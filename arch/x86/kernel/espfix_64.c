@@ -126,7 +126,7 @@ void __init init_espfix_bsp(void)
 
 	/* Install the espfix pud into the kernel page directory */
 	pgd = &init_top_pgt[pgd_index(ESPFIX_BASE_ADDR)];
-	p4d = p4d_alloc(&init_mm, pgd, ESPFIX_BASE_ADDR);
+	p4d = p4d_alloc(&init_mm, pgd, ESPFIX_BASE_ADDR, GFP_KERNEL);
 	p4d_populate(&init_mm, p4d, espfix_pud_page);
 
 	/* Randomize the locations */

@@ -62,12 +62,10 @@ static inline void pgd_populate(struct mm_struct *mm, pgd_t *pgd, pmd_t *pmd)
 		        (__u32)(__pa((unsigned long)pmd) >> PxD_VALUE_SHIFT));
 }
 
-static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long address)
+static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long address,
+				   gfp_t gfp)
 {
-	pmd_t *pmd = (pmd_t *)__get_free_pages(GFP_KERNEL, PMD_ORDER);
-	if (pmd)
-		memset(pmd, 0, PAGE_SIZE<<PMD_ORDER);
-	return pmd;
+	return (pmd_t *)__get_free_pages(gfp|__GFP_ZERO, PMD_ORDER);
 }
 
 static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
@@ -94,7 +92,7 @@ static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
  * inside the pgd, so has no extra memory associated with it.
  */
 
-#define pmd_alloc_one(mm, addr)		({ BUG(); ((pmd_t *)2); })
+#define pmd_alloc_one(mm, addr, gfp)	({ BUG(); ((pmd_t *)2); })
 #define pmd_free(mm, x)			do { } while (0)
 #define pgd_populate(mm, pmd, pte)	BUG()
 
@@ -134,11 +132,9 @@ pte_alloc_one(struct mm_struct *mm)
 	return page;
 }
 
-static inline pte_t *
-pte_alloc_one_kernel(struct mm_struct *mm)
+static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
-	pte_t *pte = (pte_t *)__get_free_page(GFP_KERNEL|__GFP_ZERO);
-	return pte;
+	return (pte_t *)get_zeroed_page(gfp);
 }
 
 static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)

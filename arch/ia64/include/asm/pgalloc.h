@@ -40,9 +40,10 @@ pgd_populate(struct mm_struct *mm, pgd_t * pgd_entry, pud_t * pud)
 	pgd_val(*pgd_entry) = __pa(pud);
 }
 
-static inline pud_t *pud_alloc_one(struct mm_struct *mm, unsigned long addr)
+static inline pud_t *pud_alloc_one(struct mm_struct *mm, unsigned long addr,
+				   gfp_t gfp)
 {
-	return quicklist_alloc(0, GFP_KERNEL, NULL);
+	return quicklist_alloc(0, gfp, NULL);
 }
 
 static inline void pud_free(struct mm_struct *mm, pud_t *pud)
@@ -58,9 +59,10 @@ pud_populate(struct mm_struct *mm, pud_t * pud_entry, pmd_t * pmd)
 	pud_val(*pud_entry) = __pa(pmd);
 }
 
-static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr)
+static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr,
+				   gfp_t gfp)
 {
-	return quicklist_alloc(0, GFP_KERNEL, NULL);
+	return quicklist_alloc(0, gfp, NULL);
 }
 
 static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
@@ -99,9 +101,9 @@ static inline pgtable_t pte_alloc_one(struct mm_struct *mm)
 	return page;
 }
 
-static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm)
+static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
-	return quicklist_alloc(0, GFP_KERNEL, NULL);
+	return quicklist_alloc(0, gfp, NULL);
 }
 
 static inline void pte_free(struct mm_struct *mm, pgtable_t pte)

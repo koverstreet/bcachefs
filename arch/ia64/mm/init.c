@@ -216,13 +216,13 @@ put_kernel_page (struct page *page, unsigned long address, pgprot_t pgprot)
 	pgd = pgd_offset_k(address);		/* note: this is NOT pgd_offset()! */
 
 	{
-		pud = pud_alloc(&init_mm, pgd, address);
+		pud = pud_alloc(&init_mm, pgd, address, GFP_KERNEL);
 		if (!pud)
 			goto out;
-		pmd = pmd_alloc(&init_mm, pud, address);
+		pmd = pmd_alloc(&init_mm, pud, address, GFP_KERNEL);
 		if (!pmd)
 			goto out;
-		pte = pte_alloc_kernel(pmd, address);
+		pte = pte_alloc_kernel(pmd, address, GFP_KERNEL);
 		if (!pte)
 			goto out;
 		if (!pte_none(*pte))

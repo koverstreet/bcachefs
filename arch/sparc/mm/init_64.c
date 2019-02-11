@@ -2925,15 +2925,9 @@ void __flush_tlb_all(void)
 			     : : "r" (pstate));
 }
 
-pte_t *pte_alloc_one_kernel(struct mm_struct *mm)
+pte_t *pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
-	struct page *page = alloc_page(GFP_KERNEL | __GFP_ZERO);
-	pte_t *pte = NULL;
-
-	if (page)
-		pte = (pte_t *) page_address(page);
-
-	return pte;
+	return (pte_t *) get_zeroed_page(gfp);
 }
 
 pgtable_t pte_alloc_one(struct mm_struct *mm)

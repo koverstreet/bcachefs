@@ -123,7 +123,7 @@ static int __ref zero_pmd_populate(pud_t *pud, unsigned long addr,
 			pte_t *p;
 
 			if (slab_is_available())
-				p = pte_alloc_one_kernel(&init_mm);
+				p = pte_alloc_one_kernel(&init_mm, GFP_KERNEL);
 			else
 				p = early_alloc(PAGE_SIZE, NUMA_NO_NODE);
 			if (!p)
@@ -160,7 +160,7 @@ static int __ref zero_pud_populate(p4d_t *p4d, unsigned long addr,
 			pmd_t *p;
 
 			if (slab_is_available()) {
-				p = pmd_alloc(&init_mm, pud, addr);
+				p = pmd_alloc(&init_mm, pud, addr, GFP_KERNEL);
 				if (!p)
 					return -ENOMEM;
 			} else {
@@ -201,7 +201,7 @@ static int __ref zero_p4d_populate(pgd_t *pgd, unsigned long addr,
 			pud_t *p;
 
 			if (slab_is_available()) {
-				p = pud_alloc(&init_mm, p4d, addr);
+				p = pud_alloc(&init_mm, p4d, addr, GFP_KERNEL);
 				if (!p)
 					return -ENOMEM;
 			} else {
@@ -274,7 +274,7 @@ int __ref kasan_populate_early_shadow(const void *shadow_start,
 			p4d_t *p;
 
 			if (slab_is_available()) {
-				p = p4d_alloc(&init_mm, pgd, addr);
+				p = p4d_alloc(&init_mm, pgd, addr, GFP_KERNEL);
 				if (!p)
 					return -ENOMEM;
 			} else {

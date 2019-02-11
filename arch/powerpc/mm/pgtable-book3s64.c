@@ -262,15 +262,14 @@ static pmd_t *get_pmd_from_cache(struct mm_struct *mm)
 	return (pmd_t *)ret;
 }
 
-static pmd_t *__alloc_for_pmdcache(struct mm_struct *mm)
+static pmd_t *__alloc_for_pmdcache(struct mm_struct *mm, gfp_t gfp)
 {
 	void *ret = NULL;
 	struct page *page;
-	gfp_t gfp = GFP_KERNEL_ACCOUNT | __GFP_ZERO;
 
-	if (mm == &init_mm)
-		gfp &= ~__GFP_ACCOUNT;
-	page = alloc_page(gfp);
+	if (mm != &init_mm)
+		gfp |= __GFP_ACCOUNT;
+	page = alloc_page(gfp|__GFP_ZERO);
 	if (!page)
 		return NULL;
 	if (!pgtable_pmd_page_ctor(page)) {
@@ -303,7 +302,8 @@ static pmd_t *__alloc_for_pmdcache(struct mm_struct *mm)
 	return (pmd_t *)ret;
 }
 
-pmd_t *pmd_fragment_alloc(struct mm_struct *mm, unsigned long vmaddr)
+pmd_t *pmd_fragment_alloc(struct mm_struct *mm, unsigned long vmaddr,
+			  gfp_t gfp)
 {
 	pmd_t *pmd;
 
@@ -311,7 +311,7 @@ pmd_t *pmd_fragment_alloc(struct mm_struct *mm, unsigned long vmaddr)
 	if (pmd)
 		return pmd;
 
-	return __alloc_for_pmdcache(mm);
+	return __alloc_for_pmdcache(mm, gfp);
 }
 
 void pmd_fragment_free(unsigned long *pmd)

@@ -54,7 +54,7 @@ pte_t __ref *vmem_pte_alloc(void)
 	pte_t *pte;
 
 	if (slab_is_available())
-		pte = (pte_t *) page_table_alloc(&init_mm);
+		pte = (pte_t *) page_table_alloc(&init_mm, GFP_KERNEL);
 	else
 		pte = (pte_t *) memblock_phys_alloc(size, size);
 	if (!pte)

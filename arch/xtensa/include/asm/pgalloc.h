@@ -38,12 +38,12 @@ static inline void pgd_free(struct mm_struct *mm, pgd_t *pgd)
 	free_page((unsigned long)pgd);
 }
 
-static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm)
+static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
 	pte_t *ptep;
 	int i;
 
-	ptep = (pte_t *)__get_free_page(GFP_KERNEL);
+	ptep = (pte_t *)__get_free_page(gfp);
 	if (!ptep)
 		return NULL;
 	for (i = 0; i < 1024; i++)

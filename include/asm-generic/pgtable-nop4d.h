@@ -48,7 +48,7 @@ static inline p4d_t *p4d_offset(pgd_t *pgd, unsigned long address)
  * allocating and freeing a p4d is trivial: the 1-entry p4d is
  * inside the pgd, so has no extra memory associated with it.
  */
-#define p4d_alloc_one(mm, address)		NULL
+#define p4d_alloc_one(mm, address, gfp)		NULL
 #define p4d_free(mm, x)				do { } while (0)
 #define __p4d_free_tlb(tlb, x, a)		do { } while (0)
 

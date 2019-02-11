@@ -199,12 +199,9 @@ void pgd_free(struct mm_struct *mm, pgd_t *pgd)
 	free_page((unsigned long) pgd);
 }
 
-pte_t *pte_alloc_one_kernel(struct mm_struct *mm)
+pte_t *pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
-	pte_t *pte;
-
-	pte = (pte_t *)__get_free_page(GFP_KERNEL|__GFP_ZERO);
-	return pte;
+	return (pte_t *)get_zeroed_page(gfp);
 }
 
 pgtable_t pte_alloc_one(struct mm_struct *mm)
@@ -222,14 +219,10 @@ pgtable_t pte_alloc_one(struct mm_struct *mm)
 }
 
 #ifdef CONFIG_3_LEVEL_PGTABLES
-pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long address)
+pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long address,
+		     gfp_t gfp)
 {
-	pmd_t *pmd = (pmd_t *) __get_free_page(GFP_KERNEL);
-
-	if (pmd)
-		memset(pmd, 0, PAGE_SIZE);
-
-	return pmd;
+	return (pmd_t *) get_zeroed_page(gfp);
 }
 #endif
 

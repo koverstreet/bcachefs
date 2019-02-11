@@ -57,11 +57,11 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 	 * Allocate PMD table for modules and pkmap mappings.
 	 */
 	new_pud = pud_alloc(mm, new_pgd + pgd_index(MODULES_VADDR),
-			    MODULES_VADDR);
+			    MODULES_VADDR, GFP_KERNEL);
 	if (!new_pud)
 		goto no_pud;
 
-	new_pmd = pmd_alloc(mm, new_pud, 0);
+	new_pmd = pmd_alloc(mm, new_pud, 0, GFP_KERNEL);
 	if (!new_pmd)
 		goto no_pmd;
 #endif
@@ -72,11 +72,11 @@ pgd_t *pgd_alloc(struct mm_struct *mm)
 		 * contains the machine vectors. The vectors are always high
 		 * with LPAE.
 		 */
-		new_pud = pud_alloc(mm, new_pgd, 0);
+		new_pud = pud_alloc(mm, new_pgd, 0, GFP_KERNEL);
 		if (!new_pud)
 			goto no_pud;
 
-		new_pmd = pmd_alloc(mm, new_pud, 0);
+		new_pmd = pmd_alloc(mm, new_pud, 0, GFP_KERNEL);
 		if (!new_pmd)
 			goto no_pmd;
 

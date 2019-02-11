@@ -95,7 +95,8 @@ inline int dvma_map_cpu(unsigned long kaddr,
 		pmd_t *pmd;
 		unsigned long end2;
 
-		if((pmd = pmd_alloc(&init_mm, pgd, vaddr)) == NULL) {
+		pmd = pmd_alloc(&init_mm, pgd, vaddr, GFP_KERNEL);
+		if (!pmd) {
 			ret = -ENOMEM;
 			goto out;
 		}
@@ -109,7 +110,8 @@ inline int dvma_map_cpu(unsigned long kaddr,
 			pte_t *pte;
 			unsigned long end3;
 
-			if((pte = pte_alloc_kernel(pmd, vaddr)) == NULL) {
+			pte = pte_alloc_kernel(pmd, vaddr, GFP_KERNEL);
+			if (!pte) {
 				ret = -ENOMEM;
 				goto out;
 			}

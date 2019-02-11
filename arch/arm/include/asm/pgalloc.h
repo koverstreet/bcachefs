@@ -27,9 +27,10 @@
 
 #ifdef CONFIG_ARM_LPAE
 
-static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr)
+static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr,
+				   gfp_t gfp)
 {
-	return (pmd_t *)get_zeroed_page(GFP_KERNEL);
+	return (pmd_t *)get_zeroed_page(gfp);
 }
 
 static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
@@ -48,7 +49,7 @@ static inline void pud_populate(struct mm_struct *mm, pud_t *pud, pmd_t *pmd)
 /*
  * Since we have only two-level page tables, these are trivial
  */
-#define pmd_alloc_one(mm,addr)		({ BUG(); ((pmd_t *)2); })
+#define pmd_alloc_one(mm,addr,gfp)	({ BUG(); ((pmd_t *)2); })
 #define pmd_free(mm, pmd)		do { } while (0)
 #define pud_populate(mm,pmd,pte)	BUG()
 
@@ -81,11 +82,11 @@ static inline void clean_pte_table(pte_t *pte)
  *  +------------+
  */
 static inline pte_t *
-pte_alloc_one_kernel(struct mm_struct *mm)
+pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
 	pte_t *pte;
 
-	pte = (pte_t *)__get_free_page(PGALLOC_GFP);
+	pte = (pte_t *)get_zeroed_page(gfp);
 	if (pte)
 		clean_pte_table(pte);
 

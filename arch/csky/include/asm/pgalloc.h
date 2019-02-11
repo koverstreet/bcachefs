@@ -24,12 +24,12 @@ static inline void pmd_populate(struct mm_struct *mm, pmd_t *pmd,
 
 extern void pgd_init(unsigned long *p);
 
-static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm)
+static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
 	pte_t *pte;
 	unsigned long i;
 
-	pte = (pte_t *) __get_free_page(GFP_KERNEL);
+	pte = (pte_t *) __get_free_page(gfp);
 	if (!pte)
 		return NULL;
 

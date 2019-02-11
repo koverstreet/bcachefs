@@ -149,21 +149,21 @@ static int __map_kernel_page(unsigned long ea, unsigned long pa,
 	 * boot.
 	 */
 	pgdp = pgd_offset_k(ea);
-	pudp = pud_alloc(&init_mm, pgdp, ea);
+	pudp = pud_alloc(&init_mm, pgdp, ea, GFP_KERNEL);
 	if (!pudp)
 		return -ENOMEM;
 	if (map_page_size == PUD_SIZE) {
 		ptep = (pte_t *)pudp;
 		goto set_the_pte;
 	}
-	pmdp = pmd_alloc(&init_mm, pudp, ea);
+	pmdp = pmd_alloc(&init_mm, pudp, ea, GFP_KERNEL);
 	if (!pmdp)
 		return -ENOMEM;
 	if (map_page_size == PMD_SIZE) {
 		ptep = pmdp_ptep(pmdp);
 		goto set_the_pte;
 	}
-	ptep = pte_alloc_kernel(pmdp, ea);
+	ptep = pte_alloc_kernel(pmdp, ea, GFP_KERNEL);
 	if (!ptep)
 		return -ENOMEM;
 
@@ -198,21 +198,21 @@ void radix__change_memory_range(unsigned long start, unsigned long end,
 
 	for (idx = start; idx < end; idx += PAGE_SIZE) {
 		pgdp = pgd_offset_k(idx);
-		pudp = pud_alloc(&init_mm, pgdp, idx);
+		pudp = pud_alloc(&init_mm, pgdp, idx, GFP_KERNEL);
 		if (!pudp)
 			continue;
 		if (pud_huge(*pudp)) {
 			ptep = (pte_t *)pudp;
 			goto update_the_pte;
 		}
-		pmdp = pmd_alloc(&init_mm, pudp, idx);
+		pmdp = pmd_alloc(&init_mm, pudp, idx, GFP_KERNEL);
 		if (!pmdp)
 			continue;
 		if (pmd_huge(*pmdp)) {
 			ptep = pmdp_ptep(pmdp);
 			goto update_the_pte;
 		}
-		ptep = pte_alloc_kernel(pmdp, idx);
+		ptep = pte_alloc_kernel(pmdp, idx, GFP_KERNEL);
 		if (!ptep)
 			continue;
 update_the_pte:

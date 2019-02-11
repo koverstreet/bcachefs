@@ -647,7 +647,7 @@ static int create_hyp_pmd_mappings(pud_t *pud, unsigned long start,
 		BUG_ON(pmd_sect(*pmd));
 
 		if (pmd_none(*pmd)) {
-			pte = pte_alloc_one_kernel(NULL);
+			pte = pte_alloc_one_kernel(NULL, GFP_KERNEL);
 			if (!pte) {
 				kvm_err("Cannot allocate Hyp pte\n");
 				return -ENOMEM;
@@ -679,7 +679,7 @@ static int create_hyp_pud_mappings(pgd_t *pgd, unsigned long start,
 		pud = pud_offset(pgd, addr);
 
 		if (pud_none_or_clear_bad(pud)) {
-			pmd = pmd_alloc_one(NULL, addr);
+			pmd = pmd_alloc_one(NULL, addr, GFP_KERNEL);
 			if (!pmd) {
 				kvm_err("Cannot allocate Hyp pmd\n");
 				return -ENOMEM;
@@ -714,7 +714,7 @@ static int __create_hyp_mappings(pgd_t *pgdp, unsigned long ptrs_per_pgd,
 		pgd = pgdp + kvm_pgd_index(addr, ptrs_per_pgd);
 
 		if (pgd_none(*pgd)) {
-			pud = pud_alloc_one(NULL, addr);
+			pud = pud_alloc_one(NULL, addr, GFP_KERNEL);
 			if (!pud) {
 				kvm_err("Cannot allocate Hyp pud\n");
 				err = -ENOMEM;

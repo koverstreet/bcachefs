@@ -67,10 +67,10 @@ static inline void pgd_free(struct mm_struct *mm, pgd_t *pgd)
 
 #ifndef __PAGETABLE_PMD_FOLDED
 
-static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr)
+static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr,
+				   gfp_t gfp)
 {
-	return (pmd_t *)__get_free_page(
-		GFP_KERNEL | __GFP_RETRY_MAYFAIL | __GFP_ZERO);
+	return (pmd_t *)get_zeroed_page(gfp|__GFP_RETRY_MAYFAIL);
 }
 
 static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
@@ -82,10 +82,9 @@ static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
 
 #endif /* __PAGETABLE_PMD_FOLDED */
 
-static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm)
+static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
-	return (pte_t *)__get_free_page(
-		GFP_KERNEL | __GFP_RETRY_MAYFAIL | __GFP_ZERO);
+	return (pte_t *)get_zeroed_page(gfp | __GFP_RETRY_MAYFAIL);
 }
 
 static inline struct page *pte_alloc_one(struct mm_struct *mm)

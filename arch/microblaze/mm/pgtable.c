@@ -144,7 +144,7 @@ int map_page(unsigned long va, phys_addr_t pa, int flags)
 	/* Use upper 10 bits of VA to index the first level map */
 	pd = pmd_offset(pgd_offset_k(va), va);
 	/* Use middle 10 bits of VA to index the second-level map */
-	pg = pte_alloc_kernel(pd, va); /* from powerpc - pgtable.c */
+	pg = pte_alloc_kernel(pd, va, GFP_KERNEL); /* from powerpc - pgtable.c */
 	/* pg = pte_alloc_kernel(&init_mm, pd, va); */
 
 	if (pg != NULL) {
@@ -235,11 +235,11 @@ unsigned long iopa(unsigned long addr)
 	return pa;
 }
 
-__ref pte_t *pte_alloc_one_kernel(struct mm_struct *mm)
+__ref pte_t *pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
 	pte_t *pte;
 	if (mem_init_done) {
-		pte = (pte_t *)__get_free_page(GFP_KERNEL | __GFP_ZERO);
+		pte = (pte_t *)get_zeroed_page(gfp);
 	} else {
 		pte = (pte_t *)early_get_page();
 		if (pte)

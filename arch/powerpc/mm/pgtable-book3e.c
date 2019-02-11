@@ -80,13 +80,13 @@ int map_kernel_page(unsigned long ea, unsigned long pa, pgprot_t prot)
 	BUILD_BUG_ON(TASK_SIZE_USER64 > PGTABLE_RANGE);
 	if (slab_is_available()) {
 		pgdp = pgd_offset_k(ea);
-		pudp = pud_alloc(&init_mm, pgdp, ea);
+		pudp = pud_alloc(&init_mm, pgdp, ea, GFP_KERNEL);
 		if (!pudp)
 			return -ENOMEM;
-		pmdp = pmd_alloc(&init_mm, pudp, ea);
+		pmdp = pmd_alloc(&init_mm, pudp, ea, GFP_KERNEL);
 		if (!pmdp)
 			return -ENOMEM;
-		ptep = pte_alloc_kernel(pmdp, ea);
+		ptep = pte_alloc_kernel(pmdp, ea, GFP_KERNEL);
 		if (!ptep)
 			return -ENOMEM;
 	} else {

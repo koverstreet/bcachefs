@@ -12,7 +12,8 @@ extern void pgd_free(struct mm_struct *mm, pgd_t *pgd);
 
 #if PAGETABLE_LEVELS > 2
 extern void pud_populate(struct mm_struct *mm, pud_t *pudp, pmd_t *pmd);
-extern pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long address);
+extern pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long address,
+			    gfp_t gfp);
 extern void pmd_free(struct mm_struct *mm, pmd_t *pmd);
 #endif
 
@@ -32,9 +33,9 @@ static inline void pmd_populate(struct mm_struct *mm, pmd_t *pmd,
 /*
  * Allocate and free page tables.
  */
-static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm)
+static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
-	return quicklist_alloc(QUICK_PT, GFP_KERNEL, NULL);
+	return quicklist_alloc(QUICK_PT, gfp, NULL);
 }
 
 static inline pgtable_t pte_alloc_one(struct mm_struct *mm)

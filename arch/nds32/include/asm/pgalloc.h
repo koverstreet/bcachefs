@@ -12,8 +12,8 @@
 /*
  * Since we have only two-level page tables, these are trivial
  */
-#define pmd_alloc_one(mm, addr)		({ BUG(); ((pmd_t *)2); })
-#define pmd_free(mm, pmd)			do { } while (0)
+#define pmd_alloc_one(mm, addr, gfp)	({ BUG(); ((pmd_t *)2); })
+#define pmd_free(mm, pmd)		do { } while (0)
 #define pgd_populate(mm, pmd, pte)	BUG()
 #define pmd_pgtable(pmd) pmd_page(pmd)
 
@@ -22,15 +22,9 @@ extern void pgd_free(struct mm_struct *mm, pgd_t * pgd);
 
 #define check_pgt_cache()		do { } while (0)
 
-static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm)
+static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
-	pte_t *pte;
-
-	pte =
-	    (pte_t *) __get_free_page(GFP_KERNEL | __GFP_RETRY_MAYFAIL |
-				      __GFP_ZERO);
-
-	return pte;
+	return (pte_t *) get_zeroed_page(gfp | __GFP_RETRY_MAYFAIL);
 }
 
 static inline pgtable_t pte_alloc_one(struct mm_struct *mm)

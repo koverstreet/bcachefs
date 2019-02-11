@@ -74,10 +74,9 @@ static inline struct page *pte_alloc_one(struct mm_struct *mm)
 }
 
 /* _kernel variant gets to use a different allocator */
-static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm)
+static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
-	gfp_t flags =  GFP_KERNEL | __GFP_ZERO;
-	return (pte_t *) __get_free_page(flags);
+	return (pte_t *) get_zeroed_page(gfp);
 }
 
 static inline void pte_free(struct mm_struct *mm, struct page *pte)

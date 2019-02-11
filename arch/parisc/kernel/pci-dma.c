@@ -113,7 +113,7 @@ static inline int map_pmd_uncached(pmd_t * pmd, unsigned long vaddr,
 	if (end > PGDIR_SIZE)
 		end = PGDIR_SIZE;
 	do {
-		pte_t * pte = pte_alloc_kernel(pmd, vaddr);
+		pte_t *pte = pte_alloc_kernel(pmd, vaddr, GFP_KERNEL);
 		if (!pte)
 			return -ENOMEM;
 		if (map_pte_uncached(pte, orig_vaddr, end - vaddr, paddr_ptr))
@@ -134,8 +134,8 @@ static inline int map_uncached_pages(unsigned long vaddr, unsigned long size,
 	dir = pgd_offset_k(vaddr);
 	do {
 		pmd_t *pmd;
-		
-		pmd = pmd_alloc(NULL, dir, vaddr);
+
+		pmd = pmd_alloc(NULL, dir, vaddr, GFP_KERNEL);
 		if (!pmd)
 			return -ENOMEM;
 		if (map_pmd_uncached(pmd, vaddr, end - vaddr, &paddr))

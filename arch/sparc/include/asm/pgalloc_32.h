@@ -38,7 +38,8 @@ static inline void pgd_set(pgd_t * pgdp, pmd_t * pmdp)
 #define pgd_populate(MM, PGD, PMD)      pgd_set(PGD, PMD)
 
 static inline pmd_t *pmd_alloc_one(struct mm_struct *mm,
-				   unsigned long address)
+				   unsigned long address,
+				   gfp_t gfp)
 {
 	return srmmu_get_nocache(SRMMU_PMD_TABLE_SIZE,
 				 SRMMU_PMD_TABLE_SIZE);
@@ -60,11 +61,10 @@ void pmd_set(pmd_t *pmdp, pte_t *ptep);
 
 pgtable_t pte_alloc_one(struct mm_struct *mm);
 
-static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm)
+static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
 	return srmmu_get_nocache(PTE_SIZE, PTE_SIZE);
 }
-
 
 static inline void free_pte_fast(pte_t *pte)
 {

@@ -24,11 +24,11 @@ static int init_stub_pte(struct mm_struct *mm, unsigned long proc,
 	pte_t *pte;
 
 	pgd = pgd_offset(mm, proc);
-	pud = pud_alloc(mm, pgd, proc);
+	pud = pud_alloc(mm, pgd, proc, GFP_KERNEL);
 	if (!pud)
 		goto out;
 
-	pmd = pmd_alloc(mm, pud, proc);
+	pmd = pmd_alloc(mm, pud, proc, GFP_KERNEL);
 	if (!pmd)
 		goto out_pmd;
 

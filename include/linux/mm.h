@@ -1780,17 +1780,18 @@ static inline pte_t *get_locked_pte(struct mm_struct *mm, unsigned long addr,
 
 #ifdef __PAGETABLE_P4D_FOLDED
 static inline int __p4d_alloc(struct mm_struct *mm, pgd_t *pgd,
-						unsigned long address)
+			      unsigned long address, gfp_t gfp)
 {
 	return 0;
 }
 #else
-int __p4d_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address);
+int __p4d_alloc(struct mm_struct *mm, pgd_t *pgd,
+		unsigned long address, gfp_t gfp);
 #endif
 
 #if defined(__PAGETABLE_PUD_FOLDED) || !defined(CONFIG_MMU)
 static inline int __pud_alloc(struct mm_struct *mm, p4d_t *p4d,
-						unsigned long address)
+			      unsigned long address, gfp_t gfp)
 {
 	return 0;
 }
@@ -1798,7 +1799,8 @@ static inline void mm_inc_nr_puds(struct mm_struct *mm) {}
 static inline void mm_dec_nr_puds(struct mm_struct *mm) {}
 
 #else
-int __pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address);
+int __pud_alloc(struct mm_struct *mm, p4d_t *p4d,
+		unsigned long address, gfp_t gfp);
 
 static inline void mm_inc_nr_puds(struct mm_struct *mm)
 {
@@ -1817,7 +1819,7 @@ static inline void mm_dec_nr_puds(struct mm_struct *mm)
 
 #if defined(__PAGETABLE_PMD_FOLDED) || !defined(CONFIG_MMU)
 static inline int __pmd_alloc(struct mm_struct *mm, pud_t *pud,
-						unsigned long address)
+			      unsigned long address, gfp_t gfp)
 {
 	return 0;
 }
@@ -1826,7 +1828,8 @@ static inline void mm_inc_nr_pmds(struct mm_struct *mm) {}
 static inline void mm_dec_nr_pmds(struct mm_struct *mm) {}
 
 #else
-int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address);
+int __pmd_alloc(struct mm_struct *mm, pud_t *pud,
+		unsigned long address, gfp_t gfp);
 
 static inline void mm_inc_nr_pmds(struct mm_struct *mm)
 {
@@ -1876,7 +1879,7 @@ static inline void mm_dec_nr_ptes(struct mm_struct *mm) {}
 #endif
 
 int __pte_alloc(struct mm_struct *mm, pmd_t *pmd);
-int __pte_alloc_kernel(pmd_t *pmd);
+int __pte_alloc_kernel(pmd_t *pmd, gfp_t gfp);
 
 /*
  * The following ifdef needed to get the 4level-fixup.h header to work.
@@ -1886,24 +1889,25 @@ int __pte_alloc_kernel(pmd_t *pmd);
 
 #ifndef __ARCH_HAS_5LEVEL_HACK
 static inline p4d_t *p4d_alloc(struct mm_struct *mm, pgd_t *pgd,
-		unsigned long address)
+		unsigned long address, gfp_t gfp)
 {
-	return (unlikely(pgd_none(*pgd)) && __p4d_alloc(mm, pgd, address)) ?
-		NULL : p4d_offset(pgd, address);
+	return (unlikely(pgd_none(*pgd)) && __p4d_alloc(mm, pgd, address, gfp))
+	    ? NULL : p4d_offset(pgd, address);
 }
 
 static inline pud_t *pud_alloc(struct mm_struct *mm, p4d_t *p4d,
-		unsigned long address)
+		unsigned long address, gfp_t gfp)
 {
-	return (unlikely(p4d_none(*p4d)) && __pud_alloc(mm, p4d, address)) ?
-		NULL : pud_offset(p4d, address);
+	return (unlikely(p4d_none(*p4d)) && __pud_alloc(mm, p4d, address, gfp))
+	    ? NULL : pud_offset(p4d, address);
 }
 #endif /* !__ARCH_HAS_5LEVEL_HACK */
 
-static inline pmd_t *pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
+static inline pmd_t *pmd_alloc(struct mm_struct *mm, pud_t *pud,
+		unsigned long address, gfp_t gfp)
 {
-	return (unlikely(pud_none(*pud)) && __pmd_alloc(mm, pud, address))?
-		NULL: pmd_offset(pud, address);
+	return (unlikely(pud_none(*pud)) && __pmd_alloc(mm, pud, address, gfp))
+	    ? NULL : pmd_offset(pud, address);
 }
 #endif /* CONFIG_MMU && !__ARCH_HAS_4LEVEL_HACK */
 
@@ -2016,8 +2020,8 @@ static inline void pgtable_page_dtor(struct page *page)
 	(pte_alloc(mm, pmd) ?			\
 		 NULL : pte_offset_map_lock(mm, pmd, address, ptlp))
 
-#define pte_alloc_kernel(pmd, address)			\
-	((unlikely(pmd_none(*(pmd))) && __pte_alloc_kernel(pmd))? \
+#define pte_alloc_kernel(pmd, address, gfp)			\
+	((unlikely(pmd_none(*(pmd))) && __pte_alloc_kernel(pmd, gfp))? \
 		NULL: pte_offset_kernel(pmd, address))
 
 #if USE_SPLIT_PMD_PTLOCKS

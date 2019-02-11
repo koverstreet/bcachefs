@@ -50,7 +50,7 @@ pgd_t *get_pgd_slow(struct mm_struct *mm)
 		 * On UniCore, first page must always be allocated since it
 		 * contains the machine vectors.
 		 */
-		new_pmd = pmd_alloc(mm, (pud_t *)new_pgd, 0);
+		new_pmd = pmd_alloc(mm, (pud_t *)new_pgd, 0, GFP_KERNEL);
 		if (!new_pmd)
 			goto no_pmd;
 

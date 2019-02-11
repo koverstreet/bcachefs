@@ -53,7 +53,7 @@ static inline pud_t *pud_offset(pgd_t *pgd, unsigned long address)
  * allocating and freeing a pud is trivial: the 1-entry pud is
  * inside the pgd, so has no extra memory associated with it.
  */
-#define pud_alloc_one(mm, address)		NULL
+#define pud_alloc_one(mm, address, gfp)		NULL
 #define pud_free(mm, x)				do { } while (0)
 #define __pud_free_tlb(tlb, x, a)		do { } while (0)
 

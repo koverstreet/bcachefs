@@ -106,7 +106,7 @@ pgd_t * __init efi_call_phys_prolog(void)
 		pgd_efi = pgd_offset_k(addr_pgd);
 		save_pgd[pgd] = *pgd_efi;
 
-		p4d = p4d_alloc(&init_mm, pgd_efi, addr_pgd);
+		p4d = p4d_alloc(&init_mm, pgd_efi, addr_pgd, GFP_KERNEL);
 		if (!p4d) {
 			pr_err("Failed to allocate p4d table!\n");
 			goto out;
@@ -116,7 +116,8 @@ pgd_t * __init efi_call_phys_prolog(void)
 			addr_p4d = addr_pgd + i * P4D_SIZE;
 			p4d_efi = p4d + p4d_index(addr_p4d);
 
-			pud = pud_alloc(&init_mm, p4d_efi, addr_p4d);
+			pud = pud_alloc(&init_mm, p4d_efi, addr_p4d,
+					GFP_KERNEL);
 			if (!pud) {
 				pr_err("Failed to allocate pud table!\n");
 				goto out;
@@ -217,13 +218,13 @@ int __init efi_alloc_page_tables(void)
 		return -ENOMEM;
 
 	pgd = efi_pgd + pgd_index(EFI_VA_END);
-	p4d = p4d_alloc(&init_mm, pgd, EFI_VA_END);
+	p4d = p4d_alloc(&init_mm, pgd, EFI_VA_END, GFP_KERNEL);
 	if (!p4d) {
 		free_page((unsigned long)efi_pgd);
 		return -ENOMEM;
 	}
 
-	pud = pud_alloc(&init_mm, p4d, EFI_VA_END);
+	pud = pud_alloc(&init_mm, p4d, EFI_VA_END, GFP_KERNEL);
 	if (!pud) {
 		if (pgtable_l5_enabled())
 			free_page((unsigned long) pgd_page_vaddr(*pgd));

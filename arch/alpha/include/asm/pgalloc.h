@@ -39,9 +39,9 @@ pgd_free(struct mm_struct *mm, pgd_t *pgd)
 }
 
 static inline pmd_t *
-pmd_alloc_one(struct mm_struct *mm, unsigned long address)
+pmd_alloc_one(struct mm_struct *mm, unsigned long address, gfp_t gfp)
 {
-	pmd_t *ret = (pmd_t *)__get_free_page(GFP_KERNEL|__GFP_ZERO);
+	pmd_t *ret = (pmd_t *)get_zeroed_page(gfp);
 	return ret;
 }
 
@@ -52,10 +52,9 @@ pmd_free(struct mm_struct *mm, pmd_t *pmd)
 }
 
 static inline pte_t *
-pte_alloc_one_kernel(struct mm_struct *mm)
+pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
-	pte_t *pte = (pte_t *)__get_free_page(GFP_KERNEL|__GFP_ZERO);
-	return pte;
+	return (pte_t *)get_zeroed_page(gfp);
 }
 
 static inline void
@@ -67,7 +66,7 @@ pte_free_kernel(struct mm_struct *mm, pte_t *pte)
 static inline pgtable_t
 pte_alloc_one(struct mm_struct *mm)
 {
-	pte_t *pte = pte_alloc_one_kernel(mm);
+	pte_t *pte = pte_alloc_one_kernel(mm, GFP_KERNEL);
 	struct page *page;
 
 	if (!pte)

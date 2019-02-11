@@ -53,9 +53,9 @@ __initcall(page_table_register_sysctl);
 
 #endif /* CONFIG_PGSTE */
 
-unsigned long *crst_table_alloc(struct mm_struct *mm)
+unsigned long *crst_table_alloc(struct mm_struct *mm, gfp_t gfp)
 {
-	struct page *page = alloc_pages(GFP_KERNEL, 2);
+	struct page *page = alloc_pages(gfp, 2);
 
 	if (!page)
 		return NULL;
@@ -87,7 +87,7 @@ int crst_table_upgrade(struct mm_struct *mm, unsigned long end)
 	rc = 0;
 	notify = 0;
 	while (mm->context.asce_limit < end) {
-		table = crst_table_alloc(mm);
+		table = crst_table_alloc(mm, GFP_KERNEL);
 		if (!table) {
 			rc = -ENOMEM;
 			break;
@@ -179,7 +179,7 @@ void page_table_free_pgste(struct page *page)
 /*
  * page table entry allocation/free routines.
  */
-unsigned long *page_table_alloc(struct mm_struct *mm)
+unsigned long *page_table_alloc(struct mm_struct *mm, gfp_t gfp)
 {
 	unsigned long *table;
 	struct page *page;
@@ -209,7 +209,7 @@ unsigned long *page_table_alloc(struct mm_struct *mm)
 			return table;
 	}
 	/* Allocate a fresh page */
-	page = alloc_page(GFP_KERNEL);
+	page = alloc_page(gfp);
 	if (!page)
 		return NULL;
 	if (!pgtable_page_ctor(page)) {

@@ -19,10 +19,10 @@
 
 #define CRST_ALLOC_ORDER 2
 
-unsigned long *crst_table_alloc(struct mm_struct *);
+unsigned long *crst_table_alloc(struct mm_struct *, gfp_t);
 void crst_table_free(struct mm_struct *, unsigned long *);
 
-unsigned long *page_table_alloc(struct mm_struct *);
+unsigned long *page_table_alloc(struct mm_struct *, gfp_t);
 struct page *page_table_alloc_pgste(struct mm_struct *mm);
 void page_table_free(struct mm_struct *, unsigned long *);
 void page_table_free_rcu(struct mmu_gather *, unsigned long *, unsigned long);
@@ -48,9 +48,10 @@ static inline unsigned long pgd_entry_type(struct mm_struct *mm)
 int crst_table_upgrade(struct mm_struct *mm, unsigned long limit);
 void crst_table_downgrade(struct mm_struct *);
 
-static inline p4d_t *p4d_alloc_one(struct mm_struct *mm, unsigned long address)
+static inline p4d_t *p4d_alloc_one(struct mm_struct *mm, unsigned long address,
+				   gfp_t gfp)
 {
-	unsigned long *table = crst_table_alloc(mm);
+	unsigned long *table = crst_table_alloc(mm, gfp);
 
 	if (table)
 		crst_table_init(table, _REGION2_ENTRY_EMPTY);
@@ -58,18 +59,20 @@ static inline p4d_t *p4d_alloc_one(struct mm_struct *mm, unsigned long address)
 }
 #define p4d_free(mm, p4d) crst_table_free(mm, (unsigned long *) p4d)
 
-static inline pud_t *pud_alloc_one(struct mm_struct *mm, unsigned long address)
+static inline pud_t *pud_alloc_one(struct mm_struct *mm, unsigned long address,
+				   gfp_t gfp)
 {
-	unsigned long *table = crst_table_alloc(mm);
+	unsigned long *table = crst_table_alloc(mm, gfp);
 	if (table)
 		crst_table_init(table, _REGION3_ENTRY_EMPTY);
 	return (pud_t *) table;
 }
 #define pud_free(mm, pud) crst_table_free(mm, (unsigned long *) pud)
 
-static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long vmaddr)
+static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long vmaddr,
+				   gfp_t gfp)
 {
-	unsigned long *table = crst_table_alloc(mm);
+	unsigned long *table = crst_table_alloc(mm, gfp);
 
 	if (!table)
 		return NULL;
@@ -104,7 +107,7 @@ static inline void pud_populate(struct mm_struct *mm, pud_t *pud, pmd_t *pmd)
 
 static inline pgd_t *pgd_alloc(struct mm_struct *mm)
 {
-	unsigned long *table = crst_table_alloc(mm);
+	unsigned long *table = crst_table_alloc(mm, GFP_KERNEL);
 
 	if (!table)
 		return NULL;
@@ -139,8 +142,8 @@ static inline void pmd_populate(struct mm_struct *mm,
 /*
  * page table entry allocation/free routines.
  */
-#define pte_alloc_one_kernel(mm) ((pte_t *)page_table_alloc(mm))
-#define pte_alloc_one(mm) ((pte_t *)page_table_alloc(mm))
+#define pte_alloc_one_kernel(mm, gfp) ((pte_t *)page_table_alloc(mm, gfp))
+#define pte_alloc_one(mm) ((pte_t *)page_table_alloc(mm, GFP_KERNEL))
 
 #define pte_free_kernel(mm, pte) page_table_free(mm, (unsigned long *) pte)
 #define pte_free(mm, pte) page_table_free(mm, (unsigned long *) pte)

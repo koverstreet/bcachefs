@@ -369,7 +369,7 @@ pgtable_t pte_alloc_one(struct mm_struct *mm)
 	unsigned long pte;
 	struct page *page;
 
-	if ((pte = (unsigned long)pte_alloc_one_kernel(mm)) == 0)
+	if ((pte = (unsigned long)pte_alloc_one_kernel(mm, GFP_KERNEL)) == 0)
 		return NULL;
 	page = pfn_to_page(__nocache_pa(pte) >> PAGE_SHIFT);
 	if (!pgtable_page_ctor(page)) {

@@ -39,8 +39,8 @@ extern struct vmemmap_backing *vmemmap_list;
 extern struct kmem_cache *pgtable_cache[];
 #define PGT_CACHE(shift) pgtable_cache[shift]
 
-extern pte_t *pte_fragment_alloc(struct mm_struct *, int);
-extern pmd_t *pmd_fragment_alloc(struct mm_struct *, unsigned long);
+extern pte_t *pte_fragment_alloc(struct mm_struct *, int, gfp_t);
+extern pmd_t *pmd_fragment_alloc(struct mm_struct *, unsigned long, gfp_t);
 extern void pte_fragment_free(unsigned long *, int);
 extern void pmd_fragment_free(unsigned long *);
 extern void pgtable_free_tlb(struct mmu_gather *tlb, void *table, int shift);
@@ -114,12 +114,13 @@ static inline void pgd_populate(struct mm_struct *mm, pgd_t *pgd, pud_t *pud)
 	pgd_set(pgd, __pgtable_ptr_val(pud) | PGD_VAL_BITS);
 }
 
-static inline pud_t *pud_alloc_one(struct mm_struct *mm, unsigned long addr)
+static inline pud_t *pud_alloc_one(struct mm_struct *mm, unsigned long addr,
+				   gfp_t gfp)
 {
 	pud_t *pud;
 
 	pud = kmem_cache_alloc(PGT_CACHE(PUD_CACHE_INDEX),
-			       pgtable_gfp_flags(mm, GFP_KERNEL));
+			       pgtable_gfp_flags(mm, gfp));
 	/*
 	 * Tell kmemleak to ignore the PUD, that means don't scan it for
 	 * pointers and don't consider it a leak. PUDs are typically only
@@ -152,9 +153,10 @@ static inline void __pud_free_tlb(struct mmu_gather *tlb, pud_t *pud,
 	pgtable_free_tlb(tlb, pud, PUD_INDEX);
 }
 
-static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr)
+static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr,
+				   gfp_t gfp)
 {
-	return pmd_fragment_alloc(mm, addr);
+	return pmd_fragment_alloc(mm, addr, gfp);
 }
 
 static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
@@ -190,14 +192,14 @@ static inline pgtable_t pmd_pgtable(pmd_t pmd)
 	return (pgtable_t)pmd_page_vaddr(pmd);
 }
 
-static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm)
+static inline pte_t *pte_alloc_one_kernel(struct mm_struct *mm, gfp_t gfp)
 {
-	return (pte_t *)pte_fragment_alloc(mm, 1);
+	return (pte_t *)pte_fragment_alloc(mm, 1, gfp);
 }
 
 static inline pgtable_t pte_alloc_one(struct mm_struct *mm)
 {
-	return (pgtable_t)pte_fragment_alloc(mm, 0);
+	return (pgtable_t)pte_fragment_alloc(mm, 0, GFP_KERNEL);
 }
 
 static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)

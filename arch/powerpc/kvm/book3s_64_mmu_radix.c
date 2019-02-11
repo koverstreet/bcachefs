@@ -580,7 +580,7 @@ int kvmppc_create_pte(struct kvm *kvm, pgd_t *pgtable, pte_t pte,
 	if (pgd_present(*pgd))
 		pud = pud_offset(pgd, gpa);
 	else
-		new_pud = pud_alloc_one(kvm->mm, gpa);
+		new_pud = pud_alloc_one(kvm->mm, gpa, GFP_KERNEL);
 
 	pmd = NULL;
 	if (pud && pud_present(*pud) && !pud_huge(*pud))
