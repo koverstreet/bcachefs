@@ -38,6 +38,7 @@ struct bucket {
 	};
 
 	u16				io_time[2];
+	u8				oldest_gen;
 	unsigned			gen_valid:1;
 };
 
