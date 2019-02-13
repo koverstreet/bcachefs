@@ -100,7 +100,7 @@ do {									\
 ({									\
 	bool _r = !fifo_empty((fifo));					\
 	if (_r)								\
-		(i) = (fifo)->data[--(fifo)->back & (fifo)->mask]	\
+		(i) = (fifo)->data[--(fifo)->back & (fifo)->mask];	\
 	_r;								\
 })
 
