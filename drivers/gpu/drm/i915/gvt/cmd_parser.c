@@ -1378,7 +1378,7 @@ static inline int cmd_address_audit(struct parser_exec_state *s,
 	}
 
 	if (index_mode)	{
-		if (guest_gma >= GTT_PAGE_SIZE / sizeof(u64)) {
+		if (guest_gma >= GTT_PAGE_SIZE) {
 			ret = -EINVAL;
 			goto err;
 		}
