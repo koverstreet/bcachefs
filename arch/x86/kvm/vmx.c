@@ -9734,6 +9734,8 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 
 	if (static_branch_unlikely(&vmx_l1d_should_flush))
 		vmx_l1d_flush(vcpu);
+	else if (static_branch_unlikely(&mds_user_clear))
+		mds_clear_cpu_buffers();
 
 	asm(
 		/* Store host registers */
