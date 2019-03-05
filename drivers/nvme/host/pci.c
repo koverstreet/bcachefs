@@ -974,9 +974,11 @@ static inline bool nvme_read_cqe(struct nvme_queue *nvmeq,
 	if (nvme_cqe_valid(nvmeq, nvmeq->cq_head, nvmeq->cq_phase)) {
 		*cqe = nvmeq->cqes[nvmeq->cq_head];
 
-		if (++nvmeq->cq_head == nvmeq->q_depth) {
+		if (nvmeq->cq_head == nvmeq->q_depth - 1) {
 			nvmeq->cq_head = 0;
 			nvmeq->cq_phase = !nvmeq->cq_phase;
+		} else {
+			nvmeq->cq_head++;
 		}
 		return true;
 	}
