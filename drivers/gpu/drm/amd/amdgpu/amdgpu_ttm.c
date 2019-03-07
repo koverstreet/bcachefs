@@ -1339,12 +1339,14 @@ int amdgpu_ttm_init(struct amdgpu_device *adev)
 		return r;
 	}
 
-	r = amdgpu_bo_create_kernel(adev, adev->mc.stolen_size, PAGE_SIZE,
-				    AMDGPU_GEM_DOMAIN_VRAM,
-				    &adev->stolen_vga_memory,
-				    NULL, NULL);
-	if (r)
-		return r;
+	if (adev->mc.stolen_size) {
+		r = amdgpu_bo_create_kernel(adev, adev->mc.stolen_size, PAGE_SIZE,
+					    AMDGPU_GEM_DOMAIN_VRAM,
+					    &adev->stolen_vga_memory,
+					    NULL, NULL);
+		if (r)
+			return r;
+	}
 	DRM_INFO("amdgpu: %uM of VRAM memory ready\n",
 		 (unsigned) (adev->mc.real_vram_size / (1024 * 1024)));
 
