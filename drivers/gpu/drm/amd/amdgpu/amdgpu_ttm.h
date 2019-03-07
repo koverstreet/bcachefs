@@ -74,6 +74,7 @@ u64 amdgpu_vram_mgr_bo_invisible_size(struct amdgpu_bo *bo);
 uint64_t amdgpu_vram_mgr_usage(struct ttm_mem_type_manager *man);
 uint64_t amdgpu_vram_mgr_vis_usage(struct ttm_mem_type_manager *man);
 
+void amdgpu_ttm_late_init(struct amdgpu_device *adev);
 int amdgpu_copy_buffer(struct amdgpu_ring *ring, uint64_t src_offset,
 		       uint64_t dst_offset, uint32_t byte_count,
 		       struct reservation_object *resv,

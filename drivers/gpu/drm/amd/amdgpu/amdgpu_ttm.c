@@ -1410,6 +1410,11 @@ int amdgpu_ttm_init(struct amdgpu_device *adev)
 	return 0;
 }
 
+void amdgpu_ttm_late_init(struct amdgpu_device *adev)
+{
+	amdgpu_bo_free_kernel(&adev->stolen_vga_memory, NULL, NULL);
+}
+
 void amdgpu_ttm_fini(struct amdgpu_device *adev)
 {
 	int r;
@@ -1417,14 +1422,6 @@ void amdgpu_ttm_fini(struct amdgpu_device *adev)
 	if (!adev->mman.initialized)
 		return;
 	amdgpu_ttm_debugfs_fini(adev);
-	if (adev->stolen_vga_memory) {
-		r = amdgpu_bo_reserve(adev->stolen_vga_memory, true);
-		if (r == 0) {
-			amdgpu_bo_unpin(adev->stolen_vga_memory);
-			amdgpu_bo_unreserve(adev->stolen_vga_memory);
-		}
-		amdgpu_bo_unref(&adev->stolen_vga_memory);
-	}
 	ttm_bo_clean_mm(&adev->mman.bdev, TTM_PL_VRAM);
 	ttm_bo_clean_mm(&adev->mman.bdev, TTM_PL_TT);
 	if (adev->gds.mem.total_size)
