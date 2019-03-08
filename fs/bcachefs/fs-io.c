@@ -1688,6 +1688,9 @@ again:
 static void bch2_dio_read_complete(struct closure *cl)
 {
 	struct dio_read *dio = container_of(cl, struct dio_read, cl);
+	/*
+	 * fux, this is a refcount error
+	 */
 
 	dio->req->ki_complete(dio->req, dio->ret, 0);
 	bio_check_pages_dirty(&dio->rbio.bio);	/* transfers ownership */
