@@ -252,6 +252,25 @@ struct deferred_update {
 	struct bkey_i		k;
 };
 
+struct btree_key_cache {
+	struct rhash_head	hash;
+	struct mutex		lock;
+	atomic_t		ref;
+	struct rcu_head		rcu;
+
+	struct journal_preres	res;
+	struct journal_entry_pin journal;
+
+	unsigned		read_done:1;
+	unsigned		dirty:1;
+
+	u8			allocated_u64s;
+	enum btree_id		btree_id;
+
+	/* must be last: */
+	struct bkey_i		k;
+};
+
 struct btree_insert_entry {
 	struct bkey_i		*k;
 
