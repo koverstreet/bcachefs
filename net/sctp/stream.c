@@ -166,8 +166,6 @@ int sctp_stream_init(struct sctp_stream *stream, __u16 outcnt, __u16 incnt,
 	for (i = 0; i < stream->outcnt; i++)
 		stream->out[i].state = SCTP_STREAM_OPEN;
 
-	sched->init(stream);
-
 in:
 	if (!incnt)
 		goto out;
