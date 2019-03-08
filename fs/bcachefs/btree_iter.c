@@ -1635,16 +1635,6 @@ static void bch2_btree_iter_link(struct btree_iter *iter, struct btree_iter *new
 
 	new->next = iter->next;
 	iter->next = new;
-
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
-		unsigned nr_iters = 0;
-
-		for_each_btree_iter(new, iter)
-			if (iter->btree_id == new->btree_id)
-				nr_iters++;
-
-		BUG_ON(nr_iters > SIX_LOCK_MAX_RECURSE);
-	}
 }
 
 void bch2_btree_iter_copy(struct btree_iter *dst, struct btree_iter *src)
