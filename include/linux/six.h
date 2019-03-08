@@ -50,12 +50,12 @@
  *   six_trylock_convert(lock, from, to)
  *
  * A lock may be held multiple types by the same thread (for read or intent,
- * not write) - up to SIX_LOCK_MAX_RECURSE. However, the six locks code does
- * _not_ implement the actual recursive checks itself though - rather, if your
- * code (e.g. btree iterator code) knows that the current thread already has a
- * lock held, and for the correct type, six_lock_increment() may be used to
- * bump up the counter for that type - the only effect is that one more call to
- * unlock will be required before the lock is unlocked.
+ * not write). However, the six locks code does _not_ implement the actual
+ * recursive checks itself though - rather, if your code (e.g. btree iterator
+ * code) knows that the current thread already has a lock held, and for the
+ * correct type, six_lock_increment() may be used to bump up the counter for
+ * that type - the only effect is that one more call to unlock will be required
+ * before the lock is unlocked.
  */
 
 #include <linux/lockdep.h>
@@ -80,8 +80,8 @@ union six_lock_state {
 	};
 
 	struct {
-		unsigned	read_lock:26;
-		unsigned	intent_lock:3;
+		unsigned	read_lock:28;
+		unsigned	intent_lock:1;
 		unsigned	waiters:3;
 		/*
 		 * seq works much like in seqlocks: it's incremented every time
@@ -96,8 +96,6 @@ union six_lock_state {
 	};
 };
 
-#define SIX_LOCK_MAX_RECURSE	((1 << 3) - 1)
-
 enum six_lock_type {
 	SIX_LOCK_read,
 	SIX_LOCK_intent,
@@ -106,6 +104,7 @@ enum six_lock_type {
 
 struct six_lock {
 	union six_lock_state	state;
+	unsigned		intent_lock_recurse;
 	struct task_struct	*owner;
 	struct optimistic_spin_queue osq;
 
