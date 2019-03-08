@@ -76,17 +76,6 @@ static inline void six_set_owner(struct six_lock *lock, enum six_lock_type type,
 	}
 }
 
-static inline void six_clear_owner(struct six_lock *lock, enum six_lock_type type)
-{
-	if (type != SIX_LOCK_intent)
-		return;
-
-	EBUG_ON(lock->owner != current);
-
-	if (lock->state.intent_lock == 1)
-		lock->owner = NULL;
-}
-
 static __always_inline bool do_six_trylock_type(struct six_lock *lock,
 						enum six_lock_type type)
 {
@@ -393,11 +382,21 @@ static void __six_unlock_type(struct six_lock *lock, enum six_lock_type type)
 	EBUG_ON(type == SIX_LOCK_write &&
 		!(lock->state.v & __SIX_LOCK_HELD_intent));
 
-	six_clear_owner(lock, type);
+	six_release(&lock->dep_map);
+
+	if (type == SIX_LOCK_intent) {
+		EBUG_ON(lock->owner != current);
+
+		if (lock->intent_lock_recurse) {
+			--lock->intent_lock_recurse;
+			return;
+		}
+
+		lock->owner = NULL;
+	}
 
 	state.v = atomic64_add_return_release(l[type].unlock_val,
 					      &lock->state.counter);
-	six_release(&lock->dep_map);
 	six_lock_wakeup(lock, state, l[type].unlock_wakeup);
 }
 
@@ -530,6 +529,16 @@ void six_lock_increment(struct six_lock *lock, enum six_lock_type type)
 
 	/* XXX: assert already locked, and that we don't overflow: */
 
-	atomic64_add(l[type].lock_val, &lock->state.counter);
+	switch (type) {
+	case SIX_LOCK_read:
+		atomic64_add(l[type].lock_val, &lock->state.counter);
+		break;
+	case SIX_LOCK_intent:
+		lock->intent_lock_recurse++;
+		break;
+	case SIX_LOCK_write:
+		BUG();
+		break;
+	}
 }
 EXPORT_SYMBOL_GPL(six_lock_increment);
