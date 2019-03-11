@@ -101,8 +101,8 @@ static void stripe_to_replicas(struct bkey_s_c k,
 		r->devs[r->nr_devs++] = ptr->dev;
 }
 
-static void bkey_to_replicas(struct bch_replicas_entry *e,
-			     struct bkey_s_c k)
+void bch2_bkey_to_replicas(struct bch_replicas_entry *e,
+			   struct bkey_s_c k)
 {
 	e->nr_devs = 0;
 
@@ -435,7 +435,7 @@ bool bch2_bkey_replicas_marked_locked(struct bch_fs *c,
 			return false;
 	}
 
-	bkey_to_replicas(&search.e, k);
+	bch2_bkey_to_replicas(&search.e, k);
 
 	return bch2_replicas_marked_locked(c, &search.e, check_gc_replicas);
 }
@@ -468,7 +468,7 @@ int bch2_mark_bkey_replicas(struct bch_fs *c, struct bkey_s_c k)
 			return ret;
 	}
 
-	bkey_to_replicas(&search.e, k);
+	bch2_bkey_to_replicas(&search.e, k);
 
 	return bch2_mark_replicas(c, &search.e);
 }
