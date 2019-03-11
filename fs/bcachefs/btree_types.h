@@ -7,6 +7,7 @@
 #include <linux/six.h>
 
 #include "bkey_methods.h"
+#include "buckets_types.h"
 #include "journal_types.h"
 
 struct open_bucket;
@@ -261,6 +262,7 @@ struct btree_insert_entry {
 	};
 
 	bool			deferred;
+	bool			triggered;
 };
 
 #define BTREE_ITER_MAX		64
@@ -298,6 +300,8 @@ struct btree_trans {
 
 	struct btree_iter	iters_onstack[2];
 	struct btree_insert_entry updates_onstack[6];
+
+	struct replicas_delta_list fs_usage_deltas;
 };
 
 #define BTREE_FLAG(flag)						\
