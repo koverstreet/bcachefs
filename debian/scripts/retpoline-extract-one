@@ -146,7 +146,7 @@ rela()
 # Uses 8 character 0 expanded hexadecimal key for ease of consumption.
 contentmap_init()
 {
-	raw32 "$1" "$2" >"$tmp.cm"
+	raw32 "$1" "$2" >"$tmp"
 	let offset=0
 	while read value
 	do
@@ -154,8 +154,8 @@ contentmap_init()
 		eval contentmap_$offset_hex=\'$value\'
 
 		let offset="$offset + 4"
-	done <"$tmp.cm"
-	rm -f "$tmp.cm"
+	done <"$tmp"
+	rm -f "$tmp"
 }
 contentmap()
 {
@@ -209,7 +209,7 @@ rel()
 	} | sed -e 's/-00*\([0-9a-f]\)/-\1/'
 }
 
-tmp="/tmp/retpoline-extract.$$"
+tmp=$(mktemp --tmpdir "retpoline-extract-XXXXXX")
 
 disassemble()
 {
@@ -267,4 +267,4 @@ esac | sort -k 1b,1 >"$object.ur-safe"
 # formed above.  This is performed in retpoline-check.
 #join -v 1 -j 1 "$tmp.extracted" "$tmp.safe" | sed -s 's/[^ ]*  *//'
 
-rm -f "$tmp".*
+rm -f "$tmp"
