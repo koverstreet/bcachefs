@@ -9413,6 +9413,8 @@ EXPORT_SYMBOL vmlinux 0x00000000	napi_schedule_prep
 EXPORT_SYMBOL vmlinux 0x00000000	native_io_delay
 EXPORT_SYMBOL vmlinux 0x00000000	native_load_gs_index
 EXPORT_SYMBOL vmlinux 0x00000000	native_queued_spin_lock_slowpath
+EXPORT_SYMBOL vmlinux 0x00000000	native_restore_fl
+EXPORT_SYMBOL vmlinux 0x00000000	native_save_fl
 EXPORT_SYMBOL vmlinux 0x00000000	nd_btt_arena_is_valid
 EXPORT_SYMBOL vmlinux 0x00000000	nd_btt_probe
 EXPORT_SYMBOL vmlinux 0x00000000	nd_btt_version
@@ -21824,11 +21826,13 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	sk_set_memalloc
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sk_set_peek_off
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sk_setup_caps
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	skb_append_pagefrags
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	skb_clone_tx_timestamp
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	skb_complete_tx_timestamp
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	skb_complete_wifi_ack
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	skb_consume_udp
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	skb_copy_ubufs
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	skb_cow_data
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	skb_defer_rx_timestamp
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	skb_gro_receive
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	skb_gso_transport_seglen
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	skb_gso_validate_mac_len

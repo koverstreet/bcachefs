@@ -156,6 +156,7 @@ dm-thin-pool
 dm-verity
 dm-zero
 dm-zoned
+dp83640
 dp83822
 dp83848
 dp83867
