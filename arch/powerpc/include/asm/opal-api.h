@@ -1047,6 +1047,7 @@ enum OpalSysCooling {
 enum {
 	OPAL_REBOOT_NORMAL		= 0,
 	OPAL_REBOOT_PLATFORM_ERROR	= 1,
+	OPAL_REBOOT_FULL_IPL		= 2,
 };
 
 /* Argument to OPAL_PCI_TCE_KILL */
