@@ -29,6 +29,7 @@
 #include <asm/pci-bridge.h>
 #include <asm/prom.h>
 #include <asm/ppc-pci.h>
+#include <asm/pci.h>
 #include "pseries.h"
 
 #if 0
@@ -73,9 +74,31 @@ static void __init pSeries_request_regions(void)
 
 void __init pSeries_final_fixup(void)
 {
+	struct pci_controller *hose;
+
 	pSeries_request_regions();
 
 	eeh_addr_cache_build();
+
+	list_for_each_entry(hose, &hose_list, list_node) {
+		struct device_node *dn = hose->dn, *nvdn;
+
+		while (1) {
+			dn = of_find_all_nodes(dn);
+			if (!dn)
+				break;
+			nvdn = of_parse_phandle(dn, "ibm,nvlink", 0);
+			if (!nvdn)
+				continue;
+			if (!of_device_is_compatible(nvdn, "ibm,npu-link"))
+				continue;
+			if (!of_device_is_compatible(nvdn->parent,
+						"ibm,power9-npu"))
+				continue;
+			WARN_ON_ONCE(pnv_npu2_init(hose));
+			break;
+		}
+	}
 }
 
 /*
