@@ -1296,6 +1296,19 @@ static void set_pcie_thunderbolt(struct pci_dev *dev)
 	}
 }
 
+static void set_pcie_untrusted(struct pci_dev *dev)
+{
+	struct pci_dev *parent;
+
+	/*
+	 * If the upstream bridge is untrusted we treat this device
+	 * untrusted as well.
+	 */
+	parent = pci_upstream_bridge(dev);
+	if (parent && parent->untrusted)
+		dev->untrusted = true;
+}
+
 /**
  * pci_ext_cfg_is_aliased - is ext config space just an alias of std config?
  * @dev: PCI device
@@ -1478,6 +1491,8 @@ int pci_setup_device(struct pci_dev *dev)
 
 	/* need to have dev->cfg_size ready */
 	set_pcie_thunderbolt(dev);
+
+	set_pcie_untrusted(dev);
 
 	/* "Unknown power state" */
 	dev->current_state = PCI_UNKNOWN;
