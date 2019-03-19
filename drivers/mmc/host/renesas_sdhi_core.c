@@ -479,6 +479,7 @@ int renesas_sdhi_probe(struct platform_device *pdev,
 	struct renesas_sdhi *priv;
 	struct resource *res;
 	int irq, ret, i;
+	u16 ver;
 
 	of_data = of_device_get_match_data(&pdev->dev);
 
@@ -587,12 +588,17 @@ int renesas_sdhi_probe(struct platform_device *pdev,
 	/* All SDHI have SDIO status bits which must be 1 */
 	mmc_data->flags |= TMIO_MMC_SDIO_STATUS_SETBITS;
 
+	ver = sd_ctrl_read16(host, CTL_VERSION);
+	/* GEN2_SDR104 is first known SDHI to use 32bit block count */
+	if (ver < SDHI_VER_GEN2_SDR104 && mmc_data->max_blk_count > U16_MAX)
+		mmc_data->max_blk_count = U16_MAX;
+
 	ret = tmio_mmc_host_probe(host, mmc_data, dma_ops);
 	if (ret < 0)
 		goto efree;
 
 	/* One Gen2 SDHI incarnation does NOT have a CBSY bit */
-	if (sd_ctrl_read16(host, CTL_VERSION) == SDHI_VER_GEN2_SDR50)
+	if (ver == SDHI_VER_GEN2_SDR50)
 		mmc_data->flags &= ~TMIO_MMC_HAVE_CBSY;
 
 	/* Enable tuning iff we have an SCC and a supported mode */
