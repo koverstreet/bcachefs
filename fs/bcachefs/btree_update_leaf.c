@@ -23,7 +23,7 @@ inline void bch2_btree_node_lock_for_insert(struct bch_fs *c, struct btree *b,
 {
 	bch2_btree_node_lock_write(b, iter);
 
-	if (btree_node_just_written(b) &&
+	if (unlikely(btree_node_just_written(b)) &&
 	    bch2_btree_post_write_cleanup(c, b))
 		bch2_btree_iter_reinit_node(iter, b);
 
@@ -812,12 +812,8 @@ static int __bch2_trans_commit(struct btree_trans *trans,
 	int ret;
 
 	trans_for_each_update_iter(trans, i) {
-		unsigned old_locks_want = i->iter->locks_want;
-		unsigned old_uptodate = i->iter->uptodate;
-
 		if (!bch2_btree_iter_upgrade(i->iter, 1, true)) {
-			trans_restart(" (failed upgrade, locks_want %u uptodate %u)",
-				      old_locks_want, old_uptodate);
+			trans_restart(" (failed upgrade)");
 			ret = -EINTR;
 			goto err;
 		}
@@ -852,7 +848,7 @@ int bch2_trans_commit(struct btree_trans *trans,
 		      unsigned flags)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_insert_entry *i;
+	struct btree_insert_entry *i = NULL;
 	unsigned orig_mem_top = trans->mem_top;
 	int ret = 0;
 
@@ -874,8 +870,9 @@ int bch2_trans_commit(struct btree_trans *trans,
 	trans->journal_seq	= journal_seq;
 	trans->flags		= flags;
 
-	trans_for_each_update(trans, i)
-		btree_insert_entry_checks(trans, i);
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG))
+		trans_for_each_update(trans, i)
+			btree_insert_entry_checks(trans, i);
 	bch2_btree_trans_verify_locks(trans);
 
 	if (unlikely(!(trans->flags & BTREE_INSERT_NOCHECK_RW) &&
