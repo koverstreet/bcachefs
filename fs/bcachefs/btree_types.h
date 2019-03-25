@@ -10,6 +10,7 @@
 
 struct open_bucket;
 struct btree_update;
+struct btree_trans;
 
 #define MAX_BSETS		3U
 
@@ -208,7 +209,7 @@ enum btree_iter_uptodate {
  * @nodes_intent_locked	- bitmask indicating which locks are intent locks
  */
 struct btree_iter {
-	struct bch_fs		*c;
+	struct btree_trans	*trans;
 	struct bpos		pos;
 
 	u8			flags;
