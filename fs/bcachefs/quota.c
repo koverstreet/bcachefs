@@ -355,11 +355,14 @@ static int __bch2_quota_set(struct bch_fs *c, struct bkey_s_c k)
 
 static int bch2_quota_init_type(struct bch_fs *c, enum quota_types type)
 {
-	struct btree_iter iter;
+	struct btree_trans trans;
+	struct btree_iter *iter;
 	struct bkey_s_c k;
 	int ret = 0;
 
-	for_each_btree_key(&iter, c, BTREE_ID_QUOTAS, POS(type, 0),
+	bch2_trans_init(&trans, c);
+
+	for_each_btree_key(&trans, iter, BTREE_ID_QUOTAS, POS(type, 0),
 			   BTREE_ITER_PREFETCH, k) {
 		if (k.k->p.inode != type)
 			break;
@@ -369,7 +372,7 @@ static int bch2_quota_init_type(struct bch_fs *c, enum quota_types type)
 			break;
 	}
 
-	return bch2_btree_iter_unlock(&iter) ?: ret;
+	return bch2_trans_exit(&trans) ?: ret;
 }
 
 void bch2_fs_quota_exit(struct bch_fs *c)
@@ -413,7 +416,8 @@ int bch2_fs_quota_read(struct bch_fs *c)
 {
 	unsigned i, qtypes = enabled_qtypes(c);
 	struct bch_memquota_type *q;
-	struct btree_iter iter;
+	struct btree_trans trans;
+	struct btree_iter *iter;
 	struct bch_inode_unpacked u;
 	struct bkey_s_c k;
 	int ret;
@@ -428,7 +432,9 @@ int bch2_fs_quota_read(struct bch_fs *c)
 			return ret;
 	}
 
-	for_each_btree_key(&iter, c, BTREE_ID_INODES, POS_MIN,
+	bch2_trans_init(&trans, c);
+
+	for_each_btree_key(&trans, iter, BTREE_ID_INODES, POS_MIN,
 			   BTREE_ITER_PREFETCH, k) {
 		switch (k.k->type) {
 		case KEY_TYPE_inode:
@@ -442,7 +448,7 @@ int bch2_fs_quota_read(struct bch_fs *c)
 					KEY_TYPE_QUOTA_NOCHECK);
 		}
 	}
-	return bch2_btree_iter_unlock(&iter) ?: ret;
+	return bch2_trans_exit(&trans) ?: ret;
 }
 
 /* Enable/disable/delete quotas for an entire filesystem: */
