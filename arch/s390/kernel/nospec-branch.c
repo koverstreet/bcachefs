@@ -38,9 +38,9 @@ static int __init nospec_report(void)
 	if (test_facility(156))
 		pr_info("Spectre V2 mitigation: etokens\n");
 	if (IS_ENABLED(CC_USING_EXPOLINE) && !nospec_disable)
-		pr_info("Spectre V2 mitigation: execute trampolines.\n");
+		pr_info("Spectre V2 mitigation: execute trampolines\n");
 	if (__test_facility(82, S390_lowcore.alt_stfle_fac_list))
-		pr_info("Spectre V2 mitigation: limited branch prediction.\n");
+		pr_info("Spectre V2 mitigation: limited branch prediction\n");
 	return 0;
 }
 arch_initcall(nospec_report);
