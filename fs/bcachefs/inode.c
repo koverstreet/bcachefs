@@ -324,7 +324,7 @@ again:
 	while (1) {
 		struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
 
-		ret = btree_iter_err(k);
+		ret = bkey_err(k);
 		if (ret)
 			return ret;
 
@@ -400,7 +400,7 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 		struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
 		u32 bi_generation = 0;
 
-		ret = btree_iter_err(k);
+		ret = bkey_err(k);
 		if (ret)
 			break;
 
