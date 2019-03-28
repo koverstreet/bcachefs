@@ -1605,24 +1605,12 @@ static inline void bch2_btree_iter_init(struct btree_trans *trans,
 
 /* new transactional stuff: */
 
-static inline unsigned btree_trans_iter_idx(struct btree_trans *trans,
-					    struct btree_iter *iter)
-{
-	ssize_t idx = iter - trans->iters;
-
-	EBUG_ON(idx < 0 || idx >= trans->nr_iters);
-	EBUG_ON(!(trans->iters_linked & (1ULL << idx)));
-
-	return idx;
-}
-
 int bch2_trans_iter_put(struct btree_trans *trans,
 			struct btree_iter *iter)
 {
-	ssize_t idx = btree_trans_iter_idx(trans, iter);
 	int ret = btree_iter_err(iter);
 
-	trans->iters_live	&= ~(1ULL << idx);
+	trans->iters_live	&= ~(1ULL << iter->idx);
 	return ret;
 }
 
@@ -1642,7 +1630,7 @@ int bch2_trans_iter_free(struct btree_trans *trans,
 {
 	int ret = btree_iter_err(iter);
 
-	__bch2_trans_iter_free(trans, btree_trans_iter_idx(trans, iter));
+	__bch2_trans_iter_free(trans, iter->idx);
 	return ret;
 }
 
@@ -1651,8 +1639,7 @@ int bch2_trans_iter_free_on_commit(struct btree_trans *trans,
 {
 	int ret = btree_iter_err(iter);
 
-	trans->iters_unlink_on_commit |=
-		1ULL << btree_trans_iter_idx(trans, iter);
+	trans->iters_unlink_on_commit |= 1ULL << iter->idx;
 	return ret;
 }
 
@@ -1728,6 +1715,8 @@ static int btree_trans_iter_alloc(struct btree_trans *trans)
 
 	idx = trans->nr_iters++;
 	BUG_ON(trans->nr_iters > trans->size);
+
+	trans->iters[idx].idx = idx;
 got_slot:
 	BUG_ON(trans->iters_linked & (1ULL << idx));
 	trans->iters_linked |= 1ULL << idx;
@@ -1836,7 +1825,10 @@ struct btree_iter *bch2_trans_copy_iter(struct btree_trans *trans,
 	trans->iters_unlink_on_restart	|= 1ULL << idx;
 
 	iter = &trans->iters[idx];
-	*iter = *src;
+
+	memcpy(&iter->trans,
+	       &src->trans,
+	       (void *) &iter[1] - (void *) &iter->trans);
 
 	for (i = 0; i < BTREE_MAX_DEPTH; i++)
 		if (btree_node_locked(iter, i))
