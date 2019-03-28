@@ -66,6 +66,14 @@ enum fsck_err_ret bch2_fsck_err(struct bch_fs *c, unsigned flags,
 	bool fix = false, print = true, suppressing = false;
 	char _buf[sizeof(s->buf)], *buf = _buf;
 
+	if (1) {
+		va_start(args, fmt);
+		vprintk(fmt, args);
+		va_end(args);
+
+		panic("panic after error\n");
+	}
+
 	if (test_bit(BCH_FS_FSCK_DONE, &c->flags)) {
 		va_start(args, fmt);
 		vprintk(fmt, args);
