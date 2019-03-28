@@ -503,32 +503,41 @@ static int bch2_gc_done(struct bch_fs *c,
 	bool verify = !metadata_only &&
 		(!initial ||
 		 (c->sb.compat & (1ULL << BCH_COMPAT_FEAT_ALLOC_INFO)));
+	bool wrong = false;
 	unsigned i;
 	int ret = 0;
 
+	c->opts.fix_errors = FSCK_OPT_YES;
+
 #define copy_field(_f, _msg, ...)					\
 	if (dst->_f != src->_f) {					\
-		if (verify)						\
+		if (verify) {						\
 			fsck_err(c, _msg ": got %llu, should be %llu"	\
 				, ##__VA_ARGS__, dst->_f, src->_f);	\
+			wrong = true;					\
+		}							\
 		dst->_f = src->_f;					\
 	}
 #define copy_stripe_field(_f, _msg, ...)				\
 	if (dst->_f != src->_f) {					\
-		if (verify)						\
+		if (verify) {						\
 			fsck_err(c, "stripe %zu has wrong "_msg		\
 				": got %u, should be %u",		\
 				dst_iter.pos, ##__VA_ARGS__,		\
 				dst->_f, src->_f);			\
+			wrong = true;					\
+		}							\
 		dst->_f = src->_f;					\
 		dst->dirty = true;					\
 	}
 #define copy_bucket_field(_f)						\
 	if (dst->b[b].mark._f != src->b[b].mark._f) {			\
-		if (verify)						\
+		if (verify) {						\
 			fsck_err(c, "dev %u bucket %zu has wrong " #_f	\
 				": got %u, should be %u", i, b,		\
 				dst->b[b].mark._f, src->b[b].mark._f);	\
+			wrong = true;					\
+		}							\
 		dst->b[b]._mark._f = src->b[b].mark._f;			\
 		dst->b[b]._mark.dirty = true;				\
 	}
@@ -636,6 +645,8 @@ static int bch2_gc_done(struct bch_fs *c,
 #undef copy_stripe_field
 #undef copy_field
 fsck_err:
+	if (ret || wrong)
+		panic("gc error\n");
 	return ret;
 }
 
