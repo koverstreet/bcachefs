@@ -400,8 +400,6 @@ static void __six_unlock_type(struct six_lock *lock, enum six_lock_type type)
 	six_lock_wakeup(lock, state, l[type].unlock_wakeup);
 }
 
-#ifdef SIX_LOCK_SEPARATE_LOCKFNS
-
 #define __SIX_LOCK(type)						\
 bool six_trylock_##type(struct six_lock *lock)				\
 {									\
@@ -432,36 +430,6 @@ __SIX_LOCK(intent)
 __SIX_LOCK(write)
 
 #undef __SIX_LOCK
-
-#else
-
-bool six_trylock_type(struct six_lock *lock, enum six_lock_type type)
-{
-	return __six_trylock_type(lock, type);
-}
-EXPORT_SYMBOL_GPL(six_trylock_type);
-
-bool six_relock_type(struct six_lock *lock, enum six_lock_type type,
-		     unsigned seq)
-{
-	return __six_relock_type(lock, type, seq);
-
-}
-EXPORT_SYMBOL_GPL(six_relock_type);
-
-void six_lock_type(struct six_lock *lock, enum six_lock_type type)
-{
-	__six_lock_type(lock, type);
-}
-EXPORT_SYMBOL_GPL(six_lock_type);
-
-void six_unlock_type(struct six_lock *lock, enum six_lock_type type)
-{
-	__six_unlock_type(lock, type);
-}
-EXPORT_SYMBOL_GPL(six_unlock_type);
-
-#endif
 
 /* Convert from intent to read: */
 void six_lock_downgrade(struct six_lock *lock)

@@ -138,8 +138,6 @@ do {									\
 
 #define __SIX_VAL(field, _v)	(((union six_lock_state) { .field = _v }).v)
 
-#ifdef SIX_LOCK_SEPARATE_LOCKFNS
-
 #define __SIX_LOCK(type)						\
 bool six_trylock_##type(struct six_lock *);				\
 bool six_relock_##type(struct six_lock *, u32);				\
@@ -183,41 +181,6 @@ static inline void six_unlock_type(struct six_lock *lock, enum six_lock_type typ
 {
 	SIX_LOCK_DISPATCH(type, six_unlock, lock);
 }
-
-#else
-
-bool six_trylock_type(struct six_lock *, enum six_lock_type);
-bool six_relock_type(struct six_lock *, enum six_lock_type, unsigned);
-void six_lock_type(struct six_lock *, enum six_lock_type);
-void six_unlock_type(struct six_lock *, enum six_lock_type);
-
-#define __SIX_LOCK(type)						\
-static __always_inline bool six_trylock_##type(struct six_lock *lock)	\
-{									\
-	return six_trylock_type(lock, SIX_LOCK_##type);			\
-}									\
-									\
-static __always_inline bool six_relock_##type(struct six_lock *lock, u32 seq)\
-{									\
-	return six_relock_type(lock, SIX_LOCK_##type, seq);		\
-}									\
-									\
-static __always_inline void six_lock_##type(struct six_lock *lock)	\
-{									\
-	six_lock_type(lock, SIX_LOCK_##type);				\
-}									\
-									\
-static __always_inline void six_unlock_##type(struct six_lock *lock)	\
-{									\
-	six_unlock_type(lock, SIX_LOCK_##type);				\
-}
-
-__SIX_LOCK(read)
-__SIX_LOCK(intent)
-__SIX_LOCK(write)
-#undef __SIX_LOCK
-
-#endif
 
 void six_lock_downgrade(struct six_lock *);
 bool six_lock_tryupgrade(struct six_lock *);
