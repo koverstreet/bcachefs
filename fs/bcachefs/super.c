@@ -844,7 +844,6 @@ err:
 	}
 
 	BUG_ON(!err);
-	set_bit(BCH_FS_ERROR, &c->flags);
 	goto out;
 }
 
