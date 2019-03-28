@@ -425,7 +425,7 @@ int bch2_ec_read_extent(struct bch_fs *c, struct bch_read_bio *rbio)
 				   POS(0, stripe_idx),
 				   BTREE_ITER_SLOTS);
 	k = bch2_btree_iter_peek_slot(iter);
-	if (btree_iter_err(k) || k.k->type != KEY_TYPE_stripe) {
+	if (bkey_err(k) || k.k->type != KEY_TYPE_stripe) {
 		__bcache_io_error(c,
 			"error doing reconstruct read: stripe not found");
 		kfree(buf);
@@ -540,7 +540,7 @@ static int ec_stripe_mem_alloc(struct bch_fs *c,
 	if (!__ec_stripe_mem_alloc(c, idx, GFP_NOWAIT))
 		return 0;
 
-	bch2_btree_iter_unlock(iter);
+	bch2_btree_trans_unlock(iter->trans);
 
 	if (!__ec_stripe_mem_alloc(c, idx, GFP_KERNEL))
 		return -EINTR;
@@ -749,7 +749,7 @@ static int ec_stripe_update_ptrs(struct bch_fs *c,
 				   BTREE_ITER_INTENT);
 
 	while ((k = bch2_btree_iter_peek(iter)).k &&
-	       !(ret = btree_iter_err(k)) &&
+	       !(ret = bkey_err(k)) &&
 	       bkey_cmp(bkey_start_pos(k.k), pos->p) < 0) {
 		idx = extent_matches_stripe(c, &s->key.v, k);
 		if (idx < 0) {
@@ -1169,7 +1169,7 @@ static int __bch2_stripe_write_key(struct btree_trans *trans,
 	bch2_btree_iter_set_pos(iter, POS(0, idx));
 
 	k = bch2_btree_iter_peek_slot(iter);
-	ret = btree_iter_err(k);
+	ret = bkey_err(k);
 	if (ret)
 		return ret;
 
