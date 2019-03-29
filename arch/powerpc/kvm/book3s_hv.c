@@ -2912,21 +2912,22 @@ static noinline void kvmppc_run_core(struct kvmppc_vcore *vc)
 	for (sub = 0; sub < core_info.n_subcores; ++sub)
 		spin_unlock(&core_info.vc[sub]->lock);
 
+	guest_enter_irqoff();
+
+	srcu_idx = srcu_read_lock(&vc->kvm->srcu);
+
 	/*
 	 * Interrupts will be enabled once we get into the guest,
 	 * so tell lockdep that we're about to enable interrupts.
 	 */
 	trace_hardirqs_on();
 
-	guest_enter_irqoff();
-
-	srcu_idx = srcu_read_lock(&vc->kvm->srcu);
-
 	trap = __kvmppc_vcore_entry();
+
+	trace_hardirqs_off();
 
 	srcu_read_unlock(&vc->kvm->srcu, srcu_idx);
 
-	trace_hardirqs_off();
 	set_irq_happened(trap);
 
 	spin_lock(&vc->lock);
