@@ -69,6 +69,7 @@ struct bch_fs_usage {
 	u64			gc_start[0];
 
 	u64			hidden;
+	u64			btree;
 	u64			data;
 	u64			cached;
 	u64			reserved;
