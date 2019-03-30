@@ -6554,7 +6554,7 @@ static void rtl_hw_start_8168(struct net_device *dev)
 
 	RTL_W16(CPlusCmd, tp->cp_cmd);
 
-	RTL_W16(IntrMitigate, 0x5151);
+	RTL_W16(IntrMitigate, 0x5100);
 
 	/* Work around for RxFIFO overflow. */
 	if (tp->mac_version == RTL_GIGA_MAC_VER_11) {
