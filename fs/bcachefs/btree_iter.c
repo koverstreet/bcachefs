@@ -465,6 +465,8 @@ void bch2_trans_unlock(struct btree_trans *trans)
 
 	trans_for_each_iter(trans, iter)
 		__bch2_btree_iter_unlock(iter);
+
+	debug_check_lock_not_held(&bch2_btree_node_lock_key);
 }
 
 /* Btree iterator: */

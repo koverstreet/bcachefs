@@ -91,6 +91,8 @@ static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp)
 	return 0;
 }
 
+struct lock_class_key bch2_btree_node_lock_key;
+
 static struct btree *__btree_node_mem_alloc(struct bch_fs *c)
 {
 	struct btree *b = kzalloc(sizeof(struct btree), GFP_KERNEL);
@@ -98,7 +100,8 @@ static struct btree *__btree_node_mem_alloc(struct bch_fs *c)
 		return NULL;
 
 	bkey_btree_ptr_init(&b->key);
-	six_lock_init(&b->c.lock);
+	__six_lock_init(&b->c.lock, "&b->lock", &bch2_btree_node_lock_key);
+
 	INIT_LIST_HEAD(&b->list);
 	INIT_LIST_HEAD(&b->write_blocked);
 	b->byte_order = ilog2(btree_bytes(c));
