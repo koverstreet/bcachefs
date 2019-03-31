@@ -1888,6 +1888,8 @@ int bch2_trans_unlock(struct btree_trans *trans)
 		iters ^= 1ULL << idx;
 	}
 
+	debug_check_lock_not_held(&bch2_btree_node_lock_key);
+
 	return ret;
 }
 

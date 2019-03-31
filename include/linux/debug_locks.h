@@ -7,6 +7,7 @@
 #include <linux/bug.h>
 
 struct task_struct;
+struct lock_class_key;
 
 extern int debug_locks __read_mostly;
 extern int debug_locks_silent __read_mostly;
@@ -53,6 +54,7 @@ extern void debug_show_all_locks(void);
 extern void debug_show_held_locks(struct task_struct *task);
 extern void debug_check_no_locks_freed(const void *from, unsigned long len);
 extern void debug_check_no_locks_held(void);
+void debug_check_lock_not_held(struct lock_class_key *);
 #else
 static inline void debug_show_all_locks(void)
 {

@@ -4379,6 +4379,24 @@ void debug_check_no_locks_held(void)
 }
 EXPORT_SYMBOL_GPL(debug_check_no_locks_held);
 
+void debug_check_lock_not_held(struct lock_class_key *key)
+{
+	struct task_struct *p = current;
+	struct lock_class *class;
+	unsigned i, j;
+
+	for (i = 0; i < p->lockdep_depth; i++) {
+		class = hlock_class(p->held_locks + i);
+
+		for (j = 0; j < MAX_LOCKDEP_SUBCLASSES; j++)
+			if (&key->subkeys[j] == class->key) {
+				lockdep_print_held_locks(p);
+				panic("holding lock we shouldn't be\n");
+			}
+	}
+}
+EXPORT_SYMBOL_GPL(debug_check_lock_not_held);
+
 #ifdef __KERNEL__
 void debug_show_all_locks(void)
 {

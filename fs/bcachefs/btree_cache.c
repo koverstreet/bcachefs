@@ -90,6 +90,8 @@ err:
 	list_move(&b->list, &bc->freed);
 }
 
+struct lock_class_key bch2_btree_node_lock_key;
+
 static struct btree *btree_node_mem_alloc(struct bch_fs *c, gfp_t gfp)
 {
 	struct btree *b = kzalloc(sizeof(struct btree), gfp);
@@ -97,7 +99,8 @@ static struct btree *btree_node_mem_alloc(struct bch_fs *c, gfp_t gfp)
 		return NULL;
 
 	bkey_btree_ptr_init(&b->key);
-	six_lock_init(&b->lock);
+	__six_lock_init(&b->lock, "&b->lock", &bch2_btree_node_lock_key);
+
 	INIT_LIST_HEAD(&b->list);
 	INIT_LIST_HEAD(&b->write_blocked);
 
