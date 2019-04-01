@@ -180,7 +180,7 @@ rw_attribute(journal_reclaim_delay_ms);
 
 rw_attribute(discard);
 rw_attribute(cache_replacement_policy);
-rw_attribute(label);
+rw_attribute(group);
 
 rw_attribute(copy_gc_enabled);
 sysfs_pd_controller_attribute(copy_gc);
@@ -924,7 +924,7 @@ SHOW(bch2_dev)
 	sysfs_print(durability,		ca->mi.durability);
 	sysfs_print(discard,		ca->mi.discard);
 
-	if (attr == &sysfs_label) {
+	if (attr == &sysfs_group) {
 		if (ca->mi.group) {
 			mutex_lock(&c->sb_lock);
 			bch2_disk_path_to_text(&out, &c->disk_sb,
@@ -1031,7 +1031,7 @@ STORE(bch2_dev)
 		mutex_unlock(&c->sb_lock);
 	}
 
-	if (attr == &sysfs_label) {
+	if (attr == &sysfs_group) {
 		char *tmp;
 		int ret;
 
@@ -1064,7 +1064,7 @@ struct attribute *bch2_dev_files[] = {
 	&sysfs_discard,
 	&sysfs_cache_replacement_policy,
 	&sysfs_state_rw,
-	&sysfs_label,
+	&sysfs_group,
 
 	&sysfs_has_data,
 	&sysfs_iodone,

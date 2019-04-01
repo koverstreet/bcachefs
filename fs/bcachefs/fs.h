@@ -71,7 +71,9 @@ static inline unsigned nlink_bias(umode_t mode)
 
 static inline u64 bch2_current_time(struct bch_fs *c)
 {
-	return timespec_to_bch2_time(c, current_kernel_time64());
+	struct timespec64 ts;
+	ktime_get_coarse_real_ts64(&ts);
+	return timespec_to_bch2_time(c, ts);
 }
 
 static inline bool inode_attr_changing(struct bch_inode_info *dir,
