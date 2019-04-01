@@ -2164,7 +2164,7 @@ static int blk_mq_init_hctx(struct request_queue *q,
 	return 0;
 
  free_fq:
-	kfree(hctx->fq);
+	blk_free_flush_queue(hctx->fq);
  sched_exit_hctx:
 	blk_mq_sched_exit_hctx(q, hctx, hctx_idx);
  exit_hctx:
