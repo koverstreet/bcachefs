@@ -109,10 +109,43 @@ static const struct dmi_system_id acpi_quirks_dmi_table[] __initconst = {
 	},
 	{}
 };
+
+static const char * const acpi_quirk_lenovo_bios_ids[] = {
+	"N2H", /* first 3 bytes of Lenovo BIOS version */
+	NULL
+};
+
+bool acpi_quirk_matches_bios_ids(const char * const ids[])
+{
+	const char *bios_vendor = dmi_get_system_info(DMI_BIOS_VENDOR);
+	const char *bios_ver = dmi_get_system_info(DMI_BIOS_VERSION);
+	int i;
+
+	if ((!bios_vendor) && (!bios_ver) && strncmp(bios_vendor, "LENOVO", 6))
+		return false;
+
+	for (i = 0; ids[i]; i++)
+		if (!strncmp(bios_ver, ids[i], 3)) {
+			acpi_gbl_parse_table_as_term_list = 1;
+			return true;
+		}
+
+	return false;
+}
+
 #else
 static const struct dmi_system_id acpi_quirks_dmi_table[] __initconst = {
 	{}
 };
+
+static const char * const acpi_quirk_lenovo_bios_ids[] = {
+	NULL
+};
+
+bool acpi_quirk_matches_bios_ids(const char * const ids[])
+{
+	return false;
+}
 #endif
 
 /* --------------------------------------------------------------------------
@@ -1036,6 +1069,7 @@ void __init acpi_early_init(void)
 
 	/* Check machine-specific quirks */
 	dmi_check_system(acpi_quirks_dmi_table);
+	acpi_quirk_matches_bios_ids(acpi_quirk_lenovo_bios_ids);
 
 	status = acpi_reallocate_root_table();
 	if (ACPI_FAILURE(status)) {
