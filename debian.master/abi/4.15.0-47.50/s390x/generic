@@ -5137,6 +5137,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	tcp_connect
 EXPORT_SYMBOL vmlinux 0x00000000	tcp_create_openreq_child
 EXPORT_SYMBOL vmlinux 0x00000000	tcp_disconnect
 EXPORT_SYMBOL vmlinux 0x00000000	tcp_enter_cwr
+EXPORT_SYMBOL vmlinux 0x00000000	tcp_enter_quickack_mode
 EXPORT_SYMBOL vmlinux 0x00000000	tcp_fastopen_defer_connect
 EXPORT_SYMBOL vmlinux 0x00000000	tcp_filter
 EXPORT_SYMBOL vmlinux 0x00000000	tcp_get_cookie_sock
@@ -8024,6 +8025,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	__srcu_read_unlock
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__suspend_report_result
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__symbol_get
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__sync_filesystem
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	__tcp_send_ack
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__trace_bprintk
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__trace_bputs
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__trace_note_message
@@ -10461,7 +10463,6 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	tcp_register_ulp
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tcp_reno_cong_avoid
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tcp_reno_ssthresh
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tcp_reno_undo_cwnd
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	tcp_send_ack
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tcp_sendmsg_locked
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tcp_sendpage_locked
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tcp_set_keepalive
