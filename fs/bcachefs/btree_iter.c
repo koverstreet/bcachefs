@@ -982,6 +982,7 @@ retry_all:
 	}
 
 	if (unlikely(ret == -EIO)) {
+		trans->error = true;
 		iter->flags |= BTREE_ITER_ERROR;
 		iter->l[iter->level].b = BTREE_ITER_NOT_END;
 		goto out;
@@ -1941,7 +1942,7 @@ void bch2_trans_init(struct btree_trans *trans, struct bch_fs *c)
 
 int bch2_trans_exit(struct btree_trans *trans)
 {
-	int ret = bch2_trans_unlock(trans);
+	bch2_trans_unlock(trans);
 
 	kfree(trans->mem);
 	if (trans->used_mempool)
@@ -1950,5 +1951,6 @@ int bch2_trans_exit(struct btree_trans *trans)
 		kfree(trans->iters);
 	trans->mem	= (void *) 0x1;
 	trans->iters	= (void *) 0x1;
-	return ret;
+
+	return trans->error ? -EIO : 0;
 }
