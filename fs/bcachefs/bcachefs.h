@@ -183,6 +183,7 @@
 #include <linux/closure.h>
 #include <linux/kobject.h>
 #include <linux/list.h>
+#include <linux/math64.h>
 #include <linux/mutex.h>
 #include <linux/percpu-refcount.h>
 #include <linux/percpu-rwsem.h>
@@ -483,6 +484,7 @@ enum {
 	BCH_FS_RW,
 
 	/* shutdown: */
+	BCH_FS_STOPPING,
 	BCH_FS_EMERGENCY_RO,
 	BCH_FS_WRITE_DISABLE_COMPLETE,
 
@@ -506,6 +508,15 @@ struct btree_debug {
 
 struct bch_fs_pcpu {
 	u64			sectors_available;
+};
+
+struct journal_seq_blacklist_table {
+	size_t			nr;
+	struct journal_seq_blacklist_table_entry {
+		u64		start;
+		u64		end;
+		bool		dirty;
+	}			entries[0];
 };
 
 struct bch_fs {
@@ -642,6 +653,11 @@ struct bch_fs {
 	struct bucket_clock	bucket_clock[2];
 
 	struct io_clock		io_clock[2];
+
+	/* JOURNAL SEQ BLACKLIST */
+	struct journal_seq_blacklist_table *
+				journal_seq_blacklist_table;
+	struct work_struct	journal_seq_blacklist_gc_work;
 
 	/* ALLOCATOR */
 	spinlock_t		freelist_lock;
