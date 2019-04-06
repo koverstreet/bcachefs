@@ -648,7 +648,7 @@ static void read_back_super(struct bch_fs *c, struct bch_dev *ca)
 	bio_reset(bio);
 	bio_set_dev(bio, ca->disk_sb.bdev);
 	bio->bi_iter.bi_sector	= le64_to_cpu(sb->layout.sb_offset[0]);
-	bio->bi_iter.bi_size	= 4096;
+	bio->bi_iter.bi_size	= PAGE_SIZE;
 	bio->bi_end_io		= write_super_endio;
 	bio->bi_private		= ca;
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_SYNC|REQ_META);
