@@ -303,4 +303,6 @@ static inline bool kvm_mwait_in_guest(void)
 	return true;
 }
 
+void kvm_load_guest_xcr0(struct kvm_vcpu *vcpu);
+void kvm_put_guest_xcr0(struct kvm_vcpu *vcpu);
 #endif
