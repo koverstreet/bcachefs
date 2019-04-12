@@ -202,6 +202,7 @@ struct journal {
 	}			pin;
 
 	u64			replay_journal_seq;
+	u64			replay_journal_seq_end;
 
 	struct write_point	wp;
 	spinlock_t		err_lock;
