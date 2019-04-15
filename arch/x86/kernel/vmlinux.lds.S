@@ -356,7 +356,7 @@ SECTIONS
 		__bss_start = .;
 		*(.bss..page_aligned)
 		. = ALIGN(PAGE_SIZE);
-		*(.bss)
+		*(BSS_MAIN)
 		. = ALIGN(PAGE_SIZE);
 		__bss_stop = .;
 	}
