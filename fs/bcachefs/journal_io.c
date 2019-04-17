@@ -948,7 +948,6 @@ out:
 	return;
 err:
 	bch2_fatal_error(c);
-	bch2_journal_halt(j);
 	spin_lock(&j->lock);
 	goto out;
 }
@@ -1060,7 +1059,6 @@ void bch2_journal_write(struct closure *cl)
 	spin_unlock(&j->lock);
 
 	if (ret) {
-		bch2_journal_halt(j);
 		bch_err(c, "Unable to allocate journal write");
 		bch2_fatal_error(c);
 		continue_at(cl, journal_write_done, system_highpri_wq);
