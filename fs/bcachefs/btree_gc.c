@@ -286,7 +286,7 @@ static int mark_journal_key(struct bch_fs *c, enum btree_id id,
 	bch2_trans_init(&trans, c);
 
 	for_each_btree_key(&trans, iter, id, bkey_start_pos(&insert->k),
-			   BTREE_ITER_SLOTS, k) {
+			   BTREE_ITER_SLOTS, k, ret) {
 		percpu_down_read_preempt_disable(&c->mark_lock);
 		ret = bch2_mark_overwrite(&trans, iter, k, insert, NULL,
 					 BCH_BUCKET_MARK_GC|
@@ -297,7 +297,7 @@ static int mark_journal_key(struct bch_fs *c, enum btree_id id,
 			break;
 	}
 
-	return bch2_trans_exit(&trans);
+	return bch2_trans_exit(&trans) ?: ret;
 }
 
 static int bch2_gc_btrees(struct bch_fs *c, struct journal_keys *journal_keys,

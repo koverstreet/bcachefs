@@ -20,8 +20,10 @@ static s64 bch2_count_inode_sectors(struct btree_trans *trans, u64 inum)
 	struct btree_iter *iter;
 	struct bkey_s_c k;
 	u64 sectors = 0;
+	int ret;
 
-	for_each_btree_key(trans, iter, BTREE_ID_EXTENTS, POS(inum, 0), 0, k) {
+	for_each_btree_key(trans, iter, BTREE_ID_EXTENTS,
+			   POS(inum, 0), 0, k, ret) {
 		if (k.k->p.inode != inum)
 			break;
 
@@ -29,7 +31,9 @@ static s64 bch2_count_inode_sectors(struct btree_trans *trans, u64 inum)
 			sectors += k.k->size;
 	}
 
-	return bch2_trans_iter_free(trans, iter) ?: sectors;
+	bch2_trans_iter_free(trans, iter);
+
+	return ret ?: sectors;
 }
 
 static int remove_dirent(struct btree_trans *trans,
@@ -941,7 +945,7 @@ next:
 			goto up;
 
 		for_each_btree_key(&trans, iter, BTREE_ID_DIRENTS,
-				   POS(e->inum, e->offset + 1), 0, k) {
+				   POS(e->inum, e->offset + 1), 0, k, ret) {
 			if (k.k->p.inode != e->inum)
 				break;
 
@@ -984,7 +988,7 @@ next:
 			}
 			goto next;
 		}
-		ret = bch2_trans_iter_free(&trans, iter);
+		ret = bch2_trans_iter_free(&trans, iter) ?: ret;
 		if (ret) {
 			bch_err(c, "btree error %i in fsck", ret);
 			goto err;
@@ -1086,7 +1090,7 @@ static int bch2_gc_walk_dirents(struct bch_fs *c, nlink_table *links,
 
 	inc_link(c, links, range_start, range_end, BCACHEFS_ROOT_INO, false);
 
-	for_each_btree_key(&trans, iter, BTREE_ID_DIRENTS, POS_MIN, 0, k) {
+	for_each_btree_key(&trans, iter, BTREE_ID_DIRENTS, POS_MIN, 0, k, ret) {
 		switch (k.k->type) {
 		case KEY_TYPE_dirent:
 			d = bkey_s_c_to_dirent(k);
@@ -1104,7 +1108,7 @@ static int bch2_gc_walk_dirents(struct bch_fs *c, nlink_table *links,
 
 		bch2_trans_cond_resched(&trans);
 	}
-	ret = bch2_trans_exit(&trans);
+	ret = bch2_trans_exit(&trans) ?: ret;
 	if (ret)
 		bch_err(c, "error in fs gc: btree error %i while walking dirents", ret);
 
@@ -1431,15 +1435,12 @@ static int check_inodes_fast(struct bch_fs *c)
 	struct btree_iter *iter;
 	struct bkey_s_c k;
 	struct bkey_s_c_inode inode;
-	int ret = 0, ret2;
+	int ret;
 
 	bch2_trans_init(&trans, c);
 	bch2_trans_preload_iters(&trans);
 
-	iter = bch2_trans_get_iter(&trans, BTREE_ID_INODES,
-				   POS_MIN, 0);
-
-	for_each_btree_key_continue(iter, 0, k) {
+	for_each_btree_key(&trans, iter, BTREE_ID_INODES, POS_MIN, 0, k, ret) {
 		if (k.k->type != KEY_TYPE_inode)
 			continue;
 
@@ -1455,10 +1456,9 @@ static int check_inodes_fast(struct bch_fs *c)
 				break;
 		}
 	}
+	BUG_ON(ret == -EINTR);
 
-	ret2 = bch2_trans_exit(&trans);
-
-	return ret ?: ret2;
+	return bch2_trans_exit(&trans) ?: ret;
 }
 
 /*
