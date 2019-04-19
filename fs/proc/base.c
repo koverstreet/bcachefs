@@ -1823,6 +1823,11 @@ int pid_getattr(const struct path *path, struct kstat *stat,
 		}
 		task_dump_owner(task, inode->i_mode, &stat->uid, &stat->gid);
 	}
+	/* Prevent changes to overridden credentials. */
+	if (current_cred() != current_real_cred()) {
+		rcu_read_unlock();
+		return -EBUSY;
+	}
 	rcu_read_unlock();
 	return 0;
 }
