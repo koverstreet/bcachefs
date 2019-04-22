@@ -926,7 +926,8 @@ err:
 		break;
 	}
 
-	BUG_ON(!ret);
+	if (ret >= 0)
+		ret = -EIO;
 	goto out;
 }
 
