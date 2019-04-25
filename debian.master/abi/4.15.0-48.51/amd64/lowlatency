@@ -19490,6 +19490,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	dma_request_slave_channel
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	dma_run_dependencies
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	dma_wait_for_async_tx
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	dmaengine_unmap_put
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	dmar_platform_optin
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	dmi_kobj
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	dmi_match
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	dmi_memdev_name
