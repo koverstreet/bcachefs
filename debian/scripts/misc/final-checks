@@ -46,7 +46,15 @@ abi_check()
 
 for arch in $archs
 do
-	for flavour in $(ls -1 "$debian/config/$arch/config.flavour."*)
+	if [ ! -f "$debian/rules.d/$arch.mk" ]; then
+		continue
+	fi
+	flavours=$(
+		awk '/^\s*flavours\s*=/{
+			sub(/^\s*flavours\s*=\s*/, "");
+			print
+		}' "$debian/rules.d/$arch.mk")
+	for flavour in $flavours
 	do
 		flavour=$(echo "$flavour" | sed -e 's@.*/config.flavour.@@')
 		abi_check "$debian/abi/$abi" "$arch" "$flavour"
