@@ -1,6 +1,6 @@
-linux (4.15.0-49.52) bionic; urgency=medium
+linux (4.15.0-49.53) bionic; urgency=medium
 
-  * linux: 4.15.0-49.52 -proposed tracker (LP: #1826358)
+  * linux: 4.15.0-49.53 -proposed tracker (LP: #1826358)
 
   * Backport support for software count cache flush Spectre v2 mitigation. (CVE)
     (required for POWER9 DD2.3) (LP: #1822870)
@@ -40,6 +40,7 @@ linux (4.15.0-49.52) bionic; urgency=medium
     - [Packaging] remove arm64 snapdragon from getabis
     - [Config] config changes for snapdragon split
     - packaging: arm64: disable building the snapdragon flavour
+    - [Packaging] arm64: Drop snapdragon from kernel-versions
 
   * CVE-2017-5753
     - KVM: arm/arm64: vgic: fix possible spectre-v1 in vgic_get_irq()
