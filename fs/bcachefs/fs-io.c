@@ -1514,6 +1514,7 @@ static int __bch2_buffered_write(struct bch_inode_info *inode,
 	for (i = 0; i < nr_pages; i++) {
 		pages[i] = grab_cache_page_write_begin(mapping, index + i, 0);
 		if (!pages[i]) {
+			pr_info("-ENOMEM");
 			nr_pages = i;
 			ret = -ENOMEM;
 			goto out;
@@ -1522,8 +1523,10 @@ static int __bch2_buffered_write(struct bch_inode_info *inode,
 
 	if (offset && !PageUptodate(pages[0])) {
 		ret = bch2_read_single_page(pages[0], mapping);
-		if (ret)
+		if (ret) {
+			pr_info("error reading page %i", ret);
 			goto out;
+		}
 	}
 
 	if ((pos + len) & (PAGE_SIZE - 1) &&
@@ -1532,8 +1535,10 @@ static int __bch2_buffered_write(struct bch_inode_info *inode,
 			zero_user(pages[nr_pages - 1], 0, PAGE_SIZE);
 		} else {
 			ret = bch2_read_single_page(pages[nr_pages - 1], mapping);
-			if (ret)
+			if (ret) {
+				pr_info("error reading page %i", ret);
 				goto out;
+			}
 		}
 	}
 
@@ -1542,14 +1547,18 @@ static int __bch2_buffered_write(struct bch_inode_info *inode,
 
 		if (ret && !PageUptodate(pages[i])) {
 			ret = bch2_read_single_page(pages[i], mapping);
-			if (ret)
+			if (ret) {
+				pr_info("error reading page %i", ret);
 				goto out;
+			}
 
 			ret = bch2_get_page_reservation(c, inode, pages[i], true);
 		}
 
-		if (ret)
+		if (ret) {
+			pr_info("error getting page reservation %i", ret);
 			goto out;
+		}
 	}
 
 	if (mapping_writably_mapped(mapping))
@@ -1643,17 +1652,22 @@ again:
 				      PAGE_SIZE - offset);
 
 			if (unlikely(iov_iter_fault_in_readable(iter, bytes))) {
+				pr_info("-EFAULT");
 				ret = -EFAULT;
 				break;
 			}
 		}
 
 		if (unlikely(fatal_signal_pending(current))) {
+			pr_info("-EINTR");
 			ret = -EINTR;
 			break;
 		}
 
 		ret = __bch2_buffered_write(inode, mapping, iter, pos, bytes);
+		if (unlikely(ret <= 0))
+			pr_info("__bch2_buffered_write() err %i", ret);
+
 		if (unlikely(ret < 0))
 			break;
 
