@@ -4841,7 +4841,7 @@ static int convert_ctx_accesses(struct bpf_verifier_env *env)
 								(1 << size * 8) - 1);
 			else
 				insn_buf[cnt++] = BPF_ALU64_IMM(BPF_AND, insn->dst_reg,
-								(1 << size * 8) - 1);
+								(1ULL << size * 8) - 1);
 		}
 
 		new_prog = bpf_patch_insn_data(env, i + delta, insn_buf, cnt);
