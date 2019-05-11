@@ -433,21 +433,32 @@ static void init_append_extent(struct bch_write_op *op,
 			       struct bversion version,
 			       struct bch_extent_crc_unpacked crc)
 {
+	struct bch_fs *c = op->c;
 	struct bkey_i_extent *e = bkey_extent_init(op->insert_keys.top);
-	struct bch_extent_ptr *ptr;
+	struct extent_ptr_decoded p = { .crc = crc };
+	struct open_bucket *ob;
+	unsigned i;
 
 	op->pos.offset += crc.uncompressed_size;
-	e->k.p = op->pos;
-	e->k.size = crc.uncompressed_size;
-	e->k.version = version;
+	e->k.p		= op->pos;
+	e->k.size	= crc.uncompressed_size;
+	e->k.version	= version;
 
-	bch2_extent_crc_append(e, crc);
-	bch2_alloc_sectors_append_ptrs(op->c, wp, &e->k_i,
-				       crc.compressed_size);
+	BUG_ON(crc.compressed_size > wp->sectors_free);
+	wp->sectors_free -= crc.compressed_size;
 
-	if (op->flags & BCH_WRITE_CACHED)
-		extent_for_each_ptr(extent_i_to_s(e), ptr)
-			ptr->cached = true;
+	open_bucket_for_each(c, &wp->ptrs, ob, i) {
+		struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
+
+		p.ptr = ob->ptr;
+		p.ptr.cached = !ca->mi.durability ||
+			(op->flags & BCH_WRITE_CACHED) != 0;
+		p.ptr.offset += ca->mi.bucket_size - ob->sectors_free;
+		bch2_extent_ptr_decoded_append(e, &p);
+
+		BUG_ON(crc.compressed_size > ob->sectors_free);
+		ob->sectors_free -= crc.compressed_size;
+	}
 
 	bch2_keylist_push(&op->insert_keys);
 }
