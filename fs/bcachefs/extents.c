@@ -1430,9 +1430,14 @@ static inline void __extent_entry_insert(struct bkey_i_extent *e,
 void bch2_extent_ptr_decoded_append(struct bkey_i_extent *e,
 				    struct extent_ptr_decoded *p)
 {
-	struct bch_extent_crc_unpacked crc;
+	struct bch_extent_crc_unpacked crc = bch2_extent_crc_unpack(&e->k, NULL);
 	union bch_extent_entry *pos;
 	unsigned i;
+
+	if (!bch2_crc_unpacked_cmp(crc, p->crc)) {
+		pos = e->v.start;
+		goto found;
+	}
 
 	extent_for_each_crc(extent_i_to_s(e), crc, pos)
 		if (!bch2_crc_unpacked_cmp(crc, p->crc)) {
