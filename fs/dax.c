@@ -1435,8 +1435,7 @@ static int dax_iomap_pmd_fault(struct vm_fault *vmf, pfn_t *pfnp,
 		}
 
 		trace_dax_pmd_insert_mapping(inode, vmf, PMD_SIZE, pfn, entry);
-		result = vmf_insert_pfn_pmd(vma, vmf->address, vmf->pmd, pfn,
-					    write);
+		result = vmf_insert_pfn_pmd(vmf, pfn, write);
 		break;
 	case IOMAP_UNWRITTEN:
 	case IOMAP_HOLE:
@@ -1550,8 +1549,7 @@ static int dax_insert_pfn_mkwrite(struct vm_fault *vmf,
 		break;
 #ifdef CONFIG_FS_DAX_PMD
 	case PE_SIZE_PMD:
-		vmf_ret = vmf_insert_pfn_pmd(vmf->vma, vmf->address, vmf->pmd,
-			pfn, true);
+		vmf_ret = vmf_insert_pfn_pmd(vmf, pfn, FAULT_FLAG_WRITE);
 		break;
 #endif
 	default:

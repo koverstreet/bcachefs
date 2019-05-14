@@ -776,11 +776,13 @@ out_unlock:
 		pte_free(mm, pgtable);
 }
 
-int vmf_insert_pfn_pmd(struct vm_area_struct *vma, unsigned long addr,
-			pmd_t *pmd, pfn_t pfn, bool write)
+int vmf_insert_pfn_pmd(struct vm_fault *vmf, pfn_t pfn, bool write)
 {
+	unsigned long addr = vmf->address & PMD_MASK;
+	struct vm_area_struct *vma = vmf->vma;
 	pgprot_t pgprot = vma->vm_page_prot;
 	pgtable_t pgtable = NULL;
+
 	/*
 	 * If we had pmd_special, we could avoid all these restrictions,
 	 * but we need to be consistent with PTEs and architectures that
@@ -803,7 +805,7 @@ int vmf_insert_pfn_pmd(struct vm_area_struct *vma, unsigned long addr,
 
 	track_pfn_insert(vma, &pgprot, pfn);
 
-	insert_pfn_pmd(vma, addr, pmd, pfn, pgprot, write, pgtable);
+	insert_pfn_pmd(vma, addr, vmf->pmd, pfn, pgprot, write, pgtable);
 	return VM_FAULT_NOPAGE;
 }
 EXPORT_SYMBOL_GPL(vmf_insert_pfn_pmd);
@@ -852,10 +854,12 @@ out_unlock:
 	spin_unlock(ptl);
 }
 
-int vmf_insert_pfn_pud(struct vm_area_struct *vma, unsigned long addr,
-			pud_t *pud, pfn_t pfn, bool write)
+int vmf_insert_pfn_pud(struct vm_fault *vmf, pfn_t pfn, bool write)
 {
+	unsigned long addr = vmf->address & PUD_MASK;
+	struct vm_area_struct *vma = vmf->vma;
 	pgprot_t pgprot = vma->vm_page_prot;
+
 	/*
 	 * If we had pud_special, we could avoid all these restrictions,
 	 * but we need to be consistent with PTEs and architectures that
@@ -872,7 +876,7 @@ int vmf_insert_pfn_pud(struct vm_area_struct *vma, unsigned long addr,
 
 	track_pfn_insert(vma, &pgprot, pfn);
 
-	insert_pfn_pud(vma, addr, pud, pfn, pgprot, write);
+	insert_pfn_pud(vma, addr, vmf->pud, pfn, pgprot, write);
 	return VM_FAULT_NOPAGE;
 }
 EXPORT_SYMBOL_GPL(vmf_insert_pfn_pud);
