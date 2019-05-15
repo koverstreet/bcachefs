@@ -62,8 +62,7 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 	struct keylist *keys = &op->insert_keys;
 	int ret = 0;
 
-	bch2_trans_init(&trans, c);
-	bch2_trans_preload_iters(&trans);
+	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
 
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
 				   bkey_start_pos(&bch2_keylist_front(keys)->k),
@@ -501,7 +500,7 @@ int bch2_move_data(struct bch_fs *c,
 	INIT_LIST_HEAD(&ctxt.reads);
 	init_waitqueue_head(&ctxt.wait);
 
-	bch2_trans_init(&trans, c);
+	bch2_trans_init(&trans, c, 0, 0);
 
 	stats->data_type = BCH_DATA_USER;
 	stats->btree_id	= BTREE_ID_EXTENTS;
@@ -635,7 +634,7 @@ static int bch2_move_btree(struct bch_fs *c,
 	enum data_cmd cmd;
 	int ret = 0;
 
-	bch2_trans_init(&trans, c);
+	bch2_trans_init(&trans, c, 0, 0);
 
 	stats->data_type = BCH_DATA_BTREE;
 
