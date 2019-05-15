@@ -220,7 +220,7 @@ struct posix_acl *bch2_get_acl(struct inode *vinode, int type)
 	struct bkey_s_c_xattr xattr;
 	struct posix_acl *acl = NULL;
 
-	bch2_trans_init(&trans, c);
+	bch2_trans_init(&trans, c, 0, 0);
 retry:
 	bch2_trans_begin(&trans);
 
@@ -301,7 +301,7 @@ int bch2_set_acl(struct inode *vinode, struct posix_acl *acl, int type)
 	int ret;
 
 	mutex_lock(&inode->ei_update_lock);
-	bch2_trans_init(&trans, c);
+	bch2_trans_init(&trans, c, 0, 0);
 
 	if (type == ACL_TYPE_ACCESS && acl) {
 		ret = posix_acl_update_mode(&inode->v, &mode, &acl);

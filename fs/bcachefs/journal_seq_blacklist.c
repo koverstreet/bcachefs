@@ -257,7 +257,7 @@ void bch2_blacklist_entries_gc(struct work_struct *work)
 	unsigned i, nr, new_nr;
 	int ret;
 
-	bch2_trans_init(&trans, c);
+	bch2_trans_init(&trans, c, 0, 0);
 
 	for (i = 0; i < BTREE_ID_NR; i++) {
 		struct btree_iter *iter;

@@ -435,8 +435,7 @@ static int bchfs_write_index_update(struct bch_write_op *wop)
 
 	BUG_ON(k->k.p.inode != inode->v.i_ino);
 
-	bch2_trans_init(&trans, c);
-	bch2_trans_preload_iters(&trans);
+	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 1024);
 
 	iter = bch2_trans_get_iter(&trans,
 				BTREE_ID_EXTENTS,
@@ -1054,7 +1053,7 @@ int bch2_readpages(struct file *file, struct address_space *mapping,
 	ret = readpages_iter_init(&readpages_iter, mapping, pages, nr_pages);
 	BUG_ON(ret);
 
-	bch2_trans_init(&trans, c);
+	bch2_trans_init(&trans, c, 0, 0);
 
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS, POS_MIN,
 				   BTREE_ITER_SLOTS);
@@ -1103,7 +1102,7 @@ static void __bchfs_readpage(struct bch_fs *c, struct bch_read_bio *rbio,
 	bio_set_op_attrs(&rbio->bio, REQ_OP_READ, REQ_SYNC);
 	bio_add_page_contig(&rbio->bio, page);
 
-	bch2_trans_init(&trans, c);
+	bch2_trans_init(&trans, c, 0, 0);
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS, POS_MIN,
 				   BTREE_ITER_SLOTS);
 
@@ -2101,8 +2100,7 @@ static int __bch2_fpunch(struct bch_fs *c, struct bch_inode_info *inode,
 	struct bkey_s_c k;
 	int ret = 0;
 
-	bch2_trans_init(&trans, c);
-	bch2_trans_preload_iters(&trans);
+	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 1024);
 
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS, start,
 				   BTREE_ITER_INTENT);
@@ -2148,7 +2146,7 @@ static inline int range_has_data(struct bch_fs *c,
 	struct bkey_s_c k;
 	int ret = 0;
 
-	bch2_trans_init(&trans, c);
+	bch2_trans_init(&trans, c, 0, 0);
 
 	for_each_btree_key(&trans, iter, BTREE_ID_EXTENTS, start, 0, k, ret) {
 		if (bkey_cmp(bkey_start_pos(k.k), end) >= 0)
@@ -2404,8 +2402,7 @@ static long bch2_fcollapse(struct bch_inode_info *inode,
 	if ((offset | len) & (block_bytes(c) - 1))
 		return -EINVAL;
 
-	bch2_trans_init(&trans, c);
-	bch2_trans_preload_iters(&trans);
+	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 256);
 
 	/*
 	 * We need i_mutex to keep the page cache consistent with the extents
@@ -2520,8 +2517,7 @@ static long bch2_fallocate(struct bch_inode_info *inode, int mode,
 	unsigned replicas = io_opts(c, inode).data_replicas;
 	int ret;
 
-	bch2_trans_init(&trans, c);
-	bch2_trans_preload_iters(&trans);
+	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
 
 	inode_lock(&inode->v);
 	inode_dio_wait(&inode->v);
@@ -2732,7 +2728,7 @@ static loff_t bch2_seek_data(struct file *file, u64 offset)
 	if (offset >= isize)
 		return -ENXIO;
 
-	bch2_trans_init(&trans, c);
+	bch2_trans_init(&trans, c, 0, 0);
 
 	for_each_btree_key(&trans, iter, BTREE_ID_EXTENTS,
 			   POS(inode->v.i_ino, offset >> 9), 0, k, ret) {
@@ -2805,7 +2801,7 @@ static loff_t bch2_seek_hole(struct file *file, u64 offset)
 	if (offset >= isize)
 		return -ENXIO;
 
-	bch2_trans_init(&trans, c);
+	bch2_trans_init(&trans, c, 0, 0);
 
 	for_each_btree_key(&trans, iter, BTREE_ID_EXTENTS,
 			   POS(inode->v.i_ino, offset >> 9),
