@@ -159,7 +159,7 @@ success:
 }
 
 static inline bool btree_iter_get_locks(struct btree_iter *iter,
-					bool upgrade)
+					bool upgrade, bool trace)
 {
 	unsigned l = iter->level;
 	int fail_idx = -1;
@@ -171,16 +171,10 @@ static inline bool btree_iter_get_locks(struct btree_iter *iter,
 		if (!(upgrade
 		      ? bch2_btree_node_upgrade(iter, l)
 		      : bch2_btree_node_relock(iter, l))) {
-			if (upgrade)
-				trace_node_upgrade_fail(l, iter->l[l].lock_seq,
-						is_btree_node(iter, l)
-						? 0
-						: (unsigned long) iter->l[l].b,
-						is_btree_node(iter, l)
-						? iter->l[l].b->lock.state.seq
-						: 0);
-			else
-				trace_node_relock_fail(l, iter->l[l].lock_seq,
+			if (trace)
+				(upgrade
+				 ? trace_node_upgrade_fail
+				 : trace_node_relock_fail)(l, iter->l[l].lock_seq,
 						is_btree_node(iter, l)
 						? 0
 						: (unsigned long) iter->l[l].b,
@@ -250,7 +244,7 @@ bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 				linked->locks_want = max_t(unsigned,
 						linked->locks_want,
 						__fls(linked->nodes_locked) + 1);
-				btree_iter_get_locks(linked, true);
+				btree_iter_get_locks(linked, true, false);
 			}
 			ret = false;
 		}
@@ -267,7 +261,7 @@ bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 					max(level + 1, max_t(unsigned,
 					    linked->locks_want,
 					    iter->locks_want));
-				btree_iter_get_locks(linked, true);
+				btree_iter_get_locks(linked, true, false);
 			}
 			ret = false;
 		}
@@ -311,10 +305,10 @@ void bch2_btree_trans_verify_locks(struct btree_trans *trans)
 #endif
 
 __flatten
-static bool bch2_btree_iter_relock(struct btree_iter *iter)
+static bool bch2_btree_iter_relock(struct btree_iter *iter, bool trace)
 {
 	return iter->uptodate >= BTREE_ITER_NEED_RELOCK
-		? btree_iter_get_locks(iter, false)
+		? btree_iter_get_locks(iter, false, trace)
 		: true;
 }
 
@@ -327,7 +321,7 @@ bool __bch2_btree_iter_upgrade(struct btree_iter *iter,
 
 	iter->locks_want = new_locks_want;
 
-	if (btree_iter_get_locks(iter, true))
+	if (btree_iter_get_locks(iter, true, true))
 		return true;
 
 	/*
@@ -340,7 +334,7 @@ bool __bch2_btree_iter_upgrade(struct btree_iter *iter,
 		    linked->btree_id == iter->btree_id &&
 		    linked->locks_want < new_locks_want) {
 			linked->locks_want = new_locks_want;
-			btree_iter_get_locks(linked, true);
+			btree_iter_get_locks(linked, true, false);
 		}
 
 	return false;
@@ -415,7 +409,8 @@ bool bch2_trans_relock(struct btree_trans *trans)
 	bool ret = true;
 
 	trans_for_each_iter(trans, iter)
-		ret &= bch2_btree_iter_relock(iter);
+		if (iter->uptodate == BTREE_ITER_NEED_RELOCK)
+			ret &= bch2_btree_iter_relock(iter, true);
 
 	return ret;
 }
@@ -1060,7 +1055,7 @@ int __must_check __bch2_btree_iter_traverse(struct btree_iter *iter)
 	if (unlikely(iter->level >= BTREE_MAX_DEPTH))
 		return 0;
 
-	if (bch2_btree_iter_relock(iter))
+	if (bch2_btree_iter_relock(iter, false))
 		return 0;
 
 	/*
@@ -1671,10 +1666,12 @@ int bch2_trans_iter_free_on_commit(struct btree_trans *trans,
 	return ret;
 }
 
-static int btree_trans_realloc_iters(struct btree_trans *trans,
-				     unsigned new_size)
+int bch2_trans_realloc_iters(struct btree_trans *trans,
+				    unsigned new_size)
 {
 	void *new_iters, *new_updates;
+
+	new_size = roundup_pow_of_two(new_size);
 
 	BUG_ON(new_size > BTREE_ITER_MAX);
 
@@ -1726,7 +1723,7 @@ success:
 
 void bch2_trans_preload_iters(struct btree_trans *trans)
 {
-	btree_trans_realloc_iters(trans, BTREE_ITER_MAX);
+	bch2_trans_realloc_iters(trans, BTREE_ITER_MAX);
 }
 
 static int btree_trans_iter_alloc(struct btree_trans *trans)
@@ -1737,7 +1734,7 @@ static int btree_trans_iter_alloc(struct btree_trans *trans)
 		goto got_slot;
 
 	if (trans->nr_iters == trans->size) {
-		int ret = btree_trans_realloc_iters(trans, trans->size * 2);
+		int ret = bch2_trans_realloc_iters(trans, trans->size * 2);
 		if (ret)
 			return ret;
 	}
