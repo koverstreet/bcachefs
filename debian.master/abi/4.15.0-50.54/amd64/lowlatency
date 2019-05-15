@@ -20554,6 +20554,8 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	mddev_suspend
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	mddev_unlock
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	mdio_bus_exit
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	mdio_bus_init
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	mds_idle_clear
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	mds_user_clear
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	memalloc_socks
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	memcpy_flushcache
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	memcpy_mcsafe_unrolled
