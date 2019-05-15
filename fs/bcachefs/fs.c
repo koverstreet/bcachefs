@@ -357,6 +357,7 @@ __bch2_create(struct bch_inode_info *dir, struct dentry *dentry,
 		mutex_lock(&dir->ei_update_lock);
 
 	bch2_trans_init(&trans, c);
+	bch2_trans_realloc_iters(&trans, 8);
 retry:
 	bch2_trans_begin(&trans);
 
