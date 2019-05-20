@@ -183,6 +183,9 @@
 			reset-names = "stmmaceth";
 			mac-address = [00 00 00 00 00 00]; /* Filled in by U-Boot */
 
+			tx-fifo-depth = <4096>;
+			rx-fifo-depth = <4096>;
+
 			mdio {
 				#address-cells = <1>;
 				#size-cells = <0>;
