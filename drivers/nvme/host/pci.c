@@ -25,6 +25,7 @@
 #include <linux/mutex.h>
 #include <linux/once.h>
 #include <linux/pci.h>
+#include <linux/suspend.h>
 #include <linux/t10-pi.h>
 #include <linux/types.h>
 #include <linux/io-64-nonatomic-lo-hi.h>
@@ -98,6 +99,7 @@ struct nvme_dev {
 	u32 cmbloc;
 	struct nvme_ctrl ctrl;
 	struct completion ioq_wait;
+	u32 last_ps;
 
 	/* shadow doorbell buffer support: */
 	u32 *dbbuf_dbs;
@@ -2615,16 +2617,93 @@ static int nvme_pci_sriov_configure(struct pci_dev *pdev, int numvfs)
 }
 
 #ifdef CONFIG_PM_SLEEP
+static int nvme_get_power_state(struct nvme_ctrl *ctrl, u32 *ps)
+{
+	return nvme_get_features(ctrl, NVME_FEAT_POWER_MGMT, 0, NULL, 0, ps);
+}
+
+static int nvme_set_power_state(struct nvme_ctrl *ctrl, u32 ps)
+{
+	return nvme_set_features(ctrl, NVME_FEAT_POWER_MGMT, ps, NULL, 0, NULL);
+}
+
+static int nvme_resume(struct device *dev)
+{
+	struct nvme_dev *ndev = pci_get_drvdata(to_pci_dev(dev));
+	struct nvme_ctrl *ctrl = &ndev->ctrl;
+
+	if (pm_resume_via_firmware() || !ctrl->npss ||
+	    nvme_set_power_state(ctrl, ndev->last_ps) != 0)
+		nvme_reset_ctrl(ctrl);
+	return 0;
+}
+
 static int nvme_suspend(struct device *dev)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
 	struct nvme_dev *ndev = pci_get_drvdata(pdev);
+	struct nvme_ctrl *ctrl = &ndev->ctrl;
+	int ret = -EBUSY;
+
+	/*
+	 * The platform does not remove power for a kernel managed suspend so
+	 * use host managed nvme power settings for lowest idle power if
+	 * possible. This should have quicker resume latency than a full device
+	 * shutdown.  But if the firmware is involved after the suspend or the
+	 * device does not support any non-default power states, shut down the
+	 * device fully.
+	 */
+	if (pm_suspend_via_firmware() || !ctrl->npss) {
+		nvme_dev_disable(ndev, true);
+		return 0;
+	}
+
+	nvme_start_freeze(ctrl);
+	nvme_wait_freeze(ctrl);
+	nvme_sync_queues(ctrl);
+
+	if (ctrl->state != NVME_CTRL_LIVE)
+		goto unfreeze;
+
+	ndev->last_ps = 0;
+	ret = nvme_get_power_state(ctrl, &ndev->last_ps);
+	if (ret < 0)
+		goto unfreeze;
+
+	ret = nvme_set_power_state(ctrl, ctrl->npss);
+	if (ret < 0)
+		goto unfreeze;
+
+	if (ret) {
+		/*
+		 * Clearing npss forces a controller reset on resume. The
+		 * correct value will be resdicovered then.
+		 */
+		nvme_dev_disable(ndev, true);
+		ctrl->npss = 0;
+		ret = 0;
+		goto unfreeze;
+	}
+	/*
+	 * A saved state prevents pci pm from generically controlling the
+	 * device's power. If we're using protocol specific settings, we don't
+	 * want pci interfering.
+	 */
+	pci_save_state(pdev);
+unfreeze:
+	nvme_unfreeze(ctrl);
+	return ret;
+}
+
+static int nvme_simple_suspend(struct device *dev)
+{
+	struct nvme_dev *ndev = pci_get_drvdata(to_pci_dev(dev));
 
 	nvme_dev_disable(ndev, true);
 	return 0;
 }
 
-static int nvme_resume(struct device *dev)
+static int nvme_simple_resume(struct device *dev)
 {
 	struct pci_dev *pdev = to_pci_dev(dev);
 	struct nvme_dev *ndev = pci_get_drvdata(pdev);
@@ -2632,9 +2711,19 @@ static int nvme_resume(struct device *dev)
 	nvme_reset_ctrl(&ndev->ctrl);
 	return 0;
 }
-#endif
 
-static SIMPLE_DEV_PM_OPS(nvme_dev_pm_ops, nvme_suspend, nvme_resume);
+const struct dev_pm_ops nvme_dev_pm_ops = {
+	.suspend	= nvme_suspend,
+	.resume		= nvme_resume,
+	.freeze		= nvme_simple_suspend,
+	.thaw		= nvme_simple_resume,
+	.poweroff	= nvme_simple_suspend,
+	.restore	= nvme_simple_resume,
+};
+
+#else
+#define nvme_dev_pm_ops		NULL
+#endif
 
 static pci_ers_result_t nvme_error_detected(struct pci_dev *pdev,
 						pci_channel_state_t state)
