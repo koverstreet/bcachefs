@@ -498,11 +498,9 @@ void bch2_dev_usage_from_buckets(struct bch_fs *c)
 
 		buckets = bucket_array(ca);
 
-		preempt_disable();
 		for_each_bucket(g, buckets)
 			bch2_dev_usage_update(c, ca, c->usage_base,
 					      old, g->mark, false);
-		preempt_enable();
 	}
 }
 
