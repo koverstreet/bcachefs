@@ -485,7 +485,6 @@ out:
 int pvcalls_front_sendmsg(struct socket *sock, struct msghdr *msg,
 			  size_t len)
 {
-	struct pvcalls_bedata *bedata;
 	struct sock_mapping *map;
 	int sent, tot_sent = 0;
 	int count = 0, flags;
@@ -499,7 +498,6 @@ int pvcalls_front_sendmsg(struct socket *sock, struct msghdr *msg,
 		pvcalls_exit();
 		return -ENOTCONN;
 	}
-	bedata = dev_get_drvdata(&pvcalls_front_dev->dev);
 
 	map = (struct sock_mapping *) sock->sk->sk_send_head;
 	if (!map) {
@@ -588,7 +586,6 @@ out:
 int pvcalls_front_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 		     int flags)
 {
-	struct pvcalls_bedata *bedata;
 	int ret;
 	struct sock_mapping *map;
 
@@ -600,7 +597,6 @@ int pvcalls_front_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 		pvcalls_exit();
 		return -ENOTCONN;
 	}
-	bedata = dev_get_drvdata(&pvcalls_front_dev->dev);
 
 	map = (struct sock_mapping *) sock->sk->sk_send_head;
 	if (!map) {
