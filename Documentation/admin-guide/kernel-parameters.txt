@@ -2008,7 +2008,7 @@
 
 			Default is 'flush'.
 
-			For details see: Documentation/admin-guide/l1tf.rst
+			For details see: Documentation/admin-guide/hw-vuln/l1tf.rst
 
 	l2cr=		[PPC]
 
@@ -2274,6 +2274,8 @@
 
 			Not specifying this option is equivalent to
 			mds=full.
+
+			For details see: Documentation/admin-guide/hw-vuln/mds.rst
 
 	mem=nn[KMG]	[KNL,BOOT] Force usage of a specific amount of memory
 			Amount of memory to be used when the kernel is not able
