@@ -353,6 +353,7 @@ static void mtk_drm_unbind(struct device *dev)
 	drm_dev_unregister(private->drm);
 	mtk_drm_kms_deinit(private->drm);
 	drm_dev_unref(private->drm);
+	private->num_pipes = 0;
 	private->drm = NULL;
 }
 
