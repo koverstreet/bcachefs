@@ -191,7 +191,7 @@ static int i2c_pca_pf_probe(struct platform_device *pdev)
 		}
 	} else if (np) {
 		i2c->adap.timeout = HZ;
-		i2c->gpio = devm_gpiod_get_optional(&pdev->dev, "reset-gpios", GPIOD_OUT_LOW);
+		i2c->gpio = devm_gpiod_get_optional(&pdev->dev, "reset", GPIOD_OUT_LOW);
 		if (IS_ERR(i2c->gpio))
 			return PTR_ERR(i2c->gpio);
 		of_property_read_u32_index(np, "clock-frequency", 0,
