@@ -1733,6 +1733,8 @@ i2c-algo-pca
 i2c-ali1535
 i2c-ali1563
 i2c-ali15x3
+i2c-amd-mp2-pci
+i2c-amd-mp2-plat
 i2c-amd756
 i2c-amd756-s4882
 i2c-amd8111
