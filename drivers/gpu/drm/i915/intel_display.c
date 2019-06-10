@@ -11980,8 +11980,6 @@ static int intel_modeset_checks(struct drm_atomic_state *state)
 		DRM_DEBUG_KMS("New cdclk calculated to be logical %u kHz, actual %u kHz\n",
 			      intel_state->cdclk.logical.cdclk,
 			      intel_state->cdclk.actual.cdclk);
-	} else {
-		to_intel_atomic_state(state)->cdclk.logical = dev_priv->cdclk.logical;
 	}
 
 	intel_modeset_clear_plls(state);
