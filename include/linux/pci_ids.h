@@ -3065,6 +3065,4 @@
 
 #define PCI_VENDOR_ID_OCZ		0x1b85
 
-#define PCI_VENDOR_ID_SK_HYNIX         0x1c5c
-
 #endif /* _LINUX_PCI_IDS_H */
