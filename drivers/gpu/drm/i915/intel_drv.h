@@ -1326,6 +1326,7 @@ void intel_update_cdclk(struct drm_i915_private *dev_priv);
 void intel_update_rawclk(struct drm_i915_private *dev_priv);
 bool intel_cdclk_state_compare(const struct intel_cdclk_state *a,
 			       const struct intel_cdclk_state *b);
+void intel_cdclk_swap_state(struct intel_atomic_state *state);
 void intel_set_cdclk(struct drm_i915_private *dev_priv,
 		     const struct intel_cdclk_state *cdclk_state);
 

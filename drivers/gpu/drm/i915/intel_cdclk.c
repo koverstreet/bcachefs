@@ -1733,6 +1733,26 @@ bool intel_cdclk_state_compare(const struct intel_cdclk_state *a,
 }
 
 /**
+ * intel_cdclk_swap_state - make atomic CDCLK configuration effective
+ * @state: atomic state
+ *
+ * This is the CDCLK version of drm_atomic_helper_swap_state() since the
+ * helper does not handle driver-specific global state.
+ *
+ * Similarly to the atomic helpers this function does a complete swap,
+ * i.e. it also puts the old state into @state. This is used by the commit
+ * code to determine how CDCLK has changed (for instance did it increase or
+ * decrease).
+ */
+void intel_cdclk_swap_state(struct intel_atomic_state *state)
+{
+	struct drm_i915_private *dev_priv = to_i915(state->base.dev);
+
+	swap(state->cdclk.logical, dev_priv->cdclk.logical);
+	swap(state->cdclk.actual, dev_priv->cdclk.actual);
+}
+
+/**
  * intel_set_cdclk - Push the CDCLK state to the hardware
  * @dev_priv: i915 device
  * @cdclk_state: new CDCLK state
