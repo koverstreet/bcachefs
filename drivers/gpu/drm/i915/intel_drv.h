@@ -371,6 +371,8 @@ struct intel_atomic_state {
 
 		int force_min_cdclk;
 		bool force_min_cdclk_changed;
+		/* pipe to which cd2x update is synchronized */
+		enum pipe pipe;
 	} cdclk;
 
 	bool dpll_set, modeset;
@@ -1326,10 +1328,20 @@ void intel_update_cdclk(struct drm_i915_private *dev_priv);
 void intel_update_rawclk(struct drm_i915_private *dev_priv);
 bool intel_cdclk_state_compare(const struct intel_cdclk_state *a,
 			       const struct intel_cdclk_state *b);
+bool intel_cdclk_needs_cd2x_update(struct drm_i915_private *dev_priv,
+				   const struct intel_cdclk_state *a,
+				   const struct intel_cdclk_state *b);
 void intel_cdclk_swap_state(struct intel_atomic_state *state);
-void intel_set_cdclk(struct drm_i915_private *dev_priv,
-		     const struct intel_cdclk_state *cdclk_state);
-
+void
+intel_set_cdclk_pre_plane_update(struct drm_i915_private *dev_priv,
+				 const struct intel_cdclk_state *old_state,
+				 const struct intel_cdclk_state *new_state,
+				 enum pipe pipe);
+void
+intel_set_cdclk_post_plane_update(struct drm_i915_private *dev_priv,
+				  const struct intel_cdclk_state *old_state,
+				  const struct intel_cdclk_state *new_state,
+				  enum pipe pipe);
 /* intel_display.c */
 void i830_enable_pipe(struct drm_i915_private *dev_priv, enum pipe pipe);
 void i830_disable_pipe(struct drm_i915_private *dev_priv, enum pipe pipe);
