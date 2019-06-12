@@ -103,6 +103,8 @@ disable_d_i=true
 endif
 
 # Versions of dkms packages.
+dkms_zfs_linux_version=$(shell gawk '/^zfs-linux / { print $$2; }' debian/dkms-versions)
+dkms_spl_linux_version=$(shell gawk '/^spl-linux / { print $$2; }' debian/dkms-versions)
 dkms_nvidia_version=$(shell gawk '/^nvidia-graphics-drivers-/ { print $$2; }' debian/dkms-versions)
 
 # Debian Build System targets
