@@ -201,8 +201,7 @@
 #include "opts.h"
 #include "util.h"
 
-#define dynamic_fault(...)		0
-#define race_fault(...)			0
+#include <linux/dynamic_fault.h>
 
 #define bch2_fs_init_fault(name)					\
 	dynamic_fault("bcachefs:bch_fs_init:" name)
