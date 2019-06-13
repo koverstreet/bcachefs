@@ -52,6 +52,7 @@ FILES=                                          \
          test-get_cpuid.bin                     \
          test-sdt.bin                           \
          test-cxx.bin                           \
+         test-gettid.bin			\
          test-jvmti.bin				\
          test-sched_getcpu.bin			\
          test-setns.bin
@@ -245,6 +246,9 @@ $(OUTPUT)test-sdt.bin:
 
 $(OUTPUT)test-cxx.bin:
 	$(BUILDXX) -std=gnu++11
+
+$(OUTPUT)test-gettid.bin:
+	$(BUILD)
 
 $(OUTPUT)test-jvmti.bin:
 	$(BUILD)
