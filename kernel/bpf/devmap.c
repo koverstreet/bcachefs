@@ -238,10 +238,11 @@ void __dev_map_flush(struct bpf_map *map)
 		if (unlikely(!dev))
 			continue;
 
-		__clear_bit(bit, bitmap);
 		netdev = dev->dev;
 		if (likely(netdev->netdev_ops->ndo_xdp_flush))
 			netdev->netdev_ops->ndo_xdp_flush(netdev);
+
+		__clear_bit(bit, bitmap);
 	}
 }
 
