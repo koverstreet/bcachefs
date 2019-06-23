@@ -161,12 +161,14 @@ static int ramoops_read_kmsg_hdr(char *buffer, struct timespec *time,
 
 	if (sscanf(buffer, RAMOOPS_KERNMSG_HDR "%lu.%lu-%c\n%n", &time->tv_sec,
 			&time->tv_nsec, &data_type, &header_length) == 3) {
+		time->tv_nsec *= 1000;
 		if (data_type == 'C')
 			*compressed = true;
 		else
 			*compressed = false;
 	} else if (sscanf(buffer, RAMOOPS_KERNMSG_HDR "%lu.%lu\n%n",
 			&time->tv_sec, &time->tv_nsec, &header_length) == 2) {
+			time->tv_nsec *= 1000;
 			*compressed = false;
 	} else {
 		time->tv_sec = 0;
