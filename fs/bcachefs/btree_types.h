@@ -262,6 +262,7 @@ struct btree_insert_entry {
 
 	bool			deferred;
 	bool			triggered;
+	bool			marked;
 };
 
 #define BTREE_ITER_MAX		64
