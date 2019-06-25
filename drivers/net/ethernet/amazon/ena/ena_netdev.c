@@ -2473,14 +2473,6 @@ err:
 	ena_com_delete_debug_area(adapter->ena_dev);
 }
 
-static void ena_extra_properties_strings_destroy(struct net_device *netdev)
-{
-	struct ena_adapter *adapter = netdev_priv(netdev);
-
-	ena_com_delete_extra_properties_strings(adapter->ena_dev);
-	adapter->ena_extra_properties_count = 0;
-}
-
 static void ena_get_stats64(struct net_device *netdev,
 			    struct rtnl_link_stats64 *stats)
 {
@@ -3579,9 +3571,6 @@ static int ena_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	ena_config_debug_area(adapter);
 
-	adapter->ena_extra_properties_count =
-		ena_com_extra_properties_strings_init(ena_dev);
-
 	memcpy(adapter->netdev->perm_addr, adapter->mac_addr, netdev->addr_len);
 
 	netif_carrier_off(netdev);
@@ -3621,7 +3610,6 @@ static int ena_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	return 0;
 
 err_rss:
-	ena_extra_properties_strings_destroy(netdev);
 	ena_com_delete_debug_area(ena_dev);
 	ena_com_rss_destroy(ena_dev);
 err_free_msix:
@@ -3713,8 +3701,6 @@ static void ena_remove(struct pci_dev *pdev)
 	ena_com_delete_debug_area(ena_dev);
 
 	ena_com_delete_host_info(ena_dev);
-
-	ena_extra_properties_strings_destroy(netdev);
 
 	ena_release_bars(ena_dev, pdev);
 
