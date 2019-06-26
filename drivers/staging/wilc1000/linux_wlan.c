@@ -741,15 +741,15 @@ int wilc1000_wlan_init(struct net_device *dev, struct wilc_vif *vif)
 			goto _fail_locks_;
 		}
 
-		if (wl->gpio >= 0 && init_irq(dev)) {
-			ret = -EIO;
-			goto _fail_locks_;
-		}
-
 		ret = wlan_initialize_threads(dev);
 		if (ret < 0) {
 			ret = -EIO;
 			goto _fail_wilc_wlan_;
+		}
+
+		if (wl->gpio >= 0 && init_irq(dev)) {
+			ret = -EIO;
+			goto fail_threads;
 		}
 
 		if (!wl->dev_irq_num &&
@@ -807,7 +807,7 @@ _fail_irq_enable_:
 _fail_irq_init_:
 		if (wl->dev_irq_num)
 			deinit_irq(dev);
-
+fail_threads:
 		wlan_deinitialize_threads(dev);
 _fail_wilc_wlan_:
 		wilc_wlan_cleanup(dev);
