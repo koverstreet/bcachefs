@@ -86,6 +86,9 @@ struct vchiq_mmal_port {
 	 * there was no buffer to satisfy them
 	 */
 	int buffer_underflow;
+
+	/* Count of buffers the VPU has yet to return */
+	atomic_t buffers_with_vpu;
 	/* callback on buffer completion */
 	vchiq_mmal_buffer_cb buffer_cb;
 	/* callback context */
