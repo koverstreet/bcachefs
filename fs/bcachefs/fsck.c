@@ -2052,8 +2052,8 @@ static void inc_link(struct bch_fs *c, struct snapshots_seen *s,
 	if (inum < range_start || inum >= range_end)
 		return;
 
-	link = __inline_bsearch(&key, links->d, links->nr,
-				sizeof(links->d[0]), nlink_cmp);
+	link = bsearch(&key, links->d, links->nr,
+		       sizeof(links->d[0]), nlink_cmp);
 	if (!link)
 		return;
 
