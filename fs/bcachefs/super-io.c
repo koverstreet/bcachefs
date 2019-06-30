@@ -288,7 +288,7 @@ static int bch2_sb_validate(struct bch_sb_handle *disk_sb, struct printbuf *out)
 	block_size = le16_to_cpu(sb->block_size);
 
 	if (block_size > PAGE_SECTORS) {
-		pr_buf(out, "Block size too big (got %u, max %u)",
+		pr_buf(out, "Block size too big (got %u, max %lu)",
 		       block_size, PAGE_SECTORS);
 		return -EINVAL;
 	}
