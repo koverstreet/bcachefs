@@ -620,7 +620,7 @@ static void bset_encrypt(struct bch_fs *c, struct bset *i, unsigned offset)
 		bch2_encrypt(c, BSET_CSUM_TYPE(i), nonce, &bn->flags,
 			     bytes);
 
-		nonce = nonce_add(nonce, round_up(bytes, CHACHA_BLOCK_SIZE));
+		nonce = nonce_add(nonce, round_up(bytes, CHACHA20_BLOCK_SIZE));
 	}
 
 	bch2_encrypt(c, BSET_CSUM_TYPE(i), nonce, i->_data,
