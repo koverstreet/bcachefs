@@ -186,8 +186,7 @@ void bch2_inode_update_after_write(struct btree_trans *,
 int __must_check bch2_write_inode(struct bch_fs *, struct bch_inode_info *,
 				  inode_set_fn, void *, unsigned);
 
-int bch2_setattr_nonsize(struct user_namespace *,
-			 struct bch_inode_info *,
+int bch2_setattr_nonsize(struct bch_inode_info *,
 			 struct iattr *);
 int __bch2_unlink(struct inode *, struct dentry *, bool);
 
