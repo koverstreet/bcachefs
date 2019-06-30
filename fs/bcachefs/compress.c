@@ -45,7 +45,7 @@ static bool bio_phys_contig(struct bio *bio, struct bvec_iter start)
 	struct bvec_iter iter;
 	void *expected_start = NULL;
 
-	__bio_for_each_bvec(bv, bio, iter, start) {
+	__bio_for_each_segment(bv, bio, iter, start) {
 		if (expected_start &&
 		    expected_start != page_address(bv.bv_page) + bv.bv_offset)
 			return false;

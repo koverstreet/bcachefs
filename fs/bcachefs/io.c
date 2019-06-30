@@ -136,10 +136,10 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 
 void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
-	struct bvec_iter_all iter;
 	struct bio_vec *bv;
+	unsigned i;
 
-	bio_for_each_segment_all(bv, bio, iter)
+	bio_for_each_segment_all(bv, bio, i)
 		if (bv->bv_page != ZERO_PAGE(0))
 			mempool_free(bv->bv_page, &c->bio_bounce_pages);
 	bio->bi_vcnt = 0;
@@ -699,7 +699,7 @@ static struct bio *bch2_write_bio_alloc(struct bch_fs *c,
 				       ? ((unsigned long) buf & (PAGE_SIZE - 1))
 				       : 0), PAGE_SIZE);
 
-	pages = min(pages, BIO_MAX_VECS);
+	pages = min_t(unsigned, pages, BIO_MAX_PAGES);
 
 	bio = bio_alloc_bioset(GFP_NOIO, pages, &c->bio_write);
 	wbio			= wbio_init(bio);

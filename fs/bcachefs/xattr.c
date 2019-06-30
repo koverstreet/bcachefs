@@ -359,7 +359,6 @@ static int bch2_xattr_get_handler(const struct xattr_handler *handler,
 }
 
 static int bch2_xattr_set_handler(const struct xattr_handler *handler,
-				  struct user_namespace *mnt_userns,
 				  struct dentry *dentry, struct inode *vinode,
 				  const char *name, const void *value,
 				  size_t size, int flags)
@@ -492,7 +491,6 @@ static int inode_opt_set_fn(struct bch_inode_info *inode,
 }
 
 static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
-				   struct user_namespace *mnt_userns,
 				   struct dentry *dentry, struct inode *vinode,
 				   const char *name, const void *value,
 				   size_t size, int flags)
