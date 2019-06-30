@@ -1734,7 +1734,7 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 
 	sb->s_bdi->congested_fn		= bch2_congested;
 	sb->s_bdi->congested_data	= c;
-	sb->s_bdi->ra_pages		= VM_READAHEAD_PAGES;
+	sb->s_bdi->ra_pages		= VM_MAX_READAHEAD * 1024 / PAGE_SIZE;
 
 	for_each_online_member(ca, c, i) {
 		struct block_device *bdev = ca->disk_sb.bdev;

@@ -757,7 +757,7 @@ int bch2_migrate_page(struct address_space *mapping, struct page *newpage,
 	EBUG_ON(!PageLocked(page));
 	EBUG_ON(!PageLocked(newpage));
 
-	ret = migrate_page_move_mapping(mapping, newpage, page, mode, 0);
+	ret = migrate_page_move_mapping(mapping, newpage, page, NULL, mode, 0);
 	if (ret != MIGRATEPAGE_SUCCESS)
 		return ret;
 
@@ -800,11 +800,10 @@ static int bio_add_page_contig(struct bio *bio, struct page *page)
 
 static void bch2_readpages_end_io(struct bio *bio)
 {
-	struct bvec_iter_all iter;
 	struct bio_vec *bv;
 	int i;
 
-	bio_for_each_segment_all(bv, bio, i, iter) {
+	bio_for_each_segment_all(bv, bio, i) {
 		struct page *page = bv->bv_page;
 
 		if (!bio->bi_status) {
@@ -943,8 +942,11 @@ static void readpage_bio_extend(struct readpages_iter *iter,
 			if (!get_more)
 				break;
 
-			page = xa_load(&iter->mapping->i_pages, page_offset);
-			if (page && !xa_is_value(page))
+			rcu_read_lock();
+			page = radix_tree_lookup(&iter->mapping->i_pages, page_offset);
+			rcu_read_unlock();
+
+			if (page && !radix_tree_exceptional_entry(page))
 				break;
 
 			page = __page_cache_alloc(readahead_gfp_mask(iter->mapping));
@@ -1186,12 +1188,11 @@ static void bch2_writepage_io_done(struct closure *cl)
 					struct bch_writepage_io, cl);
 	struct bch_fs *c = io->op.op.c;
 	struct bio *bio = &io->op.op.wbio.bio;
-	struct bvec_iter_all iter;
 	struct bio_vec *bvec;
 	unsigned i;
 
 	if (io->op.op.error) {
-		bio_for_each_segment_all(bvec, bio, i, iter) {
+		bio_for_each_segment_all(bvec, bio, i) {
 			SetPageError(bvec->bv_page);
 			mapping_set_error(bvec->bv_page->mapping, -EIO);
 		}
@@ -1218,7 +1219,7 @@ static void bch2_writepage_io_done(struct closure *cl)
 		i_sectors_acct(c, io->op.inode, NULL,
 			       io->op.sectors_added - (s64) io->new_sectors);
 
-	bio_for_each_segment_all(bvec, bio, i, iter)
+	bio_for_each_segment_all(bvec, bio, i)
 		end_page_writeback(bvec->bv_page);
 
 	closure_return_with_destructor(&io->cl, bch2_writepage_io_free);
@@ -1815,7 +1816,6 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 	struct address_space *mapping = req->ki_filp->f_mapping;
 	struct bch_inode_info *inode = dio->iop.inode;
 	struct bio *bio = &dio->iop.op.wbio.bio;
-	struct bvec_iter_all iter;
 	struct bio_vec *bv;
 	loff_t offset;
 	bool sync;
@@ -1893,7 +1893,7 @@ err_wait_io:
 
 		closure_sync(&dio->cl);
 loop:
-		bio_for_each_segment_all(bv, bio, i, iter)
+		bio_for_each_segment_all(bv, bio, i)
 			put_page(bv->bv_page);
 		if (!dio->iter.count || dio->iop.op.error)
 			break;
@@ -2765,7 +2765,7 @@ static bool page_slot_is_data(struct address_space *mapping, pgoff_t index)
 	bool ret;
 
 	page = find_lock_entry(mapping, index);
-	if (!page || xa_is_value(page))
+	if (!page || radix_tree_exception(page))
 		return false;
 
 	ret = page_is_data(page);
