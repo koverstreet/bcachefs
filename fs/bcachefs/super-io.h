@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_SUPER_IO_H
 #define _BCACHEFS_SUPER_IO_H
 
@@ -11,6 +12,7 @@
 struct bch_sb_field *bch2_sb_field_get(struct bch_sb *, enum bch_sb_field_type);
 struct bch_sb_field *bch2_sb_field_resize(struct bch_sb_handle *,
 					  enum bch_sb_field_type, unsigned);
+void bch2_sb_field_delete(struct bch_sb_handle *, enum bch_sb_field_type);
 
 #define field_to_type(_f, _name)					\
 	container_of_or_null(_f, struct bch_sb_field_##_name, field)
@@ -37,7 +39,7 @@ extern const char * const bch2_sb_fields[];
 
 struct bch_sb_field_ops {
 	const char *	(*validate)(struct bch_sb *, struct bch_sb_field *);
-	size_t		(*to_text)(char *, size_t, struct bch_sb *,
+	void		(*to_text)(struct printbuf *, struct bch_sb *,
 				   struct bch_sb_field *);
 };
 
@@ -87,7 +89,7 @@ int bch2_sb_realloc(struct bch_sb_handle *, unsigned);
 const char *bch2_sb_validate(struct bch_sb_handle *);
 
 int bch2_read_super(const char *, struct bch_opts *, struct bch_sb_handle *);
-void bch2_write_super(struct bch_fs *);
+int bch2_write_super(struct bch_fs *);
 
 /* BCH_SB_FIELD_journal: */
 
@@ -131,7 +133,18 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 	};
 }
 
-size_t bch2_sb_field_to_text(char *, size_t, struct bch_sb *,
-			     struct bch_sb_field *);
+/* BCH_SB_FIELD_clean: */
+
+struct jset_entry *
+bch2_journal_super_entries_add_common(struct bch_fs *,
+				      struct jset_entry *, u64);
+
+void bch2_sb_clean_renumber(struct bch_sb_field_clean *, int);
+
+int bch2_fs_mark_dirty(struct bch_fs *);
+void bch2_fs_mark_clean(struct bch_fs *);
+
+void bch2_sb_field_to_text(struct printbuf *, struct bch_sb *,
+			   struct bch_sb_field *);
 
 #endif /* _BCACHEFS_SUPER_IO_H */

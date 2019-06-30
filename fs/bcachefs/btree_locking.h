@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_BTREE_LOCKING_H
 #define _BCACHEFS_BTREE_LOCKING_H
 
@@ -12,7 +13,6 @@
 #include <linux/six.h>
 
 #include "btree_iter.h"
-#include "btree_io.h"
 
 /* matches six lock types */
 enum btree_node_locked_type {
@@ -76,19 +76,26 @@ static inline void mark_btree_node_intent_locked(struct btree_iter *iter,
 	mark_btree_node_locked(iter, level, SIX_LOCK_intent);
 }
 
-static inline enum six_lock_type btree_lock_want(struct btree_iter *iter, int level)
+static inline enum six_lock_type __btree_lock_want(struct btree_iter *iter, int level)
 {
 	return level < iter->locks_want
 		? SIX_LOCK_intent
 		: SIX_LOCK_read;
 }
 
-static inline bool btree_want_intent(struct btree_iter *iter, int level)
+static inline enum btree_node_locked_type
+btree_lock_want(struct btree_iter *iter, int level)
 {
-	return btree_lock_want(iter, level) == SIX_LOCK_intent;
+	if (level < iter->level)
+		return BTREE_NODE_UNLOCKED;
+	if (level < iter->locks_want)
+		return BTREE_NODE_INTENT_LOCKED;
+	if (level == iter->level)
+		return BTREE_NODE_READ_LOCKED;
+	return BTREE_NODE_UNLOCKED;
 }
 
-static inline void btree_node_unlock(struct btree_iter *iter, unsigned level)
+static inline void __btree_node_unlock(struct btree_iter *iter, unsigned level)
 {
 	int lock_type = btree_node_locked_type(iter, level);
 
@@ -97,6 +104,21 @@ static inline void btree_node_unlock(struct btree_iter *iter, unsigned level)
 	if (lock_type != BTREE_NODE_UNLOCKED)
 		six_unlock_type(&iter->l[level].b->lock, lock_type);
 	mark_btree_node_unlocked(iter, level);
+}
+
+static inline void btree_node_unlock(struct btree_iter *iter, unsigned level)
+{
+	EBUG_ON(!level && iter->trans->nounlock);
+
+	__btree_node_unlock(iter, level);
+}
+
+static inline void __bch2_btree_iter_unlock(struct btree_iter *iter)
+{
+	btree_iter_set_dirty(iter, BTREE_ITER_NEED_RELOCK);
+
+	while (iter->nodes_locked)
+		btree_node_unlock(iter, __ffs(iter->nodes_locked));
 }
 
 static inline enum bch_time_stats lock_to_time_stat(enum six_lock_type type)
@@ -132,8 +154,29 @@ static inline void btree_node_lock_type(struct bch_fs *c, struct btree *b,
 		__btree_node_lock_type(c, b, type);
 }
 
+/*
+ * Lock a btree node if we already have it locked on one of our linked
+ * iterators:
+ */
+static inline bool btree_node_lock_increment(struct btree_iter *iter,
+					     struct btree *b, unsigned level,
+					     enum btree_node_locked_type want)
+{
+	struct btree_iter *linked;
+
+	trans_for_each_iter(iter->trans, linked)
+		if (linked != iter &&
+		    linked->l[level].b == b &&
+		    btree_node_locked_type(linked, level) >= want) {
+			six_lock_increment(&b->lock, want);
+			return true;
+		}
+
+	return false;
+}
+
 bool __bch2_btree_node_lock(struct btree *, struct bpos, unsigned,
-			   struct btree_iter *, enum six_lock_type);
+			    struct btree_iter *, enum six_lock_type);
 
 static inline bool btree_node_lock(struct btree *b, struct bpos pos,
 				   unsigned level,
@@ -143,6 +186,7 @@ static inline bool btree_node_lock(struct btree *b, struct bpos pos,
 	EBUG_ON(level >= BTREE_MAX_DEPTH);
 
 	return likely(six_trylock_type(&b->lock, type)) ||
+		btree_node_lock_increment(iter, b, level, type) ||
 		__bch2_btree_node_lock(b, pos, level, iter, type);
 }
 
@@ -151,12 +195,13 @@ bool __bch2_btree_node_relock(struct btree_iter *, unsigned);
 static inline bool bch2_btree_node_relock(struct btree_iter *iter,
 					  unsigned level)
 {
-	return likely(btree_lock_want(iter, level) ==
-		      btree_node_locked_type(iter, level)) ||
+	EBUG_ON(btree_node_locked(iter, level) &&
+		btree_node_locked_type(iter, level) !=
+		__btree_lock_want(iter, level));
+
+	return likely(btree_node_locked(iter, level)) ||
 		__bch2_btree_node_relock(iter, level);
 }
-
-bool bch2_btree_iter_relock(struct btree_iter *);
 
 void bch2_btree_node_unlock_write(struct btree *, struct btree_iter *);
 
@@ -165,7 +210,7 @@ void __bch2_btree_node_lock_write(struct btree *, struct btree_iter *);
 static inline void bch2_btree_node_lock_write(struct btree *b, struct btree_iter *iter)
 {
 	EBUG_ON(iter->l[b->level].b != b);
-	EBUG_ON(iter->lock_seq[b->level] != b->lock.state.seq);
+	EBUG_ON(iter->l[b->level].lock_seq != b->lock.state.seq);
 
 	if (!six_trylock_write(&b->lock))
 		__bch2_btree_node_lock_write(b, iter);

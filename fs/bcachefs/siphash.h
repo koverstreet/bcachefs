@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: BSD-3-Clause */
 /* $OpenBSD: siphash.h,v 1.5 2015/02/20 11:51:03 tedu Exp $ */
 /*-
  * Copyright (c) 2013 Andre Oppermann <andre@FreeBSD.org>

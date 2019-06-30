@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_ALLOC_TYPES_H
 #define _BCACHEFS_ALLOC_TYPES_H
 
@@ -6,6 +7,8 @@
 
 #include "clock_types.h"
 #include "fifo.h"
+
+struct ec_bucket_buf;
 
 /* There's two of these clocks, one for reads and one for writes: */
 struct bucket_clock {
@@ -45,16 +48,32 @@ typedef FIFO(long)	alloc_fifo;
 
 /* Enough for 16 cache devices, 2 tiers and some left over for pipelining */
 #define OPEN_BUCKETS_COUNT	256
-#define WRITE_POINT_COUNT	32
+
+#define WRITE_POINT_HASH_NR	32
+#define WRITE_POINT_MAX		32
 
 struct open_bucket {
 	spinlock_t		lock;
 	atomic_t		pin;
 	u8			freelist;
-	bool			valid;
-	bool			on_partial_list;
+	u8			ec_idx;
+	u8			type;
+	unsigned		valid:1;
+	unsigned		on_partial_list:1;
 	unsigned		sectors_free;
 	struct bch_extent_ptr	ptr;
+	struct ec_stripe_new	*ec;
+};
+
+#define OPEN_BUCKET_LIST_MAX	15
+
+struct open_buckets {
+	u8			nr;
+	u8			v[OPEN_BUCKET_LIST_MAX];
+};
+
+struct dev_stripe_state {
+	u64			next_alloc[BCH_SB_MEMBERS_MAX];
 };
 
 struct write_point {
@@ -63,15 +82,13 @@ struct write_point {
 	u64			last_used;
 	unsigned long		write_point;
 	enum bch_data_type	type;
-
-	u8			nr_ptrs;
-	u8			first_ptr;
+	bool			is_ec;
 
 	/* calculated based on how many pointers we're actually going to use: */
 	unsigned		sectors_free;
 
-	struct open_bucket	*ptrs[BCH_REPLICAS_MAX * 2];
-	u64			next_alloc[BCH_SB_MEMBERS_MAX];
+	struct open_buckets	ptrs;
+	struct dev_stripe_state	stripe;
 };
 
 struct write_point_specifier {

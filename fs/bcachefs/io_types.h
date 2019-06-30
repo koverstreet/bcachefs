@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_IO_TYPES_H
 #define _BCACHEFS_IO_TYPES_H
 
@@ -54,7 +55,7 @@ struct bch_read_bio {
 
 	struct bch_devs_list	devs_have;
 
-	struct extent_pick_ptr	pick;
+	struct extent_ptr_decoded pick;
 	/* start pos of data we read (may not be pos of data we want) */
 	struct bpos		pos;
 	struct bversion		version;
@@ -103,7 +104,6 @@ struct bch_write_op {
 	unsigned		nr_replicas_required:4;
 	unsigned		alloc_reserve:4;
 
-	u8			open_buckets_nr;
 	struct bch_devs_list	devs_have;
 	u16			target;
 	u16			nonce;
@@ -120,7 +120,7 @@ struct bch_write_op {
 
 	struct disk_reservation	res;
 
-	u8			open_buckets[16];
+	struct open_buckets	open_buckets;
 
 	/*
 	 * If caller wants to flush but hasn't passed us a journal_seq ptr, we

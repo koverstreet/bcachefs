@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
 #include "error.h"
 #include "io.h"
@@ -66,10 +67,17 @@ enum fsck_err_ret bch2_fsck_err(struct bch_fs *c, unsigned flags,
 	bool fix = false, print = true, suppressing = false;
 	char _buf[sizeof(s->buf)], *buf = _buf;
 
-	mutex_lock(&c->fsck_error_lock);
+	if (test_bit(BCH_FS_FSCK_DONE, &c->flags)) {
+		va_start(args, fmt);
+		vprintk(fmt, args);
+		va_end(args);
 
-	if (test_bit(BCH_FS_FSCK_DONE, &c->flags))
-		goto print;
+		return bch2_inconsistent_error(c)
+			? FSCK_ERR_EXIT
+			: FSCK_ERR_FIX;
+	}
+
+	mutex_lock(&c->fsck_error_lock);
 
 	list_for_each_entry(s, &c->fsck_errors, list)
 		if (s->fmt == fmt)
@@ -99,11 +107,7 @@ print:
 
 	if (c->opts.fix_errors == FSCK_OPT_EXIT) {
 		bch_err(c, "%s, exiting", buf);
-		mutex_unlock(&c->fsck_error_lock);
-		return FSCK_ERR_EXIT;
-	}
-
-	if (flags & FSCK_CAN_FIX) {
+	} else if (flags & FSCK_CAN_FIX) {
 		if (c->opts.fix_errors == FSCK_OPT_ASK) {
 			printk(KERN_ERR "%s: fix?", buf);
 			fix = ask_yn();
@@ -131,12 +135,16 @@ print:
 
 	mutex_unlock(&c->fsck_error_lock);
 
-	if (fix)
-		set_bit(BCH_FS_FSCK_FIXED_ERRORS, &c->flags);
-
-	return fix				? FSCK_ERR_FIX
-		: flags & FSCK_CAN_IGNORE	? FSCK_ERR_IGNORE
-						: FSCK_ERR_EXIT;
+	if (fix) {
+		set_bit(BCH_FS_ERRORS_FIXED, &c->flags);
+		return FSCK_ERR_FIX;
+	} else {
+		set_bit(BCH_FS_ERROR, &c->flags);
+		return c->opts.fix_errors == FSCK_OPT_EXIT ||
+			!(flags & FSCK_CAN_IGNORE)
+			? FSCK_ERR_EXIT
+			: FSCK_ERR_IGNORE;
+	}
 }
 
 void bch2_flush_fsck_errs(struct bch_fs *c)

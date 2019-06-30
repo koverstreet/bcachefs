@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_FIFO_H
 #define _BCACHEFS_FIFO_H
 
@@ -12,7 +13,9 @@ struct {								\
 #define DECLARE_FIFO(type, name)	FIFO(type) name
 
 #define fifo_buf_size(fifo)						\
-	(roundup_pow_of_two((fifo)->size) * sizeof((fifo)->data[0]))
+	((fifo)->size							\
+	 ? roundup_pow_of_two((fifo)->size) * sizeof((fifo)->data[0])	\
+	 : 0)
 
 #define init_fifo(fifo, _size, _gfp)					\
 ({									\
@@ -98,7 +101,7 @@ do {									\
 ({									\
 	bool _r = !fifo_empty((fifo));					\
 	if (_r)								\
-		(i) = (fifo)->data[--(fifo)->back & (fifo)->mask]	\
+		(i) = (fifo)->data[--(fifo)->back & (fifo)->mask];	\
 	_r;								\
 })
 
@@ -108,17 +111,17 @@ do {									\
 #define fifo_peek(fifo)		fifo_peek_front(fifo)
 
 #define fifo_for_each_entry(_entry, _fifo, _iter)			\
-	for (((void) (&(_iter) == &(_fifo)->front)),			\
-	     _iter = (_fifo)->front;					\
+	for (typecheck(typeof((_fifo)->front), _iter),			\
+	     (_iter) = (_fifo)->front;					\
 	     ((_iter != (_fifo)->back) &&				\
 	      (_entry = (_fifo)->data[(_iter) & (_fifo)->mask], true));	\
-	     _iter++)
+	     (_iter)++)
 
 #define fifo_for_each_entry_ptr(_ptr, _fifo, _iter)			\
-	for (((void) (&(_iter) == &(_fifo)->front)),			\
-	     _iter = (_fifo)->front;					\
+	for (typecheck(typeof((_fifo)->front), _iter),			\
+	     (_iter) = (_fifo)->front;					\
 	     ((_iter != (_fifo)->back) &&				\
 	      (_ptr = &(_fifo)->data[(_iter) & (_fifo)->mask], true));	\
-	     _iter++)
+	     (_iter)++)
 
 #endif /* _BCACHEFS_FIFO_H */

@@ -1,7 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_BTREE_IO_H
 #define _BCACHEFS_BTREE_IO_H
 
 #include "bset.h"
+#include "btree_locking.h"
 #include "extents.h"
 #include "io_types.h"
 
@@ -14,7 +16,7 @@ struct btree_read_bio {
 	struct bch_fs		*c;
 	u64			start_time;
 	unsigned		have_ioref:1;
-	struct extent_pick_ptr	pick;
+	struct extent_ptr_decoded	pick;
 	struct work_struct	work;
 	struct bio		bio;
 };
@@ -47,7 +49,7 @@ static inline void btree_node_wait_on_io(struct btree *b)
 static inline bool btree_node_may_write(struct btree *b)
 {
 	return list_empty_careful(&b->write_blocked) &&
-		!b->will_make_reachable;
+		(!b->written || !b->will_make_reachable);
 }
 
 enum compact_mode {
@@ -99,98 +101,41 @@ bool bch2_btree_post_write_cleanup(struct bch_fs *, struct btree *);
 void bch2_btree_node_write(struct bch_fs *, struct btree *,
 			  enum six_lock_type);
 
-/*
- * btree_node_dirty() can be cleared with only a read lock,
- * and for bch2_btree_node_write_cond() we want to set need_write iff it's
- * still dirty:
- */
-static inline void set_btree_node_need_write_if_dirty(struct btree *b)
+static inline void btree_node_write_if_need(struct bch_fs *c, struct btree *b)
 {
-	unsigned long old, new, v = READ_ONCE(b->flags);
+	while (b->written &&
+	       btree_node_need_write(b) &&
+	       btree_node_may_write(b)) {
+		if (!btree_node_write_in_flight(b)) {
+			bch2_btree_node_write(c, b, SIX_LOCK_read);
+			break;
+		}
 
-	do {
-		old = new = v;
-
-		if (!(old & (1 << BTREE_NODE_dirty)))
-			return;
-
-		new |= (1 << BTREE_NODE_need_write);
-	} while ((v = cmpxchg(&b->flags, old, new)) != old);
+		six_unlock_read(&b->lock);
+		btree_node_wait_on_io(b);
+		btree_node_lock_type(c, b, SIX_LOCK_read);
+	}
 }
 
 #define bch2_btree_node_write_cond(_c, _b, cond)			\
 do {									\
-	while ((_b)->written && btree_node_dirty(_b) &&	(cond)) {	\
-		if (!btree_node_may_write(_b)) {			\
-			set_btree_node_need_write_if_dirty(_b);		\
-			break;						\
-		}							\
+	unsigned long old, new, v = READ_ONCE((_b)->flags);		\
 									\
-		if (!btree_node_write_in_flight(_b)) {			\
-			bch2_btree_node_write(_c, _b, SIX_LOCK_read);	\
-			break;						\
-		}							\
+	do {								\
+		old = new = v;						\
 									\
-		six_unlock_read(&(_b)->lock);				\
-		btree_node_wait_on_io(_b);				\
-		btree_node_lock_type(c, b, SIX_LOCK_read);		\
-	}								\
+		if (!(old & (1 << BTREE_NODE_dirty)) || !(cond))	\
+			break;						\
+									\
+		new |= (1 << BTREE_NODE_need_write);			\
+	} while ((v = cmpxchg(&(_b)->flags, old, new)) != old);		\
+									\
+	btree_node_write_if_need(_c, _b);				\
 } while (0)
 
 void bch2_btree_flush_all_reads(struct bch_fs *);
 void bch2_btree_flush_all_writes(struct bch_fs *);
 void bch2_btree_verify_flushed(struct bch_fs *);
 ssize_t bch2_dirty_btree_nodes_print(struct bch_fs *, char *);
-
-/* Sorting */
-
-struct btree_node_iter_large {
-	u8		is_extents;
-	u16		used;
-
-	struct btree_node_iter_set data[MAX_BSETS];
-};
-
-static inline void
-__bch2_btree_node_iter_large_init(struct btree_node_iter_large *iter,
-				  bool is_extents)
-{
-	iter->used = 0;
-	iter->is_extents = is_extents;
-}
-
-void bch2_btree_node_iter_large_advance(struct btree_node_iter_large *,
-					struct btree *);
-
-void bch2_btree_node_iter_large_push(struct btree_node_iter_large *,
-				     struct btree *,
-				     const struct bkey_packed *,
-				     const struct bkey_packed *);
-
-static inline bool bch2_btree_node_iter_large_end(struct btree_node_iter_large *iter)
-{
-	return !iter->used;
-}
-
-static inline struct bkey_packed *
-bch2_btree_node_iter_large_peek_all(struct btree_node_iter_large *iter,
-				    struct btree *b)
-{
-	return bch2_btree_node_iter_large_end(iter)
-		? NULL
-		: __btree_node_offset_to_key(b, iter->data->k);
-}
-
-static inline struct bkey_packed *
-bch2_btree_node_iter_large_next_all(struct btree_node_iter_large *iter,
-				    struct btree *b)
-{
-	struct bkey_packed *ret = bch2_btree_node_iter_large_peek_all(iter, b);
-
-	if (ret)
-		bch2_btree_node_iter_large_advance(iter, b);
-
-	return ret;
-}
 
 #endif /* _BCACHEFS_BTREE_IO_H */

@@ -1,7 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 
 #include <linux/kernel.h>
 
 #include "bcachefs.h"
+#include "compress.h"
 #include "disk_groups.h"
 #include "opts.h"
 #include "super-io.h"
@@ -73,22 +75,22 @@ const char * const bch2_dev_state[] = {
 
 void bch2_opts_apply(struct bch_opts *dst, struct bch_opts src)
 {
-#define BCH_OPT(_name, ...)						\
+#define x(_name, ...)						\
 	if (opt_defined(src, _name))					\
 		opt_set(*dst, _name, src._name);
 
 	BCH_OPTS()
-#undef BCH_OPT
+#undef x
 }
 
 bool bch2_opt_defined_by_id(const struct bch_opts *opts, enum bch_opt_id id)
 {
 	switch (id) {
-#define BCH_OPT(_name, ...)						\
+#define x(_name, ...)						\
 	case Opt_##_name:						\
 		return opt_defined(*opts, _name);
 	BCH_OPTS()
-#undef BCH_OPT
+#undef x
 	default:
 		BUG();
 	}
@@ -97,11 +99,11 @@ bool bch2_opt_defined_by_id(const struct bch_opts *opts, enum bch_opt_id id)
 u64 bch2_opt_get_by_id(const struct bch_opts *opts, enum bch_opt_id id)
 {
 	switch (id) {
-#define BCH_OPT(_name, ...)						\
+#define x(_name, ...)						\
 	case Opt_##_name:						\
 		return opts->_name;
 	BCH_OPTS()
-#undef BCH_OPT
+#undef x
 	default:
 		BUG();
 	}
@@ -110,12 +112,12 @@ u64 bch2_opt_get_by_id(const struct bch_opts *opts, enum bch_opt_id id)
 void bch2_opt_set_by_id(struct bch_opts *opts, enum bch_opt_id id, u64 v)
 {
 	switch (id) {
-#define BCH_OPT(_name, ...)						\
+#define x(_name, ...)						\
 	case Opt_##_name:						\
 		opt_set(*opts, _name, v);				\
 		break;
 	BCH_OPTS()
-#undef BCH_OPT
+#undef x
 	default:
 		BUG();
 	}
@@ -129,11 +131,11 @@ struct bch_opts bch2_opts_from_sb(struct bch_sb *sb)
 {
 	struct bch_opts opts = bch2_opts_empty();
 
-#define BCH_OPT(_name, _bits, _mode, _type, _sb_opt, _default)		\
+#define x(_name, _bits, _mode, _type, _sb_opt, ...)			\
 	if (_sb_opt != NO_SB_OPT)					\
 		opt_set(opts, _name, _sb_opt(sb));
 	BCH_OPTS()
-#undef BCH_OPT
+#undef x
 
 	return opts;
 }
@@ -141,24 +143,27 @@ struct bch_opts bch2_opts_from_sb(struct bch_sb *sb)
 const struct bch_option bch2_opt_table[] = {
 #define OPT_BOOL()		.type = BCH_OPT_BOOL
 #define OPT_UINT(_min, _max)	.type = BCH_OPT_UINT, .min = _min, .max = _max
+#define OPT_SECTORS(_min, _max)	.type = BCH_OPT_SECTORS, .min = _min, .max = _max
 #define OPT_STR(_choices)	.type = BCH_OPT_STR, .choices = _choices
 #define OPT_FN(_fn)		.type = BCH_OPT_FN,			\
 				.parse = _fn##_parse,			\
-				.print = _fn##_print
+				.to_text = _fn##_to_text
 
-#define BCH_OPT(_name, _bits, _mode, _type, _sb_opt, _default)		\
+#define x(_name, _bits, _mode, _type, _sb_opt, _default, _hint, _help)	\
 	[Opt_##_name] = {						\
 		.attr	= {						\
 			.name	= #_name,				\
-			.mode = _mode == OPT_RUNTIME ? 0644 : 0444,	\
+			.mode = (_mode) & OPT_RUNTIME ? 0644 : 0444,	\
 		},							\
 		.mode	= _mode,					\
+		.hint	= _hint,					\
+		.help	= _help,					\
 		.set_sb	= SET_##_sb_opt,				\
 		_type							\
 	},
 
 	BCH_OPTS()
-#undef BCH_OPT
+#undef x
 };
 
 int bch2_opt_lookup(const char *name)
@@ -217,8 +222,21 @@ int bch2_opt_parse(struct bch_fs *c, const struct bch_option *opt,
 		if (*res < opt->min || *res >= opt->max)
 			return -ERANGE;
 		break;
+	case BCH_OPT_SECTORS:
+		ret = bch2_strtou64_h(val, res);
+		if (ret < 0)
+			return ret;
+
+		if (*res & 511)
+			return -EINVAL;
+
+		*res >>= 9;
+
+		if (*res < opt->min || *res >= opt->max)
+			return -ERANGE;
+		break;
 	case BCH_OPT_STR:
-		ret = bch2_read_string_list(val, opt->choices);
+		ret = match_string(opt->choices, -1, val);
 		if (ret < 0)
 			return ret;
 
@@ -234,38 +252,81 @@ int bch2_opt_parse(struct bch_fs *c, const struct bch_option *opt,
 	return 0;
 }
 
-int bch2_opt_to_text(struct bch_fs *c, char *buf, size_t len,
-		     const struct bch_option *opt, u64 v,
-		     unsigned flags)
+void bch2_opt_to_text(struct printbuf *out, struct bch_fs *c,
+		      const struct bch_option *opt, u64 v,
+		      unsigned flags)
 {
-	char *out = buf, *end = buf + len;
-
 	if (flags & OPT_SHOW_MOUNT_STYLE) {
-		if (opt->type == BCH_OPT_BOOL)
-			return scnprintf(out, end - out, "%s%s",
-					 v ? "" : "no",
-					 opt->attr.name);
+		if (opt->type == BCH_OPT_BOOL) {
+			pr_buf(out, "%s%s",
+			       v ? "" : "no",
+			       opt->attr.name);
+			return;
+		}
 
-		out += scnprintf(out, end - out, "%s=", opt->attr.name);
+		pr_buf(out, "%s=", opt->attr.name);
 	}
 
 	switch (opt->type) {
 	case BCH_OPT_BOOL:
 	case BCH_OPT_UINT:
-		out += scnprintf(out, end - out, "%lli", v);
+		pr_buf(out, "%lli", v);
+		break;
+	case BCH_OPT_SECTORS:
+		bch2_hprint(out, v);
 		break;
 	case BCH_OPT_STR:
-		out += (flags & OPT_SHOW_FULL_LIST)
-			? bch2_scnprint_string_list(out, end - out, opt->choices, v)
-			: scnprintf(out, end - out, opt->choices[v]);
+		if (flags & OPT_SHOW_FULL_LIST)
+			bch2_string_opt_to_text(out, opt->choices, v);
+		else
+			pr_buf(out, opt->choices[v]);
 		break;
 	case BCH_OPT_FN:
-		return opt->print(c, out, end - out, v);
+		opt->to_text(out, c, v);
+		break;
 	default:
 		BUG();
 	}
+}
 
-	return out - buf;
+int bch2_opt_check_may_set(struct bch_fs *c, int id, u64 v)
+{
+	int ret = 0;
+
+	switch (id) {
+	case Opt_compression:
+	case Opt_background_compression:
+		ret = bch2_check_set_has_compressed_data(c, v);
+		break;
+	case Opt_erasure_code:
+		if (v &&
+		    !(c->sb.features & (1ULL << BCH_FEATURE_EC))) {
+			mutex_lock(&c->sb_lock);
+			c->disk_sb.sb->features[0] |=
+				cpu_to_le64(1ULL << BCH_FEATURE_EC);
+
+			bch2_write_super(c);
+			mutex_unlock(&c->sb_lock);
+		}
+		break;
+	}
+
+	return ret;
+}
+
+int bch2_opts_check_may_set(struct bch_fs *c)
+{
+	unsigned i;
+	int ret;
+
+	for (i = 0; i < bch2_opts_nr; i++) {
+		ret = bch2_opt_check_may_set(c, i,
+				bch2_opt_get_by_id(&c->opts, i));
+		if (ret)
+			return ret;
+	}
+
+	return 0;
 }
 
 int bch2_parse_mount_opts(struct bch_opts *opts, char *options)
@@ -303,7 +364,7 @@ int bch2_parse_mount_opts(struct bch_opts *opts, char *options)
 				goto no_val;
 		}
 
-		if (bch2_opt_table[id].mode < OPT_MOUNT)
+		if (!(bch2_opt_table[id].mode & OPT_MOUNT))
 			goto bad_opt;
 
 		if (id == Opt_acl &&
@@ -335,40 +396,40 @@ no_val:
 struct bch_io_opts bch2_opts_to_inode_opts(struct bch_opts src)
 {
 	struct bch_io_opts ret = { 0 };
-#define BCH_INODE_OPT(_name, _bits)					\
+#define x(_name, _bits)					\
 	if (opt_defined(src, _name))					\
 		opt_set(ret, _name, src._name);
 	BCH_INODE_OPTS()
-#undef BCH_INODE_OPT
+#undef x
 	return ret;
 }
 
 struct bch_opts bch2_inode_opts_to_opts(struct bch_io_opts src)
 {
 	struct bch_opts ret = { 0 };
-#define BCH_INODE_OPT(_name, _bits)					\
+#define x(_name, _bits)					\
 	if (opt_defined(src, _name))					\
 		opt_set(ret, _name, src._name);
 	BCH_INODE_OPTS()
-#undef BCH_INODE_OPT
+#undef x
 	return ret;
 }
 
 void bch2_io_opts_apply(struct bch_io_opts *dst, struct bch_io_opts src)
 {
-#define BCH_INODE_OPT(_name, _bits)					\
+#define x(_name, _bits)					\
 	if (opt_defined(src, _name))					\
 		opt_set(*dst, _name, src._name);
 	BCH_INODE_OPTS()
-#undef BCH_INODE_OPT
+#undef x
 }
 
 bool bch2_opt_is_inode_opt(enum bch_opt_id id)
 {
 	static const enum bch_opt_id inode_opt_list[] = {
-#define BCH_INODE_OPT(_name, _bits)	Opt_##_name,
+#define x(_name, _bits)	Opt_##_name,
 	BCH_INODE_OPTS()
-#undef BCH_INODE_OPT
+#undef x
 	};
 	unsigned i;
 

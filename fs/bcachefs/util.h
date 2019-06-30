@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_UTIL_H
 #define _BCACHEFS_UTIL_H
 
@@ -10,6 +11,8 @@
 #include <linux/sched/clock.h>
 #include <linux/llist.h>
 #include <linux/log2.h>
+#include <linux/percpu.h>
+#include <linux/preempt.h>
 #include <linux/ratelimit.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
@@ -61,13 +64,6 @@ struct closure;
 
 #endif
 
-#ifndef __CHECKER__
-#define __flatten __attribute__((flatten))
-#else
-/* sparse doesn't know about attribute((flatten)) */
-#define __flatten
-#endif
-
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define CPU_BIG_ENDIAN		0
 #elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
@@ -82,6 +78,14 @@ struct closure;
 #define type_is(_val, _type)						\
 	(__builtin_types_compatible_p(typeof(_val), _type) ||		\
 	 __builtin_types_compatible_p(typeof(_val), const _type))
+
+/* Userspace doesn't align allocations as nicely as the kernel allocators: */
+static inline size_t buf_pages(void *p, size_t len)
+{
+	return DIV_ROUND_UP(len +
+			    ((unsigned long) p & (PAGE_SIZE - 1)),
+			    PAGE_SIZE);
+}
 
 static inline void vpfree(void *p, size_t size)
 {
@@ -137,7 +141,19 @@ do {									\
 	(heap)->data = NULL;						\
 } while (0)
 
-#define heap_swap(h, i, j)	swap((h)->data[i], (h)->data[j])
+#define heap_set_backpointer(h, i, _fn)					\
+do {									\
+	void (*fn)(typeof(h), size_t) = _fn;				\
+	if (fn)								\
+		fn(h, i);						\
+} while (0)
+
+#define heap_swap(h, i, j, set_backpointer)				\
+do {									\
+	swap((h)->data[i], (h)->data[j]);				\
+	heap_set_backpointer(h, i, set_backpointer);			\
+	heap_set_backpointer(h, j, set_backpointer);			\
+} while (0)
 
 #define heap_peek(h)							\
 ({									\
@@ -147,7 +163,7 @@ do {									\
 
 #define heap_full(h)	((h)->used == (h)->size)
 
-#define heap_sift_down(h, i, cmp)					\
+#define heap_sift_down(h, i, cmp, set_backpointer)			\
 do {									\
 	size_t _c, _j = i;						\
 									\
@@ -159,132 +175,111 @@ do {									\
 									\
 		if (cmp(h, (h)->data[_c], (h)->data[_j]) >= 0)		\
 			break;						\
-		heap_swap(h, _c, _j);					\
+		heap_swap(h, _c, _j, set_backpointer);			\
 	}								\
 } while (0)
 
-#define heap_sift_up(h, i, cmp)						\
+#define heap_sift_up(h, i, cmp, set_backpointer)			\
 do {									\
 	while (i) {							\
 		size_t p = (i - 1) / 2;					\
 		if (cmp(h, (h)->data[i], (h)->data[p]) >= 0)		\
 			break;						\
-		heap_swap(h, i, p);					\
+		heap_swap(h, i, p, set_backpointer);			\
 		i = p;							\
 	}								\
 } while (0)
 
-#define __heap_add(h, d, cmp)						\
-do {									\
+#define __heap_add(h, d, cmp, set_backpointer)				\
+({									\
 	size_t _i = (h)->used++;					\
 	(h)->data[_i] = d;						\
+	heap_set_backpointer(h, _i, set_backpointer);			\
 									\
-	heap_sift_up(h, _i, cmp);					\
-} while (0)
+	heap_sift_up(h, _i, cmp, set_backpointer);			\
+	_i;								\
+})
 
-#define heap_add(h, d, cmp)						\
+#define heap_add(h, d, cmp, set_backpointer)				\
 ({									\
 	bool _r = !heap_full(h);					\
 	if (_r)								\
-		__heap_add(h, d, cmp);					\
+		__heap_add(h, d, cmp, set_backpointer);			\
 	_r;								\
 })
 
-#define heap_add_or_replace(h, new, cmp)				\
+#define heap_add_or_replace(h, new, cmp, set_backpointer)		\
 do {									\
-	if (!heap_add(h, new, cmp) &&					\
+	if (!heap_add(h, new, cmp, set_backpointer) &&			\
 	    cmp(h, new, heap_peek(h)) >= 0) {				\
 		(h)->data[0] = new;					\
-		heap_sift_down(h, 0, cmp);				\
+		heap_set_backpointer(h, 0, set_backpointer);		\
+		heap_sift_down(h, 0, cmp, set_backpointer);		\
 	}								\
 } while (0)
 
-#define heap_del(h, i, cmp)						\
+#define heap_del(h, i, cmp, set_backpointer)				\
 do {									\
 	size_t _i = (i);						\
 									\
 	BUG_ON(_i >= (h)->used);					\
 	(h)->used--;							\
-	heap_swap(h, _i, (h)->used);					\
-	heap_sift_up(h, _i, cmp);					\
-	heap_sift_down(h, _i, cmp);					\
+	heap_swap(h, _i, (h)->used, set_backpointer);			\
+	heap_sift_up(h, _i, cmp, set_backpointer);			\
+	heap_sift_down(h, _i, cmp, set_backpointer);			\
 } while (0)
 
-#define heap_pop(h, d, cmp)						\
+#define heap_pop(h, d, cmp, set_backpointer)				\
 ({									\
 	bool _r = (h)->used;						\
 	if (_r) {							\
 		(d) = (h)->data[0];					\
-		heap_del(h, 0, cmp);					\
+		heap_del(h, 0, cmp, set_backpointer);			\
 	}								\
 	_r;								\
 })
 
-#define heap_resort(heap, cmp)						\
+#define heap_resort(heap, cmp, set_backpointer)				\
 do {									\
 	ssize_t _i;							\
 	for (_i = (ssize_t) (heap)->used / 2 -  1; _i >= 0; --_i)	\
-		heap_sift_down(heap, _i, cmp);				\
+		heap_sift_down(heap, _i, cmp, set_backpointer);		\
 } while (0)
-
-/*
- * Simple array based allocator - preallocates a number of elements and you can
- * never allocate more than that, also has no locking.
- *
- * Handy because if you know you only need a fixed number of elements you don't
- * have to worry about memory allocation failure, and sometimes a mempool isn't
- * what you want.
- *
- * We treat the free elements as entries in a singly linked list, and the
- * freelist as a stack - allocating and freeing push and pop off the freelist.
- */
-
-#define DECLARE_ARRAY_ALLOCATOR(type, name, size)			\
-	struct {							\
-		type	*freelist;					\
-		type	data[size];					\
-	} name
-
-#define array_alloc(array)						\
-({									\
-	typeof((array)->freelist) _ret = (array)->freelist;		\
-									\
-	if (_ret)							\
-		(array)->freelist = *((typeof((array)->freelist) *) _ret);\
-									\
-	_ret;								\
-})
-
-#define array_free(array, ptr)						\
-do {									\
-	typeof((array)->freelist) _ptr = ptr;				\
-									\
-	*((typeof((array)->freelist) *) _ptr) = (array)->freelist;	\
-	(array)->freelist = _ptr;					\
-} while (0)
-
-#define array_allocator_init(array)					\
-do {									\
-	typeof((array)->freelist) _i;					\
-									\
-	BUILD_BUG_ON(sizeof((array)->data[0]) < sizeof(void *));	\
-	(array)->freelist = NULL;					\
-									\
-	for (_i = (array)->data;					\
-	     _i < (array)->data + ARRAY_SIZE((array)->data);		\
-	     _i++)							\
-		array_free(array, _i);					\
-} while (0)
-
-#define array_freelist_empty(array)	((array)->freelist == NULL)
 
 #define ANYSINT_MAX(t)							\
 	((((t) 1 << (sizeof(t) * 8 - 2)) - (t) 1) * (t) 2 + (t) 1)
+
+struct printbuf {
+	char		*pos;
+	char		*end;
+};
+
+static inline size_t printbuf_remaining(struct printbuf *buf)
+{
+	return buf->end - buf->pos;
+}
+
+#define _PBUF(_buf, _len)						\
+	((struct printbuf) {						\
+		.pos	= _buf,						\
+		.end	= _buf + _len,					\
+	})
+
+#define PBUF(_buf) _PBUF(_buf, sizeof(_buf))
+
+#define pr_buf(_out, ...)						\
+do {									\
+	(_out)->pos += scnprintf((_out)->pos, printbuf_remaining(_out),	\
+				 __VA_ARGS__);				\
+} while (0)
+
+void bch_scnmemcpy(struct printbuf *, const char *, size_t);
 
 int bch2_strtoint_h(const char *, int *);
 int bch2_strtouint_h(const char *, unsigned int *);
 int bch2_strtoll_h(const char *, long long *);
 int bch2_strtoull_h(const char *, unsigned long long *);
+int bch2_strtou64_h(const char *, u64 *);
 
 static inline int bch2_strtol_h(const char *cp, long *res)
 {
@@ -353,15 +348,14 @@ static inline int bch2_strtoul_h(const char *cp, long *res)
 		 : type_is(var, char *)		? "%s\n"		\
 		 : "%i\n", var)
 
-ssize_t bch2_hprint(char *buf, s64 v);
+void bch2_hprint(struct printbuf *, s64);
 
 bool bch2_is_zero(const void *, size_t);
 
-ssize_t bch2_scnprint_string_list(char *, size_t, const char * const[], size_t);
+void bch2_string_opt_to_text(struct printbuf *,
+			     const char * const [], size_t);
 
-ssize_t bch2_read_string_list(const char *, const char * const[]);
-
-ssize_t bch2_scnprint_flag_list(char *, size_t, const char * const[], u64);
+void bch2_flags_to_text(struct printbuf *, const char * const[], u64);
 u64 bch2_read_flag_list(char *, const char * const[]);
 
 #define NR_QUANTILES	15
@@ -436,7 +430,6 @@ static inline void bch2_ratelimit_reset(struct bch_ratelimit *d)
 
 u64 bch2_ratelimit_delay(struct bch_ratelimit *);
 void bch2_ratelimit_increment(struct bch_ratelimit *, u64);
-int bch2_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *);
 
 struct bch_pd_controller {
 	struct bch_ratelimit	rate;
@@ -500,95 +493,11 @@ do {									\
 			    (var)->p_term_inverse, 1, INT_MAX);		\
 } while (0)
 
-#define __DIV_SAFE(n, d, zero)						\
-({									\
-	typeof(n) _n = (n);						\
-	typeof(d) _d = (d);						\
-	_d ? _n / _d : zero;						\
-})
-
-#define DIV_SAFE(n, d)	__DIV_SAFE(n, d, 0)
-
 #define container_of_or_null(ptr, type, member)				\
 ({									\
 	typeof(ptr) _ptr = ptr;						\
 	_ptr ? container_of(_ptr, type, member) : NULL;			\
 })
-
-#define RB_INSERT(root, new, member, cmp)				\
-({									\
-	__label__ dup;							\
-	struct rb_node **n = &(root)->rb_node, *parent = NULL;		\
-	typeof(new) this;						\
-	int res, ret = -1;						\
-									\
-	while (*n) {							\
-		parent = *n;						\
-		this = container_of(*n, typeof(*(new)), member);	\
-		res = cmp(new, this);					\
-		if (!res)						\
-			goto dup;					\
-		n = res < 0						\
-			? &(*n)->rb_left				\
-			: &(*n)->rb_right;				\
-	}								\
-									\
-	rb_link_node(&(new)->member, parent, n);			\
-	rb_insert_color(&(new)->member, root);				\
-	ret = 0;							\
-dup:									\
-	ret;								\
-})
-
-#define RB_SEARCH(root, search, member, cmp)				\
-({									\
-	struct rb_node *n = (root)->rb_node;				\
-	typeof(&(search)) this, ret = NULL;				\
-	int res;							\
-									\
-	while (n) {							\
-		this = container_of(n, typeof(search), member);		\
-		res = cmp(&(search), this);				\
-		if (!res) {						\
-			ret = this;					\
-			break;						\
-		}							\
-		n = res < 0						\
-			? n->rb_left					\
-			: n->rb_right;					\
-	}								\
-	ret;								\
-})
-
-#define RB_GREATER(root, search, member, cmp)				\
-({									\
-	struct rb_node *n = (root)->rb_node;				\
-	typeof(&(search)) this, ret = NULL;				\
-	int res;							\
-									\
-	while (n) {							\
-		this = container_of(n, typeof(search), member);		\
-		res = cmp(&(search), this);				\
-		if (res < 0) {						\
-			ret = this;					\
-			n = n->rb_left;					\
-		} else							\
-			n = n->rb_right;				\
-	}								\
-	ret;								\
-})
-
-#define RB_FIRST(root, type, member)					\
-	container_of_or_null(rb_first(root), type, member)
-
-#define RB_LAST(root, type, member)					\
-	container_of_or_null(rb_last(root), type, member)
-
-#define RB_NEXT(ptr, member)						\
-	container_of_or_null(rb_next(&(ptr)->member), typeof(*ptr), member)
-
-#define RB_PREV(ptr, member)						\
-	container_of_or_null(rb_prev(&(ptr)->member), typeof(*ptr), member)
 
 /* Does linear interpolation between powers of two */
 static inline unsigned fract_exp_two(unsigned x, unsigned fract_bits)
@@ -748,8 +657,6 @@ static inline struct bio_vec next_contig_bvec(struct bio *bio,
 #define bio_for_each_contig_segment(bv, bio, iter)			\
 	__bio_for_each_contig_segment(bv, bio, iter, (bio)->bi_iter)
 
-size_t bch_scnmemcpy(char *, size_t, const char *, size_t);
-
 void sort_cmp_size(void *base, size_t num, size_t size,
 	  int (*cmp_func)(const void *, const void *, size_t),
 	  void (*swap_func)(void *, void *, size_t));
@@ -792,5 +699,56 @@ do {									\
 			}						\
 	}								\
 } while (0)
+
+static inline u64 percpu_u64_get(u64 __percpu *src)
+{
+	u64 ret = 0;
+	int cpu;
+
+	for_each_possible_cpu(cpu)
+		ret += *per_cpu_ptr(src, cpu);
+	return ret;
+}
+
+static inline void percpu_u64_set(u64 __percpu *dst, u64 src)
+{
+	int cpu;
+
+	for_each_possible_cpu(cpu)
+		*per_cpu_ptr(dst, cpu) = 0;
+
+	preempt_disable();
+	*this_cpu_ptr(dst) = src;
+	preempt_enable();
+}
+
+static inline void acc_u64s(u64 *acc, const u64 *src, unsigned nr)
+{
+	unsigned i;
+
+	for (i = 0; i < nr; i++)
+		acc[i] += src[i];
+}
+
+static inline void acc_u64s_percpu(u64 *acc, const u64 __percpu *src,
+				   unsigned nr)
+{
+	int cpu;
+
+	for_each_possible_cpu(cpu)
+		acc_u64s(acc, per_cpu_ptr(src, cpu), nr);
+}
+
+static inline void percpu_memset(void __percpu *p, int c, size_t bytes)
+{
+	int cpu;
+
+	for_each_possible_cpu(cpu)
+		memset(per_cpu_ptr(p, cpu), c, bytes);
+}
+
+u64 *bch2_acc_percpu_u64s(u64 __percpu *, unsigned);
+
+#define cmp_int(l, r)		((l > r) - (l < r))
 
 #endif /* _BCACHEFS_UTIL_H */

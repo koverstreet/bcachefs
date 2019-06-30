@@ -1,7 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 #ifndef NO_BCACHEFS_CHARDEV
 
 #include "bcachefs.h"
-#include "alloc.h"
 #include "bcachefs_ioctl.h"
 #include "buckets.h"
 #include "chardev.h"
@@ -158,7 +158,7 @@ static long bch2_ioctl_start(struct bch_fs *c, struct bch_ioctl_start arg)
 	if (arg.flags || arg.pad)
 		return -EINVAL;
 
-	return bch2_fs_start(c) ? -EIO : 0;
+	return bch2_fs_start(c);
 }
 
 static long bch2_ioctl_stop(struct bch_fs *c)
@@ -303,10 +303,10 @@ static ssize_t bch2_data_job_read(struct file *file, char __user *buf,
 	struct bch_ioctl_data_event e = {
 		.type			= BCH_DATA_EVENT_PROGRESS,
 		.p.data_type		= ctx->stats.data_type,
-		.p.btree_id		= ctx->stats.iter.btree_id,
-		.p.pos			= ctx->stats.iter.pos,
+		.p.btree_id		= ctx->stats.btree_id,
+		.p.pos			= ctx->stats.pos,
 		.p.sectors_done		= atomic64_read(&ctx->stats.sectors_seen),
-		.p.sectors_total	= bch2_fs_sectors_used(c, bch2_fs_usage_read(c)),
+		.p.sectors_total	= bch2_fs_usage_read_short(c).used,
 	};
 
 	if (len < sizeof(e))
@@ -394,21 +394,30 @@ static long bch2_ioctl_usage(struct bch_fs *c,
 	}
 
 	{
-		struct bch_fs_usage src = bch2_fs_usage_read(c);
+		struct bch_fs_usage *src;
 		struct bch_ioctl_fs_usage dst = {
 			.capacity		= c->capacity,
-			.used			= bch2_fs_sectors_used(c, src),
-			.online_reserved	= src.online_reserved,
 		};
+
+		src = bch2_fs_usage_read(c);
+		if (!src)
+			return -ENOMEM;
+
+		dst.used		= bch2_fs_sectors_used(c, src);
+		dst.online_reserved	= src->online_reserved;
+
+		percpu_up_read(&c->mark_lock);
 
 		for (i = 0; i < BCH_REPLICAS_MAX; i++) {
 			dst.persistent_reserved[i] =
-				src.s[i].persistent_reserved;
-
-			for (j = 0; j < S_ALLOC_NR; j++)
-				dst.sectors[s_alloc_to_data_type(j)][i] =
-					src.s[i].data[j];
+				src->persistent_reserved[i];
+#if 0
+			for (j = 0; j < BCH_DATA_NR; j++)
+				dst.sectors[j][i] = src.replicas[i].data[j];
+#endif
 		}
+
+		kfree(src);
 
 		ret = copy_to_user(&user_arg->fs, &dst, sizeof(dst));
 		if (ret)

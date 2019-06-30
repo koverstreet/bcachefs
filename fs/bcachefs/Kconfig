@@ -6,6 +6,7 @@ config BCACHEFS_FS
 	select EXPORTFS
 	select CLOSURES
 	select LIBCRC32C
+	select CRC64
 	select FS_POSIX_ACL
 	select LZ4_COMPRESS
 	select LZ4_DECOMPRESS
@@ -17,8 +18,9 @@ config BCACHEFS_FS
 	select CRYPTO_CHACHA20
 	select CRYPTO_POLY1305
 	select KEYS
-	select COMPACTION
 	select SIXLOCKS
+	select RAID6_PQ
+	select XOR_BLOCKS
 	---help---
 	The bcachefs filesystem - a modern, copy on write filesystem, with
 	support for multiple devices, compression, checksumming, etc.
@@ -41,3 +43,9 @@ config BCACHEFS_DEBUG
 
 	The resulting code will be significantly slower than normal; you
 	probably shouldn't select this option unless you're a developer.
+
+config BCACHEFS_TESTS
+	bool "bcachefs unit and performance tests"
+	depends on BCACHEFS_FS
+	---help---
+	Include some unit and performance tests for the core btree code

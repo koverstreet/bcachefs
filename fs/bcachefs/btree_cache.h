@@ -1,9 +1,9 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_BTREE_CACHE_H
 #define _BCACHEFS_BTREE_CACHE_H
 
 #include "bcachefs.h"
 #include "btree_types.h"
-#include "extents.h"
 
 struct btree_iter;
 
@@ -26,22 +26,22 @@ struct btree *bch2_btree_node_get(struct bch_fs *, struct btree_iter *,
 				  enum six_lock_type);
 
 struct btree *bch2_btree_node_get_sibling(struct bch_fs *, struct btree_iter *,
-					  struct btree *,
-					  enum btree_node_sibling);
+				struct btree *, enum btree_node_sibling);
 
-void bch2_btree_node_prefetch(struct bch_fs *, const struct bkey_i *,
-			      unsigned, enum btree_id);
+void bch2_btree_node_prefetch(struct bch_fs *, struct btree_iter *,
+			      const struct bkey_i *, unsigned);
 
 void bch2_fs_btree_cache_exit(struct bch_fs *);
 int bch2_fs_btree_cache_init(struct bch_fs *);
 void bch2_fs_btree_cache_init_early(struct btree_cache *);
 
-#define PTR_HASH(_k)	(bkey_i_to_extent_c(_k)->v._data[0])
+#define PTR_HASH(_k)	*((u64 *) &bkey_i_to_btree_ptr_c(_k)->v)
 
 /* is btree node in hash table? */
 static inline bool btree_node_hashed(struct btree *b)
 {
-	return bkey_extent_is_data(&b->key.k) && PTR_HASH(&b->key);
+	return b->key.k.type == KEY_TYPE_btree_ptr &&
+		PTR_HASH(&b->key);
 }
 
 #define for_each_cached_btree(_b, _c, _tbl, _iter, _pos)		\
@@ -84,7 +84,7 @@ static inline unsigned btree_blocks(struct bch_fs *c)
 
 #define btree_node_root(_c, _b)	((_c)->btree_roots[(_b)->btree_id].b)
 
-int bch2_print_btree_node(struct bch_fs *, struct btree *,
-			 char *, size_t);
+void bch2_btree_node_to_text(struct printbuf *, struct bch_fs *,
+			     struct btree *);
 
 #endif /* _BCACHEFS_BTREE_CACHE_H */

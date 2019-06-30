@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_REBALANCE_H
 #define _BCACHEFS_REBALANCE_H
 

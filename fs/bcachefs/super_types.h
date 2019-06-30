@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_SUPER_TYPES_H
 #define _BCACHEFS_SUPER_TYPES_H
 
@@ -10,6 +11,7 @@ struct bch_sb_handle {
 	unsigned		have_layout:1;
 	unsigned		have_bio:1;
 	unsigned		fs_sb:1;
+	u64			seq;
 };
 
 struct bch_devs_mask {
@@ -32,18 +34,6 @@ struct bch_member_cpu {
 	u8			data_allowed;
 	u8			durability;
 	u8			valid;
-};
-
-struct bch_replicas_cpu_entry {
-	u8			data_type;
-	u8			devs[BCH_SB_MEMBERS_MAX / 8];
-};
-
-struct bch_replicas_cpu {
-	struct rcu_head		rcu;
-	unsigned		nr;
-	unsigned		entry_size;
-	struct bch_replicas_cpu_entry entries[];
 };
 
 struct bch_disk_group_cpu {

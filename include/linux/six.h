@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0
+/* SPDX-License-Identifier: GPL-2.0 */
 
 #ifndef _LINUX_SIX_H
 #define _LINUX_SIX_H
@@ -50,12 +50,12 @@
  *   six_trylock_convert(lock, from, to)
  *
  * A lock may be held multiple types by the same thread (for read or intent,
- * not write) - up to SIX_LOCK_MAX_RECURSE. However, the six locks code does
- * _not_ implement the actual recursive checks itself though - rather, if your
- * code (e.g. btree iterator code) knows that the current thread already has a
- * lock held, and for the correct type, six_lock_increment() may be used to
- * bump up the counter for that type - the only effect is that one more call to
- * unlock will be required before the lock is unlocked.
+ * not write). However, the six locks code does _not_ implement the actual
+ * recursive checks itself though - rather, if your code (e.g. btree iterator
+ * code) knows that the current thread already has a lock held, and for the
+ * correct type, six_lock_increment() may be used to bump up the counter for
+ * that type - the only effect is that one more call to unlock will be required
+ * before the lock is unlocked.
  */
 
 #include <linux/lockdep.h>
@@ -80,8 +80,8 @@ union six_lock_state {
 	};
 
 	struct {
-		unsigned	read_lock:26;
-		unsigned	intent_lock:3;
+		unsigned	read_lock:28;
+		unsigned	intent_lock:1;
 		unsigned	waiters:3;
 		/*
 		 * seq works much like in seqlocks: it's incremented every time
@@ -96,8 +96,6 @@ union six_lock_state {
 	};
 };
 
-#define SIX_LOCK_MAX_RECURSE	((1 << 3) - 1)
-
 enum six_lock_type {
 	SIX_LOCK_read,
 	SIX_LOCK_intent,
@@ -106,6 +104,7 @@ enum six_lock_type {
 
 struct six_lock {
 	union six_lock_state	state;
+	unsigned		intent_lock_recurse;
 	struct task_struct	*owner;
 	struct optimistic_spin_queue osq;
 
@@ -138,8 +137,6 @@ do {									\
 } while (0)
 
 #define __SIX_VAL(field, _v)	(((union six_lock_state) { .field = _v }).v)
-
-#ifdef SIX_LOCK_SEPARATE_LOCKFNS
 
 #define __SIX_LOCK(type)						\
 bool six_trylock_##type(struct six_lock *);				\
@@ -184,41 +181,6 @@ static inline void six_unlock_type(struct six_lock *lock, enum six_lock_type typ
 {
 	SIX_LOCK_DISPATCH(type, six_unlock, lock);
 }
-
-#else
-
-bool six_trylock_type(struct six_lock *, enum six_lock_type);
-bool six_relock_type(struct six_lock *, enum six_lock_type, unsigned);
-void six_lock_type(struct six_lock *, enum six_lock_type);
-void six_unlock_type(struct six_lock *, enum six_lock_type);
-
-#define __SIX_LOCK(type)						\
-static __always_inline bool six_trylock_##type(struct six_lock *lock)	\
-{									\
-	return six_trylock_type(lock, SIX_LOCK_##type);			\
-}									\
-									\
-static __always_inline bool six_relock_##type(struct six_lock *lock, u32 seq)\
-{									\
-	return six_relock_type(lock, SIX_LOCK_##type, seq);		\
-}									\
-									\
-static __always_inline void six_lock_##type(struct six_lock *lock)	\
-{									\
-	six_lock_type(lock, SIX_LOCK_##type);				\
-}									\
-									\
-static __always_inline void six_unlock_##type(struct six_lock *lock)	\
-{									\
-	six_unlock_type(lock, SIX_LOCK_##type);				\
-}
-
-__SIX_LOCK(read)
-__SIX_LOCK(intent)
-__SIX_LOCK(write)
-#undef __SIX_LOCK
-
-#endif
 
 void six_lock_downgrade(struct six_lock *);
 bool six_lock_tryupgrade(struct six_lock *);

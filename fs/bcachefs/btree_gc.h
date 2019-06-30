@@ -1,18 +1,15 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_BTREE_GC_H
 #define _BCACHEFS_BTREE_GC_H
 
 #include "btree_types.h"
 
-enum bkey_type;
-
 void bch2_coalesce(struct bch_fs *);
-void bch2_gc(struct bch_fs *);
+
+struct journal_keys;
+int bch2_gc(struct bch_fs *, struct journal_keys *, bool, bool);
 void bch2_gc_thread_stop(struct bch_fs *);
 int bch2_gc_thread_start(struct bch_fs *);
-int bch2_initial_gc(struct bch_fs *, struct list_head *);
-u8 bch2_btree_key_recalc_oldest_gen(struct bch_fs *, struct bkey_s_c);
-int bch2_btree_mark_key_initial(struct bch_fs *, enum bkey_type,
-				struct bkey_s_c);
 void bch2_mark_dev_superblock(struct bch_fs *, struct bch_dev *, unsigned);
 
 /*
@@ -46,8 +43,6 @@ static inline struct gc_pos gc_phase(enum gc_phase phase)
 	};
 }
 
-#define GC_POS_MIN	gc_phase(0)
-
 static inline int gc_pos_cmp(struct gc_pos l, struct gc_pos r)
 {
 	if (l.phase != r.phase)
@@ -59,17 +54,34 @@ static inline int gc_pos_cmp(struct gc_pos l, struct gc_pos r)
 	return 0;
 }
 
+static inline enum gc_phase btree_id_to_gc_phase(enum btree_id id)
+{
+	switch (id) {
+#define x(n, v, s) case BTREE_ID_##n: return GC_PHASE_BTREE_##n;
+	BCH_BTREE_IDS()
+#undef x
+	default:
+		BUG();
+	}
+}
+
+static inline struct gc_pos gc_pos_btree(enum btree_id id,
+					 struct bpos pos, unsigned level)
+{
+	return (struct gc_pos) {
+		.phase	= btree_id_to_gc_phase(id),
+		.pos	= pos,
+		.level	= level,
+	};
+}
+
 /*
  * GC position of the pointers within a btree node: note, _not_ for &b->key
  * itself, that lives in the parent node:
  */
 static inline struct gc_pos gc_pos_btree_node(struct btree *b)
 {
-	return (struct gc_pos) {
-		.phase	= b->btree_id,
-		.pos	= b->key.k.p,
-		.level	= b->level,
-	};
+	return gc_pos_btree(b->btree_id, b->key.k.p, b->level);
 }
 
 /*
@@ -81,11 +93,7 @@ static inline struct gc_pos gc_pos_btree_node(struct btree *b)
  */
 static inline struct gc_pos gc_pos_btree_root(enum btree_id id)
 {
-	return (struct gc_pos) {
-		.phase	= (int) id,
-		.pos	= POS_MAX,
-		.level	= U8_MAX,
-	};
+	return gc_pos_btree(id, POS_MAX, BTREE_MAX_DEPTH);
 }
 
 static inline struct gc_pos gc_pos_alloc(struct bch_fs *c, struct open_bucket *ob)
@@ -96,14 +104,14 @@ static inline struct gc_pos gc_pos_alloc(struct bch_fs *c, struct open_bucket *o
 	};
 }
 
-static inline bool gc_will_visit(struct bch_fs *c, struct gc_pos pos)
+static inline bool gc_visited(struct bch_fs *c, struct gc_pos pos)
 {
 	unsigned seq;
 	bool ret;
 
 	do {
 		seq = read_seqcount_begin(&c->gc_pos_lock);
-		ret = gc_pos_cmp(c->gc_pos, pos) < 0;
+		ret = gc_pos_cmp(pos, c->gc_pos) <= 0;
 	} while (read_seqcount_retry(&c->gc_pos_lock, seq));
 
 	return ret;

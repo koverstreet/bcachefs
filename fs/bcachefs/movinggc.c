@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Moving/copying garbage collector
  *
@@ -5,6 +6,7 @@
  */
 
 #include "bcachefs.h"
+#include "alloc_foreground.h"
 #include "btree_iter.h"
 #include "btree_update.h"
 #include "buckets.h"
@@ -52,7 +54,7 @@ static inline int sectors_used_cmp(copygc_heap *heap,
 				   struct copygc_heap_entry l,
 				   struct copygc_heap_entry r)
 {
-	return (l.sectors > r.sectors) - (l.sectors < r.sectors);
+	return cmp_int(l.sectors, r.sectors);
 }
 
 static int bucket_offset_cmp(const void *_l, const void *_r, size_t size)
@@ -60,40 +62,46 @@ static int bucket_offset_cmp(const void *_l, const void *_r, size_t size)
 	const struct copygc_heap_entry *l = _l;
 	const struct copygc_heap_entry *r = _r;
 
-	return (l->offset > r->offset) - (l->offset < r->offset);
+	return cmp_int(l->offset, r->offset);
 }
 
 static bool __copygc_pred(struct bch_dev *ca,
-			  struct bkey_s_c_extent e)
+			  struct bkey_s_c k)
 {
 	copygc_heap *h = &ca->copygc_heap;
-	const struct bch_extent_ptr *ptr =
-		bch2_extent_has_device(e, ca->dev_idx);
 
-	if (ptr) {
-		struct copygc_heap_entry search = { .offset = ptr->offset };
+	switch (k.k->type) {
+	case KEY_TYPE_extent: {
+		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
+		const struct bch_extent_ptr *ptr =
+			bch2_extent_has_device(e, ca->dev_idx);
 
-		ssize_t i = eytzinger0_find_le(h->data, h->used,
-					       sizeof(h->data[0]),
-					       bucket_offset_cmp, &search);
+		if (ptr) {
+			struct copygc_heap_entry search = { .offset = ptr->offset };
 
-		return (i >= 0 &&
-			ptr->offset < h->data[i].offset + ca->mi.bucket_size &&
-			ptr->gen == h->data[i].gen);
+			ssize_t i = eytzinger0_find_le(h->data, h->used,
+						       sizeof(h->data[0]),
+						       bucket_offset_cmp, &search);
+
+			return (i >= 0 &&
+				ptr->offset < h->data[i].offset + ca->mi.bucket_size &&
+				ptr->gen == h->data[i].gen);
+		}
+		break;
+	}
 	}
 
 	return false;
 }
 
 static enum data_cmd copygc_pred(struct bch_fs *c, void *arg,
-				 enum bkey_type type,
-				 struct bkey_s_c_extent e,
+				 struct bkey_s_c k,
 				 struct bch_io_opts *io_opts,
 				 struct data_opts *data_opts)
 {
 	struct bch_dev *ca = arg;
 
-	if (!__copygc_pred(ca, e))
+	if (!__copygc_pred(ca, k))
 		return DATA_SKIP;
 
 	data_opts->target		= dev_to_target(ca->dev_idx);
@@ -108,7 +116,7 @@ static bool have_copygc_reserve(struct bch_dev *ca)
 
 	spin_lock(&ca->freelist_lock);
 	ret = fifo_full(&ca->free[RESERVE_MOVINGGC]) ||
-		ca->allocator_blocked;
+		ca->allocator_state != ALLOCATOR_RUNNING;
 	spin_unlock(&ca->freelist_lock);
 
 	return ret;
@@ -159,7 +167,7 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 			.sectors	= bucket_sectors_used(m),
 			.offset		= bucket_to_sector(ca, b),
 		};
-		heap_add_or_replace(h, e, -sectors_used_cmp);
+		heap_add_or_replace(h, e, -sectors_used_cmp, NULL);
 	}
 	up_read(&ca->bucket_lock);
 	up_read(&c->gc_lock);
@@ -168,7 +176,7 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 		sectors_to_move += i->sectors;
 
 	while (sectors_to_move > COPYGC_SECTORS_PER_ITER(ca)) {
-		BUG_ON(!heap_pop(h, e, -sectors_used_cmp));
+		BUG_ON(!heap_pop(h, e, -sectors_used_cmp, NULL));
 		sectors_to_move -= e.sectors;
 	}
 
@@ -201,7 +209,8 @@ static void bch2_copygc(struct bch_fs *c, struct bch_dev *ca)
 	up_read(&ca->bucket_lock);
 
 	if (sectors_not_moved && !ret)
-		bch_warn(c, "copygc finished but %llu/%llu sectors, %llu/%llu buckets not moved",
+		bch_warn_ratelimited(c,
+			"copygc finished but %llu/%llu sectors, %llu/%llu buckets not moved",
 			 sectors_not_moved, sectors_to_move,
 			 buckets_not_moved, buckets_to_move);
 
@@ -227,16 +236,10 @@ static int bch2_copygc_thread(void *arg)
 
 		last = atomic_long_read(&clock->now);
 
-		reserve = div64_u64((ca->mi.nbuckets - ca->mi.first_bucket) *
-				 ca->mi.bucket_size *
-				 c->opts.gc_reserve_percent, 200);
+		reserve = ca->copygc_threshold;
 
 		usage = bch2_dev_usage_read(c, ca);
 
-		/*
-		 * don't start copygc until less than half the gc reserve is
-		 * available:
-		 */
 		available = __dev_buckets_available(ca, usage) *
 			ca->mi.bucket_size;
 		if (available > reserve) {
@@ -280,7 +283,8 @@ int bch2_copygc_start(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct task_struct *t;
 
-	BUG_ON(ca->copygc_thread);
+	if (ca->copygc_thread)
+		return 0;
 
 	if (c->opts.nochanges)
 		return 0;

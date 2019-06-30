@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_BKEY_H
 #define _BCACHEFS_BKEY_H
 
@@ -32,10 +33,7 @@ struct bkey_s {
 
 #define bkey_next(_k)		vstruct_next(_k)
 
-static inline unsigned bkey_val_u64s(const struct bkey *k)
-{
-	return k->u64s - BKEY_U64s;
-}
+#define bkey_val_u64s(_k)	((_k)->u64s - BKEY_U64s)
 
 static inline size_t bkey_val_bytes(const struct bkey *k)
 {
@@ -52,25 +50,12 @@ static inline void set_bkey_val_bytes(struct bkey *k, unsigned bytes)
 	k->u64s = BKEY_U64s + DIV_ROUND_UP(bytes, sizeof(u64));
 }
 
-/*
- * Mark a key as deleted without changing the size of the value (i.e. modifying
- * keys in the btree in place)
- */
-static inline void __set_bkey_deleted(struct bkey *k)
-{
-	k->type = KEY_TYPE_DELETED;
-}
+#define bkey_val_end(_k)	vstruct_idx((_k).v, bkey_val_u64s((_k).k))
 
-static inline void set_bkey_deleted(struct bkey *k)
-{
-	__set_bkey_deleted(k);
-	set_bkey_val_u64s(k, 0);
-}
-
-#define bkey_deleted(_k)	((_k)->type == KEY_TYPE_DELETED)
+#define bkey_deleted(_k)	((_k)->type == KEY_TYPE_deleted)
 
 #define bkey_whiteout(_k)				\
-	((_k)->type == KEY_TYPE_DELETED || (_k)->type == KEY_TYPE_DISCARD)
+	((_k)->type == KEY_TYPE_deleted || (_k)->type == KEY_TYPE_discard)
 
 #define bkey_packed_typecheck(_k)					\
 ({									\
@@ -221,14 +206,12 @@ void bch2_bkey_swab_key(const struct bkey_format *, struct bkey_packed *);
 
 static __always_inline int bversion_cmp(struct bversion l, struct bversion r)
 {
-	if (l.hi != r.hi)
-		return l.hi < r.hi ? -1 : 1;
-	if (l.lo != r.lo)
-		return l.lo < r.lo ? -1 : 1;
-	return 0;
+	return  cmp_int(l.hi, r.hi) ?:
+		cmp_int(l.lo, r.lo);
 }
 
 #define ZERO_VERSION	((struct bversion) { .hi = 0, .lo = 0 })
+#define MAX_VERSION	((struct bversion) { .hi = ~0, .lo = ~0ULL })
 
 static __always_inline int bversion_zero(struct bversion v)
 {
@@ -280,6 +263,16 @@ static inline struct bpos bkey_successor(struct bpos p)
 
 	if (!++ret.offset)
 		BUG_ON(!++ret.inode);
+
+	return ret;
+}
+
+static inline struct bpos bkey_predecessor(struct bpos p)
+{
+	struct bpos ret = p;
+
+	if (!ret.offset--)
+		BUG_ON(!ret.inode--);
 
 	return ret;
 }
@@ -437,7 +430,15 @@ static inline struct bkey_s_c bkey_i_to_s_c(const struct bkey_i *k)
  * bkey_i_extent to a bkey_i - since that's always safe, instead of conversion
  * functions.
  */
-#define __BKEY_VAL_ACCESSORS(name, nr, _assert)				\
+#define BKEY_VAL_ACCESSORS(name)					\
+struct bkey_i_##name {							\
+	union {								\
+		struct bkey		k;				\
+		struct bkey_i		k_i;				\
+	};								\
+	struct bch_##name		v;				\
+};									\
+									\
 struct bkey_s_c_##name {						\
 	union {								\
 	struct {							\
@@ -462,20 +463,20 @@ struct bkey_s_##name {							\
 									\
 static inline struct bkey_i_##name *bkey_i_to_##name(struct bkey_i *k)	\
 {									\
-	_assert(k->k.type, nr);						\
+	EBUG_ON(k->k.type != KEY_TYPE_##name);				\
 	return container_of(&k->k, struct bkey_i_##name, k);		\
 }									\
 									\
 static inline const struct bkey_i_##name *				\
 bkey_i_to_##name##_c(const struct bkey_i *k)				\
 {									\
-	_assert(k->k.type, nr);						\
+	EBUG_ON(k->k.type != KEY_TYPE_##name);				\
 	return container_of(&k->k, struct bkey_i_##name, k);		\
 }									\
 									\
 static inline struct bkey_s_##name bkey_s_to_##name(struct bkey_s k)	\
 {									\
-	_assert(k.k->type, nr);						\
+	EBUG_ON(k.k->type != KEY_TYPE_##name);				\
 	return (struct bkey_s_##name) {					\
 		.k = k.k,						\
 		.v = container_of(k.v, struct bch_##name, v),		\
@@ -484,7 +485,7 @@ static inline struct bkey_s_##name bkey_s_to_##name(struct bkey_s k)	\
 									\
 static inline struct bkey_s_c_##name bkey_s_c_to_##name(struct bkey_s_c k)\
 {									\
-	_assert(k.k->type, nr);						\
+	EBUG_ON(k.k->type != KEY_TYPE_##name);				\
 	return (struct bkey_s_c_##name) {				\
 		.k = k.k,						\
 		.v = container_of(k.v, struct bch_##name, v),		\
@@ -510,7 +511,7 @@ name##_i_to_s_c(const struct bkey_i_##name *k)				\
 									\
 static inline struct bkey_s_##name bkey_i_to_s_##name(struct bkey_i *k)	\
 {									\
-	_assert(k->k.type, nr);						\
+	EBUG_ON(k->k.type != KEY_TYPE_##name);				\
 	return (struct bkey_s_##name) {					\
 		.k = &k->k,						\
 		.v = container_of(&k->v, struct bch_##name, v),		\
@@ -520,25 +521,11 @@ static inline struct bkey_s_##name bkey_i_to_s_##name(struct bkey_i *k)	\
 static inline struct bkey_s_c_##name					\
 bkey_i_to_s_c_##name(const struct bkey_i *k)				\
 {									\
-	_assert(k->k.type, nr);						\
+	EBUG_ON(k->k.type != KEY_TYPE_##name);				\
 	return (struct bkey_s_c_##name) {				\
 		.k = &k->k,						\
 		.v = container_of(&k->v, struct bch_##name, v),		\
 	};								\
-}									\
-									\
-static inline struct bch_##name *					\
-bkey_p_##name##_val(const struct bkey_format *f,			\
-		    struct bkey_packed *k)				\
-{									\
-	return container_of(bkeyp_val(f, k), struct bch_##name, v);	\
-}									\
-									\
-static inline const struct bch_##name *					\
-bkey_p_c_##name##_val(const struct bkey_format *f,			\
-		      const struct bkey_packed *k)			\
-{									\
-	return container_of(bkeyp_val(f, k), struct bch_##name, v);	\
 }									\
 									\
 static inline struct bkey_i_##name *bkey_##name##_init(struct bkey_i *_k)\
@@ -548,43 +535,23 @@ static inline struct bkey_i_##name *bkey_##name##_init(struct bkey_i *_k)\
 									\
 	bkey_init(&k->k);						\
 	memset(&k->v, 0, sizeof(k->v));					\
-	k->k.type = nr;							\
+	k->k.type = KEY_TYPE_##name;					\
 	set_bkey_val_bytes(&k->k, sizeof(k->v));			\
 									\
 	return k;							\
 }
 
-#define __BKEY_VAL_ASSERT(_type, _nr)	EBUG_ON(_type != _nr)
-
-#define BKEY_VAL_ACCESSORS(name, _nr)					\
-	static inline void __bch_##name##_assert(u8 type, u8 nr)	\
-	{								\
-		EBUG_ON(type != _nr);					\
-	}								\
-									\
-	__BKEY_VAL_ACCESSORS(name, _nr, __bch_##name##_assert)
-
-BKEY_VAL_ACCESSORS(cookie,		KEY_TYPE_COOKIE);
-
-static inline void __bch2_extent_assert(u8 type, u8 nr)
-{
-	EBUG_ON(type != BCH_EXTENT && type != BCH_EXTENT_CACHED);
-}
-
-__BKEY_VAL_ACCESSORS(extent,		BCH_EXTENT, __bch2_extent_assert);
-BKEY_VAL_ACCESSORS(reservation,		BCH_RESERVATION);
-
-BKEY_VAL_ACCESSORS(inode,		BCH_INODE_FS);
-BKEY_VAL_ACCESSORS(inode_blockdev,	BCH_INODE_BLOCKDEV);
-BKEY_VAL_ACCESSORS(inode_generation,	BCH_INODE_GENERATION);
-
-BKEY_VAL_ACCESSORS(dirent,		BCH_DIRENT);
-
-BKEY_VAL_ACCESSORS(xattr,		BCH_XATTR);
-
-BKEY_VAL_ACCESSORS(alloc,		BCH_ALLOC);
-
-BKEY_VAL_ACCESSORS(quota,		BCH_QUOTA);
+BKEY_VAL_ACCESSORS(cookie);
+BKEY_VAL_ACCESSORS(btree_ptr);
+BKEY_VAL_ACCESSORS(extent);
+BKEY_VAL_ACCESSORS(reservation);
+BKEY_VAL_ACCESSORS(inode);
+BKEY_VAL_ACCESSORS(inode_generation);
+BKEY_VAL_ACCESSORS(dirent);
+BKEY_VAL_ACCESSORS(xattr);
+BKEY_VAL_ACCESSORS(alloc);
+BKEY_VAL_ACCESSORS(quota);
+BKEY_VAL_ACCESSORS(stripe);
 
 /* byte order helpers */
 

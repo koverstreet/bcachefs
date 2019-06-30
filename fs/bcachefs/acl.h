@@ -1,5 +1,11 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_ACL_H
 #define _BCACHEFS_ACL_H
+
+struct bch_inode_unpacked;
+struct bch_hash_info;
+struct bch_inode_info;
+struct posix_acl;
 
 #ifdef CONFIG_BCACHEFS_POSIX_ACL
 
@@ -20,43 +26,30 @@ typedef struct {
 	__le32		a_version;
 } bch_acl_header;
 
-static inline size_t bch2_acl_size(int count)
-{
-	if (count <= 4) {
-		return sizeof(bch_acl_header) +
-		       count * sizeof(bch_acl_entry_short);
-	} else {
-		return sizeof(bch_acl_header) +
-		       4 * sizeof(bch_acl_entry_short) +
-		       (count - 4) * sizeof(bch_acl_entry);
-	}
-}
+struct posix_acl *bch2_get_acl(struct inode *, int);
 
-static inline int bch2_acl_count(size_t size)
-{
-	ssize_t s;
-
-	size -= sizeof(bch_acl_header);
-	s = size - 4 * sizeof(bch_acl_entry_short);
-	if (s < 0) {
-		if (size % sizeof(bch_acl_entry_short))
-			return -1;
-		return size / sizeof(bch_acl_entry_short);
-	} else {
-		if (s % sizeof(bch_acl_entry))
-			return -1;
-		return s / sizeof(bch_acl_entry) + 4;
-	}
-}
-
-struct posix_acl;
-
-extern struct posix_acl *bch2_get_acl(struct inode *, int);
-extern int bch2_set_acl(struct inode *, struct posix_acl *, int);
+int bch2_set_acl_trans(struct btree_trans *,
+		       struct bch_inode_unpacked *,
+		       const struct bch_hash_info *,
+		       struct posix_acl *, int);
+int bch2_set_acl(struct inode *, struct posix_acl *, int);
+int bch2_acl_chmod(struct btree_trans *, struct bch_inode_info *,
+		   umode_t, struct posix_acl **);
 
 #else
 
-static inline int bch2_set_acl(struct inode *inode, struct posix_acl *acl, int type)
+static inline int bch2_set_acl_trans(struct btree_trans *trans,
+				     struct bch_inode_unpacked *inode_u,
+				     const struct bch_hash_info *hash_info,
+				     struct posix_acl *acl, int type)
+{
+	return 0;
+}
+
+static inline int bch2_acl_chmod(struct btree_trans *trans,
+				 struct bch_inode_info *inode,
+				 umode_t mode,
+				 struct posix_acl **new_acl)
 {
 	return 0;
 }

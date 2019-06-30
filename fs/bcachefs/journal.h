@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_JOURNAL_H
 #define _BCACHEFS_JOURNAL_H
 
@@ -118,6 +119,7 @@ static inline void journal_wake(struct journal *j)
 {
 	wake_up(&j->wait);
 	closure_wake_up(&j->async_wait);
+	closure_wake_up(&j->preres_wait);
 }
 
 static inline struct journal_buf *journal_cur_buf(struct journal *j)
@@ -178,6 +180,11 @@ static inline unsigned jset_u64s(unsigned u64s)
 	return u64s + sizeof(struct jset_entry) / sizeof(u64);
 }
 
+static inline int journal_entry_overhead(struct journal *j)
+{
+	return sizeof(struct jset) / sizeof(u64) + j->entry_u64s_reserved;
+}
+
 static inline struct jset_entry *
 bch2_journal_add_entry_noreservation(struct journal_buf *buf, size_t u64s)
 {
@@ -222,7 +229,20 @@ static inline void bch2_journal_add_keys(struct journal *j, struct journal_res *
 			       id, 0, k, k->k.u64s);
 }
 
-void bch2_journal_buf_put_slowpath(struct journal *, bool);
+static inline bool journal_entry_empty(struct jset *j)
+{
+	struct jset_entry *i;
+
+	if (j->seq != j->last_seq)
+		return false;
+
+	vstruct_for_each(j, i)
+		if (i->type == BCH_JSET_ENTRY_btree_keys && i->u64s)
+			return false;
+	return true;
+}
+
+void __bch2_journal_buf_put(struct journal *, bool);
 
 static inline void bch2_journal_buf_put(struct journal *j, unsigned idx,
 				       bool need_write_just_set)
@@ -233,17 +253,10 @@ static inline void bch2_journal_buf_put(struct journal *j, unsigned idx,
 				    .buf0_count = idx == 0,
 				    .buf1_count = idx == 1,
 				    }).v, &j->reservations.counter);
-
-	EBUG_ON(s.idx != idx && !s.prev_buf_unwritten);
-
-	/*
-	 * Do not initiate a journal write if the journal is in an error state
-	 * (previous journal entry write may have failed)
-	 */
-	if (s.idx != idx &&
-	    !journal_state_count(s, idx) &&
-	    s.cur_entry_offset != JOURNAL_ENTRY_ERROR_VAL)
-		bch2_journal_buf_put_slowpath(j, need_write_just_set);
+	if (!journal_state_count(s, idx)) {
+		EBUG_ON(s.idx == idx || !s.prev_buf_unwritten);
+		__bch2_journal_buf_put(j, need_write_just_set);
+	}
 }
 
 /*
@@ -269,12 +282,15 @@ static inline void bch2_journal_res_put(struct journal *j,
 }
 
 int bch2_journal_res_get_slowpath(struct journal *, struct journal_res *,
-				 unsigned, unsigned);
+				  unsigned);
+
+#define JOURNAL_RES_GET_NONBLOCK	(1 << 0)
+#define JOURNAL_RES_GET_CHECK		(1 << 1)
+#define JOURNAL_RES_GET_RESERVED	(1 << 2)
 
 static inline int journal_res_get_fast(struct journal *j,
 				       struct journal_res *res,
-				       unsigned u64s_min,
-				       unsigned u64s_max)
+				       unsigned flags)
 {
 	union journal_res_state old, new;
 	u64 v = atomic64_read(&j->reservations.counter);
@@ -286,44 +302,142 @@ static inline int journal_res_get_fast(struct journal *j,
 		 * Check if there is still room in the current journal
 		 * entry:
 		 */
-		if (old.cur_entry_offset + u64s_min > j->cur_entry_u64s)
+		if (new.cur_entry_offset + res->u64s > j->cur_entry_u64s)
 			return 0;
 
-		res->offset	= old.cur_entry_offset;
-		res->u64s	= min(u64s_max, j->cur_entry_u64s -
-				      old.cur_entry_offset);
+		EBUG_ON(!journal_state_count(new, new.idx));
 
-		journal_state_inc(&new);
+		if (!(flags & JOURNAL_RES_GET_RESERVED) &&
+		    !test_bit(JOURNAL_MAY_GET_UNRESERVED, &j->flags))
+			return 0;
+
+		if (flags & JOURNAL_RES_GET_CHECK)
+			return 1;
+
 		new.cur_entry_offset += res->u64s;
+		journal_state_inc(&new);
 	} while ((v = atomic64_cmpxchg(&j->reservations.counter,
 				       old.v, new.v)) != old.v);
 
-	res->ref = true;
-	res->idx = new.idx;
-	res->seq = le64_to_cpu(j->buf[res->idx].data->seq);
+	res->ref	= true;
+	res->idx	= old.idx;
+	res->offset	= old.cur_entry_offset;
+	res->seq	= le64_to_cpu(j->buf[old.idx].data->seq);
 	return 1;
 }
 
 static inline int bch2_journal_res_get(struct journal *j, struct journal_res *res,
-				      unsigned u64s_min, unsigned u64s_max)
+				       unsigned u64s, unsigned flags)
 {
 	int ret;
 
 	EBUG_ON(res->ref);
-	EBUG_ON(u64s_max < u64s_min);
 	EBUG_ON(!test_bit(JOURNAL_STARTED, &j->flags));
 
-	if (journal_res_get_fast(j, res, u64s_min, u64s_max))
+	res->u64s = u64s;
+
+	if (journal_res_get_fast(j, res, flags))
 		goto out;
 
-	ret = bch2_journal_res_get_slowpath(j, res, u64s_min, u64s_max);
+	ret = bch2_journal_res_get_slowpath(j, res, flags);
 	if (ret)
 		return ret;
 out:
-	lock_acquire_shared(&j->res_map, 0, 0, NULL, _THIS_IP_);
-	EBUG_ON(!res->ref);
+	if (!(flags & JOURNAL_RES_GET_CHECK)) {
+		lock_acquire_shared(&j->res_map, 0, 0, NULL, _THIS_IP_);
+		EBUG_ON(!res->ref);
+	}
 	return 0;
 }
+
+/* journal_preres: */
+
+static inline bool journal_check_may_get_unreserved(struct journal *j)
+{
+	union journal_preres_state s = READ_ONCE(j->prereserved);
+	bool ret = s.reserved <= s.remaining &&
+		fifo_free(&j->pin) > 8;
+
+	lockdep_assert_held(&j->lock);
+
+	if (ret != test_bit(JOURNAL_MAY_GET_UNRESERVED, &j->flags)) {
+		if (ret) {
+			set_bit(JOURNAL_MAY_GET_UNRESERVED, &j->flags);
+			journal_wake(j);
+		} else {
+			clear_bit(JOURNAL_MAY_GET_UNRESERVED, &j->flags);
+		}
+	}
+	return ret;
+}
+
+static inline void bch2_journal_preres_put(struct journal *j,
+					   struct journal_preres *res)
+{
+	union journal_preres_state s = { .reserved = res->u64s };
+
+	if (!res->u64s)
+		return;
+
+	s.v = atomic64_sub_return(s.v, &j->prereserved.counter);
+	res->u64s = 0;
+	closure_wake_up(&j->preres_wait);
+
+	if (s.reserved <= s.remaining &&
+	    !test_bit(JOURNAL_MAY_GET_UNRESERVED, &j->flags)) {
+		spin_lock(&j->lock);
+		journal_check_may_get_unreserved(j);
+		spin_unlock(&j->lock);
+	}
+}
+
+int __bch2_journal_preres_get(struct journal *,
+			struct journal_preres *, unsigned);
+
+static inline int bch2_journal_preres_get_fast(struct journal *j,
+					       struct journal_preres *res,
+					       unsigned new_u64s)
+{
+	int d = new_u64s - res->u64s;
+	union journal_preres_state old, new;
+	u64 v = atomic64_read(&j->prereserved.counter);
+
+	do {
+		old.v = new.v = v;
+
+		new.reserved += d;
+
+		if (new.reserved > new.remaining)
+			return 0;
+	} while ((v = atomic64_cmpxchg(&j->prereserved.counter,
+				       old.v, new.v)) != old.v);
+
+	res->u64s += d;
+	return 1;
+}
+
+static inline int bch2_journal_preres_get(struct journal *j,
+					  struct journal_preres *res,
+					  unsigned new_u64s,
+					  unsigned flags)
+{
+	if (new_u64s <= res->u64s)
+		return 0;
+
+	if (bch2_journal_preres_get_fast(j, res, new_u64s))
+		return 0;
+
+	if (flags & JOURNAL_RES_GET_NONBLOCK)
+		return -EAGAIN;
+
+	return __bch2_journal_preres_get(j, res, new_u64s);
+}
+
+/* journal_entry_res: */
+
+void bch2_journal_entry_res_resize(struct journal *,
+				   struct journal_entry_res *,
+				   unsigned);
 
 u64 bch2_journal_last_unwritten_seq(struct journal *);
 int bch2_journal_open_seq_async(struct journal *, u64, struct closure *);
@@ -352,15 +466,14 @@ static inline bool journal_flushes_device(struct bch_dev *ca)
 	return true;
 }
 
-int bch2_journal_mark(struct bch_fs *, struct list_head *);
-void bch2_journal_entries_free(struct list_head *);
-int bch2_journal_replay(struct bch_fs *, struct list_head *);
-
 static inline void bch2_journal_set_replay_done(struct journal *j)
 {
 	BUG_ON(!test_bit(JOURNAL_STARTED, &j->flags));
 	set_bit(JOURNAL_REPLAY_DONE, &j->flags);
 }
+
+void bch2_journal_unblock(struct journal *);
+void bch2_journal_block(struct journal *);
 
 ssize_t bch2_journal_print_debug(struct journal *, char *);
 ssize_t bch2_journal_print_pins(struct journal *, char *);
@@ -370,8 +483,10 @@ int bch2_set_nr_journal_buckets(struct bch_fs *, struct bch_dev *,
 int bch2_dev_journal_alloc(struct bch_dev *);
 
 void bch2_dev_journal_stop(struct journal *, struct bch_dev *);
+
 void bch2_fs_journal_stop(struct journal *);
-void bch2_fs_journal_start(struct journal *);
+int bch2_fs_journal_start(struct journal *, u64, struct list_head *);
+
 void bch2_dev_journal_exit(struct bch_dev *);
 int bch2_dev_journal_init(struct bch_dev *, struct bch_sb *);
 void bch2_fs_journal_exit(struct journal *);

@@ -1,9 +1,14 @@
+// SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "buckets.h"
 #include "checksum.h"
 #include "disk_groups.h"
+#include "ec.h"
 #include "error.h"
 #include "io.h"
+#include "journal.h"
+#include "journal_seq_blacklist.h"
 #include "replicas.h"
 #include "quota.h"
 #include "super-io.h"
@@ -55,8 +60,13 @@ static struct bch_sb_field *__bch2_sb_field_resize(struct bch_sb_handle *sb,
 		void *src, *dst;
 
 		src = vstruct_end(f);
-		f->u64s = cpu_to_le32(u64s);
-		dst = vstruct_end(f);
+
+		if (u64s) {
+			f->u64s = cpu_to_le32(u64s);
+			dst = vstruct_end(f);
+		} else {
+			dst = f;
+		}
 
 		memmove(dst, src, vstruct_end(sb->sb) - src);
 
@@ -66,7 +76,16 @@ static struct bch_sb_field *__bch2_sb_field_resize(struct bch_sb_handle *sb,
 
 	sb->sb->u64s = cpu_to_le32(sb_u64s);
 
-	return f;
+	return u64s ? f : NULL;
+}
+
+void bch2_sb_field_delete(struct bch_sb_handle *sb,
+			  enum bch_sb_field_type type)
+{
+	struct bch_sb_field *f = bch2_sb_field_get(sb->sb, type);
+
+	if (f)
+		__bch2_sb_field_resize(sb, f, 0);
 }
 
 /* Superblock realloc/free: */
@@ -88,6 +107,9 @@ int bch2_sb_realloc(struct bch_sb_handle *sb, unsigned u64s)
 	unsigned order = get_order(new_bytes);
 	struct bch_sb *new_sb;
 	struct bio *bio;
+
+	if (sb->sb && sb->page_order >= order)
+		return 0;
 
 	if (sb->have_layout) {
 		u64 max_bytes = 512 << sb->sb->layout.sb_max_size_bits;
@@ -117,7 +139,7 @@ int bch2_sb_realloc(struct bch_sb_handle *sb, unsigned u64s)
 		sb->bio = bio;
 	}
 
-	new_sb = (void *) __get_free_pages(GFP_KERNEL|__GFP_ZERO, order);
+	new_sb = (void *) __get_free_pages(GFP_NOFS|__GFP_ZERO, order);
 	if (!new_sb)
 		return -ENOMEM;
 
@@ -162,8 +184,10 @@ struct bch_sb_field *bch2_sb_field_resize(struct bch_sb_handle *sb,
 		}
 	}
 
+	f = bch2_sb_field_get(sb->sb, type);
 	f = __bch2_sb_field_resize(sb, f, u64s);
-	f->type = cpu_to_le32(type);
+	if (f)
+		f->type = cpu_to_le32(type);
 	return f;
 }
 
@@ -212,16 +236,24 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 	struct bch_sb_field *f;
 	struct bch_sb_field_members *mi;
 	const char *err;
+	u32 version, version_min;
 	u16 block_size;
 
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_MIN ||
-	    le64_to_cpu(sb->version) > BCH_SB_VERSION_MAX)
-		return"Unsupported superblock version";
+	version		= le16_to_cpu(sb->version);
+	version_min	= version >= bcachefs_metadata_version_new_versioning
+		? le16_to_cpu(sb->version_min)
+		: version;
 
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_MAX) {
-		SET_BCH_SB_ENCODED_EXTENT_MAX_BITS(sb, 7);
-		SET_BCH_SB_POSIX_ACL(sb, 1);
-	}
+	if (version    >= bcachefs_metadata_version_max ||
+	    version_min < bcachefs_metadata_version_min)
+		return "Unsupported superblock version";
+
+	if (version_min > version)
+		return "Bad minimum version";
+
+	if (sb->features[1] ||
+	    (le64_to_cpu(sb->features[0]) & (~0ULL << BCH_FEATURE_NR)))
+		return "Filesystem has incompatible features";
 
 	block_size = le16_to_cpu(sb->block_size);
 
@@ -309,13 +341,6 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 			return err;
 	}
 
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_NONCE_V1 &&
-	    bch2_sb_get_crypt(sb) &&
-	    BCH_SB_INITIALIZED(sb))
-		return "Incompatible extent nonces";
-
-	sb->version = cpu_to_le64(BCH_SB_VERSION_MAX);
-
 	return NULL;
 }
 
@@ -332,6 +357,7 @@ static void bch2_sb_update(struct bch_fs *c)
 
 	c->sb.uuid		= src->uuid;
 	c->sb.user_uuid		= src->user_uuid;
+	c->sb.version		= le16_to_cpu(src->version);
 	c->sb.nr_devices	= src->nr_devices;
 	c->sb.clean		= BCH_SB_CLEAN(src);
 	c->sb.encryption_type	= BCH_SB_ENCRYPTION_TYPE(src);
@@ -340,6 +366,7 @@ static void bch2_sb_update(struct bch_fs *c)
 	c->sb.time_base_hi	= le32_to_cpu(src->time_base_hi);
 	c->sb.time_precision	= le32_to_cpu(src->time_precision);
 	c->sb.features		= le64_to_cpu(src->features[0]);
+	c->sb.compat		= le64_to_cpu(src->compat[0]);
 
 	for_each_member_device(ca, c, i)
 		ca->mi = bch2_mi_to_cpu(mi->members + i);
@@ -350,8 +377,10 @@ static void __copy_super(struct bch_sb_handle *dst_handle, struct bch_sb *src)
 {
 	struct bch_sb_field *src_f, *dst_f;
 	struct bch_sb *dst = dst_handle->sb;
+	unsigned i;
 
 	dst->version		= src->version;
+	dst->version_min	= src->version_min;
 	dst->seq		= src->seq;
 	dst->uuid		= src->uuid;
 	dst->user_uuid		= src->user_uuid;
@@ -368,15 +397,17 @@ static void __copy_super(struct bch_sb_handle *dst_handle, struct bch_sb *src)
 	memcpy(dst->features,	src->features,	sizeof(dst->features));
 	memcpy(dst->compat,	src->compat,	sizeof(dst->compat));
 
-	vstruct_for_each(src, src_f) {
-		if (src_f->type == BCH_SB_FIELD_journal)
+	for (i = 0; i < BCH_SB_FIELD_NR; i++) {
+		if (i == BCH_SB_FIELD_journal)
 			continue;
 
-		dst_f = bch2_sb_field_get(dst, le32_to_cpu(src_f->type));
+		src_f = bch2_sb_field_get(src, i);
+		dst_f = bch2_sb_field_get(dst, i);
 		dst_f = __bch2_sb_field_resize(dst_handle, dst_f,
-					       le32_to_cpu(src_f->u64s));
+				src_f ? le32_to_cpu(src_f->u64s) : 0);
 
-		memcpy(dst_f, src_f, vstruct_bytes(src_f));
+		if (src_f)
+			memcpy(dst_f, src_f, vstruct_bytes(src_f));
 	}
 }
 
@@ -449,9 +480,9 @@ reread:
 	if (uuid_le_cmp(sb->sb->magic, BCACHE_MAGIC))
 		return "Not a bcachefs superblock";
 
-	if (le64_to_cpu(sb->sb->version) < BCH_SB_VERSION_MIN ||
-	    le64_to_cpu(sb->sb->version) > BCH_SB_VERSION_MAX)
-		return"Unsupported superblock version";
+	if (le16_to_cpu(sb->sb->version) <  bcachefs_metadata_version_min ||
+	    le16_to_cpu(sb->sb->version) >= bcachefs_metadata_version_max)
+		return "Unsupported superblock version";
 
 	bytes = vstruct_bytes(sb->sb);
 
@@ -473,6 +504,8 @@ reread:
 
 	if (bch2_crc_cmp(csum, sb->sb->csum))
 		return "bad checksum reading superblock";
+
+	sb->seq = le64_to_cpu(sb->sb->seq);
 
 	return NULL;
 }
@@ -609,6 +642,27 @@ static void write_super_endio(struct bio *bio)
 	percpu_ref_put(&ca->io_ref);
 }
 
+static void read_back_super(struct bch_fs *c, struct bch_dev *ca)
+{
+	struct bch_sb *sb = ca->disk_sb.sb;
+	struct bio *bio = ca->disk_sb.bio;
+
+	bio_reset(bio);
+	bio_set_dev(bio, ca->disk_sb.bdev);
+	bio->bi_iter.bi_sector	= le64_to_cpu(sb->layout.sb_offset[0]);
+	bio->bi_iter.bi_size	= PAGE_SIZE;
+	bio->bi_end_io		= write_super_endio;
+	bio->bi_private		= ca;
+	bio_set_op_attrs(bio, REQ_OP_READ, REQ_SYNC|REQ_META);
+	bch2_bio_map(bio, ca->sb_read_scratch);
+
+	this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_SB],
+		     bio_sectors(bio));
+
+	percpu_ref_get(&ca->io_ref);
+	closure_bio_submit(bio, &c->sb_write);
+}
+
 static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 {
 	struct bch_sb *sb = ca->disk_sb.sb;
@@ -638,7 +692,7 @@ static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 	closure_bio_submit(bio, &c->sb_write);
 }
 
-void bch2_write_super(struct bch_fs *c)
+int bch2_write_super(struct bch_fs *c)
 {
 	struct closure *cl = &c->sb_write;
 	struct bch_dev *ca;
@@ -646,6 +700,7 @@ void bch2_write_super(struct bch_fs *c)
 	const char *err;
 	struct bch_devs_mask sb_written;
 	bool wrote, can_mount_without_written, can_mount_with_written;
+	int ret = 0;
 
 	lockdep_assert_held(&c->sb_lock);
 
@@ -654,6 +709,9 @@ void bch2_write_super(struct bch_fs *c)
 
 	le64_add_cpu(&c->disk_sb.sb->seq, 1);
 
+	if (test_bit(BCH_FS_ERROR, &c->flags))
+		SET_BCH_SB_HAS_ERRORS(c->disk_sb.sb, 1);
+
 	for_each_online_member(ca, c, i)
 		bch2_sb_from_fs(c, ca);
 
@@ -661,12 +719,12 @@ void bch2_write_super(struct bch_fs *c)
 		err = bch2_sb_validate(&ca->disk_sb);
 		if (err) {
 			bch2_fs_inconsistent(c, "sb invalid before write: %s", err);
+			ret = -1;
 			goto out;
 		}
 	}
 
-	if (c->opts.nochanges ||
-	    test_bit(BCH_FS_ERROR, &c->flags))
+	if (c->opts.nochanges)
 		goto out;
 
 	for_each_online_member(ca, c, i) {
@@ -674,10 +732,27 @@ void bch2_write_super(struct bch_fs *c)
 		ca->sb_write_error = 0;
 	}
 
+	for_each_online_member(ca, c, i)
+		read_back_super(c, ca);
+	closure_sync(cl);
+
+	for_each_online_member(ca, c, i) {
+		if (!ca->sb_write_error &&
+		    ca->disk_sb.seq !=
+		    le64_to_cpu(ca->sb_read_scratch->seq)) {
+			bch2_fs_fatal_error(c,
+				"Superblock modified by another process");
+			percpu_ref_put(&ca->io_ref);
+			ret = -EROFS;
+			goto out;
+		}
+	}
+
 	do {
 		wrote = false;
 		for_each_online_member(ca, c, i)
-			if (sb < ca->disk_sb.sb->layout.nr_superblocks) {
+			if (!ca->sb_write_error &&
+			    sb < ca->disk_sb.sb->layout.nr_superblocks) {
 				write_one_super(c, ca, sb);
 				wrote = true;
 			}
@@ -685,9 +760,12 @@ void bch2_write_super(struct bch_fs *c)
 		sb++;
 	} while (wrote);
 
-	for_each_online_member(ca, c, i)
+	for_each_online_member(ca, c, i) {
 		if (ca->sb_write_error)
 			__clear_bit(ca->dev_idx, sb_written.d);
+		else
+			ca->disk_sb.seq = le64_to_cpu(ca->disk_sb.sb->seq);
+	}
 
 	nr_wrote = dev_mask_nr(&sb_written);
 
@@ -710,13 +788,15 @@ void bch2_write_super(struct bch_fs *c)
 	 * written anything (new filesystem), we continue if we'd be able to
 	 * mount with the devices we did successfully write to:
 	 */
-	bch2_fs_fatal_err_on(!nr_wrote ||
-			     (can_mount_without_written &&
-			      !can_mount_with_written), c,
-		"Unable to write superblock to sufficient devices");
+	if (bch2_fs_fatal_err_on(!nr_wrote ||
+				 (can_mount_without_written &&
+				  !can_mount_with_written), c,
+		"Unable to write superblock to sufficient devices"))
+		ret = -1;
 out:
 	/* Make new options visible after they're persistent: */
 	bch2_sb_update(c);
+	return ret;
 }
 
 /* BCH_SB_FIELD_journal: */
@@ -804,7 +884,7 @@ static const char *bch2_sb_validate_members(struct bch_sb *sb,
 			return "Too many buckets";
 
 		if (le64_to_cpu(m->nbuckets) -
-		    le16_to_cpu(m->first_bucket) < 1 << 10)
+		    le16_to_cpu(m->first_bucket) < BCH_MIN_NR_NBUCKETS)
 			return "Not enough buckets";
 
 		if (le16_to_cpu(m->bucket_size) <
@@ -815,12 +895,6 @@ static const char *bch2_sb_validate_members(struct bch_sb *sb,
 		    BCH_SB_BTREE_NODE_SIZE(sb))
 			return "bucket size smaller than btree node size";
 	}
-
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_MAX)
-		for (m = mi->members;
-		     m < mi->members + sb->nr_devices;
-		     m++)
-			SET_BCH_MEMBER_DATA_ALLOWED(m, ~0);
 
 	return NULL;
 }
@@ -849,6 +923,194 @@ static const struct bch_sb_field_ops bch_sb_field_ops_crypt = {
 	.validate	= bch2_sb_validate_crypt,
 };
 
+/* BCH_SB_FIELD_clean: */
+
+void bch2_sb_clean_renumber(struct bch_sb_field_clean *clean, int write)
+{
+	struct jset_entry *entry;
+
+	for (entry = clean->start;
+	     entry < (struct jset_entry *) vstruct_end(&clean->field);
+	     entry = vstruct_next(entry))
+		bch2_bkey_renumber(BKEY_TYPE_BTREE, bkey_to_packed(entry->start), write);
+}
+
+int bch2_fs_mark_dirty(struct bch_fs *c)
+{
+	int ret;
+
+	/*
+	 * Unconditionally write superblock, to verify it hasn't changed before
+	 * we go rw:
+	 */
+
+	mutex_lock(&c->sb_lock);
+	SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
+	c->disk_sb.sb->compat[0] &= ~(1ULL << BCH_COMPAT_FEAT_ALLOC_METADATA);
+	ret = bch2_write_super(c);
+	mutex_unlock(&c->sb_lock);
+
+	return ret;
+}
+
+struct jset_entry *
+bch2_journal_super_entries_add_common(struct bch_fs *c,
+				      struct jset_entry *entry,
+				      u64 journal_seq)
+{
+	struct btree_root *r;
+	unsigned i;
+
+	mutex_lock(&c->btree_root_lock);
+
+	for (r = c->btree_roots;
+	     r < c->btree_roots + BTREE_ID_NR;
+	     r++)
+		if (r->alive) {
+			entry->u64s	= r->key.u64s;
+			entry->btree_id	= r - c->btree_roots;
+			entry->level	= r->level;
+			entry->type	= BCH_JSET_ENTRY_btree_root;
+			bkey_copy(&entry->start[0], &r->key);
+
+			entry = vstruct_next(entry);
+		}
+	c->btree_roots_dirty = false;
+
+	mutex_unlock(&c->btree_root_lock);
+
+	percpu_down_write(&c->mark_lock);
+
+	if (!journal_seq) {
+		bch2_fs_usage_acc_to_base(c, 0);
+		bch2_fs_usage_acc_to_base(c, 1);
+	} else {
+		bch2_fs_usage_acc_to_base(c, journal_seq & 1);
+	}
+
+	{
+		struct jset_entry_usage *u =
+			container_of(entry, struct jset_entry_usage, entry);
+
+		memset(u, 0, sizeof(*u));
+		u->entry.u64s	= DIV_ROUND_UP(sizeof(*u), sizeof(u64)) - 1;
+		u->entry.type	= BCH_JSET_ENTRY_usage;
+		u->entry.btree_id = FS_USAGE_INODES;
+		u->v		= cpu_to_le64(c->usage_base->nr_inodes);
+
+		entry = vstruct_next(entry);
+	}
+
+	{
+		struct jset_entry_usage *u =
+			container_of(entry, struct jset_entry_usage, entry);
+
+		memset(u, 0, sizeof(*u));
+		u->entry.u64s	= DIV_ROUND_UP(sizeof(*u), sizeof(u64)) - 1;
+		u->entry.type	= BCH_JSET_ENTRY_usage;
+		u->entry.btree_id = FS_USAGE_KEY_VERSION;
+		u->v		= cpu_to_le64(atomic64_read(&c->key_version));
+
+		entry = vstruct_next(entry);
+	}
+
+	for (i = 0; i < BCH_REPLICAS_MAX; i++) {
+		struct jset_entry_usage *u =
+			container_of(entry, struct jset_entry_usage, entry);
+
+		memset(u, 0, sizeof(*u));
+		u->entry.u64s	= DIV_ROUND_UP(sizeof(*u), sizeof(u64)) - 1;
+		u->entry.type	= BCH_JSET_ENTRY_usage;
+		u->entry.btree_id = FS_USAGE_RESERVED;
+		u->entry.level	= i;
+		u->v		= cpu_to_le64(c->usage_base->persistent_reserved[i]);
+
+		entry = vstruct_next(entry);
+	}
+
+	for (i = 0; i < c->replicas.nr; i++) {
+		struct bch_replicas_entry *e =
+			cpu_replicas_entry(&c->replicas, i);
+		struct jset_entry_data_usage *u =
+			container_of(entry, struct jset_entry_data_usage, entry);
+
+		memset(u, 0, sizeof(*u));
+		u->entry.u64s	= DIV_ROUND_UP(sizeof(*u) + e->nr_devs,
+					       sizeof(u64)) - 1;
+		u->entry.type	= BCH_JSET_ENTRY_data_usage;
+		u->v		= cpu_to_le64(c->usage_base->replicas[i]);
+		memcpy(&u->r, e, replicas_entry_bytes(e));
+
+		entry = vstruct_next(entry);
+	}
+
+	percpu_up_write(&c->mark_lock);
+
+	return entry;
+}
+
+void bch2_fs_mark_clean(struct bch_fs *c)
+{
+	struct bch_sb_field_clean *sb_clean;
+	struct jset_entry *entry;
+	unsigned u64s;
+
+	mutex_lock(&c->sb_lock);
+	if (BCH_SB_CLEAN(c->disk_sb.sb))
+		goto out;
+
+	SET_BCH_SB_CLEAN(c->disk_sb.sb, true);
+
+	c->disk_sb.sb->compat[0] |= 1ULL << BCH_COMPAT_FEAT_ALLOC_INFO;
+	c->disk_sb.sb->compat[0] |= 1ULL << BCH_COMPAT_FEAT_ALLOC_METADATA;
+
+	u64s = sizeof(*sb_clean) / sizeof(u64) + c->journal.entry_u64s_reserved;
+
+	sb_clean = bch2_sb_resize_clean(&c->disk_sb, u64s);
+	if (!sb_clean) {
+		bch_err(c, "error resizing superblock while setting filesystem clean");
+		goto out;
+	}
+
+	sb_clean->flags		= 0;
+	sb_clean->read_clock	= cpu_to_le16(c->bucket_clock[READ].hand);
+	sb_clean->write_clock	= cpu_to_le16(c->bucket_clock[WRITE].hand);
+	sb_clean->journal_seq	= cpu_to_le64(journal_cur_seq(&c->journal) - 1);
+
+	/* Trying to catch outstanding bug: */
+	BUG_ON(le64_to_cpu(sb_clean->journal_seq) > S64_MAX);
+
+	entry = sb_clean->start;
+	entry = bch2_journal_super_entries_add_common(c, entry, 0);
+	BUG_ON((void *) entry > vstruct_end(&sb_clean->field));
+
+	memset(entry, 0,
+	       vstruct_end(&sb_clean->field) - (void *) entry);
+
+	if (le16_to_cpu(c->disk_sb.sb->version) <
+	    bcachefs_metadata_version_bkey_renumber)
+		bch2_sb_clean_renumber(sb_clean, WRITE);
+
+	bch2_write_super(c);
+out:
+	mutex_unlock(&c->sb_lock);
+}
+
+static const char *bch2_sb_validate_clean(struct bch_sb *sb,
+					  struct bch_sb_field *f)
+{
+	struct bch_sb_field_clean *clean = field_to_type(f, clean);
+
+	if (vstruct_bytes(&clean->field) < sizeof(*clean))
+		return "invalid field crypt: wrong size";
+
+	return NULL;
+}
+
+static const struct bch_sb_field_ops bch_sb_field_ops_clean = {
+	.validate	= bch2_sb_validate_clean,
+};
+
 static const struct bch_sb_field_ops *bch2_sb_field_ops[] = {
 #define x(f, nr)					\
 	[BCH_SB_FIELD_##f] = &bch_sb_field_ops_##f,
@@ -866,21 +1128,20 @@ static const char *bch2_sb_field_validate(struct bch_sb *sb,
 		: NULL;
 }
 
-size_t bch2_sb_field_to_text(char *buf, size_t size,
-			     struct bch_sb *sb, struct bch_sb_field *f)
+void bch2_sb_field_to_text(struct printbuf *out, struct bch_sb *sb,
+			   struct bch_sb_field *f)
 {
 	unsigned type = le32_to_cpu(f->type);
-	size_t (*to_text)(char *, size_t, struct bch_sb *,
-				   struct bch_sb_field *) =
-		type < BCH_SB_FIELD_NR
-		? bch2_sb_field_ops[type]->to_text
-		: NULL;
+	const struct bch_sb_field_ops *ops = type < BCH_SB_FIELD_NR
+		? bch2_sb_field_ops[type] : NULL;
 
-	if (!to_text) {
-		if (size)
-			buf[0] = '\0';
-		return 0;
-	}
+	if (ops)
+		pr_buf(out, "%s", bch2_sb_fields[type]);
+	else
+		pr_buf(out, "(unknown field %u)", type);
 
-	return to_text(buf, size, sb, f);
+	pr_buf(out, " (size %llu):", vstruct_bytes(f));
+
+	if (ops && ops->to_text)
+		bch2_sb_field_ops[type]->to_text(out, sb, f);
 }

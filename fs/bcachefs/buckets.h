@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Code for manipulating bucket marks for garbage collection.
  *
@@ -16,33 +17,45 @@
 
 #define bucket_cmpxchg(g, new, expr)				\
 ({								\
+	struct bucket *_g = g;					\
 	u64 _v = atomic64_read(&(g)->_mark.v);			\
 	struct bucket_mark _old;				\
 								\
 	do {							\
 		(new).v.counter = _old.v.counter = _v;		\
 		expr;						\
-	} while ((_v = atomic64_cmpxchg(&(g)->_mark.v,		\
+	} while ((_v = atomic64_cmpxchg(&(_g)->_mark.v,		\
 			       _old.v.counter,			\
 			       (new).v.counter)) != _old.v.counter);\
 	_old;							\
 })
 
-static inline struct bucket_array *bucket_array(struct bch_dev *ca)
+static inline struct bucket_array *__bucket_array(struct bch_dev *ca,
+						  bool gc)
 {
-	return rcu_dereference_check(ca->buckets,
+	return rcu_dereference_check(ca->buckets[gc],
 				     !ca->fs ||
-				     percpu_rwsem_is_held(&ca->fs->usage_lock) ||
+				     percpu_rwsem_is_held(&ca->fs->mark_lock) ||
 				     lockdep_is_held(&ca->fs->gc_lock) ||
 				     lockdep_is_held(&ca->bucket_lock));
 }
 
-static inline struct bucket *bucket(struct bch_dev *ca, size_t b)
+static inline struct bucket_array *bucket_array(struct bch_dev *ca)
 {
-	struct bucket_array *buckets = bucket_array(ca);
+	return __bucket_array(ca, false);
+}
+
+static inline struct bucket *__bucket(struct bch_dev *ca, size_t b, bool gc)
+{
+	struct bucket_array *buckets = __bucket_array(ca, gc);
 
 	BUG_ON(b < buckets->first_bucket || b >= buckets->nbuckets);
 	return buckets->b + b;
+}
+
+static inline struct bucket *bucket(struct bch_dev *ca, size_t b)
+{
+	return __bucket(ca, b, false);
 }
 
 static inline void bucket_io_clock_reset(struct bch_fs *c, struct bch_dev *ca,
@@ -63,7 +76,9 @@ static inline u16 bucket_last_io(struct bch_fs *c, struct bucket *g, int rw)
 
 static inline u8 bucket_gc_gen(struct bch_dev *ca, size_t b)
 {
-	return bucket(ca, b)->mark.gen - ca->oldest_gens[b];
+	struct bucket *g = bucket(ca, b);
+
+	return g->mark.gen - g->oldest_gen;
 }
 
 static inline size_t PTR_BUCKET_NR(const struct bch_dev *ca,
@@ -73,9 +88,10 @@ static inline size_t PTR_BUCKET_NR(const struct bch_dev *ca,
 }
 
 static inline struct bucket *PTR_BUCKET(struct bch_dev *ca,
-					const struct bch_extent_ptr *ptr)
+					const struct bch_extent_ptr *ptr,
+					bool gc)
 {
-	return bucket(ca, PTR_BUCKET_NR(ca, ptr));
+	return __bucket(ca, PTR_BUCKET_NR(ca, ptr), gc);
 }
 
 static inline struct bucket_mark ptr_bucket_mark(struct bch_dev *ca,
@@ -84,7 +100,7 @@ static inline struct bucket_mark ptr_bucket_mark(struct bch_dev *ca,
 	struct bucket_mark m;
 
 	rcu_read_lock();
-	m = READ_ONCE(bucket(ca, PTR_BUCKET_NR(ca, ptr))->mark);
+	m = READ_ONCE(PTR_BUCKET(ca, ptr, 0)->mark);
 	rcu_read_unlock();
 
 	return m;
@@ -112,12 +128,21 @@ static inline u8 ptr_stale(struct bch_dev *ca,
 	return gen_after(ptr_bucket_mark(ca, ptr).gen, ptr->gen);
 }
 
-/* bucket gc marks */
+static inline unsigned __ptr_disk_sectors(struct extent_ptr_decoded p,
+					  unsigned live_size)
+{
+	return live_size && p.crc.compression_type
+		? max(1U, DIV_ROUND_UP(live_size * p.crc.compressed_size,
+				       p.crc.uncompressed_size))
+		: live_size;
+}
 
-/* The dirty and cached sector counts saturate. If this occurs,
- * reference counting alone will not free the bucket, and a btree
- * GC must be performed. */
-#define GC_MAX_SECTORS_USED ((1U << 15) - 1)
+static inline unsigned ptr_disk_sectors(struct extent_ptr_decoded p)
+{
+	return __ptr_disk_sectors(p, p.crc.live_size);
+}
+
+/* bucket gc marks */
 
 static inline unsigned bucket_sectors_used(struct bucket_mark mark)
 {
@@ -131,10 +156,25 @@ static inline bool bucket_unused(struct bucket_mark mark)
 		!bucket_sectors_used(mark);
 }
 
+static inline bool is_available_bucket(struct bucket_mark mark)
+{
+	return (!mark.owned_by_allocator &&
+		!mark.dirty_sectors &&
+		!mark.stripe);
+}
+
+static inline bool bucket_needs_journal_commit(struct bucket_mark m,
+					       u16 last_seq_ondisk)
+{
+	return m.journal_seq_valid &&
+		((s16) m.journal_seq - (s16) last_seq_ondisk > 0);
+}
+
 /* Device usage: */
 
-struct bch_dev_usage __bch2_dev_usage_read(struct bch_dev *);
 struct bch_dev_usage bch2_dev_usage_read(struct bch_fs *, struct bch_dev *);
+
+void bch2_dev_usage_from_buckets(struct bch_fs *);
 
 static inline u64 __dev_buckets_available(struct bch_dev *ca,
 					  struct bch_dev_usage stats)
@@ -172,44 +212,36 @@ static inline u64 dev_buckets_free(struct bch_fs *c, struct bch_dev *ca)
 
 /* Filesystem usage: */
 
-static inline enum bch_data_type s_alloc_to_data_type(enum s_alloc s)
+static inline unsigned fs_usage_u64s(struct bch_fs *c)
 {
-	switch (s) {
-	case S_META:
-		return BCH_DATA_BTREE;
-	case S_DIRTY:
-		return BCH_DATA_USER;
-	default:
-		BUG();
-	}
+
+	return sizeof(struct bch_fs_usage) / sizeof(u64) +
+		READ_ONCE(c->replicas.nr);
 }
 
-struct bch_fs_usage __bch2_fs_usage_read(struct bch_fs *);
-struct bch_fs_usage bch2_fs_usage_read(struct bch_fs *);
-void bch2_fs_usage_apply(struct bch_fs *, struct bch_fs_usage *,
-			 struct disk_reservation *, struct gc_pos);
+void bch2_fs_usage_scratch_put(struct bch_fs *, struct bch_fs_usage *);
+struct bch_fs_usage *bch2_fs_usage_scratch_get(struct bch_fs *);
 
-u64 __bch2_fs_sectors_used(struct bch_fs *, struct bch_fs_usage);
-u64 bch2_fs_sectors_used(struct bch_fs *, struct bch_fs_usage);
-u64 bch2_fs_sectors_free(struct bch_fs *, struct bch_fs_usage);
+u64 bch2_fs_usage_read_one(struct bch_fs *, u64 *);
 
-static inline bool is_available_bucket(struct bucket_mark mark)
-{
-	return (!mark.owned_by_allocator &&
-		!mark.dirty_sectors &&
-		!mark.nouse);
-}
+struct bch_fs_usage *bch2_fs_usage_read(struct bch_fs *);
 
-static inline bool bucket_needs_journal_commit(struct bucket_mark m,
-					       u16 last_seq_ondisk)
-{
-	return m.journal_seq_valid &&
-		((s16) m.journal_seq - (s16) last_seq_ondisk > 0);
-}
+void bch2_fs_usage_acc_to_base(struct bch_fs *, unsigned);
+
+void bch2_fs_usage_to_text(struct printbuf *,
+			   struct bch_fs *, struct bch_fs_usage *);
+
+u64 bch2_fs_sectors_used(struct bch_fs *, struct bch_fs_usage *);
+
+struct bch_fs_usage_short
+bch2_fs_usage_read_short(struct bch_fs *);
+
+/* key/bucket marking: */
 
 void bch2_bucket_seq_cleanup(struct bch_fs *);
+void bch2_fs_usage_initialize(struct bch_fs *);
 
-bool bch2_invalidate_bucket(struct bch_fs *, struct bch_dev *,
+void bch2_invalidate_bucket(struct bch_fs *, struct bch_dev *,
 			    size_t, struct bucket_mark *);
 void bch2_mark_alloc_bucket(struct bch_fs *, struct bch_dev *,
 			    size_t, bool, struct gc_pos, unsigned);
@@ -217,15 +249,36 @@ void bch2_mark_metadata_bucket(struct bch_fs *, struct bch_dev *,
 			       size_t, enum bch_data_type, unsigned,
 			       struct gc_pos, unsigned);
 
-#define BCH_BUCKET_MARK_NOATOMIC		(1 << 0)
-#define BCH_BUCKET_MARK_MAY_MAKE_UNAVAILABLE	(1 << 1)
-#define BCH_BUCKET_MARK_GC_WILL_VISIT		(1 << 2)
-#define BCH_BUCKET_MARK_GC_LOCK_HELD		(1 << 3)
+#define BCH_BUCKET_MARK_INSERT			(1 << 0)
+#define BCH_BUCKET_MARK_OVERWRITE		(1 << 1)
+#define BCH_BUCKET_MARK_BUCKET_INVALIDATE	(1 << 2)
+#define BCH_BUCKET_MARK_GC			(1 << 3)
+#define BCH_BUCKET_MARK_ALLOC_READ		(1 << 4)
+#define BCH_BUCKET_MARK_NOATOMIC		(1 << 5)
 
-void bch2_mark_key(struct bch_fs *, struct bkey_s_c, s64, bool, struct gc_pos,
-		   struct bch_fs_usage *, u64, unsigned);
+int bch2_mark_key_locked(struct bch_fs *, struct bkey_s_c, s64,
+			 struct bch_fs_usage *, u64, unsigned);
+int bch2_mark_key(struct bch_fs *, struct bkey_s_c, s64,
+		  struct bch_fs_usage *, u64, unsigned);
+int bch2_fs_usage_apply(struct bch_fs *, struct bch_fs_usage *,
+			struct disk_reservation *, unsigned);
 
-void bch2_recalc_sectors_available(struct bch_fs *);
+int bch2_mark_overwrite(struct btree_trans *, struct btree_iter *,
+			struct bkey_s_c, struct bkey_i *,
+			struct bch_fs_usage *, unsigned);
+int bch2_mark_update(struct btree_trans *, struct btree_insert_entry *,
+		     struct bch_fs_usage *, unsigned);
+
+void bch2_replicas_delta_list_apply(struct bch_fs *,
+				    struct bch_fs_usage *,
+				    struct replicas_delta_list *);
+int bch2_trans_mark_key(struct btree_trans *, struct bkey_s_c, s64, unsigned);
+int bch2_trans_mark_update(struct btree_trans *,
+			   struct btree_iter *iter,
+			   struct bkey_i *insert);
+void bch2_trans_fs_usage_apply(struct btree_trans *, struct bch_fs_usage *);
+
+/* disk reservations: */
 
 void __bch2_disk_reservation_put(struct bch_fs *, struct disk_reservation *);
 
@@ -237,8 +290,6 @@ static inline void bch2_disk_reservation_put(struct bch_fs *c,
 }
 
 #define BCH_DISK_RESERVATION_NOFAIL		(1 << 0)
-#define BCH_DISK_RESERVATION_GC_LOCK_HELD	(1 << 1)
-#define BCH_DISK_RESERVATION_BTREE_LOCKS_HELD	(1 << 2)
 
 int bch2_disk_reservation_add(struct bch_fs *,
 			     struct disk_reservation *,

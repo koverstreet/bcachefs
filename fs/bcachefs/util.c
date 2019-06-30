@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * random utiility code, for bcache but in theory not specific to bcache
  *
@@ -24,68 +25,82 @@
 #include "eytzinger.h"
 #include "util.h"
 
-#define simple_strtoint(c, end, base)	simple_strtol(c, end, base)
-#define simple_strtouint(c, end, base)	simple_strtoul(c, end, base)
+static const char si_units[] = "?kMGTPEZY";
+
+static int __bch2_strtoh(const char *cp, u64 *res,
+			 u64 t_max, bool t_signed)
+{
+	bool positive = *cp != '-';
+	unsigned u;
+	u64 v = 0;
+
+	if (*cp == '+' || *cp == '-')
+		cp++;
+
+	if (!isdigit(*cp))
+		return -EINVAL;
+
+	do {
+		if (v > U64_MAX / 10)
+			return -ERANGE;
+		v *= 10;
+		if (v > U64_MAX - (*cp - '0'))
+			return -ERANGE;
+		v += *cp - '0';
+		cp++;
+	} while (isdigit(*cp));
+
+	for (u = 1; u < strlen(si_units); u++)
+		if (*cp == si_units[u]) {
+			cp++;
+			goto got_unit;
+		}
+	u = 0;
+got_unit:
+	if (*cp == '\n')
+		cp++;
+	if (*cp)
+		return -EINVAL;
+
+	if (fls64(v) + u * 10 > 64)
+		return -ERANGE;
+
+	v <<= u * 10;
+
+	if (positive) {
+		if (v > t_max)
+			return -ERANGE;
+	} else {
+		if (v && !t_signed)
+			return -ERANGE;
+
+		if (v > t_max + 1)
+			return -ERANGE;
+		v = -v;
+	}
+
+	*res = v;
+	return 0;
+}
 
 #define STRTO_H(name, type)					\
 int bch2_ ## name ## _h(const char *cp, type *res)		\
 {								\
-	int u = 0;						\
-	char *e;						\
-	type i = simple_ ## name(cp, &e, 10);			\
-								\
-	switch (tolower(*e)) {					\
-	default:						\
-		return -EINVAL;					\
-	case 'y':						\
-	case 'z':						\
-		u++;						\
-	case 'e':						\
-		u++;						\
-	case 'p':						\
-		u++;						\
-	case 't':						\
-		u++;						\
-	case 'g':						\
-		u++;						\
-	case 'm':						\
-		u++;						\
-	case 'k':						\
-		u++;						\
-		if (e++ == cp)					\
-			return -EINVAL;				\
-	case '\n':						\
-	case '\0':						\
-		if (*e == '\n')					\
-			e++;					\
-	}							\
-								\
-	if (*e)							\
-		return -EINVAL;					\
-								\
-	while (u--) {						\
-		if ((type) ~0 > 0 &&				\
-		    (type) ~0 / 1024 <= i)			\
-			return -EINVAL;				\
-		if ((i > 0 && ANYSINT_MAX(type) / 1024 < i) ||	\
-		    (i < 0 && -ANYSINT_MAX(type) / 1024 > i))	\
-			return -EINVAL;				\
-		i *= 1024;					\
-	}							\
-								\
-	*res = i;						\
-	return 0;						\
-}								\
+	u64 v;							\
+	int ret = __bch2_strtoh(cp, &v, ANYSINT_MAX(type),	\
+			ANYSINT_MAX(type) != ((type) ~0ULL));	\
+	*res = v;						\
+	return ret;						\
+}
 
 STRTO_H(strtoint, int)
 STRTO_H(strtouint, unsigned int)
 STRTO_H(strtoll, long long)
 STRTO_H(strtoull, unsigned long long)
+STRTO_H(strtou64, u64)
 
-ssize_t bch2_hprint(char *buf, s64 v)
+void bch2_hprint(struct printbuf *buf, s64 v)
 {
-	static const char units[] = "?kMGTPEZY";
-	char dec[4] = "";
 	int u, t = 0;
 
 	for (u = 0; v >= 1024 || v <= -1024; u++) {
@@ -93,78 +108,47 @@ ssize_t bch2_hprint(char *buf, s64 v)
 		v >>= 10;
 	}
 
-	if (!u)
-		return sprintf(buf, "%lli", v);
+	pr_buf(buf, "%lli", v);
 
 	/*
 	 * 103 is magic: t is in the range [-1023, 1023] and we want
 	 * to turn it into [-9, 9]
 	 */
-	if (v < 100 && v > -100)
-		scnprintf(dec, sizeof(dec), ".%i", t / 103);
-
-	return sprintf(buf, "%lli%s%c", v, dec, units[u]);
+	if (u && v < 100 && v > -100)
+		pr_buf(buf, ".%i", t / 103);
+	if (u)
+		pr_buf(buf, "%c", si_units[u]);
 }
 
-ssize_t bch2_scnprint_string_list(char *buf, size_t size,
-				  const char * const list[],
-				  size_t selected)
+void bch2_string_opt_to_text(struct printbuf *out,
+			     const char * const list[],
+			     size_t selected)
 {
-	char *out = buf;
 	size_t i;
 
-	if (size)
-		*out = '\0';
-
 	for (i = 0; list[i]; i++)
-		out += scnprintf(out, buf + size - out,
-				 i == selected ? "[%s] " : "%s ", list[i]);
-
-	if (out != buf)
-		*--out = '\0';
-
-	return out - buf;
+		pr_buf(out, i == selected ? "[%s] " : "%s ", list[i]);
 }
 
-ssize_t bch2_read_string_list(const char *buf, const char * const list[])
+void bch2_flags_to_text(struct printbuf *out,
+			const char * const list[], u64 flags)
 {
-	size_t i, len;
-
-	buf = skip_spaces(buf);
-
-	len = strlen(buf);
-	while (len && isspace(buf[len - 1]))
-		--len;
-
-	for (i = 0; list[i]; i++)
-		if (strlen(list[i]) == len &&
-		    !memcmp(buf, list[i], len))
-			break;
-
-	return list[i] ? i : -EINVAL;
-}
-
-ssize_t bch2_scnprint_flag_list(char *buf, size_t size,
-				const char * const list[], u64 flags)
-{
-	char *out = buf, *end = buf + size;
 	unsigned bit, nr = 0;
+	bool first = true;
+
+	if (out->pos != out->end)
+		*out->pos = '\0';
 
 	while (list[nr])
 		nr++;
 
-	if (size)
-		*out = '\0';
-
 	while (flags && (bit = __ffs(flags)) < nr) {
-		out += scnprintf(out, end - out, "%s,", list[bit]);
+		if (!first)
+			pr_buf(out, ",");
+		first = false;
+		pr_buf(out, "%s", list[bit]);
 		flags ^= 1 << bit;
 	}
-
-	if (out != buf)
-		*--out = '\0';
-
-	return out - buf;
 }
 
 u64 bch2_read_flag_list(char *opt, const char * const list[])
@@ -178,7 +162,7 @@ u64 bch2_read_flag_list(char *opt, const char * const list[])
 	s = strim(d);
 
 	while ((p = strsep(&s, ","))) {
-		int flag = bch2_read_string_list(p, list);
+		int flag = match_string(list, -1, p);
 		if (flag < 0) {
 			ret = -1;
 			break;
@@ -327,50 +311,50 @@ static const struct time_unit *pick_time_units(u64 ns)
 	return u;
 }
 
-static size_t pr_time_units(char *buf, size_t len, u64 ns)
+static void pr_time_units(struct printbuf *out, u64 ns)
 {
 	const struct time_unit *u = pick_time_units(ns);
 
-	return scnprintf(buf, len, "%llu %s", div_u64(ns, u->nsecs), u->name);
+	pr_buf(out, "%llu %s", div_u64(ns, u->nsecs), u->name);
 }
 
 size_t bch2_time_stats_print(struct time_stats *stats, char *buf, size_t len)
 {
-	char *out = buf, *end = buf + len;
+	struct printbuf out = _PBUF(buf, len);
 	const struct time_unit *u;
 	u64 freq = READ_ONCE(stats->average_frequency);
 	u64 q, last_q = 0;
 	int i;
 
-	out += scnprintf(out, end - out, "count:\t\t%llu\n",
+	pr_buf(&out, "count:\t\t%llu\n",
 			 stats->count);
-	out += scnprintf(out, end - out, "rate:\t\t%llu/sec\n",
-			 freq ?  div64_u64(NSEC_PER_SEC, freq) : 0);
+	pr_buf(&out, "rate:\t\t%llu/sec\n",
+	       freq ?  div64_u64(NSEC_PER_SEC, freq) : 0);
 
-	out += scnprintf(out, end - out, "frequency:\t");
-	out += pr_time_units(out, end - out, freq);
+	pr_buf(&out, "frequency:\t");
+	pr_time_units(&out, freq);
 
-	out += scnprintf(out, end - out, "\navg duration:\t");
-	out += pr_time_units(out, end - out, stats->average_duration);
+	pr_buf(&out, "\navg duration:\t");
+	pr_time_units(&out, stats->average_duration);
 
-	out += scnprintf(out, end - out, "\nmax duration:\t");
-	out += pr_time_units(out, end - out, stats->max_duration);
+	pr_buf(&out, "\nmax duration:\t");
+	pr_time_units(&out, stats->max_duration);
 
 	i = eytzinger0_first(NR_QUANTILES);
 	u = pick_time_units(stats->quantiles.entries[i].m);
 
-	out += scnprintf(out, end - out, "\nquantiles (%s):\t", u->name);
+	pr_buf(&out, "\nquantiles (%s):\t", u->name);
 	eytzinger0_for_each(i, NR_QUANTILES) {
 		bool is_last = eytzinger0_next(i, NR_QUANTILES) == -1;
 
 		q = max(stats->quantiles.entries[i].m, last_q);
-		out += scnprintf(out, end - out, "%llu%s",
-				 div_u64(q, u->nsecs),
-				 is_last ? "\n" : " ");
+		pr_buf(&out, "%llu%s",
+		       div_u64(q, u->nsecs),
+		       is_last ? "\n" : " ");
 		last_q = q;
 	}
 
-	return out - buf;
+	return out.pos - buf;
 }
 
 void bch2_time_stats_exit(struct time_stats *stats)
@@ -420,27 +404,6 @@ void bch2_ratelimit_increment(struct bch_ratelimit *d, u64 done)
 
 	if (time_after64(now - NSEC_PER_SEC * 2, d->next))
 		d->next = now - NSEC_PER_SEC * 2;
-}
-
-int bch2_ratelimit_wait_freezable_stoppable(struct bch_ratelimit *d)
-{
-	bool kthread = (current->flags & PF_KTHREAD) != 0;
-
-	while (1) {
-		u64 delay = bch2_ratelimit_delay(d);
-
-		if (delay)
-			set_current_state(TASK_INTERRUPTIBLE);
-
-		if (kthread && kthread_should_stop())
-			return 1;
-
-		if (!delay)
-			return 0;
-
-		schedule_timeout(delay);
-		try_to_freeze();
-	}
 }
 
 /* pd controller: */
@@ -518,12 +481,12 @@ size_t bch2_pd_controller_print_debug(struct bch_pd_controller *pd, char *buf)
 	char change[21];
 	s64 next_io;
 
-	bch2_hprint(rate,	pd->rate.rate);
-	bch2_hprint(actual,	pd->last_actual);
-	bch2_hprint(target,	pd->last_target);
-	bch2_hprint(proportional, pd->last_proportional);
-	bch2_hprint(derivative,	pd->last_derivative);
-	bch2_hprint(change,	pd->last_change);
+	bch2_hprint(&PBUF(rate),	pd->rate.rate);
+	bch2_hprint(&PBUF(actual),	pd->last_actual);
+	bch2_hprint(&PBUF(target),	pd->last_target);
+	bch2_hprint(&PBUF(proportional), pd->last_proportional);
+	bch2_hprint(&PBUF(derivative),	pd->last_derivative);
+	bch2_hprint(&PBUF(change),	pd->last_change);
 
 	next_io = div64_s64(pd->rate.next - local_clock(), NSEC_PER_MSEC);
 
@@ -548,15 +511,17 @@ void bch2_bio_map(struct bio *bio, void *base)
 
 	BUG_ON(!bio->bi_iter.bi_size);
 	BUG_ON(bio->bi_vcnt);
+	BUG_ON(!bio->bi_max_vecs);
 
 	bv->bv_offset = base ? offset_in_page(base) : 0;
 	goto start;
 
 	for (; size; bio->bi_vcnt++, bv++) {
+		BUG_ON(bio->bi_vcnt >= bio->bi_max_vecs);
+
 		bv->bv_offset	= 0;
 start:		bv->bv_len	= min_t(size_t, PAGE_SIZE - bv->bv_offset,
 					size);
-		BUG_ON(bio->bi_vcnt >= bio->bi_max_vecs);
 		if (base) {
 			bv->bv_page = is_vmalloc_addr(base)
 				? vmalloc_to_page(base)
@@ -571,10 +536,11 @@ start:		bv->bv_len	= min_t(size_t, PAGE_SIZE - bv->bv_offset,
 
 int bch2_bio_alloc_pages(struct bio *bio, gfp_t gfp_mask)
 {
-	int i;
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
+	int i;
 
-	bio_for_each_segment_all(bv, bio, i) {
+	bio_for_each_segment_all(bv, bio, i, iter) {
 		bv->bv_page = alloc_page(gfp_mask);
 		if (!bv->bv_page) {
 			while (--bv >= bio->bi_io_vec)
@@ -629,18 +595,17 @@ void memcpy_from_bio(void *dst, struct bio *src, struct bvec_iter src_iter)
 	}
 }
 
-size_t bch_scnmemcpy(char *buf, size_t size, const char *src, size_t len)
+void bch_scnmemcpy(struct printbuf *out,
+		   const char *src, size_t len)
 {
-	size_t n;
+	size_t n = printbuf_remaining(out);
 
-	if (!size)
-		return 0;
-
-	n = min(size - 1, len);
-	memcpy(buf, src, n);
-	buf[n] = '\0';
-
-	return n;
+	if (n) {
+		n = min(n - 1, len);
+		memcpy(out->pos, src, n);
+		out->pos += n;
+		*out->pos = '\0';
+	}
 }
 
 #include "eytzinger.h"
@@ -935,3 +900,28 @@ void eytzinger0_find_test(void)
 	kfree(test_array);
 }
 #endif
+
+/*
+ * Accumulate percpu counters onto one cpu's copy - only valid when access
+ * against any percpu counter is guarded against
+ */
+u64 *bch2_acc_percpu_u64s(u64 __percpu *p, unsigned nr)
+{
+	u64 *ret;
+	int cpu;
+
+	preempt_disable();
+	ret = this_cpu_ptr(p);
+	preempt_enable();
+
+	for_each_possible_cpu(cpu) {
+		u64 *i = per_cpu_ptr(p, cpu);
+
+		if (i != ret) {
+			acc_u64s(ret, i, nr);
+			memset(i, 0, nr * sizeof(u64));
+		}
+	}
+
+	return ret;
+}

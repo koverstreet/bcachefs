@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_H
 #define _BCACHEFS_H
 
@@ -183,6 +184,7 @@
 #include <linux/closure.h>
 #include <linux/kobject.h>
 #include <linux/list.h>
+#include <linux/math64.h>
 #include <linux/mutex.h>
 #include <linux/percpu-refcount.h>
 #include <linux/percpu-rwsem.h>
@@ -201,7 +203,7 @@
 
 #include <linux/dynamic_fault.h>
 
-#define bch2_fs_init_fault(name)						\
+#define bch2_fs_init_fault(name)					\
 	dynamic_fault("bcachefs:bch_fs_init:" name)
 #define bch2_meta_read_fault(name)					\
 	 dynamic_fault("bcachefs:meta:read:" name)
@@ -220,18 +222,22 @@
 	printk(KERN_NOTICE bch2_fmt(c, fmt), ##__VA_ARGS__)
 #define bch_warn(c, fmt, ...) \
 	printk(KERN_WARNING bch2_fmt(c, fmt), ##__VA_ARGS__)
+#define bch_warn_ratelimited(c, fmt, ...) \
+	printk_ratelimited(KERN_WARNING bch2_fmt(c, fmt), ##__VA_ARGS__)
 #define bch_err(c, fmt, ...) \
 	printk(KERN_ERR bch2_fmt(c, fmt), ##__VA_ARGS__)
+#define bch_err_ratelimited(c, fmt, ...) \
+	printk_ratelimited(KERN_ERR bch2_fmt(c, fmt), ##__VA_ARGS__)
 
 #define bch_verbose(c, fmt, ...)					\
 do {									\
-	if ((c)->opts.verbose_recovery)					\
+	if ((c)->opts.verbose)						\
 		bch_info(c, fmt, ##__VA_ARGS__);			\
 } while (0)
 
 #define pr_verbose_init(opts, fmt, ...)					\
 do {									\
-	if (opt_get(opts, verbose_init))				\
+	if (opt_get(opts, verbose))					\
 		pr_info(fmt, ##__VA_ARGS__);				\
 } while (0)
 
@@ -252,6 +258,8 @@ do {									\
 	BCH_DEBUG_PARAM(expensive_debug_checks,				\
 		"Enables various runtime debugging checks that "	\
 		"significantly affect performance")			\
+	BCH_DEBUG_PARAM(debug_check_iterators,				\
+		"Enables extra verification for btree iterators")	\
 	BCH_DEBUG_PARAM(debug_check_bkeys,				\
 		"Run bkey_debugcheck (primarily checking GC/allocation "\
 		"information) when iterating over keys")		\
@@ -259,6 +267,25 @@ do {									\
 		"Reread btree nodes at various points to verify the "	\
 		"mergesort in the read path against modifications "	\
 		"done in memory")					\
+	BCH_DEBUG_PARAM(journal_seq_verify,				\
+		"Store the journal sequence number in the version "	\
+		"number of every btree key, and verify that btree "	\
+		"update ordering is preserved during recovery")		\
+	BCH_DEBUG_PARAM(inject_invalid_keys,				\
+		"Store the journal sequence number in the version "	\
+		"number of every btree key, and verify that btree "	\
+		"update ordering is preserved during recovery")		\
+	BCH_DEBUG_PARAM(test_alloc_startup,				\
+		"Force allocator startup to use the slowpath where it"	\
+		"can't find enough free buckets without invalidating"	\
+		"cached data")						\
+	BCH_DEBUG_PARAM(force_reconstruct_read,				\
+		"Force reads to use the reconstruct path, when reading"	\
+		"from erasure coded extents")				\
+	BCH_DEBUG_PARAM(test_restart_gc,				\
+		"Test restarting mark and sweep gc when bucket gens change")\
+	BCH_DEBUG_PARAM(test_reconstruct_alloc,				\
+		"Test reconstructing the alloc btree")
 
 #define BCH_DEBUG_PARAMS_ALL() BCH_DEBUG_PARAMS_ALWAYS() BCH_DEBUG_PARAMS_DEBUG()
 
@@ -270,10 +297,11 @@ do {									\
 
 #define BCH_TIME_STATS()			\
 	x(btree_node_mem_alloc)			\
+	x(btree_node_split)			\
+	x(btree_node_sort)			\
+	x(btree_node_read)			\
 	x(btree_gc)				\
-	x(btree_split)				\
-	x(btree_sort)				\
-	x(btree_read)				\
+	x(btree_update)				\
 	x(btree_lock_contended_read)		\
 	x(btree_lock_contended_intent)		\
 	x(btree_lock_contended_write)		\
@@ -282,8 +310,10 @@ do {									\
 	x(data_promote)				\
 	x(journal_write)			\
 	x(journal_delay)			\
-	x(journal_blocked)			\
-	x(journal_flush_seq)
+	x(journal_flush_seq)			\
+	x(blocked_journal)			\
+	x(blocked_allocate)			\
+	x(blocked_allocate_open_bucket)
 
 enum bch_time_stats {
 #define x(name) BCH_TIME_##name,
@@ -296,35 +326,42 @@ enum bch_time_stats {
 #include "btree_types.h"
 #include "buckets_types.h"
 #include "clock_types.h"
+#include "ec_types.h"
 #include "journal_types.h"
 #include "keylist_types.h"
 #include "quota_types.h"
 #include "rebalance_types.h"
+#include "replicas_types.h"
 #include "super_types.h"
-
-/*
- * Number of nodes we might have to allocate in a worst case btree split
- * operation - we split all the way up to the root, then allocate a new root.
- */
-#define btree_reserve_required_nodes(depth)	(((depth) + 1) * 2 + 1)
 
 /* Number of nodes btree coalesce will try to coalesce at once */
 #define GC_MERGE_NODES		4U
 
 /* Maximum number of nodes we might need to allocate atomically: */
-#define BTREE_RESERVE_MAX						\
-	(btree_reserve_required_nodes(BTREE_MAX_DEPTH) + GC_MERGE_NODES)
+#define BTREE_RESERVE_MAX	(BTREE_MAX_DEPTH + (BTREE_MAX_DEPTH - 1))
 
 /* Size of the freelist we allocate btree nodes from: */
-#define BTREE_NODE_RESERVE		(BTREE_RESERVE_MAX * 4)
+#define BTREE_NODE_RESERVE	BTREE_RESERVE_MAX
+
+#define BTREE_NODE_OPEN_BUCKET_RESERVE	(BTREE_RESERVE_MAX * BCH_REPLICAS_MAX)
 
 struct btree;
 
 enum gc_phase {
-	GC_PHASE_SB		= BTREE_ID_NR + 1,
+	GC_PHASE_NOT_RUNNING,
+	GC_PHASE_START,
+	GC_PHASE_SB,
+
+	GC_PHASE_BTREE_EC,
+	GC_PHASE_BTREE_EXTENTS,
+	GC_PHASE_BTREE_INODES,
+	GC_PHASE_BTREE_DIRENTS,
+	GC_PHASE_BTREE_XATTRS,
+	GC_PHASE_BTREE_ALLOC,
+	GC_PHASE_BTREE_QUOTAS,
+
 	GC_PHASE_PENDING_DELETE,
 	GC_PHASE_ALLOC,
-	GC_PHASE_DONE
 };
 
 struct gc_pos {
@@ -356,6 +393,7 @@ struct bch_dev {
 	char			name[BDEVNAME_SIZE];
 
 	struct bch_sb_handle	disk_sb;
+	struct bch_sb		*sb_read_scratch;
 	int			sb_write_error;
 
 	struct bch_devs_mask	self;
@@ -365,18 +403,16 @@ struct bch_dev {
 
 	/*
 	 * Buckets:
-	 * Per-bucket arrays are protected by c->usage_lock, bucket_lock and
+	 * Per-bucket arrays are protected by c->mark_lock, bucket_lock and
 	 * gc_lock, for device resize - holding any is sufficient for access:
 	 * Or rcu_read_lock(), but only for ptr_stale():
 	 */
-	struct bucket_array __rcu *buckets;
-	unsigned long		*buckets_dirty;
-	/* most out of date gen in the btree */
-	u8			*oldest_gens;
+	struct bucket_array __rcu *buckets[2];
+	unsigned long		*buckets_nouse;
+	unsigned long		*buckets_written;
 	struct rw_semaphore	bucket_lock;
 
-	struct bch_dev_usage __percpu *usage_percpu;
-	struct bch_dev_usage	usage_cached;
+	struct bch_dev_usage __percpu *usage[2];
 
 	/* Allocator: */
 	struct task_struct __rcu *alloc_thread;
@@ -393,7 +429,6 @@ struct bch_dev {
 	alloc_fifo		free[RESERVE_NR];
 	alloc_fifo		free_inc;
 	spinlock_t		freelist_lock;
-	size_t			nr_invalidated;
 
 	u8			open_buckets_partial[OPEN_BUCKETS_COUNT];
 	unsigned		open_buckets_partial_nr;
@@ -403,12 +438,19 @@ struct bch_dev {
 	/* last calculated minimum prio */
 	u16			max_last_bucket_io[2];
 
-	atomic_long_t		saturated_count;
 	size_t			inc_gen_needs_gc;
 	size_t			inc_gen_really_needs_gc;
-	u64			allocator_journal_seq_flush;
-	bool			allocator_invalidating_data;
-	bool			allocator_blocked;
+
+	/*
+	 * XXX: this should be an enum for allocator state, so as to include
+	 * error state
+	 */
+	enum {
+		ALLOCATOR_STOPPED,
+		ALLOCATOR_RUNNING,
+		ALLOCATOR_BLOCKED,
+		ALLOCATOR_BLOCKED_FULL,
+	}			allocator_state;
 
 	alloc_heap		alloc_heap;
 
@@ -417,6 +459,7 @@ struct bch_dev {
 	copygc_heap		copygc_heap;
 	struct bch_pd_controller copygc_pd;
 	struct write_point	copygc_write_point;
+	u64			copygc_threshold;
 
 	atomic64_t		rebalance_work;
 
@@ -435,33 +478,27 @@ struct bch_dev {
 	struct io_count __percpu *io_done;
 };
 
-/*
- * Flag bits for what phase of startup/shutdown the cache set is at, how we're
- * shutting down, etc.:
- *
- * BCH_FS_UNREGISTERING means we're not just shutting down, we're detaching
- * all the backing devices first (their cached data gets invalidated, and they
- * won't automatically reattach).
- */
 enum {
 	/* startup: */
 	BCH_FS_ALLOC_READ_DONE,
 	BCH_FS_ALLOCATOR_STARTED,
+	BCH_FS_ALLOCATOR_RUNNING,
 	BCH_FS_INITIAL_GC_DONE,
 	BCH_FS_FSCK_DONE,
 	BCH_FS_STARTED,
+	BCH_FS_RW,
 
 	/* shutdown: */
+	BCH_FS_STOPPING,
 	BCH_FS_EMERGENCY_RO,
 	BCH_FS_WRITE_DISABLE_COMPLETE,
 
 	/* errors: */
 	BCH_FS_ERROR,
-	BCH_FS_GC_FAILURE,
+	BCH_FS_ERRORS_FIXED,
 
 	/* misc: */
 	BCH_FS_BDEV_MOUNTED,
-	BCH_FS_FSCK_FIXED_ERRORS,
 	BCH_FS_FIXED_GENS,
 	BCH_FS_REBUILD_REPLICAS,
 	BCH_FS_HOLD_BTREE_WRITES,
@@ -474,11 +511,17 @@ struct btree_debug {
 	struct dentry		*failed;
 };
 
-enum bch_fs_state {
-	BCH_FS_STARTING		= 0,
-	BCH_FS_STOPPING,
-	BCH_FS_RO,
-	BCH_FS_RW,
+struct bch_fs_pcpu {
+	u64			sectors_available;
+};
+
+struct journal_seq_blacklist_table {
+	size_t			nr;
+	struct journal_seq_blacklist_table_entry {
+		u64		start;
+		u64		end;
+		bool		dirty;
+	}			entries[0];
 };
 
 struct bch_fs {
@@ -498,7 +541,6 @@ struct bch_fs {
 
 	/* ro/rw, add/remove devices: */
 	struct mutex		state_lock;
-	enum bch_fs_state	state;
 
 	/* Counts outstanding writes, for clean transition to read-only */
 	struct percpu_ref	writes;
@@ -506,9 +548,11 @@ struct bch_fs {
 
 	struct bch_dev __rcu	*devs[BCH_SB_MEMBERS_MAX];
 
-	struct bch_replicas_cpu __rcu *replicas;
-	struct bch_replicas_cpu __rcu *replicas_gc;
+	struct bch_replicas_cpu replicas;
+	struct bch_replicas_cpu replicas_gc;
 	struct mutex		replicas_gc_lock;
+
+	struct journal_entry_res replicas_journal_res;
 
 	struct bch_disk_groups_cpu __rcu *disk_groups;
 
@@ -519,6 +563,7 @@ struct bch_fs {
 		uuid_le		uuid;
 		uuid_le		user_uuid;
 
+		u16		version;
 		u16		encoded_extent_max;
 
 		u8		nr_devices;
@@ -530,6 +575,7 @@ struct bch_fs {
 		u32		time_base_hi;
 		u32		time_precision;
 		u64		features;
+		u64		compat;
 	}			sb;
 
 	struct bch_sb_handle	disk_sb;
@@ -568,9 +614,12 @@ struct bch_fs {
 	struct mutex		btree_interior_update_lock;
 	struct closure_waitlist	btree_interior_update_wait;
 
+	mempool_t		btree_iters_pool;
+
 	struct workqueue_struct	*wq;
 	/* copygc needs its own workqueue for index updates.. */
 	struct workqueue_struct	*copygc_wq;
+	struct workqueue_struct	*journal_reclaim_wq;
 
 	/* ALLOCATION */
 	struct delayed_work	pd_controllers_update;
@@ -586,14 +635,22 @@ struct bch_fs {
 	 * and forces them to be revalidated
 	 */
 	u32			capacity_gen;
+	unsigned		bucket_size_max;
 
 	atomic64_t		sectors_available;
 
-	struct bch_fs_usage __percpu *usage_percpu;
-	struct bch_fs_usage	usage_cached;
-	struct percpu_rw_semaphore usage_lock;
+	struct bch_fs_pcpu __percpu	*pcpu;
 
-	struct closure_waitlist	freelist_wait;
+	struct percpu_rw_semaphore	mark_lock;
+
+	seqcount_t			usage_lock;
+	struct bch_fs_usage		*usage_base;
+	struct bch_fs_usage __percpu	*usage[2];
+	struct bch_fs_usage __percpu	*usage_gc;
+
+	/* single element mempool: */
+	struct mutex		usage_scratch_lock;
+	struct bch_fs_usage	*usage_scratch;
 
 	/*
 	 * When we invalidate buckets, we use both the priority and the amount
@@ -605,8 +662,16 @@ struct bch_fs {
 
 	struct io_clock		io_clock[2];
 
+	/* JOURNAL SEQ BLACKLIST */
+	struct journal_seq_blacklist_table *
+				journal_seq_blacklist_table;
+	struct work_struct	journal_seq_blacklist_gc_work;
+
 	/* ALLOCATOR */
 	spinlock_t		freelist_lock;
+	struct closure_waitlist	freelist_wait;
+	u64			blocked_allocate;
+	u64			blocked_allocate_open_bucket;
 	u8			open_buckets_freelist;
 	u8			open_buckets_nr_free;
 	struct closure_waitlist	open_buckets_wait;
@@ -615,9 +680,10 @@ struct bch_fs {
 	struct write_point	btree_write_point;
 	struct write_point	rebalance_write_point;
 
-	struct write_point	write_points[WRITE_POINT_COUNT];
-	struct hlist_head	write_points_hash[WRITE_POINT_COUNT];
+	struct write_point	write_points[WRITE_POINT_MAX];
+	struct hlist_head	write_points_hash[WRITE_POINT_HASH_NR];
 	struct mutex		write_points_hash_lock;
+	unsigned		write_points_nr;
 
 	/* GARBAGE COLLECTION */
 	struct task_struct	*gc_thread;
@@ -629,9 +695,6 @@ struct bch_fs {
 	 * has been marked by GC.
 	 *
 	 * gc_cur_phase is a superset of btree_ids (BTREE_ID_EXTENTS etc.)
-	 *
-	 * gc_cur_phase == GC_PHASE_DONE indicates that gc is finished/not
-	 * currently running, and gc marks are currently valid
 	 *
 	 * Protected by gc_pos_lock. Only written to by GC thread, so GC thread
 	 * can read without a lock.
@@ -659,13 +722,29 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
 
 	/* REBALANCE */
 	struct bch_fs_rebalance	rebalance;
+
+	/* STRIPES: */
+	GENRADIX(struct stripe) stripes[2];
+	struct mutex		ec_stripe_create_lock;
+
+	ec_stripes_heap		ec_stripes_heap;
+	spinlock_t		ec_stripes_heap_lock;
+
+	/* ERASURE CODING */
+	struct list_head	ec_new_stripe_list;
+	struct mutex		ec_new_stripe_lock;
+
+	struct bio_set		ec_bioset;
+
+	struct work_struct	ec_stripe_delete_work;
+	struct llist_head	ec_stripe_delete_list;
 
 	/* VFS IO PATH - fs-io.c */
 	struct bio_set		writepage_bioset;
@@ -680,9 +759,6 @@ struct bch_fs {
 	struct list_head	fsck_errors;
 	struct mutex		fsck_error_lock;
 	bool			fsck_alloc_err;
-
-	/* FILESYSTEM */
-	atomic_long_t		nr_inodes;
 
 	/* QUOTAS */
 	struct bch_memquota_type quotas[QTYP_NR];
@@ -708,7 +784,7 @@ struct bch_fs {
 
 	struct journal		journal;
 
-	unsigned		bucket_journal_seq;
+	u64			last_bucket_seq_cleanup;
 
 	/* The rest of this all shows up in sysfs */
 	atomic_long_t		read_realloc_races;
@@ -734,11 +810,6 @@ static inline void bch2_set_ra_pages(struct bch_fs *c, unsigned ra_pages)
 #endif
 }
 
-static inline bool bch2_fs_running(struct bch_fs *c)
-{
-	return c->state == BCH_FS_RO || c->state == BCH_FS_RW;
-}
-
 static inline unsigned bucket_bytes(const struct bch_dev *ca)
 {
 	return ca->mi.bucket_size << 9;
@@ -747,6 +818,34 @@ static inline unsigned bucket_bytes(const struct bch_dev *ca)
 static inline unsigned block_bytes(const struct bch_fs *c)
 {
 	return c->opts.block_size << 9;
+}
+
+static inline struct timespec64 bch2_time_to_timespec(struct bch_fs *c, u64 time)
+{
+	return ns_to_timespec64(time * c->sb.time_precision + c->sb.time_base_lo);
+}
+
+static inline s64 timespec_to_bch2_time(struct bch_fs *c, struct timespec64 ts)
+{
+	s64 ns = timespec64_to_ns(&ts) - c->sb.time_base_lo;
+
+	if (c->sb.time_precision == 1)
+		return ns;
+
+	return div_s64(ns, c->sb.time_precision);
+}
+
+static inline s64 bch2_current_time(struct bch_fs *c)
+{
+	struct timespec64 now;
+
+	ktime_get_coarse_real_ts64(&now);
+	return timespec_to_bch2_time(c, now);
+}
+
+static inline bool bch2_dev_exists2(const struct bch_fs *c, unsigned dev)
+{
+	return dev < c->sb.nr_devices && c->devs[dev];
 }
 
 #endif /* _BCACHEFS_H */

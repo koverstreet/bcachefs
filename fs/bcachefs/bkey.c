@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
 #include "bkey.h"
@@ -59,8 +60,8 @@ static void bch2_bkey_pack_verify(const struct bkey_packed *packed,
 		char buf1[160], buf2[160];
 		char buf3[160], buf4[160];
 
-		bch2_bkey_to_text(buf1, sizeof(buf1), unpacked);
-		bch2_bkey_to_text(buf2, sizeof(buf2), &tmp);
+		bch2_bkey_to_text(&PBUF(buf1), unpacked);
+		bch2_bkey_to_text(&PBUF(buf2), &tmp);
 		bch2_to_binary(buf3, (void *) unpacked, 80);
 		bch2_to_binary(buf4, high_word(format, packed), 80);
 
@@ -484,7 +485,7 @@ enum bkey_pack_pos_ret bch2_bkey_pack_pos_lossy(struct bkey_packed *out,
 	pack_state_finish(&state, out);
 	out->u64s	= f->key_u64s;
 	out->format	= KEY_FORMAT_LOCAL_BTREE;
-	out->type	= KEY_TYPE_DELETED;
+	out->type	= KEY_TYPE_deleted;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 	if (exact) {
@@ -1010,11 +1011,8 @@ static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,
 			nr_key_bits -= 64;
 		}
 
-		if (l_v != r_v)
-			return l_v < r_v ? -1 : 1;
-
-		if (!nr_key_bits)
-			return 0;
+		if (!nr_key_bits || l_v != r_v)
+			break;
 
 		l = next_word(l);
 		r = next_word(r);
@@ -1022,6 +1020,8 @@ static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,
 		l_v = *l;
 		r_v = *r;
 	}
+
+	return cmp_int(l_v, r_v);
 }
 #endif
 

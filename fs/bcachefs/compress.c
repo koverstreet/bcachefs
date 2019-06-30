@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
 #include "checksum.h"
 #include "compress.h"
@@ -5,7 +6,6 @@
 #include "io.h"
 #include "super-io.h"
 
-#include "lz4.h"
 #include <linux/lz4.h>
 #include <linux/zlib.h>
 #include <linux/zstd.h>
@@ -159,11 +159,6 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 
 	switch (crc.compression_type) {
 	case BCH_COMPRESSION_LZ4_OLD:
-		ret = bch2_lz4_decompress(src_data.b, &src_len,
-				     dst_data, dst_len);
-		if (ret)
-			goto err;
-		break;
 	case BCH_COMPRESSION_LZ4:
 		ret = LZ4_decompress_safe_partial(src_data.b, dst_data,
 						  src_len, dst_len, dst_len);
@@ -601,11 +596,13 @@ have_compressed:
 			goto out;
 	}
 
-	ret = mempool_init_kmalloc_pool(
-			&c->decompress_workspace,
-			1, decompress_workspace_size);
-	if (ret)
-		goto out;
+	if (!mempool_initialized(&c->decompress_workspace)) {
+		ret = mempool_init_kmalloc_pool(
+				&c->decompress_workspace,
+				1, decompress_workspace_size);
+		if (ret)
+			goto out;
+	}
 out:
 	pr_verbose_init(c->opts, "ret %i", ret);
 	return ret;

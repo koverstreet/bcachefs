@@ -1,8 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_JOURNAL_IO_H
 #define _BCACHEFS_JOURNAL_IO_H
-
-struct bkey_i *bch2_journal_find_btree_root(struct bch_fs *, struct jset *,
-					    enum btree_id, unsigned *);
 
 /*
  * Only used for holding the journal entries we read in btree_journal_read()
@@ -39,7 +37,6 @@ static inline struct jset_entry *__jset_entry_type_next(struct jset *jset,
 
 int bch2_journal_read(struct bch_fs *, struct list_head *);
 
-int bch2_journal_entry_sectors(struct journal *);
 void bch2_journal_write(struct closure *);
 
 #endif /* _BCACHEFS_JOURNAL_IO_H */

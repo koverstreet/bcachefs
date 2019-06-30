@@ -1,6 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "alloc.h"
+#include "alloc_foreground.h"
 #include "btree_iter.h"
 #include "buckets.h"
 #include "clock.h"
@@ -17,17 +18,16 @@
 #include <trace/events/bcachefs.h>
 
 static inline bool rebalance_ptr_pred(struct bch_fs *c,
-				      const struct bch_extent_ptr *ptr,
-				      struct bch_extent_crc_unpacked crc,
+				      struct extent_ptr_decoded p,
 				      struct bch_io_opts *io_opts)
 {
 	if (io_opts->background_target &&
-	    !bch2_dev_in_target(c, ptr->dev, io_opts->background_target) &&
-	    !ptr->cached)
+	    !bch2_dev_in_target(c, p.ptr.dev, io_opts->background_target) &&
+	    !p.ptr.cached)
 		return true;
 
 	if (io_opts->background_compression &&
-	    crc.compression_type !=
+	    p.crc.compression_type !=
 	    bch2_compression_opt_to_type[io_opts->background_compression])
 		return true;
 
@@ -38,8 +38,8 @@ void bch2_rebalance_add_key(struct bch_fs *c,
 			    struct bkey_s_c k,
 			    struct bch_io_opts *io_opts)
 {
-	const struct bch_extent_ptr *ptr;
-	struct bch_extent_crc_unpacked crc;
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
 	struct bkey_s_c_extent e;
 
 	if (!bkey_extent_is_data(k.k))
@@ -51,13 +51,13 @@ void bch2_rebalance_add_key(struct bch_fs *c,
 
 	e = bkey_s_c_to_extent(k);
 
-	extent_for_each_ptr_crc(e, ptr, crc)
-		if (rebalance_ptr_pred(c, ptr, crc, io_opts)) {
-			struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
+	extent_for_each_ptr_decode(e, p, entry)
+		if (rebalance_ptr_pred(c, p, io_opts)) {
+			struct bch_dev *ca = bch_dev_bkey_exists(c, p.ptr.dev);
 
-			if (atomic64_add_return(crc.compressed_size,
+			if (atomic64_add_return(p.crc.compressed_size,
 						&ca->rebalance_work) ==
-			    crc.compressed_size)
+			    p.crc.compressed_size)
 				rebalance_wakeup(c);
 		}
 }
@@ -70,28 +70,34 @@ void bch2_rebalance_add_work(struct bch_fs *c, u64 sectors)
 }
 
 static enum data_cmd rebalance_pred(struct bch_fs *c, void *arg,
-				    enum bkey_type type,
-				    struct bkey_s_c_extent e,
+				    struct bkey_s_c k,
 				    struct bch_io_opts *io_opts,
 				    struct data_opts *data_opts)
 {
-	const struct bch_extent_ptr *ptr;
-	struct bch_extent_crc_unpacked crc;
+	switch (k.k->type) {
+	case KEY_TYPE_extent: {
+		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
+		const union bch_extent_entry *entry;
+		struct extent_ptr_decoded p;
 
-	/* Make sure we have room to add a new pointer: */
-	if (bkey_val_u64s(e.k) + BKEY_EXTENT_PTR_U64s_MAX >
-	    BKEY_EXTENT_VAL_U64s_MAX)
+		/* Make sure we have room to add a new pointer: */
+		if (bkey_val_u64s(e.k) + BKEY_EXTENT_PTR_U64s_MAX >
+		    BKEY_EXTENT_VAL_U64s_MAX)
+			return DATA_SKIP;
+
+		extent_for_each_ptr_decode(e, p, entry)
+			if (rebalance_ptr_pred(c, p, io_opts))
+				goto found;
+
 		return DATA_SKIP;
-
-	extent_for_each_ptr_crc(e, ptr, crc)
-		if (rebalance_ptr_pred(c, ptr, crc, io_opts))
-			goto found;
-
-	return DATA_SKIP;
 found:
-	data_opts->target		= io_opts->background_target;
-	data_opts->btree_insert_flags	= 0;
-	return DATA_ADD_REPLICAS;
+		data_opts->target		= io_opts->background_target;
+		data_opts->btree_insert_flags	= 0;
+		return DATA_ADD_REPLICAS;
+	}
+	default:
+		return DATA_SKIP;
+	}
 }
 
 struct rebalance_work {
@@ -112,7 +118,7 @@ static void rebalance_work_accumulate(struct rebalance_work *w,
 		work = U64_MAX;
 	work = min(work, capacity);
 
-	percent_full = div_u64(work * 100, capacity);
+	percent_full = div64_u64(work * 100, capacity);
 
 	if (percent_full >= w->dev_most_full_percent) {
 		w->dev_most_full_idx		= idx;
@@ -252,49 +258,43 @@ static int bch2_rebalance_thread(void *arg)
 
 ssize_t bch2_rebalance_work_show(struct bch_fs *c, char *buf)
 {
-	char *out = buf, *end = out + PAGE_SIZE;
+	struct printbuf out = _PBUF(buf, PAGE_SIZE);
 	struct bch_fs_rebalance *r = &c->rebalance;
 	struct rebalance_work w = rebalance_work(c);
 	char h1[21], h2[21];
 
-	bch2_hprint(h1, w.dev_most_full_work << 9);
-	bch2_hprint(h2, w.dev_most_full_capacity << 9);
-	out += scnprintf(out, end - out,
-			 "fullest_dev (%i):\t%s/%s\n",
-			 w.dev_most_full_idx, h1, h2);
+	bch2_hprint(&PBUF(h1), w.dev_most_full_work << 9);
+	bch2_hprint(&PBUF(h2), w.dev_most_full_capacity << 9);
+	pr_buf(&out, "fullest_dev (%i):\t%s/%s\n",
+	       w.dev_most_full_idx, h1, h2);
 
-	bch2_hprint(h1, w.total_work << 9);
-	bch2_hprint(h2, c->capacity << 9);
-	out += scnprintf(out, end - out,
-			 "total work:\t\t%s/%s\n",
-			 h1, h2);
+	bch2_hprint(&PBUF(h1), w.total_work << 9);
+	bch2_hprint(&PBUF(h2), c->capacity << 9);
+	pr_buf(&out, "total work:\t\t%s/%s\n", h1, h2);
 
-	out += scnprintf(out, end - out,
-			 "rate:\t\t\t%u\n",
-			 r->pd.rate.rate);
+	pr_buf(&out, "rate:\t\t\t%u\n", r->pd.rate.rate);
 
 	switch (r->state) {
 	case REBALANCE_WAITING:
-		out += scnprintf(out, end - out, "waiting\n");
+		pr_buf(&out, "waiting\n");
 		break;
 	case REBALANCE_THROTTLED:
-		bch2_hprint(h1,
+		bch2_hprint(&PBUF(h1),
 			    (r->throttled_until_iotime -
 			     atomic_long_read(&c->io_clock[WRITE].now)) << 9);
-		out += scnprintf(out, end - out,
-				 "throttled for %lu sec or %s io\n",
-				 (r->throttled_until_cputime - jiffies) / HZ,
-				 h1);
+		pr_buf(&out, "throttled for %lu sec or %s io\n",
+		       (r->throttled_until_cputime - jiffies) / HZ,
+		       h1);
 		break;
 	case REBALANCE_RUNNING:
-		out += scnprintf(out, end - out, "running\n");
-		out += scnprintf(out, end - out, "pos %llu:%llu\n",
-				 r->move_stats.iter.pos.inode,
-				 r->move_stats.iter.pos.offset);
+		pr_buf(&out, "running\n");
+		pr_buf(&out, "pos %llu:%llu\n",
+		       r->move_stats.pos.inode,
+		       r->move_stats.pos.offset);
 		break;
 	}
 
-	return out - buf;
+	return out.pos - buf;
 }
 
 void bch2_rebalance_stop(struct bch_fs *c)

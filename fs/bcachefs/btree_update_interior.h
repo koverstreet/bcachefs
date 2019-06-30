@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_BTREE_UPDATE_INTERIOR_H
 #define _BCACHEFS_BTREE_UPDATE_INTERIOR_H
 
@@ -131,7 +132,6 @@ struct btree_update {
 void bch2_btree_node_free_inmem(struct bch_fs *, struct btree *,
 				struct btree_iter *);
 void bch2_btree_node_free_never_inserted(struct bch_fs *, struct btree *);
-void bch2_btree_open_bucket_put(struct bch_fs *, struct btree *);
 
 struct btree *__bch2_btree_node_alloc_replacement(struct btree_update *,
 						  struct btree *,
@@ -146,35 +146,42 @@ void bch2_btree_interior_update_will_free_node(struct btree_update *,
 					       struct btree *);
 
 void bch2_btree_insert_node(struct btree_update *, struct btree *,
-			    struct btree_iter *, struct keylist *);
+			    struct btree_iter *, struct keylist *,
+			    unsigned);
 int bch2_btree_split_leaf(struct bch_fs *, struct btree_iter *, unsigned);
 
-int __bch2_foreground_maybe_merge(struct bch_fs *, struct btree_iter *,
-				  unsigned, enum btree_node_sibling);
+void __bch2_foreground_maybe_merge(struct bch_fs *, struct btree_iter *,
+				   unsigned, unsigned, enum btree_node_sibling);
 
-static inline int bch2_foreground_maybe_merge_sibling(struct bch_fs *c,
+static inline void bch2_foreground_maybe_merge_sibling(struct bch_fs *c,
 					struct btree_iter *iter,
-					unsigned level,
+					unsigned level, unsigned flags,
 					enum btree_node_sibling sib)
 {
 	struct btree *b;
 
+	if (iter->uptodate >= BTREE_ITER_NEED_TRAVERSE)
+		return;
+
 	if (!bch2_btree_node_relock(iter, level))
-		return 0;
+		return;
 
 	b = iter->l[level].b;
 	if (b->sib_u64s[sib] > c->btree_foreground_merge_threshold)
-		return 0;
+		return;
 
-	return __bch2_foreground_maybe_merge(c, iter, level, sib);
+	__bch2_foreground_maybe_merge(c, iter, level, flags, sib);
 }
 
 static inline void bch2_foreground_maybe_merge(struct bch_fs *c,
 					       struct btree_iter *iter,
-					       unsigned level)
+					       unsigned level,
+					       unsigned flags)
 {
-	bch2_foreground_maybe_merge_sibling(c, iter, level, btree_prev_sib);
-	bch2_foreground_maybe_merge_sibling(c, iter, level, btree_next_sib);
+	bch2_foreground_maybe_merge_sibling(c, iter, level, flags,
+					    btree_prev_sib);
+	bch2_foreground_maybe_merge_sibling(c, iter, level, flags,
+					    btree_next_sib);
 }
 
 void bch2_btree_set_root_for_read(struct bch_fs *, struct btree *);
@@ -183,9 +190,17 @@ void bch2_btree_root_alloc(struct bch_fs *, enum btree_id);
 static inline unsigned btree_update_reserve_required(struct bch_fs *c,
 						     struct btree *b)
 {
-	unsigned depth = btree_node_root(c, b)->level - b->level;
+	unsigned depth = btree_node_root(c, b)->level + 1;
 
-	return btree_reserve_required_nodes(depth);
+	/*
+	 * Number of nodes we might have to allocate in a worst case btree
+	 * split operation - we split all the way up to the root, then allocate
+	 * a new root, unless we're already at max depth:
+	 */
+	if (depth < BTREE_MAX_DEPTH)
+		return (depth - b->level) * 2 + 1;
+	else
+		return (depth - b->level) * 2 - 1;
 }
 
 static inline void btree_node_reset_sib_u64s(struct btree *b)
@@ -216,14 +231,19 @@ static inline void *write_block(struct btree *b)
 	return (void *) b->data + (b->written << 9);
 }
 
-static inline bool bset_written(struct btree *b, struct bset *i)
+static inline bool __btree_addr_written(struct btree *b, void *p)
 {
-	return (void *) i < write_block(b);
+	return p < write_block(b);
 }
 
-static inline bool bset_unwritten(struct btree *b, struct bset *i)
+static inline bool bset_written(struct btree *b, struct bset *i)
 {
-	return (void *) i > write_block(b);
+	return __btree_addr_written(b, i);
+}
+
+static inline bool bkey_written(struct btree *b, struct bkey_packed *k)
+{
+	return __btree_addr_written(b, k);
 }
 
 static inline ssize_t __bch_btree_u64s_remaining(struct bch_fs *c,
@@ -282,10 +302,9 @@ static inline struct btree_node_entry *want_new_bset(struct bch_fs *c,
 	return NULL;
 }
 
-static inline void unreserve_whiteout(struct btree *b, struct bset_tree *t,
-				      struct bkey_packed *k)
+static inline void unreserve_whiteout(struct btree *b, struct bkey_packed *k)
 {
-	if (bset_written(b, bset(b, t))) {
+	if (bkey_written(b, k)) {
 		EBUG_ON(b->uncompacted_whiteout_u64s <
 			bkeyp_key_u64s(&b->format, k));
 		b->uncompacted_whiteout_u64s -=
@@ -293,10 +312,9 @@ static inline void unreserve_whiteout(struct btree *b, struct bset_tree *t,
 	}
 }
 
-static inline void reserve_whiteout(struct btree *b, struct bset_tree *t,
-				    struct bkey_packed *k)
+static inline void reserve_whiteout(struct btree *b, struct bkey_packed *k)
 {
-	if (bset_written(b, bset(b, t))) {
+	if (bkey_written(b, k)) {
 		BUG_ON(!k->needs_whiteout);
 		b->uncompacted_whiteout_u64s +=
 			bkeyp_key_u64s(&b->format, k);
@@ -308,38 +326,12 @@ static inline void reserve_whiteout(struct btree *b, struct bset_tree *t,
  * insert into could be written out from under us)
  */
 static inline bool bch2_btree_node_insert_fits(struct bch_fs *c,
-					      struct btree *b, unsigned u64s)
+					       struct btree *b, unsigned u64s)
 {
 	if (unlikely(btree_node_fake(b)))
 		return false;
 
-	if (btree_node_is_extents(b)) {
-		/* The insert key might split an existing key
-		 * (bch2_insert_fixup_extent() -> BCH_EXTENT_OVERLAP_MIDDLE case:
-		 */
-		u64s += BKEY_EXTENT_U64s_MAX;
-	}
-
 	return u64s <= bch_btree_keys_u64s_remaining(c, b);
-}
-
-static inline bool journal_res_insert_fits(struct btree_insert *trans,
-					   struct btree_insert_entry *insert)
-{
-	unsigned u64s = 0;
-	struct btree_insert_entry *i;
-
-	/*
-	 * If we didn't get a journal reservation, we're in journal replay and
-	 * we're not journalling updates:
-	 */
-	if (!trans->journal_res.ref)
-		return true;
-
-	for (i = insert; i < trans->entries + trans->nr; i++)
-		u64s += jset_u64s(i->k->k.u64s + i->extra_res);
-
-	return u64s <= trans->journal_res.u64s;
 }
 
 ssize_t bch2_btree_updates_print(struct bch_fs *, char *);

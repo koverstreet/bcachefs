@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_QUOTA_TYPES_H
 #define _BCACHEFS_QUOTA_TYPES_H
 
@@ -5,6 +6,12 @@
 
 struct bch_qid {
 	u32		q[QTYP_NR];
+};
+
+enum quota_acct_mode {
+	KEY_TYPE_QUOTA_PREALLOC,
+	KEY_TYPE_QUOTA_WARN,
+	KEY_TYPE_QUOTA_NOCHECK,
 };
 
 struct memquota_counter {

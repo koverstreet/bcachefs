@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_CHECKSUM_H
 #define _BCACHEFS_CHECKSUM_H
 
@@ -5,9 +6,29 @@
 #include "extents_types.h"
 #include "super-io.h"
 
-#include <crypto/chacha20.h>
+#include <linux/crc64.h>
+#include <crypto/chacha.h>
 
-u64 bch2_crc64_update(u64, const void *, size_t);
+static inline bool bch2_checksum_mergeable(unsigned type)
+{
+
+	switch (type) {
+	case BCH_CSUM_NONE:
+	case BCH_CSUM_CRC32C:
+	case BCH_CSUM_CRC64:
+		return true;
+	default:
+		return false;
+	}
+}
+
+struct bch_csum bch2_checksum_merge(unsigned, struct bch_csum,
+				    struct bch_csum, size_t);
+
+static inline u64 bch2_crc64_update(u64 crc, const void *p, size_t len)
+{
+	return crc64_be(crc, p, len);
+}
 
 #define BCH_NONCE_EXTENT	cpu_to_le32(1 << 28)
 #define BCH_NONCE_BTREE		cpu_to_le32(2 << 28)
@@ -109,14 +130,6 @@ static inline bool bch2_checksum_type_valid(const struct bch_fs *c,
 	return true;
 }
 
-static const unsigned bch_crc_bytes[] = {
-	[BCH_CSUM_NONE]				= 0,
-	[BCH_CSUM_CRC32C]			= 4,
-	[BCH_CSUM_CRC64]			= 8,
-	[BCH_CSUM_CHACHA20_POLY1305_80]		= 10,
-	[BCH_CSUM_CHACHA20_POLY1305_128]	= 16,
-};
-
 /* returns true if not equal */
 static inline bool bch2_crc_cmp(struct bch_csum l, struct bch_csum r)
 {
@@ -130,9 +143,9 @@ static inline bool bch2_crc_cmp(struct bch_csum l, struct bch_csum r)
 /* for skipping ahead and encrypting/decrypting at an offset: */
 static inline struct nonce nonce_add(struct nonce nonce, unsigned offset)
 {
-	EBUG_ON(offset & (CHACHA20_BLOCK_SIZE - 1));
+	EBUG_ON(offset & (CHACHA_BLOCK_SIZE - 1));
 
-	le32_add_cpu(&nonce.d[0], offset / CHACHA20_BLOCK_SIZE);
+	le32_add_cpu(&nonce.d[0], offset / CHACHA_BLOCK_SIZE);
 	return nonce;
 }
 

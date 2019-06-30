@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
 #include "bkey_methods.h"
@@ -12,7 +13,12 @@
 
 #include <asm/unaligned.h>
 
-#define FIELD_BYTES()						\
+const char * const bch2_inode_opts[] = {
+#define x(name, ...)	#name,
+	BCH_INODE_OPTS()
+#undef  x
+	NULL,
+};
 
 static const u8 byte_table[8] = { 1, 2, 3, 4, 6, 8, 10, 13 };
 static const u8 bits_table[8] = {
@@ -97,7 +103,7 @@ void bch2_inode_pack(struct bkey_inode_buf *packed,
 	packed->inode.v.bi_flags	= cpu_to_le32(inode->bi_flags);
 	packed->inode.v.bi_mode		= cpu_to_le16(inode->bi_mode);
 
-#define BCH_INODE_FIELD(_name, _bits)					\
+#define x(_name, _bits)					\
 	out += inode_encode_field(out, end, 0, inode->_name);		\
 	nr_fields++;							\
 									\
@@ -107,7 +113,7 @@ void bch2_inode_pack(struct bkey_inode_buf *packed,
 	}
 
 	BCH_INODE_FIELDS()
-#undef  BCH_INODE_FIELD
+#undef  x
 
 	out = last_nonzero_field;
 	nr_fields = last_nonzero_fieldnr;
@@ -129,9 +135,9 @@ void bch2_inode_pack(struct bkey_inode_buf *packed,
 		BUG_ON(unpacked.bi_hash_seed	!= inode->bi_hash_seed);
 		BUG_ON(unpacked.bi_mode		!= inode->bi_mode);
 
-#define BCH_INODE_FIELD(_name, _bits)	BUG_ON(unpacked._name != inode->_name);
+#define x(_name, _bits)	BUG_ON(unpacked._name != inode->_name);
 		BCH_INODE_FIELDS()
-#undef  BCH_INODE_FIELD
+#undef  x
 	}
 }
 
@@ -149,7 +155,7 @@ int bch2_inode_unpack(struct bkey_s_c_inode inode,
 	unpacked->bi_flags	= le32_to_cpu(inode.v->bi_flags);
 	unpacked->bi_mode	= le16_to_cpu(inode.v->bi_mode);
 
-#define BCH_INODE_FIELD(_name, _bits)					\
+#define x(_name, _bits)					\
 	if (fieldnr++ == INODE_NR_FIELDS(inode.v)) {			\
 		memset(&unpacked->_name, 0,				\
 		       sizeof(*unpacked) -				\
@@ -168,7 +174,7 @@ int bch2_inode_unpack(struct bkey_s_c_inode inode,
 	in += ret;
 
 	BCH_INODE_FIELDS()
-#undef  BCH_INODE_FIELD
+#undef  x
 
 	/* XXX: signal if there were more fields than expected? */
 
@@ -177,88 +183,86 @@ int bch2_inode_unpack(struct bkey_s_c_inode inode,
 
 const char *bch2_inode_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
-	if (k.k->p.offset)
-		return "nonzero offset";
-
-	switch (k.k->type) {
-	case BCH_INODE_FS: {
 		struct bkey_s_c_inode inode = bkey_s_c_to_inode(k);
 		struct bch_inode_unpacked unpacked;
 
-		if (bkey_val_bytes(k.k) < sizeof(struct bch_inode))
-			return "incorrect value size";
+	if (k.k->p.offset)
+		return "nonzero offset";
 
-		if (k.k->p.inode < BLOCKDEV_INODE_MAX)
-			return "fs inode in blockdev range";
+	if (bkey_val_bytes(k.k) < sizeof(struct bch_inode))
+		return "incorrect value size";
 
-		if (INODE_STR_HASH(inode.v) >= BCH_STR_HASH_NR)
-			return "invalid str hash type";
+	if (k.k->p.inode < BLOCKDEV_INODE_MAX)
+		return "fs inode in blockdev range";
 
-		if (bch2_inode_unpack(inode, &unpacked))
-			return "invalid variable length fields";
+	if (INODE_STR_HASH(inode.v) >= BCH_STR_HASH_NR)
+		return "invalid str hash type";
 
-		if (unpacked.bi_data_checksum >= BCH_CSUM_OPT_NR + 1)
-			return "invalid data checksum type";
+	if (bch2_inode_unpack(inode, &unpacked))
+		return "invalid variable length fields";
 
-		if (unpacked.bi_compression >= BCH_COMPRESSION_OPT_NR + 1)
-			return "invalid data checksum type";
+	if (unpacked.bi_data_checksum >= BCH_CSUM_OPT_NR + 1)
+		return "invalid data checksum type";
 
-		return NULL;
-	}
-	case BCH_INODE_BLOCKDEV:
-		if (bkey_val_bytes(k.k) != sizeof(struct bch_inode_blockdev))
-			return "incorrect value size";
+	if (unpacked.bi_compression >= BCH_COMPRESSION_OPT_NR + 1)
+		return "invalid data checksum type";
 
-		if (k.k->p.inode >= BLOCKDEV_INODE_MAX)
-			return "blockdev inode in fs range";
+	if ((unpacked.bi_flags & BCH_INODE_UNLINKED) &&
+	    unpacked.bi_nlink != 0)
+		return "flagged as unlinked but bi_nlink != 0";
 
-		return NULL;
-	case BCH_INODE_GENERATION:
-		if (bkey_val_bytes(k.k) != sizeof(struct bch_inode_generation))
-			return "incorrect value size";
-
-		return NULL;
-	default:
-		return "invalid type";
-	}
+	return NULL;
 }
 
-void bch2_inode_to_text(struct bch_fs *c, char *buf,
-			size_t size, struct bkey_s_c k)
+void bch2_inode_to_text(struct printbuf *out, struct bch_fs *c,
+		       struct bkey_s_c k)
 {
-	char *out = buf, *end = out + size;
-	struct bkey_s_c_inode inode;
+	struct bkey_s_c_inode inode = bkey_s_c_to_inode(k);
 	struct bch_inode_unpacked unpacked;
 
-	switch (k.k->type) {
-	case BCH_INODE_FS:
-		inode = bkey_s_c_to_inode(k);
-		if (bch2_inode_unpack(inode, &unpacked)) {
-			out += scnprintf(out, end - out, "(unpack error)");
-			break;
-		}
-
-#define BCH_INODE_FIELD(_name, _bits)						\
-		out += scnprintf(out, end - out, #_name ": %llu ", (u64) unpacked._name);
-		BCH_INODE_FIELDS()
-#undef  BCH_INODE_FIELD
-		break;
+	if (bch2_inode_unpack(inode, &unpacked)) {
+		pr_buf(out, "(unpack error)");
+		return;
 	}
+
+#define x(_name, _bits)						\
+	pr_buf(out, #_name ": %llu ", (u64) unpacked._name);
+	BCH_INODE_FIELDS()
+#undef  x
+}
+
+const char *bch2_inode_generation_invalid(const struct bch_fs *c,
+					  struct bkey_s_c k)
+{
+	if (k.k->p.offset)
+		return "nonzero offset";
+
+	if (bkey_val_bytes(k.k) != sizeof(struct bch_inode_generation))
+		return "incorrect value size";
+
+	return NULL;
+}
+
+void bch2_inode_generation_to_text(struct printbuf *out, struct bch_fs *c,
+				   struct bkey_s_c k)
+{
+	struct bkey_s_c_inode_generation gen = bkey_s_c_to_inode_generation(k);
+
+	pr_buf(out, "generation: %u", le32_to_cpu(gen.v->bi_generation));
 }
 
 void bch2_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 		     uid_t uid, gid_t gid, umode_t mode, dev_t rdev,
 		     struct bch_inode_unpacked *parent)
 {
-	s64 now = timespec_to_bch2_time(c,
-		timespec64_trunc(current_kernel_time64(),
-				 c->sb.time_precision));
+	s64 now = bch2_current_time(c);
 
 	memset(inode_u, 0, sizeof(*inode_u));
 
 	/* ick */
 	inode_u->bi_flags |= c->opts.str_hash << INODE_STR_HASH_OFFSET;
-	get_random_bytes(&inode_u->bi_hash_seed, sizeof(inode_u->bi_hash_seed));
+	get_random_bytes(&inode_u->bi_hash_seed,
+			 sizeof(inode_u->bi_hash_seed));
 
 	inode_u->bi_mode	= mode;
 	inode_u->bi_uid		= uid;
@@ -270,18 +274,32 @@ void bch2_inode_init(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 	inode_u->bi_otime	= now;
 
 	if (parent) {
-#define BCH_INODE_FIELD(_name)	inode_u->_name = parent->_name;
-		BCH_INODE_FIELDS_INHERIT()
-#undef BCH_INODE_FIELD
+#define x(_name, ...)	inode_u->bi_##_name = parent->bi_##_name;
+		BCH_INODE_OPTS()
+#undef x
 	}
 }
 
-int bch2_inode_create(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
-		      u64 min, u64 max, u64 *hint)
+static inline u32 bkey_generation(struct bkey_s_c k)
 {
-	struct bkey_inode_buf inode_p;
-	struct btree_iter iter;
-	bool searched_from_start = false;
+	switch (k.k->type) {
+	case KEY_TYPE_inode:
+		BUG();
+	case KEY_TYPE_inode_generation:
+		return le32_to_cpu(bkey_s_c_to_inode_generation(k).v->bi_generation);
+	default:
+		return 0;
+	}
+}
+
+int __bch2_inode_create(struct btree_trans *trans,
+			struct bch_inode_unpacked *inode_u,
+			u64 min, u64 max, u64 *hint)
+{
+	struct bch_fs *c = trans->c;
+	struct bkey_inode_buf *inode_p;
+	struct btree_iter *iter;
+	u64 start;
 	int ret;
 
 	if (!max)
@@ -290,108 +308,74 @@ int bch2_inode_create(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
 	if (c->opts.inodes_32bit)
 		max = min_t(u64, max, U32_MAX);
 
-	if (*hint >= max || *hint < min)
-		*hint = min;
+	start = READ_ONCE(*hint);
 
-	if (*hint == min)
-		searched_from_start = true;
+	if (start >= max || start < min)
+		start = min;
+
+	inode_p = bch2_trans_kmalloc(trans, sizeof(*inode_p));
+	if (IS_ERR(inode_p))
+		return PTR_ERR(inode_p);
+
+	iter = bch2_trans_get_iter(trans,
+			BTREE_ID_INODES, POS(start, 0),
+			BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
+	if (IS_ERR(iter))
+		return PTR_ERR(iter);
 again:
-	bch2_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(*hint, 0),
-			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
-
 	while (1) {
-		struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-		u32 bi_generation = 0;
+		struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
 
-		ret = btree_iter_err(k);
-		if (ret) {
-			bch2_btree_iter_unlock(&iter);
+		ret = bkey_err(k);
+		if (ret)
 			return ret;
-		}
 
 		switch (k.k->type) {
-		case BCH_INODE_BLOCKDEV:
-		case BCH_INODE_FS:
+		case KEY_TYPE_inode:
 			/* slot used */
-			if (iter.pos.inode == max)
+			if (iter->pos.inode >= max)
 				goto out;
 
-			bch2_btree_iter_next_slot(&iter);
+			bch2_btree_iter_next_slot(iter);
 			break;
 
-		case BCH_INODE_GENERATION: {
-			struct bkey_s_c_inode_generation g =
-				bkey_s_c_to_inode_generation(k);
-			bi_generation = le32_to_cpu(g.v->bi_generation);
-			/* fallthrough: */
-		}
 		default:
-			inode_u->bi_generation = bi_generation;
+			*hint			= k.k->p.inode;
+			inode_u->bi_inum	= k.k->p.inode;
+			inode_u->bi_generation	= bkey_generation(k);
 
-			bch2_inode_pack(&inode_p, inode_u);
-			inode_p.inode.k.p = k.k->p;
-
-			ret = bch2_btree_insert_at(c, NULL, NULL, NULL,
-					BTREE_INSERT_ATOMIC,
-					BTREE_INSERT_ENTRY(&iter,
-							   &inode_p.inode.k_i));
-
-			if (ret != -EINTR) {
-				bch2_btree_iter_unlock(&iter);
-
-				if (!ret) {
-					inode_u->bi_inum =
-						inode_p.inode.k.p.inode;
-					*hint = inode_p.inode.k.p.inode + 1;
-				}
-
-				return ret;
-			}
-
-			if (ret == -EINTR)
-				continue;
-
+			bch2_inode_pack(inode_p, inode_u);
+			bch2_trans_update(trans,
+				BTREE_INSERT_ENTRY(iter, &inode_p->inode.k_i));
+			return 0;
 		}
 	}
 out:
-	bch2_btree_iter_unlock(&iter);
-
-	if (!searched_from_start) {
+	if (start != min) {
 		/* Retry from start */
-		*hint = min;
-		searched_from_start = true;
+		start = min;
+		bch2_btree_iter_set_pos(iter, POS(start, 0));
 		goto again;
 	}
 
 	return -ENOSPC;
 }
 
-int bch2_inode_truncate(struct bch_fs *c, u64 inode_nr, u64 new_size,
-			struct extent_insert_hook *hook, u64 *journal_seq)
+int bch2_inode_create(struct bch_fs *c, struct bch_inode_unpacked *inode_u,
+		      u64 min, u64 max, u64 *hint)
 {
-	return bch2_btree_delete_range(c, BTREE_ID_EXTENTS,
-				       POS(inode_nr, new_size),
-				       POS(inode_nr + 1, 0),
-				       ZERO_VERSION, NULL, hook,
-				       journal_seq);
+	return bch2_trans_do(c, NULL, BTREE_INSERT_ATOMIC,
+			__bch2_inode_create(&trans, inode_u, min, max, hint));
 }
 
 int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 {
-	struct btree_iter iter;
+	struct btree_trans trans;
+	struct btree_iter *iter;
 	struct bkey_i_inode_generation delete;
+	struct bpos start = POS(inode_nr, 0);
+	struct bpos end = POS(inode_nr + 1, 0);
 	int ret;
-
-	ret = bch2_inode_truncate(c, inode_nr, 0, NULL, NULL);
-	if (ret < 0)
-		return ret;
-
-	ret = bch2_btree_delete_range(c, BTREE_ID_XATTRS,
-				     POS(inode_nr, 0),
-				     POS(inode_nr + 1, 0),
-				     ZERO_VERSION, NULL, NULL, NULL);
-	if (ret < 0)
-		return ret;
 
 	/*
 	 * If this was a directory, there shouldn't be any real dirents left -
@@ -401,38 +385,40 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 	 * XXX: the dirent could ideally would delete whiteouts when they're no
 	 * longer needed
 	 */
-	ret = bch2_btree_delete_range(c, BTREE_ID_DIRENTS,
-				     POS(inode_nr, 0),
-				     POS(inode_nr + 1, 0),
-				     ZERO_VERSION, NULL, NULL, NULL);
-	if (ret < 0)
+	ret   = bch2_btree_delete_range(c, BTREE_ID_EXTENTS,
+					start, end, NULL) ?:
+		bch2_btree_delete_range(c, BTREE_ID_XATTRS,
+					start, end, NULL) ?:
+		bch2_btree_delete_range(c, BTREE_ID_DIRENTS,
+					start, end, NULL);
+	if (ret)
 		return ret;
 
-	bch2_btree_iter_init(&iter, c, BTREE_ID_INODES, POS(inode_nr, 0),
-			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
+	bch2_trans_init(&trans, c, 0, 0);
+
+	iter = bch2_trans_get_iter(&trans, BTREE_ID_INODES, POS(inode_nr, 0),
+				   BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 	do {
-		struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
+		struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
 		u32 bi_generation = 0;
 
-		ret = btree_iter_err(k);
-		if (ret) {
-			bch2_btree_iter_unlock(&iter);
-			return ret;
-		}
+		ret = bkey_err(k);
+		if (ret)
+			break;
 
-		bch2_fs_inconsistent_on(k.k->type != BCH_INODE_FS, c,
+		bch2_fs_inconsistent_on(k.k->type != KEY_TYPE_inode, c,
 					"inode %llu not found when deleting",
 					inode_nr);
 
 		switch (k.k->type) {
-		case BCH_INODE_FS: {
+		case KEY_TYPE_inode: {
 			struct bch_inode_unpacked inode_u;
 
 			if (!bch2_inode_unpack(bkey_s_c_to_inode(k), &inode_u))
 				bi_generation = inode_u.bi_generation + 1;
 			break;
 		}
-		case BCH_INODE_GENERATION: {
+		case KEY_TYPE_inode_generation: {
 			struct bkey_s_c_inode_generation g =
 				bkey_s_c_to_inode_generation(k);
 			bi_generation = le32_to_cpu(g.v->bi_generation);
@@ -449,40 +435,44 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 			delete.v.bi_generation = cpu_to_le32(bi_generation);
 		}
 
-		ret = bch2_btree_insert_at(c, NULL, NULL, NULL,
-				BTREE_INSERT_ATOMIC|
-				BTREE_INSERT_NOFAIL,
-				BTREE_INSERT_ENTRY(&iter, &delete.k_i));
+		bch2_trans_update(&trans,
+				  BTREE_INSERT_ENTRY(iter, &delete.k_i));
+
+		ret = bch2_trans_commit(&trans, NULL, NULL,
+					BTREE_INSERT_ATOMIC|
+					BTREE_INSERT_NOFAIL);
 	} while (ret == -EINTR);
 
-	bch2_btree_iter_unlock(&iter);
+	bch2_trans_exit(&trans);
+	return ret;
+}
+
+int bch2_inode_find_by_inum_trans(struct btree_trans *trans, u64 inode_nr,
+				  struct bch_inode_unpacked *inode)
+{
+	struct btree_iter *iter;
+	struct bkey_s_c k;
+	int ret = -ENOENT;
+
+	iter = bch2_trans_get_iter(trans, BTREE_ID_INODES,
+			POS(inode_nr, 0), BTREE_ITER_SLOTS);
+	if (IS_ERR(iter))
+		return PTR_ERR(iter);
+
+	k = bch2_btree_iter_peek_slot(iter);
+	if (k.k->type == KEY_TYPE_inode)
+		ret = bch2_inode_unpack(bkey_s_c_to_inode(k), inode);
+
+	bch2_trans_iter_put(trans, iter);
+
 	return ret;
 }
 
 int bch2_inode_find_by_inum(struct bch_fs *c, u64 inode_nr,
 			    struct bch_inode_unpacked *inode)
 {
-	struct btree_iter iter;
-	struct bkey_s_c k;
-	int ret = -ENOENT;
-
-	for_each_btree_key(&iter, c, BTREE_ID_INODES,
-			   POS(inode_nr, 0),
-			   BTREE_ITER_SLOTS, k) {
-		switch (k.k->type) {
-		case BCH_INODE_FS:
-			ret = bch2_inode_unpack(bkey_s_c_to_inode(k), inode);
-			break;
-		default:
-			/* hole, not found */
-			break;
-		}
-
-		break;
-
-	}
-
-	return bch2_btree_iter_unlock(&iter) ?: ret;
+	return bch2_trans_do(c, NULL, 0,
+		bch2_inode_find_by_inum_trans(&trans, inode_nr, inode));
 }
 
 #ifdef CONFIG_BCACHEFS_DEBUG

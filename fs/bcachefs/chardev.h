@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_CHARDEV_H
 #define _BCACHEFS_CHARDEV_H
 

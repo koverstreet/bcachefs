@@ -1,7 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_IO_H
 #define _BCACHEFS_IO_H
 
-#include "alloc.h"
 #include "checksum.h"
 #include "io_types.h"
 
@@ -31,10 +31,9 @@ enum bch_write_flags {
 	BCH_WRITE_PAGES_OWNED		= (1 << 5),
 	BCH_WRITE_ONLY_SPECIFIED_DEVS	= (1 << 6),
 	BCH_WRITE_NOPUT_RESERVATION	= (1 << 7),
-	BCH_WRITE_NOMARK_REPLICAS	= (1 << 8),
 
 	/* Internal: */
-	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 9),
+	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 8),
 };
 
 static inline u64 *op_journal_seq(struct bch_write_op *op)
@@ -71,7 +70,7 @@ static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 	op->nr_replicas		= 0;
 	op->nr_replicas_required = c->opts.data_replicas_required;
 	op->alloc_reserve	= RESERVE_NONE;
-	op->open_buckets_nr	= 0;
+	op->open_buckets.nr	= 0;
 	op->devs_have.nr	= 0;
 	op->target		= 0;
 	op->opts		= opts;
@@ -95,10 +94,10 @@ static inline struct bch_write_bio *wbio_init(struct bio *bio)
 
 struct bch_devs_mask;
 struct cache_promote_op;
-struct extent_pick_ptr;
+struct extent_ptr_decoded;
 
 int __bch2_read_extent(struct bch_fs *, struct bch_read_bio *, struct bvec_iter,
-		       struct bkey_s_c, struct bch_devs_mask *, unsigned);
+		       struct bkey_s_c, struct bch_io_failures *, unsigned);
 void bch2_read(struct bch_fs *, struct bch_read_bio *, u64);
 
 enum bch_read_flags {

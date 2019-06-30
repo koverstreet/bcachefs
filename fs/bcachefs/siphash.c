@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: BSD-3-Clause
 /*	$OpenBSD: siphash.c,v 1.3 2015/02/20 11:51:03 tedu Exp $ */
 
 /*-

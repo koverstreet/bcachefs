@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_JOURNAL_TYPES_H
 #define _BCACHEFS_JOURNAL_TYPES_H
 
@@ -21,8 +22,11 @@ struct journal_buf {
 
 	struct closure_waitlist	wait;
 
-	unsigned		size;
-	unsigned		disk_sectors;
+	unsigned		buf_size;	/* size in bytes of @data */
+	unsigned		sectors;	/* maximum size for current entry */
+	unsigned		disk_sectors;	/* maximum size entry could have been, if
+						   buf_size was bigger */
+	unsigned		u64s_reserved;
 	/* bloom filter: */
 	unsigned long		has_inode[1024 / sizeof(unsigned long)];
 };
@@ -47,25 +51,7 @@ typedef void (*journal_pin_flush_fn)(struct journal *j,
 struct journal_entry_pin {
 	struct list_head		list;
 	journal_pin_flush_fn		flush;
-	struct journal_entry_pin_list	*pin_list;
-};
-
-/* corresponds to a btree node with a blacklisted bset: */
-struct blacklisted_node {
-	__le64			seq;
-	enum btree_id		btree_id;
-	struct bpos		pos;
-};
-
-struct journal_seq_blacklist {
-	struct list_head	list;
-	u64			start;
-	u64			end;
-
-	struct journal_entry_pin pin;
-
-	struct blacklisted_node	*entries;
-	size_t			nr_entries;
+	u64				seq;
 };
 
 struct journal_res {
@@ -74,6 +60,14 @@ struct journal_res {
 	u16			u64s;
 	u32			offset;
 	u64			seq;
+};
+
+/*
+ * For reserving space in the journal prior to getting a reservation on a
+ * particular journal entry:
+ */
+struct journal_preres {
+	unsigned		u64s;
 };
 
 union journal_res_state {
@@ -91,6 +85,21 @@ union journal_res_state {
 				prev_buf_unwritten:1,
 				buf0_count:21,
 				buf1_count:21;
+	};
+};
+
+union journal_preres_state {
+	struct {
+		atomic64_t	counter;
+	};
+
+	struct {
+		u64		v;
+	};
+
+	struct {
+		u32		reserved;
+		u32		remaining;
 	};
 };
 
@@ -117,6 +126,8 @@ enum {
 	JOURNAL_REPLAY_DONE,
 	JOURNAL_STARTED,
 	JOURNAL_NEED_WRITE,
+	JOURNAL_NOT_EMPTY,
+	JOURNAL_MAY_GET_UNRESERVED,
 };
 
 /* Embedded in struct bch_fs */
@@ -126,9 +137,22 @@ struct journal {
 	unsigned long		flags;
 
 	union journal_res_state reservations;
+
+	/* Max size of current journal entry */
 	unsigned		cur_entry_u64s;
-	unsigned		prev_buf_sectors;
-	unsigned		cur_buf_sectors;
+	unsigned		cur_entry_sectors;
+
+	/*
+	 * 0, or -ENOSPC if waiting on journal reclaim, or -EROFS if
+	 * insufficient devices:
+	 */
+	int			cur_entry_error;
+
+	union journal_preres_state prereserved;
+
+	/* Reserved space in journal entry to be used just prior to write */
+	unsigned		entry_u64s_reserved;
+
 	unsigned		buf_size_want;
 
 	/*
@@ -139,9 +163,13 @@ struct journal {
 
 	spinlock_t		lock;
 
+	/* if nonzero, we may not open a new journal entry: */
+	unsigned		blocked;
+
 	/* Used when waiting because the journal was full */
 	wait_queue_head_t	wait;
 	struct closure_waitlist	async_wait;
+	struct closure_waitlist	preres_wait;
 
 	struct closure		io;
 	struct delayed_work	write_work;
@@ -149,7 +177,8 @@ struct journal {
 	/* Sequence number of most recent journal entry (last entry in @pin) */
 	atomic64_t		seq;
 
-	/* last_seq from the most recent journal entry written */
+	/* seq, last_seq from the most recent journal entry successfully written */
+	u64			seq_ondisk;
 	u64			last_seq_ondisk;
 
 	/*
@@ -172,21 +201,23 @@ struct journal {
 		u64 front, back, size, mask;
 		struct journal_entry_pin_list *data;
 	}			pin;
+
 	u64			replay_journal_seq;
+	u64			replay_journal_seq_end;
 
-	struct mutex		blacklist_lock;
-	struct list_head	seq_blacklist;
-	struct journal_seq_blacklist *new_blacklist;
-
-	BKEY_PADDED(key);
 	struct write_point	wp;
 	spinlock_t		err_lock;
 
 	struct delayed_work	reclaim_work;
-	unsigned long		last_flushed;
-
-	/* protects advancing ja->last_idx: */
 	struct mutex		reclaim_lock;
+	unsigned long		last_flushed;
+	struct journal_entry_pin *flush_in_progress;
+	wait_queue_head_t	pin_flush_wait;
+
+	/* protects advancing ja->discard_idx: */
+	struct mutex		discard_lock;
+	bool			can_discard;
+
 	unsigned		write_delay_ms;
 	unsigned		reclaim_delay_ms;
 
@@ -217,17 +248,15 @@ struct journal_device {
 
 	unsigned		sectors_free;
 
-	/* Journal bucket we're currently writing to */
-	unsigned		cur_idx;
-
-	/* Last journal bucket that still contains an open journal entry */
-
 	/*
-	 * j->lock and j->reclaim_lock must both be held to modify, j->lock
-	 * sufficient to read:
+	 * discard_idx <= dirty_idx_ondisk <= dirty_idx <= cur_idx:
 	 */
-	unsigned		last_idx;
+	unsigned		discard_idx;		/* Next bucket to discard */
+	unsigned		dirty_idx_ondisk;
+	unsigned		dirty_idx;
+	unsigned		cur_idx;		/* Journal bucket we're currently writing to */
 	unsigned		nr;
+
 	u64			*buckets;
 
 	/* Bio for journal reads/writes to this device */
@@ -235,6 +264,13 @@ struct journal_device {
 
 	/* for bch_journal_read_device */
 	struct closure		read;
+};
+
+/*
+ * journal_entry_res - reserve space in every journal entry:
+ */
+struct journal_entry_res {
+	unsigned		u64s;
 };
 
 #endif /* _BCACHEFS_JOURNAL_TYPES_H */
