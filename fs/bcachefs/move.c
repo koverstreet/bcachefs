@@ -427,12 +427,12 @@ static void move_free(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct moving_context *ctxt = io->write.ctxt;
-	struct bvec_iter_all iter;
 	struct bio_vec *bv;
+	unsigned i;
 
 	bch2_disk_reservation_put(io->write.op.c, &io->write.op.res);
 
-	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, iter)
+	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, i)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);
 
@@ -782,14 +782,6 @@ out:
 	bch2_bkey_buf_exit(&sk, c);
 
 	return ret;
-}
-
-inline void bch_move_stats_init(struct bch_move_stats *stats, char *name)
-{
-	memset(stats, 0, sizeof(*stats));
-
-	scnprintf(stats->name, sizeof(stats->name),
-			"%s", name);
 }
 
 static inline void progress_list_add(struct bch_fs *c,
