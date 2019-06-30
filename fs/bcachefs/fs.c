@@ -1225,6 +1225,15 @@ static int bch2_vfs_readdir(struct file *file, struct dir_context *ctx)
 	return bch2_readdir(c, file, ctx);
 }
 
+static int bch2_clone_file_range(struct file *file_src, loff_t pos_src,
+				 struct file *file_dst, loff_t pos_dst,
+				 u64 len)
+{
+	return bch2_remap_file_range(file_src, pos_src,
+				     file_dst, pos_dst,
+				     len, 0);
+}
+
 static const struct file_operations bch_file_operations = {
 	.llseek		= bch2_llseek,
 	.read_iter	= generic_file_read_iter,
@@ -1239,7 +1248,7 @@ static const struct file_operations bch_file_operations = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= bch2_compat_fs_ioctl,
 #endif
-	.remap_file_range = bch2_remap_file_range,
+	.clone_file_range = bch2_clone_file_range,
 };
 
 static const struct inode_operations bch_file_inode_operations = {
@@ -1774,7 +1783,7 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 
 	sb->s_bdi->congested_fn		= bch2_congested;
 	sb->s_bdi->congested_data	= c;
-	sb->s_bdi->ra_pages		= VM_READAHEAD_PAGES;
+	sb->s_bdi->ra_pages		= VM_MAX_READAHEAD * 1024 / PAGE_SIZE;
 
 	for_each_online_member(ca, c, i) {
 		struct block_device *bdev = ca->disk_sb.bdev;
