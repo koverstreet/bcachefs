@@ -11,6 +11,7 @@
 
 #include <linux/kthread.h>
 #include <linux/sched/mm.h>
+#include <linux/sched/task.h>
 #include <trace/events/bcachefs.h>
 
 /* Free space calculations: */
