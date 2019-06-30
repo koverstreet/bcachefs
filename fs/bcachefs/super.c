@@ -149,6 +149,44 @@ struct bch_fs *bch2_uuid_to_fs(uuid_le uuid)
 	return c;
 }
 
+int bch2_congested(void *data, int bdi_bits)
+{
+	struct bch_fs *c = data;
+	struct backing_dev_info *bdi;
+	struct bch_dev *ca;
+	unsigned i;
+	int ret = 0;
+
+	rcu_read_lock();
+	if (bdi_bits & (1 << WB_sync_congested)) {
+		/* Reads - check all devices: */
+		for_each_readable_member(ca, c, i) {
+			bdi = ca->disk_sb.bdev->bd_bdi;
+
+			if (bdi_congested(bdi, bdi_bits)) {
+				ret = 1;
+				break;
+			}
+		}
+	} else {
+		const struct bch_devs_mask *devs =
+			bch2_target_to_mask(c, c->opts.foreground_target) ?:
+			&c->rw_devs[BCH_DATA_user];
+
+		for_each_member_device_rcu(ca, c, i, devs) {
+			bdi = ca->disk_sb.bdev->bd_bdi;
+
+			if (bdi_congested(bdi, bdi_bits)) {
+				ret = 1;
+				break;
+			}
+		}
+	}
+	rcu_read_unlock();
+
+	return ret;
+}
+
 /* Filesystem RO/RW: */
 
 /*
