@@ -217,6 +217,7 @@ static inline bool is_superblock_bucket(struct bch_dev *ca, u64 b)
 
 struct bch_fs *bch2_dev_to_fs(dev_t);
 struct bch_fs *bch2_uuid_to_fs(uuid_le);
+int bch2_congested(void *, int);
 
 bool bch2_dev_state_allowed(struct bch_fs *, struct bch_dev *,
 			   enum bch_member_state, int);
