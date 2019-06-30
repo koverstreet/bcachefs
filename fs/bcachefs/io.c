@@ -136,10 +136,10 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 
 void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
-	struct bvec_iter_all iter;
 	struct bio_vec *bv;
+	unsigned i;
 
-	bio_for_each_segment_all(bv, bio, iter)
+	bio_for_each_segment_all(bv, bio, i)
 		if (bv->bv_page != ZERO_PAGE(0))
 			mempool_free(bv->bv_page, &c->bio_bounce_pages);
 	bio->bi_vcnt = 0;
@@ -470,8 +470,8 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 		ca = bch_dev_bkey_exists(c, ptr->dev);
 
 		if (to_entry(ptr + 1) < ptrs.end) {
-			n = to_wbio(bio_alloc_clone(NULL, &wbio->bio,
-						GFP_NOIO, &ca->replica_set));
+			n = to_wbio(bio_clone_fast(&wbio->bio, GFP_NOIO,
+						   &ca->replica_set));
 
 			n->bio.bi_end_io	= wbio->bio.bi_end_io;
 			n->bio.bi_private	= wbio->bio.bi_private;
@@ -712,10 +712,9 @@ static struct bio *bch2_write_bio_alloc(struct bch_fs *c,
 				       ? ((unsigned long) buf & (PAGE_SIZE - 1))
 				       : 0), PAGE_SIZE);
 
-	pages = min(pages, BIO_MAX_VECS);
+	pages = min_t(unsigned, pages, BIO_MAX_PAGES);
 
-	bio = bio_alloc_bioset(NULL, pages, 0,
-			       GFP_NOIO, &c->bio_write);
+	bio = bio_alloc_bioset(GFP_NOIO, pages, &c->bio_write);
 	wbio			= wbio_init(bio);
 	wbio->put_bio		= true;
 	/* copy WRITE_SYNC flag */
@@ -1446,7 +1445,7 @@ static struct promote_op *__promote_alloc(struct bch_fs *c,
 		goto err;
 
 	rbio_init(&(*rbio)->bio, opts);
-	bio_init(&(*rbio)->bio, NULL, (*rbio)->bio.bi_inline_vecs, pages, 0);
+	bio_init(&(*rbio)->bio, (*rbio)->bio.bi_inline_vecs, pages);
 
 	if (bch2_bio_alloc_pages(&(*rbio)->bio, sectors << 9,
 				 GFP_NOIO))
@@ -1461,7 +1460,7 @@ static struct promote_op *__promote_alloc(struct bch_fs *c,
 		goto err;
 
 	bio = &op->write.op.wbio.bio;
-	bio_init(bio, NULL, bio->bi_inline_vecs, pages, 0);
+	bio_init(bio, bio->bi_inline_vecs, pages);
 
 	ret = bch2_data_update_init(c, &op->write,
 			writepoint_hashed((unsigned long) current),
@@ -2144,10 +2143,8 @@ get_bio:
 	} else if (bounce) {
 		unsigned sectors = pick.crc.compressed_size;
 
-		rbio = rbio_init(bio_alloc_bioset(NULL,
+		rbio = rbio_init(bio_alloc_bioset(GFP_NOIO,
 						  DIV_ROUND_UP(sectors, PAGE_SECTORS),
-						  0,
-						  GFP_NOIO,
 						  &c->bio_read_split),
 				 orig->opts);
 
@@ -2163,8 +2160,8 @@ get_bio:
 		 * from the whole bio, in which case we don't want to retry and
 		 * lose the error)
 		 */
-		rbio = rbio_init(bio_alloc_clone(NULL, &orig->bio, GFP_NOIO,
-						 &c->bio_read_split),
+		rbio = rbio_init(bio_clone_fast(&orig->bio, GFP_NOIO,
+						&c->bio_read_split),
 				 orig->opts);
 		rbio->bio.bi_iter = iter;
 		rbio->split	= true;

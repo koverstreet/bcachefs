@@ -143,11 +143,9 @@ int bch2_sb_realloc(struct bch_sb_handle *sb, unsigned u64s)
 	if (sb->have_bio) {
 		unsigned nr_bvecs = DIV_ROUND_UP(new_buffer_size, PAGE_SIZE);
 
-		bio = bio_kmalloc(nr_bvecs, GFP_KERNEL);
+		bio = bio_kmalloc(GFP_KERNEL, nr_bvecs);
 		if (!bio)
 			return -ENOMEM;
-
-		bio_init(bio, NULL, bio->bi_inline_vecs, nr_bvecs, 0);
 
 		if (sb->bio)
 			kfree(sb->bio);
@@ -296,7 +294,7 @@ static int bch2_sb_validate(struct bch_sb_handle *disk_sb, struct printbuf *out,
 	block_size = le16_to_cpu(sb->block_size);
 
 	if (block_size > PAGE_SECTORS) {
-		prt_printf(out, "Block size too big (got %u, max %u)",
+		prt_printf(out, "Block size too big (got %u, max %lu)",
 		       block_size, PAGE_SECTORS);
 		return -EINVAL;
 	}
@@ -530,8 +528,10 @@ static int read_one_super(struct bch_sb_handle *sb, u64 offset, struct printbuf 
 	size_t bytes;
 	int ret;
 reread:
-	bio_reset(sb->bio, sb->bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
+	bio_reset(sb->bio);
+	bio_set_dev(sb->bio, sb->bdev);
 	sb->bio->bi_iter.bi_sector = offset;
+	bio_set_op_attrs(sb->bio, REQ_OP_READ, REQ_SYNC|REQ_META);
 	bch2_bio_map(sb->bio, sb->sb, sb->buffer_size);
 
 	ret = submit_bio_wait(sb->bio);
@@ -659,8 +659,10 @@ int bch2_read_super(const char *path, struct bch_opts *opts,
 	 * Error reading primary superblock - read location of backup
 	 * superblocks:
 	 */
-	bio_reset(sb->bio, sb->bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
+	bio_reset(sb->bio);
+	bio_set_dev(sb->bio, sb->bdev);
 	sb->bio->bi_iter.bi_sector = BCH_SB_LAYOUT_SECTOR;
+	bio_set_op_attrs(sb->bio, REQ_OP_READ, REQ_SYNC|REQ_META);
 	/*
 	 * use sb buffer to read layout, since sb buffer is page aligned but
 	 * layout won't be:
@@ -744,10 +746,12 @@ static void read_back_super(struct bch_fs *c, struct bch_dev *ca)
 	struct bch_sb *sb = ca->disk_sb.sb;
 	struct bio *bio = ca->disk_sb.bio;
 
-	bio_reset(bio, ca->disk_sb.bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
+	bio_reset(bio);
+	bio_set_dev(bio, ca->disk_sb.bdev);
 	bio->bi_iter.bi_sector	= le64_to_cpu(sb->layout.sb_offset[0]);
 	bio->bi_end_io		= write_super_endio;
 	bio->bi_private		= ca;
+	bio_set_op_attrs(bio, REQ_OP_READ, REQ_SYNC|REQ_META);
 	bch2_bio_map(bio, ca->sb_read_scratch, PAGE_SIZE);
 
 	this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_sb],
@@ -768,10 +772,12 @@ static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 	sb->csum = csum_vstruct(c, BCH_SB_CSUM_TYPE(sb),
 				null_nonce(), sb);
 
-	bio_reset(bio, ca->disk_sb.bdev, REQ_OP_WRITE|REQ_SYNC|REQ_META);
+	bio_reset(bio);
+	bio_set_dev(bio, ca->disk_sb.bdev);
 	bio->bi_iter.bi_sector	= le64_to_cpu(sb->offset);
 	bio->bi_end_io		= write_super_endio;
 	bio->bi_private		= ca;
+	bio_set_op_attrs(bio, REQ_OP_WRITE, REQ_SYNC|REQ_META);
 	bch2_bio_map(bio, sb,
 		     roundup((size_t) vstruct_bytes(sb),
 			     bdev_logical_block_size(ca->disk_sb.bdev)));

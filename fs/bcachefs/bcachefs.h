@@ -204,6 +204,7 @@
 #include <linux/zstd.h>
 
 #include "bcachefs_format.h"
+#include "darray.h"
 #include "errcode.h"
 #include "fifo.h"
 #include "opts.h"
@@ -211,6 +212,7 @@
 
 #define dynamic_fault(...)		0
 #define race_fault(...)			0
+#define fallthrough			do {} while (0)  /* fallthrough */
 
 #define trace_and_count(_c, _name, ...)					\
 do {									\
@@ -827,7 +829,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_sync_skcipher *chacha20;
+	struct crypto_skcipher	*chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;

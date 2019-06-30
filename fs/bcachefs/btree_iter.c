@@ -16,7 +16,7 @@
 #include "replicas.h"
 #include "subvolume.h"
 
-#include <linux/prandom.h>
+#include <linux/random.h>
 #include <linux/prefetch.h>
 #include <trace/events/bcachefs.h>
 
@@ -2844,8 +2844,6 @@ void __bch2_trans_init(struct btree_trans *trans, struct bch_fs *c, const char *
 {
 	struct btree_transaction_stats *s;
 	struct btree_trans *pos;
-
-	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
 
 	memset(trans, 0, sizeof(*trans));
 	trans->c		= c;

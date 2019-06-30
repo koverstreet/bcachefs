@@ -45,11 +45,11 @@ static bool bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 	if (!bch2_dev_get_ioref(ca, READ))
 		return false;
 
-	bio = bio_alloc_bioset(ca->disk_sb.bdev,
-			       buf_pages(n_sorted, btree_bytes(c)),
-			       REQ_OP_READ|REQ_META,
-			       GFP_NOIO,
-			       &c->btree_bio);
+	bio = bio_alloc_bioset(GFP_NOIO,
+			buf_pages(n_sorted, btree_bytes(c)),
+			&c->btree_bio);
+	bio_set_dev(bio, ca->disk_sb.bdev);
+	bio->bi_opf		= REQ_OP_READ|REQ_META;
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bch2_bio_map(bio, n_sorted, btree_bytes(c));
 

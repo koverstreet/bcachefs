@@ -18,7 +18,7 @@
 #endif
 
 #define six_acquire(l, t, r)	lock_acquire(l, 0, t, r, 1, NULL, _RET_IP_)
-#define six_release(l)		lock_release(l, _RET_IP_)
+#define six_release(l)		lock_release(l, 0, _RET_IP_)
 
 static void do_six_unlock_type(struct six_lock *lock, enum six_lock_type type);
 

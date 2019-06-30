@@ -11,6 +11,19 @@
 #include "util.h"
 #include <linux/slab.h>
 
+static inline void * __must_check krealloc_array(void *p,
+						 size_t new_n,
+						 size_t new_size,
+						 gfp_t flags)
+{
+	size_t bytes;
+
+	if (unlikely(check_mul_overflow(new_n, new_size, &bytes)))
+		return NULL;
+
+	return krealloc(p, bytes, flags);
+}
+
 #define DARRAY(type)							\
 struct {								\
 	size_t nr, size;						\
