@@ -21,6 +21,13 @@
 
 #include "darray.h"
 
+#define PAGE_SECTORS_SHIFT	(PAGE_SHIFT - 9)
+#define PAGE_SECTORS		(1U << PAGE_SECTORS_SHIFT)
+
+#define fallthrough		__attribute__((__fallthrough__))
+
+#define unsafe_memcpy(_dst, _src, _n, _reason)	memcpy(_dst, _src, _n)
+
 struct closure;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -44,6 +51,10 @@ struct closure;
 	(__builtin_types_compatible_p(typeof(_val), _type) ||		\
 	 __builtin_types_compatible_p(typeof(_val), const _type))
 
+#ifndef alloc_hooks
+#define alloc_hooks(_fn, _ret, _fail)		_fn
+#endif
+
 /* Userspace doesn't align allocations as nicely as the kernel allocators: */
 static inline size_t buf_pages(void *p, size_t len)
 {
@@ -62,9 +73,9 @@ static inline void vpfree(void *p, size_t size)
 
 static inline void *_vpmalloc(size_t size, gfp_t gfp_mask)
 {
-	return (void *) _get_free_pages(gfp_mask|__GFP_NOWARN,
+	return (void *) __get_free_pages(gfp_mask|__GFP_NOWARN,
 					 get_order(size)) ?:
-		__vmalloc(size, gfp_mask);
+		__vmalloc(size, gfp_mask, PAGE_KERNEL);
 }
 #define vpmalloc(_size, _gfp)			\
 	alloc_hooks(_vpmalloc(_size, _gfp), void *, NULL)
@@ -80,7 +91,7 @@ static inline void kvpfree(void *p, size_t size)
 static inline void *_kvpmalloc(size_t size, gfp_t gfp_mask)
 {
 	return size < PAGE_SIZE
-		? _kmalloc(size, gfp_mask)
+		? kmalloc(size, gfp_mask)
 		: _vpmalloc(size, gfp_mask);
 }
 #define kvpmalloc(_size, _gfp)			\
@@ -721,6 +732,35 @@ static inline void memset_u64s_tail(void *s, int c, unsigned bytes)
 
 	memset(s + bytes, c, rem);
 }
+
+static inline struct bio_vec next_contig_bvec(struct bio *bio,
+					      struct bvec_iter *iter)
+{
+	struct bio_vec bv = bio_iter_iovec(bio, *iter);
+
+	bio_advance_iter(bio, iter, bv.bv_len);
+#ifndef CONFIG_HIGHMEM
+	while (iter->bi_size) {
+		struct bio_vec next = bio_iter_iovec(bio, *iter);
+
+		if (page_address(bv.bv_page) + bv.bv_offset + bv.bv_len !=
+		    page_address(next.bv_page) + next.bv_offset)
+			break;
+
+		bv.bv_len += next.bv_len;
+		bio_advance_iter(bio, iter, next.bv_len);
+	}
+#endif
+	return bv;
+}
+
+#define __bio_for_each_contig_segment(bv, bio, iter, start)		\
+	for (iter = (start);						\
+	     (iter).bi_size &&						\
+		((bv = next_contig_bvec((bio), &(iter))), 1);)
+
+#define bio_for_each_contig_segment(bv, bio, iter)			\
+	__bio_for_each_contig_segment(bv, bio, iter, (bio)->bi_iter)
 
 void sort_cmp_size(void *base, size_t num, size_t size,
 	  int (*cmp_func)(const void *, const void *, size_t),

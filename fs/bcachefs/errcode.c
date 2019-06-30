@@ -3,8 +3,6 @@
 #include "bcachefs.h"
 #include "errcode.h"
 
-#include <linux/errname.h>
-
 static const char * const bch2_errcode_strs[] = {
 #define x(class, err) [BCH_ERR_##err - BCH_ERR_START] = #err,
 	BCH_ERRCODES()
@@ -31,7 +29,7 @@ const char *bch2_err_str(int err)
 	if (err >= BCH_ERR_START)
 		errstr = bch2_errcode_strs[err - BCH_ERR_START];
 	else if (err)
-		errstr = errname(err);
+		errstr = "(Standard error code)";
 	else
 		errstr = "(No error)";
 	return errstr ?: "(Invalid error)";

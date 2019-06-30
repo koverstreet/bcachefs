@@ -268,26 +268,7 @@ void bch2_print_string_as_lines(const char *prefix, const char *lines)
 
 int bch2_save_backtrace(bch_stacktrace *stack, struct task_struct *task)
 {
-	unsigned nr_entries = 0;
-	int ret = 0;
-
-	stack->nr = 0;
-	ret = darray_make_room(stack, 32);
-	if (ret)
-		return ret;
-
-	if (!down_read_trylock(&task->signal->exec_update_lock))
-		return -1;
-
-	do {
-		nr_entries = stack_trace_save_tsk(task, stack->data, stack->size, 0);
-	} while (nr_entries == stack->size &&
-		 !(ret = darray_make_room(stack, stack->size * 2)));
-
-	stack->nr = nr_entries;
-	up_read(&task->signal->exec_update_lock);
-
-	return ret;
+	return 0;
 }
 
 void bch2_prt_backtrace(struct printbuf *out, bch_stacktrace *stack)
@@ -764,7 +745,7 @@ void bch2_bio_map(struct bio *bio, void *base, size_t size)
 int _bch2_bio_alloc_pages(struct bio *bio, size_t size, gfp_t gfp_mask)
 {
 	while (size) {
-		struct page *page = _alloc_pages(gfp_mask, 0);
+		struct page *page = alloc_pages(gfp_mask, 0);
 		unsigned len = min_t(size_t, PAGE_SIZE, size);
 
 		if (!page)

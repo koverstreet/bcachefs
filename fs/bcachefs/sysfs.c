@@ -211,9 +211,11 @@ const char * const bch2_write_refs[] = {
 
 static void bch2_write_refs_to_text(struct printbuf *out, struct bch_fs *c)
 {
+	unsigned i;
+
 	bch2_printbuf_tabstop_push(out, 24);
 
-	for (unsigned i = 0; i < ARRAY_SIZE(c->writes); i++) {
+	for (i = 0; i < ARRAY_SIZE(c->writes); i++) {
 		prt_str(out, bch2_write_refs[i]);
 		prt_tab(out);
 		prt_printf(out, "%li", atomic_long_read(&c->writes[i]));
@@ -291,7 +293,7 @@ static int bch2_compression_stats_to_text(struct printbuf *out, struct bch_fs *c
 	    incompressible_sectors = 0,
 	    compressed_sectors_compressed = 0,
 	    compressed_sectors_uncompressed = 0;
-	int ret;
+	int ret = 0;
 
 	if (!test_bit(BCH_FS_STARTED, &c->flags))
 		return -EPERM;

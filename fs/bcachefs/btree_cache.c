@@ -100,7 +100,8 @@ static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp)
 	if (!b->data)
 		return -BCH_ERR_ENOMEM_btree_node_mem_alloc;
 #ifdef __KERNEL__
-	b->aux_data = vmalloc_exec(btree_aux_data_bytes(b), gfp);
+	b->aux_data = __vmalloc(btree_aux_data_bytes(b), gfp,
+				PAGE_KERNEL_EXEC);
 #else
 	b->aux_data = mmap(NULL, btree_aux_data_bytes(b),
 			   PROT_READ|PROT_WRITE|PROT_EXEC,
@@ -127,9 +128,6 @@ static struct btree *__btree_node_mem_alloc(struct bch_fs *c, gfp_t gfp)
 
 	bkey_btree_ptr_init(&b->key);
 	bch2_btree_lock_init(&b->c);
-#ifdef CONFIG_DEBUG_LOCK_ALLOC
-	lockdep_set_no_check_recursion(&b->c.lock.dep_map);
-#endif
 	INIT_LIST_HEAD(&b->list);
 	INIT_LIST_HEAD(&b->write_blocked);
 	b->byte_order = ilog2(btree_bytes(c));
@@ -428,18 +426,6 @@ static unsigned long bch2_btree_cache_count(struct shrinker *shrink,
 	return btree_cache_can_free(bc);
 }
 
-static void bch2_btree_cache_shrinker_to_text(struct seq_buf *s, struct shrinker *shrink)
-{
-	struct bch_fs *c = container_of(shrink, struct bch_fs,
-					btree_cache.shrink);
-	char *cbuf;
-	size_t buflen = seq_buf_get_buf(s, &cbuf);
-	struct printbuf out = PRINTBUF_EXTERN(cbuf, buflen);
-
-	bch2_btree_cache_to_text(&out, &c->btree_cache);
-	seq_buf_commit(s, out.pos);
-}
-
 void bch2_fs_btree_cache_exit(struct bch_fs *c)
 {
 	struct btree_cache *bc = &c->btree_cache;
@@ -523,9 +509,8 @@ int bch2_fs_btree_cache_init(struct bch_fs *c)
 
 	bc->shrink.count_objects	= bch2_btree_cache_count;
 	bc->shrink.scan_objects		= bch2_btree_cache_scan;
-	bc->shrink.to_text		= bch2_btree_cache_shrinker_to_text;
 	bc->shrink.seeks		= 4;
-	ret = register_shrinker(&bc->shrink, "%s/btree_cache", c->name);
+	ret = register_shrinker(&bc->shrink);
 out:
 	pr_verbose_init(c->opts, "ret %i", ret);
 	return ret;

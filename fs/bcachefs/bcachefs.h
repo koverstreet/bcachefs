@@ -911,7 +911,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_sync_skcipher *chacha20;
+	struct crypto_skcipher	*chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
@@ -1048,11 +1048,13 @@ static inline void bch2_write_ref_put(struct bch_fs *c, enum bch_write_ref ref)
 {
 #ifdef BCH_WRITE_REF_DEBUG
 	long v = atomic_long_dec_return(&c->writes[ref]);
+	unsigned i;
 
 	BUG_ON(v < 0);
 	if (v)
 		return;
-	for (unsigned i = 0; i < BCH_WRITE_REF_NR; i++)
+
+	for (i = 0; i < BCH_WRITE_REF_NR; i++)
 		if (atomic_long_read(&c->writes[i]))
 			return;
 

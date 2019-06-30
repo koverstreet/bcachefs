@@ -13,6 +13,7 @@
 
 #include <linux/kthread.h>
 #include <linux/sched/mm.h>
+#include <linux/sched/task.h>
 #include <trace/events/bcachefs.h>
 
 /* Free space calculations: */
@@ -267,11 +268,11 @@ void bch2_journal_do_discards(struct journal *j)
 		while (should_discard_bucket(j, ja)) {
 			if (!c->opts.nochanges &&
 			    ca->mi.discard &&
-			    bdev_max_discard_sectors(ca->disk_sb.bdev))
+			    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev)))
 				blkdev_issue_discard(ca->disk_sb.bdev,
 					bucket_to_sector(ca,
 						ja->buckets[ja->discard_idx]),
-					ca->mi.bucket_size, GFP_NOIO);
+					ca->mi.bucket_size, GFP_NOIO, 0);
 
 			spin_lock(&j->lock);
 			ja->discard_idx = (ja->discard_idx + 1) % ja->nr;
@@ -709,7 +710,7 @@ static int bch2_journal_reclaim_thread(void *arg)
 			j->next_reclaim = now + delay;
 
 		while (1) {
-			set_current_state(TASK_INTERRUPTIBLE|TASK_FREEZABLE);
+			set_current_state(TASK_INTERRUPTIBLE);
 			if (kthread_should_stop())
 				break;
 			if (j->reclaim_kicked)

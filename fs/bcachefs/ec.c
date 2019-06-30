@@ -417,22 +417,22 @@ static void ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
 	this_cpu_add(ca->io_done->sectors[rw][data_type], buf->size);
 
 	while (offset < bytes) {
-		unsigned nr_iovecs = min_t(size_t, BIO_MAX_VECS,
+		unsigned nr_iovecs = min_t(size_t, BIO_MAX_PAGES,
 					   DIV_ROUND_UP(bytes, PAGE_SIZE));
 		unsigned b = min_t(size_t, bytes - offset,
 				   nr_iovecs << PAGE_SHIFT);
 		struct ec_bio *ec_bio;
 
-		ec_bio = container_of(bio_alloc_bioset(ca->disk_sb.bdev,
-						       nr_iovecs,
-						       rw,
-						       GFP_KERNEL,
+		ec_bio = container_of(bio_alloc_bioset(GFP_KERNEL, nr_iovecs,
 						       &c->ec_bioset),
 				      struct ec_bio, bio);
 
 		ec_bio->ca			= ca;
 		ec_bio->buf			= buf;
 		ec_bio->idx			= idx;
+
+		bio_set_dev(&ec_bio->bio, ca->disk_sb.bdev);
+		bio_set_op_attrs(&ec_bio->bio, rw, 0);
 
 		ec_bio->bio.bi_iter.bi_sector	= ptr->offset + buf->offset + (offset >> 9);
 		ec_bio->bio.bi_end_io		= ec_block_endio;
@@ -759,6 +759,7 @@ static int ec_stripe_delete(struct btree_trans *trans, u64 idx)
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bkey_s_c_stripe s;
+	unsigned i;
 	int ret;
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_stripes, POS(0, idx),
@@ -775,7 +776,7 @@ static int ec_stripe_delete(struct btree_trans *trans, u64 idx)
 	}
 
 	s = bkey_s_c_to_stripe(k);
-	for (unsigned i = 0; i < s.v->nr_blocks; i++)
+	for (i = 0; i < s.v->nr_blocks; i++)
 		if (stripe_blockcount_get(s.v, i)) {
 			struct printbuf buf = PRINTBUF;
 

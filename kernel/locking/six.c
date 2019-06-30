@@ -13,6 +13,18 @@
 
 #include <trace/events/lock.h>
 
+static inline bool owner_on_cpu(struct task_struct *owner)
+{
+	/*
+	 * As lock holder preemption issue, we both skip spinning if
+	 * task is not on cpu or its cpu is preempted
+	 */
+	return READ_ONCE(owner->on_cpu) && !vcpu_is_preempted(task_cpu(owner));
+}
+
+#define trace_contention_begin(_lock, _n)
+#define trace_contention_end(_lock, _n)
+
 #ifdef DEBUG
 #define EBUG_ON(cond)		BUG_ON(cond)
 #else
@@ -20,7 +32,7 @@
 #endif
 
 #define six_acquire(l, t, r, ip)	lock_acquire(l, 0, t, r, 1, NULL, ip)
-#define six_release(l, ip)		lock_release(l, ip)
+#define six_release(l, ip)		lock_release(l, 0, ip)
 
 static void do_six_unlock_type(struct six_lock *lock, enum six_lock_type type);
 
