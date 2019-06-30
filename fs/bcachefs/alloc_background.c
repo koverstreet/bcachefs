@@ -1063,7 +1063,7 @@ void bch2_recalc_capacity(struct bch_fs *c)
 	lockdep_assert_held(&c->state_lock);
 
 	for_each_online_member(ca, c, i) {
-		struct backing_dev_info *bdi = ca->disk_sb.bdev->bd_disk->bdi;
+		struct backing_dev_info *bdi = ca->disk_sb.bdev->bd_bdi;
 
 		ra_pages += bdi->ra_pages;
 	}

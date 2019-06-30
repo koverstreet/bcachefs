@@ -561,8 +561,6 @@ void bch2_trans_unlock(struct btree_trans *trans)
 
 	trans_for_each_path(trans, path)
 		__bch2_btree_path_unlock(path);
-
-	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
 }
 
 /* Btree iterator: */
