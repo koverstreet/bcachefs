@@ -269,26 +269,7 @@ void bch2_print_string_as_lines(const char *prefix, const char *lines)
 
 int bch2_save_backtrace(bch_stacktrace *stack, struct task_struct *task)
 {
-	unsigned nr_entries = 0;
-	int ret = 0;
-
-	stack->nr = 0;
-	ret = darray_make_room(stack, 32);
-	if (ret)
-		return ret;
-
-	if (!down_read_trylock(&task->signal->exec_update_lock))
-		return -1;
-
-	do {
-		nr_entries = stack_trace_save_tsk(task, stack->data, stack->size, 0);
-	} while (nr_entries == stack->size &&
-		 !(ret = darray_make_room(stack, stack->size * 2)));
-
-	stack->nr = nr_entries;
-	up_read(&task->signal->exec_update_lock);
-
-	return ret;
+	return 0;
 }
 
 void bch2_prt_backtrace(struct printbuf *out, bch_stacktrace *stack)
@@ -798,10 +779,10 @@ void memcpy_to_bio(struct bio *dst, struct bvec_iter dst_iter, const void *src)
 	struct bvec_iter iter;
 
 	__bio_for_each_segment(bv, dst, iter, dst_iter) {
-		void *dstp = kmap_local_page(bv.bv_page);
+		void *dstp = kmap_atomic(bv.bv_page);
 
 		memcpy(dstp + bv.bv_offset, src, bv.bv_len);
-		kunmap_local(dstp);
+		kunmap_atomic(dstp);
 
 		src += bv.bv_len;
 	}
@@ -813,10 +794,10 @@ void memcpy_from_bio(void *dst, struct bio *src, struct bvec_iter src_iter)
 	struct bvec_iter iter;
 
 	__bio_for_each_segment(bv, src, iter, src_iter) {
-		void *srcp = kmap_local_page(bv.bv_page);
+		void *srcp = kmap_atomic(bv.bv_page);
 
 		memcpy(dst, srcp + bv.bv_offset, bv.bv_len);
-		kunmap_local(srcp);
+		kunmap_atomic(srcp);
 
 		dst += bv.bv_len;
 	}
@@ -1137,4 +1118,59 @@ u64 *bch2_acc_percpu_u64s(u64 __percpu *p, unsigned nr)
 	}
 
 	return ret;
+}
+
+u32 get_random_u32_below(u32 ceil)
+{
+	/*
+	 * This is the slow path for variable ceil. It is still fast, most of
+	 * the time, by doing traditional reciprocal multiplication and
+	 * opportunistically comparing the lower half to ceil itself, before
+	 * falling back to computing a larger bound, and then rejecting samples
+	 * whose lower half would indicate a range indivisible by ceil. The use
+	 * of `-ceil % ceil` is analogous to `2^32 % ceil`, but is computable
+	 * in 32-bits.
+	 */
+	u32 rand = get_random_u32();
+	u64 mult;
+
+	/*
+	 * This function is technically undefined for ceil == 0, and in fact
+	 * for the non-underscored constant version in the header, we build bug
+	 * on that. But for the non-constant case, it's convenient to have that
+	 * evaluate to being a straight call to get_random_u32(), so that
+	 * get_random_u32_inclusive() can work over its whole range without
+	 * undefined behavior.
+	 */
+	if (unlikely(!ceil))
+		return rand;
+
+	mult = (u64)ceil * rand;
+	if (unlikely((u32)mult < ceil)) {
+		u32 bound = -ceil % ceil;
+		while (unlikely((u32)mult < bound))
+			mult = (u64)ceil * get_random_u32();
+	}
+	return mult >> 32;
+}
+
+struct kvfree_rcu_cb {
+	struct rcu_head	rcu;
+	void		*p;
+};
+
+static void __kvfree_rcu(struct rcu_head *rcu)
+{
+	struct kvfree_rcu_cb *cb = container_of(rcu, struct kvfree_rcu_cb, rcu);
+
+	kvfree(cb->p);
+	kfree(cb);
+}
+
+void kvfree_rcu(void *p)
+{
+	struct kvfree_rcu_cb *cb = kmalloc(sizeof(*cb), __GFP_NOFAIL);
+
+	cb->p = p;
+	call_rcu(&cb->rcu, __kvfree_rcu);
 }

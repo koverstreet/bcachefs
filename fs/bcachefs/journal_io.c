@@ -892,10 +892,10 @@ reread:
 				end - offset, buf->size >> 9);
 			nr_bvecs = buf_pages(buf->data, sectors_read << 9);
 
-			bio = bio_kmalloc(nr_bvecs, GFP_KERNEL);
-			bio_init(bio, ca->disk_sb.bdev, bio->bi_inline_vecs, nr_bvecs, REQ_OP_READ);
-
+			bio = bio_kmalloc(GFP_KERNEL, nr_bvecs);
+			bio_set_dev(bio, ca->disk_sb.bdev);
 			bio->bi_iter.bi_sector = offset;
+			bio_set_op_attrs(bio, REQ_OP_READ, 0);
 			bch2_bio_map(bio, buf->data, sectors_read << 9);
 
 			ret = submit_bio_wait(bio);
@@ -1607,10 +1607,12 @@ static void do_journal_write(struct closure *cl)
 			     sectors);
 
 		bio = ca->journal.bio;
-		bio_reset(bio, ca->disk_sb.bdev, REQ_OP_WRITE|REQ_SYNC|REQ_META);
+		bio_reset(bio);
+		bio_set_dev(bio, ca->disk_sb.bdev);
 		bio->bi_iter.bi_sector	= ptr->offset;
 		bio->bi_end_io		= journal_write_endio;
 		bio->bi_private		= ca;
+		bio->bi_opf		= REQ_OP_WRITE|REQ_SYNC|REQ_META;
 
 		BUG_ON(bio->bi_iter.bi_sector == ca->prev_journal_sector);
 		ca->prev_journal_sector = bio->bi_iter.bi_sector;
@@ -1867,7 +1869,9 @@ retry_alloc:
 			percpu_ref_get(&ca->io_ref);
 
 			bio = ca->journal.bio;
-			bio_reset(bio, ca->disk_sb.bdev, REQ_OP_FLUSH);
+			bio_reset(bio);
+			bio_set_dev(bio, ca->disk_sb.bdev);
+			bio->bi_opf		= REQ_OP_FLUSH;
 			bio->bi_end_io		= journal_write_endio;
 			bio->bi_private		= ca;
 			closure_bio_submit(bio, cl);

@@ -894,7 +894,7 @@ static unsigned long bch2_btree_key_cache_scan(struct shrinker *shrink,
 	do {
 		struct rhash_head *pos, *next;
 
-		pos = rht_ptr_rcu(rht_bucket(tbl, bc->shrink_iter));
+		pos = *rht_bucket(tbl, bc->shrink_iter);
 
 		while (!rht_is_a_nulls(pos)) {
 			next = rht_dereference_bucket_rcu(pos->next, tbl, bc->shrink_iter);
@@ -1028,8 +1028,6 @@ void bch2_fs_btree_key_cache_init_early(struct btree_key_cache *c)
 
 int bch2_fs_btree_key_cache_init(struct btree_key_cache *bc)
 {
-	struct bch_fs *c = container_of(bc, struct bch_fs, btree_key_cache);
-
 #ifdef __KERNEL__
 	bc->pcpu_freed = alloc_percpu(struct btree_key_cache_freelist);
 	if (!bc->pcpu_freed)
@@ -1041,10 +1039,10 @@ int bch2_fs_btree_key_cache_init(struct btree_key_cache *bc)
 
 	bc->table_init_done = true;
 
-	bc->shrink.seeks		= 0;
+	bc->shrink.seeks		= 1;
 	bc->shrink.count_objects	= bch2_btree_key_cache_count;
 	bc->shrink.scan_objects		= bch2_btree_key_cache_scan;
-	if (register_shrinker(&bc->shrink, "%s/btree_key_cache", c->name))
+	if (register_shrinker(&bc->shrink))
 		return -BCH_ERR_ENOMEM_fs_btree_cache_init;
 	return 0;
 }

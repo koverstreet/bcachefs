@@ -38,7 +38,6 @@
 #include <linux/compiler.h>
 #include <linux/export.h>
 #include <linux/limits.h>
-#include <linux/math.h>
 #include <linux/math64.h>
 #include <linux/module.h>
 

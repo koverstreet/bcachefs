@@ -97,7 +97,8 @@ static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp)
 	if (!b->data)
 		return -BCH_ERR_ENOMEM_btree_node_mem_alloc;
 #ifdef __KERNEL__
-	b->aux_data = kvmalloc(btree_aux_data_bytes(b), gfp);
+	b->aux_data = __vmalloc(btree_aux_data_bytes(b), gfp,
+				PAGE_KERNEL_EXEC);
 #else
 	b->aux_data = mmap(NULL, btree_aux_data_bytes(b),
 			   PROT_READ|PROT_WRITE|PROT_EXEC,
@@ -476,7 +477,7 @@ int bch2_fs_btree_cache_init(struct bch_fs *c)
 	bc->shrink.count_objects	= bch2_btree_cache_count;
 	bc->shrink.scan_objects		= bch2_btree_cache_scan;
 	bc->shrink.seeks		= 4;
-	ret = register_shrinker(&bc->shrink, "%s/btree_cache", c->name);
+	ret = register_shrinker(&bc->shrink);
 	if (ret)
 		goto err;
 

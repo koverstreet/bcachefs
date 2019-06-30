@@ -364,7 +364,6 @@ static int bch2_xattr_get_handler(const struct xattr_handler *handler,
 }
 
 static int bch2_xattr_set_handler(const struct xattr_handler *handler,
-				  struct mnt_idmap *idmap,
 				  struct dentry *dentry, struct inode *vinode,
 				  const char *name, const void *value,
 				  size_t size, int flags)
@@ -511,7 +510,6 @@ static int inode_opt_set_fn(struct bch_inode_info *inode,
 }
 
 static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
-				   struct mnt_idmap *idmap,
 				   struct dentry *dentry, struct inode *vinode,
 				   const char *name, const void *value,
 				   size_t size, int flags)
@@ -618,8 +616,8 @@ static const struct xattr_handler bch_xattr_bcachefs_effective_handler = {
 const struct xattr_handler *bch2_xattr_handlers[] = {
 	&bch_xattr_user_handler,
 #ifdef CONFIG_BCACHEFS_POSIX_ACL
-	&nop_posix_acl_access,
-	&nop_posix_acl_default,
+	&posix_acl_access_xattr_handler,
+	&posix_acl_default_xattr_handler,
 #endif
 	&bch_xattr_trusted_handler,
 	&bch_xattr_security_handler,
@@ -633,9 +631,9 @@ const struct xattr_handler *bch2_xattr_handlers[] = {
 static const struct xattr_handler *bch_xattr_handler_map[] = {
 	[KEY_TYPE_XATTR_INDEX_USER]			= &bch_xattr_user_handler,
 	[KEY_TYPE_XATTR_INDEX_POSIX_ACL_ACCESS]	=
-		&nop_posix_acl_access,
+		&posix_acl_access_xattr_handler,
 	[KEY_TYPE_XATTR_INDEX_POSIX_ACL_DEFAULT]	=
-		&nop_posix_acl_default,
+		&posix_acl_default_xattr_handler,
 	[KEY_TYPE_XATTR_INDEX_TRUSTED]		= &bch_xattr_trusted_handler,
 	[KEY_TYPE_XATTR_INDEX_SECURITY]		= &bch_xattr_security_handler,
 };

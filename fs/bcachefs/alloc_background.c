@@ -1668,7 +1668,7 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 		blkdev_issue_discard(ca->disk_sb.bdev,
 				     k.k->p.offset * ca->mi.bucket_size,
 				     ca->mi.bucket_size,
-				     GFP_KERNEL);
+				     GFP_KERNEL, 0);
 		*discard_pos_done = iter.pos;
 
 		ret = bch2_trans_relock_notrace(trans);
@@ -2048,7 +2048,7 @@ void bch2_recalc_capacity(struct bch_fs *c)
 	lockdep_assert_held(&c->state_lock);
 
 	for_each_online_member(ca, c, i) {
-		struct backing_dev_info *bdi = ca->disk_sb.bdev->bd_disk->bdi;
+		struct backing_dev_info *bdi = ca->disk_sb.bdev->bd_bdi;
 
 		ra_pages += bdi->ra_pages;
 	}

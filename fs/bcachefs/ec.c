@@ -390,7 +390,7 @@ static void ec_block_endio(struct bio *bio)
 }
 
 static void ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
-			blk_opf_t opf, unsigned idx, struct closure *cl)
+			int opf, unsigned idx, struct closure *cl)
 {
 	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
 	unsigned offset = 0, bytes = buf->size << 9;
@@ -417,22 +417,22 @@ static void ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
 	this_cpu_add(ca->io_done->sectors[rw][data_type], buf->size);
 
 	while (offset < bytes) {
-		unsigned nr_iovecs = min_t(size_t, BIO_MAX_VECS,
+		unsigned nr_iovecs = min_t(size_t, BIO_MAX_PAGES,
 					   DIV_ROUND_UP(bytes, PAGE_SIZE));
 		unsigned b = min_t(size_t, bytes - offset,
 				   nr_iovecs << PAGE_SHIFT);
 		struct ec_bio *ec_bio;
 
-		ec_bio = container_of(bio_alloc_bioset(ca->disk_sb.bdev,
-						       nr_iovecs,
-						       opf,
-						       GFP_KERNEL,
+		ec_bio = container_of(bio_alloc_bioset(GFP_KERNEL, nr_iovecs,
 						       &c->ec_bioset),
 				      struct ec_bio, bio);
 
 		ec_bio->ca			= ca;
 		ec_bio->buf			= buf;
 		ec_bio->idx			= idx;
+
+		bio_set_dev(&ec_bio->bio, ca->disk_sb.bdev);
+		bio_set_op_attrs(&ec_bio->bio, opf, 0);
 
 		ec_bio->bio.bi_iter.bi_sector	= ptr->offset + buf->offset + (offset >> 9);
 		ec_bio->bio.bi_end_io		= ec_block_endio;

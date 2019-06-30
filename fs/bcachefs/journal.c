@@ -1181,11 +1181,11 @@ int bch2_dev_journal_init(struct bch_dev *ca, struct bch_sb *sb)
 
 	nr_bvecs = DIV_ROUND_UP(JOURNAL_ENTRY_SIZE_MAX, PAGE_SIZE);
 
-	ca->journal.bio = bio_kmalloc(nr_bvecs, GFP_KERNEL);
+	ca->journal.bio = bio_kmalloc(GFP_KERNEL, nr_bvecs);
 	if (!ca->journal.bio)
 		return -BCH_ERR_ENOMEM_dev_journal_init;
 
-	bio_init(ca->journal.bio, NULL, ca->journal.bio->bi_inline_vecs, nr_bvecs, 0);
+	bio_init(ca->journal.bio, ca->journal.bio->bi_inline_vecs, nr_bvecs);
 
 	ja->buckets = kcalloc(ja->nr, sizeof(u64), GFP_KERNEL);
 	if (!ja->buckets)

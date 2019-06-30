@@ -753,7 +753,7 @@ int __init bch2_chardev_init(void)
 	if (bch_chardev_major < 0)
 		return bch_chardev_major;
 
-	bch_chardev_class = class_create("bcachefs");
+	bch_chardev_class = class_create(THIS_MODULE, "bcachefs");
 	if (IS_ERR(bch_chardev_class))
 		return PTR_ERR(bch_chardev_class);
 

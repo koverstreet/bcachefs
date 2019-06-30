@@ -114,7 +114,7 @@ static inline int bset_encrypt(struct bch_fs *c, struct bset *i, unsigned offset
 		if (ret)
 			return ret;
 
-		nonce = nonce_add(nonce, round_up(bytes, CHACHA_BLOCK_SIZE));
+		nonce = nonce_add(nonce, round_up(bytes, CHACHA20_BLOCK_SIZE));
 	}
 
 	return bch2_encrypt(c, BSET_CSUM_TYPE(i), nonce, i->_data,

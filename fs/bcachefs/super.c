@@ -65,19 +65,10 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Kent Overstreet <kent.overstreet@gmail.com>");
 
 #define KTYPE(type)							\
-static const struct attribute_group type ## _group = {			\
-	.attrs = type ## _files						\
-};									\
-									\
-static const struct attribute_group *type ## _groups[] = {		\
-	&type ## _group,						\
-	NULL								\
-};									\
-									\
-static const struct kobj_type type ## _ktype = {			\
+struct kobj_type type ## _ktype = {					\
 	.release	= type ## _release,				\
 	.sysfs_ops	= &type ## _sysfs_ops,				\
-	.default_groups = type ## _groups				\
+	.default_attrs	= type ## _files				\
 }
 
 static void bch2_fs_release(struct kobject *);
@@ -180,6 +171,44 @@ static void bch2_dev_usage_journal_reserve(struct bch_fs *c)
 
 	bch2_journal_entry_res_resize(&c->journal,
 			&c->dev_usage_journal_res, u64s * nr);
+}
+
+int bch2_congested(void *data, int bdi_bits)
+{
+	struct bch_fs *c = data;
+	struct backing_dev_info *bdi;
+	struct bch_dev *ca;
+	unsigned i;
+	int ret = 0;
+
+	rcu_read_lock();
+	if (bdi_bits & (1 << WB_sync_congested)) {
+		/* Reads - check all devices: */
+		for_each_readable_member(ca, c, i) {
+			bdi = ca->disk_sb.bdev->bd_bdi;
+
+			if (bdi_congested(bdi, bdi_bits)) {
+				ret = 1;
+				break;
+			}
+		}
+	} else {
+		const struct bch_devs_mask *devs =
+			bch2_target_to_mask(c, c->opts.foreground_target) ?:
+			&c->rw_devs[BCH_DATA_user];
+
+		for_each_member_device_rcu(ca, c, i, devs) {
+			bdi = ca->disk_sb.bdev->bd_bdi;
+
+			if (bdi_congested(bdi, bdi_bits)) {
+				ret = 1;
+				break;
+			}
+		}
+	}
+	rcu_read_unlock();
+
+	return ret;
 }
 
 /* Filesystem RO/RW: */
@@ -548,7 +577,8 @@ void __bch2_fs_stop(struct bch_fs *c)
 	for_each_member_device(ca, c, i)
 		if (ca->kobj.state_in_sysfs &&
 		    ca->disk_sb.bdev)
-			sysfs_remove_link(bdev_kobj(ca->disk_sb.bdev), "bcachefs");
+			sysfs_remove_link(&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj,
+					  "bcachefs");
 
 	if (c->kobj.state_in_sysfs)
 		kobject_del(&c->kobj);
@@ -1036,7 +1066,8 @@ static void bch2_dev_free(struct bch_dev *ca)
 
 	if (ca->kobj.state_in_sysfs &&
 	    ca->disk_sb.bdev)
-		sysfs_remove_link(bdev_kobj(ca->disk_sb.bdev), "bcachefs");
+		sysfs_remove_link(&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj,
+				  "bcachefs");
 
 	if (ca->kobj.state_in_sysfs)
 		kobject_del(&ca->kobj);
@@ -1072,7 +1103,10 @@ static void __bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca)
 	wait_for_completion(&ca->io_ref_completion);
 
 	if (ca->kobj.state_in_sysfs) {
-		sysfs_remove_link(bdev_kobj(ca->disk_sb.bdev), "bcachefs");
+		struct kobject *block =
+			&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj;
+
+		sysfs_remove_link(block, "bcachefs");
 		sysfs_remove_link(&ca->kobj, "block");
 	}
 
@@ -1109,12 +1143,12 @@ static int bch2_dev_sysfs_online(struct bch_fs *c, struct bch_dev *ca)
 	}
 
 	if (ca->disk_sb.bdev) {
-		struct kobject *block = bdev_kobj(ca->disk_sb.bdev);
+		struct kobject *block =
+			&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj;
 
 		ret = sysfs_create_link(block, &ca->kobj, "bcachefs");
 		if (ret)
 			return ret;
-
 		ret = sysfs_create_link(&ca->kobj, block, "block");
 		if (ret)
 			return ret;
@@ -1848,19 +1882,21 @@ err:
 }
 
 /* return with ref on ca->ref: */
-struct bch_dev *bch2_dev_lookup(struct bch_fs *c, const char *name)
+struct bch_dev *bch2_dev_lookup(struct bch_fs *c, const char *path)
 {
+	struct block_device *bdev = lookup_bdev(path);
 	struct bch_dev *ca;
 	unsigned i;
 
-	rcu_read_lock();
-	for_each_member_device_rcu(ca, c, i, NULL)
-		if (!strcmp(name, ca->name))
+	if (IS_ERR(bdev))
+		return ERR_CAST(bdev);
+
+	for_each_member_device(ca, c, i)
+		if (ca->disk_sb.bdev == bdev)
 			goto found;
 	ca = ERR_PTR(-BCH_ERR_ENOENT_dev_not_found);
 found:
-	rcu_read_unlock();
-
+	bdput(bdev);
 	return ca;
 }
 

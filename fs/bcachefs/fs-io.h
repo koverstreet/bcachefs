@@ -15,13 +15,14 @@ int __must_check bch2_write_inode_size(struct bch_fs *,
 				       struct bch_inode_info *,
 				       loff_t, unsigned);
 
-int bch2_read_folio(struct file *, struct folio *);
+int bch2_readpage(struct file *, struct page *);
 
 int bch2_writepages(struct address_space *, struct writeback_control *);
-void bch2_readahead(struct readahead_control *);
+int bch2_readpages(struct file *, struct address_space *,
+		   struct list_head *, unsigned);
 
 int bch2_write_begin(struct file *, struct address_space *, loff_t,
-		     unsigned, struct page **, void **);
+		     unsigned, unsigned, struct page **, void **);
 int bch2_write_end(struct file *, struct address_space *, loff_t,
 		   unsigned, unsigned, struct page *, void *);
 
@@ -34,6 +35,10 @@ int bch2_truncate(struct mnt_idmap *,
 		  struct bch_inode_info *, struct iattr *);
 long bch2_fallocate_dispatch(struct file *, int, loff_t, loff_t);
 
+#define REMAP_FILE_ADVISORY		(0)
+#define REMAP_FILE_DEDUP		(1 << 0)
+#define REMAP_FILE_CAN_SHORTEN		(1 << 1)
+
 loff_t bch2_remap_file_range(struct file *, loff_t, struct file *,
 			     loff_t, loff_t, unsigned);
 
@@ -43,6 +48,8 @@ vm_fault_t bch2_page_fault(struct vm_fault *);
 vm_fault_t bch2_page_mkwrite(struct vm_fault *);
 void bch2_invalidate_folio(struct folio *, size_t, size_t);
 bool bch2_release_folio(struct folio *, gfp_t);
+int bch2_migrate_page(struct address_space *, struct page *,
+		      struct page *, enum migrate_mode);
 
 void bch2_fs_fsio_exit(struct bch_fs *);
 int bch2_fs_fsio_init(struct bch_fs *);

@@ -1182,7 +1182,8 @@ static void btree_node_read_work(struct work_struct *work)
 		bch_info(c, "retrying read");
 		ca = bch_dev_bkey_exists(c, rb->pick.ptr.dev);
 		rb->have_ioref		= bch2_dev_get_ioref(ca, READ);
-		bio_reset(bio, NULL, REQ_OP_READ|REQ_SYNC|REQ_META);
+		bio_reset(bio);
+		bio->bi_opf		= REQ_OP_READ|REQ_SYNC|REQ_META;
 		bio->bi_iter.bi_sector	= rb->pick.ptr.offset;
 		bio->bi_iter.bi_size	= btree_bytes(c);
 
@@ -1473,10 +1474,8 @@ static int btree_node_read_all_replicas(struct bch_fs *c, struct btree *b, bool 
 
 	for (i = 0; i < ra->nr; i++) {
 		ra->buf[i] = mempool_alloc(&c->btree_bounce_pool, GFP_NOFS);
-		ra->bio[i] = bio_alloc_bioset(NULL,
-					      buf_pages(ra->buf[i], btree_bytes(c)),
-					      REQ_OP_READ|REQ_SYNC|REQ_META,
-					      GFP_NOFS,
+		ra->bio[i] = bio_alloc_bioset(GFP_NOFS, buf_pages(ra->buf[i],
+								  btree_bytes(c)),
 					      &c->btree_bio);
 	}
 
@@ -1492,6 +1491,7 @@ static int btree_node_read_all_replicas(struct bch_fs *c, struct btree *b, bool 
 		rb->have_ioref		= bch2_dev_get_ioref(ca, READ);
 		rb->idx			= i;
 		rb->pick		= pick;
+		rb->bio.bi_opf		= REQ_OP_READ|REQ_SYNC|REQ_META;
 		rb->bio.bi_iter.bi_sector = pick.ptr.offset;
 		rb->bio.bi_end_io	= btree_node_read_all_replicas_endio;
 		bch2_bio_map(&rb->bio, ra->buf[i], btree_bytes(c));
@@ -1559,10 +1559,8 @@ void bch2_btree_node_read(struct bch_fs *c, struct btree *b,
 
 	ca = bch_dev_bkey_exists(c, pick.ptr.dev);
 
-	bio = bio_alloc_bioset(NULL,
-			       buf_pages(b->data, btree_bytes(c)),
-			       REQ_OP_READ|REQ_SYNC|REQ_META,
-			       GFP_NOFS,
+	bio = bio_alloc_bioset(GFP_NOFS, buf_pages(b->data,
+						   btree_bytes(c)),
 			       &c->btree_bio);
 	rb = container_of(bio, struct btree_read_bio, bio);
 	rb->c			= c;
@@ -1572,6 +1570,7 @@ void bch2_btree_node_read(struct bch_fs *c, struct btree *b,
 	rb->have_ioref		= bch2_dev_get_ioref(ca, READ);
 	rb->pick		= pick;
 	INIT_WORK(&rb->work, btree_node_read_work);
+	bio->bi_opf		= REQ_OP_READ|REQ_SYNC|REQ_META;
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bio->bi_end_io		= btree_node_read_endio;
 	bch2_bio_map(bio, b->data, btree_bytes(c));
@@ -2058,10 +2057,8 @@ do_write:
 
 	trace_and_count(c, btree_node_write, b, bytes_to_write, sectors_to_write);
 
-	wbio = container_of(bio_alloc_bioset(NULL,
+	wbio = container_of(bio_alloc_bioset(GFP_NOFS,
 				buf_pages(data, sectors_to_write << 9),
-				REQ_OP_WRITE|REQ_META,
-				GFP_NOFS,
 				&c->btree_bio),
 			    struct btree_write_bio, wbio.bio);
 	wbio_init(&wbio->wbio.bio);
@@ -2071,6 +2068,7 @@ do_write:
 	wbio->wbio.c			= c;
 	wbio->wbio.used_mempool		= used_mempool;
 	wbio->wbio.first_btree_write	= !b->written;
+	wbio->wbio.bio.bi_opf		= REQ_OP_WRITE|REQ_META;
 	wbio->wbio.bio.bi_end_io	= btree_node_write_endio;
 	wbio->wbio.bio.bi_private	= b;
 

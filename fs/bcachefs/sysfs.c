@@ -292,7 +292,7 @@ static int bch2_compression_stats_to_text(struct printbuf *out, struct bch_fs *c
 	    incompressible_sectors = 0,
 	    compressed_sectors_compressed = 0,
 	    compressed_sectors_uncompressed = 0;
-	int ret;
+	int ret = 0;
 
 	if (!test_bit(BCH_FS_STARTED, &c->flags))
 		return -EPERM;

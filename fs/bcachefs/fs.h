@@ -148,6 +148,8 @@ struct bch_inode_unpacked;
 
 #ifndef NO_BCACHEFS_FS
 
+struct mnt_idmap;
+
 struct bch_inode_info *
 __bch2_create(struct mnt_idmap *, struct bch_inode_info *,
 	      struct dentry *, umode_t, dev_t, subvol_inum, unsigned);
@@ -184,9 +186,7 @@ void bch2_inode_update_after_write(struct btree_trans *,
 int __must_check bch2_write_inode(struct bch_fs *, struct bch_inode_info *,
 				  inode_set_fn, void *, unsigned);
 
-int bch2_setattr_nonsize(struct mnt_idmap *,
-			 struct bch_inode_info *,
-			 struct iattr *);
+int bch2_setattr_nonsize(struct bch_inode_info *, struct iattr *);
 int __bch2_unlink(struct inode *, struct dentry *, bool);
 
 void bch2_evict_subvolume_inodes(struct bch_fs *, snapshot_id_list *);

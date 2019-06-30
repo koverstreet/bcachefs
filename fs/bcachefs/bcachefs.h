@@ -206,6 +206,7 @@
 #include "bcachefs_format.h"
 #include "errcode.h"
 #include "fifo.h"
+#include "folio.h"
 #include "nocow_locking_types.h"
 #include "opts.h"
 #include "recovery_types.h"
@@ -917,7 +918,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_sync_skcipher *chacha20;
+	struct crypto_skcipher	*chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;

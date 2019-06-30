@@ -814,7 +814,7 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 		if (fsck_err_on(k->k->version.lo > atomic64_read(&c->key_version), c,
 				"key version number higher than recorded: %llu > %llu",
 				k->k->version.lo,
-				atomic64_read(&c->key_version)))
+				(u64) atomic64_read(&c->key_version)))
 			atomic64_set(&c->key_version, k->k->version.lo);
 	}
 

@@ -1,4 +1,6 @@
 
+ccflags-y := -std=gnu99
+
 obj-$(CONFIG_BCACHEFS_FS)	+= bcachefs.o
 
 bcachefs-y		:=	\
