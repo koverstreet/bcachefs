@@ -495,6 +495,9 @@ send_fragmentable:
 		}
 		break;
 #endif
+
+	default:
+		BUG();
 	}
 
 	rxrpc_tx_backoff(call, ret);
