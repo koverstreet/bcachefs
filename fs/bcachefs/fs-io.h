@@ -9,8 +9,6 @@
 
 #include <linux/uio.h>
 
-int bch2_set_page_dirty(struct page *);
-
 int bch2_writepage(struct page *, struct writeback_control *);
 int bch2_readpage(struct file *, struct page *);
 
