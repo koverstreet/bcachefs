@@ -495,9 +495,8 @@ reread:
 						    sectors_read << 9));
 			bio_set_dev(bio, ca->disk_sb.bdev);
 			bio->bi_iter.bi_sector	= offset;
-			bio->bi_iter.bi_size	= sectors_read << 9;
 			bio_set_op_attrs(bio, REQ_OP_READ, 0);
-			bch2_bio_map(bio, buf->data);
+			bch2_bio_map(bio, buf->data, sectors_read << 9);
 
 			ret = submit_bio_wait(bio);
 			bio_put(bio);
@@ -1087,12 +1086,11 @@ void bch2_journal_write(struct closure *cl)
 		bio_reset(bio);
 		bio_set_dev(bio, ca->disk_sb.bdev);
 		bio->bi_iter.bi_sector	= ptr->offset;
-		bio->bi_iter.bi_size	= sectors << 9;
 		bio->bi_end_io		= journal_write_endio;
 		bio->bi_private		= ca;
 		bio_set_op_attrs(bio, REQ_OP_WRITE,
 				 REQ_SYNC|REQ_META|REQ_PREFLUSH|REQ_FUA);
-		bch2_bio_map(bio, jset);
+		bch2_bio_map(bio, jset, sectors << 9);
 
 		trace_journal_write(bio);
 		closure_bio_submit(bio, cl);
