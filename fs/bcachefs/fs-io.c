@@ -792,7 +792,7 @@ static int bio_add_page_contig(struct bio *bio, struct page *page)
 	else if (!bio_can_add_page_contig(bio, page))
 		return -1;
 
-	__bio_add_page(bio, page, PAGE_SIZE, 0);
+	BUG_ON(!bio_add_page(bio, page, PAGE_SIZE, 0));
 	return 0;
 }
 
@@ -963,7 +963,7 @@ static void readpage_bio_extend(struct readpages_iter *iter,
 			put_page(page);
 		}
 
-		__bio_add_page(bio, page, PAGE_SIZE, 0);
+		BUG_ON(!bio_add_page(bio, page, PAGE_SIZE, 0));
 	}
 }
 
@@ -1077,7 +1077,7 @@ int bch2_readpages(struct file *file, struct address_space *mapping,
 		bio_set_op_attrs(&rbio->bio, REQ_OP_READ, 0);
 		rbio->bio.bi_iter.bi_sector = (sector_t) index << PAGE_SECTOR_SHIFT;
 		rbio->bio.bi_end_io = bch2_readpages_end_io;
-		__bio_add_page(&rbio->bio, page, PAGE_SIZE, 0);
+		BUG_ON(!bio_add_page(&rbio->bio, page, PAGE_SIZE, 0));
 
 		bchfs_read(&trans, iter, rbio, inode->v.i_ino,
 			   &readpages_iter);
