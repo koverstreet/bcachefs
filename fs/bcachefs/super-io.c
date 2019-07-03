@@ -470,9 +470,8 @@ reread:
 	bio_reset(sb->bio);
 	bio_set_dev(sb->bio, sb->bdev);
 	sb->bio->bi_iter.bi_sector = offset;
-	sb->bio->bi_iter.bi_size = PAGE_SIZE << sb->page_order;
 	bio_set_op_attrs(sb->bio, REQ_OP_READ, REQ_SYNC|REQ_META);
-	bch2_bio_map(sb->bio, sb->sb);
+	bch2_bio_map(sb->bio, sb->sb, PAGE_SIZE << sb->page_order);
 
 	if (submit_bio_wait(sb->bio))
 		return "IO error";
@@ -574,13 +573,12 @@ int bch2_read_super(const char *path, struct bch_opts *opts,
 	bio_reset(sb->bio);
 	bio_set_dev(sb->bio, sb->bdev);
 	sb->bio->bi_iter.bi_sector = BCH_SB_LAYOUT_SECTOR;
-	sb->bio->bi_iter.bi_size = sizeof(struct bch_sb_layout);
 	bio_set_op_attrs(sb->bio, REQ_OP_READ, REQ_SYNC|REQ_META);
 	/*
 	 * use sb buffer to read layout, since sb buffer is page aligned but
 	 * layout won't be:
 	 */
-	bch2_bio_map(sb->bio, sb->sb);
+	bch2_bio_map(sb->bio, sb->sb, sizeof(struct bch_sb_layout));
 
 	err = "IO error";
 	if (submit_bio_wait(sb->bio))
@@ -650,11 +648,10 @@ static void read_back_super(struct bch_fs *c, struct bch_dev *ca)
 	bio_reset(bio);
 	bio_set_dev(bio, ca->disk_sb.bdev);
 	bio->bi_iter.bi_sector	= le64_to_cpu(sb->layout.sb_offset[0]);
-	bio->bi_iter.bi_size	= PAGE_SIZE;
 	bio->bi_end_io		= write_super_endio;
 	bio->bi_private		= ca;
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_SYNC|REQ_META);
-	bch2_bio_map(bio, ca->sb_read_scratch);
+	bch2_bio_map(bio, ca->sb_read_scratch, PAGE_SIZE);
 
 	this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_SB],
 		     bio_sectors(bio));
@@ -677,13 +674,12 @@ static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 	bio_reset(bio);
 	bio_set_dev(bio, ca->disk_sb.bdev);
 	bio->bi_iter.bi_sector	= le64_to_cpu(sb->offset);
-	bio->bi_iter.bi_size	=
-		roundup((size_t) vstruct_bytes(sb),
-			bdev_logical_block_size(ca->disk_sb.bdev));
 	bio->bi_end_io		= write_super_endio;
 	bio->bi_private		= ca;
 	bio_set_op_attrs(bio, REQ_OP_WRITE, REQ_SYNC|REQ_META);
-	bch2_bio_map(bio, sb);
+	bch2_bio_map(bio, sb,
+		     roundup((size_t) vstruct_bytes(sb),
+			     bdev_logical_block_size(ca->disk_sb.bdev)));
 
 	this_cpu_add(ca->io_done->sectors[WRITE][BCH_DATA_SB],
 		     bio_sectors(bio));
