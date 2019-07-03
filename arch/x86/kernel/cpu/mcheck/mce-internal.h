@@ -130,4 +130,7 @@ static inline void mce_unmap_kpfn(unsigned long pfn) {}
 #define mce_unmap_kpfn mce_unmap_kpfn
 #endif
 
+/* Decide whether to add MCE record to MCE event pool or filter it out. */
+extern bool filter_mce(struct mce *m);
+
 #endif /* __X86_MCE_INTERNAL_H__ */
