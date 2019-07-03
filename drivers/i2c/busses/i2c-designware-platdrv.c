@@ -101,7 +101,6 @@ static int dw_i2c_acpi_configure(struct platform_device *pdev)
 	struct acpi_device *adev;
 	const char *uid;
 
-	dev->adapter.nr = -1;
 	dev->tx_fifo_depth = 32;
 	dev->rx_fifo_depth = 32;
 
@@ -226,7 +225,7 @@ static int i2c_dw_plat_prepare_clk(struct dw_i2c_dev *i_dev, bool prepare)
 	return 0;
 }
 
-static void dw_i2c_set_fifo_size(struct dw_i2c_dev *dev, int id)
+static void dw_i2c_set_fifo_size(struct dw_i2c_dev *dev)
 {
 	u32 param, tx_fifo_depth, rx_fifo_depth;
 
@@ -240,7 +239,6 @@ static void dw_i2c_set_fifo_size(struct dw_i2c_dev *dev, int id)
 	if (!dev->tx_fifo_depth) {
 		dev->tx_fifo_depth = tx_fifo_depth;
 		dev->rx_fifo_depth = rx_fifo_depth;
-		dev->adapter.nr = id;
 	} else if (tx_fifo_depth >= 2) {
 		dev->tx_fifo_depth = min_t(u32, dev->tx_fifo_depth,
 				tx_fifo_depth);
@@ -364,13 +362,17 @@ static int dw_i2c_plat_probe(struct platform_device *pdev)
 				1000000);
 	}
 
-	dw_i2c_set_fifo_size(dev, pdev->id);
+	dw_i2c_set_fifo_size(dev);
 
 	adap = &dev->adapter;
 	adap->owner = THIS_MODULE;
 	adap->class = I2C_CLASS_DEPRECATED;
 	ACPI_COMPANION_SET(&adap->dev, ACPI_COMPANION(&pdev->dev));
 	adap->dev.of_node = pdev->dev.of_node;
+	if (has_acpi_companion(&pdev->dev))
+		adap->nr = -1;
+	else
+		adap->nr = pdev->id;
 
 	/* The code below assumes runtime PM to be disabled. */
 	WARN_ON(pm_runtime_enabled(&pdev->dev));
