@@ -2440,7 +2440,7 @@
 				improves system performance, but it may also
 				expose users to several CPU vulnerabilities.
 				Equivalent to: nopti [X86,PPC]
-					       nospectre_v1 [PPC]
+					       nospectre_v1 [X86,PPC]
 					       nobp=0 [S390]
 					       nospectre_v2 [X86,PPC,S390]
 					       spectre_v2_user=off [X86]
@@ -2780,6 +2780,10 @@
 			[KNL,x86] Disable symmetric multithreading (SMT).
 			nosmt=force: Force disable SMT, cannot be undone
 				     via the sysfs control file.
+
+	nospectre_v1	[X86] Disable mitigations for Spectre Variant 1 (bounds
+			check bypass). With this option data leaks are possible
+			in the system.
 
 	nospectre_v2	[X86] Disable all mitigations for the Spectre variant 2
 			(indirect branch prediction) vulnerability. System may
