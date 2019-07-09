@@ -121,7 +121,10 @@ bool acpi_quirk_matches_bios_ids(const char * const ids[])
 	const char *bios_ver = dmi_get_system_info(DMI_BIOS_VERSION);
 	int i;
 
-	if ((!bios_vendor) && (!bios_ver) && strncmp(bios_vendor, "LENOVO", 6))
+	if (!bios_vendor || !bios_ver)
+		return false;
+
+	if (strncmp(bios_vendor, "LENOVO", 6))
 		return false;
 
 	for (i = 0; ids[i]; i++)
