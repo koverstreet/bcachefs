@@ -3043,7 +3043,7 @@ omap_remoteproc
 omap_ssi
 omap_wdt
 omapdss
-omapfb
+omap2fb
 omfs
 omninet
 on20
