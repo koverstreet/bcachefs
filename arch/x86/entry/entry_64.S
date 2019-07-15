@@ -535,7 +535,7 @@ END(irq_entries_start)
 	SWAPGS
 	FENCE_SWAPGS_USER_ENTRY
 	call	switch_to_thread_stack
-	jmpq	2f
+	jmp	2f
 1:
 	FENCE_SWAPGS_KERNEL_ENTRY
 2:
