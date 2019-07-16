@@ -3,6 +3,7 @@ TEST_GEN_PROGS := gettimeofday context_switch mmap_bench futex_bench null_syscal
 
 CFLAGS += -O2
 
+top_srcdir = ../../../../..
 include ../../lib.mk
 
 $(TEST_GEN_PROGS): ../harness.c

@@ -11,6 +11,7 @@ ASFLAGS = $(CFLAGS)
 TEST_GEN_PROGS := copyuser_64 copyuser_power7 memcpy_64 memcpy_power7
 EXTRA_SOURCES := validate.c ../harness.c
 
+top_srcdir = ../../../../..
 include ../../lib.mk
 
 $(OUTPUT)/copyuser_64:     CPPFLAGS += -D COPY_LOOP=test___copy_tofrom_user_base
