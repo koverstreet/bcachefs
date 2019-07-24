@@ -2608,6 +2608,28 @@ err:
 	return ret;
 }
 
+static void dump_extents(struct bch_fs *c, u64 ino, u64 offset)
+{
+	struct btree_trans trans;
+	struct btree_iter *iter;
+	struct bkey_s_c k;
+	char buf[200];
+	int ret;
+
+	bch2_trans_init(&trans, c, 0, 0);
+
+	for_each_btree_key(&trans, iter, BTREE_ID_EXTENTS,
+			   POS(ino, offset), 0, k, ret) {
+		if (k.k->p.inode != ino)
+			break;
+
+		bch2_bkey_val_to_text(&PBUF(buf), c, k);
+		pr_info("%s", buf);
+	}
+
+	bch2_trans_exit(&trans);
+}
+
 static long bch2_fcollapse(struct bch_inode_info *inode,
 			   loff_t offset, loff_t len)
 {
@@ -2646,10 +2668,19 @@ static long bch2_fcollapse(struct bch_inode_info *inode,
 	if (ret)
 		goto err;
 
+	pr_info("collapse at dst %llu src %llu",
+		offset >> 9,
+		(offset + len) >> 9);
+	pr_info("extents before collapse:");
+	dump_extents(c, inode->v.i_ino, offset >> 9);
+
 	ret = __bch2_fpunch(c, inode, offset >> 9,
 			    (offset + len) >> 9);
 	if (ret)
 		goto err;
+
+	pr_info("extents after fpunch:");
+	dump_extents(c, inode->v.i_ino, offset >> 9);
 
 	dst = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
 			POS(inode->v.i_ino, offset >> 9),
@@ -2668,12 +2699,17 @@ static long bch2_fcollapse(struct bch_inode_info *inode,
 		struct bkey_s_c k;
 		struct bpos next_pos;
 
+		char buf[200];
+
 		k = bch2_btree_iter_peek(src);
 		if ((ret = bkey_err(k)))
 			goto bkey_err;
 
 		if (!k.k || k.k->p.inode != inode->v.i_ino)
 			break;
+
+		bch2_bkey_val_to_text(&PBUF(buf), c, k);
+		pr_info("copying extent %s", buf);
 
 		BUG_ON(src->pos.offset != bkey_start_offset(k.k));
 
@@ -2722,6 +2758,12 @@ static long bch2_fcollapse(struct bch_inode_info *inode,
 
 		bch2_trans_update(&trans, BTREE_INSERT_ENTRY(dst, &copy.k));
 
+		bch2_bkey_val_to_text(&PBUF(buf), c, bkey_i_to_s_c(&copy.k));
+		pr_info("dst %s", buf);
+
+		bch2_bkey_val_to_text(&PBUF(buf), c, bkey_i_to_s_c(&delete));
+		pr_info("src %s", buf);
+
 		/* We might end up splitting compressed extents: */
 		ret = bch2_disk_reservation_get(c, &disk_res, copy.k.k.size,
 				bch2_bkey_nr_dirty_ptrs(bkey_i_to_s_c(&copy.k)),
@@ -2750,6 +2792,9 @@ bkey_err:
 		bch2_trans_cond_resched(&trans);
 	}
 	bch2_trans_unlock(&trans);
+
+	pr_info("extents after collapse:");
+	dump_extents(c, inode->v.i_ino, offset >> 9);
 
 	i_size_write(&inode->v, new_size);
 	mutex_lock(&inode->ei_update_lock);
