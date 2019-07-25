@@ -426,7 +426,7 @@ static void init_append_extent(struct bch_write_op *op,
 		p.ptr.cached = !ca->mi.durability ||
 			(op->flags & BCH_WRITE_CACHED) != 0;
 		p.ptr.offset += ca->mi.bucket_size - ob->sectors_free;
-		bch2_extent_ptr_decoded_append(e, &p);
+		bch2_extent_ptr_decoded_append(&e->k_i, &p);
 
 		BUG_ON(crc.compressed_size > ob->sectors_free);
 		ob->sectors_free -= crc.compressed_size;
@@ -954,17 +954,13 @@ static inline bool should_promote(struct bch_fs *c, struct bkey_s_c k,
 				  struct bch_io_opts opts,
 				  unsigned flags)
 {
-	if (!bkey_extent_is_data(k.k))
-		return false;
-
 	if (!(flags & BCH_READ_MAY_PROMOTE))
 		return false;
 
 	if (!opts.promote_target)
 		return false;
 
-	if (bch2_extent_has_target(c, bkey_s_c_to_extent(k),
-				   opts.promote_target))
+	if (bch2_bkey_has_target(c, k, opts.promote_target))
 		return false;
 
 	if (bch2_target_congested(c, opts.promote_target)) {
@@ -1222,11 +1218,10 @@ retry:
 	k = bkey_i_to_s_c(&tmp.k);
 	bch2_trans_unlock(&trans);
 
-	if (!bkey_extent_is_data(k.k) ||
-	    !bch2_extent_matches_ptr(c, bkey_i_to_s_c_extent(&tmp.k),
-				     rbio->pick.ptr,
-				     rbio->pos.offset -
-				     rbio->pick.crc.offset)) {
+	if (!bch2_bkey_matches_ptr(c, bkey_i_to_s_c(&tmp.k),
+				   rbio->pick.ptr,
+				   rbio->pos.offset -
+				   rbio->pick.crc.offset)) {
 		/* extent we wanted to read no longer exists: */
 		rbio->hole = true;
 		goto out;
@@ -1362,7 +1357,6 @@ static void bch2_rbio_narrow_crcs(struct bch_read_bio *rbio)
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_s_c k;
-	struct bkey_i_extent *e;
 	BKEY_PADDED(k) new;
 	struct bch_extent_crc_unpacked new_crc;
 	u64 data_offset = rbio->pos.offset - rbio->pick.crc.offset;
@@ -1381,34 +1375,30 @@ retry:
 	if (IS_ERR_OR_NULL(k.k))
 		goto out;
 
-	if (!bkey_extent_is_data(k.k))
-		goto out;
-
 	bkey_reassemble(&new.k, k);
-	e = bkey_i_to_extent(&new.k);
+	k = bkey_i_to_s_c(&new.k);
 
-	if (!bch2_extent_matches_ptr(c, extent_i_to_s_c(e),
-				     rbio->pick.ptr, data_offset) ||
-	    bversion_cmp(e->k.version, rbio->version))
+	if (bversion_cmp(k.k->version, rbio->version) ||
+	    !bch2_bkey_matches_ptr(c, k, rbio->pick.ptr, data_offset))
 		goto out;
 
 	/* Extent was merged? */
-	if (bkey_start_offset(&e->k) < data_offset ||
-	    e->k.p.offset > data_offset + rbio->pick.crc.uncompressed_size)
+	if (bkey_start_offset(k.k) < data_offset ||
+	    k.k->p.offset > data_offset + rbio->pick.crc.uncompressed_size)
 		goto out;
 
 	if (bch2_rechecksum_bio(c, &rbio->bio, rbio->version,
 			rbio->pick.crc, NULL, &new_crc,
-			bkey_start_offset(&e->k) - data_offset, e->k.size,
+			bkey_start_offset(k.k) - data_offset, k.k->size,
 			rbio->pick.crc.csum_type)) {
 		bch_err(c, "error verifying existing checksum while narrowing checksum (memory corruption?)");
 		goto out;
 	}
 
-	if (!bch2_extent_narrow_crcs(e, new_crc))
+	if (!bch2_bkey_narrow_crcs(&new.k, new_crc))
 		goto out;
 
-	bch2_trans_update(&trans, BTREE_INSERT_ENTRY(iter, &e->k_i));
+	bch2_trans_update(&trans, BTREE_INSERT_ENTRY(iter, &new.k));
 	ret = bch2_trans_commit(&trans, NULL, NULL,
 				BTREE_INSERT_ATOMIC|
 				BTREE_INSERT_NOFAIL|
@@ -1417,15 +1407,6 @@ retry:
 		goto retry;
 out:
 	bch2_trans_exit(&trans);
-}
-
-static bool should_narrow_crcs(struct bkey_s_c k,
-			       struct extent_ptr_decoded *pick,
-			       unsigned flags)
-{
-	return !(flags & BCH_READ_IN_RETRY) &&
-		bkey_extent_is_data(k.k) &&
-		bch2_can_narrow_extent_crcs(bkey_s_c_to_extent(k), pick->crc);
 }
 
 /* Inner part that may run in process context */
@@ -1614,7 +1595,8 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 	    bio_flagged(&orig->bio, BIO_CHAIN))
 		flags |= BCH_READ_MUST_CLONE;
 
-	narrow_crcs = should_narrow_crcs(k, &pick, flags);
+	narrow_crcs = !(flags & BCH_READ_IN_RETRY) &&
+		bch2_can_narrow_extent_crcs(k, pick.crc);
 
 	if (narrow_crcs && (flags & BCH_READ_USER_MAPPED))
 		flags |= BCH_READ_MUST_BOUNCE;
