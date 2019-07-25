@@ -425,6 +425,9 @@ static netdev_tx_t ipip_tunnel_xmit(struct sk_buff *skb,
 	u8 ipproto;
 	struct iphdr fiph;
 
+	if (!pskb_inet_may_pull(skb))
+		goto tx_error;
+
 	switch (skb->protocol) {
 	case htons(ETH_P_IP):
 		ipproto = IPPROTO_IPIP;
