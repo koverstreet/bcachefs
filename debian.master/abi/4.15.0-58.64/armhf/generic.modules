@@ -2739,7 +2739,6 @@ mxuport
 myri10ge
 n_gsm
 n_hdlc
-n_r3964
 n_tracerouter
 n_tracesink
 nandsim
