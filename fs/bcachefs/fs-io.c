@@ -511,7 +511,6 @@ struct bch_page_sector {
 	/* i_sectors: */
 	enum {
 		SECTOR_UNALLOCATED,
-		SECTOR_QUOTA_RESERVED,
 		SECTOR_DIRTY,
 		SECTOR_ALLOCATED,
 	}			state:2;
@@ -589,31 +588,6 @@ static struct bch_page_state *bch2_page_state_create(struct page *page,
 	return bch2_page_state(page) ?: __bch2_page_state_create(page, gfp);
 }
 
-static void bch2_put_page_reservation(struct bch_fs *c, struct bch_inode_info *inode,
-				      struct page *page)
-{
-	struct bch_page_state *s = bch2_page_state(page);
-	struct disk_reservation disk_res = { 0 };
-	struct quota_res quota_res = { 0 };
-	unsigned i;
-
-	if (!s)
-		return;
-
-	for (i = 0; i < ARRAY_SIZE(s->s); i++) {
-		disk_res.sectors += s->s[i].replicas_reserved;
-		s->s[i].replicas_reserved = 0;
-
-		if (s->s[i].state == SECTOR_QUOTA_RESERVED) {
-			quota_res.sectors++;
-			s->s[i].state = SECTOR_UNALLOCATED;
-		}
-	}
-
-	bch2_quota_reservation_put(c, inode, &quota_res);
-	bch2_disk_reservation_put(c, &disk_res);
-}
-
 static inline unsigned inode_nr_replicas(struct bch_fs *c, struct bch_inode_info *inode)
 {
 	/* XXX: this should not be open coded */
@@ -664,42 +638,74 @@ static int bch2_get_page_disk_reservation(struct bch_fs *c,
 	return 0;
 }
 
-static int bch2_get_page_quota_reservation(struct bch_fs *c,
+struct bch2_page_reservation {
+	struct disk_reservation	disk;
+	struct quota_res	quota;
+};
+
+static void bch2_page_reservation_init(struct bch_fs *c,
 			struct bch_inode_info *inode,
-			struct page *page, bool check_enospc)
+			struct bch2_page_reservation *res)
+{
+	memset(res, 0, sizeof(*res));
+
+	res->disk.nr_replicas = inode_nr_replicas(c, inode);
+}
+
+static void bch2_page_reservation_put(struct bch_fs *c,
+			struct bch_inode_info *inode,
+			struct bch2_page_reservation *res)
+{
+	bch2_disk_reservation_put(c, &res->disk);
+	bch2_quota_reservation_put(c, inode, &res->quota);
+}
+
+static int bch2_page_reservation_get(struct bch_fs *c,
+			struct bch_inode_info *inode, struct page *page,
+			struct bch2_page_reservation *res,
+			unsigned offset, unsigned len, bool check_enospc)
 {
 	struct bch_page_state *s = bch2_page_state_create(page, 0);
-	struct quota_res quota_res = { 0 };
-	unsigned i, quota_res_sectors = 0;
+	unsigned i, disk_sectors = 0, quota_sectors = 0;
 	int ret;
 
 	if (!s)
 		return -ENOMEM;
 
-	for (i = 0; i < ARRAY_SIZE(s->s); i++)
-		quota_res_sectors += s->s[i].state == SECTOR_UNALLOCATED;
+	for (i = offset / 512;
+	     i < DIV_ROUND_UP(offset + len, 512);
+	     i++) {
+		disk_sectors += sectors_to_reserve(&s->s[i],
+						res->disk.nr_replicas);
+		quota_sectors += s->s[i].state == SECTOR_UNALLOCATED;
+	}
 
-	if (!quota_res_sectors)
-		return 0;
+	if (disk_sectors) {
+		ret = bch2_disk_reservation_add(c, &res->disk,
+						disk_sectors,
+						!check_enospc
+						? BCH_DISK_RESERVATION_NOFAIL
+						: 0);
+		if (unlikely(ret))
+			return ret;
+	}
 
-	ret = bch2_quota_reservation_add(c, inode, &quota_res,
-					 quota_res_sectors,
-					 check_enospc);
-	if (unlikely(ret))
-		return ret;
+	if (quota_sectors) {
+		ret = bch2_quota_reservation_add(c, inode, &res->quota,
+						 quota_sectors,
+						 check_enospc);
+		if (unlikely(ret)) {
+			struct disk_reservation tmp = {
+				.sectors = disk_sectors
+			};
 
-	for (i = 0; i < ARRAY_SIZE(s->s); i++)
-		if (s->s[i].state == SECTOR_UNALLOCATED)
-			s->s[i].state = SECTOR_QUOTA_RESERVED;
+			bch2_disk_reservation_put(c, &tmp);
+			res->disk.sectors -= disk_sectors;
+			return ret;
+		}
+	}
 
 	return 0;
-}
-
-static int bch2_get_page_reservation(struct bch_fs *c, struct bch_inode_info *inode,
-				     struct page *page, bool check_enospc)
-{
-	return bch2_get_page_disk_reservation(c, inode, page, check_enospc) ?:
-		bch2_get_page_quota_reservation(c, inode, page, check_enospc);
 }
 
 static void bch2_clear_page_bits(struct page *page)
@@ -707,55 +713,59 @@ static void bch2_clear_page_bits(struct page *page)
 	struct bch_inode_info *inode = to_bch_ei(page->mapping->host);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_page_state *s = bch2_page_state(page);
+	struct disk_reservation disk_res = { 0 };
 	int i, dirty_sectors = 0;
 
 	if (!s)
 		return;
 
 	for (i = 0; i < ARRAY_SIZE(s->s); i++) {
+		disk_res.sectors += s->s[i].replicas_reserved;
+		s->s[i].replicas_reserved = 0;
+
 		if (s->s[i].state == SECTOR_DIRTY) {
 			dirty_sectors++;
 			s->s[i].state = SECTOR_UNALLOCATED;
 		}
 	}
 
+	bch2_disk_reservation_put(c, &disk_res);
+
 	if (dirty_sectors)
 		i_sectors_acct(c, inode, NULL, -dirty_sectors);
-	bch2_put_page_reservation(c, inode, page);
 
 	bch2_page_state_release(page);
 }
 
-static void __bch2_set_page_dirty(struct page *page)
+static void bch2_set_page_dirty(struct bch_fs *c,
+			struct bch_inode_info *inode, struct page *page,
+			struct bch2_page_reservation *res,
+			unsigned offset, unsigned len)
 {
-	struct bch_inode_info *inode = to_bch_ei(page->mapping->host);
-	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_page_state *s = bch2_page_state(page);
-	struct quota_res quota_res = { 0 };
 	unsigned i, dirty_sectors = 0;
 
-	BUG_ON(!s);
+	for (i = offset / 512;
+	     i < DIV_ROUND_UP(offset + len, 512);
+	     i++) {
+		unsigned sectors = sectors_to_reserve(&s->s[i],
+						res->disk.nr_replicas);
 
-	for (i = 0; i < ARRAY_SIZE(s->s); i++) {
-		if (s->s[i].state == SECTOR_QUOTA_RESERVED)
-			quota_res.sectors++;
+		BUG_ON(sectors > res->disk.sectors);
+		s->s[i].replicas_reserved += sectors;
+		res->disk.sectors -= sectors;
 
-		if (s->s[i].state == SECTOR_UNALLOCATED ||
-		    s->s[i].state == SECTOR_QUOTA_RESERVED) {
+		if (s->s[i].state == SECTOR_UNALLOCATED) {
 			s->s[i].state = SECTOR_DIRTY;
 			dirty_sectors++;
 		}
 	}
 
 	if (dirty_sectors)
-		i_sectors_acct(c, inode, &quota_res, dirty_sectors);
-	bch2_quota_reservation_put(c, inode, &quota_res);
-}
+		i_sectors_acct(c, inode, &res->quota, dirty_sectors);
 
-static void bch2_set_page_dirty(struct page *page)
-{
-	__bch2_set_page_dirty(page);
-	__set_page_dirty_nobuffers(page);
+	if (!PageDirty(page))
+		__set_page_dirty_nobuffers(page);
 }
 
 vm_fault_t bch2_page_mkwrite(struct vm_fault *vmf)
@@ -765,7 +775,10 @@ vm_fault_t bch2_page_mkwrite(struct vm_fault *vmf)
 	struct bch_inode_info *inode = file_bch_inode(file);
 	struct address_space *mapping = inode->v.i_mapping;
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct bch2_page_reservation res;
 	int ret = VM_FAULT_LOCKED;
+
+	bch2_page_reservation_init(c, inode, &res);
 
 	sb_start_pagefault(inode->v.i_sb);
 	file_update_time(file);
@@ -787,19 +800,22 @@ vm_fault_t bch2_page_mkwrite(struct vm_fault *vmf)
 		goto out;
 	}
 
-	if (bch2_get_page_reservation(c, inode, page, true)) {
+	if (bch2_page_reservation_get(c, inode, page, &res,
+				      0, PAGE_SIZE, true)) {
 		unlock_page(page);
 		ret = VM_FAULT_SIGBUS;
 		goto out;
 	}
 
-	if (!PageDirty(page))
-		bch2_set_page_dirty(page);
+	bch2_set_page_dirty(c, inode, page, &res, 0, PAGE_SIZE);
 	wait_for_stable_page(page);
 out:
 	if (current->pagecache_lock != &mapping->add_lock)
 		pagecache_add_put(&mapping->add_lock);
 	sb_end_pagefault(inode->v.i_sb);
+
+	bch2_page_reservation_put(c, inode, &res);
+
 	return ret;
 }
 
@@ -1506,12 +1522,18 @@ int bch2_write_begin(struct file *file, struct address_space *mapping,
 {
 	struct bch_inode_info *inode = to_bch_ei(mapping->host);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct bch2_page_reservation *res;
 	pgoff_t index = pos >> PAGE_SHIFT;
 	unsigned offset = pos & (PAGE_SIZE - 1);
 	struct page *page;
 	int ret = -ENOMEM;
 
-	BUG_ON(inode_unhashed(&inode->v));
+	res = kmalloc(sizeof(*res), GFP_KERNEL);
+	if (!res)
+		return -ENOMEM;
+
+	bch2_page_reservation_init(c, inode, res);
+	*fsdata = res;
 
 	/* Not strictly necessary - same reason as mkwrite(): */
 	pagecache_add_get(&mapping->add_lock);
@@ -1543,7 +1565,8 @@ readpage:
 	if (ret)
 		goto err;
 out:
-	ret = bch2_get_page_reservation(c, inode, page, true);
+	ret = bch2_page_reservation_get(c, inode, page, res,
+					offset, len, true);
 	if (ret) {
 		if (!PageUptodate(page)) {
 			/*
@@ -1566,6 +1589,8 @@ err:
 	*pagep = NULL;
 err_unlock:
 	pagecache_add_put(&mapping->add_lock);
+	kfree(res);
+	*fsdata = NULL;
 	return ret;
 }
 
@@ -1575,6 +1600,8 @@ int bch2_write_end(struct file *file, struct address_space *mapping,
 {
 	struct bch_inode_info *inode = to_bch_ei(mapping->host);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct bch2_page_reservation *res = fsdata;
+	unsigned offset = pos & (PAGE_SIZE - 1);
 
 	lockdep_assert_held(&inode->v.i_rwsem);
 
@@ -1597,17 +1624,18 @@ int bch2_write_end(struct file *file, struct address_space *mapping,
 	if (copied) {
 		if (!PageUptodate(page))
 			SetPageUptodate(page);
-		if (!PageDirty(page))
-			bch2_set_page_dirty(page);
+
+		bch2_set_page_dirty(c, inode, page, res, offset, copied);
 
 		inode->ei_last_dirtied = (unsigned long) current;
-	} else {
-		bch2_put_page_reservation(c, inode, page);
 	}
 
 	unlock_page(page);
 	put_page(page);
 	pagecache_add_put(&mapping->add_lock);
+
+	bch2_page_reservation_put(c, inode, res);
+	kfree(res);
 
 	return copied;
 }
@@ -1621,14 +1649,18 @@ static int __bch2_buffered_write(struct bch_inode_info *inode,
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct page *pages[WRITE_BATCH_PAGES];
+	struct bch2_page_reservation res;
 	unsigned long index = pos >> PAGE_SHIFT;
 	unsigned offset = pos & (PAGE_SIZE - 1);
 	unsigned nr_pages = DIV_ROUND_UP(offset + len, PAGE_SIZE);
-	unsigned i, copied = 0, nr_pages_copied = 0;
+	unsigned i, reserved = 0, set_dirty = 0;
+	unsigned copied = 0, nr_pages_copied = 0;
 	int ret = 0;
 
 	BUG_ON(!len);
 	BUG_ON(nr_pages > ARRAY_SIZE(pages));
+
+	bch2_page_reservation_init(c, inode, &res);
 
 	for (i = 0; i < nr_pages; i++) {
 		pages[i] = grab_cache_page_write_begin(mapping, index + i, 0);
@@ -1656,19 +1688,25 @@ static int __bch2_buffered_write(struct bch_inode_info *inode,
 		}
 	}
 
-	for (i = 0; i < nr_pages; i++) {
-		ret = bch2_get_page_reservation(c, inode, pages[i], true);
+	while (reserved < len) {
+		struct page *page = pages[(offset + reserved) >> PAGE_SHIFT];
+		unsigned pg_offset = (offset + reserved) & (PAGE_SIZE - 1);
+		unsigned pg_len = min_t(unsigned, len - reserved,
+					PAGE_SIZE - pg_offset);
+retry_reservation:
+		ret = bch2_page_reservation_get(c, inode, page, &res,
+						pg_offset, pg_len, true);
 
-		if (ret && !PageUptodate(pages[i])) {
-			ret = bch2_read_single_page(pages[i], mapping);
-			if (ret)
-				goto out;
-
-			ret = bch2_get_page_reservation(c, inode, pages[i], true);
+		if (ret && !PageUptodate(page)) {
+			ret = bch2_read_single_page(page, mapping);
+			if (!ret)
+				goto retry_reservation;
 		}
 
 		if (ret)
 			goto out;
+
+		reserved += pg_len;
 	}
 
 	if (mapping_writably_mapped(mapping))
@@ -1678,10 +1716,10 @@ static int __bch2_buffered_write(struct bch_inode_info *inode,
 	while (copied < len) {
 		struct page *page = pages[(offset + copied) >> PAGE_SHIFT];
 		unsigned pg_offset = (offset + copied) & (PAGE_SIZE - 1);
-		unsigned pg_bytes = min_t(unsigned, len - copied,
-					  PAGE_SIZE - pg_offset);
+		unsigned pg_len = min_t(unsigned, len - copied,
+					PAGE_SIZE - pg_offset);
 		unsigned pg_copied = iov_iter_copy_from_user_atomic(page,
-						iter, pg_offset, pg_bytes);
+						iter, pg_offset, pg_len);
 
 		if (!pg_copied)
 			break;
@@ -1711,22 +1749,29 @@ static int __bch2_buffered_write(struct bch_inode_info *inode,
 			copied -= (offset + copied) & (PAGE_SIZE - 1);
 		}
 	}
+
+	while (set_dirty < copied) {
+		struct page *page = pages[(offset + set_dirty) >> PAGE_SHIFT];
+		unsigned pg_offset = (offset + set_dirty) & (PAGE_SIZE - 1);
+		unsigned pg_len = min_t(unsigned, copied - set_dirty,
+					PAGE_SIZE - pg_offset);
+
+		if (!PageUptodate(page))
+			SetPageUptodate(page);
+
+		bch2_set_page_dirty(c, inode, page, &res, pg_offset, pg_len);
+		unlock_page(page);
+		put_page(page);
+
+		set_dirty += pg_len;
+	}
 out:
-	for (i = 0; i < nr_pages_copied; i++) {
-		if (!PageUptodate(pages[i]))
-			SetPageUptodate(pages[i]);
-		if (!PageDirty(pages[i]))
-			bch2_set_page_dirty(pages[i]);
+	for (i = nr_pages_copied; i < nr_pages; i++) {
 		unlock_page(pages[i]);
 		put_page(pages[i]);
 	}
 
-	for (i = nr_pages_copied; i < nr_pages; i++) {
-		if (!PageDirty(pages[i]))
-			bch2_put_page_reservation(c, inode, pages[i]);
-		unlock_page(pages[i]);
-		put_page(pages[i]);
-	}
+	bch2_page_reservation_put(c, inode, &res);
 
 	return copied ?: ret;
 }
@@ -2334,7 +2379,7 @@ static int __bch2_truncate_page(struct bch_inode_info *inode,
 	 * XXX: because we aren't currently tracking whether the page has actual
 	 * data in it (vs. just 0s, or only partially written) this wrong. ick.
 	 */
-	ret = bch2_get_page_reservation(c, inode, page, false);
+	ret = bch2_get_page_disk_reservation(c, inode, page, false);
 	BUG_ON(ret);
 
 	if (index == start >> PAGE_SHIFT &&
@@ -2345,8 +2390,7 @@ static int __bch2_truncate_page(struct bch_inode_info *inode,
 	else if (index == end >> PAGE_SHIFT)
 		zero_user_segment(page, 0, end_offset);
 
-	if (!PageDirty(page))
-		bch2_set_page_dirty(page);
+	__set_page_dirty_nobuffers(page);
 unlock:
 	unlock_page(page);
 	put_page(page);
