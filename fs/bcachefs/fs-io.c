@@ -2846,39 +2846,48 @@ long bch2_fallocate_dispatch(struct file *file, int mode,
 
 /* fseek: */
 
-static bool page_is_data(struct page *page)
+static int page_data_offset(struct page *page, unsigned offset)
 {
 	struct bch_page_state *s = bch2_page_state(page);
 	unsigned i;
 
-	if (!s)
-		return false;
+	if (s)
+		for (i = offset >> 9; i < PAGE_SECTORS; i++)
+			if (s->s[i].state >= SECTOR_DIRTY)
+				return i << 9;
 
-	for (i = 0; i < PAGE_SECTORS; i++)
-		if (s->s[i].state >= SECTOR_DIRTY)
-			return true;
-
-	return false;
+	return -1;
 }
 
-static loff_t bch2_next_pagecache_data(struct inode *vinode,
+static loff_t bch2_seek_pagecache_data(struct inode *vinode,
 				       loff_t start_offset,
 				       loff_t end_offset)
 {
 	struct address_space *mapping = vinode->i_mapping;
 	struct page *page;
-	pgoff_t index;
+	pgoff_t start_index	= start_offset >> PAGE_SHIFT;
+	pgoff_t end_index	= end_offset >> PAGE_SHIFT;
+	pgoff_t index		= start_index;
+	loff_t ret;
+	int offset;
 
-	for (index = start_offset >> PAGE_SHIFT;
-	     index < end_offset >> PAGE_SHIFT;) {
-		if (find_get_pages(mapping, &index, 1, &page)) {
+	while (index <= end_index) {
+		if (find_get_pages_range(mapping, &index, end_index, 1, &page)) {
 			lock_page(page);
 
-			if (page_is_data(page))
-				end_offset =
-					min(end_offset,
-					    max(start_offset,
-						((loff_t) page->index) << PAGE_SHIFT));
+			offset = page_data_offset(page,
+					page->index == start_index
+					? start_offset & (PAGE_SIZE - 1)
+					: 0);
+			if (offset >= 0) {
+				ret = clamp(((loff_t) page->index << PAGE_SHIFT) +
+					    offset,
+					    start_offset, end_offset);
+				unlock_page(page);
+				put_page(page);
+				return ret;
+			}
+
 			unlock_page(page);
 			put_page(page);
 		} else {
@@ -2921,7 +2930,7 @@ static loff_t bch2_seek_data(struct file *file, u64 offset)
 		return ret;
 
 	if (next_data > offset)
-		next_data = bch2_next_pagecache_data(&inode->v,
+		next_data = bch2_seek_pagecache_data(&inode->v,
 						     offset, next_data);
 
 	if (next_data >= isize)
@@ -2930,34 +2939,56 @@ static loff_t bch2_seek_data(struct file *file, u64 offset)
 	return vfs_setpos(file, next_data, MAX_LFS_FILESIZE);
 }
 
-static bool page_slot_is_data(struct address_space *mapping, pgoff_t index)
+static int __page_hole_offset(struct page *page, unsigned offset)
 {
+	struct bch_page_state *s = bch2_page_state(page);
+	unsigned i;
+
+	if (!s)
+		return 0;
+
+	for (i = offset >> 9; i < PAGE_SECTORS; i++)
+		if (s->s[i].state < SECTOR_DIRTY)
+			return i << 9;
+
+	return -1;
+}
+
+static loff_t page_hole_offset(struct address_space *mapping, loff_t offset)
+{
+	pgoff_t index = offset >> PAGE_SHIFT;
 	struct page *page;
-	bool ret;
+	int pg_offset;
+	loff_t ret = -1;
 
 	page = find_lock_entry(mapping, index);
 	if (!page || xa_is_value(page))
-		return false;
+		return offset;
 
-	ret = page_is_data(page);
+	pg_offset = __page_hole_offset(page, offset & (PAGE_SIZE - 1));
+	if (pg_offset >= 0)
+		ret = ((loff_t) index << PAGE_SHIFT) + pg_offset;
+
 	unlock_page(page);
 
 	return ret;
 }
 
-static loff_t bch2_next_pagecache_hole(struct inode *vinode,
+static loff_t bch2_seek_pagecache_hole(struct inode *vinode,
 				       loff_t start_offset,
 				       loff_t end_offset)
 {
 	struct address_space *mapping = vinode->i_mapping;
-	pgoff_t index;
+	loff_t offset = start_offset, hole;
 
-	for (index = start_offset >> PAGE_SHIFT;
-	     index < end_offset >> PAGE_SHIFT;
-	     index++)
-		if (!page_slot_is_data(mapping, index))
-			end_offset = max(start_offset,
-					 ((loff_t) index) << PAGE_SHIFT);
+	while (offset < end_offset) {
+		hole = page_hole_offset(mapping, offset);
+		if (hole >= 0 && hole <= end_offset)
+			return max(start_offset, hole);
+
+		offset += PAGE_SIZE;
+		offset &= PAGE_MASK;
+	}
 
 	return end_offset;
 }
@@ -2982,11 +3013,11 @@ static loff_t bch2_seek_hole(struct file *file, u64 offset)
 			   POS(inode->v.i_ino, offset >> 9),
 			   BTREE_ITER_SLOTS, k, ret) {
 		if (k.k->p.inode != inode->v.i_ino) {
-			next_hole = bch2_next_pagecache_hole(&inode->v,
+			next_hole = bch2_seek_pagecache_hole(&inode->v,
 					offset, MAX_LFS_FILESIZE);
 			break;
 		} else if (!bkey_extent_is_data(k.k)) {
-			next_hole = bch2_next_pagecache_hole(&inode->v,
+			next_hole = bch2_seek_pagecache_hole(&inode->v,
 					max(offset, bkey_start_offset(k.k) << 9),
 					k.k->p.offset << 9);
 
