@@ -2805,16 +2805,15 @@ static loff_t bch2_next_pagecache_data(struct inode *vinode,
 	pgoff_t index;
 
 	for (index = start_offset >> PAGE_SHIFT;
-	     index < end_offset >> PAGE_SHIFT;
-	     index++) {
+	     index < end_offset >> PAGE_SHIFT;) {
 		if (find_get_pages(mapping, &index, 1, &page)) {
 			lock_page(page);
 
 			if (page_is_data(page))
 				end_offset =
 					min(end_offset,
-					max(start_offset,
-					    ((loff_t) index) << PAGE_SHIFT));
+					    max(start_offset,
+						((loff_t) page->index) << PAGE_SHIFT));
 			unlock_page(page);
 			put_page(page);
 		} else {
@@ -2860,7 +2859,7 @@ static loff_t bch2_seek_data(struct file *file, u64 offset)
 		next_data = bch2_next_pagecache_data(&inode->v,
 						     offset, next_data);
 
-	if (next_data > isize)
+	if (next_data >= isize)
 		return -ENXIO;
 
 	return vfs_setpos(file, next_data, MAX_LFS_FILESIZE);
