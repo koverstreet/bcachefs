@@ -452,6 +452,9 @@ int main(int argc, const char **argv)
 
 	srandom(time(NULL));
 
+	/* Setting $PERF_CONFIG makes perf read _only_ the given config file. */
+	config_exclusive_filename = getenv("PERF_CONFIG");
+
 	perf_config__init();
 	err = perf_config(perf_default_config, NULL);
 	if (err)
