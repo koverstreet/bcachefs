@@ -499,9 +499,6 @@ static inline int nvme_nvm_register(struct nvme_ns *ns, char *disk_name,
 static inline void nvme_nvm_unregister(struct nvme_ns *ns) {};
 static inline int nvme_nvm_register_sysfs(struct nvme_ns *ns)
 {
-	if (ctrl->subsys->cmic & (1 << 3))
-		dev_warn(ctrl->device,
-"Please enable CONFIG_NVME_MULTIPATH for full support of multi-port devices.\n");
 	return 0;
 }
 static inline void nvme_nvm_unregister_sysfs(struct nvme_ns *ns) {};
