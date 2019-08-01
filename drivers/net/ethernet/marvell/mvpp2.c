@@ -8372,9 +8372,6 @@ static int mvpp2_remove(struct platform_device *pdev)
 	struct device_node *port_node;
 	int i = 0;
 
-	flush_workqueue(priv->stats_queue);
-	destroy_workqueue(priv->stats_queue);
-
 	for_each_available_child_of_node(dn, port_node) {
 		if (priv->port_list[i]) {
 			mutex_destroy(&priv->port_list[i]->gather_stats_lock);
@@ -8382,6 +8379,8 @@ static int mvpp2_remove(struct platform_device *pdev)
 		}
 		i++;
 	}
+
+	destroy_workqueue(priv->stats_queue);
 
 	for (i = 0; i < MVPP2_BM_POOLS_NUM; i++) {
 		struct mvpp2_bm_pool *bm_pool = &priv->bm_pools[i];
