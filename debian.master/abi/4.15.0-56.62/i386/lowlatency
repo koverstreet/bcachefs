@@ -2650,6 +2650,7 @@ EXPORT_SYMBOL drivers/net/wireless/ath/ath10k/ath10k_core 0x00000000	ath10k_htt_
 EXPORT_SYMBOL drivers/net/wireless/ath/ath10k/ath10k_core 0x00000000	ath10k_htt_t2h_msg_handler
 EXPORT_SYMBOL drivers/net/wireless/ath/ath10k/ath10k_core 0x00000000	ath10k_htt_txrx_compl_task
 EXPORT_SYMBOL drivers/net/wireless/ath/ath10k/ath10k_core 0x00000000	ath10k_info
+EXPORT_SYMBOL drivers/net/wireless/ath/ath10k/ath10k_core 0x00000000	ath10k_mac_tx_push_pending
 EXPORT_SYMBOL drivers/net/wireless/ath/ath10k/ath10k_core 0x00000000	ath10k_print_driver_info
 EXPORT_SYMBOL drivers/net/wireless/ath/ath10k/ath10k_core 0x00000000	ath10k_warn
 EXPORT_SYMBOL drivers/net/wireless/ath/ath6kl/ath6kl_core 0x00000000	ath6kl_cfg80211_resume
@@ -5174,6 +5175,7 @@ EXPORT_SYMBOL net/can/can 0x00000000	can_rx_unregister
 EXPORT_SYMBOL net/can/can 0x00000000	can_send
 EXPORT_SYMBOL net/ceph/libceph 0x00000000	__ceph_open_session
 EXPORT_SYMBOL net/ceph/libceph 0x00000000	ceph_alloc_page_vector
+EXPORT_SYMBOL net/ceph/libceph 0x00000000	ceph_auth_add_authorizer_challenge
 EXPORT_SYMBOL net/ceph/libceph 0x00000000	ceph_auth_create_authorizer
 EXPORT_SYMBOL net/ceph/libceph 0x00000000	ceph_auth_destroy_authorizer
 EXPORT_SYMBOL net/ceph/libceph 0x00000000	ceph_auth_invalidate_authorizer
@@ -5629,6 +5631,8 @@ EXPORT_SYMBOL net/sunrpc/auth_gss/auth_rpcgss 0x00000000	gss_pseudoflavor_to_ser
 EXPORT_SYMBOL net/sunrpc/sunrpc 0x00000000	svc_pool_stats_open
 EXPORT_SYMBOL net/sunrpc/sunrpc 0x00000000	xdr_restrict_buflen
 EXPORT_SYMBOL net/sunrpc/sunrpc 0x00000000	xdr_truncate_encode
+EXPORT_SYMBOL net/tipc/tipc 0x00000000	tipc_dump_done
+EXPORT_SYMBOL net/tipc/tipc 0x00000000	tipc_dump_start
 EXPORT_SYMBOL net/wimax/wimax 0x00000000	wimax_reset
 EXPORT_SYMBOL net/wimax/wimax 0x00000000	wimax_rfkill
 EXPORT_SYMBOL net/wireless/cfg80211 0x00000000	__cfg80211_alloc_event_skb
@@ -6574,6 +6578,8 @@ EXPORT_SYMBOL vmlinux 0x00000000	ZSTD_resetDStream
 EXPORT_SYMBOL vmlinux 0x00000000	__ClearPageMovable
 EXPORT_SYMBOL vmlinux 0x00000000	__FIXADDR_TOP
 EXPORT_SYMBOL vmlinux 0x00000000	__SetPageMovable
+EXPORT_SYMBOL vmlinux 0x00000000	___preempt_schedule
+EXPORT_SYMBOL vmlinux 0x00000000	___preempt_schedule_notrace
 EXPORT_SYMBOL vmlinux 0x00000000	___pskb_trim
 EXPORT_SYMBOL vmlinux 0x00000000	___ratelimit
 EXPORT_SYMBOL vmlinux 0x00000000	__acpi_handle_debug
@@ -6878,6 +6884,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	__skb_gro_checksum_complete
 EXPORT_SYMBOL vmlinux 0x00000000	__skb_gso_segment
 EXPORT_SYMBOL vmlinux 0x00000000	__skb_pad
 EXPORT_SYMBOL vmlinux 0x00000000	__skb_recv_datagram
+EXPORT_SYMBOL vmlinux 0x00000000	__skb_recv_udp
 EXPORT_SYMBOL vmlinux 0x00000000	__skb_try_recv_datagram
 EXPORT_SYMBOL vmlinux 0x00000000	__skb_tx_hash
 EXPORT_SYMBOL vmlinux 0x00000000	__skb_vlan_pop
@@ -6953,7 +6960,6 @@ EXPORT_SYMBOL vmlinux 0x00000000	__zerocopy_sg_from_iter
 EXPORT_SYMBOL vmlinux 0x00000000	_atomic_dec_and_lock
 EXPORT_SYMBOL vmlinux 0x00000000	_bcd2bin
 EXPORT_SYMBOL vmlinux 0x00000000	_bin2bcd
-EXPORT_SYMBOL vmlinux 0x00000000	_cond_resched
 EXPORT_SYMBOL vmlinux 0x00000000	_copy_from_iter
 EXPORT_SYMBOL vmlinux 0x00000000	_copy_from_iter_full
 EXPORT_SYMBOL vmlinux 0x00000000	_copy_from_iter_full_nocache
@@ -6971,7 +6977,9 @@ EXPORT_SYMBOL vmlinux 0x00000000	_raw_read_lock_bh
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_read_lock_irq
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_read_lock_irqsave
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_read_trylock
+EXPORT_SYMBOL vmlinux 0x00000000	_raw_read_unlock
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_read_unlock_bh
+EXPORT_SYMBOL vmlinux 0x00000000	_raw_read_unlock_irq
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_read_unlock_irqrestore
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_spin_lock
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_spin_lock_bh
@@ -6979,14 +6987,18 @@ EXPORT_SYMBOL vmlinux 0x00000000	_raw_spin_lock_irq
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_spin_lock_irqsave
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_spin_trylock
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_spin_trylock_bh
+EXPORT_SYMBOL vmlinux 0x00000000	_raw_spin_unlock
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_spin_unlock_bh
+EXPORT_SYMBOL vmlinux 0x00000000	_raw_spin_unlock_irq
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_spin_unlock_irqrestore
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_write_lock
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_write_lock_bh
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_write_lock_irq
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_write_lock_irqsave
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_write_trylock
+EXPORT_SYMBOL vmlinux 0x00000000	_raw_write_unlock
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_write_unlock_bh
+EXPORT_SYMBOL vmlinux 0x00000000	_raw_write_unlock_irq
 EXPORT_SYMBOL vmlinux 0x00000000	_raw_write_unlock_irqrestore
 EXPORT_SYMBOL vmlinux 0x00000000	ab3100_event_register
 EXPORT_SYMBOL vmlinux 0x00000000	ab3100_event_unregister
@@ -7895,6 +7907,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	devm_nvmem_cell_put
 EXPORT_SYMBOL vmlinux 0x00000000	devm_pci_alloc_host_bridge
 EXPORT_SYMBOL vmlinux 0x00000000	devm_pci_remap_cfg_resource
 EXPORT_SYMBOL vmlinux 0x00000000	devm_pci_remap_cfgspace
+EXPORT_SYMBOL vmlinux 0x00000000	devm_pci_remap_iospace
 EXPORT_SYMBOL vmlinux 0x00000000	devm_register_reboot_notifier
 EXPORT_SYMBOL vmlinux 0x00000000	devm_release_resource
 EXPORT_SYMBOL vmlinux 0x00000000	devm_request_any_context_irq
@@ -7903,6 +7916,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	devm_request_threaded_irq
 EXPORT_SYMBOL vmlinux 0x00000000	dget_parent
 EXPORT_SYMBOL vmlinux 0x00000000	disable_irq
 EXPORT_SYMBOL vmlinux 0x00000000	disable_irq_nosync
+EXPORT_SYMBOL vmlinux 0x00000000	discard_new_inode
 EXPORT_SYMBOL vmlinux 0x00000000	disk_stack_limits
 EXPORT_SYMBOL vmlinux 0x00000000	div64_s64
 EXPORT_SYMBOL vmlinux 0x00000000	div64_u64
@@ -7992,6 +8006,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	dmt_modes
 EXPORT_SYMBOL vmlinux 0x00000000	dns_query
 EXPORT_SYMBOL vmlinux 0x00000000	do_SAK
 EXPORT_SYMBOL vmlinux 0x00000000	do_blank_screen
+EXPORT_SYMBOL vmlinux 0x00000000	do_clone_file_range
 EXPORT_SYMBOL vmlinux 0x00000000	do_gettimeofday
 EXPORT_SYMBOL vmlinux 0x00000000	do_settimeofday64
 EXPORT_SYMBOL vmlinux 0x00000000	do_splice_direct
@@ -8405,6 +8420,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	genphy_aneg_done
 EXPORT_SYMBOL vmlinux 0x00000000	genphy_config_aneg
 EXPORT_SYMBOL vmlinux 0x00000000	genphy_config_init
 EXPORT_SYMBOL vmlinux 0x00000000	genphy_loopback
+EXPORT_SYMBOL vmlinux 0x00000000	genphy_read_mmd_unsupported
 EXPORT_SYMBOL vmlinux 0x00000000	genphy_read_status
 EXPORT_SYMBOL vmlinux 0x00000000	genphy_restart_aneg
 EXPORT_SYMBOL vmlinux 0x00000000	genphy_resume
@@ -8412,6 +8428,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	genphy_setup_forced
 EXPORT_SYMBOL vmlinux 0x00000000	genphy_soft_reset
 EXPORT_SYMBOL vmlinux 0x00000000	genphy_suspend
 EXPORT_SYMBOL vmlinux 0x00000000	genphy_update_link
+EXPORT_SYMBOL vmlinux 0x00000000	genphy_write_mmd_unsupported
 EXPORT_SYMBOL vmlinux 0x00000000	get_acl
 EXPORT_SYMBOL vmlinux 0x00000000	get_agp_version
 EXPORT_SYMBOL vmlinux 0x00000000	get_anon_bdev
@@ -8639,7 +8656,6 @@ EXPORT_SYMBOL vmlinux 0x00000000	inet_dgram_ops
 EXPORT_SYMBOL vmlinux 0x00000000	inet_frag_destroy
 EXPORT_SYMBOL vmlinux 0x00000000	inet_frag_find
 EXPORT_SYMBOL vmlinux 0x00000000	inet_frag_kill
-EXPORT_SYMBOL vmlinux 0x00000000	inet_frag_maybe_warn_overflow
 EXPORT_SYMBOL vmlinux 0x00000000	inet_frags_exit_net
 EXPORT_SYMBOL vmlinux 0x00000000	inet_frags_fini
 EXPORT_SYMBOL vmlinux 0x00000000	inet_frags_init
@@ -8829,7 +8845,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	ip6_err_gen_icmpv6_unreach
 EXPORT_SYMBOL vmlinux 0x00000000	ip6_expire_frag_queue
 EXPORT_SYMBOL vmlinux 0x00000000	ip6_find_1stfragopt
 EXPORT_SYMBOL vmlinux 0x00000000	ip6_frag_init
-EXPORT_SYMBOL vmlinux 0x00000000	ip6_frag_match
+EXPORT_SYMBOL vmlinux 0x00000000	ip6_rhash_params
 EXPORT_SYMBOL vmlinux 0x00000000	ip6_route_me_harder
 EXPORT_SYMBOL vmlinux 0x00000000	ip6_xmit
 EXPORT_SYMBOL vmlinux 0x00000000	ip6tun_encaps
@@ -10066,6 +10082,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	prandom_seed
 EXPORT_SYMBOL vmlinux 0x00000000	prandom_seed_full_state
 EXPORT_SYMBOL vmlinux 0x00000000	prandom_u32
 EXPORT_SYMBOL vmlinux 0x00000000	prandom_u32_state
+EXPORT_SYMBOL vmlinux 0x00000000	preempt_schedule
 EXPORT_SYMBOL vmlinux 0x00000000	prepare_binprm
 EXPORT_SYMBOL vmlinux 0x00000000	prepare_creds
 EXPORT_SYMBOL vmlinux 0x00000000	prepare_kernel_cred
@@ -10116,6 +10133,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	ps2_sendbyte
 EXPORT_SYMBOL vmlinux 0x00000000	psched_ratecfg_precompute
 EXPORT_SYMBOL vmlinux 0x00000000	pskb_expand_head
 EXPORT_SYMBOL vmlinux 0x00000000	pskb_extract
+EXPORT_SYMBOL vmlinux 0x00000000	pskb_trim_rcsum_slow
 EXPORT_SYMBOL vmlinux 0x00000000	put_cmsg
 EXPORT_SYMBOL vmlinux 0x00000000	put_disk
 EXPORT_SYMBOL vmlinux 0x00000000	put_io_context
@@ -12748,6 +12766,8 @@ EXPORT_SYMBOL_GPL drivers/media/cec/cec 0x00000000	cec_delete_adapter
 EXPORT_SYMBOL_GPL drivers/media/cec/cec 0x00000000	cec_get_edid_phys_addr
 EXPORT_SYMBOL_GPL drivers/media/cec/cec 0x00000000	cec_phys_addr_for_input
 EXPORT_SYMBOL_GPL drivers/media/cec/cec 0x00000000	cec_phys_addr_validate
+EXPORT_SYMBOL_GPL drivers/media/cec/cec 0x00000000	cec_pin_allocate_adapter
+EXPORT_SYMBOL_GPL drivers/media/cec/cec 0x00000000	cec_pin_changed
 EXPORT_SYMBOL_GPL drivers/media/cec/cec 0x00000000	cec_queue_pin_cec_event
 EXPORT_SYMBOL_GPL drivers/media/cec/cec 0x00000000	cec_queue_pin_hpd_event
 EXPORT_SYMBOL_GPL drivers/media/cec/cec 0x00000000	cec_received_msg_ts
@@ -13612,9 +13632,11 @@ EXPORT_SYMBOL_GPL drivers/net/can/can-dev 0x00000000	can_rx_offload_add_fifo
 EXPORT_SYMBOL_GPL drivers/net/can/can-dev 0x00000000	can_rx_offload_add_timestamp
 EXPORT_SYMBOL_GPL drivers/net/can/can-dev 0x00000000	can_rx_offload_del
 EXPORT_SYMBOL_GPL drivers/net/can/can-dev 0x00000000	can_rx_offload_enable
+EXPORT_SYMBOL_GPL drivers/net/can/can-dev 0x00000000	can_rx_offload_get_echo_skb
 EXPORT_SYMBOL_GPL drivers/net/can/can-dev 0x00000000	can_rx_offload_irq_offload_fifo
 EXPORT_SYMBOL_GPL drivers/net/can/can-dev 0x00000000	can_rx_offload_irq_offload_timestamp
-EXPORT_SYMBOL_GPL drivers/net/can/can-dev 0x00000000	can_rx_offload_irq_queue_err_skb
+EXPORT_SYMBOL_GPL drivers/net/can/can-dev 0x00000000	can_rx_offload_queue_sorted
+EXPORT_SYMBOL_GPL drivers/net/can/can-dev 0x00000000	can_rx_offload_queue_tail
 EXPORT_SYMBOL_GPL drivers/net/can/can-dev 0x00000000	can_rx_offload_reset
 EXPORT_SYMBOL_GPL drivers/net/can/can-dev 0x00000000	close_candev
 EXPORT_SYMBOL_GPL drivers/net/can/can-dev 0x00000000	devm_can_led_init
@@ -16718,6 +16740,7 @@ EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_shutdown_client
 EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_sleep_on
 EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_sleep_on_priority
 EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_switch_client_transport
+EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_task_release_transport
 EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_uaddr2sockaddr
 EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_unlink
 EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_update_rtt
@@ -16919,7 +16942,6 @@ EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_find_bound_socket
 EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_find_connected_socket
 EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_for_each_connected_socket
 EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_insert_connected
-EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_pending_work
 EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_remove_bound
 EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_remove_connected
 EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_remove_pending
@@ -17078,6 +17100,7 @@ EXPORT_SYMBOL_GPL sound/hda/snd-hda-core 0x00000000	snd_hdac_bus_init_cmd_io
 EXPORT_SYMBOL_GPL sound/hda/snd-hda-core 0x00000000	snd_hdac_bus_parse_capabilities
 EXPORT_SYMBOL_GPL sound/hda/snd-hda-core 0x00000000	snd_hdac_bus_queue_event
 EXPORT_SYMBOL_GPL sound/hda/snd-hda-core 0x00000000	snd_hdac_bus_remove_device
+EXPORT_SYMBOL_GPL sound/hda/snd-hda-core 0x00000000	snd_hdac_bus_reset_link
 EXPORT_SYMBOL_GPL sound/hda/snd-hda-core 0x00000000	snd_hdac_bus_send_cmd
 EXPORT_SYMBOL_GPL sound/hda/snd-hda-core 0x00000000	snd_hdac_bus_stop_chip
 EXPORT_SYMBOL_GPL sound/hda/snd-hda-core 0x00000000	snd_hdac_bus_stop_cmd_io
@@ -17789,6 +17812,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	__crypto_xor
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__dax_zero_page_range
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__dev_forward_skb
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__devcgroup_check_permission
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	__device_reset
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__devm_alloc_percpu
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__devm_irq_alloc_descs
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__devm_of_phy_provider_register
@@ -17896,6 +17920,8 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	__put_task_struct
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__raw_notifier_call_chain
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__raw_v4_lookup
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__raw_v6_lookup
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	__rcu_read_lock
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	__rcu_read_unlock
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__regmap_init
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__regmap_init_i2c
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__regmap_init_mmio_clk
@@ -17924,7 +17950,6 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	__sbitmap_queue_get_shallow
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__scsi_init_queue
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__serdev_device_driver_register
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__skb_get_hash_symmetric
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	__skb_recv_udp
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__skb_tstamp_tx
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__sock_recv_timestamp
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__sock_recv_ts_and_drops
@@ -18576,6 +18601,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	bus_unregister
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	bus_unregister_notifier
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	byte_rev_table
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	call_netevent_notifiers
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	call_rcu
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	call_rcu_bh
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	call_rcu_sched
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	call_rcu_tasks
@@ -19161,7 +19187,6 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	device_remove_groups
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	device_remove_properties
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	device_rename
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	device_reprobe
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	device_reset
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	device_set_of_node_from_dev
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	device_set_wakeup_capable
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	device_set_wakeup_enable
@@ -21036,6 +21061,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	preempt_notifier_dec
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	preempt_notifier_inc
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	preempt_notifier_register
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	preempt_notifier_unregister
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	preempt_schedule_notrace
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	print_stack_trace
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	probe_kernel_read
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	probe_kernel_write
@@ -21857,6 +21883,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	swphy_read_reg
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	swphy_validate_state
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	symbol_put_addr
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sync_page_io
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	synchronize_rcu
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	synchronize_rcu_bh
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	synchronize_rcu_expedited
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	synchronize_rcu_tasks
@@ -21873,6 +21900,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	syscore_suspend
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysctl_vfs_cache_pressure
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_add_file_to_group
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_add_link_to_group
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_break_active_protection
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_chmod_file
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_bin_file
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_file_ns
@@ -21894,6 +21922,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_remove_link
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_remove_link_from_group
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_remove_mount_point
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_rename_link_ns
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_unbreak_active_protection
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_unmerge_group
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_update_group
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	system_freezable_power_efficient_wq
@@ -22090,6 +22119,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_prepare_flip_string
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_put_char
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_register_device_attr
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_release_struct
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_save_termios
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_set_ldisc
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_set_termios
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_standard_install
@@ -22506,7 +22536,6 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	xen_has_pv_nic_devices
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	xen_have_vector_callback
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	xen_hvm_evtchn_do_upcall
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	xen_hvm_need_lapic
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	xen_in_preemptible_hcall
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	xen_irq_from_gsi
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	xen_max_p2m_pfn
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	xen_p2m_addr

@@ -530,6 +530,7 @@ EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	genphy_aneg_done
 EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	genphy_config_aneg
 EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	genphy_config_init
 EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	genphy_loopback
+EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	genphy_read_mmd_unsupported
 EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	genphy_read_status
 EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	genphy_restart_aneg
 EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	genphy_resume
@@ -537,6 +538,7 @@ EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	genphy_setup_forced
 EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	genphy_soft_reset
 EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	genphy_suspend
 EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	genphy_update_link
+EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	genphy_write_mmd_unsupported
 EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	get_phy_device
 EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	mdio_bus_type
 EXPORT_SYMBOL drivers/net/phy/libphy 0x00000000	mdio_device_create
@@ -1304,6 +1306,7 @@ EXPORT_SYMBOL net/bridge/netfilter/ebtables 0x00000000	ebt_register_table
 EXPORT_SYMBOL net/bridge/netfilter/ebtables 0x00000000	ebt_unregister_table
 EXPORT_SYMBOL net/ceph/libceph 0x00000000	__ceph_open_session
 EXPORT_SYMBOL net/ceph/libceph 0x00000000	ceph_alloc_page_vector
+EXPORT_SYMBOL net/ceph/libceph 0x00000000	ceph_auth_add_authorizer_challenge
 EXPORT_SYMBOL net/ceph/libceph 0x00000000	ceph_auth_create_authorizer
 EXPORT_SYMBOL net/ceph/libceph 0x00000000	ceph_auth_destroy_authorizer
 EXPORT_SYMBOL net/ceph/libceph 0x00000000	ceph_auth_invalidate_authorizer
@@ -1558,6 +1561,8 @@ EXPORT_SYMBOL net/sunrpc/auth_gss/auth_rpcgss 0x00000000	gss_pseudoflavor_to_ser
 EXPORT_SYMBOL net/sunrpc/sunrpc 0x00000000	svc_pool_stats_open
 EXPORT_SYMBOL net/sunrpc/sunrpc 0x00000000	xdr_restrict_buflen
 EXPORT_SYMBOL net/sunrpc/sunrpc 0x00000000	xdr_truncate_encode
+EXPORT_SYMBOL net/tipc/tipc 0x00000000	tipc_dump_done
+EXPORT_SYMBOL net/tipc/tipc 0x00000000	tipc_dump_start
 EXPORT_SYMBOL vmlinux 0x00000000	I_BDEV
 EXPORT_SYMBOL vmlinux 0x00000000	LZ4_decompress_fast
 EXPORT_SYMBOL vmlinux 0x00000000	LZ4_decompress_fast_continue
@@ -1816,6 +1821,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	__nla_reserve
 EXPORT_SYMBOL vmlinux 0x00000000	__nla_reserve_64bit
 EXPORT_SYMBOL vmlinux 0x00000000	__nla_reserve_nohdr
 EXPORT_SYMBOL vmlinux 0x00000000	__nlmsg_put
+EXPORT_SYMBOL vmlinux 0x00000000	__node_distance
 EXPORT_SYMBOL vmlinux 0x00000000	__page_cache_alloc
 EXPORT_SYMBOL vmlinux 0x00000000	__page_frag_cache_drain
 EXPORT_SYMBOL vmlinux 0x00000000	__page_symlink
@@ -1888,6 +1894,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	__skb_gro_checksum_complete
 EXPORT_SYMBOL vmlinux 0x00000000	__skb_gso_segment
 EXPORT_SYMBOL vmlinux 0x00000000	__skb_pad
 EXPORT_SYMBOL vmlinux 0x00000000	__skb_recv_datagram
+EXPORT_SYMBOL vmlinux 0x00000000	__skb_recv_udp
 EXPORT_SYMBOL vmlinux 0x00000000	__skb_try_recv_datagram
 EXPORT_SYMBOL vmlinux 0x00000000	__skb_tx_hash
 EXPORT_SYMBOL vmlinux 0x00000000	__skb_vlan_pop
@@ -2643,6 +2650,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	devm_memunmap
 EXPORT_SYMBOL vmlinux 0x00000000	devm_pci_alloc_host_bridge
 EXPORT_SYMBOL vmlinux 0x00000000	devm_pci_remap_cfg_resource
 EXPORT_SYMBOL vmlinux 0x00000000	devm_pci_remap_cfgspace
+EXPORT_SYMBOL vmlinux 0x00000000	devm_pci_remap_iospace
 EXPORT_SYMBOL vmlinux 0x00000000	devm_register_reboot_notifier
 EXPORT_SYMBOL vmlinux 0x00000000	devm_release_resource
 EXPORT_SYMBOL vmlinux 0x00000000	devm_request_any_context_irq
@@ -2659,6 +2667,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	diag_stat_inc_norecursion
 EXPORT_SYMBOL vmlinux 0x00000000	disable_irq
 EXPORT_SYMBOL vmlinux 0x00000000	disable_irq_nosync
 EXPORT_SYMBOL vmlinux 0x00000000	disable_sacf_uaccess
+EXPORT_SYMBOL vmlinux 0x00000000	discard_new_inode
 EXPORT_SYMBOL vmlinux 0x00000000	disk_stack_limits
 EXPORT_SYMBOL vmlinux 0x00000000	dlci_ioctl_set
 EXPORT_SYMBOL vmlinux 0x00000000	dm_consume_args
@@ -2718,6 +2727,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	dmam_pool_create
 EXPORT_SYMBOL vmlinux 0x00000000	dmam_pool_destroy
 EXPORT_SYMBOL vmlinux 0x00000000	dns_query
 EXPORT_SYMBOL vmlinux 0x00000000	do_SAK
+EXPORT_SYMBOL vmlinux 0x00000000	do_clone_file_range
 EXPORT_SYMBOL vmlinux 0x00000000	do_gettimeofday
 EXPORT_SYMBOL vmlinux 0x00000000	do_settimeofday64
 EXPORT_SYMBOL vmlinux 0x00000000	do_splice_direct
@@ -3210,7 +3220,6 @@ EXPORT_SYMBOL vmlinux 0x00000000	inet_dgram_ops
 EXPORT_SYMBOL vmlinux 0x00000000	inet_frag_destroy
 EXPORT_SYMBOL vmlinux 0x00000000	inet_frag_find
 EXPORT_SYMBOL vmlinux 0x00000000	inet_frag_kill
-EXPORT_SYMBOL vmlinux 0x00000000	inet_frag_maybe_warn_overflow
 EXPORT_SYMBOL vmlinux 0x00000000	inet_frags_exit_net
 EXPORT_SYMBOL vmlinux 0x00000000	inet_frags_fini
 EXPORT_SYMBOL vmlinux 0x00000000	inet_frags_init
@@ -3312,7 +3321,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	ip6_err_gen_icmpv6_unreach
 EXPORT_SYMBOL vmlinux 0x00000000	ip6_expire_frag_queue
 EXPORT_SYMBOL vmlinux 0x00000000	ip6_find_1stfragopt
 EXPORT_SYMBOL vmlinux 0x00000000	ip6_frag_init
-EXPORT_SYMBOL vmlinux 0x00000000	ip6_frag_match
+EXPORT_SYMBOL vmlinux 0x00000000	ip6_rhash_params
 EXPORT_SYMBOL vmlinux 0x00000000	ip6_route_me_harder
 EXPORT_SYMBOL vmlinux 0x00000000	ip6_xmit
 EXPORT_SYMBOL vmlinux 0x00000000	ip6tun_encaps
@@ -4321,6 +4330,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	proto_unregister
 EXPORT_SYMBOL vmlinux 0x00000000	psched_ratecfg_precompute
 EXPORT_SYMBOL vmlinux 0x00000000	pskb_expand_head
 EXPORT_SYMBOL vmlinux 0x00000000	pskb_extract
+EXPORT_SYMBOL vmlinux 0x00000000	pskb_trim_rcsum_slow
 EXPORT_SYMBOL vmlinux 0x00000000	ptep_modify_prot_commit
 EXPORT_SYMBOL vmlinux 0x00000000	ptep_modify_prot_start
 EXPORT_SYMBOL vmlinux 0x00000000	ptep_xchg_direct
@@ -6338,6 +6348,7 @@ EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_do_ioctl
 EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_do_run_thread
 EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_do_send_packet
 EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_do_send_packet_fast
+EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_enable_hw_features
 EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_features_check
 EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_fix_features
 EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_generic_devtype
@@ -6363,7 +6374,6 @@ EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_query_ipassists
 EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_query_setadapterparms
 EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_query_switch_attributes
 EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_realloc_buffer_pool
-EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_recover_features
 EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_release_buffer
 EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_schedule_recovery
 EXPORT_SYMBOL_GPL drivers/s390/net/qeth 0x00000000	qeth_send_control_data
@@ -7651,6 +7661,7 @@ EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_shutdown_client
 EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_sleep_on
 EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_sleep_on_priority
 EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_switch_client_transport
+EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_task_release_transport
 EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_uaddr2sockaddr
 EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_unlink
 EXPORT_SYMBOL_GPL net/sunrpc/sunrpc 0x00000000	rpc_update_rtt
@@ -7852,7 +7863,6 @@ EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_find_bound_socket
 EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_find_connected_socket
 EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_for_each_connected_socket
 EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_insert_connected
-EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_pending_work
 EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_remove_bound
 EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_remove_connected
 EXPORT_SYMBOL_GPL net/vmw_vsock/vsock 0x00000000	vsock_remove_pending
@@ -8021,7 +8031,6 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	__sbitmap_queue_get_shallow
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__scsi_init_queue
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__serdev_device_driver_register
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__skb_get_hash_symmetric
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	__skb_recv_udp
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__skb_tstamp_tx
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__sock_recv_timestamp
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	__sock_recv_ts_and_drops
@@ -10412,6 +10421,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	syscore_suspend
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysctl_vfs_cache_pressure
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_add_file_to_group
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_add_link_to_group
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_break_active_protection
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_chmod_file
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_bin_file
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_file_ns
@@ -10433,6 +10443,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_remove_link
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_remove_link_from_group
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_remove_mount_point
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_rename_link_ns
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_unbreak_active_protection
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_unmerge_group
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_update_group
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	system_freezable_power_efficient_wq
@@ -10590,6 +10601,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_prepare_flip_string
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_put_char
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_register_device_attr
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_release_struct
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_save_termios
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_set_ldisc
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_set_termios
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_standard_install

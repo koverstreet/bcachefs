@@ -3032,6 +3032,7 @@ omap-sham
 omap-vout
 omap2
 omap2430
+omap2fb
 omap3-isp
 omap3-rom-rng
 omap4-iss
@@ -3042,7 +3043,6 @@ omap_remoteproc
 omap_ssi
 omap_wdt
 omapdss
-omap2fb
 omfs
 omninet
 on20

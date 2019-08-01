@@ -54,6 +54,7 @@ firmware:       amdgpu/fiji_uvd.bin
 firmware:       amdgpu/fiji_vce.bin
 firmware:       amdgpu/polaris10_ce.bin
 firmware:       amdgpu/polaris10_ce_2.bin
+firmware:       amdgpu/polaris10_k_mc.bin
 firmware:       amdgpu/polaris10_k_smc.bin
 firmware:       amdgpu/polaris10_mc.bin
 firmware:       amdgpu/polaris10_me.bin
@@ -73,6 +74,7 @@ firmware:       amdgpu/polaris10_uvd.bin
 firmware:       amdgpu/polaris10_vce.bin
 firmware:       amdgpu/polaris11_ce.bin
 firmware:       amdgpu/polaris11_ce_2.bin
+firmware:       amdgpu/polaris11_k_mc.bin
 firmware:       amdgpu/polaris11_k_smc.bin
 firmware:       amdgpu/polaris11_mc.bin
 firmware:       amdgpu/polaris11_me.bin
@@ -92,6 +94,7 @@ firmware:       amdgpu/polaris11_uvd.bin
 firmware:       amdgpu/polaris11_vce.bin
 firmware:       amdgpu/polaris12_ce.bin
 firmware:       amdgpu/polaris12_ce_2.bin
+firmware:       amdgpu/polaris12_k_mc.bin
 firmware:       amdgpu/polaris12_mc.bin
 firmware:       amdgpu/polaris12_me.bin
 firmware:       amdgpu/polaris12_me_2.bin
