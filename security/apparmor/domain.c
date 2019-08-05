@@ -592,22 +592,6 @@ static struct aa_label *profile_transition(struct aa_profile *profile,
 	if (!new)
 		goto audit;
 
-	/* Policy has specified a domain transitions. if no_new_privs and
-	 * confined and not transitioning to the current domain fail.
-	 *
-	 * NOTE: Domain transitions from unconfined and to stritly stacked
-	 * subsets are allowed even when no_new_privs is set because this
-	 * aways results in a further reduction of permissions.
-	 */
-	if ((bprm->unsafe & LSM_UNSAFE_NO_NEW_PRIVS) &&
-	    !profile_unconfined(profile) &&
-	    !aa_label_is_subset(new, &profile->label)) {
-		error = -EPERM;
-		info = "no new privs";
-		nonewprivs = true;
-		perms.allow &= ~MAY_EXEC;
-		goto audit;
-	}
 
 	if (!(perms.xindex & AA_X_UNSAFE)) {
 		if (DEBUG_ON) {
@@ -681,21 +665,6 @@ static int profile_onexec(struct aa_profile *profile, struct aa_label *onexec,
 	error = change_profile_perms(profile, onexec, stack, AA_MAY_ONEXEC,
 				     state, &perms);
 	if (error) {
-		perms.allow &= ~AA_MAY_ONEXEC;
-		goto audit;
-	}
-	/* Policy has specified a domain transitions. if no_new_privs and
-	 * confined and not transitioning to the current domain fail.
-	 *
-	 * NOTE: Domain transitions from unconfined and to stritly stacked
-	 * subsets are allowed even when no_new_privs is set because this
-	 * aways results in a further reduction of permissions.
-	 */
-	if ((bprm->unsafe & LSM_UNSAFE_NO_NEW_PRIVS) &&
-	    !profile_unconfined(profile) &&
-	    !aa_label_is_subset(onexec, &profile->label)) {
-		error = -EPERM;
-		info = "no new privs";
 		perms.allow &= ~AA_MAY_ONEXEC;
 		goto audit;
 	}
@@ -819,7 +788,20 @@ int apparmor_bprm_set_creds(struct linux_binprm *bprm)
 		goto done;
 	}
 
-	/* TODO: Add ns level no_new_privs subset test */
+	/* Policy has specified a domain transitions. If no_new_privs and
+	 * confined ensure the transition is to confinement that is subset
+	 * of the confinement when the task entered no new privs.
+	 *
+	 * NOTE: Domain transitions from unconfined and to stacked
+	 * subsets are allowed even when no_new_privs is set because this
+	 * aways results in a further reduction of permissions.
+	 */
+	if ((bprm->unsafe & LSM_UNSAFE_NO_NEW_PRIVS) &&
+	    !unconfined(label) && !aa_label_is_subset(new, label)) {
+		error = -EPERM;
+		info = "no new privs";
+		goto audit;
+	}
 
 	if (bprm->unsafe & LSM_UNSAFE_SHARE) {
 		/* FIXME: currently don't mediate shared state */
