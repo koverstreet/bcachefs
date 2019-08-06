@@ -667,7 +667,7 @@ static int submit_context(struct intel_vgpu *vgpu, int ring_id,
 	int ret;
 
 	ring_context_gpa = intel_vgpu_gma_to_gpa(vgpu->gtt.ggtt_mm,
-			(u32)((desc->lrca + 1) << GTT_PAGE_SHIFT));
+			(u32)((desc->lrca + 1) << I915_GTT_PAGE_SHIFT));
 	if (ring_context_gpa == INTEL_GVT_INVALID_ADDR) {
 		gvt_vgpu_err("invalid guest context LRCA: %x\n", desc->lrca);
 		return -EINVAL;
