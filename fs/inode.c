@@ -800,10 +800,6 @@ repeat:
 			__wait_on_freeing_inode(inode);
 			goto repeat;
 		}
-		if (unlikely(inode->i_state & I_CREATING)) {
-			spin_unlock(&inode->i_lock);
-			return ERR_PTR(-ESTALE);
-		}
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
 		return inode;
@@ -830,10 +826,6 @@ repeat:
 		if (inode->i_state & (I_FREEING|I_WILL_FREE)) {
 			__wait_on_freeing_inode(inode);
 			goto repeat;
-		}
-		if (unlikely(inode->i_state & I_CREATING)) {
-			spin_unlock(&inode->i_lock);
-			return ERR_PTR(-ESTALE);
 		}
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
@@ -965,25 +957,12 @@ void unlock_new_inode(struct inode *inode)
 	lockdep_annotate_inode_mutex_key(inode);
 	spin_lock(&inode->i_lock);
 	WARN_ON(!(inode->i_state & I_NEW));
-	inode->i_state &= ~I_NEW & ~I_CREATING;
+	inode->i_state &= ~I_NEW;
 	smp_mb();
 	wake_up_bit(&inode->i_state, __I_NEW);
 	spin_unlock(&inode->i_lock);
 }
 EXPORT_SYMBOL(unlock_new_inode);
-
-void discard_new_inode(struct inode *inode)
-{
-	lockdep_annotate_inode_mutex_key(inode);
-	spin_lock(&inode->i_lock);
-	WARN_ON(!(inode->i_state & I_NEW));
-	inode->i_state &= ~I_NEW;
-	smp_mb();
-	wake_up_bit(&inode->i_state, __I_NEW);
-	spin_unlock(&inode->i_lock);
-	iput(inode);
-}
-EXPORT_SYMBOL(discard_new_inode);
 
 /**
  * lock_two_nondirectories - take two i_mutexes on non-directory objects
@@ -1129,8 +1108,6 @@ again:
 	inode = find_inode_fast(sb, head, ino);
 	spin_unlock(&inode_hash_lock);
 	if (inode) {
-		if (IS_ERR(inode))
-			return NULL;
 		wait_on_inode(inode);
 		if (unlikely(inode_unhashed(inode))) {
 			iput(inode);
@@ -1168,8 +1145,6 @@ again:
 		 */
 		spin_unlock(&inode_hash_lock);
 		destroy_inode(inode);
-		if (IS_ERR(old))
-			return NULL;
 		inode = old;
 		wait_on_inode(inode);
 		if (unlikely(inode_unhashed(inode))) {
@@ -1287,7 +1262,7 @@ struct inode *ilookup5_nowait(struct super_block *sb, unsigned long hashval,
 	inode = find_inode(sb, head, test, data);
 	spin_unlock(&inode_hash_lock);
 
-	return IS_ERR(inode) ? NULL : inode;
+	return inode;
 }
 EXPORT_SYMBOL(ilookup5_nowait);
 
@@ -1315,8 +1290,6 @@ struct inode *ilookup5(struct super_block *sb, unsigned long hashval,
 again:
 	inode = ilookup5_nowait(sb, hashval, test, data);
 	if (inode) {
-		if (IS_ERR(inode))
-			return NULL;
 		wait_on_inode(inode);
 		if (unlikely(inode_unhashed(inode))) {
 			iput(inode);
@@ -1428,16 +1401,11 @@ int insert_inode_locked(struct inode *inode)
 		}
 		if (likely(!old)) {
 			spin_lock(&inode->i_lock);
-			inode->i_state |= I_NEW | I_CREATING;
+			inode->i_state |= I_NEW;
 			hlist_add_head(&inode->i_hash, head);
 			spin_unlock(&inode->i_lock);
 			spin_unlock(&inode_hash_lock);
 			return 0;
-		}
-		if (unlikely(old->i_state & I_CREATING)) {
-			spin_unlock(&old->i_lock);
-			spin_unlock(&inode_hash_lock);
-			return -EBUSY;
 		}
 		__iget(old);
 		spin_unlock(&old->i_lock);
@@ -1458,8 +1426,6 @@ int insert_inode_locked4(struct inode *inode, unsigned long hashval,
 	struct super_block *sb = inode->i_sb;
 	struct hlist_head *head = inode_hashtable + hash(sb, hashval);
 
-	inode->i_state |= I_CREATING;
-
 	while (1) {
 		struct inode *old = NULL;
 
@@ -1478,16 +1444,11 @@ int insert_inode_locked4(struct inode *inode, unsigned long hashval,
 		}
 		if (likely(!old)) {
 			spin_lock(&inode->i_lock);
-			inode->i_state |= I_NEW | I_CREATING;
+			inode->i_state |= I_NEW;
 			hlist_add_head(&inode->i_hash, head);
 			spin_unlock(&inode->i_lock);
 			spin_unlock(&inode_hash_lock);
 			return 0;
-		}
-		if (unlikely(old->i_state & I_CREATING)) {
-			spin_unlock(&old->i_lock);
-			spin_unlock(&inode_hash_lock);
-			return -EBUSY;
 		}
 		__iget(old);
 		spin_unlock(&old->i_lock);
