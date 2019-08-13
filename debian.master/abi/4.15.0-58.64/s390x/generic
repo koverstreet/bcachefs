@@ -2667,7 +2667,6 @@ EXPORT_SYMBOL vmlinux 0x00000000	diag_stat_inc_norecursion
 EXPORT_SYMBOL vmlinux 0x00000000	disable_irq
 EXPORT_SYMBOL vmlinux 0x00000000	disable_irq_nosync
 EXPORT_SYMBOL vmlinux 0x00000000	disable_sacf_uaccess
-EXPORT_SYMBOL vmlinux 0x00000000	discard_new_inode
 EXPORT_SYMBOL vmlinux 0x00000000	disk_stack_limits
 EXPORT_SYMBOL vmlinux 0x00000000	dlci_ioctl_set
 EXPORT_SYMBOL vmlinux 0x00000000	dm_consume_args
