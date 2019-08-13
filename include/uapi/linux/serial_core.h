@@ -281,4 +281,7 @@
 /* MediaTek BTIF */
 #define PORT_MTK_BTIF	117
 
+/* Sunix UART */
+#define PORT_SUNIX	121
+
 #endif /* _UAPILINUX_SERIAL_CORE_H */
