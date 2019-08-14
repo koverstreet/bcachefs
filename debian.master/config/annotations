@@ -4148,6 +4148,8 @@ CONFIG_VIDEO_VIVID                              policy<{'amd64': 'm', 'arm64': '
 CONFIG_VIDEO_VIVID_CEC                          policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y'}>
 CONFIG_VIDEO_VIVID_MAX_DEVS                     policy<{'amd64': '64', 'arm64': '64', 'armhf': '64', 'i386': '64', 'ppc64el': '64'}>
 CONFIG_VIDEO_VIM2M                              policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
+#
+CONFIG_VIDEO_VIMC                               note<LP#1831482>
 
 # Menu: Device Drivers >> Multimedia support >> Cameras/video grabbers support >> Memory-to-memory multimedia devices
 CONFIG_V4L_MEM2MEM_DRIVERS                      policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y'}>
