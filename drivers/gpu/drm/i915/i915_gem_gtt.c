@@ -1666,7 +1666,7 @@ static void gen6_dump_ppgtt(struct i915_hw_ppgtt *ppgtt, struct seq_file *m)
 			if (!found)
 				continue;
 
-			seq_printf(m, "\t\t0x%llx [%03d,%04d]: =", va, pde, pte);
+			seq_printf(m, "\t\t0x%lx [%03d,%04d]: =", va, pde, pte);
 			for (i = 0; i < 4; i++) {
 				if (pt_vaddr[pte + i] != scratch_pte)
 					seq_printf(m, " %08x", pt_vaddr[pte + i]);
