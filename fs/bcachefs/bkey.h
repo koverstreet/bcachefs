@@ -552,6 +552,8 @@ BKEY_VAL_ACCESSORS(xattr);
 BKEY_VAL_ACCESSORS(alloc);
 BKEY_VAL_ACCESSORS(quota);
 BKEY_VAL_ACCESSORS(stripe);
+BKEY_VAL_ACCESSORS(reflink_p);
+BKEY_VAL_ACCESSORS(reflink_v);
 
 /* byte order helpers */
 
