@@ -157,6 +157,7 @@
 				 <&clks IMX6QDL_CLK_GPU3D_SHADER>;
 			clock-names = "bus", "core", "shader";
 			power-domains = <&pd_pu>;
+			#cooling-cells = <2>;
 		};
 
 		gpu_2d: gpu@134000 {
@@ -167,6 +168,7 @@
 				 <&clks IMX6QDL_CLK_GPU2D_CORE>;
 			clock-names = "bus", "core";
 			power-domains = <&pd_pu>;
+			#cooling-cells = <2>;
 		};
 
 		timer@a00600 {
@@ -735,6 +737,7 @@
 				fsl,tempmon = <&anatop>;
 				fsl,tempmon-data = <&ocotp>;
 				clocks = <&clks IMX6QDL_CLK_PLL3_USB_OTG>;
+				#thermal-sensor-cells = <0>;
 			};
 
 			usbphy1: usbphy@20c9000 {
