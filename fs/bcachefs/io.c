@@ -454,7 +454,10 @@ static struct bio *bch2_write_bio_alloc(struct bch_fs *c,
 	struct bio *bio;
 	unsigned output_available =
 		min(wp->sectors_free << 9, src->bi_iter.bi_size);
-	unsigned pages = DIV_ROUND_UP(output_available, PAGE_SIZE);
+	unsigned pages = DIV_ROUND_UP(output_available +
+				      (buf
+				       ? ((unsigned long) buf & (PAGE_SIZE - 1))
+				       : 0), PAGE_SIZE);
 
 	bio = bio_alloc_bioset(GFP_NOIO, pages, &c->bio_write);
 	wbio			= wbio_init(bio);
