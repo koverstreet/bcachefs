@@ -513,14 +513,28 @@ void bch2_dev_usage_from_buckets(struct bch_fs *c)
 	_old;							\
 })
 
-static inline void update_replicas(struct bch_fs *c,
-				   struct bch_fs_usage *fs_usage,
-				   struct bch_replicas_entry *r,
-				   s64 sectors)
+static int update_replicas(struct bch_fs *c,
+			   struct bch_fs_usage *fs_usage,
+			   struct bch_replicas_entry *r,
+			   s64 sectors)
 {
 	int idx = bch2_replicas_entry_idx(c, r);
 
-	BUG_ON(idx < 0);
+	if (idx < 0) {
+		char buf[100];
+
+		bch2_replicas_entry_to_text(&PBUF(buf), r);
+		bch_err(c, "replicas entry not marked: %s", buf);
+
+		bch_err(c, "replicas entries:");
+		for_each_cpu_replicas_entry(&c->replicas, r) {
+			bch2_replicas_entry_to_text(&PBUF(buf), r);
+			bch_err(c, "  %s", buf);
+		}
+
+		return -1;
+	}
+
 	BUG_ON(!sectors);
 
 	switch (r->data_type) {
@@ -535,17 +549,19 @@ static inline void update_replicas(struct bch_fs *c,
 		break;
 	}
 	fs_usage->replicas[idx]		+= sectors;
+
+	return 0;
 }
 
-static inline void update_cached_sectors(struct bch_fs *c,
-					 struct bch_fs_usage *fs_usage,
-					 unsigned dev, s64 sectors)
+static inline int update_cached_sectors(struct bch_fs *c,
+					struct bch_fs_usage *fs_usage,
+					unsigned dev, s64 sectors)
 {
 	struct bch_replicas_padded r;
 
 	bch2_replicas_entry_cached(&r.e, dev);
 
-	update_replicas(c, fs_usage, &r.e, sectors);
+	return update_replicas(c, fs_usage, &r.e, sectors);
 }
 
 static struct replicas_delta_list *
@@ -590,12 +606,13 @@ static inline void update_cached_sectors_list(struct btree_trans *trans,
 	update_replicas_list(trans, &r.e, sectors);
 }
 
-void bch2_replicas_delta_list_apply(struct bch_fs *c,
+int bch2_replicas_delta_list_apply(struct bch_fs *c,
 				    struct bch_fs_usage *fs_usage,
 				    struct replicas_delta_list *r)
 {
 	struct replicas_delta *d = r->d;
 	struct replicas_delta *top = (void *) r->d + r->used;
+	int ret = 0;
 
 	acc_u64s((u64 *) fs_usage,
 		 (u64 *) &r->fs_usage, sizeof(*fs_usage) / sizeof(u64));
@@ -603,10 +620,14 @@ void bch2_replicas_delta_list_apply(struct bch_fs *c,
 	while (d != top) {
 		BUG_ON((void *) d > (void *) top);
 
-		update_replicas(c, fs_usage, &d->r, d->delta);
+		ret = update_replicas(c, fs_usage, &d->r, d->delta);
+		if (ret)
+			break;
 
 		d = (void *) d + replicas_entry_bytes(&d->r) + 8;
 	}
+
+	return ret;
 }
 
 #define do_mark_fn(fn, c, pos, flags, ...)				\
@@ -1001,7 +1022,8 @@ static int bch2_mark_stripe_ptr(struct bch_fs *c,
 
 	spin_unlock(&c->ec_stripes_heap_lock);
 
-	update_replicas(c, fs_usage, &m->r.e, sectors);
+	if (update_replicas(c, fs_usage, &m->r.e, sectors))
+		BUG();
 
 	return 0;
 }
@@ -1054,7 +1076,8 @@ static int bch2_mark_extent(struct bch_fs *c, struct bkey_s_c k,
 	}
 
 	if (dirty_sectors)
-		update_replicas(c, fs_usage, &r.e, dirty_sectors);
+		if (update_replicas(c, fs_usage, &r.e, dirty_sectors))
+			BUG();
 
 	return 0;
 }

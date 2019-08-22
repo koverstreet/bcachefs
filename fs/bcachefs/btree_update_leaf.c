@@ -642,9 +642,20 @@ static inline int do_btree_insert_at(struct btree_trans *trans,
 		    !update_triggers_transactional(trans, i))
 			bch2_mark_update(trans, i, fs_usage, mark_flags);
 
-	if (fs_usage && trans->fs_usage_deltas)
-		bch2_replicas_delta_list_apply(c, fs_usage,
-					       trans->fs_usage_deltas);
+	if (fs_usage && trans->fs_usage_deltas) {
+		if (bch2_replicas_delta_list_apply(c, fs_usage,
+					       trans->fs_usage_deltas)) {
+			bch_err(c, "while doing update:");
+			trans_for_each_update_iter(trans, i) {
+				char buf[250];
+
+				bch2_bkey_val_to_text(&PBUF(buf), c,
+						      bkey_i_to_s_c(i->k));
+				bch_err(c, "  %s", buf);
+			}
+			BUG();
+		}
+	}
 
 	if (fs_usage)
 		bch2_trans_fs_usage_apply(trans, fs_usage);
