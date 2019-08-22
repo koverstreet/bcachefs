@@ -2170,7 +2170,6 @@ static struct bpf_test tests[] = {
 			BPF_EXIT_INSN(),
 		},
 		.result = ACCEPT,
-		.retval = 0,
 	},
 	{
 		"unpriv: partial copy of pointer",
