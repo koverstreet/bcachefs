@@ -190,5 +190,5 @@ rmdir $tmpdir
 # If this is running in a git repo, add the new ABI directory, remove the old
 if [ -d ".git" ]; then
     git add $abidir
-    find $DEBIAN/abi/* -maxdepth 0 -type d | grep -v $verfull | while read f; do git rm -r $f;done
+    find $DEBIAN/abi/* -maxdepth 0 -type d | grep -v $verfull | while read f; do git rm -r -f $f;done
 fi
