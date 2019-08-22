@@ -535,8 +535,6 @@ static int update_replicas(struct bch_fs *c,
 		return -1;
 	}
 
-	BUG_ON(!sectors);
-
 	switch (r->data_type) {
 	case BCH_DATA_BTREE:
 		fs_usage->btree		+= sectors;
@@ -586,8 +584,12 @@ static inline void update_replicas_list(struct btree_trans *trans,
 {
 	struct replicas_delta_list *d;
 	struct replicas_delta *n;
-	unsigned b = replicas_entry_bytes(r) + 8;
+	unsigned b;
 
+	if (!sectors)
+		return;
+
+	b = replicas_entry_bytes(r) + 8;
 	d = replicas_deltas_realloc(trans, b);
 
 	n = (void *) d->d + d->used;
@@ -1570,12 +1572,6 @@ static int bch2_trans_mark_extent(struct btree_trans *trans,
 			? sectors
 			: ptr_disk_sectors_delta(p, offset, sectors, flags);
 
-		/*
-		 * can happen due to rounding with compressed extents:
-		 */
-		if (!disk_sectors)
-			continue;
-
 		ret = bch2_trans_mark_pointer(trans, p, disk_sectors,
 					      data_type);
 		if (ret < 0)
@@ -1584,7 +1580,7 @@ static int bch2_trans_mark_extent(struct btree_trans *trans,
 		stale = ret > 0;
 
 		if (p.ptr.cached) {
-			if (disk_sectors && !stale)
+			if (!stale)
 				update_cached_sectors_list(trans, p.ptr.dev,
 							   disk_sectors);
 		} else if (!p.ec_nr) {
@@ -1602,8 +1598,7 @@ static int bch2_trans_mark_extent(struct btree_trans *trans,
 		}
 	}
 
-	if (dirty_sectors)
-		update_replicas_list(trans, &r.e, dirty_sectors);
+	update_replicas_list(trans, &r.e, dirty_sectors);
 
 	return 0;
 }
