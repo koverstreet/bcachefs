@@ -201,12 +201,10 @@ static u32 *ipv6_cow_metrics(struct dst_entry *dst, unsigned long old)
 		return dst_cow_metrics_generic(dst, old);
 }
 
-static inline const void *choose_neigh_daddr(struct rt6_info *rt,
+static inline const void *choose_neigh_daddr(const struct in6_addr *p,
 					     struct sk_buff *skb,
 					     const void *daddr)
 {
-	struct in6_addr *p = &rt->rt6i_gateway;
-
 	if (!ipv6_addr_any(p))
 		return (const void *) p;
 	else if (skb)
@@ -221,7 +219,7 @@ static struct neighbour *ip6_neigh_lookup(const struct dst_entry *dst,
 	struct rt6_info *rt = (struct rt6_info *) dst;
 	struct neighbour *n;
 
-	daddr = choose_neigh_daddr(rt, skb, daddr);
+	daddr = choose_neigh_daddr(rt6_nexthop(rt, &in6addr_any), skb, daddr);
 	n = __ipv6_neigh_lookup(dst->dev, daddr);
 	if (n)
 		return n;
@@ -233,7 +231,7 @@ static void ip6_confirm_neigh(const struct dst_entry *dst, const void *daddr)
 	struct net_device *dev = dst->dev;
 	struct rt6_info *rt = (struct rt6_info *)dst;
 
-	daddr = choose_neigh_daddr(rt, NULL, daddr);
+	daddr = choose_neigh_daddr(&rt->rt6i_gateway, NULL, daddr);
 	if (!daddr)
 		return;
 	if (dev->flags & (IFF_NOARP | IFF_LOOPBACK))
