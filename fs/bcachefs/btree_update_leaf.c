@@ -587,7 +587,6 @@ static inline int do_btree_insert_at(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct bch_fs_usage *fs_usage = NULL;
 	struct btree_insert_entry *i;
-	bool saw_non_marked;
 	unsigned mark_flags = trans->flags & BTREE_INSERT_BUCKET_INVALIDATE
 		? BCH_BUCKET_MARK_BUCKET_INVALIDATE
 		: 0;
@@ -596,29 +595,19 @@ static inline int do_btree_insert_at(struct btree_trans *trans,
 	trans_for_each_update_iter(trans, i)
 		BUG_ON(i->iter->uptodate >= BTREE_ITER_NEED_RELOCK);
 
+	/*
+	 * note: running triggers will append more updates to the list of
+	 * updates as we're walking it:
+	 */
 	trans_for_each_update_iter(trans, i)
-		i->marked = false;
-
-	do {
-		saw_non_marked = false;
-
-		trans_for_each_update_iter(trans, i) {
-			if (i->marked)
-				continue;
-
-			saw_non_marked = true;
-			i->marked = true;
-
-			if (update_has_triggers(trans, i) &&
-			    update_triggers_transactional(trans, i)) {
-				ret = bch2_trans_mark_update(trans, i->iter, i->k);
-				if (ret == -EINTR)
-					trace_trans_restart_mark(trans->ip);
-				if (ret)
-					goto out_clear_replicas;
-			}
+		if (update_has_triggers(trans, i) &&
+		    update_triggers_transactional(trans, i)) {
+			ret = bch2_trans_mark_update(trans, i->iter, i->k);
+			if (ret == -EINTR)
+				trace_trans_restart_mark(trans->ip);
+			if (ret)
+				goto out_clear_replicas;
 		}
-	} while (saw_non_marked);
 
 	trans_for_each_update(trans, i)
 		btree_insert_entry_checks(trans, i);
@@ -739,19 +728,6 @@ int bch2_trans_commit_error(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	unsigned flags = trans->flags;
-	struct btree_insert_entry *src, *dst;
-
-	src = dst = trans->updates;
-
-	while (src < trans->updates + trans->nr_updates) {
-		if (!src->triggered) {
-			*dst = *src;
-			dst++;
-		}
-		src++;
-	}
-
-	trans->nr_updates = dst - trans->updates;
 
 	/*
 	 * BTREE_INSERT_NOUNLOCK means don't unlock _after_ successful btree
@@ -911,7 +887,8 @@ int bch2_trans_commit(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct btree_insert_entry *i = NULL;
-	unsigned orig_mem_top = trans->mem_top;
+	unsigned orig_nr_updates	= trans->nr_updates;
+	unsigned orig_mem_top		= trans->mem_top;
 	int ret = 0;
 
 	if (!trans->nr_updates)
@@ -984,37 +961,18 @@ out_noupdates:
 err:
 	ret = bch2_trans_commit_error(trans, i, ret);
 
+	/* free updates and memory used by triggers, they'll be reexecuted: */
+	trans->nr_updates	= orig_nr_updates;
+	trans->mem_top		= orig_mem_top;
+
 	/* can't loop if it was passed in and we changed it: */
 	if (unlikely(trans->flags & BTREE_INSERT_NO_CLEAR_REPLICAS) && !ret)
 		ret = -EINTR;
 
-	if (!ret) {
-		/* free memory used by triggers, they'll be reexecuted: */
-		trans->mem_top = orig_mem_top;
+	if (!ret)
 		goto retry;
-	}
 
 	goto out;
-}
-
-struct btree_insert_entry *bch2_trans_update(struct btree_trans *trans,
-					     struct btree_insert_entry entry)
-{
-	struct btree_insert_entry *i;
-
-	BUG_ON(trans->nr_updates >= trans->nr_iters + 4);
-
-	for (i = trans->updates;
-	     i < trans->updates + trans->nr_updates;
-	     i++)
-		if (btree_trans_cmp(entry, *i) < 0)
-			break;
-
-	memmove(&i[1], &i[0],
-		(void *) &trans->updates[trans->nr_updates] - (void *) i);
-	trans->nr_updates++;
-	*i = entry;
-	return i;
 }
 
 /**
