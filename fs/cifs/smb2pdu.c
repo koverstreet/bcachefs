@@ -1817,7 +1817,7 @@ SMB2_open(const unsigned int xid, struct cifs_open_parms *oparms, __le16 *path,
 	/* -1 since last byte is buf[0] which was counted in smb2_buf_len */
 	inc_rfc1001_len(req, uni_path_len - 1);
 
-	if (!server->oplocks)
+	if ((!server->oplocks) || (tcon->no_lease))
 		*oplock = SMB2_OPLOCK_LEVEL_NONE;
 
 	if (!(server->capabilities & SMB2_GLOBAL_CAP_LEASING) ||
