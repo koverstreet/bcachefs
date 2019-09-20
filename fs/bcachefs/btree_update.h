@@ -43,7 +43,6 @@ enum {
 	__BTREE_INSERT_USE_ALLOC_RESERVE,
 	__BTREE_INSERT_JOURNAL_REPLAY,
 	__BTREE_INSERT_JOURNAL_RESERVED,
-	__BTREE_INSERT_NOMARK_INSERT,
 	__BTREE_INSERT_NOMARK_OVERWRITES,
 	__BTREE_INSERT_NOMARK,
 	__BTREE_INSERT_MARK_INMEM,
@@ -80,9 +79,6 @@ enum {
 #define BTREE_INSERT_JOURNAL_REPLAY	(1 << __BTREE_INSERT_JOURNAL_REPLAY)
 
 #define BTREE_INSERT_JOURNAL_RESERVED	(1 << __BTREE_INSERT_JOURNAL_RESERVED)
-
-/* Don't mark new key, just overwrites: */
-#define BTREE_INSERT_NOMARK_INSERT	(1 << __BTREE_INSERT_NOMARK_INSERT)
 
 /* Don't mark overwrites, just new key: */
 #define BTREE_INSERT_NOMARK_OVERWRITES	(1 << __BTREE_INSERT_NOMARK_OVERWRITES)
@@ -123,8 +119,13 @@ int bch2_trans_commit(struct btree_trans *,
 		      struct disk_reservation *,
 		      u64 *, unsigned);
 
-struct btree_insert_entry *bch2_trans_update(struct btree_trans *,
-					     struct btree_insert_entry);
+static inline void bch2_trans_update(struct btree_trans *trans,
+				     struct btree_insert_entry entry)
+{
+	EBUG_ON(trans->nr_updates >= trans->nr_iters + 4);
+
+	trans->updates[trans->nr_updates++] = entry;
+}
 
 #define bch2_trans_do(_c, _journal_seq, _flags, _do)			\
 ({									\
@@ -144,18 +145,6 @@ struct btree_insert_entry *bch2_trans_update(struct btree_trans *,
 	_ret;								\
 })
 
-/*
- * We sort transaction entries so that if multiple iterators point to the same
- * leaf node they'll be adjacent:
- */
-static inline bool same_leaf_as_prev(struct btree_trans *trans,
-				     struct btree_insert_entry *i)
-{
-	return i != trans->updates &&
-		!i->deferred &&
-		i[0].iter->l[0].b == i[-1].iter->l[0].b;
-}
-
 #define __trans_next_update(_trans, _i, _filter)			\
 ({									\
 	while ((_i) < (_trans)->updates + (_trans->nr_updates) && !(_filter))\
@@ -174,9 +163,5 @@ static inline bool same_leaf_as_prev(struct btree_trans *trans,
 
 #define trans_for_each_update_iter(trans, i)				\
 	__trans_for_each_update(trans, i, !(i)->deferred)
-
-#define trans_for_each_update_leaf(trans, i)				\
-	__trans_for_each_update(trans, i, !(i)->deferred &&		\
-			       !same_leaf_as_prev(trans, i))
 
 #endif /* _BCACHEFS_BTREE_UPDATE_H */

@@ -1068,16 +1068,20 @@ static int bch2_tmpfile(struct inode *vdir, struct dentry *dentry, umode_t mode)
 	return 0;
 }
 
-static int bch2_fill_extent(struct fiemap_extent_info *info,
-			    const struct bkey_i *k, unsigned flags)
+static int bch2_fill_extent(struct bch_fs *c,
+			    struct fiemap_extent_info *info,
+			    struct bkey_s_c k, unsigned flags)
 {
-	if (bkey_extent_is_data(&k->k)) {
-		struct bkey_s_c_extent e = bkey_i_to_s_c_extent(k);
+	if (bkey_extent_is_data(k.k)) {
+		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 		const union bch_extent_entry *entry;
 		struct extent_ptr_decoded p;
 		int ret;
 
-		extent_for_each_ptr_decode(e, p, entry) {
+		if (k.k->type == KEY_TYPE_reflink_v)
+			flags |= FIEMAP_EXTENT_SHARED;
+
+		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 			int flags2 = 0;
 			u64 offset = p.ptr.offset;
 
@@ -1086,23 +1090,23 @@ static int bch2_fill_extent(struct fiemap_extent_info *info,
 			else
 				offset += p.crc.offset;
 
-			if ((offset & (PAGE_SECTORS - 1)) ||
-			    (e.k->size & (PAGE_SECTORS - 1)))
+			if ((offset & (c->opts.block_size - 1)) ||
+			    (k.k->size & (c->opts.block_size - 1)))
 				flags2 |= FIEMAP_EXTENT_NOT_ALIGNED;
 
 			ret = fiemap_fill_next_extent(info,
-						bkey_start_offset(e.k) << 9,
+						bkey_start_offset(k.k) << 9,
 						offset << 9,
-						e.k->size << 9, flags|flags2);
+						k.k->size << 9, flags|flags2);
 			if (ret)
 				return ret;
 		}
 
 		return 0;
-	} else if (k->k.type == KEY_TYPE_reservation) {
+	} else if (k.k->type == KEY_TYPE_reservation) {
 		return fiemap_fill_next_extent(info,
-					       bkey_start_offset(&k->k) << 9,
-					       0, k->k.size << 9,
+					       bkey_start_offset(k.k) << 9,
+					       0, k.k->size << 9,
 					       flags|
 					       FIEMAP_EXTENT_DELALLOC|
 					       FIEMAP_EXTENT_UNWRITTEN);
@@ -1119,7 +1123,9 @@ static int bch2_fiemap(struct inode *vinode, struct fiemap_extent_info *info,
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_s_c k;
-	BKEY_PADDED(k) tmp;
+	BKEY_PADDED(k) cur, prev;
+	struct bpos end = POS(ei->v.i_ino, (start + len) >> 9);
+	unsigned offset_into_extent, sectors;
 	bool have_extent = false;
 	int ret = 0;
 
@@ -1128,26 +1134,63 @@ static int bch2_fiemap(struct inode *vinode, struct fiemap_extent_info *info,
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	for_each_btree_key(&trans, iter, BTREE_ID_EXTENTS,
-			   POS(ei->v.i_ino, start >> 9), 0, k, ret)
-		if (bkey_extent_is_data(k.k) ||
-		    k.k->type == KEY_TYPE_reservation) {
-			if (bkey_cmp(bkey_start_pos(k.k),
-				     POS(ei->v.i_ino, (start + len) >> 9)) >= 0)
-				break;
-
-			if (have_extent) {
-				ret = bch2_fill_extent(info, &tmp.k, 0);
-				if (ret)
-					break;
-			}
-
-			bkey_reassemble(&tmp.k, k);
-			have_extent = true;
+	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
+				   POS(ei->v.i_ino, start >> 9), 0);
+retry:
+	while ((k = bch2_btree_iter_peek(iter)).k &&
+	       !(ret = bkey_err(k)) &&
+	       bkey_cmp(iter->pos, end) < 0) {
+		if (!bkey_extent_is_data(k.k) &&
+		    k.k->type != KEY_TYPE_reservation) {
+			bch2_btree_iter_next(iter);
+			continue;
 		}
 
+		bkey_reassemble(&cur.k, k);
+		k = bkey_i_to_s_c(&cur.k);
+
+		offset_into_extent	= iter->pos.offset -
+			bkey_start_offset(k.k);
+		sectors			= k.k->size - offset_into_extent;
+
+		ret = bch2_read_indirect_extent(&trans,
+					&offset_into_extent, &cur.k);
+		if (ret)
+			break;
+
+		sectors = min(sectors, k.k->size - offset_into_extent);
+
+		if (offset_into_extent)
+			bch2_cut_front(POS(k.k->p.inode,
+					   bkey_start_offset(k.k) +
+					   offset_into_extent),
+				       &cur.k);
+		bch2_key_resize(&cur.k.k, sectors);
+		cur.k.k.p = iter->pos;
+		cur.k.k.p.offset += cur.k.k.size;
+
+		if (have_extent) {
+			ret = bch2_fill_extent(c, info,
+					bkey_i_to_s_c(&prev.k), 0);
+			if (ret)
+				break;
+		}
+
+		bkey_copy(&prev.k, &cur.k);
+		have_extent = true;
+
+		if (k.k->type == KEY_TYPE_reflink_v)
+			bch2_btree_iter_set_pos(iter, k.k->p);
+		else
+			bch2_btree_iter_next(iter);
+	}
+
+	if (ret == -EINTR)
+		goto retry;
+
 	if (!ret && have_extent)
-		ret = bch2_fill_extent(info, &tmp.k, FIEMAP_EXTENT_LAST);
+		ret = bch2_fill_extent(c, info, bkey_i_to_s_c(&prev.k),
+				       FIEMAP_EXTENT_LAST);
 
 	ret = bch2_trans_exit(&trans) ?: ret;
 	return ret < 0 ? ret : 0;
@@ -1196,6 +1239,7 @@ static const struct file_operations bch_file_operations = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= bch2_compat_fs_ioctl,
 #endif
+	.remap_file_range = bch2_remap_file_range,
 };
 
 static const struct inode_operations bch_file_inode_operations = {
@@ -1266,7 +1310,7 @@ static const struct address_space_operations bch_address_space_operations = {
 	.readpage	= bch2_readpage,
 	.writepages	= bch2_writepages,
 	.readpages	= bch2_readpages,
-	.set_page_dirty	= bch2_set_page_dirty,
+	.set_page_dirty	= __set_page_dirty_nobuffers,
 	.write_begin	= bch2_write_begin,
 	.write_end	= bch2_write_end,
 	.invalidatepage	= bch2_invalidatepage,
@@ -1412,12 +1456,6 @@ static int bch2_vfs_write_inode(struct inode *vinode,
 			       ATTR_ATIME|ATTR_MTIME|ATTR_CTIME);
 	mutex_unlock(&inode->ei_update_lock);
 
-	if (c->opts.journal_flush_disabled)
-		return ret;
-
-	if (!ret && wbc->sync_mode == WB_SYNC_ALL)
-		ret = bch2_journal_flush_seq(&c->journal, inode->ei_journal_seq);
-
 	return ret;
 }
 
@@ -1473,6 +1511,9 @@ static int bch2_statfs(struct dentry *dentry, struct kstatfs *buf)
 static int bch2_sync_fs(struct super_block *sb, int wait)
 {
 	struct bch_fs *c = sb->s_fs_info;
+
+	if (c->opts.journal_flush_disabled)
+		return 0;
 
 	if (!wait) {
 		bch2_journal_flush_async(&c->journal, NULL);
@@ -1712,9 +1753,8 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 		goto out;
 	}
 
-	/* XXX: blocksize */
-	sb->s_blocksize		= PAGE_SIZE;
-	sb->s_blocksize_bits	= PAGE_SHIFT;
+	sb->s_blocksize		= block_bytes(c);
+	sb->s_blocksize_bits	= ilog2(block_bytes(c));
 	sb->s_maxbytes		= MAX_LFS_FILESIZE;
 	sb->s_op		= &bch_super_operations;
 	sb->s_export_op		= &bch_export_ops;
@@ -1734,7 +1774,7 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 
 	sb->s_bdi->congested_fn		= bch2_congested;
 	sb->s_bdi->congested_data	= c;
-	sb->s_bdi->ra_pages		= VM_MAX_READAHEAD * 1024 / PAGE_SIZE;
+	sb->s_bdi->ra_pages		= VM_READAHEAD_PAGES;
 
 	for_each_online_member(ca, c, i) {
 		struct block_device *bdev = ca->disk_sb.bdev;

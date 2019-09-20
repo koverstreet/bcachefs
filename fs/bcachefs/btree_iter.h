@@ -134,7 +134,16 @@ void bch2_btree_iter_node_drop(struct btree_iter *, struct btree *);
 
 void bch2_btree_iter_reinit_node(struct btree_iter *, struct btree *);
 
-int __must_check bch2_btree_iter_traverse(struct btree_iter *);
+int __must_check __bch2_btree_iter_traverse(struct btree_iter *);
+
+static inline int __must_check
+bch2_btree_iter_traverse(struct btree_iter *iter)
+{
+	return iter->uptodate >= BTREE_ITER_NEED_RELOCK
+		? __bch2_btree_iter_traverse(iter)
+		: 0;
+}
+
 int bch2_btree_iter_traverse_all(struct btree_trans *);
 
 struct btree *bch2_btree_iter_peek_node(struct btree_iter *);
@@ -142,6 +151,8 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *, unsigned);
 
 struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *);
 struct bkey_s_c bch2_btree_iter_next(struct btree_iter *);
+
+struct bkey_s_c bch2_btree_iter_peek_prev(struct btree_iter *);
 struct bkey_s_c bch2_btree_iter_prev(struct btree_iter *);
 
 struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *);
@@ -242,7 +253,7 @@ static inline struct bkey_s_c __bch2_btree_iter_next(struct btree_iter *iter,
 					    (_start), (_flags))) ?:	\
 		      PTR_ERR_OR_ZERO(((_k) =				\
 			__bch2_btree_iter_peek(_iter, _flags)).k);	\
-	     !ret && (_k).k;						\
+	     !_ret && (_k).k;						\
 	     (_ret) = PTR_ERR_OR_ZERO(((_k) =				\
 			__bch2_btree_iter_next(_iter, _flags)).k))
 
@@ -302,5 +313,8 @@ static inline void bch2_trans_begin_updates(struct btree_trans *trans)
 void *bch2_trans_kmalloc(struct btree_trans *, size_t);
 void bch2_trans_init(struct btree_trans *, struct bch_fs *, unsigned, size_t);
 int bch2_trans_exit(struct btree_trans *);
+
+void bch2_fs_btree_iter_exit(struct bch_fs *);
+int bch2_fs_btree_iter_init(struct bch_fs *);
 
 #endif /* _BCACHEFS_BTREE_ITER_H */

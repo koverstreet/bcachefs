@@ -10,9 +10,10 @@
 #include "extents.h"
 #include "inode.h"
 #include "quota.h"
+#include "reflink.h"
 #include "xattr.h"
 
-const char * const bch_bkey_types[] = {
+const char * const bch2_bkey_types[] = {
 #define x(name, nr) #name,
 	BCH_BKEY_TYPES()
 #undef x
@@ -144,7 +145,7 @@ void bch2_bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
 	}
 
 	if (ops->key_debugcheck)
-		ops->key_debugcheck(c, b, k);
+		ops->key_debugcheck(c, k);
 }
 
 void bch2_bpos_to_text(struct printbuf *out, struct bpos pos)
@@ -159,7 +160,8 @@ void bch2_bpos_to_text(struct printbuf *out, struct bpos pos)
 
 void bch2_bkey_to_text(struct printbuf *out, const struct bkey *k)
 {
-	pr_buf(out, "u64s %u type %u ", k->u64s, k->type);
+	pr_buf(out, "u64s %u type %s ", k->u64s,
+	       bch2_bkey_types[k->type]);
 
 	bch2_bpos_to_text(out, k->p);
 
@@ -174,8 +176,6 @@ void bch2_val_to_text(struct printbuf *out, struct bch_fs *c,
 
 	if (likely(ops->val_to_text))
 		ops->val_to_text(out, c, k);
-	else
-		pr_buf(out, " %s", bch_bkey_types[k.k->type]);
 }
 
 void bch2_bkey_val_to_text(struct printbuf *out, struct bch_fs *c,

@@ -13,7 +13,6 @@
 
 void bch2_bio_free_pages_pool(struct bch_fs *, struct bio *);
 void bch2_bio_alloc_pages_pool(struct bch_fs *, struct bio *, size_t);
-void bch2_bio_alloc_more_pages_pool(struct bch_fs *, struct bio *, size_t);
 
 void bch2_latency_acct(struct bch_dev *, u64, int);
 
@@ -96,9 +95,17 @@ struct bch_devs_mask;
 struct cache_promote_op;
 struct extent_ptr_decoded;
 
-int __bch2_read_extent(struct bch_fs *, struct bch_read_bio *, struct bvec_iter,
-		       struct bkey_s_c, struct bch_io_failures *, unsigned);
-void bch2_read(struct bch_fs *, struct bch_read_bio *, u64);
+int __bch2_read_indirect_extent(struct btree_trans *, unsigned *,
+				struct bkey_i *);
+
+static inline int bch2_read_indirect_extent(struct btree_trans *trans,
+					    unsigned *offset_into_extent,
+					    struct bkey_i *k)
+{
+	return k->k.type == KEY_TYPE_reflink_p
+		? __bch2_read_indirect_extent(trans, offset_into_extent, k)
+		: 0;
+}
 
 enum bch_read_flags {
 	BCH_READ_RETRY_IF_STALE		= 1 << 0,
@@ -113,13 +120,21 @@ enum bch_read_flags {
 	BCH_READ_IN_RETRY		= 1 << 7,
 };
 
+int __bch2_read_extent(struct bch_fs *, struct bch_read_bio *,
+		       struct bvec_iter, struct bkey_s_c, unsigned,
+		       struct bch_io_failures *, unsigned);
+
 static inline void bch2_read_extent(struct bch_fs *c,
 				    struct bch_read_bio *rbio,
 				    struct bkey_s_c k,
+				    unsigned offset_into_extent,
 				    unsigned flags)
 {
-	__bch2_read_extent(c, rbio, rbio->bio.bi_iter, k, NULL, flags);
+	__bch2_read_extent(c, rbio, rbio->bio.bi_iter, k,
+			   offset_into_extent, NULL, flags);
 }
+
+void bch2_read(struct bch_fs *, struct bch_read_bio *, u64);
 
 static inline struct bch_read_bio *rbio_init(struct bio *bio,
 					     struct bch_io_opts opts)

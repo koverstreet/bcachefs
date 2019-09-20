@@ -162,19 +162,20 @@ static int extent_matches_stripe(struct bch_fs *c,
 				 struct bch_stripe *v,
 				 struct bkey_s_c k)
 {
-	struct bkey_s_c_extent e;
-	const struct bch_extent_ptr *ptr;
-	int idx;
 
-	if (!bkey_extent_is_data(k.k))
-		return -1;
+	switch (k.k->type) {
+	case KEY_TYPE_extent: {
+		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
+		const struct bch_extent_ptr *ptr;
+		int idx;
 
-	e = bkey_s_c_to_extent(k);
-
-	extent_for_each_ptr(e, ptr) {
-		idx = ptr_matches_stripe(c, v, ptr);
-		if (idx >= 0)
-			return idx;
+		extent_for_each_ptr(e, ptr) {
+			idx = ptr_matches_stripe(c, v, ptr);
+			if (idx >= 0)
+				return idx;
+		}
+		break;
+	}
 	}
 
 	return -1;
@@ -182,19 +183,20 @@ static int extent_matches_stripe(struct bch_fs *c,
 
 static bool extent_has_stripe_ptr(struct bkey_s_c k, u64 idx)
 {
-	struct bkey_s_c_extent e;
-	const union bch_extent_entry *entry;
+	switch (k.k->type) {
+	case KEY_TYPE_extent: {
+		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
+		const union bch_extent_entry *entry;
 
-	if (!bkey_extent_is_data(k.k))
-		return false;
+		extent_for_each_entry(e, entry)
+			if (extent_entry_type(entry) ==
+			    BCH_EXTENT_ENTRY_stripe_ptr &&
+			    entry->stripe_ptr.idx == idx)
+				return true;
 
-	e = bkey_s_c_to_extent(k);
-
-	extent_for_each_entry(e, entry)
-		if (extent_entry_type(entry) ==
-		    BCH_EXTENT_ENTRY_stripe_ptr &&
-		    entry->stripe_ptr.idx == idx)
-			return true;
+		break;
+	}
+	}
 
 	return false;
 }
@@ -399,11 +401,10 @@ static void ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
 		bio_set_op_attrs(&ec_bio->bio, rw, 0);
 
 		ec_bio->bio.bi_iter.bi_sector	= ptr->offset + buf->offset + (offset >> 9);
-		ec_bio->bio.bi_iter.bi_size	= b;
 		ec_bio->bio.bi_end_io		= ec_block_endio;
 		ec_bio->bio.bi_private		= cl;
 
-		bch2_bio_map(&ec_bio->bio, buf->data[idx] + offset);
+		bch2_bio_map(&ec_bio->bio, buf->data[idx] + offset, b);
 
 		closure_get(cl);
 		percpu_ref_get(&ca->io_ref);
@@ -576,7 +577,8 @@ static ssize_t stripe_idx_to_delete(struct bch_fs *c)
 {
 	ec_stripes_heap *h = &c->ec_stripes_heap;
 
-	return h->data[0].blocks_nonempty == 0 ? h->data[0].idx : -1;
+	return h->used && h->data[0].blocks_nonempty == 0
+		? h->data[0].idx : -1;
 }
 
 static inline int ec_stripes_heap_cmp(ec_stripes_heap *h,
@@ -627,7 +629,8 @@ void bch2_stripes_heap_update(struct bch_fs *c,
 		bch2_stripes_heap_insert(c, m, idx);
 	}
 
-	if (stripe_idx_to_delete(c) >= 0)
+	if (stripe_idx_to_delete(c) >= 0 &&
+	    !percpu_ref_is_dying(&c->writes))
 		schedule_work(&c->ec_stripe_delete_work);
 }
 
@@ -685,7 +688,8 @@ static void ec_stripe_delete_work(struct work_struct *work)
 		if (idx < 0)
 			break;
 
-		ec_stripe_delete(c, idx);
+		if (ec_stripe_delete(c, idx))
+			break;
 	}
 
 	mutex_unlock(&c->ec_stripe_create_lock);
@@ -700,26 +704,34 @@ static int ec_stripe_bkey_insert(struct bch_fs *c,
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_s_c k;
+	struct bpos start_pos = POS(0, c->ec_stripe_hint);
 	int ret;
 
 	bch2_trans_init(&trans, c, 0, 0);
 retry:
 	bch2_trans_begin(&trans);
 
-	/* XXX: start pos hint */
-	for_each_btree_key(&trans, iter, BTREE_ID_EC, POS_MIN,
+	for_each_btree_key(&trans, iter, BTREE_ID_EC, start_pos,
 			   BTREE_ITER_SLOTS|BTREE_ITER_INTENT, k, ret) {
-		if (bkey_cmp(k.k->p, POS(0, U32_MAX)) > 0)
+		if (bkey_cmp(k.k->p, POS(0, U32_MAX)) > 0) {
+			if (start_pos.offset) {
+				start_pos = POS_MIN;
+				bch2_btree_iter_set_pos(iter, start_pos);
+				continue;
+			}
+
+			ret = -ENOSPC;
 			break;
+		}
 
 		if (bkey_deleted(k.k))
 			goto found_slot;
 	}
 
-	if (!ret)
-		ret = -ENOSPC;
 	goto err;
 found_slot:
+	start_pos = iter->pos;
+
 	ret = ec_stripe_mem_alloc(c, iter);
 	if (ret)
 		goto err;
@@ -734,6 +746,8 @@ found_slot:
 err:
 	if (ret == -EINTR)
 		goto retry;
+
+	c->ec_stripe_hint = ret ? start_pos.offset : start_pos.offset + 1;
 	bch2_trans_exit(&trans);
 
 	return ret;
@@ -1159,12 +1173,8 @@ void bch2_ec_stop_dev(struct bch_fs *c, struct bch_dev *ca)
 		struct ec_stripe_new *s = NULL;
 
 		mutex_lock(&h->lock);
-		bch2_open_buckets_stop_dev(c, ca,
-					   &h->blocks,
-					   BCH_DATA_USER);
-		bch2_open_buckets_stop_dev(c, ca,
-					   &h->parity,
-					   BCH_DATA_USER);
+		bch2_open_buckets_stop_dev(c, ca, &h->blocks);
+		bch2_open_buckets_stop_dev(c, ca, &h->parity);
 
 		if (!h->s)
 			goto unlock;
@@ -1265,10 +1275,10 @@ int bch2_stripes_write(struct bch_fs *c, unsigned flags, bool *wrote)
 
 int bch2_stripes_read(struct bch_fs *c, struct journal_keys *journal_keys)
 {
-	struct journal_key *i;
 	struct btree_trans trans;
-	struct btree_iter *iter;
-	struct bkey_s_c k;
+	struct btree_iter *btree_iter;
+	struct journal_iter journal_iter;
+	struct bkey_s_c btree_k, journal_k, k;
 	int ret;
 
 	ret = bch2_fs_ec_start(c);
@@ -1277,23 +1287,47 @@ int bch2_stripes_read(struct bch_fs *c, struct journal_keys *journal_keys)
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	for_each_btree_key(&trans, iter, BTREE_ID_EC, POS_MIN, 0, k, ret)
-		bch2_mark_key(c, k, 0, NULL, 0,
+	btree_iter	= bch2_trans_get_iter(&trans, BTREE_ID_EC, POS_MIN, 0);
+	journal_iter	= bch2_journal_iter_init(journal_keys, BTREE_ID_EC);
+
+	btree_k		= bch2_btree_iter_peek(btree_iter);
+	journal_k	= bch2_journal_iter_peek(&journal_iter);
+
+	while (1) {
+		if (btree_k.k && journal_k.k) {
+			int cmp = bkey_cmp(btree_k.k->p, journal_k.k->p);
+
+			if (cmp < 0) {
+				k = btree_k;
+				btree_k = bch2_btree_iter_next(btree_iter);
+			} else if (cmp == 0) {
+				btree_k = bch2_btree_iter_next(btree_iter);
+				k = journal_k;
+				journal_k = bch2_journal_iter_next(&journal_iter);
+			} else {
+				k = journal_k;
+				journal_k = bch2_journal_iter_next(&journal_iter);
+			}
+		} else if (btree_k.k) {
+			k = btree_k;
+			btree_k = bch2_btree_iter_next(btree_iter);
+		} else if (journal_k.k) {
+			k = journal_k;
+			journal_k = bch2_journal_iter_next(&journal_iter);
+		} else {
+			break;
+		}
+
+		bch2_mark_key(c, k, 0, 0, NULL, 0,
 			      BCH_BUCKET_MARK_ALLOC_READ|
 			      BCH_BUCKET_MARK_NOATOMIC);
+	}
 
 	ret = bch2_trans_exit(&trans) ?: ret;
 	if (ret) {
 		bch_err(c, "error reading stripes: %i", ret);
 		return ret;
 	}
-
-	for_each_journal_key(*journal_keys, i)
-		if (i->btree_id == BTREE_ID_EC)
-			bch2_mark_key(c, bkey_i_to_s_c(i->k),
-				      0, NULL, 0,
-				      BCH_BUCKET_MARK_ALLOC_READ|
-				      BCH_BUCKET_MARK_NOATOMIC);
 
 	return 0;
 }

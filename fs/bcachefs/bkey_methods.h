@@ -9,7 +9,7 @@ struct btree;
 struct bkey;
 enum btree_node_type;
 
-extern const char * const bch_bkey_types[];
+extern const char * const bch2_bkey_types[];
 
 enum merge_result {
 	BCH_MERGE_NOMERGE,
@@ -26,8 +26,7 @@ struct bkey_ops {
 	/* Returns reason for being invalid if invalid, else NULL: */
 	const char *	(*key_invalid)(const struct bch_fs *,
 				       struct bkey_s_c);
-	void		(*key_debugcheck)(struct bch_fs *, struct btree *,
-					  struct bkey_s_c);
+	void		(*key_debugcheck)(struct bch_fs *, struct bkey_s_c);
 	void		(*val_to_text)(struct printbuf *, struct bch_fs *,
 				       struct bkey_s_c);
 	void		(*swab)(const struct bkey_format *, struct bkey_packed *);

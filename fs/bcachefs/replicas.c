@@ -16,10 +16,15 @@ static inline int u8_cmp(u8 l, u8 r)
 	return cmp_int(l, r);
 }
 
-static void verify_replicas_entry_sorted(struct bch_replicas_entry *e)
+static void verify_replicas_entry(struct bch_replicas_entry *e)
 {
-#ifdef CONFIG_BCACHES_DEBUG
+#ifdef CONFIG_BCACHEFS_DEBUG
 	unsigned i;
+
+	BUG_ON(e->data_type >= BCH_DATA_NR);
+	BUG_ON(!e->nr_devs);
+	BUG_ON(e->nr_required > 1 &&
+	       e->nr_required >= e->nr_devs);
 
 	for (i = 0; i + 1 < e->nr_devs; i++)
 		BUG_ON(e->devs[i] >= e->devs[i + 1]);
@@ -80,7 +85,7 @@ static void extent_to_replicas(struct bkey_s_c k,
 			continue;
 
 		if (p.ec_nr) {
-			r->nr_devs = 0;
+			r->nr_required = 0;
 			break;
 		}
 
@@ -113,6 +118,7 @@ void bch2_bkey_to_replicas(struct bch_replicas_entry *e,
 		extent_to_replicas(k, e);
 		break;
 	case KEY_TYPE_extent:
+	case KEY_TYPE_reflink_v:
 		e->data_type = BCH_DATA_USER;
 		extent_to_replicas(k, e);
 		break;
@@ -157,7 +163,7 @@ cpu_replicas_add_entry(struct bch_replicas_cpu *old,
 	};
 
 	BUG_ON(!new_entry->data_type);
-	verify_replicas_entry_sorted(new_entry);
+	verify_replicas_entry(new_entry);
 
 	new.entries = kcalloc(new.nr, new.entry_size, GFP_NOIO);
 	if (!new.entries)
@@ -184,7 +190,7 @@ static inline int __replicas_entry_idx(struct bch_replicas_cpu *r,
 	if (unlikely(entry_size > r->entry_size))
 		return -1;
 
-	verify_replicas_entry_sorted(search);
+	verify_replicas_entry(search);
 
 #define entry_cmp(_l, _r, size)	memcmp(_l, _r, entry_size)
 	idx = eytzinger0_find(r->entries, r->nr, r->entry_size,
@@ -215,7 +221,7 @@ static bool bch2_replicas_marked_locked(struct bch_fs *c,
 	if (!search->nr_devs)
 		return true;
 
-	verify_replicas_entry_sorted(search);
+	verify_replicas_entry(search);
 
 	return __replicas_has_entry(&c->replicas, search) &&
 		(!check_gc_replicas ||
@@ -358,6 +364,8 @@ static int bch2_mark_replicas_slowpath(struct bch_fs *c,
 {
 	struct bch_replicas_cpu new_r, new_gc;
 	int ret = -ENOMEM;
+
+	verify_replicas_entry(new_entry);
 
 	memset(&new_r, 0, sizeof(new_r));
 	memset(&new_gc, 0, sizeof(new_gc));
@@ -874,9 +882,8 @@ static const char *bch2_sb_validate_replicas(struct bch_sb *sb, struct bch_sb_fi
 			goto err;
 
 		err = "invalid replicas entry: bad nr_required";
-		if (!e->nr_required ||
-		    (e->nr_required > 1 &&
-		     e->nr_required >= e->nr_devs))
+		if (e->nr_required > 1 &&
+		    e->nr_required >= e->nr_devs)
 			goto err;
 
 		err = "invalid replicas entry: invalid device";

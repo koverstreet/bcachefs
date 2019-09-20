@@ -283,9 +283,7 @@ do {									\
 		"Force reads to use the reconstruct path, when reading"	\
 		"from erasure coded extents")				\
 	BCH_DEBUG_PARAM(test_restart_gc,				\
-		"Test restarting mark and sweep gc when bucket gens change")\
-	BCH_DEBUG_PARAM(test_reconstruct_alloc,				\
-		"Test reconstructing the alloc btree")
+		"Test restarting mark and sweep gc when bucket gens change")
 
 #define BCH_DEBUG_PARAMS_ALL() BCH_DEBUG_PARAMS_ALWAYS() BCH_DEBUG_PARAMS_DEBUG()
 
@@ -359,6 +357,7 @@ enum gc_phase {
 	GC_PHASE_BTREE_XATTRS,
 	GC_PHASE_BTREE_ALLOC,
 	GC_PHASE_BTREE_QUOTAS,
+	GC_PHASE_BTREE_REFLINK,
 
 	GC_PHASE_PENDING_DELETE,
 	GC_PHASE_ALLOC,
@@ -409,7 +408,6 @@ struct bch_dev {
 	 */
 	struct bucket_array __rcu *buckets[2];
 	unsigned long		*buckets_nouse;
-	unsigned long		*buckets_written;
 	struct rw_semaphore	bucket_lock;
 
 	struct bch_dev_usage __percpu *usage[2];
@@ -722,7 +720,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
@@ -740,11 +738,15 @@ struct bch_fs {
 	/* ERASURE CODING */
 	struct list_head	ec_new_stripe_list;
 	struct mutex		ec_new_stripe_lock;
+	u64			ec_stripe_hint;
 
 	struct bio_set		ec_bioset;
 
 	struct work_struct	ec_stripe_delete_work;
 	struct llist_head	ec_stripe_delete_list;
+
+	/* REFLINK */
+	u64			reflink_hint;
 
 	/* VFS IO PATH - fs-io.c */
 	struct bio_set		writepage_bioset;

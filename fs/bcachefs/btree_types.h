@@ -261,8 +261,6 @@ struct btree_insert_entry {
 	};
 
 	bool			deferred;
-	bool			triggered;
-	bool			marked;
 };
 
 #define BTREE_ITER_MAX		64
@@ -291,6 +289,7 @@ struct btree_trans {
 
 	struct btree_iter	*iters;
 	struct btree_insert_entry *updates;
+	u8			*updates_sorted;
 
 	/* update path: */
 	struct journal_res	journal_res;
@@ -302,6 +301,7 @@ struct btree_trans {
 
 	struct btree_iter	iters_onstack[2];
 	struct btree_insert_entry updates_onstack[6];
+	u8			updates_sorted_onstack[6];
 
 	struct replicas_delta_list *fs_usage_deltas;
 };
@@ -461,7 +461,13 @@ static inline enum btree_node_type btree_node_type(struct btree *b)
 
 static inline bool btree_node_type_is_extents(enum btree_node_type type)
 {
-	return type == BKEY_TYPE_EXTENTS;
+	switch (type) {
+	case BKEY_TYPE_EXTENTS:
+	case BKEY_TYPE_REFLINK:
+		return true;
+	default:
+		return false;
+	}
 }
 
 static inline bool btree_node_is_extents(struct btree *b)
@@ -477,6 +483,7 @@ static inline bool btree_node_type_needs_gc(enum btree_node_type type)
 	case BKEY_TYPE_EXTENTS:
 	case BKEY_TYPE_INODES:
 	case BKEY_TYPE_EC:
+	case BKEY_TYPE_REFLINK:
 		return true;
 	default:
 		return false;

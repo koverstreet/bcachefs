@@ -24,6 +24,42 @@
 
 #define QSTR(n) { { { .len = strlen(n) } }, .name = n }
 
+/* iterate over keys read from the journal: */
+
+struct journal_iter bch2_journal_iter_init(struct journal_keys *keys,
+					   enum btree_id id)
+{
+	return (struct journal_iter) {
+		.keys		= keys,
+		.k		= keys->d,
+		.btree_id	= id,
+	};
+}
+
+struct bkey_s_c bch2_journal_iter_peek(struct journal_iter *iter)
+{
+	while (1) {
+		if (iter->k == iter->keys->d + iter->keys->nr)
+			return bkey_s_c_null;
+
+		if (iter->k->btree_id == iter->btree_id)
+			return bkey_i_to_s_c(iter->k->k);
+
+		iter->k++;
+	}
+
+	return bkey_s_c_null;
+}
+
+struct bkey_s_c bch2_journal_iter_next(struct journal_iter *iter)
+{
+	if (iter->k == iter->keys->d + iter->keys->nr)
+		return bkey_s_c_null;
+
+	iter->k++;
+	return bch2_journal_iter_peek(iter);
+}
+
 /* sort and dedup all keys in the journal: */
 
 static void journal_entries_free(struct list_head *list)
@@ -200,7 +236,8 @@ static void replay_now_at(struct journal *j, u64 seq)
 		bch2_journal_pin_put(j, j->replay_journal_seq++);
 }
 
-static int bch2_extent_replay_key(struct bch_fs *c, struct bkey_i *k)
+static int bch2_extent_replay_key(struct bch_fs *c, enum btree_id btree_id,
+				  struct bkey_i *k)
 {
 	struct btree_trans trans;
 	struct btree_iter *iter, *split_iter;
@@ -211,14 +248,21 @@ static int bch2_extent_replay_key(struct bch_fs *c, struct bkey_i *k)
 	struct disk_reservation disk_res =
 		bch2_disk_reservation_init(c, 0);
 	struct bkey_i *split;
-	bool split_compressed = false;
+	struct bpos atomic_end;
+	/*
+	 * Some extents aren't equivalent - w.r.t. what the triggers do
+	 * - if they're split:
+	 */
+	bool remark_if_split = bch2_extent_is_compressed(bkey_i_to_s_c(k)) ||
+		k->k.type == KEY_TYPE_reflink_p;
+	bool remark = false;
 	int ret;
 
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
 retry:
 	bch2_trans_begin(&trans);
 
-	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
+	iter = bch2_trans_get_iter(&trans, btree_id,
 				   bkey_start_pos(&k->k),
 				   BTREE_ITER_INTENT);
 
@@ -237,29 +281,33 @@ retry:
 		if (ret)
 			goto err;
 
-		if (!split_compressed &&
-		    bch2_extent_is_compressed(bkey_i_to_s_c(k)) &&
-		    !bch2_extent_is_atomic(k, split_iter)) {
+		ret = bch2_extent_atomic_end(split_iter, k, &atomic_end);
+		if (ret)
+			goto err;
+
+		if (!remark &&
+		    remark_if_split &&
+		    bkey_cmp(atomic_end, k->k.p) < 0) {
 			ret = bch2_disk_reservation_add(c, &disk_res,
 					k->k.size *
 					bch2_bkey_nr_dirty_ptrs(bkey_i_to_s_c(k)),
 					BCH_DISK_RESERVATION_NOFAIL);
 			BUG_ON(ret);
 
-			split_compressed = true;
+			remark = true;
 		}
 
 		bkey_copy(split, k);
 		bch2_cut_front(split_iter->pos, split);
-		bch2_extent_trim_atomic(split, split_iter);
+		bch2_cut_back(atomic_end, &split->k);
 
 		bch2_trans_update(&trans, BTREE_INSERT_ENTRY(split_iter, split));
 		bch2_btree_iter_set_pos(iter, split->k.p);
 	} while (bkey_cmp(iter->pos, k->k.p) < 0);
 
-	if (split_compressed) {
+	if (remark) {
 		ret = bch2_trans_mark_key(&trans, bkey_i_to_s_c(k),
-					  -((s64) k->k.size),
+					  0, -((s64) k->k.size),
 					  BCH_BUCKET_MARK_OVERWRITE) ?:
 		      bch2_trans_commit(&trans, &disk_res, NULL,
 					BTREE_INSERT_ATOMIC|
@@ -299,22 +347,17 @@ static int bch2_journal_replay(struct bch_fs *c,
 	for_each_journal_key(keys, i) {
 		replay_now_at(j, keys.journal_seq_base + i->journal_seq);
 
-		switch (i->btree_id) {
-		case BTREE_ID_ALLOC:
+		if (i->btree_id == BTREE_ID_ALLOC)
 			ret = bch2_alloc_replay_key(c, i->k);
-			break;
-		case BTREE_ID_EXTENTS:
-			ret = bch2_extent_replay_key(c, i->k);
-			break;
-		default:
+		else if (btree_node_type_is_extents(i->btree_id))
+			ret = bch2_extent_replay_key(c, i->btree_id, i->k);
+		else
 			ret = bch2_btree_insert(c, i->btree_id, i->k,
 						NULL, NULL,
 						BTREE_INSERT_NOFAIL|
 						BTREE_INSERT_LAZY_RW|
 						BTREE_INSERT_JOURNAL_REPLAY|
 						BTREE_INSERT_NOMARK);
-			break;
-		}
 
 		if (ret) {
 			bch_err(c, "journal replay: error %d while replaying key",
@@ -615,7 +658,7 @@ static int read_btree_roots(struct bch_fs *c)
 			continue;
 
 		if (i == BTREE_ID_ALLOC &&
-		    test_reconstruct_alloc(c)) {
+		    c->opts.reconstruct_alloc) {
 			c->sb.compat &= ~(1ULL << BCH_COMPAT_FEAT_ALLOC_INFO);
 			continue;
 		}
@@ -892,7 +935,9 @@ out:
 	ret = 0;
 err:
 fsck_err:
+	set_bit(BCH_FS_FSCK_DONE, &c->flags);
 	bch2_flush_fsck_errs(c);
+
 	journal_keys_free(&journal_keys);
 	journal_entries_free(&journal_entries);
 	kfree(clean);

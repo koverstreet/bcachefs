@@ -142,20 +142,24 @@ static int bch2_gc_mark_key(struct bch_fs *c, struct bkey_s_c k,
 			struct bucket *g2 = PTR_BUCKET(ca, ptr, false);
 
 			if (mustfix_fsck_err_on(!g->gen_valid, c,
-					"found ptr with missing gen in alloc btree,\n"
-					"type %u gen %u",
-					k.k->type, ptr->gen)) {
+					"bucket %u:%zu data type %s ptr gen %u missing in alloc btree",
+					ptr->dev, PTR_BUCKET_NR(ca, ptr),
+					bch2_data_types[ptr_data_type(k.k, ptr)],
+					ptr->gen)) {
 				g2->_mark.gen	= g->_mark.gen		= ptr->gen;
-				g2->_mark.dirty	= g->_mark.dirty	= true;
 				g2->gen_valid	= g->gen_valid		= true;
 			}
 
 			if (mustfix_fsck_err_on(gen_cmp(ptr->gen, g->mark.gen) > 0, c,
-					"%u ptr gen in the future: %u > %u",
-					k.k->type, ptr->gen, g->mark.gen)) {
+					"bucket %u:%zu data type %s ptr gen in the future: %u > %u",
+					ptr->dev, PTR_BUCKET_NR(ca, ptr),
+					bch2_data_types[ptr_data_type(k.k, ptr)],
+					ptr->gen, g->mark.gen)) {
 				g2->_mark.gen	= g->_mark.gen		= ptr->gen;
-				g2->_mark.dirty	= g->_mark.dirty	= true;
 				g2->gen_valid	= g->gen_valid		= true;
+				g2->_mark.data_type		= 0;
+				g2->_mark.dirty_sectors		= 0;
+				g2->_mark.cached_sectors	= 0;
 				set_bit(BCH_FS_FIXED_GENS, &c->flags);
 			}
 		}
@@ -171,7 +175,7 @@ static int bch2_gc_mark_key(struct bch_fs *c, struct bkey_s_c k,
 		*max_stale = max(*max_stale, ptr_stale(ca, ptr));
 	}
 
-	bch2_mark_key(c, k, k.k->size, NULL, 0, flags);
+	bch2_mark_key(c, k, 0, k.k->size, NULL, 0, flags);
 fsck_err:
 	return ret;
 }
@@ -418,7 +422,8 @@ static void bch2_mark_pending_btree_node_frees(struct bch_fs *c)
 
 	for_each_pending_btree_node_free(c, as, d)
 		if (d->index_update_done)
-			bch2_mark_key(c, bkey_i_to_s_c(&d->key), 0, NULL, 0,
+			bch2_mark_key(c, bkey_i_to_s_c(&d->key),
+				      0, 0, NULL, 0,
 				      BCH_BUCKET_MARK_GC);
 
 	mutex_unlock(&c->btree_interior_update_lock);
@@ -525,7 +530,6 @@ static int bch2_gc_done(struct bch_fs *c,
 				": got %u, should be %u", i, b,		\
 				dst->b[b].mark._f, src->b[b].mark._f);	\
 		dst->b[b]._mark._f = src->b[b].mark._f;			\
-		dst->b[b]._mark.dirty = true;				\
 	}
 #define copy_dev_field(_f, _msg, ...)					\
 	copy_field(_f, "dev %u has wrong " _msg, i, ##__VA_ARGS__)
@@ -577,10 +581,7 @@ static int bch2_gc_done(struct bch_fs *c,
 			copy_bucket_field(dirty_sectors);
 			copy_bucket_field(cached_sectors);
 
-			if (dst->b[b].oldest_gen != src->b[b].oldest_gen) {
-				dst->b[b].oldest_gen = src->b[b].oldest_gen;
-				dst->b[b]._mark.dirty = true;
-			}
+			dst->b[b].oldest_gen = src->b[b].oldest_gen;
 		}
 	};
 
@@ -761,6 +762,8 @@ out:
 			percpu_down_write(&c->mark_lock);
 			bch2_gc_free(c);
 			percpu_up_write(&c->mark_lock);
+			/* flush fsck errors, reset counters */
+			bch2_flush_fsck_errs(c);
 
 			goto again;
 		}
