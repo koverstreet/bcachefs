@@ -212,7 +212,7 @@ static inline void bch2_btree_node_lock_write(struct btree *b, struct btree_iter
 	EBUG_ON(iter->l[b->level].b != b);
 	EBUG_ON(iter->l[b->level].lock_seq != b->lock.state.seq);
 
-	if (!six_trylock_write(&b->lock))
+	if (unlikely(!six_trylock_write(&b->lock)))
 		__bch2_btree_node_lock_write(b, iter);
 }
 
