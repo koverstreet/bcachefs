@@ -2488,7 +2488,7 @@ static ssize_t generic_file_buffered_read(struct kiocb *iocb,
 			 * before reading the page on the kernel side.
 			 */
 			if (writably_mapped)
-				flush_dcache_page(page);
+				flush_dcache_page(pages[i]);
 
 			copied = copy_page_to_iter(pages[i], offset, bytes, iter);
 
