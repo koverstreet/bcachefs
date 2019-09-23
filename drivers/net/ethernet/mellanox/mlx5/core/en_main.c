@@ -190,6 +190,7 @@ static void mlx5e_update_sw_counters(struct mlx5e_priv *priv)
 		s->rx_bytes	+= rq_stats->bytes;
 		s->rx_lro_packets += rq_stats->lro_packets;
 		s->rx_lro_bytes	+= rq_stats->lro_bytes;
+		s->rx_ecn_mark	+= rq_stats->ecn_mark;
 		s->rx_removed_vlan_packets += rq_stats->removed_vlan_packets;
 		s->rx_csum_none	+= rq_stats->csum_none;
 		s->rx_csum_complete += rq_stats->csum_complete;
