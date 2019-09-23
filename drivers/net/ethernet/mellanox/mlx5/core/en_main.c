@@ -923,6 +923,9 @@ static int mlx5e_open_rq(struct mlx5e_channel *c,
 	if (params->rx_am_enabled)
 		c->rq.state |= BIT(MLX5E_RQ_STATE_AM);
 
+	if (params->pflags & MLX5E_PFLAG_RX_NO_CSUM_COMPLETE)
+		__set_bit(MLX5E_RQ_STATE_NO_CSUM_COMPLETE, &c->rq.state);
+
 	return 0;
 
 err_destroy_rq:
@@ -4114,6 +4117,7 @@ void mlx5e_build_nic_params(struct mlx5_core_dev *mdev,
 		params->rx_cqe_compress_def = cqe_compress_heuristic(link_speed, pci_bw);
 
 	MLX5E_SET_PFLAG(params, MLX5E_PFLAG_RX_CQE_COMPRESS, params->rx_cqe_compress_def);
+	MLX5E_SET_PFLAG(params, MLX5E_PFLAG_RX_NO_CSUM_COMPLETE, false);
 
 	/* RQ */
 	mlx5e_set_rq_params(mdev, params);
