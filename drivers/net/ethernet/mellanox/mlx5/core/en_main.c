@@ -923,7 +923,11 @@ static int mlx5e_open_rq(struct mlx5e_channel *c,
 	if (params->rx_am_enabled)
 		c->rq.state |= BIT(MLX5E_RQ_STATE_AM);
 
-	if (params->pflags & MLX5E_PFLAG_RX_NO_CSUM_COMPLETE)
+	/* We disable csum_complete when XDP is enabled since
+	 * XDP programs might manipulate packets which will render
+	 * skb->checksum incorrect.
+	 */
+	if (MLX5E_GET_PFLAG(params, MLX5E_PFLAG_RX_NO_CSUM_COMPLETE) || c->xdp)
 		__set_bit(MLX5E_RQ_STATE_NO_CSUM_COMPLETE, &c->rq.state);
 
 	return 0;
