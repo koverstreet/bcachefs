@@ -80,12 +80,11 @@ static int bch2_ioc_setflags(struct bch_fs *c,
 	inode_lock(&inode->v);
 	if (!inode_owner_or_capable(&inode->v)) {
 		ret = -EACCES;
-		goto setflags_out;
+		goto err;
 	}
 
-	ret = bch2_write_inode(c, inode, bch2_inode_flags_set, &s,
-			       ATTR_CTIME);
-setflags_out:
+	ret = bch2_write_inode(c, inode, bch2_inode_flags_set, &s);
+err:
 	inode_unlock(&inode->v);
 	mnt_drop_write_file(file);
 	return ret;
@@ -155,8 +154,7 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 	if (ret)
 		goto err;
 
-	ret = bch2_write_inode(c, inode, fssetxattr_inode_update_fn, &s,
-			       ATTR_CTIME);
+	ret = bch2_write_inode(c, inode, fssetxattr_inode_update_fn, &s);
 err:
 	inode_unlock(&inode->v);
 	mnt_drop_write_file(file);
@@ -222,7 +220,7 @@ static int bch2_ioc_reinherit_attrs(struct bch_fs *c,
 			goto err3;
 	}
 
-	ret = bch2_write_inode(c, dst, bch2_reinherit_attrs_fn, src, 0);
+	ret = bch2_write_inode(c, dst, bch2_reinherit_attrs_fn, src);
 err3:
 	bch2_unlock_inodes(INODE_LOCK, src, dst);
 

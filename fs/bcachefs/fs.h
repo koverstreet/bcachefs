@@ -150,10 +150,15 @@ typedef int (*inode_set_fn)(struct bch_inode_info *,
 
 void bch2_inode_update_after_write(struct bch_fs *,
 				   struct bch_inode_info *,
-				   struct bch_inode_unpacked *,
-				   unsigned);
+				   struct bch_inode_unpacked *);
 int __must_check bch2_write_inode(struct bch_fs *, struct bch_inode_info *,
-				  inode_set_fn, void *, unsigned);
+				  inode_set_fn, void *);
+
+void bch2_setattr_copy(struct bch_inode_info *,
+		       struct bch_inode_unpacked *,
+		       struct iattr *);
+
+int bch2_update_time(struct inode *, struct timespec64 *, int);
 
 void bch2_vfs_exit(void);
 int bch2_vfs_init(void);

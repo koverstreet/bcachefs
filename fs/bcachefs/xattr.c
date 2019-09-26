@@ -520,7 +520,7 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 			goto err;
 	}
 
-	ret = bch2_write_inode(c, inode, inode_opt_set_fn, &s, 0);
+	ret = bch2_write_inode(c, inode, inode_opt_set_fn, &s);
 err:
 	inode_unlock(&inode->v);
 

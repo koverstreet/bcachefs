@@ -108,20 +108,16 @@ void bch2_pagecache_block_get(struct pagecache_lock *lock)
 
 void bch2_inode_update_after_write(struct bch_fs *c,
 				   struct bch_inode_info *inode,
-				   struct bch_inode_unpacked *bi,
-				   unsigned fields)
+				   struct bch_inode_unpacked *bi)
 {
 	set_nlink(&inode->v, bch2_inode_nlink_get(bi));
 	i_uid_write(&inode->v, bi->bi_uid);
 	i_gid_write(&inode->v, bi->bi_gid);
 	inode->v.i_mode	= bi->bi_mode;
 
-	if (fields & ATTR_ATIME)
-		inode->v.i_atime = bch2_time_to_timespec(c, bi->bi_atime);
-	if (fields & ATTR_MTIME)
-		inode->v.i_mtime = bch2_time_to_timespec(c, bi->bi_mtime);
-	if (fields & ATTR_CTIME)
-		inode->v.i_ctime = bch2_time_to_timespec(c, bi->bi_ctime);
+	inode->v.i_atime = bch2_time_to_timespec(c, bi->bi_atime);
+	inode->v.i_mtime = bch2_time_to_timespec(c, bi->bi_mtime);
+	inode->v.i_ctime = bch2_time_to_timespec(c, bi->bi_ctime);
 
 	inode->ei_inode		= *bi;
 
@@ -130,8 +126,7 @@ void bch2_inode_update_after_write(struct bch_fs *c,
 
 int __must_check bch2_write_inode(struct bch_fs *c,
 				  struct bch_inode_info *inode,
-				  inode_set_fn set,
-				  void *p, unsigned fields)
+				  inode_set_fn set, void *p)
 {
 	struct btree_trans trans;
 	struct btree_iter *iter;
@@ -154,7 +149,7 @@ retry:
 
 	/* the btree node lock protects inode->ei_inode: */
 	if (!ret)
-		bch2_inode_update_after_write(c, inode, &inode_u, fields);
+		bch2_inode_update_after_write(c, inode, &inode_u);
 
 	bch2_trans_iter_put(&trans, iter);
 
@@ -294,8 +289,7 @@ err_before_quota:
 	}
 
 	if (!tmpfile) {
-		bch2_inode_update_after_write(c, dir, &dir_u,
-					      ATTR_MTIME|ATTR_CTIME);
+		bch2_inode_update_after_write(c, dir, &dir_u);
 		journal_seq_copy(c, dir, journal_seq);
 	}
 
@@ -412,9 +406,8 @@ static int __bch2_link(struct bch_fs *c,
 		BUG_ON(inode_u.bi_inum != inode->v.i_ino);
 
 		journal_seq_copy(c, inode, dir->ei_journal_seq);
-		bch2_inode_update_after_write(c, dir, &dir_u,
-					      ATTR_MTIME|ATTR_CTIME);
-		bch2_inode_update_after_write(c, inode, &inode_u, ATTR_CTIME);
+		bch2_inode_update_after_write(c, dir, &dir_u);
+		bch2_inode_update_after_write(c, inode, &inode_u);
 	}
 
 	bch2_trans_exit(&trans);
@@ -467,10 +460,8 @@ static int bch2_unlink(struct inode *vdir, struct dentry *dentry)
 		BUG_ON(inode_u.bi_inum != inode->v.i_ino);
 
 		journal_seq_copy(c, inode, dir->ei_journal_seq);
-		bch2_inode_update_after_write(c, dir, &dir_u,
-					      ATTR_MTIME|ATTR_CTIME);
-		bch2_inode_update_after_write(c, inode, &inode_u,
-					      ATTR_MTIME);
+		bch2_inode_update_after_write(c, dir, &dir_u);
+		bch2_inode_update_after_write(c, inode, &inode_u);
 	}
 
 	bch2_trans_exit(&trans);
@@ -590,23 +581,19 @@ retry:
 	BUG_ON(dst_inode &&
 	       dst_inode->v.i_ino != dst_inode_u.bi_inum);
 
-	bch2_inode_update_after_write(c, src_dir, &src_dir_u,
-				      ATTR_MTIME|ATTR_CTIME);
+	bch2_inode_update_after_write(c, src_dir, &src_dir_u);
 	journal_seq_copy(c, src_dir, journal_seq);
 
 	if (src_dir != dst_dir) {
-		bch2_inode_update_after_write(c, dst_dir, &dst_dir_u,
-					      ATTR_MTIME|ATTR_CTIME);
+		bch2_inode_update_after_write(c, dst_dir, &dst_dir_u);
 		journal_seq_copy(c, dst_dir, journal_seq);
 	}
 
-	bch2_inode_update_after_write(c, src_inode, &src_inode_u,
-				      ATTR_CTIME);
+	bch2_inode_update_after_write(c, src_inode, &src_inode_u);
 	journal_seq_copy(c, src_inode, journal_seq);
 
 	if (dst_inode) {
-		bch2_inode_update_after_write(c, dst_inode, &dst_inode_u,
-					      ATTR_CTIME);
+		bch2_inode_update_after_write(c, dst_inode, &dst_inode_u);
 		journal_seq_copy(c, dst_inode, journal_seq);
 	}
 err:
@@ -712,7 +699,7 @@ btree_err:
 	if (unlikely(ret))
 		goto err;
 
-	bch2_inode_update_after_write(c, inode, &inode_u, attr->ia_valid);
+	bch2_inode_update_after_write(c, inode, &inode_u);
 
 	/* under btree lock: */
 	if (acl)
@@ -965,6 +952,38 @@ static int bch2_vfs_readdir(struct file *file, struct dir_context *ctx)
 	return bch2_readdir(c, inode->v.i_ino, ctx);
 }
 
+struct inode_update_times {
+	s64		time;
+	int		flags;
+};
+
+static int inode_update_times_fn(struct bch_inode_info *inode,
+				 struct bch_inode_unpacked *bi,
+				 void *p)
+{
+	struct inode_update_times *t = p;
+
+	if (t->flags & S_ATIME)
+		bi->bi_atime = t->time;
+	if (t->flags & S_CTIME)
+		bi->bi_ctime = t->time;
+	if (t->flags & S_MTIME)
+		bi->bi_mtime = t->time;
+	return 0;
+}
+
+int bch2_update_time(struct inode *vinode, struct timespec64 *time, int flags)
+{
+	struct bch_fs *c = vinode->i_sb->s_fs_info;
+	struct bch_inode_info *inode = to_bch_ei(vinode);
+	struct inode_update_times t = {
+		.time	= timespec_to_bch2_time(c, *time),
+		.flags	= flags,
+	};
+
+	return bch2_write_inode(c, inode, inode_update_times_fn, &t);
+}
+
 static const struct file_operations bch_file_operations = {
 	.llseek		= bch2_llseek,
 	.read_iter	= bch2_read_iter,
@@ -990,6 +1009,7 @@ static const struct inode_operations bch_file_inode_operations = {
 	.setattr	= bch2_setattr,
 	.fiemap		= bch2_fiemap,
 	.listxattr	= bch2_xattr_list,
+	.update_time	= bch2_update_time,
 #ifdef CONFIG_BCACHEFS_POSIX_ACL
 	.get_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
@@ -1010,6 +1030,7 @@ static const struct inode_operations bch_dir_inode_operations = {
 	.setattr	= bch2_setattr,
 	.tmpfile	= bch2_tmpfile,
 	.listxattr	= bch2_xattr_list,
+	.update_time	= bch2_update_time,
 #ifdef CONFIG_BCACHEFS_POSIX_ACL
 	.get_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
@@ -1042,6 +1063,7 @@ static const struct inode_operations bch_special_inode_operations = {
 	.getattr	= bch2_getattr,
 	.setattr	= bch2_setattr,
 	.listxattr	= bch2_xattr_list,
+	.update_time	= bch2_update_time,
 #ifdef CONFIG_BCACHEFS_POSIX_ACL
 	.get_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
@@ -1109,7 +1131,7 @@ static void bch2_vfs_inode_init(struct bch_fs *c,
 				struct bch_inode_info *inode,
 				struct bch_inode_unpacked *bi)
 {
-	bch2_inode_update_after_write(c, inode, bi, ~0);
+	bch2_inode_update_after_write(c, inode, bi);
 
 	inode->v.i_blocks	= bi->bi_sectors;
 	inode->v.i_ino		= bi->bi_inum;
@@ -1171,29 +1193,6 @@ static void bch2_i_callback(struct rcu_head *head)
 static void bch2_destroy_inode(struct inode *vinode)
 {
 	call_rcu(&vinode->i_rcu, bch2_i_callback);
-}
-
-static int inode_update_times_fn(struct bch_inode_info *inode,
-				 struct bch_inode_unpacked *bi,
-				 void *p)
-{
-	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-
-	bi->bi_atime	= timespec_to_bch2_time(c, inode->v.i_atime);
-	bi->bi_mtime	= timespec_to_bch2_time(c, inode->v.i_mtime);
-	bi->bi_ctime	= timespec_to_bch2_time(c, inode->v.i_ctime);
-
-	return 0;
-}
-
-static int bch2_vfs_write_inode(struct inode *vinode,
-				struct writeback_control *wbc)
-{
-	struct bch_fs *c = vinode->i_sb->s_fs_info;
-	struct bch_inode_info *inode = to_bch_ei(vinode);
-
-	return bch2_write_inode(c, inode, inode_update_times_fn, NULL,
-				ATTR_ATIME|ATTR_MTIME|ATTR_CTIME);
 }
 
 static void bch2_evict_inode(struct inode *vinode)
@@ -1398,7 +1397,6 @@ static void bch2_put_super(struct super_block *sb)
 static const struct super_operations bch_super_operations = {
 	.alloc_inode	= bch2_alloc_inode,
 	.destroy_inode	= bch2_destroy_inode,
-	.write_inode	= bch2_vfs_write_inode,
 	.evict_inode	= bch2_evict_inode,
 	.sync_fs	= bch2_sync_fs,
 	.statfs		= bch2_statfs,
