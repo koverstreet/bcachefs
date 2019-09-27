@@ -37,6 +37,7 @@
 
 struct quirk_entry {
 	u8 touchpad_led;
+	u8 kbd_led_not_present;
 	u8 kbd_led_levels_off_1;
 
 	int needs_kbd_timeouts;
@@ -70,6 +71,10 @@ static struct quirk_entry quirk_dell_xps13_9333 = {
 
 static struct quirk_entry quirk_dell_latitude_e6410 = {
 	.kbd_led_levels_off_1 = 1,
+};
+
+static struct quirk_entry quirk_dell_inspiron_1012 = {
+	.kbd_led_not_present = 1,
 };
 
 static struct platform_driver platform_driver = {
@@ -299,6 +304,24 @@ static const struct dmi_system_id dell_quirks[] __initconst = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "Latitude E6410"),
 		},
 		.driver_data = &quirk_dell_latitude_e6410,
+	},
+	{
+		.callback = dmi_matched,
+		.ident = "Dell Inspiron 1012",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Inspiron 1012"),
+		},
+		.driver_data = &quirk_dell_inspiron_1012,
+	},
+	{
+		.callback = dmi_matched,
+		.ident = "Dell Inspiron 1018",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Inspiron 1018"),
+		},
+		.driver_data = &quirk_dell_inspiron_1012,
 	},
 	{ }
 };
@@ -1493,6 +1516,9 @@ static inline void kbd_init_tokens(void)
 static void kbd_init(void)
 {
 	int ret;
+
+	if (quirks && quirks->kbd_led_not_present)
+		return;
 
 	ret = kbd_init_info();
 	kbd_init_tokens();
