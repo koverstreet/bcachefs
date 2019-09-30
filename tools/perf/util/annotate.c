@@ -1450,7 +1450,7 @@ int symbol__disassemble(struct symbol *sym, struct map *map,
 
 	arch = arch__find(arch_name);
 	if (arch == NULL)
-		return -ENOTSUP;
+		return ENOTSUP;
 
 	if (parch)
 		*parch = arch;
