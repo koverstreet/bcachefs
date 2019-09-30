@@ -1446,7 +1446,7 @@ int symbol__disassemble(struct symbol *sym, struct map *map,
 
 	arch_name = annotate__norm_arch(arch_name);
 	if (!arch_name)
-		return -1;
+		return errno;
 
 	arch = arch__find(arch_name);
 	if (arch == NULL)
