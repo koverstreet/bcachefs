@@ -40,7 +40,7 @@
 #include "book3s.h"
 #include "trace.h"
 
-#define VCPU_STAT(x) offsetof(struct kvm_vcpu, stat.x), KVM_STAT_VCPU
+#define VCPU_STAT(x, ...) offsetof(struct kvm_vcpu, stat.x), KVM_STAT_VCPU, ## __VA_ARGS__
 
 /* #define EXIT_DEBUG */
 
