@@ -10,6 +10,7 @@
  */
 
 #include <sys/types.h>
+#include <errno.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <string.h>
@@ -21,7 +22,7 @@ int get_cpuid(char *buffer, size_t sz)
 	const char *cpuid = "IBM/S390";
 
 	if (strlen(cpuid) + 1 > sz)
-		return -1;
+		return ENOBUFS;
 
 	strcpy(buffer, cpuid);
 	return 0;
