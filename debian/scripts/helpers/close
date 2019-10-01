@@ -134,7 +134,7 @@ if [ "$DEBIAN" != 'debian.master' ] && [ $skip_master_entries == 0 ]; then
 				echo "Failed to retrieve base master version from changelog file: $DEBIAN/changelog"
 				exit 1
 			fi
-			base_version=$(echo "$changes" | sed -n -r -e '/^\s.*\[ Ubuntu: ([0-9.-]*) \]$/{s//\1/p;q}')
+			base_version=$(echo "$changes" | sed -n -r -e '/^\s.*\[ Ubuntu: ([~0-9.-]*) \]$/{s//\1/p;q}')
 			[ "$base_version" ] && break
 			offset=$(( offset + 1 ))
 		done
