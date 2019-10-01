@@ -143,6 +143,7 @@ HOSTCFLAGS += -I$(srctree)/tools/lib/
 HOSTCFLAGS += -I$(srctree)/tools/testing/selftests/bpf/
 HOSTCFLAGS += -I$(srctree)/tools/lib/ -I$(srctree)/tools/include
 HOSTCFLAGS += -I$(srctree)/tools/perf
+HOSTCFLAGS += -DHAVE_ATTR_TEST=0
 
 HOSTCFLAGS_bpf_load.o += -I$(objtree)/usr/include -Wno-unused-variable
 HOSTLOADLIBES_fds_example += -lelf
