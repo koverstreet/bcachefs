@@ -435,7 +435,7 @@ struct inode_opt_set {
 	bool			defined;
 };
 
-static int inode_opt_set_fn(struct bch_inode_info *inode,
+static int inode_opt_set_fn(struct btree_trans *trans,
 			    struct bch_inode_unpacked *bi,
 			    void *p)
 {

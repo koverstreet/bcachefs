@@ -21,11 +21,10 @@ struct flags_set {
 	unsigned		projid;
 };
 
-static int bch2_inode_flags_set(struct bch_inode_info *inode,
+static int bch2_inode_flags_set(struct btree_trans *trans,
 				struct bch_inode_unpacked *bi,
 				void *p)
 {
-	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	/*
 	 * We're relying on btree locking here for exclusion with other ioctl
 	 * calls - use the flags in the btree (@bi), not inode->i_flags:
@@ -46,7 +45,7 @@ static int bch2_inode_flags_set(struct bch_inode_info *inode,
 	bi->bi_flags &= ~s->mask;
 	bi->bi_flags |= newflags;
 
-	bi->bi_ctime = timespec_to_bch2_time(c, current_time(&inode->v));
+	bi->bi_ctime = bch2_current_time(trans->c);
 	return 0;
 }
 
@@ -101,7 +100,7 @@ static int bch2_ioc_fsgetxattr(struct bch_inode_info *inode,
 	return copy_to_user(arg, &fa, sizeof(fa));
 }
 
-static int fssetxattr_inode_update_fn(struct bch_inode_info *inode,
+static int fssetxattr_inode_update_fn(struct btree_trans *trans,
 				      struct bch_inode_unpacked *bi,
 				      void *p)
 {
@@ -112,7 +111,7 @@ static int fssetxattr_inode_update_fn(struct bch_inode_info *inode,
 		bi->bi_project = s->projid;
 	}
 
-	return bch2_inode_flags_set(inode, bi, p);
+	return bch2_inode_flags_set(trans, bi, p);
 }
 
 static int bch2_ioc_fssetxattr(struct bch_fs *c,
@@ -161,7 +160,7 @@ err:
 	return ret;
 }
 
-static int bch2_reinherit_attrs_fn(struct bch_inode_info *inode,
+static int bch2_reinherit_attrs_fn(struct btree_trans *trans,
 				   struct bch_inode_unpacked *bi,
 				   void *p)
 {
