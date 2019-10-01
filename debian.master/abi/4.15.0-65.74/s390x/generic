@@ -9400,6 +9400,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	kfree_call_rcu
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	kick_all_cpus_sync
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	kick_process
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	kill_dax
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	kill_device
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	kill_pid_info_as_cred
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	klist_add_before
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	klist_add_behind

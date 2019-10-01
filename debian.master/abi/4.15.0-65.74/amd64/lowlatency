@@ -2632,6 +2632,7 @@ EXPORT_SYMBOL drivers/net/phy/mdio-bitbang 0x00000000	alloc_mdio_bitbang
 EXPORT_SYMBOL drivers/net/phy/mdio-bitbang 0x00000000	free_mdio_bitbang
 EXPORT_SYMBOL drivers/net/phy/mdio-cavium 0x00000000	cavium_mdiobus_read
 EXPORT_SYMBOL drivers/net/phy/mdio-cavium 0x00000000	cavium_mdiobus_write
+EXPORT_SYMBOL drivers/net/ppp/pppox 0x00000000	pppox_compat_ioctl
 EXPORT_SYMBOL drivers/net/ppp/pppox 0x00000000	pppox_ioctl
 EXPORT_SYMBOL drivers/net/ppp/pppox 0x00000000	pppox_unbind_sock
 EXPORT_SYMBOL drivers/net/ppp/pppox 0x00000000	register_pppox_proto
@@ -12975,6 +12976,15 @@ EXPORT_SYMBOL_GPL drivers/media/pci/ttpci/budget-core 0x00000000	ttpci_budget_in
 EXPORT_SYMBOL_GPL drivers/media/pci/ttpci/budget-core 0x00000000	ttpci_budget_init_hooks
 EXPORT_SYMBOL_GPL drivers/media/pci/ttpci/budget-core 0x00000000	ttpci_budget_irq10_handler
 EXPORT_SYMBOL_GPL drivers/media/pci/ttpci/budget-core 0x00000000	ttpci_budget_set_video_port
+EXPORT_SYMBOL_GPL drivers/media/platform/vimc/vimc_common 0x00000000	vimc_ent_sd_register
+EXPORT_SYMBOL_GPL drivers/media/platform/vimc/vimc_common 0x00000000	vimc_ent_sd_unregister
+EXPORT_SYMBOL_GPL drivers/media/platform/vimc/vimc_common 0x00000000	vimc_link_validate
+EXPORT_SYMBOL_GPL drivers/media/platform/vimc/vimc_common 0x00000000	vimc_pads_init
+EXPORT_SYMBOL_GPL drivers/media/platform/vimc/vimc_common 0x00000000	vimc_pipeline_s_stream
+EXPORT_SYMBOL_GPL drivers/media/platform/vimc/vimc_common 0x00000000	vimc_pix_map_by_code
+EXPORT_SYMBOL_GPL drivers/media/platform/vimc/vimc_common 0x00000000	vimc_pix_map_by_index
+EXPORT_SYMBOL_GPL drivers/media/platform/vimc/vimc_common 0x00000000	vimc_pix_map_by_pixelformat
+EXPORT_SYMBOL_GPL drivers/media/platform/vimc/vimc_streamer 0x00000000	vimc_streamer_s_stream
 EXPORT_SYMBOL_GPL drivers/media/radio/shark2 0x00000000	radio_tea5777_exit
 EXPORT_SYMBOL_GPL drivers/media/radio/shark2 0x00000000	radio_tea5777_init
 EXPORT_SYMBOL_GPL drivers/media/rc/rc-core 0x00000000	devm_rc_allocate_device
@@ -17435,6 +17445,7 @@ EXPORT_SYMBOL_GPL sound/pci/hda/snd-hda-codec-generic 0x00000000	snd_hda_gen_lin
 EXPORT_SYMBOL_GPL sound/pci/hda/snd-hda-codec-generic 0x00000000	snd_hda_gen_mic_autoswitch
 EXPORT_SYMBOL_GPL sound/pci/hda/snd-hda-codec-generic 0x00000000	snd_hda_gen_parse_auto_config
 EXPORT_SYMBOL_GPL sound/pci/hda/snd-hda-codec-generic 0x00000000	snd_hda_gen_path_power_filter
+EXPORT_SYMBOL_GPL sound/pci/hda/snd-hda-codec-generic 0x00000000	snd_hda_gen_reboot_notify
 EXPORT_SYMBOL_GPL sound/pci/hda/snd-hda-codec-generic 0x00000000	snd_hda_gen_spec_init
 EXPORT_SYMBOL_GPL sound/pci/hda/snd-hda-codec-generic 0x00000000	snd_hda_gen_stream_pm
 EXPORT_SYMBOL_GPL sound/pci/hda/snd-hda-codec-generic 0x00000000	snd_hda_gen_update_outputs
@@ -20378,6 +20389,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	kgdb_unregister_nmi_console
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	kick_all_cpus_sync
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	kick_process
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	kill_dax
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	kill_device
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	kill_pid_info_as_cred
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	klist_add_before
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	klist_add_behind

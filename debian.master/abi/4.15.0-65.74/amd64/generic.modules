@@ -4837,6 +4837,13 @@ videobuf2-vmalloc
 videocodec
 videodev
 vim2m
+vimc
+vimc-debayer
+vimc_capture
+vimc_common
+vimc_scaler
+vimc_sensor
+vimc_streamer
 viperboard
 viperboard_adc
 virt-dma
