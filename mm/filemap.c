@@ -182,11 +182,12 @@ void pagecache_block_get(struct pagecache_lock *lock)
 }
 EXPORT_SYMBOL(pagecache_block_get);
 
-static int page_cache_tree_insert_vec(struct address_space *mapping,
-				      struct page *pages[],
+static int page_cache_tree_insert_vec(struct page *pages[],
 				      unsigned nr_pages,
-				      void *shadow[],
-				      pgoff_t index)
+				      struct address_space *mapping,
+				      pgoff_t index,
+				      gfp_t gfp_mask,
+				      void *shadow[])
 {
 	XA_STATE(xas, &mapping->i_pages, index);
 	void *old;
@@ -197,6 +198,8 @@ static int page_cache_tree_insert_vec(struct address_space *mapping,
 	if (!nr_pages)
 		return 0;
 
+	xa_lock_irq(&mapping->i_pages);
+
 	while (1) {
 		old = xas_load(&xas);
 		if (old && !xa_is_value(old)) {
@@ -206,6 +209,18 @@ static int page_cache_tree_insert_vec(struct address_space *mapping,
 
 		xas_store(&xas, pages[i]);
 		error = xas_error(&xas);
+
+		if (error == -ENOMEM) {
+			xa_unlock_irq(&mapping->i_pages);
+			if (xas_nomem(&xas, gfp_mask & GFP_RECLAIM_MASK))
+				error = 0;
+			xa_lock_irq(&mapping->i_pages);
+
+			if (!error)
+				continue;
+			break;
+		}
+
 		if (error)
 			break;
 
@@ -215,11 +230,17 @@ static int page_cache_tree_insert_vec(struct address_space *mapping,
 			mapping->nrexceptional--;
 		mapping->nrpages++;
 
+		/* hugetlb pages do not participate in page cache accounting. */
+		if (!PageHuge(pages[i]))
+			__inc_node_page_state(pages[i], NR_FILE_PAGES);
+
 		if (++i == nr_pages)
 			break;
 
 		xas_next(&xas);
 	}
+
+	xa_unlock_irq(&mapping->i_pages);
 
 	return i ?: error;
 }
@@ -925,66 +946,46 @@ int replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp_mask)
 }
 EXPORT_SYMBOL_GPL(replace_page_cache_page);
 
-static int add_to_page_cache_vec(struct page **pages,
-				 unsigned nr_pages,
+static int add_to_page_cache_vec(struct page **pages, unsigned nr_pages,
 				 struct address_space *mapping,
-				 pgoff_t offset, gfp_t gfp_mask,
+				 pgoff_t index, gfp_t gfp_mask,
 				 void *shadow[])
 {
 	struct mem_cgroup *memcg;
-	int i, nr_charged = 0, nr_added = 0, error;
+	int i, nr_added = 0, error = 0;
 
 	for (i = 0; i < nr_pages; i++) {
 		struct page *page = pages[i];
 
 		VM_BUG_ON_PAGE(PageSwapBacked(page), page);
-	}
+		VM_BUG_ON_PAGE(PageSwapCache(page), page);
 
-	for (; nr_charged < nr_pages; nr_charged++) {
-		struct page *page = pages[nr_charged];
-
-		if (PageHuge(page))
-			continue;
-
-		error = mem_cgroup_try_charge(page, current->mm,
-					      gfp_mask, &memcg, false);
-		if (error)
-			break;
-	}
-
-	for (i = 0; i < nr_charged; i++) {
-		struct page *page = pages[i];
+		if (!PageHuge(page)) {
+			error = mem_cgroup_try_charge(page, current->mm,
+						      gfp_mask, &memcg, false);
+			if (error) {
+				if (!i)
+					return error;
+				nr_pages = i;
+				break;
+			}
+		}
 
 		__SetPageLocked(page);
 		get_page(page);
 		page->mapping = mapping;
-		page->index = offset + i;
+		page->index = index + i;
 	}
 
 	if (current->pagecache_lock != &mapping->add_lock)
 		pagecache_add_get(&mapping->add_lock);
 
-	xa_lock_irq(&mapping->i_pages);
-
-	while (nr_added < nr_charged) {
-		error = page_cache_tree_insert_vec(mapping,
-					pages		+ nr_added,
-					nr_charged	- nr_added,
-					shadow		+ nr_added,
-					offset		+ nr_added);
-		if (error < 0)
-			break;
-
-		while (error--) {
-			struct page *page = pages[nr_added++];
-
-			/* hugetlb pages do not participate in page cache accounting. */
-			if (!PageHuge(page))
-				__inc_node_page_state(page, NR_FILE_PAGES);
-		}
+	error = page_cache_tree_insert_vec(pages, nr_pages, mapping,
+					   index, gfp_mask, shadow);
+	if (error > 0) {
+		nr_added = error;
+		error = 0;
 	}
-
-	xa_unlock_irq(&mapping->i_pages);
 
 	if (current->pagecache_lock != &mapping->add_lock)
 		pagecache_add_put(&mapping->add_lock);
@@ -998,7 +999,7 @@ static int add_to_page_cache_vec(struct page **pages,
 		trace_mm_filemap_add_to_page_cache(page);
 	}
 
-	for (i = nr_added; i < nr_charged; i++) {
+	for (i = nr_added; i < nr_pages; i++) {
 		struct page *page = pages[i];
 
 		if (!PageHuge(page))
