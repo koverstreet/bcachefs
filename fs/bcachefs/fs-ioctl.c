@@ -83,11 +83,8 @@ static int bch2_ioc_setflags(struct bch_fs *c,
 		goto setflags_out;
 	}
 
-	mutex_lock(&inode->ei_update_lock);
 	ret = bch2_write_inode(c, inode, bch2_inode_flags_set, &s,
 			       ATTR_CTIME);
-	mutex_unlock(&inode->ei_update_lock);
-
 setflags_out:
 	inode_unlock(&inode->v);
 	mnt_drop_write_file(file);
@@ -154,15 +151,12 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 		goto err;
 	}
 
-	mutex_lock(&inode->ei_update_lock);
 	ret = bch2_set_projid(c, inode, fa.fsx_projid);
 	if (ret)
-		goto err_unlock;
+		goto err;
 
 	ret = bch2_write_inode(c, inode, fssetxattr_inode_update_fn, &s,
 			       ATTR_CTIME);
-err_unlock:
-	mutex_unlock(&inode->ei_update_lock);
 err:
 	inode_unlock(&inode->v);
 	mnt_drop_write_file(file);
@@ -217,7 +211,7 @@ static int bch2_ioc_reinherit_attrs(struct bch_fs *c,
 	if (ret)
 		goto err2;
 
-	bch2_lock_inodes(INODE_UPDATE_LOCK, src, dst);
+	bch2_lock_inodes(INODE_LOCK, src, dst);
 
 	if (inode_attr_changing(src, dst, Inode_opt_project)) {
 		ret = bch2_fs_quota_transfer(c, dst,
@@ -230,7 +224,7 @@ static int bch2_ioc_reinherit_attrs(struct bch_fs *c,
 
 	ret = bch2_write_inode(c, dst, bch2_reinherit_attrs_fn, src, 0);
 err3:
-	bch2_unlock_inodes(INODE_UPDATE_LOCK, src, dst);
+	bch2_unlock_inodes(INODE_LOCK, src, dst);
 
 	/* return true if we did work */
 	if (ret >= 0)

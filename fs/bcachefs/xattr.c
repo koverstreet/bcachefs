@@ -509,7 +509,7 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 		s.defined = false;
 	}
 
-	mutex_lock(&inode->ei_update_lock);
+	inode_lock(&inode->v);
 	if (inode_opt_id == Inode_opt_project) {
 		/*
 		 * inode fields accessible via the xattr interface are stored
@@ -522,7 +522,7 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 
 	ret = bch2_write_inode(c, inode, inode_opt_set_fn, &s, 0);
 err:
-	mutex_unlock(&inode->ei_update_lock);
+	inode_unlock(&inode->v);
 
 	if (value &&
 	    (opt_id == Opt_background_compression ||

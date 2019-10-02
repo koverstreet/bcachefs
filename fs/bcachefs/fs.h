@@ -33,7 +33,6 @@ void bch2_pagecache_block_get(struct pagecache_lock *);
 struct bch_inode_info {
 	struct inode		v;
 
-	struct mutex		ei_update_lock;
 	u64			ei_journal_seq;
 	u64			ei_quota_reserved;
 	unsigned long		ei_last_dirtied;
@@ -60,7 +59,6 @@ static inline int ptrcmp(void *l, void *r)
 enum bch_inode_lock_op {
 	INODE_LOCK		= (1U << 0),
 	INODE_PAGECACHE_BLOCK	= (1U << 1),
-	INODE_UPDATE_LOCK	= (1U << 2),
 };
 
 #define bch2_lock_inodes(_locks, ...)					\
@@ -76,8 +74,6 @@ do {									\
 				down_write_nested(&a[i]->v.i_rwsem, i);	\
 			if ((_locks) & INODE_PAGECACHE_BLOCK)		\
 				bch2_pagecache_block_get(&a[i]->ei_pagecache_lock);\
-			if ((_locks) & INODE_UPDATE_LOCK)			\
-				mutex_lock_nested(&a[i]->ei_update_lock, i);\
 		}							\
 } while (0)
 
@@ -94,8 +90,6 @@ do {									\
 				up_write(&a[i]->v.i_rwsem);		\
 			if ((_locks) & INODE_PAGECACHE_BLOCK)		\
 				bch2_pagecache_block_put(&a[i]->ei_pagecache_lock);\
-			if ((_locks) & INODE_UPDATE_LOCK)			\
-				mutex_unlock(&a[i]->ei_update_lock);	\
 		}							\
 } while (0)
 

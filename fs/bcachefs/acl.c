@@ -291,7 +291,6 @@ int bch2_set_acl(struct inode *vinode, struct posix_acl *_acl, int type)
 	umode_t mode;
 	int ret;
 
-	mutex_lock(&inode->ei_update_lock);
 	bch2_trans_init(&trans, c, 0, 0);
 retry:
 	bch2_trans_begin(&trans);
@@ -333,10 +332,10 @@ btree_err:
 	bch2_inode_update_after_write(c, inode, &inode_u,
 				      ATTR_CTIME|ATTR_MODE);
 
+	/* under btree lock: */
 	set_cached_acl(&inode->v, type, acl);
 err:
 	bch2_trans_exit(&trans);
-	mutex_unlock(&inode->ei_update_lock);
 
 	return ret;
 }
