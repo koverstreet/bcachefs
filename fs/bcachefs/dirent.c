@@ -301,29 +301,40 @@ __bch2_dirent_lookup_trans(struct btree_trans *trans, u64 dir_inum,
 				hash_info, dir_inum, name, flags);
 }
 
-u64 bch2_dirent_lookup(struct bch_fs *c, u64 dir_inum,
-		       const struct bch_hash_info *hash_info,
-		       const struct qstr *name)
+int bch2_dirent_lookup_trans(struct btree_trans *trans, u64 dir_inum,
+			     const struct qstr *name, u64 *inum)
 {
-	struct btree_trans trans;
-	struct btree_iter *iter;
+	struct btree_iter *dir_iter, *iter;
+	struct bch_hash_info hash;
+	struct bch_inode_unpacked dir_u;
 	struct bkey_s_c k;
-	u64 inum = 0;
 
-	bch2_trans_init(&trans, c, 0, 0);
+	dir_iter = bch2_inode_peek(trans, &dir_u, dir_inum, 0);
+	if (IS_ERR(dir_iter))
+		return PTR_ERR(dir_iter);
 
-	iter = __bch2_dirent_lookup_trans(&trans, dir_inum,
-					  hash_info, name, 0);
-	if (IS_ERR(iter)) {
-		BUG_ON(PTR_ERR(iter) == -EINTR);
-		goto out;
-	}
+	hash = bch2_hash_info_init(trans->c, &dir_u);
+
+	iter = __bch2_dirent_lookup_trans(trans, dir_inum, &hash, name, 0);
+	if (IS_ERR(iter))
+		return PTR_ERR(iter);
 
 	k = bch2_btree_iter_peek_slot(iter);
-	inum = le64_to_cpu(bkey_s_c_to_dirent(k).v->d_inum);
-out:
-	bch2_trans_exit(&trans);
-	return inum;
+	*inum = le64_to_cpu(bkey_s_c_to_dirent(k).v->d_inum);
+	bch2_trans_iter_put(trans, iter);
+	return 0;
+}
+
+u64 bch2_dirent_lookup(struct bch_fs *c, u64 dir_inum,
+		       const struct qstr *name)
+{
+	u64 inum = 0;
+	int ret;
+
+	ret = bch2_trans_do(c, NULL, 0,
+		bch2_dirent_lookup_trans(&trans, dir_inum, name, &inum));
+
+	return !ret ? inum : 0;
 }
 
 int bch2_empty_dir_trans(struct btree_trans *trans, u64 dir_inum)

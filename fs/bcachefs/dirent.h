@@ -54,8 +54,9 @@ struct btree_iter *
 __bch2_dirent_lookup_trans(struct btree_trans *, u64,
 			   const struct bch_hash_info *,
 			   const struct qstr *, unsigned);
-u64 bch2_dirent_lookup(struct bch_fs *, u64, const struct bch_hash_info *,
-		       const struct qstr *);
+int bch2_dirent_lookup_trans(struct btree_trans *, u64,
+			     const struct qstr *, u64 *);
+u64 bch2_dirent_lookup(struct bch_fs *, u64, const struct qstr *);
 
 int bch2_empty_dir_trans(struct btree_trans *, u64);
 int bch2_readdir(struct bch_fs *, u64, struct dir_context *);

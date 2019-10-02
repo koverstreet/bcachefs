@@ -202,9 +202,7 @@ static int bch2_ioc_reinherit_attrs(struct bch_fs *c,
 	qstr.name	= kname;
 
 	ret = -ENOENT;
-	inum = bch2_dirent_lookup(c, src->v.i_ino,
-				  &src->ei_str_hash,
-				  &qstr);
+	inum = bch2_dirent_lookup(c, src->v.i_ino, &qstr);
 	if (!inum)
 		goto err1;
 

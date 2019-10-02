@@ -822,15 +822,12 @@ static int check_lostfound(struct bch_fs *c,
 			   struct bch_inode_unpacked *lostfound_inode)
 {
 	struct qstr lostfound = QSTR("lost+found");
-	struct bch_hash_info root_hash_info =
-		bch2_hash_info_init(c, root_inode);
 	u64 inum;
 	int ret;
 
 	bch_verbose(c, "checking lost+found");
 
-	inum = bch2_dirent_lookup(c, BCACHEFS_ROOT_INO, &root_hash_info,
-				 &lostfound);
+	inum = bch2_dirent_lookup(c, BCACHEFS_ROOT_INO, &lostfound);
 	if (!inum) {
 		bch_notice(c, "creating lost+found");
 		goto create_lostfound;
