@@ -2326,6 +2326,8 @@ static long bchfs_fpunch(struct bch_inode_info *inode, loff_t offset, loff_t len
 				  &i_sectors_delta);
 		i_sectors_acct(c, inode, NULL, i_sectors_delta);
 	}
+
+	/* XXX: update mtime/ctime */
 err:
 	bch2_pagecache_block_put(&inode->ei_pagecache_lock);
 	inode_unlock(&inode->v);

@@ -365,6 +365,7 @@ static struct dentry *bch2_lookup(struct inode *vdir, struct dentry *dentry,
 	struct inode *vinode = NULL;
 	u64 inum;
 
+	/* XXX: this should be done in the same transaction */
 	inum = bch2_dirent_lookup(c, dir->v.i_ino,
 				  &dir->ei_str_hash,
 				  &dentry->d_name);
