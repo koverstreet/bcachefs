@@ -1241,6 +1241,7 @@ static void bch2_writepage_io_done(struct closure *cl)
 			SetPageError(bvec->bv_page);
 			mapping_set_error(bvec->bv_page->mapping, -EIO);
 
+			/* XXX: it's not legal to call lock_page() here */
 			lock_page(bvec->bv_page);
 			s = bch2_page_state(bvec->bv_page);
 			for (i = 0; i < PAGE_SECTORS; i++)
