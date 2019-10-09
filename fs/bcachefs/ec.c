@@ -561,7 +561,7 @@ static int ec_stripe_mem_alloc(struct bch_fs *c,
 	size_t idx = iter->pos.offset;
 	int ret = 0;
 
-	if (!__ec_stripe_mem_alloc(c, idx, GFP_NOWAIT))
+	if (!__ec_stripe_mem_alloc(c, idx, GFP_NOWAIT|__GFP_NOWARN))
 		return ret;
 
 	bch2_trans_unlock(iter->trans);
