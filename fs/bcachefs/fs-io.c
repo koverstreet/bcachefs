@@ -460,6 +460,7 @@ struct bch_page_sector {
 };
 
 struct bch_page_state {
+	spinlock_t		lock;
 	atomic_t		write_count;
 	struct bch_page_sector	s[PAGE_SECTORS];
 };
@@ -515,6 +516,7 @@ static struct bch_page_state *__bch2_page_state_create(struct page *page,
 	if (!s)
 		return NULL;
 
+	spin_lock_init(&s->lock);
 	/*
 	 * migrate_page_move_mapping() assumes that pages with private data
 	 * have their count elevated by 1.
@@ -662,6 +664,9 @@ static void bch2_clear_page_bits(struct page *page)
 	if (!s)
 		return;
 
+	EBUG_ON(!PageLocked(page));
+	EBUG_ON(PageWriteback(page));
+
 	for (i = 0; i < ARRAY_SIZE(s->s); i++) {
 		disk_res.sectors += s->s[i].replicas_reserved;
 		s->s[i].replicas_reserved = 0;
@@ -691,6 +696,8 @@ static void bch2_set_page_dirty(struct bch_fs *c,
 	WARN_ON((u64) page_offset(page) + offset + len >
 		round_up((u64) i_size_read(&inode->v), block_bytes(c)));
 
+	spin_lock(&s->lock);
+
 	for (i = round_down(offset, block_bytes(c)) >> 9;
 	     i < round_up(offset + len, block_bytes(c)) >> 9;
 	     i++) {
@@ -706,6 +713,8 @@ static void bch2_set_page_dirty(struct bch_fs *c,
 
 		s->s[i].state = max_t(unsigned, s->s[i].state, SECTOR_DIRTY);
 	}
+
+	spin_unlock(&s->lock);
 
 	if (dirty_sectors)
 		i_sectors_acct(c, inode, &res->quota, dirty_sectors);
@@ -772,9 +781,6 @@ out:
 void bch2_invalidatepage(struct page *page, unsigned int offset,
 			 unsigned int length)
 {
-	EBUG_ON(!PageLocked(page));
-	EBUG_ON(PageWriteback(page));
-
 	if (offset || length < PAGE_SIZE)
 		return;
 
@@ -783,10 +789,6 @@ void bch2_invalidatepage(struct page *page, unsigned int offset,
 
 int bch2_releasepage(struct page *page, gfp_t gfp_mask)
 {
-	/* XXX: this can't take locks that are held while we allocate memory */
-	EBUG_ON(!PageLocked(page));
-	EBUG_ON(PageWriteback(page));
-
 	if (PageDirty(page))
 		return 0;
 
@@ -1241,11 +1243,11 @@ static void bch2_writepage_io_done(struct closure *cl)
 			SetPageError(bvec->bv_page);
 			mapping_set_error(bvec->bv_page->mapping, -EIO);
 
-			lock_page(bvec->bv_page);
-			s = bch2_page_state(bvec->bv_page);
+			s = __bch2_page_state(bvec->bv_page);
+			spin_lock(&s->lock);
 			for (i = 0; i < PAGE_SECTORS; i++)
 				s->s[i].nr_replicas = 0;
-			unlock_page(bvec->bv_page);
+			spin_unlock(&s->lock);
 		}
 	}
 
@@ -2993,9 +2995,12 @@ static void mark_range_unallocated(struct bch_inode_info *inode,
 			lock_page(page);
 			s = bch2_page_state(page);
 
-			if (s)
+			if (s) {
+				spin_lock(&s->lock);
 				for (j = 0; j < PAGE_SECTORS; j++)
 					s->s[j].nr_replicas = 0;
+				spin_unlock(&s->lock);
+			}
 
 			unlock_page(page);
 		}
