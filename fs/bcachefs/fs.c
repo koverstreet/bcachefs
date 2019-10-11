@@ -306,17 +306,23 @@ static struct dentry *bch2_lookup(struct inode *vdir, struct dentry *dentry,
 	return d_splice_alias(vinode, dentry);
 }
 
-static int bch2_create(struct inode *vdir, struct dentry *dentry,
-		       umode_t mode, bool excl)
+static int bch2_mknod(struct inode *vdir, struct dentry *dentry,
+		      umode_t mode, dev_t rdev)
 {
 	struct bch_inode_info *inode =
-		__bch2_create(to_bch_ei(vdir), dentry, mode|S_IFREG, 0, false);
+		__bch2_create(to_bch_ei(vdir), dentry, mode, rdev, false);
 
 	if (IS_ERR(inode))
 		return PTR_ERR(inode);
 
 	d_instantiate(dentry, &inode->v);
 	return 0;
+}
+
+static int bch2_create(struct inode *vdir, struct dentry *dentry,
+		       umode_t mode, bool excl)
+{
+	return bch2_mknod(vdir, dentry, mode|S_IFREG, 0);
 }
 
 static int __bch2_link(struct bch_fs *c,
@@ -448,32 +454,7 @@ err:
 
 static int bch2_mkdir(struct inode *vdir, struct dentry *dentry, umode_t mode)
 {
-	struct bch_inode_info *inode =
-		__bch2_create(to_bch_ei(vdir), dentry, mode|S_IFDIR, 0, false);
-
-	if (IS_ERR(inode))
-		return PTR_ERR(inode);
-
-	d_instantiate(dentry, &inode->v);
-	return 0;
-}
-
-static int bch2_rmdir(struct inode *vdir, struct dentry *dentry)
-{
-	return bch2_unlink(vdir, dentry);
-}
-
-static int bch2_mknod(struct inode *vdir, struct dentry *dentry,
-		      umode_t mode, dev_t rdev)
-{
-	struct bch_inode_info *inode =
-		__bch2_create(to_bch_ei(vdir), dentry, mode, rdev, false);
-
-	if (IS_ERR(inode))
-		return PTR_ERR(inode);
-
-	d_instantiate(dentry, &inode->v);
-	return 0;
+	return bch2_mknod(vdir, dentry, mode|S_IFDIR, 0);
 }
 
 static int bch2_rename2(struct inode *src_vdir, struct dentry *src_dentry,
@@ -958,7 +939,7 @@ static const struct inode_operations bch_dir_inode_operations = {
 	.unlink		= bch2_unlink,
 	.symlink	= bch2_symlink,
 	.mkdir		= bch2_mkdir,
-	.rmdir		= bch2_rmdir,
+	.rmdir		= bch2_unlink,
 	.mknod		= bch2_mknod,
 	.rename		= bch2_rename2,
 	.getattr	= bch2_getattr,
@@ -974,7 +955,7 @@ static const struct inode_operations bch_dir_inode_operations = {
 static const struct file_operations bch_dir_file_operations = {
 	.llseek		= bch2_dir_llseek,
 	.read		= generic_read_dir,
-	.iterate	= bch2_vfs_readdir,
+	.iterate_shared	= bch2_vfs_readdir,
 	.fsync		= bch2_fsync,
 	.unlocked_ioctl = bch2_fs_file_ioctl,
 #ifdef CONFIG_COMPAT
