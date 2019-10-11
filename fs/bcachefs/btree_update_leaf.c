@@ -898,6 +898,9 @@ retry:
 	       bkey_cmp(iter->pos, end) < 0) {
 		struct bkey_i delete;
 
+		bch2_trans_unlink_iters(trans);
+		trans->iters_touched &= trans->iters_live;
+
 		bkey_init(&delete.k);
 
 		/*
