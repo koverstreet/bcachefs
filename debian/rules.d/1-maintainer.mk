@@ -91,6 +91,7 @@ printenv:
 	@echo "any_signed                = $(any_signed)"
 	@echo " uefi_signed               = $(uefi_signed)"
 	@echo " opal_signed               = $(opal_signed)"
+	@echo " fit_signed                = $(fit_signed)"
 	@echo "full_build                = $(full_build)"
 	@echo "libc_dev_version          = $(libc_dev_version)"
 	@echo "DEB_HOST_GNU_TYPE         = $(DEB_HOST_GNU_TYPE)"

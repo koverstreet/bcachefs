@@ -452,6 +452,20 @@ endif
 	install -m644 $(abidir)/$*.compiler \
 		$(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/compiler
 
+ifeq ($(fit_signed),true)
+	install -d $(signingv)
+	cp -p $(pkgdir_bin)/boot/$(instfile)-$(abi_release)-$* \
+		$(signingv)/$(instfile)-$(abi_release)-$*;
+	# Build FIT image now that the modules folder exists
+	$(SHELL) $(DROOT)/scripts/build-fit \
+		$(CURDIR)/$(DEBIAN)/$(fit_its) \
+		"$(foreach f, $(fit_dtb_files), $(builddir)/build-$*/$(f))" \
+		$(abi_release)-$(target_flavour) \
+		$(CURDIR)/$(DROOT)/linux-modules-$(abi_release)-$* \
+		$(signingv)
+	cp -p $(signingv)/fit-$(abi_release)-$*.fit $(pkgdir_bin)/boot/
+endif
+
 headers_tmp := $(CURDIR)/debian/tmp-headers
 headers_dir := $(CURDIR)/debian/linux-libc-dev
 

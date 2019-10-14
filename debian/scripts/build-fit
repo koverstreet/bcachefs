@@ -1,0 +1,40 @@
+#!/bin/sh -e
+# Creates a FIT image
+# $1: ITS file (FIT components description)
+# $2: list of space-separated dtb files
+# $3: kernel version
+# $4: kernel modules directory
+# $5: destination directory
+
+. debian/debian.env
+
+echo "Creating FIT image"
+fit_its="$1"
+dtb_files="$2"
+KERNEL_VERSION="$3"
+KERNEL_MODULES_D="$4"
+dest_d="$5"
+
+set -x
+fit_d=$dest_d
+mkdir -p "$fit_d"
+# Export variables to be used by hooks
+export KERNEL_VERSION
+export KERNEL_MODULES_D
+initrd_f=initrd.img
+mkinitramfs -o "$initrd_f"
+mv "$initrd_f" "$fit_d"
+
+mkdir -p "$fit_d"/dtbs/
+for dtb in $dtb_files; do
+    cp -f "$dtb" "$fit_d"/dtbs/
+done
+
+cp -f "$dest_d"/vmlinuz-* "$fit_d"/zImage
+cp -f "$fit_its" "$fit_d"
+
+cd "$fit_d"
+mkimage -D "-I dts -O dtb -p 2000" -f "${fit_its##*/}" fit-"$KERNEL_VERSION".fit
+cd -
+
+rm -rf "$fit_d"/"$initrd_f" "$fit_d"/dtbs/ "$fit_d"/zImage "$fit_d"/"${fit_its##*/}"
