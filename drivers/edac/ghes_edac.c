@@ -519,7 +519,11 @@ void ghes_edac_unregister(struct ghes *ghes)
 {
 	struct mem_ctl_info *mci;
 
+	if (atomic_dec_return(&ghes_init))
+		return;
+
 	mci = ghes_pvt->mci;
+	ghes_pvt = NULL;
 	edac_mc_del_mc(mci->pdev);
 	edac_mc_free(mci);
 }
