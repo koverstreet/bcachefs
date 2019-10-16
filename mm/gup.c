@@ -724,6 +724,12 @@ retry:
 		if (unlikely(fatal_signal_pending(current)))
 			return i ? i : -ERESTARTSYS;
 		cond_resched();
+
+		if (current->faults_disabled_mapping &&
+		    vma->vm_file &&
+		    vma->vm_file->f_mapping == current->faults_disabled_mapping)
+			return -EFAULT;
+
 		page = follow_page_mask(vma, start, foll_flags, &page_mask);
 		if (!page) {
 			int ret;
