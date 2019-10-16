@@ -3633,10 +3633,18 @@ static vm_fault_t do_fault(struct vm_fault *vmf)
 	struct mm_struct *vm_mm = vma->vm_mm;
 	vm_fault_t ret;
 
-	/*
-	 * The VMA was not fully populated on mmap() or missing VM_DONTEXPAND
-	 */
-	if (!vma->vm_ops->fault) {
+	if (vma->vm_file &&
+	    vma->vm_file->f_mapping &&
+	    unlikely(vma->vm_file->f_mapping ==
+		     current->faults_disabled_mapping)) {
+		/* Faulting in pages for this mapping is currently disabled: */
+		ret = VM_FAULT_SIGBUS;
+	} else if (!vma->vm_ops->fault) {
+		/*
+		 * The VMA was not fully populated on mmap() or missing
+		 * VM_DONTEXPAND
+		 */
+
 		/*
 		 * If we find a migration pmd entry or a none pmd entry, which
 		 * should never happen, return SIGBUS
