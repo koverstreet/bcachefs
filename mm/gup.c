@@ -1085,6 +1085,13 @@ retry:
 		}
 		cond_resched();
 
+		if (current->faults_disabled_mapping &&
+		    vma->vm_file &&
+		    vma->vm_file->f_mapping == current->faults_disabled_mapping) {
+			ret = -EFAULT;
+			goto out;
+		}
+
 		page = follow_page_mask(vma, start, foll_flags, &ctx);
 		if (!page) {
 			ret = faultin_page(vma, start, &foll_flags, locked);
