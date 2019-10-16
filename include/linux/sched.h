@@ -869,6 +869,7 @@ struct task_struct {
 
 	struct mm_struct		*mm;
 	struct mm_struct		*active_mm;
+	struct address_space		*faults_disabled_mapping;
 
 #ifdef SPLIT_RSS_COUNTING
 	struct task_rss_stat		rss_stat;
