@@ -872,7 +872,7 @@ retry:
 }
 
 static const struct vm_operations_struct bch_vm_ops = {
-	.fault		= filemap_fault,
+	.fault		= bch2_page_fault,
 	.map_pages	= filemap_map_pages,
 	.page_mkwrite   = bch2_page_mkwrite,
 };
@@ -906,7 +906,7 @@ static int bch2_vfs_readdir(struct file *file, struct dir_context *ctx)
 
 static const struct file_operations bch_file_operations = {
 	.llseek		= bch2_llseek,
-	.read_iter	= generic_file_read_iter,
+	.read_iter	= bch2_read_iter,
 	.write_iter	= bch2_write_iter,
 	.mmap		= bch2_mmap,
 	.open		= generic_file_open,
@@ -994,7 +994,7 @@ static const struct address_space_operations bch_address_space_operations = {
 	.write_end	= bch2_write_end,
 	.invalidatepage	= bch2_invalidatepage,
 	.releasepage	= bch2_releasepage,
-	.direct_IO	= bch2_direct_IO,
+	.direct_IO	= noop_direct_IO,
 #ifdef CONFIG_MIGRATION
 	.migratepage	= bch2_migrate_page,
 #endif

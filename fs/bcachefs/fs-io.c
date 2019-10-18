@@ -507,12 +507,25 @@ static void bch2_set_page_dirty(struct bch_fs *c,
 		__set_page_dirty_nobuffers(page);
 }
 
+vm_fault_t bch2_page_fault(struct vm_fault *vmf)
+{
+	struct file *file = vmf->vma->vm_file;
+	struct address_space *mapping = file->f_mapping;
+	int ret;
+
+	pagecache_add_get(&mapping->add_lock);
+	ret = filemap_fault(vmf);
+	pagecache_add_put(&mapping->add_lock);
+
+	return ret;
+}
+
 vm_fault_t bch2_page_mkwrite(struct vm_fault *vmf)
 {
 	struct page *page = vmf->page;
 	struct file *file = vmf->vma->vm_file;
 	struct bch_inode_info *inode = file_bch_inode(file);
-	struct address_space *mapping = inode->v.i_mapping;
+	struct address_space *mapping = file->f_mapping;
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch2_page_reservation res;
 	unsigned len;
@@ -530,8 +543,7 @@ vm_fault_t bch2_page_mkwrite(struct vm_fault *vmf)
 	 * a write_invalidate_inode_pages_range() that works without dropping
 	 * page lock before invalidating page
 	 */
-	if (current->pagecache_lock != &mapping->add_lock)
-		pagecache_add_get(&mapping->add_lock);
+	pagecache_add_get(&mapping->add_lock);
 
 	lock_page(page);
 	isize = i_size_read(&inode->v);
@@ -551,13 +563,12 @@ vm_fault_t bch2_page_mkwrite(struct vm_fault *vmf)
 	}
 
 	bch2_set_page_dirty(c, inode, page, &res, 0, len);
+	bch2_page_reservation_put(c, inode, &res);
+
 	wait_for_stable_page(page);
 out:
-	if (current->pagecache_lock != &mapping->add_lock)
-		pagecache_add_put(&mapping->add_lock);
+	pagecache_add_put(&mapping->add_lock);
 	sb_end_pagefault(inode->v.i_sb);
-
-	bch2_page_reservation_put(c, inode, &res);
 
 	return ret;
 }
@@ -888,8 +899,7 @@ int bch2_readpages(struct file *file, struct address_space *mapping,
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS, POS_MIN,
 				   BTREE_ITER_SLOTS);
 
-	if (current->pagecache_lock != &mapping->add_lock)
-		pagecache_add_get(&mapping->add_lock);
+	pagecache_add_get(&mapping->add_lock);
 
 	while ((page = readpage_iter_next(&readpages_iter))) {
 		pgoff_t index = readpages_iter.offset + readpages_iter.idx;
@@ -912,8 +922,7 @@ int bch2_readpages(struct file *file, struct address_space *mapping,
 			   &readpages_iter);
 	}
 
-	if (current->pagecache_lock != &mapping->add_lock)
-		pagecache_add_put(&mapping->add_lock);
+	pagecache_add_put(&mapping->add_lock);
 
 	bch2_trans_exit(&trans);
 	kfree(readpages_iter.pages);
@@ -1730,6 +1739,42 @@ start:
 	}
 }
 
+ssize_t bch2_read_iter(struct kiocb *iocb, struct iov_iter *iter)
+{
+	struct file *file = iocb->ki_filp;
+	struct address_space *mapping = file->f_mapping;
+	size_t count = iov_iter_count(iter);
+	ssize_t ret;
+
+	if (!count)
+		return 0; /* skip atime */
+
+	if (iocb->ki_flags & IOCB_DIRECT) {
+		struct blk_plug plug;
+
+		ret = filemap_write_and_wait_range(mapping,
+					iocb->ki_pos,
+					iocb->ki_pos + count - 1);
+		if (ret < 0)
+			return ret;
+
+		file_accessed(file);
+
+		blk_start_plug(&plug);
+		ret = bch2_direct_IO_read(iocb, iter);
+		blk_finish_plug(&plug);
+
+		if (ret >= 0)
+			iocb->ki_pos += ret;
+	} else {
+		pagecache_add_get(&mapping->add_lock);
+		ret = generic_file_read_iter(iocb, iter);
+		pagecache_add_put(&mapping->add_lock);
+	}
+
+	return ret;
+}
+
 /* O_DIRECT writes */
 
 static long bch2_dio_write_loop(struct dio_write *dio)
@@ -1762,16 +1807,16 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 	while (1) {
 		offset = req->ki_pos + (dio->op.written << 9);
 
-		BUG_ON(current->pagecache_lock);
-		current->pagecache_lock = &mapping->add_lock;
 		if (kthread)
 			use_mm(dio->mm);
+		BUG_ON(current->faults_disabled_mapping);
+		current->faults_disabled_mapping = mapping;
 
 		ret = bio_iov_iter_get_pages(bio, &dio->iter);
 
+		current->faults_disabled_mapping = NULL;
 		if (kthread)
 			unuse_mm(dio->mm);
-		current->pagecache_lock = NULL;
 
 		if (unlikely(ret < 0))
 			goto err;
@@ -1978,21 +2023,6 @@ err_put_bio:
 	bio_put(bio);
 	inode_dio_end(&inode->v);
 	goto err;
-}
-
-ssize_t bch2_direct_IO(struct kiocb *req, struct iov_iter *iter)
-{
-	struct blk_plug plug;
-	ssize_t ret;
-
-	if (iov_iter_rw(iter) == WRITE)
-		return -EINVAL;
-
-	blk_start_plug(&plug);
-	ret = bch2_direct_IO_read(req, iter);
-	blk_finish_plug(&plug);
-
-	return ret;
 }
 
 ssize_t bch2_write_iter(struct kiocb *iocb, struct iov_iter *from)
