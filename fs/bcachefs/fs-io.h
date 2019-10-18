@@ -27,8 +27,7 @@ int bch2_write_begin(struct file *, struct address_space *, loff_t,
 int bch2_write_end(struct file *, struct address_space *, loff_t,
 		   unsigned, unsigned, struct page *, void *);
 
-ssize_t bch2_direct_IO(struct kiocb *, struct iov_iter *);
-
+ssize_t bch2_read_iter(struct kiocb *, struct iov_iter *);
 ssize_t bch2_write_iter(struct kiocb *, struct iov_iter *);
 
 int bch2_fsync(struct file *, loff_t, loff_t, int);
@@ -41,6 +40,7 @@ loff_t bch2_remap_file_range(struct file *, loff_t, struct file *,
 
 loff_t bch2_llseek(struct file *, loff_t, int);
 
+vm_fault_t bch2_page_fault(struct vm_fault *);
 vm_fault_t bch2_page_mkwrite(struct vm_fault *);
 void bch2_invalidatepage(struct page *, unsigned int, unsigned int);
 int bch2_releasepage(struct page *, gfp_t);
