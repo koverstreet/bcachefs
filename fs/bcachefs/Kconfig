@@ -2,7 +2,6 @@
 config BCACHEFS_FS
 	tristate "bcachefs filesystem support"
 	depends on BLOCK
-	depends on (64BIT || LBDAF)
 	select EXPORTFS
 	select CLOSURES
 	select LIBCRC32C
