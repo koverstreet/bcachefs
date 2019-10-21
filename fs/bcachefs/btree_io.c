@@ -1494,7 +1494,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 
 	wbio = container_of(bio_alloc_bioset(NULL,
 				buf_pages(data, sectors_to_write << 9),
-				REQ_OP_WRITE|REQ_META|REQ_FUA,
+				REQ_OP_WRITE|REQ_META,
 				GFP_NOIO,
 				&c->btree_bio),
 			    struct btree_write_bio, wbio.bio);
@@ -1504,6 +1504,9 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	wbio->wbio.used_mempool		= used_mempool;
 	wbio->wbio.bio.bi_end_io	= btree_node_write_endio;
 	wbio->wbio.bio.bi_private	= b;
+
+	if (b->c.level || !b->written)
+		wbio->wbio.bio.bi_opf |= REQ_FUA;
 
 	bch2_bio_map(&wbio->wbio.bio, data, sectors_to_write << 9);
 
