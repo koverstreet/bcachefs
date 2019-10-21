@@ -227,6 +227,7 @@ EXPORT_SYMBOL drivers/gpu/drm/drm 0x00000000	drm_crtc_from_index
 EXPORT_SYMBOL drivers/gpu/drm/drm 0x00000000	drm_crtc_handle_vblank
 EXPORT_SYMBOL drivers/gpu/drm/drm 0x00000000	drm_crtc_init_with_planes
 EXPORT_SYMBOL drivers/gpu/drm/drm 0x00000000	drm_crtc_send_vblank_event
+EXPORT_SYMBOL drivers/gpu/drm/drm 0x00000000	drm_crtc_set_max_vblank_count
 EXPORT_SYMBOL drivers/gpu/drm/drm 0x00000000	drm_crtc_vblank_count
 EXPORT_SYMBOL drivers/gpu/drm/drm 0x00000000	drm_crtc_vblank_count_and_time
 EXPORT_SYMBOL drivers/gpu/drm/drm 0x00000000	drm_crtc_vblank_get
@@ -5676,6 +5677,7 @@ EXPORT_SYMBOL net/wireless/cfg80211 0x00000000	cfg80211_get_p2p_attr
 EXPORT_SYMBOL net/wireless/cfg80211 0x00000000	cfg80211_get_station
 EXPORT_SYMBOL net/wireless/cfg80211 0x00000000	cfg80211_gtk_rekey_notify
 EXPORT_SYMBOL net/wireless/cfg80211 0x00000000	cfg80211_ibss_joined
+EXPORT_SYMBOL net/wireless/cfg80211 0x00000000	cfg80211_iftype_allowed
 EXPORT_SYMBOL net/wireless/cfg80211 0x00000000	cfg80211_inform_bss_data
 EXPORT_SYMBOL net/wireless/cfg80211 0x00000000	cfg80211_inform_bss_frame_data
 EXPORT_SYMBOL net/wireless/cfg80211 0x00000000	cfg80211_iter_combinations
@@ -11722,6 +11724,7 @@ EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_lapic_set_eoi
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_lapic_switch_to_hv_timer
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_lapic_switch_to_sw_timer
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_lmsw
+EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_load_guest_xcr0
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_max_guest_tsc_khz
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_max_tsc_scaling_ratio
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_mce_cap_supported
@@ -11745,6 +11748,7 @@ EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_mtrr_valid
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_no_apic_vcpu
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_page_track_register_notifier
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_page_track_unregister_notifier
+EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_put_guest_xcr0
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_put_kvm
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_queue_exception
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_queue_exception_e
