@@ -550,6 +550,16 @@ size_t bch2_rand_range(size_t);
 void memcpy_to_bio(struct bio *, struct bvec_iter, void *);
 void memcpy_from_bio(void *, struct bio *, struct bvec_iter);
 
+static inline void memcpy_u64s_small(void *dst, const void *src,
+				     unsigned u64s)
+{
+	u64 *d = dst;
+	const u64 *s = src;
+
+	while (u64s--)
+		*d++ = *s++;
+}
+
 static inline void __memcpy_u64s(void *dst, const void *src,
 				 unsigned u64s)
 {
@@ -589,6 +599,24 @@ static inline void memmove_u64s_down(void *dst, const void *src,
 	EBUG_ON(dst > src);
 
 	__memmove_u64s_down(dst, src, u64s);
+}
+
+static inline void __memmove_u64s_up_small(void *_dst, const void *_src,
+					   unsigned u64s)
+{
+	u64 *dst = (u64 *) _dst + u64s;
+	u64 *src = (u64 *) _src + u64s;
+
+	while (u64s--)
+		*--dst = *--src;
+}
+
+static inline void memmove_u64s_up_small(void *dst, const void *src,
+					 unsigned u64s)
+{
+	EBUG_ON(dst < src);
+
+	__memmove_u64s_up_small(dst, src, u64s);
 }
 
 static inline void __memmove_u64s_up(void *_dst, const void *_src,
