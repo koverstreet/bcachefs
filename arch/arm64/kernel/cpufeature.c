@@ -580,6 +580,11 @@ static void update_cpu_ftr_reg(struct arm64_ftr_reg *reg, u64 new)
 		reg->sys_val = arm64_ftr_set_value(ftrp, reg->sys_val, ftr_new);
 	}
 
+	/*
+	 * Run the errata work around checks on the boot CPU, once we have
+	 * initialised the cpu feature infrastructure.
+	 */
+	update_cpu_errata_workarounds();
 }
 
 static int check_update_ftr_reg(u32 sys_id, int cpu, u64 val, u64 boot)
