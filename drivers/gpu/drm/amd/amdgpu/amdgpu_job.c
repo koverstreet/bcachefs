@@ -183,7 +183,7 @@ static struct dma_fence *amdgpu_job_run(struct amd_sched_job *sched_job)
 	struct dma_fence *fence = NULL;
 	struct amdgpu_device *adev;
 	struct amdgpu_job *job;
-	int r;
+	int r = 0;
 
 	if (!sched_job) {
 		DRM_ERROR("job is null\n");
@@ -210,6 +210,8 @@ static struct dma_fence *amdgpu_job_run(struct amd_sched_job *sched_job)
 	job->fence = dma_fence_get(fence);
 
 	amdgpu_job_free_resources(job);
+
+	fence = r ? ERR_PTR(r) : fence;
 	return fence;
 }
 
