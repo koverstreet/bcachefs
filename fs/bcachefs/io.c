@@ -616,27 +616,36 @@ static void init_append_extent(struct bch_write_op *op,
 			       struct bch_extent_crc_unpacked crc)
 {
 	struct bch_fs *c = op->c;
-	struct bkey_i_extent *e = bkey_extent_init(op->insert_keys.top);
-	struct extent_ptr_decoded p = { .crc = crc };
+	struct bkey_i_extent *e;
 	struct open_bucket *ob;
 	unsigned i;
 
+	BUG_ON(crc.compressed_size > wp->sectors_free);
+	wp->sectors_free -= crc.compressed_size;
 	op->pos.offset += crc.uncompressed_size;
+
+	e = bkey_extent_init(op->insert_keys.top);
 	e->k.p		= op->pos;
 	e->k.size	= crc.uncompressed_size;
 	e->k.version	= version;
 
-	BUG_ON(crc.compressed_size > wp->sectors_free);
-	wp->sectors_free -= crc.compressed_size;
+	if (crc.csum_type ||
+	    crc.compression_type ||
+	    crc.nonce)
+		bch2_extent_crc_append(&e->k_i, crc);
 
 	open_bucket_for_each(c, &wp->ptrs, ob, i) {
 		struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
+		union bch_extent_entry *end =
+			bkey_val_end(bkey_i_to_s(&e->k_i));
 
-		p.ptr = ob->ptr;
-		p.ptr.cached = !ca->mi.durability ||
+		end->ptr = ob->ptr;
+		end->ptr.type = 1 << BCH_EXTENT_ENTRY_ptr;
+		end->ptr.cached = !ca->mi.durability ||
 			(op->flags & BCH_WRITE_CACHED) != 0;
-		p.ptr.offset += ca->mi.bucket_size - ob->sectors_free;
-		bch2_extent_ptr_decoded_append(&e->k_i, &p);
+		end->ptr.offset += ca->mi.bucket_size - ob->sectors_free;
+
+		e->k.u64s++;
 
 		BUG_ON(crc.compressed_size > ob->sectors_free);
 		ob->sectors_free -= crc.compressed_size;
