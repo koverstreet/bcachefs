@@ -6,26 +6,16 @@
 #include "btree_locking.h"
 #include "btree_update.h"
 #include "error.h"
+#include "hashtable.h"
 #include "journal.h"
 #include "journal_reclaim.h"
 
 #include <trace/events/bcachefs.h>
 
-static int bch2_btree_key_cache_cmp_fn(struct rhashtable_compare_arg *arg,
-				       const void *obj)
-{
-	const struct bkey_cached *ck = obj;
-	const struct bkey_cached_key *key = arg->key;
-
-	return cmp_int(ck->key.btree_id, key->btree_id) ?:
-		bkey_cmp(ck->key.pos, key->pos);
-}
-
-static const struct rhashtable_params bch2_btree_key_cache_params = {
+static const struct htable_params bch2_btree_key_cache_params = {
 	.head_offset	= offsetof(struct bkey_cached, hash),
 	.key_offset	= offsetof(struct bkey_cached, key),
 	.key_len	= sizeof(struct bkey_cached_key),
-	.obj_cmpfn	= bch2_btree_key_cache_cmp_fn,
 };
 
 __flatten
@@ -37,8 +27,8 @@ bch2_btree_key_cache_find(struct bch_fs *c, enum btree_id btree_id, struct bpos 
 		.pos		= pos,
 	};
 
-	return rhashtable_lookup_fast(&c->btree_key_cache.table, &key,
-				      bch2_btree_key_cache_params);
+	return htable_lookup(&c->btree_key_cache.table, &key,
+			     bch2_btree_key_cache_params);
 }
 
 static bool bkey_cached_lock_for_evict(struct bkey_cached *ck)
@@ -63,8 +53,7 @@ static bool bkey_cached_lock_for_evict(struct bkey_cached *ck)
 static void bkey_cached_evict(struct btree_key_cache *c,
 			      struct bkey_cached *ck)
 {
-	BUG_ON(rhashtable_remove_fast(&c->table, &ck->hash,
-				      bch2_btree_key_cache_params));
+	htable_remove(&c->table, ck, bch2_btree_key_cache_params);
 	memset(&ck->key, ~0, sizeof(ck->key));
 }
 
@@ -127,9 +116,7 @@ btree_key_cache_create(struct btree_key_cache *c,
 
 	BUG_ON(ck->flags);
 
-	if (rhashtable_lookup_insert_fast(&c->table,
-					  &ck->hash,
-					  bch2_btree_key_cache_params)) {
+	if (htable_insert(&c->table, ck, bch2_btree_key_cache_params)) {
 		/* We raced with another fill: */
 		bkey_cached_free(c, ck);
 		return NULL;
@@ -480,7 +467,7 @@ void bch2_fs_btree_key_cache_exit(struct btree_key_cache *c)
 		kfree(ck);
 	mutex_unlock(&c->lock);
 
-	rhashtable_destroy(&c->table);
+	bch2_htable_exit(&c->table);
 }
 
 void bch2_fs_btree_key_cache_init_early(struct btree_key_cache *c)
@@ -492,7 +479,7 @@ void bch2_fs_btree_key_cache_init_early(struct btree_key_cache *c)
 
 int bch2_fs_btree_key_cache_init(struct btree_key_cache *c)
 {
-	return rhashtable_init(&c->table, &bch2_btree_key_cache_params);
+	return bch2_htable_init(&c->table);
 }
 
 void bch2_btree_key_cache_to_text(struct printbuf *out, struct btree_key_cache *c)
