@@ -13,6 +13,7 @@ struct htable {
 	struct mutex		lock;
 	unsigned		hash_seed;
 	unsigned		nelems;
+	unsigned		max_chain;
 	unsigned long		table;
 };
 
@@ -124,22 +125,32 @@ static inline int htable_insert(struct htable *ht, void *obj,
 				const struct htable_params p)
 {
 	struct htable_ptr t;
-	struct hlist_head *hash_head;
-	unsigned hash;
+	struct hlist_head *head;
+	struct hlist_node *n;
+	unsigned hash, chainlen = 1;
 
 	hash = htable_obj_get_hash(obj, ht->hash_seed, p);
 
 	mutex_lock(&ht->lock);
 	t		= htable_read_ptr(ht);
-	hash_head	= htable_bucket(t, hash);
+	head	= htable_bucket(t, hash);
 
-	if (__htable_lookup(hash_head, obj + p.key_offset, p)) {
-		mutex_unlock(&ht->lock);
-		return -EEXIST;
+	__hlist_for_each_rcu(n, head) {
+		if (!htable_cmp(obj + p.key_offset, htable_obj(n, p), p)) {
+			mutex_unlock(&ht->lock);
+			return -EEXIST;
+		}
+		chainlen++;
 	}
 
-	hlist_add_head_rcu(obj + p.head_offset, hash_head);
+	hlist_add_head_rcu(obj + p.head_offset, head);
 	ht->nelems++;
+
+	if (chainlen > ht->max_chain) {
+		ht->max_chain = chainlen;
+		printk(KERN_INFO "%pf ht with %u/%u has chain %u",
+		       (void *) _THIS_IP_, ht->nelems, t.size, ht->max_chain);
+	}
 
 	if (ht->nelems > t.size >> 2)
 		bch2_htable_expand(ht, p);

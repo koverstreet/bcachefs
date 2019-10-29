@@ -53,6 +53,7 @@ void bch2_htable_expand(struct htable *ht, const struct htable_params p)
 	}
 
 	smp_store_release(&ht->table, (unsigned long) new.table | (shift + 1));
+	ht->max_chain = 1;
 
 	call_rcu(&free_rcu->rcu, htable_free_rcu);
 }
@@ -71,6 +72,7 @@ int bch2_htable_init(struct htable *ht)
 
 	ht->hash_seed = get_random_u32();
 	ht->nelems = 0;
+	ht->max_chain = 1;
 	ht->table = __get_free_page(GFP_KERNEL|__GFP_ZERO);
 	if (!ht->table)
 		return -ENOMEM;
