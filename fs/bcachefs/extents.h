@@ -508,6 +508,8 @@ static inline bool bkey_extent_is_allocation(const struct bkey *k)
 	__bkey_for_each_ptr_decode((_e).k, (_e).v->start,		\
 				   extent_entry_last(_e), _ptr, _entry)
 
+void bch2_extent_crc_append(struct bkey_i *,
+			    struct bch_extent_crc_unpacked);
 void bch2_extent_ptr_decoded_append(struct bkey_i *,
 				    struct extent_ptr_decoded *);
 
