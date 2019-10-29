@@ -1421,8 +1421,8 @@ static void bch2_extent_crc_pack(union bch_extent_crc *dst,
 #undef set_common_fields
 }
 
-static void bch2_extent_crc_append(struct bkey_i *k,
-				   struct bch_extent_crc_unpacked new)
+void bch2_extent_crc_append(struct bkey_i *k,
+			    struct bch_extent_crc_unpacked new)
 {
 	struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(k));
 	union bch_extent_crc *crc = (void *) ptrs.end;
