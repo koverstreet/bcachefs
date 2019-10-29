@@ -147,12 +147,12 @@ static bool uac_clock_source_is_valid(struct snd_usb_audio *chip, int source_id)
 		snd_usb_find_clock_source(chip->ctrl_intf, source_id);
 
 	if (!cs_desc)
-		return 0;
+		return false;
 
 	/* If a clock source can't tell us whether it's valid, we assume it is */
 	if (!uac2_control_is_readable(cs_desc->bmControls,
 				      UAC2_CS_CONTROL_CLOCK_VALID - 1))
-		return 1;
+		return true;
 
 	err = snd_usb_ctl_msg(dev, usb_rcvctrlpipe(dev, 0), UAC2_CS_CUR,
 			      USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_IN,
@@ -164,10 +164,10 @@ static bool uac_clock_source_is_valid(struct snd_usb_audio *chip, int source_id)
 		dev_warn(&dev->dev,
 			 "%s(): cannot get clock validity for id %d\n",
 			   __func__, source_id);
-		return 0;
+		return false;
 	}
 
-	return !!data;
+	return data ? true :  false;
 }
 
 static int __uac_clock_find_source(struct snd_usb_audio *chip,
