@@ -68,14 +68,17 @@ static int mchp23k256_write(struct mtd_info *mtd, loff_t to, size_t len,
 	struct spi_transfer transfer[2] = {};
 	struct spi_message message;
 	unsigned char command[MAX_CMD_SIZE];
+	int cmd_len;
 
 	spi_message_init(&message);
+
+	cmd_len = mchp23k256_cmdsz(flash);
 
 	command[0] = MCHP23K256_CMD_WRITE;
 	mchp23k256_addr2cmd(flash, to, command);
 
 	transfer[0].tx_buf = command;
-	transfer[0].len = mchp23k256_cmdsz(flash);
+	transfer[0].len = cmd_len;
 	spi_message_add_tail(&transfer[0], &message);
 
 	transfer[1].tx_buf = buf;
@@ -86,8 +89,8 @@ static int mchp23k256_write(struct mtd_info *mtd, loff_t to, size_t len,
 
 	spi_sync(flash->spi, &message);
 
-	if (retlen && message.actual_length > sizeof(command))
-		*retlen += message.actual_length - sizeof(command);
+	if (retlen && message.actual_length > cmd_len)
+		*retlen += message.actual_length - cmd_len;
 
 	mutex_unlock(&flash->lock);
 	return 0;
@@ -100,15 +103,18 @@ static int mchp23k256_read(struct mtd_info *mtd, loff_t from, size_t len,
 	struct spi_transfer transfer[2] = {};
 	struct spi_message message;
 	unsigned char command[MAX_CMD_SIZE];
+	int cmd_len;
 
 	spi_message_init(&message);
+
+	cmd_len = mchp23k256_cmdsz(flash);
 
 	memset(&transfer, 0, sizeof(transfer));
 	command[0] = MCHP23K256_CMD_READ;
 	mchp23k256_addr2cmd(flash, from, command);
 
 	transfer[0].tx_buf = command;
-	transfer[0].len = mchp23k256_cmdsz(flash);
+	transfer[0].len = cmd_len;
 	spi_message_add_tail(&transfer[0], &message);
 
 	transfer[1].rx_buf = buf;
@@ -119,8 +125,8 @@ static int mchp23k256_read(struct mtd_info *mtd, loff_t from, size_t len,
 
 	spi_sync(flash->spi, &message);
 
-	if (retlen && message.actual_length > sizeof(command))
-		*retlen += message.actual_length - sizeof(command);
+	if (retlen && message.actual_length > cmd_len)
+		*retlen += message.actual_length - cmd_len;
 
 	mutex_unlock(&flash->lock);
 	return 0;
