@@ -2468,6 +2468,12 @@
 					       l1tf=off [X86]
 					       mds=off [X86]
 					       tsx_async_abort=off [X86]
+					       kvm.nx_huge_pages=off [X86].
+
+				Exceptions:
+					       This does not have any effect on
+					       kvm.nx_huge_pages when
+					       kvm.nx_huge_pages=force.
 
 			auto (default)
 				Mitigate all CPU vulnerabilities, but leave SMT
