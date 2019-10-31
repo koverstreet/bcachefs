@@ -1892,6 +1892,17 @@
 			KVM MMU at runtime.
 			Default is 0 (off)
 
+	kvm.nx_huge_pages=
+			[KVM] Controls the sw workaround for bug
+			X86_BUG_ITLB_MULTIHIT.
+			force	: Always deploy workaround.
+			off	: Default. Never deploy workaround.
+			auto	: Deploy workaround based on presence of
+				  X86_BUG_ITLB_MULTIHIT.
+
+			If the sw workaround is enabled for the host, guests
+			need not enable it for nested guests.
+
 	kvm-amd.nested=	[KVM,AMD] Allow nested virtualization in KVM/SVM.
 			Default is 1 (enabled)
 
