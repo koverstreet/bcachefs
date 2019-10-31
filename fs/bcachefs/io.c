@@ -104,6 +104,7 @@ static inline void bch2_congested_acct(struct bch_dev *ca, u64 io_latency,
 
 void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 {
+#if 0
 	atomic64_t *latency = &ca->cur_latency[rw];
 	u64 now = local_clock();
 	u64 io_latency = time_after64(now, submit_time)
@@ -129,6 +130,7 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 	bch2_congested_acct(ca, io_latency, now, rw);
 
 	__bch2_time_stats_update(&ca->io_latency[rw], submit_time, now);
+#endif
 }
 
 /* Allocate, free from mempool: */

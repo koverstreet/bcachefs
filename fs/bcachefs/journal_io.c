@@ -1149,7 +1149,7 @@ retry_alloc:
 		bio->bi_end_io		= journal_write_endio;
 		bio->bi_private		= ca;
 		bio_set_op_attrs(bio, REQ_OP_WRITE,
-				 REQ_SYNC|REQ_META|REQ_PREFLUSH|REQ_FUA);
+				 REQ_SYNC|REQ_META);
 		bch2_bio_map(bio, jset, sectors << 9);
 
 		trace_journal_write(bio);
