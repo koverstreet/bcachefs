@@ -25,56 +25,78 @@ built_using_record()
 	sed -i -e "s/^\(linux:BuiltUsing=.*\)/\1$built_using, /" "$subst"
 }
 
+# ABI: returns present in $? and located path in lpackage_path when found.
+package_present()
+{
+	for lpackage_path in "$1"_*.deb
+	do
+		break
+	done
+	[ -f "$lpackage_path" ]
+}
+
 # Download and extract the DKMS package -- note there may be more
 # than one package to install.
 for package_path in "$@"
 do
-	echo "II: dkms-build downloading $package ($(basename $package_path))"
+	package_file=$(basename "$package_path")
+	echo "II: dkms-build downloading $package ($package_file)"
 	rpackage=$( echo "$package_path" | sed -e 's@.*/@@' -e 's@_.*@@' )
 	lpackage=$( echo "$rpackage" | sed -e 's@=.*@@' )
 
-	case "$package_path" in
-	pool/*)
-		for pool in $( apt-cache policy | grep '^ [^ ]' | sort -r -n -k 1,1 -s | \
-		    awk '
-			($2 ~ /^http/) {
-			    if (!($2 in E)) {
-				E[$2]=1;
-				print $2;
-			    }
-			}
-		    ')
-		do
-			for lpackage_path in "$lpackage"_*.deb
-			do
-				break
-			done
-			if [ -f "$lpackage_path" ]; then
+	while true
+	do
+		if package_present "$lpackage"; then
+			break
+		fi
+		case "$package_path" in
+		pool/*)
+			# Attempt download from the launchpad librarian first.
+			wget "https://launchpad.net/ubuntu/+archive/primary/+files/$package_file" || true
+			if package_present "$lpackage"; then
 				break
 			fi
-			url="$pool/$package_path"
-			wget "$url" && break || true
-			# No components in PPAs.
-			url=$(echo "$url" | sed -e 's@/pool/[^/]*/@/pool/main/@')
-			wget "$url" && break || true
-		done
-		;;
-	http*:*)
-		wget "$package_path"
-		;;
-	*/*)
-		cp -p "$package_path" .
-		;;
-	*)
-		apt-get download "$rpackage"
-		;;
-	esac
-	dpkg -x "$lpackage"_*.deb "$package"
 
-	for lpackage_path in "$lpackage"_*.deb
-	do
+			# Download from the available pools.
+			for pool in $( apt-cache policy | grep '^ [^ ]' | sort -r -n -k 1,1 -s | \
+			    awk '
+				($2 ~ /^http/) {
+				    if (!($2 in E)) {
+					E[$2]=1;
+					print $2;
+				    }
+				}
+			    ')
+			do
+				if package_present "$lpackage"; then
+					break
+				fi
+				url="$pool/$package_path"
+				wget "$url" && break || true
+				# No components in PPAs.
+				url=$(echo "$url" | sed -e 's@/pool/[^/]*/@/pool/main/@')
+				wget "$url" && break || true
+			done
+			;;
+		http*:*)
+			wget "$package_path"
+			;;
+		*/*)
+			cp -p "$package_path" .
+			;;
+		*)
+			apt-get download "$rpackage"
+			;;
+		esac
 		break
 	done
+	if ! package_present "$lpackage"; then
+		echo "EE: $lpackage not found"
+		exit 1
+	fi
+
+	dpkg -x "$lpackage"_*.deb "$package"
+
 	lversion=$( echo "$lpackage_path" | sed -e 's@.*/@@' -e 's@_[^_]*$@@' -e 's@.*_@@')
 	built_using_record "$srcdir/debian/$pkgname.substvars" "$built_using$lpackage (= $lversion)"
 done
