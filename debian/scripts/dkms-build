@@ -52,7 +52,7 @@ do
 		case "$package_path" in
 		pool/*)
 			# Attempt download from the launchpad librarian first.
-			wget "https://launchpad.net/ubuntu/+archive/primary/+files/$package_file" || true
+			wget -nv "https://launchpad.net/ubuntu/+archive/primary/+files/$package_file" || true
 			if package_present "$lpackage"; then
 				break
 			fi
@@ -72,14 +72,14 @@ do
 					break
 				fi
 				url="$pool/$package_path"
-				wget "$url" && break || true
+				wget -nv "$url" && break || true
 				# No components in PPAs.
 				url=$(echo "$url" | sed -e 's@/pool/[^/]*/@/pool/main/@')
-				wget "$url" && break || true
+				wget -nv "$url" && break || true
 			done
 			;;
 		http*:*)
-			wget "$package_path"
+			wget -nv "$package_path"
 			;;
 		*/*)
 			cp -p "$package_path" .
