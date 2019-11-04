@@ -938,9 +938,6 @@ struct task_struct {
 	unsigned int			in_ubsan;
 #endif
 
-	/* currently held lock, for avoiding recursing in fault path: */
-	struct pagecache_lock *pagecache_lock;
-
 	/* Journalling filesystem info: */
 	void				*journal_info;
 

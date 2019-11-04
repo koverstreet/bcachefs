@@ -115,73 +115,6 @@
  *   ->tasklist_lock            (memory_failure, collect_procs_ao)
  */
 
-static void __pagecache_lock_put(struct pagecache_lock *lock, long i)
-{
-	BUG_ON(atomic_long_read(&lock->v) == 0);
-
-	if (atomic_long_sub_return_release(i, &lock->v) == 0)
-		wake_up_all(&lock->wait);
-}
-
-static bool __pagecache_lock_tryget(struct pagecache_lock *lock, long i)
-{
-	long v = atomic_long_read(&lock->v), old;
-
-	do {
-		old = v;
-
-		if (i > 0 ? v < 0 : v > 0)
-			return false;
-	} while ((v = atomic_long_cmpxchg_acquire(&lock->v,
-					old, old + i)) != old);
-	return true;
-}
-
-static void __pagecache_lock_get(struct pagecache_lock *lock, long i)
-{
-	wait_event(lock->wait, __pagecache_lock_tryget(lock, i));
-}
-
-void pagecache_add_put(struct pagecache_lock *lock)
-{
-	__pagecache_lock_put(lock, 1);
-}
-EXPORT_SYMBOL(pagecache_add_put);
-
-void pagecache_add_get(struct pagecache_lock *lock)
-{
-	__pagecache_lock_get(lock, 1);
-}
-EXPORT_SYMBOL(pagecache_add_get);
-
-void __pagecache_block_put(struct pagecache_lock *lock)
-{
-	__pagecache_lock_put(lock, -1);
-}
-EXPORT_SYMBOL(__pagecache_block_put);
-
-void __pagecache_block_get(struct pagecache_lock *lock)
-{
-	__pagecache_lock_get(lock, -1);
-}
-EXPORT_SYMBOL(__pagecache_block_get);
-
-void pagecache_block_put(struct pagecache_lock *lock)
-{
-	BUG_ON(current->pagecache_lock != lock);
-	current->pagecache_lock = NULL;
-	__pagecache_lock_put(lock, -1);
-}
-EXPORT_SYMBOL(pagecache_block_put);
-
-void pagecache_block_get(struct pagecache_lock *lock)
-{
-	__pagecache_lock_get(lock, -1);
-	BUG_ON(current->pagecache_lock);
-	current->pagecache_lock = lock;
-}
-EXPORT_SYMBOL(pagecache_block_get);
-
 static int page_cache_tree_insert_vec(struct page *pages[],
 				      unsigned nr_pages,
 				      struct address_space *mapping,
@@ -977,18 +910,12 @@ static int add_to_page_cache_vec(struct page **pages, unsigned nr_pages,
 		page->index = index + i;
 	}
 
-	if (current->pagecache_lock != &mapping->add_lock)
-		pagecache_add_get(&mapping->add_lock);
-
 	error = page_cache_tree_insert_vec(pages, nr_pages, mapping,
 					   index, gfp_mask, shadow);
 	if (error > 0) {
 		nr_added = error;
 		error = 0;
 	}
-
-	if (current->pagecache_lock != &mapping->add_lock)
-		pagecache_add_put(&mapping->add_lock);
 
 	for (i = 0; i < nr_added; i++) {
 		struct page *page = pages[i];
