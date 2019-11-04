@@ -306,19 +306,16 @@ static int ena_get_coalesce(struct net_device *net_dev,
 	struct ena_adapter *adapter = netdev_priv(net_dev);
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 
-	if (!ena_com_interrupt_moderation_supported(ena_dev)) {
-		/* the devie doesn't support interrupt moderation */
+	if (!ena_com_interrupt_moderation_supported(ena_dev))
 		return -EOPNOTSUPP;
-	}
 
 	coalesce->tx_coalesce_usecs =
 		ena_com_get_nonadaptive_moderation_interval_tx(ena_dev) *
 			ena_dev->intr_delay_resolution;
 
-	if (!ena_com_get_adaptive_moderation_enabled(ena_dev))
-		coalesce->rx_coalesce_usecs =
-			ena_com_get_nonadaptive_moderation_interval_rx(ena_dev)
-			* ena_dev->intr_delay_resolution;
+	coalesce->rx_coalesce_usecs =
+		ena_com_get_nonadaptive_moderation_interval_rx(ena_dev)
+		* ena_dev->intr_delay_resolution;
 
 	coalesce->use_adaptive_rx_coalesce =
 		ena_com_get_adaptive_moderation_enabled(ena_dev);
@@ -326,7 +323,7 @@ static int ena_get_coalesce(struct net_device *net_dev,
 	return 0;
 }
 
-static void ena_update_tx_rings_intr_moderation(struct ena_adapter *adapter)
+static void ena_update_tx_rings_nonadaptive_intr_moderation(struct ena_adapter *adapter)
 {
 	unsigned int val;
 	int i;
@@ -337,7 +334,7 @@ static void ena_update_tx_rings_intr_moderation(struct ena_adapter *adapter)
 		adapter->tx_ring[i].smoothed_interval = val;
 }
 
-static void ena_update_rx_rings_intr_moderation(struct ena_adapter *adapter)
+static void ena_update_rx_rings_nonadaptive_intr_moderation(struct ena_adapter *adapter)
 {
 	unsigned int val;
 	int i;
@@ -355,35 +352,30 @@ static int ena_set_coalesce(struct net_device *net_dev,
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 	int rc;
 
-	if (!ena_com_interrupt_moderation_supported(ena_dev)) {
-		/* the devie doesn't support interrupt moderation */
+	if (!ena_com_interrupt_moderation_supported(ena_dev))
 		return -EOPNOTSUPP;
-	}
 
 	rc = ena_com_update_nonadaptive_moderation_interval_tx(ena_dev,
 							       coalesce->tx_coalesce_usecs);
 	if (rc)
 		return rc;
 
-	ena_update_tx_rings_intr_moderation(adapter);
-
-	if (coalesce->use_adaptive_rx_coalesce) {
-		if (!ena_com_get_adaptive_moderation_enabled(ena_dev))
-			ena_com_enable_adaptive_moderation(ena_dev);
-		return 0;
-	}
+	ena_update_tx_rings_nonadaptive_intr_moderation(adapter);
 
 	rc = ena_com_update_nonadaptive_moderation_interval_rx(ena_dev,
 							       coalesce->rx_coalesce_usecs);
 	if (rc)
 		return rc;
 
-	ena_update_rx_rings_intr_moderation(adapter);
+	ena_update_rx_rings_nonadaptive_intr_moderation(adapter);
 
-	if (!coalesce->use_adaptive_rx_coalesce) {
-		if (ena_com_get_adaptive_moderation_enabled(ena_dev))
-			ena_com_disable_adaptive_moderation(ena_dev);
-	}
+	if ((coalesce->use_adaptive_rx_coalesce) &&
+	    (!ena_com_get_adaptive_moderation_enabled(ena_dev)))
+		ena_com_enable_adaptive_moderation(ena_dev);
+
+	if ((!coalesce->use_adaptive_rx_coalesce) &&
+	    (ena_com_get_adaptive_moderation_enabled(ena_dev)))
+		ena_com_disable_adaptive_moderation(ena_dev);
 
 	return 0;
 }
