@@ -49,6 +49,53 @@ static void journal_seq_copy(struct bch_inode_info *dst,
 	} while ((v = cmpxchg(&dst->ei_journal_seq, old, journal_seq)) != old);
 }
 
+static void __pagecache_lock_put(struct pagecache_lock *lock, long i)
+{
+	BUG_ON(atomic_long_read(&lock->v) == 0);
+
+	if (atomic_long_sub_return_release(i, &lock->v) == 0)
+		wake_up_all(&lock->wait);
+}
+
+static bool __pagecache_lock_tryget(struct pagecache_lock *lock, long i)
+{
+	long v = atomic_long_read(&lock->v), old;
+
+	do {
+		old = v;
+
+		if (i > 0 ? v < 0 : v > 0)
+			return false;
+	} while ((v = atomic_long_cmpxchg_acquire(&lock->v,
+					old, old + i)) != old);
+	return true;
+}
+
+static void __pagecache_lock_get(struct pagecache_lock *lock, long i)
+{
+	wait_event(lock->wait, __pagecache_lock_tryget(lock, i));
+}
+
+void bch2_pagecache_add_put(struct pagecache_lock *lock)
+{
+	__pagecache_lock_put(lock, 1);
+}
+
+void bch2_pagecache_add_get(struct pagecache_lock *lock)
+{
+	__pagecache_lock_get(lock, 1);
+}
+
+void bch2_pagecache_block_put(struct pagecache_lock *lock)
+{
+	__pagecache_lock_put(lock, -1);
+}
+
+void bch2_pagecache_block_get(struct pagecache_lock *lock)
+{
+	__pagecache_lock_get(lock, -1);
+}
+
 void bch2_inode_update_after_write(struct bch_fs *c,
 				   struct bch_inode_info *inode,
 				   struct bch_inode_unpacked *bi,
@@ -1090,6 +1137,7 @@ static struct inode *bch2_alloc_inode(struct super_block *sb)
 
 	inode_init_once(&inode->v);
 	mutex_init(&inode->ei_update_lock);
+	pagecache_lock_init(&inode->ei_pagecache_lock);
 	mutex_init(&inode->ei_quota_lock);
 	inode->ei_journal_seq = 0;
 
