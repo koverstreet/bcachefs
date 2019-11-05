@@ -553,13 +553,13 @@ void __handle_sysrq(int key, unsigned int from)
         if (op_p) {
 		/* Ban synthetic events from some sysrq functionality */
 		if ((from == SYSRQ_FROM_PROC || from == SYSRQ_FROM_SYNTHETIC) &&
-		    op_p->enable_mask & SYSRQ_DISABLE_USERSPACE)
+		    op_p->enable_mask & SYSRQ_DISABLE_USERSPACE) {
 			printk("This sysrq operation is disabled from userspace.\n");
-		/*
-		 * Should we check for enabled operations (/proc/sysrq-trigger
-		 * should not) and is the invoked operation enabled?
-		 */
-		if (from == SYSRQ_FROM_KERNEL || sysrq_on_mask(op_p->enable_mask)) {
+		} else if (from == SYSRQ_FROM_KERNEL || sysrq_on_mask(op_p->enable_mask)) {
+			/*
+			 * Should we check for enabled operations (/proc/sysrq-trigger
+			 * should not) and is the invoked operation enabled?
+			 */
 			pr_cont("%s\n", op_p->action_msg);
 			console_loglevel = orig_log_level;
 			op_p->handler(key);
