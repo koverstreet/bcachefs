@@ -272,6 +272,7 @@ static int brcmstb_waketmr_probe(struct platform_device *pdev)
 
 err_notifier:
 	unregister_reboot_notifier(&timer->reboot_notifier);
+	clk_disable_unprepare(timer->clk);
 
 err_clk:
 	if (timer->clk)
