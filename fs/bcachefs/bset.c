@@ -1171,7 +1171,7 @@ struct bkey_range {
 	struct bkey_packed *l, *r;
 };
 
-__flatten
+noinline __flatten
 static struct bkey_range bset_search_write_set(const struct btree *b,
 				struct bset_tree *t,
 				struct bpos *search,
@@ -1228,7 +1228,7 @@ static inline bool bkey_mantissa_bits_dropped(const struct btree *b,
 #endif
 }
 
-__flatten
+noinline __flatten
 static struct bkey_range bset_search_tree(const struct btree *b,
 				const struct bset_tree *t,
 				const struct bpos *search,
