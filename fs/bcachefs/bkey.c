@@ -19,19 +19,19 @@ const struct bkey_format bch2_bkey_format_current = BKEY_FORMAT_CURRENT;
 struct bkey __bch2_bkey_unpack_key(const struct bkey_format *,
 			      const struct bkey_packed *);
 
-void bch2_to_binary(char *out, const u64 *p, unsigned nr_bits)
+void bch2_to_binary(struct printbuf *out, const u64 *p, unsigned nr_bits)
 {
 	unsigned bit = high_bit_offset, done = 0;
 
 	while (1) {
 		while (bit < 64) {
 			if (done && !(done % 8))
-				*out++ = ' ';
-			*out++ = *p & (1ULL << (63 - bit)) ? '1' : '0';
+				*out->pos++ = ' ';
+			*out->pos++ = *p & (1ULL << (63 - bit)) ? '1' : '0';
 			bit++;
 			done++;
 			if (done == nr_bits) {
-				*out++ = '\0';
+				*out->pos++ = '\0';
 				return;
 			}
 		}
@@ -39,6 +39,13 @@ void bch2_to_binary(char *out, const u64 *p, unsigned nr_bits)
 		p = next_word(p);
 		bit = 0;
 	}
+}
+
+void bch2_packed_key_bits_to_text(struct printbuf *out,
+				  const struct btree *b,
+				  const struct bkey_packed *p)
+{
+	bch2_to_binary(out, high_word(&b->format, p), b->nr_key_bits);
 }
 
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -62,8 +69,8 @@ static void bch2_bkey_pack_verify(const struct bkey_packed *packed,
 
 		bch2_bkey_to_text(&PBUF(buf1), unpacked);
 		bch2_bkey_to_text(&PBUF(buf2), &tmp);
-		bch2_to_binary(buf3, (void *) unpacked, 80);
-		bch2_to_binary(buf4, high_word(format, packed), 80);
+		bch2_to_binary(&PBUF(buf3), (void *) unpacked, 80);
+		bch2_to_binary(&PBUF(buf4), high_word(format, packed), 80);
 
 		panic("keys differ: format u64s %u fields %u %u %u %u %u\n%s\n%s\n%s\n%s\n",
 		      format->key_u64s,

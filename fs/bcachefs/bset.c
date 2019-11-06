@@ -604,6 +604,17 @@ static inline unsigned bkey_mantissa(const struct bkey_packed *k,
 	return (u16) v;
 }
 
+
+static void get_max_key(const struct btree *b, struct bset_tree *t,
+			unsigned j, struct bkey_packed *k)
+{
+	if (is_power_of_2(j + 1)) {
+		bkey_pack_pos(k, t->max_key, b);
+	} else {
+		*k = *tree_to_bkey(b, t, j >> (ffz(j) + 1));
+	}
+}
+
 __always_inline
 static inline void __make_bfloat(struct btree *b, struct bset_tree *t,
 				 unsigned j,
@@ -1228,6 +1239,88 @@ static inline bool bkey_mantissa_bits_dropped(const struct btree *b,
 #endif
 }
 
+static void bset_search_tree2(const struct btree *b,
+			      struct bset_tree *t,
+			      struct bpos *search,
+			      const struct bkey_packed *packed_search)
+{
+	struct ro_aux_tree *base = ro_aux_tree_base(b, t);
+	struct bkey_float *f;
+	unsigned n = 1, l, r, cmp;
+
+	do {
+		f = bkey_float_get(base, n);
+
+		if (packed_search &&
+		    likely(f->exponent < BFLOAT_FAILED)) {
+			struct bkey uk = bkey_unpack_key(b, tree_to_bkey(b, t, n));
+			struct bkey_packed min_key, max_key;
+			int bits_start = b->format.key_u64s * 64 - b->nr_key_bits;
+			char buf[120];
+
+			get_min_key(b, t, n, &min_key);
+			get_max_key(b, t, n, &max_key);
+
+			bch2_packed_key_bits_to_text(&PBUF(buf), b, &min_key);
+			printk(KERN_ERR "min    %s", buf);
+
+			bch2_packed_key_bits_to_text(&PBUF(buf), b, &max_key);
+			printk(KERN_ERR "max    %s", buf);
+
+			bch2_packed_key_bits_to_text(&PBUF(buf), b, tree_to_bkey(b, t, n));
+			printk(KERN_ERR "m      %s", buf);
+
+			bch2_packed_key_bits_to_text(&PBUF(buf), b, packed_search);
+			printk(KERN_ERR "search %s", buf);
+
+			{
+				char *p = buf;
+				int i;
+
+				for (i = b->nr_key_bits - 1; i >= 0; --i) {
+					if (i >= f->exponent - bits_start &&
+					    i < f->exponent - bits_start + (n < BFLOAT_32BIT_NR ? 32 : 16))
+						*p++ = '1';
+					else
+						*p++ = '0';
+
+					if (!i)
+						break;
+
+					if (!(i % 8))
+						*p++ = ' ';
+				}
+
+				*p++ = '\0';
+			}
+			printk(KERN_ERR "bits   %s", buf);
+
+			if (likely((l = bfloat_mantissa(f, n)) !=
+				   (r = bkey_mantissa(packed_search, f, n))))
+				cmp = (l < r);
+			else
+				cmp = bset_search_tree_slowpath(b, t,
+								search, packed_search, n);
+
+			printk(KERN_ERR "cmp %u should be %u comparing against %llu:%llu\n",
+				cmp,
+				bset_search_tree_slowpath(b, t,
+						search, packed_search, n),
+				uk.p.inode, uk.p.offset);
+			printk(KERN_ERR "%u %s %u exponent %i",
+			       bfloat_mantissa(f, n),
+			       cmp ? "<" : ">=",
+			       bkey_mantissa(packed_search, f, n),
+			       (int) f->exponent - bits_start);
+		} else {
+			cmp = bset_search_tree_slowpath(b, t,
+						search, packed_search, n);
+		}
+
+		n = n * 2 + cmp;
+	} while (n < t->size);
+}
+
 noinline __flatten
 static struct bkey_range bset_search_tree(const struct btree *b,
 				const struct bset_tree *t,
@@ -1304,7 +1397,7 @@ struct bkey_packed *__bch2_bset_search(struct btree *b,
 				struct bpos *search,
 				const struct bkey_packed *lossy_packed_search)
 {
-	struct bkey_range r;
+	struct bkey_range r, orig;
 
 	/*
 	 * First, we search for a cacheline, then lastly we do a linear search
@@ -1346,8 +1439,38 @@ struct bkey_packed *__bch2_bset_search(struct btree *b,
 		unreachable();
 	}
 
-	WARN_ON(r.r != btree_bkey_last(b, t) &&
-		bkey_cmp_left_packed(b, r.r, search) < 0);
+	if (r.r != btree_bkey_last(b, t) &&
+	    bkey_iter_pos_cmp(b, search, r.r) > 0) {
+		struct bkey ul = bkey_unpack_key(b, orig.l);
+		struct bkey ur = bkey_unpack_key(b, orig.r);
+
+		printk(KERN_ERR
+		       "l > r by %u u64s\n"
+		       "bset start %llu:%llu\n"
+		       "bset end   %llu:%llu\n"
+		       "l          %llu:%llu\n"
+		       "r          %llu:%llu\n"
+		       "search     %llu:%llu\n"
+		       "range was %u-%u of %u tree type %u\n"
+		       "actual offset %u\n"
+		       "key bits %u\n",
+		       (unsigned) ((u64 *) r.l - (u64 *) r.r),
+		       b->data->min_key.inode,
+		       b->data->min_key.offset,
+		       t->max_key.inode,
+		       t->max_key.offset,
+		       ul.p.inode, ul.p.offset,
+		       ur.p.inode, ur.p.offset,
+		       search->inode, search->offset,
+		       (unsigned) ((u64 *) orig.l - (u64 *) btree_bkey_first(b, t)),
+		       (unsigned) ((u64 *) orig.r - (u64 *) btree_bkey_first(b, t)),
+		       bset_u64s(t),
+		       bset_aux_tree_type(t),
+		       (unsigned) ((u64 *) r.l - (u64 *) btree_bkey_first(b, t)),
+		       b->nr_key_bits);
+		bset_search_tree2(b, t, search, packed_search);
+		panic("\n");
+	}
 
 	return r.l;
 }

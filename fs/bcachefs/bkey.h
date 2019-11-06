@@ -12,7 +12,13 @@
 #define HAVE_BCACHEFS_COMPILED_UNPACK	1
 #endif
 
-void bch2_to_binary(char *, const u64 *, unsigned);
+void bch2_to_binary(struct printbuf *, const u64 *, unsigned);
+
+struct btree;
+
+void bch2_packed_key_bits_to_text(struct printbuf *,
+				  const struct btree *,
+				  const struct bkey_packed *);
 
 /* bkey with split value, const */
 struct bkey_s_c {
