@@ -21,6 +21,7 @@
 #include <linux/serial_8250.h>
 #include <linux/delay.h>
 #include <linux/backlight.h>
+#include <linux/dmi.h>
 #include <acpi/video.h>
 
 #include "dell-uart-backlight.h"
@@ -114,6 +115,38 @@ static struct dell_uart_bl_cmd uart_cmd[] = {
 		.tx_len	= 4,
 		.rx_len	= 3,
 	},
+};
+
+static const struct dmi_system_id dell_uart_backlight_alpha_platform[] __initconst = {
+	{
+		.ident = "Dell Inspiron 7777 AIO",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Inspiron 7777 AIO"),
+		},
+	},
+	{
+		.ident = "Dell Inspiron 5477 AIO",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "Inspiron 5477 AIO"),
+		},
+	},
+	{
+		.ident = "Dell OptiPlex 7769 AIO",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "OptiPlex 7769 AIO"),
+		},
+	},
+	{
+		.ident = "Dell OptiPlex 5260 AIO",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
+			DMI_MATCH(DMI_PRODUCT_NAME, "OptiPlex 5260 AIO"),
+		},
+	},
+	{ }
 };
 
 static int dell_uart_write(struct uart_8250_port *up, __u8 *buf, int len)
@@ -285,8 +318,7 @@ static int dell_uart_get_scalar_status(struct dell_uart_backlight *dell_pdata)
 	struct dell_uart_bl_cmd *bl_cmd = &uart_cmd[DELL_UART_GET_SCALAR];
 	struct uart_8250_port *uart = serial8250_get_port(dell_pdata->line);
 	int rx_len;
-	/* assume the scalar IC controls backlight if the command failed */
-	int status = 1;
+	int status = 0;
 
 	dell_uart_dump_cmd(__func__, "tx: ", bl_cmd->cmd, bl_cmd->tx_len);
 
@@ -377,7 +409,7 @@ static int dell_uart_bl_add(struct acpi_device *dev)
 	dell_pdata = kzalloc(sizeof(struct dell_uart_backlight), GFP_KERNEL);
 	if (!dell_pdata) {
 		pr_debug("Failed to allocate memory for dell_uart_backlight\n");
-		return -1;
+		return -ENOMEM;
 	}
 	dell_pdata->dev = &dev->dev;
 	dell_uart_startup(dell_pdata);
@@ -385,10 +417,20 @@ static int dell_uart_bl_add(struct acpi_device *dev)
 
 	mutex_init(&dell_pdata->brightness_mutex);
 
-	if (!force && !dell_uart_get_scalar_status(dell_pdata)) {
-		pr_debug("Scalar is not in charge of brightness adjustment.\n");
-		kzfree(dell_pdata);
-		return -1;
+	if (!force) {
+		if (dmi_check_system(dell_uart_backlight_alpha_platform)) {
+			/* try another command to make sure there is no scalar IC */
+			if (dell_uart_show_firmware_ver(dell_pdata) <= 4) {
+				pr_debug("Scalar is not in charge of brightness adjustment.\n");
+				kzfree(dell_pdata);
+				return -ENODEV;
+			}
+		}
+		else if (!dell_uart_get_scalar_status(dell_pdata)) {
+			pr_debug("Scalar is not in charge of brightness adjustment.\n");
+			kzfree(dell_pdata);
+			return -ENODEV;
+		}
 	}
 	dell_uart_show_firmware_ver(dell_pdata);
 
@@ -404,7 +446,7 @@ static int dell_uart_bl_add(struct acpi_device *dev)
 	if (IS_ERR(dell_uart_bd)) {
 		kzfree(dell_pdata);
 		pr_debug("Backlight registration failed\n");
-		return -1;
+		return PTR_ERR(dell_uart_bd);
 	}
 
 	dell_pdata->dell_uart_bd = dell_uart_bd;
