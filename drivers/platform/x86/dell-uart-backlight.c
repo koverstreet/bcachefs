@@ -40,6 +40,10 @@ unsigned int (*io_serial_in)(struct uart_port *p, int offset);
 int (*uart_write)(struct tty_struct *tty, const unsigned char *buf, int count);
 int (*uart_chars_in_buffer)(struct tty_struct *tty);
 
+static bool force;
+module_param(force, bool, 0444);
+MODULE_PARM_DESC(force, "load the driver regardless of the scalar status");
+
 static struct dell_uart_bl_cmd uart_cmd[] = {
 	/*
 	 * Get Firmware Version: Tool uses this command to get firmware version.
@@ -381,7 +385,7 @@ static int dell_uart_bl_add(struct acpi_device *dev)
 
 	mutex_init(&dell_pdata->brightness_mutex);
 
-	if (!dell_uart_get_scalar_status(dell_pdata)) {
+	if (!force && !dell_uart_get_scalar_status(dell_pdata)) {
 		pr_debug("Scalar is not in charge of brightness adjustment.\n");
 		kzfree(dell_pdata);
 		return -1;
