@@ -382,14 +382,11 @@ static int dell_uart_bl_add(struct acpi_device *dev)
 	mutex_init(&dell_pdata->brightness_mutex);
 
 	if (!dell_uart_get_scalar_status(dell_pdata)) {
-		udelay(50);
-		/* try another command to make sure there is no scalar IC */
-		if (dell_uart_show_firmware_ver(dell_pdata) <= 0) {
-			pr_debug("Scalar is not in charge of brightness adjustment.\n");
-			kzfree(dell_pdata);
-			return -1;
-		}
+		pr_debug("Scalar is not in charge of brightness adjustment.\n");
+		kzfree(dell_pdata);
+		return -1;
 	}
+	dell_uart_show_firmware_ver(dell_pdata);
 
 	memset(&props, 0, sizeof(struct backlight_properties));
 	props.type = BACKLIGHT_PLATFORM;
