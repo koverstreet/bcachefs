@@ -53,6 +53,18 @@ static struct dell_uart_bl_cmd uart_cmd[] = {
 		.tx_len	= 3,
 	},
 	/*
+	 * Get Scalar Status: Tool uses this command to check if scalar IC controls brightness.
+	 * Command: 0x6A 0x1F 0x8F (Length:3 Type: 0x0A, Cmd:0x1F Checksum:0x76)
+	 * Return data: 0x04 0x1F Data checksum
+	 * (Data = 0: scalar cannot adjust brightness, Data = 1: scalar can adjust brightness)
+	 */
+	[DELL_UART_GET_SCALAR] = {
+		.cmd	= {0x6A,0x1F,0x76},
+		.ret	= {0x04,0x1F,0x00,0x00},
+		.tx_len	= 3,
+		.rx_len	= 4,
+	},
+	/*
 	 * Get Brightness level: Application uses this command for scaler to
 	 *                       get brightness.
 	 * Command: 0x6A 0x0C 0x89
