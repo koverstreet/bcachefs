@@ -1270,7 +1270,6 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
 	closure_return_with_destructor(cl, promote_done);
 }
 
-noinline
 static struct promote_op *__promote_alloc(struct bch_fs *c,
 					  enum btree_id btree_id,
 					  struct bpos pos,
@@ -1344,7 +1343,8 @@ err:
 	return NULL;
 }
 
-static inline struct promote_op *promote_alloc(struct bch_fs *c,
+noinline
+static struct promote_op *promote_alloc(struct bch_fs *c,
 					       struct bvec_iter iter,
 					       struct bkey_s_c k,
 					       struct extent_ptr_decoded *pick,
@@ -1908,7 +1908,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 	if (narrow_crcs && (flags & BCH_READ_USER_MAPPED))
 		flags |= BCH_READ_MUST_BOUNCE;
 
-	BUG_ON(offset_into_extent + bvec_iter_sectors(iter) > k.k->size);
+	EBUG_ON(offset_into_extent + bvec_iter_sectors(iter) > k.k->size);
 
 	if (pick.crc.compression_type != BCH_COMPRESSION_NONE ||
 	    (pick.crc.csum_type != BCH_CSUM_NONE &&
@@ -1920,8 +1920,9 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		bounce = true;
 	}
 
-	promote = promote_alloc(c, iter, k, &pick, orig->opts, flags,
-				&rbio, &bounce, &read_full);
+	if (orig->opts.promote_target)
+		promote = promote_alloc(c, iter, k, &pick, orig->opts, flags,
+					&rbio, &bounce, &read_full);
 
 	if (!read_full) {
 		EBUG_ON(pick.crc.compression_type);
@@ -1949,7 +1950,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		 * data in the write path, but we're not going to use it all
 		 * here:
 		 */
-		BUG_ON(rbio->bio.bi_iter.bi_size <
+		EBUG_ON(rbio->bio.bi_iter.bi_size <
 		       pick.crc.compressed_size << 9);
 		rbio->bio.bi_iter.bi_size =
 			pick.crc.compressed_size << 9;
@@ -1982,10 +1983,10 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 noclone:
 		rbio = orig;
 		rbio->bio.bi_iter = iter;
-		BUG_ON(bio_flagged(&rbio->bio, BIO_CHAIN));
+		EBUG_ON(bio_flagged(&rbio->bio, BIO_CHAIN));
 	}
 
-	BUG_ON(bio_sectors(&rbio->bio) != pick.crc.compressed_size);
+	EBUG_ON(bio_sectors(&rbio->bio) != pick.crc.compressed_size);
 
 	rbio->c			= c;
 	rbio->submit_time	= local_clock();
@@ -2001,6 +2002,7 @@ noclone:
 	rbio->hole		= 0;
 	rbio->retry		= 0;
 	rbio->context		= 0;
+	/* XXX: only initialize this if needed */
 	rbio->devs_have		= bch2_bkey_devs(k);
 	rbio->pick		= pick;
 	rbio->pos		= pos;
@@ -2017,11 +2019,11 @@ noclone:
 
 	bch2_increment_clock(c, bio_sectors(&rbio->bio), READ);
 
-	percpu_down_read(&c->mark_lock);
+	rcu_read_lock();
 	bucket_io_clock_reset(c, ca, PTR_BUCKET_NR(ca, &pick.ptr), READ);
-	percpu_up_read(&c->mark_lock);
+	rcu_read_unlock();
 
-	if (likely(!(flags & (BCH_READ_IN_RETRY|BCH_READ_LAST_FRAGMENT)))) {
+	if (!(flags & (BCH_READ_IN_RETRY|BCH_READ_LAST_FRAGMENT))) {
 		bio_inc_remaining(&orig->bio);
 		trace_read_split(&orig->bio);
 	}
