@@ -49,7 +49,7 @@ int __pure novamap(void)
 	return __novamap;
 }
 
-#define EFI_MMAP_NR_SLACK_SLOTS	8
+#define EFI_MMAP_NR_SLACK_SLOTS	16
 
 struct file_info {
 	efi_file_handle_t *handle;
