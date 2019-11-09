@@ -564,6 +564,7 @@ BKEY_VAL_ACCESSORS(quota);
 BKEY_VAL_ACCESSORS(stripe);
 BKEY_VAL_ACCESSORS(reflink_p);
 BKEY_VAL_ACCESSORS(reflink_v);
+BKEY_VAL_ACCESSORS(inline_data);
 
 /* byte order helpers */
 
