@@ -338,7 +338,8 @@ static inline void bkey_init(struct bkey *k)
 	x(quota,		13)			\
 	x(stripe,		14)			\
 	x(reflink_p,		15)			\
-	x(reflink_v,		16)
+	x(reflink_v,		16)			\
+	x(inline_data,		17)
 
 enum bch_bkey_type {
 #define x(name, nr) KEY_TYPE_##name	= nr,
@@ -909,6 +910,13 @@ struct bch_reflink_v {
 	__le64			refcount;
 	union bch_extent_entry	start[0];
 	__u64			_data[0];
+};
+
+/* Inline data */
+
+struct bch_inline_data {
+	struct bch_val		v;
+	u8			data[0];
 };
 
 /* Optional/variable size superblock sections: */
