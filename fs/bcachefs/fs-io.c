@@ -1055,6 +1055,7 @@ static void bch2_writepage_do_io(struct bch_writepage_state *w)
  * possible, else allocating a new one:
  */
 static void bch2_writepage_io_alloc(struct bch_fs *c,
+				    struct writeback_control *wbc,
 				    struct bch_writepage_state *w,
 				    struct bch_inode_info *inode,
 				    u64 sector,
@@ -1080,6 +1081,7 @@ static void bch2_writepage_io_alloc(struct bch_fs *c,
 	op->write_point		= writepoint_hashed(inode->ei_last_dirtied);
 	op->pos			= POS(inode->v.i_ino, sector);
 	op->wbio.bio.bi_iter.bi_sector = sector;
+	op->wbio.bio.bi_opf	= wbc_to_write_flags(wbc);
 }
 
 static int __bch2_writepage(struct page *page,
@@ -1190,7 +1192,7 @@ do_io:
 			bch2_writepage_do_io(w);
 
 		if (!w->io)
-			bch2_writepage_io_alloc(c, w, inode, sector,
+			bch2_writepage_io_alloc(c, wbc, w, inode, sector,
 						nr_replicas_this_write);
 
 		atomic_inc(&s->write_count);
@@ -1206,9 +1208,6 @@ do_io:
 		w->io->op.res.sectors += reserved_sectors;
 		w->io->op.i_sectors_delta -= dirty_sectors;
 		w->io->op.new_i_size = i_size;
-
-		if (wbc->sync_mode == WB_SYNC_ALL)
-			w->io->op.wbio.bio.bi_opf |= REQ_SYNC;
 
 		offset += sectors;
 	}
