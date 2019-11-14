@@ -1,6 +1,7 @@
 # Recreate any symlinks created since the orig.
 # Remove any files deleted from the orig.
 rm -f 'Documentation/devicetree/bindings/display/panel/toppoly,td028ttec1.txt'
+rm -f 'Documentation/usb/rio.txt'
 rm -f 'arch/arm/include/asm/kvm_psci.h'
 rm -f 'arch/arm64/include/asm/kvm_psci.h'
 rm -f 'arch/x86/crypto/salsa20-i586-asm_32.S'
@@ -27,6 +28,8 @@ rm -f 'drivers/net/ethernet/hisilicon/hns3/hns3pf/hns3_enet.h'
 rm -f 'drivers/net/ethernet/hisilicon/hns3/hns3pf/hns3_ethtool.c'
 rm -f 'drivers/platform/x86/dell-smbios.c'
 rm -f 'drivers/s390/crypto/ap_asm.h'
+rm -f 'drivers/usb/misc/rio500.c'
+rm -f 'drivers/usb/misc/rio500_usb.h'
 rm -f 'fs/xfs/xfs_attr.h'
 rm -f 'include/crypto/vmac.h'
 rm -f 'include/linux/mfd/rtsx_common.h'
