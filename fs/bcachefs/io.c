@@ -1130,6 +1130,43 @@ flush_io:
 	goto again;
 }
 
+static unsigned __data_len(void *p, unsigned len)
+{
+	while ((len & 7) && !*((u8  *) (p + len - 1)))
+		len -= 1;
+
+	while (len       && !*((u64 *) (p + len - 8)))
+		len -= 8;
+
+	while (len       && !*((u8  *) (p + len - 1)))
+		len -= 1;
+
+	return len;
+}
+
+static unsigned shorten_data_len(struct bio *bio, unsigned data_len)
+{
+	struct bio_vec bv;
+	struct bvec_iter iter;
+restart:
+	bio_for_each_segment(bv, bio, iter) {
+		unsigned done = bio->bi_iter.bi_size - iter.bi_size;
+
+		if (data_len <= done + bv.bv_len) {
+			void *p = kmap_atomic(bv.bv_page) + bv.bv_offset;
+			data_len = done + __data_len(p, bv.bv_len);
+			kunmap_atomic(p);
+
+			if (data_len && data_len == done)
+				goto restart;
+			else
+				return data_len;
+		}
+	}
+
+	BUG();
+}
+
 static void bch2_write_data_inline(struct bch_write_op *op, unsigned data_len)
 {
 	struct closure *cl = &op->cl;
@@ -1219,6 +1256,7 @@ void bch2_write(struct closure *cl)
 
 	data_len = min_t(u64, bio->bi_iter.bi_size,
 			 op->new_i_size - (op->pos.offset << 9));
+	data_len = shorten_data_len(bio, data_len);
 
 	if (data_len <= min(block_bytes(c) / 2, 1024U)) {
 		bch2_write_data_inline(op, data_len);
