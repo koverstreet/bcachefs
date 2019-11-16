@@ -582,6 +582,21 @@ enum merge_result bch2_extent_merge(struct bch_fs *c,
 	return BCH_MERGE_MERGE;
 }
 
+/* KEY_TYPE_extent_block_checksum */
+
+const char *bch2_extent_block_checksum_invalid(const struct bch_fs *c, struct bkey_s_c k)
+{
+	/* XXX check other fields */
+
+	return bch2_bkey_ptrs_invalid(c, k);
+}
+
+void bch2_extent_block_checksum_to_text(struct printbuf *out, struct bch_fs *c,
+					struct bkey_s_c k)
+{
+	bch2_bkey_ptrs_to_text(out, c, k);
+}
+
 /* KEY_TYPE_reservation: */
 
 const char *bch2_reservation_invalid(const struct bch_fs *c, struct bkey_s_c k)

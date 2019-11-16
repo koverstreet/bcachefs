@@ -315,6 +315,15 @@ static inline struct bkey_ptrs_c bch2_bkey_ptrs_c(struct bkey_s_c k)
 			bkey_val_end(r),
 		};
 	}
+	case KEY_TYPE_extent_block_checksum: {
+		struct bkey_s_c_extent_block_checksum e =
+			bkey_s_c_to_extent_block_checksum(k);
+
+		return (struct bkey_ptrs_c) {
+			(void *) (e.v->_data + e.v->csum_u64s),
+			bkey_val_end(e),
+		};
+	}
 	default:
 		return (struct bkey_ptrs_c) { NULL, NULL };
 	}
@@ -418,6 +427,19 @@ enum merge_result bch2_extent_merge(struct bch_fs *,
 	.swab		= bch2_ptr_swab,			\
 	.key_normalize	= bch2_extent_normalize,		\
 	.key_merge	= bch2_extent_merge,			\
+}
+
+/* KEY_TYPE_extent_block_checksum */
+
+const char *bch2_extent_block_checksum_invalid(const struct bch_fs *,
+					       struct bkey_s_c);
+void bch2_extent_block_checksum_to_text(struct printbuf *, struct bch_fs *,
+					struct bkey_s_c);
+
+#define bch2_bkey_ops_extent_block_checksum (struct bkey_ops) {		\
+	.key_invalid	= bch2_extent_block_checksum_invalid,		\
+	.val_to_text	= bch2_extent_block_checksum_to_text,		\
+	.key_normalize	= bch2_extent_normalize,			\
 }
 
 /* KEY_TYPE_reservation: */

@@ -339,7 +339,8 @@ static inline void bkey_init(struct bkey *k)
 	x(stripe,		14)			\
 	x(reflink_p,		15)			\
 	x(reflink_v,		16)			\
-	x(inline_data,		17)
+	x(inline_data,		17)			\
+	x(extent_block_checksum, 18)
 
 enum bch_bkey_type {
 #define x(name, nr) KEY_TYPE_##name	= nr,
@@ -642,6 +643,16 @@ struct bch_extent {
 	union bch_extent_entry	start[0];
 	__u64			_data[0];
 } __attribute__((packed, aligned(8)));
+
+struct bch_extent_block_checksum {
+	struct bch_val		v;
+	__u8			csum_type;
+	__u8			csum_granularity_bits;
+	__u8			csum_u64s;
+	__u8			pad[5];
+
+	__u64			_data[0];
+};
 
 struct bch_reservation {
 	struct bch_val		v;
