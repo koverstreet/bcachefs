@@ -387,7 +387,7 @@ void bch2_bkey_ptrs_to_text(struct printbuf *, struct bch_fs *,
 			    struct bkey_s_c);
 const char *bch2_bkey_ptrs_invalid(const struct bch_fs *, struct bkey_s_c);
 
-/* bch_btree_ptr: */
+/* KEY_TYPE_btree_ptr: */
 
 const char *bch2_btree_ptr_invalid(const struct bch_fs *, struct bkey_s_c);
 void bch2_btree_ptr_debugcheck(struct bch_fs *, struct bkey_s_c);
@@ -402,7 +402,7 @@ void bch2_ptr_swab(const struct bkey_format *, struct bkey_packed *);
 	.swab		= bch2_ptr_swab,			\
 }
 
-/* bch_extent: */
+/* KEY_TYPE_extent: */
 
 const char *bch2_extent_invalid(const struct bch_fs *, struct bkey_s_c);
 void bch2_extent_debugcheck(struct bch_fs *, struct bkey_s_c);
@@ -420,7 +420,7 @@ enum merge_result bch2_extent_merge(struct bch_fs *,
 	.key_merge	= bch2_extent_merge,			\
 }
 
-/* bch_reservation: */
+/* KEY_TYPE_reservation: */
 
 const char *bch2_reservation_invalid(const struct bch_fs *, struct bkey_s_c);
 void bch2_reservation_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
