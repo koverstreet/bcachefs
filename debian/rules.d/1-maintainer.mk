@@ -84,6 +84,7 @@ printenv:
 	@echo "do_linux_tools            = $(do_linux_tools)"
 	@echo " do_tools_cpupower         = $(do_tools_cpupower)"
 	@echo " do_tools_perf             = $(do_tools_perf)"
+	@echo " do_tools_bpftool          = $(do_tools_bpftool)"
 	@echo " do_tools_x86              = $(do_tools_x86)"
 	@echo " do_tools_host             = $(do_tools_host)"
 	@echo "do_cloud_tools            = $(do_cloud_tools)"

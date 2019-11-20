@@ -14,6 +14,7 @@ do_tools_usbip  = true
 do_tools_cpupower = true
 do_tools_perf   = true
 do_tools_perf_jvmti = true
+do_tools_bpftool = true
 do_tools_x86	= true
 do_tools_hyperv	= true
 do_tools_host = true

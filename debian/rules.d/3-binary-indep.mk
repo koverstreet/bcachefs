@@ -84,6 +84,7 @@ install-tools: toolspkg = $(tools_common_pkg_name)
 install-tools: toolsbin = $(CURDIR)/debian/$(toolspkg)/usr/bin
 install-tools: toolssbin = $(CURDIR)/debian/$(toolspkg)/usr/sbin
 install-tools: toolsman = $(CURDIR)/debian/$(toolspkg)/usr/share/man
+install-tools: toolsbashcomp = $(CURDIR)/debian/$(toolspkg)/usr/share/bash-completion/completions
 install-tools: hosttoolspkg = $(hosttools_pkg_name)
 install-tools: hosttoolsbin = $(CURDIR)/debian/$(hosttoolspkg)/usr/bin
 install-tools: hosttoolsman = $(CURDIR)/debian/$(hosttoolspkg)/usr/share/man
@@ -102,7 +103,10 @@ ifeq ($(do_tools_common),true)
 	rsync -a tools/ $(builddir)/tools/tools/
 
 	install -d $(toolsbin)
+	install -d $(toolssbin)
 	install -d $(toolsman)/man1
+	install -d $(toolsman)/man8
+	install -d $(toolsbashcomp)
 
 	install -m755 debian/tools/generic $(toolsbin)/usbip
 	install -m755 debian/tools/generic $(toolsbin)/usbipd
@@ -113,6 +117,13 @@ ifeq ($(do_tools_common),true)
 
 	install -m755 debian/tools/generic $(toolsbin)/perf
 
+	install -m755 debian/tools/generic $(toolssbin)/bpftool
+	make -C $(builddir)/tools/tools/bpf/bpftool doc
+	install -m644 $(builddir)/tools/tools/bpf/bpftool/Documentation/*.8 \
+		$(toolsman)/man8
+	install -m644 $(builddir)/tools/tools/bpf/bpftool/bash-completion/bpftool \
+		$(toolsbashcomp)
+
 	install -m755 debian/tools/generic $(toolsbin)/x86_energy_perf_policy
 	install -m755 debian/tools/generic $(toolsbin)/turbostat
 
@@ -120,7 +131,6 @@ ifeq ($(do_tools_common),true)
 	install -m644 $(builddir)/tools/tools/perf/Documentation/*.1 \
 		$(toolsman)/man1
 
-	install -d $(toolsman)/man8
 	install -m644 $(CURDIR)/tools/power/x86/x86_energy_perf_policy/*.8 $(toolsman)/man8
 	install -m644 $(CURDIR)/tools/power/x86/turbostat/*.8 $(toolsman)/man8
 

@@ -375,6 +375,9 @@ ifeq ($(do_tools_perf_jvmti),true)
 	$(LN) ../../$(src_pkg_name)-tools-$(abi_release)/libperf-jvmti.so $(toolspkgdir)/usr/lib/linux-tools/$(abi_release)-$*
 endif
 endif
+ifeq ($(do_tools_bpftool),true)
+	$(LN) ../../$(src_pkg_name)-tools-$(abi_release)/bpftool $(toolspkgdir)/usr/lib/linux-tools/$(abi_release)-$*
+endif
 ifeq ($(do_tools_x86),true)
 	$(LN) ../../$(src_pkg_name)-tools-$(abi_release)/x86_energy_perf_policy $(toolspkgdir)/usr/lib/linux-tools/$(abi_release)-$*
 	$(LN) ../../$(src_pkg_name)-tools-$(abi_release)/turbostat $(toolspkgdir)/usr/lib/linux-tools/$(abi_release)-$*
@@ -665,6 +668,9 @@ ifeq ($(do_tools_perf),true)
 	cd $(builddirpa)/tools/perf && \
 		$(kmake) prefix=/usr HAVE_NO_LIBBFD=1 HAVE_CPLUS_DEMANGLE_SUPPORT=1 CROSS_COMPILE=$(CROSS_COMPILE) NO_LIBPYTHON=1 NO_LIBPERL=1 PYTHON=python2.7
 endif
+ifeq ($(do_tools_bpftool),true)
+	$(kmake) CROSS_COMPILE=$(CROSS_COMPILE) -C $(builddirpa)/tools/bpf/bpftool
+endif
 ifeq ($(do_tools_x86),true)
 	cd $(builddirpa)/tools/power/x86/x86_energy_perf_policy && make CROSS_COMPILE=$(CROSS_COMPILE)
 	cd $(builddirpa)/tools/power/x86/turbostat && make CROSS_COMPILE=$(CROSS_COMPILE)
@@ -708,6 +714,9 @@ ifeq ($(do_tools_perf),true)
 ifeq ($(do_tools_perf_jvmti),true)
 	install -m755 $(builddirpa)/tools/perf/libperf-jvmti.so $(toolspkgdir)/usr/lib/$(src_pkg_name)-tools-$(abi_release)
 endif
+endif
+ifeq ($(do_tools_bpftool),true)
+	install -m755 $(builddirpa)/tools/bpf/bpftool/bpftool $(toolspkgdir)/usr/lib/$(src_pkg_name)-tools-$(abi_release)
 endif
 ifeq ($(do_tools_x86),true)
 	install -m755 $(builddirpa)/tools/power/x86/x86_energy_perf_policy/x86_energy_perf_policy \
