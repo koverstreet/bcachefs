@@ -1536,8 +1536,7 @@ retry:
 	if (bkey_err(k))
 		goto err;
 
-	bkey_on_stack_realloc(&sk, c, k.k->u64s);
-	bkey_reassemble(sk.k, k);
+	bkey_on_stack_reassemble(&sk, c, k);
 	k = bkey_i_to_s_c(sk.k);
 	bch2_trans_unlock(&trans);
 
@@ -1588,8 +1587,7 @@ retry:
 			   BTREE_ITER_SLOTS, k, ret) {
 		unsigned bytes, sectors, offset_into_extent;
 
-		bkey_on_stack_realloc(&sk, c, k.k->u64s);
-		bkey_reassemble(sk.k, k);
+		bkey_on_stack_reassemble(&sk, c, k);
 		k = bkey_i_to_s_c(sk.k);
 
 		offset_into_extent = iter->pos.offset -
@@ -1712,8 +1710,7 @@ retry:
 	if (IS_ERR_OR_NULL(k.k))
 		goto out;
 
-	bkey_on_stack_realloc(&new, c, k.k->u64s);
-	bkey_reassemble(new.k, k);
+	bkey_on_stack_reassemble(&new, c, k);
 	k = bkey_i_to_s_c(new.k);
 
 	if (bversion_cmp(k.k->version, rbio->version) ||
@@ -2220,8 +2217,7 @@ retry:
 			bkey_start_offset(k.k);
 		sectors = k.k->size - offset_into_extent;
 
-		bkey_on_stack_realloc(&sk, c, k.k->u64s);
-		bkey_reassemble(sk.k, k);
+		bkey_on_stack_reassemble(&sk, c, k);
 		k = bkey_i_to_s_c(sk.k);
 
 		ret = bch2_read_indirect_extent(&trans,
