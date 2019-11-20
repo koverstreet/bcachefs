@@ -34,7 +34,6 @@ Build-Depends:
  automake <!stage1>,
  libtool <!stage1>,
  uuid-dev <!stage1>,
- binutils-dev <!stage1>,
  libnuma-dev [amd64 arm64 i386 ppc64el s390x] <!stage1>,
  dkms <!stage1>,
  wget <!stage1>,
