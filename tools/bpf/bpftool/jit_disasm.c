@@ -170,3 +170,9 @@ void disasm_print_insn(unsigned char *image, ssize_t len, int opcodes)
 
 	bfd_close(bfdf);
 }
+
+int disasm_init(void)
+{
+	bfd_init();
+	return 0;
+}

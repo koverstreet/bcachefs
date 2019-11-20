@@ -33,7 +33,6 @@
 
 /* Author: Jakub Kicinski <kubakici@wp.pl> */
 
-#include <bfd.h>
 #include <ctype.h>
 #include <errno.h>
 #include <getopt.h>
@@ -326,8 +325,6 @@ int main(int argc, char **argv)
 	argv += optind;
 	if (argc < 0)
 		usage();
-
-	bfd_init();
 
 	ret = cmd_select(cmds, argc, argv, do_help);
 
