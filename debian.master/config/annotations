@@ -297,7 +297,7 @@ CONFIG_PCIE_IPROC_MSI                           policy<{'arm64': 'y'}>
 CONFIG_PCIE_ALTERA                              policy<{'armhf': 'n'}>
 CONFIG_PCI_HOST_THUNDER_PEM                     policy<{'arm64': 'y'}>
 CONFIG_PCI_HOST_THUNDER_ECAM                    policy<{'arm64': 'y'}>
-CONFIG_PCIE_ROCKCHIP                            policy<{'armhf': 'y'}>
+CONFIG_PCIE_ROCKCHIP                            policy<{'arm64': 'y', 'armhf': 'y'}>
 CONFIG_PCIE_MEDIATEK                            policy<{'arm64': 'y', 'armhf': 'y'}>
 CONFIG_VMD                                      policy<{'amd64': 'm'}>
 
@@ -542,7 +542,7 @@ CONFIG_CRYPTO_DEV_CAVIUM_ZIP                    policy<{'arm64': 'm'}>
 CONFIG_CRYPTO_DEV_QCE                           policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_CRYPTO_DEV_VMX                           policy<{'ppc64el': 'y'}>
 CONFIG_CRYPTO_DEV_VMX_ENCRYPT                   policy<{'ppc64el': 'm'}>
-CONFIG_CRYPTO_DEV_ROCKCHIP                      policy<{'armhf': 'n'}>
+CONFIG_CRYPTO_DEV_ROCKCHIP                      policy<{'arm64': 'm', 'armhf': 'n'}>
 CONFIG_CRYPTO_DEV_MEDIATEK                      policy<{'armhf': 'm'}>
 CONFIG_CRYPTO_DEV_CHELSIO                       policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_CRYPTO_DEV_VIRTIO                        policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
@@ -590,7 +590,7 @@ CONFIG_ACCESSIBILITY                            flag<REVIEW>
 
 # Menu: Device Drivers >> Adaptive Voltage Scaling class support
 CONFIG_POWER_AVS                                policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'n'}>
-CONFIG_ROCKCHIP_IODOMAIN                        policy<{'armhf': 'm'}>
+CONFIG_ROCKCHIP_IODOMAIN                        policy<{'arm64': 'm', 'armhf': 'm'}>
 
 # Menu: Device Drivers >> Android
 CONFIG_ANDROID                                  policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n', 's390x': 'n'}>
@@ -1005,7 +1005,7 @@ CONFIG_TCG_TIS_I2C_NUVOTON                      note<LP:1643652>
 
 # Menu: Device Drivers >> Clock Source drivers
 CONFIG_DW_APB_TIMER                             policy<{'armhf': 'y', 'i386': 'y'}>
-CONFIG_ROCKCHIP_TIMER                           policy<{'armhf': 'y'}>
+CONFIG_ROCKCHIP_TIMER                           policy<{'arm64': 'y', 'armhf': 'y'}>
 CONFIG_ARMADA_370_XP_TIMER                      policy<{'armhf': 'y'}>
 CONFIG_MESON6_TIMER                             policy<{'armhf': 'y'}>
 CONFIG_ORION_TIMER                              policy<{'armhf': 'y'}>
@@ -1527,7 +1527,7 @@ CONFIG_ARM_RK3399_DMC_DEVFREQ                   policy<{'armhf': 'm'}>
 CONFIG_PM_DEVFREQ_EVENT                         policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y'}>
 CONFIG_DEVFREQ_EVENT_EXYNOS_NOCP                policy<{'armhf': 'y'}>
 CONFIG_DEVFREQ_EVENT_EXYNOS_PPMU                policy<{'armhf': 'y'}>
-CONFIG_DEVFREQ_EVENT_ROCKCHIP_DFI               policy<{'armhf': 'm'}>
+CONFIG_DEVFREQ_EVENT_ROCKCHIP_DFI               policy<{'arm64': 'm', 'armhf': 'm'}>
 
 # Menu: Device Drivers >> Generic Target Core Mod (TCM) and ConfigFS Infrastructure
 CONFIG_TARGET_CORE                              policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
@@ -1556,7 +1556,7 @@ CONFIG_DEVFREQ_THERMAL                          policy<{'amd64': 'y', 'arm64': '
 CONFIG_THERMAL_EMULATION                        policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y'}>
 CONFIG_HISI_THERMAL                             policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_MAX77620_THERMAL                         policy<{'arm64': 'm', 'armhf': 'm', 'ppc64el': 'm'}>
-CONFIG_ROCKCHIP_THERMAL                         policy<{'armhf': 'm'}>
+CONFIG_ROCKCHIP_THERMAL                         policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_RCAR_THERMAL                             policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_RCAR_GEN3_THERMAL                        policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_DOVE_THERMAL                             policy<{'armhf': 'm'}>
@@ -1803,13 +1803,13 @@ CONFIG_DRM_IMX_LDB                              policy<{'armhf': 'm'}>
 CONFIG_DRM_IMX_HDMI                             policy<{'armhf': 'm'}>
 
 # Menu: Device Drivers >> Graphics support >> Direct Rendering Manager (XFree86 4.1.0 and higher DRI support) >> DRM Support for Rockchip
-CONFIG_DRM_ROCKCHIP                             policy<{'armhf': 'm'}>
-CONFIG_ROCKCHIP_ANALOGIX_DP                     policy<{'armhf': 'y'}>
-CONFIG_ROCKCHIP_CDN_DP                          policy<{'armhf': 'y'}>
-CONFIG_ROCKCHIP_DW_HDMI                         policy<{'armhf': 'y'}>
-CONFIG_ROCKCHIP_DW_MIPI_DSI                     policy<{'armhf': 'y'}>
-CONFIG_ROCKCHIP_INNO_HDMI                       policy<{'armhf': 'y'}>
-CONFIG_ROCKCHIP_LVDS                            policy<{'armhf': 'y'}>
+CONFIG_DRM_ROCKCHIP                             policy<{'arm64': 'm', 'armhf': 'm'}>
+CONFIG_ROCKCHIP_ANALOGIX_DP                     policy<{'arm64': 'y', 'armhf': 'y'}>
+CONFIG_ROCKCHIP_CDN_DP                          policy<{'arm64': 'y', 'armhf': 'y'}>
+CONFIG_ROCKCHIP_DW_HDMI                         policy<{'arm64': 'y', 'armhf': 'y'}>
+CONFIG_ROCKCHIP_DW_MIPI_DSI                     policy<{'arm64': 'y', 'armhf': 'y'}>
+CONFIG_ROCKCHIP_INNO_HDMI                       policy<{'arm64': 'y', 'armhf': 'y'}>
+CONFIG_ROCKCHIP_LVDS                            policy<{'arm64': 'y', 'armhf': 'y'}>
 
 # Menu: Device Drivers >> Graphics support >> Direct Rendering Manager (XFree86 4.1.0 and higher DRI support) >> DRM Support for Samsung SoC EXYNOS Series
 CONFIG_DRM_EXYNOS                               policy<{'armhf': 'm'}>
@@ -2568,7 +2568,7 @@ CONFIG_AMD_IOMMU_V2                             policy<{'amd64': 'm'}>
 CONFIG_IRQ_REMAP                                policy<{'amd64': 'y'}>
 CONFIG_OMAP_IOMMU                               policy<{'armhf': 'y'}>
 CONFIG_OMAP_IOMMU_DEBUG                         policy<{'armhf': 'n'}>
-CONFIG_ROCKCHIP_IOMMU                           policy<{'armhf': 'y'}>
+CONFIG_ROCKCHIP_IOMMU                           policy<{'arm64': 'y', 'armhf': 'y'}>
 CONFIG_TEGRA_IOMMU_GART                         policy<{'armhf-generic': 'y'}>
 CONFIG_TEGRA_IOMMU_SMMU                         policy<{'armhf-generic': 'y'}>
 CONFIG_EXYNOS_IOMMU                             policy<{'armhf': 'y'}>
@@ -2818,7 +2818,7 @@ CONFIG_QCOM_PM8XXX_XOADC                        policy<{'armhf': 'm'}>
 CONFIG_QCOM_SPMI_IADC                           policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_QCOM_SPMI_VADC                           policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_RCAR_GYRO_ADC                            policy<{'armhf': 'm'}>
-CONFIG_ROCKCHIP_SARADC                          policy<{'armhf': 'm'}>
+CONFIG_ROCKCHIP_SARADC                          policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_STX104                                   policy<{'amd64': 'm', 'i386': 'm'}>
 CONFIG_SUN4I_GPADC                              policy<{'arm64': 'n'}>
 CONFIG_TI_ADC081C                               policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
@@ -3650,7 +3650,7 @@ CONFIG_MMC_DW_PLTFM                             policy<{'arm64': 'm', 'armhf': '
 CONFIG_MMC_DW_EXYNOS                            policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_MMC_DW_K3                                policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_MMC_DW_PCI                               policy<{'arm64': 'm', 'armhf': 'm'}>
-CONFIG_MMC_DW_ROCKCHIP                          policy<{'armhf': 'm'}>
+CONFIG_MMC_DW_ROCKCHIP                          policy<{'arm64': 'm', 'armhf': 'm'}>
 
 # Menu: Device Drivers >> Macintosh device drivers
 CONFIG_MACINTOSH_DRIVERS                        policy<{'amd64': 'y', 'i386': 'y', 'ppc64el': 'y'}>
@@ -3670,7 +3670,7 @@ CONFIG_PLATFORM_MHU                             policy<{'arm64': 'm', 'armhf': '
 CONFIG_PL320_MBOX                               policy<{'arm64': 'y', 'armhf': 'y'}>
 CONFIG_OMAP2PLUS_MBOX                           policy<{'armhf': 'm'}>
 CONFIG_OMAP_MBOX_KFIFO_SIZE                     policy<{'armhf': '256'}>
-CONFIG_ROCKCHIP_MBOX                            policy<{'armhf': 'y'}>
+CONFIG_ROCKCHIP_MBOX                            policy<{'arm64': 'y', 'armhf': 'y'}>
 CONFIG_PCC                                      policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
 CONFIG_ALTERA_MBOX                              policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_BCM2835_MBOX                             policy<{'arm64': 'y'}>
@@ -4165,7 +4165,7 @@ CONFIG_VIDEO_RENESAS_FDP1                       policy<{'arm64': 'm', 'armhf': '
 CONFIG_VIDEO_RENESAS_JPU                        policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_VIDEO_RENESAS_FCP                        policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_VIDEO_RENESAS_VSP1                       policy<{'arm64': 'm', 'armhf': 'm'}>
-CONFIG_VIDEO_ROCKCHIP_RGA                       policy<{'armhf': 'm'}>
+CONFIG_VIDEO_ROCKCHIP_RGA                       policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_VIDEO_TI_VPE                             policy<{'armhf': 'm'}>
 CONFIG_VIDEO_TI_VPE_DEBUG                       policy<{'armhf': 'n'}>
 CONFIG_VIDEO_QCOM_VENUS                         policy<{'arm64': 'm'}>
@@ -4769,7 +4769,7 @@ CONFIG_NVMEM_IMX_IIM                            policy<{'armhf-generic': 'm'}>
 CONFIG_NVMEM_IMX_OCOTP                          policy<{'armhf-generic': 'm'}>
 CONFIG_MTK_EFUSE                                policy<{'arm64': 'n', 'armhf': 'n'}>
 CONFIG_QCOM_QFPROM                              policy<{'arm64': 'm', 'armhf': 'm'}>
-CONFIG_ROCKCHIP_EFUSE                           policy<{'armhf': 'm'}>
+CONFIG_ROCKCHIP_EFUSE                           policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_NVMEM_BCM_OCOTP                          policy<{'arm64': 'm'}>
 CONFIG_NVMEM_SUNXI_SID                          policy<{'arm64': 'm'}>
 CONFIG_UNIPHIER_EFUSE                           policy<{'armhf': 'm'}>
@@ -4916,7 +4916,7 @@ CONFIG_NET_XGENE_V2                             policy<{'arm64': 'm'}>
 CONFIG_NET_VENDOR_AQUANTIA                      policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_AQTION                                   policy<{'amd64': 'm'}>
 CONFIG_NET_VENDOR_ARC                           policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'n'}>
-CONFIG_EMAC_ROCKCHIP                            policy<{'armhf': 'm'}>
+CONFIG_EMAC_ROCKCHIP                            policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_NET_VENDOR_AURORA                        policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_AURORA_NB8800                            policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
 CONFIG_NET_CADENCE                              policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'n'}>
@@ -5293,7 +5293,7 @@ CONFIG_DWMAC_DWC_QOS_ETH                        policy<{'arm64': 'm', 'armhf': '
 CONFIG_DWMAC_GENERIC                            policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_DWMAC_IPQ806X                            policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_DWMAC_MESON                              policy<{'armhf': 'm'}>
-CONFIG_DWMAC_ROCKCHIP                           policy<{'armhf': 'm'}>
+CONFIG_DWMAC_ROCKCHIP                           policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_DWMAC_SUNXI                              policy<{'arm64': 'n'}>
 CONFIG_DWMAC_SUN8I                              policy<{'arm64': 'm'}>
 
@@ -5860,12 +5860,12 @@ CONFIG_PHY_QCOM_USB_HSIC                        policy<{'amd64': 'm', 'arm64': '
 CONFIG_PHY_RCAR_GEN2                            policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_PHY_RCAR_GEN3_USB2                       policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_PHY_RCAR_GEN3_USB3                       policy<{'arm64': 'm', 'armhf': 'm'}>
-CONFIG_PHY_ROCKCHIP_DP                          policy<{'armhf': 'm'}>
-CONFIG_PHY_ROCKCHIP_EMMC                        policy<{'armhf': 'm'}>
-CONFIG_PHY_ROCKCHIP_INNO_USB2                   policy<{'armhf': 'm'}>
-CONFIG_PHY_ROCKCHIP_PCIE                        policy<{'armhf': 'm'}>
-CONFIG_PHY_ROCKCHIP_TYPEC                       policy<{'armhf': 'm'}>
-CONFIG_PHY_ROCKCHIP_USB                         policy<{'armhf': 'm'}>
+CONFIG_PHY_ROCKCHIP_DP                          policy<{'arm64': 'm', 'armhf': 'm'}>
+CONFIG_PHY_ROCKCHIP_EMMC                        policy<{'arm64': 'm', 'armhf': 'm'}>
+CONFIG_PHY_ROCKCHIP_INNO_USB2                   policy<{'arm64': 'm', 'armhf': 'm'}>
+CONFIG_PHY_ROCKCHIP_PCIE                        policy<{'arm64': 'm', 'armhf': 'm'}>
+CONFIG_PHY_ROCKCHIP_TYPEC                       policy<{'arm64': 'm', 'armhf': 'm'}>
+CONFIG_PHY_ROCKCHIP_USB                         policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_PHY_EXYNOS_DP_VIDEO                      policy<{'armhf': 'y'}>
 CONFIG_PHY_EXYNOS_MIPI_VIDEO                    policy<{'armhf': 'y'}>
 CONFIG_PHY_EXYNOS_PCIE                          policy<{'armhf': 'y'}>
@@ -6132,7 +6132,7 @@ CONFIG_PWM_OMAP_DMTIMER                         policy<{'armhf': 'm'}>
 CONFIG_PWM_PCA9685                              policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_PWM_RCAR                                 policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_PWM_RENESAS_TPU                          policy<{'arm64': 'm', 'armhf': 'm'}>
-CONFIG_PWM_ROCKCHIP                             policy<{'armhf': 'm'}>
+CONFIG_PWM_ROCKCHIP                             policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_PWM_SAMSUNG                              policy<{'armhf': 'm'}>
 CONFIG_PWM_STMPE                                policy<{'arm64': 'y', 'armhf': 'y', 'ppc64el': 'y'}>
 CONFIG_PWM_SUN4I                                policy<{'arm64': 'm'}>
@@ -6578,7 +6578,7 @@ CONFIG_SCSI_SYM53C8XX_MMIO                      policy<{'amd64': 'y', 'arm64': '
 
 # Menu: Device Drivers >> SOC (System On Chip) specific Drivers
 CONFIG_OWL_PM_DOMAINS                           policy<{'arm64': 'y', 'armhf': 'y'}>
-CONFIG_ROCKCHIP_PM_DOMAINS                      policy<{'armhf': 'y'}>
+CONFIG_ROCKCHIP_PM_DOMAINS                      policy<{'arm64': 'y', 'armhf': 'y'}>
 CONFIG_ARCH_TEGRA_2x_SOC                        policy<{'armhf-generic': 'y'}>
 CONFIG_ARCH_TEGRA_3x_SOC                        policy<{'armhf-generic': 'y'}>
 CONFIG_ARCH_TEGRA_114_SOC                       policy<{'armhf-generic': 'y'}>
@@ -6896,12 +6896,12 @@ CONFIG_SND_SOC                                  note<not autoloadable on omap>
 CONFIG_SND_SOC_MT8173                           policy<{'arm64': 'n', 'armhf': 'n'}>
 
 # Menu: Device Drivers >> Sound card support >> Advanced Linux Sound Architecture >> ALSA for SoC audio support >> ASoC support for Rockchip
-CONFIG_SND_SOC_ROCKCHIP                         policy<{'armhf': 'm'}>
-CONFIG_SND_SOC_ROCKCHIP_I2S                     policy<{'armhf': 'm'}>
-CONFIG_SND_SOC_ROCKCHIP_PDM                     policy<{'armhf': 'm'}>
-CONFIG_SND_SOC_ROCKCHIP_SPDIF                   policy<{'armhf': 'm'}>
-CONFIG_SND_SOC_ROCKCHIP_MAX98090                policy<{'armhf': 'm'}>
-CONFIG_SND_SOC_ROCKCHIP_RT5645                  policy<{'armhf': 'm'}>
+CONFIG_SND_SOC_ROCKCHIP                         policy<{'arm64': 'm', 'armhf': 'm'}>
+CONFIG_SND_SOC_ROCKCHIP_I2S                     policy<{'arm64': 'm', 'armhf': 'm'}>
+CONFIG_SND_SOC_ROCKCHIP_PDM                     policy<{'arm64': 'm', 'armhf': 'm'}>
+CONFIG_SND_SOC_ROCKCHIP_SPDIF                   policy<{'arm64': 'm', 'armhf': 'm'}>
+CONFIG_SND_SOC_ROCKCHIP_MAX98090                policy<{'arm64': 'm', 'armhf': 'm'}>
+CONFIG_SND_SOC_ROCKCHIP_RT5645                  policy<{'arm64': 'm', 'armhf': 'm'}>
 CONFIG_SND_SOC_RK3288_HDMI_ANALOG               policy<{'armhf': 'm'}>
 CONFIG_SND_SOC_RK3399_GRU_SOUND                 policy<{'armhf': 'm'}>
 
@@ -10777,7 +10777,7 @@ CONFIG_ARCH_MESON                               policy<{'arm64': 'n', 'armhf': '
 CONFIG_ARCH_ACTIONS                             policy<{'arm64': 'y', 'armhf': 'y'}>
 CONFIG_ARCH_ALPINE                              policy<{'arm64': 'n', 'armhf': 'y'}>
 CONFIG_ARCH_HISI                                policy<{'arm64': 'y', 'armhf': 'y'}>
-CONFIG_ARCH_ROCKCHIP                            policy<{'arm64': 'n', 'armhf': 'y'}>
+CONFIG_ARCH_ROCKCHIP                            policy<{'arm64': 'y', 'armhf': 'y'}>
 CONFIG_ARCH_TEGRA                               policy<{'arm64': 'n', 'armhf-generic': 'y', 'armhf-generic-lpae': 'n'}>
 CONFIG_ARCH_UNIPHIER                            policy<{'arm64': 'n', 'armhf': 'y'}>
 CONFIG_ARCH_ZX                                  policy<{'arm64': 'n', 'armhf': 'n'}>
@@ -10789,7 +10789,7 @@ CONFIG_ARCH_MEDIATEK                            policy<{'arm64': 'y', 'armhf': '
 CONFIG_ARCH_QCOM                                policy<{'arm64': 'y', 'armhf': 'y'}>
 CONFIG_ARCH_EXYNOS                              policy<{'arm64': 'n', 'armhf': 'y'}>
 #
-CONFIG_ARCH_ROCKCHIP                            note<LP:1566283>
+CONFIG_ARCH_ROCKCHIP                            note<LP:1566283 / LP:1825222>
 CONFIG_ARCH_ZX                                  note<LP:1628503>
 
 # Menu: Platform selection >> Architecture: arm64
