@@ -361,6 +361,7 @@ CONFIG_SERIAL_CORE=m
 # CONFIG_SFC_FALCON is not set
 # CONFIG_SGI_IOC4 is not set
 # CONFIG_SGI_PARTITION is not set
+# CONFIG_SGL_ALLOC is not set
 # CONFIG_SG_SPLIT is not set
 # CONFIG_SH_TIMER_CMT is not set
 # CONFIG_SH_TIMER_MTU2 is not set
