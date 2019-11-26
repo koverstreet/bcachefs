@@ -56,13 +56,21 @@ ENTRY(__bp_harden_hyp_vecs_start)
 ENTRY(__bp_harden_hyp_vecs_end)
 
 
-ENTRY(__smccc_workaround_1_smc_start)
+.macro smccc_workaround_1 inst
 	sub	sp, sp, #(8 * 4)
 	stp	x2, x3, [sp, #(8 * 0)]
 	stp	x0, x1, [sp, #(8 * 2)]
 	mov	w0, #ARM_SMCCC_ARCH_WORKAROUND_1
-	smc	#0
+	\inst	#0
 	ldp	x2, x3, [sp, #(8 * 0)]
 	ldp	x0, x1, [sp, #(8 * 2)]
 	add	sp, sp, #(8 * 4)
+.endm
+
+ENTRY(__smccc_workaround_1_smc_start)
+	smccc_workaround_1	smc
 ENTRY(__smccc_workaround_1_smc_end)
+
+ENTRY(__smccc_workaround_1_hvc_start)
+	smccc_workaround_1	hvc
+ENTRY(__smccc_workaround_1_hvc_end)
