@@ -11680,6 +11680,7 @@ EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_fast_pio_out
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_find_cpuid_entry
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_flush_remote_tlbs
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_get_apic_base
+EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_get_apic_mode
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_get_arch_capabilities
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_get_cr8
 EXPORT_SYMBOL_GPL arch/x86/kvm/kvm 0x00000000	kvm_get_cs_db_l_bits
