@@ -572,6 +572,12 @@ void __init init_cpu_features(struct cpuinfo_arm64 *info)
 		init_cpu_ftr_reg(SYS_ZCR_EL1, info->reg_zcr);
 		sve_init_vq_map();
 	}
+
+	/*
+	 * Detect and enable early CPU capabilities based on the boot CPU,
+	 * after we have initialised the CPU feature infrastructure.
+	 */
+	setup_boot_cpu_capabilities();
 }
 
 static void update_cpu_ftr_reg(struct arm64_ftr_reg *reg, u64 new)
@@ -588,12 +594,6 @@ static void update_cpu_ftr_reg(struct arm64_ftr_reg *reg, u64 new)
 		ftr_new = arm64_ftr_safe_value(ftrp, ftr_new, ftr_cur);
 		reg->sys_val = arm64_ftr_set_value(ftrp, reg->sys_val, ftr_new);
 	}
-
-	/*
-	 * Detect and enable early CPU capabilities based on the boot CPU,
-	 * after we have initialised the CPU feature infrastructure.
-	 */
-	setup_boot_cpu_capabilities();
 }
 
 static int check_update_ftr_reg(u32 sys_id, int cpu, u64 val, u64 boot)
