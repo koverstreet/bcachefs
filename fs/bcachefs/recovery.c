@@ -10,6 +10,7 @@
 #include "dirent.h"
 #include "ec.h"
 #include "error.h"
+#include "fs-common.h"
 #include "fsck.h"
 #include "journal_io.h"
 #include "journal_reclaim.h"
@@ -176,7 +177,7 @@ static struct journal_keys journal_keys_sort(struct list_head *journal_entries)
 			if ((cmp_int(i[0].journal_seq, i[1].journal_seq) ?:
 			     cmp_int(i[0].journal_offset, i[1].journal_offset)) < 0) {
 				if (bkey_cmp(i[0].k->k.p, i[1].k->k.p) <= 0) {
-					bch2_cut_back(bkey_start_pos(&i[1].k->k), &i[0].k->k);
+					bch2_cut_back(bkey_start_pos(&i[1].k->k), i[0].k);
 				} else {
 					struct bkey_i *split =
 						kmalloc(bkey_bytes(i[0].k), GFP_KERNEL);
@@ -185,7 +186,7 @@ static struct journal_keys journal_keys_sort(struct list_head *journal_entries)
 						goto err;
 
 					bkey_copy(split, i[0].k);
-					bch2_cut_back(bkey_start_pos(&i[1].k->k), &split->k);
+					bch2_cut_back(bkey_start_pos(&i[1].k->k), split);
 					keys_deduped.d[keys_deduped.nr++] = (struct journal_key) {
 						.btree_id	= i[0].btree_id,
 						.allocated	= true,
@@ -253,7 +254,7 @@ static int bch2_extent_replay_key(struct bch_fs *c, enum btree_id btree_id,
 	 * Some extents aren't equivalent - w.r.t. what the triggers do
 	 * - if they're split:
 	 */
-	bool remark_if_split = bch2_extent_is_compressed(bkey_i_to_s_c(k)) ||
+	bool remark_if_split = bch2_bkey_sectors_compressed(bkey_i_to_s_c(k)) ||
 		k->k.type == KEY_TYPE_reflink_p;
 	bool remark = false;
 	int ret;
@@ -271,6 +272,8 @@ retry:
 		if (ret)
 			goto err;
 
+		atomic_end = bpos_min(k->k.p, iter->l[0].b->key.k.p);
+
 		split_iter = bch2_trans_copy_iter(&trans, iter);
 		ret = PTR_ERR_OR_ZERO(split_iter);
 		if (ret)
@@ -281,16 +284,12 @@ retry:
 		if (ret)
 			goto err;
 
-		ret = bch2_extent_atomic_end(split_iter, k, &atomic_end);
-		if (ret)
-			goto err;
-
 		if (!remark &&
 		    remark_if_split &&
 		    bkey_cmp(atomic_end, k->k.p) < 0) {
 			ret = bch2_disk_reservation_add(c, &disk_res,
 					k->k.size *
-					bch2_bkey_nr_dirty_ptrs(bkey_i_to_s_c(k)),
+					bch2_bkey_nr_ptrs_allocated(bkey_i_to_s_c(k)),
 					BCH_DISK_RESERVATION_NOFAIL);
 			BUG_ON(ret);
 
@@ -299,9 +298,9 @@ retry:
 
 		bkey_copy(split, k);
 		bch2_cut_front(split_iter->pos, split);
-		bch2_cut_back(atomic_end, &split->k);
+		bch2_cut_back(atomic_end, split);
 
-		bch2_trans_update(&trans, BTREE_INSERT_ENTRY(split_iter, split));
+		bch2_trans_update(&trans, split_iter, split);
 		bch2_btree_iter_set_pos(iter, split->k.p);
 	} while (bkey_cmp(iter->pos, k->k.p) < 0);
 
@@ -865,6 +864,8 @@ int bch2_fs_recovery(struct bch_fs *c)
 			goto err;
 		}
 		bch_verbose(c, "alloc write done");
+
+		set_bit(BCH_FS_ALLOC_WRITTEN, &c->flags);
 	}
 
 	if (!c->sb.clean) {
@@ -912,6 +913,12 @@ int bch2_fs_recovery(struct bch_fs *c)
 		write_sb = true;
 	}
 
+	if (!(c->sb.features & (1ULL << BCH_FEATURE_INLINE_DATA))) {
+		c->disk_sb.sb->features[0] |=
+			cpu_to_le64(1ULL << BCH_FEATURE_INLINE_DATA);
+		write_sb = true;
+	}
+
 	if (!test_bit(BCH_FS_ERROR, &c->flags)) {
 		c->disk_sb.sb->compat[0] |= 1ULL << BCH_COMPAT_FEAT_ALLOC_INFO;
 		write_sb = true;
@@ -952,7 +959,6 @@ int bch2_fs_initialize(struct bch_fs *c)
 {
 	struct bch_inode_unpacked root_inode, lostfound_inode;
 	struct bkey_inode_buf packed_inode;
-	struct bch_hash_info root_hash_info;
 	struct qstr lostfound = QSTR("lost+found");
 	const char *err = "cannot allocate memory";
 	struct bch_dev *ca;
@@ -997,7 +1003,6 @@ int bch2_fs_initialize(struct bch_fs *c)
 	bch2_inode_init(c, &root_inode, 0, 0,
 			S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0, NULL);
 	root_inode.bi_inum = BCACHEFS_ROOT_INO;
-	root_inode.bi_nlink++; /* lost+found */
 	bch2_inode_pack(&packed_inode, &root_inode);
 
 	err = "error creating root directory";
@@ -1007,24 +1012,15 @@ int bch2_fs_initialize(struct bch_fs *c)
 	if (ret)
 		goto err;
 
-	bch2_inode_init(c, &lostfound_inode, 0, 0,
-			S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0,
-			&root_inode);
-	lostfound_inode.bi_inum = BCACHEFS_ROOT_INO + 1;
-	bch2_inode_pack(&packed_inode, &lostfound_inode);
+	bch2_inode_init_early(c, &lostfound_inode);
 
 	err = "error creating lost+found";
-	ret = bch2_btree_insert(c, BTREE_ID_INODES,
-				&packed_inode.inode.k_i,
-				NULL, NULL, 0);
-	if (ret)
-		goto err;
-
-	root_hash_info = bch2_hash_info_init(c, &root_inode);
-
-	ret = bch2_dirent_create(c, BCACHEFS_ROOT_INO, &root_hash_info, DT_DIR,
-				 &lostfound, lostfound_inode.bi_inum, NULL,
-				 BTREE_INSERT_NOFAIL);
+	ret = bch2_trans_do(c, NULL, BTREE_INSERT_ATOMIC,
+		bch2_create_trans(&trans, BCACHEFS_ROOT_INO,
+				  &root_inode, &lostfound_inode,
+				  &lostfound,
+				  0, 0, S_IFDIR|0700, 0,
+				  NULL, NULL));
 	if (ret)
 		goto err;
 

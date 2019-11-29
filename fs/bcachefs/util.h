@@ -547,8 +547,18 @@ do {									\
 
 size_t bch2_rand_range(size_t);
 
-void memcpy_to_bio(struct bio *, struct bvec_iter, void *);
+void memcpy_to_bio(struct bio *, struct bvec_iter, const void *);
 void memcpy_from_bio(void *, struct bio *, struct bvec_iter);
+
+static inline void memcpy_u64s_small(void *dst, const void *src,
+				     unsigned u64s)
+{
+	u64 *d = dst;
+	const u64 *s = src;
+
+	while (u64s--)
+		*d++ = *s++;
+}
 
 static inline void __memcpy_u64s(void *dst, const void *src,
 				 unsigned u64s)
@@ -591,6 +601,24 @@ static inline void memmove_u64s_down(void *dst, const void *src,
 	__memmove_u64s_down(dst, src, u64s);
 }
 
+static inline void __memmove_u64s_up_small(void *_dst, const void *_src,
+					   unsigned u64s)
+{
+	u64 *dst = (u64 *) _dst + u64s;
+	u64 *src = (u64 *) _src + u64s;
+
+	while (u64s--)
+		*--dst = *--src;
+}
+
+static inline void memmove_u64s_up_small(void *dst, const void *src,
+					 unsigned u64s)
+{
+	EBUG_ON(dst < src);
+
+	__memmove_u64s_up_small(dst, src, u64s);
+}
+
 static inline void __memmove_u64s_up(void *_dst, const void *_src,
 				     unsigned u64s)
 {
@@ -628,34 +656,13 @@ static inline void memmove_u64s(void *dst, const void *src,
 		__memmove_u64s_up(dst, src, u64s);
 }
 
-static inline struct bio_vec next_contig_bvec(struct bio *bio,
-					      struct bvec_iter *iter)
+/* Set the last few bytes up to a u64 boundary given an offset into a buffer. */
+static inline void memset_u64s_tail(void *s, int c, unsigned bytes)
 {
-	struct bio_vec bv = bio_iter_iovec(bio, *iter);
+	unsigned rem = round_up(bytes, sizeof(u64)) - bytes;
 
-	bio_advance_iter(bio, iter, bv.bv_len);
-#ifndef CONFIG_HIGHMEM
-	while (iter->bi_size) {
-		struct bio_vec next = bio_iter_iovec(bio, *iter);
-
-		if (page_address(bv.bv_page) + bv.bv_offset + bv.bv_len !=
-		    page_address(next.bv_page) + next.bv_offset)
-			break;
-
-		bv.bv_len += next.bv_len;
-		bio_advance_iter(bio, iter, next.bv_len);
-	}
-#endif
-	return bv;
+	memset(s + bytes, c, rem);
 }
-
-#define __bio_for_each_contig_segment(bv, bio, iter, start)		\
-	for (iter = (start);						\
-	     (iter).bi_size &&						\
-		((bv = next_contig_bvec((bio), &(iter))), 1);)
-
-#define bio_for_each_contig_segment(bv, bio, iter)			\
-	__bio_for_each_contig_segment(bv, bio, iter, (bio)->bi_iter)
 
 void sort_cmp_size(void *base, size_t num, size_t size,
 	  int (*cmp_func)(const void *, const void *, size_t),

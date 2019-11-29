@@ -180,20 +180,21 @@ struct btree_node_iter {
 
 enum btree_iter_type {
 	BTREE_ITER_KEYS,
-	BTREE_ITER_SLOTS,
 	BTREE_ITER_NODES,
 };
 
 #define BTREE_ITER_TYPE			((1 << 2) - 1)
 
-#define BTREE_ITER_INTENT		(1 << 2)
-#define BTREE_ITER_PREFETCH		(1 << 3)
+#define BTREE_ITER_SLOTS		(1 << 2)
+#define BTREE_ITER_INTENT		(1 << 3)
+#define BTREE_ITER_PREFETCH		(1 << 4)
+#define BTREE_ITER_KEEP_UNTIL_COMMIT	(1 << 5)
 /*
  * Used in bch2_btree_iter_traverse(), to indicate whether we're searching for
  * @pos or the first key strictly greater than @pos
  */
-#define BTREE_ITER_IS_EXTENTS		(1 << 4)
-#define BTREE_ITER_ERROR		(1 << 5)
+#define BTREE_ITER_IS_EXTENTS		(1 << 6)
+#define BTREE_ITER_ERROR		(1 << 7)
 
 enum btree_iter_uptodate {
 	BTREE_ITER_UPTODATE		= 0,
@@ -234,33 +235,16 @@ struct btree_iter {
 	 * bch2_btree_iter_next_slot() can correctly advance pos.
 	 */
 	struct bkey		k;
-
-	u64			id;
 };
 
-struct deferred_update {
-	struct journal_preres	res;
-	struct journal_entry_pin journal;
-
-	spinlock_t		lock;
-	unsigned		dirty:1;
-
-	u8			allocated_u64s;
-	enum btree_id		btree_id;
-
-	/* must be last: */
-	struct bkey_i		k;
-};
+static inline enum btree_iter_type btree_iter_type(struct btree_iter *iter)
+{
+	return iter->flags & BTREE_ITER_TYPE;
+}
 
 struct btree_insert_entry {
 	struct bkey_i		*k;
-
-	union {
 	struct btree_iter	*iter;
-	struct deferred_update	*d;
-	};
-
-	bool			deferred;
 };
 
 #define BTREE_ITER_MAX		64
@@ -268,13 +252,10 @@ struct btree_insert_entry {
 struct btree_trans {
 	struct bch_fs		*c;
 	unsigned long		ip;
-	u64			commit_start;
 
 	u64			iters_linked;
 	u64			iters_live;
 	u64			iters_touched;
-	u64			iters_unlink_on_restart;
-	u64			iters_unlink_on_commit;
 
 	u8			nr_iters;
 	u8			nr_updates;
@@ -298,12 +279,11 @@ struct btree_trans {
 	struct disk_reservation *disk_res;
 	unsigned		flags;
 	unsigned		journal_u64s;
+	struct replicas_delta_list *fs_usage_deltas;
 
 	struct btree_iter	iters_onstack[2];
 	struct btree_insert_entry updates_onstack[6];
 	u8			updates_sorted_onstack[6];
-
-	struct replicas_delta_list *fs_usage_deltas;
 };
 
 #define BTREE_FLAG(flag)						\
@@ -435,6 +415,12 @@ static inline unsigned btree_bkey_first_offset(const struct bset_tree *t)
 	__btree_node_offset_to_key(_b, (_t)->end_offset);		\
 })
 
+static inline unsigned bset_u64s(struct bset_tree *t)
+{
+	return t->end_offset - t->data_offset -
+		sizeof(struct bset) / sizeof(u64);
+}
+
 static inline unsigned bset_byte_offset(struct btree *b, void *i)
 {
 	return i - (void *) b->data;
@@ -475,19 +461,22 @@ static inline bool btree_node_is_extents(struct btree *b)
 	return btree_node_type_is_extents(btree_node_type(b));
 }
 
+#define BTREE_NODE_TYPE_HAS_TRIGGERS			\
+	((1U << BKEY_TYPE_EXTENTS)|			\
+	 (1U << BKEY_TYPE_ALLOC)|			\
+	 (1U << BKEY_TYPE_INODES)|			\
+	 (1U << BKEY_TYPE_REFLINK)|			\
+	 (1U << BKEY_TYPE_EC)|				\
+	 (1U << BKEY_TYPE_BTREE))
+
+#define BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS		\
+	((1U << BKEY_TYPE_EXTENTS)|			\
+	 (1U << BKEY_TYPE_INODES)|			\
+	 (1U << BKEY_TYPE_REFLINK))
+
 static inline bool btree_node_type_needs_gc(enum btree_node_type type)
 {
-	switch (type) {
-	case BKEY_TYPE_ALLOC:
-	case BKEY_TYPE_BTREE:
-	case BKEY_TYPE_EXTENTS:
-	case BKEY_TYPE_INODES:
-	case BKEY_TYPE_EC:
-	case BKEY_TYPE_REFLINK:
-		return true;
-	default:
-		return false;
-	}
+	return BTREE_NODE_TYPE_HAS_TRIGGERS & (1U << type);
 }
 
 struct btree_root {

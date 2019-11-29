@@ -674,10 +674,7 @@ struct btree *bch2_btree_node_get(struct bch_fs *c, struct btree_iter *iter,
 	EBUG_ON(!btree_node_locked(iter, level + 1));
 	EBUG_ON(level >= BTREE_MAX_DEPTH);
 retry:
-	rcu_read_lock();
 	b = btree_cache_find(bc, k);
-	rcu_read_unlock();
-
 	if (unlikely(!b)) {
 		/*
 		 * We must have the parent locked to call bch2_btree_node_fill(),
@@ -878,10 +875,7 @@ void bch2_btree_node_prefetch(struct bch_fs *c, struct btree_iter *iter,
 	BUG_ON(!btree_node_locked(iter, level + 1));
 	BUG_ON(level >= BTREE_MAX_DEPTH);
 
-	rcu_read_lock();
 	b = btree_cache_find(bc, k);
-	rcu_read_unlock();
-
 	if (b)
 		return;
 
@@ -915,9 +909,7 @@ void bch2_btree_node_to_text(struct printbuf *out, struct bch_fs *c,
 	       "    nr packed keys %u\n"
 	       "    nr unpacked keys %u\n"
 	       "    floats %zu\n"
-	       "    failed unpacked %zu\n"
-	       "    failed prev %zu\n"
-	       "    failed overflow %zu\n",
+	       "    failed unpacked %zu\n",
 	       f->key_u64s,
 	       f->bits_per_field[0],
 	       f->bits_per_field[1],
@@ -934,7 +926,5 @@ void bch2_btree_node_to_text(struct printbuf *out, struct bch_fs *c,
 	       b->nr.packed_keys,
 	       b->nr.unpacked_keys,
 	       stats.floats,
-	       stats.failed_unpacked,
-	       stats.failed_prev,
-	       stats.failed_overflow);
+	       stats.failed);
 }

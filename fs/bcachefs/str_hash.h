@@ -14,6 +14,23 @@
 #include <crypto/hash.h>
 #include <crypto/sha.h>
 
+static inline enum bch_str_hash_type
+bch2_str_hash_opt_to_type(struct bch_fs *c, enum bch_str_hash_opts opt)
+{
+	switch (opt) {
+	case BCH_STR_HASH_OPT_CRC32C:
+		return BCH_STR_HASH_CRC32C;
+	case BCH_STR_HASH_OPT_CRC64:
+		return BCH_STR_HASH_CRC64;
+	case BCH_STR_HASH_OPT_SIPHASH:
+		return c->sb.features & (1ULL << BCH_FEATURE_NEW_SIPHASH)
+			? BCH_STR_HASH_SIPHASH
+			: BCH_STR_HASH_SIPHASH_OLD;
+	default:
+	     BUG();
+	}
+}
+
 struct bch_hash_info {
 	u8			type;
 	union {
@@ -23,34 +40,24 @@ struct bch_hash_info {
 };
 
 static inline struct bch_hash_info
-bch2_hash_info_init(struct bch_fs *c,
-		   const struct bch_inode_unpacked *bi)
+bch2_hash_info_init(struct bch_fs *c, const struct bch_inode_unpacked *bi)
 {
 	/* XXX ick */
 	struct bch_hash_info info = {
 		.type = (bi->bi_flags >> INODE_STR_HASH_OFFSET) &
-			~(~0U << INODE_STR_HASH_BITS)
+			~(~0U << INODE_STR_HASH_BITS),
+		.crc_key = bi->bi_hash_seed,
 	};
 
-	switch (info.type) {
-	case BCH_STR_HASH_CRC32C:
-	case BCH_STR_HASH_CRC64:
-		info.crc_key = bi->bi_hash_seed;
-		break;
-	case BCH_STR_HASH_SIPHASH: {
+	if (unlikely(info.type == BCH_STR_HASH_SIPHASH_OLD)) {
 		SHASH_DESC_ON_STACK(desc, c->sha256);
 		u8 digest[SHA256_DIGEST_SIZE];
 
 		desc->tfm = c->sha256;
-		desc->flags = 0;
 
 		crypto_shash_digest(desc, (void *) &bi->bi_hash_seed,
 				    sizeof(bi->bi_hash_seed), digest);
 		memcpy(&info.siphash_key, digest, sizeof(info.siphash_key));
-		break;
-	}
-	default:
-		BUG();
 	}
 
 	return info;
@@ -74,6 +81,7 @@ static inline void bch2_str_hash_init(struct bch_str_hash_ctx *ctx,
 	case BCH_STR_HASH_CRC64:
 		ctx->crc64 = crc64_be(~0, &info->crc_key, sizeof(info->crc_key));
 		break;
+	case BCH_STR_HASH_SIPHASH_OLD:
 	case BCH_STR_HASH_SIPHASH:
 		SipHash24_Init(&ctx->siphash, &info->siphash_key);
 		break;
@@ -93,6 +101,7 @@ static inline void bch2_str_hash_update(struct bch_str_hash_ctx *ctx,
 	case BCH_STR_HASH_CRC64:
 		ctx->crc64 = crc64_be(ctx->crc64, data, len);
 		break;
+	case BCH_STR_HASH_SIPHASH_OLD:
 	case BCH_STR_HASH_SIPHASH:
 		SipHash24_Update(&ctx->siphash, data, len);
 		break;
@@ -109,6 +118,7 @@ static inline u64 bch2_str_hash_end(struct bch_str_hash_ctx *ctx,
 		return ctx->crc32c;
 	case BCH_STR_HASH_CRC64:
 		return ctx->crc64 >> 1;
+	case BCH_STR_HASH_SIPHASH_OLD:
 	case BCH_STR_HASH_SIPHASH:
 		return SipHash24_End(&ctx->siphash) >> 1;
 	default:
@@ -188,6 +198,7 @@ int bch2_hash_needs_whiteout(struct btree_trans *trans,
 {
 	struct btree_iter *iter;
 	struct bkey_s_c k;
+	int ret;
 
 	iter = bch2_trans_copy_iter(trans, start);
 	if (IS_ERR(iter))
@@ -195,19 +206,21 @@ int bch2_hash_needs_whiteout(struct btree_trans *trans,
 
 	bch2_btree_iter_next_slot(iter);
 
-	for_each_btree_key_continue(iter, BTREE_ITER_SLOTS, k) {
+	for_each_btree_key_continue(iter, BTREE_ITER_SLOTS, k, ret) {
 		if (k.k->type != desc.key_type &&
 		    k.k->type != KEY_TYPE_whiteout)
 			break;
 
 		if (k.k->type == desc.key_type &&
 		    desc.hash_bkey(info, k) <= start->pos.offset) {
-			bch2_trans_iter_free_on_commit(trans, iter);
-			return 1;
+			iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
+			ret = 1;
+			break;
 		}
 	}
 
-	return bch2_trans_iter_free(trans, iter);
+	bch2_trans_iter_put(trans, iter);
+	return ret;
 }
 
 static __always_inline
@@ -246,11 +259,15 @@ int bch2_hash_set(struct btree_trans *trans,
 			goto not_found;
 	}
 
-	if (slot)
-		bch2_trans_iter_free(trans, slot);
-	bch2_trans_iter_free(trans, iter);
+	if (!ret)
+		ret = -ENOSPC;
+out:
+	if (!IS_ERR_OR_NULL(slot))
+		bch2_trans_iter_put(trans, slot);
+	if (!IS_ERR_OR_NULL(iter))
+		bch2_trans_iter_put(trans, iter);
 
-	return ret ?: -ENOSPC;
+	return ret;
 found:
 	found = true;
 not_found:
@@ -260,17 +277,14 @@ not_found:
 	} else if (found && (flags & BCH_HASH_SET_MUST_CREATE)) {
 		ret = -EEXIST;
 	} else {
-		if (!found && slot) {
-			bch2_trans_iter_free(trans, iter);
-			iter = slot;
-		}
+		if (!found && slot)
+			swap(iter, slot);
 
 		insert->k.p = iter->pos;
-		bch2_trans_update(trans, BTREE_INSERT_ENTRY(iter, insert));
-		bch2_trans_iter_free_on_commit(trans, iter);
+		bch2_trans_update(trans, iter, insert);
 	}
 
-	return ret;
+	goto out;
 }
 
 static __always_inline
@@ -294,7 +308,7 @@ int bch2_hash_delete_at(struct btree_trans *trans,
 	delete->k.p = iter->pos;
 	delete->k.type = ret ? KEY_TYPE_whiteout : KEY_TYPE_deleted;
 
-	bch2_trans_update(trans, BTREE_INSERT_ENTRY(iter, delete));
+	bch2_trans_update(trans, iter, delete);
 	return 0;
 }
 

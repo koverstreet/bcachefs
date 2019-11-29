@@ -79,9 +79,7 @@ void __bch2_btree_calc_format(struct bkey_format_state *s, struct btree *b)
 	bch2_bkey_format_add_pos(s, b->data->min_key);
 
 	for_each_bset(b, t)
-		for (k = btree_bkey_first(b, t);
-		     k != btree_bkey_last(b, t);
-		     k = bkey_next(k))
+		bset_tree_for_each_key(b, t, k)
 			if (!bkey_whiteout(k)) {
 				uk = bkey_unpack_key(b, k);
 				bch2_bkey_format_add_key(s, &uk);
@@ -1240,7 +1238,9 @@ static struct btree *__btree_split_node(struct btree_update *as,
 	 */
 	k = set1->start;
 	while (1) {
-		if (bkey_next(k) == vstruct_last(set1))
+		struct bkey_packed *n = bkey_next_skip_noops(k, vstruct_last(set1));
+
+		if (n == vstruct_last(set1))
 			break;
 		if (k->_data - set1->_data >= (le16_to_cpu(set1->u64s) * 3) / 5)
 			break;
@@ -1251,7 +1251,7 @@ static struct btree *__btree_split_node(struct btree_update *as,
 			nr_unpacked++;
 
 		prev = k;
-		k = bkey_next(k);
+		k = n;
 	}
 
 	BUG_ON(!prev);
@@ -1315,7 +1315,7 @@ static void btree_split_insert_keys(struct btree_update *as, struct btree *b,
 {
 	struct btree_node_iter node_iter;
 	struct bkey_i *k = bch2_keylist_front(keys);
-	struct bkey_packed *p;
+	struct bkey_packed *src, *dst, *n;
 	struct bset *i;
 
 	BUG_ON(btree_node_type(b) != BKEY_TYPE_BTREE);
@@ -1340,16 +1340,18 @@ static void btree_split_insert_keys(struct btree_update *as, struct btree *b,
 	 * for the pivot:
 	 */
 	i = btree_bset_first(b);
-	p = i->start;
-	while (p != vstruct_last(i))
-		if (bkey_deleted(p)) {
-			le16_add_cpu(&i->u64s, -p->u64s);
-			set_btree_bset_end(b, b->set);
-			memmove_u64s_down(p, bkey_next(p),
-					  (u64 *) vstruct_last(i) -
-					  (u64 *) p);
-		} else
-			p = bkey_next(p);
+	src = dst = i->start;
+	while (src != vstruct_last(i)) {
+		n = bkey_next_skip_noops(src, vstruct_last(i));
+		if (!bkey_deleted(src)) {
+			memmove_u64s_down(dst, src, src->u64s);
+			dst = bkey_next(dst);
+		}
+		src = n;
+	}
+
+	i->u64s = cpu_to_le16((u64 *) dst - i->_data);
+	set_btree_bset_end(b, b->set);
 
 	BUG_ON(b->nsets != 1 ||
 	       b->nr.live_u64s != le16_to_cpu(btree_bset_first(b)->u64s));
@@ -1446,7 +1448,19 @@ static void btree_split(struct btree_update *as, struct btree *b,
 		bch2_btree_iter_node_replace(iter, n2);
 	bch2_btree_iter_node_replace(iter, n1);
 
+	/*
+	 * The old node must be freed (in memory) _before_ unlocking the new
+	 * nodes - else another thread could re-acquire a read lock on the old
+	 * node after another thread has locked and updated the new node, thus
+	 * seeing stale data:
+	 */
 	bch2_btree_node_free_inmem(c, b, iter);
+
+	if (n3)
+		six_unlock_intent(&n3->lock);
+	if (n2)
+		six_unlock_intent(&n2->lock);
+	six_unlock_intent(&n1->lock);
 
 	bch2_btree_trans_verify_locks(iter->trans);
 
@@ -1761,6 +1775,8 @@ retry:
 	bch2_btree_node_free_inmem(c, b, iter);
 	bch2_btree_node_free_inmem(c, m, iter);
 
+	six_unlock_intent(&n->lock);
+
 	bch2_btree_update_done(as);
 
 	if (!(flags & BTREE_INSERT_GC_LOCK_HELD))
@@ -1855,6 +1871,7 @@ static int __btree_node_rewrite(struct bch_fs *c, struct btree_iter *iter,
 	bch2_btree_iter_node_drop(iter, b);
 	bch2_btree_iter_node_replace(iter, n);
 	bch2_btree_node_free_inmem(c, b, iter);
+	six_unlock_intent(&n->lock);
 
 	bch2_btree_update_done(as);
 	return 0;
@@ -2172,6 +2189,7 @@ void bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id)
 	bch2_bset_init_first(b, &b->data->keys);
 	bch2_btree_build_aux_trees(b);
 
+	b->data->flags = 0;
 	b->data->min_key = POS_MIN;
 	b->data->max_key = POS_MAX;
 	b->data->format = bch2_btree_calc_format(b);

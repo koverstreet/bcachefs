@@ -137,8 +137,8 @@ static inline u8 ptr_stale(struct bch_dev *ca,
 	return gen_after(ptr_bucket_mark(ca, ptr).gen, ptr->gen);
 }
 
-static inline unsigned __ptr_disk_sectors(struct extent_ptr_decoded p,
-					  unsigned live_size)
+static inline s64 __ptr_disk_sectors(struct extent_ptr_decoded p,
+				     unsigned live_size)
 {
 	return live_size && p.crc.compression_type
 		? max(1U, DIV_ROUND_UP(live_size * p.crc.compressed_size,
@@ -146,7 +146,7 @@ static inline unsigned __ptr_disk_sectors(struct extent_ptr_decoded p,
 		: live_size;
 }
 
-static inline unsigned ptr_disk_sectors(struct extent_ptr_decoded p)
+static inline s64 ptr_disk_sectors(struct extent_ptr_decoded p)
 {
 	return __ptr_disk_sectors(p, p.crc.live_size);
 }
@@ -279,9 +279,9 @@ int bch2_mark_overwrite(struct btree_trans *, struct btree_iter *,
 int bch2_mark_update(struct btree_trans *, struct btree_insert_entry *,
 		     struct bch_fs_usage *, unsigned);
 
-void bch2_replicas_delta_list_apply(struct bch_fs *,
-				    struct bch_fs_usage *,
-				    struct replicas_delta_list *);
+int bch2_replicas_delta_list_apply(struct bch_fs *,
+				   struct bch_fs_usage *,
+				   struct replicas_delta_list *);
 int bch2_trans_mark_key(struct btree_trans *, struct bkey_s_c,
 			unsigned, s64, unsigned);
 int bch2_trans_mark_update(struct btree_trans *,

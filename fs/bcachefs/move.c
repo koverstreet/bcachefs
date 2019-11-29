@@ -2,6 +2,7 @@
 
 #include "bcachefs.h"
 #include "alloc_foreground.h"
+#include "bkey_on_stack.h"
 #include "btree_gc.h"
 #include "btree_update.h"
 #include "btree_update_interior.h"
@@ -96,10 +97,11 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 
 		bkey_copy(&_new.k, bch2_keylist_front(keys));
 		new = bkey_i_to_extent(&_new.k);
+		bch2_cut_front(iter->pos, &new->k_i);
 
-		bch2_cut_front(iter->pos, insert);
-		bch2_cut_back(new->k.p, &insert->k);
-		bch2_cut_back(insert->k.p, &new->k);
+		bch2_cut_front(iter->pos,	insert);
+		bch2_cut_back(new->k.p,		insert);
+		bch2_cut_back(insert->k.p,	&new->k_i);
 
 		if (m->data_cmd == DATA_REWRITE)
 			bch2_bkey_drop_device(bkey_i_to_s(insert),
@@ -133,11 +135,11 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		 * If we're not fully overwriting @k, and it's compressed, we
 		 * need a reservation for all the pointers in @insert
 		 */
-		nr = bch2_bkey_nr_dirty_ptrs(bkey_i_to_s_c(insert)) -
+		nr = bch2_bkey_nr_ptrs_allocated(bkey_i_to_s_c(insert)) -
 			 m->nr_ptrs_reserved;
 
 		if (insert->k.size < k.k->size &&
-		    bch2_extent_is_compressed(k) &&
+		    bch2_bkey_sectors_compressed(k) &&
 		    nr > 0) {
 			ret = bch2_disk_reservation_add(c, &op->res,
 					keylist_sectors(keys) * nr, 0);
@@ -148,8 +150,7 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 			goto next;
 		}
 
-		bch2_trans_update(&trans,
-				BTREE_INSERT_ENTRY(iter, insert));
+		bch2_trans_update(&trans, iter, insert);
 
 		ret = bch2_trans_commit(&trans, &op->res,
 				op_journal_seq(op),
@@ -169,8 +170,6 @@ next:
 			if (bch2_keylist_empty(keys))
 				goto out;
 		}
-
-		bch2_cut_front(iter->pos, bch2_keylist_front(keys));
 		continue;
 nomatch:
 		if (m->ctxt)
@@ -252,7 +251,7 @@ int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
 		 */
 #if 0
 		int nr = (int) io_opts.data_replicas -
-			bch2_bkey_nr_dirty_ptrs(k);
+			bch2_bkey_nr_ptrs_allocated(k);
 #endif
 		int nr = (int) io_opts.data_replicas;
 
@@ -302,12 +301,12 @@ static void move_free(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct moving_context *ctxt = io->write.ctxt;
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	int i;
 
 	bch2_disk_reservation_put(io->write.op.c, &io->write.op.res);
 
-	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, i)
+	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, iter)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);
 
@@ -491,7 +490,7 @@ static int __bch2_move_data(struct bch_fs *c,
 {
 	bool kthread = (current->flags & PF_KTHREAD) != 0;
 	struct bch_io_opts io_opts = bch2_opts_to_inode_opts(c->opts);
-	BKEY_PADDED(k) tmp;
+	struct bkey_on_stack sk;
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_s_c k;
@@ -500,6 +499,7 @@ static int __bch2_move_data(struct bch_fs *c,
 	u64 delay, cur_inum = U64_MAX;
 	int ret = 0, ret2;
 
+	bkey_on_stack_init(&sk);
 	bch2_trans_init(&trans, c, 0, 0);
 
 	stats->data_type = BCH_DATA_USER;
@@ -551,7 +551,8 @@ peek:
 		if (!bkey_extent_is_direct_data(k.k))
 			goto next_nondata;
 
-		if (cur_inum != k.k->p.inode) {
+		if (btree_id == BTREE_ID_EXTENTS &&
+		    cur_inum != k.k->p.inode) {
 			struct bch_inode_unpacked inode;
 
 			/* don't hold btree locks while looking up inode: */
@@ -578,8 +579,8 @@ peek:
 		}
 
 		/* unlock before doing IO: */
-		bkey_reassemble(&tmp.k, k);
-		k = bkey_i_to_s_c(&tmp.k);
+		bkey_on_stack_reassemble(&sk, c, k);
+		k = bkey_i_to_s_c(sk.k);
 		bch2_trans_unlock(&trans);
 
 		ret2 = bch2_move_extent(c, ctxt, wp, io_opts, btree_id, k,
@@ -598,7 +599,7 @@ peek:
 		if (rate)
 			bch2_ratelimit_increment(rate, k.k->size);
 next:
-		atomic64_add(k.k->size * bch2_bkey_nr_dirty_ptrs(k),
+		atomic64_add(k.k->size * bch2_bkey_nr_ptrs_allocated(k),
 			     &stats->sectors_seen);
 next_nondata:
 		bch2_btree_iter_next(iter);
@@ -606,6 +607,7 @@ next_nondata:
 	}
 out:
 	ret = bch2_trans_exit(&trans) ?: ret;
+	bkey_on_stack_exit(&sk, c);
 
 	return ret;
 }

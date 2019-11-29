@@ -152,6 +152,7 @@ void bch2_alloc_pack(struct bkey_i_alloc *dst,
 {
 	unsigned idx = 0;
 	void *d = dst->v.data;
+	unsigned bytes;
 
 	dst->v.fields	= 0;
 	dst->v.gen	= src.gen;
@@ -160,7 +161,9 @@ void bch2_alloc_pack(struct bkey_i_alloc *dst,
 	BCH_ALLOC_FIELDS()
 #undef  x
 
-	set_bkey_val_bytes(&dst->k, (void *) d - (void *) &dst->v);
+	bytes = (void *) d - (void *) &dst->v;
+	set_bkey_val_bytes(&dst->k, bytes);
+	memset_u64s_tail(&dst->v, 0, bytes);
 }
 
 static unsigned bch_alloc_val_u64s(const struct bch_alloc *a)
@@ -311,7 +314,7 @@ retry:
 	a->k.p = iter->pos;
 	bch2_alloc_pack(a, new_u);
 
-	bch2_trans_update(trans, BTREE_INSERT_ENTRY(iter, &a->k_i));
+	bch2_trans_update(trans, iter, &a->k_i);
 	ret = bch2_trans_commit(trans, NULL, NULL,
 				BTREE_INSERT_ATOMIC|
 				BTREE_INSERT_NOFAIL|
@@ -899,7 +902,7 @@ retry:
 	a->k.p = iter->pos;
 	bch2_alloc_pack(a, u);
 
-	bch2_trans_update(trans, BTREE_INSERT_ENTRY(iter, &a->k_i));
+	bch2_trans_update(trans, iter, &a->k_i);
 
 	/*
 	 * XXX:
@@ -1437,6 +1440,9 @@ static bool flush_held_btree_writes(struct bch_fs *c)
 again:
 	cond_resched();
 	nodes_unwritten = false;
+
+	if (bch2_journal_error(&c->journal))
+		return true;
 
 	rcu_read_lock();
 	for_each_cached_btree(b, c, tbl, i, pos)

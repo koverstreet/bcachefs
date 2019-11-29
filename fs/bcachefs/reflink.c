@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
+#include "bkey_on_stack.h"
 #include "btree_update.h"
 #include "extents.h"
-#include "fs.h"
-#include "fs-io.h"
+#include "inode.h"
+#include "io.h"
 #include "reflink.h"
 
 #include <linux/sched/signal.h>
@@ -39,7 +40,7 @@ enum merge_result bch2_reflink_p_merge(struct bch_fs *c,
 
 	if ((u64) l.k->size + r.k->size > KEY_SIZE_MAX) {
 		bch2_key_resize(l.k, KEY_SIZE_MAX);
-		__bch2_cut_front(l.k->p, _r);
+		bch2_cut_front_s(l.k->p, _r);
 		return BCH_MERGE_PARTIAL;
 	}
 
@@ -69,12 +70,6 @@ void bch2_reflink_v_to_text(struct printbuf *out, struct bch_fs *c,
 
 	bch2_bkey_ptrs_to_text(out, c, k);
 }
-
-/*
- * bch2_remap_range() depends on bch2_extent_update(), which depends on various
- * things tied to the linux vfs for inode updates, for now:
- */
-#ifndef NO_BCACHEFS_FS
 
 static int bch2_make_extent_indirect(struct btree_trans *trans,
 				     struct btree_iter *extent_iter,
@@ -120,7 +115,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	r_v->v.refcount	= 0;
 	memcpy(r_v->v.start, e->v.start, bkey_val_bytes(&e->k));
 
-	bch2_trans_update(trans, BTREE_INSERT_ENTRY(reflink_iter, &r_v->k_i));
+	bch2_trans_update(trans, reflink_iter, &r_v->k_i);
 
 	r_p = bch2_trans_kmalloc(trans, sizeof(*r_p));
 	if (IS_ERR(r_p))
@@ -131,7 +126,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	set_bkey_val_bytes(&r_p->k, sizeof(r_p->v));
 	r_p->v.idx = cpu_to_le64(bkey_start_offset(&r_v->k));
 
-	bch2_trans_update(trans, BTREE_INSERT_ENTRY(extent_iter, &r_p->k_i));
+	bch2_trans_update(trans, extent_iter, &r_p->k_i);
 err:
 	if (!IS_ERR(reflink_iter)) {
 		c->reflink_hint = reflink_iter->pos.offset;
@@ -144,35 +139,37 @@ err:
 static struct bkey_s_c get_next_src(struct btree_iter *iter, struct bpos end)
 {
 	struct bkey_s_c k = bch2_btree_iter_peek(iter);
+	int ret;
 
-	while (1) {
-		if (bkey_err(k))
-			return k;
-
+	for_each_btree_key_continue(iter, 0, k, ret) {
 		if (bkey_cmp(iter->pos, end) >= 0)
 			return bkey_s_c_null;
 
 		if (k.k->type == KEY_TYPE_extent ||
 		    k.k->type == KEY_TYPE_reflink_p)
-			return k;
-
-		k = bch2_btree_iter_next(iter);
+			break;
 	}
+
+	return k;
 }
 
 s64 bch2_remap_range(struct bch_fs *c,
-		     struct bch_inode_info *dst_inode,
 		     struct bpos dst_start, struct bpos src_start,
-		     u64 remap_sectors, u64 new_i_size)
+		     u64 remap_sectors, u64 *journal_seq,
+		     u64 new_i_size, s64 *i_sectors_delta)
 {
 	struct btree_trans trans;
 	struct btree_iter *dst_iter, *src_iter;
 	struct bkey_s_c src_k;
-	BKEY_PADDED(k) new_dst, new_src;
+	BKEY_PADDED(k) new_dst;
+	struct bkey_on_stack new_src;
 	struct bpos dst_end = dst_start, src_end = src_start;
 	struct bpos dst_want, src_want;
 	u64 src_done, dst_done;
-	int ret = 0;
+	int ret = 0, ret2 = 0;
+
+	if (!percpu_ref_tryget(&c->writes))
+		return -EROFS;
 
 	if (!(c->sb.features & (1ULL << BCH_FEATURE_REFLINK))) {
 		mutex_lock(&c->sb_lock);
@@ -188,12 +185,13 @@ s64 bch2_remap_range(struct bch_fs *c,
 	dst_end.offset += remap_sectors;
 	src_end.offset += remap_sectors;
 
+	bkey_on_stack_init(&new_src);
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 4096);
 
-	src_iter = __bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS, src_start,
-					 BTREE_ITER_INTENT, 1);
-	dst_iter = __bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS, dst_start,
-					 BTREE_ITER_INTENT, 2);
+	src_iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS, src_start,
+				       BTREE_ITER_INTENT);
+	dst_iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS, dst_start,
+				       BTREE_ITER_INTENT);
 
 	while (1) {
 		bch2_trans_begin_updates(&trans);
@@ -215,7 +213,7 @@ s64 bch2_remap_range(struct bch_fs *c,
 
 		if (bkey_cmp(dst_iter->pos, dst_want) < 0) {
 			ret = bch2_fpunch_at(&trans, dst_iter, dst_want,
-					     dst_inode, new_i_size);
+					     journal_seq, i_sectors_delta);
 			if (ret)
 				goto btree_err;
 			continue;
@@ -227,14 +225,14 @@ s64 bch2_remap_range(struct bch_fs *c,
 			break;
 
 		if (src_k.k->type == KEY_TYPE_extent) {
-			bkey_reassemble(&new_src.k, src_k);
-			src_k = bkey_i_to_s_c(&new_src.k);
+			bkey_on_stack_reassemble(&new_src, c, src_k);
+			src_k = bkey_i_to_s_c(new_src.k);
 
-			bch2_cut_front(src_iter->pos,	&new_src.k);
-			bch2_cut_back(src_end,		&new_src.k.k);
+			bch2_cut_front(src_iter->pos,	new_src.k);
+			bch2_cut_back(src_end,		new_src.k);
 
 			ret = bch2_make_extent_indirect(&trans, src_iter,
-						bkey_i_to_extent(&new_src.k));
+						bkey_i_to_extent(new_src.k));
 			if (ret)
 				goto btree_err;
 
@@ -261,9 +259,9 @@ s64 bch2_remap_range(struct bch_fs *c,
 				min(src_k.k->p.offset - src_iter->pos.offset,
 				    dst_end.offset - dst_iter->pos.offset));
 
-		ret = bch2_extent_update(&trans, dst_inode, NULL, NULL,
-					 dst_iter, &new_dst.k,
-					 new_i_size, false, true, NULL);
+		ret = bch2_extent_update(&trans, dst_iter, &new_dst.k,
+					 NULL, journal_seq,
+					 new_i_size, i_sectors_delta);
 		if (ret)
 			goto btree_err;
 
@@ -284,17 +282,29 @@ err:
 	dst_done = dst_iter->pos.offset - dst_start.offset;
 	new_i_size = min(dst_iter->pos.offset << 9, new_i_size);
 
+	bch2_trans_begin(&trans);
+
+	do {
+		struct bch_inode_unpacked inode_u;
+		struct btree_iter *inode_iter;
+
+		inode_iter = bch2_inode_peek(&trans, &inode_u,
+				dst_start.inode, BTREE_ITER_INTENT);
+		ret2 = PTR_ERR_OR_ZERO(inode_iter);
+
+		if (!ret2 &&
+		    inode_u.bi_size < new_i_size) {
+			inode_u.bi_size = new_i_size;
+			ret2  = bch2_inode_write(&trans, inode_iter, &inode_u) ?:
+				bch2_trans_commit(&trans, NULL, journal_seq,
+						  BTREE_INSERT_ATOMIC);
+		}
+	} while (ret2 == -EINTR);
+
 	ret = bch2_trans_exit(&trans) ?: ret;
+	bkey_on_stack_exit(&new_src, c);
 
-	mutex_lock(&dst_inode->ei_update_lock);
-	if (dst_inode->v.i_size < new_i_size) {
-		i_size_write(&dst_inode->v, new_i_size);
-		ret = bch2_write_inode_size(c, dst_inode, new_i_size,
-					    ATTR_MTIME|ATTR_CTIME);
-	}
-	mutex_unlock(&dst_inode->ei_update_lock);
+	percpu_ref_put(&c->writes);
 
-	return dst_done ?: ret;
+	return dst_done ?: ret ?: ret2;
 }
-
-#endif /* NO_BCACHEFS_FS */

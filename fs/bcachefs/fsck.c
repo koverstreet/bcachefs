@@ -4,7 +4,7 @@
 #include "btree_update.h"
 #include "dirent.h"
 #include "error.h"
-#include "fs.h"
+#include "fs-common.h"
 #include "fsck.h"
 #include "inode.h"
 #include "keylist.h"
@@ -80,9 +80,7 @@ static int reattach_inode(struct bch_fs *c,
 			  struct bch_inode_unpacked *lostfound_inode,
 			  u64 inum)
 {
-	struct bch_hash_info lostfound_hash_info =
-		bch2_hash_info_init(c, lostfound_inode);
-	struct bkey_inode_buf packed;
+	struct bch_inode_unpacked inode_u;
 	char name_buf[20];
 	struct qstr name;
 	int ret;
@@ -90,30 +88,14 @@ static int reattach_inode(struct bch_fs *c,
 	snprintf(name_buf, sizeof(name_buf), "%llu", inum);
 	name = (struct qstr) QSTR(name_buf);
 
-	lostfound_inode->bi_nlink++;
+	ret = bch2_trans_do(c, NULL,
+			    BTREE_INSERT_ATOMIC|
+			    BTREE_INSERT_LAZY_RW,
+		bch2_link_trans(&trans, lostfound_inode->bi_inum,
+				inum, &inode_u, &name));
+	if (ret)
+		bch_err(c, "error %i reattaching inode %llu", ret, inum);
 
-	bch2_inode_pack(&packed, lostfound_inode);
-
-	ret = bch2_btree_insert(c, BTREE_ID_INODES, &packed.inode.k_i,
-				NULL, NULL,
-				BTREE_INSERT_NOFAIL|
-				BTREE_INSERT_LAZY_RW);
-	if (ret) {
-		bch_err(c, "error %i reattaching inode %llu while updating lost+found",
-			ret, inum);
-		return ret;
-	}
-
-	ret = bch2_dirent_create(c, lostfound_inode->bi_inum,
-				 &lostfound_hash_info,
-				 DT_DIR, &name, inum, NULL,
-				 BTREE_INSERT_NOFAIL|
-				 BTREE_INSERT_LAZY_RW);
-	if (ret) {
-		bch_err(c, "error %i reattaching inode %llu while creating new dirent",
-			ret, inum);
-		return ret;
-	}
 	return ret;
 }
 
@@ -165,6 +147,7 @@ struct hash_check {
 static void hash_check_init(struct hash_check *h)
 {
 	h->chain = NULL;
+	h->chain_end = 0;
 }
 
 static void hash_stop_chain(struct btree_trans *trans,
@@ -248,7 +231,7 @@ static int hash_check_duplicates(struct btree_trans *trans,
 	iter = bch2_trans_copy_iter(trans, h->chain);
 	BUG_ON(IS_ERR(iter));
 
-	for_each_btree_key_continue(iter, 0, k2) {
+	for_each_btree_key_continue(iter, 0, k2, ret) {
 		if (bkey_cmp(k2.k->p, k.k->p) >= 0)
 			break;
 
@@ -393,7 +376,7 @@ static int check_dirent_hash(struct btree_trans *trans, struct hash_check *h,
 
 	if (fsck_err(c, "dirent with junk at end, was %s (%zu) now %s (%u)",
 		     buf, strlen(buf), d->v.d_name, len)) {
-		bch2_trans_update(trans, BTREE_INSERT_ENTRY(iter, &d->k_i));
+		bch2_trans_update(trans, iter, &d->k_i);
 
 		ret = bch2_trans_commit(trans, NULL, NULL,
 					BTREE_INSERT_NOFAIL|
@@ -458,7 +441,7 @@ static int check_extents(struct bch_fs *c)
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
 				   POS(BCACHEFS_ROOT_INO, 0), 0);
 retry:
-	for_each_btree_key_continue(iter, 0, k) {
+	for_each_btree_key_continue(iter, 0, k, ret) {
 		ret = walk_inode(&trans, &w, k.k->p.inode);
 		if (ret)
 			break;
@@ -553,7 +536,7 @@ static int check_dirents(struct bch_fs *c)
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_DIRENTS,
 				   POS(BCACHEFS_ROOT_INO, 0), 0);
 retry:
-	for_each_btree_key_continue(iter, 0, k) {
+	for_each_btree_key_continue(iter, 0, k, ret) {
 		struct bkey_s_c_dirent d;
 		struct bch_inode_unpacked target;
 		bool have_target;
@@ -663,8 +646,7 @@ retry:
 			bkey_reassemble(&n->k_i, d.s_c);
 			n->v.d_type = mode_to_type(target.bi_mode);
 
-			bch2_trans_update(&trans,
-				BTREE_INSERT_ENTRY(iter, &n->k_i));
+			bch2_trans_update(&trans, iter, &n->k_i);
 
 			ret = bch2_trans_commit(&trans, NULL, NULL,
 						BTREE_INSERT_NOFAIL|
@@ -707,7 +689,7 @@ static int check_xattrs(struct bch_fs *c)
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_XATTRS,
 				   POS(BCACHEFS_ROOT_INO, 0), 0);
 retry:
-	for_each_btree_key_continue(iter, 0, k) {
+	for_each_btree_key_continue(iter, 0, k, ret) {
 		ret = walk_inode(&trans, &w, k.k->p.inode);
 		if (ret)
 			break;
@@ -759,7 +741,7 @@ static int check_root(struct bch_fs *c, struct bch_inode_unpacked *root_inode)
 fsck_err:
 	return ret;
 create_root:
-	bch2_inode_init(c, root_inode, 0, 0, S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO,
+	bch2_inode_init(c, root_inode, 0, 0, S_IFDIR|0755,
 			0, NULL);
 	root_inode->bi_inum = BCACHEFS_ROOT_INO;
 
@@ -779,7 +761,6 @@ static int check_lostfound(struct bch_fs *c,
 	struct qstr lostfound = QSTR("lost+found");
 	struct bch_hash_info root_hash_info =
 		bch2_hash_info_init(c, root_inode);
-	struct bkey_inode_buf packed;
 	u64 inum;
 	int ret;
 
@@ -807,33 +788,20 @@ static int check_lostfound(struct bch_fs *c,
 fsck_err:
 	return ret;
 create_lostfound:
-	root_inode->bi_nlink++;
+	bch2_inode_init_early(c, lostfound_inode);
 
-	bch2_inode_pack(&packed, root_inode);
-
-	ret = bch2_btree_insert(c, BTREE_ID_INODES, &packed.inode.k_i,
-				NULL, NULL,
-				BTREE_INSERT_NOFAIL|
-				BTREE_INSERT_LAZY_RW);
+	ret = bch2_trans_do(c, NULL,
+			    BTREE_INSERT_ATOMIC|
+			    BTREE_INSERT_NOFAIL|
+			    BTREE_INSERT_LAZY_RW,
+		bch2_create_trans(&trans,
+				  BCACHEFS_ROOT_INO, root_inode,
+				  lostfound_inode, &lostfound,
+				  0, 0, S_IFDIR|0700, 0, NULL, NULL));
 	if (ret)
-		return ret;
+		bch_err(c, "error creating lost+found: %i", ret);
 
-	bch2_inode_init(c, lostfound_inode, 0, 0, S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO,
-			0, root_inode);
-
-	ret = bch2_inode_create(c, lostfound_inode, BLOCKDEV_INODE_MAX, 0,
-			       &c->unused_inode_hint);
-	if (ret)
-		return ret;
-
-	ret = bch2_dirent_create(c, BCACHEFS_ROOT_INO, &root_hash_info, DT_DIR,
-				 &lostfound, lostfound_inode->bi_inum, NULL,
-				 BTREE_INSERT_NOFAIL|
-				 BTREE_INSERT_LAZY_RW);
-	if (ret)
-		return ret;
-
-	return 0;
+	return ret;
 }
 
 struct inode_bitmap {
@@ -995,7 +963,7 @@ up:
 
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_INODES, POS_MIN, 0);
 retry:
-	for_each_btree_key_continue(iter, 0, k) {
+	for_each_btree_key_continue(iter, 0, k, ret) {
 		if (k.k->type != KEY_TYPE_inode)
 			continue;
 
@@ -1021,7 +989,7 @@ retry:
 			had_unreachable = true;
 		}
 	}
-	ret = bch2_trans_iter_free(&trans, iter);
+	bch2_trans_iter_free(&trans, iter);
 	if (ret)
 		goto err;
 
@@ -1116,9 +1084,7 @@ static int check_inode_nlink(struct bch_fs *c,
 			     struct nlink *link,
 			     bool *do_update)
 {
-	u32 i_nlink = u->bi_flags & BCH_INODE_UNLINKED
-		? 0
-		: u->bi_nlink + nlink_bias(u->bi_mode);
+	u32 i_nlink = bch2_inode_nlink_get(u);
 	u32 real_i_nlink =
 		link->count * nlink_bias(u->bi_mode) +
 		link->dir_count;
@@ -1197,14 +1163,7 @@ static int check_inode_nlink(struct bch_fs *c,
 			    u->bi_inum, i_nlink, real_i_nlink);
 set_i_nlink:
 	if (i_nlink != real_i_nlink) {
-		if (real_i_nlink) {
-			u->bi_nlink = real_i_nlink - nlink_bias(u->bi_mode);
-			u->bi_flags &= ~BCH_INODE_UNLINKED;
-		} else {
-			u->bi_nlink = 0;
-			u->bi_flags |= BCH_INODE_UNLINKED;
-		}
-
+		bch2_inode_nlink_set(u, real_i_nlink);
 		*do_update = true;
 	}
 fsck_err:
@@ -1302,7 +1261,7 @@ static int check_inode(struct btree_trans *trans,
 		struct bkey_inode_buf p;
 
 		bch2_inode_pack(&p, &u);
-		bch2_trans_update(trans, BTREE_INSERT_ENTRY(iter, &p.inode.k_i));
+		bch2_trans_update(trans, iter, &p.inode.k_i);
 
 		ret = bch2_trans_commit(trans, NULL, NULL,
 					BTREE_INSERT_NOFAIL|

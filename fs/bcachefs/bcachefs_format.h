@@ -338,7 +338,8 @@ static inline void bkey_init(struct bkey *k)
 	x(quota,		13)			\
 	x(stripe,		14)			\
 	x(reflink_p,		15)			\
-	x(reflink_v,		16)
+	x(reflink_v,		16)			\
+	x(inline_data,		17)
 
 enum bch_bkey_type {
 #define x(name, nr) KEY_TYPE_##name	= nr,
@@ -911,6 +912,13 @@ struct bch_reflink_v {
 	__u64			_data[0];
 };
 
+/* Inline data */
+
+struct bch_inline_data {
+	struct bch_val		v;
+	u8			data[0];
+};
+
 /* Optional/variable size superblock sections: */
 
 struct bch_sb_field {
@@ -1314,6 +1322,8 @@ enum bch_sb_features {
 	BCH_FEATURE_EC			= 4,
 	BCH_FEATURE_JOURNAL_SEQ_BLACKLIST_V3 = 5,
 	BCH_FEATURE_REFLINK		= 6,
+	BCH_FEATURE_NEW_SIPHASH		= 7,
+	BCH_FEATURE_INLINE_DATA		= 8,
 	BCH_FEATURE_NR,
 };
 
@@ -1340,11 +1350,19 @@ enum bch_csum_opts {
 	BCH_CSUM_OPT_NR			= 3,
 };
 
-enum bch_str_hash_opts {
+enum bch_str_hash_type {
 	BCH_STR_HASH_CRC32C		= 0,
 	BCH_STR_HASH_CRC64		= 1,
-	BCH_STR_HASH_SIPHASH		= 2,
-	BCH_STR_HASH_NR			= 3,
+	BCH_STR_HASH_SIPHASH_OLD	= 2,
+	BCH_STR_HASH_SIPHASH		= 3,
+	BCH_STR_HASH_NR			= 4,
+};
+
+enum bch_str_hash_opts {
+	BCH_STR_HASH_OPT_CRC32C		= 0,
+	BCH_STR_HASH_OPT_CRC64		= 1,
+	BCH_STR_HASH_OPT_SIPHASH	= 2,
+	BCH_STR_HASH_OPT_NR		= 3,
 };
 
 #define BCH_COMPRESSION_TYPES()		\
@@ -1494,14 +1512,14 @@ LE32_BITMASK(JSET_BIG_ENDIAN,	struct jset, flags, 4, 5);
 
 /* Btree: */
 
-#define BCH_BTREE_IDS()				\
+#define BCH_BTREE_IDS()					\
 	x(EXTENTS,	0, "extents")			\
 	x(INODES,	1, "inodes")			\
 	x(DIRENTS,	2, "dirents")			\
 	x(XATTRS,	3, "xattrs")			\
 	x(ALLOC,	4, "alloc")			\
 	x(QUOTAS,	5, "quotas")			\
-	x(EC,		6, "erasure_coding")		\
+	x(EC,		6, "stripes")			\
 	x(REFLINK,	7, "reflink")
 
 enum btree_id {

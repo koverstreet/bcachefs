@@ -11,16 +11,6 @@
 
 struct quota_res;
 
-int bch2_extent_update(struct btree_trans *,
-		       struct bch_inode_info *,
-		       struct disk_reservation *,
-		       struct quota_res *,
-		       struct btree_iter *,
-		       struct bkey_i *,
-		       u64, bool, bool, s64 *);
-int bch2_fpunch_at(struct btree_trans *, struct btree_iter *,
-		   struct bpos, struct bch_inode_info *, u64);
-
 int __must_check bch2_write_inode_size(struct bch_fs *,
 				       struct bch_inode_info *,
 				       loff_t, unsigned);
@@ -37,8 +27,7 @@ int bch2_write_begin(struct file *, struct address_space *, loff_t,
 int bch2_write_end(struct file *, struct address_space *, loff_t,
 		   unsigned, unsigned, struct page *, void *);
 
-ssize_t bch2_direct_IO(struct kiocb *, struct iov_iter *);
-
+ssize_t bch2_read_iter(struct kiocb *, struct iov_iter *);
 ssize_t bch2_write_iter(struct kiocb *, struct iov_iter *);
 
 int bch2_fsync(struct file *, loff_t, loff_t, int);
@@ -46,15 +35,12 @@ int bch2_fsync(struct file *, loff_t, loff_t, int);
 int bch2_truncate(struct bch_inode_info *, struct iattr *);
 long bch2_fallocate_dispatch(struct file *, int, loff_t, loff_t);
 
-#define REMAP_FILE_ADVISORY		(0)
-#define REMAP_FILE_DEDUP		(1 << 0)
-#define REMAP_FILE_CAN_SHORTEN		(1 << 1)
-
 loff_t bch2_remap_file_range(struct file *, loff_t, struct file *,
 			     loff_t, loff_t, unsigned);
 
 loff_t bch2_llseek(struct file *, loff_t, int);
 
+vm_fault_t bch2_page_fault(struct vm_fault *);
 vm_fault_t bch2_page_mkwrite(struct vm_fault *);
 void bch2_invalidatepage(struct page *, unsigned int, unsigned int);
 int bch2_releasepage(struct page *, gfp_t);

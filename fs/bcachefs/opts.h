@@ -68,6 +68,12 @@ enum opt_type {
  *  - helptext
  */
 
+#ifdef __KERNEL__
+#define RATELIMIT_ERRORS true
+#else
+#define RATELIMIT_ERRORS false
+#endif
+
 #define BCH_OPTS()							\
 	x(block_size,			u16,				\
 	  OPT_FORMAT,							\
@@ -127,7 +133,7 @@ enum opt_type {
 	x(str_hash,			u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
 	  OPT_STR(bch2_str_hash_types),					\
-	  BCH_SB_STR_HASH_TYPE,		BCH_STR_HASH_SIPHASH,		\
+	  BCH_SB_STR_HASH_TYPE,		BCH_STR_HASH_OPT_SIPHASH,	\
 	  NULL,		"Hash function for directory entries and xattrs")\
 	x(foreground_target,		u16,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME|OPT_INODE,			\
@@ -227,6 +233,11 @@ enum opt_type {
 	  OPT_BOOL(),							\
 	  NO_SB_OPT,			false,				\
 	  NULL,		"Fix errors during fsck without asking")	\
+	x(ratelimit_errors,		u8,				\
+	  OPT_MOUNT,							\
+	  OPT_BOOL(),							\
+	  NO_SB_OPT,			RATELIMIT_ERRORS,		\
+	  NULL,		"Ratelimit error messages during fsck")		\
 	x(nochanges,			u8,				\
 	  OPT_MOUNT,							\
 	  OPT_BOOL(),							\
@@ -289,13 +300,7 @@ enum opt_type {
 	  OPT_UINT(0, BCH_REPLICAS_MAX),				\
 	  NO_SB_OPT,			1,				\
 	  "n",		"Data written to this device will be considered\n"\
-			"to have already been replicated n times")	\
-	x(new_inode_updates,		u8,				\
-	  OPT_MOUNT,							\
-	  OPT_BOOL(),							\
-	  NO_SB_OPT,			false,				\
-	  NULL,		"Enable new btree write-cache for inode updates")
-
+			"to have already been replicated n times")
 
 struct bch_opts {
 #define x(_name, _bits, ...)	unsigned _name##_defined:1;

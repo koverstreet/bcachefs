@@ -30,9 +30,11 @@ enum bch_write_flags {
 	BCH_WRITE_PAGES_OWNED		= (1 << 5),
 	BCH_WRITE_ONLY_SPECIFIED_DEVS	= (1 << 6),
 	BCH_WRITE_NOPUT_RESERVATION	= (1 << 7),
+	BCH_WRITE_WROTE_DATA_INLINE	= (1 << 8),
 
 	/* Internal: */
-	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 8),
+	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 9),
+	BCH_WRITE_SKIP_CLOSURE_PUT	= (1 << 10),
 };
 
 static inline u64 *op_journal_seq(struct bch_write_op *op)
@@ -54,13 +56,20 @@ static inline struct workqueue_struct *index_update_wq(struct bch_write_op *op)
 		: op->c->wq;
 }
 
+int bch2_extent_update(struct btree_trans *, struct btree_iter *,
+		       struct bkey_i *, struct disk_reservation *,
+		       u64 *, u64, s64 *);
+int bch2_fpunch_at(struct btree_trans *, struct btree_iter *,
+		   struct bpos, u64 *, s64 *);
+int bch2_fpunch(struct bch_fs *c, u64, u64, u64, u64 *, s64 *);
+
 int bch2_write_index_default(struct bch_write_op *);
 
 static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 				      struct bch_io_opts opts)
 {
 	op->c			= c;
-	op->io_wq		= index_update_wq(op);
+	op->end_io		= NULL;
 	op->flags		= 0;
 	op->written		= 0;
 	op->error		= 0;
@@ -78,6 +87,8 @@ static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 	op->write_point		= (struct write_point_specifier) { 0 };
 	op->res			= (struct disk_reservation) { 0 };
 	op->journal_seq		= 0;
+	op->new_i_size		= U64_MAX;
+	op->i_sectors_delta	= 0;
 	op->index_update_fn	= bch2_write_index_default;
 }
 

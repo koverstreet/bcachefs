@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
+#include "bkey_on_stack.h"
 #include "bkey_sort.h"
 #include "bset.h"
 #include "extents.h"
@@ -74,6 +75,10 @@ static void sort_key_next(struct btree_node_iter_large *iter,
 {
 	i->k += __btree_node_offset_to_key(b, i->k)->u64s;
 
+	while (i->k != i->end &&
+	       !__btree_node_offset_to_key(b, i->k)->u64s)
+		i->k++;
+
 	if (i->k == i->end)
 		*i = iter->data[--iter->used];
 }
@@ -118,7 +123,7 @@ static inline struct bkey_packed *sort_iter_peek(struct sort_iter *iter)
 
 static inline void sort_iter_advance(struct sort_iter *iter, sort_cmp_fn cmp)
 {
-	iter->data->k = bkey_next(iter->data->k);
+	iter->data->k = bkey_next_skip_noops(iter->data->k, iter->data->end);
 
 	BUG_ON(iter->data->k > iter->data->end);
 
@@ -292,8 +297,10 @@ struct btree_nr_keys bch2_extent_sort_fix_overlapping(struct bch_fs *c,
 	struct bkey l_unpacked, r_unpacked;
 	struct bkey_s l, r;
 	struct btree_nr_keys nr;
+	struct bkey_on_stack split;
 
 	memset(&nr, 0, sizeof(nr));
+	bkey_on_stack_init(&split);
 
 	heap_resort(iter, extent_sort_cmp, NULL);
 
@@ -343,29 +350,28 @@ struct btree_nr_keys bch2_extent_sort_fix_overlapping(struct bch_fs *c,
 			if (bkey_cmp(l.k->p, r.k->p) >= 0) {
 				sort_key_next(iter, b, _r);
 			} else {
-				__bch2_cut_front(l.k->p, r);
+				bch2_cut_front_s(l.k->p, r);
 				extent_save(b, rk, r.k);
 			}
 
 			extent_sort_sift(iter, b, _r - iter->data);
 		} else if (bkey_cmp(l.k->p, r.k->p) > 0) {
-			BKEY_PADDED(k) tmp;
 
 			/*
 			 * r wins, but it overlaps in the middle of l - split l:
 			 */
-			bkey_reassemble(&tmp.k, l.s_c);
-			bch2_cut_back(bkey_start_pos(r.k), &tmp.k.k);
+			bkey_on_stack_reassemble(&split, c, l.s_c);
+			bch2_cut_back(bkey_start_pos(r.k), split.k);
 
-			__bch2_cut_front(r.k->p, l);
+			bch2_cut_front_s(r.k->p, l);
 			extent_save(b, lk, l.k);
 
 			extent_sort_sift(iter, b, 0);
 
 			extent_sort_append(c, f, &nr, dst->start,
-					   &prev, bkey_i_to_s(&tmp.k));
+					   &prev, bkey_i_to_s(split.k));
 		} else {
-			bch2_cut_back(bkey_start_pos(r.k), l.k);
+			bch2_cut_back_s(bkey_start_pos(r.k), l);
 			extent_save(b, lk, l.k);
 		}
 	}
@@ -373,6 +379,8 @@ struct btree_nr_keys bch2_extent_sort_fix_overlapping(struct bch_fs *c,
 	extent_sort_advance_prev(f, &nr, dst->start, &prev);
 
 	dst->u64s = cpu_to_le16((u64 *) prev - dst->_data);
+
+	bkey_on_stack_exit(&split, c);
 	return nr;
 }
 
@@ -418,7 +426,7 @@ bch2_sort_repack_merge(struct bch_fs *c,
 	struct bkey_packed *prev = NULL, *k_packed;
 	struct bkey_s k;
 	struct btree_nr_keys nr;
-	BKEY_PADDED(k) tmp;
+	struct bkey unpacked;
 
 	memset(&nr, 0, sizeof(nr));
 
@@ -426,11 +434,7 @@ bch2_sort_repack_merge(struct bch_fs *c,
 		if (filter_whiteouts && bkey_whiteout(k_packed))
 			continue;
 
-		EBUG_ON(bkeyp_val_u64s(&src->format, k_packed) >
-			BKEY_EXTENT_VAL_U64s_MAX);
-
-		bch2_bkey_unpack(src, &tmp.k, k_packed);
-		k = bkey_i_to_s(&tmp.k);
+		k = __bkey_disassemble(src, k_packed, &unpacked);
 
 		if (filter_whiteouts &&
 		    bch2_bkey_normalize(c, k))

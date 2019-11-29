@@ -76,7 +76,7 @@ void bch2_dump_bset(struct btree *b, struct bset *i, unsigned set)
 	for (_k = i->start, k = bkey_unpack_key(b, _k);
 	     _k < vstruct_last(i);
 	     _k = _n, k = n) {
-		_n = bkey_next(_k);
+		_n = bkey_next_skip_noops(_k, vstruct_last(i));
 
 		bch2_bkey_to_text(&PBUF(buf), &k);
 		printk(KERN_ERR "block %u key %5u: %s\n", set,
@@ -144,9 +144,7 @@ void __bch2_verify_btree_nr_keys(struct btree *b)
 	struct btree_nr_keys nr = { 0 };
 
 	for_each_bset(b, t)
-		for (k = btree_bkey_first(b, t);
-		     k != btree_bkey_last(b, t);
-		     k = bkey_next(k))
+		bset_tree_for_each_key(b, t, k)
 			if (!bkey_whiteout(k))
 				btree_keys_account_key_add(&nr, t - b->set, k);
 
@@ -294,38 +292,23 @@ static inline void bch2_btree_node_iter_next_check(struct btree_node_iter *iter,
 
 /* Auxiliary search trees */
 
-#define BFLOAT_FAILED_UNPACKED	(U8_MAX - 0)
-#define BFLOAT_FAILED_PREV	(U8_MAX - 1)
-#define BFLOAT_FAILED_OVERFLOW	(U8_MAX - 2)
-#define BFLOAT_FAILED		(U8_MAX - 2)
-
-#define KEY_WORDS		BITS_TO_LONGS(1 << BKEY_EXPONENT_BITS)
+#define BFLOAT_FAILED_UNPACKED	U8_MAX
+#define BFLOAT_FAILED		U8_MAX
 
 struct bkey_float {
 	u8		exponent;
 	u8		key_offset;
-	union {
-		u32	mantissa32;
-	struct {
-		u16	mantissa16;
-		u16	_pad;
-	};
-	};
-} __packed;
-
-#define BFLOAT_32BIT_NR		32U
+	u16		mantissa;
+};
+#define BKEY_MANTISSA_BITS	16
 
 static unsigned bkey_float_byte_offset(unsigned idx)
 {
-	int d = (idx - BFLOAT_32BIT_NR) << 1;
-
-	d &= ~(d >> 31);
-
-	return idx * 6 - d;
+	return idx * sizeof(struct bkey_float);
 }
 
 struct ro_aux_tree {
-	struct bkey_float	_d[0];
+	struct bkey_float	f[0];
 };
 
 struct rw_aux_tree {
@@ -380,8 +363,8 @@ static unsigned bset_aux_tree_buf_end(const struct bset_tree *t)
 		return t->aux_data_offset;
 	case BSET_RO_AUX_TREE:
 		return t->aux_data_offset +
-			DIV_ROUND_UP(bkey_float_byte_offset(t->size) +
-				     sizeof(u8) * t->size, 8);
+			DIV_ROUND_UP(t->size * sizeof(struct bkey_float) +
+				     t->size * sizeof(u8), 8);
 	case BSET_RW_AUX_TREE:
 		return t->aux_data_offset +
 			DIV_ROUND_UP(sizeof(struct rw_aux_tree) * t->size, 8);
@@ -420,17 +403,11 @@ static u8 *ro_aux_tree_prev(const struct btree *b,
 	return __aux_tree_base(b, t) + bkey_float_byte_offset(t->size);
 }
 
-static struct bkey_float *bkey_float_get(struct ro_aux_tree *b,
-					 unsigned idx)
-{
-	return (void *) b + bkey_float_byte_offset(idx);
-}
-
 static struct bkey_float *bkey_float(const struct btree *b,
 				     const struct bset_tree *t,
 				     unsigned idx)
 {
-	return bkey_float_get(ro_aux_tree_base(b, t), idx);
+	return ro_aux_tree_base(b, t)->f + idx;
 }
 
 static void bset_aux_tree_verify(struct btree *b)
@@ -633,7 +610,7 @@ start:
 			       rw_aux_tree(b, t)[j - 1].offset);
 		}
 
-		k = bkey_next(k);
+		k = bkey_next_skip_noops(k, btree_bkey_last(b, t));
 		BUG_ON(k >= btree_bkey_last(b, t));
 	}
 }
@@ -669,21 +646,6 @@ static unsigned rw_aux_tree_bsearch(struct btree *b,
 	return idx;
 }
 
-static inline unsigned bfloat_mantissa(const struct bkey_float *f,
-				       unsigned idx)
-{
-	return idx < BFLOAT_32BIT_NR ? f->mantissa32 : f->mantissa16;
-}
-
-static inline void bfloat_mantissa_set(struct bkey_float *f,
-				       unsigned idx, unsigned mantissa)
-{
-	if (idx < BFLOAT_32BIT_NR)
-		f->mantissa32 = mantissa;
-	else
-		f->mantissa16 = mantissa;
-}
-
 static inline unsigned bkey_mantissa(const struct bkey_packed *k,
 				     const struct bkey_float *f,
 				     unsigned idx)
@@ -703,9 +665,9 @@ static inline unsigned bkey_mantissa(const struct bkey_packed *k,
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 	v >>= f->exponent & 7;
 #else
-	v >>= 64 - (f->exponent & 7) - (idx < BFLOAT_32BIT_NR ? 32 : 16);
+	v >>= 64 - (f->exponent & 7) - BKEY_MANTISSA_BITS;
 #endif
-	return idx < BFLOAT_32BIT_NR ? (u32) v : (u16) v;
+	return (u16) v;
 }
 
 static void make_bfloat(struct btree *b, struct bset_tree *t,
@@ -715,13 +677,9 @@ static void make_bfloat(struct btree *b, struct bset_tree *t,
 {
 	struct bkey_float *f = bkey_float(b, t, j);
 	struct bkey_packed *m = tree_to_bkey(b, t, j);
-	struct bkey_packed *p = tree_to_prev_bkey(b, t, j);
 	struct bkey_packed *l, *r;
-	unsigned bits = j < BFLOAT_32BIT_NR ? 32 : 16;
 	unsigned mantissa;
 	int shift, exponent, high_bit;
-
-	EBUG_ON(bkey_next(p) != m);
 
 	if (is_power_of_2(j)) {
 		l = min_key;
@@ -764,8 +722,7 @@ static void make_bfloat(struct btree *b, struct bset_tree *t,
 	 * the original key.
 	 */
 
-	if (!bkey_packed(l) || !bkey_packed(r) ||
-	    !bkey_packed(p) || !bkey_packed(m) ||
+	if (!bkey_packed(l) || !bkey_packed(r) || !bkey_packed(m) ||
 	    !b->nr_key_bits) {
 		f->exponent = BFLOAT_FAILED_UNPACKED;
 		return;
@@ -782,8 +739,8 @@ static void make_bfloat(struct btree *b, struct bset_tree *t,
 	 * of the key: we handle this later:
 	 */
 	high_bit = max(bch2_bkey_greatest_differing_bit(b, l, r),
-		       min_t(unsigned, bits, b->nr_key_bits) - 1);
-	exponent = high_bit - (bits - 1);
+		       min_t(unsigned, BKEY_MANTISSA_BITS, b->nr_key_bits) - 1);
+	exponent = high_bit - (BKEY_MANTISSA_BITS - 1);
 
 	/*
 	 * Then we calculate the actual shift value, from the start of the key
@@ -792,12 +749,12 @@ static void make_bfloat(struct btree *b, struct bset_tree *t,
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 	shift = (int) (b->format.key_u64s * 64 - b->nr_key_bits) + exponent;
 
-	EBUG_ON(shift + bits > b->format.key_u64s * 64);
+	EBUG_ON(shift + BKEY_MANTISSA_BITS > b->format.key_u64s * 64);
 #else
 	shift = high_bit_offset +
 		b->nr_key_bits -
 		exponent -
-		bits;
+		BKEY_MANTISSA_BITS;
 
 	EBUG_ON(shift < KEY_PACKED_BITS_START);
 #endif
@@ -813,37 +770,7 @@ static void make_bfloat(struct btree *b, struct bset_tree *t,
 	if (exponent < 0)
 		mantissa |= ~(~0U << -exponent);
 
-	bfloat_mantissa_set(f, j, mantissa);
-
-	/*
-	 * The bfloat must be able to tell its key apart from the previous key -
-	 * if its key and the previous key don't differ in the required bits,
-	 * flag as failed - unless the keys are actually equal, in which case
-	 * we aren't required to return a specific one:
-	 */
-	if (exponent > 0 &&
-	    bfloat_mantissa(f, j) == bkey_mantissa(p, f, j) &&
-	    bkey_cmp_packed(b, p, m)) {
-		f->exponent = BFLOAT_FAILED_PREV;
-		return;
-	}
-
-	/*
-	 * f->mantissa must compare >= the original key - for transitivity with
-	 * the comparison in bset_search_tree. If we're dropping set bits,
-	 * increment it:
-	 */
-	if (exponent > (int) bch2_bkey_ffs(b, m)) {
-		if (j < BFLOAT_32BIT_NR
-		    ? f->mantissa32 == U32_MAX
-		    : f->mantissa16 == U16_MAX)
-			f->exponent = BFLOAT_FAILED_OVERFLOW;
-
-		if (j < BFLOAT_32BIT_NR)
-			f->mantissa32++;
-		else
-			f->mantissa16++;
-	}
+	f->mantissa = mantissa;
 }
 
 /* bytes remaining - only valid for last bset: */
@@ -856,14 +783,8 @@ static unsigned __bset_tree_capacity(struct btree *b, struct bset_tree *t)
 
 static unsigned bset_ro_tree_capacity(struct btree *b, struct bset_tree *t)
 {
-	unsigned bytes = __bset_tree_capacity(b, t);
-
-	if (bytes < 7 * BFLOAT_32BIT_NR)
-		return bytes / 7;
-
-	bytes -= 7 * BFLOAT_32BIT_NR;
-
-	return BFLOAT_32BIT_NR + bytes / 5;
+	return __bset_tree_capacity(b, t) /
+		(sizeof(struct bkey_float) + sizeof(u8));
 }
 
 static unsigned bset_rw_tree_capacity(struct btree *b, struct bset_tree *t)
@@ -880,9 +801,7 @@ static void __build_rw_aux_tree(struct btree *b, struct bset_tree *t)
 	rw_aux_tree(b, t)[0].offset =
 		__btree_node_key_to_offset(b, btree_bkey_first(b, t));
 
-	for (k = btree_bkey_first(b, t);
-	     k != btree_bkey_last(b, t);
-	     k = bkey_next(k)) {
+	bset_tree_for_each_key(b, t, k) {
 		if (t->size == bset_rw_tree_capacity(b, t))
 			break;
 
@@ -915,7 +834,7 @@ retry:
 	/* First we figure out where the first key in each cacheline is */
 	eytzinger1_for_each(j, t->size) {
 		while (bkey_to_cacheline(b, t, k) < cacheline)
-			prev = k, k = bkey_next(k);
+			prev = k, k = bkey_next_skip_noops(k, btree_bkey_last(b, t));
 
 		if (k >= btree_bkey_last(b, t)) {
 			/* XXX: this path sucks */
@@ -931,10 +850,10 @@ retry:
 		EBUG_ON(tree_to_bkey(b, t, j) != k);
 	}
 
-	while (bkey_next(k) != btree_bkey_last(b, t))
-		k = bkey_next(k);
+	while (k != btree_bkey_last(b, t))
+		prev = k, k = bkey_next_skip_noops(k, btree_bkey_last(b, t));
 
-	t->max_key = bkey_unpack_pos(b, k);
+	t->max_key = bkey_unpack_pos(b, prev);
 
 	/* Then we build the tree */
 	eytzinger1_for_each(j, t->size)
@@ -1060,7 +979,7 @@ struct bkey_packed *bch2_bkey_prev_filter(struct btree *b,
 	struct bkey_packed *p, *i, *ret = NULL, *orig_k = k;
 
 	while ((p = __bkey_prev(b, t, k)) && !ret) {
-		for (i = p; i != k; i = bkey_next(i))
+		for (i = p; i != k; i = bkey_next_skip_noops(i, k))
 			if (i->type >= min_key_type)
 				ret = i;
 
@@ -1070,9 +989,11 @@ struct bkey_packed *bch2_bkey_prev_filter(struct btree *b,
 	if (btree_keys_expensive_checks(b)) {
 		BUG_ON(ret >= orig_k);
 
-		for (i = ret ? bkey_next(ret) : btree_bkey_first(b, t);
+		for (i = ret
+			? bkey_next_skip_noops(ret, orig_k)
+			: btree_bkey_first(b, t);
 		     i != orig_k;
-		     i = bkey_next(i))
+		     i = bkey_next_skip_noops(i, orig_k))
 			BUG_ON(i->type >= min_key_type);
 	}
 
@@ -1107,7 +1028,7 @@ static void ro_aux_tree_fix_invalidated_key(struct btree *b,
 	/* signal to make_bfloat() that they're uninitialized: */
 	min_key.u64s = max_key.u64s = 0;
 
-	if (bkey_next(k) == btree_bkey_last(b, t)) {
+	if (bkey_next_skip_noops(k, btree_bkey_last(b, t)) == btree_bkey_last(b, t)) {
 		t->max_key = bkey_unpack_pos(b, k);
 
 		for (j = 1; j < t->size; j = j * 2 + 1)
@@ -1231,7 +1152,7 @@ static void bch2_bset_fix_lookup_table(struct btree *b,
 		struct bkey_packed *k = start;
 
 		while (1) {
-			k = bkey_next(k);
+			k = bkey_next_skip_noops(k, end);
 			if (k == end)
 				break;
 
@@ -1333,14 +1254,38 @@ static struct bkey_packed *bset_search_write_set(const struct btree *b,
 	return rw_aux_to_bkey(b, t, l);
 }
 
-noinline
-static int bset_search_tree_slowpath(const struct btree *b,
-				struct bset_tree *t, struct bpos *search,
-				const struct bkey_packed *packed_search,
-				unsigned n)
+static inline void prefetch_four_cachelines(void *p)
 {
-	return bkey_cmp_p_or_unp(b, tree_to_bkey(b, t, n),
-				 packed_search, search) < 0;
+#ifdef CONFIG_X86_64
+	asm(".intel_syntax noprefix;"
+	    "prefetcht0 [%0 - 127 + 64 * 0];"
+	    "prefetcht0 [%0 - 127 + 64 * 1];"
+	    "prefetcht0 [%0 - 127 + 64 * 2];"
+	    "prefetcht0 [%0 - 127 + 64 * 3];"
+	    ".att_syntax prefix;"
+	    :
+	    : "r" (p + 127));
+#else
+	prefetch(p + L1_CACHE_BYTES * 0);
+	prefetch(p + L1_CACHE_BYTES * 1);
+	prefetch(p + L1_CACHE_BYTES * 2);
+	prefetch(p + L1_CACHE_BYTES * 3);
+#endif
+}
+
+static inline bool bkey_mantissa_bits_dropped(const struct btree *b,
+					      const struct bkey_float *f,
+					      unsigned idx)
+{
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+	unsigned key_bits_start = b->format.key_u64s * 64 - b->nr_key_bits;
+
+	return f->exponent > key_bits_start;
+#else
+	unsigned key_bits_end = high_bit_offset + b->nr_key_bits;
+
+	return f->exponent + BKEY_MANTISSA_BITS < key_bits_end;
+#endif
 }
 
 __flatten
@@ -1350,44 +1295,37 @@ static struct bkey_packed *bset_search_tree(const struct btree *b,
 				const struct bkey_packed *packed_search)
 {
 	struct ro_aux_tree *base = ro_aux_tree_base(b, t);
-	struct bkey_float *f = bkey_float_get(base, 1);
-	void *p;
-	unsigned inorder, n = 1;
+	struct bkey_float *f;
+	struct bkey_packed *k;
+	unsigned inorder, n = 1, l, r;
+	int cmp;
 
-	while (1) {
-		if (likely(n << 4 < t->size)) {
-			p = bkey_float_get(base, n << 4);
-			prefetch(p);
-		} else if (n << 3 < t->size) {
-			inorder = __eytzinger1_to_inorder(n, t->size, t->extra);
-			p = bset_cacheline(b, t, inorder);
-#ifdef CONFIG_X86_64
-			asm(".intel_syntax noprefix;"
-			    "prefetcht0 [%0 - 127 + 64 * 0];"
-			    "prefetcht0 [%0 - 127 + 64 * 1];"
-			    "prefetcht0 [%0 - 127 + 64 * 2];"
-			    "prefetcht0 [%0 - 127 + 64 * 3];"
-			    ".att_syntax prefix;"
-			    :
-			    : "r" (p + 127));
-#else
-			prefetch(p + L1_CACHE_BYTES * 0);
-			prefetch(p + L1_CACHE_BYTES * 1);
-			prefetch(p + L1_CACHE_BYTES * 2);
-			prefetch(p + L1_CACHE_BYTES * 3);
-#endif
-		} else if (n >= t->size)
-			break;
+	do {
+		if (likely(n << 4 < t->size))
+			prefetch(&base->f[n << 4]);
 
-		f = bkey_float_get(base, n);
+		f = &base->f[n];
 
-		if (packed_search &&
-		    likely(f->exponent < BFLOAT_FAILED))
-			n = n * 2 + (bfloat_mantissa(f, n) <
-				     bkey_mantissa(packed_search, f, n));
-		else
-			n = n * 2 + bset_search_tree_slowpath(b, t,
-						search, packed_search, n);
+		if (!unlikely(packed_search))
+			goto slowpath;
+		if (unlikely(f->exponent >= BFLOAT_FAILED))
+			goto slowpath;
+
+		l = f->mantissa;
+		r = bkey_mantissa(packed_search, f, n);
+
+		if (unlikely(l == r) && bkey_mantissa_bits_dropped(b, f, n))
+			goto slowpath;
+
+		n = n * 2 + (l < r);
+		continue;
+slowpath:
+		k = tree_to_bkey(b, t, n);
+		cmp = bkey_cmp_p_or_unp(b, k, packed_search, search);
+		if (!cmp)
+			return k;
+
+		n = n * 2 + (cmp < 0);
 	} while (n < t->size);
 
 	inorder = __eytzinger1_to_inorder(n >> 1, t->size, t->extra);
@@ -1396,29 +1334,23 @@ static struct bkey_packed *bset_search_tree(const struct btree *b,
 	 * n would have been the node we recursed to - the low bit tells us if
 	 * we recursed left or recursed right.
 	 */
-	if (n & 1) {
-		return cacheline_to_bkey(b, t, inorder, f->key_offset);
-	} else {
-		if (--inorder) {
-			n = eytzinger1_prev(n >> 1, t->size);
-			f = bkey_float_get(base, n);
-			return cacheline_to_bkey(b, t, inorder, f->key_offset);
-		} else
+	if (likely(!(n & 1))) {
+		--inorder;
+		if (unlikely(!inorder))
 			return btree_bkey_first(b, t);
+
+		f = &base->f[eytzinger1_prev(n >> 1, t->size)];
 	}
+
+	return cacheline_to_bkey(b, t, inorder, f->key_offset);
 }
 
-/*
- * Returns the first key greater than or equal to @search
- */
-__always_inline __flatten
-static struct bkey_packed *bch2_bset_search(struct btree *b,
+static __always_inline __flatten
+struct bkey_packed *__bch2_bset_search(struct btree *b,
 				struct bset_tree *t,
 				struct bpos *search,
-				struct bkey_packed *packed_search,
 				const struct bkey_packed *lossy_packed_search)
 {
-	struct bkey_packed *m;
 
 	/*
 	 * First, we search for a cacheline, then lastly we do a linear search
@@ -1437,11 +1369,9 @@ static struct bkey_packed *bch2_bset_search(struct btree *b,
 
 	switch (bset_aux_tree_type(t)) {
 	case BSET_NO_AUX_TREE:
-		m = btree_bkey_first(b, t);
-		break;
+		return btree_bkey_first(b, t);
 	case BSET_RW_AUX_TREE:
-		m = bset_search_write_set(b, t, search, lossy_packed_search);
-		break;
+		return bset_search_write_set(b, t, search, lossy_packed_search);
 	case BSET_RO_AUX_TREE:
 		/*
 		 * Each node in the auxiliary search tree covers a certain range
@@ -1453,20 +1383,30 @@ static struct bkey_packed *bch2_bset_search(struct btree *b,
 		if (bkey_cmp(*search, t->max_key) > 0)
 			return btree_bkey_last(b, t);
 
-		m = bset_search_tree(b, t, search, lossy_packed_search);
-		break;
+		return bset_search_tree(b, t, search, lossy_packed_search);
+	default:
+		unreachable();
 	}
+}
 
+static __always_inline __flatten
+struct bkey_packed *bch2_bset_search_linear(struct btree *b,
+				struct bset_tree *t,
+				struct bpos *search,
+				struct bkey_packed *packed_search,
+				const struct bkey_packed *lossy_packed_search,
+				struct bkey_packed *m)
+{
 	if (lossy_packed_search)
 		while (m != btree_bkey_last(b, t) &&
 		       bkey_iter_cmp_p_or_unp(b, search, lossy_packed_search,
 					      m) > 0)
-			m = bkey_next(m);
+			m = bkey_next_skip_noops(m, btree_bkey_last(b, t));
 
 	if (!packed_search)
 		while (m != btree_bkey_last(b, t) &&
 		       bkey_iter_pos_cmp(b, search, m) > 0)
-			m = bkey_next(m);
+			m = bkey_next_skip_noops(m, btree_bkey_last(b, t));
 
 	if (btree_keys_expensive_checks(b)) {
 		struct bkey_packed *prev = bch2_bkey_prev_all(b, t, m);
@@ -1477,6 +1417,23 @@ static struct bkey_packed *bch2_bset_search(struct btree *b,
 	}
 
 	return m;
+}
+
+/*
+ * Returns the first key greater than or equal to @search
+ */
+static __always_inline __flatten
+struct bkey_packed *bch2_bset_search(struct btree *b,
+				struct bset_tree *t,
+				struct bpos *search,
+				struct bkey_packed *packed_search,
+				const struct bkey_packed *lossy_packed_search)
+{
+	struct bkey_packed *m = __bch2_bset_search(b, t, search,
+						   lossy_packed_search);
+
+	return bch2_bset_search_linear(b, t, search,
+				 packed_search, lossy_packed_search, m);
 }
 
 /* Btree node iterator */
@@ -1565,11 +1522,14 @@ static void btree_node_iter_init_pack_failed(struct btree_node_iter *iter,
  *    So we've got to search for start_of_range, then after the lookup iterate
  *    past any extents that compare equal to the position we searched for.
  */
+__flatten
 void bch2_btree_node_iter_init(struct btree_node_iter *iter,
 			       struct btree *b, struct bpos *search)
 {
-	struct bset_tree *t;
 	struct bkey_packed p, *packed_search = NULL;
+	struct btree_node_iter_set *pos = iter->data;
+	struct bkey_packed *k[MAX_BSETS];
+	unsigned i;
 
 	EBUG_ON(bkey_cmp(*search, b->data->min_key) < 0);
 	bset_aux_tree_verify(b);
@@ -1588,11 +1548,23 @@ void bch2_btree_node_iter_init(struct btree_node_iter *iter,
 		return;
 	}
 
-	for_each_bset(b, t)
-		__bch2_btree_node_iter_push(iter, b,
-					   bch2_bset_search(b, t, search,
-							    packed_search, &p),
-					   btree_bkey_last(b, t));
+	for (i = 0; i < b->nsets; i++) {
+		k[i] = __bch2_bset_search(b, b->set + i, search, &p);
+		prefetch_four_cachelines(k[i]);
+	}
+
+	for (i = 0; i < b->nsets; i++) {
+		struct bset_tree *t = b->set + i;
+		struct bkey_packed *end = btree_bkey_last(b, t);
+
+		k[i] = bch2_bset_search_linear(b, t, search,
+					       packed_search, &p, k[i]);
+		if (k[i] != end)
+			*pos++ = (struct btree_node_iter_set) {
+				__btree_node_key_to_offset(b, k[i]),
+				__btree_node_key_to_offset(b, end)
+			};
+	}
 
 	bch2_btree_node_iter_sort(iter, b);
 }
@@ -1667,6 +1639,10 @@ static inline void __bch2_btree_node_iter_advance(struct btree_node_iter *iter,
 	iter->data->k += __bch2_btree_node_iter_peek_all(iter, b)->u64s;
 
 	EBUG_ON(iter->data->k > iter->data->end);
+
+	while (!__btree_node_iter_set_end(iter, 0) &&
+	       !__bch2_btree_node_iter_peek_all(iter, b)->u64s)
+		iter->data->k++;
 
 	if (unlikely(__btree_node_iter_set_end(iter, 0))) {
 		bch2_btree_node_iter_set_drop(iter, iter->data);
@@ -1786,17 +1762,9 @@ void bch2_btree_keys_stats(struct btree *b, struct bset_stats *stats)
 			stats->floats += t->size - 1;
 
 			for (j = 1; j < t->size; j++)
-				switch (bkey_float(b, t, j)->exponent) {
-				case BFLOAT_FAILED_UNPACKED:
-					stats->failed_unpacked++;
-					break;
-				case BFLOAT_FAILED_PREV:
-					stats->failed_prev++;
-					break;
-				case BFLOAT_FAILED_OVERFLOW:
-					stats->failed_overflow++;
-					break;
-				}
+				stats->failed +=
+					bkey_float(b, t, j)->exponent ==
+					BFLOAT_FAILED;
 		}
 	}
 }
@@ -1805,9 +1773,7 @@ void bch2_bfloat_to_text(struct printbuf *out, struct btree *b,
 			 struct bkey_packed *k)
 {
 	struct bset_tree *t = bch2_bkey_to_bset(b, k);
-	struct bkey_packed *l, *r, *p;
-	struct bkey uk, up;
-	char buf1[200], buf2[200];
+	struct bkey uk;
 	unsigned j, inorder;
 
 	if (out->pos != out->end)
@@ -1825,46 +1791,10 @@ void bch2_bfloat_to_text(struct printbuf *out, struct btree *b,
 		return;
 
 	switch (bkey_float(b, t, j)->exponent) {
-	case BFLOAT_FAILED_UNPACKED:
+	case BFLOAT_FAILED:
 		uk = bkey_unpack_key(b, k);
 		pr_buf(out,
 		       "    failed unpacked at depth %u\n"
-		       "\t%llu:%llu\n",
-		       ilog2(j),
-		       uk.p.inode, uk.p.offset);
-		break;
-	case BFLOAT_FAILED_PREV:
-		p = tree_to_prev_bkey(b, t, j);
-		l = is_power_of_2(j)
-			? btree_bkey_first(b, t)
-			: tree_to_prev_bkey(b, t, j >> ffs(j));
-		r = is_power_of_2(j + 1)
-			? bch2_bkey_prev_all(b, t, btree_bkey_last(b, t))
-			: tree_to_bkey(b, t, j >> (ffz(j) + 1));
-
-		up = bkey_unpack_key(b, p);
-		uk = bkey_unpack_key(b, k);
-		bch2_to_binary(buf1, high_word(&b->format, p), b->nr_key_bits);
-		bch2_to_binary(buf2, high_word(&b->format, k), b->nr_key_bits);
-
-		pr_buf(out,
-		       "    failed prev at depth %u\n"
-		       "\tkey starts at bit %u but first differing bit at %u\n"
-		       "\t%llu:%llu\n"
-		       "\t%llu:%llu\n"
-		       "\t%s\n"
-		       "\t%s\n",
-		       ilog2(j),
-		       bch2_bkey_greatest_differing_bit(b, l, r),
-		       bch2_bkey_greatest_differing_bit(b, p, k),
-		       uk.p.inode, uk.p.offset,
-		       up.p.inode, up.p.offset,
-		       buf1, buf2);
-		break;
-	case BFLOAT_FAILED_OVERFLOW:
-		uk = bkey_unpack_key(b, k);
-		pr_buf(out,
-		       "    failed overflow at depth %u\n"
 		       "\t%llu:%llu\n",
 		       ilog2(j),
 		       uk.p.inode, uk.p.offset);

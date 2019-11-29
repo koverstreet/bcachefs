@@ -327,7 +327,7 @@ bool bch2_bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 void bch2_bkey_unpack(const struct btree *b, struct bkey_i *dst,
 		 const struct bkey_packed *src)
 {
-	dst->k = bkey_unpack_key(b, src);
+	__bkey_unpack_key(b, &dst->k, src);
 
 	memcpy_u64s(&dst->v,
 		    bkeyp_val(&b->format, src),
@@ -1058,26 +1058,20 @@ int __bch2_bkey_cmp_packed(const struct bkey_packed *l,
 			   const struct bkey_packed *r,
 			   const struct btree *b)
 {
-	int packed = bkey_lr_packed(l, r);
+	struct bkey unpacked;
 
-	if (likely(packed == BKEY_PACKED_BOTH))
+	if (likely(bkey_packed(l) && bkey_packed(r)))
 		return __bch2_bkey_cmp_packed_format_checked(l, r, b);
 
-	switch (packed) {
-	case BKEY_PACKED_NONE:
-		return bkey_cmp(((struct bkey *) l)->p,
-				((struct bkey *) r)->p);
-	case BKEY_PACKED_LEFT:
-		return __bch2_bkey_cmp_left_packed_format_checked(b,
-				  (struct bkey_packed *) l,
-				  &((struct bkey *) r)->p);
-	case BKEY_PACKED_RIGHT:
-		return -__bch2_bkey_cmp_left_packed_format_checked(b,
-				  (struct bkey_packed *) r,
-				  &((struct bkey *) l)->p);
-	default:
-		unreachable();
+	if (bkey_packed(l)) {
+		__bkey_unpack_key_format_checked(b, &unpacked, l);
+		l = (void*) &unpacked;
+	} else if (bkey_packed(r)) {
+		__bkey_unpack_key_format_checked(b, &unpacked, r);
+		r = (void*) &unpacked;
 	}
+
+	return bkey_cmp(((struct bkey *) l)->p, ((struct bkey *) r)->p);
 }
 
 __pure __flatten

@@ -299,7 +299,6 @@ do {									\
 	x(btree_node_sort)			\
 	x(btree_node_read)			\
 	x(btree_gc)				\
-	x(btree_update)				\
 	x(btree_lock_contended_read)		\
 	x(btree_lock_contended_intent)		\
 	x(btree_lock_contended_write)		\
@@ -426,7 +425,6 @@ struct bch_dev {
 	 */
 	alloc_fifo		free[RESERVE_NR];
 	alloc_fifo		free_inc;
-	spinlock_t		freelist_lock;
 
 	u8			open_buckets_partial[OPEN_BUCKETS_COUNT];
 	unsigned		open_buckets_partial_nr;
@@ -498,6 +496,7 @@ enum {
 	/* misc: */
 	BCH_FS_BDEV_MOUNTED,
 	BCH_FS_FIXED_GENS,
+	BCH_FS_ALLOC_WRITTEN,
 	BCH_FS_REBUILD_REPLICAS,
 	BCH_FS_HOLD_BTREE_WRITES,
 };
@@ -720,10 +719,12 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
+
+	mempool_t		large_bkey_pool;
 
 	/* REBALANCE */
 	struct bch_fs_rebalance	rebalance;

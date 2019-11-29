@@ -4,6 +4,7 @@
 
 #include "bcachefs.h"
 #include "alloc_foreground.h"
+#include "bkey_on_stack.h"
 #include "bset.h"
 #include "btree_gc.h"
 #include "btree_update.h"
@@ -135,8 +136,6 @@ void bch2_stripe_to_text(struct printbuf *out, struct bch_fs *c,
 		pr_buf(out, " %u:%llu:%u", s->ptrs[i].dev,
 		       (u64) s->ptrs[i].offset,
 		       stripe_blockcount_get(s, i));
-
-	bch2_bkey_ptrs_to_text(out, c, k);
 }
 
 static int ptr_matches_stripe(struct bch_fs *c,
@@ -433,10 +432,9 @@ int bch2_ec_read_extent(struct bch_fs *c, struct bch_read_bio *rbio)
 
 	closure_init_stack(&cl);
 
-	BUG_ON(!rbio->pick.idx ||
-	       rbio->pick.idx - 1 >= rbio->pick.ec_nr);
+	BUG_ON(!rbio->pick.has_ec);
 
-	stripe_idx = rbio->pick.ec[rbio->pick.idx - 1].idx;
+	stripe_idx = rbio->pick.ec.idx;
 
 	buf = kzalloc(sizeof(*buf), GFP_NOIO);
 	if (!buf)
@@ -561,7 +559,7 @@ static int ec_stripe_mem_alloc(struct bch_fs *c,
 	size_t idx = iter->pos.offset;
 	int ret = 0;
 
-	if (!__ec_stripe_mem_alloc(c, idx, GFP_NOWAIT))
+	if (!__ec_stripe_mem_alloc(c, idx, GFP_NOWAIT|__GFP_NOWARN))
 		return ret;
 
 	bch2_trans_unlock(iter->trans);
@@ -738,7 +736,7 @@ found_slot:
 
 	stripe->k.p = iter->pos;
 
-	bch2_trans_update(&trans, BTREE_INSERT_ENTRY(iter, &stripe->k_i));
+	bch2_trans_update(&trans, iter, &stripe->k_i);
 
 	ret = bch2_trans_commit(&trans, NULL, NULL,
 				BTREE_INSERT_ATOMIC|
@@ -779,10 +777,10 @@ static int ec_stripe_update_ptrs(struct bch_fs *c,
 	struct btree_iter *iter;
 	struct bkey_s_c k;
 	struct bkey_s_extent e;
-	struct bch_extent_ptr *ptr;
-	BKEY_PADDED(k) tmp;
+	struct bkey_on_stack sk;
 	int ret = 0, dev, idx;
 
+	bkey_on_stack_init(&sk);
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
 
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
@@ -792,6 +790,8 @@ static int ec_stripe_update_ptrs(struct bch_fs *c,
 	while ((k = bch2_btree_iter_peek(iter)).k &&
 	       !(ret = bkey_err(k)) &&
 	       bkey_cmp(bkey_start_pos(k.k), pos->p) < 0) {
+		struct bch_extent_ptr *ptr, *ec_ptr = NULL;
+
 		if (extent_has_stripe_ptr(k, s->key.k.p.offset)) {
 			bch2_btree_iter_next(iter);
 			continue;
@@ -807,19 +807,19 @@ static int ec_stripe_update_ptrs(struct bch_fs *c,
 
 		dev = s->key.v.ptrs[idx].dev;
 
-		bkey_reassemble(&tmp.k, k);
-		e = bkey_i_to_s_extent(&tmp.k);
+		bkey_on_stack_reassemble(&sk, c, k);
+		e = bkey_i_to_s_extent(sk.k);
 
-		extent_for_each_ptr(e, ptr)
-			if (ptr->dev != dev)
+		extent_for_each_ptr(e, ptr) {
+			if (ptr->dev == dev)
+				ec_ptr = ptr;
+			else
 				ptr->cached = true;
+		}
 
-		ptr = (void *) bch2_extent_has_device(e.c, dev);
-		BUG_ON(!ptr);
+		extent_stripe_ptr_add(e, s, ec_ptr, idx);
 
-		extent_stripe_ptr_add(e, s, ptr, idx);
-
-		bch2_trans_update(&trans, BTREE_INSERT_ENTRY(iter, &tmp.k));
+		bch2_trans_update(&trans, iter, sk.k);
 
 		ret = bch2_trans_commit(&trans, NULL, NULL,
 					BTREE_INSERT_ATOMIC|
@@ -832,6 +832,7 @@ static int ec_stripe_update_ptrs(struct bch_fs *c,
 	}
 
 	bch2_trans_exit(&trans);
+	bkey_on_stack_exit(&sk, c);
 
 	return ret;
 }
@@ -1231,7 +1232,7 @@ static int __bch2_stripe_write_key(struct btree_trans *trans,
 
 	spin_unlock(&c->ec_stripes_heap_lock);
 
-	bch2_trans_update(trans, BTREE_INSERT_ENTRY(iter, &new_key->k_i));
+	bch2_trans_update(trans, iter, &new_key->k_i);
 
 	return bch2_trans_commit(trans, NULL, NULL,
 				 BTREE_INSERT_NOFAIL|flags);
@@ -1278,7 +1279,7 @@ int bch2_stripes_read(struct bch_fs *c, struct journal_keys *journal_keys)
 	struct btree_trans trans;
 	struct btree_iter *btree_iter;
 	struct journal_iter journal_iter;
-	struct bkey_s_c btree_k, journal_k, k;
+	struct bkey_s_c btree_k, journal_k;
 	int ret;
 
 	ret = bch2_fs_ec_start(c);
@@ -1294,33 +1295,31 @@ int bch2_stripes_read(struct bch_fs *c, struct journal_keys *journal_keys)
 	journal_k	= bch2_journal_iter_peek(&journal_iter);
 
 	while (1) {
+		bool btree;
+
 		if (btree_k.k && journal_k.k) {
 			int cmp = bkey_cmp(btree_k.k->p, journal_k.k->p);
 
-			if (cmp < 0) {
-				k = btree_k;
+			if (!cmp)
 				btree_k = bch2_btree_iter_next(btree_iter);
-			} else if (cmp == 0) {
-				btree_k = bch2_btree_iter_next(btree_iter);
-				k = journal_k;
-				journal_k = bch2_journal_iter_next(&journal_iter);
-			} else {
-				k = journal_k;
-				journal_k = bch2_journal_iter_next(&journal_iter);
-			}
+			btree = cmp < 0;
 		} else if (btree_k.k) {
-			k = btree_k;
-			btree_k = bch2_btree_iter_next(btree_iter);
+			btree = true;
 		} else if (journal_k.k) {
-			k = journal_k;
-			journal_k = bch2_journal_iter_next(&journal_iter);
+			btree = false;
 		} else {
 			break;
 		}
 
-		bch2_mark_key(c, k, 0, 0, NULL, 0,
+		bch2_mark_key(c, btree ? btree_k : journal_k,
+			      0, 0, NULL, 0,
 			      BCH_BUCKET_MARK_ALLOC_READ|
 			      BCH_BUCKET_MARK_NOATOMIC);
+
+		if (btree)
+			btree_k = bch2_btree_iter_next(btree_iter);
+		else
+			journal_k = bch2_journal_iter_next(&journal_iter);
 	}
 
 	ret = bch2_trans_exit(&trans) ?: ret;
@@ -1350,6 +1349,9 @@ int bch2_ec_mem_alloc(struct bch_fs *c, bool gc)
 	ret = bch2_trans_exit(&trans);
 	if (ret)
 		return ret;
+
+	if (!idx)
+		return 0;
 
 	if (!gc &&
 	    !init_heap(&c->ec_stripes_heap, roundup_pow_of_two(idx),

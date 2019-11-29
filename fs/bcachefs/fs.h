@@ -10,14 +10,35 @@
 #include <linux/seqlock.h>
 #include <linux/stat.h>
 
+/*
+ * Two-state lock - can be taken for add or block - both states are shared,
+ * like read side of rwsem, but conflict with other state:
+ */
+struct pagecache_lock {
+	atomic_long_t		v;
+	wait_queue_head_t	wait;
+};
+
+static inline void pagecache_lock_init(struct pagecache_lock *lock)
+{
+	atomic_long_set(&lock->v, 0);
+	init_waitqueue_head(&lock->wait);
+}
+
+void bch2_pagecache_add_put(struct pagecache_lock *);
+void bch2_pagecache_add_get(struct pagecache_lock *);
+void bch2_pagecache_block_put(struct pagecache_lock *);
+void bch2_pagecache_block_get(struct pagecache_lock *);
+
 struct bch_inode_info {
 	struct inode		v;
 
 	struct mutex		ei_update_lock;
-	struct deferred_update	*ei_inode_update;
 	u64			ei_journal_seq;
 	u64			ei_quota_reserved;
 	unsigned long		ei_last_dirtied;
+
+	struct pagecache_lock	ei_pagecache_lock;
 
 	struct mutex		ei_quota_lock;
 	struct bch_qid		ei_qid;
@@ -38,7 +59,8 @@ static inline int ptrcmp(void *l, void *r)
 
 enum bch_inode_lock_op {
 	INODE_LOCK		= (1U << 0),
-	INODE_UPDATE_LOCK	= (1U << 1),
+	INODE_PAGECACHE_BLOCK	= (1U << 1),
+	INODE_UPDATE_LOCK	= (1U << 2),
 };
 
 #define bch2_lock_inodes(_locks, ...)					\
@@ -50,9 +72,11 @@ do {									\
 									\
 	for (i = 1; i < ARRAY_SIZE(a); i++)				\
 		if (a[i] != a[i - 1]) {					\
-			if (_locks & INODE_LOCK)			\
+			if ((_locks) & INODE_LOCK)			\
 				down_write_nested(&a[i]->v.i_rwsem, i);	\
-			if (_locks & INODE_UPDATE_LOCK)			\
+			if ((_locks) & INODE_PAGECACHE_BLOCK)		\
+				bch2_pagecache_block_get(&a[i]->ei_pagecache_lock);\
+			if ((_locks) & INODE_UPDATE_LOCK)			\
 				mutex_lock_nested(&a[i]->ei_update_lock, i);\
 		}							\
 } while (0)
@@ -66,9 +90,11 @@ do {									\
 									\
 	for (i = 1; i < ARRAY_SIZE(a); i++)				\
 		if (a[i] != a[i - 1]) {					\
-			if (_locks & INODE_LOCK)			\
+			if ((_locks) & INODE_LOCK)			\
 				up_write(&a[i]->v.i_rwsem);		\
-			if (_locks & INODE_UPDATE_LOCK)			\
+			if ((_locks) & INODE_PAGECACHE_BLOCK)		\
+				bch2_pagecache_block_put(&a[i]->ei_pagecache_lock);\
+			if ((_locks) & INODE_UPDATE_LOCK)			\
 				mutex_unlock(&a[i]->ei_update_lock);	\
 		}							\
 } while (0)
@@ -76,16 +102,6 @@ do {									\
 static inline struct bch_inode_info *file_bch_inode(struct file *file)
 {
 	return to_bch_ei(file_inode(file));
-}
-
-static inline u8 mode_to_type(umode_t mode)
-{
-	return (mode >> 12) & 15;
-}
-
-static inline unsigned nlink_bias(umode_t mode)
-{
-	return S_ISDIR(mode) ? 2 : 1;
 }
 
 static inline bool inode_attr_changing(struct bch_inode_info *dir,
@@ -142,16 +158,8 @@ void bch2_inode_update_after_write(struct bch_fs *,
 				   struct bch_inode_info *,
 				   struct bch_inode_unpacked *,
 				   unsigned);
-int __must_check bch2_write_inode_trans(struct btree_trans *,
-				struct bch_inode_info *,
-				struct bch_inode_unpacked *,
-				inode_set_fn, void *);
 int __must_check bch2_write_inode(struct bch_fs *, struct bch_inode_info *,
 				  inode_set_fn, void *, unsigned);
-
-int bch2_reinherit_attrs_fn(struct bch_inode_info *,
-			    struct bch_inode_unpacked *,
-			    void *);
 
 void bch2_vfs_exit(void);
 int bch2_vfs_init(void);

@@ -284,8 +284,13 @@ static inline struct bkey_s __bkey_disassemble(struct btree *b,
 	return (struct bkey_s) { .k = u, .v = bkeyp_val(&b->format, k), };
 }
 
-#define for_each_bset(_b, _t)					\
+#define for_each_bset(_b, _t)						\
 	for (_t = (_b)->set; _t < (_b)->set + (_b)->nsets; _t++)
+
+#define bset_tree_for_each_key(_b, _t, _k)				\
+	for (_k = btree_bkey_first(_b, _t);				\
+	     _k != btree_bkey_last(_b, _t);				\
+	     _k = bkey_next_skip_noops(_k, btree_bkey_last(_b, _t)))
 
 static inline bool bset_has_ro_aux_tree(struct bset_tree *t)
 {
@@ -564,6 +569,16 @@ static inline void btree_keys_account_key(struct btree_nr_keys *n,
 		n->unpacked_keys += sign;
 }
 
+static inline void btree_keys_account_val_delta(struct btree *b,
+						struct bkey_packed *k,
+						int delta)
+{
+	struct bset_tree *t = bch2_bkey_to_bset(b, k);
+
+	b->nr.live_u64s			+= delta;
+	b->nr.bset_u64s[t - b->set]	+= delta;
+}
+
 #define btree_keys_account_key_add(_nr, _bset_idx, _k)		\
 	btree_keys_account_key(_nr, _bset_idx, _k, 1)
 #define btree_keys_account_key_drop(_nr, _bset_idx, _k)	\
@@ -582,9 +597,7 @@ struct bset_stats {
 	} sets[BSET_TREE_NR_TYPES];
 
 	size_t floats;
-	size_t failed_unpacked;
-	size_t failed_prev;
-	size_t failed_overflow;
+	size_t failed;
 };
 
 void bch2_btree_keys_stats(struct btree *, struct bset_stats *);
