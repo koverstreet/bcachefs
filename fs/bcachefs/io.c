@@ -1139,6 +1139,8 @@ static void bch2_write_data_inline(struct bch_write_op *op, unsigned data_len)
 	unsigned sectors;
 	int ret;
 
+	bch2_check_set_feature(op->c, BCH_FEATURE_INLINE_DATA);
+
 	ret = bch2_keylist_realloc(&op->insert_keys, op->inline_keys,
 				   ARRAY_SIZE(op->inline_keys),
 				   BKEY_U64s + DIV_ROUND_UP(data_len, 8));
@@ -1220,7 +1222,8 @@ void bch2_write(struct closure *cl)
 	data_len = min_t(u64, bio->bi_iter.bi_size,
 			 op->new_i_size - (op->pos.offset << 9));
 
-	if (data_len <= min(block_bytes(c) / 2, 1024U)) {
+	if (c->opts.inline_data &&
+	    data_len <= min(block_bytes(c) / 2, 1024U)) {
 		bch2_write_data_inline(op, data_len);
 		return;
 	}
