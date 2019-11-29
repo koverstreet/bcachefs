@@ -111,73 +111,6 @@
  *   ->tasklist_lock            (memory_failure, collect_procs_ao)
  */
 
-static void __pagecache_lock_put(struct pagecache_lock *lock, long i)
-{
-	BUG_ON(atomic_long_read(&lock->v) == 0);
-
-	if (atomic_long_sub_return_release(i, &lock->v) == 0)
-		wake_up_all(&lock->wait);
-}
-
-static bool __pagecache_lock_tryget(struct pagecache_lock *lock, long i)
-{
-	long v = atomic_long_read(&lock->v), old;
-
-	do {
-		old = v;
-
-		if (i > 0 ? v < 0 : v > 0)
-			return false;
-	} while ((v = atomic_long_cmpxchg_acquire(&lock->v,
-					old, old + i)) != old);
-	return true;
-}
-
-static void __pagecache_lock_get(struct pagecache_lock *lock, long i)
-{
-	wait_event(lock->wait, __pagecache_lock_tryget(lock, i));
-}
-
-void pagecache_add_put(struct pagecache_lock *lock)
-{
-	__pagecache_lock_put(lock, 1);
-}
-EXPORT_SYMBOL(pagecache_add_put);
-
-void pagecache_add_get(struct pagecache_lock *lock)
-{
-	__pagecache_lock_get(lock, 1);
-}
-EXPORT_SYMBOL(pagecache_add_get);
-
-void __pagecache_block_put(struct pagecache_lock *lock)
-{
-	__pagecache_lock_put(lock, -1);
-}
-EXPORT_SYMBOL(__pagecache_block_put);
-
-void __pagecache_block_get(struct pagecache_lock *lock)
-{
-	__pagecache_lock_get(lock, -1);
-}
-EXPORT_SYMBOL(__pagecache_block_get);
-
-void pagecache_block_put(struct pagecache_lock *lock)
-{
-	BUG_ON(current->pagecache_lock != lock);
-	current->pagecache_lock = NULL;
-	__pagecache_lock_put(lock, -1);
-}
-EXPORT_SYMBOL(pagecache_block_put);
-
-void pagecache_block_get(struct pagecache_lock *lock)
-{
-	__pagecache_lock_get(lock, -1);
-	BUG_ON(current->pagecache_lock);
-	current->pagecache_lock = lock;
-}
-EXPORT_SYMBOL(pagecache_block_get);
-
 static int page_cache_tree_insert_vec(struct address_space *mapping,
 				      struct page *pages[],
 				      unsigned nr_pages,
@@ -982,9 +915,6 @@ static int add_to_page_cache_vec(struct page **pages,
 		page->index = offset + i;
 	}
 
-	if (current->pagecache_lock != &mapping->add_lock)
-		pagecache_add_get(&mapping->add_lock);
-
 	while (nr_added < nr_charged) {
 		error = radix_tree_maybe_preload(gfp_mask & GFP_RECLAIM_MASK);
 		if (error)
@@ -1013,9 +943,6 @@ static int add_to_page_cache_vec(struct page **pages,
 		xa_unlock_irq(&mapping->i_pages);
 		radix_tree_preload_end();
 	}
-
-	if (current->pagecache_lock != &mapping->add_lock)
-		pagecache_add_put(&mapping->add_lock);
 
 	for (i = 0; i < nr_added; i++) {
 		struct page *page = pages[i];
@@ -2772,14 +2699,7 @@ vm_fault_t filemap_fault(struct vm_fault *vmf)
 	 * Do we have something in the page cache already?
 	 */
 	page = find_get_page(mapping, offset);
-	if (unlikely(current->pagecache_lock == &mapping->add_lock)) {
-		/*
-		 * fault from e.g. dio -> get_user_pages() - _don't_ want to do
-		 * readahead, only read in page we need:
-		 */
-		if (!page)
-			goto no_cached_page;
-	} else if (likely(page) && !(vmf->flags & FAULT_FLAG_TRIED)) {
+	if (likely(page) && !(vmf->flags & FAULT_FLAG_TRIED)) {
 		/*
 		 * We found the page, so try async readahead before
 		 * waiting for the lock.
