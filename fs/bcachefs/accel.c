@@ -39,7 +39,7 @@ u64 accel_crc32c(u32 crc, const void* p, size_t len) {
 	return crc32c(crc, p, len);
 	
 	// TODO: Ensure ARM64 is calling NEON code. crc32-ce 
-	// seems to be missing from the crypto folder.
+	// seems to be missing from the ARM64 crypto folder.
 }
 
 static const int MB = 1024 * 1024;

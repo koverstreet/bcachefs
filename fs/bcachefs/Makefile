@@ -68,71 +68,13 @@ CFLAGS_isal/crc/crc_base.o = $(ISAL_C_FLAGS)
 
 bcachefs-$(CONFIG_BCACHEFS_ISAL_BACKEND) += \
     isal/crc/crc64_base.o \
-    isal/crc/crc_base.o \
 	isal/crc/crc64_ecma_norm_by8.o \
-	isal/crc/crc64_iso_refl_by16_10.o \
 	isal/crc/crc64_ecma_norm_by16_10.o \
-	isal/crc/crc64_ecma_refl_by8.o \
-	isal/crc/crc16_t10dif_copy_by4.o \
-	isal/crc/crc32_ieee_by4.o \
-	isal/crc/crc32_iscsi_00.o \
-	isal/crc/crc64_iso_norm_by16_10.o \
-	isal/crc/crc32_iscsi_01.o \
-	isal/crc/crc64_jones_norm_by8.o \
-	isal/crc/crc64_iso_norm_by8.o \
-	isal/crc/crc64_multibinary.o \
-	isal/crc/crc16_t10dif_by4.o \
-	isal/crc/crc64_ecma_refl_by16_10.o \
-	isal/crc/crc32_ieee_01.o \
-	isal/crc/crc64_iso_refl_by8.o \
-	isal/crc/crc64_jones_refl_by16_10.o \
-	isal/crc/crc_multibinary.o \
-	isal/crc/crc64_jones_norm_by16_10.o \
-	isal/crc/crc64_jones_refl_by8.o \
-	isal/crc/crc32_gzip_refl_by8.o \
-	isal/crc/crc16_t10dif_01.o
+	isal/crc/crc64_multibinary.o 
 
 $(obj)/isal/crc/crc64_ecma_norm_by8.o: $(src)/isal/crc/crc64_ecma_norm_by8.asm
 	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_ecma_norm_by8.o $(src)/isal/crc/crc64_ecma_norm_by8.asm
-$(obj)/isal/crc/crc64_iso_refl_by16_10.o: $(src)/isal/crc/crc64_iso_refl_by16_10.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_iso_refl_by16_10.o $(src)/isal/crc/crc64_iso_refl_by16_10.asm
 $(obj)/isal/crc/crc64_ecma_norm_by16_10.o: $(src)/isal/crc/crc64_ecma_norm_by16_10.asm
 	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_ecma_norm_by16_10.o $(src)/isal/crc/crc64_ecma_norm_by16_10.asm
-$(obj)/isal/crc/crc64_ecma_refl_by8.o: $(src)/isal/crc/crc64_ecma_refl_by8.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_ecma_refl_by8.o $(src)/isal/crc/crc64_ecma_refl_by8.asm
-$(obj)/isal/crc/crc16_t10dif_copy_by4.o: $(src)/isal/crc/crc16_t10dif_copy_by4.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc16_t10dif_copy_by4.o $(src)/isal/crc/crc16_t10dif_copy_by4.asm
-$(obj)/isal/crc/crc32_ieee_by4.o: $(src)/isal/crc/crc32_ieee_by4.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc32_ieee_by4.o $(src)/isal/crc/crc32_ieee_by4.asm
-$(obj)/isal/crc/crc32_iscsi_00.o: $(src)/isal/crc/crc32_iscsi_00.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc32_iscsi_00.o $(src)/isal/crc/crc32_iscsi_00.asm
-$(obj)/isal/crc/crc64_iso_norm_by16_10.o: $(src)/isal/crc/crc64_iso_norm_by16_10.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_iso_norm_by16_10.o $(src)/isal/crc/crc64_iso_norm_by16_10.asm
-$(obj)/isal/crc/crc32_iscsi_01.o: $(src)/isal/crc/crc32_iscsi_01.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc32_iscsi_01.o $(src)/isal/crc/crc32_iscsi_01.asm
-$(obj)/isal/crc/crc64_jones_norm_by8.o: $(src)/isal/crc/crc64_jones_norm_by8.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_jones_norm_by8.o $(src)/isal/crc/crc64_jones_norm_by8.asm
-$(obj)/isal/crc/crc64_iso_norm_by8.o: $(src)/isal/crc/crc64_iso_norm_by8.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_iso_norm_by8.o $(src)/isal/crc/crc64_iso_norm_by8.asm
 $(obj)/isal/crc/crc64_multibinary.o: $(src)/isal/crc/crc64_multibinary.asm
 	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_multibinary.o $(src)/isal/crc/crc64_multibinary.asm
-$(obj)/isal/crc/crc16_t10dif_by4.o: $(src)/isal/crc/crc16_t10dif_by4.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc16_t10dif_by4.o $(src)/isal/crc/crc16_t10dif_by4.asm
-$(obj)/isal/crc/crc64_ecma_refl_by16_10.o: $(src)/isal/crc/crc64_ecma_refl_by16_10.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_ecma_refl_by16_10.o $(src)/isal/crc/crc64_ecma_refl_by16_10.asm
-$(obj)/isal/crc/crc32_ieee_01.o: $(src)/isal/crc/crc32_ieee_01.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc32_ieee_01.o $(src)/isal/crc/crc32_ieee_01.asm
-$(obj)/isal/crc/crc64_iso_refl_by8.o: $(src)/isal/crc/crc64_iso_refl_by8.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_iso_refl_by8.o $(src)/isal/crc/crc64_iso_refl_by8.asm
-$(obj)/isal/crc/crc64_jones_refl_by16_10.o: $(src)/isal/crc/crc64_jones_refl_by16_10.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_jones_refl_by16_10.o $(src)/isal/crc/crc64_jones_refl_by16_10.asm
-$(obj)/isal/crc/crc_multibinary.o: $(src)/isal/crc/crc_multibinary.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc_multibinary.o $(src)/isal/crc/crc_multibinary.asm
-$(obj)/isal/crc/crc64_jones_norm_by16_10.o: $(src)/isal/crc/crc64_jones_norm_by16_10.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_jones_norm_by16_10.o $(src)/isal/crc/crc64_jones_norm_by16_10.asm
-$(obj)/isal/crc/crc64_jones_refl_by8.o: $(src)/isal/crc/crc64_jones_refl_by8.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_jones_refl_by8.o $(src)/isal/crc/crc64_jones_refl_by8.asm
-$(obj)/isal/crc/crc32_gzip_refl_by8.o: $(src)/isal/crc/crc32_gzip_refl_by8.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc32_gzip_refl_by8.o $(src)/isal/crc/crc32_gzip_refl_by8.asm
-$(obj)/isal/crc/crc16_t10dif_01.o: $(src)/isal/crc/crc16_t10dif_01.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc16_t10dif_01.o $(src)/isal/crc/crc16_t10dif_01.asm
