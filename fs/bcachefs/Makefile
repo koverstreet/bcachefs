@@ -60,13 +60,13 @@ bcachefs-y	:=	\
 ISAL_INCLUDE = -I$(src)/isal/include -I$(src)/isal/crc
 ccflags-$(CONFIG_BCACHEFS_ISAL_BACKEND) +=$(ISAL_INCLUDE)
 
-ASSEMBLE=nasm -f elf64 -D NDEBUG $(ISAL_INCLUDE) -DAS_FEATURE_LEVEL=10 -DHAVE_AS_KNOWS_AVX512=1
+ASSEMBLE=nasm -f elf64 -D NDEBUG $(ISAL_INCLUDE) -DAS_FEATURE_LEVEL=10 -DHAVE_AS_KNOWS_AVX512
 
 ISAL_C_FLAGS = $(ISAL_INCLUDE) -O2 -Wall -DNDEBUG -DGF_LARGE_TABLES -DAS_FEATURE_LEVEL=10 -DHAVE_AS_KNOWS_AVX512
-CFLAGS_isal/crc/crc64_base.o = $(ISAL_C_FLAGS)
-CFLAGS_isal/crc/crc_base.o = $(ISAL_C_FLAGS)
-CFLAGS_isal/erasure_code/ec_base.o = $(ISAL_C_FLAGS)
-CFLAGS_isal/erasure_code/ec_highlevel_func.o = $(ISAL_C_FLAGS)
+CFLAGS_crc64_base.o = $(ISAL_C_FLAGS)
+CFLAGS_crc_base.o = $(ISAL_C_FLAGS)
+CFLAGS_ec_base.o = $(ISAL_C_FLAGS)
+CFLAGS_ec_highlevel_func.o = $(ISAL_C_FLAGS)
 
 bcachefs-$(CONFIG_BCACHEFS_ISAL_BACKEND) += \
     isal/crc/crc64_base.o \
