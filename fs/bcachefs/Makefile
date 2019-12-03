@@ -58,13 +58,15 @@ bcachefs-y	:=	\
 	xattr.o			
 
 ISAL_INCLUDE = -I$(src)/isal/include -I$(src)/isal/crc
-ISAL_C_FLAGS = $(ISAL_INCLUDE) -O2 -Wall -D NDEBUG
 ccflags-$(CONFIG_BCACHEFS_ISAL_BACKEND) +=$(ISAL_INCLUDE)
 
-ASSEMBLE=nasm -f elf64 -D NDEBUG $(ISAL_INCLUDE) -DAS_FEATURE_LEVEL=10 -DHAVE_AS_KNOWS_AVX512
+ASSEMBLE=nasm -f elf64 -D NDEBUG $(ISAL_INCLUDE) -DAS_FEATURE_LEVEL=10 -DHAVE_AS_KNOWS_AVX512=1
 
+ISAL_C_FLAGS = $(ISAL_INCLUDE) -O2 -Wall -DNDEBUG -DGF_LARGE_TABLES -DAS_FEATURE_LEVEL=10 -DHAVE_AS_KNOWS_AVX512
 CFLAGS_isal/crc/crc64_base.o = $(ISAL_C_FLAGS)
 CFLAGS_isal/crc/crc_base.o = $(ISAL_C_FLAGS)
+CFLAGS_isal/erasure_code/ec_base.o = $(ISAL_C_FLAGS)
+CFLAGS_isal/erasure_code/ec_highlevel_func.o = $(ISAL_C_FLAGS)
 
 bcachefs-$(CONFIG_BCACHEFS_ISAL_BACKEND) += \
     isal/crc/crc64_base.o \
@@ -72,9 +74,169 @@ bcachefs-$(CONFIG_BCACHEFS_ISAL_BACKEND) += \
 	isal/crc/crc64_ecma_norm_by16_10.o \
 	isal/crc/crc64_multibinary.o 
 
+bcachefs-$(CONFIG_BCACHEFS_ISAL_ERASURE) += \
+	isal/erasure_code/ec_base.o \
+	isal/erasure_code/ec_highlevel_func.o \
+	isal/erasure_code/gf_5vect_mad_sse.o \
+	isal/erasure_code/gf_6vect_dot_prod_avx2.o \
+	isal/erasure_code/gf_vect_dot_prod_avx.o \
+	isal/erasure_code/gf_4vect_dot_prod_sse.o \
+	isal/erasure_code/gf_6vect_dot_prod_avx.o \
+	isal/erasure_code/gf_2vect_mad_avx2.o \
+	isal/erasure_code/gf_vect_mul_avx.o \
+	isal/erasure_code/gf_5vect_dot_prod_sse.o \
+	isal/erasure_code/gf_3vect_mad_avx.o \
+	isal/erasure_code/gf_4vect_mad_sse.o \
+	isal/erasure_code/gf_6vect_mad_sse.o \
+	isal/erasure_code/gf_5vect_dot_prod_avx.o \
+	isal/erasure_code/gf_vect_dot_prod_avx512.o \
+	isal/erasure_code/gf_3vect_dot_prod_avx.o \
+	isal/erasure_code/gf_5vect_dot_prod_avx512.o \
+	isal/erasure_code/gf_2vect_dot_prod_avx.o \
+	isal/erasure_code/gf_6vect_dot_prod_avx512.o \
+	isal/erasure_code/gf_6vect_dot_prod_sse.o \
+	isal/erasure_code/gf_4vect_dot_prod_avx512.o \
+	isal/erasure_code/gf_3vect_mad_avx512.o \
+	isal/erasure_code/gf_vect_mad_avx512.o \
+	isal/erasure_code/gf_4vect_mad_avx.o \
+	isal/erasure_code/gf_3vect_dot_prod_avx512.o \
+	isal/erasure_code/gf_5vect_dot_prod_avx2.o \
+	isal/erasure_code/gf_5vect_mad_avx2.o \
+	isal/erasure_code/gf_2vect_mad_sse.o \
+	isal/erasure_code/gf_2vect_dot_prod_avx2.o \
+	isal/erasure_code/gf_6vect_mad_avx.o \
+	isal/erasure_code/gf_2vect_mad_avx.o \
+	isal/erasure_code/gf_vect_mad_avx.o \
+	isal/erasure_code/gf_3vect_mad_sse.o \
+	isal/erasure_code/gf_3vect_dot_prod_avx2.o \
+	isal/erasure_code/gf_6vect_mad_avx2.o \
+	isal/erasure_code/gf_vect_dot_prod_avx2.o \
+	isal/erasure_code/gf_4vect_dot_prod_avx2.o \
+	isal/erasure_code/gf_5vect_mad_avx.o \
+	isal/erasure_code/gf_vect_dot_prod_sse.o \
+	isal/erasure_code/gf_vect_mul_sse.o \
+	isal/erasure_code/gf_2vect_dot_prod_sse.o \
+	isal/erasure_code/gf_4vect_dot_prod_avx.o \
+	isal/erasure_code/gf_4vect_mad_avx512.o \
+	isal/erasure_code/gf_4vect_mad_avx2.o \
+	isal/erasure_code/gf_2vect_mad_avx512.o \
+	isal/erasure_code/gf_3vect_dot_prod_sse.o \
+	isal/erasure_code/gf_6vect_mad_avx512.o \
+	isal/erasure_code/ec_multibinary.o \
+	isal/erasure_code/gf_5vect_mad_avx512.o \
+	isal/erasure_code/gf_3vect_mad_avx2.o \
+	isal/erasure_code/gf_vect_mad_sse.o \
+	isal/erasure_code/gf_vect_mad_avx2.o \
+	isal/erasure_code/gf_2vect_dot_prod_avx512.o
+
+# CRC ASM
 $(obj)/isal/crc/crc64_ecma_norm_by8.o: $(src)/isal/crc/crc64_ecma_norm_by8.asm
 	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_ecma_norm_by8.o $(src)/isal/crc/crc64_ecma_norm_by8.asm
 $(obj)/isal/crc/crc64_ecma_norm_by16_10.o: $(src)/isal/crc/crc64_ecma_norm_by16_10.asm
 	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_ecma_norm_by16_10.o $(src)/isal/crc/crc64_ecma_norm_by16_10.asm
 $(obj)/isal/crc/crc64_multibinary.o: $(src)/isal/crc/crc64_multibinary.asm
 	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_multibinary.o $(src)/isal/crc/crc64_multibinary.asm
+
+# Erasure Coding ASM
+$(obj)/isal/erasure_code/gf_5vect_mad_sse.o: $(src)/isal/erasure_code/gf_5vect_mad_sse.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_5vect_mad_sse.o $(src)/isal/erasure_code/gf_5vect_mad_sse.asm
+$(obj)/isal/erasure_code/gf_6vect_dot_prod_avx2.o: $(src)/isal/erasure_code/gf_6vect_dot_prod_avx2.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_6vect_dot_prod_avx2.o $(src)/isal/erasure_code/gf_6vect_dot_prod_avx2.asm
+$(obj)/isal/erasure_code/gf_vect_dot_prod_avx.o: $(src)/isal/erasure_code/gf_vect_dot_prod_avx.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_vect_dot_prod_avx.o $(src)/isal/erasure_code/gf_vect_dot_prod_avx.asm
+$(obj)/isal/erasure_code/gf_4vect_dot_prod_sse.o: $(src)/isal/erasure_code/gf_4vect_dot_prod_sse.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_4vect_dot_prod_sse.o $(src)/isal/erasure_code/gf_4vect_dot_prod_sse.asm
+$(obj)/isal/erasure_code/gf_6vect_dot_prod_avx.o: $(src)/isal/erasure_code/gf_6vect_dot_prod_avx.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_6vect_dot_prod_avx.o $(src)/isal/erasure_code/gf_6vect_dot_prod_avx.asm
+$(obj)/isal/erasure_code/gf_2vect_mad_avx2.o: $(src)/isal/erasure_code/gf_2vect_mad_avx2.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_2vect_mad_avx2.o $(src)/isal/erasure_code/gf_2vect_mad_avx2.asm
+$(obj)/isal/erasure_code/gf_vect_mul_avx.o: $(src)/isal/erasure_code/gf_vect_mul_avx.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_vect_mul_avx.o $(src)/isal/erasure_code/gf_vect_mul_avx.asm
+$(obj)/isal/erasure_code/gf_5vect_dot_prod_sse.o: $(src)/isal/erasure_code/gf_5vect_dot_prod_sse.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_5vect_dot_prod_sse.o $(src)/isal/erasure_code/gf_5vect_dot_prod_sse.asm
+$(obj)/isal/erasure_code/gf_3vect_mad_avx.o: $(src)/isal/erasure_code/gf_3vect_mad_avx.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_3vect_mad_avx.o $(src)/isal/erasure_code/gf_3vect_mad_avx.asm
+$(obj)/isal/erasure_code/gf_4vect_mad_sse.o: $(src)/isal/erasure_code/gf_4vect_mad_sse.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_4vect_mad_sse.o $(src)/isal/erasure_code/gf_4vect_mad_sse.asm
+$(obj)/isal/erasure_code/gf_6vect_mad_sse.o: $(src)/isal/erasure_code/gf_6vect_mad_sse.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_6vect_mad_sse.o $(src)/isal/erasure_code/gf_6vect_mad_sse.asm
+$(obj)/isal/erasure_code/gf_5vect_dot_prod_avx.o: $(src)/isal/erasure_code/gf_5vect_dot_prod_avx.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_5vect_dot_prod_avx.o $(src)/isal/erasure_code/gf_5vect_dot_prod_avx.asm
+$(obj)/isal/erasure_code/gf_vect_dot_prod_avx512.o: $(src)/isal/erasure_code/gf_vect_dot_prod_avx512.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_vect_dot_prod_avx512.o $(src)/isal/erasure_code/gf_vect_dot_prod_avx512.asm
+$(obj)/isal/erasure_code/gf_3vect_dot_prod_avx.o: $(src)/isal/erasure_code/gf_3vect_dot_prod_avx.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_3vect_dot_prod_avx.o $(src)/isal/erasure_code/gf_3vect_dot_prod_avx.asm
+$(obj)/isal/erasure_code/gf_5vect_dot_prod_avx512.o: $(src)/isal/erasure_code/gf_5vect_dot_prod_avx512.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_5vect_dot_prod_avx512.o $(src)/isal/erasure_code/gf_5vect_dot_prod_avx512.asm
+$(obj)/isal/erasure_code/gf_2vect_dot_prod_avx.o: $(src)/isal/erasure_code/gf_2vect_dot_prod_avx.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_2vect_dot_prod_avx.o $(src)/isal/erasure_code/gf_2vect_dot_prod_avx.asm
+$(obj)/isal/erasure_code/gf_6vect_dot_prod_avx512.o: $(src)/isal/erasure_code/gf_6vect_dot_prod_avx512.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_6vect_dot_prod_avx512.o $(src)/isal/erasure_code/gf_6vect_dot_prod_avx512.asm
+$(obj)/isal/erasure_code/gf_6vect_dot_prod_sse.o: $(src)/isal/erasure_code/gf_6vect_dot_prod_sse.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_6vect_dot_prod_sse.o $(src)/isal/erasure_code/gf_6vect_dot_prod_sse.asm
+$(obj)/isal/erasure_code/gf_4vect_dot_prod_avx512.o: $(src)/isal/erasure_code/gf_4vect_dot_prod_avx512.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_4vect_dot_prod_avx512.o $(src)/isal/erasure_code/gf_4vect_dot_prod_avx512.asm
+$(obj)/isal/erasure_code/gf_3vect_mad_avx512.o: $(src)/isal/erasure_code/gf_3vect_mad_avx512.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_3vect_mad_avx512.o $(src)/isal/erasure_code/gf_3vect_mad_avx512.asm
+$(obj)/isal/erasure_code/gf_vect_mad_avx512.o: $(src)/isal/erasure_code/gf_vect_mad_avx512.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_vect_mad_avx512.o $(src)/isal/erasure_code/gf_vect_mad_avx512.asm
+$(obj)/isal/erasure_code/gf_4vect_mad_avx.o: $(src)/isal/erasure_code/gf_4vect_mad_avx.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_4vect_mad_avx.o $(src)/isal/erasure_code/gf_4vect_mad_avx.asm
+$(obj)/isal/erasure_code/gf_3vect_dot_prod_avx512.o: $(src)/isal/erasure_code/gf_3vect_dot_prod_avx512.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_3vect_dot_prod_avx512.o $(src)/isal/erasure_code/gf_3vect_dot_prod_avx512.asm
+$(obj)/isal/erasure_code/gf_5vect_dot_prod_avx2.o: $(src)/isal/erasure_code/gf_5vect_dot_prod_avx2.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_5vect_dot_prod_avx2.o $(src)/isal/erasure_code/gf_5vect_dot_prod_avx2.asm
+$(obj)/isal/erasure_code/gf_5vect_mad_avx2.o: $(src)/isal/erasure_code/gf_5vect_mad_avx2.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_5vect_mad_avx2.o $(src)/isal/erasure_code/gf_5vect_mad_avx2.asm
+$(obj)/isal/erasure_code/gf_2vect_mad_sse.o: $(src)/isal/erasure_code/gf_2vect_mad_sse.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_2vect_mad_sse.o $(src)/isal/erasure_code/gf_2vect_mad_sse.asm
+$(obj)/isal/erasure_code/gf_2vect_dot_prod_avx2.o: $(src)/isal/erasure_code/gf_2vect_dot_prod_avx2.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_2vect_dot_prod_avx2.o $(src)/isal/erasure_code/gf_2vect_dot_prod_avx2.asm
+$(obj)/isal/erasure_code/gf_6vect_mad_avx.o: $(src)/isal/erasure_code/gf_6vect_mad_avx.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_6vect_mad_avx.o $(src)/isal/erasure_code/gf_6vect_mad_avx.asm
+$(obj)/isal/erasure_code/gf_2vect_mad_avx.o: $(src)/isal/erasure_code/gf_2vect_mad_avx.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_2vect_mad_avx.o $(src)/isal/erasure_code/gf_2vect_mad_avx.asm
+$(obj)/isal/erasure_code/gf_vect_mad_avx.o: $(src)/isal/erasure_code/gf_vect_mad_avx.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_vect_mad_avx.o $(src)/isal/erasure_code/gf_vect_mad_avx.asm
+$(obj)/isal/erasure_code/gf_3vect_mad_sse.o: $(src)/isal/erasure_code/gf_3vect_mad_sse.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_3vect_mad_sse.o $(src)/isal/erasure_code/gf_3vect_mad_sse.asm
+$(obj)/isal/erasure_code/gf_3vect_dot_prod_avx2.o: $(src)/isal/erasure_code/gf_3vect_dot_prod_avx2.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_3vect_dot_prod_avx2.o $(src)/isal/erasure_code/gf_3vect_dot_prod_avx2.asm
+$(obj)/isal/erasure_code/gf_6vect_mad_avx2.o: $(src)/isal/erasure_code/gf_6vect_mad_avx2.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_6vect_mad_avx2.o $(src)/isal/erasure_code/gf_6vect_mad_avx2.asm
+$(obj)/isal/erasure_code/gf_vect_dot_prod_avx2.o: $(src)/isal/erasure_code/gf_vect_dot_prod_avx2.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_vect_dot_prod_avx2.o $(src)/isal/erasure_code/gf_vect_dot_prod_avx2.asm
+$(obj)/isal/erasure_code/gf_4vect_dot_prod_avx2.o: $(src)/isal/erasure_code/gf_4vect_dot_prod_avx2.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_4vect_dot_prod_avx2.o $(src)/isal/erasure_code/gf_4vect_dot_prod_avx2.asm
+$(obj)/isal/erasure_code/gf_5vect_mad_avx.o: $(src)/isal/erasure_code/gf_5vect_mad_avx.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_5vect_mad_avx.o $(src)/isal/erasure_code/gf_5vect_mad_avx.asm
+$(obj)/isal/erasure_code/gf_vect_dot_prod_sse.o: $(src)/isal/erasure_code/gf_vect_dot_prod_sse.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_vect_dot_prod_sse.o $(src)/isal/erasure_code/gf_vect_dot_prod_sse.asm
+$(obj)/isal/erasure_code/gf_vect_mul_sse.o: $(src)/isal/erasure_code/gf_vect_mul_sse.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_vect_mul_sse.o $(src)/isal/erasure_code/gf_vect_mul_sse.asm
+$(obj)/isal/erasure_code/gf_2vect_dot_prod_sse.o: $(src)/isal/erasure_code/gf_2vect_dot_prod_sse.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_2vect_dot_prod_sse.o $(src)/isal/erasure_code/gf_2vect_dot_prod_sse.asm
+$(obj)/isal/erasure_code/gf_4vect_dot_prod_avx.o: $(src)/isal/erasure_code/gf_4vect_dot_prod_avx.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_4vect_dot_prod_avx.o $(src)/isal/erasure_code/gf_4vect_dot_prod_avx.asm
+$(obj)/isal/erasure_code/gf_4vect_mad_avx512.o: $(src)/isal/erasure_code/gf_4vect_mad_avx512.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_4vect_mad_avx512.o $(src)/isal/erasure_code/gf_4vect_mad_avx512.asm
+$(obj)/isal/erasure_code/gf_4vect_mad_avx2.o: $(src)/isal/erasure_code/gf_4vect_mad_avx2.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_4vect_mad_avx2.o $(src)/isal/erasure_code/gf_4vect_mad_avx2.asm
+$(obj)/isal/erasure_code/gf_2vect_mad_avx512.o: $(src)/isal/erasure_code/gf_2vect_mad_avx512.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_2vect_mad_avx512.o $(src)/isal/erasure_code/gf_2vect_mad_avx512.asm
+$(obj)/isal/erasure_code/gf_3vect_dot_prod_sse.o: $(src)/isal/erasure_code/gf_3vect_dot_prod_sse.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_3vect_dot_prod_sse.o $(src)/isal/erasure_code/gf_3vect_dot_prod_sse.asm
+$(obj)/isal/erasure_code/gf_6vect_mad_avx512.o: $(src)/isal/erasure_code/gf_6vect_mad_avx512.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_6vect_mad_avx512.o $(src)/isal/erasure_code/gf_6vect_mad_avx512.asm
+$(obj)/isal/erasure_code/ec_multibinary.o: $(src)/isal/erasure_code/ec_multibinary.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/ec_multibinary.o $(src)/isal/erasure_code/ec_multibinary.asm
+$(obj)/isal/erasure_code/gf_5vect_mad_avx512.o: $(src)/isal/erasure_code/gf_5vect_mad_avx512.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_5vect_mad_avx512.o $(src)/isal/erasure_code/gf_5vect_mad_avx512.asm
+$(obj)/isal/erasure_code/gf_3vect_mad_avx2.o: $(src)/isal/erasure_code/gf_3vect_mad_avx2.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_3vect_mad_avx2.o $(src)/isal/erasure_code/gf_3vect_mad_avx2.asm
+$(obj)/isal/erasure_code/gf_vect_mad_sse.o: $(src)/isal/erasure_code/gf_vect_mad_sse.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_vect_mad_sse.o $(src)/isal/erasure_code/gf_vect_mad_sse.asm
+$(obj)/isal/erasure_code/gf_vect_mad_avx2.o: $(src)/isal/erasure_code/gf_vect_mad_avx2.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_vect_mad_avx2.o $(src)/isal/erasure_code/gf_vect_mad_avx2.asm
+$(obj)/isal/erasure_code/gf_2vect_dot_prod_avx512.o: $(src)/isal/erasure_code/gf_2vect_dot_prod_avx512.asm
+	$(ASSEMBLE) -o $(obj)/isal/erasure_code/gf_2vect_dot_prod_avx512.o $(src)/isal/erasure_code/gf_2vect_dot_prod_avx512.asm

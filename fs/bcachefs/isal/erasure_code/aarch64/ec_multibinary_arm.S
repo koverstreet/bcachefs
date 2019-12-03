@@ -1,5 +1,5 @@
-/**********************************************************************
-  Copyright(c) 2011-2016 Intel Corporation All rights reserved.
+/**************************************************************
+  Copyright (c) 2019 Huawei Technologies Co., Ltd.
 
   Redistribution and use in source and binary forms, with or without
   modification, are permitted provided that the following conditions
@@ -10,7 +10,7 @@
       notice, this list of conditions and the following disclaimer in
       the documentation and/or other materials provided with the
       distribution.
-    * Neither the name of Intel Corporation nor the names of its
+    * Neither the name of Huawei Corporation nor the names of its
       contributors may be used to endorse or promote products derived
       from this software without specific prior written permission.
 
@@ -27,30 +27,10 @@
   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 **********************************************************************/
 
+#include "aarch64_multibinary.h"
 
-/**
- *  @file  crc64.h
- *  @brief CRC64 functions.
- */
-
-
-#ifndef _CRC64_H_
-#define _CRC64_H_
-
-#include <linux/types.h>
-
-/**
- * @brief Generate CRC from ECMA-182 standard in normal format, runs
- * appropriate version.
- *
- * This function determines what instruction sets are enabled and
- * selects the appropriate version at runtime.
- * @returns 64 bit CRC
- */
-uint64_t crc64_ecma_norm(
-	uint64_t init_crc,        //!< initial CRC value, 64 bits
-	const unsigned char *buf, //!< buffer to calculate CRC on
-	uint64_t len              //!< buffer length in bytes (64-bit data)
-	);
-
-#endif // _CRC64_H_
+mbin_interface ec_encode_data
+mbin_interface gf_vect_mul
+mbin_interface gf_vect_dot_prod
+mbin_interface gf_vect_mad
+mbin_interface ec_encode_data_update
