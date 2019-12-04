@@ -197,6 +197,9 @@ ifeq ($(do_tools_hyperv),true)
 	dh_installinit -p$(cloudpkg) -o --name hv-fcopy-daemon
 	dh_systemd_start -p$(cloudpkg)
 endif
+	# Keep intel_sgx service disabled by default, so add it after dh_systemd_enable
+	# and dh_systemd_start are called:
+	dh_installinit -p$(cloudpkg) --no-start --no-enable --name intel-sgx-load-module
 endif
 endif
 	dh_installdeb -i
