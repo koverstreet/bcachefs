@@ -786,9 +786,9 @@ static void hub_tt_work(struct work_struct *work)
  *
  * Return: 0 if successful. A negative error code otherwise.
  */
-int usb_hub_set_port_power(struct usb_device *hdev, struct usb_hub *hub,
-			   int port1, bool set)
+int usb_hub_set_port_power(struct usb_hub *hub, int port1, bool set)
 {
+	struct usb_device *hdev = hub->hdev;
 	int ret;
 
 	if (set)
@@ -2671,6 +2671,27 @@ static bool hub_port_warm_reset_required(struct usb_hub *hub, int port1,
 	link_state = portstatus & USB_PORT_STAT_LINK_STATE;
 	return link_state == USB_SS_PORT_LS_SS_INACTIVE
 		|| link_state == USB_SS_PORT_LS_COMP_MOD;
+}
+
+static void hub_port_power_cycle(struct usb_hub *hub, int port1)
+{
+	struct usb_port *port_dev = hub->ports[port1  - 1];
+	int ret;
+
+	ret = usb_hub_set_port_power(hub, port1, false);
+	if (ret) {
+		dev_info(&port_dev->dev, "failed to disable port power\n");
+		return;
+	}
+
+	msleep(2 * hub_power_on_good_delay(hub));
+	ret = usb_hub_set_port_power(hub, port1, true);
+	if (ret) {
+		dev_info(&port_dev->dev, "failed to enable port power\n");
+		return;
+	}
+
+	msleep(hub_power_on_good_delay(hub));
 }
 
 static int hub_port_wait_reset(struct usb_hub *hub, int port1,
@@ -4994,10 +5015,7 @@ loop:
 		/* When halfway through our retry count, power-cycle the port */
 		if (i == (SET_CONFIG_TRIES / 2) - 1) {
 			dev_info(&port_dev->dev, "attempt power cycle\n");
-			usb_hub_set_port_power(hdev, hub, port1, false);
-			msleep(2 * hub_power_on_good_delay(hub));
-			usb_hub_set_port_power(hdev, hub, port1, true);
-			msleep(hub_power_on_good_delay(hub));
+			hub_port_power_cycle(hub, port1);
 		}
 	}
 	if (hub->hdev->parent ||
