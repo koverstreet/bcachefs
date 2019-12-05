@@ -2673,6 +2673,18 @@ static bool hub_port_warm_reset_required(struct usb_hub *hub, int port1,
 		|| link_state == USB_SS_PORT_LS_COMP_MOD;
 }
 
+static bool hub_port_power_cycle_required(struct usb_hub *hub, int port1,
+		u16 portstatus)
+{
+	u16 link_state;
+
+	if (!hub_is_superspeed(hub->hdev))
+		return false;
+
+	link_state = portstatus & USB_PORT_STAT_LINK_STATE;
+	return link_state == USB_SS_PORT_LS_SS_DISABLED;
+}
+
 static void hub_port_power_cycle(struct usb_hub *hub, int port1)
 {
 	struct usb_port *port_dev = hub->ports[port1  - 1];
@@ -3522,6 +3534,10 @@ int usb_port_resume(struct usb_device *udev, pm_message_t msg)
 	if (status < 0) {
 		dev_dbg(&udev->dev, "can't resume, status %d\n", status);
 		hub_port_logical_disconnect(hub, port1);
+		if (hub_port_power_cycle_required(hub, port1, portstatus)) {
+			dev_dbg(&udev->dev, "device in disabled state, attempt power cycle\n");
+			hub_port_power_cycle(hub, port1);
+		}
 	} else  {
 		/* Try to enable USB2 hardware LPM */
 		usb_enable_usb2_hardware_lpm(udev);
