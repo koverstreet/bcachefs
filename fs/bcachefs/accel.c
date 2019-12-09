@@ -240,6 +240,31 @@ static const int CACHE_THRASH = 512 * MB; // Larger than Epyc ROME L3 Cache
 static const int WARMUP_ITER = 3;
 static const int BENCH_ITER = 5;
 
+static const char* csum_test_vecs[] = { 
+	"",
+	"The quick brown fox jumps over the lazy dog.",
+	"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+};
+static const u64 crc64_test_refs[] = {
+	0x0000000000000000ull,
+	0xea6939e68ade7f25ull,
+	0x5ca18585b92c58b9ull
+};
+static const int num_csm_test_vecs = sizeof(csum_test_vecs) / sizeof(const char*);
+
+static void test_vec_crc64(u64(*f)(u64, const void*, size_t), const char* name) {
+	int i;
+	u64 res;
+
+	for(i = 0; i < num_csm_test_vecs; i++) {
+		res = f(0, csum_test_vecs[i], strlen(csum_test_vecs[i]));
+
+		if(res != crc64_test_refs[i]) {
+			printk("%s: test failed. \"%s\" was %#010llx expected %#010llx \n", name, csum_test_vecs[i], res, crc64_test_refs[i]);
+		}
+	}
+}
+
 static void bench_crc64(u64(*f)(u64, const void*, size_t), size_t bench_size, const char* name) {
 	char* buf = vmalloc(bench_size);
 	int i;
@@ -286,11 +311,16 @@ int accel_benchmark(const char* prim) {
 	}
 
 	if(crc64) {
+		test_vec_crc64(&kernel_crc64, "KERNEL CRC64");
+
 		bench_crc64(&kernel_crc64, CACHE_THRASH, "KERNEL CRC64 512MB");
 		bench_crc64(&kernel_crc64, LARGE_BLOCK, "KERNEL CRC64 2MB");
 		bench_crc64(&kernel_crc64, SMALL_BLOCK, "KERNEL CRC64 4KB");
 
 		#ifdef CONFIG_BCACHEFS_ISAL_BACKEND
+		test_vec_crc64(&isal_crc64, "ISAL CRC64");
+
+
 		bench_crc64(&isal_crc64, CACHE_THRASH, "ISAL CRC64 512MB");
 		bench_crc64(&isal_crc64, LARGE_BLOCK, "ISAL CRC64 2MB");
 		bench_crc64(&isal_crc64, SMALL_BLOCK, "ISAL CRC64 4KB");
