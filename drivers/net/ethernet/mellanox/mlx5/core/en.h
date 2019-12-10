@@ -296,6 +296,7 @@ enum {
 	MLX5E_RQ_STATE_ENABLED,
 	MLX5E_RQ_STATE_AM,
 	MLX5E_RQ_STATE_NO_CSUM_COMPLETE,
+	MLX5E_RQ_STATE_CSUM_FULL, /* cqe_csum_full hw bit is set */
 };
 
 #define MLX5E_TEST_BIT(state, nr) (state & BIT(nr))
