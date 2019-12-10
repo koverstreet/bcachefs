@@ -1524,7 +1524,7 @@ static noinline int btrfs_ioctl_resize(struct file *file,
 		btrfs_info(fs_info, "resizing devid %llu", devid);
 	}
 
-	device = btrfs_find_device(fs_info->fs_devices, devid, NULL, NULL);
+	device = btrfs_find_device(fs_info->fs_devices, devid, NULL, NULL, true);
 	if (!device) {
 		btrfs_info(fs_info, "resizer unable to find device %llu",
 			   devid);
@@ -2823,7 +2823,7 @@ static long btrfs_ioctl_dev_info(struct btrfs_fs_info *fs_info,
 
 	mutex_lock(&fs_devices->device_list_mutex);
 	dev = btrfs_find_device(fs_info->fs_devices, di_args->devid, s_uuid,
-				NULL);
+				NULL, true);
 
 	if (!dev) {
 		ret = -ENODEV;
