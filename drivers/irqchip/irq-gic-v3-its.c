@@ -2407,7 +2407,7 @@ static int its_irq_domain_activate(struct irq_domain *domain,
 	cpu = cpumask_first_and(cpu_mask, cpu_online_mask);
 	if (cpu >= nr_cpu_ids) {
 		if (its_dev->its->flags & ITS_FLAGS_WORKAROUND_CAVIUM_23144)
-			return;
+			return -EINVAL;
 
 		cpu = cpumask_first(cpu_online_mask);
 	}
