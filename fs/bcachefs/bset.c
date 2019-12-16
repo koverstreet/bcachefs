@@ -253,8 +253,8 @@ void bch2_verify_insert_pos(struct btree *b, struct bkey_packed *where,
 		bch2_bkey_to_text(&PBUF(buf2), &k2);
 
 		panic("prev > insert:\n"
-		      "prev    key %5u %s\n"
-		      "insert  key %5u %s\n",
+		      "prev    key %s\n"
+		      "insert  key %s\n",
 		      buf1, buf2);
 	}
 #endif
