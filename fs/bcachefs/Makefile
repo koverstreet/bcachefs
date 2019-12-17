@@ -130,8 +130,6 @@ bcachefs-$(CONFIG_BCACHEFS_ISAL_ERASURE) += \
 	isal/erasure_code/gf_2vect_dot_prod_avx512.o
 
 # CRC ASM
-$(obj)/isal/crc/crc64_ecma_norm_by16_10.o: $(src)/isal/crc/crc64_ecma_norm_by16_10.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_ecma_norm_by16_10.o $(src)/isal/crc/crc64_ecma_norm_by16_10.asm
 $(obj)/isal/crc/crc64_multibinary.o: $(src)/isal/crc/crc64_multibinary.asm
 	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_multibinary.o $(src)/isal/crc/crc64_multibinary.asm
 

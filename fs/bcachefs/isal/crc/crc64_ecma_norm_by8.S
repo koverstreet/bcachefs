@@ -63,7 +63,7 @@ ENTRY(crc64_ecma_norm_by8)
 	 */
 	pslldq	xmm10, 8
 
-	movdqa xmm11, [SHUF_MASK]
+	movdqa xmm11, [shuf_mask]
 	/* receive the initial 128B data, xor the initial crc value */
 	movdqu	xmm0, [data_pointer+16*0]
 	movdqu	xmm1, [data_pointer+16*1]
@@ -332,7 +332,7 @@ _less_than_256:
 	/* check if there is enough buffer to be able to fold 16B at a time */
 	cmp	data_length, 32
 	jl	_less_than_32
-	movdqa xmm11, [SHUF_MASK]
+	movdqa xmm11, [shuf_mask]
 
 	/* load the constants */
 	movdqa	xmm10, [rk1]
@@ -358,7 +358,7 @@ _less_than_32:
 	test	data_length, data_length
 	je	_cleanup
 
-	movdqa xmm11, [SHUF_MASK]
+	movdqa xmm11, [shuf_mask]
 
 	movq	xmm0, state				/* get the initial crc value */
 	pslldq	xmm0, 8					/* align it to its correct place */
@@ -460,63 +460,62 @@ ENDPROC(crc64_ecma_norm_by8)
 .section .data
 .align  16
 
-
 rk1:
-        .quad 0x5f5c3c7eb52fab6
-        .quad 0x4eb938a7d257740e
+    .quad 0x5f5c3c7eb52fab6
+    .quad 0x4eb938a7d257740e
 rk3:
-        .quad 0x5cf79dea9ac37d6
-        .quad 0x001067e571d7d5c2
+    .quad 0x05cf79dea9ac37d6
+    .quad 0x001067e571d7d5c2
 rk5:
-        .quad 0x5f5c3c7eb52fab6
-        .quad 0x0000000000000000
+    .quad 0x05f5c3c7eb52fab6
+    .quad 0x0000000000000000
 rk7:
-        .quad 0x578d29d06cc4f872
-        .quad 0x42f0e1eba9ea3693
+    .quad 0x578d29d06cc4f872
+    .quad 0x42f0e1eba9ea3693
 rk9:
-        .quad 0xe464f4df5fb60ac1
-        .quad 0xb649c5b35a759cf2
+    .quad 0xe464f4df5fb60ac1
+    .quad 0xb649c5b35a759cf2
 rk11:
-        .quad 0x9af04e1eff82d0dd
-        .quad 0x6e82e609297f8fe8
+    .quad 0x9af04e1eff82d0dd
+    .quad 0x6e82e609297f8fe8
 rk13:
-        .quad 0x97c516e98bd2e73
-        .quad 0xb76477b31e22e7b
+    .quad 0x097c516e98bd2e73
+    .quad 0x0b76477b31e22e7b
 rk15:
-        .quad 0x5f6843ca540df020
-        .quad 0xddf4b6981205b83f
+    .quad 0x5f6843ca540df020
+    .quad 0xddf4b6981205b83f
 rk17:
-        .quad 0x54819d8713758b2c
-        .quad 0x4a6b90073eb0af5a
+    .quad 0x54819d8713758b2c
+    .quad 0x4a6b90073eb0af5a
 rk19:
-        .quad 0x571bee0a227ef92b
-        .quad 0x44bef2a201b5200c
+    .quad 0x571bee0a227ef92b
+    .quad 0x44bef2a201b5200c
 
 
 mask1:                                                  
-        .quad 0x8080808080808080                       
-        .quad 0x8080808080808080                       
+    .quad 0x8080808080808080                       
+    .quad 0x8080808080808080                       
 mask2:                                                  
-		.quad 0xFFFFFFFFFFFFFFFF
-		.quad 0x00000000FFFFFFFF
+	.quad 0xFFFFFFFFFFFFFFFF
+	.quad 0x00000000FFFFFFFF
 mask3:                                                  
-        .quad 0x0000000000000000                       
-        .quad 0xFFFFFFFFFFFFFFFF                       
+    .quad 0x0000000000000000                       
+    .quad 0xFFFFFFFFFFFFFFFF                       
 
 
-SHUF_MASK:                                              
-        .quad 0x08090A0B0C0D0E0F                       
-        .quad 0x0001020304050607                       
+shuf_mask:                                              
+    .quad 0x08090A0B0C0D0E0F                       
+    .quad 0x0001020304050607                       
 
 
 pshufb_shf_table:                                       
-        .quad 0x8786858483828100
-        .quad 0x8f8e8d8c8b8a8988
-        .quad 0x0706050403020100
-        .quad 0x0f0e0d0c0b0a0908
-        .quad 0x8080808080808080        
-		.quad 0x0f0e0d0c0b0a0908
-        .quad 0x8080808080808080        
-		.quad 0x8080808080808080
+    .quad 0x8786858483828100
+    .quad 0x8f8e8d8c8b8a8988
+    .quad 0x0706050403020100
+    .quad 0x0f0e0d0c0b0a0908
+    .quad 0x8080808080808080        
+	.quad 0x0f0e0d0c0b0a0908
+    .quad 0x8080808080808080        
+	.quad 0x8080808080808080
 
 .att_syntax prefix 
