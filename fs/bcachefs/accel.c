@@ -58,13 +58,11 @@ static u64 kernel_crc64(u64 crc, const void* p, size_t len) {
 }
 
 static u64 isal_crc64(u64 crc, const void* p, size_t len) { 
-	u64 state = ~crc;
-
 	kernel_fpu_begin();
-	state = crc64_ecma_norm(state, (const unsigned char*)p, len);
+	crc = crc64_ecma_norm(crc, (const unsigned char*)p, len);
 	kernel_fpu_end();
 
-	return ~state;
+	return crc;
 }
 
 u64 accel_crc64(u64 crc, const void* p, size_t len) {
