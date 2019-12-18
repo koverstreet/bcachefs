@@ -170,6 +170,8 @@ static const struct {
 	QEDE_STAT(coalesced_aborts_num),
 	QEDE_STAT(non_coalesced_pkts),
 	QEDE_STAT(coalesced_bytes),
+
+	QEDE_STAT(ptp_skip_txts),
 };
 
 #define QEDE_NUM_STATS	ARRAY_SIZE(qede_stats_arr)

@@ -86,6 +86,7 @@ struct qede_stats_common {
 	u64 coalesced_aborts_num;
 	u64 non_coalesced_pkts;
 	u64 coalesced_bytes;
+	u64 ptp_skip_txts;
 
 	/* port */
 	u64 rx_64_byte_packets;
@@ -178,6 +179,7 @@ struct qede_dev {
 
 	const struct qed_eth_ops	*ops;
 	struct qede_ptp			*ptp;
+	u64				ptp_skip_txts;
 
 	struct qed_dev_eth_info dev_info;
 #define QEDE_MAX_RSS_CNT(edev)	((edev)->dev_info.num_queues)
