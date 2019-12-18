@@ -162,16 +162,16 @@ static const uint64_t crc64_ecma_norm_table[256] = {
 
 
 
-uint64_t crc64_ecma_norm_base(uint64_t seed, const uint8_t * buf, uint64_t len)
+uint64_t crc64_ecma_norm_base(uint64_t crc, const uint8_t * buf, uint64_t len)
 {
-	uint64_t i, crc = ~seed;
+	int i;
 
 	for (i = 0; i < len; i++) {
 		uint8_t byte = buf[i];
 		crc = crc64_ecma_norm_table[((crc >> 56) ^ byte) & 0xff] ^ (crc << 8);
 	}
 
-	return ~crc;
+	return crc;
 }
 
 struct slver {
