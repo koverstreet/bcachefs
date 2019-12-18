@@ -161,7 +161,7 @@ struct bch_fs_usage *bch2_fs_usage_scratch_get(struct bch_fs *c)
 	struct bch_fs_usage *ret;
 	unsigned bytes = fs_usage_u64s(c) * sizeof(u64);
 
-	ret = kzalloc(bytes, GFP_NOWAIT);
+	ret = kzalloc(bytes, GFP_NOWAIT|__GFP_NOWARN);
 	if (ret)
 		return ret;
 
