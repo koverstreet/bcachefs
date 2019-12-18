@@ -2670,6 +2670,11 @@ EXPORT_SYMBOL vmlinux 0x00000000	diag224
 EXPORT_SYMBOL vmlinux 0x00000000	diag26c
 EXPORT_SYMBOL vmlinux 0x00000000	diag_stat_inc
 EXPORT_SYMBOL vmlinux 0x00000000	diag_stat_inc_norecursion
+EXPORT_SYMBOL vmlinux 0x00000000	dim_calc_stats
+EXPORT_SYMBOL vmlinux 0x00000000	dim_on_top
+EXPORT_SYMBOL vmlinux 0x00000000	dim_park_on_top
+EXPORT_SYMBOL vmlinux 0x00000000	dim_park_tired
+EXPORT_SYMBOL vmlinux 0x00000000	dim_turn
 EXPORT_SYMBOL vmlinux 0x00000000	disable_irq
 EXPORT_SYMBOL vmlinux 0x00000000	disable_irq_nosync
 EXPORT_SYMBOL vmlinux 0x00000000	disable_sacf_uaccess
@@ -2733,7 +2738,6 @@ EXPORT_SYMBOL vmlinux 0x00000000	dmam_pool_destroy
 EXPORT_SYMBOL vmlinux 0x00000000	dns_query
 EXPORT_SYMBOL vmlinux 0x00000000	do_SAK
 EXPORT_SYMBOL vmlinux 0x00000000	do_clone_file_range
-EXPORT_SYMBOL vmlinux 0x00000000	do_gettimeofday
 EXPORT_SYMBOL vmlinux 0x00000000	do_settimeofday64
 EXPORT_SYMBOL vmlinux 0x00000000	do_splice_direct
 EXPORT_SYMBOL vmlinux 0x00000000	do_wait_intr
@@ -3074,7 +3078,6 @@ EXPORT_SYMBOL vmlinux 0x00000000	get_random_bytes
 EXPORT_SYMBOL vmlinux 0x00000000	get_random_bytes_arch
 EXPORT_SYMBOL vmlinux 0x00000000	get_random_u32
 EXPORT_SYMBOL vmlinux 0x00000000	get_random_u64
-EXPORT_SYMBOL vmlinux 0x00000000	get_seconds
 EXPORT_SYMBOL vmlinux 0x00000000	get_super
 EXPORT_SYMBOL vmlinux 0x00000000	get_super_exclusive_thawed
 EXPORT_SYMBOL vmlinux 0x00000000	get_super_thawed
@@ -3833,6 +3836,11 @@ EXPORT_SYMBOL vmlinux 0x00000000	neigh_table_clear
 EXPORT_SYMBOL vmlinux 0x00000000	neigh_table_init
 EXPORT_SYMBOL vmlinux 0x00000000	neigh_update
 EXPORT_SYMBOL vmlinux 0x00000000	neigh_xmit
+EXPORT_SYMBOL vmlinux 0x00000000	net_dim
+EXPORT_SYMBOL vmlinux 0x00000000	net_dim_get_def_rx_moderation
+EXPORT_SYMBOL vmlinux 0x00000000	net_dim_get_def_tx_moderation
+EXPORT_SYMBOL vmlinux 0x00000000	net_dim_get_rx_moderation
+EXPORT_SYMBOL vmlinux 0x00000000	net_dim_get_tx_moderation
 EXPORT_SYMBOL vmlinux 0x00000000	net_disable_timestamp
 EXPORT_SYMBOL vmlinux 0x00000000	net_enable_timestamp
 EXPORT_SYMBOL vmlinux 0x00000000	net_ns_barrier
@@ -4432,6 +4440,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	rb_prev
 EXPORT_SYMBOL vmlinux 0x00000000	rb_replace_node
 EXPORT_SYMBOL vmlinux 0x00000000	rb_replace_node_cached
 EXPORT_SYMBOL vmlinux 0x00000000	rb_replace_node_rcu
+EXPORT_SYMBOL vmlinux 0x00000000	rdma_dim
 EXPORT_SYMBOL vmlinux 0x00000000	rdmacg_register_device
 EXPORT_SYMBOL vmlinux 0x00000000	rdmacg_try_charge
 EXPORT_SYMBOL vmlinux 0x00000000	rdmacg_uncharge

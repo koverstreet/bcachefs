@@ -3661,6 +3661,7 @@ rk3399_dmc
 rk805-pwrkey
 rk808
 rk808-regulator
+rk_crypto
 rmd128
 rmd160
 rmd256
