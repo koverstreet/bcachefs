@@ -71,3 +71,10 @@ config BCACHEFS_ISAL_TESTS
 	depends on BCACHEFS_ISAL_BACKEND
 	---help---
 	Include some compatibility and performance tests for ISA-L primitives.
+
+config BCACHEFS_EC_LARGE_TABLES
+	bool "bcachefs large EC tables"
+	depends on BCACHEFS_ISAL_BACKEND
+	---help---
+	Use large lookup tables (64KiB) for base EC function implementations. Enable
+	for a small performance increase on platforms without SIMD acceleration.

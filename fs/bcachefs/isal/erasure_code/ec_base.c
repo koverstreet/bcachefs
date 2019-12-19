@@ -46,7 +46,7 @@ void ec_init_tables(int k, int rows, unsigned char *a, unsigned char *g_tbls)
 
 unsigned char gf_mul(unsigned char a, unsigned char b)
 {
-#ifndef GF_LARGE_TABLES
+#ifndef CONFIG_BCACHEFS_EC_LARGE_TABLES
 	int i;
 
 	if ((a == 0) || (b == 0))
@@ -60,7 +60,7 @@ unsigned char gf_mul(unsigned char a, unsigned char b)
 
 unsigned char gf_inv(unsigned char a)
 {
-#ifndef GF_LARGE_TABLES
+#ifndef CONFIG_BCACHEFS_EC_LARGE_TABLES
 	if (a == 0)
 		return 0;
 
