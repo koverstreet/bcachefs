@@ -173,12 +173,3 @@ uint64_t crc64_ecma_norm_base(uint64_t crc, const uint8_t * buf, uint64_t len)
 
 	return crc;
 }
-
-struct slver {
-	unsigned short snum;
-	unsigned char ver;
-	unsigned char core;
-};
-
-struct slver crc64_ecma_norm_base_slver_00000019;
-struct slver crc64_ecma_norm_base_slver = { 0x0019, 0x00, 0x00 };

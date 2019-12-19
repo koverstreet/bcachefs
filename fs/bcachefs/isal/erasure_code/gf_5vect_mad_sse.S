@@ -291,3 +291,5 @@ mask0f:
 constip16:
 	.quad 0xf8f9fafbfcfdfeff 
 	.quad 0xf0f1f2f3f4f5f6f7
+
+.att_syntax prefix 

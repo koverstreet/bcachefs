@@ -171,7 +171,7 @@ void gf_vect_mul_init(unsigned char c, unsigned char *tbl)
 	unsigned char c4 = (c2 << 1) ^ ((c2 & 0x80) ? 0x1d : 0);	//Mult by GF{2}
 	unsigned char c8 = (c4 << 1) ^ ((c4 & 0x80) ? 0x1d : 0);	//Mult by GF{2}
 
-#if __WORDSIZE == 64 || _WIN64 || __x86_64__
+#ifdef __LP64__
 	unsigned long long v1, v2, v4, v8, *t;
 	unsigned long long v10, v20, v40, v80;
 	unsigned char c17, c18, c20, c24;
@@ -269,7 +269,7 @@ void gf_vect_mul_init(unsigned char c, unsigned char *tbl)
 	tbl[30] = c30;
 	tbl[31] = c31;
 
-#endif //__WORDSIZE == 64 || _WIN64 || __x86_64__
+#endif // __LP64__
 }
 
 void gf_vect_dot_prod_base(int len, int vlen, unsigned char *v,
@@ -338,34 +338,3 @@ void gf_vect_mul_base(int len, unsigned char *a, unsigned char *src, unsigned ch
 	while (len-- > 0)
 		*dest++ = gf_mul(c, *src++);
 }
-
-struct slver {
-	unsigned short snum;
-	unsigned char ver;
-	unsigned char core;
-};
-
-// Version info
-struct slver gf_vect_mul_init_slver_00020035;
-struct slver gf_vect_mul_init_slver = { 0x0035, 0x02, 0x00 };
-
-struct slver ec_encode_data_base_slver_00010135;
-struct slver ec_encode_data_base_slver = { 0x0135, 0x01, 0x00 };
-
-struct slver gf_vect_mul_base_slver_00010136;
-struct slver gf_vect_mul_base_slver = { 0x0136, 0x01, 0x00 };
-
-struct slver gf_vect_dot_prod_base_slver_00010137;
-struct slver gf_vect_dot_prod_base_slver = { 0x0137, 0x01, 0x00 };
-
-struct slver gf_mul_slver_00000214;
-struct slver gf_mul_slver = { 0x0214, 0x00, 0x00 };
-
-struct slver gf_invert_matrix_slver_00000215;
-struct slver gf_invert_matrix_slver = { 0x0215, 0x00, 0x00 };
-
-struct slver gf_gen_rs_matrix_slver_00000216;
-struct slver gf_gen_rs_matrix_slver = { 0x0216, 0x00, 0x00 };
-
-struct slver gf_gen_cauchy1_matrix_slver_00000217;
-struct slver gf_gen_cauchy1_matrix_slver = { 0x0217, 0x00, 0x00 };
