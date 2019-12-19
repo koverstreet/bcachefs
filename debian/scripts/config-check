@@ -113,7 +113,7 @@ for $config (keys %annot) {
 	$options = $annot{$config};
 
 	$policy = undef;
-	while ($options =~ /\s*(\S+)<(.*?)?>/g) {
+	while ($options =~ /\s*([^\s<]+)<(.*?)?>/g) {
 		($option, $value) = ($1, $2);
 
 		if ($option eq 'mark' && $value eq 'ENFORCED') {
