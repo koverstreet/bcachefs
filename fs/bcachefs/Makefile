@@ -77,57 +77,58 @@ bcachefs-$(CONFIG_BCACHEFS_ISAL_BACKEND) += \
 bcachefs-$(CONFIG_BCACHEFS_ISAL_ERASURE) += \
 	isal/erasure_code/ec_base.o \
 	isal/erasure_code/ec_highlevel_func.o \
-	isal/erasure_code/gf_5vect_mad_sse.o \
-	isal/erasure_code/gf_6vect_dot_prod_avx2.o \
-	isal/erasure_code/gf_vect_dot_prod_avx.o \
-	isal/erasure_code/gf_4vect_dot_prod_sse.o \
-	isal/erasure_code/gf_6vect_dot_prod_avx.o \
-	isal/erasure_code/gf_2vect_mad_avx2.o \
-	isal/erasure_code/gf_vect_mul_avx.o \
-	isal/erasure_code/gf_5vect_dot_prod_sse.o \
-	isal/erasure_code/gf_3vect_mad_avx.o \
-	isal/erasure_code/gf_4vect_mad_sse.o \
-	isal/erasure_code/gf_6vect_mad_sse.o \
-	isal/erasure_code/gf_5vect_dot_prod_avx.o \
-	isal/erasure_code/gf_vect_dot_prod_avx512.o \
-	isal/erasure_code/gf_3vect_dot_prod_avx.o \
-	isal/erasure_code/gf_5vect_dot_prod_avx512.o \
-	isal/erasure_code/gf_2vect_dot_prod_avx.o \
-	isal/erasure_code/gf_6vect_dot_prod_avx512.o \
-	isal/erasure_code/gf_6vect_dot_prod_sse.o \
-	isal/erasure_code/gf_4vect_dot_prod_avx512.o \
-	isal/erasure_code/gf_3vect_mad_avx512.o \
-	isal/erasure_code/gf_vect_mad_avx512.o \
-	isal/erasure_code/gf_4vect_mad_avx.o \
-	isal/erasure_code/gf_3vect_dot_prod_avx512.o \
-	isal/erasure_code/gf_5vect_dot_prod_avx2.o \
-	isal/erasure_code/gf_5vect_mad_avx2.o \
-	isal/erasure_code/gf_2vect_mad_sse.o \
-	isal/erasure_code/gf_2vect_dot_prod_avx2.o \
-	isal/erasure_code/gf_6vect_mad_avx.o \
-	isal/erasure_code/gf_2vect_mad_avx.o \
-	isal/erasure_code/gf_vect_mad_avx.o \
-	isal/erasure_code/gf_3vect_mad_sse.o \
-	isal/erasure_code/gf_3vect_dot_prod_avx2.o \
-	isal/erasure_code/gf_6vect_mad_avx2.o \
-	isal/erasure_code/gf_vect_dot_prod_avx2.o \
-	isal/erasure_code/gf_4vect_dot_prod_avx2.o \
-	isal/erasure_code/gf_5vect_mad_avx.o \
-	isal/erasure_code/gf_vect_dot_prod_sse.o \
-	isal/erasure_code/gf_vect_mul_sse.o \
-	isal/erasure_code/gf_2vect_dot_prod_sse.o \
-	isal/erasure_code/gf_4vect_dot_prod_avx.o \
-	isal/erasure_code/gf_4vect_mad_avx512.o \
-	isal/erasure_code/gf_4vect_mad_avx2.o \
-	isal/erasure_code/gf_2vect_mad_avx512.o \
-	isal/erasure_code/gf_3vect_dot_prod_sse.o \
-	isal/erasure_code/gf_6vect_mad_avx512.o \
 	isal/erasure_code/ec_multibinary.o \
-	isal/erasure_code/gf_5vect_mad_avx512.o \
-	isal/erasure_code/gf_3vect_mad_avx2.o \
+	isal/erasure_code/gf_2vect_dot_prod_sse.o \
+	isal/erasure_code/gf_2vect_mad_sse.o \
+	isal/erasure_code/gf_3vect_dot_prod_sse.o \
+	isal/erasure_code/gf_3vect_mad_sse.o \
+	isal/erasure_code/gf_4vect_dot_prod_sse.o \
+	isal/erasure_code/gf_4vect_mad_sse.o \
+	isal/erasure_code/gf_5vect_dot_prod_sse.o \
+	isal/erasure_code/gf_5vect_mad_sse.o \
+	isal/erasure_code/gf_6vect_dot_prod_sse.o \
+	isal/erasure_code/gf_6vect_mad_sse.o \
+	isal/erasure_code/gf_vect_dot_prod_sse.o \
 	isal/erasure_code/gf_vect_mad_sse.o \
+	isal/erasure_code/gf_vect_mul_sse.o
+	
+	#isal/erasure_code/gf_2vect_dot_prod_avx.o \
+	isal/erasure_code/gf_2vect_dot_prod_avx2.o \
+	isal/erasure_code/gf_2vect_dot_prod_avx512.o \
+	isal/erasure_code/gf_2vect_mad_avx.o \
+	isal/erasure_code/gf_2vect_mad_avx2.o \
+	isal/erasure_code/gf_2vect_mad_avx512.o \
+	isal/erasure_code/gf_3vect_dot_prod_avx.o \
+	isal/erasure_code/gf_3vect_dot_prod_avx2.o \
+	isal/erasure_code/gf_3vect_dot_prod_avx512.o \
+	isal/erasure_code/gf_3vect_mad_avx.o \
+	isal/erasure_code/gf_3vect_mad_avx2.o \
+	isal/erasure_code/gf_3vect_mad_avx512.o \
+	isal/erasure_code/gf_4vect_dot_prod_avx.o \
+	isal/erasure_code/gf_4vect_dot_prod_avx2.o \
+	isal/erasure_code/gf_4vect_dot_prod_avx512.o \
+	isal/erasure_code/gf_4vect_mad_avx.o \
+	isal/erasure_code/gf_4vect_mad_avx2.o \
+	isal/erasure_code/gf_4vect_mad_avx512.o \
+	isal/erasure_code/gf_5vect_dot_prod_avx.o \
+	isal/erasure_code/gf_5vect_dot_prod_avx2.o \
+	isal/erasure_code/gf_5vect_dot_prod_avx512.o \
+	isal/erasure_code/gf_5vect_mad_avx.o \
+	isal/erasure_code/gf_5vect_mad_avx2.o \
+	isal/erasure_code/gf_5vect_mad_avx512.o \
+	isal/erasure_code/gf_6vect_dot_prod_avx.o \
+	isal/erasure_code/gf_6vect_dot_prod_avx2.o \
+	isal/erasure_code/gf_6vect_dot_prod_avx512.o \
+	isal/erasure_code/gf_6vect_mad_avx.o \
+	isal/erasure_code/gf_6vect_mad_avx2.o \
+	isal/erasure_code/gf_6vect_mad_avx512.o \
+	isal/erasure_code/gf_vect_dot_prod_avx.o \
+	isal/erasure_code/gf_vect_dot_prod_avx2.o \
+	isal/erasure_code/gf_vect_dot_prod_avx512.o \
+	isal/erasure_code/gf_vect_mad_avx.o \
 	isal/erasure_code/gf_vect_mad_avx2.o \
-	isal/erasure_code/gf_2vect_dot_prod_avx512.o
+	isal/erasure_code/gf_vect_mad_avx512.o \
+	isal/erasure_code/gf_vect_mul_avx.o \
 
 # CRC ASM
 $(obj)/isal/crc/crc64_multibinary.o: $(src)/isal/crc/crc64_multibinary.asm
