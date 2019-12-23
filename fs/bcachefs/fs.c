@@ -140,7 +140,6 @@ retry:
 		bch2_inode_write(&trans, iter, &inode_u) ?:
 		bch2_trans_commit(&trans, NULL,
 				  &inode->ei_journal_seq,
-				  BTREE_INSERT_ATOMIC|
 				  BTREE_INSERT_NOUNLOCK|
 				  BTREE_INSERT_NOFAIL);
 	if (ret == -EINTR)
@@ -269,7 +268,6 @@ retry:
 		goto err_before_quota;
 
 	ret   = bch2_trans_commit(&trans, NULL, &journal_seq,
-				  BTREE_INSERT_ATOMIC|
 				  BTREE_INSERT_NOUNLOCK);
 	if (unlikely(ret)) {
 		bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, -1,
@@ -393,7 +391,6 @@ static int __bch2_link(struct bch_fs *c,
 					&dentry->d_name) ?:
 			bch2_trans_commit(&trans, NULL,
 					&inode->ei_journal_seq,
-					BTREE_INSERT_ATOMIC|
 					BTREE_INSERT_NOUNLOCK);
 	} while (ret == -EINTR);
 
@@ -450,7 +447,6 @@ static int bch2_unlink(struct inode *vdir, struct dentry *dentry)
 					  &inode_u, &dentry->d_name) ?:
 			bch2_trans_commit(&trans, NULL,
 					  &dir->ei_journal_seq,
-					  BTREE_INSERT_ATOMIC|
 					  BTREE_INSERT_NOUNLOCK|
 					  BTREE_INSERT_NOFAIL);
 	} while (ret == -EINTR);
@@ -579,7 +575,6 @@ retry:
 				  mode) ?:
 		bch2_trans_commit(&trans, NULL,
 				  &journal_seq,
-				  BTREE_INSERT_ATOMIC|
 				  BTREE_INSERT_NOUNLOCK);
 	if (ret == -EINTR)
 		goto retry;
@@ -712,7 +707,6 @@ retry:
 	ret =   bch2_inode_write(&trans, inode_iter, &inode_u) ?:
 		bch2_trans_commit(&trans, NULL,
 				  &inode->ei_journal_seq,
-				  BTREE_INSERT_ATOMIC|
 				  BTREE_INSERT_NOUNLOCK|
 				  BTREE_INSERT_NOFAIL);
 btree_err:
