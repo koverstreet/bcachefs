@@ -314,7 +314,6 @@ int bch2_extent_update(struct btree_trans *trans,
 	ret = bch2_trans_commit(trans, disk_res, journal_seq,
 				BTREE_INSERT_NOCHECK_RW|
 				BTREE_INSERT_NOFAIL|
-				BTREE_INSERT_ATOMIC|
 				BTREE_INSERT_USE_RESERVE);
 	if (!ret && i_sectors_delta)
 		*i_sectors_delta += delta;
@@ -1741,7 +1740,6 @@ retry:
 
 	bch2_trans_update(&trans, iter, new.k);
 	ret = bch2_trans_commit(&trans, NULL, NULL,
-				BTREE_INSERT_ATOMIC|
 				BTREE_INSERT_NOFAIL|
 				BTREE_INSERT_NOWAIT);
 	if (ret == -EINTR)
