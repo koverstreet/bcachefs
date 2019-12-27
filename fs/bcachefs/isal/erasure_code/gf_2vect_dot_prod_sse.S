@@ -33,20 +33,20 @@
 
 #include <linux/linkage.h>
 
- #define arg0  rdi
- #define arg1  rsi
- #define arg2  rdx
- #define arg3  rcx
- #define arg4  r8
- #define arg5  r9
+#define arg0  rdi
+#define arg1  rsi
+#define arg2  rdx
+#define arg3  rcx
+#define arg4  r8
+#define arg5  r9
 
- #define tmp   r11
- #define tmp2  r10
- #define tmp3  r9
- #define tmp4  r12		/* must be saved and restored */
- #define return rax
- #define PS 8
- #define LOG_PS 3
+#define tmp   r11
+#define tmp2  r10
+#define tmp3  r9
+#define tmp4  r12		/* must be saved and restored */
+#define return rax
+#define PS 8
+#define LOG_PS 3
 
 #define len   arg0
 #define vec   arg1
@@ -60,19 +60,19 @@
 #define pos   return
 
 /*** Use Un-aligned load/store ***/
- #define XLDR movdqu
- #define XSTR movdqu
+#define XLDR movdqu
+#define XSTR movdqu
 
- #define xmask0f   xmm8
- #define xgft1_lo  xmm7
- #define xgft1_hi  xmm6
- #define xgft2_lo  xmm5
- #define xgft2_hi  xmm4
+#define xmask0f   xmm8
+#define xgft1_lo  xmm7
+#define xgft1_hi  xmm6
+#define xgft2_lo  xmm5
+#define xgft2_hi  xmm4
 
- #define x0     xmm0
- #define xtmpa  xmm1
- #define xp1    xmm2
- #define xp2    xmm3
+#define x0     xmm0
+#define xtmpa  xmm1
+#define xp1    xmm2
+#define xp2    xmm3
 
 .intel_syntax noprefix 
 
