@@ -283,6 +283,25 @@ void gf_gen_rs_matrix(unsigned char *a, int m, int k);
 void gf_gen_cauchy1_matrix(unsigned char *a, int m, int k);
 
 /**
+ * @brief Generate a Cauchy matrix of coefficients to be used for encoding.
+ *
+ * Cauchy matrix example of encoding coefficients where high portion of matrix
+ * is identity matrix I and lower portion is constructed as 1/(i + j) | i != j,
+ * i:{0,1,2..} j:{255,254,253..}.  Any sub-matrix of a Cauchy matrix should be invertable.
+ *
+ * The generated matrix is "stable". Additional data/parity do not change the value of
+ * existing parity coefficients in the matrix. This gives the Cauchy matrix similar 
+ * properties to Vandermonde for the purposes of implementing RAID. 
+ * 
+ * @param a  [m x k] array to hold coefficients
+ * @param m  number of rows in matrix corresponding to srcs + parity.
+ * @param k  number of columns in matrix corresponding to srcs.
+ * @returns  none
+ */
+void gf_gen_cauchy_stable_matrix(unsigned char *a, int m, int k);
+
+
+/**
  * @brief Invert a matrix in GF(2^8)
  *
  * @param in  input matrix

@@ -101,7 +101,7 @@ void accel_erasure_encode(int nd, int np, size_t size, void **v)
 	BUG_ON(encode == NULL);
 	BUG_ON(tables == NULL);
 
-	gf_gen_cauchy1_matrix(encode, nm, nd);
+	gf_gen_cauchy_stable_matrix(encode, nm, nd);
 	ec_init_tables(nd, np, &encode[nd * nd], tables);
 
 	kernel_fpu_begin();

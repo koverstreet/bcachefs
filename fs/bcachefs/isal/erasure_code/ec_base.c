@@ -107,6 +107,27 @@ void gf_gen_cauchy1_matrix(unsigned char *a, int m, int k)
 
 }
 
+void gf_gen_cauchy_stable_matrix(unsigned char *a, int m, int k)
+{
+	int i, j, v;
+	unsigned char *p;
+
+	// Identity matrix in high position
+	memset(a, 0, k * m);
+	for (i = 0; i < k; i++)
+		a[k * i + i] = 1;
+
+	// For the rest choose 1/(i + j) | i != j
+	// i = 0,1,2,3,4,5,6,7..
+	// j = 255,254,253,252..
+	p = &a[k * k];
+	v = m - k;
+	for (i = 0; i < v; i++)
+		for (j = 0; j < k; j++)
+			*p++ = gf_inv(i ^ (255 - j));
+
+}
+
 int gf_invert_matrix(unsigned char *in_mat, unsigned char *out_mat, const int n)
 {
 	int i, j, k;
