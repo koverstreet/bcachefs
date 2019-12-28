@@ -115,8 +115,8 @@ bcachefs-$(CONFIG_BCACHEFS_ISAL_ERASURE) += \
 	isal/erasure_code/gf_6vect_dot_prod_avx2.o \
 	isal/erasure_code/gf_6vect_mad_avx2.o \
 	isal/erasure_code/gf_vect_dot_prod_avx2.o \
-	isal/erasure_code/gf_vect_mad_avx2.o 
-	#isal/erasure_code/gf_2vect_dot_prod_avx512.o \
+	isal/erasure_code/gf_vect_mad_avx2.o \
+	isal/erasure_code/gf_2vect_dot_prod_avx512.o \
 	isal/erasure_code/gf_2vect_mad_avx512.o \
 	isal/erasure_code/gf_3vect_dot_prod_avx512.o \
 	isal/erasure_code/gf_3vect_mad_avx512.o \
