@@ -104,7 +104,7 @@ ENTRY(gf_2vect_dot_prod_avx)
 	vmovdqu	xgft2_hi, [tmp+vec*(32/PS)+16]	/*      "     Bx{00}, Bx{10}, ..., Bx{f0} */
 
 	add	tmp, 32
-	add	vec_i, LOG_PS
+	add	vec_i, PS
 	XLDR	x0, [ptr+pos]		/* Get next source vector */
 
 	vpand	xtmpa, x0, xmask0f	/* Mask low src nibble in bits 4-0 */

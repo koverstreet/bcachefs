@@ -90,7 +90,9 @@ ENTRY(gf_2vect_mad_sse)
 	sub	len, 16
 	jl	.return_fail
 
-	mov	tmp, [dest+2*PS]
+	xor	pos, pos
+	movdqa	xmask0f, [mask0f]	/* Load mask of lower nibble in each byte */
+	sal	vec_i, 5		/* Multiply by 32 */
 	sal	vec, 5
 	lea	tmp, [mul_array + vec_i]
 	movdqu	xgft1_lo,[tmp]		/* Load array Ax{00}, Ax{01}, Ax{02}, ... */
