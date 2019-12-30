@@ -30,7 +30,6 @@
 #include "replicas.h"
 #include "super-io.h"
 #include "tests.h"
-#include "accel.h"
 
 #include <linux/blkdev.h>
 #include <linux/sort.h>
@@ -206,10 +205,6 @@ read_attribute(io_timers_write);
 #ifdef CONFIG_BCACHEFS_TESTS
 write_attribute(perf_test);
 #endif /* CONFIG_BCACHEFS_TESTS */
-
-#ifdef CONFIG_BCACHEFS_ISAL_BACKEND
-write_attribute(accel_bench);
-#endif
 
 #define BCH_DEBUG_PARAM(name, description)				\
 	rw_attribute(name);
@@ -518,20 +513,6 @@ STORE(__bch2_fs)
 		kfree(tmp);
 	}
 #endif
-#ifdef CONFIG_BCACHEFS_ISAL_BACKEND
-	if (attr == &sysfs_accel_bench) {
-		char *tmp = kstrdup(buf, GFP_KERNEL), *p = tmp;
-		char *prim = strsep(&p, " \t\n");
-		int ret = -EINVAL;
-		
-		if((ret = accel_benchmark(prim))) {
-			size = ret;
-		} 
-
-		kfree(tmp);
-	}
-#endif
-
 	return size;
 }
 
@@ -566,11 +547,6 @@ struct attribute *bch2_fs_files[] = {
 #ifdef CONFIG_BCACHEFS_TESTS
 	&sysfs_perf_test,
 #endif
-
-#ifdef CONFIG_BCACHEFS_ISAL_BACKEND
-	&sysfs_accel_bench,
-#endif
-
 	NULL
 };
 

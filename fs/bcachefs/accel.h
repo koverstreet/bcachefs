@@ -14,11 +14,4 @@ u32 accel_crc32c(u32 crc, const void* p, size_t len);
 void accel_erasure_encode(int nd, int np, size_t size, void **v);
 void accel_erasure_decode(int nr, int *ir, int nd, int np, size_t size, void **v);
 
-/**
- * Sysfs hook for running primitive benchmarks.
- *
- * Returns a non-zero value if running the benchmarks failed.
- */
-int accel_benchmark(const char* prim);
-
 #endif /* _BCACHEFS_ACCEL_H */
