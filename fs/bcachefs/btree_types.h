@@ -280,6 +280,7 @@ struct btree_trans {
 
 	u8			nr_iters;
 	u8			nr_updates;
+	u8			nr_updates2;
 	u8			size;
 	unsigned		used_mempool:1;
 	unsigned		error:1;
@@ -292,6 +293,7 @@ struct btree_trans {
 
 	struct btree_iter	*iters;
 	struct btree_insert_entry *updates;
+	struct btree_insert_entry *updates2;
 
 	/* update path: */
 	struct journal_res	journal_res;
@@ -305,6 +307,7 @@ struct btree_trans {
 
 	struct btree_iter	iters_onstack[2];
 	struct btree_insert_entry updates_onstack[2];
+	struct btree_insert_entry updates2_onstack[2];
 };
 
 #define BTREE_FLAG(flag)						\
