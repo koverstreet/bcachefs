@@ -41,11 +41,9 @@
 #include "isal/include/erasure_code.h"
 #endif
 
-#define CAUCHY_RS_MAX 32
+#define CAUCHY_RS_MAX 16
+#define MAX_PARITY 4
 
-/*
- * Generate decode matrix from encode matrix and erasure list
- */
 static int gf_gen_decode_matrix_simple(u8 * encode_matrix,
 				       u8 * decode_matrix,
 				       u8 * invert_matrix,
@@ -53,41 +51,13 @@ static int gf_gen_decode_matrix_simple(u8 * encode_matrix,
 				       u8 * decode_index, int * frag_err_list, int nerrs, int k,
 				       int m);
 
-static u64 kernel_crc64(u64 crc, const void* p, size_t len) {
-	return crc64_be(crc, p, len);
-}
-
-static u64 isal_crc64(u64 crc, const void* p, size_t len) { 
-	kernel_fpu_begin();
-	crc = crc64_ecma_norm(crc, (const unsigned char*)p, len);
-	kernel_fpu_end();
-
-	return crc;
-}
-
-u64 accel_crc64(u64 crc, const void* p, size_t len) {
-	#ifdef CONFIG_BCACHEFS_ISAL_BACKEND
-	return isal_crc64(crc, p, len);
-	#else
-	return kernel_crc64(crc, p, len);
-	#endif
-}
-
-u32 accel_crc32c(u32 crc, const void* p, size_t len) {
-	// Kernel already provides carryless-multiply CRC32C
-	// on relevant architectures.
-	return crc32c(crc, p, len);
-	
-	// TODO: Ensure ARM64 is calling NEON code. crc32-ce 
-	// seems to be missing from the ARM64 crypto folder.
-}
-
 void accel_erasure_encode(int nd, int np, size_t size, void **v)
 {
 	u8 *encode;
 	u8 *tables;
 	int nm = nd + np;
 
+	BUG_ON(np > MAX_PARITY);
 	BUG_ON(nm > CAUCHY_RS_MAX);
 
 	if(np == 0) {
@@ -101,7 +71,7 @@ void accel_erasure_encode(int nd, int np, size_t size, void **v)
 	BUG_ON(encode == NULL);
 	BUG_ON(tables == NULL);
 
-	gf_gen_cauchy_stable_matrix(encode, nm, nd);
+	gf_gen_rs_matrix(encode, nm, nd);
 	ec_init_tables(nd, np, &encode[nd * nd], tables);
 
 	kernel_fpu_begin();
@@ -147,7 +117,7 @@ void accel_erasure_decode(int nr, int *ir, int nd, int np, size_t size, void **v
 	BUG_ON(scratch == NULL);
 	BUG_ON(tables == NULL);
 
-	gf_gen_cauchy1_matrix(encode, nm, nd);
+	gf_gen_rs_matrix(encode, nm, nd);
 	ret = gf_gen_decode_matrix_simple(encode, decode, inverse, scratch, decode_index, ir, nr, nd, nm);
 	BUG_ON(ret != 0); // Cauchy matricies should always be invertible.
 	ec_init_tables(nd, nr, decode, tables);
