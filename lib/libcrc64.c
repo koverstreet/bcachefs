@@ -19,7 +19,7 @@ static struct crypto_shash *tfm;
 u64 crc64(u64 crc, const void *data, unsigned int len)
 {
 	SHASH_DESC_ON_STACK(shash, tfm);
-	u32 ret, *ctx = (u32 *)shash_desc_ctx(shash);
+	u64 ret, *ctx = (u64 *)shash_desc_ctx(shash);
 	int err;
 
 	shash->tfm = tfm;

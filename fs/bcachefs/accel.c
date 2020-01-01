@@ -35,7 +35,7 @@
 #include <asm/fpu/api.h>
 
 #ifdef CONFIG_BCACHEFS_ISAL_BACKEND
-#include "isal/include/erasure_code.h"
+#include "isal/erasure_code/erasure_code.h"
 #endif
 
 #define CAUCHY_RS_MAX 16
