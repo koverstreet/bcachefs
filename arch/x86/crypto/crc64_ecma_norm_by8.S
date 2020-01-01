@@ -1,14 +1,15 @@
-/* SPDX-License-Identifier: BSD-3-Clause OR GPL-2.0-or-later */
+/* SPDX-License-Identifier: BSD-3-Clause */
 
 /* 
- * This is a GAS port of Intel's ISA-L implementation. The technique used to calculate the CRC can be found here: 
+ * This is a GAS port of Intel's ISA-L CRC64 ECMA 182 implementation. The technique used to calculate the CRC can be found here: 
  * https://www.intel.com/content/dam/www/public/us/en/documents/white-papers/fast-crc-computation-generic-polynomials-pclmulqdq-paper.pdf 
- *
- * This file is available under the GPL or 3-Clause BSD licenses. 
- * Copyright (c) 2019 Robbie Litchfield <blam.kiwi@gmail.com>
+ * 
+ * Copyright(c) 2019 Robbie Litchfield <blam.kiwi@gmail.com>
  */
 
-/* Copyright(c) 2011-2016 Intel Corporation All rights reserved.
+/* 
+ * Copyright(c) 2011-2016 Intel Corporation All rights reserved.
+ * Copyright(c) 2019 Robbie Litchfield All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
