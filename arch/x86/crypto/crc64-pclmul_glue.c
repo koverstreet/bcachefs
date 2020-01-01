@@ -5,6 +5,8 @@
  * Crypto API wrapper for hardware accelerated functions.
  * This crypto module uses ASM implementations ported from Intel ISA-L. 
  * 
+ * Copyright (c) 2004 Cisco Systems, Inc.	
+ * Copyright (c) 2008 Herbert Xu <herbert@gondor.apana.org.au>
  * Copyright (c) 2020 Robbie Litchfield <blam.kiwi@gmail.com>
  */
 

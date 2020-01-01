@@ -3,7 +3,8 @@
  * CRC64 ECMA 182 Checksum
  *
  * Helper function for accessing hardware/SIMD accelerated CRC64 implementations. 
- * 
+ *
+ * Copyright (c) 2004 Cisco Systems, Inc.
  * Copyright (c) 2020 Robbie Litchfield <blam.kiwi@gmail.com>
  */
 
