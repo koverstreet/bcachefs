@@ -68,12 +68,6 @@ CFLAGS_crc_base.o = $(ISAL_C_FLAGS)
 CFLAGS_ec_base.o = $(ISAL_C_FLAGS)
 CFLAGS_ec_highlevel_func.o = $(ISAL_C_FLAGS)
 
-bcachefs-$(CONFIG_BCACHEFS_ISAL_BACKEND) += \
-    isal/crc/crc64_base.o \
-	isal/crc/crc64_ecma_norm_by8.o \
-	isal/crc/crc64_ecma_norm_by16_10.o \
-	isal/crc/crc64_multibinary.o 
-
 bcachefs-$(CONFIG_BCACHEFS_ISAL_ERASURE) += \
 	isal/erasure_code/ec_base.o \
 	isal/erasure_code/ec_highlevel_func.o \
@@ -128,11 +122,6 @@ bcachefs-$(CONFIG_BCACHEFS_ISAL_ERASURE) += \
 	isal/erasure_code/gf_6vect_mad_avx512.o \
 	isal/erasure_code/gf_vect_dot_prod_avx512.o \
 	isal/erasure_code/gf_vect_mad_avx512.o 
-	
-
-# CRC ASM
-$(obj)/isal/crc/crc64_multibinary.o: $(src)/isal/crc/crc64_multibinary.asm
-	$(ASSEMBLE) -o $(obj)/isal/crc/crc64_multibinary.o $(src)/isal/crc/crc64_multibinary.asm
 
 # Erasure Coding ASM
 $(obj)/isal/erasure_code/ec_multibinary.o: $(src)/isal/erasure_code/ec_multibinary.asm

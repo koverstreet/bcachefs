@@ -2,19 +2,41 @@
 /*
  * CRC64 ECMA 182 Checksum
  *
- * Crypto API wrapper for crc64_be
+ * Crypto API wrapper for hardware accelerated functions.
  * 
  * Copyright (c) 2004 Cisco Systems, Inc.
  * Copyright (c) 2008 Herbert Xu <herbert@gondor.apana.org.au>
  * Copyright (c) 2020 Robbie Litchfield <blam.kiwi@gmail.com>
  */
 
-#include <asm/unaligned.h>
-#include <crypto/internal/hash.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/crc64.h>
+#include <asm/unaligned.h>
+#include <asm/cpufeatures.h>
+#include <asm/simd.h>
+#include <crypto/internal/hash.h>
+#include <crypto/internal/simd.h>
+
+extern u64 crc64_ecma_norm_by8(u64 crc, const void *data,	size_t len );
+extern u64 crc64_ecma_norm_by16_10(u64 crc, const void *data,	size_t len );
+static u64 (*impl)(u64, const void *, size_t ) = NULL;
+
+static u64 dispatch_crc64(u64 crc, const void *data, size_t len ) {
+	u64 res;
+	
+	// Kernel FPU has overhead, perform small csums using table based method
+	if(len < 256 || !crypto_simd_usable()) {
+		res =  crc64_be(crc, data, len);
+	} else {
+		kernel_fpu_begin();
+		res = impl(crc, data, len);
+		kernel_fpu_end();
+	}
+
+	return res;
+}
 
 /* 
  * ECMA 182 does not define a byte endianness. 
@@ -56,14 +78,14 @@ static int crc64_csum_update(struct shash_desc *desc, const u8 *data,
 {
 	struct crc64_csum_desc_ctx *ctx = shash_desc_ctx(desc);
 
-	ctx->state = crc64_be(ctx->state, data, len);
+	ctx->state = dispatch_crc64(ctx->state, data, len);
 
 	return 0;
 }
 
 static int crc64_csum_tail(u64 *state, const u8 *data, unsigned int len, u8 *out)
 {
-	STORE(crc64_be(*state, data, len), out);
+	STORE(dispatch_crc64(*state, data, len), out);
 
 	return 0;
 }
@@ -125,8 +147,8 @@ static struct shash_alg alg = {
 
 	.base			=	{
 		.cra_name			=	"crc64",
-		.cra_driver_name	=	"crc64-generic",
-		.cra_priority		=	100,
+		.cra_driver_name	=	"crc64-pclmul",
+		.cra_priority		=	200,
 		.cra_flags			=	CRYPTO_ALG_OPTIONAL_KEY,
 		.cra_blocksize		=	sizeof(u8),
 		.cra_ctxsize		=	sizeof(struct crc64_csum_ctx),
@@ -135,22 +157,36 @@ static struct shash_alg alg = {
 	}
 };
 
-static int __init crc64_mod_init(void)
+static int __init crc64_pclmul_mod_init(void)
 {
+	if (!boot_cpu_has(X86_FEATURE_PCLMULQDQ)) {
+		pr_info("PCLMUL instructions are not avaiable");
+		return -ENODEV;
+	}
+		
+	#if CONFIG_AS_AVX512
+	if (boot_cpu_has(X86_FEATURE_VPCLMULQDQ)) {
+		impl = &crc64_ecma_norm_by16_10;
+	} else {
+		impl = &crc64_ecma_norm_by8;
+	}
+	#else
+		impl = &crc64_ecma_norm_by8;
+	#endif
+
 	return crypto_register_shash(&alg);
 }
 
-static void __exit crc64_mod_exit(void)
+static void __exit crc64_pclmul_mod_exit(void)
 {
 	crypto_unregister_shash(&alg);
 }
 
-module_init(crc64_mod_init);
-module_exit(crc64_mod_exit);
+module_init(crc64_pclmul_mod_init);
+module_exit(crc64_pclmul_mod_exit);
 
 MODULE_AUTHOR("Robbie Litchfield <blam.kiwi@gmail.com>");
-MODULE_DESCRIPTION("CRC64 wrapper for lib/crc64");
 MODULE_LICENSE("GPL");
 
 MODULE_ALIAS_CRYPTO("crc64");
-MODULE_ALIAS_CRYPTO("crc64-generic");
+MODULE_ALIAS_CRYPTO("crc64-pclmul");

@@ -35,7 +35,6 @@
 #include <asm/fpu/api.h>
 
 #ifdef CONFIG_BCACHEFS_ISAL_BACKEND
-#include "isal/include/crc64.h"
 #include "isal/include/erasure_code.h"
 #endif
 
