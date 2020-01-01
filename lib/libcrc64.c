@@ -4,7 +4,6 @@
  *
  * Helper function for accessing hardware/SIMD accelerated CRC64 implementations. 
  * 
- * Copyright (c) 2004 Cisco Systems, Inc.
  * Copyright (c) 2020 Robbie Litchfield <blam.kiwi@gmail.com>
  */
 
@@ -13,11 +12,10 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/crc32c.h>
 
 static struct crypto_shash *tfm;
 
-u64 crc64(u64 crc, const void *address, unsigned int length)
+u64 crc64(u64 crc, const void *data, unsigned int len)
 {
 	SHASH_DESC_ON_STACK(shash, tfm);
 	u32 ret, *ctx = (u32 *)shash_desc_ctx(shash);
@@ -26,7 +24,7 @@ u64 crc64(u64 crc, const void *address, unsigned int length)
 	shash->tfm = tfm;
 	*ctx = crc;
 
-	err = crypto_shash_update(shash, address, length);
+	err = crypto_shash_update(shash, data, len);
 	BUG_ON(err);
 
 	ret = *ctx;
