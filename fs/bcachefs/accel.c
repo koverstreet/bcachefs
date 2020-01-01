@@ -28,8 +28,6 @@
 #include "accel.h"
 //#include "ec_types.h"
 
-#include <linux/crc64.h>
-#include <linux/crc32c.h>
 #include <linux/string.h>
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
@@ -56,7 +54,12 @@ void accel_erasure_encode(int nd, int np, size_t size, void **v)
 	u8 *encode;
 	u8 *tables;
 	int nm = nd + np;
+	u64 start;
+	u64 end;
 
+	printk("Encode %i %i %lu\n", nd, np, size);
+
+	start = ktime_get_ns();
 	BUG_ON(np > MAX_PARITY);
 	BUG_ON(nm > CAUCHY_RS_MAX);
 
@@ -80,6 +83,9 @@ void accel_erasure_encode(int nd, int np, size_t size, void **v)
 
 	kfree(encode);
 	kfree(tables);
+
+	end = ktime_get_ns();
+	printk("End %llu \n", end - start);
 }
 
 void accel_erasure_decode(int nr, int *ir, int nd, int np, size_t size, void **v)

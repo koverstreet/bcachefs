@@ -4,6 +4,7 @@
 #include "super.h"
 #include "super-io.h"
 
+#include <linux/crc64.h>
 #include <linux/crc32c.h>
 #include <linux/crypto.h>
 #include <linux/key.h>
@@ -61,7 +62,7 @@ static u64 bch2_checksum_update(unsigned type, u64 crc, const void *data, size_t
 		return crc32c(crc, data, len);
 	case BCH_CSUM_CRC64_NONZERO:
 	case BCH_CSUM_CRC64:
-		return crc64_be(crc, data, len);
+		return crc64(crc, data, len);
 	default:
 		BUG();
 	}
