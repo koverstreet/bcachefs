@@ -2,7 +2,7 @@
 
 /*
  * Generalized GF(256) Erasure Coding with Hardware Acceleration. 
- * This library complements MD-RAID for larger parity sizes.
+ * This library complements linux/raid for larger parity sizes.
  * This library uses implementations ported from Intel ISA-L. 
  * 
  * Provides implementations of various EC algorithms:

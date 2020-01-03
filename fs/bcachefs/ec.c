@@ -1340,9 +1340,8 @@ int bch2_fs_ec_init(struct bch_fs *c)
 	}
 
 	if(c->opts.erasure_code_defined) {
-		// Erasure Code works off meta-opt "replicas" which sets both data and metadata
-		// A replica of 1 means no parity data
-		total = c->sb.nr_devices;
+		// Erasure Code works off meta-opt "replicas" which sets both data and metadata replication
+		total = c->sb.nr_devices > EC_STRIPE_MAX ? EC_STRIPE_MAX : c->sb.nr_devices;
 		parity = opt_get(c->opts, data_replicas) - 1;
 		data = total - parity;
 
