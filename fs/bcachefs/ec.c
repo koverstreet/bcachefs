@@ -1343,12 +1343,11 @@ int bch2_fs_ec_init(struct bch_fs *c)
 		// Erasure Code works off meta-opt "replicas" which sets both data and metadata
 		// A replica of 1 means no parity data
 		total = c->sb.nr_devices;
-		parity = READ_ONCE(c->opts.data_replicas) - 1;
+		parity = opt_get(c->opts, data_replicas) - 1;
 		data = total - parity;
 
 		// BcacheFS uses a small stripe size, so we can cache all decode matricies
 		erasure_code_num_decode_combinations(data, parity, &cache_size);
-
 		if((res = erasure_code_context_init(&c->ec_ctx, ERASURE_CODE_VANDERMONDE_RS, data, parity, cache_size))) {
 			return res;
 		}
