@@ -1330,14 +1330,14 @@ void bch2_fs_ec_exit(struct bch_fs *c)
 
 int bch2_fs_ec_init(struct bch_fs *c)
 {
-	int res, total, data, parity; 
+	int ret, total, data, parity; 
 	size_t cache_size;
 
 	INIT_WORK(&c->ec_stripe_delete_work, ec_stripe_delete_work);
 
-	if((res = bioset_init(&c->ec_bioset, 1, offsetof(struct ec_bio, bio), BIOSET_NEED_BVECS))) {
-		return res;
-	}
+	ret = bioset_init(&c->ec_bioset, 1, offsetof(struct ec_bio, bio), BIOSET_NEED_BVECS);
+	if(ret) 
+		return ret;
 
 	if(c->opts.erasure_code_defined) {
 		// Erasure Code works off meta-opt "replicas" which sets both data and metadata replication
@@ -1347,9 +1347,9 @@ int bch2_fs_ec_init(struct bch_fs *c)
 
 		// BcacheFS uses a small stripe size, so we can cache all decode matricies
 		erasure_code_num_decode_combinations(data, parity, &cache_size);
-		if((res = erasure_code_context_init(&c->ec_ctx, ERASURE_CODE_VANDERMONDE_RS, data, parity, cache_size))) {
-			return res;
-		}
+		ret = erasure_code_context_init(&c->ec_ctx, ERASURE_CODE_VANDERMONDE_RS, data, parity, cache_size);
+		if(ret) 
+			return ret;
 	}
 
 	return 0;
