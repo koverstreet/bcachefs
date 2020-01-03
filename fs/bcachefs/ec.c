@@ -17,9 +17,9 @@
 #include "recovery.h"
 #include "super-io.h"
 #include "util.h"
-#include "accel.h"
 
 #include <linux/sort.h>
+#include <linux/erasure_code.h>
 
 struct ec_bio {
 	struct bch_dev		*ca;
@@ -241,13 +241,12 @@ static void ec_validate_checksums(struct bch_fs *c, struct ec_stripe_buf *buf)
 
 /* Erasure coding: */
 
-static void ec_generate_ec(struct ec_stripe_buf *buf)
+static void ec_generate_ec(struct ec_stripe_buf *buf, struct erasure_code_ctx *ctx)
 {
 	struct bch_stripe *v = &buf->key.v;
-	unsigned nr_data = v->nr_blocks - v->nr_redundant;
 	unsigned bytes = le16_to_cpu(v->sectors) << 9;
 
-	accel_erasure_encode(nr_data, v->nr_redundant, bytes, buf->data);
+	erasure_code_encode(ctx, bytes, buf->data);
 }
 
 static unsigned __ec_nr_failed(struct ec_stripe_buf *buf, unsigned nr)
@@ -277,8 +276,7 @@ static int ec_do_recov(struct bch_fs *c, struct ec_stripe_buf *buf)
 		if (!test_bit(i, buf->valid))
 			failed[nr_failed++] = i;
 
-	accel_erasure_decode(nr_failed, failed, nr_data, v->nr_redundant, bytes, buf->data);
-	return 0;
+	return erasure_code_decode(&c->ec_ctx, bytes, buf->data, nr_failed, failed);
 }
 
 /* IO: */
@@ -792,7 +790,7 @@ static void ec_stripe_create(struct ec_stripe_new *s)
 	BUG_ON(bitmap_weight(s->blocks_allocated,
 			     s->blocks.nr) != s->blocks.nr);
 
-	ec_generate_ec(&s->stripe);
+	ec_generate_ec(&s->stripe, &c->ec_ctx);
 
 	ec_generate_checksums(&s->stripe);
 
@@ -1323,6 +1321,8 @@ void bch2_fs_ec_exit(struct bch_fs *c)
 		kfree(h);
 	}
 
+	erasure_code_context_destroy(&c->ec_ctx);
+
 	free_heap(&c->ec_stripes_heap);
 	genradix_free(&c->stripes[0]);
 	bioset_exit(&c->ec_bioset);
@@ -1330,8 +1330,29 @@ void bch2_fs_ec_exit(struct bch_fs *c)
 
 int bch2_fs_ec_init(struct bch_fs *c)
 {
+	int res, total, data, parity; 
+	size_t cache_size;
+
 	INIT_WORK(&c->ec_stripe_delete_work, ec_stripe_delete_work);
 
-	return bioset_init(&c->ec_bioset, 1, offsetof(struct ec_bio, bio),
-			   BIOSET_NEED_BVECS);
+	if((res = bioset_init(&c->ec_bioset, 1, offsetof(struct ec_bio, bio), BIOSET_NEED_BVECS))) {
+		return res;
+	}
+
+	if(c->opts.erasure_code_defined) {
+		// Erasure Code works off meta-opt "replicas" which sets both data and metadata
+		// A replica of 1 means no parity data
+		total = c->sb.nr_devices;
+		parity = READ_ONCE(c->opts.data_replicas) - 1;
+		data = total - parity;
+
+		// BcacheFS uses a small stripe size, so we can cache all decode matricies
+		erasure_code_num_decode_combinations(data, parity, &cache_size);
+
+		if((res = erasure_code_context_init(&c->ec_ctx, ERASURE_CODE_VANDERMONDE_RS, data, parity, cache_size))) {
+			return res;
+		}
+	}
+
+	return 0;
 }
