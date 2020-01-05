@@ -228,7 +228,8 @@ void bch2_extent_debugcheck(struct bch_fs *c, struct bkey_s_c k)
 	struct extent_ptr_decoded p;
 	char buf[160];
 
-	if (!test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags))
+	if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags) ||
+	    !test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags))
 		return;
 
 	if (!percpu_down_read_trylock(&c->mark_lock))
