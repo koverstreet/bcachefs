@@ -45,9 +45,8 @@ struct erasure_code_ctx {
 };
 
 int erasure_code_num_decode_combinations(u8 data, u8 parity, size_t *value);
-int erasure_code_cache_mem_utilization(u8 data, u8 parity, size_t max_cache_size, size_t *value);
 
-int erasure_code_context_init(struct erasure_code_ctx* ctx, enum erasure_code_algorithm alg, u8 data, u8 parity, u16 max_cache_size);
+int erasure_code_context_init(struct erasure_code_ctx* ctx, enum erasure_code_algorithm alg, u8 data, u8 parity, size_t max_cache_size);
 void erasure_code_context_destroy(struct erasure_code_ctx* ctx);
 
 static __always_inline int erasure_code_encode(const struct erasure_code_ctx* ctx, size_t symbol_len, void **symbols) {
