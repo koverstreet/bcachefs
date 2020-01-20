@@ -9,6 +9,8 @@ pkgdir="$5"
 package="$6"
 shift 6
 
+here=$(dirname "$(readlink -f "${0}")")
+
 srcdir=$(pwd)
 cd "$dkms_dir" || exit 1
 
@@ -52,7 +54,7 @@ do
 		case "$package_path" in
 		pool/*)
 			# Attempt download from the launchpad librarian first.
-			wget -nv "https://launchpad.net/ubuntu/+archive/primary/+files/$package_file" || true
+			"$here/file-downloader" "https://launchpad.net/ubuntu/+archive/primary/+files/$package_file" || true
 			if package_present "$lpackage"; then
 				break
 			fi
@@ -72,14 +74,14 @@ do
 					break
 				fi
 				url="$pool/$package_path"
-				wget -nv "$url" && break || true
+				"$here/file-downloader" "$url" && break || true
 				# No components in PPAs.
 				url=$(echo "$url" | sed -e 's@/pool/[^/]*/@/pool/main/@')
-				wget -nv "$url" && break || true
+				"$here/file-downloader" "$url" && break || true
 			done
 			;;
 		http*:*)
-			wget -nv "$package_path"
+			"$here/file-downloader" "$package_path"
 			;;
 		*/*)
 			cp -p "$package_path" .
