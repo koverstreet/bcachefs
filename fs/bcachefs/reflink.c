@@ -115,7 +115,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	r_v->v.refcount	= 0;
 	memcpy(r_v->v.start, e->v.start, bkey_val_bytes(&e->k));
 
-	bch2_trans_update(trans, reflink_iter, &r_v->k_i);
+	bch2_trans_update(trans, reflink_iter, &r_v->k_i, 0);
 
 	r_p = bch2_trans_kmalloc(trans, sizeof(*r_p));
 	if (IS_ERR(r_p))
@@ -126,7 +126,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	set_bkey_val_bytes(&r_p->k, sizeof(r_p->v));
 	r_p->v.idx = cpu_to_le64(bkey_start_offset(&r_v->k));
 
-	bch2_trans_update(trans, extent_iter, &r_p->k_i);
+	bch2_trans_update(trans, extent_iter, &r_p->k_i, 0);
 err:
 	if (!IS_ERR(reflink_iter)) {
 		c->reflink_hint = reflink_iter->pos.offset;
@@ -171,7 +171,7 @@ s64 bch2_remap_range(struct bch_fs *c,
 	if (!percpu_ref_tryget(&c->writes))
 		return -EROFS;
 
-	bch2_check_set_feature(c, BCH_FEATURE_REFLINK);
+	bch2_check_set_feature(c, BCH_FEATURE_reflink);
 
 	dst_end.offset += remap_sectors;
 	src_end.offset += remap_sectors;
@@ -185,7 +185,8 @@ s64 bch2_remap_range(struct bch_fs *c,
 				       BTREE_ITER_INTENT);
 
 	while (1) {
-		bch2_trans_begin_updates(&trans);
+		bch2_trans_reset(&trans, TRANS_RESET_MEM);
+
 		trans.mem_top = 0;
 
 		if (fatal_signal_pending(current)) {
@@ -287,8 +288,7 @@ err:
 		    inode_u.bi_size < new_i_size) {
 			inode_u.bi_size = new_i_size;
 			ret2  = bch2_inode_write(&trans, inode_iter, &inode_u) ?:
-				bch2_trans_commit(&trans, NULL, journal_seq,
-						  BTREE_INSERT_ATOMIC);
+				bch2_trans_commit(&trans, NULL, journal_seq, 0);
 		}
 	} while (ret2 == -EINTR);
 

@@ -736,10 +736,9 @@ found_slot:
 
 	stripe->k.p = iter->pos;
 
-	bch2_trans_update(&trans, iter, &stripe->k_i);
+	bch2_trans_update(&trans, iter, &stripe->k_i, 0);
 
 	ret = bch2_trans_commit(&trans, NULL, NULL,
-				BTREE_INSERT_ATOMIC|
 				BTREE_INSERT_NOFAIL);
 err:
 	if (ret == -EINTR)
@@ -819,10 +818,9 @@ static int ec_stripe_update_ptrs(struct bch_fs *c,
 
 		extent_stripe_ptr_add(e, s, ec_ptr, idx);
 
-		bch2_trans_update(&trans, iter, sk.k);
+		bch2_trans_update(&trans, iter, sk.k, 0);
 
 		ret = bch2_trans_commit(&trans, NULL, NULL,
-					BTREE_INSERT_ATOMIC|
 					BTREE_INSERT_NOFAIL|
 					BTREE_INSERT_USE_RESERVE);
 		if (ret == -EINTR)
@@ -1232,7 +1230,7 @@ static int __bch2_stripe_write_key(struct btree_trans *trans,
 
 	spin_unlock(&c->ec_stripes_heap_lock);
 
-	bch2_trans_update(trans, iter, &new_key->k_i);
+	bch2_trans_update(trans, iter, &new_key->k_i, 0);
 
 	return bch2_trans_commit(trans, NULL, NULL,
 				 BTREE_INSERT_NOFAIL|flags);
@@ -1259,8 +1257,13 @@ int bch2_stripes_write(struct bch_fs *c, unsigned flags, bool *wrote)
 		if (!m->dirty)
 			continue;
 
-		ret = __bch2_stripe_write_key(&trans, iter, m, giter.pos,
-					      new_key, flags);
+		do {
+			bch2_trans_reset(&trans, TRANS_RESET_MEM);
+
+			ret = __bch2_stripe_write_key(&trans, iter, m,
+					giter.pos, new_key, flags);
+		} while (ret == -EINTR);
+
 		if (ret)
 			break;
 
@@ -1313,8 +1316,8 @@ int bch2_stripes_read(struct bch_fs *c, struct journal_keys *journal_keys)
 
 		bch2_mark_key(c, btree ? btree_k : journal_k,
 			      0, 0, NULL, 0,
-			      BCH_BUCKET_MARK_ALLOC_READ|
-			      BCH_BUCKET_MARK_NOATOMIC);
+			      BTREE_TRIGGER_ALLOC_READ|
+			      BTREE_TRIGGER_NOATOMIC);
 
 		if (btree)
 			btree_k = bch2_btree_iter_next(btree_iter);

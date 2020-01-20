@@ -18,6 +18,7 @@
 #include "btree_update_interior.h"
 #include "btree_gc.h"
 #include "buckets.h"
+#include "clock.h"
 #include "disk_groups.h"
 #include "ec.h"
 #include "inode.h"
@@ -198,6 +199,9 @@ rw_attribute(pd_controllers_update_seconds);
 read_attribute(meta_replicas_have);
 read_attribute(data_replicas_have);
 
+read_attribute(io_timers_read);
+read_attribute(io_timers_write);
+
 #ifdef CONFIG_BCACHEFS_TESTS
 write_attribute(perf_test);
 #endif /* CONFIG_BCACHEFS_TESTS */
@@ -272,7 +276,7 @@ static ssize_t bch2_compression_stats(struct bch_fs *c, char *buf)
 			struct extent_ptr_decoded p;
 
 			extent_for_each_ptr_decode(e, p, entry) {
-				if (p.crc.compression_type == BCH_COMPRESSION_NONE) {
+				if (p.crc.compression_type == BCH_COMPRESSION_TYPE_none) {
 					nr_uncompressed_extents++;
 					uncompressed_sectors += e.k->size;
 				} else {
@@ -403,6 +407,11 @@ SHOW(bch2_fs)
 
 	if (attr == &sysfs_new_stripes)
 		return bch2_new_stripes(c, buf);
+
+	if (attr == &sysfs_io_timers_read)
+		return bch2_io_timers_show(&c->io_clock[READ], buf);
+	if (attr == &sysfs_io_timers_write)
+		return bch2_io_timers_show(&c->io_clock[WRITE], buf);
 
 #define BCH_DEBUG_PARAM(name, description) sysfs_print(name, c->name);
 	BCH_DEBUG_PARAMS()
@@ -580,6 +589,9 @@ struct attribute *bch2_fs_internal_files[] = {
 	sysfs_pd_controller_files(rebalance),
 
 	&sysfs_new_stripes,
+
+	&sysfs_io_timers_read,
+	&sysfs_io_timers_write,
 
 	&sysfs_internal_uuid,
 
@@ -904,8 +916,6 @@ SHOW(bch2_dev)
 			bch2_disk_path_to_text(&out, &c->disk_sb,
 					       ca->mi.group - 1);
 			mutex_unlock(&c->sb_lock);
-		} else {
-			pr_buf(&out, "none");
 		}
 
 		pr_buf(&out, "\n");

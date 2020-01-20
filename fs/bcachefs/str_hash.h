@@ -23,7 +23,7 @@ bch2_str_hash_opt_to_type(struct bch_fs *c, enum bch_str_hash_opts opt)
 	case BCH_STR_HASH_OPT_CRC64:
 		return BCH_STR_HASH_CRC64;
 	case BCH_STR_HASH_OPT_SIPHASH:
-		return c->sb.features & (1ULL << BCH_FEATURE_NEW_SIPHASH)
+		return c->sb.features & (1ULL << BCH_FEATURE_new_siphash)
 			? BCH_STR_HASH_SIPHASH
 			: BCH_STR_HASH_SIPHASH_OLD;
 	default:
@@ -281,7 +281,7 @@ not_found:
 			swap(iter, slot);
 
 		insert->k.p = iter->pos;
-		bch2_trans_update(trans, iter, insert);
+		bch2_trans_update(trans, iter, insert, 0);
 	}
 
 	goto out;
@@ -308,7 +308,7 @@ int bch2_hash_delete_at(struct btree_trans *trans,
 	delete->k.p = iter->pos;
 	delete->k.type = ret ? KEY_TYPE_whiteout : KEY_TYPE_deleted;
 
-	bch2_trans_update(trans, iter, delete);
+	bch2_trans_update(trans, iter, delete, 0);
 	return 0;
 }
 

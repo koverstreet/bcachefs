@@ -253,10 +253,9 @@ void bch2_verify_insert_pos(struct btree *b, struct bkey_packed *where,
 		bch2_bkey_to_text(&PBUF(buf2), &k2);
 
 		panic("prev > insert:\n"
-		      "prev    key %5u %s\n"
-		      "insert  key %5u %s\n",
-		       __btree_node_key_to_offset(b, prev), buf1,
-		       __btree_node_key_to_offset(b, insert), buf2);
+		      "prev    key %s\n"
+		      "insert  key %s\n",
+		      buf1, buf2);
 	}
 #endif
 #if 0
@@ -275,10 +274,9 @@ void bch2_verify_insert_pos(struct btree *b, struct bkey_packed *where,
 		bch2_bkey_to_text(&PBUF(buf2), &k2);
 
 		panic("insert > next:\n"
-		      "insert  key %5u %s\n"
-		      "next    key %5u %s\n",
-		       __btree_node_key_to_offset(b, insert), buf1,
-		       __btree_node_key_to_offset(b, next), buf2);
+		      "insert  key %s\n"
+		      "next    key %s\n",
+		      buf1, buf2);
 	}
 #endif
 }
@@ -1399,21 +1397,21 @@ struct bkey_packed *bch2_bset_search_linear(struct btree *b,
 {
 	if (lossy_packed_search)
 		while (m != btree_bkey_last(b, t) &&
-		       bkey_iter_cmp_p_or_unp(b, search, lossy_packed_search,
-					      m) > 0)
+		       bkey_iter_cmp_p_or_unp(b, m,
+					lossy_packed_search, search) < 0)
 			m = bkey_next_skip_noops(m, btree_bkey_last(b, t));
 
 	if (!packed_search)
 		while (m != btree_bkey_last(b, t) &&
-		       bkey_iter_pos_cmp(b, search, m) > 0)
+		       bkey_iter_pos_cmp(b, m, search) < 0)
 			m = bkey_next_skip_noops(m, btree_bkey_last(b, t));
 
 	if (btree_keys_expensive_checks(b)) {
 		struct bkey_packed *prev = bch2_bkey_prev_all(b, t, m);
 
 		BUG_ON(prev &&
-		       bkey_iter_cmp_p_or_unp(b, search, packed_search,
-					      prev) <= 0);
+		       bkey_iter_cmp_p_or_unp(b, prev,
+					packed_search, search) >= 0);
 	}
 
 	return m;

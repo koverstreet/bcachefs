@@ -193,8 +193,8 @@ found:
 	    gc_pos_cmp(c->gc_pos, gc_phase(GC_PHASE_PENDING_DELETE)) < 0)
 		bch2_mark_key_locked(c, bkey_i_to_s_c(&d->key),
 			      0, 0, NULL, 0,
-			      BCH_BUCKET_MARK_OVERWRITE|
-			      BCH_BUCKET_MARK_GC);
+			      BTREE_TRIGGER_OVERWRITE|
+			      BTREE_TRIGGER_GC);
 }
 
 static void __btree_node_free(struct bch_fs *c, struct btree *b)
@@ -265,13 +265,13 @@ static void bch2_btree_node_free_ondisk(struct bch_fs *c,
 	BUG_ON(!pending->index_update_done);
 
 	bch2_mark_key(c, bkey_i_to_s_c(&pending->key),
-		      0, 0, NULL, 0, BCH_BUCKET_MARK_OVERWRITE);
+		      0, 0, NULL, 0, BTREE_TRIGGER_OVERWRITE);
 
 	if (gc_visited(c, gc_phase(GC_PHASE_PENDING_DELETE)))
 		bch2_mark_key(c, bkey_i_to_s_c(&pending->key),
 			      0, 0, NULL, 0,
-			      BCH_BUCKET_MARK_OVERWRITE|
-			      BCH_BUCKET_MARK_GC);
+			      BTREE_TRIGGER_OVERWRITE|
+			      BTREE_TRIGGER_GC);
 }
 
 static struct btree *__bch2_btree_node_alloc(struct bch_fs *c,
@@ -373,6 +373,13 @@ static struct btree *bch2_btree_node_alloc(struct btree_update *as, unsigned lev
 	SET_BTREE_NODE_ID(b->data, as->btree_id);
 	SET_BTREE_NODE_LEVEL(b->data, level);
 	b->data->ptr = bkey_i_to_btree_ptr(&b->key)->v.start[0];
+
+	if (c->sb.features & (1ULL << BCH_FEATURE_new_extent_overwrite))
+		SET_BTREE_NODE_NEW_EXTENT_OVERWRITE(b->data, true);
+
+	if (btree_node_is_extents(b) &&
+	    !BTREE_NODE_NEW_EXTENT_OVERWRITE(b->data))
+		set_btree_node_old_extent_overwrite(b);
 
 	bch2_btree_build_aux_trees(b);
 
@@ -1077,12 +1084,12 @@ static void bch2_btree_set_root_inmem(struct btree_update *as, struct btree *b)
 
 	bch2_mark_key_locked(c, bkey_i_to_s_c(&b->key),
 		      0, 0, fs_usage, 0,
-		      BCH_BUCKET_MARK_INSERT);
+		      BTREE_TRIGGER_INSERT);
 	if (gc_visited(c, gc_pos_btree_root(b->btree_id)))
 		bch2_mark_key_locked(c, bkey_i_to_s_c(&b->key),
 				     0, 0, NULL, 0,
-				     BCH_BUCKET_MARK_INSERT|
-				     BCH_BUCKET_MARK_GC);
+				     BTREE_TRIGGER_INSERT|
+				     BTREE_TRIGGER_GC);
 
 	if (old && !btree_node_fake(old))
 		bch2_btree_node_free_index(as, NULL,
@@ -1175,16 +1182,16 @@ static void bch2_insert_fixup_btree_ptr(struct btree_update *as, struct btree *b
 
 	bch2_mark_key_locked(c, bkey_i_to_s_c(insert),
 			     0, 0, fs_usage, 0,
-			     BCH_BUCKET_MARK_INSERT);
+			     BTREE_TRIGGER_INSERT);
 
 	if (gc_visited(c, gc_pos_btree_node(b)))
 		bch2_mark_key_locked(c, bkey_i_to_s_c(insert),
 				     0, 0, NULL, 0,
-				     BCH_BUCKET_MARK_INSERT|
-				     BCH_BUCKET_MARK_GC);
+				     BTREE_TRIGGER_INSERT|
+				     BTREE_TRIGGER_GC);
 
 	while ((k = bch2_btree_node_iter_peek_all(node_iter, b)) &&
-	       bkey_iter_pos_cmp(b, &insert->k.p, k) > 0)
+	       bkey_iter_pos_cmp(b, k, &insert->k.p) < 0)
 		bch2_btree_node_iter_advance(node_iter, b);
 
 	/*
@@ -1378,7 +1385,7 @@ static void btree_split(struct btree_update *as, struct btree *b,
 	if (keys)
 		btree_split_insert_keys(as, n1, iter, keys);
 
-	if (vstruct_blocks(n1->data, c->block_bits) > BTREE_SPLIT_THRESHOLD(c)) {
+	if (bset_u64s(&n1->set[0]) > BTREE_SPLIT_THRESHOLD(c)) {
 		trace_btree_split(c, b);
 
 		n2 = __btree_split_node(as, n1, iter);
@@ -1656,6 +1663,8 @@ void __bch2_foreground_maybe_merge(struct bch_fs *c,
 	struct closure cl;
 	size_t sib_u64s;
 	int ret = 0;
+
+	BUG_ON(!btree_node_locked(iter, level));
 
 	closure_init_stack(&cl);
 retry:
@@ -2022,12 +2031,12 @@ static void __bch2_btree_node_update_key(struct bch_fs *c,
 
 		bch2_mark_key_locked(c, bkey_i_to_s_c(&new_key->k_i),
 			      0, 0, fs_usage, 0,
-			      BCH_BUCKET_MARK_INSERT);
+			      BTREE_TRIGGER_INSERT);
 		if (gc_visited(c, gc_pos_btree_root(b->btree_id)))
 			bch2_mark_key_locked(c, bkey_i_to_s_c(&new_key->k_i),
 					     0, 0, NULL, 0,
-					     BCH_BUCKET_MARK_INSERT||
-					     BCH_BUCKET_MARK_GC);
+					     BTREE_TRIGGER_INSERT||
+					     BTREE_TRIGGER_GC);
 
 		bch2_btree_node_free_index(as, NULL,
 					   bkey_i_to_s_c(&b->key),

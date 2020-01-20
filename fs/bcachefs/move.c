@@ -150,11 +150,10 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 			goto next;
 		}
 
-		bch2_trans_update(&trans, iter, insert);
+		bch2_trans_update(&trans, iter, insert, 0);
 
 		ret = bch2_trans_commit(&trans, &op->res,
 				op_journal_seq(op),
-				BTREE_INSERT_ATOMIC|
 				BTREE_INSERT_NOFAIL|
 				BTREE_INSERT_USE_RESERVE|
 				m->data_opts.btree_insert_flags);
@@ -273,7 +272,7 @@ int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
 
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
 			if (!p.ptr.cached &&
-			    p.crc.compression_type != BCH_COMPRESSION_NONE &&
+			    p.crc.compression_type != BCH_COMPRESSION_TYPE_none &&
 			    bch2_dev_in_target(c, p.ptr.dev, data_opts.target))
 				compressed_sectors += p.crc.compressed_size;
 
@@ -301,12 +300,12 @@ static void move_free(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct moving_context *ctxt = io->write.ctxt;
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
 	bch2_disk_reservation_put(io->write.op.c, &io->write.op.res);
 
-	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, i)
+	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, iter)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);
 

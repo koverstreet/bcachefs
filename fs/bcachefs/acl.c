@@ -323,7 +323,6 @@ retry:
 	ret =   bch2_inode_write(&trans, inode_iter, &inode_u) ?:
 		bch2_trans_commit(&trans, NULL,
 				  &inode->ei_journal_seq,
-				  BTREE_INSERT_ATOMIC|
 				  BTREE_INSERT_NOUNLOCK);
 btree_err:
 	if (ret == -EINTR)
@@ -378,7 +377,7 @@ int bch2_acl_chmod(struct btree_trans *trans,
 	}
 
 	new->k.p = iter->pos;
-	bch2_trans_update(trans, iter, &new->k_i);
+	bch2_trans_update(trans, iter, &new->k_i, 0);
 	*new_acl = acl;
 	acl = NULL;
 err:

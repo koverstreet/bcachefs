@@ -300,31 +300,24 @@ retry:
 		bch2_cut_front(split_iter->pos, split);
 		bch2_cut_back(atomic_end, split);
 
-		bch2_trans_update(&trans, split_iter, split);
+		bch2_trans_update(&trans, split_iter, split, !remark
+				  ? BTREE_TRIGGER_NORUN
+				  : BTREE_TRIGGER_NOOVERWRITES);
 		bch2_btree_iter_set_pos(iter, split->k.p);
 	} while (bkey_cmp(iter->pos, k->k.p) < 0);
 
 	if (remark) {
 		ret = bch2_trans_mark_key(&trans, bkey_i_to_s_c(k),
 					  0, -((s64) k->k.size),
-					  BCH_BUCKET_MARK_OVERWRITE) ?:
-		      bch2_trans_commit(&trans, &disk_res, NULL,
-					BTREE_INSERT_ATOMIC|
-					BTREE_INSERT_NOFAIL|
-					BTREE_INSERT_LAZY_RW|
-					BTREE_INSERT_NOMARK_OVERWRITES|
-					BTREE_INSERT_NO_CLEAR_REPLICAS);
-	} else {
-		ret = bch2_trans_commit(&trans, &disk_res, NULL,
-					BTREE_INSERT_ATOMIC|
-					BTREE_INSERT_NOFAIL|
-					BTREE_INSERT_LAZY_RW|
-					BTREE_INSERT_JOURNAL_REPLAY|
-					BTREE_INSERT_NOMARK);
+					  BTREE_TRIGGER_OVERWRITE);
+		if (ret)
+			goto err;
 	}
 
-	if (ret)
-		goto err;
+	ret = bch2_trans_commit(&trans, &disk_res, NULL,
+				BTREE_INSERT_NOFAIL|
+				BTREE_INSERT_LAZY_RW|
+				BTREE_INSERT_JOURNAL_REPLAY);
 err:
 	if (ret == -EINTR)
 		goto retry;
@@ -332,6 +325,30 @@ err:
 	bch2_disk_reservation_put(c, &disk_res);
 
 	return bch2_trans_exit(&trans) ?: ret;
+}
+
+static int __bch2_journal_replay_key(struct btree_trans *trans,
+				     enum btree_id id, struct bkey_i *k)
+{
+	struct btree_iter *iter;
+
+	iter = bch2_trans_get_iter(trans, id, bkey_start_pos(&k->k),
+				   BTREE_ITER_INTENT);
+	if (IS_ERR(iter))
+		return PTR_ERR(iter);
+
+	bch2_trans_update(trans, iter, k, BTREE_TRIGGER_NORUN);
+	return 0;
+}
+
+static int bch2_journal_replay_key(struct bch_fs *c, enum btree_id id,
+				   struct bkey_i *k)
+{
+	return bch2_trans_do(c, NULL, NULL,
+			     BTREE_INSERT_NOFAIL|
+			     BTREE_INSERT_LAZY_RW|
+			     BTREE_INSERT_JOURNAL_REPLAY,
+			     __bch2_journal_replay_key(&trans, id, k));
 }
 
 static int bch2_journal_replay(struct bch_fs *c,
@@ -351,12 +368,7 @@ static int bch2_journal_replay(struct bch_fs *c,
 		else if (btree_node_type_is_extents(i->btree_id))
 			ret = bch2_extent_replay_key(c, i->btree_id, i->k);
 		else
-			ret = bch2_btree_insert(c, i->btree_id, i->k,
-						NULL, NULL,
-						BTREE_INSERT_NOFAIL|
-						BTREE_INSERT_LAZY_RW|
-						BTREE_INSERT_JOURNAL_REPLAY|
-						BTREE_INSERT_NOMARK);
+			ret = bch2_journal_replay_key(c, i->btree_id, i->k);
 
 		if (ret) {
 			bch_err(c, "journal replay: error %d while replaying key",
@@ -869,7 +881,7 @@ int bch2_fs_recovery(struct bch_fs *c)
 	}
 
 	if (!c->sb.clean) {
-		if (!(c->sb.features & (1 << BCH_FEATURE_ATOMIC_NLINK))) {
+		if (!(c->sb.features & (1 << BCH_FEATURE_atomic_nlink))) {
 			bch_info(c, "checking inode link counts");
 			err = "error in recovery";
 			ret = bch2_fsck_inode_nlink(c);
@@ -910,6 +922,8 @@ int bch2_fs_recovery(struct bch_fs *c)
 			c->disk_sb.sb->version_min =
 				le16_to_cpu(bcachefs_metadata_version_min);
 		c->disk_sb.sb->version = le16_to_cpu(bcachefs_metadata_version_current);
+		c->disk_sb.sb->features[0] |= 1ULL << BCH_FEATURE_new_siphash;
+		c->disk_sb.sb->features[0] |= 1ULL << BCH_FEATURE_new_extent_overwrite;
 		write_sb = true;
 	}
 
@@ -920,7 +934,7 @@ int bch2_fs_recovery(struct bch_fs *c)
 
 	if (c->opts.fsck &&
 	    !test_bit(BCH_FS_ERROR, &c->flags)) {
-		c->disk_sb.sb->features[0] |= 1ULL << BCH_FEATURE_ATOMIC_NLINK;
+		c->disk_sb.sb->features[0] |= 1ULL << BCH_FEATURE_atomic_nlink;
 		SET_BCH_SB_HAS_ERRORS(c->disk_sb.sb, 0);
 		write_sb = true;
 	}
@@ -989,11 +1003,6 @@ int bch2_fs_initialize(struct bch_fs *c)
 	bch2_fs_journal_start(&c->journal, 1, &journal);
 	bch2_journal_set_replay_done(&c->journal);
 
-	err = "error going read write";
-	ret = __bch2_fs_read_write(c, true);
-	if (ret)
-		goto err;
-
 	bch2_inode_init(c, &root_inode, 0, 0,
 			S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0, NULL);
 	root_inode.bi_inum = BCACHEFS_ROOT_INO;
@@ -1002,14 +1011,14 @@ int bch2_fs_initialize(struct bch_fs *c)
 	err = "error creating root directory";
 	ret = bch2_btree_insert(c, BTREE_ID_INODES,
 				&packed_inode.inode.k_i,
-				NULL, NULL, 0);
+				NULL, NULL, BTREE_INSERT_LAZY_RW);
 	if (ret)
 		goto err;
 
 	bch2_inode_init_early(c, &lostfound_inode);
 
 	err = "error creating lost+found";
-	ret = bch2_trans_do(c, NULL, BTREE_INSERT_ATOMIC,
+	ret = bch2_trans_do(c, NULL, NULL, 0,
 		bch2_create_trans(&trans, BCACHEFS_ROOT_INO,
 				  &root_inode, &lostfound_inode,
 				  &lostfound,
@@ -1032,7 +1041,9 @@ int bch2_fs_initialize(struct bch_fs *c)
 	mutex_lock(&c->sb_lock);
 	c->disk_sb.sb->version = c->disk_sb.sb->version_min =
 		le16_to_cpu(bcachefs_metadata_version_current);
-	c->disk_sb.sb->features[0] |= 1ULL << BCH_FEATURE_ATOMIC_NLINK;
+	c->disk_sb.sb->features[0] |= 1ULL << BCH_FEATURE_atomic_nlink;
+	c->disk_sb.sb->features[0] |= 1ULL << BCH_FEATURE_new_siphash;
+	c->disk_sb.sb->features[0] |= 1ULL << BCH_FEATURE_new_extent_overwrite;
 
 	SET_BCH_SB_INITIALIZED(c->disk_sb.sb, true);
 	SET_BCH_SB_CLEAN(c->disk_sb.sb, false);

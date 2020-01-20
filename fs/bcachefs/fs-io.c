@@ -602,7 +602,7 @@ int bch2_migrate_page(struct address_space *mapping, struct page *newpage,
 	EBUG_ON(!PageLocked(page));
 	EBUG_ON(!PageLocked(newpage));
 
-	ret = migrate_page_move_mapping(mapping, newpage, page, NULL, mode, 0);
+	ret = migrate_page_move_mapping(mapping, newpage, page, 0);
 	if (ret != MIGRATEPAGE_SUCCESS)
 		return ret;
 
@@ -627,10 +627,10 @@ int bch2_migrate_page(struct address_space *mapping, struct page *newpage,
 
 static void bch2_readpages_end_io(struct bio *bio)
 {
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
-	bio_for_each_segment_all(bv, bio, i) {
+	bio_for_each_segment_all(bv, bio, iter) {
 		struct page *page = bv->bv_page;
 
 		if (!bio->bi_status) {
@@ -782,11 +782,8 @@ static void readpage_bio_extend(struct readpages_iter *iter,
 			if (!get_more)
 				break;
 
-			rcu_read_lock();
-			page = radix_tree_lookup(&iter->mapping->i_pages, page_offset);
-			rcu_read_unlock();
-
-			if (page && !radix_tree_exceptional_entry(page))
+			page = xa_load(&iter->mapping->i_pages, page_offset);
+			if (page && !xa_is_value(page))
 				break;
 
 			page = __page_cache_alloc(readahead_gfp_mask(iter->mapping));
@@ -1037,32 +1034,33 @@ static void bch2_writepage_io_done(struct closure *cl)
 					struct bch_writepage_io, cl);
 	struct bch_fs *c = io->op.c;
 	struct bio *bio = &io->op.wbio.bio;
+	struct bvec_iter_all iter;
 	struct bio_vec *bvec;
-	unsigned i, j;
+	unsigned i;
 
 	if (io->op.error) {
-		bio_for_each_segment_all(bvec, bio, i) {
+		bio_for_each_segment_all(bvec, bio, iter) {
 			struct bch_page_state *s;
 
 			SetPageError(bvec->bv_page);
-			mapping_set_error(io->inode->v.i_mapping, -EIO);
+			mapping_set_error(bvec->bv_page->mapping, -EIO);
 
 			s = __bch2_page_state(bvec->bv_page);
 			spin_lock(&s->lock);
-			for (j = 0; j < PAGE_SECTORS; j++)
-				s->s[j].nr_replicas = 0;
+			for (i = 0; i < PAGE_SECTORS; i++)
+				s->s[i].nr_replicas = 0;
 			spin_unlock(&s->lock);
 		}
 	}
 
 	if (io->op.flags & BCH_WRITE_WROTE_DATA_INLINE) {
-		bio_for_each_segment_all(bvec, bio, i) {
+		bio_for_each_segment_all(bvec, bio, iter) {
 			struct bch_page_state *s;
 
 			s = __bch2_page_state(bvec->bv_page);
 			spin_lock(&s->lock);
-			for (j = 0; j < PAGE_SECTORS; j++)
-				s->s[j].nr_replicas = 0;
+			for (i = 0; i < PAGE_SECTORS; i++)
+				s->s[i].nr_replicas = 0;
 			spin_unlock(&s->lock);
 		}
 	}
@@ -1086,7 +1084,7 @@ static void bch2_writepage_io_done(struct closure *cl)
 	 */
 	i_sectors_acct(c, io->inode, NULL, io->op.i_sectors_delta);
 
-	bio_for_each_segment_all(bvec, bio, i) {
+	bio_for_each_segment_all(bvec, bio, iter) {
 		struct bch_page_state *s = __bch2_page_state(bvec->bv_page);
 
 		if (atomic_dec_and_test(&s->write_count))
@@ -1240,7 +1238,7 @@ do_io:
 
 		if (w->io &&
 		    (w->io->op.res.nr_replicas != nr_replicas_this_write ||
-		     bio_full(&w->io->op.wbio.bio) ||
+		     bio_full(&w->io->op.wbio.bio, PAGE_SIZE) ||
 		     w->io->op.wbio.bio.bi_iter.bi_size >= (256U << 20) ||
 		     bio_end_sector(&w->io->op.wbio.bio) != sector))
 			bch2_writepage_do_io(w);
@@ -1805,8 +1803,9 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 	struct address_space *mapping = req->ki_filp->f_mapping;
 	struct bch_inode_info *inode = file_bch_inode(req->ki_filp);
 	struct bio *bio = &dio->op.wbio.bio;
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i, unaligned;
+	unsigned unaligned;
 	u64 new_i_size;
 	bool sync;
 	long ret;
@@ -1838,7 +1837,7 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 			 * bio_iov_iter_get_pages was only able to get <
 			 * blocksize worth of pages:
 			 */
-			bio_for_each_segment_all(bv, bio, i)
+			bio_for_each_segment_all(bv, bio, iter)
 				put_page(bv->bv_page);
 			ret = -EFAULT;
 			goto err;
@@ -1886,7 +1885,7 @@ loop:
 			i_size_write(&inode->v, new_i_size);
 		spin_unlock(&inode->v.i_lock);
 
-		bio_for_each_segment_all(bv, bio, i)
+		bio_for_each_segment_all(bv, bio, iter)
 			put_page(bv->bv_page);
 		if (!dio->iter.count || dio->op.error)
 			break;
@@ -2288,6 +2287,15 @@ int bch2_truncate(struct bch_inode_info *inode, struct iattr *iattr)
 	if (ret)
 		goto err;
 
+	/*
+	 * check this before next assertion; on filesystem error our normal
+	 * invariants are a bit broken (truncate has to truncate the page cache
+	 * before the inode).
+	 */
+	ret = bch2_journal_error(&c->journal);
+	if (ret)
+		goto err;
+
 	BUG_ON(inode->v.i_size < inode_u.bi_size);
 
 	if (iattr->ia_size > inode->v.i_size) {
@@ -2403,7 +2411,7 @@ static long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
 	struct address_space *mapping = inode->v.i_mapping;
 	struct bkey_on_stack copy;
 	struct btree_trans trans;
-	struct btree_iter *src, *dst, *del = NULL;
+	struct btree_iter *src, *dst;
 	loff_t shift, new_size;
 	u64 src_start;
 	int ret;
@@ -2485,9 +2493,7 @@ static long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
 		struct bpos next_pos;
 		struct bpos move_pos = POS(inode->v.i_ino, offset >> 9);
 		struct bpos atomic_end;
-		unsigned commit_flags = BTREE_INSERT_NOFAIL|
-			BTREE_INSERT_ATOMIC|
-			BTREE_INSERT_USE_RESERVE;
+		unsigned trigger_flags = 0;
 
 		k = insert
 			? bch2_btree_iter_peek_prev(src)
@@ -2535,38 +2541,12 @@ reassemble:
 
 		next_pos = insert ? bkey_start_pos(&delete.k) : delete.k.p;
 
-		/*
-		 * If the new and old keys overlap (because we're moving an
-		 * extent that's bigger than the amount we're collapsing by),
-		 * we need to trim the delete key here so they don't overlap
-		 * because overlaps on insertions aren't handled before
-		 * triggers are run, so the overwrite will get double counted
-		 * by the triggers machinery:
-		 */
-		if (insert &&
-		    bkey_cmp(bkey_start_pos(&copy.k->k), delete.k.p) < 0) {
-			bch2_cut_back(bkey_start_pos(&copy.k->k), &delete);
-		} else if (!insert &&
-			   bkey_cmp(copy.k->k.p,
-				    bkey_start_pos(&delete.k)) > 0) {
-			bch2_cut_front(copy.k->k.p, &delete);
-
-			del = bch2_trans_copy_iter(&trans, src);
-			BUG_ON(IS_ERR_OR_NULL(del));
-
-			bch2_btree_iter_set_pos(del,
-				bkey_start_pos(&delete.k));
-		}
-
-		bch2_trans_update(&trans, dst, copy.k);
-		bch2_trans_update(&trans, del ?: src, &delete);
-
 		if (copy.k->k.size == k.k->size) {
 			/*
 			 * If we're moving the entire extent, we can skip
 			 * running triggers:
 			 */
-			commit_flags |= BTREE_INSERT_NOMARK;
+			trigger_flags |= BTREE_TRIGGER_NORUN;
 		} else {
 			/* We might end up splitting compressed extents: */
 			unsigned nr_ptrs =
@@ -2578,15 +2558,13 @@ reassemble:
 			BUG_ON(ret);
 		}
 
-		ret = bch2_trans_commit(&trans, &disk_res,
-					&inode->ei_journal_seq,
-					commit_flags);
+		ret =   bch2_trans_update(&trans, src, &delete, trigger_flags) ?:
+			bch2_trans_update(&trans, dst, copy.k, trigger_flags) ?:
+			bch2_trans_commit(&trans, &disk_res,
+					  &inode->ei_journal_seq,
+					  BTREE_INSERT_NOFAIL);
 		bch2_disk_reservation_put(c, &disk_res);
 bkey_err:
-		if (del)
-			bch2_trans_iter_put(&trans, del);
-		del = NULL;
-
 		if (!ret)
 			bch2_btree_iter_set_pos(src, next_pos);
 
@@ -2670,6 +2648,8 @@ static long bchfs_fallocate(struct bch_inode_info *inode, int mode,
 		struct bkey_i_reservation reservation;
 		struct bkey_s_c k;
 
+		bch2_trans_reset(&trans, TRANS_RESET_MEM);
+
 		k = bch2_btree_iter_peek_slot(iter);
 		if ((ret = bkey_err(k)))
 			goto bkey_err;
@@ -2715,8 +2695,6 @@ static long bchfs_fallocate(struct bch_inode_info *inode, int mode,
 
 			reservation.v.nr_replicas = disk_res.nr_replicas;
 		}
-
-		bch2_trans_begin_updates(&trans);
 
 		ret = bch2_extent_update(&trans, iter, &reservation.k_i,
 				&disk_res, &inode->ei_journal_seq,
@@ -2842,235 +2820,6 @@ static void mark_range_unallocated(struct bch_inode_info *inode,
 		}
 		pagevec_release(&pvec);
 	} while (index <= end_index);
-}
-
-static int generic_access_check_limits(struct file *file, loff_t pos,
-				       loff_t *count)
-{
-	struct inode *inode = file->f_mapping->host;
-	loff_t max_size = inode->i_sb->s_maxbytes;
-
-	if (!(file->f_flags & O_LARGEFILE))
-		max_size = MAX_NON_LFS;
-
-	if (unlikely(pos >= max_size))
-		return -EFBIG;
-	*count = min(*count, max_size - pos);
-	return 0;
-}
-
-static int generic_write_check_limits(struct file *file, loff_t pos,
-				      loff_t *count)
-{
-	loff_t limit = rlimit(RLIMIT_FSIZE);
-
-	if (limit != RLIM_INFINITY) {
-		if (pos >= limit) {
-			send_sig(SIGXFSZ, current, 0);
-			return -EFBIG;
-		}
-		*count = min(*count, limit - pos);
-	}
-
-	return generic_access_check_limits(file, pos, count);
-}
-
-static int generic_remap_checks(struct file *file_in, loff_t pos_in,
-			 struct file *file_out, loff_t pos_out,
-			 loff_t *req_count, unsigned int remap_flags)
-{
-	struct inode *inode_in = file_in->f_mapping->host;
-	struct inode *inode_out = file_out->f_mapping->host;
-	uint64_t count = *req_count;
-	uint64_t bcount;
-	loff_t size_in, size_out;
-	loff_t bs = inode_out->i_sb->s_blocksize;
-	int ret;
-
-	/* The start of both ranges must be aligned to an fs block. */
-	if (!IS_ALIGNED(pos_in, bs) || !IS_ALIGNED(pos_out, bs))
-		return -EINVAL;
-
-	/* Ensure offsets don't wrap. */
-	if (pos_in + count < pos_in || pos_out + count < pos_out)
-		return -EINVAL;
-
-	size_in = i_size_read(inode_in);
-	size_out = i_size_read(inode_out);
-
-	/* Dedupe requires both ranges to be within EOF. */
-	if ((remap_flags & REMAP_FILE_DEDUP) &&
-	    (pos_in >= size_in || pos_in + count > size_in ||
-	     pos_out >= size_out || pos_out + count > size_out))
-		return -EINVAL;
-
-	/* Ensure the infile range is within the infile. */
-	if (pos_in >= size_in)
-		return -EINVAL;
-	count = min(count, size_in - (uint64_t)pos_in);
-
-	ret = generic_access_check_limits(file_in, pos_in, &count);
-	if (ret)
-		return ret;
-
-	ret = generic_write_check_limits(file_out, pos_out, &count);
-	if (ret)
-		return ret;
-
-	/*
-	 * If the user wanted us to link to the infile's EOF, round up to the
-	 * next block boundary for this check.
-	 *
-	 * Otherwise, make sure the count is also block-aligned, having
-	 * already confirmed the starting offsets' block alignment.
-	 */
-	if (pos_in + count == size_in) {
-		bcount = ALIGN(size_in, bs) - pos_in;
-	} else {
-		if (!IS_ALIGNED(count, bs))
-			count = ALIGN_DOWN(count, bs);
-		bcount = count;
-	}
-
-	/* Don't allow overlapped cloning within the same file. */
-	if (inode_in == inode_out &&
-	    pos_out + bcount > pos_in &&
-	    pos_out < pos_in + bcount)
-		return -EINVAL;
-
-	/*
-	 * We shortened the request but the caller can't deal with that, so
-	 * bounce the request back to userspace.
-	 */
-	if (*req_count != count && !(remap_flags & REMAP_FILE_CAN_SHORTEN))
-		return -EINVAL;
-
-	*req_count = count;
-	return 0;
-}
-
-static int generic_remap_check_len(struct inode *inode_in,
-				   struct inode *inode_out,
-				   loff_t pos_out,
-				   loff_t *len,
-				   unsigned int remap_flags)
-{
-	u64 blkmask = i_blocksize(inode_in) - 1;
-	loff_t new_len = *len;
-
-	if ((*len & blkmask) == 0)
-		return 0;
-
-	if ((remap_flags & REMAP_FILE_DEDUP) ||
-	    pos_out + *len < i_size_read(inode_out))
-		new_len &= ~blkmask;
-
-	if (new_len == *len)
-		return 0;
-
-	if (remap_flags & REMAP_FILE_CAN_SHORTEN) {
-		*len = new_len;
-		return 0;
-	}
-
-	return (remap_flags & REMAP_FILE_DEDUP) ? -EBADE : -EINVAL;
-}
-
-static int generic_remap_file_range_prep(struct file *file_in, loff_t pos_in,
-				  struct file *file_out, loff_t pos_out,
-				  loff_t *len, unsigned int remap_flags)
-{
-	struct inode *inode_in = file_inode(file_in);
-	struct inode *inode_out = file_inode(file_out);
-	bool same_inode = (inode_in == inode_out);
-	int ret;
-
-	/* Don't touch certain kinds of inodes */
-	if (IS_IMMUTABLE(inode_out))
-		return -EPERM;
-
-	if (IS_SWAPFILE(inode_in) || IS_SWAPFILE(inode_out))
-		return -ETXTBSY;
-
-	/* Don't reflink dirs, pipes, sockets... */
-	if (S_ISDIR(inode_in->i_mode) || S_ISDIR(inode_out->i_mode))
-		return -EISDIR;
-	if (!S_ISREG(inode_in->i_mode) || !S_ISREG(inode_out->i_mode))
-		return -EINVAL;
-
-	/* Zero length dedupe exits immediately; reflink goes to EOF. */
-	if (*len == 0) {
-		loff_t isize = i_size_read(inode_in);
-
-		if ((remap_flags & REMAP_FILE_DEDUP) || pos_in == isize)
-			return 0;
-		if (pos_in > isize)
-			return -EINVAL;
-		*len = isize - pos_in;
-		if (*len == 0)
-			return 0;
-	}
-
-	/* Check that we don't violate system file offset limits. */
-	ret = generic_remap_checks(file_in, pos_in, file_out, pos_out, len,
-			remap_flags);
-	if (ret)
-		return ret;
-
-	/* Wait for the completion of any pending IOs on both files */
-	inode_dio_wait(inode_in);
-	if (!same_inode)
-		inode_dio_wait(inode_out);
-
-	ret = filemap_write_and_wait_range(inode_in->i_mapping,
-			pos_in, pos_in + *len - 1);
-	if (ret)
-		return ret;
-
-	ret = filemap_write_and_wait_range(inode_out->i_mapping,
-			pos_out, pos_out + *len - 1);
-	if (ret)
-		return ret;
-
-	/*
-	 * Check that the extents are the same.
-	 */
-	if (remap_flags & REMAP_FILE_DEDUP) {
-		bool		is_same = false;
-
-		ret = vfs_dedupe_file_range_compare(inode_in, pos_in,
-				inode_out, pos_out, *len, &is_same);
-		if (ret)
-			return ret;
-		if (!is_same)
-			return -EBADE;
-	}
-
-	ret = generic_remap_check_len(inode_in, inode_out, pos_out, len,
-			remap_flags);
-	if (ret)
-		return ret;
-
-	/* If can't alter the file contents, we're done. */
-	if (!(remap_flags & REMAP_FILE_DEDUP)) {
-		/* Update the timestamps, since we can alter file contents. */
-		if (!(file_out->f_mode & FMODE_NOCMTIME)) {
-			ret = file_update_time(file_out);
-			if (ret)
-				return ret;
-		}
-
-		/*
-		 * Clear the security bits if the process is not being run by
-		 * root.  This keeps people from modifying setuid and setgid
-		 * binaries.
-		 */
-		ret = file_remove_privs(file_out);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
 }
 
 loff_t bch2_remap_file_range(struct file *file_src, loff_t pos_src,
@@ -3265,7 +3014,7 @@ static loff_t page_hole_offset(struct address_space *mapping, loff_t offset)
 	loff_t ret = -1;
 
 	page = find_lock_entry(mapping, index);
-	if (!page || radix_tree_exception(page))
+	if (!page || xa_is_value(page))
 		return offset;
 
 	pg_offset = __page_hole_offset(page, offset & (PAGE_SIZE - 1));

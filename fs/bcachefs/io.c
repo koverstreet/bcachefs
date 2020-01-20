@@ -124,10 +124,10 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 
 void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
-	bio_for_each_segment_all(bv, bio, i)
+	bio_for_each_segment_all(bv, bio, iter)
 		if (bv->bv_page != ZERO_PAGE(0))
 			mempool_free(bv->bv_page, &c->bio_bounce_pages);
 	bio->bi_vcnt = 0;
@@ -292,18 +292,17 @@ int bch2_extent_update(struct btree_trans *trans,
 		if (delta || new_i_size) {
 			bch2_inode_pack(&inode_p, &inode_u);
 			bch2_trans_update(trans, inode_iter,
-					  &inode_p.inode.k_i);
+					  &inode_p.inode.k_i, 0);
 		}
 
 		bch2_trans_iter_put(trans, inode_iter);
 	}
 
-	bch2_trans_update(trans, iter, k);
+	bch2_trans_update(trans, iter, k, 0);
 
 	ret = bch2_trans_commit(trans, disk_res, journal_seq,
 				BTREE_INSERT_NOCHECK_RW|
 				BTREE_INSERT_NOFAIL|
-				BTREE_INSERT_ATOMIC|
 				BTREE_INSERT_USE_RESERVE);
 	if (!ret && i_sectors_delta)
 		*i_sectors_delta += delta;
@@ -326,6 +325,8 @@ int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 			bch2_disk_reservation_init(c, 0);
 		struct bkey_i delete;
 
+		bch2_trans_reset(trans, TRANS_RESET_MEM);
+
 		ret = bkey_err(k);
 		if (ret)
 			goto btree_err;
@@ -336,8 +337,6 @@ int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 		/* create the biggest key we can */
 		bch2_key_resize(&delete.k, max_sectors);
 		bch2_cut_back(end, &delete);
-
-		bch2_trans_begin_updates(trans);
 
 		ret = bch2_extent_update(trans, iter, &delete,
 				&disk_res, journal_seq,
@@ -400,13 +399,13 @@ int bch2_write_index_default(struct bch_write_op *op)
 				   BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
 	do {
+		bch2_trans_reset(&trans, TRANS_RESET_MEM);
+
 		k = bch2_keylist_front(keys);
 
 		bkey_on_stack_realloc(&sk, c, k->k.u64s);
 		bkey_copy(sk.k, k);
 		bch2_cut_front(iter->pos, sk.k);
-
-		bch2_trans_begin_updates(&trans);
 
 		ret = bch2_extent_update(&trans, iter, sk.k,
 					 &op->res, op_journal_seq(op),
@@ -501,12 +500,13 @@ static void bch2_write_done(struct closure *cl)
 
 	bch2_time_stats_update(&c->times[BCH_TIME_data_write], op->start_time);
 
-	if (op->end_io)
-		op->end_io(op);
-	if (cl->parent)
-		closure_return(cl);
-	else
+	if (op->end_io) {
+		EBUG_ON(cl->parent);
 		closure_debug_destroy(cl);
+		op->end_io(op);
+	} else {
+		closure_return(cl);
+	}
 }
 
 /**
@@ -1139,7 +1139,7 @@ static void bch2_write_data_inline(struct bch_write_op *op, unsigned data_len)
 	unsigned sectors;
 	int ret;
 
-	bch2_check_set_feature(op->c, BCH_FEATURE_INLINE_DATA);
+	bch2_check_set_feature(op->c, BCH_FEATURE_inline_data);
 
 	ret = bch2_keylist_realloc(&op->insert_keys, op->inline_keys,
 				   ARRAY_SIZE(op->inline_keys),
@@ -1233,12 +1233,14 @@ void bch2_write(struct closure *cl)
 err:
 	if (!(op->flags & BCH_WRITE_NOPUT_RESERVATION))
 		bch2_disk_reservation_put(c, &op->res);
-	if (op->end_io)
-		op->end_io(op);
-	if (cl->parent)
-		closure_return(cl);
-	else
+
+	if (op->end_io) {
+		EBUG_ON(cl->parent);
 		closure_debug_destroy(cl);
+		op->end_io(op);
+	} else {
+		closure_return(cl);
+	}
 }
 
 /* Cache promotion on read */
@@ -1736,9 +1738,8 @@ retry:
 	if (!bch2_bkey_narrow_crcs(new.k, new_crc))
 		goto out;
 
-	bch2_trans_update(&trans, iter, new.k);
+	bch2_trans_update(&trans, iter, new.k, 0);
 	ret = bch2_trans_commit(&trans, NULL, NULL,
-				BTREE_INSERT_ATOMIC|
 				BTREE_INSERT_NOFAIL|
 				BTREE_INSERT_NOWAIT);
 	if (ret == -EINTR)
@@ -1785,7 +1786,7 @@ static void __bch2_read_endio(struct work_struct *work)
 	crc.offset     += rbio->offset_into_extent;
 	crc.live_size	= bvec_iter_sectors(rbio->bvec_iter);
 
-	if (crc.compression_type != BCH_COMPRESSION_NONE) {
+	if (crc.compression_type != BCH_COMPRESSION_TYPE_none) {
 		bch2_encrypt_bio(c, crc.csum_type, nonce, src);
 		if (bch2_bio_uncompress(c, src, dst, dst_iter, crc))
 			goto decompression_err;
@@ -1978,7 +1979,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 			goto hole;
 
 		iter.bi_size	= pick.crc.compressed_size << 9;
-		goto noclone;
+		goto get_bio;
 	}
 
 	if (!(flags & BCH_READ_LAST_FRAGMENT) ||
@@ -1993,7 +1994,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 
 	EBUG_ON(offset_into_extent + bvec_iter_sectors(iter) > k.k->size);
 
-	if (pick.crc.compression_type != BCH_COMPRESSION_NONE ||
+	if (pick.crc.compression_type != BCH_COMPRESSION_TYPE_none ||
 	    (pick.crc.csum_type != BCH_CSUM_NONE &&
 	     (bvec_iter_sectors(iter) != pick.crc.uncompressed_size ||
 	      (bch2_csum_type_is_encryption(pick.crc.csum_type) &&
@@ -2025,7 +2026,7 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		pick.crc.live_size		= bvec_iter_sectors(iter);
 		offset_into_extent		= 0;
 	}
-
+get_bio:
 	if (rbio) {
 		/*
 		 * promote already allocated bounce rbio:
@@ -2063,7 +2064,6 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		rbio->bio.bi_iter = iter;
 		rbio->split	= true;
 	} else {
-noclone:
 		rbio = orig;
 		rbio->bio.bi_iter = iter;
 		EBUG_ON(bio_flagged(&rbio->bio, BIO_CHAIN));

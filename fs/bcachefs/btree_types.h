@@ -94,7 +94,6 @@ struct btree {
 	struct btree_nr_keys	nr;
 	u16			sib_u64s[2];
 	u16			whiteout_u64s;
-	u16			uncompacted_whiteout_u64s;
 	u8			page_order;
 	u8			unpack_fn_len;
 
@@ -185,9 +184,25 @@ enum btree_iter_type {
 
 #define BTREE_ITER_TYPE			((1 << 2) - 1)
 
+/*
+ * Iterate over all possible positions, synthesizing deleted keys for holes:
+ */
 #define BTREE_ITER_SLOTS		(1 << 2)
+/*
+ * Indicates that intent locks should be taken on leaf nodes, because we expect
+ * to be doing updates:
+ */
 #define BTREE_ITER_INTENT		(1 << 3)
+/*
+ * Causes the btree iterator code to prefetch additional btree nodes from disk:
+ */
 #define BTREE_ITER_PREFETCH		(1 << 4)
+/*
+ * Indicates that this iterator should not be reused until transaction commit,
+ * either because a pending update references it or because the update depends
+ * on that particular key being locked (e.g. by the str_hash code, for hash
+ * table consistency)
+ */
 #define BTREE_ITER_KEEP_UNTIL_COMMIT	(1 << 5)
 /*
  * Used in bch2_btree_iter_traverse(), to indicate whether we're searching for
@@ -195,6 +210,7 @@ enum btree_iter_type {
  */
 #define BTREE_ITER_IS_EXTENTS		(1 << 6)
 #define BTREE_ITER_ERROR		(1 << 7)
+#define BTREE_ITER_SET_POS_AFTER_COMMIT	(1 << 8)
 
 enum btree_iter_uptodate {
 	BTREE_ITER_UPTODATE		= 0,
@@ -211,12 +227,13 @@ enum btree_iter_uptodate {
  * @nodes_intent_locked	- bitmask indicating which locks are intent locks
  */
 struct btree_iter {
-	u8			idx;
-
 	struct btree_trans	*trans;
 	struct bpos		pos;
+	struct bpos		pos_after_commit;
 
-	u8			flags;
+	u16			flags;
+	u8			idx;
+
 	enum btree_iter_uptodate uptodate:4;
 	enum btree_id		btree_id:4;
 	unsigned		level:4,
@@ -243,6 +260,8 @@ static inline enum btree_iter_type btree_iter_type(struct btree_iter *iter)
 }
 
 struct btree_insert_entry {
+	unsigned		trigger_flags;
+	unsigned		trans_triggers_run:1;
 	struct bkey_i		*k;
 	struct btree_iter	*iter;
 };
@@ -263,6 +282,7 @@ struct btree_trans {
 	unsigned		used_mempool:1;
 	unsigned		error:1;
 	unsigned		nounlock:1;
+	unsigned		need_reset:1;
 
 	unsigned		mem_top;
 	unsigned		mem_bytes;
@@ -270,7 +290,6 @@ struct btree_trans {
 
 	struct btree_iter	*iters;
 	struct btree_insert_entry *updates;
-	u8			*updates_sorted;
 
 	/* update path: */
 	struct journal_res	journal_res;
@@ -279,11 +298,11 @@ struct btree_trans {
 	struct disk_reservation *disk_res;
 	unsigned		flags;
 	unsigned		journal_u64s;
+	unsigned		journal_preres_u64s;
 	struct replicas_delta_list *fs_usage_deltas;
 
 	struct btree_iter	iters_onstack[2];
-	struct btree_insert_entry updates_onstack[6];
-	u8			updates_sorted_onstack[6];
+	struct btree_insert_entry updates_onstack[2];
 };
 
 #define BTREE_FLAG(flag)						\
@@ -308,6 +327,7 @@ enum btree_flags {
 	BTREE_NODE_just_written,
 	BTREE_NODE_dying,
 	BTREE_NODE_fake,
+	BTREE_NODE_old_extent_overwrite,
 };
 
 BTREE_FLAG(read_in_flight);
@@ -321,6 +341,7 @@ BTREE_FLAG(write_in_flight);
 BTREE_FLAG(just_written);
 BTREE_FLAG(dying);
 BTREE_FLAG(fake);
+BTREE_FLAG(old_extent_overwrite);
 
 static inline struct btree_write *btree_current_write(struct btree *b)
 {
@@ -421,6 +442,11 @@ static inline unsigned bset_u64s(struct bset_tree *t)
 		sizeof(struct bset) / sizeof(u64);
 }
 
+static inline unsigned bset_dead_u64s(struct btree *b, struct bset_tree *t)
+{
+	return bset_u64s(t) - b->nr.bset_u64s[t - b->set];
+}
+
 static inline unsigned bset_byte_offset(struct btree *b, void *i)
 {
 	return i - (void *) b->data;
@@ -473,6 +499,32 @@ static inline bool btree_node_is_extents(struct btree *b)
 	((1U << BKEY_TYPE_EXTENTS)|			\
 	 (1U << BKEY_TYPE_INODES)|			\
 	 (1U << BKEY_TYPE_REFLINK))
+
+enum btree_trigger_flags {
+	__BTREE_TRIGGER_NORUN,		/* Don't run triggers at all */
+	__BTREE_TRIGGER_NOOVERWRITES,	/* Don't run triggers on overwrites */
+
+	__BTREE_TRIGGER_INSERT,
+	__BTREE_TRIGGER_OVERWRITE,
+	__BTREE_TRIGGER_OVERWRITE_SPLIT,
+
+	__BTREE_TRIGGER_GC,
+	__BTREE_TRIGGER_BUCKET_INVALIDATE,
+	__BTREE_TRIGGER_ALLOC_READ,
+	__BTREE_TRIGGER_NOATOMIC,
+};
+
+#define BTREE_TRIGGER_NORUN		(1U << __BTREE_TRIGGER_NORUN)
+#define BTREE_TRIGGER_NOOVERWRITES	(1U << __BTREE_TRIGGER_NOOVERWRITES)
+
+#define BTREE_TRIGGER_INSERT		(1U << __BTREE_TRIGGER_INSERT)
+#define BTREE_TRIGGER_OVERWRITE		(1U << __BTREE_TRIGGER_OVERWRITE)
+#define BTREE_TRIGGER_OVERWRITE_SPLIT	(1U << __BTREE_TRIGGER_OVERWRITE_SPLIT)
+
+#define BTREE_TRIGGER_GC		(1U << __BTREE_TRIGGER_GC)
+#define BTREE_TRIGGER_BUCKET_INVALIDATE	(1U << __BTREE_TRIGGER_BUCKET_INVALIDATE)
+#define BTREE_TRIGGER_ALLOC_READ	(1U << __BTREE_TRIGGER_ALLOC_READ)
+#define BTREE_TRIGGER_NOATOMIC		(1U << __BTREE_TRIGGER_NOATOMIC)
 
 static inline bool btree_node_type_needs_gc(enum btree_node_type type)
 {

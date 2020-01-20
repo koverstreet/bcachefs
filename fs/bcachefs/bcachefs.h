@@ -714,12 +714,12 @@ struct bch_fs {
 	struct rhashtable	promote_table;
 
 	mempool_t		compression_bounce[2];
-	mempool_t		compress_workspace[BCH_COMPRESSION_NR];
+	mempool_t		compress_workspace[BCH_COMPRESSION_TYPE_NR];
 	mempool_t		decompress_workspace;
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;

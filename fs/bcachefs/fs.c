@@ -140,7 +140,6 @@ retry:
 		bch2_inode_write(&trans, iter, &inode_u) ?:
 		bch2_trans_commit(&trans, NULL,
 				  &inode->ei_journal_seq,
-				  BTREE_INSERT_ATOMIC|
 				  BTREE_INSERT_NOUNLOCK|
 				  BTREE_INSERT_NOFAIL);
 	if (ret == -EINTR)
@@ -269,7 +268,6 @@ retry:
 		goto err_before_quota;
 
 	ret   = bch2_trans_commit(&trans, NULL, &journal_seq,
-				  BTREE_INSERT_ATOMIC|
 				  BTREE_INSERT_NOUNLOCK);
 	if (unlikely(ret)) {
 		bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, -1,
@@ -379,7 +377,7 @@ static int __bch2_link(struct bch_fs *c,
 		       struct dentry *dentry)
 {
 	struct btree_trans trans;
-	struct bch_inode_unpacked inode_u;
+	struct bch_inode_unpacked dir_u, inode_u;
 	int ret;
 
 	mutex_lock(&inode->ei_update_lock);
@@ -389,16 +387,21 @@ static int __bch2_link(struct bch_fs *c,
 		bch2_trans_begin(&trans);
 		ret   = bch2_link_trans(&trans,
 					dir->v.i_ino,
-					inode->v.i_ino, &inode_u,
+					inode->v.i_ino, &dir_u, &inode_u,
 					&dentry->d_name) ?:
 			bch2_trans_commit(&trans, NULL,
 					&inode->ei_journal_seq,
-					BTREE_INSERT_ATOMIC|
 					BTREE_INSERT_NOUNLOCK);
 	} while (ret == -EINTR);
 
-	if (likely(!ret))
+	if (likely(!ret)) {
+		BUG_ON(inode_u.bi_inum != inode->v.i_ino);
+
+		journal_seq_copy(inode, dir->ei_journal_seq);
+		bch2_inode_update_after_write(c, dir, &dir_u,
+					      ATTR_MTIME|ATTR_CTIME);
 		bch2_inode_update_after_write(c, inode, &inode_u, ATTR_CTIME);
+	}
 
 	bch2_trans_exit(&trans);
 	mutex_unlock(&inode->ei_update_lock);
@@ -444,7 +447,6 @@ static int bch2_unlink(struct inode *vdir, struct dentry *dentry)
 					  &inode_u, &dentry->d_name) ?:
 			bch2_trans_commit(&trans, NULL,
 					  &dir->ei_journal_seq,
-					  BTREE_INSERT_ATOMIC|
 					  BTREE_INSERT_NOUNLOCK|
 					  BTREE_INSERT_NOFAIL);
 	} while (ret == -EINTR);
@@ -573,7 +575,6 @@ retry:
 				  mode) ?:
 		bch2_trans_commit(&trans, NULL,
 				  &journal_seq,
-				  BTREE_INSERT_ATOMIC|
 				  BTREE_INSERT_NOUNLOCK);
 	if (ret == -EINTR)
 		goto retry;
@@ -706,7 +707,6 @@ retry:
 	ret =   bch2_inode_write(&trans, inode_iter, &inode_u) ?:
 		bch2_trans_commit(&trans, NULL,
 				  &inode->ei_journal_seq,
-				  BTREE_INSERT_ATOMIC|
 				  BTREE_INSERT_NOUNLOCK|
 				  BTREE_INSERT_NOFAIL);
 btree_err:
@@ -963,15 +963,6 @@ static int bch2_vfs_readdir(struct file *file, struct dir_context *ctx)
 	return bch2_readdir(c, inode->v.i_ino, ctx);
 }
 
-static int bch2_clone_file_range(struct file *file_src, loff_t pos_src,
-				 struct file *file_dst, loff_t pos_dst,
-				 u64 len)
-{
-	return bch2_remap_file_range(file_src, pos_src,
-				     file_dst, pos_dst,
-				     len, 0);
-}
-
 static const struct file_operations bch_file_operations = {
 	.llseek		= bch2_llseek,
 	.read_iter	= bch2_read_iter,
@@ -989,7 +980,7 @@ static const struct file_operations bch_file_operations = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= bch2_compat_fs_ioctl,
 #endif
-	.clone_file_range = bch2_clone_file_range,
+	.remap_file_range = bch2_remap_file_range,
 };
 
 static const struct inode_operations bch_file_inode_operations = {
@@ -1520,7 +1511,7 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 
 	sb->s_bdi->congested_fn		= bch2_congested;
 	sb->s_bdi->congested_data	= c;
-	sb->s_bdi->ra_pages		= VM_MAX_READAHEAD * 1024 / PAGE_SIZE;
+	sb->s_bdi->ra_pages		= VM_READAHEAD_PAGES;
 
 	for_each_online_member(ca, c, i) {
 		struct block_device *bdev = ca->disk_sb.bdev;
