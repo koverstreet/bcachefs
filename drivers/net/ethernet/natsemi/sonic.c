@@ -323,18 +323,19 @@ static irqreturn_t sonic_interrupt(int irq, void *dev_id)
 				if ((td_status = sonic_tda_get(dev, entry, SONIC_TD_STATUS)) == 0)
 					break;
 
-				if (td_status & 0x0001) {
+				if (td_status & SONIC_TCR_PTX) {
 					lp->stats.tx_packets++;
 					lp->stats.tx_bytes += sonic_tda_get(dev, entry, SONIC_TD_PKTSIZE);
 				} else {
-					lp->stats.tx_errors++;
-					if (td_status & 0x0642)
+					if (td_status & (SONIC_TCR_EXD |
+					    SONIC_TCR_EXC | SONIC_TCR_BCM))
 						lp->stats.tx_aborted_errors++;
-					if (td_status & 0x0180)
+					if (td_status &
+					    (SONIC_TCR_NCRS | SONIC_TCR_CRLS))
 						lp->stats.tx_carrier_errors++;
-					if (td_status & 0x0020)
+					if (td_status & SONIC_TCR_OWC)
 						lp->stats.tx_window_errors++;
-					if (td_status & 0x0004)
+					if (td_status & SONIC_TCR_FU)
 						lp->stats.tx_fifo_errors++;
 				}
 
@@ -364,17 +365,14 @@ static irqreturn_t sonic_interrupt(int irq, void *dev_id)
 		if (status & SONIC_INT_RFO) {
 			if (sonic_debug > 1)
 				printk("%s: rx fifo overrun\n", dev->name);
-			lp->stats.rx_fifo_errors++;
 		}
 		if (status & SONIC_INT_RDE) {
 			if (sonic_debug > 1)
 				printk("%s: rx descriptors exhausted\n", dev->name);
-			lp->stats.rx_dropped++;
 		}
 		if (status & SONIC_INT_RBAE) {
 			if (sonic_debug > 1)
 				printk("%s: rx buffer area exceeded\n", dev->name);
-			lp->stats.rx_dropped++;
 		}
 
 		/* counter overruns; all counters are 16bit wide */
@@ -465,11 +463,6 @@ static void sonic_rx(struct net_device *dev)
 			sonic_rra_put(dev, entry, SONIC_RR_BUFADR_H, bufadr_h);
 		} else {
 			/* This should only happen, if we enable accepting broken packets. */
-			lp->stats.rx_errors++;
-			if (status & SONIC_RCR_FAER)
-				lp->stats.rx_frame_errors++;
-			if (status & SONIC_RCR_CRCR)
-				lp->stats.rx_crc_errors++;
 		}
 		if (status & SONIC_RCR_LPKT) {
 			/*
