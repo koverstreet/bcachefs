@@ -626,6 +626,8 @@ static void sonic_multicast_list(struct net_device *dev)
 		    (netdev_mc_count(dev) > 15)) {
 			rcr |= SONIC_RCR_AMC;
 		} else {
+			unsigned long flags;
+
 			if (sonic_debug > 2)
 				printk("sonic_multicast_list: mc_count %d\n",
 				       netdev_mc_count(dev));
@@ -640,9 +642,14 @@ static void sonic_multicast_list(struct net_device *dev)
 				i++;
 			}
 			SONIC_WRITE(SONIC_CDC, 16);
-			/* issue Load CAM command */
 			SONIC_WRITE(SONIC_CDP, lp->cda_laddr & 0xffff);
+
+			/* LCAM and TXP commands can't be used simultaneously */
+			spin_lock_irqsave(&lp->lock, flags);
+			sonic_quiesce(dev, SONIC_CR_TXP);
 			SONIC_WRITE(SONIC_CMD, SONIC_CR_LCAM);
+			sonic_quiesce(dev, SONIC_CR_LCAM);
+			spin_unlock_irqrestore(&lp->lock, flags);
 		}
 	}
 
@@ -668,6 +675,9 @@ static int sonic_init(struct net_device *dev)
 	SONIC_WRITE(SONIC_IMR, 0);
 	SONIC_WRITE(SONIC_ISR, 0x7fff);
 	SONIC_WRITE(SONIC_CMD, SONIC_CR_RST);
+
+	/* While in reset mode, clear CAM Enable register */
+	SONIC_WRITE(SONIC_CE, 0);
 
 	/*
 	 * clear software reset flag, disable receiver, clear and
@@ -778,16 +788,7 @@ static int sonic_init(struct net_device *dev)
 	 * load the CAM
 	 */
 	SONIC_WRITE(SONIC_CMD, SONIC_CR_LCAM);
-
-	i = 0;
-	while (i++ < 100) {
-		if (SONIC_READ(SONIC_ISR) & SONIC_INT_LCD)
-			break;
-	}
-	if (sonic_debug > 2) {
-		printk("sonic_init: CMD=%x, ISR=%x\n, i=%d",
-		       SONIC_READ(SONIC_CMD), SONIC_READ(SONIC_ISR), i);
-	}
+	sonic_quiesce(dev, SONIC_CR_LCAM);
 
 	/*
 	 * enable receiver, disable loopback
