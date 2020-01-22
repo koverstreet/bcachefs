@@ -658,7 +658,6 @@ static void sonic_multicast_list(struct net_device *dev)
  */
 static int sonic_init(struct net_device *dev)
 {
-	unsigned int cmd;
 	struct sonic_local *lp = netdev_priv(dev);
 	int i;
 
@@ -675,7 +674,7 @@ static int sonic_init(struct net_device *dev)
 	 * enable interrupts, then completely initialize the SONIC
 	 */
 	SONIC_WRITE(SONIC_CMD, 0);
-	SONIC_WRITE(SONIC_CMD, SONIC_CR_RXDIS);
+	SONIC_WRITE(SONIC_CMD, SONIC_CR_RXDIS | SONIC_CR_STP);
 	sonic_quiesce(dev, SONIC_CR_ALL);
 
 	/*
@@ -706,14 +705,7 @@ static int sonic_init(struct net_device *dev)
 		printk("sonic_init: issuing RRRA command\n");
 
 	SONIC_WRITE(SONIC_CMD, SONIC_CR_RRRA);
-	i = 0;
-	while (i++ < 100) {
-		if (SONIC_READ(SONIC_CMD) & SONIC_CR_RRRA)
-			break;
-	}
-
-	if (sonic_debug > 2)
-		printk("sonic_init: status=%x i=%d\n", SONIC_READ(SONIC_CMD), i);
+	sonic_quiesce(dev, SONIC_CR_RRRA);
 
 	/*
 	 * Initialize the receive descriptors so that they
@@ -801,15 +793,11 @@ static int sonic_init(struct net_device *dev)
 	 * enable receiver, disable loopback
 	 * and enable all interrupts
 	 */
-	SONIC_WRITE(SONIC_CMD, SONIC_CR_RXEN | SONIC_CR_STP);
 	SONIC_WRITE(SONIC_RCR, SONIC_RCR_DEFAULT);
 	SONIC_WRITE(SONIC_TCR, SONIC_TCR_DEFAULT);
 	SONIC_WRITE(SONIC_ISR, 0x7fff);
 	SONIC_WRITE(SONIC_IMR, SONIC_IMR_DEFAULT);
-
-	cmd = SONIC_READ(SONIC_CMD);
-	if ((cmd & SONIC_CR_RXEN) == 0 || (cmd & SONIC_CR_STP) == 0)
-		printk(KERN_ERR "sonic_init: failed, status=%x\n", cmd);
+	SONIC_WRITE(SONIC_CMD, SONIC_CR_RXEN);
 
 	if (sonic_debug > 2)
 		printk("sonic_init: new status=%x\n",
