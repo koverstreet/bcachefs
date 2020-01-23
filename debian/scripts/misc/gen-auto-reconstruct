@@ -46,11 +46,6 @@ fi
 	git diff "$tag.." --raw --no-renames | awk -F '[: \t]' '{print $2, $3, $NF }' | \
 	while IFS=" " read old new name
 	do
-		# Exclude files in debian* directories
-		if [[ "$name" =~ ^debian ]]; then
-			continue
-		fi
-
 		old=$( printf "0%s" $old )
 		new=$( printf "0%s" $new )
 		changed=$(( (old ^ new) & 0111 ))
