@@ -1241,13 +1241,17 @@ static struct bkey_packed *bset_search_write_set(const struct btree *b,
 {
 	unsigned l = 0, r = t->size;
 
-	while (l + 1 != r) {
-		unsigned m = (l + r) >> 1;
+	BUG_ON(!t->size);
 
-		if (bkey_cmp(rw_aux_tree(b, t)[m].k, *search) < 0)
+	while (l < r) {
+		unsigned m = l + ((r - l) >> 1);
+
+		if (bkey_cmp(*search, rw_aux_tree(b, t)[m].k) <= 0)
+			r = m;
+		else if (l < m)
 			l = m;
 		else
-			r = m;
+			break;
 	}
 
 	return rw_aux_to_bkey(b, t, l);
