@@ -339,7 +339,8 @@ static inline void bkey_init(struct bkey *k)
 	x(stripe,		14)			\
 	x(reflink_p,		15)			\
 	x(reflink_v,		16)			\
-	x(inline_data,		17)
+	x(inline_data,		17)			\
+	x(btree_ptr_v2,		18)
 
 enum bch_bkey_type {
 #define x(name, nr) KEY_TYPE_##name	= nr,
@@ -595,6 +596,19 @@ struct bch_btree_ptr {
 	__u64			_data[0];
 } __attribute__((packed, aligned(8)));
 
+struct bch_btree_ptr_v2 {
+	struct bch_val		v;
+
+	__u64			mem_ptr;
+	__le64			seq;
+	__le16			sectors_written;
+	/* In case we ever decide to do variable size btree nodes: */
+	__le16			sectors;
+	struct bpos		min_key;
+	struct bch_extent_ptr	start[0];
+	__u64			_data[0];
+} __attribute__((packed, aligned(8)));
+
 struct bch_extent {
 	struct bch_val		v;
 
@@ -626,7 +640,8 @@ struct bch_reservation {
 
 /* Btree pointers don't carry around checksums: */
 #define BKEY_BTREE_PTR_VAL_U64s_MAX				\
-	((sizeof(struct bch_extent_ptr)) / sizeof(u64) * BCH_REPLICAS_MAX)
+	((sizeof(struct bch_btree_ptr_v2) +			\
+	  sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX) / sizeof(u64))
 #define BKEY_BTREE_PTR_U64s_MAX					\
 	(BKEY_U64s + BKEY_BTREE_PTR_VAL_U64s_MAX)
 
@@ -1295,7 +1310,8 @@ LE64_BITMASK(BCH_SB_ERASURE_CODE,	struct bch_sb, flags[3],  0, 16);
 	x(new_siphash,			7)	\
 	x(inline_data,			8)	\
 	x(new_extent_overwrite,		9)	\
-	x(incompressible,		10)
+	x(incompressible,		10)	\
+	x(btree_ptr_v2,			11)
 
 enum bch_sb_feature {
 #define x(f, n) BCH_FEATURE_##f,
