@@ -1985,7 +1985,7 @@ static int kdb_sr(int argc, const char **argv)
 		return KDB_ARGCOUNT;
 
 	kdb_trap_printk++;
-	__handle_sysrq(*argv[1], check_mask ? SYSRQ_FROM_KERNEL : 0);
+	__handle_sysrq(*argv[1], check_mask);
 	kdb_trap_printk--;
 
 	return 0;

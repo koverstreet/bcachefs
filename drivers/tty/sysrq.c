@@ -487,7 +487,6 @@ static struct sysrq_key_op *sysrq_key_table[36] = {
 	/* x: May be registered on mips for TLB dump */
 	/* x: May be registered on ppc/powerpc for xmon */
 	/* x: May be registered on sparc64 for global PMU dump */
-	/* x: May be registered on x86_64 for disabling secure boot */
 	NULL,				/* x */
 	/* y: May be registered on sparc64 for global register dump */
 	NULL,				/* y */
@@ -531,7 +530,7 @@ static void __sysrq_put_key_op(int key, struct sysrq_key_op *op_p)
                 sysrq_key_table[i] = op_p;
 }
 
-void __handle_sysrq(int key, unsigned int from)
+void __handle_sysrq(int key, bool check_mask)
 {
 	struct sysrq_key_op *op_p;
 	int orig_log_level;
@@ -551,15 +550,11 @@ void __handle_sysrq(int key, unsigned int from)
 
         op_p = __sysrq_get_key_op(key);
         if (op_p) {
-		/* Ban synthetic events from some sysrq functionality */
-		if ((from == SYSRQ_FROM_PROC || from == SYSRQ_FROM_SYNTHETIC) &&
-		    op_p->enable_mask & SYSRQ_DISABLE_USERSPACE) {
-			printk("This sysrq operation is disabled from userspace.\n");
-		} else if (from == SYSRQ_FROM_KERNEL || sysrq_on_mask(op_p->enable_mask)) {
-			/*
-			 * Should we check for enabled operations (/proc/sysrq-trigger
-			 * should not) and is the invoked operation enabled?
-			 */
+		/*
+		 * Should we check for enabled operations (/proc/sysrq-trigger
+		 * should not) and is the invoked operation enabled?
+		 */
+		if (!check_mask || sysrq_on_mask(op_p->enable_mask)) {
 			pr_cont("%s\n", op_p->action_msg);
 			console_loglevel = orig_log_level;
 			op_p->handler(key);
@@ -591,7 +586,7 @@ void __handle_sysrq(int key, unsigned int from)
 void handle_sysrq(int key)
 {
 	if (sysrq_on())
-		__handle_sysrq(key, SYSRQ_FROM_KERNEL);
+		__handle_sysrq(key, true);
 }
 EXPORT_SYMBOL(handle_sysrq);
 
@@ -672,7 +667,7 @@ static void sysrq_do_reset(struct timer_list *t)
 static void sysrq_handle_reset_request(struct sysrq_state *state)
 {
 	if (state->reset_requested)
-		__handle_sysrq(sysrq_xlate[KEY_B], SYSRQ_FROM_KERNEL);
+		__handle_sysrq(sysrq_xlate[KEY_B], false);
 
 	if (sysrq_reset_downtime_ms)
 		mod_timer(&state->keyreset_timer,
@@ -823,10 +818,8 @@ static bool sysrq_handle_keypress(struct sysrq_state *sysrq,
 
 	default:
 		if (sysrq->active && value && value != 2) {
-			int from = sysrq->handle.dev->flags & INPUTDEV_FLAGS_SYNTHETIC ?
-					SYSRQ_FROM_SYNTHETIC : 0;
 			sysrq->need_reinject = false;
-			__handle_sysrq(sysrq_xlate[code], from);
+			__handle_sysrq(sysrq_xlate[code], true);
 		}
 		break;
 	}
@@ -1109,7 +1102,7 @@ static ssize_t write_sysrq_trigger(struct file *file, const char __user *buf,
 
 		if (get_user(c, buf))
 			return -EFAULT;
-		__handle_sysrq(c, SYSRQ_FROM_PROC);
+		__handle_sysrq(c, false);
 	}
 
 	return count;
