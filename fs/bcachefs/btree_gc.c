@@ -293,21 +293,21 @@ static int bch2_gc_btree_init_recurse(struct bch_fs *c, struct btree *b,
 		if (ret)
 			break;
 
-		if (b->level > target_depth) {
+		if (b->c.level > target_depth) {
 			struct btree *child;
 			BKEY_PADDED(k) tmp;
 
 			bkey_reassemble(&tmp.k, k);
 
 			child = bch2_btree_node_get_noiter(c, &tmp.k,
-						b->btree_id, b->level - 1);
+						b->c.btree_id, b->c.level - 1);
 			ret = PTR_ERR_OR_ZERO(child);
 			if (ret)
 				break;
 
 			bch2_gc_btree_init_recurse(c, child,
 					journal_keys, target_depth);
-			six_unlock_read(&child->lock);
+			six_unlock_read(&child->c.lock);
 		}
 
 		bch2_btree_and_journal_iter_advance(&iter);
@@ -334,15 +334,15 @@ static int bch2_gc_btree_init(struct bch_fs *c,
 	if (btree_node_fake(b))
 		return 0;
 
-	six_lock_read(&b->lock, NULL, NULL);
-	if (b->level >= target_depth)
+	six_lock_read(&b->c.lock, NULL, NULL);
+	if (b->c.level >= target_depth)
 		ret = bch2_gc_btree_init_recurse(c, b,
 					journal_keys, target_depth);
 
 	if (!ret)
 		ret = bch2_gc_mark_key(c, bkey_i_to_s_c(&b->key),
 				       &max_stale, true);
-	six_unlock_read(&b->lock);
+	six_unlock_read(&b->c.lock);
 
 	return ret;
 }

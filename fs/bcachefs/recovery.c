@@ -185,7 +185,7 @@ void bch2_btree_and_journal_iter_init_node_iter(struct btree_and_journal_iter *i
 {
 	struct bpos start = b->data->min_key;
 
-	if (btree_node_type_is_extents(b->btree_id))
+	if (btree_node_type_is_extents(b->c.btree_id))
 		start = bkey_successor(start);
 
 	memset(iter, 0, sizeof(*iter));
@@ -193,7 +193,7 @@ void bch2_btree_and_journal_iter_init_node_iter(struct btree_and_journal_iter *i
 	iter->b = b;
 	bch2_btree_node_iter_init_from_start(&iter->node_iter, iter->b);
 	bch2_journal_iter_init(&iter->journal, journal_keys,
-			       b->btree_id, b->level, start);
+			       b->c.btree_id, b->c.level, start);
 }
 
 /* sort and dedup all keys in the journal: */
