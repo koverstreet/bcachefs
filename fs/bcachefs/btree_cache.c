@@ -795,12 +795,12 @@ retry:
 			return b;
 	} else {
 lock_node:
-		six_lock_read(&b->lock, NULL, NULL);
+		six_lock_read(&b->c.lock, NULL, NULL);
 
 		if (unlikely(b->hash_val != btree_ptr_hash_val(k) ||
-			     b->btree_id != btree_id ||
-			     b->level != level)) {
-			six_unlock_read(&b->lock);
+			     b->c.btree_id != btree_id ||
+			     b->c.level != level)) {
+			six_unlock_read(&b->c.lock);
 			goto retry;
 		}
 	}
@@ -824,11 +824,11 @@ lock_node:
 		set_btree_node_accessed(b);
 
 	if (unlikely(btree_node_read_error(b))) {
-		six_unlock_read(&b->lock);
+		six_unlock_read(&b->c.lock);
 		return ERR_PTR(-EIO);
 	}
 
-	EBUG_ON(b->btree_id != btree_id ||
+	EBUG_ON(b->c.btree_id != btree_id ||
 		BTREE_NODE_LEVEL(b->data) != level ||
 		bkey_cmp(b->data->max_key, k->k.p));
 
