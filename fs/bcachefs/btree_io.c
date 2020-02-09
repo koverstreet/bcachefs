@@ -1261,7 +1261,6 @@ void bch2_btree_complete_write(struct bch_fs *c, struct btree *b,
 		closure_put(&((struct btree_update *) new)->cl);
 
 	bch2_journal_pin_drop(&c->journal, &w->journal);
-	closure_wake_up(&w->wait);
 }
 
 static void btree_node_write_done(struct bch_fs *c, struct btree *b)
@@ -1794,12 +1793,11 @@ ssize_t bch2_dirty_btree_nodes_print(struct bch_fs *c, char *buf)
 	rcu_read_lock();
 	for_each_cached_btree(b, c, tbl, i, pos) {
 		unsigned long flags = READ_ONCE(b->flags);
-		unsigned idx = (flags & (1 << BTREE_NODE_write_idx)) != 0;
 
 		if (!(flags & (1 << BTREE_NODE_dirty)))
 			continue;
 
-		pr_buf(&out, "%p d %u n %u l %u w %u b %u r %u:%lu c %u p %u\n",
+		pr_buf(&out, "%p d %u n %u l %u w %u b %u r %u:%lu\n",
 		       b,
 		       (flags & (1 << BTREE_NODE_dirty)) != 0,
 		       (flags & (1 << BTREE_NODE_need_write)) != 0,
@@ -1807,9 +1805,7 @@ ssize_t bch2_dirty_btree_nodes_print(struct bch_fs *c, char *buf)
 		       b->written,
 		       !list_empty_careful(&b->write_blocked),
 		       b->will_make_reachable != 0,
-		       b->will_make_reachable & 1,
-		       b->writes[ idx].wait.list.first != NULL,
-		       b->writes[!idx].wait.list.first != NULL);
+		       b->will_make_reachable & 1);
 	}
 	rcu_read_unlock();
 
