@@ -1662,8 +1662,8 @@ unlock:
 }
 EXPORT_SYMBOL_GPL(hid_input_report);
 
-static bool hid_match_one_id(struct hid_device *hdev,
-		const struct hid_device_id *id)
+bool hid_match_one_id(const struct hid_device *hdev,
+		      const struct hid_device_id *id)
 {
 	return (id->bus == HID_BUS_ANY || id->bus == hdev->bus) &&
 		(id->group == HID_GROUP_ANY || id->group == hdev->group) &&
@@ -1671,7 +1671,7 @@ static bool hid_match_one_id(struct hid_device *hdev,
 		(id->product == HID_ANY_ID || id->product == hdev->product);
 }
 
-const struct hid_device_id *hid_match_id(struct hid_device *hdev,
+const struct hid_device_id *hid_match_id(const struct hid_device *hdev,
 		const struct hid_device_id *id)
 {
 	for (; id->bus; id++)
@@ -2681,6 +2681,7 @@ static struct bus_type hid_bus_type = {
 	.remove		= hid_device_remove,
 	.uevent		= hid_uevent,
 };
+EXPORT_SYMBOL(hid_bus_type);
 
 /* a list of devices that shouldn't be handled by HID core at all */
 static const struct hid_device_id hid_ignore_list[] = {
@@ -3014,6 +3015,8 @@ int hid_add_device(struct hid_device *hdev)
 	if (WARN_ON(hdev->status & HID_STAT_ADDED))
 		return -EBUSY;
 
+	hdev->quirks = hid_lookup_quirk(hdev);
+
 	/* we need to kill them here, otherwise they will stay allocated to
 	 * wait for coming driver */
 	if (hid_ignore(hdev))
@@ -3200,6 +3203,7 @@ static void __exit hid_exit(void)
 	hid_debug_exit();
 	hidraw_exit();
 	bus_unregister(&hid_bus_type);
+	hid_quirks_exit(HID_BUS_ANY);
 }
 
 module_init(hid_init);
