@@ -6937,7 +6937,6 @@ EXPORT_SYMBOL_GPL fs/ocfs2/ocfs2_stackglue 0x00000000	ocfs2_dlm_lock_status
 EXPORT_SYMBOL_GPL fs/ocfs2/ocfs2_stackglue 0x00000000	ocfs2_dlm_lvb
 EXPORT_SYMBOL_GPL fs/ocfs2/ocfs2_stackglue 0x00000000	ocfs2_dlm_lvb_valid
 EXPORT_SYMBOL_GPL fs/ocfs2/ocfs2_stackglue 0x00000000	ocfs2_dlm_unlock
-EXPORT_SYMBOL_GPL fs/ocfs2/ocfs2_stackglue 0x00000000	ocfs2_is_o2cb_active
 EXPORT_SYMBOL_GPL fs/ocfs2/ocfs2_stackglue 0x00000000	ocfs2_kset
 EXPORT_SYMBOL_GPL fs/ocfs2/ocfs2_stackglue 0x00000000	ocfs2_plock
 EXPORT_SYMBOL_GPL fs/ocfs2/ocfs2_stackglue 0x00000000	ocfs2_stack_glue_register
@@ -8126,7 +8125,6 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	add_hwgenerator_randomness
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	add_input_randomness
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	add_interrupt_randomness
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	add_memory
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	add_memory_resource
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	add_page_wait_queue
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	add_timer_on
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	add_to_page_cache_lru

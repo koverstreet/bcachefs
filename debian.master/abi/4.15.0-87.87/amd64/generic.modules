@@ -23,6 +23,7 @@
 842_compress
 842_decompress
 88pm800
+88pm800-regulator
 88pm805
 88pm80x
 88pm80x_onkey
@@ -644,7 +645,6 @@ cdc_mbim
 cdc_ncm
 cdc_subset
 cec
-cec-gpio
 ceph
 cfag12864b
 cfag12864bfb
