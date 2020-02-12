@@ -318,7 +318,7 @@ static int dell_uart_get_scalar_status(struct dell_uart_backlight *dell_pdata)
 	struct dell_uart_bl_cmd *bl_cmd = &uart_cmd[DELL_UART_GET_SCALAR];
 	struct uart_8250_port *uart = serial8250_get_port(dell_pdata->line);
 	int rx_len;
-	int status = 0, retry = 20;
+	int status = 0, retry = 50;
 
 	dell_uart_dump_cmd(__func__, "tx: ", bl_cmd->cmd, bl_cmd->tx_len);
 
