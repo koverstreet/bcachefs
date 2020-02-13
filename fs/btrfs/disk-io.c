@@ -2933,6 +2933,7 @@ retry_root_backup:
 	fs_info->fs_root = btrfs_read_fs_root_no_name(fs_info, &location);
 	if (IS_ERR(fs_info->fs_root)) {
 		err = PTR_ERR(fs_info->fs_root);
+		fs_info->fs_root = NULL;
 		goto fail_qgroup;
 	}
 
