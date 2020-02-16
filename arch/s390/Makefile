@@ -121,7 +121,7 @@ tools		:= arch/s390/tools
 
 all: image bzImage
 
-install: vmlinux
+install:
 	$(Q)$(MAKE) $(build)=$(boot) $@
 
 image bzImage: vmlinux
