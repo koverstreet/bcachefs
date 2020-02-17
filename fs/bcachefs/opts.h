@@ -89,7 +89,7 @@ enum opt_type {
 	x(errors,			u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
 	  OPT_STR(bch2_error_actions),					\
-	  BCH_SB_ERROR_ACTION,		BCH_ON_ERROR_RO,		\
+	  BCH_SB_ERROR_ACTION,		BCH_ON_ERROR_PANIC,		\
 	  NULL,		"Action to take on filesystem error")		\
 	x(metadata_replicas,		u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
@@ -232,7 +232,7 @@ enum opt_type {
 	x(fsck,				u8,				\
 	  OPT_MOUNT,							\
 	  OPT_BOOL(),							\
-	  NO_SB_OPT,			false,				\
+	  NO_SB_OPT,			true,				\
 	  NULL,		"Run fsck on mount")				\
 	x(fix_errors,			u8,				\
 	  OPT_MOUNT,							\
