@@ -671,13 +671,40 @@ static int __maybe_unused hts221_resume(struct device *dev)
 {
 	struct iio_dev *iio_dev = dev_get_drvdata(dev);
 	struct hts221_hw *hw = iio_priv(iio_dev);
+	const struct hts221_avg *avg;
+	u8 data, idx;
 	int err = 0;
+
+	/* Restore contents of AV_CONF (RH & TEMP. oversampling ratio's) */
+	avg = &hts221_avg_list[HTS221_SENSOR_H];
+	idx = hw->sensors[HTS221_SENSOR_H].cur_avg_idx;
+	data = avg->avg_avl[idx];
+	err = hts221_update_avg(hw, HTS221_SENSOR_H, data);
+	if (err < 0)
+		goto fail_err;
+
+	avg = &hts221_avg_list[HTS221_SENSOR_T];
+	idx = hw->sensors[HTS221_SENSOR_T].cur_avg_idx;
+	data = avg->avg_avl[idx];
+	err = hts221_update_avg(hw, HTS221_SENSOR_T, data);
+	if (err < 0)
+		goto fail_err;
+
+	/* Restore contents of CTRL1 (BDU & ODR) */
+	err = hts221_write_with_mask(hw, HTS221_REG_CNTRL1_ADDR,
+				     HTS221_BDU_MASK, 1);
+	if (err < 0)
+		goto fail_err;
+
+	err = hts221_update_odr(hw, hw->odr);
+	if (err < 0)
+		goto fail_err;
 
 	if (hw->enabled)
 		err = hts221_write_with_mask(hw, HTS221_REG_CNTRL1_ADDR,
 					     HTS221_ENABLE_MASK, true);
-
-	return err;
+fail_err:
+	return err < 0 ? err : 0;
 }
 
 const struct dev_pm_ops hts221_pm_ops = {
