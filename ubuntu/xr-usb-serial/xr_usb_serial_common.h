@@ -15,6 +15,9 @@
  */
 
 #include <linux/gpio/driver.h>
+#include <linux/usb/cdc.h>
+#include <linux/usb.h>
+#include <linux/tty.h>
 /*
  * CMSPAR, some architectures can't have space and mark parity.
  */

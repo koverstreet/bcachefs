@@ -1,0 +1,11 @@
+config USB_SERIAL_EXAR
+	bool "Exar USB UART (serial port) driver"
+	depends on X86 || X86_64
+	depends on TTY
+	depends on GPIOLIB
+	default y
+	---help---
+	  Say Y here if you want to use a Exar USB to Serial device.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called xr_usb_serial
