@@ -1146,7 +1146,7 @@ static void xr_usb_serial_tty_set_termios(struct tty_struct *tty,
     }
 
 		
-	if (memcmp(&xr_usb_serial->line, &newline, sizeof newline))
+	//if (memcmp(&xr_usb_serial->line, &newline, sizeof newline))
 	{
 		memcpy(&xr_usb_serial->line, &newline, sizeof newline);
 		/*
@@ -1819,11 +1819,21 @@ static int xr_usb_serial_resume(struct usb_interface *intf)
 {
 	struct xr_usb_serial *xr_usb_serial = usb_get_intfdata(intf);
 	struct xr_usb_serial_wb *wb;
+#if 0	
+	struct tty_struct *tty = xr_usb_serial->port.tty;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 7, 0)	
+	struct ktermios *termios = tty->termios;
+#else
+    struct ktermios *termios = &tty->termios;
+#endif
+#endif
 	int rv = 0;
 	int cnt;
 	     
 	xr_usb_serial_pre_setup(xr_usb_serial);
-	
+	xr_usb_serial_disable(xr_usb_serial);
+	xr_usb_serial_set_line(xr_usb_serial, &xr_usb_serial->line);
+	xr_usb_serial_enable(xr_usb_serial);	
 	spin_lock_irq(&xr_usb_serial->read_lock);
 	xr_usb_serial->susp_count -= 1;
 	cnt = xr_usb_serial->susp_count;

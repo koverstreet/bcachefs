@@ -1,6 +1,7 @@
 obj-m := xr_usb_serial_common.o
 
-KERNELDIR ?= /lib/modules/$(shell uname -r)/build
+#KERNELDIR ?= /lib/modules/$(shell uname -r)/build
+KERNELDIR ?=$(shell pwd)/../parts/kernel/build
 PWD       := $(shell pwd)
 
 EXTRA_CFLAGS	:= -DDEBUG=0
