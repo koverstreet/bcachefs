@@ -1,5 +1,8 @@
 Exar USB Serial Driver
 ======================
+Version 1B, 11/6/2015
+Fixed Bug: The conditional logic to support kernel 3.9 was incorrect(line 396 in xr_usb_serial_common.c). 
+
 Version 1A, 1/9/2015
 
 This driver will work with any USB UART function in these Exar devices:
