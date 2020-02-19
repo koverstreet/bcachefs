@@ -1215,23 +1215,24 @@ static int xr_usb_serial_write_buffers_alloc(struct xr_usb_serial *xr_usb_serial
 }
 
 #ifdef CONFIG_GPIOLIB
+
 static int xr_usb_gpio_get(struct gpio_chip *chip, unsigned offset)
 {
     struct xr_usb_serial *xr_usb_serial = container_of(chip, struct xr_usb_serial, xr_usb_gpio);
-	dev_dbg(chip->dev, "xr_usb_gpio_get offset = %d channel = %d\n",offset,xr_usb_serial->channel);
+	dev_dbg(chip->parent, "xr_usb_gpio_get offset = %d channel = %d\n",offset,xr_usb_serial->channel);
 	return 0;
 }
 
 static void xr_usb_gpio_set(struct gpio_chip *chip, unsigned offset, int val)
 {
    struct xr_usb_serial *xr_usb_serial = container_of(chip, struct xr_usb_serial, xr_usb_gpio);
-   dev_dbg(chip->dev, "xr_usb_gpio_set offset =%d val=%d channel = %d\n",offset,val,xr_usb_serial->channel);
+   dev_dbg(chip->parent, "xr_usb_gpio_set offset =%d val=%d channel = %d\n",offset,val,xr_usb_serial->channel);
 }
 
 static int xr_usb_gpio_direction_input(struct gpio_chip *chip,unsigned offset)
 {
 	struct xr_usb_serial *xr_usb_serial = container_of(chip, struct xr_usb_serial, xr_usb_gpio);
-    dev_dbg(chip->dev, "xr_usb_gpio_direction_input offset =%d channel = %d\n",offset,xr_usb_serial->channel);
+    dev_dbg(chip->parent, "xr_usb_gpio_direction_input offset =%d channel = %d\n",offset,xr_usb_serial->channel);
 	return 0;
 }
 
@@ -1239,7 +1240,7 @@ static int xr_usb_gpio_direction_output(struct gpio_chip *chip,
 					   unsigned offset, int val)
 {
     struct xr_usb_serial *xr_usb_serial = container_of(chip, struct xr_usb_serial, xr_usb_gpio);
-	dev_dbg(chip->dev, "xr_usb_gpio_direction_output offset =%d val=%d channel:%d\n",offset,val,xr_usb_serial->channel);
+	dev_dbg(chip->parent, "xr_usb_gpio_direction_output offset =%d val=%d channel:%d\n",offset,val,xr_usb_serial->channel);
 	return 0;
 }
 #endif
@@ -1676,7 +1677,7 @@ skip_countries:
 #ifdef CONFIG_GPIOLIB	
    	/* Setup GPIO cotroller */
 	xr_usb_serial->xr_usb_gpio.owner		 = THIS_MODULE;
-	xr_usb_serial->xr_usb_gpio.dev		 = &control_interface->dev;
+	xr_usb_serial->xr_usb_gpio.parent		 = &control_interface->dev;
 	xr_usb_serial->xr_usb_gpio.label		 = dev_name(&control_interface->dev);
 	xr_usb_serial->xr_usb_gpio.direction_input	 = xr_usb_gpio_direction_input;
 	xr_usb_serial->xr_usb_gpio.get		 = xr_usb_gpio_get;
