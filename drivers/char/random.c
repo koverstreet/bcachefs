@@ -1137,14 +1137,13 @@ static void add_timer_randomness(struct timer_rand_state *state, unsigned num)
 	 */
 
 	if (!state->dont_count_entropy) {
-		delta = sample.jiffies - state->last_time;
-		state->last_time = sample.jiffies;
+		delta = sample.jiffies - READ_ONCE(state->last_time);
 
-		delta2 = delta - state->last_delta;
-		state->last_delta = delta;
+		delta2 = delta - READ_ONCE(state->last_delta);
+		WRITE_ONCE(state->last_delta, delta);
 
-		delta3 = delta2 - state->last_delta2;
-		state->last_delta2 = delta2;
+		delta3 = delta2 - READ_ONCE(state->last_delta2);
+		WRITE_ONCE(state->last_delta2, delta2);
 
 		if (delta < 0)
 			delta = -delta;
