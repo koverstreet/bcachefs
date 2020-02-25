@@ -87,12 +87,12 @@ static int apparmor_ptrace_access_check(struct task_struct *child,
 	struct aa_label *tracer, *tracee;
 	int error;
 
-	tracer = __begin_current_label_crit_section();
+	tracer = begin_current_label_crit_section();
 	tracee = aa_get_task_label(child);
 	error = aa_may_ptrace(tracer, tracee,
 		  mode == PTRACE_MODE_READ ? AA_PTRACE_READ : AA_PTRACE_TRACE);
 	aa_put_label(tracee);
-	__end_current_label_crit_section(tracer);
+	end_current_label_crit_section(tracer);
 
 	return error;
 }
