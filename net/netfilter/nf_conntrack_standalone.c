@@ -399,7 +399,7 @@ static void *ct_cpu_seq_start(struct seq_file *seq, loff_t *pos)
 		*pos = cpu + 1;
 		return per_cpu_ptr(net->ct.stat, cpu);
 	}
-
+	(*pos)++;
 	return NULL;
 }
 
