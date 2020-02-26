@@ -824,6 +824,7 @@ EXPORT_SYMBOL drivers/gpu/drm/ttm/ttm 0x00000000	ttm_vt_lock
 EXPORT_SYMBOL drivers/gpu/drm/ttm/ttm 0x00000000	ttm_vt_unlock
 EXPORT_SYMBOL drivers/gpu/drm/ttm/ttm 0x00000000	ttm_write_lock
 EXPORT_SYMBOL drivers/gpu/drm/ttm/ttm 0x00000000	ttm_write_unlock
+EXPORT_SYMBOL drivers/hid/hid 0x00000000	hid_bus_type
 EXPORT_SYMBOL drivers/hwmon/hwmon-vid 0x00000000	vid_from_reg
 EXPORT_SYMBOL drivers/hwmon/hwmon-vid 0x00000000	vid_which_vrm
 EXPORT_SYMBOL drivers/hwmon/sch56xx-common 0x00000000	sch56xx_read_virtual_reg
@@ -11487,9 +11488,13 @@ EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_hw_start
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_hw_stop
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_ignore
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_input_report
+EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_lookup_quirk
+EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_match_device
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_open_report
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_output_report
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_parse_report
+EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_quirks_exit
+EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_quirks_init
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_register_report
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_report_raw_event
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_resolv_usage
@@ -11529,7 +11534,6 @@ EXPORT_SYMBOL_GPL drivers/hid/i2c-hid/i2c-hid 0x00000000	i2c_hid_ll_driver
 EXPORT_SYMBOL_GPL drivers/hid/uhid 0x00000000	uhid_hid_driver
 EXPORT_SYMBOL_GPL drivers/hid/usbhid/usbhid 0x00000000	hiddev_hid_event
 EXPORT_SYMBOL_GPL drivers/hid/usbhid/usbhid 0x00000000	usb_hid_driver
-EXPORT_SYMBOL_GPL drivers/hid/usbhid/usbhid 0x00000000	usbhid_lookup_quirk
 EXPORT_SYMBOL_GPL drivers/hsi/hsi 0x00000000	hsi_add_clients_from_dt
 EXPORT_SYMBOL_GPL drivers/hsi/hsi 0x00000000	hsi_alloc_controller
 EXPORT_SYMBOL_GPL drivers/hsi/hsi 0x00000000	hsi_alloc_msg
@@ -16739,7 +16743,6 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	ahci_check_ready
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ahci_dev_classify
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ahci_do_hardreset
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ahci_do_softreset
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	ahci_em_messages
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ahci_error_handler
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ahci_fill_cmd_slot
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ahci_handle_port_intr

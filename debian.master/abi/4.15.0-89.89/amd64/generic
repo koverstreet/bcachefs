@@ -835,6 +835,7 @@ EXPORT_SYMBOL drivers/gpu/drm/ttm/ttm 0x00000000	ttm_vt_lock
 EXPORT_SYMBOL drivers/gpu/drm/ttm/ttm 0x00000000	ttm_vt_unlock
 EXPORT_SYMBOL drivers/gpu/drm/ttm/ttm 0x00000000	ttm_write_lock
 EXPORT_SYMBOL drivers/gpu/drm/ttm/ttm 0x00000000	ttm_write_unlock
+EXPORT_SYMBOL drivers/hid/hid 0x00000000	hid_bus_type
 EXPORT_SYMBOL drivers/hid/intel-ish-hid/intel-ishtp 0x00000000	__ishtp_cl_driver_register
 EXPORT_SYMBOL drivers/hid/intel-ish-hid/intel-ishtp 0x00000000	ishtp_bus_remove_all_clients
 EXPORT_SYMBOL drivers/hid/intel-ish-hid/intel-ishtp 0x00000000	ishtp_cl_allocate
@@ -11985,7 +11986,6 @@ EXPORT_SYMBOL_GPL drivers/ata/libahci 0x00000000	ahci_check_ready
 EXPORT_SYMBOL_GPL drivers/ata/libahci 0x00000000	ahci_dev_classify
 EXPORT_SYMBOL_GPL drivers/ata/libahci 0x00000000	ahci_do_hardreset
 EXPORT_SYMBOL_GPL drivers/ata/libahci 0x00000000	ahci_do_softreset
-EXPORT_SYMBOL_GPL drivers/ata/libahci 0x00000000	ahci_em_messages
 EXPORT_SYMBOL_GPL drivers/ata/libahci 0x00000000	ahci_error_handler
 EXPORT_SYMBOL_GPL drivers/ata/libahci 0x00000000	ahci_fill_cmd_slot
 EXPORT_SYMBOL_GPL drivers/ata/libahci 0x00000000	ahci_handle_port_intr
@@ -12279,9 +12279,13 @@ EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_hw_start
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_hw_stop
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_ignore
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_input_report
+EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_lookup_quirk
+EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_match_device
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_open_report
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_output_report
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_parse_report
+EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_quirks_exit
+EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_quirks_init
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_register_report
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_report_raw_event
 EXPORT_SYMBOL_GPL drivers/hid/hid 0x00000000	hid_resolv_usage
@@ -12321,7 +12325,6 @@ EXPORT_SYMBOL_GPL drivers/hid/i2c-hid/i2c-hid 0x00000000	i2c_hid_ll_driver
 EXPORT_SYMBOL_GPL drivers/hid/uhid 0x00000000	uhid_hid_driver
 EXPORT_SYMBOL_GPL drivers/hid/usbhid/usbhid 0x00000000	hiddev_hid_event
 EXPORT_SYMBOL_GPL drivers/hid/usbhid/usbhid 0x00000000	usb_hid_driver
-EXPORT_SYMBOL_GPL drivers/hid/usbhid/usbhid 0x00000000	usbhid_lookup_quirk
 EXPORT_SYMBOL_GPL drivers/hsi/hsi 0x00000000	hsi_alloc_controller
 EXPORT_SYMBOL_GPL drivers/hsi/hsi 0x00000000	hsi_alloc_msg
 EXPORT_SYMBOL_GPL drivers/hsi/hsi 0x00000000	hsi_async
@@ -18251,17 +18254,14 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_scan_lock_release
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_set_modalias
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_complete
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_freeze
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_freeze_late
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_freeze_noirq
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_poweroff
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_prepare
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_resume_early
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_resume_noirq
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_restore_early
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_runtime_resume
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_runtime_suspend
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_suspend
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_suspend_late
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_suspend_noirq
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_subsys_thaw_noirq
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_target_system_state
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_unbind_one
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	acpi_unregister_gsi
