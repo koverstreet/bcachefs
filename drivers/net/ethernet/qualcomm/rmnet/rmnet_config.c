@@ -272,11 +272,9 @@ static void rmnet_force_unassociate_device(struct net_device *dev)
 	port = rmnet_get_port_rtnl(dev);
 	d.port = port;
 
-	rcu_read_lock();
 	rmnet_unregister_bridge(dev, port);
 
 	netdev_walk_all_lower_dev_rcu(real_dev, rmnet_dev_walk_unreg, &d);
-	rcu_read_unlock();
 	unregister_netdevice_many(&list);
 
 	rmnet_unregister_real_device(real_dev, port);
