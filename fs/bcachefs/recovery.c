@@ -323,12 +323,12 @@ static int bch2_extent_replay_key(struct bch_fs *c, enum btree_id btree_id,
 	int ret;
 
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
-retry:
-	bch2_trans_begin(&trans);
 
 	iter = bch2_trans_get_iter(&trans, btree_id,
 				   bkey_start_pos(&k->k),
 				   BTREE_ITER_INTENT);
+retry:
+	bch2_trans_begin(&trans);
 
 	do {
 		ret = bch2_btree_iter_traverse(iter);
@@ -375,6 +375,7 @@ retry:
 				  : BTREE_TRIGGER_NOOVERWRITES);
 
 		bch2_btree_iter_set_pos(iter, split->k.p);
+		bch2_trans_iter_put(&trans, split_iter);
 	} while (bkey_cmp(iter->pos, k->k.p) < 0);
 
 	if (remark) {
