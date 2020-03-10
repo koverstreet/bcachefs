@@ -513,6 +513,7 @@ static void smc_ib_remove_dev(struct ib_device *ibdev, void *client_data)
 	spin_unlock(&smc_ib_devices.lock);
 	smc_pnet_remove_by_ibdev(smcibdev);
 	smc_ib_cleanup_per_ibdev(smcibdev);
+	cancel_work_sync(&smcibdev->port_event_work);
 	kfree(smcibdev);
 }
 
