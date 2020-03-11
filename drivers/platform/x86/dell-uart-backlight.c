@@ -58,18 +58,6 @@ static struct dell_uart_bl_cmd uart_cmd[] = {
 		.tx_len	= 3,
 	},
 	/*
-	 * Get Scalar Status: Tool uses this command to check if scalar IC controls brightness.
-	 * Command: 0x6A 0x1F 0x8F (Length:3 Type: 0x0A, Cmd:0x1F Checksum:0x76)
-	 * Return data: 0x04 0x1F Data checksum
-	 * (Data = 0: scalar cannot adjust brightness, Data = 1: scalar can adjust brightness)
-	 */
-	[DELL_UART_GET_SCALAR] = {
-		.cmd	= {0x6A,0x1F,0x76},
-		.ret	= {0x04,0x1F,0x00,0x00},
-		.tx_len	= 3,
-		.rx_len	= 4,
-	},
-	/*
 	 * Get Brightness level: Application uses this command for scaler to
 	 *                       get brightness.
 	 * Command: 0x6A 0x0C 0x89
@@ -114,6 +102,21 @@ static struct dell_uart_bl_cmd uart_cmd[] = {
 		.ret	= {0x03, 0x0E, 0xEE},
 		.tx_len	= 4,
 		.rx_len	= 3,
+	},
+	/*
+	 * Get display mode: Application uses this command to get scaler
+	 * 		     display mode.
+	 * Command: 0x6A 0x10 0x85 (Length:3 Type: 0x0A, Cmd:0x10)
+	 * Return data: 0x04 0x10 Data checksum
+	 * 		(Length:4 Cmd:0x10 Data: mode checksum: SUM
+	 *		mode =0 if PC mode
+	 *		mode =1 if AV(HDMI) mode
+	 */
+	[DELL_UART_GET_DISPLAY_MODE] = {
+		.cmd	= {0x6A, 0x10, 0x85},
+		.ret	= {0x04, 0x10, 0x00, 0x00},
+		.tx_len	= 3,
+		.rx_len	= 4,
 	},
 };
 
@@ -313,37 +316,6 @@ static int dell_uart_update_status(struct backlight_device *bd)
 	return 0;
 }
 
-static int dell_uart_get_scalar_status(struct dell_uart_backlight *dell_pdata)
-{
-	struct dell_uart_bl_cmd *bl_cmd = &uart_cmd[DELL_UART_GET_SCALAR];
-	struct uart_8250_port *uart = serial8250_get_port(dell_pdata->line);
-	int rx_len;
-	int status = 0, retry = 50;
-
-	dell_uart_dump_cmd(__func__, "tx: ", bl_cmd->cmd, bl_cmd->tx_len);
-
-	if (mutex_lock_killable(&dell_pdata->brightness_mutex) < 0) {
-		pr_debug("Failed to get mutex_lock");
-		return 0;
-	}
-
-	dell_uart_write(uart, bl_cmd->cmd, bl_cmd->tx_len);
-	do {
-		rx_len = dell_uart_read(uart, bl_cmd->ret, bl_cmd->rx_len);
-		if (rx_len == 0)
-			msleep(100);
-	} while (rx_len == 0 && --retry);
-
-	mutex_unlock(&dell_pdata->brightness_mutex);
-
-	dell_uart_dump_cmd(__func__, "rx: ", bl_cmd->ret, rx_len);
-
-	if (rx_len == 4)
-		status = (unsigned int)bl_cmd->ret[2];
-
-	return status;
-}
-
 static int dell_uart_show_firmware_ver(struct dell_uart_backlight *dell_pdata)
 {
 	struct dell_uart_bl_cmd *bl_cmd = &uart_cmd[DELL_UART_GET_FIRMWARE_VER];
@@ -381,6 +353,36 @@ static int dell_uart_show_firmware_ver(struct dell_uart_backlight *dell_pdata)
 
 	pr_debug("Firmare str(%d)= %s\n", (int)bl_cmd->ret[0], bl_cmd->ret+2);
 	return rx_len;
+}
+
+static int dell_uart_get_display_mode(struct dell_uart_backlight *dell_pdata)
+{
+	struct dell_uart_bl_cmd *bl_cmd = &uart_cmd[DELL_UART_GET_DISPLAY_MODE];
+	struct uart_8250_port *uart = serial8250_get_port(dell_pdata->line);
+	int rx_len;
+	int status = 0, retry = 10;
+
+	do {
+		dell_uart_dump_cmd(__func__, "tx: ", bl_cmd->cmd, bl_cmd->tx_len);
+
+		if (mutex_lock_killable(&dell_pdata->brightness_mutex) < 0) {
+			pr_debug("Failed to get mutex_lock");
+			return 0;
+		}
+
+		dell_uart_write(uart, bl_cmd->cmd, bl_cmd->tx_len);
+		rx_len = dell_uart_read(uart, bl_cmd->ret, bl_cmd->rx_len);
+
+		mutex_unlock(&dell_pdata->brightness_mutex);
+
+		dell_uart_dump_cmd(__func__, "rx: ", bl_cmd->ret, rx_len);
+		msleep(1000);
+	} while (rx_len == 0 && --retry);
+
+	if (rx_len == 4)
+		status = ((unsigned int)bl_cmd->ret[2] == PC_MODE);
+
+	return status;
 }
 
 static const struct backlight_ops dell_uart_backlight_ops = {
@@ -430,13 +432,12 @@ static int dell_uart_bl_add(struct acpi_device *dev)
 				return -ENODEV;
 			}
 		}
-		else if (!dell_uart_get_scalar_status(dell_pdata)) {
+		else if (!dell_uart_get_display_mode(dell_pdata)) {
 			pr_debug("Scalar is not in charge of brightness adjustment.\n");
 			kzfree(dell_pdata);
 			return -ENODEV;
 		}
 	}
-	dell_uart_show_firmware_ver(dell_pdata);
 
 	memset(&props, 0, sizeof(struct backlight_properties));
 	props.type = BACKLIGHT_PLATFORM;
