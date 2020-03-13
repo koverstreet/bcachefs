@@ -1,3 +1,5 @@
 spl-linux 0.7.5-1ubuntu2
 zfs-linux 0.7.5-1ubuntu16.7
 nvidia-graphics-drivers-390 390.116-0ubuntu0.18.04.3
+nvidia-graphics-drivers-435 0
+nvidia-graphics-drivers-440 0
