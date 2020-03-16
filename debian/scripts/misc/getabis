@@ -141,7 +141,7 @@ getall_set()
 				echo "    $version"
 			)
 		# FORM 2: moduleinfo packages
-		# cranky-fix -- modinfo supported
+		# cranky fix -- modinfo supported
 		else
 			echo "  buildinfo..."
 			base="tmp/usr/lib/linux/${verabi}-${sub}"
