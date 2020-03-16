@@ -1244,6 +1244,8 @@ static int erspan_netlink_parms(struct net_device *dev,
 	err = ipgre_netlink_parms(dev, data, tb, parms, fwmark);
 	if (err)
 		return err;
+	if (!data)
+		return 0;
 
 	if (data[IFLA_GRE_ERSPAN_INDEX]) {
 		t->index = nla_get_u32(data[IFLA_GRE_ERSPAN_INDEX]);
