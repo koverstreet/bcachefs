@@ -1807,7 +1807,7 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 	struct bio_vec *bv;
 	unsigned unaligned;
 	u64 new_i_size;
-	bool sync;
+	bool sync = dio->sync;
 	long ret;
 
 	if (dio->loop)
@@ -1855,7 +1855,7 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 				iov = kmalloc(dio->iter.nr_segs * sizeof(*iov),
 					      GFP_KERNEL);
 				if (unlikely(!iov)) {
-					dio->sync = true;
+					dio->sync = sync = true;
 					goto do_io;
 				}
 
@@ -1869,7 +1869,7 @@ do_io:
 		dio->loop = true;
 		closure_call(&dio->op.cl, bch2_write, NULL, NULL);
 
-		if (dio->sync)
+		if (sync)
 			wait_for_completion(&dio->done);
 		else
 			return -EIOCBQUEUED;
@@ -1903,7 +1903,6 @@ err:
 	if (dio->free_iov)
 		kfree(dio->iter.iov);
 
-	sync = dio->sync;
 	bio_put(bio);
 
 	/* inode->i_dio_count is our ref on inode and thus bch_fs */
