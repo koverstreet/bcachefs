@@ -107,7 +107,7 @@ if [ -z "$DEBIAN" ] || [ ! -d "$DEBIAN" ]; then
 fi
 
 # Abort if changes or untracked files are found in the debian
-# directory (ie, in "debian.master/"). cranky-open is expected to
+# directory (ie, in "debian.master/"). cranky open is expected to
 # change and commit files in this directory.
 if ! git diff-index --quiet HEAD -- "$DEBIAN/" || \
 		[ -n "$(git ls-files --others -- "$DEBIAN/")" ]; then
