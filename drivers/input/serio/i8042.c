@@ -927,25 +927,28 @@ static int i8042_controller_selftest(void)
 {
 	unsigned char param;
 	int i = 0;
+	int ret;
 
 	/*
 	 * We try this 5 times; on some really fragile systems this does not
 	 * take the first time...
 	 */
-	do {
+	while (i++ < 5) {
 
-		if (i8042_command(&param, I8042_CMD_CTL_TEST)) {
-			pr_info("i8042 controller selftest timeout\n");
-			return -ENODEV;
-		}
-
-		if (param == I8042_RET_CTL_TEST)
+		ret = i8042_command(&param, I8042_CMD_CTL_TEST);
+		if (ret)
+			pr_info("i8042 controller selftest timeout (%d/5)\n", i);
+		else if (param == I8042_RET_CTL_TEST)
 			return 0;
+		else
+			dbg("i8042 controller selftest: %#x != %#x\n",
+			    param, I8042_RET_CTL_TEST);
 
-		dbg("i8042 controller selftest: %#x != %#x\n",
-		    param, I8042_RET_CTL_TEST);
 		msleep(50);
-	} while (i++ < 5);
+	}
+
+	if (ret)
+		return -ENODEV;
 
 #ifdef CONFIG_X86
 	/*
