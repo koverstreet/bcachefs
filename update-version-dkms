@@ -50,7 +50,8 @@ EOL
 done <"debian/dkms-versions"
 if ! cmp -s "debian/dkms-versions.new" "debian/dkms-versions"; then
 	mv -f "debian/dkms-versions.new" "debian/dkms-versions"
-	git commit -a -s -m "UBUNTU: update dkms package versions"
+	git commit -a -s -m "UBUNTU: update dkms package versions" \
+		-m "BugLink: https://bugs.launchpad.net/bugs/1786013"
 else
 	rm -f "debian/dkms-versions.new"
 fi
