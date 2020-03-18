@@ -46,6 +46,28 @@ static inline int btree_iter_err(const struct btree_iter *iter)
 	return iter->flags & BTREE_ITER_ERROR ? -EIO : 0;
 }
 
+static inline struct btree_iter *iter_child(struct btree_iter *iter)
+{
+	return iter->child_iter
+		? iter->trans->iters + iter->child_iter - 1
+		: NULL;
+}
+
+static inline struct btree_iter *iter_parent(struct btree_iter *iter)
+{
+	return iter->parent_iter
+		? iter->trans->iters + iter->parent_iter - 1
+		: iter;
+}
+
+static inline bool iter_live(struct btree_trans *trans, struct btree_iter *iter)
+{
+	unsigned idx = iter->parent_iter
+		? iter->parent_iter - 1
+		: iter->idx;
+	return (trans->iters_live & (1ULL << idx)) != 0;
+}
+
 /* Iterate over iters within a transaction: */
 
 #define trans_for_each_iter_all(_trans, _iter)				\

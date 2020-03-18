@@ -228,11 +228,16 @@ enum btree_iter_uptodate {
  */
 struct btree_iter {
 	struct btree_trans	*trans;
+	unsigned long		ip_allocated;
+
+	u8			idx;
+	u8			child_iter;
+	u8			parent_iter;
+
 	struct bpos		pos;
 	struct bpos		pos_after_commit;
 
 	u16			flags;
-	u8			idx;
 
 	enum btree_id		btree_id:4;
 	enum btree_iter_uptodate uptodate:4;
@@ -253,7 +258,6 @@ struct btree_iter {
 	 * bch2_btree_iter_next_slot() can correctly advance pos.
 	 */
 	struct bkey		k;
-	unsigned long		ip_allocated;
 };
 
 static inline enum btree_iter_type btree_iter_type(struct btree_iter *iter)

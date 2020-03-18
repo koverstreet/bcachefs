@@ -20,6 +20,24 @@
 #define BTREE_ITER_NO_NODE_INIT		((struct btree *) 6)
 #define BTREE_ITER_NO_NODE_ERROR	((struct btree *) 7)
 
+static inline void btree_iter_copy(struct btree_iter *, struct btree_iter *);
+static struct btree_iter *btree_trans_iter_alloc(struct btree_trans *);
+
+static inline void iter_child_set(struct btree_iter *iter, struct btree_iter *child)
+{
+	BUG_ON(iter->child_iter);
+	BUG_ON(child->parent_iter);
+
+	/*
+	 * an iterator is live when something has a reference to it, thus child
+	 * iterators are always live:
+	 */
+	iter->trans->iters_live |= 1ULL << child->idx;
+
+	iter->child_iter = child->idx + 1;
+	child->parent_iter = iter->idx + 1;
+}
+
 static inline bool is_btree_node(struct btree_iter *iter, unsigned l)
 {
 	return l < BTREE_MAX_DEPTH &&
@@ -1654,8 +1672,8 @@ struct bkey_s_c bch2_btree_iter_prev(struct btree_iter *iter)
 static inline struct bkey_s_c
 __bch2_btree_iter_peek_slot_extents(struct btree_iter *iter)
 {
-	struct btree_iter_level *l = &iter->l[0];
-	struct btree_node_iter node_iter;
+	struct btree_trans *trans = iter->trans;
+	struct btree_iter *next_key_iter;
 	struct bkey_s_c k;
 	struct bkey n;
 	int ret;
@@ -1672,37 +1690,44 @@ __bch2_btree_iter_peek_slot_extents(struct btree_iter *iter)
 			return bkey_s_c_err(ret);
 	}
 
-	/*
-	 * iterator is now at the correct position for inserting at iter->pos,
-	 * but we need to keep iterating until we find the first non whiteout so
-	 * we know how big a hole we have, if any:
-	 */
+	next_key_iter = iter_child(iter);
+	if (!next_key_iter) {
+		next_key_iter = btree_trans_iter_alloc(trans);
+		if ((ret = PTR_ERR_OR_ZERO(next_key_iter)))
+			return bkey_s_c_err(ret);
 
-	node_iter = l->iter;
-	k = __btree_iter_unpack(iter, l, &iter->k,
-		bch2_btree_node_iter_peek(&node_iter, l->b));
+		iter_child_set(iter, next_key_iter);
+	} else {
+		__bch2_btree_iter_unlock(next_key_iter);
+	}
+
+	btree_iter_copy(next_key_iter, iter);
+
+	k = bch2_btree_iter_peek(next_key_iter);
+	if (bkey_err(k))
+		return k;
 
 	if (k.k && bkey_cmp(bkey_start_pos(k.k), iter->pos) <= 0) {
 		/*
-		 * We're not setting iter->uptodate because the node iterator
-		 * doesn't necessarily point at the key we're returning:
+		 * We're not setting iter->uptodate because @iter doesn't point
+		 * to the key we're returning:
+		 *
+		 * XXX perhaps it should?
 		 */
 
 		EBUG_ON(bkey_cmp(k.k->p, iter->pos) <= 0);
+		iter->k = *k.k;
 		bch2_btree_iter_verify_level(iter, 0);
 		return k;
 	}
 
 	/* hole */
 
-	if (!k.k)
-		k.k = &l->b->key.k;
-
 	bkey_init(&n);
 	n.p = iter->pos;
 	bch2_key_resize(&n,
 			min_t(u64, KEY_SIZE_MAX,
-			      (k.k->p.inode == n.p.inode
+			      (k.k && k.k->p.inode == n.p.inode
 			       ? bkey_start_offset(k.k)
 			       : KEY_OFFSET_MAX) -
 			      n.p.offset));
@@ -1780,6 +1805,8 @@ static inline void bch2_btree_iter_init(struct btree_trans *trans,
 	iter->k.p			= pos;
 	iter->flags			= flags;
 	iter->uptodate			= BTREE_ITER_NEED_TRAVERSE;
+	iter->child_iter		= 0;
+	iter->parent_iter		= 0;
 	iter->btree_id			= btree_id;
 	iter->level			= 0;
 	iter->min_depth			= 0;
@@ -1797,10 +1824,20 @@ static inline void bch2_btree_iter_init(struct btree_trans *trans,
 static inline void __bch2_trans_iter_free(struct btree_trans *trans,
 					  unsigned idx)
 {
+	unsigned child_iter;
+again:
+	child_iter = trans->iters[idx].child_iter;
+	trans->iters[idx].child_iter = 0;
+
 	__bch2_btree_iter_unlock(&trans->iters[idx]);
 	trans->iters_linked		&= ~(1ULL << idx);
 	trans->iters_live		&= ~(1ULL << idx);
 	trans->iters_touched		&= ~(1ULL << idx);
+
+	if (child_iter) {
+		idx = child_iter - 1;
+		goto again;
+	}
 }
 
 int bch2_trans_iter_put(struct btree_trans *trans,
@@ -1933,8 +1970,12 @@ static struct btree_iter *btree_trans_iter_alloc(struct btree_trans *trans)
 	idx = trans->nr_iters++;
 	BUG_ON(trans->nr_iters > trans->size);
 
-	trans->iters[idx].idx = idx;
+	trans->iters[idx].trans		= trans;
+	trans->iters[idx].idx		= idx;
 got_slot:
+	trans->iters[idx].child_iter	= 0;
+	trans->iters[idx].parent_iter	= 0;
+
 	BUG_ON(trans->iters_linked & (1ULL << idx));
 	trans->iters_linked |= 1ULL << idx;
 	trans->iters[idx].flags = 0;
@@ -1944,10 +1985,11 @@ got_slot:
 static inline void btree_iter_copy(struct btree_iter *dst,
 				   struct btree_iter *src)
 {
-	unsigned i, idx = dst->idx;
+	unsigned i;
 
-	*dst = *src;
-	dst->idx = idx;
+	memcpy(&dst->pos,
+	       &src->pos,
+	       sizeof(struct btree_iter) - offsetof(struct btree_iter, pos));
 
 	for (i = 0; i < BTREE_MAX_DEPTH; i++)
 		if (btree_node_locked(dst, i))

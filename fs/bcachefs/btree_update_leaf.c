@@ -489,7 +489,7 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 	trans_for_each_iter_all(trans, iter) {
 		if (iter->nodes_locked != iter->nodes_intent_locked) {
 			EBUG_ON(iter->flags & BTREE_ITER_KEEP_UNTIL_COMMIT);
-			EBUG_ON(trans->iters_live & (1ULL << iter->idx));
+			EBUG_ON(iter_live(trans, iter));
 			bch2_btree_iter_unlock_noinline(iter);
 		}
 	}
