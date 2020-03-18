@@ -446,7 +446,7 @@ static ssize_t acpi_data_show(struct file *filp, struct kobject *kobj,
 	base = acpi_os_map_memory(data_attr->addr, data_attr->attr.size);
 	if (!base)
 		return -ENOMEM;
-	rc = memory_read_from_buffer(buf, count, &offset, base,
+	rc = memory_read_from_io_buffer(buf, count, &offset, base,
 				     data_attr->attr.size);
 	acpi_os_unmap_memory(base, data_attr->attr.size);
 
