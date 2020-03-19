@@ -2693,8 +2693,10 @@ static int do_tcp_setsockopt(struct sock *sk, int level,
 			err = -EPERM;
 		else if (tp->repair_queue == TCP_SEND_QUEUE)
 			tp->write_seq = val;
-		else if (tp->repair_queue == TCP_RECV_QUEUE)
+		else if (tp->repair_queue == TCP_RECV_QUEUE) {
 			tp->rcv_nxt = val;
+			tp->copied_seq = val;
+		}
 		else
 			err = -EINVAL;
 		break;
