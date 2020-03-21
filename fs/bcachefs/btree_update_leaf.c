@@ -764,10 +764,8 @@ static int extent_handle_overwrites(struct btree_trans *trans,
 			if ((ret = PTR_ERR_OR_ZERO(update)))
 				goto err;
 
-			update->k = *k.k;
-			set_bkey_val_u64s(&update->k, 0);
-			update->k.type = KEY_TYPE_deleted;
-			update->k.size = 0;
+			bkey_init(&update->k);
+			update->k.p = k.k->p;
 
 			__bch2_btree_iter_set_pos(update_iter, update->k.p, false);
 			bch2_trans_update2(trans, update_iter, update);
