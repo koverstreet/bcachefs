@@ -191,6 +191,7 @@ struct nvme_ctrl {
 	struct work_struct async_event_work;
 	struct delayed_work ka_work;
 	struct work_struct fw_act_work;
+	bool created;
 
 	/* Power saving configuration */
 	u64 ps_max_latency_us;
