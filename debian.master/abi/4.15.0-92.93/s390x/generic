@@ -2125,6 +2125,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	bioset_integrity_free
 EXPORT_SYMBOL vmlinux 0x00000000	bit_wait
 EXPORT_SYMBOL vmlinux 0x00000000	bit_wait_io
 EXPORT_SYMBOL vmlinux 0x00000000	bit_waitqueue
+EXPORT_SYMBOL vmlinux 0x00000000	bitmap_alloc
 EXPORT_SYMBOL vmlinux 0x00000000	bitmap_allocate_region
 EXPORT_SYMBOL vmlinux 0x00000000	bitmap_bitremap
 EXPORT_SYMBOL vmlinux 0x00000000	bitmap_close_sync
@@ -2150,6 +2151,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	bitmap_sync_with_cluster
 EXPORT_SYMBOL vmlinux 0x00000000	bitmap_to_u32array
 EXPORT_SYMBOL vmlinux 0x00000000	bitmap_unplug
 EXPORT_SYMBOL vmlinux 0x00000000	bitmap_update_sb
+EXPORT_SYMBOL vmlinux 0x00000000	bitmap_zalloc
 EXPORT_SYMBOL vmlinux 0x00000000	blk_alloc_queue
 EXPORT_SYMBOL vmlinux 0x00000000	blk_alloc_queue_node
 EXPORT_SYMBOL vmlinux 0x00000000	blk_check_plugged
@@ -3695,6 +3697,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	mb_cache_entry_find_first
 EXPORT_SYMBOL vmlinux 0x00000000	mb_cache_entry_find_next
 EXPORT_SYMBOL vmlinux 0x00000000	mb_cache_entry_get
 EXPORT_SYMBOL vmlinux 0x00000000	mb_cache_entry_touch
+EXPORT_SYMBOL vmlinux 0x00000000	md_bitmap_free
 EXPORT_SYMBOL vmlinux 0x00000000	md_check_no_bitmap
 EXPORT_SYMBOL vmlinux 0x00000000	md_check_recovery
 EXPORT_SYMBOL vmlinux 0x00000000	md_cluster_mod
@@ -8559,7 +8562,6 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_shash_final
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_shash_finup
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_shash_setkey
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_shash_update
-EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_shoot_alg
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_spawn_tfm
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_spawn_tfm2
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	crypto_tfm_in_queue
