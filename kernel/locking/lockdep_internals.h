@@ -96,7 +96,7 @@ static const unsigned long LOCKF_USED_IN_IRQ_READ =
 #else
 #define MAX_LOCKDEP_ENTRIES	32768UL
 
-#define MAX_LOCKDEP_CHAINS_BITS	16
+#define MAX_LOCKDEP_CHAINS_BITS	18
 
 /*
  * Stack-trace: tightly packed array of stack backtrace
@@ -114,7 +114,7 @@ static const unsigned long LOCKF_USED_IN_IRQ_READ =
 
 #define MAX_LOCKDEP_CHAINS	(1UL << MAX_LOCKDEP_CHAINS_BITS)
 
-#define MAX_LOCKDEP_CHAIN_HLOCKS (MAX_LOCKDEP_CHAINS*5)
+#define MAX_LOCKDEP_CHAIN_HLOCKS (MAX_LOCKDEP_CHAINS*10)
 
 extern struct list_head all_lock_classes;
 extern struct lock_chain lock_chains[];
