@@ -95,7 +95,7 @@ static const unsigned long LOCKF_USED_IN_IRQ_READ =
 #else
 #define MAX_LOCKDEP_ENTRIES	32768UL
 
-#define MAX_LOCKDEP_CHAINS_BITS	16
+#define MAX_LOCKDEP_CHAINS_BITS	18
 
 /*
  * Stack-trace: tightly packed array of stack backtrace
