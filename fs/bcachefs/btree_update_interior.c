@@ -746,7 +746,7 @@ again:
 		 * write it now if it needs to be written:
 		 */
 		btree_node_write_if_need(c, b, SIX_LOCK_intent);
-		six_unlock_intent(&b->lock);
+		six_unlock_intent(&b->c.lock);
 	}
 
 	btree_update_nodes_reachable(as, res.seq);
