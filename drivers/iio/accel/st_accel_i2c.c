@@ -107,6 +107,7 @@ MODULE_DEVICE_TABLE(of, st_accel_of_match);
 
 #ifdef CONFIG_ACPI
 static const struct acpi_device_id st_accel_acpi_match[] = {
+	{"SMO8840", LIS2DH12},
 	{"SMO8A90", LNG2DM},
 	{ },
 };
