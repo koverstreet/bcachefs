@@ -1949,7 +1949,7 @@ static struct btree_iter *btree_trans_iter_alloc(struct btree_trans *trans)
 			struct btree_iter *iter;
 
 			trans_for_each_iter(trans, iter) {
-				pr_err("iter: btree %s pos %llu:%llu%s%s%s %pf",
+				pr_err("iter: btree %s pos %llu:%llu%s%s%s %pF",
 				       bch2_btree_ids[iter->btree_id],
 				       iter->pos.inode,
 				       iter->pos.offset,

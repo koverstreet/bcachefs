@@ -75,7 +75,7 @@ static int count_iters_for_insert(struct btree_trans *trans,
 				     POS(0, idx + sectors)) >= 0)
 				break;
 
-			*nr_iters += 1 + bch2_bkey_nr_alloc_ptrs(r_k);
+			*nr_iters += 2 + bch2_bkey_nr_alloc_ptrs(r_k);
 
 			if (*nr_iters >= max_iters) {
 				struct bpos pos = bkey_start_pos(k.k);
