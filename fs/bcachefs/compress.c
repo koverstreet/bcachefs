@@ -17,7 +17,6 @@ struct bbuf {
 		BB_NONE,
 		BB_VMAP,
 		BB_KMALLOC,
-		BB_VMALLOC,
 		BB_MEMPOOL,
 	}		type;
 	int		rw;
@@ -33,17 +32,7 @@ static struct bbuf __bounce_alloc(struct bch_fs *c, unsigned size, int rw)
 	if (b)
 		return (struct bbuf) { .b = b, .type = BB_KMALLOC, .rw = rw };
 
-	b = mempool_alloc(&c->compression_bounce[rw], GFP_NOWAIT);
-	b = b ? page_address(b) : NULL;
-	if (b)
-		return (struct bbuf) { .b = b, .type = BB_MEMPOOL, .rw = rw };
-
-	b = vmalloc(size);
-	if (b)
-		return (struct bbuf) { .b = b, .type = BB_VMALLOC, .rw = rw };
-
 	b = mempool_alloc(&c->compression_bounce[rw], GFP_NOIO);
-	b = b ? page_address(b) : NULL;
 	if (b)
 		return (struct bbuf) { .b = b, .type = BB_MEMPOOL, .rw = rw };
 
@@ -66,7 +55,7 @@ static struct bbuf __bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 	BUG_ON(bvec_iter_sectors(start) > c->sb.encoded_extent_max);
 
 #ifndef CONFIG_HIGHMEM
-	__bio_for_each_contig_segment(bv, bio, iter, start) {
+	__bio_for_each_bvec(bv, bio, iter, start) {
 		if (bv.bv_len == start.bi_size)
 			return (struct bbuf) {
 				.b = page_address(bv.bv_page) + bv.bv_offset,
@@ -129,12 +118,8 @@ static void bio_unmap_or_unbounce(struct bch_fs *c, struct bbuf buf)
 	case BB_KMALLOC:
 		kfree(buf.b);
 		break;
-	case BB_VMALLOC:
-		vfree(buf.b);
-		break;
 	case BB_MEMPOOL:
-		mempool_free(virt_to_page(buf.b),
-			     &c->compression_bounce[buf.rw]);
+		mempool_free(buf.b, &c->compression_bounce[buf.rw]);
 		break;
 	}
 }
@@ -434,7 +419,7 @@ out:
 	bio_unmap_or_unbounce(c, dst_data);
 	return compression_type;
 err:
-	compression_type = 0;
+	compression_type = BCH_COMPRESSION_TYPE_incompressible;
 	goto out;
 }
 
@@ -561,15 +546,15 @@ static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
 have_compressed:
 
 	if (!mempool_initialized(&c->compression_bounce[READ])) {
-		ret = mempool_init_page_pool(&c->compression_bounce[READ],
-					     1, order);
+		ret = mempool_init_kvpmalloc_pool(&c->compression_bounce[READ],
+						  1, order);
 		if (ret)
 			goto out;
 	}
 
 	if (!mempool_initialized(&c->compression_bounce[WRITE])) {
-		ret = mempool_init_page_pool(&c->compression_bounce[WRITE],
-					     1, order);
+		ret = mempool_init_kvpmalloc_pool(&c->compression_bounce[WRITE],
+						  1, order);
 		if (ret)
 			goto out;
 	}

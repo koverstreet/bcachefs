@@ -175,6 +175,12 @@ bch2_extent_crc_unpack(const struct bkey *k, const union bch_extent_crc *crc)
 #undef common_fields
 }
 
+static inline bool crc_is_compressed(struct bch_extent_crc_unpacked crc)
+{
+	return (crc.compression_type != BCH_COMPRESSION_TYPE_none &&
+		crc.compression_type != BCH_COMPRESSION_TYPE_incompressible);
+}
+
 /* bkey_ptrs: generically over any key type that has ptrs */
 
 struct bkey_ptrs_c {
@@ -217,6 +223,13 @@ static inline struct bkey_ptrs_c bch2_bkey_ptrs_c(struct bkey_s_c k)
 		return (struct bkey_ptrs_c) {
 			r.v->start,
 			bkey_val_end(r),
+		};
+	}
+	case KEY_TYPE_btree_ptr_v2: {
+		struct bkey_s_c_btree_ptr_v2 e = bkey_s_c_to_btree_ptr_v2(k);
+		return (struct bkey_ptrs_c) {
+			to_entry(&e.v->start[0]),
+			to_entry(extent_entry_last(e))
 		};
 	}
 	default:
@@ -359,11 +372,24 @@ void bch2_btree_ptr_debugcheck(struct bch_fs *, struct bkey_s_c);
 void bch2_btree_ptr_to_text(struct printbuf *, struct bch_fs *,
 			    struct bkey_s_c);
 
+void bch2_btree_ptr_v2_to_text(struct printbuf *, struct bch_fs *,
+			    struct bkey_s_c);
+void bch2_btree_ptr_v2_compat(enum btree_id, unsigned, unsigned,
+			      int, struct bkey_s);
+
 #define bch2_bkey_ops_btree_ptr (struct bkey_ops) {		\
 	.key_invalid	= bch2_btree_ptr_invalid,		\
 	.key_debugcheck	= bch2_btree_ptr_debugcheck,		\
 	.val_to_text	= bch2_btree_ptr_to_text,		\
 	.swab		= bch2_ptr_swab,			\
+}
+
+#define bch2_bkey_ops_btree_ptr_v2 (struct bkey_ops) {		\
+	.key_invalid	= bch2_btree_ptr_invalid,		\
+	.key_debugcheck	= bch2_btree_ptr_debugcheck,		\
+	.val_to_text	= bch2_btree_ptr_v2_to_text,		\
+	.swab		= bch2_ptr_swab,			\
+	.compat		= bch2_btree_ptr_v2_compat,		\
 }
 
 /* KEY_TYPE_extent: */
@@ -410,6 +436,7 @@ static inline bool bkey_extent_is_direct_data(const struct bkey *k)
 {
 	switch (k->type) {
 	case KEY_TYPE_btree_ptr:
+	case KEY_TYPE_btree_ptr_v2:
 	case KEY_TYPE_extent:
 	case KEY_TYPE_reflink_v:
 		return true;
@@ -483,6 +510,7 @@ static inline struct bch_devs_list bch2_bkey_cached_devs(struct bkey_s_c k)
 unsigned bch2_bkey_nr_ptrs(struct bkey_s_c);
 unsigned bch2_bkey_nr_ptrs_allocated(struct bkey_s_c);
 unsigned bch2_bkey_nr_ptrs_fully_allocated(struct bkey_s_c);
+bool bch2_bkey_is_incompressible(struct bkey_s_c);
 unsigned bch2_bkey_sectors_compressed(struct bkey_s_c);
 bool bch2_check_range_allocated(struct bch_fs *, struct bpos, u64, unsigned);
 unsigned bch2_bkey_durability(struct bch_fs *, struct bkey_s_c);
@@ -525,7 +553,7 @@ void bch2_bkey_ptrs_to_text(struct printbuf *, struct bch_fs *,
 			    struct bkey_s_c);
 const char *bch2_bkey_ptrs_invalid(const struct bch_fs *, struct bkey_s_c);
 
-void bch2_ptr_swab(const struct bkey_format *, struct bkey_packed *);
+void bch2_ptr_swab(struct bkey_s);
 
 /* Generic extent code: */
 

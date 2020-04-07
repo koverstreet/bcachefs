@@ -134,7 +134,7 @@ const char *bch2_bkey_invalid(struct bch_fs *c, struct bkey_s_c k,
 
 const char *bch2_bkey_in_btree_node(struct btree *b, struct bkey_s_c k)
 {
-	if (bkey_cmp(bkey_start_pos(k.k), b->data->min_key) < 0)
+	if (bkey_cmp(k.k->p, b->data->min_key) < 0)
 		return "key before start of btree node";
 
 	if (bkey_cmp(k.k->p, b->data->max_key) > 0)
@@ -202,15 +202,12 @@ void bch2_bkey_val_to_text(struct printbuf *out, struct bch_fs *c,
 	bch2_val_to_text(out, c, k);
 }
 
-void bch2_bkey_swab(const struct bkey_format *f,
-		    struct bkey_packed *k)
+void bch2_bkey_swab_val(struct bkey_s k)
 {
-	const struct bkey_ops *ops = &bch2_bkey_ops[k->type];
-
-	bch2_bkey_swab_key(f, k);
+	const struct bkey_ops *ops = &bch2_bkey_ops[k.k->type];
 
 	if (ops->swab)
-		ops->swab(f, k);
+		ops->swab(k);
 }
 
 bool bch2_bkey_normalize(struct bch_fs *c, struct bkey_s k)
@@ -275,4 +272,60 @@ void bch2_bkey_renumber(enum btree_node_type btree_node_type,
 			k->type = write ? i->old : i->new;
 			break;
 		}
+}
+
+void __bch2_bkey_compat(unsigned level, enum btree_id btree_id,
+			unsigned version, unsigned big_endian,
+			int write,
+			struct bkey_format *f,
+			struct bkey_packed *k)
+{
+	const struct bkey_ops *ops;
+	struct bkey uk;
+	struct bkey_s u;
+
+	if (big_endian != CPU_BIG_ENDIAN)
+		bch2_bkey_swab_key(f, k);
+
+	if (version < bcachefs_metadata_version_bkey_renumber)
+		bch2_bkey_renumber(__btree_node_type(level, btree_id), k, write);
+
+	if (version < bcachefs_metadata_version_inode_btree_change &&
+	    btree_id == BTREE_ID_INODES) {
+		if (!bkey_packed(k)) {
+			struct bkey_i *u = packed_to_bkey(k);
+			swap(u->k.p.inode, u->k.p.offset);
+		} else if (f->bits_per_field[BKEY_FIELD_INODE] &&
+			   f->bits_per_field[BKEY_FIELD_OFFSET]) {
+			struct bkey_format tmp = *f, *in = f, *out = &tmp;
+
+			swap(tmp.bits_per_field[BKEY_FIELD_INODE],
+			     tmp.bits_per_field[BKEY_FIELD_OFFSET]);
+			swap(tmp.field_offset[BKEY_FIELD_INODE],
+			     tmp.field_offset[BKEY_FIELD_OFFSET]);
+
+			if (!write)
+				swap(in, out);
+
+			uk = __bch2_bkey_unpack_key(in, k);
+			swap(uk.p.inode, uk.p.offset);
+			BUG_ON(!bch2_bkey_pack_key(k, &uk, out));
+		}
+	}
+
+	if (!bkey_packed(k)) {
+		u = bkey_i_to_s(packed_to_bkey(k));
+	} else {
+		uk = __bch2_bkey_unpack_key(f, k);
+		u.k = &uk;
+		u.v = bkeyp_val(f, k);
+	}
+
+	if (big_endian != CPU_BIG_ENDIAN)
+		bch2_bkey_swab_val(u);
+
+	ops = &bch2_bkey_ops[k->type];
+
+	if (ops->compat)
+		ops->compat(btree_id, version, big_endian, write, u);
 }

@@ -25,6 +25,9 @@ struct btree *bch2_btree_node_get(struct bch_fs *, struct btree_iter *,
 				  const struct bkey_i *, unsigned,
 				  enum six_lock_type);
 
+struct btree *bch2_btree_node_get_noiter(struct bch_fs *, const struct bkey_i *,
+					 enum btree_id, unsigned);
+
 struct btree *bch2_btree_node_get_sibling(struct bch_fs *, struct btree_iter *,
 				struct btree *, enum btree_node_sibling);
 
@@ -35,13 +38,29 @@ void bch2_fs_btree_cache_exit(struct bch_fs *);
 int bch2_fs_btree_cache_init(struct bch_fs *);
 void bch2_fs_btree_cache_init_early(struct btree_cache *);
 
-#define PTR_HASH(_k)	*((u64 *) &bkey_i_to_btree_ptr_c(_k)->v)
+static inline u64 btree_ptr_hash_val(const struct bkey_i *k)
+{
+	switch (k->k.type) {
+	case KEY_TYPE_btree_ptr:
+		return *((u64 *) bkey_i_to_btree_ptr_c(k)->v.start);
+	case KEY_TYPE_btree_ptr_v2:
+		return bkey_i_to_btree_ptr_v2_c(k)->v.seq;
+	default:
+		return 0;
+	}
+}
+
+static inline struct btree *btree_node_mem_ptr(const struct bkey_i *k)
+{
+	return k->k.type == KEY_TYPE_btree_ptr_v2
+		? (void *)(unsigned long)bkey_i_to_btree_ptr_v2_c(k)->v.mem_ptr
+		: NULL;
+}
 
 /* is btree node in hash table? */
 static inline bool btree_node_hashed(struct btree *b)
 {
-	return b->key.k.type == KEY_TYPE_btree_ptr &&
-		PTR_HASH(&b->key);
+	return b->hash_val != 0;
 }
 
 #define for_each_cached_btree(_b, _c, _tbl, _iter, _pos)		\

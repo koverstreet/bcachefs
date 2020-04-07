@@ -79,8 +79,8 @@ void bch2_dump_bset(struct btree *b, struct bset *i, unsigned set)
 		_n = bkey_next_skip_noops(_k, vstruct_last(i));
 
 		bch2_bkey_to_text(&PBUF(buf), &k);
-		printk(KERN_ERR "block %u key %5u: %s\n", set,
-		       __btree_node_key_to_offset(b, _k), buf);
+		printk(KERN_ERR "block %u key %5zu: %s\n", set,
+		       _k->_data - i->_data, buf);
 
 		if (_n == vstruct_last(i))
 			continue;
@@ -1206,7 +1206,8 @@ void bch2_bset_insert(struct btree *b,
 	memcpy_u64s(bkeyp_val(f, where), &insert->v,
 		    bkeyp_val_u64s(f, src));
 
-	bch2_bset_fix_lookup_table(b, t, where, clobber_u64s, src->u64s);
+	if (src->u64s != clobber_u64s)
+		bch2_bset_fix_lookup_table(b, t, where, clobber_u64s, src->u64s);
 
 	bch2_verify_btree_nr_keys(b);
 }
@@ -1681,7 +1682,8 @@ struct bkey_packed *bch2_btree_node_iter_prev_all(struct btree_node_iter *iter,
 	struct bset_tree *t;
 	unsigned end = 0;
 
-	bch2_btree_node_iter_verify(iter, b);
+	if (btree_keys_expensive_checks(b))
+		bch2_btree_node_iter_verify(iter, b);
 
 	for_each_bset(b, t) {
 		k = bch2_bkey_prev_all(b, t,
@@ -1716,7 +1718,8 @@ found:
 	iter->data[0].k = __btree_node_key_to_offset(b, prev);
 	iter->data[0].end = end;
 
-	bch2_btree_node_iter_verify(iter, b);
+	if (btree_keys_expensive_checks(b))
+		bch2_btree_node_iter_verify(iter, b);
 	return prev;
 }
 

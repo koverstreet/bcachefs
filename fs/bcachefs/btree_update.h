@@ -12,8 +12,7 @@ void bch2_btree_node_lock_for_insert(struct bch_fs *, struct btree *,
 				     struct btree_iter *);
 bool bch2_btree_bset_insert_key(struct btree_iter *, struct btree *,
 				struct btree_node_iter *, struct bkey_i *);
-void bch2_btree_journal_key(struct btree_trans *, struct btree_iter *,
-			    struct bkey_i *);
+void bch2_btree_add_journal_pin(struct bch_fs *, struct btree *, u64);
 
 enum btree_insert_flags {
 	__BTREE_INSERT_NOUNLOCK,
@@ -59,6 +58,7 @@ enum btree_insert_flags {
 
 int bch2_btree_delete_at(struct btree_trans *, struct btree_iter *, unsigned);
 
+int __bch2_btree_insert(struct btree_trans *, enum btree_id, struct bkey_i *);
 int bch2_btree_insert(struct bch_fs *, enum btree_id, struct bkey_i *,
 		     struct disk_reservation *, u64 *, int flags);
 
@@ -70,7 +70,7 @@ int bch2_btree_delete_range(struct bch_fs *, enum btree_id,
 int bch2_btree_node_rewrite(struct bch_fs *c, struct btree_iter *,
 			    __le64, unsigned);
 int bch2_btree_node_update_key(struct bch_fs *, struct btree_iter *,
-			       struct btree *, struct bkey_i_btree_ptr *);
+			       struct btree *, struct bkey_i *);
 
 int bch2_trans_update(struct btree_trans *, struct btree_iter *,
 		      struct bkey_i *, enum btree_trigger_flags);
@@ -98,17 +98,17 @@ static inline int bch2_trans_commit(struct btree_trans *trans,
 	return __bch2_trans_commit(trans);
 }
 
-#define __bch2_trans_do(_trans, _disk_res, _journal_seq,		\
-			_flags,	_reset_flags, _do)			\
+#define __bch2_trans_do(_trans, _disk_res, _journal_seq, _flags, _do)	\
 ({									\
 	int _ret;							\
 									\
-	do {								\
-		bch2_trans_reset(_trans, _reset_flags);			\
-									\
+	while (1) {							\
 		_ret = (_do) ?:	bch2_trans_commit(_trans, (_disk_res),	\
 					(_journal_seq), (_flags));	\
-	} while (_ret == -EINTR);					\
+		if (_ret != -EINTR)					\
+			break;						\
+		bch2_trans_reset(_trans, 0);				\
+	}								\
 									\
 	_ret;								\
 })
@@ -120,7 +120,7 @@ static inline int bch2_trans_commit(struct btree_trans *trans,
 									\
 	bch2_trans_init(&trans, (_c), 0, 0);				\
 	_ret = __bch2_trans_do(&trans, _disk_res, _journal_seq, _flags,	\
-			       TRANS_RESET_MEM|TRANS_RESET_ITERS, _do);	\
+			       _do);					\
 	_ret2 = bch2_trans_exit(&trans);				\
 									\
 	_ret ?: _ret2;							\
@@ -129,6 +129,11 @@ static inline int bch2_trans_commit(struct btree_trans *trans,
 #define trans_for_each_update(_trans, _i)				\
 	for ((_i) = (_trans)->updates;					\
 	     (_i) < (_trans)->updates + (_trans)->nr_updates;		\
+	     (_i)++)
+
+#define trans_for_each_update2(_trans, _i)				\
+	for ((_i) = (_trans)->updates2;					\
+	     (_i) < (_trans)->updates2 + (_trans)->nr_updates2;		\
 	     (_i)++)
 
 #endif /* _BCACHEFS_BTREE_UPDATE_H */

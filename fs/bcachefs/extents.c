@@ -9,6 +9,7 @@
 #include "bcachefs.h"
 #include "bkey_methods.h"
 #include "btree_gc.h"
+#include "btree_io.h"
 #include "btree_iter.h"
 #include "buckets.h"
 #include "checksum.h"
@@ -214,6 +215,37 @@ void bch2_btree_ptr_to_text(struct printbuf *out, struct bch_fs *c,
 	bch2_bkey_ptrs_to_text(out, c, k);
 }
 
+void bch2_btree_ptr_v2_to_text(struct printbuf *out, struct bch_fs *c,
+			    struct bkey_s_c k)
+{
+	struct bkey_s_c_btree_ptr_v2 bp = bkey_s_c_to_btree_ptr_v2(k);
+
+	pr_buf(out, "seq %llu sectors %u written %u min_key ",
+	       le64_to_cpu(bp.v->seq),
+	       le16_to_cpu(bp.v->sectors),
+	       le16_to_cpu(bp.v->sectors_written));
+
+	bch2_bpos_to_text(out, bp.v->min_key);
+	pr_buf(out, " ");
+	bch2_bkey_ptrs_to_text(out, c, k);
+}
+
+void bch2_btree_ptr_v2_compat(enum btree_id btree_id, unsigned version,
+			      unsigned big_endian, int write,
+			      struct bkey_s k)
+{
+	struct bkey_s_btree_ptr_v2 bp = bkey_s_to_btree_ptr_v2(k);
+
+	compat_bpos(0, btree_id, version, big_endian, write, &bp.v->min_key);
+
+	if (version < bcachefs_metadata_version_inode_btree_change &&
+	    btree_node_type_is_extents(btree_id) &&
+	    bkey_cmp(bp.v->min_key, POS_MIN))
+		bp.v->min_key = write
+			? bkey_predecessor(bp.v->min_key)
+			: bkey_successor(bp.v->min_key);
+}
+
 /* KEY_TYPE_extent: */
 
 const char *bch2_extent_invalid(const struct bch_fs *c, struct bkey_s_c k)
@@ -337,7 +369,7 @@ enum merge_result bch2_extent_merge(struct bch_fs *c,
 			if (!bch2_checksum_mergeable(crc_l.csum_type))
 				return BCH_MERGE_NOMERGE;
 
-			if (crc_l.compression_type)
+			if (crc_is_compressed(crc_l))
 				return BCH_MERGE_NOMERGE;
 
 			if (crc_l.csum_type &&
@@ -345,7 +377,7 @@ enum merge_result bch2_extent_merge(struct bch_fs *c,
 			    crc_r.uncompressed_size > c->sb.encoded_extent_max)
 				return BCH_MERGE_NOMERGE;
 
-			if (crc_l.uncompressed_size + crc_r.uncompressed_size - 1 >
+			if (crc_l.uncompressed_size + crc_r.uncompressed_size >
 			    bch2_crc_field_size_max[extent_entry_type(en_l)])
 				return BCH_MERGE_NOMERGE;
 
@@ -448,7 +480,7 @@ static inline bool bch2_crc_unpacked_cmp(struct bch_extent_crc_unpacked l,
 static inline bool can_narrow_crc(struct bch_extent_crc_unpacked u,
 				  struct bch_extent_crc_unpacked n)
 {
-	return !u.compression_type &&
+	return !crc_is_compressed(u) &&
 		u.csum_type &&
 		u.uncompressed_size > u.live_size &&
 		bch2_csum_type_is_encryption(u.csum_type) ==
@@ -492,7 +524,7 @@ bool bch2_bkey_narrow_crcs(struct bkey_i *k, struct bch_extent_crc_unpacked n)
 	/* Find a checksum entry that covers only live data: */
 	if (!n.csum_type) {
 		bkey_for_each_crc(&k->k, ptrs, u, i)
-			if (!u.compression_type &&
+			if (!crc_is_compressed(u) &&
 			    u.csum_type &&
 			    u.live_size == u.uncompressed_size) {
 				n = u;
@@ -501,7 +533,7 @@ bool bch2_bkey_narrow_crcs(struct bkey_i *k, struct bch_extent_crc_unpacked n)
 		return false;
 	}
 found:
-	BUG_ON(n.compression_type);
+	BUG_ON(crc_is_compressed(n));
 	BUG_ON(n.offset);
 	BUG_ON(n.live_size != k->k.size);
 
@@ -563,15 +595,15 @@ void bch2_extent_crc_append(struct bkey_i *k,
 	enum bch_extent_entry_type type;
 
 	if (bch_crc_bytes[new.csum_type]	<= 4 &&
-	    new.uncompressed_size - 1		<= CRC32_SIZE_MAX &&
+	    new.uncompressed_size		<= CRC32_SIZE_MAX &&
 	    new.nonce				<= CRC32_NONCE_MAX)
 		type = BCH_EXTENT_ENTRY_crc32;
 	else if (bch_crc_bytes[new.csum_type]	<= 10 &&
-		   new.uncompressed_size - 1	<= CRC64_SIZE_MAX &&
+		   new.uncompressed_size	<= CRC64_SIZE_MAX &&
 		   new.nonce			<= CRC64_NONCE_MAX)
 		type = BCH_EXTENT_ENTRY_crc64;
 	else if (bch_crc_bytes[new.csum_type]	<= 16 &&
-		   new.uncompressed_size - 1	<= CRC128_SIZE_MAX &&
+		   new.uncompressed_size	<= CRC128_SIZE_MAX &&
 		   new.nonce			<= CRC128_NONCE_MAX)
 		type = BCH_EXTENT_ENTRY_crc128;
 	else
@@ -610,8 +642,7 @@ unsigned bch2_bkey_nr_ptrs_fully_allocated(struct bkey_s_c k)
 		struct extent_ptr_decoded p;
 
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
-			ret += !p.ptr.cached &&
-				p.crc.compression_type == BCH_COMPRESSION_TYPE_none;
+			ret += !p.ptr.cached && !crc_is_compressed(p.crc);
 	}
 
 	return ret;
@@ -625,11 +656,22 @@ unsigned bch2_bkey_sectors_compressed(struct bkey_s_c k)
 	unsigned ret = 0;
 
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
-		if (!p.ptr.cached &&
-		    p.crc.compression_type != BCH_COMPRESSION_TYPE_none)
+		if (!p.ptr.cached && crc_is_compressed(p.crc))
 			ret += p.crc.compressed_size;
 
 	return ret;
+}
+
+bool bch2_bkey_is_incompressible(struct bkey_s_c k)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	struct bch_extent_crc_unpacked crc;
+
+	bkey_for_each_crc(k.k, ptrs, crc, entry)
+		if (crc.compression_type == BCH_COMPRESSION_TYPE_incompressible)
+			return true;
+	return false;
 }
 
 bool bch2_check_range_allocated(struct bch_fs *c, struct bpos pos, u64 size,
@@ -739,6 +781,7 @@ void bch2_bkey_append_ptr(struct bkey_i *k,
 
 	switch (k->k.type) {
 	case KEY_TYPE_btree_ptr:
+	case KEY_TYPE_btree_ptr_v2:
 	case KEY_TYPE_extent:
 		EBUG_ON(bkey_val_u64s(&k->k) >= BKEY_EXTENT_VAL_U64s_MAX);
 
@@ -1021,6 +1064,8 @@ const char *bch2_bkey_ptrs_invalid(const struct bch_fs *c, struct bkey_s_c k)
 
 	if (k.k->type == KEY_TYPE_btree_ptr)
 		size_ondisk = c->opts.btree_node_size;
+	if (k.k->type == KEY_TYPE_btree_ptr_v2)
+		size_ondisk = le16_to_cpu(bkey_s_c_to_btree_ptr_v2(k).v->sectors);
 
 	bkey_extent_entry_for_each(ptrs, entry) {
 		if (__extent_entry_type(entry) >= BCH_EXTENT_ENTRY_MAX)
@@ -1069,17 +1114,19 @@ const char *bch2_bkey_ptrs_invalid(const struct bch_fs *c, struct bkey_s_c k)
 	return NULL;
 }
 
-void bch2_ptr_swab(const struct bkey_format *f, struct bkey_packed *k)
+void bch2_ptr_swab(struct bkey_s k)
 {
+	struct bkey_ptrs ptrs = bch2_bkey_ptrs(k);
 	union bch_extent_entry *entry;
-	u64 *d = (u64 *) bkeyp_val(f, k);
-	unsigned i;
+	u64 *d;
 
-	for (i = 0; i < bkeyp_val_u64s(f, k); i++)
-		d[i] = swab64(d[i]);
+	for (d =  (u64 *) ptrs.start;
+	     d != (u64 *) ptrs.end;
+	     d++)
+		*d = swab64(*d);
 
-	for (entry = (union bch_extent_entry *) d;
-	     entry < (union bch_extent_entry *) (d + bkeyp_val_u64s(f, k));
+	for (entry = ptrs.start;
+	     entry < ptrs.end;
 	     entry = extent_entry_next(entry)) {
 		switch (extent_entry_type(entry)) {
 		case BCH_EXTENT_ENTRY_ptr:

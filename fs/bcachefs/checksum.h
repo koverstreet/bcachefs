@@ -7,7 +7,7 @@
 #include "super-io.h"
 
 #include <linux/crc64.h>
-#include <crypto/chacha20.h>
+#include <crypto/chacha.h>
 
 static inline bool bch2_checksum_mergeable(unsigned type)
 {
@@ -138,9 +138,9 @@ static inline bool bch2_crc_cmp(struct bch_csum l, struct bch_csum r)
 /* for skipping ahead and encrypting/decrypting at an offset: */
 static inline struct nonce nonce_add(struct nonce nonce, unsigned offset)
 {
-	EBUG_ON(offset & (CHACHA20_BLOCK_SIZE - 1));
+	EBUG_ON(offset & (CHACHA_BLOCK_SIZE - 1));
 
-	le32_add_cpu(&nonce.d[0], offset / CHACHA20_BLOCK_SIZE);
+	le32_add_cpu(&nonce.d[0], offset / CHACHA_BLOCK_SIZE);
 	return nonce;
 }
 
@@ -155,13 +155,16 @@ static inline struct nonce null_nonce(void)
 static inline struct nonce extent_nonce(struct bversion version,
 					struct bch_extent_crc_unpacked crc)
 {
-	unsigned size = crc.compression_type ? crc.uncompressed_size : 0;
+	unsigned compression_type = crc_is_compressed(crc)
+		? crc.compression_type
+		: 0;
+	unsigned size = compression_type ? crc.uncompressed_size : 0;
 	struct nonce nonce = (struct nonce) {{
 		[0] = cpu_to_le32(size << 22),
 		[1] = cpu_to_le32(version.lo),
 		[2] = cpu_to_le32(version.lo >> 32),
 		[3] = cpu_to_le32(version.hi|
-				  (crc.compression_type << 24))^BCH_NONCE_EXTENT,
+				  (compression_type << 24))^BCH_NONCE_EXTENT,
 	}};
 
 	return nonce_add(nonce, crc.nonce << 9);

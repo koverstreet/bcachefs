@@ -53,7 +53,6 @@ struct bset_tree {
 
 struct btree_write {
 	struct journal_entry_pin	journal;
-	struct closure_waitlist		wait;
 };
 
 struct btree_alloc {
@@ -64,9 +63,7 @@ struct btree_alloc {
 struct btree {
 	/* Hottest entries first */
 	struct rhash_head	hash;
-
-	/* Key/pointer for this btree node */
-	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
+	u64			hash_val;
 
 	struct six_lock		lock;
 
@@ -133,6 +130,9 @@ struct btree {
 #ifdef CONFIG_BCACHEFS_DEBUG
 	bool			*expensive_debug_checks;
 #endif
+
+	/* Key/pointer for this btree node */
+	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
 };
 
 struct btree_cache {
@@ -234,9 +234,10 @@ struct btree_iter {
 	u16			flags;
 	u8			idx;
 
-	enum btree_iter_uptodate uptodate:4;
 	enum btree_id		btree_id:4;
+	enum btree_iter_uptodate uptodate:4;
 	unsigned		level:4,
+				min_depth:4,
 				locks_want:4,
 				nodes_locked:4,
 				nodes_intent_locked:4;
@@ -252,11 +253,17 @@ struct btree_iter {
 	 * bch2_btree_iter_next_slot() can correctly advance pos.
 	 */
 	struct bkey		k;
+	unsigned long		ip_allocated;
 };
 
 static inline enum btree_iter_type btree_iter_type(struct btree_iter *iter)
 {
 	return iter->flags & BTREE_ITER_TYPE;
+}
+
+static inline struct btree_iter_level *iter_l(struct btree_iter *iter)
+{
+	return iter->l + iter->level;
 }
 
 struct btree_insert_entry {
@@ -266,7 +273,11 @@ struct btree_insert_entry {
 	struct btree_iter	*iter;
 };
 
+#ifndef CONFIG_LOCKDEP
 #define BTREE_ITER_MAX		64
+#else
+#define BTREE_ITER_MAX		32
+#endif
 
 struct btree_trans {
 	struct bch_fs		*c;
@@ -278,6 +289,7 @@ struct btree_trans {
 
 	u8			nr_iters;
 	u8			nr_updates;
+	u8			nr_updates2;
 	u8			size;
 	unsigned		used_mempool:1;
 	unsigned		error:1;
@@ -290,6 +302,7 @@ struct btree_trans {
 
 	struct btree_iter	*iters;
 	struct btree_insert_entry *updates;
+	struct btree_insert_entry *updates2;
 
 	/* update path: */
 	struct journal_res	journal_res;
@@ -303,6 +316,7 @@ struct btree_trans {
 
 	struct btree_iter	iters_onstack[2];
 	struct btree_insert_entry updates_onstack[2];
+	struct btree_insert_entry updates2_onstack[2];
 };
 
 #define BTREE_FLAG(flag)						\
@@ -533,8 +547,6 @@ static inline bool btree_node_type_needs_gc(enum btree_node_type type)
 
 struct btree_root {
 	struct btree		*b;
-
-	struct btree_update	*as;
 
 	/* On disk root - see async splits: */
 	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);

@@ -741,6 +741,8 @@ found_slot:
 	ret = bch2_trans_commit(&trans, NULL, NULL,
 				BTREE_INSERT_NOFAIL);
 err:
+	bch2_trans_iter_put(&trans, iter);
+
 	if (ret == -EINTR)
 		goto retry;
 
@@ -802,8 +804,6 @@ static int ec_stripe_update_ptrs(struct bch_fs *c,
 			continue;
 		}
 
-		bch2_btree_iter_set_pos(iter, bkey_start_pos(k.k));
-
 		dev = s->key.v.ptrs[idx].dev;
 
 		bkey_on_stack_reassemble(&sk, c, k);
@@ -818,6 +818,7 @@ static int ec_stripe_update_ptrs(struct bch_fs *c,
 
 		extent_stripe_ptr_add(e, s, ec_ptr, idx);
 
+		bch2_btree_iter_set_pos(iter, bkey_start_pos(&sk.k->k));
 		bch2_trans_update(&trans, iter, sk.k, 0);
 
 		ret = bch2_trans_commit(&trans, NULL, NULL,
@@ -1201,8 +1202,7 @@ static int __bch2_stripe_write_key(struct btree_trans *trans,
 				   struct btree_iter *iter,
 				   struct stripe *m,
 				   size_t idx,
-				   struct bkey_i_stripe *new_key,
-				   unsigned flags)
+				   struct bkey_i_stripe *new_key)
 {
 	struct bch_fs *c = trans->c;
 	struct bkey_s_c k;
@@ -1231,9 +1231,7 @@ static int __bch2_stripe_write_key(struct btree_trans *trans,
 	spin_unlock(&c->ec_stripes_heap_lock);
 
 	bch2_trans_update(trans, iter, &new_key->k_i, 0);
-
-	return bch2_trans_commit(trans, NULL, NULL,
-				 BTREE_INSERT_NOFAIL|flags);
+	return 0;
 }
 
 int bch2_stripes_write(struct bch_fs *c, unsigned flags, bool *wrote)
@@ -1257,12 +1255,10 @@ int bch2_stripes_write(struct bch_fs *c, unsigned flags, bool *wrote)
 		if (!m->dirty)
 			continue;
 
-		do {
-			bch2_trans_reset(&trans, TRANS_RESET_MEM);
-
-			ret = __bch2_stripe_write_key(&trans, iter, m,
-					giter.pos, new_key, flags);
-		} while (ret == -EINTR);
+		ret = __bch2_trans_do(&trans, NULL, NULL,
+				      BTREE_INSERT_NOFAIL|flags,
+			__bch2_stripe_write_key(&trans, iter, m,
+					giter.pos, new_key));
 
 		if (ret)
 			break;
@@ -1280,9 +1276,8 @@ int bch2_stripes_write(struct bch_fs *c, unsigned flags, bool *wrote)
 int bch2_stripes_read(struct bch_fs *c, struct journal_keys *journal_keys)
 {
 	struct btree_trans trans;
-	struct btree_iter *btree_iter;
-	struct journal_iter journal_iter;
-	struct bkey_s_c btree_k, journal_k;
+	struct btree_and_journal_iter iter;
+	struct bkey_s_c k;
 	int ret;
 
 	ret = bch2_fs_ec_start(c);
@@ -1291,38 +1286,16 @@ int bch2_stripes_read(struct bch_fs *c, struct journal_keys *journal_keys)
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	btree_iter	= bch2_trans_get_iter(&trans, BTREE_ID_EC, POS_MIN, 0);
-	journal_iter	= bch2_journal_iter_init(journal_keys, BTREE_ID_EC);
+	bch2_btree_and_journal_iter_init(&iter, &trans, journal_keys,
+					 BTREE_ID_EC, POS_MIN);
 
-	btree_k		= bch2_btree_iter_peek(btree_iter);
-	journal_k	= bch2_journal_iter_peek(&journal_iter);
 
-	while (1) {
-		bool btree;
-
-		if (btree_k.k && journal_k.k) {
-			int cmp = bkey_cmp(btree_k.k->p, journal_k.k->p);
-
-			if (!cmp)
-				btree_k = bch2_btree_iter_next(btree_iter);
-			btree = cmp < 0;
-		} else if (btree_k.k) {
-			btree = true;
-		} else if (journal_k.k) {
-			btree = false;
-		} else {
-			break;
-		}
-
-		bch2_mark_key(c, btree ? btree_k : journal_k,
-			      0, 0, NULL, 0,
+	while ((k = bch2_btree_and_journal_iter_peek(&iter)).k) {
+		bch2_mark_key(c, k, 0, 0, NULL, 0,
 			      BTREE_TRIGGER_ALLOC_READ|
 			      BTREE_TRIGGER_NOATOMIC);
 
-		if (btree)
-			btree_k = bch2_btree_iter_next(btree_iter);
-		else
-			journal_k = bch2_journal_iter_next(&journal_iter);
+		bch2_btree_and_journal_iter_advance(&iter);
 	}
 
 	ret = bch2_trans_exit(&trans) ?: ret;

@@ -29,10 +29,13 @@ struct bkey_ops {
 	void		(*key_debugcheck)(struct bch_fs *, struct bkey_s_c);
 	void		(*val_to_text)(struct printbuf *, struct bch_fs *,
 				       struct bkey_s_c);
-	void		(*swab)(const struct bkey_format *, struct bkey_packed *);
+	void		(*swab)(struct bkey_s);
 	bool		(*key_normalize)(struct bch_fs *, struct bkey_s);
 	enum merge_result (*key_merge)(struct bch_fs *,
 				       struct bkey_s, struct bkey_s);
+	void		(*compat)(enum btree_id id, unsigned version,
+				  unsigned big_endian, int write,
+				  struct bkey_s);
 };
 
 const char *bch2_bkey_val_invalid(struct bch_fs *, struct bkey_s_c);
@@ -51,7 +54,7 @@ void bch2_val_to_text(struct printbuf *, struct bch_fs *,
 void bch2_bkey_val_to_text(struct printbuf *, struct bch_fs *,
 			   struct bkey_s_c);
 
-void bch2_bkey_swab(const struct bkey_format *, struct bkey_packed *);
+void bch2_bkey_swab_val(struct bkey_s);
 
 bool bch2_bkey_normalize(struct bch_fs *, struct bkey_s);
 
@@ -59,5 +62,21 @@ enum merge_result bch2_bkey_merge(struct bch_fs *,
 				  struct bkey_s, struct bkey_s);
 
 void bch2_bkey_renumber(enum btree_node_type, struct bkey_packed *, int);
+
+void __bch2_bkey_compat(unsigned, enum btree_id, unsigned, unsigned,
+			int, struct bkey_format *, struct bkey_packed *);
+
+static inline void bch2_bkey_compat(unsigned level, enum btree_id btree_id,
+			       unsigned version, unsigned big_endian,
+			       int write,
+			       struct bkey_format *f,
+			       struct bkey_packed *k)
+{
+	if (version < bcachefs_metadata_version_current ||
+	    big_endian != CPU_BIG_ENDIAN)
+		__bch2_bkey_compat(level, btree_id, version,
+				   big_endian, write, f, k);
+
+}
 
 #endif /* _BCACHEFS_BKEY_METHODS_H */

@@ -97,7 +97,8 @@ static inline struct bucket *PTR_BUCKET(struct bch_dev *ca,
 static inline enum bch_data_type ptr_data_type(const struct bkey *k,
 					       const struct bch_extent_ptr *ptr)
 {
-	if (k->type == KEY_TYPE_btree_ptr)
+	if (k->type == KEY_TYPE_btree_ptr ||
+	    k->type == KEY_TYPE_btree_ptr_v2)
 		return BCH_DATA_BTREE;
 
 	return ptr->cached ? BCH_DATA_CACHED : BCH_DATA_USER;
@@ -267,7 +268,7 @@ int bch2_fs_usage_apply(struct bch_fs *, struct bch_fs_usage *,
 
 int bch2_mark_overwrite(struct btree_trans *, struct btree_iter *,
 			struct bkey_s_c, struct bkey_i *,
-			struct bch_fs_usage *, unsigned);
+			struct bch_fs_usage *, unsigned, bool);
 int bch2_mark_update(struct btree_trans *, struct btree_iter *,
 		     struct bkey_i *, struct bch_fs_usage *, unsigned);
 

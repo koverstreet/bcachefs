@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "bkey_on_stack.h"
 #include "btree_update.h"
 #include "dirent.h"
 #include "error.h"
@@ -81,7 +82,6 @@ static int remove_dirent(struct btree_trans *trans,
 	return __bch2_trans_do(trans, NULL, NULL,
 			       BTREE_INSERT_NOFAIL|
 			       BTREE_INSERT_LAZY_RW,
-			       TRANS_RESET_MEM,
 			       __remove_dirent(trans, dirent));
 }
 
@@ -182,8 +182,6 @@ static int hash_redo_key(const struct bch_hash_desc desc,
 	struct bkey_i delete;
 	struct bkey_i *tmp;
 
-	bch2_trans_reset(trans, TRANS_RESET_MEM);
-
 	tmp = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
 	if (IS_ERR(tmp))
 		return PTR_ERR(tmp);
@@ -194,11 +192,8 @@ static int hash_redo_key(const struct bch_hash_desc desc,
 	delete.k.p = k_iter->pos;
 	bch2_trans_update(trans, k_iter, &delete, 0);
 
-	return  bch2_hash_set(trans, desc, &h->info, k_iter->pos.inode,
-			      tmp, BCH_HASH_SET_MUST_CREATE) ?:
-		bch2_trans_commit(trans, NULL, NULL,
-				  BTREE_INSERT_NOFAIL|
-				  BTREE_INSERT_LAZY_RW);
+	return bch2_hash_set(trans, desc, &h->info, k_iter->pos.inode,
+			     tmp, BCH_HASH_SET_MUST_CREATE);
 }
 
 static int fsck_hash_delete_at(struct btree_trans *trans,
@@ -320,10 +315,9 @@ static int hash_check_key(struct btree_trans *trans,
 			desc.btree_id, k.k->p.offset,
 			hashed, h->chain->pos.offset,
 			(bch2_bkey_val_to_text(&PBUF(buf), c, k), buf))) {
-		do {
-			ret = hash_redo_key(desc, trans, h, k_iter, k, hashed);
-		} while (ret == -EINTR);
-
+		ret = __bch2_trans_do(trans, NULL, NULL,
+				      BTREE_INSERT_NOFAIL|BTREE_INSERT_LAZY_RW,
+			hash_redo_key(desc, trans, h, k_iter, k, hashed));
 		if (ret) {
 			bch_err(c, "hash_redo_key err %i", ret);
 			return ret;
@@ -387,7 +381,6 @@ static int check_dirent_hash(struct btree_trans *trans, struct hash_check *h,
 		ret = __bch2_trans_do(trans, NULL, NULL,
 				      BTREE_INSERT_NOFAIL|
 				      BTREE_INSERT_LAZY_RW,
-				      TRANS_RESET_MEM,
 			(bch2_trans_update(trans, iter, &d->k_i, 0), 0));
 		if (ret)
 			goto err;
@@ -410,11 +403,10 @@ err_redo:
 		     k->k->p.offset, hash, h->chain->pos.offset,
 		     (bch2_bkey_val_to_text(&PBUF(buf), c,
 					    *k), buf))) {
-		do {
-			ret = hash_redo_key(bch2_dirent_hash_desc, trans,
-					    h, iter, *k, hash);
-		} while (ret == -EINTR);
-
+		ret = __bch2_trans_do(trans, NULL, NULL,
+				      BTREE_INSERT_NOFAIL|BTREE_INSERT_LAZY_RW,
+			hash_redo_key(bch2_dirent_hash_desc, trans,
+				      h, iter, *k, hash));
 		if (ret)
 			bch_err(c, "hash_redo_key err %i", ret);
 		else
@@ -431,6 +423,42 @@ static int bch2_inode_truncate(struct bch_fs *c, u64 inode_nr, u64 new_size)
 			POS(inode_nr + 1, 0), NULL);
 }
 
+static int bch2_fix_overlapping_extent(struct btree_trans *trans,
+				       struct btree_iter *iter,
+				       struct bkey_s_c k, struct bpos cut_at)
+{
+	struct btree_iter *u_iter;
+	struct bkey_i *u;
+	int ret;
+
+	u = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
+	ret = PTR_ERR_OR_ZERO(u);
+	if (ret)
+		return ret;
+
+	bkey_reassemble(u, k);
+	bch2_cut_front(cut_at, u);
+
+	u_iter = bch2_trans_copy_iter(trans, iter);
+	ret = PTR_ERR_OR_ZERO(u_iter);
+	if (ret)
+		return ret;
+
+	/*
+	 * We don't want to go through the
+	 * extent_handle_overwrites path:
+	 */
+	__bch2_btree_iter_set_pos(u_iter, u->k.p, false);
+
+	/*
+	 * XXX: this is going to leave disk space
+	 * accounting slightly wrong
+	 */
+	ret = bch2_trans_update(trans, u_iter, u, 0);
+	bch2_trans_iter_put(trans, u_iter);
+	return ret;
+}
+
 /*
  * Walk extents: verify that extents have a corresponding S_ISREG inode, and
  * that i_size an i_sectors are consistent
@@ -442,17 +470,40 @@ static int check_extents(struct bch_fs *c)
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_s_c k;
+	struct bkey_on_stack prev;
 	u64 i_sectors;
 	int ret = 0;
 
+	bkey_on_stack_init(&prev);
+	prev.k->k = KEY(0, 0, 0);
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
 
 	bch_verbose(c, "checking extents");
 
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
-				   POS(BCACHEFS_ROOT_INO, 0), 0);
+				   POS(BCACHEFS_ROOT_INO, 0),
+				   BTREE_ITER_INTENT);
 retry:
 	for_each_btree_key_continue(iter, 0, k, ret) {
+		if (bkey_cmp(prev.k->k.p, bkey_start_pos(k.k)) > 0) {
+			char buf1[200];
+			char buf2[200];
+
+			bch2_bkey_val_to_text(&PBUF(buf1), c, bkey_i_to_s_c(prev.k));
+			bch2_bkey_val_to_text(&PBUF(buf2), c, k);
+
+			if (fsck_err(c, "overlapping extents:\n%s\n%s", buf1, buf2)) {
+				ret = __bch2_trans_do(&trans, NULL, NULL,
+						      BTREE_INSERT_NOFAIL|
+						      BTREE_INSERT_LAZY_RW,
+						bch2_fix_overlapping_extent(&trans,
+								iter, k, prev.k->k.p));
+				if (ret)
+					goto err;
+			}
+		}
+		bkey_on_stack_reassemble(&prev, c, k);
+
 		ret = walk_inode(&trans, &w, k.k->p.inode);
 		if (ret)
 			break;
@@ -477,7 +528,8 @@ retry:
 			!(w.inode.bi_flags & BCH_INODE_I_SECTORS_DIRTY) &&
 			w.inode.bi_sectors !=
 			(i_sectors = bch2_count_inode_sectors(&trans, w.cur_inum)),
-			c, "i_sectors wrong: got %llu, should be %llu",
+			c, "inode %llu has incorrect i_sectors: got %llu, should be %llu",
+			w.inode.bi_inum,
 			w.inode.bi_sectors, i_sectors)) {
 			struct bkey_inode_buf p;
 
@@ -519,6 +571,7 @@ err:
 fsck_err:
 	if (ret == -EINTR)
 		goto retry;
+	bkey_on_stack_exit(&prev, c);
 	return bch2_trans_exit(&trans) ?: ret;
 }
 
@@ -660,7 +713,6 @@ retry:
 			ret = __bch2_trans_do(&trans, NULL, NULL,
 					      BTREE_INSERT_NOFAIL|
 					      BTREE_INSERT_LAZY_RW,
-					      TRANS_RESET_MEM,
 				(bch2_trans_update(&trans, iter, &n->k_i, 0), 0));
 			kfree(n);
 			if (ret)
@@ -986,12 +1038,12 @@ retry:
 		if (!ret)
 			continue;
 
-		if (fsck_err_on(!inode_bitmap_test(&dirs_done, k.k->p.inode), c,
+		if (fsck_err_on(!inode_bitmap_test(&dirs_done, k.k->p.offset), c,
 				"unreachable directory found (inum %llu)",
-				k.k->p.inode)) {
+				k.k->p.offset)) {
 			bch2_trans_unlock(&trans);
 
-			ret = reattach_inode(c, lostfound_inode, k.k->p.inode);
+			ret = reattach_inode(c, lostfound_inode, k.k->p.offset);
 			if (ret) {
 				goto err;
 			}
@@ -1275,7 +1327,6 @@ static int check_inode(struct btree_trans *trans,
 		ret = __bch2_trans_do(trans, NULL, NULL,
 				      BTREE_INSERT_NOFAIL|
 				      BTREE_INSERT_LAZY_RW,
-				      TRANS_RESET_MEM,
 			(bch2_trans_update(trans, iter, &p.inode.k_i, 0), 0));
 		if (ret)
 			bch_err(c, "error in fsck: error %i "
@@ -1302,18 +1353,18 @@ static int bch2_gc_walk_inodes(struct bch_fs *c,
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
 
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_INODES,
-				   POS(range_start, 0), 0);
+				   POS(0, range_start), 0);
 	nlinks_iter = genradix_iter_init(links, 0);
 
 	while ((k = bch2_btree_iter_peek(iter)).k &&
 	       !(ret2 = bkey_err(k))) {
 peek_nlinks:	link = genradix_iter_peek(&nlinks_iter, links);
 
-		if (!link && (!k.k || iter->pos.inode >= range_end))
+		if (!link && (!k.k || iter->pos.offset >= range_end))
 			break;
 
 		nlinks_pos = range_start + nlinks_iter.pos;
-		if (iter->pos.inode > nlinks_pos) {
+		if (iter->pos.offset > nlinks_pos) {
 			/* Should have been caught by dirents pass: */
 			need_fsck_err_on(link && link->count, c,
 				"missing inode %llu (nlink %u)",
@@ -1322,7 +1373,7 @@ peek_nlinks:	link = genradix_iter_peek(&nlinks_iter, links);
 			goto peek_nlinks;
 		}
 
-		if (iter->pos.inode < nlinks_pos || !link)
+		if (iter->pos.offset < nlinks_pos || !link)
 			link = &zero_links;
 
 		if (k.k && k.k->type == KEY_TYPE_inode) {
@@ -1338,7 +1389,7 @@ peek_nlinks:	link = genradix_iter_peek(&nlinks_iter, links);
 				nlinks_pos, link->count);
 		}
 
-		if (nlinks_pos == iter->pos.inode)
+		if (nlinks_pos == iter->pos.offset)
 			genradix_iter_advance(&nlinks_iter, links);
 
 		bch2_btree_iter_next(iter);

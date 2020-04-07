@@ -521,6 +521,18 @@ struct journal_seq_blacklist_table {
 	}			entries[0];
 };
 
+struct journal_keys {
+	struct journal_key {
+		enum btree_id	btree_id:8;
+		unsigned	level:8;
+		struct bkey_i	*k;
+		u32		journal_seq;
+		u32		journal_offset;
+	}			*d;
+	size_t			nr;
+	u64			journal_seq_base;
+};
+
 struct bch_fs {
 	struct closure		cl;
 
@@ -608,6 +620,7 @@ struct bch_fs {
 
 	mempool_t		btree_interior_update_pool;
 	struct list_head	btree_interior_update_list;
+	struct list_head	btree_interior_updates_unwritten;
 	struct mutex		btree_interior_update_lock;
 	struct closure_waitlist	btree_interior_update_wait;
 
@@ -719,7 +732,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
@@ -786,6 +799,8 @@ struct bch_fs {
 	mempool_t		btree_bounce_pool;
 
 	struct journal		journal;
+	struct list_head	journal_entries;
+	struct journal_keys	journal_keys;
 
 	u64			last_bucket_seq_cleanup;
 

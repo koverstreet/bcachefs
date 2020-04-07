@@ -32,6 +32,9 @@ struct pending_btree_node_free {
 	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
 };
 
+#define BTREE_UPDATE_JOURNAL_RES		\
+	((BKEY_BTREE_PTR_U64s_MAX + 1) * (BTREE_MAX_DEPTH - 1) * 2)
+
 /*
  * Tracks an in progress split/rewrite of a btree node and the update to the
  * parent node:
@@ -55,6 +58,7 @@ struct btree_update {
 	struct bch_fs			*c;
 
 	struct list_head		list;
+	struct list_head		unwritten_list;
 
 	/* What kind of update are we doing? */
 	enum {
@@ -68,8 +72,10 @@ struct btree_update {
 	unsigned			nodes_written:1;
 
 	enum btree_id			btree_id;
+	u8				level;
 
 	struct btree_reserve		*reserve;
+	struct journal_preres		journal_preres;
 
 	/*
 	 * BTREE_INTERIOR_UPDATING_NODE:
@@ -83,26 +89,12 @@ struct btree_update {
 	struct list_head		write_blocked_list;
 
 	/*
-	 * BTREE_INTERIOR_UPDATING_AS: btree node we updated was freed, so now
-	 * we're now blocking another btree_update
-	 * @parent_as - btree_update that's waiting on our nodes to finish
-	 * writing, before it can make new nodes visible on disk
-	 * @wait - list of child btree_updates that are waiting on this
-	 * btree_update to make all the new nodes visible before they can free
-	 * their old btree nodes
-	 */
-	struct btree_update		*parent_as;
-	struct closure_waitlist		wait;
-
-	/*
 	 * We may be freeing nodes that were dirty, and thus had journal entries
 	 * pinned: we need to transfer the oldest of those pins to the
 	 * btree_update operation, and release it when the new node(s)
 	 * are all persistent and reachable:
 	 */
 	struct journal_entry_pin	journal;
-
-	u64				journal_seq;
 
 	/*
 	 * Nodes being freed:
@@ -114,6 +106,9 @@ struct btree_update {
 	/* New nodes, that will be made reachable by this update: */
 	struct btree			*new_nodes[BTREE_MAX_DEPTH * 2 + GC_MERGE_NODES];
 	unsigned			nr_new_nodes;
+
+	unsigned			journal_u64s;
+	u64				journal_entries[BTREE_UPDATE_JOURNAL_RES];
 
 	/* Only here to reduce stack usage on recursive splits: */
 	struct keylist			parent_keys;
@@ -139,7 +134,7 @@ struct btree *__bch2_btree_node_alloc_replacement(struct btree_update *,
 
 void bch2_btree_update_done(struct btree_update *);
 struct btree_update *
-bch2_btree_update_start(struct bch_fs *, enum btree_id, unsigned,
+bch2_btree_update_start(struct btree_trans *, enum btree_id, unsigned,
 			unsigned, struct closure *);
 
 void bch2_btree_interior_update_will_free_node(struct btree_update *,
@@ -302,18 +297,23 @@ static inline struct btree_node_entry *want_new_bset(struct bch_fs *c,
 }
 
 static inline void push_whiteout(struct bch_fs *c, struct btree *b,
-				 struct bkey_packed *k)
+				 struct bpos pos)
 {
-	unsigned u64s = bkeyp_key_u64s(&b->format, k);
-	struct bkey_packed *dst;
+	struct bkey_packed k;
 
-	BUG_ON(u64s > bch_btree_keys_u64s_remaining(c, b));
+	BUG_ON(bch_btree_keys_u64s_remaining(c, b) < BKEY_U64s);
 
-	b->whiteout_u64s += bkeyp_key_u64s(&b->format, k);
-	dst = unwritten_whiteouts_start(c, b);
-	memcpy_u64s(dst, k, u64s);
-	dst->u64s = u64s;
-	dst->type = KEY_TYPE_deleted;
+	if (!bkey_pack_pos(&k, pos, b)) {
+		struct bkey *u = (void *) &k;
+
+		bkey_init(u);
+		u->p = pos;
+	}
+
+	k.needs_whiteout = true;
+
+	b->whiteout_u64s += k.u64s;
+	bkey_copy(unwritten_whiteouts_start(c, b), &k);
 }
 
 /*

@@ -2,6 +2,7 @@
 #ifndef _BCACHEFS_BTREE_IO_H
 #define _BCACHEFS_BTREE_IO_H
 
+#include "bkey_methods.h"
 #include "bset.h"
 #include "btree_locking.h"
 #include "extents.h"
@@ -102,19 +103,20 @@ bool bch2_btree_post_write_cleanup(struct bch_fs *, struct btree *);
 void bch2_btree_node_write(struct bch_fs *, struct btree *,
 			  enum six_lock_type);
 
-static inline void btree_node_write_if_need(struct bch_fs *c, struct btree *b)
+static inline void btree_node_write_if_need(struct bch_fs *c, struct btree *b,
+					    enum six_lock_type lock_held)
 {
 	while (b->written &&
 	       btree_node_need_write(b) &&
 	       btree_node_may_write(b)) {
 		if (!btree_node_write_in_flight(b)) {
-			bch2_btree_node_write(c, b, SIX_LOCK_read);
+			bch2_btree_node_write(c, b, lock_held);
 			break;
 		}
 
-		six_unlock_read(&b->lock);
+		six_unlock_type(&b->lock, lock_held);
 		btree_node_wait_on_io(b);
-		btree_node_lock_type(c, b, SIX_LOCK_read);
+		btree_node_lock_type(c, b, lock_held);
 	}
 }
 
@@ -131,12 +133,58 @@ do {									\
 		new |= (1 << BTREE_NODE_need_write);			\
 	} while ((v = cmpxchg(&(_b)->flags, old, new)) != old);		\
 									\
-	btree_node_write_if_need(_c, _b);				\
+	btree_node_write_if_need(_c, _b, SIX_LOCK_read);		\
 } while (0)
 
 void bch2_btree_flush_all_reads(struct bch_fs *);
 void bch2_btree_flush_all_writes(struct bch_fs *);
 void bch2_btree_verify_flushed(struct bch_fs *);
 ssize_t bch2_dirty_btree_nodes_print(struct bch_fs *, char *);
+
+static inline void compat_bformat(unsigned level, enum btree_id btree_id,
+				 unsigned version, unsigned big_endian,
+				 int write, struct bkey_format *f)
+{
+	if (version < bcachefs_metadata_version_inode_btree_change &&
+	    btree_id == BTREE_ID_INODES) {
+		swap(f->bits_per_field[BKEY_FIELD_INODE],
+		     f->bits_per_field[BKEY_FIELD_OFFSET]);
+		swap(f->field_offset[BKEY_FIELD_INODE],
+		     f->field_offset[BKEY_FIELD_OFFSET]);
+	}
+}
+
+static inline void compat_bpos(unsigned level, enum btree_id btree_id,
+			       unsigned version, unsigned big_endian,
+			       int write, struct bpos *p)
+{
+	if (big_endian != CPU_BIG_ENDIAN)
+		bch2_bpos_swab(p);
+
+	if (version < bcachefs_metadata_version_inode_btree_change &&
+	    btree_id == BTREE_ID_INODES)
+		swap(p->inode, p->offset);
+}
+
+static inline void compat_btree_node(unsigned level, enum btree_id btree_id,
+				     unsigned version, unsigned big_endian,
+				     int write,
+				     struct btree_node *bn)
+{
+	if (version < bcachefs_metadata_version_inode_btree_change &&
+	    btree_node_type_is_extents(btree_id) &&
+	    bkey_cmp(bn->min_key, POS_MIN) &&
+	    write)
+		bn->min_key = bkey_predecessor(bn->min_key);
+
+	compat_bpos(level, btree_id, version, big_endian, write, &bn->min_key);
+	compat_bpos(level, btree_id, version, big_endian, write, &bn->max_key);
+
+	if (version < bcachefs_metadata_version_inode_btree_change &&
+	    btree_node_type_is_extents(btree_id) &&
+	    bkey_cmp(bn->min_key, POS_MIN) &&
+	    !write)
+		bn->min_key = bkey_successor(bn->min_key);
+}
 
 #endif /* _BCACHEFS_BTREE_IO_H */

@@ -128,10 +128,9 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 
 	bch2_trans_update(trans, extent_iter, &r_p->k_i, 0);
 err:
-	if (!IS_ERR(reflink_iter)) {
+	if (!IS_ERR(reflink_iter))
 		c->reflink_hint = reflink_iter->pos.offset;
-		bch2_trans_iter_put(trans, reflink_iter);
-	}
+	bch2_trans_iter_put(trans, reflink_iter);
 
 	return ret;
 }
@@ -185,7 +184,7 @@ s64 bch2_remap_range(struct bch_fs *c,
 				       BTREE_ITER_INTENT);
 
 	while (1) {
-		bch2_trans_reset(&trans, TRANS_RESET_MEM);
+		bch2_trans_begin(&trans);
 
 		trans.mem_top = 0;
 
