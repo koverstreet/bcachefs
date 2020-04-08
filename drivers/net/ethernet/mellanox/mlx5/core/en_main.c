@@ -4222,8 +4222,7 @@ static void mlx5e_build_nic_netdev(struct net_device *netdev)
 	netdev->ethtool_ops	  = &mlx5e_ethtool_ops;
 
 	netdev->vlan_features    |= NETIF_F_SG;
-	netdev->vlan_features    |= NETIF_F_IP_CSUM;
-	netdev->vlan_features    |= NETIF_F_IPV6_CSUM;
+	netdev->vlan_features    |= NETIF_F_HW_CSUM;
 	netdev->vlan_features    |= NETIF_F_GRO;
 	netdev->vlan_features    |= NETIF_F_TSO;
 	netdev->vlan_features    |= NETIF_F_TSO6;
@@ -4246,8 +4245,7 @@ static void mlx5e_build_nic_netdev(struct net_device *netdev)
 
 	if (mlx5e_vxlan_allowed(mdev) || MLX5_CAP_ETH(mdev, tunnel_stateless_gre)) {
 		netdev->hw_features     |= NETIF_F_GSO_PARTIAL;
-		netdev->hw_enc_features |= NETIF_F_IP_CSUM;
-		netdev->hw_enc_features |= NETIF_F_IPV6_CSUM;
+		netdev->hw_enc_features |= NETIF_F_HW_CSUM;
 		netdev->hw_enc_features |= NETIF_F_TSO;
 		netdev->hw_enc_features |= NETIF_F_TSO6;
 		netdev->hw_enc_features |= NETIF_F_GSO_PARTIAL;
