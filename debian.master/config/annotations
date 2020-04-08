@@ -9388,7 +9388,8 @@ CONFIG_NET_NS                                   policy<{'amd64': 'y', 'arm64': '
 # Menu: General setup >> RCU Subsystem
 # XXX
 #
-CONFIG_CONTEXT_TRACKING_FORCE                   note<LP:1349028>
+CONFIG_CONTEXT_TRACKING_FORCE                   policy<{'amd64': '-', 'arm64': '-', 'armhf': '-', 'i386': '-', 'ppc64el': '-', 's390x': '-'}>
+CONFIG_CONTEXT_TRACKING_FORCE                   note<LP:1349028> mark<ENFORCED>
 
 # Menu: General setup >> RCU Subsystem >> Make expert-level adjustments to RCU configuration
 CONFIG_RCU_EXPERT                               policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n', 's390x': 'n'}>
