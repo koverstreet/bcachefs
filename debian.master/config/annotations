@@ -1743,7 +1743,7 @@ CONFIG_DRM_SHMOBILE                             policy<{'armhf': 'm'}>
 CONFIG_DRM_OMAP                                 policy<{'armhf': 'n'}>
 CONFIG_DRM_TILCDC                               policy<{'armhf': 'm'}>
 CONFIG_DRM_QXL                                  policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
-CONFIG_DRM_BOCHS                                policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n'}>
+CONFIG_DRM_BOCHS                                policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_DRM_VIRTIO_GPU                           policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
 CONFIG_DRM_FSL_DCU                              policy<{'armhf': 'm'}>
 CONFIG_DRM_TEGRA                                policy<{'armhf-generic': 'm'}>
@@ -1769,7 +1769,6 @@ CONFIG_DRM_PL111                                policy<{'arm64': 'm', 'armhf': '
 CONFIG_DRM_TVE200                               policy<{'armhf': 'm'}>
 #
 CONFIG_DRM_MGAG200                              note<LP#1693337>
-CONFIG_DRM_BOCHS                                note<LP#1378648>
 CONFIG_DRM_STI                                  note<LP#1398458>
 CONFIG_DRM_HISI_HIBMC                           note<LP#1762940>
 
