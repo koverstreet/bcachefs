@@ -26,6 +26,10 @@ help:
 	@echo
 	@echo "  diffupstream    : Diff stock kernel code against upstream (git)"
 	@echo
+	@echo "  compileselftests : Only compile the selftests listed on ubuntu_selftests variable"
+	@echo
+	@echo "  runselftests    : Run the selftests listed on ubuntu_selftests variable"
+	@echo
 	@echo "  help            : If you are kernel hacking, you need the professional"
 	@echo "                    version of this"
 	@echo
@@ -67,6 +71,7 @@ printenv:
 	@echo "skipdbg           = $(skipdbg)"
 	@echo "ubuntu_log_opts   = $(ubuntu_log_opts)"
 	@echo "CONCURRENCY_LEVEL = $(CONCURRENCY_LEVEL)"
+	@echo "ubuntu_selftests  = $(ubuntu_selftests)"
 	@echo "bin package name  = $(bin_pkg_name)"
 	@echo "hdr package name  = $(hdrs_pkg_name)"
 	@echo "doc package name  = $(doc_pkg_name)"
@@ -152,3 +157,11 @@ startnewrelease:
 	cat $(DEBIAN)/changelog >> $(DEBIAN)/changelog.new; \
 	mv $(DEBIAN)/changelog.new $(DEBIAN)/changelog
 
+compileselftests:
+	# a loop is needed here to fail on errors
+	for test in $(ubuntu_selftests); do \
+		$(kmake) -C tools/testing/selftests TARGETS="$$test"; \
+	done;
+
+runselftests:
+	$(kmake) -C tools/testing/selftests TARGETS="$(ubuntu_selftests)" run_tests

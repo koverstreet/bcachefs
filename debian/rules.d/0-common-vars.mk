@@ -253,3 +253,6 @@ LN = ln -sf
 # flavour as arguments.
 custom_override = \
  $(shell if [ -n "$($(1)_$(2))" ]; then echo "$($(1)_$(2))"; else echo "$($(1))"; fi)
+
+# selftests that Ubuntu cares about
+ubuntu_selftests = breakpoints bpf cpu-hotplug efivarfs memfd memory-hotplug mount net ptrace seccomp timers powerpc user ftrace
