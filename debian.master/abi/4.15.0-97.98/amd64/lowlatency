@@ -9271,6 +9271,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	memdup_user_nul
 EXPORT_SYMBOL vmlinux 0x00000000	memmove
 EXPORT_SYMBOL vmlinux 0x00000000	memory_cgrp_subsys
 EXPORT_SYMBOL vmlinux 0x00000000	memory_read_from_buffer
+EXPORT_SYMBOL vmlinux 0x00000000	memory_read_from_io_buffer
 EXPORT_SYMBOL vmlinux 0x00000000	memparse
 EXPORT_SYMBOL vmlinux 0x00000000	mempool_alloc
 EXPORT_SYMBOL vmlinux 0x00000000	mempool_alloc_pages
@@ -18479,6 +18480,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	ata_pci_sff_activate_host
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ata_pci_sff_init_host
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ata_pci_sff_init_one
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ata_pci_sff_prepare_host
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	ata_pci_shutdown_one
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ata_pio_need_iordy
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ata_platform_remove_one
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	ata_port_abort
@@ -22299,6 +22301,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_ldisc_ref_wait
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_ldisc_release
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_mode_ioctl
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_perform_flush
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_port_default_client_ops
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_port_install
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_port_link_device
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	tty_port_register_device
