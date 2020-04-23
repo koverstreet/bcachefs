@@ -571,7 +571,6 @@ static void lookup_put_fd_uobject(struct ib_uobject *uobj, bool exclusive)
 void rdma_lookup_put_uobject(struct ib_uobject *uobj, bool exclusive)
 {
 	assert_uverbs_usecnt(uobj, exclusive);
-	uobj->type->type_class->lookup_put(uobj, exclusive);
 	/*
 	 * In order to unlock an object, either decrease its usecnt for
 	 * read access or zero it in case of exclusive access. See
@@ -582,6 +581,7 @@ void rdma_lookup_put_uobject(struct ib_uobject *uobj, bool exclusive)
 	else
 		atomic_set(&uobj->usecnt, 0);
 
+	uobj->type->type_class->lookup_put(uobj, exclusive);
 	uverbs_uobject_put(uobj);
 }
 
