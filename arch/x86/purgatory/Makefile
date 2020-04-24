@@ -6,6 +6,9 @@ purgatory-y := purgatory.o stack.o setup-x86_$(BITS).o sha256.o entry64.o string
 targets += $(purgatory-y)
 PURGATORY_OBJS = $(addprefix $(obj)/,$(purgatory-y))
 
+$(obj)/string.o: $(srctree)/arch/x86/boot/compressed/string.c FORCE
+	$(call if_changed_rule,cc_o_c)
+
 LDFLAGS_purgatory.ro := -e purgatory_start -r --no-undefined -nostdlib -z nodefaultlib
 targets += purgatory.ro
 
@@ -26,11 +29,11 @@ ifdef CONFIG_FUNCTION_TRACER
 PURGATORY_CFLAGS_REMOVE		+= $(CC_FLAGS_FTRACE)
 endif
 
-ifdef CONFIG_STACKPROTECTOR
+ifdef CONFIG_CC_STACKPROTECTOR
 PURGATORY_CFLAGS_REMOVE		+= -fstack-protector
 endif
 
-ifdef CONFIG_STACKPROTECTOR_STRONG
+ifdef CONFIG_CC_STACKPROTECTOR_STRONG
 PURGATORY_CFLAGS_REMOVE		+= -fstack-protector-strong
 endif
 
