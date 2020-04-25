@@ -195,6 +195,7 @@
 #include <linux/types.h>
 #include <linux/workqueue.h>
 #include <linux/zstd.h>
+#include <linux/erasure_code.h>
 
 #include "bcachefs_format.h"
 #include "fifo.h"
@@ -753,6 +754,7 @@ struct bch_fs {
 	struct list_head	ec_new_stripe_list;
 	struct mutex		ec_new_stripe_lock;
 	u64			ec_stripe_hint;
+	struct erasure_code_ctx		ec_ctx;
 
 	struct bio_set		ec_bioset;
 

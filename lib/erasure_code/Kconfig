@@ -1,0 +1,21 @@
+config ERASURE_CODE
+	tristate "GF(256) erasure coding"
+	select RAID6_PQ
+    select XOR_BLOCKS
+	---help---
+	This option provides generalized Erasure Coding fucntions as an 
+	alternative to RAID P+Q for high resiliency storage arrays. 
+
+config ERASURE_CODE_LARGE_GF_TABLES
+	bool "Large GF lookup tables"
+	depends on ERASURE_CODE
+	---help---
+	Use large lookup tables (64KiB) for base EC implementations. Enable
+	for a small performance increase on platforms without SIMD acceleration.
+
+config ERASURE_CODE_LARGE_GF_TABLES
+	bool "Large GF lookup tables"
+	depends on ERASURE_CODE
+	---help---
+	Use large lookup tables (64KiB) for base EC implementations. Enable
+	for a small performance increase on platforms without SIMD acceleration.

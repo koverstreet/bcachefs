@@ -674,6 +674,23 @@ config CRYPTO_CRC32_PCLMUL
 	  which will enable any routine to use the CRC-32-IEEE 802.3 checksum
 	  and gain better performance as compared with the table implementation.
 
+config CRYPTO_CRC64
+	tristate "CRC64 CRC algorithm"
+	select CRYPTO_HASH
+	select CRC64
+	help
+	  CRC64-ECMA-182 cyclic redundancy-check algorithm.
+	  Shash crypto api wrappers to crc64_be function.
+
+config CRYPTO_CRC64_PCLMUL
+	tristate "CRC64 PCLMULQDQ hardware acceleration"
+	depends on X86 && 64BIT
+	select CRYPTO_HASH
+	select CRC64
+	help
+	  CRC64-ECMA-182 algorithms implemented using SSE4.2/PCLMUL or 
+	  AVX-512/VPCLMUL when the appropriate hardware is available.
+
 config CRYPTO_CRC32_MIPS
 	tristate "CRC32c and CRC32 CRC algorithm (MIPS)"
 	depends on MIPS_CRC_SUPPORT

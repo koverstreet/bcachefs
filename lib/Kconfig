@@ -19,6 +19,8 @@ config RAID6_PQ_BENCHMARK
 	  Benchmark all available RAID6 PQ functions on init and choose the
 	  fastest one.
 
+source "lib/erasure_code/Kconfig"
+
 config PACKING
 	bool "Generic bitfield packing and unpacking"
 	default n
@@ -229,6 +231,17 @@ config LIBCRC32C
 	  kernel tree does. Such modules that use library CRC32c functions
 	  require M here.  See Castagnoli93.
 	  Module will be libcrc32c.
+
+config LIBCRC64
+	tristate "CRC64 (ECMA 182) Cyclic Redundancy-Check"
+	select CRYPTO
+	select CRYPTO_CRC64
+	help
+	  This option is provided for the case where no in-kernel-tree
+	  modules require CRC64 functions, but a module built outside the
+	  kernel tree does. Such modules that use library CRC64 functions
+	  require M here.
+	  Module will be libcrc64.
 
 config CRC8
 	tristate "CRC8 function"

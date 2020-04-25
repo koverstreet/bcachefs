@@ -1,0 +1,125 @@
+/************************************************************************
+*  Copyright(c) 2011-2015 Intel Corporation All rights reserved.
+*
+*  Redistribution and use in source and binary forms, with or without
+*  modification, are permitted provided that the following conditions
+*  are met:
+*    * Redistributions of source code must retain the above copyright
+*      notice, this list of conditions and the following disclaimer.
+*    * Redistributions in binary form must reproduce the above copyright
+*      notice, this list of conditions and the following disclaimer in
+*      the documentation and/or other materials provided with the
+*      distribution.
+*    * Neither the name of Intel Corporation nor the names of its
+*      contributors may be used to endorse or promote products derived
+*      from this software without specific prior written permission.
+*
+*  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+*  "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+*  LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+*  A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+*  OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+*  SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+*  LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES* LOSS OF USE,
+*  DATA, OR PROFITS* OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+*  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+*  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+*  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+************************************************************************/
+
+/***
+*** gf_vect_mul_sse(len, mul_array, src, dest)
+***/
+
+#include <linux/linkage.h>
+
+#define arg0  rdi
+#define arg1  rsi
+#define arg2  rdx
+#define arg3  rcx
+#define arg4  r8
+#define arg5  r9
+#define tmp   r11
+#define return rax
+
+#define len    arg0
+#define mul_array arg1
+#define	src    arg2
+#define dest   arg3
+#define pos    return
+
+/*** Use Un-aligned load/store ***/
+#define XLDR movdqu
+#define XSTR movdqu
+
+#define xmask0f  xmm15
+#define xgft_lo  xmm14
+#define xgft_hi  xmm13
+
+#define x0     xmm0
+#define xtmp1a xmm1
+#define xtmp1b xmm2
+#define xtmp1c xmm3
+#define x1     xmm4
+#define xtmp2a xmm5
+#define xtmp2b xmm6
+#define xtmp2c xmm7
+
+.intel_syntax noprefix 
+
+.section .text
+.align 16
+
+ENTRY(gf_vect_mul_sse)
+	cmp len, 32
+	jl return_fail
+
+	mov	pos, 0
+	movdqa	xmask0f, [mask0f]	/* Load mask of lower nibble in each byte */
+	movdqu	xgft_lo, [mul_array]	/* Load array Cx{00}, Cx{01}, Cx{02}, ... */
+	movdqu	xgft_hi, [mul_array+16]	/*  " Cx{00}, Cx{10}, Cx{20}, ... , Cx{f0} */
+
+loop32:
+	XLDR	x0, [src+pos]		/* Get next source vector */
+	XLDR	x1, [src+pos+16]	/* Get next source vector + 16B ahead */
+	movdqa	xtmp1b, xgft_hi		/* Reload const array registers */
+	movdqa	xtmp1c, xgft_lo
+	movdqa	xtmp2b, xgft_hi
+	movdqa	xtmp2c, xgft_lo
+	movdqa	xtmp1a, x0		/* Keep unshifted copy of src */
+	movdqa	xtmp2a, x1
+	psraw	x0, 4			/* Shift to put high nibble into bits 4-0 */
+	psraw	x1, 4
+	pand	xtmp1a, xmask0f		/* Mask low src nibble in bits 4-0 */
+	pand	xtmp2a, xmask0f
+	pand	x0, xmask0f		/* Mask high src nibble in bits 4-0 */
+	pand	x1, xmask0f
+	pshufb	xtmp1b, x0		/* Lookup mul table of high nibble */
+	pshufb	xtmp1c, xtmp1a		/* Lookup mul table of low nibble */
+	pshufb	xtmp2b, x1
+	pshufb	xtmp2c, xtmp2a
+	pxor	xtmp1b, xtmp1c		/* GF add high and low partials */
+	pxor	xtmp2b, xtmp2c
+	XSTR	[dest+pos], xtmp1b 	/* Store result */
+	XSTR	[dest+pos+16], xtmp2b	/* Store +16B result */
+	add	pos, 32			/* Loop on 32 bytes at at time */
+	cmp	pos, len
+	jl	loop32
+
+return_pass:
+	sub	pos, len
+	ret
+
+return_fail:
+	mov	return, 0
+	ret
+ENDPROC(gf_vect_mul_sse)
+
+.section .data
+
+.align 16
+mask0f:
+	.quad 0x0f0f0f0f0f0f0f0f
+	.quad 0x0f0f0f0f0f0f0f0f
+
+.att_syntax prefix 

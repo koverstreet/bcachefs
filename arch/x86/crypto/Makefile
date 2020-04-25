@@ -36,6 +36,7 @@ obj-$(CONFIG_CRYPTO_SHA256_SSSE3) += sha256-ssse3.o
 obj-$(CONFIG_CRYPTO_SHA512_SSSE3) += sha512-ssse3.o
 obj-$(CONFIG_CRYPTO_CRCT10DIF_PCLMUL) += crct10dif-pclmul.o
 obj-$(CONFIG_CRYPTO_POLY1305_X86_64) += poly1305-x86_64.o
+obj-$(CONFIG_CRYPTO_CRC64_PCLMUL) += crc64-pclmul.o
 
 obj-$(CONFIG_CRYPTO_AEGIS128_AESNI_SSE2) += aegis128-aesni.o
 obj-$(CONFIG_CRYPTO_AEGIS128L_AESNI_SSE2) += aegis128l-aesni.o
@@ -113,6 +114,7 @@ endif
 
 ifeq ($(avx512_supported),yes)
 	chacha-x86_64-y += chacha-avx512vl-x86_64.o
+	crc64-pclmul-$(CONFIG_64BIT) += crc64_ecma_norm_by16_10.o
 endif
 
 aesni-intel-y := aesni-intel_asm.o aesni-intel_glue.o
@@ -130,6 +132,7 @@ endif
 crc32c-intel-y := crc32c-intel_glue.o
 crc32c-intel-$(CONFIG_64BIT) += crc32c-pcl-intel-asm_64.o
 crc32-pclmul-y := crc32-pclmul_asm.o crc32-pclmul_glue.o
+crc64-pclmul-$(CONFIG_64BIT) += crc64-pclmul_glue.o crc64_ecma_norm_by8.o
 sha256-ssse3-y := sha256-ssse3-asm.o sha256-avx-asm.o sha256-avx2-asm.o sha256_ssse3_glue.o
 ifeq ($(sha256_ni_supported),yes)
 sha256-ssse3-y += sha256_ni_asm.o
