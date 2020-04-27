@@ -100,7 +100,7 @@ do
 	dpkg -x "$lpackage"_*.deb "$package"
 
 	lversion=$( echo "$lpackage_path" | sed -e 's@.*/@@' -e 's@_[^_]*$@@' -e 's@.*_@@')
-	built_using_record "$srcdir/debian/$pkgname.substvars" "$built_using$lpackage (= $lversion)"
+	#built_using_record "$srcdir/debian/$pkgname.substvars" "$built_using$lpackage (= $lversion)"
 done
 
 # Pick out the package/version from the dkms.conf.
