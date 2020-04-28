@@ -320,7 +320,11 @@ void __init idt_setup_apic_and_irq_gates(void)
 
 	for_each_clear_bit_from(i, system_vectors, NR_VECTORS) {
 #ifdef CONFIG_X86_LOCAL_APIC
-		set_bit(i, system_vectors);
+		/*
+		 * Don't set the non assigned system vectors in the
+		 * system_vectors bitmap. Otherwise they show up in
+		 * /proc/interrupts.
+		 */
 		set_intr_gate(i, spurious_interrupt);
 #else
 		entry = irq_entries_start + 8 * (i - FIRST_EXTERNAL_VECTOR);
