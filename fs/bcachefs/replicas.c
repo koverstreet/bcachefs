@@ -299,8 +299,10 @@ static int replicas_table_update(struct bch_fs *c,
 						GFP_NOIO)) ||
 	    !(new_scratch  = kmalloc(bytes, GFP_NOIO)) ||
 	    (c->usage_gc &&
-	     !(new_gc = __alloc_percpu_gfp(bytes, sizeof(u64), GFP_NOIO))))
+	     !(new_gc = __alloc_percpu_gfp(bytes, sizeof(u64), GFP_NOIO)))) {
+		bch_err(c, "error updating replicas table: memory allocation failure");
 		goto err;
+	}
 
 	if (c->usage_base)
 		__replicas_table_update(new_base,		new_r,
@@ -362,7 +364,7 @@ static int bch2_mark_replicas_slowpath(struct bch_fs *c,
 				struct bch_replicas_entry *new_entry)
 {
 	struct bch_replicas_cpu new_r, new_gc;
-	int ret = -ENOMEM;
+	int ret = 0;
 
 	verify_replicas_entry(new_entry);
 
@@ -409,14 +411,16 @@ static int bch2_mark_replicas_slowpath(struct bch_fs *c,
 		swap(new_gc, c->replicas_gc);
 	percpu_up_write(&c->mark_lock);
 out:
-	ret = 0;
-err:
 	mutex_unlock(&c->sb_lock);
 
 	kfree(new_r.entries);
 	kfree(new_gc.entries);
 
 	return ret;
+err:
+	bch_err(c, "error adding replicas entry: memory allocation failure");
+	ret = -ENOMEM;
+	goto out;
 }
 
 int bch2_mark_replicas(struct bch_fs *c,
@@ -561,6 +565,7 @@ int bch2_replicas_gc_start(struct bch_fs *c, unsigned typemask)
 					 GFP_NOIO);
 	if (!c->replicas_gc.entries) {
 		mutex_unlock(&c->sb_lock);
+		bch_err(c, "error allocating c->replicas_gc");
 		return -ENOMEM;
 	}
 
@@ -586,8 +591,10 @@ retry:
 	nr		= READ_ONCE(c->replicas.nr);
 	new.entry_size	= READ_ONCE(c->replicas.entry_size);
 	new.entries	= kcalloc(nr, new.entry_size, GFP_KERNEL);
-	if (!new.entries)
+	if (!new.entries) {
+		bch_err(c, "error allocating c->replicas_gc");
 		return -ENOMEM;
+	}
 
 	mutex_lock(&c->sb_lock);
 	percpu_down_write(&c->mark_lock);
