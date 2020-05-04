@@ -205,6 +205,15 @@ config RTC_DRV_AC100
 	  This driver can also be built as a module. If so, the module
 	  will be called rtc-ac100.
 
+config RTC_DRV_AM1805
+	tristate "Ambiq micro AM1805 RTC driver"
+	help
+	  If you say yes here you get support for Ambiq micro AM1805 RTC
+	  chip.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called rtc-am1805.
+
 config RTC_DRV_BRCMSTB
 	tristate "Broadcom STB wake-timer"
 	depends on ARCH_BRCMSTB || BMIPS_GENERIC || COMPILE_TEST
