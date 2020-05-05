@@ -470,6 +470,12 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 		if (!journal_flushes_device(ca))
 			n->bio.bi_opf |= REQ_FUA;
 
+		pr_info("submitting %px sector %llu len %u segs %u vecs %u",
+			&n->bio,
+			(u64) n->bio.bi_iter.bi_sector,
+			n->bio.bi_iter.bi_size, bio_segments(&n->bio),
+			n->bio.bi_vcnt);
+
 		if (likely(n->have_ioref)) {
 			this_cpu_add(ca->io_done->sectors[WRITE][type],
 				     bio_sectors(&n->bio));
