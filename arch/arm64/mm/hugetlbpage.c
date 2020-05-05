@@ -220,6 +220,8 @@ pte_t *huge_pte_alloc(struct mm_struct *mm,
 		pte = (pte_t *)pud;
 	} else if (sz == (PAGE_SIZE * CONT_PTES)) {
 		pmd_t *pmd = pmd_alloc(mm, pud, addr);
+		if (!pmd)
+			return NULL;
 
 		WARN_ON(addr & (sz - 1));
 		/*
