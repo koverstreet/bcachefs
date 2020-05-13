@@ -588,7 +588,9 @@ static void bch2_write_index(struct closure *cl)
 
 	__bch2_write_index(op);
 
-	if (!op->error && (op->flags & BCH_WRITE_FLUSH)) {
+	if (!(op->flags & BCH_WRITE_DONE)) {
+		continue_at(cl, __bch2_write, index_update_wq(op));
+	} else if (!op->error && (op->flags & BCH_WRITE_FLUSH)) {
 		bch2_journal_flush_seq_async(&c->journal,
 					     *op_journal_seq(op),
 					     cl);
@@ -1103,8 +1105,15 @@ again:
 		if (ret < 0)
 			goto err;
 
-		if (ret)
+		if (ret) {
 			skip_put = false;
+		} else {
+			/*
+			 * for the skip_put optimization this has to be set
+			 * before we submit the bio:
+			 */
+			op->flags |= BCH_WRITE_DONE;
+		}
 
 		bio->bi_end_io	= bch2_write_endio;
 		bio->bi_private	= &op->cl;
@@ -1127,16 +1136,30 @@ again:
 	return;
 err:
 	op->error = ret;
+	op->flags |= BCH_WRITE_DONE;
 
 	continue_at(cl, bch2_write_index, index_update_wq(op));
 	return;
 flush_io:
+	/*
+	 * If the write can't all be submitted at once, we generally want to
+	 * block synchronously as that signals backpressure to the caller.
+	 *
+	 * However, if we're running out of a workqueue, we can't block here
+	 * because we'll be blocking other work items from completing:
+	 */
+	if (current->flags & PF_WQ_WORKER) {
+		continue_at(cl, bch2_write_index, index_update_wq(op));
+		return;
+	}
+
 	closure_sync(cl);
 
 	if (!bch2_keylist_empty(&op->insert_keys)) {
 		__bch2_write_index(op);
 
 		if (op->error) {
+			op->flags |= BCH_WRITE_DONE;
 			continue_at_nobarrier(cl, bch2_write_done, NULL);
 			return;
 		}
@@ -1182,6 +1205,8 @@ static void bch2_write_data_inline(struct bch_write_op *op, unsigned data_len)
 	bch2_keylist_push(&op->insert_keys);
 
 	op->flags |= BCH_WRITE_WROTE_DATA_INLINE;
+	op->flags |= BCH_WRITE_DONE;
+
 	continue_at_nobarrier(cl, bch2_write_index, NULL);
 	return;
 err:
