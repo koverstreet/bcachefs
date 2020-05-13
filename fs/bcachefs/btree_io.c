@@ -620,7 +620,7 @@ static void bset_encrypt(struct bch_fs *c, struct bset *i, unsigned offset)
 		bch2_encrypt(c, BSET_CSUM_TYPE(i), nonce, &bn->flags,
 			     bytes);
 
-		nonce = nonce_add(nonce, round_up(bytes, CHACHA20_BLOCK_SIZE));
+		nonce = nonce_add(nonce, round_up(bytes, CHACHA_BLOCK_SIZE));
 	}
 
 	bch2_encrypt(c, BSET_CSUM_TYPE(i), nonce, i->_data,
@@ -736,6 +736,17 @@ static int validate_bset(struct bch_fs *c, struct btree *b,
 		struct btree_node *bn =
 			container_of(i, struct btree_node, keys);
 		/* These indicate that we read the wrong btree node: */
+
+		if (b->key.k.type == KEY_TYPE_btree_ptr_v2) {
+			struct bch_btree_ptr_v2 *bp =
+				&bkey_i_to_btree_ptr_v2(&b->key)->v;
+
+			/* XXX endianness */
+			btree_err_on(bp->seq != bn->keys.seq,
+				     BTREE_ERR_MUST_RETRY, c, b, NULL,
+				     "incorrect sequence number (wrong btree node)");
+		}
+
 		btree_err_on(BTREE_NODE_ID(bn) != b->btree_id,
 			     BTREE_ERR_MUST_RETRY, c, b, i,
 			     "incorrect btree id");
@@ -1625,6 +1636,11 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	 * with the journal stopped, we're never going to update the journal to
 	 * reflect that those writes were done and the data flushed from the
 	 * journal:
+	 *
+	 * Also on journal error, the pending write may have updates that were
+	 * never journalled (interior nodes, see btree_update_nodes_written()) -
+	 * it's critical that we don't do the write in that case otherwise we
+	 * will have updates visible that weren't in the journal:
 	 *
 	 * Make sure to update b->written so bch2_btree_init_next() doesn't
 	 * break:
