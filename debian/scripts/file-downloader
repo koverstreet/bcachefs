@@ -20,7 +20,7 @@ do
 
 	echo "II: $what $url"
 
-	curl --silent --show-error "$url" -o "$to" -D "$to.hdr" || exit 1
+	curl --silent --fail --show-error "$url" -o "$to" -D "$to.hdr" || exit 1
 	redirect=$(awk '/^Location: / {gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2); print $2;}' "$to.hdr")
 	[ -z "$redirect" ] && break
 	what='  following'
