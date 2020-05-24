@@ -200,6 +200,8 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 	if (!test_bit(BCH_FS_ALLOCATOR_RUNNING, &c->flags))
 		goto nowrote_alloc;
 
+	bch_verbose(c, "writing alloc info");
+
 	do {
 		wrote = false;
 
@@ -230,6 +232,7 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 		clean_passes = wrote ? 0 : clean_passes + 1;
 	} while (clean_passes < 2);
 
+	bch_verbose(c, "writing alloc info complete");
 	set_bit(BCH_FS_ALLOC_CLEAN, &c->flags);
 nowrote_alloc:
 	for_each_member_device(ca, c, i)
@@ -314,8 +317,10 @@ void bch2_fs_read_only(struct bch_fs *c)
 	    !test_bit(BCH_FS_EMERGENCY_RO, &c->flags) &&
 	    test_bit(BCH_FS_STARTED, &c->flags) &&
 	    test_bit(BCH_FS_ALLOC_CLEAN, &c->flags) &&
-	    !c->opts.norecovery)
+	    !c->opts.norecovery) {
+		bch_verbose(c, "marking filesystem clean");
 		bch2_fs_mark_clean(c);
+	}
 
 	clear_bit(BCH_FS_RW, &c->flags);
 }
