@@ -206,11 +206,11 @@ static int bch2_btree_and_journal_walk_recurse(struct bch_fs *c, struct btree *b
 	bch2_btree_and_journal_iter_init_node_iter(&iter, journal_keys, b);
 
 	while ((k = bch2_btree_and_journal_iter_peek(&iter)).k) {
-		ret = key_fn(c, btree_id, b->level, k);
+		ret = key_fn(c, btree_id, b->c.level, k);
 		if (ret)
 			break;
 
-		if (b->level) {
+		if (b->c.level) {
 			struct btree *child;
 			BKEY_PADDED(k) tmp;
 
@@ -219,9 +219,9 @@ static int bch2_btree_and_journal_walk_recurse(struct bch_fs *c, struct btree *b
 
 			bch2_btree_and_journal_iter_advance(&iter);
 
-			if (b->level > 0) {
+			if (b->c.level > 0) {
 				child = bch2_btree_node_get_noiter(c, &tmp.k,
-							b->btree_id, b->level - 1);
+							b->c.btree_id, b->c.level - 1);
 				ret = PTR_ERR_OR_ZERO(child);
 				if (ret)
 					break;
@@ -229,7 +229,7 @@ static int bch2_btree_and_journal_walk_recurse(struct bch_fs *c, struct btree *b
 				ret   = (node_fn ? node_fn(c, b) : 0) ?:
 					bch2_btree_and_journal_walk_recurse(c, child,
 						journal_keys, btree_id, node_fn, key_fn);
-				six_unlock_read(&child->lock);
+				six_unlock_read(&child->c.lock);
 
 				if (ret)
 					break;
@@ -253,12 +253,12 @@ int bch2_btree_and_journal_walk(struct bch_fs *c, struct journal_keys *journal_k
 	if (btree_node_fake(b))
 		return 0;
 
-	six_lock_read(&b->lock, NULL, NULL);
+	six_lock_read(&b->c.lock, NULL, NULL);
 	ret   = (node_fn ? node_fn(c, b) : 0) ?:
 		bch2_btree_and_journal_walk_recurse(c, b, journal_keys, btree_id,
 						    node_fn, key_fn) ?:
-		key_fn(c, btree_id, b->level + 1, bkey_i_to_s_c(&b->key));
-	six_unlock_read(&b->lock);
+		key_fn(c, btree_id, b->c.level + 1, bkey_i_to_s_c(&b->key));
+	six_unlock_read(&b->c.lock);
 
 	return ret;
 }
@@ -763,6 +763,7 @@ static int verify_superblock_clean(struct bch_fs *c,
 			"superblock read clock doesn't match journal after clean shutdown");
 
 	for (i = 0; i < BTREE_ID_NR; i++) {
+		char buf1[200], buf2[200];
 		struct bkey_i *k1, *k2;
 		unsigned l1 = 0, l2 = 0;
 
@@ -778,7 +779,11 @@ static int verify_superblock_clean(struct bch_fs *c,
 				    k1->k.u64s != k2->k.u64s ||
 				    memcmp(k1, k2, bkey_bytes(k1)) ||
 				    l1 != l2, c,
-			"superblock btree root doesn't match journal after clean shutdown");
+			"superblock btree root %u doesn't match journal after clean shutdown\n"
+			"sb:      l=%u %s\n"
+			"journal: l=%u %s\n", i,
+			l1, (bch2_bkey_val_to_text(&PBUF(buf1), c, bkey_i_to_s_c(k1)), buf1),
+			l2, (bch2_bkey_val_to_text(&PBUF(buf2), c, bkey_i_to_s_c(k2)), buf2));
 	}
 fsck_err:
 	return ret;
