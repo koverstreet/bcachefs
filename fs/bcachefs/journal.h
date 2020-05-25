@@ -200,9 +200,23 @@ bch2_journal_add_entry_noreservation(struct journal_buf *buf, size_t u64s)
 }
 
 static inline struct jset_entry *
-bch2_journal_reservation_entry(struct journal *j, struct journal_res *res)
+journal_res_entry(struct journal *j, struct journal_res *res)
 {
 	return vstruct_idx(j->buf[res->idx].data, res->offset);
+}
+
+static inline unsigned journal_entry_set(struct jset_entry *entry, unsigned type,
+					  enum btree_id id, unsigned level,
+					  const void *data, unsigned u64s)
+{
+	memset(entry, 0, sizeof(*entry));
+	entry->u64s	= cpu_to_le16(u64s);
+	entry->type	= type;
+	entry->btree_id = id;
+	entry->level	= level;
+	memcpy_u64s_small(entry->_data, data, u64s);
+
+	return jset_u64s(u64s);
 }
 
 static inline void bch2_journal_add_entry(struct journal *j, struct journal_res *res,
@@ -210,21 +224,14 @@ static inline void bch2_journal_add_entry(struct journal *j, struct journal_res 
 					  unsigned level,
 					  const void *data, unsigned u64s)
 {
-	struct jset_entry *entry = bch2_journal_reservation_entry(j, res);
-	unsigned actual = jset_u64s(u64s);
+	unsigned actual = journal_entry_set(journal_res_entry(j, res),
+			       type, id, level, data, u64s);
 
 	EBUG_ON(!res->ref);
 	EBUG_ON(actual > res->u64s);
 
 	res->offset	+= actual;
 	res->u64s	-= actual;
-
-	memset(entry, 0, sizeof(*entry));
-	entry->u64s	= cpu_to_le16(u64s);
-	entry->type	= type;
-	entry->btree_id = id;
-	entry->level	= level;
-	memcpy_u64s_small(entry->_data, data, u64s);
 }
 
 static inline void bch2_journal_add_keys(struct journal *j, struct journal_res *res,
