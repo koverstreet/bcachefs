@@ -477,6 +477,7 @@ static void bch2_fs_free(struct bch_fs *c)
 	bch2_fs_ec_exit(c);
 	bch2_fs_encryption_exit(c);
 	bch2_fs_io_exit(c);
+	bch2_fs_btree_interior_update_exit(c);
 	bch2_fs_btree_iter_exit(c);
 	bch2_fs_btree_cache_exit(c);
 	bch2_fs_journal_exit(&c->journal);
@@ -495,8 +496,6 @@ static void bch2_fs_free(struct bch_fs *c)
 	mempool_exit(&c->large_bkey_pool);
 	mempool_exit(&c->btree_bounce_pool);
 	bioset_exit(&c->btree_bio);
-	mempool_exit(&c->btree_interior_update_pool);
-	mempool_exit(&c->btree_reserve_pool);
 	mempool_exit(&c->fill_iter);
 	percpu_ref_exit(&c->writes);
 	kfree(c->replicas.entries);
@@ -658,11 +657,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 
 	INIT_LIST_HEAD(&c->list);
 
-	INIT_LIST_HEAD(&c->btree_interior_update_list);
-	INIT_LIST_HEAD(&c->btree_interior_updates_unwritten);
-	mutex_init(&c->btree_reserve_cache_lock);
-	mutex_init(&c->btree_interior_update_lock);
-
 	mutex_init(&c->usage_scratch_lock);
 
 	mutex_init(&c->bio_bounce_pages_lock);
@@ -737,10 +731,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_HIGHPRI, 1)) ||
 	    percpu_ref_init(&c->writes, bch2_writes_disabled,
 			    PERCPU_REF_INIT_DEAD, GFP_KERNEL) ||
-	    mempool_init_kmalloc_pool(&c->btree_reserve_pool, 1,
-				      sizeof(struct btree_reserve)) ||
-	    mempool_init_kmalloc_pool(&c->btree_interior_update_pool, 1,
-				      sizeof(struct btree_update)) ||
 	    mempool_init_kmalloc_pool(&c->fill_iter, 1, iter_size) ||
 	    bioset_init(&c->btree_bio, 1,
 			max(offsetof(struct btree_read_bio, bio),
@@ -757,6 +747,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    bch2_fs_replicas_init(c) ||
 	    bch2_fs_btree_cache_init(c) ||
 	    bch2_fs_btree_iter_init(c) ||
+	    bch2_fs_btree_interior_update_init(c) ||
 	    bch2_fs_io_init(c) ||
 	    bch2_fs_encryption_init(c) ||
 	    bch2_fs_compress_init(c) ||
