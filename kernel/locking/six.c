@@ -108,7 +108,8 @@ static bool __six_trylock_type(struct six_lock *lock, enum six_lock_type type)
 	if (!do_six_trylock_type(lock, type))
 		return false;
 
-	six_acquire(&lock->dep_map, 1);
+	if (type != SIX_LOCK_write)
+		six_acquire(&lock->dep_map, 1);
 	return true;
 }
 
@@ -130,7 +131,8 @@ static bool __six_relock_type(struct six_lock *lock, enum six_lock_type type,
 				old.v + l[type].lock_val)) != old.v);
 
 	six_set_owner(lock, type, old);
-	six_acquire(&lock->dep_map, 1);
+	if (type != SIX_LOCK_write)
+		six_acquire(&lock->dep_map, 1);
 	return true;
 }
 
@@ -323,7 +325,8 @@ static void __six_lock_type_slowpath(struct six_lock *lock, enum six_lock_type t
 __always_inline
 static void __six_lock_type(struct six_lock *lock, enum six_lock_type type)
 {
-	six_acquire(&lock->dep_map, 0);
+	if (type != SIX_LOCK_write)
+		six_acquire(&lock->dep_map, 0);
 
 	if (!do_six_trylock_type(lock, type))
 		__six_lock_type_slowpath(lock, type);
@@ -382,7 +385,8 @@ static void __six_unlock_type(struct six_lock *lock, enum six_lock_type type)
 	EBUG_ON(type == SIX_LOCK_write &&
 		!(lock->state.v & __SIX_LOCK_HELD_intent));
 
-	six_release(&lock->dep_map);
+	if (type != SIX_LOCK_write)
+		six_release(&lock->dep_map);
 
 	if (type == SIX_LOCK_intent) {
 		EBUG_ON(lock->owner != current);
