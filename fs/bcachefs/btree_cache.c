@@ -553,7 +553,6 @@ out_unlock:
 
 	list_del_init(&b->list);
 	mutex_unlock(&bc->lock);
-	memalloc_nofs_restore(flags);
 out:
 	b->flags		= 0;
 	b->written		= 0;
@@ -566,6 +565,7 @@ out:
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_mem_alloc],
 			       start_time);
 
+	memalloc_nofs_restore(flags);
 	return b;
 err:
 	/* Try to cannibalize another cached btree node: */
@@ -581,6 +581,7 @@ err:
 	}
 
 	mutex_unlock(&bc->lock);
+	memalloc_nofs_restore(flags);
 	return ERR_PTR(-ENOMEM);
 }
 
