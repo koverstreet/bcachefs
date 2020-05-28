@@ -1,6 +1,5 @@
-# Bcachefs [![IRC](https://img.shields.io/badge/irc-bcache-brightgreen)](https://kiwiirc.com/nextclient/irc.oftc.net#bcache)
-[![reddit](https://img.shields.io/reddit/subreddit-subscribers/bcachefs?style=social)](https://www.reddit.com/r/bcachefs/)
-[![Donate](https://img.shields.io/badge/Donate-Patreon-green.svg)](https://www.patreon.com/bcachefs)
+# Bcachefs [![IRC](https://img.shields.io/badge/irc-bcache-brightgreen)](https://kiwiirc.com/nextclient/irc.oftc.net#bcache) [![reddit](https://img.shields.io/reddit/subreddit-subscribers/bcachefs?style=social)](https://www.reddit.com/r/bcachefs/) [![Donate](https://img.shields.io/badge/Donate-Patreon-green.svg)](https://www.patreon.com/bcachefs)
+
 "The COW filesystem for Linux that won't eat your data"
 
 ## Features
@@ -33,30 +32,30 @@ Join us in the bcache IRC channel, we have a small group of bcachefs users and t
 Bcachefs is not yet upstream - you'll have to build a kernel to use it.
 
 First, check out the bcache kernel and tools repositories:
-´´
+```
 git clone https://evilpiepirate.org/git/bcachefs.git
 git clone https://evilpiepirate.org/git/bcachefs-tools.git
-´´
+```
 
-Build and install as usual - make sure you enable ´CONFIG_BCACHE_FS´. Then, to format and mount a single device with the default options, run:
-´´´
+Build and install as usual - make sure you enable `CONFIG_BCACHE_FS`. Then, to format and mount a single device with the default options, run:
+```
 bcachefs format /dev/sda1
 mount -t bcachefs /dev/sda1 /mnt
-´´´
+```
 
 For a multi device filesystem, with sda1 caching sdb1:
-´´´
+```
 bcachefs format /dev/sd[ab]1 \
     --foreground_target /dev/sda1 \
     --promote-target /dev/sda1 \
     --background_target /dev/sdb1
 mount -t bcachefs /dev/sda1:/dev/sdb1 /mnt
-´´´
+```
 
 This will configure the filesystem so that writes will be buffered to /dev/sda1 before being written back to /dev/sdb1 in the background, and that hot data will be promoted to /dev/sda1 for faster access.
 
 
-See ´bcachefs format --help´ for more options.
+See `bcachefs format --help` for more options.
 
 ## Documentation
 End user documentation is currently fairly minimal; this would be a very helpful area for anyone who wishes to contribute - I would like the bcache man page in the bcachefs-tools repository to be rewritten and expanded.
