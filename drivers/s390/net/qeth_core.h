@@ -663,7 +663,6 @@ struct qeth_card_blkt {
 
 #define QETH_BROADCAST_WITH_ECHO    0x01
 #define QETH_BROADCAST_WITHOUT_ECHO 0x02
-#define QETH_LAYER2_MAC_READ	    0x01
 #define QETH_LAYER2_MAC_REGISTERED  0x02
 struct qeth_card_info {
 	unsigned short unit_addr2;
@@ -706,6 +705,8 @@ struct qeth_card_options {
 	enum qeth_cq cq;
 	char hsuid[9];
 };
+
+#define	IS_LAYER2(card)	((card)->options.layer2 == QETH_DISCIPLINE_LAYER2)
 
 /*
  * thread bits for qeth_card thread masks
