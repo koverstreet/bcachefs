@@ -6107,6 +6107,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	__block_write_full_page
 EXPORT_SYMBOL vmlinux 0x00000000	__blockdev_direct_IO
 EXPORT_SYMBOL vmlinux 0x00000000	__bread_gfp
 EXPORT_SYMBOL vmlinux 0x00000000	__breadahead
+EXPORT_SYMBOL vmlinux 0x00000000	__breadahead_gfp
 EXPORT_SYMBOL vmlinux 0x00000000	__break_lease
 EXPORT_SYMBOL vmlinux 0x00000000	__brelse
 EXPORT_SYMBOL vmlinux 0x00000000	__bswapdi2
@@ -10972,6 +10973,7 @@ EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_io_bus_get_dev
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_io_bus_write
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_irq_has_notifier
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_is_visible_gfn
+EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_map_gfn
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_put_kvm
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_read_guest
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_read_guest_atomic
@@ -10985,6 +10987,7 @@ EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_release_pfn_dirty
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_set_memory_region
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_set_pfn_accessed
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_set_pfn_dirty
+EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_unmap_gfn
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_unmap_hva
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_block
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_cache
@@ -10994,12 +10997,14 @@ EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_gfn_to_pfn
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_gfn_to_pfn_atomic
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_init
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_kick
+EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_map
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_mark_page_dirty
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_on_spin
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_read_guest
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_read_guest_atomic
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_read_guest_page
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_uninit
+EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_unmap
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_wake_up
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_write_guest
 EXPORT_SYMBOL_GPL arch/powerpc/kvm/kvm 0x00000000	kvm_vcpu_write_guest_page

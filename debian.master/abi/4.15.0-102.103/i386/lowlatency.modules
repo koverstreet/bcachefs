@@ -3628,6 +3628,7 @@ rtc-88pm860x
 rtc-ab-b5ze-s3
 rtc-ab3100
 rtc-abx80x
+rtc-am1805
 rtc-bq32k
 rtc-bq4802
 rtc-da9052
