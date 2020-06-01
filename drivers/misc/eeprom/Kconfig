@@ -23,7 +23,10 @@ config EEPROM_AT24
 
 	  If you use this with an SMBus adapter instead of an I2C adapter,
 	  full functionality is not available.  Only smaller devices are
-	  supported (24c16 and below, max 4 kByte).
+	  supported via block reads (24c16 and below, max 4 kByte).
+	  Larger devices that use 16-bit addresses will only work with
+	  individual byte reads, which is very slow in general and is unsafe
+	  in multi-master SMBus topologies.
 
 	  This driver can also be built as a module.  If so, the module
 	  will be called at24.
