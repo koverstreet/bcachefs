@@ -425,7 +425,7 @@ void update_srbds_msr(void)
 	if (boot_cpu_has(X86_FEATURE_HYPERVISOR))
 		return;
 
-	if (srbds_mitigation == SRBDS_MITIGATION_UCODE_NEEDED)
+	if (!boot_cpu_has(X86_FEATURE_SRBDS_CTRL))
 		return;
 
 	rdmsrl(MSR_IA32_MCU_OPT_CTRL, mcu_ctrl);
