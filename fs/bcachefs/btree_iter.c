@@ -2318,8 +2318,8 @@ void bch2_btree_trans_to_text(struct printbuf *out, struct bch_fs *c)
 			bch2_bpos_to_text(out, trans->locking_pos);
 
 			pr_buf(out, " node %px l=%u %s:",
-			       b, b->level,
-			       bch2_btree_ids[b->btree_id]);
+			       b, b->c.level,
+			       bch2_btree_ids[b->c.btree_id]);
 			bch2_bpos_to_text(out, b->key.k.p);
 			pr_buf(out, "\n");
 		}
