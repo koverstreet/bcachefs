@@ -60,17 +60,20 @@ struct btree_alloc {
 	BKEY_PADDED(k);
 };
 
+struct btree_bkey_cached_common {
+	struct six_lock		lock;
+	u8			level;
+	u8			btree_id;
+};
+
 struct btree {
-	/* Hottest entries first */
+	struct btree_bkey_cached_common c;
+
 	struct rhash_head	hash;
 	u64			hash_val;
 
-	struct six_lock		lock;
-
 	unsigned long		flags;
 	u16			written;
-	u8			level;
-	u8			btree_id;
 	u8			nsets;
 	u8			nr_key_bits;
 
@@ -495,7 +498,7 @@ static inline enum btree_node_type __btree_node_type(unsigned level, enum btree_
 /* Type of keys @b contains: */
 static inline enum btree_node_type btree_node_type(struct btree *b)
 {
-	return __btree_node_type(b->level, b->btree_id);
+	return __btree_node_type(b->c.level, b->c.btree_id);
 }
 
 static inline bool btree_node_type_is_extents(enum btree_node_type type)
