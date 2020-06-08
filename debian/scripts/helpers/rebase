@@ -56,6 +56,18 @@ while getopts "r:b:l:d" opt; do
 done
 shift $((OPTIND - 1))
 
+case "$DEBIAN" in
+debian.master|debian.uc20-efi)
+	echo "This is not a rebase kernel, no rebase should be needed, please report if otherwise"
+	exit 0
+	;;
+esac
+
+if [ "$DEBIAN_MASTER" = "" ]; then
+	echo "DEBIAN_MASTER should be defined either in ${DEBIAN}/etc/update.conf or the environment"
+	exit 1
+fi
+
 if [ -z "${LOCAL_BRANCH}" ]; then
 	if [ -z "${RELEASE_REPO}" ] || [ -z "${SOURCE_RELEASE_BRANCH}" ]; then
 		echo Missing update.conf or missing parameters for remote repo and branch.
@@ -67,16 +79,6 @@ if [ -z "${LOCAL_BRANCH}" ]; then
 	git fetch "${RELEASE_REPO}"
 	git fetch "${RELEASE_REPO}" "${SOURCE_RELEASE_BRANCH}"
 	LOCAL_BRANCH=FETCH_HEAD
-fi
-
-if [ "$DEBIAN" = "debian.master" ]; then
-	echo "This is a master kernel, no rebase should be needed, please report if otherwise"
-	exit 0
-fi
-
-if [ "$DEBIAN_MASTER" = "" ]; then
-	echo "DEBIAN_MASTER should be defined either in ${DEBIAN}/etc/update.conf or the environment"
-	exit 1
 fi
 
 #

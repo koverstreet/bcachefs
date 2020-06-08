@@ -109,15 +109,20 @@ if [ "$series" != 'UNRELEASED' ]; then
 fi
 
 # Update configs
-chroot_run fakeroot debian/rules clean updateconfigs
-changes=$(git diff HEAD -- "./$DEBIAN/config/")
-if [ "$commit_configs" -eq 0 ] && [ -n "$changes" ]; then
-	echo "Config has changed! please, review it and commit."
-	exit 1
+if [ -d "$DEBIAN/config" ]; then
+	chroot_run fakeroot debian/rules clean updateconfigs
+	changes=$(git diff HEAD -- "./$DEBIAN/config/")
+	if [ "$commit_configs" -eq 0 ] && [ -n "$changes" ]; then
+		echo "Config has changed! please, review it and commit."
+		exit 1
+	fi
 fi
 
 # Derivatives and backports have a master kernel directory (DEBIAN_MASTER).
-if [ "$DEBIAN" != 'debian.master' ] && [ $skip_master_entries == 0 ]; then
+case "$DEBIAN" in
+debian.master|debian.uc20-efi) skip_master_entries=1 ;;
+esac
+if [ $skip_master_entries == 0 ]; then
 	if [ "$DEBIAN_MASTER" = "" ]; then
 		echo "DEBIAN_MASTER should be defined either in $DEBIAN/etc/update.conf or the environment"
 		exit 1
