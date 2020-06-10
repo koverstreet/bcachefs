@@ -500,6 +500,8 @@ static void bch2_write_done(struct closure *cl)
 
 	bch2_time_stats_update(&c->times[BCH_TIME_data_write], op->start_time);
 
+	up(&c->io_in_flight);
+
 	if (op->end_io) {
 		EBUG_ON(cl->parent);
 		closure_debug_destroy(cl);
@@ -1257,6 +1259,8 @@ void bch2_write(struct closure *cl)
 		op->error = -EROFS;
 		goto err;
 	}
+
+	down(&c->io_in_flight);
 
 	bch2_increment_clock(c, bio_sectors(bio), WRITE);
 

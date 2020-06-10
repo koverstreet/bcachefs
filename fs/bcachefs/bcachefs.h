@@ -723,6 +723,7 @@ struct bch_fs {
 	struct rw_semaphore	gc_lock;
 
 	/* IO PATH */
+	struct semaphore	io_in_flight;
 	struct bio_set		bio_read;
 	struct bio_set		bio_read_split;
 	struct bio_set		bio_write;
