@@ -201,7 +201,6 @@ bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 	struct btree_trans *trans = iter->trans;
 	struct btree_iter *linked;
 	u64 start_time = local_clock();
-	unsigned l;
 	bool ret = true;
 
 	/* Check if it's safe to block: */
@@ -259,7 +258,7 @@ bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 
 		if (iter->btree_id == linked->btree_id &&
 		    btree_node_locked(linked, level) &&
-		    bkey_cmp(pos, linked->l[l].b->key.k.p) <= 0)
+		    bkey_cmp(pos, linked->l[level].b->key.k.p) <= 0)
 			ret = false;
 
 		/*
