@@ -336,7 +336,7 @@ static int bch2_gc_btree_init(struct bch_fs *c,
 	if (btree_node_fake(b))
 		return 0;
 
-	six_lock_read(&b->lock);
+	six_lock_read(&b->lock, NULL, NULL);
 	if (fsck_err_on(bkey_cmp(b->data->min_key, POS_MIN), c,
 			"btree root with incorrect min_key: %llu:%llu",
 			b->data->min_key.inode,

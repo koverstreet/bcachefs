@@ -253,7 +253,7 @@ int bch2_btree_and_journal_walk(struct bch_fs *c, struct journal_keys *journal_k
 	if (btree_node_fake(b))
 		return 0;
 
-	six_lock_read(&b->lock);
+	six_lock_read(&b->lock, NULL, NULL);
 	ret   = (node_fn ? node_fn(c, b) : 0) ?:
 		bch2_btree_and_journal_walk_recurse(c, b, journal_keys, btree_id,
 						    node_fn, key_fn) ?:

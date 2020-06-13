@@ -135,6 +135,8 @@ static void __btree_node_free(struct bch_fs *c, struct btree *b)
 
 	bch2_btree_node_hash_remove(&c->btree_cache, b);
 
+	six_lock_wakeup_all(&b->lock);
+
 	mutex_lock(&c->btree_cache.lock);
 	list_move(&b->list, &c->btree_cache.freeable);
 	mutex_unlock(&c->btree_cache.lock);
@@ -163,7 +165,7 @@ void bch2_btree_node_free_inmem(struct bch_fs *c, struct btree *b,
 	trans_for_each_iter(iter->trans, linked)
 		BUG_ON(linked->l[b->level].b == b);
 
-	six_lock_write(&b->lock);
+	six_lock_write(&b->lock, NULL, NULL);
 	__btree_node_free(c, b);
 	six_unlock_write(&b->lock);
 	six_unlock_intent(&b->lock);
