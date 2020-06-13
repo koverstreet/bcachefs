@@ -267,15 +267,21 @@ static inline bool six_optimistic_spin(struct six_lock *lock, enum six_lock_type
 #endif
 
 noinline
-static void __six_lock_type_slowpath(struct six_lock *lock, enum six_lock_type type)
+static int __six_lock_type_slowpath(struct six_lock *lock, enum six_lock_type type,
+				    six_lock_should_sleep_fn should_sleep_fn, void *p)
 {
 	const struct six_lock_vals l[] = LOCK_VALS;
 	union six_lock_state old, new;
 	struct six_lock_waiter wait;
+	int ret = 0;
 	u64 v;
 
+	ret = should_sleep_fn ? should_sleep_fn(lock, p) : 0;
+	if (ret)
+		return ret;
+
 	if (six_optimistic_spin(lock, type))
-		return;
+		return 0;
 
 	lock_contended(&lock->dep_map, _RET_IP_);
 
@@ -291,6 +297,10 @@ static void __six_lock_type_slowpath(struct six_lock *lock, enum six_lock_type t
 			list_add_tail(&wait.list, &lock->wait_list[type]);
 			raw_spin_unlock(&lock->wait_lock);
 		}
+
+		ret = should_sleep_fn ? should_sleep_fn(lock, p) : 0;
+		if (ret)
+			break;
 
 		v = READ_ONCE(lock->state.v);
 		do {
@@ -311,7 +321,8 @@ static void __six_lock_type_slowpath(struct six_lock *lock, enum six_lock_type t
 		schedule();
 	}
 
-	six_set_owner(lock, type, old);
+	if (!ret)
+		six_set_owner(lock, type, old);
 
 	__set_current_state(TASK_RUNNING);
 
@@ -320,18 +331,28 @@ static void __six_lock_type_slowpath(struct six_lock *lock, enum six_lock_type t
 		list_del_init(&wait.list);
 		raw_spin_unlock(&lock->wait_lock);
 	}
+
+	return ret;
 }
 
 __always_inline
-static void __six_lock_type(struct six_lock *lock, enum six_lock_type type)
+static int __six_lock_type(struct six_lock *lock, enum six_lock_type type,
+			   six_lock_should_sleep_fn should_sleep_fn, void *p)
 {
+	int ret;
+
 	if (type != SIX_LOCK_write)
 		six_acquire(&lock->dep_map, 0);
 
-	if (!do_six_trylock_type(lock, type))
-		__six_lock_type_slowpath(lock, type);
+	ret = do_six_trylock_type(lock, type) ? 0
+		: __six_lock_type_slowpath(lock, type, should_sleep_fn, p);
 
-	lock_acquired(&lock->dep_map, _RET_IP_);
+	if (ret && type != SIX_LOCK_write)
+		six_release(&lock->dep_map);
+	if (!ret)
+		lock_acquired(&lock->dep_map, _RET_IP_);
+
+	return ret;
 }
 
 static inline void six_lock_wakeup(struct six_lock *lock,
@@ -417,9 +438,10 @@ bool six_relock_##type(struct six_lock *lock, u32 seq)			\
 }									\
 EXPORT_SYMBOL_GPL(six_relock_##type);					\
 									\
-void six_lock_##type(struct six_lock *lock)				\
+int six_lock_##type(struct six_lock *lock,				\
+		    six_lock_should_sleep_fn should_sleep_fn, void *p)	\
 {									\
-	__six_lock_type(lock, SIX_LOCK_##type);				\
+	return __six_lock_type(lock, SIX_LOCK_##type, should_sleep_fn, p);\
 }									\
 EXPORT_SYMBOL_GPL(six_lock_##type);					\
 									\
@@ -514,3 +536,18 @@ void six_lock_increment(struct six_lock *lock, enum six_lock_type type)
 	}
 }
 EXPORT_SYMBOL_GPL(six_lock_increment);
+
+void six_lock_wakeup_all(struct six_lock *lock)
+{
+	struct six_lock_waiter *w;
+
+	raw_spin_lock(&lock->wait_lock);
+
+	list_for_each_entry(w, &lock->wait_list[0], list)
+		wake_up_process(w->task);
+	list_for_each_entry(w, &lock->wait_list[1], list)
+		wake_up_process(w->task);
+
+	raw_spin_unlock(&lock->wait_lock);
+}
+EXPORT_SYMBOL_GPL(six_lock_wakeup_all);
