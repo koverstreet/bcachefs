@@ -190,6 +190,7 @@
 #include <linux/percpu-rwsem.h>
 #include <linux/rhashtable.h>
 #include <linux/rwsem.h>
+#include <linux/semaphore.h>
 #include <linux/seqlock.h>
 #include <linux/shrinker.h>
 #include <linux/types.h>
