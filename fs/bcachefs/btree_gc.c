@@ -902,6 +902,7 @@ static int bch2_gc_btree_gens(struct bch_fs *c, enum btree_id id)
 		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 		const struct bch_extent_ptr *ptr;
 
+		percpu_down_read(&c->mark_lock);
 		bkey_for_each_ptr(ptrs, ptr) {
 			struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
 			struct bucket *g = PTR_BUCKET(ca, ptr, false);
@@ -914,6 +915,7 @@ static int bch2_gc_btree_gens(struct bch_fs *c, enum btree_id id)
 
 			}
 		}
+		percpu_up_read(&c->mark_lock);
 	}
 
 	bch2_trans_exit(&trans);
@@ -923,17 +925,20 @@ static int bch2_gc_btree_gens(struct bch_fs *c, enum btree_id id)
 int bch2_gc_gens(struct bch_fs *c)
 {
 	struct bch_dev *ca;
+	struct bucket_array *buckets;
+	struct bucket *g;
 	unsigned i;
 	int ret;
 
 	down_read(&c->state_lock);
 
 	for_each_member_device(ca, c, i) {
-		struct bucket_array *buckets = bucket_array(ca);
-		struct bucket *g;
+		down_read(&ca->bucket_lock);
+		buckets = bucket_array(ca);
 
 		for_each_bucket(g, buckets)
 			g->gc_gen = g->mark.gen;
+		up_read(&ca->bucket_lock);
 	}
 
 	for (i = 0; i < BTREE_ID_NR; i++)
@@ -944,11 +949,12 @@ int bch2_gc_gens(struct bch_fs *c)
 		}
 
 	for_each_member_device(ca, c, i) {
-		struct bucket_array *buckets = bucket_array(ca);
-		struct bucket *g;
+		down_read(&ca->bucket_lock);
+		buckets = bucket_array(ca);
 
 		for_each_bucket(g, buckets)
 			g->oldest_gen = g->gc_gen;
+		up_read(&ca->bucket_lock);
 	}
 err:
 	up_read(&c->state_lock);
