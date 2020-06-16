@@ -60,15 +60,7 @@ do
 			fi
 
 			# Download from the available pools.
-			for pool in $( apt-cache policy | grep '^ [^ ]' | sort -r -n -k 1,1 -s | \
-			    awk '
-				($2 ~ /^http/) {
-				    if (!($2 in E)) {
-					E[$2]=1;
-					print $2;
-				    }
-				}
-			    ')
+			for pool in $( grep -h '^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/*.list | awk '{print $2}' | sort -u )
 			do
 				if package_present "$lpackage"; then
 					break
