@@ -1307,6 +1307,7 @@ void regmap_exit(struct regmap *map)
 	}
 	if (IS_ENABLED(REGMAP_HWSPINLOCK) && map->hwlock)
 		hwspin_lock_free(map->hwlock);
+	kfree(map->patch);
 	kfree(map);
 }
 EXPORT_SYMBOL_GPL(regmap_exit);
