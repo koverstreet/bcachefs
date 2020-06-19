@@ -45,6 +45,7 @@ ifneq ($(DEB_HOST_ARCH),$(DEB_BUILD_ARCH))
 	disable_d_i=true
 	do_zfs=false
 	do_dkms_nvidia=false
+	do_dkms_wireguard=false
 endif
 
 # Are any of the kernel signing options enabled.
@@ -110,6 +111,7 @@ dkms_spl_linux_version=$(shell gawk '/^spl-linux / { print $$2; }' debian/dkms-v
 dkms_nvidia_390_version=$(shell gawk '/^nvidia-graphics-drivers-390/ { print $$2; }' debian/dkms-versions)
 dkms_nvidia_435_version=$(shell gawk '/^nvidia-graphics-drivers-435/ { print $$2; }' debian/dkms-versions)
 dkms_nvidia_440_version=$(shell gawk '/^nvidia-graphics-drivers-440/ { print $$2; }' debian/dkms-versions)
+dkms_wireguard_version=$(shell gawk '/^wireguard-linux-compat / { print $$2; }' debian/dkms-versions)
 
 # Debian Build System targets
 binary: binary-indep binary-arch
