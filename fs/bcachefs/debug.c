@@ -86,6 +86,15 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 	sorted = &n_sorted->keys;
 	inmemory = &n_inmemory->keys;
 
+	{
+		struct bkey_packed *k;
+
+		vstruct_for_each(inmemory, k)
+			if (k->type == KEY_TYPE_btree_ptr_v2)
+				((struct bch_btree_ptr_v2 *)
+				 bkeyp_val(&b->format, k))->mem_ptr = 0;
+	}
+
 	if (inmemory->u64s != sorted->u64s ||
 	    memcmp(inmemory->start,
 		   sorted->start,

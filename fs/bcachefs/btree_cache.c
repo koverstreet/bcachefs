@@ -242,9 +242,8 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 	struct btree *b, *t;
 	unsigned long nr = sc->nr_to_scan;
 	unsigned long can_free;
-	unsigned long touched = 0;
 	unsigned long freed = 0;
-	unsigned i;
+	unsigned long freeable = 0, live = 0, accessed = 0;
 
 	if (btree_shrinker_disabled(c))
 		return SHRINK_STOP;
@@ -266,24 +265,43 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 	can_free = btree_cache_can_free(bc);
 	nr = min_t(unsigned long, nr, can_free);
 
-	i = 0;
+	pr_info("trying to free %lu/%lu", nr, can_free);
+
 	list_for_each_entry_safe(b, t, &bc->freeable, list) {
-		touched++;
+		freeable++;
 
-		if (freed >= nr)
-			break;
+		/*
+		 * Leave a few on the freeable list, this significantly reduces
+		 * the number of btree node memory allocations we have to do:
+		 */
+		if (freeable <= 3)
+			continue;
 
-		if (++i > 3 &&
-		    !btree_node_reclaim(c, b)) {
+		if (!btree_node_reclaim(c, b)) {
 			btree_node_data_free(c, b);
 			six_unlock_write(&b->c.lock);
 			six_unlock_intent(&b->c.lock);
 			freed++;
 		}
+
+		if (freed >= nr)
+			break;
 	}
-restart:
+
 	list_for_each_entry_safe(b, t, &bc->live, list) {
-		touched++;
+		live++;
+
+		if (btree_node_accessed(b)) {
+			clear_btree_node_accessed(b);
+			accessed++;
+		} else if (!btree_node_reclaim(c, b)) {
+			btree_node_data_free(c, b);
+			bch2_btree_node_hash_remove(bc, b);
+			six_unlock_write(&b->c.lock);
+			six_unlock_intent(&b->c.lock);
+
+			freed++;
+		}
 
 		if (freed >= nr) {
 			/* Save position */
@@ -291,35 +309,12 @@ restart:
 				list_move_tail(&bc->live, &t->list);
 			break;
 		}
-
-		if (!btree_node_accessed(b) &&
-		    !btree_node_reclaim(c, b)) {
-			/* can't call bch2_btree_node_hash_remove under lock  */
-			freed++;
-			if (&t->list != &bc->live)
-				list_move_tail(&bc->live, &t->list);
-
-			btree_node_data_free(c, b);
-			mutex_unlock(&bc->lock);
-
-			bch2_btree_node_hash_remove(bc, b);
-			six_unlock_write(&b->c.lock);
-			six_unlock_intent(&b->c.lock);
-
-			if (freed >= nr)
-				goto out;
-
-			if (sc->gfp_mask & __GFP_FS)
-				mutex_lock(&bc->lock);
-			else if (!mutex_trylock(&bc->lock))
-				goto out;
-			goto restart;
-		} else
-			clear_btree_node_accessed(b);
 	}
 
 	mutex_unlock(&bc->lock);
-out:
+
+	pr_info("freeable %lu live %lu accessed %lu freed %lu",
+		freeable, live, accessed, freed);
 	return (unsigned long) freed * btree_pages(c);
 }
 
