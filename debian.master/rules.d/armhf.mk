@@ -17,3 +17,4 @@ do_tools_perf_jvmti = true
 do_tools_bpftool = true
 
 do_dtbs		= true
+do_dkms_wireguard = true

@@ -19,3 +19,4 @@ do_tools_bpftool  = true
 
 #do_flavour_image_package = false
 do_zfs		= true
+do_dkms_wireguard = true
