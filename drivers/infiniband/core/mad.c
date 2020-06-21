@@ -596,10 +596,10 @@ static void unregister_mad_agent(struct ib_mad_agent_private *mad_agent_priv)
 	spin_unlock_irqrestore(&port_priv->reg_lock, flags);
 
 	flush_workqueue(port_priv->wq);
-	ib_cancel_rmpp_recvs(mad_agent_priv);
 
 	deref_mad_agent(mad_agent_priv);
 	wait_for_completion(&mad_agent_priv->comp);
+	ib_cancel_rmpp_recvs(mad_agent_priv);
 
 	ib_mad_agent_security_cleanup(&mad_agent_priv->agent);
 
