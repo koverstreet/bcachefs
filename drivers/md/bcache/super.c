@@ -8,6 +8,7 @@
  */
 
 #include "bcache.h"
+#include "bch2.h"
 #include "btree.h"
 #include "debug.h"
 #include "extents.h"
@@ -726,7 +727,7 @@ static void bcache_device_link(struct bcache_device *d, struct cache_set *c,
 		bd_link_disk_holder(ca->bdev, d->disk);
 
 	snprintf(d->name, BCACHEDEVNAME_SIZE,
-		 "%s%u", name, d->id);
+		 "%s%llu", name, d->id);
 
 	ret = sysfs_create_link(&d->kobj, &c->kobj, "cache");
 	if (ret < 0)
@@ -948,7 +949,6 @@ static int cached_dev_status_update(void *arg)
 	return 0;
 }
 
-
 int bch_cached_dev_run(struct cached_dev *dc)
 {
 	struct bcache_device *d = &dc->disk;
@@ -978,7 +978,7 @@ int bch_cached_dev_run(struct cached_dev *dc)
 		return -EBUSY;
 	}
 
-	if (!d->c &&
+	if (!bcache_dev_is_attached(d) &&
 	    BDEV_STATE(&dc->sb) != BDEV_STATE_NONE) {
 		struct closure cl;
 
@@ -1118,7 +1118,7 @@ int bch_cached_dev_attach(struct cached_dev *dc, struct cache_set *c,
 	    (!set_uuid && memcmp(dc->sb.set_uuid, c->sb.set_uuid, 16)))
 		return -ENOENT;
 
-	if (dc->disk.c) {
+	if (bcache_dev_is_attached(&dc->disk)) {
 		pr_err("Can't attach %s: already attached",
 		       dc->backing_dev_name);
 		return -EINVAL;
@@ -1292,6 +1292,7 @@ static void cached_dev_free(struct closure *cl)
 	wake_up(&unregister_wait);
 
 	kfree(dc->writeback_keys);
+	bch2_request_exit(dc);
 	kobject_put(&dc->disk.kobj);
 }
 
@@ -1357,7 +1358,8 @@ static int cached_dev_init(struct cached_dev *dc, unsigned int block_size)
 	dc->stop_when_cache_set_failed = BCH_CACHED_DEV_STOP_AUTO;
 
 	bch_cached_dev_request_init(dc);
-	return bch_cached_dev_writeback_init(dc);
+	return bch_cached_dev_writeback_init(dc) ?:
+		bch2_request_init(dc);
 }
 
 /* Cached device - bcache superblock */
@@ -1392,6 +1394,8 @@ static int register_bdev(struct cache_sb *sb, struct cache_sb_disk *sb_disk,
 	/* attach to a matched cache set if it exists */
 	list_for_each_entry(c, &bch_cache_sets, list)
 		bch_cached_dev_attach(dc, c, NULL);
+
+	bch2_cached_dev_attach(dc, NULL);
 
 	if (BDEV_STATE(&dc->sb) == BDEV_STATE_NONE ||
 	    BDEV_STATE(&dc->sb) == BDEV_STATE_STALE) {

@@ -7,7 +7,9 @@ struct cache;
 struct cache_set;
 
 unsigned int bch_get_congested(const struct cache_set *c);
-bool bch_check_should_bypass(struct cached_dev *dc, struct bio *bio);
+bool bch_check_should_bypass(struct cached_dev *dc, struct bio *bio,
+			     unsigned int block_size,
+			     unsigned int dirty_percentage);
 
 void bch_count_backing_io_errors(struct cached_dev *dc, struct bio *bio);
 void bch_count_io_errors(struct cache *ca, blk_status_t error,

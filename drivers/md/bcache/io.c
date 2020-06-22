@@ -59,25 +59,17 @@ static struct hlist_head *iohash(struct cached_dev *dc, uint64_t k)
 	return &dc->io_hash[hash_64(k, RECENT_IO_BITS)];
 }
 
-bool bch_check_should_bypass(struct cached_dev *dc, struct bio *bio)
+bool bch_check_should_bypass(struct cached_dev *dc, struct bio *bio,
+			     unsigned int block_size,
+			     unsigned int in_use)
 {
 	unsigned int mode = cache_mode(dc);
-	unsigned int sectors, congested, dirty_percentage, block_size;
+	unsigned int sectors, congested;
 	struct task_struct *task = current;
 	struct io *i;
 
-	if (dc->disk.c) {
-		dirty_percentage = dc->disk.c->gc_stats.in_use;
-		block_size = dc->disk.c->sb.block_size;
-	} else {
-		/* XXX bcache2: */
-		dirty_percentage = 0;
-		block_size = 0;
-		//block_size = dc->disk.c2->sb.block_size;
-	}
-
 	if (test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) ||
-	    dirty_percentage > CUTOFF_CACHE_ADD ||
+	    in_use > CUTOFF_CACHE_ADD ||
 	    (bio_op(bio) == REQ_OP_DISCARD))
 		goto skip;
 

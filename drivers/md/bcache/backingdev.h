@@ -22,7 +22,11 @@ struct bcache_device {
 	struct kobject		kobj;
 
 	struct cache_set	*c;
-	unsigned int		id;
+	struct bch_fs		*c2;
+
+	u64			id;
+	struct inode		*inode;
+
 #define BCACHEDEVNAME_SIZE	12
 	char			name[BCACHEDEVNAME_SIZE];
 
@@ -48,6 +52,11 @@ struct bcache_device {
 	int (*ioctl)(struct bcache_device *d, fmode_t mode,
 		     unsigned int cmd, unsigned long arg);
 };
+
+static inline bool bcache_dev_is_attached(struct bcache_device *d)
+{
+	return d->c != NULL || d->c2 != NULL;
+}
 
 enum stop_on_failure {
 	BCH_CACHED_DEV_STOP_AUTO = 0,
@@ -86,6 +95,9 @@ struct cached_dev {
 	 * showed up yet.
 	 */
 	atomic_t		running;
+
+	struct bio_set		bch2_bio_read;
+	mempool_t		bch2_io_write;
 
 	/*
 	 * Writes take a shared lock from start to finish; scanning for dirty
@@ -223,6 +235,31 @@ static inline bool bcache_dev_stripe_dirty(struct cached_dev *dc,
 		nr_sectors -= dc->disk.stripe_size;
 		stripe++;
 	}
+}
+
+static inline bool should_writeback(struct cached_dev *dc, struct bio *bio,
+				    unsigned int cache_mode, bool would_skip,
+				    unsigned int in_use)
+{
+	if (cache_mode != CACHE_MODE_WRITEBACK ||
+	    test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) ||
+	    in_use > bch_cutoff_writeback_sync)
+		return false;
+
+	if (bio_op(bio) == REQ_OP_DISCARD)
+		return false;
+
+	if (dc->partial_stripes_expensive &&
+	    bcache_dev_stripe_dirty(dc, bio->bi_iter.bi_sector,
+				    bio_sectors(bio)))
+		return true;
+
+	if (would_skip)
+		return false;
+
+	return (op_is_sync(bio->bi_opf) ||
+		bio->bi_opf & (REQ_META|REQ_PRIO) ||
+		in_use <= bch_cutoff_writeback);
 }
 
 static inline void bch_writeback_queue(struct cached_dev *dc)

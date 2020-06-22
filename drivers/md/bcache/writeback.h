@@ -42,32 +42,6 @@ struct bch_dirty_init_state {
 	struct dirty_init_thrd_info	infos[BCH_DIRTY_INIT_THRD_MAX];
 };
 
-static inline bool should_writeback(struct cached_dev *dc, struct bio *bio,
-				    unsigned int cache_mode, bool would_skip)
-{
-	unsigned int in_use = dc->disk.c->gc_stats.in_use;
-
-	if (cache_mode != CACHE_MODE_WRITEBACK ||
-	    test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) ||
-	    in_use > bch_cutoff_writeback_sync)
-		return false;
-
-	if (bio_op(bio) == REQ_OP_DISCARD)
-		return false;
-
-	if (dc->partial_stripes_expensive &&
-	    bcache_dev_stripe_dirty(dc, bio->bi_iter.bi_sector,
-				    bio_sectors(bio)))
-		return true;
-
-	if (would_skip)
-		return false;
-
-	return (op_is_sync(bio->bi_opf) ||
-		bio->bi_opf & (REQ_META|REQ_PRIO) ||
-		in_use <= bch_cutoff_writeback);
-}
-
 void bcache_dev_sectors_dirty_add(struct cache_set *c, unsigned int inode,
 				  uint64_t offset, int nr_sectors);
 

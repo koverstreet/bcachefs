@@ -7,6 +7,7 @@
  */
 
 #include "bcache.h"
+#include "bch2.h"
 #include "sysfs.h"
 #include "btree.h"
 #include "io.h"
@@ -407,6 +408,11 @@ STORE(__cached_dev)
 			if (!v)
 				return size;
 		}
+
+		v = bch2_cached_dev_attach(dc, set_uuid);
+		if (!v)
+			return size;
+
 		if (v == -ENOENT)
 			pr_err("Can't attach %s: cache set not found", buf);
 		return v;

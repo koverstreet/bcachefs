@@ -8,11 +8,11 @@
  */
 
 #include "bcache.h"
+#include "bch2.h"
 #include "btree.h"
 #include "debug.h"
 #include "io.h"
 #include "request.h"
-#include "request2.h"
 #include "writeback.h"
 
 #include <linux/module.h>
@@ -851,7 +851,8 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 
 	if (should_writeback(dc, s->orig_bio,
 			     cache_mode(dc),
-			     s->iop.bypass)) {
+			     s->iop.bypass,
+			     dc->disk.c->gc_stats.in_use)) {
 		s->iop.bypass = false;
 		s->iop.writeback = true;
 	}
@@ -1013,34 +1014,57 @@ static void quit_max_writeback_rate(struct cache_set *c,
 
 /* Cached devices - read & write stuff */
 
-blk_qc_t cached_dev_make_request(struct request_queue *q, struct bio *bio)
+static void bch1_cached_dev_make_request(struct cached_dev *dc, struct bio *bio)
 {
+	struct bcache_device *d = &dc->disk;
+	struct cache_set *c = d->c;
 	struct search *s;
-	struct bcache_device *d = bio->bi_disk->private_data;
-	struct cached_dev *dc = container_of(d, struct cached_dev, disk);
-	int rw = bio_data_dir(bio);
 
-	if (unlikely((d->c && test_bit(CACHE_SET_IO_DISABLE, &d->c->flags)) ||
-		     dc->io_disable)) {
+	if (unlikely(test_bit(CACHE_SET_IO_DISABLE, &c->flags))) {
+		cached_dev_put(dc);
 		bio->bi_status = BLK_STS_IOERR;
 		bio_endio(bio);
-		return BLK_QC_T_NONE;
+		return;
 	}
 
-	if (likely(d->c)) {
-		if (atomic_read(&d->c->idle_counter))
-			atomic_set(&d->c->idle_counter, 0);
-		/*
-		 * If at_max_writeback_rate of cache set is true and new I/O
-		 * comes, quit max writeback rate of all cached devices
-		 * attached to this cache set, and set at_max_writeback_rate
-		 * to false.
-		 */
-		if (unlikely(atomic_read(&d->c->at_max_writeback_rate) == 1)) {
-			atomic_set(&d->c->at_max_writeback_rate, 0);
-			quit_max_writeback_rate(d->c, dc);
-		}
+	s = search_alloc(bio, d);
+	trace_bcache_request_start(s->d, bio);
+
+	if (atomic_read(&c->idle_counter))
+		atomic_set(&c->idle_counter, 0);
+	/*
+	 * If at_max_writeback_rate of cache set is true and new I/O
+	 * comes, quit max writeback rate of all cached devices
+	 * attached to this cache set, and set at_max_writeback_rate
+	 * to false.
+	 */
+	if (unlikely(atomic_read(&c->at_max_writeback_rate) == 1)) {
+		atomic_set(&c->at_max_writeback_rate, 0);
+		quit_max_writeback_rate(c, dc);
 	}
+
+	if (!bio->bi_iter.bi_size) {
+		/*
+		 * can't call bch_journal_meta from under
+		 * generic_make_request
+		 */
+		continue_at_nobarrier(&s->cl, cached_dev_nodata, bcache_wq);
+	} else {
+		s->iop.bypass = bch_check_should_bypass(dc, bio,
+						c->sb.block_size,
+						c->gc_stats.in_use);
+
+		if (bio_data_dir(bio) == WRITE)
+			cached_dev_write(dc, s);
+		else
+			cached_dev_read(dc, s);
+	}
+}
+
+blk_qc_t cached_dev_make_request(struct request_queue *q, struct bio *bio)
+{
+	struct bcache_device *d = bio->bi_disk->private_data;
+	struct cached_dev *dc = container_of(d, struct cached_dev, disk);
 
 	generic_start_io_acct(q,
 			      bio_op(bio),
@@ -1050,29 +1074,21 @@ blk_qc_t cached_dev_make_request(struct request_queue *q, struct bio *bio)
 	bio_set_dev(bio, dc->bdev);
 	bio->bi_iter.bi_sector += dc->sb.data_offset;
 
+	if (unlikely(dc->io_disable)) {
+		bio->bi_status = BLK_STS_IOERR;
+		bio_endio(bio);
+		return BLK_QC_T_NONE;
+	}
+
 	if (cached_dev_get(dc)) {
-		s = search_alloc(bio, d);
-		trace_bcache_request_start(s->d, bio);
-
-		if (!bio->bi_iter.bi_size) {
-			/*
-			 * can't call bch_journal_meta from under
-			 * generic_make_request
-			 */
-			continue_at_nobarrier(&s->cl,
-					      cached_dev_nodata,
-					      bcache_wq);
-		} else {
-			s->iop.bypass = check_should_bypass(dc, bio);
-
-			if (rw)
-				cached_dev_write(dc, s);
-			else
-				cached_dev_read(dc, s);
-		}
-	} else
+		if (d->c)
+			bch1_cached_dev_make_request(dc, bio);
+		else
+			bch2_cached_dev_make_request(dc, bio);
+	} else {
 		/* I/O request sent to backing device */
 		detached_dev_do_request(d, bio);
+	}
 
 	return BLK_QC_T_NONE;
 }
@@ -1099,12 +1115,16 @@ static int cached_dev_congested(void *data, int bits)
 		return 1;
 
 	if (cached_dev_get(dc)) {
-		unsigned int i;
-		struct cache *ca;
+		if (d->c) {
+			unsigned int i;
+			struct cache *ca;
 
-		for_each_cache(ca, d->c, i) {
-			q = bdev_get_queue(ca->bdev);
-			ret |= bdi_congested(q->backing_dev_info, bits);
+			for_each_cache(ca, d->c, i) {
+				q = bdev_get_queue(ca->bdev);
+				ret |= bdi_congested(q->backing_dev_info, bits);
+			}
+		} else {
+			/* bcache2: */
 		}
 
 		cached_dev_put(dc);
