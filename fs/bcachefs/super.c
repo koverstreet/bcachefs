@@ -90,8 +90,8 @@ static KTYPE(bch2_fs_time_stats);
 static KTYPE(bch2_dev);
 
 static struct kset *bcachefs_kset;
-static LIST_HEAD(bch_fs_list);
-static DEFINE_MUTEX(bch_fs_list_lock);
+LIST_HEAD(bch2_fs_list);
+DEFINE_MUTEX(bch2_fs_list_lock);
 
 static DECLARE_WAIT_QUEUE_HEAD(bch_read_only_wait);
 
@@ -106,10 +106,10 @@ struct bch_fs *bch2_bdev_to_fs(struct block_device *bdev)
 	struct bch_dev *ca;
 	unsigned i;
 
-	mutex_lock(&bch_fs_list_lock);
+	mutex_lock(&bch2_fs_list_lock);
 	rcu_read_lock();
 
-	list_for_each_entry(c, &bch_fs_list, list)
+	list_for_each_entry(c, &bch2_fs_list, list)
 		for_each_member_device_rcu(ca, c, i, NULL)
 			if (ca->disk_sb.bdev == bdev) {
 				closure_get(&c->cl);
@@ -118,7 +118,7 @@ struct bch_fs *bch2_bdev_to_fs(struct block_device *bdev)
 	c = NULL;
 found:
 	rcu_read_unlock();
-	mutex_unlock(&bch_fs_list_lock);
+	mutex_unlock(&bch2_fs_list_lock);
 
 	return c;
 }
@@ -127,9 +127,9 @@ static struct bch_fs *__bch2_uuid_to_fs(uuid_le uuid)
 {
 	struct bch_fs *c;
 
-	lockdep_assert_held(&bch_fs_list_lock);
+	lockdep_assert_held(&bch2_fs_list_lock);
 
-	list_for_each_entry(c, &bch_fs_list, list)
+	list_for_each_entry(c, &bch2_fs_list, list)
 		if (!memcmp(&c->disk_sb.sb->uuid, &uuid, sizeof(uuid_le)))
 			return c;
 
@@ -140,11 +140,11 @@ struct bch_fs *bch2_uuid_to_fs(uuid_le uuid)
 {
 	struct bch_fs *c;
 
-	mutex_lock(&bch_fs_list_lock);
+	mutex_lock(&bch2_fs_list_lock);
 	c = __bch2_uuid_to_fs(uuid);
 	if (c)
 		closure_get(&c->cl);
-	mutex_unlock(&bch_fs_list_lock);
+	mutex_unlock(&bch2_fs_list_lock);
 
 	return c;
 }
@@ -587,9 +587,9 @@ void bch2_fs_stop(struct bch_fs *c)
 	kobject_put(&c->opts_dir);
 	kobject_put(&c->internal);
 
-	mutex_lock(&bch_fs_list_lock);
+	mutex_lock(&bch2_fs_list_lock);
 	list_del(&c->list);
-	mutex_unlock(&bch_fs_list_lock);
+	mutex_unlock(&bch2_fs_list_lock);
 
 	closure_sync(&c->cl);
 	closure_debug_destroy(&c->cl);
@@ -620,7 +620,7 @@ static const char *bch2_fs_online(struct bch_fs *c)
 	unsigned i;
 	int ret;
 
-	lockdep_assert_held(&bch_fs_list_lock);
+	lockdep_assert_held(&bch2_fs_list_lock);
 
 	if (!list_empty(&c->list))
 		return NULL;
@@ -648,7 +648,7 @@ static const char *bch2_fs_online(struct bch_fs *c)
 		if (bch2_dev_sysfs_online(c, ca))
 			goto err;
 
-	list_add(&c->list, &bch_fs_list);
+	list_add(&c->list, &bch2_fs_list);
 	err = NULL;
 err:
 	up_write(&c->state_lock);
@@ -808,9 +808,9 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	kobject_init(&c->opts_dir, &bch2_fs_opts_dir_ktype);
 	kobject_init(&c->time_stats, &bch2_fs_time_stats_ktype);
 
-	mutex_lock(&bch_fs_list_lock);
+	mutex_lock(&bch2_fs_list_lock);
 	err = bch2_fs_online(c);
-	mutex_unlock(&bch_fs_list_lock);
+	mutex_unlock(&bch2_fs_list_lock);
 	if (err) {
 		bch_err(c, "bch2_fs_online() error: %s", err);
 		goto err;
@@ -1944,7 +1944,7 @@ static const char *__bch2_fs_open_incremental(struct bch_sb_handle *sb,
 	if (err)
 		return err;
 
-	mutex_lock(&bch_fs_list_lock);
+	mutex_lock(&bch2_fs_list_lock);
 	c = __bch2_uuid_to_fs(sb->sb->uuid);
 	if (c) {
 		closure_get(&c->cl);
@@ -1978,11 +1978,11 @@ static const char *__bch2_fs_open_incremental(struct bch_sb_handle *sb,
 	}
 
 	closure_put(&c->cl);
-	mutex_unlock(&bch_fs_list_lock);
+	mutex_unlock(&bch2_fs_list_lock);
 
 	return NULL;
 err:
-	mutex_unlock(&bch_fs_list_lock);
+	mutex_unlock(&bch2_fs_list_lock);
 
 	if (allocated_fs)
 		bch2_fs_stop(c);

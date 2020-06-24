@@ -201,6 +201,9 @@ struct bch_fs *bch2_bdev_to_fs(struct block_device *);
 struct bch_fs *bch2_uuid_to_fs(uuid_le);
 int bch2_congested(void *, int);
 
+extern struct list_head bch2_fs_list;
+extern struct mutex bch2_fs_list_lock;
+
 bool bch2_dev_state_allowed(struct bch_fs *, struct bch_dev *,
 			   enum bch_member_state, int);
 int __bch2_dev_set_state(struct bch_fs *, struct bch_dev *,
