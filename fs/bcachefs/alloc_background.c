@@ -756,13 +756,13 @@ static size_t find_reclaimable_buckets(struct bch_fs *c, struct bch_dev *ca)
 	ca->inc_gen_needs_gc			= 0;
 
 	switch (ca->mi.replacement) {
-	case CACHE_REPLACEMENT_LRU:
+	case BCH2_CACHE_REPLACEMENT_LRU:
 		find_reclaimable_buckets_lru(c, ca);
 		break;
-	case CACHE_REPLACEMENT_FIFO:
+	case BCH2_CACHE_REPLACEMENT_FIFO:
 		find_reclaimable_buckets_fifo(c, ca);
 		break;
-	case CACHE_REPLACEMENT_RANDOM:
+	case BCH2_CACHE_REPLACEMENT_RANDOM:
 		find_reclaimable_buckets_random(c, ca);
 		break;
 	}

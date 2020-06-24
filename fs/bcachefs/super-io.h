@@ -52,12 +52,12 @@ static inline __le64 bch2_sb_magic(struct bch_fs *c)
 
 static inline __u64 jset_magic(struct bch_fs *c)
 {
-	return __le64_to_cpu(bch2_sb_magic(c) ^ JSET_MAGIC);
+	return __le64_to_cpu(bch2_sb_magic(c) ^ BCH2_JSET_MAGIC);
 }
 
 static inline __u64 bset_magic(struct bch_fs *c)
 {
-	return __le64_to_cpu(bch2_sb_magic(c) ^ BSET_MAGIC);
+	return __le64_to_cpu(bch2_sb_magic(c) ^ BCH2_BSET_MAGIC);
 }
 
 int bch2_sb_to_fs(struct bch_fs *, struct bch_sb *);

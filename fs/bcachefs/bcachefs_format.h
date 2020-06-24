@@ -965,10 +965,10 @@ enum bch_member_state {
 };
 
 enum cache_replacement {
-	CACHE_REPLACEMENT_LRU		= 0,
-	CACHE_REPLACEMENT_FIFO		= 1,
-	CACHE_REPLACEMENT_RANDOM	= 2,
-	CACHE_REPLACEMENT_NR		= 3,
+	BCH2_CACHE_REPLACEMENT_LRU	= 0,
+	BCH2_CACHE_REPLACEMENT_FIFO	= 1,
+	BCH2_CACHE_REPLACEMENT_RANDOM	= 2,
+	BCH2_CACHE_REPLACEMENT_NR	= 3,
 };
 
 struct bch_sb_field_members {
@@ -1442,8 +1442,8 @@ enum bch_compression_opts {
 
 #define BCACHEFS_STATFS_MAGIC		0xca451a4e
 
-#define JSET_MAGIC		__cpu_to_le64(0x245235c1a3625032ULL)
-#define BSET_MAGIC		__cpu_to_le64(0x90135c78b99e07f5ULL)
+#define BCH2_JSET_MAGIC		__cpu_to_le64(0x245235c1a3625032ULL)
+#define BCH2_BSET_MAGIC		__cpu_to_le64(0x90135c78b99e07f5ULL)
 
 static inline __le64 __bch2_sb_magic(struct bch_sb *sb)
 {
@@ -1454,12 +1454,12 @@ static inline __le64 __bch2_sb_magic(struct bch_sb *sb)
 
 static inline __u64 __jset_magic(struct bch_sb *sb)
 {
-	return __le64_to_cpu(__bch2_sb_magic(sb) ^ JSET_MAGIC);
+	return __le64_to_cpu(__bch2_sb_magic(sb) ^ BCH2_JSET_MAGIC);
 }
 
 static inline __u64 __bset_magic(struct bch_sb *sb)
 {
-	return __le64_to_cpu(__bch2_sb_magic(sb) ^ BSET_MAGIC);
+	return __le64_to_cpu(__bch2_sb_magic(sb) ^ BCH2_BSET_MAGIC);
 }
 
 /* Journal */
