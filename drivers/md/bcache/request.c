@@ -10,27 +10,20 @@
 #include "bcache.h"
 #include "btree.h"
 #include "debug.h"
+#include "io.h"
 #include "request.h"
+#include "request2.h"
 #include "writeback.h"
 
 #include <linux/module.h>
 #include <linux/hash.h>
-#include <linux/random.h>
 #include <linux/backing-dev.h>
 
 #include <trace/events/bcache.h>
 
-#define CUTOFF_CACHE_ADD	95
-#define CUTOFF_CACHE_READA	90
-
 struct kmem_cache *bch_search_cache;
 
 static void bch_data_insert_start(struct closure *cl);
-
-static unsigned int cache_mode(struct cached_dev *dc)
-{
-	return BDEV_CACHE_MODE(&dc->sb);
-}
 
 static bool verify(struct cached_dev *dc)
 {
@@ -315,147 +308,6 @@ void bch_data_insert(struct closure *cl)
 	bch_keylist_init(&op->insert_keys);
 	bio_get(op->bio);
 	bch_data_insert_start(cl);
-}
-
-/*
- * Congested?  Return 0 (not congested) or the limit (in sectors)
- * beyond which we should bypass the cache due to congestion.
- */
-unsigned int bch_get_congested(const struct cache_set *c)
-{
-	int i;
-
-	if (!c->congested_read_threshold_us &&
-	    !c->congested_write_threshold_us)
-		return 0;
-
-	i = (local_clock_us() - c->congested_last_us) / 1024;
-	if (i < 0)
-		return 0;
-
-	i += atomic_read(&c->congested);
-	if (i >= 0)
-		return 0;
-
-	i += CONGESTED_MAX;
-
-	if (i > 0)
-		i = fract_exp_two(i, 6);
-
-	i -= hweight32(get_random_u32());
-
-	return i > 0 ? i : 1;
-}
-
-static void add_sequential(struct task_struct *t)
-{
-	ewma_add(t->sequential_io_avg,
-		 t->sequential_io, 8, 0);
-
-	t->sequential_io = 0;
-}
-
-static struct hlist_head *iohash(struct cached_dev *dc, uint64_t k)
-{
-	return &dc->io_hash[hash_64(k, RECENT_IO_BITS)];
-}
-
-static bool check_should_bypass(struct cached_dev *dc, struct bio *bio)
-{
-	struct cache_set *c = dc->disk.c;
-	unsigned int mode = cache_mode(dc);
-	unsigned int sectors, congested;
-	struct task_struct *task = current;
-	struct io *i;
-
-	if (test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) ||
-	    c->gc_stats.in_use > CUTOFF_CACHE_ADD ||
-	    (bio_op(bio) == REQ_OP_DISCARD))
-		goto skip;
-
-	if (mode == CACHE_MODE_NONE ||
-	    (mode == CACHE_MODE_WRITEAROUND &&
-	     op_is_write(bio_op(bio))))
-		goto skip;
-
-	/*
-	 * If the bio is for read-ahead or background IO, bypass it or
-	 * not depends on the following situations,
-	 * - If the IO is for meta data, always cache it and no bypass
-	 * - If the IO is not meta data, check dc->cache_reada_policy,
-	 *      BCH_CACHE_READA_ALL: cache it and not bypass
-	 *      BCH_CACHE_READA_META_ONLY: not cache it and bypass
-	 * That is, read-ahead request for metadata always get cached
-	 * (eg, for gfs2 or xfs).
-	 */
-	if ((bio->bi_opf & (REQ_RAHEAD|REQ_BACKGROUND))) {
-		if (!(bio->bi_opf & (REQ_META|REQ_PRIO)) &&
-		    (dc->cache_readahead_policy != BCH_CACHE_READA_ALL))
-			goto skip;
-	}
-
-	if (bio->bi_iter.bi_sector & (c->sb.block_size - 1) ||
-	    bio_sectors(bio) & (c->sb.block_size - 1)) {
-		pr_debug("skipping unaligned io");
-		goto skip;
-	}
-
-	if (bypass_torture_test(dc)) {
-		if ((get_random_int() & 3) == 3)
-			goto skip;
-		else
-			goto rescale;
-	}
-
-	congested = bch_get_congested(c);
-	if (!congested && !dc->sequential_cutoff)
-		goto rescale;
-
-	spin_lock(&dc->io_lock);
-
-	hlist_for_each_entry(i, iohash(dc, bio->bi_iter.bi_sector), hash)
-		if (i->last == bio->bi_iter.bi_sector &&
-		    time_before(jiffies, i->jiffies))
-			goto found;
-
-	i = list_first_entry(&dc->io_lru, struct io, lru);
-
-	add_sequential(task);
-	i->sequential = 0;
-found:
-	if (i->sequential + bio->bi_iter.bi_size > i->sequential)
-		i->sequential	+= bio->bi_iter.bi_size;
-
-	i->last			 = bio_end_sector(bio);
-	i->jiffies		 = jiffies + msecs_to_jiffies(5000);
-	task->sequential_io	 = i->sequential;
-
-	hlist_del(&i->hash);
-	hlist_add_head(&i->hash, iohash(dc, i->last));
-	list_move_tail(&i->lru, &dc->io_lru);
-
-	spin_unlock(&dc->io_lock);
-
-	sectors = max(task->sequential_io,
-		      task->sequential_io_avg) >> 9;
-
-	if (dc->sequential_cutoff &&
-	    sectors >= dc->sequential_cutoff >> 9) {
-		trace_bcache_bypass_sequential(bio);
-		goto skip;
-	}
-
-	if (congested && sectors >= congested) {
-		trace_bcache_bypass_congested(bio);
-		goto skip;
-	}
-
-rescale:
-	bch_rescale_priorities(c, bio_sectors(bio));
-	return false;
-skip:
-	bch_mark_sectors_bypassed(c, dc, bio_sectors(bio));
-	return true;
 }
 
 /* Cache lookup */

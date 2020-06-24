@@ -9,6 +9,7 @@
 #include "btree.h"
 #include "debug.h"
 #include "request.h"
+#include "io.h"
 
 #include <trace/events/bcache.h>
 

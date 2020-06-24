@@ -11,7 +11,9 @@
 #include "btree.h"
 #include "debug.h"
 #include "extents.h"
+#include "io.h"
 #include "request.h"
+#include "super.h"
 #include "writeback.h"
 
 #include <linux/blkdev.h>

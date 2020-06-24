@@ -7,10 +7,178 @@
  */
 
 #include "bcache.h"
+#include "backingdev.h"
 #include "bset.h"
 #include "debug.h"
 
 #include <linux/blkdev.h>
+#include <linux/random.h>
+
+#include <trace/events/bcache.h>
+
+/*
+ * Congested?  Return 0 (not congested) or the limit (in sectors)
+ * beyond which we should bypass the cache due to congestion.
+ */
+unsigned int bch_get_congested(const struct cache_set *c)
+{
+	int i;
+
+	if (!c->congested_read_threshold_us &&
+	    !c->congested_write_threshold_us)
+		return 0;
+
+	i = (local_clock_us() - c->congested_last_us) / 1024;
+	if (i < 0)
+		return 0;
+
+	i += atomic_read(&c->congested);
+	if (i >= 0)
+		return 0;
+
+	i += CONGESTED_MAX;
+
+	if (i > 0)
+		i = fract_exp_two(i, 6);
+
+	i -= hweight32(get_random_u32());
+
+	return i > 0 ? i : 1;
+}
+
+static void add_sequential(struct task_struct *t)
+{
+	ewma_add(t->sequential_io_avg,
+		 t->sequential_io, 8, 0);
+
+	t->sequential_io = 0;
+}
+
+static struct hlist_head *iohash(struct cached_dev *dc, uint64_t k)
+{
+	return &dc->io_hash[hash_64(k, RECENT_IO_BITS)];
+}
+
+bool bch_check_should_bypass(struct cached_dev *dc, struct bio *bio)
+{
+	unsigned int mode = cache_mode(dc);
+	unsigned int sectors, congested, dirty_percentage, block_size;
+	struct task_struct *task = current;
+	struct io *i;
+
+	if (dc->disk.c) {
+		dirty_percentage = dc->disk.c->gc_stats.in_use;
+		block_size = dc->disk.c->sb.block_size;
+	} else {
+		/* XXX bcache2: */
+		dirty_percentage = 0;
+		block_size = 0;
+		//block_size = dc->disk.c2->sb.block_size;
+	}
+
+	if (test_bit(BCACHE_DEV_DETACHING, &dc->disk.flags) ||
+	    dirty_percentage > CUTOFF_CACHE_ADD ||
+	    (bio_op(bio) == REQ_OP_DISCARD))
+		goto skip;
+
+	if (mode == CACHE_MODE_NONE ||
+	    (mode == CACHE_MODE_WRITEAROUND &&
+	     op_is_write(bio_op(bio))))
+		goto skip;
+
+	/*
+	 * If the bio is for read-ahead or background IO, bypass it or
+	 * not depends on the following situations,
+	 * - If the IO is for meta data, always cache it and no bypass
+	 * - If the IO is not meta data, check dc->cache_reada_policy,
+	 *      BCH_CACHE_READA_ALL: cache it and not bypass
+	 *      BCH_CACHE_READA_META_ONLY: not cache it and bypass
+	 * That is, read-ahead request for metadata always get cached
+	 * (eg, for gfs2 or xfs).
+	 */
+	if ((bio->bi_opf & (REQ_RAHEAD|REQ_BACKGROUND))) {
+		if (!(bio->bi_opf & (REQ_META|REQ_PRIO)) &&
+		    (dc->cache_readahead_policy != BCH_CACHE_READA_ALL))
+			goto skip;
+	}
+
+	if (bio->bi_iter.bi_sector & (block_size - 1) ||
+	    bio_sectors(bio) & (block_size - 1)) {
+		pr_debug("skipping unaligned io");
+		goto skip;
+	}
+
+	if (bypass_torture_test(dc)) {
+		if ((get_random_int() & 3) == 3)
+			goto skip;
+		else
+			goto rescale;
+	}
+
+	if (dc->disk.c) {
+		congested = bch_get_congested(dc->disk.c);
+	} else {
+		/* XXX bcache2: */
+		congested = 0;
+	}
+
+	if (!congested && !dc->sequential_cutoff)
+		goto rescale;
+
+	spin_lock(&dc->io_lock);
+
+	hlist_for_each_entry(i, iohash(dc, bio->bi_iter.bi_sector), hash)
+		if (i->last == bio->bi_iter.bi_sector &&
+		    time_before(jiffies, i->jiffies))
+			goto found;
+
+	i = list_first_entry(&dc->io_lru, struct io, lru);
+
+	add_sequential(task);
+	i->sequential = 0;
+found:
+	if (i->sequential + bio->bi_iter.bi_size > i->sequential)
+		i->sequential	+= bio->bi_iter.bi_size;
+
+	i->last			 = bio_end_sector(bio);
+	i->jiffies		 = jiffies + msecs_to_jiffies(5000);
+	task->sequential_io	 = i->sequential;
+
+	hlist_del(&i->hash);
+	hlist_add_head(&i->hash, iohash(dc, i->last));
+	list_move_tail(&i->lru, &dc->io_lru);
+
+	spin_unlock(&dc->io_lock);
+
+	sectors = max(task->sequential_io,
+		      task->sequential_io_avg) >> 9;
+
+	if (dc->sequential_cutoff &&
+	    sectors >= dc->sequential_cutoff >> 9) {
+		trace_bcache_bypass_sequential(bio);
+		goto skip;
+	}
+
+	if (congested && sectors >= congested) {
+		trace_bcache_bypass_congested(bio);
+		goto skip;
+	}
+
+rescale:
+	if (dc->disk.c) {
+		bch_rescale_priorities(dc->disk.c, bio_sectors(bio));
+	} else {
+		/* bcache2: */
+	}
+	return false;
+skip:
+	if (dc->disk.c) {
+		bch_mark_sectors_bypassed(dc->disk.c, dc, bio_sectors(bio));
+	} else {
+		/* bcache2: */
+	}
+	return true;
+}
 
 /* Bios with headers */
 

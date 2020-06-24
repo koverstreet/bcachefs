@@ -10,6 +10,7 @@
 #include "bcache.h"
 #include "btree.h"
 #include "debug.h"
+#include "io.h"
 #include "writeback.h"
 
 #include <linux/delay.h>

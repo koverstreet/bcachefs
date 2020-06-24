@@ -25,6 +25,7 @@
 #include "btree.h"
 #include "debug.h"
 #include "extents.h"
+#include "io.h"
 
 #include <linux/slab.h>
 #include <linux/bitops.h>

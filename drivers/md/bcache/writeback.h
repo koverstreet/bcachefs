@@ -42,44 +42,6 @@ struct bch_dirty_init_state {
 	struct dirty_init_thrd_info	infos[BCH_DIRTY_INIT_THRD_MAX];
 };
 
-static inline uint64_t bcache_dev_sectors_dirty(struct bcache_device *d)
-{
-	uint64_t i, ret = 0;
-
-	for (i = 0; i < d->nr_stripes; i++)
-		ret += atomic_read(d->stripe_sectors_dirty + i);
-
-	return ret;
-}
-
-static inline unsigned int offset_to_stripe(struct bcache_device *d,
-					uint64_t offset)
-{
-	do_div(offset, d->stripe_size);
-	return offset;
-}
-
-static inline bool bcache_dev_stripe_dirty(struct cached_dev *dc,
-					   uint64_t offset,
-					   unsigned int nr_sectors)
-{
-	unsigned int stripe = offset_to_stripe(&dc->disk, offset);
-
-	while (1) {
-		if (atomic_read(dc->disk.stripe_sectors_dirty + stripe))
-			return true;
-
-		if (nr_sectors <= dc->disk.stripe_size)
-			return false;
-
-		nr_sectors -= dc->disk.stripe_size;
-		stripe++;
-	}
-}
-
-extern unsigned int bch_cutoff_writeback;
-extern unsigned int bch_cutoff_writeback_sync;
-
 static inline bool should_writeback(struct cached_dev *dc, struct bio *bio,
 				    unsigned int cache_mode, bool would_skip)
 {
@@ -104,26 +66,6 @@ static inline bool should_writeback(struct cached_dev *dc, struct bio *bio,
 	return (op_is_sync(bio->bi_opf) ||
 		bio->bi_opf & (REQ_META|REQ_PRIO) ||
 		in_use <= bch_cutoff_writeback);
-}
-
-static inline void bch_writeback_queue(struct cached_dev *dc)
-{
-	if (!IS_ERR_OR_NULL(dc->writeback_thread))
-		wake_up_process(dc->writeback_thread);
-}
-
-static inline void bch_writeback_add(struct cached_dev *dc)
-{
-	if (!atomic_read(&dc->has_dirty) &&
-	    !atomic_xchg(&dc->has_dirty, 1)) {
-		if (BDEV_STATE(&dc->sb) != BDEV_STATE_DIRTY) {
-			SET_BDEV_STATE(&dc->sb, BDEV_STATE_DIRTY);
-			/* XXX: should do this synchronously */
-			bch_write_bdev_super(dc, NULL);
-		}
-
-		bch_writeback_queue(dc);
-	}
 }
 
 void bcache_dev_sectors_dirty_add(struct cache_set *c, unsigned int inode,

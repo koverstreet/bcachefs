@@ -9,6 +9,7 @@
 #include "bcache.h"
 #include "sysfs.h"
 #include "btree.h"
+#include "io.h"
 #include "request.h"
 #include "writeback.h"
 
