@@ -17,6 +17,7 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/workqueue.h>
+#include <linux/bcache/ratelimit.h>
 
 #define PAGE_SECTOR_SHIFT	(PAGE_SHIFT - 9)
 #define PAGE_SECTORS		(1UL << PAGE_SECTOR_SHIFT)
@@ -411,26 +412,6 @@ void bch2_time_stats_init(struct time_stats *);
 	(((_ewma << _weight) - _ewma) + (val)) >> _weight;		\
 })
 
-struct bch_ratelimit {
-	/* Next time we want to do some work, in nanoseconds */
-	u64			next;
-
-	/*
-	 * Rate at which we want to do work, in units per nanosecond
-	 * The units here correspond to the units passed to
-	 * bch2_ratelimit_increment()
-	 */
-	unsigned		rate;
-};
-
-static inline void bch2_ratelimit_reset(struct bch_ratelimit *d)
-{
-	d->next = local_clock();
-}
-
-u64 bch2_ratelimit_delay(struct bch_ratelimit *);
-void bch2_ratelimit_increment(struct bch_ratelimit *, u64);
-
 struct bch_pd_controller {
 	struct bch_ratelimit	rate;
 	unsigned long		last_update;
@@ -448,7 +429,7 @@ struct bch_pd_controller {
 	s64			last_change;
 	s64			last_target;
 
-	/* If true, the rate will not increase if bch2_ratelimit_delay()
+	/* If true, the rate will not increase if bch_ratelimit_delay()
 	 * is not being called often enough. */
 	bool			backpressure;
 };

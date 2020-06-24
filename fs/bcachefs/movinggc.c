@@ -280,7 +280,7 @@ static int bch2_copygc_thread(void *arg)
 void bch2_copygc_stop(struct bch_dev *ca)
 {
 	ca->copygc_pd.rate.rate = UINT_MAX;
-	bch2_ratelimit_reset(&ca->copygc_pd.rate);
+	bch_ratelimit_reset(&ca->copygc_pd.rate);
 
 	if (ca->copygc_thread) {
 		kthread_stop(ca->copygc_thread);

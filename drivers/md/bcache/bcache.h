@@ -179,6 +179,7 @@
 #define pr_fmt(fmt) "bcache: %s() " fmt "\n", __func__
 
 #include <linux/bcache.h>
+#include <linux/bcache/ratelimit.h>
 #include <linux/bio.h>
 #include <linux/closure.h>
 #include <linux/kobject.h>

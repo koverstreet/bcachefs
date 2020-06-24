@@ -1152,11 +1152,11 @@ static void quit_max_writeback_rate(struct cache_set *c,
 			 * then let update_writeback_rate() to decide the
 			 * upcoming rate.
 			 */
-			atomic_long_set(&dc->writeback_rate.rate, 1);
+			dc->writeback_rate.rate = 1024;
 		}
 		mutex_unlock(&bch_register_lock);
 	} else
-		atomic_long_set(&this_dc->writeback_rate.rate, 1);
+		dc->writeback_rate.rate = 1024;
 }
 
 /* Cached devices - read & write stuff */

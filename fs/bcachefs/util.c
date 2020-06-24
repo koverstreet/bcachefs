@@ -368,43 +368,6 @@ void bch2_time_stats_init(struct time_stats *stats)
 	spin_lock_init(&stats->lock);
 }
 
-/* ratelimit: */
-
-/**
- * bch2_ratelimit_delay() - return how long to delay until the next time to do
- * some work
- *
- * @d - the struct bch_ratelimit to update
- *
- * Returns the amount of time to delay by, in jiffies
- */
-u64 bch2_ratelimit_delay(struct bch_ratelimit *d)
-{
-	u64 now = local_clock();
-
-	return time_after64(d->next, now)
-		? nsecs_to_jiffies(d->next - now)
-		: 0;
-}
-
-/**
- * bch2_ratelimit_increment() - increment @d by the amount of work done
- *
- * @d - the struct bch_ratelimit to update
- * @done - the amount of work done, in arbitrary units
- */
-void bch2_ratelimit_increment(struct bch_ratelimit *d, u64 done)
-{
-	u64 now = local_clock();
-
-	d->next += div_u64(done * NSEC_PER_SEC, d->rate);
-
-	if (time_before64(now + NSEC_PER_SEC, d->next))
-		d->next = now + NSEC_PER_SEC;
-
-	if (time_after64(now - NSEC_PER_SEC * 2, d->next))
-		d->next = now - NSEC_PER_SEC * 2;
-}
 
 /* pd controller: */
 

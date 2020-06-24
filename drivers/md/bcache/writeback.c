@@ -113,9 +113,8 @@ static void __update_writeback_rate(struct cached_dev *dc)
 
 	dc->writeback_rate_proportional = proportional_scaled;
 	dc->writeback_rate_integral_scaled = integral_scaled;
-	dc->writeback_rate_change = new_rate -
-			atomic_long_read(&dc->writeback_rate.rate);
-	atomic_long_set(&dc->writeback_rate.rate, new_rate);
+	dc->writeback_rate_change = new_rate - dc->writeback_rate.rate;
+	dc->writeback_rate.rate = new_rate;
 	dc->writeback_rate_target = target;
 }
 
@@ -149,7 +148,7 @@ static bool set_at_max_writeback_rate(struct cache_set *c,
 	if (atomic_read(&c->at_max_writeback_rate) != 1)
 		atomic_set(&c->at_max_writeback_rate, 1);
 
-	atomic_long_set(&dc->writeback_rate.rate, INT_MAX);
+	dc->writeback_rate.rate = INT_MAX;
 
 	/* keep writeback_rate_target as existing value */
 	dc->writeback_rate_proportional = 0;
@@ -970,7 +969,7 @@ void bch_cached_dev_writeback_init(struct cached_dev *dc)
 	dc->writeback_running		= false;
 	dc->writeback_percent		= 10;
 	dc->writeback_delay		= 30;
-	atomic_long_set(&dc->writeback_rate.rate, 1024);
+	dc->writeback_rate.rate		= 1024;
 	dc->writeback_rate_minimum	= 8;
 
 	dc->writeback_rate_update_seconds = WRITEBACK_RATE_UPDATE_SECS_DEFAULT;

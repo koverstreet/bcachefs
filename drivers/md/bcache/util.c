@@ -190,37 +190,6 @@ void bch_time_stats_update(struct time_stats *stats, uint64_t start_time)
 	spin_unlock(&stats->lock);
 }
 
-/**
- * bch_next_delay() - update ratelimiting statistics and calculate next delay
- * @d: the struct bch_ratelimit to update
- * @done: the amount of work done, in arbitrary units
- *
- * Increment @d by the amount of work done, and return how long to delay in
- * jiffies until the next time to do some work.
- */
-uint64_t bch_next_delay(struct bch_ratelimit *d, uint64_t done)
-{
-	uint64_t now = local_clock();
-
-	d->next += div_u64(done * NSEC_PER_SEC, atomic_long_read(&d->rate));
-
-	/* Bound the time.  Don't let us fall further than 2 seconds behind
-	 * (this prevents unnecessary backlog that would make it impossible
-	 * to catch up).  If we're ahead of the desired writeback rate,
-	 * don't let us sleep more than 2.5 seconds (so we can notice/respond
-	 * if the control system tells us to speed up!).
-	 */
-	if (time_before64(now + NSEC_PER_SEC * 5LLU / 2LLU, d->next))
-		d->next = now + NSEC_PER_SEC * 5LLU / 2LLU;
-
-	if (time_after64(now - NSEC_PER_SEC * 2, d->next))
-		d->next = now - NSEC_PER_SEC * 2;
-
-	return time_after64(d->next, now)
-		? div_u64(d->next - now, NSEC_PER_SEC / HZ)
-		: 0;
-}
-
 /*
  * Generally it isn't good to access .bi_io_vec and .bi_vcnt directly,
  * the preferred way is bio_add_page, but in this case, bch_bio_map()

@@ -295,7 +295,7 @@ void bch2_rebalance_stop(struct bch_fs *c)
 	struct task_struct *p;
 
 	c->rebalance.pd.rate.rate = UINT_MAX;
-	bch2_ratelimit_reset(&c->rebalance.pd.rate);
+	bch_ratelimit_reset(&c->rebalance.pd.rate);
 
 	p = rcu_dereference_protected(c->rebalance.thread, 1);
 	c->rebalance.thread = NULL;

@@ -525,11 +525,11 @@ static int __bch2_move_data(struct bch_fs *c,
 				   BTREE_ITER_PREFETCH);
 
 	if (rate)
-		bch2_ratelimit_reset(rate);
+		bch_ratelimit_reset(rate);
 
 	while (1) {
 		do {
-			delay = rate ? bch2_ratelimit_delay(rate) : 0;
+			delay = rate ? bch_ratelimit_delay(rate) : 0;
 
 			if (delay) {
 				bch2_trans_unlock(&trans);
@@ -612,7 +612,7 @@ peek:
 		}
 
 		if (rate)
-			bch2_ratelimit_increment(rate, k.k->size);
+			bch_ratelimit_increment(rate, k.k->size);
 next:
 		atomic64_add(k.k->size * bch2_bkey_nr_ptrs_allocated(k),
 			     &stats->sectors_seen);
