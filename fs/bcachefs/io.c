@@ -1159,7 +1159,8 @@ flush_io:
 	 * However, if we're running out of a workqueue, we can't block here
 	 * because we'll be blocking other work items from completing:
 	 */
-	if (current->flags & PF_WQ_WORKER) {
+	if ((current->flags & PF_WQ_WORKER) ||
+	    current->bio_list) {
 		continue_at(cl, bch2_write_index, index_update_wq(op));
 		return;
 	}
@@ -1632,7 +1633,7 @@ static void bch2_read_retry(struct bch_fs *c, struct bch_read_bio *rbio,
 			    struct bch_io_failures *failed, unsigned flags)
 {
 	struct btree_trans trans;
-	struct btree_iter *iter;
+	struct btree_iter *iter = NULL;
 	struct bkey_on_stack sk;
 	struct bkey_s_c k;
 	int ret;
@@ -1673,7 +1674,8 @@ retry:
 				offset_into_extent, failed, flags);
 		switch (ret) {
 		case READ_RETRY:
-			goto retry;
+			ret = -EINTR;
+			break;
 		case READ_ERR:
 			goto err;
 		};
@@ -1684,6 +1686,7 @@ retry:
 		swap(bvec_iter.bi_size, bytes);
 		bio_advance_iter(&rbio->bio, &bvec_iter, bytes);
 	}
+	bch2_trans_iter_put(&trans, iter);
 
 	if (ret == -EINTR)
 		goto retry;
@@ -1931,29 +1934,37 @@ static void bch2_read_endio(struct bio *bio)
 	if (!rbio->split)
 		rbio->bio.bi_end_io = rbio->end_io;
 
-	if (bch2_dev_io_err_on(bio->bi_status, ca, "data read")) {
-		bch2_rbio_error(rbio, READ_RETRY_AVOID, bio->bi_status);
+	if (bio->bi_status) {
+		if (rbio->have_ioref)
+			bch2_dev_io_error(ca, "data read");
+
+		bch2_rbio_error(rbio,
+				rbio->read_from_ptr
+				? READ_RETRY_AVOID
+				: READ_ERR, bio->bi_status);
 		return;
 	}
 
-	if (rbio->pick.ptr.cached &&
-	    (((rbio->flags & BCH_READ_RETRY_IF_STALE) && race_fault()) ||
-	     ptr_stale(ca, &rbio->pick.ptr))) {
-		atomic_long_inc(&c->read_realloc_races);
+	if (rbio->read_from_ptr) {
+		if (rbio->pick.ptr.cached &&
+		    (((rbio->flags & BCH_READ_RETRY_IF_STALE) && race_fault()) ||
+		     ptr_stale(ca, &rbio->pick.ptr))) {
+			atomic_long_inc(&c->read_realloc_races);
 
-		if (rbio->flags & BCH_READ_RETRY_IF_STALE)
-			bch2_rbio_error(rbio, READ_RETRY, BLK_STS_AGAIN);
-		else
-			bch2_rbio_error(rbio, READ_ERR, BLK_STS_AGAIN);
-		return;
+			if (rbio->flags & BCH_READ_RETRY_IF_STALE)
+				bch2_rbio_error(rbio, READ_RETRY, BLK_STS_AGAIN);
+			else
+				bch2_rbio_error(rbio, READ_ERR, BLK_STS_AGAIN);
+			return;
+		}
+
+		if (rbio->narrow_crcs ||
+		    crc_is_compressed(rbio->pick.crc) ||
+		    bch2_csum_type_is_encryption(rbio->pick.crc.csum_type))
+			context = RBIO_CONTEXT_UNBOUND,	wq = system_unbound_wq;
+		else if (rbio->pick.crc.csum_type)
+			context = RBIO_CONTEXT_HIGHPRI,	wq = system_highpri_wq;
 	}
-
-	if (rbio->narrow_crcs ||
-	    crc_is_compressed(rbio->pick.crc) ||
-	    bch2_csum_type_is_encryption(rbio->pick.crc.csum_type))
-		context = RBIO_CONTEXT_UNBOUND,	wq = system_unbound_wq;
-	else if (rbio->pick.crc.csum_type)
-		context = RBIO_CONTEXT_HIGHPRI,	wq = system_highpri_wq;
 
 	bch2_rbio_punt(rbio, __bch2_read_endio, context, wq);
 }
@@ -2001,9 +2012,9 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		       unsigned offset_into_extent,
 		       struct bch_io_failures *failed, unsigned flags)
 {
-	struct extent_ptr_decoded pick;
+	struct extent_ptr_decoded pick = { 0 };
 	struct bch_read_bio *rbio = NULL;
-	struct bch_dev *ca;
+	struct bch_dev *ca = NULL;
 	struct promote_op *promote = NULL;
 	bool bounce = false, read_full = false, narrow_crcs = false;
 	struct bpos pos = bkey_start_pos(k.k);
@@ -2017,20 +2028,31 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		swap(iter.bi_size, bytes);
 		memcpy_to_bio(&orig->bio, iter, d.v->data);
 		swap(iter.bi_size, bytes);
+		/*
+		 * The inline data may be less than the size of the key - zero
+		 * out the rest:
+		 */
 		bio_advance_iter(&orig->bio, &iter, bytes);
 		zero_fill_bio_iter(&orig->bio, iter);
 		goto out_read_done;
 	}
 
 	pick_ret = bch2_bkey_pick_read_device(c, k, failed, &pick);
-
-	/* hole or reservation - just zero fill: */
-	if (!pick_ret)
-		goto hole;
-
 	if (pick_ret < 0) {
 		__bcache_io_error(c, "no device to read from");
 		goto err;
+	}
+
+	/* hole or reservation - just zero fill: */
+	if (!pick_ret) {
+		if (!(flags & BCH_READ_PASSTHROUGH_BLOCK_DEV))
+			goto hole;
+
+		pick.crc.compressed_size	= bvec_iter_sectors(iter);
+		pick.crc.uncompressed_size	= bvec_iter_sectors(iter);
+		pick.crc.live_size		= bvec_iter_sectors(iter);
+		offset_into_extent		= 0;
+		goto get_bio;
 	}
 
 	if (pick_ret > 0)
@@ -2044,13 +2066,9 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		if (pick.crc.compressed_size > orig->bio.bi_vcnt * PAGE_SECTORS)
 			goto hole;
 
-		iter.bi_size	= pick.crc.compressed_size << 9;
+		iter.bi_size = pick.crc.compressed_size << 9;
 		goto get_bio;
 	}
-
-	if (!(flags & BCH_READ_LAST_FRAGMENT) ||
-	    bio_flagged(&orig->bio, BIO_CHAIN))
-		flags |= BCH_READ_MUST_CLONE;
 
 	narrow_crcs = !(flags & BCH_READ_IN_RETRY) &&
 		bch2_can_narrow_extent_crcs(k, pick.crc);
@@ -2074,6 +2092,12 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		promote = promote_alloc(c, iter, k, &pick, orig->opts, flags,
 					&rbio, &bounce, &read_full);
 
+	/*
+	 * the endio path expects rbio->pick.crc to describe what was actually
+	 * read, because for checksummed/compressed extents we have to read the
+	 * entire extent: if we're not reading the entire extent, adjust
+	 * pick.crc to match:
+	 */
 	if (!read_full) {
 		EBUG_ON(crc_is_compressed(pick.crc));
 		EBUG_ON(pick.crc.csum_type &&
@@ -2093,6 +2117,10 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 		offset_into_extent		= 0;
 	}
 get_bio:
+	if (!(flags & BCH_READ_LAST_FRAGMENT) ||
+	    bio_flagged(&orig->bio, BIO_CHAIN))
+		flags |= BCH_READ_MUST_CLONE;
+
 	if (rbio) {
 		/*
 		 * promote already allocated bounce rbio:
@@ -2101,7 +2129,7 @@ get_bio:
 		 * here:
 		 */
 		EBUG_ON(rbio->bio.bi_iter.bi_size <
-		       pick.crc.compressed_size << 9);
+			pick.crc.compressed_size << 9);
 		rbio->bio.bi_iter.bi_size =
 			pick.crc.compressed_size << 9;
 	} else if (bounce) {
@@ -2113,8 +2141,14 @@ get_bio:
 				 orig->opts);
 
 		bch2_bio_alloc_pages_pool(c, &rbio->bio, sectors << 9);
-		rbio->bounce	= true;
-		rbio->split	= true;
+		rbio->bounce			= true;
+		rbio->split			= true;
+		rbio->bio.bi_disk		= orig->bio.bi_disk;
+		rbio->bio.bi_partno		= orig->bio.bi_partno;
+		rbio->bio.bi_opf		= orig->bio.bi_opf;
+		rbio->bio.bi_ioprio		= orig->bio.bi_ioprio;
+		rbio->bio.bi_write_hint		= orig->bio.bi_write_hint;
+		rbio->bio.bi_iter.bi_sector	= orig->bio.bi_iter.bi_sector;
 	} else if (flags & BCH_READ_MUST_CLONE) {
 		/*
 		 * Have to clone if there were any splits, due to error
@@ -2146,6 +2180,7 @@ get_bio:
 	rbio->bvec_iter		= iter;
 	rbio->offset_into_extent= offset_into_extent;
 	rbio->flags		= flags;
+	rbio->read_from_ptr	= pick_ret > 0;
 	rbio->have_ioref	= pick_ret > 0 && bch2_dev_get_ioref(ca, READ);
 	rbio->narrow_crcs	= narrow_crcs;
 	rbio->hole		= 0;
@@ -2160,22 +2195,28 @@ get_bio:
 	INIT_WORK(&rbio->work, NULL);
 
 	rbio->bio.bi_opf	= orig->bio.bi_opf;
-	rbio->bio.bi_iter.bi_sector = pick.ptr.offset;
 	rbio->bio.bi_end_io	= bch2_read_endio;
+
+	if (!(flags & (BCH_READ_IN_RETRY|BCH_READ_LAST_FRAGMENT))) {
+		bio_inc_remaining(&orig->bio);
+		trace_read_split(&orig->bio);
+	}
 
 	if (rbio->bounce)
 		trace_read_bounce(&rbio->bio);
+
+	if (!rbio->read_from_ptr) {
+		BUG_ON(!(flags & BCH_READ_PASSTHROUGH_BLOCK_DEV));
+		goto submit;
+	}
+
+	rbio->bio.bi_iter.bi_sector = pick.ptr.offset;
 
 	bch2_increment_clock(c, bio_sectors(&rbio->bio), READ);
 
 	rcu_read_lock();
 	bucket_io_clock_reset(c, ca, PTR_BUCKET_NR(ca, &pick.ptr), READ);
 	rcu_read_unlock();
-
-	if (!(flags & (BCH_READ_IN_RETRY|BCH_READ_LAST_FRAGMENT))) {
-		bio_inc_remaining(&orig->bio);
-		trace_read_split(&orig->bio);
-	}
 
 	if (!rbio->pick.idx) {
 		if (!rbio->have_ioref) {
@@ -2187,7 +2228,7 @@ get_bio:
 		this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_USER],
 			     bio_sectors(&rbio->bio));
 		bio_set_dev(&rbio->bio, ca->disk_sb.bdev);
-
+submit:
 		if (likely(!(flags & BCH_READ_IN_RETRY)))
 			submit_bio(&rbio->bio);
 		else
@@ -2200,7 +2241,7 @@ get_bio:
 		}
 
 		if (likely(!(flags & BCH_READ_IN_RETRY)))
-			bio_endio(&rbio->bio);
+			bch2_rbio_done(rbio);
 	}
 out:
 	if (likely(!(flags & BCH_READ_IN_RETRY))) {
@@ -2221,7 +2262,6 @@ out:
 
 		return ret;
 	}
-
 err:
 	if (flags & BCH_READ_IN_RETRY)
 		return READ_ERR;
@@ -2245,15 +2285,13 @@ out_read_done:
 	return 0;
 }
 
-void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio, u64 inode)
+void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
+	       u64 inode, unsigned flags)
 {
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_on_stack sk;
 	struct bkey_s_c k;
-	unsigned flags = BCH_READ_RETRY_IF_STALE|
-		BCH_READ_MAY_PROMOTE|
-		BCH_READ_USER_MAPPED;
 	int ret;
 
 	BUG_ON(rbio->_state);

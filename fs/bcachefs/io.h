@@ -127,12 +127,13 @@ enum bch_read_flags {
 	BCH_READ_MAY_PROMOTE		= 1 << 1,
 	BCH_READ_USER_MAPPED		= 1 << 2,
 	BCH_READ_NODECODE		= 1 << 3,
-	BCH_READ_LAST_FRAGMENT		= 1 << 4,
+	BCH_READ_PASSTHROUGH_BLOCK_DEV	= 1 << 4,
+	BCH_READ_LAST_FRAGMENT		= 1 << 5,
 
 	/* internal: */
-	BCH_READ_MUST_BOUNCE		= 1 << 5,
-	BCH_READ_MUST_CLONE		= 1 << 6,
-	BCH_READ_IN_RETRY		= 1 << 7,
+	BCH_READ_MUST_BOUNCE		= 1 << 6,
+	BCH_READ_MUST_CLONE		= 1 << 7,
+	BCH_READ_IN_RETRY		= 1 << 8,
 };
 
 int __bch2_read_extent(struct bch_fs *, struct bch_read_bio *,
@@ -149,7 +150,7 @@ static inline void bch2_read_extent(struct bch_fs *c,
 			   offset_into_extent, NULL, flags);
 }
 
-void bch2_read(struct bch_fs *, struct bch_read_bio *, u64);
+void bch2_read(struct bch_fs *, struct bch_read_bio *, u64, unsigned);
 
 static inline struct bch_read_bio *rbio_init(struct bio *bio,
 					     struct bch_io_opts opts)

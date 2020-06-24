@@ -1741,7 +1741,10 @@ start:
 		if (iter->count)
 			closure_get(&dio->cl);
 
-		bch2_read(c, rbio_init(bio, opts), inode->v.i_ino);
+		bch2_read(c, rbio_init(bio, opts), inode->v.i_ino,
+			  BCH_READ_RETRY_IF_STALE|
+			  BCH_READ_MAY_PROMOTE|
+			  BCH_READ_USER_MAPPED);
 	}
 
 	iter->count += shorten;

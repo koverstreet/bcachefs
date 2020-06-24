@@ -46,6 +46,7 @@ struct bch_read_bio {
 	u16			bounce:1,
 				split:1,
 				kmalloc:1,
+				read_from_ptr:1,
 				have_ioref:1,
 				narrow_crcs:1,
 				hole:1,
