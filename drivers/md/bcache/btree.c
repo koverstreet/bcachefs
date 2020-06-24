@@ -1733,13 +1733,13 @@ static void bch_btree_gc_finish(struct cache_set *c)
 			continue;
 		dc = container_of(d, struct cached_dev, disk);
 
-		spin_lock(&dc->writeback_keys.lock);
+		spin_lock(&dc->writeback_keys->lock);
 		rbtree_postorder_for_each_entry_safe(w, n,
-					&dc->writeback_keys.keys, node)
+					&dc->writeback_keys->keys, node)
 			for (j = 0; j < KEY_PTRS(&w->key); j++)
 				SET_GC_MARK(PTR_BUCKET(c, &w->key, j),
 					    GC_MARK_DIRTY);
-		spin_unlock(&dc->writeback_keys.lock);
+		spin_unlock(&dc->writeback_keys->lock);
 	}
 	rcu_read_unlock();
 

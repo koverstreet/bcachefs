@@ -1289,6 +1289,7 @@ static void cached_dev_free(struct closure *cl)
 
 	wake_up(&unregister_wait);
 
+	kfree(dc->writeback_keys);
 	kobject_put(&dc->disk.kobj);
 }
 
@@ -1354,8 +1355,7 @@ static int cached_dev_init(struct cached_dev *dc, unsigned int block_size)
 	dc->stop_when_cache_set_failed = BCH_CACHED_DEV_STOP_AUTO;
 
 	bch_cached_dev_request_init(dc);
-	bch_cached_dev_writeback_init(dc);
-	return 0;
+	return bch_cached_dev_writeback_init(dc);
 }
 
 /* Cached device - bcache superblock */

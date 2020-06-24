@@ -978,7 +978,7 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 	bch_keybuf_check_overlapping(&s->iop.c->moving_gc_keys, &start, &end);
 
 	down_read_non_owner(&dc->writeback_lock);
-	if (bch_keybuf_check_overlapping(&dc->writeback_keys, &start, &end)) {
+	if (bch_keybuf_check_overlapping(dc->writeback_keys, &start, &end)) {
 		/*
 		 * We overlap with some dirty data undergoing background
 		 * writeback, force this write to writeback
