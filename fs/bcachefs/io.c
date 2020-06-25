@@ -256,6 +256,14 @@ int bch2_extent_update(struct btree_trans *trans,
 	if (ret)
 		return ret;
 
+	/*
+	 * caller may set op->new_i_size = 0 if they know this write won't be
+	 * extending in order to avoid the inode lookup/update:
+	 *
+	 * XXX: in debug mode, verify that we're not extending whenever
+	 * new_i_size = 0
+	 */
+
 	new_i_size = extending
 		? min(k->k.p.offset << 9, new_i_size)
 		: 0;
