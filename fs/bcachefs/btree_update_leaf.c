@@ -281,7 +281,7 @@ btree_key_can_insert(struct btree_trans *trans,
 	if (unlikely(btree_node_old_extent_overwrite(b)))
 		return BTREE_INSERT_BTREE_NODE_FULL;
 
-	ret = !(iter->flags & BTREE_ITER_IS_EXTENTS)
+	ret = !btree_iter_is_extents(iter)
 		? BTREE_INSERT_OK
 		: bch2_extent_can_insert(trans, iter, insert);
 	if (ret)
