@@ -1227,6 +1227,7 @@ static int au_br_mod_files_ro(struct super_block *sb, aufs_bindex_t bindex)
 	unsigned char verbose, writer;
 	struct file *file, *hf, **array;
 	struct au_hfile *hfile;
+	struct inode *h_inode;
 
 	mnt_flags = au_mntflags(sb);
 	verbose = !!au_opt_test(mnt_flags, VERBOSE);
@@ -1297,7 +1298,10 @@ static int au_br_mod_files_ro(struct super_block *sb, aufs_bindex_t bindex)
 		hf->f_mode &= ~(FMODE_WRITE | FMODE_WRITER);
 		spin_unlock(&hf->f_lock);
 		if (writer) {
-			put_write_access(file_inode(hf));
+			h_inode = file_inode(hf);
+			if (hf->f_mode & FMODE_READ)
+				i_readcount_inc(h_inode);
+			put_write_access(h_inode);
 			__mnt_drop_write(hf->f_path.mnt);
 		}
 	}
