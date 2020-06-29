@@ -75,15 +75,8 @@ int vfsub_update_h_iattr(struct path *h_path, int *did)
 
 struct file *vfsub_dentry_open(struct path *path, int flags)
 {
-	struct file *file;
-
-	file = dentry_open(path, flags /* | __FMODE_NONOTIFY */,
+	return dentry_open(path, flags /* | __FMODE_NONOTIFY */,
 			   current_cred());
-	if (!IS_ERR_OR_NULL(file)
-	    && (file->f_mode & (FMODE_READ | FMODE_WRITE)) == FMODE_READ)
-		i_readcount_inc(d_inode(path->dentry));
-
-	return file;
 }
 
 struct file *vfsub_filp_open(const char *path, int oflags, int mode)
