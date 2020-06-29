@@ -6,6 +6,7 @@
 #include "btree_gc.h"
 #include "btree_io.h"
 #include "btree_iter.h"
+#include "btree_key_cache.h"
 #include "btree_locking.h"
 #include "buckets.h"
 #include "debug.h"
@@ -31,6 +32,9 @@ inline void bch2_btree_node_lock_for_insert(struct bch_fs *c, struct btree *b,
 					    struct btree_iter *iter)
 {
 	bch2_btree_node_lock_write(b, iter);
+
+	if (btree_iter_type(iter) == BTREE_ITER_CACHED)
+		return;
 
 	if (unlikely(btree_node_just_written(b)) &&
 	    bch2_btree_post_write_cleanup(c, b))
@@ -135,7 +139,7 @@ static void __btree_node_flush(struct journal *j, struct journal_entry_pin *pin,
 	btree_node_lock_type(c, b, SIX_LOCK_read);
 	bch2_btree_node_write_cond(c, b,
 		(btree_current_write(b) == w && w->journal.seq == seq));
-	six_unlock_read(&b->lock);
+	six_unlock_read(&b->c.lock);
 }
 
 static void btree_node_flush0(struct journal *j, struct journal_entry_pin *pin, u64 seq)
@@ -159,71 +163,35 @@ inline void bch2_btree_add_journal_pin(struct bch_fs *c,
 			     : btree_node_flush1);
 }
 
-static inline void __btree_journal_key(struct btree_trans *trans,
-				       enum btree_id btree_id,
-				       struct bkey_i *insert)
-{
-	struct journal *j = &trans->c->journal;
-	u64 seq = trans->journal_res.seq;
-	bool needs_whiteout = insert->k.needs_whiteout;
-
-	/* ick */
-	insert->k.needs_whiteout = false;
-	bch2_journal_add_keys(j, &trans->journal_res,
-			      btree_id, insert);
-	insert->k.needs_whiteout = needs_whiteout;
-
-	bch2_journal_set_has_inode(j, &trans->journal_res,
-				   insert->k.p.inode);
-
-	if (trans->journal_seq)
-		*trans->journal_seq = seq;
-}
-
-static void bch2_btree_journal_key(struct btree_trans *trans,
-				   struct btree_iter *iter,
-				   struct bkey_i *insert)
-{
-	struct bch_fs *c = trans->c;
-	struct journal *j = &c->journal;
-	struct btree *b = iter_l(iter)->b;
-
-	EBUG_ON(trans->journal_res.ref !=
-		!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY));
-
-	if (likely(!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))) {
-		__btree_journal_key(trans, iter->btree_id, insert);
-		btree_bset_last(b)->journal_seq =
-			cpu_to_le64(trans->journal_res.seq);
-	}
-
-	bch2_btree_add_journal_pin(c, b,
-		likely(!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))
-			? trans->journal_res.seq
-			: j->replay_journal_seq);
-
-	if (unlikely(!btree_node_dirty(b)))
-		set_btree_node_dirty(b);
-}
-
 /**
  * btree_insert_key - insert a key one key into a leaf node
  */
-static void btree_insert_key_leaf(struct btree_trans *trans,
+static bool btree_insert_key_leaf(struct btree_trans *trans,
 				  struct btree_iter *iter,
 				  struct bkey_i *insert)
 {
 	struct bch_fs *c = trans->c;
 	struct btree *b = iter_l(iter)->b;
 	struct bset_tree *t = bset_tree_last(b);
+	struct bset *i = bset(b, t);
 	int old_u64s = bset_u64s(t);
 	int old_live_u64s = b->nr.live_u64s;
 	int live_u64s_added, u64s_added;
 
-	insert->k.needs_whiteout = false;
+	EBUG_ON(!iter->level &&
+		!test_bit(BCH_FS_BTREE_INTERIOR_REPLAY_DONE, &c->flags));
 
-	if (likely(bch2_btree_bset_insert_key(iter, b, &iter_l(iter)->iter, insert)))
-		bch2_btree_journal_key(trans, iter, insert);
+	if (unlikely(!bch2_btree_bset_insert_key(iter, b,
+					&iter_l(iter)->iter, insert)))
+		return false;
+
+	i->journal_seq = cpu_to_le64(max(trans->journal_res.seq,
+					 le64_to_cpu(i->journal_seq)));
+
+	bch2_btree_add_journal_pin(c, b, trans->journal_res.seq);
+
+	if (unlikely(!btree_node_dirty(b)))
+		set_btree_node_dirty(b);
 
 	live_u64s_added = (int) b->nr.live_u64s - old_live_u64s;
 	u64s_added = (int) bset_u64s(t) - old_u64s;
@@ -238,7 +206,10 @@ static void btree_insert_key_leaf(struct btree_trans *trans,
 		bch2_btree_iter_reinit_node(iter, b);
 
 	trace_btree_insert_key(c, b, insert);
+	return true;
 }
+
+/* Cached btree updates: */
 
 /* Normal update interface: */
 
@@ -310,7 +281,7 @@ btree_key_can_insert(struct btree_trans *trans,
 	if (unlikely(btree_node_old_extent_overwrite(b)))
 		return BTREE_INSERT_BTREE_NODE_FULL;
 
-	ret = !(iter->flags & BTREE_ITER_IS_EXTENTS)
+	ret = !btree_iter_is_extents(iter)
 		? BTREE_INSERT_OK
 		: bch2_extent_can_insert(trans, iter, insert);
 	if (ret)
@@ -322,11 +293,60 @@ btree_key_can_insert(struct btree_trans *trans,
 	return BTREE_INSERT_OK;
 }
 
+static enum btree_insert_ret
+btree_key_can_insert_cached(struct btree_trans *trans,
+			    struct btree_iter *iter,
+			    struct bkey_i *insert,
+			    unsigned *u64s)
+{
+	struct bkey_cached *ck = (void *) iter->l[0].b;
+	unsigned new_u64s;
+	struct bkey_i *new_k;
+
+	BUG_ON(iter->level);
+
+	if (*u64s <= ck->u64s)
+		return BTREE_INSERT_OK;
+
+	new_u64s	= roundup_pow_of_two(*u64s);
+	new_k		= krealloc(ck->k, new_u64s * sizeof(u64), GFP_NOFS);
+	if (!new_k)
+		return -ENOMEM;
+
+	ck->u64s	= new_u64s;
+	ck->k		= new_k;
+	return BTREE_INSERT_OK;
+}
+
 static inline void do_btree_insert_one(struct btree_trans *trans,
 				       struct btree_iter *iter,
 				       struct bkey_i *insert)
 {
-	btree_insert_key_leaf(trans, iter, insert);
+	struct bch_fs *c = trans->c;
+	struct journal *j = &c->journal;
+	bool did_work;
+
+	EBUG_ON(trans->journal_res.ref !=
+		!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY));
+
+	insert->k.needs_whiteout = false;
+
+	did_work = (btree_iter_type(iter) != BTREE_ITER_CACHED)
+		? btree_insert_key_leaf(trans, iter, insert)
+		: bch2_btree_insert_key_cached(trans, iter, insert);
+	if (!did_work)
+		return;
+
+	if (likely(!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))) {
+		bch2_journal_add_keys(j, &trans->journal_res,
+				      iter->btree_id, insert);
+
+		bch2_journal_set_has_inode(j, &trans->journal_res,
+					   insert->k.p.inode);
+
+		if (trans->journal_seq)
+			*trans->journal_seq = trans->journal_res.seq;
+	}
 }
 
 static inline bool iter_has_trans_triggers(struct btree_iter *iter)
@@ -351,10 +371,16 @@ static noinline void bch2_trans_mark_gc(struct btree_trans *trans)
 	struct bch_fs *c = trans->c;
 	struct btree_insert_entry *i;
 
-	trans_for_each_update(trans, i)
-		if (gc_visited(c, gc_pos_btree_node(iter_l(i->iter)->b)))
+	trans_for_each_update(trans, i) {
+		/*
+		 * XXX: synchronization of cached update triggers with gc
+		 */
+		BUG_ON(btree_iter_type(i->iter) == BTREE_ITER_CACHED);
+
+		if (gc_visited(c, gc_pos_btree_node(i->iter->l[0].b)))
 			bch2_mark_update(trans, i->iter, i->k, NULL,
 					 i->trigger_flags|BTREE_TRIGGER_GC);
+	}
 }
 
 static inline int
@@ -387,7 +413,9 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 			u64s = 0;
 
 		u64s += i->k->k.u64s;
-		ret = btree_key_can_insert(trans, i->iter, i->k, &u64s);
+		ret = btree_iter_type(i->iter) != BTREE_ITER_CACHED
+			? btree_key_can_insert(trans, i->iter, i->k, &u64s)
+			: btree_key_can_insert_cached(trans, i->iter, i->k, &u64s);
 		if (ret) {
 			*stopped_at = i;
 			return ret;
@@ -411,6 +439,17 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 				JOURNAL_RES_GET_NONBLOCK);
 		if (ret)
 			goto err;
+	} else {
+		trans->journal_res.seq = c->journal.replay_journal_seq;
+	}
+
+	if (unlikely(trans->extra_journal_entry_u64s)) {
+		memcpy_u64s_small(journal_res_entry(&c->journal, &trans->journal_res),
+				  trans->extra_journal_entries,
+				  trans->extra_journal_entry_u64s);
+
+		trans->journal_res.offset	+= trans->extra_journal_entry_u64s;
+		trans->journal_res.u64s		-= trans->extra_journal_entry_u64s;
 	}
 
 	/*
@@ -472,7 +511,9 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 
 	ret = bch2_journal_preres_get(&trans->c->journal,
 			&trans->journal_preres, trans->journal_preres_u64s,
-			JOURNAL_RES_GET_NONBLOCK);
+			JOURNAL_RES_GET_NONBLOCK|
+			((trans->flags & BTREE_INSERT_JOURNAL_RECLAIM)
+			 ? JOURNAL_RES_GET_RECLAIM : 0));
 	if (unlikely(ret == -EAGAIN))
 		ret = bch2_trans_journal_preres_get_cold(trans,
 						trans->journal_preres_u64s);
@@ -486,7 +527,7 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 	 * or anything else that might call bch2_trans_relock(), since that
 	 * would just retake the read locks:
 	 */
-	trans_for_each_iter_all(trans, iter) {
+	trans_for_each_iter(trans, iter) {
 		if (iter->nodes_locked != iter->nodes_intent_locked) {
 			EBUG_ON(iter->flags & BTREE_ITER_KEEP_UNTIL_COMMIT);
 			EBUG_ON(trans->iters_live & (1ULL << iter->idx));
@@ -511,6 +552,10 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 			bch2_btree_node_unlock_write_inlined(iter_l(i->iter)->b,
 							     i->iter);
 
+	if (!ret && trans->journal_pin)
+		bch2_journal_pin_add(&trans->c->journal, trans->journal_res.seq,
+				     trans->journal_pin, NULL);
+
 	/*
 	 * Drop journal reservation after dropping write locks, since dropping
 	 * the journal reservation may kick off a journal write:
@@ -524,14 +569,14 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 		trans->nounlock = true;
 
 	trans_for_each_update2(trans, i)
-		if (!same_leaf_as_prev(trans, i))
+		if (btree_iter_type(i->iter) != BTREE_ITER_CACHED &&
+		    !same_leaf_as_prev(trans, i))
 			bch2_foreground_maybe_merge(trans->c, i->iter,
 						    0, trans->flags);
 
 	trans->nounlock = false;
 
-	trans_for_each_update2(trans, i)
-		bch2_btree_iter_downgrade(i->iter);
+	bch2_trans_downgrade(trans);
 
 	return 0;
 }
@@ -800,7 +845,7 @@ int __bch2_trans_commit(struct btree_trans *trans)
 
 	memset(&trans->journal_preres, 0, sizeof(trans->journal_preres));
 
-	trans->journal_u64s		= 0;
+	trans->journal_u64s		= trans->extra_journal_entry_u64s;
 	trans->journal_preres_u64s	= 0;
 
 	if (!(trans->flags & BTREE_INSERT_NOCHECK_RW) &&
@@ -810,6 +855,14 @@ int __bch2_trans_commit(struct btree_trans *trans)
 			return ret;
 	}
 
+#ifdef CONFIG_BCACHEFS_DEBUG
+	trans_for_each_update(trans, i)
+		if (btree_iter_type(i->iter) != BTREE_ITER_CACHED &&
+		    !(i->trigger_flags & BTREE_TRIGGER_NORUN))
+			bch2_btree_key_cache_verify_clean(trans,
+					i->iter->btree_id, i->iter->pos);
+#endif
+
 	/*
 	 * Running triggers will append more updates to the list of updates as
 	 * we're walking it:
@@ -818,9 +871,9 @@ int __bch2_trans_commit(struct btree_trans *trans)
 		trans_trigger_run = false;
 
 		trans_for_each_update(trans, i) {
-			if (unlikely(i->iter->uptodate > BTREE_ITER_NEED_PEEK)) {
+			if (unlikely(i->iter->uptodate > BTREE_ITER_NEED_PEEK &&
+				     (ret = bch2_btree_iter_traverse(i->iter)))) {
 				trace_trans_restart_traverse(trans->ip);
-				ret = -EINTR;
 				goto out;
 			}
 
@@ -882,7 +935,8 @@ int __bch2_trans_commit(struct btree_trans *trans)
 		BUG_ON(i->iter->locks_want < 1);
 
 		u64s = jset_u64s(i->k->k.u64s);
-		if (0)
+		if (btree_iter_type(i->iter) == BTREE_ITER_CACHED &&
+		    likely(!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY)))
 			trans->journal_preres_u64s += u64s;
 		trans->journal_u64s += u64s;
 	}

@@ -178,9 +178,12 @@ next:
 		}
 		continue;
 nomatch:
-		if (m->ctxt)
+		if (m->ctxt) {
+			BUG_ON(k.k->p.offset <= iter->pos.offset);
+			atomic64_inc(&m->ctxt->stats->keys_raced);
 			atomic64_add(k.k->p.offset - iter->pos.offset,
 				     &m->ctxt->stats->sectors_raced);
+		}
 		atomic_long_inc(&c->extent_migrate_raced);
 		trace_move_race(&new->k);
 		bch2_btree_iter_next_slot(iter);
@@ -313,12 +316,12 @@ static void move_free(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct moving_context *ctxt = io->write.ctxt;
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
 	bch2_disk_reservation_put(io->write.op.c, &io->write.op.res);
 
-	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, i)
+	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, iter)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);
 
@@ -775,14 +778,8 @@ int bch2_data_job(struct bch_fs *c,
 
 		ret = bch2_move_btree(c, rereplicate_pred, c, stats) ?: ret;
 
-		while (1) {
-			closure_wait_event(&c->btree_interior_update_wait,
-					   !bch2_btree_interior_updates_nr_pending(c) ||
-					   c->btree_roots_dirty);
-			if (!bch2_btree_interior_updates_nr_pending(c))
-				break;
-			bch2_journal_meta(&c->journal);
-		}
+		closure_wait_event(&c->btree_interior_update_wait,
+				   !bch2_btree_interior_updates_nr_pending(c));
 
 		ret = bch2_replicas_gc2(c) ?: ret;
 

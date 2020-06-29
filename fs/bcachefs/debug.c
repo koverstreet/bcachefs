@@ -52,8 +52,8 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 
 	bkey_copy(&v->key, &b->key);
 	v->written	= 0;
-	v->level	= b->level;
-	v->btree_id	= b->btree_id;
+	v->c.level	= b->c.level;
+	v->c.btree_id	= b->c.btree_id;
 	bch2_btree_keys_init(v, &c->expensive_debug_checks);
 
 	if (bch2_bkey_pick_read_device(c, bkey_i_to_s_c(&b->key),
@@ -97,10 +97,10 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 		console_lock();
 
 		printk(KERN_ERR "*** in memory:\n");
-		bch2_dump_bset(b, inmemory, 0);
+		bch2_dump_bset(c, b, inmemory, 0);
 
 		printk(KERN_ERR "*** read back in:\n");
-		bch2_dump_bset(v, sorted, 0);
+		bch2_dump_bset(c, v, sorted, 0);
 
 		while (offset < b->written) {
 			if (!offset ) {
@@ -117,7 +117,7 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 			}
 
 			printk(KERN_ERR "*** on disk block %u:\n", offset);
-			bch2_dump_bset(b, i, offset);
+			bch2_dump_bset(c, b, i, offset);
 
 			offset += sectors;
 		}

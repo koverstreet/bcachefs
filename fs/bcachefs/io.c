@@ -124,10 +124,10 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 
 void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
-	bio_for_each_segment_all(bv, bio, i)
+	bio_for_each_segment_all(bv, bio, iter)
 		if (bv->bv_page != ZERO_PAGE(0))
 			mempool_free(bv->bv_page, &c->bio_bounce_pages);
 	bio->bi_vcnt = 0;
@@ -493,12 +493,14 @@ static void bch2_write_done(struct closure *cl)
 	if (!op->error && (op->flags & BCH_WRITE_FLUSH))
 		op->error = bch2_journal_error(&c->journal);
 
-	if (!(op->flags & BCH_WRITE_NOPUT_RESERVATION))
-		bch2_disk_reservation_put(c, &op->res);
+	bch2_disk_reservation_put(c, &op->res);
 	percpu_ref_put(&c->writes);
 	bch2_keylist_free(&op->insert_keys, op->inline_keys);
 
 	bch2_time_stats_update(&c->times[BCH_TIME_data_write], op->start_time);
+
+	if (!(op->flags & BCH_WRITE_FROM_INTERNAL))
+		up(&c->io_in_flight);
 
 	if (op->end_io) {
 		EBUG_ON(cl->parent);
@@ -1258,6 +1260,12 @@ void bch2_write(struct closure *cl)
 		goto err;
 	}
 
+	/*
+	 * Can't ratelimit copygc - we'd deadlock:
+	 */
+	if (!(op->flags & BCH_WRITE_FROM_INTERNAL))
+		down(&c->io_in_flight);
+
 	bch2_increment_clock(c, bio_sectors(bio), WRITE);
 
 	data_len = min_t(u64, bio->bi_iter.bi_size,
@@ -1272,8 +1280,7 @@ void bch2_write(struct closure *cl)
 	continue_at_nobarrier(cl, __bch2_write, NULL);
 	return;
 err:
-	if (!(op->flags & BCH_WRITE_NOPUT_RESERVATION))
-		bch2_disk_reservation_put(c, &op->res);
+	bch2_disk_reservation_put(c, &op->res);
 
 	if (op->end_io) {
 		EBUG_ON(cl->parent);
@@ -1641,7 +1648,7 @@ retry:
 		sectors = k.k->size - offset_into_extent;
 
 		ret = bch2_read_indirect_extent(&trans,
-					&offset_into_extent, sk.k);
+					&offset_into_extent, &sk);
 		if (ret)
 			break;
 
@@ -1943,14 +1950,14 @@ static void bch2_read_endio(struct bio *bio)
 
 int __bch2_read_indirect_extent(struct btree_trans *trans,
 				unsigned *offset_into_extent,
-				struct bkey_i *orig_k)
+				struct bkey_on_stack *orig_k)
 {
 	struct btree_iter *iter;
 	struct bkey_s_c k;
 	u64 reflink_offset;
 	int ret;
 
-	reflink_offset = le64_to_cpu(bkey_i_to_reflink_p(orig_k)->v.idx) +
+	reflink_offset = le64_to_cpu(bkey_i_to_reflink_p(orig_k->k)->v.idx) +
 		*offset_into_extent;
 
 	iter = bch2_trans_get_iter(trans, BTREE_ID_REFLINK,
@@ -1973,7 +1980,7 @@ int __bch2_read_indirect_extent(struct btree_trans *trans,
 	}
 
 	*offset_into_extent = iter->pos.offset - bkey_start_offset(k.k);
-	bkey_reassemble(orig_k, k);
+	bkey_on_stack_reassemble(orig_k, trans->c, k);
 err:
 	bch2_trans_iter_put(trans, iter);
 	return ret;
@@ -2273,7 +2280,7 @@ retry:
 		k = bkey_i_to_s_c(sk.k);
 
 		ret = bch2_read_indirect_extent(&trans,
-					&offset_into_extent, sk.k);
+					&offset_into_extent, &sk);
 		if (ret)
 			goto err;
 

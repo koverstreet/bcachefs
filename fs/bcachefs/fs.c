@@ -889,7 +889,7 @@ retry:
 		sectors			= k.k->size - offset_into_extent;
 
 		ret = bch2_read_indirect_extent(&trans,
-					&offset_into_extent, cur.k);
+					&offset_into_extent, &cur);
 		if (ret)
 			break;
 
@@ -966,15 +966,6 @@ static int bch2_vfs_readdir(struct file *file, struct dir_context *ctx)
 	return bch2_readdir(c, inode->v.i_ino, ctx);
 }
 
-static int bch2_clone_file_range(struct file *file_src, loff_t pos_src,
-				 struct file *file_dst, loff_t pos_dst,
-				 u64 len)
-{
-	return bch2_remap_file_range(file_src, pos_src,
-				     file_dst, pos_dst,
-				     len, 0);
-}
-
 static const struct file_operations bch_file_operations = {
 	.llseek		= bch2_llseek,
 	.read_iter	= bch2_read_iter,
@@ -992,7 +983,7 @@ static const struct file_operations bch_file_operations = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= bch2_compat_fs_ioctl,
 #endif
-	.clone_file_range = bch2_clone_file_range,
+	.remap_file_range = bch2_remap_file_range,
 };
 
 static const struct inode_operations bch_file_inode_operations = {
@@ -1324,16 +1315,16 @@ static struct bch_fs *__bch2_open_as_blockdevs(const char *dev_name, char * cons
 	if (IS_ERR(c))
 		return c;
 
-	mutex_lock(&c->state_lock);
+	down_write(&c->state_lock);
 
 	if (!test_bit(BCH_FS_STARTED, &c->flags)) {
-		mutex_unlock(&c->state_lock);
+		up_write(&c->state_lock);
 		closure_put(&c->cl);
 		pr_err("err mounting %s: incomplete filesystem", dev_name);
 		return ERR_PTR(-EINVAL);
 	}
 
-	mutex_unlock(&c->state_lock);
+	up_write(&c->state_lock);
 
 	set_bit(BCH_FS_BDEV_MOUNTED, &c->flags);
 	return c;
@@ -1382,7 +1373,7 @@ static int bch2_remount(struct super_block *sb, int *flags, char *data)
 		return ret;
 
 	if (opts.read_only != c->opts.read_only) {
-		mutex_lock(&c->state_lock);
+		down_write(&c->state_lock);
 
 		if (opts.read_only) {
 			bch2_fs_read_only(c);
@@ -1392,7 +1383,7 @@ static int bch2_remount(struct super_block *sb, int *flags, char *data)
 			ret = bch2_fs_read_write(c);
 			if (ret) {
 				bch_err(c, "error going rw: %i", ret);
-				mutex_unlock(&c->state_lock);
+				up_write(&c->state_lock);
 				return -EINVAL;
 			}
 
@@ -1401,7 +1392,7 @@ static int bch2_remount(struct super_block *sb, int *flags, char *data)
 
 		c->opts.read_only = opts.read_only;
 
-		mutex_unlock(&c->state_lock);
+		up_write(&c->state_lock);
 	}
 
 	if (opts.errors >= 0)
@@ -1523,7 +1514,7 @@ static struct dentry *bch2_mount(struct file_system_type *fs_type,
 
 	sb->s_bdi->congested_fn		= bch2_congested;
 	sb->s_bdi->congested_data	= c;
-	sb->s_bdi->ra_pages		= VM_MAX_READAHEAD * 1024 / PAGE_SIZE;
+	sb->s_bdi->ra_pages		= VM_READAHEAD_PAGES;
 
 	for_each_online_member(ca, c, i) {
 		struct block_device *bdev = ca->disk_sb.bdev;

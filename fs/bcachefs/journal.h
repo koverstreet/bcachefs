@@ -199,27 +199,39 @@ bch2_journal_add_entry_noreservation(struct journal_buf *buf, size_t u64s)
 	return entry;
 }
 
+static inline struct jset_entry *
+journal_res_entry(struct journal *j, struct journal_res *res)
+{
+	return vstruct_idx(j->buf[res->idx].data, res->offset);
+}
+
+static inline unsigned journal_entry_set(struct jset_entry *entry, unsigned type,
+					  enum btree_id id, unsigned level,
+					  const void *data, unsigned u64s)
+{
+	memset(entry, 0, sizeof(*entry));
+	entry->u64s	= cpu_to_le16(u64s);
+	entry->type	= type;
+	entry->btree_id = id;
+	entry->level	= level;
+	memcpy_u64s_small(entry->_data, data, u64s);
+
+	return jset_u64s(u64s);
+}
+
 static inline void bch2_journal_add_entry(struct journal *j, struct journal_res *res,
 					  unsigned type, enum btree_id id,
 					  unsigned level,
 					  const void *data, unsigned u64s)
 {
-	struct journal_buf *buf = &j->buf[res->idx];
-	struct jset_entry *entry = vstruct_idx(buf->data, res->offset);
-	unsigned actual = jset_u64s(u64s);
+	unsigned actual = journal_entry_set(journal_res_entry(j, res),
+			       type, id, level, data, u64s);
 
 	EBUG_ON(!res->ref);
 	EBUG_ON(actual > res->u64s);
 
 	res->offset	+= actual;
 	res->u64s	-= actual;
-
-	memset(entry, 0, sizeof(*entry));
-	entry->u64s	= cpu_to_le16(u64s);
-	entry->type	= type;
-	entry->btree_id = id;
-	entry->level	= level;
-	memcpy_u64s(entry->_data, data, u64s);
 }
 
 static inline void bch2_journal_add_keys(struct journal *j, struct journal_res *res,
@@ -269,7 +281,7 @@ static inline void bch2_journal_res_put(struct journal *j,
 	if (!res->ref)
 		return;
 
-	lock_release(&j->res_map, 0, _THIS_IP_);
+	lock_release(&j->res_map, _THIS_IP_);
 
 	while (res->u64s)
 		bch2_journal_add_entry(j, res,
@@ -287,6 +299,7 @@ int bch2_journal_res_get_slowpath(struct journal *, struct journal_res *,
 #define JOURNAL_RES_GET_NONBLOCK	(1 << 0)
 #define JOURNAL_RES_GET_CHECK		(1 << 1)
 #define JOURNAL_RES_GET_RESERVED	(1 << 2)
+#define JOURNAL_RES_GET_RECLAIM		(1 << 3)
 
 static inline int journal_res_get_fast(struct journal *j,
 				       struct journal_res *res,
@@ -394,11 +407,12 @@ static inline void bch2_journal_preres_put(struct journal *j,
 }
 
 int __bch2_journal_preres_get(struct journal *,
-			struct journal_preres *, unsigned);
+			struct journal_preres *, unsigned, unsigned);
 
 static inline int bch2_journal_preres_get_fast(struct journal *j,
 					       struct journal_preres *res,
-					       unsigned new_u64s)
+					       unsigned new_u64s,
+					       unsigned flags)
 {
 	int d = new_u64s - res->u64s;
 	union journal_preres_state old, new;
@@ -409,7 +423,15 @@ static inline int bch2_journal_preres_get_fast(struct journal *j,
 
 		new.reserved += d;
 
-		if (new.reserved > new.remaining)
+		/*
+		 * If we're being called from the journal reclaim path, we have
+		 * to unconditionally give out the pre-reservation, there's
+		 * nothing else sensible we can do - otherwise we'd recurse back
+		 * into the reclaim path and deadlock:
+		 */
+
+		if (!(flags & JOURNAL_RES_GET_RECLAIM) &&
+		    new.reserved > new.remaining)
 			return 0;
 	} while ((v = atomic64_cmpxchg(&j->prereserved.counter,
 				       old.v, new.v)) != old.v);
@@ -426,13 +448,13 @@ static inline int bch2_journal_preres_get(struct journal *j,
 	if (new_u64s <= res->u64s)
 		return 0;
 
-	if (bch2_journal_preres_get_fast(j, res, new_u64s))
+	if (bch2_journal_preres_get_fast(j, res, new_u64s, flags))
 		return 0;
 
 	if (flags & JOURNAL_RES_GET_NONBLOCK)
 		return -EAGAIN;
 
-	return __bch2_journal_preres_get(j, res, new_u64s);
+	return __bch2_journal_preres_get(j, res, new_u64s, flags);
 }
 
 /* journal_entry_res: */

@@ -2,6 +2,7 @@
 #include "bcachefs.h"
 #include "alloc_foreground.h"
 #include "btree_io.h"
+#include "btree_update_interior.h"
 #include "buckets.h"
 #include "checksum.h"
 #include "error.h"
@@ -40,19 +41,21 @@ static int journal_entry_add(struct bch_fs *c, struct bch_dev *ca,
 				  list)->j.last_seq
 		: 0;
 
-	/* Is this entry older than the range we need? */
-	if (le64_to_cpu(j->seq) < le64_to_cpu(last_seq)) {
-		ret = JOURNAL_ENTRY_ADD_OUT_OF_RANGE;
-		goto out;
-	}
+	if (!c->opts.read_entire_journal) {
+		/* Is this entry older than the range we need? */
+		if (le64_to_cpu(j->seq) < le64_to_cpu(last_seq)) {
+			ret = JOURNAL_ENTRY_ADD_OUT_OF_RANGE;
+			goto out;
+		}
 
-	/* Drop entries we don't need anymore */
-	list_for_each_entry_safe(i, pos, jlist->head, list) {
-		if (le64_to_cpu(i->j.seq) >= le64_to_cpu(j->last_seq))
-			break;
-		list_del(&i->list);
-		kvpfree(i, offsetof(struct journal_replay, j) +
-			vstruct_bytes(&i->j));
+		/* Drop entries we don't need anymore */
+		list_for_each_entry_safe(i, pos, jlist->head, list) {
+			if (le64_to_cpu(i->j.seq) >= le64_to_cpu(j->last_seq))
+				break;
+			list_del(&i->list);
+			kvpfree(i, offsetof(struct journal_replay, j) +
+				vstruct_bytes(&i->j));
+		}
 	}
 
 	list_for_each_entry_reverse(i, jlist->head, list) {
@@ -993,8 +996,23 @@ void bch2_journal_write(struct closure *cl)
 
 	j->write_start_time = local_clock();
 
-	start	= vstruct_last(jset);
-	end	= bch2_journal_super_entries_add_common(c, start,
+	/*
+	 * New btree roots are set by journalling them; when the journal entry
+	 * gets written we have to propagate them to c->btree_roots
+	 *
+	 * But, every journal entry we write has to contain all the btree roots
+	 * (at least for now); so after we copy btree roots to c->btree_roots we
+	 * have to get any missing btree roots and add them to this journal
+	 * entry:
+	 */
+
+	bch2_journal_entries_to_btree_roots(c, jset);
+
+	start = end = vstruct_last(jset);
+
+	end	= bch2_btree_roots_to_journal_entries(c, jset->start, end);
+
+	end	= bch2_journal_super_entries_add_common(c, end,
 						le64_to_cpu(jset->seq));
 	u64s	= (u64 *) end - (u64 *) start;
 	BUG_ON(u64s > j->entry_u64s_reserved);

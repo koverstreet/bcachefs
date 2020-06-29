@@ -8,6 +8,7 @@ void bch2_coalesce(struct bch_fs *);
 
 struct journal_keys;
 int bch2_gc(struct bch_fs *, struct journal_keys *, bool, bool);
+int bch2_gc_gens(struct bch_fs *);
 void bch2_gc_thread_stop(struct bch_fs *);
 int bch2_gc_thread_start(struct bch_fs *);
 void bch2_mark_dev_superblock(struct bch_fs *, struct bch_dev *, unsigned);
@@ -81,7 +82,7 @@ static inline struct gc_pos gc_pos_btree(enum btree_id id,
  */
 static inline struct gc_pos gc_pos_btree_node(struct btree *b)
 {
-	return gc_pos_btree(b->btree_id, b->key.k.p, b->level);
+	return gc_pos_btree(b->c.btree_id, b->key.k.p, b->c.level);
 }
 
 /*

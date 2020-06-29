@@ -207,6 +207,11 @@ enum opt_type {
 	  OPT_BOOL(),							\
 	  BCH_SB_PRJQUOTA,		false,				\
 	  NULL,		"Enable project quotas")			\
+	x(reflink,			u8,				\
+	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
+	  OPT_BOOL(),							\
+	  BCH_SB_REFLINK,		true,				\
+	  NULL,		"Enable reflink support")			\
 	x(degraded,			u8,				\
 	  OPT_MOUNT,							\
 	  OPT_BOOL(),							\
@@ -260,6 +265,11 @@ enum opt_type {
 	  OPT_BOOL(),							\
 	  NO_SB_OPT,			false,				\
 	  NULL,		"Don't free journal entries/keys after startup")\
+	x(read_entire_journal,		u8,				\
+	  0,								\
+	  OPT_BOOL(),							\
+	  NO_SB_OPT,			false,				\
+	  NULL,		"Read all journal entries, not just dirty ones")\
 	x(noexcl,			u8,				\
 	  OPT_MOUNT,							\
 	  OPT_BOOL(),							\

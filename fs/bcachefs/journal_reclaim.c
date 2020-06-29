@@ -28,16 +28,8 @@ unsigned bch2_journal_dev_buckets_available(struct journal *j,
 					    struct journal_device *ja,
 					    enum journal_space_from from)
 {
-	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	unsigned available = (journal_space_from(ja, from) -
 			      ja->cur_idx - 1 + ja->nr) % ja->nr;
-
-	/*
-	 * Allocator startup needs some journal space before we can do journal
-	 * replay:
-	 */
-	if (available && test_bit(BCH_FS_ALLOCATOR_STARTED, &c->flags))
-		--available;
 
 	/*
 	 * Don't use the last bucket unless writing the new last_seq
@@ -330,7 +322,7 @@ static void bch2_journal_pin_add_locked(struct journal *j, u64 seq,
 
 	__journal_pin_drop(j, pin);
 
-	BUG_ON(!atomic_read(&pin_list->count));
+	BUG_ON(!atomic_read(&pin_list->count) && seq == journal_last_seq(j));
 
 	atomic_inc(&pin_list->count);
 	pin->seq	= seq;
@@ -345,6 +337,37 @@ void __bch2_journal_pin_add(struct journal *j, u64 seq,
 {
 	spin_lock(&j->lock);
 	bch2_journal_pin_add_locked(j, seq, pin, flush_fn);
+	spin_unlock(&j->lock);
+
+	/*
+	 * If the journal is currently full,  we might want to call flush_fn
+	 * immediately:
+	 */
+	journal_wake(j);
+}
+
+void bch2_journal_pin_update(struct journal *j, u64 seq,
+			     struct journal_entry_pin *pin,
+			     journal_pin_flush_fn flush_fn)
+{
+	if (journal_pin_active(pin) && pin->seq < seq)
+		return;
+
+	spin_lock(&j->lock);
+
+	if (pin->seq != seq) {
+		bch2_journal_pin_add_locked(j, seq, pin, flush_fn);
+	} else {
+		struct journal_entry_pin_list *pin_list =
+			journal_seq_pin(j, seq);
+
+		/*
+		 * If the pin is already pinning the right sequence number, it
+		 * still might've already been flushed:
+		 */
+		list_move(&pin->list, &pin_list->list);
+	}
+
 	spin_unlock(&j->lock);
 
 	/*
@@ -393,6 +416,9 @@ journal_get_next_pin(struct journal *j, u64 max_seq, u64 *seq)
 	struct journal_entry_pin_list *pin_list;
 	struct journal_entry_pin *ret = NULL;
 
+	if (!test_bit(JOURNAL_RECLAIM_STARTED, &j->flags))
+		return NULL;
+
 	spin_lock(&j->lock);
 
 	fifo_for_each_entry_ptr(pin_list, &j->pin, *seq)
@@ -413,10 +439,12 @@ journal_get_next_pin(struct journal *j, u64 max_seq, u64 *seq)
 	return ret;
 }
 
-static void journal_flush_pins(struct journal *j, u64 seq_to_flush,
+/* returns true if we did work */
+static bool journal_flush_pins(struct journal *j, u64 seq_to_flush,
 			       unsigned min_nr)
 {
 	struct journal_entry_pin *pin;
+	bool ret = false;
 	u64 seq;
 
 	lockdep_assert_held(&j->reclaim_lock);
@@ -431,7 +459,10 @@ static void journal_flush_pins(struct journal *j, u64 seq_to_flush,
 		BUG_ON(j->flush_in_progress != pin);
 		j->flush_in_progress = NULL;
 		wake_up(&j->pin_flush_wait);
+		ret = true;
 	}
+
+	return ret;
 }
 
 /**
@@ -523,7 +554,8 @@ void bch2_journal_reclaim_work(struct work_struct *work)
 	mutex_unlock(&j->reclaim_lock);
 }
 
-static int journal_flush_done(struct journal *j, u64 seq_to_flush)
+static int journal_flush_done(struct journal *j, u64 seq_to_flush,
+			      bool *did_work)
 {
 	int ret;
 
@@ -533,7 +565,7 @@ static int journal_flush_done(struct journal *j, u64 seq_to_flush)
 
 	mutex_lock(&j->reclaim_lock);
 
-	journal_flush_pins(j, seq_to_flush, 0);
+	*did_work = journal_flush_pins(j, seq_to_flush, 0);
 
 	spin_lock(&j->lock);
 	/*
@@ -551,12 +583,17 @@ static int journal_flush_done(struct journal *j, u64 seq_to_flush)
 	return ret;
 }
 
-void bch2_journal_flush_pins(struct journal *j, u64 seq_to_flush)
+bool bch2_journal_flush_pins(struct journal *j, u64 seq_to_flush)
 {
-	if (!test_bit(JOURNAL_STARTED, &j->flags))
-		return;
+	bool did_work = false;
 
-	closure_wait_event(&j->async_wait, journal_flush_done(j, seq_to_flush));
+	if (!test_bit(JOURNAL_STARTED, &j->flags))
+		return false;
+
+	closure_wait_event(&j->async_wait,
+		journal_flush_done(j, seq_to_flush, &did_work));
+
+	return did_work;
 }
 
 int bch2_journal_flush_device_pins(struct journal *j, int dev_idx)

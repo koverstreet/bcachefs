@@ -3,6 +3,7 @@
 #define _BCACHEFS_IO_H
 
 #include "checksum.h"
+#include "bkey_on_stack.h"
 #include "io_types.h"
 
 #define to_wbio(_bio)			\
@@ -29,14 +30,13 @@ enum bch_write_flags {
 	BCH_WRITE_PAGES_STABLE		= (1 << 4),
 	BCH_WRITE_PAGES_OWNED		= (1 << 5),
 	BCH_WRITE_ONLY_SPECIFIED_DEVS	= (1 << 6),
-	BCH_WRITE_NOPUT_RESERVATION	= (1 << 7),
-	BCH_WRITE_WROTE_DATA_INLINE	= (1 << 8),
-	BCH_WRITE_FROM_INTERNAL		= (1 << 9),
+	BCH_WRITE_WROTE_DATA_INLINE	= (1 << 7),
+	BCH_WRITE_FROM_INTERNAL		= (1 << 8),
 
 	/* Internal: */
-	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 10),
-	BCH_WRITE_SKIP_CLOSURE_PUT	= (1 << 11),
-	BCH_WRITE_DONE			= (1 << 12),
+	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 9),
+	BCH_WRITE_SKIP_CLOSURE_PUT	= (1 << 10),
+	BCH_WRITE_DONE			= (1 << 11),
 };
 
 static inline u64 *op_journal_seq(struct bch_write_op *op)
@@ -110,13 +110,13 @@ struct cache_promote_op;
 struct extent_ptr_decoded;
 
 int __bch2_read_indirect_extent(struct btree_trans *, unsigned *,
-				struct bkey_i *);
+				struct bkey_on_stack *);
 
 static inline int bch2_read_indirect_extent(struct btree_trans *trans,
 					    unsigned *offset_into_extent,
-					    struct bkey_i *k)
+					    struct bkey_on_stack *k)
 {
-	return k->k.type == KEY_TYPE_reflink_p
+	return k->k->k.type == KEY_TYPE_reflink_p
 		? __bch2_read_indirect_extent(trans, offset_into_extent, k)
 		: 0;
 }

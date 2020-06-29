@@ -584,8 +584,8 @@ void bch2_btree_init_next(struct bch_fs *c, struct btree *b,
 	struct btree_node_entry *bne;
 	bool did_sort;
 
-	EBUG_ON(!(b->lock.state.seq & 1));
-	EBUG_ON(iter && iter->l[b->level].b != b);
+	EBUG_ON(!(b->c.lock.state.seq & 1));
+	EBUG_ON(iter && iter->l[b->c.level].b != b);
 
 	did_sort = btree_node_compact(c, b, iter);
 
@@ -620,7 +620,7 @@ static void bset_encrypt(struct bch_fs *c, struct bset *i, unsigned offset)
 		bch2_encrypt(c, BSET_CSUM_TYPE(i), nonce, &bn->flags,
 			     bytes);
 
-		nonce = nonce_add(nonce, round_up(bytes, CHACHA20_BLOCK_SIZE));
+		nonce = nonce_add(nonce, round_up(bytes, CHACHA_BLOCK_SIZE));
 	}
 
 	bch2_encrypt(c, BSET_CSUM_TYPE(i), nonce, i->_data,
@@ -631,14 +631,14 @@ static void btree_err_msg(struct printbuf *out, struct bch_fs *c,
 			  struct btree *b, struct bset *i,
 			  unsigned offset, int write)
 {
-	pr_buf(out, "error validating btree node %s"
-	       "at btree %u level %u/%u\n"
-	       "pos %llu:%llu node offset %u",
+	pr_buf(out, "error validating btree node %sat btree %u level %u/%u\n"
+	       "pos ",
 	       write ? "before write " : "",
-	       b->btree_id, b->level,
-	       c->btree_roots[b->btree_id].level,
-	       b->key.k.p.inode, b->key.k.p.offset,
-	       b->written);
+	       b->c.btree_id, b->c.level,
+	       c->btree_roots[b->c.btree_id].level);
+	bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(&b->key));
+
+	pr_buf(out, " node offset %u", b->written);
 	if (i)
 		pr_buf(out, " bset u64s %u", le16_to_cpu(i->u64s));
 }
@@ -747,11 +747,11 @@ static int validate_bset(struct bch_fs *c, struct btree *b,
 				     "incorrect sequence number (wrong btree node)");
 		}
 
-		btree_err_on(BTREE_NODE_ID(bn) != b->btree_id,
+		btree_err_on(BTREE_NODE_ID(bn) != b->c.btree_id,
 			     BTREE_ERR_MUST_RETRY, c, b, i,
 			     "incorrect btree id");
 
-		btree_err_on(BTREE_NODE_LEVEL(bn) != b->level,
+		btree_err_on(BTREE_NODE_LEVEL(bn) != b->c.level,
 			     BTREE_ERR_MUST_RETRY, c, b, i,
 			     "incorrect level");
 
@@ -762,7 +762,7 @@ static int validate_bset(struct bch_fs *c, struct btree *b,
 		}
 
 		if (!write)
-			compat_btree_node(b->level, b->btree_id, version,
+			compat_btree_node(b->c.level, b->c.btree_id, version,
 					  BSET_BIG_ENDIAN(i), write, bn);
 
 		if (b->key.k.type == KEY_TYPE_btree_ptr_v2) {
@@ -783,7 +783,7 @@ static int validate_bset(struct bch_fs *c, struct btree *b,
 			     "incorrect max key");
 
 		if (write)
-			compat_btree_node(b->level, b->btree_id, version,
+			compat_btree_node(b->c.level, b->c.btree_id, version,
 					  BSET_BIG_ENDIAN(i), write, bn);
 
 		/* XXX: ideally we would be validating min_key too */
@@ -805,7 +805,7 @@ static int validate_bset(struct bch_fs *c, struct btree *b,
 			     BTREE_ERR_FATAL, c, b, i,
 			     "invalid bkey format: %s", err);
 
-		compat_bformat(b->level, b->btree_id, version,
+		compat_bformat(b->c.level, b->c.btree_id, version,
 			       BSET_BIG_ENDIAN(i), write,
 			       &bn->format);
 	}
@@ -851,7 +851,7 @@ static int validate_bset_keys(struct bch_fs *c, struct btree *b,
 
 		/* XXX: validate k->u64s */
 		if (!write)
-			bch2_bkey_compat(b->level, b->btree_id, version,
+			bch2_bkey_compat(b->c.level, b->c.btree_id, version,
 				    BSET_BIG_ENDIAN(i), write,
 				    &b->format, k);
 
@@ -874,7 +874,7 @@ static int validate_bset_keys(struct bch_fs *c, struct btree *b,
 		}
 
 		if (write)
-			bch2_bkey_compat(b->level, b->btree_id, version,
+			bch2_bkey_compat(b->c.level, b->c.btree_id, version,
 				    BSET_BIG_ENDIAN(i), write,
 				    &b->format, k);
 
@@ -897,7 +897,7 @@ static int validate_bset_keys(struct bch_fs *c, struct btree *b,
 			bch2_bkey_to_text(&PBUF(buf1), &up);
 			bch2_bkey_to_text(&PBUF(buf2), u.k);
 
-			bch2_dump_bset(b, i, 0);
+			bch2_dump_bset(c, b, i, 0);
 			btree_err(BTREE_ERR_FATAL, c, b, i,
 				  "keys out of order: %s > %s",
 				  buf1, buf2);
@@ -944,7 +944,8 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct btree *b, bool have_retry
 
 		btree_err_on(b->data->keys.seq != bp->seq,
 			     BTREE_ERR_MUST_RETRY, c, b, NULL,
-			     "got wrong btree node");
+			     "got wrong btree node (seq %llx want %llx)",
+			     b->data->keys.seq, bp->seq);
 	}
 
 	while (b->written < c->opts.btree_node_size) {
@@ -1279,8 +1280,8 @@ int bch2_btree_root_read(struct bch_fs *c, enum btree_id id,
 
 	bch2_btree_set_root_for_read(c, b);
 err:
-	six_unlock_write(&b->lock);
-	six_unlock_intent(&b->lock);
+	six_unlock_write(&b->c.lock);
+	six_unlock_intent(&b->c.lock);
 
 	return ret;
 }
@@ -1324,15 +1325,15 @@ static void bch2_btree_node_write_error(struct bch_fs *c,
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	iter = bch2_trans_get_node_iter(&trans, b->btree_id, b->key.k.p,
-					BTREE_MAX_DEPTH, b->level, 0);
+	iter = bch2_trans_get_node_iter(&trans, b->c.btree_id, b->key.k.p,
+					BTREE_MAX_DEPTH, b->c.level, 0);
 retry:
 	ret = bch2_btree_iter_traverse(iter);
 	if (ret)
 		goto err;
 
 	/* has node been freed? */
-	if (iter->l[b->level].b != b) {
+	if (iter->l[b->c.level].b != b) {
 		/* node has been freed: */
 		BUG_ON(!btree_node_dying(b));
 		goto out;
@@ -1763,18 +1764,18 @@ void bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	BUG_ON(lock_type_held == SIX_LOCK_write);
 
 	if (lock_type_held == SIX_LOCK_intent ||
-	    six_lock_tryupgrade(&b->lock)) {
+	    six_lock_tryupgrade(&b->c.lock)) {
 		__bch2_btree_node_write(c, b, SIX_LOCK_intent);
 
 		/* don't cycle lock unnecessarily: */
 		if (btree_node_just_written(b) &&
-		    six_trylock_write(&b->lock)) {
+		    six_trylock_write(&b->c.lock)) {
 			bch2_btree_post_write_cleanup(c, b);
-			six_unlock_write(&b->lock);
+			six_unlock_write(&b->c.lock);
 		}
 
 		if (lock_type_held == SIX_LOCK_read)
-			six_lock_downgrade(&b->lock);
+			six_lock_downgrade(&b->c.lock);
 	} else {
 		__bch2_btree_node_write(c, b, SIX_LOCK_read);
 	}
@@ -1844,7 +1845,7 @@ ssize_t bch2_dirty_btree_nodes_print(struct bch_fs *c, char *buf)
 		       b,
 		       (flags & (1 << BTREE_NODE_dirty)) != 0,
 		       (flags & (1 << BTREE_NODE_need_write)) != 0,
-		       b->level,
+		       b->c.level,
 		       b->written,
 		       !list_empty_careful(&b->write_blocked),
 		       b->will_make_reachable != 0,

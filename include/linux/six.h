@@ -115,6 +115,8 @@ struct six_lock {
 #endif
 };
 
+typedef int (*six_lock_should_sleep_fn)(struct six_lock *lock, void *);
+
 static __always_inline void __six_lock_init(struct six_lock *lock,
 					    const char *name,
 					    struct lock_class_key *key)
@@ -141,7 +143,7 @@ do {									\
 #define __SIX_LOCK(type)						\
 bool six_trylock_##type(struct six_lock *);				\
 bool six_relock_##type(struct six_lock *, u32);				\
-void six_lock_##type(struct six_lock *);				\
+int six_lock_##type(struct six_lock *, six_lock_should_sleep_fn, void *);\
 void six_unlock_##type(struct six_lock *);
 
 __SIX_LOCK(read)
@@ -167,14 +169,15 @@ static inline bool six_trylock_type(struct six_lock *lock, enum six_lock_type ty
 }
 
 static inline bool six_relock_type(struct six_lock *lock, enum six_lock_type type,
-		     unsigned seq)
+				   unsigned seq)
 {
 	SIX_LOCK_DISPATCH(type, six_relock, lock, seq);
 }
 
-static inline void six_lock_type(struct six_lock *lock, enum six_lock_type type)
+static inline int six_lock_type(struct six_lock *lock, enum six_lock_type type,
+				six_lock_should_sleep_fn should_sleep_fn, void *p)
 {
-	SIX_LOCK_DISPATCH(type, six_lock, lock);
+	SIX_LOCK_DISPATCH(type, six_lock, lock, should_sleep_fn, p);
 }
 
 static inline void six_unlock_type(struct six_lock *lock, enum six_lock_type type)
@@ -188,5 +191,7 @@ bool six_trylock_convert(struct six_lock *, enum six_lock_type,
 			 enum six_lock_type);
 
 void six_lock_increment(struct six_lock *, enum six_lock_type);
+
+void six_lock_wakeup_all(struct six_lock *);
 
 #endif /* _LINUX_SIX_H */

@@ -190,6 +190,7 @@
 #include <linux/percpu-rwsem.h>
 #include <linux/rhashtable.h>
 #include <linux/rwsem.h>
+#include <linux/semaphore.h>
 #include <linux/seqlock.h>
 #include <linux/shrinker.h>
 #include <linux/types.h>
@@ -338,7 +339,7 @@ enum bch_time_stats {
 #define BTREE_RESERVE_MAX	(BTREE_MAX_DEPTH + (BTREE_MAX_DEPTH - 1))
 
 /* Size of the freelist we allocate btree nodes from: */
-#define BTREE_NODE_RESERVE	BTREE_RESERVE_MAX
+#define BTREE_NODE_RESERVE	(BTREE_RESERVE_MAX * 4)
 
 #define BTREE_NODE_OPEN_BUCKET_RESERVE	(BTREE_RESERVE_MAX * BCH_REPLICAS_MAX)
 
@@ -426,8 +427,8 @@ struct bch_dev {
 	alloc_fifo		free[RESERVE_NR];
 	alloc_fifo		free_inc;
 
-	u8			open_buckets_partial[OPEN_BUCKETS_COUNT];
-	unsigned		open_buckets_partial_nr;
+	open_bucket_idx_t	open_buckets_partial[OPEN_BUCKETS_COUNT];
+	open_bucket_idx_t	open_buckets_partial_nr;
 
 	size_t			fifo_last_bucket;
 
@@ -477,9 +478,11 @@ struct bch_dev {
 enum {
 	/* startup: */
 	BCH_FS_ALLOC_READ_DONE,
-	BCH_FS_ALLOCATOR_STARTED,
+	BCH_FS_ALLOC_CLEAN,
 	BCH_FS_ALLOCATOR_RUNNING,
+	BCH_FS_ALLOCATOR_STOPPING,
 	BCH_FS_INITIAL_GC_DONE,
+	BCH_FS_BTREE_INTERIOR_REPLAY_DONE,
 	BCH_FS_FSCK_DONE,
 	BCH_FS_STARTED,
 	BCH_FS_RW,
@@ -548,8 +551,8 @@ struct bch_fs {
 	struct super_block	*vfs_sb;
 	char			name[40];
 
-	/* ro/rw, add/remove devices: */
-	struct mutex		state_lock;
+	/* ro/rw, add/remove/resize devices: */
+	struct rw_semaphore	state_lock;
 
 	/* Counts outstanding writes, for clean transition to read-only */
 	struct percpu_ref	writes;
@@ -600,12 +603,9 @@ struct bch_fs {
 	struct bio_set		btree_bio;
 
 	struct btree_root	btree_roots[BTREE_ID_NR];
-	bool			btree_roots_dirty;
 	struct mutex		btree_root_lock;
 
 	struct btree_cache	btree_cache;
-
-	mempool_t		btree_reserve_pool;
 
 	/*
 	 * Cache of allocated btree nodes - if we allocate a btree node and
@@ -624,7 +624,15 @@ struct bch_fs {
 	struct mutex		btree_interior_update_lock;
 	struct closure_waitlist	btree_interior_update_wait;
 
+	struct workqueue_struct	*btree_interior_update_worker;
+	struct work_struct	btree_interior_update_work;
+
+	/* btree_iter.c: */
+	struct mutex		btree_trans_lock;
+	struct list_head	btree_trans_list;
 	mempool_t		btree_iters_pool;
+
+	struct btree_key_cache	btree_key_cache;
 
 	struct workqueue_struct	*wq;
 	/* copygc needs its own workqueue for index updates.. */
@@ -682,8 +690,8 @@ struct bch_fs {
 	struct closure_waitlist	freelist_wait;
 	u64			blocked_allocate;
 	u64			blocked_allocate_open_bucket;
-	u8			open_buckets_freelist;
-	u8			open_buckets_nr_free;
+	open_bucket_idx_t	open_buckets_freelist;
+	open_bucket_idx_t	open_buckets_nr_free;
 	struct closure_waitlist	open_buckets_wait;
 	struct open_bucket	open_buckets[OPEN_BUCKETS_COUNT];
 
@@ -719,6 +727,7 @@ struct bch_fs {
 	struct rw_semaphore	gc_lock;
 
 	/* IO PATH */
+	struct semaphore	io_in_flight;
 	struct bio_set		bio_read;
 	struct bio_set		bio_read_split;
 	struct bio_set		bio_write;
@@ -732,7 +741,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
