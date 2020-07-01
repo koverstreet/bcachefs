@@ -180,7 +180,7 @@ done
 # as squirreled away, and the log in case it is useful.  Finally pass a formed
 # signing command line in case we need to do that.
 dkms_build_specific="$srcdir/$0--$package"
-dkms_build_generic=$(echo "$dkms_build_specific" | sed -e 's/-[0-9][0-9]*$/-N/')
+dkms_build_generic=$(echo "$dkms_build_specific" | sed -n -e 's/-[0-9][0-9]*[a-z]*$/-N/p')
 for dkms_build in "$dkms_build_specific" "$dkms_build_generic"
 do
 	if [ ! -e "$dkms_build" ]; then

@@ -3,4 +3,6 @@ zfs-linux 0.7.5-1ubuntu16.9
 nvidia-graphics-drivers-390 390.138-0ubuntu0.18.04.1
 nvidia-graphics-drivers-435 435.21-0ubuntu0.18.04.2
 nvidia-graphics-drivers-440 440.100-0ubuntu0.18.04.1
+nvidia-graphics-drivers-418-server 0
+nvidia-graphics-drivers-440-server 0
 wireguard-linux-compat 1.0.20200611-1ubuntu1~18.04.1

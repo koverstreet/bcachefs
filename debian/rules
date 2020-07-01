@@ -45,6 +45,7 @@ ifneq ($(DEB_HOST_ARCH),$(DEB_BUILD_ARCH))
 	disable_d_i=true
 	do_zfs=false
 	do_dkms_nvidia=false
+	do_dkms_nvidia_server=false
 	do_dkms_wireguard=false
 endif
 
@@ -78,6 +79,7 @@ ifeq ($(do_mainline_build),true)
 	no_dumpfile=1
 	do_zfs=false
 	do_dkms_nvidia=false
+	do_dkms_nvidia_server=false
 	skipabi=true
 	skipmodule=true
 	skipretpoline=true
@@ -112,9 +114,11 @@ endif
 # Versions of dkms packages.
 dkms_zfs_linux_version=$(shell gawk '/^zfs-linux / { print $$2; }' debian/dkms-versions)
 dkms_spl_linux_version=$(shell gawk '/^spl-linux / { print $$2; }' debian/dkms-versions)
-dkms_nvidia_390_version=$(shell gawk '/^nvidia-graphics-drivers-390/ { print $$2; }' debian/dkms-versions)
-dkms_nvidia_435_version=$(shell gawk '/^nvidia-graphics-drivers-435/ { print $$2; }' debian/dkms-versions)
-dkms_nvidia_440_version=$(shell gawk '/^nvidia-graphics-drivers-440/ { print $$2; }' debian/dkms-versions)
+dkms_nvidia_390_version=$(shell gawk '/^nvidia-graphics-drivers-390 / { print $$2; }' debian/dkms-versions)
+dkms_nvidia_435_version=$(shell gawk '/^nvidia-graphics-drivers-435 / { print $$2; }' debian/dkms-versions)
+dkms_nvidia_440_version=$(shell gawk '/^nvidia-graphics-drivers-440 / { print $$2; }' debian/dkms-versions)
+dkms_nvidia_418_server_version=$(shell gawk '/^nvidia-graphics-drivers-418-server / { print $$2; }' debian/dkms-versions)
+dkms_nvidia_440_server_version=$(shell gawk '/^nvidia-graphics-drivers-440-server / { print $$2; }' debian/dkms-versions)
 dkms_wireguard_version=$(shell gawk '/^wireguard-linux-compat / { print $$2; }' debian/dkms-versions)
 
 # Debian Build System targets

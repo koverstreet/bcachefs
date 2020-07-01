@@ -409,6 +409,11 @@ ifeq ($(do_dkms_nvidia),true)
 	$(call build_dkms, $(bldinfo_pkg_name)-$*, $(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/signatures, nvidia-440, pool/restricted/n/nvidia-graphics-drivers-440/nvidia-kernel-source-440_$(dkms_nvidia_440_version)_$(arch).deb pool/restricted/n/nvidia-graphics-drivers-440/nvidia-dkms-440_$(dkms_nvidia_440_version)_$(arch).deb)
 endif
 
+ifeq ($(do_dkms_nvidia_server),true)
+	$(call build_dkms, $(bldinfo_pkg_name)-$*, $(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/signatures, nvidia-418srv, pool/restricted/n/nvidia-graphics-drivers-418-server/nvidia-kernel-source-418-server_$(dkms_nvidia_418_server_version)_$(arch).deb pool/restricted/n/nvidia-graphics-drivers-418-server/nvidia-dkms-418-server_$(dkms_nvidia_418_server_version)_$(arch).deb)
+	$(call build_dkms, $(bldinfo_pkg_name)-$*, $(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/signatures, nvidia-440srv, pool/restricted/n/nvidia-graphics-drivers-440-server/nvidia-kernel-source-440-server_$(dkms_nvidia_440_server_version)_$(arch).deb pool/restricted/n/nvidia-graphics-drivers-440-server/nvidia-dkms-440-server_$(dkms_nvidia_440_server_version)_$(arch).deb)
+endif
+
 	# Build the final ABI information.
 	install -d $(abidir)
 	sed -e 's/^\(.\+\)[[:space:]]\+\(.\+\)[[:space:]]\(.\+\)$$/\3 \2 \1/'	\
