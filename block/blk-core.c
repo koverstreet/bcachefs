@@ -216,17 +216,22 @@ int blk_status_to_errno(blk_status_t status)
 }
 EXPORT_SYMBOL_GPL(blk_status_to_errno);
 
-void blk_print_req_error(struct request *req, blk_status_t status)
+const char *blk_status_to_str(blk_status_t status)
 {
 	int idx = (__force int)status;
 
 	if (WARN_ON_ONCE(idx >= ARRAY_SIZE(blk_errors)))
-		return;
+		return "(invalid error)";
+	return blk_errors[idx].name;
+}
+EXPORT_SYMBOL_GPL(blk_status_to_str);
 
+void blk_print_req_error(struct request *req, blk_status_t status)
+{
 	printk_ratelimited(KERN_ERR
 		"%s error, dev %s, sector %llu op 0x%x:(%s) flags 0x%x "
 		"phys_seg %u prio class %u\n",
-		blk_errors[idx].name,
+		blk_status_to_str(status),
 		req->rq_disk ? req->rq_disk->disk_name : "?",
 		blk_rq_pos(req), req_op(req), blk_op_str(req_op(req)),
 		req->cmd_flags & ~REQ_OP_MASK,
