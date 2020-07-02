@@ -936,6 +936,7 @@ extern const char *blk_op_str(unsigned int op);
 
 int blk_status_to_errno(blk_status_t status);
 blk_status_t errno_to_blk_status(int errno);
+const char *blk_status_to_str(blk_status_t status);
 
 int blk_poll(struct request_queue *q, blk_qc_t cookie, bool spin);
 
