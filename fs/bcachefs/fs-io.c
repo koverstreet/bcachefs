@@ -1516,23 +1516,23 @@ retry_reservation:
 		if (!pg_copied)
 			break;
 
+		if (!PageUptodate(page) &&
+		    pg_copied != PAGE_SIZE &&
+		    pos + copied + pg_copied < inode->v.i_size) {
+			zero_user(page, 0, PAGE_SIZE);
+			break;
+		}
+
 		flush_dcache_page(page);
 		iov_iter_advance(iter, pg_copied);
 		copied += pg_copied;
+
+		if (pg_copied != pg_len)
+			break;
 	}
 
 	if (!copied)
 		goto out;
-
-	if (copied < len &&
-	    ((offset + copied) & (PAGE_SIZE - 1))) {
-		struct page *page = pages[(offset + copied) >> PAGE_SHIFT];
-
-		if (!PageUptodate(page)) {
-			zero_user(page, 0, PAGE_SIZE);
-			copied -= (offset + copied) & (PAGE_SIZE - 1);
-		}
-	}
 
 	spin_lock(&inode->v.i_lock);
 	if (pos + copied > inode->v.i_size)
@@ -1630,6 +1630,7 @@ again:
 		}
 		pos += ret;
 		written += ret;
+		ret = 0;
 
 		balance_dirty_pages_ratelimited(mapping);
 	} while (iov_iter_count(iter));
