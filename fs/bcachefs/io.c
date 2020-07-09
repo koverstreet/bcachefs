@@ -1129,7 +1129,7 @@ again:
 		key_to_write = (void *) (op->insert_keys.keys_p +
 					 key_to_write_offset);
 
-		bch2_submit_wbio_replicas(to_wbio(bio), c, BCH_DATA_USER,
+		bch2_submit_wbio_replicas(to_wbio(bio), c, BCH_DATA_user,
 					  key_to_write);
 	} while (ret);
 
@@ -2175,7 +2175,7 @@ get_bio:
 			goto out;
 		}
 
-		this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_USER],
+		this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_user],
 			     bio_sectors(&rbio->bio));
 		bio_set_dev(&rbio->bio, ca->disk_sb.bdev);
 
