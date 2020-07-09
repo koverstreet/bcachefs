@@ -1154,26 +1154,21 @@ static unsigned int hns3_nic_bd_num(struct sk_buff *skb)
 
 static int hns3_nic_maybe_stop_tx(struct hns3_enet_ring *ring,
 				  struct net_device *netdev,
-				  struct sk_buff **out_skb)
+				  struct sk_buff *skb)
 {
 	struct hns3_nic_priv *priv = netdev_priv(netdev);
-	struct sk_buff *skb = *out_skb;
+	struct hns3_nic_ring_data *ring_data =
+		&tx_ring_data(priv, skb->queue_mapping);
 	unsigned int bd_num;
 
 	bd_num = hns3_nic_bd_num(skb);
 	if (unlikely(bd_num > HNS3_MAX_BD_NUM_NORMAL)) {
-		struct sk_buff *new_skb;
-
-		/* manual split the send packet */
-		new_skb = skb_copy(skb, GFP_ATOMIC);
-		if (!new_skb)
+		if (__skb_linearize(skb))
 			return -ENOMEM;
-		dev_kfree_skb_any(skb);
-		*out_skb = new_skb;
 
-		bd_num = hns3_nic_bd_num(new_skb);
-		if ((skb_is_gso(new_skb) && bd_num > HNS3_MAX_BD_NUM_TSO) ||
-		    (!skb_is_gso(new_skb) && bd_num > HNS3_MAX_BD_NUM_NORMAL))
+		bd_num = hns3_nic_bd_num(skb);
+		if ((skb_is_gso(skb) && bd_num > HNS3_MAX_BD_NUM_TSO) ||
+		    (!skb_is_gso(skb) && bd_num > HNS3_MAX_BD_NUM_NORMAL))
 			return -ENOMEM;
 
 		u64_stats_update_begin(&ring->syncp);
@@ -1185,7 +1180,7 @@ static int hns3_nic_maybe_stop_tx(struct hns3_enet_ring *ring,
 		return bd_num;
 
 
-	netif_stop_subqueue(netdev, ring->queue_index);
+	netif_stop_subqueue(netdev, ring_data->queue_index);
 	smp_mb(); /* Memory barrier before checking ring_space */
 
 	/* Start queue in case hns3_clean_tx_ring has just made room
@@ -1194,7 +1189,7 @@ static int hns3_nic_maybe_stop_tx(struct hns3_enet_ring *ring,
 	 */
 	if (ring_space(ring) >= bd_num && netif_carrier_ok(netdev) &&
 	    !test_bit(HNS3_NIC_STATE_DOWN, &priv->state)) {
-		netif_start_subqueue(netdev, ring->queue_index);
+		netif_start_subqueue(netdev, ring_data->queue_index);
 		return bd_num;
 	}
 
@@ -1253,7 +1248,7 @@ netdev_tx_t hns3_nic_net_xmit(struct sk_buff *skb, struct net_device *netdev)
 	/* Prefetch the data used later */
 	prefetch(skb->data);
 
-	buf_num = hns3_nic_maybe_stop_tx(ring, netdev, &skb);
+	buf_num = hns3_nic_maybe_stop_tx(ring, netdev, skb);
 	if (unlikely(buf_num <= 0)) {
 		if (buf_num == -EBUSY) {
 			u64_stats_update_begin(&ring->syncp);
