@@ -367,6 +367,7 @@ struct ring_stats {
 			u64 tx_err_cnt;
 			u64 restart_queue;
 			u64 tx_busy;
+			u64 tx_copy;
 		};
 		struct {
 			u64 rx_pkts;
@@ -433,11 +434,6 @@ struct hns3_nic_ring_data {
 	int (*poll_one)(struct hns3_nic_ring_data *, int, void *);
 	void (*ex_process)(struct hns3_nic_ring_data *, struct sk_buff *);
 	void (*fini_process)(struct hns3_nic_ring_data *);
-};
-
-struct hns3_nic_ops {
-	int (*maybe_stop_tx)(struct sk_buff **out_skb,
-			     int *bnum, struct hns3_enet_ring *ring);
 };
 
 enum hns3_flow_level_range {
@@ -529,7 +525,6 @@ struct hns3_nic_priv {
 	u32 port_id;
 	struct net_device *netdev;
 	struct device *dev;
-	struct hns3_nic_ops ops;
 
 	/**
 	 * the cb for nic to manage the ring buffer, the first half of the
