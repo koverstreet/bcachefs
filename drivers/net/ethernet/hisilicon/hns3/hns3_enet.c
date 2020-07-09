@@ -21,6 +21,8 @@
 #include "hnae3.h"
 #include "hns3_enet.h"
 
+#define hns3_tx_bd_count(S)	DIV_ROUND_UP(S, HNS3_MAX_BD_SIZE)
+
 static void hns3_clear_all_ring(struct hnae3_handle *h);
 static void hns3_force_clear_all_rx_ring(struct hnae3_handle *h);
 static void hns3_remove_hw_addr(struct net_device *netdev);
@@ -1099,7 +1101,7 @@ static int hns3_fill_desc(struct hns3_enet_ring *ring, void *priv,
 
 	desc_cb->length = size;
 
-	frag_buf_num = (size + HNS3_MAX_BD_SIZE - 1) >> HNS3_MAX_BD_SIZE_OFFSET;
+	frag_buf_num = hns3_tx_bd_count(size);
 	sizeoflast = size & HNS3_TX_LAST_SIZE_M;
 	sizeoflast = sizeoflast ? sizeoflast : HNS3_MAX_BD_SIZE;
 
@@ -1144,14 +1146,13 @@ static int hns3_nic_maybe_stop_tso(struct sk_buff **out_skb, int *bnum,
 	int i;
 
 	size = skb_headlen(skb);
-	buf_num = (size + HNS3_MAX_BD_SIZE - 1) >> HNS3_MAX_BD_SIZE_OFFSET;
+	buf_num = hns3_tx_bd_count(size);
 
 	frag_num = skb_shinfo(skb)->nr_frags;
 	for (i = 0; i < frag_num; i++) {
 		frag = &skb_shinfo(skb)->frags[i];
 		size = skb_frag_size(frag);
-		bdnum_for_frag = (size + HNS3_MAX_BD_SIZE - 1) >>
-				 HNS3_MAX_BD_SIZE_OFFSET;
+		bdnum_for_frag = hns3_tx_bd_count(size);
 		if (bdnum_for_frag > HNS3_MAX_BD_PER_FRAG)
 			return -ENOMEM;
 
@@ -1159,8 +1160,7 @@ static int hns3_nic_maybe_stop_tso(struct sk_buff **out_skb, int *bnum,
 	}
 
 	if (unlikely(buf_num > HNS3_MAX_BD_PER_FRAG)) {
-		buf_num = (skb->len + HNS3_MAX_BD_SIZE - 1) >>
-			  HNS3_MAX_BD_SIZE_OFFSET;
+		buf_num = hns3_tx_bd_count(skb->len);
 		if (ring_space(ring) < buf_num)
 			return -EBUSY;
 		/* manual split the send packet */
@@ -1189,7 +1189,7 @@ static int hns3_nic_maybe_stop_tx(struct sk_buff **out_skb, int *bnum,
 	buf_num = skb_shinfo(skb)->nr_frags + 1;
 
 	if (unlikely(buf_num > HNS3_MAX_BD_PER_FRAG)) {
-		buf_num = (skb->len + HNS3_MAX_BD_SIZE - 1) / HNS3_MAX_BD_SIZE;
+		buf_num = hns3_tx_bd_count(skb->len);
 		if (ring_space(ring) < buf_num)
 			return -EBUSY;
 		/* manual split the send packet */
