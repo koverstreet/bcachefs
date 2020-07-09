@@ -657,7 +657,6 @@ cdc_mbim
 cdc_ncm
 cdc_subset
 cec
-cec-gpio
 ceph
 cfag12864b
 cfag12864bfb
@@ -5079,6 +5078,7 @@ wimax
 winbond-840
 winbond-cir
 wire
+wireguard
 wishbone-serial
 wistron_btns
 wl1251
