@@ -444,6 +444,16 @@ static inline void nvme_mpath_check_last_path(struct nvme_ns *ns)
 		kblockd_schedule_work(&head->requeue_work);
 }
 
+static inline void nvme_mpath_update_disk_size(struct gendisk *disk)
+{
+	struct block_device *bdev = bdget_disk(disk, 0);
+
+	if (bdev) {
+		bd_set_size(bdev, get_capacity(disk) << SECTOR_SHIFT);
+		bdput(bdev);
+	}
+}
+
 #else
 /*
  * Without the multipath code enabled, multiple controller per subsystems are
@@ -480,6 +490,9 @@ static inline void nvme_mpath_clear_current_path(struct nvme_ns *ns)
 {
 }
 static inline void nvme_mpath_check_last_path(struct nvme_ns *ns)
+{
+}
+static inline void nvme_mpath_update_disk_size(struct gendisk *disk)
 {
 }
 #endif /* CONFIG_NVME_MULTIPATH */
