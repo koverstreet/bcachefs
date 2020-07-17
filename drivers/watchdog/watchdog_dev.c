@@ -927,6 +927,15 @@ static int watchdog_cdev_register(struct watchdog_device *wdd)
 	if (!watchdog_wq)
 		return -ENODEV;
 
+	device_initialize(&wd_data->dev);
+	wd_data->dev.devt = MKDEV(MAJOR(watchdog_devt), wdd->id);
+	wd_data->dev.class = &watchdog_class;
+	wd_data->dev.parent = wdd->parent;
+	wd_data->dev.groups = wdd->groups;
+	wd_data->dev.release = watchdog_core_data_release;
+	dev_set_drvdata(&wd_data->dev, wdd);
+	dev_set_name(&wd_data->dev, "watchdog%d", wdd->id);
+
 	INIT_DELAYED_WORK(&wd_data->work, watchdog_ping_work);
 
 	if (wdd->id == 0) {
@@ -944,15 +953,6 @@ static int watchdog_cdev_register(struct watchdog_device *wdd)
 			return err;
 		}
 	}
-
-	device_initialize(&wd_data->dev);
-	wd_data->dev.devt = MKDEV(MAJOR(watchdog_devt), wdd->id);
-	wd_data->dev.class = &watchdog_class;
-	wd_data->dev.parent = wdd->parent;
-	wd_data->dev.groups = wdd->groups;
-	wd_data->dev.release = watchdog_core_data_release;
-	dev_set_drvdata(&wd_data->dev, wdd);
-	dev_set_name(&wd_data->dev, "watchdog%d", wdd->id);
 
 	/* Fill in the data structures */
 	cdev_init(&wd_data->cdev, &watchdog_fops);
