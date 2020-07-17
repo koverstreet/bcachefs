@@ -507,10 +507,6 @@ static int ehci_platform_resume(struct device *dev)
 	if (priv->quirk_poll)
 		quirk_poll_init(priv);
 
-	pm_runtime_disable(dev);
-	pm_runtime_set_active(dev);
-	pm_runtime_enable(dev);
-
 	return 0;
 }
 #endif /* CONFIG_PM_SLEEP */
