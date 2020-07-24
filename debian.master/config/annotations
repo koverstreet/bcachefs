@@ -6390,7 +6390,6 @@ CONFIG_BLK_DEV_SD                               policy<{'amd64': 'y', 'arm64': '
 CONFIG_CHR_DEV_ST                               policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
 CONFIG_CHR_DEV_OSST                             policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
 CONFIG_BLK_DEV_SR                               policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
-CONFIG_BLK_DEV_SR_VENDOR                        policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n', 's390x': 'y'}>
 CONFIG_CHR_DEV_SG                               policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_CHR_DEV_SCH                              policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
 CONFIG_SCSI_ENCLOSURE                           policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
