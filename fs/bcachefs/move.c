@@ -247,11 +247,15 @@ int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
 	m->op.target	= data_opts.target,
 	m->op.write_point = wp;
 
-	if (m->data_opts.btree_insert_flags & BTREE_INSERT_USE_RESERVE)
+	if (m->data_opts.btree_insert_flags & BTREE_INSERT_USE_RESERVE) {
 		m->op.alloc_reserve = RESERVE_MOVINGGC;
+		m->op.flags |= BCH_WRITE_ALLOC_NOWAIT;
+	} else {
+		/* XXX: this should probably be passed in */
+		m->op.flags |= BCH_WRITE_ONLY_SPECIFIED_DEVS;
+	}
 
-	m->op.flags |= BCH_WRITE_ONLY_SPECIFIED_DEVS|
-		BCH_WRITE_PAGES_STABLE|
+	m->op.flags |= BCH_WRITE_PAGES_STABLE|
 		BCH_WRITE_PAGES_OWNED|
 		BCH_WRITE_DATA_ENCODED|
 		BCH_WRITE_FROM_INTERNAL;
@@ -316,12 +320,12 @@ static void move_free(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct moving_context *ctxt = io->write.ctxt;
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
 	bch2_disk_reservation_put(io->write.op.c, &io->write.op.res);
 
-	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, i)
+	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, iter)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);
 
@@ -517,7 +521,7 @@ static int __bch2_move_data(struct bch_fs *c,
 	bkey_on_stack_init(&sk);
 	bch2_trans_init(&trans, c, 0, 0);
 
-	stats->data_type = BCH_DATA_USER;
+	stats->data_type = BCH_DATA_user;
 	stats->btree_id	= btree_id;
 	stats->pos	= POS_MIN;
 
@@ -642,7 +646,7 @@ int bch2_move_data(struct bch_fs *c,
 	INIT_LIST_HEAD(&ctxt.reads);
 	init_waitqueue_head(&ctxt.wait);
 
-	stats->data_type = BCH_DATA_USER;
+	stats->data_type = BCH_DATA_user;
 
 	ret =   __bch2_move_data(c, &ctxt, rate, wp, start, end,
 				 pred, arg, stats, BTREE_ID_EXTENTS) ?:
@@ -677,7 +681,7 @@ static int bch2_move_btree(struct bch_fs *c,
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	stats->data_type = BCH_DATA_BTREE;
+	stats->data_type = BCH_DATA_btree;
 
 	for (id = 0; id < BTREE_ID_NR; id++) {
 		stats->btree_id = id;
@@ -773,7 +777,7 @@ int bch2_data_job(struct bch_fs *c,
 
 	switch (op.op) {
 	case BCH_DATA_OP_REREPLICATE:
-		stats->data_type = BCH_DATA_JOURNAL;
+		stats->data_type = BCH_DATA_journal;
 		ret = bch2_journal_flush_device_pins(&c->journal, -1);
 
 		ret = bch2_move_btree(c, rereplicate_pred, c, stats) ?: ret;
@@ -794,7 +798,7 @@ int bch2_data_job(struct bch_fs *c,
 		if (op.migrate.dev >= c->sb.nr_devices)
 			return -EINVAL;
 
-		stats->data_type = BCH_DATA_JOURNAL;
+		stats->data_type = BCH_DATA_journal;
 		ret = bch2_journal_flush_device_pins(&c->journal, op.migrate.dev);
 
 		ret = bch2_move_btree(c, migrate_pred, &op, stats) ?: ret;

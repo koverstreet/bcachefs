@@ -847,7 +847,7 @@ static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
 		if (pos <= ja->cur_idx)
 			ja->cur_idx = (ja->cur_idx + 1) % ja->nr;
 
-		bch2_mark_metadata_bucket(c, ca, bucket, BCH_DATA_JOURNAL,
+		bch2_mark_metadata_bucket(c, ca, bucket, BCH_DATA_journal,
 					  ca->mi.bucket_size,
 					  gc_phase(GC_PHASE_SB),
 					  0);
@@ -1135,9 +1135,8 @@ out:
 
 /* debug: */
 
-ssize_t bch2_journal_print_debug(struct journal *j, char *buf)
+void bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 {
-	struct printbuf out = _PBUF(buf, PAGE_SIZE);
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	union journal_res_state s;
 	struct bch_dev *ca;
@@ -1147,7 +1146,7 @@ ssize_t bch2_journal_print_debug(struct journal *j, char *buf)
 	spin_lock(&j->lock);
 	s = READ_ONCE(j->reservations);
 
-	pr_buf(&out,
+	pr_buf(out,
 	       "active journal entries:\t%llu\n"
 	       "seq:\t\t\t%llu\n"
 	       "last_seq:\t\t%llu\n"
@@ -1165,44 +1164,44 @@ ssize_t bch2_journal_print_debug(struct journal *j, char *buf)
 
 	switch (s.cur_entry_offset) {
 	case JOURNAL_ENTRY_ERROR_VAL:
-		pr_buf(&out, "error\n");
+		pr_buf(out, "error\n");
 		break;
 	case JOURNAL_ENTRY_CLOSED_VAL:
-		pr_buf(&out, "closed\n");
+		pr_buf(out, "closed\n");
 		break;
 	default:
-		pr_buf(&out, "%u/%u\n",
+		pr_buf(out, "%u/%u\n",
 		       s.cur_entry_offset,
 		       j->cur_entry_u64s);
 		break;
 	}
 
-	pr_buf(&out,
+	pr_buf(out,
 	       "current entry refs:\t%u\n"
 	       "prev entry unwritten:\t",
 	       journal_state_count(s, s.idx));
 
 	if (s.prev_buf_unwritten)
-		pr_buf(&out, "yes, ref %u sectors %u\n",
+		pr_buf(out, "yes, ref %u sectors %u\n",
 		       journal_state_count(s, !s.idx),
 		       journal_prev_buf(j)->sectors);
 	else
-		pr_buf(&out, "no\n");
+		pr_buf(out, "no\n");
 
-	pr_buf(&out,
+	pr_buf(out,
 	       "need write:\t\t%i\n"
 	       "replay done:\t\t%i\n",
 	       test_bit(JOURNAL_NEED_WRITE,	&j->flags),
 	       test_bit(JOURNAL_REPLAY_DONE,	&j->flags));
 
 	for_each_member_device_rcu(ca, c, iter,
-				   &c->rw_devs[BCH_DATA_JOURNAL]) {
+				   &c->rw_devs[BCH_DATA_journal]) {
 		struct journal_device *ja = &ca->journal;
 
 		if (!ja->nr)
 			continue;
 
-		pr_buf(&out,
+		pr_buf(out,
 		       "dev %u:\n"
 		       "\tnr\t\t%u\n"
 		       "\tavailable\t%u:%u\n"
@@ -1221,34 +1220,29 @@ ssize_t bch2_journal_print_debug(struct journal *j, char *buf)
 
 	spin_unlock(&j->lock);
 	rcu_read_unlock();
-
-	return out.pos - buf;
 }
 
-ssize_t bch2_journal_print_pins(struct journal *j, char *buf)
+void bch2_journal_pins_to_text(struct printbuf *out, struct journal *j)
 {
-	struct printbuf out = _PBUF(buf, PAGE_SIZE);
 	struct journal_entry_pin_list *pin_list;
 	struct journal_entry_pin *pin;
 	u64 i;
 
 	spin_lock(&j->lock);
 	fifo_for_each_entry_ptr(pin_list, &j->pin, i) {
-		pr_buf(&out, "%llu: count %u\n",
+		pr_buf(out, "%llu: count %u\n",
 		       i, atomic_read(&pin_list->count));
 
 		list_for_each_entry(pin, &pin_list->list, list)
-			pr_buf(&out, "\t%px %ps\n",
+			pr_buf(out, "\t%px %ps\n",
 			       pin, pin->flush);
 
 		if (!list_empty(&pin_list->flushed))
-			pr_buf(&out, "flushed:\n");
+			pr_buf(out, "flushed:\n");
 
 		list_for_each_entry(pin, &pin_list->flushed, list)
-			pr_buf(&out, "\t%px %ps\n",
+			pr_buf(out, "\t%px %ps\n",
 			       pin, pin->flush);
 	}
 	spin_unlock(&j->lock);
-
-	return out.pos - buf;
 }

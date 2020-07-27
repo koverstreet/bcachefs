@@ -6,6 +6,7 @@
 #include "buckets.h"
 #include "checksum.h"
 #include "error.h"
+#include "io.h"
 #include "journal.h"
 #include "journal_io.h"
 #include "journal_reclaim.h"
@@ -661,7 +662,7 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 
 	for_each_member_device(ca, c, iter) {
 		if (!test_bit(BCH_FS_REBUILD_REPLICAS, &c->flags) &&
-		    !(bch2_dev_has_data(c, ca) & (1 << BCH_DATA_JOURNAL)))
+		    !(bch2_dev_has_data(c, ca) & (1 << BCH_DATA_journal)))
 			continue;
 
 		if ((ca->mi.state == BCH_MEMBER_STATE_RW ||
@@ -695,11 +696,11 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list)
 		 * the devices - this is wrong:
 		 */
 
-		bch2_devlist_to_replicas(&replicas.e, BCH_DATA_JOURNAL, i->devs);
+		bch2_devlist_to_replicas(&replicas.e, BCH_DATA_journal, i->devs);
 
 		if (!degraded &&
 		    (test_bit(BCH_FS_REBUILD_REPLICAS, &c->flags) ||
-		     fsck_err_on(!bch2_replicas_marked(c, &replicas.e, false), c,
+		     fsck_err_on(!bch2_replicas_marked(c, &replicas.e), c,
 				 "superblock not marked as containing replicas %s",
 				 (bch2_replicas_entry_to_text(&PBUF(buf),
 							      &replicas.e), buf)))) {
@@ -759,7 +760,7 @@ static void __journal_write_alloc(struct journal *j,
 		    sectors > ja->sectors_free)
 			continue;
 
-		bch2_dev_stripe_increment(c, ca, &j->wp.stripe);
+		bch2_dev_stripe_increment(ca, &j->wp.stripe);
 
 		bch2_bkey_append_ptr(&w->key,
 			(struct bch_extent_ptr) {
@@ -796,7 +797,7 @@ static int journal_write_alloc(struct journal *j, struct journal_buf *w,
 	rcu_read_lock();
 
 	devs_sorted = bch2_dev_alloc_list(c, &j->wp.stripe,
-					  &c->rw_devs[BCH_DATA_JOURNAL]);
+					  &c->rw_devs[BCH_DATA_journal]);
 
 	__journal_write_alloc(j, w, &devs_sorted,
 			      sectors, &replicas, replicas_want);
@@ -914,7 +915,7 @@ static void journal_write_done(struct closure *cl)
 		goto err;
 	}
 
-	bch2_devlist_to_replicas(&replicas.e, BCH_DATA_JOURNAL, devs);
+	bch2_devlist_to_replicas(&replicas.e, BCH_DATA_journal, devs);
 
 	if (bch2_mark_replicas(c, &replicas.e))
 		goto err;
@@ -961,7 +962,8 @@ static void journal_write_endio(struct bio *bio)
 	struct bch_dev *ca = bio->bi_private;
 	struct journal *j = &ca->fs->journal;
 
-	if (bch2_dev_io_err_on(bio->bi_status, ca, "journal write") ||
+	if (bch2_dev_io_err_on(bio->bi_status, ca, "journal write: %s",
+			       bch2_blk_status_to_str(bio->bi_status)) ||
 	    bch2_meta_write_fault("journal")) {
 		struct journal_buf *w = journal_prev_buf(j);
 		unsigned long flags;
@@ -1105,7 +1107,7 @@ retry_alloc:
 			continue;
 		}
 
-		this_cpu_add(ca->io_done->sectors[WRITE][BCH_DATA_JOURNAL],
+		this_cpu_add(ca->io_done->sectors[WRITE][BCH_DATA_journal],
 			     sectors);
 
 		bio = ca->journal.bio;

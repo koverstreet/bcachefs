@@ -26,7 +26,7 @@
 /*
  * Verify that child nodes correctly span parent node's range:
  */
-static void btree_node_interior_verify(struct btree *b)
+static void btree_node_interior_verify(struct bch_fs *c, struct btree *b)
 {
 #ifdef CONFIG_BCACHEFS_DEBUG
 	struct bpos next_node = b->data->min_key;
@@ -36,6 +36,9 @@ static void btree_node_interior_verify(struct btree *b)
 	struct bkey unpacked;
 
 	BUG_ON(!b->c.level);
+
+	if (!test_bit(BCH_FS_BTREE_INTERIOR_REPLAY_DONE, &c->flags))
+		return;
 
 	bch2_btree_node_iter_init_from_start(&iter, b);
 
@@ -134,8 +137,6 @@ static void __btree_node_free(struct bch_fs *c, struct btree *b)
 	clear_btree_node_noevict(b);
 
 	bch2_btree_node_hash_remove(&c->btree_cache, b);
-
-	six_lock_wakeup_all(&b->c.lock);
 
 	mutex_lock(&c->btree_cache.lock);
 	list_move(&b->list, &c->btree_cache.freeable);
@@ -290,8 +291,10 @@ static struct btree *bch2_btree_node_alloc(struct btree_update *as, unsigned lev
 		SET_BTREE_NODE_NEW_EXTENT_OVERWRITE(b->data, true);
 
 	if (btree_node_is_extents(b) &&
-	    !BTREE_NODE_NEW_EXTENT_OVERWRITE(b->data))
+	    !BTREE_NODE_NEW_EXTENT_OVERWRITE(b->data)) {
 		set_btree_node_old_extent_overwrite(b);
+		set_btree_node_need_rewrite(b);
+	}
 
 	bch2_btree_build_aux_trees(b);
 
@@ -1118,8 +1121,8 @@ static struct btree *__btree_split_node(struct btree_update *as,
 	bch2_verify_btree_nr_keys(n2);
 
 	if (n1->c.level) {
-		btree_node_interior_verify(n1);
-		btree_node_interior_verify(n2);
+		btree_node_interior_verify(as->c, n1);
+		btree_node_interior_verify(as->c, n2);
 	}
 
 	return n2;
@@ -1178,7 +1181,7 @@ static void btree_split_insert_keys(struct btree_update *as, struct btree *b,
 	BUG_ON(b->nsets != 1 ||
 	       b->nr.live_u64s != le16_to_cpu(btree_bset_first(b)->u64s));
 
-	btree_node_interior_verify(b);
+	btree_node_interior_verify(as->c, b);
 }
 
 static void btree_split(struct btree_update *as, struct btree *b,
@@ -1376,7 +1379,7 @@ void bch2_btree_insert_node(struct btree_update *as, struct btree *b,
 
 	bch2_btree_node_unlock_write(b, iter);
 
-	btree_node_interior_verify(b);
+	btree_node_interior_verify(c, b);
 
 	/*
 	 * when called from the btree_split path the new nodes aren't added to
@@ -1864,7 +1867,7 @@ int bch2_btree_node_update_key(struct bch_fs *c, struct btree_iter *iter,
 
 		new_hash = bch2_btree_node_mem_alloc(c);
 	}
-
+retry:
 	as = bch2_btree_update_start(iter->trans, iter->btree_id,
 		parent ? btree_update_reserve_required(c, parent) : 0,
 		BTREE_INSERT_NOFAIL|
@@ -1877,16 +1880,17 @@ int bch2_btree_node_update_key(struct bch_fs *c, struct btree_iter *iter,
 		if (ret == -EAGAIN)
 			ret = -EINTR;
 
-		if (ret != -EINTR)
-			goto err;
+		if (ret == -EINTR) {
+			bch2_trans_unlock(iter->trans);
+			up_read(&c->gc_lock);
+			closure_sync(&cl);
+			down_read(&c->gc_lock);
 
-		bch2_trans_unlock(iter->trans);
-		up_read(&c->gc_lock);
-		closure_sync(&cl);
-		down_read(&c->gc_lock);
+			if (bch2_trans_relock(iter->trans))
+				goto retry;
+		}
 
-		if (!bch2_trans_relock(iter->trans))
-			goto err;
+		goto err;
 	}
 
 	ret = bch2_mark_bkey_replicas(c, bkey_i_to_s_c(new_key));
@@ -1943,6 +1947,7 @@ void bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id)
 	bch2_btree_cache_cannibalize_unlock(c);
 
 	set_btree_node_fake(b);
+	set_btree_node_need_rewrite(b);
 	b->c.level	= 0;
 	b->c.btree_id	= id;
 
@@ -1969,22 +1974,19 @@ void bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id)
 	six_unlock_intent(&b->c.lock);
 }
 
-ssize_t bch2_btree_updates_print(struct bch_fs *c, char *buf)
+void bch2_btree_updates_to_text(struct printbuf *out, struct bch_fs *c)
 {
-	struct printbuf out = _PBUF(buf, PAGE_SIZE);
 	struct btree_update *as;
 
 	mutex_lock(&c->btree_interior_update_lock);
 	list_for_each_entry(as, &c->btree_interior_update_list, list)
-		pr_buf(&out, "%p m %u w %u r %u j %llu\n",
+		pr_buf(out, "%p m %u w %u r %u j %llu\n",
 		       as,
 		       as->mode,
 		       as->nodes_written,
 		       atomic_read(&as->cl.remaining) & CLOSURE_REMAINING_MASK,
 		       as->journal.seq);
 	mutex_unlock(&c->btree_interior_update_lock);
-
-	return out.pos - buf;
 }
 
 size_t bch2_btree_interior_updates_nr_pending(struct bch_fs *c)

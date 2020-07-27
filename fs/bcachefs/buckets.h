@@ -99,9 +99,9 @@ static inline enum bch_data_type ptr_data_type(const struct bkey *k,
 {
 	if (k->type == KEY_TYPE_btree_ptr ||
 	    k->type == KEY_TYPE_btree_ptr_v2)
-		return BCH_DATA_BTREE;
+		return BCH_DATA_btree;
 
-	return ptr->cached ? BCH_DATA_CACHED : BCH_DATA_USER;
+	return ptr->cached ? BCH_DATA_cached : BCH_DATA_user;
 }
 
 static inline struct bucket_mark ptr_bucket_mark(struct bch_dev *ca,
@@ -182,7 +182,7 @@ static inline bool bucket_needs_journal_commit(struct bucket_mark m,
 
 /* Device usage: */
 
-struct bch_dev_usage bch2_dev_usage_read(struct bch_fs *, struct bch_dev *);
+struct bch_dev_usage bch2_dev_usage_read(struct bch_dev *);
 
 void bch2_dev_usage_from_buckets(struct bch_fs *);
 
@@ -202,9 +202,9 @@ static inline u64 __dev_buckets_available(struct bch_dev *ca,
 /*
  * Number of reclaimable buckets - only for use by the allocator thread:
  */
-static inline u64 dev_buckets_available(struct bch_fs *c, struct bch_dev *ca)
+static inline u64 dev_buckets_available(struct bch_dev *ca)
 {
-	return __dev_buckets_available(ca, bch2_dev_usage_read(c, ca));
+	return __dev_buckets_available(ca, bch2_dev_usage_read(ca));
 }
 
 static inline u64 __dev_buckets_free(struct bch_dev *ca,
@@ -215,9 +215,9 @@ static inline u64 __dev_buckets_free(struct bch_dev *ca,
 		fifo_used(&ca->free_inc);
 }
 
-static inline u64 dev_buckets_free(struct bch_fs *c, struct bch_dev *ca)
+static inline u64 dev_buckets_free(struct bch_dev *ca)
 {
-	return __dev_buckets_free(ca, bch2_dev_usage_read(c, ca));
+	return __dev_buckets_free(ca, bch2_dev_usage_read(ca));
 }
 
 /* Filesystem usage: */
@@ -259,14 +259,11 @@ void bch2_mark_metadata_bucket(struct bch_fs *, struct bch_dev *,
 			       size_t, enum bch_data_type, unsigned,
 			       struct gc_pos, unsigned);
 
-int bch2_mark_key(struct bch_fs *, struct bkey_s_c, unsigned, s64,
-		  struct bch_fs_usage *, u64, unsigned);
+int bch2_mark_key(struct bch_fs *, struct bkey_s_c, unsigned,
+		  s64, struct bch_fs_usage *, u64, unsigned);
 int bch2_fs_usage_apply(struct bch_fs *, struct bch_fs_usage *,
 			struct disk_reservation *, unsigned);
 
-int bch2_mark_overwrite(struct btree_trans *, struct btree_iter *,
-			struct bkey_s_c, struct bkey_i *,
-			struct bch_fs_usage *, unsigned, bool);
 int bch2_mark_update(struct btree_trans *, struct btree_iter *,
 		     struct bkey_i *, struct bch_fs_usage *, unsigned);
 

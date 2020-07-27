@@ -179,11 +179,6 @@ void bch2_btree_ptr_debugcheck(struct bch_fs *c, struct bkey_s_c k)
 	if (!percpu_down_read_trylock(&c->mark_lock))
 		return;
 
-	bch2_fs_inconsistent_on(!test_bit(BCH_FS_REBUILD_REPLICAS, &c->flags) &&
-		!bch2_bkey_replicas_marked_locked(c, k, false), c,
-		"btree key bad (replicas not marked in superblock):\n%s",
-		(bch2_bkey_val_to_text(&PBUF(buf), c, k), buf));
-
 	bkey_for_each_ptr(ptrs, ptr) {
 		ca = bch_dev_bkey_exists(c, ptr->dev);
 
@@ -194,7 +189,7 @@ void bch2_btree_ptr_debugcheck(struct bch_fs *c, struct bkey_s_c k)
 			goto err;
 
 		err = "inconsistent";
-		if (mark.data_type != BCH_DATA_BTREE ||
+		if (mark.data_type != BCH_DATA_btree ||
 		    mark.dirty_sectors < c->opts.btree_node_size)
 			goto err;
 	}
@@ -267,11 +262,6 @@ void bch2_extent_debugcheck(struct bch_fs *c, struct bkey_s_c k)
 	if (!percpu_down_read_trylock(&c->mark_lock))
 		return;
 
-	bch2_fs_inconsistent_on(!test_bit(BCH_FS_REBUILD_REPLICAS, &c->flags) &&
-		!bch2_bkey_replicas_marked_locked(c, e.s_c, false), c,
-		"extent key bad (replicas not marked in superblock):\n%s",
-		(bch2_bkey_val_to_text(&PBUF(buf), c, e.s_c), buf));
-
 	extent_for_each_ptr_decode(e, p, entry) {
 		struct bch_dev *ca	= bch_dev_bkey_exists(c, p.ptr.dev);
 		struct bucket_mark mark = ptr_bucket_mark(ca, &p.ptr);
@@ -289,7 +279,7 @@ void bch2_extent_debugcheck(struct bch_fs *c, struct bkey_s_c k)
 			"key too stale: %i", stale);
 
 		bch2_fs_inconsistent_on(!stale &&
-			(mark.data_type != BCH_DATA_USER ||
+			(mark.data_type != BCH_DATA_user ||
 			 mark_sectors < disk_sectors), c,
 			"extent pointer not marked: %s:\n"
 			"type %u sectors %u < %u",
@@ -724,7 +714,7 @@ static unsigned bch2_extent_ptr_durability(struct bch_fs *c,
 		if (WARN_ON(!s))
 			goto out;
 
-		durability = max_t(unsigned, durability, s->nr_redundant);
+		durability += s->nr_redundant;
 	}
 out:
 	return durability;

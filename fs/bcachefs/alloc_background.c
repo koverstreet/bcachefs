@@ -41,29 +41,26 @@ static void pd_controllers_update(struct work_struct *work)
 					   struct bch_fs,
 					   pd_controllers_update);
 	struct bch_dev *ca;
+	s64 free = 0, fragmented = 0;
 	unsigned i;
 
 	for_each_member_device(ca, c, i) {
-		struct bch_dev_usage stats = bch2_dev_usage_read(c, ca);
+		struct bch_dev_usage stats = bch2_dev_usage_read(ca);
 
-		u64 free = bucket_to_sector(ca,
+		free += bucket_to_sector(ca,
 				__dev_buckets_free(ca, stats)) << 9;
 		/*
 		 * Bytes of internal fragmentation, which can be
 		 * reclaimed by copy GC
 		 */
-		s64 fragmented = (bucket_to_sector(ca,
-					stats.buckets[BCH_DATA_USER] +
-					stats.buckets[BCH_DATA_CACHED]) -
-				  (stats.sectors[BCH_DATA_USER] +
-				   stats.sectors[BCH_DATA_CACHED])) << 9;
-
-		fragmented = max(0LL, fragmented);
-
-		bch2_pd_controller_update(&ca->copygc_pd,
-					 free, fragmented, -1);
+		fragmented += max_t(s64, 0, (bucket_to_sector(ca,
+					stats.buckets[BCH_DATA_user] +
+					stats.buckets[BCH_DATA_cached]) -
+				  (stats.sectors[BCH_DATA_user] +
+				   stats.sectors[BCH_DATA_cached])) << 9);
 	}
 
+	bch2_pd_controller_update(&c->copygc_pd, free, fragmented, -1);
 	schedule_delayed_work(&c->pd_controllers_update,
 			      c->pd_controllers_update_seconds * HZ);
 }
@@ -517,11 +514,13 @@ static int wait_buckets_available(struct bch_fs *c, struct bch_dev *ca)
 		if (gc_count != c->gc_count)
 			ca->inc_gen_really_needs_gc = 0;
 
-		available = max_t(s64, 0, dev_buckets_available(c, ca) -
+		available = max_t(s64, 0, dev_buckets_available(ca) -
 				  ca->inc_gen_really_needs_gc);
 
 		if (available > fifo_free(&ca->free_inc) ||
-		    (available && !fifo_full(&ca->free[RESERVE_BTREE])))
+		    (available &&
+		     (!fifo_full(&ca->free[RESERVE_BTREE]) ||
+		      !fifo_full(&ca->free[RESERVE_MOVINGGC]))))
 			break;
 
 		up_read(&c->gc_lock);
@@ -1191,7 +1190,7 @@ stop:
 void bch2_recalc_capacity(struct bch_fs *c)
 {
 	struct bch_dev *ca;
-	u64 capacity = 0, reserved_sectors = 0, gc_reserve;
+	u64 capacity = 0, reserved_sectors = 0, gc_reserve, copygc_threshold = 0;
 	unsigned bucket_size_max = 0;
 	unsigned long ra_pages = 0;
 	unsigned i, j;
@@ -1234,7 +1233,7 @@ void bch2_recalc_capacity(struct bch_fs *c)
 
 		dev_reserve *= ca->mi.bucket_size;
 
-		ca->copygc_threshold = dev_reserve;
+		copygc_threshold += dev_reserve;
 
 		capacity += bucket_to_sector(ca, ca->mi.nbuckets -
 					     ca->mi.first_bucket);
@@ -1253,6 +1252,7 @@ void bch2_recalc_capacity(struct bch_fs *c)
 
 	reserved_sectors = min(reserved_sectors, capacity);
 
+	c->copygc_threshold = copygc_threshold;
 	c->capacity = capacity - reserved_sectors;
 
 	c->bucket_size_max = bucket_size_max;
@@ -1312,7 +1312,7 @@ void bch2_dev_allocator_remove(struct bch_fs *c, struct bch_dev *ca)
 	for (i = 0; i < ARRAY_SIZE(c->write_points); i++)
 		bch2_writepoint_stop(c, ca, &c->write_points[i]);
 
-	bch2_writepoint_stop(c, ca, &ca->copygc_write_point);
+	bch2_writepoint_stop(c, ca, &c->copygc_write_point);
 	bch2_writepoint_stop(c, ca, &c->rebalance_write_point);
 	bch2_writepoint_stop(c, ca, &c->btree_write_point);
 

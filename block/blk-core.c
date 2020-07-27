@@ -249,6 +249,16 @@ int blk_status_to_errno(blk_status_t status)
 }
 EXPORT_SYMBOL_GPL(blk_status_to_errno);
 
+const char *blk_status_to_str(blk_status_t status)
+{
+	int idx = (__force int)status;
+
+	if (WARN_ON_ONCE(idx >= ARRAY_SIZE(blk_errors)))
+		return "(invalid error)";
+	return blk_errors[idx].name;
+}
+EXPORT_SYMBOL_GPL(blk_status_to_str);
+
 static void print_req_error(struct request *req, blk_status_t status)
 {
 	int idx = (__force int)status;

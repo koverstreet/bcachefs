@@ -442,11 +442,18 @@ retry:
 		 * regular keys
 		 */
 		__bch2_btree_iter_set_pos(split_iter, split->k.p, false);
-		bch2_trans_update(&trans, split_iter, split, !remark
-				  ? BTREE_TRIGGER_NORUN
-				  : BTREE_TRIGGER_NOOVERWRITES);
+		bch2_trans_update(&trans, split_iter, split,
+				  BTREE_TRIGGER_NORUN);
 
 		bch2_btree_iter_set_pos(iter, split->k.p);
+
+		if (remark) {
+			ret = bch2_trans_mark_key(&trans, bkey_i_to_s_c(split),
+						  0, split->k.size,
+						  BTREE_TRIGGER_INSERT);
+			if (ret)
+				goto err;
+		}
 	} while (bkey_cmp(iter->pos, k->k.p) < 0);
 
 	if (remark) {
@@ -967,7 +974,8 @@ int bch2_fs_recovery(struct bch_fs *c)
 		bch_info(c, "recovering from clean shutdown, journal seq %llu",
 			 le64_to_cpu(clean->journal_seq));
 
-	if (!c->replicas.entries) {
+	if (!c->replicas.entries ||
+	    c->opts.rebuild_replicas) {
 		bch_info(c, "building replicas info");
 		set_bit(BCH_FS_REBUILD_REPLICAS, &c->flags);
 	}

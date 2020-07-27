@@ -15,7 +15,7 @@
 #endif
 
 #define six_acquire(l, t)	lock_acquire(l, 0, t, 0, 0, NULL, _RET_IP_)
-#define six_release(l)		lock_release(l, 0, _RET_IP_)
+#define six_release(l)		lock_release(l, _RET_IP_)
 
 struct six_lock_vals {
 	/* Value we add to the lock in order to take the lock: */

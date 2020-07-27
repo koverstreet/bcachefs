@@ -35,10 +35,6 @@ int bch2_fsync(struct file *, loff_t, loff_t, int);
 int bch2_truncate(struct bch_inode_info *, struct iattr *);
 long bch2_fallocate_dispatch(struct file *, int, loff_t, loff_t);
 
-#define REMAP_FILE_ADVISORY		(0)
-#define REMAP_FILE_DEDUP		(1 << 0)
-#define REMAP_FILE_CAN_SHORTEN		(1 << 1)
-
 loff_t bch2_remap_file_range(struct file *, loff_t, struct file *,
 			     loff_t, loff_t, unsigned);
 

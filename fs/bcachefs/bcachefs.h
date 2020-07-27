@@ -451,13 +451,6 @@ struct bch_dev {
 
 	alloc_heap		alloc_heap;
 
-	/* Copying GC: */
-	struct task_struct	*copygc_thread;
-	copygc_heap		copygc_heap;
-	struct bch_pd_controller copygc_pd;
-	struct write_point	copygc_write_point;
-	u64			copygc_threshold;
-
 	atomic64_t		rebalance_work;
 
 	struct journal_device	journal;
@@ -741,7 +734,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
@@ -751,16 +744,27 @@ struct bch_fs {
 	/* REBALANCE */
 	struct bch_fs_rebalance	rebalance;
 
+	/* COPYGC */
+	struct task_struct	*copygc_thread;
+	copygc_heap		copygc_heap;
+	struct bch_pd_controller copygc_pd;
+	struct write_point	copygc_write_point;
+	u64			copygc_threshold;
+
 	/* STRIPES: */
 	GENRADIX(struct stripe) stripes[2];
-	struct mutex		ec_stripe_create_lock;
 
 	ec_stripes_heap		ec_stripes_heap;
 	spinlock_t		ec_stripes_heap_lock;
 
 	/* ERASURE CODING */
-	struct list_head	ec_new_stripe_list;
-	struct mutex		ec_new_stripe_lock;
+	struct list_head	ec_stripe_head_list;
+	struct mutex		ec_stripe_head_lock;
+
+	struct list_head	ec_stripe_new_list;
+	struct mutex		ec_stripe_new_lock;
+
+	struct work_struct	ec_stripe_create_work;
 	u64			ec_stripe_hint;
 
 	struct bio_set		ec_bioset;

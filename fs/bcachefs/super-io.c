@@ -636,7 +636,8 @@ static void write_super_endio(struct bio *bio)
 
 	/* XXX: return errors directly */
 
-	if (bch2_dev_io_err_on(bio->bi_status, ca, "superblock write"))
+	if (bch2_dev_io_err_on(bio->bi_status, ca, "superblock write: %s",
+			       bch2_blk_status_to_str(bio->bi_status)))
 		ca->sb_write_error = 1;
 
 	closure_put(&ca->fs->sb_write);
@@ -656,7 +657,7 @@ static void read_back_super(struct bch_fs *c, struct bch_dev *ca)
 	bio_set_op_attrs(bio, REQ_OP_READ, REQ_SYNC|REQ_META);
 	bch2_bio_map(bio, ca->sb_read_scratch, PAGE_SIZE);
 
-	this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_SB],
+	this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_sb],
 		     bio_sectors(bio));
 
 	percpu_ref_get(&ca->io_ref);
@@ -684,7 +685,7 @@ static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 		     roundup((size_t) vstruct_bytes(sb),
 			     bdev_logical_block_size(ca->disk_sb.bdev)));
 
-	this_cpu_add(ca->io_done->sectors[WRITE][BCH_DATA_SB],
+	this_cpu_add(ca->io_done->sectors[WRITE][BCH_DATA_sb],
 		     bio_sectors(bio));
 
 	percpu_ref_get(&ca->io_ref);

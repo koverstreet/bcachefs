@@ -1013,6 +1013,7 @@ extern void blk_execute_rq_nowait(struct request_queue *, struct gendisk *,
 
 int blk_status_to_errno(blk_status_t status);
 blk_status_t errno_to_blk_status(int errno);
+const char *blk_status_to_str(blk_status_t status);
 
 bool blk_poll(struct request_queue *q, blk_qc_t cookie);
 

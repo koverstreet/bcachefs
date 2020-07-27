@@ -31,8 +31,16 @@
 
 #include <linux/blkdev.h>
 #include <linux/random.h>
+#include <linux/sched/mm.h>
 
 #include <trace/events/bcachefs.h>
+
+const char *bch2_blk_status_to_str(blk_status_t status)
+{
+	if (status == BLK_STS_REMOVED)
+		return "device removed";
+	return blk_status_to_str(status);
+}
 
 static bool bch2_target_congested(struct bch_fs *c, u16 target)
 {
@@ -124,10 +132,10 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 
 void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
-	bio_for_each_segment_all(bv, bio, i)
+	bio_for_each_segment_all(bv, bio, iter)
 		if (bv->bv_page != ZERO_PAGE(0))
 			mempool_free(bv->bv_page, &c->bio_bounce_pages);
 	bio->bi_vcnt = 0;
@@ -611,7 +619,8 @@ static void bch2_write_endio(struct bio *bio)
 	struct bch_fs *c		= wbio->c;
 	struct bch_dev *ca		= bch_dev_bkey_exists(c, wbio->dev);
 
-	if (bch2_dev_io_err_on(bio->bi_status, ca, "data write"))
+	if (bch2_dev_io_err_on(bio->bi_status, ca, "data write: %s",
+			       bch2_blk_status_to_str(bio->bi_status)))
 		set_bit(wbio->dev, op->failed.d);
 
 	if (wbio->have_ioref) {
@@ -1053,7 +1062,10 @@ static void __bch2_write(struct closure *cl)
 	struct write_point *wp;
 	struct bio *bio;
 	bool skip_put = true;
+	unsigned nofs_flags;
 	int ret;
+
+	nofs_flags = memalloc_nofs_save();
 again:
 	memset(&op->failed, 0, sizeof(op->failed));
 
@@ -1100,6 +1112,16 @@ again:
 			goto flush_io;
 		}
 
+		/*
+		 * It's possible for the allocator to fail, put us on the
+		 * freelist waitlist, and then succeed in one of various retry
+		 * paths: if that happens, we need to disable the skip_put
+		 * optimization because otherwise there won't necessarily be a
+		 * barrier before we free the bch_write_op:
+		 */
+		if (atomic_read(&cl->remaining) & CLOSURE_WAITING)
+			skip_put = false;
+
 		bch2_open_bucket_get(c, wp, &op->open_buckets);
 		ret = bch2_write_extent(op, wp, &bio);
 		bch2_alloc_sectors_done(c, wp);
@@ -1129,19 +1151,21 @@ again:
 		key_to_write = (void *) (op->insert_keys.keys_p +
 					 key_to_write_offset);
 
-		bch2_submit_wbio_replicas(to_wbio(bio), c, BCH_DATA_USER,
+		bch2_submit_wbio_replicas(to_wbio(bio), c, BCH_DATA_user,
 					  key_to_write);
 	} while (ret);
 
 	if (!skip_put)
 		continue_at(cl, bch2_write_index, index_update_wq(op));
+out:
+	memalloc_nofs_restore(nofs_flags);
 	return;
 err:
 	op->error = ret;
 	op->flags |= BCH_WRITE_DONE;
 
 	continue_at(cl, bch2_write_index, index_update_wq(op));
-	return;
+	goto out;
 flush_io:
 	/*
 	 * If the write can't all be submitted at once, we generally want to
@@ -1152,7 +1176,7 @@ flush_io:
 	 */
 	if (current->flags & PF_WQ_WORKER) {
 		continue_at(cl, bch2_write_index, index_update_wq(op));
-		return;
+		goto out;
 	}
 
 	closure_sync(cl);
@@ -1163,7 +1187,7 @@ flush_io:
 		if (op->error) {
 			op->flags |= BCH_WRITE_DONE;
 			continue_at_nobarrier(cl, bch2_write_done, NULL);
-			return;
+			goto out;
 		}
 	}
 
@@ -1921,7 +1945,8 @@ static void bch2_read_endio(struct bio *bio)
 	if (!rbio->split)
 		rbio->bio.bi_end_io = rbio->end_io;
 
-	if (bch2_dev_io_err_on(bio->bi_status, ca, "data read")) {
+	if (bch2_dev_io_err_on(bio->bi_status, ca, "data read; %s",
+			       bch2_blk_status_to_str(bio->bi_status))) {
 		bch2_rbio_error(rbio, READ_RETRY_AVOID, bio->bi_status);
 		return;
 	}
@@ -2174,7 +2199,7 @@ get_bio:
 			goto out;
 		}
 
-		this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_USER],
+		this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_user],
 			     bio_sectors(&rbio->bio));
 		bio_set_dev(&rbio->bio, ca->disk_sb.bdev);
 

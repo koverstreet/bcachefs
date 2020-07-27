@@ -94,7 +94,7 @@ struct btree {
 	struct btree_nr_keys	nr;
 	u16			sib_u64s[2];
 	u16			whiteout_u64s;
-	u8			page_order;
+	u8			byte_order;
 	u8			unpack_fn_len;
 
 	/*
@@ -409,6 +409,7 @@ enum btree_flags {
 	BTREE_NODE_dying,
 	BTREE_NODE_fake,
 	BTREE_NODE_old_extent_overwrite,
+	BTREE_NODE_need_rewrite,
 };
 
 BTREE_FLAG(read_in_flight);
@@ -423,6 +424,7 @@ BTREE_FLAG(just_written);
 BTREE_FLAG(dying);
 BTREE_FLAG(fake);
 BTREE_FLAG(old_extent_overwrite);
+BTREE_FLAG(need_rewrite);
 
 static inline struct btree_write *btree_current_write(struct btree *b)
 {
@@ -593,7 +595,6 @@ static inline bool btree_iter_is_extents(struct btree_iter *iter)
 
 enum btree_trigger_flags {
 	__BTREE_TRIGGER_NORUN,		/* Don't run triggers at all */
-	__BTREE_TRIGGER_NOOVERWRITES,	/* Don't run triggers on overwrites */
 
 	__BTREE_TRIGGER_INSERT,
 	__BTREE_TRIGGER_OVERWRITE,
@@ -606,7 +607,6 @@ enum btree_trigger_flags {
 };
 
 #define BTREE_TRIGGER_NORUN		(1U << __BTREE_TRIGGER_NORUN)
-#define BTREE_TRIGGER_NOOVERWRITES	(1U << __BTREE_TRIGGER_NOOVERWRITES)
 
 #define BTREE_TRIGGER_INSERT		(1U << __BTREE_TRIGGER_INSERT)
 #define BTREE_TRIGGER_OVERWRITE		(1U << __BTREE_TRIGGER_OVERWRITE)

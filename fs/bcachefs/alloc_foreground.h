@@ -12,6 +12,13 @@ struct bch_dev;
 struct bch_fs;
 struct bch_devs_List;
 
+enum bucket_alloc_ret {
+	ALLOC_SUCCESS,
+	OPEN_BUCKETS_EMPTY,
+	FREELIST_EMPTY,		/* Allocator thread not keeping up */
+	INSUFFICIENT_DEVICES,
+};
+
 struct dev_alloc_list {
 	unsigned	nr;
 	u8		devs[BCH_SB_MEMBERS_MAX];
@@ -20,8 +27,7 @@ struct dev_alloc_list {
 struct dev_alloc_list bch2_dev_alloc_list(struct bch_fs *,
 					  struct dev_stripe_state *,
 					  struct bch_devs_mask *);
-void bch2_dev_stripe_increment(struct bch_fs *, struct bch_dev *,
-			       struct dev_stripe_state *);
+void bch2_dev_stripe_increment(struct bch_dev *, struct dev_stripe_state *);
 
 long bch2_bucket_alloc_new_fs(struct bch_dev *);
 
@@ -92,6 +98,12 @@ static inline void bch2_open_bucket_get(struct bch_fs *c,
 	}
 }
 
+enum bucket_alloc_ret
+bch2_bucket_alloc_set(struct bch_fs *, struct open_buckets *,
+		      struct dev_stripe_state *, struct bch_devs_mask *,
+		      unsigned, unsigned *, bool *, enum alloc_reserve,
+		      unsigned, struct closure *);
+
 struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
 					     unsigned, unsigned,
 					     struct write_point_specifier,
@@ -119,13 +131,6 @@ static inline struct write_point_specifier writepoint_hashed(unsigned long v)
 static inline struct write_point_specifier writepoint_ptr(struct write_point *wp)
 {
 	return (struct write_point_specifier) { .v = (unsigned long) wp };
-}
-
-static inline void writepoint_init(struct write_point *wp,
-				   enum bch_data_type type)
-{
-	mutex_init(&wp->lock);
-	wp->type = type;
 }
 
 void bch2_fs_allocator_foreground_init(struct bch_fs *);

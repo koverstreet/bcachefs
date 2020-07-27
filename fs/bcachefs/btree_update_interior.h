@@ -311,13 +311,13 @@ static inline void push_whiteout(struct bch_fs *c, struct btree *b,
 static inline bool bch2_btree_node_insert_fits(struct bch_fs *c,
 					       struct btree *b, unsigned u64s)
 {
-	if (unlikely(btree_node_fake(b)))
+	if (unlikely(btree_node_need_rewrite(b)))
 		return false;
 
 	return u64s <= bch_btree_keys_u64s_remaining(c, b);
 }
 
-ssize_t bch2_btree_updates_print(struct bch_fs *, char *);
+void bch2_btree_updates_to_text(struct printbuf *, struct bch_fs *);
 
 size_t bch2_btree_interior_updates_nr_pending(struct bch_fs *);
 
