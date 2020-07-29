@@ -454,9 +454,7 @@ static int nfs4_do_handle_exception(struct nfs_server *server,
 		case -NFS4ERR_DEADSESSION:
 		case -NFS4ERR_SEQ_FALSE_RETRY:
 		case -NFS4ERR_SEQ_MISORDERED:
-			dprintk("%s ERROR: %d Reset session\n", __func__,
-				errorcode);
-			nfs4_schedule_session_recovery(clp->cl_session, errorcode);
+			/* Handled in nfs41_sequence_process() */
 			goto wait_on_recovery;
 #endif /* defined(CONFIG_NFS_V4_1) */
 		case -NFS4ERR_FILE_OPEN:
@@ -716,6 +714,7 @@ static int nfs41_sequence_process(struct rpc_task *task,
 	struct nfs4_session *session;
 	struct nfs4_slot *slot = res->sr_slot;
 	struct nfs_client *clp;
+	int status;
 	int ret = 1;
 
 	if (slot == NULL)
@@ -727,8 +726,13 @@ static int nfs41_sequence_process(struct rpc_task *task,
 	session = slot->table->session;
 
 	trace_nfs4_sequence_done(session, res);
+
+	status = res->sr_status;
+	if (task->tk_status == -NFS4ERR_DEADSESSION)
+		status = -NFS4ERR_DEADSESSION;
+
 	/* Check the SEQUENCE operation status */
-	switch (res->sr_status) {
+	switch (status) {
 	case 0:
 		/* Mark this sequence number as having been acked */
 		nfs4_slot_sequence_acked(slot, slot->seq_nr);
@@ -800,6 +804,10 @@ static int nfs41_sequence_process(struct rpc_task *task,
 		 */
 		slot->seq_nr = slot->seq_nr_highest_sent;
 		goto out_retry;
+	case -NFS4ERR_BADSESSION:
+	case -NFS4ERR_DEADSESSION:
+	case -NFS4ERR_CONN_NOT_BOUND_TO_SESSION:
+		goto session_recover;
 	default:
 		/* Just update the slot sequence no. */
 		slot->seq_done = 1;
@@ -810,8 +818,10 @@ out:
 out_noaction:
 	return ret;
 session_recover:
-	nfs4_schedule_session_recovery(session, res->sr_status);
-	goto retry_nowait;
+	nfs4_schedule_session_recovery(session, status);
+	dprintk("%s ERROR: %d Reset session\n", __func__, status);
+	nfs41_sequence_free_slot(res);
+	goto out;
 retry_new_seq:
 	++slot->seq_nr;
 retry_nowait:
@@ -2047,7 +2057,6 @@ static int nfs4_handle_delegation_recall_error(struct nfs_server *server, struct
 		case -NFS4ERR_BAD_HIGH_SLOT:
 		case -NFS4ERR_CONN_NOT_BOUND_TO_SESSION:
 		case -NFS4ERR_DEADSESSION:
-			nfs4_schedule_session_recovery(server->nfs_client->cl_session, err);
 			return -EAGAIN;
 		case -NFS4ERR_STALE_CLIENTID:
 		case -NFS4ERR_STALE_STATEID:
@@ -7381,6 +7390,15 @@ nfs41_same_server_scope(struct nfs41_server_scope *a,
 static void
 nfs4_bind_one_conn_to_session_done(struct rpc_task *task, void *calldata)
 {
+	struct nfs41_bind_conn_to_session_args *args = task->tk_msg.rpc_argp;
+	struct nfs_client *clp = args->client;
+
+	switch (task->tk_status) {
+	case -NFS4ERR_BADSESSION:
+	case -NFS4ERR_DEADSESSION:
+		nfs4_schedule_session_recovery(clp->cl_session,
+				task->tk_status);
+	}
 }
 
 static const struct rpc_call_ops nfs4_bind_one_conn_to_session_ops = {
@@ -8427,8 +8445,6 @@ static int nfs41_reclaim_complete_handle_errors(struct rpc_task *task, struct nf
 	case -NFS4ERR_BADSESSION:
 	case -NFS4ERR_DEADSESSION:
 	case -NFS4ERR_CONN_NOT_BOUND_TO_SESSION:
-		nfs4_schedule_session_recovery(clp->cl_session,
-				task->tk_status);
 		break;
 	default:
 		nfs4_schedule_lease_recovery(clp);
