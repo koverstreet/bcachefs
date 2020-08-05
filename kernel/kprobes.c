@@ -1041,9 +1041,18 @@ static void disarm_kprobe_ftrace(struct kprobe *p)
 	WARN(ret < 0, "Failed to disarm kprobe-ftrace at %pS (%d)\n", p->addr, ret);
 }
 #else	/* !CONFIG_KPROBES_ON_FTRACE */
-#define prepare_kprobe(p)	arch_prepare_kprobe(p)
-#define arm_kprobe_ftrace(p)	do {} while (0)
-#define disarm_kprobe_ftrace(p)	do {} while (0)
+static inline int prepare_kprobe(struct kprobe *p)
+{
+	return arch_prepare_kprobe(p);
+}
+
+static inline void arm_kprobe_ftrace(struct kprobe *p)
+{
+}
+
+static inline void disarm_kprobe_ftrace(struct kprobe *p)
+{
+}
 #endif
 
 /* Arm a kprobe with text_mutex */
