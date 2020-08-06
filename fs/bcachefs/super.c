@@ -169,10 +169,9 @@ int bch2_congested(void *data, int bdi_bits)
 			}
 		}
 	} else {
-		unsigned target = READ_ONCE(c->opts.foreground_target);
-		const struct bch_devs_mask *devs = target
-			? bch2_target_to_mask(c, target)
-			: &c->rw_devs[BCH_DATA_user];
+		const struct bch_devs_mask *devs =
+			bch2_target_to_mask(c, c->opts.foreground_target) ?:
+			&c->rw_devs[BCH_DATA_user];
 
 		for_each_member_device_rcu(ca, c, i, devs) {
 			bdi = ca->disk_sb.bdev->bd_bdi;
