@@ -5,7 +5,6 @@
 # set -e
 
 devdummy="test-dummy0"
-ret=0
 
 # set global exit status, but never reset nonzero one.
 check_err()
@@ -63,7 +62,7 @@ kci_test_bridge()
 	devbr="test-br0"
 	vlandev="testbr-vlan1"
 
-	ret=0
+	local ret=0
 	ip link add name "$devbr" type bridge
 	check_err $?
 
@@ -110,7 +109,7 @@ kci_test_gre()
 	rem=10.42.42.1
 	loc=10.0.0.1
 
-	ret=0
+	local ret=0
 	ip tunnel add $gredev mode gre remote $rem local $loc ttl 1
 	check_err $?
 	ip link set $gredev up
@@ -146,7 +145,7 @@ kci_test_gre()
 kci_test_tc()
 {
 	dev=lo
-	ret=0
+	local ret=0
 
 	tc qdisc add dev "$dev" root handle 1: htb
 	check_err $?
@@ -181,7 +180,7 @@ kci_test_tc()
 
 kci_test_polrouting()
 {
-	ret=0
+	local ret=0
 	ip rule add fwmark 1 lookup 100
 	check_err $?
 	ip route add local 0.0.0.0/0 dev lo table 100
@@ -202,7 +201,7 @@ kci_test_polrouting()
 
 kci_test_route_get()
 {
-	ret=0
+	local ret=0
 
 	ip route get 127.0.0.1 > /dev/null
 	check_err $?
@@ -253,7 +252,7 @@ kci_test_addrlft()
 
 kci_test_addrlabel()
 {
-	ret=0
+	local ret=0
 
 	ip addrlabel add prefix dead::/64 dev lo label 1
 	check_err $?
@@ -293,7 +292,7 @@ kci_test_addrlabel()
 
 kci_test_ifalias()
 {
-	ret=0
+	local ret=0
 	namewant=$(uuidgen)
 	syspathname="/sys/class/net/$devdummy/ifalias"
 
@@ -348,7 +347,7 @@ kci_test_ifalias()
 kci_test_vrf()
 {
 	vrfname="test-vrf"
-	ret=0
+	local ret=0
 
 	ip link show type vrf 2>/dev/null
 	if [ $? -ne 0 ]; then
@@ -388,7 +387,7 @@ kci_test_vrf()
 
 kci_test_encap_vxlan()
 {
-	ret=0
+	local ret=0
 	vxlan="test-vxlan0"
 	vlan="test-vlan0"
 	testns="$1"
@@ -422,7 +421,7 @@ kci_test_encap_vxlan()
 
 kci_test_encap_fou()
 {
-	ret=0
+	local ret=0
 	name="test-fou"
 	testns="$1"
 
@@ -459,7 +458,7 @@ kci_test_encap_fou()
 kci_test_encap()
 {
 	testns="testns"
-	ret=0
+	local ret=0
 
 	ip netns add "$testns"
 	if [ $? -ne 0 ]; then
@@ -484,7 +483,7 @@ kci_test_encap()
 kci_test_macsec()
 {
 	msname="test_macsec0"
-	ret=0
+	local ret=0
 
 	ip macsec help 2>&1 | grep -q "^Usage: ip macsec"
 	if [ $? -ne 0 ]; then
@@ -524,6 +523,7 @@ kci_test_macsec()
 
 kci_test_rtnl()
 {
+	local ret=0
 	kci_add_dummy
 	if [ $ret -ne 0 ];then
 		echo "FAIL: cannot add dummy interface"
@@ -531,18 +531,30 @@ kci_test_rtnl()
 	fi
 
 	kci_test_polrouting
+	check_err $?
 	kci_test_route_get
+	check_err $?
 	kci_test_addrlft
+	check_err $?
 	kci_test_tc
+	check_err $?
 	kci_test_gre
+	check_err $?
 	kci_test_bridge
+	check_err $?
 	kci_test_addrlabel
+	check_err $?
 	kci_test_ifalias
+	check_err $?
 	kci_test_vrf
+	check_err $?
 	kci_test_encap
+	check_err $?
 	kci_test_macsec
+	check_err $?
 
 	kci_del_dummy
+	return $ret
 }
 
 #check for needed privileges
@@ -561,4 +573,4 @@ done
 
 kci_test_rtnl
 
-exit $ret
+exit $?
