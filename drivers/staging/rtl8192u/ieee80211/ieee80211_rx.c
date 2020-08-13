@@ -598,7 +598,7 @@ static void RxReorderIndicatePacket(struct ieee80211_device *ieee,
 	IEEE80211_DEBUG(IEEE80211_DL_REORDER,"%s(): Seq is %d,pTS->RxIndicateSeq is %d, WinSize is %d\n",__func__,SeqNum,pTS->RxIndicateSeq,WinSize);
 
 	prxbIndicateArray = kmalloc(sizeof(struct ieee80211_rxb *) *
-			REORDER_WIN_SIZE, GFP_KERNEL);
+			REORDER_WIN_SIZE, GFP_ATOMIC);
 	if (!prxbIndicateArray)
 		return;
 
