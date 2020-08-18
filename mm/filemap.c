@@ -917,6 +917,7 @@ static void page_vec_error_handler(int nr_pages, struct page **pages) {
 		page->mapping = NULL;
 		/* Leave page->index set: truncation relies upon it */
 		put_page(page);
+		__ClearPageLocked(page);
 	}
 }
 
@@ -932,8 +933,8 @@ static int add_to_page_cache_vec(struct page **pages, unsigned nr_pages,
 		struct page *page = pages[i];
 
 		XA_STATE(xas, &mapping->i_pages, index + i);
+		__SetPageLocked(page);
 
-	        VM_BUG_ON_PAGE(!PageLocked(page), page);
 		VM_BUG_ON_PAGE(PageSwapBacked(page), page);
 		VM_BUG_ON_PAGE(PageSwapCache(page), page);
 
