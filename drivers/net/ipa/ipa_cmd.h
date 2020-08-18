@@ -35,7 +35,6 @@ enum ipa_cmd_opcode {
 	IPA_CMD_HDR_INIT_LOCAL		= 9,
 	IPA_CMD_REGISTER_WRITE		= 12,
 	IPA_CMD_IP_PACKET_INIT		= 16,
-	IPA_CMD_DMA_TASK_32B_ADDR	= 17,
 	IPA_CMD_DMA_SHARED_MEM		= 19,
 	IPA_CMD_IP_PACKET_TAG_STATUS	= 20,
 };
@@ -148,16 +147,6 @@ void ipa_cmd_register_write_add(struct gsi_trans *trans, u32 offset, u32 value,
 				u32 mask, bool clear_full);
 
 /**
- * ipa_cmd_dma_task_32b_addr_add() - Add a 32-bit DMA command to a transaction
- * @trans:	GSi transaction
- * @size:	Number of bytes to be memory to be transferred
- * @addr:	DMA address of buffer to be read into or written from
- * @toward_ipa:	true means write to IPA memory; false means read
- */
-void ipa_cmd_dma_task_32b_addr_add(struct gsi_trans *trans, u16 size,
-				   dma_addr_t addr, bool toward_ipa);
-
-/**
  * ipa_cmd_dma_shared_mem_add() - Add a DMA memory command to a transaction
  * @trans:	GSI transaction
  * @offset:	Offset of IPA memory to be read or written
@@ -181,6 +170,14 @@ void ipa_cmd_tag_process_add(struct gsi_trans *trans);
  *		to hold tag process commands
  */
 u32 ipa_cmd_tag_process_count(void);
+
+/**
+ * ipa_cmd_tag_process() - Perform a tag process
+ *
+ * @Return:	The number of elements to allocate in a transaction
+ *		to hold tag process commands
+ */
+void ipa_cmd_tag_process(struct ipa *ipa);
 
 /**
  * ipa_cmd_trans_alloc() - Allocate a transaction for the command TX endpoint

@@ -10,7 +10,6 @@
 #include <linux/pci.h>
 #include <linux/hwmon.h>
 
-#define SENSORS_PKT_TIMEOUT		1000000	/* 1s */
 #define HWMON_NR_SENSOR_TYPES		(hwmon_pwm + 1)
 
 int hl_build_hwmon_channel_info(struct hl_device *hdev,
@@ -200,6 +199,7 @@ static int hl_write(struct device *dev, enum hwmon_sensor_types type,
 	case hwmon_temp:
 		switch (attr) {
 		case hwmon_temp_offset:
+		case hwmon_temp_reset_history:
 			break;
 		default:
 			return -EINVAL;
@@ -215,6 +215,24 @@ static int hl_write(struct device *dev, enum hwmon_sensor_types type,
 			return -EINVAL;
 		}
 		hl_set_pwm_info(hdev, channel, attr, val);
+		break;
+	case hwmon_in:
+		switch (attr) {
+		case hwmon_in_reset_history:
+			break;
+		default:
+			return -EINVAL;
+		}
+		hl_set_voltage(hdev, channel, attr, val);
+		break;
+	case hwmon_curr:
+		switch (attr) {
+		case hwmon_curr_reset_history:
+			break;
+		default:
+			return -EINVAL;
+		}
+		hl_set_current(hdev, channel, attr, val);
 		break;
 	default:
 		return -EINVAL;
@@ -237,6 +255,8 @@ static umode_t hl_is_visible(const void *data, enum hwmon_sensor_types type,
 			return 0444;
 		case hwmon_temp_offset:
 			return 0644;
+		case hwmon_temp_reset_history:
+			return 0200;
 		}
 		break;
 	case hwmon_in:
@@ -246,6 +266,8 @@ static umode_t hl_is_visible(const void *data, enum hwmon_sensor_types type,
 		case hwmon_in_max:
 		case hwmon_in_highest:
 			return 0444;
+		case hwmon_in_reset_history:
+			return 0200;
 		}
 		break;
 	case hwmon_curr:
@@ -255,6 +277,8 @@ static umode_t hl_is_visible(const void *data, enum hwmon_sensor_types type,
 		case hwmon_curr_max:
 		case hwmon_curr_highest:
 			return 0444;
+		case hwmon_curr_reset_history:
+			return 0200;
 		}
 		break;
 	case hwmon_fan:
@@ -298,7 +322,7 @@ int hl_get_temperature(struct hl_device *hdev,
 	pkt.type = __cpu_to_le16(attr);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-			SENSORS_PKT_TIMEOUT, value);
+						0, value);
 
 	if (rc) {
 		dev_err(hdev->dev,
@@ -325,7 +349,7 @@ int hl_set_temperature(struct hl_device *hdev,
 	pkt.value = __cpu_to_le64(value);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-						SENSORS_PKT_TIMEOUT, NULL);
+						0, NULL);
 
 	if (rc)
 		dev_err(hdev->dev,
@@ -349,7 +373,7 @@ int hl_get_voltage(struct hl_device *hdev,
 	pkt.type = __cpu_to_le16(attr);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-					SENSORS_PKT_TIMEOUT, value);
+						0, value);
 
 	if (rc) {
 		dev_err(hdev->dev,
@@ -375,7 +399,7 @@ int hl_get_current(struct hl_device *hdev,
 	pkt.type = __cpu_to_le16(attr);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-					SENSORS_PKT_TIMEOUT, value);
+						0, value);
 
 	if (rc) {
 		dev_err(hdev->dev,
@@ -401,7 +425,7 @@ int hl_get_fan_speed(struct hl_device *hdev,
 	pkt.type = __cpu_to_le16(attr);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-					SENSORS_PKT_TIMEOUT, value);
+						0, value);
 
 	if (rc) {
 		dev_err(hdev->dev,
@@ -427,7 +451,7 @@ int hl_get_pwm_info(struct hl_device *hdev,
 	pkt.type = __cpu_to_le16(attr);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-					SENSORS_PKT_TIMEOUT, value);
+						0, value);
 
 	if (rc) {
 		dev_err(hdev->dev,
@@ -454,12 +478,62 @@ void hl_set_pwm_info(struct hl_device *hdev, int sensor_index, u32 attr,
 	pkt.value = cpu_to_le64(value);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-					SENSORS_PKT_TIMEOUT, NULL);
+						0, NULL);
 
 	if (rc)
 		dev_err(hdev->dev,
 			"Failed to set pwm info to sensor %d, error %d\n",
 			sensor_index, rc);
+}
+
+int hl_set_voltage(struct hl_device *hdev,
+			int sensor_index, u32 attr, long value)
+{
+	struct armcp_packet pkt;
+	int rc;
+
+	memset(&pkt, 0, sizeof(pkt));
+
+	pkt.ctl = cpu_to_le32(ARMCP_PACKET_VOLTAGE_SET <<
+				ARMCP_PKT_CTL_OPCODE_SHIFT);
+	pkt.sensor_index = __cpu_to_le16(sensor_index);
+	pkt.type = __cpu_to_le16(attr);
+	pkt.value = __cpu_to_le64(value);
+
+	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
+						0, NULL);
+
+	if (rc)
+		dev_err(hdev->dev,
+			"Failed to set voltage of sensor %d, error %d\n",
+			sensor_index, rc);
+
+	return rc;
+}
+
+int hl_set_current(struct hl_device *hdev,
+			int sensor_index, u32 attr, long value)
+{
+	struct armcp_packet pkt;
+	int rc;
+
+	memset(&pkt, 0, sizeof(pkt));
+
+	pkt.ctl = cpu_to_le32(ARMCP_PACKET_CURRENT_SET <<
+				ARMCP_PKT_CTL_OPCODE_SHIFT);
+	pkt.sensor_index = __cpu_to_le16(sensor_index);
+	pkt.type = __cpu_to_le16(attr);
+	pkt.value = __cpu_to_le64(value);
+
+	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
+						0, NULL);
+
+	if (rc)
+		dev_err(hdev->dev,
+			"Failed to set current of sensor %d, error %d\n",
+			sensor_index, rc);
+
+	return rc;
 }
 
 int hl_hwmon_init(struct hl_device *hdev)

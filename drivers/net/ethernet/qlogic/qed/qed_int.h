@@ -191,6 +191,17 @@ void qed_int_get_num_sbs(struct qed_hwfn	*p_hwfn,
 void qed_int_disable_post_isr_release(struct qed_dev *cdev);
 
 /**
+ * @brief qed_int_attn_clr_enable - sets whether the general behavior is
+ *        preventing attentions from being reasserted, or following the
+ *        attributes of the specific attention.
+ *
+ * @param cdev
+ * @param clr_enable
+ *
+ */
+void qed_int_attn_clr_enable(struct qed_dev *cdev, bool clr_enable);
+
+/**
  * @brief - Doorbell Recovery handler.
  *          Run doorbell recovery in case of PF overflow (and flush DORQ if
  *          needed).
@@ -431,7 +442,7 @@ int qed_int_set_timer_res(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt,
 
 #define QED_MAPPING_MEMORY_SIZE(dev)	(NUM_OF_SBS(dev))
 
-int qed_pglueb_rbc_attn_handler(struct qed_hwfn *p_hwfn,
-				struct qed_ptt *p_ptt);
+int qed_pglueb_rbc_attn_handler(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt,
+				bool hw_init);
 
 #endif

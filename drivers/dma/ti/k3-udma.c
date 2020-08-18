@@ -170,7 +170,7 @@ struct udma_desc {
 	void *metadata; /* pointer to provided metadata buffer (EPIP, PSdata) */
 
 	unsigned int hwdesc_count;
-	struct udma_hwdesc hwdesc[0];
+	struct udma_hwdesc hwdesc[];
 };
 
 enum udma_chan_state {
@@ -231,7 +231,6 @@ struct udma_chan {
 	struct udma_tx_drain tx_drain;
 
 	u32 bcnt; /* number of bytes completed since the start of the channel */
-	u32 in_ring_cnt; /* number of descriptors in flight */
 
 	/* Channel configuration parameters */
 	struct udma_chan_config config;
@@ -574,7 +573,6 @@ static int udma_push_to_ring(struct udma_chan *uc, int idx)
 	struct udma_desc *d = uc->desc;
 	struct k3_ring *ring = NULL;
 	dma_addr_t paddr;
-	int ret;
 
 	switch (uc->config.dir) {
 	case DMA_DEV_TO_MEM:
@@ -598,11 +596,7 @@ static int udma_push_to_ring(struct udma_chan *uc, int idx)
 		udma_sync_for_device(uc, idx);
 	}
 
-	ret = k3_ringacc_ring_push(ring, &paddr);
-	if (!ret)
-		uc->in_ring_cnt++;
-
-	return ret;
+	return k3_ringacc_ring_push(ring, &paddr);
 }
 
 static bool udma_desc_is_rx_flush(struct udma_chan *uc, dma_addr_t addr)
@@ -655,9 +649,6 @@ static int udma_pop_from_ring(struct udma_chan *uc, dma_addr_t *addr)
 						d->hwdesc[0].cppi5_desc_size,
 						DMA_FROM_DEVICE);
 		rmb(); /* Ensure that reads are not moved before this point */
-
-		if (!ret)
-			uc->in_ring_cnt--;
 	}
 
 	return ret;
@@ -697,8 +688,6 @@ static void udma_reset_rings(struct udma_chan *uc)
 		udma_desc_free(&uc->terminated_desc->vd);
 		uc->terminated_desc = NULL;
 	}
-
-	uc->in_ring_cnt = 0;
 }
 
 static void udma_reset_counters(struct udma_chan *uc)
@@ -1073,9 +1062,6 @@ static irqreturn_t udma_ring_irq_handler(int irq, void *data)
 
 	/* Teardown completion message */
 	if (cppi5_desc_is_tdcm(paddr)) {
-		/* Compensate our internal pop/push counter */
-		uc->in_ring_cnt++;
-
 		complete_all(&uc->teardown_completed);
 
 		if (uc->terminated_desc) {
@@ -1291,10 +1277,8 @@ static int udma_get_tchan(struct udma_chan *uc)
 	}
 
 	uc->tchan = __udma_reserve_tchan(ud, uc->config.channel_tpl, -1);
-	if (IS_ERR(uc->tchan))
-		return PTR_ERR(uc->tchan);
 
-	return 0;
+	return PTR_ERR_OR_ZERO(uc->tchan);
 }
 
 static int udma_get_rchan(struct udma_chan *uc)
@@ -1308,10 +1292,8 @@ static int udma_get_rchan(struct udma_chan *uc)
 	}
 
 	uc->rchan = __udma_reserve_rchan(ud, uc->config.channel_tpl, -1);
-	if (IS_ERR(uc->rchan))
-		return PTR_ERR(uc->rchan);
 
-	return 0;
+	return PTR_ERR_OR_ZERO(uc->rchan);
 }
 
 static int udma_get_chan_pair(struct udma_chan *uc)
@@ -1373,10 +1355,8 @@ static int udma_get_rflow(struct udma_chan *uc, int flow_id)
 	}
 
 	uc->rflow = __udma_get_rflow(ud, flow_id);
-	if (IS_ERR(uc->rflow))
-		return PTR_ERR(uc->rflow);
 
-	return 0;
+	return PTR_ERR_OR_ZERO(uc->rflow);
 }
 
 static void udma_put_rchan(struct udma_chan *uc)
@@ -1773,7 +1753,8 @@ static int udma_alloc_chan_resources(struct dma_chan *chan)
 			dev_err(ud->ddev.dev,
 				"Descriptor pool allocation failed\n");
 			uc->use_dma_pool = false;
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto err_cleanup;
 		}
 	}
 
@@ -1793,16 +1774,18 @@ static int udma_alloc_chan_resources(struct dma_chan *chan)
 
 		ret = udma_get_chan_pair(uc);
 		if (ret)
-			return ret;
+			goto err_cleanup;
 
 		ret = udma_alloc_tx_resources(uc);
-		if (ret)
-			return ret;
+		if (ret) {
+			udma_put_rchan(uc);
+			goto err_cleanup;
+		}
 
 		ret = udma_alloc_rx_resources(uc);
 		if (ret) {
 			udma_free_tx_resources(uc);
-			return ret;
+			goto err_cleanup;
 		}
 
 		uc->config.src_thread = ud->psil_base + uc->tchan->id;
@@ -1820,10 +1803,8 @@ static int udma_alloc_chan_resources(struct dma_chan *chan)
 			uc->id);
 
 		ret = udma_alloc_tx_resources(uc);
-		if (ret) {
-			uc->config.remote_thread_id = -1;
-			return ret;
-		}
+		if (ret)
+			goto err_cleanup;
 
 		uc->config.src_thread = ud->psil_base + uc->tchan->id;
 		uc->config.dst_thread = uc->config.remote_thread_id;
@@ -1840,10 +1821,8 @@ static int udma_alloc_chan_resources(struct dma_chan *chan)
 			uc->id);
 
 		ret = udma_alloc_rx_resources(uc);
-		if (ret) {
-			uc->config.remote_thread_id = -1;
-			return ret;
-		}
+		if (ret)
+			goto err_cleanup;
 
 		uc->config.src_thread = uc->config.remote_thread_id;
 		uc->config.dst_thread = (ud->psil_base + uc->rchan->id) |
@@ -1858,7 +1837,9 @@ static int udma_alloc_chan_resources(struct dma_chan *chan)
 		/* Can not happen */
 		dev_err(uc->ud->dev, "%s: chan%d invalid direction (%u)\n",
 			__func__, uc->id, uc->config.dir);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err_cleanup;
+
 	}
 
 	/* check if the channel configuration was successful */
@@ -1867,9 +1848,10 @@ static int udma_alloc_chan_resources(struct dma_chan *chan)
 
 	if (udma_is_chan_running(uc)) {
 		dev_warn(ud->dev, "chan%d: is running!\n", uc->id);
-		udma_stop(uc);
+		udma_reset_chan(uc, false);
 		if (udma_is_chan_running(uc)) {
 			dev_err(ud->dev, "chan%d: won't stop!\n", uc->id);
+			ret = -EBUSY;
 			goto err_res_free;
 		}
 	}
@@ -1925,8 +1907,6 @@ static int udma_alloc_chan_resources(struct dma_chan *chan)
 
 	udma_reset_rings(uc);
 
-	INIT_DELAYED_WORK_ONSTACK(&uc->tx_drain.work,
-				  udma_check_tx_completion);
 	return 0;
 
 err_irq_free:
@@ -1938,7 +1918,7 @@ err_psi_free:
 err_res_free:
 	udma_free_tx_resources(uc);
 	udma_free_rx_resources(uc);
-
+err_cleanup:
 	udma_reset_uchan(uc);
 
 	if (uc->use_dma_pool) {
@@ -3038,7 +3018,6 @@ static void udma_free_chan_resources(struct dma_chan *chan)
 	}
 
 	cancel_delayed_work_sync(&uc->tx_drain.work);
-	destroy_delayed_work_on_stack(&uc->tx_drain.work);
 
 	if (uc->irq_num_ring > 0) {
 		free_irq(uc->irq_num_ring, uc);
@@ -3189,7 +3168,7 @@ static struct udma_match_data am654_main_data = {
 
 static struct udma_match_data am654_mcu_data = {
 	.psil_base = 0x6000,
-	.enable_memcpy_support = true, /* TEST: DMA domains */
+	.enable_memcpy_support = false,
 	.statictr_z_mask = GENMASK(11, 0),
 	.rchan_oes_offset = 0x2000,
 	.tpl_levels = 2,
@@ -3471,6 +3450,9 @@ static int udma_setup_rx_flush(struct udma_dev *ud)
 	tr_req->icnt0 = rx_flush->buffer_size;
 	tr_req->icnt1 = 1;
 
+	dma_sync_single_for_device(dev, hwdesc->cppi5_desc_paddr,
+				   hwdesc->cppi5_desc_size, DMA_TO_DEVICE);
+
 	/* Set up descriptor to be used for packet mode */
 	hwdesc = &rx_flush->hwdescs[1];
 	hwdesc->cppi5_desc_size = ALIGN(sizeof(struct cppi5_host_desc_t) +
@@ -3609,7 +3591,7 @@ static int udma_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	ret = of_property_read_u32(navss_node, "ti,udma-atype", &ud->atype);
+	ret = of_property_read_u32(dev->of_node, "ti,udma-atype", &ud->atype);
 	if (!ret && ud->atype > 2) {
 		dev_err(dev, "Invalid atype: %u\n", ud->atype);
 		return -EINVAL;
@@ -3727,6 +3709,7 @@ static int udma_probe(struct platform_device *pdev)
 		tasklet_init(&uc->vc.task, udma_vchan_complete,
 			     (unsigned long)&uc->vc);
 		init_completion(&uc->teardown_completed);
+		INIT_DELAYED_WORK(&uc->tx_drain.work, udma_check_tx_completion);
 	}
 
 	ret = dma_async_device_register(&ud->ddev);

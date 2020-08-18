@@ -135,8 +135,6 @@ static inline __be32 mptcp_option(u8 subopt, u8 len, u8 nib, u8 field)
 		     ((nib & 0xF) << 8) | field);
 }
 
-#define MPTCP_PM_MAX_ADDR	4
-
 struct mptcp_addr_info {
 	sa_family_t		family;
 	__be16			port;
@@ -234,10 +232,7 @@ static inline struct mptcp_data_frag *mptcp_rtx_head(const struct sock *sk)
 {
 	struct mptcp_sock *msk = mptcp_sk(sk);
 
-	if (list_empty(&msk->rtx_queue))
-		return NULL;
-
-	return list_first_entry(&msk->rtx_queue, struct mptcp_data_frag, list);
+	return list_first_entry_or_null(&msk->rtx_queue, struct mptcp_data_frag, list);
 }
 
 struct mptcp_subflow_request_sock {
@@ -254,6 +249,7 @@ struct mptcp_subflow_request_sock {
 	u64	thmac;
 	u32	local_nonce;
 	u32	remote_nonce;
+	struct mptcp_sock	*msk;
 };
 
 static inline struct mptcp_subflow_request_sock *
@@ -289,6 +285,7 @@ struct mptcp_subflow_context {
 		data_avail : 1,
 		rx_eof : 1,
 		data_fin_tx_enable : 1,
+		use_64bit_ack : 1, /* Set when we received a 64-bit DSN */
 		can_ack : 1;	    /* only after processing the remote a key */
 	u64	data_fin_tx_seq;
 	u32	remote_nonce;

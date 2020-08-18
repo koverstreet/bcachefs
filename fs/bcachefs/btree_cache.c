@@ -85,8 +85,8 @@ static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp)
 	if (!b->data)
 		return -ENOMEM;
 
-	b->aux_data = __vmalloc(btree_aux_data_bytes(b), gfp,
-				PAGE_KERNEL_EXEC);
+	b->aux_data = __vmalloc_node_range(btree_aux_data_bytes(b), 1, VMALLOC_START, VMALLOC_END,
+			gfp, PAGE_KERNEL_EXEC, 0, NUMA_NO_NODE, __builtin_return_address(0));
 	if (!b->aux_data) {
 		kvpfree(b->data, btree_bytes(c));
 		b->data = NULL;

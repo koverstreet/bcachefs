@@ -9,9 +9,6 @@
 
 #include <linux/pci.h>
 
-#define SET_CLK_PKT_TIMEOUT	1000000	/* 1s */
-#define SET_PWR_PKT_TIMEOUT	1000000	/* 1s */
-
 long hl_get_frequency(struct hl_device *hdev, u32 pll_index, bool curr)
 {
 	struct armcp_packet pkt;
@@ -29,7 +26,7 @@ long hl_get_frequency(struct hl_device *hdev, u32 pll_index, bool curr)
 	pkt.pll_index = cpu_to_le32(pll_index);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-						SET_CLK_PKT_TIMEOUT, &result);
+						0, &result);
 
 	if (rc) {
 		dev_err(hdev->dev,
@@ -54,7 +51,7 @@ void hl_set_frequency(struct hl_device *hdev, u32 pll_index, u64 freq)
 	pkt.value = cpu_to_le64(freq);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-					SET_CLK_PKT_TIMEOUT, NULL);
+						0, NULL);
 
 	if (rc)
 		dev_err(hdev->dev,
@@ -74,7 +71,7 @@ u64 hl_get_max_power(struct hl_device *hdev)
 				ARMCP_PKT_CTL_OPCODE_SHIFT);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-						SET_PWR_PKT_TIMEOUT, &result);
+						0, &result);
 
 	if (rc) {
 		dev_err(hdev->dev, "Failed to get max power, error %d\n", rc);
@@ -96,7 +93,7 @@ void hl_set_max_power(struct hl_device *hdev, u64 value)
 	pkt.value = cpu_to_le64(value);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-					SET_PWR_PKT_TIMEOUT, NULL);
+						0, NULL);
 
 	if (rc)
 		dev_err(hdev->dev, "Failed to set max power, error %d\n", rc);
@@ -183,6 +180,13 @@ static ssize_t soft_reset_store(struct device *dev,
 		goto out;
 	}
 
+	if (!hdev->supports_soft_reset) {
+		dev_err(hdev->dev, "Device does not support soft-reset\n");
+		goto out;
+	}
+
+	dev_warn(hdev->dev, "Soft-Reset requested through sysfs\n");
+
 	hl_device_reset(hdev, false, false);
 
 out:
@@ -204,6 +208,8 @@ static ssize_t hard_reset_store(struct device *dev,
 		goto out;
 	}
 
+	dev_warn(hdev->dev, "Hard-Reset requested through sysfs\n");
+
 	hl_device_reset(hdev, true, false);
 
 out:
@@ -219,6 +225,9 @@ static ssize_t device_type_show(struct device *dev,
 	switch (hdev->asic_type) {
 	case ASIC_GOYA:
 		str = "GOYA";
+		break;
+	case ASIC_GAUDI:
+		str = "GAUDI";
 		break;
 	default:
 		dev_err(hdev->dev, "Unrecognized ASIC type %d\n",
@@ -406,7 +415,10 @@ int hl_sysfs_init(struct hl_device *hdev)
 {
 	int rc;
 
-	hdev->pm_mng_profile = PM_AUTO;
+	if (hdev->asic_type == ASIC_GOYA)
+		hdev->pm_mng_profile = PM_AUTO;
+	else
+		hdev->pm_mng_profile = PM_MANUAL;
 	hdev->max_power = hdev->asic_prop.max_power_default;
 
 	hdev->asic_funcs->add_device_attr(hdev, &hl_dev_clks_attr_group);

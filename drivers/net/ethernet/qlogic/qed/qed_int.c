@@ -96,6 +96,7 @@ struct aeu_invert_reg_bit {
 #define ATTENTION_BB(value)             (value << ATTENTION_BB_SHIFT)
 #define ATTENTION_BB_DIFFERENT          BIT(23)
 
+#define ATTENTION_CLEAR_ENABLE          BIT(28)
 	unsigned int flags;
 
 	/* Callback to call if attention will be triggered */
@@ -256,9 +257,10 @@ out:
 #define PGLUE_ATTENTION_ZLR_VALID		(1 << 25)
 #define PGLUE_ATTENTION_ILT_VALID		(1 << 23)
 
-int qed_pglueb_rbc_attn_handler(struct qed_hwfn *p_hwfn,
-				struct qed_ptt *p_ptt)
+int qed_pglueb_rbc_attn_handler(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt,
+				bool hw_init)
 {
+	char msg[256];
 	u32 tmp;
 
 	tmp = qed_rd(p_hwfn, p_ptt, PGLUE_B_REG_TX_ERR_WR_DETAILS2);
@@ -272,22 +274,23 @@ int qed_pglueb_rbc_attn_handler(struct qed_hwfn *p_hwfn,
 		details = qed_rd(p_hwfn, p_ptt,
 				 PGLUE_B_REG_TX_ERR_WR_DETAILS);
 
-		DP_NOTICE(p_hwfn,
-			  "Illegal write by chip to [%08x:%08x] blocked.\n"
-			  "Details: %08x [PFID %02x, VFID %02x, VF_VALID %02x]\n"
-			  "Details2 %08x [Was_error %02x BME deassert %02x FID_enable deassert %02x]\n",
-			  addr_hi, addr_lo, details,
-			  (u8)GET_FIELD(details, PGLUE_ATTENTION_DETAILS_PFID),
-			  (u8)GET_FIELD(details, PGLUE_ATTENTION_DETAILS_VFID),
-			  GET_FIELD(details,
-				    PGLUE_ATTENTION_DETAILS_VF_VALID) ? 1 : 0,
-			  tmp,
-			  GET_FIELD(tmp,
-				    PGLUE_ATTENTION_DETAILS2_WAS_ERR) ? 1 : 0,
-			  GET_FIELD(tmp,
-				    PGLUE_ATTENTION_DETAILS2_BME) ? 1 : 0,
-			  GET_FIELD(tmp,
-				    PGLUE_ATTENTION_DETAILS2_FID_EN) ? 1 : 0);
+		snprintf(msg, sizeof(msg),
+			 "Illegal write by chip to [%08x:%08x] blocked.\n"
+			 "Details: %08x [PFID %02x, VFID %02x, VF_VALID %02x]\n"
+			 "Details2 %08x [Was_error %02x BME deassert %02x FID_enable deassert %02x]",
+			 addr_hi, addr_lo, details,
+			 (u8)GET_FIELD(details, PGLUE_ATTENTION_DETAILS_PFID),
+			 (u8)GET_FIELD(details, PGLUE_ATTENTION_DETAILS_VFID),
+			 !!GET_FIELD(details, PGLUE_ATTENTION_DETAILS_VF_VALID),
+			 tmp,
+			 !!GET_FIELD(tmp, PGLUE_ATTENTION_DETAILS2_WAS_ERR),
+			 !!GET_FIELD(tmp, PGLUE_ATTENTION_DETAILS2_BME),
+			 !!GET_FIELD(tmp, PGLUE_ATTENTION_DETAILS2_FID_EN));
+
+		if (hw_init)
+			DP_VERBOSE(p_hwfn, NETIF_MSG_INTR, "%s\n", msg);
+		else
+			DP_NOTICE(p_hwfn, "%s\n", msg);
 	}
 
 	tmp = qed_rd(p_hwfn, p_ptt, PGLUE_B_REG_TX_ERR_RD_DETAILS2);
@@ -320,8 +323,14 @@ int qed_pglueb_rbc_attn_handler(struct qed_hwfn *p_hwfn,
 	}
 
 	tmp = qed_rd(p_hwfn, p_ptt, PGLUE_B_REG_TX_ERR_WR_DETAILS_ICPL);
-	if (tmp & PGLUE_ATTENTION_ICPL_VALID)
-		DP_NOTICE(p_hwfn, "ICPL error - %08x\n", tmp);
+	if (tmp & PGLUE_ATTENTION_ICPL_VALID) {
+		snprintf(msg, sizeof(msg), "ICPL error - %08x", tmp);
+
+		if (hw_init)
+			DP_VERBOSE(p_hwfn, NETIF_MSG_INTR, "%s\n", msg);
+		else
+			DP_NOTICE(p_hwfn, "%s\n", msg);
+	}
 
 	tmp = qed_rd(p_hwfn, p_ptt, PGLUE_B_REG_MASTER_ZLR_ERR_DETAILS);
 	if (tmp & PGLUE_ATTENTION_ZLR_VALID) {
@@ -360,7 +369,22 @@ int qed_pglueb_rbc_attn_handler(struct qed_hwfn *p_hwfn,
 
 static int qed_pglueb_rbc_attn_cb(struct qed_hwfn *p_hwfn)
 {
-	return qed_pglueb_rbc_attn_handler(p_hwfn, p_hwfn->p_dpc_ptt);
+	return qed_pglueb_rbc_attn_handler(p_hwfn, p_hwfn->p_dpc_ptt, false);
+}
+
+static int qed_fw_assertion(struct qed_hwfn *p_hwfn)
+{
+	qed_hw_err_notify(p_hwfn, p_hwfn->p_dpc_ptt, QED_HW_ERR_FW_ASSERT,
+			  "FW assertion!\n");
+
+	return -EINVAL;
+}
+
+static int qed_general_attention_35(struct qed_hwfn *p_hwfn)
+{
+	DP_INFO(p_hwfn, "General attention 35!\n");
+
+	return 0;
 }
 
 #define QED_DORQ_ATTENTION_REASON_MASK  (0xfffff)
@@ -605,13 +629,15 @@ static struct aeu_invert_reg aeu_descs[NUM_ATTN_REGS] = {
 
 	{
 		{       /* After Invert 4 */
-			{"General Attention 32", ATTENTION_SINGLE,
-			 NULL, MAX_BLOCK_ID},
+			{"General Attention 32", ATTENTION_SINGLE |
+			 ATTENTION_CLEAR_ENABLE, qed_fw_assertion,
+			 MAX_BLOCK_ID},
 			{"General Attention %d",
 			 (2 << ATTENTION_LENGTH_SHIFT) |
 			 (33 << ATTENTION_OFFSET_SHIFT), NULL, MAX_BLOCK_ID},
-			{"General Attention 35", ATTENTION_SINGLE,
-			 NULL, MAX_BLOCK_ID},
+			{"General Attention 35", ATTENTION_SINGLE |
+			 ATTENTION_CLEAR_ENABLE, qed_general_attention_35,
+			 MAX_BLOCK_ID},
 			{"NWS Parity",
 			 ATTENTION_PAR | ATTENTION_BB_DIFFERENT |
 			 ATTENTION_BB(AEU_INVERT_REG_SPECIAL_CNIG_0),
@@ -927,9 +953,12 @@ qed_int_deassertion_aeu_bit(struct qed_hwfn *p_hwfn,
 		qed_int_attn_print(p_hwfn, p_aeu->block_index,
 				   ATTN_TYPE_INTERRUPT, !b_fatal);
 
-
-	/* If the attention is benign, no need to prevent it */
-	if (!rc)
+	/* Reach assertion if attention is fatal */
+	if (b_fatal)
+		qed_hw_err_notify(p_hwfn, p_hwfn->p_dpc_ptt, QED_HW_ERR_HW_ATTN,
+				  "`%s': Fatal attention\n",
+				  p_bit_name);
+	else /* If the attention is benign, no need to prevent it */
 		goto out;
 
 	/* Prevent this Attention from being asserted in the future */
@@ -1172,7 +1201,8 @@ static int qed_int_attentions(struct qed_hwfn *p_hwfn)
 			index, attn_bits, attn_acks, asserted_bits,
 			deasserted_bits, p_sb_attn_sw->known_attn);
 	} else if (asserted_bits == 0x100) {
-		DP_INFO(p_hwfn, "MFW indication via attention\n");
+		DP_VERBOSE(p_hwfn, NETIF_MSG_INTR,
+			   "MFW indication via attention\n");
 	} else {
 		DP_VERBOSE(p_hwfn, NETIF_MSG_INTR,
 			   "MFW indication [deassertion]\n");
@@ -2347,6 +2377,11 @@ void qed_int_disable_post_isr_release(struct qed_dev *cdev)
 
 	for_each_hwfn(cdev, i)
 		cdev->hwfns[i].b_int_requested = false;
+}
+
+void qed_int_attn_clr_enable(struct qed_dev *cdev, bool clr_enable)
+{
+	cdev->attn_clr_en = clr_enable;
 }
 
 int qed_int_set_timer_res(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt,

@@ -24,7 +24,7 @@
 #include <linux/backing-dev.h>
 #include <linux/falloc.h>
 #include <linux/migrate.h>
-#include <linux/mmu_context.h>
+#include <linux/kthread.h>
 #include <linux/pagevec.h>
 #include <linux/sched/signal.h>
 #include <linux/task_io_accounting_ops.h>
@@ -1819,7 +1819,7 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 
 	while (1) {
 		if (kthread)
-			use_mm(dio->mm);
+			kthread_use_mm(dio->mm);
 		BUG_ON(current->faults_disabled_mapping);
 		current->faults_disabled_mapping = mapping;
 
@@ -1827,7 +1827,7 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 
 		current->faults_disabled_mapping = NULL;
 		if (kthread)
-			unuse_mm(dio->mm);
+			kthread_unuse_mm(dio->mm);
 
 		if (unlikely(ret < 0))
 			goto err;

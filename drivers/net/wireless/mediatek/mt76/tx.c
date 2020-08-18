@@ -101,19 +101,17 @@ mt76_tx_status_lock(struct mt76_dev *dev, struct sk_buff_head *list)
 {
 	__skb_queue_head_init(list);
 	spin_lock_bh(&dev->status_list.lock);
-	__acquire(&dev->status_list.lock);
 }
 EXPORT_SYMBOL_GPL(mt76_tx_status_lock);
 
 void
 mt76_tx_status_unlock(struct mt76_dev *dev, struct sk_buff_head *list)
-		      __releases(&dev->status_list.unlock)
+		      __releases(&dev->status_list.lock)
 {
 	struct ieee80211_hw *hw;
 	struct sk_buff *skb;
 
 	spin_unlock_bh(&dev->status_list.lock);
-	__release(&dev->status_list.unlock);
 
 	while ((skb = __skb_dequeue(list)) != NULL) {
 		hw = mt76_tx_status_get_hw(dev, skb);
@@ -263,6 +261,13 @@ mt76_tx(struct mt76_phy *phy, struct ieee80211_sta *sta,
 
 	if (WARN_ON(qid >= MT_TXQ_PSD)) {
 		qid = MT_TXQ_BE;
+		skb_set_queue_mapping(skb, qid);
+	}
+
+	if ((dev->drv->drv_flags & MT_DRV_HW_MGMT_TXQ) &&
+	    !ieee80211_is_data(hdr->frame_control) &&
+	    !ieee80211_is_bufferable_mmpdu(hdr->frame_control)) {
+		qid = MT_TXQ_PSD;
 		skb_set_queue_mapping(skb, qid);
 	}
 

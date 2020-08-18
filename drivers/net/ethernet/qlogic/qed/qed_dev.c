@@ -980,7 +980,7 @@ int qed_llh_add_mac_filter(struct qed_dev *cdev,
 	struct qed_hwfn *p_hwfn = QED_LEADING_HWFN(cdev);
 	struct qed_ptt *p_ptt = qed_ptt_acquire(p_hwfn);
 	union qed_llh_filter filter = {};
-	u8 filter_idx, abs_ppfid;
+	u8 filter_idx, abs_ppfid = 0;
 	u32 high, low, ref_cnt;
 	int rc = 0;
 
@@ -1368,6 +1368,8 @@ static void qed_dbg_user_data_free(struct qed_hwfn *p_hwfn)
 
 void qed_resc_free(struct qed_dev *cdev)
 {
+	struct qed_rdma_info *rdma_info;
+	struct qed_hwfn *p_hwfn;
 	int i;
 
 	if (IS_VF(cdev)) {
@@ -1385,7 +1387,8 @@ void qed_resc_free(struct qed_dev *cdev)
 	qed_llh_free(cdev);
 
 	for_each_hwfn(cdev, i) {
-		struct qed_hwfn *p_hwfn = &cdev->hwfns[i];
+		p_hwfn = cdev->hwfns + i;
+		rdma_info = p_hwfn->p_rdma_info;
 
 		qed_cxt_mngr_free(p_hwfn);
 		qed_qm_info_free(p_hwfn);
@@ -1404,8 +1407,10 @@ void qed_resc_free(struct qed_dev *cdev)
 			qed_ooo_free(p_hwfn);
 		}
 
-		if (QED_IS_RDMA_PERSONALITY(p_hwfn))
+		if (QED_IS_RDMA_PERSONALITY(p_hwfn) && rdma_info) {
+			qed_spq_unregister_async_cb(p_hwfn, rdma_info->proto);
 			qed_rdma_info_free(p_hwfn);
+		}
 
 		qed_iov_free(p_hwfn);
 		qed_l2_free(p_hwfn);
@@ -1972,7 +1977,7 @@ static int qed_init_qm_sanity(struct qed_hwfn *p_hwfn)
 		return 0;
 
 	if (QED_IS_ROCE_PERSONALITY(p_hwfn)) {
-		p_hwfn->hw_info.multi_tc_roce_en = 0;
+		p_hwfn->hw_info.multi_tc_roce_en = false;
 		DP_NOTICE(p_hwfn,
 			  "multi-tc roce was disabled to reduce requested amount of pqs\n");
 		if (qed_init_qm_get_num_pqs(p_hwfn) <= RESC_NUM(p_hwfn, QED_PQ))
@@ -2269,6 +2274,7 @@ int qed_resc_alloc(struct qed_dev *cdev)
 		/* EQ */
 		n_eqes = qed_chain_get_capacity(&p_hwfn->p_spq->chain);
 		if (QED_IS_RDMA_PERSONALITY(p_hwfn)) {
+			u32 n_srq = qed_cxt_get_total_srq_count(p_hwfn);
 			enum protocol_type rdma_proto;
 
 			if (QED_IS_ROCE_PERSONALITY(p_hwfn))
@@ -2279,7 +2285,10 @@ int qed_resc_alloc(struct qed_dev *cdev)
 			num_cons = qed_cxt_get_proto_cid_count(p_hwfn,
 							       rdma_proto,
 							       NULL) * 2;
-			n_eqes += num_cons + 2 * MAX_NUM_VFS_BB;
+			/* EQ should be able to get events from all SRQ's
+			 * at the same time
+			 */
+			n_eqes += num_cons + 2 * MAX_NUM_VFS_BB + n_srq;
 		} else if (p_hwfn->hw_info.personality == QED_PCI_ISCSI) {
 			num_cons =
 			    qed_cxt_get_proto_cid_count(p_hwfn,
@@ -3085,13 +3094,15 @@ int qed_hw_init(struct qed_dev *cdev, struct qed_hw_init_params *p_params)
 			rc = qed_final_cleanup(p_hwfn, p_hwfn->p_main_ptt,
 					       p_hwfn->rel_pf_id, false);
 			if (rc) {
-				DP_NOTICE(p_hwfn, "Final cleanup failed\n");
+				qed_hw_err_notify(p_hwfn, p_hwfn->p_main_ptt,
+						  QED_HW_ERR_RAMROD_FAIL,
+						  "Final cleanup failed\n");
 				goto load_err;
 			}
 		}
 
 		/* Log and clear previous pglue_b errors if such exist */
-		qed_pglueb_rbc_attn_handler(p_hwfn, p_hwfn->p_main_ptt);
+		qed_pglueb_rbc_attn_handler(p_hwfn, p_hwfn->p_main_ptt, true);
 
 		/* Enable the PF's internal FID_enable in the PXP */
 		rc = qed_pglueb_set_pfid_enable(p_hwfn, p_hwfn->p_main_ptt,
@@ -4392,7 +4403,7 @@ qed_get_hw_info(struct qed_hwfn *p_hwfn,
 	}
 
 	if (QED_IS_ROCE_PERSONALITY(p_hwfn))
-		p_hwfn->hw_info.multi_tc_roce_en = 1;
+		p_hwfn->hw_info.multi_tc_roce_en = true;
 
 	p_hwfn->hw_info.num_hw_tc = NUM_PHYS_TCS_4PORT_K2;
 	p_hwfn->hw_info.num_active_tc = 1;
@@ -4459,12 +4470,6 @@ static int qed_get_dev_info(struct qed_hwfn *p_hwfn, struct qed_ptt *p_ptt)
 		cdev->chip_bond_id, cdev->chip_metal);
 
 	return 0;
-}
-
-static void qed_nvm_info_free(struct qed_hwfn *p_hwfn)
-{
-	kfree(p_hwfn->nvm_info.image_att);
-	p_hwfn->nvm_info.image_att = NULL;
 }
 
 static int qed_hw_prepare_single(struct qed_hwfn *p_hwfn,
@@ -4551,7 +4556,7 @@ static int qed_hw_prepare_single(struct qed_hwfn *p_hwfn,
 	return rc;
 err3:
 	if (IS_LEAD_HWFN(p_hwfn))
-		qed_nvm_info_free(p_hwfn);
+		qed_mcp_nvm_info_free(p_hwfn);
 err2:
 	if (IS_LEAD_HWFN(p_hwfn))
 		qed_iov_free_hw_info(p_hwfn->cdev);
@@ -4612,7 +4617,7 @@ int qed_hw_prepare(struct qed_dev *cdev,
 		if (rc) {
 			if (IS_PF(cdev)) {
 				qed_init_free(p_hwfn);
-				qed_nvm_info_free(p_hwfn);
+				qed_mcp_nvm_info_free(p_hwfn);
 				qed_mcp_free(p_hwfn);
 				qed_hw_hwfn_free(p_hwfn);
 			}
@@ -4646,7 +4651,7 @@ void qed_hw_remove(struct qed_dev *cdev)
 
 	qed_iov_free_hw_info(cdev);
 
-	qed_nvm_info_free(p_hwfn);
+	qed_mcp_nvm_info_free(p_hwfn);
 }
 
 static void qed_chain_free_next_ptr(struct qed_dev *cdev,

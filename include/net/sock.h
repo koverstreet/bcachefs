@@ -533,7 +533,8 @@ enum sk_pacing {
  * be copied.
  */
 #define SK_USER_DATA_NOCOPY	1UL
-#define SK_USER_DATA_PTRMASK	~(SK_USER_DATA_NOCOPY)
+#define SK_USER_DATA_BPF	2UL	/* Managed by BPF */
+#define SK_USER_DATA_PTRMASK	~(SK_USER_DATA_NOCOPY | SK_USER_DATA_BPF)
 
 /**
  * sk_user_data_is_nocopy - Test if sk_user_data pointer must not be copied
@@ -1156,7 +1157,9 @@ struct proto {
 	int			(*sendpage)(struct sock *sk, struct page *page,
 					int offset, size_t size, int flags);
 	int			(*bind)(struct sock *sk,
-					struct sockaddr *uaddr, int addr_len);
+					struct sockaddr *addr, int addr_len);
+	int			(*bind_add)(struct sock *sk,
+					struct sockaddr *addr, int addr_len);
 
 	int			(*backlog_rcv) (struct sock *sk,
 						struct sk_buff *skb);
@@ -1846,7 +1849,6 @@ static inline int sk_rx_queue_get(const struct sock *sk)
 
 static inline void sk_set_socket(struct sock *sk, struct socket *sock)
 {
-	sk_tx_queue_clear(sk);
 	sk->sk_socket = sock;
 }
 
@@ -2687,5 +2689,17 @@ static inline bool sk_dev_equal_l3scope(struct sock *sk, int dif)
 }
 
 void sock_def_readable(struct sock *sk);
+
+int sock_bindtoindex(struct sock *sk, int ifindex, bool lock_sk);
+void sock_enable_timestamps(struct sock *sk);
+void sock_no_linger(struct sock *sk);
+void sock_set_keepalive(struct sock *sk);
+void sock_set_priority(struct sock *sk, u32 priority);
+void sock_set_rcvbuf(struct sock *sk, int val);
+void sock_set_reuseaddr(struct sock *sk);
+void sock_set_reuseport(struct sock *sk);
+void sock_set_sndtimeo(struct sock *sk, s64 secs);
+
+int sock_bind_add(struct sock *sk, struct sockaddr *addr, int addr_len);
 
 #endif	/* _SOCK_H */

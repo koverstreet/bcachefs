@@ -779,13 +779,6 @@ static int max98373_probe(struct snd_soc_component *component)
 	regmap_write(max98373->regmap,
 		MAX98373_R202A_PCM_TO_SPK_MONO_MIX_2,
 		0x1);
-	/* Set inital volume (0dB) */
-	regmap_write(max98373->regmap,
-		MAX98373_R203D_AMP_DIG_VOL_CTRL,
-		0x00);
-	regmap_write(max98373->regmap,
-		MAX98373_R203E_AMP_PATH_GAIN,
-		0x00);
 	/* Enable DC blocker */
 	regmap_write(max98373->regmap,
 		MAX98373_R203F_AMP_DSP_CFG,
@@ -850,8 +843,8 @@ static int max98373_resume(struct device *dev)
 {
 	struct max98373_priv *max98373 = dev_get_drvdata(dev);
 
-	max98373_reset(max98373, dev);
 	regcache_cache_only(max98373->regmap, false);
+	max98373_reset(max98373, dev);
 	regcache_sync(max98373->regmap);
 	return 0;
 }
@@ -869,7 +862,6 @@ static const struct snd_soc_component_driver soc_codec_dev_max98373 = {
 	.num_dapm_widgets	= ARRAY_SIZE(max98373_dapm_widgets),
 	.dapm_routes		= max98373_audio_map,
 	.num_dapm_routes	= ARRAY_SIZE(max98373_audio_map),
-	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
 	.non_legacy_dai_naming	= 1,

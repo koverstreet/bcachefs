@@ -36,7 +36,7 @@ static int hl_debugfs_i2c_read(struct hl_device *hdev, u8 i2c_bus, u8 i2c_addr,
 	pkt.i2c_reg = i2c_reg;
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-					HL_DEVICE_TIMEOUT_USEC, (long *) val);
+						0, (long *) val);
 
 	if (rc)
 		dev_err(hdev->dev, "Failed to read from I2C, error %d\n", rc);
@@ -63,7 +63,7 @@ static int hl_debugfs_i2c_write(struct hl_device *hdev, u8 i2c_bus, u8 i2c_addr,
 	pkt.value = cpu_to_le64(val);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-					HL_DEVICE_TIMEOUT_USEC, NULL);
+						0, NULL);
 
 	if (rc)
 		dev_err(hdev->dev, "Failed to write to I2C, error %d\n", rc);
@@ -87,7 +87,7 @@ static void hl_debugfs_led_set(struct hl_device *hdev, u8 led, u8 state)
 	pkt.value = cpu_to_le64(state);
 
 	rc = hdev->asic_funcs->send_cpu_message(hdev, (u32 *) &pkt, sizeof(pkt),
-						HL_DEVICE_TIMEOUT_USEC, NULL);
+						0, NULL);
 
 	if (rc)
 		dev_err(hdev->dev, "Failed to set LED %d, error %d\n", led, rc);
@@ -480,7 +480,7 @@ out:
 	return 0;
 }
 
-static ssize_t mmu_write(struct file *file, const char __user *buf,
+static ssize_t mmu_asid_va_write(struct file *file, const char __user *buf,
 		size_t count, loff_t *f_pos)
 {
 	struct seq_file *s = file->private_data;
@@ -970,6 +970,91 @@ static ssize_t hl_device_write(struct file *f, const char __user *buf,
 	return count;
 }
 
+static ssize_t hl_clk_gate_read(struct file *f, char __user *buf,
+					size_t count, loff_t *ppos)
+{
+	struct hl_dbg_device_entry *entry = file_inode(f)->i_private;
+	struct hl_device *hdev = entry->hdev;
+	char tmp_buf[200];
+	ssize_t rc;
+
+	if (*ppos)
+		return 0;
+
+	sprintf(tmp_buf, "0x%llx\n", hdev->clock_gating_mask);
+	rc = simple_read_from_buffer(buf, strlen(tmp_buf) + 1, ppos, tmp_buf,
+			strlen(tmp_buf) + 1);
+
+	return rc;
+}
+
+static ssize_t hl_clk_gate_write(struct file *f, const char __user *buf,
+				     size_t count, loff_t *ppos)
+{
+	struct hl_dbg_device_entry *entry = file_inode(f)->i_private;
+	struct hl_device *hdev = entry->hdev;
+	u64 value;
+	ssize_t rc;
+
+	if (atomic_read(&hdev->in_reset)) {
+		dev_warn_ratelimited(hdev->dev,
+				"Can't change clock gating during reset\n");
+		return 0;
+	}
+
+	rc = kstrtoull_from_user(buf, count, 16, &value);
+	if (rc)
+		return rc;
+
+	hdev->clock_gating_mask = value;
+	hdev->asic_funcs->set_clock_gating(hdev);
+
+	return count;
+}
+
+static ssize_t hl_stop_on_err_read(struct file *f, char __user *buf,
+					size_t count, loff_t *ppos)
+{
+	struct hl_dbg_device_entry *entry = file_inode(f)->i_private;
+	struct hl_device *hdev = entry->hdev;
+	char tmp_buf[200];
+	ssize_t rc;
+
+	if (*ppos)
+		return 0;
+
+	sprintf(tmp_buf, "%d\n", hdev->stop_on_err);
+	rc = simple_read_from_buffer(buf, strlen(tmp_buf) + 1, ppos, tmp_buf,
+			strlen(tmp_buf) + 1);
+
+	return rc;
+}
+
+static ssize_t hl_stop_on_err_write(struct file *f, const char __user *buf,
+				     size_t count, loff_t *ppos)
+{
+	struct hl_dbg_device_entry *entry = file_inode(f)->i_private;
+	struct hl_device *hdev = entry->hdev;
+	u32 value;
+	ssize_t rc;
+
+	if (atomic_read(&hdev->in_reset)) {
+		dev_warn_ratelimited(hdev->dev,
+				"Can't change stop on error during reset\n");
+		return 0;
+	}
+
+	rc = kstrtouint_from_user(buf, count, 10, &value);
+	if (rc)
+		return rc;
+
+	hdev->stop_on_err = value ? 1 : 0;
+
+	hl_device_reset(hdev, false, false);
+
+	return count;
+}
+
 static const struct file_operations hl_data32b_fops = {
 	.owner = THIS_MODULE,
 	.read = hl_data_read32,
@@ -1015,13 +1100,25 @@ static const struct file_operations hl_device_fops = {
 	.write = hl_device_write
 };
 
+static const struct file_operations hl_clk_gate_fops = {
+	.owner = THIS_MODULE,
+	.read = hl_clk_gate_read,
+	.write = hl_clk_gate_write
+};
+
+static const struct file_operations hl_stop_on_err_fops = {
+	.owner = THIS_MODULE,
+	.read = hl_stop_on_err_read,
+	.write = hl_stop_on_err_write
+};
+
 static const struct hl_info_list hl_debugfs_list[] = {
 	{"command_buffers", command_buffers_show, NULL},
 	{"command_submission", command_submission_show, NULL},
 	{"command_submission_jobs", command_submission_jobs_show, NULL},
 	{"userptr", userptr_show, NULL},
 	{"vm", vm_show, NULL},
-	{"mmu", mmu_show, mmu_write},
+	{"mmu", mmu_show, mmu_asid_va_write},
 	{"engines", engines_show, NULL}
 };
 
@@ -1151,6 +1248,18 @@ void hl_debugfs_add_device(struct hl_device *hdev)
 				dev_entry->root,
 				dev_entry,
 				&hl_device_fops);
+
+	debugfs_create_file("clk_gate",
+				0200,
+				dev_entry->root,
+				dev_entry,
+				&hl_clk_gate_fops);
+
+	debugfs_create_file("stop_on_err",
+				0644,
+				dev_entry->root,
+				dev_entry,
+				&hl_stop_on_err_fops);
 
 	for (i = 0, entry = dev_entry->entry_arr ; i < count ; i++, entry++) {
 

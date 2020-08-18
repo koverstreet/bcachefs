@@ -22,6 +22,8 @@
 #include "super.h"
 #include "xattr.h"
 
+#include <linux/fiemap.h>
+#include <uapi/linux/fiemap.h>
 #include <linux/aio.h>
 #include <linux/backing-dev.h>
 #include <linux/exportfs.h>
