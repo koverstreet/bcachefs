@@ -2112,6 +2112,9 @@ static int check_direct_IO(struct inode *inode, struct iov_iter *iter,
 {
 	unsigned blocksize_mask = inode->i_sb->s_blocksize - 1;
 
+	if (iov_iter_rw(iter) == READ && offset >= i_size_read(inode))
+		return 1;
+
 	if (offset & blocksize_mask)
 		return -EINVAL;
 
