@@ -3423,6 +3423,27 @@ void *vzalloc_node(unsigned long size, int node)
 }
 EXPORT_SYMBOL(vzalloc_node);
 
+/**
+ * vmalloc_exec - allocate virtually contiguous, executable memory
+ * @size:	  allocation size
+ *
+ * Kernel-internal function to allocate enough pages to cover @size
+ * the page level allocator and map them into contiguous and
+ * executable kernel virtual space.
+ *
+ * For tight control over page level allocator and protection flags
+ * use __vmalloc() instead.
+ *
+ * Return: pointer to the allocated memory or %NULL on error
+ */
+void *vmalloc_exec(unsigned long size, gfp_t gfp_mask)
+{
+	return __vmalloc_node_range(size, 1, VMALLOC_START, VMALLOC_END,
+			gfp_mask, PAGE_KERNEL_EXEC, VM_FLUSH_RESET_PERMS,
+			NUMA_NO_NODE, __builtin_return_address(0));
+}
+EXPORT_SYMBOL_GPL(vmalloc_exec);
+
 #if defined(CONFIG_64BIT) && defined(CONFIG_ZONE_DMA32)
 #define GFP_VMALLOC32 (GFP_DMA32 | GFP_KERNEL)
 #elif defined(CONFIG_64BIT) && defined(CONFIG_ZONE_DMA)
