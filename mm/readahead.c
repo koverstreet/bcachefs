@@ -114,7 +114,9 @@ int read_cache_pages(struct address_space *mapping, struct list_head *pages,
 
 EXPORT_SYMBOL(read_cache_pages);
 
-static void read_pages(struct readahead_control *rac, struct list_head *pages,
+/* Old path: .readpages or .readpage */
+
+static void readpages_read_pages(struct readahead_control *rac, struct list_head *pages,
 		bool skip_page)
 {
 	const struct address_space_operations *aops = rac->mapping->a_ops;
@@ -126,14 +128,7 @@ static void read_pages(struct readahead_control *rac, struct list_head *pages,
 
 	blk_start_plug(&plug);
 
-	if (aops->readahead) {
-		aops->readahead(rac);
-		/* Clean up the remaining pages */
-		while ((page = readahead_page(rac))) {
-			unlock_page(page);
-			put_page(page);
-		}
-	} else if (aops->readpages) {
+	if (aops->readpages) {
 		aops->readpages(rac->file, rac->mapping, pages,
 				readahead_count(rac));
 		/* Clean up the remaining pages */
@@ -157,6 +152,144 @@ out:
 		rac->_index++;
 }
 
+static void readpages_page_cache_readahead_unbounded(struct address_space *mapping,
+		struct file *file, pgoff_t index, unsigned long nr_to_read,
+		unsigned long lookahead_size)
+{
+	LIST_HEAD(page_pool);
+	gfp_t gfp_mask = readahead_gfp_mask(mapping);
+	struct readahead_control rac = {
+		.mapping = mapping,
+		.file = file,
+		._index = index,
+	};
+	unsigned long i;
+
+	/*
+	 * Preallocate as many pages as we will need.
+	 */
+	for (i = 0; i < nr_to_read; i++) {
+		struct page *page = xa_load(&mapping->i_pages, index + i);
+
+		BUG_ON(index + i != rac._index + rac._nr_pages);
+
+		if (page && !xa_is_value(page)) {
+			/*
+			 * Page already present?  Kick off the current batch
+			 * of contiguous pages before continuing with the
+			 * next batch.  This page may be the one we would
+			 * have intended to mark as Readahead, but we don't
+			 * have a stable reference to this page, and it's
+			 * not worth getting one just for that.
+			 */
+			readpages_read_pages(&rac, &page_pool, true);
+			continue;
+		}
+
+		page = __page_cache_alloc(gfp_mask);
+		if (!page)
+			break;
+
+		page->index = index + i;
+		list_add(&page->lru, &page_pool);
+		if (i == nr_to_read - lookahead_size)
+			SetPageReadahead(page);
+		rac._nr_pages++;
+	}
+
+	/*
+	 * Now start the IO.  We ignore I/O errors - if the page is not
+	 * uptodate then the caller will launch readpage again, and
+	 * will then handle the error.
+	 */
+	readpages_read_pages(&rac, &page_pool, false);
+}
+
+/* New path: .readahead */
+
+static void readahead_read_pages(struct readahead_control *rac, bool skip_page)
+{
+	const struct address_space_operations *aops = rac->mapping->a_ops;
+	struct page *page;
+	struct blk_plug plug;
+
+	if (!readahead_count(rac))
+		goto out;
+
+	blk_start_plug(&plug);
+
+	aops->readahead(rac);
+	/* Clean up the remaining pages */
+	while ((page = readahead_page(rac))) {
+		unlock_page(page);
+		put_page(page);
+	}
+
+	blk_finish_plug(&plug);
+
+	BUG_ON(readahead_count(rac));
+
+out:
+	if (skip_page)
+		rac->_index++;
+}
+
+static void readahead_page_cache_readahead_unbounded(struct address_space *mapping,
+		struct file *file, pgoff_t index, unsigned long nr_to_read,
+		unsigned long lookahead_size)
+{
+	gfp_t gfp_mask = readahead_gfp_mask(mapping);
+	struct readahead_control rac = {
+		.mapping = mapping,
+		.file = file,
+		._index = index,
+	};
+	unsigned long i;
+
+	/*
+	 * Preallocate as many pages as we will need.
+	 */
+	for (i = 0; i < nr_to_read; i++) {
+		struct page *page = xa_load(&mapping->i_pages, index + i);
+
+		BUG_ON(index + i != rac._index + rac._nr_pages);
+
+		if (page && !xa_is_value(page)) {
+			/*
+			 * Page already present?  Kick off the current batch
+			 * of contiguous pages before continuing with the
+			 * next batch.  This page may be the one we would
+			 * have intended to mark as Readahead, but we don't
+			 * have a stable reference to this page, and it's
+			 * not worth getting one just for that.
+			 */
+			readahead_read_pages(&rac, true);
+			continue;
+		}
+
+		page = __page_cache_alloc(gfp_mask);
+		if (!page)
+			break;
+
+		if (add_to_page_cache_lru(page, mapping, index + i,
+					gfp_mask) < 0) {
+			put_page(page);
+			readahead_read_pages(&rac, true);
+			continue;
+		}
+		if (i == nr_to_read - lookahead_size)
+			SetPageReadahead(page);
+		rac._nr_pages++;
+	}
+
+	/*
+	 * Now start the IO.  We ignore I/O errors - if the page is not
+	 * uptodate then the caller will launch readpage again, and
+	 * will then handle the error.
+	 */
+	readahead_read_pages(&rac, false);
+}
+
 /**
  * page_cache_readahead_unbounded - Start unchecked readahead.
  * @mapping: File address space.
@@ -177,15 +310,6 @@ void page_cache_readahead_unbounded(struct address_space *mapping,
 		struct file *file, pgoff_t index, unsigned long nr_to_read,
 		unsigned long lookahead_size)
 {
-	LIST_HEAD(page_pool);
-	gfp_t gfp_mask = readahead_gfp_mask(mapping);
-	struct readahead_control rac = {
-		.mapping = mapping,
-		.file = file,
-		._index = index,
-	};
-	unsigned long i;
-
 	/*
 	 * Partway through the readahead operation, we will have added
 	 * locked pages to the page cache, but will not yet have submitted
@@ -198,50 +322,13 @@ void page_cache_readahead_unbounded(struct address_space *mapping,
 	 */
 	unsigned int nofs = memalloc_nofs_save();
 
-	/*
-	 * Preallocate as many pages as we will need.
-	 */
-	for (i = 0; i < nr_to_read; i++) {
-		struct page *page = xa_load(&mapping->i_pages, index + i);
+	if (mapping->a_ops->readahead)
+		readahead_page_cache_readahead_unbounded(mapping, file, index,
+							 nr_to_read, lookahead_size);
+	else
+		readpages_page_cache_readahead_unbounded(mapping, file, index,
+							 nr_to_read, lookahead_size);
 
-		BUG_ON(index + i != rac._index + rac._nr_pages);
-
-		if (page && !xa_is_value(page)) {
-			/*
-			 * Page already present?  Kick off the current batch
-			 * of contiguous pages before continuing with the
-			 * next batch.  This page may be the one we would
-			 * have intended to mark as Readahead, but we don't
-			 * have a stable reference to this page, and it's
-			 * not worth getting one just for that.
-			 */
-			read_pages(&rac, &page_pool, true);
-			continue;
-		}
-
-		page = __page_cache_alloc(gfp_mask);
-		if (!page)
-			break;
-		if (mapping->a_ops->readpages) {
-			page->index = index + i;
-			list_add(&page->lru, &page_pool);
-		} else if (add_to_page_cache_lru(page, mapping, index + i,
-					gfp_mask) < 0) {
-			put_page(page);
-			read_pages(&rac, &page_pool, true);
-			continue;
-		}
-		if (i == nr_to_read - lookahead_size)
-			SetPageReadahead(page);
-		rac._nr_pages++;
-	}
-
-	/*
-	 * Now start the IO.  We ignore I/O errors - if the page is not
-	 * uptodate then the caller will launch readpage again, and
-	 * will then handle the error.
-	 */
-	read_pages(&rac, &page_pool, false);
 	memalloc_nofs_restore(nofs);
 }
 EXPORT_SYMBOL_GPL(page_cache_readahead_unbounded);
