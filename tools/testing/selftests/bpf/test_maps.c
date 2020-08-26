@@ -951,6 +951,8 @@ static void run_parallel(int tasks, void (*fn)(int task, void *data),
 	pid_t pid[tasks];
 	int i;
 
+	fflush(stdout);
+
 	for (i = 0; i < tasks; i++) {
 		pid[i] = fork();
 		if (pid[i] == 0) {
