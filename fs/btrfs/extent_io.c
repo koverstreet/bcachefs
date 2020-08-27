@@ -4389,28 +4389,20 @@ void extent_readahead(struct readahead_control *rac)
 {
 	struct bio *bio = NULL;
 	unsigned long bio_flags = 0;
-	struct page *pagepool[16];
 	struct extent_map *em_cached = NULL;
 	u64 prev_em_start = (u64)-1;
-	int nr;
 
-	while ((nr = readahead_page_batch(rac, pagepool))) {
-		u64 contig_start = page_offset(pagepool[0]);
-		u64 contig_end = page_offset(pagepool[nr - 1]) + PAGE_SIZE - 1;
+	u64 contig_start = (u64) rac->index << PAGE_SHIFT;
+	u64 contig_end = ((u64) (rac->index + rac->nr) << PAGE_SHIFT) - 1;
 
-		ASSERT(contig_start + nr * PAGE_SIZE - 1 == contig_end);
-
-		contiguous_readpages(pagepool, nr, contig_start, contig_end,
-				&em_cached, &bio, &bio_flags, &prev_em_start);
-	}
+	contiguous_readpages(rac->pagevec, rac->nr, contig_start, contig_end,
+			     &em_cached, &bio, &bio_flags, &prev_em_start);
 
 	if (em_cached)
 		free_extent_map(em_cached);
 
-	if (bio) {
-		if (submit_one_bio(bio, 0, bio_flags))
-			return;
-	}
+	if (bio)
+		submit_one_bio(bio, 0, bio_flags);
 }
 
 /*

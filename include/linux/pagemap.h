@@ -689,10 +689,12 @@ void page_cache_readahead_unbounded(struct address_space *, struct file *,
 struct readahead_control {
 	struct file *file;
 	struct address_space *mapping;
-/* private: use the readahead_* accessors instead */
-	pgoff_t _index;
-	unsigned int _nr_pages;
-	unsigned int _batch_count;
+
+	pgoff_t		index;
+	unsigned int	nr;
+	unsigned int	size;
+	struct page	**pagevec;
+	struct page	*pagevec_onstack[8];
 };
 
 /**
@@ -760,20 +762,6 @@ static inline unsigned int __readahead_batch(struct readahead_control *rac,
 
 	return i;
 }
-
-/**
- * readahead_page_batch - Get a batch of pages to read.
- * @rac: The current readahead request.
- * @array: An array of pointers to struct page.
- *
- * Context: The pages are locked and have an elevated refcount.  The caller
- * should decreases the refcount once the page has been submitted for I/O
- * and unlock the page once all I/O to that page has completed.
- * Return: The number of pages placed in the array.  0 indicates the request
- * is complete.
- */
-#define readahead_page_batch(rac, array)				\
-	__readahead_batch(rac, array, ARRAY_SIZE(array))
 
 /**
  * readahead_pos - The byte offset into the file of this readahead request.

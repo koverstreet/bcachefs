@@ -1501,6 +1501,10 @@ void bch2_trans_fs_usage_apply(struct btree_trans *trans,
 	}
 }
 
+/*
+ * XXX account for compressed, uncompresed, incompressible sectors
+ */
+
 /* trans_mark: */
 
 static struct btree_iter *trans_get_update(struct btree_trans *trans,

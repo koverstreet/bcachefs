@@ -958,7 +958,7 @@ static void fuse_readahead(struct readahead_control *rac)
 			return;
 		ap = &ia->ap;
 		nr_pages = __readahead_batch(rac, ap->pages, nr_pages);
-		for (i = 0; i < nr_pages; i++) {
+		for (i = 0; i < rac->nr; i++) {
 			fuse_wait_on_page_writeback(inode,
 						    readahead_index(rac) + i);
 			ap->descs[i].length = PAGE_SIZE;

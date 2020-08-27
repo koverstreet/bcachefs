@@ -207,52 +207,55 @@ static void readpages_page_cache_readahead_unbounded(struct address_space *mappi
 
 /* New path: .readahead */
 
-static void readahead_read_pages(struct readahead_control *rac, bool skip_page)
+static void readahead_read_pages(struct readahead_control *rac)
 {
 	const struct address_space_operations *aops = rac->mapping->a_ops;
 	struct page *page;
 	struct blk_plug plug;
 
 	if (!readahead_count(rac))
-		goto out;
+		return;
 
 	blk_start_plug(&plug);
-
 	aops->readahead(rac);
+	blk_finish_plug(&plug);
+
 	/* Clean up the remaining pages */
 	while ((page = readahead_page(rac))) {
 		unlock_page(page);
 		put_page(page);
 	}
 
-	blk_finish_plug(&plug);
 
 	BUG_ON(readahead_count(rac));
-
-out:
-	if (skip_page)
-		rac->_index++;
 }
 
 static void readahead_page_cache_readahead_unbounded(struct address_space *mapping,
 		struct file *file, pgoff_t index, unsigned long nr_to_read,
 		unsigned long lookahead_size)
 {
+	pgoff_t end_index	= index + nr_to_read;
+	pgoff_t lookahead_index = index + nr_to_read - lookahead_size;
 	gfp_t gfp_mask = readahead_gfp_mask(mapping);
 	struct readahead_control rac = {
 		.mapping = mapping,
 		.file = file,
 		._index = index,
 	};
-	unsigned long i;
+	unsigned long nr_batch = nr_to_read;
 
-	/*
-	 * Preallocate as many pages as we will need.
-	 */
-	for (i = 0; i < nr_to_read; i++) {
-		struct page *page = xa_load(&mapping->i_pages, index + i);
+	if (nr_to_read > ARRAY_SIZE(rac.pagevec_onstack))
+		rac.pagevec	= kmalloc_array(nr_to_read, sizeof(void *), gfp_mask);
 
-		BUG_ON(index + i != rac._index + rac._nr_pages);
+	if (rac.pagevec) {
+		rac.size	= nr_to_read;
+	} else {
+		rac.pagevec	= rac.pagevec_onstack;
+		rac.size	= ARRAY_SIZE(rac.pagevec_onstack);
+	}
+
+	while ((index = rac->index + rac->nr) < end_index) {
+		struct page *page = xa_load(&rac->mapping->i_pages, index);
 
 		if (page && !xa_is_value(page)) {
 			/*
@@ -263,7 +266,8 @@ static void readahead_page_cache_readahead_unbounded(struct address_space *mappi
 			 * have a stable reference to this page, and it's
 			 * not worth getting one just for that.
 			 */
-			readahead_read_pages(&rac, true);
+			readahead_read_pages(rac);
+			rac->index++;
 			continue;
 		}
 
@@ -271,15 +275,20 @@ static void readahead_page_cache_readahead_unbounded(struct address_space *mappi
 		if (!page)
 			break;
 
-		if (add_to_page_cache_lru(page, mapping, index + i,
-					gfp_mask) < 0) {
+		if (add_to_page_cache_lru(page, rac->mapping, index,
+					  gfp_mask) < 0) {
 			put_page(page);
-			readahead_read_pages(&rac, true);
+			readahead_read_pages(rac);
+			rac->index++;
 			continue;
 		}
-		if (i == nr_to_read - lookahead_size)
+		if (index == lookahead_index)
 			SetPageReadahead(page);
-		rac._nr_pages++;
+
+		rac->pagevec[rac->nr++] = page;
+
+		if (rac->nr == rac->size)
+			readahead_read_pages(rac);
 	}
 
 	/*
@@ -287,7 +296,10 @@ static void readahead_page_cache_readahead_unbounded(struct address_space *mappi
 	 * uptodate then the caller will launch readpage again, and
 	 * will then handle the error.
 	 */
-	readahead_read_pages(&rac, false);
+	readahead_read_pages(rac);
+
+	if (rac.pagevec != rac.pagevec_onstack)
+		kfree(rac.pagevec);
 }
 
 /**
