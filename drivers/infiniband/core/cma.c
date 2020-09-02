@@ -3939,15 +3939,6 @@ static int cma_ib_mc_handler(int status, struct ib_sa_multicast *multicast)
 	else
 		pr_debug_ratelimited("RDMA CM: MULTICAST_ERROR: failed to join multicast. status %d\n",
 				     status);
-	mutex_lock(&id_priv->qp_mutex);
-	if (!status && id_priv->id.qp) {
-		status = ib_attach_mcast(id_priv->id.qp, &multicast->rec.mgid,
-					 be16_to_cpu(multicast->rec.mlid));
-		if (status)
-			pr_debug_ratelimited("RDMA CM: MULTICAST_ERROR: failed to attach QP. status %d\n",
-					     status);
-	}
-	mutex_unlock(&id_priv->qp_mutex);
 
 	memset(&event, 0, sizeof event);
 	event.status = status;
@@ -4197,6 +4188,10 @@ int rdma_join_multicast(struct rdma_cm_id *id, struct sockaddr *addr,
 	struct cma_multicast *mc;
 	int ret;
 
+	/* Not supported for kernel QPs */
+	if (WARN_ON(id->qp))
+		return -EINVAL;
+
 	if (!id->device)
 		return -EINVAL;
 
@@ -4247,11 +4242,6 @@ void rdma_leave_multicast(struct rdma_cm_id *id, struct sockaddr *addr)
 		if (!memcmp(&mc->addr, addr, rdma_addr_size(addr))) {
 			list_del(&mc->list);
 			spin_unlock_irq(&id_priv->lock);
-
-			if (id->qp)
-				ib_detach_mcast(id->qp,
-						&mc->multicast.ib->rec.mgid,
-						be16_to_cpu(mc->multicast.ib->rec.mlid));
 
 			BUG_ON(id_priv->cma_dev->device != id->device);
 
