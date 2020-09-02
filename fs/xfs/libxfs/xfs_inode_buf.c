@@ -443,6 +443,8 @@ xfs_dinode_verify(
 				return false;
 			if (di_size > XFS_DFORK_DSIZE(dip, mp))
 				return false;
+			if (dip->di_nextents)
+				return false;
 			/* fall through */
 		case XFS_DINODE_FMT_EXTENTS:
 		case XFS_DINODE_FMT_BTREE:
@@ -461,12 +463,31 @@ xfs_dinode_verify(
 	if (XFS_DFORK_Q(dip)) {
 		switch (dip->di_aformat) {
 		case XFS_DINODE_FMT_LOCAL:
+			if (dip->di_anextents)
+				return false;
+		/* fall through */
 		case XFS_DINODE_FMT_EXTENTS:
 		case XFS_DINODE_FMT_BTREE:
 			break;
 		default:
 			return false;
 		}
+	} else {
+		/*
+		 * If there is no fork offset, this may be a freshly-made inode
+		 * in a new disk cluster, in which case di_aformat is zeroed.
+		 * Otherwise, such an inode must be in EXTENTS format; this goes
+		 * for freed inodes as well.
+		 */
+		switch (dip->di_aformat) {
+		case 0:
+		case XFS_DINODE_FMT_EXTENTS:
+			break;
+		default:
+			return false;
+		}
+		if (dip->di_anextents)
+			return false;
 	}
 
 	/* only version 3 or greater inodes are extensively verified here */
