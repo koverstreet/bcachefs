@@ -390,12 +390,14 @@ xfs_dinode_verify(
 	uint16_t		mode;
 	uint16_t		flags;
 	uint64_t		flags2;
+	uint64_t		di_size;
 
 	if (dip->di_magic != cpu_to_be16(XFS_DINODE_MAGIC))
 		return false;
 
 	/* don't allow invalid i_size */
-	if (be64_to_cpu(dip->di_size) & (1ULL << 63))
+	di_size = be64_to_cpu(dip->di_size);
+	if (di_size & (1ULL << 63))
 		return false;
 
 	mode = be16_to_cpu(dip->di_mode);
@@ -403,8 +405,69 @@ xfs_dinode_verify(
 		return false;
 
 	/* No zero-length symlinks/dirs. */
-	if ((S_ISLNK(mode) || S_ISDIR(mode)) && dip->di_size == 0)
+	if ((S_ISLNK(mode) || S_ISDIR(mode)) && di_size == 0)
 		return false;
+
+	/* Fork checks carried over from xfs_iformat_fork */
+	if (mode &&
+	    be32_to_cpu(dip->di_nextents) + be16_to_cpu(dip->di_anextents) >
+			be64_to_cpu(dip->di_nblocks))
+		return false;
+
+	if (mode && XFS_DFORK_BOFF(dip) > mp->m_sb.sb_inodesize)
+		return false;
+
+	flags = be16_to_cpu(dip->di_flags);
+
+	if (mode && (flags & XFS_DIFLAG_REALTIME) && !mp->m_rtdev_targp)
+		return false;
+
+	/* Do we have appropriate data fork formats for the mode? */
+	switch (mode & S_IFMT) {
+	case S_IFIFO:
+	case S_IFCHR:
+	case S_IFBLK:
+	case S_IFSOCK:
+		if (dip->di_format != XFS_DINODE_FMT_DEV)
+			return false;
+		break;
+	case S_IFREG:
+	case S_IFLNK:
+	case S_IFDIR:
+		switch (dip->di_format) {
+		case XFS_DINODE_FMT_LOCAL:
+			/*
+			 * no local regular files yet
+			 */
+			if (S_ISREG(mode))
+				return false;
+			if (di_size > XFS_DFORK_DSIZE(dip, mp))
+				return false;
+			/* fall through */
+		case XFS_DINODE_FMT_EXTENTS:
+		case XFS_DINODE_FMT_BTREE:
+			break;
+		default:
+			return false;
+		}
+		break;
+	case 0:
+		/* Uninitialized inode ok. */
+		break;
+	default:
+		return false;
+	}
+
+	if (XFS_DFORK_Q(dip)) {
+		switch (dip->di_aformat) {
+		case XFS_DINODE_FMT_LOCAL:
+		case XFS_DINODE_FMT_EXTENTS:
+		case XFS_DINODE_FMT_BTREE:
+			break;
+		default:
+			return false;
+		}
+	}
 
 	/* only version 3 or greater inodes are extensively verified here */
 	if (dip->di_version < 3)
@@ -420,12 +483,15 @@ xfs_dinode_verify(
 	if (!uuid_equal(&dip->di_uuid, &mp->m_sb.sb_meta_uuid))
 		return false;
 
-	flags = be16_to_cpu(dip->di_flags);
 	flags2 = be64_to_cpu(dip->di_flags2);
 
 	/* don't allow reflink/cowextsize if we don't have reflink */
 	if ((flags2 & (XFS_DIFLAG2_REFLINK | XFS_DIFLAG2_COWEXTSIZE)) &&
             !xfs_sb_version_hasreflink(&mp->m_sb))
+		return false;
+
+	/* only regular files get reflink */
+	if ((flags2 & XFS_DIFLAG2_REFLINK) && (mode & S_IFMT) != S_IFREG)
 		return false;
 
 	/* don't let reflink and realtime mix */
