@@ -56,12 +56,20 @@ while getopts "r:b:l:d" opt; do
 done
 shift $((OPTIND - 1))
 
-case "$DEBIAN" in
-debian.master|debian.uc20-efi)
+# For normal trees the fact that the update.conf file exists means that they are rebase
+# kernels. There are some special trees which started with uc20-efi, which have that
+# file because they logically depend on another source but do not have the directory
+# which DEBIAN_MASTER points to.
+IS_REBASE_KERNEL=true
+if [ ! -f "$DEBIAN/etc/update.conf" ]; then
+        IS_REBASE_KERNEL=false
+elif [ "$DEBIAN_MASTER" != "" -a ! -d "$DEBIAN_MASTER" ]; then
+        IS_REBASE_KERNEL=false
+fi
+if ! $IS_REBASE_KERNEL; then
 	echo "This is not a rebase kernel, no rebase should be needed, please report if otherwise"
 	exit 0
-	;;
-esac
+fi
 
 if [ "$DEBIAN_MASTER" = "" ]; then
 	echo "DEBIAN_MASTER should be defined either in ${DEBIAN}/etc/update.conf or the environment"

@@ -118,10 +118,16 @@ if [ -d "$DEBIAN/config" ]; then
 	fi
 fi
 
-# Derivatives and backports have a master kernel directory (DEBIAN_MASTER).
-case "$DEBIAN" in
-debian.master|debian.uc20-efi) skip_master_entries=1 ;;
-esac
+# For normal trees the fact that the update.conf file exists means that they are rebase
+# kernels. There are some special trees which started with uc20-efi, which have that
+# file because they logically depend on another source but do not have the directory
+# which DEBIAN_MASTER points to.
+# Skip inserting parent source entries if this is not a rebase tree.
+if [ ! -f "$DEBIAN/etc/update.conf" ]; then
+	skip_master_entries=1
+elif [ "$DEBIAN_MASTER" != "" -a ! -d "$DEBIAN_MASTER" ]; then
+	skip_master_entries=1
+fi
 if [ $skip_master_entries == 0 ]; then
 	if [ "$DEBIAN_MASTER" = "" ]; then
 		echo "DEBIAN_MASTER should be defined either in $DEBIAN/etc/update.conf or the environment"
