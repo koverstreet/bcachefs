@@ -169,10 +169,9 @@ int bch2_congested(void *data, int bdi_bits)
 			}
 		}
 	} else {
-		unsigned target = READ_ONCE(c->opts.foreground_target);
-		const struct bch_devs_mask *devs = target
-			? bch2_target_to_mask(c, target)
-			: &c->rw_devs[BCH_DATA_user];
+		const struct bch_devs_mask *devs =
+			bch2_target_to_mask(c, c->opts.foreground_target) ?:
+			&c->rw_devs[BCH_DATA_user];
 
 		for_each_member_device_rcu(ca, c, i, devs) {
 			bdi = ca->disk_sb.bdev->bd_bdi;
@@ -384,8 +383,8 @@ bool bch2_fs_emergency_read_only(struct bch_fs *c)
 {
 	bool ret = !test_and_set_bit(BCH_FS_EMERGENCY_RO, &c->flags);
 
-	bch2_fs_read_only_async(c);
 	bch2_journal_halt(&c->journal);
+	bch2_fs_read_only_async(c);
 
 	wake_up(&bch_read_only_wait);
 	return ret;
@@ -441,6 +440,13 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 	ret = bch2_fs_mark_dirty(c);
 	if (ret)
 		goto err;
+
+	/*
+	 * We need to write out a journal entry before we start doing btree
+	 * updates, to ensure that on unclean shutdown new journal blacklist
+	 * entries are created:
+	 */
+	bch2_journal_meta(&c->journal);
 
 	clear_bit(BCH_FS_ALLOC_CLEAN, &c->flags);
 
@@ -1820,7 +1826,6 @@ err:
 /* return with ref on ca->ref: */
 struct bch_dev *bch2_dev_lookup(struct bch_fs *c, const char *path)
 {
-
 	struct block_device *bdev = lookup_bdev(path);
 	struct bch_dev *ca;
 	unsigned i;
@@ -1845,6 +1850,7 @@ struct bch_fs *bch2_fs_open(char * const *devices, unsigned nr_devices,
 {
 	struct bch_sb_handle *sb = NULL;
 	struct bch_fs *c = NULL;
+	struct bch_sb_field_members *mi;
 	unsigned i, best_sb = 0;
 	const char *err;
 	int ret = -ENOMEM;
@@ -1880,10 +1886,24 @@ struct bch_fs *bch2_fs_open(char * const *devices, unsigned nr_devices,
 		    le64_to_cpu(sb[best_sb].sb->seq))
 			best_sb = i;
 
-	for (i = 0; i < nr_devices; i++) {
+	mi = bch2_sb_get_members(sb[best_sb].sb);
+
+	i = 0;
+	while (i < nr_devices) {
+		if (i != best_sb &&
+		    !bch2_dev_exists(sb[best_sb].sb, mi, sb[i].sb->dev_idx)) {
+			char buf[BDEVNAME_SIZE];
+			pr_info("%s has been removed, skipping",
+				bdevname(sb[i].bdev, buf));
+			bch2_free_super(&sb[i]);
+			array_remove_item(sb, nr_devices, i);
+			continue;
+		}
+
 		err = bch2_dev_in_fs(sb[best_sb].sb, sb[i].sb);
 		if (err)
 			goto err_print;
+		i++;
 	}
 
 	ret = -ENOMEM;

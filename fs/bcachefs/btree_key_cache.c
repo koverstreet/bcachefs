@@ -391,7 +391,7 @@ static void btree_key_cache_journal_flush(struct journal *j,
 	struct btree_trans trans;
 
 	six_lock_read(&ck->c.lock, NULL, NULL);
-	key = READ_ONCE(ck->key);
+	key = ck->key;
 
 	if (ck->journal.seq != seq ||
 	    !test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {

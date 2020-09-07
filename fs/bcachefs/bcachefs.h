@@ -202,7 +202,8 @@
 #include "opts.h"
 #include "util.h"
 
-#include <linux/dynamic_fault.h>
+#define dynamic_fault(...)		0
+#define race_fault(...)			0
 
 #define bch2_fs_init_fault(name)					\
 	dynamic_fault("bcachefs:bch_fs_init:" name)
@@ -734,7 +735,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;

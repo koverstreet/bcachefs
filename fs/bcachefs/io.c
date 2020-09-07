@@ -54,7 +54,9 @@ static bool bch2_target_congested(struct bch_fs *c, u16 target)
 		return false;
 
 	rcu_read_lock();
-	devs = bch2_target_to_mask(c, target);
+	devs = bch2_target_to_mask(c, target) ?:
+		&c->rw_devs[BCH_DATA_user];
+
 	for_each_set_bit(d, devs->d, BCH_SB_MEMBERS_MAX) {
 		ca = rcu_dereference(c->devs[d]);
 		if (!ca)
@@ -132,10 +134,10 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 
 void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
-	bio_for_each_segment_all(bv, bio, i)
+	bio_for_each_segment_all(bv, bio, iter)
 		if (bv->bv_page != ZERO_PAGE(0))
 			mempool_free(bv->bv_page, &c->bio_bounce_pages);
 	bio->bi_vcnt = 0;
@@ -471,7 +473,8 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 
 		n->c			= c;
 		n->dev			= ptr->dev;
-		n->have_ioref		= bch2_dev_get_ioref(ca, WRITE);
+		n->have_ioref		= bch2_dev_get_ioref(ca,
+					type == BCH_DATA_btree ? READ : WRITE);
 		n->submit_time		= local_clock();
 		n->bio.bi_iter.bi_sector = ptr->offset;
 
@@ -1091,6 +1094,11 @@ again:
 			goto err;
 		}
 
+		/*
+		 * The copygc thread is now global, which means it's no longer
+		 * freeing up space on specific disks, which means that
+		 * allocations for specific disks may hang arbitrarily long:
+		 */
 		wp = bch2_alloc_sectors_start(c,
 			op->target,
 			op->opts.erasure_code,
@@ -1100,7 +1108,8 @@ again:
 			op->nr_replicas_required,
 			op->alloc_reserve,
 			op->flags,
-			(op->flags & BCH_WRITE_ALLOC_NOWAIT) ? NULL : cl);
+			(op->flags & (BCH_WRITE_ALLOC_NOWAIT|
+				      BCH_WRITE_ONLY_SPECIFIED_DEVS)) ? NULL : cl);
 		EBUG_ON(!wp);
 
 		if (unlikely(IS_ERR(wp))) {
