@@ -466,7 +466,7 @@ int bch2_fs_read_write_early(struct bch_fs *c)
 
 /* Filesystem startup/shutdown: */
 
-static void bch2_fs_free(struct bch_fs *c)
+static void __bch2_fs_free(struct bch_fs *c)
 {
 	unsigned i;
 
@@ -523,10 +523,10 @@ static void bch2_fs_release(struct kobject *kobj)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
 
-	bch2_fs_free(c);
+	__bch2_fs_free(c);
 }
 
-void bch2_fs_stop(struct bch_fs *c)
+void __bch2_fs_stop(struct bch_fs *c)
 {
 	struct bch_dev *ca;
 	unsigned i;
@@ -556,13 +556,6 @@ void bch2_fs_stop(struct bch_fs *c)
 	kobject_put(&c->opts_dir);
 	kobject_put(&c->internal);
 
-	mutex_lock(&bch_fs_list_lock);
-	list_del(&c->list);
-	mutex_unlock(&bch_fs_list_lock);
-
-	closure_sync(&c->cl);
-	closure_debug_destroy(&c->cl);
-
 	/* btree prefetch might have kicked off reads in the background: */
 	bch2_btree_flush_all_reads(c);
 
@@ -575,11 +568,33 @@ void bch2_fs_stop(struct bch_fs *c)
 
 	for (i = 0; i < c->sb.nr_devices; i++)
 		if (c->devs[i])
+			bch2_free_super(&c->devs[i]->disk_sb);
+}
+
+void bch2_fs_free(struct bch_fs *c)
+{
+	unsigned i;
+
+	mutex_lock(&bch_fs_list_lock);
+	list_del(&c->list);
+	mutex_unlock(&bch_fs_list_lock);
+
+	closure_sync(&c->cl);
+	closure_debug_destroy(&c->cl);
+
+	for (i = 0; i < c->sb.nr_devices; i++)
+		if (c->devs[i])
 			bch2_dev_free(rcu_dereference_protected(c->devs[i], 1));
 
 	bch_verbose(c, "shutdown complete");
 
 	kobject_put(&c->kobj);
+}
+
+void bch2_fs_stop(struct bch_fs *c)
+{
+	__bch2_fs_stop(c);
+	bch2_fs_free(c);
 }
 
 static const char *bch2_fs_online(struct bch_fs *c)
