@@ -204,8 +204,6 @@ void ovl_drop_write(struct dentry *dentry);
 struct dentry *ovl_workdir(struct dentry *dentry);
 const struct cred *ovl_override_creds(struct super_block *sb);
 struct super_block *ovl_same_sb(struct super_block *sb);
-int ovl_creator_permission(struct super_block *sb, struct inode *inode,
-			   int mode);
 bool ovl_can_decode_fh(struct super_block *sb);
 struct dentry *ovl_indexdir(struct super_block *sb);
 struct ovl_entry *ovl_alloc_entry(unsigned int numlower);

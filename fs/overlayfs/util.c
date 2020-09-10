@@ -50,19 +50,6 @@ struct super_block *ovl_same_sb(struct super_block *sb)
 	return ofs->same_sb;
 }
 
-int ovl_creator_permission(struct super_block *sb, struct inode *inode,
-			   int mode)
-{
-	const struct cred *old_cred;
-	int err = 0;
-
-	old_cred = ovl_override_creds(sb);
-	err = inode_permission(inode, mode);
-	revert_creds(old_cred);
-
-	return err;
-}
-
 bool ovl_can_decode_fh(struct super_block *sb)
 {
 	return (sb->s_export_op && sb->s_export_op->fh_to_dentry &&
