@@ -677,10 +677,10 @@ static int s3c64xx_spi_transfer_one(struct spi_master *master,
 	sdd->state &= ~RXBUSY;
 	sdd->state &= ~TXBUSY;
 
-	enable_datapath(sdd, spi, xfer, use_dma);
-
 	/* Start the signals */
 	s3c64xx_spi_set_cs(spi, true);
+
+	enable_datapath(sdd, spi, xfer, use_dma);
 
 	spin_unlock_irqrestore(&sdd->lock, flags);
 
