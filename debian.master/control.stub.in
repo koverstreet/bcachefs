@@ -124,7 +124,7 @@ Depends: ${misc:Depends}, lsb-release
 Description: Linux kernel version specific tools for version PKGVER
  This package provides the architecture independent parts for kernel
  version locked tools (such as perf and x86_energy_perf_policy) for
- version PGKVER.
+ version PKGVER.
 
 Package: SRCPKGNAME-tools-PKGVER-ABINUM
 Build-Profiles: <!stage1>
@@ -148,7 +148,7 @@ Priority: optional
 Depends: ${misc:Depends}
 Description: Linux kernel version specific cloud tools for version PKGVER
  This package provides the architecture independent parts for kernel
- version locked tools for cloud tools for version PGKVER.
+ version locked tools for cloud tools for version PKGVER.
 
 Package: SRCPKGNAME-cloud-tools-PKGVER-ABINUM
 Build-Profiles: <!stage1>
