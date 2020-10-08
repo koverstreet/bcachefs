@@ -473,11 +473,12 @@ static int tm6000_alloc_urb_buffers(struct tm6000_core *dev)
 	if (dev->urb_buffer)
 		return 0;
 
-	dev->urb_buffer = kmalloc(sizeof(void *)*num_bufs, GFP_KERNEL);
+	dev->urb_buffer = kmalloc(sizeof(*dev->urb_buffer)*num_bufs,
+					GFP_KERNEL);
 	if (!dev->urb_buffer)
 		return -ENOMEM;
 
-	dev->urb_dma = kmalloc(sizeof(dma_addr_t *)*num_bufs, GFP_KERNEL);
+	dev->urb_dma = kmalloc(sizeof(*dev->urb_dma)*num_bufs, GFP_KERNEL);
 	if (!dev->urb_dma)
 		return -ENOMEM;
 
