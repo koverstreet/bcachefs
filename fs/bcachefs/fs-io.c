@@ -26,6 +26,7 @@
 #include <linux/migrate.h>
 #include <linux/mmu_context.h>
 #include <linux/pagevec.h>
+#include <linux/rmap.h>
 #include <linux/sched/signal.h>
 #include <linux/task_io_accounting_ops.h>
 #include <linux/uio.h>
@@ -2190,6 +2191,12 @@ static int __bch2_truncate_page(struct bch_inode_info *inode,
 	ret = bch2_get_page_disk_reservation(c, inode, page, false);
 	BUG_ON(ret);
 
+	/*
+	 * This removes any writeable userspace mappings; we need to force
+	 * .page_mkwrite to be called again before any mmapped writes, to
+	 * redirty the full page:
+	 */
+	page_mkclean(page);
 	__set_page_dirty_nobuffers(page);
 unlock:
 	unlock_page(page);
