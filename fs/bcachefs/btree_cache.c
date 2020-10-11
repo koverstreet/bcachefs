@@ -351,11 +351,13 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 {
 	struct btree_cache *bc = &c->btree_cache;
 	struct btree *b;
-	unsigned i;
+	unsigned i, flags;
 
 	if (bc->shrink.list.next)
 		unregister_shrinker(&bc->shrink);
 
+	/* vfree() can allocate memory: */
+	flags = memalloc_nofs_save();
 	mutex_lock(&bc->lock);
 
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -391,6 +393,7 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 	}
 
 	mutex_unlock(&bc->lock);
+	memalloc_nofs_restore(flags);
 
 	if (bc->table_init_done)
 		rhashtable_destroy(&bc->table);
