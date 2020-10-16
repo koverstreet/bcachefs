@@ -255,7 +255,7 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 	unsigned long can_free;
 	unsigned long touched = 0;
 	unsigned long freed = 0;
-	unsigned i;
+	unsigned i, flags;
 
 	if (btree_shrinker_disabled(c))
 		return SHRINK_STOP;
@@ -265,6 +265,8 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 		mutex_lock(&bc->lock);
 	else if (!mutex_trylock(&bc->lock))
 		return -1;
+
+	flags = memalloc_nofs_save();
 
 	/*
 	 * It's _really_ critical that we don't free too many btree nodes - we
@@ -329,6 +331,7 @@ restart:
 			clear_btree_node_accessed(b);
 	}
 
+	memalloc_nofs_restore(flags);
 	mutex_unlock(&bc->lock);
 out:
 	return (unsigned long) freed * btree_pages(c);
