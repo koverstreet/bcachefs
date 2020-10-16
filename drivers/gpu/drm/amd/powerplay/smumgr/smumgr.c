@@ -253,3 +253,11 @@ bool smum_is_hw_avfs_present(struct pp_hwmgr *hwmgr)
 
 	return false;
 }
+
+int smum_stop_smc(struct pp_hwmgr *hwmgr)
+{
+	if (hwmgr->smumgr_funcs->stop_smc)
+		return hwmgr->smumgr_funcs->stop_smc(hwmgr);
+
+	return 0;
+}

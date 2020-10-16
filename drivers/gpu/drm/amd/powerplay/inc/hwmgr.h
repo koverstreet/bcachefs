@@ -266,6 +266,7 @@ struct pp_smumgr_func {
 	int (*populate_requested_graphic_levels)(struct pp_hwmgr *hwmgr,
 			struct amd_pp_profile *request);
 	bool (*is_hw_avfs_present)(struct pp_hwmgr  *hwmgr);
+	int (*stop_smc)(struct pp_hwmgr *hwmgr);
 };
 
 struct pp_hwmgr_func {
