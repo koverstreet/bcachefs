@@ -7,6 +7,7 @@
  */
 
 #include "bcachefs.h"
+#include "alloc_background.h"
 #include "alloc_foreground.h"
 #include "bkey_on_stack.h"
 #include "bset.h"
@@ -1635,7 +1636,7 @@ retry:
 		goto out;
 	}
 
-	ret = __bch2_read_extent(c, rbio, bvec_iter, k, 0, failed, flags);
+	ret = __bch2_read_extent(&trans, rbio, bvec_iter, k, 0, failed, flags);
 	if (ret == READ_RETRY)
 		goto retry;
 	if (ret)
@@ -1692,7 +1693,7 @@ retry:
 		bytes = min(sectors, bvec_iter_sectors(bvec_iter)) << 9;
 		swap(bvec_iter.bi_size, bytes);
 
-		ret = __bch2_read_extent(c, rbio, bvec_iter, k,
+		ret = __bch2_read_extent(&trans, rbio, bvec_iter, k,
 				offset_into_extent, failed, flags);
 		switch (ret) {
 		case READ_RETRY:
@@ -2020,11 +2021,12 @@ err:
 	return ret;
 }
 
-int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
+int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
 		       struct bvec_iter iter, struct bkey_s_c k,
 		       unsigned offset_into_extent,
 		       struct bch_io_failures *failed, unsigned flags)
 {
+	struct bch_fs *c = trans->c;
 	struct extent_ptr_decoded pick;
 	struct bch_read_bio *rbio = NULL;
 	struct bch_dev *ca;
@@ -2192,9 +2194,9 @@ get_bio:
 
 	bch2_increment_clock(c, bio_sectors(&rbio->bio), READ);
 
-	rcu_read_lock();
-	bucket_io_clock_reset(c, ca, PTR_BUCKET_NR(ca, &pick.ptr), READ);
-	rcu_read_unlock();
+	if (pick.ptr.cached)
+		bch2_bucket_io_time_reset(trans, pick.ptr.dev,
+			PTR_BUCKET_NR(ca, &pick.ptr), READ);
 
 	if (!(flags & (BCH_READ_IN_RETRY|BCH_READ_LAST_FRAGMENT))) {
 		bio_inc_remaining(&orig->bio);
@@ -2336,7 +2338,7 @@ retry:
 		if (rbio->bio.bi_iter.bi_size == bytes)
 			flags |= BCH_READ_LAST_FRAGMENT;
 
-		bch2_read_extent(c, rbio, k, offset_into_extent, flags);
+		bch2_read_extent(&trans, rbio, k, offset_into_extent, flags);
 
 		if (flags & BCH_READ_LAST_FRAGMENT)
 			break;
