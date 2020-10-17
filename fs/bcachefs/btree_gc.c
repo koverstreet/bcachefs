@@ -37,9 +37,11 @@
 
 static inline void __gc_pos_set(struct bch_fs *c, struct gc_pos new_pos)
 {
+	preempt_disable();
 	write_seqcount_begin(&c->gc_pos_lock);
 	c->gc_pos = new_pos;
 	write_seqcount_end(&c->gc_pos_lock);
+	preempt_enable();
 }
 
 static inline void gc_pos_set(struct bch_fs *c, struct gc_pos new_pos)
