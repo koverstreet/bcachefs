@@ -254,6 +254,7 @@ void bch2_fs_usage_acc_to_base(struct bch_fs *c, unsigned idx)
 
 	BUG_ON(idx >= 2);
 
+	preempt_disable();
 	write_seqcount_begin(&c->usage_lock);
 
 	acc_u64s_percpu((u64 *) c->usage_base,
@@ -261,6 +262,7 @@ void bch2_fs_usage_acc_to_base(struct bch_fs *c, unsigned idx)
 	percpu_memset(c->usage[idx], 0, u64s * sizeof(u64));
 
 	write_seqcount_end(&c->usage_lock);
+	preempt_enable();
 }
 
 void bch2_fs_usage_to_text(struct printbuf *out,
