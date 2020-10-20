@@ -544,8 +544,6 @@ out:
  * commands to the newly free buckets, then puts them on the various freelists.
  */
 
-#define BUCKET_GC_GEN_MAX	96U
-
 /**
  * wait_buckets_available - wait on reclaimable buckets
  *
