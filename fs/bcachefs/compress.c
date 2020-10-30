@@ -64,7 +64,8 @@ static struct bbuf __bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 
 	BUG_ON(bvec_iter_sectors(start) > c->sb.encoded_extent_max);
 
-	if (!IS_ENABLED(CONFIG_HIGHMEM) &&
+	if (0 &&
+	    !IS_ENABLED(CONFIG_HIGHMEM) &&
 	    bio_phys_contig(bio, start))
 		return (struct bbuf) {
 			.b = page_address(bio_iter_page(bio, start)) +
