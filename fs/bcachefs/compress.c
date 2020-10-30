@@ -61,12 +61,6 @@ static struct bbuf __bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 				       struct bvec_iter start, int rw)
 {
 	struct bbuf ret;
-	struct bio_vec bv;
-	struct bvec_iter iter;
-	unsigned nr_pages = 0;
-	struct page *stack_pages[16];
-	struct page **pages = NULL;
-	void *data;
 
 	BUG_ON(bvec_iter_sectors(start) > c->sb.encoded_extent_max);
 
@@ -77,7 +71,7 @@ static struct bbuf __bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 				bio_iter_offset(bio, start),
 			.type = BB_NONE, .rw = rw
 		};
-
+#if 0
 	/* check if we can map the pages contiguously: */
 	__bio_for_each_segment(bv, bio, iter, start) {
 		if (iter.bi_size != start.bi_size &&
@@ -113,6 +107,7 @@ static struct bbuf __bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 			.type = BB_VMAP, .rw = rw
 		};
 bounce:
+#endif
 	ret = __bounce_alloc(c, start.bi_size, rw);
 
 	if (rw == READ)
@@ -132,7 +127,7 @@ static void bio_unmap_or_unbounce(struct bch_fs *c, struct bbuf buf)
 	case BB_NONE:
 		break;
 	case BB_VMAP:
-		vunmap((void *) ((unsigned long) buf.b & PAGE_MASK));
+		BUG();
 		break;
 	case BB_KMALLOC:
 		kfree(buf.b);
