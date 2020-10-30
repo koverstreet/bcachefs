@@ -804,7 +804,7 @@ static int add_delayed_refs(const struct btrfs_fs_info *fs_info,
 			count = node->ref_mod * -1;
 			break;
 		default:
-			BUG_ON(1);
+			BUG();
 		}
 		*total_refs += count;
 		switch (node->type) {
@@ -1764,7 +1764,7 @@ int extent_from_logical(struct btrfs_fs_info *fs_info, u64 logical,
 		else if (flags & BTRFS_EXTENT_FLAG_DATA)
 			*flags_ret = BTRFS_EXTENT_FLAG_DATA;
 		else
-			BUG_ON(1);
+			BUG();
 		return 0;
 	}
 

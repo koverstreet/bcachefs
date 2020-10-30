@@ -1041,7 +1041,7 @@ delete_extent_item:
 			continue;
 		}
 
-		BUG_ON(1);
+		BUG();
 	}
 
 	if (!ret && del_nr > 0) {
