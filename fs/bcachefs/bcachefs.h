@@ -296,6 +296,16 @@ do {									\
 #define BCH_DEBUG_PARAMS() BCH_DEBUG_PARAMS_ALWAYS()
 #endif
 
+#define BCH_DEBUG_PARAM(name, description) extern bool bch2_##name;
+BCH_DEBUG_PARAMS()
+#undef BCH_DEBUG_PARAM
+
+#ifndef CONFIG_BCACHEFS_DEBUG
+#define BCH_DEBUG_PARAM(name, description) static const bool bch2_##name;
+BCH_DEBUG_PARAMS_DEBUG()
+#undef BCH_DEBUG_PARAM
+#endif
+
 #define BCH_TIME_STATS()			\
 	x(btree_node_mem_alloc)			\
 	x(btree_node_split)			\
@@ -830,10 +840,6 @@ struct bch_fs {
 	unsigned		btree_gc_periodic:1;
 	unsigned		copy_gc_enabled:1;
 	bool			promote_whole_extents;
-
-#define BCH_DEBUG_PARAM(name, description) bool name;
-	BCH_DEBUG_PARAMS_ALL()
-#undef BCH_DEBUG_PARAM
 
 	struct time_stats	times[BCH_TIME_STAT_NR];
 };
