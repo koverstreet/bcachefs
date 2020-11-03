@@ -1479,11 +1479,11 @@ start:
 		 * work and to enable clocks.
 		 */
 	case CLKS_OFF:
-		scsi_block_requests(hba->host);
 		hba->clk_gating.state = REQ_CLKS_ON;
 		trace_ufshcd_clk_gating(dev_name(hba->dev),
 					hba->clk_gating.state);
-		schedule_work(&hba->clk_gating.ungate_work);
+		if (schedule_work(&hba->clk_gating.ungate_work))
+		    scsi_block_requests(hba->host);
 		/*
 		 * fall through to check if we should wait for this
 		 * work to be done or not.
