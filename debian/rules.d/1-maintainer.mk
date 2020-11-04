@@ -134,7 +134,7 @@ startnewrelease:
 	dh_testdir
 	@[ -f "$(DEBIAN)/etc/update.conf" ] && . "$(DEBIAN)/etc/update.conf"; \
 	if [ -n "$$BACKPORT_SUFFIX" ]; then \
-		ver="$$(dpkg-parsechangelog -l"$$DEBIAN_MASTER/changelog" -SVersion)~$${BACKPORT_SUFFIX}.1"; \
+		ver="$$(dpkg-parsechangelog -l"$$DEBIAN_MASTER/changelog" -SVersion)$${BACKPORT_SUFFIX}.1"; \
 		prev_ver="$$(dpkg-parsechangelog -l"$(DEBIAN)/changelog" -SVersion)"; \
 		if [ "$${ver%.*}" = "$${prev_ver%.*}" ]; then \
 			ver="$${ver%.*}.$$(( $${prev_ver##*.} +1 ))"; \
