@@ -117,6 +117,7 @@ dkms_spl_linux_version=$(shell gawk '/^spl-linux / { print $$2; }' debian/dkms-v
 dkms_nvidia_390_version=$(shell gawk '/^nvidia-graphics-drivers-390 / { print $$2; }' debian/dkms-versions)
 dkms_nvidia_435_version=$(shell gawk '/^nvidia-graphics-drivers-435 / { print $$2; }' debian/dkms-versions)
 dkms_nvidia_450_version=$(shell gawk '/^nvidia-graphics-drivers-450 / { print $$2; }' debian/dkms-versions)
+dkms_nvidia_455_version=$(shell gawk '/^nvidia-graphics-drivers-455 / { print $$2; }' debian/dkms-versions)
 dkms_nvidia_418_server_version=$(shell gawk '/^nvidia-graphics-drivers-418-server / { print $$2; }' debian/dkms-versions)
 dkms_nvidia_440_server_version=$(shell gawk '/^nvidia-graphics-drivers-440-server / { print $$2; }' debian/dkms-versions)
 dkms_nvidia_450_server_version=$(shell gawk '/^nvidia-graphics-drivers-450-server / { print $$2; }' debian/dkms-versions)
