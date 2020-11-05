@@ -811,31 +811,19 @@ repeat:
 	return NULL;
 }
 
-/*
- * find_inode_fast is the fast path version of find_inode, see the comment at
- * iget_locked for details.
- */
-static struct inode *find_inode_fast(struct super_block *sb,
-				struct hlist_head *head, unsigned long ino)
+static int inum_test(struct inode *inode, void *p)
 {
-	struct inode *inode = NULL;
+	unsigned long *ino = p;
 
-repeat:
-	hlist_for_each_entry(inode, head, i_hash) {
-		if (inode->i_ino != ino)
-			continue;
-		if (inode->i_sb != sb)
-			continue;
-		spin_lock(&inode->i_lock);
-		if (inode->i_state & (I_FREEING|I_WILL_FREE)) {
-			__wait_on_freeing_inode(inode);
-			goto repeat;
-		}
-		__iget(inode);
-		spin_unlock(&inode->i_lock);
-		return inode;
-	}
-	return NULL;
+	return *ino == inode->i_ino;
+}
+
+static int inum_set(struct inode *inode, void *p)
+{
+	unsigned long *ino = p;
+
+	inode->i_ino = *ino;
+	return 0;
 }
 
 /*
@@ -1152,62 +1140,7 @@ EXPORT_SYMBOL(iget5_locked);
  */
 struct inode *iget_locked(struct super_block *sb, unsigned long ino)
 {
-	struct hlist_head *head = inode_hashtable + hash(sb, ino);
-	struct inode *inode;
-again:
-	spin_lock(&inode_hash_lock);
-	inode = find_inode_fast(sb, head, ino);
-	spin_unlock(&inode_hash_lock);
-	if (inode) {
-		if (IS_ERR(inode))
-			return NULL;
-		wait_on_inode(inode);
-		if (unlikely(inode_unhashed(inode))) {
-			iput(inode);
-			goto again;
-		}
-		return inode;
-	}
-
-	inode = new_inode_pseudo(sb);
-	if (inode) {
-		struct inode *old;
-
-		spin_lock(&inode_hash_lock);
-		/* We released the lock, so.. */
-		old = find_inode_fast(sb, head, ino);
-		if (!old) {
-			inode->i_ino = ino;
-			spin_lock(&inode->i_lock);
-			inode->i_state = I_NEW;
-			hlist_add_head_rcu(&inode->i_hash, head);
-			spin_unlock(&inode->i_lock);
-			inode_sb_list_add(inode);
-			spin_unlock(&inode_hash_lock);
-
-			/* Return the locked inode with I_NEW set, the
-			 * caller is responsible for filling in the contents
-			 */
-			return inode;
-		}
-
-		/*
-		 * Uhhuh, somebody else created the same inode under
-		 * us. Use the old inode instead of the one we just
-		 * allocated.
-		 */
-		spin_unlock(&inode_hash_lock);
-		destroy_inode(inode);
-		if (IS_ERR(old))
-			return NULL;
-		inode = old;
-		wait_on_inode(inode);
-		if (unlikely(inode_unhashed(inode))) {
-			iput(inode);
-			goto again;
-		}
-	}
-	return inode;
+	return iget5_locked(sb, hash(sb, ino), inum_test, inum_set, &ino);
 }
 EXPORT_SYMBOL(iget_locked);
 
@@ -1362,23 +1295,7 @@ EXPORT_SYMBOL(ilookup5);
  */
 struct inode *ilookup(struct super_block *sb, unsigned long ino)
 {
-	struct hlist_head *head = inode_hashtable + hash(sb, ino);
-	struct inode *inode;
-again:
-	spin_lock(&inode_hash_lock);
-	inode = find_inode_fast(sb, head, ino);
-	spin_unlock(&inode_hash_lock);
-
-	if (inode) {
-		if (IS_ERR(inode))
-			return NULL;
-		wait_on_inode(inode);
-		if (unlikely(inode_unhashed(inode))) {
-			iput(inode);
-			goto again;
-		}
-	}
-	return inode;
+	return ilookup5(sb, hash(sb, ino), inum_test, &ino);
 }
 EXPORT_SYMBOL(ilookup);
 
@@ -1444,61 +1361,14 @@ EXPORT_SYMBOL(find_inode_rcu);
 struct inode *find_inode_by_ino_rcu(struct super_block *sb,
 				    unsigned long ino)
 {
-	struct hlist_head *head = inode_hashtable + hash(sb, ino);
-	struct inode *inode;
-
-	RCU_LOCKDEP_WARN(!rcu_read_lock_held(),
-			 "suspicious find_inode_by_ino_rcu() usage");
-
-	hlist_for_each_entry_rcu(inode, head, i_hash) {
-		if (inode->i_ino == ino &&
-		    inode->i_sb == sb &&
-		    !(READ_ONCE(inode->i_state) & (I_FREEING | I_WILL_FREE)))
-		    return inode;
-	}
-	return NULL;
+	return find_inode_rcu(sb, ino, inum_test, &ino);
 }
 EXPORT_SYMBOL(find_inode_by_ino_rcu);
 
 int insert_inode_locked(struct inode *inode)
 {
-	struct super_block *sb = inode->i_sb;
-	ino_t ino = inode->i_ino;
-	struct hlist_head *head = inode_hashtable + hash(sb, ino);
-
-	while (1) {
-		struct inode *old = NULL;
-		spin_lock(&inode_hash_lock);
-		hlist_for_each_entry(old, head, i_hash) {
-			if (old->i_ino != ino)
-				continue;
-			if (old->i_sb != sb)
-				continue;
-			spin_lock(&old->i_lock);
-			if (old->i_state & (I_FREEING|I_WILL_FREE)) {
-				spin_unlock(&old->i_lock);
-				continue;
-			}
-			break;
-		}
-		if (likely(!old)) {
-			spin_lock(&inode->i_lock);
-			inode->i_state |= I_NEW;
-			hlist_add_head_rcu(&inode->i_hash, head);
-			spin_unlock(&inode->i_lock);
-			spin_unlock(&inode_hash_lock);
-			return 0;
-		}
-		__iget(old);
-		spin_unlock(&old->i_lock);
-		spin_unlock(&inode_hash_lock);
-		wait_on_inode(old);
-		if (unlikely(!inode_unhashed(old))) {
-			iput(old);
-			return -EBUSY;
-		}
-		iput(old);
-	}
+	return insert_inode_locked4(inode, hash(inode->i_sb, inode->i_ino),
+				    inum_test, &inode->i_ino);
 }
 EXPORT_SYMBOL(insert_inode_locked);
 
@@ -1516,7 +1386,6 @@ int insert_inode_locked4(struct inode *inode, unsigned long hashval,
 	return 0;
 }
 EXPORT_SYMBOL(insert_inode_locked4);
-
 
 int generic_delete_inode(struct inode *inode)
 {
