@@ -19,8 +19,7 @@ int bch2_writepage(struct page *, struct writeback_control *);
 int bch2_readpage(struct file *, struct page *);
 
 int bch2_writepages(struct address_space *, struct writeback_control *);
-int bch2_readpages(struct file *, struct address_space *,
-		   struct list_head *, unsigned);
+void bch2_readahead(struct readahead_control *);
 
 int bch2_write_begin(struct file *, struct address_space *, loff_t,
 		     unsigned, unsigned, struct page **, void **);
