@@ -900,8 +900,6 @@ static inline int rhashtable_lookup_insert_fast(
 	const char *key = rht_obj(ht, obj);
 	void *ret;
 
-	BUG_ON(ht->p.obj_hashfn);
-
 	ret = __rhashtable_insert_fast(ht, key + ht->p.key_offset, obj, params,
 				       false);
 	if (IS_ERR(ret))
@@ -925,8 +923,6 @@ static inline void *rhashtable_lookup_get_insert_fast(
 	const struct rhashtable_params params)
 {
 	const char *key = rht_obj(ht, obj);
-
-	BUG_ON(ht->p.obj_hashfn);
 
 	return __rhashtable_insert_fast(ht, key + ht->p.key_offset, obj, params,
 					false);
