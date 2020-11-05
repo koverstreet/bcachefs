@@ -804,10 +804,6 @@ repeat:
 			__wait_on_freeing_inode(inode);
 			goto repeat;
 		}
-		if (unlikely(inode->i_state & I_CREATING)) {
-			spin_unlock(&inode->i_lock);
-			return ERR_PTR(-ESTALE);
-		}
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
 		return inode;
@@ -834,10 +830,6 @@ repeat:
 		if (inode->i_state & (I_FREEING|I_WILL_FREE)) {
 			__wait_on_freeing_inode(inode);
 			goto repeat;
-		}
-		if (unlikely(inode->i_state & I_CREATING)) {
-			spin_unlock(&inode->i_lock);
-			return ERR_PTR(-ESTALE);
 		}
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
@@ -983,7 +975,7 @@ void unlock_new_inode(struct inode *inode)
 	lockdep_annotate_inode_mutex_key(inode);
 	spin_lock(&inode->i_lock);
 	WARN_ON(!(inode->i_state & I_NEW));
-	inode->i_state &= ~I_NEW & ~I_CREATING;
+	inode->i_state &= ~I_NEW;
 	smp_mb();
 	wake_up_bit(&inode->i_state, __I_NEW);
 	spin_unlock(&inode->i_lock);
@@ -1064,8 +1056,6 @@ struct inode *inode_insert5(struct inode *inode, unsigned long hashval,
 {
 	struct hlist_head *head = inode_hashtable + hash(inode->i_sb, hashval);
 	struct inode *old;
-	bool creating = inode->i_state & I_CREATING;
-
 again:
 	spin_lock(&inode_hash_lock);
 	old = find_inode(inode->i_sb, head, test, data);
@@ -1098,7 +1088,7 @@ again:
 	inode->i_state |= I_NEW;
 	hlist_add_head_rcu(&inode->i_hash, head);
 	spin_unlock(&inode->i_lock);
-	if (!creating)
+	if (list_empty(&inode->i_sb_list))
 		inode_sb_list_add(inode);
 unlock:
 	spin_unlock(&inode_hash_lock);
@@ -1493,16 +1483,11 @@ int insert_inode_locked(struct inode *inode)
 		}
 		if (likely(!old)) {
 			spin_lock(&inode->i_lock);
-			inode->i_state |= I_NEW | I_CREATING;
+			inode->i_state |= I_NEW;
 			hlist_add_head_rcu(&inode->i_hash, head);
 			spin_unlock(&inode->i_lock);
 			spin_unlock(&inode_hash_lock);
 			return 0;
-		}
-		if (unlikely(old->i_state & I_CREATING)) {
-			spin_unlock(&old->i_lock);
-			spin_unlock(&inode_hash_lock);
-			return -EBUSY;
 		}
 		__iget(old);
 		spin_unlock(&old->i_lock);
@@ -1522,7 +1507,6 @@ int insert_inode_locked4(struct inode *inode, unsigned long hashval,
 {
 	struct inode *old;
 
-	inode->i_state |= I_CREATING;
 	old = inode_insert5(inode, hashval, test, NULL, data);
 
 	if (old != inode) {

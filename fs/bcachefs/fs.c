@@ -321,8 +321,6 @@ err_before_quota:
 	 * bch2_trans_exit() and dropping locks, else we could race with another
 	 * thread pulling the inode in and modifying it:
 	 */
-
-	inode->v.i_state |= I_CREATING;
 	old = to_bch_ei(inode_insert5(&inode->v, inode->v.i_ino,
 				      inum_test, NULL, &inode->v.i_ino));
 	BUG_ON(!old);
