@@ -453,6 +453,9 @@ static int afs_fill_super(struct super_block *sb, struct afs_fs_context *ctx)
 	sb->s_op		= &afs_super_ops;
 	if (!as->dyn_root)
 		sb->s_xattr	= afs_xattr_handlers;
+	ret = super_setup_inode_table(sb, &afs_inode_table_params);
+	if (ret)
+		return ret;
 	ret = super_setup_bdi(sb);
 	if (ret)
 		return ret;

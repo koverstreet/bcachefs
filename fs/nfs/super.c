@@ -1247,6 +1247,9 @@ int nfs_get_tree_common(struct fs_context *fc)
 		nfs_free_server(server);
 		server = NULL;
 	} else {
+		error = super_setup_inode_table(s, &nfs_inode_table_params);
+		if (error)
+			goto error_splat_super;
 		error = super_setup_bdi_name(s, "%u:%u", MAJOR(server->s_dev),
 					     MINOR(server->s_dev));
 		if (error)

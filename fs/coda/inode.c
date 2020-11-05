@@ -192,6 +192,10 @@ static int coda_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_time_min = S64_MIN;
 	sb->s_time_max = S64_MAX;
 
+	error = super_setup_inode_table(sb, &coda_inode_table_params);
+	if (error)
+		goto error;
+
 	error = super_setup_bdi(sb);
 	if (error)
 		goto error;

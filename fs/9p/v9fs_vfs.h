@@ -40,6 +40,8 @@ extern const struct file_operations v9fs_cached_file_operations;
 extern const struct file_operations v9fs_cached_file_operations_dotl;
 extern const struct file_operations v9fs_mmap_file_operations;
 extern const struct file_operations v9fs_mmap_file_operations_dotl;
+extern const struct rhashtable_params v9fs_inode_table_params;
+extern const struct rhashtable_params v9fs_inode_table_dotl_params;
 extern struct kmem_cache *v9fs_inode_cache;
 
 struct inode *v9fs_alloc_inode(struct super_block *sb);

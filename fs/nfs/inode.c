@@ -66,6 +66,55 @@ static int nfs_update_inode(struct inode *, struct nfs_fattr *);
 
 static struct kmem_cache * nfs_inode_cachep;
 
+struct nfs_find_desc {
+	struct nfs_fh		*fh;
+	struct nfs_fattr	*fattr;
+};
+
+static u32 nfs_inode_key_hash_fn(const void *data, u32 len, u32 seed)
+{
+	const struct nfs_find_desc *desc = data;
+	struct nfs_fh		*fh = desc->fh;
+	u64 fileid = desc->fattr->fileid;
+
+	return  jhash(&fileid, sizeof(fileid), seed) ^
+		jhash(fh, sizeof(fh->size) + fh->size, seed);
+}
+
+static u32 nfs_inode_obj_hash_fn(const void *obj, u32 len, u32 seed)
+{
+	const struct inode *inode = obj;
+	const struct nfs_fh *fh = NFS_FH(inode);
+	u64 fileid = NFS_FILEID(inode);
+
+	return  jhash(&fileid, sizeof(fileid), seed) ^
+		jhash(fh, sizeof(fh->size) + fh->size, seed);
+}
+
+static int nfs_inode_hash_cmp_fn(struct rhashtable_compare_arg *arg,
+				 const void *obj)
+{
+	const struct inode *inode = obj;
+	const struct nfs_find_desc *desc = arg->key;
+	struct nfs_fh		*fh = desc->fh;
+	struct nfs_fattr	*fattr = desc->fattr;
+
+	if (NFS_FILEID(inode) != fattr->fileid)
+		return 1;
+	if ((S_IFMT & inode->i_mode) != (S_IFMT & fattr->mode))
+		return 1;
+	if (nfs_compare_fh(NFS_FH(inode), fh))
+		return 1;
+	return 0;
+}
+
+const struct rhashtable_params nfs_inode_table_params = {
+	.head_offset	= offsetof(struct inode, i_hash),
+	.hashfn		= nfs_inode_key_hash_fn,
+	.obj_hashfn	= nfs_inode_obj_hash_fn,
+	.obj_cmpfn	= nfs_inode_hash_cmp_fn,
+};
+
 static inline unsigned long
 nfs_fattr_to_ino_t(struct nfs_fattr *fattr)
 {
@@ -301,40 +350,11 @@ void nfs_set_inode_stale(struct inode *inode)
 	spin_unlock(&inode->i_lock);
 }
 
-struct nfs_find_desc {
-	struct nfs_fh		*fh;
-	struct nfs_fattr	*fattr;
-};
-
-/*
- * In NFSv3 we can have 64bit inode numbers. In order to support
- * this, and re-exported directories (also seen in NFSv2)
- * we are forced to allow 2 different inodes to have the same
- * i_ino.
- */
 static int
-nfs_find_actor(struct inode *inode, void *opaque)
+nfs_init_locked(struct inode *inode, const void *opaque)
 {
-	struct nfs_find_desc	*desc = (struct nfs_find_desc *)opaque;
-	struct nfs_fh		*fh = desc->fh;
-	struct nfs_fattr	*fattr = desc->fattr;
-
-	if (NFS_FILEID(inode) != fattr->fileid)
-		return 0;
-	if ((S_IFMT & inode->i_mode) != (S_IFMT & fattr->mode))
-		return 0;
-	if (nfs_compare_fh(NFS_FH(inode), fh))
-		return 0;
-	if (is_bad_inode(inode) || NFS_STALE(inode))
-		return 0;
-	return 1;
-}
-
-static int
-nfs_init_locked(struct inode *inode, void *opaque)
-{
-	struct nfs_find_desc	*desc = (struct nfs_find_desc *)opaque;
-	struct nfs_fattr	*fattr = desc->fattr;
+	const struct nfs_find_desc	*desc = (struct nfs_find_desc *)opaque;
+	const struct nfs_fattr		*fattr = desc->fattr;
 
 	set_nfs_fileid(inode, fattr->fileid);
 	inode->i_mode = fattr->mode;
@@ -413,14 +433,17 @@ nfs_ilookup(struct super_block *sb, struct nfs_fattr *fattr, struct nfs_fh *fh)
 		.fattr	= fattr,
 	};
 	struct inode *inode;
-	unsigned long hash;
 
 	if (!(fattr->valid & NFS_ATTR_FATTR_FILEID) ||
 	    !(fattr->valid & NFS_ATTR_FATTR_TYPE))
 		return NULL;
 
-	hash = nfs_fattr_to_ino_t(fattr);
-	inode = ilookup5(sb, hash, nfs_find_actor, &desc);
+	inode = ilookup5(sb, &desc);
+
+	if (inode && (is_bad_inode(inode) || NFS_STALE(inode))) {
+		iput(inode);
+		inode = NULL;
+	}
 
 	dprintk("%s: returning %p\n", __func__, inode);
 	return inode;
@@ -438,7 +461,6 @@ nfs_fhget(struct super_block *sb, struct nfs_fh *fh, struct nfs_fattr *fattr, st
 		.fattr	= fattr
 	};
 	struct inode *inode = ERR_PTR(-ENOENT);
-	unsigned long hash;
 
 	nfs_attr_check_mountpoint(sb, fattr);
 
@@ -449,9 +471,13 @@ nfs_fhget(struct super_block *sb, struct nfs_fh *fh, struct nfs_fattr *fattr, st
 	if ((fattr->valid & NFS_ATTR_FATTR_TYPE) == 0)
 		goto out_no_inode;
 
-	hash = nfs_fattr_to_ino_t(fattr);
+	inode = iget5_locked(sb, nfs_init_locked, &desc);
 
-	inode = iget5_locked(sb, hash, nfs_find_actor, nfs_init_locked, &desc);
+	if (inode && (is_bad_inode(inode) || NFS_STALE(inode))) {
+		iput(inode);
+		inode = NULL;
+	}
+
 	if (inode == NULL) {
 		inode = ERR_PTR(-ENOMEM);
 		goto out_no_inode;
@@ -463,7 +489,7 @@ nfs_fhget(struct super_block *sb, struct nfs_fh *fh, struct nfs_fattr *fattr, st
 
 		/* We set i_ino for the few things that still rely on it,
 		 * such as stat(2) */
-		inode->i_ino = hash;
+		inode->i_ino = nfs_fattr_to_ino_t(fattr);
 
 		/* We can't support update_atime(), since the server will reset it */
 		inode->i_flags |= S_NOATIME|S_NOCMTIME;

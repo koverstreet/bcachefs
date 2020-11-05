@@ -794,11 +794,6 @@ extern const struct dentry_operations fuse_dentry_operations;
 extern const struct dentry_operations fuse_root_dentry_operations;
 
 /**
- * Inode to nodeid comparison.
- */
-int fuse_inode_eq(struct inode *inode, void *_nodeidp);
-
-/**
  * Get a filled in inode
  */
 struct inode *fuse_iget(struct super_block *sb, u64 nodeid,

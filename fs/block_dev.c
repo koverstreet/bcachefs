@@ -26,6 +26,7 @@
 #include <linux/mpage.h>
 #include <linux/mount.h>
 #include <linux/pseudo_fs.h>
+#include <linux/jhash.h>
 #include <linux/uio.h>
 #include <linux/namei.h>
 #include <linux/log2.h>
@@ -53,6 +54,38 @@ struct block_device *I_BDEV(struct inode *inode)
 	return &BDEV_I(inode)->bdev;
 }
 EXPORT_SYMBOL(I_BDEV);
+
+static u32 blockdev_key_hash_fn(const void *data, u32 len, u32 seed)
+{
+	const dev_t *k = data;
+
+	return jhash(k, sizeof(*k), seed);
+}
+
+static u32 blockdev_obj_hash_fn(const void *obj, u32 len, u32 seed)
+{
+	const struct bdev_inode *ei =
+		container_of(obj, struct bdev_inode, vfs_inode);
+
+	return jhash(&ei->bdev.bd_dev, sizeof(ei->bdev.bd_dev), seed);
+}
+
+static int blockdev_hash_cmp_fn(struct rhashtable_compare_arg *arg,
+				const void *obj)
+{
+	const struct bdev_inode *ei =
+		container_of(obj, struct bdev_inode, vfs_inode);
+	const dev_t *k = arg->key;
+
+	return ei->bdev.bd_dev == *k ? 0 : 1;
+}
+
+static const struct rhashtable_params blockdev_inode_table_params = {
+	.head_offset	= offsetof(struct inode, i_hash),
+	.hashfn		= blockdev_key_hash_fn,
+	.obj_hashfn	= blockdev_obj_hash_fn,
+	.obj_cmpfn	= blockdev_hash_cmp_fn,
+};
 
 static void bdev_write_inode(struct block_device *bdev)
 {
@@ -839,24 +872,13 @@ void __init bdev_cache_init(void)
 	if (IS_ERR(bd_mnt))
 		panic("Cannot create bdev pseudo-fs");
 	blockdev_superblock = bd_mnt->mnt_sb;   /* For writeback */
+
+	err = super_setup_inode_table(blockdev_superblock, &blockdev_inode_table_params);
+	if (err)
+		panic("Cannot initialize bdev inode table");
 }
 
-/*
- * Most likely _very_ bad one - but then it's hardly critical for small
- * /dev and can be fixed when somebody will need really large one.
- * Keep in mind that it will be fed through icache hash function too.
- */
-static inline unsigned long hash(dev_t dev)
-{
-	return MAJOR(dev)+MINOR(dev);
-}
-
-static int bdev_test(struct inode *inode, void *data)
-{
-	return BDEV_I(inode)->bdev.bd_dev == *(dev_t *)data;
-}
-
-static int bdev_set(struct inode *inode, void *data)
+static int bdev_set(struct inode *inode, const void *data)
 {
 	BDEV_I(inode)->bdev.bd_dev = *(dev_t *)data;
 	return 0;
@@ -867,8 +889,7 @@ struct block_device *bdget(dev_t dev)
 	struct block_device *bdev;
 	struct inode *inode;
 
-	inode = iget5_locked(blockdev_superblock, hash(dev),
-			bdev_test, bdev_set, &dev);
+	inode = iget5_locked(blockdev_superblock, bdev_set, &dev);
 
 	if (!inode)
 		return NULL;

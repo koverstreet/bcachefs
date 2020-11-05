@@ -15,6 +15,7 @@
 #include <linux/uio.h>
 #include <linux/dax.h>
 #include <linux/fs.h>
+#include <linux/jhash.h>
 #include "dax-private.h"
 
 static dev_t dax_devt;
@@ -27,6 +28,38 @@ static struct super_block *dax_superblock __read_mostly;
 #define DAX_HASH_SIZE (PAGE_SIZE / sizeof(struct hlist_head))
 static struct hlist_head dax_host_list[DAX_HASH_SIZE];
 static DEFINE_SPINLOCK(dax_host_lock);
+
+static u32 dax_inode_key_hash_fn(const void *data, u32 len, u32 seed)
+{
+	const dev_t *devt = data;
+
+	return jhash(devt, sizeof(*devt), seed);
+}
+
+static u32 dax_inode_obj_hash_fn(const void *obj, u32 len, u32 seed)
+{
+	const struct inode *inode = obj;
+
+	return jhash(&inode->i_rdev, sizeof(inode->i_rdev), seed);
+}
+
+static int dax_inode_hash_cmp_fn(struct rhashtable_compare_arg *arg,
+				 const void *obj)
+{
+	const struct inode *inode = obj;
+	const dev_t *devt = arg->key;
+
+	if (inode->i_rdev == *devt)
+		return 0;
+	return 1;
+}
+
+static const struct rhashtable_params dax_inode_table_params = {
+	.head_offset	= offsetof(struct inode, i_hash),
+	.hashfn		= dax_inode_key_hash_fn,
+	.obj_hashfn	= dax_inode_obj_hash_fn,
+	.obj_cmpfn	= dax_inode_hash_cmp_fn,
+};
 
 int dax_read_lock(void)
 {
@@ -513,18 +546,11 @@ static struct file_system_type dax_fs_type = {
 	.kill_sb	= kill_anon_super,
 };
 
-static int dax_test(struct inode *inode, void *data)
+static int dax_set(struct inode *inode, const void *data)
 {
-	dev_t devt = *(dev_t *) data;
+	const dev_t *devt = data;
 
-	return inode->i_rdev == devt;
-}
-
-static int dax_set(struct inode *inode, void *data)
-{
-	dev_t devt = *(dev_t *) data;
-
-	inode->i_rdev = devt;
+	inode->i_rdev = *devt;
 	return 0;
 }
 
@@ -533,8 +559,7 @@ static struct dax_device *dax_dev_get(dev_t devt)
 	struct dax_device *dax_dev;
 	struct inode *inode;
 
-	inode = iget5_locked(dax_superblock, hash_32(devt + DAXFS_MAGIC, 31),
-			dax_test, dax_set, &devt);
+	inode = iget5_locked(dax_superblock, dax_set, &devt);
 
 	if (!inode)
 		return NULL;
@@ -711,8 +736,14 @@ static int dax_fs_init(void)
 	}
 	dax_superblock = dax_mnt->mnt_sb;
 
+	rc = super_setup_inode_table(dax_superblock, &dax_inode_table_params);
+	if (rc)
+		goto err_itable;
+
 	return 0;
 
+ err_itable:
+	kern_unmount(dax_mnt);
  err_mount:
 	kmem_cache_destroy(dax_cache);
 

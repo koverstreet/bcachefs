@@ -129,7 +129,7 @@ static void afs_break_one_callback(struct afs_volume *volume,
 	if (!sb)
 		return;
 
-	inode = find_inode_rcu(sb, fid->vnode, afs_ilookup5_test_by_fid, fid);
+	inode = find_inode_rcu(sb, fid);
 	if (inode) {
 		vnode = AFS_FS_I(inode);
 		afs_break_callback(vnode, afs_cb_break_for_callback);

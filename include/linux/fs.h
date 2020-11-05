@@ -39,6 +39,7 @@
 #include <linux/fs_types.h>
 #include <linux/build_bug.h>
 #include <linux/stddef.h>
+#include <linux/rhashtable-types.h>
 
 #include <asm/byteorder.h>
 #include <uapi/linux/fs.h>
@@ -70,7 +71,6 @@ struct fs_context;
 struct fs_parameter_spec;
 
 extern void __init inode_init(void);
-extern void __init inode_init_early(void);
 extern void __init files_init(void);
 extern void __init files_maxfiles_init(void);
 
@@ -667,7 +667,7 @@ struct inode {
 	unsigned long		dirtied_when;	/* jiffies of first dirtying */
 	unsigned long		dirtied_time_when;
 
-	struct hlist_node	i_hash;
+	struct rhash_head	i_hash;
 	struct list_head	i_io_list;	/* backing dev IO list */
 #ifdef CONFIG_CGROUP_WRITEBACK
 	struct bdi_writeback	*i_wb;		/* the associated cgroup wb */
@@ -734,7 +734,7 @@ static inline unsigned int i_blocksize(const struct inode *node)
 
 static inline int inode_unhashed(struct inode *inode)
 {
-	return hlist_unhashed(&inode->i_hash);
+	return inode->i_hash.next == NULL;
 }
 
 /*
@@ -745,7 +745,7 @@ static inline int inode_unhashed(struct inode *inode)
  */
 static inline void inode_fake_hash(struct inode *inode)
 {
-	hlist_add_fake(&inode->i_hash);
+	inode->i_hash.next = (void *) 2;
 }
 
 /*
@@ -1535,6 +1535,9 @@ struct super_block {
 	 * Indicates how deep in a filesystem stack this SB is
 	 */
 	int s_stack_depth;
+
+	struct rhashtable	s_inode_table;
+	bool			s_inode_table_init_done;
 
 	/* s_inode_list_lock protects s_inodes */
 	spinlock_t		s_inode_list_lock ____cacheline_aligned_in_smp;
@@ -2927,24 +2930,24 @@ static inline int generic_drop_inode(struct inode *inode)
 }
 extern void d_mark_dontcache(struct inode *inode);
 
+extern const struct rhashtable_params default_inode_table_params;
+extern int super_setup_inode_table(struct super_block *sb,
+				   const struct rhashtable_params *params);
+
 extern struct inode *ilookup5_nowait(struct super_block *sb,
-		unsigned long hashval, int (*test)(struct inode *, void *),
-		void *data);
-extern struct inode *ilookup5(struct super_block *sb, unsigned long hashval,
-		int (*test)(struct inode *, void *), void *data);
+		const void *key);
+extern struct inode *ilookup5(struct super_block *sb, const void *key);
 extern struct inode *ilookup(struct super_block *sb, unsigned long ino);
 
-extern struct inode *inode_insert5(struct inode *inode, unsigned long hashval,
-		int (*test)(struct inode *, void *),
-		int (*set)(struct inode *, void *),
-		void *data);
-extern struct inode * iget5_locked(struct super_block *, unsigned long, int (*test)(struct inode *, void *), int (*set)(struct inode *, void *), void *);
+extern struct inode *inode_insert5(struct inode *inode);
+extern struct inode * iget5_locked(struct super_block *,
+				   int (*set)(struct inode *, const void *),
+				   const void *);
 extern struct inode * iget_locked(struct super_block *, unsigned long);
-extern struct inode *find_inode_rcu(struct super_block *, unsigned long,
-				    int (*)(struct inode *, void *), void *);
+extern struct inode *find_inode_rcu(struct super_block *, const void *);
 extern struct inode *find_inode_by_ino_rcu(struct super_block *, unsigned long);
-extern int insert_inode_locked4(struct inode *, unsigned long, int (*test)(struct inode *, void *), void *);
 extern int insert_inode_locked(struct inode *);
+
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 extern void lockdep_annotate_inode_mutex_key(struct inode *inode);
 #else
@@ -2989,7 +2992,8 @@ static inline void insert_inode_hash(struct inode *inode)
 extern void __remove_inode_hash(struct inode *);
 static inline void remove_inode_hash(struct inode *inode)
 {
-	if (!inode_unhashed(inode) && !hlist_fake(&inode->i_hash))
+	if (!inode_unhashed(inode) &&
+	    inode->i_hash.next != (void *) 2)
 		__remove_inode_hash(inode);
 }
 

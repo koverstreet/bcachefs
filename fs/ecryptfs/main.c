@@ -505,6 +505,10 @@ static struct dentry *ecryptfs_mount(struct file_system_type *fs_type, int flags
 		goto out;
 	}
 
+	rc = super_setup_inode_table(s, &ecryptfs_inode_table_params);
+	if (rc)
+		goto out1;
+
 	rc = super_setup_bdi(s);
 	if (rc)
 		goto out1;

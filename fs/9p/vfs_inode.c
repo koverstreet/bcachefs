@@ -14,6 +14,7 @@
 #include <linux/errno.h>
 #include <linux/fs.h>
 #include <linux/file.h>
+#include <linux/jhash.h>
 #include <linux/pagemap.h>
 #include <linux/stat.h>
 #include <linux/string.h>
@@ -81,7 +82,7 @@ static u32 unixmode2p9mode(struct v9fs_session_info *v9ses, umode_t mode)
  *
  */
 static int p9mode2perm(struct v9fs_session_info *v9ses,
-		       struct p9_wstat *stat)
+		       const struct p9_wstat *stat)
 {
 	int res;
 	int mode = stat->mode;
@@ -108,7 +109,7 @@ static int p9mode2perm(struct v9fs_session_info *v9ses,
  *
  */
 static umode_t p9mode2unixmode(struct v9fs_session_info *v9ses,
-			       struct p9_wstat *stat, dev_t *rdev)
+			       const struct p9_wstat *stat, dev_t *rdev)
 {
 	int res;
 	u32 mode = stat->mode;
@@ -215,6 +216,48 @@ v9fs_blank_wstat(struct p9_wstat *wstat)
 	wstat->n_muid = INVALID_UID;
 	wstat->extension = NULL;
 }
+
+static u32 v9fs_inode_key_hash_fn(const void *data, u32 len, u32 seed)
+{
+	const struct p9_qid *qid = data;
+	u64 hashv = qid->type ^ qid->version ^ qid->path;
+
+	return jhash(&hashv, sizeof(hashv), seed);
+}
+
+static u32 v9fs_inode_obj_hash_fn(const void *obj, u32 len, u32 seed)
+{
+	const struct p9_qid *qid = &V9FS_I(obj)->qid;
+	u64 hashv = qid->type ^ qid->version ^ qid->path;
+
+	return jhash(&hashv, sizeof(hashv), seed);
+}
+
+static int v9fs_inode_hash_cmp_fn(struct rhashtable_compare_arg *arg,
+				  const void *obj)
+{
+	const struct inode *inode = obj;
+	struct v9fs_session_info *v9ses = v9fs_inode2v9ses(inode);
+	struct v9fs_inode *v9inode = V9FS_I(inode);
+	const struct p9_wstat *st = arg->key;
+	dev_t rdev;
+	int umode = p9mode2unixmode(v9ses, st, &rdev);
+
+	/* compare qid details */
+	if ((inode->i_mode & S_IFMT)	== (umode & S_IFMT) &&
+	    v9inode->qid.type		== st->qid.type &&
+	    v9inode->qid.version	== st->qid.version &&
+	    v9inode->qid.path		== st->qid.path)
+		return 0;
+	return 1;
+}
+
+const struct rhashtable_params v9fs_inode_table_params = {
+	.head_offset	= offsetof(struct inode, i_hash),
+	.hashfn		= v9fs_inode_key_hash_fn,
+	.obj_hashfn	= v9fs_inode_obj_hash_fn,
+	.obj_cmpfn	= v9fs_inode_hash_cmp_fn,
+};
 
 /**
  * v9fs_alloc_inode - helper function to allocate an inode
@@ -388,66 +431,26 @@ void v9fs_evict_inode(struct inode *inode)
 	}
 }
 
-static int v9fs_test_inode(struct inode *inode, void *data)
-{
-	int umode;
-	dev_t rdev;
-	struct v9fs_inode *v9inode = V9FS_I(inode);
-	struct p9_wstat *st = (struct p9_wstat *)data;
-	struct v9fs_session_info *v9ses = v9fs_inode2v9ses(inode);
-
-	umode = p9mode2unixmode(v9ses, st, &rdev);
-	/* don't match inode of different type */
-	if ((inode->i_mode & S_IFMT) != (umode & S_IFMT))
-		return 0;
-
-	/* compare qid details */
-	if (memcmp(&v9inode->qid.version,
-		   &st->qid.version, sizeof(v9inode->qid.version)))
-		return 0;
-
-	if (v9inode->qid.type != st->qid.type)
-		return 0;
-
-	if (v9inode->qid.path != st->qid.path)
-		return 0;
-	return 1;
-}
-
-static int v9fs_test_new_inode(struct inode *inode, void *data)
-{
-	return 0;
-}
-
-static int v9fs_set_inode(struct inode *inode,  void *data)
+static int v9fs_set_inode(struct inode *inode, const void *data)
 {
 	struct v9fs_inode *v9inode = V9FS_I(inode);
-	struct p9_wstat *st = (struct p9_wstat *)data;
+	const struct p9_qid *qid = data;
 
-	memcpy(&v9inode->qid, &st->qid, sizeof(st->qid));
+	v9inode->qid = *qid;
 	return 0;
 }
 
 static struct inode *v9fs_qid_iget(struct super_block *sb,
-				   struct p9_qid *qid,
 				   struct p9_wstat *st,
 				   int new)
 {
 	dev_t rdev;
 	int retval;
 	umode_t umode;
-	unsigned long i_ino;
 	struct inode *inode;
 	struct v9fs_session_info *v9ses = sb->s_fs_info;
-	int (*test)(struct inode *, void *);
 
-	if (new)
-		test = v9fs_test_new_inode;
-	else
-		test = v9fs_test_inode;
-
-	i_ino = v9fs_qid2ino(qid);
-	inode = iget5_locked(sb, i_ino, test, v9fs_set_inode, st);
+	inode = iget5_locked(sb, v9fs_set_inode, &st->qid);
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
 	if (!(inode->i_state & I_NEW))
@@ -457,7 +460,7 @@ static struct inode *v9fs_qid_iget(struct super_block *sb,
 	 * FIXME!! we may need support for stale inodes
 	 * later.
 	 */
-	inode->i_ino = i_ino;
+	inode->i_ino = v9fs_qid2ino(&st->qid);
 	umode = p9mode2unixmode(v9ses, st, &rdev);
 	retval = v9fs_init_inode(v9ses, inode, umode, rdev);
 	if (retval)
@@ -484,7 +487,7 @@ v9fs_inode_from_fid(struct v9fs_session_info *v9ses, struct p9_fid *fid,
 	if (IS_ERR(st))
 		return ERR_CAST(st);
 
-	inode = v9fs_qid_iget(sb, &st->qid, st, new);
+	inode = v9fs_qid_iget(sb, st, new);
 	p9stat_free(st);
 	kfree(st);
 	return inode;

@@ -9,6 +9,7 @@
 #include <linux/buffer_head.h>
 #include <linux/file.h>
 #include <linux/fs.h>
+#include <linux/jhash.h>
 #include <linux/pagemap.h>
 #include <linux/highmem.h>
 #include <linux/time.h>
@@ -55,6 +56,43 @@
 struct btrfs_iget_args {
 	u64 ino;
 	struct btrfs_root *root;
+};
+
+static u32 btrfs_inode_key_hash_fn(const void *data, u32 len, u32 seed)
+{
+	const struct btrfs_iget_args *args = data;
+
+	return jhash(args, sizeof(*args), seed);
+}
+
+static u32 btrfs_inode_obj_hash_fn(const void *obj, u32 len, u32 seed)
+{
+	const struct inode *inode = obj;
+	const struct btrfs_iget_args args = {
+		BTRFS_I(inode)->location.objectid,
+		BTRFS_I(inode)->root,
+	};
+
+	return jhash(&args, sizeof(args), seed);
+}
+
+static int btrfs_inode_hash_cmp_fn(struct rhashtable_compare_arg *arg,
+				   const void *obj)
+{
+	const struct inode *inode = obj;
+	const struct btrfs_iget_args *args = arg->key;
+
+	if (args->ino == BTRFS_I(inode)->location.objectid &&
+	    args->root == BTRFS_I(inode)->root)
+		return 0;
+	return 1;
+}
+
+const struct rhashtable_params btrfs_inode_table_params = {
+	.head_offset	= offsetof(struct inode, i_hash),
+	.hashfn		= btrfs_inode_key_hash_fn,
+	.obj_hashfn	= btrfs_inode_obj_hash_fn,
+	.obj_cmpfn	= btrfs_inode_hash_cmp_fn,
 };
 
 struct btrfs_dio_data {
@@ -5327,10 +5365,9 @@ static void inode_tree_del(struct inode *inode)
 	}
 }
 
-
-static int btrfs_init_locked_inode(struct inode *inode, void *p)
+static int btrfs_init_locked_inode(struct inode *inode, const void *p)
 {
-	struct btrfs_iget_args *args = p;
+	const struct btrfs_iget_args *args = p;
 
 	inode->i_ino = args->ino;
 	BTRFS_I(inode)->location.objectid = args->ino;
@@ -5339,30 +5376,6 @@ static int btrfs_init_locked_inode(struct inode *inode, void *p)
 	BTRFS_I(inode)->root = btrfs_grab_root(args->root);
 	BUG_ON(args->root && !BTRFS_I(inode)->root);
 	return 0;
-}
-
-static int btrfs_find_actor(struct inode *inode, void *opaque)
-{
-	struct btrfs_iget_args *args = opaque;
-
-	return args->ino == BTRFS_I(inode)->location.objectid &&
-		args->root == BTRFS_I(inode)->root;
-}
-
-static struct inode *btrfs_iget_locked(struct super_block *s, u64 ino,
-				       struct btrfs_root *root)
-{
-	struct inode *inode;
-	struct btrfs_iget_args args;
-	unsigned long hashval = btrfs_inode_hash(ino, root);
-
-	args.ino = ino;
-	args.root = root;
-
-	inode = iget5_locked(s, hashval, btrfs_find_actor,
-			     btrfs_init_locked_inode,
-			     (void *)&args);
-	return inode;
 }
 
 /*
@@ -5375,8 +5388,9 @@ struct inode *btrfs_iget_path(struct super_block *s, u64 ino,
 			      struct btrfs_root *root, struct btrfs_path *path)
 {
 	struct inode *inode;
+	struct btrfs_iget_args args = { ino, root };
 
-	inode = btrfs_iget_locked(s, ino, root);
+	inode = iget5_locked(s, btrfs_init_locked_inode, &args);
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
 
@@ -5876,18 +5890,6 @@ int btrfs_set_inode_index(struct btrfs_inode *dir, u64 *index)
 	return ret;
 }
 
-static int btrfs_insert_inode_locked(struct inode *inode)
-{
-	struct btrfs_iget_args args;
-
-	args.ino = BTRFS_I(inode)->location.objectid;
-	args.root = BTRFS_I(inode)->root;
-
-	return insert_inode_locked4(inode,
-		   btrfs_inode_hash(inode->i_ino, BTRFS_I(inode)->root),
-		   btrfs_find_actor, &args);
-}
-
 /*
  * Inherit flags from the parent inode.
  *
@@ -6020,7 +6022,7 @@ static struct inode *btrfs_new_inode(struct btrfs_trans_handle *trans,
 	location->offset = 0;
 	location->type = BTRFS_INODE_ITEM_KEY;
 
-	ret = btrfs_insert_inode_locked(inode);
+	ret = insert_inode_locked(inode);
 	if (ret < 0) {
 		iput(inode);
 		goto fail;

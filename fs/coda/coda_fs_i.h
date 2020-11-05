@@ -49,6 +49,8 @@ struct coda_file_info {
 #define C_DYING       0x4   /* from venus (which died) */
 #define C_PURGE       0x8
 
+const struct rhashtable_params coda_inode_table_params;
+
 struct inode *coda_cnode_make(struct CodaFid *, struct super_block *);
 struct inode *coda_iget(struct super_block *sb, struct CodaFid *fid, struct coda_vattr *attr);
 struct inode *coda_cnode_makectl(struct super_block *sb);

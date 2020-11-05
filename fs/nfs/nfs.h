@@ -22,6 +22,8 @@ struct nfs_subversion {
 	struct list_head list;		/* List of NFS versions */
 };
 
+extern const struct rhashtable_params nfs_inode_table_params;
+
 struct nfs_subversion *get_nfs_version(unsigned int);
 void put_nfs_version(struct nfs_subversion *);
 void register_nfs_version(struct nfs_subversion *);

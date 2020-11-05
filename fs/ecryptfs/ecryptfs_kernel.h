@@ -544,6 +544,7 @@ extern int ecryptfs_verbosity;
 extern unsigned int ecryptfs_message_buf_len;
 extern signed long ecryptfs_message_wait_timeout;
 extern unsigned int ecryptfs_number_of_users;
+extern const struct rhashtable_params ecryptfs_inode_table_params;
 
 extern struct kmem_cache *ecryptfs_auth_tok_list_item_cache;
 extern struct kmem_cache *ecryptfs_file_info_cache;

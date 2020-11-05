@@ -482,6 +482,8 @@ static inline ino_t ceph_vino_to_ino_t(struct ceph_vino vino)
 /* for printf-style formatting */
 #define ceph_vinop(i) ceph_inode(i)->i_vino.ino, ceph_inode(i)->i_vino.snap
 
+extern const struct rhashtable_params ceph_inode_table_params;
+
 static inline u64 ceph_ino(struct inode *inode)
 {
 	return ceph_inode(inode)->i_vino.ino;
@@ -514,14 +516,14 @@ static inline u64 ceph_present_inode(struct inode *inode)
 	return ceph_present_ino(inode->i_sb, ceph_ino(inode));
 }
 
-static inline int ceph_ino_compare(struct inode *inode, void *data)
+static inline int ceph_ino_compare(const struct inode *inode,
+				   const struct ceph_vino *pvino)
 {
-	struct ceph_vino *pvino = (struct ceph_vino *)data;
 	struct ceph_inode_info *ci = ceph_inode(inode);
+
 	return ci->i_vino.ino == pvino->ino &&
 		ci->i_vino.snap == pvino->snap;
 }
-
 
 static inline struct inode *ceph_find_inode(struct super_block *sb,
 					    struct ceph_vino vino)
@@ -531,7 +533,7 @@ static inline struct inode *ceph_find_inode(struct super_block *sb,
 	 * anyway, so there is no need to squash the inode number down to
 	 * 32-bits first. Just use low-order bits on arches with 32-bit long.
 	 */
-	return ilookup5(sb, (unsigned long)vino.ino, ceph_ino_compare, &vino);
+	return ilookup5(sb, &vino);
 }
 
 

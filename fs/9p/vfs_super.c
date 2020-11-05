@@ -60,6 +60,7 @@ static int
 v9fs_fill_super(struct super_block *sb, struct v9fs_session_info *v9ses,
 		int flags)
 {
+	const struct rhashtable_params *itable_params;
 	int ret;
 
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
@@ -69,12 +70,18 @@ v9fs_fill_super(struct super_block *sb, struct v9fs_session_info *v9ses,
 	if (v9fs_proto_dotl(v9ses)) {
 		sb->s_op = &v9fs_super_ops_dotl;
 		sb->s_xattr = v9fs_xattr_handlers;
+		itable_params = &v9fs_inode_table_dotl_params;
 	} else {
 		sb->s_op = &v9fs_super_ops;
 		sb->s_time_max = U32_MAX;
+		itable_params = &v9fs_inode_table_params;
 	}
 
 	sb->s_time_min = 0;
+
+	ret = super_setup_inode_table(sb, itable_params);
+	if (ret)
+		return ret;
 
 	ret = super_setup_bdi(sb);
 	if (ret)

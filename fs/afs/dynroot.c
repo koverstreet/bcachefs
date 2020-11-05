@@ -13,32 +13,6 @@
 static atomic_t afs_autocell_ino;
 
 /*
- * iget5() comparator for inode created by autocell operations
- *
- * These pseudo inodes don't match anything.
- */
-static int afs_iget5_pseudo_test(struct inode *inode, void *opaque)
-{
-	return 0;
-}
-
-/*
- * iget5() inode initialiser
- */
-static int afs_iget5_pseudo_set(struct inode *inode, void *opaque)
-{
-	struct afs_super_info *as = AFS_FS_S(inode->i_sb);
-	struct afs_vnode *vnode = AFS_FS_I(inode);
-	struct afs_fid *fid = opaque;
-
-	vnode->volume		= as->volume;
-	vnode->fid		= *fid;
-	inode->i_ino		= fid->vnode;
-	inode->i_generation	= fid->unique;
-	return 0;
-}
-
-/*
  * Create an inode for a dynamic root directory or an autocell dynamic
  * automount dir.
  */
@@ -61,8 +35,7 @@ struct inode *afs_iget_pseudo_dir(struct super_block *sb, bool root)
 		fid.unique = 0;
 	}
 
-	inode = iget5_locked(sb, fid.vnode,
-			     afs_iget5_pseudo_test, afs_iget5_pseudo_set, &fid);
+	inode = iget5_locked(sb, afs_iget5_set, &fid);
 	if (!inode) {
 		_leave(" = -ENOMEM");
 		return ERR_PTR(-ENOMEM);

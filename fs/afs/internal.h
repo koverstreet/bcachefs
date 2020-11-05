@@ -1073,12 +1073,13 @@ extern void afs_fs_probe_cleanup(struct afs_net *);
 /*
  * inode.c
  */
+extern const struct rhashtable_params afs_inode_table_params;
 extern const struct afs_operation_ops afs_fetch_status_operation;
 
 extern void afs_vnode_commit_status(struct afs_operation *, struct afs_vnode_param *);
 extern int afs_fetch_status(struct afs_vnode *, struct key *, bool, afs_access_t *);
-extern int afs_ilookup5_test_by_fid(struct inode *, void *);
 extern struct inode *afs_iget_pseudo_dir(struct super_block *, bool);
+int afs_iget5_set(struct inode *inode, const void *opaque);
 extern struct inode *afs_iget(struct afs_operation *, struct afs_vnode_param *);
 extern struct inode *afs_root_iget(struct super_block *, struct key *);
 extern bool afs_check_validity(struct afs_vnode *);

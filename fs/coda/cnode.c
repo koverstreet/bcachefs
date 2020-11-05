@@ -3,6 +3,7 @@
    (C) 1996 Peter Braam
    */
 
+#include <linux/jhash.h>
 #include <linux/types.h>
 #include <linux/string.h>
 #include <linux/time.h>
@@ -12,10 +13,43 @@
 #include "coda_psdev.h"
 #include "coda_linux.h"
 
-static inline int coda_fideq(struct CodaFid *fid1, struct CodaFid *fid2)
+static inline int coda_fideq(const struct CodaFid *fid1,
+			     const struct CodaFid *fid2)
 {
 	return memcmp(fid1, fid2, sizeof(*fid1)) == 0;
 }
+
+static u32 coda_inode_key_hash_fn(const void *data, u32 len, u32 seed)
+{
+	const struct CodaFid *fid = data;
+
+	return jhash(fid, sizeof(*fid), seed);
+}
+
+static u32 coda_inode_obj_hash_fn(const void *obj, u32 len, u32 seed)
+{
+	const struct coda_inode_info *cii =
+		container_of(obj, struct coda_inode_info, vfs_inode);
+
+	return jhash(&cii->c_fid, sizeof(cii->c_fid), seed);
+}
+
+static int coda_inode_hash_cmp_fn(struct rhashtable_compare_arg *arg,
+				  const void *obj)
+{
+	const struct coda_inode_info *cii =
+		container_of(obj, struct coda_inode_info, vfs_inode);
+	const struct CodaFid *fid = arg->key;
+
+	return !coda_fideq(&cii->c_fid, fid);
+}
+
+const struct rhashtable_params coda_inode_table_params = {
+	.head_offset	= offsetof(struct inode, i_hash),
+	.hashfn		= coda_inode_key_hash_fn,
+	.obj_hashfn	= coda_inode_obj_hash_fn,
+	.obj_cmpfn	= coda_inode_hash_cmp_fn,
+};
 
 static const struct inode_operations coda_symlink_inode_operations = {
 	.get_link	= page_get_link,
@@ -42,16 +76,9 @@ static void coda_fill_inode(struct inode *inode, struct coda_vattr *attr)
                 init_special_inode(inode, inode->i_mode, huge_decode_dev(attr->va_rdev));
 }
 
-static int coda_test_inode(struct inode *inode, void *data)
+static int coda_set_inode(struct inode *inode, const void *data)
 {
-	struct CodaFid *fid = (struct CodaFid *)data;
-	struct coda_inode_info *cii = ITOC(inode);
-	return coda_fideq(&cii->c_fid, fid);
-}
-
-static int coda_set_inode(struct inode *inode, void *data)
-{
-	struct CodaFid *fid = (struct CodaFid *)data;
+	const struct CodaFid *fid = data;
 	struct coda_inode_info *cii = ITOC(inode);
 	cii->c_fid = *fid;
 	return 0;
@@ -62,9 +89,8 @@ struct inode * coda_iget(struct super_block * sb, struct CodaFid * fid,
 {
 	struct inode *inode;
 	struct coda_inode_info *cii;
-	unsigned long hash = coda_f2i(fid);
 
-	inode = iget5_locked(sb, hash, coda_test_inode, coda_set_inode, fid);
+	inode = iget5_locked(sb, coda_set_inode, fid);
 
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
@@ -72,7 +98,7 @@ struct inode * coda_iget(struct super_block * sb, struct CodaFid * fid,
 	if (inode->i_state & I_NEW) {
 		cii = ITOC(inode);
 		/* we still need to set i_ino for things like stat(2) */
-		inode->i_ino = hash;
+		inode->i_ino = coda_f2i(fid);
 		/* inode is locked and unique, no need to grab cii->c_lock */
 		cii->c_mapcount = 0;
 		unlock_new_inode(inode);
@@ -135,9 +161,8 @@ void coda_replace_fid(struct inode *inode, struct CodaFid *oldfid,
 struct inode *coda_fid_to_inode(struct CodaFid *fid, struct super_block *sb) 
 {
 	struct inode *inode;
-	unsigned long hash = coda_f2i(fid);
 
-	inode = ilookup5(sb, hash, coda_test_inode, fid);
+	inode = ilookup5(sb, fid);
 	if ( !inode )
 		return NULL;
 

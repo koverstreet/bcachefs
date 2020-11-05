@@ -1564,7 +1564,7 @@ static int fuse_notify_store(struct fuse_conn *fc, unsigned int size,
 	if (!fc->sb)
 		goto out_up_killsb;
 
-	inode = ilookup5(fc->sb, nodeid, fuse_inode_eq, &nodeid);
+	inode = ilookup5(fc->sb, &nodeid);
 	if (!inode)
 		goto out_up_killsb;
 
@@ -1732,7 +1732,7 @@ static int fuse_notify_retrieve(struct fuse_conn *fc, unsigned int size,
 	if (fc->sb) {
 		u64 nodeid = outarg.nodeid;
 
-		inode = ilookup5(fc->sb, nodeid, fuse_inode_eq, &nodeid);
+		inode = ilookup5(fc->sb, &nodeid);
 		if (inode) {
 			err = fuse_retrieve(fc, inode, &outarg);
 			iput(inode);

@@ -80,6 +80,7 @@ static struct vfsmount *shm_mnt;
 #include <linux/userfaultfd_k.h>
 #include <linux/rmap.h>
 #include <linux/uuid.h>
+#include <linux/jhash.h>
 
 #include <linux/uaccess.h>
 
@@ -93,6 +94,43 @@ static struct vfsmount *shm_mnt;
 
 /* Symlink up to this size is kmalloc'ed instead of using a swappable page */
 #define SHORT_SYMLINK_LEN 128
+
+struct shmem_key {
+	u64		ino;
+	u32		gen;
+
+};
+
+static u32 shmem_key_hash_fn(const void *data, u32 len, u32 seed)
+{
+	const struct shmem_key *k = data;
+
+	return jhash(k, sizeof(*k), seed);
+}
+
+static u32 shmem_obj_hash_fn(const void *obj, u32 len, u32 seed)
+{
+	const struct inode *inode = obj;
+	const struct shmem_key k = { inode->i_ino, inode->i_generation };
+
+	return jhash(&k, sizeof(k), seed);
+}
+
+static int shmem_hash_cmp_fn(struct rhashtable_compare_arg *arg,
+			     const void *obj)
+{
+	const struct inode *inode = obj;
+	const struct shmem_key *k = arg->key;
+
+	return inode->i_ino == k->ino && inode->i_generation == k->gen ? 0 : 1;
+}
+
+static const struct rhashtable_params shmem_inode_table_params = {
+	.head_offset	= offsetof(struct inode, i_hash),
+	.hashfn		= shmem_key_hash_fn,
+	.obj_hashfn	= shmem_obj_hash_fn,
+	.obj_cmpfn	= shmem_hash_cmp_fn,
+};
 
 /*
  * shmem_fallocate communicates with shmem_fault or shmem_writepage via
@@ -3326,14 +3364,6 @@ static struct dentry *shmem_get_parent(struct dentry *child)
 	return ERR_PTR(-ESTALE);
 }
 
-static int shmem_match(struct inode *ino, void *vfh)
-{
-	__u32 *fh = vfh;
-	__u64 inum = fh[2];
-	inum = (inum << 32) | fh[1];
-	return ino->i_ino == inum && fh[0] == ino->i_generation;
-}
-
 /* Find any alias of inode, but prefer a hashed alias */
 static struct dentry *shmem_find_alias(struct inode *inode)
 {
@@ -3346,18 +3376,18 @@ static struct dentry *shmem_find_alias(struct inode *inode)
 static struct dentry *shmem_fh_to_dentry(struct super_block *sb,
 		struct fid *fid, int fh_len, int fh_type)
 {
+	struct shmem_key k;
 	struct inode *inode;
 	struct dentry *dentry = NULL;
-	u64 inum;
 
 	if (fh_len < 3)
 		return NULL;
 
-	inum = fid->raw[2];
-	inum = (inum << 32) | fid->raw[1];
+	k.ino = fid->raw[2];
+	k.ino = (k.ino << 32) | fid->raw[1];
+	k.gen = fid->raw[0];
 
-	inode = ilookup5(sb, (unsigned long)(inum + fid->raw[0]),
-			shmem_match, fid->raw);
+	inode = ilookup5(sb, &k);
 	if (inode) {
 		dentry = shmem_find_alias(inode);
 		iput(inode);
@@ -3781,6 +3811,11 @@ static int shmem_fill_super(struct super_block *sb, struct fs_context *fc)
 	sb->s_root = d_make_root(inode);
 	if (!sb->s_root)
 		goto failed;
+
+	err = super_setup_inode_table(sb, &shmem_inode_table_params);
+	if (err)
+		goto failed;
+
 	return 0;
 
 failed:

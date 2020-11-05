@@ -12,6 +12,7 @@
 #include <linux/errno.h>
 #include <linux/fs.h>
 #include <linux/file.h>
+#include <linux/jhash.h>
 #include <linux/pagemap.h>
 #include <linux/stat.h>
 #include <linux/string.h>
@@ -31,6 +32,48 @@
 #include "cache.h"
 #include "xattr.h"
 #include "acl.h"
+
+static u32 v9fs_inode_dotl_key_hash_fn(const void *data, u32 len, u32 seed)
+{
+	const struct p9_stat_dotl *st = data;
+	u64 hashv = st->st_gen ^ st->qid.type ^ st->qid.version ^ st->qid.path;
+
+	return jhash(&hashv, sizeof(hashv), seed);
+}
+
+static u32 v9fs_inode_dotl_obj_hash_fn(const void *obj, u32 len, u32 seed)
+{
+	const struct inode *inode = obj;
+	const struct v9fs_inode *v9inode = V9FS_I(inode);
+	u64 hashv = inode->i_generation ^
+		v9inode->qid.type ^ v9inode->qid.version ^ v9inode->qid.path;
+
+	return jhash(&hashv, sizeof(hashv), seed);
+}
+
+static int v9fs_inode_dotl_hash_cmp_fn(struct rhashtable_compare_arg *arg,
+				       const void *obj)
+{
+	const struct inode *inode = obj;
+	const struct v9fs_inode *v9inode = V9FS_I(inode);
+	const struct p9_stat_dotl *st = arg->key;
+
+	/* compare qid details */
+	if ((inode->i_mode & S_IFMT)	== (st->st_mode & S_IFMT) &&
+	    inode->i_generation		== st->st_gen &&
+	    v9inode->qid.type		== st->qid.type &&
+	    v9inode->qid.version	== st->qid.version &&
+	    v9inode->qid.path		== st->qid.path)
+		return 0;
+	return 1;
+}
+
+const struct rhashtable_params v9fs_inode_table_dotl_params = {
+	.head_offset	= offsetof(struct inode, i_hash),
+	.hashfn		= v9fs_inode_dotl_key_hash_fn,
+	.obj_hashfn	= v9fs_inode_dotl_obj_hash_fn,
+	.obj_cmpfn	= v9fs_inode_dotl_hash_cmp_fn,
+};
 
 static int
 v9fs_vfs_mknod_dotl(struct inode *dir, struct dentry *dentry, umode_t omode,
@@ -53,41 +96,10 @@ static kgid_t v9fs_get_fsgid_for_create(struct inode *dir_inode)
 	return current_fsgid();
 }
 
-static int v9fs_test_inode_dotl(struct inode *inode, void *data)
+static int v9fs_set_inode_dotl(struct inode *inode, const void *data)
 {
 	struct v9fs_inode *v9inode = V9FS_I(inode);
-	struct p9_stat_dotl *st = (struct p9_stat_dotl *)data;
-
-	/* don't match inode of different type */
-	if ((inode->i_mode & S_IFMT) != (st->st_mode & S_IFMT))
-		return 0;
-
-	if (inode->i_generation != st->st_gen)
-		return 0;
-
-	/* compare qid details */
-	if (memcmp(&v9inode->qid.version,
-		   &st->qid.version, sizeof(v9inode->qid.version)))
-		return 0;
-
-	if (v9inode->qid.type != st->qid.type)
-		return 0;
-
-	if (v9inode->qid.path != st->qid.path)
-		return 0;
-	return 1;
-}
-
-/* Always get a new inode */
-static int v9fs_test_new_inode_dotl(struct inode *inode, void *data)
-{
-	return 0;
-}
-
-static int v9fs_set_inode_dotl(struct inode *inode,  void *data)
-{
-	struct v9fs_inode *v9inode = V9FS_I(inode);
-	struct p9_stat_dotl *st = (struct p9_stat_dotl *)data;
+	const struct p9_stat_dotl *st = data;
 
 	memcpy(&v9inode->qid, &st->qid, sizeof(st->qid));
 	inode->i_generation = st->st_gen;
@@ -101,18 +113,10 @@ static struct inode *v9fs_qid_iget_dotl(struct super_block *sb,
 					int new)
 {
 	int retval;
-	unsigned long i_ino;
 	struct inode *inode;
 	struct v9fs_session_info *v9ses = sb->s_fs_info;
-	int (*test)(struct inode *, void *);
 
-	if (new)
-		test = v9fs_test_new_inode_dotl;
-	else
-		test = v9fs_test_inode_dotl;
-
-	i_ino = v9fs_qid2ino(qid);
-	inode = iget5_locked(sb, i_ino, test, v9fs_set_inode_dotl, st);
+	inode = iget5_locked(sb, v9fs_set_inode_dotl, st);
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
 	if (!(inode->i_state & I_NEW))
@@ -122,7 +126,8 @@ static struct inode *v9fs_qid_iget_dotl(struct super_block *sb,
 	 * FIXME!! we may need support for stale inodes
 	 * later.
 	 */
-	inode->i_ino = i_ino;
+	inode->i_ino = v9fs_qid2ino(&st->qid);
+	inode->i_generation = st->st_gen;
 	retval = v9fs_init_inode(v9ses, inode,
 				 st->st_mode, new_decode_dev(st->st_rdev));
 	if (retval)

@@ -3225,7 +3225,6 @@ void __init vfs_caches_init_early(void)
 		INIT_HLIST_BL_HEAD(&in_lookup_hashtable[i]);
 
 	dcache_init_early();
-	inode_init_early();
 }
 
 void __init vfs_caches_init(void)

@@ -10,6 +10,7 @@
  */
 
 #include <linux/file.h>
+#include <linux/jhash.h>
 #include <linux/vmalloc.h>
 #include <linux/pagemap.h>
 #include <linux/dcache.h>
@@ -20,6 +21,39 @@
 #include <linux/xattr.h>
 #include <asm/unaligned.h>
 #include "ecryptfs_kernel.h"
+
+static u32 ecryptfs_inode_key_hash_fn(const void *data, u32 len, u32 seed)
+{
+	const struct inode *lower_inode = data;
+
+	return jhash(&lower_inode, sizeof(lower_inode), seed);
+}
+
+static u32 ecryptfs_inode_obj_hash_fn(const void *obj, u32 len, u32 seed)
+{
+	const struct inode *inode = obj;
+	const struct inode *lower_inode = ecryptfs_inode_to_lower((struct inode *) inode);
+
+	return jhash(&lower_inode, sizeof(lower_inode), seed);
+}
+
+static int ecryptfs_inode_hash_cmp_fn(struct rhashtable_compare_arg *arg,
+				      const void *obj)
+{
+	const struct inode *inode = obj;
+	const struct inode *lower_inode = arg->key;
+
+	if (ecryptfs_inode_to_lower((struct inode *) inode) == lower_inode)
+		return 0;
+	return 1;
+}
+
+const struct rhashtable_params ecryptfs_inode_table_params = {
+	.head_offset	= offsetof(struct inode, i_hash),
+	.hashfn		= ecryptfs_inode_key_hash_fn,
+	.obj_hashfn	= ecryptfs_inode_obj_hash_fn,
+	.obj_cmpfn	= ecryptfs_inode_hash_cmp_fn,
+};
 
 static struct dentry *lock_parent(struct dentry *dentry)
 {
@@ -36,14 +70,9 @@ static void unlock_dir(struct dentry *dir)
 	dput(dir);
 }
 
-static int ecryptfs_inode_test(struct inode *inode, void *lower_inode)
+static int ecryptfs_inode_set(struct inode *inode, const void *opaque)
 {
-	return ecryptfs_inode_to_lower(inode) == lower_inode;
-}
-
-static int ecryptfs_inode_set(struct inode *inode, void *opaque)
-{
-	struct inode *lower_inode = opaque;
+	struct inode *lower_inode = (void *) opaque;
 
 	ecryptfs_set_inode_lower(inode, lower_inode);
 	fsstack_copy_attr_all(inode, lower_inode);
@@ -78,9 +107,7 @@ static struct inode *__ecryptfs_get_inode(struct inode *lower_inode,
 		return ERR_PTR(-EXDEV);
 	if (!igrab(lower_inode))
 		return ERR_PTR(-ESTALE);
-	inode = iget5_locked(sb, (unsigned long)lower_inode,
-			     ecryptfs_inode_test, ecryptfs_inode_set,
-			     lower_inode);
+	inode = iget5_locked(sb, ecryptfs_inode_set, lower_inode);
 	if (!inode) {
 		iput(lower_inode);
 		return ERR_PTR(-EACCES);

@@ -26,6 +26,7 @@
 #include <linux/sched/signal.h>
 #include <linux/wait_bit.h>
 #include <linux/fiemap.h>
+#include <linux/jhash.h>
 
 #include <asm/div64.h>
 #include "cifsfs.h"
@@ -38,6 +39,49 @@
 #include "cifs_unicode.h"
 #include "fscache.h"
 
+static u32 cifs_inode_key_hash_fn(const void *data, u32 len, u32 seed)
+{
+	const struct cifs_fattr *fattr = data;
+	u64 v = fattr->cf_uniqueid ^ fattr->cf_createtime;
+
+	return jhash(&v, sizeof(v), seed);
+}
+
+static u32 cifs_inode_obj_hash_fn(const void *obj, u32 len, u32 seed)
+{
+	struct inode *inode = (struct inode *) obj;
+	u64 v = CIFS_I(inode)->uniqueid ^ CIFS_I(inode)->createtime;
+
+	return jhash(&v, sizeof(v), seed);
+}
+
+static int cifs_inode_hash_cmp_fn(struct rhashtable_compare_arg *arg,
+				  const void *obj)
+{
+	struct inode *inode = (struct inode *) obj;
+	const struct cifs_fattr *fattr = arg->key;
+
+	/* don't match inode with different uniqueid */
+	if (CIFS_I(inode)->uniqueid != fattr->cf_uniqueid)
+		return 1;
+
+	/* use createtime like an i_generation field */
+	if (CIFS_I(inode)->createtime != fattr->cf_createtime)
+		return 1;
+
+	/* don't match inode of different type */
+	if ((inode->i_mode & S_IFMT) != (fattr->cf_mode & S_IFMT))
+		return 1;
+
+	return 0;
+}
+
+const struct rhashtable_params cifs_inode_table_params = {
+	.head_offset	= offsetof(struct inode, i_hash),
+	.hashfn		= cifs_inode_key_hash_fn,
+	.obj_hashfn	= cifs_inode_obj_hash_fn,
+	.obj_cmpfn	= cifs_inode_hash_cmp_fn,
+};
 
 static void cifs_set_ops(struct inode *inode)
 {
@@ -1202,33 +1246,9 @@ static const struct inode_operations cifs_ipc_inode_ops = {
 };
 
 static int
-cifs_find_inode(struct inode *inode, void *opaque)
+cifs_init_inode(struct inode *inode, const void *opaque)
 {
-	struct cifs_fattr *fattr = (struct cifs_fattr *) opaque;
-
-	/* don't match inode with different uniqueid */
-	if (CIFS_I(inode)->uniqueid != fattr->cf_uniqueid)
-		return 0;
-
-	/* use createtime like an i_generation field */
-	if (CIFS_I(inode)->createtime != fattr->cf_createtime)
-		return 0;
-
-	/* don't match inode of different type */
-	if ((inode->i_mode & S_IFMT) != (fattr->cf_mode & S_IFMT))
-		return 0;
-
-	/* if it's not a directory or has no dentries, then flag it */
-	if (S_ISDIR(inode->i_mode) && !hlist_empty(&inode->i_dentry))
-		fattr->cf_flags |= CIFS_FATTR_INO_COLLISION;
-
-	return 1;
-}
-
-static int
-cifs_init_inode(struct inode *inode, void *opaque)
-{
-	struct cifs_fattr *fattr = (struct cifs_fattr *) opaque;
+	const struct cifs_fattr *fattr = opaque;
 
 	CIFS_I(inode)->uniqueid = fattr->cf_uniqueid;
 	CIFS_I(inode)->createtime = fattr->cf_createtime;
@@ -1260,17 +1280,17 @@ inode_has_hashed_dentries(struct inode *inode)
 struct inode *
 cifs_iget(struct super_block *sb, struct cifs_fattr *fattr)
 {
-	unsigned long hash;
 	struct inode *inode;
 
 retry_iget5_locked:
 	cifs_dbg(FYI, "looking for uniqueid=%llu\n", fattr->cf_uniqueid);
 
-	/* hash down to 32-bits on 32-bit arch */
-	hash = cifs_uniqueid_to_ino_t(fattr->cf_uniqueid);
-
-	inode = iget5_locked(sb, hash, cifs_find_inode, cifs_init_inode, fattr);
+	inode = iget5_locked(sb, cifs_init_inode, fattr);
 	if (inode) {
+		/* if it's not a directory or has no dentries, then flag it */
+		if (S_ISDIR(inode->i_mode) && !hlist_empty(&inode->i_dentry))
+			fattr->cf_flags |= CIFS_FATTR_INO_COLLISION;
+
 		/* was there a potentially problematic inode collision? */
 		if (fattr->cf_flags & CIFS_FATTR_INO_COLLISION) {
 			fattr->cf_flags &= ~CIFS_FATTR_INO_COLLISION;
@@ -1287,7 +1307,7 @@ retry_iget5_locked:
 		if (sb->s_flags & SB_NOATIME)
 			inode->i_flags |= S_NOATIME | S_NOCMTIME;
 		if (inode->i_state & I_NEW) {
-			inode->i_ino = hash;
+			inode->i_ino = cifs_uniqueid_to_ino_t(fattr->cf_uniqueid);
 #ifdef CONFIG_CIFS_FSCACHE
 			/* initialize per-inode cache cookie pointer */
 			CIFS_I(inode)->fscache = NULL;

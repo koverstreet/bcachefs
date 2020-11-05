@@ -35,6 +35,7 @@
 #include <linux/fscrypt.h>
 #include <linux/fsnotify.h>
 #include <linux/lockdep.h>
+#include <linux/rhashtable.h>
 #include <linux/user_namespace.h>
 #include <linux/fs_context.h>
 #include <uapi/linux/mount.h>
@@ -162,6 +163,8 @@ static void destroy_super_work(struct work_struct *work)
 
 	for (i = 0; i < SB_FREEZE_LEVELS; i++)
 		percpu_free_rwsem(&s->s_writers.rw_sem[i]);
+	if (s->s_inode_table_init_done)
+		rhashtable_destroy(&s->s_inode_table);
 	kfree(s);
 }
 
@@ -272,6 +275,8 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags,
 	if (list_lru_init_memcg(&s->s_dentry_lru, &s->s_shrink))
 		goto fail;
 	if (list_lru_init_memcg(&s->s_inode_lru, &s->s_shrink))
+		goto fail;
+	if (super_setup_inode_table(s, &default_inode_table_params))
 		goto fail;
 	return s;
 

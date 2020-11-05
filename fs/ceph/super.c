@@ -1086,6 +1086,10 @@ static int ceph_get_tree(struct fs_context *fc)
 		dout("get_sb got existing client %p\n", fsc);
 	} else {
 		dout("get_sb using new client %p\n", fsc);
+		err = super_setup_inode_table(sb, &ceph_inode_table_params);
+		if (err < 0)
+			goto out_splat;
+
 		err = ceph_setup_bdi(sb, fsc);
 		if (err < 0)
 			goto out_splat;

@@ -23,6 +23,7 @@
 #include <linux/exportfs.h>
 #include <linux/posix_acl.h>
 #include <linux/pid_namespace.h>
+#include <linux/jhash.h>
 
 MODULE_AUTHOR("Miklos Szeredi <miklos@szeredi.hu>");
 MODULE_DESCRIPTION("Filesystem in Userspace");
@@ -63,6 +64,40 @@ MODULE_PARM_DESC(max_user_congthresh,
 #ifdef CONFIG_BLOCK
 static struct file_system_type fuseblk_fs_type;
 #endif
+
+static u32 fuse_inode_key_hash_fn(const void *data, u32 len, u32 seed)
+{
+	const u64 *nodeid = data;
+
+	return jhash(nodeid, sizeof(*nodeid), seed);
+}
+
+static u32 fuse_inode_obj_hash_fn(const void *obj, u32 len, u32 seed)
+{
+	const struct fuse_inode *fuse_inode =
+		container_of(obj, struct fuse_inode, inode);
+
+	return jhash(&fuse_inode->nodeid, sizeof(fuse_inode->nodeid), seed);
+}
+
+static int fuse_inode_hash_cmp_fn(struct rhashtable_compare_arg *arg,
+				  const void *obj)
+{
+	const struct fuse_inode *fuse_inode =
+		container_of(obj, struct fuse_inode, inode);
+	const u64 *nodeid = arg->key;
+
+	if (fuse_inode->nodeid == *nodeid)
+		return 0;
+	return 1;
+}
+
+static const struct rhashtable_params fuse_inode_table_params = {
+	.head_offset	= offsetof(struct inode, i_hash),
+	.hashfn		= fuse_inode_key_hash_fn,
+	.obj_hashfn	= fuse_inode_obj_hash_fn,
+	.obj_cmpfn	= fuse_inode_hash_cmp_fn,
+};
 
 struct fuse_forget_link *fuse_alloc_forget(void)
 {
@@ -268,16 +303,7 @@ static void fuse_init_inode(struct inode *inode, struct fuse_attr *attr)
 		BUG();
 }
 
-int fuse_inode_eq(struct inode *inode, void *_nodeidp)
-{
-	u64 nodeid = *(u64 *) _nodeidp;
-	if (get_node_id(inode) == nodeid)
-		return 1;
-	else
-		return 0;
-}
-
-static int fuse_inode_set(struct inode *inode, void *_nodeidp)
+static int fuse_inode_set(struct inode *inode, const void *_nodeidp)
 {
 	u64 nodeid = *(u64 *) _nodeidp;
 	get_fuse_inode(inode)->nodeid = nodeid;
@@ -293,7 +319,7 @@ struct inode *fuse_iget(struct super_block *sb, u64 nodeid,
 	struct fuse_conn *fc = get_fuse_conn_super(sb);
 
  retry:
-	inode = iget5_locked(sb, nodeid, fuse_inode_eq, fuse_inode_set, &nodeid);
+	inode = iget5_locked(sb, fuse_inode_set, &nodeid);
 	if (!inode)
 		return NULL;
 
@@ -329,7 +355,7 @@ int fuse_reverse_inval_inode(struct super_block *sb, u64 nodeid,
 	pgoff_t pg_start;
 	pgoff_t pg_end;
 
-	inode = ilookup5(sb, nodeid, fuse_inode_eq, &nodeid);
+	inode = ilookup5(sb, &nodeid);
 	if (!inode)
 		return -ENOENT;
 
@@ -693,7 +719,7 @@ static struct dentry *fuse_get_dentry(struct super_block *sb,
 	if (handle->nodeid == 0)
 		goto out_err;
 
-	inode = ilookup5(sb, handle->nodeid, fuse_inode_eq, &handle->nodeid);
+	inode = ilookup5(sb, &handle->nodeid);
 	if (!inode) {
 		struct fuse_entry_out outarg;
 		const struct qstr name = QSTR_INIT(".", 1);
@@ -1183,6 +1209,9 @@ int fuse_fill_super_common(struct super_block *sb, struct fuse_fs_context *ctx)
 
 	fc->dev = sb->s_dev;
 	fc->sb = sb;
+	err = super_setup_inode_table(sb, &fuse_inode_table_params);
+	if (err)
+		goto err_dev_free;
 	err = fuse_bdi_init(fc, sb);
 	if (err)
 		goto err_dev_free;

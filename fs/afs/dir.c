@@ -779,8 +779,7 @@ static struct inode *afs_do_lookup(struct inode *dir, struct dentry *dentry,
 		goto out;
 
 	/* Check to see if we already have an inode for the primary fid. */
-	inode = ilookup5(dir->i_sb, cookie->fids[1].vnode,
-			 afs_ilookup5_test_by_fid, &cookie->fids[1]);
+	inode = ilookup5(dir->i_sb, &cookie->fids[1]);
 	if (inode)
 		goto out; /* We do */
 
@@ -816,8 +815,7 @@ static struct inode *afs_do_lookup(struct inode *dir, struct dentry *dentry,
 			/* Find any inodes that already exist and get their
 			 * callback counters.
 			 */
-			ti = ilookup5_nowait(dir->i_sb, vp->fid.vnode,
-					     afs_ilookup5_test_by_fid, &vp->fid);
+			ti = ilookup5_nowait(dir->i_sb, &vp->fid);
 			if (!IS_ERR_OR_NULL(ti)) {
 				vnode = AFS_FS_I(ti);
 				vp->dv_before = vnode->status.data_version;

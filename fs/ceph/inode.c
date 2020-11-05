@@ -14,6 +14,7 @@
 #include <linux/random.h>
 #include <linux/sort.h>
 #include <linux/iversion.h>
+#include <linux/jhash.h>
 
 #include "super.h"
 #include "mds_client.h"
@@ -36,14 +37,44 @@ static const struct inode_operations ceph_symlink_iops;
 
 static void ceph_inode_work(struct work_struct *work);
 
+static u32 ceph_inode_key_hash_fn(const void *data, u32 len, u32 seed)
+{
+	const struct ceph_vino *pvino = data;
+
+	return jhash(pvino, sizeof(*pvino), seed);
+}
+
+static u32 ceph_inode_obj_hash_fn(const void *obj, u32 len, u32 seed)
+{
+	const struct ceph_inode_info *ci = ceph_inode(obj);
+
+	return jhash(&ci->i_vino, sizeof(ci->i_vino), seed);
+}
+
+static int ceph_inode_hash_cmp_fn(struct rhashtable_compare_arg *arg,
+				  const void *obj)
+{
+	if (ceph_ino_compare(obj, arg->key))
+		return 0;
+	return 1;
+}
+
+const struct rhashtable_params ceph_inode_table_params = {
+	.head_offset	= offsetof(struct inode, i_hash),
+	.hashfn		= ceph_inode_key_hash_fn,
+	.obj_hashfn	= ceph_inode_obj_hash_fn,
+	.obj_cmpfn	= ceph_inode_hash_cmp_fn,
+};
+
 /*
  * find or create an inode, given the ceph ino number
  */
-static int ceph_set_ino_cb(struct inode *inode, void *data)
+static int ceph_set_ino_cb(struct inode *inode, const void *data)
 {
 	struct ceph_inode_info *ci = ceph_inode(inode);
+	const struct ceph_vino *pvino = data;
 
-	ci->i_vino = *(struct ceph_vino *)data;
+	ci->i_vino = *pvino;
 	inode->i_ino = ceph_vino_to_ino_t(ci->i_vino);
 	inode_set_iversion_raw(inode, 0);
 	return 0;
@@ -53,8 +84,7 @@ struct inode *ceph_get_inode(struct super_block *sb, struct ceph_vino vino)
 {
 	struct inode *inode;
 
-	inode = iget5_locked(sb, (unsigned long)vino.ino, ceph_ino_compare,
-			     ceph_set_ino_cb, &vino);
+	inode = iget5_locked(sb, ceph_set_ino_cb, &vino);
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
 

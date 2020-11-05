@@ -235,13 +235,6 @@ struct inode *bch2_vfs_inode_get(struct bch_fs *c, u64 inum)
 	return &inode->v;
 }
 
-static int inum_test(struct inode *inode, void *p)
-{
-	unsigned long *ino = p;
-
-	return *ino == inode->i_ino;
-}
-
 static struct bch_inode_info *
 __bch2_create(struct bch_inode_info *dir, struct dentry *dentry,
 	      umode_t mode, dev_t rdev, bool tmpfile)
@@ -321,8 +314,7 @@ err_before_quota:
 	 * bch2_trans_exit() and dropping locks, else we could race with another
 	 * thread pulling the inode in and modifying it:
 	 */
-	old = to_bch_ei(inode_insert5(&inode->v, inode->v.i_ino,
-				      inum_test, NULL, &inode->v.i_ino));
+	old = to_bch_ei(inode_insert5(&inode->v));
 	BUG_ON(!old);
 
 	if (unlikely(old != inode)) {

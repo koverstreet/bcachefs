@@ -1010,7 +1010,7 @@ int fuse_reverse_inval_entry(struct super_block *sb, u64 parent_nodeid,
 	struct dentry *dir;
 	struct dentry *entry;
 
-	parent = ilookup5(sb, parent_nodeid, fuse_inode_eq, &parent_nodeid);
+	parent = ilookup5(sb, &parent_nodeid);
 	if (!parent)
 		return -ENOENT;
 

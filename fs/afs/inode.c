@@ -22,8 +22,45 @@
 #include <linux/mount.h>
 #include <linux/namei.h>
 #include <linux/iversion.h>
+#include <linux/jhash.h>
 #include "internal.h"
 #include "afs_fs.h"
+
+static u32 afs_inode_key_hash_fn(const void *data, u32 len, u32 seed)
+{
+	const struct afs_fid *fid = data;
+
+	return jhash(fid, sizeof(*fid), seed);
+}
+
+static u32 afs_inode_obj_hash_fn(const void *obj, u32 len, u32 seed)
+{
+	const struct afs_vnode *vnode =
+		container_of(obj, struct afs_vnode, vfs_inode);
+
+	return jhash(&vnode->fid, sizeof(vnode->fid), seed);
+}
+
+static int afs_inode_hash_cmp_fn(struct rhashtable_compare_arg *arg,
+				 const void *obj)
+{
+	const struct afs_vnode *vnode =
+		container_of(obj, struct afs_vnode, vfs_inode);
+	const struct afs_fid *fid = arg->key;
+
+	if (fid->vnode == vnode->fid.vnode &&
+	    fid->vnode_hi == vnode->fid.vnode_hi &&
+	    fid->unique == vnode->fid.unique)
+		return 0;
+	return 1;
+}
+
+const struct rhashtable_params afs_inode_table_params = {
+	.head_offset	= offsetof(struct inode, i_hash),
+	.hashfn		= afs_inode_key_hash_fn,
+	.obj_hashfn	= afs_inode_obj_hash_fn,
+	.obj_cmpfn	= afs_inode_hash_cmp_fn,
+};
 
 static const struct inode_operations afs_symlink_inode_operations = {
 	.get_link	= page_get_link,
@@ -364,40 +401,16 @@ int afs_fetch_status(struct afs_vnode *vnode, struct key *key, bool is_new,
 }
 
 /*
- * ilookup() comparator
- */
-int afs_ilookup5_test_by_fid(struct inode *inode, void *opaque)
-{
-	struct afs_vnode *vnode = AFS_FS_I(inode);
-	struct afs_fid *fid = opaque;
-
-	return (fid->vnode == vnode->fid.vnode &&
-		fid->vnode_hi == vnode->fid.vnode_hi &&
-		fid->unique == vnode->fid.unique);
-}
-
-/*
- * iget5() comparator
- */
-static int afs_iget5_test(struct inode *inode, void *opaque)
-{
-	struct afs_vnode_param *vp = opaque;
-	//struct afs_vnode *vnode = AFS_FS_I(inode);
-
-	return afs_ilookup5_test_by_fid(inode, &vp->fid);
-}
-
-/*
  * iget5() inode initialiser
  */
-static int afs_iget5_set(struct inode *inode, void *opaque)
+int afs_iget5_set(struct inode *inode, const void *opaque)
 {
-	struct afs_vnode_param *vp = opaque;
+	const struct afs_fid *fid = opaque;
 	struct afs_super_info *as = AFS_FS_S(inode->i_sb);
 	struct afs_vnode *vnode = AFS_FS_I(inode);
 
 	vnode->volume		= as->volume;
-	vnode->fid		= vp->fid;
+	vnode->fid		= *fid;
 
 	/* YFS supports 96-bit vnode IDs, but Linux only supports
 	 * 64-bit inode numbers.
@@ -452,7 +465,7 @@ struct inode *afs_iget(struct afs_operation *op, struct afs_vnode_param *vp)
 
 	_enter(",{%llx:%llu.%u},,", vp->fid.vid, vp->fid.vnode, vp->fid.unique);
 
-	inode = iget5_locked(sb, vp->fid.vnode, afs_iget5_test, afs_iget5_set, vp);
+	inode = iget5_locked(sb, afs_iget5_set, &vp->fid);
 	if (!inode) {
 		_leave(" = -ENOMEM");
 		return ERR_PTR(-ENOMEM);
@@ -488,20 +501,6 @@ bad_inode:
 	return ERR_PTR(ret);
 }
 
-static int afs_iget5_set_root(struct inode *inode, void *opaque)
-{
-	struct afs_super_info *as = AFS_FS_S(inode->i_sb);
-	struct afs_vnode *vnode = AFS_FS_I(inode);
-
-	vnode->volume		= as->volume;
-	vnode->fid.vid		= as->volume->vid,
-	vnode->fid.vnode	= 1;
-	vnode->fid.unique	= 1;
-	inode->i_ino		= 1;
-	inode->i_generation	= 1;
-	return 0;
-}
-
 /*
  * Set up the root inode for a volume.  This is always vnode 1, unique 1 within
  * the volume.
@@ -512,11 +511,16 @@ struct inode *afs_root_iget(struct super_block *sb, struct key *key)
 	struct afs_operation *op;
 	struct afs_vnode *vnode;
 	struct inode *inode;
+	const struct afs_fid fid = {
+		.vid	= as->volume->vid,
+		.vnode	= 1,
+		.unique = 1,
+	};
 	int ret;
 
 	_enter(",{%llx},,", as->volume->vid);
 
-	inode = iget5_locked(sb, 1, NULL, afs_iget5_set_root, NULL);
+	inode = iget5_locked(sb, afs_iget5_set, &fid);
 	if (!inode) {
 		_leave(" = -ENOMEM");
 		return ERR_PTR(-ENOMEM);
@@ -527,7 +531,9 @@ struct inode *afs_root_iget(struct super_block *sb, struct key *key)
 	BUG_ON(!(inode->i_state & I_NEW));
 
 	vnode = AFS_FS_I(inode);
-	vnode->cb_v_break = as->volume->cb_v_break,
+	vnode->cb_v_break	= as->volume->cb_v_break,
+	inode->i_ino		= 1;
+	inode->i_generation	= 1;
 
 	op = afs_alloc_operation(key, as->volume);
 	if (IS_ERR(op)) {

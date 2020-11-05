@@ -202,6 +202,9 @@ cifs_read_super(struct super_block *sb)
 	sb->s_magic = CIFS_MAGIC_NUMBER;
 	sb->s_op = &cifs_super_ops;
 	sb->s_xattr = cifs_xattr_handlers;
+	rc = super_setup_inode_table(sb, &cifs_inode_table_params);
+	if (rc)
+		goto out_no_root;
 	rc = super_setup_bdi(sb);
 	if (rc)
 		goto out_no_root;

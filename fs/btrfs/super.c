@@ -1307,6 +1307,12 @@ static int btrfs_fill_super(struct super_block *sb,
 	sb->s_flags |= SB_I_VERSION;
 	sb->s_iflags |= SB_I_CGROUPWB;
 
+	err = super_setup_inode_table(sb, &btrfs_inode_table_params);
+	if (err) {
+		btrfs_err(fs_info, "super_setup_inode_table failed");
+		return err;
+	}
+
 	err = super_setup_bdi(sb);
 	if (err) {
 		btrfs_err(fs_info, "super_setup_bdi failed");

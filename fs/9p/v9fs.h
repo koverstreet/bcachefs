@@ -155,7 +155,7 @@ extern struct inode *v9fs_inode_from_fid_dotl(struct v9fs_session_info *v9ses,
 #define V9FS_DEFUID	KUIDT_INIT(-2)
 #define V9FS_DEFGID	KGIDT_INIT(-2)
 
-static inline struct v9fs_session_info *v9fs_inode2v9ses(struct inode *inode)
+static inline struct v9fs_session_info *v9fs_inode2v9ses(const struct inode *inode)
 {
 	return (inode->i_sb->s_fs_info);
 }
