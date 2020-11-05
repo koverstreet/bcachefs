@@ -135,6 +135,8 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	static const struct file_operations no_open_fops = {.open = no_open};
 	struct address_space *const mapping = &inode->i_data;
 
+	inode->i_state = 0;
+	INIT_LIST_HEAD(&inode->i_sb_list);
 	inode->i_sb = sb;
 	inode->i_blkbits = sb->s_blocksize_bits;
 	inode->i_flags = 0;
@@ -221,33 +223,6 @@ static void i_callback(struct rcu_head *head)
 		inode->free_inode(inode);
 	else
 		free_inode_nonrcu(inode);
-}
-
-static struct inode *alloc_inode(struct super_block *sb)
-{
-	const struct super_operations *ops = sb->s_op;
-	struct inode *inode;
-
-	if (ops->alloc_inode)
-		inode = ops->alloc_inode(sb);
-	else
-		inode = kmem_cache_alloc(inode_cachep, GFP_KERNEL);
-
-	if (!inode)
-		return NULL;
-
-	if (unlikely(inode_init_always(sb, inode))) {
-		if (ops->destroy_inode) {
-			ops->destroy_inode(inode);
-			if (!ops->free_inode)
-				return NULL;
-		}
-		inode->free_inode = ops->free_inode;
-		i_callback(&inode->i_rcu);
-		return NULL;
-	}
-
-	return inode;
 }
 
 void __destroy_inode(struct inode *inode)
@@ -925,14 +900,28 @@ EXPORT_SYMBOL(get_next_ino);
  */
 struct inode *new_inode_pseudo(struct super_block *sb)
 {
-	struct inode *inode = alloc_inode(sb);
+	const struct super_operations *ops = sb->s_op;
+	struct inode *inode;
 
-	if (inode) {
-		spin_lock(&inode->i_lock);
-		inode->i_state = 0;
-		spin_unlock(&inode->i_lock);
-		INIT_LIST_HEAD(&inode->i_sb_list);
+	if (ops->alloc_inode)
+		inode = ops->alloc_inode(sb);
+	else
+		inode = kmem_cache_alloc(inode_cachep, GFP_KERNEL);
+
+	if (!inode)
+		return NULL;
+
+	if (unlikely(inode_init_always(sb, inode))) {
+		if (ops->destroy_inode) {
+			ops->destroy_inode(inode);
+			if (!ops->free_inode)
+				return NULL;
+		}
+		inode->free_inode = ops->free_inode;
+		i_callback(&inode->i_rcu);
+		return NULL;
 	}
+
 	return inode;
 }
 
@@ -1145,7 +1134,7 @@ struct inode *iget5_locked(struct super_block *sb, unsigned long hashval,
 	struct inode *inode = ilookup5(sb, hashval, test, data);
 
 	if (!inode) {
-		struct inode *new = alloc_inode(sb);
+		struct inode *new = new_inode_pseudo(sb);
 
 		if (new) {
 			new->i_state = 0;
@@ -1190,7 +1179,7 @@ again:
 		return inode;
 	}
 
-	inode = alloc_inode(sb);
+	inode = new_inode_pseudo(sb);
 	if (inode) {
 		struct inode *old;
 
