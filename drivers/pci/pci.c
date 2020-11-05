@@ -5315,10 +5315,16 @@ static resource_size_t pci_specified_resource_alignment(struct pci_dev *dev,
 	while (*p) {
 		count = 0;
 		if (sscanf(p, "%d%n", &align_order, &count) == 1 &&
-							p[count] == '@') {
+		    p[count] == '@') {
+			p += count + 1;
+			if (align_order > 63) {
+				pr_err("PCI: Invalid requested alignment (order %d)\n",
+				       align_order);
+				align_order = PAGE_SHIFT;
+			}
 			p += count + 1;
 		} else {
-			align_order = -1;
+			align_order = PAGE_SHIFT;
 		}
 		if (strncmp(p, "pci:", 4) == 0) {
 			/* PCI vendor/device (subvendor/subdevice) ids are specified */
@@ -5338,10 +5344,7 @@ static resource_size_t pci_specified_resource_alignment(struct pci_dev *dev,
 				(!subsystem_vendor || (subsystem_vendor == dev->subsystem_vendor)) &&
 				(!subsystem_device || (subsystem_device == dev->subsystem_device))) {
 				*resize = true;
-				if (align_order == -1)
-					align = PAGE_SIZE;
-				else
-					align = 1 << align_order;
+				align = 1 << align_order;
 				/* Found */
 				break;
 			}
