@@ -1775,39 +1775,29 @@ out:
 	return ret ? -EIO: 0;
 }
 
-static int f2fs_match_ino(struct inode *inode, unsigned long ino, void *data)
-{
-	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
-	bool clean;
-
-	if (inode->i_ino != ino)
-		return 0;
-
-	if (!is_inode_flag_set(inode, FI_DIRTY_INODE))
-		return 0;
-
-	spin_lock(&sbi->inode_lock[DIRTY_META]);
-	clean = list_empty(&F2FS_I(inode)->gdirty_list);
-	spin_unlock(&sbi->inode_lock[DIRTY_META]);
-
-	if (clean)
-		return 0;
-
-	inode = igrab(inode);
-	if (!inode)
-		return 0;
-	return 1;
-}
-
 static bool flush_dirty_inode(struct page *page)
 {
 	struct f2fs_sb_info *sbi = F2FS_P_SB(page);
 	struct inode *inode;
 	nid_t ino = ino_of_node(page);
 
-	inode = find_inode_nowait(sbi->sb, ino, f2fs_match_ino, NULL);
+	inode = ilookup(sbi->sb, ino);
 	if (!inode)
 		return false;
+
+	if (!is_inode_flag_set(inode, FI_DIRTY_INODE)) {
+		iput(inode);
+		return false;
+	}
+
+	spin_lock(&sbi->inode_lock[DIRTY_META]);
+	clean = list_empty(&F2FS_I(inode)->gdirty_list);
+	spin_unlock(&sbi->inode_lock[DIRTY_META]);
+
+	if (clean) {
+		iput(inode);
+		return 0;
+	}
 
 	f2fs_update_inode(inode, page);
 	unlock_page(page);
