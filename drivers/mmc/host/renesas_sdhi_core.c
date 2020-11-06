@@ -673,6 +673,7 @@ int renesas_sdhi_remove(struct platform_device *pdev)
 	struct tmio_mmc_host *host = mmc_priv(mmc);
 
 	tmio_mmc_host_remove(host);
+	tmio_mmc_host_free(host);
 
 	return 0;
 }
