@@ -56,4 +56,5 @@ bcachefs-y		:=	\
 	tests.o			\
 	trace.o			\
 	util.o			\
+	varint.o		\
 	xattr.o
