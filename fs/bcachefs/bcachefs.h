@@ -265,6 +265,8 @@ do {									\
 	BCH_DEBUG_PARAM(debug_check_bkeys,				\
 		"Run bkey_debugcheck (primarily checking GC/allocation "\
 		"information) when iterating over keys")		\
+	BCH_DEBUG_PARAM(debug_check_btree_accounting,			\
+		"Verify btree accounting for keys within a node")	\
 	BCH_DEBUG_PARAM(verify_btree_ondisk,				\
 		"Reread btree nodes at various points to verify the "	\
 		"mergesort in the read path against modifications "	\
@@ -293,6 +295,16 @@ do {									\
 #define BCH_DEBUG_PARAMS() BCH_DEBUG_PARAMS_ALL()
 #else
 #define BCH_DEBUG_PARAMS() BCH_DEBUG_PARAMS_ALWAYS()
+#endif
+
+#define BCH_DEBUG_PARAM(name, description) extern bool bch2_##name;
+BCH_DEBUG_PARAMS()
+#undef BCH_DEBUG_PARAM
+
+#ifndef CONFIG_BCACHEFS_DEBUG
+#define BCH_DEBUG_PARAM(name, description) static const bool bch2_##name;
+BCH_DEBUG_PARAMS_DEBUG()
+#undef BCH_DEBUG_PARAM
 #endif
 
 #define BCH_TIME_STATS()			\
@@ -491,7 +503,6 @@ enum {
 	BCH_FS_ERRORS_FIXED,
 
 	/* misc: */
-	BCH_FS_BDEV_MOUNTED,
 	BCH_FS_FIXED_GENS,
 	BCH_FS_ALLOC_WRITTEN,
 	BCH_FS_REBUILD_REPLICAS,
@@ -528,6 +539,10 @@ struct journal_keys {
 	}			*d;
 	size_t			nr;
 	u64			journal_seq_base;
+};
+
+struct btree_iter_buf {
+	struct btree_iter	*iter;
 };
 
 struct bch_fs {
@@ -625,6 +640,7 @@ struct bch_fs {
 	struct mutex		btree_trans_lock;
 	struct list_head	btree_trans_list;
 	mempool_t		btree_iters_pool;
+	struct btree_iter_buf  __percpu	*btree_iters_bufs;
 
 	struct btree_key_cache	btree_key_cache;
 
@@ -735,7 +751,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
@@ -802,7 +818,8 @@ struct bch_fs {
 	struct mutex		verify_lock;
 #endif
 
-	u64			unused_inode_hint;
+	u64			*unused_inode_hints;
+	unsigned		inode_shard_bits;
 
 	/*
 	 * A btree node on disk could have too many bsets for an iterator to fit
@@ -826,10 +843,6 @@ struct bch_fs {
 	unsigned		btree_gc_periodic:1;
 	unsigned		copy_gc_enabled:1;
 	bool			promote_whole_extents;
-
-#define BCH_DEBUG_PARAM(name, description) bool name;
-	BCH_DEBUG_PARAMS_ALL()
-#undef BCH_DEBUG_PARAM
 
 	struct time_stats	times[BCH_TIME_STAT_NR];
 };

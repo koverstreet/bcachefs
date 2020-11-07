@@ -81,8 +81,7 @@ static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp)
 	if (!b->data)
 		return -ENOMEM;
 
-	b->aux_data	= __vmalloc(btree_aux_data_bytes(b), gfp,
-				    PAGE_KERNEL_EXEC);
+	b->aux_data = vmalloc_exec(btree_aux_data_bytes(b), gfp);
 	if (!b->aux_data) {
 		kvpfree(b->data, btree_bytes(c));
 		b->data = NULL;
@@ -212,7 +211,7 @@ static int __btree_node_reclaim(struct bch_fs *c, struct btree *b, bool flush)
 		 * - unless btree verify mode is enabled, since it runs out of
 		 * the post write cleanup:
 		 */
-		if (verify_btree_ondisk(c))
+		if (bch2_verify_btree_ondisk)
 			bch2_btree_node_write(c, b, SIX_LOCK_intent);
 		else
 			__bch2_btree_node_write(c, b, SIX_LOCK_read);
@@ -253,9 +252,9 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 	unsigned long can_free;
 	unsigned long touched = 0;
 	unsigned long freed = 0;
-	unsigned i;
+	unsigned i, flags;
 
-	if (btree_shrinker_disabled(c))
+	if (bch2_btree_shrinker_disabled)
 		return SHRINK_STOP;
 
 	/* Return -1 if we can't do anything right now */
@@ -263,6 +262,8 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 		mutex_lock(&bc->lock);
 	else if (!mutex_trylock(&bc->lock))
 		return -1;
+
+	flags = memalloc_nofs_save();
 
 	/*
 	 * It's _really_ critical that we don't free too many btree nodes - we
@@ -327,6 +328,7 @@ restart:
 			clear_btree_node_accessed(b);
 	}
 
+	memalloc_nofs_restore(flags);
 	mutex_unlock(&bc->lock);
 out:
 	return (unsigned long) freed * btree_pages(c);
@@ -339,7 +341,7 @@ static unsigned long bch2_btree_cache_count(struct shrinker *shrink,
 					btree_cache.shrink);
 	struct btree_cache *bc = &c->btree_cache;
 
-	if (btree_shrinker_disabled(c))
+	if (bch2_btree_shrinker_disabled)
 		return 0;
 
 	return btree_cache_can_free(bc) * btree_pages(c);
@@ -349,11 +351,13 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 {
 	struct btree_cache *bc = &c->btree_cache;
 	struct btree *b;
-	unsigned i;
+	unsigned i, flags;
 
 	if (bc->shrink.list.next)
 		unregister_shrinker(&bc->shrink);
 
+	/* vfree() can allocate memory: */
+	flags = memalloc_nofs_save();
 	mutex_lock(&bc->lock);
 
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -389,6 +393,7 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 	}
 
 	mutex_unlock(&bc->lock);
+	memalloc_nofs_restore(flags);
 
 	if (bc->table_init_done)
 		rhashtable_destroy(&bc->table);
@@ -585,7 +590,7 @@ out:
 	b->sib_u64s[0]		= 0;
 	b->sib_u64s[1]		= 0;
 	b->whiteout_u64s	= 0;
-	bch2_btree_keys_init(b, &c->expensive_debug_checks);
+	bch2_btree_keys_init(b);
 
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_mem_alloc],
 			       start_time);
@@ -700,7 +705,8 @@ static int lock_node_check_fn(struct six_lock *lock, void *p)
  */
 struct btree *bch2_btree_node_get(struct bch_fs *c, struct btree_iter *iter,
 				  const struct bkey_i *k, unsigned level,
-				  enum six_lock_type lock_type)
+				  enum six_lock_type lock_type,
+				  unsigned long trace_ip)
 {
 	struct btree_cache *bc = &c->btree_cache;
 	struct btree *b;
@@ -762,7 +768,7 @@ lock_node:
 			btree_node_unlock(iter, level + 1);
 
 		if (!btree_node_lock(b, k->k.p, level, iter, lock_type,
-				     lock_node_check_fn, (void *) k)) {
+				     lock_node_check_fn, (void *) k, trace_ip)) {
 			if (b->hash_val != btree_ptr_hash_val(k))
 				goto retry;
 			return ERR_PTR(-EINTR);
@@ -930,7 +936,7 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 	bch2_bkey_unpack(parent, &tmp.k, k);
 
 	ret = bch2_btree_node_get(c, iter, &tmp.k, level,
-				  SIX_LOCK_intent);
+				  SIX_LOCK_intent, _THIS_IP_);
 
 	if (PTR_ERR_OR_ZERO(ret) == -EINTR && !trans->nounlock) {
 		struct btree_iter *linked;
@@ -943,14 +949,14 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 		 * holding other locks that would cause us to deadlock:
 		 */
 		trans_for_each_iter(trans, linked)
-			if (btree_iter_cmp(iter, linked) < 0)
+			if (btree_iter_lock_cmp(iter, linked) < 0)
 				__bch2_btree_iter_unlock(linked);
 
 		if (sib == btree_prev_sib)
 			btree_node_unlock(iter, level);
 
 		ret = bch2_btree_node_get(c, iter, &tmp.k, level,
-					  SIX_LOCK_intent);
+					  SIX_LOCK_intent, _THIS_IP_);
 
 		/*
 		 * before btree_iter_relock() calls btree_iter_verify_locks():

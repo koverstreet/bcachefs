@@ -185,7 +185,7 @@ enum opt_type {
 	x(inline_data,			u8,				\
 	  OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\
-	  NO_SB_OPT,			false,				\
+	  NO_SB_OPT,			true,				\
 	  NULL,		"Enable inline data extents")			\
 	x(acl,				u8,				\
 	  OPT_FORMAT|OPT_MOUNT,						\
@@ -418,7 +418,7 @@ void bch2_opt_to_text(struct printbuf *, struct bch_fs *,
 
 int bch2_opt_check_may_set(struct bch_fs *, int, u64);
 int bch2_opts_check_may_set(struct bch_fs *);
-int bch2_parse_mount_opts(struct bch_opts *, char *);
+int bch2_parse_mount_opts(struct bch_fs *, struct bch_opts *, char *);
 
 /* inode opts: */
 

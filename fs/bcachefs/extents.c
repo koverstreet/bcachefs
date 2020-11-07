@@ -89,7 +89,7 @@ static inline bool ptr_better(struct bch_fs *c,
 		return bch2_rand_range(l1 + l2) > l1;
 	}
 
-	if (force_reconstruct_read(c))
+	if (bch2_force_reconstruct_read)
 		return p1.idx > p2.idx;
 
 	return p1.idx < p2.idx;
@@ -137,7 +137,7 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 		    !bch2_dev_is_readable(ca))
 			p.idx++;
 
-		if (force_reconstruct_read(c) &&
+		if (bch2_force_reconstruct_read &&
 		    !p.idx && p.has_ec)
 			p.idx++;
 
@@ -1200,14 +1200,14 @@ int bch2_cut_front_s(struct bpos where, struct bkey_s k)
 		le64_add_cpu(&p.v->idx, sub);
 		break;
 	}
-	case KEY_TYPE_inline_data: {
-		struct bkey_s_inline_data d = bkey_s_to_inline_data(k);
+	case KEY_TYPE_inline_data:
+	case KEY_TYPE_indirect_inline_data: {
+		void *p = bkey_inline_data_p(k);
+		unsigned bytes = bkey_inline_data_bytes(k.k);
 
-		sub = min_t(u64, sub << 9, bkey_val_bytes(d.k));
+		sub = min_t(u64, sub << 9, bytes);
 
-		memmove(d.v->data,
-			d.v->data + sub,
-			bkey_val_bytes(d.k) - sub);
+		memmove(p, p + sub, bytes - sub);
 
 		new_val_u64s -= sub >> 3;
 		break;
@@ -1245,7 +1245,9 @@ int bch2_cut_back_s(struct bpos where, struct bkey_s k)
 
 	switch (k.k->type) {
 	case KEY_TYPE_inline_data:
-		new_val_u64s = min(new_val_u64s, k.k->size << 6);
+	case KEY_TYPE_indirect_inline_data:
+		new_val_u64s = (bkey_inline_data_offset(k.k) +
+				min(bkey_inline_data_bytes(k.k), k.k->size << 9)) >> 3;
 		break;
 	}
 

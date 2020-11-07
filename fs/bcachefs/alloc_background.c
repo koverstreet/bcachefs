@@ -209,10 +209,25 @@ void bch2_alloc_to_text(struct printbuf *out, struct bch_fs *c,
 static int bch2_alloc_read_fn(struct bch_fs *c, enum btree_id id,
 			      unsigned level, struct bkey_s_c k)
 {
-	if (!level)
-		bch2_mark_key(c, k, 0, 0, NULL, 0,
-			      BTREE_TRIGGER_ALLOC_READ|
-			      BTREE_TRIGGER_NOATOMIC);
+	struct bch_dev *ca;
+	struct bucket *g;
+	struct bkey_alloc_unpacked u;
+
+	if (level || k.k->type != KEY_TYPE_alloc)
+		return 0;
+
+	ca = bch_dev_bkey_exists(c, k.k->p.inode);
+	g = __bucket(ca, k.k->p.offset, 0);
+	u = bch2_alloc_unpack(k);
+
+	g->_mark.gen		= u.gen;
+	g->_mark.data_type	= u.data_type;
+	g->_mark.dirty_sectors	= u.dirty_sectors;
+	g->_mark.cached_sectors	= u.cached_sectors;
+	g->io_time[READ]	= u.read_time;
+	g->io_time[WRITE]	= u.write_time;
+	g->oldest_gen		= u.oldest_gen;
+	g->gen_valid		= 1;
 
 	return 0;
 }
@@ -223,8 +238,11 @@ int bch2_alloc_read(struct bch_fs *c, struct journal_keys *journal_keys)
 	unsigned i;
 	int ret = 0;
 
+	down_read(&c->gc_lock);
 	ret = bch2_btree_and_journal_walk(c, journal_keys, BTREE_ID_ALLOC,
 					  NULL, bch2_alloc_read_fn);
+	up_read(&c->gc_lock);
+
 	if (ret) {
 		bch_err(c, "error reading alloc info: %i", ret);
 		return ret;
@@ -252,12 +270,6 @@ int bch2_alloc_read(struct bch_fs *c, struct journal_keys *journal_keys)
 
 	return 0;
 }
-
-enum alloc_write_ret {
-	ALLOC_WROTE,
-	ALLOC_NOWROTE,
-	ALLOC_END,
-};
 
 static int bch2_alloc_write_key(struct btree_trans *trans,
 				struct btree_iter *iter,
@@ -288,18 +300,9 @@ retry:
 
 	old_u = bch2_alloc_unpack(k);
 
-	if (iter->pos.inode >= c->sb.nr_devices ||
-	    !c->devs[iter->pos.inode])
-		return ALLOC_END;
-
 	percpu_down_read(&c->mark_lock);
 	ca	= bch_dev_bkey_exists(c, iter->pos.inode);
 	ba	= bucket_array(ca);
-
-	if (iter->pos.offset >= ba->nbuckets) {
-		percpu_up_read(&c->mark_lock);
-		return ALLOC_END;
-	}
 
 	g	= &ba->b[iter->pos.offset];
 	m	= READ_ONCE(g->mark);
@@ -307,7 +310,7 @@ retry:
 	percpu_up_read(&c->mark_lock);
 
 	if (!bkey_alloc_unpacked_cmp(old_u, new_u))
-		return ALLOC_NOWROTE;
+		return 0;
 
 	a = bkey_alloc_init(&alloc_key.k);
 	a->k.p = iter->pos;
@@ -325,50 +328,55 @@ err:
 	return ret;
 }
 
-int bch2_alloc_write(struct bch_fs *c, unsigned flags, bool *wrote)
+int bch2_dev_alloc_write(struct bch_fs *c, struct bch_dev *ca, unsigned flags)
 {
 	struct btree_trans trans;
 	struct btree_iter *iter;
-	struct bch_dev *ca;
-	unsigned i;
+	u64 first_bucket, nbuckets;
 	int ret = 0;
+
+	percpu_down_read(&c->mark_lock);
+	first_bucket	= bucket_array(ca)->first_bucket;
+	nbuckets	= bucket_array(ca)->nbuckets;
+	percpu_up_read(&c->mark_lock);
 
 	BUG_ON(BKEY_ALLOC_VAL_U64s_MAX > 8);
 
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
 
-	iter = bch2_trans_get_iter(&trans, BTREE_ID_ALLOC, POS_MIN,
+	iter = bch2_trans_get_iter(&trans, BTREE_ID_ALLOC,
+				   POS(ca->dev_idx, first_bucket),
 				   BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
+	while (iter->pos.offset < nbuckets) {
+		bch2_trans_cond_resched(&trans);
+
+		ret = bch2_alloc_write_key(&trans, iter, flags);
+		if (ret)
+			break;
+		bch2_btree_iter_next_slot(iter);
+	}
+
+	bch2_trans_exit(&trans);
+
+	return ret;
+}
+
+int bch2_alloc_write(struct bch_fs *c, unsigned flags)
+{
+	struct bch_dev *ca;
+	unsigned i;
+	int ret = 0;
+
 	for_each_rw_member(ca, c, i) {
-		unsigned first_bucket;
-
-		percpu_down_read(&c->mark_lock);
-		first_bucket = bucket_array(ca)->first_bucket;
-		percpu_up_read(&c->mark_lock);
-
-		bch2_btree_iter_set_pos(iter, POS(i, first_bucket));
-
-		while (1) {
-			bch2_trans_cond_resched(&trans);
-
-			ret = bch2_alloc_write_key(&trans, iter, flags);
-			if (ret < 0 || ret == ALLOC_END)
-				break;
-			if (ret == ALLOC_WROTE)
-				*wrote = true;
-			bch2_btree_iter_next_slot(iter);
-		}
-
-		if (ret < 0) {
+		bch2_dev_alloc_write(c, ca, flags);
+		if (ret) {
 			percpu_ref_put(&ca->io_ref);
 			break;
 		}
 	}
 
-	bch2_trans_exit(&trans);
-
-	return ret < 0 ? ret : 0;
+	return ret;
 }
 
 /* Bucket IO clocks: */
@@ -481,6 +489,53 @@ static void bch2_bucket_clock_init(struct bch_fs *c, int rw)
 	mutex_init(&clock->lock);
 }
 
+int bch2_bucket_io_time_reset(struct btree_trans *trans, unsigned dev,
+			      size_t bucket_nr, int rw)
+{
+	struct bch_fs *c = trans->c;
+	struct bch_dev *ca = bch_dev_bkey_exists(c, dev);
+	struct btree_iter *iter;
+	struct bucket *g;
+	struct bkey_i_alloc *a;
+	struct bkey_alloc_unpacked u;
+	u16 *time;
+	int ret = 0;
+
+	iter = bch2_trans_get_iter(trans, BTREE_ID_ALLOC, POS(dev, bucket_nr),
+				   BTREE_ITER_CACHED|
+				   BTREE_ITER_CACHED_NOFILL|
+				   BTREE_ITER_INTENT);
+	if (IS_ERR(iter))
+		return PTR_ERR(iter);
+
+	a = bch2_trans_kmalloc(trans, BKEY_ALLOC_U64s_MAX * 8);
+	ret = PTR_ERR_OR_ZERO(a);
+	if (ret)
+		goto out;
+
+	percpu_down_read(&c->mark_lock);
+	g = bucket(ca, bucket_nr);
+	u = alloc_mem_to_key(g, READ_ONCE(g->mark));
+	percpu_up_read(&c->mark_lock);
+
+	bkey_alloc_init(&a->k_i);
+	a->k.p = iter->pos;
+
+	time = rw == READ ? &u.read_time : &u.write_time;
+	if (*time == c->bucket_clock[rw].hand)
+		goto out;
+
+	*time = c->bucket_clock[rw].hand;
+
+	bch2_alloc_pack(a, u);
+
+	ret   = bch2_trans_update(trans, iter, &a->k_i, 0) ?:
+		bch2_trans_commit(trans, NULL, NULL, 0);
+out:
+	bch2_trans_iter_put(trans, iter);
+	return ret;
+}
+
 /* Background allocator thread: */
 
 /*
@@ -488,8 +543,6 @@ static void bch2_bucket_clock_init(struct bch_fs *c, int rw)
  * (marking them as invalidated on disk), then optionally issues discard
  * commands to the newly free buckets, then puts them on the various freelists.
  */
-
-#define BUCKET_GC_GEN_MAX	96U
 
 /**
  * wait_buckets_available - wait on reclaimable buckets
@@ -1258,18 +1311,6 @@ void bch2_recalc_capacity(struct bch_fs *c)
 	c->capacity = capacity - reserved_sectors;
 
 	c->bucket_size_max = bucket_size_max;
-
-	if (c->capacity) {
-		bch2_io_timer_add(&c->io_clock[READ],
-				 &c->bucket_clock[READ].rescale);
-		bch2_io_timer_add(&c->io_clock[WRITE],
-				 &c->bucket_clock[WRITE].rescale);
-	} else {
-		bch2_io_timer_del(&c->io_clock[READ],
-				 &c->bucket_clock[READ].rescale);
-		bch2_io_timer_del(&c->io_clock[WRITE],
-				 &c->bucket_clock[WRITE].rescale);
-	}
 
 	/* Wake up case someone was waiting for buckets */
 	closure_wake_up(&c->freelist_wait);

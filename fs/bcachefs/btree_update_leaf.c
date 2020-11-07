@@ -72,7 +72,7 @@ bool bch2_btree_bset_insert_key(struct btree_iter *iter,
 	EBUG_ON(iter->flags & BTREE_ITER_IS_EXTENTS);
 
 	k = bch2_btree_node_iter_peek_all(node_iter, b);
-	if (k && bkey_cmp_packed(b, k, &insert->k))
+	if (k && bkey_cmp_left_packed(b, k, &insert->k.p))
 		k = NULL;
 
 	/* @k is the key being overwritten/deleted, if any: */
@@ -220,7 +220,7 @@ static inline void btree_insert_entry_checks(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 
 	BUG_ON(bkey_cmp(insert->k.p, iter->pos));
-	BUG_ON(debug_check_bkeys(c) &&
+	BUG_ON(bch2_debug_check_bkeys &&
 	       bch2_bkey_invalid(c, bkey_i_to_s_c(insert),
 				 __btree_node_type(iter->level, iter->btree_id)));
 }
@@ -337,8 +337,9 @@ static inline bool iter_has_trans_triggers(struct btree_iter *iter)
 
 static inline bool iter_has_nontrans_triggers(struct btree_iter *iter)
 {
-	return (BTREE_NODE_TYPE_HAS_TRIGGERS &
-		~BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS) &
+	return (((BTREE_NODE_TYPE_HAS_TRIGGERS &
+		  ~BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS)) |
+		(1U << BTREE_ID_EC)) &
 		(1U << iter->btree_id);
 }
 
@@ -439,10 +440,10 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 	 */
 
 	if (!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY)) {
-		if (journal_seq_verify(c))
+		if (bch2_journal_seq_verify)
 			trans_for_each_update2(trans, i)
 				i->k->k.version.lo = trans->journal_res.seq;
-		else if (inject_invalid_keys(c))
+		else if (bch2_inject_invalid_keys)
 			trans_for_each_update2(trans, i)
 				i->k->k.version = MAX_VERSION;
 	}
@@ -679,6 +680,13 @@ bch2_trans_commit_get_rw_cold(struct btree_trans *trans)
 	return 0;
 }
 
+static inline int btree_iter_pos_cmp(const struct btree_iter *l,
+				     const struct btree_iter *r)
+{
+	return   cmp_int(l->btree_id, r->btree_id) ?:
+		 bkey_cmp(l->pos, r->pos);
+}
+
 static void bch2_trans_update2(struct btree_trans *trans,
 			       struct btree_iter *iter,
 			       struct bkey_i *insert)
@@ -696,12 +704,12 @@ static void bch2_trans_update2(struct btree_trans *trans,
 	iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
 
 	trans_for_each_update2(trans, i) {
-		if (btree_iter_cmp(n.iter, i->iter) == 0) {
+		if (btree_iter_pos_cmp(n.iter, i->iter) == 0) {
 			*i = n;
 			return;
 		}
 
-		if (btree_iter_cmp(n.iter, i->iter) <= 0)
+		if (btree_iter_pos_cmp(n.iter, i->iter) <= 0)
 			break;
 	}
 
@@ -985,7 +993,7 @@ int bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 	 * Pending updates are kept sorted: first, find position of new update:
 	 */
 	trans_for_each_update(trans, i)
-		if (btree_iter_cmp(iter, i->iter) <= 0)
+		if (btree_iter_pos_cmp(iter, i->iter) <= 0)
 			break;
 
 	/*

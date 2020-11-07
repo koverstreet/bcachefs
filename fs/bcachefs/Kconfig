@@ -20,7 +20,7 @@ config BCACHEFS_FS
 	select SIXLOCKS
 	select RAID6_PQ
 	select XOR_BLOCKS
-	---help---
+	help
 	The bcachefs filesystem - a modern, copy on write filesystem, with
 	support for multiple devices, compression, checksumming, etc.
 
@@ -37,7 +37,7 @@ config BCACHEFS_POSIX_ACL
 config BCACHEFS_DEBUG
 	bool "bcachefs debugging"
 	depends on BCACHEFS_FS
-	---help---
+	help
 	Enables many extra debugging checks and assertions.
 
 	The resulting code will be significantly slower than normal; you
@@ -46,5 +46,5 @@ config BCACHEFS_DEBUG
 config BCACHEFS_TESTS
 	bool "bcachefs unit and performance tests"
 	depends on BCACHEFS_FS
-	---help---
+	help
 	Include some unit and performance tests for the core btree code

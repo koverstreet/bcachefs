@@ -3,6 +3,7 @@
 #define _BCACHEFS_EC_H
 
 #include "ec_types.h"
+#include "buckets_types.h"
 #include "keylist_types.h"
 
 const char *bch2_stripe_invalid(const struct bch_fs *, struct bkey_s_c);
@@ -105,6 +106,7 @@ struct ec_stripe_new {
 	struct open_buckets	blocks;
 	u8			data_block_idx[EC_STRIPE_MAX];
 	struct open_buckets	parity;
+	struct disk_reservation	res;
 
 	struct keylist		keys;
 	u64			inline_keys[BKEY_U64s * 8];
@@ -156,7 +158,7 @@ void bch2_ec_flush_new_stripes(struct bch_fs *);
 
 struct journal_keys;
 int bch2_stripes_read(struct bch_fs *, struct journal_keys *);
-int bch2_stripes_write(struct bch_fs *, unsigned, bool *);
+int bch2_stripes_write(struct bch_fs *, unsigned);
 
 int bch2_ec_mem_alloc(struct bch_fs *, bool);
 

@@ -95,10 +95,6 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		    !bch2_bkey_matches_ptr(c, k, m->ptr, m->offset))
 			goto nomatch;
 
-		if (m->data_cmd == DATA_REWRITE &&
-		    !bch2_bkey_has_device(k, m->data_opts.rewrite_dev))
-			goto nomatch;
-
 		bkey_reassemble(&_insert.k, k);
 		insert = &_insert.k;
 
@@ -110,9 +106,19 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		bch2_cut_back(new->k.p,		insert);
 		bch2_cut_back(insert->k.p,	&new->k_i);
 
-		if (m->data_cmd == DATA_REWRITE)
-			bch2_bkey_drop_device(bkey_i_to_s(insert),
-					      m->data_opts.rewrite_dev);
+		if (m->data_cmd == DATA_REWRITE) {
+			struct bch_extent_ptr *new_ptr, *old_ptr = (void *)
+				bch2_bkey_has_device(bkey_i_to_s_c(insert),
+						     m->data_opts.rewrite_dev);
+			if (!old_ptr)
+				goto nomatch;
+
+			if (old_ptr->cached)
+				extent_for_each_ptr(extent_i_to_s(new), new_ptr)
+					new_ptr->cached = true;
+
+			bch2_bkey_drop_ptr(bkey_i_to_s(insert), old_ptr);
+		}
 
 		extent_for_each_ptr_decode(extent_i_to_s(new), p, entry) {
 			if (bch2_bkey_has_device(bkey_i_to_s_c(insert), p.ptr.dev)) {
@@ -260,8 +266,8 @@ int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
 		BCH_WRITE_DATA_ENCODED|
 		BCH_WRITE_FROM_INTERNAL;
 
-	m->op.nr_replicas	= 1;
-	m->op.nr_replicas_required = 1;
+	m->op.nr_replicas	= data_opts.nr_replicas;
+	m->op.nr_replicas_required = data_opts.nr_replicas;
 	m->op.index_update_fn	= bch2_migrate_index_update;
 
 	switch (data_cmd) {
@@ -291,14 +297,14 @@ int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
 		unsigned compressed_sectors = 0;
 
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
-			if (!p.ptr.cached &&
-			    crc_is_compressed(p.crc) &&
-			    bch2_dev_in_target(c, p.ptr.dev, data_opts.target))
+			if (p.ptr.dev == data_opts.rewrite_dev &&
+			    !p.ptr.cached &&
+			    crc_is_compressed(p.crc))
 				compressed_sectors += p.crc.compressed_size;
 
 		if (compressed_sectors) {
 			ret = bch2_disk_reservation_add(c, &m->op.res,
-					compressed_sectors,
+					k.k->size * m->op.nr_replicas,
 					BCH_DISK_RESERVATION_NOFAIL);
 			if (ret)
 				return ret;
@@ -320,12 +326,12 @@ static void move_free(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct moving_context *ctxt = io->write.ctxt;
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
 	bch2_disk_reservation_put(io->write.op.c, &io->write.op.res);
 
-	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, i)
+	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, iter)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);
 
@@ -409,7 +415,7 @@ static void bch2_move_ctxt_wait_for_io(struct moving_context *ctxt)
 		atomic_read(&ctxt->write_sectors) != sectors_pending);
 }
 
-static int bch2_move_extent(struct bch_fs *c,
+static int bch2_move_extent(struct btree_trans *trans,
 			    struct moving_context *ctxt,
 			    struct write_point_specifier wp,
 			    struct bch_io_opts io_opts,
@@ -418,6 +424,7 @@ static int bch2_move_extent(struct bch_fs *c,
 			    enum data_cmd data_cmd,
 			    struct data_opts data_opts)
 {
+	struct bch_fs *c = trans->c;
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	struct moving_io *io;
 	const union bch_extent_entry *entry;
@@ -484,7 +491,7 @@ static int bch2_move_extent(struct bch_fs *c,
 	 * ctxt when doing wakeup
 	 */
 	closure_get(&ctxt->cl);
-	bch2_read_extent(c, &io->rbio, k, 0,
+	bch2_read_extent(trans, &io->rbio, k, 0,
 			 BCH_READ_NODECODE|
 			 BCH_READ_LAST_FRAGMENT);
 	return 0;
@@ -602,7 +609,7 @@ peek:
 		k = bkey_i_to_s_c(sk.k);
 		bch2_trans_unlock(&trans);
 
-		ret2 = bch2_move_extent(c, ctxt, wp, io_opts, btree_id, k,
+		ret2 = bch2_move_extent(&trans, ctxt, wp, io_opts, btree_id, k,
 					data_cmd, data_opts);
 		if (ret2) {
 			if (ret2 == -ENOMEM) {
@@ -749,6 +756,7 @@ static enum data_cmd rereplicate_pred(struct bch_fs *c, void *arg,
 		return DATA_SKIP;
 
 	data_opts->target		= 0;
+	data_opts->nr_replicas		= 1;
 	data_opts->btree_insert_flags	= 0;
 	return DATA_ADD_REPLICAS;
 }
@@ -764,6 +772,7 @@ static enum data_cmd migrate_pred(struct bch_fs *c, void *arg,
 		return DATA_SKIP;
 
 	data_opts->target		= 0;
+	data_opts->nr_replicas		= 1;
 	data_opts->btree_insert_flags	= 0;
 	data_opts->rewrite_dev		= op->migrate.dev;
 	return DATA_REWRITE;

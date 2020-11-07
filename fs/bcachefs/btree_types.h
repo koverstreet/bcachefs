@@ -130,10 +130,6 @@ struct btree {
 
 	struct btree_write	writes[2];
 
-#ifdef CONFIG_BCACHEFS_DEBUG
-	bool			*expensive_debug_checks;
-#endif
-
 	/* Key/pointer for this btree node */
 	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
 };
@@ -283,6 +279,11 @@ btree_iter_type(const struct btree_iter *iter)
 	return iter->flags & BTREE_ITER_TYPE;
 }
 
+static inline bool btree_iter_is_cached(const struct btree_iter *iter)
+{
+	return btree_iter_type(iter) == BTREE_ITER_CACHED;
+}
+
 static inline struct btree_iter_level *iter_l(struct btree_iter *iter)
 {
 	return iter->l + iter->level;
@@ -380,10 +381,6 @@ struct btree_trans {
 	unsigned		journal_u64s;
 	unsigned		journal_preres_u64s;
 	struct replicas_delta_list *fs_usage_deltas;
-
-	struct btree_iter	iters_onstack[2];
-	struct btree_insert_entry updates_onstack[2];
-	struct btree_insert_entry updates2_onstack[2];
 };
 
 #define BTREE_FLAG(flag)						\
@@ -591,6 +588,7 @@ static inline bool btree_iter_is_extents(struct btree_iter *iter)
 #define BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS		\
 	((1U << BKEY_TYPE_EXTENTS)|			\
 	 (1U << BKEY_TYPE_INODES)|			\
+	 (1U << BKEY_TYPE_EC)|				\
 	 (1U << BKEY_TYPE_REFLINK))
 
 enum btree_trigger_flags {
@@ -602,7 +600,6 @@ enum btree_trigger_flags {
 
 	__BTREE_TRIGGER_GC,
 	__BTREE_TRIGGER_BUCKET_INVALIDATE,
-	__BTREE_TRIGGER_ALLOC_READ,
 	__BTREE_TRIGGER_NOATOMIC,
 };
 
@@ -614,7 +611,6 @@ enum btree_trigger_flags {
 
 #define BTREE_TRIGGER_GC		(1U << __BTREE_TRIGGER_GC)
 #define BTREE_TRIGGER_BUCKET_INVALIDATE	(1U << __BTREE_TRIGGER_BUCKET_INVALIDATE)
-#define BTREE_TRIGGER_ALLOC_READ	(1U << __BTREE_TRIGGER_ALLOC_READ)
 #define BTREE_TRIGGER_NOATOMIC		(1U << __BTREE_TRIGGER_NOATOMIC)
 
 static inline bool btree_node_type_needs_gc(enum btree_node_type type)

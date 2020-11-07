@@ -8,6 +8,7 @@
 #include "alloc_background.h"
 #include "alloc_foreground.h"
 #include "bkey_methods.h"
+#include "bkey_on_stack.h"
 #include "btree_locking.h"
 #include "btree_update_interior.h"
 #include "btree_io.h"
@@ -36,9 +37,11 @@
 
 static inline void __gc_pos_set(struct bch_fs *c, struct gc_pos new_pos)
 {
+	preempt_disable();
 	write_seqcount_begin(&c->gc_pos_lock);
 	c->gc_pos = new_pos;
 	write_seqcount_end(&c->gc_pos_lock);
+	preempt_enable();
 }
 
 static inline void gc_pos_set(struct bch_fs *c, struct gc_pos new_pos)
@@ -98,7 +101,7 @@ static int bch2_gc_mark_key(struct bch_fs *c, struct bkey_s_c k,
 	int ret = 0;
 
 	if (initial) {
-		BUG_ON(journal_seq_verify(c) &&
+		BUG_ON(bch2_journal_seq_verify &&
 		       k.k->version.lo > journal_cur_seq(&c->journal));
 
 		/* XXX change to fsck check */
@@ -206,7 +209,7 @@ static int bch2_gc_btree(struct bch_fs *c, enum btree_id btree_id,
 	struct btree_iter *iter;
 	struct btree *b;
 	unsigned depth = metadata_only			? 1
-		: expensive_debug_checks(c)		? 0
+		: bch2_expensive_debug_checks		? 0
 		: !btree_node_type_needs_gc(btree_id)	? 1
 		: 0;
 	u8 max_stale = 0;
@@ -233,8 +236,8 @@ static int bch2_gc_btree(struct bch_fs *c, enum btree_id btree_id,
 						BTREE_INSERT_USE_RESERVE|
 						BTREE_INSERT_NOWAIT|
 						BTREE_INSERT_GC_LOCK_HELD);
-			else if (!btree_gc_rewrite_disabled(c) &&
-				 (btree_gc_always_rewrite(c) || max_stale > 16))
+			else if (!bch2_btree_gc_rewrite_disabled &&
+				 (bch2_btree_gc_always_rewrite || max_stale > 16))
 				bch2_btree_node_rewrite(c, iter,
 						b->data->keys.seq,
 						BTREE_INSERT_NOWAIT|
@@ -325,7 +328,7 @@ static int bch2_gc_btree_init(struct bch_fs *c,
 {
 	struct btree *b;
 	unsigned target_depth = metadata_only		? 1
-		: expensive_debug_checks(c)		? 0
+		: bch2_expensive_debug_checks		? 0
 		: !btree_node_type_needs_gc(btree_id)	? 1
 		: 0;
 	u8 max_stale = 0;
@@ -567,6 +570,7 @@ static int bch2_gc_done(struct bch_fs *c,
 			fsck_err(c, _msg ": got %llu, should be %llu"	\
 				, ##__VA_ARGS__, dst->_f, src->_f);	\
 		dst->_f = src->_f;					\
+		ret = 1;						\
 	}
 #define copy_stripe_field(_f, _msg, ...)				\
 	if (dst->_f != src->_f) {					\
@@ -577,6 +581,7 @@ static int bch2_gc_done(struct bch_fs *c,
 				dst->_f, src->_f);			\
 		dst->_f = src->_f;					\
 		dst->dirty = true;					\
+		ret = 1;						\
 	}
 #define copy_bucket_field(_f)						\
 	if (dst->b[b].mark._f != src->b[b].mark._f) {			\
@@ -587,6 +592,7 @@ static int bch2_gc_done(struct bch_fs *c,
 				bch2_data_types[dst->b[b].mark.data_type],\
 				dst->b[b].mark._f, src->b[b].mark._f);	\
 		dst->b[b]._mark._f = src->b[b].mark._f;			\
+		ret = 1;						\
 	}
 #define copy_dev_field(_f, _msg, ...)					\
 	copy_field(_f, "dev %u has wrong " _msg, i, ##__VA_ARGS__)
@@ -829,7 +835,7 @@ again:
 out:
 	if (!ret &&
 	    (test_bit(BCH_FS_FIXED_GENS, &c->flags) ||
-	     (!iter && test_restart_gc(c)))) {
+	     (!iter && bch2_test_restart_gc))) {
 		/*
 		 * XXX: make sure gens we fixed got saved
 		 */
@@ -888,40 +894,77 @@ out:
 	return ret;
 }
 
+static bool gc_btree_gens_key(struct bch_fs *c, struct bkey_s_c k)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const struct bch_extent_ptr *ptr;
+
+	percpu_down_read(&c->mark_lock);
+	bkey_for_each_ptr(ptrs, ptr) {
+		struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
+		struct bucket *g = PTR_BUCKET(ca, ptr, false);
+
+		if (gen_after(g->mark.gen, ptr->gen) > 16) {
+			percpu_up_read(&c->mark_lock);
+			return true;
+		}
+	}
+
+	bkey_for_each_ptr(ptrs, ptr) {
+		struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
+		struct bucket *g = PTR_BUCKET(ca, ptr, false);
+
+		if (gen_after(g->gc_gen, ptr->gen))
+			g->gc_gen = ptr->gen;
+	}
+	percpu_up_read(&c->mark_lock);
+
+	return false;
+}
+
 /*
  * For recalculating oldest gen, we only need to walk keys in leaf nodes; btree
  * node pointers currently never have cached pointers that can become stale:
  */
-static int bch2_gc_btree_gens(struct bch_fs *c, enum btree_id id)
+static int bch2_gc_btree_gens(struct bch_fs *c, enum btree_id btree_id)
 {
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_s_c k;
-	int ret;
+	struct bkey_on_stack sk;
+	int ret = 0;
 
+	bkey_on_stack_init(&sk);
 	bch2_trans_init(&trans, c, 0, 0);
 
-	for_each_btree_key(&trans, iter, id, POS_MIN, BTREE_ITER_PREFETCH, k, ret) {
-		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-		const struct bch_extent_ptr *ptr;
+	iter = bch2_trans_get_iter(&trans, btree_id, POS_MIN,
+				   BTREE_ITER_PREFETCH);
 
-		percpu_down_read(&c->mark_lock);
-		bkey_for_each_ptr(ptrs, ptr) {
-			struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
-			struct bucket *g = PTR_BUCKET(ca, ptr, false);
+	while ((k = bch2_btree_iter_peek(iter)).k &&
+	       !(ret = bkey_err(k))) {
+		if (gc_btree_gens_key(c, k)) {
+			bkey_on_stack_reassemble(&sk, c, k);
+			bch2_extent_normalize(c, bkey_i_to_s(sk.k));
 
-			if (gen_after(g->gc_gen, ptr->gen))
-				g->gc_gen = ptr->gen;
+			bch2_btree_iter_set_pos(iter, bkey_start_pos(&sk.k->k));
 
-			if (gen_after(g->mark.gen, ptr->gen) > 32) {
-				/* rewrite btree node */
+			bch2_trans_update(&trans, iter, sk.k, 0);
 
+			ret = bch2_trans_commit(&trans, NULL, NULL,
+						BTREE_INSERT_NOFAIL);
+			if (ret == -EINTR)
+				continue;
+			if (ret) {
+				break;
 			}
 		}
-		percpu_up_read(&c->mark_lock);
+
+		bch2_btree_iter_next(iter);
 	}
 
 	bch2_trans_exit(&trans);
+	bkey_on_stack_exit(&sk, c);
+
 	return ret;
 }
 
@@ -1356,7 +1399,7 @@ static int bch2_gc_thread(void *arg)
 #else
 		ret = bch2_gc_gens(c);
 #endif
-		if (ret)
+		if (ret < 0)
 			bch_err(c, "btree gc failed: %i", ret);
 
 		debug_check_no_locks_held();

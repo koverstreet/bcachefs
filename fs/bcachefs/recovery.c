@@ -25,6 +25,18 @@
 
 #define QSTR(n) { { { .len = strlen(n) } }, .name = n }
 
+/* for -o reconstruct_alloc: */
+static void drop_alloc_keys(struct journal_keys *keys)
+{
+	size_t src, dst;
+
+	for (src = 0, dst = 0; src < keys->nr; src++)
+		if (keys->d[src].btree_id != BTREE_ID_ALLOC)
+			keys->d[dst++] = keys->d[src];
+
+	keys->nr = dst;
+}
+
 /* iterate over keys read from the journal: */
 
 static struct journal_key *journal_key_search(struct journal_keys *journal_keys,
@@ -845,9 +857,11 @@ static int verify_superblock_clean(struct bch_fs *c,
 	}
 
 	mustfix_fsck_err_on(j->read_clock != clean->read_clock, c,
-			"superblock read clock doesn't match journal after clean shutdown");
+			"superblock read clock %u doesn't match journal %u after clean shutdown",
+			clean->read_clock, j->read_clock);
 	mustfix_fsck_err_on(j->write_clock != clean->write_clock, c,
-			"superblock read clock doesn't match journal after clean shutdown");
+			"superblock write clock %u doesn't match journal %u after clean shutdown",
+			clean->write_clock, j->write_clock);
 
 	for (i = 0; i < BTREE_ID_NR; i++) {
 		char buf1[200], buf2[200];
@@ -928,7 +942,6 @@ static int read_btree_roots(struct bch_fs *c)
 			continue;
 		}
 
-
 		if (r->error) {
 			__fsck_err(c, i == BTREE_ID_ALLOC
 				   ? FSCK_CAN_IGNORE : 0,
@@ -961,7 +974,7 @@ int bch2_fs_recovery(struct bch_fs *c)
 	const char *err = "cannot allocate memory";
 	struct bch_sb_field_clean *clean = NULL;
 	u64 journal_seq;
-	bool wrote = false, write_sb = false;
+	bool write_sb = false, need_write_alloc = false;
 	int ret;
 
 	if (c->sb.clean)
@@ -1023,6 +1036,11 @@ int bch2_fs_recovery(struct bch_fs *c)
 		bch_err(c, "filesystem needs recovery from older version; run fsck from older bcachefs-tools to fix");
 		ret = -EINVAL;
 		goto err;
+	}
+
+	if (c->opts.reconstruct_alloc) {
+		c->sb.compat &= ~(1ULL << BCH_COMPAT_FEAT_ALLOC_INFO);
+		drop_alloc_keys(&c->journal_keys);
 	}
 
 	ret = journal_replay_early(c, clean, &c->journal_entries);
@@ -1090,8 +1108,10 @@ int bch2_fs_recovery(struct bch_fs *c)
 		bch_info(c, "starting metadata mark and sweep");
 		err = "error in mark and sweep";
 		ret = bch2_gc(c, &c->journal_keys, true, true);
-		if (ret)
+		if (ret < 0)
 			goto err;
+		if (ret)
+			need_write_alloc = true;
 		bch_verbose(c, "mark and sweep done");
 	}
 
@@ -1101,8 +1121,10 @@ int bch2_fs_recovery(struct bch_fs *c)
 		bch_info(c, "starting mark and sweep");
 		err = "error in mark and sweep";
 		ret = bch2_gc(c, &c->journal_keys, true, false);
-		if (ret)
+		if (ret < 0)
 			goto err;
+		if (ret)
+			need_write_alloc = true;
 		bch_verbose(c, "mark and sweep done");
 	}
 
@@ -1126,7 +1148,7 @@ int bch2_fs_recovery(struct bch_fs *c)
 		goto err;
 	bch_verbose(c, "journal replay done");
 
-	if (!c->opts.nochanges) {
+	if (need_write_alloc && !c->opts.nochanges) {
 		/*
 		 * note that even when filesystem was clean there might be work
 		 * to do here, if we ran gc (because of fsck) which recalculated
@@ -1134,8 +1156,8 @@ int bch2_fs_recovery(struct bch_fs *c)
 		 */
 		bch_verbose(c, "writing allocation info");
 		err = "error writing out alloc info";
-		ret = bch2_stripes_write(c, BTREE_INSERT_LAZY_RW, &wrote) ?:
-			bch2_alloc_write(c, BTREE_INSERT_LAZY_RW, &wrote);
+		ret = bch2_stripes_write(c, BTREE_INSERT_LAZY_RW) ?:
+			bch2_alloc_write(c, BTREE_INSERT_LAZY_RW);
 		if (ret) {
 			bch_err(c, "error writing alloc info");
 			goto err;
@@ -1281,15 +1303,29 @@ int bch2_fs_initialize(struct bch_fs *c)
 	bch2_fs_journal_start(&c->journal, 1, &journal);
 	bch2_journal_set_replay_done(&c->journal);
 
+	err = "error going read-write";
+	ret = bch2_fs_read_write_early(c);
+	if (ret)
+		goto err;
+
+	/*
+	 * Write out the superblock and journal buckets, now that we can do
+	 * btree updates
+	 */
+	err = "error writing alloc info";
+	ret = bch2_alloc_write(c, 0);
+	if (ret)
+		goto err;
+
 	bch2_inode_init(c, &root_inode, 0, 0,
 			S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0, NULL);
 	root_inode.bi_inum = BCACHEFS_ROOT_INO;
-	bch2_inode_pack(&packed_inode, &root_inode);
+	bch2_inode_pack(c, &packed_inode, &root_inode);
 
 	err = "error creating root directory";
 	ret = bch2_btree_insert(c, BTREE_ID_INODES,
 				&packed_inode.inode.k_i,
-				NULL, NULL, BTREE_INSERT_LAZY_RW);
+				NULL, NULL, 0);
 	if (ret)
 		goto err;
 

@@ -340,7 +340,8 @@ static inline void bkey_init(struct bkey *k)
 	x(reflink_p,		15)			\
 	x(reflink_v,		16)			\
 	x(inline_data,		17)			\
-	x(btree_ptr_v2,		18)
+	x(btree_ptr_v2,		18)			\
+	x(indirect_inline_data,	19)
 
 enum bch_bkey_type {
 #define x(name, nr) KEY_TYPE_##name	= nr,
@@ -668,10 +669,10 @@ struct bch_inode_generation {
 } __attribute__((packed, aligned(8)));
 
 #define BCH_INODE_FIELDS()			\
-	x(bi_atime,			64)	\
-	x(bi_ctime,			64)	\
-	x(bi_mtime,			64)	\
-	x(bi_otime,			64)	\
+	x(bi_atime,			96)	\
+	x(bi_ctime,			96)	\
+	x(bi_mtime,			96)	\
+	x(bi_otime,			96)	\
 	x(bi_size,			64)	\
 	x(bi_sectors,			64)	\
 	x(bi_uid,			32)	\
@@ -738,7 +739,8 @@ enum {
 #define BCH_INODE_UNLINKED	(1 << __BCH_INODE_UNLINKED)
 
 LE32_BITMASK(INODE_STR_HASH,	struct bch_inode, bi_flags, 20, 24);
-LE32_BITMASK(INODE_NR_FIELDS,	struct bch_inode, bi_flags, 24, 32);
+LE32_BITMASK(INODE_NR_FIELDS,	struct bch_inode, bi_flags, 24, 31);
+LE32_BITMASK(INODE_NEW_VARINT,	struct bch_inode, bi_flags, 31, 32);
 
 /* Dirents */
 
@@ -884,6 +886,12 @@ struct bch_reflink_v {
 	__le64			refcount;
 	union bch_extent_entry	start[0];
 	__u64			_data[0];
+};
+
+struct bch_indirect_inline_data {
+	struct bch_val		v;
+	__le64			refcount;
+	u8			data[0];
 };
 
 /* Inline data */
@@ -1032,7 +1040,8 @@ LE64_BITMASK(BCH_KDF_SCRYPT_P,	struct bch_sb_field_crypt, kdf_flags, 32, 48);
 	x(journal,	2)		\
 	x(btree,	3)		\
 	x(user,		4)		\
-	x(cached,	5)
+	x(cached,	5)		\
+	x(parity,	6)
 
 enum bch_data_type {
 #define x(t, n) BCH_DATA_##t,
@@ -1321,13 +1330,16 @@ LE64_BITMASK(BCH_SB_ERASURE_CODE,	struct bch_sb, flags[3],  0, 16);
 	x(incompressible,		10)	\
 	x(btree_ptr_v2,			11)	\
 	x(extents_above_btree_updates,	12)	\
-	x(btree_updates_journalled,	13)
+	x(btree_updates_journalled,	13)	\
+	x(reflink_inline_data,		14)	\
+	x(new_varint,			15)
 
 #define BCH_SB_FEATURES_ALL				\
 	((1ULL << BCH_FEATURE_new_siphash)|		\
 	 (1ULL << BCH_FEATURE_new_extent_overwrite)|	\
 	 (1ULL << BCH_FEATURE_btree_ptr_v2)|		\
-	 (1ULL << BCH_FEATURE_extents_above_btree_updates))
+	 (1ULL << BCH_FEATURE_extents_above_btree_updates)|\
+	 (1ULL << BCH_FEATURE_new_varint))\
 
 enum bch_sb_feature {
 #define x(f, n) BCH_FEATURE_##f,

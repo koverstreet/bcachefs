@@ -369,10 +369,10 @@ static struct bkey_float *bkey_float(const struct btree *b,
 	return ro_aux_tree_base(b, t)->f + idx;
 }
 
-static void bset_aux_tree_verify(struct btree *b)
+static void bset_aux_tree_verify(const struct btree *b)
 {
 #ifdef CONFIG_BCACHEFS_DEBUG
-	struct bset_tree *t;
+	const struct bset_tree *t;
 
 	for_each_bset(b, t) {
 		if (t->aux_data_offset == U16_MAX)
@@ -388,15 +388,13 @@ static void bset_aux_tree_verify(struct btree *b)
 #endif
 }
 
-void bch2_btree_keys_init(struct btree *b, bool *expensive_debug_checks)
+void bch2_btree_keys_init(struct btree *b)
 {
 	unsigned i;
 
 	b->nsets		= 0;
 	memset(&b->nr, 0, sizeof(b->nr));
-#ifdef CONFIG_BCACHEFS_DEBUG
-	b->expensive_debug_checks = expensive_debug_checks;
-#endif
+
 	for (i = 0; i < MAX_BSETS; i++)
 		b->set[i].data_offset = U16_MAX;
 
@@ -522,7 +520,7 @@ static void bch2_bset_verify_rw_aux_tree(struct btree *b,
 	struct bkey_packed *k = btree_bkey_first(b, t);
 	unsigned j = 0;
 
-	if (!btree_keys_expensive_checks(b))
+	if (!bch2_expensive_debug_checks)
 		return;
 
 	BUG_ON(bset_has_ro_aux_tree(t));
@@ -710,20 +708,20 @@ static void make_bfloat(struct btree *b, struct bset_tree *t,
 }
 
 /* bytes remaining - only valid for last bset: */
-static unsigned __bset_tree_capacity(struct btree *b, struct bset_tree *t)
+static unsigned __bset_tree_capacity(const struct btree *b, const struct bset_tree *t)
 {
 	bset_aux_tree_verify(b);
 
 	return btree_aux_data_bytes(b) - t->aux_data_offset * sizeof(u64);
 }
 
-static unsigned bset_ro_tree_capacity(struct btree *b, struct bset_tree *t)
+static unsigned bset_ro_tree_capacity(const struct btree *b, const struct bset_tree *t)
 {
 	return __bset_tree_capacity(b, t) /
 		(sizeof(struct bkey_float) + sizeof(u8));
 }
 
-static unsigned bset_rw_tree_capacity(struct btree *b, struct bset_tree *t)
+static unsigned bset_rw_tree_capacity(const struct btree *b, const struct bset_tree *t)
 {
 	return __bset_tree_capacity(b, t) / sizeof(struct rw_aux_tree);
 }
@@ -922,7 +920,7 @@ struct bkey_packed *bch2_bkey_prev_filter(struct btree *b,
 		k = p;
 	}
 
-	if (btree_keys_expensive_checks(b)) {
+	if (bch2_expensive_debug_checks) {
 		BUG_ON(ret >= orig_k);
 
 		for (i = ret
@@ -1227,8 +1225,8 @@ static inline bool bkey_mantissa_bits_dropped(const struct btree *b,
 
 __flatten
 static struct bkey_packed *bset_search_tree(const struct btree *b,
-				struct bset_tree *t,
-				struct bpos *search,
+				const struct bset_tree *t,
+				const struct bpos *search,
 				const struct bkey_packed *packed_search)
 {
 	struct ro_aux_tree *base = ro_aux_tree_base(b, t);
@@ -1345,7 +1343,7 @@ struct bkey_packed *bch2_bset_search_linear(struct btree *b,
 		       bkey_iter_pos_cmp(b, m, search) < 0)
 			m = bkey_next_skip_noops(m, btree_bkey_last(b, t));
 
-	if (btree_keys_expensive_checks(b)) {
+	if (bch2_expensive_debug_checks) {
 		struct bkey_packed *prev = bch2_bkey_prev_all(b, t, m);
 
 		BUG_ON(prev &&
@@ -1601,7 +1599,7 @@ static inline void __bch2_btree_node_iter_advance(struct btree_node_iter *iter,
 void bch2_btree_node_iter_advance(struct btree_node_iter *iter,
 				  struct btree *b)
 {
-	if (btree_keys_expensive_checks(b)) {
+	if (bch2_expensive_debug_checks) {
 		bch2_btree_node_iter_verify(iter, b);
 		bch2_btree_node_iter_next_check(iter, b);
 	}
@@ -1620,7 +1618,7 @@ struct bkey_packed *bch2_btree_node_iter_prev_all(struct btree_node_iter *iter,
 	struct bset_tree *t;
 	unsigned end = 0;
 
-	if (btree_keys_expensive_checks(b))
+	if (bch2_expensive_debug_checks)
 		bch2_btree_node_iter_verify(iter, b);
 
 	for_each_bset(b, t) {
@@ -1656,7 +1654,7 @@ found:
 	iter->data[0].k = __btree_node_key_to_offset(b, prev);
 	iter->data[0].end = end;
 
-	if (btree_keys_expensive_checks(b))
+	if (bch2_expensive_debug_checks)
 		bch2_btree_node_iter_verify(iter, b);
 	return prev;
 }

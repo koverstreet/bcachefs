@@ -29,8 +29,8 @@ static const struct rhashtable_params bch2_btree_key_cache_params = {
 };
 
 __flatten
-static inline struct bkey_cached *
-btree_key_cache_find(struct bch_fs *c, enum btree_id btree_id, struct bpos pos)
+inline struct bkey_cached *
+bch2_btree_key_cache_find(struct bch_fs *c, enum btree_id btree_id, struct bpos pos)
 {
 	struct bkey_cached_key key = {
 		.btree_id	= btree_id,
@@ -204,6 +204,7 @@ static int bkey_cached_check_fn(struct six_lock *lock, void *p)
 		!bkey_cmp(ck->key.pos, iter->pos) ? 0 : -1;
 }
 
+__flatten
 int bch2_btree_iter_traverse_cached(struct btree_iter *iter)
 {
 	struct btree_trans *trans = iter->trans;
@@ -218,7 +219,7 @@ int bch2_btree_iter_traverse_cached(struct btree_iter *iter)
 		goto fill;
 	}
 retry:
-	ck = btree_key_cache_find(c, iter->btree_id, iter->pos);
+	ck = bch2_btree_key_cache_find(c, iter->btree_id, iter->pos);
 	if (!ck) {
 		if (iter->flags & BTREE_ITER_CACHED_NOCREATE) {
 			iter->l[0].b = NULL;
@@ -242,7 +243,7 @@ retry:
 		enum six_lock_type lock_want = __btree_lock_want(iter, 0);
 
 		if (!btree_node_lock((void *) ck, iter->pos, 0, iter, lock_want,
-				     bkey_cached_check_fn, iter)) {
+				     bkey_cached_check_fn, iter, _THIS_IP_)) {
 			if (ck->key.btree_id != iter->btree_id ||
 			    bkey_cmp(ck->key.pos, iter->pos)) {
 				goto retry;
@@ -415,7 +416,7 @@ int bch2_btree_key_cache_flush(struct btree_trans *trans,
 	struct bkey_cached_key key = { id, pos };
 
 	/* Fastpath - assume it won't be found: */
-	if (!btree_key_cache_find(c, id, pos))
+	if (!bch2_btree_key_cache_find(c, id, pos))
 		return 0;
 
 	return btree_key_cache_flush_pos(trans, key, 0, true);
@@ -462,7 +463,7 @@ bool bch2_btree_insert_key_cached(struct btree_trans *trans,
 void bch2_btree_key_cache_verify_clean(struct btree_trans *trans,
 			       enum btree_id id, struct bpos pos)
 {
-	BUG_ON(btree_key_cache_find(trans->c, id, pos));
+	BUG_ON(bch2_btree_key_cache_find(trans->c, id, pos));
 }
 #endif
 

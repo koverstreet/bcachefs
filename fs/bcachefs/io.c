@@ -7,6 +7,7 @@
  */
 
 #include "bcachefs.h"
+#include "alloc_background.h"
 #include "alloc_foreground.h"
 #include "bkey_on_stack.h"
 #include "bset.h"
@@ -134,10 +135,10 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 
 void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
-	bio_for_each_segment_all(bv, bio, i)
+	bio_for_each_segment_all(bv, bio, iter)
 		if (bv->bv_page != ZERO_PAGE(0))
 			mempool_free(bv->bv_page, &c->bio_bounce_pages);
 	bio->bi_vcnt = 0;
@@ -170,7 +171,7 @@ void bch2_bio_alloc_pages_pool(struct bch_fs *c, struct bio *bio,
 
 	while (size) {
 		struct page *page = __bio_alloc_page_pool(c, &using_mempool);
-		unsigned len = min(PAGE_SIZE, size);
+		unsigned len = min_t(size_t, PAGE_SIZE, size);
 
 		BUG_ON(!bio_add_page(bio, page, len, 0));
 		size -= len;
@@ -300,7 +301,7 @@ int bch2_extent_update(struct btree_trans *trans,
 		inode_u.bi_sectors += delta;
 
 		if (delta || new_i_size) {
-			bch2_inode_pack(&inode_p, &inode_u);
+			bch2_inode_pack(trans->c, &inode_p, &inode_u);
 			bch2_trans_update(trans, inode_iter,
 					  &inode_p.inode.k_i, 0);
 		}
@@ -1474,7 +1475,8 @@ static struct promote_op *__promote_alloc(struct bch_fs *c,
 			opts,
 			DATA_PROMOTE,
 			(struct data_opts) {
-				.target = opts.promote_target
+				.target		= opts.promote_target,
+				.nr_replicas	= 1,
 			},
 			btree_id, k);
 	BUG_ON(ret);
@@ -1635,7 +1637,7 @@ retry:
 		goto out;
 	}
 
-	ret = __bch2_read_extent(c, rbio, bvec_iter, k, 0, failed, flags);
+	ret = __bch2_read_extent(&trans, rbio, bvec_iter, k, 0, failed, flags);
 	if (ret == READ_RETRY)
 		goto retry;
 	if (ret)
@@ -1674,7 +1676,6 @@ retry:
 		unsigned bytes, sectors, offset_into_extent;
 
 		bkey_on_stack_reassemble(&sk, c, k);
-		k = bkey_i_to_s_c(sk.k);
 
 		offset_into_extent = iter->pos.offset -
 			bkey_start_offset(k.k);
@@ -1685,6 +1686,8 @@ retry:
 		if (ret)
 			break;
 
+		k = bkey_i_to_s_c(sk.k);
+
 		sectors = min(sectors, k.k->size - offset_into_extent);
 
 		bch2_trans_unlock(&trans);
@@ -1692,7 +1695,7 @@ retry:
 		bytes = min(sectors, bvec_iter_sectors(bvec_iter)) << 9;
 		swap(bvec_iter.bi_size, bytes);
 
-		ret = __bch2_read_extent(c, rbio, bvec_iter, k,
+		ret = __bch2_read_extent(&trans, rbio, bvec_iter, k,
 				offset_into_extent, failed, flags);
 		switch (ret) {
 		case READ_RETRY:
@@ -2006,7 +2009,8 @@ int __bch2_read_indirect_extent(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
-	if (k.k->type != KEY_TYPE_reflink_v) {
+	if (k.k->type != KEY_TYPE_reflink_v &&
+	    k.k->type != KEY_TYPE_indirect_inline_data) {
 		__bcache_io_error(trans->c,
 				"pointer to nonexistent indirect extent");
 		ret = -EIO;
@@ -2020,11 +2024,12 @@ err:
 	return ret;
 }
 
-int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
+int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
 		       struct bvec_iter iter, struct bkey_s_c k,
 		       unsigned offset_into_extent,
 		       struct bch_io_failures *failed, unsigned flags)
 {
+	struct bch_fs *c = trans->c;
 	struct extent_ptr_decoded pick;
 	struct bch_read_bio *rbio = NULL;
 	struct bch_dev *ca;
@@ -2033,13 +2038,12 @@ int __bch2_read_extent(struct bch_fs *c, struct bch_read_bio *orig,
 	struct bpos pos = bkey_start_pos(k.k);
 	int pick_ret;
 
-	if (k.k->type == KEY_TYPE_inline_data) {
-		struct bkey_s_c_inline_data d = bkey_s_c_to_inline_data(k);
+	if (bkey_extent_is_inline_data(k.k)) {
 		unsigned bytes = min_t(unsigned, iter.bi_size,
-				       bkey_val_bytes(d.k));
+				       bkey_inline_data_bytes(k.k));
 
 		swap(iter.bi_size, bytes);
-		memcpy_to_bio(&orig->bio, iter, d.v->data);
+		memcpy_to_bio(&orig->bio, iter, bkey_inline_data_p(k));
 		swap(iter.bi_size, bytes);
 		bio_advance_iter(&orig->bio, &iter, bytes);
 		zero_fill_bio_iter(&orig->bio, iter);
@@ -2192,9 +2196,9 @@ get_bio:
 
 	bch2_increment_clock(c, bio_sectors(&rbio->bio), READ);
 
-	rcu_read_lock();
-	bucket_io_clock_reset(c, ca, PTR_BUCKET_NR(ca, &pick.ptr), READ);
-	rcu_read_unlock();
+	if (pick.ptr.cached)
+		bch2_bucket_io_time_reset(trans, pick.ptr.dev,
+			PTR_BUCKET_NR(ca, &pick.ptr), READ);
 
 	if (!(flags & (BCH_READ_IN_RETRY|BCH_READ_LAST_FRAGMENT))) {
 		bio_inc_remaining(&orig->bio);
@@ -2311,12 +2315,13 @@ retry:
 		sectors = k.k->size - offset_into_extent;
 
 		bkey_on_stack_reassemble(&sk, c, k);
-		k = bkey_i_to_s_c(sk.k);
 
 		ret = bch2_read_indirect_extent(&trans,
 					&offset_into_extent, &sk);
 		if (ret)
 			goto err;
+
+		k = bkey_i_to_s_c(sk.k);
 
 		/*
 		 * With indirect extents, the amount of data to read is the min
@@ -2336,7 +2341,7 @@ retry:
 		if (rbio->bio.bi_iter.bi_size == bytes)
 			flags |= BCH_READ_LAST_FRAGMENT;
 
-		bch2_read_extent(c, rbio, k, offset_into_extent, flags);
+		bch2_read_extent(&trans, rbio, k, offset_into_extent, flags);
 
 		if (flags & BCH_READ_LAST_FRAGMENT)
 			break;

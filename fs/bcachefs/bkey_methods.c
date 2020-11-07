@@ -72,7 +72,11 @@ static const char *key_type_inline_data_invalid(const struct bch_fs *c,
 static void key_type_inline_data_to_text(struct printbuf *out, struct bch_fs *c,
 					 struct bkey_s_c k)
 {
-	pr_buf(out, "(%zu bytes)", bkey_val_bytes(k.k));
+	struct bkey_s_c_inline_data d = bkey_s_c_to_inline_data(k);
+	unsigned datalen = bkey_inline_data_bytes(k.k);
+
+	pr_buf(out, "datalen %u: %*phN",
+	       datalen, min(datalen, 32U), d.v->data);
 }
 
 #define bch2_bkey_ops_inline_data (struct bkey_ops) {	\
@@ -232,7 +236,7 @@ enum merge_result bch2_bkey_merge(struct bch_fs *c,
 	const struct bkey_ops *ops = &bch2_bkey_ops[l.k->type];
 	enum merge_result ret;
 
-	if (key_merging_disabled(c) ||
+	if (bch2_key_merging_disabled ||
 	    !ops->key_merge ||
 	    l.k->type != r.k->type ||
 	    bversion_cmp(l.k->version, r.k->version) ||
