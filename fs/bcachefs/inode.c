@@ -418,7 +418,7 @@ void bch2_inode_init_early(struct bch_fs *c,
 
 	/* ick */
 	inode_u->bi_flags |= str_hash << INODE_STR_HASH_OFFSET;
-	get_random_bytes(&inode_u->bi_hash_seed,
+	get_random_bytes_arch(&inode_u->bi_hash_seed,
 			 sizeof(inode_u->bi_hash_seed));
 }
 
