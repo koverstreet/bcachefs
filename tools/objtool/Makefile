@@ -7,9 +7,6 @@ ARCH := x86
 endif
 
 # always use the host compiler
-HOSTAR	?= ar
-HOSTCC	?= gcc
-HOSTLD	?= ld
 AR	 = $(HOSTAR)
 CC	 = $(HOSTCC)
 LD	 = $(HOSTLD)
