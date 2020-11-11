@@ -328,9 +328,9 @@ restart:
 			clear_btree_node_accessed(b);
 	}
 
-	memalloc_nofs_restore(flags);
 	mutex_unlock(&bc->lock);
 out:
+	memalloc_nofs_restore(flags);
 	return (unsigned long) freed * btree_pages(c);
 }
 
