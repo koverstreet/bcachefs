@@ -297,6 +297,7 @@ struct btree_key_cache {
 	struct list_head	freed;
 	struct list_head	clean;
 	struct list_head	dirty;
+	struct shrinker		shrink;
 
 	size_t			nr_keys;
 	size_t			nr_dirty;
