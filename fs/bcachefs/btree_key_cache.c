@@ -70,10 +70,14 @@ static void bkey_cached_evict(struct btree_key_cache *c,
 	c->nr_keys--;
 }
 
-static void bkey_cached_free(struct btree_key_cache *c,
+static void bkey_cached_free(struct btree_key_cache *bc,
 			     struct bkey_cached *ck)
 {
-	list_move(&ck->list, &c->freed);
+	struct bch_fs *c = container_of(bc, struct bch_fs, btree_key_cache);
+
+	ck->btree_trans_barrier_seq = bch2_btree_trans_barrier_seq(c);
+
+	list_move(&ck->list, &bc->freed);
 
 	kfree(ck->k);
 	ck->k		= NULL;

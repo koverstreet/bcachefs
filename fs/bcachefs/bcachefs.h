@@ -193,6 +193,7 @@
 #include <linux/semaphore.h>
 #include <linux/seqlock.h>
 #include <linux/shrinker.h>
+#include <linux/srcu.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
 #include <linux/zstd.h>
@@ -641,6 +642,13 @@ struct bch_fs {
 	struct list_head	btree_trans_list;
 	mempool_t		btree_iters_pool;
 	struct btree_iter_buf  __percpu	*btree_iters_bufs;
+
+	struct srcu_struct	btree_trans_barrier;
+	struct rcu_head		btree_trans_barrier_update;
+	spinlock_t		btree_trans_barrier_lock;
+	u32			btree_trans_barrier_seq;
+	unsigned		btree_trans_barrier_running:1;
+	unsigned		btree_trans_barrier_exiting:1;
 
 	struct btree_key_cache	btree_key_cache;
 

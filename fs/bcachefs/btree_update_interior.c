@@ -138,6 +138,8 @@ static void __btree_node_free(struct bch_fs *c, struct btree *b)
 
 	bch2_btree_node_hash_remove(&c->btree_cache, b);
 
+	b->btree_trans_barrier_seq = bch2_btree_trans_barrier_seq(c);
+
 	mutex_lock(&c->btree_cache.lock);
 	list_move(&b->list, &c->btree_cache.freeable);
 	mutex_unlock(&c->btree_cache.lock);

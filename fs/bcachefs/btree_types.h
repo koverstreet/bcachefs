@@ -76,6 +76,7 @@ struct btree {
 	u16			written;
 	u8			nsets;
 	u8			nr_key_bits;
+	u32			btree_trans_barrier_seq;
 
 	struct bkey_format	format;
 
@@ -314,6 +315,7 @@ struct bkey_cached {
 	unsigned long		flags;
 	u8			u64s;
 	bool			valid;
+	u32			btree_trans_barrier_seq;
 	struct bkey_cached_key	key;
 
 	struct rhash_head	hash;
@@ -350,6 +352,7 @@ struct btree_trans {
 	pid_t			pid;
 #endif
 	unsigned long		ip;
+	int			srcu_idx;
 
 	u64			iters_linked;
 	u64			iters_live;

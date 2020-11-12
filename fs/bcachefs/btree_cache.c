@@ -253,9 +253,12 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 	unsigned long touched = 0;
 	unsigned long freed = 0;
 	unsigned i, flags;
+	u32 seq;
 
 	if (bch2_btree_shrinker_disabled)
 		return SHRINK_STOP;
+
+	seq = bch2_btree_trans_barrier_seq(c);
 
 	/* Return -1 if we can't do anything right now */
 	if (sc->gfp_mask & __GFP_FS)
@@ -275,6 +278,13 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 	nr /= btree_pages(c);
 	can_free = btree_cache_can_free(bc);
 	nr = min_t(unsigned long, nr, can_free);
+
+	list_for_each_entry_safe(b, t, &bc->freed, list) {
+		if (seq != b->btree_trans_barrier_seq) {
+			list_del(&b->list);
+			kfree(b);
+		}
+	}
 
 	i = 0;
 	list_for_each_entry_safe(b, t, &bc->freeable, list) {
@@ -447,7 +457,7 @@ int bch2_fs_btree_cache_init(struct bch_fs *c)
 	bc->shrink.scan_objects		= bch2_btree_cache_scan;
 	bc->shrink.seeks		= 4;
 	bc->shrink.batch		= btree_pages(c) * 2;
-	register_shrinker(&bc->shrink);
+	ret = register_shrinker(&bc->shrink);
 out:
 	pr_verbose_init(c->opts, "ret %i", ret);
 	return ret;

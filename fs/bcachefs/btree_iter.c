@@ -2372,6 +2372,8 @@ void bch2_trans_init(struct btree_trans *trans, struct bch_fs *c,
 	if (expected_mem_bytes)
 		bch2_trans_preload_mem(trans, expected_mem_bytes);
 
+	trans->srcu_idx = srcu_read_lock(&c->btree_trans_barrier);
+
 #ifdef CONFIG_BCACHEFS_DEBUG
 	trans->pid = current->pid;
 	mutex_lock(&c->btree_trans_lock);
@@ -2392,6 +2394,8 @@ int bch2_trans_exit(struct btree_trans *trans)
 	mutex_unlock(&trans->c->btree_trans_lock);
 #endif
 
+	srcu_read_unlock(&c->btree_trans_barrier, trans->srcu_idx);
+
 	bch2_journal_preres_put(&trans->c->journal, &trans->journal_preres);
 
 	kfree(trans->fs_usage_deltas);
@@ -2405,6 +2409,35 @@ int bch2_trans_exit(struct btree_trans *trans)
 	trans->iters	= (void *) 0x1;
 
 	return trans->error ? -EIO : 0;
+}
+
+static void btree_trans_barrier_update_seq(struct rcu_head *head)
+{
+	struct bch_fs *c = container_of(head, struct bch_fs, btree_trans_barrier_update);
+
+	spin_lock(&c->btree_trans_barrier_lock);
+	c->btree_trans_barrier_running = false;
+	c->btree_trans_barrier_seq++;
+	spin_unlock(&c->btree_trans_barrier_lock);
+}
+
+u32 bch2_btree_trans_barrier_seq(struct bch_fs *c)
+{
+	u32 ret;
+
+	spin_lock(&c->btree_trans_barrier_lock);
+	ret = c->btree_trans_barrier_seq;
+
+	if (!c->btree_trans_barrier_running &&
+	    !c->btree_trans_barrier_exiting) {
+		c->btree_trans_barrier_running = true;
+		call_srcu(&c->btree_trans_barrier,
+			  &c->btree_trans_barrier_update,
+			  btree_trans_barrier_update_seq);
+	}
+	spin_unlock(&c->btree_trans_barrier_lock);
+
+	return ret;
 }
 
 static void __maybe_unused
@@ -2473,7 +2506,14 @@ void bch2_btree_trans_to_text(struct printbuf *out, struct bch_fs *c)
 
 void bch2_fs_btree_iter_exit(struct bch_fs *c)
 {
+	spin_lock(&c->btree_trans_barrier_lock);
+	c->btree_trans_barrier_exiting = true;
+	spin_unlock(&c->btree_trans_barrier_lock);
+
+	srcu_barrier(&c->btree_trans_barrier);
+
 	mempool_exit(&c->btree_iters_pool);
+	cleanup_srcu_struct(&c->btree_trans_barrier);
 }
 
 int bch2_fs_btree_iter_init(struct bch_fs *c)
@@ -2482,8 +2522,10 @@ int bch2_fs_btree_iter_init(struct bch_fs *c)
 
 	INIT_LIST_HEAD(&c->btree_trans_list);
 	mutex_init(&c->btree_trans_lock);
+	spin_lock_init(&c->btree_trans_barrier_lock);
 
-	return mempool_init_kmalloc_pool(&c->btree_iters_pool, 1,
+	return  init_srcu_struct(&c->btree_trans_barrier) ?:
+		mempool_init_kmalloc_pool(&c->btree_iters_pool, 1,
 			sizeof(struct btree_iter) * nr +
 			sizeof(struct btree_insert_entry) * nr +
 			sizeof(struct btree_insert_entry) * nr);
