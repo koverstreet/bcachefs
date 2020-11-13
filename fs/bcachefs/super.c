@@ -475,8 +475,8 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_journal_entries_free(&c->journal_entries);
 	percpu_free_rwsem(&c->mark_lock);
 	kfree(c->usage_scratch);
-	free_percpu(c->usage[1]);
-	free_percpu(c->usage[0]);
+	for (i = 0; i < ARRAY_SIZE(c->usage); i++)
+		free_percpu(c->usage[i]);
 	kfree(c->usage_base);
 
 	if (c->btree_iters_bufs)
