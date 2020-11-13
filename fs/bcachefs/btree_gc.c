@@ -603,7 +603,6 @@ static int bch2_gc_done(struct bch_fs *c,
 		struct genradix_iter dst_iter = genradix_iter_init(&c->stripes[0], 0);
 		struct genradix_iter src_iter = genradix_iter_init(&c->stripes[1], 0);
 		struct stripe *dst, *src;
-		unsigned i;
 
 		c->ec_stripes_heap.used = 0;
 
@@ -651,8 +650,8 @@ static int bch2_gc_done(struct bch_fs *c,
 		}
 	};
 
-	bch2_fs_usage_acc_to_base(c, 0);
-	bch2_fs_usage_acc_to_base(c, 1);
+	for (i = 0; i < ARRAY_SIZE(c->usage); i++)
+		bch2_fs_usage_acc_to_base(c, i);
 
 	bch2_dev_usage_from_buckets(c);
 
