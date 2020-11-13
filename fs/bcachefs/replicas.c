@@ -275,53 +275,55 @@ static void __replicas_table_update_pcpu(struct bch_fs_usage __percpu *dst_p,
 static int replicas_table_update(struct bch_fs *c,
 				 struct bch_replicas_cpu *new_r)
 {
-	struct bch_fs_usage __percpu *new_usage[2] = { NULL, NULL };
+	struct bch_fs_usage __percpu *new_usage[JOURNAL_BUF_NR];
 	struct bch_fs_usage *new_scratch = NULL;
 	struct bch_fs_usage __percpu *new_gc = NULL;
 	struct bch_fs_usage *new_base = NULL;
-	unsigned bytes = sizeof(struct bch_fs_usage) +
+	unsigned i, bytes = sizeof(struct bch_fs_usage) +
 		sizeof(u64) * new_r->nr;
-	int ret = -ENOMEM;
+	int ret = 0;
+
+	memset(new_usage, 0, sizeof(new_usage));
+
+	for (i = 0; i < ARRAY_SIZE(new_usage); i++)
+		if (!(new_usage[i] = __alloc_percpu_gfp(bytes,
+					sizeof(u64), GFP_NOIO)))
+			goto err;
 
 	if (!(new_base = kzalloc(bytes, GFP_NOIO)) ||
-	    !(new_usage[0] = __alloc_percpu_gfp(bytes, sizeof(u64),
-						GFP_NOIO)) ||
-	    !(new_usage[1] = __alloc_percpu_gfp(bytes, sizeof(u64),
-						GFP_NOIO)) ||
 	    !(new_scratch  = kmalloc(bytes, GFP_NOIO)) ||
 	    (c->usage_gc &&
-	     !(new_gc = __alloc_percpu_gfp(bytes, sizeof(u64), GFP_NOIO)))) {
-		bch_err(c, "error updating replicas table: memory allocation failure");
+	     !(new_gc = __alloc_percpu_gfp(bytes, sizeof(u64), GFP_NOIO))))
 		goto err;
-	}
 
+	for (i = 0; i < ARRAY_SIZE(new_usage); i++)
+		if (c->usage[i])
+			__replicas_table_update_pcpu(new_usage[i], new_r,
+						     c->usage[i], &c->replicas);
 	if (c->usage_base)
 		__replicas_table_update(new_base,		new_r,
 					c->usage_base,		&c->replicas);
-	if (c->usage[0])
-		__replicas_table_update_pcpu(new_usage[0],	new_r,
-					     c->usage[0],	&c->replicas);
-	if (c->usage[1])
-		__replicas_table_update_pcpu(new_usage[1],	new_r,
-					     c->usage[1],	&c->replicas);
 	if (c->usage_gc)
 		__replicas_table_update_pcpu(new_gc,		new_r,
 					     c->usage_gc,	&c->replicas);
 
+	for (i = 0; i < ARRAY_SIZE(new_usage); i++)
+		swap(c->usage[i],	new_usage[i]);
 	swap(c->usage_base,	new_base);
-	swap(c->usage[0],	new_usage[0]);
-	swap(c->usage[1],	new_usage[1]);
 	swap(c->usage_scratch,	new_scratch);
 	swap(c->usage_gc,	new_gc);
 	swap(c->replicas,	*new_r);
-	ret = 0;
-err:
+out:
 	free_percpu(new_gc);
 	kfree(new_scratch);
 	free_percpu(new_usage[1]);
 	free_percpu(new_usage[0]);
 	kfree(new_base);
 	return ret;
+err:
+	bch_err(c, "error updating replicas table: memory allocation failure");
+	ret = -ENOMEM;
+	goto out;
 }
 
 static unsigned reserve_journal_replicas(struct bch_fs *c,
@@ -496,9 +498,7 @@ int bch2_replicas_gc_end(struct bch_fs *c, int ret)
 		struct bch_replicas_cpu n;
 
 		if (!__replicas_has_entry(&c->replicas_gc, e) &&
-		    (c->usage_base->replicas[i] ||
-		     percpu_u64_get(&c->usage[0]->replicas[i]) ||
-		     percpu_u64_get(&c->usage[1]->replicas[i]))) {
+		    bch2_fs_usage_read_one(c, &c->usage_base->replicas[i])) {
 			n = cpu_replicas_add_entry(&c->replicas_gc, e);
 			if (!n.entries) {
 				ret = -ENOSPC;
@@ -603,9 +603,7 @@ retry:
 			cpu_replicas_entry(&c->replicas, i);
 
 		if (e->data_type == BCH_DATA_journal ||
-		    c->usage_base->replicas[i] ||
-		    percpu_u64_get(&c->usage[0]->replicas[i]) ||
-		    percpu_u64_get(&c->usage[1]->replicas[i]))
+		    bch2_fs_usage_read_one(c, &c->usage_base->replicas[i]))
 			memcpy(cpu_replicas_entry(&new, new.nr++),
 			       e, new.entry_size);
 	}
