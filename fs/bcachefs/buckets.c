@@ -142,8 +142,8 @@ void bch2_fs_usage_initialize(struct bch_fs *c)
 	percpu_down_write(&c->mark_lock);
 	usage = c->usage_base;
 
-	bch2_fs_usage_acc_to_base(c, 0);
-	bch2_fs_usage_acc_to_base(c, 1);
+	for (i = 0; i < ARRAY_SIZE(c->usage); i++)
+		bch2_fs_usage_acc_to_base(c, i);
 
 	for (i = 0; i < BCH_REPLICAS_MAX; i++)
 		usage->reserved += usage->persistent_reserved[i];
@@ -207,13 +207,13 @@ static inline struct bch_fs_usage *fs_usage_ptr(struct bch_fs *c,
 {
 	return this_cpu_ptr(gc
 			    ? c->usage_gc
-			    : c->usage[journal_seq & 1]);
+			    : c->usage[journal_seq & JOURNAL_BUF_MASK]);
 }
 
 u64 bch2_fs_usage_read_one(struct bch_fs *c, u64 *v)
 {
 	ssize_t offset = v - (u64 *) c->usage_base;
-	unsigned seq;
+	unsigned i, seq;
 	u64 ret;
 
 	BUG_ON(offset < 0 || offset >= fs_usage_u64s(c));
@@ -221,9 +221,10 @@ u64 bch2_fs_usage_read_one(struct bch_fs *c, u64 *v)
 
 	do {
 		seq = read_seqcount_begin(&c->usage_lock);
-		ret = *v +
-			percpu_u64_get((u64 __percpu *) c->usage[0] + offset) +
-			percpu_u64_get((u64 __percpu *) c->usage[1] + offset);
+		ret = *v;
+
+		for (i = 0; i < ARRAY_SIZE(c->usage); i++)
+			ret += percpu_u64_get((u64 __percpu *) c->usage[i] + offset);
 	} while (read_seqcount_retry(&c->usage_lock, seq));
 
 	return ret;
@@ -232,7 +233,7 @@ u64 bch2_fs_usage_read_one(struct bch_fs *c, u64 *v)
 struct bch_fs_usage *bch2_fs_usage_read(struct bch_fs *c)
 {
 	struct bch_fs_usage *ret;
-	unsigned seq, v, u64s = fs_usage_u64s(c);
+	unsigned seq, i, v, u64s = fs_usage_u64s(c);
 retry:
 	ret = kmalloc(u64s * sizeof(u64), GFP_NOFS);
 	if (unlikely(!ret))
@@ -251,8 +252,8 @@ retry:
 	do {
 		seq = read_seqcount_begin(&c->usage_lock);
 		memcpy(ret, c->usage_base, u64s * sizeof(u64));
-		acc_u64s_percpu((u64 *) ret, (u64 __percpu *) c->usage[0], u64s);
-		acc_u64s_percpu((u64 *) ret, (u64 __percpu *) c->usage[1], u64s);
+		for (i = 0; i < ARRAY_SIZE(c->usage); i++)
+			acc_u64s_percpu((u64 *) ret, (u64 __percpu *) c->usage[i], u64s);
 	} while (read_seqcount_retry(&c->usage_lock, seq));
 
 	return ret;
@@ -262,7 +263,7 @@ void bch2_fs_usage_acc_to_base(struct bch_fs *c, unsigned idx)
 {
 	unsigned u64s = fs_usage_u64s(c);
 
-	BUG_ON(idx >= 2);
+	BUG_ON(idx >= ARRAY_SIZE(c->usage));
 
 	preempt_disable();
 	write_seqcount_begin(&c->usage_lock);
