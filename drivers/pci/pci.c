@@ -5344,7 +5344,7 @@ static resource_size_t pci_specified_resource_alignment(struct pci_dev *dev,
 				(!subsystem_vendor || (subsystem_vendor == dev->subsystem_vendor)) &&
 				(!subsystem_device || (subsystem_device == dev->subsystem_device))) {
 				*resize = true;
-				align = 1 << align_order;
+				align = 1ULL << align_order;
 				/* Found */
 				break;
 			}
