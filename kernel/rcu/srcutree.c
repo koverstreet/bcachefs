@@ -1042,6 +1042,7 @@ unsigned long get_state_synchronize_srcu(struct srcu_struct *ssp)
 	smp_mb();
 	return rcu_seq_snap(&ssp->srcu_gp_seq);
 }
+EXPORT_SYMBOL_GPL(get_state_synchronize_srcu);
 
 /**
  * start_poll_synchronize_srcu - Provide cookie and start grace period
@@ -1057,6 +1058,7 @@ unsigned long start_poll_synchronize_srcu(struct srcu_struct *ssp)
 {
 	return srcu_gp_start_if_needed(ssp, NULL, true);
 }
+EXPORT_SYMBOL_GPL(start_poll_synchronize_srcu);
 
 /**
  * poll_state_synchronize_srcu - Has cookie's grace period ended?
@@ -1075,6 +1077,7 @@ bool poll_state_synchronize_srcu(struct srcu_struct *ssp, unsigned long cookie)
 	smp_mb(); // ^^^
 	return true;
 }
+EXPORT_SYMBOL_GPL(poll_state_synchronize_srcu);
 
 /*
  * Callback function for srcu_barrier() use.
