@@ -513,7 +513,7 @@ TRACE_EVENT(transaction_restart_ip,
 		__entry->ip	= ip;
 	),
 
-	TP_printk("%pF %pF", (void *) __entry->caller, (void *) __entry->ip)
+	TP_printk("%ps %pS", (void *) __entry->caller, (void *) __entry->ip)
 );
 
 DECLARE_EVENT_CLASS(transaction_restart,
@@ -528,7 +528,7 @@ DECLARE_EVENT_CLASS(transaction_restart,
 		__entry->ip = ip;
 	),
 
-	TP_printk("%pf", (void *) __entry->ip)
+	TP_printk("%ps", (void *) __entry->ip)
 );
 
 DEFINE_EVENT(transaction_restart,	trans_restart_btree_node_reused,
@@ -568,7 +568,7 @@ TRACE_EVENT(trans_restart_would_deadlock,
 		__entry->want_iter_type		= want_iter_type;
 	),
 
-	TP_printk("%pF %pF because %u have %u:%u want %u:%u",
+	TP_printk("%ps %pS because %u have %u:%u want %u:%u",
 		  (void *) __entry->trans_ip,
 		  (void *) __entry->caller_ip,
 		  __entry->reason,
@@ -592,7 +592,7 @@ TRACE_EVENT(trans_restart_iters_realloced,
 		__entry->nr	= nr;
 	),
 
-	TP_printk("%pf nr %u", (void *) __entry->ip, __entry->nr)
+	TP_printk("%ps nr %u", (void *) __entry->ip, __entry->nr)
 );
 
 TRACE_EVENT(trans_restart_mem_realloced,
@@ -609,7 +609,7 @@ TRACE_EVENT(trans_restart_mem_realloced,
 		__entry->bytes	= bytes;
 	),
 
-	TP_printk("%pf bytes %lu", (void *) __entry->ip, __entry->bytes)
+	TP_printk("%ps bytes %lu", (void *) __entry->ip, __entry->bytes)
 );
 
 DEFINE_EVENT(transaction_restart,	trans_restart_journal_res_get,
