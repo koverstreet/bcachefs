@@ -2369,8 +2369,10 @@ void bch2_trans_init(struct btree_trans *trans, struct bch_fs *c,
 	 */
 	bch2_trans_alloc_iters(trans, c);
 
-	if (expected_mem_bytes)
-		bch2_trans_preload_mem(trans, expected_mem_bytes);
+	if (expected_mem_bytes) {
+		trans->mem_bytes = roundup_pow_of_two(expected_mem_bytes);
+		trans->mem = kmalloc(trans->mem_bytes, GFP_KERNEL|__GFP_NOFAIL);
+	}
 
 	trans->srcu_idx = srcu_read_lock(&c->btree_trans_barrier);
 
