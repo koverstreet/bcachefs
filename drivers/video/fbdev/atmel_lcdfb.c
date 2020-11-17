@@ -1072,8 +1072,8 @@ static int atmel_lcdfb_of_init(struct atmel_lcdfb_info *sinfo)
 	}
 
 	INIT_LIST_HEAD(&pdata->pwr_gpios);
-	ret = -ENOMEM;
 	for (i = 0; i < of_gpio_named_count(display_np, "atmel,power-control-gpio"); i++) {
+		ret = -ENOMEM;
 		gpio = of_get_named_gpio_flags(display_np, "atmel,power-control-gpio",
 					       i, &flags);
 		if (gpio < 0)
