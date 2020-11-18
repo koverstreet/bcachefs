@@ -1004,7 +1004,7 @@ CONFIG_TCG_TIS_I2C_INFINEON                     note<LP:1643652>
 CONFIG_TCG_TIS_I2C_NUVOTON                      note<LP:1643652>
 
 # Menu: Device Drivers >> Clock Source drivers
-CONFIG_DW_APB_TIMER                             policy<{'armhf': 'y', 'i386': 'y'}>
+CONFIG_DW_APB_TIMER                             policy<{'arm64': 'y', 'armhf': 'y', 'i386': 'y'}>
 CONFIG_ROCKCHIP_TIMER                           policy<{'arm64': 'y', 'armhf': 'y'}>
 CONFIG_ARMADA_370_XP_TIMER                      policy<{'armhf': 'y'}>
 CONFIG_MESON6_TIMER                             policy<{'armhf': 'y'}>
