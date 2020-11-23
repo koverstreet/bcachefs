@@ -3715,6 +3715,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	md_reap_sync_thread
 EXPORT_SYMBOL vmlinux 0x00000000	md_register_thread
 EXPORT_SYMBOL vmlinux 0x00000000	md_reload_sb
 EXPORT_SYMBOL vmlinux 0x00000000	md_set_array_sectors
+EXPORT_SYMBOL vmlinux 0x00000000	md_submit_discard_bio
 EXPORT_SYMBOL vmlinux 0x00000000	md_unregister_thread
 EXPORT_SYMBOL vmlinux 0x00000000	md_update_sb
 EXPORT_SYMBOL vmlinux 0x00000000	md_wait_for_blocked_rdev
@@ -4201,7 +4202,6 @@ EXPORT_SYMBOL vmlinux 0x00000000	pci_msi_enabled
 EXPORT_SYMBOL vmlinux 0x00000000	pci_msi_vec_count
 EXPORT_SYMBOL vmlinux 0x00000000	pci_msix_vec_count
 EXPORT_SYMBOL vmlinux 0x00000000	pci_pci_problems
-EXPORT_SYMBOL vmlinux 0x00000000	pci_platform_rom
 EXPORT_SYMBOL vmlinux 0x00000000	pci_pme_active
 EXPORT_SYMBOL vmlinux 0x00000000	pci_pme_capable
 EXPORT_SYMBOL vmlinux 0x00000000	pci_prepare_to_sleep
@@ -5051,6 +5051,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	ssch
 EXPORT_SYMBOL vmlinux 0x00000000	starget_for_each_device
 EXPORT_SYMBOL vmlinux 0x00000000	start_tty
 EXPORT_SYMBOL vmlinux 0x00000000	stop_tty
+EXPORT_SYMBOL vmlinux 0x00000000	stpcpy
 EXPORT_SYMBOL vmlinux 0x00000000	strcasecmp
 EXPORT_SYMBOL vmlinux 0x00000000	strcat
 EXPORT_SYMBOL vmlinux 0x00000000	strchr
@@ -9994,6 +9995,8 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	preempt_notifier_unregister
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	print_stack_trace
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	probe_kernel_read
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	probe_kernel_write
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	probe_user_read
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	probe_user_write
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	proc_dopipe_max_size
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	proc_douintvec_minmax
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	proc_get_parent_data
