@@ -778,8 +778,10 @@ static int mv_xor_v2_probe(struct platform_device *pdev)
 		goto disable_clk;
 
 	msi_desc = first_msi_entry(&pdev->dev);
-	if (!msi_desc)
+	if (!msi_desc) {
+		ret = -ENODEV;
 		goto free_msi_irqs;
+	}
 
 	ret = devm_request_irq(&pdev->dev, msi_desc->irq,
 			       mv_xor_v2_interrupt_handler, 0,
