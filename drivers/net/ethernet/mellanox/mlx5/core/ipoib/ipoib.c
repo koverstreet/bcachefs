@@ -83,6 +83,7 @@ void mlx5i_init(struct mlx5_core_dev *mdev,
 	priv->hard_mtu = MLX5_IB_GRH_BYTES + MLX5_IPOIB_HARD_LEN;
 	mutex_init(&priv->state_lock);
 
+	INIT_DELAYED_WORK(&priv->update_stats_work, mlx5e_update_stats_work);
 	mlx5e_build_nic_params(mdev, &priv->channels.params, profile->max_nch(mdev));
 	mlx5i_build_nic_params(mdev, &priv->channels.params);
 
