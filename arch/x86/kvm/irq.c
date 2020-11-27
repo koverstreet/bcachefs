@@ -52,7 +52,7 @@ static int pending_userspace_extint(struct kvm_vcpu *v)
  * check if there is pending interrupt from
  * non-APIC source without intack.
  */
-static int kvm_cpu_has_extint(struct kvm_vcpu *v)
+int kvm_cpu_has_extint(struct kvm_vcpu *v)
 {
 	u8 accept = kvm_apic_accept_pic_intr(v);
 
