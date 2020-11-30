@@ -607,7 +607,8 @@ void bch2_fs_btree_key_cache_exit(struct btree_key_cache *bc)
 	}
 	mutex_unlock(&bc->lock);
 
-	rhashtable_destroy(&bc->table);
+	if (bc->table_init_done)
+		rhashtable_destroy(&bc->table);
 }
 
 void bch2_fs_btree_key_cache_init_early(struct btree_key_cache *c)
@@ -620,12 +621,22 @@ void bch2_fs_btree_key_cache_init_early(struct btree_key_cache *c)
 
 int bch2_fs_btree_key_cache_init(struct btree_key_cache *c)
 {
+	int ret;
+
 	c->shrink.seeks			= 1;
 	c->shrink.count_objects		= bch2_btree_key_cache_count;
 	c->shrink.scan_objects		= bch2_btree_key_cache_scan;
 
-	return  register_shrinker(&c->shrink) ?:
-		rhashtable_init(&c->table, &bch2_btree_key_cache_params);
+	ret = register_shrinker(&c->shrink);
+	if (ret)
+		return ret;
+
+	ret = rhashtable_init(&c->table, &bch2_btree_key_cache_params);
+	if (ret)
+		return ret;
+
+	c->table_init_done = true;
+	return 0;
 }
 
 void bch2_btree_key_cache_to_text(struct printbuf *out, struct btree_key_cache *c)
