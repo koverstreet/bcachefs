@@ -159,6 +159,9 @@ CONFIG_ISA                                      policy<{'i386': 'y'}>
 
 # Menu: Bus options (PCI etc.) >> Architecture: powerpc
 CONFIG_FSL_LBC                                  policy<{'ppc64el': 'y'}>
+CONFIG_PPC_RTAS_FILTER                          policy<{'ppc64el': 'y'}>
+#
+CONFIG_PPC_RTAS_FILTER                          mark<ENFORCED> note<CVE-2020-27777>
 
 # Menu: Bus options (PCI etc.) >> Architecture: s390
 CONFIG_QDIO                                     policy<{'s390x': 'm'}>
