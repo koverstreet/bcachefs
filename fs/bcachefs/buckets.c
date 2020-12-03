@@ -2032,13 +2032,6 @@ int bch2_trans_mark_update(struct btree_trans *trans,
 
 /* Disk reservations: */
 
-static u64 bch2_recalc_sectors_available(struct bch_fs *c)
-{
-	percpu_u64_set(&c->pcpu->sectors_available, 0);
-
-	return avail_factor(__bch2_fs_usage_read_short(c).free);
-}
-
 void __bch2_disk_reservation_put(struct bch_fs *c, struct disk_reservation *res)
 {
 	percpu_down_read(&c->mark_lock);
@@ -2073,7 +2066,6 @@ int bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 
 		if (get < sectors) {
 			preempt_enable();
-			percpu_up_read(&c->mark_lock);
 			goto recalculate;
 		}
 	} while ((v = atomic64_cmpxchg(&c->sectors_available,
@@ -2091,9 +2083,10 @@ out:
 	return 0;
 
 recalculate:
-	percpu_down_write(&c->mark_lock);
+	mutex_lock(&c->sectors_available_lock);
 
-	sectors_available = bch2_recalc_sectors_available(c);
+	percpu_u64_set(&c->pcpu->sectors_available, 0);
+	sectors_available = avail_factor(__bch2_fs_usage_read_short(c).free);
 
 	if (sectors <= sectors_available ||
 	    (flags & BCH_DISK_RESERVATION_NOFAIL)) {
@@ -2107,7 +2100,8 @@ recalculate:
 		ret = -ENOSPC;
 	}
 
-	percpu_up_write(&c->mark_lock);
+	mutex_unlock(&c->sectors_available_lock);
+	percpu_up_read(&c->mark_lock);
 
 	return ret;
 }
