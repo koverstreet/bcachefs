@@ -1023,6 +1023,8 @@ static void bch2_writepage_io_done(struct closure *cl)
 	unsigned i;
 
 	if (io->op.error) {
+		set_bit(EI_INODE_ERROR, &io->inode->ei_flags);
+
 		bio_for_each_segment_all(bvec, bio, iter) {
 			struct bch_page_state *s;
 
@@ -1910,7 +1912,13 @@ loop:
 
 		bio_for_each_segment_all(bv, bio, iter)
 			put_page(bv->bv_page);
-		if (!dio->iter.count || dio->op.error)
+
+		if (dio->op.error) {
+			set_bit(EI_INODE_ERROR, &inode->ei_flags);
+			break;
+		}
+
+		if (!dio->iter.count)
 			break;
 
 		bio_reset(bio);
@@ -2299,7 +2307,8 @@ int bch2_truncate(struct bch_inode_info *inode, struct iattr *iattr)
 	if (ret)
 		goto err;
 
-	BUG_ON(inode->v.i_size < inode_u.bi_size);
+	WARN_ON(!test_bit(EI_INODE_ERROR, &inode->ei_flags) &&
+		inode->v.i_size < inode_u.bi_size);
 
 	if (iattr->ia_size > inode->v.i_size) {
 		ret = bch2_extend(inode, &inode_u, iattr);
