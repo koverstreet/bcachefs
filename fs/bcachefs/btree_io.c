@@ -635,7 +635,12 @@ enum btree_validate_ret {
 ({									\
 	__label__ out;							\
 	char _buf[300];							\
+	char *buf = _buf;						\
 	struct printbuf out = PBUF(_buf);				\
+									\
+	buf = kmalloc(4096, GFP_ATOMIC);				\
+	if (buf)							\
+		out = _PBUF(buf, 4986);					\
 									\
 	btree_err_msg(&out, c, b, i, b->written, write);		\
 	pr_buf(&out, ": " msg, ##__VA_ARGS__);				\
@@ -643,13 +648,13 @@ enum btree_validate_ret {
 	if (type == BTREE_ERR_FIXABLE &&				\
 	    write == READ &&						\
 	    !test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags)) {		\
-		mustfix_fsck_err(c, "%s", _buf);			\
+		mustfix_fsck_err(c, "%s", buf);				\
 		goto out;						\
 	}								\
 									\
 	switch (write) {						\
 	case READ:							\
-		bch_err(c, "%s", _buf);					\
+		bch_err(c, "%s", buf);					\
 									\
 		switch (type) {						\
 		case BTREE_ERR_FIXABLE:					\
@@ -670,7 +675,7 @@ enum btree_validate_ret {
 		}							\
 		break;							\
 	case WRITE:							\
-		bch_err(c, "corrupt metadata before write: %s", _buf);	\
+		bch_err(c, "corrupt metadata before write: %s", buf);	\
 									\
 		if (bch2_fs_inconsistent(c)) {				\
 			ret = BCH_FSCK_ERRORS_NOT_FIXED;		\
@@ -679,6 +684,8 @@ enum btree_validate_ret {
 		break;							\
 	}								\
 out:									\
+	if (buf != _buf)						\
+		kfree(buf);						\
 	true;								\
 })
 
