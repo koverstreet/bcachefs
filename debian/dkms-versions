@@ -7,4 +7,4 @@ nvidia-graphics-drivers-455 455.38-0ubuntu0.18.04.1
 nvidia-graphics-drivers-418-server 418.152.00-0ubuntu0.18.04.1
 nvidia-graphics-drivers-440-server 440.95.01-0ubuntu0.18.04.1
 nvidia-graphics-drivers-450-server 450.80.02-0ubuntu0.18.04.3
-wireguard-linux-compat 1.0.20200611-1ubuntu1~18.04.1
+wireguard-linux-compat 1.0.20201112-1~18.04.1
