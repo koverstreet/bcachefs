@@ -6073,6 +6073,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	___ratelimit
 EXPORT_SYMBOL vmlinux 0x00000000	__alloc_disk_node
 EXPORT_SYMBOL vmlinux 0x00000000	__alloc_pages_nodemask
 EXPORT_SYMBOL vmlinux 0x00000000	__alloc_skb
+EXPORT_SYMBOL vmlinux 0x00000000	__arch_clear_user
 EXPORT_SYMBOL vmlinux 0x00000000	__arch_hweight16
 EXPORT_SYMBOL vmlinux 0x00000000	__arch_hweight32
 EXPORT_SYMBOL vmlinux 0x00000000	__arch_hweight64
@@ -6126,7 +6127,6 @@ EXPORT_SYMBOL vmlinux 0x00000000	__cleancache_invalidate_fs
 EXPORT_SYMBOL vmlinux 0x00000000	__cleancache_invalidate_inode
 EXPORT_SYMBOL vmlinux 0x00000000	__cleancache_invalidate_page
 EXPORT_SYMBOL vmlinux 0x00000000	__cleancache_put_page
-EXPORT_SYMBOL vmlinux 0x00000000	__clear_user
 EXPORT_SYMBOL vmlinux 0x00000000	__clzdi2
 EXPORT_SYMBOL vmlinux 0x00000000	__clzsi2
 EXPORT_SYMBOL vmlinux 0x00000000	__cond_resched_lock
@@ -7318,6 +7318,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	do_blank_screen
 EXPORT_SYMBOL vmlinux 0x00000000	do_clone_file_range
 EXPORT_SYMBOL vmlinux 0x00000000	do_settimeofday64
 EXPORT_SYMBOL vmlinux 0x00000000	do_splice_direct
+EXPORT_SYMBOL vmlinux 0x00000000	do_uaccess_flush
 EXPORT_SYMBOL vmlinux 0x00000000	do_unblank_screen
 EXPORT_SYMBOL vmlinux 0x00000000	do_wait_intr
 EXPORT_SYMBOL vmlinux 0x00000000	do_wait_intr_irq
@@ -10542,6 +10543,7 @@ EXPORT_SYMBOL vmlinux 0x00000000	twl_i2c_read
 EXPORT_SYMBOL vmlinux 0x00000000	twl_i2c_write
 EXPORT_SYMBOL vmlinux 0x00000000	twl_rev
 EXPORT_SYMBOL vmlinux 0x00000000	twl_set_regcache_bypass
+EXPORT_SYMBOL vmlinux 0x00000000	uaccess_flush_key
 EXPORT_SYMBOL vmlinux 0x00000000	uart_add_one_port
 EXPORT_SYMBOL vmlinux 0x00000000	uart_get_baud_rate
 EXPORT_SYMBOL vmlinux 0x00000000	uart_get_divisor
