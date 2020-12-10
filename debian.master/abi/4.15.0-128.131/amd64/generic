@@ -9225,7 +9225,6 @@ EXPORT_SYMBOL vmlinux 0x00000000	md_reap_sync_thread
 EXPORT_SYMBOL vmlinux 0x00000000	md_register_thread
 EXPORT_SYMBOL vmlinux 0x00000000	md_reload_sb
 EXPORT_SYMBOL vmlinux 0x00000000	md_set_array_sectors
-EXPORT_SYMBOL vmlinux 0x00000000	md_submit_discard_bio
 EXPORT_SYMBOL vmlinux 0x00000000	md_unregister_thread
 EXPORT_SYMBOL vmlinux 0x00000000	md_update_sb
 EXPORT_SYMBOL vmlinux 0x00000000	md_wait_for_blocked_rdev
