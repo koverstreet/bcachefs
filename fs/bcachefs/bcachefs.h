@@ -193,6 +193,7 @@
 #include <linux/semaphore.h>
 #include <linux/seqlock.h>
 #include <linux/shrinker.h>
+#include <linux/srcu.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
 #include <linux/zstd.h>
@@ -213,9 +214,11 @@
 	 dynamic_fault("bcachefs:meta:write:" name)
 
 #ifdef __KERNEL__
-#define bch2_fmt(_c, fmt)	"bcachefs (%s): " fmt "\n", ((_c)->name)
+#define bch2_fmt(_c, fmt)		"bcachefs (%s): " fmt "\n", ((_c)->name)
+#define bch2_fmt_inum(_c, _inum, fmt)	"bcachefs (%s inum %llu): " fmt "\n", ((_c)->name), (_inum)
 #else
-#define bch2_fmt(_c, fmt)	fmt "\n"
+#define bch2_fmt(_c, fmt)		fmt "\n"
+#define bch2_fmt_inum(_c, _inum, fmt)	"inum %llu: " fmt "\n", (_inum)
 #endif
 
 #define bch_info(c, fmt, ...) \
@@ -228,8 +231,11 @@
 	printk_ratelimited(KERN_WARNING bch2_fmt(c, fmt), ##__VA_ARGS__)
 #define bch_err(c, fmt, ...) \
 	printk(KERN_ERR bch2_fmt(c, fmt), ##__VA_ARGS__)
+
 #define bch_err_ratelimited(c, fmt, ...) \
 	printk_ratelimited(KERN_ERR bch2_fmt(c, fmt), ##__VA_ARGS__)
+#define bch_err_inum_ratelimited(c, _inum, fmt, ...) \
+	printk_ratelimited(KERN_ERR bch2_fmt_inum(c, _inum, fmt), ##__VA_ARGS__)
 
 #define bch_verbose(c, fmt, ...)					\
 do {									\
@@ -642,12 +648,13 @@ struct bch_fs {
 	mempool_t		btree_iters_pool;
 	struct btree_iter_buf  __percpu	*btree_iters_bufs;
 
+	struct srcu_struct	btree_trans_barrier;
+
 	struct btree_key_cache	btree_key_cache;
 
 	struct workqueue_struct	*wq;
 	/* copygc needs its own workqueue for index updates.. */
 	struct workqueue_struct	*copygc_wq;
-	struct workqueue_struct	*journal_reclaim_wq;
 
 	/* ALLOCATION */
 	struct delayed_work	pd_controllers_update;
@@ -666,6 +673,7 @@ struct bch_fs {
 	unsigned		bucket_size_max;
 
 	atomic64_t		sectors_available;
+	struct mutex		sectors_available_lock;
 
 	struct bch_fs_pcpu __percpu	*pcpu;
 
@@ -673,7 +681,7 @@ struct bch_fs {
 
 	seqcount_t			usage_lock;
 	struct bch_fs_usage		*usage_base;
-	struct bch_fs_usage __percpu	*usage[2];
+	struct bch_fs_usage __percpu	*usage[JOURNAL_BUF_NR];
 	struct bch_fs_usage __percpu	*usage_gc;
 
 	/* single element mempool: */
@@ -751,7 +759,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;

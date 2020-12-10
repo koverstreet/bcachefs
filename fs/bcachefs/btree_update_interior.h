@@ -47,7 +47,6 @@ struct btree_update {
 		BTREE_INTERIOR_UPDATING_AS,
 	} mode;
 
-	unsigned			must_rewrite:1;
 	unsigned			nodes_written:1;
 
 	enum btree_id			btree_id;
@@ -236,6 +235,9 @@ static inline ssize_t __bch_btree_u64s_remaining(struct bch_fs *c,
 	ssize_t used = bset_byte_offset(b, end) / sizeof(u64) +
 		b->whiteout_u64s;
 	ssize_t total = c->opts.btree_node_size << 6;
+
+	/* Always leave one extra u64 for bch2_varint_decode: */
+	used++;
 
 	return total - used;
 }

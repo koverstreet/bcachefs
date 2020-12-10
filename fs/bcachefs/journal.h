@@ -127,11 +127,6 @@ static inline struct journal_buf *journal_cur_buf(struct journal *j)
 	return j->buf + j->reservations.idx;
 }
 
-static inline struct journal_buf *journal_prev_buf(struct journal *j)
-{
-	return j->buf + !j->reservations.idx;
-}
-
 /* Sequence number of oldest dirty journal entry */
 
 static inline u64 journal_last_seq(struct journal *j)
@@ -141,7 +136,7 @@ static inline u64 journal_last_seq(struct journal *j)
 
 static inline u64 journal_cur_seq(struct journal *j)
 {
-	BUG_ON(j->pin.back - 1 != atomic64_read(&j->seq));
+	EBUG_ON(j->pin.back - 1 != atomic64_read(&j->seq));
 
 	return j->pin.back - 1;
 }
@@ -151,13 +146,21 @@ void bch2_journal_set_has_inum(struct journal *, u64, u64);
 
 static inline int journal_state_count(union journal_res_state s, int idx)
 {
-	return idx == 0 ? s.buf0_count : s.buf1_count;
+	switch (idx) {
+	case 0: return s.buf0_count;
+	case 1: return s.buf1_count;
+	case 2: return s.buf2_count;
+	case 3: return s.buf3_count;
+	}
+	BUG();
 }
 
 static inline void journal_state_inc(union journal_res_state *s)
 {
 	s->buf0_count += s->idx == 0;
 	s->buf1_count += s->idx == 1;
+	s->buf2_count += s->idx == 2;
+	s->buf3_count += s->idx == 3;
 }
 
 static inline void bch2_journal_set_has_inode(struct journal *j,
@@ -255,21 +258,24 @@ static inline bool journal_entry_empty(struct jset *j)
 	return true;
 }
 
-void __bch2_journal_buf_put(struct journal *, bool);
+void __bch2_journal_buf_put(struct journal *);
 
-static inline void bch2_journal_buf_put(struct journal *j, unsigned idx,
-				       bool need_write_just_set)
+static inline void bch2_journal_buf_put(struct journal *j, unsigned idx)
 {
 	union journal_res_state s;
 
 	s.v = atomic64_sub_return(((union journal_res_state) {
 				    .buf0_count = idx == 0,
 				    .buf1_count = idx == 1,
+				    .buf2_count = idx == 2,
+				    .buf3_count = idx == 3,
 				    }).v, &j->reservations.counter);
-	if (!journal_state_count(s, idx)) {
-		EBUG_ON(s.idx == idx || !s.prev_buf_unwritten);
-		__bch2_journal_buf_put(j, need_write_just_set);
-	}
+
+	EBUG_ON(((s.idx - idx) & 3) >
+		((s.idx - s.unwritten_idx) & 3));
+
+	if (!journal_state_count(s, idx) && idx == s.unwritten_idx)
+		__bch2_journal_buf_put(j);
 }
 
 /*
@@ -282,14 +288,14 @@ static inline void bch2_journal_res_put(struct journal *j,
 	if (!res->ref)
 		return;
 
-	lock_release(&j->res_map, 0, _THIS_IP_);
+	lock_release(&j->res_map, _THIS_IP_);
 
 	while (res->u64s)
 		bch2_journal_add_entry(j, res,
 				       BCH_JSET_ENTRY_btree_keys,
 				       0, 0, NULL, 0);
 
-	bch2_journal_buf_put(j, res->idx, false);
+	bch2_journal_buf_put(j, res->idx);
 
 	res->ref = 0;
 }
@@ -325,11 +331,18 @@ static inline int journal_res_get_fast(struct journal *j,
 		    !test_bit(JOURNAL_MAY_GET_UNRESERVED, &j->flags))
 			return 0;
 
-		if (flags & JOURNAL_RES_GET_CHECK)
-			return 1;
-
 		new.cur_entry_offset += res->u64s;
 		journal_state_inc(&new);
+
+		/*
+		 * If the refcount would overflow, we have to wait:
+		 * XXX - tracepoint this:
+		 */
+		if (!journal_state_count(new, new.idx))
+			return 0;
+
+		if (flags & JOURNAL_RES_GET_CHECK)
+			return 1;
 	} while ((v = atomic64_cmpxchg(&j->reservations.counter,
 				       old.v, new.v)) != old.v);
 
@@ -371,7 +384,7 @@ out:
 static inline bool journal_check_may_get_unreserved(struct journal *j)
 {
 	union journal_preres_state s = READ_ONCE(j->prereserved);
-	bool ret = s.reserved <= s.remaining &&
+	bool ret = s.reserved < s.remaining &&
 		fifo_free(&j->pin) > 8;
 
 	lockdep_assert_held(&j->lock);
@@ -464,13 +477,8 @@ void bch2_journal_entry_res_resize(struct journal *,
 				   struct journal_entry_res *,
 				   unsigned);
 
-u64 bch2_journal_last_unwritten_seq(struct journal *);
-int bch2_journal_open_seq_async(struct journal *, u64, struct closure *);
-
-void bch2_journal_wait_on_seq(struct journal *, u64, struct closure *);
-void bch2_journal_flush_seq_async(struct journal *, u64, struct closure *);
+int bch2_journal_flush_seq_async(struct journal *, u64, struct closure *);
 void bch2_journal_flush_async(struct journal *, struct closure *);
-void bch2_journal_meta_async(struct journal *, struct closure *);
 
 int bch2_journal_flush_seq(struct journal *, u64);
 int bch2_journal_flush(struct journal *);
@@ -500,6 +508,7 @@ static inline void bch2_journal_set_replay_done(struct journal *j)
 void bch2_journal_unblock(struct journal *);
 void bch2_journal_block(struct journal *);
 
+void __bch2_journal_debug_to_text(struct printbuf *, struct journal *);
 void bch2_journal_debug_to_text(struct printbuf *, struct journal *);
 void bch2_journal_pins_to_text(struct printbuf *, struct journal *);
 

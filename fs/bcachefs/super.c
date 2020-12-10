@@ -49,7 +49,6 @@
 #include <linux/device.h>
 #include <linux/genhd.h>
 #include <linux/idr.h>
-#include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/percpu.h>
 #include <linux/random.h>
@@ -147,44 +146,6 @@ struct bch_fs *bch2_uuid_to_fs(uuid_le uuid)
 	mutex_unlock(&bch_fs_list_lock);
 
 	return c;
-}
-
-int bch2_congested(void *data, int bdi_bits)
-{
-	struct bch_fs *c = data;
-	struct backing_dev_info *bdi;
-	struct bch_dev *ca;
-	unsigned i;
-	int ret = 0;
-
-	rcu_read_lock();
-	if (bdi_bits & (1 << WB_sync_congested)) {
-		/* Reads - check all devices: */
-		for_each_readable_member(ca, c, i) {
-			bdi = ca->disk_sb.bdev->bd_bdi;
-
-			if (bdi_congested(bdi, bdi_bits)) {
-				ret = 1;
-				break;
-			}
-		}
-	} else {
-		const struct bch_devs_mask *devs =
-			bch2_target_to_mask(c, c->opts.foreground_target) ?:
-			&c->rw_devs[BCH_DATA_user];
-
-		for_each_member_device_rcu(ca, c, i, devs) {
-			bdi = ca->disk_sb.bdev->bd_bdi;
-
-			if (bdi_congested(bdi, bdi_bits)) {
-				ret = 1;
-				break;
-			}
-		}
-	}
-	rcu_read_unlock();
-
-	return ret;
 }
 
 /* Filesystem RO/RW: */
@@ -297,7 +258,7 @@ static void bch2_writes_disabled(struct percpu_ref *writes)
 void bch2_fs_read_only(struct bch_fs *c)
 {
 	if (!test_bit(BCH_FS_RW, &c->flags)) {
-		cancel_delayed_work_sync(&c->journal.reclaim_work);
+		BUG_ON(c->journal.reclaim_thread);
 		return;
 	}
 
@@ -455,6 +416,12 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 
 	set_bit(BCH_FS_ALLOCATOR_RUNNING, &c->flags);
 
+	ret = bch2_journal_reclaim_start(&c->journal);
+	if (ret) {
+		bch_err(c, "error starting journal reclaim: %i", ret);
+		return ret;
+	}
+
 	if (!early) {
 		ret = bch2_fs_read_write_late(c);
 		if (ret)
@@ -463,9 +430,6 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 
 	percpu_ref_reinit(&c->writes);
 	set_bit(BCH_FS_RW, &c->flags);
-
-	queue_delayed_work(c->journal_reclaim_wq,
-			   &c->journal.reclaim_work, 0);
 	return 0;
 err:
 	__bch2_fs_read_only(c);
@@ -511,8 +475,8 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_journal_entries_free(&c->journal_entries);
 	percpu_free_rwsem(&c->mark_lock);
 	kfree(c->usage_scratch);
-	free_percpu(c->usage[1]);
-	free_percpu(c->usage[0]);
+	for (i = 0; i < ARRAY_SIZE(c->usage); i++)
+		free_percpu(c->usage[i]);
 	kfree(c->usage_base);
 
 	if (c->btree_iters_bufs)
@@ -533,8 +497,6 @@ static void __bch2_fs_free(struct bch_fs *c)
 	kfree(c->unused_inode_hints);
 	free_heap(&c->copygc_heap);
 
-	if (c->journal_reclaim_wq)
-		destroy_workqueue(c->journal_reclaim_wq);
 	if (c->copygc_wq)
 		destroy_workqueue(c->copygc_wq);
 	if (c->wq)
@@ -754,6 +716,8 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 
 	bch2_fs_btree_cache_init_early(&c->btree_cache);
 
+	mutex_init(&c->sectors_available_lock);
+
 	if (percpu_init_rwsem(&c->mark_lock))
 		goto err;
 
@@ -788,8 +752,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_CPU_INTENSIVE, 1)) ||
 	    !(c->copygc_wq = alloc_workqueue("bcachefs_copygc",
 				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_CPU_INTENSIVE, 1)) ||
-	    !(c->journal_reclaim_wq = alloc_workqueue("bcachefs_journal_reclaim",
-				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_HIGHPRI, 1)) ||
 	    percpu_ref_init(&c->writes, bch2_writes_disabled,
 			    PERCPU_REF_INIT_DEAD, GFP_KERNEL) ||
 	    mempool_init_kmalloc_pool(&c->fill_iter, 1, iter_size) ||
@@ -2056,6 +2018,7 @@ static void bcachefs_exit(void)
 	bch2_debug_exit();
 	bch2_vfs_exit();
 	bch2_chardev_exit();
+	bch2_btree_key_cache_exit();
 	if (bcachefs_kset)
 		kset_unregister(bcachefs_kset);
 }
@@ -2065,6 +2028,7 @@ static int __init bcachefs_init(void)
 	bch2_bkey_pack_test();
 
 	if (!(bcachefs_kset = kset_create_and_add("bcachefs", NULL, fs_kobj)) ||
+	    bch2_btree_key_cache_init() ||
 	    bch2_chardev_init() ||
 	    bch2_vfs_init() ||
 	    bch2_debug_init())

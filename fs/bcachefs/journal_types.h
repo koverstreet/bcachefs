@@ -9,11 +9,13 @@
 #include "super_types.h"
 #include "fifo.h"
 
-struct journal_res;
+#define JOURNAL_BUF_BITS	2
+#define JOURNAL_BUF_NR		(1U << JOURNAL_BUF_BITS)
+#define JOURNAL_BUF_MASK	(JOURNAL_BUF_NR - 1)
 
 /*
- * We put two of these in struct journal; we used them for writes to the
- * journal that are being staged or in flight.
+ * We put JOURNAL_BUF_NR of these in struct journal; we used them for writes to
+ * the journal that are being staged or in flight.
  */
 struct journal_buf {
 	struct jset		*data;
@@ -27,6 +29,8 @@ struct journal_buf {
 	unsigned		disk_sectors;	/* maximum size entry could have been, if
 						   buf_size was bigger */
 	unsigned		u64s_reserved;
+	bool			noflush;	/* write has already been kicked off, and was noflush */
+	bool			must_flush;	/* something wants a flush */
 	/* bloom filter: */
 	unsigned long		has_inode[1024 / sizeof(unsigned long)];
 };
@@ -81,10 +85,12 @@ union journal_res_state {
 
 	struct {
 		u64		cur_entry_offset:20,
-				idx:1,
-				prev_buf_unwritten:1,
-				buf0_count:21,
-				buf1_count:21;
+				idx:2,
+				unwritten_idx:2,
+				buf0_count:10,
+				buf1_count:10,
+				buf2_count:10,
+				buf3_count:10;
 	};
 };
 
@@ -116,6 +122,20 @@ union journal_preres_state {
 #define JOURNAL_ENTRY_CLOSED_VAL	(JOURNAL_ENTRY_OFFSET_MAX - 1)
 #define JOURNAL_ENTRY_ERROR_VAL		(JOURNAL_ENTRY_OFFSET_MAX)
 
+struct journal_space {
+	/* Units of 512 bytes sectors: */
+	unsigned	next_entry; /* How big the next journal entry can be */
+	unsigned	total;
+};
+
+enum journal_space_from {
+	journal_space_discarded,
+	journal_space_clean_ondisk,
+	journal_space_clean,
+	journal_space_total,
+	journal_space_nr,
+};
+
 /*
  * JOURNAL_NEED_WRITE - current (pending) journal entry should be written ASAP,
  * either because something's waiting on the write to complete or because it's
@@ -127,8 +147,8 @@ enum {
 	JOURNAL_STARTED,
 	JOURNAL_RECLAIM_STARTED,
 	JOURNAL_NEED_WRITE,
-	JOURNAL_NOT_EMPTY,
 	JOURNAL_MAY_GET_UNRESERVED,
+	JOURNAL_MAY_SKIP_FLUSH,
 };
 
 /* Embedded in struct bch_fs */
@@ -147,7 +167,14 @@ struct journal {
 	 * 0, or -ENOSPC if waiting on journal reclaim, or -EROFS if
 	 * insufficient devices:
 	 */
-	int			cur_entry_error;
+	enum {
+		cur_entry_ok,
+		cur_entry_blocked,
+		cur_entry_journal_full,
+		cur_entry_journal_pin_full,
+		cur_entry_journal_stuck,
+		cur_entry_insufficient_devices,
+	}			cur_entry_error;
 
 	union journal_preres_state prereserved;
 
@@ -160,7 +187,7 @@ struct journal {
 	 * Two journal entries -- one is currently open for new entries, the
 	 * other is possibly being written out.
 	 */
-	struct journal_buf	buf[2];
+	struct journal_buf	buf[JOURNAL_BUF_NR];
 
 	spinlock_t		lock;
 
@@ -180,7 +207,10 @@ struct journal {
 
 	/* seq, last_seq from the most recent journal entry successfully written */
 	u64			seq_ondisk;
+	u64			flushed_seq_ondisk;
 	u64			last_seq_ondisk;
+	u64			err_seq;
+	u64			last_empty_seq;
 
 	/*
 	 * FIFO of journal entries whose btree updates have not yet been
@@ -203,14 +233,20 @@ struct journal {
 		struct journal_entry_pin_list *data;
 	}			pin;
 
+	struct journal_space	space[journal_space_nr];
+
 	u64			replay_journal_seq;
 	u64			replay_journal_seq_end;
 
 	struct write_point	wp;
 	spinlock_t		err_lock;
 
-	struct delayed_work	reclaim_work;
 	struct mutex		reclaim_lock;
+	struct task_struct	*reclaim_thread;
+	bool			reclaim_kicked;
+	u64			nr_direct_reclaim;
+	u64			nr_background_reclaim;
+
 	unsigned long		last_flushed;
 	struct journal_entry_pin *flush_in_progress;
 	wait_queue_head_t	pin_flush_wait;
@@ -221,10 +257,14 @@ struct journal {
 
 	unsigned		write_delay_ms;
 	unsigned		reclaim_delay_ms;
+	unsigned long		last_flush_write;
 
 	u64			res_get_blocked_start;
 	u64			need_write_time;
 	u64			write_start_time;
+
+	u64			nr_flush_writes;
+	u64			nr_noflush_writes;
 
 	struct time_stats	*write_time;
 	struct time_stats	*delay_time;

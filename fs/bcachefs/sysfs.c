@@ -165,6 +165,7 @@ read_attribute(journal_debug);
 read_attribute(journal_pins);
 read_attribute(btree_updates);
 read_attribute(dirty_btree_nodes);
+read_attribute(btree_cache);
 read_attribute(btree_key_cache);
 read_attribute(btree_transactions);
 read_attribute(stripes_heap);
@@ -374,6 +375,11 @@ SHOW(bch2_fs)
 		return out.pos - buf;
 	}
 
+	if (attr == &sysfs_btree_cache) {
+		bch2_btree_cache_to_text(&out, c);
+		return out.pos - buf;
+	}
+
 	if (attr == &sysfs_btree_key_cache) {
 		bch2_btree_key_cache_to_text(&out, &c->btree_key_cache);
 		return out.pos - buf;
@@ -458,7 +464,7 @@ STORE(bch2_fs)
 	/* Debugging: */
 
 	if (attr == &sysfs_trigger_journal_flush)
-		bch2_journal_meta_async(&c->journal, NULL);
+		bch2_journal_meta(&c->journal);
 
 	if (attr == &sysfs_trigger_btree_coalesce)
 		bch2_coalesce(c);
@@ -497,10 +503,11 @@ STORE(bch2_fs)
 		if (threads_str &&
 		    !(ret = kstrtouint(threads_str, 10, &threads)) &&
 		    !(ret = bch2_strtoull_h(nr_str, &nr)))
-			bch2_btree_perf_test(c, test, nr, threads);
-		else
-			size = ret;
+			ret = bch2_btree_perf_test(c, test, nr, threads);
 		kfree(tmp);
+
+		if (ret)
+			size = ret;
 	}
 #endif
 	return size;
@@ -550,6 +557,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_journal_pins,
 	&sysfs_btree_updates,
 	&sysfs_dirty_btree_nodes,
+	&sysfs_btree_cache,
 	&sysfs_btree_key_cache,
 	&sysfs_btree_transactions,
 	&sysfs_stripes_heap,

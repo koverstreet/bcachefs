@@ -158,6 +158,7 @@ struct btree_cache {
 	/* Number of elements in live + freeable lists */
 	unsigned		used;
 	unsigned		reserve;
+	atomic_t		dirty;
 	struct shrinker		shrink;
 
 	/*
@@ -292,8 +293,15 @@ static inline struct btree_iter_level *iter_l(struct btree_iter *iter)
 struct btree_key_cache {
 	struct mutex		lock;
 	struct rhashtable	table;
+	bool			table_init_done;
 	struct list_head	freed;
 	struct list_head	clean;
+	struct list_head	dirty;
+	struct shrinker		shrink;
+
+	size_t			nr_freed;
+	size_t			nr_keys;
+	size_t			nr_dirty;
 };
 
 struct bkey_cached_key {
@@ -301,7 +309,8 @@ struct bkey_cached_key {
 	struct bpos		pos;
 } __attribute__((packed, aligned(4)));
 
-#define BKEY_CACHED_DIRTY		0
+#define BKEY_CACHED_ACCESSED		0
+#define BKEY_CACHED_DIRTY		1
 
 struct bkey_cached {
 	struct btree_bkey_cached_common c;
@@ -309,6 +318,7 @@ struct bkey_cached {
 	unsigned long		flags;
 	u8			u64s;
 	bool			valid;
+	u32			btree_trans_barrier_seq;
 	struct bkey_cached_key	key;
 
 	struct rhash_head	hash;
@@ -345,20 +355,18 @@ struct btree_trans {
 	pid_t			pid;
 #endif
 	unsigned long		ip;
+	int			srcu_idx;
+
+	u8			nr_updates;
+	u8			nr_updates2;
+	unsigned		used_mempool:1;
+	unsigned		error:1;
+	unsigned		nounlock:1;
+	unsigned		in_traverse_all:1;
 
 	u64			iters_linked;
 	u64			iters_live;
 	u64			iters_touched;
-
-	u8			nr_iters;
-	u8			nr_updates;
-	u8			nr_updates2;
-	u8			size;
-	unsigned		used_mempool:1;
-	unsigned		error:1;
-	unsigned		nounlock:1;
-	unsigned		need_reset:1;
-	unsigned		in_traverse_all:1;
 
 	unsigned		mem_top;
 	unsigned		mem_bytes;
@@ -407,11 +415,11 @@ enum btree_flags {
 	BTREE_NODE_fake,
 	BTREE_NODE_old_extent_overwrite,
 	BTREE_NODE_need_rewrite,
+	BTREE_NODE_never_write,
 };
 
 BTREE_FLAG(read_in_flight);
 BTREE_FLAG(read_error);
-BTREE_FLAG(dirty);
 BTREE_FLAG(need_write);
 BTREE_FLAG(noevict);
 BTREE_FLAG(write_idx);
@@ -422,6 +430,7 @@ BTREE_FLAG(dying);
 BTREE_FLAG(fake);
 BTREE_FLAG(old_extent_overwrite);
 BTREE_FLAG(need_rewrite);
+BTREE_FLAG(never_write);
 
 static inline struct btree_write *btree_current_write(struct btree *b)
 {
@@ -640,6 +649,7 @@ enum btree_insert_ret {
 	BTREE_INSERT_ENOSPC,
 	BTREE_INSERT_NEED_MARK_REPLICAS,
 	BTREE_INSERT_NEED_JOURNAL_RES,
+	BTREE_INSERT_NEED_JOURNAL_RECLAIM,
 };
 
 enum btree_gc_coalesce_fail_reason {

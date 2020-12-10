@@ -505,9 +505,6 @@ int bch2_bucket_io_time_reset(struct btree_trans *trans, unsigned dev,
 				   BTREE_ITER_CACHED|
 				   BTREE_ITER_CACHED_NOFILL|
 				   BTREE_ITER_INTENT);
-	if (IS_ERR(iter))
-		return PTR_ERR(iter);
-
 	a = bch2_trans_kmalloc(trans, BKEY_ALLOC_U64s_MAX * 8);
 	ret = PTR_ERR_OR_ZERO(a);
 	if (ret)
@@ -1456,7 +1453,7 @@ int bch2_dev_allocator_start(struct bch_dev *ca)
 		return 0;
 
 	p = kthread_create(bch2_allocator_thread, ca,
-			   "bch_alloc[%s]", ca->name);
+			   "bch-alloc/%s", ca->name);
 	if (IS_ERR(p))
 		return PTR_ERR(p);
 

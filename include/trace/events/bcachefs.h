@@ -121,6 +121,65 @@ DEFINE_EVENT(bio, journal_write,
 	TP_ARGS(bio)
 );
 
+TRACE_EVENT(journal_reclaim_start,
+	TP_PROTO(struct bch_fs *c, u64 min_nr,
+		 u64 prereserved, u64 prereserved_total,
+		 u64 btree_cache_dirty, u64 btree_cache_total,
+		 u64 btree_key_cache_dirty, u64 btree_key_cache_total),
+	TP_ARGS(c, min_nr, prereserved, prereserved_total,
+		btree_cache_dirty, btree_cache_total,
+		btree_key_cache_dirty, btree_key_cache_total),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16		)
+		__field(u64,		min_nr			)
+		__field(u64,		prereserved		)
+		__field(u64,		prereserved_total	)
+		__field(u64,		btree_cache_dirty	)
+		__field(u64,		btree_cache_total	)
+		__field(u64,		btree_key_cache_dirty	)
+		__field(u64,		btree_key_cache_total	)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
+		__entry->min_nr			= min_nr;
+		__entry->prereserved		= prereserved;
+		__entry->prereserved_total	= prereserved_total;
+		__entry->btree_cache_dirty	= btree_cache_dirty;
+		__entry->btree_cache_total	= btree_cache_total;
+		__entry->btree_key_cache_dirty	= btree_key_cache_dirty;
+		__entry->btree_key_cache_total	= btree_key_cache_total;
+	),
+
+	TP_printk("%pU min %llu prereserved %llu/%llu btree cache %llu/%llu key cache %llu/%llu",
+		  __entry->uuid,
+		  __entry->min_nr,
+		  __entry->prereserved,
+		  __entry->prereserved_total,
+		  __entry->btree_cache_dirty,
+		  __entry->btree_cache_total,
+		  __entry->btree_key_cache_dirty,
+		  __entry->btree_key_cache_total)
+);
+
+TRACE_EVENT(journal_reclaim_finish,
+	TP_PROTO(struct bch_fs *c, u64 nr_flushed),
+	TP_ARGS(c, nr_flushed),
+
+	TP_STRUCT__entry(
+		__array(char,		uuid,	16 )
+		__field(u64,		nr_flushed )
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->uuid, c->sb.user_uuid.b, 16);
+		__entry->nr_flushed = nr_flushed;
+	),
+
+	TP_printk("%pU flushed %llu", __entry->uuid, __entry->nr_flushed)
+);
+
 /* bset.c: */
 
 DEFINE_EVENT(bpos, bkey_pack_pos_fail,
@@ -513,7 +572,7 @@ TRACE_EVENT(transaction_restart_ip,
 		__entry->ip	= ip;
 	),
 
-	TP_printk("%pF %pF", (void *) __entry->caller, (void *) __entry->ip)
+	TP_printk("%ps %pS", (void *) __entry->caller, (void *) __entry->ip)
 );
 
 DECLARE_EVENT_CLASS(transaction_restart,
@@ -528,7 +587,7 @@ DECLARE_EVENT_CLASS(transaction_restart,
 		__entry->ip = ip;
 	),
 
-	TP_printk("%pf", (void *) __entry->ip)
+	TP_printk("%ps", (void *) __entry->ip)
 );
 
 DEFINE_EVENT(transaction_restart,	trans_restart_btree_node_reused,
@@ -568,7 +627,7 @@ TRACE_EVENT(trans_restart_would_deadlock,
 		__entry->want_iter_type		= want_iter_type;
 	),
 
-	TP_printk("%pF %pF because %u have %u:%u want %u:%u",
+	TP_printk("%ps %pS because %u have %u:%u want %u:%u",
 		  (void *) __entry->trans_ip,
 		  (void *) __entry->caller_ip,
 		  __entry->reason,
@@ -592,7 +651,7 @@ TRACE_EVENT(trans_restart_iters_realloced,
 		__entry->nr	= nr;
 	),
 
-	TP_printk("%pf nr %u", (void *) __entry->ip, __entry->nr)
+	TP_printk("%ps nr %u", (void *) __entry->ip, __entry->nr)
 );
 
 TRACE_EVENT(trans_restart_mem_realloced,
@@ -609,7 +668,7 @@ TRACE_EVENT(trans_restart_mem_realloced,
 		__entry->bytes	= bytes;
 	),
 
-	TP_printk("%pf bytes %lu", (void *) __entry->ip, __entry->bytes)
+	TP_printk("%ps bytes %lu", (void *) __entry->ip, __entry->bytes)
 );
 
 DEFINE_EVENT(transaction_restart,	trans_restart_journal_res_get,
@@ -618,6 +677,11 @@ DEFINE_EVENT(transaction_restart,	trans_restart_journal_res_get,
 );
 
 DEFINE_EVENT(transaction_restart,	trans_restart_journal_preres_get,
+	TP_PROTO(unsigned long ip),
+	TP_ARGS(ip)
+);
+
+DEFINE_EVENT(transaction_restart,	trans_restart_journal_reclaim,
 	TP_PROTO(unsigned long ip),
 	TP_ARGS(ip)
 );
@@ -653,11 +717,6 @@ DEFINE_EVENT(transaction_restart,	trans_restart_iter_upgrade,
 );
 
 DEFINE_EVENT(transaction_restart,	trans_restart_traverse,
-	TP_PROTO(unsigned long ip),
-	TP_ARGS(ip)
-);
-
-DEFINE_EVENT(transaction_restart,	trans_restart_atomic,
 	TP_PROTO(unsigned long ip),
 	TP_ARGS(ip)
 );

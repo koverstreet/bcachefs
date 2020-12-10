@@ -4,11 +4,16 @@
 
 #define JOURNAL_PIN	(32 * 1024)
 
-enum journal_space_from {
-	journal_space_discarded,
-	journal_space_clean_ondisk,
-	journal_space_clean,
-};
+static inline void journal_reclaim_kick(struct journal *j)
+{
+	struct task_struct *p = READ_ONCE(j->reclaim_thread);
+
+	if (p && !j->reclaim_kicked) {
+		j->reclaim_kicked = true;
+		if (p)
+			wake_up_process(p);
+	}
+}
 
 unsigned bch2_journal_dev_buckets_available(struct journal *,
 					    struct journal_device *,
@@ -28,34 +33,45 @@ journal_seq_pin(struct journal *j, u64 seq)
 	return &j->pin.data[seq & j->pin.mask];
 }
 
+void __bch2_journal_pin_put(struct journal *, u64);
 void bch2_journal_pin_put(struct journal *, u64);
 void bch2_journal_pin_drop(struct journal *, struct journal_entry_pin *);
 
-void __bch2_journal_pin_add(struct journal *, u64, struct journal_entry_pin *,
-			    journal_pin_flush_fn);
+void bch2_journal_pin_set(struct journal *, u64, struct journal_entry_pin *,
+			  journal_pin_flush_fn);
 
 static inline void bch2_journal_pin_add(struct journal *j, u64 seq,
 					struct journal_entry_pin *pin,
 					journal_pin_flush_fn flush_fn)
 {
 	if (unlikely(!journal_pin_active(pin) || pin->seq > seq))
-		__bch2_journal_pin_add(j, seq, pin, flush_fn);
+		bch2_journal_pin_set(j, seq, pin, flush_fn);
 }
 
-void bch2_journal_pin_update(struct journal *, u64,
-			     struct journal_entry_pin *,
-			     journal_pin_flush_fn);
+static inline void bch2_journal_pin_copy(struct journal *j,
+					 struct journal_entry_pin *dst,
+					 struct journal_entry_pin *src,
+					 journal_pin_flush_fn flush_fn)
+{
+	if (journal_pin_active(src))
+		bch2_journal_pin_add(j, src->seq, dst, flush_fn);
+}
 
-void bch2_journal_pin_copy(struct journal *,
-			   struct journal_entry_pin *,
-			   struct journal_entry_pin *,
-			   journal_pin_flush_fn);
+static inline void bch2_journal_pin_update(struct journal *j, u64 seq,
+					   struct journal_entry_pin *pin,
+					   journal_pin_flush_fn flush_fn)
+{
+	if (unlikely(!journal_pin_active(pin) || pin->seq < seq))
+		bch2_journal_pin_set(j, seq, pin, flush_fn);
+}
 
 void bch2_journal_pin_flush(struct journal *, struct journal_entry_pin *);
 
 void bch2_journal_do_discards(struct journal *);
-void bch2_journal_reclaim(struct journal *);
-void bch2_journal_reclaim_work(struct work_struct *);
+int bch2_journal_reclaim(struct journal *);
+
+void bch2_journal_reclaim_stop(struct journal *);
+int bch2_journal_reclaim_start(struct journal *);
 
 bool bch2_journal_flush_pins(struct journal *, u64);
 

@@ -302,9 +302,6 @@ struct btree_iter *bch2_inode_peek(struct btree_trans *trans,
 
 	iter = bch2_trans_get_iter(trans, BTREE_ID_INODES, POS(0, inum),
 				   BTREE_ITER_CACHED|flags);
-	if (IS_ERR(iter))
-		return iter;
-
 	k = bch2_btree_iter_peek_cached(iter);
 	ret = bkey_err(k);
 	if (ret)
@@ -537,10 +534,12 @@ found_slot:
 	inode_u->bi_inum	= k.k->p.offset;
 	inode_u->bi_generation	= bkey_generation(k);
 
-	return bch2_inode_write(trans, iter, inode_u);
+	ret = bch2_inode_write(trans, iter, inode_u);
+	bch2_trans_iter_put(trans, iter);
+	return ret;
 }
 
-int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
+int bch2_inode_rm(struct bch_fs *c, u64 inode_nr, bool cached)
 {
 	struct btree_trans trans;
 	struct btree_iter *iter;
@@ -551,6 +550,8 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 	u64 bi_generation;
 	int ret;
 
+	bch2_trans_init(&trans, c, 0, 0);
+
 	/*
 	 * If this was a directory, there shouldn't be any real dirents left -
 	 * but there could be whiteouts (from hash collisions) that we should
@@ -559,37 +560,34 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr)
 	 * XXX: the dirent could ideally would delete whiteouts when they're no
 	 * longer needed
 	 */
-	ret   = bch2_btree_delete_range(c, BTREE_ID_EXTENTS,
-					start, end, NULL) ?:
-		bch2_btree_delete_range(c, BTREE_ID_XATTRS,
-					start, end, NULL) ?:
-		bch2_btree_delete_range(c, BTREE_ID_DIRENTS,
-					start, end, NULL);
+	ret   = bch2_btree_delete_range_trans(&trans, BTREE_ID_EXTENTS,
+					      start, end, NULL) ?:
+		bch2_btree_delete_range_trans(&trans, BTREE_ID_XATTRS,
+					      start, end, NULL) ?:
+		bch2_btree_delete_range_trans(&trans, BTREE_ID_DIRENTS,
+					      start, end, NULL);
 	if (ret)
-		return ret;
-
-	bch2_trans_init(&trans, c, 0, 0);
+		goto err;
 retry:
 	bch2_trans_begin(&trans);
 
 	bi_generation = 0;
 
-	ret = bch2_btree_key_cache_flush(&trans, BTREE_ID_INODES, POS(0, inode_nr));
-	if (ret) {
-		if (ret != -EINTR)
-			bch_err(c, "error flushing btree key cache: %i", ret);
-		goto err;
+	if (cached) {
+		iter = bch2_trans_get_iter(&trans, BTREE_ID_INODES, POS(0, inode_nr),
+					   BTREE_ITER_CACHED|BTREE_ITER_INTENT);
+		k = bch2_btree_iter_peek_cached(iter);
+	} else {
+		iter = bch2_trans_get_iter(&trans, BTREE_ID_INODES, POS(0, inode_nr),
+					   BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
+		k = bch2_btree_iter_peek_slot(iter);
 	}
-
-	iter = bch2_trans_get_iter(&trans, BTREE_ID_INODES, POS(0, inode_nr),
-				   BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
-	k = bch2_btree_iter_peek_slot(iter);
 
 	ret = bkey_err(k);
 	if (ret)
 		goto err;
 
-	bch2_fs_inconsistent_on(k.k->type != KEY_TYPE_inode, c,
+	bch2_fs_inconsistent_on(k.k->type != KEY_TYPE_inode, trans.c,
 				"inode %llu not found when deleting",
 				inode_nr);
 
@@ -639,9 +637,6 @@ int bch2_inode_find_by_inum_trans(struct btree_trans *trans, u64 inode_nr,
 
 	iter = bch2_trans_get_iter(trans, BTREE_ID_INODES,
 			POS(0, inode_nr), BTREE_ITER_CACHED);
-	if (IS_ERR(iter))
-		return PTR_ERR(iter);
-
 	k = bch2_btree_iter_peek_cached(iter);
 	ret = bkey_err(k);
 	if (ret)

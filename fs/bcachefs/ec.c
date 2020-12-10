@@ -264,7 +264,7 @@ static void ec_validate_checksums(struct bch_fs *c, struct ec_stripe_buf *buf)
 					     len << 9);
 
 			if (memcmp(stripe_csum(v, i, j), &csum, csum_bytes)) {
-				__bcache_io_error(c,
+				bch_err_ratelimited(c,
 					"checksum error while doing reconstruct read (%u:%u)",
 					i, j);
 				clear_bit(i, buf->valid);
@@ -305,7 +305,7 @@ static int ec_do_recov(struct bch_fs *c, struct ec_stripe_buf *buf)
 	unsigned bytes = buf->size << 9;
 
 	if (ec_nr_failed(buf) > v->nr_redundant) {
-		__bcache_io_error(c,
+		bch_err_ratelimited(c,
 			"error doing reconstruct read: unable to read enough blocks");
 		return -1;
 	}
@@ -326,7 +326,7 @@ static void ec_block_endio(struct bio *bio)
 	struct bch_dev *ca = ec_bio->ca;
 	struct closure *cl = bio->bi_private;
 
-	if (bch2_dev_io_err_on(bio->bi_status, ca, "erasure coding %s: %s",
+	if (bch2_dev_io_err_on(bio->bi_status, ca, "erasure coding %s error: %s",
 			       bio_data_dir(bio) ? "write" : "read",
 			       bch2_blk_status_to_str(bio->bi_status)))
 		clear_bit(ec_bio->idx, ec_bio->buf->valid);
@@ -420,7 +420,7 @@ int bch2_ec_read_extent(struct bch_fs *c, struct bch_read_bio *rbio)
 				   BTREE_ITER_SLOTS);
 	k = bch2_btree_iter_peek_slot(iter);
 	if (bkey_err(k) || k.k->type != KEY_TYPE_stripe) {
-		__bcache_io_error(c,
+		bch_err_ratelimited(c,
 			"error doing reconstruct read: stripe not found");
 		kfree(buf);
 		return bch2_trans_exit(&trans) ?: -EIO;
@@ -462,7 +462,7 @@ int bch2_ec_read_extent(struct bch_fs *c, struct bch_read_bio *rbio)
 		struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
 
 		if (ptr_stale(ca, ptr)) {
-			__bcache_io_error(c,
+			bch_err_ratelimited(c,
 					  "error doing reconstruct read: stale pointer");
 			clear_bit(i, buf->valid);
 			continue;
@@ -474,7 +474,7 @@ int bch2_ec_read_extent(struct bch_fs *c, struct bch_read_bio *rbio)
 	closure_sync(&cl);
 
 	if (ec_nr_failed(buf) > v->nr_redundant) {
-		__bcache_io_error(c,
+		bch_err_ratelimited(c,
 			"error doing reconstruct read: unable to read enough blocks");
 		ret = -EIO;
 		goto err;
@@ -874,7 +874,7 @@ static void ec_stripe_create(struct ec_stripe_new *s)
 	for_each_keylist_key(&s->keys, k) {
 		ret = ec_stripe_update_ptrs(c, &s->stripe, &k->k);
 		if (ret) {
-			bch_err(c, "error creating stripe: error updating pointers");
+			bch_err(c, "error creating stripe: error %i updating pointers", ret);
 			break;
 		}
 	}
@@ -1341,16 +1341,14 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct bch_fs *c,
 	if (!h)
 		return NULL;
 
-	if (!h->s && ec_new_stripe_alloc(c, h)) {
-		bch2_ec_stripe_head_put(c, h);
-		return NULL;
-	}
+	if (!h->s) {
+		if (ec_new_stripe_alloc(c, h)) {
+			bch2_ec_stripe_head_put(c, h);
+			return NULL;
+		}
 
-	if (!h->s->allocated) {
-		if (!h->s->existing_stripe &&
-		    (idx = get_existing_stripe(c, target, algo, redundancy)) >= 0) {
-			//pr_info("got existing stripe %llu", idx);
-
+		idx = get_existing_stripe(c, target, algo, redundancy);
+		if (idx >= 0) {
 			h->s->existing_stripe = true;
 			h->s->existing_stripe_idx = idx;
 			if (get_stripe_key(c, idx, &h->s->stripe)) {
@@ -1364,7 +1362,9 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct bch_fs *c,
 					ec_block_io(c, &h->s->stripe, READ, i, &cl);
 				}
 		}
+	}
 
+	if (!h->s->allocated) {
 		if (!h->s->existing_stripe &&
 		    !h->s->res.sectors) {
 			ret = bch2_disk_reservation_get(c, &h->s->res,

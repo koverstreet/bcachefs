@@ -91,6 +91,11 @@ void bch2_pagecache_add_put(struct pagecache_lock *lock)
 	__pagecache_lock_put(lock, 1);
 }
 
+bool bch2_pagecache_add_tryget(struct pagecache_lock *lock)
+{
+	return __pagecache_lock_tryget(lock, 1);
+}
+
 void bch2_pagecache_add_get(struct pagecache_lock *lock)
 {
 	__pagecache_lock_get(lock, 1);
@@ -271,7 +276,8 @@ __bch2_create(struct bch_inode_info *dir, struct dentry *dentry,
 	if (!tmpfile)
 		mutex_lock(&dir->ei_update_lock);
 
-	bch2_trans_init(&trans, c, 8, 1024);
+	bch2_trans_init(&trans, c, 8,
+			2048 + (!tmpfile ? dentry->d_name.len : 0));
 retry:
 	bch2_trans_begin(&trans);
 
@@ -886,6 +892,10 @@ static int bch2_fiemap(struct inode *vinode, struct fiemap_extent_info *info,
 	bool have_extent = false;
 	int ret = 0;
 
+	ret = fiemap_prep(&ei->v, info, start, &len, FIEMAP_FLAG_SYNC);
+	if (ret)
+		return ret;
+
 	if (start + len < start)
 		return -EINVAL;
 
@@ -989,15 +999,6 @@ static int bch2_vfs_readdir(struct file *file, struct dir_context *ctx)
 	return bch2_readdir(c, inode->v.i_ino, ctx);
 }
 
-static int bch2_clone_file_range(struct file *file_src, loff_t pos_src,
-				 struct file *file_dst, loff_t pos_dst,
-				 u64 len)
-{
-	return bch2_remap_file_range(file_src, pos_src,
-				     file_dst, pos_dst,
-				     len, 0);
-}
-
 static const struct file_operations bch_file_operations = {
 	.llseek		= bch2_llseek,
 	.read_iter	= bch2_read_iter,
@@ -1015,7 +1016,7 @@ static const struct file_operations bch_file_operations = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= bch2_compat_fs_ioctl,
 #endif
-	.clone_file_range = bch2_clone_file_range,
+	.remap_file_range = bch2_remap_file_range,
 };
 
 static const struct inode_operations bch_file_inode_operations = {
@@ -1085,7 +1086,7 @@ static const struct address_space_operations bch_address_space_operations = {
 	.writepage	= bch2_writepage,
 	.readpage	= bch2_readpage,
 	.writepages	= bch2_writepages,
-	.readpages	= bch2_readpages,
+	.readahead	= bch2_readahead,
 	.set_page_dirty	= __set_page_dirty_nobuffers,
 	.write_begin	= bch2_write_begin,
 	.write_end	= bch2_write_end,
@@ -1150,6 +1151,7 @@ static void bch2_vfs_inode_init(struct bch_fs *c,
 	inode->v.i_generation	= bi->bi_generation;
 	inode->v.i_size		= bi->bi_size;
 
+	inode->ei_flags		= 0;
 	inode->ei_journal_seq	= 0;
 	inode->ei_quota_reserved = 0;
 	inode->ei_str_hash	= bch2_hash_info_init(c, bi);
@@ -1251,7 +1253,7 @@ static void bch2_evict_inode(struct inode *vinode)
 				KEY_TYPE_QUOTA_WARN);
 		bch2_quota_acct(c, inode->ei_qid, Q_INO, -1,
 				KEY_TYPE_QUOTA_WARN);
-		bch2_inode_rm(c, inode->v.i_ino);
+		bch2_inode_rm(c, inode->v.i_ino, true);
 	}
 }
 
@@ -1570,9 +1572,7 @@ got_sb:
 	if (ret)
 		goto err_put_super;
 
-	sb->s_bdi->congested_fn		= bch2_congested;
-	sb->s_bdi->congested_data	= c;
-	sb->s_bdi->ra_pages		= VM_MAX_READAHEAD * 1024 / PAGE_SIZE;
+	sb->s_bdi->ra_pages		= VM_READAHEAD_PAGES;
 
 	for_each_online_member(ca, c, i) {
 		struct block_device *bdev = ca->disk_sb.bdev;

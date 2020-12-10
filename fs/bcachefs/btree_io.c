@@ -597,18 +597,25 @@ void bch2_btree_init_next(struct bch_fs *c, struct btree *b,
 		bch2_btree_iter_reinit_node(iter, b);
 }
 
+static void btree_pos_to_text(struct printbuf *out, struct bch_fs *c,
+			  struct btree *b)
+{
+	pr_buf(out, "%s level %u/%u\n  ",
+	       bch2_btree_ids[b->c.btree_id],
+	       b->c.level,
+	       c->btree_roots[b->c.btree_id].level);
+	bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(&b->key));
+}
+
 static void btree_err_msg(struct printbuf *out, struct bch_fs *c,
 			  struct btree *b, struct bset *i,
 			  unsigned offset, int write)
 {
-	pr_buf(out, "error validating btree node %sat btree %u level %u/%u\n"
-	       "pos ",
-	       write ? "before write " : "",
-	       b->c.btree_id, b->c.level,
-	       c->btree_roots[b->c.btree_id].level);
-	bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(&b->key));
+	pr_buf(out, "error validating btree node %sat btree ",
+	       write ? "before write " : "");
+	btree_pos_to_text(out, c, b);
 
-	pr_buf(out, " node offset %u", b->written);
+	pr_buf(out, "\n  node offset %u", b->written);
 	if (i)
 		pr_buf(out, " bset u64s %u", le16_to_cpu(i->u64s));
 }
@@ -628,7 +635,12 @@ enum btree_validate_ret {
 ({									\
 	__label__ out;							\
 	char _buf[300];							\
+	char *buf = _buf;						\
 	struct printbuf out = PBUF(_buf);				\
+									\
+	buf = kmalloc(4096, GFP_ATOMIC);				\
+	if (buf)							\
+		out = _PBUF(buf, 4986);					\
 									\
 	btree_err_msg(&out, c, b, i, b->written, write);		\
 	pr_buf(&out, ": " msg, ##__VA_ARGS__);				\
@@ -636,13 +648,13 @@ enum btree_validate_ret {
 	if (type == BTREE_ERR_FIXABLE &&				\
 	    write == READ &&						\
 	    !test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags)) {		\
-		mustfix_fsck_err(c, "%s", _buf);			\
+		mustfix_fsck_err(c, "%s", buf);				\
 		goto out;						\
 	}								\
 									\
 	switch (write) {						\
 	case READ:							\
-		bch_err(c, "%s", _buf);					\
+		bch_err(c, "%s", buf);					\
 									\
 		switch (type) {						\
 		case BTREE_ERR_FIXABLE:					\
@@ -663,7 +675,7 @@ enum btree_validate_ret {
 		}							\
 		break;							\
 	case WRITE:							\
-		bch_err(c, "corrupt metadata before write: %s", _buf);	\
+		bch_err(c, "corrupt metadata before write: %s", buf);	\
 									\
 		if (bch2_fs_inconsistent(c)) {				\
 			ret = BCH_FSCK_ERRORS_NOT_FIXED;		\
@@ -672,6 +684,8 @@ enum btree_validate_ret {
 		break;							\
 	}								\
 out:									\
+	if (buf != _buf)						\
+		kfree(buf);						\
 	true;								\
 })
 
@@ -1104,6 +1118,8 @@ static void btree_node_read_work(struct work_struct *work)
 	struct btree *b		= rb->bio.bi_private;
 	struct bio *bio		= &rb->bio;
 	struct bch_io_failures failed = { .nr = 0 };
+	char buf[200];
+	struct printbuf out;
 	bool can_retry;
 
 	goto start;
@@ -1123,8 +1139,10 @@ static void btree_node_read_work(struct work_struct *work)
 			bio->bi_status = BLK_STS_REMOVED;
 		}
 start:
-		bch2_dev_io_err_on(bio->bi_status, ca, "btree read: %s",
-				   bch2_blk_status_to_str(bio->bi_status));
+		out = PBUF(buf);
+		btree_pos_to_text(&out, c, b);
+		bch2_dev_io_err_on(bio->bi_status, ca, "btree read error %s for %s",
+				   bch2_blk_status_to_str(bio->bi_status), buf);
 		if (rb->have_ioref)
 			percpu_ref_put(&ca->io_ref);
 		rb->have_ioref = false;
@@ -1408,7 +1426,7 @@ static void btree_node_write_endio(struct bio *bio)
 	if (wbio->have_ioref)
 		bch2_latency_acct(ca, wbio->submit_time, WRITE);
 
-	if (bch2_dev_io_err_on(bio->bi_status, ca, "btree write: %s",
+	if (bch2_dev_io_err_on(bio->bi_status, ca, "btree write error: %s",
 			       bch2_blk_status_to_str(bio->bi_status)) ||
 	    bch2_meta_write_fault("btree")) {
 		spin_lock_irqsave(&c->btree_write_error_lock, flags);
@@ -1442,8 +1460,10 @@ static int validate_bset_for_write(struct bch_fs *c, struct btree *b,
 
 	ret = validate_bset(c, b, i, sectors, WRITE, false) ?:
 		validate_bset_keys(c, b, i, &whiteout_u64s, WRITE, false);
-	if (ret)
+	if (ret) {
 		bch2_inconsistent_error(c);
+		dump_stack();
+	}
 
 	return ret;
 }
@@ -1486,6 +1506,9 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 		if (!btree_node_may_write(b))
 			return;
 
+		if (old & (1 << BTREE_NODE_never_write))
+			return;
+
 		if (old & (1 << BTREE_NODE_write_in_flight)) {
 			btree_node_wait_on_io(b);
 			continue;
@@ -1497,6 +1520,8 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 		new |=  (1 << BTREE_NODE_just_written);
 		new ^=  (1 << BTREE_NODE_write_idx);
 	} while (cmpxchg_acquire(&b->flags, old, new) != old);
+
+	atomic_dec(&c->btree_cache.dirty);
 
 	BUG_ON(btree_node_fake(b));
 	BUG_ON((b->will_make_reachable != 0) != !b->written);
@@ -1529,6 +1554,11 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 			      btree_bkey_last(b, t));
 		seq = max(seq, le64_to_cpu(i->journal_seq));
 	}
+
+	BUG_ON(b->written && !seq);
+
+	/* bch2_varint_decode may read up to 7 bytes past the end of the buffer: */
+	bytes += 8;
 
 	data = btree_bounce_alloc(c, bytes, &used_mempool);
 

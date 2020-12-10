@@ -187,7 +187,7 @@ void bch2_btree_and_journal_iter_init(struct btree_and_journal_iter *iter,
 {
 	memset(iter, 0, sizeof(*iter));
 
-	iter->btree = bch2_trans_get_iter(trans, id, pos, 0);
+	iter->btree = bch2_trans_get_iter(trans, id, pos, BTREE_ITER_PREFETCH);
 	bch2_journal_iter_init(&iter->journal, journal_keys, id, 0, pos);
 }
 
@@ -313,7 +313,7 @@ void bch2_journal_keys_free(struct journal_keys *keys)
 
 static struct journal_keys journal_keys_sort(struct list_head *journal_entries)
 {
-	struct journal_replay *p;
+	struct journal_replay *i;
 	struct jset_entry *entry;
 	struct bkey_i *k, *_n;
 	struct journal_keys keys = { NULL };
@@ -323,35 +323,35 @@ static struct journal_keys journal_keys_sort(struct list_head *journal_entries)
 	if (list_empty(journal_entries))
 		return keys;
 
-	keys.journal_seq_base =
-		le64_to_cpu(list_last_entry(journal_entries,
-				struct journal_replay, list)->j.last_seq);
-
-	list_for_each_entry(p, journal_entries, list) {
-		if (le64_to_cpu(p->j.seq) < keys.journal_seq_base)
+	list_for_each_entry(i, journal_entries, list) {
+		if (i->ignore)
 			continue;
 
-		for_each_jset_key(k, _n, entry, &p->j)
+		if (!keys.journal_seq_base)
+			keys.journal_seq_base = le64_to_cpu(i->j.seq);
+
+		for_each_jset_key(k, _n, entry, &i->j)
 			nr_keys++;
 	}
-
 
 	keys.d = kvmalloc(sizeof(keys.d[0]) * nr_keys, GFP_KERNEL);
 	if (!keys.d)
 		goto err;
 
-	list_for_each_entry(p, journal_entries, list) {
-		if (le64_to_cpu(p->j.seq) < keys.journal_seq_base)
+	list_for_each_entry(i, journal_entries, list) {
+		if (i->ignore)
 			continue;
 
-		for_each_jset_key(k, _n, entry, &p->j)
+		BUG_ON(le64_to_cpu(i->j.seq) - keys.journal_seq_base > U32_MAX);
+
+		for_each_jset_key(k, _n, entry, &i->j)
 			keys.d[keys.nr++] = (struct journal_key) {
 				.btree_id	= entry->btree_id,
 				.level		= entry->level,
 				.k		= k,
-				.journal_seq	= le64_to_cpu(p->j.seq) -
+				.journal_seq	= le64_to_cpu(i->j.seq) -
 					keys.journal_seq_base,
-				.journal_offset	= k->_data - p->j._data,
+				.journal_offset	= k->_data - i->j._data,
 			};
 	}
 
@@ -443,9 +443,6 @@ retry:
 		bch2_cut_back(atomic_end, split);
 
 		split_iter = bch2_trans_copy_iter(&trans, iter);
-		ret = PTR_ERR_OR_ZERO(split_iter);
-		if (ret)
-			goto err;
 
 		/*
 		 * It's important that we don't go through the
@@ -456,11 +453,14 @@ retry:
 		__bch2_btree_iter_set_pos(split_iter, split->k.p, false);
 		bch2_trans_update(&trans, split_iter, split,
 				  BTREE_TRIGGER_NORUN);
+		bch2_trans_iter_put(&trans, split_iter);
 
 		bch2_btree_iter_set_pos(iter, split->k.p);
 
 		if (remark) {
-			ret = bch2_trans_mark_key(&trans, bkey_i_to_s_c(split),
+			ret = bch2_trans_mark_key(&trans,
+						  bkey_s_c_null,
+						  bkey_i_to_s_c(split),
 						  0, split->k.size,
 						  BTREE_TRIGGER_INSERT);
 			if (ret)
@@ -469,7 +469,9 @@ retry:
 	} while (bkey_cmp(iter->pos, k->k.p) < 0);
 
 	if (remark) {
-		ret = bch2_trans_mark_key(&trans, bkey_i_to_s_c(k),
+		ret = bch2_trans_mark_key(&trans,
+					  bkey_i_to_s_c(k),
+					  bkey_s_c_null,
 					  0, -((s64) k->k.size),
 					  BTREE_TRIGGER_OVERWRITE);
 		if (ret)
@@ -481,6 +483,8 @@ retry:
 				BTREE_INSERT_LAZY_RW|
 				BTREE_INSERT_JOURNAL_REPLAY);
 err:
+	bch2_trans_iter_put(&trans, iter);
+
 	if (ret == -EINTR)
 		goto retry;
 
@@ -499,8 +503,6 @@ static int __bch2_journal_replay_key(struct btree_trans *trans,
 	iter = bch2_trans_get_node_iter(trans, id, k->k.p,
 					BTREE_MAX_DEPTH, level,
 					BTREE_ITER_INTENT);
-	if (IS_ERR(iter))
-		return PTR_ERR(iter);
 
 	/*
 	 * iter->flags & BTREE_ITER_IS_EXTENTS triggers the update path to run
@@ -535,8 +537,7 @@ static int __bch2_alloc_replay_key(struct btree_trans *trans, struct bkey_i *k)
 				   BTREE_ITER_CACHED|
 				   BTREE_ITER_CACHED_NOFILL|
 				   BTREE_ITER_INTENT);
-	ret =   PTR_ERR_OR_ZERO(iter) ?:
-		bch2_trans_update(trans, iter, k, BTREE_TRIGGER_NORUN);
+	ret = bch2_trans_update(trans, iter, k, BTREE_TRIGGER_NORUN);
 	bch2_trans_iter_put(trans, iter);
 	return ret;
 }
@@ -613,6 +614,7 @@ static int bch2_journal_replay(struct bch_fs *c,
 	 */
 	set_bit(BCH_FS_BTREE_INTERIOR_REPLAY_DONE, &c->flags);
 	set_bit(JOURNAL_RECLAIM_STARTED, &j->flags);
+	journal_reclaim_kick(j);
 
 	j->replay_journal_seq = seq;
 
@@ -642,46 +644,6 @@ static int bch2_journal_replay(struct bch_fs *c,
 	return bch2_journal_error(j);
 err:
 	bch_err(c, "journal replay: error %d while replaying key", ret);
-	return ret;
-}
-
-static bool journal_empty(struct list_head *journal)
-{
-	return list_empty(journal) ||
-		journal_entry_empty(&list_last_entry(journal,
-					struct journal_replay, list)->j);
-}
-
-static int
-verify_journal_entries_not_blacklisted_or_missing(struct bch_fs *c,
-						  struct list_head *journal)
-{
-	struct journal_replay *i =
-		list_last_entry(journal, struct journal_replay, list);
-	u64 start_seq	= le64_to_cpu(i->j.last_seq);
-	u64 end_seq	= le64_to_cpu(i->j.seq);
-	u64 seq		= start_seq;
-	int ret = 0;
-
-	list_for_each_entry(i, journal, list) {
-		if (le64_to_cpu(i->j.seq) < start_seq)
-			continue;
-
-		fsck_err_on(seq != le64_to_cpu(i->j.seq), c,
-			"journal entries %llu-%llu missing! (replaying %llu-%llu)",
-			seq, le64_to_cpu(i->j.seq) - 1,
-			start_seq, end_seq);
-
-		seq = le64_to_cpu(i->j.seq);
-
-		fsck_err_on(bch2_journal_seq_is_blacklisted(c, seq, false), c,
-			    "found blacklisted journal entry %llu", seq);
-
-		do {
-			seq++;
-		} while (bch2_journal_seq_is_blacklisted(c, seq, false));
-	}
-fsck_err:
 	return ret;
 }
 
@@ -769,6 +731,7 @@ static int journal_replay_early(struct bch_fs *c,
 				struct bch_sb_field_clean *clean,
 				struct list_head *journal)
 {
+	struct journal_replay *i;
 	struct jset_entry *entry;
 	int ret;
 
@@ -784,18 +747,19 @@ static int journal_replay_early(struct bch_fs *c,
 				return ret;
 		}
 	} else {
-		struct journal_replay *i =
-			list_last_entry(journal, struct journal_replay, list);
+		list_for_each_entry(i, journal, list) {
+			if (i->ignore)
+				continue;
 
-		c->bucket_clock[READ].hand = le16_to_cpu(i->j.read_clock);
-		c->bucket_clock[WRITE].hand = le16_to_cpu(i->j.write_clock);
+			c->bucket_clock[READ].hand = le16_to_cpu(i->j.read_clock);
+			c->bucket_clock[WRITE].hand = le16_to_cpu(i->j.write_clock);
 
-		list_for_each_entry(i, journal, list)
 			vstruct_for_each(&i->j, entry) {
 				ret = journal_replay_entry_early(c, entry);
 				if (ret)
 					return ret;
 			}
+		}
 	}
 
 	bch2_fs_usage_initialize(c);
@@ -843,9 +807,6 @@ static int verify_superblock_clean(struct bch_fs *c,
 	unsigned i;
 	struct bch_sb_field_clean *clean = *cleanp;
 	int ret = 0;
-
-	if (!c->sb.clean || !j)
-		return 0;
 
 	if (mustfix_fsck_err_on(j->seq != clean->journal_seq, c,
 			"superblock journal seq (%llu) doesn't match journal (%llu) after clean shutdown",
@@ -973,7 +934,8 @@ int bch2_fs_recovery(struct bch_fs *c)
 {
 	const char *err = "cannot allocate memory";
 	struct bch_sb_field_clean *clean = NULL;
-	u64 journal_seq;
+	struct jset *last_journal_entry = NULL;
+	u64 blacklist_seq, journal_seq;
 	bool write_sb = false, need_write_alloc = false;
 	int ret;
 
@@ -993,24 +955,38 @@ int bch2_fs_recovery(struct bch_fs *c)
 		set_bit(BCH_FS_REBUILD_REPLICAS, &c->flags);
 	}
 
-	if (!c->sb.clean || c->opts.fsck || c->opts.keep_journal) {
-		struct jset *j;
+	ret = bch2_blacklist_table_initialize(c);
+	if (ret) {
+		bch_err(c, "error initializing blacklist table");
+		goto err;
+	}
 
-		ret = bch2_journal_read(c, &c->journal_entries);
+	if (!c->sb.clean || c->opts.fsck || c->opts.keep_journal) {
+		struct journal_replay *i;
+
+		ret = bch2_journal_read(c, &c->journal_entries,
+					&blacklist_seq, &journal_seq);
 		if (ret)
 			goto err;
 
-		if (mustfix_fsck_err_on(c->sb.clean && !journal_empty(&c->journal_entries), c,
+		list_for_each_entry_reverse(i, &c->journal_entries, list)
+			if (!i->ignore) {
+				last_journal_entry = &i->j;
+				break;
+			}
+
+		if (mustfix_fsck_err_on(c->sb.clean &&
+					last_journal_entry &&
+					!journal_entry_empty(last_journal_entry), c,
 				"filesystem marked clean but journal not empty")) {
 			c->sb.compat &= ~(1ULL << BCH_COMPAT_FEAT_ALLOC_INFO);
 			SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
 			c->sb.clean = false;
 		}
 
-		if (!c->sb.clean && list_empty(&c->journal_entries)) {
-			bch_err(c, "no journal entries found");
-			ret = BCH_FSCK_REPAIR_IMPOSSIBLE;
-			goto err;
+		if (!last_journal_entry) {
+			fsck_err_on(!c->sb.clean, c, "no journal entries found");
+			goto use_clean;
 		}
 
 		c->journal_keys = journal_keys_sort(&c->journal_entries);
@@ -1019,16 +995,21 @@ int bch2_fs_recovery(struct bch_fs *c)
 			goto err;
 		}
 
-		j = &list_last_entry(&c->journal_entries,
-				     struct journal_replay, list)->j;
-
-		ret = verify_superblock_clean(c, &clean, j);
-		if (ret)
+		if (c->sb.clean && last_journal_entry) {
+			ret = verify_superblock_clean(c, &clean,
+						      last_journal_entry);
+			if (ret)
+				goto err;
+		}
+	} else {
+use_clean:
+		if (!clean) {
+			bch_err(c, "no superblock clean section found");
+			ret = BCH_FSCK_REPAIR_IMPOSSIBLE;
 			goto err;
 
-		journal_seq = le64_to_cpu(j->seq) + 1;
-	} else {
-		journal_seq = le64_to_cpu(clean->journal_seq) + 1;
+		}
+		blacklist_seq = journal_seq = le64_to_cpu(clean->journal_seq) + 1;
 	}
 
 	if (!c->sb.clean &&
@@ -1047,30 +1028,23 @@ int bch2_fs_recovery(struct bch_fs *c)
 	if (ret)
 		goto err;
 
-	if (!c->sb.clean) {
+	/*
+	 * After an unclean shutdown, skip then next few journal sequence
+	 * numbers as they may have been referenced by btree writes that
+	 * happened before their corresponding journal writes - those btree
+	 * writes need to be ignored, by skipping and blacklisting the next few
+	 * journal sequence numbers:
+	 */
+	if (!c->sb.clean)
+		journal_seq += 8;
+
+	if (blacklist_seq != journal_seq) {
 		ret = bch2_journal_seq_blacklist_add(c,
-						     journal_seq,
-						     journal_seq + 4);
+					blacklist_seq, journal_seq);
 		if (ret) {
 			bch_err(c, "error creating new journal seq blacklist entry");
 			goto err;
 		}
-
-		journal_seq += 4;
-
-		/*
-		 * The superblock needs to be written before we do any btree
-		 * node writes: it will be in the read_write() path
-		 */
-	}
-
-	ret = bch2_blacklist_table_initialize(c);
-
-	if (!list_empty(&c->journal_entries)) {
-		ret = verify_journal_entries_not_blacklisted_or_missing(c,
-							&c->journal_entries);
-		if (ret)
-			goto err;
 	}
 
 	ret = bch2_fs_journal_start(&c->journal, journal_seq,

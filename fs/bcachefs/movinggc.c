@@ -61,7 +61,7 @@ static enum data_cmd copygc_pred(struct bch_fs *c, void *arg,
 	copygc_heap *h = &c->copygc_heap;
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
-	struct extent_ptr_decoded p;
+	struct extent_ptr_decoded p = { 0 };
 
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 		struct bch_dev *ca = bch_dev_bkey_exists(c, p.ptr.dev);
@@ -345,7 +345,7 @@ int bch2_copygc_start(struct bch_fs *c)
 	if (bch2_fs_init_fault("copygc_start"))
 		return -ENOMEM;
 
-	t = kthread_create(bch2_copygc_thread, c, "bch_copygc");
+	t = kthread_create(bch2_copygc_thread, c, "bch-copygc/%s", c->name);
 	if (IS_ERR(t))
 		return PTR_ERR(t);
 

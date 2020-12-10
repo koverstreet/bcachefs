@@ -81,8 +81,7 @@ static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp)
 	if (!b->data)
 		return -ENOMEM;
 
-	b->aux_data	= __vmalloc(btree_aux_data_bytes(b), gfp,
-				    PAGE_KERNEL_EXEC);
+	b->aux_data = vmalloc_exec(btree_aux_data_bytes(b), gfp);
 	if (!b->aux_data) {
 		kvpfree(b->data, btree_bytes(c));
 		b->data = NULL;
@@ -329,9 +328,9 @@ restart:
 			clear_btree_node_accessed(b);
 	}
 
-	memalloc_nofs_restore(flags);
 	mutex_unlock(&bc->lock);
 out:
+	memalloc_nofs_restore(flags);
 	return (unsigned long) freed * btree_pages(c);
 }
 
@@ -382,10 +381,12 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 
 		if (btree_node_dirty(b))
 			bch2_btree_complete_write(c, b, btree_current_write(b));
-		clear_btree_node_dirty(b);
+		clear_btree_node_dirty(c, b);
 
 		btree_node_data_free(c, b);
 	}
+
+	BUG_ON(atomic_read(&c->btree_cache.dirty));
 
 	while (!list_empty(&bc->freed)) {
 		b = list_first_entry(&bc->freed, struct btree, list);
@@ -446,7 +447,7 @@ int bch2_fs_btree_cache_init(struct bch_fs *c)
 	bc->shrink.scan_objects		= bch2_btree_cache_scan;
 	bc->shrink.seeks		= 4;
 	bc->shrink.batch		= btree_pages(c) * 2;
-	register_shrinker(&bc->shrink);
+	ret = register_shrinker(&bc->shrink);
 out:
 	pr_verbose_init(c->opts, "ret %i", ret);
 	return ret;
@@ -1062,4 +1063,10 @@ void bch2_btree_node_to_text(struct printbuf *out, struct bch_fs *c,
 	       b->nr.unpacked_keys,
 	       stats.floats,
 	       stats.failed);
+}
+
+void bch2_btree_cache_to_text(struct printbuf *out, struct bch_fs *c)
+{
+	pr_buf(out, "nr nodes:\t%u\n", c->btree_cache.used);
+	pr_buf(out, "nr dirty:\t%u\n", atomic_read(&c->btree_cache.dirty));
 }
