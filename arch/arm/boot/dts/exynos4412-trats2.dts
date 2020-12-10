@@ -676,7 +676,7 @@
 	max77686: max77686_pmic@9 {
 		compatible = "maxim,max77686";
 		interrupt-parent = <&gpx0>;
-		interrupts = <7 IRQ_TYPE_NONE>;
+		interrupts = <7 IRQ_TYPE_LEVEL_LOW>;
 		reg = <0x09>;
 		#clock-cells = <1>;
 
