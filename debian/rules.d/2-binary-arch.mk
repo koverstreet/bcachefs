@@ -408,6 +408,7 @@ ifeq ($(do_dkms_nvidia),true)
 	$(call build_dkms, $(bldinfo_pkg_name)-$*, $(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/signatures, nvidia-435, pool/restricted/n/nvidia-graphics-drivers-435/nvidia-kernel-source-435_$(dkms_nvidia_435_version)_$(arch).deb pool/restricted/n/nvidia-graphics-drivers-435/nvidia-dkms-435_$(dkms_nvidia_435_version)_$(arch).deb)
 	$(call build_dkms, $(bldinfo_pkg_name)-$*, $(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/signatures, nvidia-450, pool/restricted/n/nvidia-graphics-drivers-450/nvidia-kernel-source-450_$(dkms_nvidia_450_version)_$(arch).deb pool/restricted/n/nvidia-graphics-drivers-450/nvidia-dkms-450_$(dkms_nvidia_450_version)_$(arch).deb)
 	$(call build_dkms, $(bldinfo_pkg_name)-$*, $(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/signatures, nvidia-455, pool/restricted/n/nvidia-graphics-drivers-455/nvidia-kernel-source-455_$(dkms_nvidia_455_version)_$(arch).deb pool/restricted/n/nvidia-graphics-drivers-455/nvidia-dkms-455_$(dkms_nvidia_455_version)_$(arch).deb)
+	$(call build_dkms, $(bldinfo_pkg_name)-$*, $(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/signatures, nvidia-460, pool/restricted/n/nvidia-graphics-drivers-460/nvidia-kernel-source-460_$(dkms_nvidia_460_version)_$(arch).deb pool/restricted/n/nvidia-graphics-drivers-460/nvidia-dkms-460_$(dkms_nvidia_460_version)_$(arch).deb)
 endif
 
 ifeq ($(do_dkms_nvidia_server),true)
