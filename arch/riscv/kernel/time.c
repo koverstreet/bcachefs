@@ -12,6 +12,7 @@
  *   GNU General Public License for more details.
  */
 
+#include <linux/of_clk.h>
 #include <linux/clocksource.h>
 #include <linux/clockchips.h>
 #include <linux/delay.h>
@@ -57,5 +58,6 @@ void __init time_init(void)
 
 	lpj_fine = riscv_timebase / HZ;
 
+	of_clk_init(NULL);
 	init_clockevent();
 }
