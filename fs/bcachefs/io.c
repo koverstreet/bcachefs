@@ -267,10 +267,6 @@ int bch2_extent_update(struct btree_trans *trans,
 
 	if (disk_res &&
 	    disk_sectors_delta > (s64) disk_res->sectors) {
-		pr_info("disk_sectors_delta %lli disk_res %llu",
-			disk_sectors_delta,
-			disk_res->sectors);
-
 		ret = bch2_disk_reservation_add(trans->c, disk_res,
 					disk_sectors_delta - disk_res->sectors,
 					0);
