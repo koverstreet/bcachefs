@@ -148,8 +148,8 @@ renesas_sdhi_internal_dmac_start_dma(struct tmio_mmc_host *host,
 	/* This DMAC cannot handle if sg_len is not 1 */
 	WARN_ON(host->sg_len > 1);
 
-	/* This DMAC cannot handle if buffer is not 8-bytes alignment */
-	if (!IS_ALIGNED(sg->offset, 8))
+	/* This DMAC cannot handle if buffer is not 128-bytes alignment */
+	if (!IS_ALIGNED(sg->offset, 128))
 		goto force_pio;
 
 	if (data->flags & MMC_DATA_READ) {
