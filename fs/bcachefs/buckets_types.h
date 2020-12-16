@@ -85,9 +85,9 @@ struct bch_fs_usage {
 	u64			compressed;
 #endif
 
-	/* broken out: */
 
 	u64			persistent_reserved[BCH_REPLICAS_MAX];
+	u64			ec_reserved;
 	u64			replicas[];
 };
 

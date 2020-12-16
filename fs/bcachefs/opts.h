@@ -164,7 +164,7 @@ enum opt_type {
 	x(gc_reserve_percent,		u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
 	  OPT_UINT(5, 21),						\
-	  BCH_SB_GC_RESERVE,		8,				\
+	  BCH_SB_GC_RESERVE,		15,				\
 	  "%",		"Percentage of disk space to reserve for copygc")\
 	x(gc_reserve_bytes,		u64,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
