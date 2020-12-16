@@ -750,6 +750,11 @@ u64 *bch2_acc_percpu_u64s(u64 __percpu *, unsigned);
 
 #define cmp_int(l, r)		((l > r) - (l < r))
 
+static inline int u8_cmp(u8 l, u8 r)
+{
+	return cmp_int(l, r);
+}
+
 static inline int uuid_le_cmp(const uuid_le u1, const uuid_le u2)
 {
 	return memcmp(&u1, &u2, sizeof(uuid_le));
