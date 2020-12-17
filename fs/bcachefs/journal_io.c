@@ -990,6 +990,8 @@ static int journal_write_alloc(struct journal *j, struct journal_buf *w,
 done:
 	rcu_read_unlock();
 
+	BUG_ON(bkey_bytes(&w->key.k) > sizeof(w->key));
+
 	return replicas >= c->opts.metadata_replicas_required ? 0 : -EROFS;
 }
 
