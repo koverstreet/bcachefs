@@ -87,24 +87,6 @@ struct dio_read {
 	struct bch_read_bio		rbio;
 };
 
-/* stub version */
-static int add_to_page_cache_lru_vec(struct address_space *mapping,
-				     struct page **pages,
-				     unsigned nr_pages,
-				     pgoff_t offset, gfp_t gfp_mask)
-{
-	int i, err = 0;
-
-	for (i = 0; i < nr_pages; i++) {
-		err = add_to_page_cache_lru(pages[i], mapping,
-					    offset + i, gfp_mask);
-		if (err)
-			break;
-	}
-
-	return i ?: err;
-}
-
 /* pagecache_block must be held */
 static int write_invalidate_inode_pages_range(struct address_space *mapping,
 					      loff_t start, loff_t end)
