@@ -593,12 +593,16 @@ static int mac_sonic_probe(struct platform_device *pdev)
 found:
 	err = register_netdev(dev);
 	if (err)
-		goto out;
+		goto undo_probe;
 
 	printk("%s: MAC %pM IRQ %d\n", dev->name, dev->dev_addr, dev->irq);
 
 	return 0;
 
+undo_probe:
+	dma_free_coherent(lp->device,
+			  SIZEOF_SONIC_DESC * SONIC_BUS_SCALE(lp->dma_bitmode),
+			  lp->descriptors, lp->descriptors_laddr);
 out:
 	free_netdev(dev);
 
