@@ -15477,6 +15477,7 @@ EXPORT_SYMBOL_GPL net/netfilter/nf_log_common 0x00000000	nf_log_dump_packet_comm
 EXPORT_SYMBOL_GPL net/netfilter/nf_log_common 0x00000000	nf_log_dump_sk_uid_gid
 EXPORT_SYMBOL_GPL net/netfilter/nf_log_common 0x00000000	nf_log_dump_tcp_header
 EXPORT_SYMBOL_GPL net/netfilter/nf_log_common 0x00000000	nf_log_dump_udp_header
+EXPORT_SYMBOL_GPL net/netfilter/nf_log_common 0x00000000	nf_log_dump_vlan
 EXPORT_SYMBOL_GPL net/netfilter/nf_log_common 0x00000000	nf_log_l2packet
 EXPORT_SYMBOL_GPL net/netfilter/nf_nat 0x00000000	__nf_nat_l4proto_find
 EXPORT_SYMBOL_GPL net/netfilter/nf_nat 0x00000000	nf_ct_nat_ext_add
