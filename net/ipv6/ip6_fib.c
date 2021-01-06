@@ -847,6 +847,8 @@ static void fib6_purge_rt(struct rt6_info *rt, struct fib6_node *fn,
 {
 	struct fib6_table *table = rt->rt6i_table;
 
+	/* Flush all cached dst in exception table */
+	rt6_flush_exceptions(rt);
 	if (atomic_read(&rt->rt6i_ref) != 1) {
 		/* This route is used as dummy address holder in some split
 		 * nodes. It is not leaked, but it still holds other resources,
@@ -1676,9 +1678,6 @@ static void fib6_del_route(struct fib6_table *table, struct fib6_node *fn,
 	rt->rt6i_node = NULL;
 	net->ipv6.rt6_stats->fib_rt_entries--;
 	net->ipv6.rt6_stats->fib_discarded_routes++;
-
-	/* Flush all cached dst in exception table */
-	rt6_flush_exceptions(rt);
 
 	/* Reset round-robin state, if necessary */
 	if (rcu_access_pointer(fn->rr_ptr) == rt)
