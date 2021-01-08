@@ -1,10 +1,10 @@
 spl-linux 0.7.5-1ubuntu2.2
 zfs-linux 0.7.5-1ubuntu16.10
-nvidia-graphics-drivers-390 390.141-0ubuntu0~0.18.04.1
+nvidia-graphics-drivers-390 390.141-0ubuntu0.18.04.1
 nvidia-graphics-drivers-435 435.21-0ubuntu0.18.04.3
-nvidia-graphics-drivers-450 450.102.04-0ubuntu0~0.18.04.1
+nvidia-graphics-drivers-450 450.102.04-0ubuntu0.18.04.1
 nvidia-graphics-drivers-455 455.45.01-0ubuntu0.18.04.1
-nvidia-graphics-drivers-460 460.32.03-0ubuntu0~0.18.04.1
+nvidia-graphics-drivers-460 460.32.03-0ubuntu0.18.04.1
 nvidia-graphics-drivers-418-server 418.152.00-0ubuntu0.18.04.1
 nvidia-graphics-drivers-440-server 440.95.01-0ubuntu0.18.04.1
 nvidia-graphics-drivers-450-server 450.80.02-0ubuntu0.18.04.3
