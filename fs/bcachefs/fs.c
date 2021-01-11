@@ -1020,7 +1020,10 @@ static const struct file_operations bch_file_operations = {
 	.open		= generic_file_open,
 	.fsync		= bch2_fsync,
 	.splice_read	= generic_file_splice_read,
+#if 0
+	/* Busted: */
 	.splice_write	= iter_file_splice_write,
+#endif
 	.fallocate	= bch2_fallocate_dispatch,
 	.unlocked_ioctl = bch2_fs_file_ioctl,
 #ifdef CONFIG_COMPAT
