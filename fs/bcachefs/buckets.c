@@ -2118,6 +2118,7 @@ int bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 			      unsigned sectors, int flags)
 {
 	struct bch_fs_pcpu *pcpu;
+	struct bch_fs_usage_short usage;
 	u64 old, v, get;
 	s64 sectors_available;
 	int ret;
@@ -2156,7 +2157,8 @@ recalculate:
 	mutex_lock(&c->sectors_available_lock);
 
 	percpu_u64_set(&c->pcpu->sectors_available, 0);
-	sectors_available = avail_factor(__bch2_fs_usage_read_short(c).free);
+	usage = __bch2_fs_usage_read_short(c);
+	sectors_available = avail_factor(usage.free);
 
 	if (sectors <= sectors_available ||
 	    (flags & BCH_DISK_RESERVATION_NOFAIL)) {
@@ -2166,6 +2168,23 @@ recalculate:
 		res->sectors			+= sectors;
 		ret = 0;
 	} else {
+		bch_err(c, "-ENOSPC:\n"
+			"real capacity:\t%llu\n"
+			"hidden:\t%llu\n"
+			"btree:\t%llu\n"
+			"data:\t%llu\n"
+			"reserved:\t%llu\n"
+			"onlinereserved:\t%llu\n"
+			"exposed capacity:\t%llu\n"
+			"used:\t%llu\n",
+			c->capacity,
+			bch2_fs_usage_read_one(c, &c->usage_base->hidden),
+			bch2_fs_usage_read_one(c, &c->usage_base->btree),
+			bch2_fs_usage_read_one(c, &c->usage_base->data),
+			bch2_fs_usage_read_one(c, &c->usage_base->reserved),
+			bch2_fs_usage_read_one(c, &c->usage_base->online_reserved),
+			usage.capacity,
+			usage.used);
 		atomic64_set(&c->sectors_available, sectors_available);
 		ret = -ENOSPC;
 	}

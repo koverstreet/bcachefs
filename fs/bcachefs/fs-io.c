@@ -1465,6 +1465,8 @@ static int __bch2_buffered_write(struct bch_inode_info *inode,
 retry_reservation:
 		ret = bch2_page_reservation_get(c, inode, page, &res,
 						pg_offset, pg_len, true);
+		if (ret)
+			bch_err(c, "err %i from bch2_page_reservation_get", ret);
 
 		if (ret && !PageUptodate(page)) {
 			ret = bch2_read_single_page(page, mapping);
