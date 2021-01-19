@@ -154,7 +154,7 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		if (ret)
 			goto err;
 
-		if (disk_sectors_delta > (s64) &op->res.sectors) {
+		if (disk_sectors_delta > (s64) op->res.sectors) {
 			ret = bch2_disk_reservation_add(c, &op->res,
 						disk_sectors_delta - op->res.sectors,
 						!should_check_enospc
