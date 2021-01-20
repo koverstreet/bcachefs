@@ -520,11 +520,11 @@ static int pcan_usb_fd_decode_canmsg(struct pcan_usb_fd_if *usb_if,
 	else
 		memcpy(cfd->data, rm->d, cfd->len);
 
-	peak_usb_netif_rx(skb, &usb_if->time_ref,
-			  le32_to_cpu(rm->ts_low), le32_to_cpu(rm->ts_high));
-
 	netdev->stats.rx_packets++;
 	netdev->stats.rx_bytes += cfd->len;
+
+	peak_usb_netif_rx(skb, &usb_if->time_ref,
+			  le32_to_cpu(rm->ts_low), le32_to_cpu(rm->ts_high));
 
 	return 0;
 }
@@ -587,11 +587,11 @@ static int pcan_usb_fd_decode_status(struct pcan_usb_fd_if *usb_if,
 	if (!skb)
 		return -ENOMEM;
 
-	peak_usb_netif_rx(skb, &usb_if->time_ref,
-			  le32_to_cpu(sm->ts_low), le32_to_cpu(sm->ts_high));
-
 	netdev->stats.rx_packets++;
 	netdev->stats.rx_bytes += cf->can_dlc;
+
+	peak_usb_netif_rx(skb, &usb_if->time_ref,
+			  le32_to_cpu(sm->ts_low), le32_to_cpu(sm->ts_high));
 
 	return 0;
 }
