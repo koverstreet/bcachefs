@@ -380,8 +380,10 @@ static int aemif_probe(struct platform_device *pdev)
 	 */
 	for_each_available_child_of_node(np, child_np) {
 		ret = of_aemif_parse_abus_config(pdev, child_np);
-		if (ret < 0)
+		if (ret < 0) {
+			of_node_put(child_np);
 			goto error;
+		}
 	}
 
 	for (i = 0; i < aemif->num_cs; i++) {
@@ -400,8 +402,10 @@ static int aemif_probe(struct platform_device *pdev)
 	 */
 	for_each_available_child_of_node(np, child_np) {
 		ret = of_platform_populate(child_np, NULL, dev_lookup, dev);
-		if (ret < 0)
+		if (ret < 0) {
+			of_node_put(child_np);
 			goto error;
+		}
 	}
 
 	return 0;
