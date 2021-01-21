@@ -2012,6 +2012,7 @@ out_forget:
 	NFS_SERVER(ino)->pnfs_curr_ld->free_lseg(lseg);
 	if (!pnfs_layout_is_valid(lo))
 		nfs_commit_inode(ino, 0);
+	pnfs_free_lseg_list(&free_me);
 	return ERR_PTR(-EAGAIN);
 }
 
