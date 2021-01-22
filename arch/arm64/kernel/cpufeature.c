@@ -1194,6 +1194,19 @@ static const struct arm64_cpu_capabilities arm64_features[] = {
 		.cpu_enable = cpu_clear_disr,
 	},
 #endif /* CONFIG_ARM64_RAS_EXTN */
+#ifdef CONFIG_ARM64_SSBD
+	{
+		.desc = "Speculative Store Bypassing Safe (SSBS)",
+		.capability = ARM64_SSBS,
+		.type = ARM64_CPUCAP_WEAK_LOCAL_CPU_FEATURE,
+		.matches = has_cpuid_feature,
+		.sys_reg = SYS_ID_AA64PFR1_EL1,
+		.field_pos = ID_AA64PFR1_SSBS_SHIFT,
+		.sign = FTR_UNSIGNED,
+		.min_field_value = ID_AA64PFR1_SSBS_PSTATE_ONLY,
+		.cpu_enable = cpu_enable_ssbs,
+	},
+#endif
 	{},
 };
 
@@ -1252,19 +1265,6 @@ static const struct arm64_cpu_capabilities arm64_elf_hwcaps[] = {
 	HWCAP_CAP(SYS_ID_AA64PFR1_EL1, ID_AA64PFR1_SSBS_SHIFT, FTR_UNSIGNED, ID_AA64PFR1_SSBS_PSTATE_INSNS, CAP_HWCAP, HWCAP_SSBS),
 #ifdef CONFIG_ARM64_SVE
 	HWCAP_CAP(SYS_ID_AA64PFR0_EL1, ID_AA64PFR0_SVE_SHIFT, FTR_UNSIGNED, ID_AA64PFR0_SVE, CAP_HWCAP, HWCAP_SVE),
-#endif
-#ifdef CONFIG_ARM64_SSBD
-	{
-		.desc = "Speculative Store Bypassing Safe (SSBS)",
-		.capability = ARM64_SSBS,
-		.type = ARM64_CPUCAP_WEAK_LOCAL_CPU_FEATURE,
-		.matches = has_cpuid_feature,
-		.sys_reg = SYS_ID_AA64PFR1_EL1,
-		.field_pos = ID_AA64PFR1_SSBS_SHIFT,
-		.sign = FTR_UNSIGNED,
-		.min_field_value = ID_AA64PFR1_SSBS_PSTATE_ONLY,
-		.cpu_enable = cpu_enable_ssbs,
-	},
 #endif
 	{},
 };
