@@ -27,7 +27,7 @@ fi
 
 # Determine if we have any updates.
 : >"debian/dkms-versions.new"
-while read package version
+while read package version remainder
 do
 	for pocket_raw in $pocket_list
 	do
@@ -46,12 +46,13 @@ EOL
 	if [ "$version" != "$pocket_version" ]; then
 		echo "$package: updated to $pocket_version"
 	fi
-	echo "$package $pocket_version" >>"debian/dkms-versions.new"
+	echo "$package $pocket_version $remainder" | sed -e 's/  *$//' >>"debian/dkms-versions.new"
 done <"debian/dkms-versions"
 if ! cmp -s "debian/dkms-versions.new" "debian/dkms-versions"; then
 	mv -f "debian/dkms-versions.new" "debian/dkms-versions"
-	git commit -a -s -m "UBUNTU: update dkms package versions" \
-		-m "BugLink: https://bugs.launchpad.net/bugs/1786013"
+	git commit -s -m "UBUNTU: update dkms package versions" \
+		-m "BugLink: https://bugs.launchpad.net/bugs/1786013" \
+		"debian/dkms-versions"
 else
 	rm -f "debian/dkms-versions.new"
 fi
