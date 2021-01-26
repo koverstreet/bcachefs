@@ -1713,12 +1713,13 @@ int bch2_dev_online(struct bch_fs *c, const char *path)
 		goto err;
 	}
 
+	ca = bch_dev_locked(c, dev_idx);
+
 	if (bch2_trans_mark_dev_sb(c, NULL, ca)) {
 		err = "bch2_trans_mark_dev_sb() error";
 		goto err;
 	}
 
-	ca = bch_dev_locked(c, dev_idx);
 	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
 		err = __bch2_dev_read_write(c, ca);
 		if (err)
