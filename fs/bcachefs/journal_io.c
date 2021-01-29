@@ -104,12 +104,14 @@ add:
 		if (dup->bad) {
 			/* we'll replace @dup: */
 		} else if (bad) {
+			i = dup;
 			goto found;
 		} else {
 			fsck_err_on(bytes != vstruct_bytes(&dup->j) ||
 				    memcmp(j, &dup->j, bytes), c,
 				    "found duplicate but non identical journal entries (seq %llu)",
 				    le64_to_cpu(j->seq));
+			i = dup;
 			goto found;
 		}
 	}
@@ -133,7 +135,7 @@ add:
 
 	list_add(&i->list, where);
 found:
-	for (ptr = i->ptrs; ptr < i->ptrs + i->nr_ptrs; i++) {
+	for (ptr = i->ptrs; ptr < i->ptrs + i->nr_ptrs; ptr++) {
 		if (ptr->dev == ca->dev_idx) {
 			bch_err(c, "duplicate journal entry %llu on same device",
 				le64_to_cpu(i->j.seq));
