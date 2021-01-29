@@ -1289,6 +1289,9 @@ static void do_journal_write(struct closure *cl)
 		bio->bi_private		= ca;
 		bio->bi_opf		= REQ_OP_WRITE|REQ_SYNC|REQ_META;
 
+		BUG_ON(bio->bi_iter.bi_sector == ca->prev_journal_sector);
+		ca->prev_journal_sector = bio->bi_iter.bi_sector;
+
 		if (!JSET_NO_FLUSH(w->data))
 			bio->bi_opf    |= REQ_FUA;
 		if (!JSET_NO_FLUSH(w->data) && !w->separate_flush)
