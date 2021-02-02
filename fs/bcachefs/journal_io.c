@@ -1041,10 +1041,10 @@ static int journal_write_alloc(struct journal *j, struct journal_buf *w,
 		c->opts.foreground_target;
 	unsigned i, replicas = 0, replicas_want =
 		READ_ONCE(c->opts.metadata_replicas);
-retry:
+
 	rcu_read_lock();
+retry:
 	devs = target_rw_devs(c, BCH_DATA_journal, target);
-	rcu_read_unlock();
 
 	devs_sorted = bch2_dev_alloc_list(c, &j->wp.stripe, &devs);
 
