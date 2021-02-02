@@ -15,6 +15,7 @@
 #include "journal.h"
 #include "journal_reclaim.h"
 #include "keylist.h"
+#include "subvolume.h"
 #include "replicas.h"
 
 #include <linux/prefetch.h>
@@ -850,6 +851,25 @@ static int extent_handle_overwrites(struct btree_trans *trans,
 
 			update_iter = bch2_trans_get_iter(trans, btree_id, update->k.p,
 							  BTREE_ITER_NOT_EXTENTS|
+							  BTREE_ITER_ALL_SNAPSHOTS|
+							  BTREE_ITER_INTENT);
+			bch2_trans_update2(trans, update_iter, update);
+			bch2_trans_iter_put(trans, update_iter);
+		}
+
+		if (k.k->p.snapshot != insert->k.p.snapshot) {
+			update = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
+			if ((ret = PTR_ERR_OR_ZERO(update)))
+				break;
+
+			bkey_reassemble(update, k);
+
+			bch2_cut_front(start, update);
+			bch2_cut_back(insert->k.p, update);
+
+			update_iter = bch2_trans_get_iter(trans, btree_id, update->k.p,
+							  BTREE_ITER_NOT_EXTENTS|
+							  BTREE_ITER_ALL_SNAPSHOTS|
 							  BTREE_ITER_INTENT);
 			bch2_trans_update2(trans, update_iter, update);
 			bch2_trans_iter_put(trans, update_iter);
@@ -863,6 +883,7 @@ static int extent_handle_overwrites(struct btree_trans *trans,
 
 			bkey_init(&update->k);
 			update->k.p = k.k->p;
+			update->k.p.snapshot = insert->k.p.snapshot;
 
 			update_iter = bch2_trans_get_iter(trans, btree_id, update->k.p,
 							  BTREE_ITER_NOT_EXTENTS|
@@ -881,6 +902,7 @@ static int extent_handle_overwrites(struct btree_trans *trans,
 
 			update_iter = bch2_trans_get_iter(trans, btree_id, update->k.p,
 							  BTREE_ITER_NOT_EXTENTS|
+							  BTREE_ITER_ALL_SNAPSHOTS|
 							  BTREE_ITER_INTENT);
 			bch2_trans_update2(trans, update_iter, update);
 			bch2_trans_iter_put(trans, update_iter);
@@ -888,6 +910,35 @@ static int extent_handle_overwrites(struct btree_trans *trans,
 		}
 
 		k = bch2_btree_iter_next_with_updates(iter);
+	}
+	bch2_trans_iter_put(trans, iter);
+
+	return ret;
+}
+
+static int need_whiteout_for_snapshot(struct btree_trans *trans,
+				      enum btree_id btree_id, struct bpos pos)
+{
+	struct btree_iter *iter;
+	struct bkey_s_c k;
+	int ret;
+
+	if (pos.snapshot == U32_MAX)
+		return 0;
+
+	pos.snapshot++;
+
+	for_each_btree_key(trans, iter, btree_id, pos,
+			   BTREE_ITER_ALL_SNAPSHOTS, k, ret) {
+		if (bkey_cmp(k.k->p, pos))
+			break;
+
+		if (bch2_snapshot_is_ancestor(trans->c,
+					      iter->snapshot,
+					      k.k->p.snapshot)) {
+			ret = !bkey_whiteout(k.k);
+			break;
+		}
 	}
 	bch2_trans_iter_put(trans, iter);
 
@@ -969,6 +1020,17 @@ int __bch2_trans_commit(struct btree_trans *trans)
 	}
 
 	trans_for_each_update2(trans, i) {
+		if (bkey_deleted(&i->k->k) &&
+		    (i->iter->flags & BTREE_ITER_FILTER_SNAPSHOTS)) {
+			ret = need_whiteout_for_snapshot(trans,
+					i->btree_id, i->k->k.p);
+			if (unlikely(ret < 0))
+				goto out;
+
+			if (ret)
+				i->k->k.type = KEY_TYPE_whiteout;
+		}
+
 		ret = bch2_btree_iter_traverse(i->iter);
 		if (unlikely(ret)) {
 			trace_trans_restart_traverse(trans->ip);

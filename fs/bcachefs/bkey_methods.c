@@ -31,7 +31,7 @@ static const char *deleted_key_invalid(const struct bch_fs *c,
 	.key_invalid = deleted_key_invalid,		\
 }
 
-#define bch2_bkey_ops_discard (struct bkey_ops) {	\
+#define bch2_bkey_ops_whiteout (struct bkey_ops) {	\
 	.key_invalid = deleted_key_invalid,		\
 }
 
@@ -150,8 +150,8 @@ const char *__bch2_bkey_invalid(struct bch_fs *c, struct bkey_s_c k,
 	    bkey_val_u64s(k.k) > BKEY_BTREE_PTR_VAL_U64s_MAX)
 		return "value too big";
 
-	if (btree_node_type_is_extents(type)) {
-		if ((k.k->size == 0) != bkey_deleted(k.k))
+	if (btree_node_type_is_extents(type) && !bkey_whiteout(k.k)) {
+		if (k.k->size == 0)
 			return "bad size field";
 
 		if (k.k->size > k.k->p.offset)
