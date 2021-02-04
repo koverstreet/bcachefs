@@ -343,6 +343,14 @@ struct btree_insert_entry {
 #define BTREE_ITER_MAX		32
 #endif
 
+struct btree_trans_commit_hook;
+typedef int (btree_trans_commit_hook_fn)(struct btree_trans *, struct btree_trans_commit_hook *);
+
+struct btree_trans_commit_hook {
+	btree_trans_commit_hook_fn	*fn;
+	struct btree_trans_commit_hook	*next;
+};
+
 struct btree_trans {
 	struct bch_fs		*c;
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -377,6 +385,7 @@ struct btree_trans {
 	struct btree_insert_entry *updates2;
 
 	/* update path: */
+	struct btree_trans_commit_hook *hooks;
 	struct jset_entry	*extra_journal_entries;
 	unsigned		extra_journal_entry_u64s;
 	struct journal_entry_pin *journal_pin;
