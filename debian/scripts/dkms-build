@@ -141,9 +141,9 @@ rc=0
 	"$dkms_conf" || rc=1
 
 # Find the log and add it to our own.
-for log in "$dkms_dir/build/$dkms_package/$dkms_version/$abi_flavour"/*/"log/make.log"
+for log in "$dkms_dir/build/$dkms_package/$dkms_version/$abi_flavour"/*/"log/make.log" "$dkms_dir/build/$dkms_package/$dkms_version/build/make.log"
 do
-	break
+	[ -f "$log" ] && break
 done
 sed -e "s@$dkms_dir@<<DKMSDIR>>@g" <"$log"
 
