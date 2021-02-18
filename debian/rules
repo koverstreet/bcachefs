@@ -126,7 +126,7 @@ binary: binary-indep binary-arch
 
 build: build-arch build-indep
 
-clean: debian/control
+clean: debian/control debian/canonical-certs.pem
 	dh_testdir
 	dh_testroot
 	dh_clean
@@ -210,3 +210,15 @@ debian/control: $(DEBIAN)/control.stub
 	LANG=C kernel-wedge gen-control $(release)-$(abinum) | \
 		perl -f $(DROOT)/scripts/misc/kernel-wedge-arch.pl $(arch) \
 		>>$(CURDIR)/debian/control
+
+debian/canonical-certs.pem: $(wildcard $(DROOT)/certs/*-all.pem) $(wildcard $(DROOT)/certs/*-$(arch).pem) $(wildcard $(DEBIAN)/certs/*-all.pem) $(wildcard $(DEBIAN)/certs/*-$(arch).pem)
+	for cert in $(sort $(notdir $^));					\
+	do									\
+		for dir in $(DEBIAN) $(DROOT);					\
+		do								\
+			if [ -f "$$dir/certs/$$cert" ]; then			\
+				cat "$$dir/certs/$$cert";			\
+				break;						\
+			fi;							\
+		done;								\
+	done >"$@"
