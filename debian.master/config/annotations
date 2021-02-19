@@ -1774,6 +1774,7 @@ CONFIG_DRM_TVE200                               policy<{'armhf': 'm'}>
 CONFIG_DRM_MGAG200                              note<LP#1693337>
 CONFIG_DRM_STI                                  note<LP#1398458>
 CONFIG_DRM_HISI_HIBMC                           note<LP#1762940>
+CONFIG_DRM_BOCHS                                mark<ENFORCED> note<LP#1872863> note<LP#1916290>
 
 # Menu: Device Drivers >> Graphics support >> Direct Rendering Manager (XFree86 4.1.0 and higher DRI support) >> AMD GPU
 CONFIG_DRM_AMDGPU                               policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
