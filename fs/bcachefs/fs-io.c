@@ -865,7 +865,7 @@ void bch2_readahead(struct readahead_control *ractl)
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS, POS_MIN,
+	iter = bch2_trans_get_iter(&trans, BTREE_ID_extents, POS_MIN,
 				   BTREE_ITER_SLOTS);
 
 	bch2_pagecache_add_get(&inode->ei_pagecache_lock);
@@ -911,7 +911,7 @@ static void __bchfs_readpage(struct bch_fs *c, struct bch_read_bio *rbio,
 	BUG_ON(!bio_add_page(&rbio->bio, page, PAGE_SIZE, 0));
 
 	bch2_trans_init(&trans, c, 0, 0);
-	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS, POS_MIN,
+	iter = bch2_trans_get_iter(&trans, BTREE_ID_extents, POS_MIN,
 				   BTREE_ITER_SLOTS);
 
 	bchfs_read(&trans, iter, rbio, inum, NULL);
@@ -2121,7 +2121,7 @@ static inline int range_has_data(struct bch_fs *c,
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	for_each_btree_key(&trans, iter, BTREE_ID_EXTENTS, start, 0, k, ret) {
+	for_each_btree_key(&trans, iter, BTREE_ID_extents, start, 0, k, ret) {
 		if (bkey_cmp(bkey_start_pos(k.k), end) >= 0)
 			break;
 
@@ -2497,7 +2497,7 @@ static long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
 			goto err;
 	}
 
-	src = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
+	src = bch2_trans_get_iter(&trans, BTREE_ID_extents,
 			POS(inode->v.i_ino, src_start >> 9),
 			BTREE_ITER_INTENT);
 	dst = bch2_trans_copy_iter(&trans, src);
@@ -2652,7 +2652,7 @@ static long bchfs_fallocate(struct bch_inode_info *inode, int mode,
 		truncate_pagecache_range(&inode->v, offset, end - 1);
 	}
 
-	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
+	iter = bch2_trans_get_iter(&trans, BTREE_ID_extents,
 			POS(inode->v.i_ino, block_start >> 9),
 			BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 	end_pos = POS(inode->v.i_ino, block_end >> 9);
@@ -2983,7 +2983,7 @@ static loff_t bch2_seek_data(struct file *file, u64 offset)
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	for_each_btree_key(&trans, iter, BTREE_ID_EXTENTS,
+	for_each_btree_key(&trans, iter, BTREE_ID_extents,
 			   POS(inode->v.i_ino, offset >> 9), 0, k, ret) {
 		if (k.k->p.inode != inode->v.i_ino) {
 			break;
@@ -3078,7 +3078,7 @@ static loff_t bch2_seek_hole(struct file *file, u64 offset)
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	for_each_btree_key(&trans, iter, BTREE_ID_EXTENTS,
+	for_each_btree_key(&trans, iter, BTREE_ID_extents,
 			   POS(inode->v.i_ino, offset >> 9),
 			   BTREE_ITER_SLOTS, k, ret) {
 		if (k.k->p.inode != inode->v.i_ino) {
