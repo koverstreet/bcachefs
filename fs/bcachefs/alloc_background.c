@@ -341,7 +341,7 @@ int bch2_alloc_read(struct bch_fs *c, struct journal_keys *journal_keys)
 	int ret;
 
 	down_read(&c->gc_lock);
-	ret = bch2_btree_and_journal_walk(c, journal_keys, BTREE_ID_ALLOC,
+	ret = bch2_btree_and_journal_walk(c, journal_keys, BTREE_ID_alloc,
 					  NULL, bch2_alloc_read_fn);
 	up_read(&c->gc_lock);
 
@@ -369,7 +369,7 @@ retry:
 	bch2_trans_begin(trans);
 
 	ret = bch2_btree_key_cache_flush(trans,
-			BTREE_ID_ALLOC, iter->pos);
+			BTREE_ID_alloc, iter->pos);
 	if (ret)
 		goto err;
 
@@ -411,7 +411,7 @@ int bch2_alloc_write(struct bch_fs *c, unsigned flags)
 
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
 
-	iter = bch2_trans_get_iter(&trans, BTREE_ID_ALLOC, POS_MIN,
+	iter = bch2_trans_get_iter(&trans, BTREE_ID_alloc, POS_MIN,
 				   BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
 	for_each_member_device(ca, c, i) {
@@ -448,7 +448,7 @@ int bch2_bucket_io_time_reset(struct btree_trans *trans, unsigned dev,
 	u64 *time, now;
 	int ret = 0;
 
-	iter = bch2_trans_get_iter(trans, BTREE_ID_ALLOC, POS(dev, bucket_nr),
+	iter = bch2_trans_get_iter(trans, BTREE_ID_alloc, POS(dev, bucket_nr),
 				   BTREE_ITER_CACHED|
 				   BTREE_ITER_CACHED_NOFILL|
 				   BTREE_ITER_INTENT);
@@ -960,7 +960,7 @@ static int bch2_invalidate_buckets(struct bch_fs *c, struct bch_dev *ca)
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	iter = bch2_trans_get_iter(&trans, BTREE_ID_ALLOC,
+	iter = bch2_trans_get_iter(&trans, BTREE_ID_alloc,
 				   POS(ca->dev_idx, 0),
 				   BTREE_ITER_CACHED|
 				   BTREE_ITER_CACHED_NOFILL|
