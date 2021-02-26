@@ -60,13 +60,13 @@ define build_dkms_sign =
 	)
 endef
 define build_dkms =
-	$(SHELL) $(DROOT)/scripts/dkms-build $(dkms_dir) $(abi_release)-$* '$(call build_dkms_sign,$(builddir)/build-$*)' $(1) $(2) $(3) $(4)
+	CROSS_COMPILE=$(CROSS_COMPILE) $(SHELL) $(DROOT)/scripts/dkms-build $(dkms_dir) $(abi_release)-$* '$(call build_dkms_sign,$(builddir)/build-$*)' $(1) $(2) $(3) $(4) $(5)
 endef
 
 # nvidia_build_payload 450 450 450_450.102.04-0ubuntu0.20.04.1
 # nvidia_build_payload 450-server 450srv 50.102.04-0ubuntu0.20.04.1
 define nvidia_build_payload =
-	$(call build_dkms, $(bldinfo_pkg_name)-$*, $(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/signatures, nvidia-$(2), pool/restricted/n/nvidia-graphics-drivers-$(1)/nvidia-kernel-source-$(1)_$(3)_$(arch).deb pool/restricted/n/nvidia-graphics-drivers-$(1)/nvidia-dkms-$(1)_$(3)_$(arch).deb)
+	$(call build_dkms, $(bldinfo_pkg_name)-$*, $(pkgdir_bldinfo)/usr/lib/linux/$(abi_release)-$*/signatures, "", nvidia-$(2), pool/restricted/n/nvidia-graphics-drivers-$(1)/nvidia-kernel-source-$(1)_$(3)_$(arch).deb pool/restricted/n/nvidia-graphics-drivers-$(1)/nvidia-dkms-$(1)_$(3)_$(arch).deb)
 endef
 # nvidia_build 450
 # nvidia_build 450-server
@@ -283,21 +283,7 @@ ifneq ($(skipdbg),true)
 		$(dbgpkgdir)/usr/lib/debug/boot/vmlinux-$(abi_release)-$*
 	$(build_cd) $(kmake) $(build_O) modules_install $(vdso) \
 		INSTALL_MOD_PATH=$(dbgpkgdir)/usr/lib/debug
-	# Add .gnu_debuglink sections to each stripped .ko
-	# pointing to unstripped verson
-	find $(pkgdir) -name '*.ko' | sed 's|$(pkgdir)||'| while read module ; do \
-		if [[ -f "$(dbgpkgdir)/usr/lib/debug/$$module" ]] ; then \
-			$(CROSS_COMPILE)objcopy \
-				--add-gnu-debuglink=$(dbgpkgdir)/usr/lib/debug/$$module \
-				$(pkgdir)/$$module; \
-			if grep -q CONFIG_MODULE_SIG=y $(builddir)/build-$*/.config; then \
-				$(builddir)/build-$*/scripts/sign-file $(MODHASHALGO) \
-					$(MODSECKEY) \
-					$(MODPUBKEY) \
-					$(pkgdir)/$$module; \
-			fi; \
-		fi; \
-	done
+	# Add .gnu_debuglink sections only after all/DKMS modules are built.
 	rm -f $(dbgpkgdir)/usr/lib/debug/lib/modules/$(abi_release)-$*/build
 	rm -f $(dbgpkgdir)/usr/lib/debug/lib/modules/$(abi_release)-$*/source
 	rm -f $(dbgpkgdir)/usr/lib/debug/lib/modules/$(abi_release)-$*/modules.*
@@ -410,16 +396,39 @@ endif
 	install -d $(dkms_dir) $(dkms_dir)/headers $(dkms_dir)/build $(dkms_dir)/source
 	cp -rp "$(hdrdir)" "$(indep_hdrdir)" "$(dkms_dir)/headers"
 
-	$(if $(filter true,$(enable_zfs)),$(call build_dkms, $(mods_pkg_name)-$*, $(pkgdir)/lib/modules/$(abi_release)-$*/kernel, spl, pool/universe/s/spl-linux/spl-dkms_$(dkms_spl_linux_version)_all.deb))
-	$(if $(filter true,$(enable_zfs)),$(call build_dkms, $(mods_pkg_name)-$*, $(pkgdir)/lib/modules/$(abi_release)-$*/kernel, zfs, pool/universe/z/zfs-linux/zfs-dkms_$(dkms_zfs_linux_version)_all.deb))
+	$(if $(filter true,$(enable_zfs)),$(call build_dkms, $(mods_pkg_name)-$*, $(pkgdir)/lib/modules/$(abi_release)-$*/kernel, "", spl, pool/universe/s/spl-linux/spl-dkms_$(dkms_spl_linux_version)_all.deb))
+	$(if $(filter true,$(enable_zfs)),$(call build_dkms, $(mods_pkg_name)-$*, $(pkgdir)/lib/modules/$(abi_release)-$*/kernel, "", zfs, pool/universe/z/zfs-linux/zfs-dkms_$(dkms_zfs_linux_version)_all.deb))
 
-	$(if $(filter true,$(do_dkms_wireguard)),$(call build_dkms, $(mods_pkg_name)-$*, $(pkgdir)/lib/modules/$(abi_release)-$*/kernel, wireguard, pool/universe/w/wireguard-linux-compat/wireguard-dkms_$(dkms_wireguard_version)_all.deb))
+	$(if $(filter true,$(do_dkms_wireguard)),$(call build_dkms, $(mods_pkg_name)-$*, $(pkgdir)/lib/modules/$(abi_release)-$*/kernel, "", wireguard, pool/universe/w/wireguard-linux-compat/wireguard-dkms_$(dkms_wireguard_version)_all.deb))
 
 ifeq ($(do_dkms_nvidia),true)
 	$(foreach series,$(nvidia_desktop_series),$(call nvidia_build,$(series)))
 endif
 ifeq ($(do_dkms_nvidia_server),true)
 	$(foreach series,$(nvidia_server_series),$(call nvidia_build,$(series)))
+endif
+
+ifneq ($(skipdbg),true)
+	# Add .gnu_debuglink sections to each stripped .ko
+	# pointing to unstripped verson
+	find $(pkgdir) \
+	  $(if $(filter true,$(do_extras_package)),$(pkgdir_ex)) \
+	  -name '*.ko' | while read path_module ; do \
+		module="/lib/modules/$${path_module#*/lib/modules/}"; \
+		if [[ -f "$(dbgpkgdir)/usr/lib/debug/$$module" ]] ; then \
+			$(CROSS_COMPILE)objcopy \
+				--add-gnu-debuglink=$(dbgpkgdir)/usr/lib/debug/$$module \
+				$$path_module; \
+			if grep -q CONFIG_MODULE_SIG=y $(builddir)/build-$*/.config; then \
+				$(builddir)/build-$*/scripts/sign-file $(MODHASHALGO) \
+					$(MODSECKEY) \
+					$(MODPUBKEY) \
+					$$path_module; \
+			fi; \
+		else \
+			echo "WARNING: Missing debug symbols for module '$$module'."; \
+		fi; \
+	done
 endif
 
 	# Build the final ABI information.

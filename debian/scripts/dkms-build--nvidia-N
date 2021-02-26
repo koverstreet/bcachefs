@@ -10,14 +10,29 @@ abi_flavour="$2"
 sign="$3"
 pkgname="$4"
 pkgdir="$5"
-package="$6"
-shift 6
+dbgpkgdir="$6"
+package="$7"
+shift 7
 
 build="$( dirname "$objects" )/build"
 
-# Copy over the objects ready for reconstruction.
+# Copy over the objects ready for reconstruction.  The objects copy contains
+# the *.o files and the *.o-ur* retpoline files to allow the kernel to track
+# any retpoline sequences therein.  For our purposes we only want the *.o
+# files, elide the rest.
 mkdir -p "$pkgdir/bits/scripts"
-cp -rp "$objects"/* "$pkgdir/bits"
+(
+	gcc_variant1=$(gcc --version | head -1 | sed -e 's/^gcc/GCC:/')
+	gcc_variant2=$(gcc --version | head -1 | sed -e 's/^\(gcc\) \((.*)\) \(.*\)$/\1 version \3 \2/')
+	cd "$objects" || exit 1
+	find -name \*.o | \
+	while read file
+	do
+		cp --parents "$file" "$pkgdir/bits"
+		"$srcdir/debian/scripts/fix-filenames" "$pkgdir/bits/$file" "$gcc_variant1"
+		"$srcdir/debian/scripts/fix-filenames" "$pkgdir/bits/$file" "$gcc_variant2"
+	done
+)
 
 # Install the support files we need.
 cp "$srcdir/scripts/module-common.lds" "$pkgdir/bits/scripts"
@@ -45,9 +60,22 @@ grep /usr/bin/ld.bfd "$log" | sed -e "s@$build/@@g" \
 	elif [ "$sign" = "--lrm" ]; then
 		# We are in LRM build the package a copy in any signatures we can
 		# find for them.  These will be added after linking.
+		base="/usr/lib/linux/$abi_flavour"
+
+		# Check the GCC version we are using against that used in the kernel
+		# NOTE: that we treat this as only a warning, as if the binaries did come
+		# out differently then we will actually 
+		echo "II: checking gcc version ..."
+		cat "$base/compiler"
+		gcc --version
+		gcc_was=$(cat "$base/compiler" | sed -e 's/^GCC:/gcc/')
+		gcc_is=$(gcc --version | head -1)
+		if [ "$gcc_was" != "$gcc_is" ]; then
+			echo "WW: gcc version missmatch between linux and linux-restricted-modules"
+			echo "WW: was: $gcc_was  is: $gcc_is"
+		fi
 
 		# Apply any local signatures.
-		base="/usr/lib/linux/$abi_flavour"
 		echo "II: adding signatures from $base ..."
 		cp "$base/signatures/$package/"*".ko.sig" "$pkgdir/bits"
 		sha256sum -c "$base/signatures/$package/SHA256SUMS" || exit 1

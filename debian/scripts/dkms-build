@@ -6,8 +6,9 @@ abi_flavour="$2"
 sign="$3"
 pkgname="$4"
 pkgdir="$5"
-package="$6"
-shift 6
+dbgpkgdir="$6"
+package="$7"
+shift 7
 
 here=$(dirname "$(readlink -f "${0}")")
 
@@ -104,6 +105,30 @@ done
 # package is installed directly, but not so much if we build it out
 # of the normal location.
 sed -i -e '/^PACKAGE_NAME=/ s/#//g' "$dkms_conf"
+
+# Run any dkms-package specfic configuration steps
+dkms_config_specific="$srcdir/$0-configure--$package"
+dkms_config_generic=$(echo "$dkms_config_specific" | sed -e 's/-[0-9][0-9]*$/-N/')
+for dkms_config in "$dkms_config_specific" "$dkms_config_generic"
+do
+	if [ -z "$dkms_config" -o ! -e "$dkms_config" ]; then
+		continue
+	fi
+	echo "II: dkms-build-configure $(basename "$dkms_config") found, executing"
+	$SHELL "$dkms_config" \
+		"$srcdir" \
+		"$dkms_conf" \
+		"$dkms_dir" \
+		"$abi_flavour" \
+		"$sign" \
+		"$pkgname" \
+		"$pkgdir" \
+		"$dbgpkgdir" \
+		"$package" \
+		"$@" || exit 1
+	break
+done
+
 cat - <<'EOF' >>"$dkms_conf"
 POST_BUILD="ubuntu-save-objects ${dkms_tree}/${PACKAGE_NAME}/${PACKAGE_VERSION}/build ${dkms_tree}/${PACKAGE_NAME}/${PACKAGE_VERSION}/objects $POST_BUILD"
 EOF
@@ -150,6 +175,34 @@ sed -e "s@$dkms_dir@<<DKMSDIR>>@g" <"$log"
 # If this build failed then exit here.
 [ "$rc" != 0 ] && exit "$rc"
 
+# Install the modules with debug symbols we possibly built,
+# and strip the original modules for the next install step.
+if [ -n "$dbgpkgdir" ]; then
+	dbgpkgdir="$dbgpkgdir/$package"
+	echo "II: dkms-build installing $package into $dbgpkgdir (debug symbols)"
+	install -d "$dbgpkgdir"
+	find "$dkms_dir/build/$dkms_package/$dkms_version/$abi_version" -name \*.ko |
+	while read module; do
+		vmodule=$( basename "$module" )
+
+		# Check for '.debug_info' section in order to copy module.
+		# Useful if debug symbols are requested but not built for
+		# any reason (including not yet supported by DKMS package).
+		# Strip module just in case even if section isn't present.
+		if ${CROSS_COMPILE}objdump -h -j '.debug_info' "$module" >/dev/null 2>&1
+		then
+			echo "copying $vmodule"
+			cp "$module" "$dbgpkgdir"
+		else
+			echo "ignoring $vmodule (missing debug symbols)"
+		fi
+
+		# Just 'strip -g' as '/usr/sbin/dkms' does.
+		echo "stripping $vmodule"
+		strip -g "$module"
+	done
+fi
+
 # Install and optionally sign the modules we have built.
 pkgdir="$pkgdir/$package"
 echo "II: dkms-build installing $package into $pkgdir"
@@ -183,7 +236,7 @@ dkms_build_specific="$srcdir/$0--$package"
 dkms_build_generic=$(echo "$dkms_build_specific" | sed -n -e 's/-[0-9][0-9]*[a-z]*$/-N/p')
 for dkms_build in "$dkms_build_specific" "$dkms_build_generic"
 do
-	if [ ! -e "$dkms_build" ]; then
+	if [ -z "$dkms_build" -o ! -e "$dkms_build" ]; then
 		continue
 	fi
 	echo "II: dkms-build override $(basename "$dkms_build") found, executing"
@@ -196,6 +249,7 @@ do
 		"$sign" \
 		"$pkgname" \
 		"$pkgdir" \
+		"$dbgpkgdir" \
 		"$package" \
 		"$@" || exit 1
 	break
