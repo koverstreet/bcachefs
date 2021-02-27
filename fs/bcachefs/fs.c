@@ -1186,6 +1186,40 @@ static struct dentry *bch2_fh_to_parent(struct super_block *sb, struct fid *fid,
 }
 #endif
 
+#if 0
+static struct dentry *bch_get_parent(struct dentry *child)
+{
+	struct bch_fs *c = child->d_sb->s_fs_info;
+	struct bch_inode_info *inode = to_bch_ei(dentry->d_inode);
+	struct bch_inode_unpacked dir_u;
+	struct bch_trans trans;
+	struct btree_iter *iter;
+	struct bkey_s_c k;
+	int ret;
+
+	bch2_trans_init(&trans, c, 4, 0);
+
+	iter = bch2_trans_get_iter(trans, BTREE_ID_dirents,
+				   POS(inode->ei_inode.bi_dir,
+				       inode->ei_inode.bi_dir_offset), 0);
+	k = bch2_btree_iter_peek_slot(iter);
+	ret = bkey_err(k);
+	if (ret)
+		goto err;
+
+
+err:
+	bch2_trans_exit(&trans);
+
+	struct inode *parent = bch2_vfs_inode_get(c, inode->ei_inode.bi_dir);
+
+	if (IS_ERR(parent))
+		return ERR_CAST(parent);
+
+	u64 parent_inum
+}
+#endif
+
 static const struct export_operations bch_export_ops = {
 	//.fh_to_dentry	= bch2_fh_to_dentry,
 	//.fh_to_parent	= bch2_fh_to_parent,
