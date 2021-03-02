@@ -675,6 +675,36 @@ retry:
 			continue;
 		}
 
+		if (fsck_err_on(!(target.bi_flags & BCH_INODE_BACKPTR_UNTRUSTED) &&
+				(target.bi_dir != k.k->p.inode ||
+				 target.bi_dir_offset != k.k->p.offset), c,
+				"inode %llu has wrong backpointer:\n"
+				"got       %llu:%llu\n"
+				"should be %llu:%llu",
+				d_inum,
+				target.bi_dir,
+				target.bi_dir_offset,
+				k.k->p.inode,
+				k.k->p.offset)) {
+			struct bkey_inode_buf p;
+
+			target.bi_dir		= k.k->p.inode;
+			target.bi_dir_offset	= k.k->p.offset;
+			bch2_trans_unlock(&trans);
+
+			bch2_inode_pack(c, &p, &target);
+
+			ret = bch2_btree_insert(c, BTREE_ID_inodes,
+						&p.inode.k_i, NULL, NULL,
+						BTREE_INSERT_NOFAIL|
+						BTREE_INSERT_LAZY_RW);
+			if (ret) {
+				bch_err(c, "error in fsck: error %i updating inode", ret);
+				goto err;
+			}
+			continue;
+		}
+
 		if (fsck_err_on(have_target &&
 				d.v->d_type !=
 				mode_to_type(target.bi_mode), c,

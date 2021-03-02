@@ -20,8 +20,10 @@ int bch2_create_trans(struct btree_trans *trans, u64 dir_inum,
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter *dir_iter = NULL;
+	struct btree_iter *inode_iter = NULL;
 	struct bch_hash_info hash = bch2_hash_info_init(c, new_inode);
 	u64 now = bch2_current_time(trans->c);
+	u64 dir_offset = 0;
 	int ret;
 
 	dir_iter = bch2_inode_peek(trans, dir_u, dir_inum, BTREE_ITER_INTENT);
@@ -34,7 +36,8 @@ int bch2_create_trans(struct btree_trans *trans, u64 dir_inum,
 	if (!name)
 		new_inode->bi_flags |= BCH_INODE_UNLINKED;
 
-	ret = bch2_inode_create(trans, new_inode);
+	inode_iter = bch2_inode_create(trans, new_inode);
+	ret = PTR_ERR_OR_ZERO(inode_iter);
 	if (ret)
 		goto err;
 
@@ -66,11 +69,18 @@ int bch2_create_trans(struct btree_trans *trans, u64 dir_inum,
 		ret = bch2_dirent_create(trans, dir_inum, &dir_hash,
 					 mode_to_type(new_inode->bi_mode),
 					 name, new_inode->bi_inum,
+					 &dir_offset,
 					 BCH_HASH_SET_MUST_CREATE);
 		if (ret)
 			goto err;
 	}
+
+	new_inode->bi_dir		= dir_u->bi_inum;
+	new_inode->bi_dir_offset	= dir_offset;
+
+	ret = bch2_inode_write(trans, inode_iter, new_inode);
 err:
+	bch2_trans_iter_put(trans, inode_iter);
 	bch2_trans_iter_put(trans, dir_iter);
 	return ret;
 }
@@ -82,6 +92,7 @@ int bch2_link_trans(struct btree_trans *trans, u64 dir_inum,
 	struct btree_iter *dir_iter = NULL, *inode_iter = NULL;
 	struct bch_hash_info dir_hash;
 	u64 now = bch2_current_time(trans->c);
+	u64 dir_offset = 0;
 	int ret;
 
 	inode_iter = bch2_inode_peek(trans, inode_u, inum, BTREE_ITER_INTENT);
@@ -92,6 +103,8 @@ int bch2_link_trans(struct btree_trans *trans, u64 dir_inum,
 	inode_u->bi_ctime = now;
 	bch2_inode_nlink_inc(inode_u);
 
+	inode_u->bi_flags |= BCH_INODE_BACKPTR_UNTRUSTED;
+
 	dir_iter = bch2_inode_peek(trans, dir_u, dir_inum, 0);
 	ret = PTR_ERR_OR_ZERO(dir_iter);
 	if (ret)
@@ -101,10 +114,17 @@ int bch2_link_trans(struct btree_trans *trans, u64 dir_inum,
 
 	dir_hash = bch2_hash_info_init(trans->c, dir_u);
 
-	ret =   bch2_dirent_create(trans, dir_inum, &dir_hash,
-				  mode_to_type(inode_u->bi_mode),
-				  name, inum, BCH_HASH_SET_MUST_CREATE) ?:
-		bch2_inode_write(trans, dir_iter, dir_u) ?:
+	ret = bch2_dirent_create(trans, dir_inum, &dir_hash,
+				 mode_to_type(inode_u->bi_mode),
+				 name, inum, &dir_offset,
+				 BCH_HASH_SET_MUST_CREATE);
+	if (ret)
+		goto err;
+
+	inode_u->bi_dir		= dir_inum;
+	inode_u->bi_dir_offset	= dir_offset;
+
+	ret =   bch2_inode_write(trans, dir_iter, dir_u) ?:
 		bch2_inode_write(trans, inode_iter, inode_u);
 err:
 	bch2_trans_iter_put(trans, dir_iter);
@@ -198,7 +218,8 @@ int bch2_rename_trans(struct btree_trans *trans,
 	struct btree_iter *src_dir_iter = NULL, *dst_dir_iter = NULL;
 	struct btree_iter *src_inode_iter = NULL, *dst_inode_iter = NULL;
 	struct bch_hash_info src_hash, dst_hash;
-	u64 src_inode, dst_inode, now = bch2_current_time(trans->c);
+	u64 src_inode, src_offset, dst_inode, dst_offset;
+	u64 now = bch2_current_time(trans->c);
 	int ret;
 
 	src_dir_iter = bch2_inode_peek(trans, src_dir_u, src_dir,
@@ -225,8 +246,8 @@ int bch2_rename_trans(struct btree_trans *trans,
 	ret = bch2_dirent_rename(trans,
 				 src_dir, &src_hash,
 				 dst_dir, &dst_hash,
-				 src_name, &src_inode,
-				 dst_name, &dst_inode,
+				 src_name, &src_inode, &src_offset,
+				 dst_name, &dst_inode, &dst_offset,
 				 mode);
 	if (ret)
 		goto err;
@@ -243,6 +264,14 @@ int bch2_rename_trans(struct btree_trans *trans,
 		ret = PTR_ERR_OR_ZERO(dst_inode_iter);
 		if (ret)
 			goto err;
+	}
+
+	src_inode_u->bi_dir		= dst_dir_u->bi_inum;
+	src_inode_u->bi_dir_offset	= dst_offset;
+
+	if (mode == BCH_RENAME_EXCHANGE) {
+		dst_inode_u->bi_dir		= src_dir_u->bi_inum;
+		dst_inode_u->bi_dir_offset	= src_offset;
 	}
 
 	if (mode == BCH_RENAME_OVERWRITE) {
