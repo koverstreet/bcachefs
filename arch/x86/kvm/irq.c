@@ -54,15 +54,29 @@ static int pending_userspace_extint(struct kvm_vcpu *v)
  */
 int kvm_cpu_has_extint(struct kvm_vcpu *v)
 {
-	u8 accept = kvm_apic_accept_pic_intr(v);
+	/*
+	 * FIXME: interrupt.pending represents an interrupt whose
+	 * side-effects have already been applied (e.g. bit from IRR
+	 * already moved to ISR). Therefore, it is incorrect to rely
+	 * on interrupt.pending to know if there is a pending
+	 * interrupt in the user-mode LAPIC.
+	 * This leads to nVMX/nSVM not be able to distinguish
+	 * if it should exit from L2 to L1 on EXTERNAL_INTERRUPT on
+	 * pending interrupt or should re-inject an injected
+	 * interrupt.
+	 * [backport note: interrupt.pending was renamed interrupt.injected
+	 * in upstream commit 04140b4144cd , not present in this tree.]
+	 */
+	if (!lapic_in_kernel(v))
+		return v->arch.interrupt.pending;
 
-	if (accept) {
-		if (irqchip_split(v->kvm))
-			return pending_userspace_extint(v);
-		else
-			return v->kvm->arch.vpic->output;
-	} else
+	if (!kvm_apic_accept_pic_intr(v))
 		return 0;
+
+	if (irqchip_split(v->kvm))
+		return pending_userspace_extint(v);
+	else
+		return v->kvm->arch.vpic->output;
 }
 
 /*
@@ -73,9 +87,6 @@ int kvm_cpu_has_extint(struct kvm_vcpu *v)
  */
 int kvm_cpu_has_injectable_intr(struct kvm_vcpu *v)
 {
-	if (!lapic_in_kernel(v))
-		return v->arch.interrupt.pending;
-
 	if (kvm_cpu_has_extint(v))
 		return 1;
 
@@ -91,9 +102,6 @@ int kvm_cpu_has_injectable_intr(struct kvm_vcpu *v)
  */
 int kvm_cpu_has_interrupt(struct kvm_vcpu *v)
 {
-	if (!lapic_in_kernel(v))
-		return v->arch.interrupt.pending;
-
 	if (kvm_cpu_has_extint(v))
 		return 1;
 
@@ -107,16 +115,21 @@ EXPORT_SYMBOL_GPL(kvm_cpu_has_interrupt);
  */
 static int kvm_cpu_get_extint(struct kvm_vcpu *v)
 {
-	if (kvm_cpu_has_extint(v)) {
-		if (irqchip_split(v->kvm)) {
-			int vector = v->arch.pending_external_vector;
-
-			v->arch.pending_external_vector = -1;
-			return vector;
-		} else
-			return kvm_pic_read_irq(v->kvm); /* PIC */
-	} else
+	if (!kvm_cpu_has_extint(v)) {
+		WARN_ON(!lapic_in_kernel(v));
 		return -1;
+	}
+
+	if (!lapic_in_kernel(v))
+		return v->arch.interrupt.nr;
+
+	if (irqchip_split(v->kvm)) {
+		int vector = v->arch.pending_external_vector;
+
+		v->arch.pending_external_vector = -1;
+		return vector;
+	} else
+		return kvm_pic_read_irq(v->kvm); /* PIC */
 }
 
 /*
@@ -124,13 +137,7 @@ static int kvm_cpu_get_extint(struct kvm_vcpu *v)
  */
 int kvm_cpu_get_interrupt(struct kvm_vcpu *v)
 {
-	int vector;
-
-	if (!lapic_in_kernel(v))
-		return v->arch.interrupt.nr;
-
-	vector = kvm_cpu_get_extint(v);
-
+	int vector = kvm_cpu_get_extint(v);
 	if (vector != -1)
 		return vector;			/* PIC */
 
