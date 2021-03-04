@@ -1095,6 +1095,43 @@ int __bch2_bkey_cmp_left_packed(const struct btree *b,
 		: __bch2_bkey_cmp_left_packed_format_checked(b, l, r);
 }
 
+#define sbb(a, b, borrow)				\
+do {							\
+	typeof(a) d1, d2;				\
+							\
+	d1 = a - borrow;				\
+	borrow  = d1 > a;				\
+							\
+	d2 = d1 - b;					\
+	borrow += d2 > d1;				\
+	a = d2;						\
+} while (0)
+
+/* a -= b: */
+void bch2_bpos_sub(struct bpos *a, const struct bpos *b)
+{
+#ifdef CONFIG_X86_64
+	asm(".intel_syntax noprefix;"
+	    "test al, al;"		/* clear flags */
+	    "mov eax, [rsi];"
+	    "sbb [rdi], eax;"
+	    "mov rax, [rsi + 4];"
+	    "sbb [rdi + 4], rax;"
+	    "mov rax, [rsi + 12];"
+	    "sbb [rdi + 12], rax;"
+	    ".att_syntax prefix;"
+	    :
+	    : "rdi" (a), "rsi" (b)
+	    : "rax", "cc", "memory");
+#else
+	int borrow = 0;
+
+	sbb(a->snapshot, b->snapshot,	borrow);
+	sbb(a->offset,	 b->offset,	borrow);
+	sbb(a->inode,	 b->inode,	borrow);
+#endif
+}
+
 void bch2_bpos_swab(struct bpos *p)
 {
 	u8 *l = (u8 *) p;
