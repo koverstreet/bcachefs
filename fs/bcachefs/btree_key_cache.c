@@ -21,7 +21,7 @@ static int bch2_btree_key_cache_cmp_fn(struct rhashtable_compare_arg *arg,
 	const struct bkey_cached_key *key = arg->key;
 
 	return cmp_int(ck->key.btree_id, key->btree_id) ?:
-		bkey_cmp(ck->key.pos, key->pos);
+		bpos_cmp(ck->key.pos, key->pos);
 }
 
 static const struct rhashtable_params bch2_btree_key_cache_params = {
@@ -251,7 +251,7 @@ static int bkey_cached_check_fn(struct six_lock *lock, void *p)
 	const struct btree_iter *iter = p;
 
 	return ck->key.btree_id == iter->btree_id &&
-		!bkey_cmp(ck->key.pos, iter->pos) ? 0 : -1;
+		!bpos_cmp(ck->key.pos, iter->pos) ? 0 : -1;
 }
 
 __flatten
@@ -292,7 +292,7 @@ retry:
 		if (!btree_node_lock((void *) ck, iter->pos, 0, iter, lock_want,
 				     bkey_cached_check_fn, iter, _THIS_IP_)) {
 			if (ck->key.btree_id != iter->btree_id ||
-			    bkey_cmp(ck->key.pos, iter->pos)) {
+			    bpos_cmp(ck->key.pos, iter->pos)) {
 				goto retry;
 			}
 
@@ -302,7 +302,7 @@ retry:
 		}
 
 		if (ck->key.btree_id != iter->btree_id ||
-		    bkey_cmp(ck->key.pos, iter->pos)) {
+		    bpos_cmp(ck->key.pos, iter->pos)) {
 			six_unlock_type(&ck->c.lock, lock_want);
 			goto retry;
 		}
