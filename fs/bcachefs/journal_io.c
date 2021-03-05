@@ -202,22 +202,19 @@ static void journal_entry_null_range(void *start, void *end)
 
 #define FSCK_DELETED_KEY	5
 
-static int journal_validate_key(struct bch_fs *c, struct jset *jset,
+static int journal_validate_key(struct bch_fs *c, const char *where,
 				struct jset_entry *entry,
 				unsigned level, enum btree_id btree_id,
-				struct bkey_i *k,
-				const char *type, int write)
+				struct bkey_i *k, const char *type,
+				unsigned version, int big_endian, int write)
 {
 	void *next = vstruct_next(entry);
 	const char *invalid;
-	unsigned version = le32_to_cpu(jset->version);
 	int ret = 0;
 
 	if (journal_entry_err_on(!k->k.u64s, c,
-			"invalid %s in jset %llu offset %zi/%u entry offset %zi/%u: k->u64s 0",
-			type, le64_to_cpu(jset->seq),
-			(u64 *) entry - jset->_data,
-			le32_to_cpu(jset->u64s),
+			"invalid %s in %s entry offset %zi/%u: k->u64s 0",
+			type, where,
 			(u64 *) k - entry->_data,
 			le16_to_cpu(entry->u64s))) {
 		entry->u64s = cpu_to_le16((u64 *) k - entry->_data);
@@ -227,10 +224,8 @@ static int journal_validate_key(struct bch_fs *c, struct jset *jset,
 
 	if (journal_entry_err_on((void *) bkey_next(k) >
 				(void *) vstruct_next(entry), c,
-			"invalid %s in jset %llu offset %zi/%u entry offset %zi/%u: extends past end of journal entry",
-			type, le64_to_cpu(jset->seq),
-			(u64 *) entry - jset->_data,
-			le32_to_cpu(jset->u64s),
+			"invalid %s in %s entry offset %zi/%u: extends past end of journal entry",
+			type, where,
 			(u64 *) k - entry->_data,
 			le16_to_cpu(entry->u64s))) {
 		entry->u64s = cpu_to_le16((u64 *) k - entry->_data);
@@ -239,10 +234,8 @@ static int journal_validate_key(struct bch_fs *c, struct jset *jset,
 	}
 
 	if (journal_entry_err_on(k->k.format != KEY_FORMAT_CURRENT, c,
-			"invalid %s in jset %llu offset %zi/%u entry offset %zi/%u: bad format %u",
-			type, le64_to_cpu(jset->seq),
-			(u64 *) entry - jset->_data,
-			le32_to_cpu(jset->u64s),
+			"invalid %s in %s entry offset %zi/%u: bad format %u",
+			type, where,
 			(u64 *) k - entry->_data,
 			le16_to_cpu(entry->u64s),
 			k->k.format)) {
@@ -253,9 +246,8 @@ static int journal_validate_key(struct bch_fs *c, struct jset *jset,
 	}
 
 	if (!write)
-		bch2_bkey_compat(level, btree_id, version,
-			    JSET_BIG_ENDIAN(jset), write,
-			    NULL, bkey_to_packed(k));
+		bch2_bkey_compat(level, btree_id, version, big_endian,
+				 write, NULL, bkey_to_packed(k));
 
 	invalid = bch2_bkey_invalid(c, bkey_i_to_s_c(k),
 				    __btree_node_type(level, btree_id));
@@ -263,10 +255,8 @@ static int journal_validate_key(struct bch_fs *c, struct jset *jset,
 		char buf[160];
 
 		bch2_bkey_val_to_text(&PBUF(buf), c, bkey_i_to_s_c(k));
-		mustfix_fsck_err(c, "invalid %s in jset %llu offset %zi/%u entry offset %zi/%u: %s\n%s",
-				 type, le64_to_cpu(jset->seq),
-				 (u64 *) entry - jset->_data,
-				 le32_to_cpu(jset->u64s),
+		mustfix_fsck_err(c, "invalid %s in %s entry offset %zi/%u: %s\n%s",
+				 type, where,
 				 (u64 *) k - entry->_data,
 				 le16_to_cpu(entry->u64s),
 				 invalid, buf);
@@ -278,25 +268,24 @@ static int journal_validate_key(struct bch_fs *c, struct jset *jset,
 	}
 
 	if (write)
-		bch2_bkey_compat(level, btree_id, version,
-			    JSET_BIG_ENDIAN(jset), write,
-			    NULL, bkey_to_packed(k));
+		bch2_bkey_compat(level, btree_id, version, big_endian,
+				 write, NULL, bkey_to_packed(k));
 fsck_err:
 	return ret;
 }
 
 static int journal_entry_validate_btree_keys(struct bch_fs *c,
-					     struct jset *jset,
+					     const char *where,
 					     struct jset_entry *entry,
-					     int write)
+					     unsigned version, int big_endian, int write)
 {
 	struct bkey_i *k = entry->start;
 
 	while (k != vstruct_last(entry)) {
-		int ret = journal_validate_key(c, jset, entry,
+		int ret = journal_validate_key(c, where, entry,
 					       entry->level,
 					       entry->btree_id,
-					       k, "key", write);
+					       k, "key", version, big_endian, write);
 		if (ret == FSCK_DELETED_KEY)
 			continue;
 
@@ -307,9 +296,9 @@ static int journal_entry_validate_btree_keys(struct bch_fs *c,
 }
 
 static int journal_entry_validate_btree_root(struct bch_fs *c,
-					     struct jset *jset,
+					     const char *where,
 					     struct jset_entry *entry,
-					     int write)
+					     unsigned version, int big_endian, int write)
 {
 	struct bkey_i *k = entry->start;
 	int ret = 0;
@@ -328,25 +317,25 @@ static int journal_entry_validate_btree_root(struct bch_fs *c,
 		return 0;
 	}
 
-	return journal_validate_key(c, jset, entry, 1, entry->btree_id, k,
-				    "btree root", write);
+	return journal_validate_key(c, where, entry, 1, entry->btree_id, k,
+				    "btree root", version, big_endian, write);
 fsck_err:
 	return ret;
 }
 
 static int journal_entry_validate_prio_ptrs(struct bch_fs *c,
-					    struct jset *jset,
+					    const char *where,
 					    struct jset_entry *entry,
-					    int write)
+					    unsigned version, int big_endian, int write)
 {
 	/* obsolete, don't care: */
 	return 0;
 }
 
 static int journal_entry_validate_blacklist(struct bch_fs *c,
-					    struct jset *jset,
+					    const char *where,
 					    struct jset_entry *entry,
-					    int write)
+					    unsigned version, int big_endian, int write)
 {
 	int ret = 0;
 
@@ -359,9 +348,9 @@ fsck_err:
 }
 
 static int journal_entry_validate_blacklist_v2(struct bch_fs *c,
-					       struct jset *jset,
+					       const char *where,
 					       struct jset_entry *entry,
-					       int write)
+					       unsigned version, int big_endian, int write)
 {
 	struct jset_entry_blacklist_v2 *bl_entry;
 	int ret = 0;
@@ -385,9 +374,9 @@ fsck_err:
 }
 
 static int journal_entry_validate_usage(struct bch_fs *c,
-					struct jset *jset,
+					const char *where,
 					struct jset_entry *entry,
-					int write)
+					unsigned version, int big_endian, int write)
 {
 	struct jset_entry_usage *u =
 		container_of(entry, struct jset_entry_usage, entry);
@@ -406,9 +395,9 @@ fsck_err:
 }
 
 static int journal_entry_validate_data_usage(struct bch_fs *c,
-					struct jset *jset,
+					const char *where,
 					struct jset_entry *entry,
-					int write)
+					unsigned version, int big_endian, int write)
 {
 	struct jset_entry_data_usage *u =
 		container_of(entry, struct jset_entry_data_usage, entry);
@@ -428,9 +417,9 @@ fsck_err:
 }
 
 static int journal_entry_validate_clock(struct bch_fs *c,
-					struct jset *jset,
+					const char *where,
 					struct jset_entry *entry,
-					int write)
+					unsigned version, int big_endian, int write)
 {
 	struct jset_entry_clock *clock =
 		container_of(entry, struct jset_entry_clock, entry);
@@ -454,9 +443,9 @@ fsck_err:
 }
 
 static int journal_entry_validate_dev_usage(struct bch_fs *c,
-					    struct jset *jset,
+					    const char *where,
 					    struct jset_entry *entry,
-					    int write)
+					    unsigned version, int big_endian, int write)
 {
 	struct jset_entry_dev_usage *u =
 		container_of(entry, struct jset_entry_dev_usage, entry);
@@ -491,8 +480,8 @@ fsck_err:
 }
 
 struct jset_entry_ops {
-	int (*validate)(struct bch_fs *, struct jset *,
-			struct jset_entry *, int);
+	int (*validate)(struct bch_fs *, const char *,
+			struct jset_entry *, unsigned, int, int);
 };
 
 static const struct jset_entry_ops bch2_jset_entry_ops[] = {
@@ -504,22 +493,29 @@ static const struct jset_entry_ops bch2_jset_entry_ops[] = {
 #undef x
 };
 
-static int journal_entry_validate(struct bch_fs *c, struct jset *jset,
-				  struct jset_entry *entry, int write)
+int bch2_journal_entry_validate(struct bch_fs *c, const char *where,
+				struct jset_entry *entry,
+				unsigned version, int big_endian, int write)
 {
 	return entry->type < BCH_JSET_ENTRY_NR
-		? bch2_jset_entry_ops[entry->type].validate(c, jset,
-							    entry, write)
+		? bch2_jset_entry_ops[entry->type].validate(c, where, entry,
+				version, big_endian, write)
 		: 0;
 }
 
 static int jset_validate_entries(struct bch_fs *c, struct jset *jset,
 				 int write)
 {
+	char buf[100];
 	struct jset_entry *entry;
 	int ret = 0;
 
 	vstruct_for_each(jset, entry) {
+		scnprintf(buf, sizeof(buf), "jset %llu entry offset %zi/%u",
+			  le64_to_cpu(jset->seq),
+			  (u64 *) entry - jset->_data,
+			  le32_to_cpu(jset->u64s));
+
 		if (journal_entry_err_on(vstruct_next(entry) >
 					 vstruct_last(jset), c,
 				"journal entry extends past end of jset")) {
@@ -527,7 +523,9 @@ static int jset_validate_entries(struct bch_fs *c, struct jset *jset,
 			break;
 		}
 
-		ret = journal_entry_validate(c, jset, entry, write);
+		ret = bch2_journal_entry_validate(c, buf, entry,
+					le32_to_cpu(jset->version),
+					JSET_BIG_ENDIAN(jset), write);
 		if (ret)
 			break;
 	}
