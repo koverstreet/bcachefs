@@ -187,6 +187,15 @@ static inline struct btree_iter *btree_iter_child(struct btree_iter *iter)
 		: iter->trans->iters + iter->child_idx;
 }
 
+static inline void bch2_btree_iter_set_snapshot(struct btree_iter *iter, u32 snapshot)
+{
+	struct bpos pos = iter->pos;
+
+	iter->snapshot = snapshot;
+	pos.snapshot = snapshot;
+	bch2_btree_iter_set_pos(iter, pos);
+}
+
 /* Sort order for locking btree iterators: */
 static inline int btree_iter_lock_cmp(const struct btree_iter *l,
 				      const struct btree_iter *r)
