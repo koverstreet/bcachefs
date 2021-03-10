@@ -390,6 +390,9 @@ int tpm_bios_log_setup(struct tpm_chip *chip)
 	unsigned int cnt;
 	int rc = 0;
 
+	if (chip->flags & TPM_CHIP_FLAG_VIRTUAL)
+		return -ENODEV;
+
 	rc = tpm_read_log(chip);
 	if (rc)
 		return rc;
