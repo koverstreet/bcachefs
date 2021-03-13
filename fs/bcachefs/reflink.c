@@ -208,6 +208,7 @@ s64 bch2_remap_range(struct bch_fs *c,
 	struct bpos dst_end = dst_start, src_end = src_start;
 	struct bpos dst_want, src_want;
 	u64 dst_done, src_done;
+	u32 dst_snapshot, src_snapshot;
 	int ret = 0, ret2 = 0;
 
 	if (!percpu_ref_tryget(&c->writes))
@@ -236,14 +237,18 @@ s64 bch2_remap_range(struct bch_fs *c,
 		}
 
 		ret = bch2_subvolume_get_snapshot(&trans, src_inum.subvol,
-						  &src_iter->snapshot);
+						  &src_snapshot);
 		if (ret)
 			continue;
 
+		bch2_btree_iter_set_snapshot(src_iter, src_snapshot);
+
 		ret = bch2_subvolume_get_snapshot(&trans, dst_inum.subvol,
-						  &dst_iter->snapshot);
+						  &dst_snapshot);
 		if (ret)
 			continue;
+
+		bch2_btree_iter_set_snapshot(dst_iter, dst_snapshot);
 
 		src_k = get_next_src(src_iter, src_end);
 		ret = bkey_err(src_k);
@@ -255,7 +260,8 @@ s64 bch2_remap_range(struct bch_fs *c,
 		dst_want = POS(dst_start.inode, dst_start.offset + src_done);
 
 		if (bkey_cmp(dst_iter->pos, dst_want) < 0) {
-			ret = bch2_fpunch_at(&trans, dst_iter, dst_want,
+			ret = bch2_fpunch_at(&trans, dst_iter, dst_inum,
+					     dst_want.offset,
 					     journal_seq, i_sectors_delta);
 			continue;
 		}
@@ -300,8 +306,8 @@ s64 bch2_remap_range(struct bch_fs *c,
 				min(src_k.k->p.offset - src_iter->pos.offset,
 				    dst_end.offset - dst_iter->pos.offset));
 
-		ret = bch2_extent_update(&trans, dst_iter, new_dst.k,
-					 NULL, journal_seq,
+		ret = bch2_extent_update(&trans, dst_inum, dst_iter,
+					 new_dst.k, NULL, journal_seq,
 					 new_i_size, i_sectors_delta);
 		if (ret)
 			continue;
