@@ -46,7 +46,7 @@ CONFIG_ACPI_EXTLOG                              policy<{'amd64': 'm', 'i386': 'm
 CONFIG_ACPI_CONFIGFS                            policy<{'amd64': 'm', 'arm64': 'm', 'i386': 'm'}>
 CONFIG_TPS68470_PMIC_OPREGION                   policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
 #
-CONFIG_ACPI_PROCFS_POWER                        mark<DEPRECATED>
+CONFIG_ACPI_PROCFS_POWER                        flag<DEPRECATED>
 CONFIG_ACPI_CUSTOM_METHOD                       mark<ENFORCED> note<SECURITY: allows arbitrary execution>
 CONFIG_ACPI_CUSTOM_DSDT_FILE                    note<might allow hardware damage>
 
@@ -2471,7 +2471,7 @@ CONFIG_I2C_DEBUG_CORE                           policy<{'amd64': 'n', 'arm64': '
 CONFIG_I2C_DEBUG_ALGO                           policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n'}>
 CONFIG_I2C_DEBUG_BUS                            policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n'}>
 #
-CONFIG_I2C                                      mark<ENFORCE> note<s390x lacks hw support for i2c>
+CONFIG_I2C                                      mark<ENFORCED> note<s390x lacks hw support for i2c>
 CONFIG_I2C_CHARDEV                              note<LP:1417032>
 
 # Menu: Device Drivers >> I2C support >> I2C support >> I2C Algorithms
@@ -3882,8 +3882,8 @@ CONFIG_SPI_HISI_SFC                             policy<{'arm64': 'm', 'armhf': '
 CONFIG_SPI_INTEL_SPI_PCI                        policy<{'amd64': 'n', 'i386': 'n'}>
 CONFIG_SPI_INTEL_SPI_PLATFORM                   policy<{'amd64': 'n', 'i386': 'n'}>
 #
-CONFIG_SPI_INTEL_SPI_PCI                        mark<ENFORCE> note<LP:1734147>
-CONFIG_SPI_INTEL_SPI_PLATFORM                   mark<ENFORCE> note<LP:1734147>
+CONFIG_SPI_INTEL_SPI_PCI                        mark<ENFORCED> note<LP:1734147>
+CONFIG_SPI_INTEL_SPI_PLATFORM                   mark<ENFORCED> note<LP:1734147>
 
 # Menu: Device Drivers >> Memory Technology Device (MTD) support >> Self-contained MTD device drivers
 CONFIG_MTD_PMC551                               policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm'}>
@@ -4128,7 +4128,7 @@ CONFIG_MFD_WM8994                               policy<{'amd64': 'm', 'arm64': '
 CONFIG_MFD_VEXPRESS_SYSREG                      policy<{'arm64': 'y', 'armhf': 'y'}>
 #
 CONFIG_MFD_SM501                                note<boot essential on OMAP4>
-CONFIG_MFD_TPS65217                             mark<ENFORCE> note<boot essential on AM335x>
+CONFIG_MFD_TPS65217                             mark<ENFORCED> note<boot essential on AM335x>
 
 # Menu: Device Drivers >> Multifunction device drivers >> Multimedia Capabilities Port drivers
 
@@ -4843,7 +4843,7 @@ CONFIG_FUJITSU_ES                               policy<{'amd64': 'm', 'arm64': '
 CONFIG_THUNDERBOLT_NET                          policy<{'amd64': 'm', 'i386': 'm'}>
 CONFIG_HYPERV_NET                               policy<{'amd64': 'm', 'i386': 'm'}>
 #
-CONFIG_HIPPI                                    note<DEPRECATED>
+CONFIG_HIPPI                                    flag<DEPRECATED>
 CONFIG_XEN_NETDEV_FRONTEND                      note<not autoloadable -- XEN paravirt support>
 CONFIG_DEFXX_MMIO                               flag<REVIEW>
 
@@ -6432,8 +6432,8 @@ CONFIG_SCSI_SCAN_ASYNC                          policy<{'amd64': 'y', 'arm64': '
 #
 CONFIG_SCSI                                     flag<REVIEW>
 CONFIG_CHR_DEV_SG                               note<not autoloadable>
-CONFIG_BLK_DEV_SD                               mark<ENFORCED> note <LP:1627330>
-CONFIG_BLK_DEV_SR                               mark<ENFORCED> note <LP:1627330>
+CONFIG_BLK_DEV_SD                               mark<ENFORCED> note<LP:1627330>
+CONFIG_BLK_DEV_SR                               mark<ENFORCED> note<LP:1627330>
 
 # Menu: Device Drivers >> SCSI device support >> SCSI device support >> OSD-Initiator library
 CONFIG_SCSI_OSD_INITIATOR                       policy<{'amd64': 'm', 'arm64': 'm', 'armhf': 'm', 'i386': 'm', 'ppc64el': 'm', 's390x': 'm'}>
@@ -8294,7 +8294,7 @@ CONFIG_VIRTIO_INPUT                             policy<{'amd64': 'm', 'arm64': '
 CONFIG_VIRTIO_MMIO                              policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'n'}>
 CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES              policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y'}>
 #
-CONFIG_VIRTIO_PCI                               mark<review>
+CONFIG_VIRTIO_PCI                               flag<REVIEW>
 CONFIG_VIRTIO_MMIO                              note<LP:1557689>
 
 # Menu: Device Drivers >> Virtualization drivers
@@ -8623,7 +8623,7 @@ CONFIG_XEN_ACPI_PROCESSOR                       policy<{'amd64': 'y', 'i386': 'y
 CONFIG_XEN_MCE_LOG                              policy<{'amd64': 'y'}>
 CONFIG_XEN_SYMS                                 policy<{'amd64': 'y', 'i386': 'y'}>
 #
-CONFIG_XEN_ACPI_PROCESSOR                       mark<ENFORCED> <boot essential on XEN host>
+CONFIG_XEN_ACPI_PROCESSOR                       mark<ENFORCED> note<boot essential on XEN host>
 
 # Menu: Device Drivers >> Xen driver support >> Backend driver support
 CONFIG_XEN_BACKEND                              policy<{'amd64': 'y', 'arm64': 'y', 'i386': 'y'}>
@@ -9373,7 +9373,7 @@ CONFIG_CGROUP_PERF                              policy<{'amd64': 'y', 'arm64': '
 CONFIG_CGROUP_BPF                               policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_CGROUP_DEBUG                             policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n', 's390x': 'n'}>
 #
-CONFIG_DEBUG_BLK_CGROUP                         mark<DEBUG>
+CONFIG_DEBUG_BLK_CGROUP                         flag<DEBUG>
 
 # Menu: General setup >> Control Group support >> CPU controller
 CONFIG_CGROUP_SCHED                             policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
@@ -9637,7 +9637,7 @@ CONFIG_DEBUG_BLOCK_EXT_DEVT                     policy<{'amd64': 'n', 'arm64': '
 CONFIG_CPU_HOTPLUG_STATE_CONTROL                policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n', 's390x': 'n'}>
 CONFIG_LATENCYTOP                               policy<{'amd64-generic': 'n', 'amd64-lowlatency': 'y', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n', 's390x': 'n'}>
 #
-CONFIG_LATENCYTOP                               marl<ENFORCED> note<https://lists.ubuntu.com/archives/kernel-team/2014-July/045006.html, LP#1655986>
+CONFIG_LATENCYTOP                               mark<ENFORCED> note<https://lists.ubuntu.com/archives/kernel-team/2014-July/045006.html, LP#1655986>
 
 # Menu: Kernel hacking >> Kernel debugging >> Fault-injection framework
 CONFIG_FAULT_INJECTION                          policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n', 's390x': 'n'}>
@@ -11834,7 +11834,7 @@ CONFIG_ARM_ERRATA_825619                        policy<{'armhf': 'y'}>
 CONFIG_ARM_ERRATA_852421                        policy<{'armhf': 'y'}>
 CONFIG_ARM_ERRATA_852423                        policy<{'armhf': 'y'}>
 #
-CONFIG_ARCH_TANGO                               mark<ENFORCED> note <LP:1787945>
+CONFIG_ARCH_TANGO                               mark<ENFORCED> note<LP:1787945>
 
 # Menu: System Type >> Aspeed BMC architectures >> Architecture: arm
 
@@ -12117,7 +12117,7 @@ CONFIG_MACH_OMAP_GENERIC                        policy<{'armhf': 'y'}>
 # Menu: Ubuntu Supplied Third-Party Device Drivers
 CONFIG_HIO                                      policy<{'amd64': 'm', 'arm64': 'n', 'armhf': 'n', 'i386': 'm', 'ppc64el': 'n'}>
 #
-CONFIG_HIO                                      mark<ENFORCED> note <LP:1635594>
+CONFIG_HIO                                      mark<ENFORCED> note<LP:1635594>
 
 # Menu: Virtualization
 CONFIG_VIRTUALIZATION                           policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
@@ -12127,7 +12127,7 @@ CONFIG_VHOST_VSOCK                              policy<{'amd64': 'm', 'arm64': '
 CONFIG_VHOST_CROSS_ENDIAN_LEGACY                policy<{'amd64': 'n', 'arm64': 'n', 'armhf': 'n', 'i386': 'n', 'ppc64el': 'n', 's390x': 'n'}>
 CONFIG_KVM                                      policy<{'amd64': 'm', 'arm64': 'y', 'armhf-generic-lpae': 'y', 'i386': 'm', 'ppc64el': 'y', 's390x': 'y'}>
 #
-CONFIG_KVM                                      note <LP:1532886>
+CONFIG_KVM                                      note<LP:1532886>
 
 # Menu: Virtualization >> Architecture: powerpc
 CONFIG_KVM_BOOK3S_64                            policy<{'ppc64el': 'm'}>
