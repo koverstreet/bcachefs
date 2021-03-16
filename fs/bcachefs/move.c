@@ -564,7 +564,8 @@ static int __bch2_move_data(struct bch_fs *c,
 	stats->pos	= start;
 
 	iter = bch2_trans_get_iter(&trans, btree_id, start,
-				   BTREE_ITER_PREFETCH);
+				   BTREE_ITER_PREFETCH|
+				   BTREE_ITER_ALL_SNAPSHOTS);
 
 	if (rate)
 		bch2_ratelimit_reset(rate);

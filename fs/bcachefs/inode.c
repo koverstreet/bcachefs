@@ -6,6 +6,7 @@
 #include "btree_update.h"
 #include "error.h"
 #include "extents.h"
+#include "extent_update.h"
 #include "inode.h"
 #include "str_hash.h"
 #include "subvolume.h"
@@ -295,13 +296,19 @@ int bch2_inode_unpack(struct bkey_s_c_inode inode,
 
 struct btree_iter *bch2_inode_peek(struct btree_trans *trans,
 				   struct bch_inode_unpacked *inode,
-				   u64 inum, unsigned flags)
+				   subvol_inum inum, unsigned flags)
 {
 	struct btree_iter *iter;
 	struct bkey_s_c k;
+	u32 snapshot;
 	int ret;
 
-	iter = bch2_trans_get_iter(trans, BTREE_ID_inodes, POS(0, inum),
+	ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot);
+	if (ret)
+		return ERR_PTR(ret);
+
+	iter = bch2_trans_get_iter(trans, BTREE_ID_inodes,
+				   SPOS(0, inum.inum, snapshot),
 				   BTREE_ITER_CACHED|flags);
 	k = bch2_btree_iter_peek_cached(iter);
 	ret = bkey_err(k);
@@ -474,6 +481,9 @@ static inline u32 bkey_generation(struct bkey_s_c k)
 	}
 }
 
+/*
+ * This just finds an empty slot:
+ */
 struct btree_iter *bch2_inode_create(struct btree_trans *trans,
 				     struct bch_inode_unpacked *inode_u,
 				     u32 snapshot)
@@ -568,15 +578,89 @@ found_slot:
 	return iter;
 }
 
-int bch2_inode_rm(struct bch_fs *c, u64 inode_nr, bool cached)
+static int bch2_inode_delete_keys(struct btree_trans *trans,
+				  subvol_inum inum, enum btree_id id)
+{
+	struct btree_iter *iter = NULL;
+	struct bkey_s_c k;
+	u64 offset = 0;
+	u32 snapshot;
+	int ret = 0;
+retry:
+	ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot);
+	if (ret)
+		goto err;
+
+	iter = bch2_trans_get_iter(trans, id,
+				   SPOS(inum.inum, offset, snapshot),
+				   BTREE_ITER_INTENT);
+
+	while ((k = bch2_btree_iter_peek(iter)).k &&
+	       !(ret = bkey_err(k)) &&
+	       iter->pos.inode == inum.inum) {
+		struct bkey_i delete;
+
+		bch2_trans_begin(trans);
+
+		bkey_init(&delete.k);
+
+		/*
+		 * This could probably be more efficient for extents:
+		 */
+
+		/*
+		 * For extents, iter.pos won't necessarily be the same as
+		 * bkey_start_pos(k.k) (for non extents they always will be the
+		 * same). It's important that we delete starting from iter.pos
+		 * because the range we want to delete could start in the middle
+		 * of k.
+		 *
+		 * (bch2_btree_iter_peek() does guarantee that iter.pos >=
+		 * bkey_start_pos(k.k)).
+		 */
+		delete.k.p = iter->pos;
+
+		if (btree_node_type_is_extents(iter->btree_id)) {
+			unsigned max_sectors =
+				min_t(u64, U64_MAX - iter->pos.offset,
+				      KEY_SIZE_MAX & (~0 << trans->c->block_bits));
+
+			/* create the biggest key we can */
+			bch2_key_resize(&delete.k, max_sectors);
+
+			ret = bch2_extent_trim_atomic(&delete, iter);
+			if (ret)
+				break;
+		}
+
+		bch2_trans_update(trans, iter, &delete, 0);
+		ret = bch2_trans_commit(trans, NULL, NULL, BTREE_INSERT_NOFAIL);
+		if (ret)
+			break;
+
+		bch2_trans_cond_resched(trans);
+	}
+
+	offset = iter->pos.offset;
+err:
+	bch2_trans_iter_put(trans, iter);
+
+	if (ret == -EINTR) {
+		ret = 0;
+		goto retry;
+	}
+
+	return ret;
+}
+
+int bch2_inode_rm(struct bch_fs *c, subvol_inum inum, bool cached)
 {
 	struct btree_trans trans;
 	struct btree_iter *iter = NULL;
 	struct bkey_i_inode_generation delete;
-	struct bpos start = POS(inode_nr, 0);
-	struct bpos end = POS(inode_nr + 1, 0);
 	struct bch_inode_unpacked inode_u;
 	struct bkey_s_c k;
+	u32 snapshot;
 	int ret;
 
 	bch2_trans_init(&trans, c, 0, 0);
@@ -589,23 +673,26 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr, bool cached)
 	 * XXX: the dirent could ideally would delete whiteouts when they're no
 	 * longer needed
 	 */
-	ret   = bch2_btree_delete_range_trans(&trans, BTREE_ID_extents,
-					      start, end, NULL) ?:
-		bch2_btree_delete_range_trans(&trans, BTREE_ID_xattrs,
-					      start, end, NULL) ?:
-		bch2_btree_delete_range_trans(&trans, BTREE_ID_dirents,
-					      start, end, NULL);
+	ret   = bch2_inode_delete_keys(&trans, inum, BTREE_ID_extents) ?:
+		bch2_inode_delete_keys(&trans, inum, BTREE_ID_xattrs) ?:
+		bch2_inode_delete_keys(&trans, inum, BTREE_ID_dirents);
 	if (ret)
 		goto err;
 retry:
 	bch2_trans_begin(&trans);
 
+	ret = bch2_subvolume_get_snapshot(&trans, inum.subvol, &snapshot);
+	if (ret)
+		goto err;
+
 	if (cached) {
-		iter = bch2_trans_get_iter(&trans, BTREE_ID_inodes, POS(0, inode_nr),
+		iter = bch2_trans_get_iter(&trans, BTREE_ID_inodes,
+					   SPOS(0, inum.inum, snapshot),
 					   BTREE_ITER_CACHED|BTREE_ITER_INTENT);
 		k = bch2_btree_iter_peek_cached(iter);
 	} else {
-		iter = bch2_trans_get_iter(&trans, BTREE_ID_inodes, POS(0, inode_nr),
+		iter = bch2_trans_get_iter(&trans, BTREE_ID_inodes,
+					   SPOS(0, inum.inum, snapshot),
 					   BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 		k = bch2_btree_iter_peek_slot(iter);
 	}
@@ -617,7 +704,7 @@ retry:
 	if (k.k->type != KEY_TYPE_inode) {
 		bch2_fs_inconsistent(trans.c,
 				     "inode %llu not found when deleting",
-				     inode_nr);
+				     inum.inum);
 		ret = -EIO;
 		goto err;
 	}
@@ -648,21 +735,22 @@ err:
 	return ret;
 }
 
-static int bch2_inode_find_by_inum_trans(struct btree_trans *trans, u64 inode_nr,
+static int bch2_inode_find_by_inum_trans(struct btree_trans *trans,
+					 subvol_inum inum,
 					 struct bch_inode_unpacked *inode)
 {
 	struct btree_iter *iter;
 	int ret;
 
-	iter = bch2_inode_peek(trans, inode, inode_nr, 0);
+	iter = bch2_inode_peek(trans, inode, inum, 0);
 	ret = PTR_ERR_OR_ZERO(iter);
 	bch2_trans_iter_put(trans, iter);
 	return ret;
 }
 
-int bch2_inode_find_by_inum(struct bch_fs *c, u64 inode_nr,
+int bch2_inode_find_by_inum(struct bch_fs *c, subvol_inum inum,
 			    struct bch_inode_unpacked *inode)
 {
 	return bch2_trans_do(c, NULL, NULL, 0,
-		bch2_inode_find_by_inum_trans(&trans, inode_nr, inode));
+		bch2_inode_find_by_inum_trans(&trans, inum, inode));
 }

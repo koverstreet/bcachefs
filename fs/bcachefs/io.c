@@ -296,7 +296,10 @@ int bch2_extent_update(struct btree_trans *trans,
 		struct bch_inode_unpacked inode_u;
 
 		inode_iter = bch2_inode_peek(trans, &inode_u,
-				k->k.p.inode, BTREE_ITER_INTENT);
+					     (subvol_inum) {
+						.subvol = BCACHEFS_ROOT_SUBVOL,
+						.inum = k->k.p.inode,
+					     }, BTREE_ITER_INTENT);
 		if (IS_ERR(inode_iter))
 			return PTR_ERR(inode_iter);
 

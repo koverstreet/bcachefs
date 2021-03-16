@@ -227,7 +227,7 @@ retry:
 	bch2_trans_begin(&trans);
 
 	iter = bch2_hash_lookup(&trans, bch2_xattr_hash_desc,
-			&hash, inode->v.i_ino,
+			&hash, inode_inum(inode),
 			&X_SEARCH(acl_to_xattr_type(type), "", 0),
 			0);
 	if (IS_ERR(iter)) {
@@ -251,11 +251,11 @@ out:
 	return acl;
 }
 
-int bch2_set_acl_trans(struct btree_trans *trans,
+int bch2_set_acl_trans(struct btree_trans *trans, subvol_inum inum,
 		       struct bch_inode_unpacked *inode_u,
-		       const struct bch_hash_info *hash_info,
 		       struct posix_acl *acl, int type)
 {
+	struct bch_hash_info hash_info = bch2_hash_info_init(trans->c, inode_u);
 	int ret;
 
 	if (type == ACL_TYPE_DEFAULT &&
@@ -268,14 +268,14 @@ int bch2_set_acl_trans(struct btree_trans *trans,
 		if (IS_ERR(xattr))
 			return PTR_ERR(xattr);
 
-		ret = bch2_hash_set(trans, bch2_xattr_hash_desc, hash_info,
-				    inode_u->bi_inum, &xattr->k_i, 0);
+		ret = bch2_hash_set(trans, bch2_xattr_hash_desc, &hash_info,
+				    inum, &xattr->k_i, 0);
 	} else {
 		struct xattr_search_key search =
 			X_SEARCH(acl_to_xattr_type(type), "", 0);
 
-		ret = bch2_hash_delete(trans, bch2_xattr_hash_desc, hash_info,
-				       inode_u->bi_inum, &search);
+		ret = bch2_hash_delete(trans, bch2_xattr_hash_desc, &hash_info,
+				       inum, &search);
 	}
 
 	return ret == -ENOENT ? 0 : ret;
@@ -288,7 +288,6 @@ int bch2_set_acl(struct inode *vinode, struct posix_acl *_acl, int type)
 	struct btree_trans trans;
 	struct btree_iter *inode_iter;
 	struct bch_inode_unpacked inode_u;
-	struct bch_hash_info hash_info;
 	struct posix_acl *acl;
 	umode_t mode;
 	int ret;
@@ -299,7 +298,7 @@ retry:
 	bch2_trans_begin(&trans);
 	acl = _acl;
 
-	inode_iter = bch2_inode_peek(&trans, &inode_u, inode->v.i_ino,
+	inode_iter = bch2_inode_peek(&trans, &inode_u, inode_inum(inode),
 				     BTREE_ITER_INTENT);
 	ret = PTR_ERR_OR_ZERO(inode_iter);
 	if (ret)
@@ -313,9 +312,7 @@ retry:
 			goto btree_err;
 	}
 
-	hash_info = bch2_hash_info_init(c, &inode_u);
-
-	ret = bch2_set_acl_trans(&trans, &inode_u, &hash_info, acl, type);
+	ret = bch2_set_acl_trans(&trans, inode_inum(inode), &inode_u, acl, type);
 	if (ret)
 		goto btree_err;
 
@@ -345,7 +342,7 @@ err:
 	return ret;
 }
 
-int bch2_acl_chmod(struct btree_trans *trans,
+int bch2_acl_chmod(struct btree_trans *trans, subvol_inum inum,
 		   struct bch_inode_unpacked *inode,
 		   umode_t mode,
 		   struct posix_acl **new_acl)
@@ -358,7 +355,7 @@ int bch2_acl_chmod(struct btree_trans *trans,
 	int ret;
 
 	iter = bch2_hash_lookup(trans, bch2_xattr_hash_desc,
-			&hash_info, inode->bi_inum,
+			&hash_info, inum,
 			&X_SEARCH(KEY_TYPE_XATTR_INDEX_POSIX_ACL_ACCESS, "", 0),
 			BTREE_ITER_INTENT);
 	ret = PTR_ERR_OR_ZERO(iter);

@@ -29,7 +29,7 @@ static inline unsigned dirent_val_u64s(unsigned len)
 			    sizeof(u64));
 }
 
-int bch2_dirent_create(struct btree_trans *, u64,
+int bch2_dirent_create(struct btree_trans *, subvol_inum,
 		       const struct bch_hash_info *, u8,
 		       const struct qstr *, u64, u64 *, int);
 
@@ -37,8 +37,8 @@ int bch2_dirent_delete_at(struct btree_trans *,
 			  const struct bch_hash_info *,
 			  struct btree_iter *);
 
-int bch2_dirent_read_target(struct btree_trans *,
-			    struct bkey_s_c_dirent, u64 *);
+int bch2_dirent_read_target(struct btree_trans *, subvol_inum,
+			    struct bkey_s_c_dirent, subvol_inum *);
 
 static inline unsigned vfs_d_type(unsigned type)
 {
@@ -52,21 +52,21 @@ enum bch_rename_mode {
 };
 
 int bch2_dirent_rename(struct btree_trans *,
-		       u64, struct bch_hash_info *,
-		       u64, struct bch_hash_info *,
-		       const struct qstr *, u64 *, u64 *,
-		       const struct qstr *, u64 *, u64 *,
+		       subvol_inum, struct bch_hash_info *,
+		       subvol_inum, struct bch_hash_info *,
+		       const struct qstr *, subvol_inum *, u64 *,
+		       const struct qstr *, subvol_inum *, u64 *,
 		       enum bch_rename_mode);
 
 struct btree_iter *
-__bch2_dirent_lookup_trans(struct btree_trans *, u64,
-			   const struct bch_hash_info *,
-			   const struct qstr *, u64 *,
-			   unsigned);
-u64 bch2_dirent_lookup(struct bch_fs *, u64, const struct bch_hash_info *,
-		       const struct qstr *);
+__bch2_dirent_lookup_trans(struct btree_trans *, subvol_inum,
+			   const struct bch_hash_info *, const struct qstr *,
+			   subvol_inum *, unsigned);
+u64 bch2_dirent_lookup(struct bch_fs *, subvol_inum,
+		       const struct bch_hash_info *,
+		       const struct qstr *, subvol_inum *);
 
-int bch2_empty_dir_trans(struct btree_trans *, u64);
-int bch2_readdir(struct bch_fs *, u64, struct dir_context *);
+int bch2_empty_dir_trans(struct btree_trans *, subvol_inum);
+int bch2_readdir(struct bch_fs *, subvol_inum, struct dir_context *);
 
 #endif /* _BCACHEFS_DIRENT_H */
