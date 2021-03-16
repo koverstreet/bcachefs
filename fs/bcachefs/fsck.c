@@ -727,6 +727,7 @@ retry:
 		struct bkey_s_c_dirent d;
 		struct bch_inode_unpacked target;
 		u32 target_snapshot;
+		u32 target_subvol;
 		bool have_target;
 		bool backpointer_exists = true;
 		u64 d_inum;
@@ -784,7 +785,10 @@ retry:
 			goto next;
 
 		d = bkey_s_c_to_dirent(k);
-		d_inum = le64_to_cpu(d.v->d_inum);
+
+		ret = lockrestart_do(&trans, bch2_dirent_read_target(&trans, d, &d_inum));
+		if (ret && ret != -ENOENT)
+			break;
 
 		ret = lookup_inode(&trans, d_inum, &target, &target_snapshot);
 		if (ret && ret != -ENOENT)
@@ -864,7 +868,24 @@ retry:
 			}
 		}
 
-		if (fsck_err_on(d.v->d_type != mode_to_type(target.bi_mode), c,
+		target_subvol = d.v->d_type == DT_SUBVOL
+			? le64_to_cpu(d.v->d_inum) : 0;
+
+		if (fsck_err_on(target.bi_subvol != target_subvol, c,
+				"subvol root %llu has wrong subvol field:\n"
+				"got       %u\n"
+				"should be %u",
+				target.bi_inum,
+				target.bi_subvol,
+				target_subvol)) {
+			target.bi_subvol = target_subvol;
+
+			ret = write_inode(&trans, &target, target_snapshot);
+			if (ret)
+				goto err;
+		}
+
+		if (fsck_err_on(vfs_d_type(d.v->d_type) != mode_to_type(target.bi_mode), c,
 				"incorrect d_type: should be %u:\n%s",
 				mode_to_type(target.bi_mode),
 				(bch2_bkey_val_to_text(&PBUF(buf), c,

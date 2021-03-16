@@ -160,13 +160,10 @@ int bch2_unlink_trans(struct btree_trans *trans,
 	dir_hash = bch2_hash_info_init(c, dir_u);
 
 	dirent_iter = __bch2_dirent_lookup_trans(trans, dir_inum, &dir_hash,
-						 name, BTREE_ITER_INTENT);
+						 name, &inum, BTREE_ITER_INTENT);
 	ret = PTR_ERR_OR_ZERO(dirent_iter);
 	if (ret)
 		goto err;
-
-	k = bch2_btree_iter_peek_slot(dirent_iter);
-	inum = le64_to_cpu(bkey_s_c_to_dirent(k).v->d_inum);
 
 	inode_iter = bch2_inode_peek(trans, inode_u, inum, BTREE_ITER_INTENT);
 	ret = PTR_ERR_OR_ZERO(inode_iter);

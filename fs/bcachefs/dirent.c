@@ -174,6 +174,43 @@ static void dirent_copy_target(struct bkey_i_dirent *dst,
 	dst->v.d_type = src.v->d_type;
 }
 
+int bch2_dirent_read_target(struct btree_trans *trans,
+			    struct bkey_s_c_dirent d, u64 *target)
+{
+	int ret = 0;
+
+	if (likely(d.v->d_type != DT_SUBVOL)) {
+		*target = le64_to_cpu(d.v->d_inum);
+	} else {
+		struct btree_iter *iter;
+		struct bkey_s_c k;
+		struct bkey_s_c_subvolume s;
+		int ret;
+
+		iter = bch2_trans_get_iter(trans, BTREE_ID_subvolumes,
+					   POS(0, le64_to_cpu(d.v->d_inum)), 0);
+
+		k = bch2_btree_iter_peek_slot(iter);
+		ret = bkey_err(k);
+		if (ret)
+			goto put_iter;
+
+		if (k.k->type != KEY_TYPE_subvolume) {
+			bch2_fs_inconsistent(trans->c, "pointer to missing subvolume %llu",
+					     iter->pos.offset);
+			ret = -ENOENT;
+			goto put_iter;
+		}
+
+		s = bkey_s_c_to_subvolume(k);
+		*target = le64_to_cpu(s.v->inode);
+put_iter:
+		bch2_trans_iter_put(trans, iter);
+	}
+
+	return ret;
+}
+
 int bch2_dirent_rename(struct btree_trans *trans,
 		       u64 src_dir, struct bch_hash_info *src_hash,
 		       u64 dst_dir, struct bch_hash_info *dst_hash,
@@ -308,12 +345,33 @@ int bch2_dirent_delete_at(struct btree_trans *trans,
 }
 
 struct btree_iter *
-__bch2_dirent_lookup_trans(struct btree_trans *trans, u64 dir_inum,
+__bch2_dirent_lookup_trans(struct btree_trans *trans, u64 dir,
 			   const struct bch_hash_info *hash_info,
-			   const struct qstr *name, unsigned flags)
+			   const struct qstr *name, u64 *inum,
+			   unsigned flags)
 {
-	return bch2_hash_lookup(trans, bch2_dirent_hash_desc,
-				hash_info, dir_inum, name, flags);
+	struct btree_iter *iter = NULL;
+	struct bkey_s_c k;
+	struct bkey_s_c_dirent d;
+	int ret;
+
+	iter = bch2_hash_lookup(trans, bch2_dirent_hash_desc,
+				hash_info, dir, name, flags);
+	if (IS_ERR(iter))
+		return iter;
+
+	k = bch2_btree_iter_peek_slot(iter);
+	BUG_ON(bkey_err(k));
+
+	d = bkey_s_c_to_dirent(k);
+
+	ret = bch2_dirent_read_target(trans, d, inum);
+	if (ret) {
+		bch2_trans_iter_put(trans, iter);
+		return ERR_PTR(ret);
+	}
+
+	return iter;
 }
 
 u64 bch2_dirent_lookup(struct bch_fs *c, u64 dir_inum,
@@ -322,22 +380,19 @@ u64 bch2_dirent_lookup(struct bch_fs *c, u64 dir_inum,
 {
 	struct btree_trans trans;
 	struct btree_iter *iter;
-	struct bkey_s_c k;
 	u64 inum = 0;
+	int ret;
 
 	bch2_trans_init(&trans, c, 0, 0);
+retry:
+	bch2_trans_begin(&trans);
 
-	iter = __bch2_dirent_lookup_trans(&trans, dir_inum,
-					  hash_info, name, 0);
-	if (IS_ERR(iter)) {
-		BUG_ON(PTR_ERR(iter) == -EINTR);
-		goto out;
-	}
-
-	k = bch2_btree_iter_peek_slot(iter);
-	inum = le64_to_cpu(bkey_s_c_to_dirent(k).v->d_inum);
+	iter = __bch2_dirent_lookup_trans(&trans, dir_inum, hash_info,
+					  name, &inum, 0);
+	ret = PTR_ERR_OR_ZERO(iter);
 	bch2_trans_iter_put(&trans, iter);
-out:
+	if (ret == -EINTR)
+		goto retry;
 	bch2_trans_exit(&trans);
 	return inum;
 }
@@ -391,7 +446,7 @@ int bch2_readdir(struct bch_fs *c, u64 inum, struct dir_context *ctx)
 		if (!dir_emit(ctx, dirent.v->d_name,
 			      bch2_dirent_name_bytes(dirent),
 			      le64_to_cpu(dirent.v->d_inum),
-			      dirent.v->d_type))
+			      vfs_d_type(dirent.v->d_type)))
 			break;
 		ctx->pos = dirent.k->p.offset + 1;
 	}
