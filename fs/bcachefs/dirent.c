@@ -312,23 +312,53 @@ u64 bch2_dirent_lookup(struct bch_fs *c, u64 dir_inum,
 		       const struct qstr *name)
 {
 	struct btree_trans trans;
-	struct btree_iter *iter;
+	struct btree_iter *d_iter, *s_iter;
 	struct bkey_s_c k;
+	struct bkey_s_c_dirent d;
 	u64 inum = 0;
+	int ret;
 
 	bch2_trans_init(&trans, c, 0, 0);
+retry:
+	bch2_trans_begin(&trans);
 
-	iter = __bch2_dirent_lookup_trans(&trans, dir_inum,
-					  hash_info, name, 0);
-	if (IS_ERR(iter)) {
-		BUG_ON(PTR_ERR(iter) == -EINTR);
-		goto out;
+	s_iter = NULL;
+	d_iter = __bch2_dirent_lookup_trans(&trans, dir_inum,
+					    hash_info, name, 0);
+	ret = PTR_ERR_OR_ZERO(d_iter);
+	if (ret)
+		goto err;
+
+	k = bch2_btree_iter_peek_slot(d_iter);
+	d = bkey_s_c_to_dirent(k);
+	inum = le64_to_cpu(d.v->d_inum);
+
+	if (d.v->d_type == DT_SUBVOL) {
+		struct bkey_s_c_subvolume s;
+
+		s_iter = bch2_trans_get_iter(&trans, BTREE_ID_subvolumes,
+					     POS(0, inum), 0);
+
+		k = bch2_btree_iter_peek_slot(s_iter);
+		ret = bkey_err(k);
+		if (ret)
+			goto err;
+
+		if (k.k->type != KEY_TYPE_subvolume) {
+			bch2_fs_inconsistent(c, "pointer to missing subvolume %llu",
+					     inum);
+			inum = 0;
+			goto err;
+		}
+
+		s = bkey_s_c_to_subvolume(k);
+		inum = le64_to_cpu(s.v->inode);
 	}
-
-	k = bch2_btree_iter_peek_slot(iter);
-	inum = le64_to_cpu(bkey_s_c_to_dirent(k).v->d_inum);
-	bch2_trans_iter_put(&trans, iter);
-out:
+err:
+	bch2_trans_iter_put(&trans, s_iter);
+	bch2_trans_iter_put(&trans, d_iter);
+	if (ret == -EINTR)
+		goto retry;
 	bch2_trans_exit(&trans);
 	return inum;
 }
@@ -352,6 +382,11 @@ int bch2_empty_dir_trans(struct btree_trans *trans, u64 dir_inum)
 	bch2_trans_iter_put(trans, iter);
 
 	return ret;
+}
+
+static inline unsigned vfs_d_type(unsigned type)
+{
+	return type == DT_SUBVOL ? DT_DIR : type;
 }
 
 int bch2_readdir(struct bch_fs *c, u64 inum, struct dir_context *ctx)
@@ -382,7 +417,7 @@ int bch2_readdir(struct bch_fs *c, u64 inum, struct dir_context *ctx)
 		if (!dir_emit(ctx, dirent.v->d_name,
 			      bch2_dirent_name_bytes(dirent),
 			      le64_to_cpu(dirent.v->d_inum),
-			      dirent.v->d_type))
+			      vfs_d_type(dirent.v->d_type)))
 			break;
 		ctx->pos = dirent.k->p.offset + 1;
 	}
