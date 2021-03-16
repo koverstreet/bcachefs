@@ -80,6 +80,9 @@ grep /usr/bin/ld.bfd "$log" | sed -e "s@$build/@@g" \
 		cp "$base/signatures/$package/"*".ko.sig" "$pkgdir/bits"
 		sha256sum -c "$base/signatures/$package/SHA256SUMS" || exit 1
 		sh ./CLEAN
+
+		sed -i '/objdump/d' ./BUILD
+
 	else
 		# We are in the main kernel, put the .kos together as we will
 		# on the users machine, sign them, and keep just the signature.
