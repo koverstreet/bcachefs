@@ -39,27 +39,20 @@ static s64 bch2_count_inode_sectors(struct btree_trans *trans, u64 inum)
 	return ret ?: sectors;
 }
 
-static int __remove_dirent(struct btree_trans *trans,
-			   struct bkey_s_c_dirent dirent)
+static int __remove_dirent(struct btree_trans *trans, struct bpos pos)
 {
 	struct bch_fs *c = trans->c;
-	struct qstr name;
 	struct bch_inode_unpacked dir_inode;
 	struct bch_hash_info dir_hash_info;
-	u64 dir_inum = dirent.k->p.inode;
+	struct btree_iter *iter;
 	int ret;
-	char *buf;
 
-	name.len = bch2_dirent_name_bytes(dirent);
-	buf = bch2_trans_kmalloc(trans, name.len + 1);
-	if (IS_ERR(buf))
-		return PTR_ERR(buf);
-
-	memcpy(buf, dirent.v->d_name, name.len);
-	buf[name.len] = '\0';
-	name.name = buf;
-
-	ret = __bch2_inode_find_by_inum_trans(trans, dir_inum, &dir_inode, 0);
+	/*
+	 * It doesn't matter which snapshot ID we find - we only need the hash
+	 * seed, which is never modified and thus will be the same in all
+	 * snapshots:
+	 */
+	ret = __bch2_inode_find_by_inum_trans(trans, pos.inode, &dir_inode, 0);
 	if (ret && ret != -EINTR)
 		bch_err(c, "remove_dirent: err %i looking up directory inode", ret);
 	if (ret)
@@ -67,29 +60,30 @@ static int __remove_dirent(struct btree_trans *trans,
 
 	dir_hash_info = bch2_hash_info_init(c, &dir_inode);
 
-	ret = bch2_hash_delete(trans, bch2_dirent_hash_desc,
-			       &dir_hash_info, dir_inum, &name);
-	if (ret && ret != -EINTR)
-		bch_err(c, "remove_dirent: err %i deleting dirent", ret);
-	if (ret)
-		return ret;
+	iter = bch2_trans_get_iter(trans, BTREE_ID_dirents, pos, BTREE_ITER_INTENT);
 
-	return 0;
+	ret = bch2_hash_delete_at(trans, bch2_dirent_hash_desc,
+				  &dir_hash_info, iter);
+	bch2_trans_iter_put(trans, iter);
+	return ret;
 }
 
-static int remove_dirent(struct btree_trans *trans,
-			 struct bkey_s_c_dirent dirent)
+static int remove_dirent(struct btree_trans *trans, struct bpos pos)
 {
-	return __bch2_trans_do(trans, NULL, NULL,
-			       BTREE_INSERT_NOFAIL|
-			       BTREE_INSERT_LAZY_RW,
-			       __remove_dirent(trans, dirent));
+	int ret = __bch2_trans_do(trans, NULL, NULL,
+				  BTREE_INSERT_NOFAIL|
+				  BTREE_INSERT_LAZY_RW,
+				  __remove_dirent(trans, pos));
+	if (ret)
+		bch_err(trans->c, "remove_dirent: err %i deleting dirent", ret);
+	return ret;
 }
 
 static int reattach_inode(struct bch_fs *c,
 			  struct bch_inode_unpacked *lostfound_inode,
 			  u64 inum)
 {
+#if 0
 	struct bch_inode_unpacked dir_u, inode_u;
 	char name_buf[20];
 	struct qstr name;
@@ -106,6 +100,9 @@ static int reattach_inode(struct bch_fs *c,
 		bch_err(c, "error %i reattaching inode %llu", ret, inum);
 
 	return ret;
+#endif
+	bch_err(c, "reattach_inode() not reimplemented yet");
+	return -EINVAL;
 }
 
 struct inode_walker {
@@ -180,6 +177,7 @@ static int hash_redo_key(const struct bch_hash_desc desc,
 			 struct btree_iter *k_iter, struct bkey_s_c k,
 			 u64 hashed)
 {
+#if 0
 	struct bkey_i delete;
 	struct bkey_i *tmp;
 
@@ -195,6 +193,9 @@ static int hash_redo_key(const struct bch_hash_desc desc,
 
 	return bch2_hash_set(trans, desc, &h->info, k_iter->pos.inode,
 			     tmp, 0);
+#endif
+	bch_err(trans->c, "hash_redo_key() not reimplemented yet");
+	return -EINVAL;
 }
 
 static int fsck_hash_delete_at(struct btree_trans *trans,
@@ -643,7 +644,7 @@ retry:
 				".. dirent") ||
 		    fsck_err_on(memchr(d.v->d_name, '/', name_len), c,
 				"dirent name has invalid chars")) {
-			ret = remove_dirent(&trans, d);
+			ret = remove_dirent(&trans, d.k->p);
 			if (ret)
 				goto err;
 			continue;
@@ -653,7 +654,7 @@ retry:
 				"dirent points to own directory:\n%s",
 				(bch2_bkey_val_to_text(&PBUF(buf), c,
 						       k), buf))) {
-			ret = remove_dirent(&trans, d);
+			ret = remove_dirent(&trans, d.k->p);
 			if (ret)
 				goto err;
 			continue;
@@ -670,7 +671,7 @@ retry:
 				"dirent points to missing inode:\n%s",
 				(bch2_bkey_val_to_text(&PBUF(buf), c,
 						       k), buf))) {
-			ret = remove_dirent(&trans, d);
+			ret = remove_dirent(&trans, d.k->p);
 			if (ret)
 				goto err;
 			continue;
@@ -849,20 +850,21 @@ static int check_lostfound(struct bch_fs *c,
 	struct qstr lostfound = QSTR("lost+found");
 	struct bch_hash_info root_hash_info =
 		bch2_hash_info_init(c, root_inode);
-	u64 inum;
+	subvol_inum lostfound_inum;
 	int ret;
 
 	bch_verbose(c, "checking lost+found");
 
-	inum = bch2_dirent_lookup(c, BCACHEFS_ROOT_INO, &root_hash_info,
-				 &lostfound);
-	if (!inum) {
+	ret = bch2_dirent_lookup(c, BCACHEFS_ROOT_SUBVOL_INUM,
+				 &root_hash_info, &lostfound, &lostfound_inum);
+	if (ret) {
 		bch_notice(c, "creating lost+found");
 		goto create_lostfound;
 	}
 
 	ret = bch2_trans_do(c, NULL, NULL, 0,
-		__bch2_inode_find_by_inum_trans(&trans, inum, lostfound_inode, 0));
+		__bch2_inode_find_by_inum_trans(&trans, lostfound_inum.inum,
+						lostfound_inode, 0));
 	if (ret && ret != -ENOENT)
 		return ret;
 
@@ -882,10 +884,10 @@ create_lostfound:
 	ret = bch2_trans_do(c, NULL, NULL,
 			    BTREE_INSERT_NOFAIL|
 			    BTREE_INSERT_LAZY_RW,
-		bch2_create_trans(&trans,
-				  BCACHEFS_ROOT_INO, root_inode,
-				  lostfound_inode, &lostfound,
-				  0, 0, S_IFDIR|0700, 0, NULL, NULL));
+		bch2_create_trans(&trans, BCACHEFS_ROOT_SUBVOL_INUM,
+				  root_inode,
+				  lostfound_inode, &lostfound, 0, 0,
+				  S_IFDIR|0700, 0, NULL, NULL, 0));
 	if (ret)
 		bch_err(c, "error creating lost+found: %i", ret);
 
@@ -1003,7 +1005,7 @@ next:
 			if (fsck_err_on(inode_bitmap_test(&dirs_done, d_inum), c,
 					"directory %llu has multiple hardlinks",
 					d_inum)) {
-				ret = remove_dirent(&trans, dirent);
+				ret = remove_dirent(&trans, dirent.k->p);
 				if (ret)
 					goto err;
 				continue;
@@ -1037,19 +1039,20 @@ up:
 	}
 
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_inodes, POS_MIN, 0);
-retry:
+//retry:
 	for_each_btree_key_continue(iter, 0, k, ret) {
 		if (k.k->type != KEY_TYPE_inode)
 			continue;
 
 		if (!S_ISDIR(le16_to_cpu(bkey_s_c_to_inode(k).v->bi_mode)))
 			continue;
-
+#if 0
 		ret = bch2_empty_dir_trans(&trans, k.k->p.inode);
 		if (ret == -EINTR)
 			goto retry;
 		if (!ret)
 			continue;
+#endif
 
 		if (fsck_err_on(!inode_bitmap_test(&dirs_done, k.k->p.offset), c,
 				"unreachable directory found (inum %llu)",
@@ -1286,8 +1289,14 @@ static int check_inode(struct btree_trans *trans,
 		bch_verbose(c, "deleting inode %llu", u.bi_inum);
 
 		bch2_fs_lazy_rw(c);
+		/*
+		 * XXX: walk parents to find out which subvolume we're in
+		 */
 
+		BUG();
+#if 0
 		ret = bch2_inode_rm(c, u.bi_inum, false);
+#endif
 		if (ret)
 			bch_err(c, "error in fsck: error %i while deleting inode", ret);
 		return ret;

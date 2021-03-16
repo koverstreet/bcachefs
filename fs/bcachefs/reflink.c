@@ -6,6 +6,7 @@
 #include "inode.h"
 #include "io.h"
 #include "reflink.h"
+#include "subvolume.h"
 
 #include <linux/sched/signal.h>
 
@@ -193,7 +194,8 @@ static struct bkey_s_c get_next_src(struct btree_iter *iter, struct bpos end)
 }
 
 s64 bch2_remap_range(struct bch_fs *c,
-		     struct bpos dst_start, struct bpos src_start,
+		     subvol_inum dst_inum, u64 dst_offset,
+		     subvol_inum src_inum, u64 src_offset,
 		     u64 remap_sectors, u64 *journal_seq,
 		     u64 new_i_size, s64 *i_sectors_delta)
 {
@@ -201,9 +203,11 @@ s64 bch2_remap_range(struct bch_fs *c,
 	struct btree_iter *dst_iter, *src_iter;
 	struct bkey_s_c src_k;
 	struct bkey_buf new_dst, new_src;
+	struct bpos dst_start = POS(dst_inum.inum, dst_offset);
+	struct bpos src_start = POS(src_inum.inum, src_offset);
 	struct bpos dst_end = dst_start, src_end = src_start;
 	struct bpos dst_want, src_want;
-	u64 src_done, dst_done;
+	u64 dst_done, src_done;
 	int ret = 0, ret2 = 0;
 
 	if (!percpu_ref_tryget(&c->writes))
@@ -230,6 +234,16 @@ s64 bch2_remap_range(struct bch_fs *c,
 			ret = -EINTR;
 			break;
 		}
+
+		ret = bch2_subvolume_get_snapshot(&trans, src_inum.subvol,
+						  &src_iter->snapshot);
+		if (ret)
+			continue;
+
+		ret = bch2_subvolume_get_snapshot(&trans, dst_inum.subvol,
+						  &dst_iter->snapshot);
+		if (ret)
+			continue;
 
 		src_k = get_next_src(src_iter, src_end);
 		ret = bkey_err(src_k);
@@ -312,7 +326,7 @@ s64 bch2_remap_range(struct bch_fs *c,
 		struct btree_iter *inode_iter;
 
 		inode_iter = bch2_inode_peek(&trans, &inode_u,
-				dst_start.inode, BTREE_ITER_INTENT);
+				dst_inum, BTREE_ITER_INTENT);
 		ret2 = PTR_ERR_OR_ZERO(inode_iter);
 
 		if (!ret2 &&
