@@ -20,6 +20,7 @@
 #include "quota.h"
 #include "recovery.h"
 #include "replicas.h"
+#include "subvolume.h"
 #include "super-io.h"
 
 #include <linux/sort.h>
@@ -1188,6 +1189,13 @@ use_clean:
 		bch_verbose(c, "alloc write done");
 	}
 
+	bch_verbose(c, "reading snapshots table");
+	err = "error reading snapshots table";
+	ret = bch2_fs_snapshots_start(c);
+	if (ret)
+		goto err;
+	bch_verbose(c, "reading snapshots done");
+
 	if (c->opts.fsck) {
 		bch_info(c, "starting fsck");
 		err = "error in fsck";
@@ -1279,7 +1287,9 @@ fsck_err:
 int bch2_fs_initialize(struct bch_fs *c)
 {
 	struct bch_inode_unpacked root_inode, lostfound_inode;
-	struct bkey_inode_buf packed_inode;
+	struct bkey_inode_buf	packed_inode;
+	struct bkey_i_subvolume root_volume;
+	struct bkey_i_snapshot	root_snapshot;
 	struct qstr lostfound = QSTR("lost+found");
 	const char *err = "cannot allocate memory";
 	struct bch_dev *ca;
@@ -1344,9 +1354,35 @@ int bch2_fs_initialize(struct bch_fs *c)
 			goto err;
 	}
 
+	bkey_snapshot_init(&root_snapshot.k_i);
+	root_snapshot.k.p.offset = U32_MAX;
+	root_snapshot.v.flags	= 0;
+	root_snapshot.v.parent	= 0;
+	root_snapshot.v.subvol	= BCACHEFS_ROOT_SUBVOL;
+	root_snapshot.v.pad	= 0;
+
+	err = "error creating root snapshot node";
+	ret = bch2_btree_insert(c, BTREE_ID_snapshots,
+				&root_snapshot.k_i,
+				NULL, NULL, 0);
+
+	bkey_subvolume_init(&root_volume.k_i);
+	root_volume.k.p.offset = BCACHEFS_ROOT_SUBVOL;
+	root_volume.v.flags	= 0;
+	root_volume.v.snapshot	= cpu_to_le32(U32_MAX);
+	root_volume.v.inode	= cpu_to_le64(BCACHEFS_ROOT_INO);
+
+	err = "error creating root subvolume";
+	ret = bch2_btree_insert(c, BTREE_ID_subvolumes,
+				&root_volume.k_i,
+				NULL, NULL, 0);
+	if (ret)
+		goto err;
+
 	bch2_inode_init(c, &root_inode, 0, 0,
 			S_IFDIR|S_IRWXU|S_IRUGO|S_IXUGO, 0, NULL);
-	root_inode.bi_inum = BCACHEFS_ROOT_INO;
+	root_inode.bi_inum	= BCACHEFS_ROOT_INO;
+	root_inode.bi_subvol	= BCACHEFS_ROOT_SUBVOL;
 	bch2_inode_pack(c, &packed_inode, &root_inode);
 	packed_inode.inode.k.p.snapshot = U32_MAX;
 

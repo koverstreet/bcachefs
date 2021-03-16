@@ -99,7 +99,8 @@ const char *bch2_dirent_invalid(const struct bch_fs *c, struct bkey_s_c k)
 	if (memchr(d.v->d_name, '/', len))
 		return "invalid name";
 
-	if (le64_to_cpu(d.v->d_inum) == d.k->p.inode)
+	if (d.v->d_type != DT_SUBVOL &&
+	    le64_to_cpu(d.v->d_inum) == d.k->p.inode)
 		return "dirent points to own directory";
 
 	return NULL;
