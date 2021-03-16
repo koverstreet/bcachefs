@@ -49,6 +49,7 @@ bcachefs-y		:=	\
 	reflink.o		\
 	replicas.o		\
 	siphash.o		\
+	subvolume.o		\
 	super.o			\
 	super-io.o		\
 	sysfs.o			\
