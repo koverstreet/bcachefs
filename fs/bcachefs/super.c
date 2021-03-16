@@ -39,6 +39,7 @@
 #include "rebalance.h"
 #include "recovery.h"
 #include "replicas.h"
+#include "subvolume.h"
 #include "super.h"
 #include "super-io.h"
 #include "sysfs.h"
@@ -471,6 +472,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 	for (i = 0; i < BCH_TIME_STAT_NR; i++)
 		bch2_time_stats_exit(&c->times[i]);
 
+	bch2_fs_snapshots_exit(c);
 	bch2_fs_quota_exit(c);
 	bch2_fs_fsio_exit(c);
 	bch2_fs_ec_exit(c);
@@ -691,6 +693,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	mutex_init(&c->usage_scratch_lock);
 
 	mutex_init(&c->bio_bounce_pages_lock);
+	mutex_init(&c->snapshot_table_lock);
 
 	bio_list_init(&c->btree_write_error_list);
 	spin_lock_init(&c->btree_write_error_lock);

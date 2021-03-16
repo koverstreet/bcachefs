@@ -11,6 +11,7 @@
 #include "inode.h"
 #include "quota.h"
 #include "reflink.h"
+#include "subvolume.h"
 #include "xattr.h"
 
 const char * const bch2_bkey_types[] = {

@@ -377,6 +377,8 @@ enum gc_phase {
 	GC_PHASE_BTREE_alloc,
 	GC_PHASE_BTREE_quotas,
 	GC_PHASE_BTREE_reflink,
+	GC_PHASE_BTREE_subvolumes,
+	GC_PHASE_BTREE_snapshots,
 
 	GC_PHASE_PENDING_DELETE,
 	GC_PHASE_ALLOC,
@@ -554,6 +556,20 @@ struct btree_iter_buf {
 	struct btree_iter	*iter;
 };
 
+struct bch_snapshot_table {
+	struct rcu_head		rcu;
+	u32			base;
+	u32			d[];
+};
+
+typedef struct {
+	u32		subvol;
+	u64		inum;
+} subvol_inum;
+
+#define BCACHEFS_ROOT_SUBVOL_INUM					\
+	((subvol_inum) { BCACHEFS_ROOT_SUBVOL,	BCACHEFS_ROOT_INO })
+
 struct bch_fs {
 	struct closure		cl;
 
@@ -658,6 +674,10 @@ struct bch_fs {
 	struct srcu_struct	btree_trans_barrier;
 
 	struct btree_key_cache	btree_key_cache;
+
+	/* snapshot.c: */
+	struct bch_snapshot_table __rcu *snapshot_table;
+	struct mutex		snapshot_table_lock;
 
 	struct workqueue_struct	*wq;
 	/* copygc needs its own workqueue for index updates.. */
