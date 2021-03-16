@@ -694,6 +694,8 @@ int bch2_move_data(struct bch_fs *c,
 	enum btree_id id;
 	int ret;
 
+	return 0;
+
 	closure_init_stack(&ctxt.cl);
 	INIT_LIST_HEAD(&ctxt.reads);
 	init_waitqueue_head(&ctxt.wait);

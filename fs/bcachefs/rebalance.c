@@ -312,6 +312,9 @@ int bch2_rebalance_start(struct bch_fs *c)
 {
 	struct task_struct *p;
 
+	/* disabled for now: */
+	return 0;
+
 	if (c->rebalance.thread)
 		return 0;
 
