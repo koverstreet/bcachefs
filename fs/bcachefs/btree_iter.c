@@ -619,6 +619,8 @@ static void bch2_btree_iter_verify_entry_exit(struct btree_iter *iter)
 {
 	enum btree_iter_type type = btree_iter_type(iter);
 
+	BUG_ON((iter->flags & BTREE_ITER_FILTER_SNAPSHOTS) &&
+	       !iter->pos.snapshot);
 	BUG_ON(!(iter->flags & BTREE_ITER_ALL_SNAPSHOTS) &&
 	       iter->pos.snapshot != iter->snapshot);
 
@@ -2132,17 +2134,11 @@ struct btree_iter *__bch2_trans_get_iter(struct btree_trans *trans,
 	if ((flags & BTREE_ITER_TYPE) != BTREE_ITER_NODES &&
 	    !btree_type_has_snapshots(btree_id))
 		flags &= ~BTREE_ITER_ALL_SNAPSHOTS;
-#if 0
-	/* let's have this be explicitly set: */
+
 	if ((flags & BTREE_ITER_TYPE) != BTREE_ITER_NODES &&
 	    btree_type_has_snapshots(btree_id) &&
 	    !(flags & BTREE_ITER_ALL_SNAPSHOTS))
 		flags |= BTREE_ITER_FILTER_SNAPSHOTS;
-#endif
-
-	if (!(flags & BTREE_ITER_ALL_SNAPSHOTS))
-		pos.snapshot = btree_type_has_snapshots(btree_id)
-			? U32_MAX : 0;
 
 	trans_for_each_iter(trans, iter) {
 		if (btree_iter_type(iter) != (flags & BTREE_ITER_TYPE))
