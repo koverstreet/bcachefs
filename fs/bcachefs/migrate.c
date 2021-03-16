@@ -48,7 +48,8 @@ static int __bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
 
 	iter = bch2_trans_get_iter(&trans, btree_id, POS_MIN,
-				   BTREE_ITER_PREFETCH);
+				   BTREE_ITER_PREFETCH|
+				   BTREE_ITER_ALL_SNAPSHOTS);
 
 	while ((k = bch2_btree_iter_peek(iter)).k &&
 	       !(ret = bkey_err(k))) {

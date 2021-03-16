@@ -350,6 +350,9 @@ int bch2_copygc_start(struct bch_fs *c)
 {
 	struct task_struct *t;
 
+	/* disabled for now: */
+	return 0;
+
 	if (c->copygc_thread)
 		return 0;
 
