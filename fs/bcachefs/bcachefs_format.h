@@ -951,9 +951,15 @@ struct bch_subvolume {
 };
 
 LE64_BITMASK(BCH_SUBVOLUME_RO,	struct bch_subvolume, flags,  0,  1)
+/*
+ * We need to know whether a subvolume is a snapshot so we can know whether we
+ * can delete it (or whether it should just be rm -rf'd)
+ */
+LE64_BITMASK(BCH_SUBVOLUME_SNAP,struct bch_subvolume, flags,  1,  2)
 
 /* Snapshots */
 
+/* Add a backpointer field?  */
 struct bch_snapshot {
 	struct bch_val		v;
 	__le32			parent;
