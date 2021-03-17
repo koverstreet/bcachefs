@@ -147,7 +147,7 @@ struct bch_inode_unpacked;
 
 struct bch_inode_info *
 __bch2_create(struct bch_inode_info *, struct dentry *,
-	      umode_t, dev_t, unsigned);
+	      umode_t, dev_t, subvol_inum, unsigned);
 
 int bch2_fs_quota_transfer(struct bch_fs *,
 			   struct bch_inode_info *,
