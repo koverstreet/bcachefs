@@ -239,12 +239,6 @@ struct inode *bch2_vfs_inode_get(struct bch_fs *c, subvol_inum inum)
 	struct bch_inode_info *inode;
 	int ret;
 
-	/*
-	 * debug assert, to be removed when we start creating
-	 * subvolumes/snapshots:
-	 */
-	BUG_ON(inum.subvol != BCACHEFS_ROOT_SUBVOL);
-
 	inode = to_bch_ei(iget5_locked(c->vfs_sb,
 				       bch2_inode_hash(inum),
 				       bch2_iget5_test,
@@ -272,7 +266,8 @@ struct inode *bch2_vfs_inode_get(struct bch_fs *c, subvol_inum inum)
 
 struct bch_inode_info *
 __bch2_create(struct bch_inode_info *dir, struct dentry *dentry,
-	      umode_t mode, dev_t rdev, unsigned flags)
+	      umode_t mode, dev_t rdev, subvol_inum snapshot_src,
+	      unsigned flags)
 {
 	struct bch_fs *c = dir->v.i_sb->s_fs_info;
 	struct user_namespace *ns = dir->v.i_sb->s_user_ns;
@@ -318,7 +313,7 @@ retry:
 				  from_kuid(ns, current_fsuid()),
 				  from_kgid(ns, current_fsgid()),
 				  mode, rdev,
-				  default_acl, acl, flags) ?:
+				  default_acl, acl, snapshot_src, flags) ?:
 		bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, 1,
 				KEY_TYPE_QUOTA_PREALLOC);
 	if (unlikely(ret))
@@ -425,7 +420,8 @@ static int bch2_mknod(struct inode *vdir, struct dentry *dentry,
 		      umode_t mode, dev_t rdev)
 {
 	struct bch_inode_info *inode =
-		__bch2_create(to_bch_ei(vdir), dentry, mode, rdev, 0);
+		__bch2_create(to_bch_ei(vdir), dentry, mode, rdev,
+			      (subvol_inum) { 0 }, 0);
 
 	if (IS_ERR(inode))
 		return PTR_ERR(inode);
@@ -535,7 +531,7 @@ static int bch2_symlink(struct inode *vdir, struct dentry *dentry,
 	int ret;
 
 	inode = __bch2_create(dir, dentry, S_IFLNK|S_IRWXUGO, 0,
-			      BCH_CREATE_TMPFILE);
+			      (subvol_inum) { 0 }, BCH_CREATE_TMPFILE);
 	if (unlikely(IS_ERR(inode)))
 		return PTR_ERR(inode);
 
@@ -846,7 +842,7 @@ static int bch2_tmpfile(struct inode *vdir, struct dentry *dentry, umode_t mode)
 {
 	struct bch_inode_info *inode =
 		__bch2_create(to_bch_ei(vdir), dentry, mode, 0,
-			      BCH_CREATE_TMPFILE);
+			      (subvol_inum) { 0 }, BCH_CREATE_TMPFILE);
 
 	if (IS_ERR(inode))
 		return PTR_ERR(inode);

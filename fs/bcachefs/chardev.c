@@ -5,6 +5,9 @@
 #include "bcachefs_ioctl.h"
 #include "buckets.h"
 #include "chardev.h"
+#include "dirent.h"
+#include "fs.h"
+#include "fs-common.h"
 #include "journal.h"
 #include "move.h"
 #include "replicas.h"
@@ -16,12 +19,16 @@
 #include <linux/device.h>
 #include <linux/file.h>
 #include <linux/fs.h>
+#include <linux/fsnotify.h>
 #include <linux/ioctl.h>
 #include <linux/kthread.h>
 #include <linux/major.h>
+#include <linux/namei.h>
 #include <linux/sched/task.h>
+#include <linux/security.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/writeback.h>
 
 /* returns with ref on ca->ref */
 static struct bch_dev *bch2_device_lookup(struct bch_fs *c, u64 dev,
@@ -585,6 +592,136 @@ static long bch2_ioctl_disk_resize_journal(struct bch_fs *c,
 	return ret;
 }
 
+static long bch2_ioctl_subvolume_create(struct bch_fs *c,
+				struct bch_ioctl_subvolume arg)
+{
+	struct inode *dir;
+	struct bch_inode_info *inode;
+	struct user_namespace *s_user_ns;
+	struct dentry *dst_dentry;
+	struct path src_path, dst_path;
+	int how = LOOKUP_FOLLOW;
+	int error;
+	subvol_inum snapshot_src = { 0 };
+	unsigned lookup_flags = 0;
+	unsigned create_flags = BCH_CREATE_SUBVOL;
+
+	if (arg.flags & ~(BCH_SUBVOL_SNAPSHOT_CREATE|
+			  BCH_SUBVOL_SNAPSHOT_RO))
+		return -EINVAL;
+
+	if (!(arg.flags & BCH_SUBVOL_SNAPSHOT_CREATE) &&
+	    (arg.src_ptr ||
+	     (arg.flags & BCH_SUBVOL_SNAPSHOT_RO)))
+		return -EINVAL;
+
+	if (arg.flags & BCH_SUBVOL_SNAPSHOT_CREATE)
+		create_flags |= BCH_CREATE_SNAPSHOT;
+
+	if (arg.flags & BCH_SUBVOL_SNAPSHOT_RO)
+		create_flags |= BCH_CREATE_SNAPSHOT_RO;
+
+	down_read(&c->vfs_sb->s_umount);
+
+	if (arg.flags & BCH_SUBVOL_SNAPSHOT_CREATE)
+		sync_inodes_sb(c->vfs_sb);
+retry:
+	if (arg.src_ptr) {
+		error = user_path_at(arg.dirfd,
+				(const char __user *)(unsigned long)arg.src_ptr,
+				how, &src_path);
+		if (error)
+			goto err1;
+
+		if (src_path.dentry->d_sb->s_fs_info != c) {
+			path_put(&src_path);
+			error = -EXDEV;
+			goto err1;
+		}
+
+		snapshot_src = inode_inum(to_bch_ei(src_path.dentry->d_inode));
+	}
+
+	dst_dentry = user_path_create(arg.dirfd,
+			(const char __user *)(unsigned long)arg.dst_ptr,
+			&dst_path, lookup_flags);
+	error = PTR_ERR_OR_ZERO(dst_dentry);
+	if (error)
+		goto err2;
+
+	if (dst_dentry->d_sb->s_fs_info != c) {
+		error = -EXDEV;
+		goto err3;
+	}
+
+	if (dst_dentry->d_inode) {
+		error = -EEXIST;
+		goto err3;
+	}
+
+	dir = dst_path.dentry->d_inode;
+	if (IS_DEADDIR(dir)) {
+		error = -ENOENT;
+		goto err3;
+	}
+
+	s_user_ns = dir->i_sb->s_user_ns;
+	if (!kuid_has_mapping(s_user_ns, current_fsuid()) ||
+	    !kgid_has_mapping(s_user_ns, current_fsgid())) {
+		error = -EOVERFLOW;
+		goto err3;
+	}
+
+	error = inode_permission(dir, MAY_WRITE | MAY_EXEC);
+	if (error)
+		goto err3;
+
+	if (!IS_POSIXACL(dir))
+		arg.mode &= ~current_umask();
+
+	error = security_path_mkdir(&dst_path, dst_dentry, arg.mode);
+	if (error)
+		goto err3;
+
+	if ((arg.flags & BCH_SUBVOL_SNAPSHOT_CREATE) &&
+	    !arg.src_ptr)
+		snapshot_src.subvol = to_bch_ei(dir)->ei_inode.bi_subvol;
+
+	inode = __bch2_create(to_bch_ei(dir), dst_dentry, arg.mode|S_IFDIR,
+			      0, snapshot_src, create_flags);
+	error = PTR_ERR_OR_ZERO(inode);
+	if (error)
+		goto err3;
+
+	d_instantiate(dst_dentry, &inode->v);
+	fsnotify_mkdir(dir, dst_dentry);
+err3:
+	done_path_create(&dst_path, dst_dentry);
+err2:
+	if (arg.src_ptr)
+		path_put(&src_path);
+
+	if (retry_estale(error, lookup_flags)) {
+		lookup_flags |= LOOKUP_REVAL;
+		goto retry;
+	}
+err1:
+	up_read(&c->vfs_sb->s_umount);
+
+	return error;
+}
+
+static long bch2_ioctl_subvolume_destroy(struct bch_fs *c,
+				struct bch_ioctl_subvolume arg)
+{
+	int ret = 0;
+
+	if (arg.flags)
+		return -EINVAL;
+
+	return ret;
+}
+
 #define BCH_IOCTL(_name, _argtype)					\
 do {									\
 	_argtype i;							\
@@ -643,6 +780,11 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 		BCH_IOCTL(disk_resize, struct bch_ioctl_disk_resize);
 	case BCH_IOCTL_DISK_RESIZE_JOURNAL:
 		BCH_IOCTL(disk_resize_journal, struct bch_ioctl_disk_resize_journal);
+
+	case BCH_IOCTL_SUBVOLUME_CREATE:
+		BCH_IOCTL(subvolume_create, struct bch_ioctl_subvolume);
+	case BCH_IOCTL_SUBVOLUME_DESTROY:
+		BCH_IOCTL(subvolume_destroy, struct bch_ioctl_subvolume);
 
 	default:
 		return -ENOTTY;

@@ -289,7 +289,8 @@ create_lostfound:
 				      BTREE_INSERT_LAZY_RW,
 			bch2_create_trans(trans, root_inum, &root,
 					  lostfound, &lostfound_str,
-					  0, 0, S_IFDIR|0700, 0, NULL, NULL, 0));
+					  0, 0, S_IFDIR|0700, 0, NULL, NULL,
+					  (subvol_inum) { }, 0));
 		if (ret)
 			bch_err(c, "error creating lost+found: %i", ret);
 	}

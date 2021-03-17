@@ -19,6 +19,7 @@ int bch2_create_trans(struct btree_trans *trans,
 		      uid_t uid, gid_t gid, umode_t mode, dev_t rdev,
 		      struct posix_acl *default_acl,
 		      struct posix_acl *acl,
+		      subvol_inum snapshot_src,
 		      unsigned flags)
 {
 	struct bch_fs *c = trans->c;
@@ -26,10 +27,9 @@ int bch2_create_trans(struct btree_trans *trans,
 	struct btree_iter *inode_iter = NULL;
 	subvol_inum new_inum = dir;
 	u64 now = bch2_current_time(c);
-	u64 dir_offset = 0;
 	u64 dir_target;
 	u32 snapshot;
-	unsigned dir_type;
+	unsigned dir_type = mode_to_type(mode);
 	int ret;
 
 	ret = bch2_subvolume_get_snapshot(trans, dir.subvol, &snapshot);
@@ -41,36 +41,116 @@ int bch2_create_trans(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
-	bch2_inode_init_late(new_inode, now, uid, gid, mode, rdev, dir_u);
+	if (!(flags & BCH_CREATE_SNAPSHOT)) {
+		/* Normal create path - allocate a new inode: */
+		bch2_inode_init_late(new_inode, now, uid, gid, mode, rdev, dir_u);
 
-	if (!name)
-		new_inode->bi_flags |= BCH_INODE_UNLINKED;
+		if (flags & BCH_CREATE_TMPFILE)
+			new_inode->bi_flags |= BCH_INODE_UNLINKED;
 
-	inode_iter = bch2_inode_create(trans, new_inode, snapshot);
-	ret = PTR_ERR_OR_ZERO(inode_iter);
-	if (ret)
-		goto err;
+		inode_iter = bch2_inode_create(trans, new_inode, snapshot);
+		ret = PTR_ERR_OR_ZERO(inode_iter);
+		if (ret)
+			goto err;
+
+		snapshot_src = (subvol_inum) { 0 };
+	} else {
+		/*
+		 * Creating a snapshot - we're not allocating a new inode, but
+		 * we do have to lookup the root inode of the subvolume we're
+		 * snapshotting and update it (in the new snapshot):
+		 */
+
+		if (!snapshot_src.inum) {
+			/* Inode wasn't specified, just snapshot: */
+			struct btree_iter *subvol_iter =
+				bch2_trans_get_iter(trans, BTREE_ID_subvolumes,
+						    POS(0, snapshot_src.subvol), 0);
+			struct bkey_s_c k = bch2_btree_iter_peek_slot(subvol_iter);
+
+			ret = bkey_err(k);
+			if (!ret && k.k->type != KEY_TYPE_subvolume) {
+				bch_err(c, "subvolume %u not found",
+					snapshot_src.subvol);
+				ret = -ENOENT;
+			}
+
+			if (!ret)
+				snapshot_src.inum = le64_to_cpu(bkey_s_c_to_subvolume(k).v->inode);
+			bch2_trans_iter_put(trans, subvol_iter);
+
+			if (ret)
+				goto err;
+		}
+
+		inode_iter = bch2_inode_peek(trans, new_inode, snapshot_src,
+					     BTREE_ITER_INTENT);
+		ret = PTR_ERR_OR_ZERO(inode_iter);
+		if (ret)
+			goto err;
+
+		if (new_inode->bi_subvol != snapshot_src.subvol) {
+			/* Not a subvolume root: */
+			ret = -EINVAL;
+			goto err;
+		}
+
+		/*
+		 * If we're not root, we have to own the subvolume being
+		 * snapshotted:
+		 */
+		if (uid && new_inode->bi_uid != uid) {
+			ret = -EPERM;
+			goto err;
+		}
+
+		flags |= BCH_CREATE_SUBVOL;
+	}
 
 	new_inum.inum	= new_inode->bi_inum;
 	dir_target	= new_inode->bi_inum;
-	dir_type	= mode_to_type(new_inode->bi_mode);
 
-	if (default_acl) {
-		ret = bch2_set_acl_trans(trans, new_inum, new_inode,
-					 default_acl, ACL_TYPE_DEFAULT);
+	if (flags & BCH_CREATE_SUBVOL) {
+		u32 new_subvol, dir_snapshot;
+
+		ret = bch2_subvolume_create(trans, new_inode->bi_inum,
+					    snapshot_src.subvol,
+					    &new_subvol, &snapshot,
+					    (flags & BCH_CREATE_SNAPSHOT_RO) != 0);
 		if (ret)
 			goto err;
-	}
 
-	if (acl) {
-		ret = bch2_set_acl_trans(trans, new_inum, new_inode,
-					 acl, ACL_TYPE_ACCESS);
+		new_inode->bi_parent_subvol	= dir.subvol;
+		new_inode->bi_subvol		= new_subvol;
+		new_inum.subvol			= new_subvol;
+		dir_target			= new_subvol;
+		dir_type			= DT_SUBVOL;
+
+		ret = bch2_subvolume_get_snapshot(trans, dir.subvol, &dir_snapshot);
 		if (ret)
 			goto err;
+		bch2_btree_iter_set_snapshot(dir_iter, dir_snapshot);
 	}
 
-	if (name) {
+	if (!(flags & BCH_CREATE_SNAPSHOT)) {
+		if (default_acl) {
+			ret = bch2_set_acl_trans(trans, new_inum, new_inode,
+						 default_acl, ACL_TYPE_DEFAULT);
+			if (ret)
+				goto err;
+		}
+
+		if (acl) {
+			ret = bch2_set_acl_trans(trans, new_inum, new_inode,
+						 acl, ACL_TYPE_ACCESS);
+			if (ret)
+				goto err;
+		}
+	}
+
+	if (!(flags & BCH_CREATE_TMPFILE)) {
 		struct bch_hash_info dir_hash = bch2_hash_info_init(c, dir_u);
+		u64 dir_offset;
 
 		if (S_ISDIR(new_inode->bi_mode))
 			dir_u->bi_nlink++;
@@ -88,11 +168,11 @@ int bch2_create_trans(struct btree_trans *trans,
 					 BCH_HASH_SET_MUST_CREATE);
 		if (ret)
 			goto err;
-	}
 
-	if (c->sb.version >= bcachefs_metadata_version_inode_backpointers) {
-		new_inode->bi_dir		= dir_u->bi_inum;
-		new_inode->bi_dir_offset	= dir_offset;
+		if (c->sb.version >= bcachefs_metadata_version_inode_backpointers) {
+			new_inode->bi_dir		= dir_u->bi_inum;
+			new_inode->bi_dir_offset	= dir_offset;
+		}
 	}
 
 	inode_iter->flags &= ~BTREE_ITER_ALL_SNAPSHOTS;
