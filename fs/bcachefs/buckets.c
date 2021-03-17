@@ -1855,16 +1855,28 @@ int bch2_trans_mark_update(struct btree_trans *trans,
 		return 0;
 
 	if (!btree_node_type_is_extents(iter->btree_id)) {
+		struct bkey deleted;
+
+		/* iterators should be uptodate, shouldn't get errors here: */
 		if (btree_iter_type(iter) != BTREE_ITER_CACHED) {
 			old = bch2_btree_iter_peek_slot(iter);
 			ret = bkey_err(old);
 			if (ret)
 				return ret;
 		} else {
-			struct bkey_cached *ck = (void *) iter->l[0].b;
+			old = bch2_btree_iter_peek_cached(iter);
+			ret = bkey_err(old);
+			if (ret)
+				return ret;
+		}
 
-			BUG_ON(!ck->valid);
-			old = bkey_i_to_s_c(ck->k);
+		if (new->k.p.snapshot != old.k->p.snapshot) {
+			/* Not actually overwriting: */
+			bkey_init(&deleted);
+			deleted.p = new->k.p;
+
+			old.k = &deleted;
+			old.v = NULL;
 		}
 
 		if (old.k->type == new->k.type) {
@@ -1901,6 +1913,9 @@ int bch2_trans_mark_update(struct btree_trans *trans,
 
 			if (bkey_cmp(new->k.p, bkey_start_pos(old.k)) <= 0)
 				break;
+
+			if (new->k.p.snapshot != old.k->p.snapshot)
+				continue;
 
 			switch (bch2_extent_overlap(&new->k, old.k)) {
 			case BCH_EXTENT_OVERLAP_ALL:
