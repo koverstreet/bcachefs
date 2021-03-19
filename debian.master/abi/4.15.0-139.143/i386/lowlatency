@@ -21979,6 +21979,8 @@ EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_groups
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_link
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_link_nowarn
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_create_mount_point
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_emit
+EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_emit_at
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_merge_group
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_notify
 EXPORT_SYMBOL_GPL vmlinux 0x00000000	sysfs_remove_bin_file
