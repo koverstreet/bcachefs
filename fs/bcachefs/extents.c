@@ -1184,7 +1184,7 @@ int bch2_cut_back_s(struct bpos where, struct bkey_s k)
 
 	len = where.offset - bkey_start_offset(k.k);
 
-	k.k->p = where;
+	k.k->p.offset = where.offset;
 	k.k->size = len;
 
 	if (!len) {
