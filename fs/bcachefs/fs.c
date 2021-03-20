@@ -732,6 +732,8 @@ retry:
 				  BTREE_INSERT_NOUNLOCK|
 				  BTREE_INSERT_NOFAIL);
 btree_err:
+	bch2_trans_iter_put(&trans, inode_iter);
+
 	if (ret == -EINTR)
 		goto retry;
 	if (unlikely(ret))
@@ -958,6 +960,7 @@ retry:
 		ret = bch2_fill_extent(c, info, bkey_i_to_s_c(prev.k),
 				       FIEMAP_EXTENT_LAST);
 
+	bch2_trans_iter_put(&trans, iter);
 	ret = bch2_trans_exit(&trans) ?: ret;
 	bch2_bkey_buf_exit(&cur, c);
 	bch2_bkey_buf_exit(&prev, c);
