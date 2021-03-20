@@ -439,6 +439,8 @@ static int bch2_gc_btree(struct bch_fs *c, enum btree_id btree_id,
 
 		bch2_trans_cond_resched(&trans);
 	}
+	bch2_trans_iter_put(&trans, iter);
+
 	ret = bch2_trans_exit(&trans) ?: ret;
 	if (ret)
 		return ret;
@@ -1470,6 +1472,7 @@ static int bch2_coalesce_btree(struct bch_fs *c, enum btree_id btree_id)
 	struct btree *b;
 	bool kthread = (current->flags & PF_KTHREAD) != 0;
 	unsigned i;
+	int ret = 0;
 
 	/* Sliding window of adjacent btree nodes */
 	struct btree *merge[GC_MERGE_NODES];
@@ -1518,8 +1521,8 @@ static int bch2_coalesce_btree(struct bch_fs *c, enum btree_id btree_id)
 		lock_seq[0] = merge[0]->c.lock.state.seq;
 
 		if (kthread && kthread_should_stop()) {
-			bch2_trans_exit(&trans);
-			return -ESHUTDOWN;
+			ret = -ESHUTDOWN;
+			break;
 		}
 
 		bch2_trans_cond_resched(&trans);
@@ -1534,7 +1537,9 @@ static int bch2_coalesce_btree(struct bch_fs *c, enum btree_id btree_id)
 			memset(merge + 1, 0,
 			       (GC_MERGE_NODES - 1) * sizeof(merge[0]));
 	}
-	return bch2_trans_exit(&trans);
+	bch2_trans_iter_put(&trans, iter);
+
+	return bch2_trans_exit(&trans) ?: ret;
 }
 
 /**
