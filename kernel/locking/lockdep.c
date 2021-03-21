@@ -750,7 +750,8 @@ register_lock_class(struct lockdep_map *lock, unsigned int subclass, int force)
 	if (IS_ERR(class)) {
 		debug_locks_off();
 		printk("INFO: trying to register non-static key.\n");
-		printk("the code is fine but needs lockdep annotation.\n");
+		printk("The code is fine but needs lockdep annotation, or maybe\n");
+		printk("you didn't initialize this object before use?\n");
 		printk("turning off the locking correctness validator.\n");
 		dump_stack();
 		return NULL;
