@@ -275,9 +275,6 @@ s64 bch2_remap_range(struct bch_fs *c,
 			bch2_bkey_buf_reassemble(&new_src, c, src_k);
 			src_k = bkey_i_to_s_c(new_src.k);
 
-			bch2_cut_front(src_iter->pos,	new_src.k);
-			bch2_cut_back(src_end,		new_src.k);
-
 			ret = bch2_make_extent_indirect(&trans, src_iter,
 						new_src.k);
 			if (ret)
