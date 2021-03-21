@@ -2058,8 +2058,8 @@ struct btree_iter *__bch2_trans_get_iter(struct btree_trans *trans,
 			continue;
 
 		if (best &&
-		    bkey_cmp(bpos_diff(best->pos, pos),
-			     bpos_diff(iter->real_pos, pos)) < 0)
+		    bkey_cmp(bpos_diff(best->real_pos, pos),
+			     bpos_diff(iter->real_pos, pos)) > 0)
 			continue;
 
 		best = iter;
