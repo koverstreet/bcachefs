@@ -1012,6 +1012,11 @@ int bch2_fs_recovery(struct bch_fs *c)
 		c->opts.fix_errors = FSCK_OPT_YES;
 	}
 
+	if (c->sb.version < bcachefs_metadata_version_snapshot) {
+		bch_info(c, "filesystem version is prior to snapshot field - upgrading");
+		c->opts.version_upgrade = true;
+	}
+
 	if (!c->replicas.entries ||
 	    c->opts.rebuild_replicas) {
 		bch_info(c, "building replicas info");
