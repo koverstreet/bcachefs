@@ -80,7 +80,8 @@ union six_lock_state {
 	};
 
 	struct {
-		unsigned	read_lock:28;
+		unsigned	read_lock:27;
+		unsigned	write_locking:1;
 		unsigned	intent_lock:1;
 		unsigned	waiters:3;
 		/*
@@ -107,6 +108,7 @@ struct six_lock {
 	unsigned		intent_lock_recurse;
 	struct task_struct	*owner;
 	struct optimistic_spin_queue osq;
+	unsigned __percpu	*readers;
 
 	raw_spinlock_t		wait_lock;
 	struct list_head	wait_list[2];
@@ -193,5 +195,8 @@ bool six_trylock_convert(struct six_lock *, enum six_lock_type,
 void six_lock_increment(struct six_lock *, enum six_lock_type);
 
 void six_lock_wakeup_all(struct six_lock *);
+
+void six_lock_pcpu_free(struct six_lock *);
+void six_lock_pcpu_alloc(struct six_lock *);
 
 #endif /* _LINUX_SIX_H */
