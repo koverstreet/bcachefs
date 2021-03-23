@@ -1115,11 +1115,20 @@ int bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 	}
 #endif
 
-	iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
-
 	if (n.is_extent) {
 		iter->pos_after_commit = k->k.p;
 		iter->flags |= BTREE_ITER_SET_POS_AFTER_COMMIT;
+	}
+
+	if (!n.is_extent &&
+	    bpos_cmp(n.k->k.p, n.iter->real_pos)) {
+		n.iter = bch2_trans_get_iter(trans, n.btree_id, n.k->k.p,
+					     BTREE_ITER_ALL_SNAPSHOTS|
+					     BTREE_ITER_INTENT);
+		n.iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
+		bch2_trans_iter_put(trans, n.iter);
+	} else {
+		n.iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
 	}
 
 	/*
