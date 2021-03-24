@@ -212,8 +212,8 @@ void bch2_btree_ptr_v2_compat(enum btree_id btree_id, unsigned version,
 	    btree_node_type_is_extents(btree_id) &&
 	    bkey_cmp(bp.v->min_key, POS_MIN))
 		bp.v->min_key = write
-			? bkey_predecessor(bp.v->min_key)
-			: bkey_successor(bp.v->min_key);
+			? bpos_nosnap_predecessor(bp.v->min_key)
+			: bpos_nosnap_successor(bp.v->min_key);
 }
 
 /* KEY_TYPE_extent: */
