@@ -8,6 +8,7 @@
 #include <linux/sched.h>
 #include <linux/sched/rt.h>
 #include <linux/six.h>
+#include <linux/slab.h>
 
 #ifdef DEBUG
 #define EBUG_ON(cond)		BUG_ON(cond)
@@ -563,6 +564,7 @@ static void __six_unlock_type(struct six_lock *lock, enum six_lock_type type)
 	    lock->readers) {
 		smp_mb(); /* unlock barrier */
 		this_cpu_dec(*lock->readers);
+		smp_mb(); /* between unlocking and checking for waiters */
 		state.v = READ_ONCE(lock->state.v);
 	} else {
 		EBUG_ON(!(lock->state.v & l[type].held_mask));
@@ -708,6 +710,34 @@ void six_lock_wakeup_all(struct six_lock *lock)
 }
 EXPORT_SYMBOL_GPL(six_lock_wakeup_all);
 
+struct free_pcpu_rcu {
+	struct rcu_head		rcu;
+	void __percpu		*p;
+};
+
+static void free_pcpu_rcu_fn(struct rcu_head *_rcu)
+{
+	struct free_pcpu_rcu *rcu =
+		container_of(_rcu, struct free_pcpu_rcu, rcu);
+
+	free_percpu(rcu->p);
+	kfree(rcu);
+}
+
+void six_lock_pcpu_free_rcu(struct six_lock *lock)
+{
+	struct free_pcpu_rcu *rcu = kzalloc(sizeof(*rcu), GFP_KERNEL);
+
+	if (!rcu)
+		return;
+
+	rcu->p = lock->readers;
+	lock->readers = NULL;
+
+	call_rcu(&rcu->rcu, free_pcpu_rcu_fn);
+}
+EXPORT_SYMBOL_GPL(six_lock_pcpu_free_rcu);
+
 void six_lock_pcpu_free(struct six_lock *lock)
 {
 	BUG_ON(lock->readers && pcpu_read_count(lock));
@@ -720,8 +750,6 @@ EXPORT_SYMBOL_GPL(six_lock_pcpu_free);
 
 void six_lock_pcpu_alloc(struct six_lock *lock)
 {
-	BUG_ON(lock->readers && pcpu_read_count(lock));
-	BUG_ON(lock->state.read_lock);
 #ifdef __KERNEL__
 	if (!lock->readers)
 		lock->readers = alloc_percpu(unsigned);
