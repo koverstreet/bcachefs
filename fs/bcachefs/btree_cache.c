@@ -149,7 +149,7 @@ int bch2_btree_node_hash_insert(struct btree_cache *bc, struct btree *b,
 	if (level)
 		six_lock_pcpu_alloc(&b->c.lock);
 	else
-		six_lock_pcpu_free(&b->c.lock);
+		six_lock_pcpu_free_rcu(&b->c.lock);
 
 	mutex_lock(&bc->lock);
 	ret = __bch2_btree_node_hash_insert(bc, b);
