@@ -369,6 +369,7 @@ struct cached_dev {
 	unsigned		partial_stripes_expensive:1;
 	unsigned		writeback_metadata:1;
 	unsigned		writeback_running:1;
+	unsigned		writeback_consider_fragment:1;
 	unsigned char		writeback_percent;
 	unsigned		writeback_delay;
 
@@ -382,6 +383,9 @@ struct cached_dev {
 	unsigned		writeback_rate_i_term_inverse;
 	unsigned		writeback_rate_p_term_inverse;
 	unsigned		writeback_rate_minimum;
+	unsigned 		writeback_rate_fp_term_low;
+	unsigned 		writeback_rate_fp_term_mid;
+	unsigned 		writeback_rate_fp_term_high;
 
 	enum stop_on_failure	stop_when_cache_set_failed;
 #define DEFAULT_CACHED_DEV_ERROR_LIMIT	64
