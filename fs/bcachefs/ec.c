@@ -873,6 +873,7 @@ static int ec_stripe_update_ptrs(struct bch_fs *c,
 		if (ret)
 			break;
 	}
+	bch2_trans_iter_put(&trans, iter);
 
 	bch2_trans_exit(&trans);
 	bch2_bkey_buf_exit(&sk, c);
