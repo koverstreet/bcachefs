@@ -1171,6 +1171,7 @@ static int bch2_gc_btree_gens(struct bch_fs *c, enum btree_id btree_id)
 
 		bch2_btree_iter_advance(iter);
 	}
+	bch2_trans_iter_put(&trans, iter);
 
 	bch2_trans_exit(&trans);
 	bch2_bkey_buf_exit(&sk, c);
