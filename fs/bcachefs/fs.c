@@ -34,6 +34,43 @@
 
 static struct kmem_cache *bch2_inode_cache;
 
+static struct inode *bch2_alloc_inode(struct super_block *sb)
+{
+	struct bch_inode_info *inode;
+
+	inode = kmem_cache_alloc(bch2_inode_cache, GFP_NOFS);
+	if (!inode)
+		return NULL;
+
+	inode_init_once(&inode->v);
+	inode_fake_hash(&inode->v);
+	mutex_init(&inode->ei_update_lock);
+	pagecache_lock_init(&inode->ei_pagecache_lock);
+	mutex_init(&inode->ei_quota_lock);
+	inode->ei_journal_seq = 0;
+
+	return &inode->v;
+}
+
+static void bch2_i_callback(struct rcu_head *head)
+{
+	struct inode *vinode = container_of(head, struct inode, i_rcu);
+	struct bch_inode_info *inode = to_bch_ei(vinode);
+
+	kmem_cache_free(bch2_inode_cache, inode);
+}
+
+static void bch2_destroy_inode(struct inode *vinode)
+{
+	call_rcu(&vinode->i_rcu, bch2_i_callback);
+}
+
+static const struct rhashtable_params bch2_inode_table_params = {
+	.head_offset	= offsetof(struct bch_inode_info, ei_hash),
+	.key_offset	= offsetof(struct bch_inode_info, ei_inode.bi_inum),
+	.key_len	= sizeof(u64),
+};
+
 static void bch2_vfs_inode_init(struct bch_fs *,
 				struct bch_inode_info *,
 				struct bch_inode_unpacked *);
@@ -210,36 +247,58 @@ int bch2_fs_quota_transfer(struct bch_fs *c,
 
 struct inode *bch2_vfs_inode_get(struct bch_fs *c, u64 inum)
 {
+	struct btree_trans trans;
+	struct btree_iter *iter = NULL;
 	struct bch_inode_unpacked inode_u;
-	struct bch_inode_info *inode;
-	int ret;
-
-	inode = to_bch_ei(iget_locked(c->vfs_sb, inum));
-	if (unlikely(!inode))
-		return ERR_PTR(-ENOMEM);
-	if (!(inode->v.i_state & I_NEW))
+	struct bch_inode_info *inode = NULL;
+retry:
+	rcu_read_lock();
+	inode = rhashtable_lookup(&c->vfs_inode_table, &inum,
+				  bch2_inode_table_params);
+	if (inode) {
+		wait_on_inode(&inode->v);
 		return &inode->v;
+	}
+	rcu_read_unlock();
 
-	ret = bch2_inode_find_by_inum(c, inum, &inode_u);
-	if (ret) {
+	inode = to_bch_ei(bch2_alloc_inode(c->vfs_sb));
+	if (!inode)
+		return ERR_PTR(-ENOMEM);
+
+	if (unlikely(inode_init_always(c->vfs_sb, &inode->v))) {
+		kmem_cache_free(bch2_inode_cache, inode);
+		return ERR_PTR(-ENOMEM);
+	}
+
+	inode->v.i_state = I_NEW;
+	inode->ei_inode.bi_inum = inum;
+
+	if (unlikely(rhashtable_lookup_insert_fast(&c->vfs_inode_table,
+					&inode->ei_hash,
+					bch2_inode_table_params))) {
+		/* We raced with another fill: */
+		__destroy_inode(&inode->v);
+		kmem_cache_free(bch2_inode_cache, inode);
+		goto retry;
+	}
+
+	bch2_trans_init(&trans, c, 0, 0);
+	iter = bch2_inode_peek(&trans, &inode_u, inum, 0);
+	if (IS_ERR(iter)) {
 		iget_failed(&inode->v);
-		return ERR_PTR(ret);
+		inode = ERR_CAST(iter);
+		goto err;
 	}
 
 	bch2_vfs_inode_init(c, inode, &inode_u);
-
 	inode->ei_journal_seq = bch2_inode_journal_seq(&c->journal, inum);
 
+	inode_sb_list_add(&inode->v);
+err:
 	unlock_new_inode(&inode->v);
-
+	bch2_trans_iter_put(&trans, iter);
+	bch2_trans_exit(&trans);
 	return &inode->v;
-}
-
-static int inum_test(struct inode *inode, void *p)
-{
-	unsigned long *ino = p;
-
-	return *ino == inode->i_ino;
 }
 
 static struct bch_inode_info *
@@ -265,7 +324,7 @@ __bch2_create(struct bch_inode_info *dir, struct dentry *dentry,
 	if (ret)
 		return ERR_PTR(ret);
 #endif
-	inode = to_bch_ei(new_inode(c->vfs_sb));
+	inode = to_bch_ei(new_inode_pseudo(c->vfs_sb));
 	if (unlikely(!inode)) {
 		inode = ERR_PTR(-ENOMEM);
 		goto err;
@@ -321,28 +380,26 @@ err_before_quota:
 	 * bch2_trans_exit() and dropping locks, else we could race with another
 	 * thread pulling the inode in and modifying it:
 	 */
-
-	inode->v.i_state |= I_CREATING;
-	old = to_bch_ei(inode_insert5(&inode->v, inode->v.i_ino,
-				      inum_test, NULL, &inode->v.i_ino));
-	BUG_ON(!old);
-
-	if (unlikely(old != inode)) {
+	old = rhashtable_lookup_get_insert_fast(&c->vfs_inode_table,
+						&inode->ei_hash,
+						bch2_inode_table_params);
+	if (IS_ERR(old)) {
+		make_bad_inode(&inode->v);
+		iput(&inode->v);
+		inode = old;
+	} else if (unlikely(old)) {
 		/*
 		 * We raced, another process pulled the new inode into cache
 		 * before us:
 		 */
-		journal_seq_copy(c, old, journal_seq);
 		make_bad_inode(&inode->v);
 		iput(&inode->v);
 
 		inode = old;
+		wait_on_inode(&inode->v);
+		journal_seq_copy(c, inode, journal_seq);
 	} else {
-		/*
-		 * we really don't want insert_inode_locked2() to be setting
-		 * I_NEW...
-		 */
-		unlock_new_inode(&inode->v);
+		inode_sb_list_add(&inode->v);
 	}
 
 	bch2_trans_exit(&trans);
@@ -1169,36 +1226,6 @@ static void bch2_vfs_inode_init(struct bch_fs *c,
 	}
 }
 
-static struct inode *bch2_alloc_inode(struct super_block *sb)
-{
-	struct bch_inode_info *inode;
-
-	inode = kmem_cache_alloc(bch2_inode_cache, GFP_NOFS);
-	if (!inode)
-		return NULL;
-
-	inode_init_once(&inode->v);
-	mutex_init(&inode->ei_update_lock);
-	pagecache_lock_init(&inode->ei_pagecache_lock);
-	mutex_init(&inode->ei_quota_lock);
-	inode->ei_journal_seq = 0;
-
-	return &inode->v;
-}
-
-static void bch2_i_callback(struct rcu_head *head)
-{
-	struct inode *vinode = container_of(head, struct inode, i_rcu);
-	struct bch_inode_info *inode = to_bch_ei(vinode);
-
-	kmem_cache_free(bch2_inode_cache, inode);
-}
-
-static void bch2_destroy_inode(struct inode *vinode)
-{
-	call_rcu(&vinode->i_rcu, bch2_i_callback);
-}
-
 static int inode_update_times_fn(struct bch_inode_info *inode,
 				 struct bch_inode_unpacked *bi,
 				 void *p)
@@ -1245,6 +1272,9 @@ static void bch2_evict_inode(struct inode *vinode)
 				KEY_TYPE_QUOTA_WARN);
 		bch2_inode_rm(c, inode->v.i_ino, true);
 	}
+
+	rhashtable_remove_fast(&c->vfs_inode_table, &inode->ei_hash,
+			       bch2_inode_table_params);
 }
 
 static int bch2_statfs(struct dentry *dentry, struct kstatfs *buf)
@@ -1609,6 +1639,25 @@ static void bch2_kill_sb(struct super_block *sb)
 
 	generic_shutdown_super(sb);
 	bch2_fs_free(c);
+}
+
+void bch2_fs_fs_exit(struct bch_fs *c)
+{
+	if (c->vfs_inode_table_init_done)
+		rhashtable_destroy(&c->vfs_inode_table);
+
+}
+
+int bch2_fs_fs_init(struct bch_fs *c)
+{
+	int ret;
+
+	ret = rhashtable_init(&c->vfs_inode_table, &bch2_inode_table_params);
+	if (ret)
+		return ret;
+
+	c->vfs_inode_table_init_done = true;
+	return 0;
 }
 
 static struct file_system_type bcache_fs_type = {

@@ -803,6 +803,8 @@ struct bch_fs {
 	struct bio_set		writepage_bioset;
 	struct bio_set		dio_write_bioset;
 	struct bio_set		dio_read_bioset;
+	struct rhashtable	vfs_inode_table;
+	bool			vfs_inode_table_init_done;
 
 	struct bio_list		btree_write_error_list;
 	struct work_struct	btree_write_error_work;

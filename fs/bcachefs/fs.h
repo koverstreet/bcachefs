@@ -33,6 +33,7 @@ void bch2_pagecache_block_get(struct pagecache_lock *);
 
 struct bch_inode_info {
 	struct inode		v;
+	struct rhash_head	ei_hash;
 	unsigned long		ei_flags;
 
 	struct mutex		ei_update_lock;
@@ -166,6 +167,9 @@ void bch2_inode_update_after_write(struct bch_fs *,
 				   unsigned);
 int __must_check bch2_write_inode(struct bch_fs *, struct bch_inode_info *,
 				  inode_set_fn, void *, unsigned);
+
+void bch2_fs_fs_exit(struct bch_fs *);
+int bch2_fs_fs_init(struct bch_fs *);
 
 void bch2_vfs_exit(void);
 int bch2_vfs_init(void);
