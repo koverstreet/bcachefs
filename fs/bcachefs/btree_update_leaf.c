@@ -556,6 +556,7 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 	if (trans->flags & BTREE_INSERT_NOUNLOCK)
 		trans->nounlock = true;
 
+	if (!(trans->flags & BTREE_INSERT_NOUNLOCK))
 	trans_for_each_update2(trans, i)
 		if (btree_iter_type(i->iter) != BTREE_ITER_CACHED &&
 		    !same_leaf_as_prev(trans, i))
@@ -826,7 +827,7 @@ int __bch2_trans_commit(struct btree_trans *trans)
 	struct btree_insert_entry *i = NULL;
 	struct btree_iter *iter;
 	bool trans_trigger_run;
-	unsigned u64s;
+	unsigned u64s, reset_flags = 0;
 	int ret = 0;
 
 	if (!trans->nr_updates)
@@ -940,7 +941,11 @@ out:
 	if (likely(!(trans->flags & BTREE_INSERT_NOCHECK_RW)))
 		percpu_ref_put(&trans->c->writes);
 out_reset:
-	bch2_trans_reset(trans, !ret ? TRANS_RESET_NOTRAVERSE : 0);
+	if (!ret)
+		reset_flags |= TRANS_RESET_NOTRAVERSE;
+	if (!ret && (trans->flags & BTREE_INSERT_NOUNLOCK))
+		reset_flags |= TRANS_RESET_NOUNLOCK;
+	bch2_trans_reset(trans, reset_flags);
 
 	return ret;
 err:
