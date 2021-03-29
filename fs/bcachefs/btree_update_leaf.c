@@ -375,7 +375,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 			       struct btree_insert_entry **stopped_at)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_fs_usage *fs_usage = NULL;
+	struct bch_fs_usage_online *fs_usage = NULL;
 	struct btree_insert_entry *i;
 	struct btree_trans_commit_hook *h;
 	unsigned u64s = 0;
@@ -464,7 +464,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 
 	/* Must be called under mark_lock: */
 	if (marking && trans->fs_usage_deltas &&
-	    bch2_replicas_delta_list_apply(c, fs_usage,
+	    bch2_replicas_delta_list_apply(c, &fs_usage->u,
 					   trans->fs_usage_deltas)) {
 		ret = BTREE_INSERT_NEED_MARK_REPLICAS;
 		goto err;
@@ -473,7 +473,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 	trans_for_each_update(trans, i)
 		if (BTREE_NODE_TYPE_HAS_MEM_TRIGGERS & (1U << i->bkey_type))
 			bch2_mark_update(trans, i->iter, i->k,
-					 fs_usage, i->trigger_flags);
+					 &fs_usage->u, i->trigger_flags);
 
 	if (marking)
 		bch2_trans_fs_usage_apply(trans, fs_usage);
