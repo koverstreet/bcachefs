@@ -999,7 +999,7 @@ void bch2_journal_super_entries_add_common(struct bch_fs *c,
 	struct bch_dev *ca;
 	unsigned i, dev;
 
-	percpu_down_write(&c->mark_lock);
+	percpu_down_read(&c->mark_lock);
 
 	if (!journal_seq) {
 		for (i = 0; i < ARRAY_SIZE(c->usage); i++)
@@ -1070,7 +1070,7 @@ void bch2_journal_super_entries_add_common(struct bch_fs *c,
 		}
 	}
 
-	percpu_up_write(&c->mark_lock);
+	percpu_up_read(&c->mark_lock);
 
 	for (i = 0; i < 2; i++) {
 		struct jset_entry_clock *clock =
