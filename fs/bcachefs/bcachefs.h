@@ -680,10 +680,11 @@ struct bch_fs {
 	struct bch_fs_usage		*usage_base;
 	struct bch_fs_usage __percpu	*usage[JOURNAL_BUF_NR];
 	struct bch_fs_usage __percpu	*usage_gc;
+	u64 __percpu		*online_reserved;
 
 	/* single element mempool: */
 	struct mutex		usage_scratch_lock;
-	struct bch_fs_usage	*usage_scratch;
+	struct bch_fs_usage_online *usage_scratch;
 
 	struct io_clock		io_clock[2];
 

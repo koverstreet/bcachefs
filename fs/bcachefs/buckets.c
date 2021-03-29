@@ -167,7 +167,7 @@ void bch2_fs_usage_initialize(struct bch_fs *c)
 	percpu_up_write(&c->mark_lock);
 }
 
-void bch2_fs_usage_scratch_put(struct bch_fs *c, struct bch_fs_usage *fs_usage)
+void bch2_fs_usage_scratch_put(struct bch_fs *c, struct bch_fs_usage_online *fs_usage)
 {
 	if (fs_usage == c->usage_scratch)
 		mutex_unlock(&c->usage_scratch_lock);
@@ -175,11 +175,11 @@ void bch2_fs_usage_scratch_put(struct bch_fs *c, struct bch_fs_usage *fs_usage)
 		kfree(fs_usage);
 }
 
-struct bch_fs_usage *bch2_fs_usage_scratch_get(struct bch_fs *c)
+struct bch_fs_usage_online *bch2_fs_usage_scratch_get(struct bch_fs *c)
 {
-	struct bch_fs_usage *ret;
-	unsigned bytes = fs_usage_u64s(c) * sizeof(u64);
-
+	struct bch_fs_usage_online *ret;
+	unsigned bytes = sizeof(struct bch_fs_usage_online) + sizeof(u64) *
+		READ_ONCE(c->replicas.nr);
 	ret = kzalloc(bytes, GFP_NOWAIT|__GFP_NOWARN);
 	if (ret)
 		return ret;
@@ -252,30 +252,28 @@ u64 bch2_fs_usage_read_one(struct bch_fs *c, u64 *v)
 	return ret;
 }
 
-struct bch_fs_usage *bch2_fs_usage_read(struct bch_fs *c)
+struct bch_fs_usage_online *bch2_fs_usage_read(struct bch_fs *c)
 {
-	struct bch_fs_usage *ret;
-	unsigned seq, i, v, u64s = fs_usage_u64s(c);
-retry:
-	ret = kmalloc(u64s * sizeof(u64), GFP_NOFS);
-	if (unlikely(!ret))
-		return NULL;
+	struct bch_fs_usage_online *ret;
+	unsigned seq, i, u64s;
 
 	percpu_down_read(&c->mark_lock);
 
-	v = fs_usage_u64s(c);
-	if (unlikely(u64s != v)) {
-		u64s = v;
+	ret = kmalloc(sizeof(struct bch_fs_usage_online) +
+		      sizeof(u64) + c->replicas.nr, GFP_NOFS);
+	if (unlikely(!ret)) {
 		percpu_up_read(&c->mark_lock);
-		kfree(ret);
-		goto retry;
+		return NULL;
 	}
 
+	ret->online_reserved = percpu_u64_get(c->online_reserved);
+
+	u64s = fs_usage_u64s(c);
 	do {
 		seq = read_seqcount_begin(&c->usage_lock);
-		memcpy(ret, c->usage_base, u64s * sizeof(u64));
+		memcpy(&ret->u, c->usage_base, u64s * sizeof(u64));
 		for (i = 0; i < ARRAY_SIZE(c->usage); i++)
-			acc_u64s_percpu((u64 *) ret, (u64 __percpu *) c->usage[i], u64s);
+			acc_u64s_percpu((u64 *) &ret->u, (u64 __percpu *) c->usage[i], u64s);
 	} while (read_seqcount_retry(&c->usage_lock, seq));
 
 	return ret;
@@ -311,31 +309,31 @@ void bch2_fs_usage_acc_to_base(struct bch_fs *c, unsigned idx)
 
 void bch2_fs_usage_to_text(struct printbuf *out,
 			   struct bch_fs *c,
-			   struct bch_fs_usage *fs_usage)
+			   struct bch_fs_usage_online *fs_usage)
 {
 	unsigned i;
 
 	pr_buf(out, "capacity:\t\t\t%llu\n", c->capacity);
 
 	pr_buf(out, "hidden:\t\t\t\t%llu\n",
-	       fs_usage->hidden);
+	       fs_usage->u.hidden);
 	pr_buf(out, "data:\t\t\t\t%llu\n",
-	       fs_usage->data);
+	       fs_usage->u.data);
 	pr_buf(out, "cached:\t\t\t\t%llu\n",
-	       fs_usage->cached);
+	       fs_usage->u.cached);
 	pr_buf(out, "reserved:\t\t\t%llu\n",
-	       fs_usage->reserved);
+	       fs_usage->u.reserved);
 	pr_buf(out, "nr_inodes:\t\t\t%llu\n",
-	       fs_usage->nr_inodes);
+	       fs_usage->u.nr_inodes);
 	pr_buf(out, "online reserved:\t\t%llu\n",
 	       fs_usage->online_reserved);
 
 	for (i = 0;
-	     i < ARRAY_SIZE(fs_usage->persistent_reserved);
+	     i < ARRAY_SIZE(fs_usage->u.persistent_reserved);
 	     i++) {
 		pr_buf(out, "%u replicas:\n", i + 1);
 		pr_buf(out, "\treserved:\t\t%llu\n",
-		       fs_usage->persistent_reserved[i]);
+		       fs_usage->u.persistent_reserved[i]);
 	}
 
 	for (i = 0; i < c->replicas.nr; i++) {
@@ -344,7 +342,7 @@ void bch2_fs_usage_to_text(struct printbuf *out,
 
 		pr_buf(out, "\t");
 		bch2_replicas_entry_to_text(out, e);
-		pr_buf(out, ":\t%llu\n", fs_usage->replicas[i]);
+		pr_buf(out, ":\t%llu\n", fs_usage->u.replicas[i]);
 	}
 }
 
@@ -360,12 +358,12 @@ static u64 avail_factor(u64 r)
 	return div_u64(r << RESERVE_FACTOR, (1 << RESERVE_FACTOR) + 1);
 }
 
-u64 bch2_fs_sectors_used(struct bch_fs *c, struct bch_fs_usage *fs_usage)
+u64 bch2_fs_sectors_used(struct bch_fs *c, struct bch_fs_usage_online *fs_usage)
 {
-	return min(fs_usage->hidden +
-		   fs_usage->btree +
-		   fs_usage->data +
-		   reserve_factor(fs_usage->reserved +
+	return min(fs_usage->u.hidden +
+		   fs_usage->u.btree +
+		   fs_usage->u.data +
+		   reserve_factor(fs_usage->u.reserved +
 				  fs_usage->online_reserved),
 		   c->capacity);
 }
@@ -382,7 +380,7 @@ __bch2_fs_usage_read_short(struct bch_fs *c)
 	data		= bch2_fs_usage_read_one(c, &c->usage_base->data) +
 		bch2_fs_usage_read_one(c, &c->usage_base->btree);
 	reserved	= bch2_fs_usage_read_one(c, &c->usage_base->reserved) +
-		bch2_fs_usage_read_one(c, &c->usage_base->online_reserved);
+		percpu_u64_get(c->online_reserved);
 
 	ret.used	= min(ret.capacity, data + reserve_factor(reserved));
 	ret.free	= ret.capacity - ret.used;
@@ -436,43 +434,6 @@ static bool bucket_became_unavailable(struct bucket_mark old,
 	       !is_available_bucket(new);
 }
 
-int bch2_fs_usage_apply(struct bch_fs *c,
-			struct bch_fs_usage *fs_usage,
-			struct disk_reservation *disk_res,
-			unsigned journal_seq)
-{
-	s64 added = fs_usage->data + fs_usage->reserved;
-	s64 should_not_have_added;
-	int ret = 0;
-
-	percpu_rwsem_assert_held(&c->mark_lock);
-
-	/*
-	 * Not allowed to reduce sectors_available except by getting a
-	 * reservation:
-	 */
-	should_not_have_added = added - (s64) (disk_res ? disk_res->sectors : 0);
-	if (WARN_ONCE(should_not_have_added > 0,
-		      "disk usage increased by %lli more than reservation of %llu",
-		      added, disk_res ? disk_res->sectors : 0)) {
-		atomic64_sub(should_not_have_added, &c->sectors_available);
-		added -= should_not_have_added;
-		ret = -1;
-	}
-
-	if (added > 0) {
-		disk_res->sectors		-= added;
-		fs_usage->online_reserved	-= added;
-	}
-
-	preempt_disable();
-	acc_u64s((u64 *) fs_usage_ptr(c, journal_seq, false),
-		 (u64 *) fs_usage, fs_usage_u64s(c));
-	preempt_enable();
-
-	return ret;
-}
-
 static inline void account_bucket(struct bch_fs_usage *fs_usage,
 				  struct bch_dev_usage *dev_usage,
 				  enum bch_data_type type,
@@ -504,8 +465,6 @@ static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
 		account_bucket(fs_usage, u, bucket_type(new),
 			       1, ca->mi.bucket_size);
 
-	u->buckets_alloc +=
-		(int) new.owned_by_allocator - (int) old.owned_by_allocator;
 	u->buckets_ec += (int) new.stripe - (int) old.stripe;
 	u->buckets_unavailable +=
 		is_unavailable_bucket(new) - is_unavailable_bucket(old);
@@ -653,20 +612,12 @@ static int __bch2_mark_alloc_bucket(struct bch_fs *c, struct bch_dev *ca,
 				    size_t b, bool owned_by_allocator,
 				    bool gc)
 {
-	struct bch_fs_usage *fs_usage = fs_usage_ptr(c, 0, gc);
 	struct bucket *g = __bucket(ca, b, gc);
 	struct bucket_mark old, new;
 
 	old = bucket_cmpxchg(g, new, ({
 		new.owned_by_allocator	= owned_by_allocator;
 	}));
-
-	/*
-	 * XXX: this is wrong, this means we'll be doing updates to the percpu
-	 * buckets_alloc counter that don't have an open journal buffer and
-	 * we'll race with the machinery that accumulates that to ca->usage_base
-	 */
-	bch2_dev_usage_update(c, ca, fs_usage, old, new, 0, gc);
 
 	BUG_ON(!gc &&
 	       !owned_by_allocator && !old.owned_by_allocator);
@@ -1416,8 +1367,47 @@ int bch2_mark_update(struct btree_trans *trans,
 	return ret;
 }
 
+static int bch2_fs_usage_apply(struct bch_fs *c,
+			       struct bch_fs_usage_online *src,
+			       struct disk_reservation *disk_res,
+			       unsigned journal_seq)
+{
+	struct bch_fs_usage *dst = fs_usage_ptr(c, journal_seq, false);
+	s64 added = src->u.data + src->u.reserved;
+	s64 should_not_have_added;
+	int ret = 0;
+
+	percpu_rwsem_assert_held(&c->mark_lock);
+
+	/*
+	 * Not allowed to reduce sectors_available except by getting a
+	 * reservation:
+	 */
+	should_not_have_added = added - (s64) (disk_res ? disk_res->sectors : 0);
+	if (WARN_ONCE(should_not_have_added > 0,
+		      "disk usage increased by %lli more than reservation of %llu",
+		      added, disk_res ? disk_res->sectors : 0)) {
+		atomic64_sub(should_not_have_added, &c->sectors_available);
+		added -= should_not_have_added;
+		ret = -1;
+	}
+
+	if (added > 0) {
+		disk_res->sectors	-= added;
+		src->online_reserved	-= added;
+	}
+
+	this_cpu_add(*c->online_reserved, src->online_reserved);
+
+	preempt_disable();
+	acc_u64s((u64 *) dst, (u64 *) &src->u, fs_usage_u64s(c));
+	preempt_enable();
+
+	return ret;
+}
+
 void bch2_trans_fs_usage_apply(struct btree_trans *trans,
-			       struct bch_fs_usage *fs_usage)
+			       struct bch_fs_usage_online *fs_usage)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_insert_entry *i;
@@ -2197,16 +2187,6 @@ int bch2_trans_mark_dev_sb(struct bch_fs *c,
 
 /* Disk reservations: */
 
-void __bch2_disk_reservation_put(struct bch_fs *c, struct disk_reservation *res)
-{
-	percpu_down_read(&c->mark_lock);
-	this_cpu_sub(c->usage[0]->online_reserved,
-		     res->sectors);
-	percpu_up_read(&c->mark_lock);
-
-	res->sectors = 0;
-}
-
 #define SECTORS_CACHE	1024
 
 int bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
@@ -2240,7 +2220,7 @@ int bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 
 out:
 	pcpu->sectors_available		-= sectors;
-	this_cpu_add(c->usage[0]->online_reserved, sectors);
+	this_cpu_add(*c->online_reserved, sectors);
 	res->sectors			+= sectors;
 
 	preempt_enable();
@@ -2257,7 +2237,7 @@ recalculate:
 	    (flags & BCH_DISK_RESERVATION_NOFAIL)) {
 		atomic64_set(&c->sectors_available,
 			     max_t(s64, 0, sectors_available - sectors));
-		this_cpu_add(c->usage[0]->online_reserved, sectors);
+		this_cpu_add(*c->online_reserved, sectors);
 		res->sectors			+= sectors;
 		ret = 0;
 	} else {
