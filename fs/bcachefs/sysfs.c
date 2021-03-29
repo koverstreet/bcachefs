@@ -230,7 +230,7 @@ static size_t bch2_btree_cache_size(struct bch_fs *c)
 
 static int fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
 {
-	struct bch_fs_usage *fs_usage = bch2_fs_usage_read(c);
+	struct bch_fs_usage_online *fs_usage = bch2_fs_usage_read(c);
 
 	if (!fs_usage)
 		return -ENOMEM;
@@ -794,7 +794,6 @@ static void dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 	pr_buf(out,
 	       "ec\t%16llu\n"
 	       "available%15llu\n"
-	       "alloc\t%16llu\n"
 	       "\n"
 	       "free_inc\t\t%zu/%zu\n"
 	       "free[RESERVE_MOVINGGC]\t%zu/%zu\n"
@@ -810,7 +809,6 @@ static void dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 	       "thread state:\t\t%s\n",
 	       stats.buckets_ec,
 	       __dev_buckets_available(ca, stats),
-	       stats.buckets_alloc,
 	       fifo_used(&ca->free_inc),		ca->free_inc.size,
 	       fifo_used(&ca->free[RESERVE_MOVINGGC]),	ca->free[RESERVE_MOVINGGC].size,
 	       fifo_used(&ca->free[RESERVE_NONE]),	ca->free[RESERVE_NONE].size,
