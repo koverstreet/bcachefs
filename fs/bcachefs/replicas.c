@@ -271,10 +271,12 @@ static int replicas_table_update(struct bch_fs *c,
 				 struct bch_replicas_cpu *new_r)
 {
 	struct bch_fs_usage __percpu *new_usage[JOURNAL_BUF_NR];
-	struct bch_fs_usage *new_scratch = NULL;
+	struct bch_fs_usage_online *new_scratch = NULL;
 	struct bch_fs_usage __percpu *new_gc = NULL;
 	struct bch_fs_usage *new_base = NULL;
 	unsigned i, bytes = sizeof(struct bch_fs_usage) +
+		sizeof(u64) * new_r->nr;
+	unsigned scratch_bytes = sizeof(struct bch_fs_usage_online) +
 		sizeof(u64) * new_r->nr;
 	int ret = 0;
 
@@ -286,7 +288,7 @@ static int replicas_table_update(struct bch_fs *c,
 			goto err;
 
 	if (!(new_base = kzalloc(bytes, GFP_KERNEL)) ||
-	    !(new_scratch  = kmalloc(bytes, GFP_KERNEL)) ||
+	    !(new_scratch  = kmalloc(scratch_bytes, GFP_KERNEL)) ||
 	    (c->usage_gc &&
 	     !(new_gc = __alloc_percpu_gfp(bytes, sizeof(u64), GFP_KERNEL))))
 		goto err;
