@@ -216,19 +216,19 @@ static inline unsigned dev_usage_u64s(void)
 	return sizeof(struct bch_dev_usage) / sizeof(u64);
 }
 
-void bch2_fs_usage_scratch_put(struct bch_fs *, struct bch_fs_usage *);
-struct bch_fs_usage *bch2_fs_usage_scratch_get(struct bch_fs *);
+void bch2_fs_usage_scratch_put(struct bch_fs *, struct bch_fs_usage_online *);
+struct bch_fs_usage_online *bch2_fs_usage_scratch_get(struct bch_fs *);
 
 u64 bch2_fs_usage_read_one(struct bch_fs *, u64 *);
 
-struct bch_fs_usage *bch2_fs_usage_read(struct bch_fs *);
+struct bch_fs_usage_online *bch2_fs_usage_read(struct bch_fs *);
 
 void bch2_fs_usage_acc_to_base(struct bch_fs *, unsigned);
 
 void bch2_fs_usage_to_text(struct printbuf *,
-			   struct bch_fs *, struct bch_fs_usage *);
+			   struct bch_fs *, struct bch_fs_usage_online *);
 
-u64 bch2_fs_sectors_used(struct bch_fs *, struct bch_fs_usage *);
+u64 bch2_fs_sectors_used(struct bch_fs *, struct bch_fs_usage_online *);
 
 struct bch_fs_usage_short
 bch2_fs_usage_read_short(struct bch_fs *);
@@ -246,8 +246,6 @@ void bch2_mark_metadata_bucket(struct bch_fs *, struct bch_dev *,
 
 int bch2_mark_key(struct bch_fs *, struct bkey_s_c, unsigned,
 		  s64, struct bch_fs_usage *, u64, unsigned);
-int bch2_fs_usage_apply(struct bch_fs *, struct bch_fs_usage *,
-			struct disk_reservation *, unsigned);
 
 int bch2_mark_update(struct btree_trans *, struct btree_iter *,
 		     struct bkey_i *, struct bch_fs_usage *, unsigned);
@@ -259,7 +257,7 @@ int bch2_trans_mark_key(struct btree_trans *, struct bkey_s_c, struct bkey_s_c,
 			unsigned, s64, unsigned);
 int bch2_trans_mark_update(struct btree_trans *, struct btree_iter *iter,
 			   struct bkey_i *insert, unsigned);
-void bch2_trans_fs_usage_apply(struct btree_trans *, struct bch_fs_usage *);
+void bch2_trans_fs_usage_apply(struct btree_trans *, struct bch_fs_usage_online *);
 
 int bch2_trans_mark_metadata_bucket(struct btree_trans *,
 			struct disk_reservation *, struct bch_dev *,
@@ -269,13 +267,11 @@ int bch2_trans_mark_dev_sb(struct bch_fs *, struct disk_reservation *,
 
 /* disk reservations: */
 
-void __bch2_disk_reservation_put(struct bch_fs *, struct disk_reservation *);
-
 static inline void bch2_disk_reservation_put(struct bch_fs *c,
 					     struct disk_reservation *res)
 {
-	if (res->sectors)
-		__bch2_disk_reservation_put(c, res);
+	this_cpu_sub(*c->online_reserved, res->sectors);
+	res->sectors = 0;
 }
 
 #define BCH_DISK_RESERVATION_NOFAIL		(1 << 0)
