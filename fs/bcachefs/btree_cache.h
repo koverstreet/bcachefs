@@ -5,6 +5,8 @@
 #include "bcachefs.h"
 #include "btree_types.h"
 
+extern struct lock_class_key bch2_btree_node_lock_key;
+
 struct btree_iter;
 
 void bch2_recalc_btree_reserve(struct bch_fs *);
