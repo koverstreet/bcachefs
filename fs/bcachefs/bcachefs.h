@@ -794,6 +794,9 @@ struct bch_fs {
 	struct bio_set		dio_write_bioset;
 	struct bio_set		dio_read_bioset;
 
+
+	atomic64_t		btree_writes_nr;
+	atomic64_t		btree_writes_sectors;
 	struct bio_list		btree_write_error_list;
 	struct work_struct	btree_write_error_work;
 	spinlock_t		btree_write_error_lock;
