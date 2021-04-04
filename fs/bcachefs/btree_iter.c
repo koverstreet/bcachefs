@@ -12,6 +12,7 @@
 #include "error.h"
 #include "extents.h"
 #include "journal.h"
+#include "replicas.h"
 
 #include <linux/prefetch.h>
 #include <trace/events/bcachefs.h>
