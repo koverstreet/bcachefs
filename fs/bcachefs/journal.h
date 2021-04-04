@@ -213,11 +213,13 @@ static inline unsigned journal_entry_set(struct jset_entry *entry, unsigned type
 					  enum btree_id id, unsigned level,
 					  const void *data, unsigned u64s)
 {
-	memset(entry, 0, sizeof(*entry));
 	entry->u64s	= cpu_to_le16(u64s);
-	entry->type	= type;
 	entry->btree_id = id;
 	entry->level	= level;
+	entry->type	= type;
+	entry->pad[0]	= 0;
+	entry->pad[1]	= 0;
+	entry->pad[2]	= 0;
 	memcpy_u64s_small(entry->_data, data, u64s);
 
 	return jset_u64s(u64s);
