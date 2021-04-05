@@ -88,7 +88,7 @@ static inline void *vpmalloc(size_t size, gfp_t gfp_mask)
 {
 	return (void *) __get_free_pages(gfp_mask|__GFP_NOWARN,
 					 get_order(size)) ?:
-		__vmalloc(size, gfp_mask, PAGE_KERNEL);
+		__vmalloc(size, gfp_mask);
 }
 
 static inline void kvpfree(void *p, size_t size)
@@ -653,35 +653,6 @@ static inline void memset_u64s_tail(void *s, int c, unsigned bytes)
 	memset(s + bytes, c, rem);
 }
 
-static inline struct bio_vec next_contig_bvec(struct bio *bio,
-					      struct bvec_iter *iter)
-{
-	struct bio_vec bv = bio_iter_iovec(bio, *iter);
-
-	bio_advance_iter(bio, iter, bv.bv_len);
-#ifndef CONFIG_HIGHMEM
-	while (iter->bi_size) {
-		struct bio_vec next = bio_iter_iovec(bio, *iter);
-
-		if (page_address(bv.bv_page) + bv.bv_offset + bv.bv_len !=
-		    page_address(next.bv_page) + next.bv_offset)
-			break;
-
-		bv.bv_len += next.bv_len;
-		bio_advance_iter(bio, iter, next.bv_len);
-	}
-#endif
-	return bv;
-}
-
-#define __bio_for_each_contig_segment(bv, bio, iter, start)		\
-	for (iter = (start);						\
-	     (iter).bi_size &&						\
-		((bv = next_contig_bvec((bio), &(iter))), 1);)
-
-#define bio_for_each_contig_segment(bv, bio, iter)			\
-	__bio_for_each_contig_segment(bv, bio, iter, (bio)->bi_iter)
-
 void sort_cmp_size(void *base, size_t num, size_t size,
 	  int (*cmp_func)(const void *, const void *, size_t),
 	  void (*swap_func)(void *, void *, size_t));
@@ -775,5 +746,10 @@ static inline void percpu_memset(void __percpu *p, int c, size_t bytes)
 u64 *bch2_acc_percpu_u64s(u64 __percpu *, unsigned);
 
 #define cmp_int(l, r)		((l > r) - (l < r))
+
+static inline int u8_cmp(u8 l, u8 r)
+{
+	return cmp_int(l, r);
+}
 
 #endif /* _BCACHEFS_UTIL_H */

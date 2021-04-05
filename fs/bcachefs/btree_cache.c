@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "bkey_buf.h"
 #include "btree_cache.h"
 #include "btree_io.h"
 #include "btree_iter.h"
 #include "btree_locking.h"
 #include "debug.h"
+#include "error.h"
 
 #include <linux/prefetch.h>
 #include <linux/sched/mm.h>
@@ -81,8 +83,7 @@ static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp)
 	if (!b->data)
 		return -ENOMEM;
 
-	b->aux_data	= __vmalloc(btree_aux_data_bytes(b), gfp,
-				    PAGE_KERNEL_EXEC);
+	b->aux_data = vmalloc_exec(btree_aux_data_bytes(b), gfp);
 	if (!b->aux_data) {
 		kvpfree(b->data, btree_bytes(c));
 		b->data = NULL;
@@ -812,9 +813,12 @@ lock_node:
 		return ERR_PTR(-EIO);
 	}
 
-	EBUG_ON(b->c.btree_id != iter->btree_id ||
-		BTREE_NODE_LEVEL(b->data) != level ||
-		bkey_cmp(b->data->max_key, k->k.p));
+	EBUG_ON(b->c.btree_id != iter->btree_id);
+	EBUG_ON(BTREE_NODE_LEVEL(b->data) != level);
+	EBUG_ON(bkey_cmp(b->data->max_key, k->k.p));
+	EBUG_ON(b->key.k.type == KEY_TYPE_btree_ptr_v2 &&
+		bkey_cmp(b->data->min_key,
+			 bkey_i_to_btree_ptr_v2(&b->key)->v.min_key));
 
 	return b;
 }
@@ -822,7 +826,8 @@ lock_node:
 struct btree *bch2_btree_node_get_noiter(struct bch_fs *c,
 					 const struct bkey_i *k,
 					 enum btree_id btree_id,
-					 unsigned level)
+					 unsigned level,
+					 bool nofill)
 {
 	struct btree_cache *bc = &c->btree_cache;
 	struct btree *b;
@@ -837,6 +842,9 @@ struct btree *bch2_btree_node_get_noiter(struct bch_fs *c,
 retry:
 	b = btree_cache_find(bc, k);
 	if (unlikely(!b)) {
+		if (nofill)
+			goto out;
+
 		b = bch2_btree_node_fill(c, NULL, k, btree_id,
 					 level, SIX_LOCK_read, true);
 
@@ -844,8 +852,12 @@ retry:
 		if (!b)
 			goto retry;
 
+		if (IS_ERR(b) &&
+		    !bch2_btree_cache_cannibalize_lock(c, NULL))
+			goto retry;
+
 		if (IS_ERR(b))
-			return b;
+			goto out;
 	} else {
 lock_node:
 		ret = six_lock_read(&b->c.lock, lock_node_check_fn, (void *) k);
@@ -880,13 +892,18 @@ lock_node:
 
 	if (unlikely(btree_node_read_error(b))) {
 		six_unlock_read(&b->c.lock);
-		return ERR_PTR(-EIO);
+		b = ERR_PTR(-EIO);
+		goto out;
 	}
 
-	EBUG_ON(b->c.btree_id != btree_id ||
-		BTREE_NODE_LEVEL(b->data) != level ||
-		bkey_cmp(b->data->max_key, k->k.p));
-
+	EBUG_ON(b->c.btree_id != btree_id);
+	EBUG_ON(BTREE_NODE_LEVEL(b->data) != level);
+	EBUG_ON(bkey_cmp(b->data->max_key, k->k.p));
+	EBUG_ON(b->key.k.type == KEY_TYPE_btree_ptr_v2 &&
+		bkey_cmp(b->data->min_key,
+			 bkey_i_to_btree_ptr_v2(&b->key)->v.min_key));
+out:
+	bch2_btree_cache_cannibalize_unlock(c);
 	return b;
 }
 
@@ -899,9 +916,11 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 	struct btree *parent;
 	struct btree_node_iter node_iter;
 	struct bkey_packed *k;
-	BKEY_PADDED(k) tmp;
+	struct bkey_buf tmp;
 	struct btree *ret = NULL;
 	unsigned level = b->c.level;
+
+	bch2_bkey_buf_init(&tmp);
 
 	parent = btree_iter_node(iter, level + 1);
 	if (!parent)
@@ -936,9 +955,9 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 	if (!k)
 		goto out;
 
-	bch2_bkey_unpack(parent, &tmp.k, k);
+	bch2_bkey_buf_unpack(&tmp, c, parent, k);
 
-	ret = bch2_btree_node_get(c, iter, &tmp.k, level,
+	ret = bch2_btree_node_get(c, iter, tmp.k, level,
 				  SIX_LOCK_intent, _THIS_IP_);
 
 	if (PTR_ERR_OR_ZERO(ret) == -EINTR && !trans->nounlock) {
@@ -958,7 +977,7 @@ struct btree *bch2_btree_node_get_sibling(struct bch_fs *c,
 		if (sib == btree_prev_sib)
 			btree_node_unlock(iter, level);
 
-		ret = bch2_btree_node_get(c, iter, &tmp.k, level,
+		ret = bch2_btree_node_get(c, iter, tmp.k, level,
 					  SIX_LOCK_intent, _THIS_IP_);
 
 		/*
@@ -993,30 +1012,46 @@ out:
 		if (sib != btree_prev_sib)
 			swap(n1, n2);
 
-		BUG_ON(bkey_cmp(bkey_successor(n1->key.k.p),
-				n2->data->min_key));
+		if (bkey_cmp(bkey_successor(n1->key.k.p),
+			     n2->data->min_key)) {
+			char buf1[200], buf2[200];
+
+			bch2_bkey_val_to_text(&PBUF(buf1), c, bkey_i_to_s_c(&n1->key));
+			bch2_bkey_val_to_text(&PBUF(buf2), c, bkey_i_to_s_c(&n2->key));
+
+			bch2_fs_inconsistent(c, "btree topology error at btree %s level %u:\n"
+					     "prev: %s\n"
+					     "next: %s\n",
+					     bch2_btree_ids[iter->btree_id], level,
+					     buf1, buf2);
+
+			six_unlock_intent(&ret->c.lock);
+			ret = NULL;
+		}
 	}
 
 	bch2_btree_trans_verify_locks(trans);
+
+	bch2_bkey_buf_exit(&tmp, c);
 
 	return ret;
 }
 
 void bch2_btree_node_prefetch(struct bch_fs *c, struct btree_iter *iter,
-			      const struct bkey_i *k, unsigned level)
+			      const struct bkey_i *k,
+			      enum btree_id btree_id, unsigned level)
 {
 	struct btree_cache *bc = &c->btree_cache;
 	struct btree *b;
 
-	BUG_ON(!btree_node_locked(iter, level + 1));
+	BUG_ON(iter && !btree_node_locked(iter, level + 1));
 	BUG_ON(level >= BTREE_MAX_DEPTH);
 
 	b = btree_cache_find(bc, k);
 	if (b)
 		return;
 
-	bch2_btree_node_fill(c, iter, k, iter->btree_id,
-			     level, SIX_LOCK_read, false);
+	bch2_btree_node_fill(c, iter, k, btree_id, level, SIX_LOCK_read, false);
 }
 
 void bch2_btree_node_to_text(struct printbuf *out, struct bch_fs *c,
@@ -1068,6 +1103,7 @@ void bch2_btree_node_to_text(struct printbuf *out, struct bch_fs *c,
 
 void bch2_btree_cache_to_text(struct printbuf *out, struct bch_fs *c)
 {
-	pr_buf(out, "nr nodes:\t%u\n", c->btree_cache.used);
-	pr_buf(out, "nr dirty:\t%u\n", atomic_read(&c->btree_cache.dirty));
+	pr_buf(out, "nr nodes:\t\t%u\n", c->btree_cache.used);
+	pr_buf(out, "nr dirty:\t\t%u\n", atomic_read(&c->btree_cache.dirty));
+	pr_buf(out, "cannibalize lock:\t%p\n", c->btree_cache.alloc_lock);
 }

@@ -169,12 +169,12 @@ static int bch2_rebalance_thread(void *arg)
 	unsigned long start, prev_start;
 	unsigned long prev_run_time, prev_run_cputime;
 	unsigned long cputime, prev_cputime;
-	unsigned long io_start;
+	u64 io_start;
 	long throttle;
 
 	set_freezable();
 
-	io_start	= atomic_long_read(&clock->now);
+	io_start	= atomic64_read(&clock->now);
 	p		= rebalance_work(c);
 	prev_start	= jiffies;
 	prev_cputime	= curr_cputime();
@@ -210,7 +210,7 @@ static int bch2_rebalance_thread(void *arg)
 					(20 - w.dev_most_full_percent),
 					50);
 
-			if (atomic_long_read(&clock->now) + clock->max_slop <
+			if (atomic64_read(&clock->now) + clock->max_slop <
 			    r->throttled_until_iotime) {
 				r->throttled_until_cputime = start + throttle;
 				r->state = REBALANCE_THROTTLED;
@@ -229,7 +229,7 @@ static int bch2_rebalance_thread(void *arg)
 			      max(p.dev_most_full_percent, 1U) /
 			      max(w.dev_most_full_percent, 1U));
 
-		io_start	= atomic_long_read(&clock->now);
+		io_start	= atomic64_read(&clock->now);
 		p		= w;
 		prev_start	= start;
 		prev_cputime	= cputime;
@@ -239,10 +239,11 @@ static int bch2_rebalance_thread(void *arg)
 		rebalance_work_reset(c);
 
 		bch2_move_data(c,
+			       0,		POS_MIN,
+			       BTREE_ID_NR,	POS_MAX,
 			       /* ratelimiting disabled for now */
 			       NULL, /*  &r->pd.rate, */
 			       writepoint_ptr(&c->rebalance_write_point),
-			       POS_MIN, POS_MAX,
 			       rebalance_pred, NULL,
 			       &r->move_stats);
 	}
@@ -274,7 +275,7 @@ void bch2_rebalance_work_to_text(struct printbuf *out, struct bch_fs *c)
 	case REBALANCE_THROTTLED:
 		bch2_hprint(&PBUF(h1),
 			    (r->throttled_until_iotime -
-			     atomic_long_read(&c->io_clock[WRITE].now)) << 9);
+			     atomic64_read(&c->io_clock[WRITE].now)) << 9);
 		pr_buf(out, "throttled for %lu sec or %s io\n",
 		       (r->throttled_until_cputime - jiffies) / HZ,
 		       h1);
@@ -311,12 +312,17 @@ int bch2_rebalance_start(struct bch_fs *c)
 {
 	struct task_struct *p;
 
+	if (c->rebalance.thread)
+		return 0;
+
 	if (c->opts.nochanges)
 		return 0;
 
 	p = kthread_create(bch2_rebalance_thread, c, "bch-rebalance/%s", c->name);
-	if (IS_ERR(p))
+	if (IS_ERR(p)) {
+		bch_err(c, "error creating rebalance thread: %li", PTR_ERR(p));
 		return PTR_ERR(p);
+	}
 
 	get_task_struct(p);
 	rcu_assign_pointer(c->rebalance.thread, p);

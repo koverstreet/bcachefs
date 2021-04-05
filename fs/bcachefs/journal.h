@@ -288,7 +288,7 @@ static inline void bch2_journal_res_put(struct journal *j,
 	if (!res->ref)
 		return;
 
-	lock_release(&j->res_map, 0, _THIS_IP_);
+	lock_release(&j->res_map, _THIS_IP_);
 
 	while (res->u64s)
 		bch2_journal_add_entry(j, res,
@@ -493,11 +493,6 @@ static inline int bch2_journal_error(struct journal *j)
 }
 
 struct bch_dev;
-
-static inline bool journal_flushes_device(struct bch_dev *ca)
-{
-	return true;
-}
 
 static inline void bch2_journal_set_replay_done(struct journal *j)
 {

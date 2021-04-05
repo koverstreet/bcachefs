@@ -341,7 +341,8 @@ static inline void bkey_init(struct bkey *k)
 	x(reflink_v,		16)			\
 	x(inline_data,		17)			\
 	x(btree_ptr_v2,		18)			\
-	x(indirect_inline_data,	19)
+	x(indirect_inline_data,	19)			\
+	x(alloc_v2,		20)
 
 enum bch_bkey_type {
 #define x(name, nr) KEY_TYPE_##name	= nr,
@@ -551,9 +552,11 @@ struct bch_extent_stripe_ptr {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	__u64			type:5,
 				block:8,
-				idx:51;
+				redundancy:4,
+				idx:47;
 #elif defined (__BIG_ENDIAN_BITFIELD)
-	__u64			idx:51,
+	__u64			idx:47,
+				redundancy:4,
 				block:8,
 				type:5;
 #endif
@@ -603,12 +606,13 @@ struct bch_btree_ptr_v2 {
 	__u64			mem_ptr;
 	__le64			seq;
 	__le16			sectors_written;
-	/* In case we ever decide to do variable size btree nodes: */
-	__le16			sectors;
+	__le16			flags;
 	struct bpos		min_key;
 	struct bch_extent_ptr	start[0];
 	__u64			_data[0];
 } __attribute__((packed, aligned(8)));
+
+LE16_BITMASK(BTREE_PTR_RANGE_UPDATED,	struct bch_btree_ptr_v2, flags, 0, 1);
 
 struct bch_extent {
 	struct bch_val		v;
@@ -633,8 +637,6 @@ struct bch_reservation {
 /* Maximum possible size of an entire extent value: */
 #define BKEY_EXTENT_VAL_U64s_MAX				\
 	(1 + BKEY_EXTENT_PTR_U64s_MAX * (BCH_REPLICAS_MAX + 1))
-
-#define BKEY_PADDED(key)	__BKEY_PADDED(key, BKEY_EXTENT_VAL_U64s_MAX)
 
 /* * Maximum possible size of an entire extent, key + value: */
 #define BKEY_EXTENT_U64s_MAX		(BKEY_U64s + BKEY_EXTENT_VAL_U64s_MAX)
@@ -800,34 +802,39 @@ struct bch_alloc {
 	__u8			data[];
 } __attribute__((packed, aligned(8)));
 
-#define BCH_ALLOC_FIELDS()			\
+#define BCH_ALLOC_FIELDS_V1()			\
 	x(read_time,		16)		\
 	x(write_time,		16)		\
 	x(data_type,		8)		\
 	x(dirty_sectors,	16)		\
 	x(cached_sectors,	16)		\
-	x(oldest_gen,		8)
+	x(oldest_gen,		8)		\
+	x(stripe,		32)		\
+	x(stripe_redundancy,	8)
+
+struct bch_alloc_v2 {
+	struct bch_val		v;
+	__u8			nr_fields;
+	__u8			gen;
+	__u8			oldest_gen;
+	__u8			data_type;
+	__u8			data[];
+} __attribute__((packed, aligned(8)));
+
+#define BCH_ALLOC_FIELDS_V2()			\
+	x(read_time,		64)		\
+	x(write_time,		64)		\
+	x(dirty_sectors,	16)		\
+	x(cached_sectors,	16)		\
+	x(stripe,		32)		\
+	x(stripe_redundancy,	8)
 
 enum {
-#define x(name, bytes) BCH_ALLOC_FIELD_##name,
-	BCH_ALLOC_FIELDS()
+#define x(name, _bits) BCH_ALLOC_FIELD_V1_##name,
+	BCH_ALLOC_FIELDS_V1()
 #undef x
 	BCH_ALLOC_FIELD_NR
 };
-
-static const unsigned BCH_ALLOC_FIELD_BYTES[] = {
-#define x(name, bits) [BCH_ALLOC_FIELD_##name] = bits / 8,
-	BCH_ALLOC_FIELDS()
-#undef x
-};
-
-#define x(name, bits) + (bits / 8)
-static const unsigned BKEY_ALLOC_VAL_U64s_MAX =
-	DIV_ROUND_UP(offsetof(struct bch_alloc, data)
-		     BCH_ALLOC_FIELDS(), sizeof(u64));
-#undef x
-
-#define BKEY_ALLOC_U64s_MAX	(BKEY_U64s + BKEY_ALLOC_VAL_U64s_MAX)
 
 /* Quotas: */
 
@@ -1132,8 +1139,8 @@ struct bch_sb_field_clean {
 	struct bch_sb_field	field;
 
 	__le32			flags;
-	__le16			read_clock;
-	__le16			write_clock;
+	__le16			_read_clock; /* no longer used */
+	__le16			_write_clock;
 	__le64			journal_seq;
 
 	union {
@@ -1306,6 +1313,7 @@ LE64_BITMASK(BCH_SB_BACKGROUND_COMPRESSION_TYPE,
 LE64_BITMASK(BCH_SB_GC_RESERVE_BYTES,	struct bch_sb, flags[2],  4, 64);
 
 LE64_BITMASK(BCH_SB_ERASURE_CODE,	struct bch_sb, flags[3],  0, 16);
+LE64_BITMASK(BCH_SB_METADATA_TARGET,	struct bch_sb, flags[3], 16, 28);
 
 /*
  * Features:
@@ -1333,15 +1341,23 @@ LE64_BITMASK(BCH_SB_ERASURE_CODE,	struct bch_sb, flags[3],  0, 16);
 	x(btree_updates_journalled,	13)	\
 	x(reflink_inline_data,		14)	\
 	x(new_varint,			15)	\
-	x(journal_no_flush,		16)
+	x(journal_no_flush,		16)	\
+	x(alloc_v2,			17)	\
+	x(extents_across_btree_nodes,	18)
+
+#define BCH_SB_FEATURES_ALWAYS				\
+	((1ULL << BCH_FEATURE_new_extent_overwrite)|	\
+	 (1ULL << BCH_FEATURE_extents_above_btree_updates)|\
+	 (1ULL << BCH_FEATURE_btree_updates_journalled)|\
+	 (1ULL << BCH_FEATURE_extents_across_btree_nodes))
 
 #define BCH_SB_FEATURES_ALL				\
-	((1ULL << BCH_FEATURE_new_siphash)|		\
-	 (1ULL << BCH_FEATURE_new_extent_overwrite)|	\
+	(BCH_SB_FEATURES_ALWAYS|			\
+	 (1ULL << BCH_FEATURE_new_siphash)|		\
 	 (1ULL << BCH_FEATURE_btree_ptr_v2)|		\
-	 (1ULL << BCH_FEATURE_extents_above_btree_updates)|\
 	 (1ULL << BCH_FEATURE_new_varint)|		\
-	 (1ULL << BCH_FEATURE_journal_no_flush))
+	 (1ULL << BCH_FEATURE_journal_no_flush)|	\
+	 (1ULL << BCH_FEATURE_alloc_v2))
 
 enum bch_sb_feature {
 #define x(f, n) BCH_FEATURE_##f,
@@ -1350,14 +1366,24 @@ enum bch_sb_feature {
 	BCH_FEATURE_NR,
 };
 
+#define BCH_SB_COMPAT()					\
+	x(alloc_info,				0)	\
+	x(alloc_metadata,			1)	\
+	x(extents_above_btree_updates_done,	2)	\
+	x(bformat_overflow_done,		3)
+
 enum bch_sb_compat {
-	BCH_COMPAT_FEAT_ALLOC_INFO	= 0,
-	BCH_COMPAT_FEAT_ALLOC_METADATA	= 1,
+#define x(f, n) BCH_COMPAT_##f,
+	BCH_SB_COMPAT()
+#undef x
+	BCH_COMPAT_NR,
 };
 
 /* options: */
 
 #define BCH_REPLICAS_MAX		4U
+
+#define BCH_BKEY_PTRS_MAX		16U
 
 enum bch_error_actions {
 	BCH_ON_ERROR_CONTINUE		= 0,
@@ -1492,7 +1518,9 @@ static inline __u64 __bset_magic(struct bch_sb *sb)
 	x(blacklist,		3)		\
 	x(blacklist_v2,		4)		\
 	x(usage,		5)		\
-	x(data_usage,		6)
+	x(data_usage,		6)		\
+	x(clock,		7)		\
+	x(dev_usage,		8)
 
 enum {
 #define x(f, nr)	BCH_JSET_ENTRY_##f	= nr,
@@ -1540,6 +1568,30 @@ struct jset_entry_data_usage {
 	struct bch_replicas_entry r;
 } __attribute__((packed));
 
+struct jset_entry_clock {
+	struct jset_entry	entry;
+	__u8			rw;
+	__u8			pad[7];
+	__le64			time;
+} __attribute__((packed));
+
+struct jset_entry_dev_usage_type {
+	__le64			buckets;
+	__le64			sectors;
+	__le64			fragmented;
+} __attribute__((packed));
+
+struct jset_entry_dev_usage {
+	struct jset_entry	entry;
+	__le32			dev;
+	__u32			pad;
+
+	__le64			buckets_ec;
+	__le64			buckets_unavailable;
+
+	struct jset_entry_dev_usage_type d[];
+} __attribute__((packed));
+
 /*
  * On disk format for a journal entry:
  * seq is monotonically increasing; every journal entry has its own unique
@@ -1562,8 +1614,8 @@ struct jset {
 
 	__u8			encrypted_start[0];
 
-	__le16			read_clock;
-	__le16			write_clock;
+	__le16			_read_clock; /* no longer used */
+	__le16			_write_clock;
 
 	/* Sequence number of oldest dirty journal entry */
 	__le64			last_seq;

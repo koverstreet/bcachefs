@@ -215,9 +215,8 @@ void bch2_btree_ptr_v2_to_text(struct printbuf *out, struct bch_fs *c,
 {
 	struct bkey_s_c_btree_ptr_v2 bp = bkey_s_c_to_btree_ptr_v2(k);
 
-	pr_buf(out, "seq %llx sectors %u written %u min_key ",
+	pr_buf(out, "seq %llx written %u min_key ",
 	       le64_to_cpu(bp.v->seq),
-	       le16_to_cpu(bp.v->sectors),
 	       le16_to_cpu(bp.v->sectors_written));
 
 	bch2_bpos_to_text(out, bp.v->min_key);
@@ -665,7 +664,7 @@ bool bch2_bkey_is_incompressible(struct bkey_s_c k)
 }
 
 bool bch2_check_range_allocated(struct bch_fs *c, struct bpos pos, u64 size,
-				unsigned nr_replicas)
+				unsigned nr_replicas, bool compressed)
 {
 	struct btree_trans trans;
 	struct btree_iter *iter;
@@ -683,7 +682,8 @@ bool bch2_check_range_allocated(struct bch_fs *c, struct bpos pos, u64 size,
 		if (bkey_cmp(bkey_start_pos(k.k), end) >= 0)
 			break;
 
-		if (nr_replicas > bch2_bkey_nr_ptrs_fully_allocated(k)) {
+		if (nr_replicas > bch2_bkey_replicas(c, k) ||
+		    (!compressed && bch2_bkey_sectors_compressed(k))) {
 			ret = false;
 			break;
 		}
@@ -691,6 +691,27 @@ bool bch2_check_range_allocated(struct bch_fs *c, struct bpos pos, u64 size,
 	bch2_trans_exit(&trans);
 
 	return ret;
+}
+
+unsigned bch2_bkey_replicas(struct bch_fs *c, struct bkey_s_c k)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p = { 0 };
+	unsigned replicas = 0;
+
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if (p.ptr.cached)
+			continue;
+
+		if (p.has_ec)
+			replicas += p.ec.redundancy;
+
+		replicas++;
+
+	}
+
+	return replicas;
 }
 
 static unsigned bch2_extent_ptr_durability(struct bch_fs *c,
@@ -707,16 +728,9 @@ static unsigned bch2_extent_ptr_durability(struct bch_fs *c,
 	if (ca->mi.state != BCH_MEMBER_STATE_FAILED)
 		durability = max_t(unsigned, durability, ca->mi.durability);
 
-	if (p.has_ec) {
-		struct stripe *s =
-			genradix_ptr(&c->stripes[0], p.ec.idx);
+	if (p.has_ec)
+		durability += p.ec.redundancy;
 
-		if (WARN_ON(!s))
-			goto out;
-
-		durability += s->nr_redundant;
-	}
-out:
 	return durability;
 }
 
@@ -762,6 +776,15 @@ void bch2_bkey_mark_replicas_cached(struct bch_fs *c, struct bkey_s k,
 				extra -= n;
 			}
 		}
+}
+
+void bch2_bkey_extent_entry_drop(struct bkey_i *k, union bch_extent_entry *entry)
+{
+	union bch_extent_entry *end = bkey_val_end(bkey_i_to_s(k));
+	union bch_extent_entry *next = extent_entry_next(entry);
+
+	memmove_u64s(entry, next, (u64 *) end - (u64 *) next);
+	k->k.u64s -= extent_entry_u64s(entry);
 }
 
 void bch2_bkey_append_ptr(struct bkey_i *k,
@@ -1046,16 +1069,17 @@ static const char *extent_ptr_invalid(const struct bch_fs *c,
 const char *bch2_bkey_ptrs_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	struct bch_devs_list devs;
 	const union bch_extent_entry *entry;
 	struct bch_extent_crc_unpacked crc;
 	unsigned size_ondisk = k.k->size;
 	const char *reason;
 	unsigned nonce = UINT_MAX;
+	unsigned i;
 
-	if (k.k->type == KEY_TYPE_btree_ptr)
+	if (k.k->type == KEY_TYPE_btree_ptr ||
+	    k.k->type == KEY_TYPE_btree_ptr_v2)
 		size_ondisk = c->opts.btree_node_size;
-	if (k.k->type == KEY_TYPE_btree_ptr_v2)
-		size_ondisk = le16_to_cpu(bkey_s_c_to_btree_ptr_v2(k).v->sectors);
 
 	bkey_extent_entry_for_each(ptrs, entry) {
 		if (__extent_entry_type(entry) >= BCH_EXTENT_ENTRY_MAX)
@@ -1100,6 +1124,12 @@ const char *bch2_bkey_ptrs_invalid(const struct bch_fs *c, struct bkey_s_c k)
 			break;
 		}
 	}
+
+	devs = bch2_bkey_devs(k);
+	bubble_sort(devs.devs, devs.nr, u8_cmp);
+	for (i = 0; i + 1 < devs.nr; i++)
+		if (devs.devs[i] == devs.devs[i + 1])
+			return "multiple ptrs to same device";
 
 	return NULL;
 }

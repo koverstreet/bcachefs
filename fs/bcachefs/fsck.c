@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "bkey_on_stack.h"
+#include "bkey_buf.h"
 #include "btree_update.h"
 #include "dirent.h"
 #include "error.h"
@@ -58,7 +58,7 @@ static int __remove_dirent(struct btree_trans *trans,
 	buf[name.len] = '\0';
 	name.name = buf;
 
-	ret = bch2_inode_find_by_inum_trans(trans, dir_inum, &dir_inode);
+	ret = __bch2_inode_find_by_inum_trans(trans, dir_inum, &dir_inode, 0);
 	if (ret && ret != -EINTR)
 		bch_err(c, "remove_dirent: err %i looking up directory inode", ret);
 	if (ret)
@@ -126,8 +126,8 @@ static int walk_inode(struct btree_trans *trans,
 		      struct inode_walker *w, u64 inum)
 {
 	if (inum != w->cur_inum) {
-		int ret = bch2_inode_find_by_inum_trans(trans, inum,
-							&w->inode);
+		int ret = __bch2_inode_find_by_inum_trans(trans, inum,
+							  &w->inode, 0);
 
 		if (ret && ret != -ENOENT)
 			return ret;
@@ -193,7 +193,7 @@ static int hash_redo_key(const struct bch_hash_desc desc,
 	bch2_trans_update(trans, k_iter, &delete, 0);
 
 	return bch2_hash_set(trans, desc, &h->info, k_iter->pos.inode,
-			     tmp, BCH_HASH_SET_MUST_CREATE);
+			     tmp, 0);
 }
 
 static int fsck_hash_delete_at(struct btree_trans *trans,
@@ -464,11 +464,11 @@ static int check_extents(struct bch_fs *c)
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_s_c k;
-	struct bkey_on_stack prev;
+	struct bkey_buf prev;
 	u64 i_sectors;
 	int ret = 0;
 
-	bkey_on_stack_init(&prev);
+	bch2_bkey_buf_init(&prev);
 	prev.k->k = KEY(0, 0, 0);
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
 
@@ -500,7 +500,7 @@ retry:
 					goto err;
 			}
 		}
-		bkey_on_stack_reassemble(&prev, c, k);
+		bch2_bkey_buf_reassemble(&prev, c, k);
 
 		ret = walk_inode(&trans, &w, k.k->p.inode);
 		if (ret)
@@ -569,7 +569,7 @@ err:
 fsck_err:
 	if (ret == -EINTR)
 		goto retry;
-	bkey_on_stack_exit(&prev, c);
+	bch2_bkey_buf_exit(&prev, c);
 	return bch2_trans_exit(&trans) ?: ret;
 }
 
@@ -673,7 +673,7 @@ retry:
 			continue;
 		}
 
-		ret = bch2_inode_find_by_inum_trans(&trans, d_inum, &target);
+		ret = __bch2_inode_find_by_inum_trans(&trans, d_inum, &target, 0);
 		if (ret && ret != -ENOENT)
 			break;
 
@@ -787,7 +787,9 @@ static int check_root(struct bch_fs *c, struct bch_inode_unpacked *root_inode)
 
 	bch_verbose(c, "checking root directory");
 
-	ret = bch2_inode_find_by_inum(c, BCACHEFS_ROOT_INO, root_inode);
+	ret = bch2_trans_do(c, NULL, NULL, 0,
+		__bch2_inode_find_by_inum_trans(&trans, BCACHEFS_ROOT_INO,
+						root_inode, 0));
 	if (ret && ret != -ENOENT)
 		return ret;
 
@@ -834,7 +836,8 @@ static int check_lostfound(struct bch_fs *c,
 		goto create_lostfound;
 	}
 
-	ret = bch2_inode_find_by_inum(c, inum, lostfound_inode);
+	ret = bch2_trans_do(c, NULL, NULL, 0,
+		__bch2_inode_find_by_inum_trans(&trans, inum, lostfound_inode, 0));
 	if (ret && ret != -ENOENT)
 		return ret;
 
@@ -1071,6 +1074,11 @@ static void inc_link(struct bch_fs *c, nlink_table *links,
 
 	if (inum < range_start || inum >= *range_end)
 		return;
+
+	if (inum - range_start >= SIZE_MAX / sizeof(struct nlink)) {
+		*range_end = inum;
+		return;
+	}
 
 	link = genradix_ptr_alloc(links, inum - range_start, GFP_KERNEL);
 	if (!link) {
@@ -1346,23 +1354,25 @@ static int bch2_gc_walk_inodes(struct bch_fs *c,
 	nlinks_iter = genradix_iter_init(links, 0);
 
 	while ((k = bch2_btree_iter_peek(iter)).k &&
-	       !(ret2 = bkey_err(k))) {
+	       !(ret2 = bkey_err(k)) &&
+	       iter->pos.offset < range_end) {
 peek_nlinks:	link = genradix_iter_peek(&nlinks_iter, links);
 
 		if (!link && (!k.k || iter->pos.offset >= range_end))
 			break;
 
 		nlinks_pos = range_start + nlinks_iter.pos;
-		if (iter->pos.offset > nlinks_pos) {
+
+		if (link && nlinks_pos < iter->pos.offset) {
 			/* Should have been caught by dirents pass: */
-			need_fsck_err_on(link && link->count, c,
+			need_fsck_err_on(link->count, c,
 				"missing inode %llu (nlink %u)",
 				nlinks_pos, link->count);
 			genradix_iter_advance(&nlinks_iter, links);
 			goto peek_nlinks;
 		}
 
-		if (iter->pos.offset < nlinks_pos || !link)
+		if (!link || nlinks_pos > iter->pos.offset)
 			link = &zero_links;
 
 		if (k.k && k.k->type == KEY_TYPE_inode) {

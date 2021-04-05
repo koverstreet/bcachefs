@@ -121,7 +121,7 @@ static inline void bset_encrypt(struct bch_fs *c, struct bset *i, unsigned offse
 		bch2_encrypt(c, BSET_CSUM_TYPE(i), nonce, &bn->flags,
 			     bytes);
 
-		nonce = nonce_add(nonce, round_up(bytes, CHACHA20_BLOCK_SIZE));
+		nonce = nonce_add(nonce, round_up(bytes, CHACHA_BLOCK_SIZE));
 	}
 
 	bch2_encrypt(c, BSET_CSUM_TYPE(i), nonce, i->_data,
@@ -134,7 +134,8 @@ void bch2_btree_build_aux_trees(struct btree *);
 void bch2_btree_init_next(struct bch_fs *, struct btree *,
 			 struct btree_iter *);
 
-int bch2_btree_node_read_done(struct bch_fs *, struct btree *, bool);
+int bch2_btree_node_read_done(struct bch_fs *, struct bch_dev *,
+			      struct btree *, bool);
 void bch2_btree_node_read(struct bch_fs *, struct btree *, bool);
 int bch2_btree_root_read(struct bch_fs *, enum btree_id,
 			 const struct bkey_i *, unsigned);
@@ -185,7 +186,6 @@ do {									\
 
 void bch2_btree_flush_all_reads(struct bch_fs *);
 void bch2_btree_flush_all_writes(struct bch_fs *);
-void bch2_btree_verify_flushed(struct bch_fs *);
 void bch2_dirty_btree_nodes_to_text(struct printbuf *, struct bch_fs *);
 
 static inline void compat_bformat(unsigned level, enum btree_id btree_id,

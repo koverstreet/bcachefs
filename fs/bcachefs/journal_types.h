@@ -20,7 +20,7 @@
 struct journal_buf {
 	struct jset		*data;
 
-	BKEY_PADDED(key);
+	__BKEY_PADDED(key, BCH_REPLICAS_MAX);
 
 	struct closure_waitlist	wait;
 
@@ -31,6 +31,7 @@ struct journal_buf {
 	unsigned		u64s_reserved;
 	bool			noflush;	/* write has already been kicked off, and was noflush */
 	bool			must_flush;	/* something wants a flush */
+	bool			separate_flush;
 	/* bloom filter: */
 	unsigned long		has_inode[1024 / sizeof(unsigned long)];
 };

@@ -11,7 +11,6 @@
 
 #include <linux/kthread.h>
 #include <linux/sched/mm.h>
-#include <linux/sched/task.h>
 #include <trace/events/bcachefs.h>
 
 /* Free space calculations: */
@@ -385,11 +384,21 @@ void bch2_journal_pin_set(struct journal *j, u64 seq,
 	struct journal_entry_pin_list *pin_list;
 
 	spin_lock(&j->lock);
+
+	if (seq < journal_last_seq(j)) {
+		/*
+		 * bch2_journal_pin_copy() raced with bch2_journal_pin_drop() on
+		 * the src pin - with the pin dropped, the entry to pin might no
+		 * longer to exist, but that means there's no longer anything to
+		 * copy and we can bail out here:
+		 */
+		spin_unlock(&j->lock);
+		return;
+	}
+
 	pin_list = journal_seq_pin(j, seq);
 
 	__journal_pin_drop(j, pin);
-
-	BUG_ON(!atomic_read(&pin_list->count) && seq == journal_last_seq(j));
 
 	atomic_inc(&pin_list->count);
 	pin->seq	= seq;
@@ -682,8 +691,10 @@ int bch2_journal_reclaim_start(struct journal *j)
 
 	p = kthread_create(bch2_journal_reclaim_thread, j,
 			   "bch-reclaim/%s", c->name);
-	if (IS_ERR(p))
+	if (IS_ERR(p)) {
+		bch_err(c, "error creating journal reclaim thread: %li", PTR_ERR(p));
 		return PTR_ERR(p);
+	}
 
 	get_task_struct(p);
 	j->reclaim_thread = p;

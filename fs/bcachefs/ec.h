@@ -60,9 +60,51 @@ static inline unsigned stripe_val_u64s(const struct bch_stripe *s)
 }
 
 static inline void *stripe_csum(struct bch_stripe *s,
-				unsigned dev, unsigned csum_idx)
+				unsigned block, unsigned csum_idx)
 {
-	return (void *) s + stripe_csum_offset(s, dev, csum_idx);
+	EBUG_ON(block >= s->nr_blocks);
+	EBUG_ON(csum_idx >= stripe_csums_per_device(s));
+
+	return (void *) s + stripe_csum_offset(s, block, csum_idx);
+}
+
+static inline struct bch_csum stripe_csum_get(struct bch_stripe *s,
+				   unsigned block, unsigned csum_idx)
+{
+	struct bch_csum csum = { 0 };
+
+	memcpy(&csum, stripe_csum(s, block, csum_idx), bch_crc_bytes[s->csum_type]);
+	return csum;
+}
+
+static inline void stripe_csum_set(struct bch_stripe *s,
+				   unsigned block, unsigned csum_idx,
+				   struct bch_csum csum)
+{
+	memcpy(stripe_csum(s, block, csum_idx), &csum, bch_crc_bytes[s->csum_type]);
+}
+
+static inline bool __bch2_ptr_matches_stripe(const struct bch_stripe *s,
+					     const struct bch_extent_ptr *ptr,
+					     unsigned block)
+{
+	unsigned nr_data = s->nr_blocks - s->nr_redundant;
+
+	if (block >= nr_data)
+		return false;
+
+	return  ptr->dev    == s->ptrs[block].dev &&
+		ptr->gen    == s->ptrs[block].gen &&
+		ptr->offset >= s->ptrs[block].offset &&
+		ptr->offset  < s->ptrs[block].offset + le16_to_cpu(s->sectors);
+}
+
+static inline bool bch2_ptr_matches_stripe(const struct bch_stripe *s,
+					   struct extent_ptr_decoded p)
+{
+	BUG_ON(!p.has_ec);
+
+	return __bch2_ptr_matches_stripe(s, &p.ptr, p.ec.block);
 }
 
 struct bch_read_bio;
@@ -71,9 +113,9 @@ struct ec_stripe_buf {
 	/* might not be buffering the entire stripe: */
 	unsigned		offset;
 	unsigned		size;
-	unsigned long		valid[BITS_TO_LONGS(EC_STRIPE_MAX)];
+	unsigned long		valid[BITS_TO_LONGS(BCH_BKEY_PTRS_MAX)];
 
-	void			*data[EC_STRIPE_MAX];
+	void			*data[BCH_BKEY_PTRS_MAX];
 
 	union {
 		struct bkey_i_stripe	key;
@@ -88,6 +130,7 @@ struct ec_stripe_new {
 	struct ec_stripe_head	*h;
 	struct mutex		lock;
 	struct list_head	list;
+	struct closure		iodone;
 
 	/* counts in flight writes, stripe is created when pin == 0 */
 	atomic_t		pin;
@@ -98,20 +141,18 @@ struct ec_stripe_new {
 	u8			nr_parity;
 	bool			allocated;
 	bool			pending;
-	bool			existing_stripe;
-	u64			existing_stripe_idx;
+	bool			have_existing_stripe;
 
-	unsigned long		blocks_allocated[BITS_TO_LONGS(EC_STRIPE_MAX)];
-
-	struct open_buckets	blocks;
-	u8			data_block_idx[EC_STRIPE_MAX];
-	struct open_buckets	parity;
+	unsigned long		blocks_gotten[BITS_TO_LONGS(BCH_BKEY_PTRS_MAX)];
+	unsigned long		blocks_allocated[BITS_TO_LONGS(BCH_BKEY_PTRS_MAX)];
+	open_bucket_idx_t	blocks[BCH_BKEY_PTRS_MAX];
 	struct disk_reservation	res;
 
 	struct keylist		keys;
 	u64			inline_keys[BKEY_U64s * 8];
 
-	struct ec_stripe_buf	stripe;
+	struct ec_stripe_buf	new_stripe;
+	struct ec_stripe_buf	existing_stripe;
 };
 
 struct ec_stripe_head {
@@ -121,6 +162,7 @@ struct ec_stripe_head {
 	unsigned		target;
 	unsigned		algo;
 	unsigned		redundancy;
+	bool			copygc;
 
 	struct bch_devs_mask	devs;
 	unsigned		nr_active_devs;
@@ -145,8 +187,8 @@ void bch2_ec_bucket_cancel(struct bch_fs *, struct open_bucket *);
 int bch2_ec_stripe_new_alloc(struct bch_fs *, struct ec_stripe_head *);
 
 void bch2_ec_stripe_head_put(struct bch_fs *, struct ec_stripe_head *);
-struct ec_stripe_head *bch2_ec_stripe_head_get(struct bch_fs *, unsigned,
-					       unsigned, unsigned);
+struct ec_stripe_head *bch2_ec_stripe_head_get(struct bch_fs *,
+			unsigned, unsigned, unsigned, bool, struct closure *);
 
 void bch2_stripes_heap_update(struct bch_fs *, struct stripe *, size_t);
 void bch2_stripes_heap_del(struct bch_fs *, struct stripe *, size_t);
@@ -155,6 +197,8 @@ void bch2_stripes_heap_insert(struct bch_fs *, struct stripe *, size_t);
 void bch2_ec_stop_dev(struct bch_fs *, struct bch_dev *);
 
 void bch2_ec_flush_new_stripes(struct bch_fs *);
+
+void bch2_stripes_heap_start(struct bch_fs *);
 
 struct journal_keys;
 int bch2_stripes_read(struct bch_fs *, struct journal_keys *);

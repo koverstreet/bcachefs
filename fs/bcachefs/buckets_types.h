@@ -37,11 +37,12 @@ struct bucket {
 		const struct bucket_mark mark;
 	};
 
-	u16				io_time[2];
+	u64				io_time[2];
 	u8				oldest_gen;
 	u8				gc_gen;
 	unsigned			gen_valid:1;
-	u8				ec_redundancy;
+	u8				stripe_redundancy;
+	u32				stripe;
 };
 
 struct bucket_array {
@@ -52,16 +53,15 @@ struct bucket_array {
 };
 
 struct bch_dev_usage {
-	u64			buckets[BCH_DATA_NR];
 	u64			buckets_alloc;
+	u64			buckets_ec;
 	u64			buckets_unavailable;
 
-	/* _compressed_ sectors: */
-	u64			sectors[BCH_DATA_NR];
-	u64			sectors_fragmented;
-
-	u64			buckets_ec;
-	u64			sectors_ec;
+	struct {
+		u64		buckets;
+		u64		sectors; /* _compressed_ sectors: */
+		u64		fragmented;
+	}			d[BCH_DATA_NR];
 };
 
 struct bch_fs_usage {

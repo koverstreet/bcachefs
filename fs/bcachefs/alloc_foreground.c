@@ -192,8 +192,9 @@ long bch2_bucket_alloc_new_fs(struct bch_dev *ca)
 	rcu_read_lock();
 	buckets = bucket_array(ca);
 
-	for (b = ca->mi.first_bucket; b < ca->mi.nbuckets; b++)
-		if (is_available_bucket(buckets->b[b].mark))
+	for (b = buckets->first_bucket; b < buckets->nbuckets; b++)
+		if (is_available_bucket(buckets->b[b].mark) &&
+		    !buckets->b[b].mark.owned_by_allocator)
 			goto success;
 	b = -1;
 success:
@@ -204,9 +205,10 @@ success:
 static inline unsigned open_buckets_reserved(enum alloc_reserve reserve)
 {
 	switch (reserve) {
-	case RESERVE_ALLOC:
-		return 0;
 	case RESERVE_BTREE:
+	case RESERVE_BTREE_MOVINGGC:
+		return 0;
+	case RESERVE_MOVINGGC:
 		return OPEN_BUCKETS_COUNT / 4;
 	default:
 		return OPEN_BUCKETS_COUNT / 2;
@@ -223,9 +225,8 @@ struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 				      bool may_alloc_partial,
 				      struct closure *cl)
 {
-	struct bucket_array *buckets;
 	struct open_bucket *ob;
-	long bucket = 0;
+	long b = 0;
 
 	spin_lock(&c->freelist_lock);
 
@@ -259,22 +260,13 @@ struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 		return ERR_PTR(-OPEN_BUCKETS_EMPTY);
 	}
 
-	if (likely(fifo_pop(&ca->free[RESERVE_NONE], bucket)))
+	if (likely(fifo_pop(&ca->free[RESERVE_NONE], b)))
 		goto out;
 
 	switch (reserve) {
-	case RESERVE_ALLOC:
-		if (fifo_pop(&ca->free[RESERVE_BTREE], bucket))
-			goto out;
-		break;
-	case RESERVE_BTREE:
-		if (fifo_used(&ca->free[RESERVE_BTREE]) * 2 >=
-		    ca->free[RESERVE_BTREE].size &&
-		    fifo_pop(&ca->free[RESERVE_BTREE], bucket))
-			goto out;
-		break;
+	case RESERVE_BTREE_MOVINGGC:
 	case RESERVE_MOVINGGC:
-		if (fifo_pop(&ca->free[RESERVE_MOVINGGC], bucket))
+		if (fifo_pop(&ca->free[RESERVE_MOVINGGC], b))
 			goto out;
 		break;
 	default:
@@ -292,20 +284,19 @@ struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 	trace_bucket_alloc_fail(ca, reserve);
 	return ERR_PTR(-FREELIST_EMPTY);
 out:
-	verify_not_on_freelist(c, ca, bucket);
+	verify_not_on_freelist(c, ca, b);
 
 	ob = bch2_open_bucket_alloc(c);
 
 	spin_lock(&ob->lock);
-	buckets = bucket_array(ca);
 
 	ob->valid	= true;
 	ob->sectors_free = ca->mi.bucket_size;
 	ob->alloc_reserve = reserve;
 	ob->ptr		= (struct bch_extent_ptr) {
 		.type	= 1 << BCH_EXTENT_ENTRY_ptr,
-		.gen	= buckets->b[bucket].mark.gen,
-		.offset	= bucket_to_sector(ca, bucket),
+		.gen	= bucket(ca, b)->mark.gen,
+		.offset	= bucket_to_sector(ca, b),
 		.dev	= ca->dev_idx,
 	};
 
@@ -458,16 +449,18 @@ bch2_bucket_alloc_set(struct bch_fs *c,
  * it's to a device we don't want:
  */
 
-static void bucket_alloc_from_stripe(struct bch_fs *c,
-				     struct open_buckets *ptrs,
-				     struct write_point *wp,
-				     struct bch_devs_mask *devs_may_alloc,
-				     u16 target,
-				     unsigned erasure_code,
-				     unsigned nr_replicas,
-				     unsigned *nr_effective,
-				     bool *have_cache,
-				     unsigned flags)
+static enum bucket_alloc_ret
+bucket_alloc_from_stripe(struct bch_fs *c,
+			 struct open_buckets *ptrs,
+			 struct write_point *wp,
+			 struct bch_devs_mask *devs_may_alloc,
+			 u16 target,
+			 unsigned erasure_code,
+			 unsigned nr_replicas,
+			 unsigned *nr_effective,
+			 bool *have_cache,
+			 unsigned flags,
+			 struct closure *cl)
 {
 	struct dev_alloc_list devs_sorted;
 	struct ec_stripe_head *h;
@@ -476,31 +469,39 @@ static void bucket_alloc_from_stripe(struct bch_fs *c,
 	unsigned i, ec_idx;
 
 	if (!erasure_code)
-		return;
+		return 0;
 
 	if (nr_replicas < 2)
-		return;
+		return 0;
 
 	if (ec_open_bucket(c, ptrs))
-		return;
+		return 0;
 
-	h = bch2_ec_stripe_head_get(c, target, 0, nr_replicas - 1);
+	h = bch2_ec_stripe_head_get(c, target, 0, nr_replicas - 1,
+				    wp == &c->copygc_write_point,
+				    cl);
+	if (IS_ERR(h))
+		return -PTR_ERR(h);
 	if (!h)
-		return;
+		return 0;
 
 	devs_sorted = bch2_dev_alloc_list(c, &wp->stripe, devs_may_alloc);
 
 	for (i = 0; i < devs_sorted.nr; i++)
-		open_bucket_for_each(c, &h->s->blocks, ob, ec_idx)
+		for (ec_idx = 0; ec_idx < h->s->nr_data; ec_idx++) {
+			if (!h->s->blocks[ec_idx])
+				continue;
+
+			ob = c->open_buckets + h->s->blocks[ec_idx];
 			if (ob->ptr.dev == devs_sorted.devs[i] &&
-			    !test_and_set_bit(h->s->data_block_idx[ec_idx],
-					      h->s->blocks_allocated))
+			    !test_and_set_bit(ec_idx, h->s->blocks_allocated))
 				goto got_bucket;
+		}
 	goto out_put_head;
 got_bucket:
 	ca = bch_dev_bkey_exists(c, ob->ptr.dev);
 
-	ob->ec_idx	= h->s->data_block_idx[ec_idx];
+	ob->ec_idx	= ec_idx;
 	ob->ec		= h->s;
 
 	add_new_bucket(c, ptrs, devs_may_alloc,
@@ -508,6 +509,7 @@ got_bucket:
 	atomic_inc(&h->s->pin);
 out_put_head:
 	bch2_ec_stripe_head_put(c, h);
+	return 0;
 }
 
 /* Sector allocator */
@@ -585,10 +587,13 @@ open_bucket_add_buckets(struct bch_fs *c,
 		}
 
 		if (!ec_open_bucket(c, ptrs)) {
-			bucket_alloc_from_stripe(c, ptrs, wp, &devs,
+			ret = bucket_alloc_from_stripe(c, ptrs, wp, &devs,
 						 target, erasure_code,
 						 nr_replicas, nr_effective,
-						 have_cache, flags);
+						 have_cache, flags, _cl);
+			if (ret == FREELIST_EMPTY ||
+			    ret == OPEN_BUCKETS_EMPTY)
+				return ret;
 			if (*nr_effective >= nr_replicas)
 				return 0;
 		}
@@ -634,10 +639,13 @@ void bch2_open_buckets_stop_dev(struct bch_fs *c, struct bch_dev *ca,
 
 		if (!drop && ob->ec) {
 			mutex_lock(&ob->ec->lock);
-			open_bucket_for_each(c, &ob->ec->blocks, ob2, j)
+			for (j = 0; j < ob->ec->new_stripe.key.v.nr_blocks; j++) {
+				if (!ob->ec->blocks[j])
+					continue;
+
+				ob2 = c->open_buckets + ob->ec->blocks[j];
 				drop |= ob2->ptr.dev == ca->dev_idx;
-			open_bucket_for_each(c, &ob->ec->parity, ob2, j)
-				drop |= ob2->ptr.dev == ca->dev_idx;
+			}
 			mutex_unlock(&ob->ec->lock);
 		}
 

@@ -10,6 +10,7 @@
 
 extern const char * const bch2_error_actions[];
 extern const char * const bch2_sb_features[];
+extern const char * const bch2_sb_compat[];
 extern const char * const bch2_csum_opts[];
 extern const char * const bch2_compression_opts[];
 extern const char * const bch2_str_hash_types[];
@@ -136,6 +137,11 @@ enum opt_type {
 	  OPT_STR(bch2_str_hash_types),					\
 	  BCH_SB_STR_HASH_TYPE,		BCH_STR_HASH_OPT_SIPHASH,	\
 	  NULL,		"Hash function for directory entries and xattrs")\
+	x(metadata_target,		u16,				\
+	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME|OPT_INODE,			\
+	  OPT_FN(bch2_opt_target),					\
+	  BCH_SB_METADATA_TARGET,	0,				\
+	  "(target)",	"Device or disk group for metadata writes")	\
 	x(foreground_target,		u16,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME|OPT_INODE,			\
 	  OPT_FN(bch2_opt_target),					\
@@ -217,6 +223,11 @@ enum opt_type {
 	  OPT_BOOL(),							\
 	  NO_SB_OPT,			false,				\
 	  NULL,		"Allow mounting in degraded mode")		\
+	x(very_degraded,		u8,				\
+	  OPT_MOUNT,							\
+	  OPT_BOOL(),							\
+	  NO_SB_OPT,			false,				\
+	  NULL,		"Allow mounting in when data will be missing")	\
 	x(discard,			u8,				\
 	  OPT_MOUNT|OPT_DEVICE,						\
 	  OPT_BOOL(),							\

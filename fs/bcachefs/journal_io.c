@@ -5,6 +5,7 @@
 #include "btree_update_interior.h"
 #include "buckets.h"
 #include "checksum.h"
+#include "disk_groups.h"
 #include "error.h"
 #include "io.h"
 #include "journal.h"
@@ -46,15 +47,16 @@ struct journal_list {
  * be replayed:
  */
 static int journal_entry_add(struct bch_fs *c, struct bch_dev *ca,
+			     struct bch_extent_ptr entry_ptr,
 			     struct journal_list *jlist, struct jset *j,
 			     bool bad)
 {
-	struct journal_replay *i, *pos;
-	struct bch_devs_list devs = { .nr = 0 };
+	struct journal_replay *i, *pos, *dup = NULL;
+	struct bch_extent_ptr *ptr;
 	struct list_head *where;
 	size_t bytes = vstruct_bytes(j);
 	u64 last_seq = 0;
-	int ret;
+	int ret = JOURNAL_ENTRY_ADD_OK;
 
 	list_for_each_entry_reverse(i, jlist->head, list) {
 		if (!JSET_NO_FLUSH(&i->j)) {
@@ -88,28 +90,31 @@ static int journal_entry_add(struct bch_fs *c, struct bch_dev *ca,
 
 	where = jlist->head;
 add:
-	i = where->next != jlist->head
+	dup = where->next != jlist->head
 		? container_of(where->next, struct journal_replay, list)
 		: NULL;
+
+	if (dup && le64_to_cpu(j->seq) != le64_to_cpu(dup->j.seq))
+		dup = NULL;
 
 	/*
 	 * Duplicate journal entries? If so we want the one that didn't have a
 	 * checksum error:
 	 */
-	if (i && le64_to_cpu(j->seq) == le64_to_cpu(i->j.seq)) {
-		if (i->bad) {
-			devs = i->devs;
-			__journal_replay_free(i);
+	if (dup) {
+		if (dup->bad) {
+			/* we'll replace @dup: */
 		} else if (bad) {
+			i = dup;
 			goto found;
 		} else {
-			fsck_err_on(bytes != vstruct_bytes(&i->j) ||
-				    memcmp(j, &i->j, bytes), c,
+			fsck_err_on(bytes != vstruct_bytes(&dup->j) ||
+				    memcmp(j, &dup->j, bytes), c,
 				    "found duplicate but non identical journal entries (seq %llu)",
 				    le64_to_cpu(j->seq));
+			i = dup;
 			goto found;
 		}
-
 	}
 
 	i = kvpmalloc(offsetof(struct journal_replay, j) + bytes, GFP_KERNEL);
@@ -118,17 +123,34 @@ add:
 		goto out;
 	}
 
-	list_add(&i->list, where);
-	i->devs = devs;
-	i->bad	= bad;
-	i->ignore = false;
+	i->nr_ptrs	 = 0;
+	i->bad		= bad;
+	i->ignore	= false;
 	memcpy(&i->j, j, bytes);
+
+	if (dup) {
+		i->nr_ptrs = dup->nr_ptrs;
+		memcpy(i->ptrs, dup->ptrs, sizeof(dup->ptrs));
+		__journal_replay_free(dup);
+	}
+
+	list_add(&i->list, where);
 found:
-	if (!bch2_dev_list_has_dev(i->devs, ca->dev_idx))
-		bch2_dev_list_add_dev(&i->devs, ca->dev_idx);
-	else
-		fsck_err_on(1, c, "duplicate journal entries on same device");
-	ret = JOURNAL_ENTRY_ADD_OK;
+	for (ptr = i->ptrs; ptr < i->ptrs + i->nr_ptrs; ptr++) {
+		if (ptr->dev == ca->dev_idx) {
+			bch_err(c, "duplicate journal entry %llu on same device",
+				le64_to_cpu(i->j.seq));
+			goto out;
+		}
+	}
+
+	if (i->nr_ptrs >= ARRAY_SIZE(i->ptrs)) {
+		bch_err(c, "found too many copies of journal entry %llu",
+			le64_to_cpu(i->j.seq));
+		goto out;
+	}
+
+	i->ptrs[i->nr_ptrs++] = entry_ptr;
 out:
 fsck_err:
 	return ret;
@@ -405,6 +427,69 @@ fsck_err:
 	return ret;
 }
 
+static int journal_entry_validate_clock(struct bch_fs *c,
+					struct jset *jset,
+					struct jset_entry *entry,
+					int write)
+{
+	struct jset_entry_clock *clock =
+		container_of(entry, struct jset_entry_clock, entry);
+	unsigned bytes = jset_u64s(le16_to_cpu(entry->u64s)) * sizeof(u64);
+	int ret = 0;
+
+	if (journal_entry_err_on(bytes != sizeof(*clock),
+				 c, "invalid journal entry clock: bad size")) {
+		journal_entry_null_range(entry, vstruct_next(entry));
+		return ret;
+	}
+
+	if (journal_entry_err_on(clock->rw > 1,
+				 c, "invalid journal entry clock: bad rw")) {
+		journal_entry_null_range(entry, vstruct_next(entry));
+		return ret;
+	}
+
+fsck_err:
+	return ret;
+}
+
+static int journal_entry_validate_dev_usage(struct bch_fs *c,
+					    struct jset *jset,
+					    struct jset_entry *entry,
+					    int write)
+{
+	struct jset_entry_dev_usage *u =
+		container_of(entry, struct jset_entry_dev_usage, entry);
+	unsigned bytes = jset_u64s(le16_to_cpu(entry->u64s)) * sizeof(u64);
+	unsigned expected = sizeof(*u) + sizeof(u->d[0]) * 7; /* Current value of BCH_DATA_NR */
+	unsigned dev;
+	int ret = 0;
+
+	if (journal_entry_err_on(bytes < expected,
+				 c, "invalid journal entry dev usage: bad size (%u < %u)",
+				 bytes, expected)) {
+		journal_entry_null_range(entry, vstruct_next(entry));
+		return ret;
+	}
+
+	dev = le32_to_cpu(u->dev);
+
+	if (journal_entry_err_on(!bch2_dev_exists2(c, dev),
+				 c, "invalid journal entry dev usage: bad dev")) {
+		journal_entry_null_range(entry, vstruct_next(entry));
+		return ret;
+	}
+
+	if (journal_entry_err_on(u->pad,
+				 c, "invalid journal entry dev usage: bad pad")) {
+		journal_entry_null_range(entry, vstruct_next(entry));
+		return ret;
+	}
+
+fsck_err:
+	return ret;
+}
+
 struct jset_entry_ops {
 	int (*validate)(struct bch_fs *, struct jset *,
 			struct jset_entry *, int);
@@ -470,7 +555,8 @@ static int jset_validate(struct bch_fs *c,
 				  version < bcachefs_metadata_version_min) ||
 				 version >= bcachefs_metadata_version_max, c,
 			"%s sector %llu seq %llu: unknown journal entry version %u",
-			ca->name, sector, le64_to_cpu(jset->seq),
+			ca ? ca->name : c->name,
+			sector, le64_to_cpu(jset->seq),
 			version)) {
 		/* don't try to continue: */
 		return EINVAL;
@@ -482,37 +568,55 @@ static int jset_validate(struct bch_fs *c,
 
 	if (journal_entry_err_on(bytes > bucket_sectors_left << 9, c,
 			"%s sector %llu seq %llu: journal entry too big (%zu bytes)",
-			ca->name, sector, le64_to_cpu(jset->seq), bytes)) {
+			ca ? ca->name : c->name,
+			sector, le64_to_cpu(jset->seq), bytes)) {
 		ret = JOURNAL_ENTRY_BAD;
 		le32_add_cpu(&jset->u64s,
 			     -((bytes - (bucket_sectors_left << 9)) / 8));
 	}
 
-	if (fsck_err_on(!bch2_checksum_type_valid(c, JSET_CSUM_TYPE(jset)), c,
+	if (journal_entry_err_on(!bch2_checksum_type_valid(c, JSET_CSUM_TYPE(jset)), c,
 			"%s sector %llu seq %llu: journal entry with unknown csum type %llu",
-			ca->name, sector, le64_to_cpu(jset->seq),
+			ca ? ca->name : c->name,
+			sector, le64_to_cpu(jset->seq),
 			JSET_CSUM_TYPE(jset))) {
 		ret = JOURNAL_ENTRY_BAD;
-		goto bad_csum_type;
+		goto csum_done;
 	}
+
+	if (write)
+		goto csum_done;
 
 	csum = csum_vstruct(c, JSET_CSUM_TYPE(jset), journal_nonce(jset), jset);
 	if (journal_entry_err_on(bch2_crc_cmp(csum, jset->csum), c,
 				 "%s sector %llu seq %llu: journal checksum bad",
-				 ca->name, sector, le64_to_cpu(jset->seq)))
+				 ca ? ca->name : c->name,
+				 sector, le64_to_cpu(jset->seq)))
 		ret = JOURNAL_ENTRY_BAD;
 
 	bch2_encrypt(c, JSET_CSUM_TYPE(jset), journal_nonce(jset),
 		     jset->encrypted_start,
 		     vstruct_end(jset) - (void *) jset->encrypted_start);
-bad_csum_type:
-	if (journal_entry_err_on(le64_to_cpu(jset->last_seq) > le64_to_cpu(jset->seq), c,
-				 "invalid journal entry: last_seq > seq")) {
+csum_done:
+	/* last_seq is ignored when JSET_NO_FLUSH is true */
+	if (journal_entry_err_on(!JSET_NO_FLUSH(jset) &&
+				 le64_to_cpu(jset->last_seq) > le64_to_cpu(jset->seq), c,
+				 "invalid journal entry: last_seq > seq (%llu > %llu)",
+				 le64_to_cpu(jset->last_seq),
+				 le64_to_cpu(jset->seq))) {
 		jset->last_seq = jset->seq;
 		return JOURNAL_ENTRY_BAD;
 	}
 fsck_err:
 	return ret;
+}
+
+static int jset_validate_for_write(struct bch_fs *c, struct jset *jset)
+{
+	unsigned sectors = vstruct_sectors(jset, c->block_bits);
+
+	return jset_validate(c, NULL, jset, 0, sectors, sectors, WRITE) ?:
+		jset_validate_entries(c, jset, WRITE);
 }
 
 struct journal_read_buf {
@@ -577,8 +681,15 @@ reread:
 			if (bch2_dev_io_err_on(ret, ca,
 					       "journal read error: sector %llu",
 					       offset) ||
-			    bch2_meta_read_fault("journal"))
-				return -EIO;
+			    bch2_meta_read_fault("journal")) {
+				/*
+				 * We don't error out of the recovery process
+				 * here, since the relevant journal entry may be
+				 * found on a different device, and missing or
+				 * no journal entries will be handled later
+				 */
+				return 0;
+			}
 
 			j = buf->data;
 		}
@@ -628,7 +739,10 @@ reread:
 		ja->bucket_seq[bucket] = le64_to_cpu(j->seq);
 
 		mutex_lock(&jlist->lock);
-		ret = journal_entry_add(c, ca, jlist, j, ret != 0);
+		ret = journal_entry_add(c, ca, (struct bch_extent_ptr) {
+					.dev = ca->dev_idx,
+					.offset	= offset,
+					}, jlist, j, ret != 0);
 		mutex_unlock(&jlist->lock);
 
 		switch (ret) {
@@ -714,6 +828,25 @@ err:
 	jlist->ret = ret;
 	mutex_unlock(&jlist->lock);
 	goto out;
+}
+
+static void bch2_journal_ptrs_to_text(struct printbuf *out, struct bch_fs *c,
+				      struct journal_replay *j)
+{
+	unsigned i;
+
+	for (i = 0; i < j->nr_ptrs; i++) {
+		struct bch_dev *ca = c->devs[j->ptrs[i].dev];
+		u64 offset;
+
+		div64_u64_rem(j->ptrs[i].offset, ca->mi.bucket_size, &offset);
+
+		if (i)
+			pr_buf(out, " ");
+		pr_buf(out, "%u:%llu (offset %llu)",
+		       j->ptrs[i].dev,
+		       (u64) j->ptrs[i].offset, offset);
+	}
 }
 
 int bch2_journal_read(struct bch_fs *c, struct list_head *list,
@@ -813,6 +946,7 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list,
 
 		while (seq < le64_to_cpu(i->j.seq)) {
 			u64 missing_start, missing_end;
+			char buf1[200], buf2[200];
 
 			while (seq < le64_to_cpu(i->j.seq) &&
 			       bch2_journal_seq_is_blacklisted(c, seq, false))
@@ -827,10 +961,23 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list,
 			       !bch2_journal_seq_is_blacklisted(c, seq, false))
 				seq++;
 
+			if (i->list.prev != list) {
+				struct printbuf out = PBUF(buf1);
+				struct journal_replay *p = list_prev_entry(i, list);
+
+				bch2_journal_ptrs_to_text(&out, c, p);
+				pr_buf(&out, " size %llu", vstruct_sectors(&p->j, c->block_bits));
+			} else
+				sprintf(buf1, "(none)");
+			bch2_journal_ptrs_to_text(&PBUF(buf2), c, i);
+
 			missing_end = seq - 1;
-			fsck_err(c, "journal entries %llu-%llu missing! (replaying %llu-%llu)",
+			fsck_err(c, "journal entries %llu-%llu missing! (replaying %llu-%llu)\n"
+				 "  prev at %s\n"
+				 "  next at %s",
 				 missing_start, missing_end,
-				 last_seq, *blacklist_seq - 1);
+				 last_seq, *blacklist_seq - 1,
+				 buf1, buf2);
 		}
 
 		seq++;
@@ -839,7 +986,11 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list,
 	list_for_each_entry(i, list, list) {
 		struct jset_entry *entry;
 		struct bkey_i *k, *_n;
-		struct bch_replicas_padded replicas;
+		struct bch_replicas_padded replicas = {
+			.e.data_type = BCH_DATA_journal,
+			.e.nr_required = 1,
+		};
+		unsigned ptr;
 		char buf[80];
 
 		if (i->ignore)
@@ -849,12 +1000,15 @@ int bch2_journal_read(struct bch_fs *c, struct list_head *list,
 		if (ret)
 			goto fsck_err;
 
+		for (ptr = 0; ptr < i->nr_ptrs; ptr++)
+			replicas.e.devs[replicas.e.nr_devs++] = i->ptrs[ptr].dev;
+
+		bch2_replicas_entry_sort(&replicas.e);
+
 		/*
 		 * If we're mounting in degraded mode - if we didn't read all
 		 * the devices - this is wrong:
 		 */
-
-		bch2_devlist_to_replicas(&replicas.e, BCH_DATA_journal, i->devs);
 
 		if (!degraded &&
 		    (test_bit(BCH_FS_REBUILD_REPLICAS, &c->flags) ||
@@ -946,16 +1100,20 @@ static int journal_write_alloc(struct journal *j, struct journal_buf *w,
 			       unsigned sectors)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+	struct bch_devs_mask devs;
 	struct journal_device *ja;
 	struct bch_dev *ca;
 	struct dev_alloc_list devs_sorted;
+	unsigned target = c->opts.metadata_target ?:
+		c->opts.foreground_target;
 	unsigned i, replicas = 0, replicas_want =
 		READ_ONCE(c->opts.metadata_replicas);
 
 	rcu_read_lock();
+retry:
+	devs = target_rw_devs(c, BCH_DATA_journal, target);
 
-	devs_sorted = bch2_dev_alloc_list(c, &j->wp.stripe,
-					  &c->rw_devs[BCH_DATA_journal]);
+	devs_sorted = bch2_dev_alloc_list(c, &j->wp.stripe, &devs);
 
 	__journal_write_alloc(j, w, &devs_sorted,
 			      sectors, &replicas, replicas_want);
@@ -987,8 +1145,16 @@ static int journal_write_alloc(struct journal *j, struct journal_buf *w,
 
 	__journal_write_alloc(j, w, &devs_sorted,
 			      sectors, &replicas, replicas_want);
+
+	if (replicas < replicas_want && target) {
+		/* Retry from all devices: */
+		target = 0;
+		goto retry;
+	}
 done:
 	rcu_read_unlock();
+
+	BUG_ON(bkey_val_u64s(&w->key.k) > BCH_REPLICAS_MAX);
 
 	return replicas >= c->opts.metadata_replicas_required ? 0 : -EROFS;
 }
@@ -1050,9 +1216,13 @@ static void journal_buf_realloc(struct journal *j, struct journal_buf *buf)
 		return;
 
 	memcpy(new_buf, buf->data, buf->buf_size);
-	kvpfree(buf->data, buf->buf_size);
-	buf->data	= new_buf;
-	buf->buf_size	= new_size;
+
+	spin_lock(&j->lock);
+	swap(buf->data,		new_buf);
+	swap(buf->buf_size,	new_size);
+	spin_unlock(&j->lock);
+
+	kvpfree(new_buf, new_size);
 }
 
 static inline struct journal_buf *journal_last_unwritten_buf(struct journal *j)
@@ -1069,9 +1239,7 @@ static void journal_write_done(struct closure *cl)
 		bch2_bkey_devs(bkey_i_to_s_c(&w->key));
 	struct bch_replicas_padded replicas;
 	union journal_res_state old, new;
-	u64 seq = le64_to_cpu(w->data->seq);
-	u64 last_seq = le64_to_cpu(w->data->last_seq);
-	u64 v;
+	u64 v, seq, last_seq;
 	int err = 0;
 
 	bch2_time_stats_update(j->write_time, j->write_start_time);
@@ -1089,6 +1257,9 @@ static void journal_write_done(struct closure *cl)
 		bch2_fatal_error(c);
 
 	spin_lock(&j->lock);
+	seq = le64_to_cpu(w->data->seq);
+	last_seq = le64_to_cpu(w->data->last_seq);
+
 	if (seq >= j->pin.front)
 		journal_seq_pin(j, seq)->devs = devs;
 
@@ -1096,7 +1267,7 @@ static void journal_write_done(struct closure *cl)
 	if (err && (!j->err_seq || seq < j->err_seq))
 		j->err_seq	= seq;
 
-	if (!w->noflush) {
+	if (!JSET_NO_FLUSH(w->data)) {
 		j->flushed_seq_ondisk = seq;
 		j->last_seq_ondisk = last_seq;
 	}
@@ -1156,6 +1327,56 @@ static void journal_write_endio(struct bio *bio)
 	percpu_ref_put(&ca->io_ref);
 }
 
+static void do_journal_write(struct closure *cl)
+{
+	struct journal *j = container_of(cl, struct journal, io);
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+	struct bch_dev *ca;
+	struct journal_buf *w = journal_last_unwritten_buf(j);
+	struct bch_extent_ptr *ptr;
+	struct bio *bio;
+	unsigned sectors = vstruct_sectors(w->data, c->block_bits);
+
+	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
+		ca = bch_dev_bkey_exists(c, ptr->dev);
+		if (!percpu_ref_tryget(&ca->io_ref)) {
+			/* XXX: fix this */
+			bch_err(c, "missing device for journal write\n");
+			continue;
+		}
+
+		this_cpu_add(ca->io_done->sectors[WRITE][BCH_DATA_journal],
+			     sectors);
+
+		bio = ca->journal.bio;
+		bio_reset(bio);
+		bio_set_dev(bio, ca->disk_sb.bdev);
+		bio->bi_iter.bi_sector	= ptr->offset;
+		bio->bi_end_io		= journal_write_endio;
+		bio->bi_private		= ca;
+		bio->bi_opf		= REQ_OP_WRITE|REQ_SYNC|REQ_META;
+
+		BUG_ON(bio->bi_iter.bi_sector == ca->prev_journal_sector);
+		ca->prev_journal_sector = bio->bi_iter.bi_sector;
+
+		if (!JSET_NO_FLUSH(w->data))
+			bio->bi_opf    |= REQ_FUA;
+		if (!JSET_NO_FLUSH(w->data) && !w->separate_flush)
+			bio->bi_opf    |= REQ_PREFLUSH;
+
+		bch2_bio_map(bio, w->data, sectors << 9);
+
+		trace_journal_write(bio);
+		closure_bio_submit(bio, cl);
+
+		ca->journal.bucket_seq[ca->journal.cur_idx] =
+			le64_to_cpu(w->data->seq);
+	}
+
+	continue_at(cl, journal_write_done, system_highpri_wq);
+	return;
+}
+
 void bch2_journal_write(struct closure *cl)
 {
 	struct journal *j = container_of(cl, struct journal, io);
@@ -1165,9 +1386,9 @@ void bch2_journal_write(struct closure *cl)
 	struct jset_entry *start, *end;
 	struct jset *jset;
 	struct bio *bio;
-	struct bch_extent_ptr *ptr;
+	char *journal_debug_buf = NULL;
 	bool validate_before_checksum = false;
-	unsigned i, sectors, bytes, u64s;
+	unsigned i, sectors, bytes, u64s, nr_rw_members = 0;
 	int ret;
 
 	BUG_ON(BCH_SB_CLEAN(c->disk_sb.sb));
@@ -1184,7 +1405,7 @@ void bch2_journal_write(struct closure *cl)
 	    test_bit(JOURNAL_MAY_SKIP_FLUSH, &j->flags)) {
 		w->noflush = true;
 		SET_JSET_NO_FLUSH(jset, true);
-		jset->last_seq = cpu_to_le64(j->last_seq_ondisk);
+		jset->last_seq = 0;
 
 		j->nr_noflush_writes++;
 	} else {
@@ -1209,8 +1430,8 @@ void bch2_journal_write(struct closure *cl)
 
 	end	= bch2_btree_roots_to_journal_entries(c, jset->start, end);
 
-	end	= bch2_journal_super_entries_add_common(c, end,
-						le64_to_cpu(jset->seq));
+	bch2_journal_super_entries_add_common(c, &end,
+				le64_to_cpu(jset->seq));
 	u64s	= (u64 *) end - (u64 *) start;
 	BUG_ON(u64s > j->entry_u64s_reserved);
 
@@ -1219,10 +1440,7 @@ void bch2_journal_write(struct closure *cl)
 
 	journal_write_compact(jset);
 
-	jset->read_clock	= cpu_to_le16(c->bucket_clock[READ].hand);
-	jset->write_clock	= cpu_to_le16(c->bucket_clock[WRITE].hand);
 	jset->magic		= cpu_to_le64(jset_magic(c));
-
 	jset->version		= c->sb.version < bcachefs_metadata_version_new_versioning
 		? cpu_to_le32(BCH_JSET_VERSION_OLD)
 		: cpu_to_le32(c->sb.version);
@@ -1236,11 +1454,11 @@ void bch2_journal_write(struct closure *cl)
 	if (bch2_csum_type_is_encryption(JSET_CSUM_TYPE(jset)))
 		validate_before_checksum = true;
 
-	if (le32_to_cpu(jset->version) < bcachefs_metadata_version_max)
+	if (le32_to_cpu(jset->version) <= bcachefs_metadata_version_inode_btree_change)
 		validate_before_checksum = true;
 
 	if (validate_before_checksum &&
-	    jset_validate_entries(c, jset, WRITE))
+	    jset_validate_for_write(c, jset))
 		goto err;
 
 	bch2_encrypt(c, JSET_CSUM_TYPE(jset), journal_nonce(jset),
@@ -1251,7 +1469,7 @@ void bch2_journal_write(struct closure *cl)
 				  journal_nonce(jset), jset);
 
 	if (!validate_before_checksum &&
-	    jset_validate_entries(c, jset, WRITE))
+	    jset_validate_for_write(c, jset))
 		goto err;
 
 	sectors = vstruct_sectors(jset, c->block_bits);
@@ -1270,6 +1488,12 @@ retry_alloc:
 		goto retry_alloc;
 	}
 
+	if (ret) {
+		journal_debug_buf = kmalloc(4096, GFP_ATOMIC);
+		if (journal_debug_buf)
+			__bch2_journal_debug_to_text(&_PBUF(journal_debug_buf, 4096), j);
+	}
+
 	/*
 	 * write is allocated, no longer need to account for it in
 	 * bch2_journal_space_available():
@@ -1284,7 +1508,9 @@ retry_alloc:
 	spin_unlock(&j->lock);
 
 	if (ret) {
-		bch_err(c, "Unable to allocate journal write");
+		bch_err(c, "Unable to allocate journal write:\n%s",
+			journal_debug_buf);
+		kfree(journal_debug_buf);
 		bch2_fatal_error(c);
 		continue_at(cl, journal_write_done, system_highpri_wq);
 		return;
@@ -1297,49 +1523,30 @@ retry_alloc:
 	if (c->opts.nochanges)
 		goto no_io;
 
-	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
-		ca = bch_dev_bkey_exists(c, ptr->dev);
-		if (!percpu_ref_tryget(&ca->io_ref)) {
-			/* XXX: fix this */
-			bch_err(c, "missing device for journal write\n");
-			continue;
+	for_each_rw_member(ca, c, i)
+		nr_rw_members++;
+
+	if (nr_rw_members > 1)
+		w->separate_flush = true;
+
+	if (!JSET_NO_FLUSH(jset) && w->separate_flush) {
+		for_each_rw_member(ca, c, i) {
+			percpu_ref_get(&ca->io_ref);
+
+			bio = ca->journal.bio;
+			bio_reset(bio);
+			bio_set_dev(bio, ca->disk_sb.bdev);
+			bio->bi_opf		= REQ_OP_FLUSH;
+			bio->bi_end_io		= journal_write_endio;
+			bio->bi_private		= ca;
+			closure_bio_submit(bio, cl);
 		}
-
-		this_cpu_add(ca->io_done->sectors[WRITE][BCH_DATA_journal],
-			     sectors);
-
-		bio = ca->journal.bio;
-		bio_reset(bio);
-		bio_set_dev(bio, ca->disk_sb.bdev);
-		bio->bi_iter.bi_sector	= ptr->offset;
-		bio->bi_end_io		= journal_write_endio;
-		bio->bi_private		= ca;
-		bio->bi_opf		= REQ_OP_WRITE|REQ_SYNC|REQ_META;
-		if (!JSET_NO_FLUSH(jset))
-			bio->bi_opf    |= REQ_PREFLUSH|REQ_FUA;
-		bch2_bio_map(bio, jset, sectors << 9);
-
-		trace_journal_write(bio);
-		closure_bio_submit(bio, cl);
-
-		ca->journal.bucket_seq[ca->journal.cur_idx] = le64_to_cpu(jset->seq);
 	}
 
-	if (!JSET_NO_FLUSH(jset)) {
-		for_each_rw_member(ca, c, i)
-			if (journal_flushes_device(ca) &&
-			    !bch2_bkey_has_device(bkey_i_to_s_c(&w->key), i)) {
-				percpu_ref_get(&ca->io_ref);
+	bch2_bucket_seq_cleanup(c);
 
-				bio = ca->journal.bio;
-				bio_reset(bio);
-				bio_set_dev(bio, ca->disk_sb.bdev);
-				bio->bi_opf		= REQ_OP_FLUSH;
-				bio->bi_end_io		= journal_write_endio;
-				bio->bi_private		= ca;
-				closure_bio_submit(bio, cl);
-			}
-	}
+	continue_at(cl, do_journal_write, system_highpri_wq);
+	return;
 no_io:
 	bch2_bucket_seq_cleanup(c);
 

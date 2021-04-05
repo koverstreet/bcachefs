@@ -3,7 +3,7 @@
 #define _BCACHEFS_IO_H
 
 #include "checksum.h"
-#include "bkey_on_stack.h"
+#include "bkey_buf.h"
 #include "io_types.h"
 
 #define to_wbio(_bio)			\
@@ -60,6 +60,8 @@ static inline struct workqueue_struct *index_update_wq(struct bch_write_op *op)
 		: op->c->wq;
 }
 
+int bch2_sum_sector_overwrites(struct btree_trans *, struct btree_iter *,
+			       struct bkey_i *, bool *, bool *, s64 *, s64 *);
 int bch2_extent_update(struct btree_trans *, struct btree_iter *,
 		       struct bkey_i *, struct disk_reservation *,
 		       u64 *, u64, s64 *);
@@ -112,11 +114,11 @@ struct cache_promote_op;
 struct extent_ptr_decoded;
 
 int __bch2_read_indirect_extent(struct btree_trans *, unsigned *,
-				struct bkey_on_stack *);
+				struct bkey_buf *);
 
 static inline int bch2_read_indirect_extent(struct btree_trans *trans,
 					    unsigned *offset_into_extent,
-					    struct bkey_on_stack *k)
+					    struct bkey_buf *k)
 {
 	return k->k->k.type == KEY_TYPE_reflink_p
 		? __bch2_read_indirect_extent(trans, offset_into_extent, k)

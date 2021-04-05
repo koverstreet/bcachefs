@@ -14,6 +14,9 @@
 #define BCH_FORCE_IF_DATA_DEGRADED	(1 << 2)
 #define BCH_FORCE_IF_METADATA_DEGRADED	(1 << 3)
 
+#define BCH_FORCE_IF_LOST			\
+	(BCH_FORCE_IF_DATA_LOST|		\
+	 BCH_FORCE_IF_METADATA_LOST)
 #define BCH_FORCE_IF_DEGRADED			\
 	(BCH_FORCE_IF_DATA_DEGRADED|		\
 	 BCH_FORCE_IF_METADATA_DEGRADED)
@@ -168,10 +171,11 @@ struct bch_ioctl_disk_set_state {
 };
 
 enum bch_data_ops {
-	BCH_DATA_OP_SCRUB	= 0,
-	BCH_DATA_OP_REREPLICATE	= 1,
-	BCH_DATA_OP_MIGRATE	= 2,
-	BCH_DATA_OP_NR		= 3,
+	BCH_DATA_OP_SCRUB		= 0,
+	BCH_DATA_OP_REREPLICATE		= 1,
+	BCH_DATA_OP_MIGRATE		= 2,
+	BCH_DATA_OP_REWRITE_OLD_NODES	= 3,
+	BCH_DATA_OP_NR			= 4,
 };
 
 /*
@@ -184,11 +188,13 @@ enum bch_data_ops {
  * job. The file descriptor is O_CLOEXEC.
  */
 struct bch_ioctl_data {
-	__u32			op;
+	__u16			op;
+	__u8			start_btree;
+	__u8			end_btree;
 	__u32			flags;
 
-	struct bpos		start;
-	struct bpos		end;
+	struct bpos		start_pos;
+	struct bpos		end_pos;
 
 	union {
 	struct {

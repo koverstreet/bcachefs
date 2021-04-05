@@ -276,19 +276,19 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 		return "Bad number of member devices";
 
 	if (!BCH_SB_META_REPLICAS_WANT(sb) ||
-	    BCH_SB_META_REPLICAS_WANT(sb) >= BCH_REPLICAS_MAX)
+	    BCH_SB_META_REPLICAS_WANT(sb) > BCH_REPLICAS_MAX)
 		return "Invalid number of metadata replicas";
 
 	if (!BCH_SB_META_REPLICAS_REQ(sb) ||
-	    BCH_SB_META_REPLICAS_REQ(sb) >= BCH_REPLICAS_MAX)
+	    BCH_SB_META_REPLICAS_REQ(sb) > BCH_REPLICAS_MAX)
 		return "Invalid number of metadata replicas";
 
 	if (!BCH_SB_DATA_REPLICAS_WANT(sb) ||
-	    BCH_SB_DATA_REPLICAS_WANT(sb) >= BCH_REPLICAS_MAX)
+	    BCH_SB_DATA_REPLICAS_WANT(sb) > BCH_REPLICAS_MAX)
 		return "Invalid number of data replicas";
 
 	if (!BCH_SB_DATA_REPLICAS_REQ(sb) ||
-	    BCH_SB_DATA_REPLICAS_REQ(sb) >= BCH_REPLICAS_MAX)
+	    BCH_SB_DATA_REPLICAS_REQ(sb) > BCH_REPLICAS_MAX)
 		return "Invalid number of data replicas";
 
 	if (BCH_SB_META_CSUM_TYPE(sb) >= BCH_CSUM_OPT_NR)
@@ -375,7 +375,6 @@ static void bch2_sb_update(struct bch_fs *c)
 		ca->mi = bch2_mi_to_cpu(mi->members + i);
 }
 
-/* doesn't copy member info */
 static void __copy_super(struct bch_sb_handle *dst_handle, struct bch_sb *src)
 {
 	struct bch_sb_field *src_f, *dst_f;
@@ -767,15 +766,13 @@ int bch2_write_super(struct bch_fs *c)
 	nr_wrote = dev_mask_nr(&sb_written);
 
 	can_mount_with_written =
-		bch2_have_enough_devs(__bch2_replicas_status(c, sb_written),
-				      BCH_FORCE_IF_DEGRADED);
+		bch2_have_enough_devs(c, sb_written, BCH_FORCE_IF_DEGRADED, false);
 
 	for (i = 0; i < ARRAY_SIZE(sb_written.d); i++)
 		sb_written.d[i] = ~sb_written.d[i];
 
 	can_mount_without_written =
-		bch2_have_enough_devs(__bch2_replicas_status(c, sb_written),
-				      BCH_FORCE_IF_DEGRADED);
+		bch2_have_enough_devs(c, sb_written, BCH_FORCE_IF_DEGRADED, false);
 
 	/*
 	 * If we would be able to mount _without_ the devices we successfully
@@ -786,6 +783,7 @@ int bch2_write_super(struct bch_fs *c)
 	 * mount with the devices we did successfully write to:
 	 */
 	if (bch2_fs_fatal_err_on(!nr_wrote ||
+				 !can_mount_with_written ||
 				 (can_mount_without_written &&
 				  !can_mount_with_written), c,
 		"Unable to write superblock to sufficient devices"))
@@ -954,40 +952,35 @@ int bch2_fs_mark_dirty(struct bch_fs *c)
 
 	mutex_lock(&c->sb_lock);
 	SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
-	c->disk_sb.sb->features[0] |= 1ULL << BCH_FEATURE_new_extent_overwrite;
-	c->disk_sb.sb->features[0] |= 1ULL << BCH_FEATURE_extents_above_btree_updates;
-	c->disk_sb.sb->features[0] |= 1ULL << BCH_FEATURE_btree_updates_journalled;
+	c->disk_sb.sb->features[0] |= BCH_SB_FEATURES_ALWAYS;
 	ret = bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
 
 	return ret;
 }
 
-static void
-entry_init_u64s(struct jset_entry *entry, unsigned u64s)
+static struct jset_entry *jset_entry_init(struct jset_entry **end, size_t size)
 {
-	memset(entry, 0, u64s * sizeof(u64));
+	struct jset_entry *entry = *end;
+	unsigned u64s = DIV_ROUND_UP(size, sizeof(u64));
 
+	memset(entry, 0, u64s * sizeof(u64));
 	/*
 	 * The u64s field counts from the start of data, ignoring the shared
 	 * fields.
 	 */
 	entry->u64s = u64s - 1;
+
+	*end = vstruct_next(*end);
+	return entry;
 }
 
-static void
-entry_init_size(struct jset_entry *entry, size_t size)
+void bch2_journal_super_entries_add_common(struct bch_fs *c,
+					   struct jset_entry **end,
+					   u64 journal_seq)
 {
-	unsigned u64s = DIV_ROUND_UP(size, sizeof(u64));
-	entry_init_u64s(entry, u64s);
-}
-
-struct jset_entry *
-bch2_journal_super_entries_add_common(struct bch_fs *c,
-				      struct jset_entry *entry,
-				      u64 journal_seq)
-{
-	unsigned i;
+	struct bch_dev *ca;
+	unsigned i, dev;
 
 	percpu_down_write(&c->mark_lock);
 
@@ -1000,58 +993,77 @@ bch2_journal_super_entries_add_common(struct bch_fs *c,
 
 	{
 		struct jset_entry_usage *u =
-			container_of(entry, struct jset_entry_usage, entry);
+			container_of(jset_entry_init(end, sizeof(*u)),
+				     struct jset_entry_usage, entry);
 
-		entry_init_size(entry, sizeof(*u));
 		u->entry.type	= BCH_JSET_ENTRY_usage;
 		u->entry.btree_id = FS_USAGE_INODES;
 		u->v		= cpu_to_le64(c->usage_base->nr_inodes);
-
-		entry = vstruct_next(entry);
 	}
 
 	{
 		struct jset_entry_usage *u =
-			container_of(entry, struct jset_entry_usage, entry);
+			container_of(jset_entry_init(end, sizeof(*u)),
+				     struct jset_entry_usage, entry);
 
-		entry_init_size(entry, sizeof(*u));
 		u->entry.type	= BCH_JSET_ENTRY_usage;
 		u->entry.btree_id = FS_USAGE_KEY_VERSION;
 		u->v		= cpu_to_le64(atomic64_read(&c->key_version));
-
-		entry = vstruct_next(entry);
 	}
 
 	for (i = 0; i < BCH_REPLICAS_MAX; i++) {
 		struct jset_entry_usage *u =
-			container_of(entry, struct jset_entry_usage, entry);
+			container_of(jset_entry_init(end, sizeof(*u)),
+				     struct jset_entry_usage, entry);
 
-		entry_init_size(entry, sizeof(*u));
 		u->entry.type	= BCH_JSET_ENTRY_usage;
 		u->entry.btree_id = FS_USAGE_RESERVED;
 		u->entry.level	= i;
 		u->v		= cpu_to_le64(c->usage_base->persistent_reserved[i]);
-
-		entry = vstruct_next(entry);
 	}
 
 	for (i = 0; i < c->replicas.nr; i++) {
 		struct bch_replicas_entry *e =
 			cpu_replicas_entry(&c->replicas, i);
 		struct jset_entry_data_usage *u =
-			container_of(entry, struct jset_entry_data_usage, entry);
+			container_of(jset_entry_init(end, sizeof(*u) + e->nr_devs),
+				     struct jset_entry_data_usage, entry);
 
-		entry_init_size(entry, sizeof(*u) + e->nr_devs);
 		u->entry.type	= BCH_JSET_ENTRY_data_usage;
 		u->v		= cpu_to_le64(c->usage_base->replicas[i]);
 		memcpy(&u->r, e, replicas_entry_bytes(e));
+	}
 
-		entry = vstruct_next(entry);
+	for_each_member_device(ca, c, dev) {
+		unsigned b = sizeof(struct jset_entry_dev_usage) +
+			sizeof(struct jset_entry_dev_usage_type) * BCH_DATA_NR;
+		struct jset_entry_dev_usage *u =
+			container_of(jset_entry_init(end, b),
+				     struct jset_entry_dev_usage, entry);
+
+		u->entry.type = BCH_JSET_ENTRY_dev_usage;
+		u->dev = cpu_to_le32(dev);
+		u->buckets_ec		= cpu_to_le64(ca->usage_base->buckets_ec);
+		u->buckets_unavailable	= cpu_to_le64(ca->usage_base->buckets_unavailable);
+
+		for (i = 0; i < BCH_DATA_NR; i++) {
+			u->d[i].buckets = cpu_to_le64(ca->usage_base->d[i].buckets);
+			u->d[i].sectors	= cpu_to_le64(ca->usage_base->d[i].sectors);
+			u->d[i].fragmented = cpu_to_le64(ca->usage_base->d[i].fragmented);
+		}
 	}
 
 	percpu_up_write(&c->mark_lock);
 
-	return entry;
+	for (i = 0; i < 2; i++) {
+		struct jset_entry_clock *clock =
+			container_of(jset_entry_init(end, sizeof(*clock)),
+				     struct jset_entry_clock, entry);
+
+		clock->entry.type = BCH_JSET_ENTRY_clock;
+		clock->rw	= i;
+		clock->time	= atomic64_read(&c->io_clock[i].now);
+	}
 }
 
 void bch2_fs_mark_clean(struct bch_fs *c)
@@ -1066,8 +1078,8 @@ void bch2_fs_mark_clean(struct bch_fs *c)
 
 	SET_BCH_SB_CLEAN(c->disk_sb.sb, true);
 
-	c->disk_sb.sb->compat[0] |= 1ULL << BCH_COMPAT_FEAT_ALLOC_INFO;
-	c->disk_sb.sb->compat[0] |= 1ULL << BCH_COMPAT_FEAT_ALLOC_METADATA;
+	c->disk_sb.sb->compat[0] |= 1ULL << BCH_COMPAT_alloc_info;
+	c->disk_sb.sb->compat[0] |= 1ULL << BCH_COMPAT_alloc_metadata;
 	c->disk_sb.sb->features[0] &= ~(1ULL << BCH_FEATURE_extents_above_btree_updates);
 	c->disk_sb.sb->features[0] &= ~(1ULL << BCH_FEATURE_btree_updates_journalled);
 
@@ -1080,15 +1092,13 @@ void bch2_fs_mark_clean(struct bch_fs *c)
 	}
 
 	sb_clean->flags		= 0;
-	sb_clean->read_clock	= cpu_to_le16(c->bucket_clock[READ].hand);
-	sb_clean->write_clock	= cpu_to_le16(c->bucket_clock[WRITE].hand);
 	sb_clean->journal_seq	= cpu_to_le64(journal_cur_seq(&c->journal) - 1);
 
 	/* Trying to catch outstanding bug: */
 	BUG_ON(le64_to_cpu(sb_clean->journal_seq) > S64_MAX);
 
 	entry = sb_clean->start;
-	entry = bch2_journal_super_entries_add_common(c, entry, 0);
+	bch2_journal_super_entries_add_common(c, &entry, 0);
 	entry = bch2_btree_roots_to_journal_entries(c, entry, entry);
 	BUG_ON((void *) entry > vstruct_end(&sb_clean->field));
 

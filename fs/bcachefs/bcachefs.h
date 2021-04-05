@@ -429,7 +429,9 @@ struct bch_dev {
 	unsigned long		*buckets_nouse;
 	struct rw_semaphore	bucket_lock;
 
-	struct bch_dev_usage __percpu *usage[2];
+	struct bch_dev_usage		*usage_base;
+	struct bch_dev_usage __percpu	*usage[JOURNAL_BUF_NR];
+	struct bch_dev_usage __percpu	*usage_gc;
 
 	/* Allocator: */
 	struct task_struct __rcu *alloc_thread;
@@ -451,9 +453,6 @@ struct bch_dev {
 
 	size_t			fifo_last_bucket;
 
-	/* last calculated minimum prio */
-	u16			max_last_bucket_io[2];
-
 	size_t			inc_gen_needs_gc;
 	size_t			inc_gen_really_needs_gc;
 
@@ -473,6 +472,7 @@ struct bch_dev {
 	atomic64_t		rebalance_work;
 
 	struct journal_device	journal;
+	u64			prev_journal_sector;
 
 	struct work_struct	io_error_work;
 
@@ -509,8 +509,9 @@ enum {
 	BCH_FS_ERRORS_FIXED,
 
 	/* misc: */
-	BCH_FS_FIXED_GENS,
-	BCH_FS_ALLOC_WRITTEN,
+	BCH_FS_NEED_ANOTHER_GC,
+	BCH_FS_DELETED_NODES,
+	BCH_FS_NEED_ALLOC_WRITE,
 	BCH_FS_REBUILD_REPLICAS,
 	BCH_FS_HOLD_BTREE_WRITES,
 };
@@ -539,11 +540,13 @@ struct journal_keys {
 	struct journal_key {
 		enum btree_id	btree_id:8;
 		unsigned	level:8;
+		bool		allocated;
 		struct bkey_i	*k;
 		u32		journal_seq;
 		u32		journal_offset;
 	}			*d;
 	size_t			nr;
+	size_t			size;
 	u64			journal_seq_base;
 };
 
@@ -579,7 +582,10 @@ struct bch_fs {
 	struct bch_replicas_cpu replicas_gc;
 	struct mutex		replicas_gc_lock;
 
+	struct journal_entry_res btree_root_journal_res;
 	struct journal_entry_res replicas_journal_res;
+	struct journal_entry_res clock_journal_res;
+	struct journal_entry_res dev_usage_journal_res;
 
 	struct bch_disk_groups_cpu __rcu *disk_groups;
 
@@ -688,14 +694,6 @@ struct bch_fs {
 	struct mutex		usage_scratch_lock;
 	struct bch_fs_usage	*usage_scratch;
 
-	/*
-	 * When we invalidate buckets, we use both the priority and the amount
-	 * of good data to determine which buckets to reuse first - to weight
-	 * those together consistently we keep track of the smallest nonzero
-	 * priority of any bucket.
-	 */
-	struct bucket_clock	bucket_clock[2];
-
 	struct io_clock		io_clock[2];
 
 	/* JOURNAL SEQ BLACKLIST */
@@ -759,7 +757,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
@@ -840,6 +838,7 @@ struct bch_fs {
 	struct journal		journal;
 	struct list_head	journal_entries;
 	struct journal_keys	journal_keys;
+	struct list_head	journal_iters;
 
 	u64			last_bucket_seq_cleanup;
 

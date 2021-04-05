@@ -57,7 +57,7 @@ struct btree_write {
 
 struct btree_alloc {
 	struct open_buckets	ob;
-	BKEY_PADDED(k);
+	__BKEY_PADDED(k, BKEY_BTREE_PTR_VAL_U64s_MAX);
 };
 
 struct btree_bkey_cached_common {
@@ -76,6 +76,7 @@ struct btree {
 	u16			written;
 	u8			nsets;
 	u8			nr_key_bits;
+	u16			version_ondisk;
 
 	struct bkey_format	format;
 
@@ -247,6 +248,8 @@ enum btree_iter_uptodate {
 struct btree_iter {
 	struct btree_trans	*trans;
 	struct bpos		pos;
+	/* what we're searching for/what the iterator actually points to: */
+	struct bpos		real_pos;
 	struct bpos		pos_after_commit;
 
 	u16			flags;

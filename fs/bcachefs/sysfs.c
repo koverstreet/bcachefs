@@ -199,9 +199,6 @@ read_attribute(new_stripes);
 
 rw_attribute(pd_controllers_update_seconds);
 
-read_attribute(meta_replicas_have);
-read_attribute(data_replicas_have);
-
 read_attribute(io_timers_read);
 read_attribute(io_timers_write);
 
@@ -347,9 +344,6 @@ SHOW(bch2_fs)
 
 	sysfs_print(promote_whole_extents,	c->promote_whole_extents);
 
-	sysfs_printf(meta_replicas_have, "%i",	bch2_replicas_online(c, true));
-	sysfs_printf(data_replicas_have, "%i",	bch2_replicas_online(c, false));
-
 	/* Debugging: */
 
 	if (attr == &sysfs_alloc_debug)
@@ -475,7 +469,7 @@ STORE(bch2_fs)
 		 */
 #if 0
 		down_read(&c->state_lock);
-		bch2_gc(c, NULL, false, false);
+		bch2_gc(c, false, false);
 		up_read(&c->state_lock);
 #else
 		bch2_gc_gens(c);
@@ -519,9 +513,6 @@ struct attribute *bch2_fs_files[] = {
 	&sysfs_block_size,
 	&sysfs_btree_node_size,
 	&sysfs_btree_cache_size,
-
-	&sysfs_meta_replicas_have,
-	&sysfs_data_replicas_have,
 
 	&sysfs_journal_write_delay_ms,
 	&sysfs_journal_reclaim_delay_ms,
@@ -705,7 +696,7 @@ static unsigned bucket_last_io_fn(struct bch_fs *c, struct bch_dev *ca,
 {
 	int rw = (private ? 1 : 0);
 
-	return bucket_last_io(c, bucket(ca, b), rw);
+	return atomic64_read(&c->io_clock[rw].now) - bucket(ca, b)->io_time[rw];
 }
 
 static unsigned bucket_sectors_used_fn(struct bch_fs *c, struct bch_dev *ca,
@@ -718,7 +709,7 @@ static unsigned bucket_sectors_used_fn(struct bch_fs *c, struct bch_dev *ca,
 static unsigned bucket_oldest_gen_fn(struct bch_fs *c, struct bch_dev *ca,
 				     size_t b, void *private)
 {
-	return bucket_gc_gen(ca, b);
+	return bucket_gc_gen(bucket(ca, b));
 }
 
 static int unsigned_cmp(const void *_l, const void *_r)
@@ -797,63 +788,42 @@ static void dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 		nr[c->open_buckets[i].type]++;
 
 	pr_buf(out,
-		"free_inc:               %zu/%zu\n"
-		"free[RESERVE_BTREE]:    %zu/%zu\n"
-		"free[RESERVE_MOVINGGC]: %zu/%zu\n"
-		"free[RESERVE_NONE]:     %zu/%zu\n"
-		"buckets:\n"
-		"    capacity:           %llu\n"
-		"    alloc:              %llu\n"
-		"    sb:                 %llu\n"
-		"    journal:            %llu\n"
-		"    meta:               %llu\n"
-		"    user:               %llu\n"
-		"    cached:             %llu\n"
-		"    erasure coded:      %llu\n"
-		"    available:          %lli\n"
-		"sectors:\n"
-		"    sb:                 %llu\n"
-		"    journal:            %llu\n"
-		"    meta:               %llu\n"
-		"    user:               %llu\n"
-		"    cached:             %llu\n"
-		"    erasure coded:      %llu\n"
-		"    fragmented:         %llu\n"
-		"    copygc threshold:   %llu\n"
-		"freelist_wait:          %s\n"
-		"open buckets:           %u/%u (reserved %u)\n"
-		"open_buckets_wait:      %s\n"
-		"open_buckets_btree:     %u\n"
-		"open_buckets_user:      %u\n"
-		"btree reserve cache:    %u\n",
-		fifo_used(&ca->free_inc),		ca->free_inc.size,
-		fifo_used(&ca->free[RESERVE_BTREE]),	ca->free[RESERVE_BTREE].size,
-		fifo_used(&ca->free[RESERVE_MOVINGGC]),	ca->free[RESERVE_MOVINGGC].size,
-		fifo_used(&ca->free[RESERVE_NONE]),	ca->free[RESERVE_NONE].size,
-		ca->mi.nbuckets - ca->mi.first_bucket,
-		stats.buckets_alloc,
-		stats.buckets[BCH_DATA_sb],
-		stats.buckets[BCH_DATA_journal],
-		stats.buckets[BCH_DATA_btree],
-		stats.buckets[BCH_DATA_user],
-		stats.buckets[BCH_DATA_cached],
-		stats.buckets_ec,
-		__dev_buckets_available(ca, stats),
-		stats.sectors[BCH_DATA_sb],
-		stats.sectors[BCH_DATA_journal],
-		stats.sectors[BCH_DATA_btree],
-		stats.sectors[BCH_DATA_user],
-		stats.sectors[BCH_DATA_cached],
-		stats.sectors_ec,
-		stats.sectors_fragmented,
-		c->copygc_threshold,
-		c->freelist_wait.list.first		? "waiting" : "empty",
-		c->open_buckets_nr_free, OPEN_BUCKETS_COUNT,
-		BTREE_NODE_OPEN_BUCKET_RESERVE,
-		c->open_buckets_wait.list.first		? "waiting" : "empty",
-		nr[BCH_DATA_btree],
-		nr[BCH_DATA_user],
-		c->btree_reserve_cache_nr);
+	       "\t\t buckets\t sectors      fragmented\n"
+	       "capacity%16llu\n",
+	       ca->mi.nbuckets - ca->mi.first_bucket);
+
+	for (i = 1; i < BCH_DATA_NR; i++)
+		pr_buf(out, "%-8s%16llu%16llu%16llu\n",
+		       bch2_data_types[i], stats.d[i].buckets,
+		       stats.d[i].sectors, stats.d[i].fragmented);
+
+	pr_buf(out,
+	       "ec\t%16llu\n"
+	       "available%15llu\n"
+	       "alloc\t%16llu\n"
+	       "\n"
+	       "free_inc\t\t%zu/%zu\n"
+	       "free[RESERVE_MOVINGGC]\t%zu/%zu\n"
+	       "free[RESERVE_NONE]\t%zu/%zu\n"
+	       "freelist_wait\t\t%s\n"
+	       "open buckets\t\t%u/%u (reserved %u)\n"
+	       "open_buckets_wait\t%s\n"
+	       "open_buckets_btree\t%u\n"
+	       "open_buckets_user\t%u\n"
+	       "btree reserve cache\t%u\n",
+	       stats.buckets_ec,
+	       __dev_buckets_available(ca, stats),
+	       stats.buckets_alloc,
+	       fifo_used(&ca->free_inc),		ca->free_inc.size,
+	       fifo_used(&ca->free[RESERVE_MOVINGGC]),	ca->free[RESERVE_MOVINGGC].size,
+	       fifo_used(&ca->free[RESERVE_NONE]),	ca->free[RESERVE_NONE].size,
+	       c->freelist_wait.list.first		? "waiting" : "empty",
+	       c->open_buckets_nr_free, OPEN_BUCKETS_COUNT,
+	       BTREE_NODE_OPEN_BUCKET_RESERVE,
+	       c->open_buckets_wait.list.first		? "waiting" : "empty",
+	       nr[BCH_DATA_btree],
+	       nr[BCH_DATA_user],
+	       c->btree_reserve_cache_nr);
 }
 
 static const char * const bch2_rw[] = {

@@ -92,11 +92,8 @@ static enum data_cmd copygc_pred(struct bch_fs *c, void *arg,
 			data_opts->btree_insert_flags	= BTREE_INSERT_USE_RESERVE;
 			data_opts->rewrite_dev		= p.ptr.dev;
 
-			if (p.has_ec) {
-				struct stripe *m = genradix_ptr(&c->stripes[0], p.ec.idx);
-
-				data_opts->nr_replicas += m->nr_redundant;
-			}
+			if (p.has_ec)
+				data_opts->nr_replicas += p.ec.redundancy;
 
 			return DATA_REWRITE;
 		}
@@ -179,12 +176,12 @@ static int bch2_copygc(struct bch_fs *c)
 			    bucket_sectors_used(m) >= ca->mi.bucket_size)
 				continue;
 
-			WARN_ON(m.stripe && !g->ec_redundancy);
+			WARN_ON(m.stripe && !g->stripe_redundancy);
 
 			e = (struct copygc_heap_entry) {
 				.dev		= dev_idx,
 				.gen		= m.gen,
-				.replicas	= 1 + g->ec_redundancy,
+				.replicas	= 1 + g->stripe_redundancy,
 				.fragmentation	= bucket_sectors_used(m) * (1U << 15)
 					/ ca->mi.bucket_size,
 				.sectors	= bucket_sectors_used(m),
@@ -199,6 +196,11 @@ static int bch2_copygc(struct bch_fs *c)
 		bch2_fs_fatal_error(c, "stuck, ran out of copygc reserve!");
 		return -1;
 	}
+
+	/*
+	 * Our btree node allocations also come out of RESERVE_MOVINGGC:
+	 */
+	sectors_to_move = (sectors_to_move * 3) / 4;
 
 	for (i = h->data; i < h->data + h->used; i++)
 		sectors_to_move += i->sectors * i->replicas;
@@ -217,9 +219,11 @@ static int bch2_copygc(struct bch_fs *c)
 			sizeof(h->data[0]),
 			bucket_offset_cmp, NULL);
 
-	ret = bch2_move_data(c, &c->copygc_pd.rate,
+	ret = bch2_move_data(c,
+			     0,			POS_MIN,
+			     BTREE_ID_NR,	POS_MAX,
+			     &c->copygc_pd.rate,
 			     writepoint_ptr(&c->copygc_write_point),
-			     POS_MIN, POS_MAX,
 			     copygc_pred, NULL,
 			     &move_stats);
 
@@ -286,7 +290,7 @@ unsigned long bch2_copygc_wait_amount(struct bch_fs *c)
 
 		fragmented_allowed += ((__dev_buckets_available(ca, usage) *
 					ca->mi.bucket_size) >> 1);
-		fragmented += usage.sectors_fragmented;
+		fragmented += usage.d[BCH_DATA_user].fragmented;
 	}
 
 	return max_t(s64, 0, fragmented_allowed - fragmented);
@@ -296,7 +300,7 @@ static int bch2_copygc_thread(void *arg)
 {
 	struct bch_fs *c = arg;
 	struct io_clock *clock = &c->io_clock[WRITE];
-	unsigned long last, wait;
+	u64 last, wait;
 
 	set_freezable();
 
@@ -304,7 +308,7 @@ static int bch2_copygc_thread(void *arg)
 		if (kthread_wait_freezable(c->copy_gc_enabled))
 			break;
 
-		last = atomic_long_read(&clock->now);
+		last = atomic64_read(&clock->now);
 		wait = bch2_copygc_wait_amount(c);
 
 		if (wait > clock->max_slop) {
@@ -346,8 +350,10 @@ int bch2_copygc_start(struct bch_fs *c)
 		return -ENOMEM;
 
 	t = kthread_create(bch2_copygc_thread, c, "bch-copygc/%s", c->name);
-	if (IS_ERR(t))
+	if (IS_ERR(t)) {
+		bch_err(c, "error creating copygc thread: %li", PTR_ERR(t));
 		return PTR_ERR(t);
+	}
 
 	get_task_struct(t);
 

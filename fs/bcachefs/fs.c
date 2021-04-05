@@ -3,7 +3,7 @@
 
 #include "bcachefs.h"
 #include "acl.h"
-#include "bkey_on_stack.h"
+#include "bkey_buf.h"
 #include "btree_update.h"
 #include "buckets.h"
 #include "chardev.h"
@@ -886,17 +886,21 @@ static int bch2_fiemap(struct inode *vinode, struct fiemap_extent_info *info,
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_s_c k;
-	struct bkey_on_stack cur, prev;
+	struct bkey_buf cur, prev;
 	struct bpos end = POS(ei->v.i_ino, (start + len) >> 9);
 	unsigned offset_into_extent, sectors;
 	bool have_extent = false;
 	int ret = 0;
 
+	ret = fiemap_prep(&ei->v, info, start, &len, FIEMAP_FLAG_SYNC);
+	if (ret)
+		return ret;
+
 	if (start + len < start)
 		return -EINVAL;
 
-	bkey_on_stack_init(&cur);
-	bkey_on_stack_init(&prev);
+	bch2_bkey_buf_init(&cur);
+	bch2_bkey_buf_init(&prev);
 	bch2_trans_init(&trans, c, 0, 0);
 
 	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
@@ -915,7 +919,7 @@ retry:
 			bkey_start_offset(k.k);
 		sectors			= k.k->size - offset_into_extent;
 
-		bkey_on_stack_reassemble(&cur, c, k);
+		bch2_bkey_buf_reassemble(&cur, c, k);
 
 		ret = bch2_read_indirect_extent(&trans,
 					&offset_into_extent, &cur);
@@ -923,7 +927,7 @@ retry:
 			break;
 
 		k = bkey_i_to_s_c(cur.k);
-		bkey_on_stack_realloc(&prev, c, k.k->u64s);
+		bch2_bkey_buf_realloc(&prev, c, k.k->u64s);
 
 		sectors = min(sectors, k.k->size - offset_into_extent);
 
@@ -957,8 +961,8 @@ retry:
 				       FIEMAP_EXTENT_LAST);
 
 	ret = bch2_trans_exit(&trans) ?: ret;
-	bkey_on_stack_exit(&cur, c);
-	bkey_on_stack_exit(&prev, c);
+	bch2_bkey_buf_exit(&cur, c);
+	bch2_bkey_buf_exit(&prev, c);
 	return ret < 0 ? ret : 0;
 }
 
@@ -995,15 +999,6 @@ static int bch2_vfs_readdir(struct file *file, struct dir_context *ctx)
 	return bch2_readdir(c, inode->v.i_ino, ctx);
 }
 
-static int bch2_clone_file_range(struct file *file_src, loff_t pos_src,
-				 struct file *file_dst, loff_t pos_dst,
-				 u64 len)
-{
-	return bch2_remap_file_range(file_src, pos_src,
-				     file_dst, pos_dst,
-				     len, 0);
-}
-
 static const struct file_operations bch_file_operations = {
 	.llseek		= bch2_llseek,
 	.read_iter	= bch2_read_iter,
@@ -1012,16 +1007,16 @@ static const struct file_operations bch_file_operations = {
 	.open		= generic_file_open,
 	.fsync		= bch2_fsync,
 	.splice_read	= generic_file_splice_read,
-	/*
-	 * Broken, on v5.3:
+#if 0
+	/* Busted: */
 	.splice_write	= iter_file_splice_write,
-	*/
+#endif
 	.fallocate	= bch2_fallocate_dispatch,
 	.unlocked_ioctl = bch2_fs_file_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= bch2_compat_fs_ioctl,
 #endif
-	.clone_file_range = bch2_clone_file_range,
+	.remap_file_range = bch2_remap_file_range,
 };
 
 static const struct inode_operations bch_file_inode_operations = {
@@ -1091,7 +1086,7 @@ static const struct address_space_operations bch_address_space_operations = {
 	.writepage	= bch2_writepage,
 	.readpage	= bch2_readpage,
 	.writepages	= bch2_writepages,
-	.readpages	= bch2_readpages,
+	.readahead	= bch2_readahead,
 	.set_page_dirty	= __set_page_dirty_nobuffers,
 	.write_begin	= bch2_write_begin,
 	.write_end	= bch2_write_end,
@@ -1577,9 +1572,7 @@ got_sb:
 	if (ret)
 		goto err_put_super;
 
-	sb->s_bdi->congested_fn		= bch2_congested;
-	sb->s_bdi->congested_data	= c;
-	sb->s_bdi->ra_pages		= VM_MAX_READAHEAD * 1024 / PAGE_SIZE;
+	sb->s_bdi->ra_pages		= VM_READAHEAD_PAGES;
 
 	for_each_online_member(ca, c, i) {
 		struct block_device *bdev = ca->disk_sb.bdev;

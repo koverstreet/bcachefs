@@ -58,20 +58,13 @@ static inline struct bucket *bucket(struct bch_dev *ca, size_t b)
 	return __bucket(ca, b, false);
 }
 
-static inline u16 bucket_last_io(struct bch_fs *c, struct bucket *g, int rw)
-{
-	return c->bucket_clock[rw].hand - g->io_time[rw];
-}
-
 /*
  * bucket_gc_gen() returns the difference between the bucket's current gen and
  * the oldest gen of any pointer into that bucket in the btree.
  */
 
-static inline u8 bucket_gc_gen(struct bch_dev *ca, size_t b)
+static inline u8 bucket_gc_gen(struct bucket *g)
 {
-	struct bucket *g = bucket(ca, b);
-
 	return g->mark.gen - g->oldest_gen;
 }
 
@@ -153,18 +146,9 @@ static inline unsigned bucket_sectors_used(struct bucket_mark mark)
 	return mark.dirty_sectors + mark.cached_sectors;
 }
 
-static inline bool bucket_unused(struct bucket_mark mark)
-{
-	return !mark.owned_by_allocator &&
-		!mark.data_type &&
-		!bucket_sectors_used(mark);
-}
-
 static inline bool is_available_bucket(struct bucket_mark mark)
 {
-	return (!mark.owned_by_allocator &&
-		!mark.dirty_sectors &&
-		!mark.stripe);
+	return !mark.dirty_sectors && !mark.stripe;
 }
 
 static inline bool bucket_needs_journal_commit(struct bucket_mark m,
@@ -177,8 +161,6 @@ static inline bool bucket_needs_journal_commit(struct bucket_mark m,
 /* Device usage: */
 
 struct bch_dev_usage bch2_dev_usage_read(struct bch_dev *);
-
-void bch2_dev_usage_from_buckets(struct bch_fs *);
 
 static inline u64 __dev_buckets_available(struct bch_dev *ca,
 					  struct bch_dev_usage stats)
@@ -223,6 +205,11 @@ static inline unsigned fs_usage_u64s(struct bch_fs *c)
 		READ_ONCE(c->replicas.nr);
 }
 
+static inline unsigned dev_usage_u64s(void)
+{
+	return sizeof(struct bch_dev_usage) / sizeof(u64);
+}
+
 void bch2_fs_usage_scratch_put(struct bch_fs *, struct bch_fs_usage *);
 struct bch_fs_usage *bch2_fs_usage_scratch_get(struct bch_fs *);
 
@@ -245,8 +232,6 @@ bch2_fs_usage_read_short(struct bch_fs *);
 void bch2_bucket_seq_cleanup(struct bch_fs *);
 void bch2_fs_usage_initialize(struct bch_fs *);
 
-void bch2_invalidate_bucket(struct bch_fs *, struct bch_dev *,
-			    size_t, struct bucket_mark *);
 void bch2_mark_alloc_bucket(struct bch_fs *, struct bch_dev *,
 			    size_t, bool, struct gc_pos, unsigned);
 void bch2_mark_metadata_bucket(struct bch_fs *, struct bch_dev *,
@@ -270,6 +255,12 @@ int bch2_trans_mark_update(struct btree_trans *, struct btree_iter *iter,
 			   struct bkey_i *insert, unsigned);
 void bch2_trans_fs_usage_apply(struct btree_trans *, struct bch_fs_usage *);
 
+int bch2_trans_mark_metadata_bucket(struct btree_trans *,
+			struct disk_reservation *, struct bch_dev *,
+			size_t, enum bch_data_type, unsigned);
+int bch2_trans_mark_dev_sb(struct bch_fs *, struct disk_reservation *,
+			   struct bch_dev *);
+
 /* disk reservations: */
 
 void __bch2_disk_reservation_put(struct bch_fs *, struct disk_reservation *);
@@ -284,8 +275,8 @@ static inline void bch2_disk_reservation_put(struct bch_fs *c,
 #define BCH_DISK_RESERVATION_NOFAIL		(1 << 0)
 
 int bch2_disk_reservation_add(struct bch_fs *,
-			     struct disk_reservation *,
-			     unsigned, int);
+			      struct disk_reservation *,
+			      u64, int);
 
 static inline struct disk_reservation
 bch2_disk_reservation_init(struct bch_fs *c, unsigned nr_replicas)
@@ -302,8 +293,7 @@ bch2_disk_reservation_init(struct bch_fs *c, unsigned nr_replicas)
 
 static inline int bch2_disk_reservation_get(struct bch_fs *c,
 					    struct disk_reservation *res,
-					    unsigned sectors,
-					    unsigned nr_replicas,
+					    u64 sectors, unsigned nr_replicas,
 					    int flags)
 {
 	*res = bch2_disk_reservation_init(c, nr_replicas);
