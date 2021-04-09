@@ -101,6 +101,7 @@ for dkms_conf in "$package/usr/src"/*/"dkms.conf"
 do
 	break
 done
+
 # It seems some packages have a # in the name which works fine if the
 # package is installed directly, but not so much if we build it out
 # of the normal location.

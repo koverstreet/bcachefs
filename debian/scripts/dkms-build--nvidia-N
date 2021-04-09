@@ -35,53 +35,56 @@ mkdir -p "$pkgdir/bits/scripts"
 )
 
 # Install the support files we need.
-cp "$srcdir/scripts/module-common.lds" "$pkgdir/bits/scripts"
-grep /usr/bin/ld.bfd "$log" | sed -e "s@$build/@@g" >"$pkgdir/bits/BUILD"
-grep /usr/bin/ld.bfd "$log" | sed -e "s@$build/@@g" \
-	-e 's/.*-o  *\([^ ]*\) .*/rm -f \1/g' >"$pkgdir/bits/CLEAN"
+echo "II: copying support files ..."
+for lds_src in \
+	"$dkms_dir/headers/linux-headers-$abi_flavour/scripts/module.lds" \
+	"/usr/src/linux-headers-$abi_flavour/scripts/module.lds" \
+	"$dkms_dir/headers/linux-headers-$abi_flavour/scripts/module-common.lds" \
+	"/usr/src/linux-headers-$abi_flavour/scripts/module-common.lds"
+do
+	[ ! -f "$lds_src" ] && continue
+	echo "II: copying support files ... found $lds_src"
+	cp "$lds_src" "$pkgdir/bits/scripts"
+	break
+done
+
+# Build helper scripts.
+cat - <<'EOL' >"$pkgdir/bits/BUILD"
+[ "$1" = "unsigned" ] && { signed_only=:; shift; }
+[ "$1" = "nocheck" ] && { check_only=:; shift; }
+EOL
+grep /usr/bin/ld.bfd "$log" | grep -v scripts/genksyms/genksyms | sed -e "s@$build/@@g" >>"$pkgdir/bits/BUILD"
+sed -e 's/.*-o  *\([^ ]*\) .*/rm -f \1/g' <"$pkgdir/bits/BUILD" >"$pkgdir/bits/CLEAN"
 
 # As the builds contain the absolute filenames as used.  Use RECONSTRUCT to
 # rebuild the .ko's, sign them, pull off the signatures and then finally clean
 # up again.
 (
 	cd "$pkgdir/bits" || exit 1
-	sh ./CLEAN
-	sh ./BUILD
-	for ko in *.ko
+
+	# Add checksum check.
+	echo "\$check_only sha256sum -c SHA256SUMS || exit 1" >>"$pkgdir/bits/BUILD"
+
+	# Add .ko handling to the CLEAN/BUILD dance.
+	for ko in "$pkgdir"/*.ko
 	do
-		echo "cat '$ko' '$ko.sig' >'../$ko'" >>"$pkgdir/bits/BUILD"
-		echo "rm -f '$ko'" >>"$pkgdir/bits/BUILD"
+		ko=$(basename "$ko")
+		echo "\$signed_only cat '$ko' '$ko.sig' >'../$ko'" >>"$pkgdir/bits/BUILD"
+		echo "\$signed_only rm -f '$ko'" >>"$pkgdir/bits/BUILD"
 		echo "rm -f '../$ko'" >>"$pkgdir/bits/CLEAN"
 	done
+
+	# Clear out anything we are not going to distribute and build unsigned .kos.
+	sh ./CLEAN
+	sh ./BUILD unsigned nocheck
 
 	if [ "$sign" = "--custom" ]; then
 		# We are building for and archive custom signing upload.  Keep everything.
 		:
 	elif [ "$sign" = "--lrm" ]; then
-		# We are in LRM build the package a copy in any signatures we can
-		# find for them.  These will be added after linking.
-		base="/usr/lib/linux/$abi_flavour"
-
-		# Check the GCC version we are using against that used in the kernel
-		# NOTE: that we treat this as only a warning, as if the binaries did come
-		# out differently then we will actually 
-		echo "II: checking gcc version ..."
-		cat "$base/compiler"
-		gcc --version
-		gcc_was=$(cat "$base/compiler" | sed -e 's/^GCC:/gcc/')
-		gcc_is=$(gcc --version | head -1)
-		if [ "$gcc_was" != "$gcc_is" ]; then
-			echo "WW: gcc version missmatch between linux and linux-restricted-modules"
-			echo "WW: was: $gcc_was  is: $gcc_is"
-		fi
-
-		# Apply any local signatures.
-		echo "II: adding signatures from $base ..."
-		cp "$base/signatures/$package/"*".ko.sig" "$pkgdir/bits"
-		sha256sum -c "$base/signatures/$package/SHA256SUMS" || exit 1
+		# We are in the LRM build; grab sha256 checksums and clean up.
+		sha256sum -b *.ko >"SHA256SUMS"
 		sh ./CLEAN
-
-		sed -i '/objdump/d' ./BUILD
 
 	else
 		# We are in the main kernel, put the .kos together as we will
