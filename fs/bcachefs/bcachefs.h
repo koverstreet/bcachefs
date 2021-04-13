@@ -448,6 +448,7 @@ struct bch_dev {
 	 */
 	alloc_fifo		free[RESERVE_NR];
 	alloc_fifo		free_inc;
+	unsigned		nr_open_buckets;
 
 	open_bucket_idx_t	open_buckets_partial[OPEN_BUCKETS_COUNT];
 	open_bucket_idx_t	open_buckets_partial_nr;
@@ -773,7 +774,6 @@ struct bch_fs {
 	copygc_heap		copygc_heap;
 	struct bch_pd_controller copygc_pd;
 	struct write_point	copygc_write_point;
-	u64			copygc_threshold;
 
 	/* STRIPES: */
 	GENRADIX(struct stripe) stripes[2];
