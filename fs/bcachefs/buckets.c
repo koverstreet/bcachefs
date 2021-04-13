@@ -229,7 +229,7 @@ struct bch_fs_usage_online *bch2_fs_usage_read(struct bch_fs *c)
 	percpu_down_read(&c->mark_lock);
 
 	ret = kmalloc(sizeof(struct bch_fs_usage_online) +
-		      sizeof(u64) + c->replicas.nr, GFP_NOFS);
+		      sizeof(u64) * c->replicas.nr, GFP_NOFS);
 	if (unlikely(!ret)) {
 		percpu_up_read(&c->mark_lock);
 		return NULL;
