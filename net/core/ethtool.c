@@ -641,7 +641,7 @@ store_link_ksettings_for_user(void __user *to,
 {
 	struct ethtool_link_usettings link_usettings;
 
-	memcpy(&link_usettings.base, &from->base, sizeof(link_usettings));
+	memcpy(&link_usettings, from, sizeof(link_usettings));
 	bitmap_to_u32array(link_usettings.link_modes.supported,
 			   __ETHTOOL_LINK_MODE_MASK_NU32,
 			   from->link_modes.supported,
