@@ -37,8 +37,9 @@ int bch2_dirent_delete_at(struct btree_trans *,
 			  const struct bch_hash_info *,
 			  struct btree_iter *);
 
-int bch2_dirent_read_target(struct btree_trans *, subvol_inum,
-			    struct bkey_s_c_dirent, subvol_inum *);
+int __bch2_dirent_read_target(struct btree_trans *,
+			      struct bkey_s_c_dirent,
+			      u32 *, u32 *, u64 *);
 
 static inline unsigned vfs_d_type(unsigned type)
 {

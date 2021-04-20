@@ -175,24 +175,29 @@ static void dirent_copy_target(struct bkey_i_dirent *dst,
 	dst->v.d_type = src.v->d_type;
 }
 
-int bch2_dirent_read_target(struct btree_trans *trans, subvol_inum dir,
-			    struct bkey_s_c_dirent d, subvol_inum *target)
+int __bch2_dirent_read_target(struct btree_trans *trans,
+			      struct bkey_s_c_dirent d,
+			      u32 *subvol,
+			      u32 *snapshot,
+			      u64 *inum)
 {
 	int ret = 0;
 
+	*subvol		= 0;
+	*snapshot	= 0;
+
 	if (likely(d.v->d_type != DT_SUBVOL)) {
-		*target = dir;
-		target->inum = le64_to_cpu(d.v->d_inum);
+		*inum = le64_to_cpu(d.v->d_inum);
 	} else {
 		struct btree_iter *iter;
 		struct bkey_s_c k;
 		struct bkey_s_c_subvolume s;
 		int ret;
 
-		*target = (subvol_inum) { .subvol = le64_to_cpu(d.v->d_inum) };
-
+		*subvol = le64_to_cpu(d.v->d_inum);
 		iter = bch2_trans_get_iter(trans, BTREE_ID_subvolumes,
-					   POS(0, target->subvol), 0);
+					   POS(0, *subvol),
+					   BTREE_ITER_CACHED);
 
 		k = bch2_btree_iter_peek_slot(iter);
 		ret = bkey_err(k);
@@ -201,17 +206,32 @@ int bch2_dirent_read_target(struct btree_trans *trans, subvol_inum dir,
 
 		if (k.k->type != KEY_TYPE_subvolume) {
 			bch2_fs_inconsistent(trans->c, "pointer to missing subvolume %u",
-					     target->subvol);
+					     *subvol);
 			ret = -EIO;
 			goto put_iter;
 		}
 
 		s = bkey_s_c_to_subvolume(k);
-		target->inum = le64_to_cpu(s.v->inode);
+		*snapshot	= le32_to_cpu(s.v->snapshot);
+		*inum		= le64_to_cpu(s.v->inode);
 put_iter:
 		bch2_trans_iter_put(trans, iter);
 	}
 
+	return ret;
+}
+
+static int bch2_dirent_read_target(struct btree_trans *trans, subvol_inum dir,
+				   struct bkey_s_c_dirent d, subvol_inum *target)
+{
+	u32 subvol, snapshot;
+	int ret = 0;
+
+	*target = dir;
+	ret = __bch2_dirent_read_target(trans, d, &subvol, &snapshot, &target->inum);
+
+	if (subvol)
+		target->subvol = subvol;
 	return ret;
 }
 
