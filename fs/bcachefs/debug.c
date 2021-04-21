@@ -29,7 +29,7 @@
 
 static struct dentry *bch_debug;
 
-static void bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
+static bool bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 				      struct extent_ptr_decoded pick)
 {
 	struct btree *v = c->verify_data;
@@ -41,7 +41,7 @@ static void bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 	bool failed = false;
 
 	if (!bch2_dev_get_ioref(ca, READ))
-		return;
+		return false;
 
 	bio = bio_alloc_bioset(GFP_NOIO,
 			buf_pages(n_sorted, btree_bytes(c)),
@@ -60,7 +60,7 @@ static void bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 
 	v->written = 0;
 	if (bch2_btree_node_read_done(c, ca, v, false))
-		return;
+		return false;
 
 	n_sorted = c->verify_data->data;
 	sorted = &n_sorted->keys;
@@ -117,12 +117,7 @@ static void bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 		failed = true;
 	}
 
-	if (failed) {
-		char buf[200];
-
-		bch2_bkey_val_to_text(&PBUF(buf), c, bkey_i_to_s_c(&b->key));
-		bch2_fs_fatal_error(c, "btree node verify failed for : %s\n", buf);
-	}
+	return failed;
 }
 
 void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
@@ -133,6 +128,7 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 	struct btree *v;
 	struct bset *inmemory = &b->data->keys;
 	struct bkey_packed *k;
+	bool failed = false;
 
 	if (c->opts.nochanges)
 		return;
@@ -170,7 +166,14 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 
 	ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(&b->key));
 	bkey_for_each_ptr_decode(&b->key.k, ptrs, p, entry)
-		bch2_btree_verify_replica(c, b, p);
+		failed |= bch2_btree_verify_replica(c, b, p);
+
+	if (failed) {
+		char buf[200];
+
+		bch2_bkey_val_to_text(&PBUF(buf), c, bkey_i_to_s_c(&b->key));
+		bch2_fs_fatal_error(c, "btree node verify failed for : %s\n", buf);
+	}
 out:
 	mutex_unlock(&c->verify_lock);
 	btree_node_io_unlock(b);
