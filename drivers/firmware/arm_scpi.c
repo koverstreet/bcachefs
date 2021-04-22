@@ -588,8 +588,10 @@ static unsigned long scpi_clk_get_val(u16 clk_id)
 
 	ret = scpi_send_message(CMD_GET_CLOCK_VALUE, &le_clk_id,
 				sizeof(le_clk_id), &clk, sizeof(clk));
+	if (ret)
+		return 0;
 
-	return ret ? ret : le32_to_cpu(clk.rate);
+	return le32_to_cpu(clk.rate);
 }
 
 static int scpi_clk_set_val(u16 clk_id, unsigned long rate)
