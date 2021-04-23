@@ -1086,7 +1086,7 @@ out:
 	tcmu_free_cmd(cmd);
 }
 
-static unsigned int tcmu_handle_completions(struct tcmu_dev *udev)
+static bool tcmu_handle_completions(struct tcmu_dev *udev)
 {
 	struct tcmu_mailbox *mb;
 	int handled = 0;
@@ -1128,7 +1128,7 @@ static unsigned int tcmu_handle_completions(struct tcmu_dev *udev)
 		if (!cmd) {
 			pr_err("cmd_id not found, ring is broken\n");
 			set_bit(TCMU_DEV_BIT_BROKEN, &udev->flags);
-			break;
+			return false;
 		}
 
 		tcmu_handle_completion(cmd, entry);
