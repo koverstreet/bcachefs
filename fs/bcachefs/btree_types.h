@@ -352,6 +352,8 @@ struct btree_trans_commit_hook {
 	struct btree_trans_commit_hook	*next;
 };
 
+#define BTREE_TRANS_MEM_MAX	4096
+
 struct btree_trans {
 	struct bch_fs		*c;
 #ifdef CONFIG_BCACHEFS_DEBUG
