@@ -372,6 +372,7 @@ static int bch2_quota_init_type(struct bch_fs *c, enum quota_types type)
 		if (ret)
 			break;
 	}
+	bch2_trans_iter_put(&trans, iter);
 
 	return bch2_trans_exit(&trans) ?: ret;
 }
