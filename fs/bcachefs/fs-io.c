@@ -1916,8 +1916,9 @@ loop:
 			i_size_write(&inode->v, req->ki_pos);
 		spin_unlock(&inode->v.i_lock);
 
-		bio_for_each_segment_all(bv, bio, iter)
-			put_page(bv->bv_page);
+		if (likely(!bio_flagged(bio, BIO_NO_PAGE_REF)))
+			bio_for_each_segment_all(bv, bio, iter)
+				put_page(bv->bv_page);
 
 		if (dio->op.error) {
 			set_bit(EI_INODE_ERROR, &inode->ei_flags);
