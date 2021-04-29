@@ -1187,6 +1187,8 @@ void __bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 	       "nr noflush writes:\t%llu\n"
 	       "nr direct reclaim:\t%llu\n"
 	       "nr background reclaim:\t%llu\n"
+	       "reclaim kicked:\t\t%u\n"
+	       "reclaim runs in:\t%u ms\n"
 	       "current entry sectors:\t%u\n"
 	       "current entry error:\t%u\n"
 	       "current entry:\t\t",
@@ -1202,6 +1204,8 @@ void __bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 	       j->nr_noflush_writes,
 	       j->nr_direct_reclaim,
 	       j->nr_background_reclaim,
+	       j->reclaim_kicked,
+	       jiffies_to_msecs(j->next_reclaim - jiffies),
 	       j->cur_entry_sectors,
 	       j->cur_entry_error);
 
