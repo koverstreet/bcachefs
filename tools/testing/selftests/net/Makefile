@@ -10,6 +10,8 @@ TEST_GEN_FILES += psock_fanout psock_tpacket msg_zerocopy
 TEST_GEN_PROGS = reuseport_bpf reuseport_bpf_cpu reuseport_bpf_numa
 TEST_GEN_PROGS += reuseport_dualstack reuseaddr_conflict
 
+TEST_FILES := settings
+
 KSFT_KHDR_INSTALL := 1
 include ../lib.mk
 
