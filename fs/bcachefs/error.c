@@ -34,7 +34,9 @@ void bch2_topology_error(struct bch_fs *c)
 
 void bch2_fatal_error(struct bch_fs *c)
 {
-	if (bch2_fs_emergency_read_only(c))
+	if (c->opts.errors == BCH_ON_ERROR_panic)
+		panic(bch2_fmt(c, "panic after error"));
+	else if (bch2_fs_emergency_read_only(c))
 		bch_err(c, "emergency read only");
 }
 
