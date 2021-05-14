@@ -436,7 +436,7 @@ static int bch2_check_fix_ptrs(struct bch_fs *c, enum btree_id btree_id,
 				p.ptr.dev, PTR_BUCKET_NR(ca, &p.ptr),
 				bch2_data_types[ptr_data_type(k->k, &p.ptr)],
 				p.ptr.gen)) {
-			if (p.ptr.cached) {
+			if (!p.ptr.cached) {
 				g2->_mark.gen	= g->_mark.gen		= p.ptr.gen;
 				g2->gen_valid	= g->gen_valid		= true;
 				set_bit(BCH_FS_NEED_ALLOC_WRITE, &c->flags);
@@ -450,7 +450,7 @@ static int bch2_check_fix_ptrs(struct bch_fs *c, enum btree_id btree_id,
 				p.ptr.dev, PTR_BUCKET_NR(ca, &p.ptr),
 				bch2_data_types[ptr_data_type(k->k, &p.ptr)],
 				p.ptr.gen, g->mark.gen)) {
-			if (p.ptr.cached) {
+			if (!p.ptr.cached) {
 				g2->_mark.gen	= g->_mark.gen	= p.ptr.gen;
 				g2->gen_valid	= g->gen_valid	= true;
 				g2->_mark.data_type		= 0;
