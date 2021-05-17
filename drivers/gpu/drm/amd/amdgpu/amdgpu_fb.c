@@ -292,10 +292,13 @@ void amdgpu_fb_output_poll_changed(struct amdgpu_device *adev)
 static int amdgpu_fbdev_destroy(struct drm_device *dev, struct amdgpu_fbdev *rfbdev)
 {
 	struct amdgpu_framebuffer *rfb = &rfbdev->rfb;
+	int i;
 
 	drm_fb_helper_unregister_fbi(&rfbdev->helper);
 
 	if (rfb->obj) {
+		for (i = 0; i < rfb->base.format->num_planes; i++)
+			drm_gem_object_put(rfb->obj);
 		amdgpufb_destroy_pinned_object(rfb->obj);
 		rfb->obj = NULL;
 		drm_framebuffer_unregister_private(&rfb->base);
