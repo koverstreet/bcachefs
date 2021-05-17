@@ -1797,7 +1797,7 @@ static int bch2_trans_mark_reflink_p(struct btree_trans *trans,
 	unsigned front_frag, back_frag;
 	s64 ret = 0;
 
-	sectors = abs(sectors);
+	sectors = llabs(sectors);
 	BUG_ON(offset + sectors > p.k->size);
 
 	front_frag = offset;
