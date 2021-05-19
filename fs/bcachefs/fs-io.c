@@ -1017,6 +1017,8 @@ static void bch2_writepage_io_done(struct closure *cl)
 	struct bio_vec *bvec;
 	unsigned i;
 
+	up(&io->op.c->io_in_flight);
+
 	if (io->op.error) {
 		set_bit(EI_INODE_ERROR, &io->inode->ei_flags);
 
@@ -1078,6 +1080,8 @@ static void bch2_writepage_io_done(struct closure *cl)
 static void bch2_writepage_do_io(struct bch_writepage_state *w)
 {
 	struct bch_writepage_io *io = w->io;
+
+	down(&io->op.c->io_in_flight);
 
 	w->io = NULL;
 	closure_call(&io->op.cl, bch2_write, NULL, &io->cl);
@@ -1816,6 +1820,8 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 	if (dio->loop)
 		goto loop;
 
+	down(&c->io_in_flight);
+
 	while (1) {
 		iter_count = dio->iter.count;
 
@@ -1946,6 +1952,7 @@ loop:
 
 	ret = dio->op.error ?: ((long) dio->written << 9);
 err:
+	up(&c->io_in_flight);
 	bch2_pagecache_block_put(&inode->ei_pagecache_lock);
 	bch2_quota_reservation_put(c, inode, &dio->quota_res);
 
