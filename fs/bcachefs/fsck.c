@@ -538,7 +538,7 @@ retry:
 				k.k->type, k.k->p.offset, k.k->p.inode, w.inode.bi_size)) {
 			bch2_fs_lazy_rw(c);
 			return bch2_btree_delete_range_trans(&trans, BTREE_ID_extents,
-					POS(k.k->p.inode, round_up(w.inode.bi_size, block_bytes(c))),
+					POS(k.k->p.inode, round_up(w.inode.bi_size, block_bytes(c)) >> 9),
 					POS(k.k->p.inode, U64_MAX),
 					NULL) ?: -EINTR;
 		}
@@ -1275,7 +1275,7 @@ static int check_inode(struct btree_trans *trans,
 		 * just switch units to bytes and that issue goes away
 		 */
 		ret = bch2_btree_delete_range_trans(trans, BTREE_ID_extents,
-				POS(u.bi_inum, round_up(u.bi_size, block_bytes(c))),
+				POS(u.bi_inum, round_up(u.bi_size, block_bytes(c)) >> 9),
 				POS(u.bi_inum, U64_MAX),
 				NULL);
 		if (ret) {
