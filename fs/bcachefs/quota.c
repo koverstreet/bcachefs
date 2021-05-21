@@ -742,7 +742,9 @@ static int bch2_set_quota_trans(struct btree_trans *trans,
 	if (qdq->d_fieldmask & QC_INO_HARD)
 		new_quota->v.c[Q_INO].hardlimit = cpu_to_le64(qdq->d_ino_hardlimit);
 
-	return bch2_trans_update(trans, iter, &new_quota->k_i, 0);
+	ret = bch2_trans_update(trans, iter, &new_quota->k_i, 0);
+	bch2_trans_iter_put(trans, iter);
+	return ret;
 }
 
 static int bch2_set_quota(struct super_block *sb, struct kqid qid,
