@@ -1826,7 +1826,7 @@ void async_btree_node_rewrite_work(struct work_struct *work)
 
 void bch2_btree_node_rewrite_async(struct bch_fs *c, struct btree *b)
 {
-	struct async_btree_rewrite *a = kmalloc(sizeof(*a), GFP_NOFS);
+	struct async_btree_rewrite *a;
 
 	if (!test_bit(BCH_FS_BTREE_INTERIOR_REPLAY_DONE, &c->flags))
 		return;
