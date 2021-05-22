@@ -1198,10 +1198,10 @@ static void btree_node_read_all_replicas_done(struct closure *cl)
 fsck_err:
 	if (dump_bset_maps) {
 		for (i = 0; i < ra->nr; i++) {
-			char buf[100];
+			char buf[200];
 			struct printbuf out = PBUF(buf);
 			struct btree_node *bn = ra->buf[i];
-			struct btree_node_entry *bne;
+			struct btree_node_entry *bne = NULL;
 			unsigned offset = 0, sectors;
 			bool gap = false;
 
@@ -1219,6 +1219,9 @@ fsck_err:
 				}
 
 				pr_buf(&out, " %u-%u", offset, offset + sectors);
+				if (bne && bch2_journal_seq_is_blacklisted(c,
+							le64_to_cpu(bne->keys.journal_seq), false))
+					pr_buf(&out, "*");
 				offset += sectors;
 			}
 
@@ -1231,6 +1234,9 @@ fsck_err:
 
 					sectors = vstruct_sectors(bne, c->block_bits);
 					pr_buf(&out, " %u-%u", offset, offset + sectors);
+					if (bch2_journal_seq_is_blacklisted(c,
+							le64_to_cpu(bne->keys.journal_seq), false))
+						pr_buf(&out, "*");
 				}
 				offset++;
 			}
