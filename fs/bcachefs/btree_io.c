@@ -1109,7 +1109,7 @@ static void btree_node_read_endio(struct bio *bio)
 		bch2_latency_acct(ca, rb->start_time, READ);
 	}
 
-	queue_work(system_unbound_wq, &rb->work);
+	queue_work(c->io_complete_wq, &rb->work);
 }
 
 struct btree_node_read_all {
@@ -1361,7 +1361,8 @@ static int btree_node_read_all_replicas(struct bch_fs *c, struct btree *b, bool 
 		closure_sync(&ra->cl);
 		btree_node_read_all_replicas_done(&ra->cl);
 	} else {
-		continue_at(&ra->cl, btree_node_read_all_replicas_done, system_unbound_wq);
+		continue_at(&ra->cl, btree_node_read_all_replicas_done,
+			    c->io_complete_wq);
 	}
 
 	return 0;
@@ -1431,7 +1432,7 @@ void bch2_btree_node_read(struct bch_fs *c, struct btree *b,
 		if (sync)
 			btree_node_read_work(&rb->work);
 		else
-			queue_work(system_unbound_wq, &rb->work);
+			queue_work(c->io_complete_wq, &rb->work);
 	}
 }
 
@@ -1598,7 +1599,7 @@ static void btree_node_write_work(struct work_struct *work)
 		bio_list_add(&c->btree_write_error_list, &wbio->wbio.bio);
 		spin_unlock_irqrestore(&c->btree_write_error_lock, flags);
 
-		queue_work(c->wq, &c->btree_write_error_work);
+		queue_work(c->btree_update_wq, &c->btree_write_error_work);
 		return;
 	}
 
@@ -1637,7 +1638,7 @@ static void btree_node_write_endio(struct bio *bio)
 			container_of(orig, struct btree_write_bio, wbio);
 
 		INIT_WORK(&wb->work, btree_node_write_work);
-		queue_work(system_unbound_wq, &wb->work);
+		queue_work(c->io_complete_wq, &wb->work);
 	}
 }
 
@@ -1897,7 +1898,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b)
 	atomic64_add(sectors_to_write, &c->btree_writes_sectors);
 
 	INIT_WORK(&wbio->work, btree_write_submit);
-	schedule_work(&wbio->work);
+	queue_work(c->io_complete_wq, &wbio->work);
 	return;
 err:
 	set_btree_node_noevict(b);
