@@ -654,9 +654,13 @@ static noinline struct btree *bch2_btree_node_fill(struct bch_fs *c,
 		return NULL;
 	}
 
-	/* Unlock before doing IO: */
-	if (iter && sync)
-		bch2_trans_unlock(iter->trans);
+	/*
+	 * Unlock before doing IO:
+	 *
+	 * XXX: ideally should be dropping all btree node locks here
+	 */
+	if (iter && btree_node_read_locked(iter, level + 1))
+		btree_node_unlock(iter, level + 1);
 
 	bch2_btree_node_read(c, b, sync);
 
@@ -665,16 +669,6 @@ static noinline struct btree *bch2_btree_node_fill(struct bch_fs *c,
 	if (!sync) {
 		six_unlock_intent(&b->c.lock);
 		return NULL;
-	}
-
-	/*
-	 * XXX: this will probably always fail because btree_iter_relock()
-	 * currently fails for iterators that aren't pointed at a valid btree
-	 * node
-	 */
-	if (iter && !bch2_trans_relock(iter->trans)) {
-		six_unlock_intent(&b->c.lock);
-		return ERR_PTR(-EINTR);
 	}
 
 	if (lock_type == SIX_LOCK_read)
@@ -818,22 +812,9 @@ lock_node:
 		}
 	}
 
-	if (unlikely(btree_node_read_in_flight(b))) {
-		six_unlock_type(&b->c.lock, lock_type);
-		bch2_trans_unlock(iter->trans);
-
-		wait_on_bit_io(&b->flags, BTREE_NODE_read_in_flight,
-			       TASK_UNINTERRUPTIBLE);
-
-		/*
-		 * XXX: check if this always fails - btree_iter_relock()
-		 * currently fails for iterators that aren't pointed at a valid
-		 * btree node
-		 */
-		if (iter && !bch2_trans_relock(iter->trans))
-			return ERR_PTR(-EINTR);
-		goto retry;
-	}
+	/* XXX: waiting on IO with btree locks held: */
+	wait_on_bit_io(&b->flags, BTREE_NODE_read_in_flight,
+		       TASK_UNINTERRUPTIBLE);
 
 	prefetch(b->aux_data);
 
