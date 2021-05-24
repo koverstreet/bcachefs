@@ -1271,6 +1271,8 @@ fsck_err:
 		mempool_free(ra->buf[i], &c->btree_bounce_pool);
 		bio_put(ra->bio[i]);
 	}
+
+	closure_debug_destroy(&ra->cl);
 	kfree(ra);
 
 	clear_btree_node_read_in_flight(b);
