@@ -1184,6 +1184,8 @@ static void btree_node_read_all_replicas_done(struct closure *cl)
 	bool have_retry = false;
 	int ret = 0, write = READ;
 	unsigned i, written, written2;
+	__le64 seq = b->key.k.type == KEY_TYPE_btree_ptr_v2
+		? bkey_i_to_btree_ptr_v2(&b->key)->v.seq : 0;
 
 	for (i = 0; i < ra->nr; i++) {
 		if (ra->err[i])
@@ -1192,6 +1194,15 @@ static void btree_node_read_all_replicas_done(struct closure *cl)
 		if (!have_good_copy) {
 			memcpy(b->data, ra->buf[i], btree_bytes(c));
 			have_good_copy = true;
+			written = btree_node_sectors_written(c, b->data);
+		}
+
+		/* Try to get the right btree node: */
+		if (have_good_copy &&
+		    seq &&
+		    b->data->keys.seq != seq &&
+		    ((struct btree_node *) ra->buf[i])->keys.seq == seq) {
+			memcpy(b->data, ra->buf[i], btree_bytes(c));
 			written = btree_node_sectors_written(c, b->data);
 		}
 
