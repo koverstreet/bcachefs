@@ -1333,8 +1333,6 @@ static void do_journal_write(struct closure *cl)
 	struct bio *bio;
 	unsigned sectors = vstruct_sectors(w->data, c->block_bits);
 
-	w->devs_written = bch2_bkey_devs(bkey_i_to_s_c(&w->key));
-
 	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
 		ca = bch_dev_bkey_exists(c, ptr->dev);
 		if (!percpu_ref_tryget(&ca->io_ref)) {
@@ -1514,10 +1512,8 @@ retry_alloc:
 		return;
 	}
 
-	/*
-	 * XXX: we really should just disable the entire journal in nochanges
-	 * mode
-	 */
+	w->devs_written = bch2_bkey_devs(bkey_i_to_s_c(&w->key));
+
 	if (c->opts.nochanges)
 		goto no_io;
 
