@@ -555,15 +555,15 @@ static void btree_update_nodes_written(struct btree_update *as)
 	 * on disk:
 	 */
 	for (i = 0; i < as->nr_old_nodes; i++) {
-		struct btree_node *bn = READ_ONCE(as->old_nodes[i]->data);
+		struct btree *old = as->old_nodes[i];
+		__le64 seq;
 
-		/*
-		 * This is technically a use after free, but it's just a read -
-		 * but it might cause problems in userspace where freeing the
-		 * buffer may unmap it:
-		 */
-		if (bn && bn->keys.seq == as->old_nodes_seq[i])
-			btree_node_wait_on_io(as->old_nodes[i]);
+		six_lock_read(&old->c.lock, NULL, NULL);
+		seq = old->data ? old->data->keys.seq : 0;
+		six_unlock_read(&old->c.lock);
+
+		if (seq == as->old_nodes_seq[i])
+			btree_node_wait_on_io(old);
 	}
 
 	/*
