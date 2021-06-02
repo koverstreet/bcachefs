@@ -1659,7 +1659,7 @@ static inline struct bkey_i *btree_trans_peek_updates(struct btree_iter *iter,
 	if (!(iter->flags & BTREE_ITER_WITH_UPDATES))
 		return NULL;
 
-	trans_for_each_update2(iter->trans, i)
+	trans_for_each_update(iter->trans, i)
 		if ((cmp_int(iter->btree_id,	i->iter->btree_id) ?:
 		     bkey_cmp(pos,		i->k->k.p)) <= 0) {
 			if (iter->btree_id ==	i->iter->btree_id)
@@ -1696,8 +1696,10 @@ start:
 		k = btree_iter_level_peek(iter, &iter->l[0]);
 
 		if (next_update &&
-		    bpos_cmp(next_update->k.p, iter->real_pos) <= 0)
+		    bpos_cmp(next_update->k.p, iter->real_pos) <= 0) {
+			iter->k = next_update->k;
 			k = bkey_i_to_s_c(next_update);
+		}
 
 		if (likely(k.k)) {
 			if (bkey_deleted(k.k)) {
