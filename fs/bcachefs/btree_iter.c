@@ -1656,7 +1656,7 @@ static noinline struct bkey_i *__btree_trans_peek_updates(struct btree_iter *ite
 {
 	struct btree_insert_entry *i;
 
-	trans_for_each_update2(iter->trans, i)
+	trans_for_each_update(iter->trans, i)
 		if ((cmp_int(iter->btree_id,	i->iter->btree_id) ?:
 		     bkey_cmp(pos,		i->k->k.p)) <= 0) {
 			if (iter->btree_id ==	i->iter->btree_id)
