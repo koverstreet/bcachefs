@@ -36,6 +36,9 @@
 #include <linux/sched/task.h>
 #include <trace/events/bcachefs.h>
 
+#define DROP_THIS_NODE		10
+#define DROP_PREV_NODE		11
+
 static inline void __gc_pos_set(struct bch_fs *c, struct gc_pos new_pos)
 {
 	preempt_disable();
@@ -229,11 +232,19 @@ static int btree_repair_node_start(struct bch_fs *c, struct btree *b,
 			(bch2_bkey_val_to_text(&PBUF(buf2), c, bkey_i_to_s_c(&cur->key)), buf2))) {
 		if (prev &&
 		    bpos_cmp(expected_start, cur->data->min_key) > 0 &&
-		    BTREE_NODE_SEQ(cur->data) > BTREE_NODE_SEQ(prev->data))
+		    BTREE_NODE_SEQ(cur->data) > BTREE_NODE_SEQ(prev->data)) {
+			if (bkey_cmp(prev->data->min_key,
+				     cur->data->min_key) <= 0)
+				return DROP_PREV_NODE;
+
 			ret = set_node_max(c, prev,
-				bpos_predecessor(cur->data->min_key));
-		else
+					   bpos_predecessor(cur->data->min_key));
+		} else {
+			if (bkey_cmp(expected_start, b->data->max_key) >= 0)
+				return DROP_THIS_NODE;
+
 			ret = set_node_min(c, cur, expected_start);
+		}
 		if (ret)
 			return ret;
 	}
@@ -262,13 +273,11 @@ fsck_err:
 	return ret;
 }
 
-#define DROP_THIS_NODE		10
-
 static int bch2_btree_repair_topology_recurse(struct bch_fs *c, struct btree *b)
 {
 	struct btree_and_journal_iter iter;
 	struct bkey_s_c k;
-	struct bkey_buf tmp;
+	struct bkey_buf prev_k, cur_k;
 	struct btree *prev = NULL, *cur = NULL;
 	bool have_child, dropped_children = false;
 	char buf[200];
@@ -278,14 +287,15 @@ static int bch2_btree_repair_topology_recurse(struct bch_fs *c, struct btree *b)
 		return 0;
 again:
 	have_child = dropped_children = false;
-	bch2_bkey_buf_init(&tmp);
+	bch2_bkey_buf_init(&prev_k);
+	bch2_bkey_buf_init(&cur_k);
 	bch2_btree_and_journal_iter_init_node_iter(&iter, c, b);
 
 	while ((k = bch2_btree_and_journal_iter_peek(&iter)).k) {
 		bch2_btree_and_journal_iter_advance(&iter);
-		bch2_bkey_buf_reassemble(&tmp, c, k);
+		bch2_bkey_buf_reassemble(&cur_k, c, k);
 
-		cur = bch2_btree_node_get_noiter(c, tmp.k,
+		cur = bch2_btree_node_get_noiter(c, cur_k.k,
 					b->c.btree_id, b->c.level - 1,
 					false);
 		ret = PTR_ERR_OR_ZERO(cur);
@@ -295,10 +305,10 @@ again:
 				"  %s",
 				bch2_btree_ids[b->c.btree_id],
 				b->c.level - 1,
-				(bch2_bkey_val_to_text(&PBUF(buf), c, bkey_i_to_s_c(tmp.k)), buf))) {
-			bch2_btree_node_evict(c, tmp.k);
+				(bch2_bkey_val_to_text(&PBUF(buf), c, bkey_i_to_s_c(cur_k.k)), buf))) {
+			bch2_btree_node_evict(c, cur_k.k);
 			ret = bch2_journal_key_delete(c, b->c.btree_id,
-						      b->c.level, tmp.k->k.p);
+						      b->c.level, cur_k.k->k.p);
 			if (ret)
 				goto err;
 			continue;
@@ -313,11 +323,27 @@ again:
 		ret = btree_repair_node_start(c, b, prev, cur);
 		if (prev)
 			six_unlock_read(&prev->c.lock);
+
+		if (ret == DROP_PREV_NODE) {
+			bch2_btree_node_evict(c, prev_k.k);
+			ret = bch2_journal_key_delete(c, b->c.btree_id,
+						      b->c.level, prev_k.k->k.p);
+			if (ret)
+				goto err;
+			goto again;
+		} else if (ret == DROP_THIS_NODE) {
+			bch2_btree_node_evict(c, cur_k.k);
+			ret = bch2_journal_key_delete(c, b->c.btree_id,
+						      b->c.level, cur_k.k->k.p);
+			if (ret)
+				goto err;
+			continue;
+		} else if (ret)
+			break;
+
 		prev = cur;
 		cur = NULL;
-
-		if (ret)
-			break;
+		bch2_bkey_buf_copy(&prev_k, c, cur_k.k);
 	}
 
 	if (!ret && !IS_ERR_OR_NULL(prev)) {
@@ -339,10 +365,10 @@ again:
 	bch2_btree_and_journal_iter_init_node_iter(&iter, c, b);
 
 	while ((k = bch2_btree_and_journal_iter_peek(&iter)).k) {
-		bch2_bkey_buf_reassemble(&tmp, c, k);
+		bch2_bkey_buf_reassemble(&cur_k, c, k);
 		bch2_btree_and_journal_iter_advance(&iter);
 
-		cur = bch2_btree_node_get_noiter(c, tmp.k,
+		cur = bch2_btree_node_get_noiter(c, cur_k.k,
 					b->c.btree_id, b->c.level - 1,
 					false);
 		ret = PTR_ERR_OR_ZERO(cur);
@@ -358,9 +384,9 @@ again:
 		cur = NULL;
 
 		if (ret == DROP_THIS_NODE) {
-			bch2_btree_node_evict(c, tmp.k);
+			bch2_btree_node_evict(c, cur_k.k);
 			ret = bch2_journal_key_delete(c, b->c.btree_id,
-						      b->c.level, tmp.k->k.p);
+						      b->c.level, cur_k.k->k.p);
 			dropped_children = true;
 		}
 
@@ -385,7 +411,8 @@ fsck_err:
 		six_unlock_read(&cur->c.lock);
 
 	bch2_btree_and_journal_iter_exit(&iter);
-	bch2_bkey_buf_exit(&tmp, c);
+	bch2_bkey_buf_exit(&prev_k, c);
+	bch2_bkey_buf_exit(&cur_k, c);
 
 	if (!ret && dropped_children)
 		goto again;
