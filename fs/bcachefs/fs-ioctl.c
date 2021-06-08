@@ -81,7 +81,7 @@ static int bch2_ioc_setflags(struct bch_fs *c,
 		return ret;
 
 	inode_lock(&inode->v);
-	if (!inode_owner_or_capable(&inode->v)) {
+	if (!inode_owner_or_capable(inode->v.i_sb->s_user_ns, &inode->v)) {
 		ret = -EACCES;
 		goto setflags_out;
 	}
@@ -152,7 +152,7 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 		return ret;
 
 	inode_lock(&inode->v);
-	if (!inode_owner_or_capable(&inode->v)) {
+	if (!inode_owner_or_capable(inode->v.i_sb->s_user_ns, &inode->v)) {
 		ret = -EACCES;
 		goto err;
 	}

@@ -281,7 +281,7 @@ int bch2_set_acl_trans(struct btree_trans *trans,
 	return ret == -ENOENT ? 0 : ret;
 }
 
-int bch2_set_acl(struct inode *vinode, struct posix_acl *_acl, int type)
+int bch2_set_acl(struct user_namespace* ns, struct inode *vinode, struct posix_acl *_acl, int type)
 {
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
@@ -308,7 +308,7 @@ retry:
 	mode = inode_u.bi_mode;
 
 	if (type == ACL_TYPE_ACCESS) {
-		ret = posix_acl_update_mode(&inode->v, &mode, &acl);
+		ret = posix_acl_update_mode(ns, &inode->v, &mode, &acl);
 		if (ret)
 			goto btree_err;
 	}
