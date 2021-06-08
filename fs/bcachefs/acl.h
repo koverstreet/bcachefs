@@ -32,7 +32,7 @@ int bch2_set_acl_trans(struct btree_trans *,
 		       struct bch_inode_unpacked *,
 		       const struct bch_hash_info *,
 		       struct posix_acl *, int);
-int bch2_set_acl(struct inode *, struct posix_acl *, int);
+int bch2_set_acl(struct user_namespace* ns, struct inode *, struct posix_acl *, int);
 int bch2_acl_chmod(struct btree_trans *, struct bch_inode_unpacked *,
 		   umode_t, struct posix_acl **);
 

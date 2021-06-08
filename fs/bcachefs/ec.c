@@ -392,7 +392,7 @@ static void ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
 	this_cpu_add(ca->io_done->sectors[rw][data_type], buf->size);
 
 	while (offset < bytes) {
-		unsigned nr_iovecs = min_t(size_t, BIO_MAX_PAGES,
+		unsigned nr_iovecs = min_t(size_t, BIO_MAX_VECS,
 					   DIV_ROUND_UP(bytes, PAGE_SIZE));
 		unsigned b = min_t(size_t, bytes - offset,
 				   nr_iovecs << PAGE_SHIFT);
