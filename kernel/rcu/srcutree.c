@@ -1058,6 +1058,21 @@ EXPORT_SYMBOL_GPL(start_poll_synchronize_srcu);
  * get_state_synchronize_srcu() or start_poll_synchronize_srcu(), and
  * returns @true if an SRCU grace period elapsed since the time that the
  * cookie was created.
+ *
+ * Because cookies are finite in size, wrapping/overflow is possible.
+ * This is more pronounced on 32-bit systems where cookies are 32 bits,
+ * where in theory wrapping could happen in about 14 hours assuming
+ * 25-microsecond expedited SRCU grace periods.  However, a more likely
+ * overflow lower bound is on the order of 24 days in the case of
+ * one-millisecond SRCU grace periods.  Of course, wrapping in a 64-bit
+ * system requires geologic timespans, as in more than seven million years
+ * even for expedited SRCU grace periods.
+ *
+ * Wrapping/overflow is much more of an issue for CONFIG_SMP=n systems
+ * that also have CONFIG_PREEMPTION=n, which selects Tiny SRCU.  This uses
+ * a 16-bit cookie, which rcutorture routinely wraps in a matter of a
+ * few minutes.  If this proves to be a problem, this counter will be
+ * expanded to the same size as for Tree SRCU.
  */
 bool poll_state_synchronize_srcu(struct srcu_struct *ssp, unsigned long cookie)
 {
@@ -1227,6 +1242,7 @@ static void srcu_advance_state(struct srcu_struct *ssp)
  */
 static void srcu_invoke_callbacks(struct work_struct *work)
 {
+	long len;
 	bool more;
 	struct rcu_cblist ready_cbs;
 	struct rcu_head *rhp;
@@ -1249,6 +1265,7 @@ static void srcu_invoke_callbacks(struct work_struct *work)
 	/* We are on the job!  Extract and invoke ready callbacks. */
 	sdp->srcu_cblist_invoking = true;
 	rcu_segcblist_extract_done_cbs(&sdp->srcu_cblist, &ready_cbs);
+	len = ready_cbs.len;
 	spin_unlock_irq_rcu_node(sdp);
 	rhp = rcu_cblist_dequeue(&ready_cbs);
 	for (; rhp != NULL; rhp = rcu_cblist_dequeue(&ready_cbs)) {
@@ -1257,13 +1274,14 @@ static void srcu_invoke_callbacks(struct work_struct *work)
 		rhp->func(rhp);
 		local_bh_enable();
 	}
+	WARN_ON_ONCE(ready_cbs.len);
 
 	/*
 	 * Update counts, accelerate new callbacks, and if needed,
 	 * schedule another round of callback invocation.
 	 */
 	spin_lock_irq_rcu_node(sdp);
-	rcu_segcblist_insert_count(&sdp->srcu_cblist, &ready_cbs);
+	rcu_segcblist_add_len(&sdp->srcu_cblist, -len);
 	(void)rcu_segcblist_accelerate(&sdp->srcu_cblist,
 				       rcu_seq_snap(&ssp->srcu_gp_seq));
 	sdp->srcu_cblist_invoking = false;
