@@ -443,8 +443,15 @@ enum bkey_pack_pos_ret bch2_bkey_pack_pos_lossy(struct bkey_packed *out,
 	struct bpos orig = in;
 #endif
 	bool exact = true;
+	unsigned i;
 
-	out->_data[0] = 0;
+	/*
+	 * bch2_bkey_pack_key() will write to all of f->key_u64s, minus the 3
+	 * byte header, but pack_pos() won't if the len/version fields are big
+	 * enough - we need to make sure to zero them out:
+	 */
+	for (i = 0; i < f->key_u64s; i++)
+		out->_data[i] = 0;
 
 	if (unlikely(in.snapshot <
 		     le64_to_cpu(f->field_offset[BKEY_FIELD_SNAPSHOT]))) {
@@ -614,15 +621,19 @@ const char *bch2_bkey_format_validate(struct bkey_format *f)
 		return "incorrect number of fields";
 
 	for (i = 0; i < f->nr_fields; i++) {
+		unsigned unpacked_bits = bch2_bkey_format_current.bits_per_field[i];
+		u64 unpacked_mask = ~((~0ULL << 1) << (unpacked_bits - 1));
 		u64 field_offset = le64_to_cpu(f->field_offset[i]);
 
-		if (f->bits_per_field[i] > 64)
+		if (f->bits_per_field[i] > unpacked_bits)
 			return "field too large";
 
-		if (field_offset &&
-		    (f->bits_per_field[i] == 64 ||
-		    (field_offset + ((1ULL << f->bits_per_field[i]) - 1) <
-		     field_offset)))
+		if ((f->bits_per_field[i] == unpacked_bits) && field_offset)
+			return "offset + bits overflow";
+
+		if (((field_offset + ((1ULL << f->bits_per_field[i]) - 1)) &
+		     unpacked_mask) <
+		    field_offset)
 			return "offset + bits overflow";
 
 		bits += f->bits_per_field[i];
@@ -1045,7 +1056,7 @@ int __bch2_bkey_cmp_packed_format_checked(const struct bkey_packed *l,
 			      high_word(f, r),
 			      b->nr_key_bits);
 
-	EBUG_ON(ret != bkey_cmp(bkey_unpack_pos(b, l),
+	EBUG_ON(ret != bpos_cmp(bkey_unpack_pos(b, l),
 				bkey_unpack_pos(b, r)));
 	return ret;
 }
@@ -1055,7 +1066,7 @@ int __bch2_bkey_cmp_left_packed_format_checked(const struct btree *b,
 					       const struct bkey_packed *l,
 					       const struct bpos *r)
 {
-	return bkey_cmp(bkey_unpack_pos_format_checked(b, l), *r);
+	return bpos_cmp(bkey_unpack_pos_format_checked(b, l), *r);
 }
 
 __pure __flatten
@@ -1076,7 +1087,7 @@ int bch2_bkey_cmp_packed(const struct btree *b,
 		r = (void*) &unpacked;
 	}
 
-	return bkey_cmp(((struct bkey *) l)->p, ((struct bkey *) r)->p);
+	return bpos_cmp(((struct bkey *) l)->p, ((struct bkey *) r)->p);
 }
 
 __pure __flatten
@@ -1087,7 +1098,7 @@ int __bch2_bkey_cmp_left_packed(const struct btree *b,
 	const struct bkey *l_unpacked;
 
 	return unlikely(l_unpacked = packed_to_bkey_c(l))
-		? bkey_cmp(l_unpacked->p, *r)
+		? bpos_cmp(l_unpacked->p, *r)
 		: __bch2_bkey_cmp_left_packed_format_checked(b, l, r);
 }
 
@@ -1123,11 +1134,12 @@ void bch2_bkey_pack_test(void)
 	struct bkey_packed p;
 
 	struct bkey_format test_format = {
-		.key_u64s	= 2,
+		.key_u64s	= 3,
 		.nr_fields	= BKEY_NR_FIELDS,
 		.bits_per_field = {
 			13,
 			64,
+			32,
 		},
 	};
 

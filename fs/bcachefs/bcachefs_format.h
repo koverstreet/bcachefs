@@ -138,19 +138,18 @@ struct bpos {
 #define KEY_SNAPSHOT_MAX		((__u32)~0U)
 #define KEY_SIZE_MAX			((__u32)~0U)
 
-static inline struct bpos POS(__u64 inode, __u64 offset)
+static inline struct bpos SPOS(__u64 inode, __u64 offset, __u32 snapshot)
 {
-	struct bpos ret;
-
-	ret.inode	= inode;
-	ret.offset	= offset;
-	ret.snapshot	= 0;
-
-	return ret;
+	return (struct bpos) {
+		.inode		= inode,
+		.offset		= offset,
+		.snapshot	= snapshot,
+	};
 }
 
-#define POS_MIN				POS(0, 0)
-#define POS_MAX				POS(KEY_INODE_MAX, KEY_OFFSET_MAX)
+#define POS_MIN				SPOS(0, 0, 0)
+#define POS_MAX				SPOS(KEY_INODE_MAX, KEY_OFFSET_MAX, KEY_SNAPSHOT_MAX)
+#define POS(_inode, _offset)		SPOS(_inode, _offset, 0)
 
 /* Empty placeholder struct, for container_of() */
 struct bch_val {
@@ -326,7 +325,7 @@ static inline void bkey_init(struct bkey *k)
 	x(discard,		1)			\
 	x(error,		2)			\
 	x(cookie,		3)			\
-	x(whiteout,		4)			\
+	x(hash_whiteout,	4)			\
 	x(btree_ptr,		5)			\
 	x(extent,		6)			\
 	x(reservation,		7)			\
@@ -351,9 +350,25 @@ enum bch_bkey_type {
 	KEY_TYPE_MAX,
 };
 
+struct bch_deleted {
+	struct bch_val		v;
+};
+
+struct bch_discard {
+	struct bch_val		v;
+};
+
+struct bch_error {
+	struct bch_val		v;
+};
+
 struct bch_cookie {
 	struct bch_val		v;
 	__le64			cookie;
+};
+
+struct bch_hash_whiteout {
+	struct bch_val		v;
 };
 
 /* Extents */
@@ -691,7 +706,9 @@ struct bch_inode_generation {
 	x(bi_foreground_target,		16)	\
 	x(bi_background_target,		16)	\
 	x(bi_erasure_code,		16)	\
-	x(bi_fields_set,		16)
+	x(bi_fields_set,		16)	\
+	x(bi_dir,			64)	\
+	x(bi_dir_offset,		64)
 
 /* subset of BCH_INODE_FIELDS */
 #define BCH_INODE_OPTS()			\
@@ -727,6 +744,7 @@ enum {
 	__BCH_INODE_I_SIZE_DIRTY= 5,
 	__BCH_INODE_I_SECTORS_DIRTY= 6,
 	__BCH_INODE_UNLINKED	= 7,
+	__BCH_INODE_BACKPTR_UNTRUSTED = 8,
 
 	/* bits 20+ reserved for packed fields below: */
 };
@@ -739,6 +757,7 @@ enum {
 #define BCH_INODE_I_SIZE_DIRTY	(1 << __BCH_INODE_I_SIZE_DIRTY)
 #define BCH_INODE_I_SECTORS_DIRTY (1 << __BCH_INODE_I_SECTORS_DIRTY)
 #define BCH_INODE_UNLINKED	(1 << __BCH_INODE_UNLINKED)
+#define BCH_INODE_BACKPTR_UNTRUSTED (1 << __BCH_INODE_BACKPTR_UNTRUSTED)
 
 LE32_BITMASK(INODE_STR_HASH,	struct bch_inode, bi_flags, 20, 24);
 LE32_BITMASK(INODE_NR_FIELDS,	struct bch_inode, bi_flags, 24, 31);
@@ -971,19 +990,29 @@ LE64_BITMASK(BCH_MEMBER_NR_READ_ERRORS,	struct bch_member, flags[1], 0,  20);
 LE64_BITMASK(BCH_MEMBER_NR_WRITE_ERRORS,struct bch_member, flags[1], 20, 40);
 #endif
 
+#define BCH_MEMBER_STATES()			\
+	x(rw,		0)			\
+	x(ro,		1)			\
+	x(failed,	2)			\
+	x(spare,	3)
+
 enum bch_member_state {
-	BCH_MEMBER_STATE_RW		= 0,
-	BCH_MEMBER_STATE_RO		= 1,
-	BCH_MEMBER_STATE_FAILED		= 2,
-	BCH_MEMBER_STATE_SPARE		= 3,
-	BCH_MEMBER_STATE_NR		= 4,
+#define x(t, n) BCH_MEMBER_STATE_##t = n,
+	BCH_MEMBER_STATES()
+#undef x
+	BCH_MEMBER_STATE_NR
 };
 
-enum cache_replacement {
-	CACHE_REPLACEMENT_LRU		= 0,
-	CACHE_REPLACEMENT_FIFO		= 1,
-	CACHE_REPLACEMENT_RANDOM	= 2,
-	CACHE_REPLACEMENT_NR		= 3,
+#define BCH_CACHE_REPLACEMENT_POLICIES()	\
+	x(lru,		0)			\
+	x(fifo,		1)			\
+	x(random,	2)
+
+enum bch_cache_replacement_policies {
+#define x(t, n) BCH_CACHE_REPLACEMENT_##t = n,
+	BCH_CACHE_REPLACEMENT_POLICIES()
+#undef x
+	BCH_CACHE_REPLACEMENT_NR
 };
 
 struct bch_sb_field_members {
@@ -1178,7 +1207,9 @@ enum bcachefs_metadata_version {
 	bcachefs_metadata_version_new_versioning	= 10,
 	bcachefs_metadata_version_bkey_renumber		= 10,
 	bcachefs_metadata_version_inode_btree_change	= 11,
-	bcachefs_metadata_version_max			= 12,
+	bcachefs_metadata_version_snapshot		= 12,
+	bcachefs_metadata_version_inode_backpointers	= 13,
+	bcachefs_metadata_version_max			= 14,
 };
 
 #define bcachefs_metadata_version_current	(bcachefs_metadata_version_max - 1)
@@ -1282,10 +1313,9 @@ LE64_BITMASK(BCH_SB_GRPQUOTA,		struct bch_sb, flags[0], 58, 59);
 LE64_BITMASK(BCH_SB_PRJQUOTA,		struct bch_sb, flags[0], 59, 60);
 
 LE64_BITMASK(BCH_SB_HAS_ERRORS,		struct bch_sb, flags[0], 60, 61);
+LE64_BITMASK(BCH_SB_HAS_TOPOLOGY_ERRORS,struct bch_sb, flags[0], 61, 62);
 
-LE64_BITMASK(BCH_SB_REFLINK,		struct bch_sb, flags[0], 61, 62);
-
-/* 61-64 unused */
+LE64_BITMASK(BCH_SB_BIG_ENDIAN,		struct bch_sb, flags[0], 62, 63);
 
 LE64_BITMASK(BCH_SB_STR_HASH_TYPE,	struct bch_sb, flags[1],  0,  4);
 LE64_BITMASK(BCH_SB_COMPRESSION_TYPE,	struct bch_sb, flags[1],  4,  8);
@@ -1314,6 +1344,7 @@ LE64_BITMASK(BCH_SB_GC_RESERVE_BYTES,	struct bch_sb, flags[2],  4, 64);
 
 LE64_BITMASK(BCH_SB_ERASURE_CODE,	struct bch_sb, flags[3],  0, 16);
 LE64_BITMASK(BCH_SB_METADATA_TARGET,	struct bch_sb, flags[3], 16, 28);
+LE64_BITMASK(BCH_SB_SHARD_INUMS,	struct bch_sb, flags[3], 28, 29);
 
 /*
  * Features:
@@ -1349,6 +1380,7 @@ LE64_BITMASK(BCH_SB_METADATA_TARGET,	struct bch_sb, flags[3], 16, 28);
 	((1ULL << BCH_FEATURE_new_extent_overwrite)|	\
 	 (1ULL << BCH_FEATURE_extents_above_btree_updates)|\
 	 (1ULL << BCH_FEATURE_btree_updates_journalled)|\
+	 (1ULL << BCH_FEATURE_alloc_v2)|\
 	 (1ULL << BCH_FEATURE_extents_across_btree_nodes))
 
 #define BCH_SB_FEATURES_ALL				\
@@ -1356,8 +1388,7 @@ LE64_BITMASK(BCH_SB_METADATA_TARGET,	struct bch_sb, flags[3], 16, 28);
 	 (1ULL << BCH_FEATURE_new_siphash)|		\
 	 (1ULL << BCH_FEATURE_btree_ptr_v2)|		\
 	 (1ULL << BCH_FEATURE_new_varint)|		\
-	 (1ULL << BCH_FEATURE_journal_no_flush)|	\
-	 (1ULL << BCH_FEATURE_alloc_v2))
+	 (1ULL << BCH_FEATURE_journal_no_flush))
 
 enum bch_sb_feature {
 #define x(f, n) BCH_FEATURE_##f,
@@ -1385,11 +1416,16 @@ enum bch_sb_compat {
 
 #define BCH_BKEY_PTRS_MAX		16U
 
+#define BCH_ERROR_ACTIONS()		\
+	x(continue,		0)	\
+	x(ro,			1)	\
+	x(panic,		2)
+
 enum bch_error_actions {
-	BCH_ON_ERROR_CONTINUE		= 0,
-	BCH_ON_ERROR_RO			= 1,
-	BCH_ON_ERROR_PANIC		= 2,
-	BCH_NR_ERROR_ACTIONS		= 3,
+#define x(t, n) BCH_ON_ERROR_##t = n,
+	BCH_ERROR_ACTIONS()
+#undef x
+	BCH_ON_ERROR_NR
 };
 
 enum bch_str_hash_type {
@@ -1400,11 +1436,16 @@ enum bch_str_hash_type {
 	BCH_STR_HASH_NR			= 4,
 };
 
+#define BCH_STR_HASH_OPTS()		\
+	x(crc32c,		0)	\
+	x(crc64,		1)	\
+	x(siphash,		2)
+
 enum bch_str_hash_opts {
-	BCH_STR_HASH_OPT_CRC32C		= 0,
-	BCH_STR_HASH_OPT_CRC64		= 1,
-	BCH_STR_HASH_OPT_SIPHASH	= 2,
-	BCH_STR_HASH_OPT_NR		= 3,
+#define x(t, n) BCH_STR_HASH_OPT_##t = n,
+	BCH_STR_HASH_OPTS()
+#undef x
+	BCH_STR_HASH_OPT_NR
 };
 
 enum bch_csum_type {
@@ -1439,11 +1480,16 @@ static inline _Bool bch2_csum_type_is_encryption(enum bch_csum_type type)
 	}
 }
 
+#define BCH_CSUM_OPTS()			\
+	x(none,			0)	\
+	x(crc32c,		1)	\
+	x(crc64,		2)
+
 enum bch_csum_opts {
-	BCH_CSUM_OPT_NONE		= 0,
-	BCH_CSUM_OPT_CRC32C		= 1,
-	BCH_CSUM_OPT_CRC64		= 2,
-	BCH_CSUM_OPT_NR			= 3,
+#define x(t, n) BCH_CSUM_OPT_##t = n,
+	BCH_CSUM_OPTS()
+#undef x
+	BCH_CSUM_OPT_NR
 };
 
 #define BCH_COMPRESSION_TYPES()		\
@@ -1455,7 +1501,7 @@ enum bch_csum_opts {
 	x(incompressible,	5)
 
 enum bch_compression_type {
-#define x(t, n) BCH_COMPRESSION_TYPE_##t,
+#define x(t, n) BCH_COMPRESSION_TYPE_##t = n,
 	BCH_COMPRESSION_TYPES()
 #undef x
 	BCH_COMPRESSION_TYPE_NR
@@ -1468,7 +1514,7 @@ enum bch_compression_type {
 	x(zstd,		3)
 
 enum bch_compression_opts {
-#define x(t, n) BCH_COMPRESSION_OPT_##t,
+#define x(t, n) BCH_COMPRESSION_OPT_##t = n,
 	BCH_COMPRESSION_OPTS()
 #undef x
 	BCH_COMPRESSION_OPT_NR
@@ -1635,18 +1681,18 @@ LE32_BITMASK(JSET_NO_FLUSH,	struct jset, flags, 5, 6);
 
 /* Btree: */
 
-#define BCH_BTREE_IDS()					\
-	x(EXTENTS,	0, "extents")			\
-	x(INODES,	1, "inodes")			\
-	x(DIRENTS,	2, "dirents")			\
-	x(XATTRS,	3, "xattrs")			\
-	x(ALLOC,	4, "alloc")			\
-	x(QUOTAS,	5, "quotas")			\
-	x(EC,		6, "stripes")			\
-	x(REFLINK,	7, "reflink")
+#define BCH_BTREE_IDS()				\
+	x(extents,	0)			\
+	x(inodes,	1)			\
+	x(dirents,	2)			\
+	x(xattrs,	3)			\
+	x(alloc,	4)			\
+	x(quotas,	5)			\
+	x(stripes,	6)			\
+	x(reflink,	7)
 
 enum btree_id {
-#define x(kwd, val, name) BTREE_ID_##kwd = val,
+#define x(kwd, val) BTREE_ID_##kwd = val,
 	BCH_BTREE_IDS()
 #undef x
 	BTREE_ID_NR
@@ -1700,7 +1746,7 @@ struct btree_node {
 	/* Closed interval: */
 	struct bpos		min_key;
 	struct bpos		max_key;
-	struct bch_extent_ptr	ptr;
+	struct bch_extent_ptr	_ptr; /* not used anymore */
 	struct bkey_format	format;
 
 	union {

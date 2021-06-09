@@ -175,25 +175,31 @@ static inline u64 __dev_buckets_available(struct bch_dev *ca,
 	return total - stats.buckets_unavailable;
 }
 
-/*
- * Number of reclaimable buckets - only for use by the allocator thread:
- */
 static inline u64 dev_buckets_available(struct bch_dev *ca)
 {
 	return __dev_buckets_available(ca, bch2_dev_usage_read(ca));
 }
 
-static inline u64 __dev_buckets_free(struct bch_dev *ca,
-				     struct bch_dev_usage stats)
+static inline u64 __dev_buckets_reclaimable(struct bch_dev *ca,
+					    struct bch_dev_usage stats)
 {
-	return __dev_buckets_available(ca, stats) +
-		fifo_used(&ca->free[RESERVE_NONE]) +
-		fifo_used(&ca->free_inc);
+	struct bch_fs *c = ca->fs;
+	s64 available = __dev_buckets_available(ca, stats);
+	unsigned i;
+
+	spin_lock(&c->freelist_lock);
+	for (i = 0; i < RESERVE_NR; i++)
+		available -= fifo_used(&ca->free[i]);
+	available -= fifo_used(&ca->free_inc);
+	available -= ca->nr_open_buckets;
+	spin_unlock(&c->freelist_lock);
+
+	return max(available, 0LL);
 }
 
-static inline u64 dev_buckets_free(struct bch_dev *ca)
+static inline u64 dev_buckets_reclaimable(struct bch_dev *ca)
 {
-	return __dev_buckets_free(ca, bch2_dev_usage_read(ca));
+	return __dev_buckets_reclaimable(ca, bch2_dev_usage_read(ca));
 }
 
 /* Filesystem usage: */
@@ -210,19 +216,16 @@ static inline unsigned dev_usage_u64s(void)
 	return sizeof(struct bch_dev_usage) / sizeof(u64);
 }
 
-void bch2_fs_usage_scratch_put(struct bch_fs *, struct bch_fs_usage *);
-struct bch_fs_usage *bch2_fs_usage_scratch_get(struct bch_fs *);
-
 u64 bch2_fs_usage_read_one(struct bch_fs *, u64 *);
 
-struct bch_fs_usage *bch2_fs_usage_read(struct bch_fs *);
+struct bch_fs_usage_online *bch2_fs_usage_read(struct bch_fs *);
 
 void bch2_fs_usage_acc_to_base(struct bch_fs *, unsigned);
 
 void bch2_fs_usage_to_text(struct printbuf *,
-			   struct bch_fs *, struct bch_fs_usage *);
+			   struct bch_fs *, struct bch_fs_usage_online *);
 
-u64 bch2_fs_sectors_used(struct bch_fs *, struct bch_fs_usage *);
+u64 bch2_fs_sectors_used(struct bch_fs *, struct bch_fs_usage_online *);
 
 struct bch_fs_usage_short
 bch2_fs_usage_read_short(struct bch_fs *);
@@ -232,44 +235,34 @@ bch2_fs_usage_read_short(struct bch_fs *);
 void bch2_bucket_seq_cleanup(struct bch_fs *);
 void bch2_fs_usage_initialize(struct bch_fs *);
 
-void bch2_mark_alloc_bucket(struct bch_fs *, struct bch_dev *,
-			    size_t, bool, struct gc_pos, unsigned);
+void bch2_mark_alloc_bucket(struct bch_fs *, struct bch_dev *, size_t, bool);
 void bch2_mark_metadata_bucket(struct bch_fs *, struct bch_dev *,
 			       size_t, enum bch_data_type, unsigned,
 			       struct gc_pos, unsigned);
 
 int bch2_mark_key(struct bch_fs *, struct bkey_s_c, unsigned,
 		  s64, struct bch_fs_usage *, u64, unsigned);
-int bch2_fs_usage_apply(struct bch_fs *, struct bch_fs_usage *,
-			struct disk_reservation *, unsigned);
 
 int bch2_mark_update(struct btree_trans *, struct btree_iter *,
 		     struct bkey_i *, struct bch_fs_usage *, unsigned);
 
-int bch2_replicas_delta_list_apply(struct bch_fs *,
-				   struct bch_fs_usage *,
-				   struct replicas_delta_list *);
 int bch2_trans_mark_key(struct btree_trans *, struct bkey_s_c, struct bkey_s_c,
 			unsigned, s64, unsigned);
 int bch2_trans_mark_update(struct btree_trans *, struct btree_iter *iter,
 			   struct bkey_i *insert, unsigned);
-void bch2_trans_fs_usage_apply(struct btree_trans *, struct bch_fs_usage *);
+void bch2_trans_fs_usage_apply(struct btree_trans *, struct replicas_delta_list *);
 
-int bch2_trans_mark_metadata_bucket(struct btree_trans *,
-			struct disk_reservation *, struct bch_dev *,
-			size_t, enum bch_data_type, unsigned);
-int bch2_trans_mark_dev_sb(struct bch_fs *, struct disk_reservation *,
-			   struct bch_dev *);
+int bch2_trans_mark_metadata_bucket(struct btree_trans *, struct bch_dev *,
+				    size_t, enum bch_data_type, unsigned);
+int bch2_trans_mark_dev_sb(struct bch_fs *, struct bch_dev *);
 
 /* disk reservations: */
-
-void __bch2_disk_reservation_put(struct bch_fs *, struct disk_reservation *);
 
 static inline void bch2_disk_reservation_put(struct bch_fs *c,
 					     struct disk_reservation *res)
 {
-	if (res->sectors)
-		__bch2_disk_reservation_put(c, res);
+	this_cpu_sub(*c->online_reserved, res->sectors);
+	res->sectors = 0;
 }
 
 #define BCH_DISK_RESERVATION_NOFAIL		(1 << 0)
@@ -299,6 +292,13 @@ static inline int bch2_disk_reservation_get(struct bch_fs *c,
 	*res = bch2_disk_reservation_init(c, nr_replicas);
 
 	return bch2_disk_reservation_add(c, res, sectors * nr_replicas, flags);
+}
+
+#define RESERVE_FACTOR	6
+
+static inline u64 avail_factor(u64 r)
+{
+	return div_u64(r << RESERVE_FACTOR, (1 << RESERVE_FACTOR) + 1);
 }
 
 int bch2_dev_buckets_resize(struct bch_fs *, struct bch_dev *, u64);

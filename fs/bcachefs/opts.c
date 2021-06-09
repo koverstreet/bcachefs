@@ -9,79 +9,59 @@
 #include "super-io.h"
 #include "util.h"
 
+#define x(t, n) #t,
+
 const char * const bch2_error_actions[] = {
-	"continue",
-	"remount-ro",
-	"panic",
+	BCH_ERROR_ACTIONS()
 	NULL
 };
 
 const char * const bch2_sb_features[] = {
-#define x(f, n) #f,
 	BCH_SB_FEATURES()
-#undef x
 	NULL
 };
 
 const char * const bch2_sb_compat[] = {
-#define x(f, n) #f,
 	BCH_SB_COMPAT()
-#undef x
+	NULL
+};
+
+const char * const bch2_btree_ids[] = {
+	BCH_BTREE_IDS()
 	NULL
 };
 
 const char * const bch2_csum_opts[] = {
-	"none",
-	"crc32c",
-	"crc64",
+	BCH_CSUM_OPTS()
 	NULL
 };
 
 const char * const bch2_compression_opts[] = {
-#define x(t, n) #t,
 	BCH_COMPRESSION_OPTS()
-#undef x
 	NULL
 };
 
 const char * const bch2_str_hash_types[] = {
-	"crc32c",
-	"crc64",
-	"siphash",
+	BCH_STR_HASH_OPTS()
 	NULL
 };
 
 const char * const bch2_data_types[] = {
-#define x(t, n) #t,
 	BCH_DATA_TYPES()
-#undef x
 	NULL
 };
 
 const char * const bch2_cache_replacement_policies[] = {
-	"lru",
-	"fifo",
-	"random",
+	BCH_CACHE_REPLACEMENT_POLICIES()
 	NULL
 };
 
-/* Default is -1; we skip past it for struct cached_dev's cache mode */
-const char * const bch2_cache_modes[] = {
-	"default",
-	"writethrough",
-	"writeback",
-	"writearound",
-	"none",
+const char * const bch2_member_states[] = {
+	BCH_MEMBER_STATES()
 	NULL
 };
 
-const char * const bch2_dev_state[] = {
-	"readwrite",
-	"readonly",
-	"failed",
-	"spare",
-	NULL
-};
+#undef x
 
 void bch2_opts_apply(struct bch_opts *dst, struct bch_opts src)
 {
@@ -335,11 +315,20 @@ int bch2_opts_check_may_set(struct bch_fs *c)
 int bch2_parse_mount_opts(struct bch_fs *c, struct bch_opts *opts,
 			  char *options)
 {
+	char *copied_opts, *copied_opts_start;
 	char *opt, *name, *val;
 	int ret, id;
 	u64 v;
 
-	while ((opt = strsep(&options, ",")) != NULL) {
+	if (!options)
+		return 0;
+
+	copied_opts = kstrdup(options, GFP_KERNEL);
+	if (!copied_opts)
+		return -1;
+	copied_opts_start = copied_opts;
+
+	while ((opt = strsep(&copied_opts, ",")) != NULL) {
 		name	= strsep(&opt, "=");
 		val	= opt;
 
@@ -383,16 +372,24 @@ int bch2_parse_mount_opts(struct bch_fs *c, struct bch_opts *opts,
 		bch2_opt_set_by_id(opts, id, v);
 	}
 
-	return 0;
+	ret = 0;
+	goto out;
+
 bad_opt:
 	pr_err("Bad mount option %s", name);
-	return -1;
+	ret = -1;
+	goto out;
 bad_val:
 	pr_err("Invalid value %s for mount option %s", val, name);
-	return -1;
+	ret = -1;
+	goto out;
 no_val:
 	pr_err("Mount option %s requires a value", name);
-	return -1;
+	ret = -1;
+	goto out;
+out:
+	kfree(copied_opts_start);
+	return ret;
 }
 
 /* io opts: */

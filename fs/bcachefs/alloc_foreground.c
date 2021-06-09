@@ -1,57 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Primary bucket allocation code
- *
  * Copyright 2012 Google, Inc.
  *
- * Allocation in bcache is done in terms of buckets:
- *
- * Each bucket has associated an 8 bit gen; this gen corresponds to the gen in
- * btree pointers - they must match for the pointer to be considered valid.
- *
- * Thus (assuming a bucket has no dirty data or metadata in it) we can reuse a
- * bucket simply by incrementing its gen.
- *
- * The gens (along with the priorities; it's really the gens are important but
- * the code is named as if it's the priorities) are written in an arbitrary list
- * of buckets on disk, with a pointer to them in the journal header.
- *
- * When we invalidate a bucket, we have to write its new gen to disk and wait
- * for that write to complete before we use it - otherwise after a crash we
- * could have pointers that appeared to be good but pointed to data that had
- * been overwritten.
- *
- * Since the gens and priorities are all stored contiguously on disk, we can
- * batch this up: We fill up the free_inc list with freshly invalidated buckets,
- * call prio_write(), and when prio_write() finishes we pull buckets off the
- * free_inc list and optionally discard them.
- *
- * free_inc isn't the only freelist - if it was, we'd often have to sleep while
- * priorities and gens were being written before we could allocate. c->free is a
- * smaller freelist, and buckets on that list are always ready to be used.
- *
- * If we've got discards enabled, that happens when a bucket moves from the
- * free_inc list to the free list.
- *
- * It's important to ensure that gens don't wrap around - with respect to
- * either the oldest gen in the btree or the gen on disk. This is quite
- * difficult to do in practice, but we explicitly guard against it anyways - if
- * a bucket is in danger of wrapping around we simply skip invalidating it that
- * time around, and we garbage collect or rewrite the priorities sooner than we
- * would have otherwise.
+ * Foreground allocator code: allocate buckets from freelist, and allocate in
+ * sector granularity from writepoints.
  *
  * bch2_bucket_alloc() allocates a single bucket from a specific device.
  *
  * bch2_bucket_alloc_set() allocates one or more buckets from different devices
  * in a given filesystem.
- *
- * invalidate_buckets() drives all the processes described above. It's called
- * from bch2_bucket_alloc() and a few other places that need to make sure free
- * buckets are ready.
- *
- * invalidate_buckets_(lru|fifo)() find buckets that are available to be
- * invalidated, and then invalidate them and stick them on the free_inc list -
- * in either lru or fifo order.
  */
 
 #include "bcachefs.h"
@@ -98,8 +55,7 @@ void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 	percpu_down_read(&c->mark_lock);
 	spin_lock(&ob->lock);
 
-	bch2_mark_alloc_bucket(c, ca, PTR_BUCKET_NR(ca, &ob->ptr),
-			       false, gc_pos_alloc(c, ob), 0);
+	bch2_mark_alloc_bucket(c, ca, PTR_BUCKET_NR(ca, &ob->ptr), false);
 	ob->valid = false;
 	ob->type = 0;
 
@@ -109,7 +65,9 @@ void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 	spin_lock(&c->freelist_lock);
 	ob->freelist = c->open_buckets_freelist;
 	c->open_buckets_freelist = ob - c->open_buckets;
+
 	c->open_buckets_nr_free++;
+	ca->nr_open_buckets--;
 	spin_unlock(&c->freelist_lock);
 
 	closure_wake_up(&c->open_buckets_wait);
@@ -316,6 +274,7 @@ out:
 		c->blocked_allocate = 0;
 	}
 
+	ca->nr_open_buckets++;
 	spin_unlock(&c->freelist_lock);
 
 	bch2_wake_allocator(ca);
@@ -351,7 +310,7 @@ void bch2_dev_stripe_increment(struct bch_dev *ca,
 			       struct dev_stripe_state *stripe)
 {
 	u64 *v = stripe->next_alloc + ca->dev_idx;
-	u64 free_space = dev_buckets_free(ca);
+	u64 free_space = dev_buckets_available(ca);
 	u64 free_space_inv = free_space
 		? div64_u64(1ULL << 48, free_space)
 		: 1ULL << 48;
@@ -680,11 +639,14 @@ static struct write_point *__writepoint_find(struct hlist_head *head,
 {
 	struct write_point *wp;
 
+	rcu_read_lock();
 	hlist_for_each_entry_rcu(wp, head, node)
 		if (wp->write_point == write_point)
-			return wp;
-
-	return NULL;
+			goto out;
+	wp = NULL;
+out:
+	rcu_read_unlock();
+	return wp;
 }
 
 static inline bool too_many_writepoints(struct bch_fs *c, unsigned factor)

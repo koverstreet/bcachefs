@@ -11,18 +11,25 @@ bool bch2_inconsistent_error(struct bch_fs *c)
 	set_bit(BCH_FS_ERROR, &c->flags);
 
 	switch (c->opts.errors) {
-	case BCH_ON_ERROR_CONTINUE:
+	case BCH_ON_ERROR_continue:
 		return false;
-	case BCH_ON_ERROR_RO:
+	case BCH_ON_ERROR_ro:
 		if (bch2_fs_emergency_read_only(c))
 			bch_err(c, "emergency read only");
 		return true;
-	case BCH_ON_ERROR_PANIC:
+	case BCH_ON_ERROR_panic:
 		panic(bch2_fmt(c, "panic after error"));
 		return true;
 	default:
 		BUG();
 	}
+}
+
+void bch2_topology_error(struct bch_fs *c)
+{
+	set_bit(BCH_FS_TOPOLOGY_ERROR, &c->flags);
+	if (test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags))
+		bch2_inconsistent_error(c);
 }
 
 void bch2_fatal_error(struct bch_fs *c)
@@ -38,10 +45,10 @@ void bch2_io_error_work(struct work_struct *work)
 	bool dev;
 
 	down_write(&c->state_lock);
-	dev = bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_RO,
+	dev = bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_ro,
 				    BCH_FORCE_IF_DEGRADED);
 	if (dev
-	    ? __bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_RO,
+	    ? __bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_ro,
 				  BCH_FORCE_IF_DEGRADED)
 	    : bch2_fs_emergency_read_only(c))
 		bch_err(ca,
@@ -74,9 +81,13 @@ enum fsck_err_ret bch2_fsck_err(struct bch_fs *c, unsigned flags,
 		vprintk(fmt, args);
 		va_end(args);
 
-		return bch2_inconsistent_error(c)
-			? FSCK_ERR_EXIT
-			: FSCK_ERR_FIX;
+		if (c->opts.errors == BCH_ON_ERROR_continue) {
+			bch_err(c, "fixing");
+			return FSCK_ERR_FIX;
+		} else {
+			bch2_inconsistent_error(c);
+			return FSCK_ERR_EXIT;
+		}
 	}
 
 	mutex_lock(&c->fsck_error_lock);
@@ -146,6 +157,7 @@ print:
 		set_bit(BCH_FS_ERRORS_FIXED, &c->flags);
 		return FSCK_ERR_FIX;
 	} else {
+		set_bit(BCH_FS_ERRORS_NOT_FIXED, &c->flags);
 		set_bit(BCH_FS_ERROR, &c->flags);
 		return c->opts.fix_errors == FSCK_OPT_EXIT ||
 			!(flags & FSCK_CAN_IGNORE)

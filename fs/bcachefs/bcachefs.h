@@ -259,7 +259,14 @@ do {									\
 	BCH_DEBUG_PARAM(btree_gc_rewrite_disabled,			\
 		"Disables rewriting of btree nodes during mark and sweep")\
 	BCH_DEBUG_PARAM(btree_shrinker_disabled,			\
-		"Disables the shrinker callback for the btree node cache")
+		"Disables the shrinker callback for the btree node cache")\
+	BCH_DEBUG_PARAM(verify_btree_ondisk,				\
+		"Reread btree nodes at various points to verify the "	\
+		"mergesort in the read path against modifications "	\
+		"done in memory")					\
+	BCH_DEBUG_PARAM(verify_all_btree_replicas,			\
+		"When reading btree nodes, read all replicas and "	\
+		"compare them")
 
 /* Parameters that should only be compiled in in debug mode: */
 #define BCH_DEBUG_PARAMS_DEBUG()					\
@@ -273,10 +280,6 @@ do {									\
 		"information) when iterating over keys")		\
 	BCH_DEBUG_PARAM(debug_check_btree_accounting,			\
 		"Verify btree accounting for keys within a node")	\
-	BCH_DEBUG_PARAM(verify_btree_ondisk,				\
-		"Reread btree nodes at various points to verify the "	\
-		"mergesort in the read path against modifications "	\
-		"done in memory")					\
 	BCH_DEBUG_PARAM(journal_seq_verify,				\
 		"Store the journal sequence number in the version "	\
 		"number of every btree key, and verify that btree "	\
@@ -369,17 +372,16 @@ enum gc_phase {
 	GC_PHASE_START,
 	GC_PHASE_SB,
 
-	GC_PHASE_BTREE_EC,
-	GC_PHASE_BTREE_EXTENTS,
-	GC_PHASE_BTREE_INODES,
-	GC_PHASE_BTREE_DIRENTS,
-	GC_PHASE_BTREE_XATTRS,
-	GC_PHASE_BTREE_ALLOC,
-	GC_PHASE_BTREE_QUOTAS,
-	GC_PHASE_BTREE_REFLINK,
+	GC_PHASE_BTREE_stripes,
+	GC_PHASE_BTREE_extents,
+	GC_PHASE_BTREE_inodes,
+	GC_PHASE_BTREE_dirents,
+	GC_PHASE_BTREE_xattrs,
+	GC_PHASE_BTREE_alloc,
+	GC_PHASE_BTREE_quotas,
+	GC_PHASE_BTREE_reflink,
 
 	GC_PHASE_PENDING_DELETE,
-	GC_PHASE_ALLOC,
 };
 
 struct gc_pos {
@@ -387,6 +389,14 @@ struct gc_pos {
 	struct bpos		pos;
 	unsigned		level;
 };
+
+struct reflink_gc {
+	u64		offset;
+	u32		size;
+	u32		refcount;
+};
+
+typedef GENRADIX(struct reflink_gc) reflink_gc_table;
 
 struct io_count {
 	u64			sectors[2][BCH_DATA_NR];
@@ -447,6 +457,7 @@ struct bch_dev {
 	 */
 	alloc_fifo		free[RESERVE_NR];
 	alloc_fifo		free_inc;
+	unsigned		nr_open_buckets;
 
 	open_bucket_idx_t	open_buckets_partial[OPEN_BUCKETS_COUNT];
 	open_bucket_idx_t	open_buckets_partial_nr;
@@ -456,16 +467,7 @@ struct bch_dev {
 	size_t			inc_gen_needs_gc;
 	size_t			inc_gen_really_needs_gc;
 
-	/*
-	 * XXX: this should be an enum for allocator state, so as to include
-	 * error state
-	 */
-	enum {
-		ALLOCATOR_STOPPED,
-		ALLOCATOR_RUNNING,
-		ALLOCATOR_BLOCKED,
-		ALLOCATOR_BLOCKED_FULL,
-	}			allocator_state;
+	enum allocator_states	allocator_state;
 
 	alloc_heap		alloc_heap;
 
@@ -494,10 +496,12 @@ enum {
 	BCH_FS_ALLOCATOR_RUNNING,
 	BCH_FS_ALLOCATOR_STOPPING,
 	BCH_FS_INITIAL_GC_DONE,
+	BCH_FS_INITIAL_GC_UNFIXED,
 	BCH_FS_BTREE_INTERIOR_REPLAY_DONE,
 	BCH_FS_FSCK_DONE,
 	BCH_FS_STARTED,
 	BCH_FS_RW,
+	BCH_FS_WAS_RW,
 
 	/* shutdown: */
 	BCH_FS_STOPPING,
@@ -506,7 +510,9 @@ enum {
 
 	/* errors: */
 	BCH_FS_ERROR,
+	BCH_FS_TOPOLOGY_ERROR,
 	BCH_FS_ERRORS_FIXED,
+	BCH_FS_ERRORS_NOT_FIXED,
 
 	/* misc: */
 	BCH_FS_NEED_ANOTHER_GC,
@@ -554,6 +560,8 @@ struct btree_iter_buf {
 	struct btree_iter	*iter;
 };
 
+#define REPLICAS_DELTA_LIST_MAX	(1U << 16)
+
 struct bch_fs {
 	struct closure		cl;
 
@@ -567,6 +575,7 @@ struct bch_fs {
 	int			minor;
 	struct device		*chardev;
 	struct super_block	*vfs_sb;
+	dev_t			dev;
 	char			name[40];
 
 	/* ro/rw, add/remove/resize devices: */
@@ -581,6 +590,7 @@ struct bch_fs {
 	struct bch_replicas_cpu replicas;
 	struct bch_replicas_cpu replicas_gc;
 	struct mutex		replicas_gc_lock;
+	mempool_t		replicas_delta_pool;
 
 	struct journal_entry_res btree_root_journal_res;
 	struct journal_entry_res replicas_journal_res;
@@ -597,6 +607,7 @@ struct bch_fs {
 		uuid_le		user_uuid;
 
 		u16		version;
+		u16		version_min;
 		u16		encoded_extent_max;
 
 		u8		nr_devices;
@@ -606,10 +617,12 @@ struct bch_fs {
 
 		u64		time_base_lo;
 		u32		time_base_hi;
-		u32		time_precision;
+		unsigned	time_units_per_sec;
+		unsigned	nsec_per_time_unit;
 		u64		features;
 		u64		compat;
 	}			sb;
+
 
 	struct bch_sb_handle	disk_sb;
 
@@ -622,6 +635,7 @@ struct bch_fs {
 
 	/* BTREE CACHE */
 	struct bio_set		btree_bio;
+	struct workqueue_struct	*io_complete_wq;
 
 	struct btree_root	btree_roots[BTREE_ID_NR];
 	struct mutex		btree_root_lock;
@@ -652,20 +666,19 @@ struct bch_fs {
 	struct mutex		btree_trans_lock;
 	struct list_head	btree_trans_list;
 	mempool_t		btree_iters_pool;
+	mempool_t		btree_trans_mem_pool;
 	struct btree_iter_buf  __percpu	*btree_iters_bufs;
 
 	struct srcu_struct	btree_trans_barrier;
 
 	struct btree_key_cache	btree_key_cache;
 
-	struct workqueue_struct	*wq;
+	struct workqueue_struct	*btree_update_wq;
+	struct workqueue_struct	*btree_error_wq;
 	/* copygc needs its own workqueue for index updates.. */
 	struct workqueue_struct	*copygc_wq;
 
 	/* ALLOCATION */
-	struct delayed_work	pd_controllers_update;
-	unsigned		pd_controllers_update_seconds;
-
 	struct bch_devs_mask	rw_devs[BCH_DATA_NR];
 
 	u64			capacity; /* sectors */
@@ -689,10 +702,11 @@ struct bch_fs {
 	struct bch_fs_usage		*usage_base;
 	struct bch_fs_usage __percpu	*usage[JOURNAL_BUF_NR];
 	struct bch_fs_usage __percpu	*usage_gc;
+	u64 __percpu		*online_reserved;
 
 	/* single element mempool: */
 	struct mutex		usage_scratch_lock;
-	struct bch_fs_usage	*usage_scratch;
+	struct bch_fs_usage_online *usage_scratch;
 
 	struct io_clock		io_clock[2];
 
@@ -724,11 +738,14 @@ struct bch_fs {
 	atomic_t		kick_gc;
 	unsigned long		gc_count;
 
+	enum btree_id		gc_gens_btree;
+	struct bpos		gc_gens_pos;
+
 	/*
 	 * Tracks GC's progress - everything in the range [ZERO_KEY..gc_cur_pos]
 	 * has been marked by GC.
 	 *
-	 * gc_cur_phase is a superset of btree_ids (BTREE_ID_EXTENTS etc.)
+	 * gc_cur_phase is a superset of btree_ids (BTREE_ID_extents etc.)
 	 *
 	 * Protected by gc_pos_lock. Only written to by GC thread, so GC thread
 	 * can read without a lock.
@@ -757,7 +774,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
@@ -770,9 +787,8 @@ struct bch_fs {
 	/* COPYGC */
 	struct task_struct	*copygc_thread;
 	copygc_heap		copygc_heap;
-	struct bch_pd_controller copygc_pd;
 	struct write_point	copygc_write_point;
-	u64			copygc_threshold;
+	s64			copygc_wait;
 
 	/* STRIPES: */
 	GENRADIX(struct stripe) stripes[2];
@@ -797,12 +813,18 @@ struct bch_fs {
 
 	/* REFLINK */
 	u64			reflink_hint;
+	reflink_gc_table	reflink_gc_table;
+	size_t			reflink_gc_nr;
+	size_t			reflink_gc_idx;
 
 	/* VFS IO PATH - fs-io.c */
 	struct bio_set		writepage_bioset;
 	struct bio_set		dio_write_bioset;
 	struct bio_set		dio_read_bioset;
 
+
+	atomic64_t		btree_writes_nr;
+	atomic64_t		btree_writes_sectors;
 	struct bio_list		btree_write_error_list;
 	struct work_struct	btree_write_error_work;
 	spinlock_t		btree_write_error_lock;
@@ -818,11 +840,9 @@ struct bch_fs {
 	/* DEBUG JUNK */
 	struct dentry		*debug;
 	struct btree_debug	btree_debug[BTREE_ID_NR];
-#ifdef CONFIG_BCACHEFS_DEBUG
 	struct btree		*verify_data;
 	struct btree_node	*verify_ondisk;
 	struct mutex		verify_lock;
-#endif
 
 	u64			*unused_inode_hints;
 	unsigned		inode_shard_bits;
@@ -872,19 +892,22 @@ static inline unsigned block_bytes(const struct bch_fs *c)
 	return c->opts.block_size << 9;
 }
 
-static inline struct timespec64 bch2_time_to_timespec(struct bch_fs *c, u64 time)
+static inline struct timespec64 bch2_time_to_timespec(struct bch_fs *c, s64 time)
 {
-	return ns_to_timespec64(time * c->sb.time_precision + c->sb.time_base_lo);
+	struct timespec64 t;
+	s32 rem;
+
+	time += c->sb.time_base_lo;
+
+	t.tv_sec = div_s64_rem(time, c->sb.time_units_per_sec, &rem);
+	t.tv_nsec = rem * c->sb.nsec_per_time_unit;
+	return t;
 }
 
 static inline s64 timespec_to_bch2_time(struct bch_fs *c, struct timespec64 ts)
 {
-	s64 ns = timespec64_to_ns(&ts) - c->sb.time_base_lo;
-
-	if (c->sb.time_precision == 1)
-		return ns;
-
-	return div_s64(ns, c->sb.time_precision);
+	return (ts.tv_sec * c->sb.time_units_per_sec +
+		(int) ts.tv_nsec / c->sb.nsec_per_time_unit) - c->sb.time_base_lo;
 }
 
 static inline s64 bch2_current_time(struct bch_fs *c)

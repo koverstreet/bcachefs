@@ -72,11 +72,14 @@ int bch2_btree_delete_range(struct bch_fs *, enum btree_id,
 
 int bch2_btree_node_rewrite(struct bch_fs *c, struct btree_iter *,
 			    __le64, unsigned);
+void bch2_btree_node_rewrite_async(struct bch_fs *, struct btree *);
 int bch2_btree_node_update_key(struct bch_fs *, struct btree_iter *,
 			       struct btree *, struct bkey_i *);
 
 int bch2_trans_update(struct btree_trans *, struct btree_iter *,
 		      struct bkey_i *, enum btree_trigger_flags);
+void bch2_trans_commit_hook(struct btree_trans *,
+			    struct btree_trans_commit_hook *);
 int __bch2_trans_commit(struct btree_trans *);
 
 /**
@@ -101,13 +104,12 @@ static inline int bch2_trans_commit(struct btree_trans *trans,
 	return __bch2_trans_commit(trans);
 }
 
-#define __bch2_trans_do(_trans, _disk_res, _journal_seq, _flags, _do)	\
+#define lockrestart_do(_trans, _do)					\
 ({									\
 	int _ret;							\
 									\
 	while (1) {							\
-		_ret = (_do) ?:	bch2_trans_commit(_trans, (_disk_res),	\
-					(_journal_seq), (_flags));	\
+		_ret = (_do);						\
 		if (_ret != -EINTR)					\
 			break;						\
 		bch2_trans_reset(_trans, 0);				\
@@ -115,6 +117,10 @@ static inline int bch2_trans_commit(struct btree_trans *trans,
 									\
 	_ret;								\
 })
+
+#define __bch2_trans_do(_trans, _disk_res, _journal_seq, _flags, _do)	\
+	lockrestart_do(_trans, _do ?: bch2_trans_commit(_trans, (_disk_res),\
+					(_journal_seq), (_flags)))
 
 #define bch2_trans_do(_c, _disk_res, _journal_seq, _flags, _do)		\
 ({									\

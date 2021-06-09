@@ -21,6 +21,14 @@
 #include <linux/sort.h>
 #include <trace/events/bcachefs.h>
 
+static inline int btree_insert_entry_cmp(const struct btree_insert_entry *l,
+					 const struct btree_insert_entry *r)
+{
+	return   cmp_int(l->btree_id,	r->btree_id) ?:
+		 -cmp_int(l->level,	r->level) ?:
+		 bpos_cmp(l->k->k.p,	r->k->k.p);
+}
+
 static inline bool same_leaf_as_prev(struct btree_trans *trans,
 				     struct btree_insert_entry *i)
 {
@@ -62,8 +70,8 @@ bool bch2_btree_bset_insert_key(struct btree_iter *iter,
 	EBUG_ON(btree_node_just_written(b));
 	EBUG_ON(bset_written(b, btree_bset_last(b)));
 	EBUG_ON(bkey_deleted(&insert->k) && bkey_val_u64s(&insert->k));
-	EBUG_ON(bkey_cmp(insert->k.p, b->data->min_key) < 0);
-	EBUG_ON(bkey_cmp(insert->k.p, b->data->max_key) > 0);
+	EBUG_ON(bpos_cmp(insert->k.p, b->data->min_key) < 0);
+	EBUG_ON(bpos_cmp(insert->k.p, b->data->max_key) > 0);
 	EBUG_ON(insert->k.u64s >
 		bch_btree_keys_u64s_remaining(iter->trans->c, b));
 	EBUG_ON(iter->flags & BTREE_ITER_IS_EXTENTS);
@@ -73,13 +81,13 @@ bool bch2_btree_bset_insert_key(struct btree_iter *iter,
 		k = NULL;
 
 	/* @k is the key being overwritten/deleted, if any: */
-	EBUG_ON(k && bkey_whiteout(k));
+	EBUG_ON(k && bkey_deleted(k));
 
 	/* Deleting, but not found? nothing to do: */
-	if (bkey_whiteout(&insert->k) && !k)
+	if (bkey_deleted(&insert->k) && !k)
 		return false;
 
-	if (bkey_whiteout(&insert->k)) {
+	if (bkey_deleted(&insert->k)) {
 		/* Deleting: */
 		btree_account_key_drop(b, k);
 		k->type = KEY_TYPE_deleted;
@@ -126,7 +134,7 @@ fix_iter:
 	return true;
 }
 
-static void __btree_node_flush(struct journal *j, struct journal_entry_pin *pin,
+static int __btree_node_flush(struct journal *j, struct journal_entry_pin *pin,
 			       unsigned i, u64 seq)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
@@ -137,14 +145,15 @@ static void __btree_node_flush(struct journal *j, struct journal_entry_pin *pin,
 	bch2_btree_node_write_cond(c, b,
 		(btree_current_write(b) == w && w->journal.seq == seq));
 	six_unlock_read(&b->c.lock);
+	return 0;
 }
 
-static void btree_node_flush0(struct journal *j, struct journal_entry_pin *pin, u64 seq)
+static int btree_node_flush0(struct journal *j, struct journal_entry_pin *pin, u64 seq)
 {
 	return __btree_node_flush(j, pin, 0, seq);
 }
 
-static void btree_node_flush1(struct journal *j, struct journal_entry_pin *pin, u64 seq)
+static int btree_node_flush1(struct journal *j, struct journal_entry_pin *pin, u64 seq)
 {
 	return __btree_node_flush(j, pin, 1, seq);
 }
@@ -211,19 +220,16 @@ static bool btree_insert_key_leaf(struct btree_trans *trans,
 /* Normal update interface: */
 
 static inline void btree_insert_entry_checks(struct btree_trans *trans,
-					     struct btree_iter *iter,
-					     struct bkey_i *insert)
+					     struct btree_insert_entry *i)
 {
-	struct bch_fs *c = trans->c;
-
-	BUG_ON(bkey_cmp(insert->k.p, iter->real_pos));
-	BUG_ON(bch2_debug_check_bkeys &&
-	       bch2_bkey_invalid(c, bkey_i_to_s_c(insert),
-				 __btree_node_type(iter->level, iter->btree_id)));
+	BUG_ON(!i->is_extent && bpos_cmp(i->k->k.p, i->iter->real_pos));
+	BUG_ON(i->level		!= i->iter->level);
+	BUG_ON(i->btree_id	!= i->iter->btree_id);
 }
 
 static noinline int
-bch2_trans_journal_preres_get_cold(struct btree_trans *trans, unsigned u64s)
+bch2_trans_journal_preres_get_cold(struct btree_trans *trans, unsigned u64s,
+				   unsigned long trace_ip)
 {
 	struct bch_fs *c = trans->c;
 	int ret;
@@ -236,7 +242,7 @@ bch2_trans_journal_preres_get_cold(struct btree_trans *trans, unsigned u64s)
 		return ret;
 
 	if (!bch2_trans_relock(trans)) {
-		trace_trans_restart_journal_preres_get(trans->ip);
+		trace_trans_restart_journal_preres_get(trans->ip, trace_ip);
 		return -EINTR;
 	}
 
@@ -288,6 +294,12 @@ btree_key_can_insert_cached(struct btree_trans *trans,
 	    !(trans->flags & BTREE_INSERT_JOURNAL_RECLAIM))
 		return BTREE_INSERT_NEED_JOURNAL_RECLAIM;
 
+	/*
+	 * bch2_varint_decode can read past the end of the buffer by at most 7
+	 * bytes (it won't be used):
+	 */
+	u64s += 1;
+
 	if (u64s <= ck->u64s)
 		return BTREE_INSERT_OK;
 
@@ -302,8 +314,7 @@ btree_key_can_insert_cached(struct btree_trans *trans,
 }
 
 static inline void do_btree_insert_one(struct btree_trans *trans,
-				       struct btree_iter *iter,
-				       struct bkey_i *insert)
+				       struct btree_insert_entry *i)
 {
 	struct bch_fs *c = trans->c;
 	struct journal *j = &c->journal;
@@ -312,37 +323,26 @@ static inline void do_btree_insert_one(struct btree_trans *trans,
 	EBUG_ON(trans->journal_res.ref !=
 		!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY));
 
-	insert->k.needs_whiteout = false;
+	i->k->k.needs_whiteout = false;
 
-	did_work = (btree_iter_type(iter) != BTREE_ITER_CACHED)
-		? btree_insert_key_leaf(trans, iter, insert)
-		: bch2_btree_insert_key_cached(trans, iter, insert);
+	did_work = (btree_iter_type(i->iter) != BTREE_ITER_CACHED)
+		? btree_insert_key_leaf(trans, i->iter, i->k)
+		: bch2_btree_insert_key_cached(trans, i->iter, i->k);
 	if (!did_work)
 		return;
 
 	if (likely(!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))) {
 		bch2_journal_add_keys(j, &trans->journal_res,
-				      iter->btree_id, insert);
+				      i->btree_id,
+				      i->level,
+				      i->k);
 
 		bch2_journal_set_has_inode(j, &trans->journal_res,
-					   insert->k.p.inode);
+					   i->k->k.p.inode);
 
 		if (trans->journal_seq)
 			*trans->journal_seq = trans->journal_res.seq;
 	}
-}
-
-static inline bool iter_has_trans_triggers(struct btree_iter *iter)
-{
-	return BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS & (1U << iter->btree_id);
-}
-
-static inline bool iter_has_nontrans_triggers(struct btree_iter *iter)
-{
-	return (((BTREE_NODE_TYPE_HAS_TRIGGERS &
-		  ~BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS)) |
-		(1U << BTREE_ID_EC)) &
-		(1U << iter->btree_id);
 }
 
 static noinline void bch2_btree_iter_unlock_noinline(struct btree_iter *iter)
@@ -369,17 +369,18 @@ static noinline void bch2_trans_mark_gc(struct btree_trans *trans)
 
 static inline int
 bch2_trans_commit_write_locked(struct btree_trans *trans,
-			       struct btree_insert_entry **stopped_at)
+			       struct btree_insert_entry **stopped_at,
+			       unsigned long trace_ip)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_fs_usage *fs_usage = NULL;
 	struct btree_insert_entry *i;
+	struct btree_trans_commit_hook *h;
 	unsigned u64s = 0;
 	bool marking = false;
 	int ret;
 
 	if (race_fault()) {
-		trace_trans_restart_fault_inject(trans->ip);
+		trace_trans_restart_fault_inject(trans->ip, trace_ip);
 		return -EINTR;
 	}
 
@@ -390,6 +391,14 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 	 */
 
 	prefetch(&trans->c->journal.flags);
+
+	h = trans->hooks;
+	while (h) {
+		ret = h->fn(trans, h);
+		if (ret)
+			return ret;
+		h = h->next;
+	}
 
 	trans_for_each_update2(trans, i) {
 		/* Multiple inserts might go to same leaf: */
@@ -405,13 +414,19 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 			return ret;
 		}
 
-		if (btree_node_type_needs_gc(i->iter->btree_id))
+		if (btree_node_type_needs_gc(i->bkey_type))
 			marking = true;
 	}
 
 	if (marking) {
 		percpu_down_read(&c->mark_lock);
-		fs_usage = bch2_fs_usage_scratch_get(c);
+	}
+
+	/* Must be called under mark_lock: */
+	if (marking && trans->fs_usage_deltas &&
+	    !bch2_replicas_delta_list_marked(c, trans->fs_usage_deltas)) {
+		ret = BTREE_INSERT_NEED_MARK_REPLICAS;
+		goto err;
 	}
 
 	/*
@@ -450,57 +465,104 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 				i->k->k.version = MAX_VERSION;
 	}
 
-	/* Must be called under mark_lock: */
-	if (marking && trans->fs_usage_deltas &&
-	    bch2_replicas_delta_list_apply(c, fs_usage,
-					   trans->fs_usage_deltas)) {
-		ret = BTREE_INSERT_NEED_MARK_REPLICAS;
-		goto err;
-	}
-
 	trans_for_each_update(trans, i)
-		if (iter_has_nontrans_triggers(i->iter))
+		if (BTREE_NODE_TYPE_HAS_MEM_TRIGGERS & (1U << i->bkey_type))
 			bch2_mark_update(trans, i->iter, i->k,
-					 fs_usage, i->trigger_flags);
+					 NULL, i->trigger_flags);
 
-	if (marking)
-		bch2_trans_fs_usage_apply(trans, fs_usage);
+	if (marking && trans->fs_usage_deltas)
+		bch2_trans_fs_usage_apply(trans, trans->fs_usage_deltas);
 
 	if (unlikely(c->gc_pos.phase))
 		bch2_trans_mark_gc(trans);
 
 	trans_for_each_update2(trans, i)
-		do_btree_insert_one(trans, i->iter, i->k);
+		do_btree_insert_one(trans, i);
 err:
 	if (marking) {
-		bch2_fs_usage_scratch_put(c, fs_usage);
 		percpu_up_read(&c->mark_lock);
 	}
 
 	return ret;
 }
 
+static noinline int maybe_do_btree_merge(struct btree_trans *trans, struct btree_iter *iter)
+{
+	struct btree_insert_entry *i;
+	struct btree *b = iter_l(iter)->b;
+	struct bkey_s_c old;
+	int u64s_delta = 0;
+	int ret;
+
+	/*
+	 * Inserting directly into interior nodes is an uncommon operation with
+	 * various weird edge cases: also, a lot of things about
+	 * BTREE_ITER_NODES iters need to be audited
+	 */
+	if (unlikely(btree_iter_type(iter) != BTREE_ITER_KEYS))
+		return 0;
+
+	BUG_ON(iter->level);
+
+	trans_for_each_update2(trans, i) {
+		if (iter_l(i->iter)->b != b)
+			continue;
+
+		old = bch2_btree_iter_peek_slot(i->iter);
+		ret = bkey_err(old);
+		if (ret)
+			return ret;
+
+		u64s_delta += !bkey_deleted(&i->k->k) ? i->k->k.u64s : 0;
+		u64s_delta -= !bkey_deleted(old.k) ? old.k->u64s : 0;
+	}
+
+	return u64s_delta <= 0
+		? (bch2_foreground_maybe_merge(trans->c, iter, iter->level,
+				trans->flags & ~BTREE_INSERT_NOUNLOCK) ?: -EINTR)
+		: 0;
+}
+
 /*
  * Get journal reservation, take write locks, and attempt to do btree update(s):
  */
 static inline int do_bch2_trans_commit(struct btree_trans *trans,
-				       struct btree_insert_entry **stopped_at)
+				       struct btree_insert_entry **stopped_at,
+				       unsigned long trace_ip)
 {
+	struct bch_fs *c = trans->c;
 	struct btree_insert_entry *i;
 	struct btree_iter *iter;
 	int ret;
 
-	trans_for_each_update2(trans, i)
-		BUG_ON(!btree_node_intent_locked(i->iter, i->iter->level));
+	trans_for_each_update2(trans, i) {
+		struct btree *b;
 
-	ret = bch2_journal_preres_get(&trans->c->journal,
+		BUG_ON(!btree_node_intent_locked(i->iter, i->level));
+
+		if (btree_iter_type(i->iter) == BTREE_ITER_CACHED)
+			continue;
+
+		b = iter_l(i->iter)->b;
+		if (b->sib_u64s[0] < c->btree_foreground_merge_threshold ||
+		    b->sib_u64s[1] < c->btree_foreground_merge_threshold) {
+			ret = maybe_do_btree_merge(trans, i->iter);
+			if (unlikely(ret))
+				return ret;
+		}
+	}
+
+	trans_for_each_update2(trans, i)
+		BUG_ON(!btree_node_intent_locked(i->iter, i->level));
+
+	ret = bch2_journal_preres_get(&c->journal,
 			&trans->journal_preres, trans->journal_preres_u64s,
 			JOURNAL_RES_GET_NONBLOCK|
-			((trans->flags & BTREE_INSERT_JOURNAL_RECLAIM)
-			 ? JOURNAL_RES_GET_RECLAIM : 0));
+			((trans->flags & BTREE_INSERT_JOURNAL_RESERVED)
+			 ? JOURNAL_RES_GET_RESERVED : 0));
 	if (unlikely(ret == -EAGAIN))
 		ret = bch2_trans_journal_preres_get_cold(trans,
-						trans->journal_preres_u64s);
+						trans->journal_preres_u64s, trace_ip);
 	if (unlikely(ret))
 		return ret;
 
@@ -517,10 +579,11 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 	 */
 	trans_for_each_iter(trans, iter) {
 		if (iter->nodes_locked != iter->nodes_intent_locked) {
-			if ((iter->flags & BTREE_ITER_KEEP_UNTIL_COMMIT) ||
-			    (trans->iters_live & (1ULL << iter->idx))) {
+			if (btree_iter_keep(trans, iter)) {
 				if (!bch2_btree_iter_upgrade(iter, 1)) {
-					trace_trans_restart_upgrade(trans->ip);
+					trace_trans_restart_upgrade(trans->ip, trace_ip,
+								    iter->btree_id,
+								    &iter->real_pos);
 					return -EINTR;
 				}
 			} else {
@@ -529,17 +592,26 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 		}
 	}
 
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG))
-		trans_for_each_update2(trans, i)
-			btree_insert_entry_checks(trans, i->iter, i->k);
+	trans_for_each_update2(trans, i) {
+		const char *invalid = bch2_bkey_invalid(c,
+				bkey_i_to_s_c(i->k), i->bkey_type);
+		if (invalid) {
+			char buf[200];
+
+			bch2_bkey_val_to_text(&PBUF(buf), c, bkey_i_to_s_c(i->k));
+			bch_err(c, "invalid bkey %s on insert: %s\n", buf, invalid);
+			bch2_fatal_error(c);
+		}
+		btree_insert_entry_checks(trans, i);
+	}
 	bch2_btree_trans_verify_locks(trans);
 
 	trans_for_each_update2(trans, i)
 		if (!same_leaf_as_prev(trans, i))
-			bch2_btree_node_lock_for_insert(trans->c,
+			bch2_btree_node_lock_for_insert(c,
 					iter_l(i->iter)->b, i->iter);
 
-	ret = bch2_trans_commit_write_locked(trans, stopped_at);
+	ret = bch2_trans_commit_write_locked(trans, stopped_at, trace_ip);
 
 	trans_for_each_update2(trans, i)
 		if (!same_leaf_as_prev(trans, i))
@@ -547,38 +619,37 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 							     i->iter);
 
 	if (!ret && trans->journal_pin)
-		bch2_journal_pin_add(&trans->c->journal, trans->journal_res.seq,
+		bch2_journal_pin_add(&c->journal, trans->journal_res.seq,
 				     trans->journal_pin, NULL);
 
 	/*
 	 * Drop journal reservation after dropping write locks, since dropping
 	 * the journal reservation may kick off a journal write:
 	 */
-	bch2_journal_res_put(&trans->c->journal, &trans->journal_res);
+	bch2_journal_res_put(&c->journal, &trans->journal_res);
 
 	if (unlikely(ret))
 		return ret;
-
-	if (trans->flags & BTREE_INSERT_NOUNLOCK)
-		trans->nounlock = true;
-
-	trans_for_each_update2(trans, i)
-		if (btree_iter_type(i->iter) != BTREE_ITER_CACHED &&
-		    !same_leaf_as_prev(trans, i))
-			bch2_foreground_maybe_merge(trans->c, i->iter,
-						    0, trans->flags);
-
-	trans->nounlock = false;
 
 	bch2_trans_downgrade(trans);
 
 	return 0;
 }
 
+static int journal_reclaim_wait_done(struct bch_fs *c)
+{
+	int ret = bch2_journal_error(&c->journal) ?:
+		!bch2_btree_key_cache_must_wait(c);
+
+	if (!ret)
+		journal_reclaim_kick(&c->journal);
+	return ret;
+}
+
 static noinline
 int bch2_trans_commit_error(struct btree_trans *trans,
 			    struct btree_insert_entry *i,
-			    int ret)
+			    int ret, unsigned long trace_ip)
 {
 	struct bch_fs *c = trans->c;
 	unsigned flags = trans->flags;
@@ -619,30 +690,35 @@ int bch2_trans_commit_error(struct btree_trans *trans,
 		if (!ret ||
 		    ret == -EINTR ||
 		    (flags & BTREE_INSERT_NOUNLOCK)) {
-			trace_trans_restart_btree_node_split(trans->ip);
+			trace_trans_restart_btree_node_split(trans->ip, trace_ip,
+							     i->iter->btree_id,
+							     &i->iter->real_pos);
 			ret = -EINTR;
 		}
 		break;
 	case BTREE_INSERT_ENOSPC:
+		BUG_ON(flags & BTREE_INSERT_NOFAIL);
 		ret = -ENOSPC;
 		break;
 	case BTREE_INSERT_NEED_MARK_REPLICAS:
 		bch2_trans_unlock(trans);
 
-		trans_for_each_update(trans, i) {
-			ret = bch2_mark_bkey_replicas(c, bkey_i_to_s_c(i->k));
-			if (ret)
-				return ret;
-		}
+		ret = bch2_replicas_delta_list_mark(c, trans->fs_usage_deltas);
+		if (ret)
+			return ret;
 
 		if (bch2_trans_relock(trans))
 			return 0;
 
-		trace_trans_restart_mark_replicas(trans->ip);
+		trace_trans_restart_mark_replicas(trans->ip, trace_ip);
 		ret = -EINTR;
 		break;
 	case BTREE_INSERT_NEED_JOURNAL_RES:
 		bch2_trans_unlock(trans);
+
+		if ((trans->flags & BTREE_INSERT_JOURNAL_RECLAIM) &&
+		    !(trans->flags & BTREE_INSERT_JOURNAL_RESERVED))
+			return -EAGAIN;
 
 		ret = bch2_trans_journal_res_get(trans, JOURNAL_RES_GET_CHECK);
 		if (ret)
@@ -651,28 +727,31 @@ int bch2_trans_commit_error(struct btree_trans *trans,
 		if (bch2_trans_relock(trans))
 			return 0;
 
-		trace_trans_restart_journal_res_get(trans->ip);
+		trace_trans_restart_journal_res_get(trans->ip, trace_ip);
 		ret = -EINTR;
 		break;
 	case BTREE_INSERT_NEED_JOURNAL_RECLAIM:
 		bch2_trans_unlock(trans);
 
-		do {
-			mutex_lock(&c->journal.reclaim_lock);
-			ret = bch2_journal_reclaim(&c->journal);
-			mutex_unlock(&c->journal.reclaim_lock);
-		} while (!ret && bch2_btree_key_cache_must_wait(c));
+		trace_trans_blocked_journal_reclaim(trans->ip, trace_ip);
 
-		if (!ret && bch2_trans_relock(trans))
+		wait_event_freezable(c->journal.reclaim_wait,
+				     (ret = journal_reclaim_wait_done(c)));
+		if (ret < 0)
+			return ret;
+
+		if (bch2_trans_relock(trans))
 			return 0;
 
-		trace_trans_restart_journal_reclaim(trans->ip);
+		trace_trans_restart_journal_reclaim(trans->ip, trace_ip);
 		ret = -EINTR;
 		break;
 	default:
 		BUG_ON(ret >= 0);
 		break;
 	}
+
+	BUG_ON(ret == -ENOSPC && (flags & BTREE_INSERT_NOFAIL));
 
 	return ret;
 }
@@ -696,144 +775,134 @@ bch2_trans_commit_get_rw_cold(struct btree_trans *trans)
 	return 0;
 }
 
-static inline int btree_iter_pos_cmp(const struct btree_iter *l,
-				     const struct btree_iter *r)
+static void __bch2_trans_update2(struct btree_trans *trans,
+				 struct btree_insert_entry n)
 {
-	return   cmp_int(l->btree_id, r->btree_id) ?:
-		 bkey_cmp(l->pos, r->pos);
-}
+	struct btree_insert_entry *i;
 
-static int bch2_trans_update2(struct btree_trans *trans,
-			       struct btree_iter *iter,
-			       struct bkey_i *insert)
-{
-	struct btree_insert_entry *i, n = (struct btree_insert_entry) {
-		.iter = iter, .k = insert
-	};
-	int ret;
-
-	btree_insert_entry_checks(trans, n.iter, n.k);
+	btree_insert_entry_checks(trans, &n);
 
 	EBUG_ON(trans->nr_updates2 >= BTREE_ITER_MAX);
 
-	ret = bch2_btree_iter_traverse(iter);
-	if (unlikely(ret))
-		return ret;
+	n.iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
 
-	BUG_ON(iter->uptodate > BTREE_ITER_NEED_PEEK);
-
-	iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
-
-	trans_for_each_update2(trans, i) {
-		if (btree_iter_pos_cmp(n.iter, i->iter) == 0) {
-			*i = n;
-			return 0;
-		}
-
-		if (btree_iter_pos_cmp(n.iter, i->iter) <= 0)
+	trans_for_each_update2(trans, i)
+		if (btree_insert_entry_cmp(&n, i) <= 0)
 			break;
-	}
 
-	array_insert_item(trans->updates2, trans->nr_updates2,
-			  i - trans->updates2, n);
-	return 0;
+	if (i < trans->updates2 + trans->nr_updates2 &&
+	    !btree_insert_entry_cmp(&n, i))
+		*i = n;
+	else
+		array_insert_item(trans->updates2, trans->nr_updates2,
+				  i - trans->updates2, n);
+}
+
+static void bch2_trans_update2(struct btree_trans *trans,
+			       struct btree_iter *iter,
+			       struct bkey_i *insert)
+{
+	__bch2_trans_update2(trans, (struct btree_insert_entry) {
+		.bkey_type	= __btree_node_type(iter->level, iter->btree_id),
+		.btree_id	= iter->btree_id,
+		.level		= iter->level,
+		.iter		= iter,
+		.k		= insert,
+	});
 }
 
 static int extent_update_to_keys(struct btree_trans *trans,
-				 struct btree_iter *orig_iter,
-				 struct bkey_i *insert)
+				 struct btree_insert_entry n)
 {
-	struct btree_iter *iter;
 	int ret;
 
-	ret = bch2_extent_can_insert(trans, orig_iter, insert);
+	ret = bch2_extent_can_insert(trans, n.iter, n.k);
 	if (ret)
 		return ret;
 
-	if (bkey_deleted(&insert->k))
+	if (bkey_deleted(&n.k->k))
 		return 0;
 
-	iter = bch2_trans_copy_iter(trans, orig_iter);
+	n.iter = bch2_trans_get_iter(trans, n.iter->btree_id, n.k->k.p,
+				     BTREE_ITER_INTENT|
+				     BTREE_ITER_NOT_EXTENTS);
+	n.is_extent = false;
 
-	iter->flags |= BTREE_ITER_INTENT;
-	__bch2_btree_iter_set_pos(iter, insert->k.p, false);
-	ret = bch2_trans_update2(trans, iter, insert);
-	bch2_trans_iter_put(trans, iter);
-	return ret;
+	__bch2_trans_update2(trans, n);
+	bch2_trans_iter_put(trans, n.iter);
+	return 0;
 }
 
 static int extent_handle_overwrites(struct btree_trans *trans,
 				    enum btree_id btree_id,
-				    struct bpos start, struct bpos end)
+				    struct bkey_i *insert)
 {
-	struct btree_iter *iter = NULL, *update_iter;
+	struct btree_iter *iter, *update_iter;
+	struct bpos start = bkey_start_pos(&insert->k);
 	struct bkey_i *update;
 	struct bkey_s_c k;
 	int ret = 0;
 
-	iter = bch2_trans_get_iter(trans, btree_id, start, BTREE_ITER_INTENT);
+	iter = bch2_trans_get_iter(trans, btree_id, start,
+				   BTREE_ITER_INTENT);
 	k = bch2_btree_iter_peek_with_updates(iter);
 
 	while (k.k && !(ret = bkey_err(k))) {
-		if (bkey_cmp(end, bkey_start_pos(k.k)) <= 0)
+		if (bkey_cmp(insert->k.p, bkey_start_pos(k.k)) <= 0)
 			break;
 
 		if (bkey_cmp(bkey_start_pos(k.k), start) < 0) {
-			update_iter = bch2_trans_copy_iter(trans, iter);
-
 			update = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
 			if ((ret = PTR_ERR_OR_ZERO(update)))
-				goto err;
+				break;
 
 			bkey_reassemble(update, k);
+
 			bch2_cut_back(start, update);
 
-			__bch2_btree_iter_set_pos(update_iter, update->k.p, false);
-			ret = bch2_trans_update2(trans, update_iter, update);
+			update_iter = bch2_trans_get_iter(trans, btree_id, update->k.p,
+							  BTREE_ITER_NOT_EXTENTS|
+							  BTREE_ITER_INTENT);
+			bch2_trans_update2(trans, update_iter, update);
 			bch2_trans_iter_put(trans, update_iter);
-			if (ret)
-				goto err;
 		}
 
-		if (bkey_cmp(k.k->p, end) > 0) {
-			update_iter = bch2_trans_copy_iter(trans, iter);
-
-			update = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
-			if ((ret = PTR_ERR_OR_ZERO(update)))
-				goto err;
-
-			bkey_reassemble(update, k);
-			bch2_cut_front(end, update);
-
-			__bch2_btree_iter_set_pos(update_iter, update->k.p, false);
-			ret = bch2_trans_update2(trans, update_iter, update);
-			bch2_trans_iter_put(trans, update_iter);
-			if (ret)
-				goto err;
-		} else {
-			update_iter = bch2_trans_copy_iter(trans, iter);
-
+		if (bkey_cmp(k.k->p, insert->k.p) < 0 ||
+		    (!bkey_cmp(k.k->p, insert->k.p) && bkey_deleted(&insert->k))) {
 			update = bch2_trans_kmalloc(trans, sizeof(struct bkey));
 			if ((ret = PTR_ERR_OR_ZERO(update)))
-				goto err;
+				break;
 
-			update->k = *k.k;
-			set_bkey_val_u64s(&update->k, 0);
-			update->k.type = KEY_TYPE_deleted;
-			update->k.size = 0;
+			bkey_init(&update->k);
+			update->k.p = k.k->p;
 
-			__bch2_btree_iter_set_pos(update_iter, update->k.p, false);
-			ret = bch2_trans_update2(trans, update_iter, update);
+			update_iter = bch2_trans_get_iter(trans, btree_id, update->k.p,
+							  BTREE_ITER_NOT_EXTENTS|
+							  BTREE_ITER_INTENT);
+			bch2_trans_update2(trans, update_iter, update);
 			bch2_trans_iter_put(trans, update_iter);
-			if (ret)
-				goto err;
+		}
+
+		if (bkey_cmp(k.k->p, insert->k.p) > 0) {
+			update = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
+			if ((ret = PTR_ERR_OR_ZERO(update)))
+				break;
+
+			bkey_reassemble(update, k);
+			bch2_cut_front(insert->k.p, update);
+
+			update_iter = bch2_trans_get_iter(trans, btree_id, update->k.p,
+							  BTREE_ITER_NOT_EXTENTS|
+							  BTREE_ITER_INTENT);
+			bch2_trans_update2(trans, update_iter, update);
+			bch2_trans_iter_put(trans, update_iter);
+			break;
 		}
 
 		k = bch2_btree_iter_next_with_updates(iter);
 	}
-err:
-	if (!IS_ERR_OR_NULL(iter))
-		bch2_trans_iter_put(trans, iter);
+	bch2_trans_iter_put(trans, iter);
+
 	return ret;
 }
 
@@ -842,7 +911,7 @@ int __bch2_trans_commit(struct btree_trans *trans)
 	struct btree_insert_entry *i = NULL;
 	struct btree_iter *iter;
 	bool trans_trigger_run;
-	unsigned u64s;
+	unsigned u64s, reset_flags = 0;
 	int ret = 0;
 
 	if (!trans->nr_updates)
@@ -868,7 +937,7 @@ int __bch2_trans_commit(struct btree_trans *trans)
 		if (btree_iter_type(i->iter) != BTREE_ITER_CACHED &&
 		    !(i->trigger_flags & BTREE_TRIGGER_NORUN))
 			bch2_btree_key_cache_verify_clean(trans,
-					i->iter->btree_id, i->iter->pos);
+					i->btree_id, i->k->k.p);
 #endif
 
 	/*
@@ -879,24 +948,7 @@ int __bch2_trans_commit(struct btree_trans *trans)
 		trans_trigger_run = false;
 
 		trans_for_each_update(trans, i) {
-			ret = bch2_btree_iter_traverse(i->iter);
-			if (unlikely(ret)) {
-				trace_trans_restart_traverse(trans->ip);
-				goto out;
-			}
-
-			/*
-			 * We're not using bch2_btree_iter_upgrade here because
-			 * we know trans->nounlock can't be set:
-			 */
-			if (unlikely(!btree_node_intent_locked(i->iter, i->iter->level) &&
-				     !__bch2_btree_iter_upgrade(i->iter, i->iter->level + 1))) {
-				trace_trans_restart_upgrade(trans->ip);
-				ret = -EINTR;
-				goto out;
-			}
-
-			if (iter_has_trans_triggers(i->iter) &&
+			if ((BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS & (1U << i->bkey_type)) &&
 			    !i->trans_triggers_run) {
 				i->trans_triggers_run = true;
 				trans_trigger_run = true;
@@ -905,7 +957,9 @@ int __bch2_trans_commit(struct btree_trans *trans)
 							     i->trigger_flags);
 				if (unlikely(ret)) {
 					if (ret == -EINTR)
-						trace_trans_restart_mark(trans->ip);
+						trace_trans_restart_mark(trans->ip, _RET_IP_,
+									 i->iter->btree_id,
+									 &i->iter->pos);
 					goto out;
 				}
 			}
@@ -914,38 +968,38 @@ int __bch2_trans_commit(struct btree_trans *trans)
 
 	/* Turn extents updates into keys: */
 	trans_for_each_update(trans, i)
-		if (i->iter->flags & BTREE_ITER_IS_EXTENTS) {
-			struct bpos start = bkey_start_pos(&i->k->k);
-
-			while (i + 1 < trans->updates + trans->nr_updates &&
-			       i[0].iter->btree_id == i[1].iter->btree_id &&
-			       !bkey_cmp(i[0].k->k.p, bkey_start_pos(&i[1].k->k)))
-				i++;
-
-			ret = extent_handle_overwrites(trans, i->iter->btree_id,
-						       start, i->k->k.p);
-			if (ret)
+		if (i->is_extent) {
+			ret = extent_handle_overwrites(trans, i->btree_id, i->k);
+			if (unlikely(ret))
 				goto out;
 		}
 
 	trans_for_each_update(trans, i) {
-		if (i->iter->flags & BTREE_ITER_IS_EXTENTS) {
-			ret = extent_update_to_keys(trans, i->iter, i->k);
-		} else {
-			ret = bch2_trans_update2(trans, i->iter, i->k);
-		}
-		if (ret)
+		ret = i->is_extent
+			? extent_update_to_keys(trans, *i)
+			: (__bch2_trans_update2(trans, *i), 0);
+		if (unlikely(ret))
 			goto out;
 	}
 
 	trans_for_each_update2(trans, i) {
-		BUG_ON(i->iter->locks_want < 1);
-
 		ret = bch2_btree_iter_traverse(i->iter);
 		if (unlikely(ret)) {
-			trace_trans_restart_traverse(trans->ip);
+			trace_trans_restart_traverse(trans->ip, _RET_IP_,
+						     i->iter->btree_id,
+						     &i->iter->pos);
 			goto out;
 		}
+
+		if (unlikely(!bch2_btree_iter_upgrade(i->iter, i->level + 1))) {
+			trace_trans_restart_upgrade(trans->ip, _RET_IP_,
+						    i->iter->btree_id,
+						    &i->iter->pos);
+			ret = -EINTR;
+			goto out;
+		}
+
+		BUG_ON(!btree_node_intent_locked(i->iter, i->level));
 
 		u64s = jset_u64s(i->k->k.u64s);
 		if (btree_iter_type(i->iter) == BTREE_ITER_CACHED &&
@@ -956,7 +1010,7 @@ int __bch2_trans_commit(struct btree_trans *trans)
 retry:
 	memset(&trans->journal_res, 0, sizeof(trans->journal_res));
 
-	ret = do_bch2_trans_commit(trans, &i);
+	ret = do_bch2_trans_commit(trans, &i, _RET_IP_);
 
 	/* make sure we didn't drop or screw up locks: */
 	bch2_btree_trans_verify_locks(trans);
@@ -965,7 +1019,7 @@ retry:
 		goto err;
 
 	trans_for_each_iter(trans, iter)
-		if ((trans->iters_live & (1ULL << iter->idx)) &&
+		if (btree_iter_live(trans, iter) &&
 		    (iter->flags & BTREE_ITER_SET_POS_AFTER_COMMIT))
 			bch2_btree_iter_set_pos(iter, iter->pos_after_commit);
 out:
@@ -974,11 +1028,15 @@ out:
 	if (likely(!(trans->flags & BTREE_INSERT_NOCHECK_RW)))
 		percpu_ref_put(&trans->c->writes);
 out_reset:
-	bch2_trans_reset(trans, !ret ? TRANS_RESET_NOTRAVERSE : 0);
+	if (!ret)
+		reset_flags |= TRANS_RESET_NOTRAVERSE;
+	if (!ret && (trans->flags & BTREE_INSERT_NOUNLOCK))
+		reset_flags |= TRANS_RESET_NOUNLOCK;
+	bch2_trans_reset(trans, reset_flags);
 
 	return ret;
 err:
-	ret = bch2_trans_commit_error(trans, i, ret);
+	ret = bch2_trans_commit_error(trans, i, ret, _RET_IP_);
 	if (ret)
 		goto out;
 
@@ -989,81 +1047,130 @@ int bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 		      struct bkey_i *k, enum btree_trigger_flags flags)
 {
 	struct btree_insert_entry *i, n = (struct btree_insert_entry) {
-		.trigger_flags = flags, .iter = iter, .k = k
+		.trigger_flags	= flags,
+		.bkey_type	= __btree_node_type(iter->level, iter->btree_id),
+		.btree_id	= iter->btree_id,
+		.level		= iter->level,
+		.is_extent	= (iter->flags & BTREE_ITER_IS_EXTENTS) != 0,
+		.iter		= iter,
+		.k		= k
 	};
+
+	BUG_ON(trans->nr_updates >= BTREE_ITER_MAX);
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 	BUG_ON(bkey_cmp(iter->pos,
-			(iter->flags & BTREE_ITER_IS_EXTENTS)
-			? bkey_start_pos(&k->k)
-			: k->k.p));
+			n.is_extent ? bkey_start_pos(&k->k) : k->k.p));
 
 	trans_for_each_update(trans, i) {
 		BUG_ON(bkey_cmp(i->iter->pos,
-				 (i->iter->flags & BTREE_ITER_IS_EXTENTS)
-				 ? bkey_start_pos(&i->k->k)
-				 : i->k->k.p));
+				i->is_extent ? bkey_start_pos(&i->k->k) : i->k->k.p));
 
 		BUG_ON(i != trans->updates &&
-		       btree_iter_pos_cmp(i[-1].iter, i[0].iter) >= 0);
+		       btree_insert_entry_cmp(i - 1, i) >= 0);
 	}
 #endif
 
 	iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
 
-	if (btree_node_type_is_extents(iter->btree_id)) {
+	if (n.is_extent) {
 		iter->pos_after_commit = k->k.p;
 		iter->flags |= BTREE_ITER_SET_POS_AFTER_COMMIT;
 	}
 
 	/*
-	 * Pending updates are kept sorted: first, find position of new update:
+	 * Pending updates are kept sorted: first, find position of new update,
+	 * then delete/trim any updates the new update overwrites:
 	 */
-	trans_for_each_update(trans, i)
-		if (btree_iter_pos_cmp(iter, i->iter) <= 0)
-			break;
+	if (!n.is_extent) {
+		trans_for_each_update(trans, i)
+			if (btree_insert_entry_cmp(&n, i) <= 0)
+				break;
 
-	/*
-	 * Now delete/trim any updates the new update overwrites:
-	 */
-	if (i > trans->updates &&
-	    i[-1].iter->btree_id == iter->btree_id &&
-	    bkey_cmp(iter->pos, i[-1].k->k.p) < 0)
-		bch2_cut_back(n.iter->pos, i[-1].k);
+		if (i < trans->updates + trans->nr_updates &&
+		    !btree_insert_entry_cmp(&n, i))
+			*i = n;
+		else
+			array_insert_item(trans->updates, trans->nr_updates,
+					  i - trans->updates, n);
+	} else {
+		trans_for_each_update(trans, i)
+			if (btree_insert_entry_cmp(&n, i) < 0)
+				break;
 
-	while (i < trans->updates + trans->nr_updates &&
-	       iter->btree_id == i->iter->btree_id &&
-	       bkey_cmp(n.k->k.p, i->k->k.p) >= 0)
-		array_remove_item(trans->updates, trans->nr_updates,
-				  i - trans->updates);
-
-	if (i < trans->updates + trans->nr_updates &&
-	    iter->btree_id == i->iter->btree_id &&
-	    bkey_cmp(n.k->k.p, i->iter->pos) > 0) {
-		/*
-		 * When we have an extent that overwrites the start of another
-		 * update, trimming that extent will mean the iterator's
-		 * position has to change since the iterator position has to
-		 * match the extent's start pos - but we don't want to change
-		 * the iterator pos if some other code is using it, so we may
-		 * need to clone it:
-		 */
-		if (trans->iters_live & (1ULL << i->iter->idx)) {
-			i->iter = bch2_trans_copy_iter(trans, i->iter);
-
-			i->iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
-			bch2_trans_iter_put(trans, i->iter);
+		while (i > trans->updates &&
+		       i[-1].btree_id == n.btree_id &&
+		       bkey_cmp(bkey_start_pos(&n.k->k),
+				bkey_start_pos(&i[-1].k->k)) <= 0) {
+			--i;
+			array_remove_item(trans->updates, trans->nr_updates,
+					  i - trans->updates);
 		}
 
-		bch2_cut_front(n.k->k.p, i->k);
-		bch2_btree_iter_set_pos(i->iter, n.k->k.p);
+		if (i > trans->updates &&
+		    i[-1].btree_id == n.btree_id &&
+		    bkey_cmp(bkey_start_pos(&n.k->k), i[-1].k->k.p) < 0)
+			bch2_cut_back(bkey_start_pos(&n.k->k), i[-1].k);
+
+		if (i < trans->updates + trans->nr_updates &&
+		    i->btree_id == n.btree_id &&
+		    bkey_cmp(n.k->k.p, bkey_start_pos(&i->k->k)) > 0) {
+			if (bkey_cmp(bkey_start_pos(&n.k->k),
+				     bkey_start_pos(&i->k->k)) > 0) {
+				struct btree_insert_entry split = *i;
+				int ret;
+
+				BUG_ON(trans->nr_updates + 1 >= BTREE_ITER_MAX);
+
+				split.k = bch2_trans_kmalloc(trans, bkey_bytes(&i->k->k));
+				ret = PTR_ERR_OR_ZERO(split.k);
+				if (ret)
+					return ret;
+
+				bkey_copy(split.k, i->k);
+				bch2_cut_back(bkey_start_pos(&n.k->k), split.k);
+
+				split.iter = bch2_trans_get_iter(trans, split.btree_id,
+								 bkey_start_pos(&split.k->k),
+								 BTREE_ITER_INTENT);
+				split.iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
+				bch2_trans_iter_put(trans, split.iter);
+				array_insert_item(trans->updates, trans->nr_updates,
+						  i - trans->updates, split);
+				i++;
+			}
+
+			/*
+			 * When we have an extent that overwrites the start of another
+			 * update, trimming that extent will mean the iterator's
+			 * position has to change since the iterator position has to
+			 * match the extent's start pos - but we don't want to change
+			 * the iterator pos if some other code is using it, so we may
+			 * need to clone it:
+			 */
+			if (btree_iter_live(trans, i->iter)) {
+				i->iter = bch2_trans_copy_iter(trans, i->iter);
+
+				i->iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
+				bch2_trans_iter_put(trans, i->iter);
+			}
+
+			bch2_cut_front(n.k->k.p, i->k);
+			bch2_btree_iter_set_pos(i->iter, n.k->k.p);
+		}
+
+		array_insert_item(trans->updates, trans->nr_updates,
+				  i - trans->updates, n);
 	}
 
-	EBUG_ON(trans->nr_updates >= BTREE_ITER_MAX);
-
-	array_insert_item(trans->updates, trans->nr_updates,
-			  i - trans->updates, n);
 	return 0;
+}
+
+void bch2_trans_commit_hook(struct btree_trans *trans,
+			    struct btree_trans_commit_hook *h)
+{
+	h->next = trans->hooks;
+	trans->hooks = h;
 }
 
 int __bch2_btree_insert(struct btree_trans *trans,
@@ -1075,8 +1182,7 @@ int __bch2_btree_insert(struct btree_trans *trans,
 	iter = bch2_trans_get_iter(trans, id, bkey_start_pos(&k->k),
 				   BTREE_ITER_INTENT);
 
-	ret   = bch2_btree_iter_traverse(iter) ?:
-		bch2_trans_update(trans, iter, k, 0);
+	ret = bch2_trans_update(trans, iter, k, 0);
 	bch2_trans_iter_put(trans, iter);
 	return ret;
 }
@@ -1105,9 +1211,9 @@ int bch2_btree_delete_at(struct btree_trans *trans,
 	bkey_init(&k.k);
 	k.k.p = iter->pos;
 
-	bch2_trans_update(trans, iter, &k, 0);
-	return bch2_trans_commit(trans, NULL, NULL,
-				 BTREE_INSERT_NOFAIL|flags);
+	return  bch2_trans_update(trans, iter, &k, 0) ?:
+		bch2_trans_commit(trans, NULL, NULL,
+				  BTREE_INSERT_NOFAIL|flags);
 }
 
 int bch2_btree_delete_range_trans(struct btree_trans *trans, enum btree_id id,
@@ -1158,8 +1264,8 @@ retry:
 				break;
 		}
 
-		bch2_trans_update(trans, iter, &delete, 0);
-		ret = bch2_trans_commit(trans, NULL, journal_seq,
+		ret   = bch2_trans_update(trans, iter, &delete, 0) ?:
+			bch2_trans_commit(trans, NULL, journal_seq,
 					BTREE_INSERT_NOFAIL);
 		if (ret)
 			break;
@@ -1172,7 +1278,7 @@ retry:
 		goto retry;
 	}
 
-	bch2_trans_iter_put(trans, iter);
+	bch2_trans_iter_free(trans, iter);
 	return ret;
 }
 

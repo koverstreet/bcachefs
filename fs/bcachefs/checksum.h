@@ -7,7 +7,7 @@
 #include "super-io.h"
 
 #include <linux/crc64.h>
-#include <crypto/chacha20.h>
+#include <crypto/chacha.h>
 
 static inline bool bch2_checksum_mergeable(unsigned type)
 {
@@ -77,11 +77,11 @@ static inline enum bch_csum_type bch2_csum_opt_to_type(enum bch_csum_opts type,
 						       bool data)
 {
 	switch (type) {
-	case BCH_CSUM_OPT_NONE:
+	case BCH_CSUM_OPT_none:
 	     return BCH_CSUM_NONE;
-	case BCH_CSUM_OPT_CRC32C:
+	case BCH_CSUM_OPT_crc32c:
 	     return data ? BCH_CSUM_CRC32C : BCH_CSUM_CRC32C_NONZERO;
-	case BCH_CSUM_OPT_CRC64:
+	case BCH_CSUM_OPT_crc64:
 	     return data ? BCH_CSUM_CRC64 : BCH_CSUM_CRC64_NONZERO;
 	default:
 	     BUG();
@@ -138,9 +138,9 @@ static inline bool bch2_crc_cmp(struct bch_csum l, struct bch_csum r)
 /* for skipping ahead and encrypting/decrypting at an offset: */
 static inline struct nonce nonce_add(struct nonce nonce, unsigned offset)
 {
-	EBUG_ON(offset & (CHACHA20_BLOCK_SIZE - 1));
+	EBUG_ON(offset & (CHACHA_BLOCK_SIZE - 1));
 
-	le32_add_cpu(&nonce.d[0], offset / CHACHA20_BLOCK_SIZE);
+	le32_add_cpu(&nonce.d[0], offset / CHACHA_BLOCK_SIZE);
 	return nonce;
 }
 

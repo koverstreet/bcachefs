@@ -59,7 +59,7 @@ static const char *key_type_cookie_invalid(const struct bch_fs *c,
 	.key_invalid = key_type_cookie_invalid,		\
 }
 
-#define bch2_bkey_ops_whiteout (struct bkey_ops) {	\
+#define bch2_bkey_ops_hash_whiteout (struct bkey_ops) {	\
 	.key_invalid = empty_val_key_invalid,		\
 }
 
@@ -98,13 +98,50 @@ const char *bch2_bkey_val_invalid(struct bch_fs *c, struct bkey_s_c k)
 	return bch2_bkey_ops[k.k->type].key_invalid(c, k);
 }
 
+static unsigned bch2_key_types_allowed[] = {
+	[BKEY_TYPE_extents] =
+		(1U << KEY_TYPE_error)|
+		(1U << KEY_TYPE_extent)|
+		(1U << KEY_TYPE_reservation)|
+		(1U << KEY_TYPE_reflink_p)|
+		(1U << KEY_TYPE_inline_data),
+	[BKEY_TYPE_inodes] =
+		(1U << KEY_TYPE_inode)|
+		(1U << KEY_TYPE_inode_generation),
+	[BKEY_TYPE_dirents] =
+		(1U << KEY_TYPE_hash_whiteout)|
+		(1U << KEY_TYPE_dirent),
+	[BKEY_TYPE_xattrs] =
+		(1U << KEY_TYPE_hash_whiteout)|
+		(1U << KEY_TYPE_xattr),
+	[BKEY_TYPE_alloc] =
+		(1U << KEY_TYPE_alloc)|
+		(1U << KEY_TYPE_alloc_v2),
+	[BKEY_TYPE_quotas] =
+		(1U << KEY_TYPE_quota),
+	[BKEY_TYPE_stripes] =
+		(1U << KEY_TYPE_stripe),
+	[BKEY_TYPE_reflink] =
+		(1U << KEY_TYPE_reflink_v)|
+		(1U << KEY_TYPE_indirect_inline_data),
+	[BKEY_TYPE_btree] =
+		(1U << KEY_TYPE_btree_ptr)|
+		(1U << KEY_TYPE_btree_ptr_v2),
+};
+
 const char *__bch2_bkey_invalid(struct bch_fs *c, struct bkey_s_c k,
 				enum btree_node_type type)
 {
+	unsigned key_types_allowed = (1U << KEY_TYPE_deleted)|
+		bch2_key_types_allowed[type] ;
+
 	if (k.k->u64s < BKEY_U64s)
 		return "u64s too small";
 
-	if (type == BKEY_TYPE_BTREE &&
+	if (!(key_types_allowed & (1U << k.k->type)))
+		return "invalid key type for this btree";
+
+	if (type == BKEY_TYPE_btree &&
 	    bkey_val_u64s(k.k) > BKEY_BTREE_PTR_VAL_U64s_MAX)
 		return "value too big";
 
@@ -119,10 +156,17 @@ const char *__bch2_bkey_invalid(struct bch_fs *c, struct bkey_s_c k,
 			return "nonzero size field";
 	}
 
-	if (k.k->p.snapshot)
+	if (type != BKEY_TYPE_btree &&
+	    !btree_type_has_snapshots(type) &&
+	    k.k->p.snapshot)
 		return "nonzero snapshot";
 
-	if (type != BKEY_TYPE_BTREE &&
+	if (type != BKEY_TYPE_btree &&
+	    btree_type_has_snapshots(type) &&
+	    k.k->p.snapshot != U32_MAX)
+		return "invalid snapshot field";
+
+	if (type != BKEY_TYPE_btree &&
 	    !bkey_cmp(k.k->p, POS_MAX))
 		return "POS_MAX key";
 
@@ -138,10 +182,10 @@ const char *bch2_bkey_invalid(struct bch_fs *c, struct bkey_s_c k,
 
 const char *bch2_bkey_in_btree_node(struct btree *b, struct bkey_s_c k)
 {
-	if (bkey_cmp(k.k->p, b->data->min_key) < 0)
+	if (bpos_cmp(k.k->p, b->data->min_key) < 0)
 		return "key before start of btree node";
 
-	if (bkey_cmp(k.k->p, b->data->max_key) > 0)
+	if (bpos_cmp(k.k->p, b->data->max_key) > 0)
 		return "key past end of btree node";
 
 	return NULL;
@@ -149,7 +193,6 @@ const char *bch2_bkey_in_btree_node(struct btree *b, struct bkey_s_c k)
 
 void bch2_bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
 {
-	const struct bkey_ops *ops = &bch2_bkey_ops[k.k->type];
 	const char *invalid;
 
 	BUG_ON(!k.k->u64s);
@@ -161,21 +204,31 @@ void bch2_bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
 
 		bch2_bkey_val_to_text(&PBUF(buf), c, k);
 		bch2_fs_inconsistent(c, "invalid bkey %s: %s", buf, invalid);
-		return;
 	}
-
-	if (ops->key_debugcheck)
-		ops->key_debugcheck(c, k);
 }
 
 void bch2_bpos_to_text(struct printbuf *out, struct bpos pos)
 {
-	if (!bkey_cmp(pos, POS_MIN))
+	if (!bpos_cmp(pos, POS_MIN))
 		pr_buf(out, "POS_MIN");
-	else if (!bkey_cmp(pos, POS_MAX))
+	else if (!bpos_cmp(pos, POS_MAX))
 		pr_buf(out, "POS_MAX");
-	else
-		pr_buf(out, "%llu:%llu", pos.inode, pos.offset);
+	else {
+		if (pos.inode == U64_MAX)
+			pr_buf(out, "U64_MAX");
+		else
+			pr_buf(out, "%llu", pos.inode);
+		pr_buf(out, ":");
+		if (pos.offset == U64_MAX)
+			pr_buf(out, "U64_MAX");
+		else
+			pr_buf(out, "%llu", pos.offset);
+		pr_buf(out, ":");
+		if (pos.snapshot == U32_MAX)
+			pr_buf(out, "U32_MAX");
+		else
+			pr_buf(out, "%u", pos.snapshot);
+	}
 }
 
 void bch2_bkey_to_text(struct printbuf *out, const struct bkey *k)
@@ -190,8 +243,7 @@ void bch2_bkey_to_text(struct printbuf *out, const struct bkey *k)
 
 		bch2_bpos_to_text(out, k->p);
 
-		pr_buf(out, " snap %u len %u ver %llu",
-		       k->p.snapshot, k->size, k->version.lo);
+		pr_buf(out, " len %u ver %llu", k->size, k->version.lo);
 	} else {
 		pr_buf(out, "(null)");
 	}
@@ -248,7 +300,7 @@ enum merge_result bch2_bkey_merge(struct bch_fs *c,
 	    !ops->key_merge ||
 	    l.k->type != r.k->type ||
 	    bversion_cmp(l.k->version, r.k->version) ||
-	    bkey_cmp(l.k->p, bkey_start_pos(r.k)))
+	    bpos_cmp(l.k->p, bkey_start_pos(r.k)))
 		return BCH_MERGE_NOMERGE;
 
 	ret = ops->key_merge(c, l, r);
@@ -263,18 +315,18 @@ static const struct old_bkey_type {
 	u8		old;
 	u8		new;
 } bkey_renumber_table[] = {
-	{BKEY_TYPE_BTREE,	128, KEY_TYPE_btree_ptr		},
-	{BKEY_TYPE_EXTENTS,	128, KEY_TYPE_extent		},
-	{BKEY_TYPE_EXTENTS,	129, KEY_TYPE_extent		},
-	{BKEY_TYPE_EXTENTS,	130, KEY_TYPE_reservation	},
-	{BKEY_TYPE_INODES,	128, KEY_TYPE_inode		},
-	{BKEY_TYPE_INODES,	130, KEY_TYPE_inode_generation	},
-	{BKEY_TYPE_DIRENTS,	128, KEY_TYPE_dirent		},
-	{BKEY_TYPE_DIRENTS,	129, KEY_TYPE_whiteout		},
-	{BKEY_TYPE_XATTRS,	128, KEY_TYPE_xattr		},
-	{BKEY_TYPE_XATTRS,	129, KEY_TYPE_whiteout		},
-	{BKEY_TYPE_ALLOC,	128, KEY_TYPE_alloc		},
-	{BKEY_TYPE_QUOTAS,	128, KEY_TYPE_quota		},
+	{BKEY_TYPE_btree,	128, KEY_TYPE_btree_ptr		},
+	{BKEY_TYPE_extents,	128, KEY_TYPE_extent		},
+	{BKEY_TYPE_extents,	129, KEY_TYPE_extent		},
+	{BKEY_TYPE_extents,	130, KEY_TYPE_reservation	},
+	{BKEY_TYPE_inodes,	128, KEY_TYPE_inode		},
+	{BKEY_TYPE_inodes,	130, KEY_TYPE_inode_generation	},
+	{BKEY_TYPE_dirents,	128, KEY_TYPE_dirent		},
+	{BKEY_TYPE_dirents,	129, KEY_TYPE_hash_whiteout	},
+	{BKEY_TYPE_xattrs,	128, KEY_TYPE_xattr		},
+	{BKEY_TYPE_xattrs,	129, KEY_TYPE_hash_whiteout	},
+	{BKEY_TYPE_alloc,	128, KEY_TYPE_alloc		},
+	{BKEY_TYPE_quotas,	128, KEY_TYPE_quota		},
 };
 
 void bch2_bkey_renumber(enum btree_node_type btree_node_type,
@@ -302,14 +354,15 @@ void __bch2_bkey_compat(unsigned level, enum btree_id btree_id,
 	const struct bkey_ops *ops;
 	struct bkey uk;
 	struct bkey_s u;
+	unsigned nr_compat = 5;
 	int i;
 
 	/*
 	 * Do these operations in reverse order in the write path:
 	 */
 
-	for (i = 0; i < 4; i++)
-	switch (!write ? i : 3 - i) {
+	for (i = 0; i < nr_compat; i++)
+	switch (!write ? i : nr_compat - 1 - i) {
 	case 0:
 		if (big_endian != CPU_BIG_ENDIAN)
 			bch2_bkey_swab_key(f, k);
@@ -320,7 +373,7 @@ void __bch2_bkey_compat(unsigned level, enum btree_id btree_id,
 		break;
 	case 2:
 		if (version < bcachefs_metadata_version_inode_btree_change &&
-		    btree_id == BTREE_ID_INODES) {
+		    btree_id == BTREE_ID_inodes) {
 			if (!bkey_packed(k)) {
 				struct bkey_i *u = packed_to_bkey(k);
 				swap(u->k.p.inode, u->k.p.offset);
@@ -343,6 +396,28 @@ void __bch2_bkey_compat(unsigned level, enum btree_id btree_id,
 		}
 		break;
 	case 3:
+		if (version < bcachefs_metadata_version_snapshot &&
+		    (level || btree_type_has_snapshots(btree_id))) {
+			struct bkey_i *u = packed_to_bkey(k);
+
+			if (u) {
+				u->k.p.snapshot = write
+					? 0 : U32_MAX;
+			} else {
+				u64 min_packed = f->field_offset[BKEY_FIELD_SNAPSHOT];
+				u64 max_packed = min_packed +
+					~(~0ULL << f->bits_per_field[BKEY_FIELD_SNAPSHOT]);
+
+				uk = __bch2_bkey_unpack_key(f, k);
+				uk.p.snapshot = write
+					? min_packed : min_t(u64, U32_MAX, max_packed);
+
+				BUG_ON(!bch2_bkey_pack_key(k, &uk, f));
+			}
+		}
+
+		break;
+	case 4:
 		if (!bkey_packed(k)) {
 			u = bkey_i_to_s(packed_to_bkey(k));
 		} else {

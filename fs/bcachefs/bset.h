@@ -188,7 +188,7 @@ static inline enum bset_aux_tree_type bset_aux_tree_type(const struct bset_tree 
  * gets to the second cacheline.
  */
 
-#define BSET_CACHELINE		128
+#define BSET_CACHELINE		256
 
 static inline size_t btree_keys_cachelines(const struct btree *b)
 {
@@ -305,7 +305,7 @@ static inline struct bkey_s __bkey_disassemble(struct btree *b,
 #define bset_tree_for_each_key(_b, _t, _k)				\
 	for (_k = btree_bkey_first(_b, _t);				\
 	     _k != btree_bkey_last(_b, _t);				\
-	     _k = bkey_next_skip_noops(_k, btree_bkey_last(_b, _t)))
+	     _k = bkey_next(_k))
 
 static inline bool bset_has_ro_aux_tree(struct bset_tree *t)
 {
@@ -378,7 +378,7 @@ static inline int bkey_cmp_p_or_unp(const struct btree *b,
 	EBUG_ON(r_packed && !bkey_packed(r_packed));
 
 	if (unlikely(!bkey_packed(l)))
-		return bkey_cmp(packed_to_bkey_c(l)->p, *r);
+		return bpos_cmp(packed_to_bkey_c(l)->p, *r);
 
 	if (likely(r_packed))
 		return __bch2_bkey_cmp_packed_format_checked(l, r_packed, b);
@@ -400,25 +400,7 @@ bch2_bkey_prev_all(struct btree *b, struct bset_tree *t, struct bkey_packed *k)
 static inline struct bkey_packed *
 bch2_bkey_prev(struct btree *b, struct bset_tree *t, struct bkey_packed *k)
 {
-	return bch2_bkey_prev_filter(b, t, k, KEY_TYPE_discard + 1);
-}
-
-enum bch_extent_overlap {
-	BCH_EXTENT_OVERLAP_ALL		= 0,
-	BCH_EXTENT_OVERLAP_BACK		= 1,
-	BCH_EXTENT_OVERLAP_FRONT	= 2,
-	BCH_EXTENT_OVERLAP_MIDDLE	= 3,
-};
-
-/* Returns how k overlaps with m */
-static inline enum bch_extent_overlap bch2_extent_overlap(const struct bkey *k,
-							  const struct bkey *m)
-{
-	int cmp1 = bkey_cmp(k->p, m->p) < 0;
-	int cmp2 = bkey_cmp(bkey_start_pos(k),
-			    bkey_start_pos(m)) > 0;
-
-	return (cmp1 << 1) + cmp2;
+	return bch2_bkey_prev_filter(b, t, k, 1);
 }
 
 /* Btree key iteration */
@@ -506,33 +488,23 @@ __bch2_btree_node_iter_peek_all(struct btree_node_iter *iter,
 }
 
 static inline struct bkey_packed *
-bch2_btree_node_iter_peek_filter(struct btree_node_iter *iter,
-				 struct btree *b,
-				 unsigned min_key_type)
+bch2_btree_node_iter_peek_all(struct btree_node_iter *iter, struct btree *b)
 {
-	while (!bch2_btree_node_iter_end(iter)) {
-		struct bkey_packed *k = __bch2_btree_node_iter_peek_all(iter, b);
-
-		if (k->type >= min_key_type)
-			return k;
-
-		bch2_btree_node_iter_advance(iter, b);
-	}
-
-	return NULL;
-}
-
-static inline struct bkey_packed *
-bch2_btree_node_iter_peek_all(struct btree_node_iter *iter,
-			      struct btree *b)
-{
-	return bch2_btree_node_iter_peek_filter(iter, b, 0);
+	return !bch2_btree_node_iter_end(iter)
+		? __btree_node_offset_to_key(b, iter->data->k)
+		: NULL;
 }
 
 static inline struct bkey_packed *
 bch2_btree_node_iter_peek(struct btree_node_iter *iter, struct btree *b)
 {
-	return bch2_btree_node_iter_peek_filter(iter, b, KEY_TYPE_discard + 1);
+	struct bkey_packed *k;
+
+	while ((k = bch2_btree_node_iter_peek_all(iter, b)) &&
+	       bkey_deleted(k))
+		bch2_btree_node_iter_advance(iter, b);
+
+	return k;
 }
 
 static inline struct bkey_packed *
@@ -548,14 +520,8 @@ bch2_btree_node_iter_next_all(struct btree_node_iter *iter, struct btree *b)
 
 struct bkey_packed *bch2_btree_node_iter_prev_all(struct btree_node_iter *,
 						  struct btree *);
-struct bkey_packed *bch2_btree_node_iter_prev_filter(struct btree_node_iter *,
-						     struct btree *, unsigned);
-
-static inline struct bkey_packed *
-bch2_btree_node_iter_prev(struct btree_node_iter *iter, struct btree *b)
-{
-	return bch2_btree_node_iter_prev_filter(iter, b, KEY_TYPE_discard + 1);
-}
+struct bkey_packed *bch2_btree_node_iter_prev(struct btree_node_iter *,
+					      struct btree *);
 
 struct bkey_s_c bch2_btree_node_iter_peek_unpack(struct btree_node_iter *,
 						struct btree *,

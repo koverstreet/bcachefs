@@ -99,7 +99,7 @@ static int bch2_dev_alloc(struct bch_fs *, unsigned);
 static int bch2_dev_sysfs_online(struct bch_fs *, struct bch_dev *);
 static void __bch2_dev_read_only(struct bch_fs *, struct bch_dev *);
 
-struct bch_fs *bch2_bdev_to_fs(struct block_device *bdev)
+struct bch_fs *bch2_dev_to_fs(dev_t dev)
 {
 	struct bch_fs *c;
 	struct bch_dev *ca;
@@ -110,7 +110,7 @@ struct bch_fs *bch2_bdev_to_fs(struct block_device *bdev)
 
 	list_for_each_entry(c, &bch_fs_list, list)
 		for_each_member_device_rcu(ca, c, i, NULL)
-			if (ca->disk_sb.bdev == bdev) {
+			if (ca->disk_sb.bdev && ca->disk_sb.bdev->bd_dev == dev) {
 				closure_get(&c->cl);
 				goto found;
 			}
@@ -163,44 +163,6 @@ static void bch2_dev_usage_journal_reserve(struct bch_fs *c)
 
 	bch2_journal_entry_res_resize(&c->journal,
 			&c->dev_usage_journal_res, u64s * nr);
-}
-
-int bch2_congested(void *data, int bdi_bits)
-{
-	struct bch_fs *c = data;
-	struct backing_dev_info *bdi;
-	struct bch_dev *ca;
-	unsigned i;
-	int ret = 0;
-
-	rcu_read_lock();
-	if (bdi_bits & (1 << WB_sync_congested)) {
-		/* Reads - check all devices: */
-		for_each_readable_member(ca, c, i) {
-			bdi = ca->disk_sb.bdev->bd_bdi;
-
-			if (bdi_congested(bdi, bdi_bits)) {
-				ret = 1;
-				break;
-			}
-		}
-	} else {
-		const struct bch_devs_mask *devs =
-			bch2_target_to_mask(c, c->opts.foreground_target) ?:
-			&c->rw_devs[BCH_DATA_user];
-
-		for_each_member_device_rcu(ca, c, i, devs) {
-			bdi = ca->disk_sb.bdev->bd_bdi;
-
-			if (bdi_congested(bdi, bdi_bits)) {
-				ret = 1;
-				break;
-			}
-		}
-	}
-	rcu_read_unlock();
-
-	return ret;
 }
 
 /* Filesystem RO/RW: */
@@ -324,7 +286,6 @@ void bch2_fs_read_only(struct bch_fs *c)
 	percpu_ref_kill(&c->writes);
 
 	cancel_work_sync(&c->ec_stripe_delete_work);
-	cancel_delayed_work(&c->pd_controllers_update);
 
 	/*
 	 * If we're not doing an emergency shutdown, we want to wait on
@@ -409,8 +370,6 @@ static int bch2_fs_read_write_late(struct bch_fs *c)
 		return ret;
 	}
 
-	schedule_delayed_work(&c->pd_controllers_update, 5 * HZ);
-
 	schedule_work(&c->ec_stripe_delete_work);
 
 	return 0;
@@ -421,6 +380,11 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 	struct bch_dev *ca;
 	unsigned i;
 	int ret;
+
+	if (test_bit(BCH_FS_INITIAL_GC_UNFIXED, &c->flags)) {
+		bch_err(c, "cannot go rw, unfixed btree errors");
+		return -EROFS;
+	}
 
 	if (test_bit(BCH_FS_RW, &c->flags))
 		return 0;
@@ -433,6 +397,8 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 	    (c->opts.nochanges &&
 	     (!early || c->opts.read_only)))
 		return -EROFS;
+
+	bch_info(c, "going read-write");
 
 	ret = bch2_fs_mark_dirty(c);
 	if (ret)
@@ -479,6 +445,7 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 
 	percpu_ref_reinit(&c->writes);
 	set_bit(BCH_FS_RW, &c->flags);
+	set_bit(BCH_FS_WAS_RW, &c->flags);
 	return 0;
 err:
 	__bch2_fs_read_only(c);
@@ -516,6 +483,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_fs_btree_iter_exit(c);
 	bch2_fs_btree_key_cache_exit(&c->btree_key_cache);
 	bch2_fs_btree_cache_exit(c);
+	bch2_fs_replicas_exit(c);
 	bch2_fs_journal_exit(&c->journal);
 	bch2_io_clock_exit(&c->io_clock[WRITE]);
 	bch2_io_clock_exit(&c->io_clock[READ]);
@@ -523,15 +491,12 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_journal_keys_free(&c->journal_keys);
 	bch2_journal_entries_free(&c->journal_entries);
 	percpu_free_rwsem(&c->mark_lock);
-	kfree(c->usage_scratch);
-	for (i = 0; i < ARRAY_SIZE(c->usage); i++)
-		free_percpu(c->usage[i]);
-	kfree(c->usage_base);
 
 	if (c->btree_iters_bufs)
 		for_each_possible_cpu(cpu)
 			kfree(per_cpu_ptr(c->btree_iters_bufs, cpu)->iter);
 
+	free_percpu(c->online_reserved);
 	free_percpu(c->btree_iters_bufs);
 	free_percpu(c->pcpu);
 	mempool_exit(&c->large_bkey_pool);
@@ -539,20 +504,21 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bioset_exit(&c->btree_bio);
 	mempool_exit(&c->fill_iter);
 	percpu_ref_exit(&c->writes);
-	kfree(c->replicas.entries);
-	kfree(c->replicas_gc.entries);
 	kfree(rcu_dereference_protected(c->disk_groups, 1));
 	kfree(c->journal_seq_blacklist_table);
 	kfree(c->unused_inode_hints);
 	free_heap(&c->copygc_heap);
 
+	if (c->io_complete_wq )
+		destroy_workqueue(c->io_complete_wq );
 	if (c->copygc_wq)
 		destroy_workqueue(c->copygc_wq);
-	if (c->wq)
-		destroy_workqueue(c->wq);
+	if (c->btree_error_wq)
+		destroy_workqueue(c->btree_error_wq);
+	if (c->btree_update_wq)
+		destroy_workqueue(c->btree_update_wq);
 
-	free_pages((unsigned long) c->disk_sb.sb,
-		   c->disk_sb.page_order);
+	bch2_free_super(&c->disk_sb);
 	kvpfree(c, sizeof(*c));
 	module_put(THIS_MODULE);
 }
@@ -582,8 +548,7 @@ void __bch2_fs_stop(struct bch_fs *c)
 	for_each_member_device(ca, c, i)
 		if (ca->kobj.state_in_sysfs &&
 		    ca->disk_sb.bdev)
-			sysfs_remove_link(&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj,
-					  "bcachefs");
+			sysfs_remove_link(bdev_kobj(ca->disk_sb.bdev), "bcachefs");
 
 	if (c->kobj.state_in_sysfs)
 		kobject_del(&c->kobj);
@@ -602,7 +567,6 @@ void __bch2_fs_stop(struct bch_fs *c)
 		cancel_work_sync(&ca->io_error_work);
 
 	cancel_work_sync(&c->btree_write_error_work);
-	cancel_delayed_work_sync(&c->pd_controllers_update);
 	cancel_work_sync(&c->read_only_work);
 
 	for (i = 0; i < c->sb.nr_devices; i++)
@@ -667,9 +631,11 @@ static const char *bch2_fs_online(struct bch_fs *c)
 	down_write(&c->state_lock);
 
 	err = "error creating sysfs objects";
-	__for_each_member_device(ca, c, i, NULL)
-		if (bch2_dev_sysfs_online(c, ca))
+	for_each_member_device(ca, c, i)
+		if (bch2_dev_sysfs_online(c, ca)) {
+			percpu_ref_put(&ca->ref);
 			goto err;
+		}
 
 	list_add(&c->list, &bch_fs_list);
 	err = NULL;
@@ -798,10 +764,14 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 
 	c->inode_shard_bits = ilog2(roundup_pow_of_two(num_possible_cpus()));
 
-	if (!(c->wq = alloc_workqueue("bcachefs",
+	if (!(c->btree_update_wq = alloc_workqueue("bcachefs",
+				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_CPU_INTENSIVE, 1)) ||
+	    !(c->btree_error_wq = alloc_workqueue("bcachefs_error",
 				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_CPU_INTENSIVE, 1)) ||
 	    !(c->copygc_wq = alloc_workqueue("bcachefs_copygc",
 				WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_CPU_INTENSIVE, 1)) ||
+	    !(c->io_complete_wq = alloc_workqueue("bcachefs_io",
+				WQ_FREEZABLE|WQ_HIGHPRI|WQ_MEM_RECLAIM, 1)) ||
 	    percpu_ref_init(&c->writes, bch2_writes_disabled,
 			    PERCPU_REF_INIT_DEAD, GFP_KERNEL) ||
 	    mempool_init_kmalloc_pool(&c->fill_iter, 1, iter_size) ||
@@ -811,6 +781,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 			BIOSET_NEED_BVECS) ||
 	    !(c->pcpu = alloc_percpu(struct bch_fs_pcpu)) ||
 	    !(c->btree_iters_bufs = alloc_percpu(struct btree_iter_buf)) ||
+	    !(c->online_reserved = alloc_percpu(u64)) ||
 	    mempool_init_kvpmalloc_pool(&c->btree_bounce_pool, 1,
 					btree_bytes(c)) ||
 	    mempool_init_kmalloc_pool(&c->large_bkey_pool, 1, 2048) ||
@@ -943,9 +914,16 @@ int bch2_fs_start(struct bch_fs *c)
 	/*
 	 * Allocator threads don't start filling copygc reserve until after we
 	 * set BCH_FS_STARTED - wake them now:
+	 *
+	 * XXX ugly hack:
+	 * Need to set ca->allocator_state here instead of relying on the
+	 * allocator threads to do it to avoid racing with the copygc threads
+	 * checking it and thinking they have no alloc reserve:
 	 */
-	for_each_online_member(ca, c, i)
+	for_each_online_member(ca, c, i) {
+		ca->allocator_state = ALLOCATOR_running;
 		bch2_wake_allocator(ca);
+	}
 
 	if (c->opts.read_only || c->opts.nochanges) {
 		bch2_fs_read_only(c);
@@ -1048,8 +1026,7 @@ static void bch2_dev_free(struct bch_dev *ca)
 
 	if (ca->kobj.state_in_sysfs &&
 	    ca->disk_sb.bdev)
-		sysfs_remove_link(&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj,
-				  "bcachefs");
+		sysfs_remove_link(bdev_kobj(ca->disk_sb.bdev), "bcachefs");
 
 	if (ca->kobj.state_in_sysfs)
 		kobject_del(&ca->kobj);
@@ -1085,10 +1062,7 @@ static void __bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca)
 	wait_for_completion(&ca->io_ref_completion);
 
 	if (ca->kobj.state_in_sysfs) {
-		struct kobject *block =
-			&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj;
-
-		sysfs_remove_link(block, "bcachefs");
+		sysfs_remove_link(bdev_kobj(ca->disk_sb.bdev), "bcachefs");
 		sysfs_remove_link(&ca->kobj, "block");
 	}
 
@@ -1125,12 +1099,12 @@ static int bch2_dev_sysfs_online(struct bch_fs *c, struct bch_dev *ca)
 	}
 
 	if (ca->disk_sb.bdev) {
-		struct kobject *block =
-			&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj;
+		struct kobject *block = bdev_kobj(ca->disk_sb.bdev);
 
 		ret = sysfs_create_link(block, &ca->kobj, "bcachefs");
 		if (ret)
 			return ret;
+
 		ret = sysfs_create_link(&ca->kobj, block, "block");
 		if (ret)
 			return ret;
@@ -1214,7 +1188,7 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 
 	ca->fs = c;
 
-	if (ca->mi.state == BCH_MEMBER_STATE_RW &&
+	if (ca->mi.state == BCH_MEMBER_STATE_rw &&
 	    bch2_dev_allocator_start(ca)) {
 		bch2_dev_free(ca);
 		goto err;
@@ -1321,16 +1295,16 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 	lockdep_assert_held(&c->state_lock);
 
 	switch (new_state) {
-	case BCH_MEMBER_STATE_RW:
+	case BCH_MEMBER_STATE_rw:
 		return true;
-	case BCH_MEMBER_STATE_RO:
-		if (ca->mi.state != BCH_MEMBER_STATE_RW)
+	case BCH_MEMBER_STATE_ro:
+		if (ca->mi.state != BCH_MEMBER_STATE_rw)
 			return true;
 
 		/* do we have enough devices to write to?  */
 		for_each_member_device(ca2, c, i)
 			if (ca2 != ca)
-				nr_rw += ca2->mi.state == BCH_MEMBER_STATE_RW;
+				nr_rw += ca2->mi.state == BCH_MEMBER_STATE_rw;
 
 		required = max(!(flags & BCH_FORCE_IF_METADATA_DEGRADED)
 			       ? c->opts.metadata_replicas
@@ -1340,10 +1314,10 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 			       : c->opts.data_replicas_required);
 
 		return nr_rw >= required;
-	case BCH_MEMBER_STATE_FAILED:
-	case BCH_MEMBER_STATE_SPARE:
-		if (ca->mi.state != BCH_MEMBER_STATE_RW &&
-		    ca->mi.state != BCH_MEMBER_STATE_RO)
+	case BCH_MEMBER_STATE_failed:
+	case BCH_MEMBER_STATE_spare:
+		if (ca->mi.state != BCH_MEMBER_STATE_rw &&
+		    ca->mi.state != BCH_MEMBER_STATE_ro)
 			return true;
 
 		/* do we have enough devices to read from?  */
@@ -1380,8 +1354,8 @@ static bool bch2_fs_may_start(struct bch_fs *c)
 			ca = bch_dev_locked(c, i);
 
 			if (!bch2_dev_is_online(ca) &&
-			    (ca->mi.state == BCH_MEMBER_STATE_RW ||
-			     ca->mi.state == BCH_MEMBER_STATE_RO)) {
+			    (ca->mi.state == BCH_MEMBER_STATE_rw ||
+			     ca->mi.state == BCH_MEMBER_STATE_ro)) {
 				mutex_unlock(&c->sb_lock);
 				return false;
 			}
@@ -1414,7 +1388,7 @@ static const char *__bch2_dev_read_write(struct bch_fs *c, struct bch_dev *ca)
 {
 	lockdep_assert_held(&c->state_lock);
 
-	BUG_ON(ca->mi.state != BCH_MEMBER_STATE_RW);
+	BUG_ON(ca->mi.state != BCH_MEMBER_STATE_rw);
 
 	bch2_dev_allocator_add(c, ca);
 	bch2_recalc_capacity(c);
@@ -1437,10 +1411,10 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 	if (!bch2_dev_state_allowed(c, ca, new_state, flags))
 		return -EINVAL;
 
-	if (new_state != BCH_MEMBER_STATE_RW)
+	if (new_state != BCH_MEMBER_STATE_rw)
 		__bch2_dev_read_only(c, ca);
 
-	bch_notice(ca, "%s", bch2_dev_state[new_state]);
+	bch_notice(ca, "%s", bch2_member_states[new_state]);
 
 	mutex_lock(&c->sb_lock);
 	mi = bch2_sb_get_members(c->disk_sb.sb);
@@ -1448,7 +1422,7 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
 
-	if (new_state == BCH_MEMBER_STATE_RW &&
+	if (new_state == BCH_MEMBER_STATE_rw &&
 	    __bch2_dev_read_write(c, ca))
 		ret = -ENOMEM;
 
@@ -1471,7 +1445,7 @@ int bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 
 /* Device add/removal: */
 
-int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
+static int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct btree_trans trans;
 	size_t i;
@@ -1481,7 +1455,7 @@ int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
 
 	for (i = 0; i < ca->mi.nbuckets; i++) {
 		ret = bch2_btree_key_cache_flush(&trans,
-				BTREE_ID_ALLOC, POS(ca->dev_idx, i));
+				BTREE_ID_alloc, POS(ca->dev_idx, i));
 		if (ret)
 			break;
 	}
@@ -1490,7 +1464,7 @@ int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
 	if (ret)
 		return ret;
 
-	return bch2_btree_delete_range(c, BTREE_ID_ALLOC,
+	return bch2_btree_delete_range(c, BTREE_ID_alloc,
 				       POS(ca->dev_idx, 0),
 				       POS(ca->dev_idx + 1, 0),
 				       NULL);
@@ -1510,7 +1484,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	 */
 	percpu_ref_put(&ca->ref);
 
-	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_FAILED, flags)) {
+	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_failed, flags)) {
 		bch_err(ca, "Cannot remove without losing data");
 		goto err;
 	}
@@ -1594,7 +1568,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	bch2_dev_usage_journal_reserve(c);
 	return 0;
 err:
-	if (ca->mi.state == BCH_MEMBER_STATE_RW &&
+	if (ca->mi.state == BCH_MEMBER_STATE_rw &&
 	    !percpu_ref_is_zero(&ca->io_ref))
 		__bch2_dev_read_write(c, ca);
 	up_write(&c->state_lock);
@@ -1714,11 +1688,11 @@ have_slot:
 	bch2_dev_usage_journal_reserve(c);
 
 	err = "error marking superblock";
-	ret = bch2_trans_mark_dev_sb(c, NULL, ca);
+	ret = bch2_trans_mark_dev_sb(c, ca);
 	if (ret)
 		goto err_late;
 
-	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
+	if (ca->mi.state == BCH_MEMBER_STATE_rw) {
 		err = __bch2_dev_read_write(c, ca);
 		if (err)
 			goto err_late;
@@ -1774,12 +1748,12 @@ int bch2_dev_online(struct bch_fs *c, const char *path)
 
 	ca = bch_dev_locked(c, dev_idx);
 
-	if (bch2_trans_mark_dev_sb(c, NULL, ca)) {
+	if (bch2_trans_mark_dev_sb(c, ca)) {
 		err = "bch2_trans_mark_dev_sb() error";
 		goto err;
 	}
 
-	if (ca->mi.state == BCH_MEMBER_STATE_RW) {
+	if (ca->mi.state == BCH_MEMBER_STATE_rw) {
 		err = __bch2_dev_read_write(c, ca);
 		if (err)
 			goto err;
@@ -1813,7 +1787,7 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags)
 		return 0;
 	}
 
-	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_FAILED, flags)) {
+	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_failed, flags)) {
 		bch_err(ca, "Cannot offline required disk");
 		up_write(&c->state_lock);
 		return -EINVAL;
@@ -1852,6 +1826,11 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 		goto err;
 	}
 
+	ret = bch2_trans_mark_dev_sb(c, ca);
+	if (ret) {
+		goto err;
+	}
+
 	mutex_lock(&c->sb_lock);
 	mi = &bch2_sb_get_members(c->disk_sb.sb)->members[ca->dev_idx];
 	mi->nbuckets = cpu_to_le64(nbuckets);
@@ -1868,20 +1847,23 @@ err:
 /* return with ref on ca->ref: */
 struct bch_dev *bch2_dev_lookup(struct bch_fs *c, const char *path)
 {
-	struct block_device *bdev = lookup_bdev(path);
 	struct bch_dev *ca;
+	dev_t dev;
 	unsigned i;
+	int ret;
 
-	if (IS_ERR(bdev))
-		return ERR_CAST(bdev);
+	ret = lookup_bdev(path, &dev);
+	if (ret)
+		return ERR_PTR(ret);
 
-	for_each_member_device(ca, c, i)
-		if (ca->disk_sb.bdev == bdev)
+	rcu_read_lock();
+	for_each_member_device_rcu(ca, c, i, NULL)
+		if (ca->disk_sb.bdev->bd_dev == dev)
 			goto found;
-
 	ca = ERR_PTR(-ENOENT);
 found:
-	bdput(bdev);
+	rcu_read_unlock();
+
 	return ca;
 }
 

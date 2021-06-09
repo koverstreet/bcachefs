@@ -53,7 +53,7 @@ static int __bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags
 	while ((k = bch2_btree_iter_peek(iter)).k &&
 	       !(ret = bkey_err(k))) {
 		if (!bch2_bkey_has_device(k, dev_idx)) {
-			bch2_btree_iter_next(iter);
+			bch2_btree_iter_advance(iter);
 			continue;
 		}
 
@@ -73,9 +73,8 @@ static int __bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags
 
 		bch2_btree_iter_set_pos(iter, bkey_start_pos(&sk.k->k));
 
-		bch2_trans_update(&trans, iter, sk.k, 0);
-
-		ret = bch2_trans_commit(&trans, NULL, NULL,
+		ret   = bch2_trans_update(&trans, iter, sk.k, 0) ?:
+			bch2_trans_commit(&trans, NULL, NULL,
 					BTREE_INSERT_NOFAIL);
 
 		/*
@@ -88,6 +87,7 @@ static int __bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags
 		if (ret)
 			break;
 	}
+	bch2_trans_iter_put(&trans, iter);
 
 	ret = bch2_trans_exit(&trans) ?: ret;
 	bch2_bkey_buf_exit(&sk, c);
@@ -99,8 +99,8 @@ static int __bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags
 
 static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 {
-	return  __bch2_dev_usrdata_drop(c, dev_idx, flags, BTREE_ID_EXTENTS) ?:
-		__bch2_dev_usrdata_drop(c, dev_idx, flags, BTREE_ID_REFLINK);
+	return  __bch2_dev_usrdata_drop(c, dev_idx, flags, BTREE_ID_extents) ?:
+		__bch2_dev_usrdata_drop(c, dev_idx, flags, BTREE_ID_reflink);
 }
 
 static int bch2_dev_metadata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
@@ -135,20 +135,24 @@ retry:
 					    dev_idx, flags, true);
 			if (ret) {
 				bch_err(c, "Cannot drop device without losing data");
-				goto err;
+				break;
 			}
 
 			ret = bch2_btree_node_update_key(c, iter, b, k.k);
 			if (ret == -EINTR) {
 				b = bch2_btree_iter_peek_node(iter);
+				ret = 0;
 				goto retry;
 			}
 			if (ret) {
 				bch_err(c, "Error updating btree node key: %i", ret);
-				goto err;
+				break;
 			}
 		}
 		bch2_trans_iter_free(&trans, iter);
+
+		if (ret)
+			goto err;
 	}
 
 	/* flush relevant btree updates */

@@ -13,6 +13,9 @@
 #include <linux/mount.h>
 
 #define FS_IOC_GOINGDOWN	     _IOR('X', 125, __u32)
+#define FSOP_GOING_FLAGS_DEFAULT	0x0	/* going down */
+#define FSOP_GOING_FLAGS_LOGFLUSH	0x1	/* flush log but not data */
+#define FSOP_GOING_FLAGS_NOLOGFLUSH	0x2	/* don't flush log nor data */
 
 struct flags_set {
 	unsigned		mask;
@@ -183,6 +186,7 @@ static int bch2_ioc_reinherit_attrs(struct bch_fs *c,
 				    struct bch_inode_info *src,
 				    const char __user *name)
 {
+	struct bch_hash_info hash = bch2_hash_info_init(c, &src->ei_inode);
 	struct bch_inode_info *dst;
 	struct inode *vinode = NULL;
 	char *kname = NULL;
@@ -202,8 +206,7 @@ static int bch2_ioc_reinherit_attrs(struct bch_fs *c,
 	qstr.name	= kname;
 
 	ret = -ENOENT;
-	inum = bch2_dirent_lookup(c, src->v.i_ino,
-				  &src->ei_str_hash,
+	inum = bch2_dirent_lookup(c, src->v.i_ino, &hash,
 				  &qstr);
 	if (!inum)
 		goto err1;
@@ -247,11 +250,54 @@ err1:
 	return ret;
 }
 
+static int bch2_ioc_goingdown(struct bch_fs *c, u32 __user *arg)
+{
+	u32 flags;
+	int ret = 0;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (get_user(flags, arg))
+		return -EFAULT;
+
+	bch_notice(c, "shutdown by ioctl type %u", flags);
+
+	down_write(&c->vfs_sb->s_umount);
+
+	switch (flags) {
+	case FSOP_GOING_FLAGS_DEFAULT:
+		ret = freeze_bdev(c->vfs_sb->s_bdev);
+		if (ret)
+			goto err;
+
+		bch2_journal_flush(&c->journal);
+		c->vfs_sb->s_flags |= SB_RDONLY;
+		bch2_fs_emergency_read_only(c);
+		thaw_bdev(c->vfs_sb->s_bdev);
+		break;
+
+	case FSOP_GOING_FLAGS_LOGFLUSH:
+		bch2_journal_flush(&c->journal);
+		fallthrough;
+
+	case FSOP_GOING_FLAGS_NOLOGFLUSH:
+		c->vfs_sb->s_flags |= SB_RDONLY;
+		bch2_fs_emergency_read_only(c);
+		break;
+	default:
+		ret = -EINVAL;
+		break;
+	}
+err:
+	up_write(&c->vfs_sb->s_umount);
+	return ret;
+}
+
 long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	struct bch_inode_info *inode = file_bch_inode(file);
-	struct super_block *sb = inode->v.i_sb;
-	struct bch_fs *c = sb->s_fs_info;
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 
 	switch (cmd) {
 	case FS_IOC_GETFLAGS:
@@ -276,15 +322,7 @@ long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 		return -ENOTTY;
 
 	case FS_IOC_GOINGDOWN:
-		if (!capable(CAP_SYS_ADMIN))
-			return -EPERM;
-
-		down_write(&sb->s_umount);
-		sb->s_flags |= SB_RDONLY;
-		if (bch2_fs_emergency_read_only(c))
-			bch_err(c, "emergency read only due to ioctl");
-		up_write(&sb->s_umount);
-		return 0;
+		return bch2_ioc_goingdown(c, (u32 __user *) arg);
 
 	default:
 		return bch2_fs_ioctl(c, cmd, (void __user *) arg);

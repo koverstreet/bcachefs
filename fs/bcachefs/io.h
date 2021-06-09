@@ -34,11 +34,12 @@ enum bch_write_flags {
 	BCH_WRITE_ONLY_SPECIFIED_DEVS	= (1 << 6),
 	BCH_WRITE_WROTE_DATA_INLINE	= (1 << 7),
 	BCH_WRITE_FROM_INTERNAL		= (1 << 8),
+	BCH_WRITE_CHECK_ENOSPC		= (1 << 9),
 
 	/* Internal: */
-	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 9),
-	BCH_WRITE_SKIP_CLOSURE_PUT	= (1 << 10),
-	BCH_WRITE_DONE			= (1 << 11),
+	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 10),
+	BCH_WRITE_SKIP_CLOSURE_PUT	= (1 << 11),
+	BCH_WRITE_DONE			= (1 << 12),
 };
 
 static inline u64 *op_journal_seq(struct bch_write_op *op)
@@ -57,14 +58,14 @@ static inline struct workqueue_struct *index_update_wq(struct bch_write_op *op)
 {
 	return op->alloc_reserve == RESERVE_MOVINGGC
 		? op->c->copygc_wq
-		: op->c->wq;
+		: op->c->btree_update_wq;
 }
 
 int bch2_sum_sector_overwrites(struct btree_trans *, struct btree_iter *,
 			       struct bkey_i *, bool *, bool *, s64 *, s64 *);
 int bch2_extent_update(struct btree_trans *, struct btree_iter *,
 		       struct bkey_i *, struct disk_reservation *,
-		       u64 *, u64, s64 *);
+		       u64 *, u64, s64 *, bool);
 int bch2_fpunch_at(struct btree_trans *, struct btree_iter *,
 		   struct bpos, u64 *, s64 *);
 int bch2_fpunch(struct bch_fs *c, u64, u64, u64, u64 *, s64 *);
@@ -117,12 +118,15 @@ int __bch2_read_indirect_extent(struct btree_trans *, unsigned *,
 				struct bkey_buf *);
 
 static inline int bch2_read_indirect_extent(struct btree_trans *trans,
+					    enum btree_id *data_btree,
 					    unsigned *offset_into_extent,
 					    struct bkey_buf *k)
 {
-	return k->k->k.type == KEY_TYPE_reflink_p
-		? __bch2_read_indirect_extent(trans, offset_into_extent, k)
-		: 0;
+	if (k->k->k.type != KEY_TYPE_reflink_p)
+		return 0;
+
+	*data_btree = BTREE_ID_reflink;
+	return __bch2_read_indirect_extent(trans, offset_into_extent, k);
 }
 
 enum bch_read_flags {
@@ -139,20 +143,37 @@ enum bch_read_flags {
 };
 
 int __bch2_read_extent(struct btree_trans *, struct bch_read_bio *,
-		       struct bvec_iter, struct bkey_s_c, unsigned,
+		       struct bvec_iter, struct bpos, enum btree_id,
+		       struct bkey_s_c, unsigned,
 		       struct bch_io_failures *, unsigned);
 
 static inline void bch2_read_extent(struct btree_trans *trans,
-				    struct bch_read_bio *rbio,
-				    struct bkey_s_c k,
-				    unsigned offset_into_extent,
-				    unsigned flags)
+			struct bch_read_bio *rbio, struct bpos read_pos,
+			enum btree_id data_btree, struct bkey_s_c k,
+			unsigned offset_into_extent, unsigned flags)
 {
-	__bch2_read_extent(trans, rbio, rbio->bio.bi_iter, k,
-			   offset_into_extent, NULL, flags);
+	__bch2_read_extent(trans, rbio, rbio->bio.bi_iter, read_pos,
+			   data_btree, k, offset_into_extent, NULL, flags);
 }
 
-void bch2_read(struct bch_fs *, struct bch_read_bio *, u64);
+void __bch2_read(struct bch_fs *, struct bch_read_bio *, struct bvec_iter,
+		 u64, struct bch_io_failures *, unsigned flags);
+
+static inline void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
+			     u64 inode)
+{
+	struct bch_io_failures failed = { .nr = 0 };
+
+	BUG_ON(rbio->_state);
+
+	rbio->c = c;
+	rbio->start_time = local_clock();
+
+	__bch2_read(c, rbio, rbio->bio.bi_iter, inode, &failed,
+		    BCH_READ_RETRY_IF_STALE|
+		    BCH_READ_MAY_PROMOTE|
+		    BCH_READ_USER_MAPPED);
+}
 
 static inline struct bch_read_bio *rbio_init(struct bio *bio,
 					     struct bch_io_opts opts)

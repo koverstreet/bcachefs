@@ -4,9 +4,7 @@
 
 #include "btree_types.h"
 
-void bch2_coalesce(struct bch_fs *);
-
-int bch2_gc(struct bch_fs *, bool);
+int bch2_gc(struct bch_fs *, bool, bool);
 int bch2_gc_gens(struct bch_fs *);
 void bch2_gc_thread_stop(struct bch_fs *);
 int bch2_gc_thread_start(struct bch_fs *);
@@ -45,19 +43,15 @@ static inline struct gc_pos gc_phase(enum gc_phase phase)
 
 static inline int gc_pos_cmp(struct gc_pos l, struct gc_pos r)
 {
-	if (l.phase != r.phase)
-		return l.phase < r.phase ? -1 : 1;
-	if (bkey_cmp(l.pos, r.pos))
-		return bkey_cmp(l.pos, r.pos);
-	if (l.level != r.level)
-		return l.level < r.level ? -1 : 1;
-	return 0;
+	return  cmp_int(l.phase, r.phase) ?:
+		bpos_cmp(l.pos, r.pos) ?:
+		cmp_int(l.level, r.level);
 }
 
 static inline enum gc_phase btree_id_to_gc_phase(enum btree_id id)
 {
 	switch (id) {
-#define x(n, v, s) case BTREE_ID_##n: return GC_PHASE_BTREE_##n;
+#define x(name, v) case BTREE_ID_##name: return GC_PHASE_BTREE_##name;
 	BCH_BTREE_IDS()
 #undef x
 	default:
@@ -94,14 +88,6 @@ static inline struct gc_pos gc_pos_btree_node(struct btree *b)
 static inline struct gc_pos gc_pos_btree_root(enum btree_id id)
 {
 	return gc_pos_btree(id, POS_MAX, BTREE_MAX_DEPTH);
-}
-
-static inline struct gc_pos gc_pos_alloc(struct bch_fs *c, struct open_bucket *ob)
-{
-	return (struct gc_pos) {
-		.phase	= GC_PHASE_ALLOC,
-		.pos	= POS(ob ? ob - c->open_buckets : 0, 0),
-	};
 }
 
 static inline bool gc_visited(struct bch_fs *c, struct gc_pos pos)

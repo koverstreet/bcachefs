@@ -33,16 +33,6 @@ struct bkey_s {
 
 #define bkey_next(_k)		vstruct_next(_k)
 
-static inline struct bkey_packed *bkey_next_skip_noops(struct bkey_packed *k,
-						       struct bkey_packed *end)
-{
-	k = bkey_next(k);
-
-	while (k != end && !k->u64s)
-		k = (void *) ((u64 *) k + 1);
-	return k;
-}
-
 #define bkey_val_u64s(_k)	((_k)->u64s - BKEY_U64s)
 
 static inline size_t bkey_val_bytes(const struct bkey *k)
@@ -150,29 +140,58 @@ static inline int bkey_cmp_left_packed_byval(const struct btree *b,
 	return bkey_cmp_left_packed(b, l, &r);
 }
 
-#if 1
+static __always_inline int bpos_cmp(struct bpos l, struct bpos r)
+{
+	return  cmp_int(l.inode,    r.inode) ?:
+		cmp_int(l.offset,   r.offset) ?:
+		cmp_int(l.snapshot, r.snapshot);
+}
+
 static __always_inline int bkey_cmp(struct bpos l, struct bpos r)
 {
-	if (l.inode != r.inode)
-		return l.inode < r.inode ? -1 : 1;
-	if (l.offset != r.offset)
-		return l.offset < r.offset ? -1 : 1;
-	if (l.snapshot != r.snapshot)
-		return l.snapshot < r.snapshot ? -1 : 1;
-	return 0;
+	return  cmp_int(l.inode,    r.inode) ?:
+		cmp_int(l.offset,   r.offset);
 }
-#else
-int bkey_cmp(struct bpos l, struct bpos r);
-#endif
 
 static inline struct bpos bpos_min(struct bpos l, struct bpos r)
 {
-	return bkey_cmp(l, r) < 0 ? l : r;
+	return bpos_cmp(l, r) < 0 ? l : r;
 }
 
 static inline struct bpos bpos_max(struct bpos l, struct bpos r)
 {
-	return bkey_cmp(l, r) > 0 ? l : r;
+	return bpos_cmp(l, r) > 0 ? l : r;
+}
+
+#define sbb(a, b, borrow)				\
+do {							\
+	typeof(a) d1, d2;				\
+							\
+	d1 = a - borrow;				\
+	borrow  = d1 > a;				\
+							\
+	d2 = d1 - b;					\
+	borrow += d2 > d1;				\
+	a = d2;						\
+} while (0)
+
+/* returns a - b: */
+static inline struct bpos bpos_sub(struct bpos a, struct bpos b)
+{
+	int borrow = 0;
+
+	sbb(a.snapshot, b.snapshot,	borrow);
+	sbb(a.offset,	b.offset,	borrow);
+	sbb(a.inode,	b.inode,	borrow);
+	return a;
+}
+
+static inline struct bpos bpos_diff(struct bpos l, struct bpos r)
+{
+	if (bpos_cmp(l, r) > 0)
+		swap(l, r);
+
+	return bpos_sub(r, l);
 }
 
 void bch2_bpos_swab(struct bpos *);
@@ -231,24 +250,46 @@ static inline unsigned bkey_format_key_bits(const struct bkey_format *format)
 		format->bits_per_field[BKEY_FIELD_SNAPSHOT];
 }
 
-static inline struct bpos bkey_successor(struct bpos p)
+static inline struct bpos bpos_successor(struct bpos p)
 {
-	struct bpos ret = p;
+	if (!++p.snapshot &&
+	    !++p.offset &&
+	    !++p.inode)
+		BUG();
 
-	if (!++ret.offset)
-		BUG_ON(!++ret.inode);
-
-	return ret;
+	return p;
 }
 
-static inline struct bpos bkey_predecessor(struct bpos p)
+static inline struct bpos bpos_predecessor(struct bpos p)
 {
-	struct bpos ret = p;
+	if (!p.snapshot-- &&
+	    !p.offset-- &&
+	    !p.inode--)
+		BUG();
 
-	if (!ret.offset--)
-		BUG_ON(!ret.inode--);
+	return p;
+}
 
-	return ret;
+static inline struct bpos bpos_nosnap_successor(struct bpos p)
+{
+	p.snapshot = 0;
+
+	if (!++p.offset &&
+	    !++p.inode)
+		BUG();
+
+	return p;
+}
+
+static inline struct bpos bpos_nosnap_predecessor(struct bpos p)
+{
+	p.snapshot = 0;
+
+	if (!p.offset-- &&
+	    !p.inode--)
+		BUG();
+
+	return p;
 }
 
 static inline u64 bkey_start_offset(const struct bkey *k)
@@ -403,7 +444,7 @@ static inline struct bkey_s_c bkey_i_to_s_c(const struct bkey_i *k)
  * bkey_i_extent to a bkey_i - since that's always safe, instead of conversion
  * functions.
  */
-#define BKEY_VAL_ACCESSORS(name)					\
+#define x(name, ...)					\
 struct bkey_i_##name {							\
 	union {								\
 		struct bkey		k;				\
@@ -514,23 +555,8 @@ static inline struct bkey_i_##name *bkey_##name##_init(struct bkey_i *_k)\
 	return k;							\
 }
 
-BKEY_VAL_ACCESSORS(cookie);
-BKEY_VAL_ACCESSORS(btree_ptr);
-BKEY_VAL_ACCESSORS(extent);
-BKEY_VAL_ACCESSORS(reservation);
-BKEY_VAL_ACCESSORS(inode);
-BKEY_VAL_ACCESSORS(inode_generation);
-BKEY_VAL_ACCESSORS(dirent);
-BKEY_VAL_ACCESSORS(xattr);
-BKEY_VAL_ACCESSORS(alloc);
-BKEY_VAL_ACCESSORS(quota);
-BKEY_VAL_ACCESSORS(stripe);
-BKEY_VAL_ACCESSORS(reflink_p);
-BKEY_VAL_ACCESSORS(reflink_v);
-BKEY_VAL_ACCESSORS(inline_data);
-BKEY_VAL_ACCESSORS(btree_ptr_v2);
-BKEY_VAL_ACCESSORS(indirect_inline_data);
-BKEY_VAL_ACCESSORS(alloc_v2);
+BCH_BKEY_TYPES();
+#undef x
 
 /* byte order helpers */
 

@@ -12,17 +12,17 @@
 
 #include <linux/crc32c.h>
 #include <crypto/hash.h>
-#include <crypto/sha.h>
+#include <crypto/sha2.h>
 
 static inline enum bch_str_hash_type
 bch2_str_hash_opt_to_type(struct bch_fs *c, enum bch_str_hash_opts opt)
 {
 	switch (opt) {
-	case BCH_STR_HASH_OPT_CRC32C:
+	case BCH_STR_HASH_OPT_crc32c:
 		return BCH_STR_HASH_CRC32C;
-	case BCH_STR_HASH_OPT_CRC64:
+	case BCH_STR_HASH_OPT_crc64:
 		return BCH_STR_HASH_CRC64;
-	case BCH_STR_HASH_OPT_SIPHASH:
+	case BCH_STR_HASH_OPT_siphash:
 		return c->sb.features & (1ULL << BCH_FEATURE_new_siphash)
 			? BCH_STR_HASH_SIPHASH
 			: BCH_STR_HASH_SIPHASH_OLD;
@@ -33,10 +33,11 @@ bch2_str_hash_opt_to_type(struct bch_fs *c, enum bch_str_hash_opts opt)
 
 struct bch_hash_info {
 	u8			type;
-	union {
-		__le64		crc_key;
-		SIPHASH_KEY	siphash_key;
-	};
+	/*
+	 * For crc32 or crc64 string hashes the first key value of
+	 * the siphash_key (k0) is used as the key.
+	 */
+	SIPHASH_KEY	siphash_key;
 };
 
 static inline struct bch_hash_info
@@ -46,7 +47,7 @@ bch2_hash_info_init(struct bch_fs *c, const struct bch_inode_unpacked *bi)
 	struct bch_hash_info info = {
 		.type = (bi->bi_flags >> INODE_STR_HASH_OFFSET) &
 			~(~0U << INODE_STR_HASH_BITS),
-		.crc_key = bi->bi_hash_seed,
+		.siphash_key = { .k0 = bi->bi_hash_seed }
 	};
 
 	if (unlikely(info.type == BCH_STR_HASH_SIPHASH_OLD)) {
@@ -76,10 +77,12 @@ static inline void bch2_str_hash_init(struct bch_str_hash_ctx *ctx,
 {
 	switch (info->type) {
 	case BCH_STR_HASH_CRC32C:
-		ctx->crc32c = crc32c(~0, &info->crc_key, sizeof(info->crc_key));
+		ctx->crc32c = crc32c(~0, &info->siphash_key.k0,
+				     sizeof(info->siphash_key.k0));
 		break;
 	case BCH_STR_HASH_CRC64:
-		ctx->crc64 = crc64_be(~0, &info->crc_key, sizeof(info->crc_key));
+		ctx->crc64 = crc64_be(~0, &info->siphash_key.k0,
+				      sizeof(info->siphash_key.k0));
 		break;
 	case BCH_STR_HASH_SIPHASH_OLD:
 	case BCH_STR_HASH_SIPHASH:
@@ -156,7 +159,7 @@ bch2_hash_lookup(struct btree_trans *trans,
 		if (k.k->type == desc.key_type) {
 			if (!desc.cmp_key(k, key))
 				return iter;
-		} else if (k.k->type == KEY_TYPE_whiteout) {
+		} else if (k.k->type == KEY_TYPE_hash_whiteout) {
 			;
 		} else {
 			/* hole, not found */
@@ -210,7 +213,7 @@ int bch2_hash_needs_whiteout(struct btree_trans *trans,
 
 	for_each_btree_key_continue(iter, BTREE_ITER_SLOTS, k, ret) {
 		if (k.k->type != desc.key_type &&
-		    k.k->type != KEY_TYPE_whiteout)
+		    k.k->type != KEY_TYPE_hash_whiteout)
 			break;
 
 		if (k.k->type == desc.key_type &&
@@ -254,7 +257,7 @@ int bch2_hash_set(struct btree_trans *trans,
 		    !(flags & BCH_HASH_SET_MUST_REPLACE))
 			slot = bch2_trans_copy_iter(trans, iter);
 
-		if (k.k->type != KEY_TYPE_whiteout)
+		if (k.k->type != KEY_TYPE_hash_whiteout)
 			goto not_found;
 	}
 
@@ -278,7 +281,7 @@ not_found:
 			swap(iter, slot);
 
 		insert->k.p = iter->pos;
-		bch2_trans_update(trans, iter, insert, 0);
+		ret = bch2_trans_update(trans, iter, insert, 0);
 	}
 
 	goto out;
@@ -293,20 +296,20 @@ int bch2_hash_delete_at(struct btree_trans *trans,
 	struct bkey_i *delete;
 	int ret;
 
+	delete = bch2_trans_kmalloc(trans, sizeof(*delete));
+	ret = PTR_ERR_OR_ZERO(delete);
+	if (ret)
+		return ret;
+
 	ret = bch2_hash_needs_whiteout(trans, desc, info, iter);
 	if (ret < 0)
 		return ret;
 
-	delete = bch2_trans_kmalloc(trans, sizeof(*delete));
-	if (IS_ERR(delete))
-		return PTR_ERR(delete);
-
 	bkey_init(&delete->k);
 	delete->k.p = iter->pos;
-	delete->k.type = ret ? KEY_TYPE_whiteout : KEY_TYPE_deleted;
+	delete->k.type = ret ? KEY_TYPE_hash_whiteout : KEY_TYPE_deleted;
 
-	bch2_trans_update(trans, iter, delete, 0);
-	return 0;
+	return bch2_trans_update(trans, iter, delete, 0);
 }
 
 static __always_inline

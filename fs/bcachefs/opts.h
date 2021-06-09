@@ -11,13 +11,13 @@
 extern const char * const bch2_error_actions[];
 extern const char * const bch2_sb_features[];
 extern const char * const bch2_sb_compat[];
+extern const char * const bch2_btree_ids[];
 extern const char * const bch2_csum_opts[];
 extern const char * const bch2_compression_opts[];
 extern const char * const bch2_str_hash_types[];
 extern const char * const bch2_data_types[];
 extern const char * const bch2_cache_replacement_policies[];
-extern const char * const bch2_cache_modes[];
-extern const char * const bch2_dev_state[];
+extern const char * const bch2_member_states[];
 
 /*
  * Mount options; we also store defaults in the superblock.
@@ -90,7 +90,7 @@ enum opt_type {
 	x(errors,			u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
 	  OPT_STR(bch2_error_actions),					\
-	  BCH_SB_ERROR_ACTION,		BCH_ON_ERROR_RO,		\
+	  BCH_SB_ERROR_ACTION,		BCH_ON_ERROR_ro,		\
 	  NULL,		"Action to take on filesystem error")		\
 	x(metadata_replicas,		u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
@@ -115,12 +115,12 @@ enum opt_type {
 	x(metadata_checksum,		u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
 	  OPT_STR(bch2_csum_opts),					\
-	  BCH_SB_META_CSUM_TYPE,	BCH_CSUM_OPT_CRC32C,		\
+	  BCH_SB_META_CSUM_TYPE,	BCH_CSUM_OPT_crc32c,		\
 	  NULL,		NULL)						\
 	x(data_checksum,		u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME|OPT_INODE,			\
 	  OPT_STR(bch2_csum_opts),					\
-	  BCH_SB_DATA_CSUM_TYPE,	BCH_CSUM_OPT_CRC32C,		\
+	  BCH_SB_DATA_CSUM_TYPE,	BCH_CSUM_OPT_crc32c,		\
 	  NULL,		NULL)						\
 	x(compression,			u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME|OPT_INODE,			\
@@ -135,7 +135,7 @@ enum opt_type {
 	x(str_hash,			u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
 	  OPT_STR(bch2_str_hash_types),					\
-	  BCH_SB_STR_HASH_TYPE,		BCH_STR_HASH_OPT_SIPHASH,	\
+	  BCH_SB_STR_HASH_TYPE,		BCH_STR_HASH_OPT_siphash,	\
 	  NULL,		"Hash function for directory entries and xattrs")\
 	x(metadata_target,		u16,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME|OPT_INODE,			\
@@ -165,8 +165,13 @@ enum opt_type {
 	x(inodes_32bit,			u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
 	  OPT_BOOL(),							\
-	  BCH_SB_INODE_32BIT,		false,				\
+	  BCH_SB_INODE_32BIT,		true,				\
 	  NULL,		"Constrain inode numbers to 32 bits")		\
+	x(shard_inode_numbers,		u8,				\
+	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
+	  OPT_BOOL(),							\
+	  BCH_SB_SHARD_INUMS,		false,				\
+	  NULL,		"Shard new inode numbers by CPU id")		\
 	x(gc_reserve_percent,		u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
 	  OPT_UINT(5, 21),						\
@@ -213,11 +218,6 @@ enum opt_type {
 	  OPT_BOOL(),							\
 	  BCH_SB_PRJQUOTA,		false,				\
 	  NULL,		"Enable project quotas")			\
-	x(reflink,			u8,				\
-	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
-	  OPT_BOOL(),							\
-	  BCH_SB_REFLINK,		true,				\
-	  NULL,		"Enable reflink support")			\
 	x(degraded,			u8,				\
 	  OPT_MOUNT,							\
 	  OPT_BOOL(),							\

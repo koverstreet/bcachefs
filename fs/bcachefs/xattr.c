@@ -61,7 +61,7 @@ static bool xattr_cmp_bkey(struct bkey_s_c _l, struct bkey_s_c _r)
 }
 
 const struct bch_hash_desc bch2_xattr_hash_desc = {
-	.btree_id	= BTREE_ID_XATTRS,
+	.btree_id	= BTREE_ID_xattrs,
 	.key_type	= KEY_TYPE_xattr,
 	.hash_key	= xattr_hash_key,
 	.hash_bkey	= xattr_hash_bkey,
@@ -121,6 +121,7 @@ void bch2_xattr_to_text(struct printbuf *out, struct bch_fs *c,
 int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *inode,
 		   const char *name, void *buffer, size_t size, int type)
 {
+	struct bch_hash_info hash = bch2_hash_info_init(c, &inode->ei_inode);
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_s_c_xattr xattr;
@@ -128,16 +129,13 @@ int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *inode,
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	iter = bch2_hash_lookup(&trans, bch2_xattr_hash_desc,
-				&inode->ei_str_hash, inode->v.i_ino,
+	iter = bch2_hash_lookup(&trans, bch2_xattr_hash_desc, &hash,
+				inode->v.i_ino,
 				&X_SEARCH(type, name, strlen(name)),
 				0);
-	if (IS_ERR(iter)) {
-		bch2_trans_exit(&trans);
-		BUG_ON(PTR_ERR(iter) == -EINTR);
-
-		return PTR_ERR(iter) == -ENOENT ? -ENODATA : PTR_ERR(iter);
-	}
+	ret = PTR_ERR_OR_ZERO(iter);
+	if (ret)
+		goto err;
 
 	xattr = bkey_s_c_to_xattr(bch2_btree_iter_peek_slot(iter));
 	ret = le16_to_cpu(xattr.v->x_val_len);
@@ -147,9 +145,12 @@ int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *inode,
 		else
 			memcpy(buffer, xattr_val(xattr.v), ret);
 	}
-
+	bch2_trans_iter_put(&trans, iter);
+err:
 	bch2_trans_exit(&trans);
-	return ret;
+
+	BUG_ON(ret == -EINTR);
+	return ret == -ENOENT ? -ENODATA : ret;
 }
 
 int bch2_xattr_set(struct btree_trans *trans, u64 inum,
@@ -239,7 +240,7 @@ static int bch2_xattr_emit(struct dentry *dentry,
 }
 
 static int bch2_xattr_list_bcachefs(struct bch_fs *c,
-				    struct bch_inode_info *inode,
+				    struct bch_inode_unpacked *inode,
 				    struct xattr_buf *buf,
 				    bool all)
 {
@@ -249,12 +250,12 @@ static int bch2_xattr_list_bcachefs(struct bch_fs *c,
 	u64 v;
 
 	for (id = 0; id < Inode_opt_nr; id++) {
-		v = bch2_inode_opt_get(&inode->ei_inode, id);
+		v = bch2_inode_opt_get(inode, id);
 		if (!v)
 			continue;
 
 		if (!all &&
-		    !(inode->ei_inode.bi_fields_set & (1 << id)))
+		    !(inode->bi_fields_set & (1 << id)))
 			continue;
 
 		ret = __bch2_xattr_emit(prefix, bch2_inode_opts[id],
@@ -279,7 +280,7 @@ ssize_t bch2_xattr_list(struct dentry *dentry, char *buffer, size_t buffer_size)
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	for_each_btree_key(&trans, iter, BTREE_ID_XATTRS,
+	for_each_btree_key(&trans, iter, BTREE_ID_xattrs,
 			   POS(inum, 0), 0, k, ret) {
 		BUG_ON(k.k->p.inode < inum);
 
@@ -293,16 +294,18 @@ ssize_t bch2_xattr_list(struct dentry *dentry, char *buffer, size_t buffer_size)
 		if (ret)
 			break;
 	}
+	bch2_trans_iter_put(&trans, iter);
+
 	ret = bch2_trans_exit(&trans) ?: ret;
 
 	if (ret)
 		return ret;
 
-	ret = bch2_xattr_list_bcachefs(c, inode, &buf, false);
+	ret = bch2_xattr_list_bcachefs(c, &inode->ei_inode, &buf, false);
 	if (ret)
 		return ret;
 
-	ret = bch2_xattr_list_bcachefs(c, inode, &buf, true);
+	ret = bch2_xattr_list_bcachefs(c, &inode->ei_inode, &buf, true);
 	if (ret)
 		return ret;
 
@@ -326,10 +329,10 @@ static int bch2_xattr_set_handler(const struct xattr_handler *handler,
 {
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct bch_hash_info hash = bch2_hash_info_init(c, &inode->ei_inode);
 
 	return bch2_trans_do(c, NULL, &inode->ei_journal_seq, 0,
-			bch2_xattr_set(&trans, inode->v.i_ino,
-				       &inode->ei_str_hash,
+			bch2_xattr_set(&trans, inode->v.i_ino, &hash,
 				       name, value, size,
 				       handler->flags, flags));
 }
@@ -557,8 +560,10 @@ static const struct xattr_handler bch_xattr_bcachefs_effective_handler = {
 
 const struct xattr_handler *bch2_xattr_handlers[] = {
 	&bch_xattr_user_handler,
+#ifdef CONFIG_BCACHEFS_POSIX_ACL
 	&posix_acl_access_xattr_handler,
 	&posix_acl_default_xattr_handler,
+#endif
 	&bch_xattr_trusted_handler,
 	&bch_xattr_security_handler,
 #ifndef NO_BCACHEFS_FS

@@ -158,56 +158,33 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 
 const char *bch2_btree_ptr_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
-	if (bkey_val_u64s(k.k) > BKEY_BTREE_PTR_VAL_U64s_MAX)
+	if (bkey_val_u64s(k.k) > BCH_REPLICAS_MAX)
 		return "value too big";
 
 	return bch2_bkey_ptrs_invalid(c, k);
-}
-
-void bch2_btree_ptr_debugcheck(struct bch_fs *c, struct bkey_s_c k)
-{
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	const struct bch_extent_ptr *ptr;
-	const char *err;
-	char buf[160];
-	struct bucket_mark mark;
-	struct bch_dev *ca;
-
-	if (!test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags))
-		return;
-
-	if (!percpu_down_read_trylock(&c->mark_lock))
-		return;
-
-	bkey_for_each_ptr(ptrs, ptr) {
-		ca = bch_dev_bkey_exists(c, ptr->dev);
-
-		mark = ptr_bucket_mark(ca, ptr);
-
-		err = "stale";
-		if (gen_after(mark.gen, ptr->gen))
-			goto err;
-
-		err = "inconsistent";
-		if (mark.data_type != BCH_DATA_btree ||
-		    mark.dirty_sectors < c->opts.btree_node_size)
-			goto err;
-	}
-out:
-	percpu_up_read(&c->mark_lock);
-	return;
-err:
-	bch2_fs_inconsistent(c, "%s btree pointer %s: bucket %zi gen %i mark %08x",
-		err, (bch2_bkey_val_to_text(&PBUF(buf), c, k), buf),
-		PTR_BUCKET_NR(ca, ptr),
-		mark.gen, (unsigned) mark.v.counter);
-	goto out;
 }
 
 void bch2_btree_ptr_to_text(struct printbuf *out, struct bch_fs *c,
 			    struct bkey_s_c k)
 {
 	bch2_bkey_ptrs_to_text(out, c, k);
+}
+
+const char *bch2_btree_ptr_v2_invalid(const struct bch_fs *c, struct bkey_s_c k)
+{
+	struct bkey_s_c_btree_ptr_v2 bp = bkey_s_c_to_btree_ptr_v2(k);
+
+	if (bkey_val_bytes(k.k) <= sizeof(*bp.v))
+		return "value too small";
+
+	if (bkey_val_u64s(k.k) > BKEY_BTREE_PTR_VAL_U64s_MAX)
+		return "value too big";
+
+	if (c->sb.version < bcachefs_metadata_version_snapshot &&
+	    bp.v->min_key.snapshot)
+		return "invalid min_key.snapshot";
+
+	return bch2_bkey_ptrs_invalid(c, k);
 }
 
 void bch2_btree_ptr_v2_to_text(struct printbuf *out, struct bch_fs *c,
@@ -236,8 +213,8 @@ void bch2_btree_ptr_v2_compat(enum btree_id btree_id, unsigned version,
 	    btree_node_type_is_extents(btree_id) &&
 	    bkey_cmp(bp.v->min_key, POS_MIN))
 		bp.v->min_key = write
-			? bkey_predecessor(bp.v->min_key)
-			: bkey_successor(bp.v->min_key);
+			? bpos_nosnap_predecessor(bp.v->min_key)
+			: bpos_nosnap_successor(bp.v->min_key);
 }
 
 /* KEY_TYPE_extent: */
@@ -245,49 +222,6 @@ void bch2_btree_ptr_v2_compat(enum btree_id btree_id, unsigned version,
 const char *bch2_extent_invalid(const struct bch_fs *c, struct bkey_s_c k)
 {
 	return bch2_bkey_ptrs_invalid(c, k);
-}
-
-void bch2_extent_debugcheck(struct bch_fs *c, struct bkey_s_c k)
-{
-	struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
-	const union bch_extent_entry *entry;
-	struct extent_ptr_decoded p;
-	char buf[160];
-
-	if (!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags) ||
-	    !test_bit(BCH_FS_INITIAL_GC_DONE, &c->flags))
-		return;
-
-	if (!percpu_down_read_trylock(&c->mark_lock))
-		return;
-
-	extent_for_each_ptr_decode(e, p, entry) {
-		struct bch_dev *ca	= bch_dev_bkey_exists(c, p.ptr.dev);
-		struct bucket_mark mark = ptr_bucket_mark(ca, &p.ptr);
-		unsigned stale		= gen_after(mark.gen, p.ptr.gen);
-		unsigned disk_sectors	= ptr_disk_sectors(p);
-		unsigned mark_sectors	= p.ptr.cached
-			? mark.cached_sectors
-			: mark.dirty_sectors;
-
-		bch2_fs_inconsistent_on(stale && !p.ptr.cached, c,
-			"stale dirty pointer (ptr gen %u bucket %u",
-			p.ptr.gen, mark.gen);
-
-		bch2_fs_inconsistent_on(stale > 96, c,
-			"key too stale: %i", stale);
-
-		bch2_fs_inconsistent_on(!stale &&
-			(mark.data_type != BCH_DATA_user ||
-			 mark_sectors < disk_sectors), c,
-			"extent pointer not marked: %s:\n"
-			"type %u sectors %u < %u",
-			(bch2_bkey_val_to_text(&PBUF(buf), c, e.s_c), buf),
-			mark.data_type,
-			mark_sectors, disk_sectors);
-	}
-
-	percpu_up_read(&c->mark_lock);
 }
 
 void bch2_extent_to_text(struct printbuf *out, struct bch_fs *c,
@@ -677,7 +611,7 @@ bool bch2_check_range_allocated(struct bch_fs *c, struct bpos pos, u64 size,
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	for_each_btree_key(&trans, iter, BTREE_ID_EXTENTS, pos,
+	for_each_btree_key(&trans, iter, BTREE_ID_extents, pos,
 			   BTREE_ITER_SLOTS, k, err) {
 		if (bkey_cmp(bkey_start_pos(k.k), end) >= 0)
 			break;
@@ -688,6 +622,8 @@ bool bch2_check_range_allocated(struct bch_fs *c, struct bpos pos, u64 size,
 			break;
 		}
 	}
+	bch2_trans_iter_put(&trans, iter);
+
 	bch2_trans_exit(&trans);
 
 	return ret;
@@ -725,7 +661,7 @@ static unsigned bch2_extent_ptr_durability(struct bch_fs *c,
 
 	ca = bch_dev_bkey_exists(c, p.ptr.dev);
 
-	if (ca->mi.state != BCH_MEMBER_STATE_FAILED)
+	if (ca->mi.state != BCH_MEMBER_STATE_failed)
 		durability = max_t(unsigned, durability, ca->mi.durability);
 
 	if (p.has_ec)
@@ -972,9 +908,9 @@ bool bch2_extent_normalize(struct bch_fs *c, struct bkey_s k)
 
 	/* will only happen if all pointers were cached: */
 	if (!bch2_bkey_nr_ptrs(k.s_c))
-		k.k->type = KEY_TYPE_discard;
+		k.k->type = KEY_TYPE_deleted;
 
-	return bkey_whiteout(k.k);
+	return bkey_deleted(k.k);
 }
 
 void bch2_bkey_ptrs_to_text(struct printbuf *out, struct bch_fs *c,
@@ -1265,7 +1201,7 @@ int bch2_cut_back_s(struct bpos where, struct bkey_s k)
 
 	len = where.offset - bkey_start_offset(k.k);
 
-	k.k->p = where;
+	k.k->p.offset = where.offset;
 	k.k->size = len;
 
 	if (!len) {

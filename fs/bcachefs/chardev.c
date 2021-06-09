@@ -379,7 +379,7 @@ static long bch2_ioctl_fs_usage(struct bch_fs *c,
 {
 	struct bch_ioctl_fs_usage *arg = NULL;
 	struct bch_replicas_usage *dst_e, *dst_end;
-	struct bch_fs_usage *src;
+	struct bch_fs_usage_online *src;
 	u32 replica_entries_bytes;
 	unsigned i;
 	int ret = 0;
@@ -405,7 +405,7 @@ static long bch2_ioctl_fs_usage(struct bch_fs *c,
 	arg->online_reserved	= src->online_reserved;
 
 	for (i = 0; i < BCH_REPLICAS_MAX; i++)
-		arg->persistent_reserved[i] = src->persistent_reserved[i];
+		arg->persistent_reserved[i] = src->u.persistent_reserved[i];
 
 	dst_e	= arg->replicas;
 	dst_end = (void *) arg->replicas + replica_entries_bytes;
@@ -414,12 +414,13 @@ static long bch2_ioctl_fs_usage(struct bch_fs *c,
 		struct bch_replicas_entry *src_e =
 			cpu_replicas_entry(&c->replicas, i);
 
-		if (replicas_usage_next(dst_e) > dst_end) {
+		/* check that we have enough space for one replicas entry */
+		if (dst_e + 1 > dst_end) {
 			ret = -ERANGE;
 			break;
 		}
 
-		dst_e->sectors		= src->replicas[i];
+		dst_e->sectors		= src->u.replicas[i];
 		dst_e->r		= *src_e;
 
 		/* recheck after setting nr_devs: */
@@ -523,7 +524,7 @@ static long bch2_ioctl_read_super(struct bch_fs *c,
 	ret = copy_to_user((void __user *)(unsigned long)arg.sb,
 			   sb, vstruct_bytes(sb));
 err:
-	if (ca)
+	if (!IS_ERR_OR_NULL(ca))
 		percpu_ref_put(&ca->ref);
 	mutex_unlock(&c->sb_lock);
 	return ret;

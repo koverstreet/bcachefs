@@ -120,7 +120,7 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 		 * the time:
 		 */
 		if (abs((int) (old - io_latency)) < (old >> 1) &&
-		    now & ~(~0 << 5))
+		    now & ~(~0U << 5))
 			break;
 
 		new = ewma_add(old, io_latency, 5);
@@ -135,10 +135,10 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 
 void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
-	bio_for_each_segment_all(bv, bio, i)
+	bio_for_each_segment_all(bv, bio, iter)
 		if (bv->bv_page != ZERO_PAGE(0))
 			mempool_free(bv->bv_page, &c->bio_bounce_pages);
 	bio->bi_vcnt = 0;
@@ -187,7 +187,7 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 			       struct btree_iter *extent_iter,
 			       struct bkey_i *new,
 			       bool *maybe_extending,
-			       bool *should_check_enospc,
+			       bool *usage_increasing,
 			       s64 *i_sectors_delta,
 			       s64 *disk_sectors_delta)
 {
@@ -199,7 +199,7 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 	int ret = 0;
 
 	*maybe_extending	= true;
-	*should_check_enospc	= false;
+	*usage_increasing	= false;
 	*i_sectors_delta	= 0;
 	*disk_sectors_delta	= 0;
 
@@ -214,14 +214,15 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 			(bkey_extent_is_allocation(&new->k) -
 			 bkey_extent_is_allocation(old.k));
 
-		*disk_sectors_delta += sectors *
-			(int) (bch2_bkey_nr_ptrs_allocated(bkey_i_to_s_c(new)) -
-			       bch2_bkey_nr_ptrs_fully_allocated(old));
+		*disk_sectors_delta += sectors * bch2_bkey_nr_ptrs_allocated(bkey_i_to_s_c(new));
+		*disk_sectors_delta -= new->k.p.snapshot == old.k->p.snapshot
+			? sectors * bch2_bkey_nr_ptrs_fully_allocated(old)
+			: 0;
 
-		if (!*should_check_enospc &&
+		if (!*usage_increasing &&
 		    (new_replicas > bch2_bkey_replicas(c, old) ||
 		     (!new_compressed && bch2_bkey_sectors_compressed(old))))
-			*should_check_enospc = true;
+			*usage_increasing = true;
 
 		if (bkey_cmp(old.k->p, new->k.p) >= 0) {
 			/*
@@ -256,11 +257,12 @@ int bch2_extent_update(struct btree_trans *trans,
 		       struct disk_reservation *disk_res,
 		       u64 *journal_seq,
 		       u64 new_i_size,
-		       s64 *i_sectors_delta_total)
+		       s64 *i_sectors_delta_total,
+		       bool check_enospc)
 {
 	/* this must live until after bch2_trans_commit(): */
 	struct bkey_inode_buf inode_p;
-	bool extending = false, should_check_enospc;
+	bool extending = false, usage_increasing;
 	s64 i_sectors_delta = 0, disk_sectors_delta = 0;
 	int ret;
 
@@ -270,17 +272,20 @@ int bch2_extent_update(struct btree_trans *trans,
 
 	ret = bch2_sum_sector_overwrites(trans, iter, k,
 			&extending,
-			&should_check_enospc,
+			&usage_increasing,
 			&i_sectors_delta,
 			&disk_sectors_delta);
 	if (ret)
 		return ret;
 
+	if (!usage_increasing)
+		check_enospc = false;
+
 	if (disk_res &&
 	    disk_sectors_delta > (s64) disk_res->sectors) {
 		ret = bch2_disk_reservation_add(trans->c, disk_res,
 					disk_sectors_delta - disk_res->sectors,
-					!should_check_enospc
+					!check_enospc
 					? BCH_DISK_RESERVATION_NOFAIL : 0);
 		if (ret)
 			return ret;
@@ -296,8 +301,9 @@ int bch2_extent_update(struct btree_trans *trans,
 
 		inode_iter = bch2_inode_peek(trans, &inode_u,
 				k->k.p.inode, BTREE_ITER_INTENT);
-		if (IS_ERR(inode_iter))
-			return PTR_ERR(inode_iter);
+		ret = PTR_ERR_OR_ZERO(inode_iter);
+		if (ret)
+			return ret;
 
 		/*
 		 * XXX:
@@ -321,18 +327,24 @@ int bch2_extent_update(struct btree_trans *trans,
 
 		if (i_sectors_delta || new_i_size) {
 			bch2_inode_pack(trans->c, &inode_p, &inode_u);
-			bch2_trans_update(trans, inode_iter,
+
+			inode_p.inode.k.p.snapshot = iter->snapshot;
+
+			ret = bch2_trans_update(trans, inode_iter,
 					  &inode_p.inode.k_i, 0);
 		}
 
 		bch2_trans_iter_put(trans, inode_iter);
+
+		if (ret)
+			return ret;
 	}
 
-	bch2_trans_update(trans, iter, k, 0);
-
-	ret = bch2_trans_commit(trans, disk_res, journal_seq,
+	ret =   bch2_trans_update(trans, iter, k, 0) ?:
+		bch2_trans_commit(trans, disk_res, journal_seq,
 				BTREE_INSERT_NOCHECK_RW|
 				BTREE_INSERT_NOFAIL);
+	BUG_ON(ret == -ENOSPC);
 	if (ret)
 		return ret;
 
@@ -371,7 +383,7 @@ int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 
 		ret = bch2_extent_update(trans, iter, &delete,
 				&disk_res, journal_seq,
-				0, i_sectors_delta);
+				0, i_sectors_delta, false);
 		bch2_disk_reservation_put(c, &disk_res);
 btree_err:
 		if (ret == -EINTR) {
@@ -398,12 +410,14 @@ int bch2_fpunch(struct bch_fs *c, u64 inum, u64 start, u64 end,
 	int ret = 0;
 
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 1024);
-	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
+	iter = bch2_trans_get_iter(&trans, BTREE_ID_extents,
 				   POS(inum, start),
 				   BTREE_ITER_INTENT);
 
 	ret = bch2_fpunch_at(&trans, iter, POS(inum, end),
 			     journal_seq, i_sectors_delta);
+
+	bch2_trans_iter_put(&trans, iter);
 	bch2_trans_exit(&trans);
 
 	if (ret == -EINTR)
@@ -425,7 +439,7 @@ int bch2_write_index_default(struct bch_write_op *op)
 	bch2_bkey_buf_init(&sk);
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 1024);
 
-	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
+	iter = bch2_trans_get_iter(&trans, BTREE_ID_extents,
 				   bkey_start_pos(&k->k),
 				   BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
@@ -434,13 +448,16 @@ int bch2_write_index_default(struct bch_write_op *op)
 
 		k = bch2_keylist_front(keys);
 
+		k->k.p.snapshot = iter->snapshot;
+
 		bch2_bkey_buf_realloc(&sk, c, k->k.u64s);
 		bkey_copy(sk.k, k);
 		bch2_cut_front(iter->pos, sk.k);
 
 		ret = bch2_extent_update(&trans, iter, sk.k,
 					 &op->res, op_journal_seq(op),
-					 op->new_i_size, &op->i_sectors_delta);
+					 op->new_i_size, &op->i_sectors_delta,
+					 op->flags & BCH_WRITE_CHECK_ENOSPC);
 		if (ret == -EINTR)
 			continue;
 		if (ret)
@@ -450,6 +467,7 @@ int bch2_write_index_default(struct bch_write_op *op)
 			bch2_keylist_pop_front(keys);
 	} while (!bch2_keylist_empty(keys));
 
+	bch2_trans_iter_put(&trans, iter);
 	bch2_trans_exit(&trans);
 	bch2_bkey_buf_exit(&sk, c);
 
@@ -527,9 +545,6 @@ static void bch2_write_done(struct closure *cl)
 	bch2_keylist_free(&op->insert_keys, op->inline_keys);
 
 	bch2_time_stats_update(&c->times[BCH_TIME_data_write], op->start_time);
-
-	if (!(op->flags & BCH_WRITE_FROM_INTERNAL))
-		up(&c->io_in_flight);
 
 	if (op->end_io) {
 		EBUG_ON(cl->parent);
@@ -1314,12 +1329,6 @@ void bch2_write(struct closure *cl)
 		goto err;
 	}
 
-	/*
-	 * Can't ratelimit copygc - we'd deadlock:
-	 */
-	if (!(op->flags & BCH_WRITE_FROM_INTERNAL))
-		down(&c->io_in_flight);
-
 	bch2_increment_clock(c, bio_sectors(bio), WRITE);
 
 	data_len = min_t(u64, bio->bi_iter.bi_size,
@@ -1434,7 +1443,7 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
 	bch2_migrate_read_done(&op->write, rbio);
 
 	closure_init(cl, NULL);
-	closure_call(&op->write.op.cl, bch2_write, c->wq, cl);
+	closure_call(&op->write.op.cl, bch2_write, c->btree_update_wq, cl);
 	closure_return_with_destructor(cl, promote_done);
 }
 
@@ -1538,8 +1547,8 @@ static struct promote_op *promote_alloc(struct bch_fs *c,
 
 	promote = __promote_alloc(c,
 				  k.k->type == KEY_TYPE_reflink_v
-				  ? BTREE_ID_REFLINK
-				  : BTREE_ID_EXTENTS,
+				  ? BTREE_ID_reflink
+				  : BTREE_ID_extents,
 				  k, pos, pick, opts, sectors, rbio);
 	if (!promote)
 		return NULL;
@@ -1635,8 +1644,8 @@ static void bch2_read_retry_nodecode(struct bch_fs *c, struct bch_read_bio *rbio
 	bch2_bkey_buf_init(&sk);
 	bch2_trans_init(&trans, c, 0, 0);
 
-	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
-				   rbio->pos, BTREE_ITER_SLOTS);
+	iter = bch2_trans_get_iter(&trans, rbio->data_btree,
+				   rbio->read_pos, BTREE_ITER_SLOTS);
 retry:
 	rbio->bio.bi_status = 0;
 
@@ -1650,102 +1659,30 @@ retry:
 
 	if (!bch2_bkey_matches_ptr(c, k,
 				   rbio->pick.ptr,
-				   rbio->pos.offset -
+				   rbio->data_pos.offset -
 				   rbio->pick.crc.offset)) {
 		/* extent we wanted to read no longer exists: */
 		rbio->hole = true;
 		goto out;
 	}
 
-	ret = __bch2_read_extent(&trans, rbio, bvec_iter, k, 0, failed, flags);
+	ret = __bch2_read_extent(&trans, rbio, bvec_iter,
+				 rbio->read_pos,
+				 rbio->data_btree,
+				 k, 0, failed, flags);
 	if (ret == READ_RETRY)
 		goto retry;
 	if (ret)
 		goto err;
 out:
 	bch2_rbio_done(rbio);
+	bch2_trans_iter_put(&trans, iter);
 	bch2_trans_exit(&trans);
 	bch2_bkey_buf_exit(&sk, c);
 	return;
 err:
 	rbio->bio.bi_status = BLK_STS_IOERR;
 	goto out;
-}
-
-static void bch2_read_retry(struct bch_fs *c, struct bch_read_bio *rbio,
-			    struct bvec_iter bvec_iter, u64 inode,
-			    struct bch_io_failures *failed, unsigned flags)
-{
-	struct btree_trans trans;
-	struct btree_iter *iter;
-	struct bkey_buf sk;
-	struct bkey_s_c k;
-	int ret;
-
-	flags &= ~BCH_READ_LAST_FRAGMENT;
-	flags |= BCH_READ_MUST_CLONE;
-
-	bch2_bkey_buf_init(&sk);
-	bch2_trans_init(&trans, c, 0, 0);
-retry:
-	bch2_trans_begin(&trans);
-
-	for_each_btree_key(&trans, iter, BTREE_ID_EXTENTS,
-			   POS(inode, bvec_iter.bi_sector),
-			   BTREE_ITER_SLOTS, k, ret) {
-		unsigned bytes, sectors, offset_into_extent;
-
-		bch2_bkey_buf_reassemble(&sk, c, k);
-
-		offset_into_extent = iter->pos.offset -
-			bkey_start_offset(k.k);
-		sectors = k.k->size - offset_into_extent;
-
-		ret = bch2_read_indirect_extent(&trans,
-					&offset_into_extent, &sk);
-		if (ret)
-			break;
-
-		k = bkey_i_to_s_c(sk.k);
-
-		sectors = min(sectors, k.k->size - offset_into_extent);
-
-		bch2_trans_unlock(&trans);
-
-		bytes = min(sectors, bvec_iter_sectors(bvec_iter)) << 9;
-		swap(bvec_iter.bi_size, bytes);
-
-		ret = __bch2_read_extent(&trans, rbio, bvec_iter, k,
-				offset_into_extent, failed, flags);
-		switch (ret) {
-		case READ_RETRY:
-			goto retry;
-		case READ_ERR:
-			goto err;
-		};
-
-		if (bytes == bvec_iter.bi_size)
-			goto out;
-
-		swap(bvec_iter.bi_size, bytes);
-		bio_advance_iter(&rbio->bio, &bvec_iter, bytes);
-	}
-
-	if (ret == -EINTR)
-		goto retry;
-	/*
-	 * If we get here, it better have been because there was an error
-	 * reading a btree node
-	 */
-	BUG_ON(!ret);
-	bch_err_inum_ratelimited(c, inode,
-			"read error %i from btree lookup", ret);
-err:
-	rbio->bio.bi_status = BLK_STS_IOERR;
-out:
-	bch2_trans_exit(&trans);
-	bch2_bkey_buf_exit(&sk, c);
-	bch2_rbio_done(rbio);
 }
 
 static void bch2_rbio_retry(struct work_struct *work)
@@ -1755,7 +1692,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 	struct bch_fs *c	= rbio->c;
 	struct bvec_iter iter	= rbio->bvec_iter;
 	unsigned flags		= rbio->flags;
-	u64 inode		= rbio->pos.inode;
+	u64 inode		= rbio->read_pos.inode;
 	struct bch_io_failures failed = { .nr = 0 };
 
 	trace_read_retry(&rbio->bio);
@@ -1770,10 +1707,14 @@ static void bch2_rbio_retry(struct work_struct *work)
 	flags |= BCH_READ_IN_RETRY;
 	flags &= ~BCH_READ_MAY_PROMOTE;
 
-	if (flags & BCH_READ_NODECODE)
+	if (flags & BCH_READ_NODECODE) {
 		bch2_read_retry_nodecode(c, rbio, iter, inode, &failed, flags);
-	else
-		bch2_read_retry(c, rbio, iter, inode, &failed, flags);
+	} else {
+		flags &= ~BCH_READ_LAST_FRAGMENT;
+		flags |= BCH_READ_MUST_CLONE;
+
+		__bch2_read(c, rbio, iter, inode, &failed, flags);
+	}
 }
 
 static void bch2_rbio_error(struct bch_read_bio *rbio, int retry,
@@ -1799,7 +1740,7 @@ static int __bch2_rbio_narrow_crcs(struct btree_trans *trans,
 				   struct bch_read_bio *rbio)
 {
 	struct bch_fs *c = rbio->c;
-	u64 data_offset = rbio->pos.offset - rbio->pick.crc.offset;
+	u64 data_offset = rbio->data_pos.offset - rbio->pick.crc.offset;
 	struct bch_extent_crc_unpacked new_crc;
 	struct btree_iter *iter = NULL;
 	struct bkey_i *new;
@@ -1809,7 +1750,7 @@ static int __bch2_rbio_narrow_crcs(struct btree_trans *trans,
 	if (crc_is_compressed(rbio->pick.crc))
 		return 0;
 
-	iter = bch2_trans_get_iter(trans, BTREE_ID_EXTENTS, rbio->pos,
+	iter = bch2_trans_get_iter(trans, rbio->data_btree, rbio->data_pos,
 				   BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 	k = bch2_btree_iter_peek_slot(iter);
 	if ((ret = bkey_err(k)))
@@ -1846,7 +1787,7 @@ static int __bch2_rbio_narrow_crcs(struct btree_trans *trans,
 	if (!bch2_bkey_narrow_crcs(new, new_crc))
 		goto out;
 
-	bch2_trans_update(trans, iter, new, 0);
+	ret = bch2_trans_update(trans, iter, new, 0);
 out:
 	bch2_trans_iter_put(trans, iter);
 	return ret;
@@ -1885,6 +1826,13 @@ static void __bch2_read_endio(struct work_struct *work)
 	if (bch2_crc_cmp(csum, rbio->pick.crc.csum))
 		goto csum_err;
 
+	/*
+	 * XXX
+	 * We need to rework the narrow_crcs path to deliver the read completion
+	 * first, and then punt to a different workqueue, otherwise we're
+	 * holding up reads while doing btree updates which is bad for memory
+	 * reclaim.
+	 */
 	if (unlikely(rbio->narrow_crcs))
 		bch2_rbio_narrow_crcs(rbio);
 
@@ -1942,14 +1890,14 @@ csum_err:
 		return;
 	}
 
-	bch2_dev_inum_io_error(ca, rbio->pos.inode, (u64) rbio->bvec_iter.bi_sector,
+	bch2_dev_inum_io_error(ca, rbio->read_pos.inode, (u64) rbio->bvec_iter.bi_sector,
 		"data checksum error: expected %0llx:%0llx got %0llx:%0llx (type %u)",
 		rbio->pick.crc.csum.hi, rbio->pick.crc.csum.lo,
 		csum.hi, csum.lo, crc.csum_type);
 	bch2_rbio_error(rbio, READ_RETRY_AVOID, BLK_STS_IOERR);
 	return;
 decompression_err:
-	bch_err_inum_ratelimited(c, rbio->pos.inode,
+	bch_err_inum_ratelimited(c, rbio->read_pos.inode,
 				 "decompression error");
 	bch2_rbio_error(rbio, READ_ERR, BLK_STS_IOERR);
 	return;
@@ -1972,13 +1920,9 @@ static void bch2_read_endio(struct bio *bio)
 	if (!rbio->split)
 		rbio->bio.bi_end_io = rbio->end_io;
 
-	/*
-	 * XXX: rbio->pos is not what we want here when reading from indirect
-	 * extents
-	 */
 	if (bch2_dev_inum_io_err_on(bio->bi_status, ca,
-				    rbio->pos.inode,
-				    rbio->pos.offset,
+				    rbio->read_pos.inode,
+				    rbio->read_pos.offset,
 				    "data read error: %s",
 			       bch2_blk_status_to_str(bio->bi_status))) {
 		bch2_rbio_error(rbio, READ_RETRY_AVOID, bio->bi_status);
@@ -2019,7 +1963,7 @@ int __bch2_read_indirect_extent(struct btree_trans *trans,
 	reflink_offset = le64_to_cpu(bkey_i_to_reflink_p(orig_k->k)->v.idx) +
 		*offset_into_extent;
 
-	iter = bch2_trans_get_iter(trans, BTREE_ID_REFLINK,
+	iter = bch2_trans_get_iter(trans, BTREE_ID_reflink,
 				   POS(0, reflink_offset),
 				   BTREE_ITER_SLOTS);
 	k = bch2_btree_iter_peek_slot(iter);
@@ -2030,7 +1974,11 @@ int __bch2_read_indirect_extent(struct btree_trans *trans,
 	if (k.k->type != KEY_TYPE_reflink_v &&
 	    k.k->type != KEY_TYPE_indirect_inline_data) {
 		bch_err_inum_ratelimited(trans->c, orig_k->k->k.p.inode,
-				"pointer to nonexistent indirect extent");
+			"%llu len %u points to nonexistent indirect extent %llu",
+			orig_k->k->k.p.offset,
+			orig_k->k->k.size,
+			reflink_offset);
+		bch2_inconsistent_error(trans->c);
 		ret = -EIO;
 		goto err;
 	}
@@ -2043,7 +1991,8 @@ err:
 }
 
 int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
-		       struct bvec_iter iter, struct bkey_s_c k,
+		       struct bvec_iter iter, struct bpos read_pos,
+		       enum btree_id data_btree, struct bkey_s_c k,
 		       unsigned offset_into_extent,
 		       struct bch_io_failures *failed, unsigned flags)
 {
@@ -2053,7 +2002,7 @@ int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
 	struct bch_dev *ca;
 	struct promote_op *promote = NULL;
 	bool bounce = false, read_full = false, narrow_crcs = false;
-	struct bpos pos = bkey_start_pos(k.k);
+	struct bpos data_pos = bkey_start_pos(k.k);
 	int pick_ret;
 
 	if (bkey_extent_is_inline_data(k.k)) {
@@ -2129,7 +2078,7 @@ int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
 			 pick.crc.offset ||
 			 offset_into_extent));
 
-		pos.offset += offset_into_extent;
+		data_pos.offset += offset_into_extent;
 		pick.ptr.offset += pick.crc.offset +
 			offset_into_extent;
 		offset_into_extent		= 0;
@@ -2201,7 +2150,9 @@ get_bio:
 	/* XXX: only initialize this if needed */
 	rbio->devs_have		= bch2_bkey_devs(k);
 	rbio->pick		= pick;
-	rbio->pos		= pos;
+	rbio->read_pos		= read_pos;
+	rbio->data_btree	= data_btree;
+	rbio->data_pos		= data_pos;
 	rbio->version		= k.k->version;
 	rbio->promote		= promote;
 	INIT_WORK(&rbio->work, NULL);
@@ -2271,6 +2222,9 @@ out:
 			ret = READ_RETRY;
 		}
 
+		if (!ret)
+			goto out_read_done;
+
 		return ret;
 	}
 
@@ -2297,42 +2251,37 @@ out_read_done:
 	return 0;
 }
 
-void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio, u64 inode)
+void __bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
+		 struct bvec_iter bvec_iter, u64 inode,
+		 struct bch_io_failures *failed, unsigned flags)
 {
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_buf sk;
 	struct bkey_s_c k;
-	unsigned flags = BCH_READ_RETRY_IF_STALE|
-		BCH_READ_MAY_PROMOTE|
-		BCH_READ_USER_MAPPED;
 	int ret;
 
-	BUG_ON(rbio->_state);
 	BUG_ON(flags & BCH_READ_NODECODE);
-	BUG_ON(flags & BCH_READ_IN_RETRY);
-
-	rbio->c = c;
-	rbio->start_time = local_clock();
 
 	bch2_bkey_buf_init(&sk);
 	bch2_trans_init(&trans, c, 0, 0);
 retry:
 	bch2_trans_begin(&trans);
 
-	iter = bch2_trans_get_iter(&trans, BTREE_ID_EXTENTS,
-				   POS(inode, rbio->bio.bi_iter.bi_sector),
+	iter = bch2_trans_get_iter(&trans, BTREE_ID_extents,
+				   POS(inode, bvec_iter.bi_sector),
 				   BTREE_ITER_SLOTS);
 	while (1) {
 		unsigned bytes, sectors, offset_into_extent;
+		enum btree_id data_btree = BTREE_ID_extents;
 
 		bch2_btree_iter_set_pos(iter,
-				POS(inode, rbio->bio.bi_iter.bi_sector));
+				POS(inode, bvec_iter.bi_sector));
 
 		k = bch2_btree_iter_peek_slot(iter);
 		ret = bkey_err(k);
 		if (ret)
-			goto err;
+			break;
 
 		offset_into_extent = iter->pos.offset -
 			bkey_start_offset(k.k);
@@ -2340,10 +2289,10 @@ retry:
 
 		bch2_bkey_buf_reassemble(&sk, c, k);
 
-		ret = bch2_read_indirect_extent(&trans,
+		ret = bch2_read_indirect_extent(&trans, &data_btree,
 					&offset_into_extent, &sk);
 		if (ret)
-			goto err;
+			break;
 
 		k = bkey_i_to_s_c(sk.k);
 
@@ -2359,33 +2308,37 @@ retry:
 		 */
 		bch2_trans_unlock(&trans);
 
-		bytes = min(sectors, bio_sectors(&rbio->bio)) << 9;
-		swap(rbio->bio.bi_iter.bi_size, bytes);
+		bytes = min(sectors, bvec_iter_sectors(bvec_iter)) << 9;
+		swap(bvec_iter.bi_size, bytes);
 
-		if (rbio->bio.bi_iter.bi_size == bytes)
+		if (bvec_iter.bi_size == bytes)
 			flags |= BCH_READ_LAST_FRAGMENT;
 
-		bch2_read_extent(&trans, rbio, k, offset_into_extent, flags);
+		ret = __bch2_read_extent(&trans, rbio, bvec_iter, iter->pos,
+					 data_btree, k,
+					 offset_into_extent, failed, flags);
+		if (ret)
+			break;
 
 		if (flags & BCH_READ_LAST_FRAGMENT)
 			break;
 
-		swap(rbio->bio.bi_iter.bi_size, bytes);
-		bio_advance(&rbio->bio, bytes);
+		swap(bvec_iter.bi_size, bytes);
+		bio_advance_iter(&rbio->bio, &bvec_iter, bytes);
 	}
-out:
-	bch2_trans_exit(&trans);
-	bch2_bkey_buf_exit(&sk, c);
-	return;
-err:
-	if (ret == -EINTR)
+	bch2_trans_iter_put(&trans, iter);
+
+	if (ret == -EINTR || ret == READ_RETRY || ret == READ_RETRY_AVOID)
 		goto retry;
 
-	bch_err_inum_ratelimited(c, inode,
-				 "read error %i from btree lookup", ret);
-	rbio->bio.bi_status = BLK_STS_IOERR;
-	bch2_rbio_done(rbio);
-	goto out;
+	if (ret) {
+		bch_err_inum_ratelimited(c, inode,
+					 "read error %i from btree lookup", ret);
+		rbio->bio.bi_status = BLK_STS_IOERR;
+		bch2_rbio_done(rbio);
+	}
+	bch2_trans_exit(&trans);
+	bch2_bkey_buf_exit(&sk, c);
 }
 
 void bch2_fs_io_exit(struct bch_fs *c)

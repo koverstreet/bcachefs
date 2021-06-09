@@ -132,10 +132,10 @@ do {									\
 } while (0)
 
 write_attribute(trigger_journal_flush);
-write_attribute(trigger_btree_coalesce);
 write_attribute(trigger_gc);
 write_attribute(prune_cache);
 rw_attribute(btree_gc_periodic);
+rw_attribute(gc_gens_pos);
 
 read_attribute(uuid);
 read_attribute(minor);
@@ -152,6 +152,8 @@ read_attribute(io_latency_write);
 read_attribute(io_latency_stats_read);
 read_attribute(io_latency_stats_write);
 read_attribute(congested);
+
+read_attribute(btree_avg_write_size);
 
 read_attribute(bucket_quantiles_last_read);
 read_attribute(bucket_quantiles_last_write);
@@ -188,7 +190,7 @@ rw_attribute(cache_replacement_policy);
 rw_attribute(label);
 
 rw_attribute(copy_gc_enabled);
-sysfs_pd_controller_attribute(copy_gc);
+read_attribute(copy_gc_wait);
 
 rw_attribute(rebalance_enabled);
 sysfs_pd_controller_attribute(rebalance);
@@ -196,8 +198,6 @@ read_attribute(rebalance_work);
 rw_attribute(promote_whole_extents);
 
 read_attribute(new_stripes);
-
-rw_attribute(pd_controllers_update_seconds);
 
 read_attribute(io_timers_read);
 read_attribute(io_timers_write);
@@ -230,9 +230,17 @@ static size_t bch2_btree_cache_size(struct bch_fs *c)
 	return ret;
 }
 
+static size_t bch2_btree_avg_write_size(struct bch_fs *c)
+{
+	u64 nr = atomic64_read(&c->btree_writes_nr);
+	u64 sectors = atomic64_read(&c->btree_writes_sectors);
+
+	return nr ? div64_u64(sectors, nr) : 0;
+}
+
 static int fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
 {
-	struct bch_fs_usage *fs_usage = bch2_fs_usage_read(c);
+	struct bch_fs_usage_online *fs_usage = bch2_fs_usage_read(c);
 
 	if (!fs_usage)
 		return -ENOMEM;
@@ -261,7 +269,7 @@ static int bch2_compression_stats_to_text(struct printbuf *out, struct bch_fs *c
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	for_each_btree_key(&trans, iter, BTREE_ID_EXTENTS, POS_MIN, 0, k, ret)
+	for_each_btree_key(&trans, iter, BTREE_ID_extents, POS_MIN, 0, k, ret)
 		if (k.k->type == KEY_TYPE_extent) {
 			struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
 			const union bch_extent_entry *entry;
@@ -304,6 +312,13 @@ static int bch2_compression_stats_to_text(struct printbuf *out, struct bch_fs *c
 	return 0;
 }
 
+static void bch2_gc_gens_pos_to_text(struct printbuf *out, struct bch_fs *c)
+{
+	pr_buf(out, "%s: ", bch2_btree_ids[c->gc_gens_btree]);
+	bch2_bpos_to_text(out, c->gc_gens_pos);
+	pr_buf(out, "\n");
+}
+
 SHOW(bch2_fs)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
@@ -318,6 +333,7 @@ SHOW(bch2_fs)
 	sysfs_print(block_size,			block_bytes(c));
 	sysfs_print(btree_node_size,		btree_bytes(c));
 	sysfs_hprint(btree_cache_size,		bch2_btree_cache_size(c));
+	sysfs_hprint(btree_avg_write_size,	bch2_btree_avg_write_size(c));
 
 	sysfs_print(read_realloc_races,
 		    atomic_long_read(&c->read_realloc_races));
@@ -328,14 +344,18 @@ SHOW(bch2_fs)
 
 	sysfs_printf(btree_gc_periodic, "%u",	(int) c->btree_gc_periodic);
 
-	sysfs_printf(copy_gc_enabled, "%i", c->copy_gc_enabled);
+	if (attr == &sysfs_gc_gens_pos) {
+		bch2_gc_gens_pos_to_text(&out, c);
+		return out.pos - buf;
+	}
 
-	sysfs_print(pd_controllers_update_seconds,
-		    c->pd_controllers_update_seconds);
+	sysfs_printf(copy_gc_enabled, "%i", c->copy_gc_enabled);
 
 	sysfs_printf(rebalance_enabled,		"%i", c->rebalance.enabled);
 	sysfs_pd_controller_show(rebalance,	&c->rebalance.pd); /* XXX */
-	sysfs_pd_controller_show(copy_gc,	&c->copygc_pd);
+	sysfs_hprint(copy_gc_wait,
+		     max(0LL, c->copygc_wait -
+			 atomic64_read(&c->io_clock[WRITE].now)) << 9);
 
 	if (attr == &sysfs_rebalance_work) {
 		bch2_rebalance_work_to_text(&out, c);
@@ -443,10 +463,7 @@ STORE(bch2_fs)
 		return ret;
 	}
 
-	sysfs_strtoul(pd_controllers_update_seconds,
-		      c->pd_controllers_update_seconds);
 	sysfs_pd_controller_store(rebalance,	&c->rebalance.pd);
-	sysfs_pd_controller_store(copy_gc,	&c->copygc_pd);
 
 	sysfs_strtoul(promote_whole_extents,	c->promote_whole_extents);
 
@@ -459,9 +476,6 @@ STORE(bch2_fs)
 
 	if (attr == &sysfs_trigger_journal_flush)
 		bch2_journal_meta(&c->journal);
-
-	if (attr == &sysfs_trigger_btree_coalesce)
-		bch2_coalesce(c);
 
 	if (attr == &sysfs_trigger_gc) {
 		/*
@@ -513,6 +527,7 @@ struct attribute *bch2_fs_files[] = {
 	&sysfs_block_size,
 	&sysfs_btree_node_size,
 	&sysfs_btree_cache_size,
+	&sysfs_btree_avg_write_size,
 
 	&sysfs_journal_write_delay_ms,
 	&sysfs_journal_reclaim_delay_ms,
@@ -558,16 +573,16 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_extent_migrate_raced,
 
 	&sysfs_trigger_journal_flush,
-	&sysfs_trigger_btree_coalesce,
 	&sysfs_trigger_gc,
+	&sysfs_gc_gens_pos,
 	&sysfs_prune_cache,
 
 	&sysfs_copy_gc_enabled,
+	&sysfs_copy_gc_wait,
 
 	&sysfs_rebalance_enabled,
 	&sysfs_rebalance_work,
 	sysfs_pd_controller_files(rebalance),
-	sysfs_pd_controller_files(copy_gc),
 
 	&sysfs_new_stripes,
 
@@ -800,30 +815,33 @@ static void dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 	pr_buf(out,
 	       "ec\t%16llu\n"
 	       "available%15llu\n"
-	       "alloc\t%16llu\n"
 	       "\n"
 	       "free_inc\t\t%zu/%zu\n"
 	       "free[RESERVE_MOVINGGC]\t%zu/%zu\n"
 	       "free[RESERVE_NONE]\t%zu/%zu\n"
 	       "freelist_wait\t\t%s\n"
-	       "open buckets\t\t%u/%u (reserved %u)\n"
+	       "open buckets allocated\t%u\n"
+	       "open buckets this dev\t%u\n"
+	       "open buckets total\t%u\n"
 	       "open_buckets_wait\t%s\n"
 	       "open_buckets_btree\t%u\n"
 	       "open_buckets_user\t%u\n"
-	       "btree reserve cache\t%u\n",
+	       "btree reserve cache\t%u\n"
+	       "thread state:\t\t%s\n",
 	       stats.buckets_ec,
 	       __dev_buckets_available(ca, stats),
-	       stats.buckets_alloc,
 	       fifo_used(&ca->free_inc),		ca->free_inc.size,
 	       fifo_used(&ca->free[RESERVE_MOVINGGC]),	ca->free[RESERVE_MOVINGGC].size,
 	       fifo_used(&ca->free[RESERVE_NONE]),	ca->free[RESERVE_NONE].size,
 	       c->freelist_wait.list.first		? "waiting" : "empty",
-	       c->open_buckets_nr_free, OPEN_BUCKETS_COUNT,
-	       BTREE_NODE_OPEN_BUCKET_RESERVE,
+	       OPEN_BUCKETS_COUNT - c->open_buckets_nr_free,
+	       ca->nr_open_buckets,
+	       OPEN_BUCKETS_COUNT,
 	       c->open_buckets_wait.list.first		? "waiting" : "empty",
 	       nr[BCH_DATA_btree],
 	       nr[BCH_DATA_user],
-	       c->btree_reserve_cache_nr);
+	       c->btree_reserve_cache_nr,
+	       bch2_allocator_states[ca->allocator_state]);
 }
 
 static const char * const bch2_rw[] = {
@@ -889,7 +907,7 @@ SHOW(bch2_dev)
 	}
 
 	if (attr == &sysfs_state_rw) {
-		bch2_string_opt_to_text(&out, bch2_dev_state,
+		bch2_string_opt_to_text(&out, bch2_member_states,
 					ca->mi.state);
 		pr_buf(&out, "\n");
 		return out.pos - buf;

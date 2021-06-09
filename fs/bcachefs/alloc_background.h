@@ -6,6 +6,8 @@
 #include "alloc_types.h"
 #include "debug.h"
 
+extern const char * const bch2_allocator_states[];
+
 struct bkey_alloc_unpacked {
 	u64		bucket;
 	u8		dev;
@@ -89,8 +91,7 @@ void bch2_alloc_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 	.val_to_text	= bch2_alloc_to_text,		\
 }
 
-struct journal_keys;
-int bch2_alloc_read(struct bch_fs *, struct journal_keys *);
+int bch2_alloc_read(struct bch_fs *);
 
 static inline void bch2_wake_allocator(struct bch_dev *ca)
 {
@@ -98,10 +99,8 @@ static inline void bch2_wake_allocator(struct bch_dev *ca)
 
 	rcu_read_lock();
 	p = rcu_dereference(ca->alloc_thread);
-	if (p) {
+	if (p)
 		wake_up_process(p);
-		ca->allocator_state = ALLOCATOR_RUNNING;
-	}
 	rcu_read_unlock();
 }
 

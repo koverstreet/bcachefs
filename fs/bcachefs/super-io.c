@@ -9,6 +9,7 @@
 #include "error.h"
 #include "io.h"
 #include "journal.h"
+#include "journal_io.h"
 #include "journal_seq_blacklist.h"
 #include "replicas.h"
 #include "quota.h"
@@ -49,8 +50,7 @@ static struct bch_sb_field *__bch2_sb_field_resize(struct bch_sb_handle *sb,
 	unsigned old_u64s = f ? le32_to_cpu(f->u64s) : 0;
 	unsigned sb_u64s = le32_to_cpu(sb->sb->u64s) + u64s - old_u64s;
 
-	BUG_ON(get_order(__vstruct_bytes(struct bch_sb, sb_u64s)) >
-	       sb->page_order);
+	BUG_ON(__vstruct_bytes(struct bch_sb, sb_u64s) > sb->buffer_size);
 
 	if (!f && !u64s) {
 		/* nothing to do: */
@@ -100,18 +100,23 @@ void bch2_free_super(struct bch_sb_handle *sb)
 	if (!IS_ERR_OR_NULL(sb->bdev))
 		blkdev_put(sb->bdev, sb->mode);
 
-	free_pages((unsigned long) sb->sb, sb->page_order);
+	kfree(sb->sb);
 	memset(sb, 0, sizeof(*sb));
 }
 
 int bch2_sb_realloc(struct bch_sb_handle *sb, unsigned u64s)
 {
 	size_t new_bytes = __vstruct_bytes(struct bch_sb, u64s);
-	unsigned order = get_order(new_bytes);
+	size_t new_buffer_size;
 	struct bch_sb *new_sb;
 	struct bio *bio;
 
-	if (sb->sb && sb->page_order >= order)
+	if (sb->bdev)
+		new_bytes = max_t(size_t, new_bytes, bdev_logical_block_size(sb->bdev));
+
+	new_buffer_size = roundup_pow_of_two(new_bytes);
+
+	if (sb->sb && sb->buffer_size >= new_buffer_size)
 		return 0;
 
 	if (sb->have_layout) {
@@ -126,14 +131,15 @@ int bch2_sb_realloc(struct bch_sb_handle *sb, unsigned u64s)
 		}
 	}
 
-	if (sb->page_order >= order && sb->sb)
+	if (sb->buffer_size >= new_buffer_size && sb->sb)
 		return 0;
 
 	if (dynamic_fault("bcachefs:add:super_realloc"))
 		return -ENOMEM;
 
 	if (sb->have_bio) {
-		bio = bio_kmalloc(GFP_KERNEL, 1 << order);
+		bio = bio_kmalloc(GFP_KERNEL,
+			DIV_ROUND_UP(new_buffer_size, PAGE_SIZE));
 		if (!bio)
 			return -ENOMEM;
 
@@ -142,17 +148,12 @@ int bch2_sb_realloc(struct bch_sb_handle *sb, unsigned u64s)
 		sb->bio = bio;
 	}
 
-	new_sb = (void *) __get_free_pages(GFP_NOFS|__GFP_ZERO, order);
+	new_sb = krealloc(sb->sb, new_buffer_size, GFP_NOFS|__GFP_ZERO);
 	if (!new_sb)
 		return -ENOMEM;
 
-	if (sb->sb)
-		memcpy(new_sb, sb->sb, PAGE_SIZE << sb->page_order);
-
-	free_pages((unsigned long) sb->sb, sb->page_order);
 	sb->sb = new_sb;
-
-	sb->page_order = order;
+	sb->buffer_size = new_buffer_size;
 
 	return 0;
 }
@@ -361,13 +362,20 @@ static void bch2_sb_update(struct bch_fs *c)
 	c->sb.uuid		= src->uuid;
 	c->sb.user_uuid		= src->user_uuid;
 	c->sb.version		= le16_to_cpu(src->version);
+	c->sb.version_min	= le16_to_cpu(src->version_min);
 	c->sb.nr_devices	= src->nr_devices;
 	c->sb.clean		= BCH_SB_CLEAN(src);
 	c->sb.encryption_type	= BCH_SB_ENCRYPTION_TYPE(src);
 	c->sb.encoded_extent_max= 1 << BCH_SB_ENCODED_EXTENT_MAX_BITS(src);
-	c->sb.time_base_lo	= le64_to_cpu(src->time_base_lo);
+
+	c->sb.nsec_per_time_unit = le32_to_cpu(src->time_precision);
+	c->sb.time_units_per_sec = NSEC_PER_SEC / c->sb.nsec_per_time_unit;
+
+	/* XXX this is wrong, we need a 96 or 128 bit integer type */
+	c->sb.time_base_lo	= div_u64(le64_to_cpu(src->time_base_lo),
+					  c->sb.nsec_per_time_unit);
 	c->sb.time_base_hi	= le32_to_cpu(src->time_base_hi);
-	c->sb.time_precision	= le32_to_cpu(src->time_precision);
+
 	c->sb.features		= le64_to_cpu(src->features[0]);
 	c->sb.compat		= le64_to_cpu(src->compat[0]);
 
@@ -431,6 +439,11 @@ int bch2_sb_to_fs(struct bch_fs *c, struct bch_sb *src)
 
 	__copy_super(&c->disk_sb, src);
 
+	if (BCH_SB_HAS_ERRORS(c->disk_sb.sb))
+		set_bit(BCH_FS_ERROR, &c->flags);
+	if (BCH_SB_HAS_TOPOLOGY_ERRORS(c->disk_sb.sb))
+		set_bit(BCH_FS_TOPOLOGY_ERROR, &c->flags);
+
 	ret = bch2_sb_replicas_to_cpu_replicas(c);
 	if (ret)
 		return ret;
@@ -473,7 +486,7 @@ reread:
 	bio_set_dev(sb->bio, sb->bdev);
 	sb->bio->bi_iter.bi_sector = offset;
 	bio_set_op_attrs(sb->bio, REQ_OP_READ, REQ_SYNC|REQ_META);
-	bch2_bio_map(sb->bio, sb->sb, PAGE_SIZE << sb->page_order);
+	bch2_bio_map(sb->bio, sb->sb, sb->buffer_size);
 
 	if (submit_bio_wait(sb->bio))
 		return "IO error";
@@ -490,7 +503,7 @@ reread:
 	if (bytes > 512 << sb->sb->layout.sb_max_size_bits)
 		return "Bad superblock: too big";
 
-	if (get_order(bytes) > sb->page_order) {
+	if (bytes > sb->buffer_size) {
 		if (bch2_sb_realloc(sb, le32_to_cpu(sb->sb->u64s)))
 			return "cannot allocate memory";
 		goto reread;
@@ -696,7 +709,11 @@ int bch2_write_super(struct bch_fs *c)
 	const char *err;
 	struct bch_devs_mask sb_written;
 	bool wrote, can_mount_without_written, can_mount_with_written;
+	unsigned degraded_flags = BCH_FORCE_IF_DEGRADED;
 	int ret = 0;
+
+	if (c->opts.very_degraded)
+		degraded_flags |= BCH_FORCE_IF_LOST;
 
 	lockdep_assert_held(&c->sb_lock);
 
@@ -707,6 +724,10 @@ int bch2_write_super(struct bch_fs *c)
 
 	if (test_bit(BCH_FS_ERROR, &c->flags))
 		SET_BCH_SB_HAS_ERRORS(c->disk_sb.sb, 1);
+	if (test_bit(BCH_FS_TOPOLOGY_ERROR, &c->flags))
+		SET_BCH_SB_HAS_TOPOLOGY_ERRORS(c->disk_sb.sb, 1);
+
+	SET_BCH_SB_BIG_ENDIAN(c->disk_sb.sb, CPU_BIG_ENDIAN);
 
 	for_each_online_member(ca, c, i)
 		bch2_sb_from_fs(c, ca);
@@ -766,13 +787,13 @@ int bch2_write_super(struct bch_fs *c)
 	nr_wrote = dev_mask_nr(&sb_written);
 
 	can_mount_with_written =
-		bch2_have_enough_devs(c, sb_written, BCH_FORCE_IF_DEGRADED, false);
+		bch2_have_enough_devs(c, sb_written, degraded_flags, false);
 
 	for (i = 0; i < ARRAY_SIZE(sb_written.d); i++)
 		sb_written.d[i] = ~sb_written.d[i];
 
 	can_mount_without_written =
-		bch2_have_enough_devs(c, sb_written, BCH_FORCE_IF_DEGRADED, false);
+		bch2_have_enough_devs(c, sb_written, degraded_flags, false);
 
 	/*
 	 * If we would be able to mount _without_ the devices we successfully
@@ -931,14 +952,23 @@ static const struct bch_sb_field_ops bch_sb_field_ops_crypt = {
 
 /* BCH_SB_FIELD_clean: */
 
-void bch2_sb_clean_renumber(struct bch_sb_field_clean *clean, int write)
+int bch2_sb_clean_validate(struct bch_fs *c, struct bch_sb_field_clean *clean, int write)
 {
 	struct jset_entry *entry;
+	int ret;
 
 	for (entry = clean->start;
 	     entry < (struct jset_entry *) vstruct_end(&clean->field);
-	     entry = vstruct_next(entry))
-		bch2_bkey_renumber(BKEY_TYPE_BTREE, bkey_to_packed(entry->start), write);
+	     entry = vstruct_next(entry)) {
+		ret = bch2_journal_entry_validate(c, "superblock", entry,
+						  le16_to_cpu(c->disk_sb.sb->version),
+						  BCH_SB_BIG_ENDIAN(c->disk_sb.sb),
+						  write);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
 }
 
 int bch2_fs_mark_dirty(struct bch_fs *c)
@@ -952,7 +982,7 @@ int bch2_fs_mark_dirty(struct bch_fs *c)
 
 	mutex_lock(&c->sb_lock);
 	SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
-	c->disk_sb.sb->features[0] |= BCH_SB_FEATURES_ALWAYS;
+	c->disk_sb.sb->features[0] |= cpu_to_le64(BCH_SB_FEATURES_ALWAYS);
 	ret = bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
 
@@ -969,7 +999,7 @@ static struct jset_entry *jset_entry_init(struct jset_entry **end, size_t size)
 	 * The u64s field counts from the start of data, ignoring the shared
 	 * fields.
 	 */
-	entry->u64s = u64s - 1;
+	entry->u64s = cpu_to_le16(u64s - 1);
 
 	*end = vstruct_next(*end);
 	return entry;
@@ -982,7 +1012,7 @@ void bch2_journal_super_entries_add_common(struct bch_fs *c,
 	struct bch_dev *ca;
 	unsigned i, dev;
 
-	percpu_down_write(&c->mark_lock);
+	percpu_down_read(&c->mark_lock);
 
 	if (!journal_seq) {
 		for (i = 0; i < ARRAY_SIZE(c->usage); i++)
@@ -1053,7 +1083,7 @@ void bch2_journal_super_entries_add_common(struct bch_fs *c,
 		}
 	}
 
-	percpu_up_write(&c->mark_lock);
+	percpu_up_read(&c->mark_lock);
 
 	for (i = 0; i < 2; i++) {
 		struct jset_entry_clock *clock =
@@ -1062,7 +1092,7 @@ void bch2_journal_super_entries_add_common(struct bch_fs *c,
 
 		clock->entry.type = BCH_JSET_ENTRY_clock;
 		clock->rw	= i;
-		clock->time	= atomic64_read(&c->io_clock[i].now);
+		clock->time	= cpu_to_le64(atomic64_read(&c->io_clock[i].now));
 	}
 }
 
@@ -1071,6 +1101,7 @@ void bch2_fs_mark_clean(struct bch_fs *c)
 	struct bch_sb_field_clean *sb_clean;
 	struct jset_entry *entry;
 	unsigned u64s;
+	int ret;
 
 	mutex_lock(&c->sb_lock);
 	if (BCH_SB_CLEAN(c->disk_sb.sb))
@@ -1078,10 +1109,10 @@ void bch2_fs_mark_clean(struct bch_fs *c)
 
 	SET_BCH_SB_CLEAN(c->disk_sb.sb, true);
 
-	c->disk_sb.sb->compat[0] |= 1ULL << BCH_COMPAT_alloc_info;
-	c->disk_sb.sb->compat[0] |= 1ULL << BCH_COMPAT_alloc_metadata;
-	c->disk_sb.sb->features[0] &= ~(1ULL << BCH_FEATURE_extents_above_btree_updates);
-	c->disk_sb.sb->features[0] &= ~(1ULL << BCH_FEATURE_btree_updates_journalled);
+	c->disk_sb.sb->compat[0] |= cpu_to_le64(1ULL << BCH_COMPAT_alloc_info);
+	c->disk_sb.sb->compat[0] |= cpu_to_le64(1ULL << BCH_COMPAT_alloc_metadata);
+	c->disk_sb.sb->features[0] &= cpu_to_le64(~(1ULL << BCH_FEATURE_extents_above_btree_updates));
+	c->disk_sb.sb->features[0] &= cpu_to_le64(~(1ULL << BCH_FEATURE_btree_updates_journalled));
 
 	u64s = sizeof(*sb_clean) / sizeof(u64) + c->journal.entry_u64s_reserved;
 
@@ -1105,9 +1136,15 @@ void bch2_fs_mark_clean(struct bch_fs *c)
 	memset(entry, 0,
 	       vstruct_end(&sb_clean->field) - (void *) entry);
 
-	if (le16_to_cpu(c->disk_sb.sb->version) <
-	    bcachefs_metadata_version_bkey_renumber)
-		bch2_sb_clean_renumber(sb_clean, WRITE);
+	/*
+	 * this should be in the write path, and we should be validating every
+	 * superblock section:
+	 */
+	ret = bch2_sb_clean_validate(c, sb_clean, WRITE);
+	if (ret) {
+		bch_err(c, "error writing marking filesystem clean: validate error");
+		goto out;
+	}
 
 	bch2_write_super(c);
 out:

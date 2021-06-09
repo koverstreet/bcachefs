@@ -7,8 +7,6 @@
 
 struct btree_iter;
 
-extern const char * const bch2_btree_ids[];
-
 void bch2_recalc_btree_reserve(struct bch_fs *);
 
 void bch2_btree_node_hash_remove(struct btree_cache *, struct btree *);
@@ -19,6 +17,7 @@ int bch2_btree_node_hash_insert(struct btree_cache *, struct btree *,
 void bch2_btree_cache_cannibalize_unlock(struct bch_fs *);
 int bch2_btree_cache_cannibalize_lock(struct bch_fs *, struct closure *);
 
+struct btree *__bch2_btree_node_mem_alloc(struct bch_fs *);
 struct btree *bch2_btree_node_mem_alloc(struct bch_fs *);
 
 struct btree *bch2_btree_node_get(struct bch_fs *, struct btree_iter *,
@@ -28,11 +27,10 @@ struct btree *bch2_btree_node_get(struct bch_fs *, struct btree_iter *,
 struct btree *bch2_btree_node_get_noiter(struct bch_fs *, const struct bkey_i *,
 					 enum btree_id, unsigned, bool);
 
-struct btree *bch2_btree_node_get_sibling(struct bch_fs *, struct btree_iter *,
-				struct btree *, enum btree_node_sibling);
-
 void bch2_btree_node_prefetch(struct bch_fs *, struct btree_iter *,
 			      const struct bkey_i *, enum btree_id, unsigned);
+
+void bch2_btree_node_evict(struct bch_fs *, const struct bkey_i *);
 
 void bch2_fs_btree_cache_exit(struct bch_fs *);
 int bch2_fs_btree_cache_init(struct bch_fs *);
@@ -94,7 +92,7 @@ static inline unsigned btree_blocks(struct bch_fs *c)
 #define BTREE_FOREGROUND_MERGE_THRESHOLD(c)	(btree_max_u64s(c) * 1 / 3)
 #define BTREE_FOREGROUND_MERGE_HYSTERESIS(c)			\
 	(BTREE_FOREGROUND_MERGE_THRESHOLD(c) +			\
-	 (BTREE_FOREGROUND_MERGE_THRESHOLD(c) << 2))
+	 (BTREE_FOREGROUND_MERGE_THRESHOLD(c) >> 2))
 
 #define btree_node_root(_c, _b)	((_c)->btree_roots[(_b)->c.btree_id].b)
 

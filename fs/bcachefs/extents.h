@@ -368,10 +368,10 @@ int bch2_bkey_pick_read_device(struct bch_fs *, struct bkey_s_c,
 /* KEY_TYPE_btree_ptr: */
 
 const char *bch2_btree_ptr_invalid(const struct bch_fs *, struct bkey_s_c);
-void bch2_btree_ptr_debugcheck(struct bch_fs *, struct bkey_s_c);
 void bch2_btree_ptr_to_text(struct printbuf *, struct bch_fs *,
 			    struct bkey_s_c);
 
+const char *bch2_btree_ptr_v2_invalid(const struct bch_fs *, struct bkey_s_c);
 void bch2_btree_ptr_v2_to_text(struct printbuf *, struct bch_fs *,
 			    struct bkey_s_c);
 void bch2_btree_ptr_v2_compat(enum btree_id, unsigned, unsigned,
@@ -379,14 +379,12 @@ void bch2_btree_ptr_v2_compat(enum btree_id, unsigned, unsigned,
 
 #define bch2_bkey_ops_btree_ptr (struct bkey_ops) {		\
 	.key_invalid	= bch2_btree_ptr_invalid,		\
-	.key_debugcheck	= bch2_btree_ptr_debugcheck,		\
 	.val_to_text	= bch2_btree_ptr_to_text,		\
 	.swab		= bch2_ptr_swab,			\
 }
 
 #define bch2_bkey_ops_btree_ptr_v2 (struct bkey_ops) {		\
-	.key_invalid	= bch2_btree_ptr_invalid,		\
-	.key_debugcheck	= bch2_btree_ptr_debugcheck,		\
+	.key_invalid	= bch2_btree_ptr_v2_invalid,		\
 	.val_to_text	= bch2_btree_ptr_v2_to_text,		\
 	.swab		= bch2_ptr_swab,			\
 	.compat		= bch2_btree_ptr_v2_compat,		\
@@ -395,14 +393,12 @@ void bch2_btree_ptr_v2_compat(enum btree_id, unsigned, unsigned,
 /* KEY_TYPE_extent: */
 
 const char *bch2_extent_invalid(const struct bch_fs *, struct bkey_s_c);
-void bch2_extent_debugcheck(struct bch_fs *, struct bkey_s_c);
 void bch2_extent_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 enum merge_result bch2_extent_merge(struct bch_fs *,
 				    struct bkey_s, struct bkey_s);
 
 #define bch2_bkey_ops_extent (struct bkey_ops) {		\
 	.key_invalid	= bch2_extent_invalid,			\
-	.key_debugcheck	= bch2_extent_debugcheck,		\
 	.val_to_text	= bch2_extent_to_text,			\
 	.swab		= bch2_ptr_swab,			\
 	.key_normalize	= bch2_extent_normalize,		\
@@ -533,6 +529,30 @@ static inline struct bch_devs_list bch2_bkey_cached_devs(struct bkey_s_c k)
 	return ret;
 }
 
+static inline unsigned bch2_bkey_ptr_data_type(struct bkey_s_c k, const struct bch_extent_ptr *ptr)
+{
+	switch (k.k->type) {
+	case KEY_TYPE_btree_ptr:
+	case KEY_TYPE_btree_ptr_v2:
+		return BCH_DATA_btree;
+	case KEY_TYPE_extent:
+	case KEY_TYPE_reflink_v:
+		return BCH_DATA_user;
+	case KEY_TYPE_stripe: {
+		struct bkey_s_c_stripe s = bkey_s_c_to_stripe(k);
+
+		BUG_ON(ptr < s.v->ptrs ||
+		       ptr >= s.v->ptrs + s.v->nr_blocks);
+
+		return ptr >= s.v->ptrs + s.v->nr_blocks - s.v->nr_redundant
+			? BCH_DATA_parity
+			: BCH_DATA_user;
+	}
+	default:
+		BUG();
+	}
+}
+
 unsigned bch2_bkey_nr_ptrs(struct bkey_s_c);
 unsigned bch2_bkey_nr_ptrs_allocated(struct bkey_s_c);
 unsigned bch2_bkey_nr_ptrs_fully_allocated(struct bkey_s_c);
@@ -585,6 +605,24 @@ const char *bch2_bkey_ptrs_invalid(const struct bch_fs *, struct bkey_s_c);
 void bch2_ptr_swab(struct bkey_s);
 
 /* Generic extent code: */
+
+enum bch_extent_overlap {
+	BCH_EXTENT_OVERLAP_ALL		= 0,
+	BCH_EXTENT_OVERLAP_BACK		= 1,
+	BCH_EXTENT_OVERLAP_FRONT	= 2,
+	BCH_EXTENT_OVERLAP_MIDDLE	= 3,
+};
+
+/* Returns how k overlaps with m */
+static inline enum bch_extent_overlap bch2_extent_overlap(const struct bkey *k,
+							  const struct bkey *m)
+{
+	int cmp1 = bkey_cmp(k->p, m->p) < 0;
+	int cmp2 = bkey_cmp(bkey_start_pos(k),
+			    bkey_start_pos(m)) > 0;
+
+	return (cmp1 << 1) + cmp2;
+}
 
 int bch2_cut_front_s(struct bpos, struct bkey_s);
 int bch2_cut_back_s(struct bpos, struct bkey_s);
