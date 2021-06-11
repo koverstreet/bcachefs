@@ -321,6 +321,17 @@ again:
 		}
 
 		ret = btree_repair_node_start(c, b, prev, cur);
+
+		if (ret == DROP_THIS_NODE) {
+			six_unlock_read(&cur->c.lock);
+			bch2_btree_node_evict(c, cur_k.k);
+			ret = bch2_journal_key_delete(c, b->c.btree_id,
+						      b->c.level, cur_k.k->k.p);
+			if (ret)
+				goto err;
+			continue;
+		}
+
 		if (prev)
 			six_unlock_read(&prev->c.lock);
 
@@ -331,13 +342,6 @@ again:
 			if (ret)
 				goto err;
 			goto again;
-		} else if (ret == DROP_THIS_NODE) {
-			bch2_btree_node_evict(c, cur_k.k);
-			ret = bch2_journal_key_delete(c, b->c.btree_id,
-						      b->c.level, cur_k.k->k.p);
-			if (ret)
-				goto err;
-			continue;
 		} else if (ret)
 			break;
 
