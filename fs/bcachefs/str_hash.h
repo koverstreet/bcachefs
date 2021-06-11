@@ -191,7 +191,7 @@ bch2_hash_hole(struct btree_trans *trans,
 			return iter;
 	}
 
-	iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
+	bch2_set_btree_iter_keep(trans, iter);
 	bch2_trans_iter_put(trans, iter);
 
 	return ERR_PTR(ret ?: -ENOSPC);
@@ -218,7 +218,7 @@ int bch2_hash_needs_whiteout(struct btree_trans *trans,
 
 		if (k.k->type == desc.key_type &&
 		    desc.hash_bkey(info, k) <= start->pos.offset) {
-			iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
+			bch2_set_btree_iter_keep(trans, iter);
 			ret = 1;
 			break;
 		}

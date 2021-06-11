@@ -228,6 +228,7 @@ static inline void btree_insert_entry_checks(struct btree_trans *trans,
 	BUG_ON(bpos_cmp(i->k->k.p, i->iter->real_pos));
 	BUG_ON(i->level		!= i->iter->level);
 	BUG_ON(i->btree_id	!= i->iter->btree_id);
+	BUG_ON(i->iter->flags & BTREE_ITER_IS_EXTENTS);
 }
 
 static noinline int
@@ -893,6 +894,15 @@ int __bch2_trans_commit(struct btree_trans *trans)
 		trans_for_each_update(trans, i) {
 			if ((BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS & (1U << i->bkey_type)) &&
 			    !i->trans_triggers_run) {
+				if (!btree_iter_linked(trans, i->iter) ||
+				    bpos_cmp(i->k->k.p, i->iter->pos)) {
+					i->iter = bch2_trans_get_iter(trans, i->btree_id, i->k->k.p,
+								      i->iter_flags|
+								      BTREE_ITER_NOT_EXTENTS|
+								      BTREE_ITER_INTENT);
+					bch2_trans_iter_put(trans, i->iter);
+				}
+
 				i->trans_triggers_run = true;
 				trans_trigger_run = true;
 
@@ -911,7 +921,22 @@ int __bch2_trans_commit(struct btree_trans *trans)
 
 	trans_for_each_update(trans, i) {
 		BUG_ON(!i->iter->should_be_locked);
+		BUG_ON(!btree_iter_linked(trans, i->iter));
+		BUG_ON(bpos_cmp(i->k->k.p, i->iter->pos));
+#if 0
+		if (!btree_iter_linked(trans, i->iter) ||
+		    bpos_cmp(i->k->k.p, i->iter->pos)) {
+			i->iter = bch2_trans_get_iter(trans, i->btree_id, i->k->k.p,
+						      i->iter_flags|
+						      BTREE_ITER_NOT_EXTENTS|
+						      BTREE_ITER_INTENT);
+			ret = bch2_btree_iter_traverse(i->iter);
+			bch2_trans_iter_put(trans, i->iter);
 
+			if (ret)
+				goto out;
+		}
+#endif
 		if (unlikely(!bch2_btree_iter_upgrade(i->iter, i->level + 1))) {
 			trace_trans_restart_upgrade(trans->ip, _RET_IP_,
 						    i->iter->btree_id,
@@ -987,6 +1012,7 @@ int bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 {
 	struct btree_insert_entry *i, n = (struct btree_insert_entry) {
 		.flags		= flags,
+		.iter_flags	= iter->flags & (BTREE_ITER_TYPE|BTREE_ITER_CACHED_NOFILL),
 		.bkey_type	= __btree_node_type(iter->level, iter->btree_id),
 		.btree_id	= iter->btree_id,
 		.level		= iter->level,
@@ -1016,19 +1042,17 @@ int bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 		if (bkey_deleted(&n.k->k))
 			return 0;
 
-		n.iter = bch2_trans_get_iter(trans, n.btree_id, n.k->k.p,
-					     BTREE_ITER_INTENT|
-					     BTREE_ITER_NOT_EXTENTS);
+		iter = bch2_trans_get_iter(trans, n.btree_id, n.k->k.p,
+					   BTREE_ITER_INTENT|
+					   BTREE_ITER_NOT_EXTENTS);
+		n.iter = bch2_set_btree_iter_keep(trans, iter);
 		ret = bch2_btree_iter_traverse(n.iter);
-		bch2_trans_iter_put(trans, n.iter);
-
-		if (ret)
-			return ret;
+		bch2_trans_iter_put(trans, iter);
 	}
 
 	BUG_ON(n.iter->flags & BTREE_ITER_IS_EXTENTS);
 
-	n.iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
+	n.iter = bch2_set_btree_iter_keep(trans, n.iter);
 
 	/*
 	 * Pending updates are kept sorted: first, find position of new update,
