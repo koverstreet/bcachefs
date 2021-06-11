@@ -2073,61 +2073,56 @@ int bch2_trans_mark_dev_sb(struct bch_fs *c, struct bch_dev *ca)
 int bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 			      u64 sectors, int flags)
 {
-	struct bch_fs_pcpu *pcpu;
-	u64 old, v, get;
-	s64 sectors_available;
-	int ret;
+	u64 avail, v, get;
+	int ret = 0;
 
-	percpu_down_read(&c->mark_lock);
-	preempt_disable();
-	pcpu = this_cpu_ptr(c->pcpu);
-
-	if (sectors <= pcpu->sectors_available)
-		goto out;
-
-	v = atomic64_read(&c->sectors_available);
+	v = this_cpu_read(c->pcpu->sectors_available);
 	do {
-		old = v;
-		get = min((u64) sectors + SECTORS_CACHE, old);
-
-		if (get < sectors) {
-			preempt_enable();
-			goto recalculate;
-		}
-	} while ((v = atomic64_cmpxchg(&c->sectors_available,
-				       old, old - get)) != old);
-
-	pcpu->sectors_available		+= get;
-
-out:
-	pcpu->sectors_available		-= sectors;
+		avail = v;
+		if (avail < sectors)
+			goto slowpath_1;
+	} while ((v = this_cpu_cmpxchg(c->pcpu->sectors_available,
+				       avail, avail - sectors)) != avail);
+success:
 	this_cpu_add(*c->online_reserved, sectors);
-	res->sectors			+= sectors;
-
-	preempt_enable();
-	percpu_up_read(&c->mark_lock);
+	res->sectors += sectors;
 	return 0;
 
-recalculate:
+slowpath_1:
+	v = atomic64_read(&c->sectors_available);
+	do {
+		avail = v;
+		if (avail < sectors)
+			goto slowpath_2;
+
+		get = min((u64) sectors + SECTORS_CACHE, avail);
+	} while ((v = atomic64_cmpxchg(&c->sectors_available,
+				       avail, avail - get)) != avail);
+
+	this_cpu_add(c->pcpu->sectors_available, get - sectors);
+	goto success;
+
+slowpath_2:
 	mutex_lock(&c->sectors_available_lock);
+	percpu_down_read(&c->mark_lock);
 
+	atomic64_set(&c->sectors_available, 0);
 	percpu_u64_set(&c->pcpu->sectors_available, 0);
-	sectors_available = avail_factor(__bch2_fs_usage_read_short(c).free);
 
-	if (sectors <= sectors_available ||
-	    (flags & BCH_DISK_RESERVATION_NOFAIL)) {
-		atomic64_set(&c->sectors_available,
-			     max_t(s64, 0, sectors_available - sectors));
-		this_cpu_add(*c->online_reserved, sectors);
-		res->sectors			+= sectors;
-		ret = 0;
-	} else {
-		atomic64_set(&c->sectors_available, sectors_available);
+	avail = avail_factor(__bch2_fs_usage_read_short(c).free);
+
+	if (avail < sectors && !(flags & BCH_DISK_RESERVATION_NOFAIL))
 		ret = -ENOSPC;
-	}
+	else
+		avail = max_t(s64, 0, avail - sectors);
 
-	mutex_unlock(&c->sectors_available_lock);
+	atomic64_set(&c->sectors_available, avail);
+
 	percpu_up_read(&c->mark_lock);
+	mutex_unlock(&c->sectors_available_lock);
+
+	if (!ret)
+		goto success;
 
 	return ret;
 }
