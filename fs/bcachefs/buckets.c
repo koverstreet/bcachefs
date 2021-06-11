@@ -20,26 +20,6 @@
 #include <linux/preempt.h>
 #include <trace/events/bcachefs.h>
 
-static inline void fs_usage_data_type_to_base(struct bch_fs_usage *fs_usage,
-					      enum bch_data_type data_type,
-					      s64 sectors)
-{
-	switch (data_type) {
-	case BCH_DATA_btree:
-		fs_usage->btree		+= sectors;
-		break;
-	case BCH_DATA_user:
-	case BCH_DATA_parity:
-		fs_usage->data		+= sectors;
-		break;
-	case BCH_DATA_cached:
-		fs_usage->cached	+= sectors;
-		break;
-	default:
-		break;
-	}
-}
-
 /*
  * Clear journal_seq_valid for buckets for which it's not needed, to prevent
  * wraparound:
@@ -90,20 +70,21 @@ void bch2_fs_usage_initialize(struct bch_fs *c)
 		bch2_fs_usage_acc_to_base(c, i);
 
 	for (i = 0; i < BCH_REPLICAS_MAX; i++)
-		usage->reserved += usage->persistent_reserved[i];
+		usage->base[BCH_DATA_reserved] += usage->persistent_reserved[i];
 
 	for (i = 0; i < c->replicas.nr; i++) {
 		struct bch_replicas_entry *e =
 			cpu_replicas_entry(&c->replicas, i);
 
-		fs_usage_data_type_to_base(usage, e->data_type, usage->replicas[i]);
+		usage->base[e->data_type] += usage->replicas[i];
 	}
 
 	for_each_member_device(ca, c, i) {
 		struct bch_dev_usage dev = bch2_dev_usage_read(ca);
 
-		usage->hidden += (dev.d[BCH_DATA_sb].buckets +
-				  dev.d[BCH_DATA_journal].buckets) *
+		usage->base[BCH_DATA_sb] += dev.d[BCH_DATA_sb].buckets *
+			ca->mi.bucket_size;
+		usage->base[BCH_DATA_journal] += dev.d[BCH_DATA_journal].buckets *
 			ca->mi.bucket_size;
 	}
 
@@ -135,13 +116,18 @@ struct bch_dev_usage bch2_dev_usage_read(struct bch_dev *ca)
 	return ret;
 }
 
-static inline struct bch_fs_usage *fs_usage_ptr(struct bch_fs *c,
-						unsigned journal_seq,
-						bool gc)
+static inline struct bch_fs_usage __percpu *
+__fs_usage_ptr(struct bch_fs *c, unsigned journal_seq, bool gc)
 {
-	return this_cpu_ptr(gc
-			    ? c->usage_gc
-			    : c->usage[journal_seq & JOURNAL_BUF_MASK]);
+	return gc
+		? c->usage_gc
+		: c->usage[journal_seq & JOURNAL_BUF_MASK];
+}
+
+static inline struct bch_fs_usage *
+fs_usage_ptr(struct bch_fs *c, unsigned journal_seq, bool gc)
+{
+	return this_cpu_ptr(__fs_usage_ptr(c, journal_seq, gc));
 }
 
 u64 bch2_fs_usage_read_one(struct bch_fs *c, u64 *v)
@@ -227,14 +213,10 @@ void bch2_fs_usage_to_text(struct printbuf *out,
 
 	pr_buf(out, "capacity:\t\t\t%llu\n", c->capacity);
 
-	pr_buf(out, "hidden:\t\t\t\t%llu\n",
-	       fs_usage->u.hidden);
-	pr_buf(out, "data:\t\t\t\t%llu\n",
-	       fs_usage->u.data);
-	pr_buf(out, "cached:\t\t\t\t%llu\n",
-	       fs_usage->u.cached);
-	pr_buf(out, "reserved:\t\t\t%llu\n",
-	       fs_usage->u.reserved);
+	for (i = 1; i < BCH_DATA_NR; i++)
+		pr_buf(out, "%s:\t\t\t\t%llu\n",
+		       bch2_data_types[i], fs_usage->u.base[i]);
+
 	pr_buf(out, "nr_inodes:\t\t\t%llu\n",
 	       fs_usage->u.nr_inodes);
 	pr_buf(out, "online reserved:\t\t%llu\n",
@@ -265,10 +247,12 @@ static u64 reserve_factor(u64 r)
 
 u64 bch2_fs_sectors_used(struct bch_fs *c, struct bch_fs_usage_online *fs_usage)
 {
-	return min(fs_usage->u.hidden +
-		   fs_usage->u.btree +
-		   fs_usage->u.data +
-		   reserve_factor(fs_usage->u.reserved +
+	return min(fs_usage->u.base[BCH_DATA_sb] +
+		   fs_usage->u.base[BCH_DATA_journal] +
+		   fs_usage->u.base[BCH_DATA_btree] +
+		   fs_usage->u.base[BCH_DATA_user] +
+		   fs_usage->u.base[BCH_DATA_parity] +
+		   reserve_factor(fs_usage->u.base[BCH_DATA_reserved] +
 				  fs_usage->online_reserved),
 		   c->capacity);
 }
@@ -280,11 +264,15 @@ __bch2_fs_usage_read_short(struct bch_fs *c)
 	u64 data, reserved;
 
 	ret.capacity = c->capacity -
-		bch2_fs_usage_read_one(c, &c->usage_base->hidden);
+		bch2_fs_usage_read_one(c, &c->usage_base->base[BCH_DATA_sb]) -
+		bch2_fs_usage_read_one(c, &c->usage_base->base[BCH_DATA_journal]);
 
-	data		= bch2_fs_usage_read_one(c, &c->usage_base->data) +
-		bch2_fs_usage_read_one(c, &c->usage_base->btree);
-	reserved	= bch2_fs_usage_read_one(c, &c->usage_base->reserved) +
+	data		=
+		bch2_fs_usage_read_one(c, &c->usage_base->base[BCH_DATA_btree]) +
+		bch2_fs_usage_read_one(c, &c->usage_base->base[BCH_DATA_user]) +
+		bch2_fs_usage_read_one(c, &c->usage_base->base[BCH_DATA_parity]);
+	reserved	=
+		bch2_fs_usage_read_one(c, &c->usage_base->base[BCH_DATA_reserved]) +
 		percpu_u64_get(c->online_reserved);
 
 	ret.used	= min(ret.capacity, data + reserve_factor(reserved));
@@ -345,8 +333,7 @@ static inline void account_bucket(struct bch_fs_usage *fs_usage,
 				  int nr, s64 size)
 {
 	if (type == BCH_DATA_sb || type == BCH_DATA_journal)
-		fs_usage->hidden	+= size;
-
+		fs_usage->base[type]	+= size;
 	dev_usage->d[type].buckets	+= nr;
 }
 
@@ -399,7 +386,7 @@ static inline int __update_replicas(struct bch_fs *c,
 	if (idx < 0)
 		return -1;
 
-	fs_usage_data_type_to_base(fs_usage, r->data_type, sectors);
+	fs_usage->base[r->data_type]	+= sectors;
 	fs_usage->replicas[idx]		+= sectors;
 	return 0;
 }
@@ -408,17 +395,15 @@ static inline int update_replicas(struct bch_fs *c,
 			struct bch_replicas_entry *r, s64 sectors,
 			unsigned journal_seq, bool gc)
 {
-	struct bch_fs_usage __percpu *fs_usage;
+	struct bch_fs_usage __percpu *fs_usage =
+		__fs_usage_ptr(c, journal_seq, gc);
 	int idx = bch2_replicas_entry_idx(c, r);
 
 	if (idx < 0)
 		return -1;
 
-	preempt_disable();
-	fs_usage = fs_usage_ptr(c, journal_seq, gc);
-	fs_usage_data_type_to_base(fs_usage, r->data_type, sectors);
-	fs_usage->replicas[idx]		+= sectors;
-	preempt_enable();
+	this_cpu_add(fs_usage->base[r->data_type],	sectors);
+	this_cpu_add(fs_usage->replicas[idx],		sectors);
 	return 0;
 }
 
@@ -1067,13 +1052,12 @@ static int bch2_mark_inode(struct bch_fs *c,
 			struct bkey_s_c old, struct bkey_s_c new,
 			u64 journal_seq, unsigned flags)
 {
-	struct bch_fs_usage __percpu *fs_usage;
+	struct bch_fs_usage __percpu *fs_usage =
+		__fs_usage_ptr(c, journal_seq, flags & BTREE_TRIGGER_GC);
 
-	preempt_disable();
-	fs_usage = fs_usage_ptr(c, journal_seq, flags & BTREE_TRIGGER_GC);
-	fs_usage->nr_inodes += new.k->type == KEY_TYPE_inode;
-	fs_usage->nr_inodes -= old.k->type == KEY_TYPE_inode;
-	preempt_enable();
+	this_cpu_add(fs_usage->nr_inodes,
+		     ((new.k->type == KEY_TYPE_inode) -
+		      (old.k->type == KEY_TYPE_inode)));
 	return 0;
 }
 
@@ -1082,7 +1066,8 @@ static int bch2_mark_reservation(struct bch_fs *c,
 			u64 journal_seq, unsigned flags)
 {
 	struct bkey_s_c k = flags & BTREE_TRIGGER_INSERT ? new : old;
-	struct bch_fs_usage __percpu *fs_usage;
+	struct bch_fs_usage __percpu *fs_usage =
+		__fs_usage_ptr(c, journal_seq, flags & BTREE_TRIGGER_GC);
 	unsigned replicas = bkey_s_c_to_reservation(k).v->nr_replicas;
 	s64 sectors = (s64) k.k->size;
 
@@ -1090,14 +1075,11 @@ static int bch2_mark_reservation(struct bch_fs *c,
 		sectors = -sectors;
 	sectors *= replicas;
 
-	preempt_disable();
-	fs_usage = fs_usage_ptr(c, journal_seq, flags & BTREE_TRIGGER_GC);
 	replicas = clamp_t(unsigned, replicas, 1,
 			   ARRAY_SIZE(fs_usage->persistent_reserved));
 
-	fs_usage->reserved				+= sectors;
-	fs_usage->persistent_reserved[replicas - 1]	+= sectors;
-	preempt_enable();
+	this_cpu_add(fs_usage->base[BCH_DATA_reserved],		  sectors);
+	this_cpu_add(fs_usage->persistent_reserved[replicas - 1], sectors);
 
 	return 0;
 }
@@ -1343,7 +1325,7 @@ void bch2_trans_fs_usage_apply(struct btree_trans *trans,
 
 	for (i = 0; i < BCH_REPLICAS_MAX; i++) {
 		added				+= deltas->persistent_reserved[i];
-		dst->reserved			+= deltas->persistent_reserved[i];
+		dst->base[BCH_DATA_reserved]	+= deltas->persistent_reserved[i];
 		dst->persistent_reserved[i]	+= deltas->persistent_reserved[i];
 	}
 
