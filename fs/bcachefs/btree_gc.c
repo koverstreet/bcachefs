@@ -1194,13 +1194,15 @@ static int bch2_gc_done(struct bch_fs *c,
 		struct bch_fs_usage *src = (void *)
 			bch2_acc_percpu_u64s((void *) c->usage_gc, nr);
 
-		copy_fs_field(hidden,		"hidden");
-		copy_fs_field(btree,		"btree");
+		copy_fs_field(base[BCH_DATA_sb],	"sb");
+		copy_fs_field(base[BCH_DATA_journal],	"journal");
+		copy_fs_field(base[BCH_DATA_btree],	"btree");
 
 		if (!metadata_only) {
-			copy_fs_field(data,	"data");
-			copy_fs_field(cached,	"cached");
-			copy_fs_field(reserved,	"reserved");
+			copy_fs_field(base[BCH_DATA_user],	"user");
+			copy_fs_field(base[BCH_DATA_cached],	"cached");
+			copy_fs_field(base[BCH_DATA_parity],	"parity");
+			copy_fs_field(base[BCH_DATA_reserved],	"reserved");
 			copy_fs_field(nr_inodes,"nr_inodes");
 
 			for (i = 0; i < BCH_REPLICAS_MAX; i++)

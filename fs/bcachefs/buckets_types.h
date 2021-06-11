@@ -70,11 +70,7 @@ struct bch_dev_usage {
 
 struct bch_fs_usage {
 	/* all fields are in units of 512 byte sectors: */
-	u64			hidden;
-	u64			btree;
-	u64			data;
-	u64			cached;
-	u64			reserved;
+	u64			base[BCH_DATA_NR];
 	u64			nr_inodes;
 
 	/* XXX: add stats for compression ratio */

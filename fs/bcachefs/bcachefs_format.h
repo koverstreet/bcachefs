@@ -1077,7 +1077,8 @@ LE64_BITMASK(BCH_KDF_SCRYPT_P,	struct bch_sb_field_crypt, kdf_flags, 32, 48);
 	x(btree,	3)		\
 	x(user,		4)		\
 	x(cached,	5)		\
-	x(parity,	6)
+	x(parity,	6)		\
+	x(reserved,	7)
 
 enum bch_data_type {
 #define x(t, n) BCH_DATA_##t,
