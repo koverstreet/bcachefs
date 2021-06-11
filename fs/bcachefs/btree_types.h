@@ -342,6 +342,7 @@ struct bkey_cached {
 
 struct btree_insert_entry {
 	unsigned		trigger_flags;
+	u16			iter_flags;
 	u8			bkey_type;
 	enum btree_id		btree_id:8;
 	u8			level;

@@ -360,7 +360,7 @@ static void bch2_btree_iter_verify_locks(struct btree_iter *iter)
 {
 	unsigned l;
 
-	if (!(iter->trans->iters_linked & (1ULL << iter->idx))) {
+	if (!btree_iter_linked(iter->trans, iter)) {
 		BUG_ON(iter->nodes_locked);
 		return;
 	}
@@ -1283,14 +1283,8 @@ retry_all:
 			i++;
 	}
 
-	if (hweight64(trans->iters_live) > 1)
+	if (trans->nr_sorted > 1)
 		ret = -EINTR;
-	else
-		trans_for_each_iter(trans, iter)
-			if (iter->flags & BTREE_ITER_KEEP_UNTIL_COMMIT) {
-				ret = -EINTR;
-				break;
-			}
 out:
 	bch2_btree_cache_cannibalize_unlock(c);
 
@@ -1348,6 +1342,8 @@ static int btree_iter_traverse_one(struct btree_iter *iter,
 {
 	unsigned depth_want = iter->level;
 	int ret = 0;
+
+	EBUG_ON(!btree_iter_linked(iter->trans, iter));
 
 	/*
 	 * if we need interior nodes locked, call btree_iter_relock() to make
@@ -1545,6 +1541,7 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *iter)
 
 static void btree_iter_set_search_pos(struct btree_iter *iter, struct bpos new_pos)
 {
+	struct btree_trans *trans = iter->trans;
 	struct bpos old_pos = iter->real_pos;
 	int cmp = bpos_cmp(new_pos, iter->real_pos);
 	unsigned l = iter->level;
@@ -1552,10 +1549,20 @@ static void btree_iter_set_search_pos(struct btree_iter *iter, struct bpos new_p
 	if (!cmp)
 		goto out;
 
+	if ((iter->flags & BTREE_ITER_KEEP_UNTIL_COMMIT) &&
+	    (iter->uptodate < BTREE_ITER_NEED_TRAVERSE)) {
+		struct btree_iter *copy = bch2_trans_copy_iter(trans, iter);
+
+		copy->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
+		bch2_trans_iter_put(trans, copy);
+		iter->flags &= BTREE_ITER_KEEP_UNTIL_COMMIT;
+		set_btree_iter_dontneed(trans, iter);
+	}
+
 	iter->real_pos = new_pos;
 	iter->should_be_locked = false;
 
-	btree_iter_check_sort(iter->trans, iter);
+	btree_iter_check_sort(trans, iter);
 
 	if (unlikely(btree_iter_type(iter) == BTREE_ITER_CACHED)) {
 		btree_node_unlock(iter, 0);
@@ -1589,7 +1596,7 @@ out:
 
 	bch2_btree_iter_verify(iter);
 #ifdef CONFIG_BCACHEFS_DEBUG
-	trace_iter_set_search_pos(iter->trans->ip, _RET_IP_,
+	trace_iter_set_search_pos(trans->ip, _RET_IP_,
 				  iter->btree_id,
 				  &old_pos, &new_pos, l);
 #endif
@@ -2138,6 +2145,8 @@ static struct btree_iter *btree_iter_child_alloc(struct btree_iter *iter,
 static inline void __bch2_trans_iter_free(struct btree_trans *trans,
 					  unsigned idx)
 {
+	BUG_ON(trans->iters[idx].flags & BTREE_ITER_KEEP_UNTIL_COMMIT);
+
 	btree_iter_child_free(&trans->iters[idx]);
 
 	btree_iter_list_remove(trans, &trans->iters[idx]);
@@ -2254,6 +2263,31 @@ static void btree_iter_copy(struct btree_iter *dst, struct btree_iter *src)
 	btree_iter_check_sort(dst->trans, dst);
 }
 
+struct btree_iter *bch2_set_btree_iter_keep(struct btree_trans *trans, struct btree_iter *iter)
+{
+	struct btree_iter *n;
+
+	EBUG_ON(!btree_iter_linked(trans, iter));
+
+	if (iter->flags & BTREE_ITER_KEEP_UNTIL_COMMIT)
+		return iter;
+
+	n = iter;
+	while ((n = prev_btree_iter(trans, n)) &&
+	       !btree_iter_cmp(n, iter))
+		if (n->flags & BTREE_ITER_KEEP_UNTIL_COMMIT)
+			return n;
+
+	n = iter;
+	while ((n = next_btree_iter(trans, n)) &&
+	       !btree_iter_cmp(n, iter))
+		if (n->flags & BTREE_ITER_KEEP_UNTIL_COMMIT)
+			return n;
+
+	iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
+	return iter;
+}
+
 struct btree_iter *__bch2_trans_get_iter(struct btree_trans *trans,
 					 unsigned btree_id, struct bpos pos,
 					 unsigned locks_want,
@@ -2265,9 +2299,11 @@ struct btree_iter *__bch2_trans_get_iter(struct btree_trans *trans,
 
 	if ((flags & BTREE_ITER_TYPE) != BTREE_ITER_NODES &&
 	    btree_node_type_is_extents(btree_id) &&
-	    !(flags & BTREE_ITER_NOT_EXTENTS) &&
 	    !(flags & BTREE_ITER_ALL_SNAPSHOTS))
 		flags |= BTREE_ITER_IS_EXTENTS;
+
+	if (flags & BTREE_ITER_NOT_EXTENTS)
+		flags &= ~BTREE_ITER_IS_EXTENTS;
 
 	if ((flags & BTREE_ITER_TYPE) != BTREE_ITER_NODES &&
 	    !btree_type_has_snapshots(btree_id))
@@ -2294,22 +2330,24 @@ struct btree_iter *__bch2_trans_get_iter(struct btree_trans *trans,
 			int cmp = bkey_cmp(bpos_diff(best->real_pos, real_pos),
 					   bpos_diff(iter->real_pos, real_pos));
 
-			if (cmp < 0 ||
-			    ((cmp == 0 && btree_iter_keep(trans, iter))))
+			if (cmp < 0)
 				continue;
 		}
 
 		best = iter;
 	}
 
-	if (!best) {
-		iter = btree_trans_iter_alloc(trans, NULL);
-		bch2_btree_iter_init(trans, iter, btree_id);
-	} else if (btree_iter_keep(trans, best)) {
+	if (best &&
+	    !btree_iter_live(trans, best) &&
+	    !bpos_cmp(best->real_pos, real_pos)) {
+		iter = best;
+		best = NULL;
+	} else if (best) {
 		iter = btree_trans_iter_alloc(trans, best);
 		btree_iter_copy(iter, best);
 	} else {
-		iter = best;
+		iter = btree_trans_iter_alloc(trans, NULL);
+		bch2_btree_iter_init(trans, iter, btree_id);
 	}
 
 	trans->iters_live	|= 1ULL << iter->idx;
@@ -2347,6 +2385,11 @@ struct btree_iter *__bch2_trans_get_iter(struct btree_trans *trans,
 
 	bch2_btree_iter_set_pos(iter, pos);
 	btree_iter_set_search_pos(iter, real_pos);
+
+	if (best && !bpos_cmp(best->real_pos, real_pos))
+		set_btree_iter_dontneed(trans, iter);
+	else
+		iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
 
 	trace_trans_get_iter(_RET_IP_, trans->ip,
 			     btree_id,
