@@ -182,19 +182,14 @@ static inline void bch2_btree_iter_set_pos_to_extent_start(struct btree_iter *it
 	iter->pos = bkey_start_pos(&iter->k);
 }
 
-static inline struct btree_iter *btree_iter_child(struct btree_iter *iter)
+static inline struct btree_iter *idx_to_btree_iter(struct btree_trans *trans, unsigned idx)
 {
-	return iter->child_idx == U8_MAX ? NULL
-		: iter->trans->iters + iter->child_idx;
+	return idx != U8_MAX ? trans->iters + idx : NULL;
 }
 
-/* Sort order for locking btree iterators: */
-static inline int btree_iter_lock_cmp(const struct btree_iter *l,
-				      const struct btree_iter *r)
+static inline struct btree_iter *btree_iter_child(struct btree_iter *iter)
 {
-	return   cmp_int(l->btree_id, r->btree_id) ?:
-		-cmp_int(btree_iter_is_cached(l), btree_iter_is_cached(r)) ?:
-		 bkey_cmp(l->real_pos, r->real_pos);
+	return idx_to_btree_iter(iter->trans, iter->child_idx);
 }
 
 /*

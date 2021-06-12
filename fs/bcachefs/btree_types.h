@@ -246,6 +246,7 @@ struct btree_iter {
 
 	u8			idx;
 	u8			child_idx;
+	u8			sorted_idx;
 
 	/* btree_iter_copy starts here: */
 	u16			flags;
@@ -379,6 +380,7 @@ struct btree_trans {
 	unsigned long		ip;
 	int			srcu_idx;
 
+	u8			nr_sorted;
 	u8			nr_updates;
 	unsigned		used_mempool:1;
 	unsigned		error:1;
@@ -397,6 +399,7 @@ struct btree_trans {
 	unsigned		mem_bytes;
 	void			*mem;
 
+	u8			*sorted;
 	struct btree_iter	*iters;
 	struct btree_insert_entry *updates;
 

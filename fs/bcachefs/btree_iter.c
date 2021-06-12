@@ -18,9 +18,20 @@
 #include <trace/events/bcachefs.h>
 
 static void btree_iter_set_search_pos(struct btree_iter *, struct bpos);
+static void btree_trans_sort_iters(struct btree_trans *);
+static void btree_iter_check_sort(struct btree_trans *, struct btree_iter *);
 static struct btree_iter *btree_iter_child_alloc(struct btree_iter *, unsigned long);
-static struct btree_iter *btree_trans_iter_alloc(struct btree_trans *);
+static struct btree_iter *btree_trans_iter_alloc(struct btree_trans *,
+						 struct btree_iter *);
 static void btree_iter_copy(struct btree_iter *, struct btree_iter *);
+
+static inline int btree_iter_cmp(const struct btree_iter *l,
+				 const struct btree_iter *r)
+{
+	return   cmp_int(l->btree_id, r->btree_id) ?:
+		-cmp_int(btree_iter_is_cached(l), btree_iter_is_cached(r)) ?:
+		 bkey_cmp(l->real_pos, r->real_pos);
+}
 
 static inline struct bpos bkey_successor(struct btree_iter *iter, struct bpos p)
 {
@@ -1203,38 +1214,29 @@ static int __btree_iter_traverse_all(struct btree_trans *trans, int ret,
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter *iter;
-	u8 sorted[BTREE_ITER_MAX];
-	int i, nr_sorted = 0;
 	bool relock_fail;
+	int i;
 
 	if (trans->in_traverse_all)
 		return -EINTR;
 
 	trans->in_traverse_all = true;
 retry_all:
-	nr_sorted = 0;
-	relock_fail = false;
+	btree_trans_sort_iters(trans);
 
-	trans_for_each_iter(trans, iter) {
+	relock_fail = false;
+	trans_for_each_iter(trans, iter)
 		if (!bch2_btree_iter_relock(iter, _THIS_IP_))
 			relock_fail = true;
-		sorted[nr_sorted++] = iter->idx;
-	}
 
 	if (!relock_fail) {
 		trans->in_traverse_all = false;
 		return 0;
 	}
 
-#define btree_iter_cmp_by_idx(_l, _r)				\
-		btree_iter_lock_cmp(&trans->iters[_l], &trans->iters[_r])
-
-	bubble_sort(sorted, nr_sorted, btree_iter_cmp_by_idx);
-#undef btree_iter_cmp_by_idx
-
-	for (i = nr_sorted - 2; i >= 0; --i) {
-		struct btree_iter *iter1 = trans->iters + sorted[i];
-		struct btree_iter *iter2 = trans->iters + sorted[i + 1];
+	for (i = trans->nr_sorted - 2; i >= 0; --i) {
+		struct btree_iter *iter1 = trans->iters + trans->sorted[i];
+		struct btree_iter *iter2 = trans->iters + trans->sorted[i + 1];
 
 		if (iter1->btree_id == iter2->btree_id &&
 		    iter1->locks_want < iter2->locks_want)
@@ -1265,19 +1267,20 @@ retry_all:
 	BUG_ON(ret && ret != -EINTR);
 
 	/* Now, redo traversals in correct order: */
-	for (i = 0; i < nr_sorted; i++) {
-		unsigned idx = sorted[i];
+	i = 0;
+	while (i < trans->nr_sorted) {
+		unsigned idx = trans->sorted[i];
+
+		ret = btree_iter_traverse_one(&trans->iters[idx], _THIS_IP_);
+		if (ret)
+			goto retry_all;
 
 		/*
 		 * sucessfully traversing one iterator can cause another to be
 		 * unlinked, in btree_key_cache_fill()
 		 */
-		if (!(trans->iters_linked & (1ULL << idx)))
-			continue;
-
-		ret = btree_iter_traverse_one(&trans->iters[idx], _THIS_IP_);
-		if (ret)
-			goto retry_all;
+		if (idx == trans->sorted[i])
+			i++;
 	}
 
 	if (hweight64(trans->iters_live) > 1)
@@ -1551,6 +1554,8 @@ static void btree_iter_set_search_pos(struct btree_iter *iter, struct bpos new_p
 
 	iter->real_pos = new_pos;
 	iter->should_be_locked = false;
+
+	btree_iter_check_sort(iter->trans, iter);
 
 	if (unlikely(btree_iter_type(iter) == BTREE_ITER_CACHED)) {
 		btree_node_unlock(iter, 0);
@@ -1955,6 +1960,153 @@ static inline void bch2_btree_iter_init(struct btree_trans *trans,
 
 /* new transactional stuff: */
 
+static inline struct btree_iter *next_btree_iter(struct btree_trans *trans, struct btree_iter *iter)
+{
+	EBUG_ON(iter->sorted_idx >= trans->nr_sorted);
+	return iter->sorted_idx + 1 < trans->nr_sorted
+		? trans->iters + trans->sorted[iter->sorted_idx + 1]
+		: NULL;
+}
+
+static inline struct btree_iter *prev_btree_iter(struct btree_trans *trans, struct btree_iter *iter)
+{
+	EBUG_ON(iter->sorted_idx >= trans->nr_sorted);
+	return iter->sorted_idx
+		? trans->iters + trans->sorted[iter->sorted_idx - 1]
+		: NULL;
+}
+
+static inline void btree_iter_verify_sorted_ref(struct btree_trans *trans,
+						struct btree_iter *iter)
+{
+	EBUG_ON(iter->sorted_idx >= trans->nr_sorted);
+	EBUG_ON(trans->sorted[iter->sorted_idx] != iter->idx);
+}
+
+static inline void btree_trans_verify_sorted_refs(struct btree_trans *trans)
+{
+#ifdef CONFIG_BCACHEFS_DEBUG
+	unsigned i;
+
+	for (i = 0; i < trans->nr_sorted; i++)
+		btree_iter_verify_sorted_ref(trans, trans->iters + trans->sorted[i]);
+#endif
+}
+
+static inline void btree_iter_swap(struct btree_trans *trans,
+				   struct btree_iter *l, struct btree_iter *r)
+{
+	swap(l->sorted_idx, r->sorted_idx);
+	swap(trans->sorted[l->sorted_idx],
+	     trans->sorted[r->sorted_idx]);
+
+	btree_iter_verify_sorted_ref(trans, l);
+	btree_iter_verify_sorted_ref(trans, r);
+}
+
+static void btree_trans_sort_iters(struct btree_trans *trans)
+{
+	bool swapped = false;
+	int i, l = 0, r = trans->nr_sorted;
+
+	while (1) {
+		for (i = l; i + 1 < r; i++) {
+			if (btree_iter_cmp(trans->iters + trans->sorted[i],
+					   trans->iters + trans->sorted[i + 1]) > 0) {
+				swap(trans->sorted[i], trans->sorted[i + 1]);
+				trans->iters[trans->sorted[i]].sorted_idx = i;
+				trans->iters[trans->sorted[i + 1]].sorted_idx = i + 1;
+				swapped = true;
+			}
+		}
+
+		if (!swapped)
+			break;
+
+		r--;
+		swapped = false;
+
+		for (i = r - 2; i >= l; --i) {
+			if (btree_iter_cmp(trans->iters + trans->sorted[i],
+					   trans->iters + trans->sorted[i + 1]) > 0) {
+				swap(trans->sorted[i],
+				     trans->sorted[i + 1]);
+				trans->iters[trans->sorted[i]].sorted_idx = i;
+				trans->iters[trans->sorted[i + 1]].sorted_idx = i + 1;
+				swapped = true;
+			}
+		}
+
+		if (!swapped)
+			break;
+
+		l++;
+		swapped = false;
+	}
+
+	btree_trans_verify_sorted_refs(trans);
+}
+
+static void btree_iter_check_sort(struct btree_trans *trans, struct btree_iter *iter)
+{
+	struct btree_iter *n;
+
+	EBUG_ON(iter->sorted_idx == U8_MAX);
+
+	n = next_btree_iter(trans, iter);
+	if (n && btree_iter_cmp(iter, n) > 0) {
+		do {
+			btree_iter_swap(trans, iter, n);
+			n = next_btree_iter(trans, iter);
+		} while (n && btree_iter_cmp(iter, n) > 0);
+
+		return;
+	}
+
+	n = prev_btree_iter(trans, iter);
+	if (n && btree_iter_cmp(n, iter) > 0) {
+		do {
+			btree_iter_swap(trans, n, iter);
+			n = prev_btree_iter(trans, iter);
+		} while (n && btree_iter_cmp(n, iter) > 0);
+	}
+}
+
+static inline void btree_iter_list_remove(struct btree_trans *trans,
+					  struct btree_iter *iter)
+{
+	unsigned i;
+
+	EBUG_ON(iter->sorted_idx >= trans->nr_sorted);
+
+	array_remove_item(trans->sorted, trans->nr_sorted, iter->sorted_idx);
+
+	for (i = iter->sorted_idx; i < trans->nr_sorted; i++)
+		trans->iters[trans->sorted[i]].sorted_idx = i;
+
+	iter->sorted_idx = U8_MAX;
+
+	btree_trans_verify_sorted_refs(trans);
+}
+
+static inline void btree_iter_list_add(struct btree_trans *trans,
+				       struct btree_iter *pos,
+				       struct btree_iter *iter)
+{
+	unsigned i;
+
+	btree_trans_verify_sorted_refs(trans);
+
+	iter->sorted_idx = pos ? pos->sorted_idx : trans->nr_sorted;
+
+	array_insert_item(trans->sorted, trans->nr_sorted, iter->sorted_idx, iter->idx);
+
+	for (i = iter->sorted_idx; i < trans->nr_sorted; i++)
+		trans->iters[trans->sorted[i]].sorted_idx = i;
+
+	btree_trans_verify_sorted_refs(trans);
+}
+
 static void btree_iter_child_free(struct btree_iter *iter)
 {
 	struct btree_iter *child = btree_iter_child(iter);
@@ -1972,7 +2124,7 @@ static struct btree_iter *btree_iter_child_alloc(struct btree_iter *iter,
 	struct btree_iter *child = btree_iter_child(iter);
 
 	if (!child) {
-		child = btree_trans_iter_alloc(trans);
+		child = btree_trans_iter_alloc(trans, iter);
 		child->ip_allocated	= ip;
 		iter->child_idx		= child->idx;
 
@@ -1987,6 +2139,8 @@ static inline void __bch2_trans_iter_free(struct btree_trans *trans,
 					  unsigned idx)
 {
 	btree_iter_child_free(&trans->iters[idx]);
+
+	btree_iter_list_remove(trans, &trans->iters[idx]);
 
 	__bch2_btree_iter_unlock(&trans->iters[idx]);
 	trans->iters_linked		&= ~(1ULL << idx);
@@ -2053,7 +2207,8 @@ static void btree_trans_iter_alloc_fail(struct btree_trans *trans)
 	panic("trans iter oveflow\n");
 }
 
-static struct btree_iter *btree_trans_iter_alloc(struct btree_trans *trans)
+static struct btree_iter *btree_trans_iter_alloc(struct btree_trans *trans,
+						 struct btree_iter *pos)
 {
 	struct btree_iter *iter;
 	unsigned idx;
@@ -2068,10 +2223,13 @@ static struct btree_iter *btree_trans_iter_alloc(struct btree_trans *trans)
 	iter->trans		= trans;
 	iter->idx		= idx;
 	iter->child_idx		= U8_MAX;
+	iter->sorted_idx	= U8_MAX;
 	iter->flags		= 0;
 	iter->nodes_locked	= 0;
 	iter->nodes_intent_locked = 0;
 	trans->iters_linked	|= 1ULL << idx;
+
+	btree_iter_list_add(trans, pos, iter);
 	return iter;
 }
 
@@ -2092,6 +2250,8 @@ static void btree_iter_copy(struct btree_iter *dst, struct btree_iter *src)
 
 	dst->flags &= ~BTREE_ITER_KEEP_UNTIL_COMMIT;
 	dst->flags &= ~BTREE_ITER_SET_POS_AFTER_COMMIT;
+
+	btree_iter_check_sort(dst->trans, dst);
 }
 
 struct btree_iter *__bch2_trans_get_iter(struct btree_trans *trans,
@@ -2143,10 +2303,10 @@ struct btree_iter *__bch2_trans_get_iter(struct btree_trans *trans,
 	}
 
 	if (!best) {
-		iter = btree_trans_iter_alloc(trans);
+		iter = btree_trans_iter_alloc(trans, NULL);
 		bch2_btree_iter_init(trans, iter, btree_id);
 	} else if (btree_iter_keep(trans, best)) {
-		iter = btree_trans_iter_alloc(trans);
+		iter = btree_trans_iter_alloc(trans, best);
 		btree_iter_copy(iter, best);
 	} else {
 		iter = best;
@@ -2227,7 +2387,7 @@ struct btree_iter *__bch2_trans_copy_iter(struct btree_trans *trans,
 {
 	struct btree_iter *iter;
 
-	iter = btree_trans_iter_alloc(trans);
+	iter = btree_trans_iter_alloc(trans, src);
 	btree_iter_copy(iter, src);
 
 	trans->iters_live |= 1ULL << iter->idx;
@@ -2332,6 +2492,7 @@ static void bch2_trans_alloc_iters(struct btree_trans *trans, struct bch_fs *c)
 {
 	size_t iters_bytes	= sizeof(struct btree_iter) * BTREE_ITER_MAX;
 	size_t updates_bytes	= sizeof(struct btree_insert_entry) * BTREE_ITER_MAX;
+	size_t sorted_bytes	= sizeof(u8) * BTREE_ITER_MAX;
 	void *p = NULL;
 
 	BUG_ON(trans->used_mempool);
@@ -2344,6 +2505,7 @@ static void bch2_trans_alloc_iters(struct btree_trans *trans, struct bch_fs *c)
 
 	trans->iters		= p; p += iters_bytes;
 	trans->updates		= p; p += updates_bytes;
+	trans->sorted		= p; p += sorted_bytes;
 }
 
 void bch2_trans_init(struct btree_trans *trans, struct bch_fs *c,
@@ -2546,6 +2708,7 @@ int bch2_fs_btree_iter_init(struct bch_fs *c)
 
 	return  init_srcu_struct(&c->btree_trans_barrier) ?:
 		mempool_init_kmalloc_pool(&c->btree_iters_pool, 1,
+			sizeof(u8) * nr +
 			sizeof(struct btree_iter) * nr +
 			sizeof(struct btree_insert_entry) * nr) ?:
 		mempool_init_kmalloc_pool(&c->btree_trans_mem_pool, 1,
