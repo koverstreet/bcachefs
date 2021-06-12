@@ -1065,18 +1065,26 @@ void bch2_journal_super_entries_add_common(struct bch_fs *c,
 	}
 
 	for_each_member_device(ca, c, dev) {
-		unsigned b = sizeof(struct jset_entry_dev_usage) +
-			sizeof(struct jset_entry_dev_usage_type) * BCH_DATA_NR;
-		struct jset_entry_dev_usage *u =
-			container_of(jset_entry_init(end, b),
-				     struct jset_entry_dev_usage, entry);
+		unsigned bytes, nr = BCH_DATA_NR;
+		struct jset_entry_dev_usage *u;
+
+		while (nr &&
+		       !ca->usage_base->d[nr - 1].buckets &&
+		       !ca->usage_base->d[nr - 1].sectors &&
+		       !ca->usage_base->d[nr - 1].fragmented)
+			nr--;
+
+		bytes = sizeof(struct jset_entry_dev_usage) +
+			sizeof(struct jset_entry_dev_usage_type) * nr;
+		u = container_of(jset_entry_init(end, bytes),
+				 struct jset_entry_dev_usage, entry);
 
 		u->entry.type = BCH_JSET_ENTRY_dev_usage;
 		u->dev = cpu_to_le32(dev);
 		u->buckets_ec		= cpu_to_le64(ca->usage_base->buckets_ec);
 		u->buckets_unavailable	= cpu_to_le64(ca->usage_base->buckets_unavailable);
 
-		for (i = 0; i < BCH_DATA_NR; i++) {
+		for (i = 0; i < nr; i++) {
 			u->d[i].buckets = cpu_to_le64(ca->usage_base->d[i].buckets);
 			u->d[i].sectors	= cpu_to_le64(ca->usage_base->d[i].sectors);
 			u->d[i].fragmented = cpu_to_le64(ca->usage_base->d[i].fragmented);
