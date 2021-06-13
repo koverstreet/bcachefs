@@ -303,7 +303,7 @@ int bch2_inode_peek(struct btree_trans *trans,
 	u32 snapshot;
 	int ret;
 
-	if (trans->c->opts.inodes_use_key_cache)
+	if (0 && trans->c->opts.inodes_use_key_cache)
 		flags |= BTREE_ITER_CACHED;
 
 	ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot);
@@ -665,7 +665,7 @@ int bch2_inode_rm(struct bch_fs *c, subvol_inum inum, bool cached)
 	u32 snapshot;
 	int ret;
 
-	if (cached && c->opts.inodes_use_key_cache)
+	if (0 && cached && c->opts.inodes_use_key_cache)
 		iter_flags |= BTREE_ITER_CACHED;
 
 	bch2_trans_init(&trans, c, 0, 1024);
