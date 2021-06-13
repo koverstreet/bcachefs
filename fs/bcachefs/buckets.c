@@ -972,17 +972,19 @@ static int bch2_mark_stripe(struct bch_fs *c,
 {
 	bool gc = flags & BTREE_TRIGGER_GC;
 	size_t idx = new.k->p.offset;
-	const struct bch_stripe *old_s = old.k->type == KEY_TYPE_stripe
-		? bkey_s_c_to_stripe(old).v : NULL;
+	const struct bch_stripe *old_s = NULL;
 	const struct bch_stripe *new_s = new.k->type == KEY_TYPE_stripe
 		? bkey_s_c_to_stripe(new).v : NULL;
 	struct stripe *m = genradix_ptr(&c->stripes[gc], idx);
 	unsigned i;
 	int ret;
 
+	if (old.k && old.k->type == KEY_TYPE_stripe)
+		old_s = bkey_s_c_to_stripe(old).v;
+
 	BUG_ON(gc && old_s);
 
-	if (!m || (old_s && !m->alive)) {
+	if (!m || (old_s && !m->alive && flags & BTREE_TRIGGER_OVERWRITE)) {
 		bch_err_ratelimited(c, "error marking nonexistent stripe %zu",
 				    idx);
 		bch2_inconsistent_error(c);
@@ -1055,9 +1057,12 @@ static int bch2_mark_inode(struct bch_fs *c,
 	struct bch_fs_usage __percpu *fs_usage =
 		__fs_usage_ptr(c, journal_seq, flags & BTREE_TRIGGER_GC);
 
-	this_cpu_add(fs_usage->nr_inodes,
-		     ((new.k->type == KEY_TYPE_inode) -
-		      (old.k->type == KEY_TYPE_inode)));
+	if (old.k)
+		this_cpu_add(fs_usage->nr_inodes,
+			     ((new.k->type == KEY_TYPE_inode) -
+			     (old.k->type == KEY_TYPE_inode)));
+	else
+		this_cpu_add(fs_usage->nr_inodes, 1);
 	return 0;
 }
 
@@ -1624,9 +1629,9 @@ static int bch2_trans_mark_stripe(struct btree_trans *trans,
 	unsigned i;
 	int ret = 0;
 
-	if (old.k->type == KEY_TYPE_stripe)
+	if (old.k && old.k->type == KEY_TYPE_stripe)
 		old_s = bkey_s_c_to_stripe(old);
-	if (new.k->type == KEY_TYPE_stripe)
+	if (new.k && new.k->type == KEY_TYPE_stripe)
 		new_s = bkey_s_c_to_stripe(new);
 
 	/*
@@ -1675,8 +1680,9 @@ static int bch2_trans_mark_inode(struct btree_trans *trans,
 				 struct bkey_s_c new,
 				 unsigned flags)
 {
-	int nr = (new.k->type == KEY_TYPE_inode) -
-		(old.k->type == KEY_TYPE_inode);
+	int old_nr = (old.k) ? old.k->type == KEY_TYPE_inode: 0;
+	int new_nr = (new.k) ? new.k->type == KEY_TYPE_inode: 0;
+	int nr = new_nr - old_nr;
 
 	if (nr) {
 		struct replicas_delta_list *d =
