@@ -198,6 +198,10 @@
 #include <linux/workqueue.h>
 #include <linux/zstd.h>
 
+#ifdef __KERNEL__
+#define BCACHEFS_HAS_PERCPU
+#endif
+
 #include "bcachefs_format.h"
 #include "fifo.h"
 #include "opts.h"
