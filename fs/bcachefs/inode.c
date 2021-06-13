@@ -300,7 +300,7 @@ int bch2_inode_peek(struct btree_trans *trans,
 	struct bkey_s_c k;
 	int ret;
 
-	if (trans->c->opts.inodes_use_key_cache)
+	if (0 && trans->c->opts.inodes_use_key_cache)
 		flags |= BTREE_ITER_CACHED;
 
 	bch2_trans_iter_init(trans, iter, BTREE_ID_inodes, POS(0, inum), flags);
@@ -593,7 +593,7 @@ int bch2_inode_rm(struct bch_fs *c, u64 inode_nr, bool cached)
 	unsigned iter_flags = BTREE_ITER_INTENT;
 	int ret;
 
-	if (cached && c->opts.inodes_use_key_cache)
+	if (0 && cached && c->opts.inodes_use_key_cache)
 		iter_flags |= BTREE_ITER_CACHED;
 
 	bch2_trans_init(&trans, c, 0, 1024);
