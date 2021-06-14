@@ -308,13 +308,6 @@ static inline bool btree_iter_touched(struct btree_trans *trans, struct btree_it
 	return (trans->iters_touched & (1ULL << iter->idx)) != 0;
 }
 
-static inline bool btree_iter_keep(struct btree_trans *trans, struct btree_iter *iter)
-{
-	return btree_iter_live(trans, iter) ||
-		btree_iter_touched(trans, iter) ||
-		(iter->flags & BTREE_ITER_KEEP_UNTIL_COMMIT);
-}
-
 struct btree_iter *bch2_set_btree_iter_keep(struct btree_trans *, struct btree_iter *);
 
 static inline void set_btree_iter_dontneed(struct btree_trans *trans, struct btree_iter *iter)

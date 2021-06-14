@@ -580,15 +580,11 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 	 */
 	trans_for_each_iter(trans, iter) {
 		if (iter->nodes_locked != iter->nodes_intent_locked) {
-			if (btree_iter_keep(trans, iter)) {
-				if (!bch2_btree_iter_upgrade(iter, 1)) {
-					trace_trans_restart_upgrade(trans->ip, trace_ip,
-								    iter->btree_id,
-								    &iter->real_pos);
-					return -EINTR;
-				}
-			} else {
-				bch2_btree_iter_unlock_noinline(iter);
+			if (!bch2_btree_iter_upgrade(iter, 1)) {
+				trace_trans_restart_upgrade(trans->ip, trace_ip,
+							    iter->btree_id,
+							    &iter->real_pos);
+				return -EINTR;
 			}
 		}
 	}
