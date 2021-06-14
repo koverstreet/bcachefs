@@ -2026,7 +2026,9 @@ ssize_t bch2_direct_write(struct kiocb *req, struct iov_iter *iter)
 	}
 
 	bio = bio_alloc_bioset(GFP_KERNEL,
-			       iov_iter_npages(iter, BIO_MAX_VECS),
+			       iov_iter_is_bvec(iter)
+			       ? 0
+			       : iov_iter_npages(iter, BIO_MAX_VECS),
 			       &c->dio_write_bioset);
 	dio = container_of(bio, struct dio_write, op.wbio.bio);
 	init_completion(&dio->done);
