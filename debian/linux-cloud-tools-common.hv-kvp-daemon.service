@@ -4,6 +4,7 @@
 [Unit]
 Description=Hyper-V KVP Protocol Daemon
 ConditionVirtualization=microsoft
+ConditionKernelCommandLine=!snapd_recovery_mode
 DefaultDependencies=no
 BindsTo=sys-devices-virtual-misc-vmbus\x21hv_kvp.device
 After=sys-devices-virtual-misc-vmbus\x21hv_kvp.device systemd-remount-fs.service
