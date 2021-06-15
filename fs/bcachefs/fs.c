@@ -662,6 +662,9 @@ static void bch2_setattr_copy(struct user_namespace *mnt_userns,
 	if (ia_valid & ATTR_GID)
 		bi->bi_gid = from_kgid(mnt_userns, attr->ia_gid);
 
+	if (ia_valid & ATTR_SIZE)
+		bi->bi_size = attr->ia_size;
+
 	if (ia_valid & ATTR_ATIME)
 		bi->bi_atime = timespec_to_bch2_time(c, attr->ia_atime);
 	if (ia_valid & ATTR_MTIME)
@@ -682,9 +685,9 @@ static void bch2_setattr_copy(struct user_namespace *mnt_userns,
 	}
 }
 
-static int bch2_setattr_nonsize(struct user_namespace *mnt_userns,
-				struct bch_inode_info *inode,
-				struct iattr *attr)
+int bch2_setattr_nonsize(struct user_namespace *mnt_userns,
+			 struct bch_inode_info *inode,
+			 struct iattr *attr)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_qid qid;
@@ -808,7 +811,7 @@ static int bch2_setattr(struct user_namespace *mnt_userns,
 		return ret;
 
 	return iattr->ia_valid & ATTR_SIZE
-		? bch2_truncate(inode, iattr)
+		? bch2_truncate(mnt_userns, inode, iattr)
 		: bch2_setattr_nonsize(mnt_userns, inode, iattr);
 }
 
