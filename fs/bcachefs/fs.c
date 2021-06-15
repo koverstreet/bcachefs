@@ -647,10 +647,10 @@ err:
 	return ret;
 }
 
-void bch2_setattr_copy(struct user_namespace *mnt_userns,
-		       struct bch_inode_info *inode,
-		       struct bch_inode_unpacked *bi,
-		       struct iattr *attr)
+static void bch2_setattr_copy(struct user_namespace *mnt_userns,
+			      struct bch_inode_info *inode,
+			      struct bch_inode_unpacked *bi,
+			      struct iattr *attr)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	unsigned int ia_valid = attr->ia_valid;
@@ -680,9 +680,9 @@ void bch2_setattr_copy(struct user_namespace *mnt_userns,
 	}
 }
 
-static int bch2_setattr_nonsize(struct user_namespace *mnt_userns,
-				struct bch_inode_info *inode,
-				struct iattr *attr)
+int bch2_setattr_nonsize(struct user_namespace *mnt_userns,
+			 struct bch_inode_info *inode,
+			 struct iattr *attr)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_qid qid;
@@ -806,7 +806,7 @@ static int bch2_setattr(struct user_namespace *mnt_userns,
 		return ret;
 
 	return iattr->ia_valid & ATTR_SIZE
-		? bch2_truncate(inode, iattr)
+		? bch2_truncate(mnt_userns, inode, iattr)
 		: bch2_setattr_nonsize(mnt_userns, inode, iattr);
 }
 
