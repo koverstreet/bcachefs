@@ -167,6 +167,10 @@ void bch2_inode_update_after_write(struct bch_fs *,
 int __must_check bch2_write_inode(struct bch_fs *, struct bch_inode_info *,
 				  inode_set_fn, void *, unsigned);
 
+int bch2_setattr_nonsize(struct user_namespace *,
+			 struct bch_inode_info *,
+			 struct iattr *);
+
 void bch2_vfs_exit(void);
 int bch2_vfs_init(void);
 
