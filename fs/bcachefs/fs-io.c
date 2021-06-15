@@ -2230,11 +2230,11 @@ static int bch2_truncate_page(struct bch_inode_info *inode, loff_t from)
 				    from, round_up(from, PAGE_SIZE));
 }
 
-static int bch2_extend(struct bch_inode_info *inode,
+static int bch2_extend(struct user_namespace *mnt_userns,
+		       struct bch_inode_info *inode,
 		       struct bch_inode_unpacked *inode_u,
 		       struct iattr *iattr)
 {
-	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct address_space *mapping = inode->v.i_mapping;
 	int ret;
 
@@ -2248,25 +2248,15 @@ static int bch2_extend(struct bch_inode_info *inode,
 		return ret;
 
 	truncate_setsize(&inode->v, iattr->ia_size);
-	/* ATTR_MODE will never be set here, ns argument isn't needed: */
-	setattr_copy(NULL, &inode->v, iattr);
 
-	mutex_lock(&inode->ei_update_lock);
-	ret = bch2_write_inode_size(c, inode, inode->v.i_size,
-				    ATTR_MTIME|ATTR_CTIME);
-	mutex_unlock(&inode->ei_update_lock);
-
-	return ret;
+	return bch2_setattr_nonsize(mnt_userns, inode, iattr);
 }
 
 static int bch2_truncate_finish_fn(struct bch_inode_info *inode,
 				   struct bch_inode_unpacked *bi,
 				   void *p)
 {
-	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-
 	bi->bi_flags &= ~BCH_INODE_I_SIZE_DIRTY;
-	bi->bi_mtime = bi->bi_ctime = bch2_current_time(c);
 	return 0;
 }
 
@@ -2280,7 +2270,8 @@ static int bch2_truncate_start_fn(struct bch_inode_info *inode,
 	return 0;
 }
 
-int bch2_truncate(struct bch_inode_info *inode, struct iattr *iattr)
+int bch2_truncate(struct user_namespace *mnt_userns,
+		  struct bch_inode_info *inode, struct iattr *iattr)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct address_space *mapping = inode->v.i_mapping;
@@ -2290,6 +2281,18 @@ int bch2_truncate(struct bch_inode_info *inode, struct iattr *iattr)
 	u64 new_i_size = iattr->ia_size;
 	s64 i_sectors_delta = 0;
 	int ret = 0;
+
+	/*
+	 * Don't update timestamps if we're not doing anything:
+	 */
+	if (iattr->ia_size == inode->v.i_size)
+		return 0;
+
+	if (!(iattr->ia_valid & ATTR_MTIME))
+		ktime_get_coarse_real_ts64(&iattr->ia_mtime);
+	if (!(iattr->ia_valid & ATTR_CTIME))
+		ktime_get_coarse_real_ts64(&iattr->ia_ctime);
+	iattr->ia_valid |= ATTR_MTIME|ATTR_CTIME;
 
 	inode_dio_wait(&inode->v);
 	bch2_pagecache_block_get(&inode->ei_pagecache_lock);
@@ -2320,9 +2323,11 @@ int bch2_truncate(struct bch_inode_info *inode, struct iattr *iattr)
 		inode->v.i_size < inode_u.bi_size);
 
 	if (iattr->ia_size > inode->v.i_size) {
-		ret = bch2_extend(inode, &inode_u, iattr);
+		ret = bch2_extend(mnt_userns, inode, &inode_u, iattr);
 		goto err;
 	}
+
+	iattr->ia_valid &= ~ATTR_SIZE;
 
 	ret = bch2_truncate_page(inode, iattr->ia_size);
 	if (unlikely(ret))
@@ -2367,13 +2372,11 @@ int bch2_truncate(struct bch_inode_info *inode, struct iattr *iattr)
 	if (unlikely(ret))
 		goto err;
 
-	/* ATTR_MODE will never be set here, ns argument isn't needed: */
-	setattr_copy(NULL, &inode->v, iattr);
-
 	mutex_lock(&inode->ei_update_lock);
-	ret = bch2_write_inode(c, inode, bch2_truncate_finish_fn, NULL,
-			       ATTR_MTIME|ATTR_CTIME);
+	ret = bch2_write_inode(c, inode, bch2_truncate_finish_fn, NULL, 0);
 	mutex_unlock(&inode->ei_update_lock);
+
+	ret = bch2_setattr_nonsize(mnt_userns, inode, iattr);
 err:
 	bch2_pagecache_block_put(&inode->ei_pagecache_lock);
 	return ret;
