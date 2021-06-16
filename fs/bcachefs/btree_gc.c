@@ -286,6 +286,7 @@ static int bch2_btree_repair_topology_recurse(struct bch_fs *c, struct btree *b)
 	if (!b->c.level)
 		return 0;
 again:
+	prev = NULL;
 	have_child = dropped_children = false;
 	bch2_bkey_buf_init(&prev_k);
 	bch2_bkey_buf_init(&cur_k);
