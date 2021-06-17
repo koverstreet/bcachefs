@@ -319,7 +319,7 @@ again:
 			ret = bch2_journal_key_delete(c, b->c.btree_id,
 						      b->c.level, cur_k.k->k.p);
 			if (ret)
-				goto err;
+				break;
 			continue;
 		}
 
@@ -337,19 +337,20 @@ again:
 			ret = bch2_journal_key_delete(c, b->c.btree_id,
 						      b->c.level, cur_k.k->k.p);
 			if (ret)
-				goto err;
+				break;
 			continue;
 		}
 
 		if (prev)
 			six_unlock_read(&prev->c.lock);
+		prev = NULL;
 
 		if (ret == DROP_PREV_NODE) {
 			bch2_btree_node_evict(c, prev_k.k);
 			ret = bch2_journal_key_delete(c, b->c.btree_id,
 						      b->c.level, prev_k.k->k.p);
 			if (ret)
-				goto err;
+				break;
 
 			bch2_btree_and_journal_iter_exit(&iter);
 			bch2_bkey_buf_exit(&prev_k, c);
