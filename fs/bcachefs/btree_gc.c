@@ -342,6 +342,10 @@ again:
 						      b->c.level, prev_k.k->k.p);
 			if (ret)
 				goto err;
+
+			bch2_btree_and_journal_iter_exit(&iter);
+			bch2_bkey_buf_exit(&prev_k, c);
+			bch2_bkey_buf_exit(&cur_k, c);
 			goto again;
 		} else if (ret)
 			break;
