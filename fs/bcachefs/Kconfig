@@ -20,6 +20,7 @@ config BCACHEFS_FS
 	select SIXLOCKS
 	select RAID6_PQ
 	select XOR_BLOCKS
+	select XXHASH
 	select SRCU
 	help
 	The bcachefs filesystem - a modern, copy on write filesystem, with
