@@ -333,8 +333,10 @@ again:
 			continue;
 		}
 
-		if (prev)
+		if (prev) {
 			six_unlock_read(&prev->c.lock);
+			prev = NULL;
+		}
 
 		if (ret == DROP_PREV_NODE) {
 			bch2_btree_node_evict(c, prev_k.k);
