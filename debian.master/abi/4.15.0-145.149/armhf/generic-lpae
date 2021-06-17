@@ -20798,6 +20798,7 @@ EXPORT_SYMBOL_GPL vmlinux 0xd55913ae	sdhci_suspend_host
 EXPORT_SYMBOL_GPL vmlinux 0xd55ad93b	iommu_group_get_iommudata
 EXPORT_SYMBOL_GPL vmlinux 0xd583857b	vfs_read
 EXPORT_SYMBOL_GPL vmlinux 0xd58dd094	of_property_read_u64
+EXPORT_SYMBOL_GPL vmlinux 0xd5928945	md_submit_discard_bio
 EXPORT_SYMBOL_GPL vmlinux 0xd595134d	wm831x_bulk_read
 EXPORT_SYMBOL_GPL vmlinux 0xd5999782	sdio_enable_func
 EXPORT_SYMBOL_GPL vmlinux 0xd59acecc	iommu_fwspec_free

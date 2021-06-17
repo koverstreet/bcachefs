@@ -8815,6 +8815,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x4e091048	platform_bus
 EXPORT_SYMBOL_GPL vmlinux 0x4e109192	ring_buffer_entries
 EXPORT_SYMBOL_GPL vmlinux 0x4e1a5269	pci_user_write_config_dword
 EXPORT_SYMBOL_GPL vmlinux 0x4e3573ef	ack_all_badblocks
+EXPORT_SYMBOL_GPL vmlinux 0x4e449b6f	md_submit_discard_bio
 EXPORT_SYMBOL_GPL vmlinux 0x4e60e57b	hugetlb_cgrp_subsys_enabled_key
 EXPORT_SYMBOL_GPL vmlinux 0x4e7a8dae	msi_desc_to_pci_sysdata
 EXPORT_SYMBOL_GPL vmlinux 0x4e943232	sysfs_remove_mount_point

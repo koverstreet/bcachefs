@@ -18782,6 +18782,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x2c13bd8f	pci_sriov_set_totalvfs
 EXPORT_SYMBOL_GPL vmlinux 0x2c208607	power_supply_is_system_supplied
 EXPORT_SYMBOL_GPL vmlinux 0x2c2f5a09	x86_family
 EXPORT_SYMBOL_GPL vmlinux 0x2c3054f9	net_inc_ingress_queue
+EXPORT_SYMBOL_GPL vmlinux 0x2c320dbd	md_submit_discard_bio
 EXPORT_SYMBOL_GPL vmlinux 0x2c4138f9	irq_chip_ack_parent
 EXPORT_SYMBOL_GPL vmlinux 0x2c42793c	da9052_request_irq
 EXPORT_SYMBOL_GPL vmlinux 0x2c59c06e	device_property_read_u8_array

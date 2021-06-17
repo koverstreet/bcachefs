@@ -21751,6 +21751,7 @@ EXPORT_SYMBOL_GPL vmlinux 0xccf4b1c0	edac_device_handle_ue
 EXPORT_SYMBOL_GPL vmlinux 0xccf53b0f	md5_zero_message_hash
 EXPORT_SYMBOL_GPL vmlinux 0xcd4c2e51	tty_release_struct
 EXPORT_SYMBOL_GPL vmlinux 0xcd4f094c	set_foreign_p2m_mapping
+EXPORT_SYMBOL_GPL vmlinux 0xcd52abc4	md_submit_discard_bio
 EXPORT_SYMBOL_GPL vmlinux 0xcd7ae709	rio_release_outb_dbell
 EXPORT_SYMBOL_GPL vmlinux 0xcd91b127	system_highpri_wq
 EXPORT_SYMBOL_GPL vmlinux 0xcd974f00	rcu_all_qs

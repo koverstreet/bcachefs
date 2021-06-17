@@ -19853,6 +19853,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x61aadb0b	pid_vnr
 EXPORT_SYMBOL_GPL vmlinux 0x61bdf992	regulator_map_voltage_linear_range
 EXPORT_SYMBOL_GPL vmlinux 0x61cbb6ce	sk_free_unlock_clone
 EXPORT_SYMBOL_GPL vmlinux 0x61dba4f9	is_hash_blacklisted
+EXPORT_SYMBOL_GPL vmlinux 0x61e5accb	md_submit_discard_bio
 EXPORT_SYMBOL_GPL vmlinux 0x61ea290a	usb_get_dr_mode
 EXPORT_SYMBOL_GPL vmlinux 0x61ec71d1	arizona_request_irq
 EXPORT_SYMBOL_GPL vmlinux 0x61f63222	__inet_lookup_established

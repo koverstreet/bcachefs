@@ -19544,6 +19544,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x92ccbadf	devres_release
 EXPORT_SYMBOL_GPL vmlinux 0x92db8f68	do_trace_rcu_torture_read
 EXPORT_SYMBOL_GPL vmlinux 0x92e93423	seg6_do_srh_inline
 EXPORT_SYMBOL_GPL vmlinux 0x92f9740b	pci_disable_pri
+EXPORT_SYMBOL_GPL vmlinux 0x930a8630	md_submit_discard_bio
 EXPORT_SYMBOL_GPL vmlinux 0x931582af	raw_seq_open
 EXPORT_SYMBOL_GPL vmlinux 0x93170790	blk_fill_rwbs
 EXPORT_SYMBOL_GPL vmlinux 0x93190722	of_irq_parse_and_map_pci

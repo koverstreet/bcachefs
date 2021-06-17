@@ -18560,6 +18560,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x498a96ee	pm_runtime_get_if_in_use
 EXPORT_SYMBOL_GPL vmlinux 0x499043d3	crypto_init_queue
 EXPORT_SYMBOL_GPL vmlinux 0x499bd4ae	__platform_register_drivers
 EXPORT_SYMBOL_GPL vmlinux 0x49a283ac	vfs_write
+EXPORT_SYMBOL_GPL vmlinux 0x49c59603	md_submit_discard_bio
 EXPORT_SYMBOL_GPL vmlinux 0x49d923ac	nvdimm_kobj
 EXPORT_SYMBOL_GPL vmlinux 0x49e0fd21	__cpu_copy_user_page
 EXPORT_SYMBOL_GPL vmlinux 0x49e96999	cond_synchronize_rcu

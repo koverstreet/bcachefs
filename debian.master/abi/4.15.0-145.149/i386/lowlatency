@@ -20899,6 +20899,7 @@ EXPORT_SYMBOL_GPL vmlinux 0xa1696b89	kthread_flush_worker
 EXPORT_SYMBOL_GPL vmlinux 0xa175006d	perf_event_disable
 EXPORT_SYMBOL_GPL vmlinux 0xa17b5e62	crypto_req_done
 EXPORT_SYMBOL_GPL vmlinux 0xa18f9433	mpi_read_buffer
+EXPORT_SYMBOL_GPL vmlinux 0xa1a5c880	md_submit_discard_bio
 EXPORT_SYMBOL_GPL vmlinux 0xa1abf57d	bitmap_load
 EXPORT_SYMBOL_GPL vmlinux 0xa1f46fa4	wbc_account_io
 EXPORT_SYMBOL_GPL vmlinux 0xa1f79553	xen_create_contiguous_region
