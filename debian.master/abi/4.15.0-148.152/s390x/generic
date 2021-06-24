@@ -6428,7 +6428,6 @@ EXPORT_SYMBOL_GPL drivers/s390/net/qeth_l3 0x64882a54	qeth_l3_discipline
 EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0x157d2810	fcoe_fcf_device_add
 EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0x30b529a9	fcoe_check_wait_queue
 EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0x3370e2f8	fcoe_fcf_device_delete
-EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0x374c1e1c	fcoe_wwn_from_mac
 EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0x3f3ba39a	fcoe_start_io
 EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0x4f1baa80	fcoe_get_wwn
 EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0x771f0e9e	__fcoe_get_lesb
@@ -6436,6 +6435,7 @@ EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0x84b3d915	fcoe_wwn_to_str
 EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0x8a3d8afb	fcoe_fc_crc
 EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0x90dbe464	fcoe_ctlr_device_delete
 EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0x9455e9f5	fcoe_get_lesb
+EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0x998b5080	fcoe_wwn_from_mac
 EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0xb88f966a	fcoe_validate_vport_create
 EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0xbab8ed77	fcoe_link_speed_update
 EXPORT_SYMBOL_GPL drivers/scsi/fcoe/libfcoe 0xcfab91d1	fcoe_clean_pending_queue
@@ -9336,7 +9336,6 @@ EXPORT_SYMBOL_GPL vmlinux 0x7c6ff2af	pci_bus_max_busnr
 EXPORT_SYMBOL_GPL vmlinux 0x7c9275a5	gfn_to_page_many_atomic
 EXPORT_SYMBOL_GPL vmlinux 0x7cc99c3c	trace_event_ignore_this_pid
 EXPORT_SYMBOL_GPL vmlinux 0x7ceaf0d5	generic_handle_irq
-EXPORT_SYMBOL_GPL vmlinux 0x7d3c75a7	smp_call_function_single_async
 EXPORT_SYMBOL_GPL vmlinux 0x7d59dd46	pm_wq
 EXPORT_SYMBOL_GPL vmlinux 0x7d633c02	l3mdev_fib_table_rcu
 EXPORT_SYMBOL_GPL vmlinux 0x7d900b68	netdev_set_default_ethtool_ops
@@ -10192,6 +10191,7 @@ EXPORT_SYMBOL_GPL vmlinux 0xc675075d	ktime_get_boot_fast_ns
 EXPORT_SYMBOL_GPL vmlinux 0xc6951360	srcutorture_get_gp_data
 EXPORT_SYMBOL_GPL vmlinux 0xc6993bb4	ftrace_set_filter
 EXPORT_SYMBOL_GPL vmlinux 0xc69b7ee5	zs_destroy_pool
+EXPORT_SYMBOL_GPL vmlinux 0xc6a27775	smp_call_function_single_async
 EXPORT_SYMBOL_GPL vmlinux 0xc6d76ee1	gpiod_get_raw_value_cansleep
 EXPORT_SYMBOL_GPL vmlinux 0xc6e1d06a	dm_internal_resume_fast
 EXPORT_SYMBOL_GPL vmlinux 0xc705f5dc	probe_kernel_write
