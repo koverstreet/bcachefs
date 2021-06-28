@@ -14,6 +14,7 @@ static inline bool bch2_checksum_mergeable(unsigned type)
 
 	switch (type) {
 	case BCH_CSUM_NONE:
+	case BCH_CSUM_XOR:
 	case BCH_CSUM_CRC32C:
 	case BCH_CSUM_CRC64:
 		return true;
@@ -85,6 +86,8 @@ static inline enum bch_csum_type bch2_csum_opt_to_type(enum bch_csum_opts type,
 	     return data ? BCH_CSUM_CRC64 : BCH_CSUM_CRC64_NONZERO;
 	case BCH_CSUM_OPT_xxhash:
 	     return BCH_CSUM_XXHASH;
+	case BCH_CSUM_OPT_xor64:
+	     return BCH_CSUM_XOR;
 	default:
 	     BUG();
 	}

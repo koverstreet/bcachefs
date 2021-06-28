@@ -7,6 +7,7 @@
 #include <linux/crc32c.h>
 #include <linux/crypto.h>
 #include <linux/xxhash.h>
+#include <linux/raid/xor.h>
 #include <linux/key.h>
 #include <linux/random.h>
 #include <linux/scatterlist.h>
@@ -32,7 +33,7 @@ struct bch2_checksum_state {
 	unsigned int type;
 };
 
-static void bch2_checksum_init(struct bch2_checksum_state *state)
+static void __bch2_checksum_init(struct bch2_checksum_state *state)
 {
 	switch (state->type) {
 	case BCH_CSUM_NONE:
@@ -49,12 +50,26 @@ static void bch2_checksum_init(struct bch2_checksum_state *state)
 	case BCH_CSUM_XXHASH:
 		xxh64_reset(&state->h64state, 0);
 		break;
+	case BCH_CSUM_XOR:
+		state->seed = 0;
+		break;
 	default:
 		BUG();
 	}
 }
 
-static u64 bch2_checksum_final(const struct bch2_checksum_state *state)
+static void bch2_checksum_init(struct bch2_checksum_state *state, const unsigned int type)
+{
+
+	if (unlikely(type > BCH_CSUM_NR))
+		BUG();
+
+	state->type = type;
+	__bch2_checksum_init(state);
+
+}
+
+static u64 bch2_checksum_final(struct bch2_checksum_state *state)
 {
 	switch (state->type) {
 	case BCH_CSUM_NONE:
@@ -63,6 +78,8 @@ static u64 bch2_checksum_final(const struct bch2_checksum_state *state)
 		return state->seed;
 	case BCH_CSUM_XXHASH:
 		return xxh64_digest(&state->h64state);
+	case BCH_CSUM_XOR:
+		return state->seed;
 	case BCH_CSUM_CRC32C_NONZERO:
 		return state->seed ^ U32_MAX;
 	case BCH_CSUM_CRC64_NONZERO:
@@ -71,6 +88,46 @@ static u64 bch2_checksum_final(const struct bch2_checksum_state *state)
 		BUG();
 	}
 }
+
+
+static void bch2_xor_block_helper(struct bch2_checksum_state *state,
+				  const u64 *data,
+				  const size_t u64_len)
+{
+	u64 iterator;
+	u64 current_seed;
+	u64 previous_seed = state->seed;
+	u64 **data_pointers;
+	u64 **src_data_pointers; //we need to add the seed value as a first element
+
+	data_pointers = (u64 **) kmalloc_array((u64_len+1), sizeof(u64 *), GFP_HIGHUSER);
+	data_pointers[0] = &previous_seed;
+	src_data_pointers = &data_pointers[1];
+
+	for (iterator = 0; iterator < u64_len; iterator++)
+		src_data_pointers[iterator] = (u64 *) &data[iterator];
+
+	for (iterator = 0; iterator + 4 <= u64_len; iterator += 3) {
+		//store the new seed pointer value at the position of the last block pointer
+		data_pointers[iterator] = &previous_seed;
+		xor_blocks(4, sizeof(u64), &current_seed, (void **) &data_pointers[iterator]);
+		previous_seed = current_seed;
+	}
+
+	data_pointers[iterator] = &previous_seed;
+
+	//we need at least 2 elements (index u64_len and seed) to make a valid xor operation
+	if (iterator < u64_len)
+		xor_blocks(u64_len - iterator + 1,
+			   sizeof(u64),
+			   &current_seed,
+			   (void **) &data_pointers[iterator]);
+
+	state->seed = current_seed;
+
+	kfree(data_pointers);
+}
+
 
 static void bch2_checksum_update(struct bch2_checksum_state *state, const void *data, size_t len)
 {
@@ -87,6 +144,9 @@ static void bch2_checksum_update(struct bch2_checksum_state *state, const void *
 		break;
 	case BCH_CSUM_XXHASH:
 		xxh64_update(&state->h64state, data, len);
+		break;
+	case BCH_CSUM_XOR:
+		bch2_xor_block_helper(state, (const u64 *) data, (len >> 3));
 		break;
 	default:
 		BUG();
@@ -166,12 +226,11 @@ struct bch_csum bch2_checksum(struct bch_fs *c, unsigned type,
 	case BCH_CSUM_CRC64_NONZERO:
 	case BCH_CSUM_CRC32C:
 	case BCH_CSUM_XXHASH:
+	case BCH_CSUM_XOR:
 	case BCH_CSUM_CRC64: {
 		struct bch2_checksum_state state;
 
-		state.type = type;
-
-		bch2_checksum_init(&state);
+		bch2_checksum_init(&state, type);
 		bch2_checksum_update(&state, data, len);
 
 		return (struct bch_csum) { .lo = cpu_to_le64(bch2_checksum_final(&state)) };
@@ -218,11 +277,11 @@ static struct bch_csum __bch2_checksum_bio(struct bch_fs *c, unsigned type,
 	case BCH_CSUM_CRC64_NONZERO:
 	case BCH_CSUM_CRC32C:
 	case BCH_CSUM_XXHASH:
+	case BCH_CSUM_XOR:
 	case BCH_CSUM_CRC64: {
 		struct bch2_checksum_state state;
 
-		state.type = type;
-		bch2_checksum_init(&state);
+		bch2_checksum_init(&state, type);
 
 #ifdef CONFIG_HIGHMEM
 		__bio_for_each_segment(bv, bio, *iter, *iter) {
@@ -315,8 +374,7 @@ struct bch_csum bch2_checksum_merge(unsigned type, struct bch_csum a,
 {
 	struct bch2_checksum_state state;
 
-	state.type = type;
-	bch2_checksum_init(&state);
+	bch2_checksum_init(&state, type);
 	state.seed = a.lo;
 
 	BUG_ON(!bch2_checksum_mergeable(type));
