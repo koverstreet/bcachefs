@@ -303,6 +303,9 @@ again:
 	bch2_btree_and_journal_iter_init_node_iter(&iter, c, b);
 
 	while ((k = bch2_btree_and_journal_iter_peek(&iter)).k) {
+		BUG_ON(bpos_cmp(k.k->p, b->data->min_key) < 0);
+		BUG_ON(bpos_cmp(k.k->p, b->data->max_key) > 0);
+
 		bch2_btree_and_journal_iter_advance(&iter);
 		bch2_bkey_buf_reassemble(&cur_k, c, k);
 
