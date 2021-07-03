@@ -574,7 +574,7 @@ void bch2_btree_node_drop_keys_outside_node(struct btree *b)
 		struct bkey_packed *k;
 
 		for (k = i->start; k != vstruct_last(i); k = bkey_next(k))
-			if (bkey_cmp_left_packed(b, k, &b->data->min_key) < 0)
+			if (bkey_cmp_left_packed(b, k, &b->data->min_key) >= 0)
 				break;
 
 		if (k != i->start) {
