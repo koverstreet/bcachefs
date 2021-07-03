@@ -565,13 +565,16 @@ out:									\
 void bch2_btree_node_drop_keys_outside_node(struct btree *b)
 {
 	struct bset_tree *t;
+	struct bkey_s_c k;
+	struct bkey unpacked;
+	struct btree_node_iter iter;
 
 	for_each_bset(b, t) {
 		struct bset *i = bset(b, t);
 		struct bkey_packed *k;
 
 		for (k = i->start; k != vstruct_last(i); k = bkey_next(k))
-			if (bkey_cmp_left_packed(b, k, &b->data->min_key) < 0)
+			if (bkey_cmp_left_packed(b, k, &b->data->min_key) >= 0)
 				break;
 
 		if (k != i->start) {
@@ -596,6 +599,11 @@ void bch2_btree_node_drop_keys_outside_node(struct btree *b)
 	}
 
 	bch2_btree_build_aux_trees(b);
+
+	for_each_btree_node_key_unpack(b, k, &iter, &unpacked) {
+		BUG_ON(bpos_cmp(k.k->p, b->data->min_key) < 0);
+		BUG_ON(bpos_cmp(k.k->p, b->data->max_key) > 0);
+	}
 }
 
 static int validate_bset(struct bch_fs *c, struct bch_dev *ca,
