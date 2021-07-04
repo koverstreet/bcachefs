@@ -291,9 +291,15 @@ static void bch2_page_state_release(struct page *page)
 	__bch2_page_state_release(page);
 }
 
-/* for newly allocated pages: */
-static struct bch_page_state *__bch2_page_state_create(struct page *page,
-						       gfp_t gfp)
+/**
+ * __bch2_page_state_alloc - allocate the bcachefs page state
+ * @page: page to attach the bcachefs page state to
+ * @gfp: additional memory allocation flags
+ *
+ * Allocate the bcachefs page private data for the given page.
+ */
+static struct bch_page_state *__bch2_page_state_alloc(struct page *page,
+						      gfp_t gfp)
 {
 	struct bch_page_state *s;
 
@@ -306,10 +312,87 @@ static struct bch_page_state *__bch2_page_state_create(struct page *page,
 	return s;
 }
 
-static struct bch_page_state *bch2_page_state_create(struct page *page,
+/**
+ * __bch2_page_state_create - internal create function for bcachefs page state
+ * @c: bcachefs filesystem of the backing sectors
+ * @page: page to attach the bcachefs page state to
+ * @gfp: additional memory allocation flags
+ *
+ * Allocate the bcachefs ptge private data for the given page and set the
+ * page state to that of the corresponding sectors in the btree.
+ */
+static struct bch_page_state *__bch2_page_state_create(struct bch_fs *c,
+						       struct page *page,
+						       gfp_t gfp)
+{
+	struct bch_inode_info *inode = to_bch_ei(page->mapping->host);
+	struct bch_page_state *s;
+	struct btree_iter *iter;
+	struct btree_trans trans;
+	struct bkey_s_c k;
+	loff_t start = page->index << PAGE_SECTOR_SHIFT;
+	int i, ret;
+
+	s = __bch2_page_state_alloc(page, gfp);
+	if (!s)
+		return NULL;
+
+	/*
+	 * Touching the btree can be expensive. We only want to touch
+	 * the btree if the page is not uptodate and no page state
+	 * currently exists.
+	 */
+	if (PageUptodate(page))
+		return s;
+
+	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
+
+	iter = bch2_trans_get_iter(&trans, BTREE_ID_extents,
+				   POS(inode->v.i_ino, start),
+				   BTREE_ITER_SLOTS | BTREE_ITER_INTENT);
+
+	ret = PTR_ERR_OR_ZERO(iter);
+
+	if (ret) {
+		kfree(s);
+		return NULL;
+	}
+
+	for (i = 0; i < PAGE_SECTORS; ++i) {
+		bch2_btree_iter_set_pos(iter, POS(inode->v.i_ino, start + i));
+		k = bch2_btree_iter_peek_slot(iter);
+		ret = bkey_err(k);
+
+		if (!ret && bkey_extent_is_allocation(k.k)) {
+			s->s[i].nr_replicas = k.k->type == KEY_TYPE_reflink_v
+				? 0 : bch2_bkey_nr_ptrs_fully_allocated(k);
+			s->s[i].state = k.k->type == KEY_TYPE_reservation
+				? SECTOR_RESERVED
+				: SECTOR_ALLOCATED;
+		}
+	}
+
+	bch2_trans_iter_put(&trans, iter);
+	bch2_trans_exit(&trans);
+
+	return s;
+}
+
+/**
+ * bch2_page_state_create - create bcachefs page state if not present
+ * @c: bcachefs filesystem of the backing sectors
+ * @page: page to attach the bcachefs page state to
+ * @gfp: additional memory allocation flags
+ *
+ * Allocate the bcachefs patge private data for the given page if no data
+ * currently exists. If the page state already exists, return the current
+ * page state.
+ */
+static struct bch_page_state *bch2_page_state_create(struct bch_fs *c,
+						     struct page *page,
 						     gfp_t gfp)
 {
-	return bch2_page_state(page) ?: __bch2_page_state_create(page, gfp);
+	return bch2_page_state(page) ?: __bch2_page_state_create(c, page, gfp);
 }
 
 static inline unsigned inode_nr_replicas(struct bch_fs *c, struct bch_inode_info *inode)
@@ -332,7 +415,7 @@ static int bch2_get_page_disk_reservation(struct bch_fs *c,
 				struct bch_inode_info *inode,
 				struct page *page, bool check_enospc)
 {
-	struct bch_page_state *s = bch2_page_state_create(page, 0);
+	struct bch_page_state *s = bch2_page_state_create(c, page, 0);
 	unsigned nr_replicas = inode_nr_replicas(c, inode);
 	struct disk_reservation disk_res = { 0 };
 	unsigned i, disk_res_sectors = 0;
@@ -389,7 +472,7 @@ static int bch2_page_reservation_get(struct bch_fs *c,
 			struct bch2_page_reservation *res,
 			unsigned offset, unsigned len, bool check_enospc)
 {
-	struct bch_page_state *s = bch2_page_state_create(page, 0);
+	struct bch_page_state *s = bch2_page_state_create(c, page, 0);
 	unsigned i, disk_sectors = 0, quota_sectors = 0;
 	int ret;
 
@@ -470,7 +553,7 @@ static void bch2_set_page_dirty(struct bch_fs *c,
 			unsigned offset, unsigned len)
 {
 	struct bch_page_state *s = bch2_page_state(page);
-	unsigned i, dirty_sectors = 0;
+	unsigned int i, unallocated_sectors = 0;
 
 	WARN_ON((u64) page_offset(page) + offset + len >
 		round_up((u64) i_size_read(&inode->v), block_bytes(c)));
@@ -492,16 +575,26 @@ static void bch2_set_page_dirty(struct bch_fs *c,
 		s->s[i].replicas_reserved += sectors;
 		res->disk.sectors -= sectors;
 
-		if (s->s[i].state == SECTOR_UNALLOCATED)
-			dirty_sectors++;
-
-		s->s[i].state = max_t(unsigned, s->s[i].state, SECTOR_DIRTY);
+		switch (s->s[i].state) {
+		case SECTOR_UNALLOCATED:
+			unallocated_sectors++;
+			s->s[i].state = SECTOR_DIRTY;
+			break;
+		case SECTOR_RESERVED:
+			s->s[i].state = SECTOR_ALLOCATED;
+			break;
+		case SECTOR_DIRTY:
+		case SECTOR_ALLOCATED:
+			continue;
+		default:
+			BUG();
+		}
 	}
 
 	spin_unlock(&s->lock);
 
-	if (dirty_sectors)
-		i_sectors_acct(c, inode, &res->quota, dirty_sectors);
+	if (unallocated_sectors)
+		i_sectors_acct(c, inode, &res->quota, unallocated_sectors);
 
 	if (!PageDirty(page))
 		__set_page_dirty_nobuffers(page);
@@ -687,7 +780,7 @@ static int readpages_iter_init(struct readpages_iter *iter,
 
 	nr_pages = __readahead_batch(ractl, iter->pages, nr_pages);
 	for (i = 0; i < nr_pages; i++) {
-		__bch2_page_state_create(iter->pages[i], __GFP_NOFAIL);
+		__bch2_page_state_alloc(iter->pages[i], __GFP_NOFAIL);
 		put_page(iter->pages[i]);
 	}
 
@@ -767,7 +860,7 @@ static void readpage_bio_extend(struct readpages_iter *iter,
 			if (!page)
 				break;
 
-			if (!__bch2_page_state_create(page, 0)) {
+			if (!__bch2_page_state_alloc(page, 0)) {
 				put_page(page);
 				break;
 			}
@@ -922,7 +1015,7 @@ static void __bchfs_readpage(struct bch_fs *c, struct bch_read_bio *rbio,
 	struct btree_trans trans;
 	struct btree_iter *iter;
 
-	bch2_page_state_create(page, __GFP_NOFAIL);
+	bch2_page_state_create(c, page, __GFP_NOFAIL);
 
 	bio_set_op_attrs(&rbio->bio, REQ_OP_READ, REQ_SYNC);
 	rbio->bio.bi_iter.bi_sector =
@@ -1156,7 +1249,7 @@ static int __bch2_writepage(struct page *page,
 	 */
 	zero_user_segment(page, offset, PAGE_SIZE);
 do_io:
-	s = bch2_page_state_create(page, __GFP_NOFAIL);
+	s = bch2_page_state_create(c, page, __GFP_NOFAIL);
 
 	ret = bch2_get_page_disk_reservation(c, inode, page, true);
 	if (ret) {
@@ -2199,7 +2292,7 @@ static int __bch2_truncate_page(struct bch_inode_info *inode,
 		}
 	}
 
-	s = bch2_page_state_create(page, 0);
+	s = bch2_page_state_create(c, page, 0);
 	if (!s) {
 		ret = -ENOMEM;
 		goto unlock;
