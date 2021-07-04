@@ -372,10 +372,18 @@ static struct dentry *bch2_lookup(struct inode *vdir, struct dentry *dentry,
 	struct bch_inode_info *dir = to_bch_ei(vdir);
 	struct bch_hash_info hash = bch2_hash_info_init(c, &dir->ei_inode);
 	struct inode *vinode = NULL;
-	u64 inum;
+	u64 inum = 0;
+	int ret;
 
-	inum = bch2_dirent_lookup(c, dir->v.i_ino, &hash,
-				  &dentry->d_name);
+	ret = bch2_dirent_lookup(c, dir->v.i_ino, &hash,
+				 &dentry->d_name, &inum);
+
+	/*
+	 * If we get an error from dirent lookup and it is ENOENT, let splice
+	 * alias handle it.
+	 */
+	if (ret && ret != -ENOENT)
+		return ERR_PTR(ret);
 
 	if (inum)
 		vinode = bch2_vfs_inode_get(c, inum);

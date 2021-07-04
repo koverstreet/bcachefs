@@ -147,9 +147,9 @@ static int lookup_lostfound(struct btree_trans *trans,
 		return ret;
 
 	root_hash_info = bch2_hash_info_init(c, &root);
-	inum = bch2_dirent_lookup(c, BCACHEFS_ROOT_INO, &root_hash_info,
-				  &lostfound_str);
-	if (!inum) {
+	ret = bch2_dirent_lookup(c, BCACHEFS_ROOT_INO, &root_hash_info,
+				 &lostfound_str, &inum);
+	if (ret) {
 		bch_notice(c, "creating lost+found");
 		goto create_lostfound;
 	}

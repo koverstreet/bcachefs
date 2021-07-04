@@ -205,10 +205,9 @@ static int bch2_ioc_reinherit_attrs(struct bch_fs *c,
 	qstr.len	= ret;
 	qstr.name	= kname;
 
-	ret = -ENOENT;
-	inum = bch2_dirent_lookup(c, src->v.i_ino, &hash,
-				  &qstr);
-	if (!inum)
+	ret = bch2_dirent_lookup(c, src->v.i_ino, &hash,
+				 &qstr, &inum);
+	if (ret)
 		goto err1;
 
 	vinode = bch2_vfs_inode_get(c, inum);

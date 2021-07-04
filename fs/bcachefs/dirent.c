@@ -321,30 +321,44 @@ __bch2_dirent_lookup_trans(struct btree_trans *trans, u64 dir_inum,
 				hash_info, dir_inum, name, flags);
 }
 
-u64 bch2_dirent_lookup(struct bch_fs *c, u64 dir_inum,
+/**
+ * bch2_dirent_lookup - lookup the named file in the given directory
+ * @c: bcachefs filesystem for the lookup
+ * @dir_inum: inode number for the parent directory the lookup will
+ *            be performed in
+ * @hash_info: hash info for the parent directory
+ * @name: value to lookup
+ * @inum: pointer whos value will be changed to the found inode number
+ *        for the given name if the lookup is successful
+ *
+ * Return: zero if found, non-zero if error.
+ */
+int bch2_dirent_lookup(struct bch_fs *c, u64 dir_inum,
 		       const struct bch_hash_info *hash_info,
-		       const struct qstr *name)
+		       const struct qstr *name,
+		       u64 *inum)
 {
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_s_c k;
-	u64 inum = 0;
+	int ret = 0;
 
 	bch2_trans_init(&trans, c, 0, 0);
 
 	iter = __bch2_dirent_lookup_trans(&trans, dir_inum,
 					  hash_info, name, 0);
 	if (IS_ERR(iter)) {
-		BUG_ON(PTR_ERR(iter) == -EINTR);
+		ret = PTR_ERR(iter);
+		BUG_ON(ret == -EINTR);
 		goto out;
 	}
 
 	k = bch2_btree_iter_peek_slot(iter);
-	inum = le64_to_cpu(bkey_s_c_to_dirent(k).v->d_inum);
+	*inum = le64_to_cpu(bkey_s_c_to_dirent(k).v->d_inum);
 	bch2_trans_iter_put(&trans, iter);
 out:
 	bch2_trans_exit(&trans);
-	return inum;
+	return ret;
 }
 
 int bch2_empty_dir_trans(struct btree_trans *trans, u64 dir_inum)
