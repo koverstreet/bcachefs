@@ -22,6 +22,34 @@
 #include <linux/sort.h>
 #include <trace/events/bcachefs.h>
 
+static bool should_dump_trans(struct btree_trans *trans)
+{
+	struct btree_insert_entry *i;
+#if 1
+	trans_for_each_update(trans, i) {
+		if (i->btree_id == BTREE_ID_dirents)
+			return true;
+
+		if (i->btree_id == BTREE_ID_subvolumes && bkey_deleted(&i->k->k))
+			return true;
+	}
+#endif
+	return false;
+}
+
+static void trans_dump_updates(struct btree_trans *trans)
+{
+	struct btree_insert_entry *i;
+	char buf[250];
+
+	trace_printk("transaction updates for %ps\n", (void *) trans->ip);
+
+	trans_for_each_update(trans, i) {
+		bch2_bkey_val_to_text(&PBUF(buf), trans->c, bkey_i_to_s_c(i->k));
+		trace_printk("%s: %s\n", bch2_btree_ids[i->btree_id], buf);
+	}
+}
+
 static inline int btree_insert_entry_cmp(const struct btree_insert_entry *l,
 					 const struct btree_insert_entry *r)
 {
@@ -515,6 +543,9 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 	} else {
 		trans->journal_res.seq = c->journal.replay_journal_seq;
 	}
+
+	if (should_dump_trans(trans))
+		trans_dump_updates(trans);
 
 	if (unlikely(trans->extra_journal_entry_u64s)) {
 		memcpy_u64s_small(journal_res_entry(&c->journal, &trans->journal_res),
