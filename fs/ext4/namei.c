@@ -2310,13 +2310,15 @@ again:
 			goto journal_error;
 		}
 	}
-	de = do_split(handle, dir, &bh, frame, &fname->hinfo);
-	if (IS_ERR(de)) {
-		err = PTR_ERR(de);
+	if (!restart) {
+		de = do_split(handle, dir, &bh, frame, &fname->hinfo);
+		if (IS_ERR(de)) {
+			err = PTR_ERR(de);
+			goto cleanup;
+		}
+		err = add_dirent_to_buf(handle, fname, dir, inode, de, bh);
 		goto cleanup;
 	}
-	err = add_dirent_to_buf(handle, fname, dir, inode, de, bh);
-	goto cleanup;
 
 journal_error:
 	ext4_std_error(dir->i_sb, err); /* this is a no-op if err == 0 */
