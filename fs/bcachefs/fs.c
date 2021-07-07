@@ -986,6 +986,62 @@ static const struct vm_operations_struct bch_vm_ops = {
 	.page_mkwrite   = bch2_page_mkwrite,
 };
 
+struct dentry *bch2_get_parent(struct dentry *child)
+{
+	struct bch_fs *c = child->d_sb->s_fs_info;
+	struct bch_inode_info *dir = to_bch_ei(d_inode(child));
+	struct inode *vinode = NULL;
+
+	/*
+	 * Lookup the parent inode via the stored backpointer.
+	 */
+	vinode = bch2_vfs_inode_get(c, dir->ei_inode.bi_dir);
+	if (IS_ERR(vinode))
+		return ERR_CAST(vinode);
+
+	return d_obtain_alias(vinode);
+}
+
+static struct inode *bch2_nfs_get_inode(struct super_block *sb,
+					u64 ino, u32 generation)
+{
+	struct bch_fs *c = sb->s_fs_info;
+	struct inode *vinode;
+
+	if (ino < BCACHEFS_ROOT_INO)
+		return ERR_PTR(-ESTALE);
+
+	vinode = bch2_vfs_inode_get(c, ino);
+	if (IS_ERR(vinode))
+		return ERR_CAST(vinode);
+	if (generation && vinode->i_generation != generation) {
+		/* we didn't find the right inode.. */
+		iput(vinode);
+		return ERR_PTR(-ESTALE);
+	}
+	return vinode;
+}
+
+static struct dentry *bch2_fh_to_dentry(struct super_block *sb, struct fid *fid,
+					int fh_len, int fh_type)
+{
+	return generic_fh_to_dentry(sb, fid, fh_len, fh_type,
+				    bch2_nfs_get_inode);
+}
+
+static struct dentry *bch2_fh_to_parent(struct super_block *sb, struct fid *fid,
+					int fh_len, int fh_type)
+{
+	return generic_fh_to_parent(sb, fid, fh_len, fh_type,
+				    bch2_nfs_get_inode);
+}
+
+static const struct export_operations bch_export_ops = {
+	.fh_to_dentry	= bch2_fh_to_dentry,
+	.fh_to_parent	= bch2_fh_to_parent,
+	.get_parent	= bch2_get_parent,
+};
+
 static int bch2_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	file_accessed(file);
@@ -1108,46 +1164,6 @@ static const struct address_space_operations bch_address_space_operations = {
 	.migratepage	= bch2_migrate_page,
 #endif
 	.error_remove_page = generic_error_remove_page,
-};
-
-static struct inode *bch2_nfs_get_inode(struct super_block *sb,
-		u64 ino, u32 generation)
-{
-	struct bch_fs *c = sb->s_fs_info;
-	struct inode *vinode;
-
-	if (ino < BCACHEFS_ROOT_INO)
-		return ERR_PTR(-ESTALE);
-
-	vinode = bch2_vfs_inode_get(c, ino);
-	if (IS_ERR(vinode))
-		return ERR_CAST(vinode);
-	if (generation && vinode->i_generation != generation) {
-		/* we didn't find the right inode.. */
-		iput(vinode);
-		return ERR_PTR(-ESTALE);
-	}
-	return vinode;
-}
-
-static struct dentry *bch2_fh_to_dentry(struct super_block *sb, struct fid *fid,
-		int fh_len, int fh_type)
-{
-	return generic_fh_to_dentry(sb, fid, fh_len, fh_type,
-				    bch2_nfs_get_inode);
-}
-
-static struct dentry *bch2_fh_to_parent(struct super_block *sb, struct fid *fid,
-		int fh_len, int fh_type)
-{
-	return generic_fh_to_parent(sb, fid, fh_len, fh_type,
-				    bch2_nfs_get_inode);
-}
-
-static const struct export_operations bch_export_ops = {
-	.fh_to_dentry	= bch2_fh_to_dentry,
-	.fh_to_parent	= bch2_fh_to_parent,
-	//.get_parent	= bch2_get_parent,
 };
 
 static void bch2_vfs_inode_init(struct bch_fs *c,
