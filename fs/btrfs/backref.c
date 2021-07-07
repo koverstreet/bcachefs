@@ -737,8 +737,7 @@ static int add_missing_keys(struct btrfs_fs_info *fs_info,
 		BUG_ON(ref->key_for_search.type);
 		BUG_ON(!ref->wanted_disk_byte);
 
-		eb = read_tree_block(fs_info, ref->wanted_disk_byte, 0,
-				     ref->level - 1, NULL);
+		eb = read_tree_block(fs_info, ref->wanted_disk_byte, 0);
 		if (IS_ERR(eb)) {
 			free_pref(ref);
 			return PTR_ERR(eb);
@@ -1293,8 +1292,7 @@ again:
 			    ref->level == 0) {
 				struct extent_buffer *eb;
 
-				eb = read_tree_block(fs_info, ref->parent, 0,
-						     ref->level, NULL);
+				eb = read_tree_block(fs_info, ref->parent, 0);
 				if (IS_ERR(eb)) {
 					ret = PTR_ERR(eb);
 					goto out;
