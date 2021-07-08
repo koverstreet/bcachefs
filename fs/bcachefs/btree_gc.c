@@ -216,8 +216,8 @@ static int set_node_max(struct bch_fs *c, struct btree *b, struct bpos new_max)
 	return 0;
 }
 
-static int btree_repair_node_start(struct bch_fs *c, struct btree *b,
-				   struct btree *prev, struct btree *cur)
+static int btree_repair_node_boundaries(struct bch_fs *c, struct btree *b,
+					struct btree *prev, struct btree *cur)
 {
 	struct bpos expected_start = !prev
 		? b->data->min_key
@@ -233,30 +233,50 @@ static int btree_repair_node_start(struct bch_fs *c, struct btree *b,
 		bch2_bkey_val_to_text(&PBUF(buf1), c, bkey_i_to_s_c(&prev->key));
 	}
 
-	if (mustfix_fsck_err_on(bpos_cmp(expected_start, cur->data->min_key), c,
-			"btree node with incorrect min_key at btree %s level %u:\n"
-			"  prev %s\n"
-			"  cur %s",
-			bch2_btree_ids[b->c.btree_id], b->c.level,
-			buf1,
-			(bch2_bkey_val_to_text(&PBUF(buf2), c, bkey_i_to_s_c(&cur->key)), buf2))) {
-		if (prev &&
-		    bpos_cmp(expected_start, cur->data->min_key) > 0 &&
-		    BTREE_NODE_SEQ(cur->data) > BTREE_NODE_SEQ(prev->data)) {
-			if (bkey_cmp(prev->data->min_key,
-				     cur->data->min_key) <= 0)
-				return DROP_PREV_NODE;
+	bch2_bkey_val_to_text(&PBUF(buf2), c, bkey_i_to_s_c(&cur->key));
 
+	if (prev &&
+	    bpos_cmp(expected_start, cur->data->min_key) > 0 &&
+	    BTREE_NODE_SEQ(cur->data) > BTREE_NODE_SEQ(prev->data)) {
+		/* cur overwrites prev: */
+
+		if (mustfix_fsck_err_on(bpos_cmp(prev->data->min_key,
+						 cur->data->min_key) >= 0, c,
+				"btree node overwritten by next node at btree %s level %u:\n"
+				"  node %s\n"
+				"  next %s",
+				bch2_btree_ids[b->c.btree_id], b->c.level,
+				buf1, buf2))
+			return DROP_PREV_NODE;
+
+		if (mustfix_fsck_err_on(bpos_cmp(prev->key.k.p,
+						 bpos_predecessor(cur->data->min_key)), c,
+				"btree node with incorrect max_key at btree %s level %u:\n"
+				"  node %s\n"
+				"  next %s",
+				bch2_btree_ids[b->c.btree_id], b->c.level,
+				buf1, buf2))
 			ret = set_node_max(c, prev,
 					   bpos_predecessor(cur->data->min_key));
-		} else {
-			if (bkey_cmp(expected_start, b->data->max_key) >= 0)
-				return DROP_THIS_NODE;
+	} else {
+		/* prev overwrites cur: */
 
-			ret = set_node_min(c, cur, expected_start);
-		}
-		if (ret)
-			return ret;
+		if (mustfix_fsck_err_on(bpos_cmp(expected_start,
+						 cur->data->max_key) >= 0, c,
+				"btree node overwritten by prev node at btree %s level %u:\n"
+				"  prev %s\n"
+				"  node %s",
+				bch2_btree_ids[b->c.btree_id], b->c.level,
+				buf1, buf2))
+			return DROP_THIS_NODE;
+
+		if (mustfix_fsck_err_on(bpos_cmp(expected_start, cur->data->min_key), c,
+				"btree node with incorrect min_key at btree %s level %u:\n"
+				"  prev %s\n"
+				"  node %s",
+				bch2_btree_ids[b->c.btree_id], b->c.level,
+				buf1, buf2))
+		    ret = set_node_min(c, cur, expected_start);
 	}
 fsck_err:
 	return ret;
@@ -334,7 +354,7 @@ again:
 			break;
 		}
 
-		ret = btree_repair_node_start(c, b, prev, cur);
+		ret = btree_repair_node_boundaries(c, b, prev, cur);
 
 		if (ret == DROP_THIS_NODE) {
 			six_unlock_read(&cur->c.lock);
