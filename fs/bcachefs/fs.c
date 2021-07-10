@@ -986,6 +986,63 @@ static const struct vm_operations_struct bch_vm_ops = {
 	.page_mkwrite   = bch2_page_mkwrite,
 };
 
+int bch2_get_name(struct dentry *parent, char *name,
+			 struct dentry *child)
+{
+	struct bch_fs *c = child->d_sb->s_fs_info;
+	struct bch_inode_info *child_dir = to_bch_ei(d_inode(child));
+	struct btree_trans trans;
+	struct btree_iter *iter;
+	struct bkey_s_c k;
+	struct bkey_s_c_dirent k_dirent;
+	/*
+	 * Use the stored backpointer to the parent directory inode number
+	 * and the directory offset for the lookup position.
+	 */
+	struct bpos pos = POS(child_dir->ei_inode.bi_dir,
+			      child_dir->ei_inode.bi_dir_offset);
+	unsigned len;
+	int ret = 0;
+
+	/*
+	 * If the backpointer to the parent inode number in the child
+	 * does not match, something is very wrong.
+	 */
+	WARN_ON(child_dir->ei_inode.bi_dir != d_inode(parent)->i_ino);
+
+	bch2_trans_init(&trans, c, 0, 0);
+
+	iter = bch2_trans_get_iter(&trans, BTREE_ID_dirents, pos, 0);
+	if (IS_ERR(iter)) {
+		ret = PTR_ERR(iter);
+		goto out_trans;
+	}
+
+	k = bch2_btree_iter_peek(iter);
+	ret = bkey_err(k);
+	if (ret || k.k->type != KEY_TYPE_dirent)
+		goto out_iter;
+
+	k_dirent = bkey_s_c_to_dirent(k);
+
+	/*
+	 * If the child inode number found in the btree does not
+	 * match, something is very wrong. Possibly the stored
+	 * backpointer offset is wrong.
+	 */
+	WARN_ON(k_dirent.v->d_inum != child_dir->v.i_ino);
+
+	len = bch2_dirent_name_bytes(k_dirent);
+	memcpy(name, k_dirent.v->d_name, len);
+	name[len] = '\0';
+
+out_iter:
+	bch2_trans_iter_put(&trans, iter);
+out_trans:
+	bch2_trans_exit(&trans);
+	return ret;
+}
+
 struct dentry *bch2_get_parent(struct dentry *child)
 {
 	struct bch_fs *c = child->d_sb->s_fs_info;
@@ -1040,6 +1097,7 @@ static const struct export_operations bch_export_ops = {
 	.fh_to_dentry	= bch2_fh_to_dentry,
 	.fh_to_parent	= bch2_fh_to_parent,
 	.get_parent	= bch2_get_parent,
+	.get_name	= bch2_get_name,
 };
 
 static int bch2_mmap(struct file *file, struct vm_area_struct *vma)
