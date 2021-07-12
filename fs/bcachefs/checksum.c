@@ -7,6 +7,7 @@
 #include <linux/crc32c.h>
 #include <linux/crypto.h>
 #include <linux/xxhash.h>
+#include <linux/raid/xor.h>
 #include <linux/key.h>
 #include <linux/random.h>
 #include <linux/scatterlist.h>
@@ -38,6 +39,7 @@ static void bch2_checksum_init(struct bch2_checksum_state *state)
 	case BCH_CSUM_NONE:
 	case BCH_CSUM_CRC32C:
 	case BCH_CSUM_CRC64:
+	case BCH_CSUM_XOR:
 		state->seed = 0;
 		break;
 	case BCH_CSUM_CRC32C_NONZERO:
@@ -60,6 +62,7 @@ static u64 bch2_checksum_final(const struct bch2_checksum_state *state)
 	case BCH_CSUM_NONE:
 	case BCH_CSUM_CRC32C:
 	case BCH_CSUM_CRC64:
+	case BCH_CSUM_XOR:
 		return state->seed;
 	case BCH_CSUM_CRC32C_NONZERO:
 		return state->seed ^ U32_MAX;
@@ -71,6 +74,43 @@ static u64 bch2_checksum_final(const struct bch2_checksum_state *state)
 		BUG();
 	}
 }
+
+/**
+ * bch2_xor_block_helper: calculate a 64-bit XOR checksum for data
+ * it can calculate a 64-bit XOR block with 3 blocks at a time over a data length of max(u64)
+ * the result is stored as seed in bch2_checksum_state so additional calculations are possible
+ **/
+
+static void bch2_xor_block_helper(struct bch2_checksum_state *state,
+				  const u64 *data,
+				  const size_t u64_len)
+{
+	const u64 end_4 = (u64) (u64_len > 3 ? u64_len - 3 : 0);
+	u64 iterator;
+	u64 current_seed;
+	u64 previous_seed = state->seed;
+	const u64 *data_pointers[4];
+
+	//store the seed pointer value at the position of the first block pointer
+	data_pointers[0] = &previous_seed;
+
+	//perform xor checksum 4 blocks (3 + seed) at a time
+	for (iterator = 0; iterator < end_4; iterator += 3) {
+		data_pointers[1] = &data[iterator];
+		data_pointers[2] = &data[iterator + 1];
+		data_pointers[3] = &data[iterator + 2];
+		xor_blocks(4, sizeof(u64), &current_seed, (void **) data_pointers);
+		previous_seed = current_seed;
+	}
+
+	//due to limited data length, we can't perform a normal 4-block merge any longer
+	for (; iterator < u64_len; iterator++)
+		data_pointers[iterator - end_4 + 1] = &data[iterator];
+
+	xor_blocks(iterator - end_4 + 1, sizeof(u64), &current_seed, (void **) data_pointers);
+	state->seed = current_seed;
+}
+
 
 static void bch2_checksum_update(struct bch2_checksum_state *state, const void *data, size_t len)
 {
@@ -87,6 +127,9 @@ static void bch2_checksum_update(struct bch2_checksum_state *state, const void *
 		break;
 	case BCH_CSUM_XXHASH:
 		xxh64_update(&state->h64state, data, len);
+		break;
+	case BCH_CSUM_XOR:
+		bch2_xor_block_helper(state, (const u64 *) data, len / sizeof(u64));
 		break;
 	default:
 		BUG();
@@ -166,6 +209,7 @@ struct bch_csum bch2_checksum(struct bch_fs *c, unsigned type,
 	case BCH_CSUM_CRC64_NONZERO:
 	case BCH_CSUM_CRC32C:
 	case BCH_CSUM_XXHASH:
+	case BCH_CSUM_XOR:
 	case BCH_CSUM_CRC64: {
 		struct bch2_checksum_state state;
 
@@ -218,6 +262,7 @@ static struct bch_csum __bch2_checksum_bio(struct bch_fs *c, unsigned type,
 	case BCH_CSUM_CRC64_NONZERO:
 	case BCH_CSUM_CRC32C:
 	case BCH_CSUM_XXHASH:
+	case BCH_CSUM_XOR:
 	case BCH_CSUM_CRC64: {
 		struct bch2_checksum_state state;
 
