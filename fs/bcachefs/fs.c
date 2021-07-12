@@ -24,6 +24,7 @@
 
 #include <linux/aio.h>
 #include <linux/backing-dev.h>
+#include <linux/dcache.h>
 #include <linux/exportfs.h>
 #include <linux/fiemap.h>
 #include <linux/module.h>
@@ -986,11 +987,9 @@ static const struct vm_operations_struct bch_vm_ops = {
 	.page_mkwrite   = bch2_page_mkwrite,
 };
 
-int bch2_get_name(struct dentry *parent, char *name,
-			 struct dentry *child)
+int bch2_get_name(struct bch_fs *c, char *name, struct inode *child)
 {
-	struct bch_fs *c = child->d_sb->s_fs_info;
-	struct bch_inode_info *child_dir = to_bch_ei(d_inode(child));
+	struct bch_inode_info *child_dir = to_bch_ei(child);
 	struct btree_trans trans;
 	struct btree_iter *iter;
 	struct bkey_s_c k;
@@ -1003,12 +1002,6 @@ int bch2_get_name(struct dentry *parent, char *name,
 			      child_dir->ei_inode.bi_dir_offset);
 	unsigned len;
 	int ret = 0;
-
-	/*
-	 * If the backpointer to the parent inode number in the child
-	 * does not match, something is very wrong.
-	 */
-	WARN_ON(child_dir->ei_inode.bi_dir != d_inode(parent)->i_ino);
 
 	bch2_trans_init(&trans, c, 0, 0);
 
@@ -1048,6 +1041,7 @@ struct dentry *bch2_get_parent(struct dentry *child)
 	struct bch_fs *c = child->d_sb->s_fs_info;
 	struct bch_inode_info *dir = to_bch_ei(d_inode(child));
 	struct inode *vinode = NULL;
+	struct dentry *dentry = NULL;
 
 	/*
 	 * Lookup the parent inode via the stored backpointer.
@@ -1056,13 +1050,16 @@ struct dentry *bch2_get_parent(struct dentry *child)
 	if (IS_ERR(vinode))
 		return ERR_CAST(vinode);
 
-	return d_obtain_alias(vinode);
+	dentry = d_obtain_alias(vinode);
+	if (!IS_ERR_OR_NULL(dentry))
+		trace_printk("%s: %s parent=%s", __func__, dentry->d_iname,
+			     (dentry->d_parent) ? dentry->d_parent->d_iname : (unsigned char*)"none");
+	return dentry;
 }
 
-static struct inode *bch2_nfs_get_inode(struct super_block *sb,
+static struct inode *bch2_nfs_get_inode(struct bch_fs *c,
 					u64 ino, u32 generation)
 {
-	struct bch_fs *c = sb->s_fs_info;
 	struct inode *vinode;
 
 	if (ino < BCACHEFS_ROOT_INO)
@@ -1079,25 +1076,161 @@ static struct inode *bch2_nfs_get_inode(struct super_block *sb,
 	return vinode;
 }
 
+void trace_dentry(struct dentry *dentry, const char *prefix)
+{
+	trace_printk("%s: dentry=%p(name=%s, is_root=%d, parent=%s inode=%p(%llu))", prefix,
+		     dentry, dentry->d_iname, IS_ROOT(dentry),
+		     (dentry->d_parent) ? dentry->d_parent->d_iname : (unsigned char *)"none",
+		     d_inode(dentry), (d_inode(dentry)) ? d_inode(dentry)->i_ino : 0);
+}
+
+static struct dentry *bch2_nfs_get_dentry(struct bch_fs *c,
+					  struct super_block *sb,
+					  struct inode *vinode)
+{
+	struct bch_inode_info *dir = NULL;
+	struct inode *child = NULL;
+	struct inode *parent = NULL;
+	struct dentry *child_dentry = NULL;
+	struct dentry *parent_dentry = NULL;
+	u64 child_ino, parent_ino;
+	char child_name[DNAME_INLINE_LEN + 1];
+	struct qstr name;
+	int ret;
+
+	trace_printk("%s: c=%p sb=%p vinode=%p(%llu)", __func__,
+		     c, sb, vinode, (vinode) ? vinode->i_ino: 0);
+
+retry_get_parent:
+	trace_printk("%s: vinode=%p(%llu)", __func__, vinode, (vinode) ? vinode->i_ino : 0);
+	child = vinode;
+	dir = to_bch_ei(vinode);
+	child_ino = dir->v.i_ino;
+	parent_ino = dir->ei_inode.bi_dir;
+	trace_printk("%s: child_ino=%llu parent_ino=%llu", __func__, child_ino, parent_ino);
+	if (parent_ino == 0)
+		return d_find_any_alias(child);
+	parent = bch2_vfs_inode_get(c, dir->ei_inode.bi_dir);
+	trace_printk("%s: parent=%p child=%p", __func__, parent, child);
+	if (IS_ERR(parent))
+		return ERR_CAST(parent);
+
+	while (!(parent_dentry = d_find_any_alias(parent))) {
+		trace_printk("%s: child inum=%llu parent inum=%llu",
+			     __func__, child_ino, parent_ino);
+
+		if (parent_ino < BCACHEFS_ROOT_INO) {
+			trace_printk("THIS IS LESS THAN THE ROOT");
+			/*
+			 * If the parent inode number is the root inode, use the
+			 * root dentry.
+			 */
+			return ERR_PTR(-ESTALE);
+		} else {
+			if (parent_ino == BCACHEFS_ROOT_INO)
+				trace_printk("THIS IS THE ROOT!");
+			child = parent;
+			parent = bch2_vfs_inode_get(c, dir->ei_inode.bi_dir);
+			trace_printk("\t%s: parent=%p(%llu)", __func__, parent, dir->ei_inode.bi_dir);
+			if (IS_ERR(parent))
+				return ERR_CAST(parent);
+			dir = to_bch_ei(parent);
+			child_ino = dir->v.i_ino;
+			parent_ino = dir->ei_inode.bi_dir;
+			trace_printk("\t%s: new child_ino=%llu parent_ino=%llu",
+				     __func__, child_ino, parent_ino);
+		}
+	}
+
+	if (child_dentry && d_inode(parent_dentry)->i_ino != d_inode(child_dentry)->i_ino)
+		trace_printk("%s: new parent %llu != old child %llu", __func__,
+			     d_inode(parent_dentry)->i_ino, d_inode(child_dentry)->i_ino);
+
+
+	trace_dentry(parent_dentry, "parent dentry");
+
+	ret = bch2_get_name(c, child_name, child);
+	if (ret)
+		return ERR_PTR(ret);
+
+	name = (struct qstr) QSTR_INIT(child_name, strlen(child_name));
+	child_dentry = d_alloc(parent_dentry, &name);
+	if (!child_dentry) {
+		trace_printk("No dentry!!!!!!!!");
+		return ERR_PTR(-ENOMEM);
+	}
+
+	trace_dentry(child_dentry, "raw child dentry");
+
+	d_instantiate(child_dentry, child);
+
+	trace_dentry(child_dentry, "child dentry");
+
+	trace_printk("%s: child ino=%llu target=%llu", __func__,
+		     child->i_ino, vinode->i_ino);
+	if (d_inode(child_dentry)->i_ino != vinode->i_ino)
+		goto retry_get_parent;
+	else
+		return child_dentry;
+}
+
 static struct dentry *bch2_fh_to_dentry(struct super_block *sb, struct fid *fid,
 					int fh_len, int fh_type)
 {
-	return generic_fh_to_dentry(sb, fid, fh_len, fh_type,
-				    bch2_nfs_get_inode);
+	struct bch_fs *c = sb->s_fs_info;
+	struct inode *inode = NULL;
+
+	if (fh_len < 2)
+		return ERR_PTR(-ESTALE);
+
+	switch (fh_type) {
+	case FILEID_INO32_GEN:
+	case FILEID_INO32_GEN_PARENT:
+		inode = bch2_nfs_get_inode(c, fid->i32.ino, fid->i32.gen);
+		break;
+	}
+
+	trace_printk("%s: fh_type=%d inode=%p", __func__, fh_type, inode);
+
+	if (IS_ERR(inode))
+		return ERR_CAST(inode);
+
+	trace_printk("%s: inode=%p(%llu)", __func__, inode, inode->i_ino);
+	return bch2_nfs_get_dentry(c, sb, inode);
+//	return generic_fh_to_dentry(sb, fid, fh_len, fh_type,
+//				    bch2_nfs_get_inode);
 }
 
 static struct dentry *bch2_fh_to_parent(struct super_block *sb, struct fid *fid,
 					int fh_len, int fh_type)
 {
-	return generic_fh_to_parent(sb, fid, fh_len, fh_type,
-				    bch2_nfs_get_inode);
+	struct bch_fs *c = sb->s_fs_info;
+	struct inode *inode = NULL;
+
+	if (fh_len < 2)
+		return ERR_PTR(-ESTALE);
+
+	switch (fh_type) {
+	case FILEID_INO32_GEN_PARENT:
+		inode = bch2_nfs_get_inode(c, fid->i32.parent_ino,
+					   (fh_len > 3 ? fid->i32.parent_gen : 0));
+		break;
+	}
+
+	if (IS_ERR(inode))
+		return ERR_CAST(inode);
+
+	trace_printk("%s: inode=%p(%llu)", __func__, inode, inode->i_ino);
+	return bch2_nfs_get_dentry(c, sb, inode);
+//	return generic_fh_to_parent(sb, fid, fh_len, fh_type,
+//				    bch2_nfs_get_inode);
 }
 
 static const struct export_operations bch_export_ops = {
 	.fh_to_dentry	= bch2_fh_to_dentry,
 	.fh_to_parent	= bch2_fh_to_parent,
-	.get_parent	= bch2_get_parent,
-	.get_name	= bch2_get_name,
+//	.get_parent	= bch2_get_parent,
+//	.get_name	= bch2_get_name,
 };
 
 static int bch2_mmap(struct file *file, struct vm_area_struct *vma)

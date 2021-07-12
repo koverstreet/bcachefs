@@ -2107,10 +2107,12 @@ static struct dentry *__d_obtain_alias(struct inode *inode, bool disconnected)
 		return ERR_CAST(inode);
 
 	res = d_find_any_alias(inode);
+	trace_printk("d_find_any_alias=%p", res);
 	if (res)
 		goto out_iput;
 
 	tmp = d_alloc_anon(inode->i_sb);
+	trace_printk("d_alloc_anon=%p", tmp);
 	if (!tmp) {
 		res = ERR_PTR(-ENOMEM);
 		goto out_iput;

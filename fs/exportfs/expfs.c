@@ -132,22 +132,25 @@ static struct dentry *reconnect_one(struct vfsmount *mnt,
 	inode_unlock(dentry->d_inode);
 
 	if (IS_ERR(parent)) {
-		dprintk("%s: get_parent of %ld failed, err %d\n",
+		trace_printk("%s: get_parent of %ld failed, err %d\n",
 			__func__, dentry->d_inode->i_ino, PTR_ERR(parent));
 		return parent;
 	}
+	trace_printk("%s: child(%s,parent=%s) parent=(%s,parent=%s)", __func__,
+		     dentry->d_iname, (dentry->d_parent) ? dentry->d_parent->d_iname : (unsigned char *)"none",
+		     parent->d_iname, (parent->d_parent) ? parent->d_parent->d_iname : (unsigned char *)"none");
 
-	dprintk("%s: find name of %lu in %lu\n", __func__,
+	trace_printk("%s: find name of %lu in %lu\n", __func__,
 		dentry->d_inode->i_ino, parent->d_inode->i_ino);
 	err = exportfs_get_name(mnt, parent, nbuf, dentry);
 	if (err == -ENOENT)
 		goto out_reconnected;
 	if (err)
 		goto out_err;
-	dprintk("%s: found name: %s\n", __func__, nbuf);
+	trace_printk("%s: found name: %s\n", __func__, nbuf);
 	tmp = lookup_one_len_unlocked(nbuf, parent, strlen(nbuf));
 	if (IS_ERR(tmp)) {
-		dprintk("%s: lookup failed: %d\n", __func__, PTR_ERR(tmp));
+		trace_printk("%s: lookup failed: %d\n", __func__, PTR_ERR(tmp));
 		err = PTR_ERR(tmp);
 		goto out_err;
 	}
@@ -215,6 +218,8 @@ reconnect_path(struct vfsmount *mnt, struct dentry *target_dir, char *nbuf)
 
 	dentry = dget(target_dir);
 
+	trace_printk("%s: root=%s target=%s", __func__,
+		     dentry->d_iname, mnt->mnt_sb->s_root->d_iname);
 	while (dentry->d_flags & DCACHE_DISCONNECTED) {
 		BUG_ON(dentry == mnt->mnt_sb->s_root);
 
@@ -433,9 +438,19 @@ exportfs_decode_fh_raw(struct vfsmount *mnt, struct fid *fid, int fh_len,
 	 */
 	if (!nop || !nop->fh_to_dentry)
 		return ERR_PTR(-ESTALE);
+	trace_printk("%s: fh_to_dentry", __func__);
 	result = nop->fh_to_dentry(mnt->mnt_sb, fid, fh_len, fileid_type);
-	if (IS_ERR_OR_NULL(result))
+	if (IS_ERR_OR_NULL(result)) {
+		if (!result) {
+			trace_printk("%s: fh_to_dentry=(nil)", __func__);
+		} else {
+			trace_printk("%s: fh_to_dentry=%d", __func__, PTR_ERR(result));
+		}
 		return result;
+	}
+
+	trace_printk("%s: result=%s disconnected=%d", __func__,
+		     result->d_iname, result->d_flags & DCACHE_DISCONNECTED);
 
 	/*
 	 * If no acceptance criteria was specified by caller, a disconnected
@@ -443,10 +458,13 @@ exportfs_decode_fh_raw(struct vfsmount *mnt, struct fid *fid, int fh_len,
 	 * file handle is stale or to get a reference to an inode without
 	 * risking the high overhead caused by directory reconnect.
 	 */
-	if (!acceptable)
+	if (!acceptable) {
+		trace_printk("No acceptance criteria");
 		return result;
+	}
 
 	if (d_is_dir(result)) {
+		trace_printk("%s: A dir", __func__);
 		/*
 		 * This request is for a directory.
 		 *
@@ -462,9 +480,11 @@ exportfs_decode_fh_raw(struct vfsmount *mnt, struct fid *fid, int fh_len,
 		}
 
 		if (!acceptable(context, result)) {
+			trace_printk("%s: result=%p not acceptable", __func__, result);
 			err = -EACCES;
 			goto err_result;
 		}
+		trace_printk("%s: result=%p good to go", __func__, result);
 
 		return result;
 	} else {
@@ -473,6 +493,7 @@ exportfs_decode_fh_raw(struct vfsmount *mnt, struct fid *fid, int fh_len,
 		 */
 		struct dentry *target_dir, *nresult;
 
+		trace_printk("%s: Not a dir", __func__);
 		/*
 		 * See if either the dentry we just got from the filesystem
 		 * or any alias for it is acceptable.  This is always true
@@ -483,9 +504,13 @@ exportfs_decode_fh_raw(struct vfsmount *mnt, struct fid *fid, int fh_len,
 		 * it's connected to the filesystem root.
 		 */
 		alias = find_acceptable_alias(result, acceptable, context);
+		trace_printk("%s: first attempt - %s parent=%s", __func__,
+			     (alias) ? alias->d_iname : (unsigned char *)"none",
+			     (alias && alias->d_parent) ? alias->d_parent->d_iname : (unsigned char *)"none");
 		if (alias)
 			return alias;
 
+		trace_printk("%s: Will not pass!!!!", __func__);
 		/*
 		 * Try to extract a dentry for the parent directory from the
 		 * file handle.  If this fails we'll have to give up.
@@ -555,6 +580,9 @@ exportfs_decode_fh_raw(struct vfsmount *mnt, struct fid *fid, int fh_len,
 			err = -EACCES;
 			goto err_result;
 		}
+		trace_printk("%s: final alias - %s parent=%s",
+			     alias->d_iname,
+			     (alias->d_parent) ? alias->d_parent->d_iname : (unsigned char *)"none");
 
 		return alias;
 	}
