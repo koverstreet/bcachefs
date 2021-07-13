@@ -1959,6 +1959,12 @@ static inline void bch2_btree_iter_init(struct btree_trans *trans,
 
 /* new transactional stuff: */
 
+static inline struct btree_iter *btree_iter_child(struct btree_iter *iter)
+{
+	return iter->child_idx == U8_MAX ? NULL
+		: iter->trans->iters + iter->child_idx;
+}
+
 static void btree_iter_child_free(struct btree_iter *iter)
 {
 	struct btree_iter *child = btree_iter_child(iter);
