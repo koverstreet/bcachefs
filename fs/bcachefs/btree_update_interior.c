@@ -1002,7 +1002,7 @@ retry:
 	 */
 	ret = bch2_journal_error(&c->journal);
 	if (ret)
-		return ERR_PTR(ret);
+		goto err;
 
 	ret = bch2_journal_preres_get(&c->journal, &as->journal_preres,
 				      BTREE_UPDATE_JOURNAL_RES,
