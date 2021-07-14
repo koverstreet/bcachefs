@@ -347,6 +347,7 @@ bool __bch2_btree_node_lock(struct btree *b, struct bpos pos,
 #ifdef CONFIG_BCACHEFS_DEBUG
 static void bch2_btree_iter_verify_locks(struct btree_iter *iter)
 {
+	struct bch_fs *c = iter->trans->c;
 	unsigned l;
 
 	if (!(iter->trans->iters_linked & (1ULL << iter->idx))) {
@@ -354,7 +355,7 @@ static void bch2_btree_iter_verify_locks(struct btree_iter *iter)
 		return;
 	}
 
-	for (l = 0; is_btree_node(iter, l); l++) {
+	for (l = 0; btree_iter_node(iter, l); l++) {
 		if (iter->uptodate >= BTREE_ITER_NEED_RELOCK &&
 		    !btree_node_locked(iter, l))
 			continue;
@@ -376,7 +377,7 @@ static inline void bch2_btree_iter_verify_locks(struct btree_iter *iter) {}
 #endif
 
 __flatten
-static bool bch2_btree_iter_relock(struct btree_iter *iter, unsigned long trace_ip)
+bool bch2_btree_iter_relock(struct btree_iter *iter, unsigned long trace_ip)
 {
 	return btree_iter_get_locks(iter, false, trace_ip);
 }
@@ -602,6 +603,8 @@ err:
 
 static void bch2_btree_iter_verify(struct btree_iter *iter)
 {
+	struct btree_trans *trans = iter->trans;
+	struct bch_fs *c = trans->c;
 	enum btree_iter_type type = btree_iter_type(iter);
 	unsigned i;
 
@@ -620,10 +623,16 @@ static void bch2_btree_iter_verify(struct btree_iter *iter)
 	       (iter->flags & BTREE_ITER_ALL_SNAPSHOTS) &&
 	       !btree_type_has_snapshots(iter->btree_id));
 
-	bch2_btree_iter_verify_locks(iter);
+	for (i = 0; i < BTREE_MAX_DEPTH; i++) {
+		if (!iter->l[i].b) {
+			BUG_ON(c->btree_roots[iter->btree_id].b->c.level > i);
+			break;
+		}
 
-	for (i = 0; i < BTREE_MAX_DEPTH; i++)
 		bch2_btree_iter_verify_level(iter, i);
+	}
+
+	bch2_btree_iter_verify_locks(iter);
 }
 
 static void bch2_btree_iter_verify_entry_exit(struct btree_iter *iter)
@@ -1345,29 +1354,29 @@ static inline unsigned btree_iter_up_until_good_node(struct btree_iter *iter,
 static int btree_iter_traverse_one(struct btree_iter *iter,
 				   unsigned long trace_ip)
 {
-	unsigned depth_want = iter->level;
+	unsigned l, depth_want = iter->level;
 	int ret = 0;
-
-	/*
-	 * if we need interior nodes locked, call btree_iter_relock() to make
-	 * sure we walk back up enough that we lock them:
-	 */
-	if (iter->uptodate == BTREE_ITER_NEED_RELOCK ||
-	    iter->locks_want > 1)
-		bch2_btree_iter_relock(iter, _THIS_IP_);
 
 	if (btree_iter_type(iter) == BTREE_ITER_CACHED) {
 		ret = bch2_btree_iter_traverse_cached(iter);
 		goto out;
 	}
 
-	if (iter->uptodate < BTREE_ITER_NEED_RELOCK)
-		goto out;
-
 	if (unlikely(iter->level >= BTREE_MAX_DEPTH))
 		goto out;
 
 	iter->level = btree_iter_up_until_good_node(iter, 0);
+
+	/* If we need intent locks, take them too: */
+	for (l = iter->level + 1;
+	     l < iter->locks_want && btree_iter_node(iter, l);
+	     l++)
+		if (!bch2_btree_node_relock(iter, l))
+			while (iter->level <= l) {
+				btree_node_unlock(iter, iter->level);
+				iter->l[iter->level].b = BTREE_ITER_NO_NODE_UP;
+				iter->level++;
+			}
 
 	/*
 	 * Note: iter->nodes[iter->level] may be temporarily NULL here - that
@@ -1389,6 +1398,7 @@ static int btree_iter_traverse_one(struct btree_iter *iter,
 				goto out;
 			}
 
+			__bch2_btree_iter_unlock(iter);
 			iter->level = depth_want;
 
 			if (ret == -EIO) {
