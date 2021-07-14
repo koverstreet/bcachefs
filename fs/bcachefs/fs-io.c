@@ -1844,8 +1844,6 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 			 * bio_iov_iter_get_pages was only able to get <
 			 * blocksize worth of pages:
 			 */
-			bio_for_each_segment_all(bv, bio, iter)
-				put_page(bv->bv_page);
 			ret = -EFAULT;
 			goto err;
 		}
@@ -1913,6 +1911,7 @@ loop:
 		if (likely(!bio_flagged(bio, BIO_NO_PAGE_REF)))
 			bio_for_each_segment_all(bv, bio, iter)
 				put_page(bv->bv_page);
+		bio->bi_vcnt = 0;
 
 		if (dio->op.error) {
 			set_bit(EI_INODE_ERROR, &inode->ei_flags);
@@ -1934,6 +1933,9 @@ err:
 	if (dio->free_iov)
 		kfree(dio->iter.iov);
 
+	if (likely(!bio_flagged(bio, BIO_NO_PAGE_REF)))
+		bio_for_each_segment_all(bv, bio, iter)
+			put_page(bv->bv_page);
 	bio_put(bio);
 
 	/* inode->i_dio_count is our ref on inode and thus bch_fs */
