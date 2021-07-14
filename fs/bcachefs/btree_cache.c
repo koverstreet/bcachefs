@@ -702,7 +702,9 @@ static noinline struct btree *bch2_btree_node_fill(struct bch_fs *c,
 	 * currently fails for iterators that aren't pointed at a valid btree
 	 * node
 	 */
-	if (iter && !bch2_trans_relock(iter->trans))
+	if (iter &&
+	    (!bch2_trans_relock(iter->trans) ||
+	     !bch2_btree_iter_relock(iter, _THIS_IP_)))
 		return ERR_PTR(-EINTR);
 
 	if (!six_relock_type(&b->c.lock, lock_type, seq))
@@ -862,7 +864,9 @@ lock_node:
 		 * currently fails for iterators that aren't pointed at a valid
 		 * btree node
 		 */
-		if (iter && !bch2_trans_relock(iter->trans))
+		if (iter &&
+		    (!bch2_trans_relock(iter->trans) ||
+		     !bch2_btree_iter_relock(iter, _THIS_IP_)))
 			return ERR_PTR(-EINTR);
 
 		if (!six_relock_type(&b->c.lock, lock_type, seq))
