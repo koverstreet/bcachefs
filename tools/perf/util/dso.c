@@ -1031,8 +1031,10 @@ struct map *dso__new_map(const char *name)
 	struct map *map = NULL;
 	struct dso *dso = dso__new(name);
 
-	if (dso)
+	if (dso) {
 		map = map__new2(0, dso, MAP__FUNCTION);
+		dso__put(dso);
+	}
 
 	return map;
 }
