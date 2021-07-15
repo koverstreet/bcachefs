@@ -113,6 +113,7 @@ static unsigned bch2_key_types_allowed[] = {
 		(1U << KEY_TYPE_hash_whiteout)|
 		(1U << KEY_TYPE_dirent),
 	[BKEY_TYPE_xattrs] =
+		(1U << KEY_TYPE_cookie)|
 		(1U << KEY_TYPE_hash_whiteout)|
 		(1U << KEY_TYPE_xattr),
 	[BKEY_TYPE_alloc] =
