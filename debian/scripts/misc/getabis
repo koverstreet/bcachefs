@@ -24,7 +24,18 @@ verfull=$ver-$revision
 
 WGET="wget --tries=1 --timeout=10 --quiet -c"
 
-abidir="`pwd`/$DEBIAN/abi/$verfull"
+# Check if we use a flat (unversioned) ABI directory
+if [ -f "${DEBIAN}/abi/version" ] || \
+   grep -qP '^abidir\s+.*/__abi.current/' debian/rules.d/0-common-vars.mk ; then
+	echo "Using flat ABI directory"
+	flat_abi=1
+	abidir=$(pwd)/${DEBIAN}/abi
+else
+	echo "Using versioned ABI directory"
+	flat_abi=0
+	abidir=$(pwd)/${DEBIAN}/abi/${verfull}
+fi
+
 tmpdir="`pwd`/abi-tmp-$verfull"
 origdir="`pwd`"
 fwinfo=$abidir/fwinfo
@@ -166,8 +177,12 @@ getall_set()
 # MAIN
 
 # Setup abi directory
+rm -rf "${abidir}"
 mkdir -p $abidir
 echo $abi > $abidir/abiname
+if [ ${flat_abi} -eq 1 ] ; then
+	echo "${verfull}" > "${abidir}"/version
+fi
 
 # NOTE: The flavours are hardcoded, because they may have changed from the
 # current build.
@@ -189,6 +204,8 @@ rmdir $tmpdir
 
 # If this is running in a git repo, add the new ABI directory, remove the old
 if [ -d ".git" ]; then
-    git add $abidir
-    find $DEBIAN/abi/* -maxdepth 0 -type d | grep -v $verfull | while read f; do git rm -r -f $f;done
+	git add "${abidir}"
+	if [ ${flat_abi} -eq 0 ] ; then
+		find "$DEBIAN"/abi/* -maxdepth 0 -type d | grep -v "$verfull" | while read f; do git rm -rf "$f"; done
+	fi
 fi
