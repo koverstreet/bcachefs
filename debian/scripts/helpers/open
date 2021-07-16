@@ -1,6 +1,36 @@
 #!/bin/bash -eu
 export LC_ALL=C.UTF-8
 
+out()
+{
+	local rc=${?}
+
+	trap - EXIT INT TERM HUP
+	[ "${rc}" -eq 0 ] || echo "Error: Script failed" >&2
+
+	exit "${rc}"
+}
+
+hl() {
+	echo -e "\e[1m$*\e[0m"
+}
+
+run() {
+	# Quote args for echo or eval
+	local quoted=()
+	for token; do
+		quoted+=("$(printf '%q' "$token")")
+	done
+	# Run
+	if [ "$dry_run" -eq 1 ]; then
+		hl "DRY RUN: ${quoted[*]}"
+	else
+		hl "${quoted[*]}"
+		"$@"
+		echo
+	fi
+}
+
 usage() {
 	cat << EOF
 Usage: ${P:-$(basename "$0")} [-h|--help] [-d|--dry-run] [-r|--reuse-abi]
@@ -56,23 +86,7 @@ while [ "$#" -gt 0 ]; do
 	shift
 done
 
-hl() { echo -e "\e[1m$*\e[0m"; }
-
-run() {
-	# Quote args for echo or eval
-	local quoted=()
-	for token; do
-		quoted+=("$(printf '%q' "$token")")
-	done
-	# Run
-	if [ "$dry_run" -eq 1 ]; then
- 		hl "DRY RUN: ${quoted[*]}"
-	else
-		hl "${quoted[*]}"
-		"$@"
-		echo
-	fi
-}
+trap out EXIT INT TERM HUP
 
 # Trick shellcheck so it doesn't complain every time it's necessary to
 # use `run $CHROOT`. Use `chroot_run` instead.
@@ -174,21 +188,28 @@ if [ -d "$DEBIAN/abi" ]; then
 	new=$(dpkg-parsechangelog -l"$DEBIAN/changelog" -SVersion)
 
 	if [ "$reuse_abi" -ne 0 ]; then
-		# Get the old ABI directory:
-		old=$(find "$DEBIAN/abi/" -mindepth 1 -maxdepth 1 -type d | \
-				  grep -P '/abi/[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+')
-		if [ -z "${old}" ] ; then
-			echo "Failed to find the previous ABI directory." \
-				 "Please check \"$DEBIAN/abi/\"!" >&2
-			exit 1
-		elif [ "$(echo "$old" | wc -l)" -gt 1 ]; then
-			echo "Failed to rename the current ABI directory." \
-			     "Multiple directories found. Please check \"$DEBIAN/abi/\"!" >&2
-			exit 1
+		if [ -f "$DEBIAN/abi/version" ]; then
+			# This is an unversioned ABI directory, so simply update the
+			# version file
+			echo "$new" > "$DEBIAN/abi/version"
+			git add "$DEBIAN/abi/version"
+		else
+			# Get the old ABI directory:
+			old=$(find "$DEBIAN/abi/" -mindepth 1 -maxdepth 1 -type d | \
+					  grep -P '/abi/[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+')
+			if [ -z "${old}" ] ; then
+				echo "Failed to find the previous ABI directory." \
+					 "Please check \"$DEBIAN/abi/\"!" >&2
+				exit 1
+			elif [ "$(echo "$old" | wc -l)" -gt 1 ]; then
+				echo "Failed to rename the current ABI directory." \
+					 "Multiple directories found. Please check \"$DEBIAN/abi/\"!" >&2
+				exit 1
+			fi
+			new="$DEBIAN/abi/$new"
+			# Rename the ABI directory
+			run git mv "$old" "$new"
 		fi
-		new="$DEBIAN/abi/$new"
-		# Rename the ABI directory
-		run git mv "$old" "$new"
 	else
 		# Call in-tree getabis:
 		# Use the single argument form since getabis is now
@@ -204,13 +225,6 @@ run git add "$DEBIAN/changelog"
 
 # Create the commit
 run git commit -s -F debian/commit-templates/newrelease
-
-# Perform a basic ABI check
-if [ "$dry_run" -eq 0 ]; then
-	version=$(dpkg-parsechangelog -l"$DEBIAN/changelog" -SVersion -c1 -o1)
-	abi_dir="$DEBIAN/abi/$version"
-	[ ! -d "$abi_dir" ] && hl "Warning: ABI directory is missing: $abi_dir"
-fi
 
 # Mimic maint-startnewrelease
 [ "$dry_run" -eq 0 ] && \
