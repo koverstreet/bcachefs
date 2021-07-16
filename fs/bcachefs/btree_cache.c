@@ -718,6 +718,7 @@ static noinline void btree_bad_header(struct bch_fs *c, struct btree *b)
 		return;
 
 	bch2_bkey_val_to_text(&PBUF(buf1), c, bkey_i_to_s_c(&b->key));
+	bch2_bpos_to_text(&PBUF(buf2), b->data->min_key);
 	bch2_bpos_to_text(&PBUF(buf3), b->data->max_key);
 
 	bch2_fs_inconsistent(c, "btree node header doesn't match ptr\n"
