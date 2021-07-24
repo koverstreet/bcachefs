@@ -221,6 +221,8 @@ struct posix_acl *bch2_get_acl(struct inode *vinode, int type, bool rcu)
 	struct btree_iter *iter;
 	struct bkey_s_c_xattr xattr;
 	struct posix_acl *acl = NULL;
+	struct bkey_s_c k;
+	int ret;
 
 	if (rcu)
 		return ERR_PTR(-ECHILD);
@@ -242,7 +244,14 @@ retry:
 		goto out;
 	}
 
-	xattr = bkey_s_c_to_xattr(bch2_btree_iter_peek_slot(iter));
+	k = bch2_btree_iter_peek_slot(iter);
+	ret = bkey_err(k);
+	if (ret) {
+		acl = ERR_PTR(ret);
+		goto out;
+	}
+
+	xattr = bkey_s_c_to_xattr(k);
 	acl = bch2_acl_from_disk(xattr_val(xattr.v),
 			le16_to_cpu(xattr.v->x_val_len));
 
@@ -359,6 +368,7 @@ int bch2_acl_chmod(struct btree_trans *trans,
 	struct bkey_s_c_xattr xattr;
 	struct bkey_i_xattr *new;
 	struct posix_acl *acl;
+	struct bkey_s_c k;
 	int ret;
 
 	iter = bch2_hash_lookup(trans, bch2_xattr_hash_desc,
@@ -369,7 +379,11 @@ int bch2_acl_chmod(struct btree_trans *trans,
 	if (ret)
 		return ret == -ENOENT ? 0 : ret;
 
-	xattr = bkey_s_c_to_xattr(bch2_btree_iter_peek_slot(iter));
+	k = bch2_btree_iter_peek_slot(iter);
+	xattr = bkey_s_c_to_xattr(k);
+	if (ret)
+		goto err;
+
 	acl = bch2_acl_from_disk(xattr_val(xattr.v),
 			le16_to_cpu(xattr.v->x_val_len));
 	ret = PTR_ERR_OR_ZERO(acl);
