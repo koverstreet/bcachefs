@@ -209,12 +209,39 @@ enum btree_iter_type {
  * @pos or the first key strictly greater than @pos
  */
 #define BTREE_ITER_IS_EXTENTS		(1 << 6)
+/*
+ * Indicates that this iterator should treat extents like normal keys. This is
+ * used to avoid a possible implicit addition of BTREE_ITER_IS_EXTENTS to the
+ * iterator flags.
+ */
 #define BTREE_ITER_NOT_EXTENTS		(1 << 7)
+/*
+ * The iterator has hit an error in traversal.
+ */
 #define BTREE_ITER_ERROR		(1 << 8)
+/*
+ * Indicates that this iterator will update @pos to the value of
+ * @pos_after_commit after the transaction is committed.
+ */
 #define BTREE_ITER_SET_POS_AFTER_COMMIT	(1 << 9)
+/*
+ * Indicates that this iterator will not fill an invalid cache entry when
+ * travsering.
+ */
 #define BTREE_ITER_CACHED_NOFILL	(1 << 10)
+/*
+ * The cache iterator's first level btree will be initialized to %NULL.
+ */
 #define BTREE_ITER_CACHED_NOCREATE	(1 << 11)
+/*
+ * Updates that exist in @trans will be viewable by bch2_btree_iter_peek() and
+ * may be returned instead of the committed key in the btree.
+ */
 #define BTREE_ITER_WITH_UPDATES		(1 << 12)
+/*
+ * Indicates that this iterator will include keys associated with different
+ * snapshots in a search.
+ */
 #define BTREE_ITER_ALL_SNAPSHOTS	(1 << 13)
 
 enum btree_iter_uptodate {
@@ -234,6 +261,10 @@ enum btree_iter_uptodate {
 #define BTREE_ITER_NO_NODE_CACHED	((struct btree *) 8)
 
 /*
+ * @trans		- transaction the iterator is associated with
+ * @idx			- index of this iterator in the associated transaction
+ * @child_idx		- index of child iterator in associated transaction
+ * @flags		- iterator type with accompanying iterator flags
  * @pos			- iterator's current position
  * @level		- current btree depth
  * @locks_want		- btree level below which we start taking intent locks
