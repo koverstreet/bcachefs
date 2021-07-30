@@ -575,6 +575,10 @@ static int bch2_journal_replay(struct bch_fs *c,
 
 	sort(keys.d, keys.nr, sizeof(keys.d[0]), journal_sort_seq_cmp, NULL);
 
+	for (i = keys.d; i < keys.d + keys.nr; i++)
+		if (i->k->k.type == KEY_TYPE_btree_ptr_v2)
+			bkey_i_to_btree_ptr_v2(i->k)->v.mem_ptr = 0;
+
 	if (keys.nr)
 		replay_now_at(j, keys.journal_seq_base);
 
