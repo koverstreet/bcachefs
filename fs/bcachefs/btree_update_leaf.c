@@ -940,6 +940,43 @@ err:
 	goto retry;
 }
 
+static int check_pos_snapshot_overwritten(struct btree_trans *trans,
+					  enum btree_id id,
+					  struct bpos pos)
+{
+	struct bch_fs *c = trans->c;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret;
+
+	if (!snapshot_t(c, pos.snapshot)->children[0])
+		return 0;
+
+	bch2_trans_iter_init(trans, &iter, id, pos,
+			     BTREE_ITER_NOT_EXTENTS|
+			     BTREE_ITER_ALL_SNAPSHOTS);
+	while (1) {
+		k = bch2_btree_iter_prev(&iter);
+		ret = bkey_err(k);
+		if (ret)
+			break;
+
+		if (!k.k)
+			break;
+
+		if (bkey_cmp(pos, k.k->p))
+			break;
+
+		if (bch2_snapshot_is_ancestor(c, k.k->p.snapshot, pos.snapshot)) {
+			ret = 1;
+			break;
+		}
+	}
+	bch2_trans_iter_exit(trans, &iter);
+
+	return ret;
+}
+
 static int bch2_trans_update_extent(struct btree_trans *trans,
 				    struct btree_iter *orig_iter,
 				    struct bkey_i *insert,
@@ -964,6 +1001,28 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 		goto out;
 
 	if (bch2_bkey_maybe_mergable(k.k, &insert->k)) {
+		/*
+		 * We can't merge extents if they belong to interior snapshot
+		 * tree nodes, and there's a snapshot in which one extent is
+		 * visible and the other is not - i.e. if visibility is
+		 * different.
+		 *
+		 * Instead of checking if visibilitiy of the two extents is
+		 * different, for now we just check if either has been
+		 * overwritten:
+		 */
+		ret = check_pos_snapshot_overwritten(trans, btree_id, insert->k.p);
+		if (ret < 0)
+			goto err;
+		if (ret)
+			goto nomerge1;
+
+		ret = check_pos_snapshot_overwritten(trans, btree_id, k.k->p);
+		if (ret < 0)
+			goto err;
+		if (ret)
+			goto nomerge1;
+
 		update = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
 		if ((ret = PTR_ERR_OR_ZERO(update)))
 			goto err;
@@ -979,7 +1038,8 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 			goto next;
 		}
 	}
-
+nomerge1:
+	ret = 0;
 	if (!bkey_cmp(k.k->p, start))
 		goto next;
 
@@ -1097,7 +1157,23 @@ next:
 			goto out;
 	}
 
-	bch2_bkey_merge(c, bkey_i_to_s(insert), k);
+	if (bch2_bkey_maybe_mergable(&insert->k, k.k)) {
+		ret = check_pos_snapshot_overwritten(trans, btree_id, insert->k.p);
+		if (ret < 0)
+			goto out;
+		if (ret)
+			goto nomerge2;
+
+		ret = check_pos_snapshot_overwritten(trans, btree_id, k.k->p);
+		if (ret < 0)
+			goto out;
+		if (ret)
+			goto nomerge2;
+
+		bch2_bkey_merge(c, bkey_i_to_s(insert), k);
+	}
+nomerge2:
+	ret = 0;
 out:
 	if (!bkey_deleted(&insert->k)) {
 		/*
