@@ -1708,8 +1708,7 @@ static inline bool btree_iter_set_pos_to_prev_leaf(struct btree_iter *iter)
 	return ret;
 }
 
-static inline struct bkey_i *btree_trans_peek_updates(struct btree_iter *iter,
-						      struct bpos pos)
+static inline struct bkey_i *btree_trans_peek_updates(struct btree_iter *iter)
 {
 	struct btree_insert_entry *i;
 
@@ -1718,7 +1717,7 @@ static inline struct bkey_i *btree_trans_peek_updates(struct btree_iter *iter,
 
 	trans_for_each_update(iter->trans, i)
 		if ((cmp_int(iter->btree_id,	i->iter->btree_id) ?:
-		     bkey_cmp(pos,		i->k->k.p)) <= 0) {
+		     bpos_cmp(iter->real_pos,	i->k->k.p)) <= 0) {
 			if (iter->btree_id ==	i->iter->btree_id)
 				return i->k;
 			break;
@@ -1742,7 +1741,6 @@ struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *iter)
 	bch2_btree_iter_verify(iter);
 	bch2_btree_iter_verify_entry_exit(iter);
 start:
-	next_update = btree_trans_peek_updates(iter, search_key);
 	btree_iter_set_search_pos(iter, search_key);
 
 	while (1) {
@@ -1752,6 +1750,7 @@ start:
 
 		k = btree_iter_level_peek(iter, &iter->l[0]);
 
+		next_update = btree_trans_peek_updates(iter);
 		if (next_update &&
 		    bpos_cmp(next_update->k.p, iter->real_pos) <= 0) {
 			iter->k = next_update->k;
@@ -1920,7 +1919,7 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 			BUG();
 		}
 
-		next_update = btree_trans_peek_updates(iter, search_key);
+		next_update = btree_trans_peek_updates(iter);
 		if (next_update &&
 		    (!k.k || bpos_cmp(next_update->k.p, k.k->p) <= 0)) {
 			iter->k = next_update->k;
