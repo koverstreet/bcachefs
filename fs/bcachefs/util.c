@@ -887,8 +887,17 @@ void eytzinger0_find_test(void)
  */
 u64 *bch2_acc_percpu_u64s(u64 __percpu *p, unsigned nr)
 {
+#ifndef CONFIG_PREEMPT
 	u64 *ret = this_cpu_ptr(p);
 	int cpu;
+#else
+	u64 ret;
+	int cpu;
+
+	preempt_disable();
+	ret = this_cpu_ptr(p);
+	preempt_enable();
+#endif
 
 	for_each_possible_cpu(cpu) {
 		u64 *i = per_cpu_ptr(p, cpu);
