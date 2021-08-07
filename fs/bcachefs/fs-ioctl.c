@@ -328,8 +328,10 @@ static long bch2_ioctl_subvolume_create(struct bch_fs *c, struct file *filp,
 	/* why do we need this lock? */
 	down_read(&c->vfs_sb->s_umount);
 
-	if (arg.flags & BCH_SUBVOL_SNAPSHOT_CREATE)
+	if (arg.flags & BCH_SUBVOL_SNAPSHOT_CREATE) {
 		sync_inodes_sb(c->vfs_sb);
+		/* XXX: need to zero out page reservations itoo */
+	}
 retry:
 	if (arg.src_ptr) {
 		error = user_path_at(arg.dirfd,
