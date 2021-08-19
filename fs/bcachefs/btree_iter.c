@@ -1328,8 +1328,13 @@ retry_all:
 		EBUG_ON(!(trans->iters_linked & (1ULL << iter->idx)));
 	}
 
+	/*
+	 * BTREE_ITER_NEED_RELOCK is ok here - if we called bch2_trans_unlock()
+	 * and relock(), relock() won't relock since iter->should_be_locked
+	 * isn't set yet, which is all fine
+	 */
 	trans_for_each_iter(trans, iter)
-		BUG_ON(iter->uptodate > BTREE_ITER_NEED_PEEK);
+		BUG_ON(iter->uptodate >= BTREE_ITER_NEED_TRAVERSE);
 out:
 	bch2_btree_cache_cannibalize_unlock(c);
 
