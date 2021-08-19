@@ -1717,9 +1717,13 @@ struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *iter)
 		if (unlikely(ret))
 			return bkey_s_c_err(ret);
 
-		k = btree_iter_level_peek(iter, &iter->l[0]);
-
+		/*
+		 * btree_iter_level_peek() mutates iter->real_pos, which
+		 * btree_trans_peek_updates() checks against, so we have to call
+		 * them in this order:
+		 */
 		next_update = btree_trans_peek_updates(iter);
+		k = btree_iter_level_peek(iter, &iter->l[0]);
 		if (next_update &&
 		    bpos_cmp(next_update->k.p, iter->real_pos) <= 0) {
 			iter->k = next_update->k;
@@ -1883,6 +1887,8 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 		struct bkey_i *next_update;
 		struct bkey_cached *ck;
 
+		next_update = btree_trans_peek_updates(iter);
+
 		switch (btree_iter_type(iter)) {
 		case BTREE_ITER_KEYS:
 			k = btree_iter_level_peek_all(iter, &iter->l[0]);
@@ -1900,7 +1906,6 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 			BUG();
 		}
 
-		next_update = btree_trans_peek_updates(iter);
 		if (next_update &&
 		    (!k.k || bpos_cmp(next_update->k.p, k.k->p) <= 0)) {
 			iter->k = next_update->k;
