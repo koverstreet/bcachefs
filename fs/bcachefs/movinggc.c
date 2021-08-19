@@ -88,6 +88,7 @@ static enum data_cmd copygc_pred(struct bch_fs *c, void *arg,
 		    p.ptr.dev == h->data[i].dev &&
 		    p.ptr.offset < h->data[i].offset + ca->mi.bucket_size &&
 		    p.ptr.gen == h->data[i].gen) {
+			h->data[i].sectors_found += k.k->size;
 			/*
 			 * We need to use the journal reserve here, because
 			 *  - journal reclaim depends on btree key cache
@@ -140,7 +141,7 @@ static int bch2_copygc(struct bch_fs *c)
 	struct bucket_array *buckets;
 	struct bch_move_stats move_stats;
 	u64 sectors_to_move = 0, sectors_not_moved = 0;
-	u64 sectors_reserved = 0;
+	u64 sectors_found = 0, sectors_reserved = 0;
 	u64 buckets_to_move, buckets_not_moved = 0;
 	struct bch_dev *ca;
 	unsigned dev_idx;
@@ -240,6 +241,9 @@ static int bch2_copygc(struct bch_fs *c)
 			     copygc_pred, NULL,
 			     &move_stats);
 
+	for (i = h->data; i < h->data + h->used; i++)
+		sectors_found += i->sectors_found;
+
 	for_each_rw_member(ca, c, dev_idx) {
 		down_read(&ca->bucket_lock);
 		buckets = bucket_array(ca);
@@ -262,10 +266,10 @@ static int bch2_copygc(struct bch_fs *c)
 		up_read(&ca->bucket_lock);
 	}
 
-	if (sectors_not_moved && !ret)
-		bch_warn_ratelimited(c,
-			"copygc finished but %llu/%llu sectors, %llu/%llu buckets not moved (move stats: moved %llu sectors, raced %llu keys, %llu sectors)",
-			 sectors_not_moved, sectors_to_move,
+	//if (sectors_not_moved && !ret)
+		bch_info(c,
+			"copygc finished but %llu/%llu/%llu sectors, %llu/%llu buckets not moved (move stats: moved %llu sectors, raced %llu keys, %llu sectors)",
+			 sectors_not_moved, sectors_found, sectors_to_move,
 			 buckets_not_moved, buckets_to_move,
 			 atomic64_read(&move_stats.sectors_moved),
 			 atomic64_read(&move_stats.keys_raced),

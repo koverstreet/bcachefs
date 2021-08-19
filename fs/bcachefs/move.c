@@ -129,6 +129,29 @@ next:
 	return ret;
 }
 
+static void dump_pos(struct btree_trans *trans, struct bpos start_pos, struct bpos end_pos)
+{
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret;
+
+	start_pos.snapshot = 0;
+
+	pr_info("keys at pos:");
+
+	for_each_btree_key(trans, iter, BTREE_ID_extents, start_pos,
+			   BTREE_ITER_ALL_SNAPSHOTS, k, ret) {
+		char buf[200];
+
+		if (bkey_cmp(k.k->p, end_pos) > 0)
+			break;
+
+		bch2_bkey_val_to_text(&PBUF(buf), trans->c, k);
+		pr_info("%s", buf);
+	}
+	bch2_trans_iter_exit(trans, &iter);
+}
+
 static int bch2_migrate_index_update(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
@@ -170,9 +193,20 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 
 		new = bkey_i_to_extent(bch2_keylist_front(keys));
 
-		if (bversion_cmp(k.k->version, new->k.version) ||
-		    !bch2_bkey_matches_ptr(c, k, m->ptr, m->offset))
+		if (k.k->p.snapshot != new->k.p.snapshot ||
+		    bversion_cmp(k.k->version, new->k.version) ||
+		    !bch2_bkey_matches_ptr(c, k, m->ptr, m->offset)) {
+			char buf1[200], buf2[200];
+
+			bch2_bkey_val_to_text(&PBUF(buf1), c, k);
+			bch2_bkey_val_to_text(&PBUF(buf2), c, bkey_i_to_s_c(&new->k_i));
+			pr_info("nomatch 1:\nk   %s\nold %u:%llu gen %u\nnew %s",
+				buf1,
+				m->ptr.dev, (u64) m->ptr.offset, m->ptr.gen,
+				buf2);
+			dump_pos(&trans, bkey_start_pos(&new->k), new->k.p);
 			goto nomatch;
+		}
 
 		bkey_reassemble(_insert.k, k);
 		insert = _insert.k;
@@ -189,8 +223,10 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 			struct bch_extent_ptr *new_ptr, *old_ptr = (void *)
 				bch2_bkey_has_device(bkey_i_to_s_c(insert),
 						     m->data_opts.rewrite_dev);
-			if (!old_ptr)
+			if (!old_ptr) {
+				pr_info("nomatch 2");
 				goto nomatch;
+			}
 
 			if (old_ptr->cached)
 				extent_for_each_ptr(extent_i_to_s(new), new_ptr)
@@ -213,8 +249,10 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 			did_work = true;
 		}
 
-		if (!did_work)
+		if (!did_work) {
+			pr_info("nomatch 3");
 			goto nomatch;
+		}
 
 		bch2_bkey_narrow_crcs(insert,
 				(struct bch_extent_crc_unpacked) { 0 });
