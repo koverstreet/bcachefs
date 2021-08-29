@@ -389,7 +389,8 @@ void bch2_btree_trans_verify_locks(struct btree_trans *trans)
 		bch2_btree_iter_verify_locks(trans, iter);
 }
 #else
-static inline void bch2_btree_iter_verify_locks(struct btree_trans *, struct btree_iter *iter) {}
+static inline void bch2_btree_iter_verify_locks(struct btree_trans *trans,
+						struct btree_iter *iter) {}
 #endif
 
 /*
