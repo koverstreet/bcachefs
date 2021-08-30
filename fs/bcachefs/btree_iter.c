@@ -18,8 +18,8 @@
 #include <trace/events/bcachefs.h>
 
 static void btree_iter_set_search_pos(struct btree_iter *, struct bpos);
-static void btree_trans_sort_iters(struct btree_trans *);
 static void btree_iter_check_sort(struct btree_trans *, struct btree_iter *);
+static inline void btree_trans_verify_sorted(struct btree_trans *);
 static struct btree_iter *btree_iter_child_alloc(struct btree_trans *,
 					struct btree_iter *, unsigned long);
 static struct btree_iter *btree_trans_iter_alloc(struct btree_trans *,
@@ -1299,7 +1299,7 @@ retry_all:
 	trans_for_each_iter(trans, iter)
 		iter->should_be_locked = false;
 
-	btree_trans_sort_iters(trans);
+	btree_trans_verify_sorted(trans);
 
 	for (i = trans->nr_sorted - 2; i >= 0; --i) {
 		struct btree_iter *iter1 = trans->iters + trans->sorted[i];
@@ -2073,50 +2073,6 @@ static inline void btree_iter_swap(struct btree_trans *trans,
 	btree_iter_verify_sorted_ref(trans, r);
 }
 
-static void btree_trans_sort_iters(struct btree_trans *trans)
-{
-	bool swapped = false;
-	int i, l = 0, r = trans->nr_sorted;
-
-	while (1) {
-		for (i = l; i + 1 < r; i++) {
-			if (btree_iter_cmp(trans->iters + trans->sorted[i],
-					   trans->iters + trans->sorted[i + 1]) > 0) {
-				swap(trans->sorted[i], trans->sorted[i + 1]);
-				trans->iters[trans->sorted[i]].sorted_idx = i;
-				trans->iters[trans->sorted[i + 1]].sorted_idx = i + 1;
-				swapped = true;
-			}
-		}
-
-		if (!swapped)
-			break;
-
-		r--;
-		swapped = false;
-
-		for (i = r - 2; i >= l; --i) {
-			if (btree_iter_cmp(trans->iters + trans->sorted[i],
-					   trans->iters + trans->sorted[i + 1]) > 0) {
-				swap(trans->sorted[i],
-				     trans->sorted[i + 1]);
-				trans->iters[trans->sorted[i]].sorted_idx = i;
-				trans->iters[trans->sorted[i + 1]].sorted_idx = i + 1;
-				swapped = true;
-			}
-		}
-
-		if (!swapped)
-			break;
-
-		l++;
-		swapped = false;
-	}
-
-	btree_trans_verify_sorted_refs(trans);
-	btree_trans_verify_sorted(trans);
-}
-
 static void btree_iter_check_sort(struct btree_trans *trans, struct btree_iter *iter)
 {
 	struct btree_iter *n;
@@ -2276,7 +2232,7 @@ void bch2_dump_trans_iters_updates(struct btree_trans *trans)
 	struct btree_insert_entry *i;
 	char buf1[300], buf2[100];
 
-	btree_trans_sort_iters(trans);
+	btree_trans_verify_sorted(trans);
 
 	trans_for_each_iter_inorder(trans, iter)
 		printk(KERN_ERR "iter: btree %s pos %s real_pos %s%s%s%s %pS\n",
