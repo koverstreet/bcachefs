@@ -2306,8 +2306,9 @@ struct btree_iter *__bch2_trans_get_iter(struct btree_trans *trans,
 					 unsigned depth,
 					 unsigned flags)
 {
-	struct btree_iter *iter, *best = NULL;
+	struct btree_iter *iter, *list_pos = NULL, *best = NULL;
 	struct bpos real_pos, pos_min = POS_MIN;
+	int cmp;
 
 	EBUG_ON(trans->restarted);
 
@@ -2331,27 +2332,27 @@ struct btree_iter *__bch2_trans_get_iter(struct btree_trans *trans,
 	    bkey_cmp(pos, POS_MAX))
 		real_pos = bpos_nosnap_successor(pos);
 
-	trans_for_each_iter(trans, iter) {
-		if (btree_iter_type(iter) != (flags & BTREE_ITER_TYPE))
+	trans_for_each_iter_inorder(trans, iter) {
+		list_pos = iter;
+
+		if (btree_iter_type(iter) != (flags & BTREE_ITER_TYPE) ||
+		    iter->btree_id	!= btree_id)
 			continue;
 
-		if (iter->btree_id != btree_id)
-			continue;
-
-		if (best) {
-			int cmp = bkey_cmp(bpos_diff(best->real_pos, real_pos),
-					   bpos_diff(iter->real_pos, real_pos));
-
-			if (cmp < 0 ||
-			    ((cmp == 0 && btree_iter_keep(trans, iter))))
-				continue;
-		}
-
-		best = iter;
+		/*
+		 * Since advancing iterators is cheaper than rewinding them, we
+		 * prefer a path <= the search pos
+		 */
+		cmp   = bpos_cmp(iter->real_pos, real_pos) ?:
+			cmp_int(iter->level, depth);
+		if (!best || cmp <= 0)
+			best = iter;
+		if (cmp >= 0)
+			break;
 	}
 
 	if (!best) {
-		iter = btree_trans_iter_alloc(trans, NULL);
+		iter = btree_trans_iter_alloc(trans, list_pos);
 		bch2_btree_iter_init(trans, iter, btree_id);
 	} else if (btree_iter_keep(trans, best)) {
 		iter = btree_trans_iter_alloc(trans, best);
