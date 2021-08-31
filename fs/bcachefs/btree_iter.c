@@ -715,8 +715,7 @@ void bch2_trans_verify_iters(struct btree_trans *trans, struct btree *b)
 
 static inline void bch2_btree_iter_verify_level(struct btree_trans *trans,
 					struct btree_iter *iter, unsigned l) {}
-static inline void bch2_btree_iter_verify(struct btree_trans *trans,
-					struct btree_iter *iter) {}
+static inline void bch2_btree_iter_verify(struct btree_iter *iter) {}
 static inline void bch2_btree_iter_verify_entry_exit(struct btree_iter *iter) {}
 
 #endif
