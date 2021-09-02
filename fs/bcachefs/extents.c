@@ -1067,8 +1067,11 @@ const char *bch2_bkey_ptrs_invalid(const struct bch_fs *c, struct bkey_s_c k)
 			if (bch2_csum_type_is_encryption(crc.csum_type)) {
 				if (nonce == UINT_MAX)
 					nonce = crc.offset + crc.nonce;
-				else if (nonce != crc.offset + crc.nonce)
+				else if (nonce != crc.offset + crc.nonce) {
+					bch_err(c, "crc.offset %u crc.nonce %u sum should be %u",
+						crc.offset, crc.nonce, nonce);
 					return "incorrect nonce";
+				}
 			}
 			break;
 		case BCH_EXTENT_ENTRY_stripe_ptr:
