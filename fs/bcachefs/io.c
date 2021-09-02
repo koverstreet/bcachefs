@@ -855,7 +855,7 @@ static enum prep_encoded_ret {
 		return PREP_ENCODED_OK;
 
 	BUG_ON(bio_sectors(bio) != op->crc.compressed_size);
-
+#if 0
 	/* Can we just write the entire extent as is? */
 	if (op->crc.uncompressed_size == op->crc.live_size &&
 	    op->crc.compressed_size <= wp->sectors_free &&
@@ -868,7 +868,7 @@ static enum prep_encoded_ret {
 
 		return PREP_ENCODED_DO_WRITE;
 	}
-
+#endif
 	/*
 	 * If the data is compressed and we couldn't write the entire extent as
 	 * is, we have to decompress it:

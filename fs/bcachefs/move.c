@@ -8,6 +8,7 @@
 #include "btree_update_interior.h"
 #include "buckets.h"
 #include "disk_groups.h"
+#include "error.h"
 #include "inode.h"
 #include "io.h"
 #include "journal_reclaim.h"
@@ -165,6 +166,28 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		}
 
 		next_pos = insert->k.p;
+
+		{
+			const char *invalid = bch2_bkey_invalid(c,
+					bkey_i_to_s_c(insert), BKEY_TYPE_extents);
+			if (invalid) {
+				char buf1[200], buf2[200];
+
+				bch2_bkey_val_to_text(&PBUF(buf1), c, k);
+				bch2_bkey_val_to_text(&PBUF(buf2), c, bkey_i_to_s_c(insert));
+				bch_err(c, "invalid bkey in migrate_write: %s\n"
+					"op.nonce %u op.crc.offset %u op.crc.nonce %u\n"
+					"old %s\n"
+					"new %s",
+					invalid,
+					op->nonce,
+					op->crc.offset,
+					op->crc.nonce,
+					buf1, buf2);
+				bch2_fatal_error(c);
+			}
+
+		}
 
 		ret   = bch2_trans_update(&trans, &iter, insert, 0) ?:
 			bch2_trans_commit(&trans, &op->res,
