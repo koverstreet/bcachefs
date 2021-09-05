@@ -1460,9 +1460,6 @@ static int btree_path_traverse_one(struct btree_trans *trans,
 	path->uptodate = BTREE_ITER_UPTODATE;
 out:
 	BUG_ON((ret == -EINTR) != !!trans->restarted);
-	trace_iter_traverse(trans->ip, trace_ip,
-			    path->cached,
-			    path->btree_id, &path->pos, ret);
 	bch2_btree_path_verify(trans, path);
 	return ret;
 }
@@ -1529,9 +1526,6 @@ btree_path_set_pos(struct btree_trans *trans,
 		   struct btree_path *path, struct bpos new_pos,
 		   bool intent)
 {
-#ifdef CONFIG_BCACHEFS_DEBUG
-	struct bpos old_pos = path->pos;
-#endif
 	int cmp = bpos_cmp(new_pos, path->pos);
 	unsigned l = path->level;
 
@@ -1575,10 +1569,6 @@ btree_path_set_pos(struct btree_trans *trans,
 	}
 out:
 	bch2_btree_path_verify(trans, path);
-#ifdef CONFIG_BCACHEFS_DEBUG
-	trace_path_set_pos(trans->ip, _RET_IP_, path->btree_id,
-			   &old_pos, &new_pos, l);
-#endif
 	return path;
 }
 
@@ -1707,7 +1697,6 @@ struct btree_path *bch2_path_get(struct btree_trans *trans, bool cached,
 				 bool intent)
 {
 	struct btree_path *path, *path_pos = NULL;
-	struct bpos pos_min = POS_MIN;
 	int i;
 
 	BUG_ON(trans->restarted);
@@ -1769,12 +1758,6 @@ struct btree_path *bch2_path_get(struct btree_trans *trans, bool cached,
 		path->locks_want = locks_want;
 		btree_path_get_locks(trans, path, true, _THIS_IP_);
 	}
-
-	trace_trans_get_path(_RET_IP_, trans->ip, btree_id,
-			     &pos, locks_want, path->uptodate,
-			     path_pos ? &path_pos->pos		: &pos_min,
-			     path_pos ? path_pos->locks_want	: U8_MAX,
-			     path_pos ? path_pos->uptodate	: U8_MAX);
 
 	return path;
 }
