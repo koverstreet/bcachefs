@@ -1367,6 +1367,9 @@ static inline unsigned btree_path_up_until_good_node(struct btree_trans *trans,
 {
 	unsigned l = path->level;
 
+	if (!path->nodes_locked)
+		btree_path_get_locks(trans, path, false, _THIS_IP_);
+
 	while (btree_path_node(path, l) &&
 	       !btree_path_good_node(trans, path, l, check_pos)) {
 		btree_node_unlock(path, l);
