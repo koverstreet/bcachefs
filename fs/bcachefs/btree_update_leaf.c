@@ -887,10 +887,7 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 		bkey_reassemble(update, k);
 
 		if (bch2_bkey_merge(c, bkey_i_to_s(update), bkey_i_to_s_c(insert))) {
-			bch2_trans_copy_iter(&update_iter, &iter);
-			ret = bch2_btree_delete_at(trans, &update_iter, flags);
-			bch2_trans_iter_exit(trans, &update_iter);
-
+			ret = bch2_btree_delete_at(trans, &iter, flags);
 			if (ret)
 				goto err;
 
@@ -935,10 +932,7 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 		}
 
 		if (bkey_cmp(k.k->p, insert->k.p) <= 0) {
-			bch2_trans_copy_iter(&update_iter, &iter);
-			ret = bch2_btree_delete_at(trans, &update_iter, flags);
-			bch2_trans_iter_exit(trans, &update_iter);
-
+			ret = bch2_btree_delete_at(trans, &iter, flags);
 			if (ret)
 				goto err;
 		}
@@ -951,9 +945,10 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 			bkey_reassemble(update, k);
 			bch2_cut_front(insert->k.p, update);
 
-			bch2_trans_copy_iter(&update_iter, &iter);
-			bch2_trans_update(trans, &update_iter, update, flags);
-			bch2_trans_iter_exit(trans, &update_iter);
+			ret = bch2_trans_update(trans, &iter, update, flags);
+			if (ret)
+				goto err;
+
 			goto out;
 		}
 next:
@@ -1056,8 +1051,7 @@ int __bch2_btree_insert(struct btree_trans *trans,
 	int ret;
 
 	bch2_trans_iter_init(trans, &iter, id, bkey_start_pos(&k->k),
-				   BTREE_ITER_INTENT);
-
+			     BTREE_ITER_INTENT);
 	ret   = bch2_btree_iter_traverse(&iter) ?:
 		bch2_trans_update(trans, &iter, k, 0);
 	bch2_trans_iter_exit(trans, &iter);
