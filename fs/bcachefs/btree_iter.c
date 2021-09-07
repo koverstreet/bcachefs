@@ -1488,17 +1488,23 @@ static void btree_path_copy(struct btree_trans *trans, struct btree_path *dst,
 	btree_path_check_sort(trans, dst, 0);
 }
 
+static struct btree_path *btree_path_clone(struct btree_trans *trans, struct btree_path *src,
+					   bool intent)
+{
+	struct btree_path *new = btree_path_alloc(trans, src);
+
+	btree_path_copy(trans, new, src);
+	__btree_path_get(new, intent);
+	return new;
+}
+
 inline struct btree_path * __must_check
 bch2_btree_path_make_mut(struct btree_trans *trans,
 			 struct btree_path *path, bool intent)
 {
 	if (path->ref > 1 || path->preserve) {
-		struct btree_path *new = btree_path_alloc(trans, path);
-
-		btree_path_copy(trans, new, path);
-		__btree_path_get(new, intent);
 		__btree_path_put(path, intent);
-		path = new;
+		path = btree_path_clone(trans, path, intent);
 		path->preserve = false;
 #ifdef CONFIG_BCACHEFS_DEBUG
 		path->ip_allocated = _RET_IP_;
@@ -2004,6 +2010,8 @@ struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *iter)
 
 	cmp = bpos_cmp(k.k->p, iter->path->pos);
 	if (cmp) {
+		iter->path = bch2_btree_path_make_mut(trans, iter->path,
+					iter->flags & BTREE_ITER_INTENT);
 		iter->path->pos = k.k->p;
 		btree_path_check_sort(trans, iter->path, cmp);
 	}
