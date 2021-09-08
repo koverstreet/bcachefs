@@ -393,7 +393,7 @@ struct btree_trans {
 	unsigned		mem_bytes;
 	void			*mem;
 
-	u8			*sorted;
+	u8			sorted[BTREE_ITER_MAX];
 	struct btree_path	*paths;
 	struct btree_insert_entry *updates;
 
