@@ -1292,7 +1292,10 @@ retry_all:
 	BUG_ON(ret && ret != -EINTR);
 
 	/* Now, redo traversals in correct order: */
-	trans_for_each_path_inorder(trans, path) {
+	i = 0;
+	while (i < trans->nr_sorted) {
+		path = trans->paths + trans->sorted[i];
+
 		EBUG_ON(!(trans->paths_allocated & (1ULL << path->idx)));
 #ifdef CONFIG_BCACHEFS_DEBUG
 		trans->traverse_all_idx = path->idx;
@@ -1303,6 +1306,9 @@ retry_all:
 			goto retry_all;
 
 		EBUG_ON(!(trans->paths_allocated & (1ULL << path->idx)));
+
+		if (path->nodes_locked)
+			i++;
 	}
 
 	/*
@@ -1636,11 +1642,12 @@ void bch2_dump_trans_paths_updates(struct btree_trans *trans)
 {
 	struct btree_path *path;
 	struct btree_insert_entry *i;
+	unsigned idx;
 	char buf[300];
 
 	btree_trans_sort_paths(trans);
 
-	trans_for_each_path_inorder(trans, path)
+	trans_for_each_path_inorder(trans, path, idx)
 		printk(KERN_ERR "path: idx %u ref %u:%u%s btree %s pos %s %pS\n",
 		       path->idx, path->ref, path->intent_ref,
 		       path->preserve ? " preserve" : "",
@@ -1697,7 +1704,7 @@ struct btree_path *bch2_path_get(struct btree_trans *trans, bool cached,
 
 	BUG_ON(trans->restarted);
 
-	trans_for_each_path_inorder(trans, path) {
+	trans_for_each_path_inorder(trans, path, i) {
 		if (__btree_path_cmp(path,
 				     btree_id,
 				     cached,
@@ -2271,8 +2278,9 @@ static void btree_trans_verify_sorted_refs(struct btree_trans *trans)
 static void btree_trans_verify_sorted(struct btree_trans *trans)
 {
 	struct btree_path *path, *prev = NULL;
+	unsigned i;
 
-	trans_for_each_path_inorder(trans, path) {
+	trans_for_each_path_inorder(trans, path, i) {
 		BUG_ON(prev && btree_path_cmp(prev, path) > 0);
 		prev = path;
 	}
