@@ -1756,7 +1756,7 @@ struct btree_path *bch2_path_get(struct btree_trans *trans, bool cached,
 	}
 
 	if (path->intent_ref)
-		locks_want = max(locks_want, level);
+		locks_want = max(locks_want, level + 1);
 
 	/*
 	 * If the path has locks_want greater than requested, we don't downgrade
