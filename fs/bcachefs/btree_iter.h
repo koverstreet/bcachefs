@@ -99,10 +99,10 @@ static inline struct btree_path *prev_btree_path(struct btree_trans *trans, stru
 		: NULL;
 }
 
-#define trans_for_each_path_inorder(_trans, _path)			\
-	for (_path = next_btree_path(trans, NULL);			\
-	     (_path);							\
-	     _path = next_btree_path((_trans), (_path)))
+#define trans_for_each_path_inorder(_trans, _path, _i)			\
+	for (_i = 0;							\
+	     ((_path) = (_trans)->paths + trans->sorted[_i]), (_i) < (_trans)->nr_sorted;\
+	     _i++)
 
 static inline bool __path_has_node(const struct btree_path *path,
 				   const struct btree *b)
