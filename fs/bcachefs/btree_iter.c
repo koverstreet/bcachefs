@@ -2510,7 +2510,6 @@ static void bch2_trans_alloc_paths(struct btree_trans *trans, struct bch_fs *c)
 {
 	size_t paths_bytes	= sizeof(struct btree_path) * BTREE_ITER_MAX;
 	size_t updates_bytes	= sizeof(struct btree_insert_entry) * BTREE_ITER_MAX;
-	size_t sorted_bytes	= sizeof(u8) * BTREE_ITER_MAX;
 	void *p = NULL;
 
 	BUG_ON(trans->used_mempool);
@@ -2523,7 +2522,6 @@ static void bch2_trans_alloc_paths(struct btree_trans *trans, struct bch_fs *c)
 
 	trans->paths		= p; p += paths_bytes;
 	trans->updates		= p; p += updates_bytes;
-	trans->sorted		= p; p += sorted_bytes;
 }
 
 void bch2_trans_init(struct btree_trans *trans, struct bch_fs *c,
@@ -2730,7 +2728,6 @@ int bch2_fs_btree_iter_init(struct bch_fs *c)
 
 	return  init_srcu_struct(&c->btree_trans_barrier) ?:
 		mempool_init_kmalloc_pool(&c->btree_paths_pool, 1,
-			sizeof(u8) * nr +
 			sizeof(struct btree_path) * nr +
 			sizeof(struct btree_insert_entry) * nr) ?:
 		mempool_init_kmalloc_pool(&c->btree_trans_mem_pool, 1,
