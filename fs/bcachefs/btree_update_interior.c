@@ -1612,7 +1612,7 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 		: bpos_successor(b->data->max_key);
 
 	sib_path = bch2_path_get(trans, false, path->btree_id,
-				 sib_pos, U8_MAX, level, true);
+				 sib_pos, U8_MAX, level, true, _THIS_IP_);
 	ret = bch2_btree_path_traverse(trans, sib_path, false);
 	if (ret)
 		goto err;
@@ -1900,7 +1900,8 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 		bch2_trans_copy_iter(&iter2, iter);
 
 		iter2.path = bch2_btree_path_make_mut(trans, iter2.path,
-				iter2.flags & BTREE_ITER_INTENT);
+				iter2.flags & BTREE_ITER_INTENT,
+				_THIS_IP_);
 
 		BUG_ON(iter2.path->level != b->c.level);
 		BUG_ON(bpos_cmp(iter2.path->pos, new_key->k.p));
