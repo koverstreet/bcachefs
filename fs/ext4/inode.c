@@ -2066,6 +2066,9 @@ static int __ext4_journalled_writepage(struct page *page,
 	}
 	if (ret == 0)
 		ret = err;
+	err = ext4_jbd2_inode_add_write(handle, inode, 0, len);
+	if (ret == 0)
+		ret = err;
 	EXT4_I(inode)->i_datasync_tid = handle->h_transaction->t_tid;
 	err = ext4_journal_stop(handle);
 	if (!ret)
@@ -6303,10 +6306,8 @@ retry_alloc:
 		size = i_size_read(inode);
 		/* Page got truncated from under us? */
 		if (page->mapping != mapping || page_offset(page) > size) {
-			unlock_page(page);
 			ret = VM_FAULT_NOPAGE;
-			ext4_journal_stop(handle);
-			goto out;
+			goto out_error;
 		}
 
 		if (page->index == size >> PAGE_SHIFT)
@@ -6316,14 +6317,17 @@ retry_alloc:
 
 		ret = __block_write_begin(page, 0, len, ext4_get_block);
 		if (!ret) {
+			ret = VM_FAULT_SIGBUS;
 			if (ext4_walk_page_buffers(handle, page_buffers(page),
-					0, len, NULL, do_journal_get_write_access)) {
-				unlock_page(page);
-				ret = VM_FAULT_SIGBUS;
-				ext4_journal_stop(handle);
-				goto out;
-			}
+					0, len, NULL, do_journal_get_write_access))
+				goto out_error;
+			if (ext4_walk_page_buffers(handle, page_buffers(page),
+					0, len, NULL, write_end_fn))
+				goto out_error;
+			if (ext4_jbd2_inode_add_write(handle, inode, 0, len))
+				goto out_error;
 			ext4_set_inode_state(inode, EXT4_STATE_JDATA);
+			ret = 0; // ensure return is VM_FAULT_LOCKED.
 		} else {
 			unlock_page(page);
 		}
@@ -6337,6 +6341,10 @@ out:
 	up_read(&EXT4_I(inode)->i_mmap_sem);
 	sb_end_pagefault(inode->i_sb);
 	return ret;
+out_error:
+	unlock_page(page);
+	ext4_journal_stop(handle);
+	goto out;
 }
 
 int ext4_filemap_fault(struct vm_fault *vmf)
