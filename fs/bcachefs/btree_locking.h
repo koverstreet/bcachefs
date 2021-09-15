@@ -235,18 +235,20 @@ bch2_btree_node_unlock_write_inlined(struct btree_trans *trans, struct btree_pat
 void bch2_btree_node_unlock_write(struct btree_trans *,
 			struct btree_path *, struct btree *);
 
-void __bch2_btree_node_lock_write(struct btree_trans *, struct btree *);
+int __bch2_btree_node_lock_write(struct btree_trans *,
+			struct btree_path *, struct btree *);
 
-static inline void bch2_btree_node_lock_write(struct btree_trans *trans,
-					      struct btree_path *path,
-					      struct btree *b)
+static inline int bch2_btree_node_lock_write(struct btree_trans *trans,
+					     struct btree_path *path,
+					     struct btree *b)
 {
 	EBUG_ON(path->l[b->c.level].b != b);
 	EBUG_ON(path->l[b->c.level].lock_seq != b->c.lock.state.seq);
 	EBUG_ON(!btree_node_intent_locked(path, b->c.level));
 
-	if (unlikely(!six_trylock_write(&b->c.lock)))
-		__bch2_btree_node_lock_write(trans, b);
+	return likely(six_trylock_write(&b->c.lock))
+		? 0
+		: __bch2_btree_node_lock_write(trans, path, b);
 }
 
 #endif /* _BCACHEFS_BTREE_LOCKING_H */

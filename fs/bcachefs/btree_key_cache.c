@@ -217,11 +217,17 @@ static int btree_key_cache_fill(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
+	/*
+	 * ck_path->should_be_locked is not set yet, so bch2_trans_relock()
+	 * won't have relocked it:
+	 */
 	if (!bch2_btree_node_relock(trans, ck_path, 0)) {
 		trace_transaction_restart_ip(trans->ip, _THIS_IP_);
 		ret = btree_trans_restart(trans);
 		goto err;
 	}
+
+	BUG_ON(ck->valid);
 
 	/*
 	 * bch2_varint_decode can read past the end of the buffer by at
@@ -238,11 +244,10 @@ static int btree_key_cache_fill(struct btree_trans *trans,
 		}
 	}
 
-	/*
-	 * XXX: not allowed to be holding read locks when we take a write lock,
-	 * currently
-	 */
-	bch2_btree_node_lock_write(trans, ck_path, ck_path->l[0].b);
+	ret = bch2_btree_node_lock_write(trans, ck_path, ck_path->l[0].b);
+	if (ret)
+		goto err;
+
 	if (new_k) {
 		kfree(ck->k);
 		ck->u64s = new_u64s;

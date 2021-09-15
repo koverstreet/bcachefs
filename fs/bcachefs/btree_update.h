@@ -8,8 +8,11 @@
 struct bch_fs;
 struct btree;
 
-void bch2_btree_node_lock_for_insert(struct btree_trans *, struct btree_path *,
-				     struct btree *);
+inline void bch2_normalize_read_intent_locks(struct btree_trans *);
+int bch2_upgrade_all_read_locks(struct btree_trans *);
+
+inline void bch2_btree_node_prep_for_write(struct btree_trans *,
+				struct btree_path *, struct btree *);
 bool bch2_btree_bset_insert_key(struct btree_trans *, struct btree_path *,
 				struct btree *, struct btree_node_iter *,
 				struct bkey_i *);

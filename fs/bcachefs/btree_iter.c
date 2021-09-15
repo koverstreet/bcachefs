@@ -115,27 +115,38 @@ void bch2_btree_node_unlock_write(struct btree_trans *trans,
 	bch2_btree_node_unlock_write_inlined(trans, path, b);
 }
 
-void __bch2_btree_node_lock_write(struct btree_trans *trans, struct btree *b)
+static inline bool have_conflicting_read_lock(struct btree_trans *trans,
+					      struct btree_path *pos)
 {
-	struct btree_path *linked;
-	unsigned readers = 0;
-
-	trans_for_each_path(trans, linked)
-		if (linked->l[b->c.level].b == b &&
-		    btree_node_read_locked(linked, b->c.level))
-			readers++;
+	struct btree_path *path;
+	unsigned i;
 
 	/*
-	 * Must drop our read locks before calling six_lock_write() -
-	 * six_unlock() won't do wakeups until the reader count
-	 * goes to 0, and it's safe because we have the node intent
-	 * locked:
+	 * We may be able to allow some read locks while taking write locks with
+	 * lock ordering: I haven't convinced myself this would be correct,
+	 * though:
 	 */
-	atomic64_sub(__SIX_VAL(read_lock, readers),
-		     &b->c.lock.state.counter);
-	btree_node_lock_type(trans->c, b, SIX_LOCK_write);
-	atomic64_add(__SIX_VAL(read_lock, readers),
-		     &b->c.lock.state.counter);
+	trans_for_each_path_inorder(trans, path, i) {
+		//if (path == pos)
+		//	break;
+
+		if (path->nodes_locked != path->nodes_intent_locked)
+			return true;
+	}
+
+	return false;
+}
+
+int __bch2_btree_node_lock_write(struct btree_trans *trans,
+				 struct btree_path *pos, struct btree *b)
+{
+	if (have_conflicting_read_lock(trans, pos)) {
+		trace_trans_restart_would_deadlock_write(trans->ip);
+		return btree_trans_restart(trans);
+	}
+
+	__btree_node_lock_type(trans->c, b, SIX_LOCK_write);
+	return 0;
 }
 
 bool __bch2_btree_node_relock(struct btree_trans *trans,

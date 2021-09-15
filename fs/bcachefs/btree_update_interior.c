@@ -29,6 +29,14 @@ static void bch2_btree_update_add_new_node(struct btree_update *, struct btree *
 
 /* Debug code: */
 
+static void verify_no_read_locks(struct btree_trans *trans)
+{
+	struct btree_path *path;
+
+	trans_for_each_path(trans, path)
+		BUG_ON(path->nodes_locked != path->nodes_intent_locked);
+}
+
 /*
  * Verify that child nodes correctly span parent node's range:
  */
@@ -931,6 +939,11 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 		journal_flags |= JOURNAL_RES_GET_RESERVED;
 
 	closure_init_stack(&cl);
+
+	/* So we don't get transaction restarts when taking write locks: */
+	ret = bch2_upgrade_all_read_locks(trans);
+	if (ret)
+		return ERR_PTR(ret);
 retry:
 
 	/*
@@ -1086,6 +1099,9 @@ static void bch2_btree_set_root(struct btree_update *as,
 {
 	struct bch_fs *c = as->c;
 	struct btree *old;
+	int ret;
+
+	verify_no_read_locks(trans);
 
 	trace_btree_set_root(c, b);
 	BUG_ON(!b->written &&
@@ -1097,7 +1113,8 @@ static void bch2_btree_set_root(struct btree_update *as,
 	 * Ensure no one is using the old root while we switch to the
 	 * new root:
 	 */
-	bch2_btree_node_lock_write(trans, path, old);
+	ret = bch2_btree_node_lock_write(trans, path, old);
+	BUG_ON(ret);
 
 	bch2_btree_set_root_inmem(c, b);
 
@@ -1495,14 +1512,19 @@ static void bch2_btree_insert_node(struct btree_update *as, struct btree_trans *
 	int old_u64s = le16_to_cpu(btree_bset_last(b)->u64s);
 	int old_live_u64s = b->nr.live_u64s;
 	int live_u64s_added, u64s_added;
+	int ret;
 
 	lockdep_assert_held(&c->gc_lock);
 	BUG_ON(!btree_node_intent_locked(path, btree_node_root(c, b)->c.level));
 	BUG_ON(!b->c.level);
 	BUG_ON(!as || as->b);
 	bch2_verify_keylist_sorted(keys);
+	verify_no_read_locks(trans);
 
-	bch2_btree_node_lock_for_insert(trans, path, b);
+	ret = bch2_btree_node_lock_write(trans, path, b);
+	BUG_ON(ret);
+
+	bch2_btree_node_prep_for_write(trans, path, b);
 
 	if (!bch2_btree_node_insert_fits(c, b, bch2_keylist_u64s(keys))) {
 		bch2_btree_node_unlock_write(trans, path, b);
@@ -1902,7 +1924,8 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 					  new_key, new_key->k.u64s);
 	}
 
-	ret = bch2_trans_commit(trans, NULL, NULL,
+	ret   = bch2_upgrade_all_read_locks(trans);
+		bch2_trans_commit(trans, NULL, NULL,
 				BTREE_INSERT_NOFAIL|
 				BTREE_INSERT_NOCHECK_RW|
 				BTREE_INSERT_JOURNAL_RECLAIM|
@@ -1910,7 +1933,10 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
-	bch2_btree_node_lock_write(trans, iter->path, b);
+	verify_no_read_locks(trans);
+
+	ret = bch2_btree_node_lock_write(trans, iter->path, b);
+	BUG_ON(ret);
 
 	if (new_hash) {
 		mutex_lock(&c->btree_cache.lock);
