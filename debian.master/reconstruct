@@ -106,5 +106,6 @@ chmod +x 'tools/testing/selftests/netfilter/conntrack_icmp_related.sh'
 chmod +x 'tools/testing/selftests/netfilter/nft_nat.sh'
 chmod +x 'tools/testing/selftests/netfilter/nft_trans_stress.sh'
 chmod +x 'ubuntu/vbox-update'
+chmod +x 'update-dkms-versions'
 chmod +x 'update-version-dkms'
 exit 0
