@@ -2,9 +2,9 @@ spl-linux 0.7.5-1ubuntu2.2
 zfs-linux 0.7.5-1ubuntu16.12
 nvidia-graphics-drivers-390 390.144-0ubuntu0.18.04.1
 nvidia-graphics-drivers-460 460.91.03-0ubuntu0.18.04.1 transition=nvidia-graphics-drivers-455 transition=nvidia-graphics-drivers-435 transition=nvidia-graphics-drivers-440 transition=nvidia-graphics-drivers-450
-nvidia-graphics-drivers-470 470.63.01-0ubuntu0.18.04.1 transition=nvidia-graphics-drivers-465
+nvidia-graphics-drivers-470 470.63.01-0ubuntu0.18.04.2 transition=nvidia-graphics-drivers-465
 nvidia-graphics-drivers-418-server 418.211.00-0ubuntu0.18.04.1
 nvidia-graphics-drivers-450-server 450.142.00-0ubuntu0.18.04.1 transition=nvidia-graphics-drivers-440-server
 nvidia-graphics-drivers-460-server 460.91.03-0ubuntu0.18.04.1
-nvidia-graphics-drivers-470-server 470.57.02-0ubuntu0.18.04.3
-wireguard-linux-compat 1.0.20201112-1~18.04.3
+nvidia-graphics-drivers-470-server 470.57.02-0ubuntu0.18.04.4
+wireguard-linux-compat 1.0.20201112-1~18.04.1
