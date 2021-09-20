@@ -795,6 +795,7 @@ static int stm32f7_i2c_xfer(struct i2c_adapter *i2c_adap,
 	if (!time_left) {
 		dev_dbg(i2c_dev->dev, "Access to slave 0x%x timed out\n",
 			i2c_dev->msg->addr);
+		stm32f7_i2c_wait_free_bus(i2c_dev);
 		ret = -ETIMEDOUT;
 	}
 
