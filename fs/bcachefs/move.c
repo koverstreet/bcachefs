@@ -263,7 +263,7 @@ int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
 	 */
 	bkey_for_each_crc(k.k, ptrs, crc, entry)
 		if (bch2_csum_type_is_encryption(crc.csum_type)) {
-			m->op.nonce	= crc.nonce + m->op.crc.offset;
+			m->op.nonce	= crc.nonce + crc.offset;
 			m->op.csum_type = crc.csum_type;
 			break;
 		}
