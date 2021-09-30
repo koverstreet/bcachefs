@@ -2053,6 +2053,13 @@ static int sanity_check_raw_super(struct f2fs_sb_info *sbi,
 		return -EFSCORRUPTED;
 	}
 
+	if (segment_count_main != total_sections * segs_per_sec) {
+		f2fs_msg(sb, KERN_INFO,
+			"Invalid segment/section count (%u != %u * %u)",
+			segment_count_main, total_sections, segs_per_sec);
+		return -EFSCORRUPTED;
+	}
+
 	if ((segment_count / segs_per_sec) < total_sections) {
 		f2fs_msg(sb, KERN_INFO,
 			"Small segment_count (%u < %u * %u)",
