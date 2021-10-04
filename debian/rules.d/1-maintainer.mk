@@ -125,6 +125,9 @@ autoreconstruct:
 	$(DROOT)/scripts/misc/gen-auto-reconstruct $(upstream_tag) $(DEBIAN)/reconstruct $(DROOT)/source/options
 
 finalchecks:
+ifeq ($(do_fips_checks),true)
+	$(DROOT)/scripts/misc/fips-checks
+endif
 	$(DROOT)/scripts/misc/final-checks "$(DEBIAN)" "$(prev_fullver)"
 
 diffupstream:

@@ -198,6 +198,9 @@ do_flavour_header_package=true
 # DTBs
 do_dtbs=false
 
+# FIPS check
+do_fips_checks=false
+
 # Support parallel=<n> in DEB_BUILD_OPTIONS (see #209008)
 #
 # These 2 environment variables set the -j value of the kernel build. For example,
