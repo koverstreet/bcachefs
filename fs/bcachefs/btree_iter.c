@@ -173,10 +173,19 @@ static bool bch2_btree_node_upgrade(struct btree_trans *trans,
 {
 	struct btree *b = path->l[level].b;
 
-	EBUG_ON(btree_lock_want(path, level) != BTREE_NODE_INTENT_LOCKED);
-
 	if (!is_btree_node(path, level))
 		return false;
+
+	switch (btree_lock_want(path, level)) {
+	case BTREE_NODE_UNLOCKED:
+		BUG_ON(btree_node_locked(path, level));
+		return true;
+	case BTREE_NODE_READ_LOCKED:
+		BUG_ON(btree_node_intent_locked(path, level));
+		return bch2_btree_node_relock(trans, path, level);
+	case BTREE_NODE_INTENT_LOCKED:
+		break;
+	}
 
 	if (btree_node_intent_locked(path, level))
 		return true;
@@ -372,7 +381,8 @@ static void bch2_btree_path_verify_locks(struct btree_path *path)
 	unsigned l;
 
 	if (!path->nodes_locked) {
-		BUG_ON(path->uptodate == BTREE_ITER_UPTODATE);
+		BUG_ON(path->uptodate == BTREE_ITER_UPTODATE &&
+		       btree_path_node(path, path->level));
 		return;
 	}
 
@@ -1359,7 +1369,8 @@ retry_all:
 
 		EBUG_ON(!(trans->paths_allocated & (1ULL << path->idx)));
 
-		if (path->nodes_locked)
+		if (path->nodes_locked ||
+		    !btree_path_node(path, path->level))
 			i++;
 	}
 
