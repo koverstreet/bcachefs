@@ -530,6 +530,7 @@ static void ucma_cleanup_mc_events(struct ucma_multicast *mc)
 {
 	struct ucma_event *uevent, *tmp;
 
+	rdma_lock_handler(mc->ctx->cm_id);
 	list_for_each_entry_safe(uevent, tmp, &mc->ctx->file->event_list, list) {
 		if (uevent->mc != mc)
 			continue;
@@ -537,6 +538,7 @@ static void ucma_cleanup_mc_events(struct ucma_multicast *mc)
 		list_del(&uevent->list);
 		kfree(uevent);
 	}
+	rdma_unlock_handler(mc->ctx->cm_id);
 }
 
 /*
@@ -1536,7 +1538,7 @@ static ssize_t ucma_leave_multicast(struct ucma_file *file,
 	mc = idr_find(&multicast_idr, cmd.id);
 	if (!mc)
 		mc = ERR_PTR(-ENOENT);
-	else if (mc->ctx->file != file)
+	else if (READ_ONCE(mc->ctx->file) != file)
 		mc = ERR_PTR(-EINVAL);
 	else if (!atomic_inc_not_zero(&mc->ctx->ref))
 		mc = ERR_PTR(-ENXIO);
@@ -1631,6 +1633,7 @@ static ssize_t ucma_migrate_id(struct ucma_file *new_file,
 		goto file_put;
 	}
 
+	rdma_lock_handler(ctx->cm_id);
 	cur_file = ctx->file;
 	if (cur_file == new_file) {
 		mutex_lock(&cur_file->mut);
@@ -1659,6 +1662,7 @@ response:
 			 &resp, sizeof(resp)))
 		ret = -EFAULT;
 
+	rdma_unlock_handler(ctx->cm_id);
 	ucma_put_ctx(ctx);
 file_put:
 	fdput(f);
