@@ -1119,16 +1119,20 @@ static ssize_t ucma_accept(struct ucma_file *file, const char __user *inbuf,
 
 	if (cmd.conn_param.valid) {
 		ucma_copy_conn_param(ctx->cm_id, &conn_param, &cmd.conn_param);
-		mutex_lock(&file->mut);
 		mutex_lock(&ctx->mutex);
+		rdma_lock_handler(ctx->cm_id);
 		ret = rdma_accept(ctx->cm_id, &conn_param);
-		mutex_unlock(&ctx->mutex);
-		if (!ret)
+		if (!ret) {
+			/* The uid must be set atomically with the handler */
 			ctx->uid = cmd.uid;
-		mutex_unlock(&file->mut);
+		}
+		rdma_unlock_handler(ctx->cm_id);
+		mutex_unlock(&ctx->mutex);
 	} else {
 		mutex_lock(&ctx->mutex);
+		rdma_lock_handler(ctx->cm_id);
 		ret = rdma_accept(ctx->cm_id, NULL);
+		rdma_unlock_handler(ctx->cm_id);
 		mutex_unlock(&ctx->mutex);
 	}
 	ucma_put_ctx(ctx);

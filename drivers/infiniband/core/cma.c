@@ -3800,14 +3800,15 @@ static int cma_send_sidr_rep(struct rdma_id_private *id_priv,
 
 int rdma_accept(struct rdma_cm_id *id, struct rdma_conn_param *conn_param)
 {
-	struct rdma_id_private *id_priv;
+	struct rdma_id_private *id_priv =
+		container_of(id, struct rdma_id_private, id);
 	int ret;
 
-	id_priv = container_of(id, struct rdma_id_private, id);
+	lockdep_assert_held(&id_priv->handler_mutex);
 
 	id_priv->owner = task_pid_nr(current);
 
-	if (!cma_comp(id_priv, RDMA_CM_CONNECT))
+	if (READ_ONCE(id_priv->state) != RDMA_CM_CONNECT)
 		return -EINVAL;
 
 	if (!id->qp && conn_param) {
@@ -3846,6 +3847,24 @@ reject:
 	return ret;
 }
 EXPORT_SYMBOL(rdma_accept);
+
+void rdma_lock_handler(struct rdma_cm_id *id)
+{
+	struct rdma_id_private *id_priv =
+		container_of(id, struct rdma_id_private, id);
+
+	mutex_lock(&id_priv->handler_mutex);
+}
+EXPORT_SYMBOL(rdma_lock_handler);
+
+void rdma_unlock_handler(struct rdma_cm_id *id)
+{
+	struct rdma_id_private *id_priv =
+		container_of(id, struct rdma_id_private, id);
+
+	mutex_unlock(&id_priv->handler_mutex);
+}
+EXPORT_SYMBOL(rdma_unlock_handler);
 
 int rdma_notify(struct rdma_cm_id *id, enum ib_event_type event)
 {
