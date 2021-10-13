@@ -527,7 +527,11 @@ int bch2_bio_alloc_pages(struct bio *bio, size_t size, gfp_t gfp_mask)
 		if (!page)
 			return -ENOMEM;
 
-		BUG_ON(!bio_add_page(bio, page, len, 0));
+		if (unlikely(!bio_add_page(bio, page, len, 0))) {
+			__free_page(page);
+			break;
+		}
+
 		size -= len;
 	}
 
