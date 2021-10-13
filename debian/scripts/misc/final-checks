@@ -44,6 +44,18 @@ abi_check()
 	fi
 }
 
+if [ -d debian/certs ]; then
+    if ! grep -q '^CONFIG_SYSTEM_TRUSTED_KEYS="debian/canonical-certs.pem"$' $debian/config/config.common.ubuntu; then
+        failure "'CONFIG_SYSTEM_TRUSTED_KEYS="debian/canonical-certs.pem"' is required"
+    fi
+fi
+
+if [ -d debian/revoked-certs ]; then
+    if ! grep -q '^CONFIG_SYSTEM_REVOCATION_KEYS="debian/canonical-revoked-certs.pem"$' $debian/config/config.common.ubuntu; then
+        failure "'CONFIG_SYSTEM_REVOCATION_KEYS="debian/canonical-revoked-certs.pem"' is required"
+    fi
+fi
+
 for arch in $archs
 do
 	if [ ! -f "$debian/rules.d/$arch.mk" ]; then
