@@ -32,6 +32,9 @@ const char *bch2_reflink_p_invalid(const struct bch_fs *c, struct bkey_s_c k)
 	if (bkey_val_bytes(p.k) != sizeof(*p.v))
 		return "incorrect value size";
 
+	if (le64_to_cpu(p.v->idx) < le32_to_cpu(p.v->front_pad))
+		return "idx < front_pad";
+
 	return NULL;
 }
 
