@@ -1349,10 +1349,8 @@ retry_all:
 		} while (ret);
 	}
 
-	if (unlikely(ret == -EIO)) {
-		trans->error = true;
+	if (unlikely(ret == -EIO))
 		goto out;
-	}
 
 	BUG_ON(ret && ret != -EINTR);
 
@@ -2741,7 +2739,7 @@ leaked:
 #endif
 }
 
-int bch2_trans_exit(struct btree_trans *trans)
+void bch2_trans_exit(struct btree_trans *trans)
 	__releases(&c->btree_trans_barrier)
 {
 	struct btree_insert_entry *i;
@@ -2791,8 +2789,6 @@ int bch2_trans_exit(struct btree_trans *trans)
 
 	trans->mem	= (void *) 0x1;
 	trans->paths	= (void *) 0x1;
-
-	return trans->error ? -EIO : 0;
 }
 
 static void __maybe_unused
