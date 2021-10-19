@@ -1899,7 +1899,7 @@ struct btree *bch2_btree_iter_peek_node(struct btree_iter *iter)
 
 	ret = bch2_btree_path_traverse(trans, iter->path, iter->flags);
 	if (ret)
-		goto out;
+		goto err;
 
 	b = btree_path_node(iter->path, iter->path->level);
 	if (!b)
@@ -1919,6 +1919,9 @@ out:
 	bch2_btree_iter_verify(iter);
 
 	return b;
+err:
+	b = ERR_PTR(ret);
+	goto out;
 }
 
 struct btree *bch2_btree_iter_next_node(struct btree_iter *iter)
@@ -1935,7 +1938,9 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *iter)
 	if (!btree_path_node(path, path->level))
 		goto out;
 
-	bch2_trans_cond_resched(trans);
+	ret = bch2_trans_cond_resched(trans);
+	if (ret)
+		goto err;
 
 	btree_node_unlock(path, path->level);
 	path->l[path->level].b = BTREE_ITER_NO_NODE_UP;
@@ -1944,7 +1949,7 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *iter)
 	btree_path_set_dirty(path, BTREE_ITER_NEED_TRAVERSE);
 	ret = bch2_btree_path_traverse(trans, path, iter->flags);
 	if (ret)
-		goto out;
+		goto err;
 
 	/* got to end? */
 	b = btree_path_node(path, path->level);
@@ -1968,10 +1973,8 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *iter)
 		bch2_btree_iter_verify(iter);
 
 		ret = bch2_btree_path_traverse(trans, path, iter->flags);
-		if (ret) {
-			b = NULL;
-			goto out;
-		}
+		if (ret)
+			goto err;
 
 		b = path->l[path->level].b;
 	}
@@ -1988,6 +1991,9 @@ out:
 	bch2_btree_iter_verify(iter);
 
 	return b;
+err:
+	b = ERR_PTR(ret);
+	goto out;
 }
 
 /* Iterate across keys (in leaf nodes only) */
