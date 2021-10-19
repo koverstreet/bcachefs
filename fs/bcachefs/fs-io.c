@@ -2206,7 +2206,8 @@ err:
 	if (ret == -EINTR)
 		goto retry;
 
-	return bch2_trans_exit(&trans) ?: ret;
+	bch2_trans_exit(&trans);
+	return ret;
 }
 
 static int __bch2_truncate_page(struct bch_inode_info *inode,
@@ -3108,7 +3109,7 @@ err:
 	if (ret == -EINTR)
 		goto retry;
 
-	ret = bch2_trans_exit(&trans) ?: ret;
+	bch2_trans_exit(&trans);
 	if (ret)
 		return ret;
 
@@ -3223,7 +3224,7 @@ err:
 	if (ret == -EINTR)
 		goto retry;
 
-	ret = bch2_trans_exit(&trans) ?: ret;
+	bch2_trans_exit(&trans);
 	if (ret)
 		return ret;
 
