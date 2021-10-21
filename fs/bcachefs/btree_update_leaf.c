@@ -1160,13 +1160,13 @@ next:
 	if (bch2_bkey_maybe_mergable(&insert->k, k.k)) {
 		ret = check_pos_snapshot_overwritten(trans, btree_id, insert->k.p);
 		if (ret < 0)
-			goto out;
+			goto err;
 		if (ret)
 			goto nomerge2;
 
 		ret = check_pos_snapshot_overwritten(trans, btree_id, k.k->p);
 		if (ret < 0)
-			goto out;
+			goto err;
 		if (ret)
 			goto nomerge2;
 
