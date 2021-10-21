@@ -966,7 +966,6 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 		ret = -EIO;
 		goto err;
 	case PREP_ENCODED_CHECKSUM_ERR:
-		BUG();
 		goto csum_err;
 	case PREP_ENCODED_DO_WRITE:
 		/* XXX look for bug here */
