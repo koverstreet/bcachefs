@@ -262,7 +262,8 @@ static int au_dr_hino(struct super_block *sb, aufs_bindex_t bindex,
 		dir = d_inode(path->dentry);
 		inode_lock_nested(dir, AuLsc_I_CHILD);
 	}
-	hinopath.dentry = vfsub_lkup_one(&hinoname, path->dentry);
+	hinopath.mnt = path->mnt;
+	hinopath.dentry = vfsub_lkup_one(&hinoname, (struct path *)path);
 	err = PTR_ERR(hinopath.dentry);
 	if (IS_ERR(hinopath.dentry))
 		goto out_unlock;
@@ -296,7 +297,6 @@ static int au_dr_hino(struct super_block *sb, aufs_bindex_t bindex,
 		}
 		flags = O_WRONLY;
 	}
-	hinopath.mnt = path->mnt;
 	hinofile = vfsub_dentry_open(&hinopath, flags);
 	if (suspend)
 		au_hn_inode_unlock(hdir);
@@ -618,7 +618,7 @@ static int au_drinfo_do_store(struct au_drinfo_store *w,
 	AuDebugOn(elm
 		  && memcmp(elm, page_address(ZERO_PAGE(0)), sizeof(*elm)));
 
-	infopath.dentry = vfsub_lookup_one_len(w->whname, w->h_ppath.dentry,
+	infopath.dentry = vfsub_lookup_one_len(w->whname, &w->h_ppath,
 					       w->whnamelen);
 	AuTraceErrPtr(infopath.dentry);
 	if (IS_ERR(infopath.dentry)) {
@@ -1002,8 +1002,7 @@ static struct au_drinfo *au_drinfo_do_load(struct path *h_ppath,
 	unlocked = 0;
 	h_dir = d_inode(h_ppath->dentry);
 	vfsub_inode_lock_shared_nested(h_dir, AuLsc_I_PARENT);
-	infopath.dentry = vfsub_lookup_one_len(whname, h_ppath->dentry,
-					       whnamelen);
+	infopath.dentry = vfsub_lookup_one_len(whname, h_ppath, whnamelen);
 	if (IS_ERR(infopath.dentry)) {
 		drinfo = (void *)infopath.dentry;
 		goto out;

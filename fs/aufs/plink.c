@@ -205,35 +205,35 @@ static int plink_name(char *name, int len, struct inode *inode,
 struct au_do_plink_lkup_args {
 	struct dentry **errp;
 	struct qstr *tgtname;
-	struct dentry *h_parent;
-	struct au_branch *br;
+	struct path *h_ppath;
 };
 
 static struct dentry *au_do_plink_lkup(struct qstr *tgtname,
-				       struct dentry *h_parent,
-				       struct au_branch *br)
+				       struct path *h_ppath)
 {
 	struct dentry *h_dentry;
 	struct inode *h_inode;
 
-	h_inode = d_inode(h_parent);
+	h_inode = d_inode(h_ppath->dentry);
 	vfsub_inode_lock_shared_nested(h_inode, AuLsc_I_CHILD2);
-	h_dentry = vfsub_lkup_one(tgtname, h_parent);
+	h_dentry = vfsub_lkup_one(tgtname, h_ppath);
 	inode_unlock_shared(h_inode);
+
 	return h_dentry;
 }
 
 static void au_call_do_plink_lkup(void *args)
 {
 	struct au_do_plink_lkup_args *a = args;
-	*a->errp = au_do_plink_lkup(a->tgtname, a->h_parent, a->br);
+	*a->errp = au_do_plink_lkup(a->tgtname, a->h_ppath);
 }
 
 /* lookup the plink-ed @inode under the branch at @bindex */
 struct dentry *au_plink_lkup(struct inode *inode, aufs_bindex_t bindex)
 {
-	struct dentry *h_dentry, *h_parent;
+	struct dentry *h_dentry;
 	struct au_branch *br;
+	struct path h_ppath;
 	int wkq_err;
 	char a[PLINK_NAME_LEN];
 	struct qstr tgtname = QSTR_INIT(a, 0);
@@ -241,40 +241,39 @@ struct dentry *au_plink_lkup(struct inode *inode, aufs_bindex_t bindex)
 	AuDebugOn(au_plink_maint(inode->i_sb, AuLock_NOPLM));
 
 	br = au_sbr(inode->i_sb, bindex);
-	h_parent = br->br_wbr->wbr_plink;
+	h_ppath.dentry = br->br_wbr->wbr_plink;
+	h_ppath.mnt = au_br_mnt(br);
 	tgtname.len = plink_name(a, sizeof(a), inode, bindex);
 
 	if (!uid_eq(current_fsuid(), GLOBAL_ROOT_UID)) {
 		struct au_do_plink_lkup_args args = {
 			.errp		= &h_dentry,
 			.tgtname	= &tgtname,
-			.h_parent	= h_parent,
-			.br		= br
+			.h_ppath	= &h_ppath
 		};
 
 		wkq_err = au_wkq_wait(au_call_do_plink_lkup, &args);
 		if (unlikely(wkq_err))
 			h_dentry = ERR_PTR(wkq_err);
 	} else
-		h_dentry = au_do_plink_lkup(&tgtname, h_parent, br);
+		h_dentry = au_do_plink_lkup(&tgtname, &h_ppath);
 
 	return h_dentry;
 }
 
 /* create a pseudo-link */
-static int do_whplink(struct qstr *tgt, struct dentry *h_parent,
-		      struct dentry *h_dentry, struct au_branch *br)
+static int do_whplink(struct qstr *tgt, struct path *h_ppath,
+		      struct dentry *h_dentry)
 {
 	int err;
-	struct path h_path = {
-		.mnt = au_br_mnt(br)
-	};
+	struct path h_path;
 	struct inode *h_dir, *delegated;
 
-	h_dir = d_inode(h_parent);
+	h_dir = d_inode(h_ppath->dentry);
 	inode_lock_nested(h_dir, AuLsc_I_CHILD2);
+	h_path.mnt = h_ppath->mnt;
 again:
-	h_path.dentry = vfsub_lkup_one(tgt, h_parent);
+	h_path.dentry = vfsub_lkup_one(tgt, h_ppath);
 	err = PTR_ERR(h_path.dentry);
 	if (IS_ERR(h_path.dentry))
 		goto out;
@@ -315,28 +314,30 @@ out:
 struct do_whplink_args {
 	int *errp;
 	struct qstr *tgt;
-	struct dentry *h_parent;
+	struct path *h_ppath;
 	struct dentry *h_dentry;
-	struct au_branch *br;
 };
 
 static void call_do_whplink(void *args)
 {
 	struct do_whplink_args *a = args;
-	*a->errp = do_whplink(a->tgt, a->h_parent, a->h_dentry, a->br);
+	*a->errp = do_whplink(a->tgt, a->h_ppath, a->h_dentry);
 }
 
 static int whplink(struct dentry *h_dentry, struct inode *inode,
-		   aufs_bindex_t bindex, struct au_branch *br)
+		   aufs_bindex_t bindex)
 {
 	int err, wkq_err;
+	struct au_branch *br;
 	struct au_wbr *wbr;
-	struct dentry *h_parent;
+	struct path h_ppath;
 	char a[PLINK_NAME_LEN];
 	struct qstr tgtname = QSTR_INIT(a, 0);
 
-	wbr = au_sbr(inode->i_sb, bindex)->br_wbr;
-	h_parent = wbr->wbr_plink;
+	br = au_sbr(inode->i_sb, bindex);
+	wbr = br->br_wbr;
+	h_ppath.dentry = wbr->wbr_plink;
+	h_ppath.mnt = au_br_mnt(br);
 	tgtname.len = plink_name(a, sizeof(a), inode, bindex);
 
 	/* always superio. */
@@ -344,15 +345,14 @@ static int whplink(struct dentry *h_dentry, struct inode *inode,
 		struct do_whplink_args args = {
 			.errp		= &err,
 			.tgt		= &tgtname,
-			.h_parent	= h_parent,
-			.h_dentry	= h_dentry,
-			.br		= br
+			.h_ppath	= &h_ppath,
+			.h_dentry	= h_dentry
 		};
 		wkq_err = au_wkq_wait(call_do_whplink, &args);
 		if (unlikely(wkq_err))
 			err = wkq_err;
 	} else
-		err = do_whplink(&tgtname, h_parent, h_dentry, br);
+		err = do_whplink(&tgtname, &h_ppath, h_dentry);
 
 	return err;
 }
@@ -402,7 +402,7 @@ void au_plink_append(struct inode *inode, aufs_bindex_t bindex,
 		if (cnt > AUFS_PLINK_WARN)
 			AuWarn1(msg ", %d\n", cnt);
 #undef msg
-		err = whplink(h_dentry, inode, bindex, au_sbr(sb, bindex));
+		err = whplink(h_dentry, inode, bindex);
 		if (unlikely(err)) {
 			pr_warn("err %d, damaged pseudo link.\n", err);
 			au_hbl_del(&icntnr->plink, hbl);

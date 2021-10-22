@@ -33,6 +33,7 @@ au_do_lookup(struct dentry *h_parent, struct dentry *dentry,
 	struct dentry *h_dentry;
 	struct inode *h_inode;
 	struct au_branch *br;
+	struct path h_path;
 	int wh_found, opq;
 	unsigned char wh_able;
 	const unsigned char allow_neg = !!au_ftest_lkup(args->flags, ALLOW_NEG);
@@ -41,9 +42,11 @@ au_do_lookup(struct dentry *h_parent, struct dentry *dentry,
 
 	wh_found = 0;
 	br = au_sbr(dentry->d_sb, bindex);
+	h_path.dentry = h_parent;
+	h_path.mnt = au_br_mnt(br);
 	wh_able = !!au_br_whable(br->br_perm);
 	if (wh_able)
-		wh_found = au_wh_test(h_parent, &args->whname, ignore_perm);
+		wh_found = au_wh_test(&h_path, &args->whname, ignore_perm);
 	h_dentry = ERR_PTR(wh_found);
 	if (!wh_found)
 		goto real_lookup;
@@ -58,9 +61,9 @@ au_do_lookup(struct dentry *h_parent, struct dentry *dentry,
 
 real_lookup:
 	if (!ignore_perm)
-		h_dentry = vfsub_lkup_one(args->name, h_parent);
+		h_dentry = vfsub_lkup_one(args->name, &h_path);
 	else
-		h_dentry = au_sio_lkup_one(args->name, h_parent);
+		h_dentry = au_sio_lkup_one(args->name, &h_path);
 	if (IS_ERR(h_dentry)) {
 		if (PTR_ERR(h_dentry) == -ENAMETOOLONG
 		    && !allow_neg)
@@ -94,8 +97,9 @@ real_lookup:
 	    || (d_really_is_positive(dentry) && !d_is_dir(dentry)))
 		goto out; /* success */
 
+	h_path.dentry = h_dentry;
 	vfsub_inode_lock_shared_nested(h_inode, AuLsc_I_CHILD);
-	opq = au_diropq_test(h_dentry);
+	opq = au_diropq_test(&h_path);
 	inode_unlock_shared(h_inode);
 	if (opq > 0)
 		au_set_dbdiropq(dentry, bindex);
@@ -240,18 +244,18 @@ out:
 	return err;
 }
 
-struct dentry *au_sio_lkup_one(struct qstr *name, struct dentry *parent)
+struct dentry *au_sio_lkup_one(struct qstr *name, struct path *ppath)
 {
 	struct dentry *dentry;
 	int wkq_err;
 
-	if (!au_test_h_perm_sio(d_inode(parent), MAY_EXEC))
-		dentry = vfsub_lkup_one(name, parent);
+	if (!au_test_h_perm_sio(d_inode(ppath->dentry), MAY_EXEC))
+		dentry = vfsub_lkup_one(name, ppath);
 	else {
 		struct vfsub_lkup_one_args args = {
 			.errp	= &dentry,
 			.name	= name,
-			.parent	= parent
+			.ppath	= ppath
 		};
 
 		wkq_err = au_wkq_wait(vfsub_call_lkup_one, &args);
@@ -268,16 +272,18 @@ struct dentry *au_sio_lkup_one(struct qstr *name, struct dentry *parent)
 int au_lkup_neg(struct dentry *dentry, aufs_bindex_t bindex, int wh)
 {
 	int err;
-	struct dentry *parent, *h_parent, *h_dentry;
+	struct dentry *parent, *h_dentry;
 	struct au_branch *br;
+	struct path h_ppath;
 
 	parent = dget_parent(dentry);
-	h_parent = au_h_dptr(parent, bindex);
 	br = au_sbr(dentry->d_sb, bindex);
+	h_ppath.dentry = au_h_dptr(parent, bindex);
+	h_ppath.mnt = au_br_mnt(br);
 	if (wh)
-		h_dentry = au_whtmp_lkup(h_parent, br, &dentry->d_name);
+		h_dentry = au_whtmp_lkup(h_ppath.dentry, br, &dentry->d_name);
 	else
-		h_dentry = au_sio_lkup_one(&dentry->d_name, h_parent);
+		h_dentry = au_sio_lkup_one(&dentry->d_name, &h_ppath);
 	err = PTR_ERR(h_dentry);
 	if (IS_ERR(h_dentry))
 		goto out;
@@ -352,6 +358,7 @@ static int au_h_verify_dentry(struct dentry *h_dentry, struct dentry *h_parent,
 	struct inode *h_inode;
 	struct dentry *h_d;
 	struct super_block *h_sb;
+	struct path h_ppath;
 
 	err = 0;
 	memset(&ia, -1, sizeof(ia));
@@ -366,7 +373,9 @@ static int au_h_verify_dentry(struct dentry *h_dentry, struct dentry *h_parent,
 		goto out;
 
 	/* main purpose is namei.c:cached_lookup() and d_revalidate */
-	h_d = vfsub_lkup_one(&h_dentry->d_name, h_parent);
+	h_ppath.dentry = h_parent;
+	h_ppath.mnt = au_br_mnt(br);
+	h_d = vfsub_lkup_one(&h_dentry->d_name, &h_ppath);
 	err = PTR_ERR(h_d);
 	if (IS_ERR(h_d))
 		goto out;

@@ -57,6 +57,11 @@ int vfsub_update_h_iattr(struct path *h_path, int *did)
 	struct kstat st;
 	struct super_block *h_sb;
 
+	/*
+	 * Always needs h_path->mnt for LSM or FUSE branch.
+	 */
+	AuDebugOn(!h_path->mnt);
+
 	/* for remote fs, leave work for its getattr or d_revalidate */
 	/* for bad i_attr fs, handle them in aufs_getattr() */
 	/* still some fs may acquire i_mutex. we need to skip them */
@@ -158,38 +163,38 @@ int vfsub_kern_path(const char *name, unsigned int flags, struct path *path)
 }
 
 struct dentry *vfsub_lookup_one_len_unlocked(const char *name,
-					     struct dentry *parent, int len)
+					     struct path *ppath, int len)
 {
-	struct path path = {
-		.mnt = NULL
-	};
+	struct path path;
 
-	path.dentry = lookup_one_len_unlocked(name, parent, len);
+	path.dentry = lookup_one_len_unlocked(name, ppath->dentry, len);
 	if (IS_ERR(path.dentry))
 		goto out;
-	if (d_is_positive(path.dentry))
+	if (d_is_positive(path.dentry)) {
+		path.mnt = ppath->mnt;
 		vfsub_update_h_iattr(&path, /*did*/NULL); /*ignore*/
+	}
 
 out:
 	AuTraceErrPtr(path.dentry);
 	return path.dentry;
 }
 
-struct dentry *vfsub_lookup_one_len(const char *name, struct dentry *parent,
+struct dentry *vfsub_lookup_one_len(const char *name, struct path *ppath,
 				    int len)
 {
-	struct path path = {
-		.mnt = NULL
-	};
+	struct path path;
 
 	/* VFS checks it too, but by WARN_ON_ONCE() */
-	IMustLock(d_inode(parent));
+	IMustLock(d_inode(ppath->dentry));
 
-	path.dentry = lookup_one_len(name, parent, len);
+	path.dentry = lookup_one_len(name, ppath->dentry, len);
 	if (IS_ERR(path.dentry))
 		goto out;
-	if (d_is_positive(path.dentry))
+	if (d_is_positive(path.dentry)) {
+		path.mnt = ppath->mnt;
 		vfsub_update_h_iattr(&path, /*did*/NULL); /*ignore*/
+	}
 
 out:
 	AuTraceErrPtr(path.dentry);
@@ -199,7 +204,7 @@ out:
 void vfsub_call_lkup_one(void *args)
 {
 	struct vfsub_lkup_one_args *a = args;
-	*a->errp = vfsub_lkup_one(a->name, a->parent);
+	*a->errp = vfsub_lkup_one(a->name, a->ppath);
 }
 
 /* ---------------------------------------------------------------------- */

@@ -60,18 +60,18 @@ int au_wh_name_alloc(struct qstr *wh, const struct qstr *name)
 /* ---------------------------------------------------------------------- */
 
 /*
- * test if the @wh_name exists under @h_parent.
+ * test if the @wh_name exists under @h_ppath.
  * @try_sio specifies the necessary of super-io.
  */
-int au_wh_test(struct dentry *h_parent, struct qstr *wh_name, int try_sio)
+int au_wh_test(struct path *h_ppath, struct qstr *wh_name, int try_sio)
 {
 	int err;
 	struct dentry *wh_dentry;
 
 	if (!try_sio)
-		wh_dentry = vfsub_lkup_one(wh_name, h_parent);
+		wh_dentry = vfsub_lkup_one(wh_name, h_ppath);
 	else
-		wh_dentry = au_sio_lkup_one(wh_name, h_parent);
+		wh_dentry = au_sio_lkup_one(wh_name, h_ppath);
 	err = PTR_ERR(wh_dentry);
 	if (IS_ERR(wh_dentry)) {
 		if (err == -ENAMETOOLONG)
@@ -98,15 +98,15 @@ out:
 }
 
 /*
- * test if the @h_dentry sets opaque or not.
+ * test if the @h_path->dentry sets opaque or not.
  */
-int au_diropq_test(struct dentry *h_dentry)
+int au_diropq_test(struct path *h_path)
 {
 	int err;
 	struct inode *h_dir;
 
-	h_dir = d_inode(h_dentry);
-	err = au_wh_test(h_dentry, &diropq_name,
+	h_dir = d_inode(h_path->dentry);
+	err = au_wh_test(h_path, &diropq_name,
 			 au_test_h_perm_sio(h_dir, MAY_EXEC));
 	return err;
 }
@@ -124,6 +124,7 @@ struct dentry *au_whtmp_lkup(struct dentry *h_parent, struct au_branch *br,
 	/* strict atomic_t is unnecessary here */
 	static unsigned short cnt;
 	struct qstr qs;
+	struct path h_ppath;
 
 	BUILD_BUG_ON(sizeof(cnt) * 2 > AUFS_WH_TMP_LEN);
 
@@ -147,10 +148,12 @@ struct dentry *au_whtmp_lkup(struct dentry *h_parent, struct au_branch *br,
 	*p++ = '.';
 	AuDebugOn(name + qs.len + 1 - p <= AUFS_WH_TMP_LEN);
 
+	h_ppath.dentry = h_parent;
+	h_ppath.mnt = au_br_mnt(br);
 	qs.name = name;
 	for (i = 0; i < 3; i++) {
 		sprintf(p, "%.*x", AUFS_WH_TMP_LEN, cnt++);
-		dentry = au_sio_lkup_one(&qs, h_parent);
+		dentry = au_sio_lkup_one(&qs, &h_ppath);
 		if (IS_ERR(dentry) || d_is_negative(dentry))
 			goto out_name;
 		dput(dentry);
@@ -244,21 +247,20 @@ int au_wh_unlink_dentry(struct inode *h_dir, struct path *h_path,
 	return err;
 }
 
-static int unlink_wh_name(struct dentry *h_parent, struct qstr *wh,
-			  struct au_branch *br)
+static int unlink_wh_name(struct path *h_ppath, struct qstr *wh)
 {
 	int err;
-	struct path h_path = {
-		.mnt = au_br_mnt(br)
-	};
+	struct path h_path;
 
 	err = 0;
-	h_path.dentry = vfsub_lkup_one(wh, h_parent);
+	h_path.dentry = vfsub_lkup_one(wh, h_ppath);
 	if (IS_ERR(h_path.dentry))
 		err = PTR_ERR(h_path.dentry);
 	else {
-		if (d_is_reg(h_path.dentry))
-			err = do_unlink_wh(d_inode(h_parent), &h_path);
+		if (d_is_reg(h_path.dentry)) {
+			h_path.mnt = h_ppath->mnt;
+			err = do_unlink_wh(d_inode(h_ppath->dentry), &h_path);
+		}
 		dput(h_path.dentry);
 	}
 
@@ -698,15 +700,17 @@ out:
 static struct dentry *do_diropq(struct dentry *dentry, aufs_bindex_t bindex,
 				unsigned int flags)
 {
-	struct dentry *opq_dentry, *h_dentry;
+	struct dentry *opq_dentry;
 	struct super_block *sb;
 	struct au_branch *br;
+	struct path h_path;
 	int err;
 
 	sb = dentry->d_sb;
 	br = au_sbr(sb, bindex);
-	h_dentry = au_h_dptr(dentry, bindex);
-	opq_dentry = vfsub_lkup_one(&diropq_name, h_dentry);
+	h_path.dentry = au_h_dptr(dentry, bindex);
+	h_path.mnt = au_br_mnt(br);
+	opq_dentry = vfsub_lkup_one(&diropq_name, &h_path);
 	if (IS_ERR(opq_dentry))
 		goto out;
 
@@ -717,11 +721,8 @@ static struct dentry *do_diropq(struct dentry *dentry, aufs_bindex_t bindex,
 			goto out; /* success */
 		}
 	} else {
-		struct path tmp = {
-			.dentry = opq_dentry,
-			.mnt	= au_br_mnt(br)
-		};
-		err = do_unlink_wh(au_h_iptr(d_inode(dentry), bindex), &tmp);
+		h_path.dentry = opq_dentry;
+		err = do_unlink_wh(au_h_iptr(d_inode(dentry), bindex), &h_path);
 		if (!err)
 			au_set_dbdiropq(dentry, -1);
 	}
@@ -784,11 +785,14 @@ struct dentry *au_wh_lkup(struct dentry *h_parent, struct qstr *base_name,
 	int err;
 	struct qstr wh_name;
 	struct dentry *wh_dentry;
+	struct path h_path;
 
 	err = au_wh_name_alloc(&wh_name, base_name);
 	wh_dentry = ERR_PTR(err);
 	if (!err) {
-		wh_dentry = vfsub_lkup_one(&wh_name, h_parent);
+		h_path.dentry = h_parent;
+		h_path.mnt = au_br_mnt(br);
+		wh_dentry = vfsub_lkup_one(&wh_name, &h_path);
 		kfree(wh_name.name);
 	}
 	return wh_dentry;
@@ -823,8 +827,8 @@ struct dentry *au_wh_create(struct dentry *dentry, aufs_bindex_t bindex,
 /* ---------------------------------------------------------------------- */
 
 /* Delete all whiteouts in this directory on branch bindex. */
-static int del_wh_children(struct dentry *h_dentry, struct au_nhash *whlist,
-			   aufs_bindex_t bindex, struct au_branch *br)
+static int del_wh_children(struct path *h_path, struct au_nhash *whlist,
+			   aufs_bindex_t bindex)
 {
 	int err;
 	unsigned long ul, n;
@@ -854,7 +858,7 @@ static int del_wh_children(struct dentry *h_dentry, struct au_nhash *whlist,
 			if (str->len + AUFS_WH_PFX_LEN <= PATH_MAX) {
 				memcpy(p, str->name, str->len);
 				wh_name.len = AUFS_WH_PFX_LEN + str->len;
-				err = unlink_wh_name(h_dentry, &wh_name, br);
+				err = unlink_wh_name(h_path, &wh_name);
 				if (!err)
 					continue;
 				break;
@@ -873,16 +877,15 @@ out:
 
 struct del_wh_children_args {
 	int *errp;
-	struct dentry *h_dentry;
+	struct path *h_path;
 	struct au_nhash *whlist;
 	aufs_bindex_t bindex;
-	struct au_branch *br;
 };
 
 static void call_del_wh_children(void *args)
 {
 	struct del_wh_children_args *a = args;
-	*a->errp = del_wh_children(a->h_dentry, a->whlist, a->bindex, a->br);
+	*a->errp = del_wh_children(a->h_path, a->whlist, a->bindex);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -934,7 +937,7 @@ int au_whtmp_rmdir(struct inode *dir, aufs_bindex_t bindex,
 {
 	int err;
 	unsigned int h_nlink;
-	struct path h_tmp;
+	struct path wh_path;
 	struct inode *wh_inode, *h_dir;
 	struct au_branch *br;
 
@@ -942,6 +945,8 @@ int au_whtmp_rmdir(struct inode *dir, aufs_bindex_t bindex,
 	IMustLock(h_dir);
 
 	br = au_sbr(dir->i_sb, bindex);
+	wh_path.dentry = wh_dentry;
+	wh_path.mnt = au_br_mnt(br);
 	wh_inode = d_inode(wh_dentry);
 	inode_lock_nested(wh_inode, AuLsc_I_CHILD);
 
@@ -950,15 +955,14 @@ int au_whtmp_rmdir(struct inode *dir, aufs_bindex_t bindex,
 	 * it means this whlist may have an obsoleted entry.
 	 */
 	if (!au_test_h_perm_sio(wh_inode, MAY_EXEC | MAY_WRITE))
-		err = del_wh_children(wh_dentry, whlist, bindex, br);
+		err = del_wh_children(&wh_path, whlist, bindex);
 	else {
 		int wkq_err;
 		struct del_wh_children_args args = {
 			.errp		= &err,
-			.h_dentry	= wh_dentry,
+			.h_path		= &wh_path,
 			.whlist		= whlist,
-			.bindex		= bindex,
-			.br		= br
+			.bindex		= bindex
 		};
 
 		wkq_err = au_wkq_wait(call_del_wh_children, &args);
@@ -968,10 +972,8 @@ int au_whtmp_rmdir(struct inode *dir, aufs_bindex_t bindex,
 	inode_unlock(wh_inode);
 
 	if (!err) {
-		h_tmp.dentry = wh_dentry;
-		h_tmp.mnt = au_br_mnt(br);
 		h_nlink = h_dir->i_nlink;
-		err = vfsub_rmdir(h_dir, &h_tmp);
+		err = vfsub_rmdir(h_dir, &wh_path);
 		/* some fs doesn't change the parent nlink in some cases */
 		h_nlink -= h_dir->i_nlink;
 	}

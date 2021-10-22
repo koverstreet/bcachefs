@@ -212,20 +212,21 @@ ssize_t xino_fwrite(vfs_writef_t func, struct file *file, void *buf,
 struct file *au_xino_create2(struct file *base_file, struct file *copy_src)
 {
 	struct file *file;
-	struct dentry *base, *parent;
+	struct dentry *base;
 	struct inode *dir, *delegated;
 	struct qstr *name;
-	struct path path;
+	struct path ppath, path;
 	int err;
 
 	base = base_file->f_path.dentry;
-	parent = base->d_parent; /* dir inode is locked */
-	dir = d_inode(parent);
+	ppath.dentry = base->d_parent; /* dir inode is locked */
+	ppath.mnt = base_file->f_path.mnt;
+	dir = d_inode(ppath.dentry);
 	IMustLock(dir);
 
 	file = ERR_PTR(-EINVAL);
 	name = &base->d_name;
-	path.dentry = vfsub_lookup_one_len(name->name, parent, name->len);
+	path.dentry = vfsub_lookup_one_len(name->name, &ppath, name->len);
 	if (IS_ERR(path.dentry)) {
 		file = (void *)path.dentry;
 		pr_err("%pd lookup err %ld\n",

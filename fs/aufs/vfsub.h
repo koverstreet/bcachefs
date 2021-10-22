@@ -109,20 +109,20 @@ int vfsub_atomic_open(struct inode *dir, struct dentry *dentry,
 int vfsub_kern_path(const char *name, unsigned int flags, struct path *path);
 
 struct dentry *vfsub_lookup_one_len_unlocked(const char *name,
-					     struct dentry *parent, int len);
-struct dentry *vfsub_lookup_one_len(const char *name, struct dentry *parent,
+					     struct path *ppath, int len);
+struct dentry *vfsub_lookup_one_len(const char *name, struct path *ppath,
 				    int len);
 
 struct vfsub_lkup_one_args {
 	struct dentry **errp;
 	struct qstr *name;
-	struct dentry *parent;
+	struct path *ppath;
 };
 
 static inline struct dentry *vfsub_lkup_one(struct qstr *name,
-					    struct dentry *parent)
+					    struct path *ppath)
 {
-	return vfsub_lookup_one_len(name->name, parent, name->len);
+	return vfsub_lookup_one_len(name->name, ppath, name->len);
 }
 
 void vfsub_call_lkup_one(void *args);
