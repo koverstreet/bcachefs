@@ -8,6 +8,7 @@
 #include "btree_update_interior.h"
 #include "buckets.h"
 #include "disk_groups.h"
+#include "ec.h"
 #include "inode.h"
 #include "io.h"
 #include "journal_reclaim.h"
@@ -136,6 +137,7 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 	struct btree_iter iter;
 	struct migrate_write *m =
 		container_of(op, struct migrate_write, op);
+	struct open_bucket *ec_ob = ec_open_bucket(c, &op->open_buckets);
 	struct keylist *keys = &op->insert_keys;
 	struct bkey_buf _new, _insert;
 	int ret = 0;
@@ -253,6 +255,8 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		if (!ret) {
 			bch2_btree_iter_set_pos(&iter, next_pos);
 			atomic_long_inc(&c->extent_migrate_done);
+			if (ec_ob)
+				bch2_ob_add_backpointer(c, ec_ob, &insert->k);
 		}
 err:
 		if (ret == -EINTR)
