@@ -471,6 +471,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
 	struct bkey_buf sk;
+	struct open_bucket *ec_ob = ec_open_bucket(c, &op->open_buckets);
 	struct keylist *keys = &op->insert_keys;
 	struct bkey_i *k = bch2_keylist_front(keys);
 	struct btree_trans trans;
@@ -513,6 +514,9 @@ static int bch2_write_index_default(struct bch_write_op *op)
 			continue;
 		if (ret)
 			break;
+
+		if (ec_ob)
+			bch2_ob_add_backpointer(c, ec_ob, &sk.k->k);
 
 		if (bkey_cmp(iter.pos, k->k.p) >= 0)
 			bch2_keylist_pop_front(&op->insert_keys);
@@ -951,7 +955,6 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 	struct bio *src = &op->wbio.bio, *dst = src;
 	struct bvec_iter saved_iter;
 	void *ec_buf;
-	struct bpos ec_pos = op->pos;
 	unsigned total_output = 0, total_input = 0;
 	bool bounce = false;
 	bool page_alloc_failed = false;
@@ -1121,9 +1124,6 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 
 	dst->bi_iter.bi_size = total_output;
 do_write:
-	/* might have done a realloc... */
-	bch2_ec_add_backpointer(c, wp, ec_pos, total_input >> 9);
-
 	*_dst = dst;
 	return more;
 csum_err:
