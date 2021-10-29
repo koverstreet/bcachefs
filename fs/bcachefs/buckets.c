@@ -1227,6 +1227,8 @@ int bch2_mark_key(struct bch_fs *c, struct bkey_s_c new, unsigned flags)
 	struct bkey_s_c old = (struct bkey_s_c) { &deleted, NULL };
 	int ret;
 
+	deleted.p = new.k->p;
+
 	percpu_down_read(&c->mark_lock);
 	ret = bch2_mark_key_locked(c, old, new, 0, flags);
 	percpu_up_read(&c->mark_lock);
@@ -1243,6 +1245,8 @@ int bch2_mark_update(struct btree_trans *trans, struct btree_path *path,
 	struct bkey_s_c		old;
 	struct bkey		unpacked;
 	int ret;
+
+	_deleted.p = path->pos;
 
 	if (unlikely(flags & BTREE_TRIGGER_NORUN))
 		return 0;
@@ -1840,6 +1844,8 @@ int bch2_trans_mark_update(struct btree_trans *trans,
 	struct bkey_s_c		old;
 	struct bkey		unpacked;
 	int ret;
+
+	_deleted.p = path->pos;
 
 	if (unlikely(flags & BTREE_TRIGGER_NORUN))
 		return 0;
