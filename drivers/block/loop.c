@@ -1153,8 +1153,6 @@ static void __loop_clr_fd(struct loop_device *lo, bool release)
 	module_put(THIS_MODULE);
 	blk_mq_unfreeze_queue(lo->lo_queue);
 
-	disk_force_media_change(lo->lo_disk, DISK_EVENT_MEDIA_CHANGE);
-
 	if (lo->lo_flags & LO_FLAGS_PARTSCAN) {
 		int err;
 
