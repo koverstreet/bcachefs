@@ -269,6 +269,8 @@ int bch2_extent_update(struct btree_trans *trans,
 {
 	/* this must live until after bch2_trans_commit(): */
 	struct bkey_inode_buf inode_p;
+	struct btree_iter inode_iter;
+	struct bch_inode_unpacked inode_u;
 	struct bpos next_pos;
 	bool extending = false, usage_increasing;
 	s64 i_sectors_delta = 0, disk_sectors_delta = 0;
@@ -313,49 +315,44 @@ int bch2_extent_update(struct btree_trans *trans,
 		? min(k->k.p.offset << 9, new_i_size)
 		: 0;
 
+	ret = bch2_inode_peek(trans, &inode_iter, &inode_u, inum,
+			      BTREE_ITER_INTENT);
+	if (ret)
+		return ret;
+
+	/*
+	 * XXX:
+	 * writeback can race a bit with truncate, because truncate
+	 * first updates the inode then truncates the pagecache. This is
+	 * ugly, but lets us preserve the invariant that the in memory
+	 * i_size is always >= the on disk i_size.
+	 *
+	BUG_ON(new_i_size > inode_u.bi_size &&
+	       (inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY));
+	 */
+	BUG_ON(new_i_size > inode_u.bi_size && !extending);
+
+	if (!(inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY) &&
+	    new_i_size > inode_u.bi_size)
+		inode_u.bi_size = new_i_size;
+	else
+		new_i_size = 0;
+
+	inode_u.bi_sectors += i_sectors_delta;
+
 	if (i_sectors_delta || new_i_size) {
-		struct btree_iter inode_iter;
-		struct bch_inode_unpacked inode_u;
+		bch2_inode_pack(trans->c, &inode_p, &inode_u);
 
-		ret = bch2_inode_peek(trans, &inode_iter, &inode_u, inum,
-				      BTREE_ITER_INTENT);
-		if (ret)
-			return ret;
+		inode_p.inode.k.p.snapshot = iter->snapshot;
 
-		/*
-		 * XXX:
-		 * writeback can race a bit with truncate, because truncate
-		 * first updates the inode then truncates the pagecache. This is
-		 * ugly, but lets us preserve the invariant that the in memory
-		 * i_size is always >= the on disk i_size.
-		 *
-		BUG_ON(new_i_size > inode_u.bi_size &&
-		       (inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY));
-		 */
-		BUG_ON(new_i_size > inode_u.bi_size && !extending);
-
-		if (!(inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY) &&
-		    new_i_size > inode_u.bi_size)
-			inode_u.bi_size = new_i_size;
-		else
-			new_i_size = 0;
-
-		inode_u.bi_sectors += i_sectors_delta;
-
-		if (i_sectors_delta || new_i_size) {
-			bch2_inode_pack(trans->c, &inode_p, &inode_u);
-
-			inode_p.inode.k.p.snapshot = iter->snapshot;
-
-			ret = bch2_trans_update(trans, &inode_iter,
-					  &inode_p.inode.k_i, 0);
-		}
-
-		bch2_trans_iter_exit(trans, &inode_iter);
-
-		if (ret)
-			return ret;
+		ret = bch2_trans_update(trans, &inode_iter,
+				  &inode_p.inode.k_i, 0);
 	}
+
+	bch2_trans_iter_exit(trans, &inode_iter);
+
+	if (ret)
+		return ret;
 
 	next_pos = k->k.p;
 
