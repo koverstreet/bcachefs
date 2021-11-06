@@ -2317,6 +2317,7 @@ static int __bch2_truncate_page(struct bch_inode_info *inode,
 	 */
 	page_mkclean(page);
 	__set_page_dirty_nobuffers(page);
+	ret = 1;
 unlock:
 	unlock_page(page);
 	put_page(page);
@@ -2328,6 +2329,20 @@ static int bch2_truncate_page(struct bch_inode_info *inode, loff_t from)
 {
 	return __bch2_truncate_page(inode, from >> PAGE_SHIFT,
 				    from, round_up(from, PAGE_SIZE));
+}
+
+static int bch2_truncate_pages(struct bch_inode_info *inode,
+			       loff_t start, loff_t end)
+{
+	int ret = __bch2_truncate_page(inode, start >> PAGE_SHIFT,
+				       start, end);
+
+	if (ret >= 0 &&
+	    start >> PAGE_SHIFT != end >> PAGE_SHIFT)
+		ret = __bch2_truncate_page(inode,
+					   end >> PAGE_SHIFT,
+					   start, end);
+	return ret;
 }
 
 static int bch2_extend(struct user_namespace *mnt_userns,
@@ -2420,7 +2435,7 @@ int bch2_truncate(struct user_namespace *mnt_userns,
 	iattr->ia_valid &= ~ATTR_SIZE;
 
 	ret = bch2_truncate_page(inode, iattr->ia_size);
-	if (unlikely(ret))
+	if (unlikely(ret < 0))
 		goto err;
 
 	/*
@@ -2486,48 +2501,39 @@ static int inode_update_times_fn(struct bch_inode_info *inode,
 static long bchfs_fpunch(struct bch_inode_info *inode, loff_t offset, loff_t len)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	u64 discard_start = round_up(offset, block_bytes(c)) >> 9;
-	u64 discard_end = round_down(offset + len, block_bytes(c)) >> 9;
+	u64 end		= offset + len;
+	u64 block_start	= round_up(offset, block_bytes(c));
+	u64 block_end	= round_down(end, block_bytes(c));
+	bool truncated_last_page;
 	int ret = 0;
 
-	inode_lock(&inode->v);
-	inode_dio_wait(&inode->v);
-	bch2_pagecache_block_get(&inode->ei_pagecache_lock);
-
-	ret = __bch2_truncate_page(inode,
-				   offset >> PAGE_SHIFT,
-				   offset, offset + len);
-	if (unlikely(ret))
+	ret = bch2_truncate_pages(inode, offset, end);
+	if (unlikely(ret < 0))
 		goto err;
 
-	if (offset >> PAGE_SHIFT !=
-	    (offset + len) >> PAGE_SHIFT) {
-		ret = __bch2_truncate_page(inode,
-					   (offset + len) >> PAGE_SHIFT,
-					   offset, offset + len);
-		if (unlikely(ret))
-			goto err;
-	}
+	truncated_last_page = ret;
 
-	truncate_pagecache_range(&inode->v, offset, offset + len - 1);
+	truncate_pagecache_range(&inode->v, offset, end - 1);
 
-	if (discard_start < discard_end) {
+	if (block_start < block_end ) {
 		s64 i_sectors_delta = 0;
 
 		ret = bch2_fpunch(c, inode_inum(inode),
-				  discard_start, discard_end,
+				  block_start >> 9, block_end >> 9,
 				  &i_sectors_delta);
 		i_sectors_acct(c, inode, NULL, i_sectors_delta);
 	}
 
 	mutex_lock(&inode->ei_update_lock);
-	ret = bch2_write_inode(c, inode, inode_update_times_fn, NULL,
-			       ATTR_MTIME|ATTR_CTIME) ?: ret;
+	if (end >= inode->v.i_size && !truncated_last_page) {
+		ret = bch2_write_inode_size(c, inode, inode->v.i_size,
+					    ATTR_MTIME|ATTR_CTIME);
+	} else {
+		ret = bch2_write_inode(c, inode, inode_update_times_fn, NULL,
+				       ATTR_MTIME|ATTR_CTIME);
+	}
 	mutex_unlock(&inode->ei_update_lock);
 err:
-	bch2_pagecache_block_put(&inode->ei_pagecache_lock);
-	inode_unlock(&inode->v);
-
 	return ret;
 }
 
@@ -2547,31 +2553,18 @@ static long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
 	if ((offset | len) & (block_bytes(c) - 1))
 		return -EINVAL;
 
-	/*
-	 * We need i_mutex to keep the page cache consistent with the extents
-	 * btree, and the btree consistent with i_size - we don't need outside
-	 * locking for the extents btree itself, because we're using linked
-	 * iterators
-	 */
-	inode_lock(&inode->v);
-	inode_dio_wait(&inode->v);
-	bch2_pagecache_block_get(&inode->ei_pagecache_lock);
-
 	if (insert) {
-		ret = -EFBIG;
 		if (inode->v.i_sb->s_maxbytes - inode->v.i_size < len)
-			goto err;
+			return -EFBIG;
 
-		ret = -EINVAL;
 		if (offset >= inode->v.i_size)
-			goto err;
+			return -EINVAL;
 
 		src_start	= U64_MAX;
 		shift		= len;
 	} else {
-		ret = -EINVAL;
 		if (offset + len >= inode->v.i_size)
-			goto err;
+			return -EINVAL;
 
 		src_start	= offset + len;
 		shift		= -len;
@@ -2581,7 +2574,7 @@ static long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
 
 	ret = write_invalidate_inode_pages_range(mapping, offset, LLONG_MAX);
 	if (ret)
-		goto err;
+		return ret;
 
 	if (insert) {
 		i_size_write(&inode->v, new_size);
@@ -2598,7 +2591,7 @@ static long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
 		i_sectors_acct(c, inode, NULL, i_sectors_delta);
 
 		if (ret)
-			goto err;
+			return ret;
 	}
 
 	bch2_bkey_buf_init(&copy);
@@ -2711,18 +2704,19 @@ reassemble:
 	bch2_bkey_buf_exit(&copy, c);
 
 	if (ret)
-		goto err;
+		return ret;
 
+	mutex_lock(&inode->ei_update_lock);
 	if (!insert) {
 		i_size_write(&inode->v, new_size);
-		mutex_lock(&inode->ei_update_lock);
 		ret = bch2_write_inode_size(c, inode, new_size,
 					    ATTR_MTIME|ATTR_CTIME);
-		mutex_unlock(&inode->ei_update_lock);
+	} else {
+		/* We need an inode update to update bi_journal_seq for fsync: */
+		ret = bch2_write_inode(c, inode, inode_update_times_fn, NULL,
+				       ATTR_MTIME|ATTR_CTIME);
 	}
-err:
-	bch2_pagecache_block_put(&inode->ei_pagecache_lock);
-	inode_unlock(&inode->v);
+	mutex_unlock(&inode->ei_update_lock);
 	return ret;
 }
 
@@ -2825,76 +2819,51 @@ bkey_err:
 static long bchfs_fallocate(struct bch_inode_info *inode, int mode,
 			    loff_t offset, loff_t len)
 {
-	struct address_space *mapping = inode->v.i_mapping;
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	loff_t end		= offset + len;
-	loff_t block_start	= round_down(offset,	block_bytes(c));
-	loff_t block_end	= round_up(end,		block_bytes(c));
+	u64 end		= offset + len;
+	u64 block_start	= round_down(offset,	block_bytes(c));
+	u64 block_end	= round_up(end,		block_bytes(c));
+	bool truncated_last_page = false;
 	int ret;
-
-	inode_lock(&inode->v);
-	inode_dio_wait(&inode->v);
-	bch2_pagecache_block_get(&inode->ei_pagecache_lock);
 
 	if (!(mode & FALLOC_FL_KEEP_SIZE) && end > inode->v.i_size) {
 		ret = inode_newsize_ok(&inode->v, end);
 		if (ret)
-			goto err;
+			return ret;
 	}
 
 	if (mode & FALLOC_FL_ZERO_RANGE) {
-		ret = __bch2_truncate_page(inode,
-					   offset >> PAGE_SHIFT,
-					   offset, end);
+		ret = bch2_truncate_pages(inode, offset, end);
+		if (unlikely(ret < 0))
+			return ret;
 
-		if (!ret &&
-		    offset >> PAGE_SHIFT != end >> PAGE_SHIFT)
-			ret = __bch2_truncate_page(inode,
-						   end >> PAGE_SHIFT,
-						   offset, end);
-
-		if (unlikely(ret))
-			goto err;
+		truncated_last_page = ret;
 
 		truncate_pagecache_range(&inode->v, offset, end - 1);
+
+		block_start	= round_up(offset,	block_bytes(c));
+		block_end	= round_down(end,	block_bytes(c));
 	}
 
 	ret = __bchfs_fallocate(inode, mode, block_start >> 9, block_end >> 9);
 	if (ret)
-		goto err;
+		return ret;
 
-	/*
-	 * Do we need to extend the file?
-	 *
-	 * If we zeroed up to the end of the file, we dropped whatever writes
-	 * were going to write out the current i_size, so we have to extend
-	 * manually even if FL_KEEP_SIZE was set:
-	 */
+	if (mode & FALLOC_FL_KEEP_SIZE && end > inode->v.i_size)
+		end = inode->v.i_size;
+
 	if (end >= inode->v.i_size &&
-	    (!(mode & FALLOC_FL_KEEP_SIZE) ||
-	     (mode & FALLOC_FL_ZERO_RANGE))) {
-
-		/*
-		 * Sync existing appends before extending i_size,
-		 * as in bch2_extend():
-		 */
-		ret = filemap_write_and_wait_range(mapping,
-					inode->ei_inode.bi_size, S64_MAX);
-		if (ret)
-			goto err;
-
-		if (mode & FALLOC_FL_KEEP_SIZE)
-			end = inode->v.i_size;
-		else
-			i_size_write(&inode->v, end);
+	    (((mode & FALLOC_FL_ZERO_RANGE) && !truncated_last_page) ||
+	     !(mode & FALLOC_FL_KEEP_SIZE))) {
+		spin_lock(&inode->v.i_lock);
+		i_size_write(&inode->v, end);
+		spin_unlock(&inode->v.i_lock);
 
 		mutex_lock(&inode->ei_update_lock);
 		ret = bch2_write_inode_size(c, inode, end, 0);
 		mutex_unlock(&inode->ei_update_lock);
 	}
-err:
-	bch2_pagecache_block_put(&inode->ei_pagecache_lock);
-	inode_unlock(&inode->v);
+
 	return ret;
 }
 
@@ -2908,6 +2877,10 @@ long bch2_fallocate_dispatch(struct file *file, int mode,
 	if (!percpu_ref_tryget(&c->writes))
 		return -EROFS;
 
+	inode_lock(&inode->v);
+	inode_dio_wait(&inode->v);
+	bch2_pagecache_block_get(&inode->ei_pagecache_lock);
+
 	if (!(mode & ~(FALLOC_FL_KEEP_SIZE|FALLOC_FL_ZERO_RANGE)))
 		ret = bchfs_fallocate(inode, mode, offset, len);
 	else if (mode == (FALLOC_FL_PUNCH_HOLE|FALLOC_FL_KEEP_SIZE))
@@ -2919,6 +2892,9 @@ long bch2_fallocate_dispatch(struct file *file, int mode,
 	else
 		ret = -EOPNOTSUPP;
 
+
+	bch2_pagecache_block_put(&inode->ei_pagecache_lock);
+	inode_unlock(&inode->v);
 	percpu_ref_put(&c->writes);
 
 	return ret;
