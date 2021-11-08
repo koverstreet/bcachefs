@@ -187,7 +187,6 @@ void bch2_bio_alloc_pages_pool(struct bch_fs *c, struct bio *bio,
 int bch2_sum_sector_overwrites(struct btree_trans *trans,
 			       struct btree_iter *extent_iter,
 			       struct bkey_i *new,
-			       bool *maybe_extending,
 			       bool *usage_increasing,
 			       s64 *i_sectors_delta,
 			       s64 *disk_sectors_delta)
@@ -199,7 +198,6 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 	bool new_compressed = bch2_bkey_sectors_compressed(bkey_i_to_s_c(new));
 	int ret = 0;
 
-	*maybe_extending	= true;
 	*usage_increasing	= false;
 	*i_sectors_delta	= 0;
 	*disk_sectors_delta	= 0;
@@ -226,31 +224,8 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 		     (!new_compressed && bch2_bkey_sectors_compressed(old))))
 			*usage_increasing = true;
 
-		if (bkey_cmp(old.k->p, new->k.p) >= 0) {
-			/*
-			 * Check if there's already data above where we're
-			 * going to be writing to - this means we're definitely
-			 * not extending the file:
-			 *
-			 * Note that it's not sufficient to check if there's
-			 * data up to the sector offset we're going to be
-			 * writing to, because i_size could be up to one block
-			 * less:
-			 */
-			if (!bkey_cmp(old.k->p, new->k.p)) {
-				old = bch2_btree_iter_next(&iter);
-				ret = bkey_err(old);
-				if (ret)
-					break;
-			}
-
-			if (old.k && !bkey_err(old) &&
-			    old.k->p.inode == extent_iter->pos.inode &&
-			    bkey_extent_is_data(old.k))
-				*maybe_extending = false;
-
+		if (bkey_cmp(old.k->p, new->k.p) >= 0)
 			break;
-		}
 	}
 
 	bch2_trans_iter_exit(trans, &iter);
@@ -267,12 +242,10 @@ int bch2_extent_update(struct btree_trans *trans,
 		       s64 *i_sectors_delta_total,
 		       bool check_enospc)
 {
-	/* this must live until after bch2_trans_commit(): */
-	struct bkey_inode_buf inode_p;
 	struct btree_iter inode_iter;
 	struct bch_inode_unpacked inode_u;
 	struct bpos next_pos;
-	bool extending = false, usage_increasing;
+	bool usage_increasing;
 	s64 i_sectors_delta = 0, disk_sectors_delta = 0;
 	int ret;
 
@@ -290,84 +263,51 @@ int bch2_extent_update(struct btree_trans *trans,
 	if (ret)
 		return ret;
 
+	new_i_size = min(k->k.p.offset << 9, new_i_size);
+	next_pos = k->k.p;
+
 	ret = bch2_sum_sector_overwrites(trans, iter, k,
-			&extending,
 			&usage_increasing,
 			&i_sectors_delta,
 			&disk_sectors_delta);
 	if (ret)
 		return ret;
 
-	if (!usage_increasing)
-		check_enospc = false;
-
 	if (disk_res &&
 	    disk_sectors_delta > (s64) disk_res->sectors) {
 		ret = bch2_disk_reservation_add(trans->c, disk_res,
 					disk_sectors_delta - disk_res->sectors,
-					!check_enospc
+					!check_enospc || !usage_increasing
 					? BCH_DISK_RESERVATION_NOFAIL : 0);
 		if (ret)
 			return ret;
 	}
-
-	new_i_size = extending
-		? min(k->k.p.offset << 9, new_i_size)
-		: 0;
 
 	ret = bch2_inode_peek(trans, &inode_iter, &inode_u, inum,
 			      BTREE_ITER_INTENT);
 	if (ret)
 		return ret;
 
-	/*
-	 * XXX:
-	 * writeback can race a bit with truncate, because truncate
-	 * first updates the inode then truncates the pagecache. This is
-	 * ugly, but lets us preserve the invariant that the in memory
-	 * i_size is always >= the on disk i_size.
-	 *
-	BUG_ON(new_i_size > inode_u.bi_size &&
-	       (inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY));
-	 */
-	BUG_ON(new_i_size > inode_u.bi_size && !extending);
-
 	if (!(inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY) &&
 	    new_i_size > inode_u.bi_size)
 		inode_u.bi_size = new_i_size;
-	else
-		new_i_size = 0;
 
 	inode_u.bi_sectors += i_sectors_delta;
 
-	if (i_sectors_delta || new_i_size) {
-		bch2_inode_pack(trans->c, &inode_p, &inode_u);
-
-		inode_p.inode.k.p.snapshot = iter->snapshot;
-
-		ret = bch2_trans_update(trans, &inode_iter,
-				  &inode_p.inode.k_i, 0);
-	}
-
+	ret =   bch2_trans_update(trans, iter, k, 0) ?:
+		bch2_inode_write(trans, &inode_iter, &inode_u) ?:
+		bch2_trans_commit(trans, disk_res, journal_seq,
+				BTREE_INSERT_NOCHECK_RW|
+				BTREE_INSERT_NOFAIL);
 	bch2_trans_iter_exit(trans, &inode_iter);
 
 	if (ret)
 		return ret;
 
-	next_pos = k->k.p;
-
-	ret =   bch2_trans_update(trans, iter, k, 0) ?:
-		bch2_trans_commit(trans, disk_res, journal_seq,
-				BTREE_INSERT_NOCHECK_RW|
-				BTREE_INSERT_NOFAIL);
-	BUG_ON(ret == -ENOSPC);
-	if (ret)
-		return ret;
-
-	bch2_btree_iter_set_pos(iter, next_pos);
-
 	if (i_sectors_delta_total)
 		*i_sectors_delta_total += i_sectors_delta;
+	bch2_btree_iter_set_pos(iter, next_pos);
+
 	return 0;
 }
 
