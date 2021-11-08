@@ -1803,6 +1803,9 @@ static ssize_t bch2_buffered_write(struct kiocb *iocb, struct iov_iter *iter)
 	ssize_t written = 0;
 	int ret = 0;
 
+	trace_printk("buffered write inum %llu offset %llu len %zu\n",
+		     inode->ei_inode.bi_inum, pos, iter->count);
+
 	bch2_pagecache_add_get(&inode->ei_pagecache_lock);
 
 	do {
@@ -2284,6 +2287,9 @@ ssize_t bch2_direct_write(struct kiocb *req, struct iov_iter *iter)
 	bool locked = true, extending;
 	ssize_t ret;
 
+	trace_printk("O_DIRECT write inum %llu offset %llu len %zu\n",
+		     inode->ei_inode.bi_inum, req->ki_pos, iter->count);
+
 	prefetch(&c->opts);
 	prefetch((void *) &c->opts + 64);
 	prefetch(&inode->ei_inode);
@@ -2592,6 +2598,11 @@ static int bch2_extend(struct user_namespace *mnt_userns,
 	struct address_space *mapping = inode->v.i_mapping;
 	int ret;
 
+	trace_printk("extend inum %llu old size %llu new size %llu\n",
+		     inode->ei_inode.bi_inum,
+		     inode->v.i_size,
+		     iattr->ia_size);
+
 	/*
 	 * sync appends:
 	 *
@@ -2670,6 +2681,11 @@ int bch2_truncate(struct user_namespace *mnt_userns,
 		ret = bch2_extend(mnt_userns, inode, &inode_u, iattr);
 		goto err;
 	}
+
+	trace_printk("truncate inum %llu old size %llu new size %llu\n",
+		     inode->ei_inode.bi_inum,
+		     inode->v.i_size,
+		     iattr->ia_size);
 
 	iattr->ia_valid &= ~ATTR_SIZE;
 
@@ -2778,6 +2794,10 @@ static long bchfs_fpunch(struct bch_inode_info *inode, loff_t offset, loff_t len
 	}
 	mutex_unlock(&inode->ei_update_lock);
 err:
+	trace_printk("fpunch inum %llu offset %llu len %llu truncated_last_page %u ret %i\n",
+		     inode->ei_inode.bi_inum, offset, len,
+		     truncated_last_page, ret);
+
 	return ret;
 }
 
@@ -2793,6 +2813,9 @@ static long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
 	loff_t shift, new_size;
 	u64 src_start;
 	int ret = 0;
+
+	trace_printk("fcollapse_finsert inum %llu offset %llu len %llu insert %u\n",
+		     inode->ei_inode.bi_inum, offset, len, insert);
 
 	if ((offset | len) & (block_bytes(c) - 1))
 		return -EINVAL;
@@ -3079,6 +3102,9 @@ static long bchfs_fallocate(struct bch_inode_info *inode, int mode,
 	u64 block_end	= round_up(end,		block_bytes(c));
 	bool truncated_last_page = false;
 	int ret, ret2 = 0;
+
+	trace_printk("fallocate inum %llu offset %llu len %llu mode %x\n",
+		     inode->ei_inode.bi_inum, offset, len, mode);
 
 	if (!(mode & FALLOC_FL_KEEP_SIZE) && end > inode->v.i_size) {
 		ret = inode_newsize_ok(&inode->v, end);
