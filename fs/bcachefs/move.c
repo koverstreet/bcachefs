@@ -160,7 +160,7 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 		struct extent_ptr_decoded p;
 		struct bpos next_pos;
 		bool did_work = false;
-		bool extending = false, should_check_enospc;
+		bool should_check_enospc;
 		s64 i_sectors_delta = 0, disk_sectors_delta = 0;
 
 		bch2_trans_begin(&trans);
@@ -226,7 +226,6 @@ static int bch2_migrate_index_update(struct bch_write_op *op)
 					       op->opts.data_replicas);
 
 		ret = bch2_sum_sector_overwrites(&trans, &iter, insert,
-						 &extending,
 						 &should_check_enospc,
 						 &i_sectors_delta,
 						 &disk_sectors_delta);
