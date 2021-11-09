@@ -877,6 +877,44 @@ static enum prep_encoded_ret {
 	return PREP_ENCODED_OK;
 }
 
+static void old_bio_copy_data_iter(struct bio *dst, struct bvec_iter *dst_iter,
+				   struct bio *src, struct bvec_iter *src_iter)
+{
+	struct bio_vec src_bv, dst_bv;
+	void *src_p, *dst_p;
+	unsigned bytes;
+
+	while (src_iter->bi_size && dst_iter->bi_size) {
+		src_bv = bio_iter_iovec(src, *src_iter);
+		dst_bv = bio_iter_iovec(dst, *dst_iter);
+
+		bytes = min(src_bv.bv_len, dst_bv.bv_len);
+
+		src_p = kmap_atomic(src_bv.bv_page);
+		dst_p = kmap_atomic(dst_bv.bv_page);
+
+		memcpy(dst_p + dst_bv.bv_offset,
+		       src_p + src_bv.bv_offset,
+		       bytes);
+
+		kunmap_atomic(dst_p);
+		kunmap_atomic(src_p);
+
+		flush_dcache_page(dst_bv.bv_page);
+
+		bio_advance_iter_single(src, src_iter, bytes);
+		bio_advance_iter_single(dst, dst_iter, bytes);
+	}
+}
+
+static void old_bio_copy_data(struct bio *dst, struct bio *src)
+{
+	struct bvec_iter src_iter = src->bi_iter;
+	struct bvec_iter dst_iter = dst->bi_iter;
+
+	old_bio_copy_data_iter(dst, &dst_iter, src, &src_iter);
+}
+
 static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 			     struct bio **_dst)
 {
@@ -907,7 +945,7 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 			dst = bch2_write_bio_alloc(c, wp, src,
 						   &page_alloc_failed,
 						   ec_buf);
-			bio_copy_data(dst, src);
+			old_bio_copy_data(dst, src);
 			bounce = true;
 		}
 		init_append_extent(op, wp, op->version, op->crc);
@@ -960,7 +998,7 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 
 			if (bounce) {
 				swap(dst->bi_iter.bi_size, dst_len);
-				bio_copy_data(dst, src);
+				old_bio_copy_data(dst, src);
 				swap(dst->bi_iter.bi_size, dst_len);
 			}
 
@@ -1839,7 +1877,7 @@ static void __bch2_read_endio(struct work_struct *work)
 
 		if (rbio->bounce) {
 			struct bvec_iter src_iter = src->bi_iter;
-			bio_copy_data_iter(dst, &dst_iter, src, &src_iter);
+			old_bio_copy_data_iter(dst, &dst_iter, src, &src_iter);
 		}
 	}
 
