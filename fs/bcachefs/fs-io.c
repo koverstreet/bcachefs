@@ -2298,6 +2298,14 @@ static int __bch2_truncate_page(struct bch_inode_info *inode,
 		s->s[i].state		= SECTOR_UNALLOCATED;
 	}
 
+	/*
+	 * Caller needs to know whether this page will be written out by
+	 * writeback - doing an i_size update if necessary - or whether it will
+	 * be responsible for the i_size update:
+	 */
+	ret = s->s[(min_t(u64, inode->v.i_size - (index << PAGE_SHIFT),
+			  PAGE_SIZE) - 1) >> 9].state >= SECTOR_DIRTY;
+
 	zero_user_segment(page, start_offset, end_offset);
 
 	/*
@@ -2306,8 +2314,7 @@ static int __bch2_truncate_page(struct bch_inode_info *inode,
 	 * XXX: because we aren't currently tracking whether the page has actual
 	 * data in it (vs. just 0s, or only partially written) this wrong. ick.
 	 */
-	ret = bch2_get_page_disk_reservation(c, inode, page, false);
-	BUG_ON(ret);
+	BUG_ON(bch2_get_page_disk_reservation(c, inode, page, false));
 
 	/*
 	 * This removes any writeable userspace mappings; we need to force
@@ -2316,7 +2323,6 @@ static int __bch2_truncate_page(struct bch_inode_info *inode,
 	 */
 	page_mkclean(page);
 	__set_page_dirty_nobuffers(page);
-	ret = 1;
 unlock:
 	unlock_page(page);
 	put_page(page);
