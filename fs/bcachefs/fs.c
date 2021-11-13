@@ -1122,17 +1122,25 @@ static const struct address_space_operations bch_address_space_operations = {
 	.error_remove_page = generic_error_remove_page,
 };
 
-#if 0
+/**
+ * experimental NFS code,
+ * please note that this code only accepts the primary subvolume,
+ * so snapshots won't be supported
+ * also, much functionality is not implemented
+ * so, for now, if NFS is required,
+ * keep it as basic as possible
+ **/
 static struct inode *bch2_nfs_get_inode(struct super_block *sb,
 		u64 ino, u32 generation)
 {
 	struct bch_fs *c = sb->s_fs_info;
 	struct inode *vinode;
+	subvol_inum subi = { .subvol = 1,  ino };
 
 	if (ino < BCACHEFS_ROOT_INO)
 		return ERR_PTR(-ESTALE);
 
-	vinode = bch2_vfs_inode_get(c, ino);
+	vinode = bch2_vfs_inode_get(c, subi);
 	if (IS_ERR(vinode))
 		return ERR_CAST(vinode);
 	if (generation && vinode->i_generation != generation) {
@@ -1156,13 +1164,15 @@ static struct dentry *bch2_fh_to_parent(struct super_block *sb, struct fid *fid,
 	return generic_fh_to_parent(sb, fid, fh_len, fh_type,
 				    bch2_nfs_get_inode);
 }
-#endif
 
 static const struct export_operations bch_export_ops = {
-	//.fh_to_dentry	= bch2_fh_to_dentry,
-	//.fh_to_parent	= bch2_fh_to_parent,
-	//.get_parent	= bch2_get_parent,
+	.fh_to_dentry	= bch2_fh_to_dentry,
+	.fh_to_parent	= bch2_fh_to_parent,
 };
+
+/*
+ * -- end of experimental NFS code --
+ * */
 
 static void bch2_vfs_inode_init(struct btree_trans *trans, subvol_inum inum,
 				struct bch_inode_info *inode,
