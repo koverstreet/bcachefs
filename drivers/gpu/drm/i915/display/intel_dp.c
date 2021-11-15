@@ -1916,6 +1916,9 @@ void intel_dp_sync_state(struct intel_encoder *encoder,
 {
 	struct intel_dp *intel_dp = enc_to_intel_dp(encoder);
 
+	if (!crtc_state)
+		return;
+
 	/*
 	 * Don't clobber DPCD if it's been already read out during output
 	 * setup (eDP) or detect.
@@ -2445,10 +2448,13 @@ intel_edp_init_dpcd(struct intel_dp *intel_dp)
 	 */
 	if (drm_dp_dpcd_read(&intel_dp->aux, DP_EDP_DPCD_REV,
 			     intel_dp->edp_dpcd, sizeof(intel_dp->edp_dpcd)) ==
-			     sizeof(intel_dp->edp_dpcd))
+			     sizeof(intel_dp->edp_dpcd)) {
 		drm_dbg_kms(&dev_priv->drm, "eDP DPCD: %*ph\n",
 			    (int)sizeof(intel_dp->edp_dpcd),
 			    intel_dp->edp_dpcd);
+
+		intel_dp->use_max_params = intel_dp->edp_dpcd[0] < DP_EDP_14;
+	}
 
 	/*
 	 * This has to be called after intel_dp->edp_dpcd is filled, PSR checks

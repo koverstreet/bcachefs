@@ -24,7 +24,10 @@
 struct btf * __weak btf__load_from_kernel_by_id(__u32 id)
 {
        struct btf *btf;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
        int err = btf__get_from_id(id, &btf);
+#pragma GCC diagnostic pop
 
        return err ? ERR_PTR(err) : btf;
 }
@@ -107,7 +110,7 @@ static int perf_env__fetch_btf(struct perf_env *env,
 	u32 data_size;
 	const void *data;
 
-	data = btf__get_raw_data(btf, &data_size);
+	data = btf__raw_data(btf, &data_size);
 
 	node = malloc(data_size + sizeof(struct btf_node));
 	if (!node)
