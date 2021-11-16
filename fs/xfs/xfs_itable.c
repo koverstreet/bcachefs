@@ -78,8 +78,8 @@ xfs_bulkstat_one_int(
 	buf->bs_projid_lo = dic->di_projid & 0xFFFF;
 	buf->bs_projid_hi = dic->di_projid >> 16;
 	buf->bs_ino = ino;
-	buf->bs_uid = dic->di_uid;
-	buf->bs_gid = dic->di_gid;
+	buf->bs_uid = xfs_kuid_to_uid(inode->i_uid);
+	buf->bs_gid = xfs_kgid_to_gid(inode->i_gid);
 	buf->bs_size = dic->di_size;
 
 	buf->bs_nlink = inode->i_nlink;
