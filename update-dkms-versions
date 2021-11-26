@@ -115,10 +115,16 @@ fi
 
 # Determine our series and mainline version from our own changelog.
 our_series=$(LC_ALL=C dpkg-parsechangelog -l"$DEBIAN/changelog" -SDistribution)
-if [ "$series" = "UNRELEASED" ]; then
-	our_series=$(LC_ALL=C dpkg-parsechangelog -l"$DEBIAN/changelog" -c1 -SDistribution)
+if [ "$our_series" = "UNRELEASED" ]; then
+	our_series=$(LC_ALL=C dpkg-parsechangelog -l"$DEBIAN/changelog" -o1 -c1 -SDistribution)
 fi
 our_mainline=$(LC_ALL=C dpkg-parsechangelog -l"$DEBIAN/changelog" -SVersion | sed -e 's/-.*//')
+our_package=$(LC_ALL=C dpkg-parsechangelog -l"$DEBIAN/changelog" -SSource)
+our_source=$(echo "$our_package" | sed -e 's/-restricted-modules//')
+case "$our_package" in
+linux-restricted-modules*)	our_type="lrm" ;;
+*)				our_type="main" ;;
+esac
 
 # Update rules are complex.  We update development series kernels to the
 # versions in development.  For stable series we update versions against
@@ -126,29 +132,42 @@ our_mainline=$(LC_ALL=C dpkg-parsechangelog -l"$DEBIAN/changelog" -SVersion | se
 # via the map/dkms-versions namespace.  Attempt to map via our series
 # and then our mainline-version.
 
-# Attempt to map via our series, if that works assume we are development.
-versions_path=$(cat_file -p "$git_base:map/dkms-versions/$our_series" 2>/dev/null)
+# Try and find a package specific dkms-versions fragment.  Try:
+#  handle+type
+#  series+type
+#  mainline+type
+#  series			- backwards compatibility
+#  mainline			- backwards compatibility
+for versions_path_tail in \
+	"$our_series:$our_source:$our_type" \
+	"$our_series:$our_type" \
+	"$our_mainline:$our_type" \
+	"$our_series" \
+	"$our_mainline"
+do
+	echo "II: trying $versions_path_tail ..."
+	versions_paths=$(echo $(cat_file -p "$git_base:map/dkms-versions/$versions_path_tail" 2>/dev/null))
+	[ -n "$versions_paths" ] && break
+done
 
-# If we do not yet have a mapping re-map using our mainline version.
-if [ -z "$versions_path" ]; then
-	versions_path=$(cat_file -p "$git_base:map/dkms-versions/$our_mainline")
-fi
-
-echo "git_base<$git_base> versions_path<$versions_path>"
-echo "II: grabbing dkms-versions from $sru_cycle $versions_path"
-
-cat_file -p "$git_base:$versions_path" >"debian/dkms-versions.new"
-rc="$?"
-if [ "$rc" -ne 0 ]; then
-	echo "$0: unable to download an updated dkms-versions file" 1>&2
+if [ -z "$versions_paths" ]; then
+	echo "$0: unable to identify dkms-versions mapping" 1>&2
 	exit 1
-
-elif [ "$rc" -eq 0 ]; then
-	mv "debian/dkms-versions.new" "debian/dkms-versions"
-
-else
-	rm -f "debian/dkms-versions.new"
 fi
+
+echo "git_base<$git_base> versions_paths<$versions_paths>"
+echo "II: grabbing dkms-versions from $sru_cycle $versions_paths"
+
+: ">debian/dkms-versions.new"
+for versions_path in $versions_paths
+do
+	cat_file -p "$git_base:$versions_path" >>"debian/dkms-versions.new"
+	if [ "$?" -ne 0 ]; then
+		echo "$0: unable to download an updated dkms-versions file" 1>&2
+		exit 1
+	fi
+done
+mv "debian/dkms-versions.new" "debian/dkms-versions"
 
 thing="debian/dkms-versions"
 if ! git diff --exit-code -- "$thing" >/dev/null; then
@@ -159,4 +178,4 @@ else
 	echo "$thing: no changes from kernel-versions"
 fi
 
-exit "$rc"
+exit 0
