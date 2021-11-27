@@ -291,6 +291,9 @@ struct btree_iter {
 	 * bch2_btree_iter_next_slot() can correctly advance pos.
 	 */
 	struct bkey		k;
+#ifdef CONFIG_BCACHEFS_DEBUG
+	unsigned long		ip_allocated;
+#endif
 };
 
 struct btree_key_cache {

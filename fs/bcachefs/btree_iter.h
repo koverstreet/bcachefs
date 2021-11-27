@@ -130,11 +130,13 @@ __trans_next_path_with_node(struct btree_trans *trans, struct btree *b,
 						 (_path)->idx + 1))
 
 struct btree_path * __must_check
-bch2_btree_path_make_mut(struct btree_trans *, struct btree_path *, bool);
+bch2_btree_path_make_mut(struct btree_trans *, struct btree_path *,
+			 bool, unsigned long);
 int __must_check bch2_btree_path_traverse(struct btree_trans *,
 					  struct btree_path *, unsigned);
 struct btree_path *bch2_path_get(struct btree_trans *, bool, enum btree_id,
-				 struct bpos, unsigned, unsigned, bool);
+				 struct bpos, unsigned, unsigned, bool,
+				 unsigned long);
 inline struct bkey_s_c bch2_btree_path_peek_slot(struct btree_path *, struct bkey *);
 
 #ifdef CONFIG_BCACHEFS_DEBUG
