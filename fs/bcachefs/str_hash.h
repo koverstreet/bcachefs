@@ -8,24 +8,25 @@
 #include "error.h"
 #include "inode.h"
 #include "siphash.h"
+#include "subvolume.h"
 #include "super.h"
 
 #include <linux/crc32c.h>
 #include <crypto/hash.h>
-#include <crypto/sha.h>
+#include <crypto/sha2.h>
 
 static inline enum bch_str_hash_type
 bch2_str_hash_opt_to_type(struct bch_fs *c, enum bch_str_hash_opts opt)
 {
 	switch (opt) {
 	case BCH_STR_HASH_OPT_crc32c:
-		return BCH_STR_HASH_CRC32C;
+		return BCH_STR_HASH_crc32c;
 	case BCH_STR_HASH_OPT_crc64:
-		return BCH_STR_HASH_CRC64;
+		return BCH_STR_HASH_crc64;
 	case BCH_STR_HASH_OPT_siphash:
 		return c->sb.features & (1ULL << BCH_FEATURE_new_siphash)
-			? BCH_STR_HASH_SIPHASH
-			: BCH_STR_HASH_SIPHASH_OLD;
+			? BCH_STR_HASH_siphash
+			: BCH_STR_HASH_siphash_old;
 	default:
 	     BUG();
 	}
@@ -50,7 +51,7 @@ bch2_hash_info_init(struct bch_fs *c, const struct bch_inode_unpacked *bi)
 		.siphash_key = { .k0 = bi->bi_hash_seed }
 	};
 
-	if (unlikely(info.type == BCH_STR_HASH_SIPHASH_OLD)) {
+	if (unlikely(info.type == BCH_STR_HASH_siphash_old)) {
 		SHASH_DESC_ON_STACK(desc, c->sha256);
 		u8 digest[SHA256_DIGEST_SIZE];
 
@@ -76,16 +77,16 @@ static inline void bch2_str_hash_init(struct bch_str_hash_ctx *ctx,
 				     const struct bch_hash_info *info)
 {
 	switch (info->type) {
-	case BCH_STR_HASH_CRC32C:
+	case BCH_STR_HASH_crc32c:
 		ctx->crc32c = crc32c(~0, &info->siphash_key.k0,
 				     sizeof(info->siphash_key.k0));
 		break;
-	case BCH_STR_HASH_CRC64:
+	case BCH_STR_HASH_crc64:
 		ctx->crc64 = crc64_be(~0, &info->siphash_key.k0,
 				      sizeof(info->siphash_key.k0));
 		break;
-	case BCH_STR_HASH_SIPHASH_OLD:
-	case BCH_STR_HASH_SIPHASH:
+	case BCH_STR_HASH_siphash_old:
+	case BCH_STR_HASH_siphash:
 		SipHash24_Init(&ctx->siphash, &info->siphash_key);
 		break;
 	default:
@@ -98,14 +99,14 @@ static inline void bch2_str_hash_update(struct bch_str_hash_ctx *ctx,
 				       const void *data, size_t len)
 {
 	switch (info->type) {
-	case BCH_STR_HASH_CRC32C:
+	case BCH_STR_HASH_crc32c:
 		ctx->crc32c = crc32c(ctx->crc32c, data, len);
 		break;
-	case BCH_STR_HASH_CRC64:
+	case BCH_STR_HASH_crc64:
 		ctx->crc64 = crc64_be(ctx->crc64, data, len);
 		break;
-	case BCH_STR_HASH_SIPHASH_OLD:
-	case BCH_STR_HASH_SIPHASH:
+	case BCH_STR_HASH_siphash_old:
+	case BCH_STR_HASH_siphash:
 		SipHash24_Update(&ctx->siphash, data, len);
 		break;
 	default:
@@ -117,12 +118,12 @@ static inline u64 bch2_str_hash_end(struct bch_str_hash_ctx *ctx,
 				   const struct bch_hash_info *info)
 {
 	switch (info->type) {
-	case BCH_STR_HASH_CRC32C:
+	case BCH_STR_HASH_crc32c:
 		return ctx->crc32c;
-	case BCH_STR_HASH_CRC64:
+	case BCH_STR_HASH_crc64:
 		return ctx->crc64 >> 1;
-	case BCH_STR_HASH_SIPHASH_OLD:
-	case BCH_STR_HASH_SIPHASH:
+	case BCH_STR_HASH_siphash_old:
+	case BCH_STR_HASH_siphash:
 		return SipHash24_End(&ctx->siphash) >> 1;
 	default:
 		BUG();
@@ -137,28 +138,40 @@ struct bch_hash_desc {
 	u64		(*hash_bkey)(const struct bch_hash_info *, struct bkey_s_c);
 	bool		(*cmp_key)(struct bkey_s_c, const void *);
 	bool		(*cmp_bkey)(struct bkey_s_c, struct bkey_s_c);
+	bool		(*is_visible)(subvol_inum inum, struct bkey_s_c);
 };
 
-static __always_inline struct btree_iter *
+static inline bool is_visible_key(struct bch_hash_desc desc, subvol_inum inum, struct bkey_s_c k)
+{
+	return k.k->type == desc.key_type &&
+		(!desc.is_visible || desc.is_visible(inum, k));
+}
+
+static __always_inline int
 bch2_hash_lookup(struct btree_trans *trans,
+		 struct btree_iter *iter,
 		 const struct bch_hash_desc desc,
 		 const struct bch_hash_info *info,
-		 u64 inode, const void *key,
+		 subvol_inum inum, const void *key,
 		 unsigned flags)
 {
-	struct btree_iter *iter;
 	struct bkey_s_c k;
+	u32 snapshot;
 	int ret;
 
-	for_each_btree_key(trans, iter, desc.btree_id,
-			   POS(inode, desc.hash_key(info, key)),
+	ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot);
+	if (ret)
+		return ret;
+
+	for_each_btree_key_norestart(trans, *iter, desc.btree_id,
+			   SPOS(inum.inum, desc.hash_key(info, key), snapshot),
 			   BTREE_ITER_SLOTS|flags, k, ret) {
-		if (iter->pos.inode != inode)
+		if (iter->pos.inode != inum.inum)
 			break;
 
-		if (k.k->type == desc.key_type) {
+		if (is_visible_key(desc, inum, k)) {
 			if (!desc.cmp_key(k, key))
-				return iter;
+				return 0;
 		} else if (k.k->type == KEY_TYPE_hash_whiteout) {
 			;
 		} else {
@@ -166,35 +179,38 @@ bch2_hash_lookup(struct btree_trans *trans,
 			break;
 		}
 	}
-	bch2_trans_iter_put(trans, iter);
+	bch2_trans_iter_exit(trans, iter);
 
-	return ERR_PTR(ret ?: -ENOENT);
+	return ret ?: -ENOENT;
 }
 
-static __always_inline struct btree_iter *
+static __always_inline int
 bch2_hash_hole(struct btree_trans *trans,
+	       struct btree_iter *iter,
 	       const struct bch_hash_desc desc,
 	       const struct bch_hash_info *info,
-	       u64 inode, const void *key)
+	       subvol_inum inum, const void *key)
 {
-	struct btree_iter *iter;
 	struct bkey_s_c k;
+	u32 snapshot;
 	int ret;
 
-	for_each_btree_key(trans, iter, desc.btree_id,
-			   POS(inode, desc.hash_key(info, key)),
+	ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot);
+	if (ret)
+		return ret;
+
+	for_each_btree_key_norestart(trans, *iter, desc.btree_id,
+			   SPOS(inum.inum, desc.hash_key(info, key), snapshot),
 			   BTREE_ITER_SLOTS|BTREE_ITER_INTENT, k, ret) {
-		if (iter->pos.inode != inode)
+		if (iter->pos.inode != inum.inum)
 			break;
 
-		if (k.k->type != desc.key_type)
-			return iter;
+		if (!is_visible_key(desc, inum, k))
+			return 0;
 	}
+	bch2_trans_iter_exit(trans, iter);
 
-	iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
-	bch2_trans_iter_put(trans, iter);
-
-	return ERR_PTR(ret ?: -ENOSPC);
+	return ret ?: -ENOSPC;
 }
 
 static __always_inline
@@ -203,28 +219,27 @@ int bch2_hash_needs_whiteout(struct btree_trans *trans,
 			     const struct bch_hash_info *info,
 			     struct btree_iter *start)
 {
-	struct btree_iter *iter;
+	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret;
 
-	iter = bch2_trans_copy_iter(trans, start);
+	bch2_trans_copy_iter(&iter, start);
 
-	bch2_btree_iter_next_slot(iter);
+	bch2_btree_iter_advance(&iter);
 
-	for_each_btree_key_continue(iter, BTREE_ITER_SLOTS, k, ret) {
+	for_each_btree_key_continue_norestart(iter, BTREE_ITER_SLOTS, k, ret) {
 		if (k.k->type != desc.key_type &&
 		    k.k->type != KEY_TYPE_hash_whiteout)
 			break;
 
 		if (k.k->type == desc.key_type &&
 		    desc.hash_bkey(info, k) <= start->pos.offset) {
-			iter->flags |= BTREE_ITER_KEEP_UNTIL_COMMIT;
 			ret = 1;
 			break;
 		}
 	}
 
-	bch2_trans_iter_put(trans, iter);
+	bch2_trans_iter_exit(trans, &iter);
 	return ret;
 }
 
@@ -232,20 +247,28 @@ static __always_inline
 int bch2_hash_set(struct btree_trans *trans,
 		  const struct bch_hash_desc desc,
 		  const struct bch_hash_info *info,
-		  u64 inode, struct bkey_i *insert, int flags)
+		  subvol_inum inum,
+		  struct bkey_i *insert, int flags)
 {
-	struct btree_iter *iter, *slot = NULL;
+	struct btree_iter iter, slot = { NULL };
 	struct bkey_s_c k;
 	bool found = false;
+	u32 snapshot;
 	int ret;
 
-	for_each_btree_key(trans, iter, desc.btree_id,
-			   POS(inode, desc.hash_bkey(info, bkey_i_to_s_c(insert))),
+	ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot);
+	if (ret)
+		return ret;
+
+	for_each_btree_key_norestart(trans, iter, desc.btree_id,
+			   SPOS(inum.inum,
+				desc.hash_bkey(info, bkey_i_to_s_c(insert)),
+				snapshot),
 			   BTREE_ITER_SLOTS|BTREE_ITER_INTENT, k, ret) {
-		if (iter->pos.inode != inode)
+		if (iter.pos.inode != inum.inum)
 			break;
 
-		if (k.k->type == desc.key_type) {
+		if (is_visible_key(desc, inum, k)) {
 			if (!desc.cmp_bkey(k, bkey_i_to_s_c(insert)))
 				goto found;
 
@@ -253,9 +276,9 @@ int bch2_hash_set(struct btree_trans *trans,
 			continue;
 		}
 
-		if (!slot &&
+		if (!slot.path &&
 		    !(flags & BCH_HASH_SET_MUST_REPLACE))
-			slot = bch2_trans_copy_iter(trans, iter);
+			bch2_trans_copy_iter(&slot, &iter);
 
 		if (k.k->type != KEY_TYPE_hash_whiteout)
 			goto not_found;
@@ -264,8 +287,8 @@ int bch2_hash_set(struct btree_trans *trans,
 	if (!ret)
 		ret = -ENOSPC;
 out:
-	bch2_trans_iter_put(trans, slot);
-	bch2_trans_iter_put(trans, iter);
+	bch2_trans_iter_exit(trans, &slot);
+	bch2_trans_iter_exit(trans, &iter);
 
 	return ret;
 found:
@@ -277,11 +300,11 @@ not_found:
 	} else if (found && (flags & BCH_HASH_SET_MUST_CREATE)) {
 		ret = -EEXIST;
 	} else {
-		if (!found && slot)
+		if (!found && slot.path)
 			swap(iter, slot);
 
-		insert->k.p = iter->pos;
-		ret = bch2_trans_update(trans, iter, insert, 0);
+		insert->k.p = iter.pos;
+		ret = bch2_trans_update(trans, &iter, insert, 0);
 	}
 
 	goto out;
@@ -291,7 +314,8 @@ static __always_inline
 int bch2_hash_delete_at(struct btree_trans *trans,
 			const struct bch_hash_desc desc,
 			const struct bch_hash_info *info,
-			struct btree_iter *iter)
+			struct btree_iter *iter,
+			unsigned update_flags)
 {
 	struct bkey_i *delete;
 	int ret;
@@ -309,25 +333,25 @@ int bch2_hash_delete_at(struct btree_trans *trans,
 	delete->k.p = iter->pos;
 	delete->k.type = ret ? KEY_TYPE_hash_whiteout : KEY_TYPE_deleted;
 
-	return bch2_trans_update(trans, iter, delete, 0);
+	return bch2_trans_update(trans, iter, delete, update_flags);
 }
 
 static __always_inline
 int bch2_hash_delete(struct btree_trans *trans,
 		     const struct bch_hash_desc desc,
 		     const struct bch_hash_info *info,
-		     u64 inode, const void *key)
+		     subvol_inum inum, const void *key)
 {
-	struct btree_iter *iter;
+	struct btree_iter iter;
 	int ret;
 
-	iter = bch2_hash_lookup(trans, desc, info, inode, key,
+	ret = bch2_hash_lookup(trans, &iter, desc, info, inum, key,
 				BTREE_ITER_INTENT);
-	if (IS_ERR(iter))
-		return PTR_ERR(iter);
+	if (ret)
+		return ret;
 
-	ret = bch2_hash_delete_at(trans, desc, info, iter);
-	bch2_trans_iter_put(trans, iter);
+	ret = bch2_hash_delete_at(trans, desc, info, &iter, 0);
+	bch2_trans_iter_exit(trans, &iter);
 	return ret;
 }
 

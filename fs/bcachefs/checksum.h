@@ -7,15 +7,15 @@
 #include "super-io.h"
 
 #include <linux/crc64.h>
-#include <crypto/chacha20.h>
+#include <crypto/chacha.h>
 
 static inline bool bch2_checksum_mergeable(unsigned type)
 {
 
 	switch (type) {
-	case BCH_CSUM_NONE:
-	case BCH_CSUM_CRC32C:
-	case BCH_CSUM_CRC64:
+	case BCH_CSUM_none:
+	case BCH_CSUM_crc32c:
+	case BCH_CSUM_crc64:
 		return true;
 	default:
 		return false;
@@ -78,11 +78,13 @@ static inline enum bch_csum_type bch2_csum_opt_to_type(enum bch_csum_opts type,
 {
 	switch (type) {
 	case BCH_CSUM_OPT_none:
-	     return BCH_CSUM_NONE;
+	     return BCH_CSUM_none;
 	case BCH_CSUM_OPT_crc32c:
-	     return data ? BCH_CSUM_CRC32C : BCH_CSUM_CRC32C_NONZERO;
+	     return data ? BCH_CSUM_crc32c : BCH_CSUM_crc32c_nonzero;
 	case BCH_CSUM_OPT_crc64:
-	     return data ? BCH_CSUM_CRC64 : BCH_CSUM_CRC64_NONZERO;
+	     return data ? BCH_CSUM_crc64 : BCH_CSUM_crc64_nonzero;
+	case BCH_CSUM_OPT_xxhash:
+	     return BCH_CSUM_xxhash;
 	default:
 	     BUG();
 	}
@@ -93,8 +95,8 @@ static inline enum bch_csum_type bch2_data_checksum_type(struct bch_fs *c,
 {
 	if (c->sb.encryption_type)
 		return c->opts.wide_macs
-			? BCH_CSUM_CHACHA20_POLY1305_128
-			: BCH_CSUM_CHACHA20_POLY1305_80;
+			? BCH_CSUM_chacha20_poly1305_128
+			: BCH_CSUM_chacha20_poly1305_80;
 
 	return bch2_csum_opt_to_type(opt, true);
 }
@@ -102,7 +104,7 @@ static inline enum bch_csum_type bch2_data_checksum_type(struct bch_fs *c,
 static inline enum bch_csum_type bch2_meta_checksum_type(struct bch_fs *c)
 {
 	if (c->sb.encryption_type)
-		return BCH_CSUM_CHACHA20_POLY1305_128;
+		return BCH_CSUM_chacha20_poly1305_128;
 
 	return bch2_csum_opt_to_type(c->opts.metadata_checksum, false);
 }
@@ -138,9 +140,9 @@ static inline bool bch2_crc_cmp(struct bch_csum l, struct bch_csum r)
 /* for skipping ahead and encrypting/decrypting at an offset: */
 static inline struct nonce nonce_add(struct nonce nonce, unsigned offset)
 {
-	EBUG_ON(offset & (CHACHA20_BLOCK_SIZE - 1));
+	EBUG_ON(offset & (CHACHA_BLOCK_SIZE - 1));
 
-	le32_add_cpu(&nonce.d[0], offset / CHACHA20_BLOCK_SIZE);
+	le32_add_cpu(&nonce.d[0], offset / CHACHA_BLOCK_SIZE);
 	return nonce;
 }
 

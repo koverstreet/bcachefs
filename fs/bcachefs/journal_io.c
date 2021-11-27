@@ -450,7 +450,7 @@ static int journal_entry_validate_dev_usage(struct bch_fs *c,
 	struct jset_entry_dev_usage *u =
 		container_of(entry, struct jset_entry_dev_usage, entry);
 	unsigned bytes = jset_u64s(le16_to_cpu(entry->u64s)) * sizeof(u64);
-	unsigned expected = sizeof(*u) + sizeof(u->d[0]) * 7; /* Current value of BCH_DATA_NR */
+	unsigned expected = sizeof(*u);
 	unsigned dev;
 	int ret = 0;
 
@@ -1259,14 +1259,15 @@ static void journal_write_done(struct closure *cl)
 	if (seq >= j->pin.front)
 		journal_seq_pin(j, seq)->devs = w->devs_written;
 
-	j->seq_ondisk		= seq;
-	if (err && (!j->err_seq || seq < j->err_seq))
-		j->err_seq	= seq;
+	if (!err) {
+		j->seq_ondisk		= seq;
 
-	if (!JSET_NO_FLUSH(w->data)) {
-		j->flushed_seq_ondisk = seq;
-		j->last_seq_ondisk = w->last_seq;
-	}
+		if (!JSET_NO_FLUSH(w->data)) {
+			j->flushed_seq_ondisk = seq;
+			j->last_seq_ondisk = w->last_seq;
+		}
+	} else if (!j->err_seq || seq < j->err_seq)
+		j->err_seq	= seq;
 
 	/*
 	 * Updating last_seq_ondisk may let bch2_journal_reclaim_work() discard
@@ -1515,7 +1516,7 @@ retry_alloc:
 
 	w->devs_written = bch2_bkey_devs(bkey_i_to_s_c(&w->key));
 
-	if (c->opts.nochanges)
+	if (test_bit(JOURNAL_NOCHANGES, &j->flags))
 		goto no_io;
 
 	for_each_rw_member(ca, c, i)

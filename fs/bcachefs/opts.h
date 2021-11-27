@@ -12,12 +12,21 @@ extern const char * const bch2_error_actions[];
 extern const char * const bch2_sb_features[];
 extern const char * const bch2_sb_compat[];
 extern const char * const bch2_btree_ids[];
+extern const char * const bch2_csum_types[];
 extern const char * const bch2_csum_opts[];
+extern const char * const bch2_compression_types[];
 extern const char * const bch2_compression_opts[];
 extern const char * const bch2_str_hash_types[];
+extern const char * const bch2_str_hash_opts[];
 extern const char * const bch2_data_types[];
 extern const char * const bch2_cache_replacement_policies[];
 extern const char * const bch2_member_states[];
+extern const char * const bch2_d_types[];
+
+static inline const char *bch2_d_type_str(unsigned d_type)
+{
+	return (d_type < BCH_DT_MAX ? bch2_d_types[d_type] : NULL) ?: "(bad d_type)";
+}
 
 /*
  * Mount options; we also store defaults in the superblock.
@@ -134,7 +143,7 @@ enum opt_type {
 	  NULL,		NULL)						\
 	x(str_hash,			u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
-	  OPT_STR(bch2_str_hash_types),					\
+	  OPT_STR(bch2_str_hash_opts),					\
 	  BCH_SB_STR_HASH_TYPE,		BCH_STR_HASH_OPT_siphash,	\
 	  NULL,		"Hash function for directory entries and xattrs")\
 	x(metadata_target,		u16,				\
@@ -170,8 +179,18 @@ enum opt_type {
 	x(shard_inode_numbers,		u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
 	  OPT_BOOL(),							\
-	  BCH_SB_SHARD_INUMS,		false,				\
+	  BCH_SB_SHARD_INUMS,		true,				\
 	  NULL,		"Shard new inode numbers by CPU id")		\
+	x(inodes_use_key_cache,	u8,					\
+	  OPT_FORMAT|OPT_MOUNT,						\
+	  OPT_BOOL(),							\
+	  BCH_SB_INODES_USE_KEY_CACHE,	true,				\
+	  NULL,		"Use the btree key cache for the inodes btree")	\
+	x(btree_node_mem_ptr_optimization, u8,				\
+	  OPT_MOUNT|OPT_RUNTIME,					\
+	  OPT_BOOL(),							\
+	  NO_SB_OPT,			true,				\
+	  NULL,		"Stash pointer to in memory btree node in btree ptr")\
 	x(gc_reserve_percent,		u8,				\
 	  OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,				\
 	  OPT_UINT(5, 21),						\

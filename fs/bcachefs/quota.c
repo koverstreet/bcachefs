@@ -3,6 +3,7 @@
 #include "btree_update.h"
 #include "inode.h"
 #include "quota.h"
+#include "subvolume.h"
 #include "super-io.h"
 
 static const char *bch2_sb_validate_quota(struct bch_sb *sb,
@@ -357,7 +358,7 @@ static int __bch2_quota_set(struct bch_fs *c, struct bkey_s_c k)
 static int bch2_quota_init_type(struct bch_fs *c, enum quota_types type)
 {
 	struct btree_trans trans;
-	struct btree_iter *iter;
+	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret = 0;
 
@@ -372,9 +373,10 @@ static int bch2_quota_init_type(struct bch_fs *c, enum quota_types type)
 		if (ret)
 			break;
 	}
-	bch2_trans_iter_put(&trans, iter);
+	bch2_trans_iter_exit(&trans, &iter);
 
-	return bch2_trans_exit(&trans) ?: ret;
+	bch2_trans_exit(&trans);
+	return ret;
 }
 
 void bch2_fs_quota_exit(struct bch_fs *c)
@@ -414,14 +416,55 @@ static void bch2_sb_quota_read(struct bch_fs *c)
 	}
 }
 
+static int bch2_fs_quota_read_inode(struct btree_trans *trans,
+				    struct btree_iter *iter)
+{
+	struct bch_fs *c = trans->c;
+	struct bch_inode_unpacked u;
+	struct bch_subvolume subvolume;
+	struct bkey_s_c k;
+	int ret;
+
+	k = bch2_btree_iter_peek(iter);
+	ret = bkey_err(k);
+	if (ret)
+		return ret;
+
+	if (!k.k)
+		return 1;
+
+	ret = bch2_snapshot_get_subvol(trans, k.k->p.snapshot, &subvolume);
+	if (ret)
+		return ret;
+
+	/*
+	 * We don't do quota accounting in snapshots:
+	 */
+	if (BCH_SUBVOLUME_SNAP(&subvolume))
+		goto advance;
+
+	if (!bkey_is_inode(k.k))
+		goto advance;
+
+	ret = bch2_inode_unpack(k, &u);
+	if (ret)
+		return ret;
+
+	bch2_quota_acct(c, bch_qid(&u), Q_SPC, u.bi_sectors,
+			KEY_TYPE_QUOTA_NOCHECK);
+	bch2_quota_acct(c, bch_qid(&u), Q_INO, 1,
+			KEY_TYPE_QUOTA_NOCHECK);
+advance:
+	bch2_btree_iter_set_pos(iter, POS(iter->pos.inode, iter->pos.offset + 1));
+	return 0;
+}
+
 int bch2_fs_quota_read(struct bch_fs *c)
 {
 	unsigned i, qtypes = enabled_qtypes(c);
 	struct bch_memquota_type *q;
 	struct btree_trans trans;
-	struct btree_iter *iter;
-	struct bch_inode_unpacked u;
-	struct bkey_s_c k;
+	struct btree_iter iter;
 	int ret;
 
 	mutex_lock(&c->sb_lock);
@@ -436,23 +479,18 @@ int bch2_fs_quota_read(struct bch_fs *c)
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	for_each_btree_key(&trans, iter, BTREE_ID_inodes, POS_MIN,
-			   BTREE_ITER_PREFETCH, k, ret) {
-		switch (k.k->type) {
-		case KEY_TYPE_inode:
-			ret = bch2_inode_unpack(bkey_s_c_to_inode(k), &u);
-			if (ret)
-				return ret;
+	bch2_trans_iter_init(&trans, &iter, BTREE_ID_inodes, POS_MIN,
+			     BTREE_ITER_INTENT|
+			     BTREE_ITER_PREFETCH|
+			     BTREE_ITER_ALL_SNAPSHOTS);
+	do {
+		ret = lockrestart_do(&trans,
+				     bch2_fs_quota_read_inode(&trans, &iter));
+	} while (!ret);
+	bch2_trans_iter_exit(&trans, &iter);
 
-			bch2_quota_acct(c, bch_qid(&u), Q_SPC, u.bi_sectors,
-					KEY_TYPE_QUOTA_NOCHECK);
-			bch2_quota_acct(c, bch_qid(&u), Q_INO, 1,
-					KEY_TYPE_QUOTA_NOCHECK);
-		}
-	}
-	bch2_trans_iter_put(&trans, iter);
-
-	return bch2_trans_exit(&trans) ?: ret;
+	bch2_trans_exit(&trans);
+	return ret < 0 ? ret : 0;
 }
 
 /* Enable/disable/delete quotas for an entire filesystem: */
@@ -717,13 +755,13 @@ static int bch2_set_quota_trans(struct btree_trans *trans,
 				struct bkey_i_quota *new_quota,
 				struct qc_dqblk *qdq)
 {
-	struct btree_iter *iter;
+	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret;
 
-	iter = bch2_trans_get_iter(trans, BTREE_ID_quotas, new_quota->k.p,
-				   BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
-	k = bch2_btree_iter_peek_slot(iter);
+	bch2_trans_iter_init(trans, &iter, BTREE_ID_quotas, new_quota->k.p,
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
+	k = bch2_btree_iter_peek_slot(&iter);
 
 	ret = bkey_err(k);
 	if (unlikely(ret))
@@ -742,8 +780,8 @@ static int bch2_set_quota_trans(struct btree_trans *trans,
 	if (qdq->d_fieldmask & QC_INO_HARD)
 		new_quota->v.c[Q_INO].hardlimit = cpu_to_le64(qdq->d_ino_hardlimit);
 
-	ret = bch2_trans_update(trans, iter, &new_quota->k_i, 0);
-	bch2_trans_iter_put(trans, iter);
+	ret = bch2_trans_update(trans, &iter, &new_quota->k_i, 0);
+	bch2_trans_iter_exit(trans, &iter);
 	return ret;
 }
 
@@ -760,7 +798,7 @@ static int bch2_set_quota(struct super_block *sb, struct kqid qid,
 	bkey_quota_init(&new_quota.k_i);
 	new_quota.k.p = POS(qid.type, from_kqid(&init_user_ns, qid));
 
-	ret = bch2_trans_do(c, NULL, NULL, BTREE_INSERT_NOUNLOCK,
+	ret = bch2_trans_do(c, NULL, NULL, 0,
 			    bch2_set_quota_trans(&trans, &new_quota, qdq)) ?:
 		__bch2_quota_set(c, bkey_i_to_s_c(&new_quota.k_i));
 

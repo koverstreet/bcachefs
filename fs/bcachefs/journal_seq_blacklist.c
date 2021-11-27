@@ -250,19 +250,28 @@ void bch2_blacklist_entries_gc(struct work_struct *work)
 	bch2_trans_init(&trans, c, 0, 0);
 
 	for (i = 0; i < BTREE_ID_NR; i++) {
-		struct btree_iter *iter;
+		struct btree_iter iter;
 		struct btree *b;
 
-		for_each_btree_node(&trans, iter, i, POS_MIN,
-				    BTREE_ITER_PREFETCH, b)
-			if (test_bit(BCH_FS_STOPPING, &c->flags)) {
-				bch2_trans_exit(&trans);
-				return;
-			}
-		bch2_trans_iter_free(&trans, iter);
+		bch2_trans_node_iter_init(&trans, &iter, i, POS_MIN,
+					  0, 0, BTREE_ITER_PREFETCH);
+retry:
+		bch2_trans_begin(&trans);
+
+		b = bch2_btree_iter_peek_node(&iter);
+
+		while (!(ret = PTR_ERR_OR_ZERO(b)) &&
+		       b &&
+		       !test_bit(BCH_FS_STOPPING, &c->flags))
+			b = bch2_btree_iter_next_node(&iter);
+
+		if (ret == -EINTR)
+			goto retry;
+
+		bch2_trans_iter_exit(&trans, &iter);
 	}
 
-	ret = bch2_trans_exit(&trans);
+	bch2_trans_exit(&trans);
 	if (ret)
 		return;
 

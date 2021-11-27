@@ -78,12 +78,12 @@ static inline size_t extent_entry_u64s(const union bch_extent_entry *entry)
 
 static inline bool extent_entry_is_ptr(const union bch_extent_entry *e)
 {
-	switch (extent_entry_type(e)) {
-	case BCH_EXTENT_ENTRY_ptr:
-		return true;
-	default:
-		return false;
-	}
+	return extent_entry_type(e) == BCH_EXTENT_ENTRY_ptr;
+}
+
+static inline bool extent_entry_is_stripe_ptr(const union bch_extent_entry *e)
+{
+	return extent_entry_type(e) == BCH_EXTENT_ENTRY_stripe_ptr;
 }
 
 static inline bool extent_entry_is_crc(const union bch_extent_entry *e)
@@ -394,8 +394,7 @@ void bch2_btree_ptr_v2_compat(enum btree_id, unsigned, unsigned,
 
 const char *bch2_extent_invalid(const struct bch_fs *, struct bkey_s_c);
 void bch2_extent_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
-enum merge_result bch2_extent_merge(struct bch_fs *,
-				    struct bkey_s, struct bkey_s);
+bool bch2_extent_merge(struct bch_fs *, struct bkey_s, struct bkey_s_c);
 
 #define bch2_bkey_ops_extent (struct bkey_ops) {		\
 	.key_invalid	= bch2_extent_invalid,			\
@@ -409,8 +408,7 @@ enum merge_result bch2_extent_merge(struct bch_fs *,
 
 const char *bch2_reservation_invalid(const struct bch_fs *, struct bkey_s_c);
 void bch2_reservation_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
-enum merge_result bch2_reservation_merge(struct bch_fs *,
-					 struct bkey_s, struct bkey_s);
+bool bch2_reservation_merge(struct bch_fs *, struct bkey_s, struct bkey_s_c);
 
 #define bch2_bkey_ops_reservation (struct bkey_ops) {		\
 	.key_invalid	= bch2_reservation_invalid,		\
@@ -427,6 +425,17 @@ void bch2_extent_crc_append(struct bkey_i *,
 			    struct bch_extent_crc_unpacked);
 
 /* Generic code for keys with pointers: */
+
+static inline bool bkey_is_btree_ptr(const struct bkey *k)
+{
+	switch (k->type) {
+	case KEY_TYPE_btree_ptr:
+	case KEY_TYPE_btree_ptr_v2:
+		return true;
+	default:
+		return false;
+	}
+}
 
 static inline bool bkey_extent_is_direct_data(const struct bkey *k)
 {
@@ -558,7 +567,6 @@ unsigned bch2_bkey_nr_ptrs_allocated(struct bkey_s_c);
 unsigned bch2_bkey_nr_ptrs_fully_allocated(struct bkey_s_c);
 bool bch2_bkey_is_incompressible(struct bkey_s_c);
 unsigned bch2_bkey_sectors_compressed(struct bkey_s_c);
-bool bch2_check_range_allocated(struct bch_fs *, struct bpos, u64, unsigned, bool);
 
 unsigned bch2_bkey_replicas(struct bch_fs *, struct bkey_s_c);
 unsigned bch2_bkey_durability(struct bch_fs *, struct bkey_s_c);
@@ -570,6 +578,8 @@ void bch2_bkey_extent_entry_drop(struct bkey_i *, union bch_extent_entry *);
 void bch2_bkey_append_ptr(struct bkey_i *, struct bch_extent_ptr);
 void bch2_extent_ptr_decoded_append(struct bkey_i *,
 				    struct extent_ptr_decoded *);
+union bch_extent_entry *__bch2_bkey_drop_ptr(struct bkey_s,
+					     struct bch_extent_ptr *);
 union bch_extent_entry *bch2_bkey_drop_ptr(struct bkey_s,
 					   struct bch_extent_ptr *);
 

@@ -7,6 +7,7 @@
 #include "inode.h"
 #include "io.h"
 #include "reflink.h"
+#include "subvolume.h"
 
 #include <linux/sched/signal.h>
 
@@ -31,6 +32,10 @@ const char *bch2_reflink_p_invalid(const struct bch_fs *c, struct bkey_s_c k)
 	if (bkey_val_bytes(p.k) != sizeof(*p.v))
 		return "incorrect value size";
 
+	if (c->sb.version >= bcachefs_metadata_version_reflink_p_fix &&
+	    le64_to_cpu(p.v->idx) < le32_to_cpu(p.v->front_pad))
+		return "idx < front_pad";
+
 	return NULL;
 }
 
@@ -39,27 +44,28 @@ void bch2_reflink_p_to_text(struct printbuf *out, struct bch_fs *c,
 {
 	struct bkey_s_c_reflink_p p = bkey_s_c_to_reflink_p(k);
 
-	pr_buf(out, "idx %llu", le64_to_cpu(p.v->idx));
+	pr_buf(out, "idx %llu front_pad %u back_pad %u",
+	       le64_to_cpu(p.v->idx),
+	       le32_to_cpu(p.v->front_pad),
+	       le32_to_cpu(p.v->back_pad));
 }
 
-enum merge_result bch2_reflink_p_merge(struct bch_fs *c,
-				       struct bkey_s _l, struct bkey_s _r)
+bool bch2_reflink_p_merge(struct bch_fs *c, struct bkey_s _l, struct bkey_s_c _r)
 {
 	struct bkey_s_reflink_p l = bkey_s_to_reflink_p(_l);
-	struct bkey_s_reflink_p r = bkey_s_to_reflink_p(_r);
+	struct bkey_s_c_reflink_p r = bkey_s_c_to_reflink_p(_r);
+
+	/*
+	 * Disabled for now, the triggers code needs to be reworked for merging
+	 * of reflink pointers to work:
+	 */
+	return false;
 
 	if (le64_to_cpu(l.v->idx) + l.k->size != le64_to_cpu(r.v->idx))
-		return BCH_MERGE_NOMERGE;
-
-	if ((u64) l.k->size + r.k->size > KEY_SIZE_MAX) {
-		bch2_key_resize(l.k, KEY_SIZE_MAX);
-		bch2_cut_front_s(l.k->p, _r);
-		return BCH_MERGE_PARTIAL;
-	}
+		return false;
 
 	bch2_key_resize(l.k, l.k->size + r.k->size);
-
-	return BCH_MERGE_MERGE;
+	return true;
 }
 
 /* indirect extents */
@@ -82,6 +88,14 @@ void bch2_reflink_v_to_text(struct printbuf *out, struct bch_fs *c,
 	pr_buf(out, "refcount: %llu ", le64_to_cpu(r.v->refcount));
 
 	bch2_bkey_ptrs_to_text(out, c, k);
+}
+
+bool bch2_reflink_v_merge(struct bch_fs *c, struct bkey_s _l, struct bkey_s_c _r)
+{
+	struct bkey_s_reflink_v   l = bkey_s_to_reflink_v(_l);
+	struct bkey_s_c_reflink_v r = bkey_s_c_to_reflink_v(_r);
+
+	return l.v->refcount == r.v->refcount && bch2_extent_merge(c, _l, _r);
 }
 
 /* indirect inline data */
@@ -110,7 +124,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 				     struct bkey_i *orig)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter *reflink_iter;
+	struct btree_iter reflink_iter = { NULL };
 	struct bkey_s_c k;
 	struct bkey_i *r_v;
 	struct bkey_i_reflink_p *r_p;
@@ -120,11 +134,11 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	if (orig->k.type == KEY_TYPE_inline_data)
 		bch2_check_set_feature(c, BCH_FEATURE_reflink_inline_data);
 
-	for_each_btree_key(trans, reflink_iter, BTREE_ID_reflink,
+	for_each_btree_key_norestart(trans, reflink_iter, BTREE_ID_reflink,
 			   POS(0, c->reflink_hint),
 			   BTREE_ITER_INTENT|BTREE_ITER_SLOTS, k, ret) {
-		if (reflink_iter->pos.inode) {
-			bch2_btree_iter_set_pos(reflink_iter, POS_MIN);
+		if (reflink_iter.pos.inode) {
+			bch2_btree_iter_set_pos(&reflink_iter, POS_MIN);
 			continue;
 		}
 
@@ -136,16 +150,16 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 		goto err;
 
 	/* rewind iter to start of hole, if necessary: */
-	bch2_btree_iter_set_pos(reflink_iter, bkey_start_pos(k.k));
+	bch2_btree_iter_set_pos_to_extent_start(&reflink_iter);
 
-	r_v = bch2_trans_kmalloc(trans, sizeof(__le64) + bkey_val_bytes(&orig->k));
+	r_v = bch2_trans_kmalloc(trans, sizeof(__le64) + bkey_bytes(&orig->k));
 	ret = PTR_ERR_OR_ZERO(r_v);
 	if (ret)
 		goto err;
 
 	bkey_init(&r_v->k);
 	r_v->k.type	= bkey_type_to_indirect(&orig->k);
-	r_v->k.p	= reflink_iter->pos;
+	r_v->k.p	= reflink_iter.pos;
 	bch2_key_resize(&r_v->k, orig->k.size);
 	r_v->k.version	= orig->k.version;
 
@@ -155,26 +169,25 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	*refcount	= 0;
 	memcpy(refcount + 1, &orig->v, bkey_val_bytes(&orig->k));
 
-	ret = bch2_trans_update(trans, reflink_iter, r_v, 0);
+	ret = bch2_trans_update(trans, &reflink_iter, r_v, 0);
 	if (ret)
 		goto err;
 
-	r_p = bch2_trans_kmalloc(trans, sizeof(*r_p));
-	if (IS_ERR(r_p)) {
-		ret = PTR_ERR(r_p);
-		goto err;
-	}
-
+	/*
+	 * orig is in a bkey_buf which statically allocates 5 64s for the val,
+	 * so we know it will be big enough:
+	 */
 	orig->k.type = KEY_TYPE_reflink_p;
 	r_p = bkey_i_to_reflink_p(orig);
 	set_bkey_val_bytes(&r_p->k, sizeof(r_p->v));
+	memset(&r_p->v, 0, sizeof(r_p->v));
+
 	r_p->v.idx = cpu_to_le64(bkey_start_offset(&r_v->k));
 
 	ret = bch2_trans_update(trans, extent_iter, &r_p->k_i, 0);
 err:
-	if (!IS_ERR(reflink_iter))
-		c->reflink_hint = reflink_iter->pos.offset;
-	bch2_trans_iter_put(trans, reflink_iter);
+	c->reflink_hint = reflink_iter.pos.offset;
+	bch2_trans_iter_exit(trans, &reflink_iter);
 
 	return ret;
 }
@@ -184,7 +197,7 @@ static struct bkey_s_c get_next_src(struct btree_iter *iter, struct bpos end)
 	struct bkey_s_c k;
 	int ret;
 
-	for_each_btree_key_continue(iter, 0, k, ret) {
+	for_each_btree_key_continue_norestart(*iter, 0, k, ret) {
 		if (bkey_cmp(iter->pos, end) >= 0)
 			break;
 
@@ -192,22 +205,27 @@ static struct bkey_s_c get_next_src(struct btree_iter *iter, struct bpos end)
 			return k;
 	}
 
-	bch2_btree_iter_set_pos(iter, end);
-	return bkey_s_c_null;
+	if (bkey_cmp(iter->pos, end) >= 0)
+		bch2_btree_iter_set_pos(iter, end);
+	return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
 }
 
 s64 bch2_remap_range(struct bch_fs *c,
-		     struct bpos dst_start, struct bpos src_start,
-		     u64 remap_sectors, u64 *journal_seq,
+		     subvol_inum dst_inum, u64 dst_offset,
+		     subvol_inum src_inum, u64 src_offset,
+		     u64 remap_sectors,
 		     u64 new_i_size, s64 *i_sectors_delta)
 {
 	struct btree_trans trans;
-	struct btree_iter *dst_iter, *src_iter;
+	struct btree_iter dst_iter, src_iter;
 	struct bkey_s_c src_k;
 	struct bkey_buf new_dst, new_src;
+	struct bpos dst_start = POS(dst_inum.inum, dst_offset);
+	struct bpos src_start = POS(src_inum.inum, src_offset);
 	struct bpos dst_end = dst_start, src_end = src_start;
 	struct bpos src_want;
 	u64 dst_done;
+	u32 dst_snapshot, src_snapshot;
 	int ret = 0, ret2 = 0;
 
 	if (!percpu_ref_tryget(&c->writes))
@@ -222,13 +240,13 @@ s64 bch2_remap_range(struct bch_fs *c,
 	bch2_bkey_buf_init(&new_src);
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 4096);
 
-	src_iter = bch2_trans_get_iter(&trans, BTREE_ID_extents, src_start,
-				       BTREE_ITER_INTENT);
-	dst_iter = bch2_trans_get_iter(&trans, BTREE_ID_extents, dst_start,
-				       BTREE_ITER_INTENT);
+	bch2_trans_iter_init(&trans, &src_iter, BTREE_ID_extents, src_start,
+			     BTREE_ITER_INTENT);
+	bch2_trans_iter_init(&trans, &dst_iter, BTREE_ID_extents, dst_start,
+			     BTREE_ITER_INTENT);
 
 	while ((ret == 0 || ret == -EINTR) &&
-	       bkey_cmp(dst_iter->pos, dst_end) < 0) {
+	       bkey_cmp(dst_iter.pos, dst_end) < 0) {
 		struct disk_reservation disk_res = { 0 };
 
 		bch2_trans_begin(&trans);
@@ -238,31 +256,45 @@ s64 bch2_remap_range(struct bch_fs *c,
 			break;
 		}
 
-		dst_done = dst_iter->pos.offset - dst_start.offset;
-		src_want = POS(src_start.inode, src_start.offset + dst_done);
-		bch2_btree_iter_set_pos(src_iter, src_want);
+		ret = bch2_subvolume_get_snapshot(&trans, src_inum.subvol,
+						  &src_snapshot);
+		if (ret)
+			continue;
 
-		src_k = get_next_src(src_iter, src_end);
+		bch2_btree_iter_set_snapshot(&src_iter, src_snapshot);
+
+		ret = bch2_subvolume_get_snapshot(&trans, dst_inum.subvol,
+						  &dst_snapshot);
+		if (ret)
+			continue;
+
+		bch2_btree_iter_set_snapshot(&dst_iter, dst_snapshot);
+
+		dst_done = dst_iter.pos.offset - dst_start.offset;
+		src_want = POS(src_start.inode, src_start.offset + dst_done);
+		bch2_btree_iter_set_pos(&src_iter, src_want);
+
+		src_k = get_next_src(&src_iter, src_end);
 		ret = bkey_err(src_k);
 		if (ret)
 			continue;
 
-		if (bkey_cmp(src_want, src_iter->pos) < 0) {
-			ret = bch2_fpunch_at(&trans, dst_iter,
-					bpos_min(dst_end,
-						 POS(dst_iter->pos.inode, dst_iter->pos.offset +
-						     src_iter->pos.offset - src_want.offset)),
-						 journal_seq, i_sectors_delta);
+		if (bkey_cmp(src_want, src_iter.pos) < 0) {
+			ret = bch2_fpunch_at(&trans, &dst_iter, dst_inum,
+					min(dst_end.offset,
+					    dst_iter.pos.offset +
+					    src_iter.pos.offset - src_want.offset),
+					i_sectors_delta);
 			continue;
 		}
 
 		if (src_k.k->type != KEY_TYPE_reflink_p) {
+			bch2_btree_iter_set_pos_to_extent_start(&src_iter);
+
 			bch2_bkey_buf_reassemble(&new_src, c, src_k);
 			src_k = bkey_i_to_s_c(new_src.k);
 
-			bch2_btree_iter_set_pos(src_iter, bkey_start_pos(src_k.k));
-
-			ret = bch2_make_extent_indirect(&trans, src_iter,
+			ret = bch2_make_extent_indirect(&trans, &src_iter,
 						new_src.k);
 			if (ret)
 				continue;
@@ -285,46 +317,47 @@ s64 bch2_remap_range(struct bch_fs *c,
 			BUG();
 		}
 
-		new_dst.k->k.p = dst_iter->pos;
+		new_dst.k->k.p = dst_iter.pos;
 		bch2_key_resize(&new_dst.k->k,
 				min(src_k.k->p.offset - src_want.offset,
-				    dst_end.offset - dst_iter->pos.offset));
-		ret = bch2_extent_update(&trans, dst_iter, new_dst.k,
-					 &disk_res, journal_seq,
+				    dst_end.offset - dst_iter.pos.offset));
+
+		ret = bch2_extent_update(&trans, dst_inum, &dst_iter,
+					 new_dst.k, &disk_res, NULL,
 					 new_i_size, i_sectors_delta,
 					 true);
 		bch2_disk_reservation_put(c, &disk_res);
 	}
-	bch2_trans_iter_put(&trans, dst_iter);
-	bch2_trans_iter_put(&trans, src_iter);
+	bch2_trans_iter_exit(&trans, &dst_iter);
+	bch2_trans_iter_exit(&trans, &src_iter);
 
-	BUG_ON(!ret && bkey_cmp(dst_iter->pos, dst_end));
-	BUG_ON(bkey_cmp(dst_iter->pos, dst_end) > 0);
+	BUG_ON(!ret && bkey_cmp(dst_iter.pos, dst_end));
+	BUG_ON(bkey_cmp(dst_iter.pos, dst_end) > 0);
 
-	dst_done = dst_iter->pos.offset - dst_start.offset;
-	new_i_size = min(dst_iter->pos.offset << 9, new_i_size);
-
-	bch2_trans_begin(&trans);
+	dst_done = dst_iter.pos.offset - dst_start.offset;
+	new_i_size = min(dst_iter.pos.offset << 9, new_i_size);
 
 	do {
 		struct bch_inode_unpacked inode_u;
-		struct btree_iter *inode_iter;
+		struct btree_iter inode_iter = { NULL };
 
-		inode_iter = bch2_inode_peek(&trans, &inode_u,
-				dst_start.inode, BTREE_ITER_INTENT);
-		ret2 = PTR_ERR_OR_ZERO(inode_iter);
+		bch2_trans_begin(&trans);
+
+		ret2 = bch2_inode_peek(&trans, &inode_iter, &inode_u,
+				       dst_inum, BTREE_ITER_INTENT);
 
 		if (!ret2 &&
 		    inode_u.bi_size < new_i_size) {
 			inode_u.bi_size = new_i_size;
-			ret2  = bch2_inode_write(&trans, inode_iter, &inode_u) ?:
-				bch2_trans_commit(&trans, NULL, journal_seq, 0);
+			ret2  = bch2_inode_write(&trans, &inode_iter, &inode_u) ?:
+				bch2_trans_commit(&trans, NULL, NULL,
+						  BTREE_INSERT_NOFAIL);
 		}
 
-		bch2_trans_iter_put(&trans, inode_iter);
+		bch2_trans_iter_exit(&trans, &inode_iter);
 	} while (ret2 == -EINTR);
 
-	ret = bch2_trans_exit(&trans) ?: ret;
+	bch2_trans_exit(&trans);
 	bch2_bkey_buf_exit(&new_src, c);
 	bch2_bkey_buf_exit(&new_dst, c);
 

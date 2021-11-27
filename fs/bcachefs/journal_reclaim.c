@@ -11,7 +11,6 @@
 
 #include <linux/kthread.h>
 #include <linux/sched/mm.h>
-#include <linux/sched/task.h>
 #include <trace/events/bcachefs.h>
 
 /* Free space calculations: */
@@ -35,8 +34,10 @@ unsigned bch2_journal_dev_buckets_available(struct journal *j,
 					    struct journal_device *ja,
 					    enum journal_space_from from)
 {
-	unsigned available = (journal_space_from(ja, from) -
-			      ja->cur_idx - 1 + ja->nr) % ja->nr;
+	unsigned available = !test_bit(JOURNAL_NOCHANGES, &j->flags)
+		? ((journal_space_from(ja, from) -
+		    ja->cur_idx - 1 + ja->nr) % ja->nr)
+		: ja->nr;
 
 	/*
 	 * Don't use the last bucket unless writing the new last_seq
@@ -645,6 +646,9 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct)
 		if (fifo_free(&j->pin) <= 32)
 			min_nr = 1;
 
+		if (atomic_read(&c->btree_cache.dirty) * 2 > c->btree_cache.used)
+			min_nr = 1;
+
 		trace_journal_reclaim_start(c,
 				min_nr,
 				j->prereserved.reserved,
@@ -654,7 +658,7 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct)
 				atomic_long_read(&c->btree_key_cache.nr_dirty),
 				atomic_long_read(&c->btree_key_cache.nr_keys));
 
-		min_key_cache = min(bch2_nr_btree_keys_need_flush(c), 128UL);
+		min_key_cache = min(bch2_nr_btree_keys_need_flush(c), (size_t) 128);
 
 		nr_flushed = journal_flush_pins(j, seq_to_flush,
 						min_nr, min_key_cache);

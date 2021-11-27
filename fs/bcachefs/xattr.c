@@ -118,26 +118,28 @@ void bch2_xattr_to_text(struct printbuf *out, struct bch_fs *c,
 		      le16_to_cpu(xattr.v->x_val_len));
 }
 
-int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *inode,
-		   const char *name, void *buffer, size_t size, int type)
+static int bch2_xattr_get_trans(struct btree_trans *trans, struct bch_inode_info *inode,
+				const char *name, void *buffer, size_t size, int type)
 {
-	struct bch_hash_info hash = bch2_hash_info_init(c, &inode->ei_inode);
-	struct btree_trans trans;
-	struct btree_iter *iter;
+	struct bch_hash_info hash = bch2_hash_info_init(trans->c, &inode->ei_inode);
+	struct btree_iter iter;
 	struct bkey_s_c_xattr xattr;
+	struct bkey_s_c k;
 	int ret;
 
-	bch2_trans_init(&trans, c, 0, 0);
-
-	iter = bch2_hash_lookup(&trans, bch2_xattr_hash_desc, &hash,
-				inode->v.i_ino,
-				&X_SEARCH(type, name, strlen(name)),
-				0);
-	ret = PTR_ERR_OR_ZERO(iter);
+	ret = bch2_hash_lookup(trans, &iter, bch2_xattr_hash_desc, &hash,
+			       inode_inum(inode),
+			       &X_SEARCH(type, name, strlen(name)),
+			       0);
 	if (ret)
-		goto err;
+		goto err1;
 
-	xattr = bkey_s_c_to_xattr(bch2_btree_iter_peek_slot(iter));
+	k = bch2_btree_iter_peek_slot(&iter);
+	ret = bkey_err(k);
+	if (ret)
+		goto err2;
+
+	xattr = bkey_s_c_to_xattr(k);
 	ret = le16_to_cpu(xattr.v->x_val_len);
 	if (buffer) {
 		if (ret > size)
@@ -145,20 +147,41 @@ int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *inode,
 		else
 			memcpy(buffer, xattr_val(xattr.v), ret);
 	}
-	bch2_trans_iter_put(&trans, iter);
-err:
-	bch2_trans_exit(&trans);
-
-	BUG_ON(ret == -EINTR);
+err2:
+	bch2_trans_iter_exit(trans, &iter);
+err1:
 	return ret == -ENOENT ? -ENODATA : ret;
 }
 
-int bch2_xattr_set(struct btree_trans *trans, u64 inum,
+int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *inode,
+		   const char *name, void *buffer, size_t size, int type)
+{
+	return bch2_trans_do(c, NULL, NULL, 0,
+		bch2_xattr_get_trans(&trans, inode, name, buffer, size, type));
+}
+
+int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 		   const struct bch_hash_info *hash_info,
 		   const char *name, const void *value, size_t size,
 		   int type, int flags)
 {
+	struct btree_iter inode_iter = { NULL };
+	struct bch_inode_unpacked inode_u;
 	int ret;
+
+	/*
+	 * We need to do an inode update so that bi_journal_sync gets updated
+	 * and fsync works:
+	 *
+	 * Perhaps we should be updating bi_mtime too?
+	 */
+
+	ret   = bch2_inode_peek(trans, &inode_iter, &inode_u, inum, BTREE_ITER_INTENT) ?:
+		bch2_inode_write(trans, &inode_iter, &inode_u);
+	bch2_trans_iter_exit(trans, &inode_iter);
+
+	if (ret)
+		return ret;
 
 	if (value) {
 		struct bkey_i_xattr *xattr;
@@ -272,16 +295,24 @@ ssize_t bch2_xattr_list(struct dentry *dentry, char *buffer, size_t buffer_size)
 	struct bch_fs *c = dentry->d_sb->s_fs_info;
 	struct bch_inode_info *inode = to_bch_ei(dentry->d_inode);
 	struct btree_trans trans;
-	struct btree_iter *iter;
+	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct xattr_buf buf = { .buf = buffer, .len = buffer_size };
-	u64 inum = dentry->d_inode->i_ino;
+	u64 offset = 0, inum = inode->ei_inode.bi_inum;
+	u32 snapshot;
 	int ret;
 
 	bch2_trans_init(&trans, c, 0, 0);
+retry:
+	bch2_trans_begin(&trans);
+	iter = (struct btree_iter) { NULL };
 
-	for_each_btree_key(&trans, iter, BTREE_ID_xattrs,
-			   POS(inum, 0), 0, k, ret) {
+	ret = bch2_subvolume_get_snapshot(&trans, inode->ei_subvol, &snapshot);
+	if (ret)
+		goto err;
+
+	for_each_btree_key_norestart(&trans, iter, BTREE_ID_xattrs,
+			   SPOS(inum, offset, snapshot), 0, k, ret) {
 		BUG_ON(k.k->p.inode < inum);
 
 		if (k.k->p.inode > inum)
@@ -294,9 +325,14 @@ ssize_t bch2_xattr_list(struct dentry *dentry, char *buffer, size_t buffer_size)
 		if (ret)
 			break;
 	}
-	bch2_trans_iter_put(&trans, iter);
 
-	ret = bch2_trans_exit(&trans) ?: ret;
+	offset = iter.pos.offset;
+	bch2_trans_iter_exit(&trans, &iter);
+err:
+	if (ret == -EINTR)
+		goto retry;
+
+	bch2_trans_exit(&trans);
 
 	if (ret)
 		return ret;
@@ -323,6 +359,7 @@ static int bch2_xattr_get_handler(const struct xattr_handler *handler,
 }
 
 static int bch2_xattr_set_handler(const struct xattr_handler *handler,
+				  struct user_namespace *mnt_userns,
 				  struct dentry *dentry, struct inode *vinode,
 				  const char *name, const void *value,
 				  size_t size, int flags)
@@ -331,8 +368,8 @@ static int bch2_xattr_set_handler(const struct xattr_handler *handler,
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_hash_info hash = bch2_hash_info_init(c, &inode->ei_inode);
 
-	return bch2_trans_do(c, NULL, &inode->ei_journal_seq, 0,
-			bch2_xattr_set(&trans, inode->v.i_ino, &hash,
+	return bch2_trans_do(c, NULL, NULL, 0,
+			bch2_xattr_set(&trans, inode_inum(inode), &hash,
 				       name, value, size,
 				       handler->flags, flags));
 }
@@ -455,6 +492,7 @@ static int inode_opt_set_fn(struct bch_inode_info *inode,
 }
 
 static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
+				   struct user_namespace *mnt_userns,
 				   struct dentry *dentry, struct inode *vinode,
 				   const char *name, const void *value,
 				   size_t size, int flags)

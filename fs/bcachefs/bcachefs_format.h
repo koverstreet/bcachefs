@@ -148,7 +148,8 @@ static inline struct bpos SPOS(__u64 inode, __u64 offset, __u32 snapshot)
 }
 
 #define POS_MIN				SPOS(0, 0, 0)
-#define POS_MAX				SPOS(KEY_INODE_MAX, KEY_OFFSET_MAX, KEY_SNAPSHOT_MAX)
+#define POS_MAX				SPOS(KEY_INODE_MAX, KEY_OFFSET_MAX, 0)
+#define SPOS_MAX			SPOS(KEY_INODE_MAX, KEY_OFFSET_MAX, KEY_SNAPSHOT_MAX)
 #define POS(_inode, _offset)		SPOS(_inode, _offset, 0)
 
 /* Empty placeholder struct, for container_of() */
@@ -322,7 +323,7 @@ static inline void bkey_init(struct bkey *k)
 */
 #define BCH_BKEY_TYPES()				\
 	x(deleted,		0)			\
-	x(discard,		1)			\
+	x(whiteout,		1)			\
 	x(error,		2)			\
 	x(cookie,		3)			\
 	x(hash_whiteout,	4)			\
@@ -341,7 +342,11 @@ static inline void bkey_init(struct bkey *k)
 	x(inline_data,		17)			\
 	x(btree_ptr_v2,		18)			\
 	x(indirect_inline_data,	19)			\
-	x(alloc_v2,		20)
+	x(alloc_v2,		20)			\
+	x(subvolume,		21)			\
+	x(snapshot,		22)			\
+	x(inode_v2,		23)			\
+	x(alloc_v3,		24)
 
 enum bch_bkey_type {
 #define x(name, nr) KEY_TYPE_##name	= nr,
@@ -354,7 +359,7 @@ struct bch_deleted {
 	struct bch_val		v;
 };
 
-struct bch_discard {
+struct bch_whiteout {
 	struct bch_val		v;
 };
 
@@ -678,12 +683,26 @@ struct bch_inode {
 	__u8			fields[0];
 } __attribute__((packed, aligned(8)));
 
+struct bch_inode_v2 {
+	struct bch_val		v;
+
+	__le64			bi_journal_seq;
+	__le64			bi_hash_seed;
+	__le64			bi_flags;
+	__le16			bi_mode;
+	__u8			fields[0];
+} __attribute__((packed, aligned(8)));
+
 struct bch_inode_generation {
 	struct bch_val		v;
 
 	__le32			bi_generation;
 	__le32			pad;
 } __attribute__((packed, aligned(8)));
+
+/*
+ * bi_subvol and bi_parent_subvol are only set for subvolume roots:
+ */
 
 #define BCH_INODE_FIELDS()			\
 	x(bi_atime,			96)	\
@@ -708,7 +727,9 @@ struct bch_inode_generation {
 	x(bi_erasure_code,		16)	\
 	x(bi_fields_set,		16)	\
 	x(bi_dir,			64)	\
-	x(bi_dir_offset,		64)
+	x(bi_dir_offset,		64)	\
+	x(bi_subvol,			32)	\
+	x(bi_parent_subvol,		32)
 
 /* subset of BCH_INODE_FIELDS */
 #define BCH_INODE_OPTS()			\
@@ -763,6 +784,9 @@ LE32_BITMASK(INODE_STR_HASH,	struct bch_inode, bi_flags, 20, 24);
 LE32_BITMASK(INODE_NR_FIELDS,	struct bch_inode, bi_flags, 24, 31);
 LE32_BITMASK(INODE_NEW_VARINT,	struct bch_inode, bi_flags, 31, 32);
 
+LE64_BITMASK(INODEv2_STR_HASH,	struct bch_inode_v2, bi_flags, 20, 24);
+LE64_BITMASK(INODEv2_NR_FIELDS,	struct bch_inode_v2, bi_flags, 24, 31);
+
 /* Dirents */
 
 /*
@@ -780,7 +804,13 @@ struct bch_dirent {
 	struct bch_val		v;
 
 	/* Target inode number: */
+	union {
 	__le64			d_inum;
+	struct {		/* DT_SUBVOL */
+	__le32			d_child_subvol;
+	__le32			d_parent_subvol;
+	};
+	};
 
 	/*
 	 * Copy of mode bits 12-15 from the target inode - so userspace can get
@@ -790,6 +820,9 @@ struct bch_dirent {
 
 	__u8			d_name[];
 } __attribute__((packed, aligned(8)));
+
+#define DT_SUBVOL	16
+#define BCH_DT_MAX	17
 
 #define BCH_NAME_MAX	(U8_MAX * sizeof(u64) -				\
 			 sizeof(struct bkey) -				\
@@ -848,6 +881,17 @@ struct bch_alloc_v2 {
 	x(stripe,		32)		\
 	x(stripe_redundancy,	8)
 
+struct bch_alloc_v3 {
+	struct bch_val		v;
+	__le64			journal_seq;
+	__le32			flags;
+	__u8			nr_fields;
+	__u8			gen;
+	__u8			oldest_gen;
+	__u8			data_type;
+	__u8			data[];
+} __attribute__((packed, aligned(8)));
+
 enum {
 #define x(name, _bits) BCH_ALLOC_FIELD_V1_##name,
 	BCH_ALLOC_FIELDS_V1()
@@ -901,18 +945,24 @@ struct bch_stripe {
 struct bch_reflink_p {
 	struct bch_val		v;
 	__le64			idx;
-
-	__le32			reservation_generation;
-	__u8			nr_replicas;
-	__u8			pad[3];
-};
+	/*
+	 * A reflink pointer might point to an indirect extent which is then
+	 * later split (by copygc or rebalance). If we only pointed to part of
+	 * the original indirect extent, and then one of the fragments is
+	 * outside the range we point to, we'd leak a refcount: so when creating
+	 * reflink pointers, we need to store pad values to remember the full
+	 * range we were taking a reference on.
+	 */
+	__le32			front_pad;
+	__le32			back_pad;
+} __attribute__((packed, aligned(8)));
 
 struct bch_reflink_v {
 	struct bch_val		v;
 	__le64			refcount;
 	union bch_extent_entry	start[0];
 	__u64			_data[0];
-};
+} __attribute__((packed, aligned(8)));
 
 struct bch_indirect_inline_data {
 	struct bch_val		v;
@@ -926,6 +976,43 @@ struct bch_inline_data {
 	struct bch_val		v;
 	u8			data[0];
 };
+
+/* Subvolumes: */
+
+#define SUBVOL_POS_MIN		POS(0, 1)
+#define SUBVOL_POS_MAX		POS(0, S32_MAX)
+#define BCACHEFS_ROOT_SUBVOL	1
+
+struct bch_subvolume {
+	struct bch_val		v;
+	__le32			flags;
+	__le32			snapshot;
+	__le64			inode;
+};
+
+LE32_BITMASK(BCH_SUBVOLUME_RO,		struct bch_subvolume, flags,  0,  1)
+/*
+ * We need to know whether a subvolume is a snapshot so we can know whether we
+ * can delete it (or whether it should just be rm -rf'd)
+ */
+LE32_BITMASK(BCH_SUBVOLUME_SNAP,	struct bch_subvolume, flags,  1,  2)
+LE32_BITMASK(BCH_SUBVOLUME_UNLINKED,	struct bch_subvolume, flags,  2,  3)
+
+/* Snapshots */
+
+struct bch_snapshot {
+	struct bch_val		v;
+	__le32			flags;
+	__le32			parent;
+	__le32			children[2];
+	__le32			subvol;
+	__le32			pad;
+};
+
+LE32_BITMASK(BCH_SNAPSHOT_DELETED,	struct bch_snapshot, flags,  0,  1)
+
+/* True if a subvolume points to this snapshot node: */
+LE32_BITMASK(BCH_SNAPSHOT_SUBVOL,	struct bch_snapshot, flags,  1,  2)
 
 /* Optional/variable size superblock sections: */
 
@@ -982,8 +1069,6 @@ LE64_BITMASK(BCH_MEMBER_DISCARD,	struct bch_member, flags[0], 14, 15)
 LE64_BITMASK(BCH_MEMBER_DATA_ALLOWED,	struct bch_member, flags[0], 15, 20)
 LE64_BITMASK(BCH_MEMBER_GROUP,		struct bch_member, flags[0], 20, 28)
 LE64_BITMASK(BCH_MEMBER_DURABILITY,	struct bch_member, flags[0], 28, 30)
-
-#define BCH_TIER_MAX			4U
 
 #if 0
 LE64_BITMASK(BCH_MEMBER_NR_READ_ERRORS,	struct bch_member, flags[1], 0,  20);
@@ -1209,7 +1294,12 @@ enum bcachefs_metadata_version {
 	bcachefs_metadata_version_inode_btree_change	= 11,
 	bcachefs_metadata_version_snapshot		= 12,
 	bcachefs_metadata_version_inode_backpointers	= 13,
-	bcachefs_metadata_version_max			= 14,
+	bcachefs_metadata_version_btree_ptr_sectors_written = 14,
+	bcachefs_metadata_version_snapshot_2		= 15,
+	bcachefs_metadata_version_reflink_p_fix		= 16,
+	bcachefs_metadata_version_subvol_dirent		= 17,
+	bcachefs_metadata_version_inode_v2		= 18,
+	bcachefs_metadata_version_max			= 19,
 };
 
 #define bcachefs_metadata_version_current	(bcachefs_metadata_version_max - 1)
@@ -1345,6 +1435,7 @@ LE64_BITMASK(BCH_SB_GC_RESERVE_BYTES,	struct bch_sb, flags[2],  4, 64);
 LE64_BITMASK(BCH_SB_ERASURE_CODE,	struct bch_sb, flags[3],  0, 16);
 LE64_BITMASK(BCH_SB_METADATA_TARGET,	struct bch_sb, flags[3], 16, 28);
 LE64_BITMASK(BCH_SB_SHARD_INUMS,	struct bch_sb, flags[3], 28, 29);
+LE64_BITMASK(BCH_SB_INODES_USE_KEY_CACHE,struct bch_sb, flags[3], 29, 30);
 
 /*
  * Features:
@@ -1352,7 +1443,7 @@ LE64_BITMASK(BCH_SB_SHARD_INUMS,	struct bch_sb, flags[3], 28, 29);
  * journal_seq_blacklist_v3:	gates BCH_SB_FIELD_journal_seq_blacklist
  * reflink:			gates KEY_TYPE_reflink
  * inline_data:			gates KEY_TYPE_inline_data
- * new_siphash:			gates BCH_STR_HASH_SIPHASH
+ * new_siphash:			gates BCH_STR_HASH_siphash
  * new_extent_overwrite:	gates BTREE_NODE_NEW_EXTENT_OVERWRITE
  */
 #define BCH_SB_FEATURES()			\
@@ -1428,12 +1519,17 @@ enum bch_error_actions {
 	BCH_ON_ERROR_NR
 };
 
+#define BCH_STR_HASH_TYPES()		\
+	x(crc32c,		0)	\
+	x(crc64,		1)	\
+	x(siphash_old,		2)	\
+	x(siphash,		3)
+
 enum bch_str_hash_type {
-	BCH_STR_HASH_CRC32C		= 0,
-	BCH_STR_HASH_CRC64		= 1,
-	BCH_STR_HASH_SIPHASH_OLD	= 2,
-	BCH_STR_HASH_SIPHASH		= 3,
-	BCH_STR_HASH_NR			= 4,
+#define x(t, n) BCH_STR_HASH_##t = n,
+	BCH_STR_HASH_TYPES()
+#undef x
+	BCH_STR_HASH_NR
 };
 
 #define BCH_STR_HASH_OPTS()		\
@@ -1448,32 +1544,39 @@ enum bch_str_hash_opts {
 	BCH_STR_HASH_OPT_NR
 };
 
+#define BCH_CSUM_TYPES()			\
+	x(none,				0)	\
+	x(crc32c_nonzero,		1)	\
+	x(crc64_nonzero,		2)	\
+	x(chacha20_poly1305_80,		3)	\
+	x(chacha20_poly1305_128,	4)	\
+	x(crc32c,			5)	\
+	x(crc64,			6)	\
+	x(xxhash,			7)
+
 enum bch_csum_type {
-	BCH_CSUM_NONE			= 0,
-	BCH_CSUM_CRC32C_NONZERO		= 1,
-	BCH_CSUM_CRC64_NONZERO		= 2,
-	BCH_CSUM_CHACHA20_POLY1305_80	= 3,
-	BCH_CSUM_CHACHA20_POLY1305_128	= 4,
-	BCH_CSUM_CRC32C			= 5,
-	BCH_CSUM_CRC64			= 6,
-	BCH_CSUM_NR			= 7,
+#define x(t, n) BCH_CSUM_##t = n,
+	BCH_CSUM_TYPES()
+#undef x
+	BCH_CSUM_NR
 };
 
 static const unsigned bch_crc_bytes[] = {
-	[BCH_CSUM_NONE]				= 0,
-	[BCH_CSUM_CRC32C_NONZERO]		= 4,
-	[BCH_CSUM_CRC32C]			= 4,
-	[BCH_CSUM_CRC64_NONZERO]		= 8,
-	[BCH_CSUM_CRC64]			= 8,
-	[BCH_CSUM_CHACHA20_POLY1305_80]		= 10,
-	[BCH_CSUM_CHACHA20_POLY1305_128]	= 16,
+	[BCH_CSUM_none]				= 0,
+	[BCH_CSUM_crc32c_nonzero]		= 4,
+	[BCH_CSUM_crc32c]			= 4,
+	[BCH_CSUM_crc64_nonzero]		= 8,
+	[BCH_CSUM_crc64]			= 8,
+	[BCH_CSUM_xxhash]			= 8,
+	[BCH_CSUM_chacha20_poly1305_80]		= 10,
+	[BCH_CSUM_chacha20_poly1305_128]	= 16,
 };
 
 static inline _Bool bch2_csum_type_is_encryption(enum bch_csum_type type)
 {
 	switch (type) {
-	case BCH_CSUM_CHACHA20_POLY1305_80:
-	case BCH_CSUM_CHACHA20_POLY1305_128:
+	case BCH_CSUM_chacha20_poly1305_80:
+	case BCH_CSUM_chacha20_poly1305_128:
 		return true;
 	default:
 		return false;
@@ -1483,7 +1586,8 @@ static inline _Bool bch2_csum_type_is_encryption(enum bch_csum_type type)
 #define BCH_CSUM_OPTS()			\
 	x(none,			0)	\
 	x(crc32c,		1)	\
-	x(crc64,		2)
+	x(crc64,		2)	\
+	x(xxhash,		3)
 
 enum bch_csum_opts {
 #define x(t, n) BCH_CSUM_OPT_##t = n,
@@ -1689,7 +1793,9 @@ LE32_BITMASK(JSET_NO_FLUSH,	struct jset, flags, 5, 6);
 	x(alloc,	4)			\
 	x(quotas,	5)			\
 	x(stripes,	6)			\
-	x(reflink,	7)
+	x(reflink,	7)			\
+	x(subvolumes,	8)			\
+	x(snapshots,	9)
 
 enum btree_id {
 #define x(kwd, val) BTREE_ID_##kwd = val,
@@ -1735,6 +1841,9 @@ LE32_BITMASK(BSET_CSUM_TYPE,	struct bset, flags, 0, 4);
 LE32_BITMASK(BSET_BIG_ENDIAN,	struct bset, flags, 4, 5);
 LE32_BITMASK(BSET_SEPARATE_WHITEOUTS,
 				struct bset, flags, 5, 6);
+
+/* Sector offset within the btree node: */
+LE32_BITMASK(BSET_OFFSET,	struct bset, flags, 16, 32);
 
 struct btree_node {
 	struct bch_csum		csum;

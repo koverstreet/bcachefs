@@ -7,11 +7,23 @@
 extern const char * const bch2_inode_opts[];
 
 const char *bch2_inode_invalid(const struct bch_fs *, struct bkey_s_c);
+const char *bch2_inode_v2_invalid(const struct bch_fs *, struct bkey_s_c);
 void bch2_inode_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 
 #define bch2_bkey_ops_inode (struct bkey_ops) {		\
 	.key_invalid	= bch2_inode_invalid,		\
 	.val_to_text	= bch2_inode_to_text,		\
+}
+
+#define bch2_bkey_ops_inode_v2 (struct bkey_ops) {	\
+	.key_invalid	= bch2_inode_v2_invalid,	\
+	.val_to_text	= bch2_inode_to_text,		\
+}
+
+static inline bool bkey_is_inode(const struct bkey *k)
+{
+	return  k->type == KEY_TYPE_inode ||
+		k->type == KEY_TYPE_inode_v2;
 }
 
 const char *bch2_inode_generation_invalid(const struct bch_fs *,
@@ -34,6 +46,7 @@ typedef u64 u96;
 
 struct bch_inode_unpacked {
 	u64			bi_inum;
+	u64			bi_journal_seq;
 	__le64			bi_hash_seed;
 	u32			bi_flags;
 	u16			bi_mode;
@@ -44,7 +57,7 @@ struct bch_inode_unpacked {
 };
 
 struct bkey_inode_buf {
-	struct bkey_i_inode	inode;
+	struct bkey_i_inode_v2	inode;
 
 #define x(_name, _bits)		+ 8 + _bits / 8
 	u8		_pad[0 + BCH_INODE_FIELDS()];
@@ -53,10 +66,12 @@ struct bkey_inode_buf {
 
 void bch2_inode_pack(struct bch_fs *, struct bkey_inode_buf *,
 		     const struct bch_inode_unpacked *);
-int bch2_inode_unpack(struct bkey_s_c_inode, struct bch_inode_unpacked *);
+int bch2_inode_unpack(struct bkey_s_c, struct bch_inode_unpacked *);
 
-struct btree_iter *bch2_inode_peek(struct btree_trans *,
-			struct bch_inode_unpacked *, u64, unsigned);
+void bch2_inode_unpacked_to_text(struct printbuf *, struct bch_inode_unpacked *);
+
+int bch2_inode_peek(struct btree_trans *, struct btree_iter *,
+		    struct bch_inode_unpacked *, subvol_inum, unsigned);
 int bch2_inode_write(struct btree_trans *, struct btree_iter *,
 		     struct bch_inode_unpacked *);
 
@@ -69,12 +84,15 @@ void bch2_inode_init(struct bch_fs *, struct bch_inode_unpacked *,
 		     uid_t, gid_t, umode_t, dev_t,
 		     struct bch_inode_unpacked *);
 
-struct btree_iter *bch2_inode_create(struct btree_trans *,
-				     struct bch_inode_unpacked *, u32, u64);
+int bch2_inode_create(struct btree_trans *, struct btree_iter *,
+		      struct bch_inode_unpacked *, u32, u64);
 
-int bch2_inode_rm(struct bch_fs *, u64, bool);
+int bch2_inode_rm(struct bch_fs *, subvol_inum, bool);
 
-int bch2_inode_find_by_inum(struct bch_fs *, u64, struct bch_inode_unpacked *);
+int bch2_inode_find_by_inum_trans(struct btree_trans *, subvol_inum,
+				  struct bch_inode_unpacked *);
+int bch2_inode_find_by_inum(struct bch_fs *, subvol_inum,
+			    struct bch_inode_unpacked *);
 
 static inline struct bch_io_opts bch2_inode_opts_get(struct bch_inode_unpacked *inode)
 {
@@ -129,6 +147,11 @@ io_opts(struct bch_fs *c, struct bch_inode_unpacked *inode)
 static inline u8 mode_to_type(umode_t mode)
 {
 	return (mode >> 12) & 15;
+}
+
+static inline u8 inode_d_type(struct bch_inode_unpacked *inode)
+{
+	return inode->bi_subvol ? DT_SUBVOL : mode_to_type(inode->bi_mode);
 }
 
 /* i_nlink: */

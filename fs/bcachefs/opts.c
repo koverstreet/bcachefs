@@ -31,8 +31,18 @@ const char * const bch2_btree_ids[] = {
 	NULL
 };
 
+const char * const bch2_csum_types[] = {
+	BCH_CSUM_TYPES()
+	NULL
+};
+
 const char * const bch2_csum_opts[] = {
 	BCH_CSUM_OPTS()
+	NULL
+};
+
+const char * const bch2_compression_types[] = {
+	BCH_COMPRESSION_TYPES()
 	NULL
 };
 
@@ -42,6 +52,11 @@ const char * const bch2_compression_opts[] = {
 };
 
 const char * const bch2_str_hash_types[] = {
+	BCH_STR_HASH_TYPES()
+	NULL
+};
+
+const char * const bch2_str_hash_opts[] = {
 	BCH_STR_HASH_OPTS()
 	NULL
 };
@@ -62,6 +77,19 @@ const char * const bch2_member_states[] = {
 };
 
 #undef x
+
+const char * const bch2_d_types[BCH_DT_MAX] = {
+	[DT_UNKNOWN]	= "unknown",
+	[DT_FIFO]	= "fifo",
+	[DT_CHR]	= "chr",
+	[DT_DIR]	= "dir",
+	[DT_BLK]	= "blk",
+	[DT_REG]	= "reg",
+	[DT_LNK]	= "lnk",
+	[DT_SOCK]	= "sock",
+	[DT_WHT]	= "whiteout",
+	[DT_SUBVOL]	= "subvol",
+};
 
 void bch2_opts_apply(struct bch_opts *dst, struct bch_opts src)
 {

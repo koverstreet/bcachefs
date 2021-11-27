@@ -155,11 +155,6 @@ read_attribute(congested);
 
 read_attribute(btree_avg_write_size);
 
-read_attribute(bucket_quantiles_last_read);
-read_attribute(bucket_quantiles_last_write);
-read_attribute(bucket_quantiles_fragmentation);
-read_attribute(bucket_quantiles_oldest_gen);
-
 read_attribute(reserve_stats);
 read_attribute(btree_cache_size);
 read_attribute(compression_stats);
@@ -171,6 +166,7 @@ read_attribute(btree_cache);
 read_attribute(btree_key_cache);
 read_attribute(btree_transactions);
 read_attribute(stripes_heap);
+read_attribute(open_buckets);
 
 read_attribute(internal_uuid);
 
@@ -201,6 +197,8 @@ read_attribute(new_stripes);
 
 read_attribute(io_timers_read);
 read_attribute(io_timers_write);
+
+read_attribute(data_op_data_progress);
 
 #ifdef CONFIG_BCACHEFS_TESTS
 write_attribute(perf_test);
@@ -238,6 +236,37 @@ static size_t bch2_btree_avg_write_size(struct bch_fs *c)
 	return nr ? div64_u64(sectors, nr) : 0;
 }
 
+static long stats_to_text(struct printbuf *out, struct bch_fs *c,
+			  struct bch_move_stats *stats)
+{
+	pr_buf(out, "%s: data type %s btree_id %s position: ",
+		stats->name,
+		bch2_data_types[stats->data_type],
+		bch2_btree_ids[stats->btree_id]);
+	bch2_bpos_to_text(out, stats->pos);
+	pr_buf(out, "%s", "\n");
+
+	return 0;
+}
+
+static long data_progress_to_text(struct printbuf *out, struct bch_fs *c)
+{
+	long ret = 0;
+	struct bch_move_stats *iter;
+
+	mutex_lock(&c->data_progress_lock);
+
+	if (list_empty(&c->data_progress_list))
+		pr_buf(out, "%s", "no progress to report\n");
+	else
+		list_for_each_entry(iter, &c->data_progress_list, list) {
+			stats_to_text(out, c, iter);
+		}
+
+	mutex_unlock(&c->data_progress_lock);
+	return ret;
+}
+
 static int fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
 {
 	struct bch_fs_usage_online *fs_usage = bch2_fs_usage_read(c);
@@ -256,7 +285,7 @@ static int fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
 static int bch2_compression_stats_to_text(struct printbuf *out, struct bch_fs *c)
 {
 	struct btree_trans trans;
-	struct btree_iter *iter;
+	struct btree_iter iter;
 	struct bkey_s_c k;
 	u64 nr_uncompressed_extents = 0, uncompressed_sectors = 0,
 	    nr_compressed_extents = 0,
@@ -291,8 +320,9 @@ static int bch2_compression_stats_to_text(struct printbuf *out, struct bch_fs *c
 				break;
 			}
 		}
+	bch2_trans_iter_exit(&trans, &iter);
 
-	ret = bch2_trans_exit(&trans) ?: ret;
+	bch2_trans_exit(&trans);
 	if (ret)
 		return ret;
 
@@ -409,6 +439,11 @@ SHOW(bch2_fs)
 		return out.pos - buf;
 	}
 
+	if (attr == &sysfs_open_buckets) {
+		bch2_open_buckets_to_text(&out, c);
+		return out.pos - buf;
+	}
+
 	if (attr == &sysfs_compression_stats) {
 		bch2_compression_stats_to_text(&out, c);
 		return out.pos - buf;
@@ -425,6 +460,11 @@ SHOW(bch2_fs)
 	}
 	if (attr == &sysfs_io_timers_write) {
 		bch2_io_timers_to_text(&out, &c->io_clock[WRITE]);
+		return out.pos - buf;
+	}
+
+	if (attr == &sysfs_data_op_data_progress) {
+		data_progress_to_text(&out, c);
 		return out.pos - buf;
 	}
 
@@ -567,6 +607,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_btree_key_cache,
 	&sysfs_btree_transactions,
 	&sysfs_stripes_heap,
+	&sysfs_open_buckets,
 
 	&sysfs_read_realloc_races,
 	&sysfs_extent_migrate_done,
@@ -588,6 +629,8 @@ struct attribute *bch2_fs_internal_files[] = {
 
 	&sysfs_io_timers_read,
 	&sysfs_io_timers_write,
+
+	&sysfs_data_op_data_progress,
 
 	&sysfs_internal_uuid,
 	NULL
@@ -702,76 +745,6 @@ struct attribute *bch2_fs_time_stats_files[] = {
 #undef x
 	NULL
 };
-
-typedef unsigned (bucket_map_fn)(struct bch_fs *, struct bch_dev *,
-				 size_t, void *);
-
-static unsigned bucket_last_io_fn(struct bch_fs *c, struct bch_dev *ca,
-				  size_t b, void *private)
-{
-	int rw = (private ? 1 : 0);
-
-	return atomic64_read(&c->io_clock[rw].now) - bucket(ca, b)->io_time[rw];
-}
-
-static unsigned bucket_sectors_used_fn(struct bch_fs *c, struct bch_dev *ca,
-				       size_t b, void *private)
-{
-	struct bucket *g = bucket(ca, b);
-	return bucket_sectors_used(g->mark);
-}
-
-static unsigned bucket_oldest_gen_fn(struct bch_fs *c, struct bch_dev *ca,
-				     size_t b, void *private)
-{
-	return bucket_gc_gen(bucket(ca, b));
-}
-
-static int unsigned_cmp(const void *_l, const void *_r)
-{
-	const unsigned *l = _l;
-	const unsigned *r = _r;
-
-	return cmp_int(*l, *r);
-}
-
-static int quantiles_to_text(struct printbuf *out,
-			     struct bch_fs *c, struct bch_dev *ca,
-			     bucket_map_fn *fn, void *private)
-{
-	size_t i, n;
-	/* Compute 31 quantiles */
-	unsigned q[31], *p;
-
-	down_read(&ca->bucket_lock);
-	n = ca->mi.nbuckets;
-
-	p = vzalloc(n * sizeof(unsigned));
-	if (!p) {
-		up_read(&ca->bucket_lock);
-		return -ENOMEM;
-	}
-
-	for (i = ca->mi.first_bucket; i < n; i++)
-		p[i] = fn(c, ca, i, private);
-
-	sort(p, n, sizeof(unsigned), unsigned_cmp, NULL);
-	up_read(&ca->bucket_lock);
-
-	while (n &&
-	       !p[n - 1])
-		--n;
-
-	for (i = 0; i < ARRAY_SIZE(q); i++)
-		q[i] = p[n * (i + 1) / (ARRAY_SIZE(q) + 1)];
-
-	vfree(p);
-
-	for (i = 0; i < ARRAY_SIZE(q); i++)
-		pr_buf(out, "%u ", q[i]);
-	pr_buf(out, "\n");
-	return 0;
-}
 
 static void reserve_stats_to_text(struct printbuf *out, struct bch_dev *ca)
 {
@@ -934,15 +907,6 @@ SHOW(bch2_dev)
 		     clamp(atomic_read(&ca->congested), 0, CONGESTED_MAX)
 		     * 100 / CONGESTED_MAX);
 
-	if (attr == &sysfs_bucket_quantiles_last_read)
-		return quantiles_to_text(&out, c, ca, bucket_last_io_fn, (void *) 0) ?: out.pos - buf;
-	if (attr == &sysfs_bucket_quantiles_last_write)
-		return quantiles_to_text(&out, c, ca, bucket_last_io_fn, (void *) 1) ?: out.pos - buf;
-	if (attr == &sysfs_bucket_quantiles_fragmentation)
-		return quantiles_to_text(&out, c, ca, bucket_sectors_used_fn, NULL)  ?: out.pos - buf;
-	if (attr == &sysfs_bucket_quantiles_oldest_gen)
-		return quantiles_to_text(&out, c, ca, bucket_oldest_gen_fn, NULL)    ?: out.pos - buf;
-
 	if (attr == &sysfs_reserve_stats) {
 		reserve_stats_to_text(&out, ca);
 		return out.pos - buf;
@@ -1033,12 +997,6 @@ struct attribute *bch2_dev_files[] = {
 	&sysfs_io_latency_stats_read,
 	&sysfs_io_latency_stats_write,
 	&sysfs_congested,
-
-	/* alloc info - other stats: */
-	&sysfs_bucket_quantiles_last_read,
-	&sysfs_bucket_quantiles_last_write,
-	&sysfs_bucket_quantiles_fragmentation,
-	&sysfs_bucket_quantiles_oldest_gen,
 
 	&sysfs_reserve_stats,
 

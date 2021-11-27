@@ -32,6 +32,13 @@ static inline void clear_btree_node_dirty(struct bch_fs *c, struct btree *b)
 		atomic_dec(&c->btree_cache.dirty);
 }
 
+static inline unsigned btree_ptr_sectors_written(struct bkey_i *k)
+{
+	return k->k.type == KEY_TYPE_btree_ptr_v2
+		? le16_to_cpu(bkey_i_to_btree_ptr_v2(k)->v.sectors_written)
+		: 0;
+}
+
 struct btree_read_bio {
 	struct bch_fs		*c;
 	struct btree		*b;
@@ -48,28 +55,17 @@ struct btree_write_bio {
 	struct work_struct	work;
 	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
 	void			*data;
-	unsigned		bytes;
+	unsigned		data_bytes;
+	unsigned		sector_offset;
 	struct bch_write_bio	wbio;
 };
 
-static inline void btree_node_io_unlock(struct btree *b)
-{
-	EBUG_ON(!btree_node_write_in_flight(b));
-	clear_btree_node_write_in_flight(b);
-	wake_up_bit(&b->flags, BTREE_NODE_write_in_flight);
-}
-
-static inline void btree_node_io_lock(struct btree *b)
-{
-	wait_on_bit_lock_io(&b->flags, BTREE_NODE_write_in_flight,
-			    TASK_UNINTERRUPTIBLE);
-}
-
-static inline void btree_node_wait_on_io(struct btree *b)
-{
-	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,
-		       TASK_UNINTERRUPTIBLE);
-}
+void bch2_btree_node_io_unlock(struct btree *);
+void bch2_btree_node_io_lock(struct btree *);
+void __bch2_btree_node_wait_on_read(struct btree *);
+void __bch2_btree_node_wait_on_write(struct btree *);
+void bch2_btree_node_wait_on_read(struct btree *);
+void bch2_btree_node_wait_on_write(struct btree *);
 
 static inline bool btree_node_may_write(struct btree *b)
 {
@@ -126,7 +122,7 @@ static inline void bset_encrypt(struct bch_fs *c, struct bset *i, unsigned offse
 		bch2_encrypt(c, BSET_CSUM_TYPE(i), nonce, &bn->flags,
 			     bytes);
 
-		nonce = nonce_add(nonce, round_up(bytes, CHACHA20_BLOCK_SIZE));
+		nonce = nonce_add(nonce, round_up(bytes, CHACHA_BLOCK_SIZE));
 	}
 
 	bch2_encrypt(c, BSET_CSUM_TYPE(i), nonce, i->_data,
@@ -138,8 +134,7 @@ void bch2_btree_sort_into(struct bch_fs *, struct btree *, struct btree *);
 void bch2_btree_node_drop_keys_outside_node(struct btree *);
 
 void bch2_btree_build_aux_trees(struct btree *);
-void bch2_btree_init_next(struct bch_fs *, struct btree *,
-			 struct btree_iter *);
+void bch2_btree_init_next(struct btree_trans *, struct btree *);
 
 int bch2_btree_node_read_done(struct bch_fs *, struct bch_dev *,
 			      struct btree *, bool);
@@ -149,9 +144,8 @@ int bch2_btree_root_read(struct bch_fs *, enum btree_id,
 
 void bch2_btree_complete_write(struct bch_fs *, struct btree *,
 			      struct btree_write *);
-void bch2_btree_write_error_work(struct work_struct *);
 
-void __bch2_btree_node_write(struct bch_fs *, struct btree *);
+void __bch2_btree_node_write(struct bch_fs *, struct btree *, bool);
 bool bch2_btree_post_write_cleanup(struct bch_fs *, struct btree *);
 
 void bch2_btree_node_write(struct bch_fs *, struct btree *,
@@ -160,18 +154,11 @@ void bch2_btree_node_write(struct bch_fs *, struct btree *,
 static inline void btree_node_write_if_need(struct bch_fs *c, struct btree *b,
 					    enum six_lock_type lock_held)
 {
-	while (b->written &&
-	       btree_node_need_write(b) &&
-	       btree_node_may_write(b)) {
-		if (!btree_node_write_in_flight(b)) {
-			bch2_btree_node_write(c, b, lock_held);
-			break;
-		}
-
-		six_unlock_type(&b->c.lock, lock_held);
-		btree_node_wait_on_io(b);
-		btree_node_lock_type(c, b, lock_held);
-	}
+	if (b->written &&
+	    btree_node_need_write(b) &&
+	    btree_node_may_write(b) &&
+	    !btree_node_write_in_flight(b))
+		bch2_btree_node_write(c, b, lock_held);
 }
 
 #define bch2_btree_node_write_cond(_c, _b, cond)			\

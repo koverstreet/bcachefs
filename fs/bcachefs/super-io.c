@@ -439,10 +439,8 @@ int bch2_sb_to_fs(struct bch_fs *c, struct bch_sb *src)
 
 	__copy_super(&c->disk_sb, src);
 
-	if (BCH_SB_HAS_ERRORS(c->disk_sb.sb))
-		set_bit(BCH_FS_ERROR, &c->flags);
-	if (BCH_SB_HAS_TOPOLOGY_ERRORS(c->disk_sb.sb))
-		set_bit(BCH_FS_TOPOLOGY_ERROR, &c->flags);
+	if (BCH_SB_INITIALIZED(c->disk_sb.sb))
+		set_bit(BCH_FS_INITIALIZED, &c->flags);
 
 	ret = bch2_sb_replicas_to_cpu_replicas(c);
 	if (ret)
@@ -680,7 +678,7 @@ static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 
 	sb->offset = sb->layout.sb_offset[idx];
 
-	SET_BCH_SB_CSUM_TYPE(sb, c->opts.metadata_checksum);
+	SET_BCH_SB_CSUM_TYPE(sb, bch2_csum_opt_to_type(c->opts.metadata_checksum, false));
 	sb->csum = csum_vstruct(c, BCH_SB_CSUM_TYPE(sb),
 				null_nonce(), sb);
 
@@ -807,7 +805,8 @@ int bch2_write_super(struct bch_fs *c)
 				 !can_mount_with_written ||
 				 (can_mount_without_written &&
 				  !can_mount_with_written), c,
-		"Unable to write superblock to sufficient devices"))
+		"Unable to write superblock to sufficient devices (from %ps)",
+		(void *) _RET_IP_))
 		ret = -1;
 out:
 	/* Make new options visible after they're persistent: */
@@ -983,6 +982,7 @@ int bch2_fs_mark_dirty(struct bch_fs *c)
 	mutex_lock(&c->sb_lock);
 	SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
 	c->disk_sb.sb->features[0] |= cpu_to_le64(BCH_SB_FEATURES_ALWAYS);
+	c->disk_sb.sb->compat[0] &= cpu_to_le64((1ULL << BCH_COMPAT_NR) - 1);
 	ret = bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
 

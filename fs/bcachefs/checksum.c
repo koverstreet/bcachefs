@@ -6,83 +6,108 @@
 
 #include <linux/crc32c.h>
 #include <linux/crypto.h>
+#include <linux/xxhash.h>
 #include <linux/key.h>
 #include <linux/random.h>
 #include <linux/scatterlist.h>
 #include <crypto/algapi.h>
-#include <crypto/chacha20.h>
+#include <crypto/chacha.h>
 #include <crypto/hash.h>
 #include <crypto/poly1305.h>
 #include <crypto/skcipher.h>
 #include <keys/user-type.h>
 
-static u64 bch2_checksum_init(unsigned type)
+/*
+ * bch2_checksum state is an abstraction of the checksum state calculated over different pages.
+ * it features page merging without having the checksum algorithm lose its state.
+ * for native checksum aglorithms (like crc), a default seed value will do.
+ * for hash-like algorithms, a state needs to be stored
+ */
+
+struct bch2_checksum_state {
+	union {
+		u64 seed;
+		struct xxh64_state h64state;
+	};
+	unsigned int type;
+};
+
+static void bch2_checksum_init(struct bch2_checksum_state *state)
 {
-	switch (type) {
-	case BCH_CSUM_NONE:
-		return 0;
-	case BCH_CSUM_CRC32C_NONZERO:
-		return U32_MAX;
-	case BCH_CSUM_CRC64_NONZERO:
-		return U64_MAX;
-	case BCH_CSUM_CRC32C:
-		return 0;
-	case BCH_CSUM_CRC64:
-		return 0;
+	switch (state->type) {
+	case BCH_CSUM_none:
+	case BCH_CSUM_crc32c:
+	case BCH_CSUM_crc64:
+		state->seed = 0;
+		break;
+	case BCH_CSUM_crc32c_nonzero:
+		state->seed = U32_MAX;
+		break;
+	case BCH_CSUM_crc64_nonzero:
+		state->seed = U64_MAX;
+		break;
+	case BCH_CSUM_xxhash:
+		xxh64_reset(&state->h64state, 0);
+		break;
 	default:
 		BUG();
 	}
 }
 
-static u64 bch2_checksum_final(unsigned type, u64 crc)
+static u64 bch2_checksum_final(const struct bch2_checksum_state *state)
 {
-	switch (type) {
-	case BCH_CSUM_NONE:
-		return 0;
-	case BCH_CSUM_CRC32C_NONZERO:
-		return crc ^ U32_MAX;
-	case BCH_CSUM_CRC64_NONZERO:
-		return crc ^ U64_MAX;
-	case BCH_CSUM_CRC32C:
-		return crc;
-	case BCH_CSUM_CRC64:
-		return crc;
+	switch (state->type) {
+	case BCH_CSUM_none:
+	case BCH_CSUM_crc32c:
+	case BCH_CSUM_crc64:
+		return state->seed;
+	case BCH_CSUM_crc32c_nonzero:
+		return state->seed ^ U32_MAX;
+	case BCH_CSUM_crc64_nonzero:
+		return state->seed ^ U64_MAX;
+	case BCH_CSUM_xxhash:
+		return xxh64_digest(&state->h64state);
 	default:
 		BUG();
 	}
 }
 
-static u64 bch2_checksum_update(unsigned type, u64 crc, const void *data, size_t len)
+static void bch2_checksum_update(struct bch2_checksum_state *state, const void *data, size_t len)
 {
-	switch (type) {
-	case BCH_CSUM_NONE:
-		return 0;
-	case BCH_CSUM_CRC32C_NONZERO:
-	case BCH_CSUM_CRC32C:
-		return crc32c(crc, data, len);
-	case BCH_CSUM_CRC64_NONZERO:
-	case BCH_CSUM_CRC64:
-		return crc64_be(crc, data, len);
+	switch (state->type) {
+	case BCH_CSUM_none:
+		return;
+	case BCH_CSUM_crc32c_nonzero:
+	case BCH_CSUM_crc32c:
+		state->seed = crc32c(state->seed, data, len);
+		break;
+	case BCH_CSUM_crc64_nonzero:
+	case BCH_CSUM_crc64:
+		state->seed = crc64_be(state->seed, data, len);
+		break;
+	case BCH_CSUM_xxhash:
+		xxh64_update(&state->h64state, data, len);
+		break;
 	default:
 		BUG();
 	}
 }
 
-static inline void do_encrypt_sg(struct crypto_skcipher *tfm,
+static inline void do_encrypt_sg(struct crypto_sync_skcipher *tfm,
 				 struct nonce nonce,
 				 struct scatterlist *sg, size_t len)
 {
-	SKCIPHER_REQUEST_ON_STACK(req, tfm);
+	SYNC_SKCIPHER_REQUEST_ON_STACK(req, tfm);
 	int ret;
 
-	skcipher_request_set_tfm(req, tfm);
+	skcipher_request_set_sync_tfm(req, tfm);
 	skcipher_request_set_crypt(req, sg, sg, len, nonce.d);
 
 	ret = crypto_skcipher_encrypt(req);
 	BUG_ON(ret);
 }
 
-static inline void do_encrypt(struct crypto_skcipher *tfm,
+static inline void do_encrypt(struct crypto_sync_skcipher *tfm,
 			      struct nonce nonce,
 			      void *buf, size_t len)
 {
@@ -95,8 +120,8 @@ static inline void do_encrypt(struct crypto_skcipher *tfm,
 int bch2_chacha_encrypt_key(struct bch_key *key, struct nonce nonce,
 			    void *buf, size_t len)
 {
-	struct crypto_skcipher *chacha20 =
-		crypto_alloc_skcipher("chacha20", 0, 0);
+	struct crypto_sync_skcipher *chacha20 =
+		crypto_alloc_sync_skcipher("chacha20", 0, 0);
 	int ret;
 
 	if (!chacha20) {
@@ -104,7 +129,8 @@ int bch2_chacha_encrypt_key(struct bch_key *key, struct nonce nonce,
 		return PTR_ERR(chacha20);
 	}
 
-	ret = crypto_skcipher_setkey(chacha20, (void *) key, sizeof(*key));
+	ret = crypto_skcipher_setkey(&chacha20->base,
+				     (void *) key, sizeof(*key));
 	if (ret) {
 		pr_err("crypto_skcipher_setkey() error: %i", ret);
 		goto err;
@@ -112,7 +138,7 @@ int bch2_chacha_encrypt_key(struct bch_key *key, struct nonce nonce,
 
 	do_encrypt(chacha20, nonce, buf, len);
 err:
-	crypto_free_skcipher(chacha20);
+	crypto_free_sync_skcipher(chacha20);
 	return ret;
 }
 
@@ -135,21 +161,24 @@ struct bch_csum bch2_checksum(struct bch_fs *c, unsigned type,
 			      struct nonce nonce, const void *data, size_t len)
 {
 	switch (type) {
-	case BCH_CSUM_NONE:
-	case BCH_CSUM_CRC32C_NONZERO:
-	case BCH_CSUM_CRC64_NONZERO:
-	case BCH_CSUM_CRC32C:
-	case BCH_CSUM_CRC64: {
-		u64 crc = bch2_checksum_init(type);
+	case BCH_CSUM_none:
+	case BCH_CSUM_crc32c_nonzero:
+	case BCH_CSUM_crc64_nonzero:
+	case BCH_CSUM_crc32c:
+	case BCH_CSUM_xxhash:
+	case BCH_CSUM_crc64: {
+		struct bch2_checksum_state state;
 
-		crc = bch2_checksum_update(type, crc, data, len);
-		crc = bch2_checksum_final(type, crc);
+		state.type = type;
 
-		return (struct bch_csum) { .lo = cpu_to_le64(crc) };
+		bch2_checksum_init(&state);
+		bch2_checksum_update(&state, data, len);
+
+		return (struct bch_csum) { .lo = cpu_to_le64(bch2_checksum_final(&state)) };
 	}
 
-	case BCH_CSUM_CHACHA20_POLY1305_80:
-	case BCH_CSUM_CHACHA20_POLY1305_128: {
+	case BCH_CSUM_chacha20_poly1305_80:
+	case BCH_CSUM_chacha20_poly1305_128: {
 		SHASH_DESC_ON_STACK(desc, c->poly1305);
 		u8 digest[POLY1305_DIGEST_SIZE];
 		struct bch_csum ret = { 0 };
@@ -183,33 +212,34 @@ static struct bch_csum __bch2_checksum_bio(struct bch_fs *c, unsigned type,
 	struct bio_vec bv;
 
 	switch (type) {
-	case BCH_CSUM_NONE:
+	case BCH_CSUM_none:
 		return (struct bch_csum) { 0 };
-	case BCH_CSUM_CRC32C_NONZERO:
-	case BCH_CSUM_CRC64_NONZERO:
-	case BCH_CSUM_CRC32C:
-	case BCH_CSUM_CRC64: {
-		u64 crc = bch2_checksum_init(type);
+	case BCH_CSUM_crc32c_nonzero:
+	case BCH_CSUM_crc64_nonzero:
+	case BCH_CSUM_crc32c:
+	case BCH_CSUM_xxhash:
+	case BCH_CSUM_crc64: {
+		struct bch2_checksum_state state;
+
+		state.type = type;
+		bch2_checksum_init(&state);
 
 #ifdef CONFIG_HIGHMEM
 		__bio_for_each_segment(bv, bio, *iter, *iter) {
 			void *p = kmap_atomic(bv.bv_page) + bv.bv_offset;
-			crc = bch2_checksum_update(type,
-				crc, p, bv.bv_len);
+			bch2_checksum_update(&state, p, bv.bv_len);
 			kunmap_atomic(p);
 		}
 #else
-		__bio_for_each_contig_segment(bv, bio, *iter, *iter)
-			crc = bch2_checksum_update(type, crc,
-				page_address(bv.bv_page) + bv.bv_offset,
+		__bio_for_each_bvec(bv, bio, *iter, *iter)
+			bch2_checksum_update(&state, page_address(bv.bv_page) + bv.bv_offset,
 				bv.bv_len);
 #endif
-		crc = bch2_checksum_final(type, crc);
-		return (struct bch_csum) { .lo = cpu_to_le64(crc) };
+		return (struct bch_csum) { .lo = cpu_to_le64(bch2_checksum_final(&state)) };
 	}
 
-	case BCH_CSUM_CHACHA20_POLY1305_80:
-	case BCH_CSUM_CHACHA20_POLY1305_128: {
+	case BCH_CSUM_chacha20_poly1305_80:
+	case BCH_CSUM_chacha20_poly1305_128: {
 		SHASH_DESC_ON_STACK(desc, c->poly1305);
 		u8 digest[POLY1305_DIGEST_SIZE];
 		struct bch_csum ret = { 0 };
@@ -224,7 +254,7 @@ static struct bch_csum __bch2_checksum_bio(struct bch_fs *c, unsigned type,
 			kunmap_atomic(p);
 		}
 #else
-		__bio_for_each_contig_segment(bv, bio, *iter, *iter)
+		__bio_for_each_bvec(bv, bio, *iter, *iter)
 			crypto_shash_update(desc,
 				page_address(bv.bv_page) + bv.bv_offset,
 				bv.bv_len);
@@ -283,16 +313,22 @@ void bch2_encrypt_bio(struct bch_fs *c, unsigned type,
 struct bch_csum bch2_checksum_merge(unsigned type, struct bch_csum a,
 				    struct bch_csum b, size_t b_len)
 {
+	struct bch2_checksum_state state;
+
+	state.type = type;
+	bch2_checksum_init(&state);
+	state.seed = a.lo;
+
 	BUG_ON(!bch2_checksum_mergeable(type));
 
 	while (b_len) {
 		unsigned b = min_t(unsigned, b_len, PAGE_SIZE);
 
-		a.lo = bch2_checksum_update(type, a.lo,
+		bch2_checksum_update(&state,
 				page_address(ZERO_PAGE(0)), b);
 		b_len -= b;
 	}
-
+	a.lo = bch2_checksum_final(&state);
 	a.lo ^= b.lo;
 	a.hi ^= b.hi;
 	return a;
@@ -463,7 +499,7 @@ err:
 static int bch2_alloc_ciphers(struct bch_fs *c)
 {
 	if (!c->chacha20)
-		c->chacha20 = crypto_alloc_skcipher("chacha20", 0, 0);
+		c->chacha20 = crypto_alloc_sync_skcipher("chacha20", 0, 0);
 	if (IS_ERR(c->chacha20)) {
 		bch_err(c, "error requesting chacha20 module: %li",
 			PTR_ERR(c->chacha20));
@@ -546,7 +582,7 @@ int bch2_enable_encryption(struct bch_fs *c, bool keyed)
 			goto err;
 	}
 
-	ret = crypto_skcipher_setkey(c->chacha20,
+	ret = crypto_skcipher_setkey(&c->chacha20->base,
 			(void *) &key.key, sizeof(key.key));
 	if (ret)
 		goto err;
@@ -574,7 +610,7 @@ void bch2_fs_encryption_exit(struct bch_fs *c)
 	if (!IS_ERR_OR_NULL(c->poly1305))
 		crypto_free_shash(c->poly1305);
 	if (!IS_ERR_OR_NULL(c->chacha20))
-		crypto_free_skcipher(c->chacha20);
+		crypto_free_sync_skcipher(c->chacha20);
 	if (!IS_ERR_OR_NULL(c->sha256))
 		crypto_free_shash(c->sha256);
 }
@@ -606,7 +642,7 @@ int bch2_fs_encryption_init(struct bch_fs *c)
 	if (ret)
 		goto out;
 
-	ret = crypto_skcipher_setkey(c->chacha20,
+	ret = crypto_skcipher_setkey(&c->chacha20->base,
 			(void *) &key.key, sizeof(key.key));
 	if (ret)
 		goto out;

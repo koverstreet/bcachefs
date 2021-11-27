@@ -88,8 +88,6 @@ static void bch2_journal_buf_init(struct journal *j)
 	buf->must_flush	= false;
 	buf->separate_flush = false;
 
-	memset(buf->has_inode, 0, sizeof(buf->has_inode));
-
 	memset(buf->data, 0, sizeof(*buf->data));
 	buf->data->seq	= cpu_to_le64(journal_cur_seq(j));
 	buf->data->u64s	= 0;
@@ -109,7 +107,12 @@ void bch2_journal_halt(struct journal *j)
 	} while ((v = atomic64_cmpxchg(&j->reservations.counter,
 				       old.v, new.v)) != old.v);
 
-	j->err_seq = journal_cur_seq(j);
+	/*
+	 * XXX: we're not using j->lock here because this can be called from
+	 * interrupt context, this can race with journal_write_done()
+	 */
+	if (!j->err_seq)
+		j->err_seq = journal_cur_seq(j);
 	journal_wake(j);
 	closure_wake_up(&journal_cur_buf(j)->wait);
 }
@@ -335,55 +338,6 @@ static void journal_write_work(struct work_struct *work)
 	journal_entry_close(j);
 }
 
-/*
- * Given an inode number, if that inode number has data in the journal that
- * hasn't yet been flushed, return the journal sequence number that needs to be
- * flushed:
- */
-u64 bch2_inode_journal_seq(struct journal *j, u64 inode)
-{
-	size_t h = hash_64(inode, ilog2(sizeof(j->buf[0].has_inode) * 8));
-	union journal_res_state s;
-	unsigned i;
-	u64 seq;
-
-
-	spin_lock(&j->lock);
-	seq = journal_cur_seq(j);
-	s = READ_ONCE(j->reservations);
-	i = s.idx;
-
-	while (1) {
-		if (test_bit(h, j->buf[i].has_inode))
-			goto out;
-
-		if (i == s.unwritten_idx)
-			break;
-
-		i = (i - 1) & JOURNAL_BUF_MASK;
-		seq--;
-	}
-
-	seq = 0;
-out:
-	spin_unlock(&j->lock);
-
-	return seq;
-}
-
-void bch2_journal_set_has_inum(struct journal *j, u64 inode, u64 seq)
-{
-	size_t h = hash_64(inode, ilog2(sizeof(j->buf[0].has_inode) * 8));
-	struct journal_buf *buf;
-
-	spin_lock(&j->lock);
-
-	if ((buf = journal_seq_to_buf(j, seq)))
-		set_bit(h, buf->has_inode);
-
-	spin_unlock(&j->lock);
-}
-
 static int __journal_res_get(struct journal *j, struct journal_res *res,
 			     unsigned flags)
 {
@@ -602,7 +556,10 @@ int bch2_journal_flush_seq_async(struct journal *j, u64 seq,
 
 	spin_lock(&j->lock);
 
-	BUG_ON(seq > journal_cur_seq(j));
+	if (WARN_ONCE(seq > journal_cur_seq(j),
+		      "requested to flush journal seq %llu, but currently at %llu",
+		      seq, journal_cur_seq(j)))
+		goto out;
 
 	/* Recheck under lock: */
 	if (j->err_seq && seq >= j->err_seq) {
@@ -1071,7 +1028,7 @@ int bch2_fs_journal_start(struct journal *j, u64 cur_seq,
 	bch2_journal_space_available(j);
 	spin_unlock(&j->lock);
 
-	return 0;
+	return bch2_journal_reclaim_start(j);
 }
 
 /* init/exit: */

@@ -34,8 +34,6 @@ struct journal_buf {
 	bool			noflush;	/* write has already been kicked off, and was noflush */
 	bool			must_flush;	/* something wants a flush */
 	bool			separate_flush;
-	/* bloom filter: */
-	unsigned long		has_inode[1024 / sizeof(unsigned long)];
 };
 
 /*
@@ -154,6 +152,7 @@ enum {
 	JOURNAL_NEED_WRITE,
 	JOURNAL_MAY_GET_UNRESERVED,
 	JOURNAL_MAY_SKIP_FLUSH,
+	JOURNAL_NOCHANGES,
 };
 
 /* Embedded in struct bch_fs */

@@ -197,9 +197,11 @@ void bch2_btree_node_iter_verify(struct btree_node_iter *iter,
 		return;
 
 	/* Verify no duplicates: */
-	btree_node_iter_for_each(iter, set)
+	btree_node_iter_for_each(iter, set) {
+		BUG_ON(set->k > set->end);
 		btree_node_iter_for_each(iter, s2)
 			BUG_ON(set != s2 && set->end == s2->end);
+	}
 
 	/* Verify that set->end is correct: */
 	btree_node_iter_for_each(iter, set) {
@@ -1193,7 +1195,7 @@ static struct bkey_packed *bset_search_write_set(const struct btree *b,
 
 static inline void prefetch_four_cachelines(void *p)
 {
-#if CONFIG_X86_64
+#ifdef CONFIG_X86_64
 	asm("prefetcht0 (-127 + 64 * 0)(%0);"
 	    "prefetcht0 (-127 + 64 * 1)(%0);"
 	    "prefetcht0 (-127 + 64 * 2)(%0);"

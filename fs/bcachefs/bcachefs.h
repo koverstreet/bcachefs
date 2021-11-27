@@ -179,6 +179,7 @@
 #undef pr_fmt
 #define pr_fmt(fmt) "bcachefs: %s() " fmt "\n", __func__
 
+#include <linux/backing-dev-defs.h>
 #include <linux/bug.h>
 #include <linux/bio.h>
 #include <linux/closure.h>
@@ -217,8 +218,8 @@
 #define bch2_fmt(_c, fmt)		"bcachefs (%s): " fmt "\n", ((_c)->name)
 #define bch2_fmt_inum(_c, _inum, fmt)	"bcachefs (%s inum %llu): " fmt "\n", ((_c)->name), (_inum)
 #else
-#define bch2_fmt(_c, fmt)		fmt "\n"
-#define bch2_fmt_inum(_c, _inum, fmt)	"inum %llu: " fmt "\n", (_inum)
+#define bch2_fmt(_c, fmt)		"%s: " fmt "\n", ((_c)->name)
+#define bch2_fmt_inum(_c, _inum, fmt)	"%s inum %llu: " fmt "\n", ((_c)->name), (_inum)
 #endif
 
 #define bch_info(c, fmt, ...) \
@@ -352,6 +353,7 @@ enum bch_time_stats {
 #include "quota_types.h"
 #include "rebalance_types.h"
 #include "replicas_types.h"
+#include "subvolume_types.h"
 #include "super_types.h"
 
 /* Number of nodes btree coalesce will try to coalesce at once */
@@ -380,6 +382,8 @@ enum gc_phase {
 	GC_PHASE_BTREE_alloc,
 	GC_PHASE_BTREE_quotas,
 	GC_PHASE_BTREE_reflink,
+	GC_PHASE_BTREE_subvolumes,
+	GC_PHASE_BTREE_snapshots,
 
 	GC_PHASE_PENDING_DELETE,
 };
@@ -491,12 +495,14 @@ struct bch_dev {
 
 enum {
 	/* startup: */
+	BCH_FS_INITIALIZED,
 	BCH_FS_ALLOC_READ_DONE,
 	BCH_FS_ALLOC_CLEAN,
 	BCH_FS_ALLOCATOR_RUNNING,
 	BCH_FS_ALLOCATOR_STOPPING,
 	BCH_FS_INITIAL_GC_DONE,
 	BCH_FS_INITIAL_GC_UNFIXED,
+	BCH_FS_TOPOLOGY_REPAIR_DONE,
 	BCH_FS_BTREE_INTERIOR_REPLAY_DONE,
 	BCH_FS_FSCK_DONE,
 	BCH_FS_STARTED,
@@ -556,11 +562,26 @@ struct journal_keys {
 	u64			journal_seq_base;
 };
 
-struct btree_iter_buf {
-	struct btree_iter	*iter;
+struct btree_path_buf {
+	struct btree_path	*path;
 };
 
 #define REPLICAS_DELTA_LIST_MAX	(1U << 16)
+
+struct snapshot_t {
+	u32			parent;
+	u32			children[2];
+	u32			subvol; /* Nonzero only if a subvolume points to this node: */
+	u32			equiv;
+};
+
+typedef struct {
+	u32		subvol;
+	u64		inum;
+} subvol_inum;
+
+#define BCACHEFS_ROOT_SUBVOL_INUM					\
+	((subvol_inum) { BCACHEFS_ROOT_SUBVOL,	BCACHEFS_ROOT_INO })
 
 struct bch_fs {
 	struct closure		cl;
@@ -633,6 +654,15 @@ struct bch_fs {
 	struct closure		sb_write;
 	struct mutex		sb_lock;
 
+	/* snapshot.c: */
+	GENRADIX(struct snapshot_t) snapshots;
+	struct bch_snapshot_table __rcu *snapshot_table;
+	struct mutex		snapshot_table_lock;
+	struct work_struct	snapshot_delete_work;
+	struct work_struct	snapshot_wait_for_pagecache_and_delete_work;
+	struct snapshot_id_list	snapshots_unlinked;
+	struct mutex		snapshots_unlinked_lock;
+
 	/* BTREE CACHE */
 	struct bio_set		btree_bio;
 	struct workqueue_struct	*io_complete_wq;
@@ -665,16 +695,16 @@ struct bch_fs {
 	/* btree_iter.c: */
 	struct mutex		btree_trans_lock;
 	struct list_head	btree_trans_list;
-	mempool_t		btree_iters_pool;
+	mempool_t		btree_paths_pool;
 	mempool_t		btree_trans_mem_pool;
-	struct btree_iter_buf  __percpu	*btree_iters_bufs;
+	struct btree_path_buf  __percpu	*btree_paths_bufs;
 
 	struct srcu_struct	btree_trans_barrier;
 
 	struct btree_key_cache	btree_key_cache;
 
 	struct workqueue_struct	*btree_update_wq;
-	struct workqueue_struct	*btree_error_wq;
+	struct workqueue_struct	*btree_io_complete_wq;
 	/* copygc needs its own workqueue for index updates.. */
 	struct workqueue_struct	*copygc_wq;
 
@@ -774,7 +804,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
@@ -789,6 +819,10 @@ struct bch_fs {
 	copygc_heap		copygc_heap;
 	struct write_point	copygc_write_point;
 	s64			copygc_wait;
+
+	/* DATA PROGRESS STATS */
+	struct list_head	data_progress_list;
+	struct mutex		data_progress_lock;
 
 	/* STRIPES: */
 	GENRADIX(struct stripe) stripes[2];
@@ -825,8 +859,6 @@ struct bch_fs {
 
 	atomic64_t		btree_writes_nr;
 	atomic64_t		btree_writes_sectors;
-	struct bio_list		btree_write_error_list;
-	struct work_struct	btree_write_error_work;
 	spinlock_t		btree_write_error_lock;
 
 	/* ERRORS */

@@ -22,6 +22,51 @@
 #include <linux/sched/mm.h>
 #include <trace/events/bcachefs.h>
 
+void bch2_btree_node_io_unlock(struct btree *b)
+{
+	EBUG_ON(!btree_node_write_in_flight(b));
+
+	clear_btree_node_write_in_flight_inner(b);
+	clear_btree_node_write_in_flight(b);
+	wake_up_bit(&b->flags, BTREE_NODE_write_in_flight);
+}
+
+void bch2_btree_node_io_lock(struct btree *b)
+{
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
+
+	wait_on_bit_lock_io(&b->flags, BTREE_NODE_write_in_flight,
+			    TASK_UNINTERRUPTIBLE);
+}
+
+void __bch2_btree_node_wait_on_read(struct btree *b)
+{
+	wait_on_bit_io(&b->flags, BTREE_NODE_read_in_flight,
+		       TASK_UNINTERRUPTIBLE);
+}
+
+void __bch2_btree_node_wait_on_write(struct btree *b)
+{
+	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,
+		       TASK_UNINTERRUPTIBLE);
+}
+
+void bch2_btree_node_wait_on_read(struct btree *b)
+{
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
+
+	wait_on_bit_io(&b->flags, BTREE_NODE_read_in_flight,
+		       TASK_UNINTERRUPTIBLE);
+}
+
+void bch2_btree_node_wait_on_write(struct btree *b)
+{
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
+
+	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,
+		       TASK_UNINTERRUPTIBLE);
+}
+
 static void verify_no_dups(struct btree *b,
 			   struct bkey_packed *start,
 			   struct bkey_packed *end)
@@ -420,17 +465,17 @@ void bch2_btree_build_aux_trees(struct btree *b)
  *
  * Returns true if we sorted (i.e. invalidated iterators
  */
-void bch2_btree_init_next(struct bch_fs *c, struct btree *b,
-			  struct btree_iter *iter)
+void bch2_btree_init_next(struct btree_trans *trans, struct btree *b)
 {
+	struct bch_fs *c = trans->c;
 	struct btree_node_entry *bne;
 	bool reinit_iter = false;
 
 	EBUG_ON(!(b->c.lock.state.seq & 1));
-	EBUG_ON(iter && iter->l[b->c.level].b != b);
 	BUG_ON(bset_written(b, bset(b, &b->set[1])));
 
-	if (b->nsets == MAX_BSETS) {
+	if (b->nsets == MAX_BSETS &&
+	    !btree_node_write_in_flight(b)) {
 		unsigned log_u64s[] = {
 			ilog2(bset_u64s(&b->set[0])),
 			ilog2(bset_u64s(&b->set[1])),
@@ -455,8 +500,8 @@ void bch2_btree_init_next(struct bch_fs *c, struct btree *b,
 
 	bch2_btree_build_aux_trees(b);
 
-	if (iter && reinit_iter)
-		bch2_btree_iter_reinit_node(iter, b);
+	if (reinit_iter)
+		bch2_trans_node_reinit_iter(trans, b);
 }
 
 static void btree_pos_to_text(struct printbuf *out, struct bch_fs *c,
@@ -565,13 +610,16 @@ out:									\
 void bch2_btree_node_drop_keys_outside_node(struct btree *b)
 {
 	struct bset_tree *t;
+	struct bkey_s_c k;
+	struct bkey unpacked;
+	struct btree_node_iter iter;
 
 	for_each_bset(b, t) {
 		struct bset *i = bset(b, t);
 		struct bkey_packed *k;
 
 		for (k = i->start; k != vstruct_last(i); k = bkey_next(k))
-			if (bkey_cmp_left_packed(b, k, &b->data->min_key) < 0)
+			if (bkey_cmp_left_packed(b, k, &b->data->min_key) >= 0)
 				break;
 
 		if (k != i->start) {
@@ -596,11 +644,17 @@ void bch2_btree_node_drop_keys_outside_node(struct btree *b)
 	}
 
 	bch2_btree_build_aux_trees(b);
+
+	for_each_btree_node_key_unpack(b, k, &iter, &unpacked) {
+		BUG_ON(bpos_cmp(k.k->p, b->data->min_key) < 0);
+		BUG_ON(bpos_cmp(k.k->p, b->data->max_key) > 0);
+	}
 }
 
 static int validate_bset(struct bch_fs *c, struct bch_dev *ca,
 			 struct btree *b, struct bset *i,
-			 unsigned sectors, int write, bool have_retry)
+			 unsigned offset, unsigned sectors,
+			 int write, bool have_retry)
 {
 	unsigned version = le16_to_cpu(i->version);
 	const char *err;
@@ -638,18 +692,23 @@ static int validate_bset(struct bch_fs *c, struct bch_dev *ca,
 		     BTREE_ERR_FATAL, c, ca, b, i,
 		     "BSET_SEPARATE_WHITEOUTS no longer supported");
 
-	if (btree_err_on(b->written + sectors > c->opts.btree_node_size,
+	if (btree_err_on(offset + sectors > c->opts.btree_node_size,
 			 BTREE_ERR_FIXABLE, c, ca, b, i,
 			 "bset past end of btree node")) {
 		i->u64s = 0;
 		return 0;
 	}
 
-	btree_err_on(b->written && !i->u64s,
+	btree_err_on(offset && !i->u64s,
 		     BTREE_ERR_FIXABLE, c, ca, b, i,
 		     "empty bset");
 
-	if (!b->written) {
+	btree_err_on(BSET_OFFSET(i) &&
+		     BSET_OFFSET(i) != offset,
+		     BTREE_ERR_WANT_RETRY, c, ca, b, i,
+		     "bset at wrong sector offset");
+
+	if (!offset) {
 		struct btree_node *bn =
 			container_of(i, struct btree_node, keys);
 		/* These indicate that we read the wrong btree node: */
@@ -815,7 +874,8 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 	bool updated_range = b->key.k.type == KEY_TYPE_btree_ptr_v2 &&
 		BTREE_PTR_RANGE_UPDATED(&bkey_i_to_btree_ptr_v2(&b->key)->v);
 	unsigned u64s;
-	unsigned nonblacklisted_written = 0;
+	unsigned blacklisted_written, nonblacklisted_written = 0;
+	unsigned ptr_written = btree_ptr_sectors_written(&b->key);
 	int ret, retry_read = 0, write = READ;
 
 	b->version_ondisk = U16_MAX;
@@ -846,7 +906,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 			     b->data->keys.seq, bp->seq);
 	}
 
-	while (b->written < c->opts.btree_node_size) {
+	while (b->written < (ptr_written ?: c->opts.btree_node_size)) {
 		unsigned sectors, whiteout_u64s = 0;
 		struct nonce nonce;
 		struct bch_csum csum;
@@ -902,7 +962,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 		b->version_ondisk = min(b->version_ondisk,
 					le16_to_cpu(i->version));
 
-		ret = validate_bset(c, ca, b, i, sectors,
+		ret = validate_bset(c, ca, b, i, b->written, sectors,
 				    READ, have_retry);
 		if (ret)
 			goto fsck_err;
@@ -926,6 +986,10 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 		btree_err_on(blacklisted && first,
 			     BTREE_ERR_FIXABLE, c, ca, b, i,
 			     "first btree node bset has blacklisted journal seq");
+
+		btree_err_on(blacklisted && ptr_written,
+			     BTREE_ERR_FIXABLE, c, ca, b, i,
+			     "found blacklisted bset in btree node with sectors_written");
 		if (blacklisted && !first)
 			continue;
 
@@ -939,26 +1003,34 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 		nonblacklisted_written = b->written;
 	}
 
-	for (bne = write_block(b);
-	     bset_byte_offset(b, bne) < btree_bytes(c);
-	     bne = (void *) bne + block_bytes(c))
-		btree_err_on(bne->keys.seq == b->data->keys.seq &&
-			     !bch2_journal_seq_is_blacklisted(c,
-					le64_to_cpu(bne->keys.journal_seq),
-					true),
+	if (ptr_written) {
+		btree_err_on(b->written < ptr_written,
 			     BTREE_ERR_WANT_RETRY, c, ca, b, NULL,
-			     "found bset signature after last bset");
+			     "btree node data missing: expected %u sectors, found %u",
+			     ptr_written, b->written);
+	} else {
+		for (bne = write_block(b);
+		     bset_byte_offset(b, bne) < btree_bytes(c);
+		     bne = (void *) bne + block_bytes(c))
+			btree_err_on(bne->keys.seq == b->data->keys.seq &&
+				     !bch2_journal_seq_is_blacklisted(c,
+								      le64_to_cpu(bne->keys.journal_seq),
+								      true),
+				     BTREE_ERR_WANT_RETRY, c, ca, b, NULL,
+				     "found bset signature after last bset");
 
-	/*
-	 * Blacklisted bsets are those that were written after the most recent
-	 * (flush) journal write. Since there wasn't a flush, they may not have
-	 * made it to all devices - which means we shouldn't write new bsets
-	 * after them, as that could leave a gap and then reads from that device
-	 * wouldn't find all the bsets in that btree node - which means it's
-	 * important that we start writing new bsets after the most recent _non_
-	 * blacklisted bset:
-	 */
-	b->written = nonblacklisted_written;
+		/*
+		 * Blacklisted bsets are those that were written after the most recent
+		 * (flush) journal write. Since there wasn't a flush, they may not have
+		 * made it to all devices - which means we shouldn't write new bsets
+		 * after them, as that could leave a gap and then reads from that device
+		 * wouldn't find all the bsets in that btree node - which means it's
+		 * important that we start writing new bsets after the most recent _non_
+		 * blacklisted bset:
+		 */
+		blacklisted_written = b->written;
+		b->written = nonblacklisted_written;
+	}
 
 	sorted = btree_bounce_alloc(c, btree_bytes(c), &used_mempool);
 	sorted->keys.u64s = 0;
@@ -1026,6 +1098,9 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 		if (ca->mi.state != BCH_MEMBER_STATE_rw)
 			set_btree_node_need_rewrite(b);
 	}
+
+	if (!ptr_written)
+		set_btree_node_need_rewrite(b);
 out:
 	mempool_free(iter, &c->fill_iter);
 	return retry_read;
@@ -1179,31 +1254,27 @@ static void btree_node_read_all_replicas_done(struct closure *cl)
 		container_of(cl, struct btree_node_read_all, cl);
 	struct bch_fs *c = ra->c;
 	struct btree *b = ra->b;
-	bool have_good_copy = false;
 	bool dump_bset_maps = false;
 	bool have_retry = false;
-	int ret = 0, write = READ;
-	unsigned i, written, written2;
+	int ret = 0, best = -1, write = READ;
+	unsigned i, written = 0, written2 = 0;
 	__le64 seq = b->key.k.type == KEY_TYPE_btree_ptr_v2
 		? bkey_i_to_btree_ptr_v2(&b->key)->v.seq : 0;
 
 	for (i = 0; i < ra->nr; i++) {
+		struct btree_node *bn = ra->buf[i];
+
 		if (ra->err[i])
 			continue;
 
-		if (!have_good_copy) {
-			memcpy(b->data, ra->buf[i], btree_bytes(c));
-			have_good_copy = true;
-			written = btree_node_sectors_written(c, b->data);
-		}
+		if (le64_to_cpu(bn->magic) != bset_magic(c) ||
+		    (seq && seq != bn->keys.seq))
+			continue;
 
-		/* Try to get the right btree node: */
-		if (have_good_copy &&
-		    seq &&
-		    b->data->keys.seq != seq &&
-		    ((struct btree_node *) ra->buf[i])->keys.seq == seq) {
-			memcpy(b->data, ra->buf[i], btree_bytes(c));
-			written = btree_node_sectors_written(c, b->data);
+		if (best < 0) {
+			best = i;
+			written = btree_node_sectors_written(c, bn);
+			continue;
 		}
 
 		written2 = btree_node_sectors_written(c, ra->buf[i]);
@@ -1213,14 +1284,14 @@ static void btree_node_read_all_replicas_done(struct closure *cl)
 		    btree_err_on(btree_node_has_extra_bsets(c, written2, ra->buf[i]),
 				 BTREE_ERR_FIXABLE, c, NULL, b, NULL,
 				 "found bset signature after last bset") ||
-		    btree_err_on(memcmp(b->data, ra->buf[i], written << 9),
+		    btree_err_on(memcmp(ra->buf[best], ra->buf[i], written << 9),
 				 BTREE_ERR_FIXABLE, c, NULL, b, NULL,
 				 "btree node replicas content mismatch"))
 			dump_bset_maps = true;
 
 		if (written2 > written) {
 			written = written2;
-			memcpy(b->data, ra->buf[i], btree_bytes(c));
+			best = i;
 		}
 	}
 fsck_err:
@@ -1273,9 +1344,14 @@ fsck_err:
 		}
 	}
 
-	if (have_good_copy)
-		bch2_btree_node_read_done(c, NULL, b, false);
-	else
+	if (best >= 0) {
+		memcpy(b->data, ra->buf[best], btree_bytes(c));
+		ret = bch2_btree_node_read_done(c, NULL, b, false);
+	} else {
+		ret = -1;
+	}
+
+	if (ret)
 		set_btree_node_read_error(b);
 
 	for (i = 0; i < ra->nr; i++) {
@@ -1390,8 +1466,6 @@ void bch2_btree_node_read(struct bch_fs *c, struct btree *b,
 	btree_pos_to_text(&PBUF(buf), c, b);
 	trace_btree_read(c, b);
 
-	set_btree_node_read_in_flight(b);
-
 	if (bch2_verify_all_btree_replicas &&
 	    !btree_node_read_all_replicas(c, b, sync))
 		return;
@@ -1467,6 +1541,8 @@ int bch2_btree_root_read(struct bch_fs *c, enum btree_id id,
 	bkey_copy(&b->key, k);
 	BUG_ON(bch2_btree_node_hash_insert(&c->btree_cache, b, level, id));
 
+	set_btree_node_read_in_flight(b);
+
 	bch2_btree_node_read(c, b, true);
 
 	if (btree_node_read_error(b)) {
@@ -1510,57 +1586,84 @@ void bch2_btree_complete_write(struct bch_fs *c, struct btree *b,
 static void btree_node_write_done(struct bch_fs *c, struct btree *b)
 {
 	struct btree_write *w = btree_prev_write(b);
+	unsigned long old, new, v;
 
 	bch2_btree_complete_write(c, b, w);
-	btree_node_io_unlock(b);
+
+	v = READ_ONCE(b->flags);
+	do {
+		old = new = v;
+
+		if (old & (1U << BTREE_NODE_need_write))
+			goto do_write;
+
+		new &= ~(1U << BTREE_NODE_write_in_flight);
+		new &= ~(1U << BTREE_NODE_write_in_flight_inner);
+	} while ((v = cmpxchg(&b->flags, old, new)) != old);
+
+	wake_up_bit(&b->flags, BTREE_NODE_write_in_flight);
+	return;
+
+do_write:
+	six_lock_read(&b->c.lock, NULL, NULL);
+	v = READ_ONCE(b->flags);
+	do {
+		old = new = v;
+
+		if ((old & (1U << BTREE_NODE_dirty)) &&
+		    (old & (1U << BTREE_NODE_need_write)) &&
+		    !(old & (1U << BTREE_NODE_never_write)) &&
+		    btree_node_may_write(b)) {
+			new &= ~(1U << BTREE_NODE_dirty);
+			new &= ~(1U << BTREE_NODE_need_write);
+			new |=  (1U << BTREE_NODE_write_in_flight);
+			new |=  (1U << BTREE_NODE_write_in_flight_inner);
+			new |=  (1U << BTREE_NODE_just_written);
+			new ^=  (1U << BTREE_NODE_write_idx);
+		} else {
+			new &= ~(1U << BTREE_NODE_write_in_flight);
+			new &= ~(1U << BTREE_NODE_write_in_flight_inner);
+		}
+	} while ((v = cmpxchg(&b->flags, old, new)) != old);
+
+	if (new & (1U << BTREE_NODE_write_in_flight))
+		__bch2_btree_node_write(c, b, true);
+
+	six_unlock_read(&b->c.lock);
 }
 
-static void bch2_btree_node_write_error(struct bch_fs *c,
-					struct btree_write_bio *wbio)
+static void btree_node_write_work(struct work_struct *work)
 {
+	struct btree_write_bio *wbio =
+		container_of(work, struct btree_write_bio, work);
+	struct bch_fs *c	= wbio->wbio.c;
 	struct btree *b		= wbio->wbio.bio.bi_private;
-	struct bkey_buf k;
 	struct bch_extent_ptr *ptr;
-	struct btree_trans trans;
-	struct btree_iter *iter;
 	int ret;
 
-	bch2_bkey_buf_init(&k);
-	bch2_trans_init(&trans, c, 0, 0);
+	btree_bounce_free(c,
+		wbio->data_bytes,
+		wbio->wbio.used_mempool,
+		wbio->data);
 
-	iter = bch2_trans_get_node_iter(&trans, b->c.btree_id, b->key.k.p,
-					BTREE_MAX_DEPTH, b->c.level, 0);
-retry:
-	ret = bch2_btree_iter_traverse(iter);
-	if (ret)
-		goto err;
-
-	/* has node been freed? */
-	if (iter->l[b->c.level].b != b) {
-		/* node has been freed: */
-		BUG_ON(!btree_node_dying(b));
-		goto out;
-	}
-
-	BUG_ON(!btree_node_hashed(b));
-
-	bch2_bkey_buf_copy(&k, c, &b->key);
-
-	bch2_bkey_drop_ptrs(bkey_i_to_s(k.k), ptr,
+	bch2_bkey_drop_ptrs(bkey_i_to_s(&wbio->key), ptr,
 		bch2_dev_list_has_dev(wbio->wbio.failed, ptr->dev));
 
-	if (!bch2_bkey_nr_ptrs(bkey_i_to_s_c(k.k)))
+	if (!bch2_bkey_nr_ptrs(bkey_i_to_s_c(&wbio->key)))
 		goto err;
 
-	ret = bch2_btree_node_update_key(c, iter, b, k.k);
-	if (ret == -EINTR)
-		goto retry;
-	if (ret)
-		goto err;
+	if (wbio->wbio.first_btree_write) {
+		if (wbio->wbio.failed.nr) {
+
+		}
+	} else {
+		ret = bch2_trans_do(c, NULL, NULL, 0,
+			bch2_btree_node_update_key_get_iter(&trans, b, &wbio->key,
+							    !wbio->wbio.failed.nr));
+		if (ret)
+			goto err;
+	}
 out:
-	bch2_trans_iter_put(&trans, iter);
-	bch2_trans_exit(&trans);
-	bch2_bkey_buf_exit(&k, c);
 	bio_put(&wbio->wbio.bio);
 	btree_node_write_done(c, b);
 	return;
@@ -1570,58 +1673,14 @@ err:
 	goto out;
 }
 
-void bch2_btree_write_error_work(struct work_struct *work)
-{
-	struct bch_fs *c = container_of(work, struct bch_fs,
-					btree_write_error_work);
-	struct bio *bio;
-
-	while (1) {
-		spin_lock_irq(&c->btree_write_error_lock);
-		bio = bio_list_pop(&c->btree_write_error_list);
-		spin_unlock_irq(&c->btree_write_error_lock);
-
-		if (!bio)
-			break;
-
-		bch2_btree_node_write_error(c,
-			container_of(bio, struct btree_write_bio, wbio.bio));
-	}
-}
-
-static void btree_node_write_work(struct work_struct *work)
-{
-	struct btree_write_bio *wbio =
-		container_of(work, struct btree_write_bio, work);
-	struct bch_fs *c	= wbio->wbio.c;
-	struct btree *b		= wbio->wbio.bio.bi_private;
-
-	btree_bounce_free(c,
-		wbio->bytes,
-		wbio->wbio.used_mempool,
-		wbio->data);
-
-	if (wbio->wbio.failed.nr) {
-		unsigned long flags;
-
-		spin_lock_irqsave(&c->btree_write_error_lock, flags);
-		bio_list_add(&c->btree_write_error_list, &wbio->wbio.bio);
-		spin_unlock_irqrestore(&c->btree_write_error_lock, flags);
-
-		queue_work(c->btree_error_wq, &c->btree_write_error_work);
-		return;
-	}
-
-	bio_put(&wbio->wbio.bio);
-	btree_node_write_done(c, b);
-}
-
 static void btree_node_write_endio(struct bio *bio)
 {
 	struct bch_write_bio *wbio	= to_wbio(bio);
 	struct bch_write_bio *parent	= wbio->split ? wbio->parent : NULL;
 	struct bch_write_bio *orig	= parent ?: wbio;
+	struct btree_write_bio *wb	= container_of(orig, struct btree_write_bio, wbio);
 	struct bch_fs *c		= wbio->c;
+	struct btree *b			= wbio->bio.bi_private;
 	struct bch_dev *ca		= bch_dev_bkey_exists(c, wbio->dev);
 	unsigned long flags;
 
@@ -1642,13 +1701,13 @@ static void btree_node_write_endio(struct bio *bio)
 	if (parent) {
 		bio_put(bio);
 		bio_endio(&parent->bio);
-	} else {
-		struct btree_write_bio *wb =
-			container_of(orig, struct btree_write_bio, wbio);
-
-		INIT_WORK(&wb->work, btree_node_write_work);
-		queue_work(c->io_complete_wq, &wb->work);
+		return;
 	}
+
+	clear_btree_node_write_in_flight_inner(b);
+	wake_up_bit(&b->flags, BTREE_NODE_write_in_flight_inner);
+	INIT_WORK(&wb->work, btree_node_write_work);
+	queue_work(c->btree_io_complete_wq, &wb->work);
 }
 
 static int validate_bset_for_write(struct bch_fs *c, struct btree *b,
@@ -1661,7 +1720,7 @@ static int validate_bset_for_write(struct bch_fs *c, struct btree *b,
 		return -1;
 
 	ret = validate_bset_keys(c, b, i, &whiteout_u64s, WRITE, false) ?:
-		validate_bset(c, NULL, b, i, sectors, WRITE, false);
+		validate_bset(c, NULL, b, i, b->written, sectors, WRITE, false);
 	if (ret) {
 		bch2_inconsistent_error(c);
 		dump_stack();
@@ -1673,18 +1732,24 @@ static int validate_bset_for_write(struct bch_fs *c, struct btree *b,
 static void btree_write_submit(struct work_struct *work)
 {
 	struct btree_write_bio *wbio = container_of(work, struct btree_write_bio, work);
+	struct bch_extent_ptr *ptr;
+	__BKEY_PADDED(k, BKEY_BTREE_PTR_VAL_U64s_MAX) tmp;
 
-	bch2_submit_wbio_replicas(&wbio->wbio, wbio->wbio.c, BCH_DATA_btree, &wbio->key);
+	bkey_copy(&tmp.k, &wbio->key);
+
+	bkey_for_each_ptr(bch2_bkey_ptrs(bkey_i_to_s(&tmp.k)), ptr)
+		ptr->offset += wbio->sector_offset;
+
+	bch2_submit_wbio_replicas(&wbio->wbio, wbio->wbio.c, BCH_DATA_btree, &tmp.k);
 }
 
-void __bch2_btree_node_write(struct bch_fs *c, struct btree *b)
+void __bch2_btree_node_write(struct bch_fs *c, struct btree *b, bool already_started)
 {
 	struct btree_write_bio *wbio;
 	struct bset_tree *t;
 	struct bset *i;
 	struct btree_node *bn = NULL;
 	struct btree_node_entry *bne = NULL;
-	struct bch_extent_ptr *ptr;
 	struct sort_iter sort_iter;
 	struct nonce nonce;
 	unsigned bytes_to_write, sectors_to_write, bytes, u64s;
@@ -1693,6 +1758,9 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b)
 	unsigned long old, new;
 	bool validate_before_checksum = false;
 	void *data;
+
+	if (already_started)
+		goto do_write;
 
 	if (test_bit(BCH_FS_HOLD_BTREE_WRITES, &c->flags))
 		return;
@@ -1716,22 +1784,19 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b)
 		if (old & (1 << BTREE_NODE_never_write))
 			return;
 
-		if (old & (1 << BTREE_NODE_write_in_flight)) {
-			/*
-			 * XXX waiting on btree writes with btree locks held -
-			 * this can deadlock, and we hit the write error path
-			 */
-			btree_node_wait_on_io(b);
-			continue;
-		}
+		BUG_ON(old & (1 << BTREE_NODE_write_in_flight));
 
 		new &= ~(1 << BTREE_NODE_dirty);
 		new &= ~(1 << BTREE_NODE_need_write);
 		new |=  (1 << BTREE_NODE_write_in_flight);
+		new |=  (1 << BTREE_NODE_write_in_flight_inner);
 		new |=  (1 << BTREE_NODE_just_written);
 		new ^=  (1 << BTREE_NODE_write_idx);
 	} while (cmpxchg_acquire(&b->flags, old, new) != old);
 
+	if (new & (1U << BTREE_NODE_need_write))
+		return;
+do_write:
 	atomic_dec(&c->btree_cache.dirty);
 
 	BUG_ON(btree_node_fake(b));
@@ -1818,6 +1883,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b)
 	i->version = c->sb.version < bcachefs_metadata_version_new_versioning
 		? cpu_to_le16(BCH_BSET_VERSION_OLD)
 		: cpu_to_le16(c->sb.version);
+	SET_BSET_OFFSET(i, b->written);
 	SET_BSET_CSUM_TYPE(i, bch2_meta_checksum_type(c));
 
 	if (bch2_csum_type_is_encryption(BSET_CSUM_TYPE(i)))
@@ -1876,36 +1942,29 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b)
 			    struct btree_write_bio, wbio.bio);
 	wbio_init(&wbio->wbio.bio);
 	wbio->data			= data;
-	wbio->bytes			= bytes;
+	wbio->data_bytes		= bytes;
+	wbio->sector_offset		= b->written;
 	wbio->wbio.c			= c;
 	wbio->wbio.used_mempool		= used_mempool;
+	wbio->wbio.first_btree_write	= !b->written;
 	wbio->wbio.bio.bi_opf		= REQ_OP_WRITE|REQ_META;
 	wbio->wbio.bio.bi_end_io	= btree_node_write_endio;
 	wbio->wbio.bio.bi_private	= b;
 
 	bch2_bio_map(&wbio->wbio.bio, data, sectors_to_write << 9);
 
-	/*
-	 * If we're appending to a leaf node, we don't technically need FUA -
-	 * this write just needs to be persisted before the next journal write,
-	 * which will be marked FLUSH|FUA.
-	 *
-	 * Similarly if we're writing a new btree root - the pointer is going to
-	 * be in the next journal entry.
-	 *
-	 * But if we're writing a new btree node (that isn't a root) or
-	 * appending to a non leaf btree node, we need either FUA or a flush
-	 * when we write the parent with the new pointer. FUA is cheaper than a
-	 * flush, and writes appending to leaf nodes aren't blocking anything so
-	 * just make all btree node writes FUA to keep things sane.
-	 */
-
 	bkey_copy(&wbio->key, &b->key);
 
-	bkey_for_each_ptr(bch2_bkey_ptrs(bkey_i_to_s(&wbio->key)), ptr)
-		ptr->offset += b->written;
-
 	b->written += sectors_to_write;
+
+	if (wbio->wbio.first_btree_write &&
+	    b->key.k.type == KEY_TYPE_btree_ptr_v2)
+		bkey_i_to_btree_ptr_v2(&b->key)->v.sectors_written =
+			cpu_to_le16(b->written);
+
+	if (wbio->key.k.type == KEY_TYPE_btree_ptr_v2)
+		bkey_i_to_btree_ptr_v2(&wbio->key)->v.sectors_written =
+			cpu_to_le16(b->written);
 
 	atomic64_inc(&c->btree_writes_nr);
 	atomic64_add(sectors_to_write, &c->btree_writes_sectors);
@@ -1915,6 +1974,10 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b)
 	return;
 err:
 	set_btree_node_noevict(b);
+	if (!b->written &&
+	    b->key.k.type == KEY_TYPE_btree_ptr_v2)
+		bkey_i_to_btree_ptr_v2(&b->key)->v.sectors_written =
+			cpu_to_le16(sectors_to_write);
 	b->written += sectors_to_write;
 nowrite:
 	btree_bounce_free(c, bytes, used_mempool, data);
@@ -1986,7 +2049,7 @@ void bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 	if (lock_type_held == SIX_LOCK_intent ||
 	    (lock_type_held == SIX_LOCK_read &&
 	     six_lock_tryupgrade(&b->c.lock))) {
-		__bch2_btree_node_write(c, b);
+		__bch2_btree_node_write(c, b, false);
 
 		/* don't cycle lock unnecessarily: */
 		if (btree_node_just_written(b) &&
@@ -1998,7 +2061,7 @@ void bch2_btree_node_write(struct bch_fs *c, struct btree *b,
 		if (lock_type_held == SIX_LOCK_read)
 			six_lock_downgrade(&b->c.lock);
 	} else {
-		__bch2_btree_node_write(c, b);
+		__bch2_btree_node_write(c, b, false);
 		if (lock_type_held == SIX_LOCK_write &&
 		    btree_node_just_written(b))
 			bch2_btree_post_write_cleanup(c, b);

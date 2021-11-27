@@ -5,8 +5,7 @@
 const char *bch2_reflink_p_invalid(const struct bch_fs *, struct bkey_s_c);
 void bch2_reflink_p_to_text(struct printbuf *, struct bch_fs *,
 			    struct bkey_s_c);
-enum merge_result bch2_reflink_p_merge(struct bch_fs *,
-				       struct bkey_s, struct bkey_s);
+bool bch2_reflink_p_merge(struct bch_fs *, struct bkey_s, struct bkey_s_c);
 
 #define bch2_bkey_ops_reflink_p (struct bkey_ops) {		\
 	.key_invalid	= bch2_reflink_p_invalid,		\
@@ -58,7 +57,7 @@ static inline __le64 *bkey_refcount(struct bkey_i *k)
 	}
 }
 
-s64 bch2_remap_range(struct bch_fs *, struct bpos, struct bpos,
-		     u64, u64 *, u64, s64 *);
+s64 bch2_remap_range(struct bch_fs *, subvol_inum, u64,
+		     subvol_inum, u64, u64, u64, s64 *);
 
 #endif /* _BCACHEFS_REFLINK_H */

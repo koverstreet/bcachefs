@@ -55,7 +55,7 @@ static inline void set_bkey_val_bytes(struct bkey *k, unsigned bytes)
 #define bkey_deleted(_k)	((_k)->type == KEY_TYPE_deleted)
 
 #define bkey_whiteout(_k)				\
-	((_k)->type == KEY_TYPE_deleted || (_k)->type == KEY_TYPE_discard)
+	((_k)->type == KEY_TYPE_deleted || (_k)->type == KEY_TYPE_whiteout)
 
 enum bkey_lr_packed {
 	BKEY_PACKED_BOTH,
@@ -161,37 +161,6 @@ static inline struct bpos bpos_min(struct bpos l, struct bpos r)
 static inline struct bpos bpos_max(struct bpos l, struct bpos r)
 {
 	return bpos_cmp(l, r) > 0 ? l : r;
-}
-
-#define sbb(a, b, borrow)				\
-do {							\
-	typeof(a) d1, d2;				\
-							\
-	d1 = a - borrow;				\
-	borrow  = d1 > a;				\
-							\
-	d2 = d1 - b;					\
-	borrow += d2 > d1;				\
-	a = d2;						\
-} while (0)
-
-/* returns a - b: */
-static inline struct bpos bpos_sub(struct bpos a, struct bpos b)
-{
-	int borrow = 0;
-
-	sbb(a.snapshot, b.snapshot,	borrow);
-	sbb(a.offset,	b.offset,	borrow);
-	sbb(a.inode,	b.inode,	borrow);
-	return a;
-}
-
-static inline struct bpos bpos_diff(struct bpos l, struct bpos r)
-{
-	if (bpos_cmp(l, r) > 0)
-		swap(l, r);
-
-	return bpos_sub(r, l);
 }
 
 void bch2_bpos_swab(struct bpos *);
