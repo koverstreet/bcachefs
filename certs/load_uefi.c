@@ -114,6 +114,7 @@ static __init void uefi_blacklist_binary(const char *source,
 static __init void uefi_revocation_list_x509(const char *source,
 					     const void *data, size_t len)
 {
+	pr_info("Revoking X.509 certificate: %s\n", source);
 	add_key_to_revocation_list(data, len);
 }
 
