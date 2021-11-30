@@ -126,7 +126,7 @@ binary: binary-indep binary-arch
 
 build: build-arch build-indep
 
-clean: debian/control debian/canonical-certs.pem
+clean: debian/control debian/canonical-certs.pem debian/canonical-revoked-certs.pem
 	dh_testdir
 	dh_testroot
 	dh_clean
@@ -218,6 +218,18 @@ debian/canonical-certs.pem: $(wildcard $(DROOT)/certs/*-all.pem) $(wildcard $(DR
 		do								\
 			if [ -f "$$dir/certs/$$cert" ]; then			\
 				cat "$$dir/certs/$$cert";			\
+				break;						\
+			fi;							\
+		done;								\
+	done >"$@"
+
+debian/canonical-revoked-certs.pem: $(wildcard $(DROOT)/revoked-certs/*-all.pem) $(wildcard $(DROOT)/revoked-certs/*-$(arch).pem) $(wildcard $(DEBIAN)/revoked-certs/*-all.pem) $(wildcard $(DEBIAN)/revoked-certs/*-$(arch).pem)
+	for cert in $(sort $(notdir $^));					\
+	do									\
+		for dir in $(DEBIAN) $(DROOT);					\
+		do								\
+			if [ -f "$$dir/revoked-certs/$$cert" ]; then		\
+				cat "$$dir/revoked-certs/$$cert";		\
 				break;						\
 			fi;							\
 		done;								\
