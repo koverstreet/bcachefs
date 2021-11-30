@@ -52,6 +52,9 @@ struct efi __read_mostly efi = {
 	.properties_table	= EFI_INVALID_TABLE_ADDR,
 	.mem_attr_table		= EFI_INVALID_TABLE_ADDR,
 	.rng_seed		= EFI_INVALID_TABLE_ADDR,
+#ifdef CONFIG_LOAD_UEFI_KEYS
+	.mokvar_table		= EFI_INVALID_TABLE_ADDR,
+#endif
 };
 EXPORT_SYMBOL(efi);
 
@@ -72,6 +75,9 @@ static unsigned long *efi_tables[] = {
 	&efi.esrt,
 	&efi.properties_table,
 	&efi.mem_attr_table,
+#ifdef CONFIG_LOAD_UEFI_KEYS
+	&efi.mokvar_table,
+#endif
 };
 
 static bool disable_runtime;
@@ -472,6 +478,9 @@ static __initdata efi_config_table_type_t common_tables[] = {
 	{EFI_PROPERTIES_TABLE_GUID, "PROP", &efi.properties_table},
 	{EFI_MEMORY_ATTRIBUTES_TABLE_GUID, "MEMATTR", &efi.mem_attr_table},
 	{LINUX_EFI_RANDOM_SEED_TABLE_GUID, "RNG", &efi.rng_seed},
+#ifdef CONFIG_LOAD_UEFI_KEYS
+	{LINUX_EFI_MOK_VARIABLE_TABLE_GUID, "MOKvar", &efi.mokvar_table},
+#endif
 	{NULL_GUID, NULL, NULL},
 };
 
