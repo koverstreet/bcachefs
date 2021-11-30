@@ -144,6 +144,40 @@ static __init efi_element_handler_t get_handler_for_dbx(const efi_guid_t *sig_ty
 }
 
 /*
+ * load_moklist_certs() - Load MokList certs
+ *
+ * Load the certs contained in the UEFI MokListRT database into the
+ * platform trusted keyring.
+ *
+ * Return:	Status
+ */
+static int __init load_moklist_certs(void)
+{
+	efi_guid_t mok_var = EFI_SHIM_LOCK_GUID;
+	void *mok;
+	unsigned long moksize;
+	int rc;
+
+	/* Get MokListRT. It might not exist, so it isn't an error
+	 * if we can't get it.
+	 */
+	mok = get_cert_list(L"MokListRT", &mok_var, &moksize);
+	if (mok) {
+		rc = parse_efi_signature_list("UEFI:MokListRT",
+					      mok, moksize, get_handler_for_db);
+		kfree(mok);
+		if (rc)
+			pr_err("Couldn't parse MokListRT signatures: %d\n", rc);
+		return rc;
+	} else
+		pr_info("Couldn't get UEFI MokListRT\n");
+	return 0;
+}
+
+/*
+ * load_uefi_certs() - Load certs from UEFI sources
+ *
+ *
  * Load the certs contained in the UEFI databases into the secondary trusted
  * keyring and the UEFI blacklisted X.509 cert SHA256 hashes into the blacklist
  * keyring.
@@ -151,9 +185,8 @@ static __init efi_element_handler_t get_handler_for_dbx(const efi_guid_t *sig_ty
 static int __init load_uefi_certs(void)
 {
 	efi_guid_t secure_var = EFI_IMAGE_SECURITY_DATABASE_GUID;
-	efi_guid_t mok_var = EFI_SHIM_LOCK_GUID;
-	void *db = NULL, *dbx = NULL, *mok = NULL;
-	unsigned long dbsize = 0, dbxsize = 0, moksize = 0;
+	void *db = NULL, *dbx = NULL;
+	unsigned long dbsize = 0, dbxsize = 0;
 	int rc = 0;
 
 	if (!efi.get_variable)
@@ -175,17 +208,6 @@ static int __init load_uefi_certs(void)
 		}
 	}
 
-	mok = get_cert_list(L"MokListRT", &mok_var, &moksize);
-	if (!mok) {
-		pr_info("MODSIGN: Couldn't get UEFI MokListRT\n");
-	} else {
-		rc = parse_efi_signature_list("UEFI:MokListRT",
-					      mok, moksize, get_handler_for_db);
-		if (rc)
-			pr_err("Couldn't parse MokListRT signatures: %d\n", rc);
-		kfree(mok);
-	}
-
 	dbx = get_cert_list(L"dbx", &secure_var, &dbxsize);
 	if (!dbx) {
 		pr_info("MODSIGN: Couldn't get UEFI dbx list\n");
@@ -197,6 +219,9 @@ static int __init load_uefi_certs(void)
 			pr_err("Couldn't parse dbx signatures: %d\n", rc);
 		kfree(dbx);
 	}
+
+	/* Load the MokListRT certs */
+	rc = load_moklist_certs();
 
 	return rc;
 }
