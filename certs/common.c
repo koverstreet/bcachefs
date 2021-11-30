@@ -41,6 +41,7 @@ int load_certificate_list(const u8 cert_list[],
 		if (IS_ERR(key)) {
 			pr_err("Problem loading in-kernel X.509 certificate (%ld)\n",
 			       PTR_ERR(key));
+			WARN_ON_ONCE(1);
 		} else {
 			pr_notice("Loaded X.509 cert '%s'\n",
 				  key_ref_to_ptr(key)->description);
