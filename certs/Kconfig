@@ -107,4 +107,13 @@ config LOAD_UEFI_KEYS
 	  mode, modules signed with UEFI-stored keys will be permitted to be
 	  loaded and keys that match the blacklist will be rejected.
 
+config SYSTEM_REVOCATION_LIST
+	bool "Provide system-wide ring of revocation certificates"
+	depends on SYSTEM_BLACKLIST_KEYRING
+	depends on PKCS7_MESSAGE_PARSER=y
+	help
+	  If set, this allows revocation certificates to be stored in the
+	  blacklist keyring and implements a hook whereby a PKCS#7 message can
+	  be checked to see if it matches such a certificate.
+
 endmenu
