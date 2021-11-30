@@ -502,6 +502,7 @@ CONFIG_SYSTEM_TRUSTED_KEYRING                   policy<{'amd64': 'y', 'arm64': '
 CONFIG_SYSTEM_TRUSTED_KEYS                      policy<{'amd64': '"debian/canonical-certs.pem"', 'arm64': '"debian/canonical-certs.pem"', 'armhf': '"debian/canonical-certs.pem"', 'i386': '"debian/canonical-certs.pem"', 'ppc64el': '"debian/canonical-certs.pem"', 's390x': '"debian/canonical-certs.pem"'}>
 CONFIG_SYSTEM_EXTRA_CERTIFICATE                 policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 CONFIG_SYSTEM_EXTRA_CERTIFICATE_SIZE            policy<{'amd64': '4096', 'arm64': '4096', 'armhf': '4096', 'i386': '4096', 'ppc64el': '4096', 's390x': '4096'}>
+CONFIG_SYSTEM_REVOCATION_KEYS                   policy<{'amd64': '"debian/canonical-revoked-certs.pem"', 'arm64': '"debian/canonical-revoked-certs.pem"', 'armhf': '"debian/canonical-revoked-certs.pem"', 'ppc64el': '"debian/canonical-revoked-certs.pem"', 's390x': '"debian/canonical-revoked-certs.pem"'}>
 CONFIG_SECONDARY_TRUSTED_KEYRING                policy<{'amd64': 'y', 'arm64': 'y', 'armhf': 'y', 'i386': 'y', 'ppc64el': 'y', 's390x': 'y'}>
 
 # Menu: Cryptographic API >> Hardware crypto devices
