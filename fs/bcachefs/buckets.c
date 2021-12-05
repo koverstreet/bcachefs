@@ -1544,7 +1544,9 @@ static int bch2_trans_mark_pointer(struct btree_trans *trans,
 		goto out;
 
 	bch2_alloc_pack(c, a, u);
-	bch2_trans_update(trans, &iter, &a->k, 0);
+	ret = bch2_trans_update(trans, &iter, &a->k, 0);
+	if (ret)
+		goto out;
 out:
 	bch2_trans_iter_exit(trans, &iter);
 	return ret;
@@ -1595,7 +1597,9 @@ static int bch2_trans_mark_stripe_ptr(struct btree_trans *trans,
 	stripe_blockcount_set(&s->v, p.ec.block,
 		stripe_blockcount_get(&s->v, p.ec.block) +
 		sectors);
-	bch2_trans_update(trans, &iter, &s->k_i, 0);
+	ret = bch2_trans_update(trans, &iter, &s->k_i, 0);
+	if (ret)
+		goto err;
 
 	bch2_bkey_to_replicas(&r.e, bkey_i_to_s_c(&s->k_i));
 	r.e.data_type = data_type;
@@ -1733,7 +1737,9 @@ static int bch2_trans_mark_stripe_bucket(struct btree_trans *trans,
 		u.data_type = !deleting ? data_type : 0;
 
 	bch2_alloc_pack(c, a, u);
-	bch2_trans_update(trans, &iter, &a->k, 0);
+	ret = bch2_trans_update(trans, &iter, &a->k, 0);
+	if (ret)
+		goto err;
 err:
 	bch2_trans_iter_exit(trans, &iter);
 	return ret;
@@ -2012,7 +2018,9 @@ static int __bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 	u.dirty_sectors	= sectors;
 
 	bch2_alloc_pack(c, a, u);
-	bch2_trans_update(trans, &iter, &a->k, 0);
+	ret = bch2_trans_update(trans, &iter, &a->k, 0);
+	if (ret)
+		goto out;
 out:
 	bch2_trans_iter_exit(trans, &iter);
 	return ret;
