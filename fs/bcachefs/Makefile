@@ -40,6 +40,7 @@ bcachefs-y		:=	\
 	journal_reclaim.o	\
 	journal_seq_blacklist.o	\
 	keylist.o		\
+	lru.o			\
 	migrate.o		\
 	move.o			\
 	movinggc.o		\
