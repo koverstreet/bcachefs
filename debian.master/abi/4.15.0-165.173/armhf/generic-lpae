@@ -8754,7 +8754,6 @@ EXPORT_SYMBOL vmlinux 0x8b9ea582	ZSTD_copyDCtx
 EXPORT_SYMBOL vmlinux 0x8bc8034e	hdmi_infoframe_unpack
 EXPORT_SYMBOL vmlinux 0x8bf3c4d6	snd_pcm_hw_constraint_integer
 EXPORT_SYMBOL vmlinux 0x8c5c996f	genphy_config_init
-EXPORT_SYMBOL vmlinux 0x8c64e22d	efi
 EXPORT_SYMBOL vmlinux 0x8c67d6d4	input_handler_for_each_handle
 EXPORT_SYMBOL vmlinux 0x8c8b9fd3	security_inode_invalidate_secctx
 EXPORT_SYMBOL vmlinux 0x8c8ebb28	buffer_migrate_page
@@ -9840,6 +9839,7 @@ EXPORT_SYMBOL vmlinux 0xc364ae22	iomem_resource
 EXPORT_SYMBOL vmlinux 0xc36880d9	skb_queue_tail
 EXPORT_SYMBOL vmlinux 0xc36a5ea2	ww_mutex_unlock
 EXPORT_SYMBOL vmlinux 0xc3760578	cdrom_check_events
+EXPORT_SYMBOL vmlinux 0xc37f9322	efi
 EXPORT_SYMBOL vmlinux 0xc37f9c6e	cpufreq_update_policy
 EXPORT_SYMBOL vmlinux 0xc382ded8	ab3100_event_unregister
 EXPORT_SYMBOL vmlinux 0xc396403d	take_dentry_name_snapshot

@@ -6024,7 +6024,6 @@ EXPORT_SYMBOL vmlinux 0x01553371	vm_brk_flags
 EXPORT_SYMBOL vmlinux 0x016b8154	read_dev_sector
 EXPORT_SYMBOL vmlinux 0x01784d3a	inet_stream_connect
 EXPORT_SYMBOL vmlinux 0x017de3d5	nr_cpu_ids
-EXPORT_SYMBOL vmlinux 0x0196a7eb	efi
 EXPORT_SYMBOL vmlinux 0x01a3d310	omap_set_dma_channel_mode
 EXPORT_SYMBOL vmlinux 0x01cf3b63	__xfrm_decode_session
 EXPORT_SYMBOL vmlinux 0x01d7c676	netdev_crit
@@ -7571,6 +7570,7 @@ EXPORT_SYMBOL vmlinux 0x4e702a10	snd_pcm_hw_constraint_msbits
 EXPORT_SYMBOL vmlinux 0x4e78583b	mipi_dsi_detach
 EXPORT_SYMBOL vmlinux 0x4e79f717	vsscanf
 EXPORT_SYMBOL vmlinux 0x4e8c44e8	inet_csk_clear_xmit_timers
+EXPORT_SYMBOL vmlinux 0x4e8dd6e4	efi
 EXPORT_SYMBOL vmlinux 0x4e8eae8e	reuseport_alloc
 EXPORT_SYMBOL vmlinux 0x4eaa2100	blk_register_region
 EXPORT_SYMBOL vmlinux 0x4ece39aa	thaw_super
