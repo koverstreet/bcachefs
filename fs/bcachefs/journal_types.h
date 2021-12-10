@@ -271,8 +271,8 @@ struct journal {
 	u64			nr_flush_writes;
 	u64			nr_noflush_writes;
 
-	struct time_stats	*write_time;
-	struct time_stats	*delay_time;
+	struct time_stats	*flush_write_time;
+	struct time_stats	*noflush_write_time;
 	struct time_stats	*blocked_time;
 	struct time_stats	*flush_seq_time;
 
