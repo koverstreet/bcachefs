@@ -1379,7 +1379,7 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	if (IS_ERR(a))
 		return PTR_ERR(a);
 
-	ret = bch2_trans_update(trans, iter, &a->k, BTREE_TRIGGER_NORUN);
+	ret = bch2_trans_update(trans, iter, &a->k, 0);
 fsck_err:
 	return ret;
 }
@@ -1891,7 +1891,7 @@ static int bch2_alloc_write_oldest_gen(struct btree_trans *trans, struct btree_i
 
 	u.oldest_gen = ca->oldest_gen[iter->pos.offset];
 
-	return bch2_alloc_write(trans, iter, &u, BTREE_TRIGGER_NORUN);
+	return bch2_alloc_write(trans, iter, &u, 0);
 }
 
 int bch2_gc_gens(struct bch_fs *c)
