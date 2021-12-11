@@ -1481,8 +1481,7 @@ need_mark:
 
 /* trans_mark: */
 
-static struct bkey_alloc_buf *
-bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree_iter *iter,
+static int bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree_iter *iter,
 			      const struct bch_extent_ptr *ptr,
 			      struct bkey_alloc_unpacked *u)
 {
@@ -1490,13 +1489,8 @@ bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree_iter *iter
 	struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
 	struct bpos pos = POS(ptr->dev, PTR_BUCKET_NR(ca, ptr));
 	struct bucket *g;
-	struct bkey_alloc_buf *a;
 	struct bkey_i *update = btree_trans_peek_updates(trans, BTREE_ID_alloc, pos);
 	int ret;
-
-	a = bch2_trans_kmalloc(trans, sizeof(struct bkey_alloc_buf));
-	if (IS_ERR(a))
-		return a;
 
 	bch2_trans_iter_init(trans, iter, BTREE_ID_alloc, pos,
 			     BTREE_ITER_CACHED|
@@ -1505,7 +1499,7 @@ bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree_iter *iter
 	ret = bch2_btree_iter_traverse(iter);
 	if (ret) {
 		bch2_trans_iter_exit(trans, iter);
-		return ERR_PTR(ret);
+		return ret;
 	}
 
 	if (update && !bpos_cmp(update->k.p, pos)) {
@@ -1517,22 +1511,20 @@ bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree_iter *iter
 		percpu_up_read(&c->mark_lock);
 	}
 
-	return a;
+	return 0;
 }
 
 static int bch2_trans_mark_pointer(struct btree_trans *trans,
 			struct bkey_s_c k, struct extent_ptr_decoded p,
 			s64 sectors, enum bch_data_type data_type)
 {
-	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
 	struct bkey_alloc_unpacked u;
-	struct bkey_alloc_buf *a;
 	int ret;
 
-	a = bch2_trans_start_alloc_update(trans, &iter, &p.ptr, &u);
-	if (IS_ERR(a))
-		return PTR_ERR(a);
+	ret = bch2_trans_start_alloc_update(trans, &iter, &p.ptr, &u);
+	if (ret)
+		return ret;
 
 	ret = __mark_pointer(trans, k, &p.ptr, sectors, data_type,
 			     u.gen, &u.data_type,
@@ -1540,8 +1532,7 @@ static int bch2_trans_mark_pointer(struct btree_trans *trans,
 	if (ret)
 		goto out;
 
-	bch2_alloc_pack(c, a, u);
-	ret = bch2_trans_update(trans, &iter, &a->k, 0);
+	ret = bch2_alloc_write(trans, &iter, &u, 0);
 	if (ret)
 		goto out;
 out:
@@ -1671,7 +1662,6 @@ static int bch2_trans_mark_stripe_bucket(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	const struct bch_extent_ptr *ptr = &s.v->ptrs[idx];
-	struct bkey_alloc_buf *a;
 	struct btree_iter iter;
 	struct bkey_alloc_unpacked u;
 	enum bch_data_type data_type = idx >= s.v->nr_blocks - s.v->nr_redundant
@@ -1682,9 +1672,9 @@ static int bch2_trans_mark_stripe_bucket(struct btree_trans *trans,
 	if (deleting)
 		sectors = -sectors;
 
-	a = bch2_trans_start_alloc_update(trans, &iter, ptr, &u);
-	if (IS_ERR(a))
-		return PTR_ERR(a);
+	ret = bch2_trans_start_alloc_update(trans, &iter, ptr, &u);
+	if (ret)
+		return ret;
 
 	ret = check_bucket_ref(c, s.s_c, ptr, sectors, data_type,
 			       u.gen, u.data_type,
@@ -1734,8 +1724,7 @@ static int bch2_trans_mark_stripe_bucket(struct btree_trans *trans,
 	if (data_type)
 		u.data_type = !deleting ? data_type : 0;
 
-	bch2_alloc_pack(c, a, u);
-	ret = bch2_trans_update(trans, &iter, &a->k, 0);
+	ret = bch2_alloc_write(trans, &iter, &u, 0);
 	if (ret)
 		goto err;
 err:
@@ -1983,7 +1972,6 @@ static int __bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
 	struct bkey_alloc_unpacked u;
-	struct bkey_alloc_buf *a;
 	struct bch_extent_ptr ptr = {
 		.dev = ca->dev_idx,
 		.offset = bucket_to_sector(ca, b),
@@ -1996,9 +1984,9 @@ static int __bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 	if (b >= ca->mi.nbuckets)
 		return 0;
 
-	a = bch2_trans_start_alloc_update(trans, &iter, &ptr, &u);
-	if (IS_ERR(a))
-		return PTR_ERR(a);
+	ret = bch2_trans_start_alloc_update(trans, &iter, &ptr, &u);
+	if (ret)
+		return ret;
 
 	if (u.data_type && u.data_type != type) {
 		bch2_fsck_err(c, FSCK_CAN_IGNORE|FSCK_NEED_FSCK,
@@ -2015,8 +2003,7 @@ static int __bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 	u.data_type	= type;
 	u.dirty_sectors	= sectors;
 
-	bch2_alloc_pack(c, a, u);
-	ret = bch2_trans_update(trans, &iter, &a->k, 0);
+	ret = bch2_alloc_write(trans, &iter, &u, 0);
 	if (ret)
 		goto out;
 out:
