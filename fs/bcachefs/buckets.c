@@ -553,6 +553,11 @@ static int bch2_mark_alloc(struct btree_trans *trans,
 	if (new_u.bucket >= ca->mi.nbuckets)
 		return 0;
 
+	if (bucket_state(new_u) == BUCKET_need_gc_gens) {
+		atomic_inc(&c->kick_gc);
+		wake_up_process(c->gc_thread);
+	}
+
 	percpu_down_read(&c->mark_lock);
 	if (!gc && new_u.gen != old_u.gen)
 		*bucket_gen(ca, new_u.bucket) = new_u.gen;
@@ -1885,6 +1890,10 @@ int bch2_trans_mark_key(struct btree_trans *trans, struct bkey_s_c old,
 		: bkey_i_to_s_c(new);
 
 	switch (k.k->type) {
+	case KEY_TYPE_alloc:
+	case KEY_TYPE_alloc_v2:
+	case KEY_TYPE_alloc_v3:
+		return bch2_trans_mark_alloc(trans, old, new, flags);
 	case KEY_TYPE_btree_ptr:
 	case KEY_TYPE_btree_ptr_v2:
 	case KEY_TYPE_extent:

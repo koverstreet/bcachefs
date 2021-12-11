@@ -1721,6 +1721,12 @@ have_slot:
 		goto err_late;
 	}
 
+	ret = bch2_fs_freespace_init(c);
+	if (ret) {
+		bch_err(c, "device add error: error initializing free space: %i", ret);
+		goto err_late;
+	}
+
 	ca->new_fs_bucket_idx = 0;
 
 	if (ca->mi.state == BCH_MEMBER_STATE_rw) {

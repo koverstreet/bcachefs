@@ -17,6 +17,7 @@ struct bkey_alloc_unpacked {
 	u8		gen;
 	u8		oldest_gen;
 	u8		data_type;
+	bool		need_discard:1;
 #define x(_name, _bits)	u##_bits _name;
 	BCH_ALLOC_FIELDS_V2()
 #undef  x
@@ -24,6 +25,50 @@ struct bkey_alloc_unpacked {
 
 /* How out of date a pointer gen is allowed to be: */
 #define BUCKET_GC_GEN_MAX	96U
+
+static inline u8 alloc_gc_gen(struct bkey_alloc_unpacked a)
+{
+	return a.gen - a.oldest_gen;
+}
+
+enum bucket_state {
+	BUCKET_free,
+	BUCKET_need_gc_gens,
+	BUCKET_need_discard,
+	BUCKET_cached,
+	BUCKET_dirty,
+};
+
+extern const char * const bch2_bucket_states[];
+
+static inline enum bucket_state bucket_state(struct bkey_alloc_unpacked a)
+{
+	if (a.dirty_sectors || a.stripe)
+		return BUCKET_dirty;
+	if (a.cached_sectors)
+		return BUCKET_cached;
+	BUG_ON(a.data_type);
+	if (a.need_discard)
+		return BUCKET_need_discard;
+	if (alloc_gc_gen(a) >= BUCKET_GC_GEN_MAX)
+		return BUCKET_need_gc_gens;
+	return BUCKET_free;
+}
+
+static inline u64 alloc_lru_idx(struct bkey_alloc_unpacked a)
+{
+	return bucket_state(a) == BUCKET_cached ? a.read_time : 0;
+}
+
+static inline u64 alloc_freespace_genbits(struct bkey_alloc_unpacked a)
+{
+	return ((u64) alloc_gc_gen(a) >> 4) << 56;
+}
+
+static inline struct bpos alloc_freespace_pos(struct bkey_alloc_unpacked a)
+{
+	return POS(a.dev, a.bucket | alloc_freespace_genbits(a));
+}
 
 /* returns true if not equal */
 static inline bool bkey_alloc_unpacked_cmp(struct bkey_alloc_unpacked l,
@@ -85,6 +130,10 @@ static inline bool bkey_is_alloc(const struct bkey *k)
 }
 
 int bch2_alloc_read(struct bch_fs *, bool, bool);
+
+int bch2_trans_mark_alloc(struct btree_trans *, struct bkey_s_c,
+			  struct bkey_i *, unsigned);
+int bch2_fs_freespace_init(struct bch_fs *);
 
 static inline void bch2_wake_allocator(struct bch_dev *ca)
 {
