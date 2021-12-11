@@ -555,6 +555,11 @@ int bch2_mark_alloc(struct btree_trans *trans,
 		}
 	}
 
+	if (bucket_state(new_u) == BUCKET_need_gc_gens) {
+		atomic_inc(&c->kick_gc);
+		wake_up_process(c->gc_thread);
+	}
+
 	percpu_down_read(&c->mark_lock);
 	if (!gc && new_u.gen != old_u.gen)
 		*bucket_gen(ca, new_u.bucket) = new_u.gen;

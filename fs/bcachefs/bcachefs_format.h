@@ -899,11 +899,13 @@ struct bch_alloc_v3 {
 	__u8			data[];
 } __attribute__((packed, aligned(8)));
 
+LE32_BITMASK(BCH_ALLOC_NEED_DISCARD,struct bch_alloc_v3, flags,  0,  1)
+LE32_BITMASK(BCH_ALLOC_NEED_INC_GEN,struct bch_alloc_v3, flags,  1,  2)
+
 enum {
 #define x(name, _bits) BCH_ALLOC_FIELD_V1_##name,
 	BCH_ALLOC_FIELDS_V1()
 #undef x
-	BCH_ALLOC_FIELD_NR
 };
 
 /* Quotas: */
@@ -1102,6 +1104,8 @@ LE64_BITMASK(BCH_MEMBER_DISCARD,	struct bch_member, flags[0], 14, 15)
 LE64_BITMASK(BCH_MEMBER_DATA_ALLOWED,	struct bch_member, flags[0], 15, 20)
 LE64_BITMASK(BCH_MEMBER_GROUP,		struct bch_member, flags[0], 20, 28)
 LE64_BITMASK(BCH_MEMBER_DURABILITY,	struct bch_member, flags[0], 28, 30)
+LE64_BITMASK(BCH_MEMBER_FREESPACE_INITIALIZED,
+					struct bch_member, flags[0], 30, 31)
 
 #if 0
 LE64_BITMASK(BCH_MEMBER_NR_READ_ERRORS,	struct bch_member, flags[1], 0,  20);
@@ -1320,7 +1324,8 @@ enum bcachefs_metadata_version {
 	bcachefs_metadata_version_reflink_p_fix		= 16,
 	bcachefs_metadata_version_subvol_dirent		= 17,
 	bcachefs_metadata_version_inode_v2		= 18,
-	bcachefs_metadata_version_max			= 19,
+	bcachefs_metadata_version_freespace		= 19,
+	bcachefs_metadata_version_max			= 20,
 };
 
 #define bcachefs_metadata_version_current	(bcachefs_metadata_version_max - 1)
@@ -1838,7 +1843,9 @@ LE32_BITMASK(JSET_NO_FLUSH,	struct jset, flags, 5, 6);
 	x(reflink,	7)			\
 	x(subvolumes,	8)			\
 	x(snapshots,	9)			\
-	x(lru,		10)
+	x(lru,		10)			\
+	x(freespace,	11)			\
+	x(need_discard,	12)
 
 enum btree_id {
 #define x(kwd, val) BTREE_ID_##kwd = val,
