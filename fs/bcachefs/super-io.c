@@ -1116,6 +1116,10 @@ static void bch2_sb_members_to_text(struct printbuf *out, struct bch_sb *sb,
 		       BCH_MEMBER_DISCARD(m));
 		pr_newline(out);
 
+		pr_buf(out, "Freespace initialized: %llu",
+		       BCH_MEMBER_FREESPACE_INITIALIZED(m));
+		pr_newline(out);
+
 		pr_indent_pop(out, 2);
 	}
 }
