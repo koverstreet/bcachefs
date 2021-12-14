@@ -710,7 +710,7 @@ reread:
 		case JOURNAL_ENTRY_NONE:
 			if (!saw_bad)
 				return 0;
-			sectors = c->opts.block_size;
+			sectors = block_sectors(c);
 			goto next_block;
 		case JOURNAL_ENTRY_BAD:
 			saw_bad = true;
@@ -719,7 +719,7 @@ reread:
 			 * field of the journal entry we read, so try reading
 			 * again at next block boundary:
 			 */
-			sectors = c->opts.block_size;
+			sectors = block_sectors(c);
 			break;
 		default:
 			return ret;
