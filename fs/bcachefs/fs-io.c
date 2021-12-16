@@ -2681,7 +2681,8 @@ int bch2_truncate(struct user_namespace *mnt_userns,
 			U64_MAX, &i_sectors_delta);
 	i_sectors_acct(c, inode, NULL, i_sectors_delta);
 
-	BUG_ON(!inode->v.i_size && inode->v.i_blocks);
+	WARN_ON(!inode->v.i_size && inode->v.i_blocks &&
+		!bch2_journal_error(&c->journal));
 
 	if (unlikely(ret))
 		goto err;
