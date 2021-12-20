@@ -437,17 +437,6 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 			marking = true;
 	}
 
-	if (marking) {
-		percpu_down_read(&c->mark_lock);
-	}
-
-	/* Must be called under mark_lock: */
-	if (marking && trans->fs_usage_deltas &&
-	    !bch2_replicas_delta_list_marked(c, trans->fs_usage_deltas)) {
-		ret = BTREE_INSERT_NEED_MARK_REPLICAS;
-		goto err;
-	}
-
 	/*
 	 * Don't get journal reservation until after we know insert will
 	 * succeed:
@@ -456,7 +445,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 		ret = bch2_trans_journal_res_get(trans,
 				JOURNAL_RES_GET_NONBLOCK);
 		if (ret)
-			goto err;
+			return ret;
 	} else {
 		trans->journal_res.seq = c->journal.replay_journal_seq;
 	}
@@ -484,22 +473,19 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 				i->k->k.version = MAX_VERSION;
 	}
 
+	if (trans->fs_usage_deltas &&
+	    bch2_trans_fs_usage_apply(trans, trans->fs_usage_deltas))
+		return BTREE_INSERT_NEED_MARK_REPLICAS;
+
 	trans_for_each_update(trans, i)
 		if (BTREE_NODE_TYPE_HAS_MEM_TRIGGERS & (1U << i->bkey_type))
 			bch2_mark_update(trans, i->path, i->k, i->flags);
-
-	if (marking && trans->fs_usage_deltas)
-		bch2_trans_fs_usage_apply(trans, trans->fs_usage_deltas);
 
 	if (unlikely(c->gc_pos.phase))
 		bch2_trans_mark_gc(trans);
 
 	trans_for_each_update(trans, i)
 		do_btree_insert_one(trans, i);
-err:
-	if (marking) {
-		percpu_up_read(&c->mark_lock);
-	}
 
 	return ret;
 }
@@ -1285,22 +1271,24 @@ err:
  * When deleting, check if we need to emit a whiteout (because we're overwriting
  * something in an ancestor snapshot)
  */
-static int need_whiteout_for_snapshot(struct btree_trans *trans,
-				      enum btree_id btree_id, struct bpos pos)
+static int need_whiteout_for_snapshot(struct btree_trans *trans, struct btree_iter *orig)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	u32 snapshot = pos.snapshot;
+	u32 snapshot = orig->pos.snapshot;
 	int ret;
 
-	if (!bch2_snapshot_parent(trans->c, pos.snapshot))
+	if (!bch2_snapshot_parent(trans->c, snapshot))
 		return 0;
 
-	pos.snapshot++;
+	bch2_trans_copy_iter(&iter, orig);
+	iter.flags &= BTREE_ITER_FILTER_SNAPSHOTS;
+	iter.flags |= BTREE_ITER_ALL_SNAPSHOTS;
 
-	for_each_btree_key_norestart(trans, iter, btree_id, pos,
-			   BTREE_ITER_ALL_SNAPSHOTS, k, ret) {
-		if (bkey_cmp(k.k->p, pos))
+	bch2_btree_iter_advance(&iter);
+
+	for_each_btree_key_continue_norestart(iter, 0, k, ret) {
+		if (bkey_cmp(k.k->p, orig->pos))
 			break;
 
 		if (bch2_snapshot_is_ancestor(trans->c, snapshot,
@@ -1314,8 +1302,8 @@ static int need_whiteout_for_snapshot(struct btree_trans *trans,
 	return ret;
 }
 
-int bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
-		      struct bkey_i *k, enum btree_update_flags flags)
+int __must_check bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
+				   struct bkey_i *k, enum btree_update_flags flags)
 {
 	struct btree_insert_entry *i, n;
 
@@ -1326,6 +1314,7 @@ int bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 
 	BUG_ON(trans->nr_updates >= BTREE_ITER_MAX);
 	BUG_ON(bpos_cmp(k->k.p, iter->path->pos));
+	BUG_ON(bpos_cmp(k->k.p, iter->pos));
 
 	n = (struct btree_insert_entry) {
 		.flags		= flags,
@@ -1338,8 +1327,6 @@ int bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 		.ip_allocated	= _RET_IP_,
 	};
 
-	__btree_path_get(n.path, true);
-
 #ifdef CONFIG_BCACHEFS_DEBUG
 	trans_for_each_update(trans, i)
 		BUG_ON(i != trans->updates &&
@@ -1348,7 +1335,7 @@ int bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 
 	if (bkey_deleted(&n.k->k) &&
 	    (iter->flags & BTREE_ITER_FILTER_SNAPSHOTS)) {
-		int ret = need_whiteout_for_snapshot(trans, n.btree_id, n.k->k.p);
+		int ret = need_whiteout_for_snapshot(trans, iter);
 		if (unlikely(ret < 0))
 			return ret;
 
@@ -1376,15 +1363,16 @@ int bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 		if (n.cached && !i->cached) {
 			i->k = n.k;
 			i->flags = n.flags;
-
-			__btree_path_get(n.path, false);
-		} else {
-			bch2_path_put(trans, i->path, true);
-			*i = n;
+			return 0;
 		}
+
+		bch2_path_put(trans, i->path, true);
+		*i = n;
 	} else
 		array_insert_item(trans->updates, trans->nr_updates,
 				  i - trans->updates, n);
+
+	__btree_path_get(n.path, true);
 
 	return 0;
 }
@@ -1455,6 +1443,8 @@ retry:
 	       (k = bch2_btree_iter_peek(&iter)).k) &&
 	       !(ret = bkey_err(k)) &&
 	       bkey_cmp(iter.pos, end) < 0) {
+		struct disk_reservation disk_res =
+			bch2_disk_reservation_init(trans->c, 0);
 		struct bkey_i delete;
 
 		bkey_init(&delete.k);
@@ -1489,8 +1479,9 @@ retry:
 		}
 
 		ret   = bch2_trans_update(trans, &iter, &delete, 0) ?:
-			bch2_trans_commit(trans, NULL, journal_seq,
+			bch2_trans_commit(trans, &disk_res, journal_seq,
 					BTREE_INSERT_NOFAIL);
+		bch2_disk_reservation_put(trans->c, &disk_res);
 		if (ret)
 			break;
 	}

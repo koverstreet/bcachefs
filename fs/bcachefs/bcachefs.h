@@ -200,6 +200,7 @@
 #include <linux/zstd.h>
 
 #include "bcachefs_format.h"
+#include "errcode.h"
 #include "fifo.h"
 #include "opts.h"
 #include "util.h"
@@ -320,8 +321,12 @@ BCH_DEBUG_PARAMS_DEBUG()
 #define BCH_TIME_STATS()			\
 	x(btree_node_mem_alloc)			\
 	x(btree_node_split)			\
+	x(btree_node_compact)			\
+	x(btree_node_merge)			\
 	x(btree_node_sort)			\
 	x(btree_node_read)			\
+	x(btree_interior_update_foreground)	\
+	x(btree_interior_update_total)		\
 	x(btree_gc)				\
 	x(btree_lock_contended_read)		\
 	x(btree_lock_contended_intent)		\
@@ -329,8 +334,8 @@ BCH_DEBUG_PARAMS_DEBUG()
 	x(data_write)				\
 	x(data_read)				\
 	x(data_promote)				\
-	x(journal_write)			\
-	x(journal_delay)			\
+	x(journal_flush_write)			\
+	x(journal_noflush_write)		\
 	x(journal_flush_seq)			\
 	x(blocked_journal)			\
 	x(blocked_allocate)			\
@@ -804,7 +809,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
@@ -825,7 +830,8 @@ struct bch_fs {
 	struct mutex		data_progress_lock;
 
 	/* STRIPES: */
-	GENRADIX(struct stripe) stripes[2];
+	GENRADIX(struct stripe) stripes;
+	GENRADIX(struct gc_stripe) gc_stripes;
 
 	ec_stripes_heap		ec_stripes_heap;
 	spinlock_t		ec_stripes_heap_lock;

@@ -262,8 +262,6 @@ struct journal {
 	struct mutex		discard_lock;
 	bool			can_discard;
 
-	unsigned		write_delay_ms;
-	unsigned		reclaim_delay_ms;
 	unsigned long		last_flush_write;
 
 	u64			res_get_blocked_start;
@@ -273,8 +271,8 @@ struct journal {
 	u64			nr_flush_writes;
 	u64			nr_noflush_writes;
 
-	struct time_stats	*write_time;
-	struct time_stats	*delay_time;
+	struct time_stats	*flush_write_time;
+	struct time_stats	*noflush_write_time;
 	struct time_stats	*blocked_time;
 	struct time_stats	*flush_seq_time;
 

@@ -394,10 +394,14 @@ int bch2_migrate_write_init(struct bch_fs *c, struct migrate_write *m,
 		unsigned compressed_sectors = 0;
 
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
-			if (p.ptr.dev == data_opts.rewrite_dev &&
-			    !p.ptr.cached &&
-			    crc_is_compressed(p.crc))
-				compressed_sectors += p.crc.compressed_size;
+			if (p.ptr.dev == data_opts.rewrite_dev) {
+				if (p.ptr.cached)
+					m->op.flags |= BCH_WRITE_CACHED;
+
+				if (!p.ptr.cached &&
+				    crc_is_compressed(p.crc))
+					compressed_sectors += p.crc.compressed_size;
+			}
 
 		if (compressed_sectors) {
 			ret = bch2_disk_reservation_add(c, &m->op.res,
@@ -423,12 +427,12 @@ static void move_free(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct moving_context *ctxt = io->write.ctxt;
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
 	bch2_disk_reservation_put(io->write.op.c, &io->write.op.res);
 
-	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, i)
+	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, iter)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);
 
@@ -767,8 +771,7 @@ static int __bch2_move_data(struct bch_fs *c,
 		if (rate)
 			bch2_ratelimit_increment(rate, k.k->size);
 next:
-		atomic64_add(k.k->size * bch2_bkey_nr_ptrs_allocated(k),
-			     &stats->sectors_seen);
+		atomic64_add(k.k->size, &stats->sectors_seen);
 next_nondata:
 		bch2_btree_iter_advance(&iter);
 	}
@@ -779,6 +782,14 @@ out:
 	bch2_bkey_buf_exit(&sk, c);
 
 	return ret;
+}
+
+inline void bch_move_stats_init(struct bch_move_stats *stats, char *name)
+{
+	memset(stats, 0, sizeof(*stats));
+
+	scnprintf(stats->name, sizeof(stats->name),
+			"%s", name);
 }
 
 static inline void progress_list_add(struct bch_fs *c,

@@ -1238,7 +1238,9 @@ static void journal_write_done(struct closure *cl)
 	u64 v, seq;
 	int err = 0;
 
-	bch2_time_stats_update(j->write_time, j->write_start_time);
+	bch2_time_stats_update(!JSET_NO_FLUSH(w->data)
+			       ? j->flush_write_time
+			       : j->noflush_write_time, j->write_start_time);
 
 	if (!w->devs_written.nr) {
 		bch_err(c, "unable to write journal to sufficient devices");
@@ -1398,7 +1400,7 @@ void bch2_journal_write(struct closure *cl)
 	spin_lock(&j->lock);
 	if (c->sb.features & (1ULL << BCH_FEATURE_journal_no_flush) &&
 	    !w->must_flush &&
-	    (jiffies - j->last_flush_write) < msecs_to_jiffies(j->write_delay_ms) &&
+	    (jiffies - j->last_flush_write) < msecs_to_jiffies(c->opts.journal_flush_delay) &&
 	    test_bit(JOURNAL_MAY_SKIP_FLUSH, &j->flags)) {
 		w->noflush = true;
 		SET_JSET_NO_FLUSH(jset, true);

@@ -137,7 +137,7 @@ int __must_check bch2_btree_path_traverse(struct btree_trans *,
 struct btree_path *bch2_path_get(struct btree_trans *, bool, enum btree_id,
 				 struct bpos, unsigned, unsigned, bool,
 				 unsigned long);
-struct bkey_s_c bch2_btree_path_peek_slot(struct btree_path *, struct bkey *);
+inline struct bkey_s_c bch2_btree_path_peek_slot(struct btree_path *, struct bkey *);
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 void bch2_trans_verify_paths(struct btree_trans *);

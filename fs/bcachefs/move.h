@@ -66,13 +66,8 @@ int bch2_data_job(struct bch_fs *,
 		  struct bch_move_stats *,
 		  struct bch_ioctl_data);
 
-static inline void bch_move_stats_init(struct bch_move_stats *stats, char *name)
-{
-	memset(stats, 0, sizeof(*stats));
-
-	scnprintf(stats->name, sizeof(stats->name),
-			"%s", name);
-}
+inline void bch_move_stats_init(struct bch_move_stats *stats,
+				char *name);
 
 
 #endif /* _BCACHEFS_MOVE_H */

@@ -33,6 +33,8 @@ void bch2_btree_node_io_unlock(struct btree *b)
 
 void bch2_btree_node_io_lock(struct btree *b)
 {
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
+
 	wait_on_bit_lock_io(&b->flags, BTREE_NODE_write_in_flight,
 			    TASK_UNINTERRUPTIBLE);
 }
@@ -51,12 +53,16 @@ void __bch2_btree_node_wait_on_write(struct btree *b)
 
 void bch2_btree_node_wait_on_read(struct btree *b)
 {
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
+
 	wait_on_bit_io(&b->flags, BTREE_NODE_read_in_flight,
 		       TASK_UNINTERRUPTIBLE);
 }
 
 void bch2_btree_node_wait_on_write(struct btree *b)
 {
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
+
 	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,
 		       TASK_UNINTERRUPTIBLE);
 }
@@ -385,16 +391,10 @@ void bch2_btree_sort_into(struct bch_fs *c,
 
 	bch2_btree_node_iter_init_from_start(&src_iter, src);
 
-	if (btree_node_is_extents(src))
-		nr = bch2_sort_repack_merge(c, btree_bset_first(dst),
-				src, &src_iter,
-				&dst->format,
-				true);
-	else
-		nr = bch2_sort_repack(btree_bset_first(dst),
-				src, &src_iter,
-				&dst->format,
-				true);
+	nr = bch2_sort_repack(btree_bset_first(dst),
+			src, &src_iter,
+			&dst->format,
+			true);
 
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_sort],
 			       start_time);
@@ -560,7 +560,8 @@ enum btree_validate_ret {
 									\
 	switch (write) {						\
 	case READ:							\
-		bch_err(c, "%s", _buf2);				\
+		if (_buf2)						\
+			bch_err(c, "%s", _buf2);			\
 									\
 		switch (type) {						\
 		case BTREE_ERR_FIXABLE:					\
