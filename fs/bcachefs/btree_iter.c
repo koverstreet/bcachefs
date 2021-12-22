@@ -1818,12 +1818,14 @@ static struct btree_path *btree_path_alloc(struct btree_trans *trans,
 	return path;
 }
 
-struct btree_path *bch2_path_get(struct btree_trans *trans, bool cached,
+struct btree_path *bch2_path_get(struct btree_trans *trans,
 				 enum btree_id btree_id, struct bpos pos,
 				 unsigned locks_want, unsigned level,
-				 bool intent, unsigned long ip)
+				 unsigned flags, unsigned long ip)
 {
 	struct btree_path *path, *path_pos = NULL;
+	bool cached = flags & BTREE_ITER_CACHED;
+	bool intent = flags & BTREE_ITER_INTENT;
 	int i;
 
 	BUG_ON(trans->restarted);
@@ -1845,7 +1847,6 @@ struct btree_path *bch2_path_get(struct btree_trans *trans, bool cached,
 	    path_pos->level	== level) {
 		__btree_path_get(path_pos, intent);
 		path = btree_path_set_pos(trans, path_pos, pos, intent, ip);
-		path->preserve = true;
 	} else {
 		path = btree_path_alloc(trans, path_pos);
 		path_pos = NULL;
@@ -1854,7 +1855,6 @@ struct btree_path *bch2_path_get(struct btree_trans *trans, bool cached,
 		path->pos			= pos;
 		path->btree_id			= btree_id;
 		path->cached			= cached;
-		path->preserve			= true;
 		path->uptodate			= BTREE_ITER_NEED_TRAVERSE;
 		path->should_be_locked		= false;
 		path->level			= level;
@@ -1868,6 +1868,9 @@ struct btree_path *bch2_path_get(struct btree_trans *trans, bool cached,
 #endif
 		btree_trans_verify_sorted(trans);
 	}
+
+	if (!(flags & BTREE_ITER_NOPRESERVE))
+		path->preserve = true;
 
 	if (path->intent_ref)
 		locks_want = max(locks_want, level + 1);
@@ -2628,13 +2631,8 @@ static void __bch2_trans_iter_init(struct btree_trans *trans,
 	iter->ip_allocated = ip;
 #endif
 
-	iter->path = bch2_path_get(trans,
-				   flags & BTREE_ITER_CACHED,
-				   btree_id,
-				   iter->pos,
-				   locks_want,
-				   depth,
-				   flags & BTREE_ITER_INTENT, ip);
+	iter->path = bch2_path_get(trans, btree_id, iter->pos,
+				   locks_want, depth, flags, ip);
 }
 
 void bch2_trans_iter_init(struct btree_trans *trans,
