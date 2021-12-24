@@ -613,7 +613,8 @@ static int bucket_invalidate_btree(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
-	*u = bch2_alloc_unpack(k);
+	*u = alloc_mem_to_key(c, &iter);
+
 	u->gen++;
 	u->data_type		= 0;
 	u->dirty_sectors	= 0;
@@ -657,20 +658,6 @@ static int bch2_invalidate_one_bucket(struct bch_fs *c, struct bch_dev *ca,
 	BUG_ON(!fifo_push(&ca->free_inc, b));
 	spin_unlock(&c->freelist_lock);
 
-	/*
-	 * If we're not invalidating cached data, we only increment the bucket
-	 * gen in memory here, the incremented gen will be updated in the btree
-	 * by bch2_trans_mark_pointer():
-	 */
-	if (!m.data_type &&
-	    !bch2_bucket_needs_journal_commit(c, c->journal.flushed_seq_ondisk,
-					      ca->dev_idx, b)) {
-		bucket_cmpxchg(g, m, m.gen++);
-		*bucket_gen(ca, b) = m.gen;
-		percpu_up_read(&c->mark_lock);
-		goto out;
-	}
-
 	percpu_up_read(&c->mark_lock);
 
 	ret = bch2_trans_do(c, NULL, &commit_seq,
@@ -689,6 +676,19 @@ static int bch2_invalidate_one_bucket(struct bch_fs *c, struct bch_dev *ca,
 
 		if (!top->nr)
 			heap_pop(&ca->alloc_heap, e, bucket_alloc_cmp, NULL);
+
+		/*
+		 * If we invalidating cached data then we need to wait on the
+		 * journal commit:
+		 */
+		if (u.data_type)
+			*journal_seq = max(*journal_seq, commit_seq);
+
+		/*
+		 * We already waiting on u.alloc_seq when we filtered out
+		 * buckets that need journal commit:
+		 */
+		BUG_ON(*journal_seq > u.journal_seq);
 	} else {
 		size_t b2;
 
