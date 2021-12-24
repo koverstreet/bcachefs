@@ -170,10 +170,10 @@ static int set_node_min(struct bch_fs *c, struct btree *b, struct bpos new_min)
 	SET_BTREE_PTR_RANGE_UPDATED(&new->v, true);
 
 	ret = bch2_journal_key_insert(c, b->c.btree_id, b->c.level + 1, &new->k_i);
-	if (ret) {
-		kfree(new);
+	kfree(new);
+
+	if (ret)
 		return ret;
-	}
 
 	bch2_btree_node_drop_keys_outside_node(b);
 
@@ -199,10 +199,10 @@ static int set_node_max(struct bch_fs *c, struct btree *b, struct bpos new_max)
 	SET_BTREE_PTR_RANGE_UPDATED(&new->v, true);
 
 	ret = bch2_journal_key_insert(c, b->c.btree_id, b->c.level + 1, &new->k_i);
-	if (ret) {
-		kfree(new);
+	kfree(new);
+
+	if (ret)
 		return ret;
-	}
 
 	bch2_btree_node_drop_keys_outside_node(b);
 
@@ -691,9 +691,9 @@ found:
 		}
 
 		ret = bch2_journal_key_insert(c, btree_id, level, new);
-		if (ret)
-			kfree(new);
-		else
+		kfree(new);
+
+		if (!ret)
 			*k = bkey_i_to_s_c(new);
 	}
 fsck_err:
@@ -1390,8 +1390,7 @@ static int bch2_gc_reflink_done_initial_fn(struct btree_trans *trans,
 		}
 
 		ret = bch2_journal_key_insert(c, BTREE_ID_reflink, 0, new);
-		if (ret)
-			kfree(new);
+		kfree(new);
 	}
 fsck_err:
 	return ret;
@@ -1516,8 +1515,7 @@ inconsistent:
 			stripe_blockcount_set(&new->v, i, m ? m->block_sectors[i] : 0);
 
 		ret = bch2_journal_key_insert(c, BTREE_ID_stripes, 0, &new->k_i);
-		if (ret)
-			kfree(new);
+		kfree(new);
 	}
 fsck_err:
 	return ret;

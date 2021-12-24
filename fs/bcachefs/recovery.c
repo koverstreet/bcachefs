@@ -115,20 +115,11 @@ int bch2_journal_key_insert(struct bch_fs *c, enum btree_id id,
 	struct journal_key n = {
 		.btree_id	= id,
 		.level		= level,
-		.k		= k,
 		.allocated	= true
 	};
 	struct journal_keys *keys = &c->journal_keys;
 	struct journal_iter *iter;
 	unsigned idx = journal_key_search(keys, id, level, k->k.p);
-
-	if (idx < keys->nr &&
-	    journal_key_cmp(&n, &keys->d[idx]) == 0) {
-		if (keys->d[idx].allocated)
-			kfree(keys->d[idx].k);
-		keys->d[idx] = n;
-		return 0;
-	}
 
 	if (keys->nr == keys->size) {
 		struct journal_keys new_keys = {
@@ -149,10 +140,23 @@ int bch2_journal_key_insert(struct bch_fs *c, enum btree_id id,
 		*keys = new_keys;
 	}
 
-	array_insert_item(keys->d, keys->nr, idx, n);
+	n.k = kmalloc(bkey_bytes(&k->k), GFP_KERNEL);
+	if (!n.k)
+		return -ENOMEM;
 
-	list_for_each_entry(iter, &c->journal_iters, list)
-		journal_iter_fix(c, iter, idx);
+	bkey_copy(n.k, k);
+
+	if (idx < keys->nr &&
+	    journal_key_cmp(&n, &keys->d[idx]) == 0) {
+		if (keys->d[idx].allocated)
+			kfree(keys->d[idx].k);
+		keys->d[idx] = n;
+	} else {
+		array_insert_item(keys->d, keys->nr, idx, n);
+
+		list_for_each_entry(iter, &c->journal_iters, list)
+			journal_iter_fix(c, iter, idx);
+	}
 
 	return 0;
 }
@@ -160,22 +164,12 @@ int bch2_journal_key_insert(struct bch_fs *c, enum btree_id id,
 int bch2_journal_key_delete(struct bch_fs *c, enum btree_id id,
 			    unsigned level, struct bpos pos)
 {
-	struct bkey_i *whiteout =
-		kmalloc(sizeof(struct bkey), GFP_KERNEL);
-	int ret;
+	struct bkey_i whiteout;
 
-	if (!whiteout) {
-		bch_err(c, "%s: error allocating new key", __func__);
-		return -ENOMEM;
-	}
+	bkey_init(&whiteout.k);
+	whiteout.k.p = pos;
 
-	bkey_init(&whiteout->k);
-	whiteout->k.p = pos;
-
-	ret = bch2_journal_key_insert(c, id, level, whiteout);
-	if (ret)
-		kfree(whiteout);
-	return ret;
+	return bch2_journal_key_insert(c, id, level, &whiteout);
 }
 
 static struct bkey_i *bch2_journal_iter_peek(struct journal_iter *iter)
