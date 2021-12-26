@@ -2194,6 +2194,23 @@ inline bool bch2_btree_iter_rewind(struct btree_iter *iter)
 	return ret;
 }
 
+static inline struct bkey_i *btree_trans_peek_updates(struct btree_trans *trans,
+						      enum btree_id btree_id,
+						      struct bpos pos)
+{
+	struct btree_insert_entry *i;
+
+	trans_for_each_update(trans, i)
+		if ((cmp_int(btree_id,	i->btree_id) ?:
+		     bpos_cmp(pos,	i->k->k.p)) <= 0) {
+			if (btree_id ==	i->btree_id)
+				return i->k;
+			break;
+		}
+
+	return NULL;
+}
+
 static noinline
 struct bkey_i *__btree_trans_peek_journal(struct btree_trans *trans,
 					  struct btree_path *path)
