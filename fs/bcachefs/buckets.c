@@ -531,6 +531,20 @@ void bch2_mark_alloc_bucket(struct bch_fs *c, struct bch_dev *ca,
 	BUG_ON(owned_by_allocator == old.owned_by_allocator);
 }
 
+static inline u8 bkey_alloc_gen(struct bkey_s_c k)
+{
+	switch (k.k->type) {
+	case KEY_TYPE_alloc:
+		return bkey_s_c_to_alloc(k).v->gen;
+	case KEY_TYPE_alloc_v2:
+		return bkey_s_c_to_alloc_v2(k).v->gen;
+	case KEY_TYPE_alloc_v3:
+		return bkey_s_c_to_alloc_v3(k).v->gen;
+	default:
+		return 0;
+	}
+}
+
 static int bch2_mark_alloc(struct btree_trans *trans,
 			   struct bkey_s_c old, struct bkey_s_c new,
 			   unsigned flags)
@@ -569,9 +583,13 @@ static int bch2_mark_alloc(struct btree_trans *trans,
 	if (new.k->p.offset >= ca->mi.nbuckets)
 		return 0;
 
-	percpu_down_read(&c->mark_lock);
-	g = __bucket(ca, new.k->p.offset, gc);
 	u = bch2_alloc_unpack(new);
+
+	percpu_down_read(&c->mark_lock);
+	if (!gc && u.gen != bkey_alloc_gen(old))
+		*bucket_gen(ca, new.k->p.offset) = u.gen;
+
+	g = __bucket(ca, new.k->p.offset, gc);
 
 	old_m = bucket_cmpxchg(g, m, ({
 		m.gen			= u.gen;
@@ -2126,9 +2144,18 @@ static void buckets_free_rcu(struct rcu_head *rcu)
 		buckets->nbuckets * sizeof(struct bucket));
 }
 
+static void bucket_gens_free_rcu(struct rcu_head *rcu)
+{
+	struct bucket_gens *buckets =
+		container_of(rcu, struct bucket_gens, rcu);
+
+	kvpfree(buckets, sizeof(struct bucket_array) + buckets->nbuckets);
+}
+
 int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 {
 	struct bucket_array *buckets = NULL, *old_buckets = NULL;
+	struct bucket_gens *bucket_gens = NULL, *old_bucket_gens = NULL;
 	unsigned long *buckets_nouse = NULL;
 	alloc_fifo	free[RESERVE_NR];
 	alloc_fifo	free_inc;
@@ -2152,6 +2179,8 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 	if (!(buckets		= kvpmalloc(sizeof(struct bucket_array) +
 					    nbuckets * sizeof(struct bucket),
 					    GFP_KERNEL|__GFP_ZERO)) ||
+	    !(bucket_gens	= kvpmalloc(sizeof(struct bucket_gens) + nbuckets,
+					    GFP_KERNEL|__GFP_ZERO)) ||
 	    !(buckets_nouse	= kvpmalloc(BITS_TO_LONGS(nbuckets) *
 					    sizeof(unsigned long),
 					    GFP_KERNEL|__GFP_ZERO)) ||
@@ -2164,6 +2193,8 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 
 	buckets->first_bucket	= ca->mi.first_bucket;
 	buckets->nbuckets	= nbuckets;
+	bucket_gens->first_bucket = ca->mi.first_bucket;
+	bucket_gens->nbuckets	= nbuckets;
 
 	bch2_copygc_stop(c);
 
@@ -2174,6 +2205,7 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 	}
 
 	old_buckets = bucket_array(ca);
+	old_bucket_gens = rcu_dereference_protected(ca->bucket_gens, 1);
 
 	if (resize) {
 		size_t n = min(buckets->nbuckets, old_buckets->nbuckets);
@@ -2181,13 +2213,18 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 		memcpy(buckets->b,
 		       old_buckets->b,
 		       n * sizeof(struct bucket));
+		memcpy(bucket_gens->b,
+		       old_bucket_gens->b,
+		       n);
 		memcpy(buckets_nouse,
 		       ca->buckets_nouse,
 		       BITS_TO_LONGS(n) * sizeof(unsigned long));
 	}
 
 	rcu_assign_pointer(ca->buckets[0], buckets);
-	buckets = old_buckets;
+	rcu_assign_pointer(ca->bucket_gens, bucket_gens);
+	buckets		= old_buckets;
+	bucket_gens	= old_bucket_gens;
 
 	swap(ca->buckets_nouse, buckets_nouse);
 
@@ -2221,6 +2258,8 @@ err:
 		free_fifo(&free[i]);
 	kvpfree(buckets_nouse,
 		BITS_TO_LONGS(nbuckets) * sizeof(unsigned long));
+	if (bucket_gens)
+		call_rcu(&old_buckets->rcu, bucket_gens_free_rcu);
 	if (buckets)
 		call_rcu(&old_buckets->rcu, buckets_free_rcu);
 
