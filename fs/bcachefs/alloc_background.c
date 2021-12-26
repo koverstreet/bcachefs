@@ -354,6 +354,7 @@ static int bch2_alloc_read_fn(struct btree_trans *trans, struct bkey_s_c k)
 	g = bucket(ca, k.k->p.offset);
 	u = bch2_alloc_unpack(k);
 
+	*bucket_gen(ca, k.k->p.offset) = u.gen;
 	g->_mark.gen		= u.gen;
 	g->_mark.data_type	= u.data_type;
 	g->_mark.dirty_sectors	= u.dirty_sectors;
