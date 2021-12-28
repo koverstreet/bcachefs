@@ -530,8 +530,7 @@ static int bch2_mark_alloc(struct btree_trans *trans,
 		 * to wait on a journal flush before we can reuse the bucket:
 		 */
 		new_u.journal_seq = !new_u.data_type &&
-			(journal_seq == old_journal_seq ||
-			 bch2_journal_noflush_seq(&c->journal, old_journal_seq))
+			bch2_journal_noflush_seq(&c->journal, journal_seq)
 			? 0 : journal_seq;
 		v->journal_seq = cpu_to_le64(new_u.journal_seq);
 	}
@@ -555,7 +554,7 @@ static int bch2_mark_alloc(struct btree_trans *trans,
 
 	percpu_down_read(&c->mark_lock);
 	if (!gc && new_u.gen != old_u.gen)
-		*bucket_gen(ca, new_u.bucket) = new_u.gen;
+		*bucket_gen(ca, new.k->p.offset) = new_u.gen;
 
 	g = __bucket(ca, new_u.bucket, gc);
 
@@ -565,6 +564,11 @@ static int bch2_mark_alloc(struct btree_trans *trans,
 		m.dirty_sectors		= new_u.dirty_sectors;
 		m.cached_sectors	= new_u.cached_sectors;
 		m.stripe		= new_u.stripe != 0;
+
+		if (journal_seq) {
+			m.journal_seq_valid	= 1;
+			m.journal_seq		= journal_seq;
+		}
 	}));
 
 	bch2_dev_usage_update(c, ca, old_m, m, journal_seq, gc);
