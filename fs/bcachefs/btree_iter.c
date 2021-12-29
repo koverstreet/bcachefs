@@ -2931,6 +2931,8 @@ void __bch2_trans_init(struct btree_trans *trans, struct bch_fs *c, unsigned fn_
 {
 	struct btree_transaction_stats *s;
 
+	bch2_assert_btree_nodes_not_locked();
+
 	memset(trans, 0, sizeof(*trans));
 	trans->c		= c;
 	trans->fn		= fn_idx < ARRAY_SIZE(bch2_btree_transaction_fns)
