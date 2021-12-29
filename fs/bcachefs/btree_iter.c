@@ -3061,6 +3061,8 @@ void __bch2_trans_init(struct btree_trans *trans, struct bch_fs *c,
 		       const char *fn)
 	__acquires(&c->btree_trans_barrier)
 {
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
+
 	memset(trans, 0, sizeof(*trans));
 	trans->c		= c;
 	trans->fn		= fn;
