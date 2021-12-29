@@ -2969,6 +2969,8 @@ struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 	struct btree_trans *trans;
 	struct btree_transaction_stats *s;
 
+	bch2_assert_btree_nodes_not_locked();
+
 	trans = bch2_trans_alloc(c);
 
 	memset(trans, 0, sizeof(*trans));
