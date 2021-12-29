@@ -2963,6 +2963,8 @@ struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 {
 	struct btree_trans *trans;
 
+	bch2_assert_btree_nodes_not_locked();
+
 	if (IS_ENABLED(__KERNEL__)) {
 		trans = this_cpu_xchg(c->btree_trans_bufs->trans, NULL);
 		if (trans) {
