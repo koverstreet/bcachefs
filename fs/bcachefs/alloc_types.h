@@ -37,24 +37,31 @@ typedef FIFO(long)	alloc_fifo;
 #define WRITE_POINT_HASH_NR	32
 #define WRITE_POINT_MAX		32
 
+/*
+ * 0 is never a valid open_bucket_idx_t:
+ */
 typedef u16			open_bucket_idx_t;
 
 struct open_bucket {
 	spinlock_t		lock;
 	atomic_t		pin;
 	open_bucket_idx_t	freelist;
+	open_bucket_idx_t	hash;
 
 	/*
 	 * When an open bucket has an ec_stripe attached, this is the index of
 	 * the block in the stripe this open_bucket corresponds to:
 	 */
 	u8			ec_idx;
-	u8			type;
+	enum bch_data_type	data_type:3;
 	unsigned		valid:1;
 	unsigned		on_partial_list:1;
 	int			alloc_reserve:3;
+
 	unsigned		sectors_free;
-	struct bch_extent_ptr	ptr;
+	u8			dev;
+	u8			gen;
+	u64			bucket;
 	struct ec_stripe_new	*ec;
 };
 
@@ -74,7 +81,7 @@ struct write_point {
 	struct mutex		lock;
 	u64			last_used;
 	unsigned long		write_point;
-	enum bch_data_type	type;
+	enum bch_data_type	data_type;
 
 	/* calculated based on how many pointers we're actually going to use: */
 	unsigned		sectors_free;

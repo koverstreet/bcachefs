@@ -354,6 +354,7 @@ static int bch2_alloc_read_fn(struct btree_trans *trans, struct bkey_s_c k)
 	g = bucket(ca, k.k->p.offset);
 	u = bch2_alloc_unpack(k);
 
+	*bucket_gen(ca, k.k->p.offset) = u.gen;
 	g->_mark.gen		= u.gen;
 	g->_mark.data_type	= u.data_type;
 	g->_mark.dirty_sectors	= u.dirty_sectors;
@@ -513,6 +514,18 @@ static bool bch2_can_invalidate_bucket(struct bch_dev *ca, size_t b,
 	    test_bit(b, ca->buckets_nouse))
 		return false;
 
+	if (ca->new_fs_bucket_idx) {
+		/*
+		 * Device or filesystem is still being initialized, and we
+		 * haven't fully marked superblocks & journal:
+		 */
+		if (is_superblock_bucket(ca, b))
+			return false;
+
+		if (b < ca->new_fs_bucket_idx)
+			return false;
+	}
+
 	gc_gen = bucket_gc_gen(bucket(ca, b));
 
 	ca->inc_gen_needs_gc		+= gc_gen >= BUCKET_GC_GEN_MAX / 2;
@@ -581,7 +594,7 @@ static void find_reclaimable_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 	buckets = bucket_array(ca);
 	ca->alloc_heap.used = 0;
 	now = atomic64_read(&c->io_clock[READ].now);
-	last_seq_ondisk = c->journal.last_seq_ondisk;
+	last_seq_ondisk = c->journal.flushed_seq_ondisk;
 
 	/*
 	 * Find buckets with lowest read priority, by building a maxheap sorted
@@ -628,76 +641,6 @@ static void find_reclaimable_buckets_lru(struct bch_fs *c, struct bch_dev *ca)
 	up_read(&ca->bucket_lock);
 }
 
-static void find_reclaimable_buckets_fifo(struct bch_fs *c, struct bch_dev *ca)
-{
-	struct bucket_array *buckets = bucket_array(ca);
-	struct bucket_mark m;
-	size_t b, start;
-
-	if (ca->fifo_last_bucket <  ca->mi.first_bucket ||
-	    ca->fifo_last_bucket >= ca->mi.nbuckets)
-		ca->fifo_last_bucket = ca->mi.first_bucket;
-
-	start = ca->fifo_last_bucket;
-
-	do {
-		ca->fifo_last_bucket++;
-		if (ca->fifo_last_bucket == ca->mi.nbuckets)
-			ca->fifo_last_bucket = ca->mi.first_bucket;
-
-		b = ca->fifo_last_bucket;
-		m = READ_ONCE(buckets->b[b].mark);
-
-		if (bch2_can_invalidate_bucket(ca, b, m)) {
-			struct alloc_heap_entry e = { .bucket = b, .nr = 1, };
-
-			heap_add(&ca->alloc_heap, e, bucket_alloc_cmp, NULL);
-			if (heap_full(&ca->alloc_heap))
-				break;
-		}
-
-		cond_resched();
-	} while (ca->fifo_last_bucket != start);
-}
-
-static void find_reclaimable_buckets_random(struct bch_fs *c, struct bch_dev *ca)
-{
-	struct bucket_array *buckets = bucket_array(ca);
-	struct bucket_mark m;
-	size_t checked, i;
-
-	for (checked = 0;
-	     checked < ca->mi.nbuckets / 2;
-	     checked++) {
-		size_t b = bch2_rand_range(ca->mi.nbuckets -
-					   ca->mi.first_bucket) +
-			ca->mi.first_bucket;
-
-		m = READ_ONCE(buckets->b[b].mark);
-
-		if (bch2_can_invalidate_bucket(ca, b, m)) {
-			struct alloc_heap_entry e = { .bucket = b, .nr = 1, };
-
-			heap_add(&ca->alloc_heap, e, bucket_alloc_cmp, NULL);
-			if (heap_full(&ca->alloc_heap))
-				break;
-		}
-
-		cond_resched();
-	}
-
-	sort(ca->alloc_heap.data,
-	     ca->alloc_heap.used,
-	     sizeof(ca->alloc_heap.data[0]),
-	     bucket_idx_cmp, NULL);
-
-	/* remove duplicates: */
-	for (i = 0; i + 1 < ca->alloc_heap.used; i++)
-		if (ca->alloc_heap.data[i].bucket ==
-		    ca->alloc_heap.data[i + 1].bucket)
-			ca->alloc_heap.data[i].nr = 0;
-}
-
 static size_t find_reclaimable_buckets(struct bch_fs *c, struct bch_dev *ca)
 {
 	size_t i, nr = 0;
@@ -705,17 +648,7 @@ static size_t find_reclaimable_buckets(struct bch_fs *c, struct bch_dev *ca)
 	ca->inc_gen_needs_gc			= 0;
 	ca->inc_gen_really_needs_gc		= 0;
 
-	switch (ca->mi.replacement) {
-	case BCH_CACHE_REPLACEMENT_lru:
-		find_reclaimable_buckets_lru(c, ca);
-		break;
-	case BCH_CACHE_REPLACEMENT_fifo:
-		find_reclaimable_buckets_fifo(c, ca);
-		break;
-	case BCH_CACHE_REPLACEMENT_random:
-		find_reclaimable_buckets_random(c, ca);
-		break;
-	}
+	find_reclaimable_buckets_lru(c, ca);
 
 	heap_resort(&ca->alloc_heap, bucket_alloc_cmp, NULL);
 
@@ -725,33 +658,11 @@ static size_t find_reclaimable_buckets(struct bch_fs *c, struct bch_dev *ca)
 	return nr;
 }
 
-/*
- * returns sequence number of most recent journal entry that updated this
- * bucket:
- */
-static u64 bucket_journal_seq(struct bch_fs *c, struct bucket_mark m)
-{
-	if (m.journal_seq_valid) {
-		u64 journal_seq = atomic64_read(&c->journal.seq);
-		u64 bucket_seq	= journal_seq;
-
-		bucket_seq &= ~((u64) U16_MAX);
-		bucket_seq |= m.journal_seq;
-
-		if (bucket_seq > journal_seq)
-			bucket_seq -= 1 << 16;
-
-		return bucket_seq;
-	} else {
-		return 0;
-	}
-}
-
 static int bucket_invalidate_btree(struct btree_trans *trans,
-				   struct bch_dev *ca, u64 b)
+				   struct bch_dev *ca, u64 b,
+				   struct bkey_alloc_unpacked *u)
 {
 	struct bch_fs *c = trans->c;
-	struct bkey_alloc_unpacked u;
 	struct btree_iter iter;
 	int ret;
 
@@ -765,16 +676,16 @@ static int bucket_invalidate_btree(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
-	u = alloc_mem_to_key(c, &iter);
+	*u = alloc_mem_to_key(c, &iter);
 
-	u.gen++;
-	u.data_type	= 0;
-	u.dirty_sectors	= 0;
-	u.cached_sectors = 0;
-	u.read_time	= atomic64_read(&c->io_clock[READ].now);
-	u.write_time	= atomic64_read(&c->io_clock[WRITE].now);
+	u->gen++;
+	u->data_type		= 0;
+	u->dirty_sectors	= 0;
+	u->cached_sectors	= 0;
+	u->read_time		= atomic64_read(&c->io_clock[READ].now);
+	u->write_time		= atomic64_read(&c->io_clock[WRITE].now);
 
-	ret = bch2_alloc_write(trans, &iter, &u,
+	ret = bch2_alloc_write(trans, &iter, u,
 			       BTREE_TRIGGER_BUCKET_INVALIDATE);
 err:
 	bch2_trans_iter_exit(trans, &iter);
@@ -784,10 +695,16 @@ err:
 static int bch2_invalidate_one_bucket(struct bch_fs *c, struct bch_dev *ca,
 				      u64 *journal_seq, unsigned flags)
 {
-	struct bucket *g;
-	struct bucket_mark m;
+	struct bkey_alloc_unpacked u;
 	size_t b;
 	int ret = 0;
+
+	/*
+	 * If the read-only path is trying to shut down, we can't be generating
+	 * new btree updates:
+	 */
+	if (test_bit(BCH_FS_ALLOCATOR_STOPPING, &c->flags))
+		return 1;
 
 	BUG_ON(!ca->alloc_heap.used ||
 	       !ca->alloc_heap.data[0].nr);
@@ -795,10 +712,6 @@ static int bch2_invalidate_one_bucket(struct bch_fs *c, struct bch_dev *ca,
 
 	/* first, put on free_inc and mark as owned by allocator: */
 	percpu_down_read(&c->mark_lock);
-	g = bucket(ca, b);
-	m = READ_ONCE(g->mark);
-
-	BUG_ON(m.dirty_sectors);
 
 	bch2_mark_alloc_bucket(c, ca, b, true);
 
@@ -807,37 +720,15 @@ static int bch2_invalidate_one_bucket(struct bch_fs *c, struct bch_dev *ca,
 	BUG_ON(!fifo_push(&ca->free_inc, b));
 	spin_unlock(&c->freelist_lock);
 
-	/*
-	 * If we're not invalidating cached data, we only increment the bucket
-	 * gen in memory here, the incremented gen will be updated in the btree
-	 * by bch2_trans_mark_pointer():
-	 */
-	if (!m.cached_sectors &&
-	    !bucket_needs_journal_commit(m, c->journal.last_seq_ondisk)) {
-		BUG_ON(m.data_type);
-		bucket_cmpxchg(g, m, m.gen++);
-		percpu_up_read(&c->mark_lock);
-		goto out;
-	}
-
 	percpu_up_read(&c->mark_lock);
-
-	/*
-	 * If the read-only path is trying to shut down, we can't be generating
-	 * new btree updates:
-	 */
-	if (test_bit(BCH_FS_ALLOCATOR_STOPPING, &c->flags)) {
-		ret = 1;
-		goto out;
-	}
 
 	ret = bch2_trans_do(c, NULL, journal_seq,
 			    BTREE_INSERT_NOCHECK_RW|
 			    BTREE_INSERT_NOFAIL|
 			    BTREE_INSERT_JOURNAL_RESERVED|
 			    flags,
-			    bucket_invalidate_btree(&trans, ca, b));
-out:
+			    bucket_invalidate_btree(&trans, ca, b, &u));
+
 	if (!ret) {
 		/* remove from alloc_heap: */
 		struct alloc_heap_entry e, *top = ca->alloc_heap.data;
@@ -853,7 +744,7 @@ out:
 		 * bucket (i.e. deleting the last reference) before writing to
 		 * this bucket again:
 		 */
-		*journal_seq = max(*journal_seq, bucket_journal_seq(c, m));
+		*journal_seq = max(*journal_seq, u.journal_seq);
 	} else {
 		size_t b2;
 
@@ -1063,7 +954,7 @@ void bch2_recalc_capacity(struct bch_fs *c)
 	lockdep_assert_held(&c->state_lock);
 
 	for_each_online_member(ca, c, i) {
-		struct backing_dev_info *bdi = ca->disk_sb.bdev->bd_bdi;
+		struct backing_dev_info *bdi = ca->disk_sb.bdev->bd_disk->bdi;
 
 		ra_pages += bdi->ra_pages;
 	}
@@ -1133,7 +1024,7 @@ static bool bch2_dev_has_open_write_point(struct bch_fs *c, struct bch_dev *ca)
 	     ob++) {
 		spin_lock(&ob->lock);
 		if (ob->valid && !ob->on_partial_list &&
-		    ob->ptr.dev == ca->dev_idx)
+		    ob->dev == ca->dev_idx)
 			ret = true;
 		spin_unlock(&ob->lock);
 	}
@@ -1279,23 +1170,4 @@ int bch2_dev_allocator_start(struct bch_dev *ca)
 void bch2_fs_allocator_background_init(struct bch_fs *c)
 {
 	spin_lock_init(&c->freelist_lock);
-}
-
-void bch2_open_buckets_to_text(struct printbuf *out, struct bch_fs *c)
-{
-	struct open_bucket *ob;
-
-	for (ob = c->open_buckets;
-	     ob < c->open_buckets + ARRAY_SIZE(c->open_buckets);
-	     ob++) {
-		spin_lock(&ob->lock);
-		if (ob->valid && !ob->on_partial_list) {
-			pr_buf(out, "%zu ref %u type %s\n",
-			       ob - c->open_buckets,
-			       atomic_read(&ob->pin),
-			       bch2_data_types[ob->type]);
-		}
-		spin_unlock(&ob->lock);
-	}
-
 }

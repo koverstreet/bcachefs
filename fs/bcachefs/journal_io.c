@@ -710,7 +710,7 @@ reread:
 		case JOURNAL_ENTRY_NONE:
 			if (!saw_bad)
 				return 0;
-			sectors = c->opts.block_size;
+			sectors = block_sectors(c);
 			goto next_block;
 		case JOURNAL_ENTRY_BAD:
 			saw_bad = true;
@@ -719,7 +719,7 @@ reread:
 			 * field of the journal entry we read, so try reading
 			 * again at next block boundary:
 			 */
-			sectors = c->opts.block_size;
+			sectors = block_sectors(c);
 			break;
 		default:
 			return ret;
@@ -1399,9 +1399,10 @@ void bch2_journal_write(struct closure *cl)
 
 	spin_lock(&j->lock);
 	if (c->sb.features & (1ULL << BCH_FEATURE_journal_no_flush) &&
-	    !w->must_flush &&
-	    (jiffies - j->last_flush_write) < msecs_to_jiffies(c->opts.journal_flush_delay) &&
-	    test_bit(JOURNAL_MAY_SKIP_FLUSH, &j->flags)) {
+	    (w->noflush ||
+	     (!w->must_flush &&
+	      (jiffies - j->last_flush_write) < msecs_to_jiffies(c->opts.journal_flush_delay) &&
+	      test_bit(JOURNAL_MAY_SKIP_FLUSH, &j->flags)))) {
 		w->noflush = true;
 		SET_JSET_NO_FLUSH(jset, true);
 		jset->last_seq	= 0;
@@ -1448,7 +1449,7 @@ void bch2_journal_write(struct closure *cl)
 	SET_JSET_BIG_ENDIAN(jset, CPU_BIG_ENDIAN);
 	SET_JSET_CSUM_TYPE(jset, bch2_meta_checksum_type(c));
 
-	if (journal_entry_empty(jset))
+	if (!JSET_NO_FLUSH(jset) && journal_entry_empty(jset))
 		j->last_empty_seq = le64_to_cpu(jset->seq);
 
 	if (bch2_csum_type_is_encryption(JSET_CSUM_TYPE(jset)))

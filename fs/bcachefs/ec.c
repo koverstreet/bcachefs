@@ -395,7 +395,7 @@ static void ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
 	this_cpu_add(ca->io_done->sectors[rw][data_type], buf->size);
 
 	while (offset < bytes) {
-		unsigned nr_iovecs = min_t(size_t, BIO_MAX_PAGES,
+		unsigned nr_iovecs = min_t(size_t, BIO_MAX_VECS,
 					   DIV_ROUND_UP(bytes, PAGE_SIZE));
 		unsigned b = min_t(size_t, bytes - offset,
 				   nr_iovecs << PAGE_SHIFT);
@@ -1063,7 +1063,7 @@ void *bch2_writepoint_ec_buf(struct bch_fs *c, struct write_point *wp)
 	if (!ob)
 		return NULL;
 
-	ca	= bch_dev_bkey_exists(c, ob->ptr.dev);
+	ca	= bch_dev_bkey_exists(c, ob->dev);
 	offset	= ca->mi.bucket_size - ob->sectors_free;
 
 	return ob->ec->new_stripe.data[ob->ec_idx] + (offset << 9);
@@ -1152,7 +1152,7 @@ static void ec_stripe_key_init(struct bch_fs *c,
 	s->v.algorithm			= 0;
 	s->v.nr_blocks			= nr_data + nr_parity;
 	s->v.nr_redundant		= nr_parity;
-	s->v.csum_granularity_bits	= ilog2(c->sb.encoded_extent_max);
+	s->v.csum_granularity_bits	= ilog2(c->opts.encoded_extent_max >> 9);
 	s->v.csum_type			= BCH_CSUM_crc32c;
 	s->v.pad			= 0;
 
@@ -1318,7 +1318,7 @@ static int new_stripe_alloc_buckets(struct bch_fs *c, struct ec_stripe_head *h,
 			BUG_ON(j >= h->s->nr_data + h->s->nr_parity);
 
 			h->s->blocks[j] = buckets.v[i];
-			h->s->new_stripe.key.v.ptrs[j] = ob->ptr;
+			h->s->new_stripe.key.v.ptrs[j] = bch2_ob_ptr(c, ob);
 			__set_bit(j, h->s->blocks_gotten);
 		}
 
@@ -1346,7 +1346,7 @@ static int new_stripe_alloc_buckets(struct bch_fs *c, struct ec_stripe_head *h,
 			BUG_ON(j >= h->s->nr_data);
 
 			h->s->blocks[j] = buckets.v[i];
-			h->s->new_stripe.key.v.ptrs[j] = ob->ptr;
+			h->s->new_stripe.key.v.ptrs[j] = bch2_ob_ptr(c, ob);
 			__set_bit(j, h->s->blocks_gotten);
 		}
 
@@ -1535,7 +1535,7 @@ void bch2_ec_stop_dev(struct bch_fs *c, struct bch_dev *ca)
 				continue;
 
 			ob = c->open_buckets + h->s->blocks[i];
-			if (ob->ptr.dev == ca->dev_idx)
+			if (ob->dev == ca->dev_idx)
 				goto found;
 		}
 		goto unlock;
@@ -1606,46 +1606,6 @@ int bch2_stripes_read(struct bch_fs *c)
 		bch_err(c, "error reading stripes: %i", ret);
 
 	return ret;
-}
-
-int bch2_ec_mem_alloc(struct bch_fs *c, bool gc)
-{
-	struct btree_trans trans;
-	struct btree_iter iter;
-	struct bkey_s_c k;
-	size_t i, idx = 0;
-	int ret = 0;
-
-	bch2_trans_init(&trans, c, 0, 0);
-	bch2_trans_iter_init(&trans, &iter, BTREE_ID_stripes, POS(0, U64_MAX), 0);
-
-	k = bch2_btree_iter_prev(&iter);
-	ret = bkey_err(k);
-	if (!ret && k.k)
-		idx = k.k->p.offset + 1;
-
-	bch2_trans_iter_exit(&trans, &iter);
-	bch2_trans_exit(&trans);
-	if (ret)
-		return ret;
-
-	if (!idx)
-		return 0;
-
-	if (!gc &&
-	    !init_heap(&c->ec_stripes_heap, roundup_pow_of_two(idx),
-		       GFP_KERNEL))
-		return -ENOMEM;
-#if 0
-	ret = genradix_prealloc(&c->stripes[gc], idx, GFP_KERNEL);
-#else
-	for (i = 0; i < idx; i++)
-		if (!gc
-		    ? !genradix_ptr_alloc(&c->stripes, i, GFP_KERNEL)
-		    : !genradix_ptr_alloc(&c->gc_stripes, i, GFP_KERNEL))
-			return -ENOMEM;
-#endif
-	return 0;
 }
 
 void bch2_stripes_heap_to_text(struct printbuf *out, struct bch_fs *c)

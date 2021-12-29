@@ -85,10 +85,34 @@ static inline void bch2_open_bucket_get(struct bch_fs *c,
 	unsigned i;
 
 	open_bucket_for_each(c, &wp->ptrs, ob, i) {
-		ob->type = wp->type;
+		ob->data_type = wp->data_type;
 		atomic_inc(&ob->pin);
 		ob_push(c, ptrs, ob);
 	}
+}
+
+static inline open_bucket_idx_t *open_bucket_hashslot(struct bch_fs *c,
+						  unsigned dev, u64 bucket)
+{
+	return c->open_buckets_hash +
+		(jhash_3words(dev, bucket, bucket >> 32, 0) &
+		 (OPEN_BUCKETS_COUNT - 1));
+}
+
+static inline bool bch2_bucket_is_open(struct bch_fs *c, unsigned dev, u64 bucket)
+{
+	open_bucket_idx_t slot = *open_bucket_hashslot(c, dev, bucket);
+
+	while (slot) {
+		struct open_bucket *ob = &c->open_buckets[slot];
+
+		if (ob->dev == dev && ob->bucket == bucket)
+			return true;
+
+		slot = ob->hash;
+	}
+
+	return false;
 }
 
 int bch2_bucket_alloc_set(struct bch_fs *, struct open_buckets *,
@@ -105,8 +129,9 @@ struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
 					     unsigned,
 					     struct closure *);
 
+struct bch_extent_ptr bch2_ob_ptr(struct bch_fs *, struct open_bucket *);
 void bch2_alloc_sectors_append_ptrs(struct bch_fs *, struct write_point *,
-				    struct bkey_i *, unsigned);
+				    struct bkey_i *, unsigned, bool);
 void bch2_alloc_sectors_done(struct bch_fs *, struct write_point *);
 
 void bch2_open_buckets_stop_dev(struct bch_fs *, struct bch_dev *,
@@ -126,5 +151,7 @@ static inline struct write_point_specifier writepoint_ptr(struct write_point *wp
 }
 
 void bch2_fs_allocator_foreground_init(struct bch_fs *);
+
+void bch2_open_buckets_to_text(struct printbuf *, struct bch_fs *);
 
 #endif /* _BCACHEFS_ALLOC_FOREGROUND_H */

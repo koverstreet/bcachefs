@@ -78,8 +78,7 @@ static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp)
 	if (!b->data)
 		return -ENOMEM;
 #ifdef __KERNEL__
-	b->aux_data = __vmalloc(btree_aux_data_bytes(b), gfp,
-				PAGE_KERNEL_EXEC);
+	b->aux_data = vmalloc_exec(btree_aux_data_bytes(b), gfp);
 #else
 	b->aux_data = mmap(NULL, btree_aux_data_bytes(b),
 			   PROT_READ|PROT_WRITE|PROT_EXEC,
@@ -275,6 +274,7 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 	unsigned long touched = 0;
 	unsigned long freed = 0;
 	unsigned i, flags;
+	unsigned long ret = SHRINK_STOP;
 
 	if (bch2_btree_shrinker_disabled)
 		return SHRINK_STOP;
@@ -283,7 +283,7 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 	if (sc->gfp_mask & __GFP_FS)
 		mutex_lock(&bc->lock);
 	else if (!mutex_trylock(&bc->lock))
-		return -1;
+		goto out_norestore;
 
 	flags = memalloc_nofs_save();
 
@@ -300,13 +300,19 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 
 	i = 0;
 	list_for_each_entry_safe(b, t, &bc->freeable, list) {
+		/*
+		 * Leave a few nodes on the freeable list, so that a btree split
+		 * won't have to hit the system allocator:
+		 */
+		if (++i <= 3)
+			continue;
+
 		touched++;
 
 		if (touched >= nr)
 			break;
 
-		if (++i > 3 &&
-		    !btree_node_reclaim(c, b)) {
+		if (!btree_node_reclaim(c, b)) {
 			btree_node_data_free(c, b);
 			six_unlock_write(&b->c.lock);
 			six_unlock_intent(&b->c.lock);
@@ -352,8 +358,14 @@ restart:
 
 	mutex_unlock(&bc->lock);
 out:
+	ret = (unsigned long) freed * btree_pages(c);
 	memalloc_nofs_restore(flags);
-	return (unsigned long) freed * btree_pages(c);
+out_norestore:
+	trace_btree_cache_scan(sc->nr_to_scan,
+			       sc->nr_to_scan / btree_pages(c),
+			       btree_cache_can_free(bc),
+			       ret);
+	return ret;
 }
 
 static unsigned long bch2_btree_cache_count(struct shrinker *shrink,
@@ -769,16 +781,17 @@ struct btree *bch2_btree_node_get(struct btree_trans *trans, struct btree_path *
 
 	EBUG_ON(level >= BTREE_MAX_DEPTH);
 
-	if (c->opts.btree_node_mem_ptr_optimization) {
-		b = btree_node_mem_ptr(k);
-		/*
-		 * Check b->hash_val _before_ calling btree_node_lock() - this
-		 * might not be the node we want anymore, and trying to lock the
-		 * wrong node could cause an unneccessary transaction restart:
-		 */
-		if (b && b->hash_val == btree_ptr_hash_val(k))
+	b = btree_node_mem_ptr(k);
+
+	/*
+	 * Check b->hash_val _before_ calling btree_node_lock() - this might not
+	 * be the node we want anymore, and trying to lock the wrong node could
+	 * cause an unneccessary transaction restart:
+	 */
+	if (likely(c->opts.btree_node_mem_ptr_optimization &&
+		   b &&
+		   b->hash_val == btree_ptr_hash_val(k)))
 			goto lock_node;
-	}
 retry:
 	b = btree_cache_find(bc, k);
 	if (unlikely(!b)) {

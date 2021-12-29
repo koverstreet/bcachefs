@@ -170,10 +170,10 @@ static int set_node_min(struct bch_fs *c, struct btree *b, struct bpos new_min)
 	SET_BTREE_PTR_RANGE_UPDATED(&new->v, true);
 
 	ret = bch2_journal_key_insert(c, b->c.btree_id, b->c.level + 1, &new->k_i);
-	if (ret) {
-		kfree(new);
+	kfree(new);
+
+	if (ret)
 		return ret;
-	}
 
 	bch2_btree_node_drop_keys_outside_node(b);
 
@@ -199,10 +199,10 @@ static int set_node_max(struct bch_fs *c, struct btree *b, struct bpos new_max)
 	SET_BTREE_PTR_RANGE_UPDATED(&new->v, true);
 
 	ret = bch2_journal_key_insert(c, b->c.btree_id, b->c.level + 1, &new->k_i);
-	if (ret) {
-		kfree(new);
+	kfree(new);
+
+	if (ret)
 		return ret;
-	}
 
 	bch2_btree_node_drop_keys_outside_node(b);
 
@@ -504,8 +504,8 @@ static int bch2_check_fix_ptrs(struct bch_fs *c, enum btree_id btree_id,
 	 */
 	bkey_for_each_ptr_decode(k->k, ptrs, p, entry) {
 		struct bch_dev *ca = bch_dev_bkey_exists(c, p.ptr.dev);
-		struct bucket *g = PTR_BUCKET(ca, &p.ptr, true);
-		struct bucket *g2 = PTR_BUCKET(ca, &p.ptr, false);
+		struct bucket *g = PTR_GC_BUCKET(ca, &p.ptr);
+		struct bucket *g2 = PTR_BUCKET(ca, &p.ptr);
 		enum bch_data_type data_type = bch2_bkey_ptr_data_type(*k, &entry->ptr);
 
 		if (fsck_err_on(!g->gen_valid, c,
@@ -643,14 +643,14 @@ static int bch2_check_fix_ptrs(struct bch_fs *c, enum btree_id btree_id,
 			ptrs = bch2_bkey_ptrs(bkey_i_to_s(new));
 			bkey_for_each_ptr(ptrs, ptr) {
 				struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
-				struct bucket *g = PTR_BUCKET(ca, ptr, true);
+				struct bucket *g = PTR_GC_BUCKET(ca, ptr);
 
 				ptr->gen = g->mark.gen;
 			}
 		} else {
 			bch2_bkey_drop_ptrs(bkey_i_to_s(new), ptr, ({
 				struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
-				struct bucket *g = PTR_BUCKET(ca, ptr, true);
+				struct bucket *g = PTR_GC_BUCKET(ca, ptr);
 				enum bch_data_type data_type = bch2_bkey_ptr_data_type(*k, ptr);
 
 				(ptr->cached &&
@@ -691,9 +691,9 @@ found:
 		}
 
 		ret = bch2_journal_key_insert(c, btree_id, level, new);
-		if (ret)
-			kfree(new);
-		else
+		kfree(new);
+
+		if (!ret)
 			*k = bkey_i_to_s_c(new);
 	}
 fsck_err:
@@ -737,7 +737,7 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 	ptrs = bch2_bkey_ptrs_c(*k);
 	bkey_for_each_ptr(ptrs, ptr) {
 		struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
-		struct bucket *g = PTR_BUCKET(ca, ptr, true);
+		struct bucket *g = PTR_GC_BUCKET(ca, ptr);
 
 		if (gen_after(g->oldest_gen, ptr->gen))
 			g->oldest_gen = ptr->gen;
@@ -1056,22 +1056,12 @@ static void mark_metadata_sectors(struct bch_fs *c, struct bch_dev *ca,
 	} while (start < end);
 }
 
-void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
-			      unsigned flags)
+static void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
+				     unsigned flags)
 {
 	struct bch_sb_layout *layout = &ca->disk_sb.sb->layout;
 	unsigned i;
 	u64 b;
-
-	/*
-	 * This conditional is kind of gross, but we may be called from the
-	 * device add path, before the new device has actually been added to the
-	 * running filesystem:
-	 */
-	if (c) {
-		lockdep_assert_held(&c->sb_lock);
-		percpu_down_read(&c->mark_lock);
-	}
 
 	for (i = 0; i < layout->nr_superblocks; i++) {
 		u64 offset = le64_to_cpu(layout->sb_offset[i]);
@@ -1091,9 +1081,6 @@ void bch2_mark_dev_superblock(struct bch_fs *c, struct bch_dev *ca,
 					  ca->mi.bucket_size,
 					  gc_phase(GC_PHASE_SB), flags);
 	}
-
-	if (c)
-		percpu_up_read(&c->mark_lock);
 }
 
 static void bch2_mark_superblocks(struct bch_fs *c)
@@ -1283,7 +1270,6 @@ static int bch2_gc_start(struct bch_fs *c,
 {
 	struct bch_dev *ca = NULL;
 	unsigned i;
-	int ret;
 
 	BUG_ON(c->usage_gc);
 
@@ -1313,12 +1299,6 @@ static int bch2_gc_start(struct bch_fs *c,
 			percpu_ref_put(&ca->ref);
 			return -ENOMEM;
 		}
-	}
-
-	ret = bch2_ec_mem_alloc(c, true);
-	if (ret) {
-		bch_err(c, "error allocating ec gc mem");
-		return ret;
 	}
 
 	percpu_down_write(&c->mark_lock);
@@ -1403,8 +1383,7 @@ static int bch2_gc_reflink_done_initial_fn(struct btree_trans *trans,
 		}
 
 		ret = bch2_journal_key_insert(c, BTREE_ID_reflink, 0, new);
-		if (ret)
-			kfree(new);
+		kfree(new);
 	}
 fsck_err:
 	return ret;
@@ -1529,8 +1508,7 @@ inconsistent:
 			stripe_blockcount_set(&new->v, i, m ? m->block_sectors[i] : 0);
 
 		ret = bch2_journal_key_insert(c, BTREE_ID_stripes, 0, &new->k_i);
-		if (ret)
-			kfree(new);
+		kfree(new);
 	}
 fsck_err:
 	return ret;
@@ -1768,7 +1746,7 @@ static bool gc_btree_gens_key(struct bch_fs *c, struct bkey_s_c k)
 	percpu_down_read(&c->mark_lock);
 	bkey_for_each_ptr(ptrs, ptr) {
 		struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
-		struct bucket *g = PTR_BUCKET(ca, ptr, false);
+		struct bucket *g = PTR_BUCKET(ca, ptr);
 
 		if (gen_after(g->mark.gen, ptr->gen) > 16) {
 			percpu_up_read(&c->mark_lock);
@@ -1778,7 +1756,7 @@ static bool gc_btree_gens_key(struct bch_fs *c, struct bkey_s_c k)
 
 	bkey_for_each_ptr(ptrs, ptr) {
 		struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
-		struct bucket *g = PTR_BUCKET(ca, ptr, false);
+		struct bucket *g = PTR_BUCKET(ca, ptr);
 
 		if (gen_after(g->gc_gen, ptr->gen))
 			g->gc_gen = ptr->gen;

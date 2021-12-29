@@ -136,10 +136,10 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 
 void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
-	bio_for_each_segment_all(bv, bio, i)
+	bio_for_each_segment_all(bv, bio, iter)
 		if (bv->bv_page != ZERO_PAGE(0))
 			mempool_free(bv->bv_page, &c->bio_bounce_pages);
 	bio->bi_vcnt = 0;
@@ -665,11 +665,7 @@ static void init_append_extent(struct bch_write_op *op,
 {
 	struct bch_fs *c = op->c;
 	struct bkey_i_extent *e;
-	struct open_bucket *ob;
-	unsigned i;
 
-	BUG_ON(crc.compressed_size > wp->sectors_free);
-	wp->sectors_free -= crc.compressed_size;
 	op->pos.offset += crc.uncompressed_size;
 
 	e = bkey_extent_init(op->insert_keys.top);
@@ -682,22 +678,8 @@ static void init_append_extent(struct bch_write_op *op,
 	    crc.nonce)
 		bch2_extent_crc_append(&e->k_i, crc);
 
-	open_bucket_for_each(c, &wp->ptrs, ob, i) {
-		struct bch_dev *ca = bch_dev_bkey_exists(c, ob->ptr.dev);
-		union bch_extent_entry *end =
-			bkey_val_end(bkey_i_to_s(&e->k_i));
-
-		end->ptr = ob->ptr;
-		end->ptr.type = 1 << BCH_EXTENT_ENTRY_ptr;
-		end->ptr.cached = !ca->mi.durability ||
-			(op->flags & BCH_WRITE_CACHED) != 0;
-		end->ptr.offset += ca->mi.bucket_size - ob->sectors_free;
-
-		e->k.u64s++;
-
-		BUG_ON(crc.compressed_size > ob->sectors_free);
-		ob->sectors_free -= crc.compressed_size;
-	}
+	bch2_alloc_sectors_append_ptrs(c, wp, &e->k_i, crc.compressed_size,
+				       op->flags & BCH_WRITE_CACHED);
 
 	bch2_keylist_push(&op->insert_keys);
 }
@@ -717,7 +699,7 @@ static struct bio *bch2_write_bio_alloc(struct bch_fs *c,
 				       ? ((unsigned long) buf & (PAGE_SIZE - 1))
 				       : 0), PAGE_SIZE);
 
-	pages = min_t(unsigned, pages, BIO_MAX_PAGES);
+	pages = min(pages, BIO_MAX_VECS);
 
 	bio = bio_alloc_bioset(GFP_NOIO, pages, &c->bio_write);
 	wbio			= wbio_init(bio);
@@ -738,7 +720,7 @@ static struct bio *bch2_write_bio_alloc(struct bch_fs *c,
 	 */
 	bch2_bio_alloc_pages_pool(c, bio,
 				  min_t(unsigned, output_available,
-					c->sb.encoded_extent_max << 9));
+					c->opts.encoded_extent_max));
 
 	if (bio->bi_iter.bi_size < output_available)
 		*page_alloc_failed =
@@ -935,8 +917,8 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 		size_t dst_len, src_len;
 
 		if (page_alloc_failed &&
-		    bio_sectors(dst) < wp->sectors_free &&
-		    bio_sectors(dst) < c->sb.encoded_extent_max)
+		    dst->bi_iter.bi_size  < (wp->sectors_free << 9) &&
+		    dst->bi_iter.bi_size < c->opts.encoded_extent_max)
 			break;
 
 		BUG_ON(op->compression_type &&
@@ -956,7 +938,7 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 
 			if (op->csum_type)
 				dst_len = min_t(unsigned, dst_len,
-						c->sb.encoded_extent_max << 9);
+						c->opts.encoded_extent_max);
 
 			if (bounce) {
 				swap(dst->bi_iter.bi_size, dst_len);
@@ -1289,7 +1271,7 @@ void bch2_write(struct closure *cl)
 	bch2_keylist_init(&op->insert_keys, op->inline_keys);
 	wbio_init(bio)->put_bio = false;
 
-	if (bio_sectors(bio) & (c->opts.block_size - 1)) {
+	if (bio->bi_iter.bi_size & (c->opts.block_size - 1)) {
 		bch_err_inum_ratelimited(c, op->pos.inode,
 					 "misaligned write");
 		op->error = -EIO;
@@ -2366,8 +2348,8 @@ int bch2_fs_io_init(struct bch_fs *c)
 	    mempool_init_page_pool(&c->bio_bounce_pages,
 				   max_t(unsigned,
 					 c->opts.btree_node_size,
-					 c->sb.encoded_extent_max) /
-				   PAGE_SECTORS, 0) ||
+					 c->opts.encoded_extent_max) /
+				   PAGE_SIZE, 0) ||
 	    rhashtable_init(&c->promote_table, &bch_promote_params))
 		return -ENOMEM;
 

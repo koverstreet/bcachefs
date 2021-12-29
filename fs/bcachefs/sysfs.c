@@ -10,6 +10,7 @@
 
 #include "bcachefs.h"
 #include "alloc_background.h"
+#include "alloc_foreground.h"
 #include "sysfs.h"
 #include "btree_cache.h"
 #include "btree_io.h"
@@ -131,7 +132,6 @@ do {									\
 		return strtoi_h(buf, &var) ?: (ssize_t) size;		\
 } while (0)
 
-write_attribute(trigger_journal_flush);
 write_attribute(trigger_gc);
 write_attribute(prune_cache);
 rw_attribute(btree_gc_periodic);
@@ -177,7 +177,6 @@ read_attribute(extent_migrate_done);
 read_attribute(extent_migrate_raced);
 
 rw_attribute(discard);
-rw_attribute(cache_replacement_policy);
 rw_attribute(label);
 
 rw_attribute(copy_gc_enabled);
@@ -267,8 +266,12 @@ static int bch2_compression_stats_to_text(struct printbuf *out, struct bch_fs *c
 	struct btree_trans trans;
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	u64 nr_uncompressed_extents = 0, uncompressed_sectors = 0,
+	enum btree_id id;
+	u64 nr_uncompressed_extents = 0,
 	    nr_compressed_extents = 0,
+	    nr_incompressible_extents = 0,
+	    uncompressed_sectors = 0,
+	    incompressible_sectors = 0,
 	    compressed_sectors_compressed = 0,
 	    compressed_sectors_uncompressed = 0;
 	int ret;
@@ -278,47 +281,72 @@ static int bch2_compression_stats_to_text(struct printbuf *out, struct bch_fs *c
 
 	bch2_trans_init(&trans, c, 0, 0);
 
-	for_each_btree_key(&trans, iter, BTREE_ID_extents, POS_MIN, 0, k, ret)
-		if (k.k->type == KEY_TYPE_extent) {
-			struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
+	for (id = 0; id < BTREE_ID_NR; id++) {
+		if (!((1U << id) & BTREE_ID_HAS_PTRS))
+			continue;
+
+		for_each_btree_key(&trans, iter, id, POS_MIN,
+				   BTREE_ITER_ALL_SNAPSHOTS, k, ret) {
+			struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 			const union bch_extent_entry *entry;
 			struct extent_ptr_decoded p;
+			bool compressed = false, uncompressed = false, incompressible = false;
 
-			extent_for_each_ptr_decode(e, p, entry) {
-				if (!crc_is_compressed(p.crc)) {
-					nr_uncompressed_extents++;
-					uncompressed_sectors += e.k->size;
-				} else {
-					nr_compressed_extents++;
+			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+				switch (p.crc.compression_type) {
+				case BCH_COMPRESSION_TYPE_none:
+					uncompressed = true;
+					uncompressed_sectors += k.k->size;
+					break;
+				case BCH_COMPRESSION_TYPE_incompressible:
+					incompressible = true;
+					incompressible_sectors += k.k->size;
+					break;
+				default:
 					compressed_sectors_compressed +=
 						p.crc.compressed_size;
 					compressed_sectors_uncompressed +=
 						p.crc.uncompressed_size;
+					compressed = true;
+					break;
 				}
-
-				/* only looking at the first ptr */
-				break;
 			}
+
+			if (incompressible)
+				nr_incompressible_extents++;
+			else if (uncompressed)
+				nr_uncompressed_extents++;
+			else if (compressed)
+				nr_compressed_extents++;
 		}
-	bch2_trans_iter_exit(&trans, &iter);
+		bch2_trans_iter_exit(&trans, &iter);
+	}
 
 	bch2_trans_exit(&trans);
+
 	if (ret)
 		return ret;
 
-	pr_buf(out,
-	       "uncompressed data:\n"
-	       "	nr extents:			%llu\n"
-	       "	size (bytes):			%llu\n"
-	       "compressed data:\n"
-	       "	nr extents:			%llu\n"
-	       "	compressed size (bytes):	%llu\n"
-	       "	uncompressed size (bytes):	%llu\n",
-	       nr_uncompressed_extents,
-	       uncompressed_sectors << 9,
-	       nr_compressed_extents,
-	       compressed_sectors_compressed << 9,
-	       compressed_sectors_uncompressed << 9);
+	pr_buf(out, "uncompressed:\n");
+	pr_buf(out, "	nr extents:		%llu\n", nr_uncompressed_extents);
+	pr_buf(out, "	size:			");
+	bch2_hprint(out, uncompressed_sectors << 9);
+	pr_buf(out, "\n");
+
+	pr_buf(out, "compressed:\n");
+	pr_buf(out, "	nr extents:		%llu\n", nr_compressed_extents);
+	pr_buf(out, "	compressed size:	");
+	bch2_hprint(out, compressed_sectors_compressed << 9);
+	pr_buf(out, "\n");
+	pr_buf(out, "	uncompressed size:	");
+	bch2_hprint(out, compressed_sectors_uncompressed << 9);
+	pr_buf(out, "\n");
+
+	pr_buf(out, "incompressible:\n");
+	pr_buf(out, "	nr extents:		%llu\n", nr_incompressible_extents);
+	pr_buf(out, "	size:			");
+	bch2_hprint(out, incompressible_sectors << 9);
+	pr_buf(out, "\n");
 	return 0;
 }
 
@@ -483,9 +511,6 @@ STORE(bch2_fs)
 
 	/* Debugging: */
 
-	if (attr == &sysfs_trigger_journal_flush)
-		bch2_journal_meta(&c->journal);
-
 	if (attr == &sysfs_trigger_gc) {
 		/*
 		 * Full gc is currently incompatible with btree key cache:
@@ -575,7 +600,6 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_io_timers_read,
 	&sysfs_io_timers_write,
 
-	&sysfs_trigger_journal_flush,
 	&sysfs_trigger_gc,
 	&sysfs_prune_cache,
 
@@ -626,7 +650,7 @@ STORE(bch2_fs_opts_dir)
 	if (!tmp)
 		return -ENOMEM;
 
-	ret = bch2_opt_parse(c, opt, strim(tmp), &v);
+	ret = bch2_opt_parse(c, NULL, opt, strim(tmp), &v);
 	kfree(tmp);
 
 	if (ret < 0)
@@ -636,13 +660,7 @@ STORE(bch2_fs_opts_dir)
 	if (ret < 0)
 		return ret;
 
-	if (opt->set_sb != SET_NO_SB_OPT) {
-		mutex_lock(&c->sb_lock);
-		opt->set_sb(c->disk_sb.sb, v);
-		bch2_write_super(c);
-		mutex_unlock(&c->sb_lock);
-	}
-
+	bch2_opt_set_sb(c, opt, v);
 	bch2_opt_set_by_id(&c->opts, id, v);
 
 	if ((id == Opt_background_target ||
@@ -665,7 +683,7 @@ int bch2_opts_create_sysfs_files(struct kobject *kobj)
 	for (i = bch2_opt_table;
 	     i < bch2_opt_table + bch2_opts_nr;
 	     i++) {
-		if (!(i->mode & OPT_FS))
+		if (!(i->flags & OPT_FS))
 			continue;
 
 		ret = sysfs_create_file(kobj, &i->attr);
@@ -735,7 +753,7 @@ static void dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 	memset(nr, 0, sizeof(nr));
 
 	for (i = 0; i < ARRAY_SIZE(c->open_buckets); i++)
-		nr[c->open_buckets[i].type]++;
+		nr[c->open_buckets[i].data_type]++;
 
 	pr_buf(out,
 	       "\t\t buckets\t sectors      fragmented\n"
@@ -832,14 +850,6 @@ SHOW(bch2_dev)
 		return out.pos - buf;
 	}
 
-	if (attr == &sysfs_cache_replacement_policy) {
-		bch2_string_opt_to_text(&out,
-					bch2_cache_replacement_policies,
-					ca->mi.replacement);
-		pr_buf(&out, "\n");
-		return out.pos - buf;
-	}
-
 	if (attr == &sysfs_state_rw) {
 		bch2_string_opt_to_text(&out, bch2_member_states,
 					ca->mi.state);
@@ -899,22 +909,6 @@ STORE(bch2_dev)
 		mutex_unlock(&c->sb_lock);
 	}
 
-	if (attr == &sysfs_cache_replacement_policy) {
-		ssize_t v = __sysfs_match_string(bch2_cache_replacement_policies, -1, buf);
-
-		if (v < 0)
-			return v;
-
-		mutex_lock(&c->sb_lock);
-		mi = &bch2_sb_get_members(c->disk_sb.sb)->members[ca->dev_idx];
-
-		if ((unsigned) v != BCH_MEMBER_REPLACEMENT(mi)) {
-			SET_BCH_MEMBER_REPLACEMENT(mi, v);
-			bch2_write_super(c);
-		}
-		mutex_unlock(&c->sb_lock);
-	}
-
 	if (attr == &sysfs_label) {
 		char *tmp;
 		int ret;
@@ -945,7 +939,6 @@ struct attribute *bch2_dev_files[] = {
 
 	/* settings: */
 	&sysfs_discard,
-	&sysfs_cache_replacement_policy,
 	&sysfs_state_rw,
 	&sysfs_label,
 

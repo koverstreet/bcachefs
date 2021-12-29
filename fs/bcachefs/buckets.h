@@ -53,9 +53,32 @@ static inline struct bucket *__bucket(struct bch_dev *ca, size_t b, bool gc)
 	return buckets->b + b;
 }
 
+static inline struct bucket *gc_bucket(struct bch_dev *ca, size_t b)
+{
+	return __bucket(ca, b, true);
+}
+
 static inline struct bucket *bucket(struct bch_dev *ca, size_t b)
 {
 	return __bucket(ca, b, false);
+}
+
+static inline struct bucket_gens *bucket_gens(struct bch_dev *ca)
+{
+	return rcu_dereference_check(ca->bucket_gens,
+				     !ca->fs ||
+				     percpu_rwsem_is_held(&ca->fs->mark_lock) ||
+				     lockdep_is_held(&ca->fs->gc_lock) ||
+				     lockdep_is_held(&ca->bucket_lock));
+
+}
+
+static inline u8 *bucket_gen(struct bch_dev *ca, size_t b)
+{
+	struct bucket_gens *gens = bucket_gens(ca);
+
+	BUG_ON(b < gens->first_bucket || b >= gens->nbuckets);
+	return gens->b + b;
 }
 
 /*
@@ -75,10 +98,15 @@ static inline size_t PTR_BUCKET_NR(const struct bch_dev *ca,
 }
 
 static inline struct bucket *PTR_BUCKET(struct bch_dev *ca,
-					const struct bch_extent_ptr *ptr,
-					bool gc)
+					const struct bch_extent_ptr *ptr)
 {
-	return __bucket(ca, PTR_BUCKET_NR(ca, ptr), gc);
+	return bucket(ca, PTR_BUCKET_NR(ca, ptr));
+}
+
+static inline struct bucket *PTR_GC_BUCKET(struct bch_dev *ca,
+					   const struct bch_extent_ptr *ptr)
+{
+	return gc_bucket(ca, PTR_BUCKET_NR(ca, ptr));
 }
 
 static inline enum bch_data_type ptr_data_type(const struct bkey *k,
@@ -89,18 +117,6 @@ static inline enum bch_data_type ptr_data_type(const struct bkey *k,
 		return BCH_DATA_btree;
 
 	return ptr->cached ? BCH_DATA_cached : BCH_DATA_user;
-}
-
-static inline struct bucket_mark ptr_bucket_mark(struct bch_dev *ca,
-						 const struct bch_extent_ptr *ptr)
-{
-	struct bucket_mark m;
-
-	rcu_read_lock();
-	m = READ_ONCE(PTR_BUCKET(ca, ptr, 0)->mark);
-	rcu_read_unlock();
-
-	return m;
 }
 
 static inline int gen_cmp(u8 a, u8 b)
@@ -122,7 +138,13 @@ static inline int gen_after(u8 a, u8 b)
 static inline u8 ptr_stale(struct bch_dev *ca,
 			   const struct bch_extent_ptr *ptr)
 {
-	return gen_after(ptr_bucket_mark(ca, ptr).gen, ptr->gen);
+	u8 ret;
+
+	rcu_read_lock();
+	ret = gen_after(*bucket_gen(ca, PTR_BUCKET_NR(ca, ptr)), ptr->gen);
+	rcu_read_unlock();
+
+	return ret;
 }
 
 /* bucket gc marks */

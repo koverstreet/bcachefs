@@ -115,20 +115,11 @@ int bch2_journal_key_insert(struct bch_fs *c, enum btree_id id,
 	struct journal_key n = {
 		.btree_id	= id,
 		.level		= level,
-		.k		= k,
 		.allocated	= true
 	};
 	struct journal_keys *keys = &c->journal_keys;
 	struct journal_iter *iter;
 	unsigned idx = journal_key_search(keys, id, level, k->k.p);
-
-	if (idx < keys->nr &&
-	    journal_key_cmp(&n, &keys->d[idx]) == 0) {
-		if (keys->d[idx].allocated)
-			kfree(keys->d[idx].k);
-		keys->d[idx] = n;
-		return 0;
-	}
 
 	if (keys->nr == keys->size) {
 		struct journal_keys new_keys = {
@@ -149,10 +140,23 @@ int bch2_journal_key_insert(struct bch_fs *c, enum btree_id id,
 		*keys = new_keys;
 	}
 
-	array_insert_item(keys->d, keys->nr, idx, n);
+	n.k = kmalloc(bkey_bytes(&k->k), GFP_KERNEL);
+	if (!n.k)
+		return -ENOMEM;
 
-	list_for_each_entry(iter, &c->journal_iters, list)
-		journal_iter_fix(c, iter, idx);
+	bkey_copy(n.k, k);
+
+	if (idx < keys->nr &&
+	    journal_key_cmp(&n, &keys->d[idx]) == 0) {
+		if (keys->d[idx].allocated)
+			kfree(keys->d[idx].k);
+		keys->d[idx] = n;
+	} else {
+		array_insert_item(keys->d, keys->nr, idx, n);
+
+		list_for_each_entry(iter, &c->journal_iters, list)
+			journal_iter_fix(c, iter, idx);
+	}
 
 	return 0;
 }
@@ -160,22 +164,12 @@ int bch2_journal_key_insert(struct bch_fs *c, enum btree_id id,
 int bch2_journal_key_delete(struct bch_fs *c, enum btree_id id,
 			    unsigned level, struct bpos pos)
 {
-	struct bkey_i *whiteout =
-		kmalloc(sizeof(struct bkey), GFP_KERNEL);
-	int ret;
+	struct bkey_i whiteout;
 
-	if (!whiteout) {
-		bch_err(c, "%s: error allocating new key", __func__);
-		return -ENOMEM;
-	}
+	bkey_init(&whiteout.k);
+	whiteout.k.p = pos;
 
-	bkey_init(&whiteout->k);
-	whiteout->k.p = pos;
-
-	ret = bch2_journal_key_insert(c, id, level, whiteout);
-	if (ret)
-		kfree(whiteout);
-	return ret;
+	return bch2_journal_key_insert(c, id, level, &whiteout);
 }
 
 static struct bkey_i *bch2_journal_iter_peek(struct journal_iter *iter)
@@ -1149,16 +1143,6 @@ use_clean:
 	if (ret)
 		goto err;
 
-	/*
-	 * After an unclean shutdown, skip then next few journal sequence
-	 * numbers as they may have been referenced by btree writes that
-	 * happened before their corresponding journal writes - those btree
-	 * writes need to be ignored, by skipping and blacklisting the next few
-	 * journal sequence numbers:
-	 */
-	if (!c->sb.clean)
-		journal_seq += 8;
-
 	if (blacklist_seq != journal_seq) {
 		ret = bch2_journal_seq_blacklist_add(c,
 					blacklist_seq, journal_seq);
@@ -1295,24 +1279,15 @@ use_clean:
 		bch_verbose(c, "quotas done");
 	}
 
-	if (!(c->sb.compat & (1ULL << BCH_COMPAT_extents_above_btree_updates_done)) ||
-	    !(c->sb.compat & (1ULL << BCH_COMPAT_bformat_overflow_done))) {
-		struct bch_move_stats stats;
-
-		bch_move_stats_init(&stats, "recovery");
-
-		bch_info(c, "scanning for old btree nodes");
-		ret = bch2_fs_read_write(c);
-		if (ret)
-			goto err;
-
-		ret = bch2_scan_old_btree_nodes(c, &stats);
-		if (ret)
-			goto err;
-		bch_info(c, "scanning for old btree nodes done");
-	}
-
 	mutex_lock(&c->sb_lock);
+	/*
+	 * With journal replay done, we can clear the journal seq blacklist
+	 * table:
+	 */
+	BUG_ON(!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags));
+	if (le16_to_cpu(c->sb.version_min) >= bcachefs_metadata_version_btree_ptr_sectors_written)
+		bch2_sb_resize_journal_seq_blacklist(&c->disk_sb, 0);
+
 	if (c->opts.version_upgrade) {
 		c->disk_sb.sb->version = cpu_to_le16(bcachefs_metadata_version_current);
 		c->disk_sb.sb->features[0] |= cpu_to_le64(BCH_SB_FEATURES_ALL);
@@ -1336,9 +1311,23 @@ use_clean:
 		bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
 
-	if (c->journal_seq_blacklist_table &&
-	    c->journal_seq_blacklist_table->nr > 128)
-		queue_work(system_long_wq, &c->journal_seq_blacklist_gc_work);
+	if (!(c->sb.compat & (1ULL << BCH_COMPAT_extents_above_btree_updates_done)) ||
+	    !(c->sb.compat & (1ULL << BCH_COMPAT_bformat_overflow_done)) ||
+	    le16_to_cpu(c->sb.version_min) < bcachefs_metadata_version_btree_ptr_sectors_written) {
+		struct bch_move_stats stats;
+
+		bch_move_stats_init(&stats, "recovery");
+
+		bch_info(c, "scanning for old btree nodes");
+		ret = bch2_fs_read_write(c);
+		if (ret)
+			goto err;
+
+		ret = bch2_scan_old_btree_nodes(c, &stats);
+		if (ret)
+			goto err;
+		bch_info(c, "scanning for old btree nodes done");
+	}
 
 	ret = 0;
 out:
@@ -1383,9 +1372,6 @@ int bch2_fs_initialize(struct bch_fs *c)
 		c->disk_sb.sb->features[0] |= cpu_to_le64(BCH_SB_FEATURES_ALL);
 		bch2_write_super(c);
 	}
-
-	for_each_online_member(ca, c, i)
-		bch2_mark_dev_superblock(c, ca, 0);
 	mutex_unlock(&c->sb_lock);
 
 	set_bit(BCH_FS_ALLOC_READ_DONE, &c->flags);
@@ -1429,6 +1415,8 @@ int bch2_fs_initialize(struct bch_fs *c)
 			percpu_ref_put(&ca->ref);
 			goto err;
 		}
+
+		ca->new_fs_bucket_idx = 0;
 	}
 
 	err = "error creating root snapshot node";

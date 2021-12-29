@@ -445,6 +445,7 @@ struct bch_dev {
 	 * Or rcu_read_lock(), but only for ptr_stale():
 	 */
 	struct bucket_array __rcu *buckets[2];
+	struct bucket_gens	*bucket_gens;
 	unsigned long		*buckets_nouse;
 	struct rw_semaphore	bucket_lock;
 
@@ -453,6 +454,7 @@ struct bch_dev {
 	struct bch_dev_usage __percpu	*usage_gc;
 
 	/* Allocator: */
+	u64			new_fs_bucket_idx;
 	struct task_struct __rcu *alloc_thread;
 
 	/*
@@ -634,7 +636,6 @@ struct bch_fs {
 
 		u16		version;
 		u16		version_min;
-		u16		encoded_extent_max;
 
 		u8		nr_devices;
 		u8		clean;
@@ -705,6 +706,7 @@ struct bch_fs {
 	struct btree_path_buf  __percpu	*btree_paths_bufs;
 
 	struct srcu_struct	btree_trans_barrier;
+	bool			btree_trans_barrier_initialized;
 
 	struct btree_key_cache	btree_key_cache;
 
@@ -748,17 +750,18 @@ struct bch_fs {
 	/* JOURNAL SEQ BLACKLIST */
 	struct journal_seq_blacklist_table *
 				journal_seq_blacklist_table;
-	struct work_struct	journal_seq_blacklist_gc_work;
 
 	/* ALLOCATOR */
 	spinlock_t		freelist_lock;
 	struct closure_waitlist	freelist_wait;
 	u64			blocked_allocate;
 	u64			blocked_allocate_open_bucket;
+
 	open_bucket_idx_t	open_buckets_freelist;
 	open_bucket_idx_t	open_buckets_nr_free;
 	struct closure_waitlist	open_buckets_wait;
 	struct open_bucket	open_buckets[OPEN_BUCKETS_COUNT];
+	open_bucket_idx_t	open_buckets_hash[OPEN_BUCKETS_COUNT];
 
 	struct write_point	btree_write_point;
 	struct write_point	rebalance_write_point;
@@ -809,7 +812,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
@@ -927,10 +930,20 @@ static inline unsigned bucket_bytes(const struct bch_dev *ca)
 
 static inline unsigned block_bytes(const struct bch_fs *c)
 {
-	return c->opts.block_size << 9;
+	return c->opts.block_size;
 }
 
-static inline struct timespec64 bch2_time_to_timespec(struct bch_fs *c, s64 time)
+static inline unsigned block_sectors(const struct bch_fs *c)
+{
+	return c->opts.block_size >> 9;
+}
+
+static inline size_t btree_sectors(const struct bch_fs *c)
+{
+	return c->opts.btree_node_size >> 9;
+}
+
+static inline struct timespec64 bch2_time_to_timespec(const struct bch_fs *c, s64 time)
 {
 	struct timespec64 t;
 	s32 rem;
@@ -942,13 +955,13 @@ static inline struct timespec64 bch2_time_to_timespec(struct bch_fs *c, s64 time
 	return t;
 }
 
-static inline s64 timespec_to_bch2_time(struct bch_fs *c, struct timespec64 ts)
+static inline s64 timespec_to_bch2_time(const struct bch_fs *c, struct timespec64 ts)
 {
 	return (ts.tv_sec * c->sb.time_units_per_sec +
 		(int) ts.tv_nsec / c->sb.nsec_per_time_unit) - c->sb.time_base_lo;
 }
 
-static inline s64 bch2_current_time(struct bch_fs *c)
+static inline s64 bch2_current_time(const struct bch_fs *c)
 {
 	struct timespec64 now;
 

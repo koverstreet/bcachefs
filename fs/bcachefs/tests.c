@@ -618,7 +618,6 @@ static int rand_mixed(struct bch_fs *c, u64 nr)
 static int __do_delete(struct btree_trans *trans, struct bpos pos)
 {
 	struct btree_iter iter;
-	struct bkey_i delete;
 	struct bkey_s_c k;
 	int ret = 0;
 
@@ -632,10 +631,7 @@ static int __do_delete(struct btree_trans *trans, struct bpos pos)
 	if (!k.k)
 		goto err;
 
-	bkey_init(&delete.k);
-	delete.k.p = k.k->p;
-
-	ret = bch2_trans_update(trans, &iter, &delete, 0);
+	ret = bch2_btree_delete_at(trans, &iter, 0);
 err:
 	bch2_trans_iter_exit(trans, &iter);
 	return ret;
@@ -650,7 +646,7 @@ static int rand_delete(struct bch_fs *c, u64 nr)
 	bch2_trans_init(&trans, c, 0, 0);
 
 	for (i = 0; i < nr; i++) {
-		struct bpos pos = POS(0, test_rand());
+		struct bpos pos = SPOS(0, test_rand(), U32_MAX);
 
 		ret = __bch2_trans_do(&trans, NULL, NULL, 0,
 			__do_delete(&trans, pos));

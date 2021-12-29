@@ -166,44 +166,6 @@ static void bch2_dev_usage_journal_reserve(struct bch_fs *c)
 			&c->dev_usage_journal_res, u64s * nr);
 }
 
-int bch2_congested(void *data, int bdi_bits)
-{
-	struct bch_fs *c = data;
-	struct backing_dev_info *bdi;
-	struct bch_dev *ca;
-	unsigned i;
-	int ret = 0;
-
-	rcu_read_lock();
-	if (bdi_bits & (1 << WB_sync_congested)) {
-		/* Reads - check all devices: */
-		for_each_readable_member(ca, c, i) {
-			bdi = ca->disk_sb.bdev->bd_bdi;
-
-			if (bdi_congested(bdi, bdi_bits)) {
-				ret = 1;
-				break;
-			}
-		}
-	} else {
-		const struct bch_devs_mask *devs =
-			bch2_target_to_mask(c, c->opts.foreground_target) ?:
-			&c->rw_devs[BCH_DATA_user];
-
-		for_each_member_device_rcu(ca, c, i, devs) {
-			bdi = ca->disk_sb.bdev->bd_bdi;
-
-			if (bdi_congested(bdi, bdi_bits)) {
-				ret = 1;
-				break;
-			}
-		}
-	}
-	rcu_read_unlock();
-
-	return ret;
-}
-
 /* Filesystem RO/RW: */
 
 /*
@@ -566,8 +528,6 @@ void __bch2_fs_stop(struct bch_fs *c)
 
 	set_bit(BCH_FS_STOPPING, &c->flags);
 
-	cancel_work_sync(&c->journal_seq_blacklist_gc_work);
-
 	down_write(&c->state_lock);
 	bch2_fs_read_only(c);
 	up_write(&c->state_lock);
@@ -575,8 +535,7 @@ void __bch2_fs_stop(struct bch_fs *c)
 	for_each_member_device(ca, c, i)
 		if (ca->kobj.state_in_sysfs &&
 		    ca->disk_sb.bdev)
-			sysfs_remove_link(&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj,
-					  "bcachefs");
+			sysfs_remove_link(bdev_kobj(ca->disk_sb.bdev), "bcachefs");
 
 	if (c->kobj.state_in_sysfs)
 		kobject_del(&c->kobj);
@@ -731,9 +690,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 
 	spin_lock_init(&c->btree_write_error_lock);
 
-	INIT_WORK(&c->journal_seq_blacklist_gc_work,
-		  bch2_blacklist_entries_gc);
-
 	INIT_LIST_HEAD(&c->journal_entries);
 	INIT_LIST_HEAD(&c->journal_iters);
 
@@ -793,10 +749,13 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 		SET_BCH_SB_JOURNAL_RECLAIM_DELAY(sb, 100);
 
 	c->opts = bch2_opts_default;
-	bch2_opts_apply(&c->opts, bch2_opts_from_sb(sb));
+	ret = bch2_opts_from_sb(&c->opts, sb);
+	if (ret)
+		goto err;
+
 	bch2_opts_apply(&c->opts, opts);
 
-	c->block_bits		= ilog2(c->opts.block_size);
+	c->block_bits		= ilog2(block_sectors(c));
 	c->btree_foreground_merge_threshold = BTREE_FOREGROUND_MERGE_THRESHOLD(c);
 
 	if (bch2_fs_init_fault("fs_alloc")) {
@@ -908,7 +867,7 @@ static void print_mount_opts(struct bch_fs *c)
 		const struct bch_option *opt = &bch2_opt_table[i];
 		u64 v = bch2_opt_get_by_id(&c->opts, i);
 
-		if (!(opt->mode & OPT_MOUNT))
+		if (!(opt->flags & OPT_MOUNT))
 			continue;
 
 		if (v == bch2_opt_get_by_id(&bch2_opts_default, i))
@@ -1034,7 +993,7 @@ static const char *bch2_dev_may_add(struct bch_sb *sb, struct bch_fs *c)
 	if (!sb_mi)
 		return "Invalid superblock: member info area missing";
 
-	if (le16_to_cpu(sb->block_size) != c->opts.block_size)
+	if (le16_to_cpu(sb->block_size) != block_sectors(c))
 		return "mismatched block size";
 
 	if (le16_to_cpu(sb_mi->members[sb->dev_idx].bucket_size) <
@@ -1079,8 +1038,7 @@ static void bch2_dev_free(struct bch_dev *ca)
 
 	if (ca->kobj.state_in_sysfs &&
 	    ca->disk_sb.bdev)
-		sysfs_remove_link(&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj,
-				  "bcachefs");
+		sysfs_remove_link(bdev_kobj(ca->disk_sb.bdev), "bcachefs");
 
 	if (ca->kobj.state_in_sysfs)
 		kobject_del(&ca->kobj);
@@ -1116,10 +1074,7 @@ static void __bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca)
 	wait_for_completion(&ca->io_ref_completion);
 
 	if (ca->kobj.state_in_sysfs) {
-		struct kobject *block =
-			&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj;
-
-		sysfs_remove_link(block, "bcachefs");
+		sysfs_remove_link(bdev_kobj(ca->disk_sb.bdev), "bcachefs");
 		sysfs_remove_link(&ca->kobj, "block");
 	}
 
@@ -1156,12 +1111,12 @@ static int bch2_dev_sysfs_online(struct bch_fs *c, struct bch_dev *ca)
 	}
 
 	if (ca->disk_sb.bdev) {
-		struct kobject *block =
-			&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj;
+		struct kobject *block = bdev_kobj(ca->disk_sb.bdev);
 
 		ret = sysfs_create_link(block, &ca->kobj, "bcachefs");
 		if (ret)
 			return ret;
+
 		ret = sysfs_create_link(&ca->kobj, block, "block");
 		if (ret)
 			return ret;
@@ -1640,24 +1595,28 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 	struct bch_dev *ca = NULL;
 	struct bch_sb_field_members *mi;
 	struct bch_member dev_mi;
-	struct bucket_array *buckets;
-	struct bucket *g;
 	unsigned dev_idx, nr_devices, u64s;
 	int ret;
 
 	ret = bch2_read_super(path, &opts, &sb);
-	if (ret)
+	if (ret) {
+		bch_err(c, "device add error: error reading super: %i", ret);
 		return ret;
+	}
 
 	err = bch2_sb_validate(&sb);
-	if (err)
+	if (err) {
+		bch_err(c, "device add error: error validating super: %s", err);
 		return -EINVAL;
+	}
 
 	dev_mi = bch2_sb_get_members(sb.sb)->members[sb.sb->dev_idx];
 
 	err = bch2_dev_may_add(sb.sb, c);
-	if (err)
+	if (err) {
+		bch_err(c, "device add error: %s", err);
 		return -EINVAL;
+	}
 
 	ca = __bch2_dev_alloc(c, &dev_mi);
 	if (!ca) {
@@ -1671,38 +1630,27 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 		return ret;
 	}
 
-	/*
-	 * We want to allocate journal on the new device before adding the new
-	 * device to the filesystem because allocating after we attach requires
-	 * spinning up the allocator thread, and the allocator thread requires
-	 * doing btree writes, which if the existing devices are RO isn't going
-	 * to work
-	 *
-	 * So we have to mark where the superblocks are, but marking allocated
-	 * data normally updates the filesystem usage too, so we have to mark,
-	 * allocate the journal, reset all the marks, then remark after we
-	 * attach...
-	 */
-	bch2_mark_dev_superblock(NULL, ca, 0);
-
-	err = "journal alloc failed";
 	ret = bch2_dev_journal_alloc(ca);
-	if (ret)
+	if (ret) {
+		bch_err(c, "device add error: journal alloc failed");
 		goto err;
+	}
 
 	down_write(&c->state_lock);
 	mutex_lock(&c->sb_lock);
 
-	err = "insufficient space in new superblock";
 	ret = bch2_sb_from_fs(c, ca);
-	if (ret)
+	if (ret) {
+		bch_err(c, "device add error: new device superblock too small");
 		goto err_unlock;
+	}
 
 	mi = bch2_sb_get_members(ca->disk_sb.sb);
 
 	if (!bch2_sb_resize_members(&ca->disk_sb,
 				le32_to_cpu(mi->field.u64s) +
 				sizeof(dev_mi) / sizeof(u64))) {
+		bch_err(c, "device add error: new device superblock too small");
 		ret = -ENOSPC;
 		goto err_unlock;
 	}
@@ -1715,7 +1663,7 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 		if (!bch2_dev_exists(c->disk_sb.sb, mi, dev_idx))
 			goto have_slot;
 no_slot:
-	err = "no slots available in superblock";
+	bch_err(c, "device add error: already have maximum number of devices");
 	ret = -ENOSPC;
 	goto err_unlock;
 
@@ -1724,12 +1672,12 @@ have_slot:
 	u64s = (sizeof(struct bch_sb_field_members) +
 		sizeof(struct bch_member) * nr_devices) / sizeof(u64);
 
-	err = "no space in superblock for member info";
-	ret = -ENOSPC;
-
 	mi = bch2_sb_resize_members(&c->disk_sb, u64s);
-	if (!mi)
+	if (!mi) {
+		bch_err(c, "device add error: no room in superblock for member info");
+		ret = -ENOSPC;
 		goto err_unlock;
+	}
 
 	/* success: */
 
@@ -1745,25 +1693,20 @@ have_slot:
 
 	bch2_dev_usage_journal_reserve(c);
 
-	/*
-	 * Clear marks before marking transactionally in the btree, so that
-	 * per-device accounting gets done correctly:
-	 */
-	down_read(&ca->bucket_lock);
-	buckets = bucket_array(ca);
-	for_each_bucket(g, buckets)
-		atomic64_set(&g->_mark.v, 0);
-	up_read(&ca->bucket_lock);
-
-	err = "error marking superblock";
 	ret = bch2_trans_mark_dev_sb(c, ca);
-	if (ret)
+	if (ret) {
+		bch_err(c, "device add error: error marking new superblock: %i", ret);
 		goto err_late;
+	}
+
+	ca->new_fs_bucket_idx = 0;
 
 	if (ca->mi.state == BCH_MEMBER_STATE_rw) {
 		ret = __bch2_dev_read_write(c, ca);
-		if (ret)
+		if (ret) {
+			bch_err(c, "device add error: error going RW on new device: %i", ret);
 			goto err_late;
+		}
 	}
 
 	up_write(&c->state_lock);
@@ -1776,11 +1719,9 @@ err:
 	if (ca)
 		bch2_dev_free(ca);
 	bch2_free_super(&sb);
-	bch_err(c, "Unable to add device: %s", err);
 	return ret;
 err_late:
 	up_write(&c->state_lock);
-	bch_err(c, "Error going rw after adding device: %s", err);
 	return -EINVAL;
 }
 
@@ -1917,20 +1858,23 @@ err:
 /* return with ref on ca->ref: */
 struct bch_dev *bch2_dev_lookup(struct bch_fs *c, const char *path)
 {
-	struct block_device *bdev = lookup_bdev(path);
 	struct bch_dev *ca;
+	dev_t dev;
 	unsigned i;
+	int ret;
 
-	if (IS_ERR(bdev))
-		return ERR_CAST(bdev);
+	ret = lookup_bdev(path, &dev);
+	if (ret)
+		return ERR_PTR(ret);
 
-	for_each_member_device(ca, c, i)
-		if (ca->disk_sb.bdev == bdev)
+	rcu_read_lock();
+	for_each_member_device_rcu(ca, c, i, NULL)
+		if (ca->disk_sb.bdev->bd_dev == dev)
 			goto found;
-
 	ca = ERR_PTR(-ENOENT);
 found:
-	bdput(bdev);
+	rcu_read_unlock();
+
 	return ca;
 }
 

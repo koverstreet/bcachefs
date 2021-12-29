@@ -212,7 +212,7 @@ bch2_acl_to_xattr(struct btree_trans *trans,
 	return xattr;
 }
 
-struct posix_acl *bch2_get_acl(struct inode *vinode, int type)
+struct posix_acl *bch2_get_acl(struct inode *vinode, int type, bool rcu)
 {
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
@@ -223,6 +223,9 @@ struct posix_acl *bch2_get_acl(struct inode *vinode, int type)
 	struct posix_acl *acl = NULL;
 	struct bkey_s_c k;
 	int ret;
+
+	if (rcu)
+		return ERR_PTR(-ECHILD);
 
 	bch2_trans_init(&trans, c, 0, 0);
 retry:
@@ -289,7 +292,8 @@ int bch2_set_acl_trans(struct btree_trans *trans, subvol_inum inum,
 	return ret == -ENOENT ? 0 : ret;
 }
 
-int bch2_set_acl(struct inode *vinode, struct posix_acl *_acl, int type)
+int bch2_set_acl(struct user_namespace *mnt_userns,
+		 struct inode *vinode, struct posix_acl *_acl, int type)
 {
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
@@ -314,7 +318,7 @@ retry:
 	mode = inode_u.bi_mode;
 
 	if (type == ACL_TYPE_ACCESS) {
-		ret = posix_acl_update_mode(&inode->v, &mode, &acl);
+		ret = posix_acl_update_mode(mnt_userns, &inode->v, &mode, &acl);
 		if (ret)
 			goto btree_err;
 	}

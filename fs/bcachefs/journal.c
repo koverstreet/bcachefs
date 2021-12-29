@@ -642,6 +642,7 @@ int bch2_journal_flush_seq(struct journal *j, u64 seq)
 
 int bch2_journal_meta(struct journal *j)
 {
+	struct journal_buf *buf;
 	struct journal_res res;
 	int ret;
 
@@ -650,6 +651,10 @@ int bch2_journal_meta(struct journal *j)
 	ret = bch2_journal_res_get(j, &res, jset_u64s(0), 0);
 	if (ret)
 		return ret;
+
+	buf = j->buf + (res.seq & JOURNAL_BUF_MASK);
+	buf->must_flush = true;
+	set_bit(JOURNAL_NEED_WRITE, &j->flags);
 
 	bch2_journal_res_put(j, &res);
 
@@ -698,6 +703,44 @@ int bch2_journal_flush(struct journal *j)
 	spin_unlock(&j->lock);
 
 	return bch2_journal_flush_seq(j, seq);
+}
+
+/*
+ * bch2_journal_noflush_seq - tell the journal not to issue any flushes before
+ * @seq
+ */
+bool bch2_journal_noflush_seq(struct journal *j, u64 seq)
+{
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+	u64 unwritten_seq;
+	bool ret = false;
+
+	if (!(c->sb.features & (1ULL << BCH_FEATURE_journal_no_flush)))
+		return false;
+
+	if (seq <= c->journal.flushed_seq_ondisk)
+		return false;
+
+	spin_lock(&j->lock);
+	if (seq <= c->journal.flushed_seq_ondisk)
+		goto out;
+
+	for (unwritten_seq = last_unwritten_seq(j);
+	     unwritten_seq < seq;
+	     unwritten_seq++) {
+		struct journal_buf *buf = journal_seq_to_buf(j, unwritten_seq);
+
+		/* journal write is already in flight, and was a flush write: */
+		if (unwritten_seq == last_unwritten_seq(j) && !buf->noflush)
+			goto out;
+
+		buf->noflush = true;
+	}
+
+	ret = true;
+out:
+	spin_unlock(&j->lock);
+	return ret;
 }
 
 /* block/unlock the journal: */
@@ -770,11 +813,8 @@ static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
 		long b;
 
 		if (new_fs) {
-			if (c)
-				percpu_down_read(&c->mark_lock);
 			b = bch2_bucket_alloc_new_fs(ca);
 			if (b < 0) {
-				percpu_up_read(&c->mark_lock);
 				ret = -ENOSPC;
 				goto err;
 			}
@@ -788,7 +828,7 @@ static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
 				goto err;
 			}
 
-			b = sector_to_bucket(ca, ob->ptr.offset);
+			b = ob->bucket;
 		}
 
 		if (c)
@@ -822,14 +862,7 @@ static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
 		if (c)
 			spin_unlock(&c->journal.lock);
 
-		if (new_fs) {
-			bch2_mark_metadata_bucket(c, ca, b, BCH_DATA_journal,
-						  ca->mi.bucket_size,
-						  gc_phase(GC_PHASE_SB),
-						  0);
-			if (c)
-				percpu_up_read(&c->mark_lock);
-		} else {
+		if (!new_fs) {
 			ret = bch2_trans_do(c, NULL, NULL, BTREE_INSERT_NOFAIL,
 				bch2_trans_mark_metadata_bucket(&trans, ca,
 						b, BCH_DATA_journal,
@@ -995,9 +1028,13 @@ int bch2_fs_journal_start(struct journal *j, u64 cur_seq,
 	j->replay_journal_seq	= last_seq;
 	j->replay_journal_seq_end = cur_seq;
 	j->last_seq_ondisk	= last_seq;
+	j->flushed_seq_ondisk	= cur_seq - 1;
 	j->pin.front		= last_seq;
 	j->pin.back		= cur_seq;
 	atomic64_set(&j->seq, cur_seq - 1);
+
+	if (list_empty(journal_entries))
+		j->last_empty_seq = cur_seq - 1;
 
 	fifo_for_each_entry_ptr(p, &j->pin, seq)
 		journal_pin_list_init(p, 1);
@@ -1011,12 +1048,18 @@ int bch2_fs_journal_start(struct journal *j, u64 cur_seq,
 		if (seq < last_seq)
 			continue;
 
+		if (journal_entry_empty(&i->j))
+			j->last_empty_seq = le64_to_cpu(i->j.seq);
+
 		p = journal_seq_pin(j, seq);
 
 		p->devs.nr = 0;
 		for (ptr = 0; ptr < i->nr_ptrs; ptr++)
 			bch2_dev_list_add_dev(&p->devs, i->ptrs[ptr].dev);
 	}
+
+	if (list_empty(journal_entries))
+		j->last_empty_seq = cur_seq;
 
 	spin_lock(&j->lock);
 

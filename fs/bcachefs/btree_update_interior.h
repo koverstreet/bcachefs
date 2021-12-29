@@ -82,12 +82,12 @@ struct btree_update {
 	/* Nodes being freed: */
 	struct keylist			old_keys;
 	u64				_old_keys[BTREE_UPDATE_NODES_MAX *
-						  BKEY_BTREE_PTR_VAL_U64s_MAX];
+						  BKEY_BTREE_PTR_U64s_MAX];
 
 	/* Nodes being added: */
 	struct keylist			new_keys;
 	u64				_new_keys[BTREE_UPDATE_NODES_MAX *
-						  BKEY_BTREE_PTR_VAL_U64s_MAX];
+						  BKEY_BTREE_PTR_U64s_MAX];
 
 	/* New nodes, that will be made reachable by this update: */
 	struct btree			*new_nodes[BTREE_UPDATE_NODES_MAX];
@@ -218,7 +218,7 @@ static inline ssize_t __bch_btree_u64s_remaining(struct bch_fs *c,
 {
 	ssize_t used = bset_byte_offset(b, end) / sizeof(u64) +
 		b->whiteout_u64s;
-	ssize_t total = c->opts.btree_node_size << 6;
+	ssize_t total = c->opts.btree_node_size >> 3;
 
 	/* Always leave one extra u64 for bch2_varint_decode: */
 	used++;
