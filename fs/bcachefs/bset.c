@@ -1547,10 +1547,6 @@ static inline void __bch2_btree_node_iter_advance(struct btree_node_iter *iter,
 
 	EBUG_ON(iter->data->k > iter->data->end);
 
-	while (!__btree_node_iter_set_end(iter, 0) &&
-	       !__bch2_btree_node_iter_peek_all(iter, b)->u64s)
-		iter->data->k++;
-
 	if (unlikely(__btree_node_iter_set_end(iter, 0))) {
 		bch2_btree_node_iter_set_drop(iter, iter->data);
 		return;
