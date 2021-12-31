@@ -1020,7 +1020,7 @@ void bch2_journal_super_entries_add_common(struct bch_fs *c,
 				     struct jset_entry_usage, entry);
 
 		u->entry.type	= BCH_JSET_ENTRY_usage;
-		u->entry.btree_id = FS_USAGE_INODES;
+		u->entry.btree_id = BCH_FS_USAGE_inodes;
 		u->v		= cpu_to_le64(c->usage_base->nr_inodes);
 	}
 
@@ -1030,7 +1030,7 @@ void bch2_journal_super_entries_add_common(struct bch_fs *c,
 				     struct jset_entry_usage, entry);
 
 		u->entry.type	= BCH_JSET_ENTRY_usage;
-		u->entry.btree_id = FS_USAGE_KEY_VERSION;
+		u->entry.btree_id = BCH_FS_USAGE_key_version;
 		u->v		= cpu_to_le64(atomic64_read(&c->key_version));
 	}
 
@@ -1040,7 +1040,7 @@ void bch2_journal_super_entries_add_common(struct bch_fs *c,
 				     struct jset_entry_usage, entry);
 
 		u->entry.type	= BCH_JSET_ENTRY_usage;
-		u->entry.btree_id = FS_USAGE_RESERVED;
+		u->entry.btree_id = BCH_FS_USAGE_reserved;
 		u->entry.level	= i;
 		u->v		= cpu_to_le64(c->usage_base->persistent_reserved[i]);
 	}
