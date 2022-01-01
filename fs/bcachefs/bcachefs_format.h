@@ -78,6 +78,21 @@
 #include <linux/uuid.h>
 #include "vstructs.h"
 
+#define BITMASK(name, type, field, offset, end)				\
+static const unsigned	name##_OFFSET = offset;				\
+static const unsigned	name##_BITS = (end - offset);			\
+									\
+static inline __u64 name(const type *k)					\
+{									\
+	return (k->field >> offset) & ~(~0ULL << (end - offset));	\
+}									\
+									\
+static inline void SET_##name(type *k, __u64 v)				\
+{									\
+	k->field &= ~(~(~0ULL << (end - offset)) << offset);		\
+	k->field |= (v & ~(~0ULL << (end - offset))) << offset;		\
+}
+
 #define LE_BITMASK(_bits, name, type, field, offset, end)		\
 static const unsigned	name##_OFFSET = offset;				\
 static const unsigned	name##_BITS = (end - offset);			\
@@ -349,7 +364,8 @@ static inline void bkey_init(struct bkey *k)
 	x(inode_v2,		23)			\
 	x(alloc_v3,		24)			\
 	x(set,			25)			\
-	x(lru,			26)
+	x(lru,			26)			\
+	x(alloc_v4,		27)
 
 enum bch_bkey_type {
 #define x(name, nr) KEY_TYPE_##name	= nr,
@@ -899,8 +915,29 @@ struct bch_alloc_v3 {
 	__u8			data[];
 } __attribute__((packed, aligned(8)));
 
-LE32_BITMASK(BCH_ALLOC_NEED_DISCARD,struct bch_alloc_v3, flags,  0,  1)
-LE32_BITMASK(BCH_ALLOC_NEED_INC_GEN,struct bch_alloc_v3, flags,  1,  2)
+struct bch_alloc_v4 {
+	struct bch_val		v;
+	__u64			journal_seq;
+	__u32			flags;
+	__u8			gen;
+	__u8			oldest_gen;
+	__u8			data_type;
+	__u8			stripe_redundancy;
+	__u32			dirty_sectors;
+	__u32			cached_sectors;
+	__u64			io_time[2];
+	__u32			stripe;
+	__u32			nr_external_backpointers;
+	struct bpos		backpointers[0];
+} __attribute__((packed, aligned(8)));
+
+LE32_BITMASK(BCH_ALLOC_V3_NEED_DISCARD,struct bch_alloc_v3, flags,  0,  1)
+LE32_BITMASK(BCH_ALLOC_V3_NEED_INC_GEN,struct bch_alloc_v3, flags,  1,  2)
+
+BITMASK(BCH_ALLOC_V4_NEED_DISCARD,	struct bch_alloc_v4, flags,  0,  1)
+BITMASK(BCH_ALLOC_V4_NEED_INC_GEN,	struct bch_alloc_v4, flags,  1,  2)
+BITMASK(BCH_ALLOC_V4_BACKPOINTERS_START,struct bch_alloc_v4, flags,  2,  8)
+BITMASK(BCH_ALLOC_V4_NR_BACKPOINTERS,	struct bch_alloc_v4, flags,  8,  14)
 
 enum {
 #define x(name, _bits) BCH_ALLOC_FIELD_V1_##name,
@@ -1322,7 +1359,8 @@ struct bch_sb_field_journal_seq_blacklist {
 	x(reflink_p_fix,		16)		\
 	x(subvol_dirent,		17)		\
 	x(inode_v2,			18)		\
-	x(freespace,			19)
+	x(freespace,			19)		\
+	x(alloc_v4,			20)
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,
@@ -1849,7 +1887,8 @@ LE32_BITMASK(JSET_NO_FLUSH,	struct jset, flags, 5, 6);
 	x(snapshots,	9)			\
 	x(lru,		10)			\
 	x(freespace,	11)			\
-	x(need_discard,	12)
+	x(need_discard,	12)			\
+	x(backpointers,	13)
 
 enum btree_id {
 #define x(kwd, val) BTREE_ID_##kwd = val,
