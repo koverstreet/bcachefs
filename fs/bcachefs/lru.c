@@ -126,7 +126,7 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
 	struct bkey_s_c lru_k, k;
-	struct bkey_alloc_unpacked a;
+	struct bch_alloc_v4 a;
 	struct printbuf buf1 = PRINTBUF;
 	struct printbuf buf2 = PRINTBUF;
 	u64 idx;
@@ -149,10 +149,10 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
-	a = bch2_alloc_unpack(k);
+	bch2_alloc_to_v4(k, &a);
 
 	if (fsck_err_on(bucket_state(a) != BUCKET_cached ||
-			a.read_time != lru_k.k->p.offset, c,
+			a.io_time[READ] != lru_k.k->p.offset, c,
 			"incorrect lru entry %s\n"
 			"  for %s",
 			(bch2_bkey_val_to_text(&buf1, c, lru_k), buf1.buf),
