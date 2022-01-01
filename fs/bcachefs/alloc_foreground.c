@@ -190,8 +190,9 @@ static inline unsigned open_buckets_reserved(enum alloc_reserve reserve)
 }
 
 static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *ca,
+					      u64 bucket,
 					      enum alloc_reserve reserve,
-					      struct bkey_alloc_unpacked a,
+					      struct bch_alloc_v4 *a,
 					      u64 *skipped_open,
 					      u64 *skipped_need_journal_commit,
 					      u64 *skipped_nouse,
@@ -199,18 +200,18 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 {
 	struct open_bucket *ob;
 
-	if (unlikely(ca->buckets_nouse && test_bit(a.bucket, ca->buckets_nouse))) {
+	if (unlikely(ca->buckets_nouse && test_bit(bucket, ca->buckets_nouse))) {
 		(*skipped_nouse)++;
 		return NULL;
 	}
 
-	if (bch2_bucket_is_open(c, ca->dev_idx, a.bucket)) {
+	if (bch2_bucket_is_open(c, ca->dev_idx, bucket)) {
 		(*skipped_open)++;
 		return NULL;
 	}
 
 	if (bch2_bucket_needs_journal_commit(&c->buckets_waiting_for_journal,
-			c->journal.flushed_seq_ondisk, ca->dev_idx, a.bucket)) {
+			c->journal.flushed_seq_ondisk, ca->dev_idx, bucket)) {
 		(*skipped_need_journal_commit)++;
 		return NULL;
 	}
@@ -231,7 +232,7 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 	}
 
 	/* Recheck under lock: */
-	if (bch2_bucket_is_open(c, ca->dev_idx, a.bucket)) {
+	if (bch2_bucket_is_open(c, ca->dev_idx, bucket)) {
 		spin_unlock(&c->freelist_lock);
 		(*skipped_open)++;
 		return NULL;
@@ -245,8 +246,8 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 	ob->sectors_free = ca->mi.bucket_size;
 	ob->alloc_reserve = reserve;
 	ob->dev		= ca->dev_idx;
-	ob->gen		= a.gen;
-	ob->bucket	= a.bucket;
+	ob->gen		= a->gen;
+	ob->bucket	= bucket;
 	spin_unlock(&ob->lock);
 
 	ca->nr_open_buckets++;
@@ -283,7 +284,7 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct open_bucket *ob;
-	struct bkey_alloc_unpacked a;
+	struct bch_alloc_v4 a;
 	u64 b = free_entry & ~(~0ULL << 56);
 	unsigned genbits = free_entry >> 56;
 	struct printbuf buf = PRINTBUF;
@@ -297,7 +298,7 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 		goto err;
 	}
 
-	a = bch2_alloc_unpack(k);
+	bch2_alloc_to_v4(k, &a);
 
 	if (bch2_fs_inconsistent_on(bucket_state(a) != BUCKET_free, c,
 			"non free bucket in freespace btree (state %s)\n"
@@ -326,7 +327,7 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 		goto err;
 	}
 
-	ob = __try_alloc_bucket(c, ca, reserve, a,
+	ob = __try_alloc_bucket(c, ca, b, reserve, &a,
 				skipped_open,
 				skipped_need_journal_commit,
 				skipped_nouse,
@@ -390,7 +391,7 @@ bch2_bucket_alloc_trans_early(struct btree_trans *trans,
 
 	for_each_btree_key(trans, iter, BTREE_ID_alloc, POS(ca->dev_idx, *cur_bucket),
 			   BTREE_ITER_SLOTS, k, ret) {
-		struct bkey_alloc_unpacked a;
+		struct bch_alloc_v4 a;
 
 		if (bkey_cmp(k.k->p, POS(ca->dev_idx, ca->mi.nbuckets)) >= 0)
 			break;
@@ -399,14 +400,14 @@ bch2_bucket_alloc_trans_early(struct btree_trans *trans,
 		    is_superblock_bucket(ca, k.k->p.offset))
 			continue;
 
-		a = bch2_alloc_unpack(k);
+		bch2_alloc_to_v4(k, &a);
 
 		if (bucket_state(a) != BUCKET_free)
 			continue;
 
 		(*buckets_seen)++;
 
-		ob = __try_alloc_bucket(trans->c, ca, reserve, a,
+		ob = __try_alloc_bucket(trans->c, ca, k.k->p.offset, reserve, &a,
 					skipped_open,
 					skipped_need_journal_commit,
 					skipped_nouse,
