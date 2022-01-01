@@ -1029,8 +1029,8 @@ int bch2_fs_recovery(struct bch_fs *c)
 			bch_info(c, "filesystem version is prior to subvol_dirent - upgrading");
 			c->opts.version_upgrade = true;
 			c->opts.fsck		= true;
-		} else if (c->sb.version < bcachefs_metadata_version_freespace) {
-			bch_info(c, "filesystem version is prior to freespace - upgrading");
+		} else if (c->sb.version < bcachefs_metadata_version_alloc_v4) {
+			bch_info(c, "filesystem version is prior to alloc_v4 - upgrading");
 			c->opts.version_upgrade = true;
 		}
 	}

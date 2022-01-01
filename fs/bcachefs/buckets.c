@@ -279,20 +279,20 @@ bch2_fs_usage_read_short(struct bch_fs *c)
 	return ret;
 }
 
-static inline int is_unavailable_bucket(struct bkey_alloc_unpacked a)
+static inline int is_unavailable_bucket(struct bch_alloc_v4 a)
 {
 	return a.dirty_sectors || a.stripe;
 }
 
 static inline int bucket_sectors_fragmented(struct bch_dev *ca,
-					    struct bkey_alloc_unpacked a)
+					    struct bch_alloc_v4 a)
 {
 	return a.dirty_sectors
 		? max(0, (int) ca->mi.bucket_size - (int) a.dirty_sectors)
 		: 0;
 }
 
-static inline enum bch_data_type bucket_type(struct bkey_alloc_unpacked a)
+static inline enum bch_data_type bucket_type(struct bch_alloc_v4 a)
 {
 	return a.cached_sectors && !a.dirty_sectors
 		? BCH_DATA_cached
@@ -311,8 +311,8 @@ static inline void account_bucket(struct bch_fs_usage *fs_usage,
 }
 
 static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
-				  struct bkey_alloc_unpacked old,
-				  struct bkey_alloc_unpacked new,
+				  struct bch_alloc_v4 old,
+				  struct bch_alloc_v4 new,
 				  u64 journal_seq, bool gc)
 {
 	struct bch_fs_usage *fs_usage;
@@ -349,14 +349,14 @@ static void bch2_dev_usage_update_m(struct bch_fs *c, struct bch_dev *ca,
 				    struct bucket old, struct bucket new,
 				    u64 journal_seq, bool gc)
 {
-	struct bkey_alloc_unpacked old_a = {
+	struct bch_alloc_v4 old_a = {
 		.gen		= old.gen,
 		.data_type	= old.data_type,
 		.dirty_sectors	= old.dirty_sectors,
 		.cached_sectors	= old.cached_sectors,
 		.stripe		= old.stripe,
 	};
-	struct bkey_alloc_unpacked new_a = {
+	struct bch_alloc_v4 new_a = {
 		.gen		= new.gen,
 		.data_type	= new.data_type,
 		.dirty_sectors	= new.dirty_sectors,
@@ -506,13 +506,12 @@ int bch2_mark_alloc(struct btree_trans *trans,
 	bool gc = flags & BTREE_TRIGGER_GC;
 	u64 journal_seq = trans->journal_res.seq;
 	struct bch_fs *c = trans->c;
-	struct bkey_alloc_unpacked old_u = bch2_alloc_unpack(old);
-	struct bkey_alloc_unpacked new_u = bch2_alloc_unpack(new);
-	struct bch_dev *ca = bch_dev_bkey_exists(c, new_u.dev);
+	struct bch_alloc_v4 old_a, new_a;
+	struct bch_dev *ca = bch_dev_bkey_exists(c, new.k->p.inode);
 	int ret = 0;
 
-	if (bch2_trans_inconsistent_on(new_u.bucket < ca->mi.first_bucket ||
-				       new_u.bucket >= ca->mi.nbuckets, trans,
+	if (bch2_trans_inconsistent_on(new.k->p.offset < ca->mi.first_bucket ||
+				       new.k->p.offset >= ca->mi.nbuckets, trans,
 				       "alloc key outside range of device's buckets"))
 		return -EIO;
 
@@ -523,11 +522,13 @@ int bch2_mark_alloc(struct btree_trans *trans,
 	    !(flags & BTREE_TRIGGER_BUCKET_INVALIDATE))
 		return 0;
 
+	bch2_alloc_to_v4(old, &old_a);
+	bch2_alloc_to_v4(new, &new_a);
+
 	if ((flags & BTREE_TRIGGER_INSERT) &&
-	    !old_u.data_type != !new_u.data_type &&
-	    new.k->type == KEY_TYPE_alloc_v3) {
-		struct bch_alloc_v3 *v = (struct bch_alloc_v3 *) new.v;
-		u64 old_journal_seq = le64_to_cpu(v->journal_seq);
+	    !old_a.data_type != !new_a.data_type &&
+	    new.k->type == KEY_TYPE_alloc_v4) {
+		struct bch_alloc_v4 *v = (struct bch_alloc_v4 *) new.v;
 
 		BUG_ON(!journal_seq);
 
@@ -536,18 +537,18 @@ int bch2_mark_alloc(struct btree_trans *trans,
 		 * before the bucket became empty again, then the we don't have
 		 * to wait on a journal flush before we can reuse the bucket:
 		 */
-		new_u.journal_seq = !new_u.data_type &&
-			(journal_seq == old_journal_seq ||
-			 bch2_journal_noflush_seq(&c->journal, old_journal_seq))
+		new_a.journal_seq = !new_a.data_type &&
+			(journal_seq == v->journal_seq ||
+			 bch2_journal_noflush_seq(&c->journal, v->journal_seq))
 			? 0 : journal_seq;
-		v->journal_seq = cpu_to_le64(new_u.journal_seq);
+		v->journal_seq = new_a.journal_seq;
 	}
 
-	if (old_u.data_type && !new_u.data_type && new_u.journal_seq) {
+	if (old_a.data_type && !new_a.data_type && new_a.journal_seq) {
 		ret = bch2_set_bucket_needs_journal_commit(&c->buckets_waiting_for_journal,
 				c->journal.flushed_seq_ondisk,
-				new_u.dev, new_u.bucket,
-				new_u.journal_seq);
+				new.k->p.inode, new.k->p.offset,
+				new_a.journal_seq);
 		if (ret) {
 			bch2_fs_fatal_error(c,
 				"error setting bucket_needs_journal_commit: %i", ret);
@@ -555,43 +556,43 @@ int bch2_mark_alloc(struct btree_trans *trans,
 		}
 	}
 
-	if (!new_u.data_type &&
-	    (!new_u.journal_seq || new_u.journal_seq < c->journal.flushed_seq_ondisk))
+	if (!new_a.data_type &&
+	    (!new_a.journal_seq || new_a.journal_seq < c->journal.flushed_seq_ondisk))
 		closure_wake_up(&c->freelist_wait);
 
 	if ((flags & BTREE_TRIGGER_INSERT) &&
-	    new_u.need_discard &&
-	    !new_u.journal_seq)
+	    BCH_ALLOC_V4_NEED_DISCARD(&new_a) &&
+	    !new_a.journal_seq)
 		bch2_do_discards(c);
 
-	if (!old_u.data_type &&
-	    new_u.data_type &&
+	if (!old_a.data_type &&
+	    new_a.data_type &&
 	    should_invalidate_buckets(ca))
 		bch2_do_invalidates(c);
 
-	if (bucket_state(new_u) == BUCKET_need_gc_gens) {
+	if (bucket_state(new_a) == BUCKET_need_gc_gens) {
 		atomic_inc(&c->kick_gc);
 		wake_up_process(c->gc_thread);
 	}
 
 	percpu_down_read(&c->mark_lock);
-	if (!gc && new_u.gen != old_u.gen)
-		*bucket_gen(ca, new_u.bucket) = new_u.gen;
+	if (!gc && new_a.gen != old_a.gen)
+		*bucket_gen(ca, new.k->p.offset) = new_a.gen;
 
-	bch2_dev_usage_update(c, ca, old_u, new_u, journal_seq, gc);
+	bch2_dev_usage_update(c, ca, old_a, new_a, journal_seq, gc);
 
 	if (gc) {
-		struct bucket *g = gc_bucket(ca, new_u.bucket);
+		struct bucket *g = gc_bucket(ca, new.k->p.offset);
 
 		bucket_lock(g);
 
 		g->gen_valid		= 1;
-		g->gen			= new_u.gen;
-		g->data_type		= new_u.data_type;
-		g->stripe		= new_u.stripe;
-		g->stripe_redundancy	= new_u.stripe_redundancy;
-		g->dirty_sectors	= new_u.dirty_sectors;
-		g->cached_sectors	= new_u.cached_sectors;
+		g->gen			= new_a.gen;
+		g->data_type		= new_a.data_type;
+		g->stripe		= new_a.stripe;
+		g->stripe_redundancy	= new_a.stripe_redundancy;
+		g->dirty_sectors	= new_a.dirty_sectors;
+		g->cached_sectors	= new_a.cached_sectors;
 
 		bucket_unlock(g);
 	}
@@ -603,17 +604,17 @@ int bch2_mark_alloc(struct btree_trans *trans,
 	 */
 
 	if ((flags & BTREE_TRIGGER_BUCKET_INVALIDATE) &&
-	    old_u.cached_sectors) {
+	    old_a.cached_sectors) {
 		ret = update_cached_sectors(c, new, ca->dev_idx,
-					    -old_u.cached_sectors,
+					    -old_a.cached_sectors,
 					    journal_seq, gc);
 		if (ret) {
 			bch2_fs_fatal_error(c, "bch2_mark_alloc(): no replicas entry while updating cached sectors");
 			return ret;
 		}
 
-		trace_invalidate(ca, bucket_to_sector(ca, new_u.bucket),
-				 old_u.cached_sectors);
+		trace_invalidate(ca, bucket_to_sector(ca, new.k->p.offset),
+				 old_a.cached_sectors);
 	}
 
 	return 0;
@@ -1387,7 +1388,7 @@ need_mark:
 
 static int bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree_iter *iter,
 			      const struct bch_extent_ptr *ptr,
-			      struct bkey_alloc_unpacked *u)
+			      struct bch_alloc_v4 *a)
 {
 	struct bch_fs *c = trans->c;
 	struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
@@ -1406,7 +1407,7 @@ static int bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree
 		return ret;
 	}
 
-	*u = bch2_alloc_unpack(k);
+	bch2_alloc_to_v4(k, a);
 	return 0;
 }
 
@@ -1415,20 +1416,20 @@ static int bch2_trans_mark_pointer(struct btree_trans *trans,
 			s64 sectors, enum bch_data_type data_type)
 {
 	struct btree_iter iter;
-	struct bkey_alloc_unpacked u;
+	struct bch_alloc_v4 a;
 	int ret;
 
-	ret = bch2_trans_start_alloc_update(trans, &iter, &p.ptr, &u);
+	ret = bch2_trans_start_alloc_update(trans, &iter, &p.ptr, &a);
 	if (ret)
 		return ret;
 
 	ret = __mark_pointer(trans, k, &p.ptr, sectors, data_type,
-			     u.gen, &u.data_type,
-			     &u.dirty_sectors, &u.cached_sectors);
+			     a.gen, &a.data_type,
+			     &a.dirty_sectors, &a.cached_sectors);
 	if (ret)
 		goto out;
 
-	ret = bch2_alloc_write(trans, &iter, &u, 0);
+	ret = bch2_alloc_write(trans, &iter, &a, 0);
 	if (ret)
 		goto out;
 out:
@@ -1561,7 +1562,7 @@ static int bch2_trans_mark_stripe_bucket(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	const struct bch_extent_ptr *ptr = &s.v->ptrs[idx];
 	struct btree_iter iter;
-	struct bkey_alloc_unpacked u;
+	struct bch_alloc_v4 a;
 	enum bch_data_type data_type = idx >= s.v->nr_blocks - s.v->nr_redundant
 		? BCH_DATA_parity : 0;
 	s64 sectors = data_type ? le16_to_cpu(s.v->sectors) : 0;
@@ -1570,59 +1571,59 @@ static int bch2_trans_mark_stripe_bucket(struct btree_trans *trans,
 	if (deleting)
 		sectors = -sectors;
 
-	ret = bch2_trans_start_alloc_update(trans, &iter, ptr, &u);
+	ret = bch2_trans_start_alloc_update(trans, &iter, ptr, &a);
 	if (ret)
 		return ret;
 
 	ret = check_bucket_ref(c, s.s_c, ptr, sectors, data_type,
-			       u.gen, u.data_type,
-			       u.dirty_sectors, u.cached_sectors);
+			       a.gen, a.data_type,
+			       a.dirty_sectors, a.cached_sectors);
 	if (ret)
 		goto err;
 
 	if (!deleting) {
-		if (bch2_trans_inconsistent_on(u.stripe ||
-					    u.stripe_redundancy, trans,
+		if (bch2_trans_inconsistent_on(a.stripe ||
+					    a.stripe_redundancy, trans,
 				"bucket %llu:%llu gen %u data type %s dirty_sectors %u: multiple stripes using same bucket (%u, %llu)",
-				iter.pos.inode, iter.pos.offset, u.gen,
-				bch2_data_types[u.data_type],
-				u.dirty_sectors,
-				u.stripe, s.k->p.offset)) {
+				iter.pos.inode, iter.pos.offset, a.gen,
+				bch2_data_types[a.data_type],
+				a.dirty_sectors,
+				a.stripe, s.k->p.offset)) {
 			ret = -EIO;
 			goto err;
 		}
 
-		if (bch2_trans_inconsistent_on(data_type && u.dirty_sectors, trans,
+		if (bch2_trans_inconsistent_on(data_type && a.dirty_sectors, trans,
 				"bucket %llu:%llu gen %u data type %s dirty_sectors %u: data already in stripe bucket %llu",
-				iter.pos.inode, iter.pos.offset, u.gen,
-				bch2_data_types[u.data_type],
-				u.dirty_sectors,
+				iter.pos.inode, iter.pos.offset, a.gen,
+				bch2_data_types[a.data_type],
+				a.dirty_sectors,
 				s.k->p.offset)) {
 			ret = -EIO;
 			goto err;
 		}
 
-		u.stripe		= s.k->p.offset;
-		u.stripe_redundancy	= s.v->nr_redundant;
+		a.stripe		= s.k->p.offset;
+		a.stripe_redundancy	= s.v->nr_redundant;
 	} else {
-		if (bch2_trans_inconsistent_on(u.stripe != s.k->p.offset ||
-					    u.stripe_redundancy != s.v->nr_redundant, trans,
+		if (bch2_trans_inconsistent_on(a.stripe != s.k->p.offset ||
+					    a.stripe_redundancy != s.v->nr_redundant, trans,
 				"bucket %llu:%llu gen %u: not marked as stripe when deleting stripe %llu (got %u)",
-				iter.pos.inode, iter.pos.offset, u.gen,
-				s.k->p.offset, u.stripe)) {
+				iter.pos.inode, iter.pos.offset, a.gen,
+				s.k->p.offset, a.stripe)) {
 			ret = -EIO;
 			goto err;
 		}
 
-		u.stripe		= 0;
-		u.stripe_redundancy	= 0;
+		a.stripe		= 0;
+		a.stripe_redundancy	= 0;
 	}
 
-	u.dirty_sectors += sectors;
+	a.dirty_sectors += sectors;
 	if (data_type)
-		u.data_type = !deleting ? data_type : 0;
+		a.data_type = !deleting ? data_type : 0;
 
-	ret = bch2_alloc_write(trans, &iter, &u, 0);
+	ret = bch2_alloc_write(trans, &iter, &a, 0);
 	if (ret)
 		goto err;
 err:
@@ -1852,7 +1853,7 @@ static int __bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
-	struct bkey_alloc_unpacked u;
+	struct bch_alloc_v4 a;
 	struct bch_extent_ptr ptr = {
 		.dev = ca->dev_idx,
 		.offset = bucket_to_sector(ca, b),
@@ -1865,26 +1866,26 @@ static int __bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 	if (b >= ca->mi.nbuckets)
 		return 0;
 
-	ret = bch2_trans_start_alloc_update(trans, &iter, &ptr, &u);
+	ret = bch2_trans_start_alloc_update(trans, &iter, &ptr, &a);
 	if (ret)
 		return ret;
 
-	if (u.data_type && u.data_type != type) {
+	if (a.data_type && a.data_type != type) {
 		bch2_fsck_err(c, FSCK_CAN_IGNORE|FSCK_NEED_FSCK,
 			"bucket %llu:%llu gen %u different types of data in same bucket: %s, %s\n"
 			"while marking %s",
-			iter.pos.inode, iter.pos.offset, u.gen,
-			bch2_data_types[u.data_type],
+			iter.pos.inode, iter.pos.offset, a.gen,
+			bch2_data_types[a.data_type],
 			bch2_data_types[type],
 			bch2_data_types[type]);
 		ret = -EIO;
 		goto out;
 	}
 
-	u.data_type	= type;
-	u.dirty_sectors	= sectors;
+	a.data_type	= type;
+	a.dirty_sectors	= sectors;
 
-	ret = bch2_alloc_write(trans, &iter, &u, 0);
+	ret = bch2_alloc_write(trans, &iter, &a, 0);
 	if (ret)
 		goto out;
 out:
