@@ -207,10 +207,11 @@ struct btree_node_iter {
 #define BTREE_ITER_CACHED_NOFILL	(1 << 8)
 #define BTREE_ITER_CACHED_NOCREATE	(1 << 9)
 #define BTREE_ITER_WITH_UPDATES		(1 << 10)
-#define __BTREE_ITER_ALL_SNAPSHOTS	(1 << 11)
-#define BTREE_ITER_ALL_SNAPSHOTS	(1 << 12)
-#define BTREE_ITER_FILTER_SNAPSHOTS	(1 << 13)
-#define BTREE_ITER_NOPRESERVE		(1 << 14)
+#define BTREE_ITER_WITH_JOURNAL		(1 << 11)
+#define __BTREE_ITER_ALL_SNAPSHOTS	(1 << 12)
+#define BTREE_ITER_ALL_SNAPSHOTS	(1 << 13)
+#define BTREE_ITER_FILTER_SNAPSHOTS	(1 << 14)
+#define BTREE_ITER_NOPRESERVE		(1 << 15)
 
 enum btree_path_uptodate {
 	BTREE_ITER_UPTODATE		= 0,
@@ -382,6 +383,7 @@ struct btree_trans {
 	bool			used_mempool:1;
 	bool			in_traverse_all:1;
 	bool			restarted:1;
+	bool			journal_transaction_names:1;
 	/*
 	 * For when bch2_trans_update notices we'll be splitting a compressed
 	 * extent:

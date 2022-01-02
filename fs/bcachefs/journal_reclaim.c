@@ -11,7 +11,6 @@
 
 #include <linux/kthread.h>
 #include <linux/sched/mm.h>
-#include <linux/sched/task.h>
 #include <trace/events/bcachefs.h>
 
 /* Free space calculations: */
@@ -490,9 +489,6 @@ static size_t journal_flush_pins(struct journal *j, u64 seq_to_flush,
 	u64 seq;
 	int err;
 
-	if (!test_bit(JOURNAL_RECLAIM_STARTED, &j->flags))
-		return 0;
-
 	lockdep_assert_held(&j->reclaim_lock);
 
 	while (1) {
@@ -692,8 +688,6 @@ static int bch2_journal_reclaim_thread(void *arg)
 	int ret = 0;
 
 	set_freezable();
-
-	kthread_wait_freezable(test_bit(JOURNAL_RECLAIM_STARTED, &j->flags));
 
 	j->last_flushed = jiffies;
 

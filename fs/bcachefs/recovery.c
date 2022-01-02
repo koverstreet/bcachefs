@@ -59,23 +59,21 @@ static void zero_out_btree_mem_ptr(struct journal_keys *keys)
 static int __journal_key_cmp(enum btree_id	l_btree_id,
 			     unsigned		l_level,
 			     struct bpos	l_pos,
-			     struct journal_key *r)
+			     const struct journal_key *r)
 {
 	return (cmp_int(l_btree_id,	r->btree_id) ?:
 		cmp_int(l_level,	r->level) ?:
 		bpos_cmp(l_pos,	r->k->k.p));
 }
 
-static int journal_key_cmp(struct journal_key *l, struct journal_key *r)
+static int journal_key_cmp(const struct journal_key *l, const struct journal_key *r)
 {
-	return (cmp_int(l->btree_id,	r->btree_id) ?:
-		cmp_int(l->level,	r->level) ?:
-		bpos_cmp(l->k->k.p,	r->k->k.p));
+	return __journal_key_cmp(l->btree_id, l->level, l->k->k.p, r);
 }
 
-static size_t journal_key_search(struct journal_keys *journal_keys,
-				 enum btree_id id, unsigned level,
-				 struct bpos pos)
+size_t bch2_journal_key_search(struct journal_keys *journal_keys,
+			       enum btree_id id, unsigned level,
+			       struct bpos pos)
 {
 	size_t l = 0, r = journal_keys->nr, m;
 
@@ -109,17 +107,33 @@ static void journal_iter_fix(struct bch_fs *c, struct journal_iter *iter, unsign
 		iter->idx++;
 }
 
-int bch2_journal_key_insert(struct bch_fs *c, enum btree_id id,
-			    unsigned level, struct bkey_i *k)
+int bch2_journal_key_insert_take(struct bch_fs *c, enum btree_id id,
+				 unsigned level, struct bkey_i *k)
 {
 	struct journal_key n = {
 		.btree_id	= id,
 		.level		= level,
-		.allocated	= true
+		.k		= k,
+		.allocated	= true,
+		/*
+		 * Ensure these keys are done last by journal replay, to unblock
+		 * journal reclaim:
+		 */
+		.journal_seq	= U32_MAX,
 	};
 	struct journal_keys *keys = &c->journal_keys;
 	struct journal_iter *iter;
-	unsigned idx = journal_key_search(keys, id, level, k->k.p);
+	size_t idx = bch2_journal_key_search(keys, id, level, k->k.p);
+
+	BUG_ON(test_bit(BCH_FS_RW, &c->flags));
+
+	if (idx < keys->nr &&
+	    journal_key_cmp(&n, &keys->d[idx]) == 0) {
+		if (keys->d[idx].allocated)
+			kfree(keys->d[idx].k);
+		keys->d[idx] = n;
+		return 0;
+	}
 
 	if (keys->nr == keys->size) {
 		struct journal_keys new_keys = {
@@ -140,25 +154,34 @@ int bch2_journal_key_insert(struct bch_fs *c, enum btree_id id,
 		*keys = new_keys;
 	}
 
-	n.k = kmalloc(bkey_bytes(&k->k), GFP_KERNEL);
-	if (!n.k)
-		return -ENOMEM;
+	array_insert_item(keys->d, keys->nr, idx, n);
 
-	bkey_copy(n.k, k);
-
-	if (idx < keys->nr &&
-	    journal_key_cmp(&n, &keys->d[idx]) == 0) {
-		if (keys->d[idx].allocated)
-			kfree(keys->d[idx].k);
-		keys->d[idx] = n;
-	} else {
-		array_insert_item(keys->d, keys->nr, idx, n);
-
-		list_for_each_entry(iter, &c->journal_iters, list)
-			journal_iter_fix(c, iter, idx);
-	}
+	list_for_each_entry(iter, &c->journal_iters, list)
+		journal_iter_fix(c, iter, idx);
 
 	return 0;
+}
+
+/*
+ * Can only be used from the recovery thread while we're still RO - can't be
+ * used once we've got RW, as journal_keys is at that point used by multiple
+ * threads:
+ */
+int bch2_journal_key_insert(struct bch_fs *c, enum btree_id id,
+			    unsigned level, struct bkey_i *k)
+{
+	struct bkey_i *n;
+	int ret;
+
+	n = kmalloc(bkey_bytes(&k->k), GFP_KERNEL);
+	if (!n)
+		return -ENOMEM;
+
+	bkey_copy(n, k);
+	ret = bch2_journal_key_insert_take(c, id, level, n);
+	if (ret)
+		kfree(n);
+	return ret;
 }
 
 int bch2_journal_key_delete(struct bch_fs *c, enum btree_id id,
@@ -172,17 +195,33 @@ int bch2_journal_key_delete(struct bch_fs *c, enum btree_id id,
 	return bch2_journal_key_insert(c, id, level, &whiteout);
 }
 
+void bch2_journal_key_overwritten(struct bch_fs *c, enum btree_id btree,
+				  unsigned level, struct bpos pos)
+{
+	struct journal_keys *keys = &c->journal_keys;
+	size_t idx = bch2_journal_key_search(keys, btree, level, pos);
+
+	if (idx < keys->nr &&
+	    keys->d[idx].btree_id	== btree &&
+	    keys->d[idx].level		== level &&
+	    !bpos_cmp(keys->d[idx].k->k.p, pos))
+		keys->d[idx].overwritten = true;
+}
+
 static struct bkey_i *bch2_journal_iter_peek(struct journal_iter *iter)
 {
-	struct journal_key *k = iter->idx - iter->keys->nr
-		? iter->keys->d + iter->idx : NULL;
+	struct journal_key *k = iter->keys->d + iter->idx;
 
-	if (k &&
-	    k->btree_id	== iter->btree_id &&
-	    k->level	== iter->level)
-		return k->k;
+	while (k < iter->keys->d + iter->keys->nr &&
+	       k->btree_id	== iter->btree_id &&
+	       k->level		== iter->level) {
+		if (!k->overwritten)
+			return k->k;
 
-	iter->idx = iter->keys->nr;
+		iter->idx++;
+		k = iter->keys->d + iter->idx;
+	}
+
 	return NULL;
 }
 
@@ -205,8 +244,7 @@ static void bch2_journal_iter_init(struct bch_fs *c,
 	iter->btree_id	= id;
 	iter->level	= level;
 	iter->keys	= &c->journal_keys;
-	iter->idx	= journal_key_search(&c->journal_keys, id, level, pos);
-	list_add(&iter->list, &c->journal_iters);
+	iter->idx	= bch2_journal_key_search(&c->journal_keys, id, level, pos);
 }
 
 static struct bkey_s_c bch2_journal_iter_peek_btree(struct btree_and_journal_iter *iter)
@@ -292,106 +330,33 @@ void bch2_btree_and_journal_iter_exit(struct btree_and_journal_iter *iter)
 	bch2_journal_iter_exit(&iter->journal);
 }
 
-void bch2_btree_and_journal_iter_init_node_iter(struct btree_and_journal_iter *iter,
-						struct bch_fs *c,
-						struct btree *b)
+void __bch2_btree_and_journal_iter_init_node_iter(struct btree_and_journal_iter *iter,
+						  struct bch_fs *c,
+						  struct btree *b,
+						  struct btree_node_iter node_iter,
+						  struct bpos pos)
 {
 	memset(iter, 0, sizeof(*iter));
 
 	iter->b = b;
-	bch2_btree_node_iter_init_from_start(&iter->node_iter, iter->b);
-	bch2_journal_iter_init(c, &iter->journal,
-			       b->c.btree_id, b->c.level, b->data->min_key);
+	iter->node_iter = node_iter;
+	bch2_journal_iter_init(c, &iter->journal, b->c.btree_id, b->c.level, pos);
+	INIT_LIST_HEAD(&iter->journal.list);
 }
 
-/* Walk btree, overlaying keys from the journal: */
-
-static void btree_and_journal_iter_prefetch(struct bch_fs *c, struct btree *b,
-					   struct btree_and_journal_iter iter)
+/*
+ * this version is used by btree_gc before filesystem has gone RW and
+ * multithreaded, so uses the journal_iters list:
+ */
+void bch2_btree_and_journal_iter_init_node_iter(struct btree_and_journal_iter *iter,
+						struct bch_fs *c,
+						struct btree *b)
 {
-	unsigned i = 0, nr = b->c.level > 1 ? 2 : 16;
-	struct bkey_s_c k;
-	struct bkey_buf tmp;
+	struct btree_node_iter node_iter;
 
-	BUG_ON(!b->c.level);
-
-	bch2_bkey_buf_init(&tmp);
-
-	while (i < nr &&
-	       (k = bch2_btree_and_journal_iter_peek(&iter)).k) {
-		bch2_bkey_buf_reassemble(&tmp, c, k);
-
-		bch2_btree_node_prefetch(c, NULL, NULL, tmp.k,
-					b->c.btree_id, b->c.level - 1);
-
-		bch2_btree_and_journal_iter_advance(&iter);
-		i++;
-	}
-
-	bch2_bkey_buf_exit(&tmp, c);
-}
-
-static int bch2_btree_and_journal_walk_recurse(struct btree_trans *trans, struct btree *b,
-				enum btree_id btree_id,
-				btree_walk_key_fn key_fn)
-{
-	struct bch_fs *c = trans->c;
-	struct btree_and_journal_iter iter;
-	struct bkey_s_c k;
-	struct bkey_buf tmp;
-	struct btree *child;
-	int ret = 0;
-
-	bch2_bkey_buf_init(&tmp);
-	bch2_btree_and_journal_iter_init_node_iter(&iter, c, b);
-
-	while ((k = bch2_btree_and_journal_iter_peek(&iter)).k) {
-		if (b->c.level) {
-			bch2_bkey_buf_reassemble(&tmp, c, k);
-
-			child = bch2_btree_node_get_noiter(c, tmp.k,
-						b->c.btree_id, b->c.level - 1,
-						false);
-
-			ret = PTR_ERR_OR_ZERO(child);
-			if (ret)
-				break;
-
-			btree_and_journal_iter_prefetch(c, b, iter);
-
-			ret = bch2_btree_and_journal_walk_recurse(trans, child,
-					btree_id, key_fn);
-			six_unlock_read(&child->c.lock);
-		} else {
-			ret = key_fn(trans, k);
-		}
-
-		if (ret)
-			break;
-
-		bch2_btree_and_journal_iter_advance(&iter);
-	}
-
-	bch2_btree_and_journal_iter_exit(&iter);
-	bch2_bkey_buf_exit(&tmp, c);
-	return ret;
-}
-
-int bch2_btree_and_journal_walk(struct btree_trans *trans, enum btree_id btree_id,
-				btree_walk_key_fn key_fn)
-{
-	struct bch_fs *c = trans->c;
-	struct btree *b = c->btree_roots[btree_id].b;
-	int ret = 0;
-
-	if (btree_node_fake(b))
-		return 0;
-
-	six_lock_read(&b->c.lock, NULL, NULL);
-	ret = bch2_btree_and_journal_walk_recurse(trans, b, btree_id, key_fn);
-	six_unlock_read(&b->c.lock);
-
-	return ret;
+	bch2_btree_node_iter_init_from_start(&node_iter, b);
+	__bch2_btree_and_journal_iter_init_node_iter(iter, c, b, node_iter, b->data->min_key);
+	list_add(&iter->journal.list, &c->journal_iters);
 }
 
 /* sort and dedup all keys in the journal: */
@@ -416,9 +381,7 @@ static int journal_sort_key_cmp(const void *_l, const void *_r)
 	const struct journal_key *l = _l;
 	const struct journal_key *r = _r;
 
-	return  cmp_int(l->btree_id,	r->btree_id) ?:
-		cmp_int(l->level,	r->level) ?:
-		bpos_cmp(l->k->k.p, r->k->k.p) ?:
+	return  journal_key_cmp(l, r) ?:
 		cmp_int(l->journal_seq, r->journal_seq) ?:
 		cmp_int(l->journal_offset, r->journal_offset);
 }
@@ -511,8 +474,8 @@ static void replay_now_at(struct journal *j, u64 seq)
 		bch2_journal_pin_put(j, j->replay_journal_seq++);
 }
 
-static int __bch2_journal_replay_key(struct btree_trans *trans,
-				     struct journal_key *k)
+static int bch2_journal_replay_key(struct btree_trans *trans,
+				   struct journal_key *k)
 {
 	struct btree_iter iter;
 	unsigned iter_flags =
@@ -521,111 +484,76 @@ static int __bch2_journal_replay_key(struct btree_trans *trans,
 	int ret;
 
 	if (!k->level && k->btree_id == BTREE_ID_alloc)
-		iter_flags |= BTREE_ITER_CACHED|BTREE_ITER_CACHED_NOFILL;
+		iter_flags |= BTREE_ITER_CACHED;
 
 	bch2_trans_node_iter_init(trans, &iter, k->btree_id, k->k->k.p,
 				  BTREE_MAX_DEPTH, k->level,
 				  iter_flags);
-	ret   = bch2_btree_iter_traverse(&iter) ?:
-		bch2_trans_update(trans, &iter, k->k, BTREE_TRIGGER_NORUN);
+	ret = bch2_btree_iter_traverse(&iter);
+	if (ret)
+		goto out;
+
+	/* Must be checked with btree locked: */
+	if (k->overwritten)
+		goto out;
+
+	ret = bch2_trans_update(trans, &iter, k->k, BTREE_TRIGGER_NORUN);
+out:
 	bch2_trans_iter_exit(trans, &iter);
 	return ret;
 }
 
-static int bch2_journal_replay_key(struct bch_fs *c, struct journal_key *k)
-{
-	unsigned commit_flags =
-		BTREE_INSERT_LAZY_RW|
-		BTREE_INSERT_NOFAIL|
-		BTREE_INSERT_JOURNAL_RESERVED;
-
-	if (!k->allocated)
-		commit_flags |= BTREE_INSERT_JOURNAL_REPLAY;
-
-	return bch2_trans_do(c, NULL, NULL, commit_flags,
-			     __bch2_journal_replay_key(&trans, k));
-}
-
 static int journal_sort_seq_cmp(const void *_l, const void *_r)
 {
-	const struct journal_key *l = _l;
-	const struct journal_key *r = _r;
+	const struct journal_key *l = *((const struct journal_key **)_l);
+	const struct journal_key *r = *((const struct journal_key **)_r);
 
-	return  cmp_int(r->level,	l->level) ?:
-		cmp_int(l->journal_seq, r->journal_seq) ?:
-		cmp_int(l->btree_id,	r->btree_id) ?:
-		bpos_cmp(l->k->k.p,	r->k->k.p);
+	return cmp_int(l->journal_seq, r->journal_seq);
 }
 
-static int bch2_journal_replay(struct bch_fs *c,
-			       struct journal_keys keys)
+static int bch2_journal_replay(struct bch_fs *c)
 {
+	struct journal_keys *keys = &c->journal_keys;
+	struct journal_key **keys_sorted, *k;
 	struct journal *j = &c->journal;
-	struct journal_key *i;
-	u64 seq;
+	size_t i;
 	int ret;
 
-	sort(keys.d, keys.nr, sizeof(keys.d[0]), journal_sort_seq_cmp, NULL);
+	keys_sorted = kmalloc_array(sizeof(*keys_sorted), keys->nr, GFP_KERNEL);
+	if (!keys_sorted)
+		return -ENOMEM;
 
-	if (keys.nr)
-		replay_now_at(j, keys.journal_seq_base);
+	for (i = 0; i < keys->nr; i++)
+		keys_sorted[i] = &keys->d[i];
 
-	seq = j->replay_journal_seq;
+	sort(keys_sorted, keys->nr,
+	     sizeof(keys_sorted[0]),
+	     journal_sort_seq_cmp, NULL);
 
-	/*
-	 * First replay updates to the alloc btree - these will only update the
-	 * btree key cache:
-	 */
-	for_each_journal_key(keys, i) {
-		cond_resched();
-
-		if (!i->level && i->btree_id == BTREE_ID_alloc) {
-			j->replay_journal_seq = keys.journal_seq_base + i->journal_seq;
-			ret = bch2_journal_replay_key(c, i);
-			if (ret)
-				goto err;
-		}
+	if (keys->nr) {
+		bch_verbose(c, "starting journal replay, %zu keys", keys->nr);
+		replay_now_at(j, keys->journal_seq_base);
 	}
 
-	/*
-	 * Next replay updates to interior btree nodes:
-	 */
-	for_each_journal_key(keys, i) {
+	for (i = 0; i < keys->nr; i++) {
+		k = keys_sorted[i];
+
 		cond_resched();
 
-		if (i->level) {
-			j->replay_journal_seq = keys.journal_seq_base + i->journal_seq;
-			ret = bch2_journal_replay_key(c, i);
-			if (ret)
-				goto err;
-		}
-	}
+		if (!k->allocated)
+			replay_now_at(j, keys->journal_seq_base + k->journal_seq);
 
-	/*
-	 * Now that the btree is in a consistent state, we can start journal
-	 * reclaim (which will be flushing entries from the btree key cache back
-	 * to the btree:
-	 */
-	set_bit(BCH_FS_BTREE_INTERIOR_REPLAY_DONE, &c->flags);
-	set_bit(JOURNAL_RECLAIM_STARTED, &j->flags);
-	journal_reclaim_kick(j);
-
-	j->replay_journal_seq = seq;
-
-	/*
-	 * Now replay leaf node updates:
-	 */
-	for_each_journal_key(keys, i) {
-		cond_resched();
-
-		if (i->level || i->btree_id == BTREE_ID_alloc)
-			continue;
-
-		replay_now_at(j, keys.journal_seq_base + i->journal_seq);
-
-		ret = bch2_journal_replay_key(c, i);
-		if (ret)
+		ret = bch2_trans_do(c, NULL, NULL,
+				    BTREE_INSERT_LAZY_RW|
+				    BTREE_INSERT_NOFAIL|
+				    BTREE_INSERT_JOURNAL_RESERVED|
+				    (!k->allocated ? BTREE_INSERT_JOURNAL_REPLAY : 0),
+			     bch2_journal_replay_key(&trans, k));
+		if (ret) {
+			bch_err(c, "journal replay: error %d while replaying key at btree %s level %u",
+				ret, bch2_btree_ids[k->btree_id], k->level);
 			goto err;
+		}
 	}
 
 	replay_now_at(j, j->replay_journal_seq_end);
@@ -633,10 +561,9 @@ static int bch2_journal_replay(struct bch_fs *c,
 
 	bch2_journal_set_replay_done(j);
 	bch2_journal_flush_all_pins(j);
-	return bch2_journal_error(j);
+	ret = bch2_journal_error(j);
 err:
-	bch_err(c, "journal replay: error %d while replaying key at btree %s level %u",
-		ret, bch2_btree_ids[i->btree_id], i->level);
+	kfree(keys_sorted);
 	return ret;
 }
 
@@ -674,15 +601,15 @@ static int journal_replay_entry_early(struct bch_fs *c,
 			container_of(entry, struct jset_entry_usage, entry);
 
 		switch (entry->btree_id) {
-		case FS_USAGE_RESERVED:
+		case BCH_FS_USAGE_reserved:
 			if (entry->level < BCH_REPLICAS_MAX)
 				c->usage_base->persistent_reserved[entry->level] =
 					le64_to_cpu(u->v);
 			break;
-		case FS_USAGE_INODES:
+		case BCH_FS_USAGE_inodes:
 			c->usage_base->nr_inodes = le64_to_cpu(u->v);
 			break;
-		case FS_USAGE_KEY_VERSION:
+		case BCH_FS_USAGE_key_version:
 			atomic64_set(&c->key_version,
 				     le64_to_cpu(u->v));
 			break;
@@ -702,10 +629,7 @@ static int journal_replay_entry_early(struct bch_fs *c,
 		struct jset_entry_dev_usage *u =
 			container_of(entry, struct jset_entry_dev_usage, entry);
 		struct bch_dev *ca = bch_dev_bkey_exists(c, le32_to_cpu(u->dev));
-		unsigned bytes = jset_u64s(le16_to_cpu(entry->u64s)) * sizeof(u64);
-		unsigned nr_types = (bytes - sizeof(struct jset_entry_dev_usage)) /
-			sizeof(struct jset_entry_dev_usage_type);
-		unsigned i;
+		unsigned i, nr_types = jset_entry_dev_usage_nr_types(u);
 
 		ca->usage_base->buckets_ec		= le64_to_cpu(u->buckets_ec);
 		ca->usage_base->buckets_unavailable	= le64_to_cpu(u->buckets_unavailable);
@@ -1163,7 +1087,11 @@ use_clean:
 
 	bch_verbose(c, "starting alloc read");
 	err = "error reading allocation information";
-	ret = bch2_alloc_read(c);
+
+	down_read(&c->gc_lock);
+	ret = bch2_alloc_read(c, false, false);
+	up_read(&c->gc_lock);
+
 	if (ret)
 		goto err;
 	bch_verbose(c, "alloc read done");
@@ -1176,6 +1104,13 @@ use_clean:
 	bch_verbose(c, "stripes_read done");
 
 	set_bit(BCH_FS_ALLOC_READ_DONE, &c->flags);
+
+	/*
+	 * If we're not running fsck, this ensures bch2_fsck_err() calls are
+	 * instead interpreted as bch2_inconsistent_err() calls:
+	 */
+	if (!c->opts.fsck)
+		set_bit(BCH_FS_FSCK_DONE, &c->flags);
 
 	if (c->opts.fsck ||
 	    !(c->sb.compat & (1ULL << BCH_COMPAT_alloc_info)) ||
@@ -1208,27 +1143,11 @@ use_clean:
 
 	bch_verbose(c, "starting journal replay");
 	err = "journal replay failed";
-	ret = bch2_journal_replay(c, c->journal_keys);
+	ret = bch2_journal_replay(c);
 	if (ret)
 		goto err;
-	bch_verbose(c, "journal replay done");
-
-	if (test_bit(BCH_FS_NEED_ALLOC_WRITE, &c->flags) &&
-	    !c->opts.nochanges) {
-		/*
-		 * note that even when filesystem was clean there might be work
-		 * to do here, if we ran gc (because of fsck) which recalculated
-		 * oldest_gen:
-		 */
-		bch_verbose(c, "writing allocation info");
-		err = "error writing out alloc info";
-		ret = bch2_alloc_write_all(c, BTREE_INSERT_LAZY_RW);
-		if (ret) {
-			bch_err(c, "error writing alloc info");
-			goto err;
-		}
-		bch_verbose(c, "alloc write done");
-	}
+	if (c->opts.verbose || !c->sb.clean)
+		bch_info(c, "journal replay done");
 
 	if (c->sb.version < bcachefs_metadata_version_snapshot_2) {
 		bch2_fs_lazy_rw(c);
@@ -1376,12 +1295,10 @@ int bch2_fs_initialize(struct bch_fs *c)
 
 	set_bit(BCH_FS_ALLOC_READ_DONE, &c->flags);
 	set_bit(BCH_FS_INITIAL_GC_DONE, &c->flags);
+	set_bit(BCH_FS_FSCK_DONE, &c->flags);
 
 	for (i = 0; i < BTREE_ID_NR; i++)
 		bch2_btree_root_alloc(c, i);
-
-	set_bit(BCH_FS_BTREE_INTERIOR_REPLAY_DONE, &c->flags);
-	set_bit(JOURNAL_RECLAIM_STARTED, &c->journal.flags);
 
 	err = "unable to allocate journal buckets";
 	for_each_online_member(ca, c, i) {

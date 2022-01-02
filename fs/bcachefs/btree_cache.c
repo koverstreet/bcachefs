@@ -78,12 +78,13 @@ static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp)
 	if (!b->data)
 		return -ENOMEM;
 #ifdef __KERNEL__
-	b->aux_data = __vmalloc(btree_aux_data_bytes(b), gfp,
-				PAGE_KERNEL_EXEC);
+	b->aux_data = vmalloc_exec(btree_aux_data_bytes(b), gfp);
 #else
 	b->aux_data = mmap(NULL, btree_aux_data_bytes(b),
 			   PROT_READ|PROT_WRITE|PROT_EXEC,
 			   MAP_PRIVATE|MAP_ANONYMOUS, 0, 0);
+	if (b->aux_data == MAP_FAILED)
+		b->aux_data = NULL;
 #endif
 	if (!b->aux_data) {
 		kvpfree(b->data, btree_bytes(c));

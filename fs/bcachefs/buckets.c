@@ -358,13 +358,6 @@ static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
 	struct bch_fs_usage *fs_usage;
 	struct bch_dev_usage *u;
 
-	/*
-	 * Hack for bch2_fs_initialize path, where we're first marking sb and
-	 * journal non-transactionally:
-	 */
-	if (!journal_seq && !test_bit(BCH_FS_INITIALIZED, &c->flags))
-		journal_seq = 1;
-
 	preempt_disable();
 	fs_usage = fs_usage_ptr(c, journal_seq, gc);
 	u = dev_usage_ptr(ca, journal_seq, gc);
@@ -538,20 +531,6 @@ void bch2_mark_alloc_bucket(struct bch_fs *c, struct bch_dev *ca,
 	BUG_ON(owned_by_allocator == old.owned_by_allocator);
 }
 
-static inline u8 bkey_alloc_gen(struct bkey_s_c k)
-{
-	switch (k.k->type) {
-	case KEY_TYPE_alloc:
-		return bkey_s_c_to_alloc(k).v->gen;
-	case KEY_TYPE_alloc_v2:
-		return bkey_s_c_to_alloc_v2(k).v->gen;
-	case KEY_TYPE_alloc_v3:
-		return bkey_s_c_to_alloc_v3(k).v->gen;
-	default:
-		return 0;
-	}
-}
-
 static int bch2_mark_alloc(struct btree_trans *trans,
 			   struct bkey_s_c old, struct bkey_s_c new,
 			   unsigned flags)
@@ -596,7 +575,7 @@ static int bch2_mark_alloc(struct btree_trans *trans,
 		return 0;
 
 	percpu_down_read(&c->mark_lock);
-	if (!gc && new_u.gen != bkey_alloc_gen(old))
+	if (!gc && new_u.gen != old_u.gen)
 		*bucket_gen(ca, new.k->p.offset) = new_u.gen;
 
 	g = __bucket(ca, new.k->p.offset, gc);
@@ -940,9 +919,11 @@ static int bch2_mark_stripe_ptr(struct btree_trans *trans,
 	BUG_ON(!(flags & BTREE_TRIGGER_GC));
 
 	m = genradix_ptr_alloc(&c->gc_stripes, p.idx, GFP_KERNEL);
-
-	if (!m)
+	if (!m) {
+		bch_err(c, "error allocating memory for gc_stripes, idx %llu",
+			(u64) p.idx);
 		return -ENOMEM;
+	}
 
 	spin_lock(&c->ec_stripes_heap_lock);
 
@@ -1053,7 +1034,7 @@ static int bch2_mark_stripe(struct btree_trans *trans,
 	bool gc = flags & BTREE_TRIGGER_GC;
 	u64 journal_seq = trans->journal_res.seq;
 	struct bch_fs *c = trans->c;
-	size_t idx = new.k->p.offset;
+	u64 idx = new.k->p.offset;
 	const struct bch_stripe *old_s = old.k->type == KEY_TYPE_stripe
 		? bkey_s_c_to_stripe(old).v : NULL;
 	const struct bch_stripe *new_s = new.k->type == KEY_TYPE_stripe
@@ -1071,7 +1052,7 @@ static int bch2_mark_stripe(struct btree_trans *trans,
 
 			bch2_bkey_val_to_text(&PBUF(buf1), c, old);
 			bch2_bkey_val_to_text(&PBUF(buf2), c, new);
-			bch_err_ratelimited(c, "error marking nonexistent stripe %zu while marking\n"
+			bch_err_ratelimited(c, "error marking nonexistent stripe %llu while marking\n"
 					    "old %s\n"
 					    "new %s", idx, buf1, buf2);
 			bch2_inconsistent_error(c);
@@ -1103,9 +1084,11 @@ static int bch2_mark_stripe(struct btree_trans *trans,
 		struct gc_stripe *m =
 			genradix_ptr_alloc(&c->gc_stripes, idx, GFP_KERNEL);
 
-		if (!m)
+		if (!m) {
+			bch_err(c, "error allocating memory for gc_stripes, idx %llu",
+				idx);
 			return -ENOMEM;
-
+		}
 		/*
 		 * This will be wrong when we bring back runtime gc: we should
 		 * be unmarking the old key and then marking the new key
@@ -1475,24 +1458,22 @@ static int bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree
 {
 	struct bch_fs *c = trans->c;
 	struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
-	struct bpos pos = POS(ptr->dev, PTR_BUCKET_NR(ca, ptr));
-	struct bkey_i *update = btree_trans_peek_updates(trans, BTREE_ID_alloc, pos);
+	struct bkey_s_c k;
 	int ret;
 
-	bch2_trans_iter_init(trans, iter, BTREE_ID_alloc, pos,
+	bch2_trans_iter_init(trans, iter, BTREE_ID_alloc,
+			     POS(ptr->dev, PTR_BUCKET_NR(ca, ptr)),
+			     BTREE_ITER_WITH_UPDATES|
 			     BTREE_ITER_CACHED|
-			     BTREE_ITER_CACHED_NOFILL|
 			     BTREE_ITER_INTENT);
-	ret = bch2_btree_iter_traverse(iter);
+	k = bch2_btree_iter_peek_slot(iter);
+	ret = bkey_err(k);
 	if (ret) {
 		bch2_trans_iter_exit(trans, iter);
 		return ret;
 	}
 
-	*u = update && !bpos_cmp(update->k.p, pos)
-		? bch2_alloc_unpack(bkey_i_to_s_c(update))
-		: alloc_mem_to_key(c, iter);
-
+	*u = bch2_alloc_unpack(k);
 	return 0;
 }
 

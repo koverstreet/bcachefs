@@ -76,6 +76,7 @@
 #include <asm/byteorder.h>
 #include <linux/kernel.h>
 #include <linux/uuid.h>
+#include "vstructs.h"
 
 #define LE_BITMASK(_bits, name, type, field, offset, end)		\
 static const unsigned	name##_OFFSET = offset;				\
@@ -1426,6 +1427,7 @@ LE64_BITMASK(BCH_SB_INODES_USE_KEY_CACHE,struct bch_sb, flags[3], 29, 30);
 LE64_BITMASK(BCH_SB_JOURNAL_FLUSH_DELAY,struct bch_sb, flags[3], 30, 62);
 LE64_BITMASK(BCH_SB_JOURNAL_FLUSH_DISABLED,struct bch_sb, flags[3], 62, 63);
 LE64_BITMASK(BCH_SB_JOURNAL_RECLAIM_DELAY,struct bch_sb, flags[4], 0, 32);
+LE64_BITMASK(BCH_SB_JOURNAL_TRANSACTION_NAMES,struct bch_sb, flags[4], 32, 33);
 
 /*
  * Features:
@@ -1660,7 +1662,8 @@ static inline __u64 __bset_magic(struct bch_sb *sb)
 	x(usage,		5)		\
 	x(data_usage,		6)		\
 	x(clock,		7)		\
-	x(dev_usage,		8)
+	x(dev_usage,		8)		\
+	x(log,			9)
 
 enum {
 #define x(f, nr)	BCH_JSET_ENTRY_##f	= nr,
@@ -1690,11 +1693,16 @@ struct jset_entry_blacklist_v2 {
 	__le64			end;
 };
 
+#define BCH_FS_USAGE_TYPES()			\
+	x(reserved,		0)		\
+	x(inodes,		1)		\
+	x(key_version,		2)
+
 enum {
-	FS_USAGE_RESERVED		= 0,
-	FS_USAGE_INODES			= 1,
-	FS_USAGE_KEY_VERSION		= 2,
-	FS_USAGE_NR			= 3
+#define x(f, nr)	BCH_FS_USAGE_##f	= nr,
+	BCH_FS_USAGE_TYPES()
+#undef x
+	BCH_FS_USAGE_NR
 };
 
 struct jset_entry_usage {
@@ -1730,6 +1738,17 @@ struct jset_entry_dev_usage {
 	__le64			buckets_unavailable;
 
 	struct jset_entry_dev_usage_type d[];
+} __attribute__((packed));
+
+static inline unsigned jset_entry_dev_usage_nr_types(struct jset_entry_dev_usage *u)
+{
+	return (vstruct_bytes(&u->entry) - sizeof(struct jset_entry_dev_usage)) /
+		sizeof(struct jset_entry_dev_usage_type);
+}
+
+struct jset_entry_log {
+	struct jset_entry	entry;
+	u8			d[];
 } __attribute__((packed));
 
 /*
