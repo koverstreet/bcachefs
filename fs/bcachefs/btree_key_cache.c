@@ -223,7 +223,7 @@ static int btree_key_cache_fill(struct btree_trans *trans,
 		goto err;
 
 	if (!bch2_btree_node_relock(trans, ck_path, 0)) {
-		trace_transaction_restart_ip(trans->ip, _THIS_IP_);
+		trace_transaction_restart_ip(trans->fn, _THIS_IP_);
 		ret = btree_trans_restart(trans);
 		goto err;
 	}
@@ -318,7 +318,7 @@ retry:
 			if (!trans->restarted)
 				goto retry;
 
-			trace_transaction_restart_ip(trans->ip, _THIS_IP_);
+			trace_transaction_restart_ip(trans->fn, _THIS_IP_);
 			ret = -EINTR;
 			goto err;
 		}
@@ -338,7 +338,7 @@ fill:
 	if (!ck->valid && !(flags & BTREE_ITER_CACHED_NOFILL)) {
 		if (!path->locks_want &&
 		    !__bch2_btree_path_upgrade(trans, path, 1)) {
-			trace_transaction_restart_ip(trans->ip, _THIS_IP_);
+			trace_transaction_restart_ip(trans->fn, _THIS_IP_);
 			ret = btree_trans_restart(trans);
 			goto err;
 		}
