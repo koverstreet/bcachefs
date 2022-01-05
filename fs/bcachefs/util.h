@@ -769,4 +769,13 @@ static inline int uuid_le_cmp(const uuid_le u1, const uuid_le u2)
 	return memcmp(&u1, &u2, sizeof(uuid_le));
 }
 
+#ifdef __KERNEL__
+static inline void uuid_unparse_lower(u8 *uuid, char *out)
+{
+	sprintf(out, "%plU", uuid);
+}
+#else
+#include <uuid/uuid.h>
+#endif
+
 #endif /* _BCACHEFS_UTIL_H */
