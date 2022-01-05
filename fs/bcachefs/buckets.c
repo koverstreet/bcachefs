@@ -536,15 +536,11 @@ static int bch2_mark_alloc(struct btree_trans *trans,
 	}
 
 	if (old_u.data_type && !new_u.data_type && new_u.journal_seq) {
-		ret = bch2_set_bucket_needs_journal_commit(&c->buckets_waiting_for_journal,
-				c->journal.flushed_seq_ondisk,
+		ret = bch2_set_bucket_needs_journal_commit(c,
 				new_u.dev, new_u.bucket,
 				new_u.journal_seq);
-		if (ret) {
-			bch2_fs_fatal_error(c,
-				"error setting bucket_needs_journal_commit: %i", ret);
+		if (ret)
 			return ret;
-		}
 	}
 
 	ca = bch_dev_bkey_exists(c, new_u.dev);
@@ -554,7 +550,7 @@ static int bch2_mark_alloc(struct btree_trans *trans,
 
 	percpu_down_read(&c->mark_lock);
 	if (!gc && new_u.gen != old_u.gen)
-		*bucket_gen(ca, new.k->p.offset) = new_u.gen;
+		*bucket_gen(ca, new_u.bucket) = new_u.gen;
 
 	g = __bucket(ca, new_u.bucket, gc);
 
@@ -564,11 +560,6 @@ static int bch2_mark_alloc(struct btree_trans *trans,
 		m.dirty_sectors		= new_u.dirty_sectors;
 		m.cached_sectors	= new_u.cached_sectors;
 		m.stripe		= new_u.stripe != 0;
-
-		if (journal_seq) {
-			m.journal_seq_valid	= 1;
-			m.journal_seq		= journal_seq;
-		}
 	}));
 
 	bch2_dev_usage_update(c, ca, old_m, m, journal_seq, gc);
