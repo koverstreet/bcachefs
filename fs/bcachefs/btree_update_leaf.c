@@ -1084,6 +1084,9 @@ static int check_pos_snapshot_overwritten(struct btree_trans *trans,
 	struct bkey_s_c k;
 	int ret;
 
+	if (!btree_type_has_snapshots(id))
+		return 0;
+
 	if (!snapshot_t(c, pos.snapshot)->children[0])
 		return 0;
 
