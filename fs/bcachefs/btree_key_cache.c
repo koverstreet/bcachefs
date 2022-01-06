@@ -208,7 +208,6 @@ static int btree_key_cache_fill(struct btree_trans *trans,
 				struct btree_path *ck_path,
 				struct bkey_cached *ck)
 {
-	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	unsigned new_u64s = 0;
@@ -223,7 +222,7 @@ static int btree_key_cache_fill(struct btree_trans *trans,
 		goto err;
 
 	if (!bch2_btree_node_relock(trans, ck_path, 0)) {
-		trace_transaction_restart_ip(trans->ip, _THIS_IP_);
+		trace_transaction_restart_ip(trans->fn, _THIS_IP_);
 		ret = btree_trans_restart(trans);
 		goto err;
 	}
@@ -238,7 +237,7 @@ static int btree_key_cache_fill(struct btree_trans *trans,
 		new_u64s = roundup_pow_of_two(new_u64s);
 		new_k = kmalloc(new_u64s * sizeof(u64), GFP_NOFS);
 		if (!new_k) {
-			bch_err(c, "error allocating memory for key cache key, btree %s u64s %u",
+			bch_err(trans->c, "error allocating memory for key cache key, btree %s u64s %u",
 				bch2_btree_ids[ck->key.btree_id], new_u64s);
 			ret = -ENOMEM;
 			goto err;
@@ -318,7 +317,7 @@ retry:
 			if (!trans->restarted)
 				goto retry;
 
-			trace_transaction_restart_ip(trans->ip, _THIS_IP_);
+			trace_transaction_restart_ip(trans->fn, _THIS_IP_);
 			ret = -EINTR;
 			goto err;
 		}
@@ -338,7 +337,7 @@ fill:
 	if (!ck->valid && !(flags & BTREE_ITER_CACHED_NOFILL)) {
 		if (!path->locks_want &&
 		    !__bch2_btree_path_upgrade(trans, path, 1)) {
-			trace_transaction_restart_ip(trans->ip, _THIS_IP_);
+			trace_transaction_restart_ip(trans->fn, _THIS_IP_);
 			ret = btree_trans_restart(trans);
 			goto err;
 		}
@@ -604,7 +603,7 @@ static unsigned long bch2_btree_key_cache_scan(struct shrinker *shrink,
 	do {
 		struct rhash_head *pos, *next;
 
-		pos = *rht_bucket(tbl, bc->shrink_iter);
+		pos = rht_ptr_rcu(rht_bucket(tbl, bc->shrink_iter));
 
 		while (!rht_is_a_nulls(pos)) {
 			next = rht_dereference_bucket_rcu(pos->next, tbl, bc->shrink_iter);

@@ -363,7 +363,7 @@ bool __bch2_btree_node_lock(struct btree_trans *trans,
 	}
 
 	if (unlikely(deadlock_path)) {
-		trace_trans_restart_would_deadlock(trans->ip, ip,
+		trace_trans_restart_would_deadlock(trans->fn, ip,
 				trans->in_traverse_all, reason,
 				deadlock_path->btree_id,
 				deadlock_path->cached,
@@ -548,7 +548,7 @@ bool bch2_trans_relock(struct btree_trans *trans)
 	trans_for_each_path(trans, path)
 		if (path->should_be_locked &&
 		    !bch2_btree_path_relock(trans, path, _RET_IP_)) {
-			trace_trans_restart_relock(trans->ip, _RET_IP_,
+			trace_trans_restart_relock(trans->fn, _RET_IP_,
 					path->btree_id, &path->pos);
 			BUG_ON(!trans->restarted);
 			return false;
@@ -562,6 +562,8 @@ void bch2_trans_unlock(struct btree_trans *trans)
 
 	trans_for_each_path(trans, path)
 		__bch2_btree_path_unlock(path);
+
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
 }
 
 /* Btree iterator: */
@@ -1517,7 +1519,7 @@ out:
 
 	trans->in_traverse_all = false;
 
-	trace_trans_traverse_all(trans->ip, trace_ip);
+	trace_trans_traverse_all(trans->fn, trace_ip);
 	return ret;
 }
 
@@ -2180,23 +2182,6 @@ inline bool bch2_btree_iter_rewind(struct btree_iter *iter)
 	return ret;
 }
 
-static inline struct bkey_i *btree_trans_peek_updates(struct btree_trans *trans,
-						      enum btree_id btree_id,
-						      struct bpos pos)
-{
-	struct btree_insert_entry *i;
-
-	trans_for_each_update(trans, i)
-		if ((cmp_int(btree_id,	i->btree_id) ?:
-		     bpos_cmp(pos,	i->k->k.p)) <= 0) {
-			if (btree_id ==	i->btree_id)
-				return i->k;
-			break;
-		}
-
-	return NULL;
-}
-
 static noinline
 struct bkey_i *__btree_trans_peek_journal(struct btree_trans *trans,
 					  struct btree_path *path)
@@ -2841,7 +2826,7 @@ void *bch2_trans_kmalloc(struct btree_trans *trans, size_t size)
 		trans->mem_bytes = new_bytes;
 
 		if (old_bytes) {
-			trace_trans_restart_mem_realloced(trans->ip, _RET_IP_, new_bytes);
+			trace_trans_restart_mem_realloced(trans->fn, _RET_IP_, new_bytes);
 			btree_trans_restart(trans);
 			return ERR_PTR(-EINTR);
 		}
@@ -2925,14 +2910,15 @@ static void bch2_trans_alloc_paths(struct btree_trans *trans, struct bch_fs *c)
 	trans->updates		= p; p += updates_bytes;
 }
 
-void bch2_trans_init(struct btree_trans *trans, struct bch_fs *c,
-		     unsigned expected_nr_iters,
-		     size_t expected_mem_bytes)
+void __bch2_trans_init(struct btree_trans *trans, struct bch_fs *c,
+		       unsigned expected_nr_iters,
+		       size_t expected_mem_bytes,
+		       const char *fn)
 	__acquires(&c->btree_trans_barrier)
 {
 	memset(trans, 0, sizeof(*trans));
 	trans->c		= c;
-	trans->ip		= _RET_IP_;
+	trans->fn		= fn;
 
 	bch2_trans_alloc_paths(trans, c);
 
@@ -2965,7 +2951,7 @@ static void check_btree_paths_leaked(struct btree_trans *trans)
 			goto leaked;
 	return;
 leaked:
-	bch_err(c, "btree paths leaked from %pS!", (void *) trans->ip);
+	bch_err(c, "btree paths leaked from %s!", trans->fn);
 	trans_for_each_path(trans, path)
 		if (path->ref)
 			printk(KERN_ERR "  btree %s %pS\n",
@@ -3058,7 +3044,7 @@ void bch2_btree_trans_to_text(struct printbuf *out, struct bch_fs *c)
 		if (!trans_has_locks(trans))
 			continue;
 
-		pr_buf(out, "%i %ps\n", trans->pid, (void *) trans->ip);
+		pr_buf(out, "%i %s\n", trans->pid, trans->fn);
 
 		trans_for_each_path(trans, path) {
 			if (!path->nodes_locked)

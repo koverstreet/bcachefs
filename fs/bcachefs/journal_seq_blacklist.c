@@ -66,6 +66,12 @@ blacklist_entry_try_merge(struct bch_fs *c,
 	return bl;
 }
 
+static bool bl_entry_contig_or_overlaps(struct journal_seq_blacklist_entry *e,
+					u64 start, u64 end)
+{
+	return !(end < le64_to_cpu(e->start) || le64_to_cpu(e->end) < start);
+}
+
 int bch2_journal_seq_blacklist_add(struct bch_fs *c, u64 start, u64 end)
 {
 	struct bch_sb_field_journal_seq_blacklist *bl;
@@ -76,28 +82,21 @@ int bch2_journal_seq_blacklist_add(struct bch_fs *c, u64 start, u64 end)
 	bl = bch2_sb_get_journal_seq_blacklist(c->disk_sb.sb);
 	nr = blacklist_nr_entries(bl);
 
-	if (bl) {
-		for (i = 0; i < nr; i++) {
-			struct journal_seq_blacklist_entry *e =
-				bl->start + i;
+	for (i = 0; i < nr; i++) {
+		struct journal_seq_blacklist_entry *e =
+			bl->start + i;
 
-			if (start == le64_to_cpu(e->start) &&
-			    end   == le64_to_cpu(e->end))
-				goto out;
+		if (bl_entry_contig_or_overlaps(e, start, end)) {
+			e->start = cpu_to_le64(min(start, le64_to_cpu(e->start)));
+			e->end	= cpu_to_le64(max(end, le64_to_cpu(e->end)));
 
-			if (start <= le64_to_cpu(e->start) &&
-			    end   >= le64_to_cpu(e->end)) {
-				e->start = cpu_to_le64(start);
-				e->end	= cpu_to_le64(end);
-
-				if (i + 1 < nr)
-					bl = blacklist_entry_try_merge(c,
-								bl, i);
-				if (i)
-					bl = blacklist_entry_try_merge(c,
-								bl, i - 1);
-				goto out_write_sb;
-			}
+			if (i + 1 < nr)
+				bl = blacklist_entry_try_merge(c,
+							bl, i);
+			if (i)
+				bl = blacklist_entry_try_merge(c,
+							bl, i - 1);
+			goto out_write_sb;
 		}
 	}
 
@@ -189,27 +188,34 @@ int bch2_blacklist_table_initialize(struct bch_fs *c)
 	return 0;
 }
 
-static const char *
-bch2_sb_journal_seq_blacklist_validate(struct bch_sb *sb,
-				       struct bch_sb_field *f)
+static int bch2_sb_journal_seq_blacklist_validate(struct bch_sb *sb,
+						  struct bch_sb_field *f,
+						  struct printbuf *err)
 {
 	struct bch_sb_field_journal_seq_blacklist *bl =
 		field_to_type(f, journal_seq_blacklist);
-	struct journal_seq_blacklist_entry *i;
-	unsigned nr = blacklist_nr_entries(bl);
+	unsigned i, nr = blacklist_nr_entries(bl);
 
-	for (i = bl->start; i < bl->start + nr; i++) {
-		if (le64_to_cpu(i->start) >=
-		    le64_to_cpu(i->end))
-			return "entry start >= end";
+	for (i = 0; i < nr; i++) {
+		struct journal_seq_blacklist_entry *e = bl->start + i;
 
-		if (i + 1 < bl->start + nr &&
-		    le64_to_cpu(i[0].end) >
-		    le64_to_cpu(i[1].start))
-			return "entries out of order";
+		if (le64_to_cpu(e->start) >=
+		    le64_to_cpu(e->end)) {
+			pr_buf(err, "entry %u start >= end (%llu >= %llu)",
+			       i, le64_to_cpu(e->start), le64_to_cpu(e->end));
+			return -EINVAL;
+		}
+
+		if (i + 1 < nr &&
+		    le64_to_cpu(e[0].end) >
+		    le64_to_cpu(e[1].start)) {
+			pr_buf(err, "entry %u out of order with next entry (%llu > %llu)",
+			       i + 1, le64_to_cpu(e[0].end), le64_to_cpu(e[1].start));
+			return -EINVAL;
+		}
 	}
 
-	return NULL;
+	return 0;
 }
 
 static void bch2_sb_journal_seq_blacklist_to_text(struct printbuf *out,
@@ -235,3 +241,81 @@ const struct bch_sb_field_ops bch_sb_field_ops_journal_seq_blacklist = {
 	.validate	= bch2_sb_journal_seq_blacklist_validate,
 	.to_text	= bch2_sb_journal_seq_blacklist_to_text
 };
+
+void bch2_blacklist_entries_gc(struct work_struct *work)
+{
+	struct bch_fs *c = container_of(work, struct bch_fs,
+					journal_seq_blacklist_gc_work);
+	struct journal_seq_blacklist_table *t;
+	struct bch_sb_field_journal_seq_blacklist *bl;
+	struct journal_seq_blacklist_entry *src, *dst;
+	struct btree_trans trans;
+	unsigned i, nr, new_nr;
+	int ret;
+
+	bch2_trans_init(&trans, c, 0, 0);
+
+	for (i = 0; i < BTREE_ID_NR; i++) {
+		struct btree_iter iter;
+		struct btree *b;
+
+		bch2_trans_node_iter_init(&trans, &iter, i, POS_MIN,
+					  0, 0, BTREE_ITER_PREFETCH);
+retry:
+		bch2_trans_begin(&trans);
+
+		b = bch2_btree_iter_peek_node(&iter);
+
+		while (!(ret = PTR_ERR_OR_ZERO(b)) &&
+		       b &&
+		       !test_bit(BCH_FS_STOPPING, &c->flags))
+			b = bch2_btree_iter_next_node(&iter);
+
+		if (ret == -EINTR)
+			goto retry;
+
+		bch2_trans_iter_exit(&trans, &iter);
+	}
+
+	bch2_trans_exit(&trans);
+	if (ret)
+		return;
+
+	mutex_lock(&c->sb_lock);
+	bl = bch2_sb_get_journal_seq_blacklist(c->disk_sb.sb);
+	if (!bl)
+		goto out;
+
+	nr = blacklist_nr_entries(bl);
+	dst = bl->start;
+
+	t = c->journal_seq_blacklist_table;
+	BUG_ON(nr != t->nr);
+
+	for (src = bl->start, i = eytzinger0_first(t->nr);
+	     src < bl->start + nr;
+	     src++, i = eytzinger0_next(i, nr)) {
+		BUG_ON(t->entries[i].start	!= le64_to_cpu(src->start));
+		BUG_ON(t->entries[i].end	!= le64_to_cpu(src->end));
+
+		if (t->entries[i].dirty)
+			*dst++ = *src;
+	}
+
+	new_nr = dst - bl->start;
+
+	bch_info(c, "nr blacklist entries was %u, now %u", nr, new_nr);
+
+	if (new_nr != nr) {
+		bl = bch2_sb_resize_journal_seq_blacklist(&c->disk_sb,
+				new_nr ? sb_blacklist_u64s(new_nr) : 0);
+		BUG_ON(new_nr && !bl);
+
+		if (!new_nr)
+			c->disk_sb.sb->features[0] &= cpu_to_le64(~(1ULL << BCH_FEATURE_journal_seq_blacklist_v3));
+
+		bch2_write_super(c);
+	}
+out:
+	mutex_unlock(&c->sb_lock);
+}

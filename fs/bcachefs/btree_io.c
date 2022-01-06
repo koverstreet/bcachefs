@@ -33,6 +33,8 @@ void bch2_btree_node_io_unlock(struct btree *b)
 
 void bch2_btree_node_io_lock(struct btree *b)
 {
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
+
 	wait_on_bit_lock_io(&b->flags, BTREE_NODE_write_in_flight,
 			    TASK_UNINTERRUPTIBLE);
 }
@@ -51,12 +53,16 @@ void __bch2_btree_node_wait_on_write(struct btree *b)
 
 void bch2_btree_node_wait_on_read(struct btree *b)
 {
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
+
 	wait_on_bit_io(&b->flags, BTREE_NODE_read_in_flight,
 		       TASK_UNINTERRUPTIBLE);
 }
 
 void bch2_btree_node_wait_on_write(struct btree *b)
 {
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
+
 	wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight,
 		       TASK_UNINTERRUPTIBLE);
 }
@@ -966,19 +972,23 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 
 		SET_BSET_BIG_ENDIAN(i, CPU_BIG_ENDIAN);
 
-		b->written += sectors;
-
 		blacklisted = bch2_journal_seq_is_blacklisted(c,
 					le64_to_cpu(i->journal_seq),
 					true);
 
 		btree_err_on(blacklisted && first,
 			     BTREE_ERR_FIXABLE, c, ca, b, i,
-			     "first btree node bset has blacklisted journal seq");
+			     "first btree node bset has blacklisted journal seq (%llu)",
+			     le64_to_cpu(i->journal_seq));
 
 		btree_err_on(blacklisted && ptr_written,
 			     BTREE_ERR_FIXABLE, c, ca, b, i,
-			     "found blacklisted bset in btree node with sectors_written");
+			     "found blacklisted bset (journal seq %llu) in btree node at offset %u-%u/%u",
+			     le64_to_cpu(i->journal_seq),
+			     b->written, b->written + sectors, ptr_written);
+
+		b->written += sectors;
+
 		if (blacklisted && !first)
 			continue;
 

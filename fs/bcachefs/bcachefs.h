@@ -177,7 +177,11 @@
  */
 
 #undef pr_fmt
+#ifdef __KERNEL__
 #define pr_fmt(fmt) "bcachefs: %s() " fmt "\n", __func__
+#else
+#define pr_fmt(fmt) "%s() " fmt "\n", __func__
+#endif
 
 #include <linux/backing-dev-defs.h>
 #include <linux/bug.h>
@@ -219,8 +223,8 @@
 #define bch2_fmt(_c, fmt)		"bcachefs (%s): " fmt "\n", ((_c)->name)
 #define bch2_fmt_inum(_c, _inum, fmt)	"bcachefs (%s inum %llu): " fmt "\n", ((_c)->name), (_inum)
 #else
-#define bch2_fmt(_c, fmt)		"%s: " fmt "\n", ((_c)->name)
-#define bch2_fmt_inum(_c, _inum, fmt)	"%s inum %llu: " fmt "\n", ((_c)->name), (_inum)
+#define bch2_fmt(_c, fmt)		fmt "\n"
+#define bch2_fmt_inum(_c, _inum, fmt)	"inum %llu: " fmt "\n", (_inum)
 #endif
 
 #define bch_info(c, fmt, ...) \
@@ -432,6 +436,7 @@ struct bch_dev {
 	struct bch_sb_handle	disk_sb;
 	struct bch_sb		*sb_read_scratch;
 	int			sb_write_error;
+	dev_t			dev;
 
 	struct bch_devs_mask	self;
 
@@ -529,6 +534,7 @@ enum {
 	/* misc: */
 	BCH_FS_NEED_ANOTHER_GC,
 	BCH_FS_DELETED_NODES,
+	BCH_FS_NEED_ALLOC_WRITE,
 	BCH_FS_REBUILD_REPLICAS,
 	BCH_FS_HOLD_BTREE_WRITES,
 };
@@ -749,6 +755,7 @@ struct bch_fs {
 	/* JOURNAL SEQ BLACKLIST */
 	struct journal_seq_blacklist_table *
 				journal_seq_blacklist_table;
+	struct work_struct	journal_seq_blacklist_gc_work;
 
 	/* ALLOCATOR */
 	spinlock_t		freelist_lock;
@@ -811,7 +818,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;

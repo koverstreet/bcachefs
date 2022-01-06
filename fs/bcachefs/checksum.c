@@ -11,7 +11,7 @@
 #include <linux/random.h>
 #include <linux/scatterlist.h>
 #include <crypto/algapi.h>
-#include <crypto/chacha20.h>
+#include <crypto/chacha.h>
 #include <crypto/hash.h>
 #include <crypto/poly1305.h>
 #include <crypto/skcipher.h>
@@ -93,21 +93,21 @@ static void bch2_checksum_update(struct bch2_checksum_state *state, const void *
 	}
 }
 
-static inline void do_encrypt_sg(struct crypto_skcipher *tfm,
+static inline void do_encrypt_sg(struct crypto_sync_skcipher *tfm,
 				 struct nonce nonce,
 				 struct scatterlist *sg, size_t len)
 {
-	SKCIPHER_REQUEST_ON_STACK(req, tfm);
+	SYNC_SKCIPHER_REQUEST_ON_STACK(req, tfm);
 	int ret;
 
-	skcipher_request_set_tfm(req, tfm);
+	skcipher_request_set_sync_tfm(req, tfm);
 	skcipher_request_set_crypt(req, sg, sg, len, nonce.d);
 
 	ret = crypto_skcipher_encrypt(req);
 	BUG_ON(ret);
 }
 
-static inline void do_encrypt(struct crypto_skcipher *tfm,
+static inline void do_encrypt(struct crypto_sync_skcipher *tfm,
 			      struct nonce nonce,
 			      void *buf, size_t len)
 {
@@ -120,8 +120,8 @@ static inline void do_encrypt(struct crypto_skcipher *tfm,
 int bch2_chacha_encrypt_key(struct bch_key *key, struct nonce nonce,
 			    void *buf, size_t len)
 {
-	struct crypto_skcipher *chacha20 =
-		crypto_alloc_skcipher("chacha20", 0, 0);
+	struct crypto_sync_skcipher *chacha20 =
+		crypto_alloc_sync_skcipher("chacha20", 0, 0);
 	int ret;
 
 	if (!chacha20) {
@@ -129,7 +129,8 @@ int bch2_chacha_encrypt_key(struct bch_key *key, struct nonce nonce,
 		return PTR_ERR(chacha20);
 	}
 
-	ret = crypto_skcipher_setkey(chacha20, (void *) key, sizeof(*key));
+	ret = crypto_skcipher_setkey(&chacha20->base,
+				     (void *) key, sizeof(*key));
 	if (ret) {
 		pr_err("crypto_skcipher_setkey() error: %i", ret);
 		goto err;
@@ -137,7 +138,7 @@ int bch2_chacha_encrypt_key(struct bch_key *key, struct nonce nonce,
 
 	do_encrypt(chacha20, nonce, buf, len);
 err:
-	crypto_free_skcipher(chacha20);
+	crypto_free_sync_skcipher(chacha20);
 	return ret;
 }
 
@@ -230,7 +231,7 @@ static struct bch_csum __bch2_checksum_bio(struct bch_fs *c, unsigned type,
 			kunmap_atomic(p);
 		}
 #else
-		__bio_for_each_contig_segment(bv, bio, *iter, *iter)
+		__bio_for_each_bvec(bv, bio, *iter, *iter)
 			bch2_checksum_update(&state, page_address(bv.bv_page) + bv.bv_offset,
 				bv.bv_len);
 #endif
@@ -253,7 +254,7 @@ static struct bch_csum __bch2_checksum_bio(struct bch_fs *c, unsigned type,
 			kunmap_atomic(p);
 		}
 #else
-		__bio_for_each_contig_segment(bv, bio, *iter, *iter)
+		__bio_for_each_bvec(bv, bio, *iter, *iter)
 			crypto_shash_update(desc,
 				page_address(bv.bv_page) + bv.bv_offset,
 				bv.bv_len);
@@ -406,15 +407,11 @@ int bch2_rechecksum_bio(struct bch_fs *c, struct bio *bio,
 }
 
 #ifdef __KERNEL__
-int bch2_request_key(struct bch_sb *sb, struct bch_key *key)
+static int __bch2_request_key(char *key_description, struct bch_key *key)
 {
-	char key_description[60];
 	struct key *keyring_key;
 	const struct user_key_payload *ukp;
 	int ret;
-
-	snprintf(key_description, sizeof(key_description),
-		 "bcachefs:%pUb", &sb->user_uuid);
 
 	keyring_key = request_key(&key_type_logon, key_description, NULL);
 	if (IS_ERR(keyring_key))
@@ -435,16 +432,10 @@ int bch2_request_key(struct bch_sb *sb, struct bch_key *key)
 }
 #else
 #include <keyutils.h>
-#include <uuid/uuid.h>
 
-int bch2_request_key(struct bch_sb *sb, struct bch_key *key)
+static int __bch2_request_key(char *key_description, struct bch_key *key)
 {
 	key_serial_t key_id;
-	char key_description[60];
-	char uuid[40];
-
-	uuid_unparse_lower(sb->user_uuid.b, uuid);
-	sprintf(key_description, "bcachefs:%s", uuid);
 
 	key_id = request_key("user", key_description, NULL,
 			     KEY_SPEC_USER_KEYRING);
@@ -457,6 +448,17 @@ int bch2_request_key(struct bch_sb *sb, struct bch_key *key)
 	return 0;
 }
 #endif
+
+int bch2_request_key(struct bch_sb *sb, struct bch_key *key)
+{
+	char key_description[60];
+	char uuid[40];
+
+	uuid_unparse_lower(sb->user_uuid.b, uuid);
+	sprintf(key_description, "bcachefs:%s", uuid);
+
+	return __bch2_request_key(key_description, key);
+}
 
 int bch2_decrypt_sb_key(struct bch_fs *c,
 			struct bch_sb_field_crypt *crypt,
@@ -498,7 +500,7 @@ err:
 static int bch2_alloc_ciphers(struct bch_fs *c)
 {
 	if (!c->chacha20)
-		c->chacha20 = crypto_alloc_skcipher("chacha20", 0, 0);
+		c->chacha20 = crypto_alloc_sync_skcipher("chacha20", 0, 0);
 	if (IS_ERR(c->chacha20)) {
 		bch_err(c, "error requesting chacha20 module: %li",
 			PTR_ERR(c->chacha20));
@@ -581,7 +583,7 @@ int bch2_enable_encryption(struct bch_fs *c, bool keyed)
 			goto err;
 	}
 
-	ret = crypto_skcipher_setkey(c->chacha20,
+	ret = crypto_skcipher_setkey(&c->chacha20->base,
 			(void *) &key.key, sizeof(key.key));
 	if (ret)
 		goto err;
@@ -609,7 +611,7 @@ void bch2_fs_encryption_exit(struct bch_fs *c)
 	if (!IS_ERR_OR_NULL(c->poly1305))
 		crypto_free_shash(c->poly1305);
 	if (!IS_ERR_OR_NULL(c->chacha20))
-		crypto_free_skcipher(c->chacha20);
+		crypto_free_sync_skcipher(c->chacha20);
 	if (!IS_ERR_OR_NULL(c->sha256))
 		crypto_free_shash(c->sha256);
 }
@@ -641,7 +643,7 @@ int bch2_fs_encryption_init(struct bch_fs *c)
 	if (ret)
 		goto out;
 
-	ret = crypto_skcipher_setkey(c->chacha20,
+	ret = crypto_skcipher_setkey(&c->chacha20->base,
 			(void *) &key.key, sizeof(key.key));
 	if (ret)
 		goto out;

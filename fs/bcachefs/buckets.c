@@ -564,9 +564,10 @@ static int bch2_mark_alloc(struct btree_trans *trans,
 		 * before the bucket became empty again, then the we don't have
 		 * to wait on a journal flush before we can reuse the bucket:
 		 */
-		v->journal_seq = !new_u.data_type &&
+		new_u.journal_seq = !new_u.data_type &&
 			bch2_journal_noflush_seq(&c->journal, journal_seq)
-			? 0 : cpu_to_le64(journal_seq);
+			? 0 : journal_seq;
+		v->journal_seq = cpu_to_le64(new_u.journal_seq);
 	}
 
 	ca = bch_dev_bkey_exists(c, new.k->p.inode);
@@ -1458,22 +1459,24 @@ static int bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree
 {
 	struct bch_fs *c = trans->c;
 	struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
-	struct bkey_s_c k;
+	struct bpos pos = POS(ptr->dev, PTR_BUCKET_NR(ca, ptr));
+	struct bkey_i *update = btree_trans_peek_updates(trans, BTREE_ID_alloc, pos);
 	int ret;
 
-	bch2_trans_iter_init(trans, iter, BTREE_ID_alloc,
-			     POS(ptr->dev, PTR_BUCKET_NR(ca, ptr)),
-			     BTREE_ITER_WITH_UPDATES|
+	bch2_trans_iter_init(trans, iter, BTREE_ID_alloc, pos,
 			     BTREE_ITER_CACHED|
+			     BTREE_ITER_CACHED_NOFILL|
 			     BTREE_ITER_INTENT);
-	k = bch2_btree_iter_peek_slot(iter);
-	ret = bkey_err(k);
+	ret = bch2_btree_iter_traverse(iter);
 	if (ret) {
 		bch2_trans_iter_exit(trans, iter);
 		return ret;
 	}
 
-	*u = bch2_alloc_unpack(k);
+	*u = update && !bpos_cmp(update->k.p, pos)
+		? bch2_alloc_unpack(bkey_i_to_s_c(update))
+		: alloc_mem_to_key(c, iter);
+
 	return 0;
 }
 

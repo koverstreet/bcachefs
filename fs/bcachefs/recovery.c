@@ -519,7 +519,7 @@ static int bch2_journal_replay(struct bch_fs *c)
 	size_t i;
 	int ret;
 
-	keys_sorted = kmalloc_array(sizeof(*keys_sorted), keys->nr, GFP_KERNEL);
+	keys_sorted = kvmalloc_array(sizeof(*keys_sorted), keys->nr, GFP_KERNEL);
 	if (!keys_sorted)
 		return -ENOMEM;
 
@@ -530,10 +530,8 @@ static int bch2_journal_replay(struct bch_fs *c)
 	     sizeof(keys_sorted[0]),
 	     journal_sort_seq_cmp, NULL);
 
-	if (keys->nr) {
-		bch_verbose(c, "starting journal replay, %zu keys", keys->nr);
+	if (keys->nr)
 		replay_now_at(j, keys->journal_seq_base);
-	}
 
 	for (i = 0; i < keys->nr; i++) {
 		k = keys_sorted[i];
@@ -563,7 +561,7 @@ static int bch2_journal_replay(struct bch_fs *c)
 	bch2_journal_flush_all_pins(j);
 	ret = bch2_journal_error(j);
 err:
-	kfree(keys_sorted);
+	kvfree(keys_sorted);
 	return ret;
 }
 
@@ -901,7 +899,6 @@ static int bch2_fs_initialize_subvolumes(struct bch_fs *c)
 
 static int bch2_fs_upgrade_for_subvolumes(struct btree_trans *trans)
 {
-	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bch_inode_unpacked inode;
@@ -915,7 +912,7 @@ static int bch2_fs_upgrade_for_subvolumes(struct btree_trans *trans)
 		goto err;
 
 	if (!bkey_is_inode(k.k)) {
-		bch_err(c, "root inode not found");
+		bch_err(trans->c, "root inode not found");
 		ret = -ENOENT;
 		goto err;
 	}
@@ -1008,6 +1005,7 @@ int bch2_fs_recovery(struct bch_fs *c)
 	if (!c->sb.clean || c->opts.fsck || c->opts.keep_journal) {
 		struct journal_replay *i;
 
+		bch_verbose(c, "starting journal read");
 		ret = bch2_journal_read(c, &c->journal_entries,
 					&blacklist_seq, &journal_seq);
 		if (ret)
@@ -1067,6 +1065,16 @@ use_clean:
 	if (ret)
 		goto err;
 
+	/*
+	 * After an unclean shutdown, skip then next few journal sequence
+	 * numbers as they may have been referenced by btree writes that
+	 * happened before their corresponding journal writes - those btree
+	 * writes need to be ignored, by skipping and blacklisting the next few
+	 * journal sequence numbers:
+	 */
+	if (!c->sb.clean)
+		journal_seq += 8;
+
 	if (blacklist_seq != journal_seq) {
 		ret = bch2_journal_seq_blacklist_add(c,
 					blacklist_seq, journal_seq);
@@ -1087,11 +1095,7 @@ use_clean:
 
 	bch_verbose(c, "starting alloc read");
 	err = "error reading allocation information";
-
-	down_read(&c->gc_lock);
-	ret = bch2_alloc_read(c, false, false);
-	up_read(&c->gc_lock);
-
+	ret = bch2_alloc_read(c);
 	if (ret)
 		goto err;
 	bch_verbose(c, "alloc read done");
@@ -1141,13 +1145,30 @@ use_clean:
 	if (c->opts.norecovery)
 		goto out;
 
-	bch_verbose(c, "starting journal replay");
+	bch_verbose(c, "starting journal replay, %zu keys", c->journal_keys.nr);
 	err = "journal replay failed";
 	ret = bch2_journal_replay(c);
 	if (ret)
 		goto err;
 	if (c->opts.verbose || !c->sb.clean)
 		bch_info(c, "journal replay done");
+
+	if (test_bit(BCH_FS_NEED_ALLOC_WRITE, &c->flags) &&
+	    !c->opts.nochanges) {
+		/*
+		 * note that even when filesystem was clean there might be work
+		 * to do here, if we ran gc (because of fsck) which recalculated
+		 * oldest_gen:
+		 */
+		bch_verbose(c, "writing allocation info");
+		err = "error writing out alloc info";
+		ret = bch2_alloc_write_all(c, BTREE_INSERT_LAZY_RW);
+		if (ret) {
+			bch_err(c, "error writing alloc info");
+			goto err;
+		}
+		bch_verbose(c, "alloc write done");
+	}
 
 	if (c->sb.version < bcachefs_metadata_version_snapshot_2) {
 		bch2_fs_lazy_rw(c);
@@ -1199,14 +1220,6 @@ use_clean:
 	}
 
 	mutex_lock(&c->sb_lock);
-	/*
-	 * With journal replay done, we can clear the journal seq blacklist
-	 * table:
-	 */
-	BUG_ON(!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags));
-	if (le16_to_cpu(c->sb.version_min) >= bcachefs_metadata_version_btree_ptr_sectors_written)
-		bch2_sb_resize_journal_seq_blacklist(&c->disk_sb, 0);
-
 	if (c->opts.version_upgrade) {
 		c->disk_sb.sb->version = cpu_to_le16(bcachefs_metadata_version_current);
 		c->disk_sb.sb->features[0] |= cpu_to_le64(BCH_SB_FEATURES_ALL);
@@ -1247,6 +1260,10 @@ use_clean:
 			goto err;
 		bch_info(c, "scanning for old btree nodes done");
 	}
+
+	if (c->journal_seq_blacklist_table &&
+	    c->journal_seq_blacklist_table->nr > 128)
+		queue_work(system_long_wq, &c->journal_seq_blacklist_gc_work);
 
 	ret = 0;
 out:

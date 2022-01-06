@@ -136,7 +136,7 @@ int __must_check bch2_btree_path_traverse(struct btree_trans *,
 					  struct btree_path *, unsigned);
 struct btree_path *bch2_path_get(struct btree_trans *, enum btree_id, struct bpos,
 				 unsigned, unsigned, unsigned, unsigned long);
-struct bkey_s_c bch2_btree_path_peek_slot(struct btree_path *, struct bkey *);
+inline struct bkey_s_c bch2_btree_path_peek_slot(struct btree_path *, struct bkey *);
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 void bch2_trans_verify_paths(struct btree_trans *);
@@ -354,8 +354,11 @@ __bch2_btree_iter_peek_and_restart(struct btree_trans *trans,
 /* new multiple iterator interface: */
 
 void bch2_dump_trans_paths_updates(struct btree_trans *);
-void bch2_trans_init(struct btree_trans *, struct bch_fs *, unsigned, size_t);
+void __bch2_trans_init(struct btree_trans *, struct bch_fs *,
+		       unsigned, size_t, const char *);
 void bch2_trans_exit(struct btree_trans *);
+
+#define bch2_trans_init(...)	__bch2_trans_init(__VA_ARGS__, __func__)
 
 void bch2_btree_trans_to_text(struct printbuf *, struct bch_fs *);
 

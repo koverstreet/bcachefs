@@ -135,4 +135,21 @@ static inline int bch2_trans_commit(struct btree_trans *trans,
 	     (_i) < (_trans)->updates + (_trans)->nr_updates;		\
 	     (_i)++)
 
+static inline struct bkey_i *btree_trans_peek_updates(struct btree_trans *trans,
+						      enum btree_id btree_id,
+						      struct bpos pos)
+{
+	struct btree_insert_entry *i;
+
+	trans_for_each_update(trans, i)
+		if ((cmp_int(btree_id,	i->btree_id) ?:
+		     bpos_cmp(pos,	i->k->k.p)) <= 0) {
+			if (btree_id ==	i->btree_id)
+				return i->k;
+			break;
+		}
+
+	return NULL;
+}
+
 #endif /* _BCACHEFS_BTREE_UPDATE_H */

@@ -38,6 +38,15 @@ static const unsigned BCH_ALLOC_V1_FIELD_BYTES[] = {
 #undef x
 };
 
+struct bkey_alloc_buf {
+	struct bkey_i	k;
+	struct bch_alloc_v3 v;
+
+#define x(_name,  _bits)		+ _bits / 8
+	u8		_pad[0 + BCH_ALLOC_FIELDS_V2()];
+#undef  x
+} __attribute__((packed, aligned(8)));
+
 /* Persistent alloc info: */
 
 static inline u64 alloc_field_v1_get(const struct bch_alloc *a,
@@ -244,25 +253,24 @@ struct bkey_alloc_unpacked bch2_alloc_unpack(struct bkey_s_c k)
 	return ret;
 }
 
-struct bkey_alloc_buf *bch2_alloc_pack(struct btree_trans *trans,
-				       const struct bkey_alloc_unpacked src)
+static void bch2_alloc_pack(struct bch_fs *c,
+			    struct bkey_alloc_buf *dst,
+			    const struct bkey_alloc_unpacked src)
 {
-	struct bkey_alloc_buf *dst;
-
-	dst = bch2_trans_kmalloc(trans, sizeof(struct bkey_alloc_buf));
-	if (!IS_ERR(dst))
-		bch2_alloc_pack_v3(dst, src);
-
-	return dst;
+	bch2_alloc_pack_v3(dst, src);
 }
 
 int bch2_alloc_write(struct btree_trans *trans, struct btree_iter *iter,
 		     struct bkey_alloc_unpacked *u, unsigned trigger_flags)
 {
-	struct bkey_alloc_buf *a = bch2_alloc_pack(trans, *u);
+	struct bkey_alloc_buf *a;
 
-	return PTR_ERR_OR_ZERO(a) ?:
-		bch2_trans_update(trans, iter, &a->k, trigger_flags);
+	a = bch2_trans_kmalloc(trans, sizeof(struct bkey_alloc_buf));
+	if (IS_ERR(a))
+		return PTR_ERR(a);
+
+	bch2_alloc_pack(trans->c, a, *u);
+	return bch2_trans_update(trans, iter, &a->k, trigger_flags);
 }
 
 static unsigned bch_alloc_v1_val_u64s(const struct bch_alloc *a)
@@ -332,7 +340,7 @@ void bch2_alloc_to_text(struct printbuf *out, struct bch_fs *c,
 #undef  x
 }
 
-int bch2_alloc_read(struct bch_fs *c, bool gc, bool metadata_only)
+int bch2_alloc_read(struct bch_fs *c)
 {
 	struct btree_trans trans;
 	struct btree_iter iter;
@@ -343,43 +351,108 @@ int bch2_alloc_read(struct bch_fs *c, bool gc, bool metadata_only)
 	int ret;
 
 	bch2_trans_init(&trans, c, 0, 0);
+	down_read(&c->gc_lock);
 
 	for_each_btree_key(&trans, iter, BTREE_ID_alloc, POS_MIN,
 			   BTREE_ITER_PREFETCH, k, ret) {
+		if (!bkey_is_alloc(k.k))
+			continue;
+
 		ca = bch_dev_bkey_exists(c, k.k->p.inode);
-		g = __bucket(ca, k.k->p.offset, gc);
+		g = bucket(ca, k.k->p.offset);
 		u = bch2_alloc_unpack(k);
 
-		if (!gc)
-			*bucket_gen(ca, k.k->p.offset) = u.gen;
-
+		*bucket_gen(ca, k.k->p.offset) = u.gen;
 		g->_mark.gen		= u.gen;
+		g->_mark.data_type	= u.data_type;
+		g->_mark.dirty_sectors	= u.dirty_sectors;
+		g->_mark.cached_sectors	= u.cached_sectors;
+		g->_mark.stripe		= u.stripe != 0;
+		g->stripe		= u.stripe;
+		g->stripe_redundancy	= u.stripe_redundancy;
 		g->io_time[READ]	= u.read_time;
 		g->io_time[WRITE]	= u.write_time;
-		g->oldest_gen		= !gc ? u.oldest_gen : u.gen;
+		g->oldest_gen		= u.oldest_gen;
 		g->gen_valid		= 1;
-
-		if (!gc ||
-		    (metadata_only &&
-		     (u.data_type == BCH_DATA_user ||
-		      u.data_type == BCH_DATA_cached ||
-		      u.data_type == BCH_DATA_parity))) {
-			g->_mark.data_type	= u.data_type;
-			g->_mark.dirty_sectors	= u.dirty_sectors;
-			g->_mark.cached_sectors	= u.cached_sectors;
-			g->_mark.stripe		= u.stripe != 0;
-			g->stripe		= u.stripe;
-			g->stripe_redundancy	= u.stripe_redundancy;
-		}
-
 	}
 	bch2_trans_iter_exit(&trans, &iter);
 
+	up_read(&c->gc_lock);
 	bch2_trans_exit(&trans);
 
-	if (ret)
+	if (ret) {
 		bch_err(c, "error reading alloc info: %i", ret);
+		return ret;
+	}
 
+	return 0;
+}
+
+static int bch2_alloc_write_key(struct btree_trans *trans,
+				struct btree_iter *iter,
+				unsigned flags)
+{
+	struct bch_fs *c = trans->c;
+	struct bkey_s_c k;
+	struct bkey_alloc_unpacked old_u, new_u;
+	int ret;
+retry:
+	bch2_trans_begin(trans);
+
+	ret = bch2_btree_key_cache_flush(trans,
+			BTREE_ID_alloc, iter->pos);
+	if (ret)
+		goto err;
+
+	k = bch2_btree_iter_peek_slot(iter);
+	ret = bkey_err(k);
+	if (ret)
+		goto err;
+
+	old_u	= bch2_alloc_unpack(k);
+	new_u	= alloc_mem_to_key(c, iter);
+
+	if (!bkey_alloc_unpacked_cmp(old_u, new_u))
+		return 0;
+
+	ret   = bch2_alloc_write(trans, iter, &new_u,
+				  BTREE_TRIGGER_NORUN) ?:
+		bch2_trans_commit(trans, NULL, NULL,
+				BTREE_INSERT_NOFAIL|flags);
+err:
+	if (ret == -EINTR)
+		goto retry;
+	return ret;
+}
+
+int bch2_alloc_write_all(struct bch_fs *c, unsigned flags)
+{
+	struct btree_trans trans;
+	struct btree_iter iter;
+	struct bch_dev *ca;
+	unsigned i;
+	int ret = 0;
+
+	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
+	bch2_trans_iter_init(&trans, &iter, BTREE_ID_alloc, POS_MIN,
+			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
+
+	for_each_member_device(ca, c, i) {
+		bch2_btree_iter_set_pos(&iter,
+			POS(ca->dev_idx, ca->mi.first_bucket));
+
+		while (iter.pos.offset < ca->mi.nbuckets) {
+			ret = bch2_alloc_write_key(&trans, &iter, flags);
+			if (ret) {
+				percpu_ref_put(&ca->ref);
+				goto err;
+			}
+			bch2_btree_iter_advance(&iter);
+		}
+	}
+err:
+	bch2_trans_iter_exit(&trans, &iter);
+	bch2_trans_exit(&trans);
 	return ret;
 }
 
@@ -390,20 +463,19 @@ int bch2_bucket_io_time_reset(struct btree_trans *trans, unsigned dev,
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
-	struct bkey_s_c k;
 	struct bkey_alloc_unpacked u;
 	u64 *time, now;
 	int ret = 0;
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc, POS(dev, bucket_nr),
 			     BTREE_ITER_CACHED|
+			     BTREE_ITER_CACHED_NOFILL|
 			     BTREE_ITER_INTENT);
-	k = bch2_btree_iter_peek_slot(&iter);
-	ret = bkey_err(k);
+	ret = bch2_btree_iter_traverse(&iter);
 	if (ret)
 		goto out;
 
-	u = bch2_alloc_unpack(k);
+	u = alloc_mem_to_key(c, &iter);
 
 	time = rw == READ ? &u.read_time : &u.write_time;
 	now = atomic64_read(&c->io_clock[rw].now);
@@ -586,34 +658,56 @@ static size_t find_reclaimable_buckets(struct bch_fs *c, struct bch_dev *ca)
 	return nr;
 }
 
+/*
+ * returns sequence number of most recent journal entry that updated this
+ * bucket:
+ */
+static u64 bucket_journal_seq(struct bch_fs *c, struct bucket_mark m)
+{
+	if (m.journal_seq_valid) {
+		u64 journal_seq = atomic64_read(&c->journal.seq);
+		u64 bucket_seq	= journal_seq;
+
+		bucket_seq &= ~((u64) U16_MAX);
+		bucket_seq |= m.journal_seq;
+
+		if (bucket_seq > journal_seq)
+			bucket_seq -= 1 << 16;
+
+		return bucket_seq;
+	} else {
+		return 0;
+	}
+}
+
 static int bucket_invalidate_btree(struct btree_trans *trans,
-				   struct bch_dev *ca, u64 b,
-				   struct bkey_alloc_unpacked *u)
+				   struct bch_dev *ca, u64 b)
 {
 	struct bch_fs *c = trans->c;
+	struct bkey_alloc_unpacked u;
 	struct btree_iter iter;
-	struct bkey_s_c k;
 	int ret;
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc,
 			     POS(ca->dev_idx, b),
 			     BTREE_ITER_CACHED|
+			     BTREE_ITER_CACHED_NOFILL|
 			     BTREE_ITER_INTENT);
 
-	k = bch2_btree_iter_peek_slot(&iter);
-	ret = bkey_err(k);
+	ret = bch2_btree_iter_traverse(&iter);
 	if (ret)
 		goto err;
 
-	*u = bch2_alloc_unpack(k);
-	u->gen++;
-	u->data_type		= 0;
-	u->dirty_sectors	= 0;
-	u->cached_sectors	= 0;
-	u->read_time		= atomic64_read(&c->io_clock[READ].now);
-	u->write_time		= atomic64_read(&c->io_clock[WRITE].now);
+	u = alloc_mem_to_key(c, &iter);
 
-	ret = bch2_alloc_write(trans, &iter, u,
+	u.gen++;
+	u.data_type	= 0;
+	u.dirty_sectors	= 0;
+	u.cached_sectors = 0;
+	u.read_time	= atomic64_read(&c->io_clock[READ].now);
+	u.write_time	= atomic64_read(&c->io_clock[WRITE].now);
+
+	ret = bch2_alloc_write(trans, &iter, &u,
 			       BTREE_TRIGGER_BUCKET_INVALIDATE);
 err:
 	bch2_trans_iter_exit(trans, &iter);
@@ -623,16 +717,10 @@ err:
 static int bch2_invalidate_one_bucket(struct bch_fs *c, struct bch_dev *ca,
 				      u64 *journal_seq, unsigned flags)
 {
-	struct bkey_alloc_unpacked u;
+	struct bucket *g;
+	struct bucket_mark m;
 	size_t b;
 	int ret = 0;
-
-	/*
-	 * If the read-only path is trying to shut down, we can't be generating
-	 * new btree updates:
-	 */
-	if (test_bit(BCH_FS_ALLOCATOR_STOPPING, &c->flags))
-		return 1;
 
 	BUG_ON(!ca->alloc_heap.used ||
 	       !ca->alloc_heap.data[0].nr);
@@ -640,6 +728,10 @@ static int bch2_invalidate_one_bucket(struct bch_fs *c, struct bch_dev *ca,
 
 	/* first, put on free_inc and mark as owned by allocator: */
 	percpu_down_read(&c->mark_lock);
+	g = bucket(ca, b);
+	m = READ_ONCE(g->mark);
+
+	BUG_ON(m.dirty_sectors);
 
 	bch2_mark_alloc_bucket(c, ca, b, true);
 
@@ -648,15 +740,38 @@ static int bch2_invalidate_one_bucket(struct bch_fs *c, struct bch_dev *ca,
 	BUG_ON(!fifo_push(&ca->free_inc, b));
 	spin_unlock(&c->freelist_lock);
 
+	/*
+	 * If we're not invalidating cached data, we only increment the bucket
+	 * gen in memory here, the incremented gen will be updated in the btree
+	 * by bch2_trans_mark_pointer():
+	 */
+	if (!m.cached_sectors &&
+	    !bucket_needs_journal_commit(m, c->journal.last_seq_ondisk)) {
+		BUG_ON(m.data_type);
+		bucket_cmpxchg(g, m, m.gen++);
+		*bucket_gen(ca, b) = m.gen;
+		percpu_up_read(&c->mark_lock);
+		goto out;
+	}
+
 	percpu_up_read(&c->mark_lock);
+
+	/*
+	 * If the read-only path is trying to shut down, we can't be generating
+	 * new btree updates:
+	 */
+	if (test_bit(BCH_FS_ALLOCATOR_STOPPING, &c->flags)) {
+		ret = 1;
+		goto out;
+	}
 
 	ret = bch2_trans_do(c, NULL, journal_seq,
 			    BTREE_INSERT_NOCHECK_RW|
 			    BTREE_INSERT_NOFAIL|
 			    BTREE_INSERT_JOURNAL_RESERVED|
 			    flags,
-			    bucket_invalidate_btree(&trans, ca, b, &u));
-
+			    bucket_invalidate_btree(&trans, ca, b));
+out:
 	if (!ret) {
 		/* remove from alloc_heap: */
 		struct alloc_heap_entry e, *top = ca->alloc_heap.data;
@@ -672,7 +787,7 @@ static int bch2_invalidate_one_bucket(struct bch_fs *c, struct bch_dev *ca,
 		 * bucket (i.e. deleting the last reference) before writing to
 		 * this bucket again:
 		 */
-		*journal_seq = max(*journal_seq, u.journal_seq);
+		*journal_seq = max(*journal_seq, bucket_journal_seq(c, m));
 	} else {
 		size_t b2;
 
@@ -882,7 +997,7 @@ void bch2_recalc_capacity(struct bch_fs *c)
 	lockdep_assert_held(&c->state_lock);
 
 	for_each_online_member(ca, c, i) {
-		struct backing_dev_info *bdi = ca->disk_sb.bdev->bd_bdi;
+		struct backing_dev_info *bdi = ca->disk_sb.bdev->bd_disk->bdi;
 
 		ra_pages += bdi->ra_pages;
 	}
