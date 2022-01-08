@@ -16,6 +16,7 @@
 #include "btree_key_cache.h"
 #include "btree_update_interior.h"
 #include "btree_io.h"
+#include "buckets_waiting_for_journal.h"
 #include "chardev.h"
 #include "checksum.h"
 #include "clock.h"
@@ -164,44 +165,6 @@ static void bch2_dev_usage_journal_reserve(struct bch_fs *c)
 
 	bch2_journal_entry_res_resize(&c->journal,
 			&c->dev_usage_journal_res, u64s * nr);
-}
-
-int bch2_congested(void *data, int bdi_bits)
-{
-	struct bch_fs *c = data;
-	struct backing_dev_info *bdi;
-	struct bch_dev *ca;
-	unsigned i;
-	int ret = 0;
-
-	rcu_read_lock();
-	if (bdi_bits & (1 << WB_sync_congested)) {
-		/* Reads - check all devices: */
-		for_each_readable_member(ca, c, i) {
-			bdi = ca->disk_sb.bdev->bd_bdi;
-
-			if (bdi_congested(bdi, bdi_bits)) {
-				ret = 1;
-				break;
-			}
-		}
-	} else {
-		const struct bch_devs_mask *devs =
-			bch2_target_to_mask(c, c->opts.foreground_target) ?:
-			&c->rw_devs[BCH_DATA_user];
-
-		for_each_member_device_rcu(ca, c, i, devs) {
-			bdi = ca->disk_sb.bdev->bd_bdi;
-
-			if (bdi_congested(bdi, bdi_bits)) {
-				ret = 1;
-				break;
-			}
-		}
-	}
-	rcu_read_unlock();
-
-	return ret;
 }
 
 /* Filesystem RO/RW: */
@@ -506,6 +469,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_fs_ec_exit(c);
 	bch2_fs_encryption_exit(c);
 	bch2_fs_io_exit(c);
+	bch2_fs_buckets_waiting_for_journal_exit(c);
 	bch2_fs_btree_interior_update_exit(c);
 	bch2_fs_btree_iter_exit(c);
 	bch2_fs_btree_key_cache_exit(&c->btree_key_cache);
@@ -575,8 +539,7 @@ void __bch2_fs_stop(struct bch_fs *c)
 	for_each_member_device(ca, c, i)
 		if (ca->kobj.state_in_sysfs &&
 		    ca->disk_sb.bdev)
-			sysfs_remove_link(&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj,
-					  "bcachefs");
+			sysfs_remove_link(bdev_kobj(ca->disk_sb.bdev), "bcachefs");
 
 	if (c->kobj.state_in_sysfs)
 		kobject_del(&c->kobj);
@@ -849,6 +812,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    bch2_fs_btree_key_cache_init(&c->btree_key_cache) ?:
 	    bch2_fs_btree_iter_init(c) ?:
 	    bch2_fs_btree_interior_update_init(c) ?:
+	    bch2_fs_buckets_waiting_for_journal_init(c);
 	    bch2_fs_subvolumes_init(c) ?:
 	    bch2_fs_io_init(c) ?:
 	    bch2_fs_encryption_init(c) ?:
@@ -1082,8 +1046,7 @@ static void bch2_dev_free(struct bch_dev *ca)
 
 	if (ca->kobj.state_in_sysfs &&
 	    ca->disk_sb.bdev)
-		sysfs_remove_link(&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj,
-				  "bcachefs");
+		sysfs_remove_link(bdev_kobj(ca->disk_sb.bdev), "bcachefs");
 
 	if (ca->kobj.state_in_sysfs)
 		kobject_del(&ca->kobj);
@@ -1119,10 +1082,7 @@ static void __bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca)
 	wait_for_completion(&ca->io_ref_completion);
 
 	if (ca->kobj.state_in_sysfs) {
-		struct kobject *block =
-			&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj;
-
-		sysfs_remove_link(block, "bcachefs");
+		sysfs_remove_link(bdev_kobj(ca->disk_sb.bdev), "bcachefs");
 		sysfs_remove_link(&ca->kobj, "block");
 	}
 
@@ -1159,12 +1119,12 @@ static int bch2_dev_sysfs_online(struct bch_fs *c, struct bch_dev *ca)
 	}
 
 	if (ca->disk_sb.bdev) {
-		struct kobject *block =
-			&part_to_dev(ca->disk_sb.bdev->bd_part)->kobj;
+		struct kobject *block = bdev_kobj(ca->disk_sb.bdev);
 
 		ret = sysfs_create_link(block, &ca->kobj, "bcachefs");
 		if (ret)
 			return ret;
+
 		ret = sysfs_create_link(&ca->kobj, block, "block");
 		if (ret)
 			return ret;
@@ -1914,20 +1874,23 @@ err:
 /* return with ref on ca->ref: */
 struct bch_dev *bch2_dev_lookup(struct bch_fs *c, const char *path)
 {
-	struct block_device *bdev = lookup_bdev(path);
 	struct bch_dev *ca;
+	dev_t dev;
 	unsigned i;
+	int ret;
 
-	if (IS_ERR(bdev))
-		return ERR_CAST(bdev);
+	ret = lookup_bdev(path, &dev);
+	if (ret)
+		return ERR_PTR(ret);
 
-	for_each_member_device(ca, c, i)
-		if (ca->disk_sb.bdev == bdev)
+	rcu_read_lock();
+	for_each_member_device_rcu(ca, c, i, NULL)
+		if (ca->dev == dev)
 			goto found;
-
 	ca = ERR_PTR(-ENOENT);
 found:
-	bdput(bdev);
+	rcu_read_unlock();
+
 	return ca;
 }
 
