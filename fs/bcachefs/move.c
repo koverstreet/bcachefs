@@ -427,12 +427,12 @@ static void move_free(struct closure *cl)
 {
 	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct moving_context *ctxt = io->write.ctxt;
+	struct bvec_iter_all iter;
 	struct bio_vec *bv;
-	unsigned i;
 
 	bch2_disk_reservation_put(io->write.op.c, &io->write.op.res);
 
-	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, i)
+	bio_for_each_segment_all(bv, &io->write.op.wbio.bio, iter)
 		if (bv->bv_page)
 			__free_page(bv->bv_page);
 
@@ -700,16 +700,19 @@ static int __bch2_move_data(struct bch_fs *c,
 		bch2_trans_begin(&trans);
 
 		k = bch2_btree_iter_peek(&iter);
-
-		stats->pos = iter.pos;
-
 		if (!k.k)
 			break;
+
 		ret = bkey_err(k);
+		if (ret == -EINTR)
+			continue;
 		if (ret)
 			break;
+
 		if (bkey_cmp(bkey_start_pos(k.k), end) >= 0)
 			break;
+
+		stats->pos = iter.pos;
 
 		if (!bkey_extent_is_direct_data(k.k))
 			goto next_nondata;
@@ -753,10 +756,8 @@ static int __bch2_move_data(struct bch_fs *c,
 		ret2 = bch2_move_extent(&trans, ctxt, wp, io_opts, btree_id, k,
 					data_cmd, data_opts);
 		if (ret2) {
-			if (ret2 == -EINTR) {
-				bch2_trans_begin(&trans);
+			if (ret2 == -EINTR)
 				continue;
-			}
 
 			if (ret2 == -ENOMEM) {
 				/* memory allocation failure, wait for some IO to finish */
@@ -782,6 +783,14 @@ out:
 	bch2_bkey_buf_exit(&sk, c);
 
 	return ret;
+}
+
+inline void bch_move_stats_init(struct bch_move_stats *stats, char *name)
+{
+	memset(stats, 0, sizeof(*stats));
+
+	scnprintf(stats->name, sizeof(stats->name),
+			"%s", name);
 }
 
 static inline void progress_list_add(struct bch_fs *c,

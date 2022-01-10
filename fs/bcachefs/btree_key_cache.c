@@ -222,7 +222,8 @@ static int btree_key_cache_fill(struct btree_trans *trans,
 		goto err;
 
 	if (!bch2_btree_node_relock(trans, ck_path, 0)) {
-		trace_transaction_restart_ip(trans->fn, _THIS_IP_);
+		trace_trans_restart_relock_key_cache_fill(trans->fn,
+				_THIS_IP_, ck_path->btree_id, &ck_path->pos);
 		ret = btree_trans_restart(trans);
 		goto err;
 	}
@@ -603,7 +604,7 @@ static unsigned long bch2_btree_key_cache_scan(struct shrinker *shrink,
 	do {
 		struct rhash_head *pos, *next;
 
-		pos = *rht_bucket(tbl, bc->shrink_iter);
+		pos = rht_ptr_rcu(rht_bucket(tbl, bc->shrink_iter));
 
 		while (!rht_is_a_nulls(pos)) {
 			next = rht_dereference_bucket_rcu(pos->next, tbl, bc->shrink_iter);
