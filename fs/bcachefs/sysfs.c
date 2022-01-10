@@ -170,7 +170,6 @@ read_attribute(congested);
 
 read_attribute(btree_avg_write_size);
 
-read_attribute(reserve_stats);
 read_attribute(btree_cache_size);
 read_attribute(compression_stats);
 read_attribute(journal_debug);
@@ -185,7 +184,6 @@ read_attribute(internal_uuid);
 
 read_attribute(has_data);
 read_attribute(alloc_debug);
-write_attribute(wake_allocator);
 
 read_attribute(read_realloc_races);
 read_attribute(extent_migrate_done);
@@ -698,24 +696,6 @@ struct attribute *bch2_fs_time_stats_files[] = {
 	NULL
 };
 
-static void reserve_stats_to_text(struct printbuf *out, struct bch_dev *ca)
-{
-	enum alloc_reserve i;
-
-	spin_lock(&ca->fs->freelist_lock);
-
-	pr_buf(out, "free_inc:\t%zu\t%zu\n",
-	       fifo_used(&ca->free_inc),
-	       ca->free_inc.size);
-
-	for (i = 0; i < RESERVE_NR; i++)
-		pr_buf(out, "free[%u]:\t%zu\t%zu\n", i,
-		       fifo_used(&ca->free[i]),
-		       ca->free[i].size);
-
-	spin_unlock(&ca->fs->freelist_lock);
-}
-
 static void dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 {
 	struct bch_fs *c = ca->fs;
@@ -741,9 +721,6 @@ static void dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 	       "ec\t%16llu\n"
 	       "available%15llu\n"
 	       "\n"
-	       "free_inc\t\t%zu/%zu\n"
-	       "free[RESERVE_MOVINGGC]\t%zu/%zu\n"
-	       "free[RESERVE_NONE]\t%zu/%zu\n"
 	       "freelist_wait\t\t%s\n"
 	       "open buckets allocated\t%u\n"
 	       "open buckets this dev\t%u\n"
@@ -751,13 +728,9 @@ static void dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 	       "open_buckets_wait\t%s\n"
 	       "open_buckets_btree\t%u\n"
 	       "open_buckets_user\t%u\n"
-	       "btree reserve cache\t%u\n"
-	       "thread state:\t\t%s\n",
+	       "btree reserve cache\t%u\n",
 	       stats.buckets_ec,
-	       __dev_buckets_available(ca, stats),
-	       fifo_used(&ca->free_inc),		ca->free_inc.size,
-	       fifo_used(&ca->free[RESERVE_MOVINGGC]),	ca->free[RESERVE_MOVINGGC].size,
-	       fifo_used(&ca->free[RESERVE_NONE]),	ca->free[RESERVE_NONE].size,
+	       __dev_buckets_available(ca, stats, RESERVE_NONE),
 	       c->freelist_wait.list.first		? "waiting" : "empty",
 	       OPEN_BUCKETS_COUNT - c->open_buckets_nr_free,
 	       ca->nr_open_buckets,
@@ -765,8 +738,7 @@ static void dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 	       c->open_buckets_wait.list.first		? "waiting" : "empty",
 	       nr[BCH_DATA_btree],
 	       nr[BCH_DATA_user],
-	       c->btree_reserve_cache_nr,
-	       bch2_allocator_states[ca->allocator_state]);
+	       c->btree_reserve_cache_nr);
 }
 
 static const char * const bch2_rw[] = {
@@ -841,9 +813,6 @@ SHOW(bch2_dev)
 		     clamp(atomic_read(&ca->congested), 0, CONGESTED_MAX)
 		     * 100 / CONGESTED_MAX);
 
-	if (attr == &sysfs_reserve_stats)
-		reserve_stats_to_text(out, ca);
-
 	if (attr == &sysfs_alloc_debug)
 		dev_alloc_debug_to_text(out, ca);
 
@@ -883,9 +852,6 @@ STORE(bch2_dev)
 			return ret;
 	}
 
-	if (attr == &sysfs_wake_allocator)
-		bch2_wake_allocator(ca);
-
 	return size;
 }
 SYSFS_OPS(bch2_dev);
@@ -911,11 +877,8 @@ struct attribute *bch2_dev_files[] = {
 	&sysfs_io_latency_stats_write,
 	&sysfs_congested,
 
-	&sysfs_reserve_stats,
-
 	/* debug: */
 	&sysfs_alloc_debug,
-	&sysfs_wake_allocator,
 	NULL
 };
 
