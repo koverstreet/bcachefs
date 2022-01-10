@@ -573,6 +573,8 @@ void bch2_trans_unlock(struct btree_trans *trans)
 
 	trans_for_each_path(trans, path)
 		__bch2_btree_path_unlock(path);
+
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
 }
 
 /* Btree iterator: */
@@ -2190,6 +2192,23 @@ inline bool bch2_btree_iter_rewind(struct btree_iter *iter)
 		pos = bkey_predecessor(iter, pos);
 	bch2_btree_iter_set_pos(iter, pos);
 	return ret;
+}
+
+static inline struct bkey_i *btree_trans_peek_updates(struct btree_trans *trans,
+						      enum btree_id btree_id,
+						      struct bpos pos)
+{
+	struct btree_insert_entry *i;
+
+	trans_for_each_update(trans, i)
+		if ((cmp_int(btree_id,	i->btree_id) ?:
+		     bpos_cmp(pos,	i->k->k.p)) <= 0) {
+			if (btree_id ==	i->btree_id)
+				return i->k;
+			break;
+		}
+
+	return NULL;
 }
 
 static noinline
