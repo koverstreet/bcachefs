@@ -107,6 +107,10 @@ retry:
 				victim = old;
 		}
 
+		/* hashed to same slot 3 times: */
+		if (!victim)
+			break;
+
 		/* Failed to find an empty slot: */
 		swap(new, *victim);
 		last_evicted = victim;
