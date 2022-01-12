@@ -1677,6 +1677,6 @@ no_io:
 	continue_at(cl, journal_write_done, c->io_complete_wq);
 	return;
 err:
-	bch2_inconsistent_error(c);
+	bch2_fatal_error(c);
 	continue_at(cl, journal_write_done, c->io_complete_wq);
 }
