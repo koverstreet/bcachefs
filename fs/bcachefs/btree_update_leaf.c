@@ -23,6 +23,10 @@
 #include <linux/sort.h>
 #include <trace/events/bcachefs.h>
 
+static int __must_check
+bch2_trans_update_by_path(struct btree_trans *, struct btree_path *,
+			  struct bkey_i *, enum btree_update_flags);
+
 static inline int btree_insert_entry_cmp(const struct btree_insert_entry *l,
 					 const struct btree_insert_entry *r)
 {
@@ -998,18 +1002,6 @@ int __bch2_trans_commit(struct btree_trans *trans)
 			goto out_reset;
 	}
 
-#ifdef CONFIG_BCACHEFS_DEBUG
-	/*
-	 * if BTREE_TRIGGER_NORUN is set, it means we're probably being called
-	 * from the key cache flush code:
-	 */
-	trans_for_each_update(trans, i)
-		if (!i->cached &&
-		    !(i->flags & BTREE_TRIGGER_NORUN))
-			bch2_btree_key_cache_verify_clean(trans,
-					i->btree_id, i->k->k.p);
-#endif
-
 	ret = bch2_trans_commit_run_triggers(trans);
 	if (ret)
 		goto out;
@@ -1369,8 +1361,9 @@ static int need_whiteout_for_snapshot(struct btree_trans *trans,
 	return ret;
 }
 
-int __must_check bch2_trans_update_by_path(struct btree_trans *trans, struct btree_path *path,
-				   struct bkey_i *k, enum btree_update_flags flags)
+static int __must_check
+bch2_trans_update_by_path(struct btree_trans *trans, struct btree_path *path,
+			  struct bkey_i *k, enum btree_update_flags flags)
 {
 	struct btree_insert_entry *i, n;
 
@@ -1408,17 +1401,6 @@ int __must_check bch2_trans_update_by_path(struct btree_trans *trans, struct btr
 	    !btree_insert_entry_cmp(&n, i)) {
 		BUG_ON(i->insert_trigger_run || i->overwrite_trigger_run);
 
-		/*
-		 * This is a hack to ensure that inode creates update the btree,
-		 * not the key cache, which helps with cache coherency issues in
-		 * other areas:
-		 */
-		if (n.cached && !i->cached) {
-			i->k = n.k;
-			i->flags = n.flags;
-			return 0;
-		}
-
 		bch2_path_put(trans, i->path, true);
 		*i = n;
 	} else
@@ -1432,12 +1414,17 @@ int __must_check bch2_trans_update_by_path(struct btree_trans *trans, struct btr
 int __must_check bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
 				   struct bkey_i *k, enum btree_update_flags flags)
 {
+	struct btree_path *path = iter->update_path ?: iter->path;
+	struct bkey_cached *ck;
+	int ret;
+
 	if (iter->flags & BTREE_ITER_IS_EXTENTS)
 		return bch2_trans_update_extent(trans, iter, k, flags);
 
 	if (bkey_deleted(&k->k) &&
+	    !(flags & BTREE_UPDATE_KEY_CACHE_RECLAIM) &&
 	    (iter->flags & BTREE_ITER_FILTER_SNAPSHOTS)) {
-		int ret = need_whiteout_for_snapshot(trans, iter->btree_id, k->k.p);
+		ret = need_whiteout_for_snapshot(trans, iter->btree_id, k->k.p);
 		if (unlikely(ret < 0))
 			return ret;
 
@@ -1445,8 +1432,44 @@ int __must_check bch2_trans_update(struct btree_trans *trans, struct btree_iter 
 			k->k.type = KEY_TYPE_whiteout;
 	}
 
-	return bch2_trans_update_by_path(trans, iter->update_path ?: iter->path,
-					 k, flags);
+	if (!(flags & BTREE_UPDATE_KEY_CACHE_RECLAIM) &&
+	    !path->cached &&
+	    !path->level &&
+	    btree_id_cached(trans->c, path->btree_id)) {
+		if (!iter->key_cache_path ||
+		    !iter->key_cache_path->should_be_locked ||
+		    bpos_cmp(iter->key_cache_path->pos, k->k.p)) {
+			if (!iter->key_cache_path)
+				iter->key_cache_path =
+					bch2_path_get(trans, path->btree_id, path->pos, 1, 0,
+						      BTREE_ITER_INTENT|
+						      BTREE_ITER_CACHED, _THIS_IP_);
+
+			iter->key_cache_path =
+				bch2_btree_path_set_pos(trans, iter->key_cache_path, path->pos,
+							iter->flags & BTREE_ITER_INTENT,
+							_THIS_IP_);
+
+			ret = bch2_btree_path_traverse(trans, iter->key_cache_path,
+						       BTREE_ITER_CACHED);
+			if (unlikely(ret))
+				return ret;
+
+			ck = (void *) iter->key_cache_path->l[0].b;
+
+			if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
+				trace_trans_restart_key_cache_raced(trans->fn, _RET_IP_);
+				btree_trans_restart(trans);
+				return -EINTR;
+			}
+
+			iter->key_cache_path->should_be_locked = true;
+		}
+
+		path = iter->key_cache_path;
+	}
+
+	return bch2_trans_update_by_path(trans, path, k, flags);
 }
 
 void bch2_trans_commit_hook(struct btree_trans *trans,
