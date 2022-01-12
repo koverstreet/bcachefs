@@ -2849,6 +2849,9 @@ static void __bch2_trans_iter_init(struct btree_trans *trans,
 	if (!test_bit(JOURNAL_REPLAY_DONE, &trans->c->journal.flags))
 		flags |= BTREE_ITER_WITH_JOURNAL;
 
+	if (!btree_id_cached(trans->c, btree_id))
+		flags &= ~BTREE_ITER_CACHED;
+
 	iter->trans	= trans;
 	iter->path	= NULL;
 	iter->update_path = NULL;
