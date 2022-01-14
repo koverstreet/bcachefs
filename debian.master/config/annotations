@@ -9494,7 +9494,7 @@ CONFIG_STRICT_DEVMEM                            mark<ENFORCED>
 
 # Menu: Kernel hacking >> Architecture: arm
 CONFIG_ARM_PTDUMP                               policy<{'armhf': 'n'}>
-CONFIG_ARM_UNWIND                               policy<{'armhf': 'y'}>
+CONFIG_UNWINDER_ARM                             policy<{'armhf': 'n'}>
 CONFIG_DEBUG_USER                               policy<{'armhf': 'n'}>
 CONFIG_DEBUG_IMX_UART_PORT                      policy<{'armhf-generic': '1'}>
 CONFIG_DEBUG_VF_UART_PORT                       policy<{'armhf-generic': '1'}>
@@ -9549,7 +9549,7 @@ CONFIG_PUNIT_ATOM_DEBUG                         flag<REVIEW>
 
 # Menu: Kernel hacking >> Choose kernel unwinder >> Architecture: x86
 CONFIG_UNWINDER_ORC                             policy<{'amd64': 'n'}>
-CONFIG_UNWINDER_FRAME_POINTER                   policy<{'amd64': 'y', 'i386': 'y'}>
+CONFIG_UNWINDER_FRAME_POINTER                   policy<{'amd64': 'y', 'i386': 'y', 'armhf': 'y'}>
 CONFIG_UNWINDER_GUESS                           policy<{'amd64': 'n', 'i386': 'n'}>
 #
 CONFIG_UNWINDER_FRAME_POINTER                   mark<ENFORCED> note<needed for livepatch>
