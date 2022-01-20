@@ -2062,7 +2062,7 @@ static void ip6_link_failure(struct sk_buff *skb)
 			rcu_read_lock();
 			fn = rcu_dereference(rt->rt6i_node);
 			if (fn && (rt->rt6i_flags & RTF_DEFAULT))
-				fn->fn_sernum = -1;
+				WRITE_ONCE(fn->fn_sernum, -1);
 			rcu_read_unlock();
 		}
 	}

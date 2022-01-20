@@ -227,7 +227,7 @@ static inline bool rt6_get_cookie_safe(const struct rt6_info *rt,
 	fn = rcu_dereference(rt->rt6i_node);
 
 	if (fn) {
-		*cookie = fn->fn_sernum;
+		*cookie = READ_ONCE(fn->fn_sernum);
 		/* pairs with smp_wmb() in fib6_update_sernum_upto_root() */
 		smp_rmb();
 		status = true;
