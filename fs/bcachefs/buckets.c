@@ -2103,7 +2103,7 @@ static void bucket_gens_free_rcu(struct rcu_head *rcu)
 	struct bucket_gens *buckets =
 		container_of(rcu, struct bucket_gens, rcu);
 
-	kvpfree(buckets, sizeof(struct bucket_array) + buckets->nbuckets);
+	kvpfree(buckets, sizeof(struct bucket_gens) + buckets->nbuckets);
 }
 
 int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
@@ -2205,7 +2205,6 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 		up_write(&ca->bucket_lock);
 
 	ret = 0;
-err:
 	free_heap(&alloc_heap);
 	free_fifo(&free_inc);
 	for (i = 0; i < RESERVE_NR; i++)
@@ -2213,9 +2212,26 @@ err:
 	kvpfree(buckets_nouse,
 		BITS_TO_LONGS(nbuckets) * sizeof(unsigned long));
 	if (bucket_gens)
-		call_rcu(&old_buckets->rcu, bucket_gens_free_rcu);
+		call_rcu(&old_bucket_gens->rcu, bucket_gens_free_rcu);
 	if (buckets)
 		call_rcu(&old_buckets->rcu, buckets_free_rcu);
+
+	return ret;
+err:
+	free_heap(&alloc_heap);
+	free_fifo(&free_inc);
+	for (i = 0; i < RESERVE_NR; i++)
+		free_fifo(&free[i]);
+	if (buckets_nouse)
+		kvpfree(buckets_nouse,
+			BITS_TO_LONGS(nbuckets) * sizeof(unsigned long));
+	if (bucket_gens)
+		kvpfree(bucket_gens,
+			sizeof(struct bucket_array) +
+			buckets->nbuckets * sizeof(struct bucket));
+	if (buckets)
+		kvpfree(buckets,
+			sizeof(struct bucket_gens) + buckets->nbuckets);
 
 	return ret;
 }
@@ -2233,6 +2249,8 @@ void bch2_dev_buckets_free(struct bch_dev *ca)
 	kvpfree(rcu_dereference_protected(ca->buckets[0], 1),
 		sizeof(struct bucket_array) +
 		ca->mi.nbuckets * sizeof(struct bucket));
+	kvpfree(rcu_dereference_protected(ca->bucket_gens, 1),
+		sizeof(struct bucket_gens) + ca->bucket_gens->nbuckets);
 
 	for (i = 0; i < ARRAY_SIZE(ca->usage); i++)
 		free_percpu(ca->usage[i]);
