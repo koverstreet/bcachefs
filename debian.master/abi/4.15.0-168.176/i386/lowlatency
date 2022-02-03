@@ -5328,7 +5328,7 @@ EXPORT_SYMBOL net/ieee802154/ieee802154 0x76a6270d	wpan_phy_for_each
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x7d50d7cd	wpan_phy_register
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x93fa7062	wpan_phy_unregister
 EXPORT_SYMBOL net/ieee802154/ieee802154 0xb38041a0	wpan_phy_find
-EXPORT_SYMBOL net/ieee802154/ieee802154 0xe6414d5b	wpan_phy_new
+EXPORT_SYMBOL net/ieee802154/ieee802154 0xfee895ad	wpan_phy_new
 EXPORT_SYMBOL net/ipv4/fou 0x0c07b4a3	fou_encap_hlen
 EXPORT_SYMBOL net/ipv4/fou 0xc98e0991	__fou_build_header
 EXPORT_SYMBOL net/ipv4/fou 0xce94aa04	__gue_build_header
@@ -7557,7 +7557,6 @@ EXPORT_SYMBOL vmlinux 0x3677b4a6	security_old_inode_init_security
 EXPORT_SYMBOL vmlinux 0x3678dbe0	param_array_ops
 EXPORT_SYMBOL vmlinux 0x367ba856	__crc32c_le_shift
 EXPORT_SYMBOL vmlinux 0x368c4666	bio_endio
-EXPORT_SYMBOL vmlinux 0x36907c9c	__siphash_aligned
 EXPORT_SYMBOL vmlinux 0x3695edda	request_resource
 EXPORT_SYMBOL vmlinux 0x369c0d56	elv_register_queue
 EXPORT_SYMBOL vmlinux 0x36b04dfd	tcp_proc_register
@@ -9165,6 +9164,7 @@ EXPORT_SYMBOL vmlinux 0x8415d0ec	fput
 EXPORT_SYMBOL vmlinux 0x8417f512	acpi_update_all_gpes
 EXPORT_SYMBOL vmlinux 0x8435a052	skb_ensure_writable
 EXPORT_SYMBOL vmlinux 0x8436fcf7	pci_remap_iospace
+EXPORT_SYMBOL vmlinux 0x84377856	__siphash_unaligned
 EXPORT_SYMBOL vmlinux 0x843a1858	fscrypt_put_encryption_info
 EXPORT_SYMBOL vmlinux 0x84608c32	d_exact_alias
 EXPORT_SYMBOL vmlinux 0x84b5038a	blk_mq_delay_queue
@@ -9595,6 +9595,7 @@ EXPORT_SYMBOL vmlinux 0x9a6a83f9	cmos_lock
 EXPORT_SYMBOL vmlinux 0x9a6f2471	mempool_alloc
 EXPORT_SYMBOL vmlinux 0x9a71a829	i2c_smbus_write_byte
 EXPORT_SYMBOL vmlinux 0x9a798926	dev_set_allmulti
+EXPORT_SYMBOL vmlinux 0x9a7db6fe	__hsiphash_unaligned
 EXPORT_SYMBOL vmlinux 0x9a80b712	filp_open
 EXPORT_SYMBOL vmlinux 0x9a906e65	netpoll_send_udp
 EXPORT_SYMBOL vmlinux 0x9aa3f98b	request_firmware_nowait
@@ -10685,7 +10686,6 @@ EXPORT_SYMBOL vmlinux 0xd2d7ae01	jbd2_journal_invalidatepage
 EXPORT_SYMBOL vmlinux 0xd2da1048	register_netdevice_notifier
 EXPORT_SYMBOL vmlinux 0xd2e346d9	twl6040_reg_read
 EXPORT_SYMBOL vmlinux 0xd2f27884	jbd2_complete_transaction
-EXPORT_SYMBOL vmlinux 0xd33dd68e	__hsiphash_aligned
 EXPORT_SYMBOL vmlinux 0xd351661b	d_find_alias
 EXPORT_SYMBOL vmlinux 0xd35f75a1	match_string
 EXPORT_SYMBOL vmlinux 0xd374db18	sock_no_setsockopt

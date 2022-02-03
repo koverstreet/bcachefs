@@ -5355,7 +5355,7 @@ EXPORT_SYMBOL net/dccp/dccp_ipv4 0x2410ef35	dccp_syn_ack_timeout
 EXPORT_SYMBOL net/dccp/dccp_ipv4 0x5cad7398	dccp_req_err
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x0032d078	wpan_phy_unregister
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x3e7d9c1b	wpan_phy_find
-EXPORT_SYMBOL net/ieee802154/ieee802154 0x8e915518	wpan_phy_new
+EXPORT_SYMBOL net/ieee802154/ieee802154 0x823da921	wpan_phy_new
 EXPORT_SYMBOL net/ieee802154/ieee802154 0xa96c27b5	wpan_phy_register
 EXPORT_SYMBOL net/ieee802154/ieee802154 0xc3122c33	wpan_phy_for_each
 EXPORT_SYMBOL net/ieee802154/ieee802154 0xc5370366	wpan_phy_free
@@ -6920,7 +6920,6 @@ EXPORT_SYMBOL vmlinux 0x16316a10	ZSTD_getFrameContentSize
 EXPORT_SYMBOL vmlinux 0x16329dd4	max8998_write_reg
 EXPORT_SYMBOL vmlinux 0x1636a567	vfs_fsync
 EXPORT_SYMBOL vmlinux 0x163aeeff	dquot_get_state
-EXPORT_SYMBOL vmlinux 0x163b33e5	__siphash_aligned
 EXPORT_SYMBOL vmlinux 0x164b47a5	mdio_device_register
 EXPORT_SYMBOL vmlinux 0x165ef15d	flush_old_exec
 EXPORT_SYMBOL vmlinux 0x166e6eba	elv_register_queue
@@ -8328,6 +8327,7 @@ EXPORT_SYMBOL vmlinux 0x5bfe8a63	phy_suspend
 EXPORT_SYMBOL vmlinux 0x5c017464	kvasprintf
 EXPORT_SYMBOL vmlinux 0x5c0442fd	acpi_gbl_FADT
 EXPORT_SYMBOL vmlinux 0x5c146c8c	gnet_stats_start_copy_compat
+EXPORT_SYMBOL vmlinux 0x5c18e7d3	__siphash_unaligned
 EXPORT_SYMBOL vmlinux 0x5c1c2d5d	blk_execute_rq
 EXPORT_SYMBOL vmlinux 0x5c26adf4	blk_queue_virt_boundary
 EXPORT_SYMBOL vmlinux 0x5c2db1f4	dma_sync_wait
@@ -9466,7 +9466,6 @@ EXPORT_SYMBOL vmlinux 0x92a6f160	radix_tree_lookup
 EXPORT_SYMBOL vmlinux 0x92a92548	alloc_fddidev
 EXPORT_SYMBOL vmlinux 0x92b0b4b9	__vfs_removexattr
 EXPORT_SYMBOL vmlinux 0x92bc87d1	follow_pfn
-EXPORT_SYMBOL vmlinux 0x92dbe7ec	__hsiphash_aligned
 EXPORT_SYMBOL vmlinux 0x92dfc1f7	d_alloc
 EXPORT_SYMBOL vmlinux 0x92e5aff5	inet_release
 EXPORT_SYMBOL vmlinux 0x92f812cc	eth_change_mtu
@@ -10360,6 +10359,7 @@ EXPORT_SYMBOL vmlinux 0xc0023910	udp_lib_get_port
 EXPORT_SYMBOL vmlinux 0xc00906db	tty_flip_buffer_push
 EXPORT_SYMBOL vmlinux 0xc029437c	set_pages_array_uc
 EXPORT_SYMBOL vmlinux 0xc035d2f9	blk_queue_update_dma_alignment
+EXPORT_SYMBOL vmlinux 0xc059f454	__hsiphash_unaligned
 EXPORT_SYMBOL vmlinux 0xc064e057	get_io_context
 EXPORT_SYMBOL vmlinux 0xc0698831	simple_transaction_release
 EXPORT_SYMBOL vmlinux 0xc0763484	rfkill_blocked

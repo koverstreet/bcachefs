@@ -5355,9 +5355,9 @@ EXPORT_SYMBOL net/dccp/dccp_ipv4 0x259df154	dccp_syn_ack_timeout
 EXPORT_SYMBOL net/dccp/dccp_ipv4 0x54a3bb3c	dccp_req_err
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x035c140c	wpan_phy_register
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x7047b247	wpan_phy_free
+EXPORT_SYMBOL net/ieee802154/ieee802154 0x71f46670	wpan_phy_new
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x8ee2f34b	wpan_phy_for_each
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x9c800a5c	wpan_phy_find
-EXPORT_SYMBOL net/ieee802154/ieee802154 0xca1b0446	wpan_phy_new
 EXPORT_SYMBOL net/ieee802154/ieee802154 0xcfbef50e	wpan_phy_unregister
 EXPORT_SYMBOL net/ipv4/fou 0x3106aeb4	gue_encap_hlen
 EXPORT_SYMBOL net/ipv4/fou 0x33011459	__fou_build_header
@@ -6873,7 +6873,6 @@ EXPORT_SYMBOL vmlinux 0x161b59ba	compat_sock_get_timestamp
 EXPORT_SYMBOL vmlinux 0x161ddf25	sk_stream_wait_close
 EXPORT_SYMBOL vmlinux 0x16311bce	radix_tree_lookup_slot
 EXPORT_SYMBOL vmlinux 0x16316a10	ZSTD_getFrameContentSize
-EXPORT_SYMBOL vmlinux 0x163b33e5	__siphash_aligned
 EXPORT_SYMBOL vmlinux 0x1650b54d	genphy_write_mmd_unsupported
 EXPORT_SYMBOL vmlinux 0x166a6d78	csum_and_copy_to_iter
 EXPORT_SYMBOL vmlinux 0x166deef2	bio_advance
@@ -8253,6 +8252,7 @@ EXPORT_SYMBOL vmlinux 0x5bf9e775	pcie_capability_read_word
 EXPORT_SYMBOL vmlinux 0x5bfb1475	is_nd_dax
 EXPORT_SYMBOL vmlinux 0x5c017464	kvasprintf
 EXPORT_SYMBOL vmlinux 0x5c0442fd	acpi_gbl_FADT
+EXPORT_SYMBOL vmlinux 0x5c18e7d3	__siphash_unaligned
 EXPORT_SYMBOL vmlinux 0x5c1a186e	cont_write_begin
 EXPORT_SYMBOL vmlinux 0x5c1a67a2	d_prune_aliases
 EXPORT_SYMBOL vmlinux 0x5c1e5370	skb_free_datagram
@@ -9364,7 +9364,6 @@ EXPORT_SYMBOL vmlinux 0x9291cd3b	memdup_user
 EXPORT_SYMBOL vmlinux 0x92a6f160	radix_tree_lookup
 EXPORT_SYMBOL vmlinux 0x92b18d4e	__cgroup_bpf_run_filter_sk
 EXPORT_SYMBOL vmlinux 0x92c9f0eb	__skb_warn_lro_forwarding
-EXPORT_SYMBOL vmlinux 0x92dbe7ec	__hsiphash_aligned
 EXPORT_SYMBOL vmlinux 0x92fa5abb	vme_lm_detach
 EXPORT_SYMBOL vmlinux 0x93022ba6	__scsi_format_command
 EXPORT_SYMBOL vmlinux 0x9305f8e6	cpufreq_get
@@ -10272,6 +10271,7 @@ EXPORT_SYMBOL vmlinux 0xc01988b6	rwsem_down_read_failed_killable
 EXPORT_SYMBOL vmlinux 0xc01b0360	__ethtool_get_link_ksettings
 EXPORT_SYMBOL vmlinux 0xc0208581	ip_getsockopt
 EXPORT_SYMBOL vmlinux 0xc0442f78	adjust_managed_page_count
+EXPORT_SYMBOL vmlinux 0xc059f454	__hsiphash_unaligned
 EXPORT_SYMBOL vmlinux 0xc061ec3b	set_security_override
 EXPORT_SYMBOL vmlinux 0xc072694a	mmc_release_host
 EXPORT_SYMBOL vmlinux 0xc0763484	rfkill_blocked

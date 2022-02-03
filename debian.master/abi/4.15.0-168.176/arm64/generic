@@ -5344,10 +5344,10 @@ EXPORT_SYMBOL net/core/devlink 0xc0b2664d	devlink_dpipe_header_ipv4
 EXPORT_SYMBOL net/core/devlink 0xf28404cf	devlink_dpipe_header_ipv6
 EXPORT_SYMBOL net/dccp/dccp_ipv4 0x314c5e00	dccp_syn_ack_timeout
 EXPORT_SYMBOL net/dccp/dccp_ipv4 0x96c8db80	dccp_req_err
+EXPORT_SYMBOL net/ieee802154/ieee802154 0x35f4cd13	wpan_phy_new
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x68ff3e35	wpan_phy_unregister
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x84989df4	wpan_phy_register
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x85ac5085	wpan_phy_free
-EXPORT_SYMBOL net/ieee802154/ieee802154 0x86b1f9e6	wpan_phy_new
 EXPORT_SYMBOL net/ieee802154/ieee802154 0xdb27d279	wpan_phy_for_each
 EXPORT_SYMBOL net/ieee802154/ieee802154 0xe824d5a7	wpan_phy_find
 EXPORT_SYMBOL net/ipv4/fou 0x195f80bd	__fou_build_header
@@ -6561,7 +6561,6 @@ EXPORT_SYMBOL vmlinux 0x162dbf3c	iommu_put_dma_cookie
 EXPORT_SYMBOL vmlinux 0x16311bce	radix_tree_lookup_slot
 EXPORT_SYMBOL vmlinux 0x16316a10	ZSTD_getFrameContentSize
 EXPORT_SYMBOL vmlinux 0x1632bcc0	__ll_sc___cmpxchg_double
-EXPORT_SYMBOL vmlinux 0x163b33e5	__siphash_aligned
 EXPORT_SYMBOL vmlinux 0x167168fa	xfrm_unregister_type
 EXPORT_SYMBOL vmlinux 0x167c5967	print_hex_dump
 EXPORT_SYMBOL vmlinux 0x167d6fe3	vfs_clone_file_range
@@ -8020,6 +8019,7 @@ EXPORT_SYMBOL vmlinux 0x5c017464	kvasprintf
 EXPORT_SYMBOL vmlinux 0x5c0442fd	acpi_gbl_FADT
 EXPORT_SYMBOL vmlinux 0x5c0ac0dc	vfs_copy_file_range
 EXPORT_SYMBOL vmlinux 0x5c13ba1e	mipi_dsi_driver_unregister
+EXPORT_SYMBOL vmlinux 0x5c18e7d3	__siphash_unaligned
 EXPORT_SYMBOL vmlinux 0x5c2c2640	udp_sk_rx_dst_set
 EXPORT_SYMBOL vmlinux 0x5c2d463e	blk_free_tags
 EXPORT_SYMBOL vmlinux 0x5c51868c	pcie_set_readrq
@@ -9078,7 +9078,6 @@ EXPORT_SYMBOL vmlinux 0x929b4a6d	locks_init_lock
 EXPORT_SYMBOL vmlinux 0x92a4c9ff	param_set_short
 EXPORT_SYMBOL vmlinux 0x92a6f160	radix_tree_lookup
 EXPORT_SYMBOL vmlinux 0x92ae717a	kernel_bind
-EXPORT_SYMBOL vmlinux 0x92dbe7ec	__hsiphash_aligned
 EXPORT_SYMBOL vmlinux 0x92f96553	compat_tcp_setsockopt
 EXPORT_SYMBOL vmlinux 0x92fa5abb	vme_lm_detach
 EXPORT_SYMBOL vmlinux 0x93022ba6	__scsi_format_command
@@ -9989,6 +9988,7 @@ EXPORT_SYMBOL vmlinux 0xc00911a6	pfifo_qdisc_ops
 EXPORT_SYMBOL vmlinux 0xc038bb91	scsi_get_device_flags_keyed
 EXPORT_SYMBOL vmlinux 0xc03b87b0	current_time
 EXPORT_SYMBOL vmlinux 0xc04ead6a	eth_header_parse
+EXPORT_SYMBOL vmlinux 0xc059f454	__hsiphash_unaligned
 EXPORT_SYMBOL vmlinux 0xc05a9a24	alloc_anon_inode
 EXPORT_SYMBOL vmlinux 0xc05b6782	__mmc_claim_host
 EXPORT_SYMBOL vmlinux 0xc07245ff	__devm_release_region

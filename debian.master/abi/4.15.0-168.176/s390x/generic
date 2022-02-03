@@ -1856,7 +1856,6 @@ EXPORT_SYMBOL vmlinux 0x117439ef	__destroy_inode
 EXPORT_SYMBOL vmlinux 0x11a0985e	sk_ns_capable
 EXPORT_SYMBOL vmlinux 0x11adf60a	generic_update_time
 EXPORT_SYMBOL vmlinux 0x11caecbf	udp6_csum_init
-EXPORT_SYMBOL vmlinux 0x11dd1517	__siphash_aligned
 EXPORT_SYMBOL vmlinux 0x11e0ec41	dm_read_arg
 EXPORT_SYMBOL vmlinux 0x11ed2eb8	sclp_remove_processed
 EXPORT_SYMBOL vmlinux 0x11f7ed4c	hex_to_bin
@@ -3318,6 +3317,7 @@ EXPORT_SYMBOL vmlinux 0x6a9caefe	jbd2_journal_lock_updates
 EXPORT_SYMBOL vmlinux 0x6aa135f0	__tracepoint_s390_cio_xsch
 EXPORT_SYMBOL vmlinux 0x6aa7fd58	pci_scan_bus
 EXPORT_SYMBOL vmlinux 0x6aab99c6	single_release
+EXPORT_SYMBOL vmlinux 0x6ade99bd	__siphash_unaligned
 EXPORT_SYMBOL vmlinux 0x6ae3f605	skb_copy_and_csum_dev
 EXPORT_SYMBOL vmlinux 0x6ae5ab1f	errseq_set
 EXPORT_SYMBOL vmlinux 0x6b1b67d3	__bdevname
@@ -4386,6 +4386,7 @@ EXPORT_SYMBOL vmlinux 0xae531cd5	d_genocide
 EXPORT_SYMBOL vmlinux 0xae68812d	starget_for_each_device
 EXPORT_SYMBOL vmlinux 0xae8c175b	inode_init_owner
 EXPORT_SYMBOL vmlinux 0xae92d362	get_io_context
+EXPORT_SYMBOL vmlinux 0xaea117ea	__hsiphash_unaligned
 EXPORT_SYMBOL vmlinux 0xaebcb322	debug_exception_common
 EXPORT_SYMBOL vmlinux 0xaedd36bd	set_binfmt
 EXPORT_SYMBOL vmlinux 0xaee822b0	bio_advance
@@ -5630,7 +5631,6 @@ EXPORT_SYMBOL vmlinux 0xfed561f5	audit_log
 EXPORT_SYMBOL vmlinux 0xfedcdb60	seq_hlist_next_percpu
 EXPORT_SYMBOL vmlinux 0xfee1c693	block_write_full_page
 EXPORT_SYMBOL vmlinux 0xfeebe6fc	pcim_iomap_regions_request_all
-EXPORT_SYMBOL vmlinux 0xfeed26b6	__hsiphash_aligned
 EXPORT_SYMBOL vmlinux 0xfef8add4	wait_for_completion_timeout
 EXPORT_SYMBOL vmlinux 0xff0db4a5	blk_rq_map_user
 EXPORT_SYMBOL vmlinux 0xff1161fc	pci_bus_alloc_resource

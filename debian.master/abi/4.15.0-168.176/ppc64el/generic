@@ -5208,7 +5208,7 @@ EXPORT_SYMBOL net/core/devlink 0xc0b2664d	devlink_dpipe_header_ipv4
 EXPORT_SYMBOL net/core/devlink 0xf28404cf	devlink_dpipe_header_ipv6
 EXPORT_SYMBOL net/dccp/dccp_ipv4 0x0f04e729	dccp_syn_ack_timeout
 EXPORT_SYMBOL net/dccp/dccp_ipv4 0xebcd617c	dccp_req_err
-EXPORT_SYMBOL net/ieee802154/ieee802154 0x2275fdf0	wpan_phy_new
+EXPORT_SYMBOL net/ieee802154/ieee802154 0x02f56c76	wpan_phy_new
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x3871bdfc	wpan_phy_for_each
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x3b829517	wpan_phy_find
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x416d8eea	wpan_phy_register
@@ -6454,7 +6454,6 @@ EXPORT_SYMBOL vmlinux 0x16311bce	radix_tree_lookup_slot
 EXPORT_SYMBOL vmlinux 0x16316a10	ZSTD_getFrameContentSize
 EXPORT_SYMBOL vmlinux 0x1633a18a	bitmap_unplug
 EXPORT_SYMBOL vmlinux 0x1637095d	generic_perform_write
-EXPORT_SYMBOL vmlinux 0x163b33e5	__siphash_aligned
 EXPORT_SYMBOL vmlinux 0x164c9db2	dquot_acquire
 EXPORT_SYMBOL vmlinux 0x164d7484	fb_set_suspend
 EXPORT_SYMBOL vmlinux 0x165546f8	add_to_pipe
@@ -7779,6 +7778,7 @@ EXPORT_SYMBOL vmlinux 0x5be63c5b	crc32c_csum_stub
 EXPORT_SYMBOL vmlinux 0x5c017464	kvasprintf
 EXPORT_SYMBOL vmlinux 0x5c058b68	neigh_changeaddr
 EXPORT_SYMBOL vmlinux 0x5c14c828	noop_llseek
+EXPORT_SYMBOL vmlinux 0x5c18e7d3	__siphash_unaligned
 EXPORT_SYMBOL vmlinux 0x5c1c7fbc	of_find_i2c_device_by_node
 EXPORT_SYMBOL vmlinux 0x5c37f319	_raw_spin_unlock_irqrestore
 EXPORT_SYMBOL vmlinux 0x5c4595e2	page_cache_next_hole
@@ -8806,7 +8806,6 @@ EXPORT_SYMBOL vmlinux 0x92985a01	pci_ep_cfs_add_epc_group
 EXPORT_SYMBOL vmlinux 0x92a6f160	radix_tree_lookup
 EXPORT_SYMBOL vmlinux 0x92b76435	from_kprojid_munged
 EXPORT_SYMBOL vmlinux 0x92d41db1	input_mt_assign_slots
-EXPORT_SYMBOL vmlinux 0x92dbe7ec	__hsiphash_aligned
 EXPORT_SYMBOL vmlinux 0x92fa5abb	vme_lm_detach
 EXPORT_SYMBOL vmlinux 0x92fe8fb3	param_get_byte
 EXPORT_SYMBOL vmlinux 0x93022ba6	__scsi_format_command
@@ -9678,6 +9677,7 @@ EXPORT_SYMBOL vmlinux 0xbfc82ae6	kernel_param_lock
 EXPORT_SYMBOL vmlinux 0xbfee3ad5	loop_unregister_transfer
 EXPORT_SYMBOL vmlinux 0xbff8182c	plpar_hcall_norets
 EXPORT_SYMBOL vmlinux 0xc0189ecf	truncate_inode_pages_range
+EXPORT_SYMBOL vmlinux 0xc059f454	__hsiphash_unaligned
 EXPORT_SYMBOL vmlinux 0xc067a4b7	vc_resize
 EXPORT_SYMBOL vmlinux 0xc0763484	rfkill_blocked
 EXPORT_SYMBOL vmlinux 0xc0801895	vga_set_legacy_decoding

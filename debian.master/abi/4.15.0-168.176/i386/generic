@@ -5323,11 +5323,11 @@ EXPORT_SYMBOL net/core/devlink 0xc0b2664d	devlink_dpipe_header_ipv4
 EXPORT_SYMBOL net/core/devlink 0xf28404cf	devlink_dpipe_header_ipv6
 EXPORT_SYMBOL net/dccp/dccp_ipv4 0x66bdf533	dccp_req_err
 EXPORT_SYMBOL net/dccp/dccp_ipv4 0xc6110cce	dccp_syn_ack_timeout
+EXPORT_SYMBOL net/ieee802154/ieee802154 0x40e94113	wpan_phy_new
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x4b2599a0	wpan_phy_for_each
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x5ab979ed	wpan_phy_find
 EXPORT_SYMBOL net/ieee802154/ieee802154 0x60e96c47	wpan_phy_register
 EXPORT_SYMBOL net/ieee802154/ieee802154 0xa9768da2	wpan_phy_free
-EXPORT_SYMBOL net/ieee802154/ieee802154 0xac906922	wpan_phy_new
 EXPORT_SYMBOL net/ieee802154/ieee802154 0xfeaf922f	wpan_phy_unregister
 EXPORT_SYMBOL net/ipv4/fou 0x0a7547ea	__fou_build_header
 EXPORT_SYMBOL net/ipv4/fou 0x0c07b4a3	fou_encap_hlen
@@ -7599,7 +7599,6 @@ EXPORT_SYMBOL vmlinux 0x367eb07f	fb_validate_mode
 EXPORT_SYMBOL vmlinux 0x36840bbb	i2c_put_adapter
 EXPORT_SYMBOL vmlinux 0x3685a34a	ps2_init
 EXPORT_SYMBOL vmlinux 0x3685f48e	__inode_permission
-EXPORT_SYMBOL vmlinux 0x36907c9c	__siphash_aligned
 EXPORT_SYMBOL vmlinux 0x3695edda	request_resource
 EXPORT_SYMBOL vmlinux 0x36a01ab3	debugfs_create_automount
 EXPORT_SYMBOL vmlinux 0x36c14263	qdisc_warn_nonwc
@@ -9173,6 +9172,7 @@ EXPORT_SYMBOL vmlinux 0x842cda5a	__neigh_set_probe_once
 EXPORT_SYMBOL vmlinux 0x84311929	vm_iomap_memory
 EXPORT_SYMBOL vmlinux 0x8431bd8e	netif_set_real_num_tx_queues
 EXPORT_SYMBOL vmlinux 0x8436fcf7	pci_remap_iospace
+EXPORT_SYMBOL vmlinux 0x84377856	__siphash_unaligned
 EXPORT_SYMBOL vmlinux 0x84498345	blk_queue_make_request
 EXPORT_SYMBOL vmlinux 0x8458ae8b	blk_init_tags
 EXPORT_SYMBOL vmlinux 0x847fa8cf	set_pages_nx
@@ -9606,6 +9606,7 @@ EXPORT_SYMBOL vmlinux 0x9a66ffdf	kfree_skb_partial
 EXPORT_SYMBOL vmlinux 0x9a68dd5d	netpoll_poll_disable
 EXPORT_SYMBOL vmlinux 0x9a6a83f9	cmos_lock
 EXPORT_SYMBOL vmlinux 0x9a6f2471	mempool_alloc
+EXPORT_SYMBOL vmlinux 0x9a7db6fe	__hsiphash_unaligned
 EXPORT_SYMBOL vmlinux 0x9a8d1c12	dev_driver_string
 EXPORT_SYMBOL vmlinux 0x9a987ba6	tcf_em_tree_dump
 EXPORT_SYMBOL vmlinux 0x9aa9cea4	trace_print_flags_seq_u64
@@ -10752,7 +10753,6 @@ EXPORT_SYMBOL vmlinux 0xd3110e19	skb_make_writable
 EXPORT_SYMBOL vmlinux 0xd32c414e	__alloc_pages_nodemask
 EXPORT_SYMBOL vmlinux 0xd33062a5	get_acl
 EXPORT_SYMBOL vmlinux 0xd3366367	neigh_ifdown
-EXPORT_SYMBOL vmlinux 0xd33dd68e	__hsiphash_aligned
 EXPORT_SYMBOL vmlinux 0xd35cee43	devm_get_clk_from_child
 EXPORT_SYMBOL vmlinux 0xd35f75a1	match_string
 EXPORT_SYMBOL vmlinux 0xd383f3f6	jbd2_journal_blocks_per_page
