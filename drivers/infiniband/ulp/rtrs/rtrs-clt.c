@@ -867,7 +867,7 @@ static struct rtrs_clt_sess *get_next_path_min_latency(struct path_it *it)
 	struct rtrs_clt_sess *min_path = NULL;
 	struct rtrs_clt *clt = it->clt;
 	struct rtrs_clt_sess *sess;
-	ktime_t min_latency = INT_MAX;
+	ktime_t min_latency = KTIME_MAX;
 	ktime_t latency;
 
 	list_for_each_entry_rcu(sess, &clt->paths_list, s.entry) {
@@ -2787,6 +2787,12 @@ struct rtrs_clt *rtrs_clt_open(struct rtrs_clt_ops *ops,
 	struct rtrs_clt_sess *sess, *tmp;
 	struct rtrs_clt *clt;
 	int err, i;
+
+	if (strchr(sessname, '/') || strchr(sessname, '.')) {
+		pr_err("sessname cannot contain / and .\n");
+		err = -EINVAL;
+		goto out;
+	}
 
 	clt = alloc_clt(sessname, paths_num, port, pdu_sz, ops->priv,
 			ops->link_ev,

@@ -589,7 +589,7 @@ out:
 
 static void test_bpf_hash_map(void)
 {
-	__u32 expected_key_a = 0, expected_key_b = 0, expected_key_c = 0;
+	__u32 expected_key_a = 0, expected_key_b = 0;
 	DECLARE_LIBBPF_OPTS(bpf_iter_attach_opts, opts);
 	struct bpf_iter_bpf_hash_map *skel;
 	int err, i, len, map_fd, iter_fd;
@@ -638,7 +638,6 @@ static void test_bpf_hash_map(void)
 		val = i + 4;
 		expected_key_a += key.a;
 		expected_key_b += key.b;
-		expected_key_c += key.c;
 		expected_val += val;
 
 		err = bpf_map_update_elem(map_fd, &key, &val, BPF_ANY);
@@ -685,7 +684,7 @@ out:
 
 static void test_bpf_percpu_hash_map(void)
 {
-	__u32 expected_key_a = 0, expected_key_b = 0, expected_key_c = 0;
+	__u32 expected_key_a = 0, expected_key_b = 0;
 	DECLARE_LIBBPF_OPTS(bpf_iter_attach_opts, opts);
 	struct bpf_iter_bpf_percpu_hash_map *skel;
 	int err, i, j, len, map_fd, iter_fd;
@@ -722,7 +721,6 @@ static void test_bpf_percpu_hash_map(void)
 		key.c = i + 3;
 		expected_key_a += key.a;
 		expected_key_b += key.b;
-		expected_key_c += key.c;
 
 		for (j = 0; j < bpf_num_possible_cpus(); j++) {
 			*(__u32 *)(val + j * 8) = i + j;
@@ -1208,13 +1206,14 @@ static void test_task_vma(void)
 		goto out;
 
 	/* Read CMP_BUFFER_SIZE (1kB) from bpf_iter. Read in small chunks
-	 * to trigger seq_file corner cases. The expected output is much
-	 * longer than 1kB, so the while loop will terminate.
+	 * to trigger seq_file corner cases.
 	 */
 	len = 0;
 	while (len < CMP_BUFFER_SIZE) {
 		err = read_fd_into_buffer(iter_fd, task_vma_output + len,
 					  min(read_size, CMP_BUFFER_SIZE - len));
+		if (!err)
+			break;
 		if (CHECK(err < 0, "read_iter_fd", "read_iter_fd failed\n"))
 			goto out;
 		len += err;

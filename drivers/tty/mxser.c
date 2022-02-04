@@ -249,8 +249,7 @@ struct mxser_port {
 	unsigned char x_char;	/* xon/xoff character */
 	u8 IER;			/* Interrupt Enable Register */
 	u8 MCR;			/* Modem control register */
-
-	unsigned char ldisc_stop_rx;
+	u8 FCR;			/* FIFO control register */
 
 	struct async_icount icount; /* kernel counters for 4 input interrupts */
 	unsigned int timeout;
@@ -261,7 +260,6 @@ struct mxser_port {
 	unsigned int xmit_head;
 	unsigned int xmit_tail;
 	unsigned int xmit_cnt;
-	int closing;
 
 	spinlock_t slock;
 };
@@ -559,14 +557,20 @@ static void mxser_handle_cts(struct tty_struct *tty, struct mxser_port *info,
  * This routine is called to set the UART divisor registers to match
  * the specified baud rate for a serial port.
  */
-static void mxser_change_speed(struct tty_struct *tty)
+static void mxser_change_speed(struct tty_struct *tty, struct ktermios *old_termios)
 {
 	struct mxser_port *info = tty->driver_data;
-	unsigned cflag, cval, fcr;
+	unsigned cflag, cval;
 
 	cflag = tty->termios.c_cflag;
 
-	mxser_set_baud(tty, tty_get_baud_rate(tty));
+	if (mxser_set_baud(tty, tty_get_baud_rate(tty))) {
+		/* Use previous rate on a failure */
+		if (old_termios) {
+			speed_t baud = tty_termios_baud_rate(old_termios);
+			tty_encode_baud_rate(tty, baud, baud);
+		}
+	}
 
 	/* byte size and parity */
 	switch (cflag & CSIZE) {
@@ -594,33 +598,26 @@ static void mxser_change_speed(struct tty_struct *tty)
 	if (cflag & CMSPAR)
 		cval |= UART_LCR_SPAR;
 
-	if ((info->type == PORT_8250) || (info->type == PORT_16450)) {
-		if (info->board->must_hwid) {
-			fcr = UART_FCR_ENABLE_FIFO;
-			fcr |= MOXA_MUST_FCR_GDA_MODE_ENABLE;
-			mxser_set_must_fifo_value(info);
-		} else
-			fcr = 0;
-	} else {
-		fcr = UART_FCR_ENABLE_FIFO;
-		if (info->board->must_hwid) {
-			fcr |= MOXA_MUST_FCR_GDA_MODE_ENABLE;
-			mxser_set_must_fifo_value(info);
-		} else {
-			switch (info->rx_high_water) {
-			case 1:
-				fcr |= UART_FCR_TRIGGER_1;
-				break;
-			case 4:
-				fcr |= UART_FCR_TRIGGER_4;
-				break;
-			case 8:
-				fcr |= UART_FCR_TRIGGER_8;
-				break;
-			default:
-				fcr |= UART_FCR_TRIGGER_14;
-				break;
-			}
+	info->FCR = 0;
+	if (info->board->must_hwid) {
+		info->FCR |= UART_FCR_ENABLE_FIFO |
+			MOXA_MUST_FCR_GDA_MODE_ENABLE;
+		mxser_set_must_fifo_value(info);
+	} else if (info->type != PORT_8250 && info->type != PORT_16450) {
+		info->FCR |= UART_FCR_ENABLE_FIFO;
+		switch (info->rx_high_water) {
+		case 1:
+			info->FCR |= UART_FCR_TRIGGER_1;
+			break;
+		case 4:
+			info->FCR |= UART_FCR_TRIGGER_4;
+			break;
+		case 8:
+			info->FCR |= UART_FCR_TRIGGER_8;
+			break;
+		default:
+			info->FCR |= UART_FCR_TRIGGER_14;
+			break;
 		}
 	}
 
@@ -680,7 +677,7 @@ static void mxser_change_speed(struct tty_struct *tty)
 	}
 
 
-	outb(fcr, info->ioaddr + UART_FCR);	/* set fcr */
+	outb(info->FCR, info->ioaddr + UART_FCR);
 	outb(cval, info->ioaddr + UART_LCR);
 }
 
@@ -707,6 +704,16 @@ static void mxser_check_modem_status(struct tty_struct *tty,
 		mxser_handle_cts(tty, port, status);
 }
 
+static void mxser_disable_and_clear_FIFO(struct mxser_port *info)
+{
+	u8 fcr = UART_FCR_CLEAR_RCVR | UART_FCR_CLEAR_XMIT;
+
+	if (info->board->must_hwid)
+		fcr |= MOXA_MUST_FCR_GDA_MODE_ENABLE;
+
+	outb(fcr, info->ioaddr + UART_FCR);
+}
+
 static int mxser_activate(struct tty_port *port, struct tty_struct *tty)
 {
 	struct mxser_port *info = container_of(port, struct mxser_port, port);
@@ -731,13 +738,7 @@ static int mxser_activate(struct tty_port *port, struct tty_struct *tty)
 	 * Clear the FIFO buffers and disable them
 	 * (they will be reenabled in mxser_change_speed())
 	 */
-	if (info->board->must_hwid)
-		outb((UART_FCR_CLEAR_RCVR |
-			UART_FCR_CLEAR_XMIT |
-			MOXA_MUST_FCR_GDA_MODE_ENABLE), info->ioaddr + UART_FCR);
-	else
-		outb((UART_FCR_CLEAR_RCVR | UART_FCR_CLEAR_XMIT),
-			info->ioaddr + UART_FCR);
+	mxser_disable_and_clear_FIFO(info);
 
 	/*
 	 * At this point there's no way the LSR could still be 0xFF;
@@ -791,7 +792,7 @@ static int mxser_activate(struct tty_port *port, struct tty_struct *tty)
 	/*
 	 * and set the speed of the serial port
 	 */
-	mxser_change_speed(tty);
+	mxser_change_speed(tty, NULL);
 	spin_unlock_irqrestore(&info->slock, flags);
 
 	return 0;
@@ -825,13 +826,7 @@ static void mxser_shutdown_port(struct tty_port *port)
 	outb(0x00, info->ioaddr + UART_IER);
 
 	/* clear Rx/Tx FIFO's */
-	if (info->board->must_hwid)
-		outb(UART_FCR_CLEAR_RCVR | UART_FCR_CLEAR_XMIT |
-				MOXA_MUST_FCR_GDA_MODE_ENABLE,
-				info->ioaddr + UART_FCR);
-	else
-		outb(UART_FCR_CLEAR_RCVR | UART_FCR_CLEAR_XMIT,
-			info->ioaddr + UART_FCR);
+	mxser_disable_and_clear_FIFO(info);
 
 	/* read data port to reset things */
 	(void) inb(info->ioaddr + UART_RX);
@@ -862,17 +857,14 @@ static int mxser_open(struct tty_struct *tty, struct file *filp)
 static void mxser_flush_buffer(struct tty_struct *tty)
 {
 	struct mxser_port *info = tty->driver_data;
-	char fcr;
 	unsigned long flags;
 
 
 	spin_lock_irqsave(&info->slock, flags);
 	info->xmit_cnt = info->xmit_head = info->xmit_tail = 0;
 
-	fcr = inb(info->ioaddr + UART_FCR);
-	outb((fcr | UART_FCR_CLEAR_RCVR | UART_FCR_CLEAR_XMIT),
+	outb(info->FCR | UART_FCR_CLEAR_RCVR | UART_FCR_CLEAR_XMIT,
 		info->ioaddr + UART_FCR);
-	outb(fcr, info->ioaddr + UART_FCR);
 
 	spin_unlock_irqrestore(&info->slock, flags);
 
@@ -923,7 +915,6 @@ static void mxser_close(struct tty_struct *tty, struct file *filp)
 		return;
 	if (tty_port_close_start(port, tty, filp) == 0)
 		return;
-	info->closing = 1;
 	mutex_lock(&port->mutex);
 	mxser_close_port(port);
 	mxser_flush_buffer(tty);
@@ -932,7 +923,6 @@ static void mxser_close(struct tty_struct *tty, struct file *filp)
 	mxser_shutdown_port(port);
 	tty_port_set_initialized(port, 0);
 	mutex_unlock(&port->mutex);
-	info->closing = 0;
 	/* Right now the tty_port set is done outside of the close_end helper
 	   as we don't yet have everyone using refcounts */	
 	tty_port_close_end(port, tty);
@@ -1119,7 +1109,7 @@ static int mxser_set_serial_info(struct tty_struct *tty,
 	if (tty_port_initialized(port)) {
 		if (old_speed != (port->flags & ASYNC_SPD_MASK)) {
 			spin_lock_irqsave(&info->slock, sl_flags);
-			mxser_change_speed(tty);
+			mxser_change_speed(tty, NULL);
 			spin_unlock_irqrestore(&info->slock, sl_flags);
 		}
 	} else {
@@ -1331,11 +1321,14 @@ static int mxser_get_icount(struct tty_struct *tty,
 	return 0;
 }
 
-static void mxser_stoprx(struct tty_struct *tty)
+/*
+ * This routine is called by the upper-layer tty layer to signal that
+ * incoming characters should be throttled.
+ */
+static void mxser_throttle(struct tty_struct *tty)
 {
 	struct mxser_port *info = tty->driver_data;
 
-	info->ldisc_stop_rx = 1;
 	if (I_IXOFF(tty)) {
 		if (info->board->must_hwid) {
 			info->IER &= ~MOXA_MUST_RECV_ISR;
@@ -1354,21 +1347,11 @@ static void mxser_stoprx(struct tty_struct *tty)
 	}
 }
 
-/*
- * This routine is called by the upper-layer tty layer to signal that
- * incoming characters should be throttled.
- */
-static void mxser_throttle(struct tty_struct *tty)
-{
-	mxser_stoprx(tty);
-}
-
 static void mxser_unthrottle(struct tty_struct *tty)
 {
 	struct mxser_port *info = tty->driver_data;
 
 	/* startrx */
-	info->ldisc_stop_rx = 0;
 	if (I_IXOFF(tty)) {
 		if (info->x_char)
 			info->x_char = 0;
@@ -1425,7 +1408,7 @@ static void mxser_set_termios(struct tty_struct *tty, struct ktermios *old_termi
 	unsigned long flags;
 
 	spin_lock_irqsave(&info->slock, flags);
-	mxser_change_speed(tty);
+	mxser_change_speed(tty, old_termios);
 	spin_unlock_irqrestore(&info->slock, flags);
 
 	if ((old_termios->c_cflag & CRTSCTS) && !C_CRTSCTS(tty)) {
@@ -1544,23 +1527,17 @@ static bool mxser_receive_chars_new(struct tty_struct *tty,
 
 	if (hwid == MOXA_OTHER_UART)
 		return false;
-	if (status & UART_LSR_BRK_ERROR_BITS)
-		return false;
-	if (hwid == MOXA_MUST_MU860_HWID && (status & MOXA_MUST_LSR_RERR))
-		return false;
-	if (status & MOXA_MUST_LSR_RERR)
+	if (status & (UART_LSR_BRK_ERROR_BITS | MOXA_MUST_LSR_RERR))
 		return false;
 
 	gdl = inb(port->ioaddr + MOXA_MUST_GDL_REGISTER);
 	if (hwid == MOXA_MUST_MU150_HWID)
 		gdl &= MOXA_MUST_GDL_MASK;
 
-	if (gdl >= tty->receive_room && !port->ldisc_stop_rx)
-		mxser_stoprx(tty);
-
 	while (gdl--) {
 		u8 ch = inb(port->ioaddr + UART_RX);
-		tty_insert_flip_char(&port->port, ch, 0);
+		if (!tty_insert_flip_char(&port->port, ch, 0))
+			port->icount.buf_overrun++;
 	}
 
 	return true;
@@ -1570,10 +1547,8 @@ static u8 mxser_receive_chars_old(struct tty_struct *tty,
 		                struct mxser_port *port, u8 status)
 {
 	enum mxser_must_hwid hwid = port->board->must_hwid;
-	int recv_room = tty->receive_room;
 	int ignored = 0;
 	int max = 256;
-	int cnt = 0;
 	u8 ch;
 
 	do {
@@ -1582,8 +1557,7 @@ static u8 mxser_receive_chars_old(struct tty_struct *tty,
 
 		ch = inb(port->ioaddr + UART_RX);
 		if (hwid && (status & UART_LSR_OE))
-			outb(UART_FCR_ENABLE_FIFO | UART_FCR_CLEAR_RCVR |
-					MOXA_MUST_FCR_GDA_MODE_ENABLE,
+			outb(port->FCR | UART_FCR_CLEAR_RCVR,
 					port->ioaddr + UART_FCR);
 		status &= port->read_status_mask;
 		if (status & port->ignore_status_mask) {
@@ -1609,14 +1583,10 @@ static u8 mxser_receive_chars_old(struct tty_struct *tty,
 					port->icount.overrun++;
 				}
 			}
-			tty_insert_flip_char(&port->port, ch, flag);
-			cnt++;
-			if (cnt >= recv_room) {
-				if (!port->ldisc_stop_rx)
-					mxser_stoprx(tty);
+			if (!tty_insert_flip_char(&port->port, ch, flag)) {
+				port->icount.buf_overrun++;
 				break;
 			}
-
 		}
 
 		if (hwid)
@@ -1631,9 +1601,6 @@ static u8 mxser_receive_chars_old(struct tty_struct *tty,
 static u8 mxser_receive_chars(struct tty_struct *tty,
 		struct mxser_port *port, u8 status)
 {
-	if (tty->receive_room == 0 && !port->ldisc_stop_rx)
-		mxser_stoprx(tty);
-
 	if (!mxser_receive_chars_new(tty, port, status))
 		status = mxser_receive_chars_old(tty, port, status);
 
@@ -1693,10 +1660,9 @@ static bool mxser_port_isr(struct mxser_port *port)
 
 	iir &= MOXA_MUST_IIR_MASK;
 	tty = tty_port_tty_get(&port->port);
-	if (!tty || port->closing || !tty_port_initialized(&port->port)) {
+	if (!tty) {
 		status = inb(port->ioaddr + UART_LSR);
-		outb(MOXA_MUST_FCR_GDA_MODE_ENABLE | UART_FCR_ENABLE_FIFO |
-				UART_FCR_CLEAR_RCVR | UART_FCR_CLEAR_XMIT,
+		outb(port->FCR | UART_FCR_CLEAR_RCVR | UART_FCR_CLEAR_XMIT,
 				port->ioaddr + UART_FCR);
 		inb(port->ioaddr + UART_MSR);
 
@@ -1847,7 +1813,6 @@ static void mxser_initbrd(struct mxser_board *brd, bool high_baud)
 		tty_port_init(&info->port);
 		info->port.ops = &mxser_port_ops;
 		info->board = brd;
-		info->ldisc_stop_rx = 0;
 
 		/* Enhance mode enabled here */
 		if (brd->must_hwid != MOXA_OTHER_UART)

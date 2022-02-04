@@ -48,7 +48,6 @@
 #define EN_COHERENCY			0xF0000000
 #define EN_REG				0x00000001
 #define OB_LO_IO			0x00000002
-#define XGENE_PCIE_VENDORID		0x10E8
 #define XGENE_PCIE_DEVICEID		0xE004
 #define SZ_1T				(SZ_1G*1024ULL)
 #define PIPE_PHY_RATE_RD(src)		((0xc000 & (u32)(src)) >> 0xe)
@@ -466,7 +465,7 @@ static int xgene_pcie_select_ib_reg(u8 *ib_reg_mask, u64 size)
 		return 1;
 	}
 
-	if ((size > SZ_1K) && (size < SZ_1T) && !(*ib_reg_mask & (1 << 0))) {
+	if ((size > SZ_1K) && (size < SZ_4G) && !(*ib_reg_mask & (1 << 0))) {
 		*ib_reg_mask |= (1 << 0);
 		return 0;
 	}
@@ -560,7 +559,7 @@ static int xgene_pcie_setup(struct xgene_pcie_port *port)
 	xgene_pcie_clear_config(port);
 
 	/* setup the vendor and device IDs correctly */
-	val = (XGENE_PCIE_DEVICEID << 16) | XGENE_PCIE_VENDORID;
+	val = (XGENE_PCIE_DEVICEID << 16) | PCI_VENDOR_ID_AMCC;
 	xgene_pcie_writel(port, BRIDGE_CFG_0, val);
 
 	ret = xgene_pcie_map_ranges(port);

@@ -66,11 +66,9 @@ int rn_get_active_display_cnt_wa(
 	for (i = 0; i < context->stream_count; i++) {
 		const struct dc_stream_state *stream = context->streams[i];
 
-		/* Extend the WA to DP for Linux*/
 		if (stream->signal == SIGNAL_TYPE_HDMI_TYPE_A ||
 				stream->signal == SIGNAL_TYPE_DVI_SINGLE_LINK ||
-				stream->signal == SIGNAL_TYPE_DVI_DUAL_LINK ||
-				stream->signal == SIGNAL_TYPE_DISPLAY_PORT)
+				stream->signal == SIGNAL_TYPE_DVI_DUAL_LINK)
 			tmds_present = true;
 	}
 
@@ -149,6 +147,7 @@ void rn_update_clocks(struct clk_mgr *clk_mgr_base,
 		if (clk_mgr_base->clks.pwr_state != DCN_PWR_STATE_LOW_POWER) {
 
 			display_count = rn_get_active_display_cnt_wa(dc, context);
+
 			/* if we can go lower, go lower */
 			if (display_count == 0) {
 				rn_vbios_smu_set_dcn_low_power_state(clk_mgr, DCN_PWR_STATE_LOW_POWER);

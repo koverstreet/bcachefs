@@ -1636,7 +1636,6 @@ static int pxp_soft_reset(struct pxp_dev *dev)
 static int pxp_probe(struct platform_device *pdev)
 {
 	struct pxp_dev *dev;
-	struct resource *res;
 	struct video_device *vfd;
 	int irq;
 	int ret;
@@ -1652,14 +1651,15 @@ static int pxp_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	dev->mmio = devm_ioremap_resource(&pdev->dev, res);
+	dev->mmio = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(dev->mmio))
 		return PTR_ERR(dev->mmio);
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
 		return irq;
+
+	spin_lock_init(&dev->irqlock);
 
 	ret = devm_request_threaded_irq(&pdev->dev, irq, NULL, pxp_irq_handler,
 			IRQF_ONESHOT, dev_name(&pdev->dev), dev);
@@ -1677,8 +1677,6 @@ static int pxp_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "PXP reset timeout: %d\n", ret);
 		goto err_clk;
 	}
-
-	spin_lock_init(&dev->irqlock);
 
 	ret = v4l2_device_register(&pdev->dev, &dev->v4l2_dev);
 	if (ret)
