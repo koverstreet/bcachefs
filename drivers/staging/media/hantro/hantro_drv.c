@@ -179,7 +179,7 @@ err_cancel_job:
 	hantro_job_finish_no_pm(ctx->dev, ctx, VB2_BUF_STATE_ERROR);
 }
 
-static struct v4l2_m2m_ops vpu_m2m_ops = {
+static const struct v4l2_m2m_ops vpu_m2m_ops = {
 	.device_run = device_run,
 };
 
@@ -262,9 +262,6 @@ static int hantro_try_ctrl(struct v4l2_ctrl *ctrl)
 			return -EINVAL;
 		if (sps->bit_depth_luma_minus8 != 0)
 			/* Only 8-bit is supported */
-			return -EINVAL;
-		if (sps->flags & V4L2_HEVC_SPS_FLAG_SCALING_LIST_ENABLED)
-			/* No scaling support */
 			return -EINVAL;
 	}
 	return 0;
@@ -446,6 +443,11 @@ static const struct hantro_ctrl controls[] = {
 		.codec = HANTRO_HEVC_DECODER,
 		.cfg = {
 			.id = V4L2_CID_MPEG_VIDEO_HEVC_DECODE_PARAMS,
+		},
+	}, {
+		.codec = HANTRO_HEVC_DECODER,
+		.cfg = {
+			.id = V4L2_CID_MPEG_VIDEO_HEVC_SCALING_MATRIX,
 		},
 	}, {
 		.codec = HANTRO_HEVC_DECODER,
@@ -958,7 +960,7 @@ static int hantro_probe(struct platform_device *pdev)
 	ret = clk_bulk_prepare(vpu->variant->num_clocks, vpu->clocks);
 	if (ret) {
 		dev_err(&pdev->dev, "Failed to prepare clocks\n");
-		return ret;
+		goto err_pm_disable;
 	}
 
 	ret = v4l2_device_register(&pdev->dev, &vpu->v4l2_dev);
@@ -978,7 +980,7 @@ static int hantro_probe(struct platform_device *pdev)
 	vpu->mdev.dev = vpu->dev;
 	strscpy(vpu->mdev.model, DRIVER_NAME, sizeof(vpu->mdev.model));
 	strscpy(vpu->mdev.bus_info, "platform: " DRIVER_NAME,
-		sizeof(vpu->mdev.model));
+		sizeof(vpu->mdev.bus_info));
 	media_device_init(&vpu->mdev);
 	vpu->mdev.ops = &hantro_m2m_media_ops;
 	vpu->v4l2_dev.mdev = &vpu->mdev;
@@ -1014,6 +1016,7 @@ err_v4l2_unreg:
 	v4l2_device_unregister(&vpu->v4l2_dev);
 err_clk_unprepare:
 	clk_bulk_unprepare(vpu->variant->num_clocks, vpu->clocks);
+err_pm_disable:
 	pm_runtime_dont_use_autosuspend(vpu->dev);
 	pm_runtime_disable(vpu->dev);
 	return ret;

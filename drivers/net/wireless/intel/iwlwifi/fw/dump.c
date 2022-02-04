@@ -12,6 +12,7 @@
 #include "iwl-io.h"
 #include "iwl-prph.h"
 #include "iwl-csr.h"
+#include "pnvm.h"
 
 /*
  * Note: This structure is read from the device with IO accesses,
@@ -147,6 +148,7 @@ static void iwl_fwrt_dump_umac_error_log(struct iwl_fw_runtime *fwrt)
 	struct iwl_trans *trans = fwrt->trans;
 	struct iwl_umac_error_event_table table = {};
 	u32 base = fwrt->trans->dbg.umac_error_event_table;
+	char pnvm_name[MAX_PNVM_NAME];
 
 	if (!base &&
 	    !(fwrt->trans->dbg.error_event_table_tlv_status &
@@ -162,6 +164,13 @@ static void iwl_fwrt_dump_umac_error_log(struct iwl_fw_runtime *fwrt)
 		IWL_ERR(trans, "Start IWL Error Log Dump:\n");
 		IWL_ERR(trans, "Transport status: 0x%08lX, valid: %d\n",
 			fwrt->trans->status, table.valid);
+	}
+
+	if ((table.error_id & ~FW_SYSASSERT_CPU_MASK) ==
+	    FW_SYSASSERT_PNVM_MISSING) {
+		iwl_pnvm_get_fs_name(trans, pnvm_name, sizeof(pnvm_name));
+		IWL_ERR(fwrt, "PNVM data is missing, please install %s\n",
+			pnvm_name);
 	}
 
 	IWL_ERR(fwrt, "0x%08X | %s\n", table.error_id,
@@ -214,7 +223,7 @@ static void iwl_fwrt_dump_lmac_error_log(struct iwl_fw_runtime *fwrt, u8 lmac_nu
 		/* reset the device */
 		iwl_trans_sw_reset(trans);
 
-		err = iwl_finish_nic_init(trans, trans->trans_cfg);
+		err = iwl_finish_nic_init(trans);
 		if (err)
 			return;
 	}
@@ -328,6 +337,13 @@ static void iwl_fwrt_dump_tcm_error_log(struct iwl_fw_runtime *fwrt)
 	for (i = 0; i < ARRAY_SIZE(table.sw_status); i++)
 		IWL_ERR(fwrt, "0x%08X | tcm SW status[%d]\n",
 			table.sw_status[i], i);
+
+	if (trans->trans_cfg->device_family >= IWL_DEVICE_FAMILY_BZ) {
+		u32 scratch = iwl_read32(trans, CSR_FUNC_SCRATCH);
+
+		IWL_ERR(fwrt, "Function Scratch status:\n");
+		IWL_ERR(fwrt, "0x%08X | Func Scratch\n", scratch);
+	}
 }
 
 static void iwl_fwrt_dump_iml_error_log(struct iwl_fw_runtime *fwrt)

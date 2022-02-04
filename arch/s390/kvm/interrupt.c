@@ -960,7 +960,7 @@ static int __must_check __deliver_prog(struct kvm_vcpu *vcpu)
 	/* bit 1+2 of the target are the ilc, so we can directly use ilen */
 	rc |= put_guest_lc(vcpu, ilen, (u16 *) __LC_PGM_ILC);
 	rc |= put_guest_lc(vcpu, vcpu->arch.sie_block->gbea,
-				 (u64 *) __LC_LAST_BREAK);
+				 (u64 *) __LC_PGM_LAST_BREAK);
 	rc |= put_guest_lc(vcpu, pgm_info.code,
 			   (u16 *)__LC_PGM_INT_CODE);
 	rc |= write_guest_lc(vcpu, __LC_PGM_OLD_PSW,
@@ -2113,6 +2113,13 @@ int kvm_s390_is_stop_irq_pending(struct kvm_vcpu *vcpu)
 	struct kvm_s390_local_interrupt *li = &vcpu->arch.local_int;
 
 	return test_bit(IRQ_PEND_SIGP_STOP, &li->pending_irqs);
+}
+
+int kvm_s390_is_restart_irq_pending(struct kvm_vcpu *vcpu)
+{
+	struct kvm_s390_local_interrupt *li = &vcpu->arch.local_int;
+
+	return test_bit(IRQ_PEND_RESTART, &li->pending_irqs);
 }
 
 void kvm_s390_clear_stop_irq(struct kvm_vcpu *vcpu)

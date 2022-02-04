@@ -943,7 +943,7 @@ static void vsc9959_phylink_validate(struct ocelot *ocelot, int port,
 
 	if (state->interface != PHY_INTERFACE_MODE_NA &&
 	    state->interface != ocelot_port->phy_mode) {
-		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
+		linkmode_zero(supported);
 		return;
 	}
 
@@ -965,10 +965,8 @@ static void vsc9959_phylink_validate(struct ocelot *ocelot, int port,
 		phylink_set(mask, 2500baseX_Full);
 	}
 
-	bitmap_and(supported, supported, mask,
-		   __ETHTOOL_LINK_MODE_MASK_NBITS);
-	bitmap_and(state->advertising, state->advertising, mask,
-		   __ETHTOOL_LINK_MODE_MASK_NBITS);
+	linkmode_and(supported, supported, mask);
+	linkmode_and(state->advertising, state->advertising, mask);
 }
 
 static int vsc9959_prevalidate_phy_mode(struct ocelot *ocelot, int port,
@@ -1066,7 +1064,7 @@ static int vsc9959_mdio_bus_alloc(struct ocelot *ocelot)
 		return PTR_ERR(hw);
 	}
 
-	bus = devm_mdiobus_alloc_size(dev, sizeof(*mdio_priv));
+	bus = mdiobus_alloc_size(sizeof(*mdio_priv));
 	if (!bus)
 		return -ENOMEM;
 
@@ -1086,6 +1084,7 @@ static int vsc9959_mdio_bus_alloc(struct ocelot *ocelot)
 	rc = mdiobus_register(bus);
 	if (rc < 0) {
 		dev_err(dev, "failed to register MDIO bus\n");
+		mdiobus_free(bus);
 		return rc;
 	}
 
@@ -1135,6 +1134,7 @@ static void vsc9959_mdio_bus_free(struct ocelot *ocelot)
 		lynx_pcs_destroy(pcs);
 	}
 	mdiobus_unregister(felix->imdio);
+	mdiobus_free(felix->imdio);
 }
 
 static void vsc9959_sched_speed_set(struct ocelot *ocelot, int port,

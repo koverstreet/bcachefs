@@ -41,7 +41,8 @@ phys_addr_t phys_ram_base __ro_after_init;
 EXPORT_SYMBOL(phys_ram_base);
 
 #ifdef CONFIG_XIP_KERNEL
-extern char _xiprom[], _exiprom[];
+#define phys_ram_base  (*(phys_addr_t *)XIP_FIXUP(&phys_ram_base))
+extern char _xiprom[], _exiprom[], __data_loc;
 #endif
 
 unsigned long empty_zero_page[PAGE_SIZE / sizeof(unsigned long)]
@@ -187,10 +188,10 @@ static void __init setup_bootmem(void)
 
 
 	phys_ram_end = memblock_end_of_DRAM();
-#ifndef CONFIG_64BIT
 #ifndef CONFIG_XIP_KERNEL
 	phys_ram_base = memblock_start_of_DRAM();
 #endif
+#ifndef CONFIG_64BIT
 	/*
 	 * memblock allocator is not aware of the fact that last 4K bytes of
 	 * the addressable memory can not be mapped because of IS_ERR_VALUE
@@ -454,10 +455,9 @@ static uintptr_t __init best_map_size(phys_addr_t base, phys_addr_t size)
 /* called from head.S with MMU off */
 asmlinkage void __init __copy_data(void)
 {
-	void *from = (void *)(&_sdata);
-	void *end = (void *)(&_end);
+	void *from = (void *)(&__data_loc);
 	void *to = (void *)CONFIG_PHYS_RAM_BASE;
-	size_t sz = (size_t)(end - from + 1);
+	size_t sz = (size_t)((uintptr_t)(&_end) - (uintptr_t)(&_sdata));
 
 	memcpy(to, from, sz);
 }
@@ -813,13 +813,22 @@ static void __init reserve_crashkernel(void)
 	/*
 	 * Current riscv boot protocol requires 2MB alignment for
 	 * RV64 and 4MB alignment for RV32 (hugepage size)
+	 *
+	 * Try to alloc from 32bit addressible physical memory so that
+	 * swiotlb can work on the crash kernel.
 	 */
 	crash_base = memblock_phys_alloc_range(crash_size, PMD_SIZE,
-					       search_start, search_end);
+					       search_start,
+					       min(search_end, (unsigned long) SZ_4G));
 	if (crash_base == 0) {
-		pr_warn("crashkernel: couldn't allocate %lldKB\n",
-			crash_size >> 10);
-		return;
+		/* Try again without restricting region to 32bit addressible memory */
+		crash_base = memblock_phys_alloc_range(crash_size, PMD_SIZE,
+						search_start, search_end);
+		if (crash_base == 0) {
+			pr_warn("crashkernel: couldn't allocate %lldKB\n",
+				crash_size >> 10);
+			return;
+		}
 	}
 
 	pr_info("crashkernel: reserved 0x%016llx - 0x%016llx (%lld MB)\n",

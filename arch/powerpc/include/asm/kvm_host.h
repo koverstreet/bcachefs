@@ -33,11 +33,11 @@
 
 #ifdef CONFIG_KVM_BOOK3S_HV_POSSIBLE
 #include <asm/kvm_book3s_asm.h>		/* for MAX_SMT_THREADS */
-#define KVM_MAX_VCPU_ID		(MAX_SMT_THREADS * KVM_MAX_VCORES)
+#define KVM_MAX_VCPU_IDS	(MAX_SMT_THREADS * KVM_MAX_VCORES)
 #define KVM_MAX_NESTED_GUESTS	KVMPPC_NR_LPIDS
 
 #else
-#define KVM_MAX_VCPU_ID		KVM_MAX_VCPUS
+#define KVM_MAX_VCPU_IDS	KVM_MAX_VCPUS
 #endif /* CONFIG_KVM_BOOK3S_HV_POSSIBLE */
 
 #define __KVM_HAVE_ARCH_INTC_INITIALIZED
@@ -190,7 +190,7 @@ struct kvmppc_spapr_tce_table {
 	u64 size;		/* window size in pages */
 	struct list_head iommu_tables;
 	struct mutex alloc_lock;
-	struct page *pages[0];
+	struct page *pages[];
 };
 
 /* XICS components, defined in book3s_xics.c */
@@ -814,6 +814,7 @@ struct kvm_vcpu_arch {
 
 	/* For support of nested guests */
 	struct kvm_nested_guest *nested;
+	u64 nested_hfscr;	/* HFSCR that the L1 requested for the nested guest */
 	u32 nested_vcpu_id;
 	gpa_t nested_io_gpr;
 #endif

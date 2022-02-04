@@ -1703,6 +1703,9 @@ static int hl_fw_dynamic_validate_descriptor(struct hl_device *hdev,
 		return rc;
 	}
 
+	/* here we can mark the descriptor as valid as the content has been validated */
+	fw_loader->dynamic_loader.fw_desc_valid = true;
+
 	return 0;
 }
 
@@ -1759,7 +1762,13 @@ static int hl_fw_dynamic_read_and_validate_descriptor(struct hl_device *hdev,
 		return rc;
 	}
 
-	/* extract address copy the descriptor from */
+	/*
+	 * extract address to copy the descriptor from
+	 * in addition, as the descriptor value is going to be over-ridden by new data- we mark it
+	 * as invalid.
+	 * it will be marked again as valid once validated
+	 */
+	fw_loader->dynamic_loader.fw_desc_valid = false;
 	src = hdev->pcie_bar[region->bar_id] + region->offset_in_bar +
 							response->ram_offset;
 	memcpy_fromio(fw_desc, src, sizeof(struct lkd_fw_comms_desc));
@@ -2162,18 +2171,17 @@ static void hl_fw_linux_update_state(struct hl_device *hdev,
 }
 
 /**
- * hl_fw_dynamic_report_reset_cause - send a COMMS message with the cause
- *                                    of the newly triggered hard reset
+ * hl_fw_dynamic_send_msg - send a COMMS message with attached data
  *
  * @hdev: pointer to the habanalabs device structure
  * @fw_loader: managing structure for loading device's FW
- * @reset_cause: enumerated cause for the recent hard reset
+ * @msg_type: message type
+ * @data: data to be sent
  *
  * @return 0 on success, otherwise non-zero error code
  */
-static int hl_fw_dynamic_report_reset_cause(struct hl_device *hdev,
-		struct fw_load_mgr *fw_loader,
-		enum comms_reset_cause reset_cause)
+static int hl_fw_dynamic_send_msg(struct hl_device *hdev,
+		struct fw_load_mgr *fw_loader, u8 msg_type, void *data)
 {
 	struct lkd_msg_comms msg;
 	int rc;
@@ -2181,11 +2189,20 @@ static int hl_fw_dynamic_report_reset_cause(struct hl_device *hdev,
 	memset(&msg, 0, sizeof(msg));
 
 	/* create message to be sent */
-	msg.header.type = HL_COMMS_RESET_CAUSE_TYPE;
+	msg.header.type = msg_type;
 	msg.header.size = cpu_to_le16(sizeof(struct comms_msg_header));
 	msg.header.magic = cpu_to_le32(HL_COMMS_MSG_MAGIC);
 
-	msg.reset_cause = reset_cause;
+	switch (msg_type) {
+	case HL_COMMS_RESET_CAUSE_TYPE:
+		msg.reset_cause = *(__u8 *) data;
+		break;
+	default:
+		dev_err(hdev->dev,
+			"Send COMMS message - invalid message type %u\n",
+			msg_type);
+		return -EINVAL;
+	}
 
 	rc = hl_fw_dynamic_request_descriptor(hdev, fw_loader,
 			sizeof(struct lkd_msg_comms));
@@ -2239,6 +2256,9 @@ static int hl_fw_dynamic_init_cpu(struct hl_device *hdev,
 	dev_info(hdev->dev,
 		"Loading firmware to device, may take some time...\n");
 
+	/* initialize FW descriptor as invalid */
+	fw_loader->dynamic_loader.fw_desc_valid = false;
+
 	/*
 	 * In this stage, "cpu_dyn_regs" contains only LKD's hard coded values!
 	 * It will be updated from FW after hl_fw_dynamic_request_descriptor().
@@ -2252,8 +2272,8 @@ static int hl_fw_dynamic_init_cpu(struct hl_device *hdev,
 		goto protocol_err;
 
 	if (hdev->curr_reset_cause) {
-		rc = hl_fw_dynamic_report_reset_cause(hdev, fw_loader,
-				hdev->curr_reset_cause);
+		rc = hl_fw_dynamic_send_msg(hdev, fw_loader,
+				HL_COMMS_RESET_CAUSE_TYPE, &hdev->curr_reset_cause);
 		if (rc)
 			goto protocol_err;
 
@@ -2325,7 +2345,8 @@ static int hl_fw_dynamic_init_cpu(struct hl_device *hdev,
 	return 0;
 
 protocol_err:
-	fw_read_errors(hdev, le32_to_cpu(dyn_regs->cpu_boot_err0),
+	if (fw_loader->dynamic_loader.fw_desc_valid)
+		fw_read_errors(hdev, le32_to_cpu(dyn_regs->cpu_boot_err0),
 				le32_to_cpu(dyn_regs->cpu_boot_err1),
 				le32_to_cpu(dyn_regs->cpu_boot_dev_sts0),
 				le32_to_cpu(dyn_regs->cpu_boot_dev_sts1));

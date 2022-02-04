@@ -301,7 +301,7 @@ int rtnl_unregister(int protocol, int msgtype)
 	}
 
 	link = rtnl_dereference(tab[msgindex]);
-	rcu_assign_pointer(tab[msgindex], NULL);
+	RCU_INIT_POINTER(tab[msgindex], NULL);
 	rtnl_unlock();
 
 	kfree_rcu(link, rcu);
@@ -337,7 +337,7 @@ void rtnl_unregister_all(int protocol)
 		if (!link)
 			continue;
 
-		rcu_assign_pointer(tab[msgindex], NULL);
+		RCU_INIT_POINTER(tab[msgindex], NULL);
 		kfree_rcu(link, rcu);
 	}
 	rtnl_unlock();
@@ -3204,8 +3204,8 @@ struct net_device *rtnl_create_link(struct net *net, const char *ifname,
 		dev->mtu = mtu;
 	}
 	if (tb[IFLA_ADDRESS]) {
-		memcpy(dev->dev_addr, nla_data(tb[IFLA_ADDRESS]),
-				nla_len(tb[IFLA_ADDRESS]));
+		__dev_addr_set(dev, nla_data(tb[IFLA_ADDRESS]),
+			       nla_len(tb[IFLA_ADDRESS]));
 		dev->addr_assign_type = NET_ADDR_SET;
 	}
 	if (tb[IFLA_BROADCAST])
@@ -3254,8 +3254,8 @@ static int __rtnl_newlink(struct sk_buff *skb, struct nlmsghdr *nlh,
 	struct nlattr *slave_attr[RTNL_SLAVE_MAX_TYPE + 1];
 	unsigned char name_assign_type = NET_NAME_USER;
 	struct nlattr *linkinfo[IFLA_INFO_MAX + 1];
-	const struct rtnl_link_ops *m_ops = NULL;
-	struct net_device *master_dev = NULL;
+	const struct rtnl_link_ops *m_ops;
+	struct net_device *master_dev;
 	struct net *net = sock_net(skb->sk);
 	const struct rtnl_link_ops *ops;
 	struct nlattr *tb[IFLA_MAX + 1];
@@ -3293,6 +3293,8 @@ replay:
 	else
 		dev = NULL;
 
+	master_dev = NULL;
+	m_ops = NULL;
 	if (dev) {
 		master_dev = netdev_master_upper_dev_get(dev);
 		if (master_dev)
@@ -3804,9 +3806,8 @@ struct sk_buff *rtmsg_ifinfo_build_skb(int type, struct net_device *dev,
 	struct net *net = dev_net(dev);
 	struct sk_buff *skb;
 	int err = -ENOBUFS;
-	size_t if_info_size;
 
-	skb = nlmsg_new((if_info_size = if_nlmsg_size(dev, 0)), flags);
+	skb = nlmsg_new(if_nlmsg_size(dev, 0), flags);
 	if (skb == NULL)
 		goto errout;
 
@@ -4384,7 +4385,7 @@ static int rtnl_fdb_dump(struct sk_buff *skb, struct netlink_callback *cb)
 					continue;
 
 				if (br_dev != netdev_master_upper_dev_get(dev) &&
-				    !(dev->priv_flags & IFF_EBRIDGE))
+				    !netif_is_bridge_master(dev))
 					continue;
 				cops = ops;
 			}

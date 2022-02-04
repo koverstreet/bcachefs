@@ -20,9 +20,18 @@
 	REG_L t0, _xip_fixup
 	add \reg, \reg, t0
 .endm
+.macro XIP_FIXUP_FLASH_OFFSET reg
+	la t0, __data_loc
+	REG_L t1, _xip_phys_offset
+	sub \reg, \reg, t1
+	add \reg, \reg, t0
+.endm
 _xip_fixup: .dword CONFIG_PHYS_RAM_BASE - CONFIG_XIP_PHYS_ADDR - XIP_OFFSET
+_xip_phys_offset: .dword CONFIG_XIP_PHYS_ADDR + XIP_OFFSET
 #else
 .macro XIP_FIXUP_OFFSET reg
+.endm
+.macro XIP_FIXUP_FLASH_OFFSET reg
 .endm
 #endif /* CONFIG_XIP_KERNEL */
 
@@ -267,6 +276,7 @@ pmp_done:
 	la a3, hart_lottery
 	mv a2, a3
 	XIP_FIXUP_OFFSET a2
+	XIP_FIXUP_FLASH_OFFSET a3
 	lw t1, (a3)
 	amoswap.w t0, t1, (a2)
 	/* first time here if hart_lottery in RAM is not set */
@@ -305,6 +315,7 @@ clear_bss_done:
 	XIP_FIXUP_OFFSET sp
 #ifdef CONFIG_BUILTIN_DTB
 	la a0, __dtb_start
+	XIP_FIXUP_OFFSET a0
 #else
 	mv a0, s1
 #endif /* CONFIG_BUILTIN_DTB */
@@ -318,7 +329,6 @@ clear_bss_done:
 	call setup_trap_vector
 	/* Restore C environment */
 	la tp, init_task
-	sw zero, TASK_TI_CPU(tp)
 	la sp, init_thread_union + THREAD_SIZE
 
 #ifdef CONFIG_KASAN

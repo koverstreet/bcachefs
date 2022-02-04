@@ -64,6 +64,7 @@ struct dp_srng {
 	dma_addr_t paddr;
 	int size;
 	u32 ring_id;
+	u8 cached;
 };
 
 struct dp_rxdma_ring {
@@ -170,6 +171,7 @@ struct ath11k_pdev_dp {
 #define DP_BA_WIN_SZ_MAX	256
 
 #define DP_TCL_NUM_RING_MAX	3
+#define DP_TCL_NUM_RING_MAX_QCA6390	1
 
 #define DP_IDLE_SCATTER_BUFS_MAX 16
 
@@ -195,6 +197,7 @@ struct ath11k_pdev_dp {
 #define DP_RXDMA_MONITOR_DESC_RING_SIZE	4096
 
 #define DP_RX_BUFFER_SIZE	2048
+#define	DP_RX_BUFFER_SIZE_LITE  1024
 #define DP_RX_BUFFER_ALIGN_SIZE	128
 
 #define DP_RXDMA_BUF_COOKIE_BUF_ID	GENMASK(17, 0)
@@ -515,7 +518,8 @@ struct htt_ppdu_stats_cfg_cmd {
 } __packed;
 
 #define HTT_PPDU_STATS_CFG_MSG_TYPE		GENMASK(7, 0)
-#define HTT_PPDU_STATS_CFG_PDEV_ID		GENMASK(15, 8)
+#define HTT_PPDU_STATS_CFG_SOC_STATS		BIT(8)
+#define HTT_PPDU_STATS_CFG_PDEV_ID		GENMASK(15, 9)
 #define HTT_PPDU_STATS_CFG_TLV_TYPE_BITMASK	GENMASK(31, 16)
 
 enum htt_ppdu_stats_tag_type {
@@ -1591,6 +1595,13 @@ struct ath11k_htt_extd_stats_msg {
 	u32 info1;
 	u8 data[0];
 } __packed;
+
+#define	HTT_MAC_ADDR_L32_0	GENMASK(7, 0)
+#define	HTT_MAC_ADDR_L32_1	GENMASK(15, 8)
+#define	HTT_MAC_ADDR_L32_2	GENMASK(23, 16)
+#define	HTT_MAC_ADDR_L32_3	GENMASK(31, 24)
+#define	HTT_MAC_ADDR_H16_0	GENMASK(7, 0)
+#define	HTT_MAC_ADDR_H16_1	GENMASK(15, 8)
 
 struct htt_mac_addr {
 	u32 mac_addr_l32;

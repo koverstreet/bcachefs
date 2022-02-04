@@ -50,9 +50,11 @@
 #include "fs_core.h"
 #include "lib/mlx5.h"
 #include "lib/devcom.h"
+#include "lib/vxlan.h"
 #define CREATE_TRACE_POINTS
 #include "diag/en_rep_tracepoint.h"
 #include "en_accel/ipsec.h"
+#include "en/tc/int_port.h"
 
 #define MLX5E_REP_PARAMS_DEF_LOG_SQ_SIZE \
 	max(0x7, MLX5E_PARAMS_MINIMUM_LOG_SQ_SIZE)
@@ -793,7 +795,6 @@ int mlx5e_rep_bond_update(struct mlx5e_priv *priv, bool cleanup)
 static int mlx5e_init_rep_rx(struct mlx5e_priv *priv)
 {
 	struct mlx5_core_dev *mdev = priv->mdev;
-	struct mlx5e_lro_param lro_param;
 	int err;
 
 	priv->rx_res = mlx5e_rx_res_alloc();
@@ -808,9 +809,9 @@ static int mlx5e_init_rep_rx(struct mlx5e_priv *priv)
 		return err;
 	}
 
-	lro_param = mlx5e_get_lro_param(&priv->channels.params);
 	err = mlx5e_rx_res_init(priv->rx_res, priv->mdev, 0,
-				priv->max_nch, priv->drop_rq.rqn, &lro_param,
+				priv->max_nch, priv->drop_rq.rqn,
+				&priv->channels.params.packet_merge,
 				priv->channels.params.num_channels);
 	if (err)
 		goto err_close_drop_rq;
@@ -858,12 +859,22 @@ static void mlx5e_cleanup_rep_rx(struct mlx5e_priv *priv)
 
 static int mlx5e_init_ul_rep_rx(struct mlx5e_priv *priv)
 {
+	int err;
+
 	mlx5e_create_q_counters(priv);
-	return mlx5e_init_rep_rx(priv);
+	err = mlx5e_init_rep_rx(priv);
+	if (err)
+		goto out;
+
+	mlx5e_tc_int_port_init_rep_rx(priv);
+
+out:
+	return err;
 }
 
 static void mlx5e_cleanup_ul_rep_rx(struct mlx5e_priv *priv)
 {
+	mlx5e_tc_int_port_cleanup_rep_rx(priv);
 	mlx5e_cleanup_rep_rx(priv);
 	mlx5e_destroy_q_counters(priv);
 }
@@ -1017,6 +1028,7 @@ static void mlx5e_uplink_rep_enable(struct mlx5e_priv *priv)
 	rtnl_lock();
 	if (netif_running(netdev))
 		mlx5e_open(netdev);
+	udp_tunnel_nic_reset_ntf(priv->netdev);
 	netif_device_attach(netdev);
 	rtnl_unlock();
 }
@@ -1038,6 +1050,7 @@ static void mlx5e_uplink_rep_disable(struct mlx5e_priv *priv)
 	mlx5_notifier_unregister(mdev, &priv->events_nb);
 	mlx5e_rep_tc_disable(priv);
 	mlx5_lag_remove_netdev(mdev, priv->netdev);
+	mlx5_vxlan_reset_to_default(mdev->vxlan);
 }
 
 static MLX5E_DEFINE_STATS_GRP(sw_rep, 0);
@@ -1070,6 +1083,10 @@ static mlx5e_stats_grp_t mlx5e_ul_rep_stats_grps[] = {
 	&MLX5E_STATS_GRP(pme),
 	&MLX5E_STATS_GRP(channels),
 	&MLX5E_STATS_GRP(per_port_buff_congest),
+#ifdef CONFIG_MLX5_EN_IPSEC
+	&MLX5E_STATS_GRP(ipsec_sw),
+	&MLX5E_STATS_GRP(ipsec_hw),
+#endif
 };
 
 static unsigned int mlx5e_ul_rep_stats_grps_num(struct mlx5e_priv *priv)

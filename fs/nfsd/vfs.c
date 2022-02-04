@@ -244,6 +244,7 @@ out_nfserr:
  * returned. Otherwise the covered directory is returned.
  * NOTE: this mountpoint crossing is not supported properly by all
  *   clients and is explicitly disallowed for NFSv3
+ *      NeilBrown <neilb@cse.unsw.edu.au>
  */
 __be32
 nfsd_lookup(struct svc_rqst *rqstp, struct svc_fh *fhp, const char *name,
@@ -432,6 +433,10 @@ nfsd_setattr(struct svc_rqst *rqstp, struct svc_fh *fhp, struct iattr *iap,
 			.ia_valid	= ATTR_SIZE | ATTR_CTIME | ATTR_MTIME,
 			.ia_size	= iap->ia_size,
 		};
+
+		host_err = -EFBIG;
+		if (iap->ia_size < 0)
+			goto out_unlock;
 
 		host_err = notify_change(&init_user_ns, dentry, &size_attr, NULL);
 		if (host_err)
@@ -729,9 +734,6 @@ __nfsd_open(struct svc_rqst *rqstp, struct svc_fh *fhp, umode_t type,
 	path.dentry = fhp->fh_dentry;
 	inode = d_inode(path.dentry);
 
-	/* Disallow write access to files with the append-only bit set
-	 * or any access when mandatory locking enabled
-	 */
 	err = nfserr_perm;
 	if (IS_APPEND(inode) && (may_flags & NFSD_MAY_WRITE))
 		goto out;
@@ -989,6 +991,10 @@ nfsd_vfs_write(struct svc_rqst *rqstp, struct svc_fh *fhp, struct nfsd_file *nf,
 	iov_iter_kvec(&iter, WRITE, vec, vlen, *cnt);
 	if (flags & RWF_SYNC) {
 		down_write(&nf->nf_rwsem);
+		if (verf)
+			nfsd_copy_boot_verifier(verf,
+					net_generic(SVC_NET(rqstp),
+					nfsd_net_id));
 		host_err = vfs_iter_write(file, &iter, &pos, flags);
 		if (host_err < 0)
 			nfsd_reset_boot_verifier(net_generic(SVC_NET(rqstp),
@@ -1410,7 +1416,8 @@ do_nfsd_create(struct svc_rqst *rqstp, struct svc_fh *fhp,
 
 	if (nfsd_create_is_exclusive(createmode)) {
 		/* solaris7 gets confused (bugid 4218508) if these have
-		 * the high bit set, so just clear the high bits. If this is
+		 * the high bit set, as do xfs filesystems without the
+		 * "bigtime" feature.  So just clear the high bits. If this is
 		 * ever changed to use different attrs for storing the
 		 * verifier, then do_open_lookup() will also need to be fixed
 		 * accordingly.

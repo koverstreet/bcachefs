@@ -584,7 +584,7 @@ static int bcm_sf2_mdio_register(struct dsa_switch *ds)
 	get_device(&priv->master_mii_bus->dev);
 	priv->master_mii_dn = dn;
 
-	priv->slave_mii_bus = devm_mdiobus_alloc(ds->dev);
+	priv->slave_mii_bus = mdiobus_alloc();
 	if (!priv->slave_mii_bus) {
 		of_node_put(dn);
 		return -ENOMEM;
@@ -644,8 +644,10 @@ static int bcm_sf2_mdio_register(struct dsa_switch *ds)
 	}
 
 	err = mdiobus_register(priv->slave_mii_bus);
-	if (err && dn)
+	if (err && dn) {
+		mdiobus_free(priv->slave_mii_bus);
 		of_node_put(dn);
+	}
 
 	return err;
 }
@@ -653,6 +655,7 @@ static int bcm_sf2_mdio_register(struct dsa_switch *ds)
 static void bcm_sf2_mdio_unregister(struct bcm_sf2_priv *priv)
 {
 	mdiobus_unregister(priv->slave_mii_bus);
+	mdiobus_free(priv->slave_mii_bus);
 	of_node_put(priv->master_mii_dn);
 }
 
@@ -667,7 +670,9 @@ static u32 bcm_sf2_sw_get_phy_flags(struct dsa_switch *ds, int port)
 	if (priv->int_phy_mask & BIT(port))
 		return priv->hw_params.gphy_rev;
 	else
-		return 0;
+		return PHY_BRCM_AUTO_PWRDWN_ENABLE |
+		       PHY_BRCM_DIS_TXCRXC_NOENRGY |
+		       PHY_BRCM_IDDQ_SUSPEND;
 }
 
 static void bcm_sf2_sw_validate(struct dsa_switch *ds, int port,
@@ -683,7 +688,7 @@ static void bcm_sf2_sw_validate(struct dsa_switch *ds, int port,
 	    state->interface != PHY_INTERFACE_MODE_GMII &&
 	    state->interface != PHY_INTERFACE_MODE_INTERNAL &&
 	    state->interface != PHY_INTERFACE_MODE_MOCA) {
-		bitmap_zero(supported, __ETHTOOL_LINK_MODE_MASK_NBITS);
+		linkmode_zero(supported);
 		if (port != core_readl(priv, CORE_IMP0_PRT_ID))
 			dev_err(ds->dev,
 				"Unsupported interface: %d for port %d\n",
@@ -711,10 +716,8 @@ static void bcm_sf2_sw_validate(struct dsa_switch *ds, int port,
 	phylink_set(mask, 100baseT_Half);
 	phylink_set(mask, 100baseT_Full);
 
-	bitmap_and(supported, supported, mask,
-		   __ETHTOOL_LINK_MODE_MASK_NBITS);
-	bitmap_and(state->advertising, state->advertising, mask,
-		   __ETHTOOL_LINK_MODE_MASK_NBITS);
+	linkmode_and(supported, supported, mask);
+	linkmode_and(state->advertising, state->advertising, mask);
 }
 
 static void bcm_sf2_sw_mac_config(struct dsa_switch *ds, int port,

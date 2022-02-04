@@ -91,6 +91,33 @@ enum {
 	MCU_EVENT_COREDUMP = 0xf0,
 };
 
+struct mt7921_mcu_tx_done_event {
+	u8 pid;
+	u8 status;
+	__le16 seq;
+
+	u8 wlan_idx;
+	u8 tx_cnt;
+	__le16 tx_rate;
+
+	u8 flag;
+	u8 tid;
+	u8 rsp_rate;
+	u8 mcs;
+
+	u8 bw;
+	u8 tx_pwr;
+	u8 reason;
+	u8 rsv0[1];
+
+	__le32 delay;
+	__le32 timestamp;
+	__le32 applied_flag;
+	u8 txs[28];
+
+	u8 rsv1[32];
+} __packed;
+
 /* ext event table */
 enum {
 	MCU_EXT_EVENT_RATE_REPORT = 0x87,
@@ -259,25 +286,6 @@ struct mt7921_mcu_ant_id_config {
 	u8 ant_id[4];
 } __packed;
 
-struct mt7921_mcu_peer_cap {
-	struct mt7921_mcu_ant_id_config ant_id_config;
-
-	u8 power_offset;
-	u8 bw_selector;
-	u8 change_bw_rate_n;
-	u8 bw;
-	u8 spe_idx;
-
-	u8 g2;
-	u8 g4;
-	u8 g8;
-	u8 g16;
-
-	u8 mmss;
-	u8 ampdu_factor;
-	u8 rsv[1];
-} __packed;
-
 struct mt7921_txpwr_req {
 	u8 ver;
 	u8 action;
@@ -293,31 +301,29 @@ struct mt7921_txpwr_event {
 	struct mt7921_txpwr txpwr;
 } __packed;
 
-struct mt7921_mcu_tx_done_event {
-	u8 pid;
-	u8 status;
-	u16 seq;
+enum {
+	TM_SWITCH_MODE,
+	TM_SET_AT_CMD,
+	TM_QUERY_AT_CMD,
+};
 
-	u8 wlan_idx;
-	u8 tx_cnt;
-	u16 tx_rate;
+enum {
+	MT7921_TM_NORMAL,
+	MT7921_TM_TESTMODE,
+	MT7921_TM_ICAP,
+	MT7921_TM_ICAP_OVERLAP,
+	MT7921_TM_WIFISPECTRUM,
+};
 
-	u8 flag;
-	u8 tid;
-	u8 rsp_rate;
-	u8 mcs;
+struct mt7921_rftest_cmd {
+	u8 action;
+	u8 rsv[3];
+	__le32 param0;
+	__le32 param1;
+} __packed;
 
-	u8 bw;
-	u8 tx_pwr;
-	u8 reason;
-	u8 rsv0[1];
-
-	u32 delay;
-	u32 timestamp;
-	u32 applied_flag;
-
-	u8 txs[28];
-
-	u8 rsv1[32];
+struct mt7921_rftest_evt {
+	__le32 param0;
+	__le32 param1;
 } __packed;
 #endif
