@@ -50,11 +50,6 @@ static inline struct btree *btree_node_parent(struct btree_path *path,
 	return btree_path_node(path, b->c.level + 1);
 }
 
-static inline int btree_iter_err(const struct btree_iter *iter)
-{
-	return iter->flags & BTREE_ITER_ERROR ? -EIO : 0;
-}
-
 /* Iterate over paths within a transaction: */
 
 static inline struct btree_path *
