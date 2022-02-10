@@ -483,7 +483,7 @@ static int bch2_mark_alloc(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct bkey_alloc_unpacked old_u = bch2_alloc_unpack(old);
 	struct bkey_alloc_unpacked new_u = bch2_alloc_unpack(new);
-	struct bch_dev *ca;
+	struct bch_dev *ca = bch_dev_bkey_exists(c, new_u.dev);
 	struct bucket *g;
 	struct bucket_mark old_m, m;
 	int ret = 0;
@@ -536,7 +536,10 @@ static int bch2_mark_alloc(struct btree_trans *trans,
 	    !new_u.journal_seq)
 		bch2_do_discards(c);
 
-	ca = bch_dev_bkey_exists(c, new_u.dev);
+	if (!old_u.data_type &&
+	    new_u.data_type &&
+	    should_invalidate_buckets(ca))
+		bch2_do_invalidates(c);
 
 	if (new_u.bucket >= ca->mi.nbuckets)
 		return 0;
