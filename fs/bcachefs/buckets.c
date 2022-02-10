@@ -531,6 +531,11 @@ static int bch2_mark_alloc(struct btree_trans *trans,
 	    (!new_u.journal_seq || new_u.journal_seq < c->journal.flushed_seq_ondisk))
 		closure_wake_up(&c->freelist_wait);
 
+	if ((flags & BTREE_TRIGGER_INSERT) &&
+	    new_u.need_discard &&
+	    !new_u.journal_seq)
+		bch2_do_discards(c);
+
 	ca = bch_dev_bkey_exists(c, new_u.dev);
 
 	if (new_u.bucket >= ca->mi.nbuckets)

@@ -516,6 +516,92 @@ int bch2_trans_mark_alloc(struct btree_trans *trans,
 	return 0;
 }
 
+static int bch2_clear_need_discard(struct btree_trans *trans, struct bpos pos)
+{
+	struct bch_fs *c = trans->c;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	struct bkey_alloc_unpacked a;
+	int ret;
+
+	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc, pos,
+			     BTREE_ITER_CACHED);
+	k = bch2_btree_iter_peek_slot(&iter);
+	ret = bkey_err(k);
+	if (ret)
+		goto out;
+
+	a = bch2_alloc_unpack(k);
+	BUG_ON(!a.need_discard || a.journal_seq > c->journal.flushed_seq_ondisk);
+
+	a.need_discard = false;
+	ret = bch2_alloc_write(trans, &iter, &a, 0);
+out:
+	bch2_trans_iter_exit(trans, &iter);
+	return ret;
+}
+
+static void bch2_do_discards_work(struct work_struct *work)
+{
+	struct bch_fs *c = container_of(work, struct bch_fs, discard_work);
+	struct bch_dev *ca = NULL;
+	struct btree_trans trans;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret;
+
+	bch2_trans_init(&trans, c, 0, 0);
+
+	for_each_btree_key(&trans, iter, BTREE_ID_need_discard,
+			   POS_MIN, 0, k, ret) {
+		if (ca && k.k->p.inode != ca->dev_idx) {
+			percpu_ref_put(&ca->io_ref);
+			ca = NULL;
+		}
+
+		if (!ca) {
+			ca = bch_dev_bkey_exists(c, k.k->p.inode);
+			if (!percpu_ref_tryget(&ca->io_ref)) {
+				ca = NULL;
+				bch2_btree_iter_set_pos(&iter, POS(k.k->p.inode + 1, 0));
+				continue;
+			}
+		}
+
+		if (bch2_bucket_needs_journal_commit(&c->buckets_waiting_for_journal,
+				c->journal.flushed_seq_ondisk,
+				k.k->p.inode, k.k->p.offset))
+			continue;
+
+		bch2_trans_unlock(&trans);
+
+		/* XXX explain synchronization */
+		blkdev_issue_discard(ca->disk_sb.bdev,
+				     k.k->p.offset * ca->mi.bucket_size,
+				     ca->mi.bucket_size,
+				     GFP_KERNEL, 0);
+
+		ret = __bch2_trans_do(&trans, NULL, NULL, 0,
+				bch2_clear_need_discard(&trans, k.k->p));
+		if (ret)
+			break;
+	}
+	bch2_trans_iter_exit(&trans, &iter);
+
+	if (ca)
+		percpu_ref_put(&ca->io_ref);
+
+	bch2_trans_exit(&trans);
+	percpu_ref_put(&c->writes);
+}
+
+void bch2_do_discards(struct bch_fs *c)
+{
+	if (percpu_ref_tryget(&c->writes) &&
+	    !queue_work(system_long_wq, &c->discard_work))
+		percpu_ref_put(&c->writes);
+}
+
 static int bch2_dev_freespace_init(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct btree_trans trans;
@@ -806,4 +892,5 @@ void bch2_dev_allocator_add(struct bch_fs *c, struct bch_dev *ca)
 void bch2_fs_allocator_background_init(struct bch_fs *c)
 {
 	spin_lock_init(&c->freelist_lock);
+	INIT_WORK(&c->discard_work, bch2_do_discards_work);
 }
