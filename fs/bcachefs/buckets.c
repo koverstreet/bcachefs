@@ -543,6 +543,11 @@ int bch2_mark_alloc(struct btree_trans *trans,
 	    !new_u.journal_seq)
 		bch2_do_discards(c);
 
+	if (!old_u.data_type &&
+	    new_u.data_type &&
+	    should_invalidate_buckets(ca))
+		bch2_do_invalidates(c);
+
 	if (bucket_state(new_u) == BUCKET_need_gc_gens) {
 		atomic_inc(&c->kick_gc);
 		wake_up_process(c->gc_thread);
