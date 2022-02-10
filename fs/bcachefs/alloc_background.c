@@ -484,7 +484,6 @@ int bch2_trans_mark_alloc(struct btree_trans *trans,
 
 	if (old_u.data_type && !new_u.data_type &&
 	    old_u.gen == new_u.gen &&
-	    !bch2_bucket_is_open(c, new->k.p.inode, new->k.p.offset) &&
 	    !bch2_bucket_is_open_safe(c, new->k.p.inode, new->k.p.offset)) {
 		new_u.gen++;
 		new_u.need_inc_gen = false;
@@ -519,6 +518,122 @@ int bch2_trans_mark_alloc(struct btree_trans *trans,
 		bch2_alloc_pack_v3((void *) new, new_u);
 
 	return 0;
+}
+
+static int bch2_clear_need_discard(struct btree_trans *trans, struct bpos pos,
+				   struct bch_dev *ca, bool *discard_done)
+{
+	struct bch_fs *c = trans->c;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	struct bkey_alloc_unpacked a;
+	struct printbuf buf = PRINTBUF;
+	int ret;
+
+	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc, pos,
+			     BTREE_ITER_CACHED);
+	k = bch2_btree_iter_peek_slot(&iter);
+	ret = bkey_err(k);
+	if (ret)
+		goto out;
+
+	a = bch2_alloc_unpack(k);
+
+	if (a.need_inc_gen) {
+		a.gen++;
+		a.need_inc_gen = false;
+		goto write;
+	}
+
+	BUG_ON(a.journal_seq > c->journal.flushed_seq_ondisk);
+
+	if (bch2_fs_inconsistent_on(!a.need_discard, c,
+			"%s\n  incorrectly set in need_discard btree",
+			(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
+		ret = -EIO;
+		goto out;
+	}
+
+	if (!*discard_done && ca->mi.discard && !c->opts.nochanges) {
+		/*
+		 * This works without any other locks because this is the only
+		 * thread that removes items from the need_discard tree
+		 */
+		bch2_trans_unlock(trans);
+		blkdev_issue_discard(ca->disk_sb.bdev,
+				     k.k->p.offset * ca->mi.bucket_size,
+				     ca->mi.bucket_size,
+				     GFP_KERNEL, 0);
+		*discard_done = true;
+
+		ret = bch2_trans_relock(trans);
+		if (ret)
+			goto out;
+	}
+
+	a.need_discard = false;
+write:
+	ret = bch2_alloc_write(trans, &iter, &a, 0);
+out:
+	bch2_trans_iter_exit(trans, &iter);
+	printbuf_exit(&buf);
+	return ret;
+}
+
+static void bch2_do_discards_work(struct work_struct *work)
+{
+	struct bch_fs *c = container_of(work, struct bch_fs, discard_work);
+	struct bch_dev *ca = NULL;
+	struct btree_trans trans;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret;
+
+	bch2_trans_init(&trans, c, 0, 0);
+
+	for_each_btree_key(&trans, iter, BTREE_ID_need_discard,
+			   POS_MIN, 0, k, ret) {
+		bool discard_done = false;
+
+		if (ca && k.k->p.inode != ca->dev_idx) {
+			percpu_ref_put(&ca->io_ref);
+			ca = NULL;
+		}
+
+		if (!ca) {
+			ca = bch_dev_bkey_exists(c, k.k->p.inode);
+			if (!percpu_ref_tryget(&ca->io_ref)) {
+				ca = NULL;
+				bch2_btree_iter_set_pos(&iter, POS(k.k->p.inode + 1, 0));
+				continue;
+			}
+		}
+
+		if (bch2_bucket_needs_journal_commit(&c->buckets_waiting_for_journal,
+				c->journal.flushed_seq_ondisk,
+				k.k->p.inode, k.k->p.offset) ||
+		    bch2_bucket_is_open_safe(c, k.k->p.inode, k.k->p.offset))
+			continue;
+
+		ret = __bch2_trans_do(&trans, NULL, NULL, 0,
+				bch2_clear_need_discard(&trans, k.k->p, ca, &discard_done));
+		if (ret)
+			break;
+	}
+	bch2_trans_iter_exit(&trans, &iter);
+
+	if (ca)
+		percpu_ref_put(&ca->io_ref);
+
+	bch2_trans_exit(&trans);
+	percpu_ref_put(&c->writes);
+}
+
+void bch2_do_discards(struct bch_fs *c)
+{
+	if (percpu_ref_tryget(&c->writes) &&
+	    !queue_work(system_long_wq, &c->discard_work))
+		percpu_ref_put(&c->writes);
 }
 
 static int bch2_dev_freespace_init(struct bch_fs *c, struct bch_dev *ca)
@@ -811,4 +926,5 @@ void bch2_dev_allocator_add(struct bch_fs *c, struct bch_dev *ca)
 void bch2_fs_allocator_background_init(struct bch_fs *c)
 {
 	spin_lock_init(&c->freelist_lock);
+	INIT_WORK(&c->discard_work, bch2_do_discards_work);
 }
