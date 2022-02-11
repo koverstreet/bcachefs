@@ -279,24 +279,24 @@ bch2_fs_usage_read_short(struct bch_fs *c)
 	return ret;
 }
 
-static inline int is_unavailable_bucket(struct bucket_mark m)
+static inline int is_unavailable_bucket(struct bkey_alloc_unpacked a)
 {
-	return !is_available_bucket(m);
+	return a.dirty_sectors || a.stripe;
 }
 
 static inline int bucket_sectors_fragmented(struct bch_dev *ca,
-					    struct bucket_mark m)
+					    struct bkey_alloc_unpacked a)
 {
-	return m.dirty_sectors
-		? max(0, (int) ca->mi.bucket_size - (int) m.dirty_sectors)
+	return a.dirty_sectors
+		? max(0, (int) ca->mi.bucket_size - (int) a.dirty_sectors)
 		: 0;
 }
 
-static inline enum bch_data_type bucket_type(struct bucket_mark m)
+static inline enum bch_data_type bucket_type(struct bkey_alloc_unpacked a)
 {
-	return m.cached_sectors && !m.dirty_sectors
+	return a.cached_sectors && !a.dirty_sectors
 		? BCH_DATA_cached
-		: m.data_type;
+		: a.data_type;
 }
 
 static inline void account_bucket(struct bch_fs_usage *fs_usage,
@@ -311,7 +311,8 @@ static inline void account_bucket(struct bch_fs_usage *fs_usage,
 }
 
 static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
-				  struct bucket_mark old, struct bucket_mark new,
+				  struct bkey_alloc_unpacked old,
+				  struct bkey_alloc_unpacked new,
 				  u64 journal_seq, bool gc)
 {
 	struct bch_fs_usage *fs_usage;
@@ -342,6 +343,28 @@ static void bch2_dev_usage_update(struct bch_fs *c, struct bch_dev *ca,
 	u->d[new.data_type].fragmented += bucket_sectors_fragmented(ca, new);
 
 	preempt_enable();
+}
+
+static void bch2_dev_usage_update_m(struct bch_fs *c, struct bch_dev *ca,
+				    struct bucket_mark old, struct bucket_mark new,
+				    u64 journal_seq, bool gc)
+{
+	struct bkey_alloc_unpacked old_a = {
+		.gen		= old.gen,
+		.data_type	= old.data_type,
+		.dirty_sectors	= old.dirty_sectors,
+		.cached_sectors	= old.cached_sectors,
+		.stripe		= old.stripe,
+	};
+	struct bkey_alloc_unpacked new_a = {
+		.gen		= new.gen,
+		.data_type	= new.data_type,
+		.dirty_sectors	= new.dirty_sectors,
+		.cached_sectors	= new.cached_sectors,
+		.stripe		= new.stripe,
+	};
+
+	bch2_dev_usage_update(c, ca, old_a, new_a, journal_seq, gc);
 }
 
 static inline int __update_replicas(struct bch_fs *c,
@@ -557,6 +580,8 @@ int bch2_mark_alloc(struct btree_trans *trans,
 	if (!gc && new_u.gen != old_u.gen)
 		*bucket_gen(ca, new_u.bucket) = new_u.gen;
 
+	bch2_dev_usage_update(c, ca, old_u, new_u, journal_seq, gc);
+
 	g = __bucket(ca, new_u.bucket, gc);
 
 	old_m = bucket_cmpxchg(g, m, ({
@@ -566,8 +591,6 @@ int bch2_mark_alloc(struct btree_trans *trans,
 		m.cached_sectors	= new_u.cached_sectors;
 		m.stripe		= new_u.stripe != 0;
 	}));
-
-	bch2_dev_usage_update(c, ca, old_m, m, journal_seq, gc);
 
 	g->io_time[READ]	= new_u.read_time;
 	g->io_time[WRITE]	= new_u.write_time;
@@ -646,7 +669,7 @@ void bch2_mark_metadata_bucket(struct bch_fs *c, struct bch_dev *ca,
 		bch2_data_types[old.data_type ?: data_type],
 		old.dirty_sectors, sectors);
 
-	bch2_dev_usage_update(c, ca, old, new, 0, true);
+	bch2_dev_usage_update_m(c, ca, old, new, 0, true);
 	percpu_up_read(&c->mark_lock);
 }
 
@@ -805,7 +828,7 @@ static int mark_stripe_bucket(struct btree_trans *trans,
 	g->stripe		= k.k->p.offset;
 	g->stripe_redundancy	= s->nr_redundant;
 
-	bch2_dev_usage_update(c, ca, old, new, journal_seq, true);
+	bch2_dev_usage_update_m(c, ca, old, new, journal_seq, true);
 err:
 	percpu_up_read(&c->mark_lock);
 	printbuf_exit(&buf);
@@ -878,7 +901,7 @@ static int bch2_mark_pointer(struct btree_trans *trans,
 			      old.v.counter,
 			      new.v.counter)) != old.v.counter);
 
-	bch2_dev_usage_update(c, ca, old, new, journal_seq, true);
+	bch2_dev_usage_update_m(c, ca, old, new, journal_seq, true);
 err:
 	percpu_up_read(&c->mark_lock);
 
