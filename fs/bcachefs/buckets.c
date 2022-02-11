@@ -509,8 +509,6 @@ int bch2_mark_alloc(struct btree_trans *trans,
 	struct bkey_alloc_unpacked old_u = bch2_alloc_unpack(old);
 	struct bkey_alloc_unpacked new_u = bch2_alloc_unpack(new);
 	struct bch_dev *ca = bch_dev_bkey_exists(c, new_u.dev);
-	struct bucket *g;
-	struct bucket_mark old_m, m;
 	int ret = 0;
 
 	if (bch2_trans_inconsistent_on(new_u.bucket < ca->mi.first_bucket ||
@@ -582,21 +580,22 @@ int bch2_mark_alloc(struct btree_trans *trans,
 
 	bch2_dev_usage_update(c, ca, old_u, new_u, journal_seq, gc);
 
-	g = __bucket(ca, new_u.bucket, gc);
+	if (gc) {
+		struct bucket_mark old_m, m;
+		struct bucket *g = gc_bucket(ca, new_u.bucket);
 
-	old_m = bucket_cmpxchg(g, m, ({
-		m.gen			= new_u.gen;
-		m.data_type		= new_u.data_type;
-		m.dirty_sectors		= new_u.dirty_sectors;
-		m.cached_sectors	= new_u.cached_sectors;
-		m.stripe		= new_u.stripe != 0;
-	}));
+		old_m = bucket_cmpxchg(g, m, ({
+			m.gen			= new_u.gen;
+			m.data_type		= new_u.data_type;
+			m.dirty_sectors		= new_u.dirty_sectors;
+			m.cached_sectors	= new_u.cached_sectors;
+			m.stripe		= new_u.stripe != 0;
+		}));
 
-	g->io_time[READ]	= new_u.read_time;
-	g->io_time[WRITE]	= new_u.write_time;
-	g->gen_valid		= 1;
-	g->stripe		= new_u.stripe;
-	g->stripe_redundancy	= new_u.stripe_redundancy;
+		g->gen_valid		= 1;
+		g->stripe		= new_u.stripe;
+		g->stripe_redundancy	= new_u.stripe_redundancy;
+	}
 	percpu_up_read(&c->mark_lock);
 
 	/*
@@ -605,9 +604,9 @@ int bch2_mark_alloc(struct btree_trans *trans,
 	 */
 
 	if ((flags & BTREE_TRIGGER_BUCKET_INVALIDATE) &&
-	    old_m.cached_sectors) {
+	    old_u.cached_sectors) {
 		ret = update_cached_sectors(c, new, ca->dev_idx,
-					    -old_m.cached_sectors,
+					    -old_u.cached_sectors,
 					    journal_seq, gc);
 		if (ret) {
 			bch2_fs_fatal_error(c, "bch2_mark_alloc(): no replicas entry while updating cached sectors");
@@ -615,7 +614,7 @@ int bch2_mark_alloc(struct btree_trans *trans,
 		}
 
 		trace_invalidate(ca, bucket_to_sector(ca, new_u.bucket),
-				 old_m.cached_sectors);
+				 old_u.cached_sectors);
 	}
 
 	return 0;
@@ -2061,16 +2060,6 @@ recalculate:
 
 /* Startup/shutdown: */
 
-static void buckets_free_rcu(struct rcu_head *rcu)
-{
-	struct bucket_array *buckets =
-		container_of(rcu, struct bucket_array, rcu);
-
-	kvpfree(buckets,
-		sizeof(*buckets) +
-		buckets->nbuckets * sizeof(struct bucket));
-}
-
 static void bucket_gens_free_rcu(struct rcu_head *rcu)
 {
 	struct bucket_gens *buckets =
@@ -2081,16 +2070,12 @@ static void bucket_gens_free_rcu(struct rcu_head *rcu)
 
 int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 {
-	struct bucket_array *buckets = NULL, *old_buckets = NULL;
 	struct bucket_gens *bucket_gens = NULL, *old_bucket_gens = NULL;
 	unsigned long *buckets_nouse = NULL;
-	bool resize = ca->buckets[0] != NULL;
+	bool resize = ca->bucket_gens != NULL;
 	int ret = -ENOMEM;
 
-	if (!(buckets		= kvpmalloc(sizeof(struct bucket_array) +
-					    nbuckets * sizeof(struct bucket),
-					    GFP_KERNEL|__GFP_ZERO)) ||
-	    !(bucket_gens	= kvpmalloc(sizeof(struct bucket_gens) + nbuckets,
+	if (!(bucket_gens	= kvpmalloc(sizeof(struct bucket_gens) + nbuckets,
 					    GFP_KERNEL|__GFP_ZERO)) ||
 	    (c->opts.buckets_nouse &&
 	     !(buckets_nouse	= kvpmalloc(BITS_TO_LONGS(nbuckets) *
@@ -2098,8 +2083,6 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 					    GFP_KERNEL|__GFP_ZERO))))
 		goto err;
 
-	buckets->first_bucket	= ca->mi.first_bucket;
-	buckets->nbuckets	= nbuckets;
 	bucket_gens->first_bucket = ca->mi.first_bucket;
 	bucket_gens->nbuckets	= nbuckets;
 
@@ -2111,15 +2094,11 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 		percpu_down_write(&c->mark_lock);
 	}
 
-	old_buckets = bucket_array(ca);
 	old_bucket_gens = rcu_dereference_protected(ca->bucket_gens, 1);
 
 	if (resize) {
-		size_t n = min(buckets->nbuckets, old_buckets->nbuckets);
+		size_t n = min(bucket_gens->nbuckets, old_bucket_gens->nbuckets);
 
-		memcpy(buckets->b,
-		       old_buckets->b,
-		       n * sizeof(struct bucket));
 		memcpy(bucket_gens->b,
 		       old_bucket_gens->b,
 		       n);
@@ -2129,22 +2108,18 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 			       BITS_TO_LONGS(n) * sizeof(unsigned long));
 	}
 
-	rcu_assign_pointer(ca->buckets[0], buckets);
 	rcu_assign_pointer(ca->bucket_gens, bucket_gens);
-	buckets		= old_buckets;
 	bucket_gens	= old_bucket_gens;
 
 	swap(ca->buckets_nouse, buckets_nouse);
 
-	if (resize) {
-		percpu_up_write(&c->mark_lock);
-		up_write(&c->gc_lock);
-	}
-
 	nbuckets = ca->mi.nbuckets;
 
-	if (resize)
+	if (resize) {
+		percpu_up_write(&c->mark_lock);
 		up_write(&ca->bucket_lock);
+		up_write(&c->gc_lock);
+	}
 
 	ret = 0;
 err:
@@ -2152,8 +2127,6 @@ err:
 		BITS_TO_LONGS(nbuckets) * sizeof(unsigned long));
 	if (bucket_gens)
 		call_rcu(&bucket_gens->rcu, bucket_gens_free_rcu);
-	if (buckets)
-		call_rcu(&buckets->rcu, buckets_free_rcu);
 
 	return ret;
 }
@@ -2166,9 +2139,6 @@ void bch2_dev_buckets_free(struct bch_dev *ca)
 		BITS_TO_LONGS(ca->mi.nbuckets) * sizeof(unsigned long));
 	kvpfree(rcu_dereference_protected(ca->bucket_gens, 1),
 		sizeof(struct bucket_gens) + ca->mi.nbuckets);
-	kvpfree(rcu_dereference_protected(ca->buckets[0], 1),
-		sizeof(struct bucket_array) +
-		ca->mi.nbuckets * sizeof(struct bucket));
 
 	for (i = 0; i < ARRAY_SIZE(ca->usage); i++)
 		free_percpu(ca->usage[i]);
