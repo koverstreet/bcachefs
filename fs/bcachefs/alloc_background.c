@@ -340,14 +340,12 @@ void bch2_alloc_to_text(struct printbuf *out, struct bch_fs *c,
 #undef  x
 }
 
-int bch2_alloc_read(struct bch_fs *c, bool gc, bool metadata_only)
+int bch2_alloc_read(struct bch_fs *c)
 {
 	struct btree_trans trans;
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bch_dev *ca;
-	struct bucket *g;
-	struct bkey_alloc_unpacked u;
 	int ret;
 
 	bch2_trans_init(&trans, c, 0, 0);
@@ -355,30 +353,8 @@ int bch2_alloc_read(struct bch_fs *c, bool gc, bool metadata_only)
 	for_each_btree_key(&trans, iter, BTREE_ID_alloc, POS_MIN,
 			   BTREE_ITER_PREFETCH, k, ret) {
 		ca = bch_dev_bkey_exists(c, k.k->p.inode);
-		g = __bucket(ca, k.k->p.offset, gc);
-		u = bch2_alloc_unpack(k);
 
-		if (!gc)
-			*bucket_gen(ca, k.k->p.offset) = u.gen;
-
-		g->_mark.gen		= u.gen;
-		g->io_time[READ]	= u.read_time;
-		g->io_time[WRITE]	= u.write_time;
-		g->gen_valid		= 1;
-
-		if (!gc ||
-		    (metadata_only &&
-		     (u.data_type == BCH_DATA_user ||
-		      u.data_type == BCH_DATA_cached ||
-		      u.data_type == BCH_DATA_parity))) {
-			g->_mark.data_type	= u.data_type;
-			g->_mark.dirty_sectors	= u.dirty_sectors;
-			g->_mark.cached_sectors	= u.cached_sectors;
-			g->_mark.stripe		= u.stripe != 0;
-			g->stripe		= u.stripe;
-			g->stripe_redundancy	= u.stripe_redundancy;
-		}
-
+		*bucket_gen(ca, k.k->p.offset) = bch2_alloc_unpack(k).gen;
 	}
 	bch2_trans_iter_exit(&trans, &iter);
 
