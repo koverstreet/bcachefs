@@ -319,7 +319,6 @@ retry:
 			if (!trans->restarted)
 				goto retry;
 
-			trace_transaction_restart_ip(trans->fn, _THIS_IP_);
 			ret = -EINTR;
 			goto err;
 		}
