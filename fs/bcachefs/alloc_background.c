@@ -520,6 +520,266 @@ int bch2_trans_mark_alloc(struct btree_trans *trans,
 	return 0;
 }
 
+static int bch2_check_alloc_key(struct btree_trans *trans,
+				struct btree_iter *alloc_iter)
+{
+	struct bch_fs *c = trans->c;
+	struct btree_iter discard_iter, freespace_iter, lru_iter;
+	struct bkey_alloc_unpacked a;
+	unsigned discard_key_type, freespace_key_type;
+	struct bkey_s_c alloc_k, k;
+	struct printbuf buf = PRINTBUF;
+	struct printbuf buf2 = PRINTBUF;
+	int ret;
+
+	alloc_k = bch2_btree_iter_peek(alloc_iter);
+	if (!alloc_k.k)
+		return 0;
+
+	ret = bkey_err(alloc_k);
+	if (ret)
+		return ret;
+
+	a = bch2_alloc_unpack(alloc_k);
+	discard_key_type = bucket_state(a) == BUCKET_need_discard
+		? KEY_TYPE_set : 0;
+	freespace_key_type = bucket_state(a) == BUCKET_free
+		? KEY_TYPE_set : 0;
+
+	bch2_trans_iter_init(trans, &discard_iter, BTREE_ID_need_discard,
+			     alloc_k.k->p, 0);
+	bch2_trans_iter_init(trans, &freespace_iter, BTREE_ID_freespace,
+			     alloc_freespace_pos(a), 0);
+	bch2_trans_iter_init(trans, &lru_iter, BTREE_ID_lru,
+			     POS(a.dev, a.read_time), 0);
+
+	k = bch2_btree_iter_peek_slot(&discard_iter);
+	ret = bkey_err(k);
+	if (ret)
+		goto err;
+
+	if (fsck_err_on(k.k->type != discard_key_type, c,
+			"incorrect key in need_discard btree (got %s should be %s)\n"
+			"  %s",
+			bch2_bkey_types[k.k->type],
+			bch2_bkey_types[discard_key_type],
+			(bch2_bkey_val_to_text(&buf, c, alloc_k), buf.buf))) {
+		struct bkey_i *update =
+			bch2_trans_kmalloc(trans, sizeof(*update));
+
+		ret = PTR_ERR_OR_ZERO(update);
+		if (ret)
+			goto err;
+
+		bkey_init(&update->k);
+		update->k.type	= discard_key_type;
+		update->k.p	= discard_iter.pos;
+
+		ret =   bch2_trans_update(trans, &discard_iter, update, 0) ?:
+			bch2_trans_commit(trans, NULL, NULL, 0);
+		if (ret)
+			goto err;
+	}
+
+	k = bch2_btree_iter_peek_slot(&freespace_iter);
+	ret = bkey_err(k);
+	if (ret)
+		goto err;
+
+	if (fsck_err_on(k.k->type != freespace_key_type, c,
+			"incorrect key in freespace btree (got %s should be %s)\n"
+			"  %s",
+			bch2_bkey_types[k.k->type],
+			bch2_bkey_types[freespace_key_type],
+			(printbuf_reset(&buf),
+			 bch2_bkey_val_to_text(&buf, c, alloc_k), buf.buf))) {
+		struct bkey_i *update =
+			bch2_trans_kmalloc(trans, sizeof(*update));
+
+		ret = PTR_ERR_OR_ZERO(update);
+		if (ret)
+			goto err;
+
+		bkey_init(&update->k);
+		update->k.type	= freespace_key_type;
+		update->k.p	= freespace_iter.pos;
+		bch2_key_resize(&update->k, 1);
+
+		ret   = bch2_trans_update(trans, &freespace_iter, update, 0) ?:
+			bch2_trans_commit(trans, NULL, NULL, 0);
+		if (ret)
+			goto err;
+	}
+
+	if (bucket_state(a) == BUCKET_cached) {
+		if (fsck_err_on(!a.read_time, c,
+				"cached bucket with read_time 0\n"
+				"  %s",
+			(printbuf_reset(&buf),
+			 bch2_bkey_val_to_text(&buf, c, alloc_k), buf.buf))) {
+
+			a.read_time = atomic64_read(&c->io_clock[READ].now);
+
+			ret   = bch2_lru_change(trans, a.dev, a.bucket,
+						0, &a.read_time) ?:
+				bch2_alloc_write(trans, alloc_iter, &a, BTREE_TRIGGER_NORUN);
+				bch2_trans_commit(trans, NULL, NULL, 0);
+			if (ret)
+				goto err;
+		}
+
+		k = bch2_btree_iter_peek_slot(&lru_iter);
+		ret = bkey_err(k);
+		if (ret)
+			goto err;
+
+		if (fsck_err_on(k.k->type != KEY_TYPE_lru ||
+				le64_to_cpu(bkey_s_c_to_lru(k).v->idx) != a.bucket, c,
+			"incorrect/missing lru entry\n"
+			"  %s\n"
+			"  %s",
+			(printbuf_reset(&buf),
+			 bch2_bkey_val_to_text(&buf, c, alloc_k), buf.buf),
+			(bch2_bkey_val_to_text(&buf2, c, k), buf2.buf))) {
+			u64 read_time = a.read_time;
+
+			ret   = bch2_lru_change(trans, a.dev, a.bucket,
+						0, &a.read_time) ?:
+				(a.read_time != read_time
+				 ? bch2_alloc_write(trans, alloc_iter, &a, 0)
+				 : 0) ?:
+				bch2_trans_commit(trans, NULL, NULL, 0);
+			if (ret)
+				goto err;
+		}
+	}
+err:
+fsck_err:
+	bch2_trans_iter_exit(trans, &lru_iter);
+	bch2_trans_iter_exit(trans, &freespace_iter);
+	bch2_trans_iter_exit(trans, &discard_iter);
+	printbuf_exit(&buf2);
+	printbuf_exit(&buf);
+	return ret;
+}
+
+static inline bool bch2_dev_bucket_exists(struct bch_fs *c, struct bpos pos)
+{
+	struct bch_dev *ca;
+
+	if (pos.inode >= c->sb.nr_devices || !c->devs[pos.inode])
+		return false;
+
+	ca = bch_dev_bkey_exists(c, pos.inode);
+	return pos.offset >= ca->mi.first_bucket &&
+		pos.offset < ca->mi.nbuckets;
+}
+
+static int bch2_check_freespace_key(struct btree_trans *trans,
+				    struct btree_iter *freespace_iter,
+				    bool initial)
+{
+	struct bch_fs *c = trans->c;
+	struct btree_iter alloc_iter;
+	struct bkey_s_c k, freespace_k;
+	struct bkey_alloc_unpacked a;
+	u64 genbits;
+	struct bpos pos;
+	struct bkey_i *update;
+	struct printbuf buf = PRINTBUF;
+	int ret;
+
+	freespace_k = bch2_btree_iter_peek(freespace_iter);
+	if (!freespace_k.k)
+		return 1;
+
+	ret = bkey_err(freespace_k);
+	if (ret)
+		return ret;
+
+	pos = freespace_iter->pos;
+	pos.offset &= ~(~0ULL << 56);
+	genbits = freespace_iter->pos.offset & (~0ULL << 56);
+
+	bch2_trans_iter_init(trans, &alloc_iter, BTREE_ID_alloc, pos, 0);
+
+	if (fsck_err_on(!bch2_dev_bucket_exists(c, pos), c,
+			"%llu:%llu set in freespace btree but device or bucket does not exist",
+			pos.inode, pos.offset))
+		goto delete;
+
+	k = bch2_btree_iter_peek_slot(&alloc_iter);
+	ret = bkey_err(k);
+	if (ret)
+		goto err;
+
+	a = bch2_alloc_unpack(k);
+
+	if (fsck_err_on(bucket_state(a) != BUCKET_free ||
+			genbits != alloc_freespace_genbits(a), c,
+			"%s\n  incorrectly set in freespace index (free %u, genbits %llu should be %llu)",
+			(bch2_bkey_val_to_text(&buf, c, k), buf.buf),
+			bucket_state(a) == BUCKET_free,
+			genbits >> 56, alloc_freespace_genbits(a) >> 56))
+		goto delete;
+out:
+err:
+fsck_err:
+	bch2_trans_iter_exit(trans, &alloc_iter);
+	printbuf_exit(&buf);
+	return ret;
+delete:
+	update = bch2_trans_kmalloc(trans, sizeof(*update));
+	ret = PTR_ERR_OR_ZERO(update);
+	if (ret)
+		goto err;
+
+	bkey_init(&update->k);
+	update->k.p = freespace_iter->pos;
+	bch2_key_resize(&update->k, 1);
+
+	ret   = bch2_trans_update(trans, freespace_iter, update, 0) ?:
+		bch2_trans_commit(trans, NULL, NULL, 0);
+	goto out;
+}
+
+int bch2_check_alloc_info(struct bch_fs *c, bool initial)
+{
+	struct btree_trans trans;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret = 0;
+
+	bch2_trans_init(&trans, c, 0, 0);
+
+	for_each_btree_key(&trans, iter, BTREE_ID_alloc, POS_MIN,
+			   BTREE_ITER_PREFETCH, k, ret) {
+		ret = __bch2_trans_do(&trans, NULL, NULL, 0,
+			bch2_check_alloc_key(&trans, &iter));
+		if (ret)
+			break;
+	}
+	bch2_trans_iter_exit(&trans, &iter);
+
+	if (ret)
+		goto err;
+
+	bch2_trans_iter_init(&trans, &iter, BTREE_ID_freespace, POS_MIN,
+			     BTREE_ITER_PREFETCH);
+	while (1) {
+		ret = __bch2_trans_do(&trans, NULL, NULL, 0,
+			bch2_check_freespace_key(&trans, &iter, initial));
+		if (ret)
+			break;
+
+		bch2_btree_iter_set_pos(&iter, bpos_nosnap_successor(iter.pos));
+	}
+	bch2_trans_iter_exit(&trans, &iter);
+err:
+	bch2_trans_exit(&trans);
+	return ret < 0 ? ret : 0;
+}
+
 static int bch2_clear_need_discard(struct btree_trans *trans, struct bpos pos,
 				   struct bch_dev *ca, bool *discard_done)
 {
