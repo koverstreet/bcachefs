@@ -138,6 +138,7 @@ int bch2_alloc_read(struct bch_fs *, bool, bool);
 
 int bch2_trans_mark_alloc(struct btree_trans *, struct bkey_s_c,
 			  struct bkey_i *, unsigned);
+int bch2_check_alloc_info(struct bch_fs *, bool);
 void bch2_do_discards(struct bch_fs *);
 
 static inline bool should_invalidate_buckets(struct bch_dev *ca)
