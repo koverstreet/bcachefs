@@ -538,6 +538,17 @@ void zero_fill_bio_iter(struct bio *bio, struct bvec_iter start)
 }
 EXPORT_SYMBOL(zero_fill_bio_iter);
 
+void zero_fill_bio(struct bio *bio) 
+{
+	struct bio_vec bv; 	
+	struct bvec_iter iter; 	
+	bio_for_each_segment(bv, bio, iter)
+ 		memzero_bvec(&bv); 
+}
+
+EXPORT_SYMBOL(zero_fill_bio); 
+
+
 /**
  * bio_truncate - truncate the bio to small size of @new_size
  * @bio:	the bio to be truncated

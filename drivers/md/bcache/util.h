@@ -4,7 +4,6 @@
 #define _BCACHE_UTIL_H
 
 #include <linux/blkdev.h>
-#include <linux/closure.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/sched/clock.h>
@@ -13,6 +12,8 @@
 #include <linux/vmalloc.h>
 #include <linux/workqueue.h>
 #include <linux/crc64.h>
+
+#include "closure.h"
 
 struct closure;
 

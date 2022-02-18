@@ -37,11 +37,23 @@
 
 #include <trace/events/bcachefs.h>
 
+static void zero_fill_bio_iter(struct bio *bio, struct bvec_iter start)
+{
+	unsigned long flags;
+	struct bio_vec bv;
+	struct bvec_iter iter;
+
+	__bio_for_each_segment(bv, bio, iter, start)
+		memzero_bvec(&bv);
+
+}
+
+
 const char *bch2_blk_status_to_str(blk_status_t status)
 {
 	if (status == BLK_STS_REMOVED)
 		return "device removed";
-	return blk_status_to_str(status);
+	return blk_op_str(blk_status_to_errno(status));
 }
 
 static bool bch2_target_congested(struct bch_fs *c, u16 target)
