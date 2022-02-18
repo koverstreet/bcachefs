@@ -613,8 +613,7 @@ static int bucket_invalidate_btree(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
-	*u = alloc_mem_to_key(c, &iter);
-
+	*u = bch2_alloc_unpack(k);
 	u->gen++;
 	u->data_type		= 0;
 	u->dirty_sectors	= 0;

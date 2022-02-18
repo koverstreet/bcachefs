@@ -35,6 +35,22 @@
 #include <trace/events/bcachefs.h>
 #include <trace/events/writeback.h>
 
+/** * bio_full - check if the bio is full 
+ * @bio:	bio to check 
+ * @len:	length of one segment to be added 
+ * * Return true if @bio is full and one segment with @len bytes can't be 
+ * added to the bio, otherwise return false 
+*/
+
+static inline bool bio_full(struct bio *bio, unsigned len)
+{
+	if (bio->bi_vcnt >= bio->bi_max_vecs)
+		return true;
+
+ 	if (bio->bi_iter.bi_size > UINT_MAX - len)
+		return true;
+ 	return false;}
+
 static inline struct address_space *faults_disabled_mapping(void)
 {
 	return (void *) (((unsigned long) current->faults_disabled_mapping) & ~1UL);
@@ -1808,11 +1824,11 @@ again:
 		 * to check that the address is actually valid, when atomic
 		 * usercopies are used, below.
 		 */
-		if (unlikely(iov_iter_fault_in_readable(iter, bytes))) {
+		if (unlikely(fault_in_iov_iter_readable(iter, bytes))) {
 			bytes = min_t(unsigned long, iov_iter_count(iter),
 				      PAGE_SIZE - offset);
 
-			if (unlikely(iov_iter_fault_in_readable(iter, bytes))) {
+			if (unlikely(fault_in_iov_iter_readable(iter, bytes))) {
 				ret = -EFAULT;
 				break;
 			}
@@ -1870,7 +1886,7 @@ static void bch2_dio_read_complete(struct closure *cl)
 {
 	struct dio_read *dio = container_of(cl, struct dio_read, cl);
 
-	dio->req->ki_complete(dio->req, dio->ret, 0);
+	dio->req->ki_complete(dio->req, dio->ret);
 	bio_check_or_release(&dio->rbio.bio, dio->should_dirty);
 }
 
@@ -2244,7 +2260,7 @@ err:
 	inode_dio_end(&inode->v);
 
 	if (!sync) {
-		req->ki_complete(req, ret, 0);
+		req->ki_complete(req, ret);
 		ret = -EIOCBQUEUED;
 	}
 	return ret;
