@@ -293,6 +293,11 @@ enum opt_type {
 	  OPT_BOOL(),							\
 	  NO_SB_OPT,			false,				\
 	  NULL,		"Run fsck on mount")				\
+	x(fsck_run_twice,		u8,				\
+	  OPT_FS|OPT_MOUNT,						\
+	  OPT_BOOL(),							\
+	  NO_SB_OPT,			true,				\
+	  NULL,		"Run fsck twice - second time should not find errors")\
 	x(fix_errors,			u8,				\
 	  OPT_FS|OPT_MOUNT,						\
 	  OPT_BOOL(),							\

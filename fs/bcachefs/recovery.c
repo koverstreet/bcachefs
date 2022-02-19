@@ -1150,6 +1150,26 @@ use_clean:
 		bch_verbose(c, "done checking need_discard and freespace btrees");
 	}
 
+	if (c->opts.fsck &&
+	    c->opts.fsck_run_twice &&
+	    c->opts.fix_errors &&
+	    !c->opts.norecovery) {
+		bch_info(c, "checking allocations, second pass: should be clean");
+		err = "error checking allocations";
+		ret = bch2_gc(c, true, false);
+		if (ret)
+			goto err;
+
+		ret = bch2_check_alloc_info(c, true);
+		if (ret)
+			goto err;
+
+		ret = bch2_check_lrus(c, true);
+		if (ret)
+			goto err;
+		bch_verbose(c, "done checking allocations, second pass");
+	}
+
 	bch2_stripes_heap_start(c);
 
 	clear_bit(BCH_FS_REBUILD_REPLICAS, &c->flags);
