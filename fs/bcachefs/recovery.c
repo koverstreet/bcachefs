@@ -1111,8 +1111,6 @@ use_clean:
 		goto err;
 	bch_verbose(c, "stripes_read done");
 
-	set_bit(BCH_FS_ALLOC_READ_DONE, &c->flags);
-
 	/*
 	 * If we're not running fsck, this ensures bch2_fsck_err() calls are
 	 * instead interpreted as bch2_inconsistent_err() calls:
@@ -1297,7 +1295,6 @@ int bch2_fs_initialize(struct bch_fs *c)
 	}
 	mutex_unlock(&c->sb_lock);
 
-	set_bit(BCH_FS_ALLOC_READ_DONE, &c->flags);
 	set_bit(BCH_FS_INITIAL_GC_DONE, &c->flags);
 	set_bit(BCH_FS_FSCK_DONE, &c->flags);
 
