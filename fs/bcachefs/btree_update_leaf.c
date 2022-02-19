@@ -1004,18 +1004,6 @@ int __bch2_trans_commit(struct btree_trans *trans)
 			goto out_reset;
 	}
 
-#ifdef CONFIG_BCACHEFS_DEBUG
-	/*
-	 * if BTREE_TRIGGER_NORUN is set, it means we're probably being called
-	 * from the key cache flush code:
-	 */
-	trans_for_each_update(trans, i)
-		if (!i->cached &&
-		    !(i->flags & BTREE_TRIGGER_NORUN))
-			bch2_btree_key_cache_verify_clean(trans,
-					i->btree_id, i->k->k.p);
-#endif
-
 	ret = bch2_trans_commit_run_triggers(trans);
 	if (ret)
 		goto out;

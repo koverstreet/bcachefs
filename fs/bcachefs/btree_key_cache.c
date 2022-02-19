@@ -555,14 +555,6 @@ bool bch2_btree_insert_key_cached(struct btree_trans *trans,
 	return true;
 }
 
-#ifdef CONFIG_BCACHEFS_DEBUG
-void bch2_btree_key_cache_verify_clean(struct btree_trans *trans,
-			       enum btree_id id, struct bpos pos)
-{
-	BUG_ON(bch2_btree_key_cache_find(trans->c, id, pos));
-}
-#endif
-
 static unsigned long bch2_btree_key_cache_scan(struct shrinker *shrink,
 					   struct shrink_control *sc)
 {
