@@ -753,7 +753,8 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 			atomic64_set(&c->key_version, k->k->version.lo);
 	}
 
-	ret = bch2_mark_key(trans, old, *k, flags);
+	ret = __bch2_trans_do(trans, NULL, NULL, 0,
+			bch2_mark_key(trans, old, *k, flags));
 fsck_err:
 err:
 	if (ret)
@@ -1327,9 +1328,7 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	if (IS_ERR(a))
 		return PTR_ERR(a);
 
-	ret = initial
-		? bch2_journal_key_insert(c, BTREE_ID_alloc, 0, &a->k)
-		: bch2_trans_update(trans, iter, &a->k, BTREE_TRIGGER_NORUN);
+	ret = bch2_trans_update(trans, iter, &a->k, BTREE_TRIGGER_NORUN);
 fsck_err:
 	return ret;
 }
@@ -1466,23 +1465,13 @@ static int bch2_gc_reflink_done(struct bch_fs *c, bool initial,
 
 			bkey_reassemble(new, k);
 
-			if (!r->refcount) {
+			if (!r->refcount)
 				new->k.type = KEY_TYPE_deleted;
-				/*
-				 * XXX ugly: bch2_journal_key_insert() queues up
-				 * the key for the journal replay code, which
-				 * doesn't run the extent overwrite pass
-				 */
-				if (initial)
-					new->k.size = 0;
-			} else {
+			else
 				*bkey_refcount(new) = cpu_to_le64(r->refcount);
-			}
 
-			ret = initial
-			       ? bch2_journal_key_insert(c, BTREE_ID_stripes, 0, new)
-			       : __bch2_trans_do(&trans, NULL, NULL, 0,
-					__bch2_btree_insert(&trans, BTREE_ID_reflink, new));
+			ret = __bch2_trans_do(&trans, NULL, NULL, 0,
+				__bch2_btree_insert(&trans, BTREE_ID_reflink, new));
 			kfree(new);
 
 			if (ret)
@@ -1594,10 +1583,8 @@ inconsistent:
 			for (i = 0; i < new->v.nr_blocks; i++)
 				stripe_blockcount_set(&new->v, i, m ? m->block_sectors[i] : 0);
 
-			ret = initial
-				? bch2_journal_key_insert(c, BTREE_ID_stripes, 0, &new->k_i)
-				: __bch2_trans_do(&trans, NULL, NULL, 0,
-					__bch2_btree_insert(&trans, BTREE_ID_reflink, &new->k_i));
+			ret = __bch2_trans_do(&trans, NULL, NULL, 0,
+				__bch2_btree_insert(&trans, BTREE_ID_reflink, &new->k_i));
 			kfree(new);
 		}
 	}
