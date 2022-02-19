@@ -1054,6 +1054,9 @@ use_clean:
 		blacklist_seq = journal_seq = le64_to_cpu(clean->journal_seq) + 1;
 	}
 
+	if (c->opts.read_journal_only)
+		goto out;
+
 	if (c->opts.reconstruct_alloc) {
 		c->sb.compat &= ~(1ULL << BCH_COMPAT_alloc_info);
 		drop_alloc_keys(&c->journal_keys);
@@ -1110,8 +1113,6 @@ use_clean:
 	if (ret)
 		goto err;
 	bch_verbose(c, "stripes_read done");
-
-	set_bit(BCH_FS_ALLOC_READ_DONE, &c->flags);
 
 	/*
 	 * If we're not running fsck, this ensures bch2_fsck_err() calls are
@@ -1297,7 +1298,6 @@ int bch2_fs_initialize(struct bch_fs *c)
 	}
 	mutex_unlock(&c->sb_lock);
 
-	set_bit(BCH_FS_ALLOC_READ_DONE, &c->flags);
 	set_bit(BCH_FS_INITIAL_GC_DONE, &c->flags);
 	set_bit(BCH_FS_FSCK_DONE, &c->flags);
 
