@@ -765,6 +765,7 @@ static int bch2_write_decrypt(struct bch_write_op *op)
 	struct bch_fs *c = op->c;
 	struct nonce nonce = extent_nonce(op->version, op->crc);
 	struct bch_csum csum;
+	int ret;
 
 	if (!bch2_csum_type_is_encryption(op->crc.csum_type))
 		return 0;
@@ -779,10 +780,10 @@ static int bch2_write_decrypt(struct bch_write_op *op)
 	if (bch2_crc_cmp(op->crc.csum, csum))
 		return -EIO;
 
-	bch2_encrypt_bio(c, op->crc.csum_type, nonce, &op->wbio.bio);
+	ret = bch2_encrypt_bio(c, op->crc.csum_type, nonce, &op->wbio.bio);
 	op->crc.csum_type = 0;
 	op->crc.csum = (struct bch_csum) { 0, 0 };
-	return 0;
+	return ret;
 }
 
 static enum prep_encoded_ret {
@@ -997,8 +998,11 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 			crc.live_size		= src_len >> 9;
 
 			swap(dst->bi_iter.bi_size, dst_len);
-			bch2_encrypt_bio(c, op->csum_type,
-					 extent_nonce(version, crc), dst);
+			ret = bch2_encrypt_bio(c, op->csum_type,
+					       extent_nonce(version, crc), dst);
+			if (ret)
+				goto err;
+
 			crc.csum = bch2_checksum_bio(c, op->csum_type,
 					 extent_nonce(version, crc), dst);
 			crc.csum_type = op->csum_type;
@@ -1773,6 +1777,7 @@ static void __bch2_read_endio(struct work_struct *work)
 	struct nonce nonce = extent_nonce(rbio->version, crc);
 	unsigned nofs_flags;
 	struct bch_csum csum;
+	int ret;
 
 	nofs_flags = memalloc_nofs_save();
 
@@ -1807,7 +1812,10 @@ static void __bch2_read_endio(struct work_struct *work)
 	crc.live_size	= bvec_iter_sectors(rbio->bvec_iter);
 
 	if (crc_is_compressed(crc)) {
-		bch2_encrypt_bio(c, crc.csum_type, nonce, src);
+		ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
+		if (ret)
+			goto decrypt_err;
+
 		if (bch2_bio_uncompress(c, src, dst, dst_iter, crc))
 			goto decompression_err;
 	} else {
@@ -1818,7 +1826,9 @@ static void __bch2_read_endio(struct work_struct *work)
 		BUG_ON(src->bi_iter.bi_size < dst_iter.bi_size);
 		src->bi_iter.bi_size = dst_iter.bi_size;
 
-		bch2_encrypt_bio(c, crc.csum_type, nonce, src);
+		ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
+		if (ret)
+			goto decrypt_err;
 
 		if (rbio->bounce) {
 			struct bvec_iter src_iter = src->bi_iter;
@@ -1831,7 +1841,10 @@ static void __bch2_read_endio(struct work_struct *work)
 		 * Re encrypt data we decrypted, so it's consistent with
 		 * rbio->crc:
 		 */
-		bch2_encrypt_bio(c, crc.csum_type, nonce, src);
+		ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
+		if (ret)
+			goto decrypt_err;
+
 		promote_start(rbio->promote, rbio);
 		rbio->promote = NULL;
 	}
@@ -1864,6 +1877,11 @@ csum_err:
 decompression_err:
 	bch_err_inum_ratelimited(c, rbio->read_pos.inode,
 				 "decompression error");
+	bch2_rbio_error(rbio, READ_ERR, BLK_STS_IOERR);
+	goto out;
+decrypt_err:
+	bch_err_inum_ratelimited(c, rbio->read_pos.inode,
+				 "decrypt error");
 	bch2_rbio_error(rbio, READ_ERR, BLK_STS_IOERR);
 	goto out;
 }
