@@ -794,7 +794,8 @@ static int push_invalidated_bucket(struct bch_fs *c, struct bch_dev *ca, u64 b)
 
 static void discard_one_bucket(struct bch_fs *c, struct bch_dev *ca, u64 b)
 {
-	if (ca->mi.discard &&
+	if (!c->opts.nochanges &&
+	    ca->mi.discard &&
 	    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev)))
 		blkdev_issue_discard(ca->disk_sb.bdev, bucket_to_sector(ca, b),
 				     ca->mi.bucket_size, GFP_NOFS, 0);
