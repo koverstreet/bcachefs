@@ -646,7 +646,7 @@ static int bch2_check_alloc_key(struct btree_trans *trans,
 			ret   = bch2_lru_change(trans, a.dev, a.bucket,
 						0, &a.read_time) ?:
 				(a.read_time != read_time
-				 ? bch2_alloc_write(trans, alloc_iter, &a, 0)
+				 ? bch2_alloc_write(trans, alloc_iter, &a, BTREE_TRIGGER_NORUN)
 				 : 0) ?:
 				bch2_trans_commit(trans, NULL, NULL, 0);
 			if (ret)
