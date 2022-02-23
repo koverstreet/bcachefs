@@ -2011,6 +2011,10 @@ int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
 	bool bounce = false, read_full = false, narrow_crcs = false;
 	struct bpos data_pos = bkey_start_pos(k.k);
 	int pick_ret;
+	char buf[200];
+
+	bch2_bkey_val_to_text(&PBUF(buf), c, k);
+	pr_info("reading from %s", buf);
 
 	if (bkey_extent_is_inline_data(k.k)) {
 		unsigned bytes = min_t(unsigned, iter.bi_size,
@@ -2025,6 +2029,8 @@ int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
 	}
 retry_pick:
 	pick_ret = bch2_bkey_pick_read_device(c, k, failed, &pick);
+
+	pr_info("%s pick_ret %i", buf, pick_ret);
 
 	/* hole or reservation - just zero fill: */
 	if (!pick_ret)
