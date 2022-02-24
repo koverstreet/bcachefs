@@ -1967,6 +1967,7 @@ inline struct bkey_s_c bch2_btree_path_peek_slot(struct btree_path *path, struct
 
 		EBUG_ON(path->uptodate != BTREE_ITER_UPTODATE);
 
+		*u = ck->k->k;
 		k = bkey_i_to_s_c(ck->k);
 	}
 
