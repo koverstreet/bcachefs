@@ -420,9 +420,6 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 				  BTREE_INSERT_NOCHECK_RW|
 				  BTREE_INSERT_NOFAIL|
 				  BTREE_INSERT_USE_RESERVE|
-				  (ck->journal.seq == journal_last_seq(j)
-				   ? BTREE_INSERT_JOURNAL_RESERVED
-				   : 0)|
 				  commit_flags);
 	if (ret) {
 		bch2_fs_fatal_err_on(ret != -EINTR &&
@@ -491,7 +488,8 @@ int bch2_btree_key_cache_journal_flush(struct journal *j,
 
 	ret = bch2_trans_do(c, NULL, NULL, 0,
 		btree_key_cache_flush_pos(&trans, key, seq,
-				BTREE_INSERT_JOURNAL_RECLAIM, false));
+				BTREE_INSERT_JOURNAL_RECLAIM|
+				BTREE_INSERT_JOURNAL_RESERVED, false));
 unlock:
 	srcu_read_unlock(&c->btree_trans_barrier, srcu_idx);
 
