@@ -1806,8 +1806,6 @@ void bch2_dump_trans_paths_updates(struct btree_trans *trans)
 	unsigned idx;
 	char buf1[300], buf2[300];
 
-	btree_trans_verify_sorted(trans);
-
 	trans_for_each_path_inorder(trans, path, idx)
 		printk(KERN_ERR "path: idx %u ref %u:%u%s%s btree %s pos %s locks %u %pS\n",
 		       path->idx, path->ref, path->intent_ref,
@@ -1873,6 +1871,7 @@ struct btree_path *bch2_path_get(struct btree_trans *trans,
 	int i;
 
 	BUG_ON(trans->restarted);
+	btree_trans_verify_sorted(trans);
 
 	trans_for_each_path_inorder(trans, path, i) {
 		if (__btree_path_cmp(path,
@@ -2733,7 +2732,10 @@ static void btree_trans_verify_sorted(struct btree_trans *trans)
 	unsigned i;
 
 	trans_for_each_path_inorder(trans, path, i) {
-		BUG_ON(prev && btree_path_cmp(prev, path) > 0);
+		if (prev && btree_path_cmp(prev, path) > 0) {
+			bch2_dump_trans_paths_updates(trans);
+			panic("trans paths out of order!\n");
+		}
 		prev = path;
 	}
 #endif
