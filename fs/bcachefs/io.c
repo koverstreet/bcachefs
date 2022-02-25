@@ -1813,6 +1813,7 @@ static void __bch2_read_endio(struct work_struct *work)
 	if (crc_is_compressed(crc)) {
 		ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
 		if (ret)
+			goto decrypt_err;
 
 		if (bch2_bio_uncompress(c, src, dst, dst_iter, crc))
 			goto decompression_err;
