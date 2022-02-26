@@ -59,7 +59,7 @@ static ssize_t fn ## _show(struct kobject *kobj, struct attribute *attr,\
 		ret = -ENOMEM;						\
 									\
 	if (!ret) {							\
-		ret = min_t(size_t, out.pos, PAGE_SIZE);		\
+		ret = min_t(size_t, out.pos, PAGE_SIZE - 1);		\
 		memcpy(buf, out.buf, ret);				\
 	}								\
 	printbuf_exit(&out);						\
