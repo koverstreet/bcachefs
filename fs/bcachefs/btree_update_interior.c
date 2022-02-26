@@ -1911,6 +1911,8 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 		path_l(iter2.path)->b = BTREE_ITER_NO_NODE_UP;
 		iter2.path->level++;
 
+		bch2_btree_path_check_sort(trans, iter2.path, 0);
+
 		ret   = bch2_btree_iter_traverse(&iter2) ?:
 			bch2_trans_update(trans, &iter2, new_key, BTREE_TRIGGER_NORUN);
 		if (ret)
