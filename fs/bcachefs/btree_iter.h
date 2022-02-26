@@ -70,6 +70,8 @@ __trans_next_path(struct btree_trans *trans, unsigned idx)
 	return &trans->paths[idx];
 }
 
+void bch2_btree_path_check_sort(struct btree_trans *, struct btree_path *, int);
+
 #define trans_for_each_path(_trans, _path)				\
 	for (_path = __trans_next_path((_trans), 0);			\
 	     (_path);							\
