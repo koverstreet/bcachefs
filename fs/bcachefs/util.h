@@ -300,6 +300,10 @@ static inline void pr_indent_push(struct printbuf *buf, unsigned spaces)
 
 static inline void pr_indent_pop(struct printbuf *buf, unsigned spaces)
 {
+	if (buf->last_newline + buf->indent == buf->pos) {
+		buf->pos -= spaces;
+		buf->buf[buf->pos] = 0;
+	}
 	buf->indent -= spaces;
 }
 
