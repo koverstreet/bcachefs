@@ -20,7 +20,7 @@
 #include <trace/events/bcachefs.h>
 
 static void btree_trans_verify_sorted(struct btree_trans *);
-static void btree_path_check_sort(struct btree_trans *, struct btree_path *, int);
+inline void bch2_btree_path_check_sort(struct btree_trans *, struct btree_path *, int);
 
 static inline void btree_path_list_remove(struct btree_trans *, struct btree_path *);
 static inline void btree_path_list_add(struct btree_trans *, struct btree_path *,
@@ -1648,7 +1648,7 @@ static void btree_path_copy(struct btree_trans *trans, struct btree_path *dst,
 			six_lock_increment(&dst->l[i].b->c.lock,
 					   __btree_lock_want(dst, i));
 
-	btree_path_check_sort(trans, dst, 0);
+	bch2_btree_path_check_sort(trans, dst, 0);
 }
 
 static struct btree_path *btree_path_clone(struct btree_trans *trans, struct btree_path *src,
@@ -1698,7 +1698,7 @@ bch2_btree_path_set_pos(struct btree_trans *trans,
 	path->pos		= new_pos;
 	path->should_be_locked	= false;
 
-	btree_path_check_sort(trans, path, cmp);
+	bch2_btree_path_check_sort(trans, path, cmp);
 
 	if (unlikely(path->cached)) {
 		btree_node_unlock(path, 0);
@@ -1815,11 +1815,12 @@ void bch2_dump_trans_paths_updates(struct btree_trans *trans)
 
 		bch2_bpos_to_text(&buf1, path->pos);
 
-		printk(KERN_ERR "path: idx %u ref %u:%u%s%s btree %s pos %s locks %u %pS\n",
+		printk(KERN_ERR "path: idx %u ref %u:%u%s%s btree=%s l=%u pos %s locks %u %pS\n",
 		       path->idx, path->ref, path->intent_ref,
 		       path->should_be_locked ? " S" : "",
 		       path->preserve ? " P" : "",
 		       bch2_btree_ids[path->btree_id],
+		       path->level,
 		       buf1.buf,
 		       path->nodes_locked,
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -2502,7 +2503,7 @@ struct bkey_s_c bch2_btree_iter_peek_prev(struct btree_iter *iter)
 			k = btree_path_level_prev(trans->c, iter->path,
 						  &iter->path->l[0], &iter->k);
 
-		btree_path_check_sort(trans, iter->path, 0);
+		bch2_btree_path_check_sort(trans, iter->path, 0);
 
 		if (likely(k.k)) {
 			if (iter->flags & BTREE_ITER_FILTER_SNAPSHOTS) {
@@ -2768,8 +2769,8 @@ static inline void btree_path_swap(struct btree_trans *trans,
 	btree_path_verify_sorted_ref(trans, r);
 }
 
-static void btree_path_check_sort(struct btree_trans *trans, struct btree_path *path,
-				  int cmp)
+inline void bch2_btree_path_check_sort(struct btree_trans *trans, struct btree_path *path,
+				       int cmp)
 {
 	struct btree_path *n;
 
