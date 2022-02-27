@@ -1059,6 +1059,9 @@ static int bch2_gc_btrees(struct bch_fs *c, bool initial, bool metadata_only)
 
 	bch2_trans_init(&trans, c, 0, 0);
 
+	if (initial)
+		trans.is_initial_gc = true;
+
 	for (i = 0; i < BTREE_ID_NR; i++)
 		ids[i] = i;
 	bubble_sort(ids, BTREE_ID_NR, btree_id_gc_phase_cmp);
