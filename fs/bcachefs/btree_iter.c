@@ -558,7 +558,12 @@ void bch2_trans_unlock(struct btree_trans *trans)
 	trans_for_each_path(trans, path)
 		__bch2_btree_path_unlock(path);
 
-	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
+	/*
+	 * bch2_gc_btree_init_recurse() doesn't use btree iterators for walking
+	 * btree nodes, it implements its own walking:
+	 */
+	BUG_ON(!trans->is_initial_gc &&
+	       lock_class_is_held(&bch2_btree_node_lock_key));
 }
 
 /* Btree iterator: */
