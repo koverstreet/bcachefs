@@ -2041,7 +2041,14 @@ retry_pick:
 
 	ca = bch_dev_bkey_exists(c, pick.ptr.dev);
 
-	if (!pick.ptr.cached &&
+	/*
+	 * Stale dirty pointers are treated as IO errors, but @failed isn't
+	 * allocated unless we're in the retry path - so if we're not in the
+	 * retry path, don't check here, it'll be caught in bch2_read_endio()
+	 * and we'll end up in the retry path:
+	 */
+	if ((flags & BCH_READ_IN_RETRY) &&
+	    !pick.ptr.cached &&
 	    unlikely(ptr_stale(ca, &pick.ptr))) {
 		read_from_stale_dirty_pointer(trans, k, pick.ptr);
 		bch2_mark_io_failure(failed, &pick);
