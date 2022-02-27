@@ -243,9 +243,9 @@ wait_on_io:
 		 * the post write cleanup:
 		 */
 		if (bch2_verify_btree_ondisk)
-			bch2_btree_node_write(c, b, SIX_LOCK_intent);
+			bch2_btree_node_write(c, b, SIX_LOCK_intent, 0);
 		else
-			__bch2_btree_node_write(c, b, false);
+			__bch2_btree_node_write(c, b, 0);
 
 		six_unlock_write(&b->c.lock);
 		six_unlock_intent(&b->c.lock);
@@ -1068,7 +1068,7 @@ wait_on_io:
 	six_lock_write(&b->c.lock, NULL, NULL);
 
 	if (btree_node_dirty(b)) {
-		__bch2_btree_node_write(c, b, false);
+		__bch2_btree_node_write(c, b, 0);
 		six_unlock_write(&b->c.lock);
 		six_unlock_intent(&b->c.lock);
 		goto wait_on_io;
