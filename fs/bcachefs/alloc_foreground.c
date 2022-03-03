@@ -432,7 +432,7 @@ static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 	}
 	bch2_trans_iter_exit(trans, &iter);
 
-	return ob ?: ERR_PTR(ret ?: -FREELIST_EMPTY);
+	return ob ?: ERR_PTR(ret);
 }
 
 /**
@@ -471,8 +471,8 @@ again:
 		if (!c->blocked_allocate)
 			c->blocked_allocate = local_clock();
 
-		trace_bucket_alloc_fail(ca, reserve);
-		return ERR_PTR(-FREELIST_EMPTY);
+		ob = ERR_PTR(-FREELIST_EMPTY);
+		goto err;
 	}
 
 	ret = bch2_trans_do(c, NULL, NULL, 0,
@@ -482,8 +482,16 @@ again:
 
 	if (need_journal_commit * 2 > avail)
 		bch2_journal_flush_async(&c->journal, NULL);
+err:
+	if (!ob)
+		ob = ERR_PTR(ret ?: -FREELIST_EMPTY);
 
-	return ob ?: ERR_PTR(ret ?: -FREELIST_EMPTY);
+	if (ob == ERR_PTR(-FREELIST_EMPTY)) {
+		trace_bucket_alloc_fail(ca, reserve, avail, need_journal_commit);
+		atomic_long_inc(&c->bucket_alloc_fail);
+	}
+
+	return ob;
 }
 
 static int __dev_stripe_cmp(struct dev_stripe_state *stripe,
