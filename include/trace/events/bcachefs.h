@@ -491,9 +491,30 @@ DEFINE_EVENT(bucket_alloc, bucket_alloc,
 	TP_ARGS(ca, reserve)
 );
 
-DEFINE_EVENT(bucket_alloc, bucket_alloc_fail,
-	TP_PROTO(struct bch_dev *ca, enum alloc_reserve reserve),
-	TP_ARGS(ca, reserve)
+TRACE_EVENT(bucket_alloc_fail,
+	TP_PROTO(struct bch_dev *ca, enum alloc_reserve reserve,
+		 u64 avail, u64 need_journal_commit),
+	TP_ARGS(ca, reserve, avail, need_journal_commit),
+
+	TP_STRUCT__entry(
+		__field(dev_t,			dev	)
+		__field(enum alloc_reserve,	reserve	)
+		__field(u64,			avail	)
+		__field(u64,			need_journal_commit )
+	),
+
+	TP_fast_assign(
+		__entry->dev		= ca->dev;
+		__entry->reserve	= reserve;
+		__entry->avail		= avail;
+		__entry->need_journal_commit = need_journal_commit;
+	),
+
+	TP_printk("%d,%d reserve %d avail %llu need_journal_commit %llu",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  __entry->reserve,
+		  __entry->avail,
+		  __entry->need_journal_commit)
 );
 
 DEFINE_EVENT(bucket_alloc, open_bucket_alloc_fail,
