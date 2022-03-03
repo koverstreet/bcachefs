@@ -897,6 +897,7 @@ struct bch_fs {
 	atomic_long_t		read_realloc_races;
 	atomic_long_t		extent_migrate_done;
 	atomic_long_t		extent_migrate_raced;
+	atomic_long_t		bucket_alloc_fail;
 
 	unsigned		btree_gc_periodic:1;
 	unsigned		copy_gc_enabled:1;
