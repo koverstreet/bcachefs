@@ -1119,9 +1119,6 @@ static struct bch_dev *__bch2_dev_alloc(struct bch_fs *c,
 	ca->nr_btree_reserve = DIV_ROUND_UP(BTREE_NODE_RESERVE,
 			     ca->mi.bucket_size / btree_sectors(c));
 
-	if (opt_defined(c->opts, discard))
-		ca->mi.discard = opt_get(c->opts, discard);
-
 	if (percpu_ref_init(&ca->ref, bch2_dev_ref_complete,
 			    0, GFP_KERNEL) ||
 	    percpu_ref_init(&ca->io_ref, bch2_dev_io_ref_complete,
