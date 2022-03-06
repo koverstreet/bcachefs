@@ -670,6 +670,7 @@ static int bch2_journal_reclaim_thread(void *arg)
 	struct journal *j = arg;
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	unsigned long delay, now;
+	bool journal_empty;
 	int ret = 0;
 
 	set_freezable();
@@ -696,10 +697,17 @@ static int bch2_journal_reclaim_thread(void *arg)
 				break;
 			if (j->reclaim_kicked)
 				break;
-			if (time_after_eq(jiffies, j->next_reclaim))
-				break;
-			freezable_schedule_timeout(j->next_reclaim - jiffies);
 
+			spin_lock(&j->lock);
+			journal_empty = fifo_empty(&j->pin);
+			spin_unlock(&j->lock);
+
+			if (journal_empty)
+				freezable_schedule();
+			else if (time_after(j->next_reclaim, jiffies))
+				freezable_schedule_timeout(j->next_reclaim - jiffies);
+			else
+				break;
 		}
 		__set_current_state(TASK_RUNNING);
 	}
