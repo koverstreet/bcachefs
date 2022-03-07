@@ -58,7 +58,8 @@ static inline void mark_btree_node_unlocked(struct btree_path *path,
 	path->nodes_intent_locked &= ~(1 << level);
 }
 
-static inline void mark_btree_node_locked(struct btree_path *path,
+static inline void mark_btree_node_locked(struct btree_trans *trans,
+					  struct btree_path *path,
 					  unsigned level,
 					  enum six_lock_type type)
 {
@@ -66,14 +67,17 @@ static inline void mark_btree_node_locked(struct btree_path *path,
 	BUILD_BUG_ON(SIX_LOCK_read   != 0);
 	BUILD_BUG_ON(SIX_LOCK_intent != 1);
 
+	BUG_ON(trans->in_traverse_all && path->sorted_idx > trans->traverse_all_idx);
+
 	path->nodes_locked |= 1 << level;
 	path->nodes_intent_locked |= type << level;
 }
 
-static inline void mark_btree_node_intent_locked(struct btree_path *path,
+static inline void mark_btree_node_intent_locked(struct btree_trans *trans,
+						 struct btree_path *path,
 						 unsigned level)
 {
-	mark_btree_node_locked(path, level, SIX_LOCK_intent);
+	mark_btree_node_locked(trans, path, level, SIX_LOCK_intent);
 }
 
 static inline enum six_lock_type __btree_lock_want(struct btree_path *path, int level)
