@@ -392,6 +392,7 @@ struct btree_trans {
 
 	u8			nr_sorted;
 	u8			nr_updates;
+	u8			traverse_all_idx;
 	bool			used_mempool:1;
 	bool			in_traverse_all:1;
 	bool			restarted:1;
