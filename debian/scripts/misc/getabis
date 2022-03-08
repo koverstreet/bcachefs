@@ -162,6 +162,9 @@ getall_set()
 				mv "$base/$comp" "$abidir/$arch/$sub.$comp"
 			done
 			cat "$base/fwinfo" >>"$fwinfo"
+			if [ -e "${base}"/fwinfo.builtin ] ; then
+				cat "${base}"/fwinfo.builtin >> "${fwinfo}".builtin
+			fi
 		fi
 		rm -rf tmp $filenames
 		echo "  done"
@@ -197,8 +200,13 @@ if [ "$compilers" != 1 ]; then
 	sort -u $abidir/*/*.compiler | sed 's/^/WARNING:    /' 1>&2
 fi
 
+# Sort fwinfo files
 sort < $fwinfo | uniq > fwinfo.tmp
 mv fwinfo.tmp $fwinfo
+if [ -e  "${fwinfo}".builtin ] ; then
+	sort <  "${fwinfo}".builtin | uniq > fwinfo.tmp
+	mv fwinfo.tmp  "${fwinfo}".builtin
+fi
 
 rmdir $tmpdir
 
