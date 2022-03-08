@@ -1899,7 +1899,7 @@ static int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter)
 	iter->count -= shorten;
 
 	bio = bio_alloc_bioset(NULL,
-			       iov_iter_npages(iter, BIO_MAX_VECS),
+			       bio_iov_vecs_to_alloc(iter, BIO_MAX_VECS),
 			       REQ_OP_READ,
 			       GFP_KERNEL,
 			       &c->dio_read_bioset);
@@ -1936,7 +1936,7 @@ static int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter)
 	goto start;
 	while (iter->count) {
 		bio = bio_alloc_bioset(NULL,
-				       iov_iter_npages(iter, BIO_MAX_VECS),
+				       bio_iov_vecs_to_alloc(iter, BIO_MAX_VECS),
 				       REQ_OP_READ,
 				       GFP_KERNEL,
 				       &c->bio_read);
@@ -2288,9 +2288,7 @@ ssize_t bch2_direct_write(struct kiocb *req, struct iov_iter *iter)
 	}
 
 	bio = bio_alloc_bioset(NULL,
-			       iov_iter_is_bvec(iter)
-			       ? 0
-			       : iov_iter_npages(iter, BIO_MAX_VECS),
+			       bio_iov_vecs_to_alloc(iter, BIO_MAX_VECS),
 			       REQ_OP_WRITE,
 			       GFP_KERNEL,
 			       &c->dio_write_bioset);
