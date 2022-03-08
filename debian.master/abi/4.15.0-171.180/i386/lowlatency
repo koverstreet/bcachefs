@@ -20673,6 +20673,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x9439b43d	bind_interdomain_evtchn_to_irq
 EXPORT_SYMBOL_GPL vmlinux 0x943fc708	xen_setup_shutdown_event
 EXPORT_SYMBOL_GPL vmlinux 0x946112e0	pm_clk_add_clk
 EXPORT_SYMBOL_GPL vmlinux 0x946f87b4	pinctrl_put
+EXPORT_SYMBOL_GPL vmlinux 0x947b40c6	cpu_smt_possible
 EXPORT_SYMBOL_GPL vmlinux 0x9481bd40	xhci_run
 EXPORT_SYMBOL_GPL vmlinux 0x9482b4b3	get_state_synchronize_sched
 EXPORT_SYMBOL_GPL vmlinux 0x94a6b250	console_drivers

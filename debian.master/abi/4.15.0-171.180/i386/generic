@@ -20707,6 +20707,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x941f2aaa	eventfd_ctx_put
 EXPORT_SYMBOL_GPL vmlinux 0x9439b43d	bind_interdomain_evtchn_to_irq
 EXPORT_SYMBOL_GPL vmlinux 0x943fc708	xen_setup_shutdown_event
 EXPORT_SYMBOL_GPL vmlinux 0x94671df6	scsi_autopm_get_device
+EXPORT_SYMBOL_GPL vmlinux 0x947b40c6	cpu_smt_possible
 EXPORT_SYMBOL_GPL vmlinux 0x947c4029	ata_sff_dma_pause
 EXPORT_SYMBOL_GPL vmlinux 0x9482b4b3	get_state_synchronize_sched
 EXPORT_SYMBOL_GPL vmlinux 0x9485134a	usb_get_urb

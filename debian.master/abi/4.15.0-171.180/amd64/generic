@@ -20768,6 +20768,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x945b4469	xen_unregister_device_domain_owner
 EXPORT_SYMBOL_GPL vmlinux 0x945c7919	tpm2_get_tpm_pt
 EXPORT_SYMBOL_GPL vmlinux 0x9460b25c	skb_splice_bits
 EXPORT_SYMBOL_GPL vmlinux 0x94701096	fat_search_long
+EXPORT_SYMBOL_GPL vmlinux 0x947b40c6	cpu_smt_possible
 EXPORT_SYMBOL_GPL vmlinux 0x947c693d	bus_register_notifier
 EXPORT_SYMBOL_GPL vmlinux 0x9482b4b3	get_state_synchronize_sched
 EXPORT_SYMBOL_GPL vmlinux 0x949f7342	__alloc_percpu

@@ -20770,6 +20770,7 @@ EXPORT_SYMBOL_GPL vmlinux 0x94431d87	mbox_chan_received_data
 EXPORT_SYMBOL_GPL vmlinux 0x945db876	dev_pm_qos_expose_latency_tolerance
 EXPORT_SYMBOL_GPL vmlinux 0x946701c5	md_stop
 EXPORT_SYMBOL_GPL vmlinux 0x9467c1ed	bus_find_device
+EXPORT_SYMBOL_GPL vmlinux 0x947b40c6	cpu_smt_possible
 EXPORT_SYMBOL_GPL vmlinux 0x9482b4b3	get_state_synchronize_sched
 EXPORT_SYMBOL_GPL vmlinux 0x948ad3ad	__sock_recv_wifi_status
 EXPORT_SYMBOL_GPL vmlinux 0x9498fb0b	sock_diag_register
