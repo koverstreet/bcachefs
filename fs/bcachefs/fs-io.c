@@ -2085,7 +2085,7 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 	while (1) {
 		iter_count = dio->iter.count;
 
-		if (kthread)
+		if (kthread && dio->mm)
 			kthread_use_mm(dio->mm);
 		BUG_ON(current->faults_disabled_mapping);
 		current->faults_disabled_mapping = mapping;
@@ -2095,7 +2095,7 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 		dropped_locks = fdm_dropped_locks();
 
 		current->faults_disabled_mapping = NULL;
-		if (kthread)
+		if (kthread && dio->mm)
 			kthread_unuse_mm(dio->mm);
 
 		/*
