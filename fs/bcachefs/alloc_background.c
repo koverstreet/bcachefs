@@ -165,6 +165,7 @@ static int bch2_alloc_unpack_v3(struct bkey_alloc_unpacked *out,
 	out->oldest_gen	= a.v->oldest_gen;
 	out->data_type	= a.v->data_type;
 	out->need_discard = BCH_ALLOC_NEED_DISCARD(a.v);
+	out->need_inc_gen = BCH_ALLOC_NEED_INC_GEN(a.v);
 	out->journal_seq = le64_to_cpu(a.v->journal_seq);
 
 #define x(_name, _bits)							\
@@ -202,6 +203,7 @@ static void bch2_alloc_pack_v3(struct bkey_alloc_buf *dst,
 	a->v.data_type	= src.data_type;
 	a->v.journal_seq = cpu_to_le64(src.journal_seq);
 	SET_BCH_ALLOC_NEED_DISCARD(&a->v, src.need_discard);
+	SET_BCH_ALLOC_NEED_INC_GEN(&a->v, src.need_inc_gen);
 
 #define x(_name, _bits)							\
 	nr_fields++;							\
@@ -441,22 +443,18 @@ int bch2_trans_mark_alloc(struct btree_trans *trans,
 			  unsigned flags)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_dev *ca = bch_dev_bkey_exists(c, new->k.p.inode);
 	struct bkey_alloc_unpacked old_u = bch2_alloc_unpack(old);
 	struct bkey_alloc_unpacked new_u = bch2_alloc_unpack(bkey_i_to_s_c(new));
 	u64 old_lru, new_lru;
 	bool need_repack = false;
 	int ret = 0;
 
-	if (old_u.data_type && !new_u.data_type && ca->mi.discard) {
-		new_u.need_discard = true;
-		need_repack = true;
-	}
-
 	if (new_u.dirty_sectors > old_u.dirty_sectors ||
 	    new_u.cached_sectors > old_u.cached_sectors) {
 		new_u.read_time = max_t(u64, 1, atomic64_read(&c->io_clock[READ].now));
 		new_u.write_time = max_t(u64, 1, atomic64_read(&c->io_clock[WRITE].now));
+		new_u.need_inc_gen = true;
+		new_u.need_discard = true;
 		need_repack = true;
 	}
 
@@ -464,6 +462,7 @@ int bch2_trans_mark_alloc(struct btree_trans *trans,
 	    old_u.gen == new_u.gen &&
 	    !bch2_bucket_is_open_safe(c, new->k.p.inode, new->k.p.offset)) {
 		new_u.gen++;
+		new_u.need_inc_gen = false;
 		need_repack = true;
 	}
 
@@ -741,7 +740,8 @@ err:
 	return ret < 0 ? ret : 0;
 }
 
-static int bch2_clear_need_discard(struct btree_trans *trans, struct bpos pos)
+static int bch2_clear_need_discard(struct btree_trans *trans, struct bpos pos,
+				   struct bch_dev *ca, bool *discard_done)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
@@ -758,6 +758,13 @@ static int bch2_clear_need_discard(struct btree_trans *trans, struct bpos pos)
 		goto out;
 
 	a = bch2_alloc_unpack(k);
+
+	if (a.need_inc_gen) {
+		a.gen++;
+		a.need_inc_gen = false;
+		goto write;
+	}
+
 	BUG_ON(a.journal_seq > c->journal.flushed_seq_ondisk);
 
 	if (bch2_fs_inconsistent_on(!a.need_discard, c,
@@ -767,7 +774,25 @@ static int bch2_clear_need_discard(struct btree_trans *trans, struct bpos pos)
 		goto out;
 	}
 
+	if (!*discard_done && ca->mi.discard && !c->opts.nochanges) {
+		/*
+		 * This works without any other locks because this is the only
+		 * thread that removes items from the need_discard tree
+		 */
+		bch2_trans_unlock(trans);
+		blkdev_issue_discard(ca->disk_sb.bdev,
+				     k.k->p.offset * ca->mi.bucket_size,
+				     ca->mi.bucket_size,
+				     GFP_KERNEL, 0);
+		*discard_done = true;
+
+		ret = bch2_trans_relock(trans);
+		if (ret)
+			goto out;
+	}
+
 	a.need_discard = false;
+write:
 	ret = bch2_alloc_write(trans, &iter, &a, 0);
 out:
 	bch2_trans_iter_exit(trans, &iter);
@@ -788,6 +813,8 @@ static void bch2_do_discards_work(struct work_struct *work)
 
 	for_each_btree_key(&trans, iter, BTREE_ID_need_discard,
 			   POS_MIN, 0, k, ret) {
+		bool discard_done = false;
+
 		if (ca && k.k->p.inode != ca->dev_idx) {
 			percpu_ref_put(&ca->io_ref);
 			ca = NULL;
@@ -808,20 +835,8 @@ static void bch2_do_discards_work(struct work_struct *work)
 		    bch2_bucket_is_open_safe(c, k.k->p.inode, k.k->p.offset))
 			continue;
 
-		bch2_trans_unlock(&trans);
-
-		/*
-		 * This works without any other locks because this is the only
-		 * thread that removes items from the need_discard tree:
-		 */
-		if (!c->opts.nochanges)
-			blkdev_issue_discard(ca->disk_sb.bdev,
-					     k.k->p.offset * ca->mi.bucket_size,
-					     ca->mi.bucket_size,
-					     GFP_KERNEL, 0);
-
 		ret = __bch2_trans_do(&trans, NULL, NULL, 0,
-				bch2_clear_need_discard(&trans, k.k->p));
+				bch2_clear_need_discard(&trans, k.k->p, ca, &discard_done));
 		if (ret)
 			break;
 	}
@@ -884,6 +899,7 @@ static int invalidate_one_bucket(struct btree_trans *trans, struct bch_dev *ca)
 		goto out;
 
 	a.gen++;
+	a.need_inc_gen		= false;
 	a.data_type		= 0;
 	a.dirty_sectors		= 0;
 	a.cached_sectors	= 0;

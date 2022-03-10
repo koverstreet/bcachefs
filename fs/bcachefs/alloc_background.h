@@ -16,6 +16,7 @@ struct bkey_alloc_unpacked {
 	u8		oldest_gen;
 	u8		data_type;
 	bool		need_discard:1;
+	bool		need_inc_gen:1;
 #define x(_name, _bits)	u##_bits _name;
 	BCH_ALLOC_FIELDS_V2()
 #undef  x

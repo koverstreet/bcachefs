@@ -900,6 +900,7 @@ struct bch_alloc_v3 {
 } __attribute__((packed, aligned(8)));
 
 LE32_BITMASK(BCH_ALLOC_NEED_DISCARD,struct bch_alloc_v3, flags,  0,  1)
+LE32_BITMASK(BCH_ALLOC_NEED_INC_GEN,struct bch_alloc_v3, flags,  1,  2)
 
 enum {
 #define x(name, _bits) BCH_ALLOC_FIELD_V1_##name,
