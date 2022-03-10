@@ -158,8 +158,10 @@ dkms_version=$( sed -ne 's/PACKAGE_VERSION="\(.*\)"/\1/p' "$dkms_conf" )
 
 # Build the DKMS binaries.
 echo "II: dkms-build building $package"
+fakeroot=""
+[[ $EUID -ne 0 ]] && fakeroot="/usr/bin/fakeroot"
 rc=0
-/usr/sbin/dkms build --no-prepare-kernel --no-clean-kernel \
+$fakeroot /usr/sbin/dkms build --no-prepare-kernel --no-clean-kernel \
 	-k "$abi_flavour" \
 	--sourcetree "$dkms_dir/source" \
 	--dkmstree "$dkms_dir/build" \
