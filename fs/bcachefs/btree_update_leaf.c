@@ -213,7 +213,7 @@ inline void bch2_btree_add_journal_pin(struct bch_fs *c,
 /**
  * btree_insert_key - insert a key one key into a leaf node
  */
-static bool btree_insert_key_leaf(struct btree_trans *trans,
+static void btree_insert_key_leaf(struct btree_trans *trans,
 				  struct btree_insert_entry *insert)
 {
 	struct bch_fs *c = trans->c;
@@ -226,7 +226,7 @@ static bool btree_insert_key_leaf(struct btree_trans *trans,
 
 	if (unlikely(!bch2_btree_bset_insert_key(trans, insert->path, b,
 					&insert_l(insert)->iter, insert->k)))
-		return false;
+		return;
 
 	i->journal_seq = cpu_to_le64(max(trans->journal_res.seq,
 					 le64_to_cpu(i->journal_seq)));
@@ -247,8 +247,6 @@ static bool btree_insert_key_leaf(struct btree_trans *trans,
 	if (u64s_added > live_u64s_added &&
 	    bch2_maybe_compact_whiteouts(c, b))
 		bch2_trans_node_reinit_iter(trans, b);
-
-	return true;
 }
 
 /* Cached btree updates: */
@@ -400,18 +398,16 @@ static inline void do_btree_insert_one(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct journal *j = &c->journal;
-	bool did_work;
 
 	EBUG_ON(trans->journal_res.ref !=
 		!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY));
 
 	i->k->k.needs_whiteout = false;
 
-	did_work = !i->cached
-		? btree_insert_key_leaf(trans, i)
-		: bch2_btree_insert_key_cached(trans, i->path, i->k);
-	if (!did_work)
-		return;
+	if (!i->cached)
+		btree_insert_key_leaf(trans, i);
+	else
+		bch2_btree_insert_key_cached(trans, i->path, i->k);
 
 	if (likely(!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))) {
 		bch2_journal_add_keys(j, &trans->journal_res,
