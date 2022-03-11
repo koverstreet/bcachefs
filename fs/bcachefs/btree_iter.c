@@ -2392,10 +2392,7 @@ struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *iter)
 			iter->update_path = bch2_btree_path_set_pos(trans,
 						iter->update_path, pos,
 						iter->flags & BTREE_ITER_INTENT,
-						btree_iter_ip_allocated(iter));
-
-			BUG_ON(!(iter->update_path->nodes_locked & 1));
-			iter->update_path->should_be_locked = true;
+						_THIS_IP_);
 		}
 
 		/*
@@ -2434,8 +2431,13 @@ struct bkey_s_c bch2_btree_iter_peek(struct btree_iter *iter)
 	BUG_ON(!iter->path->nodes_locked);
 out:
 	if (iter->update_path) {
-		BUG_ON(!(iter->update_path->nodes_locked & 1));
-		iter->update_path->should_be_locked = true;
+		if (iter->update_path->uptodate &&
+		    !bch2_btree_path_relock(trans, iter->update_path, _THIS_IP_)) {
+			k = bkey_s_c_err(-EINTR);
+		} else {
+			BUG_ON(!(iter->update_path->nodes_locked & 1));
+			iter->update_path->should_be_locked = true;
+		}
 	}
 	iter->path->should_be_locked = true;
 
