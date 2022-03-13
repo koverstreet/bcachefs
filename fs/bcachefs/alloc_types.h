@@ -10,12 +10,16 @@
 
 struct ec_bucket_buf;
 
+#define BCH_ALLOC_RESERVES()		\
+	x(btree_movinggc)		\
+	x(btree)			\
+	x(movinggc)			\
+	x(none)
+
 enum alloc_reserve {
-	RESERVE_BTREE_MOVINGGC	= -2,
-	RESERVE_BTREE		= -1,
-	RESERVE_MOVINGGC	= 0,
-	RESERVE_NONE		= 1,
-	RESERVE_NR		= 2,
+#define x(name)	RESERVE_##name,
+	BCH_ALLOC_RESERVES()
+#undef x
 };
 
 #define OPEN_BUCKETS_COUNT	1024
