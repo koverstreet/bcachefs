@@ -30,21 +30,6 @@
 #include <linux/sort.h>
 #include <linux/wait.h>
 
-/*
- * We can't use the entire copygc reserve in one iteration of copygc: we may
- * need the buckets we're freeing up to go back into the copygc reserve to make
- * forward progress, but if the copygc reserve is full they'll be available for
- * any allocation - and it's possible that in a given iteration, we free up most
- * of the buckets we're going to free before we allocate most of the buckets
- * we're going to allocate.
- *
- * If we only use half of the reserve per iteration, then in steady state we'll
- * always have room in the reserve for the buckets we're going to need in the
- * next iteration:
- */
-#define COPYGC_BUCKETS_PER_ITER(ca)					\
-	((ca)->free[RESERVE_MOVINGGC].size / 2)
-
 static int bucket_offset_cmp(const void *_l, const void *_r, size_t size)
 {
 	const struct copygc_heap_entry *l = _l;
@@ -250,7 +235,7 @@ static int bch2_copygc(struct bch_fs *c)
 	}
 
 	for_each_rw_member(ca, c, dev_idx) {
-		s64 avail = min(dev_buckets_available(ca, RESERVE_MOVINGGC),
+		s64 avail = min(dev_buckets_available(ca, RESERVE_movinggc),
 				ca->mi.nbuckets >> 6);
 
 		sectors_reserved += avail * ca->mi.bucket_size;
@@ -268,7 +253,7 @@ static int bch2_copygc(struct bch_fs *c)
 	}
 
 	/*
-	 * Our btree node allocations also come out of RESERVE_MOVINGGC:
+	 * Our btree node allocations also come out of RESERVE_movingc:
 	 */
 	sectors_reserved = (sectors_reserved * 3) / 4;
 	if (!sectors_reserved) {
@@ -354,7 +339,7 @@ unsigned long bch2_copygc_wait_amount(struct bch_fs *c)
 	for_each_rw_member(ca, c, dev_idx) {
 		struct bch_dev_usage usage = bch2_dev_usage_read(ca);
 
-		fragmented_allowed = ((__dev_buckets_available(ca, usage, RESERVE_NONE) *
+		fragmented_allowed = ((__dev_buckets_available(ca, usage, RESERVE_none) *
 				       ca->mi.bucket_size) >> 1);
 		fragmented = usage.d[BCH_DATA_user].fragmented;
 
