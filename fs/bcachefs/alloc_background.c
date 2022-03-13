@@ -588,6 +588,22 @@ static int bch2_check_alloc_key(struct btree_trans *trans,
 	}
 
 	if (bucket_state(a) == BUCKET_cached) {
+		if (fsck_err_on(!a.read_time, c,
+				"cached bucket with read_time 0\n"
+				"  %s",
+			(printbuf_reset(&buf),
+			 bch2_bkey_val_to_text(&buf, c, alloc_k), buf.buf))) {
+
+			a.read_time = atomic64_read(&c->io_clock[READ].now);
+
+			ret   = bch2_lru_change(trans, a.dev, a.bucket,
+						0, &a.read_time) ?:
+				bch2_alloc_write(trans, alloc_iter, &a, BTREE_TRIGGER_NORUN);
+				bch2_trans_commit(trans, NULL, NULL, 0);
+			if (ret)
+				goto err;
+		}
+
 		k = bch2_btree_iter_peek_slot(&lru_iter);
 		ret = bkey_err(k);
 		if (ret)
