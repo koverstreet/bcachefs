@@ -734,7 +734,7 @@ static void dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 	       "open_buckets_user\t%u\n"
 	       "btree reserve cache\t%u\n",
 	       stats.buckets_ec,
-	       __dev_buckets_available(ca, stats, RESERVE_NONE),
+	       __dev_buckets_available(ca, stats, RESERVE_none),
 	       c->freelist_wait.list.first		? "waiting" : "empty",
 	       OPEN_BUCKETS_COUNT - c->open_buckets_nr_free,
 	       ca->nr_open_buckets,

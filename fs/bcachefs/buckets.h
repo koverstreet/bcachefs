@@ -122,16 +122,16 @@ static inline u64 __dev_buckets_available(struct bch_dev *ca,
 	s64 reserved = 0;
 
 	switch (reserve) {
-	case RESERVE_NONE:
+	case RESERVE_none:
 		reserved += ca->mi.nbuckets >> 6;
 		fallthrough;
-	case RESERVE_MOVINGGC:
+	case RESERVE_movinggc:
 		reserved += ca->nr_btree_reserve;
 		fallthrough;
-	case RESERVE_BTREE:
+	case RESERVE_btree:
 		reserved += ca->nr_btree_reserve;
 		fallthrough;
-	case RESERVE_BTREE_MOVINGGC:
+	case RESERVE_btree_movinggc:
 		break;
 	default:
 		BUG();

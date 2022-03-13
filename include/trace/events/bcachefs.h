@@ -468,58 +468,62 @@ TRACE_EVENT(invalidate,
 );
 
 DECLARE_EVENT_CLASS(bucket_alloc,
-	TP_PROTO(struct bch_dev *ca, enum alloc_reserve reserve),
-	TP_ARGS(ca, reserve),
+	TP_PROTO(struct bch_dev *ca, const char *alloc_reserve),
+	TP_ARGS(ca, alloc_reserve),
 
 	TP_STRUCT__entry(
 		__field(dev_t,			dev	)
-		__field(enum alloc_reserve,	reserve	)
+		__array(char,	reserve,	16	)
 	),
 
 	TP_fast_assign(
 		__entry->dev		= ca->dev;
-		__entry->reserve	= reserve;
+		strlcpy(__entry->reserve, alloc_reserve, sizeof(__entry->reserve));
 	),
 
-	TP_printk("%d,%d reserve %d",
+	TP_printk("%d,%d reserve %s",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->reserve)
 );
 
 DEFINE_EVENT(bucket_alloc, bucket_alloc,
-	TP_PROTO(struct bch_dev *ca, enum alloc_reserve reserve),
-	TP_ARGS(ca, reserve)
+	TP_PROTO(struct bch_dev *ca, const char *alloc_reserve),
+	TP_ARGS(ca, alloc_reserve)
 );
 
 TRACE_EVENT(bucket_alloc_fail,
-	TP_PROTO(struct bch_dev *ca, enum alloc_reserve reserve,
-		 u64 avail, u64 need_journal_commit),
-	TP_ARGS(ca, reserve, avail, need_journal_commit),
+	TP_PROTO(struct bch_dev *ca, const char *alloc_reserve,
+		 u64 avail, u64 need_journal_commit,
+		 bool nonblocking),
+	TP_ARGS(ca, alloc_reserve, avail, need_journal_commit, nonblocking),
 
 	TP_STRUCT__entry(
-		__field(dev_t,			dev	)
-		__field(enum alloc_reserve,	reserve	)
-		__field(u64,			avail	)
-		__field(u64,			need_journal_commit )
+		__field(dev_t,			dev			)
+		__array(char,	reserve,	16			)
+		__field(u64,			avail			)
+		__field(u64,			need_journal_commit	)
+		__field(bool,			nonblocking		)
 	),
 
 	TP_fast_assign(
 		__entry->dev		= ca->dev;
-		__entry->reserve	= reserve;
+		strlcpy(__entry->reserve, alloc_reserve, sizeof(__entry->reserve));
 		__entry->avail		= avail;
 		__entry->need_journal_commit = need_journal_commit;
+		__entry->nonblocking	= nonblocking;
 	),
 
-	TP_printk("%d,%d reserve %d avail %llu need_journal_commit %llu",
+	TP_printk("%d,%d reserve %s avail %llu need_journal_commit %llu nonblocking %u",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->reserve,
 		  __entry->avail,
-		  __entry->need_journal_commit)
+		  __entry->need_journal_commit,
+		  __entry->nonblocking)
 );
 
 DEFINE_EVENT(bucket_alloc, open_bucket_alloc_fail,
-	TP_PROTO(struct bch_dev *ca, enum alloc_reserve reserve),
-	TP_ARGS(ca, reserve)
+	TP_PROTO(struct bch_dev *ca, const char *alloc_reserve),
+	TP_ARGS(ca, alloc_reserve)
 );
 
 /* Moving IO */
