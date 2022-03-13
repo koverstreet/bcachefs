@@ -201,7 +201,7 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 
 		src_len = le32_to_cpup(src_data.b);
 
-		ret = ZSTD_decompressDCtx(ctx,
+		ret = zstd_decompress_dctx(ctx,
 				dst_data,	dst_len,
 				src_data.b + 4, real_src_len);
 
@@ -353,7 +353,7 @@ static int attempt_compress(struct bch_fs *c,
 				dst + 4,	dst_len - 4 - 7,
 				src,		src_len,
 				&c->zstd_params);
-		if (ZSTD_isError(len))
+		if (zstd_is_error(len))
 			return 0;
 
 		*((__le32 *) dst) = cpu_to_le32(len);
@@ -548,7 +548,7 @@ static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
 {
 	size_t decompress_workspace_size = 0;
 	bool decompress_workspace_needed;
-	ZSTD_parameters params = ZSTD_getParams(0, c->opts.encoded_extent_max, 0);
+	ZSTD_parameters params = zstd_get_params(0, c->opts.encoded_extent_max);
 	struct {
 		unsigned	feature;
 		unsigned	type;
