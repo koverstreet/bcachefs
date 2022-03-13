@@ -32,6 +32,13 @@
 #include <linux/rcupdate.h>
 #include <trace/events/bcachefs.h>
 
+const char * const bch2_alloc_reserves[] = {
+#define x(t) #t,
+	BCH_ALLOC_RESERVES()
+#undef x
+	NULL
+};
+
 /*
  * Open buckets represent a bucket that's currently being allocated from.  They
  * serve two purposes:
@@ -172,10 +179,10 @@ long bch2_bucket_alloc_new_fs(struct bch_dev *ca)
 static inline unsigned open_buckets_reserved(enum alloc_reserve reserve)
 {
 	switch (reserve) {
-	case RESERVE_BTREE:
-	case RESERVE_BTREE_MOVINGGC:
+	case RESERVE_btree:
+	case RESERVE_btree_movinggc:
 		return 0;
-	case RESERVE_MOVINGGC:
+	case RESERVE_movinggc:
 		return OPEN_BUCKETS_COUNT / 4;
 	default:
 		return OPEN_BUCKETS_COUNT / 2;
@@ -213,7 +220,7 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 
 		spin_unlock(&c->freelist_lock);
 
-		trace_open_bucket_alloc_fail(ca, reserve);
+		trace_open_bucket_alloc_fail(ca, bch2_alloc_reserves[reserve]);
 		return ERR_PTR(-OPEN_BUCKETS_EMPTY);
 	}
 
@@ -254,7 +261,7 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 
 	spin_unlock(&c->freelist_lock);
 
-	trace_bucket_alloc(ca, reserve);
+	trace_bucket_alloc(ca, bch2_alloc_reserves[reserve]);
 	return ob;
 }
 
@@ -487,7 +494,8 @@ err:
 		ob = ERR_PTR(ret ?: -FREELIST_EMPTY);
 
 	if (ob == ERR_PTR(-FREELIST_EMPTY)) {
-		trace_bucket_alloc_fail(ca, reserve, avail, need_journal_commit);
+		trace_bucket_alloc_fail(ca, bch2_alloc_reserves[reserve], avail,
+					need_journal_commit, cl == NULL);
 		atomic_long_inc(&c->bucket_alloc_fail);
 	}
 
@@ -521,7 +529,7 @@ void bch2_dev_stripe_increment(struct bch_dev *ca,
 			       struct dev_stripe_state *stripe)
 {
 	u64 *v = stripe->next_alloc + ca->dev_idx;
-	u64 free_space = dev_buckets_available(ca, RESERVE_NONE);
+	u64 free_space = dev_buckets_available(ca, RESERVE_none);
 	u64 free_space_inv = free_space
 		? div64_u64(1ULL << 48, free_space)
 		: 1ULL << 48;
