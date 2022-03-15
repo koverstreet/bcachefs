@@ -767,7 +767,6 @@ static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
 					 bool new_fs, struct closure *cl)
 {
 	struct bch_fs *c = ca->fs;
-	struct journal *j = &c->journal;
 	struct journal_device *ja = &ca->journal;
 	u64 *new_bucket_seq = NULL, *new_buckets = NULL;
 	struct open_bucket **ob = NULL;
@@ -780,8 +779,10 @@ static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
 	unsigned old_cur_idx		= ja->cur_idx;
 	int ret = 0;
 
-	bch2_journal_block(j);
-	bch2_journal_flush_all_pins(j);
+	if (c) {
+		bch2_journal_block(&c->journal);
+		bch2_journal_flush_all_pins(&c->journal);
+	}
 
 	bu		= kzalloc(nr_want * sizeof(*bu), GFP_KERNEL);
 	ob		= kzalloc(nr_want * sizeof(*ob), GFP_KERNEL);
@@ -819,7 +820,7 @@ static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
 	 * actually been added to the running filesystem:
 	 */
 	if (!new_fs)
-		spin_lock(&j->lock);
+		spin_lock(&c->journal.lock);
 
 	memcpy(new_buckets,	ja->buckets,	ja->nr * sizeof(u64));
 	memcpy(new_bucket_seq,	ja->bucket_seq,	ja->nr * sizeof(u64));
@@ -860,9 +861,10 @@ static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
 	}
 
 	if (!new_fs)
-		spin_unlock(&j->lock);
+		spin_unlock(&c->journal.lock);
 
-	bch2_journal_unblock(j);
+	if (c)
+		bch2_journal_unblock(&c->journal);
 
 	if (ret)
 		goto err;
@@ -891,7 +893,8 @@ err:
 
 	return ret;
 err_unblock:
-	bch2_journal_unblock(j);
+	if (c)
+		bch2_journal_unblock(&c->journal);
 	goto err;
 }
 
