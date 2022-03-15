@@ -144,7 +144,6 @@ enum journal_space_from {
 enum {
 	JOURNAL_REPLAY_DONE,
 	JOURNAL_STARTED,
-	JOURNAL_MAY_GET_UNRESERVED,
 	JOURNAL_MAY_SKIP_FLUSH,
 };
 
@@ -155,6 +154,12 @@ struct journal {
 	unsigned long		flags;
 
 	union journal_res_state reservations;
+	enum journal_watermark {
+#define JOURNAL_WATERMARK_MASK	3
+		JOURNAL_WATERMARK_ANY,
+		JOURNAL_WATERMARK_COPYGC,
+		JOURNAL_WATERMARK_RESERVED,
+	}			watermark;
 
 	/* Max size of current journal entry */
 	unsigned		cur_entry_u64s;

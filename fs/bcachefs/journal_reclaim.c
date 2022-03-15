@@ -238,7 +238,7 @@ out:
 	j->cur_entry_sectors	= !ret ? j->space[journal_space_discarded].next_entry : 0;
 	j->cur_entry_error	= ret;
 	journal_set_remaining(j, u64s_remaining);
-	journal_check_may_get_unreserved(j);
+	journal_set_watermark(j);
 
 	if (!ret)
 		journal_wake(j);

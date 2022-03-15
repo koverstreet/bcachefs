@@ -355,8 +355,7 @@ retry:
 		return 0;
 	}
 
-	if (!(flags & JOURNAL_RES_GET_RESERVED) &&
-	    !test_bit(JOURNAL_MAY_GET_UNRESERVED, &j->flags)) {
+	if ((flags & JOURNAL_WATERMARK_MASK) < j->watermark) {
 		/*
 		 * Don't want to close current journal entry, just need to
 		 * invoke reclaim:
@@ -398,7 +397,7 @@ unlock:
 	     ret == cur_entry_journal_pin_full) &&
 	    !can_discard &&
 	    !nr_unwritten_journal_entries(j) &&
-	    (flags & JOURNAL_RES_GET_RESERVED)) {
+	    (flags & JOURNAL_WATERMARK_RESERVED)) {
 		struct printbuf buf = PRINTBUF;
 
 		bch_err(c, "Journal stuck! Hava a pre-reservation but journal full");
@@ -1234,6 +1233,7 @@ void __bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 	pr_buf(out, "last_seq_ondisk:\t%llu\n",		j->last_seq_ondisk);
 	pr_buf(out, "flushed_seq_ondisk:\t%llu\n",	j->flushed_seq_ondisk);
 	pr_buf(out, "prereserved:\t\t%u/%u\n",		j->prereserved.reserved, j->prereserved.remaining);
+	pr_buf(out, "watermark:\t\t%u\n",		j->watermark);
 	pr_buf(out, "each entry reserved:\t%u\n",	j->entry_u64s_reserved);
 	pr_buf(out, "nr flush writes:\t%llu\n",		j->nr_flush_writes);
 	pr_buf(out, "nr noflush writes:\t%llu\n",	j->nr_noflush_writes);
