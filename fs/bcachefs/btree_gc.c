@@ -1367,7 +1367,7 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	if (IS_ERR(a))
 		return PTR_ERR(a);
 
-	ret = bch2_trans_update(trans, iter, &a->k, 0);
+	ret = bch2_trans_update(trans, iter, &a->k, BTREE_TRIGGER_NORUN);
 fsck_err:
 	return ret;
 }
