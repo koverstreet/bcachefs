@@ -606,7 +606,7 @@ static void btree_update_nodes_written(struct btree_update *as)
 			      BTREE_INSERT_NOFAIL|
 			      BTREE_INSERT_NOCHECK_RW|
 			      BTREE_INSERT_JOURNAL_RECLAIM|
-			      JOURNAL_WATERMARK_RESERVED,
+			      JOURNAL_WATERMARK_reserved,
 			      btree_update_nodes_written_trans(&trans, as));
 	bch2_trans_exit(&trans);
 
@@ -1956,7 +1956,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 				BTREE_INSERT_NOCHECK_RW|
 				BTREE_INSERT_USE_RESERVE|
 				BTREE_INSERT_JOURNAL_RECLAIM|
-				JOURNAL_WATERMARK_RESERVED);
+				JOURNAL_WATERMARK_reserved);
 	if (ret)
 		goto err;
 

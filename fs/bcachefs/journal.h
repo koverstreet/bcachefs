@@ -295,6 +295,7 @@ static inline void bch2_journal_res_put(struct journal *j,
 int bch2_journal_res_get_slowpath(struct journal *, struct journal_res *,
 				  unsigned);
 
+/* First two bits for JOURNAL_WATERMARK: */
 #define JOURNAL_RES_GET_NONBLOCK	(1 << 2)
 #define JOURNAL_RES_GET_CHECK		(1 << 3)
 
@@ -373,17 +374,17 @@ out:
 static inline void journal_set_watermark(struct journal *j)
 {
 	union journal_preres_state s = READ_ONCE(j->prereserved);
-	unsigned watermark = JOURNAL_WATERMARK_ANY;
+	unsigned watermark = JOURNAL_WATERMARK_any;
 
 	if (fifo_free(&j->pin) < j->pin.size / 4)
-		watermark = max_t(unsigned, watermark, JOURNAL_WATERMARK_COPYGC);
+		watermark = max_t(unsigned, watermark, JOURNAL_WATERMARK_copygc);
 	if (fifo_free(&j->pin) < j->pin.size / 8)
-		watermark = max_t(unsigned, watermark, JOURNAL_WATERMARK_RESERVED);
+		watermark = max_t(unsigned, watermark, JOURNAL_WATERMARK_reserved);
 
 	if (s.reserved > s.remaining)
-		watermark = max_t(unsigned, watermark, JOURNAL_WATERMARK_COPYGC);
+		watermark = max_t(unsigned, watermark, JOURNAL_WATERMARK_copygc);
 	if (!s.remaining)
-		watermark = max_t(unsigned, watermark, JOURNAL_WATERMARK_RESERVED);
+		watermark = max_t(unsigned, watermark, JOURNAL_WATERMARK_reserved);
 
 	if (watermark == j->watermark)
 		return;
@@ -432,7 +433,7 @@ static inline int bch2_journal_preres_get_fast(struct journal *j,
 		old.v = new.v = v;
 		ret = 0;
 
-		if ((flags & JOURNAL_WATERMARK_RESERVED) ||
+		if ((flags & JOURNAL_WATERMARK_reserved) ||
 		    new.reserved + d < new.remaining) {
 			new.reserved += d;
 			ret = 1;

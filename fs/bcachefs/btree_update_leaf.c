@@ -984,7 +984,7 @@ int bch2_trans_commit_error(struct btree_trans *trans,
 		bch2_trans_unlock(trans);
 
 		if ((trans->flags & BTREE_INSERT_JOURNAL_RECLAIM) &&
-		    !(trans->flags & JOURNAL_WATERMARK_RESERVED)) {
+		    !(trans->flags & JOURNAL_WATERMARK_reserved)) {
 			trans->restarted = true;
 			ret = -EAGAIN;
 			break;
