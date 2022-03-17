@@ -1386,50 +1386,25 @@ need_mark:
 
 /* trans_mark: */
 
-static int bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree_iter *iter,
-			      const struct bch_extent_ptr *ptr,
-			      struct bch_alloc_v4 *a)
-{
-	struct bch_fs *c = trans->c;
-	struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
-	struct bkey_s_c k;
-	int ret;
-
-	bch2_trans_iter_init(trans, iter, BTREE_ID_alloc,
-			     POS(ptr->dev, PTR_BUCKET_NR(ca, ptr)),
-			     BTREE_ITER_WITH_UPDATES|
-			     BTREE_ITER_CACHED|
-			     BTREE_ITER_INTENT);
-	k = bch2_btree_iter_peek_slot(iter);
-	ret = bkey_err(k);
-	if (ret) {
-		bch2_trans_iter_exit(trans, iter);
-		return ret;
-	}
-
-	bch2_alloc_to_v4(k, a);
-	return 0;
-}
-
 static int bch2_trans_mark_pointer(struct btree_trans *trans,
 			struct bkey_s_c k, struct extent_ptr_decoded p,
 			s64 sectors, enum bch_data_type data_type)
 {
 	struct btree_iter iter;
-	struct bch_alloc_v4 a;
+	struct bkey_i_alloc_v4 *a;
 	int ret;
 
-	ret = bch2_trans_start_alloc_update(trans, &iter, &p.ptr, &a);
-	if (ret)
-		return ret;
+	a = bch2_trans_start_alloc_update(trans, &iter, PTR_BUCKET_POS(trans->c, &p.ptr));
+	if (IS_ERR(a))
+		return PTR_ERR(a);
 
 	ret = __mark_pointer(trans, k, &p.ptr, sectors, data_type,
-			     a.gen, &a.data_type,
-			     &a.dirty_sectors, &a.cached_sectors);
+			     a->v.gen, &a->v.data_type,
+			     &a->v.dirty_sectors, &a->v.cached_sectors);
 	if (ret)
 		goto out;
 
-	ret = bch2_alloc_write(trans, &iter, &a, 0);
+	ret = bch2_trans_update(trans, &iter, &a->k_i, 0);
 	if (ret)
 		goto out;
 out:
@@ -1562,7 +1537,7 @@ static int bch2_trans_mark_stripe_bucket(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	const struct bch_extent_ptr *ptr = &s.v->ptrs[idx];
 	struct btree_iter iter;
-	struct bch_alloc_v4 a;
+	struct bkey_i_alloc_v4 *a;
 	enum bch_data_type data_type = idx >= s.v->nr_blocks - s.v->nr_redundant
 		? BCH_DATA_parity : 0;
 	s64 sectors = data_type ? le16_to_cpu(s.v->sectors) : 0;
@@ -1571,59 +1546,59 @@ static int bch2_trans_mark_stripe_bucket(struct btree_trans *trans,
 	if (deleting)
 		sectors = -sectors;
 
-	ret = bch2_trans_start_alloc_update(trans, &iter, ptr, &a);
-	if (ret)
-		return ret;
+	a = bch2_trans_start_alloc_update(trans, &iter, PTR_BUCKET_POS(c, ptr));
+	if (IS_ERR(a))
+		return PTR_ERR(a);
 
 	ret = check_bucket_ref(c, s.s_c, ptr, sectors, data_type,
-			       a.gen, a.data_type,
-			       a.dirty_sectors, a.cached_sectors);
+			       a->v.gen, a->v.data_type,
+			       a->v.dirty_sectors, a->v.cached_sectors);
 	if (ret)
 		goto err;
 
 	if (!deleting) {
-		if (bch2_trans_inconsistent_on(a.stripe ||
-					    a.stripe_redundancy, trans,
+		if (bch2_trans_inconsistent_on(a->v.stripe ||
+					       a->v.stripe_redundancy, trans,
 				"bucket %llu:%llu gen %u data type %s dirty_sectors %u: multiple stripes using same bucket (%u, %llu)",
-				iter.pos.inode, iter.pos.offset, a.gen,
-				bch2_data_types[a.data_type],
-				a.dirty_sectors,
-				a.stripe, s.k->p.offset)) {
+				iter.pos.inode, iter.pos.offset, a->v.gen,
+				bch2_data_types[a->v.data_type],
+				a->v.dirty_sectors,
+				a->v.stripe, s.k->p.offset)) {
 			ret = -EIO;
 			goto err;
 		}
 
-		if (bch2_trans_inconsistent_on(data_type && a.dirty_sectors, trans,
+		if (bch2_trans_inconsistent_on(data_type && a->v.dirty_sectors, trans,
 				"bucket %llu:%llu gen %u data type %s dirty_sectors %u: data already in stripe bucket %llu",
-				iter.pos.inode, iter.pos.offset, a.gen,
-				bch2_data_types[a.data_type],
-				a.dirty_sectors,
+				iter.pos.inode, iter.pos.offset, a->v.gen,
+				bch2_data_types[a->v.data_type],
+				a->v.dirty_sectors,
 				s.k->p.offset)) {
 			ret = -EIO;
 			goto err;
 		}
 
-		a.stripe		= s.k->p.offset;
-		a.stripe_redundancy	= s.v->nr_redundant;
+		a->v.stripe		= s.k->p.offset;
+		a->v.stripe_redundancy	= s.v->nr_redundant;
 	} else {
-		if (bch2_trans_inconsistent_on(a.stripe != s.k->p.offset ||
-					    a.stripe_redundancy != s.v->nr_redundant, trans,
+		if (bch2_trans_inconsistent_on(a->v.stripe != s.k->p.offset ||
+					       a->v.stripe_redundancy != s.v->nr_redundant, trans,
 				"bucket %llu:%llu gen %u: not marked as stripe when deleting stripe %llu (got %u)",
-				iter.pos.inode, iter.pos.offset, a.gen,
-				s.k->p.offset, a.stripe)) {
+				iter.pos.inode, iter.pos.offset, a->v.gen,
+				s.k->p.offset, a->v.stripe)) {
 			ret = -EIO;
 			goto err;
 		}
 
-		a.stripe		= 0;
-		a.stripe_redundancy	= 0;
+		a->v.stripe		= 0;
+		a->v.stripe_redundancy	= 0;
 	}
 
-	a.dirty_sectors += sectors;
+	a->v.dirty_sectors += sectors;
 	if (data_type)
-		a.data_type = !deleting ? data_type : 0;
+		a->v.data_type = !deleting ? data_type : 0;
 
-	ret = bch2_alloc_write(trans, &iter, &a, 0);
+	ret = bch2_trans_update(trans, &iter, &a->k_i, 0);
 	if (ret)
 		goto err;
 err:
@@ -1853,11 +1828,7 @@ static int __bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
-	struct bch_alloc_v4 a;
-	struct bch_extent_ptr ptr = {
-		.dev = ca->dev_idx,
-		.offset = bucket_to_sector(ca, b),
-	};
+	struct bkey_i_alloc_v4 *a;
 	int ret = 0;
 
 	/*
@@ -1866,26 +1837,26 @@ static int __bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 	if (b >= ca->mi.nbuckets)
 		return 0;
 
-	ret = bch2_trans_start_alloc_update(trans, &iter, &ptr, &a);
-	if (ret)
-		return ret;
+	a = bch2_trans_start_alloc_update(trans, &iter, POS(ca->dev_idx, b));
+	if (IS_ERR(a))
+		return PTR_ERR(a);
 
-	if (a.data_type && a.data_type != type) {
+	if (a->v.data_type && a->v.data_type != type) {
 		bch2_fsck_err(c, FSCK_CAN_IGNORE|FSCK_NEED_FSCK,
 			"bucket %llu:%llu gen %u different types of data in same bucket: %s, %s\n"
 			"while marking %s",
-			iter.pos.inode, iter.pos.offset, a.gen,
-			bch2_data_types[a.data_type],
+			iter.pos.inode, iter.pos.offset, a->v.gen,
+			bch2_data_types[a->v.data_type],
 			bch2_data_types[type],
 			bch2_data_types[type]);
 		ret = -EIO;
 		goto out;
 	}
 
-	a.data_type	= type;
-	a.dirty_sectors	= sectors;
+	a->v.data_type		= type;
+	a->v.dirty_sectors	= sectors;
 
-	ret = bch2_alloc_write(trans, &iter, &a, 0);
+	ret = bch2_trans_update(trans, &iter, &a->k_i, 0);
 	if (ret)
 		goto out;
 out:
