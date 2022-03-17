@@ -56,10 +56,11 @@ static inline struct bpos alloc_freespace_pos(struct bpos pos, struct bch_alloc_
 	return pos;
 }
 
-int bch2_alloc_write(struct btree_trans *, struct btree_iter *,
-		     struct bch_alloc_v4 *, unsigned);
+struct bkey_i_alloc_v4 *
+bch2_trans_start_alloc_update(struct btree_trans *, struct btree_iter *, struct bpos);
 
 void bch2_alloc_to_v4(struct bkey_s_c, struct bch_alloc_v4 *);
+struct bkey_i_alloc_v4 *bch2_alloc_to_v4_mut(struct btree_trans *, struct bkey_s_c);
 
 int bch2_bucket_io_time_reset(struct btree_trans *, unsigned, size_t, int);
 
