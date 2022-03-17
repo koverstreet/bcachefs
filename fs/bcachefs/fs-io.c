@@ -1287,7 +1287,7 @@ static void bch2_writepage_io_done(struct closure *cl)
 	 * racing with fallocate can cause us to add fewer sectors than
 	 * expected - but we shouldn't add more sectors than expected:
 	 */
-	WARN_ON(io->op.i_sectors_delta > 0);
+	WARN_ON_ONCE(io->op.i_sectors_delta > 0);
 
 	/*
 	 * (error (due to going RO) halfway through a page can screw that up
@@ -1473,8 +1473,8 @@ do_io:
 				     sectors << 9, offset << 9));
 
 		/* Check for writing past i_size: */
-		WARN_ON((bio_end_sector(&w->io->op.wbio.bio) << 9) >
-			round_up(i_size, block_bytes(c)));
+		WARN_ON_ONCE((bio_end_sector(&w->io->op.wbio.bio) << 9) >
+			     round_up(i_size, block_bytes(c)));
 
 		w->io->op.res.sectors += reserved_sectors;
 		w->io->op.i_sectors_delta -= dirty_sectors;
