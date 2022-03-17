@@ -458,7 +458,13 @@ static int run_one_mem_trigger(struct btree_trans *trans,
 static int run_one_trans_trigger(struct btree_trans *trans, struct btree_insert_entry *i,
 			   bool overwrite)
 {
-	struct bkey_s_c old = { &i->old_k, i->old_v };
+	/*
+	 * Transactional triggers create new btree_insert_entries, so we can't
+	 * pass them a pointer to a btree_insert_entry, that memory is going to
+	 * move:
+	 */
+	struct bkey old_k = i->old_k;
+	struct bkey_s_c old = { &old_k, i->old_v };
 	int ret = 0;
 
 	if ((i->flags & BTREE_TRIGGER_NORUN) ||
