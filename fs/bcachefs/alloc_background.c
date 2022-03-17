@@ -247,21 +247,48 @@ void bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *out)
 	}
 }
 
-int bch2_alloc_write(struct btree_trans *trans, struct btree_iter *iter,
-		     struct bch_alloc_v4 *src, unsigned trigger_flags)
+struct bkey_i_alloc_v4 *bch2_alloc_to_v4_mut(struct btree_trans *trans, struct bkey_s_c k)
 {
-	struct bkey_i_alloc_v4 *dst =
-		bch2_trans_kmalloc(trans, sizeof(*dst));
+	struct bkey_i_alloc_v4 *ret;
 
-	if (IS_ERR(dst))
-		return PTR_ERR(dst);
+	if (k.k->type == KEY_TYPE_alloc_v4) {
+		ret = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
+		if (!IS_ERR(ret))
+			bkey_reassemble(&ret->k_i, k);
+	} else {
+		ret = bch2_trans_kmalloc(trans, sizeof(*ret));
+		if (!IS_ERR(ret)) {
+			bkey_alloc_v4_init(&ret->k_i);
+			ret->k.p = k.k->p;
+			bch2_alloc_to_v4(k, &ret->v);
+		}
+	}
+	return ret;
+}
 
-	bkey_alloc_v4_init(&dst->k_i);
-	set_bkey_val_bytes(&dst->k, sizeof(dst->v));
-	dst->k.p = iter->pos;
-	dst->v = *src;
+struct bkey_i_alloc_v4 *
+bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree_iter *iter,
+			      struct bpos pos)
+{
+	struct bkey_s_c k;
+	struct bkey_i_alloc_v4 *a;
+	int ret;
 
-	return bch2_trans_update(trans, iter, &dst->k_i, trigger_flags);
+	bch2_trans_iter_init(trans, iter, BTREE_ID_alloc, pos,
+			     BTREE_ITER_WITH_UPDATES|
+			     BTREE_ITER_CACHED|
+			     BTREE_ITER_INTENT);
+	k = bch2_btree_iter_peek_slot(iter);
+	ret = bkey_err(k);
+	if (ret) {
+		bch2_trans_iter_exit(trans, iter);
+		return ERR_PTR(ret);
+	}
+
+	a = bch2_alloc_to_v4_mut(trans, k);
+	if (IS_ERR(a))
+		bch2_trans_iter_exit(trans, iter);
+	return a;
 }
 
 static unsigned bch_alloc_v1_val_u64s(const struct bch_alloc *a)
@@ -649,11 +676,25 @@ static int bch2_check_alloc_key(struct btree_trans *trans,
 			ret   = bch2_lru_change(trans,
 						alloc_k.k->p.inode,
 						alloc_k.k->p.offset,
-						0, &a.io_time[READ]) ?:
-				(a.io_time[READ] != read_time
-				 ? bch2_alloc_write(trans, alloc_iter, &a, BTREE_TRIGGER_NORUN)
-				 : 0) ?:
-				bch2_trans_commit(trans, NULL, NULL, 0);
+						0, &a.io_time[READ]);
+			if (ret)
+				goto err;
+
+			if (a.io_time[READ] != read_time) {
+				struct bkey_i_alloc_v4 *a_mut =
+					bch2_alloc_to_v4_mut(trans, alloc_k);
+				ret = PTR_ERR_OR_ZERO(a_mut);
+				if (ret)
+					goto err;
+
+				a_mut->v.io_time[READ] = a.io_time[READ];
+				ret = bch2_trans_update(trans, alloc_iter,
+							&a_mut->k_i, BTREE_TRIGGER_NORUN);
+				if (ret)
+					goto err;
+			}
+
+			ret = bch2_trans_commit(trans, NULL, NULL, 0);
 			if (ret)
 				goto err;
 		}
@@ -802,7 +843,7 @@ static int bch2_clear_need_discard(struct btree_trans *trans, struct bpos pos,
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	struct bch_alloc_v4 a;
+	struct bkey_i_alloc_v4 *a;
 	struct printbuf buf = PRINTBUF;
 	int ret;
 
@@ -813,17 +854,20 @@ static int bch2_clear_need_discard(struct btree_trans *trans, struct bpos pos,
 	if (ret)
 		goto out;
 
-	bch2_alloc_to_v4(k, &a);
+	a = bch2_alloc_to_v4_mut(trans, k);
+	ret = PTR_ERR_OR_ZERO(a);
+	if (ret)
+		goto out;
 
-	if (BCH_ALLOC_V4_NEED_INC_GEN(&a)) {
-		a.gen++;
-		SET_BCH_ALLOC_V4_NEED_INC_GEN(&a, false);
+	if (BCH_ALLOC_V4_NEED_INC_GEN(&a->v)) {
+		a->v.gen++;
+		SET_BCH_ALLOC_V4_NEED_INC_GEN(&a->v, false);
 		goto write;
 	}
 
-	BUG_ON(a.journal_seq > c->journal.flushed_seq_ondisk);
+	BUG_ON(a->v.journal_seq > c->journal.flushed_seq_ondisk);
 
-	if (bch2_fs_inconsistent_on(!BCH_ALLOC_V4_NEED_DISCARD(&a), c,
+	if (bch2_fs_inconsistent_on(!BCH_ALLOC_V4_NEED_DISCARD(&a->v), c,
 			"%s\n  incorrectly set in need_discard btree",
 			(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
 		ret = -EIO;
@@ -847,9 +891,9 @@ static int bch2_clear_need_discard(struct btree_trans *trans, struct bpos pos,
 			goto out;
 	}
 
-	SET_BCH_ALLOC_V4_NEED_DISCARD(&a, false);
+	SET_BCH_ALLOC_V4_NEED_DISCARD(&a->v, false);
 write:
-	ret = bch2_alloc_write(trans, &iter, &a, 0);
+	ret = bch2_trans_update(trans, &iter, &a->k_i, 0);
 out:
 	bch2_trans_iter_exit(trans, &iter);
 	printbuf_exit(&buf);
@@ -919,7 +963,7 @@ static int invalidate_one_bucket(struct btree_trans *trans, struct bch_dev *ca)
 	struct bch_fs *c = trans->c;
 	struct btree_iter lru_iter, alloc_iter = { NULL };
 	struct bkey_s_c k;
-	struct bch_alloc_v4 a;
+	struct bkey_i_alloc_v4 *a;
 	u64 bucket, idx;
 	int ret;
 
@@ -940,32 +984,27 @@ static int invalidate_one_bucket(struct btree_trans *trans, struct bch_dev *ca)
 	idx	= k.k->p.offset;
 	bucket	= le64_to_cpu(bkey_s_c_to_lru(k).v->idx);
 
-	bch2_trans_iter_init(trans, &alloc_iter, BTREE_ID_alloc,
-			     POS(ca->dev_idx, bucket),
-			     BTREE_ITER_CACHED|
-			     BTREE_ITER_INTENT);
-	k = bch2_btree_iter_peek_slot(&alloc_iter);
-	ret = bkey_err(k);
+	a = bch2_trans_start_alloc_update(trans, &alloc_iter,
+					  POS(ca->dev_idx, bucket));
+	ret = PTR_ERR_OR_ZERO(a);
 	if (ret)
 		goto out;
 
-	bch2_alloc_to_v4(k, &a);
-
-	if (bch2_fs_inconsistent_on(idx != alloc_lru_idx(a), c,
+	if (bch2_fs_inconsistent_on(idx != alloc_lru_idx(a->v), c,
 			"invalidating bucket with wrong lru idx (got %llu should be %llu",
-			idx, alloc_lru_idx(a)))
+			idx, alloc_lru_idx(a->v)))
 		goto out;
 
-	SET_BCH_ALLOC_V4_NEED_INC_GEN(&a, false);
-	a.gen++;
-	a.data_type		= 0;
-	a.dirty_sectors		= 0;
-	a.cached_sectors	= 0;
-	a.io_time[READ]		= atomic64_read(&c->io_clock[READ].now);
-	a.io_time[WRITE]	= atomic64_read(&c->io_clock[WRITE].now);
+	SET_BCH_ALLOC_V4_NEED_INC_GEN(&a->v, false);
+	a->v.gen++;
+	a->v.data_type		= 0;
+	a->v.dirty_sectors	= 0;
+	a->v.cached_sectors	= 0;
+	a->v.io_time[READ]	= atomic64_read(&c->io_clock[READ].now);
+	a->v.io_time[WRITE]	= atomic64_read(&c->io_clock[WRITE].now);
 
-	ret = bch2_alloc_write(trans, &alloc_iter, &a,
-			       BTREE_TRIGGER_BUCKET_INVALIDATE);
+	ret = bch2_trans_update(trans, &alloc_iter, &a->k_i,
+				BTREE_TRIGGER_BUCKET_INVALIDATE);
 out:
 	bch2_trans_iter_exit(trans, &alloc_iter);
 	bch2_trans_iter_exit(trans, &lru_iter);
@@ -1087,28 +1126,22 @@ int bch2_bucket_io_time_reset(struct btree_trans *trans, unsigned dev,
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
-	struct bkey_s_c k;
-	struct bch_alloc_v4 a;
+	struct bkey_i_alloc_v4 *a;
 	u64 now;
 	int ret = 0;
 
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc, POS(dev, bucket_nr),
-			     BTREE_ITER_CACHED|
-			     BTREE_ITER_INTENT);
-	k = bch2_btree_iter_peek_slot(&iter);
-	ret = bkey_err(k);
+	a = bch2_trans_start_alloc_update(trans, &iter,  POS(dev, bucket_nr));
+	ret = PTR_ERR_OR_ZERO(a);
 	if (ret)
-		goto out;
-
-	bch2_alloc_to_v4(k, &a);
+		return ret;
 
 	now = atomic64_read(&c->io_clock[rw].now);
-	if (a.io_time[rw] == now)
+	if (a->v.io_time[rw] == now)
 		goto out;
 
-	a.io_time[rw] = now;
+	a->v.io_time[rw] = now;
 
-	ret   = bch2_alloc_write(trans, &iter, &a, 0) ?:
+	ret   = bch2_trans_update(trans, &iter, &a->k_i, 0) ?:
 		bch2_trans_commit(trans, NULL, NULL, 0);
 out:
 	bch2_trans_iter_exit(trans, &iter);
