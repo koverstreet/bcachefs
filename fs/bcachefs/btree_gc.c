@@ -1330,6 +1330,7 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	struct bch_dev *ca = bch_dev_bkey_exists(c, iter->pos.inode);
 	struct bucket gc;
 	struct bkey_s_c k;
+	struct bkey_i_alloc_v4 *a;
 	struct bch_alloc_v4 old, new;
 	int ret;
 
@@ -1375,7 +1376,14 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	if (!bch2_alloc_v4_cmp(old, new))
 		return 0;
 
-	ret = bch2_alloc_write(trans, iter, &new, BTREE_TRIGGER_NORUN);
+	a = bch2_alloc_to_v4_mut(trans, k);
+	ret = PTR_ERR_OR_ZERO(a);
+	if (ret)
+		return ret;
+
+	a->v = new;
+
+	ret = bch2_trans_update(trans, iter, &a->k_i, BTREE_TRIGGER_NORUN);
 fsck_err:
 	return ret;
 }
@@ -1900,6 +1908,7 @@ static int bch2_alloc_write_oldest_gen(struct btree_trans *trans, struct btree_i
 	struct bch_dev *ca = bch_dev_bkey_exists(trans->c, iter->pos.inode);
 	struct bkey_s_c k;
 	struct bch_alloc_v4 a;
+	struct bkey_i_alloc_v4 *a_mut;
 	int ret;
 
 	k = bch2_btree_iter_peek_slot(iter);
@@ -1912,9 +1921,14 @@ static int bch2_alloc_write_oldest_gen(struct btree_trans *trans, struct btree_i
 	if (a.oldest_gen == ca->oldest_gen[iter->pos.offset])
 		return 0;
 
-	a.oldest_gen = ca->oldest_gen[iter->pos.offset];
+	a_mut = bch2_alloc_to_v4_mut(trans, k);
+	ret = PTR_ERR_OR_ZERO(a_mut);
+	if (ret)
+		return ret;
 
-	return bch2_alloc_write(trans, iter, &a, 0);
+	a_mut->v.oldest_gen = ca->oldest_gen[iter->pos.offset];
+
+	return bch2_trans_update(trans, iter, &a_mut->k_i, 0);
 }
 
 int bch2_gc_gens(struct bch_fs *c)
