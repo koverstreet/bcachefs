@@ -1816,21 +1816,29 @@ void bch2_trans_updates_to_text(struct printbuf *buf, struct btree_trans *trans)
 {
 	struct btree_insert_entry *i;
 
-	pr_buf(buf, "transaction updates for %s journal seq %llu\n",
+	pr_buf(buf, "transaction updates for %s journal seq %llu",
 	       trans->fn, trans->journal_res.seq);
+	pr_newline(buf);
+	pr_indent_push(buf, 2);
 
 	trans_for_each_update(trans, i) {
 		struct bkey_s_c old = { &i->old_k, i->old_v };
 
-		pr_buf(buf, "update: btree %s %pS\n  old ",
+		pr_buf(buf, "update: btree %s %pS",
 		       bch2_btree_ids[i->btree_id],
 		       (void *) i->ip_allocated);
+		pr_newline(buf);
 
+		pr_buf(buf, "  old ");
 		bch2_bkey_val_to_text(buf, trans->c, old);
-		pr_buf(buf, "\n  new ");
+		pr_newline(buf);
+
+		pr_buf(buf, "  new ");
 		bch2_bkey_val_to_text(buf, trans->c, bkey_i_to_s_c(i->k));
-		pr_buf(buf, "\n");
+		pr_newline(buf);
 	}
+
+	pr_indent_pop(buf, 2);
 }
 
 noinline __cold
