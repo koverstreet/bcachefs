@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "alloc_background.h"
 #include "alloc_foreground.h"
+#include "backpointers.h"
 #include "bkey_buf.h"
 #include "btree_gc.h"
 #include "btree_update.h"
@@ -9,6 +11,7 @@
 #include "buckets.h"
 #include "disk_groups.h"
 #include "ec.h"
+#include "error.h"
 #include "inode.h"
 #include "io.h"
 #include "journal_reclaim.h"
@@ -634,6 +637,70 @@ err:
 	return ret;
 }
 
+static int move_ratelimit(struct btree_trans *trans,
+			  struct moving_context *ctxt,
+			  struct bch_ratelimit *rate)
+{
+	u64 delay;
+
+	do {
+		delay = rate ? bch2_ratelimit_delay(rate) : 0;
+
+		if (delay) {
+			bch2_trans_unlock(trans);
+			set_current_state(TASK_INTERRUPTIBLE);
+		}
+
+		if ((current->flags & PF_KTHREAD) && kthread_should_stop()) {
+			__set_current_state(TASK_RUNNING);
+			return 1;
+		}
+
+		if (delay)
+			schedule_timeout(delay);
+
+		if (unlikely(freezing(current))) {
+			move_ctxt_wait_event(ctxt, trans, list_empty(&ctxt->reads));
+			try_to_freeze();
+		}
+	} while (delay);
+
+	move_ctxt_wait_event(ctxt, trans,
+		atomic_read(&ctxt->write_sectors) <
+		SECTORS_IN_FLIGHT_PER_DEVICE);
+
+	move_ctxt_wait_event(ctxt, trans,
+		atomic_read(&ctxt->read_sectors) <
+		SECTORS_IN_FLIGHT_PER_DEVICE);
+
+	return 0;
+}
+
+static int move_get_io_opts(struct btree_trans *trans,
+			    struct bch_io_opts *io_opts,
+			    struct bkey_s_c k, u64 *cur_inum)
+{
+	struct bch_inode_unpacked inode;
+	int ret;
+
+	if (*cur_inum == k.k->p.inode)
+		return 0;
+
+	*io_opts = bch2_opts_to_inode_opts(trans->c->opts);
+
+	ret = lookup_inode(trans,
+			   SPOS(0, k.k->p.inode, k.k->p.snapshot),
+			   &inode);
+	if (ret == -EINTR)
+		return ret;
+
+	if (!ret)
+		bch2_io_opts_apply(io_opts, bch2_inode_opts_get(&inode));
+
+	*cur_inum = k.k->p.inode;
+	return 0;
+}
+
 static int __bch2_move_data(struct bch_fs *c,
 		struct moving_context *ctxt,
 		struct bch_ratelimit *rate,
@@ -644,7 +711,6 @@ static int __bch2_move_data(struct bch_fs *c,
 		struct bch_move_stats *stats,
 		enum btree_id btree_id)
 {
-	bool kthread = (current->flags & PF_KTHREAD) != 0;
 	struct bch_io_opts io_opts = bch2_opts_to_inode_opts(c->opts);
 	struct bkey_buf sk;
 	struct btree_trans trans;
@@ -652,7 +718,7 @@ static int __bch2_move_data(struct bch_fs *c,
 	struct bkey_s_c k;
 	struct data_opts data_opts;
 	enum data_cmd data_cmd;
-	u64 delay, cur_inum = U64_MAX;
+	u64 cur_inum = U64_MAX;
 	int ret = 0, ret2;
 
 	bch2_bkey_buf_init(&sk);
@@ -669,37 +735,7 @@ static int __bch2_move_data(struct bch_fs *c,
 	if (rate)
 		bch2_ratelimit_reset(rate);
 
-	while (1) {
-		do {
-			delay = rate ? bch2_ratelimit_delay(rate) : 0;
-
-			if (delay) {
-				bch2_trans_unlock(&trans);
-				set_current_state(TASK_INTERRUPTIBLE);
-			}
-
-			if (kthread && (ret = kthread_should_stop())) {
-				__set_current_state(TASK_RUNNING);
-				goto out;
-			}
-
-			if (delay)
-				schedule_timeout(delay);
-
-			if (unlikely(freezing(current))) {
-				move_ctxt_wait_event(ctxt, &trans, list_empty(&ctxt->reads));
-				try_to_freeze();
-			}
-		} while (delay);
-
-		move_ctxt_wait_event(ctxt, &trans,
-			atomic_read(&ctxt->write_sectors) <
-			SECTORS_IN_FLIGHT_PER_DEVICE);
-
-		move_ctxt_wait_event(ctxt, &trans,
-			atomic_read(&ctxt->read_sectors) <
-			SECTORS_IN_FLIGHT_PER_DEVICE);
-
+	while (!move_ratelimit(&trans, ctxt, rate)) {
 		bch2_trans_begin(&trans);
 
 		k = bch2_btree_iter_peek(&iter);
@@ -720,23 +756,9 @@ static int __bch2_move_data(struct bch_fs *c,
 		if (!bkey_extent_is_direct_data(k.k))
 			goto next_nondata;
 
-		if (btree_id == BTREE_ID_extents &&
-		    cur_inum != k.k->p.inode) {
-			struct bch_inode_unpacked inode;
-
-			io_opts = bch2_opts_to_inode_opts(c->opts);
-
-			ret = lookup_inode(&trans,
-					SPOS(0, k.k->p.inode, k.k->p.snapshot),
-					&inode);
-			if (ret == -EINTR)
-				continue;
-
-			if (!ret)
-				bch2_io_opts_apply(&io_opts, bch2_inode_opts_get(&inode));
-
-			cur_inum = k.k->p.inode;
-		}
+		ret = move_get_io_opts(&trans, &io_opts, k, &cur_inum);
+		if (ret)
+			continue;
 
 		switch ((data_cmd = pred(c, arg, k, &io_opts, &data_opts))) {
 		case DATA_SKIP:
@@ -781,7 +803,6 @@ next:
 next_nondata:
 		bch2_btree_iter_advance(&iter);
 	}
-out:
 
 	bch2_trans_iter_exit(&trans, &iter);
 	bch2_trans_exit(&trans);
@@ -850,7 +871,6 @@ int bch2_move_data(struct bch_fs *c,
 			break;
 	}
 
-
 	move_ctxt_wait_event(&ctxt, NULL, list_empty(&ctxt.reads));
 	closure_sync(&ctxt.cl);
 
@@ -861,6 +881,174 @@ int bch2_move_data(struct bch_fs *c,
 			atomic64_read(&stats->keys_moved));
 
 	progress_list_del(c, stats);
+	return ret;
+}
+
+static int verify_bucket_evacuated(struct btree_trans *trans, struct bpos bucket, int gen)
+{
+	struct bch_fs *c = trans->c;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret;
+
+	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc,
+			     bucket, BTREE_ITER_CACHED);
+again:
+	k = bch2_btree_iter_peek_slot(&iter);
+	ret = bkey_err(k);
+
+	if (!ret && k.k->type == KEY_TYPE_alloc_v4) {
+		struct bkey_s_c_alloc_v4 a = bkey_s_c_to_alloc_v4(k);
+
+		if (a.v->gen == gen &&
+		    a.v->dirty_sectors) {
+			struct printbuf buf = PRINTBUF;
+
+			if (a.v->data_type == BCH_DATA_btree) {
+				bch2_trans_unlock(trans);
+				if (bch2_btree_interior_updates_flush(c))
+					goto again;
+			}
+
+			prt_str(&buf, "failed to evacuate bucket ");
+			bch2_bkey_val_to_text(&buf, c, k);
+
+			bch_err_ratelimited(c, "%s", buf.buf);
+			printbuf_exit(&buf);
+		}
+	}
+
+	bch2_trans_iter_exit(trans, &iter);
+	return ret;
+}
+
+int bch2_evacuate_bucket(struct bch_fs *c,
+			 struct bpos bucket, int gen,
+			 struct bch_ratelimit *rate,
+			 struct write_point_specifier wp,
+			 enum data_cmd data_cmd,
+			 struct data_opts *data_opts,
+			 struct bch_move_stats *stats)
+{
+	struct bch_io_opts io_opts = bch2_opts_to_inode_opts(c->opts);
+	struct moving_context ctxt = { .stats = stats };
+	struct btree_trans trans;
+	struct btree_iter iter;
+	struct bkey_buf sk;
+	struct bch_backpointer bp;
+	u64 bp_offset = 0, cur_inum = U64_MAX;
+	int ret = 0;
+
+	bch2_bkey_buf_init(&sk);
+	bch2_trans_init(&trans, c, 0, 0);
+	progress_list_add(c, stats);
+	closure_init_stack(&ctxt.cl);
+	INIT_LIST_HEAD(&ctxt.reads);
+	init_waitqueue_head(&ctxt.wait);
+
+	stats->data_type = BCH_DATA_user;
+
+	while (!(ret = move_ratelimit(&trans, &ctxt, rate))) {
+		bch2_trans_begin(&trans);
+
+		ret = bch2_get_next_backpointer(&trans, bucket, gen,
+						&bp_offset, &bp);
+		if (ret == -EINTR)
+			continue;
+		if (ret)
+			goto err;
+		if (bp_offset == U64_MAX)
+			break;
+
+		if (!bp.level) {
+			struct bkey_s_c k;
+
+			k = bch2_backpointer_get_key(&trans, &iter,
+						bucket, bp_offset, bp);
+			ret = bkey_err(k);
+			if (ret == -EINTR)
+				continue;
+			if (ret)
+				goto err;
+			if (!k.k)
+				continue;
+
+			bch2_bkey_buf_reassemble(&sk, c, k);
+			k = bkey_i_to_s_c(sk.k);
+			bch2_trans_iter_exit(&trans, &iter);
+
+			ret = move_get_io_opts(&trans, &io_opts, k, &cur_inum);
+			if (ret)
+				continue;
+
+			data_opts->target	= io_opts.background_target;
+			data_opts->rewrite_dev	= bucket.inode;
+
+			ret = bch2_move_extent(&trans, &ctxt, wp, io_opts, bp.btree_id, k,
+						data_cmd, *data_opts);
+			if (ret == -EINTR)
+				continue;
+			if (ret == -ENOMEM) {
+				/* memory allocation failure, wait for some IO to finish */
+				bch2_move_ctxt_wait_for_io(&ctxt, &trans);
+				continue;
+			}
+			if (ret)
+				goto err;
+
+			if (rate)
+				bch2_ratelimit_increment(rate, k.k->size);
+			atomic64_add(k.k->size, &stats->sectors_seen);
+		} else {
+			struct btree *b;
+
+			b = bch2_backpointer_get_node(&trans, &iter,
+						bucket, bp_offset, bp);
+			ret = PTR_ERR_OR_ZERO(b);
+			if (ret == -EINTR)
+				continue;
+			if (ret)
+				goto err;
+			if (!b)
+				continue;
+
+			ret = bch2_btree_node_rewrite(&trans, &iter, b, 0);
+			bch2_trans_iter_exit(&trans, &iter);
+
+			if (ret == -EINTR)
+				continue;
+			if (ret)
+				goto err;
+
+			if (rate)
+				bch2_ratelimit_increment(rate, c->opts.btree_node_size >> 9);
+			atomic64_add(c->opts.btree_node_size >> 9, &stats->sectors_seen);
+			atomic64_add(c->opts.btree_node_size >> 9, &stats->sectors_moved);
+		}
+
+		bp_offset++;
+	}
+
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) && gen >= 0) {
+		bch2_trans_unlock(&trans);
+		move_ctxt_wait_event(&ctxt, NULL, list_empty(&ctxt.reads));
+		closure_sync(&ctxt.cl);
+		lockrestart_do(&trans, verify_bucket_evacuated(&trans, bucket, gen));
+	}
+err:
+	bch2_trans_exit(&trans);
+	bch2_bkey_buf_exit(&sk, c);
+
+	move_ctxt_wait_event(&ctxt, NULL, list_empty(&ctxt.reads));
+	closure_sync(&ctxt.cl);
+	progress_list_del(c, stats);
+
+	EBUG_ON(atomic_read(&ctxt.write_sectors));
+
+	trace_move_data(c,
+			atomic64_read(&stats->sectors_moved),
+			atomic64_read(&stats->keys_moved));
+
 	return ret;
 }
 
