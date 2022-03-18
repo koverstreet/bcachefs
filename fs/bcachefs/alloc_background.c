@@ -2,6 +2,7 @@
 #include "bcachefs.h"
 #include "alloc_background.h"
 #include "alloc_foreground.h"
+#include "backpointers.h"
 #include "btree_cache.h"
 #include "btree_io.h"
 #include "btree_key_cache.h"
@@ -37,8 +38,6 @@ static const unsigned BCH_ALLOC_V1_FIELD_BYTES[] = {
 
 struct bkey_alloc_unpacked {
 	u64		journal_seq;
-	u64		bucket;
-	u8		dev;
 	u8		gen;
 	u8		oldest_gen;
 	u8		data_type;
@@ -194,11 +193,7 @@ static int bch2_alloc_unpack_v3(struct bkey_alloc_unpacked *out,
 
 static struct bkey_alloc_unpacked bch2_alloc_unpack(struct bkey_s_c k)
 {
-	struct bkey_alloc_unpacked ret = {
-		.dev	= k.k->p.inode,
-		.bucket	= k.k->p.offset,
-		.gen	= 0,
-	};
+	struct bkey_alloc_unpacked ret = { .gen	= 0 };
 
 	switch (k.k->type) {
 	case KEY_TYPE_alloc:
@@ -212,48 +207,6 @@ static struct bkey_alloc_unpacked bch2_alloc_unpack(struct bkey_s_c k)
 		break;
 	}
 
-	return ret;
-}
-
-void bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *out)
-{
-	if (k.k->type == KEY_TYPE_alloc_v4) {
-		*out = *bkey_s_c_to_alloc_v4(k).v;
-	} else {
-		struct bkey_alloc_unpacked u = bch2_alloc_unpack(k);
-
-		*out = (struct bch_alloc_v4) {
-			.journal_seq		= u.journal_seq,
-			.flags			= u.need_discard,
-			.gen			= u.gen,
-			.oldest_gen		= u.oldest_gen,
-			.data_type		= u.data_type,
-			.stripe_redundancy	= u.stripe_redundancy,
-			.dirty_sectors		= u.dirty_sectors,
-			.cached_sectors		= u.cached_sectors,
-			.io_time[READ]		= u.read_time,
-			.io_time[WRITE]		= u.write_time,
-			.stripe			= u.stripe,
-		};
-	}
-}
-
-struct bkey_i_alloc_v4 *bch2_alloc_to_v4_mut(struct btree_trans *trans, struct bkey_s_c k)
-{
-	struct bkey_i_alloc_v4 *ret;
-
-	if (k.k->type == KEY_TYPE_alloc_v4) {
-		ret = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
-		if (!IS_ERR(ret))
-			bkey_reassemble(&ret->k_i, k);
-	} else {
-		ret = bch2_trans_kmalloc(trans, sizeof(*ret));
-		if (!IS_ERR(ret)) {
-			bkey_alloc_v4_init(&ret->k_i);
-			ret->k.p = k.k->p;
-			bch2_alloc_to_v4(k, &ret->v);
-		}
-	}
 	return ret;
 }
 
@@ -339,9 +292,15 @@ int bch2_alloc_v4_invalid(const struct bch_fs *c, struct bkey_s_c k,
 {
 	struct bkey_s_c_alloc_v4 a = bkey_s_c_to_alloc_v4(k);
 
-	if (bkey_val_bytes(k.k) != sizeof(struct bch_alloc_v4)) {
-		prt_printf(err, "bad val size (%zu != %zu)",
-		       bkey_val_bytes(k.k), sizeof(struct bch_alloc_v4));
+	if (alloc_v4_u64s(a.v) != bkey_val_u64s(k.k)) {
+		prt_printf(err, "bad val size (%lu != %u)",
+		       bkey_val_u64s(k.k), alloc_v4_u64s(a.v));
+		return -EINVAL;
+	}
+
+	if (!BCH_ALLOC_V4_BACKPOINTERS_START(a.v) &&
+	    BCH_ALLOC_V4_NR_BACKPOINTERS(a.v)) {
+		prt_printf(err, "invalid backpointers_start");
 		return -EINVAL;
 	}
 
@@ -401,9 +360,19 @@ int bch2_alloc_v4_invalid(const struct bch_fs *c, struct bkey_s_c k,
 	return 0;
 }
 
+static inline u64 swab40(u64 x)
+{
+	return (((x & 0x00000000ffULL) << 32)|
+		((x & 0x000000ff00ULL) << 16)|
+		((x & 0x0000ff0000ULL) >>  0)|
+		((x & 0x00ff000000ULL) >> 16)|
+		((x & 0xff00000000ULL) >> 32));
+}
+
 void bch2_alloc_v4_swab(struct bkey_s k)
 {
 	struct bch_alloc_v4 *a = bkey_s_to_alloc_v4(k).v;
+	struct bch_backpointer *bp, *bps;
 
 	a->journal_seq		= swab64(a->journal_seq);
 	a->flags		= swab32(a->flags);
@@ -413,25 +382,135 @@ void bch2_alloc_v4_swab(struct bkey_s k)
 	a->io_time[1]		= swab64(a->io_time[1]);
 	a->stripe		= swab32(a->stripe);
 	a->nr_external_backpointers = swab32(a->nr_external_backpointers);
+
+	bps = alloc_v4_backpointers(a);
+	for (bp = bps; bp < bps + BCH_ALLOC_V4_NR_BACKPOINTERS(a); bp++) {
+		bp->bucket_offset	= swab40(bp->bucket_offset);
+		bp->bucket_len		= swab32(bp->bucket_len);
+		bch2_bpos_swab(&bp->pos);
+	}
 }
 
 void bch2_alloc_to_text(struct printbuf *out, struct bch_fs *c, struct bkey_s_c k)
 {
-	struct bch_alloc_v4 a;
+	struct bch_alloc_v4 _a;
+	const struct bch_alloc_v4 *a = &_a;
+	const struct bch_backpointer *bps;
+	unsigned i;
 
-	bch2_alloc_to_v4(k, &a);
+	if (k.k->type == KEY_TYPE_alloc_v4)
+		a = bkey_s_c_to_alloc_v4(k).v;
+	else
+		bch2_alloc_to_v4(k, &_a);
 
-	prt_printf(out, "gen %u oldest_gen %u data_type %s journal_seq %llu need_discard %llu need_inc_gen %llu",
-	       a.gen, a.oldest_gen, bch2_data_types[a.data_type],
-	       a.journal_seq,
-	       BCH_ALLOC_V4_NEED_DISCARD(&a),
-	       BCH_ALLOC_V4_NEED_INC_GEN(&a));
-	prt_printf(out, " dirty_sectors %u",	a.dirty_sectors);
-	prt_printf(out, " cached_sectors %u",	a.cached_sectors);
-	prt_printf(out, " stripe %u",		a.stripe);
-	prt_printf(out, " stripe_redundancy %u",	a.stripe_redundancy);
-	prt_printf(out, " read_time %llu",		a.io_time[READ]);
-	prt_printf(out, " write_time %llu",		a.io_time[WRITE]);
+	prt_newline(out);
+	printbuf_indent_add(out, 2);
+
+	prt_printf(out, "gen %u oldest_gen %u data_type %s",
+	       a->gen, a->oldest_gen, bch2_data_types[a->data_type]);
+	prt_newline(out);
+	prt_printf(out, "journal_seq       %llu",	a->journal_seq);
+	prt_newline(out);
+	prt_printf(out, "need_discard      %llu",	BCH_ALLOC_V4_NEED_DISCARD(a));
+	prt_newline(out);
+	prt_printf(out, "need_inc_gen      %llu",	BCH_ALLOC_V4_NEED_INC_GEN(a));
+	prt_newline(out);
+	prt_printf(out, "dirty_sectors     %u",	a->dirty_sectors);
+	prt_newline(out);
+	prt_printf(out, "cached_sectors    %u",	a->cached_sectors);
+	prt_newline(out);
+	prt_printf(out, "stripe            %u",	a->stripe);
+	prt_newline(out);
+	prt_printf(out, "stripe_redundancy %u",	a->stripe_redundancy);
+	prt_newline(out);
+	prt_printf(out, "io_time[READ]     %llu",	a->io_time[READ]);
+	prt_newline(out);
+	prt_printf(out, "io_time[WRITE]    %llu",	a->io_time[WRITE]);
+	prt_newline(out);
+	prt_printf(out, "backpointers:     %llu",	BCH_ALLOC_V4_NR_BACKPOINTERS(a));
+	printbuf_indent_add(out, 2);
+
+	bps = alloc_v4_backpointers_c(a);
+	for (i = 0; i < BCH_ALLOC_V4_NR_BACKPOINTERS(a); i++) {
+		prt_newline(out);
+		bch2_backpointer_to_text(out, &bps[i]);
+	}
+
+	printbuf_indent_sub(out, 4);
+}
+
+void bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *out)
+{
+	if (k.k->type == KEY_TYPE_alloc_v4) {
+		int d;
+
+		*out = *bkey_s_c_to_alloc_v4(k).v;
+
+		d = (int) BCH_ALLOC_V4_U64s -
+			(int) (BCH_ALLOC_V4_BACKPOINTERS_START(out) ?: BCH_ALLOC_V4_U64s_V0);
+		if (unlikely(d > 0)) {
+			memset((u64 *) out + BCH_ALLOC_V4_BACKPOINTERS_START(out),
+			       0,
+			       d * sizeof(u64));
+			SET_BCH_ALLOC_V4_BACKPOINTERS_START(out, BCH_ALLOC_V4_U64s);
+		}
+	} else {
+		struct bkey_alloc_unpacked u = bch2_alloc_unpack(k);
+
+		*out = (struct bch_alloc_v4) {
+			.journal_seq		= u.journal_seq,
+			.flags			= u.need_discard,
+			.gen			= u.gen,
+			.oldest_gen		= u.oldest_gen,
+			.data_type		= u.data_type,
+			.stripe_redundancy	= u.stripe_redundancy,
+			.dirty_sectors		= u.dirty_sectors,
+			.cached_sectors		= u.cached_sectors,
+			.io_time[READ]		= u.read_time,
+			.io_time[WRITE]		= u.write_time,
+			.stripe			= u.stripe,
+		};
+
+		SET_BCH_ALLOC_V4_BACKPOINTERS_START(out, BCH_ALLOC_V4_U64s);
+	}
+}
+
+struct bkey_i_alloc_v4 *bch2_alloc_to_v4_mut(struct btree_trans *trans, struct bkey_s_c k)
+{
+	unsigned bytes = k.k->type == KEY_TYPE_alloc_v4
+		? bkey_bytes(k.k)
+		: sizeof(struct bkey_i_alloc_v4);
+	struct bkey_i_alloc_v4 *ret;
+
+	/*
+	 * Reserve space for one more backpointer here:
+	 * Not sketchy at doing it this way, nope...
+	 */
+	ret = bch2_trans_kmalloc(trans, bytes + sizeof(struct bch_backpointer));
+	if (IS_ERR(ret))
+		return ret;
+
+	if (k.k->type == KEY_TYPE_alloc_v4) {
+		bkey_reassemble(&ret->k_i, k);
+
+		if (BCH_ALLOC_V4_BACKPOINTERS_START(&ret->v) < BCH_ALLOC_V4_U64s) {
+			struct bch_backpointer *src, *dst;
+
+			src = alloc_v4_backpointers(&ret->v);
+			SET_BCH_ALLOC_V4_BACKPOINTERS_START(&ret->v, BCH_ALLOC_V4_U64s);
+			dst = alloc_v4_backpointers(&ret->v);
+
+			memmove(dst, src, BCH_ALLOC_V4_NR_BACKPOINTERS(&ret->v) *
+				sizeof(struct bch_backpointer));
+			memset(src, 0, dst - src);
+			set_alloc_v4_u64s(ret);
+		}
+	} else {
+		bkey_alloc_v4_init(&ret->k_i);
+		ret->k.p = k.k->p;
+		bch2_alloc_to_v4(k, &ret->v);
+	}
+	return ret;
 }
 
 int bch2_alloc_read(struct bch_fs *c)
