@@ -8189,6 +8189,7 @@ EXPORT_SYMBOL vmlinux 0x55326309	inet_proto_csum_replace_by_diff
 EXPORT_SYMBOL vmlinux 0x5532ce4f	gnttab_free_pages
 EXPORT_SYMBOL vmlinux 0x55357625	proc_mkdir_mode
 EXPORT_SYMBOL vmlinux 0x553b76a8	splice_direct_to_actor
+EXPORT_SYMBOL vmlinux 0x553e3ff9	psched_ratecfg_precompute
 EXPORT_SYMBOL vmlinux 0x5541ea93	on_each_cpu
 EXPORT_SYMBOL vmlinux 0x554ae3a4	irq_poll_sched
 EXPORT_SYMBOL vmlinux 0x5567c227	kernel_cpustat
@@ -10152,7 +10153,6 @@ EXPORT_SYMBOL vmlinux 0xb74af415	ex_handler_rdmsr_unsafe
 EXPORT_SYMBOL vmlinux 0xb758b225	acpi_disable_event
 EXPORT_SYMBOL vmlinux 0xb7593ddc	iosf_mbi_unregister_pmic_bus_access_notifier
 EXPORT_SYMBOL vmlinux 0xb761b5b2	invalidate_bdev
-EXPORT_SYMBOL vmlinux 0xb77131b1	psched_ratecfg_precompute
 EXPORT_SYMBOL vmlinux 0xb78debe3	LZ4_decompress_fast_usingDict
 EXPORT_SYMBOL vmlinux 0xb7903c7a	inet_listen
 EXPORT_SYMBOL vmlinux 0xb79ec15d	mipi_dsi_create_packet
@@ -16695,10 +16695,10 @@ EXPORT_SYMBOL_GPL net/rds/rds 0xe71de9ca	rds_send_ping
 EXPORT_SYMBOL_GPL net/rds/rds 0xee4142e7	rds_recv_incoming
 EXPORT_SYMBOL_GPL net/rds/rds 0xfae0a21a	rds_conn_destroy
 EXPORT_SYMBOL_GPL net/rds/rds 0xfece66cb	rds_conn_path_drop
-EXPORT_SYMBOL_GPL net/sctp/sctp 0x1fdbc838	sctp_get_sctp_info
-EXPORT_SYMBOL_GPL net/sctp/sctp 0x6ec47f26	sctp_for_each_transport
-EXPORT_SYMBOL_GPL net/sctp/sctp 0xbb36243d	sctp_transport_lookup_process
-EXPORT_SYMBOL_GPL net/sctp/sctp 0xd898e277	sctp_for_each_endpoint
+EXPORT_SYMBOL_GPL net/sctp/sctp 0x21368c15	sctp_for_each_endpoint
+EXPORT_SYMBOL_GPL net/sctp/sctp 0x5e86c05f	sctp_transport_lookup_process
+EXPORT_SYMBOL_GPL net/sctp/sctp 0xb0fda8d4	sctp_get_sctp_info
+EXPORT_SYMBOL_GPL net/sctp/sctp 0xd6428d3c	sctp_transport_traverse_process
 EXPORT_SYMBOL_GPL net/smc/smc 0x6e25bf4a	smc_unhash_sk
 EXPORT_SYMBOL_GPL net/smc/smc 0xdcee313f	smc_proto
 EXPORT_SYMBOL_GPL net/smc/smc 0xe3dbf633	smc_hash_sk

@@ -7644,6 +7644,7 @@ EXPORT_SYMBOL vmlinux 0x550ca373	vfs_tmpfile
 EXPORT_SYMBOL vmlinux 0x55119887	jbd2_journal_start_reserved
 EXPORT_SYMBOL vmlinux 0x551bd071	__rb_erase_color
 EXPORT_SYMBOL vmlinux 0x552c01c6	rwsem_down_write_failed
+EXPORT_SYMBOL vmlinux 0x553e3ff9	psched_ratecfg_precompute
 EXPORT_SYMBOL vmlinux 0x5541ea93	on_each_cpu
 EXPORT_SYMBOL vmlinux 0x554ae3a4	irq_poll_sched
 EXPORT_SYMBOL vmlinux 0x5558aa1c	set_binfmt
@@ -9517,7 +9518,6 @@ EXPORT_SYMBOL vmlinux 0xb71e47b3	udp_flush_pending_frames
 EXPORT_SYMBOL vmlinux 0xb7488905	scsi_normalize_sense
 EXPORT_SYMBOL vmlinux 0xb75f53ac	mount_pseudo_xattr
 EXPORT_SYMBOL vmlinux 0xb7678c8b	cdev_alloc
-EXPORT_SYMBOL vmlinux 0xb77131b1	psched_ratecfg_precompute
 EXPORT_SYMBOL vmlinux 0xb77932eb	flex_array_clear
 EXPORT_SYMBOL vmlinux 0xb78debe3	LZ4_decompress_fast_usingDict
 EXPORT_SYMBOL vmlinux 0xb795781f	dquot_commit
@@ -15738,10 +15738,10 @@ EXPORT_SYMBOL_GPL net/rds/rds 0xdbd2fe34	rds_message_unmapped
 EXPORT_SYMBOL_GPL net/rds/rds 0xf759c326	rds_send_path_reset
 EXPORT_SYMBOL_GPL net/rds/rds 0xf916a4cd	rds_trans_register
 EXPORT_SYMBOL_GPL net/rds/rds 0xffa607c5	rds_atomic_send_complete
-EXPORT_SYMBOL_GPL net/sctp/sctp 0x6e0ae8c5	sctp_get_sctp_info
-EXPORT_SYMBOL_GPL net/sctp/sctp 0xb2455f49	sctp_transport_lookup_process
-EXPORT_SYMBOL_GPL net/sctp/sctp 0xcd7186d8	sctp_for_each_transport
-EXPORT_SYMBOL_GPL net/sctp/sctp 0xd1e0c7a1	sctp_for_each_endpoint
+EXPORT_SYMBOL_GPL net/sctp/sctp 0x0c0bacdf	sctp_transport_lookup_process
+EXPORT_SYMBOL_GPL net/sctp/sctp 0x299abab9	sctp_transport_traverse_process
+EXPORT_SYMBOL_GPL net/sctp/sctp 0x91e53964	sctp_for_each_endpoint
+EXPORT_SYMBOL_GPL net/sctp/sctp 0xe1b0bb95	sctp_get_sctp_info
 EXPORT_SYMBOL_GPL net/smc/smc 0x3ca13d75	smc_unhash_sk
 EXPORT_SYMBOL_GPL net/smc/smc 0x6070ecb1	smc_proto
 EXPORT_SYMBOL_GPL net/smc/smc 0xdfb63433	smc_hash_sk
