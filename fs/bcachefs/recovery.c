@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "backpointers.h"
 #include "bkey_buf.h"
 #include "alloc_background.h"
 #include "btree_gc.h"
@@ -1087,8 +1088,8 @@ int bch2_fs_recovery(struct bch_fs *c)
 	}
 
 	if (!c->opts.nochanges) {
-		if (c->sb.version < bcachefs_metadata_version_new_data_types) {
-			bch_info(c, "version prior to new_data_types, upgrade and fsck required");
+		if (c->sb.version < bcachefs_metadata_version_backpointers) {
+			bch_info(c, "version prior to backpointers, upgrade and fsck required");
 			c->opts.version_upgrade	= true;
 			c->opts.fsck		= true;
 			c->opts.fix_errors	= FSCK_OPT_YES;
@@ -1263,6 +1264,28 @@ use_clean:
 
 		set_bit(BCH_FS_CHECK_LRUS_DONE, &c->flags);
 
+		bch_info(c, "checking extents to backpointers");
+		err = "error checking extents to backpointers";
+		ret = bch2_check_extents_to_backpointers(c);
+		if (ret)
+			goto err;
+		bch_verbose(c, "done checking extents to backpointers");
+
+		bch_info(c, "checking backpointers to alloc keys");
+		err = "error checking backpointers to alloc keys";
+		ret = bch2_check_backpointers(c);
+		if (ret)
+			goto err;
+		bch_verbose(c, "done checking backpointers to alloc keys");
+
+		bch_info(c, "checking backpointers to extents");
+		err = "error checking backpointers to extents";
+		ret = bch2_check_backpointers_to_extents(c);
+		if (ret)
+			goto err;
+		bch_verbose(c, "done checking backpointers to extents");
+		set_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags);
+
 		bch_info(c, "checking alloc to lru refs");
 		err = "error checking alloc to lru refs";
 		ret = bch2_check_alloc_to_lru_refs(c);
@@ -1278,6 +1301,7 @@ use_clean:
 		set_bit(BCH_FS_MAY_GO_RW, &c->flags);
 		set_bit(BCH_FS_INITIAL_GC_DONE, &c->flags);
 		set_bit(BCH_FS_CHECK_LRUS_DONE, &c->flags);
+		set_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags);
 		set_bit(BCH_FS_CHECK_ALLOC_TO_LRU_REFS_DONE, &c->flags);
 		set_bit(BCH_FS_FSCK_DONE, &c->flags);
 
