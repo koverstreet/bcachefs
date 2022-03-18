@@ -70,6 +70,22 @@ static inline struct bpos alloc_freespace_pos(struct bpos pos, struct bch_alloc_
 	return pos;
 }
 
+static inline unsigned alloc_v4_u64s(const struct bch_alloc_v4 *a)
+{
+	unsigned ret = (BCH_ALLOC_V4_BACKPOINTERS_START(a) ?:
+			BCH_ALLOC_V4_U64s_V0) +
+		BCH_ALLOC_V4_NR_BACKPOINTERS(a) *
+		(sizeof(struct bch_backpointer) / sizeof(u64));
+
+	BUG_ON(ret > U8_MAX - BKEY_U64s);
+	return ret;
+}
+
+static inline void set_alloc_v4_u64s(struct bkey_i_alloc_v4 *a)
+{
+	set_bkey_val_u64s(&a->k, alloc_v4_u64s(&a->v));
+}
+
 struct bkey_i_alloc_v4 *
 bch2_trans_start_alloc_update(struct btree_trans *, struct btree_iter *, struct bpos);
 
@@ -142,6 +158,16 @@ static inline u64 should_invalidate_buckets(struct bch_dev *ca,
 }
 
 void bch2_do_invalidates(struct bch_fs *);
+
+static inline struct bch_backpointer *alloc_v4_backpointers(struct bch_alloc_v4 *a)
+{
+	return (void *) ((u64 *) &a->v + BCH_ALLOC_V4_BACKPOINTERS_START(a));
+}
+
+static inline const struct bch_backpointer *alloc_v4_backpointers_c(const struct bch_alloc_v4 *a)
+{
+	return (void *) ((u64 *) &a->v + BCH_ALLOC_V4_BACKPOINTERS_START(a));
+}
 
 int bch2_fs_freespace_init(struct bch_fs *);
 
