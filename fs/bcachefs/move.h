@@ -63,6 +63,12 @@ int bch2_move_data(struct bch_fs *,
 		   move_pred_fn, void *,
 		   struct bch_move_stats *);
 
+int bch2_evacuate_bucket(struct bch_fs *, struct bpos, int,
+			 struct bch_ratelimit *,
+			 struct write_point_specifier,
+			 enum data_cmd,
+			 struct data_opts *,
+			 struct bch_move_stats *);
 int bch2_data_job(struct bch_fs *,
 		  struct bch_move_stats *,
 		  struct bch_ioctl_data);
