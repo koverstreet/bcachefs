@@ -31,7 +31,7 @@ If you get an assert/segfault etc:
 * type `bt` in to and provide the output here.
 
 If the tools lockup:
-* run `perf top -p $(pidof bcachefs)` and provide a screenshot.
+* If it's spinning on CPU, See advanced section else:
 * press ctrl+c to interrupt the process and provide the output of `bt`.
 
 **Kernel bugs**
@@ -51,11 +51,13 @@ Provide the output of `dmesg` either in a paste-bin or as attachment, if less th
 
 **Optional Advanced**
 
-If lockup or performance issues:
-* run `perf record` and `perf record -e 'bcachefs:*' -o events.data` both during the window of issue and then ctrl+c.
+If performance issues:
+* run `perf record` (add `-p $(pidof bcachefs)` for tools)
+* and if it's for kernel `perf record -e 'bcachefs:*' -o events.data` both during the window of issue and then ctrl+c.
 * run `perf archive` to dump symbols.
 * archive, compress and upload the files: `perf.data`, `events.data` and `perf.data.tar.bz2`.
 
 Upload large files to a file storage provider:
-* provide the output of `bcachefs list_journal -a <list of devices> | zstd -f -T0 -o ../journal.log.zst`
-*compress & upload all the `metdata.dump.*` files from: bcachefs dump -o metadata.dump <list of devices>
+
+* provide the output of `bcachefs list_journal -a <list of devices> | zstd -f -T0 -o ./journal.log.zst`
+* compress & upload all the `metdata.dump.*` files from: bcachefs dump -o metadata.dump <list of devices>
