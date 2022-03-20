@@ -966,7 +966,8 @@ static void bch2_journal_read_device(struct closure *cl)
 	}
 	mutex_unlock(&jlist->lock);
 
-	BUG_ON(ja->sectors_free == ca->mi.bucket_size);
+	BUG_ON(ja->bucket_seq[ja->cur_idx] &&
+	       ja->sectors_free == ca->mi.bucket_size);
 
 	/*
 	 * Set dirty_idx to indicate the entire journal is full and needs to be
