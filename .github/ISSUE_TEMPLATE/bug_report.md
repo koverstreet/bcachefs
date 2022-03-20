@@ -7,7 +7,7 @@ assignees: YellowOnion
 
 ---
 
-**Please search for duplicates**
+### ***Please search for duplicates***
 
 **Version**
 
@@ -16,6 +16,7 @@ Make sure you're using a reasonably new version.
 Provide the commit hash from the kernel version (preferable) or tools, don't say "I'm using the latest master" as that will very quickly become out of date.
 
 **Generic info**
+
 Provide the output of:
 ```
 bcachefs fs usage
@@ -35,6 +36,7 @@ If the tools lockup:
 * press ctrl+c to interrupt the process and provide the output of `bt`.
 
 **Kernel bugs**
+
 Compile the kernel with these flags:
 
 ```
@@ -49,7 +51,7 @@ CONFIG_FTRACE=y
 Provide the output of `dmesg` either in a paste-bin or as attachment, if less than 30~ lines just provide inline here.
 
 
-**Optional Advanced**
+**Optional advanced**
 
 If performance issues:
 * run `perf record` (add `-p $(pidof bcachefs)` for tools)
