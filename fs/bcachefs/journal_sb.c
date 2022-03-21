@@ -131,13 +131,13 @@ static int bch2_sb_journal_v2_validate(struct bch_sb *sb,
 
 	if (b[0].start < le16_to_cpu(m->first_bucket)) {
 		pr_buf(err, "journal bucket %llu before first bucket %u",
-		       b[0], le16_to_cpu(m->first_bucket));
+		       b[0].start, le16_to_cpu(m->first_bucket));
 		goto err;
 	}
 
 	if (b[nr - 1].end > le64_to_cpu(m->nbuckets)) {
 		pr_buf(err, "journal bucket %llu past end of device (nbuckets %llu)",
-		       b[nr - 1], le64_to_cpu(m->nbuckets));
+		       b[nr - 1].end - 1, le64_to_cpu(m->nbuckets));
 		goto err;
 	}
 
