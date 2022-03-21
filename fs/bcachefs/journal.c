@@ -1246,7 +1246,7 @@ void __bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 	pr_buf(out, "last_seq_ondisk:\t%llu\n",		j->last_seq_ondisk);
 	pr_buf(out, "flushed_seq_ondisk:\t%llu\n",	j->flushed_seq_ondisk);
 	pr_buf(out, "prereserved:\t\t%u/%u\n",		j->prereserved.reserved, j->prereserved.remaining);
-	pr_buf(out, "watermark:\t\t%u\n",		bch2_journal_watermarks[j->watermark]);
+	pr_buf(out, "watermark:\t\t%s\n",		bch2_journal_watermarks[j->watermark]);
 	pr_buf(out, "each entry reserved:\t%u\n",	j->entry_u64s_reserved);
 	pr_buf(out, "nr flush writes:\t%llu\n",		j->nr_flush_writes);
 	pr_buf(out, "nr noflush writes:\t%llu\n",	j->nr_noflush_writes);
