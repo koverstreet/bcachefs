@@ -20,6 +20,7 @@
 #include "counters.h"
 
 #include <linux/backing-dev.h>
+#include <linux/pretty-printers.h>
 #include <linux/sort.h>
 
 #include <trace/events/bcachefs.h>
@@ -1015,7 +1016,7 @@ static void bch2_sb_members_to_text(struct printbuf *out, struct bch_sb *sb,
 		pr_buf(out, "%u", i);
 		pr_newline(out);
 
-		pr_indent_push(out, 2);
+		pr_indent_add(out, 2);
 
 		pr_buf(out, "UUID:");
 		pr_tab(out);
@@ -1024,12 +1025,12 @@ static void bch2_sb_members_to_text(struct printbuf *out, struct bch_sb *sb,
 
 		pr_buf(out, "Size:");
 		pr_tab(out);
-		pr_units(out, device_size, device_size << 9);
+		pr_units_u64(out, device_size << 9);
 		pr_newline(out);
 
 		pr_buf(out, "Bucket size:");
 		pr_tab(out);
-		pr_units(out, bucket_size, bucket_size << 9);
+		pr_units_u64(out, bucket_size << 9);
 		pr_newline(out);
 
 		pr_buf(out, "First bucket:");
@@ -1076,8 +1077,7 @@ static void bch2_sb_members_to_text(struct printbuf *out, struct bch_sb *sb,
 		pr_buf(out, "Data allowed:");
 		pr_tab(out);
 		if (BCH_MEMBER_DATA_ALLOWED(m))
-			bch2_flags_to_text(out, bch2_data_types,
-					   BCH_MEMBER_DATA_ALLOWED(m));
+			pr_bitflags(out, bch2_data_types, BCH_MEMBER_DATA_ALLOWED(m));
 		else
 			pr_buf(out, "(none)");
 		pr_newline(out);
@@ -1085,7 +1085,7 @@ static void bch2_sb_members_to_text(struct printbuf *out, struct bch_sb *sb,
 		pr_buf(out, "Has data:");
 		pr_tab(out);
 		if (data_have)
-			bch2_flags_to_text(out, bch2_data_types, data_have);
+			pr_bitflags(out, bch2_data_types, data_have);
 		else
 			pr_buf(out, "(none)");
 		pr_newline(out);
@@ -1100,7 +1100,7 @@ static void bch2_sb_members_to_text(struct printbuf *out, struct bch_sb *sb,
 		pr_buf(out, "%llu", BCH_MEMBER_FREESPACE_INITIALIZED(m));
 		pr_newline(out);
 
-		pr_indent_pop(out, 2);
+		pr_indent_sub(out, 2);
 	}
 }
 
@@ -1444,9 +1444,9 @@ void bch2_sb_field_to_text(struct printbuf *out, struct bch_sb *sb,
 	pr_newline(out);
 
 	if (ops && ops->to_text) {
-		pr_indent_push(out, 2);
+		pr_indent_add(out, 2);
 		bch2_sb_field_ops[type]->to_text(out, sb, f);
-		pr_indent_pop(out, 2);
+		pr_indent_sub(out, 2);
 	}
 }
 
@@ -1458,9 +1458,7 @@ void bch2_sb_layout_to_text(struct printbuf *out, struct bch_sb_layout *l)
 	pr_newline(out);
 
 	pr_buf(out, "Superblock max size:     ");
-	pr_units(out,
-		 1 << l->sb_max_size_bits,
-		 512 << l->sb_max_size_bits);
+	pr_units_u64(out, 512 << l->sb_max_size_bits);
 	pr_newline(out);
 
 	pr_buf(out, "Nr superblocks:          %u", l->nr_superblocks);
@@ -1558,25 +1556,23 @@ void bch2_sb_to_text(struct printbuf *out, struct bch_sb *sb,
 	vstruct_for_each(sb, f)
 		fields_have |= 1 << le32_to_cpu(f->type);
 	pr_tab(out);
-	bch2_flags_to_text(out, bch2_sb_fields, fields_have);
+	pr_bitflags(out, bch2_sb_fields, fields_have);
 	pr_newline(out);
 
 	pr_buf(out, "Features:");
 	pr_tab(out);
-	bch2_flags_to_text(out, bch2_sb_features,
-			   le64_to_cpu(sb->features[0]));
+	pr_bitflags(out, bch2_sb_features, le64_to_cpu(sb->features[0]));
 	pr_newline(out);
 
 	pr_buf(out, "Compat features:");
 	pr_tab(out);
-	bch2_flags_to_text(out, bch2_sb_compat,
-			   le64_to_cpu(sb->compat[0]));
+	pr_bitflags(out, bch2_sb_compat, le64_to_cpu(sb->compat[0]));
 	pr_newline(out);
 
 	pr_newline(out);
 	pr_buf(out, "Options:");
 	pr_newline(out);
-	pr_indent_push(out, 2);
+	pr_indent_add(out, 2);
 	{
 		enum bch_opt_id id;
 
@@ -1595,15 +1591,15 @@ void bch2_sb_to_text(struct printbuf *out, struct bch_sb *sb,
 		}
 	}
 
-	pr_indent_pop(out, 2);
+	pr_indent_sub(out, 2);
 
 	if (print_layout) {
 		pr_newline(out);
 		pr_buf(out, "layout:");
 		pr_newline(out);
-		pr_indent_push(out, 2);
+		pr_indent_add(out, 2);
 		bch2_sb_layout_to_text(out, &sb->layout);
-		pr_indent_pop(out, 2);
+		pr_indent_sub(out, 2);
 	}
 
 	vstruct_for_each(sb, f)

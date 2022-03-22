@@ -868,7 +868,7 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 			pr_buf(&buf, "invalid bkey on insert from %s -> %ps",
 			       trans->fn, (void *) i->ip_allocated);
 			pr_newline(&buf);
-			pr_indent_push(&buf, 2);
+			pr_indent_add(&buf, 2);
 
 			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(i->k));
 			pr_newline(&buf);

@@ -265,7 +265,7 @@ static int journal_validate_key(struct bch_fs *c, const char *where,
 		       (u64 *) k - entry->_data,
 		       le16_to_cpu(entry->u64s));
 		pr_newline(&buf);
-		pr_indent_push(&buf, 2);
+		pr_indent_add(&buf, 2);
 
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(k));
 		pr_newline(&buf);

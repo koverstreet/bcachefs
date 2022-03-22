@@ -263,17 +263,17 @@ void bch2_rebalance_work_to_text(struct printbuf *out, struct bch_fs *c)
 	pr_buf(out, "fullest_dev (%i):", w.dev_most_full_idx);
 	pr_tab(out);
 
-	bch2_hprint(out, w.dev_most_full_work << 9);
+	pr_human_readable_u64(out, w.dev_most_full_work << 9);
 	pr_buf(out, "/");
-	bch2_hprint(out, w.dev_most_full_capacity << 9);
+	pr_human_readable_u64(out, w.dev_most_full_capacity << 9);
 	pr_newline(out);
 
 	pr_buf(out, "total work:");
 	pr_tab(out);
 
-	bch2_hprint(out, w.total_work << 9);
+	pr_human_readable_u64(out, w.total_work << 9);
 	pr_buf(out, "/");
-	bch2_hprint(out, c->capacity << 9);
+	pr_human_readable_u64(out, c->capacity << 9);
 	pr_newline(out);
 
 	pr_buf(out, "rate:");
@@ -288,7 +288,7 @@ void bch2_rebalance_work_to_text(struct printbuf *out, struct bch_fs *c)
 	case REBALANCE_THROTTLED:
 		pr_buf(out, "throttled for %lu sec or ",
 		       (r->throttled_until_cputime - jiffies) / HZ);
-		bch2_hprint(out,
+		pr_human_readable_u64(out,
 			    (r->throttled_until_iotime -
 			     atomic64_read(&c->io_clock[WRITE].now)) << 9);
 		pr_buf(out, " io");

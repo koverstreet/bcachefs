@@ -1301,7 +1301,7 @@ void __bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 		pr_tab(out);
 		pr_buf(out, "%llu", seq);
 		pr_newline(out);
-		pr_indent_push(out, 2);
+		pr_indent_add(out, 2);
 
 		pr_buf(out, "refcount:");
 		pr_tab(out);
@@ -1318,7 +1318,7 @@ void __bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 		pr_buf(out, "%li jiffies", j->buf[i].expires - jiffies);
 		pr_newline(out);
 
-		pr_indent_pop(out, 2);
+		pr_indent_sub(out, 2);
 	}
 
 	pr_buf(out,
@@ -1390,7 +1390,7 @@ bool bch2_journal_seq_pins_to_text(struct printbuf *out, struct journal *j, u64 
 
 	pr_buf(out, "%llu: count %u", *seq, atomic_read(&pin_list->count));
 	pr_newline(out);
-	pr_indent_push(out, 2);
+	pr_indent_add(out, 2);
 
 	list_for_each_entry(pin, &pin_list->list, list) {
 		pr_buf(out, "\t%px %ps", pin, pin->flush);
@@ -1412,7 +1412,7 @@ bool bch2_journal_seq_pins_to_text(struct printbuf *out, struct journal *j, u64 
 		pr_newline(out);
 	}
 
-	pr_indent_pop(out, 2);
+	pr_indent_sub(out, 2);
 
 	--out->atomic;
 	spin_unlock(&j->lock);

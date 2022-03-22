@@ -99,135 +99,6 @@ STRTO_H(strtoll, long long)
 STRTO_H(strtoull, unsigned long long)
 STRTO_H(strtou64, u64)
 
-static int bch2_printbuf_realloc(struct printbuf *out, unsigned extra)
-{
-	unsigned new_size;
-	char *buf;
-
-	if (out->pos + extra + 1 < out->size)
-		return 0;
-
-	new_size = roundup_pow_of_two(out->size + extra);
-	buf = krealloc(out->buf, new_size, !out->atomic ? GFP_KERNEL : GFP_ATOMIC);
-
-	if (!buf) {
-		out->allocation_failure = true;
-		return -ENOMEM;
-	}
-
-	out->buf	= buf;
-	out->size	= new_size;
-	return 0;
-}
-
-void bch2_pr_buf(struct printbuf *out, const char *fmt, ...)
-{
-	va_list args;
-	int len;
-
-	do {
-		va_start(args, fmt);
-		len = vsnprintf(out->buf + out->pos, printbuf_remaining(out), fmt, args);
-		va_end(args);
-	} while (len + 1 >= printbuf_remaining(out) &&
-		 !bch2_printbuf_realloc(out, len + 1));
-
-	len = min_t(size_t, len,
-		  printbuf_remaining(out) ? printbuf_remaining(out) - 1 : 0);
-	out->pos += len;
-}
-
-void bch2_pr_tab_rjust(struct printbuf *buf)
-{
-	BUG_ON(buf->tabstop > ARRAY_SIZE(buf->tabstops));
-
-	if (printbuf_linelen(buf) < buf->tabstops[buf->tabstop]) {
-		unsigned move = buf->pos - buf->last_field;
-		unsigned shift = buf->tabstops[buf->tabstop] -
-			printbuf_linelen(buf);
-
-		bch2_printbuf_realloc(buf, shift);
-
-		if (buf->last_field + shift + 1 < buf->size) {
-			move = min(move, buf->size - 1 - buf->last_field - shift);
-
-			memmove(buf->buf + buf->last_field + shift,
-				buf->buf + buf->last_field,
-				move);
-			memset(buf->buf + buf->last_field, ' ', shift);
-			buf->pos += shift;
-			buf->buf[buf->pos] = 0;
-		}
-	}
-
-	buf->last_field = buf->pos;
-	buf->tabstop++;
-}
-
-void bch2_hprint(struct printbuf *buf, s64 v)
-{
-	int u, t = 0;
-
-	for (u = 0; v >= 1024 || v <= -1024; u++) {
-		t = v & ~(~0U << 10);
-		v >>= 10;
-	}
-
-	pr_buf(buf, "%lli", v);
-
-	/*
-	 * 103 is magic: t is in the range [-1023, 1023] and we want
-	 * to turn it into [-9, 9]
-	 */
-	if (u && t && v < 100 && v > -100)
-		pr_buf(buf, ".%i", t / 103);
-	if (u)
-		pr_char(buf, si_units[u]);
-}
-
-void bch2_pr_units(struct printbuf *out, s64 raw, s64 bytes)
-{
-	switch (out->units) {
-	case PRINTBUF_UNITS_RAW:
-		pr_buf(out, "%llu", raw);
-		break;
-	case PRINTBUF_UNITS_BYTES:
-		pr_buf(out, "%llu", bytes);
-		break;
-	case PRINTBUF_UNITS_HUMAN_READABLE:
-		bch2_hprint(out, bytes);
-		break;
-	}
-}
-
-void bch2_string_opt_to_text(struct printbuf *out,
-			     const char * const list[],
-			     size_t selected)
-{
-	size_t i;
-
-	for (i = 0; list[i]; i++)
-		pr_buf(out, i == selected ? "[%s] " : "%s ", list[i]);
-}
-
-void bch2_flags_to_text(struct printbuf *out,
-			const char * const list[], u64 flags)
-{
-	unsigned bit, nr = 0;
-	bool first = true;
-
-	while (list[nr])
-		nr++;
-
-	while (flags && (bit = __ffs(flags)) < nr) {
-		if (!first)
-			pr_buf(out, ",");
-		first = false;
-		pr_buf(out, "%s", list[bit]);
-		flags ^= 1 << bit;
-	}
-}
-
 u64 bch2_read_flag_list(char *opt, const char * const list[])
 {
 	u64 ret = 0;
@@ -550,32 +421,32 @@ void bch2_pd_controller_debug_to_text(struct printbuf *out, struct bch_pd_contro
 
 	pr_buf(out, "rate:");
 	pr_tab(out);
-	bch2_hprint(out, pd->rate.rate);
+	pr_human_readable_s64(out, pd->rate.rate);
 	pr_newline(out);
 
 	pr_buf(out, "target:");
 	pr_tab(out);
-	bch2_hprint(out, pd->last_target);
+	pr_human_readable_u64(out, pd->last_target);
 	pr_newline(out);
 
 	pr_buf(out, "actual:");
 	pr_tab(out);
-	bch2_hprint(out, pd->last_actual);
+	pr_human_readable_u64(out, pd->last_actual);
 	pr_newline(out);
 
 	pr_buf(out, "proportional:");
 	pr_tab(out);
-	bch2_hprint(out, pd->last_proportional);
+	pr_human_readable_s64(out, pd->last_proportional);
 	pr_newline(out);
 
 	pr_buf(out, "derivative:");
 	pr_tab(out);
-	bch2_hprint(out, pd->last_derivative);
+	pr_human_readable_s64(out, pd->last_derivative);
 	pr_newline(out);
 
 	pr_buf(out, "change:");
 	pr_tab(out);
-	bch2_hprint(out, pd->last_change);
+	pr_human_readable_s64(out, pd->last_change);
 	pr_newline(out);
 
 	pr_buf(out, "next io:");

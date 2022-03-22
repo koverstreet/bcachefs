@@ -1987,7 +1987,7 @@ static noinline void read_from_stale_dirty_pointer(struct btree_trans *trans,
 			     BTREE_ITER_CACHED);
 
 	pr_buf(&buf, "Attempting to read from stale dirty pointer:");
-	pr_indent_push(&buf, 2);
+	pr_indent_add(&buf, 2);
 	pr_newline(&buf);
 
 	bch2_bkey_val_to_text(&buf, c, k);

@@ -1844,7 +1844,7 @@ void bch2_trans_updates_to_text(struct printbuf *buf, struct btree_trans *trans)
 	pr_buf(buf, "transaction updates for %s journal seq %llu",
 	       trans->fn, trans->journal_res.seq);
 	pr_newline(buf);
-	pr_indent_push(buf, 2);
+	pr_indent_add(buf, 2);
 
 	trans_for_each_update(trans, i) {
 		struct bkey_s_c old = { &i->old_k, i->old_v };
@@ -1863,7 +1863,7 @@ void bch2_trans_updates_to_text(struct printbuf *buf, struct btree_trans *trans)
 		pr_newline(buf);
 	}
 
-	pr_indent_pop(buf, 2);
+	pr_indent_sub(buf, 2);
 }
 
 noinline __cold

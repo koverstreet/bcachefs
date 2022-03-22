@@ -24,6 +24,7 @@
 #include <linux/console.h>
 #include <linux/debugfs.h>
 #include <linux/module.h>
+#include <linux/pretty-printers.h>
 #include <linux/random.h>
 #include <linux/seq_file.h>
 
@@ -433,14 +434,14 @@ static void bch2_cached_btree_node_to_text(struct printbuf *out, struct bch_fs *
 	       b->c.level);
 	pr_newline(out);
 
-	pr_indent_push(out, 2);
+	pr_indent_add(out, 2);
 
 	bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(&b->key));
 	pr_newline(out);
 
 	pr_buf(out, "flags: ");
 	pr_tab(out);
-	bch2_flags_to_text(out, bch2_btree_node_flags, b->flags);
+	pr_bitflags(out, bch2_btree_node_flags, b->flags);
 	pr_newline(out);
 
 	pr_buf(out, "pcpu read locks: ");
@@ -473,7 +474,7 @@ static void bch2_cached_btree_node_to_text(struct printbuf *out, struct bch_fs *
 	pr_buf(out, "%llu", b->writes[1].journal.seq);
 	pr_newline(out);
 
-	pr_indent_pop(out, 2);
+	pr_indent_sub(out, 2);
 }
 
 static ssize_t bch2_cached_btree_nodes_read(struct file *file, char __user *buf,
