@@ -290,7 +290,7 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 	int ret;
 
 	if (b < ca->mi.first_bucket || b >= ca->mi.nbuckets) {
-		pr_buf(&buf, "freespace btree has bucket outside allowed range %u-%llu\n"
+		prt_printf(&buf, "freespace btree has bucket outside allowed range %u-%llu\n"
 		       "  freespace key ",
 			ca->mi.first_bucket, ca->mi.nbuckets);
 		bch2_bkey_val_to_text(&buf, c, freespace_k);
@@ -310,11 +310,11 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 	bch2_alloc_to_v4(k, &a);
 
 	if (genbits != (alloc_freespace_genbits(a) >> 56)) {
-		pr_buf(&buf, "bucket in freespace btree with wrong genbits (got %u should be %llu)\n"
+		prt_printf(&buf, "bucket in freespace btree with wrong genbits (got %u should be %llu)\n"
 		       "  freespace key ",
 		       genbits, alloc_freespace_genbits(a) >> 56);
 		bch2_bkey_val_to_text(&buf, c, freespace_k);
-		pr_buf(&buf, "\n  ");
+		prt_printf(&buf, "\n  ");
 		bch2_bkey_val_to_text(&buf, c, k);
 		bch2_trans_inconsistent(trans, "%s", buf.buf);
 		ob = ERR_PTR(-EIO);
@@ -323,10 +323,10 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 	}
 
 	if (a.data_type != BCH_DATA_free) {
-		pr_buf(&buf, "non free bucket in freespace btree\n"
+		prt_printf(&buf, "non free bucket in freespace btree\n"
 		       "  freespace key ");
 		bch2_bkey_val_to_text(&buf, c, freespace_k);
-		pr_buf(&buf, "\n  ");
+		prt_printf(&buf, "\n  ");
 		bch2_bkey_val_to_text(&buf, c, k);
 		bch2_trans_inconsistent(trans, "%s", buf.buf);
 		ob = ERR_PTR(-EIO);
@@ -1271,7 +1271,7 @@ void bch2_open_buckets_to_text(struct printbuf *out, struct bch_fs *c)
 	     ob++) {
 		spin_lock(&ob->lock);
 		if (ob->valid && !ob->on_partial_list) {
-			pr_buf(out, "%zu ref %u type %s %u:%llu:%u\n",
+			prt_printf(out, "%zu ref %u type %s %u:%llu:%u\n",
 			       ob - c->open_buckets,
 			       atomic_read(&ob->pin),
 			       bch2_data_types[ob->data_type],
