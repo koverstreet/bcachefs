@@ -394,6 +394,14 @@ static unsigned long bch2_btree_cache_count(struct shrinker *shrink,
 	return btree_cache_can_free(bc);
 }
 
+static void bch2_btree_cache_shrinker_to_text(struct printbuf *out, struct shrinker *shrink)
+{
+	struct bch_fs *c = container_of(shrink, struct bch_fs,
+					btree_cache.shrink);
+
+	bch2_btree_cache_to_text(out, c);
+}
+
 void bch2_fs_btree_cache_exit(struct bch_fs *c)
 {
 	struct btree_cache *bc = &c->btree_cache;
@@ -477,6 +485,7 @@ int bch2_fs_btree_cache_init(struct bch_fs *c)
 
 	bc->shrink.count_objects	= bch2_btree_cache_count;
 	bc->shrink.scan_objects		= bch2_btree_cache_scan;
+	bc->shrink.to_text		= bch2_btree_cache_shrinker_to_text;
 	bc->shrink.seeks		= 4;
 	ret = register_shrinker(&bc->shrink);
 out:
@@ -1147,7 +1156,10 @@ void bch2_btree_node_to_text(struct printbuf *out, struct bch_fs *c,
 
 void bch2_btree_cache_to_text(struct printbuf *out, struct bch_fs *c)
 {
-	pr_buf(out, "nr nodes:\t\t%u\n", c->btree_cache.used);
-	pr_buf(out, "nr dirty:\t\t%u\n", atomic_read(&c->btree_cache.dirty));
-	pr_buf(out, "cannibalize lock:\t%p\n", c->btree_cache.alloc_lock);
+	pr_buf(out, "nr nodes:          %u", c->btree_cache.used);
+	pr_newline(out);
+	pr_buf(out, "nr dirty:          %u", atomic_read(&c->btree_cache.dirty));
+	pr_newline(out);
+	pr_buf(out, "cannibalize lock:  %p", c->btree_cache.alloc_lock);
+	pr_newline(out);
 }

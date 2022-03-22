@@ -711,6 +711,14 @@ void bch2_fs_btree_key_cache_init_early(struct btree_key_cache *c)
 	INIT_LIST_HEAD(&c->freed);
 }
 
+static void bch2_btree_key_cache_shrinker_to_text(struct printbuf *out, struct shrinker *shrink)
+{
+	struct btree_key_cache *bc =
+		container_of(shrink, struct btree_key_cache, shrink);
+
+	bch2_btree_key_cache_to_text(out, bc);
+}
+
 int bch2_fs_btree_key_cache_init(struct btree_key_cache *c)
 {
 	int ret;
@@ -724,14 +732,18 @@ int bch2_fs_btree_key_cache_init(struct btree_key_cache *c)
 	c->shrink.seeks			= 1;
 	c->shrink.count_objects		= bch2_btree_key_cache_count;
 	c->shrink.scan_objects		= bch2_btree_key_cache_scan;
+	c->shrink.to_text		= bch2_btree_key_cache_shrinker_to_text;
 	return register_shrinker(&c->shrink);
 }
 
 void bch2_btree_key_cache_to_text(struct printbuf *out, struct btree_key_cache *c)
 {
-	pr_buf(out, "nr_freed:\t%zu\n",	c->nr_freed);
-	pr_buf(out, "nr_keys:\t%lu\n",	atomic_long_read(&c->nr_keys));
-	pr_buf(out, "nr_dirty:\t%lu\n",	atomic_long_read(&c->nr_dirty));
+	pr_buf(out, "nr_freed:  %zu",	c->nr_freed);
+	pr_newline(out);
+	pr_buf(out, "nr_keys:   %zu",	atomic_long_read(&c->nr_keys));
+	pr_newline(out);
+	pr_buf(out, "nr_dirty:  %zu",	atomic_long_read(&c->nr_dirty));
+	pr_newline(out);
 }
 
 void bch2_btree_key_cache_exit(void)
