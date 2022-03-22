@@ -596,6 +596,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 {
 	struct bch_sb_field_members *mi;
 	struct bch_fs *c;
+	struct printbuf name = PRINTBUF;
 	unsigned i, iter_size;
 	int ret = 0;
 
@@ -699,7 +700,13 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	if (ret)
 		goto err;
 
-	uuid_unparse_lower(c->sb.user_uuid.b, c->name);
+	pr_uuid(&name, c->sb.user_uuid.b);
+	strlcpy(c->name, name.buf, sizeof(c->name));
+	printbuf_exit(&name);
+
+	ret = name.allocation_failure ? -ENOMEM : 0;
+	if (ret)
+		goto err;
 
 	/* Compat: */
 	if (sb->version <= bcachefs_metadata_version_inode_v2 &&
@@ -1478,7 +1485,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	if (data) {
 		struct printbuf data_has = PRINTBUF;
 
-		bch2_flags_to_text(&data_has, bch2_data_types, data);
+		pr_bitflags(&data_has, bch2_data_types, data);
 		bch_err(ca, "Remove failed, still has data (%s)", data_has.buf);
 		printbuf_exit(&data_has);
 		ret = -EBUSY;

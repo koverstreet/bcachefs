@@ -1076,8 +1076,7 @@ static void bch2_sb_members_to_text(struct printbuf *out, struct bch_sb *sb,
 		pr_buf(out, "Data allowed:");
 		pr_tab(out);
 		if (BCH_MEMBER_DATA_ALLOWED(m))
-			bch2_flags_to_text(out, bch2_data_types,
-					   BCH_MEMBER_DATA_ALLOWED(m));
+			pr_bitflags(out, bch2_data_types, BCH_MEMBER_DATA_ALLOWED(m));
 		else
 			pr_buf(out, "(none)");
 		pr_newline(out);
@@ -1085,7 +1084,7 @@ static void bch2_sb_members_to_text(struct printbuf *out, struct bch_sb *sb,
 		pr_buf(out, "Has data:");
 		pr_tab(out);
 		if (data_have)
-			bch2_flags_to_text(out, bch2_data_types, data_have);
+			pr_bitflags(out, bch2_data_types, data_have);
 		else
 			pr_buf(out, "(none)");
 		pr_newline(out);
@@ -1558,19 +1557,17 @@ void bch2_sb_to_text(struct printbuf *out, struct bch_sb *sb,
 	vstruct_for_each(sb, f)
 		fields_have |= 1 << le32_to_cpu(f->type);
 	pr_tab(out);
-	bch2_flags_to_text(out, bch2_sb_fields, fields_have);
+	pr_bitflags(out, bch2_sb_fields, fields_have);
 	pr_newline(out);
 
 	pr_buf(out, "Features:");
 	pr_tab(out);
-	bch2_flags_to_text(out, bch2_sb_features,
-			   le64_to_cpu(sb->features[0]));
+	pr_bitflags(out, bch2_sb_features, le64_to_cpu(sb->features[0]));
 	pr_newline(out);
 
 	pr_buf(out, "Compat features:");
 	pr_tab(out);
-	bch2_flags_to_text(out, bch2_sb_compat,
-			   le64_to_cpu(sb->compat[0]));
+	pr_bitflags(out, bch2_sb_compat, le64_to_cpu(sb->compat[0]));
 	pr_newline(out);
 
 	pr_newline(out);

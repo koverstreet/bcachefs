@@ -316,13 +316,13 @@ void bch2_opt_to_text(struct printbuf *out,
 	case BCH_OPT_BOOL:
 	case BCH_OPT_UINT:
 		if (opt->flags & OPT_HUMAN_READABLE)
-			bch2_hprint(out, v);
+			pr_human_readable_u64(out, v);
 		else
 			pr_buf(out, "%lli", v);
 		break;
 	case BCH_OPT_STR:
 		if (flags & OPT_SHOW_FULL_LIST)
-			bch2_string_opt_to_text(out, opt->choices, v);
+			pr_string_option(out, opt->choices, v);
 		else
 			pr_buf(out, "%s", opt->choices[v]);
 		break;

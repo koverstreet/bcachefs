@@ -99,7 +99,7 @@ do {									\
 #define sysfs_hprint(file, val)						\
 do {									\
 	if (attr == &sysfs_ ## file)					\
-		bch2_hprint(out, val);					\
+		pr_human_readable_s64(out, val);			\
 } while (0)
 
 #define var_printf(_var, fmt)	sysfs_printf(_var, fmt, var(_var))
@@ -340,22 +340,22 @@ static int bch2_compression_stats_to_text(struct printbuf *out, struct bch_fs *c
 	pr_buf(out, "uncompressed:\n");
 	pr_buf(out, "	nr extents:		%llu\n", nr_uncompressed_extents);
 	pr_buf(out, "	size:			");
-	bch2_hprint(out, uncompressed_sectors << 9);
+	pr_human_readable_u64(out, uncompressed_sectors << 9);
 	pr_buf(out, "\n");
 
 	pr_buf(out, "compressed:\n");
 	pr_buf(out, "	nr extents:		%llu\n", nr_compressed_extents);
 	pr_buf(out, "	compressed size:	");
-	bch2_hprint(out, compressed_sectors_compressed << 9);
+	pr_human_readable_u64(out, compressed_sectors_compressed << 9);
 	pr_buf(out, "\n");
 	pr_buf(out, "	uncompressed size:	");
-	bch2_hprint(out, compressed_sectors_uncompressed << 9);
+	pr_human_readable_u64(out, compressed_sectors_uncompressed << 9);
 	pr_buf(out, "\n");
 
 	pr_buf(out, "incompressible:\n");
 	pr_buf(out, "	nr extents:		%llu\n", nr_incompressible_extents);
 	pr_buf(out, "	size:			");
-	bch2_hprint(out, incompressible_sectors << 9);
+	pr_human_readable_u64(out, incompressible_sectors << 9);
 	pr_buf(out, "\n");
 	return 0;
 }
@@ -566,12 +566,12 @@ SHOW(bch2_fs_counters)
 			counter_since_mount = counter - c->counters_on_mount[BCH_COUNTER_##t];\
 			pr_buf(out, "since mount:");				\
 			pr_tab(out);						\
-			bch2_hprint(out, counter_since_mount << 9);		\
+			pr_human_readable_u64(out, counter_since_mount << 9);	\
 			pr_newline(out);					\
 										\
 			pr_buf(out, "since filesystem creation:");		\
 			pr_tab(out);						\
-			bch2_hprint(out, counter << 9);				\
+			pr_human_readable_u64(out, counter << 9);		\
 			pr_newline(out);					\
 		}
 	BCH_PERSISTENT_COUNTERS()
@@ -843,14 +843,12 @@ SHOW(bch2_dev)
 	}
 
 	if (attr == &sysfs_has_data) {
-		bch2_flags_to_text(out, bch2_data_types,
-				   bch2_dev_has_data(c, ca));
+		pr_bitflags(out, bch2_data_types, bch2_dev_has_data(c, ca));
 		pr_char(out, '\n');
 	}
 
 	if (attr == &sysfs_state_rw) {
-		bch2_string_opt_to_text(out, bch2_member_states,
-					ca->mi.state);
+		pr_string_option(out, bch2_member_states, ca->mi.state);
 		pr_char(out, '\n');
 	}
 

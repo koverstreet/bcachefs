@@ -440,7 +440,7 @@ static void bch2_cached_btree_node_to_text(struct printbuf *out, struct bch_fs *
 
 	pr_buf(out, "flags: ");
 	pr_tab(out);
-	bch2_flags_to_text(out, bch2_btree_node_flags, b->flags);
+	pr_bitflags(out, bch2_btree_node_flags, b->flags);
 	pr_newline(out);
 
 	pr_buf(out, "pcpu read locks: ");
