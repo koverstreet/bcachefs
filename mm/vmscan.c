@@ -50,6 +50,7 @@
 #include <linux/printk.h>
 #include <linux/dax.h>
 #include <linux/psi.h>
+#include <linux/printbuf.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -701,6 +702,83 @@ void synchronize_shrinkers(void)
 	up_write(&shrinker_rwsem);
 }
 EXPORT_SYMBOL(synchronize_shrinkers);
+
+void shrinker_to_text(struct printbuf *out, struct shrinker *shrinker)
+{
+	struct shrink_control sc = { .gfp_mask = GFP_KERNEL, };
+
+	if (shrinker->name[0])
+		pr_buf(out, "%s", shrinker->name);
+	else
+		pr_buf(out, "%ps:", shrinker->scan_objects);
+
+	pr_buf(out, " objects: %lu", shrinker->count_objects(shrinker, &sc));
+	pr_newline(out);
+
+	if (shrinker->to_text) {
+		pr_indent_push(out, 2);
+		shrinker->to_text(out, shrinker);
+		pr_indent_pop(out, 2);
+		pr_newline(out);
+	}
+}
+
+/**
+ * shrinkers_to_text - Report on shrinkers with highest usage
+ *
+ * This reports on the top 10 shrinkers, by object counts, in sorted order:
+ * intended to be used for OOM reporting.
+ */
+void shrinkers_to_text(struct printbuf *out)
+{
+	struct shrinker *shrinker;
+	struct shrinker_by_mem {
+		struct shrinker	*shrinker;
+		unsigned long	mem;
+	} shrinkers_by_mem[10];
+	int i, nr = 0;
+
+	if (!down_read_trylock(&shrinker_rwsem)) {
+		pr_buf(out, "(couldn't take shrinker lock)");
+		return;
+	}
+
+	list_for_each_entry(shrinker, &shrinker_list, list) {
+		struct shrink_control sc = { .gfp_mask = GFP_KERNEL, };
+		unsigned long mem = shrinker->count_objects(shrinker, &sc);
+
+		if (!mem || mem == SHRINK_STOP || mem == SHRINK_EMPTY)
+			continue;
+
+		for (i = 0; i < nr; i++)
+			if (mem < shrinkers_by_mem[i].mem)
+				break;
+
+		if (nr < ARRAY_SIZE(shrinkers_by_mem)) {
+			memmove(&shrinkers_by_mem[i + 1],
+				&shrinkers_by_mem[i],
+				sizeof(shrinkers_by_mem[0]) * (nr - i));
+			nr++;
+		} else if (i) {
+			i--;
+			memmove(&shrinkers_by_mem[0],
+				&shrinkers_by_mem[1],
+				sizeof(shrinkers_by_mem[0]) * i);
+		} else {
+			continue;
+		}
+
+		shrinkers_by_mem[i] = (struct shrinker_by_mem) {
+			.shrinker = shrinker,
+			.mem = mem,
+		};
+	}
+
+	for (i = nr - 1; i >= 0; --i)
+		shrinker_to_text(out, shrinkers_by_mem[i].shrinker);
+
+	up_read(&shrinker_rwsem);
+}
 
 #define SHRINK_BATCH 128
 
