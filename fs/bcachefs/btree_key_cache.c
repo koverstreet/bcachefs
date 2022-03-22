@@ -721,6 +721,14 @@ void bch2_fs_btree_key_cache_init_early(struct btree_key_cache *c)
 	INIT_LIST_HEAD(&c->freed);
 }
 
+static void bch2_btree_key_cache_shrinker_to_text(struct printbuf *out, struct shrinker *shrink)
+{
+	struct btree_key_cache *bc =
+		container_of(shrink, struct btree_key_cache, shrink);
+
+	bch2_btree_key_cache_to_text(out, bc);
+}
+
 int bch2_fs_btree_key_cache_init(struct btree_key_cache *c)
 {
 	int ret;
@@ -734,6 +742,7 @@ int bch2_fs_btree_key_cache_init(struct btree_key_cache *c)
 	c->shrink.seeks			= 1;
 	c->shrink.count_objects		= bch2_btree_key_cache_count;
 	c->shrink.scan_objects		= bch2_btree_key_cache_scan;
+	c->shrink.to_text		= bch2_btree_key_cache_shrinker_to_text;
 	return register_shrinker(&c->shrink);
 }
 
