@@ -54,6 +54,7 @@
 #include <linux/shmem_fs.h>
 #include <linux/ctype.h>
 #include <linux/debugfs.h>
+#include <linux/printbuf.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -645,7 +646,6 @@ static int __prealloc_shrinker(struct shrinker *shrinker)
 	return 0;
 }
 
-#ifdef CONFIG_SHRINKER_DEBUG
 int prealloc_shrinker(struct shrinker *shrinker, const char *fmt, ...)
 {
 	va_list ap;
@@ -665,19 +665,12 @@ int prealloc_shrinker(struct shrinker *shrinker, const char *fmt, ...)
 
 	return err;
 }
-#else
-int prealloc_shrinker(struct shrinker *shrinker, const char *fmt, ...)
-{
-	return __prealloc_shrinker(shrinker);
-}
-#endif
 
 void free_prealloced_shrinker(struct shrinker *shrinker)
 {
-#ifdef CONFIG_SHRINKER_DEBUG
 	kfree_const(shrinker->name);
 	shrinker->name = NULL;
-#endif
+
 	if (shrinker->flags & SHRINKER_MEMCG_AWARE) {
 		down_write(&shrinker_rwsem);
 		unregister_memcg_shrinker(shrinker);
@@ -708,7 +701,6 @@ static int __register_shrinker(struct shrinker *shrinker)
 	return 0;
 }
 
-#ifdef CONFIG_SHRINKER_DEBUG
 int register_shrinker(struct shrinker *shrinker, const char *fmt, ...)
 {
 	va_list ap;
@@ -727,12 +719,6 @@ int register_shrinker(struct shrinker *shrinker, const char *fmt, ...)
 	}
 	return err;
 }
-#else
-int register_shrinker(struct shrinker *shrinker, const char *fmt, ...)
-{
-	return __register_shrinker(shrinker);
-}
-#endif
 EXPORT_SYMBOL(register_shrinker);
 
 /*
@@ -770,6 +756,83 @@ void synchronize_shrinkers(void)
 	up_write(&shrinker_rwsem);
 }
 EXPORT_SYMBOL(synchronize_shrinkers);
+
+void shrinker_to_text(struct printbuf *out, struct shrinker *shrinker)
+{
+	struct shrink_control sc = { .gfp_mask = GFP_KERNEL, };
+
+	if (shrinker->name[0])
+		prt_str(out, shrinker->name);
+	else
+		prt_printf(out, "%ps:", shrinker->scan_objects);
+
+	prt_printf(out, " objects: %lu", shrinker->count_objects(shrinker, &sc));
+	prt_newline(out);
+
+	if (shrinker->to_text) {
+		printbuf_indent_add(out, 2);
+		shrinker->to_text(out, shrinker);
+		printbuf_indent_sub(out, 2);
+		prt_newline(out);
+	}
+}
+
+/**
+ * shrinkers_to_text - Report on shrinkers with highest usage
+ *
+ * This reports on the top 10 shrinkers, by object counts, in sorted order:
+ * intended to be used for OOM reporting.
+ */
+void shrinkers_to_text(struct printbuf *out)
+{
+	struct shrinker *shrinker;
+	struct shrinker_by_mem {
+		struct shrinker	*shrinker;
+		unsigned long	mem;
+	} shrinkers_by_mem[10];
+	int i, nr = 0;
+
+	if (!down_read_trylock(&shrinker_rwsem)) {
+		prt_str(out, "(couldn't take shrinker lock)");
+		return;
+	}
+
+	list_for_each_entry(shrinker, &shrinker_list, list) {
+		struct shrink_control sc = { .gfp_mask = GFP_KERNEL, };
+		unsigned long mem = shrinker->count_objects(shrinker, &sc);
+
+		if (!mem || mem == SHRINK_STOP || mem == SHRINK_EMPTY)
+			continue;
+
+		for (i = 0; i < nr; i++)
+			if (mem < shrinkers_by_mem[i].mem)
+				break;
+
+		if (nr < ARRAY_SIZE(shrinkers_by_mem)) {
+			memmove(&shrinkers_by_mem[i + 1],
+				&shrinkers_by_mem[i],
+				sizeof(shrinkers_by_mem[0]) * (nr - i));
+			nr++;
+		} else if (i) {
+			i--;
+			memmove(&shrinkers_by_mem[0],
+				&shrinkers_by_mem[1],
+				sizeof(shrinkers_by_mem[0]) * i);
+		} else {
+			continue;
+		}
+
+		shrinkers_by_mem[i] = (struct shrinker_by_mem) {
+			.shrinker = shrinker,
+			.mem = mem,
+		};
+	}
+
+	for (i = nr - 1; i >= 0; --i)
+		shrinker_to_text(out, shrinkers_by_mem[i].shrinker);
+
+	up_read(&shrinker_rwsem);
+}
 
 #define SHRINK_BATCH 128
 
