@@ -13,6 +13,7 @@
 #include "trace.h"
 
 #include <linux/sched/mm.h>
+#include <linux/seq_buf.h>
 
 static inline bool btree_uses_pcpu_readers(enum btree_id id)
 {
@@ -1024,6 +1025,18 @@ void bch2_fs_btree_key_cache_init_early(struct btree_key_cache *c)
 	INIT_LIST_HEAD(&c->freed_nonpcpu);
 }
 
+static void bch2_btree_key_cache_shrinker_to_text(struct seq_buf *s, struct shrinker *shrink)
+{
+	struct btree_key_cache *bc =
+		container_of(shrink, struct btree_key_cache, shrink);
+	char *cbuf;
+	size_t buflen = seq_buf_get_buf(s, &cbuf);
+	struct printbuf out = PRINTBUF_EXTERN(cbuf, buflen);
+
+	bch2_btree_key_cache_to_text(&out, bc);
+	seq_buf_commit(s, out.pos);
+}
+
 int bch2_fs_btree_key_cache_init(struct btree_key_cache *bc)
 {
 	struct bch_fs *c = container_of(bc, struct bch_fs, btree_key_cache);
@@ -1042,6 +1055,7 @@ int bch2_fs_btree_key_cache_init(struct btree_key_cache *bc)
 	bc->shrink.seeks		= 0;
 	bc->shrink.count_objects	= bch2_btree_key_cache_count;
 	bc->shrink.scan_objects		= bch2_btree_key_cache_scan;
+	bc->shrink.to_text		= bch2_btree_key_cache_shrinker_to_text;
 	if (register_shrinker(&bc->shrink, "%s-btree_key_cache", c->name))
 		return -BCH_ERR_ENOMEM_fs_btree_cache_init;
 	return 0;
