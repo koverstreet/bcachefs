@@ -1174,8 +1174,7 @@ use_clean:
 		bch_verbose(c, "done checking allocations");
 	}
 
-	if (c->opts.fsck &&
-	    c->sb.version >= bcachefs_metadata_version_freespace) {
+	if (c->opts.fsck) {
 		bch_info(c, "checking need_discard and freespace btrees");
 		err = "error checking need_discard and freespace btrees";
 		ret = bch2_check_alloc_info(c, true);

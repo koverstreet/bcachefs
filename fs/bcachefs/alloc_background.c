@@ -724,12 +724,23 @@ int bch2_check_alloc_info(struct bch_fs *c, bool initial)
 	struct btree_trans trans;
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	int ret = 0;
+	int ret = 0, last_dev = -1;
 
 	bch2_trans_init(&trans, c, 0, 0);
 
 	for_each_btree_key(&trans, iter, BTREE_ID_alloc, POS_MIN,
 			   BTREE_ITER_PREFETCH, k, ret) {
+		if (k.k->p.inode != last_dev) {
+			struct bch_dev *ca = bch_dev_bkey_exists(c, k.k->p.inode);
+
+			if (!ca->mi.freespace_initialized) {
+				bch2_btree_iter_set_pos(&iter, POS(k.k->p.inode + 1, 0));
+				continue;
+			}
+
+			last_dev = k.k->p.inode;
+		}
+
 		ret = __bch2_trans_do(&trans, NULL, NULL, 0,
 			bch2_check_alloc_key(&trans, &iter));
 		if (ret)
