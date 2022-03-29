@@ -493,32 +493,49 @@ DEFINE_EVENT(bucket_alloc, bucket_alloc,
 
 TRACE_EVENT(bucket_alloc_fail,
 	TP_PROTO(struct bch_dev *ca, const char *alloc_reserve,
-		 u64 avail, u64 need_journal_commit,
-		 bool nonblocking),
-	TP_ARGS(ca, alloc_reserve, avail, need_journal_commit, nonblocking),
+		 u64 avail,
+		 u64 seen,
+		 u64 open,
+		 u64 need_journal_commit,
+		 u64 nouse,
+		 bool nonblocking,
+		 int ret),
+	TP_ARGS(ca, alloc_reserve, avail, seen, open, need_journal_commit, nouse, nonblocking, ret),
 
 	TP_STRUCT__entry(
 		__field(dev_t,			dev			)
 		__array(char,	reserve,	16			)
 		__field(u64,			avail			)
+		__field(u64,			seen			)
+		__field(u64,			open			)
 		__field(u64,			need_journal_commit	)
+		__field(u64,			nouse			)
 		__field(bool,			nonblocking		)
+		__field(int,			ret			)
 	),
 
 	TP_fast_assign(
 		__entry->dev		= ca->dev;
 		strlcpy(__entry->reserve, alloc_reserve, sizeof(__entry->reserve));
 		__entry->avail		= avail;
+		__entry->seen		= seen;
+		__entry->open		= open;
 		__entry->need_journal_commit = need_journal_commit;
+		__entry->nouse		= nouse;
 		__entry->nonblocking	= nonblocking;
+		__entry->ret		= ret;
 	),
 
-	TP_printk("%d,%d reserve %s avail %llu need_journal_commit %llu nonblocking %u",
+	TP_printk("%d,%d reserve %s avail %llu seen %llu open %llu need_journal_commit %llu nouse %llu nonblocking %u ret %i",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->reserve,
 		  __entry->avail,
+		  __entry->seen,
+		  __entry->open,
 		  __entry->need_journal_commit,
-		  __entry->nonblocking)
+		  __entry->nouse,
+		  __entry->nonblocking,
+		  __entry->ret)
 );
 
 DEFINE_EVENT(bucket_alloc, open_bucket_alloc_fail,
