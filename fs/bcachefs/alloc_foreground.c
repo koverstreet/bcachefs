@@ -192,20 +192,26 @@ static inline unsigned open_buckets_reserved(enum alloc_reserve reserve)
 static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *ca,
 					      enum alloc_reserve reserve,
 					      struct bkey_alloc_unpacked a,
-					      size_t *need_journal_commit,
+					      u64 *skipped_open,
+					      u64 *skipped_need_journal_commit,
+					      u64 *skipped_nouse,
 					      struct closure *cl)
 {
 	struct open_bucket *ob;
 
-	if (unlikely(ca->buckets_nouse && test_bit(a.bucket, ca->buckets_nouse)))
+	if (unlikely(ca->buckets_nouse && test_bit(a.bucket, ca->buckets_nouse))) {
+		(*skipped_nouse)++;
 		return NULL;
+	}
 
-	if (bch2_bucket_is_open(c, ca->dev_idx, a.bucket))
+	if (bch2_bucket_is_open(c, ca->dev_idx, a.bucket)) {
+		(*skipped_open)++;
 		return NULL;
+	}
 
 	if (bch2_bucket_needs_journal_commit(&c->buckets_waiting_for_journal,
 			c->journal.flushed_seq_ondisk, ca->dev_idx, a.bucket)) {
-		(*need_journal_commit)++;
+		(*skipped_need_journal_commit)++;
 		return NULL;
 	}
 
@@ -227,6 +233,7 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 	/* Recheck under lock: */
 	if (bch2_bucket_is_open(c, ca->dev_idx, a.bucket)) {
 		spin_unlock(&c->freelist_lock);
+		(*skipped_open)++;
 		return NULL;
 	}
 
@@ -267,7 +274,9 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 
 static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bch_dev *ca,
 					    enum alloc_reserve reserve, u64 free_entry,
-					    size_t *need_journal_commit,
+					    u64 *skipped_open,
+					    u64 *skipped_need_journal_commit,
+					    u64 *skipped_nouse,
 					    struct closure *cl)
 {
 	struct bch_fs *c = trans->c;
@@ -317,7 +326,11 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 		goto err;
 	}
 
-	ob = __try_alloc_bucket(c, ca, reserve, a, need_journal_commit, cl);
+	ob = __try_alloc_bucket(c, ca, reserve, a,
+				skipped_open,
+				skipped_need_journal_commit,
+				skipped_nouse,
+				cl);
 err:
 	bch2_trans_iter_exit(trans, &iter);
 	printbuf_exit(&buf);
@@ -360,8 +373,11 @@ static noinline struct open_bucket *
 bch2_bucket_alloc_trans_early(struct btree_trans *trans,
 			      struct bch_dev *ca,
 			      enum alloc_reserve reserve,
-			      u64 *b,
-			      size_t *need_journal_commit,
+			      u64 *cur_bucket,
+			      u64 *buckets_seen,
+			      u64 *skipped_open,
+			      u64 *skipped_need_journal_commit,
+			      u64 *skipped_nouse,
 			      struct closure *cl)
 {
 	struct btree_iter iter;
@@ -369,10 +385,10 @@ bch2_bucket_alloc_trans_early(struct btree_trans *trans,
 	struct open_bucket *ob = NULL;
 	int ret;
 
-	*b = max_t(u64, *b, ca->mi.first_bucket);
-	*b = max_t(u64, *b, ca->new_fs_bucket_idx);
+	*cur_bucket = max_t(u64, *cur_bucket, ca->mi.first_bucket);
+	*cur_bucket = max_t(u64, *cur_bucket, ca->new_fs_bucket_idx);
 
-	for_each_btree_key(trans, iter, BTREE_ID_alloc, POS(ca->dev_idx, *b),
+	for_each_btree_key(trans, iter, BTREE_ID_alloc, POS(ca->dev_idx, *cur_bucket),
 			   BTREE_ITER_SLOTS, k, ret) {
 		struct bkey_alloc_unpacked a;
 
@@ -388,14 +404,19 @@ bch2_bucket_alloc_trans_early(struct btree_trans *trans,
 		if (bucket_state(a) != BUCKET_free)
 			continue;
 
+		(*buckets_seen)++;
+
 		ob = __try_alloc_bucket(trans->c, ca, reserve, a,
-					need_journal_commit, cl);
+					skipped_open,
+					skipped_need_journal_commit,
+					skipped_nouse,
+					cl);
 		if (ob)
 			break;
 	}
 	bch2_trans_iter_exit(trans, &iter);
 
-	*b = iter.pos.offset;
+	*cur_bucket = iter.pos.offset;
 
 	return ob ?: ERR_PTR(ret ?: -FREELIST_EMPTY);
 }
@@ -403,8 +424,11 @@ bch2_bucket_alloc_trans_early(struct btree_trans *trans,
 static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 						   struct bch_dev *ca,
 						   enum alloc_reserve reserve,
-						   u64 *b,
-						   size_t *need_journal_commit,
+						   u64 *cur_bucket,
+						   u64 *buckets_seen,
+						   u64 *skipped_open,
+						   u64 *skipped_need_journal_commit,
+						   u64 *skipped_nouse,
 						   struct closure *cl)
 {
 	struct btree_iter iter;
@@ -413,26 +437,37 @@ static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 	int ret;
 
 	if (unlikely(!ca->mi.freespace_initialized))
-		return bch2_bucket_alloc_trans_early(trans, ca, reserve, b,
-						     need_journal_commit, cl);
+		return bch2_bucket_alloc_trans_early(trans, ca, reserve,
+						     cur_bucket,
+						     buckets_seen,
+						     skipped_open,
+						     skipped_need_journal_commit,
+						     skipped_nouse,
+						     cl);
 
 	BUG_ON(ca->new_fs_bucket_idx);
 
 	for_each_btree_key(trans, iter, BTREE_ID_freespace,
-			   POS(ca->dev_idx, *b), 0, k, ret) {
+			   POS(ca->dev_idx, *cur_bucket), 0, k, ret) {
 		if (k.k->p.inode != ca->dev_idx)
 			break;
 
-		for (*b = max(*b, bkey_start_offset(k.k));
-		     *b != k.k->p.offset && !ob;
-		     (*b)++) {
+		for (*cur_bucket = max(*cur_bucket, bkey_start_offset(k.k));
+		     *cur_bucket != k.k->p.offset && !ob;
+		     (*cur_bucket)++) {
 			if (btree_trans_too_many_iters(trans)) {
 				ob = ERR_PTR(-EINTR);
 				break;
 			}
 
-			ob = try_alloc_bucket(trans, ca, reserve, *b,
-					      need_journal_commit, cl);
+			(*buckets_seen)++;
+
+			ob = try_alloc_bucket(trans, ca, reserve,
+					      *cur_bucket,
+					      skipped_open,
+					      skipped_need_journal_commit,
+					      skipped_nouse,
+					      cl);
 		}
 		if (ob)
 			break;
@@ -453,9 +488,12 @@ struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 				      struct closure *cl)
 {
 	struct open_bucket *ob = NULL;
-	size_t need_journal_commit = 0;
 	u64 avail = dev_buckets_available(ca, reserve);
-	u64 b = 0;
+	u64 cur_bucket = 0;
+	u64 buckets_seen = 0;
+	u64 skipped_open = 0;
+	u64 skipped_need_journal_commit = 0;
+	u64 skipped_nouse = 0;
 	int ret;
 
 	if (may_alloc_partial) {
@@ -483,19 +521,27 @@ again:
 	}
 
 	ret = bch2_trans_do(c, NULL, NULL, 0,
-			PTR_ERR_OR_ZERO(ob = bch2_bucket_alloc_trans(&trans,
-							ca, reserve, &b,
-							&need_journal_commit, cl)));
+			PTR_ERR_OR_ZERO(ob = bch2_bucket_alloc_trans(&trans, ca, reserve,
+							&cur_bucket,
+							&buckets_seen,
+							&skipped_open,
+							&skipped_need_journal_commit,
+							&skipped_nouse,
+							cl)));
 
-	if (need_journal_commit * 2 > avail)
+	if (skipped_need_journal_commit * 2 > avail)
 		bch2_journal_flush_async(&c->journal, NULL);
 err:
 	if (!ob)
 		ob = ERR_PTR(ret ?: -FREELIST_EMPTY);
 
-	if (ob == ERR_PTR(-FREELIST_EMPTY)) {
+	if (IS_ERR(ob)) {
 		trace_bucket_alloc_fail(ca, bch2_alloc_reserves[reserve], avail,
-					need_journal_commit, cl == NULL);
+					buckets_seen,
+					skipped_open,
+					skipped_need_journal_commit,
+					skipped_nouse,
+					cl == NULL, PTR_ERR(ob));
 		atomic_long_inc(&c->bucket_alloc_fail);
 	}
 
