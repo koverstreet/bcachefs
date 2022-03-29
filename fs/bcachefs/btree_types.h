@@ -8,6 +8,7 @@
 
 #include "bkey_methods.h"
 #include "buckets_types.h"
+#include "darray.h"
 #include "journal_types.h"
 
 struct open_bucket;
@@ -417,8 +418,7 @@ struct btree_trans {
 
 	/* update path: */
 	struct btree_trans_commit_hook *hooks;
-	struct jset_entry	*extra_journal_entries;
-	unsigned		extra_journal_entry_u64s;
+	DARRAY(u64)		extra_journal_entries;
 	struct journal_entry_pin *journal_pin;
 
 	struct journal_res	journal_res;
