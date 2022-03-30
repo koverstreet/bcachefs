@@ -1721,6 +1721,7 @@ bch2_btree_path_set_pos(struct btree_trans *trans,
 	l = btree_path_up_until_good_node(trans, path, cmp);
 
 	if (btree_path_node(path, l)) {
+		BUG_ON(!btree_node_locked(path, l));
 		/*
 		 * We might have to skip over many keys, or just a few: try
 		 * advancing the node iterator, and if we have to skip over too
@@ -1924,6 +1925,7 @@ struct btree_path *bch2_path_get(struct btree_trans *trans,
 
 	BUG_ON(trans->restarted);
 	btree_trans_verify_sorted(trans);
+	bch2_trans_verify_locks(trans);
 
 	trans_for_each_path_inorder(trans, path, i) {
 		if (__btree_path_cmp(path,
@@ -2115,6 +2117,7 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *iter)
 		btree_node_unlock(path, path->level);
 		path->l[path->level].b = BTREE_ITER_NO_NODE_UP;
 		path->level++;
+		btree_path_set_dirty(path, BTREE_ITER_NEED_TRAVERSE);
 		return NULL;
 	}
 
@@ -2122,6 +2125,7 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *iter)
 		__bch2_btree_path_unlock(path);
 		path->l[path->level].b = BTREE_ITER_NO_NODE_GET_LOCKS;
 		path->l[path->level + 1].b = BTREE_ITER_NO_NODE_GET_LOCKS;
+		btree_path_set_dirty(path, BTREE_ITER_NEED_TRAVERSE);
 		trace_trans_restart_relock_next_node(trans->fn, _THIS_IP_,
 					   path->btree_id, &path->pos);
 		btree_trans_restart(trans);
