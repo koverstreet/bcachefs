@@ -1661,9 +1661,8 @@ static struct btree_path *btree_path_clone(struct btree_trans *trans, struct btr
 	return new;
 }
 
-struct btree_path * __must_check
-__bch2_btree_path_make_mut(struct btree_trans *trans,
-			   struct btree_path *path, bool intent)
+struct btree_path *__bch2_btree_path_make_mut(struct btree_trans *trans,
+			 struct btree_path *path, bool intent)
 {
 	__btree_path_put(path, intent);
 	path = btree_path_clone(trans, path, intent);
@@ -1671,6 +1670,7 @@ __bch2_btree_path_make_mut(struct btree_trans *trans,
 #ifdef CONFIG_BCACHEFS_DEBUG
 	path->ip_allocated = _RET_IP_;
 #endif
+	path->should_be_locked = false;
 	return path;
 }
 
@@ -1687,7 +1687,6 @@ __bch2_btree_path_set_pos(struct btree_trans *trans,
 	path = bch2_btree_path_make_mut(trans, path, intent);
 
 	path->pos		= new_pos;
-	path->should_be_locked	= false;
 	trans->paths_sorted	= false;
 
 	if (unlikely(path->cached)) {
