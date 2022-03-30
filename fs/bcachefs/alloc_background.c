@@ -862,7 +862,9 @@ static void bch2_do_discards_work(struct work_struct *work)
 		    bch2_bucket_is_open_safe(c, k.k->p.inode, k.k->p.offset))
 			continue;
 
-		ret = __bch2_trans_do(&trans, NULL, NULL, 0,
+		ret = __bch2_trans_do(&trans, NULL, NULL,
+				      BTREE_INSERT_USE_RESERVE|
+				      BTREE_INSERT_NOFAIL,
 				bch2_clear_need_discard(&trans, k.k->p, ca, &discard_done));
 		if (ret)
 			break;
@@ -954,6 +956,7 @@ static void bch2_do_invalidates_work(struct work_struct *work)
 	for_each_member_device(ca, c, i)
 		while (!ret && should_invalidate_buckets(ca))
 			ret = __bch2_trans_do(&trans, NULL, NULL,
+					      BTREE_INSERT_USE_RESERVE|
 					      BTREE_INSERT_NOFAIL,
 					invalidate_one_bucket(&trans, ca));
 
