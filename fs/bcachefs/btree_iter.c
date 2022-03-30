@@ -1686,6 +1686,7 @@ bch2_btree_path_make_mut(struct btree_trans *trans,
 		btree_trans_verify_sorted(trans);
 	}
 
+	path->should_be_locked = false;
 	return path;
 }
 
@@ -1705,8 +1706,7 @@ bch2_btree_path_set_pos(struct btree_trans *trans,
 
 	path = bch2_btree_path_make_mut(trans, path, intent, ip);
 
-	path->pos		= new_pos;
-	path->should_be_locked	= false;
+	path->pos = new_pos;
 
 	bch2_btree_path_check_sort(trans, path, cmp);
 
