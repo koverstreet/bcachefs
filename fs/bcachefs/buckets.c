@@ -1447,6 +1447,7 @@ err:
 }
 
 int bch2_trans_mark_extent(struct btree_trans *trans,
+			   enum btree_id btree_id, unsigned level,
 			   struct bkey_s_c old, struct bkey_i *new,
 			   unsigned flags)
 {
@@ -1585,6 +1586,7 @@ err:
 }
 
 int bch2_trans_mark_stripe(struct btree_trans *trans,
+			   enum btree_id btree_id, unsigned level,
 			   struct bkey_s_c old, struct bkey_i *new,
 			   unsigned flags)
 {
@@ -1655,6 +1657,7 @@ int bch2_trans_mark_stripe(struct btree_trans *trans,
 }
 
 int bch2_trans_mark_inode(struct btree_trans *trans,
+			  enum btree_id btree_id, unsigned level,
 			  struct bkey_s_c old,
 			  struct bkey_i *new,
 			  unsigned flags)
@@ -1671,6 +1674,7 @@ int bch2_trans_mark_inode(struct btree_trans *trans,
 }
 
 int bch2_trans_mark_reservation(struct btree_trans *trans,
+				enum btree_id btree_id, unsigned level,
 				struct bkey_s_c old,
 				struct bkey_i *new,
 				unsigned flags)
@@ -1772,6 +1776,7 @@ err:
 }
 
 int bch2_trans_mark_reflink_p(struct btree_trans *trans,
+			      enum btree_id btree_id, unsigned level,
 			      struct bkey_s_c old,
 			      struct bkey_i *new,
 			      unsigned flags)
