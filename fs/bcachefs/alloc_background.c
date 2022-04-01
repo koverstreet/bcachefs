@@ -886,7 +886,7 @@ static int bch2_clear_need_discard(struct btree_trans *trans, struct bpos pos,
 				     GFP_KERNEL, 0);
 		*discard_done = true;
 
-		ret = bch2_trans_relock(trans);
+		ret = bch2_trans_relock(trans) ? 0 : -EINTR;
 		if (ret)
 			goto out;
 	}
@@ -907,6 +907,7 @@ static void bch2_do_discards_work(struct work_struct *work)
 	struct btree_trans trans;
 	struct btree_iter iter;
 	struct bkey_s_c k;
+	u64 seen = 0, open = 0, need_journal_commit = 0, discarded = 0;
 	int ret;
 
 	bch2_trans_init(&trans, c, 0, 0);
@@ -929,11 +930,19 @@ static void bch2_do_discards_work(struct work_struct *work)
 			}
 		}
 
+		seen++;
+
+		if (bch2_bucket_is_open_safe(c, k.k->p.inode, k.k->p.offset)) {
+			open++;
+			continue;
+		}
+
 		if (bch2_bucket_needs_journal_commit(&c->buckets_waiting_for_journal,
 				c->journal.flushed_seq_ondisk,
-				k.k->p.inode, k.k->p.offset) ||
-		    bch2_bucket_is_open_safe(c, k.k->p.inode, k.k->p.offset))
+				k.k->p.inode, k.k->p.offset)) {
+			need_journal_commit++;
 			continue;
+		}
 
 		ret = __bch2_trans_do(&trans, NULL, NULL,
 				      BTREE_INSERT_USE_RESERVE|
@@ -941,6 +950,8 @@ static void bch2_do_discards_work(struct work_struct *work)
 				bch2_clear_need_discard(&trans, k.k->p, ca, &discard_done));
 		if (ret)
 			break;
+
+		discarded++;
 	}
 	bch2_trans_iter_exit(&trans, &iter);
 
@@ -948,7 +959,13 @@ static void bch2_do_discards_work(struct work_struct *work)
 		percpu_ref_put(&ca->io_ref);
 
 	bch2_trans_exit(&trans);
+
+	if (need_journal_commit * 2 > seen)
+		bch2_journal_flush_async(&c->journal, NULL);
+
 	percpu_ref_put(&c->writes);
+
+	trace_do_discards(c, seen, open, need_journal_commit, discarded, ret);
 }
 
 void bch2_do_discards(struct bch_fs *c)
