@@ -197,11 +197,11 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 			goto err;
 
 		workspace = mempool_alloc(&c->decompress_workspace, GFP_NOIO);
-		ctx = zstd_init_dctx(workspace, zstd_dctx_workspace_bound());
+		ctx = ZSTD_initDCtx(workspace, ZSTD_DCtxWorkspaceBound());
 
 		src_len = le32_to_cpup(src_data.b);
 
-		ret = zstd_decompress_dctx(ctx,
+		ret = ZSTD_decompressDCtx(ctx,
 				dst_data,	dst_len,
 				src_data.b + 4, real_src_len);
 
@@ -335,8 +335,8 @@ static int attempt_compress(struct bch_fs *c,
 		return strm.total_out;
 	}
 	case BCH_COMPRESSION_TYPE_zstd: {
-		ZSTD_CCtx *ctx = zstd_init_cctx(workspace,
-			zstd_cctx_workspace_bound(&c->zstd_params.cParams));
+		ZSTD_CCtx *ctx = ZSTD_initCCtx(workspace,
+			ZSTD_CCtxWorkspaceBound(c->zstd_params.cParams));
 
 		/*
 		 * ZSTD requires that when we decompress we pass in the exact
@@ -349,11 +349,11 @@ static int attempt_compress(struct bch_fs *c,
 		 * factor (7 bytes) from the dst buffer size to account for
 		 * that.
 		 */
-		size_t len = zstd_compress_cctx(ctx,
+		size_t len = ZSTD_compressCCtx(ctx,
 				dst + 4,	dst_len - 4 - 7,
 				src,		src_len,
-				&c->zstd_params);
-		if (zstd_is_error(len))
+				c->zstd_params);
+		if (ZSTD_isError(len))
 			return 0;
 
 		*((__le32 *) dst) = cpu_to_le32(len);
@@ -548,7 +548,7 @@ static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
 {
 	size_t decompress_workspace_size = 0;
 	bool decompress_workspace_needed;
-	ZSTD_parameters params = zstd_get_params(0, c->opts.encoded_extent_max);
+	ZSTD_parameters params = ZSTD_getParams(0, c->opts.encoded_extent_max, 0);
 	struct {
 		unsigned	feature;
 		unsigned	type;
@@ -560,8 +560,8 @@ static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
 			zlib_deflate_workspacesize(MAX_WBITS, DEF_MEM_LEVEL),
 			zlib_inflate_workspacesize(), },
 		{ BCH_FEATURE_zstd, BCH_COMPRESSION_TYPE_zstd,
-			zstd_cctx_workspace_bound(&params.cParams),
-			zstd_dctx_workspace_bound() },
+			ZSTD_CCtxWorkspaceBound(params.cParams),
+			ZSTD_DCtxWorkspaceBound() },
 	}, *i;
 	int ret = 0;
 
