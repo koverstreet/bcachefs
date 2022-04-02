@@ -111,11 +111,11 @@ void bch2_xattr_to_text(struct printbuf *out, struct bch_fs *c,
 	else
 		pr_buf(out, "(unknown type %u)", xattr.v->x_type);
 
-	bch_scnmemcpy(out, xattr.v->x_name,
-		      xattr.v->x_name_len);
-	pr_buf(out, ":");
-	bch_scnmemcpy(out, xattr_val(xattr.v),
-		      le16_to_cpu(xattr.v->x_val_len));
+	pr_buf(out, "%.*s:%.*s",
+	       xattr.v->x_name_len,
+	       xattr.v->x_name,
+	       le16_to_cpu(xattr.v->x_val_len),
+	       (char *) xattr_val(xattr.v));
 }
 
 static int bch2_xattr_get_trans(struct btree_trans *trans, struct bch_inode_info *inode,
@@ -311,13 +311,9 @@ retry:
 	if (ret)
 		goto err;
 
-	for_each_btree_key_norestart(&trans, iter, BTREE_ID_xattrs,
-			   SPOS(inum, offset, snapshot), 0, k, ret) {
-		BUG_ON(k.k->p.inode < inum);
-
-		if (k.k->p.inode > inum)
-			break;
-
+	for_each_btree_key_upto_norestart(&trans, iter, BTREE_ID_xattrs,
+			   SPOS(inum, offset, snapshot),
+			   POS(inum, U64_MAX), 0, k, ret) {
 		if (k.k->type != KEY_TYPE_xattr)
 			continue;
 
@@ -426,9 +422,8 @@ static int __bch2_xattr_bcachefs_get(const struct xattr_handler *handler,
 		bch2_inode_opts_to_opts(bch2_inode_opts_get(&inode->ei_inode));
 	const struct bch_option *opt;
 	int id, inode_opt_id;
-	char buf[512];
-	struct printbuf out = PBUF(buf);
-	unsigned val_len;
+	struct printbuf out = PRINTBUF;
+	int ret;
 	u64 v;
 
 	id = bch2_opt_lookup(name);
@@ -449,16 +444,21 @@ static int __bch2_xattr_bcachefs_get(const struct xattr_handler *handler,
 		return -ENODATA;
 
 	v = bch2_opt_get_by_id(&opts, id);
-	bch2_opt_to_text(&out, c, opt, v, 0);
+	bch2_opt_to_text(&out, c, c->disk_sb.sb, opt, v, 0);
 
-	val_len = out.pos - buf;
+	ret = out.pos;
 
-	if (buffer && val_len > size)
-		return -ERANGE;
+	if (out.allocation_failure) {
+		ret = -ENOMEM;
+	} else if (buffer) {
+		if (out.pos > size)
+			ret = -ERANGE;
+		else
+			memcpy(buffer, out.buf, out.pos);
+	}
 
-	if (buffer)
-		memcpy(buffer, buf, val_len);
-	return val_len;
+	printbuf_exit(&out);
+	return ret;
 }
 
 static int bch2_xattr_bcachefs_get(const struct xattr_handler *handler,
@@ -525,7 +525,7 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 		memcpy(buf, value, size);
 		buf[size] = '\0';
 
-		ret = bch2_opt_parse(c, NULL, opt, buf, &v);
+		ret = bch2_opt_parse(c, opt, buf, &v, NULL);
 		kfree(buf);
 
 		if (ret < 0)

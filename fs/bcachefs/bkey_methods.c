@@ -9,6 +9,7 @@
 #include "error.h"
 #include "extents.h"
 #include "inode.h"
+#include "lru.h"
 #include "quota.h"
 #include "reflink.h"
 #include "subvolume.h"
@@ -85,6 +86,24 @@ static void key_type_inline_data_to_text(struct printbuf *out, struct bch_fs *c,
 	.val_to_text	= key_type_inline_data_to_text,	\
 }
 
+static const char *key_type_set_invalid(const struct bch_fs *c, struct bkey_s_c k)
+{
+	if (bkey_val_bytes(k.k))
+		return "nonempty value";
+	return NULL;
+}
+
+static bool key_type_set_merge(struct bch_fs *c, struct bkey_s l, struct bkey_s_c r)
+{
+	bch2_key_resize(l.k, l.k->size + r.k->size);
+	return true;
+}
+
+#define bch2_bkey_ops_set (struct bkey_ops) {		\
+	.key_invalid	= key_type_set_invalid,		\
+	.key_merge	= key_type_set_merge,		\
+}
+
 const struct bkey_ops bch2_bkey_ops[] = {
 #define x(name, nr) [KEY_TYPE_##name]	= bch2_bkey_ops_##name,
 	BCH_BKEY_TYPES()
@@ -130,7 +149,8 @@ static unsigned bch2_key_types_allowed[] = {
 		(1U << KEY_TYPE_deleted)|
 		(1U << KEY_TYPE_alloc)|
 		(1U << KEY_TYPE_alloc_v2)|
-		(1U << KEY_TYPE_alloc_v3),
+		(1U << KEY_TYPE_alloc_v3)|
+		(1U << KEY_TYPE_alloc_v4),
 	[BKEY_TYPE_quotas] =
 		(1U << KEY_TYPE_deleted)|
 		(1U << KEY_TYPE_quota),
@@ -147,6 +167,15 @@ static unsigned bch2_key_types_allowed[] = {
 	[BKEY_TYPE_snapshots] =
 		(1U << KEY_TYPE_deleted)|
 		(1U << KEY_TYPE_snapshot),
+	[BKEY_TYPE_lru] =
+		(1U << KEY_TYPE_deleted)|
+		(1U << KEY_TYPE_lru),
+	[BKEY_TYPE_freespace] =
+		(1U << KEY_TYPE_deleted)|
+		(1U << KEY_TYPE_set),
+	[BKEY_TYPE_need_discard] =
+		(1U << KEY_TYPE_deleted)|
+		(1U << KEY_TYPE_set),
 	[BKEY_TYPE_btree] =
 		(1U << KEY_TYPE_deleted)|
 		(1U << KEY_TYPE_btree_ptr)|
@@ -210,22 +239,6 @@ const char *bch2_bkey_in_btree_node(struct btree *b, struct bkey_s_c k)
 		return "key past end of btree node";
 
 	return NULL;
-}
-
-void bch2_bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
-{
-	const char *invalid;
-
-	BUG_ON(!k.k->u64s);
-
-	invalid = bch2_bkey_invalid(c, k, btree_node_type(b)) ?:
-		bch2_bkey_in_btree_node(b, k);
-	if (invalid) {
-		char buf[160];
-
-		bch2_bkey_val_to_text(&PBUF(buf), c, k);
-		bch2_fs_inconsistent(c, "invalid bkey %s: %s", buf, invalid);
-	}
 }
 
 void bch2_bpos_to_text(struct printbuf *out, struct bpos pos)

@@ -25,6 +25,8 @@ struct journal_buf {
 
 	struct closure_waitlist	wait;
 	u64			last_seq;	/* copy of data->last_seq */
+	long			expires;
+	u64			flush_time;
 
 	unsigned		buf_size;	/* size in bytes of @data */
 	unsigned		sectors;	/* maximum size for current entry */
@@ -139,20 +141,39 @@ enum journal_space_from {
 	journal_space_nr,
 };
 
-/*
- * JOURNAL_NEED_WRITE - current (pending) journal entry should be written ASAP,
- * either because something's waiting on the write to complete or because it's
- * been dirty too long and the timer's expired.
- */
-
 enum {
 	JOURNAL_REPLAY_DONE,
 	JOURNAL_STARTED,
-	JOURNAL_RECLAIM_STARTED,
-	JOURNAL_NEED_WRITE,
-	JOURNAL_MAY_GET_UNRESERVED,
 	JOURNAL_MAY_SKIP_FLUSH,
-	JOURNAL_NOCHANGES,
+};
+
+#define JOURNAL_WATERMARKS()		\
+	x(any)				\
+	x(copygc)			\
+	x(reserved)
+
+enum journal_watermark {
+#define x(n)	JOURNAL_WATERMARK_##n,
+	JOURNAL_WATERMARKS()
+#undef x
+};
+
+#define JOURNAL_WATERMARK_MASK	3
+
+/* Reasons we may fail to get a journal reservation: */
+#define JOURNAL_ERRORS()		\
+	x(ok)				\
+	x(blocked)			\
+	x(max_in_flight)		\
+	x(journal_full)			\
+	x(journal_pin_full)		\
+	x(journal_stuck)		\
+	x(insufficient_devices)
+
+enum journal_errors {
+#define x(n)	JOURNAL_ERR_##n,
+	JOURNAL_ERRORS()
+#undef x
 };
 
 /* Embedded in struct bch_fs */
@@ -162,6 +183,7 @@ struct journal {
 	unsigned long		flags;
 
 	union journal_res_state reservations;
+	enum journal_watermark	watermark;
 
 	/* Max size of current journal entry */
 	unsigned		cur_entry_u64s;
@@ -171,14 +193,7 @@ struct journal {
 	 * 0, or -ENOSPC if waiting on journal reclaim, or -EROFS if
 	 * insufficient devices:
 	 */
-	enum {
-		cur_entry_ok,
-		cur_entry_blocked,
-		cur_entry_journal_full,
-		cur_entry_journal_pin_full,
-		cur_entry_journal_stuck,
-		cur_entry_insufficient_devices,
-	}			cur_entry_error;
+	enum journal_errors	cur_entry_error;
 
 	union journal_preres_state prereserved;
 
@@ -246,6 +261,10 @@ struct journal {
 	spinlock_t		err_lock;
 
 	struct mutex		reclaim_lock;
+	/*
+	 * Used for waiting until journal reclaim has freed up space in the
+	 * journal:
+	 */
 	wait_queue_head_t	reclaim_wait;
 	struct task_struct	*reclaim_thread;
 	bool			reclaim_kicked;
@@ -265,7 +284,6 @@ struct journal {
 	unsigned long		last_flush_write;
 
 	u64			res_get_blocked_start;
-	u64			need_write_time;
 	u64			write_start_time;
 
 	u64			nr_flush_writes;

@@ -13,11 +13,15 @@ void bch2_inode_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 #define bch2_bkey_ops_inode (struct bkey_ops) {		\
 	.key_invalid	= bch2_inode_invalid,		\
 	.val_to_text	= bch2_inode_to_text,		\
+	.trans_trigger	= bch2_trans_mark_inode,	\
+	.atomic_trigger	= bch2_mark_inode,		\
 }
 
 #define bch2_bkey_ops_inode_v2 (struct bkey_ops) {	\
 	.key_invalid	= bch2_inode_v2_invalid,	\
 	.val_to_text	= bch2_inode_to_text,		\
+	.trans_trigger	= bch2_trans_mark_inode,	\
+	.atomic_trigger	= bch2_mark_inode,		\
 }
 
 static inline bool bkey_is_inode(const struct bkey *k)
@@ -87,7 +91,7 @@ void bch2_inode_init(struct bch_fs *, struct bch_inode_unpacked *,
 int bch2_inode_create(struct btree_trans *, struct btree_iter *,
 		      struct bch_inode_unpacked *, u32, u64);
 
-int bch2_inode_rm(struct bch_fs *, subvol_inum, bool);
+int bch2_inode_rm(struct bch_fs *, subvol_inum);
 
 int bch2_inode_find_by_inum_trans(struct btree_trans *, subvol_inum,
 				  struct bch_inode_unpacked *);

@@ -38,9 +38,8 @@ BCH_SB_FIELDS()
 extern const char * const bch2_sb_fields[];
 
 struct bch_sb_field_ops {
-	const char *	(*validate)(struct bch_sb *, struct bch_sb_field *);
-	void		(*to_text)(struct printbuf *, struct bch_sb *,
-				   struct bch_sb_field *);
+	int	(*validate)(struct bch_sb *, struct bch_sb_field *, struct printbuf *);
+	void	(*to_text)(struct printbuf *, struct bch_sb *, struct bch_sb_field *);
 };
 
 static inline __le64 bch2_sb_magic(struct bch_fs *c)
@@ -66,8 +65,6 @@ int bch2_sb_from_fs(struct bch_fs *, struct bch_dev *);
 void bch2_free_super(struct bch_sb_handle *);
 int bch2_sb_realloc(struct bch_sb_handle *, unsigned);
 
-const char *bch2_sb_validate(struct bch_sb_handle *);
-
 int bch2_read_super(const char *, struct bch_opts *, struct bch_sb_handle *);
 int bch2_write_super(struct bch_fs *);
 void __bch2_check_set_feature(struct bch_fs *, unsigned);
@@ -76,15 +73,6 @@ static inline void bch2_check_set_feature(struct bch_fs *c, unsigned feat)
 {
 	if (!(c->sb.features & (1ULL << feat)))
 		__bch2_check_set_feature(c, feat);
-}
-
-/* BCH_SB_FIELD_journal: */
-
-static inline unsigned bch2_nr_journal_buckets(struct bch_sb_field_journal *j)
-{
-	return j
-		? (__le64 *) vstruct_end(&j->field) - j->buckets
-		: 0;
 }
 
 /* BCH_SB_FIELD_members: */
@@ -115,6 +103,7 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 		.durability	= BCH_MEMBER_DURABILITY(mi)
 			? BCH_MEMBER_DURABILITY(mi) - 1
 			: 1,
+		.freespace_initialized = BCH_MEMBER_FREESPACE_INITIALIZED(mi),
 		.valid		= !bch2_is_zero(mi->uuid.b, sizeof(uuid_le)),
 	};
 }
@@ -124,12 +113,14 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 void bch2_journal_super_entries_add_common(struct bch_fs *,
 					   struct jset_entry **, u64);
 
-int bch2_sb_clean_validate(struct bch_fs *, struct bch_sb_field_clean *, int);
+int bch2_sb_clean_validate_late(struct bch_fs *, struct bch_sb_field_clean *, int);
 
 int bch2_fs_mark_dirty(struct bch_fs *);
 void bch2_fs_mark_clean(struct bch_fs *);
 
 void bch2_sb_field_to_text(struct printbuf *, struct bch_sb *,
 			   struct bch_sb_field *);
+void bch2_sb_layout_to_text(struct printbuf *, struct bch_sb_layout *);
+void bch2_sb_to_text(struct printbuf *, struct bch_sb *, bool, unsigned);
 
 #endif /* _BCACHEFS_SUPER_IO_H */

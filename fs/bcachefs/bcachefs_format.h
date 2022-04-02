@@ -76,6 +76,22 @@
 #include <asm/byteorder.h>
 #include <linux/kernel.h>
 #include <linux/uuid.h>
+#include "vstructs.h"
+
+#define BITMASK(name, type, field, offset, end)				\
+static const unsigned	name##_OFFSET = offset;				\
+static const unsigned	name##_BITS = (end - offset);			\
+									\
+static inline __u64 name(const type *k)					\
+{									\
+	return (k->field >> offset) & ~(~0ULL << (end - offset));	\
+}									\
+									\
+static inline void SET_##name(type *k, __u64 v)				\
+{									\
+	k->field &= ~(~(~0ULL << (end - offset)) << offset);		\
+	k->field |= (v & ~(~0ULL << (end - offset))) << offset;		\
+}
 
 #define LE_BITMASK(_bits, name, type, field, offset, end)		\
 static const unsigned	name##_OFFSET = offset;				\
@@ -346,7 +362,10 @@ static inline void bkey_init(struct bkey *k)
 	x(subvolume,		21)			\
 	x(snapshot,		22)			\
 	x(inode_v2,		23)			\
-	x(alloc_v3,		24)
+	x(alloc_v3,		24)			\
+	x(set,			25)			\
+	x(lru,			26)			\
+	x(alloc_v4,		27)
 
 enum bch_bkey_type {
 #define x(name, nr) KEY_TYPE_##name	= nr,
@@ -373,6 +392,10 @@ struct bch_cookie {
 };
 
 struct bch_hash_whiteout {
+	struct bch_val		v;
+};
+
+struct bch_set {
 	struct bch_val		v;
 };
 
@@ -876,8 +899,8 @@ struct bch_alloc_v2 {
 #define BCH_ALLOC_FIELDS_V2()			\
 	x(read_time,		64)		\
 	x(write_time,		64)		\
-	x(dirty_sectors,	16)		\
-	x(cached_sectors,	16)		\
+	x(dirty_sectors,	32)		\
+	x(cached_sectors,	32)		\
 	x(stripe,		32)		\
 	x(stripe_redundancy,	8)
 
@@ -892,11 +915,34 @@ struct bch_alloc_v3 {
 	__u8			data[];
 } __attribute__((packed, aligned(8)));
 
+struct bch_alloc_v4 {
+	struct bch_val		v;
+	__u64			journal_seq;
+	__u32			flags;
+	__u8			gen;
+	__u8			oldest_gen;
+	__u8			data_type;
+	__u8			stripe_redundancy;
+	__u32			dirty_sectors;
+	__u32			cached_sectors;
+	__u64			io_time[2];
+	__u32			stripe;
+	__u32			nr_external_backpointers;
+	struct bpos		backpointers[0];
+} __attribute__((packed, aligned(8)));
+
+LE32_BITMASK(BCH_ALLOC_V3_NEED_DISCARD,struct bch_alloc_v3, flags,  0,  1)
+LE32_BITMASK(BCH_ALLOC_V3_NEED_INC_GEN,struct bch_alloc_v3, flags,  1,  2)
+
+BITMASK(BCH_ALLOC_V4_NEED_DISCARD,	struct bch_alloc_v4, flags,  0,  1)
+BITMASK(BCH_ALLOC_V4_NEED_INC_GEN,	struct bch_alloc_v4, flags,  1,  2)
+BITMASK(BCH_ALLOC_V4_BACKPOINTERS_START,struct bch_alloc_v4, flags,  2,  8)
+BITMASK(BCH_ALLOC_V4_NR_BACKPOINTERS,	struct bch_alloc_v4, flags,  8,  14)
+
 enum {
 #define x(name, _bits) BCH_ALLOC_FIELD_V1_##name,
 	BCH_ALLOC_FIELDS_V1()
 #undef x
-	BCH_ALLOC_FIELD_NR
 };
 
 /* Quotas: */
@@ -1014,6 +1060,15 @@ LE32_BITMASK(BCH_SNAPSHOT_DELETED,	struct bch_snapshot, flags,  0,  1)
 /* True if a subvolume points to this snapshot node: */
 LE32_BITMASK(BCH_SNAPSHOT_SUBVOL,	struct bch_snapshot, flags,  1,  2)
 
+/* LRU btree: */
+
+struct bch_lru {
+	struct bch_val		v;
+	__le64			idx;
+} __attribute__((packed, aligned(8)));
+
+#define LRU_ID_STRIPES		(1U << 16)
+
 /* Optional/variable size superblock sections: */
 
 struct bch_sb_field {
@@ -1022,16 +1077,17 @@ struct bch_sb_field {
 	__le32			type;
 };
 
-#define BCH_SB_FIELDS()		\
-	x(journal,	0)	\
-	x(members,	1)	\
-	x(crypt,	2)	\
-	x(replicas_v0,	3)	\
-	x(quota,	4)	\
-	x(disk_groups,	5)	\
-	x(clean,	6)	\
-	x(replicas,	7)	\
-	x(journal_seq_blacklist, 8)
+#define BCH_SB_FIELDS()				\
+	x(journal,	0)			\
+	x(members,	1)			\
+	x(crypt,	2)			\
+	x(replicas_v0,	3)			\
+	x(quota,	4)			\
+	x(disk_groups,	5)			\
+	x(clean,	6)			\
+	x(replicas,	7)			\
+	x(journal_seq_blacklist, 8)		\
+	x(journal_v2,	9)
 
 enum bch_sb_field_type {
 #define x(f, nr)	BCH_SB_FIELD_##f = nr,
@@ -1040,11 +1096,28 @@ enum bch_sb_field_type {
 	BCH_SB_FIELD_NR
 };
 
+/*
+ * Most superblock fields are replicated in all device's superblocks - a few are
+ * not:
+ */
+#define BCH_SINGLE_DEVICE_SB_FIELDS		\
+	((1U << BCH_SB_FIELD_journal)|		\
+	 (1U << BCH_SB_FIELD_journal_v2))
+
 /* BCH_SB_FIELD_journal: */
 
 struct bch_sb_field_journal {
 	struct bch_sb_field	field;
 	__le64			buckets[0];
+};
+
+struct bch_sb_field_journal_v2 {
+	struct bch_sb_field	field;
+
+	struct bch_sb_field_journal_v2_entry {
+		__le64		start;
+		__le64		nr;
+	}			d[0];
 };
 
 /* BCH_SB_FIELD_members: */
@@ -1068,6 +1141,8 @@ LE64_BITMASK(BCH_MEMBER_DISCARD,	struct bch_member, flags[0], 14, 15)
 LE64_BITMASK(BCH_MEMBER_DATA_ALLOWED,	struct bch_member, flags[0], 15, 20)
 LE64_BITMASK(BCH_MEMBER_GROUP,		struct bch_member, flags[0], 20, 28)
 LE64_BITMASK(BCH_MEMBER_DURABILITY,	struct bch_member, flags[0], 28, 30)
+LE64_BITMASK(BCH_MEMBER_FREESPACE_INITIALIZED,
+					struct bch_member, flags[0], 30, 31)
 
 #if 0
 LE64_BITMASK(BCH_MEMBER_NR_READ_ERRORS,	struct bch_member, flags[1], 0,  20);
@@ -1274,19 +1349,25 @@ struct bch_sb_field_journal_seq_blacklist {
 #define BCH_JSET_VERSION_OLD			2
 #define BCH_BSET_VERSION_OLD			3
 
+#define BCH_METADATA_VERSIONS()				\
+	x(bkey_renumber,		10)		\
+	x(inode_btree_change,		11)		\
+	x(snapshot,			12)		\
+	x(inode_backpointers,		13)		\
+	x(btree_ptr_sectors_written,	14)		\
+	x(snapshot_2,			15)		\
+	x(reflink_p_fix,		16)		\
+	x(subvol_dirent,		17)		\
+	x(inode_v2,			18)		\
+	x(freespace,			19)		\
+	x(alloc_v4,			20)
+
 enum bcachefs_metadata_version {
-	bcachefs_metadata_version_min			= 9,
-	bcachefs_metadata_version_new_versioning	= 10,
-	bcachefs_metadata_version_bkey_renumber		= 10,
-	bcachefs_metadata_version_inode_btree_change	= 11,
-	bcachefs_metadata_version_snapshot		= 12,
-	bcachefs_metadata_version_inode_backpointers	= 13,
-	bcachefs_metadata_version_btree_ptr_sectors_written = 14,
-	bcachefs_metadata_version_snapshot_2		= 15,
-	bcachefs_metadata_version_reflink_p_fix		= 16,
-	bcachefs_metadata_version_subvol_dirent		= 17,
-	bcachefs_metadata_version_inode_v2		= 18,
-	bcachefs_metadata_version_max			= 19,
+	bcachefs_metadata_version_min = 9,
+#define x(t, n)	bcachefs_metadata_version_##t = n,
+	BCH_METADATA_VERSIONS()
+#undef x
+	bcachefs_metadata_version_max
 };
 
 #define bcachefs_metadata_version_current	(bcachefs_metadata_version_max - 1)
@@ -1426,6 +1507,7 @@ LE64_BITMASK(BCH_SB_INODES_USE_KEY_CACHE,struct bch_sb, flags[3], 29, 30);
 LE64_BITMASK(BCH_SB_JOURNAL_FLUSH_DELAY,struct bch_sb, flags[3], 30, 62);
 LE64_BITMASK(BCH_SB_JOURNAL_FLUSH_DISABLED,struct bch_sb, flags[3], 62, 63);
 LE64_BITMASK(BCH_SB_JOURNAL_RECLAIM_DELAY,struct bch_sb, flags[4], 0, 32);
+LE64_BITMASK(BCH_SB_JOURNAL_TRANSACTION_NAMES,struct bch_sb, flags[4], 32, 33);
 
 /*
  * Features:
@@ -1660,7 +1742,8 @@ static inline __u64 __bset_magic(struct bch_sb *sb)
 	x(usage,		5)		\
 	x(data_usage,		6)		\
 	x(clock,		7)		\
-	x(dev_usage,		8)
+	x(dev_usage,		8)		\
+	x(log,			9)
 
 enum {
 #define x(f, nr)	BCH_JSET_ENTRY_##f	= nr,
@@ -1690,11 +1773,16 @@ struct jset_entry_blacklist_v2 {
 	__le64			end;
 };
 
+#define BCH_FS_USAGE_TYPES()			\
+	x(reserved,		0)		\
+	x(inodes,		1)		\
+	x(key_version,		2)
+
 enum {
-	FS_USAGE_RESERVED		= 0,
-	FS_USAGE_INODES			= 1,
-	FS_USAGE_KEY_VERSION		= 2,
-	FS_USAGE_NR			= 3
+#define x(f, nr)	BCH_FS_USAGE_##f	= nr,
+	BCH_FS_USAGE_TYPES()
+#undef x
+	BCH_FS_USAGE_NR
 };
 
 struct jset_entry_usage {
@@ -1730,6 +1818,17 @@ struct jset_entry_dev_usage {
 	__le64			buckets_unavailable;
 
 	struct jset_entry_dev_usage_type d[];
+} __attribute__((packed));
+
+static inline unsigned jset_entry_dev_usage_nr_types(struct jset_entry_dev_usage *u)
+{
+	return (vstruct_bytes(&u->entry) - sizeof(struct jset_entry_dev_usage)) /
+		sizeof(struct jset_entry_dev_usage_type);
+}
+
+struct jset_entry_log {
+	struct jset_entry	entry;
+	u8			d[];
 } __attribute__((packed));
 
 /*
@@ -1785,7 +1884,11 @@ LE32_BITMASK(JSET_NO_FLUSH,	struct jset, flags, 5, 6);
 	x(stripes,	6)			\
 	x(reflink,	7)			\
 	x(subvolumes,	8)			\
-	x(snapshots,	9)
+	x(snapshots,	9)			\
+	x(lru,		10)			\
+	x(freespace,	11)			\
+	x(need_discard,	12)			\
+	x(backpointers,	13)
 
 enum btree_id {
 #define x(kwd, val) BTREE_ID_##kwd = val,

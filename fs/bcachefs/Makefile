@@ -16,6 +16,7 @@ bcachefs-y		:=	\
 	btree_update_interior.o	\
 	btree_update_leaf.o	\
 	buckets.o		\
+	buckets_waiting_for_journal.o	\
 	chardev.o		\
 	checksum.o		\
 	clock.o			\
@@ -37,8 +38,10 @@ bcachefs-y		:=	\
 	journal.o		\
 	journal_io.o		\
 	journal_reclaim.o	\
+	journal_sb.o		\
 	journal_seq_blacklist.o	\
 	keylist.o		\
+	lru.o			\
 	migrate.o		\
 	move.o			\
 	movinggc.o		\

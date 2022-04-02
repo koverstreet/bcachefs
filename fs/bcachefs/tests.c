@@ -4,6 +4,7 @@
 #include "bcachefs.h"
 #include "btree_update.h"
 #include "journal_reclaim.h"
+#include "subvolume.h"
 #include "tests.h"
 
 #include "linux/kthread.h"
@@ -14,15 +15,14 @@ static void delete_test_keys(struct bch_fs *c)
 	int ret;
 
 	ret = bch2_btree_delete_range(c, BTREE_ID_extents,
-				      SPOS(0, 0, U32_MAX),
-				      SPOS(0, U64_MAX, U32_MAX),
+				      SPOS(0, 0, U32_MAX), SPOS_MAX,
+				      0,
 				      NULL);
 	BUG_ON(ret);
 
 	ret = bch2_btree_delete_range(c, BTREE_ID_xattrs,
-				      SPOS(0, 0, U32_MAX),
-				      SPOS(0, U64_MAX, U32_MAX),
-				      NULL);
+				      SPOS(0, 0, U32_MAX), SPOS_MAX,
+				      0, NULL);
 	BUG_ON(ret);
 }
 
@@ -146,7 +146,7 @@ static int test_iterate(struct bch_fs *c, u64 nr)
 	i = 0;
 
 	for_each_btree_key(&trans, iter, BTREE_ID_xattrs,
-			   POS_MIN, 0, k, ret) {
+			   SPOS(0, 0, U32_MAX), 0, k, ret) {
 		if (k.k->p.inode)
 			break;
 
@@ -202,7 +202,7 @@ static int test_iterate_extents(struct bch_fs *c, u64 nr)
 	i = 0;
 
 	for_each_btree_key(&trans, iter, BTREE_ID_extents,
-			   POS_MIN, 0, k, ret) {
+			   SPOS(0, 0, U32_MAX), 0, k, ret) {
 		BUG_ON(bkey_start_offset(k.k) != i);
 		i = k.k->p.offset;
 	}
@@ -256,8 +256,8 @@ static int test_iterate_slots(struct bch_fs *c, u64 nr)
 
 	i = 0;
 
-	for_each_btree_key(&trans, iter, BTREE_ID_xattrs, POS_MIN,
-			   0, k, ret) {
+	for_each_btree_key(&trans, iter, BTREE_ID_xattrs,
+			   SPOS(0, 0, U32_MAX), 0, k, ret) {
 		if (k.k->p.inode)
 			break;
 
@@ -272,7 +272,8 @@ static int test_iterate_slots(struct bch_fs *c, u64 nr)
 
 	i = 0;
 
-	for_each_btree_key(&trans, iter, BTREE_ID_xattrs, POS_MIN,
+	for_each_btree_key(&trans, iter, BTREE_ID_xattrs,
+			   SPOS(0, 0, U32_MAX),
 			   BTREE_ITER_SLOTS, k, ret) {
 		BUG_ON(k.k->p.offset != i);
 		BUG_ON(bkey_deleted(k.k) != (i & 1));
@@ -321,8 +322,8 @@ static int test_iterate_slots_extents(struct bch_fs *c, u64 nr)
 
 	i = 0;
 
-	for_each_btree_key(&trans, iter, BTREE_ID_extents, POS_MIN,
-			   0, k, ret) {
+	for_each_btree_key(&trans, iter, BTREE_ID_extents,
+			   SPOS(0, 0, U32_MAX), 0, k, ret) {
 		BUG_ON(bkey_start_offset(k.k) != i + 8);
 		BUG_ON(k.k->size != 8);
 		i += 16;
@@ -335,7 +336,8 @@ static int test_iterate_slots_extents(struct bch_fs *c, u64 nr)
 
 	i = 0;
 
-	for_each_btree_key(&trans, iter, BTREE_ID_extents, POS_MIN,
+	for_each_btree_key(&trans, iter, BTREE_ID_extents,
+			   SPOS(0, 0, U32_MAX),
 			   BTREE_ITER_SLOTS, k, ret) {
 		BUG_ON(bkey_deleted(k.k) != !(i % 16));
 
@@ -363,7 +365,8 @@ static int test_peek_end(struct bch_fs *c, u64 nr)
 	struct bkey_s_c k;
 
 	bch2_trans_init(&trans, c, 0, 0);
-	bch2_trans_iter_init(&trans, &iter, BTREE_ID_xattrs, POS_MIN, 0);
+	bch2_trans_iter_init(&trans, &iter, BTREE_ID_xattrs,
+			     SPOS(0, 0, U32_MAX), 0);
 
 	k = bch2_btree_iter_peek(&iter);
 	BUG_ON(k.k);
@@ -383,7 +386,8 @@ static int test_peek_end_extents(struct bch_fs *c, u64 nr)
 	struct bkey_s_c k;
 
 	bch2_trans_init(&trans, c, 0, 0);
-	bch2_trans_iter_init(&trans, &iter, BTREE_ID_extents, POS_MIN, 0);
+	bch2_trans_iter_init(&trans, &iter, BTREE_ID_extents,
+			     SPOS(0, 0, U32_MAX), 0);
 
 	k = bch2_btree_iter_peek(&iter);
 	BUG_ON(k.k);
@@ -405,8 +409,6 @@ static int insert_test_extent(struct bch_fs *c,
 {
 	struct bkey_i_cookie k;
 	int ret;
-
-	//pr_info("inserting %llu-%llu v %llu", start, end, test_version);
 
 	bkey_cookie_init(&k.k_i);
 	k.k_i.k.p.offset = end;
@@ -457,6 +459,70 @@ static int test_extent_overwrite_all(struct bch_fs *c, u64 nr)
 		__test_extent_overwrite(c, 32, 64,  0, 128) ?:
 		__test_extent_overwrite(c, 32, 64, 32,  64) ?:
 		__test_extent_overwrite(c, 32, 64, 32, 128);
+}
+
+/* snapshot unit tests */
+
+/* Test skipping over keys in unrelated snapshots: */
+static int test_snapshot_filter(struct bch_fs *c, u32 snapid_lo, u32 snapid_hi)
+{
+	struct btree_trans trans;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	struct bkey_i_cookie cookie;
+	int ret;
+
+	bkey_cookie_init(&cookie.k_i);
+	cookie.k.p.snapshot = snapid_hi;
+	ret = bch2_btree_insert(c, BTREE_ID_xattrs, &cookie.k_i,
+				NULL, NULL, 0);
+	if (ret)
+		return ret;
+
+	bch2_trans_init(&trans, c, 0, 0);
+	bch2_trans_iter_init(&trans, &iter, BTREE_ID_xattrs,
+			     SPOS(0, 0, snapid_lo), 0);
+	k = bch2_btree_iter_peek(&iter);
+
+	BUG_ON(k.k->p.snapshot != U32_MAX);
+
+	bch2_trans_iter_exit(&trans, &iter);
+	bch2_trans_exit(&trans);
+	return ret;
+}
+
+static int test_snapshots(struct bch_fs *c, u64 nr)
+{
+	struct bkey_i_cookie cookie;
+	u32 snapids[2];
+	u32 snapid_subvols[2] = { 1, 1 };
+	int ret;
+
+	bkey_cookie_init(&cookie.k_i);
+	cookie.k.p.snapshot = U32_MAX;
+	ret = bch2_btree_insert(c, BTREE_ID_xattrs, &cookie.k_i,
+				NULL, NULL, 0);
+	if (ret)
+		return ret;
+
+	ret = bch2_trans_do(c, NULL, NULL, 0,
+		      bch2_snapshot_node_create(&trans, U32_MAX,
+						snapids,
+						snapid_subvols,
+						2));
+	if (ret)
+		return ret;
+
+	if (snapids[0] > snapids[1])
+		swap(snapids[0], snapids[1]);
+
+	ret = test_snapshot_filter(c, snapids[0], snapids[1]);
+	if (ret) {
+		bch_err(c, "err %i from test_snapshot_filter", ret);
+		return ret;
+	}
+
+	return 0;
 }
 
 /* perf tests */
@@ -747,7 +813,8 @@ static int seq_delete(struct bch_fs *c, u64 nr)
 	int ret;
 
 	ret = bch2_btree_delete_range(c, BTREE_ID_xattrs,
-				      SPOS(0, 0, U32_MAX), POS_MAX, NULL);
+				      SPOS(0, 0, U32_MAX), SPOS_MAX,
+				      0, NULL);
 	if (ret)
 		bch_err(c, "error in seq_delete: %i", ret);
 	return ret;
@@ -785,8 +852,10 @@ static int btree_perf_test_thread(void *data)
 	}
 
 	ret = j->fn(j->c, div64_u64(j->nr, j->nr_threads));
-	if (ret)
+	if (ret) {
+		bch_err(j->c, "%ps: error %i", j->fn, ret);
 		j->ret = ret;
+	}
 
 	if (atomic_dec_and_test(&j->done)) {
 		j->finish = sched_clock();
@@ -800,7 +869,9 @@ int bch2_btree_perf_test(struct bch_fs *c, const char *testname,
 			 u64 nr, unsigned nr_threads)
 {
 	struct test_job j = { .c = c, .nr = nr, .nr_threads = nr_threads };
-	char name_buf[20], nr_buf[20], per_sec_buf[20];
+	char name_buf[20];
+	struct printbuf nr_buf = PRINTBUF;
+	struct printbuf per_sec_buf = PRINTBUF;
 	unsigned i;
 	u64 time;
 
@@ -839,6 +910,8 @@ int bch2_btree_perf_test(struct bch_fs *c, const char *testname,
 	perf_test(test_extent_overwrite_middle);
 	perf_test(test_extent_overwrite_all);
 
+	perf_test(test_snapshots);
+
 	if (!j.fn) {
 		pr_err("unknown test %s", testname);
 		return -EINVAL;
@@ -859,13 +932,15 @@ int bch2_btree_perf_test(struct bch_fs *c, const char *testname,
 	time = j.finish - j.start;
 
 	scnprintf(name_buf, sizeof(name_buf), "%s:", testname);
-	bch2_hprint(&PBUF(nr_buf), nr);
-	bch2_hprint(&PBUF(per_sec_buf), div64_u64(nr * NSEC_PER_SEC, time));
+	bch2_hprint(&nr_buf, nr);
+	bch2_hprint(&per_sec_buf, div64_u64(nr * NSEC_PER_SEC, time));
 	printk(KERN_INFO "%-12s %s with %u threads in %5llu sec, %5llu nsec per iter, %5s per sec\n",
-		name_buf, nr_buf, nr_threads,
+		name_buf, nr_buf.buf, nr_threads,
 		div_u64(time, NSEC_PER_SEC),
 		div_u64(time * nr_threads, nr),
-		per_sec_buf);
+		per_sec_buf.buf);
+	printbuf_exit(&per_sec_buf);
+	printbuf_exit(&nr_buf);
 	return j.ret;
 }
 

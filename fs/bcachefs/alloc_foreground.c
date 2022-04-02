@@ -14,18 +14,30 @@
 #include "bcachefs.h"
 #include "alloc_background.h"
 #include "alloc_foreground.h"
+#include "btree_iter.h"
+#include "btree_update.h"
 #include "btree_gc.h"
 #include "buckets.h"
+#include "buckets_waiting_for_journal.h"
 #include "clock.h"
 #include "debug.h"
 #include "disk_groups.h"
 #include "ec.h"
+#include "error.h"
 #include "io.h"
+#include "journal.h"
 
 #include <linux/math64.h>
 #include <linux/rculist.h>
 #include <linux/rcupdate.h>
 #include <trace/events/bcachefs.h>
+
+const char * const bch2_alloc_reserves[] = {
+#define x(t) #t,
+	BCH_ALLOC_RESERVES()
+#undef x
+	NULL
+};
 
 /*
  * Open buckets represent a bucket that's currently being allocated from.  They
@@ -78,7 +90,6 @@ void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 	percpu_down_read(&c->mark_lock);
 	spin_lock(&ob->lock);
 
-	bch2_mark_alloc_bucket(c, ca, ob->bucket, false);
 	ob->valid = false;
 	ob->data_type = 0;
 
@@ -151,22 +162,6 @@ static void open_bucket_free_unused(struct bch_fs *c,
 	}
 }
 
-static void verify_not_stale(struct bch_fs *c, const struct open_buckets *obs)
-{
-#ifdef CONFIG_BCACHEFS_DEBUG
-	struct open_bucket *ob;
-	unsigned i;
-
-	rcu_read_lock();
-	open_bucket_for_each(c, obs, ob, i) {
-		struct bch_dev *ca = bch_dev_bkey_exists(c, ob->dev);
-
-		BUG_ON(*bucket_gen(ca, ob->bucket) != ob->gen);
-	}
-	rcu_read_unlock();
-#endif
-}
-
 /* _only_ for allocating the journal on a new device: */
 long bch2_bucket_alloc_new_fs(struct bch_dev *ca)
 {
@@ -184,48 +179,44 @@ long bch2_bucket_alloc_new_fs(struct bch_dev *ca)
 static inline unsigned open_buckets_reserved(enum alloc_reserve reserve)
 {
 	switch (reserve) {
-	case RESERVE_BTREE:
-	case RESERVE_BTREE_MOVINGGC:
+	case RESERVE_btree:
+	case RESERVE_btree_movinggc:
 		return 0;
-	case RESERVE_MOVINGGC:
+	case RESERVE_movinggc:
 		return OPEN_BUCKETS_COUNT / 4;
 	default:
 		return OPEN_BUCKETS_COUNT / 2;
 	}
 }
 
-/**
- * bch_bucket_alloc - allocate a single bucket from a specific device
- *
- * Returns index of bucket on success, 0 on failure
- * */
-struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
-				      enum alloc_reserve reserve,
-				      bool may_alloc_partial,
-				      struct closure *cl)
+static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *ca,
+					      u64 bucket,
+					      enum alloc_reserve reserve,
+					      struct bch_alloc_v4 *a,
+					      u64 *skipped_open,
+					      u64 *skipped_need_journal_commit,
+					      u64 *skipped_nouse,
+					      struct closure *cl)
 {
 	struct open_bucket *ob;
-	long b = 0;
+
+	if (unlikely(ca->buckets_nouse && test_bit(bucket, ca->buckets_nouse))) {
+		(*skipped_nouse)++;
+		return NULL;
+	}
+
+	if (bch2_bucket_is_open(c, ca->dev_idx, bucket)) {
+		(*skipped_open)++;
+		return NULL;
+	}
+
+	if (bch2_bucket_needs_journal_commit(&c->buckets_waiting_for_journal,
+			c->journal.flushed_seq_ondisk, ca->dev_idx, bucket)) {
+		(*skipped_need_journal_commit)++;
+		return NULL;
+	}
 
 	spin_lock(&c->freelist_lock);
-
-	if (may_alloc_partial) {
-		int i;
-
-		for (i = ca->open_buckets_partial_nr - 1; i >= 0; --i) {
-			ob = c->open_buckets + ca->open_buckets_partial[i];
-
-			if (reserve <= ob->alloc_reserve) {
-				array_remove_item(ca->open_buckets_partial,
-						  ca->open_buckets_partial_nr,
-						  i);
-				ob->on_partial_list = false;
-				ob->alloc_reserve = reserve;
-				spin_unlock(&c->freelist_lock);
-				return ob;
-			}
-		}
-	}
 
 	if (unlikely(c->open_buckets_nr_free <= open_buckets_reserved(reserve))) {
 		if (cl)
@@ -235,35 +226,17 @@ struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 			c->blocked_allocate_open_bucket = local_clock();
 
 		spin_unlock(&c->freelist_lock);
-		trace_open_bucket_alloc_fail(ca, reserve);
+
+		trace_open_bucket_alloc_fail(ca, bch2_alloc_reserves[reserve]);
 		return ERR_PTR(-OPEN_BUCKETS_EMPTY);
 	}
 
-	if (likely(fifo_pop(&ca->free[RESERVE_NONE], b)))
-		goto out;
-
-	switch (reserve) {
-	case RESERVE_BTREE_MOVINGGC:
-	case RESERVE_MOVINGGC:
-		if (fifo_pop(&ca->free[RESERVE_MOVINGGC], b))
-			goto out;
-		break;
-	default:
-		break;
+	/* Recheck under lock: */
+	if (bch2_bucket_is_open(c, ca->dev_idx, bucket)) {
+		spin_unlock(&c->freelist_lock);
+		(*skipped_open)++;
+		return NULL;
 	}
-
-	if (cl)
-		closure_wait(&c->freelist_wait, cl);
-
-	if (!c->blocked_allocate)
-		c->blocked_allocate = local_clock();
-
-	spin_unlock(&c->freelist_lock);
-
-	trace_bucket_alloc_fail(ca, reserve);
-	return ERR_PTR(-FREELIST_EMPTY);
-out:
-	verify_not_on_freelist(c, ca, b);
 
 	ob = bch2_open_bucket_alloc(c);
 
@@ -273,8 +246,8 @@ out:
 	ob->sectors_free = ca->mi.bucket_size;
 	ob->alloc_reserve = reserve;
 	ob->dev		= ca->dev_idx;
-	ob->gen		= *bucket_gen(ca, b);
-	ob->bucket	= b;
+	ob->gen		= a->gen;
+	ob->bucket	= bucket;
 	spin_unlock(&ob->lock);
 
 	ca->nr_open_buckets++;
@@ -296,9 +269,283 @@ out:
 
 	spin_unlock(&c->freelist_lock);
 
-	bch2_wake_allocator(ca);
+	trace_bucket_alloc(ca, bch2_alloc_reserves[reserve]);
+	return ob;
+}
 
-	trace_bucket_alloc(ca, reserve);
+static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bch_dev *ca,
+					    enum alloc_reserve reserve, u64 free_entry,
+					    u64 *skipped_open,
+					    u64 *skipped_need_journal_commit,
+					    u64 *skipped_nouse,
+					    struct closure *cl)
+{
+	struct bch_fs *c = trans->c;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	struct open_bucket *ob;
+	struct bch_alloc_v4 a;
+	u64 b = free_entry & ~(~0ULL << 56);
+	unsigned genbits = free_entry >> 56;
+	struct printbuf buf = PRINTBUF;
+	int ret;
+
+	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc, POS(ca->dev_idx, b), BTREE_ITER_CACHED);
+	k = bch2_btree_iter_peek_slot(&iter);
+	ret = bkey_err(k);
+	if (ret) {
+		ob = ERR_PTR(ret);
+		goto err;
+	}
+
+	bch2_alloc_to_v4(k, &a);
+
+	if (bch2_fs_inconsistent_on(bucket_state(a) != BUCKET_free, c,
+			"non free bucket in freespace btree (state %s)\n"
+			"  %s\n"
+			"  at %llu (genbits %u)",
+			bch2_bucket_states[bucket_state(a)],
+			(bch2_bkey_val_to_text(&buf, c, k), buf.buf),
+			free_entry, genbits)) {
+		ob = ERR_PTR(-EIO);
+		goto err;
+	}
+
+	if (bch2_fs_inconsistent_on(genbits != (alloc_freespace_genbits(a) >> 56), c,
+			"bucket in freespace btree with wrong genbits (got %u should be %llu)\n"
+			"  %s",
+			genbits, alloc_freespace_genbits(a) >> 56,
+			(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
+		ob = ERR_PTR(-EIO);
+		goto err;
+	}
+
+	if (bch2_fs_inconsistent_on(b < ca->mi.first_bucket || b >= ca->mi.nbuckets, c,
+			"freespace btree has bucket outside allowed range (got %llu, valid %u-%llu)",
+			b, ca->mi.first_bucket, ca->mi.nbuckets)) {
+		ob = ERR_PTR(-EIO);
+		goto err;
+	}
+
+	ob = __try_alloc_bucket(c, ca, b, reserve, &a,
+				skipped_open,
+				skipped_need_journal_commit,
+				skipped_nouse,
+				cl);
+err:
+	bch2_trans_iter_exit(trans, &iter);
+	printbuf_exit(&buf);
+	return ob;
+}
+
+static struct open_bucket *try_alloc_partial_bucket(struct bch_fs *c, struct bch_dev *ca,
+						    enum alloc_reserve reserve)
+{
+	struct open_bucket *ob;
+	int i;
+
+	spin_lock(&c->freelist_lock);
+
+	for (i = ca->open_buckets_partial_nr - 1; i >= 0; --i) {
+		ob = c->open_buckets + ca->open_buckets_partial[i];
+
+		if (reserve <= ob->alloc_reserve) {
+			array_remove_item(ca->open_buckets_partial,
+					  ca->open_buckets_partial_nr,
+					  i);
+			ob->on_partial_list = false;
+			ob->alloc_reserve = reserve;
+			spin_unlock(&c->freelist_lock);
+			return ob;
+		}
+	}
+
+	spin_unlock(&c->freelist_lock);
+	return NULL;
+}
+
+/*
+ * This path is for before the freespace btree is initialized:
+ *
+ * If ca->new_fs_bucket_idx is nonzero, we haven't yet marked superblock &
+ * journal buckets - journal buckets will be < ca->new_fs_bucket_idx
+ */
+static noinline struct open_bucket *
+bch2_bucket_alloc_trans_early(struct btree_trans *trans,
+			      struct bch_dev *ca,
+			      enum alloc_reserve reserve,
+			      u64 *cur_bucket,
+			      u64 *buckets_seen,
+			      u64 *skipped_open,
+			      u64 *skipped_need_journal_commit,
+			      u64 *skipped_nouse,
+			      struct closure *cl)
+{
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	struct open_bucket *ob = NULL;
+	int ret;
+
+	*cur_bucket = max_t(u64, *cur_bucket, ca->mi.first_bucket);
+	*cur_bucket = max_t(u64, *cur_bucket, ca->new_fs_bucket_idx);
+
+	for_each_btree_key(trans, iter, BTREE_ID_alloc, POS(ca->dev_idx, *cur_bucket),
+			   BTREE_ITER_SLOTS, k, ret) {
+		struct bch_alloc_v4 a;
+
+		if (bkey_cmp(k.k->p, POS(ca->dev_idx, ca->mi.nbuckets)) >= 0)
+			break;
+
+		if (ca->new_fs_bucket_idx &&
+		    is_superblock_bucket(ca, k.k->p.offset))
+			continue;
+
+		bch2_alloc_to_v4(k, &a);
+
+		if (bucket_state(a) != BUCKET_free)
+			continue;
+
+		(*buckets_seen)++;
+
+		ob = __try_alloc_bucket(trans->c, ca, k.k->p.offset, reserve, &a,
+					skipped_open,
+					skipped_need_journal_commit,
+					skipped_nouse,
+					cl);
+		if (ob)
+			break;
+	}
+	bch2_trans_iter_exit(trans, &iter);
+
+	*cur_bucket = iter.pos.offset;
+
+	return ob ?: ERR_PTR(ret ?: -FREELIST_EMPTY);
+}
+
+static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
+						   struct bch_dev *ca,
+						   enum alloc_reserve reserve,
+						   u64 *cur_bucket,
+						   u64 *buckets_seen,
+						   u64 *skipped_open,
+						   u64 *skipped_need_journal_commit,
+						   u64 *skipped_nouse,
+						   struct closure *cl)
+{
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	struct open_bucket *ob = NULL;
+	int ret;
+
+	if (unlikely(!ca->mi.freespace_initialized))
+		return bch2_bucket_alloc_trans_early(trans, ca, reserve,
+						     cur_bucket,
+						     buckets_seen,
+						     skipped_open,
+						     skipped_need_journal_commit,
+						     skipped_nouse,
+						     cl);
+
+	BUG_ON(ca->new_fs_bucket_idx);
+
+	for_each_btree_key(trans, iter, BTREE_ID_freespace,
+			   POS(ca->dev_idx, *cur_bucket), 0, k, ret) {
+		if (k.k->p.inode != ca->dev_idx)
+			break;
+
+		for (*cur_bucket = max(*cur_bucket, bkey_start_offset(k.k));
+		     *cur_bucket != k.k->p.offset && !ob;
+		     (*cur_bucket)++) {
+			if (btree_trans_too_many_iters(trans)) {
+				ob = ERR_PTR(-EINTR);
+				break;
+			}
+
+			(*buckets_seen)++;
+
+			ob = try_alloc_bucket(trans, ca, reserve,
+					      *cur_bucket,
+					      skipped_open,
+					      skipped_need_journal_commit,
+					      skipped_nouse,
+					      cl);
+		}
+		if (ob)
+			break;
+	}
+	bch2_trans_iter_exit(trans, &iter);
+
+	return ob ?: ERR_PTR(ret);
+}
+
+/**
+ * bch_bucket_alloc - allocate a single bucket from a specific device
+ *
+ * Returns index of bucket on success, 0 on failure
+ * */
+struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
+				      enum alloc_reserve reserve,
+				      bool may_alloc_partial,
+				      struct closure *cl)
+{
+	struct open_bucket *ob = NULL;
+	u64 avail = dev_buckets_available(ca, reserve);
+	u64 cur_bucket = 0;
+	u64 buckets_seen = 0;
+	u64 skipped_open = 0;
+	u64 skipped_need_journal_commit = 0;
+	u64 skipped_nouse = 0;
+	int ret;
+
+	if (may_alloc_partial) {
+		ob = try_alloc_partial_bucket(c, ca, reserve);
+		if (ob)
+			return ob;
+	}
+again:
+	if (!avail) {
+		if (cl) {
+			closure_wait(&c->freelist_wait, cl);
+			/* recheck after putting ourself on waitlist */
+			avail = dev_buckets_available(ca, reserve);
+			if (avail) {
+				closure_wake_up(&c->freelist_wait);
+				goto again;
+			}
+		}
+
+		if (!c->blocked_allocate)
+			c->blocked_allocate = local_clock();
+
+		ob = ERR_PTR(-FREELIST_EMPTY);
+		goto err;
+	}
+
+	ret = bch2_trans_do(c, NULL, NULL, 0,
+			PTR_ERR_OR_ZERO(ob = bch2_bucket_alloc_trans(&trans, ca, reserve,
+							&cur_bucket,
+							&buckets_seen,
+							&skipped_open,
+							&skipped_need_journal_commit,
+							&skipped_nouse,
+							cl)));
+
+	if (skipped_need_journal_commit * 2 > avail)
+		bch2_journal_flush_async(&c->journal, NULL);
+err:
+	if (!ob)
+		ob = ERR_PTR(ret ?: -FREELIST_EMPTY);
+
+	if (IS_ERR(ob)) {
+		trace_bucket_alloc_fail(ca, bch2_alloc_reserves[reserve], avail,
+					buckets_seen,
+					skipped_open,
+					skipped_need_journal_commit,
+					skipped_nouse,
+					cl == NULL, PTR_ERR(ob));
+		atomic_long_inc(&c->bucket_alloc_fail);
+	}
+
 	return ob;
 }
 
@@ -329,7 +576,7 @@ void bch2_dev_stripe_increment(struct bch_dev *ca,
 			       struct dev_stripe_state *stripe)
 {
 	u64 *v = stripe->next_alloc + ca->dev_idx;
-	u64 free_space = dev_buckets_available(ca);
+	u64 free_space = dev_buckets_available(ca, RESERVE_none);
 	u64 free_space_inv = free_space
 		? div64_u64(1ULL << 48, free_space)
 		: 1ULL << 48;
@@ -380,6 +627,7 @@ int bch2_bucket_alloc_set(struct bch_fs *c,
 {
 	struct dev_alloc_list devs_sorted =
 		bch2_dev_alloc_list(c, stripe, devs_may_alloc);
+	unsigned dev;
 	struct bch_dev *ca;
 	int ret = -INSUFFICIENT_DEVICES;
 	unsigned i;
@@ -389,30 +637,43 @@ int bch2_bucket_alloc_set(struct bch_fs *c,
 	for (i = 0; i < devs_sorted.nr; i++) {
 		struct open_bucket *ob;
 
-		ca = rcu_dereference(c->devs[devs_sorted.devs[i]]);
+		dev = devs_sorted.devs[i];
+
+		rcu_read_lock();
+		ca = rcu_dereference(c->devs[dev]);
+		if (ca)
+			percpu_ref_get(&ca->ref);
+		rcu_read_unlock();
+
 		if (!ca)
 			continue;
 
-		if (!ca->mi.durability && *have_cache)
+		if (!ca->mi.durability && *have_cache) {
+			percpu_ref_put(&ca->ref);
 			continue;
+		}
 
 		ob = bch2_bucket_alloc(c, ca, reserve,
 				flags & BUCKET_MAY_ALLOC_PARTIAL, cl);
+		if (!IS_ERR(ob))
+			bch2_dev_stripe_increment(ca, stripe);
+		percpu_ref_put(&ca->ref);
+
 		if (IS_ERR(ob)) {
 			ret = PTR_ERR(ob);
 
 			if (cl)
-				return ret;
+				break;
 			continue;
 		}
 
 		add_new_bucket(c, ptrs, devs_may_alloc,
 			       nr_effective, have_cache, flags, ob);
 
-		bch2_dev_stripe_increment(ca, stripe);
-
-		if (*nr_effective >= nr_replicas)
-			return 0;
+		if (*nr_effective >= nr_replicas) {
+			ret = 0;
+			break;
+		}
 	}
 
 	return ret;
@@ -580,9 +841,6 @@ static int open_bucket_add_buckets(struct bch_fs *c,
 	if (*nr_effective >= nr_replicas)
 		return 0;
 
-	percpu_down_read(&c->mark_lock);
-	rcu_read_lock();
-
 retry_blocking:
 	/*
 	 * Try nonblocking first, so that if one device is full we'll try from
@@ -595,9 +853,6 @@ retry_blocking:
 		cl = _cl;
 		goto retry_blocking;
 	}
-
-	rcu_read_unlock();
-	percpu_up_read(&c->mark_lock);
 
 	return ret;
 }
@@ -857,8 +1112,6 @@ alloc_done:
 
 	BUG_ON(!wp->sectors_free || wp->sectors_free == UINT_MAX);
 
-	verify_not_stale(c, &wp->ptrs);
-
 	return wp;
 err:
 	open_bucket_for_each(c, &wp->ptrs, ob, i)
@@ -881,7 +1134,7 @@ err:
 	case -INSUFFICIENT_DEVICES:
 		return ERR_PTR(-EROFS);
 	default:
-		BUG();
+		return ERR_PTR(ret);
 	}
 }
 

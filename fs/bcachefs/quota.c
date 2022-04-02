@@ -6,19 +6,55 @@
 #include "subvolume.h"
 #include "super-io.h"
 
-static const char *bch2_sb_validate_quota(struct bch_sb *sb,
-					  struct bch_sb_field *f)
+static const char * const bch2_quota_types[] = {
+	"user",
+	"group",
+	"project",
+};
+
+static const char * const bch2_quota_counters[] = {
+	"space",
+	"inodes",
+};
+
+static int bch2_sb_quota_validate(struct bch_sb *sb, struct bch_sb_field *f,
+				  struct printbuf *err)
 {
 	struct bch_sb_field_quota *q = field_to_type(f, quota);
 
-	if (vstruct_bytes(&q->field) != sizeof(*q))
-		return "invalid field quota: wrong size";
+	if (vstruct_bytes(&q->field) < sizeof(*q)) {
+		pr_buf(err, "wrong size (got %zu should be %zu)",
+		       vstruct_bytes(&q->field), sizeof(*q));
+		return -EINVAL;
+	}
 
-	return NULL;
+	return 0;
+}
+
+static void bch2_sb_quota_to_text(struct printbuf *out, struct bch_sb *sb,
+				  struct bch_sb_field *f)
+{
+	struct bch_sb_field_quota *q = field_to_type(f, quota);
+	unsigned qtyp, counter;
+
+	for (qtyp = 0; qtyp < ARRAY_SIZE(q->q); qtyp++) {
+		pr_buf(out, "%s: flags %llx",
+		       bch2_quota_types[qtyp],
+		       le64_to_cpu(q->q[qtyp].flags));
+
+		for (counter = 0; counter < Q_COUNTERS; counter++)
+			pr_buf(out, " %s timelimit %u warnlimit %u",
+			       bch2_quota_counters[counter],
+			       le32_to_cpu(q->q[qtyp].c[counter].timelimit),
+			       le32_to_cpu(q->q[qtyp].c[counter].warnlimit));
+
+		pr_newline(out);
+	}
 }
 
 const struct bch_sb_field_ops bch_sb_field_ops_quota = {
-	.validate	= bch2_sb_validate_quota,
+	.validate	= bch2_sb_quota_validate,
+	.to_text	= bch2_sb_quota_to_text,
 };
 
 const char *bch2_quota_invalid(const struct bch_fs *c, struct bkey_s_c k)
@@ -31,11 +67,6 @@ const char *bch2_quota_invalid(const struct bch_fs *c, struct bkey_s_c k)
 
 	return NULL;
 }
-
-static const char * const bch2_quota_counters[] = {
-	"space",
-	"inodes",
-};
 
 void bch2_quota_to_text(struct printbuf *out, struct bch_fs *c,
 			struct bkey_s_c k)
@@ -570,7 +601,7 @@ static int bch2_quota_remove(struct super_block *sb, unsigned uflags)
 		ret = bch2_btree_delete_range(c, BTREE_ID_quotas,
 					      POS(QTYP_USR, 0),
 					      POS(QTYP_USR + 1, 0),
-					      NULL);
+					      0, NULL);
 		if (ret)
 			return ret;
 	}
@@ -582,7 +613,7 @@ static int bch2_quota_remove(struct super_block *sb, unsigned uflags)
 		ret = bch2_btree_delete_range(c, BTREE_ID_quotas,
 					      POS(QTYP_GRP, 0),
 					      POS(QTYP_GRP + 1, 0),
-					      NULL);
+					      0, NULL);
 		if (ret)
 			return ret;
 	}
@@ -594,7 +625,7 @@ static int bch2_quota_remove(struct super_block *sb, unsigned uflags)
 		ret = bch2_btree_delete_range(c, BTREE_ID_quotas,
 					      POS(QTYP_PRJ, 0),
 					      POS(QTYP_PRJ + 1, 0),
-					      NULL);
+					      0, NULL);
 		if (ret)
 			return ret;
 	}

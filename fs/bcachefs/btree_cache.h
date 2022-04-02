@@ -7,6 +7,8 @@
 
 extern struct lock_class_key bch2_btree_node_lock_key;
 
+extern const char * const bch2_btree_node_flags[];
+
 struct btree_iter;
 
 void bch2_recalc_btree_reserve(struct bch_fs *);
@@ -20,7 +22,7 @@ void bch2_btree_cache_cannibalize_unlock(struct bch_fs *);
 int bch2_btree_cache_cannibalize_lock(struct bch_fs *, struct closure *);
 
 struct btree *__bch2_btree_node_mem_alloc(struct bch_fs *);
-struct btree *bch2_btree_node_mem_alloc(struct bch_fs *);
+struct btree *bch2_btree_node_mem_alloc(struct bch_fs *, bool);
 
 struct btree *bch2_btree_node_get(struct btree_trans *, struct btree_path *,
 				  const struct bkey_i *, unsigned,

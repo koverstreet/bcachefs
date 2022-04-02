@@ -15,52 +15,32 @@
 	for (_b = (_buckets)->b + (_buckets)->first_bucket;	\
 	     _b < (_buckets)->b + (_buckets)->nbuckets; _b++)
 
-#define bucket_cmpxchg(g, new, expr)				\
-({								\
-	struct bucket *_g = g;					\
-	u64 _v = atomic64_read(&(g)->_mark.v);			\
-	struct bucket_mark _old;				\
-								\
-	do {							\
-		(new).v.counter = _old.v.counter = _v;		\
-		expr;						\
-	} while ((_v = atomic64_cmpxchg(&(_g)->_mark.v,		\
-			       _old.v.counter,			\
-			       (new).v.counter)) != _old.v.counter);\
-	_old;							\
-})
-
-static inline struct bucket_array *__bucket_array(struct bch_dev *ca,
-						  bool gc)
+static inline void bucket_unlock(struct bucket *b)
 {
-	return rcu_dereference_check(ca->buckets[gc],
+	smp_store_release(&b->lock, 0);
+}
+
+static inline void bucket_lock(struct bucket *b)
+{
+	while (xchg(&b->lock, 1))
+		cpu_relax();
+}
+
+static inline struct bucket_array *gc_bucket_array(struct bch_dev *ca)
+{
+	return rcu_dereference_check(ca->buckets_gc,
 				     !ca->fs ||
 				     percpu_rwsem_is_held(&ca->fs->mark_lock) ||
 				     lockdep_is_held(&ca->fs->gc_lock) ||
 				     lockdep_is_held(&ca->bucket_lock));
 }
 
-static inline struct bucket_array *bucket_array(struct bch_dev *ca)
+static inline struct bucket *gc_bucket(struct bch_dev *ca, size_t b)
 {
-	return __bucket_array(ca, false);
-}
-
-static inline struct bucket *__bucket(struct bch_dev *ca, size_t b, bool gc)
-{
-	struct bucket_array *buckets = __bucket_array(ca, gc);
+	struct bucket_array *buckets = gc_bucket_array(ca);
 
 	BUG_ON(b < buckets->first_bucket || b >= buckets->nbuckets);
 	return buckets->b + b;
-}
-
-static inline struct bucket *gc_bucket(struct bch_dev *ca, size_t b)
-{
-	return __bucket(ca, b, true);
-}
-
-static inline struct bucket *bucket(struct bch_dev *ca, size_t b)
-{
-	return __bucket(ca, b, false);
 }
 
 static inline struct bucket_gens *bucket_gens(struct bch_dev *ca)
@@ -70,7 +50,6 @@ static inline struct bucket_gens *bucket_gens(struct bch_dev *ca)
 				     percpu_rwsem_is_held(&ca->fs->mark_lock) ||
 				     lockdep_is_held(&ca->fs->gc_lock) ||
 				     lockdep_is_held(&ca->bucket_lock));
-
 }
 
 static inline u8 *bucket_gen(struct bch_dev *ca, size_t b)
@@ -81,26 +60,18 @@ static inline u8 *bucket_gen(struct bch_dev *ca, size_t b)
 	return gens->b + b;
 }
 
-/*
- * bucket_gc_gen() returns the difference between the bucket's current gen and
- * the oldest gen of any pointer into that bucket in the btree.
- */
-
-static inline u8 bucket_gc_gen(struct bucket *g)
-{
-	return g->mark.gen - g->oldest_gen;
-}
-
 static inline size_t PTR_BUCKET_NR(const struct bch_dev *ca,
 				   const struct bch_extent_ptr *ptr)
 {
 	return sector_to_bucket(ca, ptr->offset);
 }
 
-static inline struct bucket *PTR_BUCKET(struct bch_dev *ca,
-					const struct bch_extent_ptr *ptr)
+static inline struct bpos PTR_BUCKET_POS(const struct bch_fs *c,
+				   const struct bch_extent_ptr *ptr)
 {
-	return bucket(ca, PTR_BUCKET_NR(ca, ptr));
+	struct bch_dev *ca = bch_dev_bkey_exists(c, ptr->dev);
+
+	return POS(ptr->dev, PTR_BUCKET_NR(ca, ptr));
 }
 
 static inline struct bucket *PTR_GC_BUCKET(struct bch_dev *ca,
@@ -147,74 +118,55 @@ static inline u8 ptr_stale(struct bch_dev *ca,
 	return ret;
 }
 
-/* bucket gc marks */
-
-static inline unsigned bucket_sectors_used(struct bucket_mark mark)
-{
-	return mark.dirty_sectors + mark.cached_sectors;
-}
-
-static inline bool is_available_bucket(struct bucket_mark mark)
-{
-	return !mark.dirty_sectors && !mark.stripe;
-}
-
-static inline bool bucket_needs_journal_commit(struct bucket_mark m,
-					       u16 last_seq_ondisk)
-{
-	return m.journal_seq_valid &&
-		((s16) m.journal_seq - (s16) last_seq_ondisk > 0);
-}
-
 /* Device usage: */
 
 struct bch_dev_usage bch2_dev_usage_read(struct bch_dev *);
 
 static inline u64 __dev_buckets_available(struct bch_dev *ca,
-					  struct bch_dev_usage stats)
+					  struct bch_dev_usage stats,
+					  enum alloc_reserve reserve)
 {
-	u64 total = ca->mi.nbuckets - ca->mi.first_bucket;
+	s64 total = ca->mi.nbuckets - ca->mi.first_bucket;
+	s64 reserved = 0;
+
+	switch (reserve) {
+	case RESERVE_none:
+		reserved += ca->mi.nbuckets >> 6;
+		fallthrough;
+	case RESERVE_movinggc:
+		reserved += ca->nr_btree_reserve;
+		fallthrough;
+	case RESERVE_btree:
+		reserved += ca->nr_btree_reserve;
+		fallthrough;
+	case RESERVE_btree_movinggc:
+		break;
+	default:
+		BUG();
+	}
 
 	if (WARN_ONCE(stats.buckets_unavailable > total,
 		      "buckets_unavailable overflow (%llu > %llu)\n",
 		      stats.buckets_unavailable, total))
 		return 0;
 
-	return total - stats.buckets_unavailable;
+	return max_t(s64, 0,
+		     total -
+		     stats.buckets_unavailable -
+		     ca->nr_open_buckets -
+		     reserved);
 }
 
-static inline u64 dev_buckets_available(struct bch_dev *ca)
+static inline u64 dev_buckets_available(struct bch_dev *ca,
+					enum alloc_reserve reserve)
 {
-	return __dev_buckets_available(ca, bch2_dev_usage_read(ca));
-}
-
-static inline u64 __dev_buckets_reclaimable(struct bch_dev *ca,
-					    struct bch_dev_usage stats)
-{
-	struct bch_fs *c = ca->fs;
-	s64 available = __dev_buckets_available(ca, stats);
-	unsigned i;
-
-	spin_lock(&c->freelist_lock);
-	for (i = 0; i < RESERVE_NR; i++)
-		available -= fifo_used(&ca->free[i]);
-	available -= fifo_used(&ca->free_inc);
-	available -= ca->nr_open_buckets;
-	spin_unlock(&c->freelist_lock);
-
-	return max(available, 0LL);
-}
-
-static inline u64 dev_buckets_reclaimable(struct bch_dev *ca)
-{
-	return __dev_buckets_reclaimable(ca, bch2_dev_usage_read(ca));
+	return __dev_buckets_available(ca, bch2_dev_usage_read(ca), reserve);
 }
 
 /* Filesystem usage: */
 
 static inline unsigned fs_usage_u64s(struct bch_fs *c)
 {
-
 	return sizeof(struct bch_fs_usage) / sizeof(u64) +
 		READ_ONCE(c->replicas.nr);
 }
@@ -240,21 +192,54 @@ bch2_fs_usage_read_short(struct bch_fs *);
 
 /* key/bucket marking: */
 
-void bch2_bucket_seq_cleanup(struct bch_fs *);
 void bch2_fs_usage_initialize(struct bch_fs *);
 
-void bch2_mark_alloc_bucket(struct bch_fs *, struct bch_dev *, size_t, bool);
 void bch2_mark_metadata_bucket(struct bch_fs *, struct bch_dev *,
 			       size_t, enum bch_data_type, unsigned,
 			       struct gc_pos, unsigned);
 
+int bch2_mark_alloc(struct btree_trans *, struct bkey_s_c, struct bkey_s_c, unsigned);
+int bch2_mark_extent(struct btree_trans *, struct bkey_s_c, struct bkey_s_c, unsigned);
+int bch2_mark_stripe(struct btree_trans *, struct bkey_s_c, struct bkey_s_c, unsigned);
+int bch2_mark_inode(struct btree_trans *, struct bkey_s_c, struct bkey_s_c, unsigned);
+int bch2_mark_reservation(struct btree_trans *, struct bkey_s_c, struct bkey_s_c, unsigned);
+int bch2_mark_reflink_p(struct btree_trans *, struct bkey_s_c, struct bkey_s_c, unsigned);
+
+int bch2_trans_mark_extent(struct btree_trans *, struct bkey_s_c, struct bkey_i *, unsigned);
+int bch2_trans_mark_stripe(struct btree_trans *, struct bkey_s_c, struct bkey_i *, unsigned);
+int bch2_trans_mark_inode(struct btree_trans *, struct bkey_s_c, struct bkey_i *, unsigned);
+int bch2_trans_mark_reservation(struct btree_trans *, struct bkey_s_c, struct bkey_i *, unsigned);
+int bch2_trans_mark_reflink_p(struct btree_trans *, struct bkey_s_c, struct bkey_i *, unsigned);
+
 int bch2_mark_key(struct btree_trans *, struct bkey_s_c, struct bkey_s_c, unsigned);
 
-int bch2_mark_update(struct btree_trans *, struct btree_path *,
-		     struct bkey_i *, unsigned);
-
 int bch2_trans_mark_key(struct btree_trans *, struct bkey_s_c,
-			struct bkey_s_c, unsigned);
+			struct bkey_i *, unsigned);
+
+static inline int bch2_trans_mark_old(struct btree_trans *trans,
+				      struct bkey_s_c old, unsigned flags)
+{
+	struct bkey_i deleted;
+
+	bkey_init(&deleted.k);
+	deleted.k.p = old.k->p;
+
+	return bch2_trans_mark_key(trans, old, &deleted,
+				   BTREE_TRIGGER_OVERWRITE|flags);
+}
+
+static inline int bch2_trans_mark_new(struct btree_trans *trans,
+				      struct bkey_i *new, unsigned flags)
+{
+	struct bkey_i deleted;
+
+	bkey_init(&deleted.k);
+	deleted.k.p = new->k.p;
+
+	return bch2_trans_mark_key(trans, bkey_i_to_s_c(&deleted), new,
+				   BTREE_TRIGGER_INSERT|flags);
+}
+
 int bch2_trans_fs_usage_apply(struct btree_trans *, struct replicas_delta_list *);
 
 int bch2_trans_mark_metadata_bucket(struct btree_trans *, struct bch_dev *,

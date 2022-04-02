@@ -30,6 +30,7 @@
 #include <linux/pagemap.h>
 #include <linux/posix_acl.h>
 #include <linux/random.h>
+#include <linux/seq_file.h>
 #include <linux/statfs.h>
 #include <linux/string.h>
 #include <linux/xattr.h>
@@ -104,7 +105,7 @@ void bch2_inode_update_after_write(struct btree_trans *trans,
 
 	bch2_assert_pos_locked(trans, BTREE_ID_inodes,
 			       POS(0, bi->bi_inum),
-			       0 && c->opts.inodes_use_key_cache);
+			       c->opts.inodes_use_key_cache);
 
 	set_nlink(&inode->v, bch2_inode_nlink_get(bi));
 	i_uid_write(&inode->v, bi->bi_uid);
@@ -134,7 +135,6 @@ int __must_check bch2_write_inode(struct bch_fs *c,
 	int ret;
 
 	bch2_trans_init(&trans, c, 0, 512);
-	trans.ip = _RET_IP_;
 retry:
 	bch2_trans_begin(&trans);
 
@@ -934,9 +934,9 @@ retry:
 	bch2_trans_iter_init(&trans, &iter, BTREE_ID_extents,
 			     SPOS(ei->v.i_ino, start, snapshot), 0);
 
-	while ((k = bch2_btree_iter_peek(&iter)).k &&
-	       !(ret = bkey_err(k)) &&
-	       bkey_cmp(iter.pos, end) < 0) {
+	while (!(ret = btree_trans_too_many_iters(&trans)) &&
+	       (k = bch2_btree_iter_peek_upto(&iter, end)).k &&
+	       !(ret = bkey_err(k))) {
 		enum btree_id data_btree = BTREE_ID_extents;
 
 		if (!bkey_extent_is_data(k.k) &&
@@ -1472,12 +1472,12 @@ static void bch2_evict_inode(struct inode *vinode)
 				KEY_TYPE_QUOTA_WARN);
 		bch2_quota_acct(c, inode->ei_qid, Q_INO, -1,
 				KEY_TYPE_QUOTA_WARN);
-		bch2_inode_rm(c, inode_inum(inode), true);
+		bch2_inode_rm(c, inode_inum(inode));
 	}
 }
 
 void bch2_evict_subvolume_inodes(struct bch_fs *c,
-				 struct snapshot_id_list *s)
+				 snapshot_id_list *s)
 {
 	struct super_block *sb = c->vfs_sb;
 	struct inode *inode;
@@ -1675,7 +1675,8 @@ static int bch2_show_options(struct seq_file *seq, struct dentry *root)
 {
 	struct bch_fs *c = root->d_sb->s_fs_info;
 	enum bch_opt_id i;
-	char buf[512];
+	struct printbuf buf = PRINTBUF;
+	int ret = 0;
 
 	for (i = 0; i < bch2_opts_nr; i++) {
 		const struct bch_option *opt = &bch2_opt_table[i];
@@ -1687,13 +1688,17 @@ static int bch2_show_options(struct seq_file *seq, struct dentry *root)
 		if (v == bch2_opt_get_by_id(&bch2_opts_default, i))
 			continue;
 
-		bch2_opt_to_text(&PBUF(buf), c, opt, v,
+		printbuf_reset(&buf);
+		bch2_opt_to_text(&buf, c, c->disk_sb.sb, opt, v,
 				 OPT_SHOW_MOUNT_STYLE);
 		seq_putc(seq, ',');
-		seq_puts(seq, buf);
+		seq_puts(seq, buf.buf);
 	}
 
-	return 0;
+	if (buf.allocation_failure)
+		ret = -ENOMEM;
+	printbuf_exit(&buf);
+	return ret;
 }
 
 static void bch2_put_super(struct super_block *sb)

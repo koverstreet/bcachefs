@@ -16,12 +16,12 @@ bool bch2_btree_bset_insert_key(struct btree_trans *, struct btree_path *,
 void bch2_btree_add_journal_pin(struct bch_fs *, struct btree *, u64);
 
 enum btree_insert_flags {
-	__BTREE_INSERT_NOFAIL,
+	/* First two bits for journal watermark: */
+	__BTREE_INSERT_NOFAIL = 2,
 	__BTREE_INSERT_NOCHECK_RW,
 	__BTREE_INSERT_LAZY_RW,
 	__BTREE_INSERT_USE_RESERVE,
 	__BTREE_INSERT_JOURNAL_REPLAY,
-	__BTREE_INSERT_JOURNAL_RESERVED,
 	__BTREE_INSERT_JOURNAL_RECLAIM,
 	__BTREE_INSERT_NOWAIT,
 	__BTREE_INSERT_GC_LOCK_HELD,
@@ -40,9 +40,6 @@ enum btree_insert_flags {
 
 /* Insert is for journal replay - don't get journal reservations: */
 #define BTREE_INSERT_JOURNAL_REPLAY	(1 << __BTREE_INSERT_JOURNAL_REPLAY)
-
-/* Indicates that we have pre-reserved space in the journal: */
-#define BTREE_INSERT_JOURNAL_RESERVED	(1 << __BTREE_INSERT_JOURNAL_RESERVED)
 
 /* Insert is being called from journal reclaim path: */
 #define BTREE_INSERT_JOURNAL_RECLAIM (1 << __BTREE_INSERT_JOURNAL_RECLAIM)
@@ -63,7 +60,7 @@ int bch2_btree_insert(struct bch_fs *, enum btree_id, struct bkey_i *,
 int bch2_btree_delete_range_trans(struct btree_trans *, enum btree_id,
 				  struct bpos, struct bpos, unsigned, u64 *);
 int bch2_btree_delete_range(struct bch_fs *, enum btree_id,
-			    struct bpos, struct bpos, u64 *);
+			    struct bpos, struct bpos, unsigned, u64 *);
 
 int bch2_btree_node_rewrite(struct btree_trans *, struct btree_iter *,
 			    struct btree *, unsigned);
@@ -73,11 +70,17 @@ int bch2_btree_node_update_key(struct btree_trans *, struct btree_iter *,
 int bch2_btree_node_update_key_get_iter(struct btree_trans *,
 				struct btree *, struct bkey_i *, bool);
 
+int bch2_trans_update_extent(struct btree_trans *, struct btree_iter *,
+			     struct bkey_i *, enum btree_update_flags);
+
 int __must_check bch2_trans_update(struct btree_trans *, struct btree_iter *,
 				   struct bkey_i *, enum btree_update_flags);
+
 void bch2_trans_commit_hook(struct btree_trans *,
 			    struct btree_trans_commit_hook *);
 int __bch2_trans_commit(struct btree_trans *);
+
+int bch2_trans_log_msg(struct btree_trans *, const char *);
 
 /**
  * bch2_trans_commit - insert keys at given iterator positions
@@ -134,22 +137,5 @@ static inline int bch2_trans_commit(struct btree_trans *trans,
 	for ((_i) = (_trans)->updates;					\
 	     (_i) < (_trans)->updates + (_trans)->nr_updates;		\
 	     (_i)++)
-
-static inline struct bkey_i *btree_trans_peek_updates(struct btree_trans *trans,
-						      enum btree_id btree_id,
-						      struct bpos pos)
-{
-	struct btree_insert_entry *i;
-
-	trans_for_each_update(trans, i)
-		if ((cmp_int(btree_id,	i->btree_id) ?:
-		     bpos_cmp(pos,	i->k->k.p)) <= 0) {
-			if (btree_id ==	i->btree_id)
-				return i->k;
-			break;
-		}
-
-	return NULL;
-}
 
 #endif /* _BCACHEFS_BTREE_UPDATE_H */

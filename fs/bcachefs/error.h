@@ -39,7 +39,7 @@ void bch2_topology_error(struct bch_fs *);
 
 #define bch2_fs_inconsistent_on(cond, c, ...)				\
 ({									\
-	int _ret = !!(cond);						\
+	bool _ret = unlikely(!!(cond));					\
 									\
 	if (_ret)							\
 		bch2_fs_inconsistent(c, __VA_ARGS__);			\
@@ -59,10 +59,30 @@ do {									\
 
 #define bch2_dev_inconsistent_on(cond, ca, ...)				\
 ({									\
-	int _ret = !!(cond);						\
+	bool _ret = unlikely(!!(cond));					\
 									\
 	if (_ret)							\
 		bch2_dev_inconsistent(ca, __VA_ARGS__);			\
+	_ret;								\
+})
+
+/*
+ * When a transaction update discovers or is causing a fs inconsistency, it's
+ * helpful to also dump the pending updates:
+ */
+#define bch2_trans_inconsistent(trans, ...)				\
+({									\
+	bch_err(trans->c, __VA_ARGS__);					\
+	bch2_inconsistent_error(trans->c);				\
+	bch2_dump_trans_updates(trans);					\
+})
+
+#define bch2_trans_inconsistent_on(cond, trans, ...)			\
+({									\
+	bool _ret = unlikely(!!(cond));					\
+									\
+	if (_ret)							\
+		bch2_trans_inconsistent(trans, __VA_ARGS__);		\
 	_ret;								\
 })
 
@@ -129,7 +149,7 @@ void bch2_flush_fsck_errs(struct bch_fs *);
 /* XXX: mark in superblock that filesystem contains errors, if we ignore: */
 
 #define __fsck_err_on(cond, c, _flags, ...)				\
-	((cond) ? __fsck_err(c, _flags,	##__VA_ARGS__) : false)
+	(unlikely(cond) ? __fsck_err(c, _flags,	##__VA_ARGS__) : false)
 
 #define need_fsck_err_on(cond, c, ...)					\
 	__fsck_err_on(cond, c, FSCK_CAN_IGNORE|FSCK_NEED_FSCK, ##__VA_ARGS__)
@@ -164,7 +184,7 @@ do {									\
 
 #define bch2_fs_fatal_err_on(cond, c, ...)				\
 ({									\
-	int _ret = !!(cond);						\
+	bool _ret = unlikely(!!(cond));					\
 									\
 	if (_ret)							\
 		bch2_fs_fatal_error(c, __VA_ARGS__);			\

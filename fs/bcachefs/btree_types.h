@@ -8,6 +8,7 @@
 
 #include "bkey_methods.h"
 #include "buckets_types.h"
+#include "darray.h"
 #include "journal_types.h"
 
 struct open_bucket;
@@ -152,7 +153,8 @@ struct btree_cache {
 	struct mutex		lock;
 	struct list_head	live;
 	struct list_head	freeable;
-	struct list_head	freed;
+	struct list_head	freed_pcpu;
+	struct list_head	freed_nonpcpu;
 
 	/* Number of elements in live + freeable lists */
 	unsigned		used;
@@ -202,15 +204,16 @@ struct btree_node_iter {
  */
 #define BTREE_ITER_IS_EXTENTS		(1 << 4)
 #define BTREE_ITER_NOT_EXTENTS		(1 << 5)
-#define BTREE_ITER_ERROR		(1 << 6)
-#define BTREE_ITER_CACHED		(1 << 7)
-#define BTREE_ITER_CACHED_NOFILL	(1 << 8)
-#define BTREE_ITER_CACHED_NOCREATE	(1 << 9)
+#define BTREE_ITER_CACHED		(1 << 6)
+#define BTREE_ITER_CACHED_NOFILL	(1 << 7)
+#define BTREE_ITER_CACHED_NOCREATE	(1 << 8)
+#define BTREE_ITER_WITH_KEY_CACHE	(1 << 9)
 #define BTREE_ITER_WITH_UPDATES		(1 << 10)
-#define __BTREE_ITER_ALL_SNAPSHOTS	(1 << 11)
-#define BTREE_ITER_ALL_SNAPSHOTS	(1 << 12)
-#define BTREE_ITER_FILTER_SNAPSHOTS	(1 << 13)
-#define BTREE_ITER_NOPRESERVE		(1 << 14)
+#define BTREE_ITER_WITH_JOURNAL		(1 << 11)
+#define __BTREE_ITER_ALL_SNAPSHOTS	(1 << 12)
+#define BTREE_ITER_ALL_SNAPSHOTS	(1 << 13)
+#define BTREE_ITER_FILTER_SNAPSHOTS	(1 << 14)
+#define BTREE_ITER_NOPRESERVE		(1 << 15)
 
 enum btree_path_uptodate {
 	BTREE_ITER_UPTODATE		= 0,
@@ -275,6 +278,8 @@ static inline struct btree_path_level *path_l(struct btree_path *path)
 struct btree_iter {
 	struct btree_trans	*trans;
 	struct btree_path	*path;
+	struct btree_path	*update_path;
+	struct btree_path	*key_cache_path;
 
 	enum btree_id		btree_id:4;
 	unsigned		min_depth:4;
@@ -322,7 +327,7 @@ struct bkey_cached {
 	struct btree_bkey_cached_common c;
 
 	unsigned long		flags;
-	u8			u64s;
+	u16			u64s;
 	bool			valid;
 	u32			btree_trans_barrier_seq;
 	struct bkey_cached_key	key;
@@ -340,12 +345,20 @@ struct btree_insert_entry {
 	unsigned		flags;
 	u8			bkey_type;
 	enum btree_id		btree_id:8;
-	u8			level;
+	u8			level:4;
 	bool			cached:1;
 	bool			insert_trigger_run:1;
 	bool			overwrite_trigger_run:1;
+	/*
+	 * @old_k may be a key from the journal; @old_btree_u64s always refers
+	 * to the size of the key being overwritten in the btree:
+	 */
+	u8			old_btree_u64s;
 	struct bkey_i		*k;
 	struct btree_path	*path;
+	/* key being overwritten: */
+	struct bkey		old_k;
+	const struct bch_val	*old_v;
 	unsigned long		ip_allocated;
 };
 
@@ -367,21 +380,26 @@ struct btree_trans_commit_hook {
 
 struct btree_trans {
 	struct bch_fs		*c;
+	const char		*fn;
 	struct list_head	list;
 	struct btree		*locking;
 	unsigned		locking_path_idx;
 	struct bpos		locking_pos;
 	u8			locking_btree_id;
 	u8			locking_level;
+	u8			locking_lock_type;
 	pid_t			pid;
-	unsigned long		ip;
 	int			srcu_idx;
 
 	u8			nr_sorted;
 	u8			nr_updates;
+	u8			traverse_all_idx;
 	bool			used_mempool:1;
 	bool			in_traverse_all:1;
 	bool			restarted:1;
+	bool			memory_allocation_failure:1;
+	bool			journal_transaction_names:1;
+	bool			is_initial_gc:1;
 	/*
 	 * For when bch2_trans_update notices we'll be splitting a compressed
 	 * extent:
@@ -400,8 +418,7 @@ struct btree_trans {
 
 	/* update path: */
 	struct btree_trans_commit_hook *hooks;
-	struct jset_entry	*extra_journal_entries;
-	unsigned		extra_journal_entry_u64s;
+	DARRAY(u64)		extra_journal_entries;
 	struct journal_entry_pin *journal_pin;
 
 	struct journal_res	journal_res;
@@ -414,7 +431,31 @@ struct btree_trans {
 	struct replicas_delta_list *fs_usage_deltas;
 };
 
-#define BTREE_FLAG(flag)						\
+#define BTREE_FLAGS()							\
+	x(read_in_flight)						\
+	x(read_error)							\
+	x(dirty)							\
+	x(need_write)							\
+	x(write_blocked)						\
+	x(will_make_reachable)						\
+	x(noevict)							\
+	x(write_idx)							\
+	x(accessed)							\
+	x(write_in_flight)						\
+	x(write_in_flight_inner)					\
+	x(just_written)							\
+	x(dying)							\
+	x(fake)								\
+	x(need_rewrite)							\
+	x(never_write)
+
+enum btree_flags {
+#define x(flag)	BTREE_NODE_##flag,
+	BTREE_FLAGS()
+#undef x
+};
+
+#define x(flag)								\
 static inline bool btree_node_ ## flag(struct btree *b)			\
 {	return test_bit(BTREE_NODE_ ## flag, &b->flags); }		\
 									\
@@ -424,36 +465,8 @@ static inline void set_btree_node_ ## flag(struct btree *b)		\
 static inline void clear_btree_node_ ## flag(struct btree *b)		\
 {	clear_bit(BTREE_NODE_ ## flag, &b->flags); }
 
-enum btree_flags {
-	BTREE_NODE_read_in_flight,
-	BTREE_NODE_read_error,
-	BTREE_NODE_dirty,
-	BTREE_NODE_need_write,
-	BTREE_NODE_noevict,
-	BTREE_NODE_write_idx,
-	BTREE_NODE_accessed,
-	BTREE_NODE_write_in_flight,
-	BTREE_NODE_write_in_flight_inner,
-	BTREE_NODE_just_written,
-	BTREE_NODE_dying,
-	BTREE_NODE_fake,
-	BTREE_NODE_need_rewrite,
-	BTREE_NODE_never_write,
-};
-
-BTREE_FLAG(read_in_flight);
-BTREE_FLAG(read_error);
-BTREE_FLAG(need_write);
-BTREE_FLAG(noevict);
-BTREE_FLAG(write_idx);
-BTREE_FLAG(accessed);
-BTREE_FLAG(write_in_flight);
-BTREE_FLAG(write_in_flight_inner);
-BTREE_FLAG(just_written);
-BTREE_FLAG(dying);
-BTREE_FLAG(fake);
-BTREE_FLAG(need_rewrite);
-BTREE_FLAG(never_write);
+BTREE_FLAGS()
+#undef x
 
 static inline struct btree_write *btree_current_write(struct btree *b)
 {
@@ -583,24 +596,9 @@ static inline enum btree_node_type btree_node_type(struct btree *b)
 	return __btree_node_type(b->c.level, b->c.btree_id);
 }
 
-static inline bool btree_node_type_is_extents(enum btree_node_type type)
-{
-	switch (type) {
-	case BKEY_TYPE_extents:
-	case BKEY_TYPE_reflink:
-		return true;
-	default:
-		return false;
-	}
-}
-
-static inline bool btree_node_is_extents(struct btree *b)
-{
-	return btree_node_type_is_extents(btree_node_type(b));
-}
-
 #define BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS		\
 	((1U << BKEY_TYPE_extents)|			\
+	 (1U << BKEY_TYPE_alloc)|			\
 	 (1U << BKEY_TYPE_inodes)|			\
 	 (1U << BKEY_TYPE_stripes)|			\
 	 (1U << BKEY_TYPE_reflink)|			\
@@ -615,6 +613,16 @@ static inline bool btree_node_is_extents(struct btree *b)
 #define BTREE_NODE_TYPE_HAS_TRIGGERS			\
 	(BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS|		\
 	 BTREE_NODE_TYPE_HAS_MEM_TRIGGERS)
+
+#define BTREE_ID_IS_EXTENTS				\
+	((1U << BTREE_ID_extents)|			\
+	 (1U << BTREE_ID_reflink)|			\
+	 (1U << BTREE_ID_freespace))
+
+static inline bool btree_node_type_is_extents(enum btree_node_type type)
+{
+	return (1U << type) & BTREE_ID_IS_EXTENTS;
+}
 
 #define BTREE_ID_HAS_SNAPSHOTS				\
 	((1U << BTREE_ID_extents)|			\
@@ -633,6 +641,7 @@ static inline bool btree_type_has_snapshots(enum btree_id id)
 
 enum btree_update_flags {
 	__BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE,
+	__BTREE_UPDATE_KEY_CACHE_RECLAIM,
 
 	__BTREE_TRIGGER_NORUN,		/* Don't run triggers at all */
 
@@ -645,6 +654,7 @@ enum btree_update_flags {
 };
 
 #define BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE (1U << __BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE)
+#define BTREE_UPDATE_KEY_CACHE_RECLAIM	(1U << __BTREE_UPDATE_KEY_CACHE_RECLAIM)
 
 #define BTREE_TRIGGER_NORUN		(1U << __BTREE_TRIGGER_NORUN)
 
@@ -659,6 +669,7 @@ enum btree_update_flags {
 	((1U << KEY_TYPE_alloc)|		\
 	 (1U << KEY_TYPE_alloc_v2)|		\
 	 (1U << KEY_TYPE_alloc_v3)|		\
+	 (1U << KEY_TYPE_alloc_v4)|		\
 	 (1U << KEY_TYPE_stripe)|		\
 	 (1U << KEY_TYPE_inode)|		\
 	 (1U << KEY_TYPE_inode_v2)|		\

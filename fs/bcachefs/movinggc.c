@@ -6,6 +6,7 @@
  */
 
 #include "bcachefs.h"
+#include "alloc_background.h"
 #include "alloc_foreground.h"
 #include "btree_iter.h"
 #include "btree_update.h"
@@ -28,21 +29,6 @@
 #include <linux/sched/task.h>
 #include <linux/sort.h>
 #include <linux/wait.h>
-
-/*
- * We can't use the entire copygc reserve in one iteration of copygc: we may
- * need the buckets we're freeing up to go back into the copygc reserve to make
- * forward progress, but if the copygc reserve is full they'll be available for
- * any allocation - and it's possible that in a given iteration, we free up most
- * of the buckets we're going to free before we allocate most of the buckets
- * we're going to allocate.
- *
- * If we only use half of the reserve per iteration, then in steady state we'll
- * always have room in the reserve for the buckets we're going to need in the
- * next iteration:
- */
-#define COPYGC_BUCKETS_PER_ITER(ca)					\
-	((ca)->free[RESERVE_MOVINGGC].size / 2)
 
 static int bucket_offset_cmp(const void *_l, const void *_r, size_t size)
 {
@@ -69,10 +55,14 @@ static enum data_cmd copygc_pred(struct bch_fs *c, void *arg,
 			.dev	= p.ptr.dev,
 			.offset	= p.ptr.offset,
 		};
+		ssize_t i;
 
-		ssize_t i = eytzinger0_find_le(h->data, h->used,
-					       sizeof(h->data[0]),
-					       bucket_offset_cmp, &search);
+		if (p.ptr.cached)
+			continue;
+
+		i = eytzinger0_find_le(h->data, h->used,
+				       sizeof(h->data[0]),
+				       bucket_offset_cmp, &search);
 #if 0
 		/* eytzinger search verify code: */
 		ssize_t j = -1, k;
@@ -101,7 +91,7 @@ static enum data_cmd copygc_pred(struct bch_fs *c, void *arg,
 			data_opts->target		= io_opts->background_target;
 			data_opts->nr_replicas		= 1;
 			data_opts->btree_insert_flags	= BTREE_INSERT_USE_RESERVE|
-				BTREE_INSERT_JOURNAL_RESERVED;
+				JOURNAL_WATERMARK_copygc;
 			data_opts->rewrite_dev		= p.ptr.dev;
 
 			if (p.has_ec)
@@ -114,18 +104,6 @@ static enum data_cmd copygc_pred(struct bch_fs *c, void *arg,
 	return DATA_SKIP;
 }
 
-static bool have_copygc_reserve(struct bch_dev *ca)
-{
-	bool ret;
-
-	spin_lock(&ca->fs->freelist_lock);
-	ret = fifo_full(&ca->free[RESERVE_MOVINGGC]) ||
-		ca->allocator_state != ALLOCATOR_running;
-	spin_unlock(&ca->fs->freelist_lock);
-
-	return ret;
-}
-
 static inline int fragmentation_cmp(copygc_heap *heap,
 				   struct copygc_heap_entry l,
 				   struct copygc_heap_entry r)
@@ -133,18 +111,106 @@ static inline int fragmentation_cmp(copygc_heap *heap,
 	return cmp_int(l.fragmentation, r.fragmentation);
 }
 
+static int walk_buckets_to_copygc(struct bch_fs *c)
+{
+	copygc_heap *h = &c->copygc_heap;
+	struct btree_trans trans;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	struct bch_alloc_v4 a;
+	int ret;
+
+	bch2_trans_init(&trans, c, 0, 0);
+
+	for_each_btree_key(&trans, iter, BTREE_ID_alloc, POS_MIN,
+			   BTREE_ITER_PREFETCH, k, ret) {
+		struct bch_dev *ca = bch_dev_bkey_exists(c, iter.pos.inode);
+		struct copygc_heap_entry e;
+
+		bch2_alloc_to_v4(k, &a);
+
+		if (a.data_type != BCH_DATA_user ||
+		    a.dirty_sectors >= ca->mi.bucket_size ||
+		    bch2_bucket_is_open(c, iter.pos.inode, iter.pos.offset))
+			continue;
+
+		e = (struct copygc_heap_entry) {
+			.dev		= iter.pos.inode,
+			.gen		= a.gen,
+			.replicas	= 1 + a.stripe_redundancy,
+			.fragmentation	= (u64) a.dirty_sectors * (1ULL << 31)
+				/ ca->mi.bucket_size,
+			.sectors	= a.dirty_sectors,
+			.offset		= bucket_to_sector(ca, iter.pos.offset),
+		};
+		heap_add_or_replace(h, e, -fragmentation_cmp, NULL);
+
+	}
+	bch2_trans_iter_exit(&trans, &iter);
+
+	bch2_trans_exit(&trans);
+	return ret;
+}
+
+static int bucket_inorder_cmp(const void *_l, const void *_r)
+{
+	const struct copygc_heap_entry *l = _l;
+	const struct copygc_heap_entry *r = _r;
+
+	return cmp_int(l->dev, r->dev) ?: cmp_int(l->offset, r->offset);
+}
+
+static int check_copygc_was_done(struct bch_fs *c,
+				 u64 *sectors_not_moved,
+				 u64 *buckets_not_moved)
+{
+	copygc_heap *h = &c->copygc_heap;
+	struct btree_trans trans;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	struct bch_alloc_v4 a;
+	struct copygc_heap_entry *i;
+	int ret = 0;
+
+	sort(h->data, h->used, sizeof(h->data[0]), bucket_inorder_cmp, NULL);
+
+	bch2_trans_init(&trans, c, 0, 0);
+	bch2_trans_iter_init(&trans, &iter, BTREE_ID_alloc, POS_MIN, 0);
+
+	for (i = h->data; i < h->data + h->used; i++) {
+		struct bch_dev *ca = bch_dev_bkey_exists(c, i->dev);
+
+		bch2_btree_iter_set_pos(&iter, POS(i->dev, sector_to_bucket(ca, i->offset)));
+
+		ret = lockrestart_do(&trans,
+				bkey_err(k = bch2_btree_iter_peek_slot(&iter)));
+		if (ret)
+			break;
+
+		bch2_alloc_to_v4(k, &a);
+
+		if (a.gen == i->gen && a.dirty_sectors) {
+			*sectors_not_moved += a.dirty_sectors;
+			*buckets_not_moved += 1;
+		}
+	}
+	bch2_trans_iter_exit(&trans, &iter);
+
+	bch2_trans_exit(&trans);
+	return ret;
+}
+
 static int bch2_copygc(struct bch_fs *c)
 {
 	copygc_heap *h = &c->copygc_heap;
 	struct copygc_heap_entry e, *i;
-	struct bucket_array *buckets;
 	struct bch_move_stats move_stats;
 	u64 sectors_to_move = 0, sectors_to_write = 0, sectors_not_moved = 0;
 	u64 sectors_reserved = 0;
 	u64 buckets_to_move, buckets_not_moved = 0;
 	struct bch_dev *ca;
 	unsigned dev_idx;
-	size_t b, heap_size = 0;
+	size_t heap_size = 0;
 	int ret;
 
 	bch_move_stats_init(&move_stats, "copygc");
@@ -169,44 +235,25 @@ static int bch2_copygc(struct bch_fs *c)
 	}
 
 	for_each_rw_member(ca, c, dev_idx) {
-		closure_wait_event(&c->freelist_wait, have_copygc_reserve(ca));
+		s64 avail = min(dev_buckets_available(ca, RESERVE_movinggc),
+				ca->mi.nbuckets >> 6);
 
-		spin_lock(&ca->fs->freelist_lock);
-		sectors_reserved += fifo_used(&ca->free[RESERVE_MOVINGGC]) * ca->mi.bucket_size;
-		spin_unlock(&ca->fs->freelist_lock);
+		sectors_reserved += avail * ca->mi.bucket_size;
+	}
 
-		down_read(&ca->bucket_lock);
-		buckets = bucket_array(ca);
+	ret = walk_buckets_to_copygc(c);
+	if (ret) {
+		bch2_fs_fatal_error(c, "error walking buckets to copygc!");
+		return ret;
+	}
 
-		for (b = buckets->first_bucket; b < buckets->nbuckets; b++) {
-			struct bucket *g = buckets->b + b;
-			struct bucket_mark m = READ_ONCE(g->mark);
-			struct copygc_heap_entry e;
-
-			if (m.owned_by_allocator ||
-			    m.data_type != BCH_DATA_user ||
-			    !bucket_sectors_used(m) ||
-			    bucket_sectors_used(m) >= ca->mi.bucket_size)
-				continue;
-
-			WARN_ON(m.stripe && !g->stripe_redundancy);
-
-			e = (struct copygc_heap_entry) {
-				.dev		= dev_idx,
-				.gen		= m.gen,
-				.replicas	= 1 + g->stripe_redundancy,
-				.fragmentation	= bucket_sectors_used(m) * (1U << 15)
-					/ ca->mi.bucket_size,
-				.sectors	= bucket_sectors_used(m),
-				.offset		= bucket_to_sector(ca, b),
-			};
-			heap_add_or_replace(h, e, -fragmentation_cmp, NULL);
-		}
-		up_read(&ca->bucket_lock);
+	if (!h->used) {
+		bch_err_ratelimited(c, "copygc requested to run but found no buckets to move!");
+		return 0;
 	}
 
 	/*
-	 * Our btree node allocations also come out of RESERVE_MOVINGGC:
+	 * Our btree node allocations also come out of RESERVE_movingc:
 	 */
 	sectors_reserved = (sectors_reserved * 3) / 4;
 	if (!sectors_reserved) {
@@ -226,8 +273,11 @@ static int bch2_copygc(struct bch_fs *c)
 
 	buckets_to_move = h->used;
 
-	if (!buckets_to_move)
+	if (!buckets_to_move) {
+		bch_err_ratelimited(c, "copygc cannot run - sectors_reserved %llu!",
+				    sectors_reserved);
 		return 0;
+	}
 
 	eytzinger0_sort(h->data, h->used,
 			sizeof(h->data[0]),
@@ -240,30 +290,18 @@ static int bch2_copygc(struct bch_fs *c)
 			     writepoint_ptr(&c->copygc_write_point),
 			     copygc_pred, NULL,
 			     &move_stats);
-
-	for_each_rw_member(ca, c, dev_idx) {
-		down_read(&ca->bucket_lock);
-		buckets = bucket_array(ca);
-		for (i = h->data; i < h->data + h->used; i++) {
-			struct bucket_mark m;
-			size_t b;
-
-			if (i->dev != dev_idx)
-				continue;
-
-			b = sector_to_bucket(ca, i->offset);
-			m = READ_ONCE(buckets->b[b].mark);
-
-			if (i->gen == m.gen &&
-			    bucket_sectors_used(m)) {
-				sectors_not_moved += bucket_sectors_used(m);
-				buckets_not_moved++;
-			}
-		}
-		up_read(&ca->bucket_lock);
+	if (ret) {
+		bch_err(c, "error %i from bch2_move_data() in copygc", ret);
+		return ret;
 	}
 
-	if (sectors_not_moved && !ret)
+	ret = check_copygc_was_done(c, &sectors_not_moved, &buckets_not_moved);
+	if (ret) {
+		bch_err(c, "error %i from check_copygc_was_done()", ret);
+		return ret;
+	}
+
+	if (sectors_not_moved)
 		bch_warn_ratelimited(c,
 			"copygc finished but %llu/%llu sectors, %llu/%llu buckets not moved (move stats: moved %llu sectors, raced %llu keys, %llu sectors)",
 			 sectors_not_moved, sectors_to_move,
@@ -301,8 +339,8 @@ unsigned long bch2_copygc_wait_amount(struct bch_fs *c)
 	for_each_rw_member(ca, c, dev_idx) {
 		struct bch_dev_usage usage = bch2_dev_usage_read(ca);
 
-		fragmented_allowed = ((__dev_buckets_reclaimable(ca, usage) *
-					ca->mi.bucket_size) >> 1);
+		fragmented_allowed = ((__dev_buckets_available(ca, usage, RESERVE_none) *
+				       ca->mi.bucket_size) >> 1);
 		fragmented = usage.d[BCH_DATA_user].fragmented;
 
 		wait = min(wait, max(0LL, fragmented_allowed - fragmented));

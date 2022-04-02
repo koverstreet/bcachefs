@@ -76,18 +76,20 @@ struct btree_update {
 	struct journal_entry_pin	journal;
 
 	/* Preallocated nodes we reserve when we start the update: */
-	struct btree			*prealloc_nodes[BTREE_UPDATE_NODES_MAX];
-	unsigned			nr_prealloc_nodes;
+	struct prealloc_nodes {
+		struct btree		*b[BTREE_UPDATE_NODES_MAX];
+		unsigned		nr;
+	}				prealloc_nodes[2];
 
 	/* Nodes being freed: */
 	struct keylist			old_keys;
 	u64				_old_keys[BTREE_UPDATE_NODES_MAX *
-						  BKEY_BTREE_PTR_VAL_U64s_MAX];
+						  BKEY_BTREE_PTR_U64s_MAX];
 
 	/* Nodes being added: */
 	struct keylist			new_keys;
 	u64				_new_keys[BTREE_UPDATE_NODES_MAX *
-						  BKEY_BTREE_PTR_VAL_U64s_MAX];
+						  BKEY_BTREE_PTR_U64s_MAX];
 
 	/* New nodes, that will be made reachable by this update: */
 	struct btree			*new_nodes[BTREE_UPDATE_NODES_MAX];
