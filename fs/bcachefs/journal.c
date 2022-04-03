@@ -964,6 +964,7 @@ int bch2_set_nr_journal_buckets(struct bch_fs *c, struct bch_dev *ca,
 int bch2_dev_journal_alloc(struct bch_dev *ca)
 {
 	unsigned nr;
+	int ret;
 
 	if (dynamic_fault("bcachefs:add:journal_alloc"))
 		return -ENOMEM;
@@ -980,7 +981,15 @@ int bch2_dev_journal_alloc(struct bch_dev *ca)
 		     min(1 << 13,
 			 (1 << 24) / ca->mi.bucket_size));
 
-	return __bch2_set_nr_journal_buckets(ca, nr, true, NULL);
+	if (ca->fs)
+		mutex_lock(&ca->fs->sb_lock);
+
+	ret = __bch2_set_nr_journal_buckets(ca, nr, true, NULL);
+
+	if (ca->fs)
+		mutex_unlock(&ca->fs->sb_lock);
+
+	return ret;
 }
 
 /* startup/shutdown: */
