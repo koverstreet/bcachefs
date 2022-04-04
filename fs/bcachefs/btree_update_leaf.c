@@ -1703,10 +1703,9 @@ retry:
 				break;
 		}
 
-		ret   = bch2_trans_update(trans, &iter, &delete, 0) ?:
+		ret   = bch2_trans_update(trans, &iter, &delete, update_flags) ?:
 			bch2_trans_commit(trans, &disk_res, journal_seq,
-					  BTREE_INSERT_NOFAIL|
-					  update_flags);
+					  BTREE_INSERT_NOFAIL);
 		bch2_disk_reservation_put(trans->c, &disk_res);
 		if (ret)
 			break;
