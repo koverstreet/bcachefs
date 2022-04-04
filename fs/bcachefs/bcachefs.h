@@ -548,6 +548,7 @@ struct journal_keys {
 		u32		journal_seq;
 		u32		journal_offset;
 	}			*d;
+	size_t			gap;
 	size_t			nr;
 	size_t			size;
 	u64			journal_seq_base;
