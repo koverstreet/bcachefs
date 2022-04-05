@@ -577,7 +577,7 @@ static int bch2_check_alloc_key(struct btree_trans *trans,
 				struct btree_iter *alloc_iter)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter discard_iter, freespace_iter, lru_iter;
+	struct btree_iter discard_iter, freespace_iter;
 	struct bch_alloc_v4 a;
 	unsigned discard_key_type, freespace_key_type;
 	struct bkey_s_c alloc_k, k;
@@ -603,8 +603,6 @@ static int bch2_check_alloc_key(struct btree_trans *trans,
 			     alloc_k.k->p, 0);
 	bch2_trans_iter_init(trans, &freespace_iter, BTREE_ID_freespace,
 			     alloc_freespace_pos(alloc_k.k->p, a), 0);
-	bch2_trans_iter_init(trans, &lru_iter, BTREE_ID_lru,
-			     POS(alloc_k.k->p.inode, a.io_time[READ]), 0);
 
 	k = bch2_btree_iter_peek_slot(&discard_iter);
 	ret = bkey_err(k);
@@ -628,8 +626,7 @@ static int bch2_check_alloc_key(struct btree_trans *trans,
 		update->k.type	= discard_key_type;
 		update->k.p	= discard_iter.pos;
 
-		ret =   bch2_trans_update(trans, &discard_iter, update, 0) ?:
-			bch2_trans_commit(trans, NULL, NULL, 0);
+		ret = bch2_trans_update(trans, &discard_iter, update, 0);
 		if (ret)
 			goto err;
 	}
@@ -658,65 +655,12 @@ static int bch2_check_alloc_key(struct btree_trans *trans,
 		update->k.p	= freespace_iter.pos;
 		bch2_key_resize(&update->k, 1);
 
-		ret   = bch2_trans_update(trans, &freespace_iter, update, 0) ?:
-			bch2_trans_commit(trans, NULL, NULL, 0);
+		ret = bch2_trans_update(trans, &freespace_iter, update, 0);
 		if (ret)
 			goto err;
-	}
-
-	if (bucket_state(a) == BUCKET_cached) {
-		k = bch2_btree_iter_peek_slot(&lru_iter);
-		ret = bkey_err(k);
-		if (ret)
-			goto err;
-
-		if (fsck_err_on(!a.io_time[READ], c,
-				"cached bucket with read_time 0\n"
-				"  %s",
-			(printbuf_reset(&buf),
-			 bch2_bkey_val_to_text(&buf, c, alloc_k), buf.buf)) ||
-		    fsck_err_on(k.k->type != KEY_TYPE_lru ||
-				le64_to_cpu(bkey_s_c_to_lru(k).v->idx) != alloc_k.k->p.offset, c,
-				"incorrect/missing lru entry\n"
-				"  %s\n"
-				"  %s",
-				(printbuf_reset(&buf),
-				 bch2_bkey_val_to_text(&buf, c, alloc_k), buf.buf),
-				(bch2_bkey_val_to_text(&buf2, c, k), buf2.buf))) {
-			u64 read_time = a.io_time[READ];
-
-			if (!a.io_time[READ])
-				a.io_time[READ] = atomic64_read(&c->io_clock[READ].now);
-
-			ret   = bch2_lru_change(trans,
-						alloc_k.k->p.inode,
-						alloc_k.k->p.offset,
-						0, &a.io_time[READ]);
-			if (ret)
-				goto err;
-
-			if (a.io_time[READ] != read_time) {
-				struct bkey_i_alloc_v4 *a_mut =
-					bch2_alloc_to_v4_mut(trans, alloc_k);
-				ret = PTR_ERR_OR_ZERO(a_mut);
-				if (ret)
-					goto err;
-
-				a_mut->v.io_time[READ] = a.io_time[READ];
-				ret = bch2_trans_update(trans, alloc_iter,
-							&a_mut->k_i, BTREE_TRIGGER_NORUN);
-				if (ret)
-					goto err;
-			}
-
-			ret = bch2_trans_commit(trans, NULL, NULL, 0);
-			if (ret)
-				goto err;
-		}
 	}
 err:
 fsck_err:
-	bch2_trans_iter_exit(trans, &lru_iter);
 	bch2_trans_iter_exit(trans, &freespace_iter);
 	bch2_trans_iter_exit(trans, &discard_iter);
 	printbuf_exit(&buf2);
@@ -848,6 +792,107 @@ int bch2_check_alloc_info(struct bch_fs *c, bool initial)
 	}
 	bch2_trans_iter_exit(&trans, &iter);
 err:
+	bch2_trans_exit(&trans);
+	return ret < 0 ? ret : 0;
+}
+
+static int bch2_check_alloc_to_lru_ref(struct btree_trans *trans,
+				       struct btree_iter *alloc_iter)
+{
+	struct bch_fs *c = trans->c;
+	struct btree_iter lru_iter;
+	struct bch_alloc_v4 a;
+	struct bkey_s_c alloc_k, k;
+	struct printbuf buf = PRINTBUF;
+	struct printbuf buf2 = PRINTBUF;
+	int ret;
+
+	alloc_k = bch2_btree_iter_peek(alloc_iter);
+	if (!alloc_k.k)
+		return 0;
+
+	ret = bkey_err(alloc_k);
+	if (ret)
+		return ret;
+
+	bch2_alloc_to_v4(alloc_k, &a);
+
+	if (bucket_state(a) != BUCKET_cached)
+		return 0;
+
+	bch2_trans_iter_init(trans, &lru_iter, BTREE_ID_lru,
+			     POS(alloc_k.k->p.inode, a.io_time[READ]), 0);
+
+	k = bch2_btree_iter_peek_slot(&lru_iter);
+	ret = bkey_err(k);
+	if (ret)
+		goto err;
+
+	if (fsck_err_on(!a.io_time[READ], c,
+			"cached bucket with read_time 0\n"
+			"  %s",
+		(printbuf_reset(&buf),
+		 bch2_bkey_val_to_text(&buf, c, alloc_k), buf.buf)) ||
+	    fsck_err_on(k.k->type != KEY_TYPE_lru ||
+			le64_to_cpu(bkey_s_c_to_lru(k).v->idx) != alloc_k.k->p.offset, c,
+			"incorrect/missing lru entry\n"
+			"  %s\n"
+			"  %s",
+			(printbuf_reset(&buf),
+			 bch2_bkey_val_to_text(&buf, c, alloc_k), buf.buf),
+			(bch2_bkey_val_to_text(&buf2, c, k), buf2.buf))) {
+		u64 read_time = a.io_time[READ];
+
+		if (!a.io_time[READ])
+			a.io_time[READ] = atomic64_read(&c->io_clock[READ].now);
+
+		ret = bch2_lru_change(trans,
+				      alloc_k.k->p.inode,
+				      alloc_k.k->p.offset,
+				      0, &a.io_time[READ]);
+		if (ret)
+			goto err;
+
+		if (a.io_time[READ] != read_time) {
+			struct bkey_i_alloc_v4 *a_mut =
+				bch2_alloc_to_v4_mut(trans, alloc_k);
+			ret = PTR_ERR_OR_ZERO(a_mut);
+			if (ret)
+				goto err;
+
+			a_mut->v.io_time[READ] = a.io_time[READ];
+			ret = bch2_trans_update(trans, alloc_iter,
+						&a_mut->k_i, BTREE_TRIGGER_NORUN);
+			if (ret)
+				goto err;
+		}
+	}
+err:
+fsck_err:
+	bch2_trans_iter_exit(trans, &lru_iter);
+	printbuf_exit(&buf2);
+	printbuf_exit(&buf);
+	return ret;
+}
+
+int bch2_check_alloc_to_lru_refs(struct bch_fs *c)
+{
+	struct btree_trans trans;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret = 0;
+
+	bch2_trans_init(&trans, c, 0, 0);
+
+	for_each_btree_key(&trans, iter, BTREE_ID_alloc, POS_MIN,
+			   BTREE_ITER_PREFETCH, k, ret) {
+		ret = __bch2_trans_do(&trans, NULL, NULL, BTREE_INSERT_NOFAIL,
+			bch2_check_alloc_to_lru_ref(&trans, &iter));
+		if (ret)
+			break;
+	}
+	bch2_trans_iter_exit(&trans, &iter);
+
 	bch2_trans_exit(&trans);
 	return ret < 0 ? ret : 0;
 }
