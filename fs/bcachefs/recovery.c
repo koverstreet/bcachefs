@@ -1276,6 +1276,19 @@ use_clean:
 	if (ret)
 		goto err;
 
+	if (c->opts.fsck) {
+		bch_info(c, "checking alloc to lru refs");
+		err = "error checking alloc to lru refs";
+		ret = bch2_check_alloc_to_lru_refs(c);
+		if (ret)
+			goto err;
+
+		ret = bch2_check_lrus(c, true);
+		if (ret)
+			goto err;
+		bch_verbose(c, "done checking alloc to lru refs");
+	}
+
 	if (c->sb.version < bcachefs_metadata_version_snapshot_2) {
 		bch2_fs_lazy_rw(c);
 
