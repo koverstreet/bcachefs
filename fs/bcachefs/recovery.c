@@ -471,7 +471,7 @@ void bch2_journal_keys_free(struct journal_keys *keys)
 
 	kvfree(keys->d);
 	keys->d = NULL;
-	keys->nr = 0;
+	keys->nr = keys->gap = keys->size = 0;
 }
 
 static struct journal_keys journal_keys_sort(struct list_head *journal_entries)
