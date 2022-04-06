@@ -868,7 +868,9 @@ int bch2_check_alloc_to_lru_refs(struct bch_fs *c)
 
 	for_each_btree_key(&trans, iter, BTREE_ID_alloc, POS_MIN,
 			   BTREE_ITER_PREFETCH, k, ret) {
-		ret = __bch2_trans_do(&trans, NULL, NULL, BTREE_INSERT_NOFAIL,
+		ret = __bch2_trans_do(&trans, NULL, NULL,
+				      BTREE_INSERT_NOFAIL|
+				      BTREE_INSERT_LAZY_RW,
 			bch2_check_alloc_to_lru_ref(&trans, &iter));
 		if (ret)
 			break;
