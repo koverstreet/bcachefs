@@ -485,7 +485,7 @@ static int run_one_trans_trigger(struct btree_trans *trans, struct btree_insert_
 	} else if (overwrite && !i->overwrite_trigger_run) {
 		i->overwrite_trigger_run = true;
 		return bch2_trans_mark_old(trans, old, i->flags) ?: 1;
-	} else if (!i->insert_trigger_run) {
+	} else if (!overwrite && !i->insert_trigger_run) {
 		i->insert_trigger_run = true;
 		return bch2_trans_mark_new(trans, i->k, i->flags) ?: 1;
 	} else {
