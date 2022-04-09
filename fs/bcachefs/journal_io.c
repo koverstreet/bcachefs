@@ -94,7 +94,7 @@ static int journal_entry_add(struct bch_fs *c, struct bch_dev *ca,
 	}
 
 	/* Drop entries we don't need anymore */
-	if (!JSET_NO_FLUSH(j)) {
+	if (!JSET_NO_FLUSH(j) && !c->opts.read_entire_journal) {
 		genradix_for_each(&c->journal_entries, iter, _i) {
 			i = *_i;
 
