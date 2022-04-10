@@ -1051,6 +1051,7 @@ int bch2_journal_read(struct bch_fs *c, u64 *blacklist_seq, u64 *start_seq)
 
 	closure_init_stack(&jlist.cl);
 	mutex_init(&jlist.lock);
+	jlist.last_seq = 0;
 	jlist.ret = 0;
 
 	for_each_member_device(ca, c, iter) {
