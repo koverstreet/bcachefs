@@ -138,8 +138,8 @@ static int walk_buckets_to_copygc(struct bch_fs *c)
 			.dev		= iter.pos.inode,
 			.gen		= a.gen,
 			.replicas	= 1 + a.stripe_redundancy,
-			.fragmentation	= (u64) a.dirty_sectors * (1ULL << 31)
-				/ ca->mi.bucket_size,
+			.fragmentation	= div_u64((u64) a.dirty_sectors * (1ULL << 31),
+						  ca->mi.bucket_size),
 			.sectors	= a.dirty_sectors,
 			.offset		= bucket_to_sector(ca, iter.pos.offset),
 		};
