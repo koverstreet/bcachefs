@@ -545,6 +545,7 @@ int bch2_trans_mark_alloc(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct bch_alloc_v4 old_a, *new_a;
+	u64 old_lru, new_lru;
 	int ret = 0;
 
 	/*
@@ -586,11 +587,11 @@ int bch2_trans_mark_alloc(struct btree_trans *trans,
 	    !new_a->io_time[READ])
 		new_a->io_time[READ] = max_t(u64, 1, atomic64_read(&c->io_clock[READ].now));
 
-	if ((old_a.data_type == BCH_DATA_cached) !=
-	    (new_a->data_type == BCH_DATA_cached)) {
-		u64 old_lru = alloc_lru_idx(old_a);
-		u64 new_lru = alloc_lru_idx(*new_a);
 
+	old_lru = alloc_lru_idx(old_a);
+	new_lru = alloc_lru_idx(*new_a);
+
+	if (old_lru != new_lru) {
 		ret = bch2_lru_change(trans, new->k.p.inode, new->k.p.offset,
 				      old_lru, &new_lru);
 		if (ret)
