@@ -2233,12 +2233,11 @@ struct bkey_s_c btree_trans_peek_journal(struct btree_trans *trans,
 					 struct bkey_s_c k)
 {
 	struct bkey_i *next_journal =
-		bch2_journal_keys_peek(trans->c, iter->btree_id, 0,
-				       iter->path->pos);
+		bch2_journal_keys_peek_upto(trans->c, iter->btree_id, 0,
+				iter->path->pos,
+				k.k ? k.k->p : iter->path->l[0].b->key.k.p);
 
-	if (next_journal &&
-	    bpos_cmp(next_journal->k.p,
-		     k.k ? k.k->p : iter->path->l[0].b->key.k.p) <= 0) {
+	if (next_journal) {
 		iter->k = next_journal->k;
 		k = bkey_i_to_s_c(next_journal);
 	}
@@ -2687,9 +2686,8 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 		}
 
 		if (unlikely(iter->flags & BTREE_ITER_WITH_JOURNAL) &&
-		    (next_update = bch2_journal_keys_peek(trans->c, iter->btree_id,
-							  0, iter->pos)) &&
-		    !bpos_cmp(next_update->k.p, iter->pos)) {
+		    (next_update = bch2_journal_keys_peek_slot(trans->c,
+					iter->btree_id, 0, iter->pos))) {
 			iter->k = next_update->k;
 			k = bkey_i_to_s_c(next_update);
 			goto out;
