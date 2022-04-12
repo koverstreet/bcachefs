@@ -989,7 +989,7 @@ static void bch2_journal_read_device(struct closure *cl)
 		bch_err(c, "ja->sectors_free == ca->mi.bucket_size");
 		bch_err(c, "cur_idx %u/%u", ja->cur_idx, ja->nr);
 		for (i = 0; i < 3; i++) {
-			unsigned idx = ja->cur_idx - 1 + i;
+			unsigned idx = (ja->cur_idx + ja->nr - 1 + i) % ja->nr;
 			bch_err(c, "bucket_seq[%u] = %llu", idx, ja->bucket_seq[idx]);
 		}
 		ja->sectors_free = 0;
