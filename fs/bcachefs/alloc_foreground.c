@@ -226,8 +226,6 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 			c->blocked_allocate_open_bucket = local_clock();
 
 		spin_unlock(&c->freelist_lock);
-
-		trace_open_bucket_alloc_fail(ca, bch2_alloc_reserves[reserve]);
 		return ERR_PTR(-OPEN_BUCKETS_EMPTY);
 	}
 

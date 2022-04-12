@@ -513,7 +513,7 @@ TRACE_EVENT(invalidate,
 		  __entry->offset)
 );
 
-DECLARE_EVENT_CLASS(bucket_alloc,
+TRACE_EVENT(bucket_alloc,
 	TP_PROTO(struct bch_dev *ca, const char *alloc_reserve),
 	TP_ARGS(ca, alloc_reserve),
 
@@ -530,11 +530,6 @@ DECLARE_EVENT_CLASS(bucket_alloc,
 	TP_printk("%d,%d reserve %s",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->reserve)
-);
-
-DEFINE_EVENT(bucket_alloc, bucket_alloc,
-	TP_PROTO(struct bch_dev *ca, const char *alloc_reserve),
-	TP_ARGS(ca, alloc_reserve)
 );
 
 TRACE_EVENT(bucket_alloc_fail,
@@ -582,11 +577,6 @@ TRACE_EVENT(bucket_alloc_fail,
 		  __entry->nouse,
 		  __entry->nonblocking,
 		  __entry->ret)
-);
-
-DEFINE_EVENT(bucket_alloc, open_bucket_alloc_fail,
-	TP_PROTO(struct bch_dev *ca, const char *alloc_reserve),
-	TP_ARGS(ca, alloc_reserve)
 );
 
 /* Moving IO */
