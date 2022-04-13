@@ -1,4 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * NOTE:
+ *
+ * This header has combined a lot of unrelated to each other stuff.
+ * The process of splitting its content is in progress while keeping
+ * backward compatibility. That's why it's highly recommended NOT to
+ * include this header inside another header file, especially under
+ * generic or architectural include/ directory.
+ */
 #ifndef _LINUX_KERNEL_H
 #define _LINUX_KERNEL_H
 
@@ -90,7 +99,7 @@ struct user;
 extern int __cond_resched(void);
 # define might_resched() __cond_resched()
 
-#elif defined(CONFIG_PREEMPT_DYNAMIC)
+#elif defined(CONFIG_PREEMPT_DYNAMIC) && defined(CONFIG_HAVE_PREEMPT_DYNAMIC_CALL)
 
 extern int __cond_resched(void);
 
@@ -100,6 +109,11 @@ static __always_inline void might_resched(void)
 {
 	static_call_mod(might_resched)();
 }
+
+#elif defined(CONFIG_PREEMPT_DYNAMIC) && defined(CONFIG_HAVE_PREEMPT_DYNAMIC_KEY)
+
+extern int dynamic_might_resched(void);
+# define might_resched() dynamic_might_resched()
 
 #else
 
@@ -187,7 +201,6 @@ static inline void might_fault(void) { }
 #endif
 
 void do_exit(long error_code) __noreturn;
-void complete_and_exit(struct completion *, long) __noreturn;
 
 extern int num_to_str(char *buf, int size,
 		      unsigned long long num, unsigned int width);

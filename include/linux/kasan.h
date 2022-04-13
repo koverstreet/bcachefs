@@ -3,6 +3,7 @@
 #define _LINUX_KASAN_H
 
 #include <linux/bug.h>
+#include <linux/kasan-enabled.h>
 #include <linux/kernel.h>
 #include <linux/static_key.h>
 #include <linux/types.h>
@@ -83,32 +84,10 @@ static inline void kasan_disable_current(void) {}
 
 #ifdef CONFIG_KASAN_HW_TAGS
 
-DECLARE_STATIC_KEY_FALSE(kasan_flag_enabled);
-
-static __always_inline bool kasan_enabled(void)
-{
-	return static_branch_likely(&kasan_flag_enabled);
-}
-
-static inline bool kasan_hw_tags_enabled(void)
-{
-	return kasan_enabled();
-}
-
 void kasan_alloc_pages(struct page *page, unsigned int order, gfp_t flags);
 void kasan_free_pages(struct page *page, unsigned int order);
 
 #else /* CONFIG_KASAN_HW_TAGS */
-
-static inline bool kasan_enabled(void)
-{
-	return IS_ENABLED(CONFIG_KASAN);
-}
-
-static inline bool kasan_hw_tags_enabled(void)
-{
-	return false;
-}
 
 static __always_inline void kasan_alloc_pages(struct page *page,
 					      unsigned int order, gfp_t flags)
@@ -475,12 +454,12 @@ static inline void kasan_populate_early_vm_area_shadow(void *start,
  * allocations with real shadow memory. With KASAN vmalloc, the special
  * case is unnecessary, as the work is handled in the generic case.
  */
-int kasan_module_alloc(void *addr, size_t size);
+int kasan_module_alloc(void *addr, size_t size, gfp_t gfp_mask);
 void kasan_free_shadow(const struct vm_struct *vm);
 
 #else /* (CONFIG_KASAN_GENERIC || CONFIG_KASAN_SW_TAGS) && !CONFIG_KASAN_VMALLOC */
 
-static inline int kasan_module_alloc(void *addr, size_t size) { return 0; }
+static inline int kasan_module_alloc(void *addr, size_t size, gfp_t gfp_mask) { return 0; }
 static inline void kasan_free_shadow(const struct vm_struct *vm) {}
 
 #endif /* (CONFIG_KASAN_GENERIC || CONFIG_KASAN_SW_TAGS) && !CONFIG_KASAN_VMALLOC */

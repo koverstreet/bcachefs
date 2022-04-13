@@ -16,7 +16,6 @@
 #include <linux/module.h>
 #include <linux/bio.h>
 #include <linux/blkdev.h>
-#include <linux/blk-mq.h>
 #include <linux/blk-pm.h>
 #include <linux/blk-integrity.h>
 #include <linux/highmem.h>
@@ -35,11 +34,11 @@
 #include <linux/delay.h>
 #include <linux/ratelimit.h>
 #include <linux/pm_runtime.h>
-#include <linux/blk-cgroup.h>
 #include <linux/t10-pi.h>
 #include <linux/debugfs.h>
 #include <linux/bpf.h>
 #include <linux/psi.h>
+#include <linux/part_stat.h>
 #include <linux/sched/sysctl.h>
 #include <linux/blk-crypto.h>
 
@@ -47,10 +46,11 @@
 #include <trace/events/block.h>
 
 #include "blk.h"
-#include "blk-mq.h"
 #include "blk-mq-sched.h"
 #include "blk-pm.h"
+#include "blk-cgroup.h"
 #include "blk-throttle.h"
+#include "blk-rq-qos.h"
 
 struct dentry *blk_debugfs_root;
 
@@ -67,6 +67,7 @@ DEFINE_IDA(blk_queue_ida);
  * For queue allocation
  */
 struct kmem_cache *blk_requestq_cachep;
+struct kmem_cache *blk_requestq_srcu_cachep;
 
 /*
  * Controlling structure to kblockd
@@ -108,23 +109,6 @@ bool blk_queue_flag_test_and_set(unsigned int flag, struct request_queue *q)
 	return test_and_set_bit(flag, &q->queue_flags);
 }
 EXPORT_SYMBOL_GPL(blk_queue_flag_test_and_set);
-
-void blk_rq_init(struct request_queue *q, struct request *rq)
-{
-	memset(rq, 0, sizeof(*rq));
-
-	INIT_LIST_HEAD(&rq->queuelist);
-	rq->q = q;
-	rq->__sector = (sector_t) -1;
-	INIT_HLIST_NODE(&rq->hash);
-	RB_CLEAR_NODE(&rq->rb_node);
-	rq->tag = BLK_MQ_NO_TAG;
-	rq->internal_tag = BLK_MQ_NO_TAG;
-	rq->start_time_ns = ktime_get_ns();
-	rq->part = NULL;
-	blk_crypto_rq_set_defaults(rq);
-}
-EXPORT_SYMBOL(blk_rq_init);
 
 #define REQ_OP_NAME(name) [REQ_OP_##name] = #name
 static const char *const blk_op_name[] = {
@@ -181,6 +165,7 @@ static const struct {
 	[BLK_STS_RESOURCE]	= { -ENOMEM,	"kernel resource" },
 	[BLK_STS_DEV_RESOURCE]	= { -EBUSY,	"device resource" },
 	[BLK_STS_AGAIN]		= { -EAGAIN,	"nonblocking retry" },
+	[BLK_STS_OFFLINE]	= { -ENODEV,	"device offline" },
 
 	/* device mapper special case, should not leak out: */
 	[BLK_STS_DM_REQUEUE]	= { -EREMCHG, "dm internal retry" },
@@ -216,37 +201,14 @@ int blk_status_to_errno(blk_status_t status)
 }
 EXPORT_SYMBOL_GPL(blk_status_to_errno);
 
-void blk_print_req_error(struct request *req, blk_status_t status)
+const char *blk_status_to_str(blk_status_t status)
 {
 	int idx = (__force int)status;
 
 	if (WARN_ON_ONCE(idx >= ARRAY_SIZE(blk_errors)))
-		return;
-
-	printk_ratelimited(KERN_ERR
-		"%s error, dev %s, sector %llu op 0x%x:(%s) flags 0x%x "
-		"phys_seg %u prio class %u\n",
-		blk_errors[idx].name,
-		req->rq_disk ? req->rq_disk->disk_name : "?",
-		blk_rq_pos(req), req_op(req), blk_op_str(req_op(req)),
-		req->cmd_flags & ~REQ_OP_MASK,
-		req->nr_phys_segments,
-		IOPRIO_PRIO_CLASS(req->ioprio));
+		return "<null>";
+	return blk_errors[idx].name;
 }
-
-void blk_dump_rq_flags(struct request *rq, char *msg)
-{
-	printk(KERN_INFO "%s: dev %s: flags=%llx\n", msg,
-		rq->rq_disk ? rq->rq_disk->disk_name : "?",
-		(unsigned long long) rq->cmd_flags);
-
-	printk(KERN_INFO "  sector %llu, nr/cnr %u/%u\n",
-	       (unsigned long long)blk_rq_pos(rq),
-	       blk_rq_sectors(rq), blk_rq_cur_sectors(rq));
-	printk(KERN_INFO "  bio %p, biotail %p, len %u\n",
-	       rq->bio, rq->biotail, blk_rq_bytes(rq));
-}
-EXPORT_SYMBOL(blk_dump_rq_flags);
 
 /**
  * blk_sync_queue - cancel any pending callbacks on a queue
@@ -324,13 +286,6 @@ void blk_queue_start_drain(struct request_queue *q)
 	wake_up_all(&q->mq_freeze_wq);
 }
 
-void blk_set_queue_dying(struct request_queue *q)
-{
-	blk_queue_flag_set(QUEUE_FLAG_DYING, q);
-	blk_queue_start_drain(q);
-}
-EXPORT_SYMBOL_GPL(blk_set_queue_dying);
-
 /**
  * blk_cleanup_queue - shutdown a request queue
  * @q: request queue to shutdown
@@ -348,7 +303,8 @@ void blk_cleanup_queue(struct request_queue *q)
 	WARN_ON_ONCE(blk_queue_registered(q));
 
 	/* mark @q DYING, no new request or merges will be allowed afterwards */
-	blk_set_queue_dying(q);
+	blk_queue_flag_set(QUEUE_FLAG_DYING, q);
+	blk_queue_start_drain(q);
 
 	blk_queue_flag_set(QUEUE_FLAG_NOMERGES, q);
 	blk_queue_flag_set(QUEUE_FLAG_NOXMERGES, q);
@@ -359,6 +315,9 @@ void blk_cleanup_queue(struct request_queue *q)
 	 * after draining finished.
 	 */
 	blk_freeze_queue(q);
+
+	/* cleanup rq qos structures for queue without disk */
+	rq_qos_exit(q);
 
 	blk_queue_flag_set(QUEUE_FLAG_DEAD, q);
 
@@ -380,8 +339,6 @@ void blk_cleanup_queue(struct request_queue *q)
 	if (q->elevator)
 		blk_mq_sched_free_rqs(q);
 	mutex_unlock(&q->sysfs_lock);
-
-	percpu_ref_exit(&q->q_usage_counter);
 
 	/* @q is and will stay empty, shutdown and put */
 	blk_put_queue(q);
@@ -478,21 +435,27 @@ static void blk_timeout_work(struct work_struct *work)
 {
 }
 
-struct request_queue *blk_alloc_queue(int node_id)
+struct request_queue *blk_alloc_queue(int node_id, bool alloc_srcu)
 {
 	struct request_queue *q;
 	int ret;
 
-	q = kmem_cache_alloc_node(blk_requestq_cachep,
-				GFP_KERNEL | __GFP_ZERO, node_id);
+	q = kmem_cache_alloc_node(blk_get_queue_kmem_cache(alloc_srcu),
+			GFP_KERNEL | __GFP_ZERO, node_id);
 	if (!q)
 		return NULL;
+
+	if (alloc_srcu) {
+		blk_queue_flag_set(QUEUE_FLAG_HAS_SRCU, q);
+		if (init_srcu_struct(q->srcu) != 0)
+			goto fail_q;
+	}
 
 	q->last_merge = NULL;
 
 	q->id = ida_simple_get(&blk_queue_ida, 0, 0, GFP_KERNEL);
 	if (q->id < 0)
-		goto fail_q;
+		goto fail_srcu;
 
 	ret = bioset_init(&q->bio_split, BIO_POOL_SIZE, 0, 0);
 	if (ret)
@@ -509,9 +472,6 @@ struct request_queue *blk_alloc_queue(int node_id)
 	timer_setup(&q->timeout, blk_rq_timed_out_timer, 0);
 	INIT_WORK(&q->timeout_work, blk_timeout_work);
 	INIT_LIST_HEAD(&q->icq_list);
-#ifdef CONFIG_BLK_CGROUP
-	INIT_LIST_HEAD(&q->blkg_list);
-#endif
 
 	kobject_init(&q->kobj, &blk_queue_ktype);
 
@@ -532,25 +492,23 @@ struct request_queue *blk_alloc_queue(int node_id)
 				PERCPU_REF_INIT_ATOMIC, GFP_KERNEL))
 		goto fail_stats;
 
-	if (blkcg_init_queue(q))
-		goto fail_ref;
-
 	blk_queue_dma_alignment(q, 511);
 	blk_set_default_limits(&q->limits);
 	q->nr_requests = BLKDEV_DEFAULT_RQ;
 
 	return q;
 
-fail_ref:
-	percpu_ref_exit(&q->q_usage_counter);
 fail_stats:
 	blk_free_queue_stats(q->stats);
 fail_split:
 	bioset_exit(&q->bio_split);
 fail_id:
 	ida_simple_remove(&blk_queue_ida, q->id);
+fail_srcu:
+	if (alloc_srcu)
+		cleanup_srcu_struct(q->srcu);
 fail_q:
-	kmem_cache_free(blk_requestq_cachep, q);
+	kmem_cache_free(blk_get_queue_kmem_cache(alloc_srcu), q);
 	return NULL;
 }
 
@@ -573,17 +531,6 @@ bool blk_get_queue(struct request_queue *q)
 }
 EXPORT_SYMBOL(blk_get_queue);
 
-static void handle_bad_sector(struct bio *bio, sector_t maxsector)
-{
-	char b[BDEVNAME_SIZE];
-
-	pr_info_ratelimited("%s: attempt to access beyond end of device\n"
-			    "%s: rw=%d, want=%llu, limit=%llu\n",
-			    current->comm,
-			    bio_devname(bio, b), bio->bi_opf,
-			    bio_end_sector(bio), maxsector);
-}
-
 #ifdef CONFIG_FAIL_MAKE_REQUEST
 
 static DECLARE_FAULT_ATTR(fail_make_request);
@@ -594,7 +541,7 @@ static int __init setup_fail_make_request(char *str)
 }
 __setup("fail_make_request=", setup_fail_make_request);
 
-static bool should_fail_request(struct block_device *part, unsigned int bytes)
+bool should_fail_request(struct block_device *part, unsigned int bytes)
 {
 	return part->bd_make_it_fail && should_fail(&fail_make_request, bytes);
 }
@@ -608,28 +555,15 @@ static int __init fail_make_request_debugfs(void)
 }
 
 late_initcall(fail_make_request_debugfs);
-
-#else /* CONFIG_FAIL_MAKE_REQUEST */
-
-static inline bool should_fail_request(struct block_device *part,
-					unsigned int bytes)
-{
-	return false;
-}
-
 #endif /* CONFIG_FAIL_MAKE_REQUEST */
 
 static inline bool bio_check_ro(struct bio *bio)
 {
 	if (op_is_write(bio_op(bio)) && bdev_read_only(bio->bi_bdev)) {
-		char b[BDEVNAME_SIZE];
-
 		if (op_is_flush(bio->bi_opf) && !bio_sectors(bio))
 			return false;
-
-		WARN_ONCE(1,
-		       "Trying to write to read-only block-device %s (partno %d)\n",
-			bio_devname(bio, b), bio->bi_bdev->bd_partno);
+		pr_warn("Trying to write to read-only block-device %pg\n",
+			bio->bi_bdev);
 		/* Older lvm-tools actually trigger this */
 		return false;
 	}
@@ -658,7 +592,11 @@ static inline int bio_check_eod(struct bio *bio)
 	if (nr_sectors && maxsector &&
 	    (nr_sectors > maxsector ||
 	     bio->bi_iter.bi_sector > maxsector - nr_sectors)) {
-		handle_bad_sector(bio, maxsector);
+		pr_info_ratelimited("%s: attempt to access beyond end of device\n"
+				    "%pg: rw=%d, want=%llu, limit=%llu\n",
+				    current->comm,
+				    bio->bi_bdev, bio->bi_opf,
+				    bio_end_sector(bio), maxsector);
 		return -EIO;
 	}
 	return 0;
@@ -718,7 +656,123 @@ static inline blk_status_t blk_check_zone_append(struct request_queue *q,
 	return BLK_STS_OK;
 }
 
-noinline_for_stack bool submit_bio_checks(struct bio *bio)
+static void __submit_bio(struct bio *bio)
+{
+	struct gendisk *disk = bio->bi_bdev->bd_disk;
+
+	if (unlikely(!blk_crypto_bio_prep(&bio)))
+		return;
+
+	if (!disk->fops->submit_bio) {
+		blk_mq_submit_bio(bio);
+	} else if (likely(bio_queue_enter(bio) == 0)) {
+		disk->fops->submit_bio(bio);
+		blk_queue_exit(disk->queue);
+	}
+}
+
+/*
+ * The loop in this function may be a bit non-obvious, and so deserves some
+ * explanation:
+ *
+ *  - Before entering the loop, bio->bi_next is NULL (as all callers ensure
+ *    that), so we have a list with a single bio.
+ *  - We pretend that we have just taken it off a longer list, so we assign
+ *    bio_list to a pointer to the bio_list_on_stack, thus initialising the
+ *    bio_list of new bios to be added.  ->submit_bio() may indeed add some more
+ *    bios through a recursive call to submit_bio_noacct.  If it did, we find a
+ *    non-NULL value in bio_list and re-enter the loop from the top.
+ *  - In this case we really did just take the bio of the top of the list (no
+ *    pretending) and so remove it from bio_list, and call into ->submit_bio()
+ *    again.
+ *
+ * bio_list_on_stack[0] contains bios submitted by the current ->submit_bio.
+ * bio_list_on_stack[1] contains bios that were submitted before the current
+ *	->submit_bio_bio, but that haven't been processed yet.
+ */
+static void __submit_bio_noacct(struct bio *bio)
+{
+	struct bio_list bio_list_on_stack[2];
+
+	BUG_ON(bio->bi_next);
+
+	bio_list_init(&bio_list_on_stack[0]);
+	current->bio_list = bio_list_on_stack;
+
+	do {
+		struct request_queue *q = bdev_get_queue(bio->bi_bdev);
+		struct bio_list lower, same;
+
+		/*
+		 * Create a fresh bio_list for all subordinate requests.
+		 */
+		bio_list_on_stack[1] = bio_list_on_stack[0];
+		bio_list_init(&bio_list_on_stack[0]);
+
+		__submit_bio(bio);
+
+		/*
+		 * Sort new bios into those for a lower level and those for the
+		 * same level.
+		 */
+		bio_list_init(&lower);
+		bio_list_init(&same);
+		while ((bio = bio_list_pop(&bio_list_on_stack[0])) != NULL)
+			if (q == bdev_get_queue(bio->bi_bdev))
+				bio_list_add(&same, bio);
+			else
+				bio_list_add(&lower, bio);
+
+		/*
+		 * Now assemble so we handle the lowest level first.
+		 */
+		bio_list_merge(&bio_list_on_stack[0], &lower);
+		bio_list_merge(&bio_list_on_stack[0], &same);
+		bio_list_merge(&bio_list_on_stack[0], &bio_list_on_stack[1]);
+	} while ((bio = bio_list_pop(&bio_list_on_stack[0])));
+
+	current->bio_list = NULL;
+}
+
+static void __submit_bio_noacct_mq(struct bio *bio)
+{
+	struct bio_list bio_list[2] = { };
+
+	current->bio_list = bio_list;
+
+	do {
+		__submit_bio(bio);
+	} while ((bio = bio_list_pop(&bio_list[0])));
+
+	current->bio_list = NULL;
+}
+
+void submit_bio_noacct_nocheck(struct bio *bio)
+{
+	/*
+	 * We only want one ->submit_bio to be active at a time, else stack
+	 * usage with stacked devices could be a problem.  Use current->bio_list
+	 * to collect a list of requests submited by a ->submit_bio method while
+	 * it is active, and then process them after it returned.
+	 */
+	if (current->bio_list)
+		bio_list_add(&current->bio_list[0], bio);
+	else if (!bio->bi_bdev->bd_disk->fops->submit_bio)
+		__submit_bio_noacct_mq(bio);
+	else
+		__submit_bio_noacct(bio);
+}
+
+/**
+ * submit_bio_noacct - re-submit a bio to the block device layer for I/O
+ * @bio:  The bio describing the location in memory and on the device.
+ *
+ * This is a version of submit_bio() that shall only be used for I/O that is
+ * resubmitted to lower level drivers by stacking block drivers.  All file
+ * systems and other upper level users of the block layer should use
+ * submit_bio() instead.
+ */
+void submit_bio_noacct(struct bio *bio)
 {
 	struct block_device *bdev = bio->bi_bdev;
 	struct request_queue *q = bdev_get_queue(bdev);
@@ -802,17 +856,8 @@ noinline_for_stack bool submit_bio_checks(struct bio *bio)
 		break;
 	}
 
-	/*
-	 * Various block parts want %current->io_context, so allocate it up
-	 * front rather than dealing with lots of pain to allocate it only
-	 * where needed. This may fail and the block layer knows how to live
-	 * with it.
-	 */
-	if (unlikely(!current->io_context))
-		create_task_io_context(current, GFP_ATOMIC, q->node);
-
 	if (blk_throtl_bio(bio))
-		return false;
+		return;
 
 	blk_cgroup_bio_start(bio);
 	blkcg_bio_issue_init(bio);
@@ -824,134 +869,14 @@ noinline_for_stack bool submit_bio_checks(struct bio *bio)
 		 */
 		bio_set_flag(bio, BIO_TRACE_COMPLETION);
 	}
-	return true;
+	submit_bio_noacct_nocheck(bio);
+	return;
 
 not_supported:
 	status = BLK_STS_NOTSUPP;
 end_io:
 	bio->bi_status = status;
 	bio_endio(bio);
-	return false;
-}
-
-static void __submit_bio_fops(struct gendisk *disk, struct bio *bio)
-{
-	if (unlikely(bio_queue_enter(bio) != 0))
-		return;
-	if (submit_bio_checks(bio) && blk_crypto_bio_prep(&bio))
-		disk->fops->submit_bio(bio);
-	blk_queue_exit(disk->queue);
-}
-
-static void __submit_bio(struct bio *bio)
-{
-	struct gendisk *disk = bio->bi_bdev->bd_disk;
-
-	if (!disk->fops->submit_bio)
-		blk_mq_submit_bio(bio);
-	else
-		__submit_bio_fops(disk, bio);
-}
-
-/*
- * The loop in this function may be a bit non-obvious, and so deserves some
- * explanation:
- *
- *  - Before entering the loop, bio->bi_next is NULL (as all callers ensure
- *    that), so we have a list with a single bio.
- *  - We pretend that we have just taken it off a longer list, so we assign
- *    bio_list to a pointer to the bio_list_on_stack, thus initialising the
- *    bio_list of new bios to be added.  ->submit_bio() may indeed add some more
- *    bios through a recursive call to submit_bio_noacct.  If it did, we find a
- *    non-NULL value in bio_list and re-enter the loop from the top.
- *  - In this case we really did just take the bio of the top of the list (no
- *    pretending) and so remove it from bio_list, and call into ->submit_bio()
- *    again.
- *
- * bio_list_on_stack[0] contains bios submitted by the current ->submit_bio.
- * bio_list_on_stack[1] contains bios that were submitted before the current
- *	->submit_bio_bio, but that haven't been processed yet.
- */
-static void __submit_bio_noacct(struct bio *bio)
-{
-	struct bio_list bio_list_on_stack[2];
-
-	BUG_ON(bio->bi_next);
-
-	bio_list_init(&bio_list_on_stack[0]);
-	current->bio_list = bio_list_on_stack;
-
-	do {
-		struct request_queue *q = bdev_get_queue(bio->bi_bdev);
-		struct bio_list lower, same;
-
-		/*
-		 * Create a fresh bio_list for all subordinate requests.
-		 */
-		bio_list_on_stack[1] = bio_list_on_stack[0];
-		bio_list_init(&bio_list_on_stack[0]);
-
-		__submit_bio(bio);
-
-		/*
-		 * Sort new bios into those for a lower level and those for the
-		 * same level.
-		 */
-		bio_list_init(&lower);
-		bio_list_init(&same);
-		while ((bio = bio_list_pop(&bio_list_on_stack[0])) != NULL)
-			if (q == bdev_get_queue(bio->bi_bdev))
-				bio_list_add(&same, bio);
-			else
-				bio_list_add(&lower, bio);
-
-		/*
-		 * Now assemble so we handle the lowest level first.
-		 */
-		bio_list_merge(&bio_list_on_stack[0], &lower);
-		bio_list_merge(&bio_list_on_stack[0], &same);
-		bio_list_merge(&bio_list_on_stack[0], &bio_list_on_stack[1]);
-	} while ((bio = bio_list_pop(&bio_list_on_stack[0])));
-
-	current->bio_list = NULL;
-}
-
-static void __submit_bio_noacct_mq(struct bio *bio)
-{
-	struct bio_list bio_list[2] = { };
-
-	current->bio_list = bio_list;
-
-	do {
-		__submit_bio(bio);
-	} while ((bio = bio_list_pop(&bio_list[0])));
-
-	current->bio_list = NULL;
-}
-
-/**
- * submit_bio_noacct - re-submit a bio to the block device layer for I/O
- * @bio:  The bio describing the location in memory and on the device.
- *
- * This is a version of submit_bio() that shall only be used for I/O that is
- * resubmitted to lower level drivers by stacking block drivers.  All file
- * systems and other upper level users of the block layer should use
- * submit_bio() instead.
- */
-void submit_bio_noacct(struct bio *bio)
-{
-	/*
-	 * We only want one ->submit_bio to be active at a time, else stack
-	 * usage with stacked devices could be a problem.  Use current->bio_list
-	 * to collect a list of requests submited by a ->submit_bio method while
-	 * it is active, and then process them after it returned.
-	 */
-	if (current->bio_list)
-		bio_list_add(&current->bio_list[0], bio);
-	else if (!bio->bi_bdev->bd_disk->fops->submit_bio)
-		__submit_bio_noacct_mq(bio);
-	else
-		__submit_bio_noacct(bio);
 }
 EXPORT_SYMBOL(submit_bio_noacct);
 
@@ -1036,8 +961,7 @@ int bio_poll(struct bio *bio, struct io_comp_batch *iob, unsigned int flags)
 	    !test_bit(QUEUE_FLAG_POLL, &q->queue_flags))
 		return 0;
 
-	if (current->plug)
-		blk_flush_plug(current->plug, false);
+	blk_flush_plug(current->plug, false);
 
 	if (blk_queue_enter(q, BLK_MQ_REQ_NOWAIT))
 		return 0;
@@ -1090,135 +1014,7 @@ int iocb_bio_iopoll(struct kiocb *kiocb, struct io_comp_batch *iob,
 }
 EXPORT_SYMBOL_GPL(iocb_bio_iopoll);
 
-/**
- * blk_cloned_rq_check_limits - Helper function to check a cloned request
- *                              for the new queue limits
- * @q:  the queue
- * @rq: the request being checked
- *
- * Description:
- *    @rq may have been made based on weaker limitations of upper-level queues
- *    in request stacking drivers, and it may violate the limitation of @q.
- *    Since the block layer and the underlying device driver trust @rq
- *    after it is inserted to @q, it should be checked against @q before
- *    the insertion using this generic function.
- *
- *    Request stacking drivers like request-based dm may change the queue
- *    limits when retrying requests on other queues. Those requests need
- *    to be checked against the new queue limits again during dispatch.
- */
-static blk_status_t blk_cloned_rq_check_limits(struct request_queue *q,
-				      struct request *rq)
-{
-	unsigned int max_sectors = blk_queue_get_max_sectors(q, req_op(rq));
-
-	if (blk_rq_sectors(rq) > max_sectors) {
-		/*
-		 * SCSI device does not have a good way to return if
-		 * Write Same/Zero is actually supported. If a device rejects
-		 * a non-read/write command (discard, write same,etc.) the
-		 * low-level device driver will set the relevant queue limit to
-		 * 0 to prevent blk-lib from issuing more of the offending
-		 * operations. Commands queued prior to the queue limit being
-		 * reset need to be completed with BLK_STS_NOTSUPP to avoid I/O
-		 * errors being propagated to upper layers.
-		 */
-		if (max_sectors == 0)
-			return BLK_STS_NOTSUPP;
-
-		printk(KERN_ERR "%s: over max size limit. (%u > %u)\n",
-			__func__, blk_rq_sectors(rq), max_sectors);
-		return BLK_STS_IOERR;
-	}
-
-	/*
-	 * The queue settings related to segment counting may differ from the
-	 * original queue.
-	 */
-	rq->nr_phys_segments = blk_recalc_rq_segments(rq);
-	if (rq->nr_phys_segments > queue_max_segments(q)) {
-		printk(KERN_ERR "%s: over max segments limit. (%hu > %hu)\n",
-			__func__, rq->nr_phys_segments, queue_max_segments(q));
-		return BLK_STS_IOERR;
-	}
-
-	return BLK_STS_OK;
-}
-
-/**
- * blk_insert_cloned_request - Helper for stacking drivers to submit a request
- * @q:  the queue to submit the request
- * @rq: the request being queued
- */
-blk_status_t blk_insert_cloned_request(struct request_queue *q, struct request *rq)
-{
-	blk_status_t ret;
-
-	ret = blk_cloned_rq_check_limits(q, rq);
-	if (ret != BLK_STS_OK)
-		return ret;
-
-	if (rq->rq_disk &&
-	    should_fail_request(rq->rq_disk->part0, blk_rq_bytes(rq)))
-		return BLK_STS_IOERR;
-
-	if (blk_crypto_insert_cloned_request(rq))
-		return BLK_STS_IOERR;
-
-	blk_account_io_start(rq);
-
-	/*
-	 * Since we have a scheduler attached on the top device,
-	 * bypass a potential scheduler on the bottom device for
-	 * insert.
-	 */
-	return blk_mq_request_issue_directly(rq, true);
-}
-EXPORT_SYMBOL_GPL(blk_insert_cloned_request);
-
-/**
- * blk_rq_err_bytes - determine number of bytes till the next failure boundary
- * @rq: request to examine
- *
- * Description:
- *     A request could be merge of IOs which require different failure
- *     handling.  This function determines the number of bytes which
- *     can be failed from the beginning of the request without
- *     crossing into area which need to be retried further.
- *
- * Return:
- *     The number of bytes to fail.
- */
-unsigned int blk_rq_err_bytes(const struct request *rq)
-{
-	unsigned int ff = rq->cmd_flags & REQ_FAILFAST_MASK;
-	unsigned int bytes = 0;
-	struct bio *bio;
-
-	if (!(rq->rq_flags & RQF_MIXED_MERGE))
-		return blk_rq_bytes(rq);
-
-	/*
-	 * Currently the only 'mixing' which can happen is between
-	 * different fastfail types.  We can safely fail portions
-	 * which have all the failfast bits that the first one has -
-	 * the ones which are at least as eager to fail as the first
-	 * one.
-	 */
-	for (bio = rq->bio; bio; bio = bio->bi_next) {
-		if ((bio->bi_opf & ff) != ff)
-			break;
-		bytes += bio->bi_iter.bi_size;
-	}
-
-	/* this could lead to infinite loop */
-	BUG_ON(blk_rq_bytes(rq) && !bytes);
-	return bytes;
-}
-EXPORT_SYMBOL_GPL(blk_rq_err_bytes);
-
-static void update_io_ticks(struct block_device *part, unsigned long now,
-		bool end)
+void update_io_ticks(struct block_device *part, unsigned long now, bool end)
 {
 	unsigned long stamp;
 again:
@@ -1233,45 +1029,33 @@ again:
 	}
 }
 
-void __blk_account_io_done(struct request *req, u64 now)
-{
-	const int sgrp = op_stat_group(req_op(req));
-
-	part_stat_lock();
-	update_io_ticks(req->part, jiffies, true);
-	part_stat_inc(req->part, ios[sgrp]);
-	part_stat_add(req->part, nsecs[sgrp], now - req->start_time_ns);
-	part_stat_unlock();
-}
-
-void __blk_account_io_start(struct request *rq)
-{
-	/* passthrough requests can hold bios that do not have ->bi_bdev set */
-	if (rq->bio && rq->bio->bi_bdev)
-		rq->part = rq->bio->bi_bdev;
-	else
-		rq->part = rq->rq_disk->part0;
-
-	part_stat_lock();
-	update_io_ticks(rq->part, jiffies, false);
-	part_stat_unlock();
-}
-
 static unsigned long __part_start_io_acct(struct block_device *part,
-					  unsigned int sectors, unsigned int op)
+					  unsigned int sectors, unsigned int op,
+					  unsigned long start_time)
 {
 	const int sgrp = op_stat_group(op);
-	unsigned long now = READ_ONCE(jiffies);
 
 	part_stat_lock();
-	update_io_ticks(part, now, false);
+	update_io_ticks(part, start_time, false);
 	part_stat_inc(part, ios[sgrp]);
 	part_stat_add(part, sectors[sgrp], sectors);
 	part_stat_local_inc(part, in_flight[op_is_write(op)]);
 	part_stat_unlock();
 
-	return now;
+	return start_time;
 }
+
+/**
+ * bio_start_io_acct_time - start I/O accounting for bio based drivers
+ * @bio:	bio to start account for
+ * @start_time:	start time that should be passed back to bio_end_io_acct().
+ */
+void bio_start_io_acct_time(struct bio *bio, unsigned long start_time)
+{
+	__part_start_io_acct(bio->bi_bdev, bio_sectors(bio),
+			     bio_op(bio), start_time);
+}
+EXPORT_SYMBOL_GPL(bio_start_io_acct_time);
 
 /**
  * bio_start_io_acct - start I/O accounting for bio based drivers
@@ -1281,14 +1065,15 @@ static unsigned long __part_start_io_acct(struct block_device *part,
  */
 unsigned long bio_start_io_acct(struct bio *bio)
 {
-	return __part_start_io_acct(bio->bi_bdev, bio_sectors(bio), bio_op(bio));
+	return __part_start_io_acct(bio->bi_bdev, bio_sectors(bio),
+				    bio_op(bio), jiffies);
 }
 EXPORT_SYMBOL_GPL(bio_start_io_acct);
 
 unsigned long disk_start_io_acct(struct gendisk *disk, unsigned int sectors,
 				 unsigned int op)
 {
-	return __part_start_io_acct(disk->part0, sectors, op);
+	return __part_start_io_acct(disk->part0, sectors, op, jiffies);
 }
 EXPORT_SYMBOL(disk_start_io_acct);
 
@@ -1320,46 +1105,6 @@ void disk_end_io_acct(struct gendisk *disk, unsigned int op,
 }
 EXPORT_SYMBOL(disk_end_io_acct);
 
-/*
- * Steal bios from a request and add them to a bio list.
- * The request must not have been partially completed before.
- */
-void blk_steal_bios(struct bio_list *list, struct request *rq)
-{
-	if (rq->bio) {
-		if (list->tail)
-			list->tail->bi_next = rq->bio;
-		else
-			list->head = rq->bio;
-		list->tail = rq->biotail;
-
-		rq->bio = NULL;
-		rq->biotail = NULL;
-	}
-
-	rq->__data_len = 0;
-}
-EXPORT_SYMBOL_GPL(blk_steal_bios);
-
-#if ARCH_IMPLEMENTS_FLUSH_DCACHE_PAGE
-/**
- * rq_flush_dcache_pages - Helper function to flush all pages in a request
- * @rq: the request to be flushed
- *
- * Description:
- *     Flush all pages in @rq.
- */
-void rq_flush_dcache_pages(struct request *rq)
-{
-	struct req_iterator iter;
-	struct bio_vec bvec;
-
-	rq_for_each_segment(bvec, rq, iter)
-		flush_dcache_page(bvec.bv_page);
-}
-EXPORT_SYMBOL_GPL(rq_flush_dcache_pages);
-#endif
-
 /**
  * blk_lld_busy - Check if underlying low-level drivers of a device are busy
  * @q : the queue of the device being checked
@@ -1387,93 +1132,6 @@ int blk_lld_busy(struct request_queue *q)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(blk_lld_busy);
-
-/**
- * blk_rq_unprep_clone - Helper function to free all bios in a cloned request
- * @rq: the clone request to be cleaned up
- *
- * Description:
- *     Free all bios in @rq for a cloned request.
- */
-void blk_rq_unprep_clone(struct request *rq)
-{
-	struct bio *bio;
-
-	while ((bio = rq->bio) != NULL) {
-		rq->bio = bio->bi_next;
-
-		bio_put(bio);
-	}
-}
-EXPORT_SYMBOL_GPL(blk_rq_unprep_clone);
-
-/**
- * blk_rq_prep_clone - Helper function to setup clone request
- * @rq: the request to be setup
- * @rq_src: original request to be cloned
- * @bs: bio_set that bios for clone are allocated from
- * @gfp_mask: memory allocation mask for bio
- * @bio_ctr: setup function to be called for each clone bio.
- *           Returns %0 for success, non %0 for failure.
- * @data: private data to be passed to @bio_ctr
- *
- * Description:
- *     Clones bios in @rq_src to @rq, and copies attributes of @rq_src to @rq.
- *     Also, pages which the original bios are pointing to are not copied
- *     and the cloned bios just point same pages.
- *     So cloned bios must be completed before original bios, which means
- *     the caller must complete @rq before @rq_src.
- */
-int blk_rq_prep_clone(struct request *rq, struct request *rq_src,
-		      struct bio_set *bs, gfp_t gfp_mask,
-		      int (*bio_ctr)(struct bio *, struct bio *, void *),
-		      void *data)
-{
-	struct bio *bio, *bio_src;
-
-	if (!bs)
-		bs = &fs_bio_set;
-
-	__rq_for_each_bio(bio_src, rq_src) {
-		bio = bio_clone_fast(bio_src, gfp_mask, bs);
-		if (!bio)
-			goto free_and_out;
-
-		if (bio_ctr && bio_ctr(bio, bio_src, data))
-			goto free_and_out;
-
-		if (rq->bio) {
-			rq->biotail->bi_next = bio;
-			rq->biotail = bio;
-		} else {
-			rq->bio = rq->biotail = bio;
-		}
-		bio = NULL;
-	}
-
-	/* Copy attributes of the original request to the clone request. */
-	rq->__sector = blk_rq_pos(rq_src);
-	rq->__data_len = blk_rq_bytes(rq_src);
-	if (rq_src->rq_flags & RQF_SPECIAL_PAYLOAD) {
-		rq->rq_flags |= RQF_SPECIAL_PAYLOAD;
-		rq->special_vec = rq_src->special_vec;
-	}
-	rq->nr_phys_segments = rq_src->nr_phys_segments;
-	rq->ioprio = rq_src->ioprio;
-
-	if (rq->bio && blk_crypto_rq_bio_prep(rq, rq->bio, gfp_mask) < 0)
-		goto free_and_out;
-
-	return 0;
-
-free_and_out:
-	if (bio)
-		bio_put(bio);
-	blk_rq_unprep_clone(rq);
-
-	return -ENOMEM;
-}
-EXPORT_SYMBOL_GPL(blk_rq_prep_clone);
 
 int kblockd_schedule_work(struct work_struct *work)
 {
@@ -1585,7 +1243,7 @@ struct blk_plug_cb *blk_check_plugged(blk_plug_cb_fn unplug, void *data,
 }
 EXPORT_SYMBOL(blk_check_plugged);
 
-void blk_flush_plug(struct blk_plug *plug, bool from_schedule)
+void __blk_flush_plug(struct blk_plug *plug, bool from_schedule)
 {
 	if (!list_empty(&plug->cb_list))
 		flush_plug_callbacks(plug, from_schedule);
@@ -1614,7 +1272,7 @@ void blk_flush_plug(struct blk_plug *plug, bool from_schedule)
 void blk_finish_plug(struct blk_plug *plug)
 {
 	if (plug == current->plug) {
-		blk_flush_plug(plug, false);
+		__blk_flush_plug(plug, false);
 		current->plug = NULL;
 	}
 }
@@ -1639,6 +1297,9 @@ int __init blk_dev_init(void)
 			sizeof_field(struct request, cmd_flags));
 	BUILD_BUG_ON(REQ_OP_BITS + REQ_FLAG_BITS > 8 *
 			sizeof_field(struct bio, bi_opf));
+	BUILD_BUG_ON(ALIGN(offsetof(struct request_queue, srcu),
+			   __alignof__(struct request_queue)) !=
+		     sizeof(struct request_queue));
 
 	/* used for unplugging and affects IO latency/throughput - HIGHPRI */
 	kblockd_workqueue = alloc_workqueue("kblockd",
@@ -1648,6 +1309,10 @@ int __init blk_dev_init(void)
 
 	blk_requestq_cachep = kmem_cache_create("request_queue",
 			sizeof(struct request_queue), 0, SLAB_PANIC, NULL);
+
+	blk_requestq_srcu_cachep = kmem_cache_create("request_queue_srcu",
+			sizeof(struct request_queue) +
+			sizeof(struct srcu_struct), 0, SLAB_PANIC, NULL);
 
 	blk_debugfs_root = debugfs_create_dir("block", NULL);
 

@@ -142,7 +142,7 @@ static const struct iio_chan_spec_ext_info ad5446_ext_info_powerdown[] = {
 		.shared = IIO_SEPARATE,
 	},
 	IIO_ENUM("powerdown_mode", IIO_SEPARATE, &ad5446_powerdown_mode_enum),
-	IIO_ENUM_AVAILABLE("powerdown_mode", &ad5446_powerdown_mode_enum),
+	IIO_ENUM_AVAILABLE("powerdown_mode", IIO_SHARED_BY_TYPE, &ad5446_powerdown_mode_enum),
 	{ },
 };
 
@@ -491,11 +491,9 @@ static int ad5446_spi_probe(struct spi_device *spi)
 		&ad5446_spi_chip_info[id->driver_data]);
 }
 
-static int ad5446_spi_remove(struct spi_device *spi)
+static void ad5446_spi_remove(struct spi_device *spi)
 {
 	ad5446_remove(&spi->dev);
-
-	return 0;
 }
 
 static struct spi_driver ad5446_spi_driver = {

@@ -64,6 +64,7 @@ extern int icache_44x_need_flush;
 #ifndef __ASSEMBLY__
 
 int map_kernel_page(unsigned long va, phys_addr_t pa, pgprot_t prot);
+void unmap_kernel_page(unsigned long va);
 
 #endif /* !__ASSEMBLY__ */
 
@@ -348,15 +349,14 @@ static inline int pte_young(pte_t pte)
  * of the pte page.  -- paulus
  */
 #ifndef CONFIG_BOOKE
-#define pmd_page(pmd)		\
-	pfn_to_page(pmd_val(pmd) >> PAGE_SHIFT)
+#define pmd_pfn(pmd)		(pmd_val(pmd) >> PAGE_SHIFT)
 #else
 #define pmd_page_vaddr(pmd)	\
 	((unsigned long)(pmd_val(pmd) & ~(PTE_TABLE_SIZE - 1)))
-#define pmd_page(pmd)		\
-	pfn_to_page((__pa(pmd_val(pmd)) >> PAGE_SHIFT))
+#define pmd_pfn(pmd)		(__pa(pmd_val(pmd)) >> PAGE_SHIFT)
 #endif
 
+#define pmd_page(pmd)		pfn_to_page(pmd_pfn(pmd))
 /*
  * Encode and decode a swap entry.
  * Note that the bits we use in a PTE for representing a swap entry

@@ -1244,11 +1244,9 @@ static enum dinode_demise evict_should_delete(struct inode *inode,
 	if (ret)
 		return SHOULD_NOT_DELETE_DINODE;
 
-	if (test_bit(GLF_INSTANTIATE_NEEDED, &ip->i_gl->gl_flags)) {
-		ret = gfs2_instantiate(gh);
-		if (ret)
-			return SHOULD_NOT_DELETE_DINODE;
-	}
+	ret = gfs2_instantiate(gh);
+	if (ret)
+		return SHOULD_NOT_DELETE_DINODE;
 
 	/*
 	 * The inode may have been recreated in the meantime.
@@ -1427,7 +1425,7 @@ static struct inode *gfs2_alloc_inode(struct super_block *sb)
 {
 	struct gfs2_inode *ip;
 
-	ip = kmem_cache_alloc(gfs2_inode_cachep, GFP_KERNEL);
+	ip = alloc_inode_sb(sb, gfs2_inode_cachep, GFP_KERNEL);
 	if (!ip)
 		return NULL;
 	ip->i_flags = 0;

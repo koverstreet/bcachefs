@@ -556,6 +556,20 @@ i915_ttm_resource_get_st(struct drm_i915_gem_object *obj,
 	return intel_region_ttm_resource_to_rsgt(obj->mm.region, res);
 }
 
+static int i915_ttm_truncate(struct drm_i915_gem_object *obj)
+{
+	struct ttm_buffer_object *bo = i915_gem_to_ttm(obj);
+	int err;
+
+	WARN_ON_ONCE(obj->mm.madv == I915_MADV_WILLNEED);
+
+	err = i915_ttm_move_notify(bo);
+	if (err)
+		return err;
+
+	return i915_ttm_purge(obj);
+}
+
 static void i915_ttm_swap_notify(struct ttm_buffer_object *bo)
 {
 	struct drm_i915_gem_object *obj = i915_ttm_to_gem(bo);
@@ -828,11 +842,9 @@ void i915_ttm_adjust_lru(struct drm_i915_gem_object *obj)
 	} else if (obj->mm.madv != I915_MADV_WILLNEED) {
 		bo->priority = I915_TTM_PRIO_PURGE;
 	} else if (!i915_gem_object_has_pages(obj)) {
-		if (bo->priority < I915_TTM_PRIO_HAS_PAGES)
-			bo->priority = I915_TTM_PRIO_HAS_PAGES;
+		bo->priority = I915_TTM_PRIO_NO_PAGES;
 	} else {
-		if (bo->priority > I915_TTM_PRIO_NO_PAGES)
-			bo->priority = I915_TTM_PRIO_NO_PAGES;
+		bo->priority = I915_TTM_PRIO_HAS_PAGES;
 	}
 
 	ttm_bo_move_to_lru_tail(bo, bo->resource, NULL);
@@ -882,6 +894,11 @@ static vm_fault_t vm_fault_ttm(struct vm_fault *vmf)
 	ret = ttm_bo_vm_reserve(bo, vmf);
 	if (ret)
 		return ret;
+
+	if (obj->mm.madv != I915_MADV_WILLNEED) {
+		dma_resv_unlock(bo->base.resv);
+		return VM_FAULT_SIGBUS;
+	}
 
 	if (drm_dev_enter(dev, &idx)) {
 		ret = ttm_bo_vm_fault_reserved(vmf, vmf->vma->vm_page_prot,
@@ -945,6 +962,11 @@ static u64 i915_ttm_mmap_offset(struct drm_i915_gem_object *obj)
 	return drm_vma_node_offset_addr(&obj->base.vma_node);
 }
 
+static void i915_ttm_unmap_virtual(struct drm_i915_gem_object *obj)
+{
+	ttm_bo_unmap_virtual(i915_gem_to_ttm(obj));
+}
+
 static const struct drm_i915_gem_object_ops i915_gem_ttm_obj_ops = {
 	.name = "i915_gem_object_ttm",
 	.flags = I915_GEM_OBJECT_IS_SHRINKABLE |
@@ -952,7 +974,7 @@ static const struct drm_i915_gem_object_ops i915_gem_ttm_obj_ops = {
 
 	.get_pages = i915_ttm_get_pages,
 	.put_pages = i915_ttm_put_pages,
-	.truncate = i915_ttm_purge,
+	.truncate = i915_ttm_truncate,
 	.shrinker_release_pages = i915_ttm_shrinker_release_pages,
 
 	.adjust_lru = i915_ttm_adjust_lru,
@@ -960,6 +982,7 @@ static const struct drm_i915_gem_object_ops i915_gem_ttm_obj_ops = {
 	.migrate = i915_ttm_migrate,
 
 	.mmap_offset = i915_ttm_mmap_offset,
+	.unmap_virtual = i915_ttm_unmap_virtual,
 	.mmap_ops = &vm_ops_ttm,
 };
 

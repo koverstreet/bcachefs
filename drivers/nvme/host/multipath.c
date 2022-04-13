@@ -5,13 +5,50 @@
 
 #include <linux/backing-dev.h>
 #include <linux/moduleparam.h>
+#include <linux/vmalloc.h>
 #include <trace/events/block.h>
 #include "nvme.h"
 
-static bool multipath = true;
+bool multipath = true;
 module_param(multipath, bool, 0444);
 MODULE_PARM_DESC(multipath,
 	"turn on native support for multiple controllers per subsystem");
+
+static const char *nvme_iopolicy_names[] = {
+	[NVME_IOPOLICY_NUMA]	= "numa",
+	[NVME_IOPOLICY_RR]	= "round-robin",
+};
+
+static int iopolicy = NVME_IOPOLICY_NUMA;
+
+static int nvme_set_iopolicy(const char *val, const struct kernel_param *kp)
+{
+	if (!val)
+		return -EINVAL;
+	if (!strncmp(val, "numa", 4))
+		iopolicy = NVME_IOPOLICY_NUMA;
+	else if (!strncmp(val, "round-robin", 11))
+		iopolicy = NVME_IOPOLICY_RR;
+	else
+		return -EINVAL;
+
+	return 0;
+}
+
+static int nvme_get_iopolicy(char *buf, const struct kernel_param *kp)
+{
+	return sprintf(buf, "%s\n", nvme_iopolicy_names[iopolicy]);
+}
+
+module_param_call(iopolicy, nvme_set_iopolicy, nvme_get_iopolicy,
+	&iopolicy, 0644);
+MODULE_PARM_DESC(iopolicy,
+	"Default multipath I/O policy; 'numa' (default) or 'round-robin'");
+
+void nvme_mpath_default_iopolicy(struct nvme_subsystem *subsys)
+{
+	subsys->iopolicy = iopolicy;
+}
 
 void nvme_mpath_unfreeze(struct nvme_subsystem *subsys)
 {
@@ -41,28 +78,6 @@ void nvme_mpath_start_freeze(struct nvme_subsystem *subsys)
 	list_for_each_entry(h, &subsys->nsheads, entry)
 		if (h->disk)
 			blk_freeze_queue_start(h->disk->queue);
-}
-
-/*
- * If multipathing is enabled we need to always use the subsystem instance
- * number for numbering our devices to avoid conflicts between subsystems that
- * have multiple controllers and thus use the multipath-aware subsystem node
- * and those that have a single controller and use the controller node
- * directly.
- */
-bool nvme_mpath_set_disk_name(struct nvme_ns *ns, char *disk_name, int *flags)
-{
-	if (!multipath)
-		return false;
-	if (!ns->head->disk) {
-		sprintf(disk_name, "nvme%dn%d", ns->ctrl->subsys->instance,
-			ns->head->instance);
-		return true;
-	}
-	sprintf(disk_name, "nvme%dc%dn%d", ns->ctrl->subsys->instance,
-		ns->ctrl->instance, ns->head->instance);
-	*flags = GENHD_FL_HIDDEN;
-	return true;
 }
 
 void nvme_failover_req(struct request *req)
@@ -350,8 +365,7 @@ static void nvme_ns_head_submit_bio(struct bio *bio)
 	} else {
 		dev_warn_ratelimited(dev, "no available path - failing I/O\n");
 
-		bio->bi_status = BLK_STS_IOERR;
-		bio_endio(bio);
+		bio_io_error(bio);
 	}
 
 	srcu_read_unlock(&head->srcu, srcu_idx);
@@ -706,11 +720,6 @@ void nvme_mpath_stop(struct nvme_ctrl *ctrl)
 	struct device_attribute subsys_attr_##_name =	\
 		__ATTR(_name, _mode, _show, _store)
 
-static const char *nvme_iopolicy_names[] = {
-	[NVME_IOPOLICY_NUMA]	= "numa",
-	[NVME_IOPOLICY_RR]	= "round-robin",
-};
-
 static ssize_t nvme_subsys_iopolicy_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -817,7 +826,7 @@ void nvme_mpath_remove_disk(struct nvme_ns_head *head)
 {
 	if (!head->disk)
 		return;
-	blk_set_queue_dying(head->disk->queue);
+	blk_mark_disk_dead(head->disk);
 	/* make sure all pending bios are cleaned up */
 	kblockd_schedule_work(&head->requeue_work);
 	flush_work(&head->requeue_work);
@@ -867,7 +876,7 @@ int nvme_mpath_init_identify(struct nvme_ctrl *ctrl, struct nvme_id_ctrl *id)
 	if (ana_log_size > ctrl->ana_log_size) {
 		nvme_mpath_stop(ctrl);
 		nvme_mpath_uninit(ctrl);
-		ctrl->ana_log_buf = kmalloc(ana_log_size, GFP_KERNEL);
+		ctrl->ana_log_buf = kvmalloc(ana_log_size, GFP_KERNEL);
 		if (!ctrl->ana_log_buf)
 			return -ENOMEM;
 	}
@@ -884,7 +893,7 @@ out_uninit:
 
 void nvme_mpath_uninit(struct nvme_ctrl *ctrl)
 {
-	kfree(ctrl->ana_log_buf);
+	kvfree(ctrl->ana_log_buf);
 	ctrl->ana_log_buf = NULL;
 	ctrl->ana_log_size = 0;
 }

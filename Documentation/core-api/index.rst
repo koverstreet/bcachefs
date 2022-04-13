@@ -20,6 +20,7 @@ it.
    workqueue
    printk-basics
    printk-formats
+   printk-index
    symbol-namespaces
 
 Data structures and low-level utilities
@@ -43,6 +44,14 @@ Library functionality that is used throughout the kernel.
    this_cpu_ops
    timekeeping
    errseq
+
+Low level entry and exit
+========================
+
+.. toctree::
+   :maxdepth: 1
+
+   entry
 
 Concurrency primitives
 ======================

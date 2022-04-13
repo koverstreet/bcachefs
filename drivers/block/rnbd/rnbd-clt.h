@@ -75,7 +75,7 @@ struct rnbd_cpu_qlist {
 
 struct rnbd_clt_session {
 	struct list_head        list;
-	struct rtrs_clt        *rtrs;
+	struct rtrs_clt_sess        *rtrs;
 	wait_queue_head_t       rtrs_waitq;
 	bool                    rtrs_ready;
 	struct rnbd_cpu_qlist	__percpu
@@ -118,7 +118,6 @@ struct rnbd_clt_dev {
 	enum rnbd_access_mode	access_mode;
 	u32			nr_poll_queues;
 	bool			read_only;
-	bool			rotational;
 	bool			wc;
 	bool			fua;
 	u32			max_hw_sectors;

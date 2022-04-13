@@ -10,7 +10,6 @@
  */
 
 #include <asm/unaligned.h>
-#include <linux/async.h>
 
 #include "ufshcd.h"
 #include "ufshpb.h"
@@ -495,7 +494,7 @@ static struct ufshpb_req *ufshpb_get_map_req(struct ufshpb_lu *hpb,
 	if (!map_req)
 		return NULL;
 
-	bio = bio_alloc(GFP_KERNEL, hpb->pages_per_srgn);
+	bio = bio_alloc(NULL, hpb->pages_per_srgn, 0, GFP_KERNEL);
 	if (!bio) {
 		ufshpb_put_req(hpb, map_req);
 		return NULL;
@@ -677,7 +676,7 @@ static void ufshpb_execute_umap_req(struct ufshpb_lu *hpb,
 	ufshpb_set_unmap_cmd(rq->cmd, rgn);
 	rq->cmd_len = HPB_WRITE_BUFFER_CMD_LENGTH;
 
-	blk_execute_rq_nowait(NULL, req, 1, ufshpb_umap_req_compl_fn);
+	blk_execute_rq_nowait(req, true, ufshpb_umap_req_compl_fn);
 
 	hpb->stats.umap_req_cnt++;
 }
@@ -719,7 +718,7 @@ static int ufshpb_execute_map_req(struct ufshpb_lu *hpb,
 				map_req->rb.srgn_idx, mem_size);
 	rq->cmd_len = HPB_READ_BUFFER_CMD_LENGTH;
 
-	blk_execute_rq_nowait(NULL, req, 1, ufshpb_map_req_compl_fn);
+	blk_execute_rq_nowait(req, true, ufshpb_map_req_compl_fn);
 
 	hpb->stats.map_req_cnt++;
 	return 0;
@@ -2051,7 +2050,7 @@ static int ufshpb_pre_req_mempool_init(struct ufshpb_lu *hpb)
 		INIT_LIST_HEAD(&pre_req->list_req);
 		pre_req->req = NULL;
 
-		pre_req->bio = bio_alloc(GFP_KERNEL, 1);
+		pre_req->bio = bio_alloc(NULL, 1, 0, GFP_KERNEL);
 		if (!pre_req->bio)
 			goto release_mem;
 

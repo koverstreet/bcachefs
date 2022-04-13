@@ -360,6 +360,7 @@ struct acpi_gpio_mapping;
 
 /* Device */
 struct acpi_device {
+	u32 pld_crc;
 	int device_type;
 	acpi_handle handle;		/* no handle for fixed hardware */
 	struct fwnode_handle fwnode;
@@ -478,6 +479,8 @@ void acpi_initialize_hp_context(struct acpi_device *adev,
 
 /* acpi_device.dev.bus == &acpi_bus_type */
 extern struct bus_type acpi_bus_type;
+
+int acpi_bus_for_each_dev(int (*fn)(struct device *, void *), void *data);
 
 /*
  * Events

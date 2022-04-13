@@ -157,7 +157,7 @@ static void xas_move_index(struct xa_state *xas, unsigned long offset)
 	xas->xa_index += offset << shift;
 }
 
-static void xas_advance(struct xa_state *xas)
+static void xas_next_offset(struct xa_state *xas)
 {
 	xas->xa_offset++;
 	xas_move_index(xas, xas->xa_offset);
@@ -302,7 +302,7 @@ bool xas_nomem(struct xa_state *xas, gfp_t gfp)
 	}
 	if (xas->xa->xa_flags & XA_FLAGS_ACCOUNT)
 		gfp |= __GFP_ACCOUNT;
-	xas->xa_alloc = kmem_cache_alloc(radix_tree_node_cachep, gfp);
+	xas->xa_alloc = kmem_cache_alloc_lru(radix_tree_node_cachep, xas->xa_lru, gfp);
 	if (!xas->xa_alloc)
 		return false;
 	xas->xa_alloc->parent = NULL;
@@ -334,10 +334,10 @@ static bool __xas_nomem(struct xa_state *xas, gfp_t gfp)
 		gfp |= __GFP_ACCOUNT;
 	if (gfpflags_allow_blocking(gfp)) {
 		xas_unlock_type(xas, lock_type);
-		xas->xa_alloc = kmem_cache_alloc(radix_tree_node_cachep, gfp);
+		xas->xa_alloc = kmem_cache_alloc_lru(radix_tree_node_cachep, xas->xa_lru, gfp);
 		xas_lock_type(xas, lock_type);
 	} else {
-		xas->xa_alloc = kmem_cache_alloc(radix_tree_node_cachep, gfp);
+		xas->xa_alloc = kmem_cache_alloc_lru(radix_tree_node_cachep, xas->xa_lru, gfp);
 	}
 	if (!xas->xa_alloc)
 		return false;
@@ -371,7 +371,7 @@ static void *xas_alloc(struct xa_state *xas, unsigned int shift)
 		if (xas->xa->xa_flags & XA_FLAGS_ACCOUNT)
 			gfp |= __GFP_ACCOUNT;
 
-		node = kmem_cache_alloc(radix_tree_node_cachep, gfp);
+		node = kmem_cache_alloc_lru(radix_tree_node_cachep, xas->xa_lru, gfp);
 		if (!node) {
 			xas_set_err(xas, -ENOMEM);
 			return NULL;
@@ -1014,7 +1014,7 @@ void xas_split_alloc(struct xa_state *xas, void *entry, unsigned int order,
 		void *sibling = NULL;
 		struct xa_node *node;
 
-		node = kmem_cache_alloc(radix_tree_node_cachep, gfp);
+		node = kmem_cache_alloc_lru(radix_tree_node_cachep, xas->xa_lru, gfp);
 		if (!node)
 			goto nomem;
 		node->array = xas->xa;
@@ -1250,7 +1250,7 @@ void *xas_find(struct xa_state *xas, unsigned long max)
 		xas->xa_offset = ((xas->xa_index - 1) & XA_CHUNK_MASK) + 1;
 	}
 
-	xas_advance(xas);
+	xas_next_offset(xas);
 
 	while (xas->xa_node && (xas->xa_index <= max)) {
 		if (unlikely(xas->xa_offset == XA_CHUNK_SIZE)) {
@@ -1268,7 +1268,7 @@ void *xas_find(struct xa_state *xas, unsigned long max)
 		if (entry && !xa_is_sibling(entry))
 			return entry;
 
-		xas_advance(xas);
+		xas_next_offset(xas);
 	}
 
 	if (!xas->xa_node)

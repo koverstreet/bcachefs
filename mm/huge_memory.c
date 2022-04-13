@@ -34,6 +34,7 @@
 #include <linux/oom.h>
 #include <linux/numa.h>
 #include <linux/page_owner.h>
+#include <linux/sched/sysctl.h>
 
 #include <asm/tlb.h>
 #include <asm/pgalloc.h>
@@ -582,13 +583,10 @@ unsigned long thp_get_unmapped_area(struct file *filp, unsigned long addr,
 	unsigned long ret;
 	loff_t off = (loff_t)pgoff << PAGE_SHIFT;
 
-	if (!IS_DAX(filp->f_mapping->host) || !IS_ENABLED(CONFIG_FS_DAX_PMD))
-		goto out;
-
 	ret = __thp_get_unmapped_area(filp, addr, len, off, flags, PMD_SIZE);
 	if (ret)
 		return ret;
-out:
+
 	return current->mm->get_unmapped_area(filp, addr, len, pgoff, flags);
 }
 EXPORT_SYMBOL_GPL(thp_get_unmapped_area);
@@ -1322,7 +1320,7 @@ vm_fault_t do_huge_pmd_wp_page(struct vm_fault *vmf)
 	 * We can only reuse the page if nobody else maps the huge page or it's
 	 * part.
 	 */
-	if (reuse_swap_page(page, NULL)) {
+	if (reuse_swap_page(page)) {
 		pmd_t entry;
 		entry = pmd_mkyoung(orig_pmd);
 		entry = maybe_pmd_mkwrite(pmd_mkdirty(entry), vma);
@@ -1380,39 +1378,6 @@ struct page *follow_trans_huge_pmd(struct vm_area_struct *vma,
 	if (flags & FOLL_TOUCH)
 		touch_pmd(vma, addr, pmd, flags);
 
-	if ((flags & FOLL_MLOCK) && (vma->vm_flags & VM_LOCKED)) {
-		/*
-		 * We don't mlock() pte-mapped THPs. This way we can avoid
-		 * leaking mlocked pages into non-VM_LOCKED VMAs.
-		 *
-		 * For anon THP:
-		 *
-		 * In most cases the pmd is the only mapping of the page as we
-		 * break COW for the mlock() -- see gup_flags |= FOLL_WRITE for
-		 * writable private mappings in populate_vma_page_range().
-		 *
-		 * The only scenario when we have the page shared here is if we
-		 * mlocking read-only mapping shared over fork(). We skip
-		 * mlocking such pages.
-		 *
-		 * For file THP:
-		 *
-		 * We can expect PageDoubleMap() to be stable under page lock:
-		 * for file pages we set it in page_add_file_rmap(), which
-		 * requires page to be locked.
-		 */
-
-		if (PageAnon(page) && compound_mapcount(page) != 1)
-			goto skip_mlock;
-		if (PageDoubleMap(page) || !page->mapping)
-			goto skip_mlock;
-		if (!trylock_page(page))
-			goto skip_mlock;
-		if (page->mapping && !PageDoubleMap(page))
-			mlock_vma_page(page);
-		unlock_page(page);
-	}
-skip_mlock:
 	page += (addr & ~HPAGE_PMD_MASK) >> PAGE_SHIFT;
 	VM_BUG_ON_PAGE(!PageCompound(page) && !is_zone_device_page(page), page);
 
@@ -1610,7 +1575,7 @@ int zap_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 
 		if (pmd_present(orig_pmd)) {
 			page = pmd_page(orig_pmd);
-			page_remove_rmap(page, true);
+			page_remove_rmap(page, vma, true);
 			VM_BUG_ON_PAGE(page_mapcount(page) < 0, page);
 			VM_BUG_ON_PAGE(!PageHead(page), page);
 		} else if (thp_migration_supported()) {
@@ -1766,17 +1731,28 @@ int change_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 	}
 #endif
 
-	/*
-	 * Avoid trapping faults against the zero page. The read-only
-	 * data is likely to be read-cached on the local CPU and
-	 * local/remote hits to the zero page are not interesting.
-	 */
-	if (prot_numa && is_huge_zero_pmd(*pmd))
-		goto unlock;
+	if (prot_numa) {
+		struct page *page;
+		/*
+		 * Avoid trapping faults against the zero page. The read-only
+		 * data is likely to be read-cached on the local CPU and
+		 * local/remote hits to the zero page are not interesting.
+		 */
+		if (is_huge_zero_pmd(*pmd))
+			goto unlock;
 
-	if (prot_numa && pmd_protnone(*pmd))
-		goto unlock;
+		if (pmd_protnone(*pmd))
+			goto unlock;
 
+		page = pmd_page(*pmd);
+		/*
+		 * Skip scanning top tier node if normal numa
+		 * balancing is disabled
+		 */
+		if (!(sysctl_numa_balancing_mode & NUMA_BALANCING_NORMAL) &&
+		    node_is_toptier(page_to_nid(page)))
+			goto unlock;
+	}
 	/*
 	 * In case prot_numa, we are under mmap_read_lock(mm). It's critical
 	 * to not clear pmd intermittently to avoid race with MADV_DONTNEED
@@ -1995,7 +1971,7 @@ static void __split_huge_pmd_locked(struct vm_area_struct *vma, pmd_t *pmd,
 				set_page_dirty(page);
 			if (!PageReferenced(page) && pmd_young(old_pmd))
 				SetPageReferenced(page);
-			page_remove_rmap(page, true);
+			page_remove_rmap(page, vma, true);
 			put_page(page);
 		}
 		add_mm_counter(mm, mm_counter_file(page), -HPAGE_PMD_NR);
@@ -2055,9 +2031,9 @@ static void __split_huge_pmd_locked(struct vm_area_struct *vma, pmd_t *pmd,
 		young = pmd_young(old_pmd);
 		soft_dirty = pmd_soft_dirty(old_pmd);
 		uffd_wp = pmd_uffd_wp(old_pmd);
+		VM_BUG_ON_PAGE(!page_count(page), page);
+		page_ref_add(page, HPAGE_PMD_NR - 1);
 	}
-	VM_BUG_ON_PAGE(!page_count(page), page);
-	page_ref_add(page, HPAGE_PMD_NR - 1);
 
 	/*
 	 * Withdraw the table only after we mark the pmd entry invalid.
@@ -2129,6 +2105,9 @@ static void __split_huge_pmd_locked(struct vm_area_struct *vma, pmd_t *pmd,
 			}
 		}
 		unlock_page_memcg(page);
+
+		/* Above is effectively page_remove_rmap(page, vma, true) */
+		munlock_vma_page(page, vma, true);
 	}
 
 	smp_wmb(); /* make pte visible before pmd */
@@ -2136,18 +2115,18 @@ static void __split_huge_pmd_locked(struct vm_area_struct *vma, pmd_t *pmd,
 
 	if (freeze) {
 		for (i = 0; i < HPAGE_PMD_NR; i++) {
-			page_remove_rmap(page + i, false);
+			page_remove_rmap(page + i, vma, false);
 			put_page(page + i);
 		}
 	}
 }
 
 void __split_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
-		unsigned long address, bool freeze, struct page *page)
+		unsigned long address, bool freeze, struct folio *folio)
 {
 	spinlock_t *ptl;
 	struct mmu_notifier_range range;
-	bool do_unlock_page = false;
+	bool do_unlock_folio = false;
 	pmd_t _pmd;
 
 	mmu_notifier_range_init(&range, MMU_NOTIFY_CLEAR, 0, vma, vma->vm_mm,
@@ -2157,20 +2136,20 @@ void __split_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 	ptl = pmd_lock(vma->vm_mm, pmd);
 
 	/*
-	 * If caller asks to setup a migration entries, we need a page to check
-	 * pmd against. Otherwise we can end up replacing wrong page.
+	 * If caller asks to setup a migration entry, we need a folio to check
+	 * pmd against. Otherwise we can end up replacing wrong folio.
 	 */
-	VM_BUG_ON(freeze && !page);
-	if (page) {
-		VM_WARN_ON_ONCE(!PageLocked(page));
-		if (page != pmd_page(*pmd))
+	VM_BUG_ON(freeze && !folio);
+	if (folio) {
+		VM_WARN_ON_ONCE(!folio_test_locked(folio));
+		if (folio != page_folio(pmd_page(*pmd)))
 			goto out;
 	}
 
 repeat:
 	if (pmd_trans_huge(*pmd)) {
-		if (!page) {
-			page = pmd_page(*pmd);
+		if (!folio) {
+			folio = page_folio(pmd_page(*pmd));
 			/*
 			 * An anonymous page must be locked, to ensure that a
 			 * concurrent reuse_swap_page() sees stable mapcount;
@@ -2178,33 +2157,31 @@ repeat:
 			 * and page lock must not be taken when zap_pmd_range()
 			 * calls __split_huge_pmd() while i_mmap_lock is held.
 			 */
-			if (PageAnon(page)) {
-				if (unlikely(!trylock_page(page))) {
-					get_page(page);
+			if (folio_test_anon(folio)) {
+				if (unlikely(!folio_trylock(folio))) {
+					folio_get(folio);
 					_pmd = *pmd;
 					spin_unlock(ptl);
-					lock_page(page);
+					folio_lock(folio);
 					spin_lock(ptl);
 					if (unlikely(!pmd_same(*pmd, _pmd))) {
-						unlock_page(page);
-						put_page(page);
-						page = NULL;
+						folio_unlock(folio);
+						folio_put(folio);
+						folio = NULL;
 						goto repeat;
 					}
-					put_page(page);
+					folio_put(folio);
 				}
-				do_unlock_page = true;
+				do_unlock_folio = true;
 			}
 		}
-		if (PageMlocked(page))
-			clear_page_mlock(page);
 	} else if (!(pmd_devmap(*pmd) || is_pmd_migration_entry(*pmd)))
 		goto out;
 	__split_huge_pmd_locked(vma, pmd, range.start, freeze);
 out:
 	spin_unlock(ptl);
-	if (do_unlock_page)
-		unlock_page(page);
+	if (do_unlock_folio)
+		folio_unlock(folio);
 	/*
 	 * No need to double call mmu_notifier->invalidate_range() callback.
 	 * They are 3 cases to consider inside __split_huge_pmd_locked():
@@ -2222,7 +2199,7 @@ out:
 }
 
 void split_huge_pmd_address(struct vm_area_struct *vma, unsigned long address,
-		bool freeze, struct page *page)
+		bool freeze, struct folio *folio)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
@@ -2243,7 +2220,7 @@ void split_huge_pmd_address(struct vm_area_struct *vma, unsigned long address,
 
 	pmd = pmd_offset(pud, address);
 
-	__split_huge_pmd(vma, pmd, address, freeze, page);
+	__split_huge_pmd(vma, pmd, address, freeze, folio);
 }
 
 static inline void split_huge_pmd_if_needed(struct vm_area_struct *vma, unsigned long address)
@@ -2283,6 +2260,7 @@ void vma_adjust_trans_huge(struct vm_area_struct *vma,
 
 static void unmap_page(struct page *page)
 {
+	struct folio *folio = page_folio(page);
 	enum ttu_flags ttu_flags = TTU_RMAP_LOCKED | TTU_SPLIT_HUGE_PMD |
 		TTU_SYNC;
 
@@ -2293,26 +2271,27 @@ static void unmap_page(struct page *page)
 	 * pages can simply be left unmapped, then faulted back on demand.
 	 * If that is ever changed (perhaps for mlock), update remap_page().
 	 */
-	if (PageAnon(page))
-		try_to_migrate(page, ttu_flags);
+	if (folio_test_anon(folio))
+		try_to_migrate(folio, ttu_flags);
 	else
-		try_to_unmap(page, ttu_flags | TTU_IGNORE_MLOCK);
+		try_to_unmap(folio, ttu_flags | TTU_IGNORE_MLOCK);
 
 	VM_WARN_ON_ONCE_PAGE(page_mapped(page), page);
 }
 
-static void remap_page(struct page *page, unsigned int nr)
+static void remap_page(struct folio *folio, unsigned long nr)
 {
-	int i;
+	int i = 0;
 
 	/* If unmap_page() uses try_to_migrate() on file, remove this check */
-	if (!PageAnon(page))
+	if (!folio_test_anon(folio))
 		return;
-	if (PageTransHuge(page)) {
-		remove_migration_ptes(page, page, true);
-	} else {
-		for (i = 0; i < nr; i++)
-			remove_migration_ptes(page + i, page + i, true);
+	for (;;) {
+		remove_migration_ptes(folio, folio, true);
+		i += folio_nr_pages(folio);
+		if (i >= nr)
+			break;
+		folio = folio_next(folio);
 	}
 }
 
@@ -2332,8 +2311,11 @@ static void lru_add_page_tail(struct page *head, struct page *tail,
 	} else {
 		/* head is still on lru (and we have it frozen) */
 		VM_WARN_ON(!PageLRU(head));
+		if (PageUnevictable(tail))
+			tail->mlock_count = 0;
+		else
+			list_add_tail(&tail->lru, &head->lru);
 		SetPageLRU(tail);
-		list_add_tail(&tail->lru, &head->lru);
 	}
 }
 
@@ -2469,7 +2451,7 @@ static void __split_huge_page(struct page *page, struct list_head *list,
 	}
 	local_irq_enable();
 
-	remap_page(head, nr);
+	remap_page(folio, nr);
 
 	if (PageSwapCache(head)) {
 		swp_entry_t entry = { .val = page_private(head) };
@@ -2492,30 +2474,6 @@ static void __split_huge_page(struct page *page, struct list_head *list,
 		 */
 		put_page(subpage);
 	}
-}
-
-int total_mapcount(struct page *page)
-{
-	int i, compound, nr, ret;
-
-	VM_BUG_ON_PAGE(PageTail(page), page);
-
-	if (likely(!PageCompound(page)))
-		return atomic_read(&page->_mapcount) + 1;
-
-	compound = compound_mapcount(page);
-	nr = compound_nr(page);
-	if (PageHuge(page))
-		return compound;
-	ret = compound;
-	for (i = 0; i < nr; i++)
-		ret += atomic_read(&page[i]._mapcount) + 1;
-	/* File pages has compound_mapcount included in _mapcount */
-	if (!PageAnon(page))
-		return ret - compound * nr;
-	if (PageDoubleMap(page))
-		ret -= nr;
-	return ret;
 }
 
 /*
@@ -2542,53 +2500,44 @@ int total_mapcount(struct page *page)
  * need full accuracy to avoid breaking page pinning, because
  * page_trans_huge_mapcount() is slower than page_mapcount().
  */
-int page_trans_huge_mapcount(struct page *page, int *total_mapcount)
+int page_trans_huge_mapcount(struct page *page)
 {
-	int i, ret, _total_mapcount, mapcount;
+	int i, ret;
 
 	/* hugetlbfs shouldn't call it */
 	VM_BUG_ON_PAGE(PageHuge(page), page);
 
-	if (likely(!PageTransCompound(page))) {
-		mapcount = atomic_read(&page->_mapcount) + 1;
-		if (total_mapcount)
-			*total_mapcount = mapcount;
-		return mapcount;
-	}
+	if (likely(!PageTransCompound(page)))
+		return atomic_read(&page->_mapcount) + 1;
 
 	page = compound_head(page);
 
-	_total_mapcount = ret = 0;
+	ret = 0;
 	for (i = 0; i < thp_nr_pages(page); i++) {
-		mapcount = atomic_read(&page[i]._mapcount) + 1;
+		int mapcount = atomic_read(&page[i]._mapcount) + 1;
 		ret = max(ret, mapcount);
-		_total_mapcount += mapcount;
 	}
-	if (PageDoubleMap(page)) {
+
+	if (PageDoubleMap(page))
 		ret -= 1;
-		_total_mapcount -= thp_nr_pages(page);
-	}
-	mapcount = compound_mapcount(page);
-	ret += mapcount;
-	_total_mapcount += mapcount;
-	if (total_mapcount)
-		*total_mapcount = _total_mapcount;
-	return ret;
+
+	return ret + compound_mapcount(page);
 }
 
 /* Racy check whether the huge page can be split */
-bool can_split_huge_page(struct page *page, int *pextra_pins)
+bool can_split_folio(struct folio *folio, int *pextra_pins)
 {
 	int extra_pins;
 
 	/* Additional pins from page cache */
-	if (PageAnon(page))
-		extra_pins = PageSwapCache(page) ? thp_nr_pages(page) : 0;
+	if (folio_test_anon(folio))
+		extra_pins = folio_test_swapcache(folio) ?
+				folio_nr_pages(folio) : 0;
 	else
-		extra_pins = thp_nr_pages(page);
+		extra_pins = folio_nr_pages(folio);
 	if (pextra_pins)
 		*pextra_pins = extra_pins;
-	return total_mapcount(page) == page_count(page) - extra_pins - 1;
+	return folio_mapcount(folio) == folio_ref_count(folio) - extra_pins - 1;
 }
 
 /*
@@ -2612,8 +2561,10 @@ bool can_split_huge_page(struct page *page, int *pextra_pins)
  */
 int split_huge_page_to_list(struct page *page, struct list_head *list)
 {
-	struct page *head = compound_head(page);
+	struct folio *folio = page_folio(page);
+	struct page *head = &folio->page;
 	struct deferred_split *ds_queue = get_deferred_split_queue(head);
+	XA_STATE(xas, &head->mapping->i_pages, head->index);
 	struct anon_vma *anon_vma = NULL;
 	struct address_space *mapping = NULL;
 	int extra_pins, ret;
@@ -2631,7 +2582,7 @@ int split_huge_page_to_list(struct page *page, struct list_head *list)
 		 * The caller does not necessarily hold an mmap_lock that would
 		 * prevent the anon_vma disappearing so we first we take a
 		 * reference to it and then lock the anon_vma for write. This
-		 * is similar to page_lock_anon_vma_read except the write lock
+		 * is similar to folio_lock_anon_vma_read except the write lock
 		 * is taken to serialise against parallel split or collapse
 		 * operations.
 		 */
@@ -2649,6 +2600,13 @@ int split_huge_page_to_list(struct page *page, struct list_head *list)
 		/* Truncated ? */
 		if (!mapping) {
 			ret = -EBUSY;
+			goto out;
+		}
+
+		xas_split_alloc(&xas, head, compound_order(head),
+				mapping_gfp_mask(mapping) & GFP_RECLAIM_MASK);
+		if (xas_error(&xas)) {
+			ret = xas_error(&xas);
 			goto out;
 		}
 
@@ -2671,7 +2629,7 @@ int split_huge_page_to_list(struct page *page, struct list_head *list)
 	 * Racy check if we can split the page, before unmap_page() will
 	 * split PMDs
 	 */
-	if (!can_split_huge_page(head, &extra_pins)) {
+	if (!can_split_folio(folio, &extra_pins)) {
 		ret = -EBUSY;
 		goto out_unlock;
 	}
@@ -2681,13 +2639,12 @@ int split_huge_page_to_list(struct page *page, struct list_head *list)
 	/* block interrupt reentry in xa_lock and spinlock */
 	local_irq_disable();
 	if (mapping) {
-		XA_STATE(xas, &mapping->i_pages, page_index(head));
-
 		/*
 		 * Check if the head page is present in page cache.
 		 * We assume all tail are present too, if head is there.
 		 */
-		xa_lock(&mapping->i_pages);
+		xas_lock(&xas);
+		xas_reset(&xas);
 		if (xas_load(&xas) != head)
 			goto fail;
 	}
@@ -2703,6 +2660,7 @@ int split_huge_page_to_list(struct page *page, struct list_head *list)
 		if (mapping) {
 			int nr = thp_nr_pages(head);
 
+			xas_split(&xas, head, thp_order(head));
 			if (PageSwapBacked(head)) {
 				__mod_lruvec_page_state(head, NR_SHMEM_THPS,
 							-nr);
@@ -2719,9 +2677,9 @@ int split_huge_page_to_list(struct page *page, struct list_head *list)
 		spin_unlock(&ds_queue->split_queue_lock);
 fail:
 		if (mapping)
-			xa_unlock(&mapping->i_pages);
+			xas_unlock(&xas);
 		local_irq_enable();
-		remap_page(head, thp_nr_pages(head));
+		remap_page(folio, folio_nr_pages(folio));
 		ret = -EBUSY;
 	}
 
@@ -2733,6 +2691,8 @@ out_unlock:
 	if (mapping)
 		i_mmap_unlock_read(mapping);
 out:
+	/* Free any memory we didn't use */
+	xas_nomem(&xas, 0);
 	count_vm_event(!ret ? THP_SPLIT_PAGE : THP_SPLIT_PAGE_FAILED);
 	return ret;
 }
@@ -2953,7 +2913,6 @@ static int split_huge_pages_pid(int pid, unsigned long vaddr_start,
 	 */
 	for (addr = vaddr_start; addr < vaddr_end; addr += PAGE_SIZE) {
 		struct vm_area_struct *vma = find_vma(mm, addr);
-		unsigned int follflags;
 		struct page *page;
 
 		if (!vma || addr < vma->vm_start)
@@ -2966,8 +2925,7 @@ static int split_huge_pages_pid(int pid, unsigned long vaddr_start,
 		}
 
 		/* FOLL_DUMP to ignore special (like zero) pages */
-		follflags = FOLL_GET | FOLL_DUMP;
-		page = follow_page(vma, addr, follflags);
+		page = follow_page(vma, addr, FOLL_GET | FOLL_DUMP);
 
 		if (IS_ERR(page))
 			continue;
@@ -2978,7 +2936,7 @@ static int split_huge_pages_pid(int pid, unsigned long vaddr_start,
 			goto next;
 
 		total++;
-		if (!can_split_huge_page(compound_head(page), NULL))
+		if (!can_split_folio(page_folio(page), NULL))
 			goto next;
 
 		if (!trylock_page(page))
@@ -3171,7 +3129,7 @@ void set_pmd_migration_entry(struct page_vma_mapped_walk *pvmw,
 	if (pmd_soft_dirty(pmdval))
 		pmdswp = pmd_swp_mksoft_dirty(pmdswp);
 	set_pmd_at(mm, address, pvmw->pmd, pmdswp);
-	page_remove_rmap(page, true);
+	page_remove_rmap(page, vma, true);
 	put_page(page);
 }
 
@@ -3197,14 +3155,13 @@ void remove_migration_pmd(struct page_vma_mapped_walk *pvmw, struct page *new)
 	if (pmd_swp_uffd_wp(*pvmw->pmd))
 		pmde = pmd_wrprotect(pmd_mkuffd_wp(pmde));
 
-	flush_cache_range(vma, mmun_start, mmun_start + HPAGE_PMD_SIZE);
 	if (PageAnon(new))
 		page_add_anon_rmap(new, vma, mmun_start, true);
 	else
-		page_add_file_rmap(new, true);
+		page_add_file_rmap(new, vma, true);
 	set_pmd_at(mm, mmun_start, pvmw->pmd, pmde);
-	if ((vma->vm_flags & VM_LOCKED) && !PageDoubleMap(new))
-		mlock_vma_page(new);
+
+	/* No need to invalidate - it was non-present before */
 	update_mmu_cache_pmd(vma, address, pvmw->pmd);
 }
 #endif

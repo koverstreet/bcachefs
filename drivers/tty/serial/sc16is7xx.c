@@ -734,12 +734,15 @@ static irqreturn_t sc16is7xx_irq(int irq, void *dev_id)
 static void sc16is7xx_tx_proc(struct kthread_work *ws)
 {
 	struct uart_port *port = &(to_sc16is7xx_one(ws, tx_work)->port);
+	struct sc16is7xx_port *s = dev_get_drvdata(port->dev);
 
 	if ((port->rs485.flags & SER_RS485_ENABLED) &&
 	    (port->rs485.delay_rts_before_send > 0))
 		msleep(port->rs485.delay_rts_before_send);
 
+	mutex_lock(&s->efr_lock);
 	sc16is7xx_handle_tx(port);
+	mutex_unlock(&s->efr_lock);
 }
 
 static void sc16is7xx_reconf_rs485(struct uart_port *port)
@@ -1440,11 +1443,9 @@ static int sc16is7xx_spi_probe(struct spi_device *spi)
 	return sc16is7xx_probe(&spi->dev, devtype, regmap, spi->irq);
 }
 
-static int sc16is7xx_spi_remove(struct spi_device *spi)
+static void sc16is7xx_spi_remove(struct spi_device *spi)
 {
 	sc16is7xx_remove(&spi->dev);
-
-	return 0;
 }
 
 static const struct spi_device_id sc16is7xx_spi_id_table[] = {

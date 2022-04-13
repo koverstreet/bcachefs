@@ -179,6 +179,7 @@
 #include <linux/kthread.h>
 #include <linux/sched/signal.h>
 #include <linux/limits.h>
+#include <linux/pagemap.h>
 #include <linux/rwsem.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
@@ -2547,7 +2548,7 @@ static int fsg_main_thread(void *common_)
 	up_write(&common->filesem);
 
 	/* Let fsg_unbind() know the thread has exited */
-	complete_and_exit(&common->thread_notifier, 0);
+	kthread_complete_and_exit(&common->thread_notifier, 0);
 }
 
 
