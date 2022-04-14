@@ -2651,9 +2651,9 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 	struct bkey_s_c k;
 	int ret;
 
-	EBUG_ON(iter->path->level);
 	bch2_btree_iter_verify(iter);
 	bch2_btree_iter_verify_entry_exit(iter);
+	EBUG_ON(iter->path->level && (iter->flags & BTREE_ITER_WITH_KEY_CACHE));
 
 	/* extents can't span inode numbers: */
 	if ((iter->flags & BTREE_ITER_IS_EXTENTS) &&
@@ -2688,7 +2688,9 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 
 		if (unlikely(iter->flags & BTREE_ITER_WITH_JOURNAL) &&
 		    (next_update = bch2_journal_keys_peek_slot(trans->c,
-					iter->btree_id, 0, iter->pos))) {
+					iter->btree_id,
+					iter->path->level,
+					iter->pos))) {
 			iter->k = next_update->k;
 			k = bkey_i_to_s_c(next_update);
 			goto out;
@@ -2704,6 +2706,8 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 		k = bch2_btree_path_peek_slot(iter->path, &iter->k);
 	} else {
 		struct bpos next;
+
+		EBUG_ON(iter->path->level);
 
 		if (iter->flags & BTREE_ITER_INTENT) {
 			struct btree_iter iter2;
@@ -2935,12 +2939,6 @@ static void __bch2_trans_iter_init(struct btree_trans *trans,
 	if (!test_bit(JOURNAL_REPLAY_DONE, &trans->c->journal.flags))
 		flags |= BTREE_ITER_WITH_JOURNAL;
 
-	if (!btree_id_cached(trans->c, btree_id)) {
-		flags &= ~BTREE_ITER_CACHED;
-		flags &= ~BTREE_ITER_WITH_KEY_CACHE;
-	} else if (!(flags & BTREE_ITER_CACHED))
-		flags |= BTREE_ITER_WITH_KEY_CACHE;
-
 	iter->trans	= trans;
 	iter->path	= NULL;
 	iter->update_path = NULL;
@@ -2966,6 +2964,12 @@ void bch2_trans_iter_init(struct btree_trans *trans,
 			  unsigned btree_id, struct bpos pos,
 			  unsigned flags)
 {
+	if (!btree_id_cached(trans->c, btree_id)) {
+		flags &= ~BTREE_ITER_CACHED;
+		flags &= ~BTREE_ITER_WITH_KEY_CACHE;
+	} else if (!(flags & BTREE_ITER_CACHED))
+		flags |= BTREE_ITER_WITH_KEY_CACHE;
+
 	__bch2_trans_iter_init(trans, iter, btree_id, pos,
 			       0, 0, flags, _RET_IP_);
 }
