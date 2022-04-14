@@ -276,10 +276,11 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 					    u64 *skipped_open,
 					    u64 *skipped_need_journal_commit,
 					    u64 *skipped_nouse,
+					    struct bkey_s_c freespace_k,
 					    struct closure *cl)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
+	struct btree_iter iter = { NULL };
 	struct bkey_s_c k;
 	struct open_bucket *ob;
 	struct bch_alloc_v4 a;
@@ -287,6 +288,16 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 	unsigned genbits = free_entry >> 56;
 	struct printbuf buf = PRINTBUF;
 	int ret;
+
+	if (b < ca->mi.first_bucket || b >= ca->mi.nbuckets) {
+		pr_buf(&buf, "freespace btree has bucket outside allowed range %u-%llu\n"
+		       "  freespace key ",
+			ca->mi.first_bucket, ca->mi.nbuckets);
+		bch2_bkey_val_to_text(&buf, c, freespace_k);
+		bch2_trans_inconsistent(trans, "%s", buf.buf);
+		ob = ERR_PTR(-EIO);
+		goto err;
+	}
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc, POS(ca->dev_idx, b), BTREE_ITER_CACHED);
 	k = bch2_btree_iter_peek_slot(&iter);
@@ -298,29 +309,26 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 
 	bch2_alloc_to_v4(k, &a);
 
-	if (bch2_fs_inconsistent_on(a.data_type != BCH_DATA_free, c,
-			"non free bucket in freespace btree (state %s)\n"
-			"  %s\n"
-			"  at %llu (genbits %u)",
-			bch2_data_types[a.data_type],
-			(bch2_bkey_val_to_text(&buf, c, k), buf.buf),
-			free_entry, genbits)) {
+	if (genbits != (alloc_freespace_genbits(a) >> 56)) {
+		pr_buf(&buf, "bucket in freespace btree with wrong genbits (got %u should be %llu)\n"
+		       "  freespace key ",
+		       genbits, alloc_freespace_genbits(a) >> 56);
+		bch2_bkey_val_to_text(&buf, c, freespace_k);
+		pr_buf(&buf, "\n  ");
+		bch2_bkey_val_to_text(&buf, c, k);
+		bch2_trans_inconsistent(trans, "%s", buf.buf);
 		ob = ERR_PTR(-EIO);
 		goto err;
+
 	}
 
-	if (bch2_fs_inconsistent_on(genbits != (alloc_freespace_genbits(a) >> 56), c,
-			"bucket in freespace btree with wrong genbits (got %u should be %llu)\n"
-			"  %s",
-			genbits, alloc_freespace_genbits(a) >> 56,
-			(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
-		ob = ERR_PTR(-EIO);
-		goto err;
-	}
-
-	if (bch2_fs_inconsistent_on(b < ca->mi.first_bucket || b >= ca->mi.nbuckets, c,
-			"freespace btree has bucket outside allowed range (got %llu, valid %u-%llu)",
-			b, ca->mi.first_bucket, ca->mi.nbuckets)) {
+	if (a.data_type != BCH_DATA_free) {
+		pr_buf(&buf, "non free bucket in freespace btree\n"
+		       "  freespace key ");
+		bch2_bkey_val_to_text(&buf, c, freespace_k);
+		pr_buf(&buf, "\n  ");
+		bch2_bkey_val_to_text(&buf, c, k);
+		bch2_trans_inconsistent(trans, "%s", buf.buf);
 		ob = ERR_PTR(-EIO);
 		goto err;
 	}
@@ -446,13 +454,13 @@ static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 
 	BUG_ON(ca->new_fs_bucket_idx);
 
-	for_each_btree_key(trans, iter, BTREE_ID_freespace,
-			   POS(ca->dev_idx, *cur_bucket), 0, k, ret) {
+	for_each_btree_key_norestart(trans, iter, BTREE_ID_freespace,
+				     POS(ca->dev_idx, *cur_bucket), 0, k, ret) {
 		if (k.k->p.inode != ca->dev_idx)
 			break;
 
 		for (*cur_bucket = max(*cur_bucket, bkey_start_offset(k.k));
-		     *cur_bucket != k.k->p.offset && !ob;
+		     *cur_bucket < k.k->p.offset && !ob;
 		     (*cur_bucket)++) {
 			if (btree_trans_too_many_iters(trans)) {
 				ob = ERR_PTR(-EINTR);
@@ -466,7 +474,7 @@ static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 					      skipped_open,
 					      skipped_need_journal_commit,
 					      skipped_nouse,
-					      cl);
+					      k, cl);
 		}
 		if (ob)
 			break;
