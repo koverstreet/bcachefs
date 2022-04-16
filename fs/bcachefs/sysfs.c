@@ -617,7 +617,7 @@ STORE(bch2_fs_opts_dir)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, opts_dir);
 	const struct bch_option *opt = container_of(attr, struct bch_option, attr);
-	int ret = size, id = opt - bch2_opt_table;
+	int ret, id = opt - bch2_opt_table;
 	char *tmp;
 	u64 v;
 
@@ -652,6 +652,8 @@ STORE(bch2_fs_opts_dir)
 		bch2_rebalance_add_work(c, S64_MAX);
 		rebalance_wakeup(c);
 	}
+
+	ret = size;
 err:
 	percpu_ref_put(&c->writes);
 	return ret;
