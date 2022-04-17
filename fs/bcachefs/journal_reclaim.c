@@ -589,7 +589,7 @@ static u64 journal_seq_to_flush(struct journal *j)
  * 512 journal entries or 25% of all journal buckets, then
  * journal_next_bucket() should not stall.
  */
-static int __bch2_journal_reclaim(struct journal *j, bool direct)
+static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	bool kthread = (current->flags & PF_KTHREAD) != 0;
@@ -638,16 +638,16 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct)
 		if (atomic_read(&c->btree_cache.dirty) * 2 > c->btree_cache.used)
 			min_nr = 1;
 
-		trace_journal_reclaim_start(c,
-				min_nr,
+		min_key_cache = min(bch2_nr_btree_keys_need_flush(c), (size_t) 128);
+
+		trace_journal_reclaim_start(c, direct, kicked,
+				min_nr, min_key_cache,
 				j->prereserved.reserved,
 				j->prereserved.remaining,
 				atomic_read(&c->btree_cache.dirty),
 				c->btree_cache.used,
 				atomic_long_read(&c->btree_key_cache.nr_dirty),
 				atomic_long_read(&c->btree_key_cache.nr_keys));
-
-		min_key_cache = min(bch2_nr_btree_keys_need_flush(c), (size_t) 128);
 
 		nr_flushed = journal_flush_pins(j, seq_to_flush,
 						min_nr, min_key_cache);
@@ -669,7 +669,7 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct)
 
 int bch2_journal_reclaim(struct journal *j)
 {
-	return __bch2_journal_reclaim(j, true);
+	return __bch2_journal_reclaim(j, true, true);
 }
 
 static int bch2_journal_reclaim_thread(void *arg)
@@ -685,10 +685,12 @@ static int bch2_journal_reclaim_thread(void *arg)
 	j->last_flushed = jiffies;
 
 	while (!ret && !kthread_should_stop()) {
+		bool kicked = j->reclaim_kicked;
+
 		j->reclaim_kicked = false;
 
 		mutex_lock(&j->reclaim_lock);
-		ret = __bch2_journal_reclaim(j, false);
+		ret = __bch2_journal_reclaim(j, false, kicked);
 		mutex_unlock(&j->reclaim_lock);
 
 		now = jiffies;
