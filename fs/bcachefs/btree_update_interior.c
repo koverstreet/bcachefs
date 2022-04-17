@@ -1798,10 +1798,8 @@ int bch2_btree_node_rewrite(struct btree_trans *trans,
 	as = bch2_btree_update_start(trans, iter->path, b->c.level,
 				     false, flags);
 	ret = PTR_ERR_OR_ZERO(as);
-	if (ret) {
-		trace_btree_gc_rewrite_node_fail(c, b);
+	if (ret)
 		goto out;
-	}
 
 	bch2_btree_interior_update_will_free_node(as, b);
 
@@ -1811,7 +1809,7 @@ int bch2_btree_node_rewrite(struct btree_trans *trans,
 	bch2_btree_build_aux_trees(n);
 	six_unlock_write(&n->c.lock);
 
-	trace_btree_gc_rewrite_node(c, b);
+	trace_btree_rewrite(c, b);
 
 	bch2_btree_node_write(c, n, SIX_LOCK_intent, 0);
 
