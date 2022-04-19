@@ -7,11 +7,15 @@
 
 #include <linux/mm.h>
 #include <linux/cma.h>
+#include <linux/seq_buf.h>
+
+#include "slab.h"
 
 void __show_mem(unsigned int filter, nodemask_t *nodemask, int max_zone_idx)
 {
 	unsigned long total = 0, reserved = 0, highmem = 0;
 	struct zone *zone;
+	char *buf;
 
 	printk("Mem-Info:\n");
 	__show_free_areas(filter, nodemask, max_zone_idx);
@@ -34,4 +38,23 @@ void __show_mem(unsigned int filter, nodemask_t *nodemask, int max_zone_idx)
 #ifdef CONFIG_MEMORY_FAILURE
 	printk("%lu pages hwpoisoned\n", atomic_long_read(&num_poisoned_pages));
 #endif
+
+	buf = kmalloc(4096, GFP_ATOMIC);
+	if (buf) {
+		struct seq_buf s;
+
+		printk("Unreclaimable slab info:\n");
+		seq_buf_init(&s, buf, 4096);
+		dump_unreclaimable_slab(&s);
+		seq_buf_terminate(&s);
+		printk("%s", buf);
+
+		printk("Shrinkers:\n");
+		seq_buf_init(&s, buf, 4096);
+		shrinkers_to_text(&s);
+		seq_buf_terminate(&s);
+		printk("%s", buf);
+
+		kfree(buf);
+	}
 }
