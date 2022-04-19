@@ -7,6 +7,9 @@
 
 #include <linux/mm.h>
 #include <linux/cma.h>
+#include <linux/printbuf.h>
+
+#include "slab.h"
 
 void show_mem(unsigned int filter, nodemask_t *nodemask)
 {
@@ -41,4 +44,9 @@ void show_mem(unsigned int filter, nodemask_t *nodemask)
 #ifdef CONFIG_MEMORY_FAILURE
 	printk("%lu pages hwpoisoned\n", atomic_long_read(&num_poisoned_pages));
 #endif
+	printk("Unreclaimable slab info:\n");
+	printk("%pf()", CALL_PP(dump_unreclaimable_slab));
+
+	printk("Shrinkers:\n");
+	printk("%pf()", CALL_PP(shrinkers_to_text));
 }
