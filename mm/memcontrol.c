@@ -62,7 +62,7 @@
 #include <linux/file.h>
 #include <linux/resume_user_mode.h>
 #include <linux/psi.h>
-#include <linux/seq_buf.h>
+#include <linux/printbuf.h>
 #include "internal.h"
 #include <net/sock.h>
 #include <net/ip.h>
@@ -1462,12 +1462,8 @@ static inline unsigned long memcg_page_state_output(struct mem_cgroup *memcg,
 
 static char *memory_stat_format(struct mem_cgroup *memcg)
 {
-	struct seq_buf s;
+	struct printbuf buf = PRINTBUF;
 	int i;
-
-	seq_buf_init(&s, kmalloc(PAGE_SIZE, GFP_KERNEL), PAGE_SIZE);
-	if (!s.buffer)
-		return NULL;
 
 	/*
 	 * Provide statistics on the state of the memory subsystem as
@@ -1485,56 +1481,58 @@ static char *memory_stat_format(struct mem_cgroup *memcg)
 		u64 size;
 
 		size = memcg_page_state_output(memcg, memory_stats[i].idx);
-		seq_buf_printf(&s, "%s %llu\n", memory_stats[i].name, size);
+		prt_printf(&buf, "%s %llu\n", memory_stats[i].name, size);
 
 		if (unlikely(memory_stats[i].idx == NR_SLAB_UNRECLAIMABLE_B)) {
 			size += memcg_page_state_output(memcg,
 							NR_SLAB_RECLAIMABLE_B);
-			seq_buf_printf(&s, "slab %llu\n", size);
+			prt_printf(&buf, "slab %llu\n", size);
 		}
 	}
 
 	/* Accumulated memory events */
 
-	seq_buf_printf(&s, "%s %lu\n", vm_event_name(PGFAULT),
-		       memcg_events(memcg, PGFAULT));
-	seq_buf_printf(&s, "%s %lu\n", vm_event_name(PGMAJFAULT),
-		       memcg_events(memcg, PGMAJFAULT));
-	seq_buf_printf(&s, "%s %lu\n",  vm_event_name(PGREFILL),
-		       memcg_events(memcg, PGREFILL));
-	seq_buf_printf(&s, "pgscan %lu\n",
-		       memcg_events(memcg, PGSCAN_KSWAPD) +
-		       memcg_events(memcg, PGSCAN_DIRECT));
-	seq_buf_printf(&s, "pgsteal %lu\n",
-		       memcg_events(memcg, PGSTEAL_KSWAPD) +
-		       memcg_events(memcg, PGSTEAL_DIRECT));
-	seq_buf_printf(&s, "%s %lu\n", vm_event_name(PGACTIVATE),
-		       memcg_events(memcg, PGACTIVATE));
-	seq_buf_printf(&s, "%s %lu\n", vm_event_name(PGDEACTIVATE),
-		       memcg_events(memcg, PGDEACTIVATE));
-	seq_buf_printf(&s, "%s %lu\n", vm_event_name(PGLAZYFREE),
-		       memcg_events(memcg, PGLAZYFREE));
-	seq_buf_printf(&s, "%s %lu\n", vm_event_name(PGLAZYFREED),
-		       memcg_events(memcg, PGLAZYFREED));
+	prt_printf(&buf, "%s %lu\n", vm_event_name(PGFAULT),
+	       memcg_events(memcg, PGFAULT));
+	prt_printf(&buf, "%s %lu\n", vm_event_name(PGMAJFAULT),
+	       memcg_events(memcg, PGMAJFAULT));
+	prt_printf(&buf, "%s %lu\n",  vm_event_name(PGREFILL),
+	       memcg_events(memcg, PGREFILL));
+	prt_printf(&buf, "pgscan %lu\n",
+	       memcg_events(memcg, PGSCAN_KSWAPD) +
+	       memcg_events(memcg, PGSCAN_DIRECT));
+	prt_printf(&buf, "pgsteal %lu\n",
+	       memcg_events(memcg, PGSTEAL_KSWAPD) +
+	       memcg_events(memcg, PGSTEAL_DIRECT));
+	prt_printf(&buf, "%s %lu\n", vm_event_name(PGACTIVATE),
+	       memcg_events(memcg, PGACTIVATE));
+	prt_printf(&buf, "%s %lu\n", vm_event_name(PGDEACTIVATE),
+	       memcg_events(memcg, PGDEACTIVATE));
+	prt_printf(&buf, "%s %lu\n", vm_event_name(PGLAZYFREE),
+	       memcg_events(memcg, PGLAZYFREE));
+	prt_printf(&buf, "%s %lu\n", vm_event_name(PGLAZYFREED),
+	       memcg_events(memcg, PGLAZYFREED));
 
 #if defined(CONFIG_MEMCG_KMEM) && defined(CONFIG_ZSWAP)
-	seq_buf_printf(&s, "%s %lu\n", vm_event_name(ZSWPIN),
-		       memcg_events(memcg, ZSWPIN));
-	seq_buf_printf(&s, "%s %lu\n", vm_event_name(ZSWPOUT),
-		       memcg_events(memcg, ZSWPOUT));
+	prt_printf(&buf, "%s %lu\n", vm_event_name(ZSWPIN),
+		memcg_events(memcg, ZSWPIN));
+	prt_printf(&buf, "%s %lu\n", vm_event_name(ZSWPOUT),
+		memcg_events(memcg, ZSWPOUT));
 #endif
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
-	seq_buf_printf(&s, "%s %lu\n", vm_event_name(THP_FAULT_ALLOC),
-		       memcg_events(memcg, THP_FAULT_ALLOC));
-	seq_buf_printf(&s, "%s %lu\n", vm_event_name(THP_COLLAPSE_ALLOC),
-		       memcg_events(memcg, THP_COLLAPSE_ALLOC));
+	prt_printf(&buf, "%s %lu\n", vm_event_name(THP_FAULT_ALLOC),
+	       memcg_events(memcg, THP_FAULT_ALLOC));
+	prt_printf(&buf, "%s %lu\n", vm_event_name(THP_COLLAPSE_ALLOC),
+	       memcg_events(memcg, THP_COLLAPSE_ALLOC));
 #endif /* CONFIG_TRANSPARENT_HUGEPAGE */
 
-	/* The above should easily fit into one page */
-	WARN_ON_ONCE(seq_buf_has_overflowed(&s));
+	if (buf.allocation_failure) {
+		printbuf_exit(&buf);
+		return NULL;
+	}
 
-	return s.buffer;
+	return buf.buf;
 }
 
 #define K(x) ((x) << (PAGE_SHIFT-10))
