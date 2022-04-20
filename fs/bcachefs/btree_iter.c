@@ -2210,6 +2210,9 @@ inline bool bch2_btree_iter_advance(struct btree_iter *iter)
 		bch2_btree_iter_set_pos(iter, pos);
 		return ret;
 	} else {
+		if (!btree_path_node(iter->path, iter->path->level))
+			return true;
+
 		iter->advanced = true;
 		return false;
 	}
@@ -2600,7 +2603,7 @@ struct bkey_s_c bch2_btree_iter_peek_all_levels(struct btree_iter *iter)
 		break;
 	}
 
-	bch2_btree_iter_set_pos(iter, k.k->p);
+	iter->pos = k.k->p;
 out:
 	iter->path->should_be_locked = true;
 	bch2_btree_iter_verify(iter);
