@@ -767,7 +767,11 @@ void shrinker_to_text(struct seq_buf *out, struct shrinker *shrinker)
 	struct shrink_control sc = { .gfp_mask = GFP_KERNEL, };
 
 	seq_buf_puts(out, shrinker->name);
-	seq_buf_printf(out, " objects: %lu\n", shrinker->count_objects(shrinker, &sc));
+	seq_buf_putc(out, '\n');
+
+	seq_buf_printf(out, "objects:           %lu\n", shrinker->count_objects(shrinker, &sc));
+	seq_buf_printf(out, "requested to free: %lu\n", atomic_long_read(&shrinker->objects_requested_to_free));
+	seq_buf_printf(out, "objects freed:     %lu\n", atomic_long_read(&shrinker->objects_freed));
 
 	if (shrinker->to_text) {
 		shrinker->to_text(out, shrinker);
@@ -898,12 +902,16 @@ static unsigned long do_shrink_slab(struct shrink_control *shrinkctl,
 		unsigned long ret;
 		unsigned long nr_to_scan = min(batch_size, total_scan);
 
+		atomic_long_add(nr_to_scan, &shrinker->objects_requested_to_free);
+
 		shrinkctl->nr_to_scan = nr_to_scan;
 		shrinkctl->nr_scanned = nr_to_scan;
 		ret = shrinker->scan_objects(shrinker, shrinkctl);
 		if (ret == SHRINK_STOP)
 			break;
+
 		freed += ret;
+		atomic_long_add(ret, &shrinker->objects_freed);
 
 		count_vm_events(SLABS_SCANNED, shrinkctl->nr_scanned);
 		total_scan -= shrinkctl->nr_scanned;
