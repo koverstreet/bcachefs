@@ -994,7 +994,6 @@ static int bch2_fs_initialize_subvolumes(struct bch_fs *c)
 	if (ret)
 		return ret;
 
-
 	bkey_subvolume_init(&root_volume.k_i);
 	root_volume.k.p.offset = BCACHEFS_ROOT_SUBVOL;
 	root_volume.v.flags	= 0;
@@ -1228,6 +1227,8 @@ use_clean:
 			goto err;
 		bch_verbose(c, "done checking allocations");
 
+		set_bit(BCH_FS_INITIAL_GC_DONE, &c->flags);
+
 		bch_info(c, "checking need_discard and freespace btrees");
 		err = "error checking need_discard and freespace btrees";
 		ret = bch2_check_alloc_info(c);
@@ -1235,18 +1236,22 @@ use_clean:
 			goto err;
 		bch_verbose(c, "done checking need_discard and freespace btrees");
 
+		set_bit(BCH_FS_MAY_GO_RW, &c->flags);
+
 		bch_info(c, "checking lrus");
 		err = "error checking lrus";
 		ret = bch2_check_lrus(c, true);
 		if (ret)
 			goto err;
 		bch_verbose(c, "done checking lrus");
+
+		set_bit(BCH_FS_CHECK_LRUS_DONE, &c->flags);
+	} else {
+		set_bit(BCH_FS_INITIAL_GC_DONE, &c->flags);
+		set_bit(BCH_FS_MAY_GO_RW, &c->flags);
 	}
 
 	bch2_stripes_heap_start(c);
-
-	set_bit(BCH_FS_INITIAL_GC_DONE, &c->flags);
-	set_bit(BCH_FS_MAY_GO_RW, &c->flags);
 
 	/*
 	 * Skip past versions that might have possibly been used (as nonces),
