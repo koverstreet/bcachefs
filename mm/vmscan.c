@@ -711,16 +711,22 @@ void shrinker_to_text(struct printbuf *out, struct shrinker *shrinker)
 		pr_buf(out, "%s", shrinker->name);
 	else
 		pr_buf(out, "%ps:", shrinker->scan_objects);
+	pr_newline(out);
+	pr_indent_push(out, 2);
 
-	pr_buf(out, " objects: %lu", shrinker->count_objects(shrinker, &sc));
+	pr_buf(out, "objects:           %lu", shrinker->count_objects(shrinker, &sc));
+	pr_newline(out);
+	pr_buf(out, "requested to free: %lu", atomic_long_read(&shrinker->objects_requested_to_free));
+	pr_newline(out);
+	pr_buf(out, "objects freed:     %lu", atomic_long_read(&shrinker->objects_freed));
 	pr_newline(out);
 
 	if (shrinker->to_text) {
-		pr_indent_push(out, 2);
 		shrinker->to_text(out, shrinker);
-		pr_indent_pop(out, 2);
 		pr_newline(out);
 	}
+
+	pr_indent_pop(out, 2);
 }
 
 /**
@@ -846,12 +852,16 @@ static unsigned long do_shrink_slab(struct shrink_control *shrinkctl,
 		unsigned long ret;
 		unsigned long nr_to_scan = min(batch_size, total_scan);
 
+		atomic_long_add(nr_to_scan, &shrinker->objects_requested_to_free);
+
 		shrinkctl->nr_to_scan = nr_to_scan;
 		shrinkctl->nr_scanned = nr_to_scan;
 		ret = shrinker->scan_objects(shrinker, shrinkctl);
 		if (ret == SHRINK_STOP)
 			break;
+
 		freed += ret;
+		atomic_long_add(ret, &shrinker->objects_freed);
 
 		count_vm_events(SLABS_SCANNED, shrinkctl->nr_scanned);
 		total_scan -= shrinkctl->nr_scanned;
