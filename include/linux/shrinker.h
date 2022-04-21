@@ -86,6 +86,9 @@ struct shrinker {
 #endif
 	/* objs pending delete, per node */
 	atomic_long_t *nr_deferred;
+
+	atomic_long_t objects_requested_to_free;
+	atomic_long_t objects_freed;
 };
 #define DEFAULT_SEEKS 2 /* A good number if you don't know better. */
 
