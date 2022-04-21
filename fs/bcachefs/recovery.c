@@ -1248,6 +1248,7 @@ use_clean:
 		set_bit(BCH_FS_CHECK_LRUS_DONE, &c->flags);
 	} else {
 		set_bit(BCH_FS_INITIAL_GC_DONE, &c->flags);
+		set_bit(BCH_FS_CHECK_LRUS_DONE, &c->flags);
 		set_bit(BCH_FS_MAY_GO_RW, &c->flags);
 	}
 
