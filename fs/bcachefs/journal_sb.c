@@ -2,6 +2,7 @@
 
 #include "bcachefs.h"
 #include "journal_sb.h"
+#include "darray.h"
 
 #include <linux/sort.h>
 
@@ -142,12 +143,6 @@ static int bch2_sb_journal_v2_validate(struct bch_sb *sb,
 	}
 
 	for (i = 0; i + 1 < nr; i++) {
-		if (b[i].end == b[i + 1].start) {
-			pr_buf(err, "contiguous journal buckets ranges %llu-%llu, %llu-%llu",
-			       b[i].start, b[i].end, b[i + 1].start, b[i + 1].end);
-			goto err;
-		}
-
 		if (b[i].end > b[i + 1].start) {
 			pr_buf(err, "duplicate journal buckets in ranges %llu-%llu, %llu-%llu",
 			       b[i].start, b[i].end, b[i + 1].start, b[i + 1].end);
@@ -218,6 +213,8 @@ int bch2_journal_buckets_to_sb(struct bch_fs *c, struct bch_dev *ca)
 			j->d[dst].nr	= le64_to_cpu(1);
 		}
 	}
+
+	BUG_ON(dst + 1 != nr);
 
 	return 0;
 }

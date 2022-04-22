@@ -792,8 +792,8 @@ static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
 	int ret = 0;
 
 	if (c) {
-		bch2_journal_block(&c->journal);
 		bch2_journal_flush_all_pins(&c->journal);
+		bch2_journal_block(&c->journal);
 	}
 
 	bu		= kzalloc(nr_want * sizeof(*bu), GFP_KERNEL);
