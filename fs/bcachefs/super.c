@@ -215,7 +215,8 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 
 	bch_verbose(c, "flushing journal and stopping allocators complete");
 
-	if (test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))
+	if (test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags) &&
+	    !test_bit(BCH_FS_EMERGENCY_RO, &c->flags))
 		set_bit(BCH_FS_CLEAN_SHUTDOWN, &c->flags);
 	bch2_fs_journal_stop(&c->journal);
 
