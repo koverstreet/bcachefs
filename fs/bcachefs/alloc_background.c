@@ -382,7 +382,8 @@ int bch2_alloc_v4_invalid(const struct bch_fs *c, struct bkey_s_c k,
 				return -EINVAL;
 			}
 
-			if (!a.v->io_time[READ]) {
+			if (!a.v->io_time[READ] &&
+			    test_bit(BCH_FS_CHECK_ALLOC_TO_LRU_REFS_DONE, &c->flags)) {
 				pr_buf(err, "cached bucket with read_time == 0");
 				return -EINVAL;
 			}
@@ -587,7 +588,6 @@ int bch2_trans_mark_alloc(struct btree_trans *trans,
 	if (new_a->data_type == BCH_DATA_cached &&
 	    !new_a->io_time[READ])
 		new_a->io_time[READ] = max_t(u64, 1, atomic64_read(&c->io_clock[READ].now));
-
 
 	old_lru = alloc_lru_idx(old_a);
 	new_lru = alloc_lru_idx(*new_a);
