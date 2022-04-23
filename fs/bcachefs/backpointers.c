@@ -5,6 +5,8 @@
 #include "btree_update.h"
 #include "error.h"
 
+#define MAX_EXTENT_COMPRESS_RATIO_SHIFT		10
+
 int bch2_backpointer_invalid(const struct bch_fs *c, struct bkey_s_c k,
 			     int rw, struct printbuf *err)
 {
@@ -20,10 +22,11 @@ int bch2_backpointer_invalid(const struct bch_fs *c, struct bkey_s_c k,
 
 void bch2_backpointer_to_text(struct printbuf *out, const struct bch_backpointer *bp)
 {
-	pr_buf(out, "btree=%s l=%u offset=%llu len=%u pos=",
+	pr_buf(out, "btree=%s l=%u offset=%llu:%u len=%u pos=",
 	       bch2_btree_ids[bp->btree_id],
 	       bp->level,
-	       (u64) bp->bucket_offset,
+	       (u64) (bp->bucket_offset >> MAX_EXTENT_COMPRESS_RATIO_SHIFT),
+	       (u32) bp->bucket_offset & ~(~0U << MAX_EXTENT_COMPRESS_RATIO_SHIFT),
 	       bp->bucket_len);
 	bch2_bpos_to_text(out, bp->pos);
 }
@@ -41,8 +44,6 @@ void bch2_backpointer_swab(struct bkey_s k)
 	bp.v->bucket_len	= swab32(bp.v->bucket_len);
 	bch2_bpos_swab(&bp.v->pos);
 }
-
-#define MAX_EXTENT_COMPRESS_RATIO_SHIFT		10
 
 void bch2_pointer_to_bucket_and_backpointer(struct bch_fs *c,
 				 enum btree_id btree_id, unsigned level,
@@ -357,14 +358,14 @@ int bch2_get_next_backpointer(struct btree_trans *trans,
 	k = bch2_btree_iter_peek_slot(&alloc_iter);
 	ret = bkey_err(k);
 	if (ret)
-		goto out;
+		goto done;
 
 	if (k.k->type != KEY_TYPE_alloc_v4)
-		goto out;
+		goto done;
 
 	a = bkey_s_c_to_alloc_v4(k);
 	if (gen >= 0 && a.v->gen != gen)
-		goto out;
+		goto done;
 
 	for (i = 0; i < BCH_ALLOC_V4_NR_BACKPOINTERS(a.v); i++) {
 		*dst = alloc_v4_backpointers_c(a.v)[i];
@@ -373,7 +374,6 @@ int bch2_get_next_backpointer(struct btree_trans *trans,
 			continue;
 
 		*bp_offset = dst->bucket_offset;
-		ret = 1;
 		goto out;
 	}
 
@@ -387,9 +387,10 @@ int bch2_get_next_backpointer(struct btree_trans *trans,
 
 		*bp_offset = k.k->p.offset - bucket_to_sector(ca, bucket) + U32_MAX;
 		*dst = *bkey_s_c_to_backpointer(k).v;
-		ret = 1;
 		goto out;
 	}
+done:
+	*bp_offset = U64_MAX;
 out:
 	bch2_trans_iter_exit(trans, &bp_iter);
 	bch2_trans_iter_exit(trans, &alloc_iter);
@@ -739,7 +740,7 @@ static int check_one_backpointer(struct btree_trans *trans,
 	ret = bch2_get_next_backpointer(trans, alloc_pos.inode,
 					alloc_pos.offset, -1,
 					bp_offset, &bp);
-	if (ret <= 0)
+	if (ret || *bp_offset == U64_MAX)
 		return ret;
 
 	k = bch2_backpointer_get_key(trans, &iter, bp);
@@ -749,12 +750,10 @@ static int check_one_backpointer(struct btree_trans *trans,
 
 	if (fsck_err_on(!k.k, trans->c,
 			"backpointer points to missing extent\n%s",
-			(bch2_backpointer_to_text(&buf, &bp), buf.buf))) {
+			(bch2_backpointer_to_text(&buf, &bp), buf.buf)))
 		ret = bch2_backpointer_del_by_offset(trans, alloc_pos, *bp_offset);
-	}
 
 	bch2_trans_iter_exit(trans, &iter);
-	ret = 1;
 fsck_err:
 	return ret;
 }
@@ -771,11 +770,11 @@ int bch2_check_backpointers_to_extents(struct bch_fs *c)
 			   BTREE_ITER_PREFETCH, k, ret) {
 		u64 bp_offset = 0;
 
-		while ((ret = __bch2_trans_do(&trans, NULL, NULL,
-					      BTREE_INSERT_LAZY_RW|
-					      BTREE_INSERT_NOFAIL,
-				check_one_backpointer(&trans, iter.pos,
-						&bp_offset))) > 0)
+		while (!(ret = __bch2_trans_do(&trans, NULL, NULL,
+					       BTREE_INSERT_LAZY_RW|
+					       BTREE_INSERT_NOFAIL,
+				check_one_backpointer(&trans, iter.pos, &bp_offset))) &&
+		       bp_offset < U64_MAX)
 			bp_offset++;
 
 		if (ret)

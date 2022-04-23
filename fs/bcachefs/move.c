@@ -916,9 +916,7 @@ int bch2_evacuate_bucket(struct bch_fs *c,
 						&bp_offset, &bp);
 		if (ret == -EINTR)
 			continue;
-		if (ret < 0)
-			goto err;
-		if (!ret)
+		if (ret || bp_offset == U64_MAX)
 			break;
 
 		if (!bp.level) {
@@ -987,7 +985,6 @@ int bch2_evacuate_bucket(struct bch_fs *c,
 
 		bp_offset++;
 	}
-	ret = 0;
 err:
 	bch2_trans_exit(&trans);
 	bch2_bkey_buf_exit(&sk, c);
