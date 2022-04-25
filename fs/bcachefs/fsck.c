@@ -560,7 +560,7 @@ struct inode_walker {
 
 static void inode_walker_exit(struct inode_walker *w)
 {
-	darray_exit(w->inodes);
+	darray_exit(&w->inodes);
 }
 
 static struct inode_walker inode_walker_init(void)
@@ -575,7 +575,7 @@ static int add_inode(struct bch_fs *c, struct inode_walker *w,
 
 	BUG_ON(bch2_inode_unpack(inode, &u));
 
-	return darray_push(w->inodes, ((struct inode_walker_entry) {
+	return darray_push(&w->inodes, ((struct inode_walker_entry) {
 		.inode		= u,
 		.snapshot	= snapshot_t(c, inode.k->p.snapshot)->equiv,
 	}));
@@ -628,7 +628,7 @@ found:
 		while (i && w->inodes.data[i - 1].snapshot > pos.snapshot)
 			--i;
 
-		ret = darray_insert_item(w->inodes, i, w->inodes.data[ancestor_pos]);
+		ret = darray_insert_item(&w->inodes, i, w->inodes.data[ancestor_pos]);
 		if (ret)
 			return ret;
 
@@ -1879,7 +1879,7 @@ static bool path_is_dup(pathbuf *p, u64 inum, u32 snapshot)
 static int path_down(struct bch_fs *c, pathbuf *p,
 		     u64 inum, u32 snapshot)
 {
-	int ret = darray_push(*p, ((struct pathbuf_entry) {
+	int ret = darray_push(p, ((struct pathbuf_entry) {
 		.inum		= inum,
 		.snapshot	= snapshot,
 	}));
@@ -2037,7 +2037,7 @@ static int check_directory_structure(struct bch_fs *c)
 
 	BUG_ON(ret == -EINTR);
 
-	darray_exit(path);
+	darray_exit(&path);
 
 	bch2_trans_exit(&trans);
 	return ret;

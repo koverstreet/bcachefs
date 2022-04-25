@@ -529,7 +529,7 @@ static int btree_update_nodes_written_trans(struct btree_trans *trans,
 	struct bkey_i *k;
 	int ret;
 
-	ret = darray_make_room(trans->extra_journal_entries, as->journal_u64s);
+	ret = darray_make_room(&trans->extra_journal_entries, as->journal_u64s);
 	if (ret)
 		return ret;
 
@@ -1957,7 +1957,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 	} else {
 		BUG_ON(btree_node_root(c, b) != b);
 
-		ret = darray_make_room(trans->extra_journal_entries,
+		ret = darray_make_room(&trans->extra_journal_entries,
 				       jset_u64s(new_key->k.u64s));
 		if (ret)
 			return ret;

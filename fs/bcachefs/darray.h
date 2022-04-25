@@ -36,7 +36,7 @@ static inline int __darray_make_room(darray_void *d, size_t t_size, size_t more)
 }
 
 #define darray_make_room(_d, _more)					\
-	__darray_make_room((darray_void *) &(_d), sizeof((_d).data[0]), (_more))
+	__darray_make_room((darray_void *) (_d), sizeof((_d)->data[0]), (_more))
 
 #define darray_top(_d)		((_d).data[(_d).nr])
 
@@ -45,7 +45,7 @@ static inline int __darray_make_room(darray_void *d, size_t t_size, size_t more)
 	int _ret = darray_make_room((_d), 1);				\
 									\
 	if (!_ret)							\
-		(_d).data[(_d).nr++] = (_item);				\
+		(_d)->data[(_d)->nr++] = (_item);			\
 	_ret;								\
 })
 
@@ -54,7 +54,7 @@ static inline int __darray_make_room(darray_void *d, size_t t_size, size_t more)
 	int _ret = darray_make_room((_d), 1);				\
 									\
 	if (!_ret)							\
-		array_insert_item((_d).data, (_d).nr, (_pos), (_item));	\
+		array_insert_item((_d)->data, (_d)->nr, (_pos), (_item));\
 	_ret;								\
 })
 
@@ -63,13 +63,13 @@ static inline int __darray_make_room(darray_void *d, size_t t_size, size_t more)
 
 #define darray_init(_d)							\
 do {									\
-	(_d).data = NULL;						\
-	(_d).nr = (_d).size = 0;					\
+	(_d)->data = NULL;						\
+	(_d)->nr = (_d)->size = 0;					\
 } while (0)
 
 #define darray_exit(_d)							\
 do {									\
-	kfree((_d).data);						\
+	kfree((_d)->data);						\
 	darray_init(_d);						\
 } while (0)
 

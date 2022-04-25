@@ -76,7 +76,7 @@ static inline void snapshots_seen_init(struct snapshots_seen *s)
 
 static inline int snapshots_seen_add(struct bch_fs *c, struct snapshots_seen *s, u32 id)
 {
-	int ret = darray_push(s->ids, id);
+	int ret = darray_push(&s->ids, id);
 	if (ret)
 		bch_err(c, "error reallocating snapshots_seen table (size %zu)",
 			s->ids.size);

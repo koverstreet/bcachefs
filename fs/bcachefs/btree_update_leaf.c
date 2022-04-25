@@ -1757,7 +1757,7 @@ int bch2_trans_log_msg(struct btree_trans *trans, const char *msg)
 	struct jset_entry_log *l;
 	int ret;
 
-	ret = darray_make_room(trans->extra_journal_entries, jset_u64s(u64s));
+	ret = darray_make_room(&trans->extra_journal_entries, jset_u64s(u64s));
 	if (ret)
 		return ret;
 

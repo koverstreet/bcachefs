@@ -565,7 +565,7 @@ static int snapshot_id_add(snapshot_id_list *s, u32 id)
 {
 	BUG_ON(snapshot_list_has_id(s, id));
 
-	return darray_push(*s, id);
+	return darray_push(s, id);
 }
 
 static int bch2_snapshot_delete_keys_btree(struct btree_trans *trans,
@@ -622,7 +622,7 @@ static int bch2_snapshot_delete_keys_btree(struct btree_trans *trans,
 	}
 	bch2_trans_iter_exit(trans, &iter);
 
-	darray_exit(equiv_seen);
+	darray_exit(&equiv_seen);
 
 	return ret;
 }
@@ -722,7 +722,7 @@ static void bch2_delete_dead_snapshots_work(struct work_struct *work)
 		}
 	}
 err:
-	darray_exit(deleted);
+	darray_exit(&deleted);
 	bch2_trans_exit(&trans);
 	percpu_ref_put(&c->writes);
 }
@@ -888,7 +888,7 @@ void bch2_subvolume_wait_for_pagecache_and_delete(struct work_struct *work)
 	while (!ret) {
 		mutex_lock(&c->snapshots_unlinked_lock);
 		s = c->snapshots_unlinked;
-		darray_init(c->snapshots_unlinked);
+		darray_init(&c->snapshots_unlinked);
 		mutex_unlock(&c->snapshots_unlinked_lock);
 
 		if (!s.nr)
@@ -905,7 +905,7 @@ void bch2_subvolume_wait_for_pagecache_and_delete(struct work_struct *work)
 			}
 		}
 
-		darray_exit(s);
+		darray_exit(&s);
 	}
 
 	percpu_ref_put(&c->writes);

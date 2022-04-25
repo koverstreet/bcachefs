@@ -125,7 +125,7 @@ next:
 		}
 	}
 	bch2_trans_iter_exit(trans, &iter);
-	darray_exit(s.ids);
+	darray_exit(&s.ids);
 
 	return ret;
 }
