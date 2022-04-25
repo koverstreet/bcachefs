@@ -146,8 +146,6 @@ static inline u64 journal_last_unwritten_seq(struct journal *j)
 	return j->seq_ondisk + 1;
 }
 
-void bch2_journal_set_has_inum(struct journal *, u64, u64);
-
 static inline int journal_state_count(union journal_res_state s, int idx)
 {
 	switch (idx) {
