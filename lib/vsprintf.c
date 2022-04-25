@@ -431,7 +431,8 @@ enum format_type {
 	FORMAT_TYPE_UINT,
 	FORMAT_TYPE_INT,
 	FORMAT_TYPE_SIZE_T,
-	FORMAT_TYPE_PTRDIFF
+	FORMAT_TYPE_PTRDIFF,
+	FORMAT_TYPE_FN,
 };
 
 struct printf_spec {
@@ -2512,7 +2513,16 @@ qualifier:
 		return ++fmt - start;
 
 	case 'p':
-		spec->type = FORMAT_TYPE_PTR;
+		fmt++;
+		if (fmt[0] == 'f' &&
+		    fmt[1] == '(') {
+			fmt += 2;
+			spec->type = FORMAT_TYPE_FN;
+		} else
+			spec->type = FORMAT_TYPE_PTR;
+		return fmt - start;
+	case '(':
+		spec->type = FORMAT_TYPE_FN;
 		return ++fmt - start;
 
 	case '%':
@@ -2594,6 +2604,49 @@ set_precision(struct printf_spec *spec, int prec)
 	}
 }
 
+static void call_pr_fn(struct printbuf *out, void *fn, void **fn_args, unsigned nr_args)
+{
+	typedef void (*printf_fn_0)(struct printbuf *);
+	typedef void (*printf_fn_1)(struct printbuf *, void *);
+	typedef void (*printf_fn_2)(struct printbuf *, void *, void *);
+	typedef void (*printf_fn_3)(struct printbuf *, void *, void *, void *);
+	typedef void (*printf_fn_4)(struct printbuf *, void *, void *, void *, void *);
+	typedef void (*printf_fn_5)(struct printbuf *, void *, void *, void *, void *, void *);
+	typedef void (*printf_fn_6)(struct printbuf *, void *, void *, void *, void *, void *, void *);
+	typedef void (*printf_fn_7)(struct printbuf *, void *, void *, void *, void *, void *, void *, void *);
+	typedef void (*printf_fn_8)(struct printbuf *, void *, void *, void *, void *, void *, void *, void *, void *);
+
+	switch (nr_args) {
+	case 0:
+		((printf_fn_0)fn)(out);
+		break;
+	case 1:
+		((printf_fn_1)fn)(out, fn_args[0]);
+		break;
+	case 2:
+		((printf_fn_2)fn)(out, fn_args[0], fn_args[1]);
+		break;
+	case 3:
+		((printf_fn_3)fn)(out, fn_args[0], fn_args[1], fn_args[2]);
+		break;
+	case 4:
+		((printf_fn_4)fn)(out, fn_args[0], fn_args[1], fn_args[2], fn_args[3]);
+		break;
+	case 5:
+		((printf_fn_5)fn)(out, fn_args[0], fn_args[1], fn_args[2], fn_args[3], fn_args[4]);
+		break;
+	case 6:
+		((printf_fn_6)fn)(out, fn_args[0], fn_args[1], fn_args[2], fn_args[3], fn_args[4], fn_args[5]);
+		break;
+	case 7:
+		((printf_fn_7)fn)(out, fn_args[0], fn_args[1], fn_args[2], fn_args[3], fn_args[4], fn_args[5], fn_args[6]);
+		break;
+	case 8:
+		((printf_fn_8)fn)(out, fn_args[0], fn_args[1], fn_args[2], fn_args[3], fn_args[4], fn_args[5], fn_args[6], fn_args[7]);
+		break;
+	}
+}
+
 /**
  * vpr_buf - Format a string, outputting to a printbuf
  * @out: The printbuf to output to
@@ -2656,6 +2709,30 @@ void vpr_buf(struct printbuf *out, const char *fmt, va_list args)
 			while (isalnum(*fmt))
 				fmt++;
 			break;
+
+		case FORMAT_TYPE_FN: {
+			unsigned nr_args = 0;
+			void *fn_args[8];
+			void *fn = va_arg(args, void *);
+
+			while (1) {
+				if (WARN_ON_ONCE(nr_args == ARRAY_SIZE(fn_args)))
+					goto out;
+				if (*fmt++ != '%')
+					goto out;
+				if (*fmt++ != 'p')
+					goto out;
+				fn_args[nr_args++] = va_arg(args, void *);
+				if (*fmt == ')')
+					break;
+				if (*fmt++ != ',')
+					goto out;
+			}
+
+			call_pr_fn(out, fn, fn_args, nr_args);
+			fmt++; /* past trailing ) */
+			break;
+		}
 
 		case FORMAT_TYPE_PERCENT_CHAR:
 			__pr_char(out, '%');

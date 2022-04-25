@@ -783,6 +783,25 @@ test_pointer(void)
 	fourcc_pointer();
 }
 
+static void printf_test_fn(struct printbuf *out, void *p)
+{
+	int *i = p;
+
+	pr_buf(out, "%i", *i);
+}
+
+static void __init
+test_fn(void)
+{
+	int i = 1;
+
+	test("1", "%pf(%p)", printf_test_fn, &i);
+	/*
+	 * Not tested, so we don't fail the build with -Werror:
+	 */
+	//test("1", "%(%p)", printf_test_fn, &i);
+}
+
 static void __init selftest(void)
 {
 	alloced_buffer = kmalloc(BUF_SIZE + 2*PAD_SIZE, GFP_KERNEL);
@@ -794,6 +813,7 @@ static void __init selftest(void)
 	test_number();
 	test_string();
 	test_pointer();
+	test_fn();
 
 	kfree(alloced_buffer);
 }
