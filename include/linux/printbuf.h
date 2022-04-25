@@ -277,4 +277,30 @@ static inline void printbuf_atomic_dec(struct printbuf *buf)
 	buf->atomic--;
 }
 
+/*
+ * This is used for the %pf(%p) sprintf format extension, where we pass a pretty
+ * printer and arguments to the pretty-printer to sprintf
+ *
+ * Instead of passing a pretty-printer function to sprintf directly, we pass it
+ * a pointer to a struct call_pp, so that sprintf can check that the magic
+ * number is present, which in turn ensures that the CALL_PP() macro has been
+ * used in order to typecheck the arguments to the pretty printer function
+ *
+ * Example usage:
+ *   sprintf("%pf(%p)", CALL_PP(prt_bdev, bdev));
+ */
+struct call_pp {
+	unsigned long	magic;
+	void		*fn;
+};
+
+#define PP_TYPECHECK(fn, ...)					\
+	({ while (0) fn((struct printbuf *) NULL, ##__VA_ARGS__); })
+
+#define CALL_PP_MAGIC		(unsigned long) 0xce0b92d22f6b6be4
+
+#define CALL_PP(fn, ...)					\
+	(PP_TYPECHECK(fn, ##__VA_ARGS__),			\
+	 &((struct call_pp) { CALL_PP_MAGIC, fn })), ##__VA_ARGS__
+
 #endif /* _LINUX_PRINTBUF_H */
