@@ -51,10 +51,11 @@ static inline int __darray_make_room(darray_void *d, size_t t_size, size_t more)
 
 #define darray_insert_item(_d, _pos, _item)				\
 ({									\
+	size_t pos = (_pos);						\
 	int _ret = darray_make_room((_d), 1);				\
 									\
 	if (!_ret)							\
-		array_insert_item((_d)->data, (_d)->nr, (_pos), (_item));\
+		array_insert_item((_d)->data, (_d)->nr, pos, (_item));	\
 	_ret;								\
 })
 
