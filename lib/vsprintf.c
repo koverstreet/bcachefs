@@ -430,7 +430,8 @@ enum format_type {
 	FORMAT_TYPE_UINT,
 	FORMAT_TYPE_INT,
 	FORMAT_TYPE_SIZE_T,
-	FORMAT_TYPE_PTRDIFF
+	FORMAT_TYPE_PTRDIFF,
+	FORMAT_TYPE_FN,
 };
 
 struct printf_spec {
@@ -2477,6 +2478,16 @@ char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 		return ptr_to_id(buf, end, ptr, spec);
 }
 
+typedef int (*printf_fn_0)(char *buf, size_t size);
+typedef int (*printf_fn_1)(char *buf, size_t size, void *);
+typedef int (*printf_fn_2)(char *buf, size_t size, void *, void *);
+typedef int (*printf_fn_3)(char *buf, size_t size, void *, void *, void *);
+typedef int (*printf_fn_4)(char *buf, size_t size, void *, void *, void *, void *);
+typedef int (*printf_fn_5)(char *buf, size_t size, void *, void *, void *, void *, void *);
+typedef int (*printf_fn_6)(char *buf, size_t size, void *, void *, void *, void *, void *, void *);
+typedef int (*printf_fn_7)(char *buf, size_t size, void *, void *, void *, void *, void *, void *, void *);
+typedef int (*printf_fn_8)(char *buf, size_t size, void *, void *, void *, void *, void *, void *, void *, void *);
+
 /*
  * Helper function to decode printf style format.
  * Each call decode a token from the format and return the
@@ -2613,6 +2624,9 @@ qualifier:
 
 	case 'p':
 		spec->type = FORMAT_TYPE_PTR;
+		return ++fmt - start;
+	case 'q':
+		spec->type = FORMAT_TYPE_FN;
 		return ++fmt - start;
 
 	case '%':
@@ -2801,6 +2815,62 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 			while (isalnum(*fmt))
 				fmt++;
 			break;
+
+		case FORMAT_TYPE_FN: {
+			unsigned nr_args = 0;
+			void *fn_args[8];
+			void *fn = va_arg(args, void *);
+
+			if (*fmt++ != '(')
+				return 0;
+
+			while (1) {
+				if (nr_args == ARRAY_SIZE(fn_args))
+					return 0;
+				if (*fmt++ != '%')
+					return 0;
+				if (*fmt++ != 'p')
+					return 0;
+				fn_args[nr_args++] = va_arg(args, void *);
+				if (*fmt == ')')
+					break;
+				if (*fmt++ != ',')
+					return 0;
+			}
+
+			switch (nr_args) {
+			case 0:
+				buf += ((printf_fn_0)fn)(buf, size);
+				break;
+			case 1:
+				buf += ((printf_fn_1)fn)(buf, size, fn_args[0]);
+				break;
+			case 2:
+				buf += ((printf_fn_2)fn)(buf, size, fn_args[0], fn_args[1]);
+				break;
+			case 3:
+				buf += ((printf_fn_3)fn)(buf, size, fn_args[0], fn_args[1], fn_args[2]);
+				break;
+			case 4:
+				buf += ((printf_fn_4)fn)(buf, size, fn_args[0], fn_args[1], fn_args[2], fn_args[3]);
+				break;
+			case 5:
+				buf += ((printf_fn_5)fn)(buf, size, fn_args[0], fn_args[1], fn_args[2], fn_args[3], fn_args[4]);
+				break;
+			case 6:
+				buf += ((printf_fn_6)fn)(buf, size, fn_args[0], fn_args[1], fn_args[2], fn_args[3], fn_args[4], fn_args[5]);
+				break;
+			case 7:
+				buf += ((printf_fn_7)fn)(buf, size, fn_args[0], fn_args[1], fn_args[2], fn_args[3], fn_args[4], fn_args[5], fn_args[6]);
+				break;
+			case 8:
+				buf += ((printf_fn_8)fn)(buf, size, fn_args[0], fn_args[1], fn_args[2], fn_args[3], fn_args[4], fn_args[5], fn_args[6], fn_args[7]);
+				break;
+			}
+
+			fmt++; /* past trailing ) */
+			break;
+		}
 
 		case FORMAT_TYPE_PERCENT_CHAR:
 			if (str < end)
