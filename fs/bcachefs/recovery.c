@@ -1264,13 +1264,6 @@ use_clean:
 
 		set_bit(BCH_FS_CHECK_LRUS_DONE, &c->flags);
 
-		bch_info(c, "checking extents to backpointers");
-		err = "error checking extents to backpointers";
-		ret = bch2_check_extents_to_backpointers(c);
-		if (ret)
-			goto err;
-		bch_verbose(c, "done checking extents to backpointers");
-
 		bch_info(c, "checking backpointers to alloc keys");
 		err = "error checking backpointers to alloc keys";
 		ret = bch2_check_backpointers(c);
@@ -1284,6 +1277,13 @@ use_clean:
 		if (ret)
 			goto err;
 		bch_verbose(c, "done checking backpointers to extents");
+
+		bch_info(c, "checking extents to backpointers");
+		err = "error checking extents to backpointers";
+		ret = bch2_check_extents_to_backpointers(c);
+		if (ret)
+			goto err;
+		bch_verbose(c, "done checking extents to backpointers");
 		set_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags);
 
 		bch_info(c, "checking alloc to lru refs");

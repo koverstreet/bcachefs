@@ -397,9 +397,10 @@ out:
 	return ret;
 }
 
-struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
-					 struct btree_iter *iter,
-					 struct bch_backpointer bp)
+struct bkey_s_c __bch2_backpointer_get_key(struct btree_trans *trans,
+					   struct btree_iter *iter,
+					   struct bch_backpointer bp,
+					   bool in_fsck)
 {
 	struct bch_fs *c = trans->c;
 	struct bkey_ptrs_c ptrs;
@@ -435,15 +436,25 @@ struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
 			return k;
 	}
 
-	pr_buf(&buf, "backpointer doesn't match extent it points to:\n  ");
-	bch2_backpointer_to_text(&buf, &bp);
-	pr_buf(&buf, "\n  ");
-	bch2_bkey_val_to_text(&buf, c, k);
-	bch2_trans_inconsistent(trans, "%s", buf.buf);
+	if (!in_fsck) {
+		pr_buf(&buf, "backpointer doesn't match extent it points to:\n  ");
+		bch2_backpointer_to_text(&buf, &bp);
+		pr_buf(&buf, "\n  ");
+		bch2_bkey_val_to_text(&buf, c, k);
+		bch2_trans_inconsistent(trans, "%s", buf.buf);
 
-	bch2_trans_iter_exit(trans, iter);
+		bch2_trans_iter_exit(trans, iter);
+	}
+
 	printbuf_exit(&buf);
 	return bkey_s_c_null;
+}
+
+struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
+					 struct btree_iter *iter,
+					 struct bch_backpointer bp)
+{
+	return __bch2_backpointer_get_key(trans, iter, bp, false);
 }
 
 struct btree *bch2_backpointer_get_node(struct btree_trans *trans,
@@ -743,7 +754,7 @@ static int check_one_backpointer(struct btree_trans *trans,
 	if (ret || *bp_offset == U64_MAX)
 		return ret;
 
-	k = bch2_backpointer_get_key(trans, &iter, bp);
+	k = __bch2_backpointer_get_key(trans, &iter, bp, true);
 	ret = bkey_err(k);
 	if (ret)
 		return ret;
