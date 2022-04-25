@@ -625,6 +625,28 @@ Examples::
 	%p4cc	Y10  little-endian (0x20303159)
 	%p4cc	NV12 big-endian (0xb231564e)
 
+Calling a pretty printer function
+---------------------------------
+
+::
+
+        %pf(%p)     pretty printer function taking one argument
+        %pf(%p,%p)  pretty printer function taking two arguments
+
+For calling generic pretty printers. A pretty printer is a function that takes
+as its first argument a pointer to a printbuf, and then zero or more additional
+pointer arguments. For example::
+
+        void foo_to_text(struct printbuf *out, struct foo *foo)
+        {
+                pr_buf(out, "bar=%u baz=%u", foo->bar, foo->baz);
+        }
+
+        printf("%pf(%p)", CALL_PP(foo_to_text, foo));
+
+Note that a pretty-printer may not sleep if called from printk(). If called from
+pr_buf() or sprintf() there are no such restrictions.
+
 Rust
 ----
 
