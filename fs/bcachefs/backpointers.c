@@ -368,11 +368,10 @@ int bch2_get_next_backpointer(struct btree_trans *trans,
 		goto done;
 
 	for (i = 0; i < BCH_ALLOC_V4_NR_BACKPOINTERS(a.v); i++) {
-		*dst = alloc_v4_backpointers_c(a.v)[i];
-
-		if (dst->bucket_offset < *bp_offset)
+		if (alloc_v4_backpointers_c(a.v)[i].bucket_offset < *bp_offset)
 			continue;
 
+		*dst = alloc_v4_backpointers_c(a.v)[i];
 		*bp_offset = dst->bucket_offset;
 		goto out;
 	}
