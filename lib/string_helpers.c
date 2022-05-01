@@ -15,6 +15,7 @@
 #include <linux/fs.h>
 #include <linux/limits.h>
 #include <linux/mm.h>
+#include <linux/printbuf.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/string_helpers.h>
@@ -586,6 +587,16 @@ int string_escape_mem(const char *src, size_t isz, char *dst, size_t osz,
 	return p - dst;
 }
 EXPORT_SYMBOL(string_escape_mem);
+
+void pr_escaped_string(struct printbuf *out,
+		       const char *src, size_t isz,
+		       unsigned int flags, const char *only)
+{
+	out->pos += string_escape_mem(src, isz, out->buf + out->pos,
+				      printbuf_remaining(out),
+				      flags, only);
+}
+EXPORT_SYMBOL(pr_escaped_string);
 
 /*
  * Return an allocated string that has been escaped of special characters

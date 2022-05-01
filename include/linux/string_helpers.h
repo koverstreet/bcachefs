@@ -10,6 +10,7 @@
 struct device;
 struct file;
 struct task_struct;
+struct printbuf;
 
 /* Descriptions of the types of units to
  * print in */
@@ -70,6 +71,9 @@ static inline int string_escape_mem_any_np(const char *src, size_t isz,
 {
 	return string_escape_mem(src, isz, dst, osz, ESCAPE_ANY_NP, only);
 }
+
+void pr_escaped_string(struct printbuf *out, const char *src, size_t isz,
+		       unsigned int flags, const char *only);
 
 static inline int string_escape_str(const char *src, char *dst, size_t sz,
 		unsigned int flags, const char *only)
