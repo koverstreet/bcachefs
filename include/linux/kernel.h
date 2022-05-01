@@ -207,6 +207,10 @@ extern int num_to_str(char *buf, int size,
 
 /* lib/printf utilities */
 
+struct printbuf;
+extern __printf(2, 3) void prt_printf(struct printbuf *out, const char *fmt, ...);
+extern __printf(2, 0) void prt_vprintf(struct printbuf *out, const char *fmt, va_list);
+
 extern __printf(2, 3) int sprintf(char *buf, const char * fmt, ...);
 extern __printf(2, 0) int vsprintf(char *buf, const char *, va_list);
 extern __printf(3, 4)
