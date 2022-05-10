@@ -4,6 +4,7 @@
 #ifndef _LINUX_PRETTY_PRINTERS_H
 #define _LINUX_PRETTY_PRINTERS_H
 
+void pr_hex_bytes(struct printbuf *, const u8 *, unsigned, unsigned);
 void pr_string_option(struct printbuf *, const char * const[], size_t);
 void pr_bitflags(struct printbuf *, const char * const[], u64);
 

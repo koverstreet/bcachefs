@@ -52,6 +52,7 @@
 #include <asm/byteorder.h>	/* cpu_to_le16 */
 
 #include <linux/string_helpers.h>
+#include <linux/pretty-printers.h>
 #include "kstrtox.h"
 
 static noinline unsigned long long simple_strntoull(const char *startp, size_t max_chars, char **endp, unsigned int base)
@@ -1107,10 +1108,10 @@ void resource_string(struct printbuf *out, struct resource *res,
 }
 
 static noinline_for_stack
-void hex_string(struct printbuf *out, u8 *addr,
+void hex_string(struct printbuf *out, const u8 *addr,
 		struct printf_spec spec, const char *fmt)
 {
-	int i, len = 1;		/* if we pass '%ph[CDN]', field width remains
+	int len = 1;		/* if we pass '%ph[CDN]', field width remains
 				   negative value, fallback to the default */
 	char separator;
 
@@ -1139,13 +1140,7 @@ void hex_string(struct printbuf *out, u8 *addr,
 	if (spec.field_width > 0)
 		len = min_t(int, spec.field_width, 64);
 
-	for (i = 0; i < len; ++i) {
-		__pr_char(out, hex_asc_hi(addr[i]));
-		__pr_char(out, hex_asc_lo(addr[i]));
-
-		if (separator && i != len - 1)
-			__pr_char(out, separator);
-	}
+	pr_hex_bytes(out, addr, len, separator);
 }
 
 static noinline_for_stack
