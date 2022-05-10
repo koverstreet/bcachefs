@@ -36,6 +36,23 @@
  * memory allocation failure we usually don't want to bail out and unwind - we
  * want to print what we've got, on a best-effort basis. But code that does want
  * to return -ENOMEM may check printbuf.allocation_failure.
+ *
+ * Indenting, tabstops:
+ *
+ * To aid is writing multi-line pretty printers spread across multiple
+ * functions, printbufs track the current indent level.
+ *
+ * pr_indent_push() and pr_indent_pop() increase and decrease the current indent
+ * level, respectively.
+ *
+ * To use tabstops, set printbuf->tabstops[]; they are in units of spaces, from
+ * start of line. Once set, pr_tab() will output spaces up to the next tabstop.
+ * pr_tab_rjust() will also advance the current line of text up to the next
+ * tabstop, but it does so by shifting text since the previous tabstop up to the
+ * next tabstop - right justifying it.
+ *
+ * Make sure you use pr_newline() instead of \n in the format string for indent
+ * level and tabstops to work corretly.
  */
 
 #include <linux/string.h>
@@ -44,17 +61,28 @@ struct printbuf {
 	char			*buf;
 	unsigned		size;
 	unsigned		pos;
+	unsigned		last_newline;
+	unsigned		last_field;
+	unsigned		indent;
 	/*
 	 * If nonzero, allocations will be done with GFP_ATOMIC:
 	 */
 	u8			atomic;
 	bool			allocation_failure:1;
 	bool			heap_allocated:1;
+	u8			tabstop;
+	u8			tabstops[4];
 };
 
 int printbuf_make_room(struct printbuf *, unsigned);
 const char *printbuf_str(const struct printbuf *);
 void printbuf_exit(struct printbuf *);
+
+void pr_newline(struct printbuf *);
+void pr_indent_add(struct printbuf *, unsigned);
+void pr_indent_sub(struct printbuf *, unsigned);
+void pr_tab(struct printbuf *);
+void pr_tab_rjust(struct printbuf *);
 
 /* Initializer for a heap allocated printbuf: */
 #define PRINTBUF ((struct printbuf) { .heap_allocated = true })
