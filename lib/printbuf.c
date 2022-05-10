@@ -9,6 +9,7 @@
 #endif
 
 #include <linux/slab.h>
+#include <linux/string_helpers.h>
 #include <linux/printbuf.h>
 
 static inline size_t printbuf_linelen(struct printbuf *buf)
@@ -193,3 +194,59 @@ void pr_tab_rjust(struct printbuf *buf)
 	buf->tabstop++;
 }
 EXPORT_SYMBOL(pr_tab_rjust);
+
+/**
+ * pr_human_readable_u64 - Print out a u64 in human readable units
+ *
+ * Units of 2^10 (default) or 10^3 are controlled via @buf->si_units
+ */
+void pr_human_readable_u64(struct printbuf *buf, u64 v)
+{
+	printbuf_make_room(buf, 10);
+	buf->pos += string_get_size(v, 1, !buf->si_units,
+				    buf->buf + buf->pos,
+				    printbuf_remaining(buf));
+}
+EXPORT_SYMBOL(pr_human_readable_u64);
+
+/**
+ * pr_human_readable_s64 - Print out a s64 in human readable units
+ *
+ * Units of 2^10 (default) or 10^3 are controlled via @buf->si_units
+ */
+void pr_human_readable_s64(struct printbuf *buf, s64 v)
+{
+	if (v < 0)
+		pr_char(buf, '-');
+	pr_human_readable_u64(buf, abs(v));
+}
+EXPORT_SYMBOL(pr_human_readable_s64);
+
+/**
+ * pr_human_readable_u64 - Print out a u64 according to printbuf unit options
+ *
+ * Units are either raw (default), or human reabable units (controlled via
+ * @buf->human_readable_units)
+ */
+void pr_units_u64(struct printbuf *out, u64 v)
+{
+	if (out->human_readable_units)
+		pr_human_readable_u64(out, v);
+	else
+		pr_buf(out, "%llu", v);
+}
+EXPORT_SYMBOL(pr_units_u64);
+
+/**
+ * pr_human_readable_s64 - Print out a s64 according to printbuf unit options
+ *
+ * Units are either raw (default), or human reabable units (controlled via
+ * @buf->human_readable_units)
+ */
+void pr_units_s64(struct printbuf *out, s64 v)
+{
+	if (v < 0)
+		pr_char(out, '-');
+	pr_units_u64(out, abs(v));
+}
+EXPORT_SYMBOL(pr_units_s64);
