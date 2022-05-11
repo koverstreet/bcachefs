@@ -26,8 +26,8 @@ int bch2_bucket_backpointer_add(struct btree_trans *, struct bkey_i_alloc_v4 *,
 				struct bch_backpointer, struct bkey_s_c);
 int bch2_get_next_backpointer(struct btree_trans *, unsigned, u64, int,
 			      u64 *, struct bch_backpointer *);
-struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *,
-				struct btree_iter *, struct bch_backpointer);
+struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *, struct btree_iter *,
+					 struct bpos, struct bch_backpointer);
 struct btree *bch2_backpointer_get_node(struct btree_trans *,
 				struct btree_iter *, struct bch_backpointer);
 

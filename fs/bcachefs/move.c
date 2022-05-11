@@ -922,7 +922,8 @@ int bch2_evacuate_bucket(struct bch_fs *c,
 		if (!bp.level) {
 			struct bkey_s_c k;
 
-			k = bch2_backpointer_get_key(&trans, &iter, bp);
+			k = bch2_backpointer_get_key(&trans, &iter,
+					POS(ca->dev_idx, bucket), bp);
 			ret = bkey_err(k);
 			if (ret == -EINTR)
 				continue;

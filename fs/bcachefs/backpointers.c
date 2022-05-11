@@ -420,6 +420,7 @@ out:
 
 struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
 					 struct btree_iter *iter,
+					 struct bpos alloc_pos,
 					 struct bch_backpointer bp)
 {
 	struct bch_fs *c = trans->c;
@@ -447,12 +448,13 @@ struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
 	/* Check if key matches backpointer: */
 	ptrs = bch2_bkey_ptrs_c(k);
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-		struct bpos bucket_pos;
+		struct bpos alloc_pos2;
 		struct bch_backpointer bp2;
 
 		bch2_pointer_to_bucket_and_backpointer(c, bp.btree_id, bp.level,
-						       k, p, &bucket_pos, &bp2);
-		if (!memcmp(&bp, &bp2, sizeof(bp)))
+						       k, p, &alloc_pos2, &bp2);
+		if (!bpos_cmp(alloc_pos, alloc_pos2) &&
+		    !memcmp(&bp, &bp2, sizeof(bp)))
 			return k;
 	}
 
@@ -803,7 +805,7 @@ static int check_one_backpointer(struct btree_trans *trans,
 	if (ret || *bp_offset == U64_MAX)
 		return ret;
 
-	k = bch2_backpointer_get_key(trans, &iter, bp);
+	k = bch2_backpointer_get_key(trans, &iter, alloc_pos, bp);
 	ret = bkey_err(k);
 	if (ret)
 		return ret;
