@@ -418,10 +418,9 @@ out:
 	return ret;
 }
 
-struct bkey_s_c __bch2_backpointer_get_key(struct btree_trans *trans,
-					   struct btree_iter *iter,
-					   struct bch_backpointer bp,
-					   bool in_fsck)
+struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
+					 struct btree_iter *iter,
+					 struct bch_backpointer bp)
 {
 	struct bch_fs *c = trans->c;
 	struct bkey_ptrs_c ptrs;
@@ -457,25 +456,19 @@ struct bkey_s_c __bch2_backpointer_get_key(struct btree_trans *trans,
 			return k;
 	}
 
-	if (!in_fsck) {
-		prt_printf(&buf, "backpointer doesn't match extent it points to:\n  ");
-		bch2_backpointer_to_text(&buf, &bp);
-		prt_printf(&buf, "\n  ");
-		bch2_bkey_val_to_text(&buf, c, k);
+	prt_printf(&buf, "backpointer doesn't match extent it points to:\n  ");
+	bch2_backpointer_to_text(&buf, &bp);
+	prt_printf(&buf, "\n  ");
+	bch2_bkey_val_to_text(&buf, c, k);
+
+	if (!test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags))
+		bch_err(c, "%s", buf.buf);
+	else
 		bch2_trans_inconsistent(trans, "%s", buf.buf);
 
-		bch2_trans_iter_exit(trans, iter);
-	}
-
+	bch2_trans_iter_exit(trans, iter);
 	printbuf_exit(&buf);
 	return bkey_s_c_null;
-}
-
-struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
-					 struct btree_iter *iter,
-					 struct bch_backpointer bp)
-{
-	return __bch2_backpointer_get_key(trans, iter, bp, false);
 }
 
 struct btree *bch2_backpointer_get_node(struct btree_trans *trans,
@@ -810,14 +803,14 @@ static int check_one_backpointer(struct btree_trans *trans,
 	if (ret || *bp_offset == U64_MAX)
 		return ret;
 
-	k = __bch2_backpointer_get_key(trans, &iter, bp, true);
+	k = bch2_backpointer_get_key(trans, &iter, bp);
 	ret = bkey_err(k);
 	if (ret)
 		return ret;
 
 	if (fsck_err_on(!k.k, trans->c,
-			"backpointer offset %llu points to missing extent\n%s",
-			*bp_offset,
+			"%s backpointer points to missing extent\n%s",
+			*bp_offset < BACKPOINTER_OFFSET_MAX ? "alloc" : "btree",
 			(bch2_backpointer_to_text(&buf, &bp), buf.buf))) {
 		ret = bch2_backpointer_del_by_offset(trans, alloc_pos, *bp_offset);
 		if (ret == -ENOENT)
