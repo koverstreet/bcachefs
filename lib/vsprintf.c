@@ -1702,17 +1702,15 @@ void netdev_bits(struct printbuf *out, const void *addr,
 
 static noinline_for_stack
 void fourcc_string(struct printbuf *out, const u32 *fourcc,
-		   struct printf_spec spec, const char *fmt)
+		   const char *fmt)
 {
-	char output_buf[sizeof("0123 little-endian (0x01234567)")];
-	struct printbuf output = PRINTBUF_EXTERN(output_buf, sizeof(output_buf));
 	unsigned int i;
 	u32 val;
 
 	if (fmt[1] != 'c' || fmt[2] != 'c')
-		return error_string_spec(out, "(%p4?)", spec);
+		return error_string(out, "(%p4?)");
 
-	if (check_pointer_spec(out, fourcc, spec))
+	if (check_pointer(out, fourcc))
 		return;
 
 	val = *fourcc & ~BIT(31);
@@ -1721,18 +1719,17 @@ void fourcc_string(struct printbuf *out, const u32 *fourcc,
 		unsigned char c = val >> (i * 8);
 
 		/* Print non-control ASCII characters as-is, dot otherwise */
-		__pr_char(&output, isascii(c) && isprint(c) ? c : '.');
+		__pr_char(out, isascii(c) && isprint(c) ? c : '.');
 	}
 
-	pr_str(&output, *fourcc & BIT(31) ? " big-endian" : " little-endian");
+	pr_str(out, *fourcc & BIT(31) ? " big-endian" : " little-endian");
 
-	__pr_char(&output, ' ');
-	__pr_char(&output, '(');
-	special_hex_number(&output, *fourcc, sizeof(u32));
-	__pr_char(&output, ')');
-	printbuf_nul_terminate(&output);
+	__pr_char(out, ' ');
+	__pr_char(out, '(');
+	special_hex_number(out, *fourcc, sizeof(u32));
+	__pr_char(out, ')');
 
-	string_spec(out, output_buf, spec);
+	printbuf_nul_terminate(out);
 }
 
 static noinline_for_stack
@@ -2340,7 +2337,8 @@ void pointer(struct printbuf *out, const char *fmt,
 		netdev_bits(out, ptr, fmt);
 		return do_width_precision(out, prev_pos, spec);
 	case '4':
-		return fourcc_string(out, ptr, spec, fmt);
+		fourcc_string(out, ptr, fmt);
+		return do_width_precision(out, prev_pos, spec);
 	case 'a':
 		address_val(out, ptr, fmt);
 		return do_width_precision(out, prev_pos, spec);
