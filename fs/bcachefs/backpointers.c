@@ -294,10 +294,13 @@ int bch2_bucket_backpointer_add(struct btree_trans *trans,
 		prt_printf(&buf, "for ");
 		bch2_bkey_val_to_text(&buf, c, orig_k);
 
-		bch2_trans_inconsistent(trans, "%s", buf.buf);
-
-		printbuf_exit(&buf);
-		return -EIO;
+		if (!test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags))
+			bch_err(c, "%s", buf.buf);
+		else {
+			bch2_trans_inconsistent(trans, "%s", buf.buf);
+			printbuf_exit(&buf);
+			return -EIO;
+		}
 	}
 
 	if (nr < BCH_ALLOC_V4_NR_BACKPOINTERS_MAX) {
@@ -343,11 +346,14 @@ int bch2_bucket_backpointer_add(struct btree_trans *trans,
 		prt_printf(&buf, "for ");
 		bch2_bkey_val_to_text(&buf, c, orig_k);
 
-		bch2_trans_inconsistent(trans, "%s", buf.buf);
-
-		printbuf_exit(&buf);
-		ret = -EIO;
-		goto err;
+		if (!test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags))
+			bch_err(c, "%s", buf.buf);
+		else {
+			bch2_trans_inconsistent(trans, "%s", buf.buf);
+			printbuf_exit(&buf);
+			ret = -EIO;
+			goto err;
+		}
 	}
 
 	ret = bch2_trans_update(trans, &bp_iter, &bp_k->k_i, 0);
@@ -519,7 +525,10 @@ struct btree *bch2_backpointer_get_node(struct btree_trans *trans,
 	bch2_backpointer_to_text(&buf, &bp);
 	prt_printf(&buf, "\n  ");
 	bch2_bkey_val_to_text(&buf, c, k);
-	bch2_trans_inconsistent(trans, "%s", buf.buf);
+	if (!test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags))
+		bch_err(c, "%s", buf.buf);
+	else
+		bch2_trans_inconsistent(trans, "%s", buf.buf);
 out:
 	bch2_trans_iter_exit(trans, iter);
 	printbuf_exit(&buf);
