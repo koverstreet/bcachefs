@@ -465,6 +465,9 @@ struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
 	}
 
 	prt_printf(&buf, "backpointer doesn't match extent it points to:\n  ");
+	prt_printf(&buf, "bucket: ");
+	bch2_bpos_to_text(&buf, alloc_pos);
+	prt_printf(&buf, "\n  ");
 	bch2_backpointer_to_text(&buf, &bp);
 	prt_printf(&buf, "\n  ");
 	bch2_bkey_val_to_text(&buf, c, k);
@@ -481,6 +484,7 @@ struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
 
 struct btree *bch2_backpointer_get_node(struct btree_trans *trans,
 					struct btree_iter *iter,
+					struct bpos alloc_pos,
 					struct bch_backpointer bp)
 {
 	struct bch_fs *c = trans->c;
@@ -509,12 +513,13 @@ struct btree *bch2_backpointer_get_node(struct btree_trans *trans,
 	k = bkey_i_to_s_c(&b->key);
 	ptrs = bch2_bkey_ptrs_c(k);
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-		struct bpos bucket_pos;
+		struct bpos alloc_pos2;
 		struct bch_backpointer bp2;
 
 		bch2_pointer_to_bucket_and_backpointer(c, bp.btree_id, bp.level,
-						       k, p, &bucket_pos, &bp2);
-		if (!memcmp(&bp, &bp2, sizeof(bp)))
+						       k, p, &alloc_pos2, &bp2);
+		if (!bpos_cmp(alloc_pos, alloc_pos2) &&
+		    !memcmp(&bp, &bp2, sizeof(bp)))
 			return b;
 	}
 
@@ -522,6 +527,9 @@ struct btree *bch2_backpointer_get_node(struct btree_trans *trans,
 		goto out;
 
 	prt_printf(&buf, "backpointer doesn't match btree node it points to:\n  ");
+	prt_printf(&buf, "bucket: ");
+	bch2_bpos_to_text(&buf, alloc_pos);
+	prt_printf(&buf, "\n  ");
 	bch2_backpointer_to_text(&buf, &bp);
 	prt_printf(&buf, "\n  ");
 	bch2_bkey_val_to_text(&buf, c, k);

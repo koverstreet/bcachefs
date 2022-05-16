@@ -961,7 +961,8 @@ int bch2_evacuate_bucket(struct bch_fs *c,
 		} else {
 			struct btree *b;
 
-			b = bch2_backpointer_get_node(&trans, &iter, bp);
+			b = bch2_backpointer_get_node(&trans, &iter,
+					POS(ca->dev_idx, bucket), bp);
 			ret = PTR_ERR_OR_ZERO(b);
 			if (ret == -EINTR)
 				continue;
