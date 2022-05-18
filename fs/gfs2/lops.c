@@ -474,7 +474,7 @@ static void gfs2_jhead_process_page(struct gfs2_jdesc *jd, unsigned long index,
 	page = find_get_page(jd->jd_inode->i_mapping, index);
 	wait_on_page_locked(page);
 
-	if (PageError(page))
+	if (!PageUptodate(page))
 		*done = true;
 
 	if (!*done)
