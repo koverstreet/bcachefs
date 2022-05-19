@@ -1441,6 +1441,9 @@ int bch2_fs_initialize(struct bch_fs *c)
 	c->disk_sb.sb->compat[0] |= cpu_to_le64(1ULL << BCH_COMPAT_extents_above_btree_updates_done);
 	c->disk_sb.sb->compat[0] |= cpu_to_le64(1ULL << BCH_COMPAT_bformat_overflow_done);
 
+	if (c->sb.version < bcachefs_metadata_version_backpointers)
+		c->opts.version_upgrade	= true;
+
 	if (c->opts.version_upgrade) {
 		c->disk_sb.sb->version = cpu_to_le16(bcachefs_metadata_version_current);
 		c->disk_sb.sb->features[0] |= cpu_to_le64(BCH_SB_FEATURES_ALL);
