@@ -2,7 +2,7 @@
 #ifndef _LINUX_TRACE_SEQ_H
 #define _LINUX_TRACE_SEQ_H
 
-#include <linux/seq_buf.h>
+#include <linux/printbuf.h>
 
 #include <asm/page.h>
 
@@ -13,14 +13,16 @@
 
 struct trace_seq {
 	char			buffer[PAGE_SIZE];
-	struct seq_buf		seq;
+	struct printbuf		seq;
+	unsigned		readpos;
 	int			full;
 };
 
 static inline void
 trace_seq_init(struct trace_seq *s)
 {
-	seq_buf_init(&s->seq, s->buffer, PAGE_SIZE);
+	s->seq = PRINTBUF_EXTERN(s->buffer, PAGE_SIZE);
+	s->readpos = 0;
 	s->full = 0;
 }
 
@@ -39,7 +41,7 @@ trace_seq_init(struct trace_seq *s)
  */
 static inline int trace_seq_used(struct trace_seq *s)
 {
-	return seq_buf_used(&s->seq);
+	return printbuf_written(&s->seq);
 }
 
 /**
@@ -54,7 +56,7 @@ static inline int trace_seq_used(struct trace_seq *s)
 static inline char *
 trace_seq_buffer_ptr(struct trace_seq *s)
 {
-	return s->buffer + seq_buf_used(&s->seq);
+	return s->buffer + printbuf_written(&s->seq);
 }
 
 /**
@@ -66,7 +68,7 @@ trace_seq_buffer_ptr(struct trace_seq *s)
  */
 static inline bool trace_seq_has_overflowed(struct trace_seq *s)
 {
-	return s->full || seq_buf_has_overflowed(&s->seq);
+	return s->full || printbuf_overflowed(&s->seq);
 }
 
 /*
