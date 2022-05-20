@@ -1022,9 +1022,9 @@ print_graph_comment(struct trace_seq *s, struct trace_entry *ent,
 		goto out;
 
 	/* Strip ending newline */
-	if (s->buffer[s->seq.len - 1] == '\n') {
-		s->buffer[s->seq.len - 1] = '\0';
-		s->seq.len--;
+	if (s->buffer[s->seq.pos - 1] == '\n') {
+		s->buffer[s->seq.pos - 1] = '\0';
+		s->seq.pos--;
 	}
 
 	trace_seq_puts(s, " */\n");
