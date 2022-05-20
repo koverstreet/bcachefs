@@ -292,21 +292,19 @@ int dynevent_arg_add(struct dynevent_cmd *cmd,
 		     struct dynevent_arg *arg,
 		     dynevent_check_arg_fn_t check_arg)
 {
-	int ret = 0;
-
 	if (check_arg) {
-		ret = check_arg(arg);
+		int ret = check_arg(arg);
 		if (ret)
 			return ret;
 	}
 
-	ret = seq_buf_printf(&cmd->seq, " %s%c", arg->str, arg->separator);
-	if (ret) {
+	prt_printf(&cmd->seq, " %s%c", arg->str, arg->separator);
+	if (printbuf_overflowed(&cmd->seq)) {
 		pr_err("String is too long: %s%c\n", arg->str, arg->separator);
 		return -E2BIG;
 	}
 
-	return ret;
+	return 0;
 }
 
 /**
@@ -337,25 +335,23 @@ int dynevent_arg_pair_add(struct dynevent_cmd *cmd,
 			  struct dynevent_arg_pair *arg_pair,
 			  dynevent_check_arg_fn_t check_arg)
 {
-	int ret = 0;
-
 	if (check_arg) {
-		ret = check_arg(arg_pair);
+		int ret = check_arg(arg_pair);
 		if (ret)
 			return ret;
 	}
 
-	ret = seq_buf_printf(&cmd->seq, " %s%c%s%c", arg_pair->lhs,
-			     arg_pair->operator, arg_pair->rhs,
-			     arg_pair->separator);
-	if (ret) {
+	prt_printf(&cmd->seq, " %s%c%s%c", arg_pair->lhs,
+		   arg_pair->operator, arg_pair->rhs,
+		   arg_pair->separator);
+	if (printbuf_overflowed(&cmd->seq)) {
 		pr_err("field string is too long: %s%c%s%c\n", arg_pair->lhs,
 		       arg_pair->operator, arg_pair->rhs,
 		       arg_pair->separator);
 		return -E2BIG;
 	}
 
-	return ret;
+	return 0;
 }
 
 /**
@@ -370,15 +366,13 @@ int dynevent_arg_pair_add(struct dynevent_cmd *cmd,
  */
 int dynevent_str_add(struct dynevent_cmd *cmd, const char *str)
 {
-	int ret = 0;
-
-	ret = seq_buf_puts(&cmd->seq, str);
-	if (ret) {
+	prt_str(&cmd->seq, str);
+	if (printbuf_overflowed(&cmd->seq)) {
 		pr_err("String is too long: %s\n", str);
 		return -E2BIG;
 	}
 
-	return ret;
+	return 0;
 }
 
 /**
@@ -407,7 +401,7 @@ void dynevent_cmd_init(struct dynevent_cmd *cmd, char *buf, int maxlen,
 {
 	memset(cmd, '\0', sizeof(*cmd));
 
-	seq_buf_init(&cmd->seq, buf, maxlen);
+	cmd->seq = PRINTBUF_EXTERN(buf, maxlen);
 	cmd->type = type;
 	cmd->run_command = run_command;
 }

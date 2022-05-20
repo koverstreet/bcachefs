@@ -1107,7 +1107,7 @@ static void append_filter_err(struct trace_array *tr,
 				FILT_ERR_ERRNO, 0);
 	}
 	trace_seq_putc(s, 0);
-	buf = kmemdup_nul(s->buffer, s->seq.len, GFP_KERNEL);
+	buf = kstrdup(printbuf_str(&s->seq), GFP_KERNEL);
 	if (buf) {
 		kfree(filter->filter_string);
 		filter->filter_string = buf;
