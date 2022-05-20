@@ -497,7 +497,7 @@ struct dynevent_cmd;
 typedef int (*dynevent_create_fn_t)(struct dynevent_cmd *cmd);
 
 struct dynevent_cmd {
-	struct seq_buf		seq;
+	struct printbuf		seq;
 	const char		*event_name;
 	unsigned int		n_fields;
 	enum dynevent_type	type;
