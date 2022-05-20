@@ -5,13 +5,14 @@
  * Copyright (C) 2015, 2020 Tom Zanussi <tom.zanussi@linux.intel.com>
  */
 
-#include <linux/module.h>
 #include <linux/kallsyms.h>
-#include <linux/security.h>
+#include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/printbuf.h>
+#include <linux/rculist.h>
+#include <linux/security.h>
 #include <linux/slab.h>
 #include <linux/stacktrace.h>
-#include <linux/rculist.h>
 #include <linux/tracefs.h>
 
 /* for gfp flag names */
@@ -611,7 +612,7 @@ static struct synth_field *parse_synth_field(int argc, char **argv,
 	const char *prefix = NULL, *field_type = argv[0], *field_name, *array;
 	struct synth_field *field;
 	int len, ret = -ENOMEM;
-	struct seq_buf s;
+	struct printbuf s;
 	ssize_t size;
 
 	if (!strcmp(field_type, "unsigned")) {
@@ -666,16 +667,14 @@ static struct synth_field *parse_synth_field(int argc, char **argv,
 	if (!field->type)
 		goto free;
 
-	seq_buf_init(&s, field->type, len);
+	s = PRINTBUF_EXTERN(field->type, len);
 	if (prefix)
-		seq_buf_puts(&s, prefix);
-	seq_buf_puts(&s, field_type);
+		prt_str(&s, prefix);
+	prt_str(&s, field_type);
 	if (array)
-		seq_buf_puts(&s, array);
-	if (WARN_ON_ONCE(!seq_buf_buffer_left(&s)))
+		prt_str(&s, array);
+	if (WARN_ON_ONCE(!printbuf_remaining(&s)))
 		goto free;
-
-	s.buffer[s.len] = '\0';
 
 	size = synth_field_size(field->type);
 	if (size < 0) {
@@ -694,13 +693,12 @@ static struct synth_field *parse_synth_field(int argc, char **argv,
 			if (!type)
 				goto free;
 
-			seq_buf_init(&s, type, len);
-			seq_buf_puts(&s, "__data_loc ");
-			seq_buf_puts(&s, field->type);
+			s = PRINTBUF_EXTERN(type, len);
+			prt_str(&s, "__data_loc ");
+			prt_str(&s, field->type);
 
-			if (WARN_ON_ONCE(!seq_buf_buffer_left(&s)))
+			if (WARN_ON_ONCE(!printbuf_remaining(&s)))
 				goto free;
-			s.buffer[s.len] = '\0';
 
 			kfree(field->type);
 			field->type = type;
