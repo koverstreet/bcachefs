@@ -139,6 +139,8 @@ int bch2_chacha_encrypt_key(struct bch_key *key, struct nonce nonce,
 		goto err;
 	}
 
+	pr_info("buf %px page %px", buf, virt_to_page(buf));
+
 	ret = do_encrypt(chacha20, nonce, buf, len);
 err:
 	crypto_free_sync_skcipher(chacha20);
