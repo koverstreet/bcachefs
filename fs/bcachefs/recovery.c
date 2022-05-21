@@ -86,9 +86,9 @@ static inline struct journal_key *idx_to_key(struct journal_keys *keys, size_t i
 	return keys->d + idx_to_pos(keys, idx);
 }
 
-size_t bch2_journal_key_search(struct journal_keys *keys,
-			       enum btree_id id, unsigned level,
-			       struct bpos pos)
+static size_t bch2_journal_key_search(struct journal_keys *keys,
+				      enum btree_id id, unsigned level,
+				      struct bpos pos)
 {
 	size_t l = 0, r = keys->nr, m;
 
@@ -111,21 +111,31 @@ size_t bch2_journal_key_search(struct journal_keys *keys,
 
 struct bkey_i *bch2_journal_keys_peek_upto(struct bch_fs *c, enum btree_id btree_id,
 					   unsigned level, struct bpos pos,
-					   struct bpos end_pos)
+					   struct bpos end_pos, size_t *idx)
 {
 	struct journal_keys *keys = &c->journal_keys;
-	size_t idx = bch2_journal_key_search(keys, btree_id, level, pos);
+	unsigned iters = 0;
+search:
+	if (!*idx)
+		*idx = bch2_journal_key_search(keys, btree_id, level, pos);
 
-	while (idx < keys->size &&
-	       keys->d[idx].btree_id == btree_id &&
-	       keys->d[idx].level == level &&
-	       bpos_cmp(keys->d[idx].k->k.p, end_pos) <= 0) {
-		if (!keys->d[idx].overwritten)
-			return keys->d[idx].k;
+	while (*idx < keys->size &&
+	       keys->d[*idx].btree_id == btree_id &&
+	       keys->d[*idx].level == level &&
+	       bpos_cmp(keys->d[*idx].k->k.p, end_pos) <= 0) {
+		if (bpos_cmp(keys->d[*idx].k->k.p, pos) >= 0 &&
+		    !keys->d[*idx].overwritten)
+			return keys->d[*idx].k;
 
-		idx++;
-		if (idx == keys->gap)
-			idx += keys->size - keys->nr;
+		(*idx)++;
+		if (*idx == keys->gap)
+			*idx += keys->size - keys->nr;
+
+		iters++;
+		if (iters == 10) {
+			*idx = 0;
+			goto search;
+		}
 	}
 
 	return NULL;
@@ -134,7 +144,9 @@ struct bkey_i *bch2_journal_keys_peek_upto(struct bch_fs *c, enum btree_id btree
 struct bkey_i *bch2_journal_keys_peek_slot(struct bch_fs *c, enum btree_id btree_id,
 					   unsigned level, struct bpos pos)
 {
-	return bch2_journal_keys_peek_upto(c, btree_id, level, pos, pos);
+	size_t idx = 0;
+
+	return bch2_journal_keys_peek_upto(c, btree_id, level, pos, pos, &idx);
 }
 
 static void journal_iters_fix(struct bch_fs *c)

@@ -2248,14 +2248,38 @@ static inline struct bkey_i *btree_trans_peek_updates(struct btree_trans *trans,
 	return NULL;
 }
 
+struct bkey_i *bch2_btree_journal_peek(struct btree_trans *trans,
+				       struct btree_iter *iter,
+				       struct bpos start_pos,
+				       struct bpos end_pos)
+{
+	struct bkey_i *k;
+
+	if (bpos_cmp(start_pos, iter->journal_pos) < 0)
+		iter->journal_idx = 0;
+
+	k = bch2_journal_keys_peek_upto(trans->c, iter->btree_id, 0,
+					start_pos, end_pos,
+					&iter->journal_idx);
+
+	iter->journal_pos = k ? k->k.p : end_pos;
+	return k;
+}
+
+struct bkey_i *bch2_btree_journal_peek_slot(struct btree_trans *trans,
+					    struct btree_iter *iter,
+					    struct bpos pos)
+{
+	return bch2_btree_journal_peek(trans, iter, pos, pos);
+}
+
 static noinline
 struct bkey_s_c btree_trans_peek_journal(struct btree_trans *trans,
 					 struct btree_iter *iter,
 					 struct bkey_s_c k)
 {
 	struct bkey_i *next_journal =
-		bch2_journal_keys_peek_upto(trans->c, iter->btree_id, 0,
-				iter->path->pos,
+		bch2_btree_journal_peek(trans, iter, iter->path->pos,
 				k.k ? k.k->p : iter->path->l[0].b->key.k.p);
 
 	if (next_journal) {
@@ -2804,10 +2828,8 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 		}
 
 		if (unlikely(iter->flags & BTREE_ITER_WITH_JOURNAL) &&
-		    (next_update = bch2_journal_keys_peek_slot(trans->c,
-					iter->btree_id,
-					iter->path->level,
-					iter->pos))) {
+		    (next_update = bch2_btree_journal_peek_slot(trans,
+					iter, iter->pos))) {
 			iter->k = next_update->k;
 			k = bkey_i_to_s_c(next_update);
 			goto out;
@@ -3074,6 +3096,8 @@ static void __bch2_trans_iter_init(struct btree_trans *trans,
 	iter->k.type	= KEY_TYPE_deleted;
 	iter->k.p	= pos;
 	iter->k.size	= 0;
+	iter->journal_idx = 0;
+	iter->journal_pos = POS_MIN;
 #ifdef CONFIG_BCACHEFS_DEBUG
 	iter->ip_allocated = ip;
 #endif
