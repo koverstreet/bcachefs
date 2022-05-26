@@ -397,7 +397,6 @@ struct btree_trans {
 	bool			in_traverse_all:1;
 	bool			restarted:1;
 	bool			memory_allocation_failure:1;
-	bool			journal_transaction_names:1;
 	bool			is_initial_gc:1;
 	/*
 	 * For when bch2_trans_update notices we'll be splitting a compressed
