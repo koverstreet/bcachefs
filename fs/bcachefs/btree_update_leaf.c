@@ -305,7 +305,7 @@ static inline int bch2_trans_journal_res_get(struct btree_trans *trans,
 
 #define JSET_ENTRY_LOG_U64s		4
 
-static noinline void journal_transaction_name(struct btree_trans *trans)
+static void journal_transaction_name(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;
 	struct jset_entry *entry = journal_res_entry(&c->journal, &trans->journal_res);
@@ -684,8 +684,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 		if (ret)
 			return ret;
 
-		if (unlikely(trans->journal_transaction_names))
-			journal_transaction_name(trans);
+		journal_transaction_name(trans);
 	} else {
 		trans->journal_res.seq = c->journal.replay_journal_seq;
 	}
@@ -1118,10 +1117,8 @@ int __bch2_trans_commit(struct btree_trans *trans)
 	trans->journal_u64s		= trans->extra_journal_entries.nr;
 	trans->journal_preres_u64s	= 0;
 
-	trans->journal_transaction_names = READ_ONCE(c->opts.journal_transaction_names);
-
-	if (trans->journal_transaction_names)
-		trans->journal_u64s += JSET_ENTRY_LOG_U64s;
+	/* For journalling transaction name: */
+	trans->journal_u64s += JSET_ENTRY_LOG_U64s;
 
 	trans_for_each_update(trans, i) {
 		BUG_ON(!i->path->should_be_locked);
