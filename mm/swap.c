@@ -97,7 +97,6 @@ static void __page_cache_release(struct page *page)
 		mod_zone_page_state(page_zone(page), NR_MLOCK, -nr_pages);
 		count_vm_events(UNEVICTABLE_PGCLEARED, nr_pages);
 	}
-	__ClearPageWaiters(page);
 }
 
 static void __put_single_page(struct page *page)
@@ -152,7 +151,6 @@ void put_pages_list(struct list_head *pages)
 			continue;
 		}
 		/* Cannot be PageLRU because it's passed to us using the lru */
-		__ClearPageWaiters(page);
 	}
 
 	free_unref_page_list(pages);
@@ -626,7 +624,6 @@ void lru_add_drain_cpu(int cpu)
 		pagevec_lru_move_fn(pvec, lru_lazyfree_fn);
 
 	activate_page_drain(cpu);
-	mlock_page_drain(cpu);
 }
 
 /**
@@ -708,6 +705,7 @@ void lru_add_drain(void)
 	local_lock(&lru_pvecs.lock);
 	lru_add_drain_cpu(smp_processor_id());
 	local_unlock(&lru_pvecs.lock);
+	mlock_page_drain_local();
 }
 
 /*
@@ -722,6 +720,7 @@ static void lru_add_and_bh_lrus_drain(void)
 	lru_add_drain_cpu(smp_processor_id());
 	local_unlock(&lru_pvecs.lock);
 	invalidate_bh_lrus_cpu();
+	mlock_page_drain_local();
 }
 
 void lru_add_drain_cpu_zone(struct zone *zone)
@@ -730,6 +729,7 @@ void lru_add_drain_cpu_zone(struct zone *zone)
 	lru_add_drain_cpu(smp_processor_id());
 	drain_local_pages(zone);
 	local_unlock(&lru_pvecs.lock);
+	mlock_page_drain_local();
 }
 
 #ifdef CONFIG_SMP
@@ -970,8 +970,6 @@ void release_pages(struct page **pages, int nr)
 			dec_zone_page_state(page, NR_MLOCK);
 			count_vm_event(UNEVICTABLE_PGCLEARED);
 		}
-
-		__ClearPageWaiters(page);
 
 		list_add(&page->lru, &pages_to_free);
 	}

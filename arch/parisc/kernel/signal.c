@@ -19,7 +19,7 @@
 #include <linux/errno.h>
 #include <linux/wait.h>
 #include <linux/ptrace.h>
-#include <linux/tracehook.h>
+#include <linux/resume_user_mode.h>
 #include <linux/unistd.h>
 #include <linux/stddef.h>
 #include <linux/compat.h>
@@ -236,7 +236,7 @@ setup_rt_frame(struct ksignal *ksig, sigset_t *set, struct pt_regs *regs,
 	DBG(1, "%s: frame %p info %p\n", __func__, frame, &ksig->info);
 
 	start = (unsigned long) frame;
-	if (start >= user_addr_max() - sigframe_size)
+	if (start >= TASK_SIZE_MAX - sigframe_size)
 		return -EFAULT;
 	
 #ifdef CONFIG_64BIT
@@ -497,7 +497,7 @@ insert_restart_trampoline(struct pt_regs *regs)
 		long err = 0;
 
 		/* check that we don't exceed the stack */
-		if (A(&usp[0]) >= user_addr_max() - 5 * sizeof(int))
+		if (A(&usp[0]) >= TASK_SIZE_MAX - 5 * sizeof(int))
 			return;
 
 		/* Call trampoline in vdso to restart the syscall
@@ -585,5 +585,5 @@ void do_notify_resume(struct pt_regs *regs, long in_syscall)
 		do_signal(regs, in_syscall);
 
 	if (test_thread_flag(TIF_NOTIFY_RESUME))
-		tracehook_notify_resume(regs);
+		resume_user_mode_work(regs);
 }

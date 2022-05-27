@@ -90,6 +90,7 @@ Hardware Monitoring Kernel Drivers
    jc42
    k10temp
    k8temp
+   lan966x
    lineage-pem
    lm25066
    lm63
@@ -163,6 +164,8 @@ Hardware Monitoring Kernel Drivers
    pim4328
    pli1209bc
    pm6764tr
+   peci-cputemp
+   peci-dimmtemp
    pmbus
    powr1220
    pxe1610
@@ -187,6 +190,7 @@ Hardware Monitoring Kernel Drivers
    smsc47m1
    sparx5-temp
    stpddc60
+   sy7636a-hwmon
    tc654
    tc74
    thmc50
@@ -220,6 +224,7 @@ Hardware Monitoring Kernel Drivers
    wm8350
    xgene-hwmon
    xdpe12284
+   xdpe152c4
    zl6100
 
 .. only::  subproject and html

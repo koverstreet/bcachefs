@@ -56,7 +56,6 @@
 #include <linux/tsacct_kern.h>
 #include <linux/cn_proc.h>
 #include <linux/audit.h>
-#include <linux/tracehook.h>
 #include <linux/kmod.h>
 #include <linux/fsnotify.h>
 #include <linux/fs_struct.h>
@@ -1308,12 +1307,6 @@ int begin_new_exec(struct linux_binprm * bprm)
 	retval = unshare_sighand(me);
 	if (retval)
 		goto out_unlock;
-
-	/*
-	 * Ensure that the uaccess routines can actually operate on userspace
-	 * pointers:
-	 */
-	force_uaccess_begin();
 
 	if (me->flags & PF_KTHREAD)
 		free_kthread_struct(me);

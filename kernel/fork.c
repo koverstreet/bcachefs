@@ -286,11 +286,13 @@ static int alloc_thread_stack_node(struct task_struct *tsk, int node)
 		if (!s)
 			continue;
 
-		/* Mark stack accessible for KASAN. */
+		/* Reset stack metadata. */
 		kasan_unpoison_range(s->addr, THREAD_SIZE);
 
+		stack = kasan_reset_tag(s->addr);
+
 		/* Clear stale pointers from reused stack. */
-		memset(s->addr, 0, THREAD_SIZE);
+		memset(stack, 0, THREAD_SIZE);
 
 		if (memcg_charge_kernel_stack(s)) {
 			vfree(s->addr);
@@ -298,7 +300,7 @@ static int alloc_thread_stack_node(struct task_struct *tsk, int node)
 		}
 
 		tsk->stack_vm_area = s;
-		tsk->stack = s->addr;
+		tsk->stack = stack;
 		return 0;
 	}
 
@@ -326,6 +328,7 @@ static int alloc_thread_stack_node(struct task_struct *tsk, int node)
 	 * so cache the vm_struct.
 	 */
 	tsk->stack_vm_area = vm;
+	stack = kasan_reset_tag(stack);
 	tsk->stack = stack;
 	return 0;
 }
@@ -789,6 +792,7 @@ void __mmdrop(struct mm_struct *mm)
 	mmu_notifier_subscriptions_destroy(mm);
 	check_mm(mm);
 	put_user_ns(mm->user_ns);
+	mm_pasid_drop(mm);
 	free_mm(mm);
 }
 EXPORT_SYMBOL_GPL(__mmdrop);
@@ -1042,6 +1046,11 @@ static struct task_struct *dup_task_struct(struct task_struct *orig, int node)
 #ifdef CONFIG_MEMCG
 	tsk->active_memcg = NULL;
 #endif
+
+#ifdef CONFIG_CPU_SUP_INTEL
+	tsk->reported_split_lock = 0;
+#endif
+
 	return tsk;
 
 free_stack:
@@ -1187,7 +1196,6 @@ static inline void __mmput(struct mm_struct *mm)
 	}
 	if (mm->binfmt)
 		module_put(mm->binfmt->module);
-	mm_pasid_drop(mm);
 	mmdrop(mm);
 }
 
@@ -2321,6 +2329,9 @@ static __latent_entropy struct task_struct *copy_process(
 
 #ifdef CONFIG_KRETPROBES
 	p->kretprobe_instances.first = NULL;
+#endif
+#ifdef CONFIG_RETHOOK
+	p->rethooks.first = NULL;
 #endif
 
 	/*

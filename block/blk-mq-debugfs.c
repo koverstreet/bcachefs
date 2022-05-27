@@ -113,10 +113,8 @@ static const char *const blk_queue_flag_name[] = {
 	QUEUE_FLAG_NAME(FAIL_IO),
 	QUEUE_FLAG_NAME(NONROT),
 	QUEUE_FLAG_NAME(IO_STAT),
-	QUEUE_FLAG_NAME(DISCARD),
 	QUEUE_FLAG_NAME(NOXMERGES),
 	QUEUE_FLAG_NAME(ADD_RANDOM),
-	QUEUE_FLAG_NAME(SECERASE),
 	QUEUE_FLAG_NAME(SAME_FORCE),
 	QUEUE_FLAG_NAME(DEAD),
 	QUEUE_FLAG_NAME(INIT_DONE),
@@ -183,35 +181,11 @@ inval:
 	return count;
 }
 
-static int queue_write_hint_show(void *data, struct seq_file *m)
-{
-	struct request_queue *q = data;
-	int i;
-
-	for (i = 0; i < BLK_MAX_WRITE_HINTS; i++)
-		seq_printf(m, "hint%d: %llu\n", i, q->write_hints[i]);
-
-	return 0;
-}
-
-static ssize_t queue_write_hint_store(void *data, const char __user *buf,
-				      size_t count, loff_t *ppos)
-{
-	struct request_queue *q = data;
-	int i;
-
-	for (i = 0; i < BLK_MAX_WRITE_HINTS; i++)
-		q->write_hints[i] = 0;
-
-	return count;
-}
-
 static const struct blk_mq_debugfs_attr blk_mq_debugfs_queue_attrs[] = {
 	{ "poll_stat", 0400, queue_poll_stat_show },
 	{ "requeue_list", 0400, .seq_ops = &queue_requeue_list_seq_ops },
 	{ "pm_only", 0600, queue_pm_only_show, NULL },
 	{ "state", 0600, queue_state_show, queue_state_write },
-	{ "write_hints", 0600, queue_write_hint_show, queue_write_hint_store },
 	{ "zone_wlock", 0400, queue_zone_wlock_show, NULL },
 	{ },
 };

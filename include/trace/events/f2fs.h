@@ -956,12 +956,11 @@ TRACE_EVENT(f2fs_direct_IO_enter,
 		__entry->rw	= rw;
 	),
 
-	TP_printk("dev = (%d,%d), ino = %lu pos = %lld len = %lu ki_flags = %x ki_hint = %x ki_ioprio = %x rw = %d",
+	TP_printk("dev = (%d,%d), ino = %lu pos = %lld len = %lu ki_flags = %x ki_ioprio = %x rw = %d",
 		show_dev_ino(__entry),
 		__entry->iocb->ki_pos,
 		__entry->len,
 		__entry->iocb->ki_flags,
-		__entry->iocb->ki_hint,
 		__entry->iocb->ki_ioprio,
 		__entry->rw)
 );
@@ -1160,17 +1159,15 @@ DEFINE_EVENT_CONDITION(f2fs__bio, f2fs_submit_write_bio,
 
 TRACE_EVENT(f2fs_write_begin,
 
-	TP_PROTO(struct inode *inode, loff_t pos, unsigned int len,
-				unsigned int flags),
+	TP_PROTO(struct inode *inode, loff_t pos, unsigned int len),
 
-	TP_ARGS(inode, pos, len, flags),
+	TP_ARGS(inode, pos, len),
 
 	TP_STRUCT__entry(
 		__field(dev_t,	dev)
 		__field(ino_t,	ino)
 		__field(loff_t,	pos)
 		__field(unsigned int, len)
-		__field(unsigned int, flags)
 	),
 
 	TP_fast_assign(
@@ -1178,14 +1175,12 @@ TRACE_EVENT(f2fs_write_begin,
 		__entry->ino	= inode->i_ino;
 		__entry->pos	= pos;
 		__entry->len	= len;
-		__entry->flags	= flags;
 	),
 
-	TP_printk("dev = (%d,%d), ino = %lu, pos = %llu, len = %u, flags = %u",
+	TP_printk("dev = (%d,%d), ino = %lu, pos = %llu, len = %u",
 		show_dev_ino(__entry),
 		(unsigned long long)__entry->pos,
-		__entry->len,
-		__entry->flags)
+		__entry->len)
 );
 
 TRACE_EVENT(f2fs_write_end,

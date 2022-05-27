@@ -217,9 +217,6 @@ static void dm_done(struct request *clone, blk_status_t error, bool mapped)
 		if (req_op(clone) == REQ_OP_DISCARD &&
 		    !clone->q->limits.max_discard_sectors)
 			disable_discard(tio->md);
-		else if (req_op(clone) == REQ_OP_WRITE_SAME &&
-			 !clone->q->limits.max_write_same_sectors)
-			disable_write_same(tio->md);
 		else if (req_op(clone) == REQ_OP_WRITE_ZEROES &&
 			 !clone->q->limits.max_write_zeroes_sectors)
 			disable_write_zeroes(tio->md);
@@ -491,8 +488,13 @@ static blk_status_t dm_mq_queue_rq(struct blk_mq_hw_ctx *hctx,
 
 	if (unlikely(!ti)) {
 		int srcu_idx;
-		struct dm_table *map = dm_get_live_table(md, &srcu_idx);
+		struct dm_table *map;
 
+		map = dm_get_live_table(md, &srcu_idx);
+		if (unlikely(!map)) {
+			dm_put_live_table(md, srcu_idx);
+			return BLK_STS_RESOURCE;
+		}
 		ti = dm_table_find_target(map, 0);
 		dm_put_live_table(md, srcu_idx);
 	}

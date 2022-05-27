@@ -36,7 +36,7 @@
  *
  * The mpage code never puts partial pages into a BIO (except for end-of-file).
  * If a page does not map to a contiguous run of blocks then it simply falls
- * back to block_read_full_page().
+ * back to block_read_full_folio().
  *
  * Why is this?  If a page's completion depends on a number of different BIOs
  * which can complete in any order (or at the same time) then determining the
@@ -68,7 +68,7 @@ static struct bio *mpage_bio_submit(struct bio *bio)
 /*
  * support function for mpage_readahead.  The fs supplied get_block might
  * return an up to date buffer.  This is used to map that buffer into
- * the page, which allows readpage to avoid triggering a duplicate call
+ * the page, which allows read_folio to avoid triggering a duplicate call
  * to get_block.
  *
  * The idea is to avoid adding buffers to pages that don't already have
@@ -148,13 +148,11 @@ static struct bio *do_mpage_readpage(struct mpage_readpage_args *args)
 	int op = REQ_OP_READ;
 	unsigned nblocks;
 	unsigned relative_block;
-	gfp_t gfp;
+	gfp_t gfp = mapping_gfp_constraint(page->mapping, GFP_KERNEL);
 
 	if (args->is_readahead) {
 		op |= REQ_RAHEAD;
-		gfp = readahead_gfp_mask(page->mapping);
-	} else {
-		gfp = mapping_gfp_constraint(page->mapping, GFP_KERNEL);
+		gfp |= __GFP_NORETRY | __GFP_NOWARN;
 	}
 
 	if (page_has_buffers(page))
@@ -298,7 +296,7 @@ confused:
 	if (args->bio)
 		args->bio = mpage_bio_submit(args->bio);
 	if (!PageUptodate(page))
-		block_read_full_page(page, args->get_block);
+		block_read_full_folio(page_folio(page), args->get_block);
 	else
 		unlock_page(page);
 	goto out;
@@ -366,20 +364,22 @@ EXPORT_SYMBOL(mpage_readahead);
 /*
  * This isn't called much at all
  */
-int mpage_readpage(struct page *page, get_block_t get_block)
+int mpage_read_folio(struct folio *folio, get_block_t get_block)
 {
 	struct mpage_readpage_args args = {
-		.page = page,
+		.page = &folio->page,
 		.nr_pages = 1,
 		.get_block = get_block,
 	};
+
+	VM_BUG_ON_FOLIO(folio_test_large(folio), folio);
 
 	args.bio = do_mpage_readpage(&args);
 	if (args.bio)
 		mpage_bio_submit(args.bio);
 	return 0;
 }
-EXPORT_SYMBOL(mpage_readpage);
+EXPORT_SYMBOL(mpage_read_folio);
 
 /*
  * Writing is not so simple.
@@ -427,11 +427,11 @@ static void clean_buffers(struct page *page, unsigned first_unmapped)
 
 	/*
 	 * we cannot drop the bh if the page is not uptodate or a concurrent
-	 * readpage would fail to serialize with the bh and it would read from
+	 * read_folio would fail to serialize with the bh and it would read from
 	 * disk before we reach the platter.
 	 */
 	if (buffer_heads_over_limit && PageUptodate(page))
-		try_to_free_buffers(page);
+		try_to_free_buffers(page_folio(page));
 }
 
 /*
@@ -512,7 +512,7 @@ static int __mpage_writepage(struct page *page, struct writeback_control *wbc,
 		/*
 		 * Page has buffers, but they are all unmapped. The page was
 		 * created by pagein or read over a hole which was handled by
-		 * block_read_full_page().  If this address_space is also
+		 * block_read_full_folio().  If this address_space is also
 		 * using mpage_readahead then this can rarely happen.
 		 */
 		goto confused;
@@ -588,7 +588,6 @@ alloc_new:
 				GFP_NOFS);
 		bio->bi_iter.bi_sector = blocks[0] << (blkbits - 9);
 		wbc_init_bio(wbc, bio);
-		bio->bi_write_hint = inode->i_write_hint;
 	}
 
 	/*

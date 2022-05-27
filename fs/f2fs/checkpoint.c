@@ -98,9 +98,9 @@ repeat:
 	}
 
 	if (unlikely(!PageUptodate(page))) {
-		if (page->index == sbi->metapage_eio_ofs &&
-			sbi->metapage_eio_cnt++ == MAX_RETRY_META_PAGE_EIO) {
-			set_ckpt_flags(sbi, CP_ERROR_FLAG);
+		if (page->index == sbi->metapage_eio_ofs) {
+			if (sbi->metapage_eio_cnt++ == MAX_RETRY_META_PAGE_EIO)
+				set_ckpt_flags(sbi, CP_ERROR_FLAG);
 		} else {
 			sbi->metapage_eio_ofs = page->index;
 			sbi->metapage_eio_cnt = 0;
@@ -456,7 +456,7 @@ static bool f2fs_dirty_meta_folio(struct address_space *mapping,
 		folio_mark_uptodate(folio);
 	if (!folio_test_dirty(folio)) {
 		filemap_dirty_folio(mapping, folio);
-		inc_page_count(F2FS_P_SB(&folio->page), F2FS_DIRTY_META);
+		inc_page_count(F2FS_M_SB(mapping), F2FS_DIRTY_META);
 		set_page_private_reference(&folio->page);
 		return true;
 	}
@@ -468,7 +468,7 @@ const struct address_space_operations f2fs_meta_aops = {
 	.writepages	= f2fs_write_meta_pages,
 	.dirty_folio	= f2fs_dirty_meta_folio,
 	.invalidate_folio = f2fs_invalidate_folio,
-	.releasepage	= f2fs_release_page,
+	.release_folio	= f2fs_release_folio,
 #ifdef CONFIG_MIGRATION
 	.migratepage    = f2fs_migrate_page,
 #endif

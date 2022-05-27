@@ -730,7 +730,6 @@ static int dmz_get_zoned_device(struct dm_target *ti, char *path,
 	}
 	dev->bdev = bdev;
 	dev->dev_idx = idx;
-	(void)bdevname(dev->bdev, dev->name);
 
 	dev->capacity = bdev_nr_sectors(bdev);
 	if (ti->begin) {
@@ -1002,7 +1001,7 @@ static void dmz_io_hints(struct dm_target *ti, struct queue_limits *limits)
 	blk_limits_io_min(limits, DMZ_BLOCK_SIZE);
 	blk_limits_io_opt(limits, DMZ_BLOCK_SIZE);
 
-	limits->discard_alignment = DMZ_BLOCK_SIZE;
+	limits->discard_alignment = 0;
 	limits->discard_granularity = DMZ_BLOCK_SIZE;
 	limits->max_discard_sectors = chunk_sectors;
 	limits->max_hw_discard_sectors = chunk_sectors;

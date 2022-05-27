@@ -2146,11 +2146,11 @@ static bool f2fs_dirty_node_folio(struct address_space *mapping,
 		folio_mark_uptodate(folio);
 #ifdef CONFIG_F2FS_CHECK_FS
 	if (IS_INODE(&folio->page))
-		f2fs_inode_chksum_set(F2FS_P_SB(&folio->page), &folio->page);
+		f2fs_inode_chksum_set(F2FS_M_SB(mapping), &folio->page);
 #endif
 	if (!folio_test_dirty(folio)) {
 		filemap_dirty_folio(mapping, folio);
-		inc_page_count(F2FS_P_SB(&folio->page), F2FS_DIRTY_NODES);
+		inc_page_count(F2FS_M_SB(mapping), F2FS_DIRTY_NODES);
 		set_page_private_reference(&folio->page);
 		return true;
 	}
@@ -2165,7 +2165,7 @@ const struct address_space_operations f2fs_node_aops = {
 	.writepages	= f2fs_write_node_pages,
 	.dirty_folio	= f2fs_dirty_node_folio,
 	.invalidate_folio = f2fs_invalidate_folio,
-	.releasepage	= f2fs_release_page,
+	.release_folio	= f2fs_release_folio,
 #ifdef CONFIG_MIGRATION
 	.migratepage	= f2fs_migrate_page,
 #endif

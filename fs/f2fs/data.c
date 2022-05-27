@@ -164,7 +164,7 @@ static void f2fs_verify_bio(struct work_struct *work)
 	bool may_have_compressed_pages = (ctx->enabled_steps & STEP_DECOMPRESS);
 
 	/*
-	 * fsverity_verify_bio() may call readpages() again, and while verity
+	 * fsverity_verify_bio() may call readahead() again, and while verity
 	 * will be disabled for this, decryption and/or decompression may still
 	 * be needed, resulting in another bio_post_read_ctx being allocated.
 	 * So to prevent deadlocks we need to release the current ctx to the
@@ -388,11 +388,23 @@ int f2fs_target_device_index(struct f2fs_sb_info *sbi, block_t blkaddr)
 	return 0;
 }
 
-static void __attach_io_flag(struct f2fs_io_info *fio, unsigned int io_flag)
+static unsigned int f2fs_io_flags(struct f2fs_io_info *fio)
 {
 	unsigned int temp_mask = (1 << NR_TEMP_TYPE) - 1;
-	unsigned int fua_flag = io_flag & temp_mask;
-	unsigned int meta_flag = (io_flag >> NR_TEMP_TYPE) & temp_mask;
+	unsigned int fua_flag, meta_flag, io_flag;
+	unsigned int op_flags = 0;
+
+	if (fio->op != REQ_OP_WRITE)
+		return 0;
+	if (fio->type == DATA)
+		io_flag = fio->sbi->data_io_flag;
+	else if (fio->type == NODE)
+		io_flag = fio->sbi->node_io_flag;
+	else
+		return 0;
+
+	fua_flag = io_flag & temp_mask;
+	meta_flag = (io_flag >> NR_TEMP_TYPE) & temp_mask;
 
 	/*
 	 * data/node io flag bits per temp:
@@ -401,9 +413,10 @@ static void __attach_io_flag(struct f2fs_io_info *fio, unsigned int io_flag)
 	 * Cold | Warm | Hot | Cold | Warm | Hot |
 	 */
 	if ((1 << fio->temp) & meta_flag)
-		fio->op_flags |= REQ_META;
+		op_flags |= REQ_META;
 	if ((1 << fio->temp) & fua_flag)
-		fio->op_flags |= REQ_FUA;
+		op_flags |= REQ_FUA;
+	return op_flags;
 }
 
 static struct bio *__bio_alloc(struct f2fs_io_info *fio, int npages)
@@ -413,14 +426,10 @@ static struct bio *__bio_alloc(struct f2fs_io_info *fio, int npages)
 	sector_t sector;
 	struct bio *bio;
 
-	if (fio->type == DATA)
-		__attach_io_flag(fio, sbi->data_io_flag);
-	else if (fio->type == NODE)
-		__attach_io_flag(fio, sbi->node_io_flag);
-
 	bdev = f2fs_target_device(sbi, fio->new_blkaddr, &sector);
-	bio = bio_alloc_bioset(bdev, npages, fio->op | fio->op_flags, GFP_NOIO,
-			       &f2fs_bioset);
+	bio = bio_alloc_bioset(bdev, npages,
+				fio->op | fio->op_flags | f2fs_io_flags(fio),
+				GFP_NOIO, &f2fs_bioset);
 	bio->bi_iter.bi_sector = sector;
 	if (is_read_io(fio->op)) {
 		bio->bi_end_io = f2fs_read_end_io;
@@ -428,8 +437,6 @@ static struct bio *__bio_alloc(struct f2fs_io_info *fio, int npages)
 	} else {
 		bio->bi_end_io = f2fs_write_end_io;
 		bio->bi_private = sbi;
-		bio->bi_write_hint = f2fs_io_type_to_rw_hint(sbi,
-						fio->type, fio->temp);
 	}
 	iostat_alloc_and_bind_ctx(sbi, bio, NULL);
 
@@ -2365,8 +2372,9 @@ next_page:
 	return ret;
 }
 
-static int f2fs_read_data_page(struct file *file, struct page *page)
+static int f2fs_read_data_folio(struct file *file, struct folio *folio)
 {
+	struct page *page = &folio->page;
 	struct inode *inode = page_file_mapping(page)->host;
 	int ret = -EAGAIN;
 
@@ -2394,7 +2402,7 @@ static void f2fs_readahead(struct readahead_control *rac)
 	if (!f2fs_is_compress_backend_ready(inode))
 		return;
 
-	/* If the file has inline data, skip readpages */
+	/* If the file has inline data, skip readahead */
 	if (f2fs_has_inline_data(inode))
 		return;
 
@@ -3307,8 +3315,7 @@ unlock_out:
 }
 
 static int f2fs_write_begin(struct file *file, struct address_space *mapping,
-		loff_t pos, unsigned len, unsigned flags,
-		struct page **pagep, void **fsdata)
+		loff_t pos, unsigned len, struct page **pagep, void **fsdata)
 {
 	struct inode *inode = mapping->host;
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
@@ -3318,7 +3325,7 @@ static int f2fs_write_begin(struct file *file, struct address_space *mapping,
 	block_t blkaddr = NULL_ADDR;
 	int err = 0;
 
-	trace_f2fs_write_begin(inode, pos, len, flags);
+	trace_f2fs_write_begin(inode, pos, len);
 
 	if (!f2fs_is_checkpoint_ready(sbi)) {
 		err = -ENOSPC;
@@ -3521,28 +3528,30 @@ void f2fs_invalidate_folio(struct folio *folio, size_t offset, size_t length)
 	folio_detach_private(folio);
 }
 
-int f2fs_release_page(struct page *page, gfp_t wait)
+bool f2fs_release_folio(struct folio *folio, gfp_t wait)
 {
-	/* If this is dirty page, keep PagePrivate */
-	if (PageDirty(page))
-		return 0;
+	struct f2fs_sb_info *sbi;
+
+	/* If this is dirty folio, keep private data */
+	if (folio_test_dirty(folio))
+		return false;
 
 	/* This is atomic written page, keep Private */
-	if (page_private_atomic(page))
-		return 0;
+	if (page_private_atomic(&folio->page))
+		return false;
 
-	if (test_opt(F2FS_P_SB(page), COMPRESS_CACHE)) {
-		struct inode *inode = page->mapping->host;
+	sbi = F2FS_M_SB(folio->mapping);
+	if (test_opt(sbi, COMPRESS_CACHE)) {
+		struct inode *inode = folio->mapping->host;
 
-		if (inode->i_ino == F2FS_COMPRESS_INO(F2FS_I_SB(inode)))
-			clear_page_private_data(page);
+		if (inode->i_ino == F2FS_COMPRESS_INO(sbi))
+			clear_page_private_data(&folio->page);
 	}
 
-	clear_page_private_gcing(page);
+	clear_page_private_gcing(&folio->page);
 
-	detach_page_private(page);
-	set_page_private(page, 0);
-	return 1;
+	folio_detach_private(folio);
+	return true;
 }
 
 static bool f2fs_dirty_data_folio(struct address_space *mapping,
@@ -3573,7 +3582,7 @@ static bool f2fs_dirty_data_folio(struct address_space *mapping,
 		f2fs_update_dirty_folio(inode, folio);
 		return true;
 	}
-	return true;
+	return false;
 }
 
 
@@ -3929,7 +3938,7 @@ static void f2fs_swap_deactivate(struct file *file)
 #endif
 
 const struct address_space_operations f2fs_dblock_aops = {
-	.readpage	= f2fs_read_data_page,
+	.read_folio	= f2fs_read_data_folio,
 	.readahead	= f2fs_readahead,
 	.writepage	= f2fs_write_data_page,
 	.writepages	= f2fs_write_data_pages,
@@ -3937,7 +3946,7 @@ const struct address_space_operations f2fs_dblock_aops = {
 	.write_end	= f2fs_write_end,
 	.dirty_folio	= f2fs_dirty_data_folio,
 	.invalidate_folio = f2fs_invalidate_folio,
-	.releasepage	= f2fs_release_page,
+	.release_folio	= f2fs_release_folio,
 	.direct_IO	= noop_direct_IO,
 	.bmap		= f2fs_bmap,
 	.swap_activate  = f2fs_swap_activate,

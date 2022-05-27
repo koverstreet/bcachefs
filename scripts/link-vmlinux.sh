@@ -50,7 +50,7 @@ gen_initcalls()
 {
 	info GEN .tmp_initcalls.lds
 
-	${PYTHON} ${srctree}/scripts/jobserver-exec		\
+	${PYTHON3} ${srctree}/scripts/jobserver-exec		\
 	${PERL} ${srctree}/scripts/generate_initcall_order.pl	\
 		${KBUILD_VMLINUX_OBJS} ${KBUILD_VMLINUX_LIBS}	\
 		> .tmp_initcalls.lds
@@ -108,46 +108,68 @@ objtool_link()
 	local objtoolcmd;
 	local objtoolopt;
 
-	if is_enabled CONFIG_LTO_CLANG && is_enabled CONFIG_STACK_VALIDATION; then
-		# Don't perform vmlinux validation unless explicitly requested,
-		# but run objtool on vmlinux.o now that we have an object file.
-		if is_enabled CONFIG_UNWINDER_ORC; then
-			objtoolcmd="orc generate"
+	if ! is_enabled CONFIG_OBJTOOL; then
+		return;
+	fi
+
+	if is_enabled CONFIG_LTO_CLANG || is_enabled CONFIG_X86_KERNEL_IBT; then
+
+		# For LTO and IBT, objtool doesn't run on individual
+		# translation units.  Run everything on vmlinux instead.
+
+		if is_enabled CONFIG_HAVE_JUMP_LABEL_HACK; then
+			objtoolopt="${objtoolopt} --hacks=jump_label"
 		fi
 
-		objtoolopt="${objtoolopt} --duplicate"
+		if is_enabled CONFIG_HAVE_NOINSTR_HACK; then
+			objtoolopt="${objtoolopt} --hacks=noinstr"
+		fi
+
+		if is_enabled CONFIG_X86_KERNEL_IBT; then
+			objtoolopt="${objtoolopt} --ibt"
+		fi
 
 		if is_enabled CONFIG_FTRACE_MCOUNT_USE_OBJTOOL; then
 			objtoolopt="${objtoolopt} --mcount"
 		fi
+
+		if is_enabled CONFIG_UNWINDER_ORC; then
+			objtoolopt="${objtoolopt} --orc"
+		fi
+
+		if is_enabled CONFIG_RETPOLINE; then
+			objtoolopt="${objtoolopt} --retpoline"
+		fi
+
+		if is_enabled CONFIG_SLS; then
+			objtoolopt="${objtoolopt} --sls"
+		fi
+
+		if is_enabled CONFIG_STACK_VALIDATION; then
+			objtoolopt="${objtoolopt} --stackval"
+		fi
+
+		if is_enabled CONFIG_HAVE_STATIC_CALL_INLINE; then
+			objtoolopt="${objtoolopt} --static-call"
+		fi
+
+		objtoolopt="${objtoolopt} --uaccess"
 	fi
 
-	if is_enabled CONFIG_VMLINUX_VALIDATION; then
+	if is_enabled CONFIG_NOINSTR_VALIDATION; then
 		objtoolopt="${objtoolopt} --noinstr"
 	fi
 
 	if [ -n "${objtoolopt}" ]; then
-		if [ -z "${objtoolcmd}" ]; then
-			objtoolcmd="check"
-		fi
-		objtoolopt="${objtoolopt} --vmlinux"
-		if ! is_enabled CONFIG_FRAME_POINTER; then
-			objtoolopt="${objtoolopt} --no-fp"
-		fi
-		if is_enabled CONFIG_GCOV_KERNEL || is_enabled CONFIG_LTO_CLANG; then
+
+		if is_enabled CONFIG_GCOV_KERNEL; then
 			objtoolopt="${objtoolopt} --no-unreachable"
 		fi
-		if is_enabled CONFIG_RETPOLINE; then
-			objtoolopt="${objtoolopt} --retpoline"
-		fi
-		if is_enabled CONFIG_X86_SMAP; then
-			objtoolopt="${objtoolopt} --uaccess"
-		fi
-		if is_enabled CONFIG_SLS; then
-			objtoolopt="${objtoolopt} --sls"
-		fi
+
+		objtoolopt="${objtoolopt} --link"
+
 		info OBJTOOL ${1}
-		tools/objtool/objtool ${objtoolcmd} ${objtoolopt} ${1}
+		tools/objtool/objtool ${objtoolopt} ${1}
 	fi
 }
 
@@ -168,7 +190,7 @@ vmlinux_link()
 	# skip output file argument
 	shift
 
-	if is_enabled CONFIG_LTO_CLANG; then
+	if is_enabled CONFIG_LTO_CLANG || is_enabled CONFIG_X86_KERNEL_IBT; then
 		# Use vmlinux.o instead of performing the slow LTO link again.
 		objs=vmlinux.o
 		libs=

@@ -89,9 +89,9 @@ int acpi_get_rc_resources(struct device *dev, const char *hid, u16 segment,
 		return -ENODEV;
 	}
 
-	ret = acpi_bus_get_device(handle, &adev);
-	if (ret)
-		return ret;
+	adev = acpi_fetch_acpi_dev(handle);
+	if (!adev)
+		return -ENODEV;
 
 	ret = acpi_get_rc_addr(adev, res);
 	if (ret) {
@@ -1374,6 +1374,9 @@ void pci_acpi_setup(struct device *dev, struct acpi_device *adev)
 
 	acpi_pci_wakeup(pci_dev, false);
 	acpi_device_power_add_dependent(adev, dev);
+
+	if (pci_is_bridge(pci_dev))
+		acpi_dev_power_up_children_with_adr(adev);
 }
 
 void pci_acpi_cleanup(struct device *dev, struct acpi_device *adev)

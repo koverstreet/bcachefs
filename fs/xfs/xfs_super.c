@@ -815,7 +815,8 @@ xfs_fs_statfs(
 	spin_unlock(&mp->m_sb_lock);
 
 	/* make sure statp->f_bfree does not underflow */
-	statp->f_bfree = max_t(int64_t, fdblocks - mp->m_alloc_set_aside, 0);
+	statp->f_bfree = max_t(int64_t, 0,
+				fdblocks - xfs_fdblocks_unavailable(mp));
 	statp->f_bavail = statp->f_bfree;
 
 	fakeinos = XFS_FSB_TO_INO(mp, statp->f_bfree);
@@ -1607,14 +1608,10 @@ xfs_fs_fill_super(
 			goto out_filestream_unmount;
 	}
 
-	if (xfs_has_discard(mp)) {
-		struct request_queue *q = bdev_get_queue(sb->s_bdev);
-
-		if (!blk_queue_discard(q)) {
-			xfs_warn(mp, "mounting with \"discard\" option, but "
-					"the device does not support discard");
-			mp->m_features &= ~XFS_FEAT_DISCARD;
-		}
+	if (xfs_has_discard(mp) && !bdev_max_discard_sectors(sb->s_bdev)) {
+		xfs_warn(mp,
+	"mounting with \"discard\" option, but the device does not support discard");
+		mp->m_features &= ~XFS_FEAT_DISCARD;
 	}
 
 	if (xfs_has_reflink(mp)) {

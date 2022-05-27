@@ -152,25 +152,25 @@ static void filemap_unaccount_folio(struct address_space *mapping,
 
 	VM_BUG_ON_FOLIO(folio_mapped(folio), folio);
 	if (!IS_ENABLED(CONFIG_DEBUG_VM) && unlikely(folio_mapped(folio))) {
-		int mapcount;
-
 		pr_alert("BUG: Bad page cache in process %s  pfn:%05lx\n",
 			 current->comm, folio_pfn(folio));
 		dump_page(&folio->page, "still mapped when deleted");
 		dump_stack();
 		add_taint(TAINT_BAD_PAGE, LOCKDEP_NOW_UNRELIABLE);
 
-		mapcount = page_mapcount(&folio->page);
-		if (mapping_exiting(mapping) &&
-		    folio_ref_count(folio) >= mapcount + 2) {
-			/*
-			 * All vmas have already been torn down, so it's
-			 * a good bet that actually the folio is unmapped,
-			 * and we'd prefer not to leak it: if we're wrong,
-			 * some other bad page check should catch it later.
-			 */
-			page_mapcount_reset(&folio->page);
-			folio_ref_sub(folio, mapcount);
+		if (mapping_exiting(mapping) && !folio_test_large(folio)) {
+			int mapcount = page_mapcount(&folio->page);
+
+			if (folio_ref_count(folio) >= mapcount + 2) {
+				/*
+				 * All vmas have already been torn down, so it's
+				 * a good bet that actually the page is unmapped
+				 * and we'd rather not leak it: if we're wrong,
+				 * another bad page check should catch it later.
+				 */
+				page_mapcount_reset(&folio->page);
+				folio_ref_sub(folio, mapcount);
+			}
 		}
 	}
 
@@ -193,16 +193,20 @@ static void filemap_unaccount_folio(struct address_space *mapping,
 	/*
 	 * At this point folio must be either written or cleaned by
 	 * truncate.  Dirty folio here signals a bug and loss of
-	 * unwritten data.
+	 * unwritten data - on ordinary filesystems.
 	 *
-	 * This fixes dirty accounting after removing the folio entirely
+	 * But it's harmless on in-memory filesystems like tmpfs; and can
+	 * occur when a driver which did get_user_pages() sets page dirty
+	 * before putting it, while the inode is being finally evicted.
+	 *
+	 * Below fixes dirty accounting after removing the folio entirely
 	 * but leaves the dirty flag set: it has no effect for truncated
 	 * folio and anyway will be cleared before returning folio to
 	 * buddy allocator.
 	 */
-	if (WARN_ON_ONCE(folio_test_dirty(folio)))
-		folio_account_cleaned(folio, mapping,
-					inode_to_wb(mapping->host));
+	if (WARN_ON_ONCE(folio_test_dirty(folio) &&
+			 mapping_can_writeback(mapping)))
+		folio_account_cleaned(folio, inode_to_wb(mapping->host));
 }
 
 /*
@@ -221,12 +225,12 @@ void __filemap_remove_folio(struct folio *folio, void *shadow)
 
 void filemap_free_folio(struct address_space *mapping, struct folio *folio)
 {
-	void (*freepage)(struct page *);
+	void (*free_folio)(struct folio *);
 	int refs = 1;
 
-	freepage = mapping->a_ops->freepage;
-	if (freepage)
-		freepage(&folio->page);
+	free_folio = mapping->a_ops->free_folio;
+	if (free_folio)
+		free_folio(folio);
 
 	if (folio_test_large(folio) && !folio_test_hugetlb(folio))
 		refs = folio_nr_pages(folio);
@@ -803,7 +807,7 @@ void replace_page_cache_page(struct page *old, struct page *new)
 	struct folio *fold = page_folio(old);
 	struct folio *fnew = page_folio(new);
 	struct address_space *mapping = old->mapping;
-	void (*freepage)(struct page *) = mapping->a_ops->freepage;
+	void (*free_folio)(struct folio *) = mapping->a_ops->free_folio;
 	pgoff_t offset = old->index;
 	XA_STATE(xas, &mapping->i_pages, offset);
 
@@ -831,9 +835,9 @@ void replace_page_cache_page(struct page *old, struct page *new)
 	if (PageSwapBacked(new))
 		__inc_lruvec_page_state(new, NR_SHMEM);
 	xas_unlock_irq(&xas);
-	if (freepage)
-		freepage(old);
-	put_page(old);
+	if (free_folio)
+		free_folio(fold);
+	folio_put(fold);
 }
 EXPORT_SYMBOL_GPL(replace_page_cache_page);
 
@@ -1059,12 +1063,6 @@ void __init pagecache_init(void)
 		init_waitqueue_head(&folio_wait_table[i]);
 
 	page_writeback_init();
-
-	/*
-	 * tmpfs uses the ZERO_PAGE for reading holes: it is up-to-date,
-	 * and splice's page_cache_pipe_buf_confirm() needs to see that.
-	 */
-	SetPageUptodate(ZERO_PAGE(0));
 }
 
 /*
@@ -1185,24 +1183,17 @@ static void folio_wake_bit(struct folio *folio, int bit_nr)
 	}
 
 	/*
-	 * It is possible for other pages to have collided on the waitqueue
-	 * hash, so in that case check for a page match. That prevents a long-
-	 * term waiter
+	 * It's possible to miss clearing waiters here, when we woke our page
+	 * waiters, but the hashed waitqueue has waiters for other pages on it.
+	 * That's okay, it's a rare case. The next waker will clear it.
 	 *
-	 * It is still possible to miss a case here, when we woke page waiters
-	 * and removed them from the waitqueue, but there are still other
-	 * page waiters.
+	 * Note that, depending on the page pool (buddy, hugetlb, ZONE_DEVICE,
+	 * other), the flag may be cleared in the course of freeing the page;
+	 * but that is not required for correctness.
 	 */
-	if (!waitqueue_active(q) || !key.page_match) {
+	if (!waitqueue_active(q) || !key.page_match)
 		folio_clear_waiters(folio);
-		/*
-		 * It's possible to miss clearing Waiters here, when we woke
-		 * our page waiters, but the hashed waitqueue has waiters for
-		 * other pages on it.
-		 *
-		 * That's okay, it's a rare case. The next waker will clear it.
-		 */
-	}
+
 	spin_unlock_irqrestore(&q->lock, flags);
 }
 
@@ -2423,12 +2414,12 @@ static int filemap_read_folio(struct file *file, struct address_space *mapping,
 
 	/*
 	 * A previous I/O error may have been due to temporary failures,
-	 * eg. multipath errors.  PG_error will be set again if readpage
+	 * eg. multipath errors.  PG_error will be set again if read_folio
 	 * fails.
 	 */
 	folio_clear_error(folio);
 	/* Start the actual read. The read will unlock the page. */
-	error = mapping->a_ops->readpage(file, &folio->page);
+	error = mapping->a_ops->read_folio(file, folio);
 	if (error)
 		return error;
 
@@ -2541,7 +2532,7 @@ static int filemap_create_folio(struct file *file,
 	 * the page cache as the locked folio would then be enough to
 	 * synchronize with hole punching. But there are code paths
 	 * such as filemap_update_page() filling in partially uptodate
-	 * pages or ->readpages() that need to hold invalidate_lock
+	 * pages or ->readahead() that need to hold invalidate_lock
 	 * while mapping blocks for IO so let's hold the lock here as
 	 * well to keep locking rules simple.
 	 */
@@ -2645,7 +2636,7 @@ err:
  * @already_read: Number of bytes already read by the caller.
  *
  * Copies data from the page cache.  If the data is not currently present,
- * uses the readahead and readpage address_space operations to fetch it.
+ * uses the readahead and read_folio address_space operations to fetch it.
  *
  * Return: Total number of bytes copied, including those already read by
  * the caller.  If an error happens before any bytes are copied, returns
@@ -3456,7 +3447,7 @@ int generic_file_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	struct address_space *mapping = file->f_mapping;
 
-	if (!mapping->a_ops->readpage)
+	if (!mapping->a_ops->read_folio)
 		return -ENOEXEC;
 	file_accessed(file);
 	vma->vm_ops = &generic_file_vm_ops;
@@ -3492,10 +3483,13 @@ EXPORT_SYMBOL(generic_file_mmap);
 EXPORT_SYMBOL(generic_file_readonly_mmap);
 
 static struct folio *do_read_cache_folio(struct address_space *mapping,
-		pgoff_t index, filler_t filler, void *data, gfp_t gfp)
+		pgoff_t index, filler_t filler, struct file *file, gfp_t gfp)
 {
 	struct folio *folio;
 	int err;
+
+	if (!filler)
+		filler = mapping->a_ops->read_folio;
 repeat:
 	folio = filemap_get_folio(mapping, index);
 	if (!folio) {
@@ -3512,11 +3506,7 @@ repeat:
 		}
 
 filler:
-		if (filler)
-			err = filler(data, &folio->page);
-		else
-			err = mapping->a_ops->readpage(data, &folio->page);
-
+		err = filler(file, folio);
 		if (err < 0) {
 			folio_put(folio);
 			return ERR_PTR(err);
@@ -3566,44 +3556,44 @@ out:
 }
 
 /**
- * read_cache_folio - read into page cache, fill it if needed
- * @mapping:	the page's address_space
- * @index:	the page index
- * @filler:	function to perform the read
- * @data:	first arg to filler(data, page) function, often left as NULL
+ * read_cache_folio - Read into page cache, fill it if needed.
+ * @mapping: The address_space to read from.
+ * @index: The index to read.
+ * @filler: Function to perform the read, or NULL to use aops->read_folio().
+ * @file: Passed to filler function, may be NULL if not required.
  *
- * Read into the page cache. If a page already exists, and PageUptodate() is
- * not set, try to fill the page and wait for it to become unlocked.
+ * Read one page into the page cache.  If it succeeds, the folio returned
+ * will contain @index, but it may not be the first page of the folio.
  *
- * If the page does not get brought uptodate, return -EIO.
+ * If the filler function returns an error, it will be returned to the
+ * caller.
  *
- * The function expects mapping->invalidate_lock to be already held.
- *
- * Return: up to date page on success, ERR_PTR() on failure.
+ * Context: May sleep.  Expects mapping->invalidate_lock to be held.
+ * Return: An uptodate folio on success, ERR_PTR() on failure.
  */
 struct folio *read_cache_folio(struct address_space *mapping, pgoff_t index,
-		filler_t filler, void *data)
+		filler_t filler, struct file *file)
 {
-	return do_read_cache_folio(mapping, index, filler, data,
+	return do_read_cache_folio(mapping, index, filler, file,
 			mapping_gfp_mask(mapping));
 }
 EXPORT_SYMBOL(read_cache_folio);
 
 static struct page *do_read_cache_page(struct address_space *mapping,
-		pgoff_t index, filler_t *filler, void *data, gfp_t gfp)
+		pgoff_t index, filler_t *filler, struct file *file, gfp_t gfp)
 {
 	struct folio *folio;
 
-	folio = do_read_cache_folio(mapping, index, filler, data, gfp);
+	folio = do_read_cache_folio(mapping, index, filler, file, gfp);
 	if (IS_ERR(folio))
 		return &folio->page;
 	return folio_file_page(folio, index);
 }
 
 struct page *read_cache_page(struct address_space *mapping,
-				pgoff_t index, filler_t *filler, void *data)
+			pgoff_t index, filler_t *filler, struct file *file)
 {
-	return do_read_cache_page(mapping, index, filler, data,
+	return do_read_cache_page(mapping, index, filler, file,
 			mapping_gfp_mask(mapping));
 }
 EXPORT_SYMBOL(read_cache_page);
@@ -3630,27 +3620,6 @@ struct page *read_cache_page_gfp(struct address_space *mapping,
 	return do_read_cache_page(mapping, index, NULL, NULL, gfp);
 }
 EXPORT_SYMBOL(read_cache_page_gfp);
-
-int pagecache_write_begin(struct file *file, struct address_space *mapping,
-				loff_t pos, unsigned len, unsigned flags,
-				struct page **pagep, void **fsdata)
-{
-	const struct address_space_operations *aops = mapping->a_ops;
-
-	return aops->write_begin(file, mapping, pos, len, flags,
-							pagep, fsdata);
-}
-EXPORT_SYMBOL(pagecache_write_begin);
-
-int pagecache_write_end(struct file *file, struct address_space *mapping,
-				loff_t pos, unsigned len, unsigned copied,
-				struct page *page, void *fsdata)
-{
-	const struct address_space_operations *aops = mapping->a_ops;
-
-	return aops->write_end(file, mapping, pos, len, copied, page, fsdata);
-}
-EXPORT_SYMBOL(pagecache_write_end);
 
 /*
  * Warn about a page cache invalidation failure during a direct I/O write.
@@ -3755,14 +3724,14 @@ out:
 }
 EXPORT_SYMBOL(generic_file_direct_write);
 
-ssize_t generic_perform_write(struct file *file,
-				struct iov_iter *i, loff_t pos)
+ssize_t generic_perform_write(struct kiocb *iocb, struct iov_iter *i)
 {
+	struct file *file = iocb->ki_filp;
+	loff_t pos = iocb->ki_pos;
 	struct address_space *mapping = file->f_mapping;
 	const struct address_space_operations *a_ops = mapping->a_ops;
 	long status = 0;
 	ssize_t written = 0;
-	unsigned int flags = 0;
 
 	do {
 		struct page *page;
@@ -3782,7 +3751,7 @@ again:
 		 * same page as we're writing to, without it being marked
 		 * up-to-date.
 		 */
-		if (unlikely(fault_in_iov_iter_readable(i, bytes))) {
+		if (unlikely(fault_in_iov_iter_readable(i, bytes) == bytes)) {
 			status = -EFAULT;
 			break;
 		}
@@ -3792,7 +3761,7 @@ again:
 			break;
 		}
 
-		status = a_ops->write_begin(file, mapping, pos, bytes, flags,
+		status = a_ops->write_begin(file, mapping, pos, bytes,
 						&page, &fsdata);
 		if (unlikely(status < 0))
 			break;
@@ -3887,7 +3856,8 @@ ssize_t __generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		if (written < 0 || !iov_iter_count(from) || IS_DAX(inode))
 			goto out;
 
-		status = generic_perform_write(file, from, pos = iocb->ki_pos);
+		pos = iocb->ki_pos;
+		status = generic_perform_write(iocb, from);
 		/*
 		 * If generic_perform_write() returned a synchronous error
 		 * then we want to return the number of bytes which were
@@ -3919,7 +3889,7 @@ ssize_t __generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			 */
 		}
 	} else {
-		written = generic_perform_write(file, from, iocb->ki_pos);
+		written = generic_perform_write(iocb, from);
 		if (likely(written > 0))
 			iocb->ki_pos += written;
 	}
@@ -3985,8 +3955,8 @@ bool filemap_release_folio(struct folio *folio, gfp_t gfp)
 	if (folio_test_writeback(folio))
 		return false;
 
-	if (mapping && mapping->a_ops->releasepage)
-		return mapping->a_ops->releasepage(&folio->page, gfp);
-	return try_to_free_buffers(&folio->page);
+	if (mapping && mapping->a_ops->release_folio)
+		return mapping->a_ops->release_folio(folio, gfp);
+	return try_to_free_buffers(folio);
 }
 EXPORT_SYMBOL(filemap_release_folio);

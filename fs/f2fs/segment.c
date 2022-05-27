@@ -1196,9 +1196,8 @@ static int __submit_discard_cmd(struct f2fs_sb_info *sbi,
 						unsigned int *issued)
 {
 	struct block_device *bdev = dc->bdev;
-	struct request_queue *q = bdev_get_queue(bdev);
 	unsigned int max_discard_blocks =
-			SECTOR_TO_BLOCK(q->limits.max_discard_sectors);
+			SECTOR_TO_BLOCK(bdev_max_discard_sectors(bdev));
 	struct discard_cmd_control *dcc = SM_I(sbi)->dcc_info;
 	struct list_head *wait_list = (dpolicy->type == DPOLICY_FSTRIM) ?
 					&(dcc->fstrim_list) : &(dcc->wait_list);
@@ -1245,7 +1244,7 @@ static int __submit_discard_cmd(struct f2fs_sb_info *sbi,
 		err = __blkdev_issue_discard(bdev,
 					SECTOR_FROM_BLOCK(start),
 					SECTOR_FROM_BLOCK(len),
-					GFP_NOFS, 0, &bio);
+					GFP_NOFS, &bio);
 submit:
 		if (err) {
 			spin_lock_irqsave(&dc->lock, flags);
@@ -1375,9 +1374,8 @@ static void __update_discard_tree_range(struct f2fs_sb_info *sbi,
 	struct discard_cmd *dc;
 	struct discard_info di = {0};
 	struct rb_node **insert_p = NULL, *insert_parent = NULL;
-	struct request_queue *q = bdev_get_queue(bdev);
 	unsigned int max_discard_blocks =
-			SECTOR_TO_BLOCK(q->limits.max_discard_sectors);
+			SECTOR_TO_BLOCK(bdev_max_discard_sectors(bdev));
 	block_t end = lstart + len;
 
 	dc = (struct discard_cmd *)f2fs_lookup_rb_tree_ret(&dcc->root,
@@ -3241,101 +3239,6 @@ int f2fs_rw_hint_to_seg_type(enum rw_hint hint)
 	default:
 		return CURSEG_WARM_DATA;
 	}
-}
-
-/* This returns write hints for each segment type. This hints will be
- * passed down to block layer. There are mapping tables which depend on
- * the mount option 'whint_mode'.
- *
- * 1) whint_mode=off. F2FS only passes down WRITE_LIFE_NOT_SET.
- *
- * 2) whint_mode=user-based. F2FS tries to pass down hints given by users.
- *
- * User                  F2FS                     Block
- * ----                  ----                     -----
- *                       META                     WRITE_LIFE_NOT_SET
- *                       HOT_NODE                 "
- *                       WARM_NODE                "
- *                       COLD_NODE                "
- * ioctl(COLD)           COLD_DATA                WRITE_LIFE_EXTREME
- * extension list        "                        "
- *
- * -- buffered io
- * WRITE_LIFE_EXTREME    COLD_DATA                WRITE_LIFE_EXTREME
- * WRITE_LIFE_SHORT      HOT_DATA                 WRITE_LIFE_SHORT
- * WRITE_LIFE_NOT_SET    WARM_DATA                WRITE_LIFE_NOT_SET
- * WRITE_LIFE_NONE       "                        "
- * WRITE_LIFE_MEDIUM     "                        "
- * WRITE_LIFE_LONG       "                        "
- *
- * -- direct io
- * WRITE_LIFE_EXTREME    COLD_DATA                WRITE_LIFE_EXTREME
- * WRITE_LIFE_SHORT      HOT_DATA                 WRITE_LIFE_SHORT
- * WRITE_LIFE_NOT_SET    WARM_DATA                WRITE_LIFE_NOT_SET
- * WRITE_LIFE_NONE       "                        WRITE_LIFE_NONE
- * WRITE_LIFE_MEDIUM     "                        WRITE_LIFE_MEDIUM
- * WRITE_LIFE_LONG       "                        WRITE_LIFE_LONG
- *
- * 3) whint_mode=fs-based. F2FS passes down hints with its policy.
- *
- * User                  F2FS                     Block
- * ----                  ----                     -----
- *                       META                     WRITE_LIFE_MEDIUM;
- *                       HOT_NODE                 WRITE_LIFE_NOT_SET
- *                       WARM_NODE                "
- *                       COLD_NODE                WRITE_LIFE_NONE
- * ioctl(COLD)           COLD_DATA                WRITE_LIFE_EXTREME
- * extension list        "                        "
- *
- * -- buffered io
- * WRITE_LIFE_EXTREME    COLD_DATA                WRITE_LIFE_EXTREME
- * WRITE_LIFE_SHORT      HOT_DATA                 WRITE_LIFE_SHORT
- * WRITE_LIFE_NOT_SET    WARM_DATA                WRITE_LIFE_LONG
- * WRITE_LIFE_NONE       "                        "
- * WRITE_LIFE_MEDIUM     "                        "
- * WRITE_LIFE_LONG       "                        "
- *
- * -- direct io
- * WRITE_LIFE_EXTREME    COLD_DATA                WRITE_LIFE_EXTREME
- * WRITE_LIFE_SHORT      HOT_DATA                 WRITE_LIFE_SHORT
- * WRITE_LIFE_NOT_SET    WARM_DATA                WRITE_LIFE_NOT_SET
- * WRITE_LIFE_NONE       "                        WRITE_LIFE_NONE
- * WRITE_LIFE_MEDIUM     "                        WRITE_LIFE_MEDIUM
- * WRITE_LIFE_LONG       "                        WRITE_LIFE_LONG
- */
-
-enum rw_hint f2fs_io_type_to_rw_hint(struct f2fs_sb_info *sbi,
-				enum page_type type, enum temp_type temp)
-{
-	if (F2FS_OPTION(sbi).whint_mode == WHINT_MODE_USER) {
-		if (type == DATA) {
-			if (temp == WARM)
-				return WRITE_LIFE_NOT_SET;
-			else if (temp == HOT)
-				return WRITE_LIFE_SHORT;
-			else if (temp == COLD)
-				return WRITE_LIFE_EXTREME;
-		} else {
-			return WRITE_LIFE_NOT_SET;
-		}
-	} else if (F2FS_OPTION(sbi).whint_mode == WHINT_MODE_FS) {
-		if (type == DATA) {
-			if (temp == WARM)
-				return WRITE_LIFE_LONG;
-			else if (temp == HOT)
-				return WRITE_LIFE_SHORT;
-			else if (temp == COLD)
-				return WRITE_LIFE_EXTREME;
-		} else if (type == NODE) {
-			if (temp == WARM || temp == HOT)
-				return WRITE_LIFE_NOT_SET;
-			else if (temp == COLD)
-				return WRITE_LIFE_NONE;
-		} else if (type == META) {
-			return WRITE_LIFE_MEDIUM;
-		}
-	}
-	return WRITE_LIFE_NOT_SET;
 }
 
 static int __get_segment_type_2(struct f2fs_io_info *fio)

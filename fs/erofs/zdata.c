@@ -791,7 +791,7 @@ err_out:
 static bool z_erofs_get_sync_decompress_policy(struct erofs_sb_info *sbi,
 				       unsigned int readahead_pages)
 {
-	/* auto: enable for readpage, disable for readahead */
+	/* auto: enable for read_folio, disable for readahead */
 	if ((sbi->opt.sync_decompress == EROFS_SYNC_DECOMPRESS_AUTO) &&
 	    !readahead_pages)
 		return true;
@@ -1066,12 +1066,9 @@ static void z_erofs_decompress_kickoff(struct z_erofs_decompressqueue *io,
 
 	/* wake up the caller thread for sync decompression */
 	if (sync) {
-		unsigned long flags;
-
-		spin_lock_irqsave(&io->u.wait.lock, flags);
 		if (!atomic_add_return(bios, &io->pending_bios))
-			wake_up_locked(&io->u.wait);
-		spin_unlock_irqrestore(&io->u.wait.lock, flags);
+			complete(&io->u.done);
+
 		return;
 	}
 
@@ -1217,7 +1214,7 @@ jobqueue_init(struct super_block *sb,
 	} else {
 fg_out:
 		q = fgq;
-		init_waitqueue_head(&fgq->u.wait);
+		init_completion(&fgq->u.done);
 		atomic_set(&fgq->pending_bios, 0);
 	}
 	q->sb = sb;
@@ -1419,8 +1416,7 @@ static void z_erofs_runqueue(struct super_block *sb,
 		return;
 
 	/* wait until all bios are completed */
-	io_wait_event(io[JQ_SUBMIT].u.wait,
-		      !atomic_read(&io[JQ_SUBMIT].pending_bios));
+	wait_for_completion_io(&io[JQ_SUBMIT].u.done);
 
 	/* handle synchronous decompress queue in the caller context */
 	z_erofs_decompress_queue(&io[JQ_SUBMIT], pagepool);
@@ -1492,8 +1488,9 @@ skip:
 	}
 }
 
-static int z_erofs_readpage(struct file *file, struct page *page)
+static int z_erofs_read_folio(struct file *file, struct folio *folio)
 {
+	struct page *page = &folio->page;
 	struct inode *const inode = page->mapping->host;
 	struct erofs_sb_info *const sbi = EROFS_I_SB(inode);
 	struct z_erofs_decompress_frontend f = DECOMPRESS_FRONTEND_INIT(inode);
@@ -1567,6 +1564,6 @@ static void z_erofs_readahead(struct readahead_control *rac)
 }
 
 const struct address_space_operations z_erofs_aops = {
-	.readpage = z_erofs_readpage,
+	.read_folio = z_erofs_read_folio,
 	.readahead = z_erofs_readahead,
 };

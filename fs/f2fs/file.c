@@ -2285,7 +2285,6 @@ static int f2fs_ioc_fitrim(struct file *filp, unsigned long arg)
 {
 	struct inode *inode = file_inode(filp);
 	struct super_block *sb = inode->i_sb;
-	struct request_queue *q = bdev_get_queue(sb->s_bdev);
 	struct fstrim_range range;
 	int ret;
 
@@ -2304,7 +2303,7 @@ static int f2fs_ioc_fitrim(struct file *filp, unsigned long arg)
 		return ret;
 
 	range.minlen = max((unsigned int)range.minlen,
-				q->limits.discard_granularity);
+			   bdev_discard_granularity(sb->s_bdev));
 	ret = f2fs_trim_fs(F2FS_SB(sb), &range);
 	mnt_drop_write_file(filp);
 	if (ret < 0)
@@ -3686,18 +3685,18 @@ out:
 static int f2fs_secure_erase(struct block_device *bdev, struct inode *inode,
 		pgoff_t off, block_t block, block_t len, u32 flags)
 {
-	struct request_queue *q = bdev_get_queue(bdev);
 	sector_t sector = SECTOR_FROM_BLOCK(block);
 	sector_t nr_sects = SECTOR_FROM_BLOCK(len);
 	int ret = 0;
 
-	if (!q)
-		return -ENXIO;
-
-	if (flags & F2FS_TRIM_FILE_DISCARD)
-		ret = blkdev_issue_discard(bdev, sector, nr_sects, GFP_NOFS,
-						blk_queue_secure_erase(q) ?
-						BLKDEV_DISCARD_SECURE : 0);
+	if (flags & F2FS_TRIM_FILE_DISCARD) {
+		if (bdev_max_secure_erase_sectors(bdev))
+			ret = blkdev_issue_secure_erase(bdev, sector, nr_sects,
+					GFP_NOFS);
+		else
+			ret = blkdev_issue_discard(bdev, sector, nr_sects,
+					GFP_NOFS);
+	}
 
 	if (!ret && (flags & F2FS_TRIM_FILE_ZEROOUT)) {
 		if (IS_ENCRYPTED(inode))
@@ -4309,7 +4308,7 @@ static ssize_t f2fs_dio_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	 */
 	inc_page_count(sbi, F2FS_DIO_READ);
 	dio = __iomap_dio_rw(iocb, to, &f2fs_iomap_ops,
-			     &f2fs_iomap_dio_read_ops, 0, 0);
+			     &f2fs_iomap_dio_read_ops, 0, NULL, 0);
 	if (IS_ERR_OR_NULL(dio)) {
 		ret = PTR_ERR_OR_ZERO(dio);
 		if (ret != -EIOCBQUEUED)
@@ -4448,7 +4447,7 @@ static ssize_t f2fs_buffered_write_iter(struct kiocb *iocb,
 		return -EOPNOTSUPP;
 
 	current->backing_dev_info = inode_to_bdi(inode);
-	ret = generic_perform_write(file, from, iocb->ki_pos);
+	ret = generic_perform_write(iocb, from);
 	current->backing_dev_info = NULL;
 
 	if (ret > 0) {
@@ -4482,10 +4481,8 @@ static ssize_t f2fs_dio_write_iter(struct kiocb *iocb, struct iov_iter *from,
 	struct f2fs_inode_info *fi = F2FS_I(inode);
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	const bool do_opu = f2fs_lfs_mode(sbi);
-	const int whint_mode = F2FS_OPTION(sbi).whint_mode;
 	const loff_t pos = iocb->ki_pos;
 	const ssize_t count = iov_iter_count(from);
-	const enum rw_hint hint = iocb->ki_hint;
 	unsigned int dio_flags;
 	struct iomap_dio *dio;
 	ssize_t ret;
@@ -4518,8 +4515,6 @@ static ssize_t f2fs_dio_write_iter(struct kiocb *iocb, struct iov_iter *from,
 		if (do_opu)
 			f2fs_down_read(&fi->i_gc_rwsem[READ]);
 	}
-	if (whint_mode == WHINT_MODE_OFF)
-		iocb->ki_hint = WRITE_LIFE_NOT_SET;
 
 	/*
 	 * We have to use __iomap_dio_rw() and iomap_dio_complete() instead of
@@ -4531,7 +4526,7 @@ static ssize_t f2fs_dio_write_iter(struct kiocb *iocb, struct iov_iter *from,
 	if (pos + count > inode->i_size)
 		dio_flags |= IOMAP_DIO_FORCE_WAIT;
 	dio = __iomap_dio_rw(iocb, from, &f2fs_iomap_ops,
-			     &f2fs_iomap_dio_write_ops, dio_flags, 0);
+			     &f2fs_iomap_dio_write_ops, dio_flags, NULL, 0);
 	if (IS_ERR_OR_NULL(dio)) {
 		ret = PTR_ERR_OR_ZERO(dio);
 		if (ret == -ENOTBLK)
@@ -4542,8 +4537,6 @@ static ssize_t f2fs_dio_write_iter(struct kiocb *iocb, struct iov_iter *from,
 		ret = iomap_dio_complete(dio);
 	}
 
-	if (whint_mode == WHINT_MODE_OFF)
-		iocb->ki_hint = hint;
 	if (do_opu)
 		f2fs_up_read(&fi->i_gc_rwsem[READ]);
 	f2fs_up_read(&fi->i_gc_rwsem[WRITE]);

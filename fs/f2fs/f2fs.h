@@ -18,6 +18,7 @@
 #include <linux/kobject.h>
 #include <linux/sched.h>
 #include <linux/cred.h>
+#include <linux/sched/mm.h>
 #include <linux/vmalloc.h>
 #include <linux/bio.h>
 #include <linux/blkdev.h>
@@ -154,7 +155,6 @@ struct f2fs_mount_info {
 	int s_jquota_fmt;			/* Format of quota to use */
 #endif
 	/* For which write hints are passed down to block layer */
-	int whint_mode;
 	int alloc_mode;			/* segment allocation policy */
 	int fsync_mode;			/* fsync policy */
 	int fs_mode;			/* fs mode: LFS or ADAPTIVE */
@@ -1331,12 +1331,6 @@ enum {
 	FS_MODE_LFS,			/* use lfs allocation only */
 	FS_MODE_FRAGMENT_SEG,		/* segment fragmentation mode */
 	FS_MODE_FRAGMENT_BLK,		/* block fragmentation mode */
-};
-
-enum {
-	WHINT_MODE_OFF,		/* not pass down write hints */
-	WHINT_MODE_USER,	/* try to pass down hints given by users */
-	WHINT_MODE_FS,		/* pass down hints with F2FS policy */
 };
 
 enum {
@@ -2661,6 +2655,7 @@ static inline struct page *f2fs_grab_cache_page(struct address_space *mapping,
 						pgoff_t index, bool for_write)
 {
 	struct page *page;
+	unsigned int flags;
 
 	if (IS_ENABLED(CONFIG_F2FS_FAULT_INJECTION)) {
 		if (!for_write)
@@ -2680,7 +2675,12 @@ static inline struct page *f2fs_grab_cache_page(struct address_space *mapping,
 
 	if (!for_write)
 		return grab_cache_page(mapping, index);
-	return grab_cache_page_write_begin(mapping, index, AOP_FLAG_NOFS);
+
+	flags = memalloc_nofs_save();
+	page = grab_cache_page_write_begin(mapping, index);
+	memalloc_nofs_restore(flags);
+
+	return page;
 }
 
 static inline struct page *f2fs_pagecache_get_page(
@@ -3657,8 +3657,6 @@ void f2fs_destroy_segment_manager(struct f2fs_sb_info *sbi);
 int __init f2fs_create_segment_manager_caches(void);
 void f2fs_destroy_segment_manager_caches(void);
 int f2fs_rw_hint_to_seg_type(enum rw_hint hint);
-enum rw_hint f2fs_io_type_to_rw_hint(struct f2fs_sb_info *sbi,
-			enum page_type type, enum temp_type temp);
 unsigned int f2fs_usable_segs_in_sec(struct f2fs_sb_info *sbi,
 			unsigned int segno);
 unsigned int f2fs_usable_blks_in_seg(struct f2fs_sb_info *sbi,
@@ -3770,7 +3768,7 @@ int f2fs_write_single_data_page(struct page *page, int *submitted,
 				int compr_blocks, bool allow_balance);
 void f2fs_write_failed(struct inode *inode, loff_t to);
 void f2fs_invalidate_folio(struct folio *folio, size_t offset, size_t length);
-int f2fs_release_page(struct page *page, gfp_t wait);
+bool f2fs_release_folio(struct folio *folio, gfp_t wait);
 #ifdef CONFIG_MIGRATION
 int f2fs_migrate_page(struct address_space *mapping, struct page *newpage,
 			struct page *page, enum migrate_mode mode);
@@ -4381,8 +4379,7 @@ static inline bool f2fs_hw_should_discard(struct f2fs_sb_info *sbi)
 
 static inline bool f2fs_bdev_support_discard(struct block_device *bdev)
 {
-	return blk_queue_discard(bdev_get_queue(bdev)) ||
-	       bdev_is_zoned(bdev);
+	return bdev_max_discard_sectors(bdev) || bdev_is_zoned(bdev);
 }
 
 static inline bool f2fs_hw_support_discard(struct f2fs_sb_info *sbi)
