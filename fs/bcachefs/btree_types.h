@@ -348,6 +348,7 @@ struct btree_insert_entry {
 	bool			cached:1;
 	bool			insert_trigger_run:1;
 	bool			overwrite_trigger_run:1;
+	bool			key_cache_already_flushed:1;
 	/*
 	 * @old_k may be a key from the journal; @old_btree_u64s always refers
 	 * to the size of the key being overwritten in the btree:

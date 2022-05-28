@@ -31,6 +31,7 @@ static inline int btree_insert_entry_cmp(const struct btree_insert_entry *l,
 					 const struct btree_insert_entry *r)
 {
 	return   cmp_int(l->btree_id,	r->btree_id) ?:
+		 cmp_int(l->cached,	r->cached) ?:
 		 -cmp_int(l->level,	r->level) ?:
 		 bpos_cmp(l->k->k.p,	r->k->k.p);
 }
@@ -406,8 +407,12 @@ static inline void do_btree_insert_one(struct btree_trans *trans,
 
 	if (!i->cached)
 		btree_insert_key_leaf(trans, i);
-	else
+	else if (!i->key_cache_already_flushed)
 		bch2_btree_insert_key_cached(trans, i->path, i->k);
+	else {
+		bch2_btree_key_cache_drop(trans, i->path);
+		return;
+	}
 
 	if (likely(!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))) {
 		bch2_journal_add_keys(j, &trans->journal_res,
@@ -1473,11 +1478,13 @@ static int need_whiteout_for_snapshot(struct btree_trans *trans,
 }
 
 static int __must_check
-bch2_trans_update_by_path(struct btree_trans *trans, struct btree_path *path,
-			  struct bkey_i *k, enum btree_update_flags flags)
+bch2_trans_update_by_path_trace(struct btree_trans *trans, struct btree_path *path,
+				struct bkey_i *k, enum btree_update_flags flags,
+				unsigned long ip)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_insert_entry *i, n;
+	int ret = 0;
 
 	BUG_ON(!path->should_be_locked);
 
@@ -1492,7 +1499,7 @@ bch2_trans_update_by_path(struct btree_trans *trans, struct btree_path *path,
 		.cached		= path->cached,
 		.path		= path,
 		.k		= k,
-		.ip_allocated	= _RET_IP_,
+		.ip_allocated	= ip,
 	};
 
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -1537,8 +1544,43 @@ bch2_trans_update_by_path(struct btree_trans *trans, struct btree_path *path,
 		}
 	}
 
-	__btree_path_get(n.path, true);
-	return 0;
+	__btree_path_get(i->path, true);
+
+	/*
+	 * If a key is present in the key cache, it must also exist in the
+	 * btree - this is necessary for cache coherency. When iterating over
+	 * a btree that's cached in the key cache, the btree iter code checks
+	 * the key cache - but the key has to exist in the btree for that to
+	 * work:
+	 */
+	if (path->cached &&
+	    bkey_deleted(&i->old_k)) {
+		struct btree_path *btree_path;
+
+		i->key_cache_already_flushed = true;
+		i->flags |= BTREE_TRIGGER_NORUN;
+
+		btree_path = bch2_path_get(trans, path->btree_id, path->pos, 1, 0,
+					   BTREE_ITER_INTENT, _THIS_IP_);
+
+		ret = bch2_btree_path_traverse(trans, btree_path, 0);
+		if (ret)
+			goto err;
+
+		btree_path->should_be_locked = true;
+		ret = bch2_trans_update_by_path_trace(trans, btree_path, k, flags, ip);
+err:
+		bch2_path_put(trans, btree_path, true);
+	}
+
+	return ret;
+}
+
+static int __must_check
+bch2_trans_update_by_path(struct btree_trans *trans, struct btree_path *path,
+			  struct bkey_i *k, enum btree_update_flags flags)
+{
+	return bch2_trans_update_by_path_trace(trans, path, k, flags, _RET_IP_);
 }
 
 int __must_check bch2_trans_update(struct btree_trans *trans, struct btree_iter *iter,
@@ -1562,6 +1604,9 @@ int __must_check bch2_trans_update(struct btree_trans *trans, struct btree_iter 
 			k->k.type = KEY_TYPE_whiteout;
 	}
 
+	/*
+	 * Ensure that updates to cached btrees go to the key cache:
+	 */
 	if (!(flags & BTREE_UPDATE_KEY_CACHE_RECLAIM) &&
 	    !path->cached &&
 	    !path->level &&
