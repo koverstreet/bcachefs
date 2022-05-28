@@ -1828,8 +1828,9 @@ void bch2_trans_updates_to_text(struct printbuf *buf, struct btree_trans *trans)
 	trans_for_each_update(trans, i) {
 		struct bkey_s_c old = { &i->old_k, i->old_v };
 
-		pr_buf(buf, "update: btree %s %pS",
+		pr_buf(buf, "update: btree=%s cached=%u %pS",
 		       bch2_btree_ids[i->btree_id],
+		       i->cached,
 		       (void *) i->ip_allocated);
 		pr_newline(buf);
 
@@ -2215,16 +2216,22 @@ static noinline
 struct bkey_i *__bch2_btree_trans_peek_updates(struct btree_iter *iter)
 {
 	struct btree_insert_entry *i;
+	struct bkey_i *ret = NULL;
 
-	trans_for_each_update(iter->trans, i)
-		if ((cmp_int(iter->btree_id,	i->btree_id) ?:
-		     bpos_cmp(iter->path->pos,	i->k->k.p)) <= 0) {
-			if (iter->btree_id ==	i->btree_id)
-				return i->k;
+	trans_for_each_update(iter->trans, i) {
+		if (i->btree_id < iter->btree_id)
+			continue;
+		if (i->btree_id > iter->btree_id)
 			break;
-		}
+		if (bpos_cmp(i->k->k.p, iter->path->pos) < 0)
+			continue;
+		if (i->key_cache_already_flushed)
+			continue;
+		if (!ret || bpos_cmp(i->k->k.p, ret->k.p) < 0)
+			ret = i->k;
+	}
 
-	return NULL;
+	return ret;
 }
 
 static inline struct bkey_i *btree_trans_peek_updates(struct btree_iter *iter)
