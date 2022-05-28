@@ -562,6 +562,16 @@ bool bch2_btree_insert_key_cached(struct btree_trans *trans,
 	return true;
 }
 
+void bch2_btree_key_cache_drop(struct btree_trans *trans,
+			       struct btree_path *path)
+{
+	struct bkey_cached *ck = (void *) path->l[0].b;
+
+	ck->valid = false;
+
+	BUG_ON(test_bit(BKEY_CACHED_DIRTY, &ck->flags));
+}
+
 static unsigned long bch2_btree_key_cache_scan(struct shrinker *shrink,
 					   struct shrink_control *sc)
 {
