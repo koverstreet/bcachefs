@@ -87,18 +87,18 @@ int bch2_sb_counters_from_cpu(struct bch_fs *c)
 	return 0;
 }
 
+void bch2_fs_counters_exit(struct bch_fs *c)
+{
+	free_percpu(c->counters);
+}
+
 int bch2_fs_counters_init(struct bch_fs *c)
 {
-	int ret = 0;
-
 	c->counters = __alloc_percpu(sizeof(u64) * BCH_COUNTER_NR, sizeof(u64));
-
 	if (!c->counters)
 		return -ENOMEM;
 
-	ret = bch2_sb_counters_to_cpu(c);
-
-	return ret;
+	return bch2_sb_counters_to_cpu(c);
 }
 
 const struct bch_sb_field_ops bch_sb_field_ops_counters = {
