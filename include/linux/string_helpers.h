@@ -9,6 +9,7 @@
 
 struct device;
 struct file;
+struct printbuf;
 struct task_struct;
 
 /* Descriptions of the types of units to
@@ -62,6 +63,8 @@ static inline int string_unescape_any_inplace(char *buf)
 
 #define ESCAPE_ALL_MASK		GENMASK(8, 0)
 
+void prt_escaped_string(struct printbuf *out, const char *src, size_t isz,
+			unsigned int flags, const char *only);
 int string_escape_mem(const char *src, size_t isz, char *dst, size_t osz,
 		unsigned int flags, const char *only);
 
