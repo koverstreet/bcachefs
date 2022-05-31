@@ -15,6 +15,7 @@
 #include <linux/fs.h>
 #include <linux/limits.h>
 #include <linux/mm.h>
+#include <linux/printbuf.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/string_helpers.h>
@@ -301,19 +302,14 @@ int string_unescape(char *src, char *dst, size_t size, unsigned int flags)
 }
 EXPORT_SYMBOL(string_unescape);
 
-static bool escape_passthrough(unsigned char c, char **dst, char *end)
+static bool escape_passthrough(struct printbuf *out, unsigned char c)
 {
-	char *out = *dst;
-
-	if (out < end)
-		*out = c;
-	*dst = out + 1;
+	prt_char(out, c);
 	return true;
 }
 
-static bool escape_space(unsigned char c, char **dst, char *end)
+static bool escape_space(struct printbuf *out, unsigned char c)
 {
-	char *out = *dst;
 	unsigned char to;
 
 	switch (c) {
@@ -336,20 +332,13 @@ static bool escape_space(unsigned char c, char **dst, char *end)
 		return false;
 	}
 
-	if (out < end)
-		*out = '\\';
-	++out;
-	if (out < end)
-		*out = to;
-	++out;
-
-	*dst = out;
+	prt_char(out, '\\');
+	prt_char(out, to);
 	return true;
 }
 
-static bool escape_special(unsigned char c, char **dst, char *end)
+static bool escape_special(struct printbuf *out, unsigned char c)
 {
-	char *out = *dst;
 	unsigned char to;
 
 	switch (c) {
@@ -369,83 +358,43 @@ static bool escape_special(unsigned char c, char **dst, char *end)
 		return false;
 	}
 
-	if (out < end)
-		*out = '\\';
-	++out;
-	if (out < end)
-		*out = to;
-	++out;
-
-	*dst = out;
+	prt_char(out, '\\');
+	prt_char(out, to);
 	return true;
 }
 
-static bool escape_null(unsigned char c, char **dst, char *end)
+static bool escape_null(struct printbuf *out, unsigned char c)
 {
-	char *out = *dst;
-
 	if (c)
 		return false;
 
-	if (out < end)
-		*out = '\\';
-	++out;
-	if (out < end)
-		*out = '0';
-	++out;
-
-	*dst = out;
+	prt_char(out, '\\');
+	prt_char(out, '0');
 	return true;
 }
 
-static bool escape_octal(unsigned char c, char **dst, char *end)
+static bool escape_octal(struct printbuf *out, unsigned char c)
 {
-	char *out = *dst;
-
-	if (out < end)
-		*out = '\\';
-	++out;
-	if (out < end)
-		*out = ((c >> 6) & 0x07) + '0';
-	++out;
-	if (out < end)
-		*out = ((c >> 3) & 0x07) + '0';
-	++out;
-	if (out < end)
-		*out = ((c >> 0) & 0x07) + '0';
-	++out;
-
-	*dst = out;
+	prt_char(out, '\\');
+	prt_char(out, ((c >> 6) & 0x07) + '0');
+	prt_char(out, ((c >> 3) & 0x07) + '0');
+	prt_char(out, ((c >> 0) & 0x07) + '0');
 	return true;
 }
 
-static bool escape_hex(unsigned char c, char **dst, char *end)
+static bool escape_hex(struct printbuf *out, unsigned char c)
 {
-	char *out = *dst;
-
-	if (out < end)
-		*out = '\\';
-	++out;
-	if (out < end)
-		*out = 'x';
-	++out;
-	if (out < end)
-		*out = hex_asc_hi(c);
-	++out;
-	if (out < end)
-		*out = hex_asc_lo(c);
-	++out;
-
-	*dst = out;
+	prt_char(out, '\\');
+	prt_char(out, 'x');
+	prt_hex_byte(out, c);
 	return true;
 }
 
 /**
- * string_escape_mem - quote characters in the given memory buffer
+ * prt_escaped_string - quote characters in the given memory buffer
+ * @out:	printbuf to output to (escaped)
  * @src:	source buffer (unescaped)
  * @isz:	source buffer size
- * @dst:	destination buffer (escaped)
- * @osz:	destination buffer size
  * @flags:	combination of the flags
  * @only:	NULL-terminated string containing characters used to limit
  *		the selected escape class. If characters are included in @only
@@ -517,11 +466,10 @@ static bool escape_hex(unsigned char c, char **dst, char *end)
  * truncated, compare the return value to osz. There is room left in
  * dst for a '\0' terminator if and only if ret < osz.
  */
-int string_escape_mem(const char *src, size_t isz, char *dst, size_t osz,
-		      unsigned int flags, const char *only)
+void prt_escaped_string(struct printbuf *out,
+			const char *src, size_t isz,
+			unsigned int flags, const char *only)
 {
-	char *p = dst;
-	char *end = p + osz;
 	bool is_dict = only && *only;
 	bool is_append = flags & ESCAPE_APPEND;
 
@@ -549,41 +497,49 @@ int string_escape_mem(const char *src, size_t isz, char *dst, size_t osz,
 		 * %ESCAPE_NA cases.
 		 */
 		if (!(is_append || in_dict) && is_dict &&
-					  escape_passthrough(c, &p, end))
+		    escape_passthrough(out, c))
 			continue;
 
 		if (!(is_append && in_dict) && isascii(c) && isprint(c) &&
-		    flags & ESCAPE_NAP && escape_passthrough(c, &p, end))
+		    flags & ESCAPE_NAP && escape_passthrough(out, c))
 			continue;
 
 		if (!(is_append && in_dict) && isprint(c) &&
-		    flags & ESCAPE_NP && escape_passthrough(c, &p, end))
+		    flags & ESCAPE_NP && escape_passthrough(out, c))
 			continue;
 
 		if (!(is_append && in_dict) && isascii(c) &&
-		    flags & ESCAPE_NA && escape_passthrough(c, &p, end))
+		    flags & ESCAPE_NA && escape_passthrough(out, c))
 			continue;
 
-		if (flags & ESCAPE_SPACE && escape_space(c, &p, end))
+		if (flags & ESCAPE_SPACE && escape_space(out, c))
 			continue;
 
-		if (flags & ESCAPE_SPECIAL && escape_special(c, &p, end))
+		if (flags & ESCAPE_SPECIAL && escape_special(out, c))
 			continue;
 
-		if (flags & ESCAPE_NULL && escape_null(c, &p, end))
+		if (flags & ESCAPE_NULL && escape_null(out, c))
 			continue;
 
 		/* ESCAPE_OCTAL and ESCAPE_HEX always go last */
-		if (flags & ESCAPE_OCTAL && escape_octal(c, &p, end))
+		if (flags & ESCAPE_OCTAL && escape_octal(out, c))
 			continue;
 
-		if (flags & ESCAPE_HEX && escape_hex(c, &p, end))
+		if (flags & ESCAPE_HEX && escape_hex(out, c))
 			continue;
 
-		escape_passthrough(c, &p, end);
+		escape_passthrough(out, c);
 	}
+}
+EXPORT_SYMBOL(prt_escaped_string);
 
-	return p - dst;
+int string_escape_mem(const char *src, size_t isz, char *dst, size_t osz,
+		      unsigned int flags, const char *only)
+{
+	struct printbuf out = PRINTBUF_EXTERN(dst, osz);
+
+	prt_escaped_string(&out, src, isz, flags, only);
+	return out.pos;
 }
 EXPORT_SYMBOL(string_escape_mem);
 
