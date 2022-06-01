@@ -293,6 +293,12 @@ extern int hex_to_bin(unsigned char ch);
 extern int __must_check hex2bin(u8 *dst, const char *src, size_t count);
 extern char *bin2hex(char *dst, const void *src, size_t count);
 
+struct printbuf;
+void prt_hex_bytes(struct printbuf *, const void *, unsigned, unsigned, unsigned);
+void prt_hex_line(struct printbuf *, const void *, size_t, int, int, bool);
+void prt_hex_dump(struct printbuf *, const void *, size_t,
+		  const char *, int, unsigned, unsigned, bool);
+
 bool mac_pton(const char *s, u8 *mac);
 
 /*
