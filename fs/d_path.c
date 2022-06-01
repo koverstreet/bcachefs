@@ -5,6 +5,7 @@
 #include <linux/fs_struct.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
+#include <linux/printbuf.h>
 #include <linux/prefetch.h>
 #include "mount.h"
 
@@ -293,6 +294,40 @@ char *d_path(const struct path *path, char *buf, int buflen)
 	return extract_string(&b);
 }
 EXPORT_SYMBOL(d_path);
+
+/**
+ * prt_path - format a path for output
+ * @out: printbuf to output to
+ * @path: path to write into the sequence buffer.
+ * @esc: set of characters to escape in the output
+ *
+ * Write a path name into the sequence buffer.
+ *
+ * Returns 0 on success, or error code from d_path
+ */
+int prt_path(struct printbuf *out, const struct path *path, const char *esc)
+{
+	char *p, *buf;
+	size_t size;
+again:
+	buf = out->buf + out->pos;
+	size = printbuf_remaining_size(out);
+
+	p = d_path(path, buf, size);
+	if (IS_ERR(p)) {
+		printbuf_make_room(out, max_t(size_t, 64, size * 2));
+		if (printbuf_remaining_size(out) > size)
+			goto again;
+
+		return PTR_ERR(p);
+	}
+
+	p = mangle_path(buf, p, esc);
+	if (p)
+		out->pos += p - buf;
+	return 0;
+}
+EXPORT_SYMBOL(prt_path);
 
 /*
  * Helper function for dentry_operations.d_dname() members
