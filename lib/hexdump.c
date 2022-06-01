@@ -9,6 +9,7 @@
 #include <linux/kernel.h>
 #include <linux/minmax.h>
 #include <linux/export.h>
+#include <linux/printbuf.h>
 #include <asm/unaligned.h>
 
 const char hex_asc[] = "0123456789abcdef";
@@ -79,6 +80,141 @@ int hex2bin(u8 *dst, const char *src, size_t count)
 EXPORT_SYMBOL(hex2bin);
 
 /**
+ * prt_hex_bytes - Print a string of hex bytes, with optional separator
+ *
+ * @out: The printbuf to output to
+ * @addr: Buffer to print
+ * @nr: Number of bytes to print
+ * @separator: Optional separator character between each byte
+ */
+void prt_hex_bytes(struct printbuf *out, const void *buf, unsigned len,
+		   unsigned groupsize, unsigned separator)
+{
+	const u8 *ptr = buf;
+	unsigned i;
+
+	if (!groupsize)
+		groupsize = 1;
+
+	for (i = 0; i < len ; ++i) {
+		if (i && separator && !(i % groupsize))
+			__prt_char(out, separator);
+		prt_hex_byte(out, ptr[i]);
+	}
+}
+EXPORT_SYMBOL(prt_hex_bytes);
+
+/**
+ * prt_hex_line - convert a blob of data to "hex ASCII" in memory
+ * @out: printbuf to output to
+ * @buf: data blob to dump
+ * @len: number of bytes in the @buf
+ * @rowsize: number of bytes to print per line; must be 16 or 32
+ * @groupsize: number of bytes to print at a time (1, 2, 4, 8; default = 1)
+ * @ascii: include ASCII after the hex output
+ *
+ * prt_hex_line() works on one "line" of output at a time, i.e.,
+ * 16 or 32 bytes of input data converted to hex + ASCII output.
+ *
+ * Given a buffer of u8 data, hex_dump_to_buffer() converts the input data
+ * to a hex + ASCII dump at the supplied memory location.
+ * The converted output is always NUL-terminated.
+ *
+ * E.g.:
+ *   hex_dump_to_buffer(frame->data, frame->len, 16, 1,
+ *			linebuf, sizeof(linebuf), true);
+ *
+ * example output buffer:
+ * 40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f  @ABCDEFGHIJKLMNO
+ */
+void prt_hex_line(struct printbuf *out, const void *buf, size_t len,
+		  int rowsize, int groupsize, bool ascii)
+{
+	unsigned saved_pos = out->pos;
+	const u8 *ptr = buf;
+	int i, ngroups;
+
+	if (rowsize != 16 && rowsize != 32)
+		rowsize = 16;
+
+	if (len > rowsize)		/* limit to one line at a time */
+		len = rowsize;
+	if (!is_power_of_2(groupsize) || groupsize > 8)
+		groupsize = 1;
+	if ((len % groupsize) != 0)	/* no mixed size output */
+		groupsize = 1;
+
+	ngroups = len / groupsize;
+
+	if (!len)
+		return;
+
+	prt_hex_bytes(out, ptr, len, groupsize, ' ');
+
+	if (ascii) {
+		unsigned ascii_column = rowsize * 2 + rowsize / groupsize + 1;
+
+		prt_chars(out, ' ', max_t(int, 0, ascii_column - (out->pos - saved_pos)));
+
+		for (i = 0; i < len; i++) {
+			u8 ch = ptr[i];
+			prt_char(out, isascii(ch) && isprint(ch) ? ch : '.');
+		}
+	}
+}
+EXPORT_SYMBOL(prt_hex_line);
+
+/**
+ * prt_hex_dump - print multiline formatted hex dump
+ * @out: printbuf to output to
+ * @buf: data blob to dump
+ * @len: number of bytes in the @buf
+ * @prefix_str: string to prefix each line with;
+ *  caller supplies trailing spaces for alignment if desired
+ * @prefix_type: controls whether prefix of an offset, address, or none
+ *  is printed (%DUMP_PREFIX_OFFSET, %DUMP_PREFIX_ADDRESS, %DUMP_PREFIX_NONE)
+ * @rowsize: number of bytes to print per line; must be 16 or 32
+ * @groupsize: number of bytes to print at a time (1, 2, 4, 8; default = 1)
+ * @ascii: include ASCII after the hex output
+ *
+ * Function is an analogue of print_hex_dump() and thus has similar interface.
+ *
+ * linebuf size is maximal length for one line.
+ * 32 * 3 - maximum bytes per line, each printed into 2 chars + 1 for
+ *	separating space
+ * 2 - spaces separating hex dump and ascii representation
+ * 32 - ascii representation
+ * 1 - terminating '\0'
+ */
+void prt_hex_dump(struct printbuf *out, const void *buf, size_t len,
+		  const char *prefix_str, int prefix_type,
+		  unsigned rowsize, unsigned groupsize, bool ascii)
+{
+	const u8 *ptr = buf;
+	size_t i;
+
+	if (rowsize != 16 && rowsize != 32)
+		rowsize = 16;
+
+	for (i = 0; i < len; i += rowsize) {
+		prt_str(out, prefix_str);
+
+		switch (prefix_type) {
+		case DUMP_PREFIX_ADDRESS:
+			prt_printf(out, "%p: ", ptr + i);
+			break;
+		case DUMP_PREFIX_OFFSET:
+			prt_printf(out, "%.8zx: ", i);
+			break;
+		}
+
+		prt_hex_line(out, ptr + i, min_t(size_t, len - i, rowsize),
+			     rowsize, groupsize, ascii);
+		prt_char(out, '\n');
+	}
+}
+
+/**
  * bin2hex - convert binary data to an ascii hexadecimal string
  * @dst: ascii hexadecimal result
  * @src: binary data
@@ -86,11 +222,10 @@ EXPORT_SYMBOL(hex2bin);
  */
 char *bin2hex(char *dst, const void *src, size_t count)
 {
-	const unsigned char *_src = src;
+	struct printbuf out = PRINTBUF_EXTERN(dst, count * 4);
 
-	while (count--)
-		dst = hex_byte_pack(dst, *_src++);
-	return dst;
+	prt_hex_bytes(&out, src, count, 0, 0);
+	return dst + out.pos;
 }
 EXPORT_SYMBOL(bin2hex);
 
@@ -127,102 +262,10 @@ EXPORT_SYMBOL(bin2hex);
 int hex_dump_to_buffer(const void *buf, size_t len, int rowsize, int groupsize,
 		       char *linebuf, size_t linebuflen, bool ascii)
 {
-	const u8 *ptr = buf;
-	int ngroups;
-	u8 ch;
-	int j, lx = 0;
-	int ascii_column;
-	int ret;
+	struct printbuf out = PRINTBUF_EXTERN(linebuf, linebuflen);
 
-	if (rowsize != 16 && rowsize != 32)
-		rowsize = 16;
-
-	if (len > rowsize)		/* limit to one line at a time */
-		len = rowsize;
-	if (!is_power_of_2(groupsize) || groupsize > 8)
-		groupsize = 1;
-	if ((len % groupsize) != 0)	/* no mixed size output */
-		groupsize = 1;
-
-	ngroups = len / groupsize;
-	ascii_column = rowsize * 2 + rowsize / groupsize + 1;
-
-	if (!linebuflen)
-		goto overflow1;
-
-	if (!len)
-		goto nil;
-
-	if (groupsize == 8) {
-		const u64 *ptr8 = buf;
-
-		for (j = 0; j < ngroups; j++) {
-			ret = snprintf(linebuf + lx, linebuflen - lx,
-				       "%s%16.16llx", j ? " " : "",
-				       get_unaligned(ptr8 + j));
-			if (ret >= linebuflen - lx)
-				goto overflow1;
-			lx += ret;
-		}
-	} else if (groupsize == 4) {
-		const u32 *ptr4 = buf;
-
-		for (j = 0; j < ngroups; j++) {
-			ret = snprintf(linebuf + lx, linebuflen - lx,
-				       "%s%8.8x", j ? " " : "",
-				       get_unaligned(ptr4 + j));
-			if (ret >= linebuflen - lx)
-				goto overflow1;
-			lx += ret;
-		}
-	} else if (groupsize == 2) {
-		const u16 *ptr2 = buf;
-
-		for (j = 0; j < ngroups; j++) {
-			ret = snprintf(linebuf + lx, linebuflen - lx,
-				       "%s%4.4x", j ? " " : "",
-				       get_unaligned(ptr2 + j));
-			if (ret >= linebuflen - lx)
-				goto overflow1;
-			lx += ret;
-		}
-	} else {
-		for (j = 0; j < len; j++) {
-			if (linebuflen < lx + 2)
-				goto overflow2;
-			ch = ptr[j];
-			linebuf[lx++] = hex_asc_hi(ch);
-			if (linebuflen < lx + 2)
-				goto overflow2;
-			linebuf[lx++] = hex_asc_lo(ch);
-			if (linebuflen < lx + 2)
-				goto overflow2;
-			linebuf[lx++] = ' ';
-		}
-		if (j)
-			lx--;
-	}
-	if (!ascii)
-		goto nil;
-
-	while (lx < ascii_column) {
-		if (linebuflen < lx + 2)
-			goto overflow2;
-		linebuf[lx++] = ' ';
-	}
-	for (j = 0; j < len; j++) {
-		if (linebuflen < lx + 2)
-			goto overflow2;
-		ch = ptr[j];
-		linebuf[lx++] = (isascii(ch) && isprint(ch)) ? ch : '.';
-	}
-nil:
-	linebuf[lx] = '\0';
-	return lx;
-overflow2:
-	linebuf[lx++] = '\0';
-overflow1:
-	return ascii ? ascii_column + len : (groupsize * 2 + 1) * ngroups - 1;
+	prt_hex_line(&out, buf, len, rowsize, groupsize, ascii);
+	return out.pos;
 }
 EXPORT_SYMBOL(hex_dump_to_buffer);
 
@@ -262,6 +305,11 @@ void print_hex_dump(const char *level, const char *prefix_str, int prefix_type,
 		    int rowsize, int groupsize,
 		    const void *buf, size_t len, bool ascii)
 {
+	/*
+	 * XXX: this code does the exact same thing as prt_hex_dump(): we should
+	 * be able to call that and printk() the result, except printk is
+	 * restricted to 1024 bytes of output per call
+	 */
 	const u8 *ptr = buf;
 	int i, linelen, remaining = len;
 	unsigned char linebuf[32 * 3 + 2 + 32 + 1];
