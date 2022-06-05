@@ -1554,9 +1554,9 @@ struct mpage_da_data {
 static void mpage_release_unused_pages(struct mpage_da_data *mpd,
 				       bool invalidate)
 {
-	unsigned nr, i;
 	pgoff_t index, end;
-	struct folio_batch fbatch;
+	struct folio_iter_batched iter;
+	struct folio *folio;
 	struct inode *inode = mpd->inode;
 	struct address_space *mapping = inode->i_mapping;
 
@@ -1574,31 +1574,24 @@ static void mpage_release_unused_pages(struct mpage_da_data *mpd,
 		ext4_es_remove_extent(inode, start, last - start + 1);
 	}
 
-	folio_batch_init(&fbatch);
-	while (index <= end) {
-		nr = filemap_get_folios(mapping, &index, end, &fbatch);
-		if (nr == 0)
-			break;
-		for (i = 0; i < nr; i++) {
-			struct folio *folio = fbatch.folios[i];
+	for_each_folio_batched(mapping, iter, index, end, folio) {
+		BUG_ON(folio->index < mpd->first_page);
+		BUG_ON(!folio_test_locked(folio));
+		BUG_ON(folio_test_writeback(folio));
 
-			if (folio->index < mpd->first_page)
-				continue;
-			if (folio->index + folio_nr_pages(folio) - 1 > end)
-				continue;
-			BUG_ON(!folio_test_locked(folio));
-			BUG_ON(folio_test_writeback(folio));
-			if (invalidate) {
-				if (folio_mapped(folio))
-					folio_clear_dirty_for_io(folio);
-				block_invalidate_folio(folio, 0,
-						folio_size(folio));
-				folio_clear_uptodate(folio);
-			}
-			folio_unlock(folio);
+		if ((folio_next_index(folio) - 1 > end))
+			break;
+
+		if (invalidate) {
+			if (folio_mapped(folio))
+				folio_clear_dirty_for_io(folio);
+			block_invalidate_folio(folio, 0,
+					       folio_size(folio));
+			folio_clear_uptodate(folio);
 		}
-		folio_batch_release(&fbatch);
+		folio_unlock(folio);
 	}
+	folio_iter_batched_exit(&iter);
 }
 
 static void ext4_print_free_blocks(struct inode *inode)
@@ -2314,14 +2307,14 @@ out:
  */
 static int mpage_map_and_submit_buffers(struct mpage_da_data *mpd)
 {
-	struct folio_batch fbatch;
-	unsigned nr, i;
+	struct folio_iter_batched iter;
+	struct folio *folio;
 	struct inode *inode = mpd->inode;
 	int bpp_bits = PAGE_SHIFT - inode->i_blkbits;
 	pgoff_t start, end;
 	ext4_lblk_t lblk;
 	ext4_fsblk_t pblock;
-	int err;
+	int err = 0;
 	bool map_bh = false;
 
 	start = mpd->map.m_lblk >> bpp_bits;
@@ -2329,37 +2322,30 @@ static int mpage_map_and_submit_buffers(struct mpage_da_data *mpd)
 	lblk = start << bpp_bits;
 	pblock = mpd->map.m_pblk;
 
-	folio_batch_init(&fbatch);
-	while (start <= end) {
-		nr = filemap_get_folios(inode->i_mapping, &start, end, &fbatch);
-		if (nr == 0)
-			break;
-		for (i = 0; i < nr; i++) {
-			struct page *page = &fbatch.folios[i]->page;
+	for_each_folio_batched(inode->i_mapping, iter, start, end, folio) {
+		struct page *page = &folio->page;
 
-			err = mpage_process_page(mpd, page, &lblk, &pblock,
-						 &map_bh);
-			/*
-			 * If map_bh is true, means page may require further bh
-			 * mapping, or maybe the page was submitted for IO.
-			 * So we return to call further extent mapping.
-			 */
-			if (err < 0 || map_bh)
-				goto out;
-			/* Page fully mapped - let IO run! */
-			err = mpage_submit_page(mpd, page);
-			if (err < 0)
-				goto out;
-		}
-		folio_batch_release(&fbatch);
+		err = mpage_process_page(mpd, page, &lblk, &pblock,
+					 &map_bh);
+		/*
+		 * If map_bh is true, means page may require further bh
+		 * mapping, or maybe the page was submitted for IO.
+		 * So we return to call further extent mapping.
+		 */
+		if (err < 0 || map_bh)
+			goto out;
+		/* Page fully mapped - let IO run! */
+		err = mpage_submit_page(mpd, page);
+		if (err < 0)
+			goto out;
 	}
+
 	/* Extent fully mapped and matches with page boundary. We are done. */
 	mpd->map.m_len = 0;
 	mpd->map.m_flags = 0;
-	return 0;
 out:
-	folio_batch_release(&fbatch);
-	return err;
+	folio_iter_batched_exit(&iter);
+	return err < 0 ? err : 0;
 }
 
 static int mpage_map_one_extent(handle_t *handle, struct mpage_da_data *mpd)

@@ -468,79 +468,72 @@ static void remove_inode_hugepages(struct inode *inode, loff_t lstart,
 {
 	struct hstate *h = hstate_inode(inode);
 	struct address_space *mapping = &inode->i_data;
+	struct folio_iter_batched iter;
+	struct folio *folio;
 	const pgoff_t start = lstart >> huge_page_shift(h);
 	const pgoff_t end = lend >> huge_page_shift(h);
-	struct folio_batch fbatch;
-	pgoff_t next, index;
-	int i, freed = 0;
+	int  freed = 0;
 	bool truncate_op = (lend == LLONG_MAX);
 
-	folio_batch_init(&fbatch);
-	next = start;
-	while (filemap_get_folios(mapping, &next, end - 1, &fbatch)) {
-		for (i = 0; i < folio_batch_count(&fbatch); ++i) {
-			struct folio *folio = fbatch.folios[i];
-			u32 hash = 0;
+	for_each_folio_batched(mapping, iter, start, end - 1, folio) {
+		u32 hash = 0;
+		pgoff_t index = folio->index;
 
-			index = folio->index;
-			if (!truncate_op) {
-				/*
-				 * Only need to hold the fault mutex in the
-				 * hole punch case.  This prevents races with
-				 * page faults.  Races are not possible in the
-				 * case of truncation.
-				 */
-				hash = hugetlb_fault_mutex_hash(mapping, index);
-				mutex_lock(&hugetlb_fault_mutex_table[hash]);
-			}
-
+		if (!truncate_op) {
 			/*
-			 * If folio is mapped, it was faulted in after being
-			 * unmapped in caller.  Unmap (again) now after taking
-			 * the fault mutex.  The mutex will prevent faults
-			 * until we finish removing the folio.
-			 *
-			 * This race can only happen in the hole punch case.
-			 * Getting here in a truncate operation is a bug.
+			 * Only need to hold the fault mutex in the
+			 * hole punch case.  This prevents races with
+			 * page faults.  Races are not possible in the
+			 * case of truncation.
 			 */
-			if (unlikely(folio_mapped(folio))) {
-				BUG_ON(truncate_op);
-
-				mutex_unlock(&hugetlb_fault_mutex_table[hash]);
-				i_mmap_lock_write(mapping);
-				mutex_lock(&hugetlb_fault_mutex_table[hash]);
-				hugetlb_vmdelete_list(&mapping->i_mmap,
-					index * pages_per_huge_page(h),
-					(index + 1) * pages_per_huge_page(h),
-					ZAP_FLAG_DROP_MARKER);
-				i_mmap_unlock_write(mapping);
-			}
-
-			folio_lock(folio);
-			/*
-			 * We must free the huge page and remove from page
-			 * cache (remove_huge_page) BEFORE removing the
-			 * region/reserve map (hugetlb_unreserve_pages).  In
-			 * rare out of memory conditions, removal of the
-			 * region/reserve map could fail. Correspondingly,
-			 * the subpool and global reserve usage count can need
-			 * to be adjusted.
-			 */
-			VM_BUG_ON(HPageRestoreReserve(&folio->page));
-			remove_huge_page(&folio->page);
-			freed++;
-			if (!truncate_op) {
-				if (unlikely(hugetlb_unreserve_pages(inode,
-							index, index + 1, 1)))
-					hugetlb_fix_reserve_counts(inode);
-			}
-
-			folio_unlock(folio);
-			if (!truncate_op)
-				mutex_unlock(&hugetlb_fault_mutex_table[hash]);
+			hash = hugetlb_fault_mutex_hash(mapping, index);
+			mutex_lock(&hugetlb_fault_mutex_table[hash]);
 		}
-		folio_batch_release(&fbatch);
-		cond_resched();
+
+		/*
+		 * If folio is mapped, it was faulted in after being
+		 * unmapped in caller.  Unmap (again) now after taking
+		 * the fault mutex.  The mutex will prevent faults
+		 * until we finish removing the folio.
+		 *
+		 * This race can only happen in the hole punch case.
+		 * Getting here in a truncate operation is a bug.
+		 */
+		if (unlikely(folio_mapped(folio))) {
+			BUG_ON(truncate_op);
+
+			mutex_unlock(&hugetlb_fault_mutex_table[hash]);
+			i_mmap_lock_write(mapping);
+			mutex_lock(&hugetlb_fault_mutex_table[hash]);
+			hugetlb_vmdelete_list(&mapping->i_mmap,
+				index * pages_per_huge_page(h),
+				(index + 1) * pages_per_huge_page(h),
+				ZAP_FLAG_DROP_MARKER);
+			i_mmap_unlock_write(mapping);
+		}
+
+		folio_lock(folio);
+		/*
+		 * We must free the huge page and remove from page
+		 * cache (remove_huge_page) BEFORE removing the
+		 * region/reserve map (hugetlb_unreserve_pages).  In
+		 * rare out of memory conditions, removal of the
+		 * region/reserve map could fail. Correspondingly,
+		 * the subpool and global reserve usage count can need
+		 * to be adjusted.
+		 */
+		VM_BUG_ON(HPageRestoreReserve(&folio->page));
+		remove_huge_page(&folio->page);
+		freed++;
+		if (!truncate_op) {
+			if (unlikely(hugetlb_unreserve_pages(inode,
+						index, index + 1, 1)))
+				hugetlb_fix_reserve_counts(inode);
+		}
+
+		folio_unlock(folio);
+		if (!truncate_op)
+			mutex_unlock(&hugetlb_fault_mutex_table[hash]);
 	}
 
 	if (truncate_op)

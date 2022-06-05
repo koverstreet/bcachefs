@@ -137,4 +137,36 @@ static inline void folio_batch_release(struct folio_batch *fbatch)
 }
 
 void folio_batch_remove_exceptionals(struct folio_batch *fbatch);
+
+struct folio_iter_batched {
+	struct folio_batch	batch;
+	unsigned		batch_idx;
+	struct address_space	*mapping;
+	pgoff_t			pos;
+	pgoff_t			end;
+};
+
+static inline struct folio_iter_batched
+folio_iter_batched_init(struct address_space *mapping, pgoff_t start, pgoff_t end)
+{
+	return (struct folio_iter_batched) {
+		.mapping	= mapping,
+		.pos		= start,
+		.end		= end,
+	};
+}
+
+static inline void folio_iter_batched_exit(struct folio_iter_batched *iter)
+{
+	folio_batch_release(&iter->batch);
+}
+
+struct folio *folio_iter_batched_peek(struct folio_iter_batched *);
+void folio_iter_batched_advance(struct folio_iter_batched *);
+
+#define for_each_folio_batched(_mapping, _iter, _start, _end, _folio)	\
+	for (_iter = folio_iter_batched_init(_mapping, _start, _end);	\
+	     (_folio = folio_iter_batched_peek(&(_iter)));		\
+	     folio_iter_batched_advance(&(_iter)))
+
 #endif /* _LINUX_PAGEVEC_H */

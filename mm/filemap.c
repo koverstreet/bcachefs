@@ -2182,6 +2182,55 @@ out:
 }
 EXPORT_SYMBOL(filemap_get_folios);
 
+static inline struct folio *__folio_iter_batched_peek(struct folio_iter_batched *iter)
+{
+	return iter->batch.folios[iter->batch_idx];
+}
+
+struct folio *folio_iter_batched_peek(struct folio_iter_batched *iter)
+{
+	struct folio *f;
+
+	if (iter->batch_idx >= iter->batch.nr) {
+		pgoff_t start = iter->pos;
+
+		folio_batch_release(&iter->batch);
+
+		cond_resched();
+
+		filemap_get_folios(iter->mapping, &start, iter->end, &iter->batch);
+		iter->batch_idx = 0;
+	}
+
+	if (!iter->batch.nr) {
+		iter->pos = iter->end + 1;
+		return NULL;
+	}
+
+	f = __folio_iter_batched_peek(iter);
+	/*
+	 * folio might span iter->pos, but iter->pos should be monotonically
+	 * increasing:
+	 */
+	iter->pos = max(iter->pos, f->index);
+	return f;
+}
+EXPORT_SYMBOL(folio_iter_batched_peek);
+
+void folio_iter_batched_advance(struct folio_iter_batched *iter)
+{
+	/* Do we have a previously returned folio? */
+	if (iter->batch_idx < iter->batch.nr) {
+		struct folio *f = __folio_iter_batched_peek(iter);
+		pgoff_t f_end = folio_next_index(f);
+
+		BUG_ON(iter->pos < f->index || iter->pos >= f_end);
+		iter->pos = f_end;
+		iter->batch_idx++;
+	}
+}
+EXPORT_SYMBOL(folio_iter_batched_advance);
+
 static inline
 bool folio_more_pages(struct folio *folio, pgoff_t index, pgoff_t max)
 {

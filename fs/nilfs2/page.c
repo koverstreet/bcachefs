@@ -294,18 +294,10 @@ repeat:
 void nilfs_copy_back_pages(struct address_space *dmap,
 			   struct address_space *smap)
 {
-	struct folio_batch fbatch;
-	unsigned int i, n;
-	pgoff_t start = 0;
+	struct folio_iter_batched iter;
+	struct folio *folio, *dfolio;
 
-	folio_batch_init(&fbatch);
-repeat:
-	n = filemap_get_folios(smap, &start, ~0UL, &fbatch);
-	if (!n)
-		return;
-
-	for (i = 0; i < folio_batch_count(&fbatch); i++) {
-		struct folio *folio = fbatch.folios[i], *dfolio;
+	for_each_folio_batched(smap, iter, 0, ~0UL, folio) {
 		pgoff_t index = folio->index;
 
 		folio_lock(folio);
@@ -344,10 +336,7 @@ repeat:
 		}
 		folio_unlock(folio);
 	}
-	folio_batch_release(&fbatch);
-	cond_resched();
-
-	goto repeat;
+	folio_iter_batched_exit(&iter);
 }
 
 /**
