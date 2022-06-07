@@ -297,23 +297,6 @@ void bch2_journal_key_overwritten(struct bch_fs *c, enum btree_id btree,
 		keys->d[idx].overwritten = true;
 }
 
-static struct bkey_i *bch2_journal_iter_peek(struct journal_iter *iter)
-{
-	struct journal_key *k = iter->keys->d + iter->idx;
-
-	while (k < iter->keys->d + iter->keys->nr &&
-	       k->btree_id	== iter->btree_id &&
-	       k->level		== iter->level) {
-		if (!k->overwritten)
-			return k->k;
-
-		iter->idx++;
-		k = iter->keys->d + iter->idx;
-	}
-
-	return NULL;
-}
-
 static void bch2_journal_iter_advance(struct journal_iter *iter)
 {
 	if (iter->idx < iter->keys->size) {
@@ -321,6 +304,23 @@ static void bch2_journal_iter_advance(struct journal_iter *iter)
 		if (iter->idx == iter->keys->gap)
 			iter->idx += iter->keys->size - iter->keys->nr;
 	}
+}
+
+struct bkey_i *bch2_journal_iter_peek(struct journal_iter *iter)
+{
+	struct journal_key *k = iter->keys->d + iter->idx;
+
+	while (k < iter->keys->d + iter->keys->size &&
+	       k->btree_id	== iter->btree_id &&
+	       k->level		== iter->level) {
+		if (!k->overwritten)
+			return k->k;
+
+		bch2_journal_iter_advance(iter);
+		k = iter->keys->d + iter->idx;
+	}
+
+	return NULL;
 }
 
 static void bch2_journal_iter_exit(struct journal_iter *iter)
