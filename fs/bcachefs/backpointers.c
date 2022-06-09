@@ -722,6 +722,14 @@ static int check_extent_to_backpointers(struct btree_trans *trans,
 	if (!k.k)
 		return 0;
 
+	if (!bpos_cmp(k.k->p, SPOS(9844355, 128, U32_MAX))) {
+		struct printbuf buf = PRINTBUF;
+
+		bch2_bkey_val_to_text(&buf, c, k);
+		pr_info("checking %s", buf.buf);
+		printbuf_exit(&buf);
+	}
+
 	ptrs = bch2_bkey_ptrs_c(k);
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 		struct bpos bucket_pos;
@@ -832,11 +840,31 @@ static int check_one_backpointer(struct btree_trans *trans,
 	struct printbuf buf = PRINTBUF;
 	int ret;
 
+	if (!bpos_cmp(alloc_pos, POS(3, 2609822)))
+		pr_info("bp_offset %llu", *bp_offset);
+
 	ret = bch2_get_next_backpointer(trans, alloc_pos.inode,
 					alloc_pos.offset, -1,
 					bp_offset, &bp);
 	if (ret || *bp_offset == U64_MAX)
 		return ret;
+
+	if (!bpos_cmp(alloc_pos, POS(3, 2609822))) {
+		bch2_backpointer_to_text(&buf, &bp);
+		pr_info("got bp %s at bp_offset %llu",
+			buf.buf, *bp_offset);
+		printbuf_reset(&buf);
+	}
+
+	if (!bpos_cmp(bp.pos, SPOS(9844355, 128, U32_MAX))) {
+		prt_printf(&buf, "alloc_pos ");
+		bch2_bpos_to_text(&buf, alloc_pos);
+		prt_printf(&buf, "\nbp offset %llu", *bp_offset);
+		prt_printf(&buf, "\nbp ");
+		bch2_backpointer_to_text(&buf, &bp);
+		pr_info("%s", buf.buf);
+		printbuf_reset(&buf);
+	}
 
 	k = bch2_backpointer_get_key(trans, &iter, alloc_pos, *bp_offset, bp);
 	ret = bkey_err(k);
