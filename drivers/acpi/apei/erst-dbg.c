@@ -11,6 +11,7 @@
  *   Author: Huang Ying <ying.huang@intel.com>
  */
 
+#include <linux/fs.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/uaccess.h>
