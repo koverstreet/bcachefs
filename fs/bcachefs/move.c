@@ -923,7 +923,8 @@ int bch2_evacuate_bucket(struct bch_fs *c,
 			struct bkey_s_c k;
 
 			k = bch2_backpointer_get_key(&trans, &iter,
-					POS(ca->dev_idx, bucket), bp);
+					POS(ca->dev_idx, bucket),
+					bp_offset, bp);
 			ret = bkey_err(k);
 			if (ret == -EINTR)
 				continue;
@@ -962,7 +963,8 @@ int bch2_evacuate_bucket(struct bch_fs *c,
 			struct btree *b;
 
 			b = bch2_backpointer_get_node(&trans, &iter,
-					POS(ca->dev_idx, bucket), bp);
+					POS(ca->dev_idx, bucket),
+					bp_offset, bp);
 			ret = PTR_ERR_OR_ZERO(b);
 			if (ret == -EINTR)
 				continue;
