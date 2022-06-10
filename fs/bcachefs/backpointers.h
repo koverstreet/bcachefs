@@ -31,7 +31,7 @@ struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *, struct btree_iter
 struct btree *bch2_backpointer_get_node(struct btree_trans *, struct btree_iter *,
 					struct bpos, u64, struct bch_backpointer);
 
-int bch2_check_backpointers(struct bch_fs *);
+int bch2_check_btree_backpointers(struct bch_fs *);
 int bch2_check_extents_to_backpointers(struct bch_fs *);
 int bch2_check_backpointers_to_extents(struct bch_fs *);
 

@@ -1257,7 +1257,7 @@ use_clean:
 
 		bch_info(c, "checking backpointers to alloc keys");
 		err = "error checking backpointers to alloc keys";
-		ret = bch2_check_backpointers(c);
+		ret = bch2_check_btree_backpointers(c);
 		if (ret)
 			goto err;
 		bch_verbose(c, "done checking backpointers to alloc keys");

@@ -8,15 +8,23 @@
 
 #define MAX_EXTENT_COMPRESS_RATIO_SHIFT		10
 
-static inline struct bpos __backpointer_pos(struct bch_dev *ca, u64 b,
-					    u64 bucket_offset)
+/*
+ * Convert from pos in backpointer btree to pos of corresponding bucket in alloc
+ * btree:
+ */
+static inline struct bpos bp_pos_to_alloc(const struct bch_fs *c,
+					  struct bpos bp_pos)
 {
-	return POS(ca->dev_idx,
-		   (bucket_to_sector(ca, b) <<
-		    MAX_EXTENT_COMPRESS_RATIO_SHIFT) + bucket_offset);
+	struct bch_dev *ca = bch_dev_bkey_exists(c, bp_pos.inode);
+	u64 bucket_sector = bp_pos.offset >> MAX_EXTENT_COMPRESS_RATIO_SHIFT;
+
+	return POS(bp_pos.inode, sector_to_bucket(ca, bucket_sector));
 }
 
-static inline struct bpos backpointer_pos(struct bch_fs *c,
+/*
+ * Convert from pos in alloc btree + bucket offset to pos in backpointer btree:
+ */
+static inline struct bpos alloc_pos_to_bp(const struct bch_fs *c,
 					  struct bpos alloc_pos,
 					  u64 bucket_offset)
 {
@@ -31,18 +39,15 @@ int bch2_backpointer_invalid(const struct bch_fs *c, struct bkey_s_c k,
 			     int rw, struct printbuf *err)
 {
 	struct bkey_s_c_backpointer bp = bkey_s_c_to_backpointer(k);
-	struct bch_dev *ca = bch_dev_bkey_exists(c, bp.k->p.inode);
-	u64 b;
+	struct bpos alloc_pos = bp_pos_to_alloc(c, bp.k->p);
 
-	if (bkey_val_bytes(bp.k) != sizeof(*bp.v)) {
-		prt_printf(err, "incorrect value size");
+	if (bkey_val_bytes(bp.k) < sizeof(*bp.v)) {
+		prt_str(err, "incorrect value size");
 		return -EINVAL;
 	}
 
-	b = sector_to_bucket(ca, k.k->p.offset >> MAX_EXTENT_COMPRESS_RATIO_SHIFT);
-
-	if (bpos_cmp(__backpointer_pos(ca, b, bp.v->bucket_offset), bp.k->p)) {
-		prt_printf(err, "backpointer at wrong pos");
+	if (bpos_cmp(bp.k->p, backpointer_pos(c, alloc_pos, bp.v->bucket_offset))) {
+		prt_str(err, "backpointer at wrong pos");
 		return -EINVAL;
 	}
 
@@ -370,10 +375,10 @@ int bch2_get_next_backpointer(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct bpos alloc_pos = POS(dev, bucket);
 	struct bpos bp_pos =
-		backpointer_pos(c, alloc_pos,
-				max_t(u64, *bp_offset, BACKPOINTER_OFFSET_MAX) - BACKPOINTER_OFFSET_MAX);
+		alloc_pos_to_bp(c, alloc_pos,
+				max(*bp_offset, BACKPOINTER_OFFSET_MAX) - BACKPOINTER_OFFSET_MAX);
 	struct bpos bp_end_pos =
-		backpointer_pos(c, bpos_nosnap_successor(alloc_pos), 0);
+		alloc_pos_to_bp(c, bpos_nosnap_successor(alloc_pos), 0);
 	struct btree_iter alloc_iter, bp_iter = { NULL };
 	struct bkey_s_c k;
 	struct bkey_s_c_alloc_v4 a;
@@ -468,7 +473,7 @@ static void backpointer_not_found(struct btree_trans *trans,
 
 	if (bp_offset >= BACKPOINTER_OFFSET_MAX) {
 		struct bpos bp_pos =
-			backpointer_pos(c, alloc_pos,
+			alloc_pos_to_bp(c, alloc_pos,
 					bp_offset - BACKPOINTER_OFFSET_MAX);
 		prt_printf(&buf, "backpointer pos: ");
 		bch2_bpos_to_text(&buf, bp_pos);
@@ -555,7 +560,7 @@ struct btree *bch2_backpointer_get_node(struct btree_trans *trans,
 	return NULL;
 }
 
-static int bch2_check_backpointer(struct btree_trans *trans, struct btree_iter *bp_iter)
+static int bch2_check_btree_backpointer(struct btree_trans *trans, struct btree_iter *bp_iter)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter alloc_iter = { NULL };
@@ -581,8 +586,7 @@ static int bch2_check_backpointer(struct btree_trans *trans, struct btree_iter *
 	ca = bch_dev_bkey_exists(c, k.k->p.inode);
 
 	bch2_trans_iter_init(trans, &alloc_iter, BTREE_ID_alloc,
-			     POS(k.k->p.inode, sector_to_bucket(ca,
-						k.k->p.offset >> MAX_EXTENT_COMPRESS_RATIO_SHIFT)), 0);
+			     bp_pos_to_alloc(c, k.k->p), 0);
 
 	alloc_k = bch2_btree_iter_peek_slot(&alloc_iter);
 	ret = bkey_err(alloc_k);
@@ -604,7 +608,7 @@ fsck_err:
 }
 
 /* verify that every backpointer has a corresponding alloc key */
-int bch2_check_backpointers(struct bch_fs *c)
+int bch2_check_btree_backpointers(struct bch_fs *c)
 {
 	struct btree_trans trans;
 	struct btree_iter iter;
@@ -617,7 +621,7 @@ int bch2_check_backpointers(struct bch_fs *c)
 		ret = __bch2_trans_do(&trans, NULL, NULL,
 				      BTREE_INSERT_LAZY_RW|
 				      BTREE_INSERT_NOFAIL,
-				      bch2_check_backpointer(&trans, &iter));
+				      bch2_check_btree_backpointer(&trans, &iter));
 		if (ret)
 			break;
 	} while (bch2_btree_iter_advance(&iter));
@@ -665,7 +669,7 @@ static int backpointer_check(struct btree_trans *trans,
 	}
 
 	bch2_trans_iter_init(trans, &bp_iter, BTREE_ID_backpointers,
-			     backpointer_pos(c, bucket_pos, bp.bucket_offset),
+			     alloc_pos_to_bp(c, bucket_pos, bp.bucket_offset),
 			     0);
 	bp_k = bch2_btree_iter_peek_slot(&bp_iter);
 	ret = bkey_err(bp_k);
