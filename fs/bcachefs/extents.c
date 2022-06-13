@@ -688,37 +688,6 @@ unsigned bch2_bkey_durability(struct bch_fs *c, struct bkey_s_c k)
 	return durability;
 }
 
-void bch2_bkey_mark_replicas_cached(struct bch_fs *c, struct bkey_s k,
-				    unsigned target,
-				    unsigned nr_desired_replicas)
-{
-	struct bkey_ptrs ptrs = bch2_bkey_ptrs(k);
-	union bch_extent_entry *entry;
-	struct extent_ptr_decoded p;
-	int extra = bch2_bkey_durability(c, k.s_c) - nr_desired_replicas;
-
-	if (target && extra > 0)
-		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-			int n = bch2_extent_ptr_durability(c, p);
-
-			if (n && n <= extra &&
-			    !bch2_dev_in_target(c, p.ptr.dev, target)) {
-				entry->ptr.cached = true;
-				extra -= n;
-			}
-		}
-
-	if (extra > 0)
-		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-			int n = bch2_extent_ptr_durability(c, p);
-
-			if (n && n <= extra) {
-				entry->ptr.cached = true;
-				extra -= n;
-			}
-		}
-}
-
 void bch2_bkey_extent_entry_drop(struct bkey_i *k, union bch_extent_entry *entry)
 {
 	union bch_extent_entry *end = bkey_val_end(bkey_i_to_s(k));
@@ -934,6 +903,44 @@ bool bch2_bkey_matches_ptr(struct bch_fs *c, struct bkey_s_c k,
 		    p.ptr.gen	== m.gen &&
 		    (s64) p.ptr.offset + p.crc.offset - bkey_start_offset(k.k) ==
 		    (s64) m.offset  - offset)
+			return true;
+
+	return false;
+}
+
+/*
+ * Returns true if two extents refer to the same data:
+ */
+bool bch2_extents_match(struct bkey_s_c k1, struct bkey_s_c k2)
+{
+	struct bkey_ptrs_c ptrs1 = bch2_bkey_ptrs_c(k1);
+	struct bkey_ptrs_c ptrs2 = bch2_bkey_ptrs_c(k2);
+	const union bch_extent_entry *entry1, *entry2;
+	struct extent_ptr_decoded p1, p2;
+
+	bkey_for_each_ptr_decode(k1.k, ptrs1, p1, entry1)
+		bkey_for_each_ptr_decode(k2.k, ptrs2, p2, entry2)
+			if (p1.ptr.dev		== p2.ptr.dev &&
+			    p1.ptr.gen		== p2.ptr.gen &&
+			    (s64) p1.ptr.offset + p1.crc.offset - bkey_start_offset(k1.k) ==
+			    (s64) p2.ptr.offset + p2.crc.offset - bkey_start_offset(k2.k))
+				return true;
+
+	return false;
+}
+
+bool bch2_extent_has_ptr(struct bkey_s_c k1, struct extent_ptr_decoded p1,
+			 struct bkey_s_c k2)
+{
+	struct bkey_ptrs_c ptrs2 = bch2_bkey_ptrs_c(k2);
+	const union bch_extent_entry *entry2;
+	struct extent_ptr_decoded p2;
+
+	bkey_for_each_ptr_decode(k2.k, ptrs2, p2, entry2)
+		if (p1.ptr.dev		== p2.ptr.dev &&
+		    p1.ptr.gen		== p2.ptr.gen &&
+		    (s64) p1.ptr.offset + p1.crc.offset - bkey_start_offset(k1.k) ==
+		    (s64) p2.ptr.offset + p2.crc.offset - bkey_start_offset(k2.k))
 			return true;
 
 	return false;

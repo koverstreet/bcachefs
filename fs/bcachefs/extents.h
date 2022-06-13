@@ -577,9 +577,6 @@ unsigned bch2_bkey_sectors_compressed(struct bkey_s_c);
 unsigned bch2_bkey_replicas(struct bch_fs *, struct bkey_s_c);
 unsigned bch2_bkey_durability(struct bch_fs *, struct bkey_s_c);
 
-void bch2_bkey_mark_replicas_cached(struct bch_fs *, struct bkey_s,
-				    unsigned, unsigned);
-
 void bch2_bkey_extent_entry_drop(struct bkey_i *, union bch_extent_entry *);
 void bch2_bkey_append_ptr(struct bkey_i *, struct bch_extent_ptr);
 void bch2_extent_ptr_decoded_append(struct bkey_i *,
@@ -612,6 +609,8 @@ bool bch2_bkey_has_target(struct bch_fs *, struct bkey_s_c, unsigned);
 
 bool bch2_bkey_matches_ptr(struct bch_fs *, struct bkey_s_c,
 			   struct bch_extent_ptr, u64);
+bool bch2_extents_match(struct bkey_s_c, struct bkey_s_c);
+bool bch2_extent_has_ptr(struct bkey_s_c, struct extent_ptr_decoded, struct bkey_s_c);
 
 bool bch2_extent_normalize(struct bch_fs *, struct bkey_s);
 void bch2_bkey_ptrs_to_text(struct printbuf *, struct bch_fs *,

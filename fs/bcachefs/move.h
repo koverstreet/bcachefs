@@ -24,9 +24,8 @@ struct moving_context {
 	wait_queue_head_t	wait;
 };
 
-typedef enum data_cmd (*move_pred_fn)(struct bch_fs *, void *,
-				struct bkey_s_c,
-				struct bch_io_opts *, struct data_opts *);
+typedef bool (*move_pred_fn)(struct bch_fs *, void *, struct bkey_s_c,
+				struct bch_io_opts *, struct data_update_opts *);
 
 int bch2_scan_old_btree_nodes(struct bch_fs *, struct bch_move_stats *);
 
@@ -41,8 +40,7 @@ int bch2_move_data(struct bch_fs *,
 int bch2_evacuate_bucket(struct bch_fs *, struct bpos, int,
 			 struct bch_ratelimit *,
 			 struct write_point_specifier,
-			 enum data_cmd,
-			 struct data_opts *,
+			 struct data_update_opts *,
 			 struct bch_move_stats *);
 int bch2_data_job(struct bch_fs *,
 		  struct bch_move_stats *,

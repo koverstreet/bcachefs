@@ -95,9 +95,8 @@ static int bch2_copygc(struct bch_fs *c)
 	struct bch_dev *ca;
 	unsigned dev_idx;
 	size_t heap_size = 0;
-	struct data_opts data_opts = {
-		.nr_replicas		= 1,
-		.btree_insert_flags	= BTREE_INSERT_USE_RESERVE|JOURNAL_WATERMARK_copygc,
+	struct data_update_opts data_opts = {
+		.btree_insert_flags = BTREE_INSERT_USE_RESERVE|JOURNAL_WATERMARK_copygc,
 	};
 	int ret;
 
@@ -154,8 +153,7 @@ static int bch2_copygc(struct bch_fs *c)
 
 		ret = bch2_evacuate_bucket(c, POS(e.dev, e.bucket), e.gen, NULL,
 					   writepoint_ptr(&c->copygc_write_point),
-					   DATA_REWRITE, &data_opts,
-					   &move_stats);
+					   &data_opts, &move_stats);
 		if (ret < 0)
 			bch_err(c, "error %i from bch2_move_data() in copygc", ret);
 		if (ret)
