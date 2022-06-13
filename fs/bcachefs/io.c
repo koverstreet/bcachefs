@@ -1325,7 +1325,7 @@ struct promote_op {
 	struct rhash_head	hash;
 	struct bpos		pos;
 
-	struct migrate_write	write;
+	struct data_update	write;
 	struct bio_vec		bi_inline_vecs[0]; /* must be last */
 };
 
@@ -1401,7 +1401,7 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
 	       sizeof(struct bio_vec) * rbio->bio.bi_vcnt);
 	swap(bio->bi_vcnt, rbio->bio.bi_vcnt);
 
-	bch2_migrate_read_done(&op->write, rbio);
+	bch2_data_update_read_done(&op->write, rbio);
 
 	closure_init(cl, NULL);
 	closure_call(&op->write.op.cl, bch2_write, c->btree_update_wq, cl);
@@ -1460,7 +1460,7 @@ static struct promote_op *__promote_alloc(struct bch_fs *c,
 	bio = &op->write.op.wbio.bio;
 	bio_init(bio, NULL, bio->bi_inline_vecs, pages, 0);
 
-	ret = bch2_migrate_write_init(c, &op->write,
+	ret = bch2_data_update_init(c, &op->write,
 			writepoint_hashed((unsigned long) current),
 			opts,
 			DATA_PROMOTE,
