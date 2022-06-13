@@ -1380,13 +1380,12 @@ static void promote_done(struct closure *cl)
 	bch2_time_stats_update(&c->times[BCH_TIME_data_promote],
 			       op->start_time);
 
-	bch2_bio_free_pages_pool(c, &op->write.op.wbio.bio);
+	bch2_data_update_exit(&op->write);
 	promote_free(c, op);
 }
 
 static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
 {
-	struct bch_fs *c = rbio->c;
 	struct closure *cl = &op->cl;
 	struct bio *bio = &op->write.op.wbio.bio;
 
@@ -1400,10 +1399,8 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
 	       sizeof(struct bio_vec) * rbio->bio.bi_vcnt);
 	swap(bio->bi_vcnt, rbio->bio.bi_vcnt);
 
-	bch2_data_update_read_done(&op->write, rbio);
-
 	closure_init(cl, NULL);
-	closure_call(&op->write.op.cl, bch2_write, c->btree_update_wq, cl);
+	bch2_data_update_read_done(&op->write, rbio->pick.crc, cl);
 	closure_return_with_destructor(cl, promote_done);
 }
 
@@ -1462,10 +1459,10 @@ static struct promote_op *__promote_alloc(struct bch_fs *c,
 	ret = bch2_data_update_init(c, &op->write,
 			writepoint_hashed((unsigned long) current),
 			opts,
-			DATA_PROMOTE,
-			(struct data_opts) {
+			(struct data_update_opts) {
 				.target		= opts.promote_target,
-				.nr_replicas	= 1,
+				.extra_replicas	= 1,
+				.write_flags	= BCH_WRITE_ALLOC_NOWAIT|BCH_WRITE_CACHED,
 			},
 			btree_id, k);
 	BUG_ON(ret);
