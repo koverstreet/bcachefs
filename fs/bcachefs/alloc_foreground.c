@@ -506,7 +506,7 @@ struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 	int ret;
 again:
 	usage = bch2_dev_usage_read(ca);
-	avail = __dev_buckets_available(ca, usage,reserve);
+	avail = dev_buckets_free(ca, usage,reserve);
 
 	if (usage.d[BCH_DATA_need_discard].buckets > avail)
 		bch2_do_discards(c);
