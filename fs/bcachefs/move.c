@@ -244,9 +244,18 @@ err:
 
 static int move_ratelimit(struct btree_trans *trans,
 			  struct moving_context *ctxt,
-			  struct bch_ratelimit *rate)
+			  struct bch_ratelimit *rate,
+			  bool wait_on_copygc)
 {
+	struct bch_fs *c = trans->c;
 	u64 delay;
+
+	if (wait_on_copygc) {
+		bch2_trans_unlock(trans);
+		wait_event_killable(c->copygc_running_wq,
+				    !c->copygc_running ||
+				    kthread_should_stop());
+	}
 
 	do {
 		delay = rate ? bch2_ratelimit_delay(rate) : 0;
@@ -307,14 +316,15 @@ static int move_get_io_opts(struct btree_trans *trans,
 }
 
 static int __bch2_move_data(struct bch_fs *c,
-		struct moving_context *ctxt,
-		struct bch_ratelimit *rate,
-		struct write_point_specifier wp,
-		struct bpos start,
-		struct bpos end,
-		move_pred_fn pred, void *arg,
-		struct bch_move_stats *stats,
-		enum btree_id btree_id)
+			    struct moving_context *ctxt,
+			    struct bch_ratelimit *rate,
+			    struct write_point_specifier wp,
+			    struct bpos start,
+			    struct bpos end,
+			    move_pred_fn pred, void *arg,
+			    struct bch_move_stats *stats,
+			    enum btree_id btree_id,
+			    bool wait_on_copygc)
 {
 	struct bch_io_opts io_opts = bch2_opts_to_inode_opts(c->opts);
 	struct bkey_buf sk;
@@ -339,7 +349,7 @@ static int __bch2_move_data(struct bch_fs *c,
 	if (rate)
 		bch2_ratelimit_reset(rate);
 
-	while (!move_ratelimit(&trans, ctxt, rate)) {
+	while (!move_ratelimit(&trans, ctxt, rate, wait_on_copygc)) {
 		bch2_trans_begin(&trans);
 
 		k = bch2_btree_iter_peek(&iter);
@@ -436,7 +446,8 @@ int bch2_move_data(struct bch_fs *c,
 		   struct bch_ratelimit *rate,
 		   struct write_point_specifier wp,
 		   move_pred_fn pred, void *arg,
-		   struct bch_move_stats *stats)
+		   struct bch_move_stats *stats,
+		   bool wait_on_copygc)
 {
 	struct moving_context ctxt = { .stats = stats };
 	enum btree_id id;
@@ -461,7 +472,7 @@ int bch2_move_data(struct bch_fs *c,
 		ret = __bch2_move_data(c, &ctxt, rate, wp,
 				       id == start_btree_id ? start_pos : POS_MIN,
 				       id == end_btree_id   ? end_pos   : POS_MAX,
-				       pred, arg, stats, id);
+				       pred, arg, stats, id, wait_on_copygc);
 		if (ret)
 			break;
 	}
@@ -542,7 +553,7 @@ int bch2_evacuate_bucket(struct bch_fs *c,
 
 	stats->data_type = BCH_DATA_user;
 
-	while (!(ret = move_ratelimit(&trans, &ctxt, rate))) {
+	while (!(ret = move_ratelimit(&trans, &ctxt, rate, false))) {
 		bch2_trans_begin(&trans);
 
 		ret = bch2_get_next_backpointer(&trans, bucket, gen,
@@ -872,7 +883,7 @@ int bch2_data_job(struct bch_fs *c,
 				     op.start_btree,	op.start_pos,
 				     op.end_btree,	op.end_pos,
 				     NULL, writepoint_hashed((unsigned long) current),
-				     rereplicate_pred, c, stats) ?: ret;
+				     rereplicate_pred, c, stats, true) ?: ret;
 		ret = bch2_replicas_gc2(c) ?: ret;
 		break;
 	case BCH_DATA_OP_MIGRATE:
@@ -893,7 +904,7 @@ int bch2_data_job(struct bch_fs *c,
 				     op.start_btree,	op.start_pos,
 				     op.end_btree,	op.end_pos,
 				     NULL, writepoint_hashed((unsigned long) current),
-				     migrate_pred, &op, stats) ?: ret;
+				     migrate_pred, &op, stats, true) ?: ret;
 		ret = bch2_replicas_gc2(c) ?: ret;
 		break;
 	case BCH_DATA_OP_REWRITE_OLD_NODES:
