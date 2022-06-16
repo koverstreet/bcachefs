@@ -387,6 +387,11 @@ err:
 	return ret;
 }
 
+void bch_journal_space_reserve(struct journal *j)
+{
+	j->do_reserve = true;
+}
+
 /* Journalling */
 #define journal_max_cmp(l, r) \
 	(fifo_idx(&c->journal.pin, btree_current_write(l)->journal) < \
@@ -507,6 +512,17 @@ static void do_journal_discard(struct cache *ca)
 	}
 }
 
+static bool dev_has_journal_buckets_free(struct cache_set *c, struct cache *ca)
+{
+	struct journal *j = &c->journal;
+	struct journal_device *ja = &ca->journal;
+	unsigned nr_free = (ca->sb.njournal_buckets +
+			    ja->discard_idx - ja->cur_idx) %
+		ca->sb.njournal_buckets;
+
+	return nr_free > 1 + j->do_reserve;
+}
+
 static void journal_reclaim(struct cache_set *c)
 {
 	struct bkey *k = &c->journal.key;
@@ -549,8 +565,8 @@ static void journal_reclaim(struct cache_set *c)
 		unsigned next = (ja->cur_idx + 1) % ca->sb.njournal_buckets;
 
 		/* No space available on this device */
-		if (next == ja->discard_idx)
-			continue;
+		if (!dev_has_journal_buckets_free(c, ca))
+			goto out;
 
 		ja->cur_idx = next;
 		k->ptr[n++] = MAKE_PTR(0,
