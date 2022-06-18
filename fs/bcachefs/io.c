@@ -1283,7 +1283,7 @@ void bch2_write(struct closure *cl)
 	}
 
 	if (c->opts.nochanges ||
-	    !percpu_ref_tryget(&c->writes)) {
+	    !percpu_ref_tryget_live(&c->writes)) {
 		op->error = -EROFS;
 		goto err;
 	}
@@ -1418,7 +1418,7 @@ static struct promote_op *__promote_alloc(struct bch_fs *c,
 	unsigned pages = DIV_ROUND_UP(sectors, PAGE_SECTORS);
 	int ret;
 
-	if (!percpu_ref_tryget(&c->writes))
+	if (!percpu_ref_tryget_live(&c->writes))
 		return NULL;
 
 	op = kzalloc(sizeof(*op) + sizeof(struct bio_vec) * pages, GFP_NOIO);
