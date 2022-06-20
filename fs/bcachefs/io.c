@@ -1084,12 +1084,6 @@ again:
 					BKEY_EXTENT_U64s_MAX))
 			goto flush_io;
 
-		if ((op->flags & BCH_WRITE_FROM_INTERNAL) &&
-		    percpu_ref_is_dying(&c->writes)) {
-			ret = -EROFS;
-			goto err;
-		}
-
 		/*
 		 * The copygc thread is now global, which means it's no longer
 		 * freeing up space on specific disks, which means that
