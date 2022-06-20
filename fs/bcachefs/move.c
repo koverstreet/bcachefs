@@ -55,9 +55,11 @@ struct moving_io {
 static void move_free(struct moving_io *io)
 {
 	struct moving_context *ctxt = io->write.ctxt;
+	struct bch_fs *c = ctxt->c;
 
 	bch2_data_update_exit(&io->write);
 	wake_up(&ctxt->wait);
+	percpu_ref_put(&c->writes);
 	kfree(io);
 }
 
@@ -195,6 +197,9 @@ static int bch2_move_extent(struct btree_trans *trans,
 	unsigned sectors = k.k->size, pages;
 	int ret = -ENOMEM;
 
+	if (!percpu_ref_tryget_live(&c->writes))
+		return -EROFS;
+
 	/* write path might have to decompress data: */
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
 		sectors = max_t(unsigned, sectors, p.crc.uncompressed_size);
@@ -261,6 +266,7 @@ err_free_pages:
 err_free:
 	kfree(io);
 err:
+	percpu_ref_put(&c->writes);
 	trace_move_alloc_mem_fail(k.k);
 	return ret;
 }
