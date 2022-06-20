@@ -23,8 +23,6 @@
 
 #include <trace/events/bcachefs.h>
 
-#define SECTORS_IN_FLIGHT_PER_DEVICE	2048
-
 struct moving_io {
 	struct list_head	list;
 	struct closure		cl;
@@ -281,11 +279,11 @@ static int move_ratelimit(struct btree_trans *trans,
 
 	move_ctxt_wait_event(ctxt, trans,
 		atomic_read(&ctxt->write_sectors) <
-		SECTORS_IN_FLIGHT_PER_DEVICE);
+		c->opts.move_bytes_in_flight >> 9);
 
 	move_ctxt_wait_event(ctxt, trans,
 		atomic_read(&ctxt->read_sectors) <
-		SECTORS_IN_FLIGHT_PER_DEVICE);
+		c->opts.move_bytes_in_flight >> 9);
 
 	return 0;
 }
