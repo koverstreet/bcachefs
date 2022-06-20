@@ -151,9 +151,12 @@ static int bch2_copygc(struct bch_fs *c)
 		BUG_ON(!heap_pop(h, e, -fragmentation_cmp, NULL));
 		/* not correct w.r.t. device removal */
 
-		ret = bch2_evacuate_bucket(c, POS(e.dev, e.bucket), e.gen, NULL,
+		ret = bch2_evacuate_bucket(c, POS(e.dev, e.bucket), e.gen,
+					   data_opts,
+					   NULL,
+					   &move_stats,
 					   writepoint_ptr(&c->copygc_write_point),
-					   &data_opts, &move_stats);
+					   false);
 		if (ret < 0)
 			bch_err(c, "error %i from bch2_move_data() in copygc", ret);
 		if (ret)
