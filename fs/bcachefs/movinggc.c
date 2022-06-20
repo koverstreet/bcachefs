@@ -95,10 +95,11 @@ static int bch2_copygc(struct bch_fs *c)
 	struct bch_dev *ca;
 	unsigned dev_idx;
 	size_t heap_size = 0;
+	struct moving_context ctxt;
 	struct data_update_opts data_opts = {
 		.btree_insert_flags = BTREE_INSERT_USE_RESERVE|JOURNAL_WATERMARK_copygc,
 	};
-	int ret;
+	int ret = 0;
 
 	bch_move_stats_init(&move_stats, "copygc");
 
@@ -147,21 +148,21 @@ static int bch2_copygc(struct bch_fs *c)
 
 	heap_resort(h, fragmentation_cmp, NULL);
 
-	while (h->used) {
-		BUG_ON(!heap_pop(h, e, -fragmentation_cmp, NULL));
-		/* not correct w.r.t. device removal */
+	bch2_moving_ctxt_init(&ctxt, c, NULL, &move_stats,
+			      writepoint_ptr(&c->copygc_write_point),
+			      false);
 
-		ret = bch2_evacuate_bucket(c, POS(e.dev, e.bucket), e.gen,
-					   data_opts,
-					   NULL,
-					   &move_stats,
-					   writepoint_ptr(&c->copygc_write_point),
-					   false);
-		if (ret < 0)
-			bch_err(c, "error %i from bch2_move_data() in copygc", ret);
-		if (ret)
-			return ret;
+	/* not correct w.r.t. device removal */
+	while (h->used && !ret) {
+		BUG_ON(!heap_pop(h, e, -fragmentation_cmp, NULL));
+		ret = __bch2_evacuate_bucket(&ctxt, POS(e.dev, e.bucket), e.gen,
+					     data_opts);
 	}
+
+	bch2_moving_ctxt_exit(&ctxt);
+
+	if (ret < 0)
+		bch_err(c, "error %i from bch2_move_data() in copygc", ret);
 
 	trace_copygc(c, atomic64_read(&move_stats.sectors_moved), 0, 0, 0);
 	return ret;
