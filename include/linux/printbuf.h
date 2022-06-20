@@ -133,7 +133,7 @@ static inline unsigned printbuf_remaining(struct printbuf *out)
 
 static inline unsigned printbuf_written(struct printbuf *out)
 {
-	return min(out->pos, out->size);
+	return out->size ? min(out->pos, out->size - 1) : 0;
 }
 
 /*
