@@ -252,6 +252,14 @@ next:
 		}
 		continue;
 nomatch:
+		if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+			struct printbuf buf = PRINTBUF;
+
+			bch2_bkey_val_to_text(&buf, c, old);
+			bch_info(c, "no match for %s", buf.buf);
+			printbuf_exit(&buf);
+		}
+
 		if (m->ctxt) {
 			BUG_ON(k.k->p.offset <= iter.pos.offset);
 			atomic64_inc(&m->ctxt->stats->keys_raced);
