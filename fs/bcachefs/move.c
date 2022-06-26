@@ -68,6 +68,9 @@ static void move_write_done(struct bch_write_op *op)
 	struct moving_io *io = container_of(op, struct moving_io, write.op);
 	struct moving_context *ctxt = io->write.ctxt;
 
+	if (io->write.op.error)
+		ctxt->write_error = true;
+
 	atomic_sub(io->write_sectors, &io->write.ctxt->write_sectors);
 	move_free(io);
 	closure_put(&ctxt->cl);
@@ -657,7 +660,8 @@ int __bch2_evacuate_bucket(struct moving_context *ctxt,
 		bch2_trans_unlock(&trans);
 		move_ctxt_wait_event(ctxt, NULL, list_empty(&ctxt->reads));
 		closure_sync(&ctxt->cl);
-		lockrestart_do(&trans, verify_bucket_evacuated(&trans, bucket, gen));
+		if (!ctxt->write_error)
+			lockrestart_do(&trans, verify_bucket_evacuated(&trans, bucket, gen));
 	}
 err:
 	bch2_trans_exit(&trans);
