@@ -15,6 +15,7 @@ struct moving_context {
 	struct bch_move_stats	*stats;
 	struct write_point_specifier wp;
 	bool			wait_on_copygc;
+	bool			write_error;
 
 	/* For waiting on outstanding reads and writes: */
 	struct closure		cl;
