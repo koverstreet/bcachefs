@@ -863,7 +863,9 @@ int bch2_check_alloc_info(struct bch_fs *c)
 
 	for_each_btree_key(&trans, iter, BTREE_ID_alloc, POS_MIN,
 			   BTREE_ITER_PREFETCH, k, ret) {
-		ret = __bch2_trans_do(&trans, NULL, NULL, 0,
+		ret = __bch2_trans_do(&trans, NULL, NULL,
+				      BTREE_INSERT_NOFAIL|
+				      BTREE_INSERT_LAZY_RW,
 			bch2_check_alloc_key(&trans, &iter));
 		if (ret)
 			break;
@@ -876,7 +878,9 @@ int bch2_check_alloc_info(struct bch_fs *c)
 	bch2_trans_iter_init(&trans, &iter, BTREE_ID_need_discard, POS_MIN,
 			     BTREE_ITER_PREFETCH);
 	while (1) {
-		ret = __bch2_trans_do(&trans, NULL, NULL, 0,
+		ret = __bch2_trans_do(&trans, NULL, NULL,
+				      BTREE_INSERT_NOFAIL|
+				      BTREE_INSERT_LAZY_RW,
 			bch2_check_discard_freespace_key(&trans, &iter));
 		if (ret)
 			break;
@@ -891,7 +895,9 @@ int bch2_check_alloc_info(struct bch_fs *c)
 	bch2_trans_iter_init(&trans, &iter, BTREE_ID_freespace, POS_MIN,
 			     BTREE_ITER_PREFETCH);
 	while (1) {
-		ret = __bch2_trans_do(&trans, NULL, NULL, 0,
+		ret = __bch2_trans_do(&trans, NULL, NULL,
+				      BTREE_INSERT_NOFAIL|
+				      BTREE_INSERT_LAZY_RW,
 			bch2_check_discard_freespace_key(&trans, &iter));
 		if (ret)
 			break;
