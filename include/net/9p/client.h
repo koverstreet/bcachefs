@@ -9,6 +9,7 @@
 #ifndef NET_9P_CLIENT_H
 #define NET_9P_CLIENT_H
 
+#include <linux/mempool.h>
 #include <linux/utsname.h>
 #include <linux/idr.h>
 
@@ -106,6 +107,14 @@ struct p9_client {
 	enum p9_trans_status status;
 	void *trans;
 	struct kmem_cache *fcall_cache;
+
+	/*
+	 * We need two identical mempools because it's not safe to allocate
+	 * multiple elements from the same pool (without freeing the first);
+	 * that will deadlock if multiple threads need the last element at the
+	 * same time.
+	 */
+	mempool_t pools[2];
 
 	union {
 		struct {
@@ -222,7 +231,8 @@ int p9_client_mkdir_dotl(struct p9_fid *fid, const char *name, int mode,
 				kgid_t gid, struct p9_qid *qid);
 int p9_client_lock_dotl(struct p9_fid *fid, struct p9_flock *flock, u8 *status);
 int p9_client_getlock_dotl(struct p9_fid *fid, struct p9_getlock *fl);
-void p9_fcall_fini(struct p9_fcall *fc);
+void p9_fcall_fini(struct p9_client *c, struct p9_fcall *fc,
+		   int fc_idx);
 struct p9_req_t *p9_tag_lookup(struct p9_client *c, u16 tag);
 
 static inline void p9_req_get(struct p9_req_t *r)
