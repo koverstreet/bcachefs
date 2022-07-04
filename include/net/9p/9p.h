@@ -539,12 +539,12 @@ struct p9_rstatfs {
 struct p9_fcall {
 	u32 size;
 	u8 id;
+	bool used_mempool;
 	u16 tag;
 
 	size_t offset;
 	size_t capacity;
 
-	struct kmem_cache *cache;
 	u8 *sdata;
 };
 
