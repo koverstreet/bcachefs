@@ -136,6 +136,14 @@ int bch2_bucket_alloc_set(struct bch_fs *, struct open_buckets *,
 		      unsigned, unsigned *, bool *, enum alloc_reserve,
 		      unsigned, struct closure *);
 
+struct write_point *bch2_alloc_sectors_start_trans(struct btree_trans *,
+					     unsigned, unsigned,
+					     struct write_point_specifier,
+					     struct bch_devs_list *,
+					     unsigned, unsigned,
+					     enum alloc_reserve,
+					     unsigned,
+					     struct closure *);
 struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
 					     unsigned, unsigned,
 					     struct write_point_specifier,
