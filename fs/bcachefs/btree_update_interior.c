@@ -416,16 +416,13 @@ static void bch2_btree_reserve_put(struct btree_update *as)
 static int bch2_btree_reserve_get(struct btree_trans *trans,
 				  struct btree_update *as,
 				  unsigned nr_nodes[2],
-				  unsigned flags)
+				  unsigned flags,
+				  struct closure *cl)
 {
 	struct bch_fs *c = as->c;
-	struct closure cl;
 	struct btree *b;
 	unsigned interior;
-	int ret;
-
-	closure_init_stack(&cl);
-retry:
+	int ret = 0;
 
 	BUG_ON(nr_nodes[0] + nr_nodes[1] > BTREE_RESERVE_MAX);
 
@@ -436,18 +433,17 @@ retry:
 	 * BTREE_INSERT_NOWAIT only applies to btree node allocation, not
 	 * blocking on this lock:
 	 */
-	ret = bch2_btree_cache_cannibalize_lock(c, &cl);
+	ret = bch2_btree_cache_cannibalize_lock(c, cl);
 	if (ret)
-		goto err;
+		return ret;
 
 	for (interior = 0; interior < 2; interior++) {
 		struct prealloc_nodes *p = as->prealloc_nodes + interior;
 
 		while (p->nr < nr_nodes[interior]) {
 			b = __bch2_btree_node_alloc(trans, &as->disk_res,
-						    flags & BTREE_INSERT_NOWAIT
-						    ? NULL : &cl,
-						    interior, flags);
+					flags & BTREE_INSERT_NOWAIT ? NULL : cl,
+					interior, flags);
 			if (IS_ERR(b)) {
 				ret = PTR_ERR(b);
 				goto err;
@@ -456,18 +452,8 @@ retry:
 			p->b[p->nr++] = b;
 		}
 	}
-
-	bch2_btree_cache_cannibalize_unlock(c);
-	closure_sync(&cl);
-	return 0;
 err:
 	bch2_btree_cache_cannibalize_unlock(c);
-	closure_sync(&cl);
-
-	if (ret == -EAGAIN)
-		goto retry;
-
-	trace_btree_reserve_get_fail(c, nr_nodes[0] + nr_nodes[1], &cl);
 	return ret;
 }
 
@@ -1056,16 +1042,24 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 	if (ret)
 		goto err;
 
-	bch2_trans_unlock(trans);
-
 	ret = bch2_journal_preres_get(&c->journal, &as->journal_preres,
 				      BTREE_UPDATE_JOURNAL_RES,
-				      journal_flags);
+				      journal_flags|JOURNAL_RES_GET_NONBLOCK);
 	if (ret) {
-		bch2_btree_update_free(as);
-		trace_trans_restart_journal_preres_get(trans, _RET_IP_);
-		ret = btree_trans_restart(trans, BCH_ERR_transaction_restart_journal_preres_get);
-		return ERR_PTR(ret);
+		bch2_trans_unlock(trans);
+
+		ret = bch2_journal_preres_get(&c->journal, &as->journal_preres,
+					      BTREE_UPDATE_JOURNAL_RES,
+					      journal_flags);
+		if (ret) {
+			trace_trans_restart_journal_preres_get(trans, _RET_IP_);
+			ret = btree_trans_restart(trans, BCH_ERR_transaction_restart_journal_preres_get);
+			goto err;
+		}
+
+		ret = bch2_trans_relock(trans);
+		if (ret)
+			goto err;
 	}
 
 	ret = bch2_disk_reservation_get(c, &as->disk_res,
@@ -1075,9 +1069,26 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 	if (ret)
 		goto err;
 
-	ret = bch2_btree_reserve_get(trans, as, nr_nodes, flags);
-	if (ret)
+	ret = bch2_btree_reserve_get(trans, as, nr_nodes, flags, NULL);
+	if (ret == -EAGAIN ||
+	    ret == -ENOMEM) {
+		struct closure cl;
+
+		closure_init_stack(&cl);
+
+		bch2_trans_unlock(trans);
+
+		do {
+			ret = bch2_btree_reserve_get(trans, as, nr_nodes, flags, &cl);
+			closure_sync(&cl);
+		} while (ret == -EAGAIN);
+	}
+
+	if (ret) {
+		trace_btree_reserve_get_fail(trans->fn, _RET_IP_,
+					     nr_nodes[0] + nr_nodes[1]);
 		goto err;
+	}
 
 	ret = bch2_trans_relock(trans);
 	if (ret)
