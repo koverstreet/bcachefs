@@ -365,7 +365,6 @@ bool __bch2_btree_node_lock(struct btree_trans *trans,
 		if (btree_node_locked(linked, level) &&
 		    bpos_cmp(pos, btree_node_pos((void *) linked->l[level].b,
 						 linked->cached)) <= 0) {
-			BUG_ON(trans->in_traverse_all);
 			reason = 7;
 			goto deadlock;
 		}
