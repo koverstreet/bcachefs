@@ -392,12 +392,16 @@ __bch2_btree_iter_peek_and_restart(struct btree_trans *trans,
 
 #define lockrestart_do(_trans, _do)					\
 ({									\
+	u32 _restart_count;						\
 	int _ret;							\
 									\
 	do {								\
-		bch2_trans_begin(_trans);				\
+		_restart_count = bch2_trans_begin(_trans);		\
 		_ret = (_do);						\
 	} while (bch2_err_matches(_ret, BCH_ERR_transaction_restart));	\
+									\
+	if (!_ret)							\
+		bch2_trans_verify_not_restarted(_trans, _restart_count);\
 									\
 	_ret;								\
 })
@@ -439,7 +443,7 @@ __bch2_btree_iter_peek_and_restart(struct btree_trans *trans,
 			     (_start), (_flags));			\
 									\
 	while (1) {							\
-		bch2_trans_begin(_trans);				\
+		u32 _restart_count = bch2_trans_begin(_trans);		\
 		(_k) = bch2_btree_iter_peek_type(&(_iter), (_flags));	\
 		if (!(_k).k) {						\
 			_ret = 0;					\
@@ -451,6 +455,7 @@ __bch2_btree_iter_peek_and_restart(struct btree_trans *trans,
 			continue;					\
 		if (_ret)						\
 			break;						\
+		bch2_trans_verify_not_restarted(_trans, _restart_count);\
 		if (!bch2_btree_iter_advance(&(_iter)))			\
 			break;						\
 	}								\
@@ -468,7 +473,7 @@ __bch2_btree_iter_peek_and_restart(struct btree_trans *trans,
 			     (_start), (_flags));			\
 									\
 	while (1) {							\
-		bch2_trans_begin(_trans);				\
+		u32 _restart_count = bch2_trans_begin(_trans);		\
 		(_k) = bch2_btree_iter_peek_prev_type(&(_iter), (_flags));\
 		if (!(_k).k) {						\
 			_ret = 0;					\
@@ -480,6 +485,7 @@ __bch2_btree_iter_peek_and_restart(struct btree_trans *trans,
 			continue;					\
 		if (_ret)						\
 			break;						\
+		bch2_trans_verify_not_restarted(_trans, _restart_count);\
 		if (!bch2_btree_iter_rewind(&(_iter)))			\
 			break;						\
 	}								\
