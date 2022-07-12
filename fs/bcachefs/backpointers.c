@@ -700,6 +700,7 @@ missing:
 	bch2_bkey_val_to_text(&buf, c, alloc_k);
 
 	if (c->sb.version < bcachefs_metadata_version_backpointers ||
+	    c->opts.reconstruct_alloc ||
 	    fsck_err(c, "%s", buf.buf)) {
 		struct bkey_i_alloc_v4 *a = bch2_alloc_to_v4_mut(trans, alloc_k);
 
