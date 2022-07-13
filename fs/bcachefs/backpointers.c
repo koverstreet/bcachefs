@@ -627,7 +627,7 @@ int bch2_check_btree_backpointers(struct bch_fs *c)
 	bch2_trans_iter_init(&trans, &iter, BTREE_ID_backpointers, POS_MIN, 0);
 
 	do {
-		ret = __bch2_trans_do(&trans, NULL, NULL,
+		ret = commit_do(&trans, NULL, NULL,
 				      BTREE_INSERT_LAZY_RW|
 				      BTREE_INSERT_NOFAIL,
 				      bch2_check_btree_backpointer(&trans, &iter));
@@ -805,7 +805,7 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 					  BTREE_ITER_PREFETCH);
 
 		do {
-			ret = __bch2_trans_do(&trans, NULL, NULL,
+			ret = commit_do(&trans, NULL, NULL,
 					      BTREE_INSERT_LAZY_RW|
 					      BTREE_INSERT_NOFAIL,
 					      check_extent_to_backpointers(&trans, &iter));
@@ -818,7 +818,7 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 		if (ret)
 			break;
 
-		ret = __bch2_trans_do(&trans, NULL, NULL,
+		ret = commit_do(&trans, NULL, NULL,
 				      BTREE_INSERT_LAZY_RW|
 				      BTREE_INSERT_NOFAIL,
 				      check_btree_root_to_backpointers(&trans, btree_id));
@@ -876,7 +876,7 @@ int bch2_check_backpointers_to_extents(struct bch_fs *c)
 			   BTREE_ITER_PREFETCH, k, ret) {
 		u64 bp_offset = 0;
 
-		while (!(ret = __bch2_trans_do(&trans, NULL, NULL,
+		while (!(ret = commit_do(&trans, NULL, NULL,
 					       BTREE_INSERT_LAZY_RW|
 					       BTREE_INSERT_NOFAIL,
 				check_one_backpointer(&trans, iter.pos, &bp_offset))) &&
