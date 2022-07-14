@@ -3293,6 +3293,15 @@ void __bch2_trans_init(struct btree_trans *trans, struct bch_fs *c,
 	trans->last_begin_time	= ktime_get_ns();
 	trans->task		= current;
 
+	while (c->lock_held_stats.names[trans->lock_name_idx] != fn
+	       && c->lock_held_stats.names[trans->lock_name_idx] != 0)
+		trans->lock_name_idx++;
+
+	if (trans->lock_name_idx >= BCH_LOCK_TIME_NR)
+		pr_warn_once("lock_times array not big enough!");
+	else
+		c->lock_held_stats.names[trans->lock_name_idx] = fn;
+
 	bch2_trans_alloc_paths(trans, c);
 
 	if (expected_mem_bytes) {
