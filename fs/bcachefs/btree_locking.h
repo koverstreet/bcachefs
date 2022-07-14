@@ -95,7 +95,8 @@ btree_lock_want(struct btree_path *path, int level)
 	return BTREE_NODE_UNLOCKED;
 }
 
-static inline void btree_node_unlock(struct btree_path *path, unsigned level)
+static inline void btree_node_unlock(struct btree_trans *trans,
+				     struct btree_path *path, unsigned level)
 {
 	int lock_type = btree_node_locked_type(path, level);
 
@@ -106,12 +107,13 @@ static inline void btree_node_unlock(struct btree_path *path, unsigned level)
 	mark_btree_node_unlocked(path, level);
 }
 
-static inline void __bch2_btree_path_unlock(struct btree_path *path)
+static inline void __bch2_btree_path_unlock(struct btree_trans *trans,
+					    struct btree_path *path)
 {
 	btree_path_set_dirty(path, BTREE_ITER_NEED_RELOCK);
 
 	while (path->nodes_locked)
-		btree_node_unlock(path, __ffs(path->nodes_locked));
+		btree_node_unlock(trans, path, __ffs(path->nodes_locked));
 }
 
 static inline enum bch_time_stats lock_to_time_stat(enum six_lock_type type)
