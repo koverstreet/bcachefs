@@ -397,7 +397,7 @@ bch2_bucket_alloc_trans_early(struct btree_trans *trans,
 	*cur_bucket = max_t(u64, *cur_bucket, ca->mi.first_bucket);
 	*cur_bucket = max_t(u64, *cur_bucket, ca->new_fs_bucket_idx);
 
-	for_each_btree_key(trans, iter, BTREE_ID_alloc, POS(ca->dev_idx, *cur_bucket),
+	for_each_btree_key_norestart(trans, iter, BTREE_ID_alloc, POS(ca->dev_idx, *cur_bucket),
 			   BTREE_ITER_SLOTS, k, ret) {
 		struct bch_alloc_v4 a;
 
@@ -503,8 +503,10 @@ struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 {
 	struct open_bucket *ob = NULL;
 	struct bch_dev_usage usage;
+	bool freespace_initialized = READ_ONCE(ca->mi.freespace_initialized);
+	u64 start = freespace_initialized ? 0 : ca->bucket_alloc_trans_early_cursor;
 	u64 avail;
-	u64 cur_bucket = 0;
+	u64 cur_bucket = start;
 	u64 buckets_seen = 0;
 	u64 skipped_open = 0;
 	u64 skipped_need_journal_commit = 0;
@@ -558,6 +560,14 @@ again:
 
 	if (skipped_need_journal_commit * 2 > avail)
 		bch2_journal_flush_async(&c->journal, NULL);
+
+	if (!ob && !ret && !freespace_initialized && start) {
+		start = cur_bucket = 0;
+		goto again;
+	}
+
+	if (!freespace_initialized)
+		ca->bucket_alloc_trans_early_cursor = cur_bucket;
 err:
 	if (!ob)
 		ob = ERR_PTR(ret ?: -BCH_ERR_no_buckets_found);
