@@ -411,6 +411,9 @@ struct btree_trans {
 	bool			journal_transaction_names:1;
 	bool			journal_replay_not_finished:1;
 	bool			is_initial_gc:1;
+	u32			restart_count;
+	unsigned long		last_restarted_ip;
+
 	/*
 	 * For when bch2_trans_update notices we'll be splitting a compressed
 	 * extent:
