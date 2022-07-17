@@ -411,6 +411,9 @@ struct btree_trans {
 	bool			restarted:1;
 	bool			memory_allocation_failure:1;
 	bool			is_initial_gc:1;
+	u32			restart_count;
+	unsigned long		last_restarted_ip;
+
 	/*
 	 * For when bch2_trans_update notices we'll be splitting a compressed
 	 * extent:
