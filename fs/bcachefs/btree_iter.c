@@ -1663,9 +1663,6 @@ out:
 int __must_check bch2_btree_path_traverse(struct btree_trans *trans,
 					  struct btree_path *path, unsigned flags)
 {
-	if (!(local_clock() % 128))
-		return btree_trans_restart(trans);
-
 	if (path->uptodate < BTREE_ITER_NEED_RELOCK)
 		return 0;
 
