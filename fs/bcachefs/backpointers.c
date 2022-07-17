@@ -569,21 +569,15 @@ struct btree *bch2_backpointer_get_node(struct btree_trans *trans,
 	return NULL;
 }
 
-static int bch2_check_btree_backpointer(struct btree_trans *trans, struct btree_iter *bp_iter)
+static int bch2_check_btree_backpointer(struct btree_trans *trans, struct btree_iter *bp_iter,
+					struct bkey_s_c k)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter alloc_iter = { NULL };
 	struct bch_dev *ca;
-	struct bkey_s_c k, alloc_k;
+	struct bkey_s_c alloc_k;
 	struct printbuf buf = PRINTBUF;
 	int ret = 0;
-
-	k = bch2_btree_iter_peek(bp_iter);
-	ret = bkey_err(k);
-	if (ret)
-		return ret;
-	if (!k.k)
-		return 0;
 
 	if (fsck_err_on(!bch2_dev_exists2(c, k.k->p.inode), c,
 			"backpointer for mising device:\n%s",
@@ -619,25 +613,14 @@ fsck_err:
 /* verify that every backpointer has a corresponding alloc key */
 int bch2_check_btree_backpointers(struct bch_fs *c)
 {
-	struct btree_trans trans;
 	struct btree_iter iter;
-	int ret = 0;
+	struct bkey_s_c k;
 
-	bch2_trans_init(&trans, c, 0, 0);
-	bch2_trans_iter_init(&trans, &iter, BTREE_ID_backpointers, POS_MIN, 0);
-
-	do {
-		ret = commit_do(&trans, NULL, NULL,
-				      BTREE_INSERT_LAZY_RW|
-				      BTREE_INSERT_NOFAIL,
-				      bch2_check_btree_backpointer(&trans, &iter));
-		if (ret)
-			break;
-	} while (bch2_btree_iter_advance(&iter));
-
-	bch2_trans_iter_exit(&trans, &iter);
-	bch2_trans_exit(&trans);
-	return ret;
+	return bch2_trans_run(c,
+		for_each_btree_key_commit(&trans, iter,
+			BTREE_ID_backpointers, POS_MIN, 0, k,
+			NULL, NULL, BTREE_INSERT_LAZY_RW|BTREE_INSERT_NOFAIL,
+		  bch2_check_btree_backpointer(&trans, &iter, k)));
 }
 
 static int check_bp_exists(struct btree_trans *trans,
