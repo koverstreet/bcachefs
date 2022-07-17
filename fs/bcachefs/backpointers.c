@@ -443,8 +443,8 @@ int bch2_get_next_backpointer(struct btree_trans *trans,
 		goto out;
 	}
 
-	for_each_btree_key(trans, bp_iter, BTREE_ID_backpointers,
-			   bp_pos, 0, k, ret) {
+	for_each_btree_key_norestart(trans, bp_iter, BTREE_ID_backpointers,
+				     bp_pos, 0, k, ret) {
 		if (bpos_cmp(k.k->p, bp_end_pos) >= 0)
 			break;
 
