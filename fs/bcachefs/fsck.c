@@ -2202,7 +2202,7 @@ static int check_nlinks_walk_dirents(struct bch_fs *c, struct nlink_table *links
 			    d.v->d_type != DT_SUBVOL)
 				inc_link(c, &s, links, range_start, range_end,
 					 le64_to_cpu(d.v->d_inum),
-					 d.k->p.snapshot);
+					 bch2_snapshot_equiv(c, d.k->p.snapshot));
 			break;
 		}
 	}
