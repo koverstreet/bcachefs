@@ -16,6 +16,7 @@
 #include "replicas.h"
 #include "subvolume.h"
 
+#include <linux/prandom.h>
 #include <linux/prefetch.h>
 #include <trace/events/bcachefs.h>
 
@@ -1667,6 +1668,16 @@ out:
 int __must_check bch2_btree_path_traverse(struct btree_trans *trans,
 					  struct btree_path *path, unsigned flags)
 {
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+		unsigned restart_probability_bits = 4 << min(trans->restart_count, 32U);
+		u64 max = ~(~0ULL << restart_probability_bits);
+
+		if (!prandom_u32_max(max)) {
+			trace_transaction_restart_injected(trans->fn, _RET_IP_);
+			return btree_trans_restart(trans, BCH_ERR_transaction_restart_fault_inject);
+		}
+	}
+
 	if (path->uptodate < BTREE_ITER_NEED_RELOCK)
 		return 0;
 
