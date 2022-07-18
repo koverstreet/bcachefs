@@ -9,6 +9,7 @@
 #include "btree_update_interior.h"
 #include "disk_groups.h"
 #include "ec.h"
+#include "errcode.h"
 #include "error.h"
 #include "inode.h"
 #include "io.h"
@@ -758,7 +759,7 @@ next:
 	bch2_trans_exit(&trans);
 
 	if (ret)
-		bch_err(c, "error %i in bch2_move_btree", ret);
+		bch_err(c, "error in %s(): %s", __func__, bch2_err_str(ret));
 
 	bch2_btree_interior_updates_flush(c);
 

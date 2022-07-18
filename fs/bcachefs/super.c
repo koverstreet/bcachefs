@@ -24,6 +24,7 @@
 #include "debug.h"
 #include "disk_groups.h"
 #include "ec.h"
+#include "errcode.h"
 #include "error.h"
 #include "fs.h"
 #include "fs-io.h"
@@ -1435,7 +1436,7 @@ static int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
 		bch2_btree_delete_range(c, BTREE_ID_alloc, start, end,
 					BTREE_TRIGGER_NORUN, NULL);
 	if (ret)
-		bch_err(c, "error %i removing dev alloc info", ret);
+		bch_err(c, "error removing dev alloc info: %s", bch2_err_str(ret));
 
 	return ret;
 }
@@ -1463,7 +1464,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 
 	ret = bch2_dev_data_drop(c, ca->dev_idx, flags);
 	if (ret) {
-		bch_err(ca, "Remove failed: error %i dropping data", ret);
+		bch_err(ca, "Remove failed: error dropping data: %s", bch2_err_str(ret));
 		goto err;
 	}
 
@@ -1475,7 +1476,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 
 	ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
 	if (ret) {
-		bch_err(ca, "Remove failed: error %i flushing journal", ret);
+		bch_err(ca, "Remove failed: error flushing journal: %s", bch2_err_str(ret));
 		goto err;
 	}
 
@@ -1487,7 +1488,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 
 	ret = bch2_replicas_gc2(c);
 	if (ret) {
-		bch_err(ca, "Remove failed: error %i from replicas gc", ret);
+		bch_err(ca, "Remove failed: error from replicas gc: %s", bch2_err_str(ret));
 		goto err;
 	}
 
@@ -1551,7 +1552,7 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 
 	ret = bch2_read_super(path, &opts, &sb);
 	if (ret) {
-		bch_err(c, "device add error: error reading super: %i", ret);
+		bch_err(c, "device add error: error reading super: %s", bch2_err_str(ret));
 		goto err;
 	}
 
@@ -1644,13 +1645,13 @@ have_slot:
 
 	ret = bch2_trans_mark_dev_sb(c, ca);
 	if (ret) {
-		bch_err(c, "device add error: error marking new superblock: %i", ret);
+		bch_err(c, "device add error: error marking new superblock: %s", bch2_err_str(ret));
 		goto err_late;
 	}
 
 	ret = bch2_fs_freespace_init(c);
 	if (ret) {
-		bch_err(c, "device add error: error initializing free space: %i", ret);
+		bch_err(c, "device add error: error initializing free space: %s", bch2_err_str(ret));
 		goto err_late;
 	}
 
@@ -1712,8 +1713,8 @@ int bch2_dev_online(struct bch_fs *c, const char *path)
 
 	ret = bch2_trans_mark_dev_sb(c, ca);
 	if (ret) {
-		bch_err(c, "error bringing %s online: error %i from bch2_trans_mark_dev_sb",
-			path, ret);
+		bch_err(c, "error bringing %s online: error from bch2_trans_mark_dev_sb: %s",
+			path, bch2_err_str(ret));
 		goto err;
 	}
 
@@ -1782,7 +1783,7 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 
 	ret = bch2_dev_buckets_resize(c, ca, nbuckets);
 	if (ret) {
-		bch_err(ca, "Resize error: %i", ret);
+		bch_err(ca, "Resize error: %s", bch2_err_str(ret));
 		goto err;
 	}
 
