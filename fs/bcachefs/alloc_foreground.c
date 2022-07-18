@@ -26,6 +26,7 @@
 #include "error.h"
 #include "io.h"
 #include "journal.h"
+#include "movinggc.h"
 
 #include <linux/math64.h>
 #include <linux/rculist.h>
@@ -559,6 +560,8 @@ err:
 		trace_bucket_alloc_fail(ca, bch2_alloc_reserves[reserve],
 					usage.d[BCH_DATA_free].buckets,
 					avail,
+					bch2_copygc_wait_amount(c),
+					c->copygc_wait - atomic64_read(&c->io_clock[WRITE].now),
 					buckets_seen,
 					skipped_open,
 					skipped_need_journal_commit,
