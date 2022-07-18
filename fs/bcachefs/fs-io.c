@@ -408,7 +408,7 @@ retry:
 	offset = iter.pos.offset;
 	bch2_trans_iter_exit(&trans, &iter);
 err:
-	if (ret == -EINTR)
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 	bch2_trans_exit(&trans);
 
@@ -1018,10 +1018,9 @@ retry:
 		 * read_extent -> io_time_reset may cause a transaction restart
 		 * without returning an error, we need to check for that here:
 		 */
-		if (!bch2_trans_relock(trans)) {
-			ret = -EINTR;
+		ret = bch2_trans_relock(trans);
+		if (ret)
 			break;
-		}
 
 		bch2_btree_iter_set_pos(&iter,
 				POS(inum.inum, rbio->bio.bi_iter.bi_sector));
@@ -1074,7 +1073,7 @@ retry:
 err:
 	bch2_trans_iter_exit(trans, &iter);
 
-	if (ret == -EINTR)
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 
 	if (ret) {
@@ -2034,7 +2033,7 @@ retry:
 	offset = iter.pos.offset;
 	bch2_trans_iter_exit(&trans, &iter);
 err:
-	if (err == -EINTR)
+	if (bch2_err_matches(err, BCH_ERR_transaction_restart))
 		goto retry;
 	bch2_trans_exit(&trans);
 
@@ -2409,7 +2408,7 @@ retry:
 	start = iter.pos;
 	bch2_trans_iter_exit(&trans, &iter);
 err:
-	if (ret == -EINTR)
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 
 	bch2_trans_exit(&trans);
@@ -2799,7 +2798,8 @@ static long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
 	bch2_trans_copy_iter(&dst, &src);
 	bch2_trans_copy_iter(&del, &src);
 
-	while (ret == 0 || ret == -EINTR) {
+	while (ret == 0 ||
+	       bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
 		struct disk_reservation disk_res =
 			bch2_disk_reservation_init(c, 0);
 		struct bkey_i delete;
@@ -3001,7 +3001,7 @@ static int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 bkey_err:
 		bch2_quota_reservation_put(c, inode, &quota_res);
 		bch2_disk_reservation_put(c, &disk_res);
-		if (ret == -EINTR)
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			ret = 0;
 	}
 
@@ -3283,7 +3283,7 @@ retry:
 	}
 	bch2_trans_iter_exit(&trans, &iter);
 err:
-	if (ret == -EINTR)
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 
 	bch2_trans_exit(&trans);
@@ -3398,7 +3398,7 @@ retry:
 	}
 	bch2_trans_iter_exit(&trans, &iter);
 err:
-	if (ret == -EINTR)
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 
 	bch2_trans_exit(&trans);
