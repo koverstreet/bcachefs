@@ -543,7 +543,7 @@ int bch2_alloc_read(struct bch_fs *c)
 	bch2_trans_exit(&trans);
 
 	if (ret)
-		bch_err(c, "error reading alloc info: %i", ret);
+		bch_err(c, "error reading alloc info: %s", bch2_err_str(ret));
 
 	return ret;
 }
@@ -1294,7 +1294,7 @@ static int bch2_dev_freespace_init(struct bch_fs *c, struct bch_dev *ca)
 	bch2_trans_exit(&trans);
 
 	if (ret < 0) {
-		bch_err(ca, "error initializing free space: %i", ret);
+		bch_err(ca, "error initializing free space: %s", bch2_err_str(ret));
 		return ret;
 	}
 
