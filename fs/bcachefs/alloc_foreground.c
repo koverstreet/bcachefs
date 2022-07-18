@@ -227,7 +227,7 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 			c->blocked_allocate_open_bucket = local_clock();
 
 		spin_unlock(&c->freelist_lock);
-		return ERR_PTR(-OPEN_BUCKETS_EMPTY);
+		return ERR_PTR(-BCH_ERR_open_buckets_empty);
 	}
 
 	/* Recheck under lock: */
@@ -426,7 +426,7 @@ bch2_bucket_alloc_trans_early(struct btree_trans *trans,
 
 	*cur_bucket = iter.pos.offset;
 
-	return ob ?: ERR_PTR(ret ?: -FREELIST_EMPTY);
+	return ob ?: ERR_PTR(ret ?: -BCH_ERR_no_buckets_found);
 }
 
 static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
@@ -528,7 +528,7 @@ again:
 		if (!c->blocked_allocate)
 			c->blocked_allocate = local_clock();
 
-		ob = ERR_PTR(-FREELIST_EMPTY);
+		ob = ERR_PTR(-BCH_ERR_freelist_empty);
 		goto err;
 	}
 
@@ -554,7 +554,7 @@ again:
 		bch2_journal_flush_async(&c->journal, NULL);
 err:
 	if (!ob)
-		ob = ERR_PTR(ret ?: -FREELIST_EMPTY);
+		ob = ERR_PTR(ret ?: -BCH_ERR_no_buckets_found);
 
 	if (IS_ERR(ob)) {
 		trace_bucket_alloc_fail(ca, bch2_alloc_reserves[reserve],
@@ -566,7 +566,8 @@ err:
 					skipped_open,
 					skipped_need_journal_commit,
 					skipped_nouse,
-					cl == NULL, PTR_ERR(ob));
+					cl == NULL,
+					bch2_err_str(PTR_ERR(ob)));
 		atomic_long_inc(&c->bucket_alloc_fail);
 	}
 
@@ -653,7 +654,7 @@ int bch2_bucket_alloc_set(struct bch_fs *c,
 		bch2_dev_alloc_list(c, stripe, devs_may_alloc);
 	unsigned dev;
 	struct bch_dev *ca;
-	int ret = -INSUFFICIENT_DEVICES;
+	int ret = -BCH_ERR_insufficient_devices;
 	unsigned i;
 
 	BUG_ON(*nr_effective >= nr_replicas);
@@ -851,8 +852,8 @@ static int open_bucket_add_buckets(struct bch_fs *c,
 						 target, erasure_code,
 						 nr_replicas, nr_effective,
 						 have_cache, flags, _cl);
-			if (ret == -FREELIST_EMPTY ||
-			    ret == -OPEN_BUCKETS_EMPTY)
+			if (bch2_err_matches(ret, BCH_ERR_freelist_empty) ||
+			    bch2_err_matches(ret, BCH_ERR_open_buckets_empty))
 				return ret;
 			if (*nr_effective >= nr_replicas)
 				return 0;
@@ -873,7 +874,9 @@ retry_blocking:
 	ret = bch2_bucket_alloc_set(c, ptrs, &wp->stripe, &devs,
 				nr_replicas, nr_effective, have_cache,
 				reserve, flags, cl);
-	if (ret && ret != -INSUFFICIENT_DEVICES && !cl && _cl) {
+	if (ret &&
+	    !bch2_err_matches(ret, BCH_ERR_insufficient_devices) &&
+	    !cl && _cl) {
 		cl = _cl;
 		goto retry_blocking;
 	}
@@ -1116,7 +1119,7 @@ alloc_done:
 	if (erasure_code && !ec_open_bucket(c, &ptrs))
 		pr_debug("failed to get ec bucket: ret %u", ret);
 
-	if (ret == -INSUFFICIENT_DEVICES &&
+	if (ret == -BCH_ERR_insufficient_devices &&
 	    nr_effective >= nr_replicas_required)
 		ret = 0;
 
@@ -1147,19 +1150,18 @@ err:
 
 	mutex_unlock(&wp->lock);
 
-	if (ret == -FREELIST_EMPTY &&
+	if (bch2_err_matches(ret, BCH_ERR_freelist_empty) &&
 	    try_decrease_writepoints(c, write_points_nr))
 		goto retry;
 
-	switch (ret) {
-	case -OPEN_BUCKETS_EMPTY:
-	case -FREELIST_EMPTY:
+	if (bch2_err_matches(ret, BCH_ERR_open_buckets_empty) ||
+	    bch2_err_matches(ret, BCH_ERR_freelist_empty))
 		return cl ? ERR_PTR(-EAGAIN) : ERR_PTR(-ENOSPC);
-	case -INSUFFICIENT_DEVICES:
+
+	if (bch2_err_matches(ret, BCH_ERR_insufficient_devices))
 		return ERR_PTR(-EROFS);
-	default:
-		return ERR_PTR(ret);
-	}
+
+	return ERR_PTR(ret);
 }
 
 struct bch_extent_ptr bch2_ob_ptr(struct bch_fs *c, struct open_bucket *ob)
