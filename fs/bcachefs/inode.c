@@ -639,7 +639,7 @@ static int bch2_inode_delete_keys(struct btree_trans *trans,
 		      bch2_trans_commit(trans, NULL, NULL,
 					BTREE_INSERT_NOFAIL);
 err:
-		if (ret && ret != -EINTR)
+		if (ret && !bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			break;
 	}
 
@@ -710,7 +710,7 @@ retry:
 				BTREE_INSERT_NOFAIL);
 err:
 	bch2_trans_iter_exit(&trans, &iter);
-	if (ret == -EINTR)
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 
 	bch2_trans_exit(&trans);

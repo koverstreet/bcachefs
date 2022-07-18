@@ -408,9 +408,9 @@ struct btree_trans {
 	u8			traverse_all_idx;
 	bool			used_mempool:1;
 	bool			in_traverse_all:1;
-	bool			restarted:1;
 	bool			memory_allocation_failure:1;
 	bool			is_initial_gc:1;
+	enum bch_errcode	restarted:16;
 	u32			restart_count;
 	unsigned long		last_restarted_ip;
 

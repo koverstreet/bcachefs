@@ -469,10 +469,9 @@ static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 		for (*cur_bucket = max(*cur_bucket, bkey_start_offset(k.k));
 		     *cur_bucket < k.k->p.offset && !ob;
 		     (*cur_bucket)++) {
-			if (btree_trans_too_many_iters(trans)) {
-				ob = ERR_PTR(-EINTR);
+			ret = btree_trans_too_many_iters(trans);
+			if (ret)
 				break;
-			}
 
 			(*buckets_seen)++;
 
@@ -483,7 +482,8 @@ static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 					      skipped_nouse,
 					      k, cl);
 		}
-		if (ob)
+
+		if (ob || ret)
 			break;
 	}
 	bch2_trans_iter_exit(trans, &iter);
