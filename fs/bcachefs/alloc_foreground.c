@@ -506,7 +506,7 @@ struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 	int ret;
 again:
 	usage = bch2_dev_usage_read(ca);
-	avail = dev_buckets_free(ca, usage,reserve);
+	avail = dev_buckets_free(ca, usage, reserve);
 
 	if (usage.d[BCH_DATA_need_discard].buckets > avail)
 		bch2_do_discards(c);
@@ -556,7 +556,9 @@ err:
 		ob = ERR_PTR(ret ?: -FREELIST_EMPTY);
 
 	if (IS_ERR(ob)) {
-		trace_bucket_alloc_fail(ca, bch2_alloc_reserves[reserve], avail,
+		trace_bucket_alloc_fail(ca, bch2_alloc_reserves[reserve],
+					usage.d[BCH_DATA_free].buckets,
+					avail,
 					buckets_seen,
 					skipped_open,
 					skipped_need_journal_commit,

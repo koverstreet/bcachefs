@@ -456,6 +456,7 @@ TRACE_EVENT(bucket_alloc,
 
 TRACE_EVENT(bucket_alloc_fail,
 	TP_PROTO(struct bch_dev *ca, const char *alloc_reserve,
+		 u64 free,
 		 u64 avail,
 		 u64 seen,
 		 u64 open,
@@ -463,11 +464,12 @@ TRACE_EVENT(bucket_alloc_fail,
 		 u64 nouse,
 		 bool nonblocking,
 		 int ret),
-	TP_ARGS(ca, alloc_reserve, avail, seen, open, need_journal_commit, nouse, nonblocking, ret),
+	TP_ARGS(ca, alloc_reserve, free, avail, seen, open, need_journal_commit, nouse, nonblocking, ret),
 
 	TP_STRUCT__entry(
 		__field(dev_t,			dev			)
 		__array(char,	reserve,	16			)
+		__field(u64,			free			)
 		__field(u64,			avail			)
 		__field(u64,			seen			)
 		__field(u64,			open			)
@@ -480,6 +482,7 @@ TRACE_EVENT(bucket_alloc_fail,
 	TP_fast_assign(
 		__entry->dev		= ca->dev;
 		strlcpy(__entry->reserve, alloc_reserve, sizeof(__entry->reserve));
+		__entry->free		= free;
 		__entry->avail		= avail;
 		__entry->seen		= seen;
 		__entry->open		= open;
@@ -489,9 +492,10 @@ TRACE_EVENT(bucket_alloc_fail,
 		__entry->ret		= ret;
 	),
 
-	TP_printk("%d,%d reserve %s avail %llu seen %llu open %llu need_journal_commit %llu nouse %llu nonblocking %u ret %i",
+	TP_printk("%d,%d reserve %s free %llu avail %llu seen %llu open %llu need_journal_commit %llu nouse %llu nonblocking %u ret %i",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->reserve,
+		  __entry->free,
 		  __entry->avail,
 		  __entry->seen,
 		  __entry->open,
