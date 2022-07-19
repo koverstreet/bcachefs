@@ -340,6 +340,7 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 				skipped_nouse,
 				cl);
 err:
+	set_btree_iter_dontneed(&iter);
 	bch2_trans_iter_exit(trans, &iter);
 	printbuf_exit(&buf);
 	return ob;
@@ -455,6 +456,11 @@ static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 
 	BUG_ON(ca->new_fs_bucket_idx);
 
+	/*
+	 * XXX:
+	 * On transaction restart, we'd like to restart from the bucket we were
+	 * at previously
+	 */
 	for_each_btree_key_norestart(trans, iter, BTREE_ID_freespace,
 				     POS(ca->dev_idx, *cur_bucket), 0, k, ret) {
 		if (k.k->p.inode != ca->dev_idx)
