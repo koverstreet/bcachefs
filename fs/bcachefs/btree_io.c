@@ -543,7 +543,7 @@ enum btree_validate_ret {
 	struct printbuf out = PRINTBUF;					\
 									\
 	btree_err_msg(&out, c, ca, b, i, b->written, write);		\
-	prt_printf(&out, ": " msg, ##__VA_ARGS__);				\
+	prt_printf(&out, ": " msg, ##__VA_ARGS__);			\
 									\
 	if (type == BTREE_ERR_FIXABLE &&				\
 	    write == READ &&						\
@@ -558,7 +558,7 @@ enum btree_validate_ret {
 									\
 		switch (type) {						\
 		case BTREE_ERR_FIXABLE:					\
-			ret = BCH_FSCK_ERRORS_NOT_FIXED;		\
+			ret = -BCH_ERR_fsck_errors_not_fixed;		\
 			goto fsck_err;					\
 		case BTREE_ERR_WANT_RETRY:				\
 			if (have_retry) {				\
@@ -570,7 +570,7 @@ enum btree_validate_ret {
 			ret = BTREE_RETRY_READ;				\
 			goto fsck_err;					\
 		case BTREE_ERR_FATAL:					\
-			ret = BCH_FSCK_ERRORS_NOT_FIXED;		\
+			ret = -BCH_ERR_fsck_errors_not_fixed;		\
 			goto fsck_err;					\
 		}							\
 		break;							\
@@ -578,7 +578,7 @@ enum btree_validate_ret {
 		bch_err(c, "corrupt metadata before write: %s", out.buf);\
 									\
 		if (bch2_fs_inconsistent(c)) {				\
-			ret = BCH_FSCK_ERRORS_NOT_FIXED;		\
+			ret = -BCH_ERR_fsck_errors_not_fixed;		\
 			goto fsck_err;					\
 		}							\
 		break;							\
