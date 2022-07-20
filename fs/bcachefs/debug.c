@@ -277,6 +277,9 @@ static ssize_t bch2_read_btree(struct file *file, char __user *buf,
 	}));
 	i->from = iter.pos;
 
+	if (!err)
+		err = flush_buf(i);
+
 	bch2_trans_exit(&trans);
 
 	return err ?: i->ret;
@@ -387,6 +390,9 @@ static ssize_t bch2_read_bfloat_failed(struct file *file, char __user *buf,
 		0;
 	}));
 	i->from = iter.pos;
+
+	if (!err)
+		err = flush_buf(i);
 
 	bch2_trans_exit(&trans);
 
