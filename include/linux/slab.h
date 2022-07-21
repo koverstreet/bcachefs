@@ -17,6 +17,7 @@
 #include <linux/types.h>
 #include <linux/workqueue.h>
 #include <linux/percpu-refcount.h>
+#include <linux/dynamic_fault.h>
 
 
 /*
@@ -478,7 +479,7 @@ static inline void slab_tag_dec(const void *ptr) {}
 
 #define krealloc_hooks(_p, _do_alloc)					\
 ({									\
-	void *_res = _do_alloc;						\
+	void *_res = !memory_fault() ? _do_alloc : NULL;		\
 	slab_tag_add(_p, _res);						\
 	_res;								\
 })
