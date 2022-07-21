@@ -1021,27 +1021,29 @@ static inline struct bkey_s_c btree_path_level_peek_all(struct bch_fs *c,
 			bch2_btree_node_iter_peek_all(&l->iter, l->b));
 }
 
-static inline struct bkey_s_c btree_path_level_peek(struct bch_fs *c,
+static inline struct bkey_s_c btree_path_level_peek(struct btree_trans *trans,
 						    struct btree_path *path,
 						    struct btree_path_level *l,
 						    struct bkey *u)
 {
-	struct bkey_s_c k = __btree_iter_unpack(c, l, u,
+	struct bkey_s_c k = __btree_iter_unpack(trans->c, l, u,
 			bch2_btree_node_iter_peek(&l->iter, l->b));
 
 	path->pos = k.k ? k.k->p : l->b->key.k.p;
+	bch2_btree_path_verify_level(trans, path, l - path->l);
 	return k;
 }
 
-static inline struct bkey_s_c btree_path_level_prev(struct bch_fs *c,
+static inline struct bkey_s_c btree_path_level_prev(struct btree_trans *trans,
 						    struct btree_path *path,
 						    struct btree_path_level *l,
 						    struct bkey *u)
 {
-	struct bkey_s_c k = __btree_iter_unpack(c, l, u,
+	struct bkey_s_c k = __btree_iter_unpack(trans->c, l, u,
 			bch2_btree_node_iter_prev(&l->iter, l->b));
 
 	path->pos = k.k ? k.k->p : l->b->data->min_key;
+	bch2_btree_path_verify_level(trans, path, l - path->l);
 	return k;
 }
 
@@ -1670,7 +1672,7 @@ out:
 int __must_check bch2_btree_path_traverse(struct btree_trans *trans,
 					  struct btree_path *path, unsigned flags)
 {
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
+	if (0 && IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
 		unsigned restart_probability_bits = 4 << min(trans->restart_count, 32U);
 		u64 mask = ~(~0ULL << restart_probability_bits);
 
@@ -2711,13 +2713,13 @@ struct bkey_s_c bch2_btree_iter_peek_prev(struct btree_iter *iter)
 			goto out;
 		}
 
-		k = btree_path_level_peek(trans->c, iter->path,
+		k = btree_path_level_peek(trans, iter->path,
 					  &iter->path->l[0], &iter->k);
 		if (!k.k ||
 		    ((iter->flags & BTREE_ITER_IS_EXTENTS)
 		     ? bpos_cmp(bkey_start_pos(k.k), search_key) >= 0
 		     : bpos_cmp(k.k->p, search_key) > 0))
-			k = btree_path_level_prev(trans->c, iter->path,
+			k = btree_path_level_prev(trans, iter->path,
 						  &iter->path->l[0], &iter->k);
 
 		bch2_btree_path_check_sort(trans, iter->path, 0);
