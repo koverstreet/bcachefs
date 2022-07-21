@@ -2040,6 +2040,12 @@ config FAULT_INJECTION_STACKTRACE_FILTER
 	help
 	  Provide stacktrace filter for fault-injection capabilities
 
+config CODETAG_FAULT_INJECTION
+	bool "Code tagging based fault injection"
+	select CODE_TAGGING
+	help
+	  Dynamic fault injection based on code tagging
+
 config ARCH_HAS_KCOV
 	bool
 	help

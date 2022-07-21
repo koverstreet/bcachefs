@@ -9,6 +9,7 @@
 	__stop_##_name = .;
 
 #define CODETAG_SECTIONS()		\
-	SECTION_WITH_BOUNDARIES(alloc_tags)
+	SECTION_WITH_BOUNDARIES(alloc_tags)		\
+	SECTION_WITH_BOUNDARIES(dynamic_fault_tags)
 
 #endif /* __ASM_GENERIC_CODETAG_LDS_H */

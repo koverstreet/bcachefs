@@ -8,6 +8,7 @@
 #include <linux/bug.h>
 #include <linux/codetag.h>
 #include <linux/container_of.h>
+#include <linux/dynamic_fault.h>
 #include <linux/lazy-percpu-counter.h>
 #include <linux/static_key.h>
 
@@ -150,7 +151,7 @@ static inline void alloc_tag_add(union codetag_ref *ref, struct alloc_tag *tag,
 	_res_type _res;							\
 	DEFINE_ALLOC_TAG(_alloc_tag, _old);				\
 									\
-	_res = _do_alloc;						\
+	_res = !memory_fault() ? _do_alloc : _err;			\
 	alloc_tag_restore(&_alloc_tag, _old);				\
 	_res;								\
 })
