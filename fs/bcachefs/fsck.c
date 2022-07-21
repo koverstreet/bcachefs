@@ -2141,6 +2141,8 @@ int bch2_check_directory_structure(struct bch_fs *c)
 	return ret;
 }
 
+/* check_nlink pass: */
+
 struct nlink_table {
 	size_t		nr;
 	size_t		size;
