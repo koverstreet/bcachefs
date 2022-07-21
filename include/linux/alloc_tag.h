@@ -10,6 +10,7 @@
 #include <linux/container_of.h>
 #include <asm/percpu.h>
 #include <linux/cpumask.h>
+#include <linux/dynamic_fault.h>
 #include <linux/static_key.h>
 
 /*
@@ -136,12 +137,22 @@ static inline void set_codetag_empty(union codetag_ref *ref) {}
 
 #endif
 
+typedef struct mempool_s mempool_t;
+
+#define res_type_to_err(_res)	_Generic((_res),			\
+	struct folio *:		NULL,					\
+	struct page *:		NULL,					\
+	mempool_t *:		NULL,					\
+	void *:			NULL,					\
+	unsigned long:		0,					\
+	int:			-ENOMEM)
+
 #define alloc_hooks(_do_alloc)						\
 ({									\
 	typeof(_do_alloc) _res;						\
 	DEFINE_ALLOC_TAG(_alloc_tag, _old);				\
 									\
-	_res = _do_alloc;						\
+	_res = !memory_fault() ? _do_alloc : res_type_to_err(_res);	\
 	alloc_tag_restore(&_alloc_tag, _old);				\
 	_res;								\
 })
