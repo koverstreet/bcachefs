@@ -381,6 +381,7 @@ struct time_stats {
 	/* all fields are in nanoseconds */
 	u64		average_duration;
 	u64		average_frequency;
+	u64		variance_duration;
 	u64		max_duration;
 	u64		last_event;
 	struct quantiles quantiles;
@@ -407,6 +408,24 @@ void bch2_time_stats_init(struct time_stats *);
 									\
 	(((_ewma << _weight) - _ewma) + (val)) >> _weight;		\
 })
+
+static inline void ewma_cal(u64 *_mean, u64 *_variance, u64 weight, u64 val)
+{
+	u64 m = *_mean;
+	u64 v = *_variance;
+	s64 d = val - m;
+	u64 d2 = d*d;
+
+	if (m) {
+		*_mean = ((m << weight) + d) >> weight;
+		if (_variance)
+			*_variance = (((1 << weight) - 1) * ( (v << weight) + d2)) >> (weight + weight);
+	} else {
+		*_mean = val;
+		if (_variance)
+			*_variance = 0;
+	}
+}
 
 struct bch_ratelimit {
 	/* Next time we want to do some work, in nanoseconds */

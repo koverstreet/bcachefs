@@ -288,13 +288,12 @@ static void bch2_time_stats_update_one(struct time_stats *stats,
 
 	stats->count++;
 
-	stats->average_duration = stats->average_duration
-		? ewma_add(stats->average_duration, duration, 6)
-		: duration;
-
-	stats->average_frequency = stats->average_frequency
-		? ewma_add(stats->average_frequency, freq, 6)
-		: freq;
+	ewma_cal(&stats->average_duration,
+		 &stats->variance_duration,
+		 8, duration);
+	ewma_cal(&stats->average_frequency,
+		 NULL,
+		 8, freq);
 
 	stats->max_duration = max(stats->max_duration, duration);
 
@@ -395,6 +394,10 @@ void bch2_time_stats_to_text(struct printbuf *out, struct time_stats *stats)
 	prt_newline(out);
 	prt_printf(out, "avg duration:\t");
 	pr_time_units(out, stats->average_duration);
+
+	prt_newline(out);
+	prt_printf(out, "stddev duration:\t");
+	pr_time_units(out, int_sqrt64(stats->variance_duration));
 
 	prt_newline(out);
 	prt_printf(out, "max duration:\t");

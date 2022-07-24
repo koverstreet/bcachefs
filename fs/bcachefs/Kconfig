@@ -57,3 +57,8 @@ config BCACHEFS_LOCK_TIME_STATS
        depends on BCACHEFS_FS
        help
        Expose statistics for how long we held a lock in debugfs
+
+config BCACHEFS_UNIT_TESTS
+       tristate "bcachefs kunit tests" if !KUNIT_ALL_TESTS
+       depends on BCACHEFS_FS && KUNIT
+       default KUNIT_ALL_TESTS

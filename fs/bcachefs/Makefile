@@ -67,3 +67,5 @@ bcachefs-y		:=	\
 	xattr.o
 
 bcachefs-$(CONFIG_BCACHEFS_POSIX_ACL) += acl.o
+
+obj-$(CONFIG_BCACHEFS_UNIT_TESTS) += unit_tests.o
