@@ -704,6 +704,53 @@ static const struct file_operations lock_held_stats_op = {
 	.read = lock_held_stats_read,
 };
 
+static ssize_t lock_held_stats_btree_read(struct file *file, char __user *buf,
+				      size_t size, loff_t *ppos)
+{
+	struct dump_iter        *i = file->private_data;
+	struct bch_fs           *c = i->c;
+
+	int err;
+
+	i->ubuf = buf;
+	i->size = size;
+	i->ret  = 0;
+
+	while (i->iter < BTREE_ID_NR) {
+		err = flush_buf(i);
+		if (err)
+			return err;
+		if (!i->size)
+			break;
+
+		if (IS_ENABLED(CONFIG_BCACHEFS_LOCK_TIME_STATS)) {
+			prt_printf(&i->buf, "%s:", bch2_btree_ids[i->iter]);
+			prt_newline(&i->buf);
+			printbuf_indent_add(&i->buf, 4);
+			bch2_time_stats_to_text(&i->buf, &c->btree_id_stats[i->iter]);
+			printbuf_indent_sub(&i->buf, 4);
+			prt_newline(&i->buf);
+		}
+		i->iter++;
+
+		err = flush_buf(i);
+		if (err)
+			return err;
+	}
+
+	if (i->buf.allocation_failure)
+		return -ENOMEM;
+
+	return i->ret;
+}
+
+static const struct file_operations lock_held_stats_btree_op = {
+	.owner = THIS_MODULE,
+	.open = lock_held_stats_open,
+	.release = lock_held_stats_release,
+	.read = lock_held_stats_btree_read,
+};
+
 void bch2_fs_debug_exit(struct bch_fs *c)
 {
 	if (!IS_ERR_OR_NULL(c->fs_debug_dir))
@@ -734,6 +781,9 @@ void bch2_fs_debug_init(struct bch_fs *c)
 
 	debugfs_create_file("btree_transaction_stats", 0400, c->fs_debug_dir,
 			    c, &lock_held_stats_op);
+
+	debugfs_create_file("lock_held_btree_stats", 0400, c->fs_debug_dir,
+			c, &lock_held_stats_btree_op);
 
 	c->btree_debug_dir = debugfs_create_dir("btrees", c->fs_debug_dir);
 	if (IS_ERR_OR_NULL(c->btree_debug_dir))

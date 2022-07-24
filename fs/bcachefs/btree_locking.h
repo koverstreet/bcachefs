@@ -127,11 +127,16 @@ static void btree_trans_lock_hold_time_update(struct btree_trans *trans,
 {
 #ifdef CONFIG_BCACHEFS_LOCK_TIME_STATS
 	struct btree_transaction_stats *s = btree_trans_stats(trans);
+	u64 time = ktime_get_ns();
 
 	if (s)
 		__bch2_time_stats_update(&s->lock_hold_times,
 					 path->l[level].lock_taken_time,
-					 ktime_get_ns());
+					 time);
+	__bch2_time_stats_update(
+		&trans->c->btree_id_stats[trans->locking_btree_id],
+		path->l[level].lock_taken_time,
+		time);
 #endif
 }
 

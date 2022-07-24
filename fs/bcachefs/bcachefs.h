@@ -934,6 +934,7 @@ struct bch_fs {
 
 	const char              *btree_transaction_fns[BCH_TRANSACTIONS_NR];
 	struct btree_transaction_stats btree_transaction_stats[BCH_TRANSACTIONS_NR];
+	struct time_stats       btree_id_stats[BTREE_ID_NR];
 };
 
 static inline void bch2_set_ra_pages(struct bch_fs *c, unsigned ra_pages)
