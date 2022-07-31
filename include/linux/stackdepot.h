@@ -164,4 +164,20 @@ depot_stack_handle_t __must_check stack_depot_set_extra_bits(
  */
 unsigned int stack_depot_get_extra_bits(depot_stack_handle_t handle);
 
+/**
+ * stack_depot_capture_init - Initialize stack depot capture mechanism
+ *
+ * Return: Stack depot initialization status
+ */
+bool stack_depot_capture_init(void);
+
+/**
+ * stack_depot_capture_stack - Capture current stack trace into stack depot
+ *
+ * @flags:	Allocation GFP flags
+ *
+ * Return: Handle of the stack trace stored in depot, 0 on failure
+ */
+depot_stack_handle_t stack_depot_capture_stack(gfp_t flags);
+
 #endif
