@@ -4,7 +4,6 @@
 
 #include <linux/types.h>
 #include <linux/stacktrace.h>
-#include <linux/stackdepot.h>
 
 struct pglist_data;
 struct page_ext_operations {
@@ -13,6 +12,8 @@ struct page_ext_operations {
 	bool (*need)(void);
 	void (*init)(void);
 };
+
+#include <linux/stackdepot.h>
 
 #ifdef CONFIG_PAGE_EXTENSION
 
