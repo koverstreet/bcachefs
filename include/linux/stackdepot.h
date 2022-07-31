@@ -72,4 +72,7 @@ int stack_depot_snprint(depot_stack_handle_t handle, char *buf, size_t size,
 
 void stack_depot_print(depot_stack_handle_t stack);
 
+bool stack_depot_capture_init(void);
+depot_stack_handle_t stack_depot_capture_stack(gfp_t flags);
+
 #endif
