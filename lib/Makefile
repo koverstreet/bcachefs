@@ -230,6 +230,7 @@ obj-$(CONFIG_FUNCTION_ERROR_INJECTION) += error-inject.o
 obj-$(CONFIG_CODE_TAGGING) += codetag.o
 obj-$(CONFIG_ALLOC_TAGGING) += alloc_tag.o
 obj-$(CONFIG_PAGE_ALLOC_TAGGING) += pgalloc_tag.o
+obj-$(CONFIG_SLAB_ALLOC_TAGGING) += slab_alloc_tag.o
 
 lib-$(CONFIG_GENERIC_BUG) += bug.o
 
