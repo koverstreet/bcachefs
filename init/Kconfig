@@ -968,10 +968,14 @@ config CGROUP_FAVOR_DYNMODS
 
           Say N if unsure.
 
+config SLAB_OBJ_EXT
+	bool
+
 config MEMCG
 	bool "Memory controller"
 	select PAGE_COUNTER
 	select EVENTFD
+	select SLAB_OBJ_EXT
 	help
 	  Provides control over the memory footprint of tasks in a cgroup.
 

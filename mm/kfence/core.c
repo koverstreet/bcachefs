@@ -566,9 +566,9 @@ static unsigned long kfence_init_pool(void)
 			return addr;
 
 		__folio_set_slab(slab_folio(slab));
-#ifdef CONFIG_MEMCG
-		slab->memcg_data = (unsigned long)&kfence_metadata[i / 2 - 1].objcg |
-				   MEMCG_DATA_OBJCGS;
+#ifdef CONFIG_SLAB_OBJ_EXT
+		slab->obj_exts = (unsigned long)&kfence_metadata[i / 2 - 1].objcg |
+				 MEMCG_DATA_OBJEXTS;
 #endif
 	}
 
@@ -637,8 +637,8 @@ static bool __init kfence_init_pool_early(void)
 
 		if (!slab)
 			continue;
-#ifdef CONFIG_MEMCG
-		slab->memcg_data = 0;
+#ifdef CONFIG_SLAB_OBJ_EXT
+		slab->obj_exts = 0;
 #endif
 		__folio_clear_slab(slab_folio(slab));
 	}
@@ -1055,7 +1055,7 @@ void __kfence_free(void *addr)
 {
 	struct kfence_metadata *meta = addr_to_metadata((unsigned long)addr);
 
-#ifdef CONFIG_MEMCG
+#ifdef CONFIG_SLAB_OBJ_EXT
 	KFENCE_WARN_ON(meta->objcg);
 #endif
 	/*
