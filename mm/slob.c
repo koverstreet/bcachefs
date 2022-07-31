@@ -656,7 +656,7 @@ EXPORT_SYMBOL(__kmalloc_node);
 
 void *kmem_cache_alloc_node(struct kmem_cache *cachep, gfp_t gfp, int node)
 {
-	return slob_alloc_node(cachep, gfp, node);
+	return slob_alloc_node(cachep, gfp | __GFP_NO_OBJ_EXT, node);
 }
 EXPORT_SYMBOL(kmem_cache_alloc_node);
 #endif
