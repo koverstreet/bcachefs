@@ -1021,6 +1021,7 @@ config MEM_ALLOC_PROFILING
 	select LAZY_PERCPU_COUNTER
 	select PAGE_EXTENSION
 	select SLAB_OBJ_EXT
+	select STACKDEPOT
 	help
 	  Track allocation source code and record total allocation size
 	  initiated at that code location. The mechanism can be used to track

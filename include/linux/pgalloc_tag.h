@@ -6,6 +6,7 @@
 #define _LINUX_PGALLOC_TAG_H
 
 #include <linux/alloc_tag.h>
+#include <linux/codetag_ctx.h>
 
 #ifdef CONFIG_MEM_ALLOC_PROFILING
 
@@ -62,7 +63,8 @@ static inline void pgalloc_tag_split(struct page *page, unsigned int nr)
 	if (!ref->ct)
 		return;
 
-	tag = ct_to_alloc_tag(ref->ct);
+	tag = is_codetag_ctx_ref(ref) ? ctc_to_alloc_tag(ref->ctx->ctc)
+				      : ct_to_alloc_tag(ref->ct);
 	page_ext = page_ext_next(page_ext);
 	for (i = 1; i < nr; i++) {
 		/* New reference with 0 bytes accounted */

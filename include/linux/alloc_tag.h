@@ -17,20 +17,29 @@
  * an array of these. Embedded codetag utilizes codetag framework.
  */
 struct alloc_tag {
-	struct codetag			ct;
+	struct codetag_with_ctx		ctc;
 	struct lazy_percpu_counter	bytes_allocated;
 } __aligned(8);
 
 #ifdef CONFIG_MEM_ALLOC_PROFILING
 
+static inline struct alloc_tag *ctc_to_alloc_tag(struct codetag_with_ctx *ctc)
+{
+	return container_of(ctc, struct alloc_tag, ctc);
+}
+
 static inline struct alloc_tag *ct_to_alloc_tag(struct codetag *ct)
 {
-	return container_of(ct, struct alloc_tag, ct);
+	return container_of(ct_to_ctc(ct), struct alloc_tag, ctc);
 }
+
+struct codetag_ctx *alloc_tag_create_ctx(struct alloc_tag *tag, size_t size);
+void alloc_tag_free_ctx(struct codetag_ctx *ctx, struct alloc_tag **ptag);
+bool alloc_tag_enable_ctx(struct alloc_tag *tag, bool enable);
 
 #define DEFINE_ALLOC_TAG(_alloc_tag, _old)				\
 	static struct alloc_tag _alloc_tag __used __aligned(8)		\
-	__section("alloc_tags") = { .ct = CODE_TAG_INIT };		\
+	__section("alloc_tags") = { .ctc.ct = CODE_TAG_INIT };		\
 	struct alloc_tag * __maybe_unused _old = alloc_tag_save(&_alloc_tag)
 
 extern struct static_key_true mem_alloc_profiling_key;
@@ -54,7 +63,10 @@ static inline void __alloc_tag_sub(union codetag_ref *ref, size_t bytes,
 	if (!ref || !ref->ct)
 		return;
 
-	tag = ct_to_alloc_tag(ref->ct);
+	if (is_codetag_ctx_ref(ref))
+		alloc_tag_free_ctx(ref->ctx, &tag);
+	else
+		tag = ct_to_alloc_tag(ref->ct);
 
 	if (may_allocate)
 		lazy_percpu_counter_add(&tag->bytes_allocated, -bytes);
@@ -88,7 +100,10 @@ static inline void alloc_tag_add(union codetag_ref *ref, struct alloc_tag *tag, 
 	if (!ref || !tag)
 		return;
 
-	ref->ct = &tag->ct;
+	if (codetag_ctx_enabled(&tag->ctc))
+		ref->ctx = alloc_tag_create_ctx(tag, bytes);
+	else
+		ref->ct = &tag->ctc.ct;
 	lazy_percpu_counter_add(&tag->bytes_allocated, bytes);
 }
 
