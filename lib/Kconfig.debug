@@ -984,6 +984,11 @@ config CODE_TAGGING
 	bool
 	select KALLSYMS
 
+config ALLOC_TAGGING
+	bool
+	select CODE_TAGGING
+	select LAZY_PERCPU_COUNTER
+
 source "lib/Kconfig.kasan"
 source "lib/Kconfig.kfence"
 source "lib/Kconfig.kmsan"
