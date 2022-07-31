@@ -141,4 +141,18 @@ static inline void alloc_tag_add(union codetag_ref *ref, struct alloc_tag *tag,
 
 #endif /* CONFIG_MEM_ALLOC_PROFILING */
 
+#define alloc_hooks_tag(_tag, _do_alloc)				\
+({									\
+	struct alloc_tag * __maybe_unused _old = alloc_tag_save(_tag);	\
+	typeof(_do_alloc) _res = _do_alloc;				\
+	alloc_tag_restore(_tag, _old);					\
+	_res;								\
+})
+
+#define alloc_hooks(_do_alloc)						\
+({									\
+	DEFINE_ALLOC_TAG(_alloc_tag);					\
+	alloc_hooks_tag(&_alloc_tag, _do_alloc);			\
+})
+
 #endif /* _LINUX_ALLOC_TAG_H */
