@@ -958,6 +958,10 @@ config MEMCG
 	help
 	  Provides control over the memory footprint of tasks in a cgroup.
 
+config SLAB_OBJ_EXT
+	bool
+	depends on MEMCG
+
 config MEMCG_SWAP
 	bool
 	depends on MEMCG && SWAP
@@ -966,6 +970,7 @@ config MEMCG_SWAP
 config MEMCG_KMEM
 	bool
 	depends on MEMCG && !SLOB
+	select SLAB_OBJ_EXT
 	default y
 
 config BLK_CGROUP

@@ -569,7 +569,7 @@ static unsigned long kfence_init_pool(void)
 		__folio_set_slab(slab_folio(slab));
 #ifdef CONFIG_MEMCG
 		slab->memcg_data = (unsigned long)&kfence_metadata[i / 2 - 1].objcg |
-				   MEMCG_DATA_OBJCGS;
+				   MEMCG_DATA_OBJEXTS;
 #endif
 	}
 
