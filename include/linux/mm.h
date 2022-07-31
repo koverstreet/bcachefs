@@ -2290,6 +2290,7 @@ static inline void pgtable_pte_page_dtor(struct page *page)
 	ptlock_free(page);
 	__ClearPageTable(page);
 	dec_lruvec_page_state(page, NR_PAGETABLE);
+	pgalloc_tag_dec(page, compound_order(page) << PAGE_SHIFT);
 }
 
 #define pte_offset_map_lock(mm, pmd, address, ptlp)	\
@@ -2385,6 +2386,7 @@ static inline void pgtable_pmd_page_dtor(struct page *page)
 	pmd_ptlock_free(page);
 	__ClearPageTable(page);
 	dec_lruvec_page_state(page, NR_PAGETABLE);
+	pgalloc_tag_dec(page, compound_order(page) << PAGE_SHIFT);
 }
 
 /*
