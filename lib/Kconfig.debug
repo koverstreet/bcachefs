@@ -988,6 +988,7 @@ config ALLOC_TAGGING
 	bool
 	select CODE_TAGGING
 	select LAZY_PERCPU_COUNTER
+	select STACKDEPOT
 
 config PAGE_ALLOC_TAGGING
 	bool "Enable page allocation tagging"

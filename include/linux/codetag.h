@@ -104,7 +104,8 @@ struct codetag_with_ctx *ct_to_ctc(struct codetag *ct)
 }
 
 void codetag_lock_module_list(struct codetag_type *cttype, bool lock);
-struct codetag_iterator codetag_get_ct_iter(struct codetag_type *cttype);
+void codetag_init_iter(struct codetag_iterator *iter,
+		       struct codetag_type *cttype);
 struct codetag *codetag_next_ct(struct codetag_iterator *iter);
 struct codetag_ctx *codetag_next_ctx(struct codetag_iterator *iter);
 
