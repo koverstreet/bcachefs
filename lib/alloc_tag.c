@@ -4,6 +4,7 @@
 #include <linux/fs.h>
 #include <linux/gfp.h>
 #include <linux/module.h>
+#include <linux/page_ext.h>
 #include <linux/seq_buf.h>
 #include <linux/uaccess.h>
 
@@ -145,6 +146,22 @@ static void alloc_tag_module_unload(struct codetag_type *cttype, struct codetag_
 		lazy_percpu_counter_exit(&tag->bytes_allocated);
 	}
 }
+
+static __init bool need_page_alloc_tagging(void)
+{
+	return true;
+}
+
+static __init void init_page_alloc_tagging(void)
+{
+}
+
+struct page_ext_operations page_alloc_tagging_ops = {
+	.size = sizeof(union codetag_ref),
+	.need = need_page_alloc_tagging,
+	.init = init_page_alloc_tagging,
+};
+EXPORT_SYMBOL(page_alloc_tagging_ops);
 
 static int __init alloc_tag_init(void)
 {
