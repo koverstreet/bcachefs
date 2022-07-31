@@ -1001,6 +1001,16 @@ config SLAB_ALLOC_TAGGING
 	  initiated at that code location. The mechanism can be used to track
 	  memory leaks with a low performance impact.
 
+config CODE_TAG_TESTING
+	bool "Enable code tag testing"
+	default y
+	select MEMCG
+	select PAGE_ALLOC_TAGGING
+	select SLAB_ALLOC_TAGGING
+	select STAGING
+	help
+	  Enable to test code tagging.
+
 source "lib/Kconfig.kasan"
 source "lib/Kconfig.kfence"
 
