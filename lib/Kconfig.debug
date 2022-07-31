@@ -1036,6 +1036,15 @@ config MEM_ALLOC_PROFILING_DEBUG
 	  Adds warnings with helpful error messages for memory allocation
 	  profiling.
 
+config CODE_TAG_TESTING
+	bool "Enable code tag testing"
+	default y
+	select MEM_ALLOC_PROFILING
+	select MEM_ALLOC_PROFILING_DEBUG
+	select STAGING
+	help
+	  Enable to test code tagging.
+
 source "lib/Kconfig.kasan"
 source "lib/Kconfig.kfence"
 source "lib/Kconfig.kmsan"
