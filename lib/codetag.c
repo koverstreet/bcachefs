@@ -26,16 +26,14 @@ void codetag_lock_module_list(struct codetag_type *cttype, bool lock)
 		up_read(&cttype->mod_lock);
 }
 
-struct codetag_iterator codetag_get_ct_iter(struct codetag_type *cttype)
+void codetag_init_iter(struct codetag_iterator *iter,
+		       struct codetag_type *cttype)
 {
-	struct codetag_iterator iter = {
-		.cttype = cttype,
-		.cmod = NULL,
-		.mod_id = 0,
-		.ct = NULL,
-	};
-
-	return iter;
+	iter->cttype = cttype;
+	iter->cmod = NULL;
+	iter->mod_id = 0;
+	iter->ct = NULL;
+	iter->ctx = NULL;
 }
 
 static inline struct codetag *get_first_module_ct(struct codetag_module *cmod)
@@ -126,6 +124,10 @@ struct codetag_ctx *codetag_next_ctx(struct codetag_iterator *iter)
 	struct codetag_ctx *found = NULL;
 
 	lockdep_assert_held(&iter->cttype->mod_lock);
+
+	/* Move to the first codetag if search just started */
+	if (!iter->ct)
+		codetag_next_ct(iter);
 
 	if (!ctx)
 		return next_ctx_from_ct(iter);
