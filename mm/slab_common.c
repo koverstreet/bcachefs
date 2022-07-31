@@ -1088,6 +1088,7 @@ size_t __ksize(const void *object)
 
 	return slab_ksize(folio_slab(folio)->slab_cache);
 }
+EXPORT_SYMBOL(__ksize);
 
 void *kmalloc_trace(struct kmem_cache *s, gfp_t gfpflags, size_t size)
 {
