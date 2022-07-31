@@ -447,6 +447,32 @@ static_assert(PAGE_SHIFT <= 20);
 #define kmalloc_index(s) __kmalloc_index(s, true)
 #endif /* !CONFIG_SLOB */
 
+#ifdef CONFIG_SLAB_ALLOC_TAGGING
+
+#include <linux/alloc_tag.h>
+
+size_t __ksize(const void *objp);
+union codetag_ref *get_slab_tag_ref(const void *objp);
+
+#define slab_tag_add(_old, _new)					\
+do {									\
+	if (!ZERO_OR_NULL_PTR(_new) && _old != _new)			\
+		alloc_tag_add(get_slab_tag_ref(_new), __ksize(_new));	\
+} while (0)
+
+static inline void slab_tag_dec(const void *ptr)
+{
+	if (!ZERO_OR_NULL_PTR(ptr))
+		alloc_tag_sub(get_slab_tag_ref(ptr), __ksize(ptr));
+}
+
+#else
+
+#define slab_tag_add(_old, _new) do {} while (0)
+static inline void slab_tag_dec(const void *ptr) {}
+
+#endif
+
 void *__kmalloc(size_t size, gfp_t flags) __assume_kmalloc_alignment __alloc_size(1);
 void *kmem_cache_alloc(struct kmem_cache *s, gfp_t flags) __assume_slab_alignment __malloc;
 void *kmem_cache_alloc_lru(struct kmem_cache *s, struct list_lru *lru,

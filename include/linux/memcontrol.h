@@ -202,7 +202,12 @@ struct obj_cgroup {
  * if MEMCG_DATA_OBJEXTS is set.
  */
 struct slabobj_ext {
+#ifdef CONFIG_MEMCG_KMEM
 	struct obj_cgroup *objcg;
+#endif
+#ifdef CONFIG_SLAB_ALLOC_TAGGING
+	union codetag_ref ref;
+#endif
 } __aligned(8);
 
 /*

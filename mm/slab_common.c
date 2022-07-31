@@ -202,6 +202,39 @@ struct kmem_cache *find_mergeable(unsigned int size, unsigned int align,
 	return NULL;
 }
 
+#ifdef CONFIG_SLAB_ALLOC_TAGGING
+
+union codetag_ref *get_slab_tag_ref(const void *objp)
+{
+	struct slabobj_ext *obj_exts;
+	union codetag_ref *res = NULL;
+	struct slab *slab;
+	unsigned int off;
+
+	slab = virt_to_slab(objp);
+	/*
+	 * We could be given a kmalloc_large() object, skip those. They use
+	 * alloc_pages and can be tracked by page allocation tracking.
+	 */
+	if (!slab)
+		goto out;
+
+	obj_exts = slab_obj_exts(slab);
+	if (!obj_exts)
+		goto out;
+
+	if (!slab->slab_cache)
+		goto out;
+
+	off = obj_to_index(slab->slab_cache, slab, objp);
+	res = &obj_exts[off].ref;
+out:
+	return res;
+}
+EXPORT_SYMBOL(get_slab_tag_ref);
+
+#endif /* CONFIG_SLAB_ALLOC_TAGGING */
+
 static struct kmem_cache *create_cache(const char *name,
 		unsigned int object_size, unsigned int align,
 		slab_flags_t flags, unsigned int useroffset,
@@ -1039,6 +1072,7 @@ size_t __ksize(const void *object)
 
 	return slab_ksize(folio_slab(folio)->slab_cache);
 }
+EXPORT_SYMBOL(__ksize);
 
 #ifdef CONFIG_TRACING
 void *kmalloc_trace(struct kmem_cache *s, gfp_t gfpflags, size_t size)

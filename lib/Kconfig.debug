@@ -1000,6 +1000,17 @@ config PAGE_ALLOC_TAGGING
 	  initiated at that code location. The mechanism can be used to track
 	  memory leaks with a low performance impact.
 
+config SLAB_ALLOC_TAGGING
+	bool "Enable slab allocation tagging"
+	default n
+	select ALLOC_TAGGING
+	select SLAB_OBJ_EXT
+	help
+	  Instrument slab allocators to track allocation source code and
+	  collect statistics on the number of allocations and their total size
+	  initiated at that code location. The mechanism can be used to track
+	  memory leaks with a low performance impact.
+
 source "lib/Kconfig.kasan"
 source "lib/Kconfig.kfence"
 source "lib/Kconfig.kmsan"
