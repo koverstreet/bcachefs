@@ -1684,8 +1684,8 @@ splitmap:
  * This is a migrate-callback that "allocates" freepages by taking pages
  * from the isolated freelists in the block we are migrating to.
  */
-static struct page *compaction_alloc(struct page *migratepage,
-					unsigned long data)
+static struct page *compaction_alloc_noprof(struct page *migratepage,
+					    unsigned long data)
 {
 	struct compact_control *cc = (struct compact_control *)data;
 	struct page *freepage;
@@ -1702,6 +1702,12 @@ static struct page *compaction_alloc(struct page *migratepage,
 	cc->nr_freepages--;
 
 	return freepage;
+}
+
+static struct page *compaction_alloc(struct page *migratepage,
+				     unsigned long data)
+{
+	return alloc_hooks(compaction_alloc_noprof(migratepage, data));
 }
 
 /*
