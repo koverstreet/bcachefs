@@ -688,6 +688,7 @@ files are there, and which are missing.
  ============ ===============================================================
  File         Content
  ============ ===============================================================
+ allocinfo    Memory allocations profiling information
  apm          Advanced power management info
  bootconfig   Kernel command line obtained from boot config,
  	      and, if there were kernel parameters from the
@@ -951,6 +952,33 @@ at a given point in time. All the "Movable" blocks should be allocatable
 unless memory has been mlock()'d. Some of the Reclaimable blocks should
 also be allocatable although a lot of filesystem metadata may have to be
 reclaimed to achieve this.
+
+
+allocinfo
+~~~~~~~
+
+Provides information about memory allocations at all locations in the code
+base. Each allocation in the code is identified by its source file, line
+number, module and the function calling the allocation. The number of bytes
+allocated at each location is reported.
+
+Example output.
+
+::
+
+    > cat /proc/allocinfo
+
+      153MiB     mm/slub.c:1826 module:slub func:alloc_slab_page
+     6.08MiB     mm/slab_common.c:950 module:slab_common func:_kmalloc_order
+     5.09MiB     mm/memcontrol.c:2814 module:memcontrol func:alloc_slab_obj_exts
+     4.54MiB     mm/page_alloc.c:5777 module:page_alloc func:alloc_pages_exact
+     1.32MiB     include/asm-generic/pgalloc.h:63 module:pgtable func:__pte_alloc_one
+     1.16MiB     fs/xfs/xfs_log_priv.h:700 module:xfs func:xlog_kvmalloc
+     1.00MiB     mm/swap_cgroup.c:48 module:swap_cgroup func:swap_cgroup_prepare
+      734KiB     fs/xfs/kmem.c:20 module:xfs func:kmem_alloc
+      640KiB     kernel/rcu/tree.c:3184 module:tree func:fill_page_cache_func
+      640KiB     drivers/char/virtio_console.c:452 module:virtio_console func:alloc_buf
+      ...
 
 
 meminfo
