@@ -12,6 +12,8 @@
 # define SANITIZER_DISCARDS
 #endif
 
+#include <asm-generic/codetag.lds.h>
+
 SECTIONS {
 	/DISCARD/ : {
 		*(.discard)
@@ -47,6 +49,7 @@ SECTIONS {
 	.data : {
 		*(.data .data.[0-9a-zA-Z_]*)
 		*(.data..L*)
+		CODETAG_SECTIONS()
 	}
 
 	.rodata : {
@@ -61,6 +64,10 @@ SECTIONS {
 	.text : ALIGN_CFI {
 		*(.text.__cfi_check)
 		*(.text .text.[0-9a-zA-Z_]* .text..L.cfi*)
+	}
+#else
+	.data : {
+		CODETAG_SECTIONS()
 	}
 #endif
 }
