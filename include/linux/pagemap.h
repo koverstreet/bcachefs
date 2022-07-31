@@ -467,13 +467,16 @@ static inline void *detach_page_private(struct page *page)
 }
 
 #ifdef CONFIG_NUMA
-struct folio *filemap_alloc_folio(gfp_t gfp, unsigned int order);
+struct folio *_filemap_alloc_folio(gfp_t gfp, unsigned int order);
 #else
-static inline struct folio *filemap_alloc_folio(gfp_t gfp, unsigned int order)
+static inline struct folio *_filemap_alloc_folio(gfp_t gfp, unsigned int order)
 {
-	return folio_alloc(gfp, order);
+	return _folio_alloc(gfp, order);
 }
 #endif
+
+#define filemap_alloc_folio(_gfp, _order) \
+	alloc_hooks(_filemap_alloc_folio(_gfp, _order), struct folio *, NULL)
 
 static inline struct page *__page_cache_alloc(gfp_t gfp)
 {
