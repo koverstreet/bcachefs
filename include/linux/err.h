@@ -15,7 +15,7 @@
  * This should be a per-architecture thing, to allow different
  * error and pointer decisions.
  */
-#define MAX_ERRNO	4095
+#define MAX_ERRNO	((1 << 20) - 1)
 
 #ifndef __ASSEMBLY__
 
