@@ -1,9 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/build_bug.h>
+#include <linux/codetag.h>
 #include <linux/errno.h>
 #include <linux/errname.h>
+#include <linux/idr.h>
 #include <linux/kernel.h>
 #include <linux/math.h>
+#include <linux/module.h>
+#include <linux/xarray.h>
+
+#define DYNAMIC_ERRCODE_START	4096
+
+static DEFINE_IDR(dynamic_error_strings);
+static DEFINE_XARRAY(error_classes);
+
+static struct codetag_type *cttype;
 
 /*
  * Ensure these tables do not accidentally become gigantic if some
@@ -200,6 +211,9 @@ static const char *names_512[] = {
 
 static const char *__errname(unsigned err)
 {
+	if (err >= DYNAMIC_ERRCODE_START)
+		return idr_find(&dynamic_error_strings, err);
+
 	if (err < ARRAY_SIZE(names_0))
 		return names_0[err];
 	if (err >= 512 && err - 512 < ARRAY_SIZE(names_512))
@@ -222,3 +236,92 @@ const char *errname(int err)
 
 	return err > 0 ? name + 1 : name;
 }
+
+/**
+ * error_class - return standard/parent error (of a dynamic error code)
+ *
+ * When using dynamic error codes returned by ERR(), error_class() will return
+ * the original errorcode that was passed to ERR().
+ */
+int error_class(int err)
+{
+	int class = abs(err);
+
+	if (class > DYNAMIC_ERRCODE_START)
+		class = (unsigned long) xa_load(&error_classes,
+					      class - DYNAMIC_ERRCODE_START);
+	if (err < 0)
+		class = -class;
+	return class;
+}
+EXPORT_SYMBOL(error_class);
+
+/**
+ * error_matches - test if error is of some type
+ *
+ * When using dynamic error codes, instead of checking for errors with e.g.
+ *   if (err == -ENOMEM)
+ * Instead use
+ *   if (error_matches(err, ENOMEM))
+ */
+bool error_matches(int err, int class)
+{
+	err	= abs(err);
+	class	= abs(class);
+
+	BUG_ON(err	>= MAX_ERRNO);
+	BUG_ON(class	>= MAX_ERRNO);
+
+	if (err != class)
+		err = error_class(err);
+
+	return err == class;
+}
+EXPORT_SYMBOL(error_matches);
+
+static void errcode_module_load(struct codetag_type *cttype, struct codetag_module *mod)
+{
+	struct codetag_error_code *i, *start = (void *) mod->range.start;
+	struct codetag_error_code *end = (void *) mod->range.stop;
+
+	for (i = start; i != end; i++) {
+		int err = idr_alloc(&dynamic_error_strings,
+				    (char *) i->str,
+				    DYNAMIC_ERRCODE_START,
+				    MAX_ERRNO,
+				    GFP_KERNEL);
+		if (err < 0)
+			continue;
+
+		xa_store(&error_classes,
+			 err - DYNAMIC_ERRCODE_START,
+			 (void *)(unsigned long) abs(i->err),
+			 GFP_KERNEL);
+
+		i->err = i->err < 0 ? -err : err;
+	}
+}
+
+static void errcode_module_unload(struct codetag_type *cttype, struct codetag_module *mod)
+{
+	struct codetag_error_code *i, *start = (void *) mod->range.start;
+	struct codetag_error_code *end = (void *) mod->range.stop;
+
+	for (i = start; i != end; i++)
+		idr_remove(&dynamic_error_strings, abs(i->err));
+}
+
+static int __init errname_init(void)
+{
+	const struct codetag_type_desc desc = {
+		.section	= "error_code_tags",
+		.tag_size	= sizeof(struct codetag_error_code),
+		.module_load	= errcode_module_load,
+		.module_unload	= errcode_module_unload,
+	};
+
+	cttype = codetag_register_type(&desc);
+
+	return PTR_ERR_OR_ZERO(cttype);
+}
+module_init(errname_init);
