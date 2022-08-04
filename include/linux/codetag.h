@@ -79,4 +79,31 @@ static inline void codetag_load_module(struct module *mod) {}
 static inline void codetag_unload_module(struct module *mod) {}
 #endif
 
+/* Codetag query parsing */
+
+struct codetag_query {
+	const char	*filename;
+	const char	*module;
+	const char	*function;
+	const char	*class;
+	unsigned	first_line, last_line;
+	unsigned	first_index, last_index;
+	unsigned	cur_index;
+
+	bool		match_line:1;
+	bool		match_index:1;
+
+	unsigned	set_enabled:1;
+	unsigned	enabled:2;
+
+	unsigned	set_frequency:1;
+	unsigned	frequency;
+};
+
+char *codetag_query_parse(struct codetag_query *q, char *buf);
+bool codetag_matches_query(struct codetag_query *q,
+			   const struct codetag *ct,
+			   const struct codetag_module *mod,
+			   const char *class);
+
 #endif /* _LINUX_CODETAG_H */
