@@ -15,3 +15,14 @@ config PRIME_NUMBERS
 
 config RATIONAL
 	tristate
+
+config MEAN_AND_VARIANCE
+	tristate "fast incremental integer mean and vairance module"
+	help
+	  This option provides functions for calculating mean and standard
+      	  deviation incrementally, standard and expotentially weighted variants"
+
+config MEAN_AND_VARIANCE_UNIT_TEST
+	tristate "mean_and_variance unit tests" if !KUNIT_ALL_TESTS
+	depends on MEAN_AND_VARIANCE && KUNIT
+	default KUNIT_ALL_TESTS
