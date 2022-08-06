@@ -502,6 +502,9 @@ config ASSOCIATIVE_ARRAY
 config CLOSURES
 	bool
 
+config LAZY_PERCPU_COUNTER
+	bool
+
 config HAS_IOMEM
 	bool
 	depends on !NO_IOMEM
