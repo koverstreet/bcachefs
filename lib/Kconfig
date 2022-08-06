@@ -24,6 +24,9 @@ config HAVE_ARCH_BITREVERSE
 config RATIONAL
 	bool
 
+config MEAN_AND_VARIANCE
+	tristate
+
 config GENERIC_STRNCPY_FROM_USER
 	bool
 
