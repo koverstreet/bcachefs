@@ -3475,7 +3475,7 @@ static void __init hugetlb_hstate_alloc_pages_onenode(struct hstate *h, int nid)
 	if (i == h->max_huge_pages_node[nid])
 		return;
 
-	string_get_size(huge_page_size(h), 1, STRING_UNITS_2, buf, 32);
+	string_get_size(huge_page_size(h), 1, STRING_SIZE_BASE2, buf, 32);
 	pr_warn("HugeTLB: allocating %u of page size %s failed node%d.  Only allocated %lu hugepages.\n",
 		h->max_huge_pages_node[nid], buf, nid, i);
 	h->max_huge_pages -= (h->max_huge_pages_node[nid] - i);
@@ -3561,7 +3561,7 @@ static void __init hugetlb_hstate_alloc_pages(struct hstate *h)
 	if (i < h->max_huge_pages) {
 		char buf[32];
 
-		string_get_size(huge_page_size(h), 1, STRING_UNITS_2, buf, 32);
+		string_get_size(huge_page_size(h), 1, STRING_SIZE_BASE2, buf, 32);
 		pr_warn("HugeTLB: allocating %lu of page size %s failed.  Only allocated %lu hugepages.\n",
 			h->max_huge_pages, buf, i);
 		h->max_huge_pages = i;
@@ -3607,7 +3607,7 @@ static void __init report_hugepages(void)
 	for_each_hstate(h) {
 		char buf[32];
 
-		string_get_size(huge_page_size(h), 1, STRING_UNITS_2, buf, 32);
+		string_get_size(huge_page_size(h), 1, STRING_SIZE_BASE2, buf, 32);
 		pr_info("HugeTLB: registered %s page size, pre-allocated %ld pages\n",
 			buf, h->free_huge_pages);
 		pr_info("HugeTLB: %d KiB vmemmap can be freed for a %s page\n",
@@ -4527,7 +4527,7 @@ static int __init hugetlb_init(void)
 				char buf[32];
 
 				string_get_size(huge_page_size(&default_hstate),
-					1, STRING_UNITS_2, buf, 32);
+					1, STRING_SIZE_BASE2, buf, 32);
 				pr_warn("HugeTLB: Ignoring hugepages=%lu associated with %s page size\n",
 					default_hstate.max_huge_pages, buf);
 				pr_warn("HugeTLB: Using hugepages=%lu for number of default huge pages\n",

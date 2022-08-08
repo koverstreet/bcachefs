@@ -85,7 +85,7 @@ static int spi_nor_params_show(struct seq_file *s, void *data)
 
 	seq_printf(s, "name\t\t%s\n", info->name);
 	seq_printf(s, "id\t\t%*ph\n", SPI_NOR_MAX_ID_LEN, nor->id);
-	string_get_size(params->size, 1, STRING_UNITS_2, buf, sizeof(buf));
+	string_get_size(params->size, 1, STRING_SIZE_BASE2, buf, sizeof(buf));
 	seq_printf(s, "size\t\t%s\n", buf);
 	seq_printf(s, "write size\t%u\n", params->writesize);
 	seq_printf(s, "page size\t%u\n", params->page_size);
@@ -130,14 +130,14 @@ static int spi_nor_params_show(struct seq_file *s, void *data)
 		struct spi_nor_erase_type *et = &erase_map->erase_type[i];
 
 		if (et->size) {
-			string_get_size(et->size, 1, STRING_UNITS_2, buf,
+			string_get_size(et->size, 1, STRING_SIZE_BASE2, buf,
 					sizeof(buf));
 			seq_printf(s, " %02x (%s) [%d]\n", et->opcode, buf, i);
 		}
 	}
 
 	if (!(nor->flags & SNOR_F_NO_OP_CHIP_ERASE)) {
-		string_get_size(params->size, 1, STRING_UNITS_2, buf, sizeof(buf));
+		string_get_size(params->size, 1, STRING_SIZE_BASE2, buf, sizeof(buf));
 		seq_printf(s, " %02x (%s)\n", nor->params->die_erase_opcode, buf);
 	}
 
