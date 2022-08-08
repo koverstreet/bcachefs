@@ -3457,8 +3457,8 @@ static void mem_region_show(struct seq_file *seq, const char *name,
 {
 	char buf[40];
 
-	string_get_size((u64)to - from + 1, 1, STRING_UNITS_2, buf,
-			sizeof(buf));
+	string_get_size((u64)to - from + 1, 1, STRING_SIZE_BASE2,
+			buf, sizeof(buf));
 	seq_printf(seq, "%-15s %#x-%#x [%s]\n", name, from, to, buf);
 }
 

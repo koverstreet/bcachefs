@@ -19,11 +19,17 @@
 #include <linux/string.h>
 #include <linux/string_helpers.h>
 
+enum string_size_units {
+	STRING_UNITS_10,	/* use powers of 10^3 (standard SI) */
+	STRING_UNITS_2,		/* use binary powers of 2^10 */
+};
+
 /**
  * string_get_size - get the size in the specified units
  * @size:	The size to be converted in blocks
  * @blk_size:	Size of the block (use 1 for size in bytes)
- * @units:	units to use (powers of 1000 or 1024)
+ * @flags:	units to use (powers of 1000 or 1024), whether to include space
+ *		separator
  * @buf:	buffer to format to
  * @len:	length of buffer
  *
@@ -34,14 +40,16 @@
  * Return value: number of characters of output that would have been written
  * (which may be greater than len, if output was truncated).
  */
-int string_get_size(u64 size, u64 blk_size, const enum string_size_units units,
+int string_get_size(u64 size, u64 blk_size, enum string_size_flags flags,
 		    char *buf, int len)
 {
+	enum string_size_units units = flags & flags & STRING_SIZE_BASE2
+		? STRING_UNITS_2 : STRING_UNITS_10;
 	static const char *const units_10[] = {
-		"B", "kB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"
+		"", "k", "M", "G", "T", "P", "E", "Z", "Y"
 	};
 	static const char *const units_2[] = {
-		"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"
+		"", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi", "Yi"
 	};
 	static const char *const *const units_str[] = {
 		[STRING_UNITS_10] = units_10,
@@ -128,8 +136,10 @@ int string_get_size(u64 size, u64 blk_size, const enum string_size_units units,
 	else
 		unit = units_str[units][i];
 
-	return snprintf(buf, len, "%u%s %s", (u32)size,
-			tmp, unit);
+	return snprintf(buf, len, "%u%s%s%s%s", (u32)size, tmp,
+			(flags & STRING_SIZE_NOSPACE)		? "" : " ",
+			unit,
+			(flags & STRING_SIZE_NOBYTES)		? "" : "B");
 }
 EXPORT_SYMBOL(string_get_size);
 
