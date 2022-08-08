@@ -58,9 +58,6 @@ struct _ddebug {
 /* exported for module authors to exercise >control */
 int dynamic_debug_exec_queries(const char *query, const char *modname);
 
-int ddebug_add_module(struct _ddebug *tab, unsigned int n,
-				const char *modname);
-extern int ddebug_remove_module(const char *mod_name);
 extern __printf(2, 3)
 void __dynamic_pr_debug(struct _ddebug *descriptor, const char *fmt, ...);
 
@@ -89,7 +86,7 @@ void __dynamic_ibdev_dbg(struct _ddebug *descriptor,
 
 #define DEFINE_DYNAMIC_DEBUG_METADATA(name, fmt)		\
 	static struct _ddebug  __aligned(8)			\
-	__section("__dyndbg") name = {				\
+	__section("dyndbg") name = {				\
 		.modname = KBUILD_MODNAME,			\
 		.function = __func__,				\
 		.filename = __FILE__,				\
@@ -186,12 +183,6 @@ void __dynamic_ibdev_dbg(struct _ddebug *descriptor,
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/printk.h>
-
-static inline int ddebug_add_module(struct _ddebug *tab, unsigned int n,
-				    const char *modname)
-{
-	return 0;
-}
 
 static inline int ddebug_remove_module(const char *mod)
 {

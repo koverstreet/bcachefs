@@ -1163,9 +1163,6 @@ static void free_module(struct module *mod)
 	mod->state = MODULE_STATE_UNFORMED;
 	mutex_unlock(&module_mutex);
 
-	/* Remove dynamic debug info */
-	ddebug_remove_module(mod->name);
-
 	/* Arch-specific cleanup. */
 	module_arch_cleanup(mod);
 
@@ -1598,19 +1595,6 @@ static void free_modinfo(struct module *mod)
 		if (attr->free)
 			attr->free(mod);
 	}
-}
-
-static void dynamic_debug_setup(struct module *mod, struct _ddebug *debug, unsigned int num)
-{
-	if (!debug)
-		return;
-	ddebug_add_module(debug, num, mod->name);
-}
-
-static void dynamic_debug_remove(struct module *mod, struct _ddebug *debug)
-{
-	if (debug)
-		ddebug_remove_module(mod->name);
 }
 
 void * __weak module_alloc(unsigned long size)
@@ -2112,9 +2096,6 @@ static int find_module_sections(struct module *mod, struct load_info *info)
 
 	if (section_addr(info, "__obsparm"))
 		pr_warn("%s: Ignoring obsolete parameters\n", mod->name);
-
-	info->debug = section_objs(info, "__dyndbg",
-				   sizeof(*info->debug), &info->num_debug);
 
 	return 0;
 }
@@ -2808,9 +2789,6 @@ static int load_module(struct load_info *info, const char __user *uargs,
 		goto free_arch_cleanup;
 	}
 
-	init_build_id(mod, info);
-	dynamic_debug_setup(mod, info->debug, info->num_debug);
-
 	/* Ftrace init must be called in the MODULE_STATE_UNFORMED state */
 	ftrace_module_init(mod);
 
@@ -2875,7 +2853,6 @@ static int load_module(struct load_info *info, const char __user *uargs,
 
  ddebug_cleanup:
 	ftrace_release_mod(mod);
-	dynamic_debug_remove(mod, info->debug);
 	synchronize_rcu();
 	kfree(mod->args);
  free_arch_cleanup:
