@@ -2557,7 +2557,7 @@ static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
 
 	blk_queue_write_cache(md->queue.queue, cache_enabled, fua_enabled);
 
-	string_get_size((u64)size, 512, STRING_UNITS_2,
+	string_get_size((u64)size, 512, STRING_SIZE_BASE2,
 			cap_str, sizeof(cap_str));
 	pr_info("%s: %s %s %s%s\n",
 		md->disk->disk_name, mmc_card_id(card), mmc_card_name(card),
@@ -2753,7 +2753,7 @@ static int mmc_blk_alloc_rpmb_part(struct mmc_card *card,
 
 	list_add(&rpmb->node, &md->rpmbs);
 
-	string_get_size((u64)size, 512, STRING_UNITS_2,
+	string_get_size((u64)size, 512, STRING_SIZE_BASE2,
 			cap_str, sizeof(cap_str));
 
 	pr_info("%s: %s %s %s, chardev (%d:%d)\n",

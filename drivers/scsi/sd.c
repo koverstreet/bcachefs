@@ -2731,10 +2731,10 @@ sd_print_capacity(struct scsi_disk *sdkp,
 	if (!sdkp->first_scan && old_capacity == sdkp->capacity)
 		return;
 
-	string_get_size(sdkp->capacity, sector_size,
-			STRING_UNITS_2, cap_str_2, sizeof(cap_str_2));
-	string_get_size(sdkp->capacity, sector_size,
-			STRING_UNITS_10, cap_str_10, sizeof(cap_str_10));
+	string_get_size(sdkp->capacity, sector_size, STRING_SIZE_BASE2,
+			cap_str_2, sizeof(cap_str_2));
+	string_get_size(sdkp->capacity, sector_size, 0,
+			cap_str_10, sizeof(cap_str_10));
 
 	sd_printk(KERN_NOTICE, sdkp,
 		  "%llu %d-byte logical blocks: (%s/%s)\n",

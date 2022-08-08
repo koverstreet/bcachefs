@@ -260,7 +260,7 @@ print_mapping(unsigned long start, unsigned long end, unsigned long size, bool e
 	if (end <= start)
 		return;
 
-	string_get_size(size, 1, STRING_UNITS_2, buf, sizeof(buf));
+	string_get_size(size, 1, STRING_SIZE_BASE2, buf, sizeof(buf));
 
 	pr_info("Mapped 0x%016lx-0x%016lx with %s pages%s\n", start, end, buf,
 		exec ? " (exec)" : "");
