@@ -17,14 +17,13 @@ static inline bool string_is_terminated(const char *s, int len)
 	return memchr(s, '\0', len) ? true : false;
 }
 
-/* Descriptions of the types of units to
- * print in */
-enum string_size_units {
-	STRING_UNITS_10,	/* use powers of 10^3 (standard SI) */
-	STRING_UNITS_2,		/* use binary powers of 2^10 */
+enum string_size_flags {
+	STRING_SIZE_BASE2	= (1 << 0),
+	STRING_SIZE_NOSPACE	= (1 << 1),
+	STRING_SIZE_NOBYTES	= (1 << 2),
 };
 
-int string_get_size(u64 size, u64 blk_size, enum string_size_units units,
+int string_get_size(u64 size, u64 blk_size, enum string_size_flags flags,
 		    char *buf, int len);
 
 int parse_int_array_user(const char __user *from, size_t count, int **array);
