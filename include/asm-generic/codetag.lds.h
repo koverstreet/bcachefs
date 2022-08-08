@@ -8,10 +8,11 @@
 	KEEP(*(_name))			\
 	__stop_##_name = .;
 
-#define CODETAG_SECTIONS()		\
+#define CODETAG_SECTIONS()				\
 	SECTION_WITH_BOUNDARIES(alloc_tags)		\
 	SECTION_WITH_BOUNDARIES(dynamic_fault_tags)	\
 	SECTION_WITH_BOUNDARIES(time_stats_tags)	\
-	SECTION_WITH_BOUNDARIES(error_code_tags)
+	SECTION_WITH_BOUNDARIES(error_code_tags)	\
+	SECTION_WITH_BOUNDARIES(dyndbg)
 
 #endif /* __ASM_GENERIC_CODETAG_LDS_H */
