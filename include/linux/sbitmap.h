@@ -603,11 +603,7 @@ struct sbq_wait {
 #define DEFINE_SBQ_WAIT(name)							\
 	struct sbq_wait name = {						\
 		.sbq = NULL,							\
-		.wait = {							\
-			.private	= current,				\
-			.func		= autoremove_wake_function,		\
-			.entry		= LIST_HEAD_INIT((name).wait.entry),	\
-		}								\
+		.wait = WAIT_FUNC_INITIALIZER((name).wait, autoremove_wake_function),\
 	}
 
 /*
