@@ -329,7 +329,7 @@ static int gud_stats_debugfs(struct seq_file *m, void *data)
 	struct gud_device *gdrm = to_gud_device(entry->dev);
 	char buf[10];
 
-	string_get_size(gdrm->bulk_len, 1, STRING_UNITS_2, buf, sizeof(buf));
+	string_get_size(gdrm->bulk_len, 1, STRING_SIZE_BASE2, buf, sizeof(buf));
 	seq_printf(m, "Max buffer size: %s\n", buf);
 	seq_printf(m, "Number of errors:  %u\n", gdrm->stats_num_errors);
 
