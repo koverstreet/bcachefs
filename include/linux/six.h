@@ -200,4 +200,11 @@ void six_lock_pcpu_free_rcu(struct six_lock *);
 void six_lock_pcpu_free(struct six_lock *);
 void six_lock_pcpu_alloc(struct six_lock *);
 
+struct six_lock_count {
+	unsigned read;
+	unsigned intent;
+};
+
+struct six_lock_count six_lock_counts(struct six_lock *);
+
 #endif /* _LINUX_SIX_H */
