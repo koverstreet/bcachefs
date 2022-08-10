@@ -378,11 +378,6 @@ enum bch_time_stats {
 
 struct btree;
 
-struct lock_count {
-	unsigned read;
-	unsigned intent;
-};
-
 enum gc_phase {
 	GC_PHASE_NOT_RUNNING,
 	GC_PHASE_START,
