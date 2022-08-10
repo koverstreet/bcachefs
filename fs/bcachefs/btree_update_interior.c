@@ -1943,10 +1943,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 		BUG_ON(iter2.path->level != b->c.level);
 		BUG_ON(bpos_cmp(iter2.path->pos, new_key->k.p));
 
-		btree_node_unlock(trans, iter2.path, iter2.path->level);
-		path_l(iter2.path)->b = BTREE_ITER_NO_NODE_UP;
-		iter2.path->level++;
-		btree_path_set_dirty(iter2.path, BTREE_ITER_NEED_TRAVERSE);
+		btree_path_set_level_up(trans, iter2.path);
 
 		bch2_btree_path_check_sort(trans, iter2.path, 0);
 
