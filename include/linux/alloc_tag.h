@@ -5,6 +5,7 @@
 #ifndef _LINUX_ALLOC_TAG_H
 #define _LINUX_ALLOC_TAG_H
 
+#include <linux/bug.h>
 #include <linux/codetag.h>
 #include <linux/container_of.h>
 #include <linux/lazy-percpu-counter.h>
@@ -33,30 +34,33 @@ static inline struct alloc_tag *ct_to_alloc_tag(struct codetag *ct)
 #define alloc_tag_counter_read(counter)					\
 	__lazy_percpu_counter_read(counter)
 
-static inline void alloc_tag_sub(union codetag_ref *ref, size_t bytes)
+static inline void __alloc_tag_sub(union codetag_ref *ref, size_t bytes)
 {
-	if (ref && ref->ct) {
-		struct alloc_tag *tag = ct_to_alloc_tag(ref->ct);
+	struct alloc_tag *tag = ct_to_alloc_tag(ref->ct);
 
-		__lazy_percpu_counter_add(&tag->call_count, &tag->last_wrap, -1);
-		__lazy_percpu_counter_add(&tag->bytes_allocated, &tag->last_wrap, -bytes);
-		ref->ct = NULL;
-	}
+	__lazy_percpu_counter_add(&tag->call_count, &tag->last_wrap, -1);
+	__lazy_percpu_counter_add(&tag->bytes_allocated, &tag->last_wrap, -bytes);
+	ref->ct = NULL;
 }
+
+#define alloc_tag_sub(_ref, _bytes)					\
+do {									\
+	if (!WARN_ONCE(!(_ref) || !(_ref)->ct, "missing alloc tag hook"))\
+		__alloc_tag_sub(_ref, _bytes);				\
+} while (0)
 
 static inline void __alloc_tag_add(struct alloc_tag *tag, union codetag_ref *ref, size_t bytes)
 {
-	if (ref) {
-		ref->ct = &tag->ct;
-		__lazy_percpu_counter_add(&tag->call_count, &tag->last_wrap, 1);
-		__lazy_percpu_counter_add(&tag->bytes_allocated, &tag->last_wrap, bytes);
-	}
+	ref->ct = &tag->ct;
+	__lazy_percpu_counter_add(&tag->call_count, &tag->last_wrap, 1);
+	__lazy_percpu_counter_add(&tag->bytes_allocated, &tag->last_wrap, bytes);
 }
 
 #define alloc_tag_add(_ref, _bytes)					\
 do {									\
 	DEFINE_ALLOC_TAG(_alloc_tag);					\
-	__alloc_tag_add(&_alloc_tag, _ref, _bytes);			\
+	if (_ref && !WARN_ONCE(_ref->ct, "alloc_tag_add called twice or not cleared"))	\
+		__alloc_tag_add(&_alloc_tag, _ref, _bytes);		\
 } while (0)
 
 #endif /* _LINUX_ALLOC_TAG_H */
