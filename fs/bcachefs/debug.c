@@ -607,7 +607,7 @@ static const struct file_operations journal_pins_ops = {
 	.read		= bch2_journal_pins_read,
 };
 
-static int lock_held_stats_open(struct inode *inode, struct file *file)
+static int lock_hold_stats_open(struct inode *inode, struct file *file)
 {
 	struct bch_fs *c = inode->i_private;
 	struct dump_iter *i;
@@ -625,7 +625,7 @@ static int lock_held_stats_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static int lock_held_stats_release(struct inode *inode, struct file *file)
+static int lock_hold_stats_release(struct inode *inode, struct file *file)
 {
 	struct dump_iter *i = file->private_data;
 
@@ -635,7 +635,7 @@ static int lock_held_stats_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static ssize_t lock_held_stats_read(struct file *file, char __user *buf,
+static ssize_t lock_hold_stats_read(struct file *file, char __user *buf,
 				      size_t size, loff_t *ppos)
 {
 	struct dump_iter        *i = file->private_data;
@@ -697,14 +697,14 @@ static ssize_t lock_held_stats_read(struct file *file, char __user *buf,
 	return i->ret;
 }
 
-static const struct file_operations lock_held_stats_op = {
+static const struct file_operations lock_hold_stats_op = {
 	.owner = THIS_MODULE,
-	.open = lock_held_stats_open,
-	.release = lock_held_stats_release,
-	.read = lock_held_stats_read,
+	.open = lock_hold_stats_open,
+	.release = lock_hold_stats_release,
+	.read = lock_hold_stats_read,
 };
 
-static ssize_t lock_held_stats_btree_read(struct file *file, char __user *buf,
+static ssize_t lock_hold_stats_btree_read(struct file *file, char __user *buf,
 				      size_t size, loff_t *ppos)
 {
 	struct dump_iter        *i = file->private_data;
@@ -744,11 +744,11 @@ static ssize_t lock_held_stats_btree_read(struct file *file, char __user *buf,
 	return i->ret;
 }
 
-static const struct file_operations lock_held_stats_btree_op = {
+static const struct file_operations lock_hold_stats_btree_op = {
 	.owner = THIS_MODULE,
-	.open = lock_held_stats_open,
-	.release = lock_held_stats_release,
-	.read = lock_held_stats_btree_read,
+	.open = lock_hold_stats_open,
+	.release = lock_hold_stats_release,
+	.read = lock_hold_stats_btree_read,
 };
 
 void bch2_fs_debug_exit(struct bch_fs *c)
@@ -780,10 +780,10 @@ void bch2_fs_debug_init(struct bch_fs *c)
 			    c->btree_debug, &journal_pins_ops);
 
 	debugfs_create_file("btree_transaction_stats", 0400, c->fs_debug_dir,
-			    c, &lock_held_stats_op);
+			    c, &lock_hold_stats_op);
 
 	debugfs_create_file("lock_held_btree_stats", 0400, c->fs_debug_dir,
-			c, &lock_held_stats_btree_op);
+			c, &lock_hold_stats_btree_op);
 
 	c->btree_debug_dir = debugfs_create_dir("btrees", c->fs_debug_dir);
 	if (IS_ERR_OR_NULL(c->btree_debug_dir))

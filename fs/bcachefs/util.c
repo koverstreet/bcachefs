@@ -21,6 +21,7 @@
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/sched/clock.h>
+#include <linux/mean_and_variance.h>
 
 #include "eytzinger.h"
 #include "util.h"
@@ -286,11 +287,9 @@ static void bch2_time_stats_update_one(struct time_stats *stats,
 	freq		= time_after64(end, stats->last_event)
 		? end - stats->last_event : 0;
 
-	stats->count++;
+	stats->duration_stats = mean_and_variance_update(stats->duration_stats, duration);
+	stats->duration_stats_ewm = mean_and_variance_ewm_update(stats->duration_stats_ewm, duration);
 
-	ewma_cal(&stats->average_duration,
-		 &stats->variance_duration,
-		 8, duration);
 	ewma_cal(&stats->average_frequency,
 		 NULL,
 		 8, freq);
@@ -311,7 +310,7 @@ void __bch2_time_stats_update(struct time_stats *stats, u64 start, u64 end)
 		bch2_time_stats_update_one(stats, start, end);
 
 		if (stats->average_frequency < 32 &&
-		    stats->count > 1024)
+		    stats->duration_stats.n > 1024)
 			stats->buffer =
 				alloc_percpu_gfp(struct time_stat_buffer,
 						 GFP_ATOMIC);
@@ -382,26 +381,59 @@ void bch2_time_stats_to_text(struct printbuf *out, struct time_stats *stats)
 	int i;
 
 	prt_printf(out, "count:\t\t%llu",
-			 stats->count);
+			 stats->duration_stats.n);
 	prt_newline(out);
+
 	prt_printf(out, "rate:\t\t%llu/sec",
 	       freq ?  div64_u64(NSEC_PER_SEC, freq) : 0);
 	prt_newline(out);
 
-	prt_printf(out, "frequency:\t");
+	prt_printf(out, "frequency:");
 	pr_time_units(out, freq);
 
 	prt_newline(out);
-	prt_printf(out, "avg duration:\t");
-	pr_time_units(out, stats->average_duration);
+
+	prt_printf(out, "standard:");
+	printbuf_indent_add(out, 2);
+	printbuf_tabstop_push(out, out->indent + 18);
 
 	prt_newline(out);
-	prt_printf(out, "stddev duration:\t");
-	pr_time_units(out, int_sqrt64(stats->variance_duration));
+	prt_printf(out, "avg duration:");
+	prt_tab(out);
+	pr_time_units(out, get_mean(stats->duration_stats));
 
 	prt_newline(out);
-	prt_printf(out, "max duration:\t");
+	prt_printf(out, "stddev duration:");
+	prt_tab(out);
+	pr_time_units(out, get_stddev(stats->duration_stats));
+
+	printbuf_tabstop_pop(out);
+	printbuf_indent_sub(out, 2);
+
+	prt_newline(out);
+
+	prt_printf(out, "weighted:");
+	printbuf_indent_add(out, 2);
+	printbuf_tabstop_push(out, out->indent + 18);
+
+	prt_newline(out);
+	prt_printf(out, "avg duration:");
+	prt_tab(out);
+	pr_time_units(out, get_ewm_mean(stats->duration_stats_ewm));
+
+	prt_newline(out);
+	prt_printf(out, "stddev duration:");
+	prt_tab(out);
+	pr_time_units(out, get_ewm_stddev(stats->duration_stats_ewm));
+
+	printbuf_indent_sub(out, 2);
+
+	prt_newline(out);
+	prt_printf(out, "max duration:");
+	prt_tab(out);
 	pr_time_units(out, stats->max_duration);
+
+	printbuf_tabstop_pop(out);
 
 	i = eytzinger0_first(NR_QUANTILES);
 	u = pick_time_units(stats->quantiles.entries[i].m);
