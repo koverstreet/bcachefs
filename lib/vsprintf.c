@@ -53,7 +53,6 @@
 #include <asm/unaligned.h>
 
 #include <linux/string_helpers.h>
-#include <linux/pretty-printers.h>
 #include "kstrtox.h"
 
 /* Disable pointer hashing if requested */
