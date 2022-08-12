@@ -268,7 +268,8 @@ void bch2_rebalance_work_to_text(struct printbuf *out, struct bch_fs *c)
 	struct bch_fs_rebalance *r = &c->rebalance;
 	struct rebalance_work w = rebalance_work(c);
 
-	out->tabstops[0] = 20;
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 20);
 
 	prt_printf(out, "fullest_dev (%i):", w.dev_most_full_idx);
 	prt_tab(out);

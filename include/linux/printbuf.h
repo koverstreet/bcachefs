@@ -71,6 +71,8 @@ enum printbuf_si {
 	PRINTBUF_UNITS_10,	/* use powers of 10^3 (standard SI) */
 };
 
+#define PRINTBUF_INLINE_TABSTOPS	4
+
 struct printbuf {
 	char			*buf;
 	unsigned		size;
@@ -86,19 +88,33 @@ struct printbuf {
 	bool			heap_allocated:1;
 	enum printbuf_si	si_units:1;
 	bool			human_readable_units:1;
-	u8			tabstop;
-	u8			tabstops[4];
+	bool			has_indent_or_tabstops:1;
+	bool			suppress_indent_tabstop_handling:1;
+	u8			nr_tabstops;
+
+	/*
+	 * Do not modify directly: use printbuf_tabstop_add(),
+	 * printbuf_tabstop_get()
+	 */
+	u8			cur_tabstop;
+	u8			_tabstops[PRINTBUF_INLINE_TABSTOPS];
 };
 
 int printbuf_make_room(struct printbuf *, unsigned);
 const char *printbuf_str(const struct printbuf *);
 void printbuf_exit(struct printbuf *);
 
-void prt_newline(struct printbuf *);
+void printbuf_tabstops_reset(struct printbuf *);
+void printbuf_tabstop_pop(struct printbuf *);
+int printbuf_tabstop_push(struct printbuf *, unsigned);
+
 void printbuf_indent_add(struct printbuf *, unsigned);
 void printbuf_indent_sub(struct printbuf *, unsigned);
+
+void prt_newline(struct printbuf *);
 void prt_tab(struct printbuf *);
 void prt_tab_rjust(struct printbuf *);
+
 void prt_bytes_indented(struct printbuf *, const char *, unsigned);
 void prt_human_readable_u64(struct printbuf *, u64);
 void prt_human_readable_s64(struct printbuf *, s64);
@@ -241,7 +257,8 @@ static inline void printbuf_reset(struct printbuf *buf)
 	buf->pos		= 0;
 	buf->allocation_failure	= 0;
 	buf->indent		= 0;
-	buf->tabstop		= 0;
+	buf->nr_tabstops	= 0;
+	buf->cur_tabstop	= 0;
 }
 
 /**
