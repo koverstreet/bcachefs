@@ -202,6 +202,45 @@ void prt_tab_rjust(struct printbuf *buf)
 EXPORT_SYMBOL(prt_tab_rjust);
 
 /**
+ * prt_str_indented - Print a string, handling embedded control characters
+ *
+ * @out: printbuf to output to
+ * @str: string to print
+ *
+ * The following contol characters are handled as so:
+ *   \n: prt_newline
+ *   \t: prt_tab
+ *   \r: prt_tab_rjust
+ */
+void prt_str_indented(struct printbuf *out, const char *str)
+{
+	while (1) {
+		size_t n = strcspn(str, "\n\t\r");
+
+		prt_bytes(out, str, n);
+		str += n;
+
+		if (!*str)
+			break;
+
+		switch (*str) {
+		case '\n':
+			prt_newline(out);
+			break;
+		case '\t':
+			prt_tab(out);
+			break;
+		case '\r':
+			prt_tab_rjust(out);
+			break;
+		}
+
+		str++;
+	}
+}
+EXPORT_SYMBOL(prt_str_indented);
+
+/**
  * prt_human_readable_u64 - Print out a u64 in human readable units
  *
  * Units of 2^10 (default) or 10^3 are controlled via @buf->si_units

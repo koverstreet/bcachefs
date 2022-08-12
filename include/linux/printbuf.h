@@ -99,6 +99,7 @@ void printbuf_indent_add(struct printbuf *, unsigned);
 void printbuf_indent_sub(struct printbuf *, unsigned);
 void prt_tab(struct printbuf *);
 void prt_tab_rjust(struct printbuf *);
+void prt_str_indented(struct printbuf *, const char *);
 void prt_human_readable_u64(struct printbuf *, u64);
 void prt_human_readable_s64(struct printbuf *, s64);
 void prt_units_u64(struct printbuf *, u64);
