@@ -532,7 +532,10 @@ struct btree_debug {
 #define BCH_TRANSACTIONS_NR 128
 
 struct btree_transaction_stats {
+	struct mutex		lock;
 	struct time_stats       lock_hold_times;
+	unsigned		nr_max_paths;
+	char			*max_paths_text;
 };
 
 struct bch_fs_pcpu {
