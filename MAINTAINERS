@@ -16365,6 +16365,12 @@ S:	Maintained
 F:	include/linux/psi*
 F:	kernel/sched/psi.c
 
+PRINTBUF
+M:	Kent Overstreet <kent.overstreet@linux.dev>
+S:	Maintained
+F:	include/linux/printbuf.h
+F:	lib/printbuf.c
+
 PRINTK
 M:	Petr Mladek <pmladek@suse.com>
 M:	Sergey Senozhatsky <senozhatsky@chromium.org>
