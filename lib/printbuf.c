@@ -13,7 +13,7 @@
 #include <linux/string_helpers.h>
 #include <linux/printbuf.h>
 
-static inline size_t printbuf_linelen(struct printbuf *buf)
+static inline unsigned printbuf_linelen(struct printbuf *buf)
 {
 	return buf->pos - buf->last_newline;
 }
@@ -81,25 +81,43 @@ void printbuf_exit(struct printbuf *buf)
 }
 EXPORT_SYMBOL(printbuf_exit);
 
-void prt_newline(struct printbuf *buf)
+void printbuf_tabstops_reset(struct printbuf *buf)
 {
-	unsigned i;
-
-	printbuf_make_room(buf, 1 + buf->indent);
-
-	__prt_char(buf, '\n');
-
-	buf->last_newline	= buf->pos;
-
-	for (i = 0; i < buf->indent; i++)
-		__prt_char(buf, ' ');
-
-	printbuf_nul_terminate(buf);
-
-	buf->last_field		= buf->pos;
-	buf->tabstop = 0;
+	buf->nr_tabstops = 0;
 }
-EXPORT_SYMBOL(prt_newline);
+EXPORT_SYMBOL(printbuf_tabstops_reset);
+
+void printbuf_tabstop_pop(struct printbuf *buf)
+{
+	if (buf->nr_tabstops)
+		--buf->nr_tabstops;
+}
+EXPORT_SYMBOL(printbuf_tabstop_pop);
+
+/*
+ * printbuf_tabstop_set - add a tabstop, n spaces from the previous tabstop
+ *
+ * @buf: printbuf to control
+ * @spaces: number of spaces from previous tabpstop
+ *
+ * In the future this function may allocate memory if setting more than
+ * PRINTBUF_INLINE_TABSTOPS or setting tabstops more than 255 spaces from start
+ * of line.
+ */
+int printbuf_tabstop_push(struct printbuf *buf, unsigned spaces)
+{
+	unsigned prev_tabstop = buf->nr_tabstops
+		? buf->_tabstops[buf->nr_tabstops - 1]
+		: 0;
+
+	if (WARN_ON(buf->nr_tabstops >= ARRAY_SIZE(buf->_tabstops)))
+		return -EINVAL;
+
+	buf->_tabstops[buf->nr_tabstops++] = prev_tabstop + spaces;
+	buf->has_indent_or_tabstops = true;
+	return 0;
+}
+EXPORT_SYMBOL(printbuf_tabstop_push);
 
 /**
  * printbuf_indent_add - add to the current indent level
@@ -116,8 +134,9 @@ void printbuf_indent_add(struct printbuf *buf, unsigned spaces)
 		spaces = 0;
 
 	buf->indent += spaces;
-	while (spaces--)
-		prt_char(buf, ' ');
+	prt_chars(buf, ' ', spaces);
+
+	buf->has_indent_or_tabstops = true;
 }
 EXPORT_SYMBOL(printbuf_indent_add);
 
@@ -140,23 +159,50 @@ void printbuf_indent_sub(struct printbuf *buf, unsigned spaces)
 		printbuf_nul_terminate(buf);
 	}
 	buf->indent -= spaces;
+
+	if (!buf->indent && !buf->nr_tabstops)
+		buf->has_indent_or_tabstops = false;
 }
 EXPORT_SYMBOL(printbuf_indent_sub);
 
-static inline bool tabstop_is_set(struct printbuf *buf)
+void prt_newline(struct printbuf *buf)
 {
-	return buf->tabstop < ARRAY_SIZE(buf->tabstops) &&
-		buf->tabstops[buf->tabstop];
+	unsigned i;
+
+	printbuf_make_room(buf, 1 + buf->indent);
+
+	__prt_char(buf, '\n');
+
+	buf->last_newline	= buf->pos;
+
+	for (i = 0; i < buf->indent; i++)
+		__prt_char(buf, ' ');
+
+	printbuf_nul_terminate(buf);
+
+	buf->last_field		= buf->pos;
+	buf->cur_tabstop	= 0;
+}
+EXPORT_SYMBOL(prt_newline);
+
+/*
+ * Returns spaces from start of line, if set, or 0 if unset:
+ */
+static inline unsigned cur_tabstop(struct printbuf *buf)
+{
+	return buf->cur_tabstop < buf->nr_tabstops
+		? buf->_tabstops[buf->cur_tabstop]
+		: 0;
 }
 
 static void __prt_tab(struct printbuf *out)
 {
-	int spaces = max_t(int, 0, out->tabstops[out->tabstop] - printbuf_linelen(out));
+	int spaces = max_t(int, 0, cur_tabstop(out) - printbuf_linelen(out));
 
 	prt_chars(out, ' ', spaces);
 
 	out->last_field = out->pos;
-	out->tabstop++;
+	out->cur_tabstop++;
 }
 
 /**
@@ -168,7 +214,7 @@ static void __prt_tab(struct printbuf *out)
  */
 void prt_tab(struct printbuf *out)
 {
-	if (WARN_ON(!tabstop_is_set(out)))
+	if (WARN_ON(!cur_tabstop(out)))
 		return;
 
 	__prt_tab(out);
@@ -177,28 +223,27 @@ EXPORT_SYMBOL(prt_tab);
 
 static void __prt_tab_rjust(struct printbuf *buf)
 {
-	if (printbuf_linelen(buf) < buf->tabstops[buf->tabstop]) {
-		unsigned move = buf->pos - buf->last_field;
-		unsigned shift = buf->tabstops[buf->tabstop] -
-			printbuf_linelen(buf);
+	unsigned move = buf->pos - buf->last_field;
+	int pad = (int) cur_tabstop(buf) - (int) printbuf_linelen(buf);
 
-		printbuf_make_room(buf, shift);
+	if (pad > 0) {
+		printbuf_make_room(buf, pad);
 
-		if (buf->last_field + shift < buf->size)
-			memmove(buf->buf + buf->last_field + shift,
+		if (buf->last_field + pad < buf->size)
+			memmove(buf->buf + buf->last_field + pad,
 				buf->buf + buf->last_field,
-				min(move, buf->size - 1 - buf->last_field - shift));
+				min(move, buf->size - 1 - buf->last_field - pad));
 
 		if (buf->last_field < buf->size)
 			memset(buf->buf + buf->last_field, ' ',
-			       min(shift, buf->size - buf->last_field));
+			       min((unsigned) pad, buf->size - buf->last_field));
 
-		buf->pos += shift;
+		buf->pos += pad;
 		printbuf_nul_terminate(buf);
 	}
 
 	buf->last_field = buf->pos;
-	buf->tabstop++;
+	buf->cur_tabstop++;
 }
 
 /**
@@ -212,7 +257,7 @@ static void __prt_tab_rjust(struct printbuf *buf)
  */
 void prt_tab_rjust(struct printbuf *buf)
 {
-	if (WARN_ON(!tabstop_is_set(buf)))
+	if (WARN_ON(!cur_tabstop(buf)))
 		return;
 
 	__prt_tab_rjust(buf);
@@ -236,6 +281,11 @@ void prt_bytes_indented(struct printbuf *out, const char *str, unsigned count)
 	const char *unprinted_start = str;
 	const char *end = str + count;
 
+	if (!out->has_indent_or_tabstops || out->suppress_indent_tabstop_handling) {
+		prt_bytes(out, str, count);
+		return;
+	}
+
 	while (str != end) {
 		switch (*str) {
 		case '\n':
@@ -244,14 +294,14 @@ void prt_bytes_indented(struct printbuf *out, const char *str, unsigned count)
 			prt_newline(out);
 			break;
 		case '\t':
-			if (likely(tabstop_is_set(out))) {
+			if (likely(cur_tabstop(out))) {
 				prt_bytes(out, unprinted_start, str - unprinted_start);
 				unprinted_start = str + 1;
 				__prt_tab(out);
 			}
 			break;
 		case '\r':
-			if (likely(tabstop_is_set(out))) {
+			if (likely(cur_tabstop(out))) {
 				prt_bytes(out, unprinted_start, str - unprinted_start);
 				unprinted_start = str + 1;
 				__prt_tab_rjust(out);

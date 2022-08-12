@@ -560,7 +560,8 @@ SHOW(bch2_fs_counters)
 	u64 counter = 0;
 	u64 counter_since_mount = 0;
 
-	out->tabstops[0] = 32;
+	printbuf_tabstop_push(out, 32);
+
 	#define x(t, ...) \
 		if (attr == &sysfs_##t) {					\
 			counter             = percpu_u64_get(&c->counters[BCH_COUNTER_##t]);\

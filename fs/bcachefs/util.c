@@ -526,7 +526,8 @@ void bch2_pd_controller_init(struct bch_pd_controller *pd)
 
 void bch2_pd_controller_debug_to_text(struct printbuf *out, struct bch_pd_controller *pd)
 {
-	out->tabstops[0] = 20;
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 20);
 
 	prt_printf(out, "rate:");
 	prt_tab(out);
