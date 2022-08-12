@@ -409,7 +409,8 @@ static const struct file_operations bfloat_failed_debug_ops = {
 static void bch2_cached_btree_node_to_text(struct printbuf *out, struct bch_fs *c,
 					   struct btree *b)
 {
-	out->tabstops[0] = 32;
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 32);
 
 	prt_printf(out, "%px btree=%s l=%u ",
 	       b,
