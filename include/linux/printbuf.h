@@ -99,6 +99,7 @@ void printbuf_indent_add(struct printbuf *, unsigned);
 void printbuf_indent_sub(struct printbuf *, unsigned);
 void prt_tab(struct printbuf *);
 void prt_tab_rjust(struct printbuf *);
+void prt_bytes_indented(struct printbuf *, const char *, unsigned);
 void prt_human_readable_u64(struct printbuf *, u64);
 void prt_human_readable_s64(struct printbuf *, s64);
 void prt_units_u64(struct printbuf *, u64);
@@ -209,6 +210,11 @@ static inline void prt_bytes(struct printbuf *out, const void *b, unsigned n)
 static inline void prt_str(struct printbuf *out, const char *str)
 {
 	prt_bytes(out, str, strlen(str));
+}
+
+static inline void prt_str_indented(struct printbuf *out, const char *str)
+{
+	prt_bytes_indented(out, str, strlen(str));
 }
 
 static inline void prt_hex_byte(struct printbuf *out, u8 byte)
