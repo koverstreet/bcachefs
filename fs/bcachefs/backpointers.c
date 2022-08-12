@@ -526,9 +526,21 @@ struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
 	if (extent_matches_bp(c, bp.btree_id, bp.level, k, bucket, bp))
 		return k;
 
-	backpointer_not_found(trans, bucket, bp_offset, bp, k, "extent");
-
 	bch2_trans_iter_exit(trans, iter);
+
+	if (bp.level) {
+		/*
+		 * If a backpointer for a btree node wasn't found, it may be
+		 * because it was overwritten by a new btree node that hasn't
+		 * been written out yet - backpointer_get_node() checks for
+		 * this:
+		 */
+		bch2_backpointer_get_node(trans, iter, bucket, bp_offset, bp);
+		bch2_trans_iter_exit(trans, iter);
+		return bkey_s_c_null;
+	}
+
+	backpointer_not_found(trans, bucket, bp_offset, bp, k, "extent");
 	return bkey_s_c_null;
 }
 
@@ -540,7 +552,6 @@ struct btree *bch2_backpointer_get_node(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct btree *b;
-	struct bkey_s_c k;
 
 	BUG_ON(!bp.level);
 
@@ -551,22 +562,24 @@ struct btree *bch2_backpointer_get_node(struct btree_trans *trans,
 				  bp.level - 1,
 				  0);
 	b = bch2_btree_iter_peek_node(iter);
-	if (IS_ERR(b)) {
-		bch2_trans_iter_exit(trans, iter);
-		return b;
-	}
+	if (IS_ERR(b))
+		goto err;
 
 	if (extent_matches_bp(c, bp.btree_id, bp.level,
 			      bkey_i_to_s_c(&b->key),
 			      bucket, bp))
 		return b;
 
-	if (!btree_node_will_make_reachable(b))
-		backpointer_not_found(trans, bucket, bp_offset,
-				      bp, k, "btree node");
-
+	if (btree_node_will_make_reachable(b)) {
+		b = ERR_PTR(-BCH_ERR_backpointer_to_overwritten_btree_node);
+	} else {
+		backpointer_not_found(trans, bucket, bp_offset, bp,
+				      bkey_i_to_s_c(&b->key), "btree node");
+		b = NULL;
+	}
+err:
 	bch2_trans_iter_exit(trans, iter);
-	return NULL;
+	return b;
 }
 
 static int bch2_check_btree_backpointer(struct btree_trans *trans, struct btree_iter *bp_iter,
@@ -829,6 +842,8 @@ static int check_one_backpointer(struct btree_trans *trans,
 
 	k = bch2_backpointer_get_key(trans, &iter, bucket, *bp_offset, bp);
 	ret = bkey_err(k);
+	if (ret == -BCH_ERR_backpointer_to_overwritten_btree_node)
+		return 0;
 	if (ret)
 		return ret;
 
