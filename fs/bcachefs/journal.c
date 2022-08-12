@@ -1255,8 +1255,9 @@ void __bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 	u64 seq;
 	unsigned i;
 
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 24);
 	out->atomic++;
-	out->tabstops[0] = 24;
 
 	rcu_read_lock();
 	s = READ_ONCE(j->reservations);
