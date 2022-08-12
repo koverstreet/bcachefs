@@ -143,6 +143,22 @@ void printbuf_indent_sub(struct printbuf *buf, unsigned spaces)
 }
 EXPORT_SYMBOL(printbuf_indent_sub);
 
+static inline bool tabstop_is_set(struct printbuf *buf)
+{
+	return buf->tabstop < ARRAY_SIZE(buf->tabstops) &&
+		buf->tabstops[buf->tabstop];
+}
+
+static void __prt_tab(struct printbuf *out)
+{
+	int spaces = max_t(int, 0, out->tabstops[out->tabstop] - printbuf_linelen(out));
+
+	prt_chars(out, ' ', spaces);
+
+	out->last_field = out->pos;
+	out->tabstop++;
+}
+
 /**
  * prt_tab - Advance printbuf to the next tabstop
  *
@@ -152,30 +168,15 @@ EXPORT_SYMBOL(printbuf_indent_sub);
  */
 void prt_tab(struct printbuf *out)
 {
-	int spaces = max_t(int, 0, out->tabstops[out->tabstop] - printbuf_linelen(out));
+	if (WARN_ON(!tabstop_is_set(out)))
+		return;
 
-	BUG_ON(out->tabstop > ARRAY_SIZE(out->tabstops));
-
-	prt_chars(out, ' ', spaces);
-
-	out->last_field = out->pos;
-	out->tabstop++;
+	__prt_tab(out);
 }
 EXPORT_SYMBOL(prt_tab);
 
-/**
- * prt_tab_rjust - Advance printbuf to the next tabstop, right justifying
- * previous output
- *
- * @buf: printbuf to control
- *
- * Advance output to the next tabstop by inserting spaces immediately after the
- * previous tabstop, right justifying previously outputted text.
- */
-void prt_tab_rjust(struct printbuf *buf)
+static void __prt_tab_rjust(struct printbuf *buf)
 {
-	BUG_ON(buf->tabstop > ARRAY_SIZE(buf->tabstops));
-
 	if (printbuf_linelen(buf) < buf->tabstops[buf->tabstop]) {
 		unsigned move = buf->pos - buf->last_field;
 		unsigned shift = buf->tabstops[buf->tabstop] -
@@ -199,7 +200,71 @@ void prt_tab_rjust(struct printbuf *buf)
 	buf->last_field = buf->pos;
 	buf->tabstop++;
 }
+
+/**
+ * prt_tab_rjust - Advance printbuf to the next tabstop, right justifying
+ * previous output
+ *
+ * @buf: printbuf to control
+ *
+ * Advance output to the next tabstop by inserting spaces immediately after the
+ * previous tabstop, right justifying previously outputted text.
+ */
+void prt_tab_rjust(struct printbuf *buf)
+{
+	if (WARN_ON(!tabstop_is_set(buf)))
+		return;
+
+	__prt_tab_rjust(buf);
+}
 EXPORT_SYMBOL(prt_tab_rjust);
+
+/**
+ * prt_bytes_indented - Print an array of chars, handling embedded control characters
+ *
+ * @out: printbuf to output to
+ * @str: string to print
+ * @count: number of bytes to print
+ *
+ * The following contol characters are handled as so:
+ *   \n: prt_newline	newline that obeys current indent level
+ *   \t: prt_tab	advance to next tabstop
+ *   \r: prt_tab_rjust	advance to next tabstop, with right justification
+ */
+void prt_bytes_indented(struct printbuf *out, const char *str, unsigned count)
+{
+	const char *unprinted_start = str;
+	const char *end = str + count;
+
+	while (str != end) {
+		switch (*str) {
+		case '\n':
+			prt_bytes(out, unprinted_start, str - unprinted_start);
+			unprinted_start = str + 1;
+			prt_newline(out);
+			break;
+		case '\t':
+			if (likely(tabstop_is_set(out))) {
+				prt_bytes(out, unprinted_start, str - unprinted_start);
+				unprinted_start = str + 1;
+				__prt_tab(out);
+			}
+			break;
+		case '\r':
+			if (likely(tabstop_is_set(out))) {
+				prt_bytes(out, unprinted_start, str - unprinted_start);
+				unprinted_start = str + 1;
+				__prt_tab_rjust(out);
+			}
+			break;
+		}
+
+		str++;
+	}
+
+	prt_bytes(out, unprinted_start, str - unprinted_start);
+}
+EXPORT_SYMBOL(prt_bytes_indented);
 
 /**
  * prt_human_readable_u64 - Print out a u64 in human readable units
