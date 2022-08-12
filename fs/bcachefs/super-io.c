@@ -1427,8 +1427,8 @@ void bch2_sb_field_to_text(struct printbuf *out, struct bch_sb *sb,
 	const struct bch_sb_field_ops *ops = type < BCH_SB_FIELD_NR
 		? bch2_sb_field_ops[type] : NULL;
 
-	if (!out->tabstops[0])
-		out->tabstops[0] = 32;
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 32);
 
 	if (ops)
 		prt_printf(out, "%s", bch2_sb_fields[type]);
@@ -1476,8 +1476,8 @@ void bch2_sb_to_text(struct printbuf *out, struct bch_sb *sb,
 	u64 fields_have = 0;
 	unsigned nr_devices = 0;
 
-	if (!out->tabstops[0])
-		out->tabstops[0] = 32;
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 32);
 
 	mi = bch2_sb_get_members(sb);
 	if (mi) {
