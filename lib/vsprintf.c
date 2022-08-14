@@ -384,7 +384,7 @@ void prt_u64_minwidth(struct printbuf *out, u64 num, unsigned width)
 	printbuf_make_room(out, max(len, width));
 
 	if (width > len)
-		__prt_chars_reserved(out, '0', width - len);
+		__prt_chars_reserved(out, ' ', width - len);
 
 	while (len)
 		__prt_char_reserved(out, tmp[--len]);
