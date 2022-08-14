@@ -268,6 +268,12 @@ static void bch2_quantiles_update(struct quantiles *q, u64 v)
 	}
 }
 
+void bch2_prt_u64_binary(struct printbuf *out, u64 v, unsigned nr_bits)
+{
+	while (nr_bits)
+		prt_char(out, '0' + ((v >> --nr_bits) & 1));
+}
+
 /* time stats: */
 
 static void bch2_time_stats_update_one(struct time_stats *stats,
