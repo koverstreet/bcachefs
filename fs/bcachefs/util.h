@@ -527,6 +527,8 @@ void prt_string_option(struct printbuf *, const char * const [], size_t);
 void prt_bitflags(struct printbuf *, const char * const[], u64);
 u64 bch2_read_flag_list(char *, const char * const[]);
 
+void bch2_prt_u64_binary(struct printbuf *, u64, unsigned);
+
 #define NR_QUANTILES	15
 #define QUANTILE_IDX(i)	inorder_to_eytzinger0(i, NR_QUANTILES)
 #define QUANTILE_FIRST	eytzinger0_first(NR_QUANTILES)
