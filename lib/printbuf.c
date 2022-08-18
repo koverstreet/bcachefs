@@ -1,17 +1,12 @@
 // SPDX-License-Identifier: LGPL-2.1+
 /* Copyright (C) 2022 Kent Overstreet */
 
-#ifdef __KERNEL__
+#include <linux/err.h>
 #include <linux/export.h>
 #include <linux/kernel.h>
-#else
-#define EXPORT_SYMBOL(x)
-#endif
-
-#include <linux/err.h>
+#include <linux/printbuf.h>
 #include <linux/slab.h>
 #include <linux/string_helpers.h>
-#include <linux/printbuf.h>
 
 static inline unsigned printbuf_linelen(struct printbuf *buf)
 {
