@@ -249,6 +249,8 @@ next:
 		}
 		continue;
 nomatch:
+		trace_data_update_fail(&old.k->p);
+
 		if (m->ctxt) {
 			BUG_ON(k.k->p.offset <= iter.pos.offset);
 			atomic64_inc(&m->ctxt->stats->keys_raced);
