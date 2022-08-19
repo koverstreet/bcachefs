@@ -14,8 +14,6 @@
 #include <linux/prefetch.h>
 #include <linux/sched/mm.h>
 
-struct lock_class_key bch2_btree_node_lock_key;
-
 const char * const bch2_btree_node_flags[] = {
 #define x(f)	#f,
 	BTREE_FLAGS()
