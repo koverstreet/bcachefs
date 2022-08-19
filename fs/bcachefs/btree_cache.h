@@ -5,8 +5,6 @@
 #include "bcachefs.h"
 #include "btree_types.h"
 
-extern struct lock_class_key bch2_btree_node_lock_key;
-
 extern const char * const bch2_btree_node_flags[];
 
 struct btree_iter;
