@@ -2847,8 +2847,9 @@ void __bch2_trans_init(struct btree_trans *trans, struct bch_fs *c, const char *
 	trans->c		= c;
 	trans->fn		= fn;
 	trans->last_begin_time	= ktime_get_ns();
-	trans->task		= current;
 	trans->fn_idx		= bch2_trans_get_fn_idx(trans, c, fn);
+	trans->locking_wait.task = current;
+	closure_init_stack(&trans->ref);
 
 	bch2_trans_alloc_paths(trans, c);
 
@@ -2869,7 +2870,7 @@ void __bch2_trans_init(struct btree_trans *trans, struct bch_fs *c, const char *
 
 	mutex_lock(&c->btree_trans_lock);
 	list_for_each_entry(pos, &c->btree_trans_list, list) {
-		if (trans->task->pid < pos->task->pid) {
+		if (trans->locking_wait.task->pid < pos->locking_wait.task->pid) {
 			list_add_tail(&trans->list, &pos->list);
 			goto list_add_done;
 		}
@@ -2909,6 +2910,8 @@ void bch2_trans_exit(struct btree_trans *trans)
 	struct btree_transaction_stats *s = btree_trans_stats(trans);
 
 	bch2_trans_unlock(trans);
+
+	closure_sync(&trans->ref);
 
 	if (s)
 		s->max_mem = max(s->max_mem, trans->mem_max);
@@ -2985,7 +2988,7 @@ void bch2_btree_trans_to_text(struct printbuf *out, struct btree_trans *trans)
 	static char lock_types[] = { 'r', 'i', 'w' };
 	unsigned l;
 
-	prt_printf(out, "%i %s\n", trans->task->pid, trans->fn);
+	prt_printf(out, "%i %s\n", trans->locking_wait.task->pid, trans->fn);
 
 	trans_for_each_path(trans, path) {
 		if (!path->nodes_locked)
@@ -3017,7 +3020,7 @@ void bch2_btree_trans_to_text(struct printbuf *out, struct btree_trans *trans)
 		       trans->locking_path_idx,
 		       path->cached ? 'c' : 'b',
 		       trans->locking_level,
-		       lock_types[trans->locking_lock_type],
+		       lock_types[trans->locking_wait.lock_want],
 		       bch2_btree_ids[trans->locking_btree_id]);
 		bch2_bpos_to_text(out, trans->locking_pos);
 
