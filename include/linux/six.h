@@ -107,6 +107,7 @@ struct six_lock {
 	struct task_struct	*owner;
 	unsigned __percpu	*readers;
 	unsigned		intent_lock_recurse;
+	unsigned long		ip;
 	raw_spinlock_t		wait_lock;
 	struct list_head	wait_list;
 #ifdef CONFIG_DEBUG_LOCK_ALLOC

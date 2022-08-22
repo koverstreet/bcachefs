@@ -393,10 +393,6 @@ struct btree_trans {
 	struct list_head	list;
 	u64			last_begin_time;
 
-	unsigned		locking_path_idx;
-	struct bpos		locking_pos;
-	u8			locking_btree_id;
-	u8			locking_level;
 	u8			lock_may_not_fail;
 	u8			lock_must_abort;
 	u64			lock_start_time;
