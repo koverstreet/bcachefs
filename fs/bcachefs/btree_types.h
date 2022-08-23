@@ -421,6 +421,7 @@ struct btree_trans {
 	u64			paths_allocated;
 
 	unsigned		mem_top;
+	unsigned		mem_max;
 	unsigned		mem_bytes;
 	void			*mem;
 
