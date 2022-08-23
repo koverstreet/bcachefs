@@ -535,6 +535,7 @@ struct btree_transaction_stats {
 	struct mutex		lock;
 	struct time_stats       lock_hold_times;
 	unsigned		nr_max_paths;
+	unsigned		max_mem;
 	char			*max_paths_text;
 };
 
