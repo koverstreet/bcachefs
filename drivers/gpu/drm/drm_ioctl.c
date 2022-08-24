@@ -813,7 +813,7 @@ long drm_ioctl(struct file *filp,
 	int retcode = -EINVAL;
 	char stack_kdata[128];
 	char *kdata = NULL;
-	unsigned int in_size, out_size, drv_size, ksize;
+	unsigned int in_size, out_size, drv_size, size;
 	bool is_driver_ioctl;
 
 	dev = file_priv->minor->dev;
@@ -848,7 +848,7 @@ long drm_ioctl(struct file *filp,
 		in_size = 0;
 	if ((cmd & ioctl->cmd & IOC_OUT) == 0)
 		out_size = 0;
-	ksize = max(max(in_size, out_size), drv_size);
+	size = max(max(in_size, out_size), drv_size);
 
 	DRM_DEBUG("comm=\"%s\" pid=%d, dev=0x%lx, auth=%d, %s\n",
 		  current->comm, task_pid_nr(current),
@@ -864,10 +864,10 @@ long drm_ioctl(struct file *filp,
 		goto err_i1;
 	}
 
-	if (ksize <= sizeof(stack_kdata)) {
+	if (size <= sizeof(stack_kdata)) {
 		kdata = stack_kdata;
 	} else {
-		kdata = kmalloc(ksize, GFP_KERNEL);
+		kdata = kmalloc(size, GFP_KERNEL);
 		if (!kdata) {
 			retcode = -ENOMEM;
 			goto err_i1;
@@ -879,8 +879,8 @@ long drm_ioctl(struct file *filp,
 		goto err_i1;
 	}
 
-	if (ksize > in_size)
-		memset(kdata + in_size, 0, ksize - in_size);
+	if (size > in_size)
+		memset(kdata + in_size, 0, size - in_size);
 
 	retcode = drm_ioctl_kernel(filp, func, kdata, ioctl->flags);
 	if (copy_to_user((void __user *)arg, kdata, out_size) != 0)

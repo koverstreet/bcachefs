@@ -16,6 +16,7 @@
 #include <linux/overflow.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
+#include <linux/slab_alloc_tag.h>
 #include <linux/percpu-refcount.h>
 
 
@@ -192,7 +193,8 @@ int kmem_cache_shrink(struct kmem_cache *s);
  * Common kmalloc functions provided by all allocators
  */
 void * __must_check krealloc(const void *objp, size_t new_size, gfp_t flags) __alloc_size(2);
-void kfree(const void *objp);
+void _kfree(const void *objp);
+static inline void kfree(const void *objp) { slabtag_kfree(objp); }
 void kfree_sensitive(const void *objp);
 size_t __ksize(const void *objp);
 size_t ksize(const void *objp);
@@ -590,7 +592,7 @@ static __always_inline __alloc_size(1) void *kmalloc_large(size_t size, gfp_t fl
  *	Try really hard to succeed the allocation but fail
  *	eventually.
  */
-static __always_inline __alloc_size(1) void *kmalloc(size_t size, gfp_t flags)
+static __always_inline __alloc_size(1) void *_kmalloc(size_t size, gfp_t flags)
 {
 	if (__builtin_constant_p(size)) {
 #ifndef CONFIG_SLOB
@@ -611,6 +613,7 @@ static __always_inline __alloc_size(1) void *kmalloc(size_t size, gfp_t flags)
 	}
 	return __kmalloc(size, flags);
 }
+#define kmalloc(size, flags) slabtag_kmalloc(size, flags)
 
 static __always_inline __alloc_size(1) void *kmalloc_node(size_t size, gfp_t flags, int node)
 {

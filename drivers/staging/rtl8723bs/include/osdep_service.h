@@ -56,7 +56,6 @@ extern int RTW_STATUS_CODE(int error_code);
 
 void *_rtw_zmalloc(u32 sz);
 void *_rtw_malloc(u32 sz);
-void _kfree(u8 *pbuf, u32 sz);
 
 struct sk_buff *_rtw_skb_alloc(u32 sz);
 struct sk_buff *_rtw_skb_copy(const struct sk_buff *skb);

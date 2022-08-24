@@ -545,7 +545,7 @@ void *__kmalloc_node_track_caller(size_t size, gfp_t gfp,
 EXPORT_SYMBOL(__kmalloc_node_track_caller);
 #endif
 
-void kfree(const void *block)
+void _kfree(const void *block)
 {
 	struct folio *sp;
 
@@ -572,7 +572,7 @@ void kfree(const void *block)
 
 	}
 }
-EXPORT_SYMBOL(kfree);
+EXPORT_SYMBOL(_kfree);
 
 /* can't use ksize for kmem_cache_alloc memory, only kmalloc */
 size_t __ksize(const void *block)

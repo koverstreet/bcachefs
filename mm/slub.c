@@ -4543,7 +4543,7 @@ size_t __ksize(const void *object)
 }
 EXPORT_SYMBOL(__ksize);
 
-void kfree(const void *x)
+void _kfree(const void *x)
 {
 	struct folio *folio;
 	struct slab *slab;
@@ -4562,7 +4562,7 @@ void kfree(const void *x)
 	slab = folio_slab(folio);
 	slab_free(slab->slab_cache, slab, object, NULL, &object, 1, _RET_IP_);
 }
-EXPORT_SYMBOL(kfree);
+EXPORT_SYMBOL(_kfree);
 
 #define SHRINK_PROMOTE_MAX 32
 

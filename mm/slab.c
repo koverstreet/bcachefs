@@ -3765,7 +3765,7 @@ EXPORT_SYMBOL(kmem_cache_free_bulk);
  * Don't free memory not originally allocated by kmalloc()
  * or you will run into trouble.
  */
-void kfree(const void *objp)
+void _kfree(const void *objp)
 {
 	struct kmem_cache *c;
 	unsigned long flags;
@@ -3787,7 +3787,7 @@ void kfree(const void *objp)
 	__cache_free(c, (void *)objp, _RET_IP_);
 	local_irq_restore(flags);
 }
-EXPORT_SYMBOL(kfree);
+EXPORT_SYMBOL(_kfree);
 
 /*
  * This initializes kmem_cache_node or resizes various caches for all nodes.
