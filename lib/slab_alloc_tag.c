@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <linux/module.h>
 #include <linux/seq_file.h>
-#include <linux/slab_alloc_tag.h>
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <../mm/slab.h>
 
 union codetag_ref *get_slab_tag_ref(const void *objp)
