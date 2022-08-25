@@ -38,6 +38,14 @@ static inline void slabtag_kfree(const void *ptr)
 	_kfree(ptr);
 }
 
+#define kmalloc_hooks(_do_alloc)					\
+({									\
+	void *_res = _do_alloc;						\
+	if (!ZERO_OR_NULL_PTR(_res))					\
+		alloc_tag_add(get_slab_tag_ref(_res), ksize(_res));	\
+	_res;								\
+})
+
 #else /* CONFIG_SLAB_ALLOC_TAGGING */
 
 #define slabtag_kmalloc(size, flags) _kmalloc(size, flags)
@@ -46,6 +54,12 @@ static inline void slabtag_kfree(const void *objp)
 {
 	_kfree(objp);
 }
+
+#define kmalloc_hooks(_do_alloc)					\
+({									\
+	_do_alloc;							\
+})
+
 
 #endif /* CONFIG_SLAB_ALLOC_TAGGING */
 

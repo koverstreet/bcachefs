@@ -541,14 +541,6 @@ static __always_inline __alloc_size(1) void *kmalloc_large(size_t size, gfp_t fl
 	return kmalloc_order_trace(size, flags, order);
 }
 
-#define kmalloc_hooks(_do_alloc)					\
-({									\
-	void *_res = _do_alloc;						\
-	if (!ZERO_OR_NULL_PTR(_res))					\
-		alloc_tag_add(get_slab_tag_ref(_res), ksize(_res));	\
-	_res;								\
-})
-
 /**
  * kmalloc - allocate memory
  * @size: how many bytes of memory are required.
