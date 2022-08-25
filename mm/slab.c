@@ -3402,6 +3402,7 @@ static __always_inline void __cache_free(struct kmem_cache *cachep, void *objp,
 
 	if (is_kfence_address(objp)) {
 		kmemleak_free_recursive(objp, cachep->flags);
+		slab_tag_dec_nowarn(objp);
 		__kfence_free(objp);
 		return;
 	}
@@ -3433,6 +3434,7 @@ void ___cache_free(struct kmem_cache *cachep, void *objp,
 
 	check_irq_off();
 	kmemleak_free_recursive(objp, cachep->flags);
+	slab_tag_dec_nowarn(objp);
 	objp = cache_free_debugcheck(cachep, objp, caller);
 
 	/*
@@ -3765,7 +3767,7 @@ EXPORT_SYMBOL(kmem_cache_free_bulk);
  * Don't free memory not originally allocated by kmalloc()
  * or you will run into trouble.
  */
-void _kfree(const void *objp)
+void kfree(const void *objp)
 {
 	struct kmem_cache *c;
 	unsigned long flags;
@@ -3787,7 +3789,7 @@ void _kfree(const void *objp)
 	__cache_free(c, (void *)objp, _RET_IP_);
 	local_irq_restore(flags);
 }
-EXPORT_SYMBOL(_kfree);
+EXPORT_SYMBOL(kfree);
 
 /*
  * This initializes kmem_cache_node or resizes various caches for all nodes.

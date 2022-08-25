@@ -5,8 +5,6 @@
 #ifndef _LINUX_SLAB_ALLOC_TAG_H
 #define _LINUX_SLAB_ALLOC_TAG_H
 
-extern void _kfree(const void *objp);
-
 #ifdef CONFIG_SLAB_ALLOC_TAGGING
 
 #include <linux/alloc_tag.h>
@@ -23,43 +21,39 @@ size_t ksize(const void *objp);
 /*
  * Redefinitions of the common slab allocators/destructors
  */
-#define slabtag_kmalloc(size, flags)					\
+#define krealloc_hooks(_p, _do_alloc)					\
 ({									\
-	void *_res = _kmalloc((size), (flags));				\
-	if (!ZERO_OR_NULL_PTR(_res))					\
+	void *_res = _do_alloc;						\
+	if (!ZERO_OR_NULL_PTR(_res) && _res != _p)			\
 		alloc_tag_add(get_slab_tag_ref(_res), ksize(_res));	\
 	_res;								\
 })
 
-static inline void slabtag_kfree(const void *ptr)
+#define kmalloc_hooks(_do_alloc)	krealloc_hooks(NULL, _do_alloc)
+
+static inline void slab_tag_dec(const void *ptr)
 {
 	if (!ZERO_OR_NULL_PTR(ptr))
 		alloc_tag_sub(get_slab_tag_ref(ptr), ksize(ptr));
-	_kfree(ptr);
 }
 
-#define kmalloc_hooks(_do_alloc)					\
-({									\
-	void *_res = _do_alloc;						\
-	if (!ZERO_OR_NULL_PTR(_res))					\
-		alloc_tag_add(get_slab_tag_ref(_res), ksize(_res));	\
-	_res;								\
-})
+static inline void slab_tag_dec_nowarn(const void *ptr)
+{
+	if (!ZERO_OR_NULL_PTR(ptr)) {
+		union codetag_ref *ref = get_slab_tag_ref(ptr);
+
+		if (ref && ref->ct)
+			alloc_tag_sub(ref, ksize(ptr));
+	}
+}
 
 #else /* CONFIG_SLAB_ALLOC_TAGGING */
 
-#define slabtag_kmalloc(size, flags) _kmalloc(size, flags)
+#define krealloc_hooks(_p, _do_alloc)	_do_alloc
+#define kmalloc_hooks(_do_alloc)	_do_alloc
 
-static inline void slabtag_kfree(const void *objp)
-{
-	_kfree(objp);
-}
-
-#define kmalloc_hooks(_do_alloc)					\
-({									\
-	_do_alloc;							\
-})
-
+static inline void slab_tag_dec(const void *ptr) {}
+static inline void slab_tag_dec_nowarn(const void *ptr) {}
 
 #endif /* CONFIG_SLAB_ALLOC_TAGGING */
 

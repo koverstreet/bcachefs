@@ -1715,6 +1715,7 @@ static inline void *kmalloc_large_node_hook(void *ptr, size_t size, gfp_t flags)
 static __always_inline void kfree_hook(void *x)
 {
 	kmemleak_free(x);
+	slab_tag_dec_nowarn(x);
 	kasan_kfree_large(x);
 }
 
@@ -1722,6 +1723,7 @@ static __always_inline bool slab_free_hook(struct kmem_cache *s,
 						void *x, bool init)
 {
 	kmemleak_free_recursive(x, s->flags);
+	slab_tag_dec_nowarn(x);
 
 	debug_check_no_locks_freed(x, s->object_size);
 
@@ -4543,7 +4545,7 @@ size_t __ksize(const void *object)
 }
 EXPORT_SYMBOL(__ksize);
 
-void _kfree(const void *x)
+void kfree(const void *x)
 {
 	struct folio *folio;
 	struct slab *slab;
@@ -4562,7 +4564,7 @@ void _kfree(const void *x)
 	slab = folio_slab(folio);
 	slab_free(slab->slab_cache, slab, object, NULL, &object, 1, _RET_IP_);
 }
-EXPORT_SYMBOL(_kfree);
+EXPORT_SYMBOL(kfree);
 
 #define SHRINK_PROMOTE_MAX 32
 

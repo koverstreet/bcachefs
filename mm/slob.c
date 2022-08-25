@@ -545,7 +545,7 @@ void *__kmalloc_node_track_caller(size_t size, gfp_t gfp,
 EXPORT_SYMBOL(__kmalloc_node_track_caller);
 #endif
 
-void _kfree(const void *block)
+void kfree(const void *block)
 {
 	struct folio *sp;
 
@@ -554,6 +554,7 @@ void _kfree(const void *block)
 	if (unlikely(ZERO_OR_NULL_PTR(block)))
 		return;
 	kmemleak_free(block);
+	slab_tag_dec_nowarn(block);
 
 	sp = virt_to_folio(block);
 	if (folio_test_slab(sp)) {
@@ -572,7 +573,7 @@ void _kfree(const void *block)
 
 	}
 }
-EXPORT_SYMBOL(_kfree);
+EXPORT_SYMBOL(kfree);
 
 /* can't use ksize for kmem_cache_alloc memory, only kmalloc */
 size_t __ksize(const void *block)
@@ -680,6 +681,7 @@ static void kmem_rcu_free(struct rcu_head *head)
 void kmem_cache_free(struct kmem_cache *c, void *b)
 {
 	kmemleak_free_recursive(b, c->flags);
+	slab_tag_dec_nowarn(b);
 	trace_kmem_cache_free(_RET_IP_, b, c->name);
 	if (unlikely(c->flags & SLAB_TYPESAFE_BY_RCU)) {
 		struct slob_rcu *slob_rcu;

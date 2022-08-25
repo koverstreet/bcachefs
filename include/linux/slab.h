@@ -194,10 +194,9 @@ int kmem_cache_shrink(struct kmem_cache *s);
  */
 void * __must_check _krealloc(const void *objp, size_t new_size, gfp_t flags) __alloc_size(2);
 #define krealloc(_p, _size, _flags)					\
-	kmalloc_hooks(_krealloc(_p, _size, _flags))
+	krealloc_hooks(_p, _krealloc(_p, _size, _flags))
 
-void _kfree(const void *objp);
-static inline void kfree(const void *objp) { slabtag_kfree(objp); }
+void kfree(const void *objp);
 void kfree_sensitive(const void *objp);
 size_t __ksize(const void *objp);
 size_t ksize(const void *objp);
@@ -651,8 +650,8 @@ static inline __alloc_size(1, 2) void *_kmalloc_array(size_t n, size_t size, gfp
 	if (unlikely(check_mul_overflow(n, size, &bytes)))
 		return NULL;
 	if (__builtin_constant_p(n) && __builtin_constant_p(size))
-		return kmalloc(bytes, flags);
-	return __kmalloc(bytes, flags);
+		return _kmalloc(bytes, flags);
+	return _kmalloc(bytes, flags);
 }
 #define kmalloc_array(_n, _size, _flags)		\
 	kmalloc_hooks(_kmalloc_array(_n, _size, _flags))
@@ -677,7 +676,7 @@ static inline __alloc_size(2, 3) void * __must_check _krealloc_array(void *p,
 	return _krealloc(p, bytes, flags);
 }
 #define krealloc_array(_p, _n, _size, _flags)		\
-	kmalloc_hooks(_krealloc_array(_p, _n, _size, _flags))
+	krealloc_hooks(_p, _krealloc_array(_p, _n, _size, _flags))
 
 /**
  * kcalloc - allocate memory for an array. The memory is set to zero.

@@ -1154,7 +1154,7 @@ static __always_inline void *__do_krealloc(const void *p, size_t new_size,
 		return (void *)p;
 	}
 
-	ret = kmalloc_track_caller(new_size, flags);
+	ret = __kmalloc_track_caller(new_size, flags, _RET_IP_);
 	if (ret && p) {
 		/* Disable KASAN checks as the object's redzone is accessed. */
 		kasan_disable_current();
