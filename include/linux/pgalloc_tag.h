@@ -27,6 +27,17 @@ static inline void pgalloc_tag_dec(struct page *page, size_t bytes)
 		alloc_tag_sub(get_page_tag_ref(page), bytes);
 }
 
+
+static inline void pgalloc_tag_dec_nowarn(struct page *page, size_t bytes)
+{
+	if (page) {
+		union codetag_ref *ref = get_page_tag_ref(page);
+
+		if (ref && ref->ct)
+			alloc_tag_sub(ref, bytes);
+	}
+}
+
 /*
  * Redefinitions of the common page allocators/destructors
  */
@@ -57,6 +68,8 @@ static inline void pgalloc_tag_dec(struct page *page, size_t bytes)
 	_get_free_pages((gfp_mask), (order), NULL)
 
 #define pgalloc_tag_dec(__page, __size)		do {} while (0)
+
+#define pgalloc_tag_dec_nowarn(__page, __size)	do {} while (0)
 
 #endif /* CONFIG_PAGE_ALLOC_TAGGING */
 

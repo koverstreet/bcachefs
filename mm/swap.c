@@ -102,6 +102,7 @@ static void __folio_put_small(struct folio *folio)
 {
 	__page_cache_release(folio);
 	mem_cgroup_uncharge(folio);
+	pgalloc_tag_dec_nowarn(&folio->page, 0);
 	free_unref_page(&folio->page, 0);
 }
 
