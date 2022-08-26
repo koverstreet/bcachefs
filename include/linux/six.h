@@ -107,9 +107,8 @@ struct six_lock {
 	union six_lock_state	state;
 	unsigned		intent_lock_recurse;
 	struct task_struct	*owner;
-	struct optimistic_spin_queue osq;
 	unsigned __percpu	*readers;
-
+	struct optimistic_spin_queue osq;
 	raw_spinlock_t		wait_lock;
 	struct list_head	wait_list;
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
@@ -121,6 +120,7 @@ struct six_lock_waiter {
 	struct list_head	list;
 	struct task_struct	*task;
 	enum six_lock_type	lock_want;
+	bool			lock_acquired;
 };
 
 typedef int (*six_lock_should_sleep_fn)(struct six_lock *lock, void *);
