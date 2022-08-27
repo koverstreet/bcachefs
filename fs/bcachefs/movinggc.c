@@ -165,7 +165,7 @@ static int bch2_copygc(struct bch_fs *c)
 	if (ret < 0)
 		bch_err(c, "error from bch2_move_data() in copygc: %s", bch2_err_str(ret));
 
-	trace_copygc(c, atomic64_read(&move_stats.sectors_moved), 0, 0, 0);
+	trace_and_count(c, copygc, c, atomic64_read(&move_stats.sectors_moved), 0, 0, 0);
 	return ret;
 }
 
@@ -221,7 +221,7 @@ static int bch2_copygc_thread(void *arg)
 		wait = bch2_copygc_wait_amount(c);
 
 		if (wait > clock->max_slop) {
-			trace_copygc_wait(c, wait, last + wait);
+			trace_and_count(c, copygc_wait, c, wait, last + wait);
 			c->copygc_wait = last + wait;
 			bch2_kthread_io_clock_wait(clock, last + wait,
 					MAX_SCHEDULE_TIMEOUT);

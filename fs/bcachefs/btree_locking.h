@@ -323,7 +323,7 @@ static inline int bch2_btree_path_relock(struct btree_trans *trans,
 				struct btree_path *path, unsigned long trace_ip)
 {
 	if (!bch2_btree_path_relock_norestart(trans, path, trace_ip)) {
-		trace_trans_restart_relock_path(trans, trace_ip, path);
+		trace_and_count(trans->c, trans_restart_relock_path, trans, trace_ip, path);
 		return btree_trans_restart(trans, BCH_ERR_transaction_restart_relock_path);
 	}
 

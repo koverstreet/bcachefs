@@ -268,7 +268,7 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 
 	spin_unlock(&c->freelist_lock);
 
-	trace_bucket_alloc(ca, bch2_alloc_reserves[reserve]);
+	trace_and_count(c, bucket_alloc, ca, bch2_alloc_reserves[reserve]);
 	return ob;
 }
 
@@ -575,20 +575,19 @@ err:
 	if (!ob)
 		ob = ERR_PTR(-BCH_ERR_no_buckets_found);
 
-	if (IS_ERR(ob)) {
-		trace_bucket_alloc_fail(ca, bch2_alloc_reserves[reserve],
-					usage.d[BCH_DATA_free].buckets,
-					avail,
-					bch2_copygc_wait_amount(c),
-					c->copygc_wait - atomic64_read(&c->io_clock[WRITE].now),
-					buckets_seen,
-					skipped_open,
-					skipped_need_journal_commit,
-					skipped_nouse,
-					cl == NULL,
-					bch2_err_str(PTR_ERR(ob)));
-		atomic_long_inc(&c->bucket_alloc_fail);
-	}
+	if (IS_ERR(ob))
+		trace_and_count(c, bucket_alloc_fail,
+				ca, bch2_alloc_reserves[reserve],
+				usage.d[BCH_DATA_free].buckets,
+				avail,
+				bch2_copygc_wait_amount(c),
+				c->copygc_wait - atomic64_read(&c->io_clock[WRITE].now),
+				buckets_seen,
+				skipped_open,
+				skipped_need_journal_commit,
+				skipped_nouse,
+				cl == NULL,
+				bch2_err_str(PTR_ERR(ob)));
 
 	return ob;
 }
