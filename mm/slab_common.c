@@ -938,7 +938,7 @@ gfp_t kmalloc_fix_flags(gfp_t flags)
  * directly to the page allocator. We use __GFP_COMP, because we will need to
  * know the allocation order to free the pages properly in kfree.
  */
-void *kmalloc_order(size_t size, gfp_t flags, unsigned int order)
+void *_kmalloc_order(size_t size, gfp_t flags, unsigned int order)
 {
 	void *ret = NULL;
 	struct page *page;
@@ -958,16 +958,16 @@ void *kmalloc_order(size_t size, gfp_t flags, unsigned int order)
 	kmemleak_alloc(ret, size, 1, flags);
 	return ret;
 }
-EXPORT_SYMBOL(kmalloc_order);
+EXPORT_SYMBOL(_kmalloc_order);
 
 #ifdef CONFIG_TRACING
-void *kmalloc_order_trace(size_t size, gfp_t flags, unsigned int order)
+void *_kmalloc_order_trace(size_t size, gfp_t flags, unsigned int order)
 {
-	void *ret = kmalloc_order(size, flags, order);
+	void *ret = _kmalloc_order(size, flags, order);
 	trace_kmalloc(_RET_IP_, ret, NULL, size, PAGE_SIZE << order, flags);
 	return ret;
 }
-EXPORT_SYMBOL(kmalloc_order_trace);
+EXPORT_SYMBOL(_kmalloc_order_trace);
 #endif
 
 #ifdef CONFIG_SLAB_FREELIST_RANDOM
@@ -1187,7 +1187,7 @@ static __always_inline void *__do_krealloc(const void *p, size_t new_size,
 		return (void *)p;
 	}
 
-	ret = kmalloc_track_caller(new_size, flags);
+	ret = __kmalloc_track_caller(new_size, flags, _RET_IP_);
 	if (ret && p) {
 		/* Disable KASAN checks as the object's redzone is accessed. */
 		kasan_disable_current();
@@ -1211,7 +1211,7 @@ static __always_inline void *__do_krealloc(const void *p, size_t new_size,
  *
  * Return: pointer to the allocated memory or %NULL in case of error
  */
-void *krealloc(const void *p, size_t new_size, gfp_t flags)
+void *_krealloc(const void *p, size_t new_size, gfp_t flags)
 {
 	void *ret;
 
@@ -1226,7 +1226,7 @@ void *krealloc(const void *p, size_t new_size, gfp_t flags)
 
 	return ret;
 }
-EXPORT_SYMBOL(krealloc);
+EXPORT_SYMBOL(_krealloc);
 
 /**
  * kfree_sensitive - Clear sensitive information in memory before freeing
