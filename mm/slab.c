@@ -3402,6 +3402,7 @@ static __always_inline void __cache_free(struct kmem_cache *cachep, void *objp,
 
 	if (is_kfence_address(objp)) {
 		kmemleak_free_recursive(objp, cachep->flags);
+		slab_tag_dec(objp);
 		__kfence_free(objp);
 		return;
 	}
@@ -3433,6 +3434,7 @@ void ___cache_free(struct kmem_cache *cachep, void *objp,
 
 	check_irq_off();
 	kmemleak_free_recursive(objp, cachep->flags);
+	slab_tag_dec(objp);
 	objp = cache_free_debugcheck(cachep, objp, caller);
 
 	/*
