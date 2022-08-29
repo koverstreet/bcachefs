@@ -762,3 +762,6 @@ config ASN1_ENCODER
 
 config POLYNOMIAL
        tristate
+
+config TIME_STATS
+	bool
