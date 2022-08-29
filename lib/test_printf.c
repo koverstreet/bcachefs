@@ -413,6 +413,21 @@ addr(void)
 static void __init
 escaped_str(void)
 {
+	const char buf[] = "test \f\n\r\t\v \"\\\a\e \0 end";
+	unsigned n = strlen(buf), with_embedded_nul = sizeof(buf) - 1;
+
+	/* ESCAPE_ANY_NP: */
+	test("test \\f\\n\\r\\t\\v \"\\\\a\\e ",	"%*pE",  n, buf);
+	/* ESCAPE_ANY: */
+	//test("test \\f\\n\\r\\t\\v \"\\\\a\\e end",	"%*pEa",  n, buf);
+	/* ESCAPE_SPACE: */
+	test("test \\f\\n\\r\\t\\v \"\\\x07\x1b ",	"%*pEs", n, buf);
+
+	/* ESCAPE_SPECIAL: */
+	test("test \f\n\r\t\v \\\"\\\\\\a\\e ",		"%*pEc", n, buf);
+
+	/* ESCAPE_NULL: */
+	test("test \f\n\r\t\v \"\\\a\e \\0 end",	"%*pEn", with_embedded_nul, buf);
 }
 
 static void __init
