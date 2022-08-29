@@ -228,6 +228,7 @@ obj-$(CONFIG_CODE_TAGGING) += codetag.o
 obj-$(CONFIG_ALLOC_TAGGING) += alloc_tag.o
 
 obj-$(CONFIG_TIME_STATS) += time_stats.o
+obj-$(CONFIG_CODETAG_TIME_STATS) += codetag_time_stats.o
 
 lib-$(CONFIG_GENERIC_BUG) += bug.o
 
