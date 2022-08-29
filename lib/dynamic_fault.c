@@ -74,7 +74,7 @@ static int dfault_change(struct dfault_query *query)
 	unsigned int nfound = 0;
 
 	codetag_lock_module_list(cttype, true);
-	ct_iter = codetag_get_ct_iter(cttype);
+	codetag_init_iter(&ct_iter, cttype);
 
 	while ((ct = codetag_next_ct(&ct_iter))) {
 		struct dfault *df = container_of(ct, struct dfault, tag);
@@ -249,7 +249,7 @@ static int dfault_open(struct inode *inode, struct file *file)
 		return -ENOMEM;
 
 	codetag_lock_module_list(cttype, true);
-	iter->ct_iter = codetag_get_ct_iter(cttype);
+	codetag_init_iter(&iter->ct_iter, cttype);
 	codetag_lock_module_list(cttype, false);
 
 	file->private_data = iter;
