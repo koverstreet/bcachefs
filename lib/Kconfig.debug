@@ -1748,6 +1748,14 @@ config LATENCYTOP
 	  Enable this option if you want to use the LatencyTOP tool
 	  to find out which userspace is blocking on what kernel operations.
 
+config CODETAG_TIME_STATS
+	bool "Code tagging based latency measuring"
+	depends on DEBUG_FS
+	select TIME_STATS
+	select CODE_TAGGING
+	help
+	  Enabling this option makes latency statistics available in debugfs
+
 source "kernel/trace/Kconfig"
 
 config PROVIDE_OHCI1394_DMA_INIT
