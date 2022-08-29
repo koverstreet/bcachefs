@@ -177,7 +177,7 @@ static int ddebug_change(const struct ddebug_query *query,
 	struct flagsbuf fbuf;
 
 	codetag_lock_module_list(cttype, true);
-	ct_iter = codetag_get_ct_iter(cttype);
+	codetag_init_iter(&ct_iter, cttype);
 
 	while ((ct = codetag_next_ct(&ct_iter))) {
 		struct _ddebug *dp = (void *) ct;
@@ -844,7 +844,7 @@ static int ddebug_proc_open(struct inode *inode, struct file *file)
 		return -ENOMEM;
 
 	codetag_lock_module_list(cttype, true);
-	iter->ct_iter = codetag_get_ct_iter(cttype);
+	codetag_init_iter(&iter->ct_iter, cttype);
 	codetag_lock_module_list(cttype, false);
 	seq_buf_init(&iter->buf, iter->rawbuf, sizeof(iter->rawbuf));
 	file->private_data = iter;
