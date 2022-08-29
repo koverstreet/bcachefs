@@ -493,7 +493,7 @@ struct io_cqe {
 struct io_cmd_data {
 	struct file		*file;
 	/* each command gets 56 bytes of data */
-	__u8			data[56];
+	__u8			data[64];
 };
 
 static inline void io_kiocb_cmd_sz_check(size_t cmd_sz)

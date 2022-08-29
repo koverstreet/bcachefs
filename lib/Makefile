@@ -227,6 +227,7 @@ obj-$(CONFIG_MEM_ALLOC_PROFILING) += alloc_tag.o
 
 obj-$(CONFIG_CODETAG_FAULT_INJECTION) += dynamic_fault.o
 obj-$(CONFIG_TIME_STATS) += time_stats.o
+obj-$(CONFIG_CODETAG_TIME_STATS) += codetag_time_stats.o
 
 lib-$(CONFIG_GENERIC_BUG) += bug.o
 
