@@ -48,11 +48,15 @@ struct swait_queue_head {
 struct swait_queue {
 	struct task_struct	*task;
 	struct list_head	task_list;
+#ifdef CONFIG_CODETAG_TIME_STATS
+	u64			start_time;
+#endif
 };
 
 #define __SWAITQUEUE_INITIALIZER(name) {				\
 	.task		= current,					\
 	.task_list	= LIST_HEAD_INIT((name).task_list),		\
+	WAIT_QUEUE_ENTRY_START_TIME_INITIALIZER				\
 }
 
 #define DECLARE_SWAITQUEUE(name)					\
@@ -151,8 +155,20 @@ extern void swake_up_locked(struct swait_queue_head *q);
 extern void prepare_to_swait_exclusive(struct swait_queue_head *q, struct swait_queue *wait, int state);
 extern long prepare_to_swait_event(struct swait_queue_head *q, struct swait_queue *wait, int state);
 
-extern void __finish_swait(struct swait_queue_head *q, struct swait_queue *wait);
-extern void finish_swait(struct swait_queue_head *q, struct swait_queue *wait);
+extern void __finish_swait_notrace(struct swait_queue_head *q, struct swait_queue *wait);
+extern void finish_swait_notrace(struct swait_queue_head *q, struct swait_queue *wait);
+
+#define __finish_swait(_q, _wait)					\
+do {									\
+	__finish_swait_notrace(_q, _wait);				\
+	codetag_time_stats_finish((_wait)->start_time);			\
+} while (0)
+
+#define finish_swait(_q, _wait)						\
+do {									\
+	finish_swait_notrace(_q, _wait);				\
+	codetag_time_stats_finish((_wait)->start_time);			\
+} while (0)
 
 /* as per ___wait_event() but for swait, therefore "exclusive == 1" */
 #define ___swait_event(wq, condition, state, ret, cmd)			\
