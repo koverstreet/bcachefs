@@ -1691,6 +1691,9 @@ static void cache_set_free(struct closure *cl)
 		kobject_put(&ca->kobj);
 	}
 
+	time_stats_exit(&c->btree_gc_time);
+	time_stats_exit(&c->btree_split_time);
+	time_stats_exit(&c->sort.time);
 
 	if (c->moving_gc_wq)
 		destroy_workqueue(c->moving_gc_wq);
