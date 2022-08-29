@@ -122,14 +122,14 @@ long prepare_to_swait_event(struct swait_queue_head *q, struct swait_queue *wait
 }
 EXPORT_SYMBOL(prepare_to_swait_event);
 
-void __finish_swait(struct swait_queue_head *q, struct swait_queue *wait)
+void __finish_swait_notrace(struct swait_queue_head *q, struct swait_queue *wait)
 {
 	__set_current_state(TASK_RUNNING);
 	if (!list_empty(&wait->task_list))
 		list_del_init(&wait->task_list);
 }
 
-void finish_swait(struct swait_queue_head *q, struct swait_queue *wait)
+void finish_swait_notrace(struct swait_queue_head *q, struct swait_queue *wait)
 {
 	unsigned long flags;
 
@@ -141,4 +141,4 @@ void finish_swait(struct swait_queue_head *q, struct swait_queue *wait)
 		raw_spin_unlock_irqrestore(&q->lock, flags);
 	}
 }
-EXPORT_SYMBOL(finish_swait);
+EXPORT_SYMBOL(finish_swait_notrace);
