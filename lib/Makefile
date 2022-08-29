@@ -228,6 +228,7 @@ obj-$(CONFIG_ALLOC_TAGGING) += alloc_tag.o
 obj-$(CONFIG_PAGE_ALLOC_TAGGING) += pgalloc_tag.o
 
 obj-$(CONFIG_CODETAG_FAULT_INJECTION) += dynamic_fault.o
+obj-$(CONFIG_TIME_STATS) += time_stats.o
 
 lib-$(CONFIG_GENERIC_BUG) += bug.o
 
