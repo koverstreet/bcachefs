@@ -18,6 +18,7 @@
 #include <linux/dcache.h>
 #include <linux/socket.h>
 #include <linux/in.h>
+#include <linux/in6.h>
 
 #include <linux/gfp.h>
 #include <linux/mm.h>
@@ -60,6 +61,9 @@ do_test(int bufsize, const char *expect, int elen,
 	if (ret != elen) {
 		pr_warn("vsnprintf(buf, %d, \"%s\", ...) returned %d, expected %d\n",
 			bufsize, fmt, ret, elen);
+		return 1;
+		pr_warn("vsnprintf(buf, %d, \"%s\", ...) returned %d, expected %d (%s != %s)\n",
+			bufsize, fmt, ret, elen, test_buffer, expect);
 		return 1;
 	}
 
@@ -452,6 +456,31 @@ ip4(void)
 static void __init
 ip6(void)
 {
+	struct sockaddr_in6 sa = { .sin6_family = AF_INET6 };
+
+	sa.sin6_port			= cpu_to_be16(12345);
+	sa.sin6_addr.in6_u.u6_addr16[0]	= cpu_to_be16(1);
+	sa.sin6_addr.in6_u.u6_addr16[1]	= cpu_to_be16(2);
+	sa.sin6_addr.in6_u.u6_addr16[6]	= cpu_to_be16(7);
+	sa.sin6_addr.in6_u.u6_addr16[7]	= cpu_to_be16(8);
+	sa.sin6_flowinfo		= cpu_to_be32(8008);
+	sa.sin6_scope_id		= 4004;
+
+	test("00010002000000000000000000070008",		"%pi6", &sa.sin6_addr);
+	test("00010002000000000000000000070008",		"%piS", &sa);
+	test("0001:0002:0000:0000:0000:0000:0007:0008",		"%pI6", &sa.sin6_addr);
+	test("0001:0002:0000:0000:0000:0000:0007:0008",		"%pIS", &sa);
+	test("1:2::7:8",					"%pISc", &sa);
+
+	test("[0001:0002:0000:0000:0000:0000:0007:0008]:12345",	"%pISp", &sa);
+	test("[0001:0002:0000:0000:0000:0000:0007:0008]%4004",	"%pISs", &sa);
+	test("[0001:0002:0000:0000:0000:0000:0007:0008]/8008",	"%pISf", &sa);
+
+	test("[1:2::7:8]:12345",				"%pIScp", &sa);
+	test("[1:2::7:8]%4004",					"%pIScs", &sa);
+	test("[1:2::7:8]/8008",					"%pIScf", &sa);
+
+	test("[1:2::7:8]:12345/8008%4004",			"%pIScpsf", &sa);
 }
 
 static void __init
