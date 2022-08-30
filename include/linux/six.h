@@ -59,7 +59,6 @@
  */
 
 #include <linux/lockdep.h>
-#include <linux/osq_lock.h>
 #include <linux/sched.h>
 #include <linux/types.h>
 
@@ -105,10 +104,9 @@ enum six_lock_type {
 
 struct six_lock {
 	union six_lock_state	state;
-	unsigned		intent_lock_recurse;
 	struct task_struct	*owner;
 	unsigned __percpu	*readers;
-	struct optimistic_spin_queue osq;
+	unsigned		intent_lock_recurse;
 	raw_spinlock_t		wait_lock;
 	struct list_head	wait_list;
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
