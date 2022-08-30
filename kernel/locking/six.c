@@ -338,33 +338,26 @@ static bool __six_relock_type(struct six_lock *lock, enum six_lock_type type,
 
 #ifdef CONFIG_LOCK_SPIN_ON_OWNER
 
-static inline int six_can_spin_on_owner(struct six_lock *lock)
+static inline bool six_optimistic_spin(struct six_lock *lock,
+				       struct six_lock_waiter *wait)
 {
-	struct task_struct *owner;
-	int retval = 1;
+	struct task_struct *owner, *task = current;
 
-	if (need_resched())
-		return 0;
+	switch (wait->lock_want) {
+	case SIX_LOCK_read:
+		break;
+	case SIX_LOCK_intent:
+		if (lock->wait_list.next != &wait->list)
+			return false;
+		break;
+	case SIX_LOCK_write:
+		return false;
+	}
 
 	rcu_read_lock();
 	owner = READ_ONCE(lock->owner);
-	if (owner)
-		retval = owner->on_cpu;
-	rcu_read_unlock();
-	/*
-	 * if lock->owner is not set, the mutex owner may have just acquired
-	 * it and not set the owner yet or the mutex has been released.
-	 */
-	return retval;
-}
 
-static inline bool six_spin_on_owner(struct six_lock *lock,
-				     struct task_struct *owner)
-{
-	bool ret = true;
-
-	rcu_read_lock();
-	while (lock->owner == owner) {
+	while (owner && lock->owner == owner) {
 		/*
 		 * Ensure we emit the owner->on_cpu, dereference _after_
 		 * checking lock->owner still matches owner. If that fails,
@@ -373,85 +366,27 @@ static inline bool six_spin_on_owner(struct six_lock *lock,
 		 */
 		barrier();
 
-		if (!owner->on_cpu || need_resched()) {
-			ret = false;
+		/*
+		 * If we're an RT task that will live-lock because we won't let
+		 * the owner complete.
+		 */
+		if (wait->lock_acquired ||
+		    !owner->on_cpu ||
+		    rt_task(task) ||
+		    need_resched())
 			break;
-		}
 
 		cpu_relax();
 	}
 	rcu_read_unlock();
 
-	return ret;
-}
-
-static inline bool six_optimistic_spin(struct six_lock *lock, enum six_lock_type type)
-{
-	struct task_struct *task = current;
-
-	if (type == SIX_LOCK_write)
-		return false;
-
-	preempt_disable();
-	if (!six_can_spin_on_owner(lock))
-		goto fail;
-
-	if (!osq_lock(&lock->osq))
-		goto fail;
-
-	while (1) {
-		struct task_struct *owner;
-
-		/*
-		 * If there's an owner, wait for it to either
-		 * release the lock or go to sleep.
-		 */
-		owner = READ_ONCE(lock->owner);
-		if (owner && !six_spin_on_owner(lock, owner))
-			break;
-
-		if (do_six_trylock_type(lock, type, false)) {
-			osq_unlock(&lock->osq);
-			preempt_enable();
-			return true;
-		}
-
-		/*
-		 * When there's no owner, we might have preempted between the
-		 * owner acquiring the lock and setting the owner field. If
-		 * we're an RT task that will live-lock because we won't let
-		 * the owner complete.
-		 */
-		if (!owner && (need_resched() || rt_task(task)))
-			break;
-
-		/*
-		 * The cpu_relax() call is a compiler barrier which forces
-		 * everything in this loop to be re-loaded. We don't need
-		 * memory barriers as we'll eventually observe the right
-		 * values at the cost of a few extra spins.
-		 */
-		cpu_relax();
-	}
-
-	osq_unlock(&lock->osq);
-fail:
-	preempt_enable();
-
-	/*
-	 * If we fell out of the spin path because of need_resched(),
-	 * reschedule now, before we try-lock again. This avoids getting
-	 * scheduled out right after we obtained the lock.
-	 */
-	if (need_resched())
-		schedule();
-
-	return false;
+	return wait->lock_acquired;
 }
 
 #else /* CONFIG_LOCK_SPIN_ON_OWNER */
 
-static inline bool six_optimistic_spin(struct six_lock *lock, enum six_lock_type type)
+static inline bool six_optimistic_spin(struct six_lock *lock,
+				       struct six_lock_waiter *wait)
 {
 	return false;
 }
@@ -471,9 +406,6 @@ static int __six_lock_type_slowpath(struct six_lock *lock, enum six_lock_type ty
 		atomic64_add(__SIX_VAL(write_locking, 1), &lock->state.counter);
 		smp_mb__after_atomic();
 	}
-
-	if (six_optimistic_spin(lock, type))
-		goto out;
 
 	lock_contended(&lock->dep_map, _RET_IP_);
 
@@ -502,6 +434,9 @@ static int __six_lock_type_slowpath(struct six_lock *lock, enum six_lock_type ty
 		__six_lock_wakeup(lock, -ret - 1);
 		ret = 0;
 	}
+
+	if (six_optimistic_spin(lock, wait))
+		goto out;
 
 	while (1) {
 		set_current_state(TASK_UNINTERRUPTIBLE);
