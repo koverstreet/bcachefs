@@ -1636,19 +1636,19 @@ static void __init get_srmmu_type(void)
 /* Local cross-calls. */
 static void smp_flush_page_for_dma(unsigned long page)
 {
-	xc1((smpfunc_t) local_ops->page_for_dma, page);
+	xc1(local_ops->page_for_dma, page);
 	local_ops->page_for_dma(page);
 }
 
 static void smp_flush_cache_all(void)
 {
-	xc0((smpfunc_t) local_ops->cache_all);
+	xc0(local_ops->cache_all);
 	local_ops->cache_all();
 }
 
 static void smp_flush_tlb_all(void)
 {
-	xc0((smpfunc_t) local_ops->tlb_all);
+	xc0(local_ops->tlb_all);
 	local_ops->tlb_all();
 }
 
