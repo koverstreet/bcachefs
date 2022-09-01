@@ -191,6 +191,7 @@ config DYNAMIC_DEBUG_CORE
 config SYMBOLIC_ERRNAME
 	bool "Support symbolic error names in printf"
 	default y if PRINTK
+	select CODE_TAGGING
 	help
 	  If you say Y here, the kernel's printf implementation will
 	  be able to print symbolic error names such as ENOSPC instead
