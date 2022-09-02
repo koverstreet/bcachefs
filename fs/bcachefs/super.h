@@ -173,7 +173,11 @@ static inline struct bch_dev *bch2_get_next_online_dev(struct bch_fs *c,
  */
 static inline struct bch_dev *bch_dev_bkey_exists(const struct bch_fs *c, unsigned idx)
 {
-	EBUG_ON(idx >= c->sb.nr_devices || !c->devs[idx]);
+
+	if (idx >= c->sb.nr_devices || !c->devs[idx]) {
+		printk("bad bkey %ui", idx);
+		EBUG_ON(1);
+	}
 
 	return rcu_dereference_check(c->devs[idx], 1);
 }
