@@ -544,7 +544,7 @@ again:
 			prt_str(&buf, "failed to evacuate bucket ");
 			bch2_bkey_val_to_text(&buf, c, k);
 
-			bch2_trans_inconsistent(trans, "%s", buf.buf);
+			bch_err(c, "%s", buf.buf);
 			printbuf_exit(&buf);
 		}
 	}

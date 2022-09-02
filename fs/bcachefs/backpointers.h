@@ -10,6 +10,9 @@ void bch2_backpointer_to_text(struct printbuf *, const struct bch_backpointer *)
 void bch2_backpointer_k_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 void bch2_backpointer_swab(struct bkey_s);
 
+struct bpos bp_pos_to_bucket(const struct bch_fs *,
+					   struct bpos);
+
 #define bch2_bkey_ops_backpointer (struct bkey_ops) {	\
 	.key_invalid	= bch2_backpointer_invalid,	\
 	.val_to_text	= bch2_backpointer_k_to_text,	\
