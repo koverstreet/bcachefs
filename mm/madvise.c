@@ -31,6 +31,8 @@
 #include <linux/swapops.h>
 #include <linux/shmem_fs.h>
 #include <linux/mmu_notifier.h>
+#include <linux/stackdepot.h>
+#include <trace/events/kmem.h>
 
 #include <asm/tlb.h>
 
@@ -1328,6 +1330,81 @@ int madvise_set_anon_name(struct mm_struct *mm, unsigned long start,
 				 madvise_vma_anon_name);
 }
 #endif /* CONFIG_ANON_VMA_NAME */
+
+static noinline unsigned long my__get_free_page(unsigned long in1, unsigned long in2, size_t size)
+{
+	depot_stack_handle_t handle;
+
+	if (in2)
+		handle = stack_depot_capture_stack(GFP_KERNEL);
+	switch (in1)
+	{
+	case (1):
+		trace_kmalloc(_RET_IP_, NULL, 0, size, size, GFP_KERNEL);
+		return __get_free_pages(GFP_KERNEL, 0);
+	case (2):
+		return (unsigned long)kmalloc(size, GFP_KERNEL);
+	default:
+		printk("my__get_free_page invoked with args in1=%lu in2=%lu\n",
+			in1, in2);
+		return 0;
+	}
+}
+
+static noinline void my_free_page(unsigned long in1, unsigned long in2, unsigned long addr)
+{
+	switch (in1)
+	{
+	case (1):
+		free_page(addr);
+		break;
+	case (2):
+		kfree((void*)addr);
+		break;
+	default:
+		printk("my_free_page invoked with args in1=%lu in2=%lu\n",
+			in1, in2);
+		break;
+	}
+}
+
+static void init_stack_trace(void)
+{
+	static bool stack_depot_ready;
+
+	if (!stack_depot_ready) {
+		stack_depot_init();
+		stack_depot_capture_init();
+		stack_depot_ready = true;
+	}
+}
+
+#define MADV_TEST 25
+static int alloc_bench(unsigned long in1, unsigned long in2)
+{
+	int i, batch, iter;
+	unsigned long addr[10];
+/*
+	printk("madvise_test(%d) was invoked, start=%lu len_in=%lu\n",
+		MADV_TEST, start, len_in);
+*/
+	init_stack_trace();
+	for (iter = 0; iter < 10; iter++) {
+		size_t size = 8;
+		for (batch = 0; batch < 30; batch++) {
+			for (i = 0; i < 10; i++) {
+				addr[i] = my__get_free_page(in1, in2, size);
+			}
+			for (i = 0; i < 10; i++) {
+				my_free_page(in1, in2, addr[i]);
+			}
+			size += 8;
+		}
+		cond_resched();
+	}
+	return -MADV_TEST;
+}
+
 /*
  * The madvise(2) system call.
  *
@@ -1408,6 +1485,9 @@ int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, int beh
 	struct blk_plug plug;
 
 	start = untagged_addr(start);
+
+	if (behavior == MADV_TEST)
+		return alloc_bench(start, len_in);
 
 	if (!madvise_behavior_valid(behavior))
 		return -EINVAL;
