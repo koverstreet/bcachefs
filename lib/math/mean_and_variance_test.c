@@ -65,8 +65,8 @@ static void stats_basic_test(struct kunit *test)
 }
 
 /*
-** Test values computed using a spreadsheet from the psuedocode at the bottom:
-** https://fanf2.user.srcf.net/hermes/doc/antiforgery/stats.pdf
+ * Test values computed using a spreadsheet from the psuedocode at the bottom:
+ * https://fanf2.user.srcf.net/hermes/doc/antiforgery/stats.pdf
  */
 
 static void stats_ewm_test(struct kunit *test)

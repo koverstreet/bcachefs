@@ -80,7 +80,7 @@ EXPORT_SYMBOL_GPL(mean_and_variance_update);
  */
 inline s64 get_mean(struct mean_and_variance s)
 {
-	return s.sum / s.n;
+	return div64_u64(s.sum, s.n);
 }
 EXPORT_SYMBOL_GPL(get_mean);
 
