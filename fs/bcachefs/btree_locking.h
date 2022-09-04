@@ -339,8 +339,6 @@ static inline int bch2_btree_path_relock(struct btree_trans *trans,
 	return 0;
 }
 
-int bch2_btree_path_relock(struct btree_trans *, struct btree_path *, unsigned long);
-
 /* upgrade */
 
 bool bch2_btree_path_upgrade_noupgrade_sibs(struct btree_trans *,
