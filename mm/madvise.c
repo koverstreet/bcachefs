@@ -1323,6 +1323,64 @@ int madvise_set_anon_name(struct mm_struct *mm, unsigned long start,
 				 madvise_vma_anon_name);
 }
 #endif /* CONFIG_ANON_VMA_NAME */
+
+static noinline unsigned long test_alloc(unsigned long in1, unsigned long in2, size_t size)
+{
+	switch (in1)
+	{
+	case (1):
+		return __get_free_pages(GFP_KERNEL, 0);
+	case (2):
+		return (unsigned long)kmalloc(size, GFP_KERNEL | __GFP_ACCOUNT);
+	default:
+		printk("test_alloc invoked with args in1=%lu in2=%lu\n",
+			in1, in2);
+		return 0;
+	}
+}
+
+static noinline void test_free(unsigned long in1, unsigned long in2, unsigned long addr)
+{
+	switch (in1)
+	{
+	case (1):
+		free_page(addr);
+		break;
+	case (2):
+		kfree((void*)addr);
+		break;
+	default:
+		printk("test_free invoked with args in1=%lu in2=%lu\n",
+			in1, in2);
+		break;
+	}
+}
+
+#define MADV_TEST 25
+static noinline int alloc_bench(unsigned long in1, unsigned long in2)
+{
+	int i, batch, iter;
+	unsigned long addr[10];
+
+	for (iter = 0; iter < 1000000; iter++) {
+		size_t size = 8;
+		for (batch = 0; batch < 30; batch++) {
+			for (i = 0; i < 10; i++) {
+				addr[i] = test_alloc(in1, in2, size);
+			}
+			for (i = 0; i < 10; i++) {
+				test_free(in1, in2, addr[i]);
+			}
+			size += 8;
+		}
+		if (fatal_signal_pending(current))
+			return -EINTR;
+		//cond_resched();
+	}
+
+	return 0;
+}
+
 /*
  * The madvise(2) system call.
  *
@@ -1401,6 +1459,9 @@ int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, int beh
 	int write;
 	size_t len;
 	struct blk_plug plug;
+
+	if (behavior == MADV_TEST)
+		return alloc_bench(start, len_in);
 
 	if (!madvise_behavior_valid(behavior))
 		return -EINVAL;
