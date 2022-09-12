@@ -557,13 +557,13 @@ struct journal_seq_blacklist_table {
 
 struct journal_keys {
 	struct journal_key {
+		u64		journal_seq;
+		u32		journal_offset;
 		enum btree_id	btree_id:8;
 		unsigned	level:8;
 		bool		allocated;
 		bool		overwritten;
 		struct bkey_i	*k;
-		u32		journal_seq;
-		u32		journal_offset;
 	}			*d;
 	/*
 	 * Gap buffer: instead of all the empty space in the array being at the
@@ -573,7 +573,6 @@ struct journal_keys {
 	size_t			gap;
 	size_t			nr;
 	size_t			size;
-	u64			journal_seq_base;
 };
 
 struct btree_path_buf {
