@@ -132,7 +132,7 @@ int bch2_sb_realloc(struct bch_sb_handle *sb, unsigned u64s)
 
 			pr_err("%s: superblock too big: want %zu but have %llu",
 			       bdevname(sb->bdev, buf), new_bytes, max_bytes);
-			return -ENOSPC;
+			return -BCH_ERR_ENOSPC_sb;
 		}
 	}
 
