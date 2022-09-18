@@ -350,17 +350,19 @@ err:
 	bch2_trans_exit(&trans);
 
 	if (ret)
-		return ret;
+		goto out;
 
 	ret = bch2_xattr_list_bcachefs(c, &inode->ei_inode, &buf, false);
 	if (ret)
-		return ret;
+		goto out;
 
 	ret = bch2_xattr_list_bcachefs(c, &inode->ei_inode, &buf, true);
 	if (ret)
-		return ret;
+		goto out;
 
 	return buf.used;
+out:
+	return bch2_err_class(ret);
 }
 
 static int bch2_xattr_get_handler(const struct xattr_handler *handler,
