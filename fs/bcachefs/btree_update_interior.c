@@ -28,6 +28,21 @@ static void bch2_btree_insert_node(struct btree_update *, struct btree_trans *,
 				   struct keylist *, unsigned);
 static void bch2_btree_update_add_new_node(struct btree_update *, struct btree *);
 
+static struct btree_path *get_unlocked_mut_path(struct btree_trans *trans,
+						enum btree_id btree_id,
+						unsigned level,
+						struct bpos pos)
+{
+	struct btree_path *path;
+
+	path = bch2_path_get(trans, btree_id, pos, level + 1, level,
+			     BTREE_ITER_INTENT, _THIS_IP_);
+	path = bch2_btree_path_make_mut(trans, path, true, _THIS_IP_);
+	bch2_btree_path_downgrade(trans, path);
+	__bch2_btree_path_unlock(trans, path);
+	return path;
+}
+
 /* Debug code: */
 
 /*
@@ -617,7 +632,10 @@ static void btree_update_nodes_written(struct btree_update *as)
 			     "error %i in btree_update_nodes_written()", ret);
 err:
 	if (as->b) {
+		struct btree_path *path;
+
 		b = as->b;
+		path = get_unlocked_mut_path(&trans, as->btree_id, b->c.level, b->key.k.p);
 		/*
 		 * @b is the node we did the final insert into:
 		 *
@@ -631,7 +649,11 @@ err:
 		 */
 
 		btree_node_lock_nopath_nofail(&trans, &b->c, SIX_LOCK_intent);
-		btree_node_lock_nopath_nofail(&trans, &b->c, SIX_LOCK_write);
+		mark_btree_node_locked(&trans, path, b->c.level, SIX_LOCK_intent);
+		bch2_btree_path_level_init(&trans, path, b);
+
+		bch2_btree_node_lock_write_nofail(&trans, path, &b->c);
+
 		mutex_lock(&c->btree_interior_update_lock);
 
 		list_del(&as->write_blocked_list);
@@ -665,10 +687,13 @@ err:
 		}
 
 		mutex_unlock(&c->btree_interior_update_lock);
+
+		mark_btree_node_locked_noreset(path, b->c.level, SIX_LOCK_intent);
 		six_unlock_write(&b->c.lock);
 
 		btree_node_write_if_need(c, b, SIX_LOCK_intent);
-		six_unlock_intent(&b->c.lock);
+		btree_node_unlock(&trans, path, b->c.level);
+		bch2_path_put(&trans, path, true);
 	}
 
 	bch2_journal_pin_drop(&c->journal, &as->journal);
@@ -1418,21 +1443,6 @@ static void btree_split_insert_keys(struct btree_update *as,
 	       b->nr.live_u64s != le16_to_cpu(btree_bset_first(b)->u64s));
 
 	btree_node_interior_verify(as->c, b);
-}
-
-static struct btree_path *get_unlocked_mut_path(struct btree_trans *trans,
-						enum btree_id btree_id,
-						unsigned level,
-						struct bpos pos)
-{
-	struct btree_path *path;
-
-	path = bch2_path_get(trans, btree_id, pos, level + 1, level,
-			     BTREE_ITER_INTENT, _THIS_IP_);
-	path = bch2_btree_path_make_mut(trans, path, true, _THIS_IP_);
-	bch2_btree_path_downgrade(trans, path);
-	__bch2_btree_path_unlock(trans, path);
-	return path;
 }
 
 static void btree_split(struct btree_update *as, struct btree_trans *trans,
