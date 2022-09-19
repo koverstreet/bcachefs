@@ -36,6 +36,7 @@ static struct btree_path *get_unlocked_mut_path(struct btree_trans *trans,
 	struct btree_path *path;
 
 	path = bch2_path_get(trans, btree_id, pos, level + 1, level,
+			     BTREE_ITER_NOPRESERVE|
 			     BTREE_ITER_INTENT, _THIS_IP_);
 	path = bch2_btree_path_make_mut(trans, path, true, _THIS_IP_);
 	bch2_btree_path_downgrade(trans, path);
