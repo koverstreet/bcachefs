@@ -87,23 +87,34 @@ static noinline void print_cycle(struct printbuf *out, struct lock_graph *g)
 		bch2_btree_trans_to_text(out, i->trans);
 }
 
+static int abort_lock(struct lock_graph *g, struct trans_waiting_for_lock *i)
+{
+	if (i == g->g) {
+		trace_and_count(i->trans->c, trans_restart_would_deadlock, i->trans, _RET_IP_);
+		return btree_trans_restart(i->trans, BCH_ERR_transaction_restart_would_deadlock);
+	} else {
+		i->trans->lock_must_abort = true;
+		wake_up_process(i->trans->locking_wait.task);
+		return 1;
+	}
+}
+
 static noinline int break_cycle(struct lock_graph *g)
 {
-	struct btree_trans *orig_trans = g->g->trans;
 	struct trans_waiting_for_lock *i;
+
+	for (i = g->g; i < g->g + g->nr; i++) {
+		if (i->trans->lock_may_not_fail || i->trans->in_traverse_all)
+			continue;
+
+		return abort_lock(g, i);
+	}
 
 	for (i = g->g; i < g->g + g->nr; i++) {
 		if (i->trans->lock_may_not_fail)
 			continue;
 
-		if (i == g->g) {
-			trace_and_count(orig_trans->c, trans_restart_would_deadlock, orig_trans, _RET_IP_);
-			return btree_trans_restart(orig_trans, BCH_ERR_transaction_restart_would_deadlock);
-		}
-
-		i->trans->lock_must_abort = true;
-		wake_up_process(i->trans->locking_wait.task);
-		return 1;
+		return abort_lock(g, i);
 	}
 
 	BUG();
