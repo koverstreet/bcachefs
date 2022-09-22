@@ -135,13 +135,14 @@ static int lock_graph_descend(struct lock_graph *g, struct btree_trans *trans,
 			}
 
 		if (i->trans == trans) {
-			/* Only checking: */
 			if (cycle) {
+				/* Only checking: */
 				print_cycle(cycle, g);
-				return 1;
+				ret = -1;
+			} else {
+				ret = break_cycle(g);
 			}
 
-			ret = break_cycle(g);
 			goto deadlock;
 		}
 	}
