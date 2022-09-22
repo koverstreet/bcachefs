@@ -100,16 +100,6 @@ int pud_huge(pud_t pud)
 #endif
 }
 
-/*
- * Select all bits except the pfn
- */
-static inline pgprot_t pte_pgprot(pte_t pte)
-{
-	unsigned long pfn = pte_pfn(pte);
-
-	return __pgprot(pte_val(pfn_pte(pfn, __pgprot(0))) ^ pte_val(pte));
-}
-
 static int find_num_contig(struct mm_struct *mm, unsigned long addr,
 			   pte_t *ptep, size_t *pgsize)
 {
@@ -211,6 +201,19 @@ static pte_t get_clear_contig(struct mm_struct *mm,
 		if (pte_young(pte))
 			orig_pte = pte_mkyoung(orig_pte);
 	}
+	return orig_pte;
+}
+
+static pte_t get_clear_contig_flush(struct mm_struct *mm,
+				    unsigned long addr,
+				    pte_t *ptep,
+				    unsigned long pgsize,
+				    unsigned long ncontig)
+{
+	pte_t orig_pte = get_clear_contig(mm, addr, ptep, pgsize, ncontig);
+	struct vm_area_struct vma = TLB_FLUSH_VMA(mm, 0);
+
+	flush_tlb_range(&vma, addr, addr + (pgsize * ncontig));
 	return orig_pte;
 }
 
@@ -447,19 +450,20 @@ int huge_ptep_set_access_flags(struct vm_area_struct *vma,
 	int ncontig, i;
 	size_t pgsize = 0;
 	unsigned long pfn = pte_pfn(pte), dpfn;
+	struct mm_struct *mm = vma->vm_mm;
 	pgprot_t hugeprot;
 	pte_t orig_pte;
 
 	if (!pte_cont(pte))
 		return ptep_set_access_flags(vma, addr, ptep, pte, dirty);
 
-	ncontig = find_num_contig(vma->vm_mm, addr, ptep, &pgsize);
+	ncontig = find_num_contig(mm, addr, ptep, &pgsize);
 	dpfn = pgsize >> PAGE_SHIFT;
 
 	if (!__cont_access_flags_changed(ptep, pte, ncontig))
 		return 0;
 
-	orig_pte = get_clear_contig(vma->vm_mm, addr, ptep, pgsize, ncontig);
+	orig_pte = get_clear_contig_flush(mm, addr, ptep, pgsize, ncontig);
 
 	/* Make sure we don't lose the dirty or young state */
 	if (pte_dirty(orig_pte))
@@ -470,7 +474,7 @@ int huge_ptep_set_access_flags(struct vm_area_struct *vma,
 
 	hugeprot = pte_pgprot(pte);
 	for (i = 0; i < ncontig; i++, ptep++, addr += pgsize, pfn += dpfn)
-		set_pte_at(vma->vm_mm, addr, ptep, pfn_pte(pfn, hugeprot));
+		set_pte_at(mm, addr, ptep, pfn_pte(pfn, hugeprot));
 
 	return 1;
 }
@@ -492,7 +496,7 @@ void huge_ptep_set_wrprotect(struct mm_struct *mm,
 	ncontig = find_num_contig(mm, addr, ptep, &pgsize);
 	dpfn = pgsize >> PAGE_SHIFT;
 
-	pte = get_clear_contig(mm, addr, ptep, pgsize, ncontig);
+	pte = get_clear_contig_flush(mm, addr, ptep, pgsize, ncontig);
 	pte = pte_wrprotect(pte);
 
 	hugeprot = pte_pgprot(pte);
@@ -505,17 +509,15 @@ void huge_ptep_set_wrprotect(struct mm_struct *mm,
 pte_t huge_ptep_clear_flush(struct vm_area_struct *vma,
 			    unsigned long addr, pte_t *ptep)
 {
+	struct mm_struct *mm = vma->vm_mm;
 	size_t pgsize;
 	int ncontig;
-	pte_t orig_pte;
 
 	if (!pte_cont(READ_ONCE(*ptep)))
 		return ptep_clear_flush(vma, addr, ptep);
 
-	ncontig = find_num_contig(vma->vm_mm, addr, ptep, &pgsize);
-	orig_pte = get_clear_contig(vma->vm_mm, addr, ptep, pgsize, ncontig);
-	flush_tlb_range(vma, addr, addr + pgsize * ncontig);
-	return orig_pte;
+	ncontig = find_num_contig(mm, addr, ptep, &pgsize);
+	return get_clear_contig_flush(mm, addr, ptep, pgsize, ncontig);
 }
 
 static int __init hugetlbpage_init(void)

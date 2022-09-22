@@ -71,7 +71,8 @@ static int generic_remap_checks(struct file *file_in, loff_t pos_in,
 	 * Otherwise, make sure the count is also block-aligned, having
 	 * already confirmed the starting offsets' block alignment.
 	 */
-	if (pos_in + count == size_in) {
+	if (pos_in + count == size_in &&
+	    (!(remap_flags & REMAP_FILE_DEDUP) || pos_out + count == size_out)) {
 		bcount = ALIGN(size_in, bs) - pos_in;
 	} else {
 		if (!IS_ALIGNED(count, bs))
@@ -148,16 +149,7 @@ static int generic_remap_check_len(struct inode *inode_in,
 /* Read a page's worth of file data into the page cache. */
 static struct folio *vfs_dedupe_get_folio(struct file *file, loff_t pos)
 {
-	struct folio *folio;
-
-	folio = read_mapping_folio(file->f_mapping, pos >> PAGE_SHIFT, file);
-	if (IS_ERR(folio))
-		return folio;
-	if (!folio_test_uptodate(folio)) {
-		folio_put(folio);
-		return ERR_PTR(-EIO);
-	}
-	return folio;
+	return read_mapping_folio(file->f_mapping, pos >> PAGE_SHIFT, file);
 }
 
 /*

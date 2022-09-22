@@ -4788,8 +4788,13 @@ again:
 			 * sharing with another vma.
 			 */
 			;
-		} else if (unlikely(is_hugetlb_entry_migration(entry) ||
-				    is_hugetlb_entry_hwpoisoned(entry))) {
+		} else if (unlikely(is_hugetlb_entry_hwpoisoned(entry))) {
+			bool uffd_wp = huge_pte_uffd_wp(entry);
+
+			if (!userfaultfd_wp(dst_vma) && uffd_wp)
+				entry = huge_pte_clear_uffd_wp(entry);
+			set_huge_pte_at(dst, addr, dst_pte, entry);
+		} else if (unlikely(is_hugetlb_entry_migration(entry))) {
 			swp_entry_t swp_entry = pte_to_swp_entry(entry);
 			bool uffd_wp = huge_pte_uffd_wp(entry);
 
@@ -5414,19 +5419,25 @@ static bool hugetlbfs_pagecache_present(struct hstate *h,
 int huge_add_to_page_cache(struct page *page, struct address_space *mapping,
 			   pgoff_t idx)
 {
+	struct folio *folio = page_folio(page);
 	struct inode *inode = mapping->host;
 	struct hstate *h = hstate_inode(inode);
-	int err = add_to_page_cache(page, mapping, idx, GFP_KERNEL);
+	int err;
 
-	if (err)
+	__folio_set_locked(folio);
+	err = __filemap_add_folio(mapping, folio, idx, GFP_KERNEL, NULL);
+
+	if (unlikely(err)) {
+		__folio_clear_locked(folio);
 		return err;
+	}
 	ClearHPageRestoreReserve(page);
 
 	/*
-	 * set page dirty so that it will not be removed from cache/file
+	 * mark folio dirty so that it will not be removed from cache/file
 	 * by non-hugetlbfs specific code paths.
 	 */
-	set_page_dirty(page);
+	folio_mark_dirty(folio);
 
 	spin_lock(&inode->i_lock);
 	inode->i_blocks += blocks_per_huge_page(h);
@@ -5947,6 +5958,7 @@ int hugetlb_mcopy_atomic_pte(struct mm_struct *dst_mm,
 
 		page = alloc_huge_page(dst_vma, dst_addr, 0);
 		if (IS_ERR(page)) {
+			put_page(*pagep);
 			ret = -ENOMEM;
 			*pagep = NULL;
 			goto out;

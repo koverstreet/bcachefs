@@ -50,6 +50,7 @@
 			riscv,isa = "rv64imafdc";
 			clocks = <&clkcfg CLK_CPU>;
 			tlb-split;
+			next-level-cache = <&cctrllr>;
 			status = "okay";
 
 			cpu1_intc: interrupt-controller {
@@ -77,6 +78,7 @@
 			riscv,isa = "rv64imafdc";
 			clocks = <&clkcfg CLK_CPU>;
 			tlb-split;
+			next-level-cache = <&cctrllr>;
 			status = "okay";
 
 			cpu2_intc: interrupt-controller {
@@ -104,6 +106,7 @@
 			riscv,isa = "rv64imafdc";
 			clocks = <&clkcfg CLK_CPU>;
 			tlb-split;
+			next-level-cache = <&cctrllr>;
 			status = "okay";
 
 			cpu3_intc: interrupt-controller {
@@ -131,6 +134,7 @@
 			riscv,isa = "rv64imafdc";
 			clocks = <&clkcfg CLK_CPU>;
 			tlb-split;
+			next-level-cache = <&cctrllr>;
 			status = "okay";
 			cpu4_intc: interrupt-controller {
 				#interrupt-cells = <1>;
@@ -336,6 +340,24 @@
 			interrupts = <61>;
 			clocks = <&clkcfg CLK_I2C1>;
 			clock-frequency = <100000>;
+			status = "disabled";
+		};
+
+		can0: can@2010c000 {
+			compatible = "microchip,mpfs-can";
+			reg = <0x0 0x2010c000 0x0 0x1000>;
+			clocks = <&clkcfg CLK_CAN0>;
+			interrupt-parent = <&plic>;
+			interrupts = <56>;
+			status = "disabled";
+		};
+
+		can1: can@2010d000 {
+			compatible = "microchip,mpfs-can";
+			reg = <0x0 0x2010d000 0x0 0x1000>;
+			clocks = <&clkcfg CLK_CAN1>;
+			interrupt-parent = <&plic>;
+			interrupts = <57>;
 			status = "disabled";
 		};
 
