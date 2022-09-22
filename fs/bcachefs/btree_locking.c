@@ -89,14 +89,19 @@ static noinline void print_cycle(struct printbuf *out, struct lock_graph *g)
 
 static int abort_lock(struct lock_graph *g, struct trans_waiting_for_lock *i)
 {
+	int ret;
+
 	if (i == g->g) {
 		trace_and_count(i->trans->c, trans_restart_would_deadlock, i->trans, _RET_IP_);
-		return btree_trans_restart(i->trans, BCH_ERR_transaction_restart_would_deadlock);
+		ret = btree_trans_restart(i->trans, BCH_ERR_transaction_restart_would_deadlock);
 	} else {
 		i->trans->lock_must_abort = true;
-		wake_up_process(i->trans->locking_wait.task);
-		return 1;
+		ret = 1;
 	}
+
+	for (i = g->g + 1; i < g->g + g->nr; i++)
+		wake_up_process(i->trans->locking_wait.task);
+	return ret;
 }
 
 static noinline int break_cycle(struct lock_graph *g)
