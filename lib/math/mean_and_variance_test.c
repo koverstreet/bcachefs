@@ -30,12 +30,12 @@ static void mean_and_variance_basic_test(struct kunit *test)
 	s = mean_and_variance_update(s, SQRT_U64_MAX);
 
 	KUNIT_EXPECT_EQ_MSG(test,
-			    s.sum_squares,
+			    s.sum_squares.lo,
 			    MAX_SQR,
 			    "%llu == %llu, sqrt: %llu == %llu",
-			    s.sum_squares,
+			    s.sum_squares.lo,
 			    MAX_SQR,
-			    int_sqrt64(s.sum_squares),
+			    int_sqrt64(s.sum_squares.lo),
 			    SQRT_U64_MAX);
 
 	s = (struct mean_and_variance){};
@@ -43,25 +43,25 @@ static void mean_and_variance_basic_test(struct kunit *test)
 	s = mean_and_variance_update(s, -(s64)SQRT_U64_MAX);
 
 	KUNIT_EXPECT_EQ_MSG(test,
-			    s.sum_squares,
+			    s.sum_squares.lo,
 			    MAX_SQR,
 			    "%llu == %llu, sqrt: %llu == %llu",
-			    s.sum_squares,
+			    s.sum_squares.lo,
 			    MAX_SQR,
-			    int_sqrt64(s.sum_squares),
+			    int_sqrt64(s.sum_squares.lo),
 			    SQRT_U64_MAX);
 
 	s = (struct mean_and_variance){};
 
 	s = mean_and_variance_update(s, (SQRT_U64_MAX + 1));
 
-	KUNIT_EXPECT_EQ(test, s.sum_squares, MAX_SQR);
+	KUNIT_EXPECT_EQ(test, s.sum_squares.lo, MAX_SQR);
 
 	s = (struct mean_and_variance){};
 
 	s = mean_and_variance_update(s, (-(s64)SQRT_U64_MAX) - 1);
 
-	KUNIT_EXPECT_EQ(test, s.sum_squares, MAX_SQR);
+	KUNIT_EXPECT_EQ(test, s.sum_squares.lo, MAX_SQR);
 }
 
 /*
@@ -145,16 +145,49 @@ static void mean_and_variance_fast_divpow2(struct kunit *test)
 	}
 }
 
+static void mean_and_variance_u128_test(struct kunit *test)
+{
+	u128 a = u128_init(0, U64_MAX);
+	u128 a0 = u128_init(0, 0);
+	u128 a1 = u128_init(0, 1);
+	u128 a2 = u128_init(0, 2);
+	u128 b = u128_init(1, 0);
+	u128 c = u128_init(0, 1LLU << 63);
+
+	KUNIT_EXPECT_EQ(test, u128_add(a,a1).hi, 1);
+	KUNIT_EXPECT_EQ(test, u128_add(a,a1).lo, 0);
+	KUNIT_EXPECT_EQ(test, u128_sub(b,a1).lo, U64_MAX);
+	KUNIT_EXPECT_EQ(test, u128_sub(b,a1).hi, 0);
+
+	KUNIT_EXPECT_EQ(test, u128_shl(c, 1).hi, 1 );
+	KUNIT_EXPECT_EQ(test, u128_shl(c, 1).lo, 0 );
+
+	KUNIT_EXPECT_EQ(test, u128_square(1).hi, 0);
+	KUNIT_EXPECT_EQ(test, u128_square(1).lo, 1);
+
+	KUNIT_EXPECT_EQ(test, u128_square(0).hi, 0);
+	KUNIT_EXPECT_EQ(test, u128_square(0).lo, 0);
+
+	KUNIT_EXPECT_EQ(test, u128_square(2).lo, 4);
+
+	KUNIT_EXPECT_EQ(test, u128_square(U64_MAX).hi, U64_MAX);
+	KUNIT_EXPECT_EQ(test, u128_square(U64_MAX).lo, 1);
+
+
+	KUNIT_EXPECT_EQ(test, u128_div(b, 2).lo, 1LLU << 63);
+}
+
 static struct kunit_case mean_and_variance_test_cases[] = {
+	KUNIT_CASE(mean_and_variance_fast_divpow2),
+	KUNIT_CASE(mean_and_variance_u128_test),
 	KUNIT_CASE(mean_and_variance_basic_test),
 	KUNIT_CASE(mean_and_variance_weighted_test),
 	KUNIT_CASE(mean_and_variance_weighted_advanced_test),
-	KUNIT_CASE(mean_and_variance_fast_divpow2),
 	{}
 };
 
 static struct kunit_suite mean_and_variance_test_suite = {
-.name = "statistics",
+.name = "mean and variance tests",
 .test_cases = mean_and_variance_test_cases
 };
 

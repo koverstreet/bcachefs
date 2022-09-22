@@ -57,6 +57,16 @@ inline s64 fast_divpow2(s64 n, u8 d)
 	return (n + ((n < 0) ? ((1 << d) - 1) : 0)) >> d; // + (n < 0 ? 1 : 0);
 }
 
+/*
+inline u128 u128_mul(u128 a, u128 b)
+{
+	u32 a1 = a.lo, a2 = a.lo >> 32, a3 = a.hi, a4 = a.hi >> 32;
+	u32 b1 = b.lo, b2 = b.lo >> 32, b3 = b.hi, b4 = b.hi >> 32;
+
+
+	a1 * b1 + (a2 * b1) << 32 + (a1 + b2) << 32 + a2 * b2)
+}
+*/
 /**
  * mean_and_variance_update() - update a mean_and_variance struct @s1 with a new sample @v1
  * and return it.
@@ -70,14 +80,15 @@ struct mean_and_variance mean_and_variance_update(struct mean_and_variance s1, s
 	struct mean_and_variance s2;
 	u64 v2 = abs(v1);
 
+	/*
 	if (v2 > SQRT_U64_MAX) {
 		v2 = SQRT_U64_MAX;
 		WARN(true, "stats overflow! %lld^2 > U64_MAX", v1);
 	}
-
+	*/
 	s2.n           = s1.n + 1;
 	s2.sum         = s1.sum + v1;
-	s2.sum_squares = s1.sum_squares + v2*v2;
+	s2.sum_squares = u128_add(s1.sum_squares, u128_square(v2));
 	return s2;
 }
 EXPORT_SYMBOL_GPL(mean_and_variance_update);
@@ -98,11 +109,11 @@ EXPORT_SYMBOL_GPL(mean_and_variance_get_mean);
  */
 u64 mean_and_variance_get_variance(struct mean_and_variance s1)
 {
-	u64 s2 = s1.sum_squares / s1.n;
-	u64 s3 = abs(mean_and_variance_get_mean(s1));
+	u128 s2 = u128_div(s1.sum_squares,s1.n);
+	u64  s3 = abs(mean_and_variance_get_mean(s1));
 
-	WARN(s3 > SQRT_U64_MAX, "stats overflow %lld ^2 > S64_MAX", s3);
-	return s2 - s3*s3;
+	// WARN(s3 > SQRT_U64_MAX, "stats overflow %llu ^2 > S64_MAX", (u64)(s3 >> 64));
+	return u128_sub(s2, u128_square(s3)).lo;
 }
 EXPORT_SYMBOL_GPL(mean_and_variance_get_variance);
 
