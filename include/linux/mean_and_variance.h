@@ -20,9 +20,9 @@ typedef struct {
 	u64 lo;
 } u128;
 
-static inline u128 u128_init(u64 a, u64 b)
+static inline u128 u64_to_128(u64 a)
 {
-	return (u128){ .hi = a, .lo = b };
+	return (u128){ lo = a };
 }
 
 static inline u128 u128_add(u128 a, u128 b)
@@ -40,33 +40,29 @@ static inline u128 u128_sub(u128 a, u128 b)
 	c.hi = a.hi - (b.hi + c.lo > a.lo);
 	return c;
 }
-static inline u128 u128_shl(u128 i, s8 s1) {
+
+static inline u128 u128_shl(u128 i, s8 shift)
+{
 	u128 r;
-	s8   s2 = 64 - s1;
-	r.lo = i.lo << s1;
-	r.hi = (i.hi << s1) + (i.lo >> s2);
+	if (shift < 64) {
+		r.lo = i.lo << s1;
+		r.hi = (i.hi << s1) + (i.lo >> (64 - shift));
+	} else {
+		r.lo = 0;
+		r.hi = i.lo << (shift - 64);
+	}
 	return r;
 }
 
-static inline u128 u128_square(u64 i)
+static inline u128 u128_square(u64 x)
 {
-	u128 r;
-	u64  h = i >> 32, l = i & (u64)U32_MAX;
-	u64  x;
-	// overflows:
-	//
-	// ( (a*a) << 128) + (( a*b) << 97) + ((a*c) << 65) + ((b*b) << 65)
-	printk("square %llu", i);
-	printk("h = %llu, l = %llu\n", h, l);
-	r = u128_init(h*h, 0);
-	x = h*l;
-	printk("hi = %llu, x = %llu, x >> 31 = %llu\n", r.hi, x, x >> 31);
-	r = u128_add(r, u128_shl(u128_init(0,x), 33));
-	printk("hi = %llu, lo = %llu\n", r.hi, r.lo);
-	x = l*l;
-	printk("x = %llu\n", x);
-	r = u128_add(r, u128_init(0, x));
-	printk("hi = %llu, lo = %llu\n", r.hi, r.lo);
+	u128 r = { 0 };
+	u64  x0 = i >> 32, 0 = i & (u64)U32_MAX;
+
+	r = u128_add(r, u128_shl(u64_to_u128(x0 * x0), 0));
+	r = u128_add(r, u128_shl(u64_to_u128(x0 * x1), 32));
+	r = u128_add(r, u128_shl(u64_to_u128(x0 * x1), 32));
+	r = u128_add(r, u128_shl(u64_to_u128(x1 * x1), 64));
 	return r;
 }
 
