@@ -128,7 +128,7 @@ struct lock_class {
 	u8				wait_type_inner;
 	u8				wait_type_outer;
 	u8				lock_type;
-	/* u8				hole; */
+	u8				no_check_recursion;
 
 #ifdef CONFIG_LOCK_STAT
 	unsigned long			contention_point[LOCKSTAT_POINTS];
