@@ -676,10 +676,16 @@ EXPORT_SYMBOL_GPL(six_lock_increment);
 void six_lock_wakeup_all(struct six_lock *lock)
 {
 	union six_lock_state state = lock->state;
+	struct six_lock_waiter *w;
 
 	six_lock_wakeup(lock, state, SIX_LOCK_read);
 	six_lock_wakeup(lock, state, SIX_LOCK_intent);
 	six_lock_wakeup(lock, state, SIX_LOCK_write);
+
+	raw_spin_lock(&lock->wait_lock);
+	list_for_each_entry(w, &lock->wait_list, list)
+		wake_up_process(w->task);
+	raw_spin_unlock(&lock->wait_lock);
 }
 EXPORT_SYMBOL_GPL(six_lock_wakeup_all);
 
