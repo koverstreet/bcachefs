@@ -120,6 +120,7 @@ struct six_lock_waiter {
 	struct task_struct	*task;
 	enum six_lock_type	lock_want;
 	bool			lock_acquired;
+	u64			start_time;
 };
 
 typedef int (*six_lock_should_sleep_fn)(struct six_lock *lock, void *);
