@@ -193,13 +193,16 @@ static inline int __btree_node_lock_nopath(struct btree_trans *trans,
 					 enum six_lock_type type,
 					 bool lock_may_not_fail)
 {
+	int ret;
 	trans->lock_may_not_fail = lock_may_not_fail;
 	trans->lock_must_abort	= false;
-	trans->lock_start_time	= local_clock();
 	trans->locking		= b;
 
-	return six_lock_type_waiter(&b->lock, type, &trans->locking_wait,
-				    bch2_six_check_for_deadlock, trans);
+	ret = six_lock_type_waiter(&b->lock, type, &trans->locking_wait,
+				   bch2_six_check_for_deadlock, trans);
+	WRITE_ONCE(trans->locking, NULL);
+	WRITE_ONCE(trans->locking_wait.start_time, 0);
+	return ret;
 }
 
 static inline int __must_check

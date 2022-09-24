@@ -395,7 +395,6 @@ struct btree_trans {
 
 	u8			lock_may_not_fail;
 	u8			lock_must_abort;
-	u64			lock_start_time;
 	struct btree_bkey_cached_common *locking;
 	struct six_lock_waiter	locking_wait;
 

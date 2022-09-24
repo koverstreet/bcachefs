@@ -67,7 +67,7 @@ struct trans_waiting_for_lock {
 };
 
 struct lock_graph {
-	struct trans_waiting_for_lock	g[4];
+	struct trans_waiting_for_lock	g[8];
 	unsigned			nr;
 };
 
@@ -96,7 +96,7 @@ static int abort_lock(struct lock_graph *g, struct trans_waiting_for_lock *i)
 		ret = btree_trans_restart(i->trans, BCH_ERR_transaction_restart_would_deadlock);
 	} else {
 		i->trans->lock_must_abort = true;
-		ret = 1;
+		ret = 0;
 	}
 
 	for (i = g->g + 1; i < g->g + g->nr; i++)
@@ -157,11 +157,19 @@ static int lock_graph_descend(struct lock_graph *g, struct btree_trans *trans,
 				ret = break_cycle(g);
 			}
 
-			goto deadlock;
+			if (ret)
+				goto deadlock;
+			/*
+			 * If we didn't abort (instead telling another
+			 * transaction to abort), keep checking:
+			 */
 		}
 	}
 
 	if (g->nr == ARRAY_SIZE(g->g)) {
+		if (orig_trans->lock_may_not_fail)
+			return 0;
+
 		trace_and_count(trans->c, trans_restart_would_deadlock_recursion_limit, trans, _RET_IP_);
 		ret = btree_trans_restart(orig_trans, BCH_ERR_transaction_restart_deadlock_recursion_limit);
 		goto deadlock;
@@ -186,10 +194,13 @@ static noinline void lock_graph_remove_non_waiters(struct lock_graph *g)
 {
 	struct trans_waiting_for_lock *i;
 
-	for (i = g->g; i < g->g + g->nr; i++)
-		if (i->trans->locking != i->node_want)
+	for (i = g->g + 1; i < g->g + g->nr; i++)
+		if (i->trans->locking != i->node_want ||
+		    i->trans->locking_wait.start_time != i[-1].lock_start_time) {
 			while (g->g + g->nr >= i)
 				lock_graph_pop(g);
+			return;
+		}
 	BUG();
 }
 
@@ -234,7 +245,6 @@ next:
 		     top->level < BTREE_MAX_DEPTH;
 		     top->level++, top->lock_start_time = 0) {
 			int lock_held = btree_node_locked_type(path, top->level);
-			struct btree_trans *prev = NULL;
 
 			if (lock_held == BTREE_NODE_UNLOCKED)
 				continue;
@@ -253,23 +263,11 @@ next:
 			list_for_each_entry(trans, &b->lock.wait_list, locking_wait.list) {
 				BUG_ON(b != trans->locking);
 
-				/*
-				 * We need transactions on waitlists to be
-				 * strictly ordered by lock_start_time, since we
-				 * use it as a cursor, Since adding to the
-				 * waitlist is done in the six lock code and
-				 * might race, fix up if necessary here:
-				 */
-				if (prev &&
-				    time_before_eq64(trans->lock_start_time, prev->lock_start_time))
-					trans->lock_start_time = prev->lock_start_time + 1;
-				prev = trans;
-
 				if (top->lock_start_time &&
-				    time_after_eq64(top->lock_start_time, trans->lock_start_time))
+				    time_after_eq64(top->lock_start_time, trans->locking_wait.start_time))
 					continue;
 
-				top->lock_start_time = trans->lock_start_time;
+				top->lock_start_time = trans->locking_wait.start_time;
 
 				/* Don't check for self deadlock: */
 				if (trans == top->trans ||
