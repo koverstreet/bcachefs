@@ -310,7 +310,7 @@ bch2_btree_node_lock_write(struct btree_trans *trans,
 
 bool bch2_btree_path_relock_norestart(struct btree_trans *,
 				      struct btree_path *, unsigned long);
-bool __bch2_btree_node_relock(struct btree_trans *, struct btree_path *, unsigned);
+bool __bch2_btree_node_relock(struct btree_trans *, struct btree_path *, unsigned, bool trace);
 
 static inline bool bch2_btree_node_relock(struct btree_trans *trans,
 					  struct btree_path *path, unsigned level)
@@ -321,7 +321,19 @@ static inline bool bch2_btree_node_relock(struct btree_trans *trans,
 
 	return likely(btree_node_locked(path, level)) ||
 		(!IS_ERR_OR_NULL(path->l[level].b) &&
-		 __bch2_btree_node_relock(trans, path, level));
+		 __bch2_btree_node_relock(trans, path, level, true));
+}
+
+static inline bool bch2_btree_node_relock_notrace(struct btree_trans *trans,
+						  struct btree_path *path, unsigned level)
+{
+	EBUG_ON(btree_node_locked(path, level) &&
+		!btree_node_write_locked(path, level) &&
+		btree_node_locked_type(path, level) != __btree_lock_want(path, level));
+
+	return likely(btree_node_locked(path, level)) ||
+		(!IS_ERR_OR_NULL(path->l[level].b) &&
+		 __bch2_btree_node_relock(trans, path, level, false));
 }
 
 static inline int bch2_btree_path_relock(struct btree_trans *trans,
