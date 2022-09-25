@@ -1354,7 +1354,7 @@ void bch2_dump_trans_updates(struct btree_trans *trans)
 	struct printbuf buf = PRINTBUF;
 
 	bch2_trans_updates_to_text(&buf, trans);
-	bch_err(trans->c, "%s", buf.buf);
+	bch2_print_string_as_lines(KERN_ERR, buf.buf);
 	printbuf_exit(&buf);
 }
 
@@ -1390,11 +1390,10 @@ void bch2_dump_trans_paths_updates(struct btree_trans *trans)
 	struct printbuf buf = PRINTBUF;
 
 	bch2_trans_paths_to_text(&buf, trans);
+	bch2_trans_updates_to_text(&buf, trans);
 
-	printk(KERN_ERR "%s", buf.buf);
+	bch2_print_string_as_lines(KERN_ERR, buf.buf);
 	printbuf_exit(&buf);
-
-	bch2_dump_trans_updates(trans);
 }
 
 noinline
