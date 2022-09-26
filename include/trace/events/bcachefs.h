@@ -511,22 +511,29 @@ DEFINE_EVENT(bch_fs, gc_gens_end,
 /* Allocator */
 
 TRACE_EVENT(bucket_alloc,
-	TP_PROTO(struct bch_dev *ca, const char *alloc_reserve),
-	TP_ARGS(ca, alloc_reserve),
+	TP_PROTO(struct bch_dev *ca, const char *alloc_reserve,
+		 bool user, u64 bucket),
+	TP_ARGS(ca, alloc_reserve, user, bucket),
 
 	TP_STRUCT__entry(
 		__field(dev_t,			dev	)
 		__array(char,	reserve,	16	)
+		__field(bool,			user	)
+		__field(u64,			bucket	)
 	),
 
 	TP_fast_assign(
 		__entry->dev		= ca->dev;
 		strlcpy(__entry->reserve, alloc_reserve, sizeof(__entry->reserve));
+		__entry->user		= user;
+		__entry->bucket		= bucket;
 	),
 
-	TP_printk("%d,%d reserve %s",
+	TP_printk("%d,%d reserve %s user %u bucket %llu",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
-		  __entry->reserve)
+		  __entry->reserve,
+		  __entry->user,
+		  __entry->bucket)
 );
 
 TRACE_EVENT(bucket_alloc_fail,
@@ -556,7 +563,7 @@ TRACE_EVENT(bucket_alloc_fail,
 		__field(u64,			need_journal_commit	)
 		__field(u64,			nouse			)
 		__field(bool,			nonblocking		)
-		__array(char,			err,	16		)
+		__array(char,			err,	32		)
 	),
 
 	TP_fast_assign(
