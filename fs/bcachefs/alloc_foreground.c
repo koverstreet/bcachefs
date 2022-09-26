@@ -268,7 +268,6 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 
 	spin_unlock(&c->freelist_lock);
 
-	trace_and_count(c, bucket_alloc, ca, bch2_alloc_reserves[reserve]);
 	return ob;
 }
 
@@ -575,7 +574,10 @@ err:
 	if (!ob)
 		ob = ERR_PTR(-BCH_ERR_no_buckets_found);
 
-	if (IS_ERR(ob))
+	if (!IS_ERR(ob))
+		trace_and_count(c, bucket_alloc, ca, bch2_alloc_reserves[reserve],
+				may_alloc_partial, ob->bucket);
+	else
 		trace_and_count(c, bucket_alloc_fail,
 				ca, bch2_alloc_reserves[reserve],
 				usage.d[BCH_DATA_free].buckets,
