@@ -279,6 +279,11 @@ void bch2_print_string_as_lines(const char *prefix, const char *lines)
 {
 	const char *p;
 
+	if (!lines) {
+		printk("%s (null)\n", prefix);
+		return;
+	}
+
 	console_lock();
 	while (1) {
 		p = strchrnul(lines, '\n');
