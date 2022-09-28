@@ -529,14 +529,22 @@ struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
 	bch2_trans_iter_exit(trans, iter);
 
 	if (bp.level) {
+		struct btree *b;
+
 		/*
 		 * If a backpointer for a btree node wasn't found, it may be
 		 * because it was overwritten by a new btree node that hasn't
 		 * been written out yet - backpointer_get_node() checks for
 		 * this:
 		 */
-		bch2_backpointer_get_node(trans, iter, bucket, bp_offset, bp);
+		b = bch2_backpointer_get_node(trans, iter, bucket, bp_offset, bp);
+		if (!IS_ERR_OR_NULL(b))
+			return bkey_i_to_s_c(&b->key);
+
 		bch2_trans_iter_exit(trans, iter);
+
+		if (IS_ERR(b))
+			return bkey_s_c_err(PTR_ERR(b));
 		return bkey_s_c_null;
 	}
 
