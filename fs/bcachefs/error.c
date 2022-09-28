@@ -95,6 +95,7 @@ static struct fsck_err_state *fsck_err_get(struct bch_fs *c, const char *fmt)
 
 	INIT_LIST_HEAD(&s->list);
 	s->fmt = fmt;
+	s->buf = PRINTBUF;
 	list_add(&s->list, &c->fsck_errors);
 	return s;
 }
