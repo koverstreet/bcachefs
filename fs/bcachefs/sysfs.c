@@ -419,7 +419,7 @@ SHOW(bch2_fs)
 		bch2_btree_updates_to_text(out, c);
 
 	if (attr == &sysfs_btree_cache)
-		bch2_btree_cache_to_text(out, c);
+		bch2_btree_cache_to_text(out, &c->btree_cache);
 
 	if (attr == &sysfs_btree_key_cache)
 		bch2_btree_key_cache_to_text(out, &c->btree_key_cache);
