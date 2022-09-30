@@ -125,6 +125,6 @@ static inline struct btree *btree_node_root(struct bch_fs *c, struct btree *b)
 
 void bch2_btree_node_to_text(struct printbuf *, struct bch_fs *,
 			     const struct btree *);
-void bch2_btree_cache_to_text(struct printbuf *, const struct bch_fs *);
+void bch2_btree_cache_to_text(struct printbuf *, const struct btree_cache *);
 
 #endif /* _BCACHEFS_BTREE_CACHE_H */
