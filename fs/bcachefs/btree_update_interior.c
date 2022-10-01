@@ -391,8 +391,6 @@ static struct btree *__btree_root_alloc(struct btree_update *as,
 
 	btree_node_set_format(b, b->data->format);
 	bch2_btree_build_aux_trees(b);
-
-	bch2_btree_update_add_new_node(as, b);
 	six_unlock_write(&b->c.lock);
 
 	return b;
@@ -858,6 +856,14 @@ static void bch2_btree_update_add_new_node(struct btree_update *as, struct btree
 	mutex_unlock(&c->btree_interior_update_lock);
 
 	btree_update_add_key(as, &as->new_keys, b);
+
+	if (b->key.k.type == KEY_TYPE_btree_ptr_v2) {
+		unsigned bytes = vstruct_end(&b->data->keys) - (void *) b->data;
+		unsigned sectors = round_up(bytes, block_bytes(c)) >> 9;
+
+		bkey_i_to_btree_ptr_v2(&b->key)->v.sectors_written =
+			cpu_to_le16(sectors);
+	}
 }
 
 /*
@@ -1190,7 +1196,6 @@ static void bch2_btree_set_root(struct btree_update *as,
 	struct btree *old;
 
 	trace_and_count(c, btree_node_set_root, c, b);
-	BUG_ON(!b->written);
 
 	old = btree_node_root(c, b);
 
@@ -1313,8 +1318,6 @@ static struct btree *__btree_split_node(struct btree_update *as,
 	n2->data->format	= n1->format;
 	SET_BTREE_NODE_SEQ(n2->data, BTREE_NODE_SEQ(n1->data));
 	n2->key.k.p = n1->key.k.p;
-
-	bch2_btree_update_add_new_node(as, n2);
 
 	set1 = btree_bset_first(n1);
 	set2 = btree_bset_first(n2);
@@ -1498,9 +1501,7 @@ static void btree_split(struct btree_update *as, struct btree_trans *trans,
 		bch2_btree_path_level_init(trans, path2, n2);
 
 		bch2_btree_update_add_new_node(as, n1);
-
-		bch2_btree_node_write(c, n1, SIX_LOCK_intent, 0);
-		bch2_btree_node_write(c, n2, SIX_LOCK_intent, 0);
+		bch2_btree_update_add_new_node(as, n2);
 
 		/*
 		 * Note that on recursive parent_keys == keys, so we
@@ -1523,9 +1524,9 @@ static void btree_split(struct btree_update *as, struct btree_trans *trans,
 			n3->sib_u64s[0] = U16_MAX;
 			n3->sib_u64s[1] = U16_MAX;
 
-			btree_split_insert_keys(as, trans, path, n3, &as->parent_keys);
+			bch2_btree_update_add_new_node(as, n3);
 
-			bch2_btree_node_write(c, n3, SIX_LOCK_intent, 0);
+			btree_split_insert_keys(as, trans, path, n3, &as->parent_keys);
 		}
 	} else {
 		trace_and_count(c, btree_node_compact, c, b);
@@ -1539,8 +1540,6 @@ static void btree_split(struct btree_update *as, struct btree_trans *trans,
 		bch2_btree_path_level_init(trans, path1, n1);
 
 		bch2_btree_update_add_new_node(as, n1);
-
-		bch2_btree_node_write(c, n1, SIX_LOCK_intent, 0);
 
 		if (parent)
 			bch2_keylist_add(&as->parent_keys, &n1->key);
@@ -1558,11 +1557,16 @@ static void btree_split(struct btree_update *as, struct btree_trans *trans,
 		bch2_btree_set_root(as, trans, path, n1);
 	}
 
-	bch2_btree_update_get_open_buckets(as, n1);
-	if (n2)
-		bch2_btree_update_get_open_buckets(as, n2);
-	if (n3)
+	if (n3) {
 		bch2_btree_update_get_open_buckets(as, n3);
+		bch2_btree_node_write(c, n3, SIX_LOCK_intent, 0);
+	}
+	if (n2) {
+		bch2_btree_update_get_open_buckets(as, n2);
+		bch2_btree_node_write(c, n2, SIX_LOCK_intent, 0);
+	}
+	bch2_btree_update_get_open_buckets(as, n1);
+	bch2_btree_node_write(c, n1, SIX_LOCK_intent, 0);
 
 	/*
 	 * The old node must be freed (in memory) _before_ unlocking the new
@@ -1822,8 +1826,6 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	btree_set_min(n, prev->data->min_key);
 	btree_set_max(n, next->data->max_key);
 
-	bch2_btree_update_add_new_node(as, n);
-
 	n->data->format	 = new_f;
 	btree_node_set_format(n, new_f);
 
@@ -1833,12 +1835,12 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	bch2_btree_build_aux_trees(n);
 	six_unlock_write(&n->c.lock);
 
+	bch2_btree_update_add_new_node(as, n);
+
 	new_path = get_unlocked_mut_path(trans, path->btree_id, n->c.level, n->key.k.p);
 	six_lock_increment(&n->c.lock, SIX_LOCK_intent);
 	mark_btree_node_locked(trans, new_path, n->c.level, SIX_LOCK_intent);
 	bch2_btree_path_level_init(trans, new_path, n);
-
-	bch2_btree_node_write(c, n, SIX_LOCK_intent, 0);
 
 	bkey_init(&delete.k);
 	delete.k.p = prev->key.k.p;
@@ -1852,6 +1854,7 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	bch2_trans_verify_paths(trans);
 
 	bch2_btree_update_get_open_buckets(as, n);
+	bch2_btree_node_write(c, n, SIX_LOCK_intent, 0);
 
 	bch2_btree_node_free_inmem(trans, path, b);
 	bch2_btree_node_free_inmem(trans, sib_path, m);
@@ -1912,8 +1915,6 @@ int bch2_btree_node_rewrite(struct btree_trans *trans,
 
 	trace_and_count(c, btree_node_rewrite, c, b);
 
-	bch2_btree_node_write(c, n, SIX_LOCK_intent, 0);
-
 	if (parent) {
 		bch2_keylist_add(&as->parent_keys, &n->key);
 		bch2_btree_insert_node(as, trans, iter->path, parent,
@@ -1923,6 +1924,7 @@ int bch2_btree_node_rewrite(struct btree_trans *trans,
 	}
 
 	bch2_btree_update_get_open_buckets(as, n);
+	bch2_btree_node_write(c, n, SIX_LOCK_intent, 0);
 
 	bch2_btree_node_free_inmem(trans, iter->path, b);
 
