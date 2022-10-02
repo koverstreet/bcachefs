@@ -688,7 +688,7 @@ static int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 		bch2_dev_alloc_list(c, stripe, devs_may_alloc);
 	unsigned dev;
 	struct bch_dev *ca;
-	int ret = 0;
+	int ret = -BCH_ERR_insufficient_devices;
 	unsigned i;
 
 	BUG_ON(*nr_effective >= nr_replicas);
@@ -718,8 +718,8 @@ static int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 			bch2_dev_stripe_increment(ca, stripe);
 		percpu_ref_put(&ca->ref);
 
-		ret = PTR_ERR_OR_ZERO(ob);
-		if (ret) {
+		if (IS_ERR(ob)) {
+			ret = PTR_ERR(ob);
 			if (bch2_err_matches(ret, BCH_ERR_transaction_restart) || cl)
 				break;
 			continue;
@@ -728,14 +728,11 @@ static int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 		add_new_bucket(c, ptrs, devs_may_alloc,
 			       nr_effective, have_cache, flags, ob);
 
-		if (*nr_effective >= nr_replicas)
+		if (*nr_effective >= nr_replicas) {
+			ret = 0;
 			break;
+		}
 	}
-
-	if (*nr_effective >= nr_replicas)
-		ret = 0;
-	else if (!ret)
-		ret = -BCH_ERR_insufficient_devices;
 
 	return ret;
 }
