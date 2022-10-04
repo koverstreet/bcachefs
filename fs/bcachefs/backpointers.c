@@ -30,9 +30,12 @@ static inline struct bpos bucket_pos_to_bp(const struct bch_fs *c,
 {
 	struct bch_dev *ca = bch_dev_bkey_exists(c, bucket.inode);
 
-	return POS(bucket.inode,
+	struct bpos ret = POS(bucket.inode,
 		   (bucket_to_sector(ca, bucket.offset) <<
 		    MAX_EXTENT_COMPRESS_RATIO_SHIFT) + bucket_offset);
+
+	BUG_ON(bpos_cmp(bucket, bp_pos_to_bucket(c, ret)));
+	return ret;
 }
 
 void bch2_extent_ptr_to_bp(struct bch_fs *c,
@@ -419,6 +422,8 @@ int bch2_get_next_backpointer(struct btree_trans *trans,
 	struct bkey_s_c_alloc_v4 a;
 	size_t i;
 	int ret;
+
+	BUG_ON(bpos_cmp(bucket, bp_pos_to_bucket(c, bpos_nosnap_predecessor(bp_end_pos))));
 
 	bch2_trans_iter_init(trans, &alloc_iter, BTREE_ID_alloc,
 			     bucket, BTREE_ITER_CACHED);
