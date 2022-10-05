@@ -102,7 +102,7 @@ static int mq_permissions(struct ctl_table_header *head, struct ctl_table *table
 	if (uid_eq(current_euid(), ns_root_uid))
 		mode >>= 6;
 
-	if (in_egroup_p(ns_root_gid))
+	else if (in_egroup_p(ns_root_gid))
 		mode >>= 3;
 
 	mode &= 7;
