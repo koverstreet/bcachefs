@@ -341,7 +341,7 @@ restart:
 			six_unlock_intent(&b->c.lock);
 
 			if (freed == nr)
-				goto out;
+				goto out_rotate;
 		} else if (trigger_writes &&
 			   btree_node_dirty(b) &&
 			   !btree_node_will_make_reachable(b) &&
@@ -360,9 +360,10 @@ restart:
 		if (touched >= nr)
 			break;
 	}
-out:
+out_rotate:
 	if (&t->list != &bc->live)
 		list_move_tail(&bc->live, &t->list);
+out:
 	mutex_unlock(&bc->lock);
 out_nounlock:
 	ret = freed;
