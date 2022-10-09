@@ -1455,7 +1455,7 @@ static int __bch2_ec_stripe_head_reserve(struct bch_fs *c,
 		 * This means we need to wait for copygc to
 		 * empty out buckets from existing stripes:
 		 */
-		bch_err(c, "failed to reserve stripe");
+		bch_err_ratelimited(c, "failed to reserve stripe: %s", bch2_err_str(ret));
 	}
 
 	return ret;
