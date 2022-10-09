@@ -811,8 +811,10 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 
 	bch2_trans_init(&trans, c, 0, 0);
 	for (btree_id = 0; btree_id < BTREE_ID_NR; btree_id++) {
+		unsigned depth = btree_type_has_ptrs(btree_id) ? 0 : 1;
+
 		bch2_trans_node_iter_init(&trans, &iter, btree_id, POS_MIN, 0,
-					  0,
+					  depth,
 					  BTREE_ITER_ALL_LEVELS|
 					  BTREE_ITER_PREFETCH);
 
