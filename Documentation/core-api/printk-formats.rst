@@ -635,7 +635,7 @@ Calling a pretty printer function
 
 For calling generic pretty printers. A pretty printer is a function that takes
 as its first argument a pointer to a printbuf, and then zero or more additional
-pointer arguments. For example:
+pointer arguments. For example::
 
         void foo_to_text(struct printbuf *out, struct foo *foo)
         {
