@@ -414,11 +414,7 @@ int bch2_get_next_backpointer(struct btree_trans *trans,
 			      struct bch_backpointer *dst)
 {
 	struct bch_fs *c = trans->c;
-	struct bpos bp_pos =
-		bucket_pos_to_bp(c, bucket,
-				max(*bp_offset, BACKPOINTER_OFFSET_MAX) - BACKPOINTER_OFFSET_MAX);
-	struct bpos bp_end_pos =
-		bucket_pos_to_bp(c, bpos_nosnap_successor(bucket), 0);
+	struct bpos bp_pos, bp_end_pos;
 	struct btree_iter alloc_iter, bp_iter = { NULL };
 	struct bkey_s_c k;
 	struct bkey_s_c_alloc_v4 a;
@@ -427,6 +423,10 @@ int bch2_get_next_backpointer(struct btree_trans *trans,
 
 	if (*bp_offset == U64_MAX)
 		return 0;
+
+	bp_pos = bucket_pos_to_bp(c, bucket,
+				  max(*bp_offset, BACKPOINTER_OFFSET_MAX) - BACKPOINTER_OFFSET_MAX);
+	bp_end_pos = bucket_pos_to_bp(c, bpos_nosnap_successor(bucket), 0);
 
 	bch2_trans_iter_init(trans, &alloc_iter, BTREE_ID_alloc,
 			     bucket, BTREE_ITER_CACHED);
