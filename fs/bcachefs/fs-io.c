@@ -2208,6 +2208,9 @@ err:
 	/* inode->i_dio_count is our ref on inode and thus bch_fs */
 	inode_dio_end(&inode->v);
 
+	if (ret < 0)
+		ret = bch2_err_class(ret);
+
 	if (!sync) {
 		req->ki_complete(req, ret);
 		ret = -EIOCBQUEUED;
