@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
+#include "bbpos.h"
 #include "alloc_background.h"
 #include "backpointers.h"
 #include "btree_cache.h"
@@ -804,47 +805,22 @@ err:
 	return ret;
 }
 
-struct bbpos {
-	enum btree_id		btree;
-	struct bpos		pos;
-};
-
-static inline int bbpos_cmp(struct bbpos l, struct bbpos r)
-{
-	return cmp_int(l.btree, r.btree) ?: bpos_cmp(l.pos, r.pos);
-}
-
-static inline struct bbpos bbpos_successor(struct bbpos pos)
-{
-	if (bpos_cmp(pos.pos, SPOS_MAX)) {
-		pos.pos = bpos_successor(pos.pos);
-		return pos;
-	}
-
-	if (pos.btree != BTREE_ID_NR) {
-		pos.btree++;
-		pos.pos = POS_MIN;
-		return pos;
-	}
-
-	BUG();
-}
-
-#if 0
-static void bbpos_to_text(struct printbuf *out, struct bbpos pos)
-{
-	prt_str(out, bch2_btree_ids[pos.btree]);
-	prt_char(out, ':');
-	bch2_bpos_to_text(out, pos.pos);
-}
-#endif
-
 static inline struct bbpos bp_to_bbpos(struct bch_backpointer bp)
 {
 	return (struct bbpos) {
 		.btree	= bp.btree_id,
 		.pos	= bp.pos,
 	};
+}
+
+static size_t btree_nodes_fit_in_ram(struct bch_fs *c)
+{
+	struct sysinfo i;
+	u64 mem_bytes;
+
+	si_meminfo(&i);
+	mem_bytes = i.totalram * i.mem_unit;
+	return (mem_bytes >> 1) / btree_bytes(c);
 }
 
 int bch2_get_btree_in_memory_pos(struct btree_trans *trans,
@@ -854,14 +830,9 @@ int bch2_get_btree_in_memory_pos(struct btree_trans *trans,
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	struct sysinfo i;
-	size_t btree_nodes;
+	size_t btree_nodes = btree_nodes_fit_in_ram(trans->c);
 	enum btree_id btree;
 	int ret = 0;
-
-	si_meminfo(&i);
-
-	btree_nodes = (i.totalram >> 1) / btree_bytes(trans->c);
 
 	for (btree = start.btree; btree < BTREE_ID_NR && !ret; btree++) {
 		unsigned depth = ((1U << btree) & btree_leaf_mask) ? 1 : 2;
@@ -887,8 +858,7 @@ int bch2_get_btree_in_memory_pos(struct btree_trans *trans,
 
 			--btree_nodes;
 			if (!btree_nodes) {
-				end->btree = btree;
-				end->pos = k.k->p;
+				*end = BBPOS(btree, k.k->p);
 				bch2_trans_iter_exit(trans, &iter);
 				return 0;
 			}
@@ -896,8 +866,7 @@ int bch2_get_btree_in_memory_pos(struct btree_trans *trans,
 		bch2_trans_iter_exit(trans, &iter);
 	}
 
-	end->btree	= BTREE_ID_NR;
-	end->pos	= POS_MIN;
+	*end = BBPOS_MAX;
 	return ret;
 }
 
@@ -1020,13 +989,35 @@ int bch2_check_backpointers_to_extents(struct bch_fs *c)
 
 	bch2_trans_init(&trans, c, 0, 0);
 	while (1) {
-		ret =   bch2_get_btree_in_memory_pos(&trans,
-						     (1U << BTREE_ID_extents)|
-						     (1U << BTREE_ID_reflink),
-						     ~0,
-						     start, &end) ?:
-			bch2_check_backpointers_to_extents_pass(&trans, start, end);
-		if (ret || end.btree == BTREE_ID_NR)
+		ret = bch2_get_btree_in_memory_pos(&trans,
+						   (1U << BTREE_ID_extents)|
+						   (1U << BTREE_ID_reflink),
+						   ~0,
+						   start, &end);
+		if (ret)
+			break;
+
+		if (!bbpos_cmp(start, BBPOS_MIN) &&
+		    bbpos_cmp(end, BBPOS_MAX))
+			bch_verbose(c, "check_backpointers_to_extents(): extents do not fit in ram,"
+				    "running in multiple passes with %zu nodes per pass",
+				    btree_nodes_fit_in_ram(c));
+
+		if (bbpos_cmp(start, BBPOS_MIN) ||
+		    bbpos_cmp(end, BBPOS_MAX)) {
+			struct printbuf buf = PRINTBUF;
+
+			prt_str(&buf, "check_backointers_to_extents(): ");
+			bch2_bbpos_to_text(&buf, start);
+			prt_str(&buf, "-");
+			bch2_bbpos_to_text(&buf, end);
+
+			bch_verbose(c, "%s", buf.buf);
+			printbuf_exit(&buf);
+		}
+
+		ret = bch2_check_backpointers_to_extents_pass(&trans, start, end);
+		if (ret || !bbpos_cmp(end, BBPOS_MAX))
 			break;
 
 		start = bbpos_successor(end);
