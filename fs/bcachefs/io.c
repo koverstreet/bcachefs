@@ -523,15 +523,18 @@ int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 
 		bch2_btree_iter_set_snapshot(iter, snapshot);
 
-		k = bch2_btree_iter_peek(iter);
-		if (bkey_ge(iter->pos, end_pos)) {
-			bch2_btree_iter_set_pos(iter, end_pos);
+		/*
+		 * peek_upto() doesn't have ideal semantics for extents:
+		 */
+		k = bch2_btree_iter_peek_upto(iter, end_pos);
+		if (!k.k)
 			break;
-		}
 
 		ret = bkey_err(k);
 		if (ret)
 			continue;
+
+		BUG_ON(bkey_ge(iter->pos, end_pos));
 
 		bkey_init(&delete.k);
 		delete.k.p = iter->pos;
@@ -544,6 +547,8 @@ int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 				&disk_res, 0, i_sectors_delta, false);
 		bch2_disk_reservation_put(c, &disk_res);
 	}
+
+	BUG_ON(bkey_gt(iter->pos, end_pos));
 
 	return ret ?: ret2;
 }
@@ -1350,12 +1355,11 @@ static void bch2_nocow_write_convert_unwritten(struct bch_write_op *op)
 	bch2_trans_init(&trans, c, 0, 0);
 
 	for_each_keylist_key(&op->insert_keys, orig) {
-		ret = for_each_btree_key_commit(&trans, iter, BTREE_ID_extents,
-				     bkey_start_pos(&orig->k),
+		ret = for_each_btree_key_upto_commit(&trans, iter, BTREE_ID_extents,
+				     bkey_start_pos(&orig->k), orig->k.p,
 				     BTREE_ITER_INTENT, k,
 				     NULL, NULL, BTREE_INSERT_NOFAIL, ({
-			if (bkey_ge(bkey_start_pos(k.k), orig->k.p))
-				break;
+			BUG_ON(bkey_ge(bkey_start_pos(k.k), orig->k.p));
 
 			bch2_nocow_write_convert_one_unwritten(&trans, &iter, orig, k, op->new_i_size);
 		}));
