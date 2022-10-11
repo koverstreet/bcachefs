@@ -1007,7 +1007,7 @@ int bch2_check_backpointers_to_extents(struct bch_fs *c)
 		    bbpos_cmp(end, BBPOS_MAX)) {
 			struct printbuf buf = PRINTBUF;
 
-			prt_str(&buf, "check_backointers_to_extents(): ");
+			prt_str(&buf, "check_backpointers_to_extents(): ");
 			bch2_bbpos_to_text(&buf, start);
 			prt_str(&buf, "-");
 			bch2_bbpos_to_text(&buf, end);
