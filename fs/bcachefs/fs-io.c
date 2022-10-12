@@ -3256,6 +3256,62 @@ err:
 
 /* fseek: */
 
+static int page_data_offset(struct page *page, unsigned offset)
+{
+	struct bch_page_state *s = bch2_page_state(page);
+	unsigned i;
+
+	if (s)
+		for (i = offset >> 9; i < PAGE_SECTORS; i++)
+			if (s->s[i].state >= SECTOR_DIRTY)
+				return i << 9;
+
+	return -1;
+}
+
+static loff_t bch2_seek_pagecache_data(struct inode *vinode,
+				       loff_t start_offset,
+				       loff_t end_offset)
+{
+	struct folio_batch fbatch;
+	pgoff_t start_index	= start_offset >> PAGE_SHIFT;
+	pgoff_t end_index	= end_offset >> PAGE_SHIFT;
+	pgoff_t index		= start_index;
+	unsigned i;
+	loff_t ret;
+	int offset;
+
+	folio_batch_init(&fbatch);
+
+	while (filemap_get_folios(vinode->i_mapping,
+				  &index, end_index, &fbatch)) {
+		for (i = 0; i < folio_batch_count(&fbatch); i++) {
+			struct folio *folio = fbatch.folios[i];
+
+			folio_lock(folio);
+
+			offset = page_data_offset(&folio->page,
+					folio->index == start_index
+					? start_offset & (PAGE_SIZE - 1)
+					: 0);
+			if (offset >= 0) {
+				ret = clamp(((loff_t) folio->index << PAGE_SHIFT) +
+					    offset,
+					    start_offset, end_offset);
+				folio_unlock(folio);
+				folio_batch_release(&fbatch);
+				return ret;
+			}
+
+			folio_unlock(folio);
+		}
+		folio_batch_release(&fbatch);
+		cond_resched();
+	}
+
+	return end_offset;
+}
+
 static loff_t bch2_seek_data(struct file *file, u64 offset)
 {
 	struct bch_inode_info *inode = file_bch_inode(file);
@@ -3299,13 +3355,9 @@ err:
 	if (ret)
 		return ret;
 
-	if (next_data > offset) {
-		loff_t pagecache_next_data =
-			mapping_seek_hole_data(inode->v.i_mapping, offset,
-					       next_data, SEEK_DATA);
-		if (pagecache_next_data >= 0)
-			next_data = min_t(u64, next_data, pagecache_next_data);
-	}
+	if (next_data > offset)
+		next_data = bch2_seek_pagecache_data(&inode->v,
+						     offset, next_data);
 
 	if (next_data >= isize)
 		return -ENXIO;
