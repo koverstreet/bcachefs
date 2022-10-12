@@ -855,7 +855,7 @@ int bch2_get_btree_in_memory_pos(struct btree_trans *trans,
 					  btree == start.btree ? start.pos : POS_MIN,
 					  0, depth, 0);
 		/*
-		 * for_each_btree_key_contineu() doesn't check the return value
+		 * for_each_btree_key_continue() doesn't check the return value
 		 * from bch2_btree_iter_advance(), which is needed when
 		 * iterating over interior nodes where we'll see keys at
 		 * SPOS_MAX:
