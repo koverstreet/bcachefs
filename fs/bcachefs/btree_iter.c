@@ -1540,15 +1540,17 @@ struct btree_path *bch2_path_get(struct btree_trans *trans,
 inline struct bkey_s_c bch2_btree_path_peek_slot(struct btree_path *path, struct bkey *u)
 {
 
+	struct btree_path_level *l = path_l(path);
+	struct bkey_packed *_k;
 	struct bkey_s_c k;
+
+	if (unlikely(!l->b))
+		return bkey_s_c_null;
 
 	EBUG_ON(path->uptodate != BTREE_ITER_UPTODATE);
 	EBUG_ON(!btree_node_locked(path, path->level));
 
 	if (!path->cached) {
-		struct btree_path_level *l = path_l(path);
-		struct bkey_packed *_k;
-
 		_k = bch2_btree_node_iter_peek_all(&l->iter, l->b);
 		k = _k ? bkey_disassemble(l->b, _k, u) : bkey_s_c_null;
 
