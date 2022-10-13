@@ -162,7 +162,7 @@ static int bch2_copygc(struct bch_fs *c)
 
 	bch2_moving_ctxt_exit(&ctxt);
 
-	if (ret < 0)
+	if (ret < 0 && ret != -EROFS)
 		bch_err(c, "error from bch2_move_data() in copygc: %s", bch2_err_str(ret));
 
 	trace_and_count(c, copygc, c, atomic64_read(&move_stats.sectors_moved), 0, 0, 0);
