@@ -419,7 +419,7 @@ static int bch2_mknod(struct user_namespace *mnt_userns,
 			      (subvol_inum) { 0 }, 0);
 
 	if (IS_ERR(inode))
-		return PTR_ERR(inode);
+		return bch2_err_class(PTR_ERR(inode));
 
 	d_instantiate(dentry, &inode->v);
 	return 0;
@@ -529,7 +529,7 @@ static int bch2_symlink(struct user_namespace *mnt_userns,
 	inode = __bch2_create(mnt_userns, dir, dentry, S_IFLNK|S_IRWXUGO, 0,
 			      (subvol_inum) { 0 }, BCH_CREATE_TMPFILE);
 	if (unlikely(IS_ERR(inode)))
-		return PTR_ERR(inode);
+		return bch2_err_class(PTR_ERR(inode));
 
 	inode_lock(&inode->v);
 	ret = page_symlink(&inode->v, symname, strlen(symname) + 1);
@@ -838,7 +838,7 @@ static int bch2_tmpfile(struct user_namespace *mnt_userns,
 			      (subvol_inum) { 0 }, BCH_CREATE_TMPFILE);
 
 	if (IS_ERR(inode))
-		return PTR_ERR(inode);
+		return bch2_err_class(PTR_ERR(inode));
 
 	d_mark_tmpfile(dentry, &inode->v);
 	d_instantiate(dentry, &inode->v);
