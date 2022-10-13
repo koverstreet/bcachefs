@@ -21,47 +21,6 @@ static void mean_and_variance_basic_test(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, mean_and_variance_get_mean(s), 3);
 	KUNIT_EXPECT_EQ(test, mean_and_variance_get_variance(s), 1);
 	KUNIT_EXPECT_EQ(test, s.n, 4);
-
-	/*
-	 * Test overflow bounds
-	s = (struct mean_and_variance){};
-
-	s = mean_and_variance_update(s, SQRT_U64_MAX);
-
-	KUNIT_EXPECT_EQ_MSG(test,
-			    s.sum_squares.lo,
-			    MAX_SQR,
-			    "%llu == %llu, sqrt: %llu == %llu",
-			    s.sum_squares.lo,
-			    MAX_SQR,
-			    int_sqrt64(s.sum_squares.lo),
-			    SQRT_U64_MAX);
-
-	s = (struct mean_and_variance){};
-
-	s = mean_and_variance_update(s, -(s64)SQRT_U64_MAX);
-
-	KUNIT_EXPECT_EQ_MSG(test,
-			    s.sum_squares.lo,
-			    MAX_SQR,
-			    "%llu == %llu, sqrt: %llu == %llu",
-			    s.sum_squares.lo,
-			    MAX_SQR,
-			    int_sqrt64(s.sum_squares.lo),
-			    SQRT_U64_MAX);
-
-	s = (struct mean_and_variance){};
-
-	s = mean_and_variance_update(s, (SQRT_U64_MAX + 1));
-
-	KUNIT_EXPECT_EQ(test, s.sum_squares.lo, MAX_SQR);
-
-	s = (struct mean_and_variance){};
-
-	s = mean_and_variance_update(s, (-(s64)SQRT_U64_MAX) - 1);
-
-	KUNIT_EXPECT_EQ(test, s.sum_squares.lo, MAX_SQR);
-	*/
 }
 
 /*
