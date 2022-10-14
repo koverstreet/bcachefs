@@ -872,7 +872,9 @@ retry:
 	while (1) {
 		bch2_trans_begin(trans);
 
-		ret = bch2_get_next_backpointer(trans, bucket_pos, bucket.gen, &bp_offset, &bp);
+		ret = bch2_get_next_backpointer(trans, bucket_pos, bucket.gen,
+						&bp_offset, &bp,
+						BTREE_ITER_CACHED);
 		if (ret)
 			break;
 		if (bp_offset == U64_MAX)
