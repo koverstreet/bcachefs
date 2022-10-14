@@ -186,11 +186,12 @@ void bch2_inode_update_after_write(struct btree_trans *,
 int __must_check bch2_write_inode(struct bch_fs *, struct bch_inode_info *,
 				  inode_set_fn, void *, unsigned);
 
-int bch2_setattr_nonsize(struct bch_inode_info *,
+int bch2_setattr_nonsize(struct user_namespace *,
+			 struct bch_inode_info *,
 			 struct iattr *);
 int __bch2_unlink(struct inode *, struct dentry *, bool);
 
-void bch2_evict_subvolume_inodes(struct bch_fs *, struct snapshot_id_list *);
+void bch2_evict_subvolume_inodes(struct bch_fs *, snapshot_id_list *);
 
 void bch2_vfs_exit(void);
 int bch2_vfs_init(void);
@@ -198,7 +199,7 @@ int bch2_vfs_init(void);
 #else
 
 static inline void bch2_evict_subvolume_inodes(struct bch_fs *c,
-					       struct snapshot_id_list *s) {}
+					       snapshot_id_list *s) {}
 static inline void bch2_vfs_exit(void) {}
 static inline int bch2_vfs_init(void) { return 0; }
 

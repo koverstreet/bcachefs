@@ -4,8 +4,10 @@
 
 #include "buckets_waiting_for_journal_types.h"
 
-bool bch2_bucket_needs_journal_commit(struct bch_fs *, u64, unsigned, u64);
-int bch2_set_bucket_needs_journal_commit(struct bch_fs *, unsigned, u64, u64);
+bool bch2_bucket_needs_journal_commit(struct buckets_waiting_for_journal *,
+				      u64, unsigned, u64);
+int bch2_set_bucket_needs_journal_commit(struct buckets_waiting_for_journal *,
+					 u64, unsigned, u64, u64);
 
 void bch2_fs_buckets_waiting_for_journal_exit(struct bch_fs *);
 int bch2_fs_buckets_waiting_for_journal_init(struct bch_fs *);

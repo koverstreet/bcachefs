@@ -7,7 +7,7 @@
 #include "super-io.h"
 
 #include <linux/crc64.h>
-#include <crypto/chacha20.h>
+#include <crypto/chacha.h>
 
 static inline bool bch2_checksum_mergeable(unsigned type)
 {
@@ -49,7 +49,7 @@ struct bch_csum bch2_checksum(struct bch_fs *, unsigned, struct nonce,
 int bch2_chacha_encrypt_key(struct bch_key *, struct nonce, void *, size_t);
 int bch2_request_key(struct bch_sb *, struct bch_key *);
 
-void bch2_encrypt(struct bch_fs *, unsigned, struct nonce,
+int bch2_encrypt(struct bch_fs *, unsigned, struct nonce,
 		 void *data, size_t);
 
 struct bch_csum bch2_checksum_bio(struct bch_fs *, unsigned,
@@ -61,8 +61,8 @@ int bch2_rechecksum_bio(struct bch_fs *, struct bio *, struct bversion,
 			struct bch_extent_crc_unpacked *,
 			unsigned, unsigned, unsigned);
 
-void bch2_encrypt_bio(struct bch_fs *, unsigned,
-		    struct nonce, struct bio *);
+int bch2_encrypt_bio(struct bch_fs *, unsigned,
+		     struct nonce, struct bio *);
 
 int bch2_decrypt_sb_key(struct bch_fs *, struct bch_sb_field_crypt *,
 			struct bch_key *);
@@ -140,9 +140,9 @@ static inline bool bch2_crc_cmp(struct bch_csum l, struct bch_csum r)
 /* for skipping ahead and encrypting/decrypting at an offset: */
 static inline struct nonce nonce_add(struct nonce nonce, unsigned offset)
 {
-	EBUG_ON(offset & (CHACHA20_BLOCK_SIZE - 1));
+	EBUG_ON(offset & (CHACHA_BLOCK_SIZE - 1));
 
-	le32_add_cpu(&nonce.d[0], offset / CHACHA20_BLOCK_SIZE);
+	le32_add_cpu(&nonce.d[0], offset / CHACHA_BLOCK_SIZE);
 	return nonce;
 }
 

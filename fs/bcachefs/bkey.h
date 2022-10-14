@@ -12,7 +12,9 @@
 #define HAVE_BCACHEFS_COMPILED_UNPACK	1
 #endif
 
-void bch2_to_binary(char *, const u64 *, unsigned);
+void bch2_bkey_packed_to_binary_text(struct printbuf *,
+				     const struct bkey_format *,
+				     const struct bkey_packed *);
 
 /* bkey with split value, const */
 struct bkey_s_c {
@@ -42,12 +44,15 @@ static inline size_t bkey_val_bytes(const struct bkey *k)
 
 static inline void set_bkey_val_u64s(struct bkey *k, unsigned val_u64s)
 {
-	k->u64s = BKEY_U64s + val_u64s;
+	unsigned u64s = BKEY_U64s + val_u64s;
+
+	BUG_ON(u64s > U8_MAX);
+	k->u64s = u64s;
 }
 
 static inline void set_bkey_val_bytes(struct bkey *k, unsigned bytes)
 {
-	k->u64s = BKEY_U64s + DIV_ROUND_UP(bytes, sizeof(u64));
+	set_bkey_val_u64s(k, DIV_ROUND_UP(bytes, sizeof(u64)));
 }
 
 #define bkey_val_end(_k)	((void *) (((u64 *) (_k).v) + bkey_val_u64s((_k).k)))

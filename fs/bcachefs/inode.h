@@ -6,18 +6,22 @@
 
 extern const char * const bch2_inode_opts[];
 
-const char *bch2_inode_invalid(const struct bch_fs *, struct bkey_s_c);
-const char *bch2_inode_v2_invalid(const struct bch_fs *, struct bkey_s_c);
+int bch2_inode_invalid(const struct bch_fs *, struct bkey_s_c, int, struct printbuf *);
+int bch2_inode_v2_invalid(const struct bch_fs *, struct bkey_s_c, int, struct printbuf *);
 void bch2_inode_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 
 #define bch2_bkey_ops_inode (struct bkey_ops) {		\
 	.key_invalid	= bch2_inode_invalid,		\
 	.val_to_text	= bch2_inode_to_text,		\
+	.trans_trigger	= bch2_trans_mark_inode,	\
+	.atomic_trigger	= bch2_mark_inode,		\
 }
 
 #define bch2_bkey_ops_inode_v2 (struct bkey_ops) {	\
 	.key_invalid	= bch2_inode_v2_invalid,	\
 	.val_to_text	= bch2_inode_to_text,		\
+	.trans_trigger	= bch2_trans_mark_inode,	\
+	.atomic_trigger	= bch2_mark_inode,		\
 }
 
 static inline bool bkey_is_inode(const struct bkey *k)
@@ -26,10 +30,9 @@ static inline bool bkey_is_inode(const struct bkey *k)
 		k->type == KEY_TYPE_inode_v2;
 }
 
-const char *bch2_inode_generation_invalid(const struct bch_fs *,
-					  struct bkey_s_c);
-void bch2_inode_generation_to_text(struct printbuf *, struct bch_fs *,
-				   struct bkey_s_c);
+int bch2_inode_generation_invalid(const struct bch_fs *, struct bkey_s_c,
+				  int, struct printbuf *);
+void bch2_inode_generation_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 
 #define bch2_bkey_ops_inode_generation (struct bkey_ops) {	\
 	.key_invalid	= bch2_inode_generation_invalid,	\
@@ -87,7 +90,7 @@ void bch2_inode_init(struct bch_fs *, struct bch_inode_unpacked *,
 int bch2_inode_create(struct btree_trans *, struct btree_iter *,
 		      struct bch_inode_unpacked *, u32, u64);
 
-int bch2_inode_rm(struct bch_fs *, subvol_inum, bool);
+int bch2_inode_rm(struct bch_fs *, subvol_inum);
 
 int bch2_inode_find_by_inum_trans(struct btree_trans *, subvol_inum,
 				  struct bch_inode_unpacked *);
@@ -161,23 +164,6 @@ static inline unsigned nlink_bias(umode_t mode)
 	return S_ISDIR(mode) ? 2 : 1;
 }
 
-static inline void bch2_inode_nlink_inc(struct bch_inode_unpacked *bi)
-{
-	if (bi->bi_flags & BCH_INODE_UNLINKED)
-		bi->bi_flags &= ~BCH_INODE_UNLINKED;
-	else
-		bi->bi_nlink++;
-}
-
-static inline void bch2_inode_nlink_dec(struct bch_inode_unpacked *bi)
-{
-	BUG_ON(bi->bi_flags & BCH_INODE_UNLINKED);
-	if (bi->bi_nlink)
-		bi->bi_nlink--;
-	else
-		bi->bi_flags |= BCH_INODE_UNLINKED;
-}
-
 static inline unsigned bch2_inode_nlink_get(struct bch_inode_unpacked *bi)
 {
 	return bi->bi_flags & BCH_INODE_UNLINKED
@@ -196,5 +182,8 @@ static inline void bch2_inode_nlink_set(struct bch_inode_unpacked *bi,
 		bi->bi_flags |= BCH_INODE_UNLINKED;
 	}
 }
+
+int bch2_inode_nlink_inc(struct bch_inode_unpacked *);
+void bch2_inode_nlink_dec(struct btree_trans *, struct bch_inode_unpacked *);
 
 #endif /* _BCACHEFS_INODE_H */

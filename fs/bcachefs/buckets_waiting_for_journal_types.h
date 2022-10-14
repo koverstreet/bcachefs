@@ -2,15 +2,22 @@
 #ifndef _BUCKETS_WAITING_FOR_JOURNAL_TYPES_H
 #define _BUCKETS_WAITING_FOR_JOURNAL_TYPES_H
 
+#include <linux/siphash.h>
+
 struct bucket_hashed {
 	u64			dev_bucket;
 	u64			journal_seq;
 };
 
+struct buckets_waiting_for_journal_table {
+	size_t			size;
+	siphash_key_t		hash_seeds[3];
+	struct bucket_hashed	d[];
+};
+
 struct buckets_waiting_for_journal {
 	struct mutex		lock;
-	size_t			nr;
-	struct bucket_hashed	*d;
+	struct buckets_waiting_for_journal_table *t;
 };
 
 #endif /* _BUCKETS_WAITING_FOR_JOURNAL_TYPES_H */

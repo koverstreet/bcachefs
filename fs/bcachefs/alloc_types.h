@@ -10,27 +10,17 @@
 
 struct ec_bucket_buf;
 
-#define ALLOC_THREAD_STATES()		\
-	x(stopped)			\
-	x(running)			\
-	x(blocked)			\
-	x(blocked_full)
-
-enum allocator_states {
-#define x(n)	ALLOCATOR_##n,
-	ALLOC_THREAD_STATES()
-#undef x
-};
+#define BCH_ALLOC_RESERVES()		\
+	x(btree_movinggc)		\
+	x(btree)			\
+	x(movinggc)			\
+	x(none)
 
 enum alloc_reserve {
-	RESERVE_BTREE_MOVINGGC	= -2,
-	RESERVE_BTREE		= -1,
-	RESERVE_MOVINGGC	= 0,
-	RESERVE_NONE		= 1,
-	RESERVE_NR		= 2,
+#define x(name)	RESERVE_##name,
+	BCH_ALLOC_RESERVES()
+#undef x
 };
-
-typedef FIFO(long)	alloc_fifo;
 
 #define OPEN_BUCKETS_COUNT	1024
 
@@ -53,14 +43,14 @@ struct open_bucket {
 	 * the block in the stripe this open_bucket corresponds to:
 	 */
 	u8			ec_idx;
-	enum bch_data_type	data_type:3;
+	enum bch_data_type	data_type:8;
 	unsigned		valid:1;
 	unsigned		on_partial_list:1;
-	int			alloc_reserve:3;
+	unsigned		alloc_reserve:3;
 
-	unsigned		sectors_free;
 	u8			dev;
 	u8			gen;
+	u32			sectors_free;
 	u64			bucket;
 	struct ec_stripe_new	*ec;
 };
@@ -93,13 +83,5 @@ struct write_point {
 struct write_point_specifier {
 	unsigned long		v;
 };
-
-struct alloc_heap_entry {
-	size_t			bucket;
-	size_t			nr;
-	unsigned long		key;
-};
-
-typedef HEAP(struct alloc_heap_entry) alloc_heap;
 
 #endif /* _BCACHEFS_ALLOC_TYPES_H */

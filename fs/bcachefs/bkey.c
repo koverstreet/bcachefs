@@ -19,33 +19,49 @@ const struct bkey_format bch2_bkey_format_current = BKEY_FORMAT_CURRENT;
 struct bkey __bch2_bkey_unpack_key(const struct bkey_format *,
 			      const struct bkey_packed *);
 
-void bch2_to_binary(char *out, const u64 *p, unsigned nr_bits)
+void bch2_bkey_packed_to_binary_text(struct printbuf *out,
+				     const struct bkey_format *f,
+				     const struct bkey_packed *k)
 {
-	unsigned bit = high_bit_offset, done = 0;
+	const u64 *p = high_word(f, k);
+	unsigned word_bits = 64 - high_bit_offset;
+	unsigned nr_key_bits = bkey_format_key_bits(f) + high_bit_offset;
+	u64 v = *p & (~0ULL >> high_bit_offset);
+
+	if (!nr_key_bits) {
+		prt_str(out, "(empty)");
+		return;
+	}
 
 	while (1) {
-		while (bit < 64) {
-			if (done && !(done % 8))
-				*out++ = ' ';
-			*out++ = *p & (1ULL << (63 - bit)) ? '1' : '0';
-			bit++;
-			done++;
-			if (done == nr_bits) {
-				*out++ = '\0';
-				return;
-			}
+		unsigned next_key_bits = nr_key_bits;
+
+		if (nr_key_bits < 64) {
+			v >>= 64 - nr_key_bits;
+			next_key_bits = 0;
+		} else {
+			next_key_bits -= 64;
 		}
 
+		bch2_prt_u64_binary(out, v, min(word_bits, nr_key_bits));
+
+		if (!next_key_bits)
+			break;
+
+		prt_char(out, ' ');
+
 		p = next_word(p);
-		bit = 0;
+		v = *p;
+		word_bits = 64;
+		nr_key_bits = next_key_bits;
 	}
 }
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 
 static void bch2_bkey_pack_verify(const struct bkey_packed *packed,
-				 const struct bkey *unpacked,
-				 const struct bkey_format *format)
+				  const struct bkey *unpacked,
+				  const struct bkey_format *format)
 {
 	struct bkey tmp;
 
@@ -57,22 +73,35 @@ static void bch2_bkey_pack_verify(const struct bkey_packed *packed,
 	tmp = __bch2_bkey_unpack_key(format, packed);
 
 	if (memcmp(&tmp, unpacked, sizeof(struct bkey))) {
-		char buf1[160], buf2[160];
-		char buf3[160], buf4[160];
+		struct printbuf buf = PRINTBUF;
 
-		bch2_bkey_to_text(&PBUF(buf1), unpacked);
-		bch2_bkey_to_text(&PBUF(buf2), &tmp);
-		bch2_to_binary(buf3, (void *) unpacked, 80);
-		bch2_to_binary(buf4, high_word(format, packed), 80);
-
-		panic("keys differ: format u64s %u fields %u %u %u %u %u\n%s\n%s\n%s\n%s\n",
+		prt_printf(&buf, "keys differ: format u64s %u fields %u %u %u %u %u\n",
 		      format->key_u64s,
 		      format->bits_per_field[0],
 		      format->bits_per_field[1],
 		      format->bits_per_field[2],
 		      format->bits_per_field[3],
-		      format->bits_per_field[4],
-		      buf1, buf2, buf3, buf4);
+		      format->bits_per_field[4]);
+
+		prt_printf(&buf, "compiled unpack: ");
+		bch2_bkey_to_text(&buf, unpacked);
+		prt_newline(&buf);
+
+		prt_printf(&buf, "c unpack:        ");
+		bch2_bkey_to_text(&buf, &tmp);
+		prt_newline(&buf);
+
+		prt_printf(&buf, "compiled unpack: ");
+		bch2_bkey_packed_to_binary_text(&buf, &bch2_bkey_format_current,
+						(struct bkey_packed *) unpacked);
+		prt_newline(&buf);
+
+		prt_printf(&buf, "c unpack:        ");
+		bch2_bkey_packed_to_binary_text(&buf, &bch2_bkey_format_current,
+						(struct bkey_packed *) &tmp);
+		prt_newline(&buf);
+
+		panic("%s", buf.buf);
 	}
 }
 
@@ -201,9 +230,10 @@ static bool bch2_bkey_transform_key(const struct bkey_format *out_f,
 {
 	struct pack_state out_s = pack_state_init(out_f, out);
 	struct unpack_state in_s = unpack_state_init(in_f, in);
+	u64 *w = out->_data;
 	unsigned i;
 
-	out->_data[0] = 0;
+	*w = 0;
 
 	for (i = 0; i < BKEY_NR_FIELDS; i++)
 		if (!set_inc_field(&out_s, i, get_inc_field(&in_s, i)))
@@ -292,12 +322,13 @@ bool bch2_bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 		   const struct bkey_format *format)
 {
 	struct pack_state state = pack_state_init(format, out);
+	u64 *w = out->_data;
 
 	EBUG_ON((void *) in == (void *) out);
 	EBUG_ON(format->nr_fields != BKEY_NR_FIELDS);
 	EBUG_ON(in->format != KEY_FORMAT_CURRENT);
 
-	out->_data[0] = 0;
+	*w = 0;
 
 #define x(id, field)	if (!set_inc_field(&state, id, in->field)) return false;
 	bkey_fields()
@@ -439,6 +470,7 @@ enum bkey_pack_pos_ret bch2_bkey_pack_pos_lossy(struct bkey_packed *out,
 {
 	const struct bkey_format *f = &b->format;
 	struct pack_state state = pack_state_init(f, out);
+	u64 *w = out->_data;
 #ifdef CONFIG_BCACHEFS_DEBUG
 	struct bpos orig = in;
 #endif
@@ -451,7 +483,7 @@ enum bkey_pack_pos_ret bch2_bkey_pack_pos_lossy(struct bkey_packed *out,
 	 * enough - we need to make sure to zero them out:
 	 */
 	for (i = 0; i < f->key_u64s; i++)
-		out->_data[i] = 0;
+		w[i] = 0;
 
 	if (unlikely(in.snapshot <
 		     le64_to_cpu(f->field_offset[BKEY_FIELD_SNAPSHOT]))) {

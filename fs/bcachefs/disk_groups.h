@@ -75,14 +75,14 @@ int bch2_disk_path_find(struct bch_sb_handle *, const char *);
 /* Exported for userspace bcachefs-tools: */
 int bch2_disk_path_find_or_create(struct bch_sb_handle *, const char *);
 
-void bch2_disk_path_to_text(struct printbuf *, struct bch_sb_handle *,
-			    unsigned);
+void bch2_disk_path_to_text(struct printbuf *, struct bch_sb *, unsigned);
 
 int bch2_opt_target_parse(struct bch_fs *, const char *, u64 *);
-void bch2_opt_target_to_text(struct printbuf *, struct bch_fs *, u64);
+void bch2_opt_target_to_text(struct printbuf *, struct bch_fs *, struct bch_sb *, u64);
 
 int bch2_sb_disk_groups_to_cpu(struct bch_fs *);
 
+int __bch2_dev_group_set(struct bch_fs *, struct bch_dev *, const char *);
 int bch2_dev_group_set(struct bch_fs *, struct bch_dev *, const char *);
 
 const char *bch2_sb_validate_disk_groups(struct bch_sb *,

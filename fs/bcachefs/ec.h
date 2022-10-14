@@ -4,9 +4,9 @@
 
 #include "ec_types.h"
 #include "buckets_types.h"
-#include "keylist_types.h"
 
-const char *bch2_stripe_invalid(const struct bch_fs *, struct bkey_s_c);
+int bch2_stripe_invalid(const struct bch_fs *, struct bkey_s_c,
+			int rw, struct printbuf *);
 void bch2_stripe_to_text(struct printbuf *, struct bch_fs *,
 			 struct bkey_s_c);
 
@@ -14,6 +14,8 @@ void bch2_stripe_to_text(struct printbuf *, struct bch_fs *,
 	.key_invalid	= bch2_stripe_invalid,		\
 	.val_to_text	= bch2_stripe_to_text,		\
 	.swab		= bch2_ptr_swab,		\
+	.trans_trigger	= bch2_trans_mark_stripe,	\
+	.atomic_trigger	= bch2_mark_stripe,		\
 }
 
 static inline unsigned stripe_csums_per_device(const struct bch_stripe *s)
@@ -163,9 +165,6 @@ struct ec_stripe_new {
 	open_bucket_idx_t	blocks[BCH_BKEY_PTRS_MAX];
 	struct disk_reservation	res;
 
-	struct keylist		keys;
-	u64			inline_keys[BKEY_U64s * 8];
-
 	struct ec_stripe_buf	new_stripe;
 	struct ec_stripe_buf	existing_stripe;
 };
@@ -193,8 +192,6 @@ struct ec_stripe_head {
 int bch2_ec_read_extent(struct bch_fs *, struct bch_read_bio *);
 
 void *bch2_writepoint_ec_buf(struct bch_fs *, struct write_point *);
-void bch2_ob_add_backpointer(struct bch_fs *, struct open_bucket *,
-			     struct bkey *);
 
 void bch2_ec_bucket_written(struct bch_fs *, struct open_bucket *);
 void bch2_ec_bucket_cancel(struct bch_fs *, struct open_bucket *);
@@ -221,6 +218,7 @@ void bch2_stripes_heap_to_text(struct printbuf *, struct bch_fs *);
 void bch2_new_stripes_to_text(struct printbuf *, struct bch_fs *);
 
 void bch2_fs_ec_exit(struct bch_fs *);
+void bch2_fs_ec_init_early(struct bch_fs *);
 int bch2_fs_ec_init(struct bch_fs *);
 
 #endif /* _BCACHEFS_EC_H */

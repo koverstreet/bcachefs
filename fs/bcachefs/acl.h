@@ -26,12 +26,12 @@ typedef struct {
 	__le32		a_version;
 } bch_acl_header;
 
-struct posix_acl *bch2_get_acl(struct inode *, int);
+struct posix_acl *bch2_get_acl(struct inode *, int, bool);
 
 int bch2_set_acl_trans(struct btree_trans *, subvol_inum,
 		       struct bch_inode_unpacked *,
 		       struct posix_acl *, int);
-int bch2_set_acl(struct inode *, struct posix_acl *, int);
+int bch2_set_acl(struct user_namespace *, struct inode *, struct posix_acl *, int);
 int bch2_acl_chmod(struct btree_trans *, subvol_inum,
 		   struct bch_inode_unpacked *,
 		   umode_t, struct posix_acl **);

@@ -52,6 +52,7 @@ struct btree_update {
 	unsigned			took_gc_lock:1;
 
 	enum btree_id			btree_id;
+	unsigned			update_level;
 
 	struct disk_reservation		disk_res;
 	struct journal_preres		journal_preres;
@@ -76,8 +77,10 @@ struct btree_update {
 	struct journal_entry_pin	journal;
 
 	/* Preallocated nodes we reserve when we start the update: */
-	struct btree			*prealloc_nodes[BTREE_UPDATE_NODES_MAX];
-	unsigned			nr_prealloc_nodes;
+	struct prealloc_nodes {
+		struct btree		*b[BTREE_UPDATE_NODES_MAX];
+		unsigned		nr;
+	}				prealloc_nodes[2];
 
 	/* Nodes being freed: */
 	struct keylist			old_keys;
@@ -115,6 +118,7 @@ struct btree_update {
 };
 
 struct btree *__bch2_btree_node_alloc_replacement(struct btree_update *,
+						  struct btree_trans *,
 						  struct btree *,
 						  struct bkey_format);
 
@@ -307,7 +311,7 @@ static inline bool bch2_btree_node_insert_fits(struct bch_fs *c,
 
 void bch2_btree_updates_to_text(struct printbuf *, struct bch_fs *);
 
-size_t bch2_btree_interior_updates_nr_pending(struct bch_fs *);
+bool bch2_btree_interior_updates_flush(struct bch_fs *);
 
 void bch2_journal_entries_to_btree_roots(struct bch_fs *, struct jset *);
 struct jset_entry *bch2_btree_roots_to_journal_entries(struct bch_fs *,

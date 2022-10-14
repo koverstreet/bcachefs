@@ -26,6 +26,12 @@ static inline sector_t bucket_remainder(const struct bch_dev *ca, sector_t s)
 	return remainder;
 }
 
+static inline size_t sector_to_bucket_and_offset(const struct bch_dev *ca, sector_t s,
+						 u32 *offset)
+{
+	return div_u64_rem(s, ca->mi.bucket_size, offset);
+}
+
 static inline bool bch2_dev_is_online(struct bch_dev *ca)
 {
 	return !percpu_ref_is_zero(&ca->io_ref);
@@ -83,7 +89,7 @@ static inline void bch2_dev_list_add_dev(struct bch_devs_list *devs,
 					 unsigned dev)
 {
 	BUG_ON(bch2_dev_list_has_dev(*devs, dev));
-	BUG_ON(devs->nr >= BCH_REPLICAS_MAX);
+	BUG_ON(devs->nr >= ARRAY_SIZE(devs->devs));
 	devs->devs[devs->nr++] = dev;
 }
 
@@ -217,7 +223,6 @@ static inline bool is_superblock_bucket(struct bch_dev *ca, u64 b)
 
 struct bch_fs *bch2_dev_to_fs(dev_t);
 struct bch_fs *bch2_uuid_to_fs(uuid_le);
-int bch2_congested(void *, int);
 
 bool bch2_dev_state_allowed(struct bch_fs *, struct bch_dev *,
 			   enum bch_member_state, int);

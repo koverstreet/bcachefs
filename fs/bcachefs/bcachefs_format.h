@@ -78,6 +78,21 @@
 #include <linux/uuid.h>
 #include "vstructs.h"
 
+#define BITMASK(name, type, field, offset, end)				\
+static const unsigned	name##_OFFSET = offset;				\
+static const unsigned	name##_BITS = (end - offset);			\
+									\
+static inline __u64 name(const type *k)					\
+{									\
+	return (k->field >> offset) & ~(~0ULL << (end - offset));	\
+}									\
+									\
+static inline void SET_##name(type *k, __u64 v)				\
+{									\
+	k->field &= ~(~(~0ULL << (end - offset)) << offset);		\
+	k->field |= (v & ~(~0ULL << (end - offset))) << offset;		\
+}
+
 #define LE_BITMASK(_bits, name, type, field, offset, end)		\
 static const unsigned	name##_OFFSET = offset;				\
 static const unsigned	name##_BITS = (end - offset);			\
@@ -347,7 +362,11 @@ static inline void bkey_init(struct bkey *k)
 	x(subvolume,		21)			\
 	x(snapshot,		22)			\
 	x(inode_v2,		23)			\
-	x(alloc_v3,		24)
+	x(alloc_v3,		24)			\
+	x(set,			25)			\
+	x(lru,			26)			\
+	x(alloc_v4,		27)			\
+	x(backpointer,		28)
 
 enum bch_bkey_type {
 #define x(name, nr) KEY_TYPE_##name	= nr,
@@ -374,6 +393,10 @@ struct bch_cookie {
 };
 
 struct bch_hash_whiteout {
+	struct bch_val		v;
+};
+
+struct bch_set {
 	struct bch_val		v;
 };
 
@@ -617,8 +640,8 @@ union bch_extent_entry {
 struct bch_btree_ptr {
 	struct bch_val		v;
 
-	struct bch_extent_ptr	start[0];
 	__u64			_data[0];
+	struct bch_extent_ptr	start[];
 } __attribute__((packed, aligned(8)));
 
 struct bch_btree_ptr_v2 {
@@ -629,8 +652,8 @@ struct bch_btree_ptr_v2 {
 	__le16			sectors_written;
 	__le16			flags;
 	struct bpos		min_key;
-	struct bch_extent_ptr	start[0];
 	__u64			_data[0];
+	struct bch_extent_ptr	start[];
 } __attribute__((packed, aligned(8)));
 
 LE16_BITMASK(BTREE_PTR_RANGE_UPDATED,	struct bch_btree_ptr_v2, flags, 0, 1);
@@ -638,8 +661,8 @@ LE16_BITMASK(BTREE_PTR_RANGE_UPDATED,	struct bch_btree_ptr_v2, flags, 0, 1);
 struct bch_extent {
 	struct bch_val		v;
 
-	union bch_extent_entry	start[0];
 	__u64			_data[0];
+	union bch_extent_entry	start[];
 } __attribute__((packed, aligned(8)));
 
 struct bch_reservation {
@@ -825,10 +848,9 @@ struct bch_dirent {
 #define DT_SUBVOL	16
 #define BCH_DT_MAX	17
 
-#define BCH_NAME_MAX	(U8_MAX * sizeof(u64) -				\
+#define BCH_NAME_MAX	((unsigned) (U8_MAX * sizeof(u64) -		\
 			 sizeof(struct bkey) -				\
-			 offsetof(struct bch_dirent, d_name))
-
+			 offsetof(struct bch_dirent, d_name)))
 
 /* Xattrs */
 
@@ -865,6 +887,12 @@ struct bch_alloc {
 	x(stripe,		32)		\
 	x(stripe_redundancy,	8)
 
+enum {
+#define x(name, _bits) BCH_ALLOC_FIELD_V1_##name,
+	BCH_ALLOC_FIELDS_V1()
+#undef x
+};
+
 struct bch_alloc_v2 {
 	struct bch_val		v;
 	__u8			nr_fields;
@@ -877,8 +905,8 @@ struct bch_alloc_v2 {
 #define BCH_ALLOC_FIELDS_V2()			\
 	x(read_time,		64)		\
 	x(write_time,		64)		\
-	x(dirty_sectors,	16)		\
-	x(cached_sectors,	16)		\
+	x(dirty_sectors,	32)		\
+	x(cached_sectors,	32)		\
 	x(stripe,		32)		\
 	x(stripe_redundancy,	8)
 
@@ -893,12 +921,43 @@ struct bch_alloc_v3 {
 	__u8			data[];
 } __attribute__((packed, aligned(8)));
 
-enum {
-#define x(name, _bits) BCH_ALLOC_FIELD_V1_##name,
-	BCH_ALLOC_FIELDS_V1()
-#undef x
-	BCH_ALLOC_FIELD_NR
-};
+LE32_BITMASK(BCH_ALLOC_V3_NEED_DISCARD,struct bch_alloc_v3, flags,  0,  1)
+LE32_BITMASK(BCH_ALLOC_V3_NEED_INC_GEN,struct bch_alloc_v3, flags,  1,  2)
+
+struct bch_alloc_v4 {
+	struct bch_val		v;
+	__u64			journal_seq;
+	__u32			flags;
+	__u8			gen;
+	__u8			oldest_gen;
+	__u8			data_type;
+	__u8			stripe_redundancy;
+	__u32			dirty_sectors;
+	__u32			cached_sectors;
+	__u64			io_time[2];
+	__u32			stripe;
+	__u32			nr_external_backpointers;
+} __attribute__((packed, aligned(8)));
+
+#define BCH_ALLOC_V4_U64s_V0	6
+#define BCH_ALLOC_V4_U64s	(sizeof(struct bch_alloc_v4) / sizeof(u64))
+
+BITMASK(BCH_ALLOC_V4_NEED_DISCARD,	struct bch_alloc_v4, flags,  0,  1)
+BITMASK(BCH_ALLOC_V4_NEED_INC_GEN,	struct bch_alloc_v4, flags,  1,  2)
+BITMASK(BCH_ALLOC_V4_BACKPOINTERS_START,struct bch_alloc_v4, flags,  2,  8)
+BITMASK(BCH_ALLOC_V4_NR_BACKPOINTERS,	struct bch_alloc_v4, flags,  8,  14)
+
+#define BCH_ALLOC_V4_NR_BACKPOINTERS_MAX	40
+
+struct bch_backpointer {
+	struct bch_val		v;
+	__u8			btree_id;
+	__u8			level;
+	__u8			data_type;
+	__u64			bucket_offset:40;
+	__u32			bucket_len;
+	struct bpos		pos;
+} __attribute__((packed, aligned(8)));
 
 /* Quotas: */
 
@@ -938,7 +997,7 @@ struct bch_stripe {
 	__u8			csum_type;
 	__u8			pad;
 
-	struct bch_extent_ptr	ptrs[0];
+	struct bch_extent_ptr	ptrs[];
 } __attribute__((packed, aligned(8)));
 
 /* Reflink: */
@@ -1015,6 +1074,15 @@ LE32_BITMASK(BCH_SNAPSHOT_DELETED,	struct bch_snapshot, flags,  0,  1)
 /* True if a subvolume points to this snapshot node: */
 LE32_BITMASK(BCH_SNAPSHOT_SUBVOL,	struct bch_snapshot, flags,  1,  2)
 
+/* LRU btree: */
+
+struct bch_lru {
+	struct bch_val		v;
+	__le64			idx;
+} __attribute__((packed, aligned(8)));
+
+#define LRU_ID_STRIPES		(1U << 16)
+
 /* Optional/variable size superblock sections: */
 
 struct bch_sb_field {
@@ -1023,16 +1091,18 @@ struct bch_sb_field {
 	__le32			type;
 };
 
-#define BCH_SB_FIELDS()		\
-	x(journal,	0)	\
-	x(members,	1)	\
-	x(crypt,	2)	\
-	x(replicas_v0,	3)	\
-	x(quota,	4)	\
-	x(disk_groups,	5)	\
-	x(clean,	6)	\
-	x(replicas,	7)	\
-	x(journal_seq_blacklist, 8)
+#define BCH_SB_FIELDS()				\
+	x(journal,	0)			\
+	x(members,	1)			\
+	x(crypt,	2)			\
+	x(replicas_v0,	3)			\
+	x(quota,	4)			\
+	x(disk_groups,	5)			\
+	x(clean,	6)			\
+	x(replicas,	7)			\
+	x(journal_seq_blacklist, 8)		\
+	x(journal_v2,	9)			\
+	x(counters,	10)
 
 enum bch_sb_field_type {
 #define x(f, nr)	BCH_SB_FIELD_##f = nr,
@@ -1041,11 +1111,28 @@ enum bch_sb_field_type {
 	BCH_SB_FIELD_NR
 };
 
+/*
+ * Most superblock fields are replicated in all device's superblocks - a few are
+ * not:
+ */
+#define BCH_SINGLE_DEVICE_SB_FIELDS		\
+	((1U << BCH_SB_FIELD_journal)|		\
+	 (1U << BCH_SB_FIELD_journal_v2))
+
 /* BCH_SB_FIELD_journal: */
 
 struct bch_sb_field_journal {
 	struct bch_sb_field	field;
 	__le64			buckets[0];
+};
+
+struct bch_sb_field_journal_v2 {
+	struct bch_sb_field	field;
+
+	struct bch_sb_field_journal_v2_entry {
+		__le64		start;
+		__le64		nr;
+	}			d[0];
 };
 
 /* BCH_SB_FIELD_members: */
@@ -1069,6 +1156,8 @@ LE64_BITMASK(BCH_MEMBER_DISCARD,	struct bch_member, flags[0], 14, 15)
 LE64_BITMASK(BCH_MEMBER_DATA_ALLOWED,	struct bch_member, flags[0], 15, 20)
 LE64_BITMASK(BCH_MEMBER_GROUP,		struct bch_member, flags[0], 20, 28)
 LE64_BITMASK(BCH_MEMBER_DURABILITY,	struct bch_member, flags[0], 28, 30)
+LE64_BITMASK(BCH_MEMBER_FREESPACE_INITIALIZED,
+					struct bch_member, flags[0], 30, 31)
 
 #if 0
 LE64_BITMASK(BCH_MEMBER_NR_READ_ERRORS,	struct bch_member, flags[1], 0,  20);
@@ -1144,13 +1233,16 @@ LE64_BITMASK(BCH_KDF_SCRYPT_P,	struct bch_sb_field_crypt, kdf_flags, 32, 48);
 /* BCH_SB_FIELD_replicas: */
 
 #define BCH_DATA_TYPES()		\
-	x(none,		0)		\
+	x(free,		0)		\
 	x(sb,		1)		\
 	x(journal,	2)		\
 	x(btree,	3)		\
 	x(user,		4)		\
 	x(cached,	5)		\
-	x(parity,	6)
+	x(parity,	6)		\
+	x(stripe,	7)		\
+	x(need_gc_gens,	8)		\
+	x(need_discard,	9)
 
 enum bch_data_type {
 #define x(t, n) BCH_DATA_##t,
@@ -1159,22 +1251,45 @@ enum bch_data_type {
 	BCH_DATA_NR
 };
 
+static inline bool data_type_is_empty(enum bch_data_type type)
+{
+	switch (type) {
+	case BCH_DATA_free:
+	case BCH_DATA_need_gc_gens:
+	case BCH_DATA_need_discard:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static inline bool data_type_is_hidden(enum bch_data_type type)
+{
+	switch (type) {
+	case BCH_DATA_sb:
+	case BCH_DATA_journal:
+		return true;
+	default:
+		return false;
+	}
+}
+
 struct bch_replicas_entry_v0 {
 	__u8			data_type;
 	__u8			nr_devs;
-	__u8			devs[0];
+	__u8			devs[];
 } __attribute__((packed));
 
 struct bch_sb_field_replicas_v0 {
 	struct bch_sb_field	field;
-	struct bch_replicas_entry_v0 entries[0];
+	struct bch_replicas_entry_v0 entries[];
 } __attribute__((packed, aligned(8)));
 
 struct bch_replicas_entry {
 	__u8			data_type;
 	__u8			nr_devs;
 	__u8			nr_required;
-	__u8			devs[0];
+	__u8			devs[];
 } __attribute__((packed));
 
 #define replicas_entry_bytes(_i)					\
@@ -1219,6 +1334,97 @@ struct bch_sb_field_disk_groups {
 	struct bch_sb_field	field;
 	struct bch_disk_group	entries[0];
 } __attribute__((packed, aligned(8)));
+
+/* BCH_SB_FIELD_counters */
+
+#define BCH_PERSISTENT_COUNTERS()				\
+	x(io_read,					0)	\
+	x(io_write,					1)	\
+	x(io_move,					2)	\
+	x(bucket_invalidate,				3)	\
+	x(bucket_discard,				4)	\
+	x(bucket_alloc,					5)	\
+	x(bucket_alloc_fail,				6)	\
+	x(btree_cache_scan,				7)	\
+	x(btree_cache_reap,				8)	\
+	x(btree_cache_cannibalize,			9)	\
+	x(btree_cache_cannibalize_lock,			10)	\
+	x(btree_cache_cannibalize_lock_fail,		11)	\
+	x(btree_cache_cannibalize_unlock,		12)	\
+	x(btree_node_write,				13)	\
+	x(btree_node_read,				14)	\
+	x(btree_node_compact,				15)	\
+	x(btree_node_merge,				16)	\
+	x(btree_node_split,				17)	\
+	x(btree_node_rewrite,				18)	\
+	x(btree_node_alloc,				19)	\
+	x(btree_node_free,				20)	\
+	x(btree_node_set_root,				21)	\
+	x(btree_path_relock_fail,			22)	\
+	x(btree_path_upgrade_fail,			23)	\
+	x(btree_reserve_get_fail,			24)	\
+	x(journal_entry_full,				25)	\
+	x(journal_full,					26)	\
+	x(journal_reclaim_finish,			27)	\
+	x(journal_reclaim_start,			28)	\
+	x(journal_write,				29)	\
+	x(read_promote,					30)	\
+	x(read_bounce,					31)	\
+	x(read_split,					33)	\
+	x(read_retry,					32)	\
+	x(read_reuse_race,				34)	\
+	x(move_extent_read,				35)	\
+	x(move_extent_write,				36)	\
+	x(move_extent_finish,				37)	\
+	x(move_extent_race,				38)	\
+	x(move_extent_alloc_mem_fail,			39)	\
+	x(copygc,					40)	\
+	x(copygc_wait,					41)	\
+	x(gc_gens_end,					42)	\
+	x(gc_gens_start,				43)	\
+	x(trans_blocked_journal_reclaim,		44)	\
+	x(trans_restart_btree_node_reused,		45)	\
+	x(trans_restart_btree_node_split,		46)	\
+	x(trans_restart_fault_inject,			47)	\
+	x(trans_restart_iter_upgrade,			48)	\
+	x(trans_restart_journal_preres_get,		49)	\
+	x(trans_restart_journal_reclaim,		50)	\
+	x(trans_restart_journal_res_get,		51)	\
+	x(trans_restart_key_cache_key_realloced,	52)	\
+	x(trans_restart_key_cache_raced,		53)	\
+	x(trans_restart_mark_replicas,			54)	\
+	x(trans_restart_mem_realloced,			55)	\
+	x(trans_restart_memory_allocation_failure,	56)	\
+	x(trans_restart_relock,				57)	\
+	x(trans_restart_relock_after_fill,		58)	\
+	x(trans_restart_relock_key_cache_fill,		59)	\
+	x(trans_restart_relock_next_node,		60)	\
+	x(trans_restart_relock_parent_for_fill,		61)	\
+	x(trans_restart_relock_path,			62)	\
+	x(trans_restart_relock_path_intent,		63)	\
+	x(trans_restart_too_many_iters,			64)	\
+	x(trans_restart_traverse,			65)	\
+	x(trans_restart_upgrade,			66)	\
+	x(trans_restart_would_deadlock,			67)	\
+	x(trans_restart_would_deadlock_write,		68)	\
+	x(trans_restart_injected,			69)	\
+	x(trans_restart_key_cache_upgrade,		70)	\
+	x(trans_traverse_all,				71)	\
+	x(transaction_commit,				72)	\
+	x(write_super,					73)	\
+	x(trans_restart_would_deadlock_recursion_limit,	74)
+
+enum bch_persistent_counters {
+#define x(t, n, ...) BCH_COUNTER_##t,
+	BCH_PERSISTENT_COUNTERS()
+#undef x
+	BCH_COUNTER_NR
+};
+
+struct bch_sb_field_counters {
+	struct bch_sb_field	field;
+	__le64			d[0];
+};
 
 /*
  * On clean shutdown, store btree roots and current journal sequence number in
@@ -1275,19 +1481,27 @@ struct bch_sb_field_journal_seq_blacklist {
 #define BCH_JSET_VERSION_OLD			2
 #define BCH_BSET_VERSION_OLD			3
 
+#define BCH_METADATA_VERSIONS()				\
+	x(bkey_renumber,		10)		\
+	x(inode_btree_change,		11)		\
+	x(snapshot,			12)		\
+	x(inode_backpointers,		13)		\
+	x(btree_ptr_sectors_written,	14)		\
+	x(snapshot_2,			15)		\
+	x(reflink_p_fix,		16)		\
+	x(subvol_dirent,		17)		\
+	x(inode_v2,			18)		\
+	x(freespace,			19)		\
+	x(alloc_v4,			20)		\
+	x(new_data_types,		21)		\
+	x(backpointers,			22)
+
 enum bcachefs_metadata_version {
-	bcachefs_metadata_version_min			= 9,
-	bcachefs_metadata_version_new_versioning	= 10,
-	bcachefs_metadata_version_bkey_renumber		= 10,
-	bcachefs_metadata_version_inode_btree_change	= 11,
-	bcachefs_metadata_version_snapshot		= 12,
-	bcachefs_metadata_version_inode_backpointers	= 13,
-	bcachefs_metadata_version_btree_ptr_sectors_written = 14,
-	bcachefs_metadata_version_snapshot_2		= 15,
-	bcachefs_metadata_version_reflink_p_fix		= 16,
-	bcachefs_metadata_version_subvol_dirent		= 17,
-	bcachefs_metadata_version_inode_v2		= 18,
-	bcachefs_metadata_version_max			= 19,
+	bcachefs_metadata_version_min = 9,
+#define x(t, n)	bcachefs_metadata_version_##t = n,
+	BCH_METADATA_VERSIONS()
+#undef x
+	bcachefs_metadata_version_max
 };
 
 #define bcachefs_metadata_version_current	(bcachefs_metadata_version_max - 1)
@@ -1427,6 +1641,7 @@ LE64_BITMASK(BCH_SB_INODES_USE_KEY_CACHE,struct bch_sb, flags[3], 29, 30);
 LE64_BITMASK(BCH_SB_JOURNAL_FLUSH_DELAY,struct bch_sb, flags[3], 30, 62);
 LE64_BITMASK(BCH_SB_JOURNAL_FLUSH_DISABLED,struct bch_sb, flags[3], 62, 63);
 LE64_BITMASK(BCH_SB_JOURNAL_RECLAIM_DELAY,struct bch_sb, flags[4], 0, 32);
+/* Obsolete, always enabled: */
 LE64_BITMASK(BCH_SB_JOURNAL_TRANSACTION_NAMES,struct bch_sb, flags[4], 32, 33);
 
 /*
@@ -1663,7 +1878,8 @@ static inline __u64 __bset_magic(struct bch_sb *sb)
 	x(data_usage,		6)		\
 	x(clock,		7)		\
 	x(dev_usage,		8)		\
-	x(log,			9)
+	x(log,			9)		\
+	x(overwrite,		10)
 
 enum {
 #define x(f, nr)	BCH_JSET_ENTRY_##f	= nr,
@@ -1735,7 +1951,7 @@ struct jset_entry_dev_usage {
 	__u32			pad;
 
 	__le64			buckets_ec;
-	__le64			buckets_unavailable;
+	__le64			_buckets_unavailable; /* No longer used */
 
 	struct jset_entry_dev_usage_type d[];
 } __attribute__((packed));
@@ -1804,7 +2020,11 @@ LE32_BITMASK(JSET_NO_FLUSH,	struct jset, flags, 5, 6);
 	x(stripes,	6)			\
 	x(reflink,	7)			\
 	x(subvolumes,	8)			\
-	x(snapshots,	9)
+	x(snapshots,	9)			\
+	x(lru,		10)			\
+	x(freespace,	11)			\
+	x(need_discard,	12)			\
+	x(backpointers,	13)
 
 enum btree_id {
 #define x(kwd, val) BTREE_ID_##kwd = val,

@@ -11,15 +11,14 @@
 #include <linux/sched/clock.h>
 #include <linux/llist.h>
 #include <linux/log2.h>
+#include <linux/printbuf.h>
 #include <linux/percpu.h>
 #include <linux/preempt.h>
 #include <linux/ratelimit.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/workqueue.h>
-
-#define PAGE_SECTORS_SHIFT	(PAGE_SHIFT - 9)
-#define PAGE_SECTORS		(1UL << PAGE_SECTORS_SHIFT)
+#include <linux/mean_and_variance.h>
 
 struct closure;
 
@@ -88,7 +87,7 @@ static inline void *vpmalloc(size_t size, gfp_t gfp_mask)
 {
 	return (void *) __get_free_pages(gfp_mask|__GFP_NOWARN,
 					 get_order(size)) ?:
-		__vmalloc(size, gfp_mask, PAGE_KERNEL);
+		__vmalloc(size, gfp_mask);
 }
 
 static inline void kvpfree(void *p, size_t size)
@@ -213,9 +212,11 @@ do {									\
 									\
 	BUG_ON(_i >= (h)->used);					\
 	(h)->used--;							\
-	heap_swap(h, _i, (h)->used, set_backpointer);			\
-	heap_sift_up(h, _i, cmp, set_backpointer);			\
-	heap_sift_down(h, _i, cmp, set_backpointer);			\
+	if ((_i) < (h)->used) {						\
+		heap_swap(h, _i, (h)->used, set_backpointer);		\
+		heap_sift_up(h, _i, cmp, set_backpointer);		\
+		heap_sift_down(h, _i, cmp, set_backpointer);		\
+	}								\
 } while (0)
 
 #define heap_pop(h, d, cmp, set_backpointer)				\
@@ -238,31 +239,43 @@ do {									\
 #define ANYSINT_MAX(t)							\
 	((((t) 1 << (sizeof(t) * 8 - 2)) - (t) 1) * (t) 2 + (t) 1)
 
-struct printbuf {
-	char		*pos;
-	char		*end;
-};
 
-static inline size_t printbuf_remaining(struct printbuf *buf)
+#ifdef __KERNEL__
+static inline void pr_time(struct printbuf *out, u64 time)
 {
-	return buf->end - buf->pos;
+	prt_printf(out, "%llu", time);
 }
+#else
+#include <time.h>
+static inline void pr_time(struct printbuf *out, u64 _time)
+{
+	char time_str[64];
+	time_t time = _time;
+	struct tm *tm = localtime(&time);
+	size_t err = strftime(time_str, sizeof(time_str), "%c", tm);
+	if (!err)
+		prt_printf(out, "(formatting error)");
+	else
+		prt_printf(out, "%s", time_str);
+}
+#endif
 
-#define _PBUF(_buf, _len)						\
-	((struct printbuf) {						\
-		.pos	= _buf,						\
-		.end	= _buf + _len,					\
-	})
+#ifdef __KERNEL__
+static inline void uuid_unparse_lower(u8 *uuid, char *out)
+{
+	sprintf(out, "%pUb", uuid);
+}
+#else
+#include <uuid/uuid.h>
+#endif
 
-#define PBUF(_buf) _PBUF(_buf, sizeof(_buf))
+static inline void pr_uuid(struct printbuf *out, u8 *uuid)
+{
+	char uuid_str[40];
 
-#define pr_buf(_out, ...)						\
-do {									\
-	(_out)->pos += scnprintf((_out)->pos, printbuf_remaining(_out),	\
-				 __VA_ARGS__);				\
-} while (0)
-
-void bch_scnmemcpy(struct printbuf *, const char *, size_t);
+	uuid_unparse_lower(uuid, uuid_str);
+	prt_printf(out, "%s", uuid_str);
+}
 
 int bch2_strtoint_h(const char *, int *);
 int bch2_strtouint_h(const char *, unsigned int *);
@@ -326,8 +339,8 @@ static inline int bch2_strtoul_h(const char *cp, long *res)
 	_r;								\
 })
 
-#define snprint(buf, size, var)						\
-	snprintf(buf, size,						\
+#define snprint(out, var)						\
+	prt_printf(out,							\
 		   type_is(var, int)		? "%i\n"		\
 		 : type_is(var, unsigned)	? "%u\n"		\
 		 : type_is(var, long)		? "%li\n"		\
@@ -337,15 +350,14 @@ static inline int bch2_strtoul_h(const char *cp, long *res)
 		 : type_is(var, char *)		? "%s\n"		\
 		 : "%i\n", var)
 
-void bch2_hprint(struct printbuf *, s64);
-
 bool bch2_is_zero(const void *, size_t);
 
-void bch2_string_opt_to_text(struct printbuf *,
-			     const char * const [], size_t);
-
-void bch2_flags_to_text(struct printbuf *, const char * const[], u64);
 u64 bch2_read_flag_list(char *, const char * const[]);
+
+void bch2_prt_u64_binary(struct printbuf *, u64, unsigned);
+
+void bch2_print_string_as_lines(const char *prefix, const char *lines);
+int bch2_prt_backtrace(struct printbuf *, struct task_struct *);
 
 #define NR_QUANTILES	15
 #define QUANTILE_IDX(i)	inorder_to_eytzinger0(i, NR_QUANTILES)
@@ -369,14 +381,18 @@ struct time_stat_buffer {
 
 struct time_stats {
 	spinlock_t	lock;
-	u64		count;
 	/* all fields are in nanoseconds */
-	u64		average_duration;
-	u64		average_frequency;
 	u64		max_duration;
+	u64             min_duration;
+	u64             max_freq;
+	u64             min_freq;
 	u64		last_event;
 	struct quantiles quantiles;
 
+	struct mean_and_variance	  duration_stats;
+	struct mean_and_variance_weighted duration_stats_weighted;
+	struct mean_and_variance	  freq_stats;
+	struct mean_and_variance_weighted freq_stats_weighted;
 	struct time_stat_buffer __percpu *buffer;
 };
 
@@ -444,7 +460,7 @@ struct bch_pd_controller {
 
 void bch2_pd_controller_update(struct bch_pd_controller *, s64, s64, int);
 void bch2_pd_controller_init(struct bch_pd_controller *);
-size_t bch2_pd_controller_print_debug(struct bch_pd_controller *, char *);
+void bch2_pd_controller_debug_to_text(struct printbuf *, struct bch_pd_controller *);
 
 #define sysfs_pd_controller_attribute(name)				\
 	rw_attribute(name##_rate);					\
@@ -468,7 +484,7 @@ do {									\
 	sysfs_print(name##_rate_p_term_inverse,	(var)->p_term_inverse);	\
 									\
 	if (attr == &sysfs_##name##_rate_debug)				\
-		return bch2_pd_controller_print_debug(var, buf);		\
+		bch2_pd_controller_debug_to_text(out, var);		\
 } while (0)
 
 #define sysfs_pd_controller_store(name, var)				\
@@ -653,35 +669,6 @@ static inline void memset_u64s_tail(void *s, int c, unsigned bytes)
 	memset(s + bytes, c, rem);
 }
 
-static inline struct bio_vec next_contig_bvec(struct bio *bio,
-					      struct bvec_iter *iter)
-{
-	struct bio_vec bv = bio_iter_iovec(bio, *iter);
-
-	bio_advance_iter(bio, iter, bv.bv_len);
-#ifndef CONFIG_HIGHMEM
-	while (iter->bi_size) {
-		struct bio_vec next = bio_iter_iovec(bio, *iter);
-
-		if (page_address(bv.bv_page) + bv.bv_offset + bv.bv_len !=
-		    page_address(next.bv_page) + next.bv_offset)
-			break;
-
-		bv.bv_len += next.bv_len;
-		bio_advance_iter(bio, iter, next.bv_len);
-	}
-#endif
-	return bv;
-}
-
-#define __bio_for_each_contig_segment(bv, bio, iter, start)		\
-	for (iter = (start);						\
-	     (iter).bi_size &&						\
-		((bv = next_contig_bvec((bio), &(iter))), 1);)
-
-#define bio_for_each_contig_segment(bv, bio, iter)			\
-	__bio_for_each_contig_segment(bv, bio, iter, (bio)->bi_iter)
-
 void sort_cmp_size(void *base, size_t num, size_t size,
 	  int (*cmp_func)(const void *, const void *, size_t),
 	  void (*swap_func)(void *, void *, size_t));
@@ -709,6 +696,31 @@ do {									\
 
 #define array_remove_item(_array, _nr, _pos)				\
 	array_remove_items(_array, _nr, _pos, 1)
+
+static inline void __move_gap(void *array, size_t element_size,
+			      size_t nr, size_t size,
+			      size_t old_gap, size_t new_gap)
+{
+	size_t gap_end = old_gap + size - nr;
+
+	if (new_gap < old_gap) {
+		size_t move = old_gap - new_gap;
+
+		memmove(array + element_size * (gap_end - move),
+			array + element_size * (old_gap - move),
+				element_size * move);
+	} else if (new_gap > old_gap) {
+		size_t move = new_gap - old_gap;
+
+		memmove(array + element_size * old_gap,
+			array + element_size * gap_end,
+				element_size * move);
+	}
+}
+
+/* Move the gap in a gap buffer: */
+#define move_gap(_array, _nr, _size, _old_gap, _new_gap)	\
+	__move_gap(_array, sizeof(_array[0]), _nr, _size, _old_gap, _new_gap)
 
 #define bubble_sort(_base, _nr, _cmp)					\
 do {									\
@@ -777,14 +789,5 @@ static inline int u8_cmp(u8 l, u8 r)
 {
 	return cmp_int(l, r);
 }
-
-#ifdef __KERNEL__
-static inline void uuid_unparse_lower(u8 *uuid, char *out)
-{
-	sprintf(out, "%plU", uuid);
-}
-#else
-#include <uuid/uuid.h>
-#endif
 
 #endif /* _BCACHEFS_UTIL_H */

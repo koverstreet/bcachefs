@@ -12,6 +12,8 @@ struct bch_dev;
 struct bch_fs;
 struct bch_devs_List;
 
+extern const char * const bch2_alloc_reserves[];
+
 struct dev_alloc_list {
 	unsigned	nr;
 	u8		devs[BCH_SB_MEMBERS_MAX];
@@ -115,11 +117,33 @@ static inline bool bch2_bucket_is_open(struct bch_fs *c, unsigned dev, u64 bucke
 	return false;
 }
 
+static inline bool bch2_bucket_is_open_safe(struct bch_fs *c, unsigned dev, u64 bucket)
+{
+	bool ret;
+
+	if (bch2_bucket_is_open(c, dev, bucket))
+		return true;
+
+	spin_lock(&c->freelist_lock);
+	ret = bch2_bucket_is_open(c, dev, bucket);
+	spin_unlock(&c->freelist_lock);
+
+	return ret;
+}
+
 int bch2_bucket_alloc_set(struct bch_fs *, struct open_buckets *,
 		      struct dev_stripe_state *, struct bch_devs_mask *,
 		      unsigned, unsigned *, bool *, enum alloc_reserve,
 		      unsigned, struct closure *);
 
+struct write_point *bch2_alloc_sectors_start_trans(struct btree_trans *,
+					     unsigned, unsigned,
+					     struct write_point_specifier,
+					     struct bch_devs_list *,
+					     unsigned, unsigned,
+					     enum alloc_reserve,
+					     unsigned,
+					     struct closure *);
 struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
 					     unsigned, unsigned,
 					     struct write_point_specifier,
