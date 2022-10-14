@@ -2386,6 +2386,8 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 		}
 
 		k = bch2_btree_path_peek_slot(iter->path, &iter->k);
+		if (unlikely(!k.k))
+			goto out_no_locked;
 	} else {
 		struct bpos next;
 
