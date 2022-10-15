@@ -1162,11 +1162,6 @@ int bch2_journal_read(struct bch_fs *c, u64 *blacklist_seq, u64 *start_seq)
 						 le64_to_cpu(i->j.seq)))
 				i->j.last_seq = i->j.seq;
 
-			pr_info("last flush %llu-%llu csum good %u",
-				le64_to_cpu(i->j.last_seq),
-				le64_to_cpu(i->j.seq),
-				i->csum_good);
-
 			last_seq	= le64_to_cpu(i->j.last_seq);
 			*blacklist_seq	= le64_to_cpu(i->j.seq) + 1;
 			break;
