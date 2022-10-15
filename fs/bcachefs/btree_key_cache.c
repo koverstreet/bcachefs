@@ -891,15 +891,20 @@ void bch2_fs_btree_key_cache_exit(struct btree_key_cache *bc)
 
 	mutex_lock(&bc->lock);
 
-	rcu_read_lock();
-	tbl = rht_dereference_rcu(bc->table.tbl, &bc->table);
-	if (tbl)
-		for (i = 0; i < tbl->size; i++)
-			rht_for_each_entry_rcu(ck, pos, tbl, i, hash) {
-				bkey_cached_evict(bc, ck);
-				list_add(&ck->list, &bc->freed_nonpcpu);
-			}
-	rcu_read_unlock();
+	/*
+	 * The loop is needed to guard against racing with rehash:
+	 */
+	while (atomic_long_read(&bc->nr_keys)) {
+		rcu_read_lock();
+		tbl = rht_dereference_rcu(bc->table.tbl, &bc->table);
+		if (tbl)
+			for (i = 0; i < tbl->size; i++)
+				rht_for_each_entry_rcu(ck, pos, tbl, i, hash) {
+					bkey_cached_evict(bc, ck);
+					list_add(&ck->list, &bc->freed_nonpcpu);
+				}
+		rcu_read_unlock();
+	}
 
 #ifdef __KERNEL__
 	for_each_possible_cpu(cpu) {
