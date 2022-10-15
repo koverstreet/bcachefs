@@ -3041,6 +3041,13 @@ void bch2_btree_trans_to_text(struct printbuf *out, struct btree_trans *trans)
 
 void bch2_fs_btree_iter_exit(struct bch_fs *c)
 {
+	struct btree_transaction_stats *s;
+
+	for (s = c->btree_transaction_stats;
+	     s < c->btree_transaction_stats + ARRAY_SIZE(c->btree_transaction_stats);
+	     s++)
+		kfree(s->max_paths_text);
+
 	if (c->btree_trans_barrier_initialized)
 		cleanup_srcu_struct(&c->btree_trans_barrier);
 	mempool_exit(&c->btree_trans_mem_pool);
