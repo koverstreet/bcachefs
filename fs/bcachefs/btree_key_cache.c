@@ -103,6 +103,22 @@ static void bkey_cached_free(struct btree_key_cache *bc,
 	six_unlock_intent(&ck->c.lock);
 }
 
+static void __bkey_cached_move_to_freelist_ordered(struct btree_key_cache *bc,
+						   struct bkey_cached *ck)
+{
+	struct bkey_cached *pos;
+
+	list_for_each_entry_reverse(pos, &bc->freed_nonpcpu, list) {
+		if (ULONG_CMP_GE(ck->btree_trans_barrier_seq,
+				 pos->btree_trans_barrier_seq)) {
+			list_move(&ck->list, &pos->list);
+			return;
+		}
+	}
+
+	list_move(&ck->list, &bc->freed_nonpcpu);
+}
+
 static void bkey_cached_move_to_freelist(struct btree_key_cache *bc,
 					 struct bkey_cached *ck)
 {
@@ -130,11 +146,11 @@ static void bkey_cached_move_to_freelist(struct btree_key_cache *bc,
 			while (f->nr > ARRAY_SIZE(f->objs) / 2) {
 				struct bkey_cached *ck2 = f->objs[--f->nr];
 
-				list_move_tail(&ck2->list, &bc->freed_nonpcpu);
+				__bkey_cached_move_to_freelist_ordered(bc, ck2);
 			}
 			preempt_enable();
 
-			list_move_tail(&ck->list, &bc->freed_nonpcpu);
+			__bkey_cached_move_to_freelist_ordered(bc, ck);
 			mutex_unlock(&bc->lock);
 		}
 #else
@@ -982,7 +998,7 @@ int bch2_fs_btree_key_cache_init(struct btree_key_cache *bc)
 
 	bc->table_init_done = true;
 
-	bc->shrink.seeks		= 1;
+	bc->shrink.seeks		= 0;
 	bc->shrink.count_objects	= bch2_btree_key_cache_count;
 	bc->shrink.scan_objects		= bch2_btree_key_cache_scan;
 	bc->shrink.to_text		= bch2_btree_key_cache_shrinker_to_text;
@@ -991,9 +1007,12 @@ int bch2_fs_btree_key_cache_init(struct btree_key_cache *bc)
 
 void bch2_btree_key_cache_to_text(struct printbuf *out, struct btree_key_cache *c)
 {
-	prt_printf(out, "nr_freed:\t%zu\n",	atomic_long_read(&c->nr_freed));
-	prt_printf(out, "nr_keys:\t%lu\n",	atomic_long_read(&c->nr_keys));
-	prt_printf(out, "nr_dirty:\t%lu\n",	atomic_long_read(&c->nr_dirty));
+	prt_printf(out, "nr_freed:\t%zu",	atomic_long_read(&c->nr_freed));
+	prt_newline(out);
+	prt_printf(out, "nr_keys:\t%lu",	atomic_long_read(&c->nr_keys));
+	prt_newline(out);
+	prt_printf(out, "nr_dirty:\t%lu",	atomic_long_read(&c->nr_dirty));
+	prt_newline(out);
 }
 
 void bch2_btree_key_cache_exit(void)
