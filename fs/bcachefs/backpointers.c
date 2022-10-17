@@ -535,7 +535,7 @@ struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
 	if (bp.level == c->btree_roots[bp.btree_id].level + 1)
 		k = bkey_i_to_s_c(&c->btree_roots[bp.btree_id].key);
 
-	if (extent_matches_bp(c, bp.btree_id, bp.level, k, bucket, bp))
+	if (k.k && extent_matches_bp(c, bp.btree_id, bp.level, k, bucket, bp))
 		return k;
 
 	bch2_trans_iter_exit(trans, iter);
@@ -585,12 +585,12 @@ struct btree *bch2_backpointer_get_node(struct btree_trans *trans,
 	if (IS_ERR(b))
 		goto err;
 
-	if (extent_matches_bp(c, bp.btree_id, bp.level,
-			      bkey_i_to_s_c(&b->key),
-			      bucket, bp))
+	if (b && extent_matches_bp(c, bp.btree_id, bp.level,
+				   bkey_i_to_s_c(&b->key),
+				   bucket, bp))
 		return b;
 
-	if (btree_node_will_make_reachable(b)) {
+	if (b && btree_node_will_make_reachable(b)) {
 		b = ERR_PTR(-BCH_ERR_backpointer_to_overwritten_btree_node);
 	} else {
 		backpointer_not_found(trans, bucket, bp_offset, bp,
