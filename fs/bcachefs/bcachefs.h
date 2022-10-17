@@ -930,7 +930,6 @@ struct bch_fs {
 
 	struct time_stats	times[BCH_TIME_STAT_NR];
 
-	const char              *btree_transaction_fns[BCH_TRANSACTIONS_NR];
 	struct btree_transaction_stats btree_transaction_stats[BCH_TRANSACTIONS_NR];
 };
 
