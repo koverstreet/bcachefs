@@ -210,31 +210,6 @@ static struct bkey_alloc_unpacked bch2_alloc_unpack(struct bkey_s_c k)
 	return ret;
 }
 
-struct bkey_i_alloc_v4 *
-bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree_iter *iter,
-			      struct bpos pos)
-{
-	struct bkey_s_c k;
-	struct bkey_i_alloc_v4 *a;
-	int ret;
-
-	bch2_trans_iter_init(trans, iter, BTREE_ID_alloc, pos,
-			     BTREE_ITER_WITH_UPDATES|
-			     BTREE_ITER_CACHED|
-			     BTREE_ITER_INTENT);
-	k = bch2_btree_iter_peek_slot(iter);
-	ret = bkey_err(k);
-	if (ret) {
-		bch2_trans_iter_exit(trans, iter);
-		return ERR_PTR(ret);
-	}
-
-	a = bch2_alloc_to_v4_mut(trans, k);
-	if (IS_ERR(a))
-		bch2_trans_iter_exit(trans, iter);
-	return a;
-}
-
 static unsigned bch_alloc_v1_val_u64s(const struct bch_alloc *a)
 {
 	unsigned i, bytes = offsetof(struct bch_alloc, data);
@@ -475,12 +450,13 @@ void bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *out)
 	}
 }
 
-struct bkey_i_alloc_v4 *bch2_alloc_to_v4_mut(struct btree_trans *trans, struct bkey_s_c k)
+static noinline struct bkey_i_alloc_v4 *
+__bch2_alloc_to_v4_mut(struct btree_trans *trans, struct bkey_s_c k)
 {
+	struct bkey_i_alloc_v4 *ret;
 	unsigned bytes = k.k->type == KEY_TYPE_alloc_v4
 		? bkey_bytes(k.k)
 		: sizeof(struct bkey_i_alloc_v4);
-	struct bkey_i_alloc_v4 *ret;
 
 	/*
 	 * Reserve space for one more backpointer here:
@@ -491,26 +467,72 @@ struct bkey_i_alloc_v4 *bch2_alloc_to_v4_mut(struct btree_trans *trans, struct b
 		return ret;
 
 	if (k.k->type == KEY_TYPE_alloc_v4) {
+		struct bch_backpointer *src, *dst;
+
 		bkey_reassemble(&ret->k_i, k);
 
-		if (BCH_ALLOC_V4_BACKPOINTERS_START(&ret->v) < BCH_ALLOC_V4_U64s) {
-			struct bch_backpointer *src, *dst;
+		src = alloc_v4_backpointers(&ret->v);
+		SET_BCH_ALLOC_V4_BACKPOINTERS_START(&ret->v, BCH_ALLOC_V4_U64s);
+		dst = alloc_v4_backpointers(&ret->v);
 
-			src = alloc_v4_backpointers(&ret->v);
-			SET_BCH_ALLOC_V4_BACKPOINTERS_START(&ret->v, BCH_ALLOC_V4_U64s);
-			dst = alloc_v4_backpointers(&ret->v);
-
-			memmove(dst, src, BCH_ALLOC_V4_NR_BACKPOINTERS(&ret->v) *
-				sizeof(struct bch_backpointer));
-			memset(src, 0, dst - src);
-			set_alloc_v4_u64s(ret);
-		}
+		memmove(dst, src, BCH_ALLOC_V4_NR_BACKPOINTERS(&ret->v) *
+			sizeof(struct bch_backpointer));
+		memset(src, 0, dst - src);
+		set_alloc_v4_u64s(ret);
 	} else {
 		bkey_alloc_v4_init(&ret->k_i);
 		ret->k.p = k.k->p;
 		bch2_alloc_to_v4(k, &ret->v);
 	}
 	return ret;
+}
+
+static inline struct bkey_i_alloc_v4 *bch2_alloc_to_v4_mut_inlined(struct btree_trans *trans, struct bkey_s_c k)
+{
+	if (likely(k.k->type == KEY_TYPE_alloc_v4) &&
+	    BCH_ALLOC_V4_BACKPOINTERS_START(bkey_s_c_to_alloc_v4(k).v) == BCH_ALLOC_V4_U64s) {
+		/*
+		 * Reserve space for one more backpointer here:
+		 * Not sketchy at doing it this way, nope...
+		 */
+		struct bkey_i_alloc_v4 *ret =
+			bch2_trans_kmalloc(trans, bkey_bytes(k.k) + sizeof(struct bch_backpointer));
+		if (!IS_ERR(ret))
+			bkey_reassemble(&ret->k_i, k);
+		return ret;
+	}
+
+	return __bch2_alloc_to_v4_mut(trans, k);
+}
+
+struct bkey_i_alloc_v4 *bch2_alloc_to_v4_mut(struct btree_trans *trans, struct bkey_s_c k)
+{
+	return bch2_alloc_to_v4_mut_inlined(trans, k);
+}
+
+struct bkey_i_alloc_v4 *
+bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree_iter *iter,
+			      struct bpos pos)
+{
+	struct bkey_s_c k;
+	struct bkey_i_alloc_v4 *a;
+	int ret;
+
+	bch2_trans_iter_init(trans, iter, BTREE_ID_alloc, pos,
+			     BTREE_ITER_WITH_UPDATES|
+			     BTREE_ITER_CACHED|
+			     BTREE_ITER_INTENT);
+	k = bch2_btree_iter_peek_slot(iter);
+	ret = bkey_err(k);
+	if (ret) {
+		bch2_trans_iter_exit(trans, iter);
+		return ERR_PTR(ret);
+	}
+
+	a = bch2_alloc_to_v4_mut_inlined(trans, k);
+	if (IS_ERR(a))
+		bch2_trans_iter_exit(trans, iter);
+	return a;
 }
 
 int bch2_alloc_read(struct bch_fs *c)
