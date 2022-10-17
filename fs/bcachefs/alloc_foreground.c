@@ -577,7 +577,7 @@ err:
 	if (!IS_ERR(ob))
 		trace_and_count(c, bucket_alloc, ca, bch2_alloc_reserves[reserve],
 				may_alloc_partial, ob->bucket);
-	else
+	else if (!bch2_err_matches(PTR_ERR(ob), BCH_ERR_transaction_restart))
 		trace_and_count(c, bucket_alloc_fail,
 				ca, bch2_alloc_reserves[reserve],
 				usage.d[BCH_DATA_free].buckets,
@@ -1110,7 +1110,7 @@ restart_find_oldest:
 	hlist_add_head_rcu(&wp->node, head);
 	mutex_unlock(&c->write_points_hash_lock);
 out:
-	wp->last_used = sched_clock();
+	wp->last_used = local_clock();
 	return wp;
 }
 
@@ -1356,7 +1356,7 @@ void bch2_fs_allocator_foreground_init(struct bch_fs *c)
 	     wp < c->write_points + c->write_points_nr; wp++) {
 		writepoint_init(wp, BCH_DATA_user);
 
-		wp->last_used	= sched_clock();
+		wp->last_used	= local_clock();
 		wp->write_point	= (unsigned long) wp;
 		hlist_add_head_rcu(&wp->node,
 				   writepoint_hash(c, wp->write_point));
