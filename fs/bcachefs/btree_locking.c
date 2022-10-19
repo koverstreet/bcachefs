@@ -274,7 +274,7 @@ next:
 
 			b = &READ_ONCE(path->l[top->level].b)->c;
 
-			if (unlikely(IS_ERR_OR_NULL(b))) {
+			if (IS_ERR_OR_NULL(b)) {
 				BUG_ON(!lock_graph_remove_non_waiters(&g));
 				goto next;
 			}
@@ -605,7 +605,7 @@ int bch2_trans_relock(struct btree_trans *trans)
 	struct btree_path *path;
 
 	if (unlikely(trans->restarted))
-		return - ((int) trans->restarted);
+		return -((int) trans->restarted);
 
 	trans_for_each_path(trans, path)
 		if (path->should_be_locked &&
