@@ -2128,8 +2128,8 @@ static long bch2_dio_write_loop(struct dio_write *dio)
 			struct iovec *iov = dio->inline_vecs;
 
 			if (dio->iter.nr_segs > ARRAY_SIZE(dio->inline_vecs)) {
-				iov = kmalloc(dio->iter.nr_segs * sizeof(*iov),
-					      GFP_KERNEL);
+				iov = kmalloc_array(dio->iter.nr_segs, sizeof(*iov),
+						    GFP_KERNEL);
 				if (unlikely(!iov)) {
 					dio->sync = sync = true;
 					goto do_io;
@@ -2706,7 +2706,7 @@ static long bchfs_fpunch(struct bch_inode_info *inode, loff_t offset, loff_t len
 
 	truncate_pagecache_range(&inode->v, offset, end - 1);
 
-	if (block_start < block_end ) {
+	if (block_start < block_end) {
 		s64 i_sectors_delta = 0;
 
 		ret = bch2_fpunch(c, inode_inum(inode),
