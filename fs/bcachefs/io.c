@@ -1206,8 +1206,8 @@ again:
 				      BCH_WRITE_ONLY_SPECIFIED_DEVS)) ? NULL : cl);
 		EBUG_ON(!wp);
 
-		if (unlikely(IS_ERR(wp))) {
-			if (unlikely(PTR_ERR(wp) != -EAGAIN)) {
+		if (IS_ERR(wp)) {
+			if (unlikely(wp != ERR_PTR(-EAGAIN))) {
 				ret = PTR_ERR(wp);
 				goto err;
 			}
