@@ -344,17 +344,27 @@ static inline int journal_res_get_fast(struct journal *j,
 				       unsigned flags)
 {
 	union journal_res_state old, new;
-	unsigned offset;
+	unsigned u64s, offset;
 
 	old.v = atomic64_read(&j->reservations.counter);
 	do {
 		new.v = old.v;
 
 		/*
+		 * Round up the end of the journal reservation to the next
+		 * cacheline boundary:
+		 */
+		u64s = res->u64s;
+		offset = sizeof(struct jset) / sizeof(u64) +
+			  new.cur_entry_offset + u64s;
+		u64s += ((offset - 1) & ((SMP_CACHE_BYTES / sizeof(u64)) - 1)) + 1;
+
+
+		/*
 		 * Check if there is still room in the current journal
 		 * entry:
 		 */
-		if (new.cur_entry_offset + res->u64s > j->cur_entry_u64s)
+		if (new.cur_entry_offset + u64s > j->cur_entry_u64s)
 			return 0;
 
 		EBUG_ON(!journal_state_count(new, new.idx));
@@ -362,7 +372,7 @@ static inline int journal_res_get_fast(struct journal *j,
 		if ((flags & BCH_WATERMARK_MASK) < j->watermark)
 			return 0;
 
-		new.cur_entry_offset += res->u64s;
+		new.cur_entry_offset += u64s;
 		journal_state_inc(&new);
 
 		/*
@@ -378,6 +388,7 @@ static inline int journal_res_get_fast(struct journal *j,
 				       &old.v, new.v));
 
 	res->ref	= true;
+	res->u64s	= u64s;
 	res->offset	= old.cur_entry_offset;
 	res->seq	= journal_cur_seq(j);
 	res->seq -= (res->seq - old.idx) & JOURNAL_STATE_BUF_MASK;
