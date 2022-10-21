@@ -418,6 +418,7 @@ struct btree_trans {
 	bool			in_traverse_all:1;
 	bool			memory_allocation_failure:1;
 	bool			is_initial_gc:1;
+	bool			journal_replay_not_finished:1;
 	enum bch_errcode	restarted:16;
 	u32			restart_count;
 	unsigned long		last_restarted_ip;
