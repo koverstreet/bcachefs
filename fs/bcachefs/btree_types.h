@@ -6,7 +6,7 @@
 #include <linux/rhashtable.h>
 #include <linux/six.h>
 
-#include "bkey_methods.h"
+//#include "bkey_methods.h"
 #include "buckets_types.h"
 #include "darray.h"
 #include "journal_types.h"
