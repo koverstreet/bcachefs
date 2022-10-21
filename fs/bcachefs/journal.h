@@ -110,6 +110,7 @@
  */
 
 #include <linux/hash.h>
+#include <linux/prefetch.h>
 
 #include "journal_types.h"
 
@@ -327,6 +328,7 @@ static inline int journal_res_get_fast(struct journal *j,
 				       unsigned flags)
 {
 	union journal_res_state old, new;
+	unsigned offset;
 
 	old.v = atomic64_read(&j->reservations.counter);
 	do {
@@ -363,6 +365,12 @@ static inline int journal_res_get_fast(struct journal *j,
 	res->idx	= old.idx;
 	res->offset	= old.cur_entry_offset;
 	res->seq	= le64_to_cpu(j->buf[old.idx].data->seq);
+
+	offset = res->offset;
+	while (offset < res->offset + res->u64s) {
+		prefetchw(vstruct_idx(j->buf[res->idx].data, offset));
+		offset += SMP_CACHE_BYTES / sizeof(u64);
+	}
 	return 1;
 }
 
