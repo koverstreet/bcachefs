@@ -1195,8 +1195,7 @@ static struct btree_path *btree_path_clone(struct btree_trans *trans, struct btr
 	return new;
 }
 
-inline struct btree_path * __must_check
-bch2_btree_path_make_mut(struct btree_trans *trans,
+struct btree_path *__bch2_btree_path_make_mut(struct btree_trans *trans,
 			 struct btree_path *path, bool intent,
 			 unsigned long ip)
 {

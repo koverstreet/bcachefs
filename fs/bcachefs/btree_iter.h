@@ -131,9 +131,20 @@ __trans_next_path_with_node(struct btree_trans *trans, struct btree *b,
 	     _path = __trans_next_path_with_node((_trans), (_b),	\
 						 (_path)->idx + 1))
 
-struct btree_path * __must_check
-bch2_btree_path_make_mut(struct btree_trans *, struct btree_path *,
+struct btree_path *__bch2_btree_path_make_mut(struct btree_trans *, struct btree_path *,
 			 bool, unsigned long);
+
+static inline struct btree_path * __must_check
+bch2_btree_path_make_mut(struct btree_trans *trans,
+			 struct btree_path *path, bool intent,
+			 unsigned long ip)
+{
+	if (path->ref > 1 || path->preserve)
+		path = __bch2_btree_path_make_mut(trans, path, intent, ip);
+	path->should_be_locked = false;
+	return path;
+}
+
 struct btree_path * __must_check
 bch2_btree_path_set_pos(struct btree_trans *, struct btree_path *,
 			struct bpos, bool, unsigned long);
