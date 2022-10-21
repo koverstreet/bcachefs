@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
 #include "bkey_buf.h"
+#include "bkey_cmp.h"
 #include "bkey_sort.h"
 #include "bset.h"
 #include "extents.h"
@@ -155,7 +156,7 @@ static inline int sort_keys_cmp(struct btree *b,
 				struct bkey_packed *l,
 				struct bkey_packed *r)
 {
-	return bch2_bkey_cmp_packed(b, l, r) ?:
+	return bch2_bkey_cmp_packed_inlined(b, l, r) ?:
 		(int) bkey_deleted(r) - (int) bkey_deleted(l) ?:
 		(int) l->needs_whiteout - (int) r->needs_whiteout;
 }
