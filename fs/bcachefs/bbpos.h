@@ -2,6 +2,8 @@
 #ifndef _BCACHEFS_BBPOS_H
 #define _BCACHEFS_BBPOS_H
 
+#include "bkey_methods.h"
+
 struct bbpos {
 	enum btree_id		btree;
 	struct bpos		pos;
