@@ -242,8 +242,10 @@ int bch2_extent_update(struct btree_trans *trans,
 		       s64 *i_sectors_delta_total,
 		       bool check_enospc)
 {
-	struct btree_iter inode_iter;
-	struct bch_inode_unpacked inode_u;
+	struct btree_iter inode_iter = { NULL };
+	struct bkey_s_c inode_k;
+	struct bkey_s_c_inode_v3 inode;
+	struct bkey_i_inode_v3 *new_inode;
 	struct bpos next_pos;
 	bool usage_increasing;
 	s64 i_sectors_delta = 0, disk_sectors_delta = 0;
@@ -283,32 +285,62 @@ int bch2_extent_update(struct btree_trans *trans,
 			return ret;
 	}
 
-	ret = bch2_inode_peek(trans, &inode_iter, &inode_u, inum,
-			      BTREE_ITER_INTENT);
-	if (ret)
-		return ret;
+	bch2_trans_iter_init(trans, &inode_iter, BTREE_ID_inodes,
+			     SPOS(0, inum.inum, iter->snapshot),
+			     BTREE_ITER_INTENT|BTREE_ITER_CACHED);
+	inode_k = bch2_btree_iter_peek_slot(&inode_iter);
+	ret = bkey_err(inode_k);
+	if (unlikely(ret))
+		goto err;
 
-	if (!(inode_u.bi_flags & BCH_INODE_I_SIZE_DIRTY) &&
-	    new_i_size > inode_u.bi_size)
-		inode_u.bi_size = new_i_size;
+	ret = bkey_is_inode(inode_k.k) ? 0 : -ENOENT;
+	if (unlikely(ret))
+		goto err;
 
-	inode_u.bi_sectors += i_sectors_delta;
+	if (unlikely(inode_k.k->type != KEY_TYPE_inode_v3)) {
+		inode_k = bch2_inode_to_v3(trans, inode_k);
+		ret = bkey_err(inode_k);
+		if (unlikely(ret))
+			goto err;
+	}
 
-	ret =   bch2_trans_update(trans, iter, k, 0) ?:
-		bch2_inode_write(trans, &inode_iter, &inode_u) ?:
+	inode = bkey_s_c_to_inode_v3(inode_k);
+
+	new_inode = bch2_trans_kmalloc(trans, bkey_bytes(inode_k.k));
+	ret = PTR_ERR_OR_ZERO(new_inode);
+	if (unlikely(ret))
+		goto err;
+
+	bkey_reassemble(&new_inode->k_i, inode.s_c);
+
+	if (!(le64_to_cpu(inode.v->bi_flags) & BCH_INODE_I_SIZE_DIRTY) &&
+	    new_i_size > le64_to_cpu(inode.v->bi_size))
+		new_inode->v.bi_size = cpu_to_le64(new_i_size);
+
+	le64_add_cpu(&new_inode->v.bi_sectors, i_sectors_delta);
+
+	new_inode->k.p.snapshot = iter->snapshot;
+
+	/*
+	 * Note:
+	 * We always have to do an inode updated - even when i_size/i_sectors
+	 * aren't changing - for fsync to work properly; fsync relies on
+	 * inode->bi_journal_seq which is updated by the trigger code:
+	 */
+	ret =   bch2_trans_update(trans, &inode_iter, &new_inode->k_i, 0) ?:
+		bch2_trans_update(trans, iter, k, 0) ?:
 		bch2_trans_commit(trans, disk_res, journal_seq,
 				BTREE_INSERT_NOCHECK_RW|
 				BTREE_INSERT_NOFAIL);
-	bch2_trans_iter_exit(trans, &inode_iter);
-
-	if (ret)
-		return ret;
+	if (unlikely(ret))
+		goto err;
 
 	if (i_sectors_delta_total)
 		*i_sectors_delta_total += i_sectors_delta;
 	bch2_btree_iter_set_pos(iter, next_pos);
-
-	return 0;
+err:
+	bch2_trans_iter_exit(trans, &inode_iter);
+	return ret;
 }
 
 /*
