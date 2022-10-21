@@ -22,6 +22,8 @@
 
 static void btree_trans_verify_sorted(struct btree_trans *);
 inline void bch2_btree_path_check_sort(struct btree_trans *, struct btree_path *, int);
+static __always_inline void bch2_btree_path_check_sort_fast(struct btree_trans *,
+						   struct btree_path *, int);
 
 static inline void btree_path_list_remove(struct btree_trans *, struct btree_path *);
 static inline void btree_path_list_add(struct btree_trans *, struct btree_path *,
@@ -1172,6 +1174,7 @@ static void btree_path_copy(struct btree_trans *trans, struct btree_path *dst,
 			    struct btree_path *src)
 {
 	unsigned i, offset = offsetof(struct btree_path, pos);
+	int cmp = btree_path_cmp(dst, src);
 
 	memcpy((void *) dst + offset,
 	       (void *) src + offset,
@@ -1182,7 +1185,8 @@ static void btree_path_copy(struct btree_trans *trans, struct btree_path *dst,
 			six_lock_increment(&dst->l[i].b->c.lock,
 					   __btree_lock_want(dst, i));
 
-	bch2_btree_path_check_sort(trans, dst, 0);
+	if (cmp)
+		bch2_btree_path_check_sort_fast(trans, dst, cmp);
 }
 
 static struct btree_path *btree_path_clone(struct btree_trans *trans, struct btree_path *src,
@@ -1231,7 +1235,7 @@ bch2_btree_path_set_pos(struct btree_trans *trans,
 
 	path->pos = new_pos;
 
-	bch2_btree_path_check_sort(trans, path, cmp);
+	bch2_btree_path_check_sort_fast(trans, path, cmp);
 
 	if (unlikely(path->cached)) {
 		btree_node_unlock(trans, path, 0);
@@ -1255,7 +1259,7 @@ bch2_btree_path_set_pos(struct btree_trans *trans,
 			__btree_path_level_init(path, l);
 	}
 
-	if (l != path->level) {
+	if (unlikely(l != path->level)) {
 		btree_path_set_dirty(path, BTREE_ITER_NEED_TRAVERSE);
 		__bch2_btree_path_unlock(trans, path);
 	}
@@ -2529,6 +2533,25 @@ static inline void btree_path_swap(struct btree_trans *trans,
 
 	btree_path_verify_sorted_ref(trans, l);
 	btree_path_verify_sorted_ref(trans, r);
+}
+
+static __always_inline void bch2_btree_path_check_sort_fast(struct btree_trans *trans,
+						   struct btree_path *path,
+						   int cmp)
+{
+	struct btree_path *n;
+	int cmp2;
+
+	EBUG_ON(!cmp);
+
+	while ((n = cmp < 0
+		? prev_btree_path(trans, path)
+		: next_btree_path(trans, path)) &&
+	       (cmp2 = btree_path_cmp(n, path)) &&
+	       cmp2 != cmp)
+		btree_path_swap(trans, n, path);
+
+	btree_trans_verify_sorted(trans);
 }
 
 inline void bch2_btree_path_check_sort(struct btree_trans *trans, struct btree_path *path,
