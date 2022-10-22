@@ -1219,6 +1219,7 @@ static void btree_node_read_endio(struct bio *bio)
 
 	if (rb->have_ioref) {
 		struct bch_dev *ca = bch_dev_bkey_exists(c, rb->pick.ptr.dev);
+
 		bch2_latency_acct(ca, rb->start_time, READ);
 	}
 
@@ -1406,6 +1407,7 @@ static void btree_node_read_all_replicas_endio(struct bio *bio)
 
 	if (rb->have_ioref) {
 		struct bch_dev *ca = bch_dev_bkey_exists(c, rb->pick.ptr.dev);
+
 		bch2_latency_acct(ca, rb->start_time, READ);
 	}
 

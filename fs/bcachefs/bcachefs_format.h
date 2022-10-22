@@ -1901,6 +1901,7 @@ enum bch_compression_opts {
 static inline __le64 __bch2_sb_magic(struct bch_sb *sb)
 {
 	__le64 ret;
+
 	memcpy(&ret, &sb->uuid, sizeof(ret));
 	return ret;
 }
