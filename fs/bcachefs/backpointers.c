@@ -984,9 +984,8 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 			break;
 
 		if (!bpos_cmp(start, POS_MIN) && bpos_cmp(end, SPOS_MAX))
-			bch_verbose(c, "check_extents_to_backpointers(): alloc info does not fit in ram,"
-				    "running in multiple passes with %zu nodes per pass",
-				    btree_nodes_fit_in_ram(c));
+			bch_verbose(c, "%s(): alloc info does not fit in ram, running in multiple passes with %zu nodes per pass",
+				    __func__, btree_nodes_fit_in_ram(c));
 
 		if (bpos_cmp(start, POS_MIN) || bpos_cmp(end, SPOS_MAX)) {
 			struct printbuf buf = PRINTBUF;
@@ -1099,9 +1098,8 @@ int bch2_check_backpointers_to_extents(struct bch_fs *c)
 
 		if (!bbpos_cmp(start, BBPOS_MIN) &&
 		    bbpos_cmp(end, BBPOS_MAX))
-			bch_verbose(c, "check_backpointers_to_extents(): extents do not fit in ram,"
-				    "running in multiple passes with %zu nodes per pass",
-				    btree_nodes_fit_in_ram(c));
+			bch_verbose(c, "%s(): extents do not fit in ram, running in multiple passes with %zu nodes per pass",
+				    __func__, btree_nodes_fit_in_ram(c));
 
 		if (bbpos_cmp(start, BBPOS_MIN) ||
 		    bbpos_cmp(end, BBPOS_MAX)) {
