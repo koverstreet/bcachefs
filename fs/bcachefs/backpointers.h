@@ -10,11 +10,11 @@ void bch2_backpointer_to_text(struct printbuf *, const struct bch_backpointer *)
 void bch2_backpointer_k_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 void bch2_backpointer_swab(struct bkey_s);
 
-#define bch2_bkey_ops_backpointer (struct bkey_ops) {	\
+#define bch2_bkey_ops_backpointer ((struct bkey_ops) {	\
 	.key_invalid	= bch2_backpointer_invalid,	\
 	.val_to_text	= bch2_backpointer_k_to_text,	\
 	.swab		= bch2_backpointer_swab,	\
-}
+})
 
 void bch2_extent_ptr_to_bp(struct bch_fs *, enum btree_id, unsigned,
 			   struct bkey_s_c, struct extent_ptr_decoded,
