@@ -110,6 +110,7 @@
  */
 
 #include <linux/hash.h>
+#include <linux/prefetch.h>
 
 #include "journal_types.h"
 
