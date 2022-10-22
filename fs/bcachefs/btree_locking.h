@@ -296,6 +296,7 @@ static inline void bch2_btree_node_lock_write_nofail(struct btree_trans *trans,
 					      struct btree_bkey_cached_common *b)
 {
 	int ret = __btree_node_lock_write(trans, path, b, true);
+
 	BUG_ON(ret);
 }
 
