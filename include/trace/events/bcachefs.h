@@ -354,7 +354,7 @@ TRACE_EVENT(btree_reserve_get_fail,
 	),
 
 	TP_fast_assign(
-		strlcpy(__entry->trans_fn, trans_fn, sizeof(__entry->trans_fn));
+		strscpy(__entry->trans_fn, trans_fn, sizeof(__entry->trans_fn));
 		__entry->caller_ip	= caller_ip;
 		__entry->required	= required;
 	),
@@ -411,7 +411,7 @@ TRACE_EVENT(btree_path_relock_fail,
 	TP_fast_assign(
 		struct btree *b = btree_path_node(path, level);
 
-		strlcpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
+		strscpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
 		__entry->caller_ip		= caller_ip;
 		__entry->btree_id		= path->btree_id;
 		__entry->level			= path->level;
@@ -462,7 +462,7 @@ TRACE_EVENT(btree_path_upgrade_fail,
 	TP_fast_assign(
 		struct six_lock_count c;
 
-		strlcpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
+		strscpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
 		__entry->caller_ip		= caller_ip;
 		__entry->btree_id		= path->btree_id;
 		__entry->level			= level;
@@ -524,7 +524,7 @@ TRACE_EVENT(bucket_alloc,
 
 	TP_fast_assign(
 		__entry->dev		= ca->dev;
-		strlcpy(__entry->reserve, alloc_reserve, sizeof(__entry->reserve));
+		strscpy(__entry->reserve, alloc_reserve, sizeof(__entry->reserve));
 		__entry->user		= user;
 		__entry->bucket		= bucket;
 	),
@@ -568,7 +568,7 @@ TRACE_EVENT(bucket_alloc_fail,
 
 	TP_fast_assign(
 		__entry->dev		= ca->dev;
-		strlcpy(__entry->reserve, alloc_reserve, sizeof(__entry->reserve));
+		strscpy(__entry->reserve, alloc_reserve, sizeof(__entry->reserve));
 		__entry->free		= free;
 		__entry->avail		= avail;
 		__entry->copygc_wait_amount	= copygc_wait_amount;
@@ -578,7 +578,7 @@ TRACE_EVENT(bucket_alloc_fail,
 		__entry->need_journal_commit = need_journal_commit;
 		__entry->nouse		= nouse;
 		__entry->nonblocking	= nonblocking;
-		strlcpy(__entry->err, err, sizeof(__entry->err));
+		strscpy(__entry->err, err, sizeof(__entry->err));
 	),
 
 	TP_printk("%d,%d reserve %s free %llu avail %llu copygc_wait %llu/%lli seen %llu open %llu need_journal_commit %llu nouse %llu nonblocking %u err %s",
@@ -616,7 +616,7 @@ TRACE_EVENT(discard_buckets,
 		__entry->open			= open;
 		__entry->need_journal_commit	= need_journal_commit;
 		__entry->discarded		= discarded;
-		strlcpy(__entry->err, err, sizeof(__entry->err));
+		strscpy(__entry->err, err, sizeof(__entry->err));
 	),
 
 	TP_printk("%d%d seen %llu open %llu need_journal_commit %llu discarded %llu err %s",
@@ -766,7 +766,7 @@ DECLARE_EVENT_CLASS(transaction_event,
 	),
 
 	TP_fast_assign(
-		strlcpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
+		strscpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
 		__entry->caller_ip		= caller_ip;
 	),
 
@@ -811,7 +811,7 @@ TRACE_EVENT(trans_restart_journal_preres_get,
 	),
 
 	TP_fast_assign(
-		strlcpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
+		strscpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
 		__entry->caller_ip		= caller_ip;
 		__entry->flags			= flags;
 	),
@@ -871,7 +871,7 @@ DECLARE_EVENT_CLASS(transaction_restart_iter,
 	),
 
 	TP_fast_assign(
-		strlcpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
+		strscpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
 		__entry->caller_ip		= caller_ip;
 		__entry->btree_id		= path->btree_id;
 		TRACE_BPOS_assign(pos, path->pos)
@@ -918,7 +918,7 @@ TRACE_EVENT(trans_restart_upgrade,
 	),
 
 	TP_fast_assign(
-		strlcpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
+		strscpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
 		__entry->caller_ip		= caller_ip;
 		__entry->btree_id		= path->btree_id;
 		__entry->old_locks_want		= old_locks_want;
@@ -1027,7 +1027,7 @@ TRACE_EVENT(trans_restart_would_deadlock_write,
 	),
 
 	TP_fast_assign(
-		strlcpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
+		strscpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
 	),
 
 	TP_printk("%s", __entry->trans_fn)
@@ -1046,7 +1046,7 @@ TRACE_EVENT(trans_restart_mem_realloced,
 	),
 
 	TP_fast_assign(
-		strlcpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
+		strscpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
 		__entry->caller_ip	= caller_ip;
 		__entry->bytes		= bytes;
 	),
@@ -1075,7 +1075,7 @@ TRACE_EVENT(trans_restart_key_cache_key_realloced,
 	),
 
 	TP_fast_assign(
-		strlcpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
+		strscpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
 		__entry->caller_ip		= caller_ip;
 
 		__entry->btree_id	= path->btree_id;

@@ -214,6 +214,7 @@ err:
 
 	if (p) {
 		struct bkey uk = bkey_unpack_key(l->b, p);
+
 		bch2_bkey_to_text(&buf2, &uk);
 	} else {
 		prt_printf(&buf2, "(none)");
@@ -221,6 +222,7 @@ err:
 
 	if (k) {
 		struct bkey uk = bkey_unpack_key(l->b, k);
+
 		bch2_bkey_to_text(&buf3, &uk);
 	} else {
 		prt_printf(&buf3, "(none)");
