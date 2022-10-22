@@ -2881,7 +2881,7 @@ void __bch2_trans_init(struct btree_trans *trans, struct bch_fs *c, unsigned fn_
 	bch2_trans_alloc_paths(trans, c);
 
 	s = btree_trans_stats(trans);
-	if (s) {
+	if (s && s->max_mem) {
 		unsigned expected_mem_bytes = roundup_pow_of_two(s->max_mem);
 
 		trans->mem = kmalloc(expected_mem_bytes, GFP_KERNEL);
@@ -2892,9 +2892,9 @@ void __bch2_trans_init(struct btree_trans *trans, struct bch_fs *c, unsigned fn_
 		} else {
 			trans->mem_bytes = expected_mem_bytes;
 		}
-
-		trans->nr_max_paths = s->nr_max_paths;
 	}
+	if (s)
+		trans->nr_max_paths = s->nr_max_paths;
 
 	trans->srcu_idx = srcu_read_lock(&c->btree_trans_barrier);
 
