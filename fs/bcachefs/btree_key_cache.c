@@ -104,6 +104,7 @@ static void bkey_cached_free(struct btree_key_cache *bc,
 	six_unlock_intent(&ck->c.lock);
 }
 
+#ifdef __KERNEL__
 static void __bkey_cached_move_to_freelist_ordered(struct btree_key_cache *bc,
 						   struct bkey_cached *ck)
 {
@@ -119,17 +120,18 @@ static void __bkey_cached_move_to_freelist_ordered(struct btree_key_cache *bc,
 
 	list_move(&ck->list, &bc->freed_nonpcpu);
 }
+#endif
 
 static void bkey_cached_move_to_freelist(struct btree_key_cache *bc,
 					 struct bkey_cached *ck)
 {
-	struct btree_key_cache_freelist *f;
-	bool freed = false;
-
 	BUG_ON(test_bit(BKEY_CACHED_DIRTY, &ck->flags));
 
 	if (!ck->c.lock.readers) {
 #ifdef __KERNEL__
+		struct btree_key_cache_freelist *f;
+		bool freed = false;
+
 		preempt_disable();
 		f = this_cpu_ptr(bc->pcpu_freed);
 
@@ -193,11 +195,12 @@ bkey_cached_alloc(struct btree_trans *trans, struct btree_path *path)
 	struct bch_fs *c = trans->c;
 	struct btree_key_cache *bc = &c->btree_key_cache;
 	struct bkey_cached *ck = NULL;
-	struct btree_key_cache_freelist *f;
 	bool pcpu_readers = btree_uses_pcpu_readers(path->btree_id);
 
 	if (!pcpu_readers) {
 #ifdef __KERNEL__
+		struct btree_key_cache_freelist *f;
+
 		preempt_disable();
 		f = this_cpu_ptr(bc->pcpu_freed);
 		if (f->nr)
