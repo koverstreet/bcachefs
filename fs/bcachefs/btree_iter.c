@@ -1222,18 +1222,14 @@ struct btree_path *__bch2_btree_path_make_mut(struct btree_trans *trans,
 }
 
 struct btree_path * __must_check
-bch2_btree_path_set_pos(struct btree_trans *trans,
+__bch2_btree_path_set_pos(struct btree_trans *trans,
 		   struct btree_path *path, struct bpos new_pos,
-		   bool intent, unsigned long ip)
+		   bool intent, unsigned long ip, int cmp)
 {
-	int cmp = bpos_cmp(new_pos, path->pos);
 	unsigned l = path->level;
 
 	EBUG_ON(trans->restarted);
 	EBUG_ON(!path->ref);
-
-	if (!cmp)
-		return path;
 
 	path = bch2_btree_path_make_mut(trans, path, intent, ip);
 
