@@ -280,6 +280,16 @@ int bch2_alloc_v4_invalid(const struct bch_fs *c, struct bkey_s_c k,
 	}
 
 	if (rw == WRITE) {
+		unsigned i, bp_len = 0;
+
+		for (i = 0; i < BCH_ALLOC_V4_NR_BACKPOINTERS(a.v); i++)
+			bp_len += alloc_v4_backpointers_c(a.v)[i].bucket_len;
+
+		if (bp_len > a.v->dirty_sectors) {
+			prt_printf(err, "too many backpointers");
+			return -EINVAL;
+		}
+
 		if (alloc_data_type(*a.v, a.v->data_type) != a.v->data_type) {
 			prt_printf(err, "invalid data type (got %u should be %u)",
 			       a.v->data_type, alloc_data_type(*a.v, a.v->data_type));
