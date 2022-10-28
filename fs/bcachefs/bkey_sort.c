@@ -178,7 +178,7 @@ unsigned bch2_sort_keys(struct bkey_packed *dst,
 			continue;
 
 		while ((next = sort_iter_peek(iter)) &&
-		       !bch2_bkey_cmp_packed(iter->b, in, next)) {
+		       !bch2_bkey_cmp_packed_inlined(iter->b, in, next)) {
 			BUG_ON(in->needs_whiteout &&
 			       next->needs_whiteout);
 			needs_whiteout |= in->needs_whiteout;
