@@ -270,8 +270,7 @@ out:
 }
 
 void bch2_data_update_read_done(struct data_update *m,
-				struct bch_extent_crc_unpacked crc,
-				struct closure *cl)
+				struct bch_extent_crc_unpacked crc)
 {
 	/* write bio must own pages: */
 	BUG_ON(!m->op.wbio.bio.bi_vcnt);
@@ -279,7 +278,7 @@ void bch2_data_update_read_done(struct data_update *m,
 	m->op.crc = crc;
 	m->op.wbio.bio.bi_iter.bi_size = crc.compressed_size << 9;
 
-	closure_call(&m->op.cl, bch2_write, NULL, cl);
+	closure_call(&m->op.cl, bch2_write, NULL, NULL);
 }
 
 void bch2_data_update_exit(struct data_update *update)

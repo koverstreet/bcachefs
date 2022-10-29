@@ -53,9 +53,8 @@ struct moving_io {
 	struct bio_vec		bi_inline_vecs[0];
 };
 
-static void move_free(struct closure *cl)
+static void move_free(struct moving_io *io)
 {
-	struct moving_io *io = container_of(cl, struct moving_io, cl);
 	struct moving_context *ctxt = io->write.ctxt;
 	struct bch_fs *c = ctxt->c;
 
@@ -65,31 +64,30 @@ static void move_free(struct closure *cl)
 	kfree(io);
 }
 
-static void move_write_done(struct closure *cl)
+static void move_write_done(struct bch_write_op *op)
 {
-	struct moving_io *io = container_of(cl, struct moving_io, cl);
+	struct moving_io *io = container_of(op, struct moving_io, write.op);
 	struct moving_context *ctxt = io->write.ctxt;
 
 	if (io->write.op.error)
 		ctxt->write_error = true;
 
 	atomic_sub(io->write_sectors, &io->write.ctxt->write_sectors);
-	closure_return_with_destructor(cl, move_free);
+	closure_put(&ctxt->cl);
+	move_free(io);
 }
 
-static void move_write(struct closure *cl)
+static void move_write(struct moving_io *io)
 {
-	struct moving_io *io = container_of(cl, struct moving_io, cl);
-
 	if (unlikely(io->rbio.bio.bi_status || io->rbio.hole)) {
-		closure_return_with_destructor(cl, move_free);
+		move_free(io);
 		return;
 	}
 
+	closure_get(&io->write.ctxt->cl);
 	atomic_add(io->write_sectors, &io->write.ctxt->write_sectors);
 
-	bch2_data_update_read_done(&io->write, io->rbio.pick.crc, cl);
-	continue_at(cl, move_write_done, NULL);
+	bch2_data_update_read_done(&io->write, io->rbio.pick.crc);
 }
 
 static inline struct moving_io *next_pending_write(struct moving_context *ctxt)
@@ -121,7 +119,7 @@ static void do_pending_writes(struct moving_context *ctxt, struct btree_trans *t
 
 	while ((io = next_pending_write(ctxt))) {
 		list_del(&io->list);
-		closure_call(&io->cl, move_write, NULL, &ctxt->cl);
+		move_write(io);
 	}
 }
 
@@ -302,6 +300,7 @@ static int bch2_move_extent(struct btree_trans *trans,
 		goto err_free_pages;
 
 	io->write.ctxt = ctxt;
+	io->write.op.end_io = move_write_done;
 
 	atomic64_inc(&ctxt->stats->keys_moved);
 	atomic64_add(k.k->size, &ctxt->stats->sectors_moved);
