@@ -597,7 +597,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 
 static void __bch2_write(struct bch_write_op *);
 
-static void bch2_write_done(struct closure *cl)
+static void __bch2_write_done(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bch_fs *c = op->c;
@@ -613,7 +613,23 @@ static void bch2_write_done(struct closure *cl)
 
 	EBUG_ON(cl->parent);
 	closure_debug_destroy(cl);
-	op->end_io(op);
+	if (op->end_io)
+		op->end_io(op);
+}
+
+static __always_inline void bch2_write_done(struct bch_write_op *op)
+{
+	if (likely(!(op->flags & BCH_WRITE_FLUSH) || op->error)) {
+		__bch2_write_done(&op->cl);
+	} else if (!(op->flags & BCH_WRITE_SYNC)) {
+		bch2_journal_flush_seq_async(&op->c->journal,
+					     op->journal_seq,
+					     &op->cl);
+		continue_at(&op->cl, __bch2_write_done, index_update_wq(op));
+	} else {
+		bch2_journal_flush_seq(&op->c->journal, op->journal_seq);
+		__bch2_write_done(&op->cl);
+	}
 }
 
 static noinline int bch2_write_drop_io_error_ptrs(struct bch_write_op *op)
@@ -700,6 +716,7 @@ out:
 err:
 	keys->top = keys->keys;
 	op->error = ret;
+	op->flags |= BCH_WRITE_DONE;
 	goto out;
 }
 
@@ -779,9 +796,9 @@ unlock:
 			bch2_journal_flush_seq_async(&op->c->journal,
 						     op->journal_seq,
 						     &op->cl);
-			continue_at(&op->cl, bch2_write_done, index_update_wq(op));
+			continue_at(&op->cl, __bch2_write_done, index_update_wq(op));
 		} else {
-			bch2_write_done(&op->cl);
+			__bch2_write_done(&op->cl);
 		}
 	}
 }
@@ -1272,10 +1289,10 @@ again:
 			? NULL : &op->cl,
 			&wp);
 		if (unlikely(ret)) {
-			if (unlikely(ret != -EAGAIN))
-				goto err;
+			if (ret == -EAGAIN)
+				break;
 
-			break;
+			goto err;
 		}
 
 		EBUG_ON(!wp);
@@ -1284,12 +1301,24 @@ again:
 		ret = bch2_write_extent(op, wp, &bio);
 
 		bch2_alloc_sectors_done(c, wp);
+err:
+		if (ret <= 0) {
+			if (!(op->flags & BCH_WRITE_SYNC)) {
+				spin_lock(&wp->writes_lock);
+				op->wp = wp;
+				list_add_tail(&op->wp_list, &wp->writes);
+				if (wp->state == WRITE_POINT_stopped)
+					__wp_update_state(wp, WRITE_POINT_waiting_io);
+				spin_unlock(&wp->writes_lock);
+			}
 
-		if (ret < 0)
-			goto err;
-
-		if (!ret)
 			op->flags |= BCH_WRITE_DONE;
+
+			if (ret < 0) {
+				op->error = ret;
+				break;
+			}
+		}
 
 		bio->bi_end_io	= bch2_write_endio;
 		bio->bi_private	= &op->cl;
@@ -1303,36 +1332,28 @@ again:
 		bch2_submit_wbio_replicas(to_wbio(bio), c, BCH_DATA_user,
 					  key_to_write);
 	} while (ret);
-out:
+
 	/*
-	 * If the write can't all be submitted at once, we generally want to
-	 * block synchronously as that signals backpressure to the caller.
+	 * Sync or no?
+	 *
+	 * If we're running asynchronously, wne may still want to block
+	 * synchronously here if we weren't able to submit all of the IO at
+	 * once, as that signals backpressure to the caller.
 	 */
-	if (!(op->flags & BCH_WRITE_DONE) &&
-	    !(op->flags & BCH_WRITE_IN_WORKER)) {
+	if ((op->flags & BCH_WRITE_SYNC) ||
+	    (!(op->flags & BCH_WRITE_DONE) &&
+	     !(op->flags & BCH_WRITE_IN_WORKER))) {
 		closure_sync(&op->cl);
 		__bch2_write_index(op);
 
 		if (!(op->flags & BCH_WRITE_DONE))
 			goto again;
-		bch2_write_done(&op->cl);
+		bch2_write_done(op);
 	} else {
-		spin_lock(&wp->writes_lock);
-		op->wp = wp;
-		list_add_tail(&op->wp_list, &wp->writes);
-		if (wp->state == WRITE_POINT_stopped)
-			__wp_update_state(wp, WRITE_POINT_waiting_io);
-		spin_unlock(&wp->writes_lock);
-
 		continue_at(&op->cl, bch2_write_index, NULL);
 	}
 
 	memalloc_nofs_restore(nofs_flags);
-	return;
-err:
-	op->error = ret;
-	op->flags |= BCH_WRITE_DONE;
-	goto out;
 }
 
 static void bch2_write_data_inline(struct bch_write_op *op, unsigned data_len)
@@ -1375,7 +1396,7 @@ static void bch2_write_data_inline(struct bch_write_op *op, unsigned data_len)
 
 	__bch2_write_index(op);
 err:
-	bch2_write_done(&op->cl);
+	bch2_write_done(op);
 }
 
 /**
