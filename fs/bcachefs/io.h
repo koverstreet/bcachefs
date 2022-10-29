@@ -35,10 +35,10 @@ enum bch_write_flags {
 	BCH_WRITE_WROTE_DATA_INLINE	= (1 << 7),
 	BCH_WRITE_FROM_INTERNAL		= (1 << 8),
 	BCH_WRITE_CHECK_ENOSPC		= (1 << 9),
-	BCH_WRITE_MOVE			= (1 << 10),
+	BCH_WRITE_SYNC			= (1 << 10),
+	BCH_WRITE_MOVE			= (1 << 11),
 
 	/* Internal: */
-	BCH_WRITE_SKIP_CLOSURE_PUT	= (1 << 11),
 	BCH_WRITE_DONE			= (1 << 12),
 	BCH_WRITE_IO_ERROR		= (1 << 13),
 };
