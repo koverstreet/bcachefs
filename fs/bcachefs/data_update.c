@@ -97,7 +97,7 @@ static void bch2_bkey_mark_dev_cached(struct bkey_s k, unsigned dev)
 			ptr->cached = true;
 }
 
-static int bch2_data_update_index_update(struct bch_write_op *op)
+int bch2_data_update_index_update(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
 	struct btree_trans trans;
@@ -318,13 +318,13 @@ int bch2_data_update_init(struct bch_fs *c, struct data_update *m,
 		BCH_WRITE_PAGES_OWNED|
 		BCH_WRITE_DATA_ENCODED|
 		BCH_WRITE_FROM_INTERNAL|
+		BCH_WRITE_MOVE|
 		m->data_opts.write_flags;
 	m->op.compression_type =
 		bch2_compression_opt_to_type[io_opts.background_compression ?:
 					     io_opts.compression];
 	if (m->data_opts.btree_insert_flags & BTREE_INSERT_USE_RESERVE)
 		m->op.alloc_reserve = RESERVE_movinggc;
-	m->op.index_update_fn	= bch2_data_update_index_update;
 
 	i = 0;
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {

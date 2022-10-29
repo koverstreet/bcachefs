@@ -26,6 +26,8 @@ struct data_update {
 	struct bch_write_op	op;
 };
 
+int bch2_data_update_index_update(struct bch_write_op *);
+
 void bch2_data_update_read_done(struct data_update *,
 				struct bch_extent_crc_unpacked,
 				struct closure *);

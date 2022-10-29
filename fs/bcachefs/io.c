@@ -16,6 +16,7 @@
 #include "checksum.h"
 #include "compress.h"
 #include "clock.h"
+#include "data_update.h"
 #include "debug.h"
 #include "disk_groups.h"
 #include "ec.h"
@@ -423,7 +424,7 @@ int bch2_fpunch(struct bch_fs *c, subvol_inum inum, u64 start, u64 end,
 	return ret;
 }
 
-int bch2_write_index_default(struct bch_write_op *op)
+static int bch2_write_index_default(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
 	struct bkey_buf sk;
@@ -598,7 +599,7 @@ static void __bch2_write_index(struct bch_write_op *op)
 	struct keylist *keys = &op->insert_keys;
 	struct bkey_i *k;
 	unsigned dev;
-	int ret;
+	int ret = 0;
 
 	if (unlikely(op->flags & BCH_WRITE_IO_ERROR)) {
 		ret = bch2_write_drop_io_error_ptrs(op);
@@ -621,7 +622,10 @@ static void __bch2_write_index(struct bch_write_op *op)
 
 	if (!bch2_keylist_empty(keys)) {
 		u64 sectors_start = keylist_sectors(keys);
-		int ret = op->index_update_fn(op);
+
+		ret = !(op->flags & BCH_WRITE_MOVE)
+			? bch2_write_index_default(op)
+			: bch2_data_update_index_update(op);
 
 		BUG_ON(bch2_err_matches(ret, BCH_ERR_transaction_restart));
 		BUG_ON(keylist_sectors(keys) && !ret);
@@ -631,7 +635,7 @@ static void __bch2_write_index(struct bch_write_op *op)
 		if (ret) {
 			bch_err_inum_ratelimited(c, op->pos.inode,
 				"write error while doing btree update: %s", bch2_err_str(ret));
-			op->error = ret;
+			goto err;
 		}
 	}
 out:

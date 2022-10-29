@@ -35,12 +35,13 @@ enum bch_write_flags {
 	BCH_WRITE_WROTE_DATA_INLINE	= (1 << 7),
 	BCH_WRITE_FROM_INTERNAL		= (1 << 8),
 	BCH_WRITE_CHECK_ENOSPC		= (1 << 9),
+	BCH_WRITE_MOVE			= (1 << 10),
 
 	/* Internal: */
-	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 10),
-	BCH_WRITE_SKIP_CLOSURE_PUT	= (1 << 11),
-	BCH_WRITE_DONE			= (1 << 12),
-	BCH_WRITE_IO_ERROR		= (1 << 13),
+	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 11),
+	BCH_WRITE_SKIP_CLOSURE_PUT	= (1 << 12),
+	BCH_WRITE_DONE			= (1 << 13),
+	BCH_WRITE_IO_ERROR		= (1 << 14),
 };
 
 static inline u64 *op_journal_seq(struct bch_write_op *op)
@@ -65,8 +66,6 @@ int bch2_extent_update(struct btree_trans *, subvol_inum,
 int bch2_fpunch_at(struct btree_trans *, struct btree_iter *,
 		   subvol_inum, u64, s64 *);
 int bch2_fpunch(struct bch_fs *c, subvol_inum, u64, u64, s64 *);
-
-int bch2_write_index_default(struct bch_write_op *);
 
 static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 				      struct bch_io_opts opts)
@@ -94,7 +93,6 @@ static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 	op->journal_seq		= 0;
 	op->new_i_size		= U64_MAX;
 	op->i_sectors_delta	= 0;
-	op->index_update_fn	= bch2_write_index_default;
 }
 
 void bch2_write(struct closure *);
