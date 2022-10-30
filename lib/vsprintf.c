@@ -399,6 +399,7 @@ void prt_u64(struct printbuf *out, u64 num)
 {
 	prt_u64_minwidth(out, num, 0);
 }
+EXPORT_SYMBOL_GPL(prt_u64);
 
 /*
  * Convert passed number to decimal string.
