@@ -462,8 +462,10 @@ void bch2_btree_build_aux_trees(struct btree *b)
  */
 static inline bool should_compact_all(struct bch_fs *c, struct btree *b)
 {
-	return bset_u64s(&b->set[1]) >
-		int_sqrt(btree_max_u64s(c) * btree_write_set_buffer(b) / 2);
+	unsigned mid_u64s_bits =
+		(ilog2(btree_max_u64s(c)) + BTREE_WRITE_SET_U64s_BITS) / 2;
+
+	return bset_u64s(&b->set[1]) > 1U << mid_u64s_bits;
 }
 
 /*
