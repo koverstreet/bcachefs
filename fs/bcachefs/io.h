@@ -38,17 +38,10 @@ enum bch_write_flags {
 	BCH_WRITE_MOVE			= (1 << 10),
 
 	/* Internal: */
-	BCH_WRITE_JOURNAL_SEQ_PTR	= (1 << 11),
-	BCH_WRITE_SKIP_CLOSURE_PUT	= (1 << 12),
-	BCH_WRITE_DONE			= (1 << 13),
-	BCH_WRITE_IO_ERROR		= (1 << 14),
+	BCH_WRITE_SKIP_CLOSURE_PUT	= (1 << 11),
+	BCH_WRITE_DONE			= (1 << 12),
+	BCH_WRITE_IO_ERROR		= (1 << 13),
 };
-
-static inline u64 *op_journal_seq(struct bch_write_op *op)
-{
-	return (op->flags & BCH_WRITE_JOURNAL_SEQ_PTR)
-		? op->journal_seq_p : &op->journal_seq;
-}
 
 static inline struct workqueue_struct *index_update_wq(struct bch_write_op *op)
 {
