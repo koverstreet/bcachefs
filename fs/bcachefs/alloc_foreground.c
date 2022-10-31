@@ -1153,16 +1153,17 @@ out:
 /*
  * Get us an open_bucket we can allocate from, return with it locked:
  */
-struct write_point *bch2_alloc_sectors_start_trans(struct btree_trans *trans,
-				unsigned target,
-				unsigned erasure_code,
-				struct write_point_specifier write_point,
-				struct bch_devs_list *devs_have,
-				unsigned nr_replicas,
-				unsigned nr_replicas_required,
-				enum alloc_reserve reserve,
-				unsigned flags,
-				struct closure *cl)
+int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
+				   unsigned target,
+				   unsigned erasure_code,
+				   struct write_point_specifier write_point,
+				   struct bch_devs_list *devs_have,
+				   unsigned nr_replicas,
+				   unsigned nr_replicas_required,
+				   enum alloc_reserve reserve,
+				   unsigned flags,
+				   struct closure *cl,
+				   struct write_point **wp_ret)
 {
 	struct bch_fs *c = trans->c;
 	struct write_point *wp;
@@ -1184,7 +1185,7 @@ retry:
 	write_points_nr = c->write_points_nr;
 	have_cache	= false;
 
-	wp = writepoint_find(trans, write_point.v);
+	*wp_ret = wp = writepoint_find(trans, write_point.v);
 
 	if (wp->data_type == BCH_DATA_user)
 		ob_flags |= BUCKET_MAY_ALLOC_PARTIAL;
@@ -1241,7 +1242,7 @@ alloc_done:
 
 	BUG_ON(!wp->sectors_free || wp->sectors_free == UINT_MAX);
 
-	return wp;
+	return 0;
 err:
 	open_bucket_for_each(c, &wp->ptrs, ob, i)
 		if (ptrs.nr < ARRAY_SIZE(ptrs.v))
@@ -1259,13 +1260,13 @@ err:
 	if (bch2_err_matches(ret, BCH_ERR_open_buckets_empty) ||
 	    bch2_err_matches(ret, BCH_ERR_freelist_empty))
 		return cl
-			? ERR_PTR(-EAGAIN)
-			: ERR_PTR(-BCH_ERR_ENOSPC_bucket_alloc);
+			? -EAGAIN
+			: -BCH_ERR_ENOSPC_bucket_alloc;
 
 	if (bch2_err_matches(ret, BCH_ERR_insufficient_devices))
-		return ERR_PTR(-EROFS);
+		return -EROFS;
 
-	return ERR_PTR(ret);
+	return ret;
 }
 
 struct bch_extent_ptr bch2_ob_ptr(struct bch_fs *c, struct open_bucket *ob)
@@ -1336,6 +1337,10 @@ static inline void writepoint_init(struct write_point *wp,
 {
 	mutex_init(&wp->lock);
 	wp->data_type = type;
+
+	INIT_WORK(&wp->index_update_work, bch2_write_point_do_index_updates);
+	INIT_LIST_HEAD(&wp->writes);
+	spin_lock_init(&wp->writes_lock);
 }
 
 void bch2_fs_allocator_foreground_init(struct bch_fs *c)

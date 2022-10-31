@@ -78,6 +78,11 @@ struct write_point {
 
 	struct open_buckets	ptrs;
 	struct dev_stripe_state	stripe;
+
+	struct work_struct	index_update_work;
+
+	struct list_head	writes;
+	spinlock_t		writes_lock;
 };
 
 struct write_point_specifier {

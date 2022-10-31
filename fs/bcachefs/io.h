@@ -90,6 +90,8 @@ static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 
 void bch2_write(struct closure *);
 
+void bch2_write_point_do_index_updates(struct work_struct *);
+
 static inline struct bch_write_bio *wbio_init(struct bio *bio)
 {
 	struct bch_write_bio *wbio = to_wbio(bio);
