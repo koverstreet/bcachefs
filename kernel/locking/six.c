@@ -342,7 +342,11 @@ static bool __six_relock_type(struct six_lock *lock, enum six_lock_type type,
 	return true;
 }
 
-#ifdef CONFIG_LOCK_SPIN_ON_OWNER
+/*
+ * We don't see stable performance with SIX_LOCK_SPIN_ON_OWNER enabled, so it's
+ * off for now:
+ */
+#ifdef SIX_LOCK_SPIN_ON_OWNER
 
 static inline bool six_optimistic_spin(struct six_lock *lock,
 				       struct six_lock_waiter *wait)
