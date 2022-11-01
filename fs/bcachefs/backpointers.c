@@ -9,8 +9,6 @@
 
 #include <linux/mm.h>
 
-#define MAX_EXTENT_COMPRESS_RATIO_SHIFT		10
-
 /*
  * Convert from pos in backpointer btree to pos of corresponding bucket in alloc
  * btree:
@@ -41,27 +39,6 @@ static inline struct bpos bucket_pos_to_bp(const struct bch_fs *c,
 	BUG_ON(bkey_cmp(bucket, bp_pos_to_bucket(c, ret)));
 
 	return ret;
-}
-
-void bch2_extent_ptr_to_bp(struct bch_fs *c,
-			   enum btree_id btree_id, unsigned level,
-			   struct bkey_s_c k, struct extent_ptr_decoded p,
-			   struct bpos *bucket_pos, struct bch_backpointer *bp)
-{
-	enum bch_data_type data_type = level ? BCH_DATA_btree : BCH_DATA_user;
-	s64 sectors = level ? btree_sectors(c) : k.k->size;
-	u32 bucket_offset;
-
-	*bucket_pos = PTR_BUCKET_POS_OFFSET(c, &p.ptr, &bucket_offset);
-	*bp = (struct bch_backpointer) {
-		.btree_id	= btree_id,
-		.level		= level,
-		.data_type	= data_type,
-		.bucket_offset	= ((u64) bucket_offset << MAX_EXTENT_COMPRESS_RATIO_SHIFT) +
-			p.crc.offset,
-		.bucket_len	= ptr_disk_sectors(sectors, p),
-		.pos		= k.k->p,
-	};
 }
 
 static bool extent_matches_bp(struct bch_fs *c,
