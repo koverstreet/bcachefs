@@ -2537,6 +2537,18 @@ static inline void btree_path_swap(struct btree_trans *trans,
 	btree_path_verify_sorted_ref(trans, r);
 }
 
+static inline struct btree_path *sib_btree_path(struct btree_trans *trans,
+						struct btree_path *path, int sib)
+{
+	unsigned idx = (unsigned) path->sorted_idx + sib;
+
+	EBUG_ON(sib != -1 && sib != 1);
+
+	return idx < trans->nr_sorted
+		? trans->paths + trans->sorted[idx]
+		: NULL;
+}
+
 static __always_inline void bch2_btree_path_check_sort_fast(struct btree_trans *trans,
 						   struct btree_path *path,
 						   int cmp)
@@ -2546,9 +2558,7 @@ static __always_inline void bch2_btree_path_check_sort_fast(struct btree_trans *
 
 	EBUG_ON(!cmp);
 
-	while ((n = cmp < 0
-		? prev_btree_path(trans, path)
-		: next_btree_path(trans, path)) &&
+	while ((n = sib_btree_path(trans, path, cmp)) &&
 	       (cmp2 = btree_path_cmp(n, path)) &&
 	       cmp2 != cmp)
 		btree_path_swap(trans, n, path);
