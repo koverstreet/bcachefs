@@ -349,7 +349,7 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 		if (bp_offset != U64_MAX) {
 			/*
 			 * Bucket may have data in it - we don't call
-			 * bc2h_trans_inconnsistent() because fsck hasn't
+			 * bc2h_trans_inconsistent() because fsck hasn't
 			 * finished yet
 			 */
 			ob = NULL;
