@@ -1176,7 +1176,6 @@ static inline void btree_path_copy(struct btree_trans *trans, struct btree_path 
 			    struct btree_path *src)
 {
 	unsigned i, offset = offsetof(struct btree_path, pos);
-	int cmp = btree_path_cmp(dst, src);
 
 	memcpy((void *) dst + offset,
 	       (void *) src + offset,
@@ -1188,9 +1187,6 @@ static inline void btree_path_copy(struct btree_trans *trans, struct btree_path 
 		if (t != BTREE_NODE_UNLOCKED)
 			six_lock_increment(&dst->l[i].b->c.lock, t);
 	}
-
-	if (cmp)
-		bch2_btree_path_check_sort_fast(trans, dst, cmp);
 }
 
 static struct btree_path *btree_path_clone(struct btree_trans *trans, struct btree_path *src,
@@ -1208,17 +1204,13 @@ struct btree_path *__bch2_btree_path_make_mut(struct btree_trans *trans,
 			 struct btree_path *path, bool intent,
 			 unsigned long ip)
 {
-	if (path->ref > 1 || path->preserve) {
-		__btree_path_put(path, intent);
-		path = btree_path_clone(trans, path, intent);
-		path->preserve = false;
+	__btree_path_put(path, intent);
+	path = btree_path_clone(trans, path, intent);
+	path->preserve = false;
 #ifdef CONFIG_BCACHEFS_DEBUG
-		path->ip_allocated = ip;
+	path->ip_allocated = ip;
 #endif
-		btree_trans_verify_sorted(trans);
-	}
-
-	path->should_be_locked = false;
+	btree_trans_verify_sorted(trans);
 	return path;
 }
 
