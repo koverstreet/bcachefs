@@ -259,8 +259,10 @@ int bch2_trans_mark_dev_sb(struct bch_fs *, struct bch_dev *);
 static inline void bch2_disk_reservation_put(struct bch_fs *c,
 					     struct disk_reservation *res)
 {
-	this_cpu_sub(*c->online_reserved, res->sectors);
-	res->sectors = 0;
+	if (res->sectors) {
+		this_cpu_sub(*c->online_reserved, res->sectors);
+		res->sectors = 0;
+	}
 }
 
 #define BCH_DISK_RESERVATION_NOFAIL		(1 << 0)
