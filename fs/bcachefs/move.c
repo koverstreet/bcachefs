@@ -73,8 +73,8 @@ static void move_write_done(struct bch_write_op *op)
 		ctxt->write_error = true;
 
 	atomic_sub(io->write_sectors, &io->write.ctxt->write_sectors);
-	closure_put(&ctxt->cl);
 	move_free(io);
+	closure_put(&ctxt->cl);
 }
 
 static void move_write(struct moving_io *io)
