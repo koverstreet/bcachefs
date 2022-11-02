@@ -157,6 +157,8 @@ io_opts(struct bch_fs *c, struct bch_inode_unpacked *inode)
 	struct bch_io_opts opts = bch2_opts_to_inode_opts(c->opts);
 
 	bch2_io_opts_apply(&opts, bch2_inode_opts_get(inode));
+	if (opts.nocow)
+		opts.compression = opts.background_compression = opts.data_checksum = opts.erasure_code;
 	return opts;
 }
 
