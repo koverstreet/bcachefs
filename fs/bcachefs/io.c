@@ -513,7 +513,8 @@ static int bch2_write_index_default(struct bch_write_op *op)
 
 void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 			       enum bch_data_type type,
-			       const struct bkey_i *k)
+			       const struct bkey_i *k,
+			       bool have_ioref)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(k));
 	const struct bch_extent_ptr *ptr;
@@ -547,7 +548,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 
 		n->c			= c;
 		n->dev			= ptr->dev;
-		n->have_ioref		= bch2_dev_get_ioref(ca,
+		n->have_ioref		= have_ioref || bch2_dev_get_ioref(ca,
 					type == BCH_DATA_btree ? READ : WRITE);
 		n->submit_time		= local_clock();
 		n->bio.bi_iter.bi_sector = ptr->offset;
@@ -1150,6 +1151,219 @@ err:
 	return ret;
 }
 
+static bool bch2_extent_is_writeable(struct bch_write_op *op,
+				     struct bkey_s_c k)
+{
+	struct bch_fs *c = op->c;
+	struct bkey_s_c_extent e;
+	struct extent_ptr_decoded p;
+	const union bch_extent_entry *entry;
+	unsigned replicas = 0;
+
+	if (k.k->type != KEY_TYPE_extent)
+		return false;
+
+	e = bkey_s_c_to_extent(k);
+	extent_for_each_ptr_decode(e, p, entry) {
+		if (p.crc.csum_type ||
+		    crc_is_compressed(p.crc) ||
+		    p.has_ec)
+			return false;
+
+		replicas += bch2_extent_ptr_durability(c, &p);
+	}
+
+	return replicas >= op->opts.data_replicas;
+}
+
+static inline void bch2_nocow_write_unlock(struct bch_write_op *op)
+{
+	struct bch_fs *c = op->c;
+	const struct bch_extent_ptr *ptr;
+	struct bkey_i *k;
+
+	for_each_keylist_key(&op->insert_keys, k) {
+		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(k));
+
+		bkey_for_each_ptr(ptrs, ptr)
+			bch2_bucket_nocow_unlock(&c->nocow_locks,
+					       PTR_BUCKET_POS(c, ptr),
+					       BUCKET_NOCOW_LOCK_UPDATE);
+	}
+}
+
+static void bch2_nocow_write_done(struct closure *cl)
+{
+	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
+
+	bch2_nocow_write_unlock(op);
+
+	if (unlikely(op->flags & BCH_WRITE_IO_ERROR))
+		op->error = -EIO;
+	bch2_write_done(cl);
+}
+
+static void bch2_nocow_write(struct bch_write_op *op)
+{
+	struct bch_fs *c = op->c;
+	struct bio *bio = &op->wbio.bio;
+	struct btree_trans trans;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	struct bkey_ptrs_c ptrs;
+	const struct bch_extent_ptr *ptr, *ptr2;
+	u32 snapshot;
+	int ret;
+
+	if (op->flags & BCH_WRITE_MOVE)
+		return;
+
+	bch2_trans_init(&trans, c, 0, 0);
+retry:
+	bch2_trans_begin(&trans);
+
+	ret = bch2_subvolume_get_snapshot(&trans, op->subvol, &snapshot);
+	if (unlikely(ret))
+		goto err;
+
+	bch2_trans_iter_init(&trans, &iter, BTREE_ID_extents,
+			     SPOS(op->pos.inode, op->pos.offset, snapshot),
+			     BTREE_ITER_SLOTS);
+	while (1) {
+		k = bch2_btree_iter_peek_slot(&iter);
+		ret = bkey_err(k);
+		if (ret)
+			break;
+
+		/* fall back to normal cow write path? */
+		if (unlikely(k.k->p.snapshot != snapshot ||
+			     !bch2_extent_is_writeable(op, k)))
+			break;
+
+		if (bch2_keylist_realloc(&op->insert_keys,
+					op->inline_keys,
+					ARRAY_SIZE(op->inline_keys),
+					k.k->u64s))
+			break;
+
+		/* Get iorefs before dropping btree locks: */
+		ptrs = bch2_bkey_ptrs_c(k);
+		bkey_for_each_ptr(ptrs, ptr)
+			if (unlikely(!bch2_dev_get_ioref(bch_dev_bkey_exists(c, ptr->dev), WRITE)))
+				goto err_get_ioref;
+
+		/* Unlock before taking nocow locks, doing IO: */
+		bkey_reassemble(op->insert_keys.top, k);
+		bch2_trans_unlock(&trans);
+
+		if (bkey_cmp(op->pos, op->insert_keys.top->k.p))
+			bch2_cut_front(op->pos, op->insert_keys.top);
+
+		ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(op->insert_keys.top));
+		bkey_for_each_ptr(ptrs, ptr) {
+			/*
+			 * XXX: since we'll be reading from multiple extents
+			 * that could live on multiple devices, this could
+			 * overflow bch_devs_list
+			 *
+			 * perhaps we should stash a pointer to
+			 * bch_inode_info->ei_devs_need_flush?
+			 *
+			 * it would need to be updated after bio completion,
+			 * before completing bch_write_op
+			 */
+			bch2_dev_list_add_dev(&op->nocow_devs, ptr->dev);
+			bch2_bucket_nocow_lock(&c->nocow_locks,
+					       PTR_BUCKET_POS(c, ptr),
+					       BUCKET_NOCOW_LOCK_UPDATE);
+			if (unlikely(ptr_stale(bch_dev_bkey_exists(c, ptr->dev), ptr)))
+				goto err_bucket_stale;
+		}
+
+		bio = &op->wbio.bio;
+		if (k.k->p.offset < op->pos.offset + bio_sectors(bio)) {
+			bio = bio_split(bio, k.k->p.offset - op->pos.offset,
+					GFP_KERNEL, &c->bio_write);
+			wbio_init(bio)->put_bio = true;
+			bio->bi_opf = op->wbio.bio.bi_opf;
+		} else {
+			op->flags |= BCH_WRITE_DONE;
+		}
+
+		op->pos.offset += bio_sectors(bio);
+		op->written += bio_sectors(bio);
+
+		bio->bi_end_io	= bch2_write_endio;
+		bio->bi_private	= &op->cl;
+		bio->bi_opf |= REQ_OP_WRITE;
+		closure_get(&op->cl);
+		bch2_submit_wbio_replicas(to_wbio(bio), c, BCH_DATA_user,
+					  op->insert_keys.top, true);
+
+		bch2_keylist_push(&op->insert_keys);
+		if (op->flags & BCH_WRITE_DONE)
+			break;
+		bch2_btree_iter_advance(&iter);
+	}
+out:
+	bch2_trans_iter_exit(&trans, &iter);
+err:
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+		goto retry;
+
+	if (ret) {
+		bch_err_inum_ratelimited(c, op->pos.inode,
+					 "%s: error %s", __func__, bch2_err_str(ret));
+		op->error = ret;
+		op->flags |= BCH_WRITE_DONE;
+	}
+
+	bch2_trans_exit(&trans);
+
+	/* fallback to cow write path? */
+	if (!(op->flags & BCH_WRITE_DONE)) {
+		closure_sync(&op->cl);
+		bch2_nocow_write_unlock(op);
+		op->insert_keys.top = op->insert_keys.keys;
+	} else if (op->flags & BCH_WRITE_SYNC) {
+		closure_sync(&op->cl);
+		bch2_nocow_write_done(&op->cl);
+	} else {
+		/*
+		 * XXX
+		 * needs to run out of process context because ei_quota_lock is
+		 * a mutex
+		 */
+		continue_at(&op->cl, bch2_nocow_write_done, index_update_wq(op));
+	}
+	return;
+err_get_ioref:
+	bkey_for_each_ptr(ptrs, ptr2) {
+		if (ptr2 == ptr)
+			break;
+
+		percpu_ref_put(&bch_dev_bkey_exists(c, ptr2->dev)->io_ref);
+	}
+
+	/* Fall back to COW path: */
+	goto out;
+err_bucket_stale:
+	bkey_for_each_ptr(ptrs, ptr2) {
+		bch2_bucket_nocow_unlock(&c->nocow_locks,
+					 PTR_BUCKET_POS(c, ptr2),
+					 BUCKET_NOCOW_LOCK_UPDATE);
+		if (ptr2 == ptr)
+			break;
+	}
+
+	bkey_for_each_ptr(ptrs, ptr2)
+		percpu_ref_put(&bch_dev_bkey_exists(c, ptr2->dev)->io_ref);
+
+	/* We can retry this: */
+	ret = BCH_ERR_transaction_restart;
+	goto out;
+}
+
 static void __bch2_write(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
@@ -1159,6 +1373,12 @@ static void __bch2_write(struct bch_write_op *op)
 	int ret;
 
 	nofs_flags = memalloc_nofs_save();
+
+	if (unlikely(op->opts.nocow)) {
+		bch2_nocow_write(op);
+		if (op->flags & BCH_WRITE_DONE)
+			goto out_nofs_restore;
+	}
 again:
 	memset(&op->failed, 0, sizeof(op->failed));
 	op->btree_update_ready = false;
@@ -1230,7 +1450,7 @@ again:
 					 key_to_write_offset);
 
 		bch2_submit_wbio_replicas(to_wbio(bio), c, BCH_DATA_user,
-					  key_to_write);
+					  key_to_write, false);
 	} while (ret);
 
 	/*
@@ -1255,7 +1475,7 @@ again:
 
 		continue_at(&op->cl, bch2_write_index, NULL);
 	}
-
+out_nofs_restore:
 	memalloc_nofs_restore(nofs_flags);
 }
 
@@ -2462,6 +2682,11 @@ void bch2_fs_io_exit(struct bch_fs *c)
 
 int bch2_fs_io_init(struct bch_fs *c)
 {
+	unsigned i;
+
+	for (i = 0; i < ARRAY_SIZE(c->nocow_locks.l); i++)
+		two_state_lock_init(&c->nocow_locks.l[i]);
+
 	if (bioset_init(&c->bio_read, 1, offsetof(struct bch_read_bio, bio),
 			BIOSET_NEED_BVECS) ||
 	    bioset_init(&c->bio_read_split, 1, offsetof(struct bch_read_bio, bio),

@@ -18,7 +18,7 @@ void bch2_bio_alloc_pages_pool(struct bch_fs *, struct bio *, size_t);
 void bch2_latency_acct(struct bch_dev *, u64, int);
 
 void bch2_submit_wbio_replicas(struct bch_write_bio *, struct bch_fs *,
-			       enum bch_data_type, const struct bkey_i *);
+			       enum bch_data_type, const struct bkey_i *, bool);
 
 #define BLK_STS_REMOVED		((__force blk_status_t)128)
 
@@ -87,6 +87,7 @@ static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 	op->res			= (struct disk_reservation) { 0 };
 	op->new_i_size		= U64_MAX;
 	op->i_sectors_delta	= 0;
+	op->nocow_devs.nr	= 0;
 }
 
 void bch2_write(struct closure *);

@@ -148,6 +148,8 @@ struct bch_write_op {
 	struct keylist		insert_keys;
 	u64			inline_keys[BKEY_EXTENT_U64s_MAX * 2];
 
+	struct bch_devs_list	nocow_devs;
+
 	/* Must be last: */
 	struct bch_write_bio	wbio;
 };

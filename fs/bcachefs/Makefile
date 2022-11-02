@@ -50,6 +50,7 @@ bcachefs-y		:=	\
 	migrate.o		\
 	move.o			\
 	movinggc.o		\
+	nocow_locking.o		\
 	opts.o			\
 	quota.o			\
 	rebalance.o		\

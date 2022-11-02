@@ -795,7 +795,8 @@ struct bch_inode_generation {
 	x(bi_dir_offset,		64)	\
 	x(bi_subvol,			32)	\
 	x(bi_parent_subvol,		32)	\
-	x(bi_tmpdir,			8)
+	x(bi_tmpdir,			8)	\
+	x(bi_nocow,			8)
 
 /* subset of BCH_INODE_FIELDS */
 #define BCH_INODE_OPTS()			\
@@ -808,7 +809,8 @@ struct bch_inode_generation {
 	x(foreground_target,		16)	\
 	x(background_target,		16)	\
 	x(erasure_code,			16)	\
-	x(tmpdir,			8)
+	x(tmpdir,			8)	\
+	x(nocow,			8)
 
 enum inode_opt_id {
 #define x(name, ...)				\
@@ -1694,6 +1696,7 @@ LE64_BITMASK(BCH_SB_JOURNAL_FLUSH_DISABLED,struct bch_sb, flags[3], 62, 63);
 LE64_BITMASK(BCH_SB_JOURNAL_RECLAIM_DELAY,struct bch_sb, flags[4], 0, 32);
 /* Obsolete, always enabled: */
 LE64_BITMASK(BCH_SB_JOURNAL_TRANSACTION_NAMES,struct bch_sb, flags[4], 32, 33);
+LE64_BITMASK(BCH_SB_NOCOW,		struct bch_sb, flags[4], 33, 34);
 
 /*
  * Features:
