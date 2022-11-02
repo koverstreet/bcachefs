@@ -206,6 +206,7 @@
 #include "bcachefs_format.h"
 #include "errcode.h"
 #include "fifo.h"
+#include "nocow_locking.h"
 #include "opts.h"
 #include "util.h"
 
@@ -376,7 +377,8 @@ BCH_DEBUG_PARAMS_DEBUG()
 	x(journal_flush_seq)			\
 	x(blocked_journal)			\
 	x(blocked_allocate)			\
-	x(blocked_allocate_open_bucket)
+	x(blocked_allocate_open_bucket)		\
+	x(nocow_lock_contended)
 
 enum bch_time_stats {
 #define x(name) BCH_TIME_##name,
@@ -475,6 +477,7 @@ struct bch_dev {
 	struct bch_sb		*sb_read_scratch;
 	int			sb_write_error;
 	dev_t			dev;
+	atomic_t		flush_seq;
 
 	struct bch_devs_mask	self;
 
@@ -857,6 +860,8 @@ struct bch_fs {
 	struct bio_set		bio_write;
 	struct mutex		bio_bounce_pages_lock;
 	mempool_t		bio_bounce_pages;
+	struct bucket_nocow_lock_table
+				nocow_locks;
 	struct rhashtable	promote_table;
 
 	mempool_t		compression_bounce[2];
@@ -918,6 +923,7 @@ struct bch_fs {
 	struct bio_set		writepage_bioset;
 	struct bio_set		dio_write_bioset;
 	struct bio_set		dio_read_bioset;
+	struct bio_set		nocow_flush_bioset;
 
 	/* ERRORS */
 	struct list_head	fsck_errors;

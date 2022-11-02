@@ -3,6 +3,7 @@
 #include "bcachefs.h"
 #include "buckets_waiting_for_journal.h"
 #include <linux/random.h>
+#include <linux/siphash.h>
 
 static inline struct bucket_hashed *
 bucket_hash(struct buckets_waiting_for_journal_table *t,
@@ -10,7 +11,7 @@ bucket_hash(struct buckets_waiting_for_journal_table *t,
 {
 	unsigned h = siphash_1u64(dev_bucket, &t->hash_seeds[hash_seed_idx]);
 
-	BUG_ON(!is_power_of_2(t->size));
+	EBUG_ON(!is_power_of_2(t->size));
 
 	return t->d + (h & (t->size - 1));
 }
