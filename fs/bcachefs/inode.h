@@ -199,4 +199,9 @@ static inline void bch2_inode_nlink_set(struct bch_inode_unpacked *bi,
 int bch2_inode_nlink_inc(struct bch_inode_unpacked *);
 void bch2_inode_nlink_dec(struct btree_trans *, struct bch_inode_unpacked *);
 
+static inline bool inode_wants_fsync(struct bch_inode_unpacked *inode)
+{
+	return !(inode->bi_flags & BCH_INODE_UNLINKED) && !inode->bi_tmpdir;
+}
+
 #endif /* _BCACHEFS_INODE_H */

@@ -794,7 +794,8 @@ struct bch_inode_generation {
 	x(bi_dir,			64)	\
 	x(bi_dir_offset,		64)	\
 	x(bi_subvol,			32)	\
-	x(bi_parent_subvol,		32)
+	x(bi_parent_subvol,		32)	\
+	x(bi_tmpdir,			8)
 
 /* subset of BCH_INODE_FIELDS */
 #define BCH_INODE_OPTS()			\
@@ -806,7 +807,8 @@ struct bch_inode_generation {
 	x(promote_target,		16)	\
 	x(foreground_target,		16)	\
 	x(background_target,		16)	\
-	x(erasure_code,			16)
+	x(erasure_code,			16)	\
+	x(tmpdir,			8)
 
 enum inode_opt_id {
 #define x(name, ...)				\

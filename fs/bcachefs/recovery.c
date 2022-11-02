@@ -1368,7 +1368,7 @@ use_clean:
 		if (ret)
 			goto err;
 		bch_verbose(c, "fsck done");
-	} else if (!c->sb.clean) {
+	} else {
 		bch_verbose(c, "checking for deleted inodes");
 		err = "error in recovery";
 		ret = bch2_fsck_walk_inodes_only(c);

@@ -382,6 +382,11 @@ enum opt_type {
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,			false,				\
 	  NULL,		NULL)						\
+	x(tmpdir,			u8,				\
+	  OPT_INODE,							\
+	  OPT_BOOL(),							\
+	  BCH2_NO_SB_OPT,		false,				\
+	  NULL,		NULL)						\
 	x(fs_size,			u64,				\
 	  OPT_DEVICE,							\
 	  OPT_UINT(0, S64_MAX),						\

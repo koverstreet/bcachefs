@@ -2394,7 +2394,9 @@ ssize_t bch2_direct_write(struct kiocb *req, struct iov_iter *iter)
 	dio->loop		= false;
 	dio->extending		= extending;
 	dio->sync		= is_sync_kiocb(req) || extending;
-	dio->flush		= iocb_is_dsync(req) && !c->opts.journal_flush_disabled;
+	dio->flush		= iocb_is_dsync(req) &&
+		!c->opts.journal_flush_disabled &&
+		inode_wants_fsync(&inode->ei_inode);
 	dio->free_iov		= false;
 	dio->quota_res.sectors	= 0;
 	dio->written		= 0;
@@ -2487,6 +2489,9 @@ int bch2_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	struct bch_inode_info *inode = file_bch_inode(file);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	int ret, ret2, ret3;
+
+	if (!inode_wants_fsync(&inode->ei_inode))
+		return 0;
 
 	ret = file_write_and_wait_range(file, start, end);
 	ret2 = sync_inode_metadata(&inode->v, 1);
@@ -2667,9 +2672,11 @@ static int bch2_extend(struct user_namespace *mnt_userns,
 	 *
 	 * this has to be done _before_ extending i_size:
 	 */
-	ret = filemap_write_and_wait_range(mapping, inode_u->bi_size, S64_MAX);
-	if (ret)
-		return ret;
+	if (inode_wants_fsync(&inode->ei_inode)) {
+		ret = filemap_write_and_wait_range(mapping, inode_u->bi_size, S64_MAX);
+		if (ret)
+			return ret;
+	}
 
 	truncate_setsize(&inode->v, iattr->ia_size);
 
@@ -2757,16 +2764,18 @@ int bch2_truncate(struct user_namespace *mnt_userns,
 	 * userspace has to redirty it and call .mkwrite -> set_page_dirty
 	 * again to allocate the part of the page that was extended.
 	 */
-	if (iattr->ia_size > inode_u.bi_size)
-		ret = filemap_write_and_wait_range(mapping,
-				inode_u.bi_size,
-				iattr->ia_size - 1);
-	else if (iattr->ia_size & (PAGE_SIZE - 1))
-		ret = filemap_write_and_wait_range(mapping,
-				round_down(iattr->ia_size, PAGE_SIZE),
-				iattr->ia_size - 1);
-	if (ret)
-		goto err;
+	if (inode_wants_fsync(&inode->ei_inode)) {
+		if (iattr->ia_size > inode_u.bi_size)
+			ret = filemap_write_and_wait_range(mapping,
+					inode_u.bi_size,
+					iattr->ia_size - 1);
+		else if (iattr->ia_size & (PAGE_SIZE - 1))
+			ret = filemap_write_and_wait_range(mapping,
+					round_down(iattr->ia_size, PAGE_SIZE),
+					iattr->ia_size - 1);
+		if (ret)
+			goto err;
+	}
 
 	mutex_lock(&inode->ei_update_lock);
 	ret = bch2_write_inode(c, inode, bch2_truncate_start_fn,

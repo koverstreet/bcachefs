@@ -863,6 +863,32 @@ fsck_err:
 	goto out;
 }
 
+
+/*
+ * Returns 1 if inode was deleted:
+ */
+static int do_tmpdir_inode(struct btree_trans *trans,
+			   struct btree_iter *iter,
+			   struct bch_inode_unpacked *u)
+{
+	struct bch_fs *c = trans->c;
+	int ret;
+
+	bch2_trans_unlock(trans);
+	bch2_fs_lazy_rw(c);
+
+	if (!S_ISDIR(u->bi_mode)) {
+		ret = fsck_inode_rm(trans, u->bi_inum, iter->pos.snapshot);
+		if (ret && !bch2_err_matches(ret, BCH_ERR_transaction_restart))
+			bch_err(c, "error in fsck: error while deleting inode: %s",
+				bch2_err_str(ret));
+		return ret ?: 1;
+	} else {
+		/* XXX rm -rf contents */
+
+	}
+}
+
 static int check_inode(struct btree_trans *trans,
 		       struct btree_iter *iter,
 		       struct bkey_s_c k,
@@ -926,6 +952,12 @@ static int check_inode(struct btree_trans *trans,
 			bch_err(c, "error in fsck: error while deleting inode: %s",
 				bch2_err_str(ret));
 		return ret;
+	}
+
+	if (u.bi_tmpdir) {
+		ret = do_tmpdir_inode(trans, iter, &u);
+		if (ret)
+			return ret < 0 ? ret : 0;
 	}
 
 	if (u.bi_flags & BCH_INODE_I_SIZE_DIRTY &&

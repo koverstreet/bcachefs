@@ -529,7 +529,8 @@ static int bch2_rename2(struct user_namespace *mnt_userns,
 	if (flags & ~(RENAME_NOREPLACE|RENAME_EXCHANGE))
 		return -EINVAL;
 
-	if (mode == BCH_RENAME_OVERWRITE) {
+	if (mode == BCH_RENAME_OVERWRITE &&
+	    (!src_inode->ei_inode.bi_tmpdir || !dst_dir->ei_inode.bi_tmpdir)) {
 		ret = filemap_write_and_wait_range(src_inode->v.i_mapping,
 						   0, LLONG_MAX);
 		if (ret)
