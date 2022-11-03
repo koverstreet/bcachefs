@@ -885,7 +885,7 @@ static int do_tmpdir_inode(struct btree_trans *trans,
 		return ret ?: 1;
 	} else {
 		/* XXX rm -rf contents */
-
+		return 0;
 	}
 }
 
