@@ -790,6 +790,7 @@ static void dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 	       "freelist_wait\t\t%s\n"
 	       "open buckets allocated\t%u\n"
 	       "open buckets this dev\t%u\n"
+	       "open buckets this dev partial list\t%u\n"
 	       "open buckets total\t%u\n"
 	       "open_buckets_wait\t%s\n"
 	       "open_buckets_btree\t%u\n"
@@ -800,6 +801,7 @@ static void dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 	       c->freelist_wait.list.first		? "waiting" : "empty",
 	       OPEN_BUCKETS_COUNT - c->open_buckets_nr_free,
 	       ca->nr_open_buckets,
+	       ca->open_buckets_partial_nr,
 	       OPEN_BUCKETS_COUNT,
 	       c->open_buckets_wait.list.first		? "waiting" : "empty",
 	       nr[BCH_DATA_btree],
