@@ -249,7 +249,6 @@ int bch2_extent_update(struct btree_trans *trans,
 		       struct btree_iter *iter,
 		       struct bkey_i *k,
 		       struct disk_reservation *disk_res,
-		       u64 *journal_seq,
 		       u64 new_i_size,
 		       s64 *i_sectors_delta_total,
 		       bool check_enospc)
@@ -348,7 +347,7 @@ int bch2_extent_update(struct btree_trans *trans,
 	ret =   bch2_trans_update(trans, &inode_iter, &new_inode->k_i,
 				  inode_update_flags) ?:
 		bch2_trans_update(trans, iter, k, 0) ?:
-		bch2_trans_commit(trans, disk_res, journal_seq,
+		bch2_trans_commit(trans, disk_res, NULL,
 				BTREE_INSERT_NOCHECK_RW|
 				BTREE_INSERT_NOFAIL);
 	if (unlikely(ret))
@@ -411,8 +410,7 @@ int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 		bch2_cut_back(end_pos, &delete);
 
 		ret = bch2_extent_update(trans, inum, iter, &delete,
-				&disk_res, NULL,
-				0, i_sectors_delta, false);
+				&disk_res, 0, i_sectors_delta, false);
 		bch2_disk_reservation_put(c, &disk_res);
 	}
 
@@ -479,7 +477,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 				     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 
 		ret = bch2_extent_update(&trans, inum, &iter, sk.k,
-					 &op->res, &op->journal_seq,
+					 &op->res,
 					 op->new_i_size, &op->i_sectors_delta,
 					 op->flags & BCH_WRITE_CHECK_ENOSPC);
 		bch2_trans_iter_exit(&trans, &iter);
@@ -565,13 +563,10 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 
 static void __bch2_write(struct closure *);
 
-static void __bch2_write_done(struct closure *cl)
+static void bch2_write_done(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
 	struct bch_fs *c = op->c;
-
-	if (!op->error && (op->flags & BCH_WRITE_FLUSH))
-		op->error = bch2_journal_error(&c->journal);
 
 	bch2_disk_reservation_put(c, &op->res);
 	percpu_ref_put(&c->writes);
@@ -583,21 +578,6 @@ static void __bch2_write_done(struct closure *cl)
 	closure_debug_destroy(cl);
 	if (op->end_io)
 		op->end_io(op);
-}
-
-static __always_inline void bch2_write_done(struct bch_write_op *op)
-{
-	if (likely(!(op->flags & BCH_WRITE_FLUSH) || op->error)) {
-		__bch2_write_done(&op->cl);
-	} else if (!(op->flags & BCH_WRITE_SYNC)) {
-		bch2_journal_flush_seq_async(&op->c->journal,
-					     op->journal_seq,
-					     &op->cl);
-		continue_at(&op->cl, __bch2_write_done, index_update_wq(op));
-	} else {
-		bch2_journal_flush_seq(&op->c->journal, op->journal_seq);
-		__bch2_write_done(&op->cl);
-	}
 }
 
 static noinline int bch2_write_drop_io_error_ptrs(struct bch_write_op *op)
@@ -697,7 +677,7 @@ static void bch2_write_index(struct closure *cl)
 	if (!(op->flags & BCH_WRITE_DONE))
 		continue_at(cl, __bch2_write, index_update_wq(op));
 	else
-		bch2_write_done(op);
+		bch2_write_done(cl);
 }
 
 static void bch2_write_endio(struct bio *bio)
@@ -1239,7 +1219,7 @@ again:
 
 		if (!(op->flags & BCH_WRITE_DONE))
 			goto again;
-		bch2_write_done(op);
+		bch2_write_done(&op->cl);
 	} else {
 		continue_at(cl, bch2_write_index, index_update_wq(op));
 	}
@@ -1287,7 +1267,7 @@ static void bch2_write_data_inline(struct bch_write_op *op, unsigned data_len)
 
 	__bch2_write_index(op);
 err:
-	bch2_write_done(op);
+	bch2_write_done(&op->cl);
 }
 
 /**
