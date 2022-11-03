@@ -27,20 +27,18 @@ const char *bch2_blk_status_to_str(blk_status_t);
 enum bch_write_flags {
 	BCH_WRITE_ALLOC_NOWAIT		= (1 << 0),
 	BCH_WRITE_CACHED		= (1 << 1),
-	BCH_WRITE_FLUSH			= (1 << 2),
-	BCH_WRITE_DATA_ENCODED		= (1 << 3),
-	BCH_WRITE_PAGES_STABLE		= (1 << 4),
-	BCH_WRITE_PAGES_OWNED		= (1 << 5),
-	BCH_WRITE_ONLY_SPECIFIED_DEVS	= (1 << 6),
-	BCH_WRITE_WROTE_DATA_INLINE	= (1 << 7),
-	BCH_WRITE_FROM_INTERNAL		= (1 << 8),
-	BCH_WRITE_CHECK_ENOSPC		= (1 << 9),
-	BCH_WRITE_SYNC			= (1 << 10),
-	BCH_WRITE_MOVE			= (1 << 11),
+	BCH_WRITE_DATA_ENCODED		= (1 << 2),
+	BCH_WRITE_PAGES_STABLE		= (1 << 3),
+	BCH_WRITE_PAGES_OWNED		= (1 << 4),
+	BCH_WRITE_ONLY_SPECIFIED_DEVS	= (1 << 5),
+	BCH_WRITE_WROTE_DATA_INLINE	= (1 << 6),
+	BCH_WRITE_CHECK_ENOSPC		= (1 << 7),
+	BCH_WRITE_SYNC			= (1 << 8),
+	BCH_WRITE_MOVE			= (1 << 9),
 
 	/* Internal: */
-	BCH_WRITE_DONE			= (1 << 12),
-	BCH_WRITE_IO_ERROR		= (1 << 13),
+	BCH_WRITE_DONE			= (1 << 10),
+	BCH_WRITE_IO_ERROR		= (1 << 11),
 };
 
 static inline struct workqueue_struct *index_update_wq(struct bch_write_op *op)
@@ -54,7 +52,7 @@ int bch2_sum_sector_overwrites(struct btree_trans *, struct btree_iter *,
 			       struct bkey_i *, bool *, s64 *, s64 *);
 int bch2_extent_update(struct btree_trans *, subvol_inum,
 		       struct btree_iter *, struct bkey_i *,
-		       struct disk_reservation *, u64 *, u64, s64 *, bool);
+		       struct disk_reservation *, u64, s64 *, bool);
 
 int bch2_fpunch_at(struct btree_trans *, struct btree_iter *,
 		   subvol_inum, u64, s64 *);
@@ -83,7 +81,6 @@ static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 	op->version		= ZERO_VERSION;
 	op->write_point		= (struct write_point_specifier) { 0 };
 	op->res			= (struct disk_reservation) { 0 };
-	op->journal_seq		= 0;
 	op->new_i_size		= U64_MAX;
 	op->i_sectors_delta	= 0;
 }
