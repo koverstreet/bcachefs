@@ -2,12 +2,14 @@
 #ifndef __LINUX_PERCPU_H
 #define __LINUX_PERCPU_H
 
+#include <linux/alloc_tag.h>
 #include <linux/mmdebug.h>
 #include <linux/preempt.h>
 #include <linux/smp.h>
 #include <linux/cpumask.h>
 #include <linux/pfn.h>
 #include <linux/init.h>
+#include <linux/sched.h>
 
 #include <asm/percpu.h>
 
@@ -117,7 +119,6 @@ extern int __init pcpu_page_first_chunk(size_t reserved_size,
 				pcpu_fc_cpu_to_node_fn_t cpu_to_nd_fn);
 #endif
 
-extern void __percpu *__alloc_reserved_percpu(size_t size, size_t align) __alloc_size(1);
 extern bool __is_kernel_percpu_address(unsigned long addr, unsigned long *can_addr);
 extern bool is_kernel_percpu_address(unsigned long addr);
 
@@ -125,10 +126,22 @@ extern bool is_kernel_percpu_address(unsigned long addr);
 extern void __init setup_per_cpu_areas(void);
 #endif
 
-extern void __percpu *__alloc_percpu_gfp(size_t size, size_t align, gfp_t gfp) __alloc_size(1);
-extern void __percpu *__alloc_percpu(size_t size, size_t align) __alloc_size(1);
-extern void free_percpu(void __percpu *__pdata);
-extern phys_addr_t per_cpu_ptr_to_phys(void *addr);
+extern void __percpu *__pcpu_alloc(size_t size, size_t align, bool reserved,
+				   gfp_t gfp) __alloc_size(1);
+
+#define pcpu_alloc(_size, _align, _reserved, _gfp)			\
+({									\
+	void __percpu *_res;						\
+	DEFINE_ALLOC_TAG(_alloc_tag, _old);				\
+									\
+	_res = __pcpu_alloc(_size, _align, _reserved, _gfp);		\
+	alloc_tag_restore(&_alloc_tag, _old);				\
+	_res;								\
+})
+
+#define __alloc_percpu_gfp(_size, _align, _gfp)	pcpu_alloc(_size, _align, false, _gfp)
+#define __alloc_percpu(_size, _align)		pcpu_alloc(_size, _align, false, GFP_KERNEL)
+#define __alloc_reserved_percpu(_size, _align)	pcpu_alloc(_size, _align, true, GFP_KERNEL)
 
 #define alloc_percpu_gfp(type, gfp)					\
 	(typeof(type) __percpu *)__alloc_percpu_gfp(sizeof(type),	\
@@ -136,6 +149,9 @@ extern phys_addr_t per_cpu_ptr_to_phys(void *addr);
 #define alloc_percpu(type)						\
 	(typeof(type) __percpu *)__alloc_percpu(sizeof(type),		\
 						__alignof__(type))
+
+extern void free_percpu(void __percpu *__pdata);
+extern phys_addr_t per_cpu_ptr_to_phys(void *addr);
 
 extern unsigned long pcpu_nr_pages(void);
 
