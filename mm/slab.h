@@ -476,6 +476,9 @@ static inline void prepare_slab_obj_exts_hook(struct kmem_cache *s, gfp_t flags,
 {
 	struct slab *slab;
 
+	if (!p)
+		return;
+
 	/* If kmem is the only extension then the vector will be created conditionally */
 	if (is_kmem_only_obj_ext())
 		return;
