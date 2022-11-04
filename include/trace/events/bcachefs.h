@@ -546,14 +546,11 @@ TRACE_EVENT(bucket_alloc_fail,
 		 u64 avail,
 		 u64 copygc_wait_amount,
 		 s64 copygc_waiting_for,
-		 u64 seen,
-		 u64 open,
-		 u64 need_journal_commit,
-		 u64 nouse,
+		 struct bucket_alloc_state *s,
 		 bool nonblocking,
 		 const char *err),
 	TP_ARGS(ca, alloc_reserve, free, avail, copygc_wait_amount, copygc_waiting_for,
-		seen, open, need_journal_commit, nouse, nonblocking, err),
+		s, nonblocking, err),
 
 	TP_STRUCT__entry(
 		__field(dev_t,			dev			)
@@ -577,10 +574,10 @@ TRACE_EVENT(bucket_alloc_fail,
 		__entry->avail		= avail;
 		__entry->copygc_wait_amount	= copygc_wait_amount;
 		__entry->copygc_waiting_for	= copygc_waiting_for;
-		__entry->seen		= seen;
-		__entry->open		= open;
-		__entry->need_journal_commit = need_journal_commit;
-		__entry->nouse		= nouse;
+		__entry->seen		= s->buckets_seen;
+		__entry->open		= s->skipped_open;
+		__entry->need_journal_commit = s->skipped_need_journal_commit;
+		__entry->nouse		= s->skipped_nouse;
 		__entry->nonblocking	= nonblocking;
 		strscpy(__entry->err, err, sizeof(__entry->err));
 	),
