@@ -1340,7 +1340,6 @@ static noinline unsigned long my__get_free_page(unsigned long in1, unsigned long
 	switch (in1)
 	{
 	case (1):
-		trace_kmalloc(_RET_IP_, NULL, 0, size, size, GFP_KERNEL);
 		return __get_free_pages(GFP_KERNEL, 0);
 	case (2):
 		return (unsigned long)kmalloc(size, GFP_KERNEL);
@@ -1368,28 +1367,13 @@ static noinline void my_free_page(unsigned long in1, unsigned long in2, unsigned
 	}
 }
 
-static void init_stack_trace(void)
-{
-	static bool stack_depot_ready;
-
-	if (!stack_depot_ready) {
-		stack_depot_init();
-		stack_depot_capture_init();
-		stack_depot_ready = true;
-	}
-}
-
 #define MADV_TEST 25
 static int alloc_bench(unsigned long in1, unsigned long in2)
 {
 	int i, batch, iter;
 	unsigned long addr[10];
-/*
-	printk("madvise_test(%d) was invoked, start=%lu len_in=%lu\n",
-		MADV_TEST, start, len_in);
-*/
-	init_stack_trace();
-	for (iter = 0; iter < 10; iter++) {
+
+	for (iter = 0; iter < 1000000; iter++) {
 		size_t size = 8;
 		for (batch = 0; batch < 30; batch++) {
 			for (i = 0; i < 10; i++) {
@@ -1402,7 +1386,8 @@ static int alloc_bench(unsigned long in1, unsigned long in2)
 		}
 		cond_resched();
 	}
-	return -MADV_TEST;
+
+	return 0;
 }
 
 /*
