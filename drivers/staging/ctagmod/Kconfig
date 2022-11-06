@@ -2,7 +2,6 @@
 config CTAGMOD
 	tristate "Code tagging test module"
 	depends on CODE_TAGGING
-	default m
 	help
 	  Code tagging test module.
 
