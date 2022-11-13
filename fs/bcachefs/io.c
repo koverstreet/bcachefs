@@ -344,6 +344,34 @@ err:
 }
 
 /*
+ * Overwrites whatever was present with zeroes: */
+int bch2_extent_fallocate(struct btree_trans *trans,
+			  subvol_inum inum,
+			  struct btree_iter *iter,
+			  unsigned sectors,
+			  struct bch_io_opts opts,
+			  struct disk_reservation *disk_res,
+			  s64 *i_sectors_delta,
+			  struct write_point_specifier write_point)
+{
+	int ret;
+	struct bkey_i_reservation *reservation =
+		bch2_trans_kmalloc(trans, sizeof(*reservation));
+
+	ret = PTR_ERR_OR_ZERO(reservation);
+	if (ret)
+		return ret;
+
+	bkey_reservation_init(&reservation->k_i);
+	reservation->k.p = iter->pos;
+	bch2_key_resize(&reservation->k, sectors);
+	reservation->v.nr_replicas = opts.data_replicas;
+
+	return bch2_extent_update(trans, inum, iter, &reservation->k_i, disk_res,
+				  0, i_sectors_delta, true);
+}
+
+/*
  * Returns -BCH_ERR_transacton_restart if we had to drop locks:
  */
 int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,

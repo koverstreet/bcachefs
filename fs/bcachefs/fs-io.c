@@ -3045,7 +3045,7 @@ static int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 	struct btree_trans trans;
 	struct btree_iter iter;
 	struct bpos end_pos = POS(inode->v.i_ino, end_sector);
-	unsigned replicas = io_opts(c, &inode->ei_inode).data_replicas;
+	struct bch_io_opts opts = io_opts(c, &inode->ei_inode);
 	int ret = 0;
 
 	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 512);
@@ -3058,7 +3058,6 @@ static int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 		s64 i_sectors_delta = 0;
 		struct disk_reservation disk_res = { 0 };
 		struct quota_res quota_res = { 0 };
-		struct bkey_i_reservation reservation;
 		struct bkey_s_c k;
 		unsigned sectors;
 		u32 snapshot;
@@ -3078,7 +3077,7 @@ static int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 
 		/* already reserved */
 		if (k.k->type == KEY_TYPE_reservation &&
-		    bkey_s_c_to_reservation(k).v->nr_replicas >= replicas) {
+		    bkey_s_c_to_reservation(k).v->nr_replicas >= opts.data_replicas) {
 			bch2_btree_iter_advance(&iter);
 			continue;
 		}
@@ -3089,16 +3088,7 @@ static int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 			continue;
 		}
 
-		bkey_reservation_init(&reservation.k_i);
-		reservation.k.type	= KEY_TYPE_reservation;
-		reservation.k.p		= k.k->p;
-		reservation.k.size	= k.k->size;
-
-		bch2_cut_front(iter.pos,	&reservation.k_i);
-		bch2_cut_back(end_pos,		&reservation.k_i);
-
-		sectors = reservation.k.size;
-		reservation.v.nr_replicas = bch2_bkey_nr_ptrs_allocated(k);
+		sectors = bpos_min(k.k->p, end_pos).offset - iter.pos.offset;
 
 		if (!bkey_extent_is_allocation(k.k)) {
 			ret = bch2_quota_reservation_add(c, inode,
@@ -3108,21 +3098,13 @@ static int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 				goto bkey_err;
 		}
 
-		if (reservation.v.nr_replicas < replicas ||
-		    bch2_bkey_sectors_compressed(k)) {
-			ret = bch2_disk_reservation_get(c, &disk_res, sectors,
-							replicas, 0);
-			if (unlikely(ret))
-				goto bkey_err;
-
-			reservation.v.nr_replicas = disk_res.nr_replicas;
-		}
-
-		ret = bch2_extent_update(&trans, inode_inum(inode), &iter,
-				&reservation.k_i, &disk_res,
-				0, &i_sectors_delta, true);
+		ret = bch2_extent_fallocate(&trans, inode_inum(inode), &iter,
+					    sectors, opts,
+					    &disk_res, &i_sectors_delta,
+					    writepoint_hashed((unsigned long) current));
 		if (ret)
 			goto bkey_err;
+
 		i_sectors_acct(c, inode, &quota_res, i_sectors_delta);
 bkey_err:
 		bch2_quota_reservation_put(c, inode, &quota_res);
