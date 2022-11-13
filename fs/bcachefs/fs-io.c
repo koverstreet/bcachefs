@@ -3170,6 +3170,11 @@ static int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 			continue;
 		}
 
+		/*
+		 * XXX: for nocow mode, we should promote shared extents to
+		 * unshared here
+		 */
+
 		sectors = bpos_min(k.k->p, end_pos).offset - iter.pos.offset;
 
 		if (!bkey_extent_is_allocation(k.k)) {

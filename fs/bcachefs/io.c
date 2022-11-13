@@ -354,21 +354,85 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 			  s64 *i_sectors_delta,
 			  struct write_point_specifier write_point)
 {
+	struct bch_fs *c = trans->c;
+	struct closure cl;
+	struct bkey_i *new;
 	int ret;
-	struct bkey_i_reservation *reservation =
-		bch2_trans_kmalloc(trans, sizeof(*reservation));
 
-	ret = PTR_ERR_OR_ZERO(reservation);
-	if (ret)
-		return ret;
+	closure_init_stack(&cl);
 
-	bkey_reservation_init(&reservation->k_i);
-	reservation->k.p = iter->pos;
-	bch2_key_resize(&reservation->k, sectors);
-	reservation->v.nr_replicas = opts.data_replicas;
+	if (!opts.nocow) {
+		struct bkey_i_reservation *reservation =
+			bch2_trans_kmalloc(trans, sizeof(*reservation));
 
-	return bch2_extent_update(trans, inum, iter, &reservation->k_i, disk_res,
-				  0, i_sectors_delta, true);
+		ret = PTR_ERR_OR_ZERO(reservation);
+		if (ret)
+			return ret;
+
+		bkey_reservation_init(&reservation->k_i);
+		reservation->k.p = iter->pos;
+		bch2_key_resize(&reservation->k, sectors);
+		reservation->v.nr_replicas = opts.data_replicas;
+
+		new = &reservation->k_i;
+	} else {
+		struct bkey_i_extent *e =
+			bch2_trans_kmalloc(trans, sizeof(struct bkey_i_extent) +
+					   sizeof(struct bch_extent_ptr) *
+					   opts.data_replicas);
+		struct bch_devs_list devs_have;
+		struct write_point *wp;
+		struct bch_extent_ptr *ptr;
+
+		devs_have.nr = 0;
+
+		ret = PTR_ERR_OR_ZERO(e);
+		if (ret)
+			return ret;
+
+		bkey_extent_init(&e->k_i);
+		e->k.p = iter->pos;
+
+		while (1) {
+			ret = bch2_alloc_sectors_start_trans(trans,
+					opts.foreground_target,
+					false,
+					write_point,
+					&devs_have,
+					opts.data_replicas,
+					opts.data_replicas,
+					RESERVE_none, 0, &cl, &wp);
+			if (ret != -EAGAIN)
+				break;
+
+			bch2_trans_unlock(trans);
+			closure_sync(&cl);
+		}
+
+		if (ret)
+			return ret;
+
+		sectors = min(sectors, wp->sectors_free);
+
+		bch2_key_resize(&e->k, sectors);
+
+		bch2_alloc_sectors_append_ptrs(c, wp, &e->k_i, sectors, false);
+		bch2_alloc_sectors_done(c, wp);
+
+		extent_for_each_ptr(extent_i_to_s(e), ptr)
+			ptr->unwritten = true;
+		new = &e->k_i;
+	}
+
+	ret = bch2_extent_update(trans, inum, iter, new, disk_res,
+				 0, i_sectors_delta, true);
+
+	if ((atomic_read(&cl.remaining) & CLOSURE_REMAINING_MASK) != 1) {
+		bch2_trans_unlock(trans);
+		closure_sync(&cl);
+	}
+
+	return ret;
 }
 
 /*
@@ -1192,6 +1256,72 @@ static inline void bch2_nocow_write_unlock(struct bch_write_op *op)
 	}
 }
 
+static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
+						  struct btree_iter *iter,
+						  struct bkey_i *orig,
+						  struct bkey_s_c k)
+{
+	struct bkey_i *new;
+	struct bkey_ptrs ptrs;
+	struct bch_extent_ptr *ptr;
+	int ret;
+
+	if (!bch2_extents_match(bkey_i_to_s_c(orig), k)) {
+		/* trace this */
+		return 0;
+	}
+
+	new = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
+	ret = PTR_ERR_OR_ZERO(new);
+	if (ret)
+		return ret;
+
+	bkey_reassemble(new, k);
+
+	bch2_cut_front(bkey_start_pos(&orig->k), new);
+	bch2_cut_back(orig->k.p, new);
+
+	ptrs = bch2_bkey_ptrs(bkey_i_to_s(new));
+	bkey_for_each_ptr(ptrs, ptr)
+		ptr->unwritten = 0;
+
+	return bch2_trans_update(trans, iter, new,
+				 BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE);
+}
+
+static void bch2_nocow_write_convert_unwritten(struct bch_write_op *op)
+{
+	struct bch_fs *c = op->c;
+	struct btree_trans trans;
+	struct btree_iter iter;
+	struct bkey_i *orig;
+	struct bkey_s_c k;
+	int ret;
+
+	bch2_trans_init(&trans, c, 0, 0);
+
+	for_each_keylist_key(&op->insert_keys, orig) {
+		ret = for_each_btree_key_commit(&trans, iter, BTREE_ID_extents,
+				     bkey_start_pos(&orig->k),
+				     BTREE_ITER_INTENT, k,
+				     NULL, NULL, BTREE_INSERT_NOFAIL, ({
+			if (bkey_cmp(bkey_start_pos(k.k), orig->k.p) >= 0)
+				break;
+
+			bch2_nocow_write_convert_one_unwritten(&trans, &iter, orig, k);
+		}));
+
+		if (ret) {
+			bch_err_inum_ratelimited(c, op->pos.inode,
+					"%s: error %s", __func__, bch2_err_str(ret));
+			op->error = ret;
+			break;
+		}
+	}
+
+	bch2_trans_exit(&trans);
+}
+
 static void bch2_nocow_write_done(struct closure *cl)
 {
 	struct bch_write_op *op = container_of(cl, struct bch_write_op, cl);
@@ -1200,6 +1330,9 @@ static void bch2_nocow_write_done(struct closure *cl)
 
 	if (unlikely(op->flags & BCH_WRITE_IO_ERROR))
 		op->error = -EIO;
+	else if (unlikely(op->flags & BCH_WRITE_CONVERT_UNWRITTEN))
+		bch2_nocow_write_convert_unwritten(op);
+
 	bch2_write_done(cl);
 }
 
@@ -1278,6 +1411,9 @@ retry:
 					       BUCKET_NOCOW_LOCK_UPDATE);
 			if (unlikely(ptr_stale(bch_dev_bkey_exists(c, ptr->dev), ptr)))
 				goto err_bucket_stale;
+
+			if (ptr->unwritten)
+				op->flags |= BCH_WRITE_CONVERT_UNWRITTEN;
 		}
 
 		bio = &op->wbio.bio;

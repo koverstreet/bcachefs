@@ -39,6 +39,7 @@ enum bch_write_flags {
 	/* Internal: */
 	BCH_WRITE_DONE			= (1 << 10),
 	BCH_WRITE_IO_ERROR		= (1 << 11),
+	BCH_WRITE_CONVERT_UNWRITTEN	= (1 << 12),
 };
 
 static inline struct workqueue_struct *index_update_wq(struct bch_write_op *op)
