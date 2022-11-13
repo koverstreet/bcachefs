@@ -1289,8 +1289,9 @@ static int check_extent(struct btree_trans *trans, struct btree_iter *iter,
 			continue;
 
 		if (fsck_err_on(!(i->inode.bi_flags & BCH_INODE_I_SIZE_DIRTY) &&
+				k.k->p.offset > round_up(i->inode.bi_size, block_bytes(c)) >> 9 &&
 				k.k->type != KEY_TYPE_reservation &&
-				k.k->p.offset > round_up(i->inode.bi_size, block_bytes(c)) >> 9, c,
+				!bkey_extent_is_unwritten(k), c,
 				"extent type past end of inode %llu:%u, i_size %llu\n  %s",
 				i->inode.bi_inum, i->snapshot, i->inode.bi_size,
 				(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
