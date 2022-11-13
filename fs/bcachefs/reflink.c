@@ -255,6 +255,9 @@ static struct bkey_s_c get_next_src(struct btree_iter *iter, struct bpos end)
 		if (bkey_cmp(iter->pos, end) >= 0)
 			break;
 
+		if (bkey_extent_is_unwritten(k))
+			continue;
+
 		if (bkey_extent_is_data(k.k))
 			return k;
 	}
