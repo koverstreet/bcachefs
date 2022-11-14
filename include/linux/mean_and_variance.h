@@ -155,7 +155,7 @@ struct mean_and_variance_weighted {
 	u64 variance;
 };
 
-inline s64 fast_divpow2(s64 n, u8 d);
+s64 fast_divpow2(s64 n, u8 d);
 
 struct mean_and_variance mean_and_variance_update(struct mean_and_variance s1, s64 v1);
        s64		 mean_and_variance_get_mean(struct mean_and_variance s);

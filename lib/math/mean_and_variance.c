@@ -52,7 +52,7 @@
  *
  * note: this rounds towards 0.
  */
-inline s64 fast_divpow2(s64 n, u8 d)
+s64 fast_divpow2(s64 n, u8 d)
 {
 	return (n + ((n < 0) ? ((1 << d) - 1) : 0)) >> d;
 }
