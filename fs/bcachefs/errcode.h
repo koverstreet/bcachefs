@@ -63,7 +63,8 @@
 	x(BCH_ERR_fsck,			fsck_repair_unimplemented)		\
 	x(BCH_ERR_fsck,			fsck_repair_impossible)			\
 	x(0,				need_snapshot_cleanup)			\
-	x(0,				need_topology_repair)
+	x(0,				need_topology_repair)			\
+	x(0,				unwritten_extent_update)
 
 enum bch_errcode {
 	BCH_ERR_START		= 2048,
