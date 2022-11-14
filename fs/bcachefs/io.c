@@ -356,10 +356,12 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct closure cl;
+	struct open_buckets open_buckets;
 	struct bkey_i *new;
 	int ret;
 
 	closure_init_stack(&cl);
+	open_buckets.nr = 0;
 
 	if (!opts.nocow) {
 		struct bkey_i_reservation *reservation =
@@ -416,6 +418,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 
 		bch2_key_resize(&e->k, sectors);
 
+		bch2_open_bucket_get(c, wp, &open_buckets);
 		bch2_alloc_sectors_append_ptrs(c, wp, &e->k_i, sectors, false);
 		bch2_alloc_sectors_done(c, wp);
 
@@ -431,6 +434,10 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 		bch2_trans_unlock(trans);
 		closure_sync(&cl);
 	}
+
+	/* XXX: on transaction restart, we leak space */
+
+	bch2_open_buckets_put(c, &open_buckets);
 
 	return ret;
 }
