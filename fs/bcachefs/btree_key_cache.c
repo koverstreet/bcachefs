@@ -348,12 +348,12 @@ btree_key_cache_create(struct btree_trans *trans, struct btree_path *path)
 		if (likely(was_new)) {
 			six_unlock_write(&ck->c.lock);
 			six_unlock_intent(&ck->c.lock);
-			mark_btree_node_locked(trans, path, 0, BTREE_NODE_UNLOCKED);
 			kfree(ck);
 		} else {
 			bkey_cached_free_fast(bc, ck);
 		}
 
+		mark_btree_node_locked(trans, path, 0, BTREE_NODE_UNLOCKED);
 		return NULL;
 	}
 
