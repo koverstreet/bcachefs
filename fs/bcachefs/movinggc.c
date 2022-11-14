@@ -102,7 +102,7 @@ static int bch2_copygc(struct bch_fs *c)
 	};
 	int ret = 0;
 
-	bch_move_stats_init(&move_stats, "copygc");
+	bch2_move_stats_init(&move_stats, "copygc");
 
 	for_each_rw_member(ca, c, dev_idx)
 		heap_size += ca->mi.nbuckets >> 7;
