@@ -244,63 +244,24 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 	return ret;
 }
 
-int bch2_extent_update(struct btree_trans *trans,
-		       subvol_inum inum,
-		       struct btree_iter *iter,
-		       struct bkey_i *k,
-		       struct disk_reservation *disk_res,
-		       u64 new_i_size,
-		       s64 *i_sectors_delta_total,
-		       bool check_enospc)
+static int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
+					     struct btree_iter *extent_iter,
+					     u64 new_i_size,
+					     s64 i_sectors_delta)
 {
-	struct btree_iter inode_iter = { NULL };
+	struct btree_iter iter;
 	struct bkey_s_c inode_k;
 	struct bkey_s_c_inode_v3 inode;
 	struct bkey_i_inode_v3 *new_inode;
-	struct bpos next_pos;
-	bool usage_increasing;
 	unsigned inode_update_flags = BTREE_UPDATE_NOJOURNAL;
-	s64 i_sectors_delta = 0, disk_sectors_delta = 0;
 	int ret;
 
-	/*
-	 * This traverses us the iterator without changing iter->path->pos to
-	 * search_key() (which is pos + 1 for extents): we want there to be a
-	 * path already traversed at iter->pos because
-	 * bch2_trans_extent_update() will use it to attempt extent merging
-	 */
-	ret = __bch2_btree_iter_traverse(iter);
-	if (ret)
-		return ret;
-
-	ret = bch2_extent_trim_atomic(trans, iter, k);
-	if (ret)
-		return ret;
-
-	new_i_size = min(k->k.p.offset << 9, new_i_size);
-	next_pos = k->k.p;
-
-	ret = bch2_sum_sector_overwrites(trans, iter, k,
-			&usage_increasing,
-			&i_sectors_delta,
-			&disk_sectors_delta);
-	if (ret)
-		return ret;
-
-	if (disk_res &&
-	    disk_sectors_delta > (s64) disk_res->sectors) {
-		ret = bch2_disk_reservation_add(trans->c, disk_res,
-					disk_sectors_delta - disk_res->sectors,
-					!check_enospc || !usage_increasing
-					? BCH_DISK_RESERVATION_NOFAIL : 0);
-		if (ret)
-			return ret;
-	}
-
-	bch2_trans_iter_init(trans, &inode_iter, BTREE_ID_inodes,
-			     SPOS(0, inum.inum, iter->snapshot),
+	bch2_trans_iter_init(trans, &iter, BTREE_ID_inodes,
+			     SPOS(0,
+				  extent_iter->pos.inode,
+				  extent_iter->snapshot),
 			     BTREE_ITER_INTENT|BTREE_ITER_CACHED);
-	inode_k = bch2_btree_iter_peek_slot(&inode_iter);
+	inode_k = bch2_btree_iter_peek_slot(&iter);
 	ret = bkey_err(inode_k);
 	if (unlikely(ret))
 		goto err;
@@ -336,29 +297,86 @@ int bch2_extent_update(struct btree_trans *trans,
 		inode_update_flags = 0;
 	}
 
-	new_inode->k.p.snapshot = iter->snapshot;
+	if (new_inode->k.p.snapshot != iter.snapshot) {
+		new_inode->k.p.snapshot = iter.snapshot;
+		inode_update_flags = 0;
+	}
+
+	ret = bch2_trans_update(trans, &iter, &new_inode->k_i,
+				BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE|
+				inode_update_flags);
+err:
+	bch2_trans_iter_exit(trans, &iter);
+	return ret;
+}
+
+int bch2_extent_update(struct btree_trans *trans,
+		       subvol_inum inum,
+		       struct btree_iter *iter,
+		       struct bkey_i *k,
+		       struct disk_reservation *disk_res,
+		       u64 new_i_size,
+		       s64 *i_sectors_delta_total,
+		       bool check_enospc)
+{
+	struct bpos next_pos;
+	bool usage_increasing;
+	s64 i_sectors_delta = 0, disk_sectors_delta = 0;
+	int ret;
+
+	/*
+	 * This traverses us the iterator without changing iter->path->pos to
+	 * search_key() (which is pos + 1 for extents): we want there to be a
+	 * path already traversed at iter->pos because
+	 * bch2_trans_extent_update() will use it to attempt extent merging
+	 */
+	ret = __bch2_btree_iter_traverse(iter);
+	if (ret)
+		return ret;
+
+	ret = bch2_extent_trim_atomic(trans, iter, k);
+	if (ret)
+		return ret;
+
+	next_pos = k->k.p;
+
+	ret = bch2_sum_sector_overwrites(trans, iter, k,
+			&usage_increasing,
+			&i_sectors_delta,
+			&disk_sectors_delta);
+	if (ret)
+		return ret;
+
+	if (disk_res &&
+	    disk_sectors_delta > (s64) disk_res->sectors) {
+		ret = bch2_disk_reservation_add(trans->c, disk_res,
+					disk_sectors_delta - disk_res->sectors,
+					!check_enospc || !usage_increasing
+					? BCH_DISK_RESERVATION_NOFAIL : 0);
+		if (ret)
+			return ret;
+	}
 
 	/*
 	 * Note:
-	 * We always have to do an inode updated - even when i_size/i_sectors
+	 * We always have to do an inode update - even when i_size/i_sectors
 	 * aren't changing - for fsync to work properly; fsync relies on
 	 * inode->bi_journal_seq which is updated by the trigger code:
 	 */
-	ret =   bch2_trans_update(trans, &inode_iter, &new_inode->k_i,
-				  inode_update_flags) ?:
+	ret =   bch2_extent_update_i_size_sectors(trans, iter,
+						  min(k->k.p.offset << 9, new_i_size),
+						  i_sectors_delta) ?:
 		bch2_trans_update(trans, iter, k, 0) ?:
 		bch2_trans_commit(trans, disk_res, NULL,
 				BTREE_INSERT_NOCHECK_RW|
 				BTREE_INSERT_NOFAIL);
 	if (unlikely(ret))
-		goto err;
+		return ret;
 
 	if (i_sectors_delta_total)
 		*i_sectors_delta_total += i_sectors_delta;
 	bch2_btree_iter_set_pos(iter, next_pos);
-err:
-	bch2_trans_iter_exit(trans, &inode_iter);
-	return ret;
+	return 0;
 }
 
 /* Overwrites whatever was present with zeroes: */
