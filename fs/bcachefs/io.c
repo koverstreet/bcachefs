@@ -540,6 +540,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 		n->have_ioref		= bch2_dev_get_ioref(ca,
 					type == BCH_DATA_btree ? READ : WRITE);
 		n->submit_time		= local_clock();
+		n->inode_offset		= bkey_start_offset(&k->k);
 		n->bio.bi_iter.bi_sector = ptr->offset;
 
 		if (likely(n->have_ioref)) {
@@ -649,8 +650,12 @@ static void __bch2_write_index(struct bch_write_op *op)
 		op->written += sectors_start - keylist_sectors(keys);
 
 		if (ret) {
-			bch_err_inum_ratelimited(c, op->pos.inode,
-				"write error while doing btree update: %s", bch2_err_str(ret));
+			struct bkey_i *k = bch2_keylist_front(&op->insert_keys);
+
+			bch_err_inum_offset_ratelimited(c,
+				k->k.p.inode, k->k.p.offset << 9,
+				"write error while doing btree update: %s",
+				bch2_err_str(ret));
 			goto err;
 		}
 	}
@@ -691,7 +696,7 @@ static void bch2_write_endio(struct bio *bio)
 
 	if (bch2_dev_inum_io_err_on(bio->bi_status, ca,
 				    op->pos.inode,
-				    op->pos.offset - bio_sectors(bio), /* XXX definitely wrong */
+				    wbio->inode_offset << 9,
 				    "data write error: %s",
 				    bch2_blk_status_to_str(bio->bi_status))) {
 		set_bit(wbio->dev, op->failed.d);
@@ -1302,8 +1307,10 @@ void bch2_write(struct closure *cl)
 	wbio_init(bio)->put_bio = false;
 
 	if (bio->bi_iter.bi_size & (c->opts.block_size - 1)) {
-		bch_err_inum_ratelimited(c, op->pos.inode,
-					 "misaligned write");
+		bch_err_inum_offset_ratelimited(c,
+			op->pos.inode,
+			op->pos.offset << 9,
+			"misaligned write");
 		op->error = -EIO;
 		goto err;
 	}
@@ -1889,20 +1896,25 @@ csum_err:
 		goto out;
 	}
 
-	bch2_dev_inum_io_error(ca, rbio->read_pos.inode, (u64) rbio->bvec_iter.bi_sector,
+	bch_err_inum_offset_ratelimited(ca,
+		rbio->read_pos.inode,
+		rbio->read_pos.offset << 9,
 		"data checksum error: expected %0llx:%0llx got %0llx:%0llx (type %s)",
 		rbio->pick.crc.csum.hi, rbio->pick.crc.csum.lo,
 		csum.hi, csum.lo, bch2_csum_types[crc.csum_type]);
+	bch2_io_error(ca);
 	bch2_rbio_error(rbio, READ_RETRY_AVOID, BLK_STS_IOERR);
 	goto out;
 decompression_err:
-	bch_err_inum_ratelimited(c, rbio->read_pos.inode,
-				 "decompression error");
+	bch_err_inum_offset_ratelimited(c, rbio->read_pos.inode,
+					rbio->read_pos.offset << 9,
+					"decompression error");
 	bch2_rbio_error(rbio, READ_ERR, BLK_STS_IOERR);
 	goto out;
 decrypt_err:
-	bch_err_inum_ratelimited(c, rbio->read_pos.inode,
-				 "decrypt error");
+	bch_err_inum_offset_ratelimited(c, rbio->read_pos.inode,
+					rbio->read_pos.offset << 9,
+					"decrypt error");
 	bch2_rbio_error(rbio, READ_ERR, BLK_STS_IOERR);
 	goto out;
 }
@@ -1977,7 +1989,9 @@ int __bch2_read_indirect_extent(struct btree_trans *trans,
 
 	if (k.k->type != KEY_TYPE_reflink_v &&
 	    k.k->type != KEY_TYPE_indirect_inline_data) {
-		bch_err_inum_ratelimited(trans->c, orig_k->k->k.p.inode,
+		bch_err_inum_offset_ratelimited(trans->c,
+			orig_k->k->k.p.inode,
+			orig_k->k->k.p.offset << 9,
 			"%llu len %u points to nonexistent indirect extent %llu",
 			orig_k->k->k.p.offset,
 			orig_k->k->k.size,
@@ -2063,8 +2077,9 @@ retry_pick:
 		goto hole;
 
 	if (pick_ret < 0) {
-		bch_err_inum_ratelimited(c, k.k->p.inode,
-					 "no device to read from");
+		bch_err_inum_offset_ratelimited(c,
+				read_pos.inode, read_pos.offset << 9,
+				"no device to read from");
 		goto err;
 	}
 
@@ -2243,8 +2258,10 @@ get_bio:
 
 	if (!rbio->pick.idx) {
 		if (!rbio->have_ioref) {
-			bch_err_inum_ratelimited(c, k.k->p.inode,
-						 "no device to read from");
+			bch_err_inum_offset_ratelimited(c,
+					read_pos.inode,
+					read_pos.offset << 9,
+					"no device to read from");
 			bch2_rbio_error(rbio, READ_RETRY_AVOID, BLK_STS_IOERR);
 			goto out;
 		}
@@ -2417,8 +2434,9 @@ err:
 	bch2_bkey_buf_exit(&sk, c);
 
 	if (ret) {
-		bch_err_inum_ratelimited(c, inum.inum,
-					 "read error %i from btree lookup", ret);
+		bch_err_inum_offset_ratelimited(c, inum.inum,
+						bvec_iter.bi_sector << 9,
+						"read error %i from btree lookup", ret);
 		rbio->bio.bi_status = BLK_STS_IOERR;
 		bch2_rbio_done(rbio);
 	}
