@@ -573,6 +573,9 @@ static int verify_bucket_evacuated(struct btree_trans *trans, struct bpos bucket
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
 	struct bkey_s_c k;
+	struct printbuf buf = PRINTBUF;
+	struct bch_backpointer bp;
+	u64 bp_offset = 0;
 	int ret;
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc,
@@ -586,24 +589,53 @@ again:
 
 		if (a.v->gen == gen &&
 		    a.v->dirty_sectors) {
-			struct printbuf buf = PRINTBUF;
-
 			if (a.v->data_type == BCH_DATA_btree) {
 				bch2_trans_unlock(trans);
 				if (bch2_btree_interior_updates_flush(c))
 					goto again;
+				goto failed_to_evacuate;
 			}
-
-			prt_str(&buf, "failed to evacuate bucket ");
-			bch2_bkey_val_to_text(&buf, c, k);
-
-			bch_err(c, "%s", buf.buf);
-			printbuf_exit(&buf);
 		}
 	}
 
 	bch2_trans_iter_exit(trans, &iter);
 	return ret;
+failed_to_evacuate:
+	bch2_trans_iter_exit(trans, &iter);
+
+	prt_printf(&buf, bch2_log_msg(c, "failed to evacuate bucket "));
+	bch2_bkey_val_to_text(&buf, c, k);
+
+	while (1) {
+		bch2_trans_begin(trans);
+
+		ret = bch2_get_next_backpointer(trans, bucket, gen,
+						&bp_offset, &bp,
+						BTREE_ITER_CACHED);
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+			continue;
+		if (ret)
+			break;
+		if (bp_offset == U64_MAX)
+			break;
+
+		k = bch2_backpointer_get_key(trans, &iter,
+					     bucket, bp_offset, bp);
+		ret = bkey_err(k);
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+			continue;
+		if (ret)
+			break;
+		if (!k.k)
+			continue;
+		prt_newline(&buf);
+		bch2_bkey_val_to_text(&buf, c, k);
+		bch2_trans_iter_exit(trans, &iter);
+	}
+
+	bch2_print_string_as_lines(KERN_ERR, buf.buf);
+	printbuf_exit(&buf);
+	return 0;
 }
 
 int __bch2_evacuate_bucket(struct moving_context *ctxt,
