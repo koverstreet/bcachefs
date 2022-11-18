@@ -1347,7 +1347,7 @@ static void __btree_split_node(struct btree_update *as,
 			       struct btree *n[2])
 {
 	struct bkey_packed *k;
-	struct bpos n1_pos;
+	struct bpos n1_pos = POS_MIN;
 	struct btree_node_iter iter;
 	struct bset *bsets[2];
 	struct bkey_format_state format[2];
