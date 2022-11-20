@@ -76,12 +76,12 @@ int bch2_backpointer_invalid(const struct bch_fs *c, struct bkey_s_c k,
 
 	if (bkey_val_bytes(bp.k) < sizeof(*bp.v)) {
 		prt_str(err, "incorrect value size");
-		return -EINVAL;
+		return -BCH_ERR_invalid_bkey;
 	}
 
 	if (bpos_cmp(bp.k->p, bucket_pos_to_bp(c, bucket, bp.v->bucket_offset))) {
 		prt_str(err, "backpointer at wrong pos");
-		return -EINVAL;
+		return -BCH_ERR_invalid_bkey;
 	}
 
 	return 0;
