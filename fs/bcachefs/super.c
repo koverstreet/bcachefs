@@ -743,9 +743,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 
 	bch2_opts_apply(&c->opts, opts);
 
-	/* key cache currently disabled for inodes, because of snapshots: */
-	c->opts.inodes_use_key_cache = 0;
-
 	c->btree_key_cache_btrees |= 1U << BTREE_ID_alloc;
 	if (c->opts.inodes_use_key_cache)
 		c->btree_key_cache_btrees |= 1U << BTREE_ID_inodes;
