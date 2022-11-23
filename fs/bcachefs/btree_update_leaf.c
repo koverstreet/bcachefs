@@ -615,7 +615,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 		 */
 		i->old_v = bch2_btree_path_peek_slot(i->path, &i->old_k).v;
 
-		if (unlikely(!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))) {
+		if (unlikely(trans->journal_replay_not_finished)) {
 			struct bkey_i *j_k =
 				bch2_journal_keys_peek_slot(c, i->btree_id, i->level,
 							    i->k->k.p);
@@ -850,7 +850,7 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 
 	ret = bch2_trans_commit_write_locked(trans, stopped_at, trace_ip);
 
-	if (!ret && unlikely(!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags)))
+	if (!ret && unlikely(trans->journal_replay_not_finished))
 		bch2_drop_overwrites_from_journal(trans);
 
 	trans_for_each_update(trans, i)
@@ -1487,7 +1487,7 @@ bch2_trans_update_by_path_trace(struct btree_trans *trans, struct btree_path *pa
 		i->old_v = bch2_btree_path_peek_slot(path, &i->old_k).v;
 		i->old_btree_u64s = !bkey_deleted(&i->old_k) ? i->old_k.u64s : 0;
 
-		if (unlikely(!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags))) {
+		if (unlikely(trans->journal_replay_not_finished)) {
 			struct bkey_i *j_k =
 				bch2_journal_keys_peek_slot(c, n.btree_id, n.level, k->k.p);
 

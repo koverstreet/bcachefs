@@ -888,7 +888,6 @@ static __always_inline int btree_path_down(struct btree_trans *trans,
 	struct btree *b;
 	unsigned level = path->level - 1;
 	enum six_lock_type lock_type = __btree_lock_want(path, level);
-	bool replay_done = test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags);
 	struct bkey_buf tmp;
 	int ret;
 
@@ -896,7 +895,7 @@ static __always_inline int btree_path_down(struct btree_trans *trans,
 
 	bch2_bkey_buf_init(&tmp);
 
-	if (unlikely(!replay_done)) {
+	if (unlikely(trans->journal_replay_not_finished)) {
 		ret = btree_node_iter_and_journal_peek(trans, path, flags, &tmp);
 		if (ret)
 			goto err;
@@ -916,7 +915,8 @@ static __always_inline int btree_path_down(struct btree_trans *trans,
 	if (unlikely(ret))
 		goto err;
 
-	if (likely(replay_done && tmp.k->k.type == KEY_TYPE_btree_ptr_v2) &&
+	if (likely(!trans->journal_replay_not_finished &&
+		   tmp.k->k.type == KEY_TYPE_btree_ptr_v2) &&
 	    unlikely(b != btree_node_mem_ptr(tmp.k)))
 		btree_node_mem_ptr_set(trans, path, level + 1, b);
 
