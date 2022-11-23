@@ -1420,8 +1420,14 @@ static void bch2_nocow_write(struct bch_write_op *op)
 	struct bkey_s_c k;
 	struct bkey_ptrs_c ptrs;
 	const struct bch_extent_ptr *ptr, *ptr2;
+	struct {
+		struct bpos	b;
+		unsigned	gen;
+		two_state_lock_t *l;
+	} buckets[BCH_REPLICAS_MAX];
+	unsigned nr_buckets = 0;
 	u32 snapshot;
-	int ret;
+	int ret, i;
 
 	if (op->flags & BCH_WRITE_MOVE)
 		return;
@@ -1439,6 +1445,8 @@ retry:
 			     BTREE_ITER_SLOTS);
 	while (1) {
 		struct bio *bio = &op->wbio.bio;
+
+		nr_buckets = 0;
 
 		k = bch2_btree_iter_peek_slot(&iter);
 		ret = bkey_err(k);
@@ -1458,27 +1466,44 @@ retry:
 
 		/* Get iorefs before dropping btree locks: */
 		ptrs = bch2_bkey_ptrs_c(k);
-		bkey_for_each_ptr(ptrs, ptr)
+		bkey_for_each_ptr(ptrs, ptr) {
+			buckets[nr_buckets].b = PTR_BUCKET_POS(c, ptr);
+			buckets[nr_buckets].gen = ptr->gen;
+			buckets[nr_buckets].l =
+				bucket_nocow_lock(&c->nocow_locks, buckets[nr_buckets].b);
+
+			prefetch(buckets[nr_buckets].l);
+			nr_buckets++;
+
 			if (unlikely(!bch2_dev_get_ioref(bch_dev_bkey_exists(c, ptr->dev), WRITE)))
 				goto err_get_ioref;
+
+			if (ptr->unwritten)
+				op->flags |= BCH_WRITE_CONVERT_UNWRITTEN;
+		}
 
 		/* Unlock before taking nocow locks, doing IO: */
 		bkey_reassemble(op->insert_keys.top, k);
 		bch2_trans_unlock(&trans);
 
 		bch2_cut_front(op->pos, op->insert_keys.top);
-		bch2_cut_back(POS(op->pos.inode, op->pos.offset + bio_sectors(bio)), op->insert_keys.top);
+		if (op->flags & BCH_WRITE_CONVERT_UNWRITTEN)
+			bch2_cut_back(POS(op->pos.inode, op->pos.offset + bio_sectors(bio)), op->insert_keys.top);
 
-		ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(op->insert_keys.top));
-		bkey_for_each_ptr(ptrs, ptr) {
-			bch2_bucket_nocow_lock(&c->nocow_locks,
-					       PTR_BUCKET_POS(c, ptr),
-					       BUCKET_NOCOW_LOCK_UPDATE);
-			if (unlikely(ptr_stale(bch_dev_bkey_exists(c, ptr->dev), ptr)))
+		for (i = 0; i < nr_buckets; i++) {
+			struct bch_dev *ca = bch_dev_bkey_exists(c, buckets[i].b.inode);
+			two_state_lock_t *l = buckets[i].l;
+			bool stale;
+
+			if (!bch2_two_state_trylock(l, BUCKET_NOCOW_LOCK_UPDATE))
+				__bch2_bucket_nocow_lock(&c->nocow_locks, l, BUCKET_NOCOW_LOCK_UPDATE);
+
+			rcu_read_lock();
+			stale = gen_after(*bucket_gen(ca, buckets[i].b.offset), buckets[i].gen);
+			rcu_read_unlock();
+
+			if (unlikely(stale))
 				goto err_bucket_stale;
-
-			if (ptr->unwritten)
-				op->flags |= BCH_WRITE_CONVERT_UNWRITTEN;
 		}
 
 		bio = &op->wbio.bio;
@@ -1552,13 +1577,10 @@ err_get_ioref:
 	/* Fall back to COW path: */
 	goto out;
 err_bucket_stale:
-	bkey_for_each_ptr(ptrs, ptr2) {
+	while (--i >= 0)
 		bch2_bucket_nocow_unlock(&c->nocow_locks,
-					 PTR_BUCKET_POS(c, ptr2),
+					 buckets[i].b,
 					 BUCKET_NOCOW_LOCK_UPDATE);
-		if (ptr2 == ptr)
-			break;
-	}
 
 	bkey_for_each_ptr(ptrs, ptr2)
 		percpu_ref_put(&bch_dev_bkey_exists(c, ptr2->dev)->io_ref);

@@ -41,7 +41,7 @@ static inline void bch2_bucket_nocow_unlock(struct bucket_nocow_lock_table *t,
 	bch2_two_state_unlock(l, flags & BUCKET_NOCOW_LOCK_UPDATE);
 }
 
-void __bch2_bucket_nocow_lock(struct bucket_nocow_lock_table *, struct bpos, int);
+void __bch2_bucket_nocow_lock(struct bucket_nocow_lock_table *, two_state_lock_t *, int);
 
 static inline void bch2_bucket_nocow_lock(struct bucket_nocow_lock_table *t,
 					  struct bpos bucket, int flags)
@@ -49,7 +49,7 @@ static inline void bch2_bucket_nocow_lock(struct bucket_nocow_lock_table *t,
 	two_state_lock_t *l = bucket_nocow_lock(t, bucket);
 
 	if (!bch2_two_state_trylock(l, flags & BUCKET_NOCOW_LOCK_UPDATE))
-		__bch2_bucket_nocow_lock(t, bucket, flags);
+		__bch2_bucket_nocow_lock(t, l, flags);
 }
 
 #endif /* _BCACHEFS_NOCOW_LOCKING_H */
