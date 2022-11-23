@@ -1484,7 +1484,7 @@ struct btree_path *bch2_path_get(struct btree_trans *trans,
 	bool intent = flags & BTREE_ITER_INTENT;
 	int i;
 
-	BUG_ON(trans->restarted);
+	EBUG_ON(trans->restarted);
 	btree_trans_verify_sorted(trans);
 	bch2_trans_verify_locks(trans);
 
