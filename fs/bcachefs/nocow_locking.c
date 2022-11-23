@@ -11,6 +11,6 @@ void __bch2_bucket_nocow_lock(struct bucket_nocow_lock_table *t,
 	two_state_lock_t *l = bucket_nocow_lock(t, bucket);
 	u64 start_time = local_clock();
 
-	bch2_two_state_lock(l, flags & BUCKET_NOCOW_LOCK_UPDATE);
+	__bch2_two_state_lock(l, flags & BUCKET_NOCOW_LOCK_UPDATE);
 	bch2_time_stats_update(&c->times[BCH_TIME_nocow_lock_contended], start_time);
 }
