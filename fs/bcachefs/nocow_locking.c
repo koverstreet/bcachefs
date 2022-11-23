@@ -5,10 +5,9 @@
 #include "util.h"
 
 void __bch2_bucket_nocow_lock(struct bucket_nocow_lock_table *t,
-			      struct bpos bucket, int flags)
+			      two_state_lock_t *l, int flags)
 {
 	struct bch_fs *c = container_of(t, struct bch_fs, nocow_locks);
-	two_state_lock_t *l = bucket_nocow_lock(t, bucket);
 	u64 start_time = local_clock();
 
 	__bch2_two_state_lock(l, flags & BUCKET_NOCOW_LOCK_UPDATE);
