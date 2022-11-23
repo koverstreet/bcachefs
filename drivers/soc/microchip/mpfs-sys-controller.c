@@ -71,6 +71,12 @@ int mpfs_blocking_transaction(struct mpfs_sys_controller *sys_controller, struct
 out:
 	mutex_unlock(&transaction_lock);
 
+	if (ret)
+		return ret;
+
+	if (msg->response->resp_status)
+		ret = -EIO;
+
 	return ret;
 }
 EXPORT_SYMBOL(mpfs_blocking_transaction);
