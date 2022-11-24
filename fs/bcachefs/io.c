@@ -236,7 +236,7 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 		     (!new_compressed && bch2_bkey_sectors_compressed(old))))
 			*usage_increasing = true;
 
-		if (bkey_cmp(old.k->p, new->k.p) >= 0)
+		if (bkey_ge(old.k->p, new->k.p))
 			break;
 	}
 
@@ -536,7 +536,7 @@ int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 		bch2_btree_iter_set_snapshot(iter, snapshot);
 
 		k = bch2_btree_iter_peek(iter);
-		if (bkey_cmp(iter->pos, end_pos) >= 0) {
+		if (bkey_ge(iter->pos, end_pos)) {
 			bch2_btree_iter_set_pos(iter, end_pos);
 			break;
 		}
@@ -630,7 +630,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 		if (ret)
 			break;
 
-		if (bkey_cmp(iter.pos, k->k.p) >= 0)
+		if (bkey_ge(iter.pos, k->k.p))
 			bch2_keylist_pop_front(&op->insert_keys);
 		else
 			bch2_cut_front(iter.pos, k);
@@ -1373,7 +1373,7 @@ static void bch2_nocow_write_convert_unwritten(struct bch_write_op *op)
 				     bkey_start_pos(&orig->k),
 				     BTREE_ITER_INTENT, k,
 				     NULL, NULL, BTREE_INSERT_NOFAIL, ({
-			if (bkey_cmp(bkey_start_pos(k.k), orig->k.p) >= 0)
+			if (bkey_ge(bkey_start_pos(k.k), orig->k.p))
 				break;
 
 			bch2_nocow_write_convert_one_unwritten(&trans, &iter, orig, k, op->new_i_size);
@@ -1749,7 +1749,7 @@ void bch2_write(struct closure *cl)
 
 	BUG_ON(!op->nr_replicas);
 	BUG_ON(!op->write_point.v);
-	BUG_ON(!bkey_cmp(op->pos, POS_MAX));
+	BUG_ON(bkey_eq(op->pos, POS_MAX));
 
 	op->start_time = local_clock();
 	bch2_keylist_init(&op->insert_keys, op->inline_keys);
