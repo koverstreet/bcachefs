@@ -434,8 +434,6 @@ static int move_get_io_opts(struct btree_trans *trans,
 	if (*cur_inum == k.k->p.inode)
 		return 0;
 
-	*io_opts = bch2_opts_to_inode_opts(trans->c->opts);
-
 	ret = lookup_inode(trans,
 			   SPOS(0, k.k->p.inode, k.k->p.snapshot),
 			   &inode);
@@ -443,8 +441,9 @@ static int move_get_io_opts(struct btree_trans *trans,
 		return ret;
 
 	if (!ret)
-		bch2_io_opts_apply(io_opts, bch2_inode_opts_get(&inode));
-
+		bch2_inode_opts_get(io_opts, trans->c, &inode);
+	else
+		*io_opts = bch2_opts_to_inode_opts(trans->c->opts);
 	*cur_inum = k.k->p.inode;
 	return 0;
 }
