@@ -250,9 +250,8 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 						    s64 i_sectors_delta)
 {
 	struct btree_iter iter;
-	struct bkey_s_c inode_k;
-	struct bkey_s_c_inode_v3 inode;
-	struct bkey_i_inode_v3 *new_inode;
+	struct bkey_i *k;
+	struct bkey_i_inode_v3 *inode;
 	unsigned inode_update_flags = BTREE_UPDATE_NOJOURNAL;
 	int ret;
 
@@ -261,48 +260,37 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 				  extent_iter->pos.inode,
 				  extent_iter->snapshot),
 			     BTREE_ITER_INTENT|BTREE_ITER_CACHED);
-	inode_k = bch2_btree_iter_peek_slot(&iter);
-	ret = bkey_err(inode_k);
+	k = bch2_bkey_get_mut(trans, &iter);
+	ret = PTR_ERR_OR_ZERO(k);
 	if (unlikely(ret))
 		goto err;
 
-	ret = bkey_is_inode(inode_k.k) ? 0 : -ENOENT;
-	if (unlikely(ret))
-		goto err;
-
-	if (unlikely(inode_k.k->type != KEY_TYPE_inode_v3)) {
-		inode_k = bch2_inode_to_v3(trans, inode_k);
-		ret = bkey_err(inode_k);
+	if (unlikely(k->k.type != KEY_TYPE_inode_v3)) {
+		k = bch2_inode_to_v3(trans, k);
+		ret = PTR_ERR_OR_ZERO(k);
 		if (unlikely(ret))
 			goto err;
 	}
 
-	inode = bkey_s_c_to_inode_v3(inode_k);
+	inode = bkey_i_to_inode_v3(k);
 
-	new_inode = bch2_trans_kmalloc(trans, bkey_bytes(inode_k.k));
-	ret = PTR_ERR_OR_ZERO(new_inode);
-	if (unlikely(ret))
-		goto err;
-
-	bkey_reassemble(&new_inode->k_i, inode.s_c);
-
-	if (!(le64_to_cpu(inode.v->bi_flags) & BCH_INODE_I_SIZE_DIRTY) &&
-	    new_i_size > le64_to_cpu(inode.v->bi_size)) {
-		new_inode->v.bi_size = cpu_to_le64(new_i_size);
+	if (!(le64_to_cpu(inode->v.bi_flags) & BCH_INODE_I_SIZE_DIRTY) &&
+	    new_i_size > le64_to_cpu(inode->v.bi_size)) {
+		inode->v.bi_size = cpu_to_le64(new_i_size);
 		inode_update_flags = 0;
 	}
 
 	if (i_sectors_delta) {
-		le64_add_cpu(&new_inode->v.bi_sectors, i_sectors_delta);
+		le64_add_cpu(&inode->v.bi_sectors, i_sectors_delta);
 		inode_update_flags = 0;
 	}
 
-	if (new_inode->k.p.snapshot != iter.snapshot) {
-		new_inode->k.p.snapshot = iter.snapshot;
+	if (inode->k.p.snapshot != iter.snapshot) {
+		inode->k.p.snapshot = iter.snapshot;
 		inode_update_flags = 0;
 	}
 
-	ret = bch2_trans_update(trans, &iter, &new_inode->k_i,
+	ret = bch2_trans_update(trans, &iter, &inode->k_i,
 				BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE|
 				inode_update_flags);
 err:
@@ -1325,12 +1313,10 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 		return 0;
 	}
 
-	new = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
+	new = bch2_bkey_make_mut(trans, k);
 	ret = PTR_ERR_OR_ZERO(new);
 	if (ret)
 		return ret;
-
-	bkey_reassemble(new, k);
 
 	bch2_cut_front(bkey_start_pos(&orig->k), new);
 	bch2_cut_back(orig->k.p, new);
