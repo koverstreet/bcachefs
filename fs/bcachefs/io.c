@@ -1620,27 +1620,33 @@ again:
 					      BCH_WRITE_ONLY_SPECIFIED_DEVS))
 				? NULL : &op->cl, &wp));
 		if (unlikely(ret)) {
-			if (unlikely(ret != -EAGAIN)) {
-				op->error = ret;
-				op->flags |= BCH_WRITE_DONE;
-			}
+			if (ret == -EAGAIN)
+				break;
 
-			break;
+			goto err;
 		}
 
-		bch2_open_bucket_get(c, wp, &op->open_buckets);
 		ret = bch2_write_extent(op, wp, &bio);
 
+		if (ret >= 0)
+			bch2_open_bucket_get(c, wp, &op->open_buckets);
 		bch2_alloc_sectors_done_inlined(c, wp);
+err:
+		if (ret <= 0) {
+			if (!(op->flags & BCH_WRITE_SYNC)) {
+				spin_lock(&wp->writes_lock);
+				op->wp = wp;
+				list_add_tail(&op->wp_list, &wp->writes);
+				spin_unlock(&wp->writes_lock);
+			}
 
-		if (ret < 0) {
-			op->error = ret;
 			op->flags |= BCH_WRITE_DONE;
-			break;
+
+			if (ret < 0) {
+				op->error = ret;
+				break;
+			}
 		}
-
-		if (!ret)
-			op->flags |= BCH_WRITE_DONE;
 
 		bio->bi_end_io	= bch2_write_endio;
 		bio->bi_private	= &op->cl;
@@ -1670,11 +1676,6 @@ again:
 			goto again;
 		bch2_write_done(&op->cl);
 	} else {
-		spin_lock(&wp->writes_lock);
-		op->wp = wp;
-		list_add_tail(&op->wp_list, &wp->writes);
-		spin_unlock(&wp->writes_lock);
-
 		continue_at(&op->cl, bch2_write_index, NULL);
 	}
 out_nofs_restore:
