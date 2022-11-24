@@ -657,7 +657,7 @@ int bch2_inode_create(struct btree_trans *trans,
 again:
 	while ((k = bch2_btree_iter_peek(iter)).k &&
 	       !(ret = bkey_err(k)) &&
-	       bkey_cmp(k.k->p, POS(0, max)) < 0) {
+	       bkey_lt(k.k->p, POS(0, max))) {
 		while (pos < iter->pos.offset) {
 			if (!bch2_btree_key_cache_find(c, BTREE_ID_inodes, POS(0, pos)))
 				goto found_slot;

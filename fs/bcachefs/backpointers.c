@@ -36,7 +36,7 @@ static inline struct bpos bucket_pos_to_bp(const struct bch_fs *c,
 		  (bucket_to_sector(ca, bucket.offset) <<
 		   MAX_EXTENT_COMPRESS_RATIO_SHIFT) + bucket_offset);
 
-	BUG_ON(bkey_cmp(bucket, bp_pos_to_bucket(c, ret)));
+	BUG_ON(!bkey_eq(bucket, bp_pos_to_bucket(c, ret)));
 
 	return ret;
 }
@@ -60,7 +60,7 @@ static bool extent_matches_bp(struct bch_fs *c,
 
 		bch2_extent_ptr_to_bp(c, btree_id, level, k, p,
 				      &bucket2, &bp2);
-		if (!bpos_cmp(bucket, bucket2) &&
+		if (bpos_eq(bucket, bucket2) &&
 		    !memcmp(&bp, &bp2, sizeof(bp)))
 			return true;
 	}
@@ -79,7 +79,7 @@ int bch2_backpointer_invalid(const struct bch_fs *c, struct bkey_s_c k,
 		return -BCH_ERR_invalid_bkey;
 	}
 
-	if (bpos_cmp(bp.k->p, bucket_pos_to_bp(c, bucket, bp.v->bucket_offset))) {
+	if (!bpos_eq(bp.k->p, bucket_pos_to_bp(c, bucket, bp.v->bucket_offset))) {
 		prt_str(err, "backpointer at wrong pos");
 		return -BCH_ERR_invalid_bkey;
 	}
@@ -434,7 +434,7 @@ int bch2_get_next_backpointer(struct btree_trans *trans,
 
 	for_each_btree_key_norestart(trans, bp_iter, BTREE_ID_backpointers,
 				     bp_pos, 0, k, ret) {
-		if (bpos_cmp(k.k->p, bp_end_pos) >= 0)
+		if (bpos_ge(k.k->p, bp_end_pos))
 			break;
 
 		if (k.k->type != KEY_TYPE_backpointer)
@@ -646,8 +646,8 @@ static int check_bp_exists(struct btree_trans *trans,
 	struct bkey_s_c alloc_k, bp_k;
 	int ret;
 
-	if (bpos_cmp(bucket_pos, bucket_start) < 0 ||
-	    bpos_cmp(bucket_pos, bucket_end) > 0)
+	if (bpos_lt(bucket_pos, bucket_start) ||
+	    bpos_gt(bucket_pos, bucket_end))
 		return 0;
 
 	bch2_trans_iter_init(trans, &alloc_iter, BTREE_ID_alloc, bucket_pos, 0);
@@ -934,8 +934,8 @@ int bch2_get_alloc_in_memory_pos(struct btree_trans *trans,
 			break;
 		}
 
-		if (bpos_cmp(alloc_iter.pos, SPOS_MAX) &&
-		    bpos_cmp(bucket_pos_to_bp(trans->c, alloc_iter.pos, 0), bp_iter.pos) < 0) {
+		if (bpos_lt(alloc_iter.pos, SPOS_MAX) &&
+		    bpos_lt(bucket_pos_to_bp(trans->c, alloc_iter.pos, 0), bp_iter.pos)) {
 			if (!bch2_btree_iter_advance(&alloc_iter))
 				alloc_end = true;
 		} else {
@@ -960,11 +960,11 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 		if (ret)
 			break;
 
-		if (!bpos_cmp(start, POS_MIN) && bpos_cmp(end, SPOS_MAX))
+		if (bpos_eq(start, POS_MIN) && !bpos_eq(end, SPOS_MAX))
 			bch_verbose(c, "%s(): alloc info does not fit in ram, running in multiple passes with %zu nodes per pass",
 				    __func__, btree_nodes_fit_in_ram(c));
 
-		if (bpos_cmp(start, POS_MIN) || bpos_cmp(end, SPOS_MAX)) {
+		if (!bpos_eq(start, POS_MIN) || !bpos_eq(end, SPOS_MAX)) {
 			struct printbuf buf = PRINTBUF;
 
 			prt_str(&buf, "check_extents_to_backpointers(): ");
@@ -977,7 +977,7 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 		}
 
 		ret = bch2_check_extents_to_backpointers_pass(&trans, start, end);
-		if (ret || !bpos_cmp(end, SPOS_MAX))
+		if (ret || bpos_eq(end, SPOS_MAX))
 			break;
 
 		start = bpos_successor(end);
