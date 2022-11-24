@@ -2615,7 +2615,7 @@ static inline void btree_path_list_add(struct btree_trans *trans,
 
 	path->sorted_idx = pos ? pos->sorted_idx + 1 : 0;
 
-	if (trans->in_traverse_all &&
+	if (unlikely(trans->in_traverse_all) &&
 	    trans->traverse_all_idx != U8_MAX &&
 	    trans->traverse_all_idx >= path->sorted_idx)
 		trans->traverse_all_idx++;

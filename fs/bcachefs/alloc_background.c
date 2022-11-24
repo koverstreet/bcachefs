@@ -540,15 +540,17 @@ bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree_iter *iter
 			     BTREE_ITER_INTENT);
 	k = bch2_btree_iter_peek_slot(iter);
 	ret = bkey_err(k);
-	if (ret) {
-		bch2_trans_iter_exit(trans, iter);
-		return ERR_PTR(ret);
-	}
+	if (unlikely(ret))
+		goto err;
 
 	a = bch2_alloc_to_v4_mut_inlined(trans, k);
-	if (IS_ERR(a))
-		bch2_trans_iter_exit(trans, iter);
+	ret = PTR_ERR_OR_ZERO(a);
+	if (unlikely(ret))
+		goto err;
 	return a;
+err:
+	bch2_trans_iter_exit(trans, iter);
+	return ERR_PTR(ret);
 }
 
 int bch2_alloc_read(struct bch_fs *c)
