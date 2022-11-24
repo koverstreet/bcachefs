@@ -244,10 +244,10 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 	return ret;
 }
 
-static int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
-					     struct btree_iter *extent_iter,
-					     u64 new_i_size,
-					     s64 i_sectors_delta)
+static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
+						    struct btree_iter *extent_iter,
+						    u64 new_i_size,
+						    s64 i_sectors_delta)
 {
 	struct btree_iter iter;
 	struct bkey_s_c inode_k;
@@ -889,7 +889,7 @@ static void init_append_extent(struct bch_write_op *op,
 	    crc.nonce)
 		bch2_extent_crc_append(&e->k_i, crc);
 
-	bch2_alloc_sectors_append_ptrs(op->c, wp, &e->k_i, crc.compressed_size,
+	bch2_alloc_sectors_append_ptrs_inlined(op->c, wp, &e->k_i, crc.compressed_size,
 				       op->flags & BCH_WRITE_CACHED);
 
 	bch2_keylist_push(&op->insert_keys);
@@ -1632,7 +1632,7 @@ again:
 
 		bch2_open_bucket_get(c, wp, &op->open_buckets);
 		ret = bch2_write_extent(op, wp, &bio);
-		bch2_alloc_sectors_done(c, wp);
+		bch2_alloc_sectors_done_inlined(c, wp);
 
 		if (ret < 0) {
 			op->error = ret;
