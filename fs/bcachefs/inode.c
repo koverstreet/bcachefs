@@ -364,22 +364,25 @@ int bch2_inode_write(struct btree_trans *trans,
 	return bch2_trans_update(trans, iter, &inode_p->inode.k_i, 0);
 }
 
-struct bkey_s_c bch2_inode_to_v3(struct btree_trans *trans, struct bkey_s_c k)
+struct bkey_i *bch2_inode_to_v3(struct btree_trans *trans, struct bkey_i *k)
 {
 	struct bch_inode_unpacked u;
 	struct bkey_inode_buf *inode_p;
 	int ret;
 
+	if (!bkey_is_inode(&k->k))
+		return ERR_PTR(-ENOENT);
+
 	inode_p = bch2_trans_kmalloc(trans, sizeof(*inode_p));
 	if (IS_ERR(inode_p))
-		return bkey_s_c_err(PTR_ERR(inode_p));
+		return ERR_CAST(inode_p);
 
-	ret = bch2_inode_unpack(k, &u);
+	ret = bch2_inode_unpack(bkey_i_to_s_c(k), &u);
 	if (ret)
-		return bkey_s_c_err(ret);
+		return ERR_PTR(ret);
 
 	bch2_inode_pack(inode_p, &u);
-	return bkey_i_to_s_c(&inode_p->inode.k_i);
+	return &inode_p->inode.k_i;
 }
 
 static int __bch2_inode_invalid(struct bkey_s_c k, struct printbuf *err)

@@ -512,9 +512,11 @@ static inline struct bkey_i_alloc_v4 *bch2_alloc_to_v4_mut_inlined(struct btree_
 		 * Not sketchy at doing it this way, nope...
 		 */
 		struct bkey_i_alloc_v4 *ret =
-			bch2_trans_kmalloc(trans, bkey_bytes(k.k) + sizeof(struct bch_backpointer));
-		if (!IS_ERR(ret))
+			bch2_trans_kmalloc_nomemzero(trans, bkey_bytes(k.k) + sizeof(struct bch_backpointer));
+		if (!IS_ERR(ret)) {
 			bkey_reassemble(&ret->k_i, k);
+			memset((void *) ret + bkey_bytes(k.k), 0, sizeof(struct bch_backpointer));
+		}
 		return ret;
 	}
 
@@ -610,7 +612,7 @@ static int bch2_bucket_do_index(struct btree_trans *trans,
 	    a->data_type != BCH_DATA_need_discard)
 		return 0;
 
-	k = bch2_trans_kmalloc(trans, sizeof(*k));
+	k = bch2_trans_kmalloc_nomemzero(trans, sizeof(*k));
 	if (IS_ERR(k))
 		return PTR_ERR(k);
 
