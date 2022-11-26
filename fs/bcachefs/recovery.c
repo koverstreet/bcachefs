@@ -1215,7 +1215,9 @@ use_clean:
 	err = "error reading allocation information";
 
 	down_read(&c->gc_lock);
-	ret = bch2_alloc_read(c);
+	ret = c->sb.version < bcachefs_metadata_version_bucket_gens
+		? bch2_alloc_read(c)
+		: bch2_bucket_gens_read(c);
 	up_read(&c->gc_lock);
 
 	if (ret)
@@ -1350,6 +1352,16 @@ use_clean:
 	ret = bch2_fs_freespace_init(c);
 	if (ret)
 		goto err;
+
+	if (c->sb.version < bcachefs_metadata_version_bucket_gens &&
+	    c->opts.version_upgrade) {
+		bch_info(c, "initializing bucket_gens");
+		err = "error initializing bucket gens";
+		ret = bch2_bucket_gens_init(c);
+		if (ret)
+			goto err;
+		bch_verbose(c, "bucket_gens init done");
+	}
 
 	if (c->sb.version < bcachefs_metadata_version_snapshot_2) {
 		/* set bi_subvol on root inode */
