@@ -89,7 +89,25 @@ static inline void set_alloc_v4_u64s(struct bkey_i_alloc_v4 *a)
 struct bkey_i_alloc_v4 *
 bch2_trans_start_alloc_update(struct btree_trans *, struct btree_iter *, struct bpos);
 
-void bch2_alloc_to_v4(struct bkey_s_c, struct bch_alloc_v4 *);
+void __bch2_alloc_to_v4(struct bkey_s_c, struct bch_alloc_v4 *);
+
+static inline const struct bch_alloc_v4 *bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *convert)
+{
+	const struct bch_alloc_v4 *ret;
+
+	if (unlikely(k.k->type != KEY_TYPE_alloc_v4))
+		goto slowpath;
+
+	ret = bkey_s_c_to_alloc_v4(k).v;
+	if (BCH_ALLOC_V4_BACKPOINTERS_START(ret) != BCH_ALLOC_V4_U64s)
+		goto slowpath;
+
+	return ret;
+slowpath:
+	__bch2_alloc_to_v4(k, convert);
+	return convert;
+}
+
 struct bkey_i_alloc_v4 *bch2_alloc_to_v4_mut(struct btree_trans *, struct bkey_s_c);
 
 int bch2_bucket_io_time_reset(struct btree_trans *, unsigned, size_t, int);
