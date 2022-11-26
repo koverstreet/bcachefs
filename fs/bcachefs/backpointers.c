@@ -900,6 +900,14 @@ static int bch2_check_extents_to_backpointers_pass(struct btree_trans *trans,
 	return ret;
 }
 
+static struct bpos bucket_pos_to_bp_safe(const struct bch_fs *c,
+					 struct bpos bucket)
+{
+	return bch2_dev_exists2(c, bucket.inode)
+		? bucket_pos_to_bp(c, bucket, 0)
+		: bucket;
+}
+
 int bch2_get_alloc_in_memory_pos(struct btree_trans *trans,
 				 struct bpos start, struct bpos *end)
 {
@@ -913,7 +921,7 @@ int bch2_get_alloc_in_memory_pos(struct btree_trans *trans,
 	bch2_trans_node_iter_init(trans, &alloc_iter, BTREE_ID_alloc,
 				  start, 0, 1, 0);
 	bch2_trans_node_iter_init(trans, &bp_iter, BTREE_ID_backpointers,
-				  bucket_pos_to_bp(trans->c, start, 0), 0, 1, 0);
+				  bucket_pos_to_bp_safe(trans->c, start), 0, 1, 0);
 	while (1) {
 		alloc_k = !alloc_end
 			? __bch2_btree_iter_peek_and_restart(trans, &alloc_iter, 0)
@@ -935,7 +943,7 @@ int bch2_get_alloc_in_memory_pos(struct btree_trans *trans,
 		}
 
 		if (bpos_lt(alloc_iter.pos, SPOS_MAX) &&
-		    bpos_lt(bucket_pos_to_bp(trans->c, alloc_iter.pos, 0), bp_iter.pos)) {
+		    bpos_lt(bucket_pos_to_bp_safe(trans->c, alloc_iter.pos), bp_iter.pos)) {
 			if (!bch2_btree_iter_advance(&alloc_iter))
 				alloc_end = true;
 		} else {
