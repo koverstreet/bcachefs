@@ -271,8 +271,9 @@ int bch2_opt_parse(struct bch_fs *c,
 	case BCH_OPT_BOOL:
 		ret = kstrtou64(val, 10, res);
 		if (ret < 0 || (*res != 0 && *res != 1)) {
-			prt_printf(err, "%s: must be bool",
-			       opt->attr.name);
+			if (err)
+				prt_printf(err, "%s: must be bool",
+					   opt->attr.name);
 			return ret;
 		}
 		break;
