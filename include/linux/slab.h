@@ -774,7 +774,7 @@ static inline __alloc_size(1, 2) void *_kmalloc_array_node(size_t n, size_t size
  * @flags: the type of memory to allocate (see kmalloc).
  */
 #define kzalloc(_size, _flags)			kmalloc(_size, (_flags)|__GFP_ZERO)
-#define kzalloc_node(_size, _flags, _node)	kmalloc_node(_size, _flags|__GFP_ZERO, _node)
+#define kzalloc_node(_size, _flags, _node)	kmalloc_node(_size, (_flags)|__GFP_ZERO, _node)
 
 extern void *_kvmalloc_node(size_t size, gfp_t flags, int node) __alloc_size(1);
 #define kvmalloc_node(_size, _flags, _node)              \
