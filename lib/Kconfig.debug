@@ -1016,7 +1016,6 @@ config SLAB_ALLOC_TAGGING
 config CODE_TAG_TESTING
 	bool "Enable code tag testing"
 	default y
-	select MEMCG
 	select PAGE_ALLOC_TAGGING
 	select SLAB_ALLOC_TAGGING
 	select STAGING
