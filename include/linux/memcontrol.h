@@ -198,19 +198,6 @@ struct obj_cgroup {
 };
 
 /*
- * Extended information for slab objects stored as an array in page->memcg_data
- * if MEMCG_DATA_OBJEXTS is set.
- */
-struct slabobj_ext {
-#ifdef CONFIG_MEMCG_KMEM
-	struct obj_cgroup *objcg;
-#endif
-#ifdef CONFIG_SLAB_ALLOC_TAGGING
-	union codetag_ref ref;
-#endif
-} __aligned(8);
-
-/*
  * The memory controller data structure. The memory controller controls both
  * page cache and RSS per cgroup. We would eventually like to provide
  * statistics based on the statistics developed by Rik Van Riel for clock-pro,
@@ -351,7 +338,7 @@ struct mem_cgroup {
 extern struct mem_cgroup *root_mem_cgroup;
 
 enum page_memcg_data_flags {
-	/* page->memcg_data is a pointer to an objcgs vector */
+	/* page->memcg_data is a pointer to an slabobj_ext vector */
 	MEMCG_DATA_OBJEXTS = (1UL << 0),
 	/* page has been accounted as a non-slab kernel page */
 	MEMCG_DATA_KMEM = (1UL << 1),
@@ -1579,6 +1566,20 @@ unsigned long mem_cgroup_soft_limit_reclaim(pg_data_t *pgdat, int order,
 	return 0;
 }
 #endif /* CONFIG_MEMCG */
+
+/*
+ * Extended information for slab objects stored as an array in slab->obj_exts.
+ * When CONFIG_MEMCG is enabled page->memcg_data coinsides with slab->obj_exts
+ * if MEMCG_DATA_OBJEXTS is set.
+ */
+struct slabobj_ext {
+#ifdef CONFIG_MEMCG_KMEM
+	struct obj_cgroup *objcg;
+#endif
+#ifdef CONFIG_SLAB_ALLOC_TAGGING
+	union codetag_ref ref;
+#endif
+} __aligned(8);
 
 static inline void __inc_lruvec_kmem_state(void *p, enum node_stat_item idx)
 {
