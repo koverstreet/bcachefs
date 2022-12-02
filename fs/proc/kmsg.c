@@ -15,7 +15,6 @@
 #include <linux/fs.h>
 #include <linux/syslog.h>
 
-#include <linux/uaccess.h>
 #include <asm/io.h>
 
 static int kmsg_open(struct inode * inode, struct file * file)
