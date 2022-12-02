@@ -9,6 +9,8 @@
 #include <linux/codetag.h>
 #include <linux/container_of.h>
 #include <linux/lazy-percpu-counter.h>
+#include <linux/sched.h>
+#include <linux/static_key.h>
 
 /*
  * An instance of this structure is created in a special ELF section at every
@@ -19,6 +21,8 @@ struct alloc_tag {
 	struct codetag_with_ctx		ctc;
 	struct lazy_percpu_counter	bytes_allocated;
 } __aligned(8);
+
+#ifdef CONFIG_ALLOC_TAGGING
 
 static inline struct alloc_tag *ctc_to_alloc_tag(struct codetag_with_ctx *ctc)
 {
@@ -34,13 +38,30 @@ struct codetag_ctx *alloc_tag_create_ctx(struct alloc_tag *tag, size_t size);
 void alloc_tag_free_ctx(struct codetag_ctx *ctx, struct alloc_tag **ptag);
 bool alloc_tag_enable_ctx(struct alloc_tag *tag, bool enable);
 
-#define DEFINE_ALLOC_TAG(_alloc_tag)					\
+#define DEFINE_ALLOC_TAG(_alloc_tag, _old)				\
 	static struct alloc_tag _alloc_tag __used __aligned(8)		\
-	__section("alloc_tags") = { .ctc.ct = CODE_TAG_INIT }
+	__section("alloc_tags") = { .ctc.ct = CODE_TAG_INIT };		\
+	struct alloc_tag * __maybe_unused _old = alloc_tag_save(&_alloc_tag)
 
-static inline void __alloc_tag_sub(union codetag_ref *ref, size_t bytes)
+extern struct static_key_true alloc_tagging_key;
+
+static inline bool alloc_tagging_enabled(void)
+{
+	return static_branch_likely(&alloc_tagging_key);
+}
+
+static inline void alloc_tag_sub(union codetag_ref *ref, size_t bytes)
 {
 	struct alloc_tag *tag;
+
+	if (!alloc_tagging_enabled())
+		return;
+
+#ifdef CONFIG_ALLOC_TAGGING_DEBUG
+	WARN_ONCE(ref && !ref->ct, "alloc_tag was not set\n");
+#endif
+	if (!ref || !ref->ct)
+		return;
 
 	if (is_codetag_ctx_ref(ref))
 		alloc_tag_free_ctx(ref->ctx, &tag);
@@ -51,14 +72,21 @@ static inline void __alloc_tag_sub(union codetag_ref *ref, size_t bytes)
 	ref->ct = NULL;
 }
 
-#define alloc_tag_sub(_ref, _bytes)					\
-do {									\
-	if ((_ref) && (_ref)->ct)					\
-		__alloc_tag_sub(_ref, _bytes);				\
-} while (0)
-
-static inline void __alloc_tag_add(struct alloc_tag *tag, union codetag_ref *ref, size_t bytes)
+static inline void alloc_tag_add(union codetag_ref *ref, struct alloc_tag *tag, size_t bytes)
 {
+	if (!alloc_tagging_enabled())
+		return;
+
+#ifdef CONFIG_ALLOC_TAGGING_DEBUG
+	WARN_ONCE(ref && ref->ct,
+		  "alloc_tag was not cleared (got tag for %s:%u)\n",\
+		  ref->ct->filename, ref->ct->lineno);
+
+	WARN_ONCE(!tag, "current->alloc_tag not set");
+#endif
+	if (!ref || !tag)
+		return;
+
 	if (codetag_ctx_enabled(&tag->ctc))
 		ref->ctx = alloc_tag_create_ctx(tag, bytes);
 	else
@@ -67,11 +95,14 @@ static inline void __alloc_tag_add(struct alloc_tag *tag, union codetag_ref *ref
 	lazy_percpu_counter_add(&tag->bytes_allocated, bytes);
 }
 
-#define alloc_tag_add(_ref, _bytes)					\
-do {									\
-	DEFINE_ALLOC_TAG(_alloc_tag);					\
-	if (_ref && !WARN_ONCE(_ref->ct, "alloc_tag was not cleared"))	\
-		__alloc_tag_add(&_alloc_tag, _ref, _bytes);		\
-} while (0)
+#else
+
+#define DEFINE_ALLOC_TAG(_alloc_tag, _old)
+static inline void alloc_tag_sub(union codetag_ref *ref, size_t bytes) {}
+static inline void alloc_tag_add(union codetag_ref *ref, struct alloc_tag *tag,
+				 size_t bytes) {}
+#define alloc_tag_restore(_tag, _old)
+
+#endif
 
 #endif /* _LINUX_ALLOC_TAG_H */

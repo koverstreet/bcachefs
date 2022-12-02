@@ -251,39 +251,6 @@ int alloc_slab_obj_exts(struct slab *slab, struct kmem_cache *s,
 }
 #endif /* CONFIG_SLAB_OBJ_EXT */
 
-#ifdef CONFIG_SLAB_ALLOC_TAGGING
-
-union codetag_ref *get_slab_tag_ref(const void *objp)
-{
-	struct slabobj_ext *obj_exts;
-	union codetag_ref *res = NULL;
-	struct slab *slab;
-	unsigned int off;
-
-	slab = virt_to_slab(objp);
-	/*
-	 * We could be given a kmalloc_large() object, skip those. They use
-	 * alloc_pages and can be tracked by page allocation tracking.
-	 */
-	if (!slab)
-		goto out;
-
-	obj_exts = slab_obj_exts(slab);
-	if (!obj_exts)
-		goto out;
-
-	if (!slab->slab_cache)
-		goto out;
-
-	off = obj_to_index(slab->slab_cache, slab, objp);
-	res = &obj_exts[off].ref;
-out:
-	return res;
-}
-EXPORT_SYMBOL(get_slab_tag_ref);
-
-#endif /* CONFIG_SLAB_ALLOC_TAGGING */
-
 static struct kmem_cache *create_cache(const char *name,
 		unsigned int object_size, unsigned int align,
 		slab_flags_t flags, unsigned int useroffset,
@@ -1006,7 +973,6 @@ void free_large_kmalloc(struct folio *folio, void *object)
 		pr_warn_once("object pointer: 0x%p\n", object);
 
 	kmemleak_free(object);
-	slab_tag_dec(object);
 	kasan_kfree_large(object);
 	kmsan_kfree_large(object);
 

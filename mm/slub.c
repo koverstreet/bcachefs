@@ -1691,7 +1691,6 @@ static __always_inline bool slab_free_hook(struct kmem_cache *s,
 						void *x, bool init)
 {
 	kmemleak_free_recursive(x, s->flags);
-	slab_tag_dec(x);
 	kmsan_slab_free(s, x);
 
 	debug_check_no_locks_freed(x, s->object_size);
@@ -1792,7 +1791,7 @@ static inline struct slab *alloc_slab_page(gfp_t flags, int node,
 	unsigned int order = oo_order(oo);
 
 	if (node == NUMA_NO_NODE)
-		folio = (struct folio *)alloc_pages(flags, order);
+		folio = (struct folio *)_alloc_pages(flags, order);
 	else
 		folio = (struct folio *)__alloc_pages_node(node, flags, order);
 
@@ -3655,6 +3654,7 @@ static __always_inline void slab_free(struct kmem_cache *s, struct slab *slab,
 				      unsigned long addr)
 {
 	memcg_slab_free_hook(s, slab, p, cnt);
+	alloc_tagging_slab_free_hook(s, slab, p, cnt);
 	/*
 	 * With KASAN enabled slab_free_freelist_hook modifies the freelist
 	 * to remove objects, whose reuse must be delayed.

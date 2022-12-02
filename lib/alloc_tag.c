@@ -13,6 +13,21 @@
 
 #define STACK_BUF_SIZE 1024
 
+DEFINE_STATIC_KEY_TRUE(alloc_tagging_key);
+
+/*
+ * Won't need to be exported once page allocation accounting is moved to the
+ * correct place:
+ */
+EXPORT_SYMBOL(alloc_tagging_key);
+
+static int __init mem_profiling_disable(char *s)
+{
+	static_branch_disable(&alloc_tagging_key);
+	return 1;
+}
+__setup("nomem_profiling", mem_profiling_disable);
+
 struct alloc_call_ctx {
 	struct codetag_ctx ctx;
 	size_t size;

@@ -15,7 +15,7 @@ struct page_ext *lookup_page_ext(const struct page *page);
 
 static inline union codetag_ref *get_page_tag_ref(struct page *page)
 {
-	struct page_ext *page_ext = lookup_page_ext(page);
+	struct page_ext *page_ext = page ? lookup_page_ext(page) : NULL;
 
 	return page_ext ? (void *)page_ext + page_alloc_tagging_ops.offset
 			: NULL;
@@ -32,20 +32,26 @@ static inline void pgalloc_tag_dec(struct page *page, unsigned int order)
  */
 #define pgtag_alloc_pages(gfp, order)					\
 ({									\
-	struct page *_page = _alloc_pages((gfp), (order));		\
+	struct page *_page;						\
+	DEFINE_ALLOC_TAG(_alloc_tag, _old);				\
 									\
-	if (_page)							\
-		alloc_tag_add(get_page_tag_ref(_page), PAGE_SIZE << (order));\
+	_page = _alloc_pages((gfp), (order));				\
+	alloc_tag_add(get_page_tag_ref(_page), &_alloc_tag,		\
+		      PAGE_SIZE << (order));				\
+	alloc_tag_restore(&_alloc_tag, _old);				\
 	_page;								\
 })
 
 #define pgtag_get_free_pages(gfp_mask, order)				\
 ({									\
 	struct page *_page;						\
-	unsigned long _res = _get_free_pages((gfp_mask), (order), &_page);\
+	unsigned long _res;						\
+	DEFINE_ALLOC_TAG(_alloc_tag, _old);				\
 									\
-	if (_res)							\
-		alloc_tag_add(get_page_tag_ref(_page), PAGE_SIZE << (order));\
+	_res = _get_free_pages((gfp_mask), (order), &_page);		\
+	alloc_tag_add(get_page_tag_ref(_page), &_alloc_tag,		\
+		      PAGE_SIZE << (order));				\
+	alloc_tag_restore(&_alloc_tag, _old);				\
 	_res;								\
 })
 

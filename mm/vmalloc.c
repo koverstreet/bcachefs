@@ -2491,7 +2491,7 @@ static struct vm_struct *__get_vm_area_node(unsigned long size,
 		align = 1ul << clamp_t(int, get_count_order_long(size),
 				       PAGE_SHIFT, IOREMAP_MAX_ORDER);
 
-	area = kzalloc_node(sizeof(*area), gfp_mask & GFP_RECLAIM_MASK, node);
+	area = _kmalloc_node(sizeof(*area), (gfp_mask & GFP_RECLAIM_MASK)|__GFP_ZERO, node);
 	if (unlikely(!area))
 		return NULL;
 

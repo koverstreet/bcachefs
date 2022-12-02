@@ -991,6 +991,13 @@ config ALLOC_TAGGING
 	select LAZY_PERCPU_COUNTER
 	select STACKDEPOT
 
+config ALLOC_TAGGING_DEBUG
+	bool "Alloc tagging debugging"
+	depends on ALLOC_TAGGING
+	help
+	  Adds warnings with helpful error messages for memory allocation
+	  profiling accounting.
+
 config PAGE_ALLOC_TAGGING
 	bool "Enable page allocation tagging"
 	default n

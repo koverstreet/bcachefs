@@ -544,7 +544,6 @@ void kfree(const void *block)
 	if (unlikely(ZERO_OR_NULL_PTR(block)))
 		return;
 	kmemleak_free(block);
-	slab_tag_dec(block);
 
 	sp = virt_to_folio(block);
 	if (folio_test_slab(sp)) {
@@ -683,7 +682,6 @@ static void kmem_rcu_free(struct rcu_head *head)
 void kmem_cache_free(struct kmem_cache *c, void *b)
 {
 	kmemleak_free_recursive(b, c->flags);
-	slab_tag_dec(b);
 	trace_kmem_cache_free(_RET_IP_, b, c);
 	if (unlikely(c->flags & SLAB_TYPESAFE_BY_RCU)) {
 		struct slob_rcu *slob_rcu;

@@ -476,28 +476,31 @@ static inline void free_slab_obj_exts(struct slab *slab)
 	slab->obj_exts = 0;
 }
 
-static inline void prepare_slab_obj_exts_hook(struct kmem_cache *s, gfp_t flags, void *p)
+static inline struct slabobj_ext *prepare_slab_obj_exts_hook(struct kmem_cache *s, gfp_t flags, void *p)
 {
 	struct slab *slab;
 
 	if (!p)
-		return;
+		return NULL;
 
 	/* If kmem is the only extension then the vector will be created conditionally */
 	if (is_kmem_only_obj_ext())
-		return;
+		return NULL;
 
 	if (s->flags & SLAB_NO_OBJ_EXT)
-		return;
+		return NULL;
 
 	if (flags & __GFP_NO_OBJ_EXT)
-		return;
+		return NULL;
 
 	slab = virt_to_slab(p);
-	if (!slab_obj_exts(slab))
-		WARN(alloc_slab_obj_exts(slab, s, flags, false),
-			"%s, %s: Failed to create slab extension vector!\n",
-			__func__, s->name);
+	if (!slab_obj_exts(slab) &&
+	    WARN(alloc_slab_obj_exts(slab, s, flags, false),
+		 "%s, %s: Failed to create slab extension vector!\n",
+		 __func__, s->name))
+		return NULL;
+
+	return slab_obj_exts(slab) + obj_to_index(s, slab, p);
 }
 
 #else /* CONFIG_SLAB_OBJ_EXT */
@@ -518,11 +521,38 @@ static inline void free_slab_obj_exts(struct slab *slab)
 {
 }
 
-static inline void prepare_slab_obj_exts_hook(struct kmem_cache *s, gfp_t flags, void *p)
+static inline struct slabobj_ext *prepare_slab_obj_exts_hook(struct kmem_cache *s, gfp_t flags, void *p)
 {
+	return NULL;
 }
 
 #endif /* CONFIG_SLAB_OBJ_EXT */
+
+#ifdef CONFIG_SLAB_ALLOC_TAGGING
+
+static inline void alloc_tagging_slab_free_hook(struct kmem_cache *s, struct slab *slab,
+					void **p, int objects)
+{
+	struct slabobj_ext *obj_exts;
+	int i;
+
+	obj_exts = slab_obj_exts(slab);
+	if (!obj_exts)
+		return;
+
+	for (i = 0; i < objects; i++) {
+		unsigned int off = obj_to_index(s, slab, p[i]);
+
+		alloc_tag_sub(&obj_exts[off].ref, s->size);
+	}
+}
+
+#else
+
+static inline void alloc_tagging_slab_free_hook(struct kmem_cache *s, struct slab *slab,
+					void **p, int objects) {}
+
+#endif /* CONFIG_SLAB_ALLOC_TAGGING */
 
 #ifdef CONFIG_MEMCG_KMEM
 void mod_objcg_state(struct obj_cgroup *objcg, struct pglist_data *pgdat,
@@ -775,6 +805,7 @@ static inline void slab_post_alloc_hook(struct kmem_cache *s,
 					struct obj_cgroup *objcg, gfp_t flags,
 					size_t size, void **p, bool init)
 {
+	struct slabobj_ext *obj_exts;
 	size_t i;
 
 	flags &= gfp_allowed_mask;
@@ -793,7 +824,12 @@ static inline void slab_post_alloc_hook(struct kmem_cache *s,
 		kmemleak_alloc_recursive(p[i], s->object_size, 1,
 					 s->flags, flags);
 		kmsan_slab_alloc(s, p[i], flags);
-		prepare_slab_obj_exts_hook(s, flags, p[i]);
+		obj_exts = prepare_slab_obj_exts_hook(s, flags, p[i]);
+
+#ifdef CONFIG_SLAB_ALLOC_TAGGING
+		if (likely(obj_exts))
+			alloc_tag_add(&obj_exts->ref, current->alloc_tag, s->size);
+#endif
 	}
 
 	memcg_slab_post_alloc_hook(s, objcg, flags, size, p);

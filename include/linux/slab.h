@@ -202,7 +202,7 @@ int kmem_cache_shrink(struct kmem_cache *s);
  */
 void * __must_check _krealloc(const void *objp, size_t new_size, gfp_t flags) __realloc_size(2);
 #define krealloc(_p, _size, _flags)					\
-	krealloc_hooks(_p, _krealloc(_p, _size, _flags))
+	kmalloc_hooks(_krealloc(_p, _size, _flags))
 
 void kfree(const void *objp);
 void kfree_sensitive(const void *objp);
@@ -452,39 +452,22 @@ static_assert(PAGE_SHIFT <= 20);
 #endif /* !CONFIG_SLOB */
 
 #ifdef CONFIG_SLAB_ALLOC_TAGGING
-
 #include <linux/alloc_tag.h>
-
-size_t __ksize(const void *objp);
-union codetag_ref *get_slab_tag_ref(const void *objp);
-
-#define slab_tag_add(_old, _new)					\
-do {									\
-	if (!ZERO_OR_NULL_PTR(_new) && _old != _new)			\
-		alloc_tag_add(get_slab_tag_ref(_new), __ksize(_new));	\
-} while (0)
-
-static inline void slab_tag_dec(const void *ptr)
-{
-	if (!ZERO_OR_NULL_PTR(ptr))
-		alloc_tag_sub(get_slab_tag_ref(ptr), __ksize(ptr));
-}
-
 #else
 
-#define slab_tag_add(_old, _new) do {} while (0)
-static inline void slab_tag_dec(const void *ptr) {}
-
+#define DEFINE_ALLOC_TAG(_alloc_tag, _old)
+#define alloc_tag_restore(_tag, _old)
 #endif
 
-#define krealloc_hooks(_p, _do_alloc)					\
+#define kmalloc_hooks(_do_alloc)					\
 ({									\
-	void *_res = !memory_fault() ? _do_alloc : NULL;		\
-	slab_tag_add(_p, _res);						\
+	void *_res;							\
+	DEFINE_ALLOC_TAG(_alloc_tag, _old);				\
+									\
+	_res = !memory_fault() ? _do_alloc : NULL;			\
+	alloc_tag_restore(&_alloc_tag, _old);				\
 	_res;								\
 })
-
-#define kmalloc_hooks(_do_alloc)	krealloc_hooks(NULL, _do_alloc)
 
 void *__kmalloc(size_t size, gfp_t flags) __assume_kmalloc_alignment __alloc_size(1);
 
@@ -717,7 +700,7 @@ static inline __realloc_size(2, 3) void * __must_check _krealloc_array(void *p,
 	return _krealloc(p, bytes, flags);
 }
 #define krealloc_array(_p, _n, _size, _flags)		\
-	krealloc_hooks(_p, _krealloc_array(_p, _n, _size, _flags))
+	kmalloc_hooks(_krealloc_array(_p, _n, _size, _flags))
 
 /**
  * kcalloc - allocate memory for an array. The memory is set to zero.
@@ -798,7 +781,7 @@ extern void *_kvrealloc(const void *p, size_t oldsize, size_t newsize, gfp_t fla
 		      __realloc_size(3);
 
 #define kvrealloc(_p, _oldsize, _newsize, _flags)					\
-	krealloc_hooks(_p, _kvrealloc(_p, _oldsize, _newsize, _flags))
+	kmalloc_hooks(_kvrealloc(_p, _oldsize, _newsize, _flags))
 
 extern void kvfree(const void *addr);
 extern void kvfree_sensitive(const void *addr, size_t len);
