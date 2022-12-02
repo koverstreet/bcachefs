@@ -226,7 +226,7 @@ int alloc_slab_obj_exts(struct slab *slab, struct kmem_cache *s,
 		return -ENOMEM;
 
 	obj_exts = (unsigned long) vec;
-#ifdef COFNIG_MEMCG
+#ifdef CONFIG_MEMCG
 	obj_exts |= MEMCG_DATA_OBJEXTS;
 #endif
 	if (new_slab) {
