@@ -6639,4 +6639,5 @@ void lockdep_set_no_check_recursion(struct lockdep_map *lock)
 	lockdep_recursion_finish();
 	raw_local_irq_restore(flags);
 }
+EXPORT_SYMBOL_GPL(lockdep_set_no_check_recursion);
 #endif
