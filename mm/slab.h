@@ -71,7 +71,7 @@ SLAB_MATCH(compound_head, slab_list);	/* Ensure bit 0 is clear */
 SLAB_MATCH(rcu_head, rcu_head);
 #endif
 SLAB_MATCH(_refcount, __page_refcount);
-#ifdef CONFIG_MEMCG
+#ifdef CONFIG_SLAB_OBJ_EXT
 SLAB_MATCH(memcg_data, obj_exts);
 #endif
 #undef SLAB_MATCH
