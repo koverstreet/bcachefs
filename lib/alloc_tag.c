@@ -134,10 +134,10 @@ static void alloc_tag_to_text(struct seq_buf *out, struct codetag *ct)
 	struct alloc_tag *tag = ct_to_alloc_tag(ct);
 	char buf[10];
 
-	string_get_size(alloc_tag_counter_read(&tag->bytes_allocated), 1,
+	string_get_size(lazy_percpu_counter_read(&tag->bytes_allocated), 1,
 			STRING_UNITS_2, buf, sizeof(buf));
 
-	seq_buf_printf(out, "%8s %8lld ", buf, alloc_tag_counter_read(&tag->call_count));
+	seq_buf_printf(out, "%8s ", buf);
 	codetag_to_text(out, ct);
 	seq_buf_putc(out, '\n');
 }
@@ -367,8 +367,7 @@ static void alloc_tag_module_unload(struct codetag_type *cttype, struct codetag_
 	for (ct = codetag_next_ct(&iter); ct; ct = codetag_next_ct(&iter)) {
 		struct alloc_tag *tag = ct_to_alloc_tag(ct);
 
-		__lazy_percpu_counter_exit(&tag->call_count);
-		__lazy_percpu_counter_exit(&tag->bytes_allocated);
+		lazy_percpu_counter_exit(&tag->bytes_allocated);
 	}
 }
 

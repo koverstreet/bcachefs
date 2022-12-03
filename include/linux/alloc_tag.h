@@ -17,9 +17,7 @@
  */
 struct alloc_tag {
 	struct codetag_with_ctx		ctc;
-	unsigned long			last_wrap;
-	struct raw_lazy_percpu_counter	call_count;
-	struct raw_lazy_percpu_counter	bytes_allocated;
+	struct lazy_percpu_counter	bytes_allocated;
 } __aligned(8);
 
 static inline struct alloc_tag *ctc_to_alloc_tag(struct codetag_with_ctx *ctc)
@@ -40,9 +38,6 @@ bool alloc_tag_enable_ctx(struct alloc_tag *tag, bool enable);
 	static struct alloc_tag _alloc_tag __used __aligned(8)		\
 	__section("alloc_tags") = { .ctc.ct = CODE_TAG_INIT }
 
-#define alloc_tag_counter_read(counter)					\
-	__lazy_percpu_counter_read(counter)
-
 static inline void __alloc_tag_sub(union codetag_ref *ref, size_t bytes)
 {
 	struct alloc_tag *tag;
@@ -52,8 +47,7 @@ static inline void __alloc_tag_sub(union codetag_ref *ref, size_t bytes)
 	else
 		tag = ct_to_alloc_tag(ref->ct);
 
-	__lazy_percpu_counter_add(&tag->call_count, &tag->last_wrap, -1);
-	__lazy_percpu_counter_add(&tag->bytes_allocated, &tag->last_wrap, -bytes);
+	lazy_percpu_counter_add(&tag->bytes_allocated, -bytes);
 	ref->ct = NULL;
 }
 
@@ -70,8 +64,7 @@ static inline void __alloc_tag_add(struct alloc_tag *tag, union codetag_ref *ref
 	else
 		ref->ct = &tag->ctc.ct;
 
-	__lazy_percpu_counter_add(&tag->call_count, &tag->last_wrap, 1);
-	__lazy_percpu_counter_add(&tag->bytes_allocated, &tag->last_wrap, bytes);
+	lazy_percpu_counter_add(&tag->bytes_allocated, bytes);
 }
 
 #define alloc_tag_add(_ref, _bytes)					\
