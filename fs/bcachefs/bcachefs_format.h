@@ -1578,7 +1578,7 @@ struct bch_sb_layout {
  * @version_min	- Oldest metadata version this filesystem contains; so we can
  *		  safely drop compatibility code and refuse to mount filesystems
  *		  we'd need it for
- * @magic	- identifies as a bcachefs superblock (BCACHE_MAGIC)
+ * @magic	- identifies as a bcachefs superblock (BCHFS_MAGIC)
  * @seq		- incremented each time superblock is written
  * @uuid	- used for generating various magic numbers and identifying
  *                member devices, never changes
@@ -1894,6 +1894,9 @@ enum bch_compression_opts {
 #define BCACHE_MAGIC							\
 	UUID_LE(0xf67385c6, 0x1a4e, 0xca45,				\
 		0x82, 0x65, 0xf5, 0x7f, 0x48, 0xba, 0x6d, 0x81)
+#define BCHFS_MAGIC							\
+	UUID_LE(0xf67385c6, 0xce66, 0xa990,				\
+		0xd9, 0x6a, 0x60, 0xcf, 0x80, 0x3d, 0xf7, 0xef)
 
 #define BCACHEFS_STATFS_MAGIC		0xca451a4e
 
