@@ -261,11 +261,10 @@ btree:
 		prt_printf(&buf, "for ");
 		bch2_bkey_val_to_text(&buf, c, orig_k);
 
-		if (!test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags)) {
-			bch_err(c, "%s", buf.buf);
-		} else {
+		bch_err(c, "%s", buf.buf);
+		if (test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags)) {
+			bch2_inconsistent_error(c);
 			ret = -EIO;
-			bch2_trans_inconsistent(trans, "%s", buf.buf);
 		}
 		printbuf_exit(&buf);
 		goto err;
@@ -283,7 +282,6 @@ int bch2_bucket_backpointer_add(struct btree_trans *trans,
 				struct bkey_s_c orig_k)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_dev *ca;
 	struct bch_backpointer *bps = alloc_v4_backpointers(&a->v);
 	unsigned i, nr = BCH_ALLOC_V4_NR_BACKPOINTERS(&a->v);
 	struct bkey_i_backpointer *bp_k;
@@ -317,11 +315,10 @@ int bch2_bucket_backpointer_add(struct btree_trans *trans,
 		prt_printf(&buf, "for ");
 		bch2_bkey_val_to_text(&buf, c, orig_k);
 
-		if (!test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags))
-			bch_err(c, "%s", buf.buf);
-		else {
-			bch2_trans_inconsistent(trans, "%s", buf.buf);
-			printbuf_exit(&buf);
+		bch_err(c, "%s", buf.buf);
+		printbuf_exit(&buf);
+		if (test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags)) {
+			bch2_inconsistent_error(c);
 			return -EIO;
 		}
 	}
@@ -334,18 +331,9 @@ int bch2_bucket_backpointer_add(struct btree_trans *trans,
 	}
 
 	/* Overflow: use backpointer btree */
-	bp_k = bch2_trans_kmalloc(trans, sizeof(*bp_k));
-	ret = PTR_ERR_OR_ZERO(bp_k);
-	if (ret)
-		return ret;
 
-	ca = bch_dev_bkey_exists(c, a->k.p.inode);
-
-	bkey_backpointer_init(&bp_k->k_i);
-	bp_k->k.p = bucket_pos_to_bp(c, a->k.p, bp.bucket_offset);
-	bp_k->v = bp;
-
-	bch2_trans_iter_init(trans, &bp_iter, BTREE_ID_backpointers, bp_k->k.p,
+	bch2_trans_iter_init(trans, &bp_iter, BTREE_ID_backpointers,
+			     bucket_pos_to_bp(c, a->k.p, bp.bucket_offset),
 			     BTREE_ITER_INTENT|
 			     BTREE_ITER_SLOTS|
 			     BTREE_ITER_WITH_UPDATES);
@@ -369,15 +357,21 @@ int bch2_bucket_backpointer_add(struct btree_trans *trans,
 		prt_printf(&buf, "for ");
 		bch2_bkey_val_to_text(&buf, c, orig_k);
 
-		if (!test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags))
-			bch_err(c, "%s", buf.buf);
-		else {
-			bch2_trans_inconsistent(trans, "%s", buf.buf);
-			printbuf_exit(&buf);
+		bch_err(c, "%s", buf.buf);
+		printbuf_exit(&buf);
+		if (test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags)) {
+			bch2_inconsistent_error(c);
 			ret = -EIO;
 			goto err;
 		}
 	}
+
+	bp_k = bch2_bkey_alloc(trans, &bp_iter, backpointer);
+	ret = PTR_ERR_OR_ZERO(bp_k);
+	if (ret)
+		goto err;
+
+	bp_k->v = bp;
 
 	ret = bch2_trans_update(trans, &bp_iter, &bp_k->k_i, 0);
 err:
