@@ -386,7 +386,6 @@ void bch2_alloc_to_text(struct printbuf *out, struct bch_fs *c, struct bkey_s_c 
 {
 	struct bch_alloc_v4 _a;
 	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &_a);
-	const struct bch_backpointer *bps;
 	unsigned i;
 
 	prt_newline(out);
@@ -413,33 +412,41 @@ void bch2_alloc_to_text(struct printbuf *out, struct bch_fs *c, struct bkey_s_c 
 	prt_newline(out);
 	prt_printf(out, "io_time[WRITE]    %llu",	a->io_time[WRITE]);
 	prt_newline(out);
-	prt_printf(out, "backpointers:     %llu",	BCH_ALLOC_V4_NR_BACKPOINTERS(a));
-	printbuf_indent_add(out, 2);
 
-	bps = alloc_v4_backpointers_c(a);
-	for (i = 0; i < BCH_ALLOC_V4_NR_BACKPOINTERS(a); i++) {
+	if (k.k->type == KEY_TYPE_alloc_v4) {
+		struct bkey_s_c_alloc_v4 a_raw = bkey_s_c_to_alloc_v4(k);
+		const struct bch_backpointer *bps = alloc_v4_backpointers_c(a_raw.v);
+
+		prt_printf(out, "bp_start          %llu", BCH_ALLOC_V4_BACKPOINTERS_START(a_raw.v));
 		prt_newline(out);
-		bch2_backpointer_to_text(out, &bps[i]);
+
+		prt_printf(out, "backpointers:     %llu", BCH_ALLOC_V4_NR_BACKPOINTERS(a_raw.v));
+		printbuf_indent_add(out, 2);
+
+		for (i = 0; i < BCH_ALLOC_V4_NR_BACKPOINTERS(a_raw.v); i++) {
+			prt_newline(out);
+			bch2_backpointer_to_text(out, &bps[i]);
+		}
+
+		printbuf_indent_sub(out, 2);
 	}
 
-	printbuf_indent_sub(out, 4);
+	printbuf_indent_sub(out, 2);
 }
 
 void __bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *out)
 {
 	if (k.k->type == KEY_TYPE_alloc_v4) {
-		int d;
+		void *src, *dst;
 
 		*out = *bkey_s_c_to_alloc_v4(k).v;
 
-		d = (int) BCH_ALLOC_V4_U64s -
-			(int) (BCH_ALLOC_V4_BACKPOINTERS_START(out) ?: BCH_ALLOC_V4_U64s_V0);
-		if (unlikely(d > 0)) {
-			memset((u64 *) out + BCH_ALLOC_V4_BACKPOINTERS_START(out),
-			       0,
-			       d * sizeof(u64));
-			SET_BCH_ALLOC_V4_BACKPOINTERS_START(out, BCH_ALLOC_V4_U64s);
-		}
+		src = alloc_v4_backpointers(out);
+		SET_BCH_ALLOC_V4_BACKPOINTERS_START(out, BCH_ALLOC_V4_U64s);
+		dst = alloc_v4_backpointers(out);
+
+		if (src < dst)
+			memset(src, 0, dst - src);
 	} else {
 		struct bkey_alloc_unpacked u = bch2_alloc_unpack(k);
 
@@ -465,20 +472,20 @@ static noinline struct bkey_i_alloc_v4 *
 __bch2_alloc_to_v4_mut(struct btree_trans *trans, struct bkey_s_c k)
 {
 	struct bkey_i_alloc_v4 *ret;
-	unsigned bytes = k.k->type == KEY_TYPE_alloc_v4
-		? bkey_bytes(k.k)
-		: sizeof(struct bkey_i_alloc_v4);
-
-	/*
-	 * Reserve space for one more backpointer here:
-	 * Not sketchy at doing it this way, nope...
-	 */
-	ret = bch2_trans_kmalloc(trans, bytes + sizeof(struct bch_backpointer));
-	if (IS_ERR(ret))
-		return ret;
-
 	if (k.k->type == KEY_TYPE_alloc_v4) {
-		struct bch_backpointer *src, *dst;
+		struct bkey_s_c_alloc_v4 a = bkey_s_c_to_alloc_v4(k);
+		unsigned bytes = sizeof(struct bkey_i_alloc_v4) +
+			BCH_ALLOC_V4_NR_BACKPOINTERS(a.v) *
+			sizeof(struct bch_backpointer);
+		void *src, *dst;
+
+		/*
+		 * Reserve space for one more backpointer here:
+		 * Not sketchy at doing it this way, nope...
+		 */
+		ret = bch2_trans_kmalloc(trans, bytes + sizeof(struct bch_backpointer));
+		if (IS_ERR(ret))
+			return ret;
 
 		bkey_reassemble(&ret->k_i, k);
 
@@ -488,9 +495,15 @@ __bch2_alloc_to_v4_mut(struct btree_trans *trans, struct bkey_s_c k)
 
 		memmove(dst, src, BCH_ALLOC_V4_NR_BACKPOINTERS(&ret->v) *
 			sizeof(struct bch_backpointer));
-		memset(src, 0, dst - src);
+		if (src < dst)
+			memset(src, 0, dst - src);
 		set_alloc_v4_u64s(ret);
 	} else {
+		ret = bch2_trans_kmalloc(trans, sizeof(struct bkey_i_alloc_v4) +
+					 sizeof(struct bch_backpointer));
+		if (IS_ERR(ret))
+			return ret;
+
 		bkey_alloc_v4_init(&ret->k_i);
 		ret->k.p = k.k->p;
 		bch2_alloc_to_v4(k, &ret->v);
@@ -508,10 +521,8 @@ static inline struct bkey_i_alloc_v4 *bch2_alloc_to_v4_mut_inlined(struct btree_
 		 */
 		struct bkey_i_alloc_v4 *ret =
 			bch2_trans_kmalloc_nomemzero(trans, bkey_bytes(k.k) + sizeof(struct bch_backpointer));
-		if (!IS_ERR(ret)) {
+		if (!IS_ERR(ret))
 			bkey_reassemble(&ret->k_i, k);
-			memset((void *) ret + bkey_bytes(k.k), 0, sizeof(struct bch_backpointer));
-		}
 		return ret;
 	}
 
