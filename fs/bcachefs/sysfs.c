@@ -194,6 +194,7 @@ read_attribute(btree_cache);
 read_attribute(btree_key_cache);
 read_attribute(stripes_heap);
 read_attribute(open_buckets);
+read_attribute(nocow_lock_table);
 
 read_attribute(internal_uuid);
 
@@ -445,6 +446,22 @@ SHOW(bch2_fs)
 	if (attr == &sysfs_data_jobs)
 		data_progress_to_text(out, c);
 
+	if (attr == &sysfs_nocow_lock_table) {
+		int i, count = 1;
+		long last, curr = 0;
+
+		last = atomic_long_read(&c->nocow_locks.l[0].v);
+		for (i = 1; i < BUCKET_NOCOW_LOCKS; i++) {
+			curr = atomic_long_read(&c->nocow_locks.l[i].v);
+			if (last != curr) {
+				prt_printf(out, "%li: %d\n", last, count);
+				count = 1;
+				last = curr;
+			} else
+				count++;
+		}
+		prt_printf(out, "%li: %d\n", last, count);
+}
 	return 0;
 }
 
@@ -627,6 +644,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_new_stripes,
 	&sysfs_stripes_heap,
 	&sysfs_open_buckets,
+	&sysfs_nocow_lock_table,
 	&sysfs_io_timers_read,
 	&sysfs_io_timers_write,
 
