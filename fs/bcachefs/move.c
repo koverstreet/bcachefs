@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "alloc_background.h"
 #include "alloc_foreground.h"
 #include "backpointers.h"
 #include "bkey_buf.h"
@@ -661,12 +662,28 @@ int __bch2_evacuate_bucket(struct moving_context *ctxt,
 	struct btree_iter iter;
 	struct bkey_buf sk;
 	struct bch_backpointer bp;
+	struct bch_alloc_v4 a_convert;
+	const struct bch_alloc_v4 *a;
+	struct bkey_s_c k;
 	struct data_update_opts data_opts;
+	unsigned dirty_sectors, bucket_size;
 	u64 bp_offset = 0, cur_inum = U64_MAX;
 	int ret = 0;
 
 	bch2_bkey_buf_init(&sk);
 	bch2_trans_init(&trans, c, 0, 0);
+
+	bch2_trans_iter_init(&trans, &iter, BTREE_ID_alloc,
+			     bucket, BTREE_ITER_CACHED);
+	ret = lockrestart_do(&trans,
+			bkey_err(k = bch2_btree_iter_peek_slot(&iter)));
+	bch2_trans_iter_exit(&trans, &iter);
+
+	if (!ret) {
+		a = bch2_alloc_to_v4(k, &a_convert);
+		dirty_sectors = a->dirty_sectors;
+		bucket_size = bch_dev_bkey_exists(c, bucket.inode)->mi.bucket_size;
+	}
 
 	while (!(ret = move_ratelimit(&trans, ctxt))) {
 		bch2_trans_begin(&trans);
@@ -764,6 +781,8 @@ int __bch2_evacuate_bucket(struct moving_context *ctxt,
 
 		bp_offset++;
 	}
+
+	trace_evacuate_bucket(c, &bucket, dirty_sectors, bucket_size, ret);
 
 	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) && gen >= 0) {
 		bch2_trans_unlock(&trans);
