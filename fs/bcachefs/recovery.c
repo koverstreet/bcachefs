@@ -922,6 +922,7 @@ static bool btree_id_is_alloc(enum btree_id id)
 	case BTREE_ID_backpointers:
 	case BTREE_ID_need_discard:
 	case BTREE_ID_freespace:
+	case BTREE_ID_bucket_gens:
 		return true;
 	default:
 		return false;

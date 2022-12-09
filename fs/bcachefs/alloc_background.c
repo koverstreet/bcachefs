@@ -1255,7 +1255,15 @@ static int bch2_check_alloc_hole_bucket_gens(struct btree_trans *trans,
 		}
 
 		if (need_update) {
-			ret = bch2_trans_update(trans, bucket_gens_iter, &g.k_i, 0);
+			struct bkey_i *k = bch2_trans_kmalloc(trans, sizeof(g));
+
+			ret = PTR_ERR_OR_ZERO(k);
+			if (ret)
+				goto err;
+
+			memcpy(k, &g, sizeof(g));
+
+			ret = bch2_trans_update(trans, bucket_gens_iter, k, 0);
 			if (ret)
 				goto err;
 		}
@@ -1381,7 +1389,7 @@ static int bch2_check_bucket_gens_key(struct btree_trans *trans,
 		k = bch2_trans_kmalloc(trans, sizeof(g));
 		ret = PTR_ERR_OR_ZERO(k);
 		if (ret)
-			return ret;
+			goto out;
 
 		memcpy(k, &g, sizeof(g));
 		ret = bch2_trans_update(trans, iter, k, 0);
@@ -1433,7 +1441,7 @@ int bch2_check_alloc_info(struct bch_fs *c)
 						   &freespace_iter,
 						   &bucket_gens_iter);
 			if (ret)
-				break;
+				goto bkey_err;
 		} else {
 			next = k.k->p;
 
