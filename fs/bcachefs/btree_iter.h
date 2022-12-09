@@ -467,7 +467,7 @@ static inline struct bkey_i *bch2_bkey_get_mut(struct btree_trans *trans,
 
 #define bch2_bkey_alloc(_trans, _iter, _type)				\
 ({									\
-	struct bkey_i_##_type *_k = bch2_trans_kmalloc(_trans, sizeof(*_k));\
+	struct bkey_i_##_type *_k = bch2_trans_kmalloc_nomemzero(_trans, sizeof(*_k));\
 	if (!IS_ERR(_k)) {						\
 		bkey_##_type##_init(&_k->k_i);				\
 		_k->k.p	= (_iter)->pos;					\
