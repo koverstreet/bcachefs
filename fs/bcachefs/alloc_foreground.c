@@ -1227,9 +1227,6 @@ err:
 			? -EAGAIN
 			: -BCH_ERR_ENOSPC_bucket_alloc;
 
-	if (bch2_err_matches(ret, BCH_ERR_insufficient_devices))
-		return -EROFS;
-
 	return ret;
 }
 

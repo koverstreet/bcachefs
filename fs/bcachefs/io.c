@@ -1775,7 +1775,7 @@ void bch2_write(struct closure *cl)
 
 	if (c->opts.nochanges ||
 	    !percpu_ref_tryget_live(&c->writes)) {
-		op->error = -EROFS;
+		op->error = -BCH_ERR_erofs_no_writes;
 		goto err;
 	}
 

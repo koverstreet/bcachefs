@@ -863,7 +863,7 @@ int bch2_write_super(struct bch_fs *c)
 				le64_to_cpu(ca->sb_read_scratch->seq),
 				ca->disk_sb.seq);
 			percpu_ref_put(&ca->io_ref);
-			ret = -EROFS;
+			ret = -BCH_ERR_erofs_sb_err;
 			goto out;
 		}
 
@@ -873,7 +873,7 @@ int bch2_write_super(struct bch_fs *c)
 				le64_to_cpu(ca->sb_read_scratch->seq),
 				ca->disk_sb.seq);
 			percpu_ref_put(&ca->io_ref);
-			ret = -EROFS;
+			ret = -BCH_ERR_erofs_sb_err;
 			goto out;
 		}
 	}
