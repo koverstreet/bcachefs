@@ -242,6 +242,9 @@ btree:
 	    memcmp(bkey_s_c_to_backpointer(k).v, &bp, sizeof(bp))) {
 		struct printbuf buf = PRINTBUF;
 
+		if (!test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags))
+			goto err;
+
 		prt_printf(&buf, "backpointer not found when deleting");
 		prt_newline(&buf);
 		printbuf_indent_add(&buf, 2);
@@ -262,10 +265,8 @@ btree:
 		bch2_bkey_val_to_text(&buf, c, orig_k);
 
 		bch_err(c, "%s", buf.buf);
-		if (test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags)) {
-			bch2_inconsistent_error(c);
-			ret = -EIO;
-		}
+		bch2_inconsistent_error(c);
+		ret = -EIO;
 		printbuf_exit(&buf);
 		goto err;
 	}
