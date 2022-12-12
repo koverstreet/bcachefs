@@ -258,7 +258,7 @@ static int bch2_move_extent(struct btree_trans *trans,
 	}
 
 	if (!percpu_ref_tryget_live(&c->writes))
-		return -EROFS;
+		return -BCH_ERR_erofs_no_writes;
 
 	/*
 	 * Before memory allocations & taking nocow locks in
