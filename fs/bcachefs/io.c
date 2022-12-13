@@ -427,7 +427,7 @@ retry:
 				opts.data_replicas,
 				opts.data_replicas,
 				RESERVE_none, 0, &cl, &wp);
-		if (ret == -EAGAIN) {
+		if (bch2_err_matches(ret, BCH_ERR_operation_blocked)) {
 			bch2_trans_unlock(trans);
 			closure_sync(&cl);
 			goto retry;
@@ -1627,7 +1627,7 @@ again:
 					      BCH_WRITE_ONLY_SPECIFIED_DEVS))
 				? NULL : &op->cl, &wp));
 		if (unlikely(ret)) {
-			if (ret == -EAGAIN)
+			if (bch2_err_matches(ret, BCH_ERR_operation_blocked))
 				break;
 
 			goto err;
