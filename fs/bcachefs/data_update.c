@@ -350,7 +350,7 @@ void bch2_update_unwritten_extent(struct btree_trans *trans,
 				update->op.alloc_reserve,
 				0, &cl);
 		ret = PTR_ERR_OR_ZERO(wp);
-		if (ret == -EAGAIN) {
+		if (bch2_err_matches(ret, BCH_ERR_operation_blocked)) {
 			bch2_trans_unlock(trans);
 			closure_sync(&cl);
 			continue;
