@@ -1223,7 +1223,7 @@ err:
 	if (bch2_err_matches(ret, BCH_ERR_open_buckets_empty) ||
 	    bch2_err_matches(ret, BCH_ERR_freelist_empty))
 		return cl
-			? ERR_PTR(-EAGAIN)
+			? ERR_PTR(-BCH_ERR_bucket_alloc_blocked)
 			: ERR_PTR(-BCH_ERR_ENOSPC_bucket_alloc);
 
 	return ERR_PTR(ret);
