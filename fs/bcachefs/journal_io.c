@@ -1128,9 +1128,6 @@ int bch2_journal_read(struct bch_fs *c,
 	/*
 	 * Find most recent flush entry, and ignore newer non flush entries -
 	 * those entries will be blacklisted:
-	 *
-	 *
-	 * XXX check for torn write on last journal entry
 	 */
 	genradix_for_each_reverse(&c->journal_entries, radix_iter, _i) {
 		int write = READ;
@@ -1144,13 +1141,13 @@ int bch2_journal_read(struct bch_fs *c,
 			*blacklist_seq = *start_seq = le64_to_cpu(i->j.seq) + 1;
 
 		if (JSET_NO_FLUSH(&i->j)) {
-			journal_replay_free(c, i);
+			i->ignore = true;
 			continue;
 		}
 
 		if (!last_write_torn && !i->csum_good) {
 			last_write_torn = true;
-			journal_replay_free(c, i);
+			i->ignore = true;
 			continue;
 		}
 
@@ -1199,8 +1196,7 @@ int bch2_journal_read(struct bch_fs *c,
 		if (bch2_journal_seq_is_blacklisted(c, seq, true)) {
 			fsck_err_on(!JSET_NO_FLUSH(&i->j), c,
 				    "found blacklisted journal entry %llu", seq);
-
-			journal_replay_free(c, i);
+			i->ignore = true;
 		}
 	}
 
