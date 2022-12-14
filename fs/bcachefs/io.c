@@ -782,15 +782,17 @@ static void __bch2_write_index(struct bch_write_op *op)
 
 		op->written += sectors_start - keylist_sectors(keys);
 
-		if (ret) {
+		if (ret && !bch2_err_matches(ret, EROFS)) {
 			struct bkey_i *k = bch2_keylist_front(&op->insert_keys);
 
 			bch_err_inum_offset_ratelimited(c,
 				k->k.p.inode, k->k.p.offset << 9,
 				"write error while doing btree update: %s",
 				bch2_err_str(ret));
-			goto err;
 		}
+
+		if (ret)
+			goto err;
 	}
 out:
 	/* If some a bucket wasn't written, we can't erasure code it: */
@@ -1364,13 +1366,16 @@ static void bch2_nocow_write_convert_unwritten(struct bch_write_op *op)
 			bch2_nocow_write_convert_one_unwritten(&trans, &iter, orig, k, op->new_i_size);
 		}));
 
-		if (ret) {
+		if (ret && !bch2_err_matches(ret, EROFS)) {
 			struct bkey_i *k = bch2_keylist_front(&op->insert_keys);
 
 			bch_err_inum_offset_ratelimited(c,
 				k->k.p.inode, k->k.p.offset << 9,
 				"write error while doing btree update: %s",
 				bch2_err_str(ret));
+		}
+
+		if (ret) {
 			op->error = ret;
 			break;
 		}
