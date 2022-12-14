@@ -1080,7 +1080,10 @@ void bch2_journal_ptrs_to_text(struct printbuf *out, struct bch_fs *c,
 	}
 }
 
-int bch2_journal_read(struct bch_fs *c, u64 *blacklist_seq, u64 *start_seq)
+int bch2_journal_read(struct bch_fs *c,
+		      u64 *last_seq,
+		      u64 *blacklist_seq,
+		      u64 *start_seq)
 {
 	struct journal_list jlist;
 	struct journal_replay *i, **_i, *prev = NULL;
@@ -1089,7 +1092,7 @@ int bch2_journal_read(struct bch_fs *c, u64 *blacklist_seq, u64 *start_seq)
 	unsigned iter;
 	struct printbuf buf = PRINTBUF;
 	bool degraded = false, last_write_torn = false;
-	u64 seq, last_seq = 0;
+	u64 seq;
 	int ret = 0;
 
 	closure_init_stack(&jlist.cl);
@@ -1118,6 +1121,7 @@ int bch2_journal_read(struct bch_fs *c, u64 *blacklist_seq, u64 *start_seq)
 	if (jlist.ret)
 		return jlist.ret;
 
+	*last_seq	= 0;
 	*start_seq	= 0;
 	*blacklist_seq	= 0;
 
@@ -1157,7 +1161,7 @@ int bch2_journal_read(struct bch_fs *c, u64 *blacklist_seq, u64 *start_seq)
 					 le64_to_cpu(i->j.seq)))
 			i->j.last_seq = i->j.seq;
 
-		last_seq	= le64_to_cpu(i->j.last_seq);
+		*last_seq	= le64_to_cpu(i->j.last_seq);
 		*blacklist_seq	= le64_to_cpu(i->j.seq) + 1;
 		break;
 	}
@@ -1167,13 +1171,13 @@ int bch2_journal_read(struct bch_fs *c, u64 *blacklist_seq, u64 *start_seq)
 		return 0;
 	}
 
-	if (!last_seq) {
+	if (!*last_seq) {
 		fsck_err(c, "journal read done, but no entries found after dropping non-flushes");
 		return 0;
 	}
 
 	bch_info(c, "journal read done, replaying entries %llu-%llu",
-		 last_seq, *blacklist_seq - 1);
+		 *last_seq, *blacklist_seq - 1);
 
 	if (*start_seq != *blacklist_seq)
 		bch_info(c, "dropped unflushed entries %llu-%llu",
@@ -1187,7 +1191,7 @@ int bch2_journal_read(struct bch_fs *c, u64 *blacklist_seq, u64 *start_seq)
 			continue;
 
 		seq = le64_to_cpu(i->j.seq);
-		if (seq < last_seq) {
+		if (seq < *last_seq) {
 			journal_replay_free(c, i);
 			continue;
 		}
@@ -1201,7 +1205,7 @@ int bch2_journal_read(struct bch_fs *c, u64 *blacklist_seq, u64 *start_seq)
 	}
 
 	/* Check for missing entries: */
-	seq = last_seq;
+	seq = *last_seq;
 	genradix_for_each(&c->journal_entries, radix_iter, _i) {
 		i = *_i;
 
@@ -1239,7 +1243,7 @@ int bch2_journal_read(struct bch_fs *c, u64 *blacklist_seq, u64 *start_seq)
 				 "  prev at %s\n"
 				 "  next at %s",
 				 missing_start, missing_end,
-				 last_seq, *blacklist_seq - 1,
+				 *last_seq, *blacklist_seq - 1,
 				 buf1.buf, buf2.buf);
 
 			printbuf_exit(&buf1);
