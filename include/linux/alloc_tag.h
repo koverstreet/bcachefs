@@ -49,6 +49,29 @@ static inline bool alloc_tagging_enabled(void)
 	return static_branch_likely(&alloc_tagging_key);
 }
 
+#ifdef CONFIG_ALLOC_TAGGING_DEBUG
+
+#define CODETAG_EMPTY	(void*)1
+
+static inline bool is_codetag_empty(union codetag_ref *ref)
+{
+	return ref->ct == CODETAG_EMPTY;
+}
+
+static inline void set_codetag_empty(union codetag_ref *ref)
+{
+	if (ref)
+		ref->ct = CODETAG_EMPTY;
+}
+
+#else /* CONFIG_ALLOC_TAGGING_DEBUG */
+
+static inline bool is_codetag_empty(union codetag_ref *ref) { return false; }
+static inline void set_codetag_empty(union codetag_ref *ref) {}
+
+#endif /* CONFIG_ALLOC_TAGGING_DEBUG */
+
+
 static inline void alloc_tag_sub(union codetag_ref *ref, size_t bytes)
 {
 	struct alloc_tag *tag;
@@ -61,6 +84,11 @@ static inline void alloc_tag_sub(union codetag_ref *ref, size_t bytes)
 #endif
 	if (!ref || !ref->ct)
 		return;
+
+	if (is_codetag_empty(ref)) {
+		ref->ct = NULL;
+		return;
+	}
 
 	if (is_codetag_ctx_ref(ref))
 		alloc_tag_free_ctx(ref->ctx, &tag);
@@ -95,6 +123,7 @@ static inline void alloc_tag_add(union codetag_ref *ref, struct alloc_tag *tag, 
 #else
 
 #define DEFINE_ALLOC_TAG(_alloc_tag, _old)
+static inline void set_codetag_empty(union codetag_ref *ref) {}
 static inline void alloc_tag_sub(union codetag_ref *ref, size_t bytes) {}
 static inline void alloc_tag_add(union codetag_ref *ref, struct alloc_tag *tag,
 				 size_t bytes) {}
