@@ -27,6 +27,7 @@
 #include "journal.h"
 #include "keylist.h"
 #include "move.h"
+#include "nocow_locking.h"
 #include "opts.h"
 #include "rebalance.h"
 #include "replicas.h"
@@ -446,22 +447,9 @@ SHOW(bch2_fs)
 	if (attr == &sysfs_data_jobs)
 		data_progress_to_text(out, c);
 
-	if (attr == &sysfs_nocow_lock_table) {
-		int i, count = 1;
-		long last, curr = 0;
+	if (attr == &sysfs_nocow_lock_table)
+		bch2_nocow_locks_to_text(out, &c->nocow_locks);
 
-		last = atomic_long_read(&c->nocow_locks.l[0].v);
-		for (i = 1; i < BUCKET_NOCOW_LOCKS; i++) {
-			curr = atomic_long_read(&c->nocow_locks.l[i].v);
-			if (last != curr) {
-				prt_printf(out, "%li: %d\n", last, count);
-				count = 1;
-				last = curr;
-			} else
-				count++;
-		}
-		prt_printf(out, "%li: %d\n", last, count);
-}
 	return 0;
 }
 
