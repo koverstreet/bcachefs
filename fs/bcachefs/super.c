@@ -37,6 +37,7 @@
 #include "move.h"
 #include "migrate.h"
 #include "movinggc.h"
+#include "nocow_locking.h"
 #include "quota.h"
 #include "rebalance.h"
 #include "recovery.h"
@@ -802,6 +803,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	    bch2_fs_buckets_waiting_for_journal_init(c) ?:
 	    bch2_fs_subvolumes_init(c) ?:
 	    bch2_fs_io_init(c) ?:
+	    bch2_fs_nocow_locking_init(c) ?:
 	    bch2_fs_encryption_init(c) ?:
 	    bch2_fs_compress_init(c) ?:
 	    bch2_fs_ec_init(c) ?:
