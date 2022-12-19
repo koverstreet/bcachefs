@@ -200,7 +200,9 @@ void bch2_do_invalidates(struct bch_fs *);
 
 static inline struct bch_backpointer *alloc_v4_backpointers(struct bch_alloc_v4 *a)
 {
-	return (void *) ((u64 *) &a->v + BCH_ALLOC_V4_BACKPOINTERS_START(a));
+	return (void *) ((u64 *) &a->v +
+			 (BCH_ALLOC_V4_BACKPOINTERS_START(a) ?:
+			  BCH_ALLOC_V4_U64s_V0));
 }
 
 static inline const struct bch_backpointer *alloc_v4_backpointers_c(const struct bch_alloc_v4 *a)
