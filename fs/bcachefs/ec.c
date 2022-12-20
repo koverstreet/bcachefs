@@ -9,6 +9,7 @@
 #include "bset.h"
 #include "btree_gc.h"
 #include "btree_update.h"
+#include "btree_write_buffer.h"
 #include "buckets.h"
 #include "disk_groups.h"
 #include "ec.h"
@@ -921,13 +922,16 @@ static int ec_stripe_update_extents(struct bch_fs *c, struct ec_stripe_buf *s)
 
 	bch2_trans_init(&trans, c, 0, 0);
 
+	ret = bch2_btree_write_buffer_flush(&trans);
+	if (ret)
+		goto err;
+
 	for (i = 0; i < nr_data; i++) {
 		ret = ec_stripe_update_bucket(&trans, s, i);
 		if (ret)
 			break;
 	}
-
-
+err:
 	bch2_trans_exit(&trans);
 
 	return ret;

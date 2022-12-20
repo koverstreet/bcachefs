@@ -316,7 +316,10 @@ do {									\
 		"done in memory")					\
 	BCH_DEBUG_PARAM(verify_all_btree_replicas,			\
 		"When reading btree nodes, read all replicas and "	\
-		"compare them")
+		"compare them")						\
+	BCH_DEBUG_PARAM(backpointers_no_use_write_buffer,		\
+		"Don't use the write buffer for backpointers, enabling "\
+		"extra runtime checks")
 
 /* Parameters that should only be compiled in debug mode: */
 #define BCH_DEBUG_PARAMS_DEBUG()					\

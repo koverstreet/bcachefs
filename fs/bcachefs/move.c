@@ -8,6 +8,7 @@
 #include "btree_gc.h"
 #include "btree_update.h"
 #include "btree_update_interior.h"
+#include "btree_write_buffer.h"
 #include "disk_groups.h"
 #include "ec.h"
 #include "errcode.h"
@@ -680,10 +681,19 @@ int __bch2_evacuate_bucket(struct moving_context *ctxt,
 			bkey_err(k = bch2_btree_iter_peek_slot(&iter)));
 	bch2_trans_iter_exit(&trans, &iter);
 
-	if (!ret) {
-		a = bch2_alloc_to_v4(k, &a_convert);
-		dirty_sectors = a->dirty_sectors;
-		bucket_size = bch_dev_bkey_exists(c, bucket.inode)->mi.bucket_size;
+	if (ret) {
+		bch_err(c, "%s: error looking up alloc key: %s", __func__, bch2_err_str(ret));
+		goto err;
+	}
+
+	a = bch2_alloc_to_v4(k, &a_convert);
+	dirty_sectors = a->dirty_sectors;
+	bucket_size = bch_dev_bkey_exists(c, bucket.inode)->mi.bucket_size;
+
+	ret = bch2_btree_write_buffer_flush(&trans);
+	if (ret) {
+		bch_err(c, "%s: error flushing btree write buffer: %s", __func__, bch2_err_str(ret));
+		goto err;
 	}
 
 	while (!(ret = move_ratelimit(&trans, ctxt))) {
@@ -712,7 +722,7 @@ int __bch2_evacuate_bucket(struct moving_context *ctxt,
 			if (ret)
 				goto err;
 			if (!k.k)
-				continue;
+				goto next;
 
 			bch2_bkey_buf_reassemble(&sk, c, k);
 			k = bkey_i_to_s_c(sk.k);
@@ -763,7 +773,7 @@ int __bch2_evacuate_bucket(struct moving_context *ctxt,
 			if (ret)
 				goto err;
 			if (!b)
-				continue;
+				goto next;
 
 			ret = bch2_btree_node_rewrite(&trans, &iter, b, 0);
 			bch2_trans_iter_exit(&trans, &iter);
@@ -779,7 +789,7 @@ int __bch2_evacuate_bucket(struct moving_context *ctxt,
 			atomic64_add(c->opts.btree_node_size >> 9, &ctxt->stats->sectors_seen);
 			atomic64_add(c->opts.btree_node_size >> 9, &ctxt->stats->sectors_moved);
 		}
-
+next:
 		bp_offset++;
 	}
 

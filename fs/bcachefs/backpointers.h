@@ -2,6 +2,8 @@
 #ifndef _BCACHEFS_BACKPOINTERS_BACKGROUND_H
 #define _BCACHEFS_BACKPOINTERS_BACKGROUND_H
 
+#include "btree_iter.h"
+#include "btree_update.h"
 #include "buckets.h"
 #include "super.h"
 
@@ -19,8 +21,80 @@ void bch2_backpointer_swab(struct bkey_s);
 
 #define MAX_EXTENT_COMPRESS_RATIO_SHIFT		10
 
-int bch2_bucket_backpointer_mod(struct btree_trans *, struct bkey_i_alloc_v4 *,
+/*
+ * Convert from pos in backpointer btree to pos of corresponding bucket in alloc
+ * btree:
+ */
+static inline struct bpos bp_pos_to_bucket(const struct bch_fs *c,
+					   struct bpos bp_pos)
+{
+	struct bch_dev *ca = bch_dev_bkey_exists(c, bp_pos.inode);
+	u64 bucket_sector = bp_pos.offset >> MAX_EXTENT_COMPRESS_RATIO_SHIFT;
+
+	return POS(bp_pos.inode, sector_to_bucket(ca, bucket_sector));
+}
+
+/*
+ * Convert from pos in alloc btree + bucket offset to pos in backpointer btree:
+ */
+static inline struct bpos bucket_pos_to_bp(const struct bch_fs *c,
+					   struct bpos bucket,
+					   u64 bucket_offset)
+{
+	struct bch_dev *ca = bch_dev_bkey_exists(c, bucket.inode);
+	struct bpos ret;
+
+	ret = POS(bucket.inode,
+		  (bucket_to_sector(ca, bucket.offset) <<
+		   MAX_EXTENT_COMPRESS_RATIO_SHIFT) + bucket_offset);
+
+	BUG_ON(!bkey_eq(bucket, bp_pos_to_bucket(c, ret)));
+
+	return ret;
+}
+
+bool bch2_bucket_backpointer_del(struct btree_trans *,
+				struct bkey_i_alloc_v4 *,
+				struct bch_backpointer);
+
+int bch2_bucket_backpointer_mod_nowritebuffer(struct btree_trans *,
+				struct bkey_i_alloc_v4 *,
 				struct bch_backpointer, struct bkey_s_c, bool);
+
+static inline int bch2_bucket_backpointer_mod(struct btree_trans *trans,
+				struct bkey_i_alloc_v4 *a,
+				struct bch_backpointer bp,
+				struct bkey_s_c orig_k,
+				bool insert)
+{
+	struct bch_fs *c = trans->c;
+	struct bkey_i_backpointer *bp_k;
+	int ret;
+
+	if (!insert &&
+	    unlikely(BCH_ALLOC_V4_NR_BACKPOINTERS(&a->v)) &&
+	    bch2_bucket_backpointer_del(trans, a, bp))
+		return 0;
+
+	if (unlikely(bch2_backpointers_no_use_write_buffer))
+		return bch2_bucket_backpointer_mod_nowritebuffer(trans, a, bp, orig_k, insert);
+
+	bp_k = bch2_trans_kmalloc_nomemzero(trans, sizeof(struct bkey_i_backpointer));
+	ret = PTR_ERR_OR_ZERO(bp_k);
+	if (ret)
+		return ret;
+
+	bkey_backpointer_init(&bp_k->k_i);
+	bp_k->k.p = bucket_pos_to_bp(c, a->k.p, bp.bucket_offset);
+	bp_k->v = bp;
+
+	if (!insert) {
+		bp_k->k.type = KEY_TYPE_deleted;
+		set_bkey_val_u64s(&bp_k->k, 0);
+	}
+
+	return bch2_trans_update_buffered(trans, BTREE_ID_backpointers, &bp_k->k_i);
+}
 
 static inline void bch2_extent_ptr_to_bp(struct bch_fs *c,
 			   enum btree_id btree_id, unsigned level,

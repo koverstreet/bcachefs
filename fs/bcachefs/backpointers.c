@@ -9,38 +9,6 @@
 
 #include <linux/mm.h>
 
-/*
- * Convert from pos in backpointer btree to pos of corresponding bucket in alloc
- * btree:
- */
-static inline struct bpos bp_pos_to_bucket(const struct bch_fs *c,
-					   struct bpos bp_pos)
-{
-	struct bch_dev *ca = bch_dev_bkey_exists(c, bp_pos.inode);
-	u64 bucket_sector = bp_pos.offset >> MAX_EXTENT_COMPRESS_RATIO_SHIFT;
-
-	return POS(bp_pos.inode, sector_to_bucket(ca, bucket_sector));
-}
-
-/*
- * Convert from pos in alloc btree + bucket offset to pos in backpointer btree:
- */
-static inline struct bpos bucket_pos_to_bp(const struct bch_fs *c,
-					   struct bpos bucket,
-					   u64 bucket_offset)
-{
-	struct bch_dev *ca = bch_dev_bkey_exists(c, bucket.inode);
-	struct bpos ret;
-
-	ret = POS(bucket.inode,
-		  (bucket_to_sector(ca, bucket.offset) <<
-		   MAX_EXTENT_COMPRESS_RATIO_SHIFT) + bucket_offset);
-
-	BUG_ON(!bkey_eq(bucket, bp_pos_to_bucket(c, ret)));
-
-	return ret;
-}
-
 static bool extent_matches_bp(struct bch_fs *c,
 			      enum btree_id btree_id, unsigned level,
 			      struct bkey_s_c k,
@@ -200,9 +168,9 @@ err:
 	return ret;
 }
 
-static bool bch2_bucket_backpointer_del(struct btree_trans *trans,
-					struct bkey_i_alloc_v4 *a,
-					struct bch_backpointer bp)
+bool bch2_bucket_backpointer_del(struct btree_trans *trans,
+				 struct bkey_i_alloc_v4 *a,
+				 struct bch_backpointer bp)
 {
 	struct bch_backpointer *bps = alloc_v4_backpointers(&a->v);
 	unsigned i, nr = BCH_ALLOC_V4_NR_BACKPOINTERS(&a->v);
@@ -275,7 +243,7 @@ static noinline int backpointer_mod_err(struct btree_trans *trans,
 	}
 }
 
-int bch2_bucket_backpointer_mod(struct btree_trans *trans,
+int bch2_bucket_backpointer_mod_nowritebuffer(struct btree_trans *trans,
 				struct bkey_i_alloc_v4 *a,
 				struct bch_backpointer bp,
 				struct bkey_s_c orig_k,
@@ -286,11 +254,6 @@ int bch2_bucket_backpointer_mod(struct btree_trans *trans,
 	struct btree_iter bp_iter;
 	struct bkey_s_c k;
 	int ret;
-
-	if (!insert &&
-	    unlikely(BCH_ALLOC_V4_NR_BACKPOINTERS(&a->v)) &&
-	    bch2_bucket_backpointer_del(trans, a, bp))
-		return 0;
 
 	bp_k = bch2_trans_kmalloc_nomemzero(trans, sizeof(struct bkey_i_backpointer));
 	ret = PTR_ERR_OR_ZERO(bp_k);
@@ -408,6 +371,9 @@ static void backpointer_not_found(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct printbuf buf = PRINTBUF;
 
+	if (likely(!bch2_backpointers_no_use_write_buffer))
+		return;
+
 	prt_printf(&buf, "backpointer doesn't match %s it points to:\n  ",
 		   thing_it_points_to);
 	prt_printf(&buf, "bucket: ");
@@ -463,27 +429,30 @@ struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
 
 	bch2_trans_iter_exit(trans, iter);
 
-	if (bp.level) {
-		struct btree *b;
+	if (unlikely(bch2_backpointers_no_use_write_buffer)) {
+		if (bp.level) {
+			struct btree *b;
 
-		/*
-		 * If a backpointer for a btree node wasn't found, it may be
-		 * because it was overwritten by a new btree node that hasn't
-		 * been written out yet - backpointer_get_node() checks for
-		 * this:
-		 */
-		b = bch2_backpointer_get_node(trans, iter, bucket, bp_offset, bp);
-		if (!IS_ERR_OR_NULL(b))
-			return bkey_i_to_s_c(&b->key);
+			/*
+			 * If a backpointer for a btree node wasn't found, it may be
+			 * because it was overwritten by a new btree node that hasn't
+			 * been written out yet - backpointer_get_node() checks for
+			 * this:
+			 */
+			b = bch2_backpointer_get_node(trans, iter, bucket, bp_offset, bp);
+			if (!IS_ERR_OR_NULL(b))
+				return bkey_i_to_s_c(&b->key);
 
-		bch2_trans_iter_exit(trans, iter);
+			bch2_trans_iter_exit(trans, iter);
 
-		if (IS_ERR(b))
-			return bkey_s_c_err(PTR_ERR(b));
-		return bkey_s_c_null;
+			if (IS_ERR(b))
+				return bkey_s_c_err(PTR_ERR(b));
+			return bkey_s_c_null;
+		}
+
+		backpointer_not_found(trans, bucket, bp_offset, bp, k, "extent");
 	}
 
-	backpointer_not_found(trans, bucket, bp_offset, bp, k, "extent");
 	return bkey_s_c_null;
 }
 
