@@ -58,7 +58,7 @@ static int __bch2_lru_set(struct btree_trans *trans, u16 lru_id,
 			     k->k.p, BTREE_ITER_INTENT);
 
 	ret = bch2_btree_iter_traverse(&iter) ?:
-		bch2_btree_delete_at(trans, &iter, 0);
+		bch2_trans_update(trans, &iter, k, 0);
 	bch2_trans_iter_exit(trans, &iter);
 	return ret;
 }
@@ -111,11 +111,12 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 
 	a = bch2_alloc_to_v4(k, &a_convert);
 
-	if (fsck_err_on(k.k->type != KEY_TYPE_set ||
+	if (fsck_err_on(lru_k.k->type != KEY_TYPE_set ||
 			a->data_type != BCH_DATA_cached ||
-			a->io_time[READ] != lru_k.k->p.offset, c,
-			"incorrect lru entry %s\n"
+			a->io_time[READ] != lru_pos_time(lru_k.k->p), c,
+			"incorrect lru entry (time %llu) %s\n"
 			"  for %s",
+			lru_pos_time(lru_k.k->p),
 			(bch2_bkey_val_to_text(&buf1, c, lru_k), buf1.buf),
 			(bch2_bkey_val_to_text(&buf2, c, k), buf2.buf))) {
 		ret = bch2_btree_delete_at(trans, lru_iter, 0);
