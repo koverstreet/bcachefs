@@ -172,7 +172,7 @@ int bch2_btree_insert_keys_write_buffer(struct btree_trans *trans)
 	struct btree_write_buffered_key *i;
 	unsigned u64s = 0;
 
-	BUG_ON(trans->flags & BTREE_INSERT_JOURNAL_REPLAY);
+	EBUG_ON(trans->flags & BTREE_INSERT_JOURNAL_REPLAY);
 
 	mutex_lock(&wb->lock);
 	if (wb->nr + trans->nr_wb_updates > wb->size) {
@@ -181,7 +181,7 @@ int bch2_btree_insert_keys_write_buffer(struct btree_trans *trans)
 	}
 
 	trans_for_each_wb_update(trans, i) {
-		BUG_ON(i->k.k.u64s != BKEY_U64s);
+		EBUG_ON(i->k.k.u64s > BTREE_WRITE_BUFERED_U64s_MAX);
 
 		i->journal_seq		= trans->journal_res.seq;
 		i->journal_offset	= trans->journal_res.offset;
@@ -195,7 +195,7 @@ int bch2_btree_insert_keys_write_buffer(struct btree_trans *trans)
 	wb->nr += trans->nr_wb_updates;
 
 	if (likely(!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))) {
-		BUG_ON(u64s > trans->journal_preres.u64s);
+		EBUG_ON(u64s > trans->journal_preres.u64s);
 
 		trans->journal_preres.u64s	-= u64s;
 		wb->res.u64s			+= u64s;

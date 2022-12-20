@@ -4,11 +4,14 @@
 
 #include "journal_types.h"
 
+#define BTREE_WRITE_BUFERED_VAL_U64s_MAX	4
+#define BTREE_WRITE_BUFERED_U64s_MAX	(BKEY_U64s + BTREE_WRITE_BUFERED_VAL_U64s_MAX)
+
 struct btree_write_buffered_key {
 	u64			journal_seq;
 	unsigned		journal_offset;
 	enum btree_id		btree;
-	struct bkey_i		k;
+	__BKEY_PADDED(k, BTREE_WRITE_BUFERED_VAL_U64s_MAX);
 };
 
 struct btree_write_buffer {

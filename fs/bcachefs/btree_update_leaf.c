@@ -1658,7 +1658,8 @@ int __must_check bch2_trans_update_buffered(struct btree_trans *trans,
 {
 	int ret;
 
-	BUG_ON(trans->nr_wb_updates > trans->wb_updates_size);
+	EBUG_ON(trans->nr_wb_updates > trans->wb_updates_size);
+	EBUG_ON(k->k.u64s > BTREE_WRITE_BUFERED_U64s_MAX);
 
 	if (!trans->wb_updates ||
 	    trans->nr_wb_updates == trans->wb_updates_size) {
@@ -1686,10 +1687,12 @@ int __must_check bch2_trans_update_buffered(struct btree_trans *trans,
 		trans->wb_updates = u;
 	}
 
-	trans->wb_updates[trans->nr_wb_updates++] = (struct btree_write_buffered_key) {
+	trans->wb_updates[trans->nr_wb_updates] = (struct btree_write_buffered_key) {
 		.btree	= btree,
-		.k	= *k,
 	};
+
+	bkey_copy(&trans->wb_updates[trans->nr_wb_updates].k, k);
+	trans->nr_wb_updates++;
 
 	return 0;
 }
