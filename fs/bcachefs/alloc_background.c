@@ -284,7 +284,9 @@ int bch2_alloc_v4_invalid(const struct bch_fs *c, struct bkey_s_c k,
 	 * XXX this is wrong, we'll be checking updates that happened from
 	 * before BCH_FS_CHECK_BACKPOINTERS_DONE
 	 */
-	if (rw == WRITE && test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags)) {
+	if (rw == WRITE &&
+	    !(flags & BKEY_INVALID_FROM_JOURNAL) &&
+	    test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags)) {
 		unsigned i, bp_len = 0;
 
 		for (i = 0; i < BCH_ALLOC_V4_NR_BACKPOINTERS(a.v); i++)
