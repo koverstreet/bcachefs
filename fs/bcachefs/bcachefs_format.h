@@ -1006,7 +1006,9 @@ struct bch_sb_layout {
  */
 struct bch_sb {
 	struct bch_csum		csum;
-	__le64			version;
+	__le16			version;
+	__le16			version_min;
+	__le16			pad[2];
 	uuid_le			magic;
 	uuid_le			uuid;
 	uuid_le			user_uuid;

@@ -278,11 +278,11 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 	const char *err;
 	u16 block_size;
 
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_MIN ||
-	    le64_to_cpu(sb->version) > BCH_SB_VERSION_MAX)
-		return"Unsupported superblock version";
+	if (le16_to_cpu(sb->version) < BCH_SB_VERSION_MIN ||
+	    le16_to_cpu(sb->version) > BCH_SB_VERSION_MAX)
+		return "Unsupported superblock version";
 
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_MAX) {
+	if (le16_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_MAX) {
 		SET_BCH_SB_ENCODED_EXTENT_MAX_BITS(sb, 7);
 		SET_BCH_SB_POSIX_ACL(sb, 1);
 	}
@@ -373,12 +373,12 @@ const char *bch2_sb_validate(struct bch_sb_handle *disk_sb)
 			return err;
 	}
 
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_NONCE_V1 &&
+	if (le16_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_NONCE_V1 &&
 	    bch2_sb_get_crypt(sb) &&
 	    BCH_SB_INITIALIZED(sb))
 		return "Incompatible extent nonces";
 
-	sb->version = cpu_to_le64(BCH_SB_VERSION_MAX);
+	sb->version = cpu_to_le16(BCH_SB_VERSION_MAX);
 
 	return NULL;
 }
@@ -511,9 +511,9 @@ reread:
 	    uuid_le_cmp(sb->sb->magic, BCHFS_MAGIC))
 		return "Not a bcachefs superblock";
 
-	if (le64_to_cpu(sb->sb->version) < BCH_SB_VERSION_MIN ||
-	    le64_to_cpu(sb->sb->version) > BCH_SB_VERSION_MAX)
-		return"Unsupported superblock version";
+	if (le16_to_cpu(sb->sb->version) < BCH_SB_VERSION_MIN ||
+	    le16_to_cpu(sb->sb->version) > BCH_SB_VERSION_MAX)
+		return "Unsupported superblock version";
 
 	bytes = vstruct_bytes(sb->sb);
 
@@ -866,7 +866,7 @@ static const char *bch2_sb_validate_members(struct bch_sb *sb,
 			return "bucket size smaller than btree node size";
 	}
 
-	if (le64_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_MAX)
+	if (le16_to_cpu(sb->version) < BCH_SB_VERSION_EXTENT_MAX)
 		for (m = mi->members;
 		     m < mi->members + sb->nr_devices;
 		     m++)
