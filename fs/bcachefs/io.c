@@ -183,6 +183,12 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 
 			n->have_io_ref		= true;
 			bio_set_dev(&n->bio, ca->disk_sb.bdev);
+
+			if (type != BCH_DATA_BTREE && unlikely(c->opts.no_data_io)) {
+				bio_endio(&n->bio);
+				continue;
+			}
+
 			submit_bio(&n->bio);
 		} else {
 			n->have_io_ref		= false;
@@ -1158,7 +1164,7 @@ static void __bch2_read_endio(struct work_struct *work)
 	}
 
 	csum = bch2_checksum_bio(c, crc.csum_type, nonce, src);
-	if (bch2_crc_cmp(csum, rbio->pick.crc.csum))
+	if (bch2_crc_cmp(csum, rbio->pick.crc.csum) && !c->opts.no_data_io)
 		goto csum_err;
 
 	if (unlikely(rbio->narrow_crcs))
@@ -1402,6 +1408,11 @@ noclone:
 		     bio_sectors(&rbio->bio));
 
 	if (likely(!(flags & BCH_READ_IN_RETRY))) {
+		if (unlikely(c->opts.no_data_io)) {
+			bio_endio(&rbio->bio);
+			return ret;
+		}
+
 		submit_bio(&rbio->bio);
 	} else {
 		submit_bio_wait(&rbio->bio);

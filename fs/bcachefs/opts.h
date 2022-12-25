@@ -173,6 +173,9 @@ enum opt_type {
 		NO_SB_OPT,			false)			\
 	BCH_OPT(nostart,		u8,	OPT_INTERNAL,		\
 		OPT_BOOL(),						\
+		NO_SB_OPT,			false)			\
+	BCH_OPT(no_data_io,		u8,	OPT_MOUNT,		\
+		OPT_BOOL(),						\
 		NO_SB_OPT,			false)
 
 struct bch_opts {
