@@ -39,3 +39,9 @@ config BCACHEFS_DEBUG
 
 	The resulting code will be significantly slower than normal; you
 	probably shouldn't select this option unless you're a developer.
+
+config BCACHEFS_NO_IO
+	bool "disable data IO calls"
+	depends on BCACHEFS_FS
+	help
+	This disables low level reads and writes for user data, only for performance testing
