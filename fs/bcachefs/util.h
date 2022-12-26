@@ -391,7 +391,12 @@ struct bch2_time_stats {
 	struct bch2_time_stat_buffer __percpu *buffer;
 };
 
+#ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
 void bch2_time_stats_update(struct bch2_time_stats *stats, u64 time);
+#else
+static inline void bch2_time_stats_update(struct bch2_time_stats *stats, u64 start) {}
+#endif
+
 size_t bch2_time_stats_print(struct bch2_time_stats *, char *, size_t);
 
 void bch2_time_stats_exit(struct bch2_time_stats *);

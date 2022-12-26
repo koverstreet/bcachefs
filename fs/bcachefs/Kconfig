@@ -39,3 +39,9 @@ config BCACHEFS_DEBUG
 
 	The resulting code will be significantly slower than normal; you
 	probably shouldn't select this option unless you're a developer.
+
+config BCACHEFS_NO_LATENCY_ACCT
+	bool "disable latency accounting and time stats"
+	depends on BCACHEFS_FS
+	help
+	This disables device latency tracking and time stats, only for performance testing

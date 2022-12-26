@@ -421,7 +421,7 @@ struct bch_dev {
 
 	/* The rest of this all shows up in sysfs */
 	atomic64_t		cur_latency[2];
-	struct time_stats	io_latency[2];
+	struct bch2_time_stats	io_latency[2];
 
 	struct io_count __percpu *io_done;
 };

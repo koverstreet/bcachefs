@@ -31,6 +31,7 @@
 
 #include <trace/events/bcachefs.h>
 
+#ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
 void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 {
 	atomic64_t *latency = &ca->cur_latency[rw];
@@ -57,6 +58,7 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 
 	bch2_time_stats_update(&ca->io_latency[rw], submit_time);
 }
+#endif
 
 /* Allocate, free from mempool: */
 
