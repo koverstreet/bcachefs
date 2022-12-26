@@ -45,3 +45,9 @@ config BCACHEFS_NO_IO
 	depends on BCACHEFS_FS
 	help
 	This disables low level reads and writes for user data, only for performance testing
+
+config BCACHEFS_NO_LATENCY_ACCT
+	bool "disable latency accounting and time stats"
+	depends on BCACHEFS_FS
+	help
+	This disables device latency tracking and time stats, only for performance testing
