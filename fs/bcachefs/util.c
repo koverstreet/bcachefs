@@ -268,6 +268,7 @@ static void __bch2_time_stats_update(struct bch2_time_stats *stats,
 	bch2_quantiles_update(&stats->quantiles, duration);
 }
 
+#ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
 void bch2_time_stats_update(struct bch2_time_stats *stats, u64 start)
 {
 	u64 end = local_clock();
@@ -310,6 +311,7 @@ void bch2_time_stats_update(struct bch2_time_stats *stats, u64 start)
 		preempt_enable();
 	}
 }
+#endif
 
 static const struct time_unit {
 	const char	*name;
