@@ -154,7 +154,7 @@ replace:
 	i->nr_ptrs	= 0;
 	i->csum_good	= entry_ptr.csum_good;
 	i->ignore	= false;
-	memcpy(&i->j, j, bytes);
+	unsafe_memcpy(&i->j, j, bytes, "embedded variable length struct");
 	i->ptrs[i->nr_ptrs++] = entry_ptr;
 
 	if (dup) {
