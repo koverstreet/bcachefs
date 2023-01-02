@@ -1899,7 +1899,7 @@ static void promote_start(struct promote_op *op, struct bch_read_bio *rbio)
 	bch2_data_update_read_done(&op->write, rbio->pick.crc);
 }
 
-static struct promote_op *__promote_alloc(struct bch_fs *c,
+static struct promote_op *__promote_alloc(struct btree_trans *trans,
 					  enum btree_id btree_id,
 					  struct bkey_s_c k,
 					  struct bpos pos,
@@ -1908,6 +1908,7 @@ static struct promote_op *__promote_alloc(struct bch_fs *c,
 					  unsigned sectors,
 					  struct bch_read_bio **rbio)
 {
+	struct bch_fs *c = trans->c;
 	struct promote_op *op = NULL;
 	struct bio *bio;
 	unsigned pages = DIV_ROUND_UP(sectors, PAGE_SECTORS);
@@ -1951,7 +1952,7 @@ static struct promote_op *__promote_alloc(struct bch_fs *c,
 	bio = &op->write.op.wbio.bio;
 	bio_init(bio, NULL, bio->bi_inline_vecs, pages, 0);
 
-	ret = bch2_data_update_init(c, &op->write,
+	ret = bch2_data_update_init(trans, NULL, &op->write,
 			writepoint_hashed((unsigned long) current),
 			opts,
 			(struct data_update_opts) {
@@ -1975,16 +1976,17 @@ err:
 }
 
 noinline
-static struct promote_op *promote_alloc(struct bch_fs *c,
-					       struct bvec_iter iter,
-					       struct bkey_s_c k,
-					       struct extent_ptr_decoded *pick,
-					       struct bch_io_opts opts,
-					       unsigned flags,
-					       struct bch_read_bio **rbio,
-					       bool *bounce,
-					       bool *read_full)
+static struct promote_op *promote_alloc(struct btree_trans *trans,
+					struct bvec_iter iter,
+					struct bkey_s_c k,
+					struct extent_ptr_decoded *pick,
+					struct bch_io_opts opts,
+					unsigned flags,
+					struct bch_read_bio **rbio,
+					bool *bounce,
+					bool *read_full)
 {
+	struct bch_fs *c = trans->c;
 	bool promote_full = *read_full || READ_ONCE(c->promote_whole_extents);
 	/* data might have to be decompressed in the write path: */
 	unsigned sectors = promote_full
@@ -1998,7 +2000,7 @@ static struct promote_op *promote_alloc(struct bch_fs *c,
 	if (!should_promote(c, k, pos, opts, flags))
 		return NULL;
 
-	promote = __promote_alloc(c,
+	promote = __promote_alloc(trans,
 				  k.k->type == KEY_TYPE_reflink_v
 				  ? BTREE_ID_reflink
 				  : BTREE_ID_extents,
@@ -2606,7 +2608,7 @@ retry_pick:
 	}
 
 	if (orig->opts.promote_target)
-		promote = promote_alloc(c, iter, k, &pick, orig->opts, flags,
+		promote = promote_alloc(trans, iter, k, &pick, orig->opts, flags,
 					&rbio, &bounce, &read_full);
 
 	if (!read_full) {
