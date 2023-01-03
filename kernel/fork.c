@@ -535,6 +535,9 @@ void put_task_stack(struct task_struct *tsk)
 
 void free_task(struct task_struct *tsk)
 {
+#ifdef CONFIG_SECCOMP
+	WARN_ON_ONCE(tsk->seccomp.filter);
+#endif
 	release_user_cpus_ptr(tsk);
 	scs_release(tsk);
 
@@ -2043,15 +2046,6 @@ static __latent_entropy struct task_struct *copy_process(
 			return ERR_PTR(-EINVAL);
 	}
 
-	/*
-	 * If the new process will be in a different time namespace
-	 * do not allow it to share VM or a thread group with the forking task.
-	 */
-	if (clone_flags & (CLONE_THREAD | CLONE_VM)) {
-		if (nsp->time_ns != nsp->time_ns_for_children)
-			return ERR_PTR(-EINVAL);
-	}
-
 	if (clone_flags & CLONE_PIDFD) {
 		/*
 		 * - CLONE_DETACHED is blocked so that we can potentially
@@ -2406,12 +2400,6 @@ static __latent_entropy struct task_struct *copy_process(
 
 	spin_lock(&current->sighand->siglock);
 
-	/*
-	 * Copy seccomp details explicitly here, in case they were changed
-	 * before holding sighand lock.
-	 */
-	copy_seccomp(p);
-
 	rv_task_fork(p);
 
 	rseq_fork(p, clone_flags);
@@ -2427,6 +2415,14 @@ static __latent_entropy struct task_struct *copy_process(
 		retval = -EINTR;
 		goto bad_fork_cancel_cgroup;
 	}
+
+	/* No more failure paths after this point. */
+
+	/*
+	 * Copy seccomp details explicitly here, in case they were changed
+	 * before holding sighand lock.
+	 */
+	copy_seccomp(p);
 
 	init_task_pid_links(p);
 	if (likely(p->pid)) {
