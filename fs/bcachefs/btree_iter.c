@@ -2909,8 +2909,11 @@ void __bch2_trans_init(struct btree_trans *trans, struct bch_fs *c, unsigned fn_
 			trans->mem_bytes = expected_mem_bytes;
 		}
 	}
-	if (s)
+
+	if (s) {
 		trans->nr_max_paths = s->nr_max_paths;
+		trans->wb_updates_size = s->wb_updates_size;
+	}
 
 	trans->srcu_idx = srcu_read_lock(&c->btree_trans_barrier);
 	trans->srcu_lock_time	= jiffies;

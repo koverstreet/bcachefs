@@ -77,6 +77,8 @@ int bch2_trans_update_extent(struct btree_trans *, struct btree_iter *,
 
 int __must_check bch2_trans_update(struct btree_trans *, struct btree_iter *,
 				   struct bkey_i *, enum btree_update_flags);
+int __must_check bch2_trans_update_buffered(struct btree_trans *,
+					    enum btree_id, struct bkey_i *);
 
 void bch2_trans_commit_hook(struct btree_trans *,
 			    struct btree_trans_commit_hook *);
@@ -143,6 +145,11 @@ static inline int bch2_trans_commit(struct btree_trans *trans,
 	     (_i) < (_trans)->updates + (_trans)->nr_updates;		\
 	     (_i)++)
 
+#define trans_for_each_wb_update(_trans, _i)				\
+	for ((_i) = (_trans)->wb_updates;				\
+	     (_i) < (_trans)->wb_updates + (_trans)->nr_wb_updates;	\
+	     (_i)++)
+
 static inline void bch2_trans_reset_updates(struct btree_trans *trans)
 {
 	struct btree_insert_entry *i;
@@ -152,6 +159,8 @@ static inline void bch2_trans_reset_updates(struct btree_trans *trans)
 
 	trans->extra_journal_res	= 0;
 	trans->nr_updates		= 0;
+	trans->nr_wb_updates		= 0;
+	trans->wb_updates		= NULL;
 	trans->hooks			= NULL;
 	trans->extra_journal_entries.nr	= 0;
 
