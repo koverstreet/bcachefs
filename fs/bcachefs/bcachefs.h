@@ -393,6 +393,7 @@ enum bch_time_stats {
 
 #include "alloc_types.h"
 #include "btree_types.h"
+#include "btree_write_buffer_types.h"
 #include "buckets_types.h"
 #include "buckets_waiting_for_journal_types.h"
 #include "clock_types.h"
@@ -581,6 +582,7 @@ struct btree_transaction_stats {
 	struct bch2_time_stats	lock_hold_times;
 	struct mutex		lock;
 	unsigned		nr_max_paths;
+	unsigned		wb_updates_size;
 	unsigned		max_mem;
 	char			*max_paths_text;
 };
@@ -794,6 +796,8 @@ struct bch_fs {
 
 	struct btree_key_cache	btree_key_cache;
 	unsigned		btree_key_cache_btrees;
+
+	struct btree_write_buffer btree_write_buffer;
 
 	struct workqueue_struct	*btree_update_wq;
 	struct workqueue_struct	*btree_io_complete_wq;
