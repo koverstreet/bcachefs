@@ -1862,6 +1862,8 @@ static void promote_free(struct bch_fs *c, struct promote_op *op)
 {
 	int ret;
 
+	bch2_data_update_exit(&op->write);
+
 	ret = rhashtable_remove_fast(&c->promote_table, &op->hash,
 				     bch_promote_params);
 	BUG_ON(ret);
@@ -1877,8 +1879,6 @@ static void promote_done(struct bch_write_op *wop)
 
 	bch2_time_stats_update(&c->times[BCH_TIME_data_promote],
 			       op->start_time);
-
-	bch2_data_update_exit(&op->write);
 	promote_free(c, op);
 }
 
