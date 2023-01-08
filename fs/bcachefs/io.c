@@ -1638,9 +1638,10 @@ again:
 				? NULL : cl)));
 		ret = PTR_ERR_OR_ZERO(wp);
 		if (unlikely(ret)) {
-			if (bch2_err_matches(ret, BCH_ERR_operation_blocked))
-				break;
-
+			if (!bch2_err_matches(ret, BCH_ERR_operation_blocked)) {
+				op->error = PTR_ERR(wp);
+				op->flags |= BCH_WRITE_DONE;
+			}
 			break;
 		}
 
