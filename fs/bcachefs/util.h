@@ -361,7 +361,7 @@ ssize_t bch2_read_string_list(const char *, const char * const[]);
 ssize_t bch2_scnprint_flag_list(char *, size_t, const char * const[], u64);
 u64 bch2_read_flag_list(char *, const char * const[]);
 
-struct time_stats {
+struct bch2_time_stats {
 	spinlock_t	lock;
 	u64		count;
 	/*
@@ -375,9 +375,9 @@ struct time_stats {
 	u64		last;
 };
 
-void bch2_time_stats_clear(struct time_stats *stats);
-void __bch2_time_stats_update(struct time_stats *stats, u64 time);
-void bch2_time_stats_update(struct time_stats *stats, u64 time);
+void bch2_time_stats_clear(struct bch2_time_stats *stats);
+void __bch2_time_stats_update(struct bch2_time_stats *stats, u64 time);
+void bch2_time_stats_update(struct bch2_time_stats *stats, u64 time);
 
 static inline unsigned local_clock_us(void)
 {

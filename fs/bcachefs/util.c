@@ -208,7 +208,7 @@ bool bch2_is_zero(const void *_p, size_t n)
 	return true;
 }
 
-void bch2_time_stats_clear(struct time_stats *stats)
+void bch2_time_stats_clear(struct bch2_time_stats *stats)
 {
 	spin_lock(&stats->lock);
 
@@ -222,7 +222,7 @@ void bch2_time_stats_clear(struct time_stats *stats)
 	spin_unlock(&stats->lock);
 }
 
-void __bch2_time_stats_update(struct time_stats *stats, u64 start_time)
+void __bch2_time_stats_update(struct bch2_time_stats *stats, u64 start_time)
 {
 	u64 now, duration, last;
 
@@ -254,7 +254,7 @@ void __bch2_time_stats_update(struct time_stats *stats, u64 start_time)
 	stats->last = now ?: 1;
 }
 
-void bch2_time_stats_update(struct time_stats *stats, u64 start_time)
+void bch2_time_stats_update(struct bch2_time_stats *stats, u64 start_time)
 {
 	spin_lock(&stats->lock);
 	__bch2_time_stats_update(stats, start_time);

@@ -193,10 +193,10 @@ struct journal {
 	u64			need_write_time;
 	u64			write_start_time;
 
-	struct time_stats	*write_time;
-	struct time_stats	*delay_time;
-	struct time_stats	*blocked_time;
-	struct time_stats	*flush_seq_time;
+	struct bch2_time_stats	*write_time;
+	struct bch2_time_stats	*delay_time;
+	struct bch2_time_stats	*blocked_time;
+	struct bch2_time_stats	*flush_seq_time;
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 	struct lockdep_map	res_map;
