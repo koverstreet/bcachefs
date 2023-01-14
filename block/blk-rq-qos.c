@@ -245,10 +245,7 @@ void rq_qos_wait(struct rq_wait *rqw, void *private_data,
 		 cleanup_cb_t *cleanup_cb)
 {
 	struct rq_qos_wait_data data = {
-		.wq = {
-			.func	= rq_qos_wake_function,
-			.entry	= LIST_HEAD_INIT(data.wq.entry),
-		},
+		.wq = WAIT_FUNC_INITIALIZER(data.wq, rq_qos_wake_function),
 		.task = current,
 		.rqw = rqw,
 		.cb = acquire_inflight_cb,
