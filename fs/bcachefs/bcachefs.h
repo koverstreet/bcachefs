@@ -718,7 +718,7 @@ struct bch_fs {
 #undef BCH_DEBUG_PARAM
 
 #define BCH_TIME_STAT(name, frequency_units, duration_units)		\
-	struct time_stats	name##_time;
+	struct bch2_time_stats	name##_time;
 	BCH_TIME_STATS()
 #undef BCH_TIME_STAT
 };
