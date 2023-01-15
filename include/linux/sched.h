@@ -781,6 +781,8 @@ struct task_struct {
 	 */
 	int				recent_used_cpu;
 	int				wake_cpu;
+
+	u64				schedule_time;
 #endif
 	int				on_rq;
 

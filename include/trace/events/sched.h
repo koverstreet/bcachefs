@@ -735,6 +735,21 @@ DECLARE_TRACE(sched_update_nr_running_tp,
 	TP_PROTO(struct rq *rq, int change),
 	TP_ARGS(rq, change));
 
+TRACE_EVENT(sched_blocked,
+	TP_PROTO(u64 ns),
+	TP_ARGS(ns),
+
+	TP_STRUCT__entry(
+		__field(	u64,	ns	)
+	),
+
+	TP_fast_assign(
+		__entry->ns = ns;
+	),
+
+	TP_printk("%llu", __entry->ns)
+);
+
 #endif /* _TRACE_SCHED_H */
 
 /* This part must be outside protection */

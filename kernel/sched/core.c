@@ -6490,6 +6490,9 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 #endif
 
 	if (likely(prev != next)) {
+		u64 now = ktime_get_ns();
+
+		prev->schedule_time = now;
 		rq->nr_switches++;
 		/*
 		 * RCU users of rcu_dereference(rq->curr) may not see
@@ -6519,6 +6522,10 @@ static void __sched notrace __schedule(unsigned int sched_mode)
 
 		/* Also unlocks the rq: */
 		rq = context_switch(rq, prev, next, &rf);
+
+		trace_sched_blocked(time_after(now, next->schedule_time)
+				    ? now - next->schedule_time
+				    : 0);
 	} else {
 		rq->clock_update_flags &= ~(RQCF_ACT_SKIP|RQCF_REQ_SKIP);
 
