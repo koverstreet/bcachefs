@@ -14,7 +14,7 @@
 
 #ifndef __ASSEMBLY__
 
-#include <linux/percpu.h>
+#include <linux/percpu-defs.h>
 
 #include <asm/cpufeature.h>
 #include <asm/virt.h>
