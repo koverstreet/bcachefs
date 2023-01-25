@@ -477,7 +477,7 @@ bch2_btree_path_traverse_cached_slowpath(struct btree_trans *trans, struct btree
 
 	path->l[1].b = NULL;
 
-	if (bch2_btree_node_relock(trans, path, 0)) {
+	if (bch2_btree_node_relock_notrace(trans, path, 0)) {
 		ck = (void *) path->l[0].b;
 		goto fill;
 	}
@@ -567,7 +567,7 @@ int bch2_btree_path_traverse_cached(struct btree_trans *trans, struct btree_path
 
 	path->l[1].b = NULL;
 
-	if (bch2_btree_node_relock(trans, path, 0)) {
+	if (bch2_btree_node_relock_notrace(trans, path, 0)) {
 		ck = (void *) path->l[0].b;
 		goto fill;
 	}
