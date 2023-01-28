@@ -95,7 +95,16 @@ unsigned long page_ext_size = sizeof(struct page_ext);
 static unsigned long total_usage;
 struct page_ext *lookup_page_ext(const struct page *page);
 
+#ifdef CONFIG_MEM_ALLOC_PROFILING_DEBUG
+/*
+ * To ensure correct allocation tagging for pages, page_ext should be available
+ * before the first page allocation. Otherwise early task stacks will be
+ * allocated before page_ext initialization and missing tags will be flagged.
+ */
+bool early_page_ext = true;
+#else
 bool early_page_ext;
+#endif
 static int __init setup_early_page_ext(char *str)
 {
 	early_page_ext = true;
