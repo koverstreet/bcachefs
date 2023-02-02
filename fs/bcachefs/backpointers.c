@@ -246,52 +246,54 @@ int bch2_bucket_backpointer_add(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct bkey_i_backpointer *bp_k;
 	int ret;
-#if 0
-	struct bch_backpointer *bps = alloc_v4_backpointers(&a->v);
-	unsigned i, nr = BCH_ALLOC_V4_NR_BACKPOINTERS(&a->v);
-	/* Check for duplicates: */
-	for (i = 0; i < nr; i++) {
-		int cmp = backpointer_cmp(bps[i], bp);
-		if (cmp >= 0)
-			break;
-	}
 
-	if ((i &&
-	     (bps[i - 1].bucket_offset +
-	      bps[i - 1].bucket_len > bp.bucket_offset)) ||
-	    (i < nr &&
-	     (bp.bucket_offset + bp.bucket_len > bps[i].bucket_offset))) {
-		struct printbuf buf = PRINTBUF;
-
-		prt_printf(&buf, "overlapping backpointer found when inserting ");
-		bch2_backpointer_to_text(&buf, &bp);
-		prt_newline(&buf);
-		printbuf_indent_add(&buf, 2);
-
-		prt_printf(&buf, "into ");
-		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&a->k_i));
-		prt_newline(&buf);
-
-		prt_printf(&buf, "for ");
-		bch2_bkey_val_to_text(&buf, c, orig_k);
-
-		bch_err(c, "%s", buf.buf);
-		printbuf_exit(&buf);
-		if (test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags)) {
-			bch2_inconsistent_error(c);
-			return -EIO;
+	if (0) {
+		struct bch_backpointer *bps = alloc_v4_backpointers(&a->v);
+		unsigned i, nr = BCH_ALLOC_V4_NR_BACKPOINTERS(&a->v);
+		/* Check for duplicates: */
+		for (i = 0; i < nr; i++) {
+			int cmp = backpointer_cmp(bps[i], bp);
+			if (cmp >= 0)
+				break;
 		}
+
+		if ((i &&
+		     (bps[i - 1].bucket_offset +
+		      bps[i - 1].bucket_len > bp.bucket_offset)) ||
+		    (i < nr &&
+		     (bp.bucket_offset + bp.bucket_len > bps[i].bucket_offset))) {
+			struct printbuf buf = PRINTBUF;
+
+			prt_printf(&buf, "overlapping backpointer found when inserting ");
+			bch2_backpointer_to_text(&buf, &bp);
+			prt_newline(&buf);
+			printbuf_indent_add(&buf, 2);
+
+			prt_printf(&buf, "into ");
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&a->k_i));
+			prt_newline(&buf);
+
+			prt_printf(&buf, "for ");
+			bch2_bkey_val_to_text(&buf, c, orig_k);
+
+			bch_err(c, "%s", buf.buf);
+			printbuf_exit(&buf);
+			if (test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags)) {
+				bch2_inconsistent_error(c);
+				return -EIO;
+			}
+		}
+
+		if (nr < BCH_ALLOC_V4_NR_BACKPOINTERS_MAX) {
+			array_insert_item(bps, nr, i, bp);
+			SET_BCH_ALLOC_V4_NR_BACKPOINTERS(&a->v, nr);
+			set_alloc_v4_u64s(a);
+			return 0;
+		}
+
+		/* Overflow: use backpointer btree */
 	}
 
-	if (nr < BCH_ALLOC_V4_NR_BACKPOINTERS_MAX) {
-		array_insert_item(bps, nr, i, bp);
-		SET_BCH_ALLOC_V4_NR_BACKPOINTERS(&a->v, nr);
-		set_alloc_v4_u64s(a);
-		return 0;
-	}
-
-	/* Overflow: use backpointer btree */
-#endif
 	bp_k = bch2_trans_kmalloc_nomemzero(trans, sizeof(struct bkey_i_backpointer));
 	ret = PTR_ERR_OR_ZERO(bp_k);
 	if (ret)
