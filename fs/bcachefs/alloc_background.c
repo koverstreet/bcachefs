@@ -414,13 +414,12 @@ void bch2_alloc_to_text(struct printbuf *out, struct bch_fs *c, struct bkey_s_c 
 	prt_newline(out);
 	prt_printf(out, "io_time[WRITE]    %llu",	a->io_time[WRITE]);
 	prt_newline(out);
+	prt_printf(out, "bp_start          %llu", BCH_ALLOC_V4_BACKPOINTERS_START(a));
+	prt_newline(out);
 
-	if (k.k->type == KEY_TYPE_alloc_v4) {
+	if (BCH_ALLOC_V4_NR_BACKPOINTERS(a)) {
 		struct bkey_s_c_alloc_v4 a_raw = bkey_s_c_to_alloc_v4(k);
 		const struct bch_backpointer *bps = alloc_v4_backpointers_c(a_raw.v);
-
-		prt_printf(out, "bp_start          %llu", BCH_ALLOC_V4_BACKPOINTERS_START(a_raw.v));
-		prt_newline(out);
 
 		prt_printf(out, "backpointers:     %llu", BCH_ALLOC_V4_NR_BACKPOINTERS(a_raw.v));
 		printbuf_indent_add(out, 2);

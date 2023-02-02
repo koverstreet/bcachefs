@@ -19,6 +19,9 @@ void bch2_backpointer_swab(struct bkey_s);
 
 #define MAX_EXTENT_COMPRESS_RATIO_SHIFT		10
 
+int bch2_bucket_backpointer_mod(struct btree_trans *, struct bkey_i_alloc_v4 *,
+				struct bch_backpointer, struct bkey_s_c, bool);
+
 static inline void bch2_extent_ptr_to_bp(struct bch_fs *c,
 			   enum btree_id btree_id, unsigned level,
 			   struct bkey_s_c k, struct extent_ptr_decoded p,
@@ -40,10 +43,6 @@ static inline void bch2_extent_ptr_to_bp(struct bch_fs *c,
 	};
 }
 
-int bch2_bucket_backpointer_del(struct btree_trans *, struct bkey_i_alloc_v4 *,
-				struct bch_backpointer, struct bkey_s_c);
-int bch2_bucket_backpointer_add(struct btree_trans *, struct bkey_i_alloc_v4 *,
-				struct bch_backpointer, struct bkey_s_c);
 int bch2_get_next_backpointer(struct btree_trans *, struct bpos, int,
 			      u64 *, struct bch_backpointer *, unsigned);
 struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *, struct btree_iter *,

@@ -1349,7 +1349,7 @@ need_mark:
 
 /* trans_mark: */
 
-static int bch2_trans_mark_pointer(struct btree_trans *trans,
+static inline int bch2_trans_mark_pointer(struct btree_trans *trans,
 				   enum btree_id btree_id, unsigned level,
 				   struct bkey_s_c k, struct extent_ptr_decoded p,
 				   unsigned flags)
@@ -1378,9 +1378,7 @@ static int bch2_trans_mark_pointer(struct btree_trans *trans,
 		goto err;
 
 	if (!p.ptr.cached) {
-		ret = insert
-			? bch2_bucket_backpointer_add(trans, a, bp, k)
-			: bch2_bucket_backpointer_del(trans, a, bp, k);
+		ret = bch2_bucket_backpointer_mod(trans, a, bp, k, insert);
 		if (ret)
 			goto err;
 	}
