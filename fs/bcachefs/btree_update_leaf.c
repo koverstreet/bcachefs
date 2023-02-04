@@ -887,6 +887,13 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 	 * Drop journal reservation after dropping write locks, since dropping
 	 * the journal reservation may kick off a journal write:
 	 */
+	if (!ret && trans->journal_res.u64s) {
+		bch2_dump_trans_updates(trans);
+		panic("left %u/%u ret %s\n",
+		      trans->journal_res.u64s,
+		      trans->journal_u64s,
+		      bch2_err_str(ret));
+	}
 	bch2_journal_res_put(&c->journal, &trans->journal_res);
 
 	if (unlikely(ret))

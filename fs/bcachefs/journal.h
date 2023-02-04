@@ -315,9 +315,11 @@ static inline int journal_res_get_fast(struct journal *j,
 		 * cacheline boundary:
 		 */
 		u64s = res->u64s;
+		/*
 		offset = sizeof(struct jset) / sizeof(u64) +
 			  new.cur_entry_offset + u64s;
 		u64s += ((offset - 1) & ((SMP_CACHE_BYTES / sizeof(u64)) - 1)) + 1;
+		*/
 
 
 		/*
