@@ -15,6 +15,9 @@ bool bch2_btree_bset_insert_key(struct btree_trans *, struct btree_path *,
 				struct bkey_i *);
 void bch2_btree_add_journal_pin(struct bch_fs *, struct btree *, u64);
 
+inline void bch2_btree_insert_key_leaf(struct btree_trans *, struct btree_path *,
+				       struct bkey_i *, u64);
+
 enum btree_insert_flags {
 	/* First two bits for journal watermark: */
 	__BTREE_INSERT_NOFAIL = 2,

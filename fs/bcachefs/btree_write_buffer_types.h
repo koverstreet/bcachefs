@@ -18,7 +18,6 @@ struct btree_write_buffer {
 	struct mutex			lock;
 	struct mutex			flush_lock;
 	struct journal_entry_pin	journal_pin;
-	struct journal_preres		res;
 
 	struct btree_write_buffered_key	*keys;
 	struct btree_write_buffered_key	*flushing;

@@ -209,7 +209,7 @@ enum opt_type {
 	x(btree_write_buffer_size, u32,					\
 	  OPT_FS|OPT_MOUNT,						\
 	  OPT_UINT(16, (1U << 20) - 1),					\
-	  BCH2_NO_SB_OPT,		1U << 10,			\
+	  BCH2_NO_SB_OPT,		1U << 16,			\
 	  NULL,		"Number of btree write buffer entries")		\
 	x(gc_reserve_percent,		u8,				\
 	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\

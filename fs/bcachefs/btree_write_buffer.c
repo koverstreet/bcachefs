@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "btree_locking.h"
 #include "btree_update.h"
+#include "btree_update_interior.h"
 #include "btree_write_buffer.h"
 #include "error.h"
 #include "journal.h"
@@ -28,26 +30,66 @@ static int btree_write_buffered_journal_cmp(const void *_l, const void *_r)
 	return  cmp_int(l->journal_seq, r->journal_seq);
 }
 
-int __bch2_btree_write_buffer_flush(struct btree_trans *trans, unsigned commit_flags)
+static int bch2_btree_write_buffer_flush_one(struct btree_trans *trans,
+					     struct btree_iter *iter,
+					     struct btree_write_buffered_key *wb,
+					     bool *write_locked,
+					     size_t *fast)
+{
+	struct bch_fs *c = trans->c;
+	struct btree_path *path = iter->path;
+	int ret;
+
+	ret = bch2_btree_iter_traverse(iter);
+	if (ret)
+		return ret;
+
+	if (!*write_locked) {
+		ret = bch2_btree_node_lock_write(trans, path, &path->l[0].b->c);
+		if (ret)
+			return ret;
+
+		bch2_btree_node_prep_for_write(trans, path, path->l[0].b);
+		*write_locked = true;
+	}
+
+	if (!bch2_btree_node_insert_fits(c, path->l[0].b, wb->k.k.u64s)) {
+		bch2_btree_node_unlock_write(trans, path, path->l[0].b);
+		*write_locked = false;
+		goto trans_commit;
+	}
+
+	bch2_btree_insert_key_leaf(trans, path, &wb->k, wb->journal_seq);
+	(*fast)++;
+	return 0;
+trans_commit:
+	return  bch2_trans_update(trans, iter, &wb->k, 0) ?:
+		bch2_trans_commit(trans, NULL, NULL,
+				  BTREE_INSERT_NOFAIL|
+				  BTREE_INSERT_JOURNAL_RECLAIM);
+}
+
+int __bch2_btree_write_buffer_flush(struct btree_trans *trans, unsigned commit_flags,
+				    bool locked)
 {
 	struct bch_fs *c = trans->c;
 	struct journal *j = &c->journal;
 	struct btree_write_buffer *wb = &c->btree_write_buffer;
 	struct journal_entry_pin pin;
-	struct journal_preres res = { 0 };
 	struct btree_write_buffered_key *i, *dst;
-	size_t nr = 0;
+	struct btree_iter iter = { NULL };
+	size_t nr = 0, skipped = 0, fast = 0;
+	bool write_locked = false;
 	int ret = 0;
 
 	memset(&pin, 0, sizeof(pin));
 
-	if (!mutex_trylock(&wb->flush_lock))
+	if (!locked && !mutex_trylock(&wb->flush_lock))
 		return 0;
 
 	mutex_lock(&wb->lock);
 	swap(wb->keys, wb->flushing);
 	swap(wb->nr, nr);
-	swap(wb->res, res);
 
 	bch2_journal_pin_copy(j, &pin, &wb->journal_pin, NULL);
 	bch2_journal_pin_drop(j, &wb->journal_pin);
@@ -75,32 +117,58 @@ int __bch2_btree_write_buffer_flush(struct btree_trans *trans, unsigned commit_f
 	     NULL);
 
 	for (i = wb->flushing;
-	     i < wb->flushing + nr;
+	     i < wb->flushing + nr && !ret;
 	     i++) {
 		if (i + 1 < wb->flushing + nr &&
 		    i[0].btree == i[1].btree &&
 		    bpos_eq(i[0].k.k.p, i[1].k.k.p)) {
-			if (bkey_deleted(&i[1].k.k))
+			skipped++;
+			if (bkey_deleted(&i[1].k.k)) {
+				skipped++;
 				i++;
+			}
 			continue;
 		}
 
-		ret = commit_do(trans, NULL, NULL,
-				commit_flags|
-				BTREE_INSERT_NOFAIL|
-				BTREE_INSERT_JOURNAL_RECLAIM,
-				__bch2_btree_insert(trans, i->btree, &i->k));
-		if (ret == -BCH_ERR_journal_reclaim_would_deadlock)
-			goto slowpath;
-		if (bch2_fs_fatal_err_on(ret, c, "%s: insert error %s", __func__, bch2_err_str(ret)))
-			break;
+		if (write_locked &&
+		    (iter.path->btree_id != i->btree ||
+		     bpos_gt(i->k.k.p, iter.path->l[0].b->key.k.p))) {
+			bch2_btree_node_unlock_write(trans, iter.path, iter.path->l[0].b);
+			write_locked = false;
+		}
+
+		if (!iter.path || iter.path->btree_id != i->btree) {
+			bch2_trans_iter_exit(trans, &iter);
+			bch2_trans_iter_init(trans, &iter, i->btree, i->k.k.p, BTREE_ITER_INTENT);
+			iter.path->preserve = false;
+		}
+
+		bch2_btree_iter_set_pos(&iter, i->k.k.p);
+
+		while (1) {
+			ret = bch2_btree_write_buffer_flush_one(trans, &iter, i, &write_locked, &fast);
+			if (!bch2_err_matches(ret, BCH_ERR_transaction_restart))
+				break;
+			bch2_trans_begin(trans);
+		}
 	}
+	if (write_locked)
+		bch2_btree_node_unlock_write(trans, iter.path, iter.path->l[0].b);
+	bch2_trans_iter_exit(trans, &iter);
+
+	trace_write_buffer_flush(trans, nr, skipped, fast, wb->size);
+
+	if (ret == -BCH_ERR_journal_reclaim_would_deadlock)
+		goto slowpath;
+
+	bch2_fs_fatal_err_on(ret, c, "%s: insert error %s", __func__, bch2_err_str(ret));
 out:
 	bch2_journal_pin_drop(j, &pin);
-	bch2_journal_preres_put(j, &res);
 	mutex_unlock(&wb->flush_lock);
 	return ret;
 slowpath:
+	trace_write_buffer_flush_slowpath(trans, i - wb->flushing, nr);
+
 	dst = wb->flushing;
 	for (;
 	     i < wb->flushing + nr;
@@ -112,7 +180,6 @@ slowpath:
 				i++;
 			continue;
 		}
-
 
 		*dst = *i;
 		dst++;
@@ -153,7 +220,7 @@ slowpath:
 
 int bch2_btree_write_buffer_flush(struct btree_trans *trans)
 {
-	return __bch2_btree_write_buffer_flush(trans, 0);
+	return __bch2_btree_write_buffer_flush(trans, 0, false);
 }
 
 static int bch2_btree_write_buffer_journal_flush(struct journal *j,
@@ -162,7 +229,8 @@ static int bch2_btree_write_buffer_journal_flush(struct journal *j,
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 
 	return bch2_trans_run(c,
-			__bch2_btree_write_buffer_flush(&trans, BTREE_INSERT_NOCHECK_RW));
+			__bch2_btree_write_buffer_flush(&trans, BTREE_INSERT_NOCHECK_RW,
+							false));
 }
 
 int bch2_btree_insert_keys_write_buffer(struct btree_trans *trans)
@@ -170,9 +238,15 @@ int bch2_btree_insert_keys_write_buffer(struct btree_trans *trans)
 	struct bch_fs *c = trans->c;
 	struct btree_write_buffer *wb = &c->btree_write_buffer;
 	struct btree_write_buffered_key *i;
-	unsigned u64s = 0;
 
 	EBUG_ON(trans->flags & BTREE_INSERT_JOURNAL_REPLAY);
+
+	trans_for_each_wb_update(trans, i) {
+		EBUG_ON(i->k.k.u64s > BTREE_WRITE_BUFERED_U64s_MAX);
+
+		i->journal_seq		= trans->journal_res.seq;
+		i->journal_offset	= trans->journal_res.offset;
+	}
 
 	mutex_lock(&wb->lock);
 	if (wb->nr + trans->nr_wb_updates > wb->size) {
@@ -180,29 +254,14 @@ int bch2_btree_insert_keys_write_buffer(struct btree_trans *trans)
 		return -BCH_ERR_btree_insert_need_flush_buffer;
 	}
 
-	trans_for_each_wb_update(trans, i) {
-		EBUG_ON(i->k.k.u64s > BTREE_WRITE_BUFERED_U64s_MAX);
-
-		i->journal_seq		= trans->journal_res.seq;
-		i->journal_offset	= trans->journal_res.offset;
-
-		u64s += jset_u64s(i->k.k.u64s);
-	}
-
 	memcpy(wb->keys + wb->nr,
 	       trans->wb_updates,
 	       sizeof(trans->wb_updates[0]) * trans->nr_wb_updates);
 	wb->nr += trans->nr_wb_updates;
 
-	if (likely(!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY))) {
-		EBUG_ON(u64s > trans->journal_preres.u64s);
-
-		trans->journal_preres.u64s	-= u64s;
-		wb->res.u64s			+= u64s;
-
+	if (likely(!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY)))
 		bch2_journal_pin_add(&c->journal, trans->journal_res.seq, &wb->journal_pin,
 				     bch2_btree_write_buffer_journal_flush);
-	}
 	mutex_unlock(&wb->lock);
 
 	return 0;

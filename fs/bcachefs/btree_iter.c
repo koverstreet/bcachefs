@@ -1357,6 +1357,7 @@ noinline __cold
 void bch2_trans_updates_to_text(struct printbuf *buf, struct btree_trans *trans)
 {
 	struct btree_insert_entry *i;
+	struct btree_write_buffered_key *wb;
 
 	prt_printf(buf, "transaction updates for %s journal seq %llu",
 	       trans->fn, trans->journal_res.seq);
@@ -1378,6 +1379,17 @@ void bch2_trans_updates_to_text(struct printbuf *buf, struct btree_trans *trans)
 
 		prt_printf(buf, "  new ");
 		bch2_bkey_val_to_text(buf, trans->c, bkey_i_to_s_c(i->k));
+		prt_newline(buf);
+	}
+
+	trans_for_each_wb_update(trans, wb) {
+		prt_printf(buf, "update: btree=%s wb=1 %pS",
+		       bch2_btree_ids[wb->btree],
+		       (void *) i->ip_allocated);
+		prt_newline(buf);
+
+		prt_printf(buf, "  new ");
+		bch2_bkey_val_to_text(buf, trans->c, bkey_i_to_s_c(&wb->k));
 		prt_newline(buf);
 	}
 
