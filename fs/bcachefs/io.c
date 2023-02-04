@@ -280,7 +280,7 @@ int bch2_extent_update(struct btree_trans *trans,
 {
 	/* this must live until after bch2_trans_commit(): */
 	struct bkey_inode_buf inode_p;
-	struct btree_iter inode_iter;
+	struct btree_iter inode_iter = { NULL };
 	struct bch_inode_unpacked inode_u;
 	struct bpos next_pos;
 	struct bkey_s_c inode;
@@ -377,8 +377,8 @@ int bch2_extent_update(struct btree_trans *trans,
 		bch2_trans_commit(trans, disk_res, NULL,
 				BTREE_INSERT_NOCHECK_RW|
 				BTREE_INSERT_NOFAIL);
-	bch2_trans_iter_exit(trans, &inode_iter);
 err:
+	bch2_trans_iter_exit(trans, &inode_iter);
 	if (ret)
 		return ret;
 
