@@ -3121,8 +3121,10 @@ void bch2_fs_btree_iter_exit(struct bch_fs *c)
 
 	for (s = c->btree_transaction_stats;
 	     s < c->btree_transaction_stats + ARRAY_SIZE(c->btree_transaction_stats);
-	     s++)
+	     s++) {
 		kfree(s->max_paths_text);
+		bch2_time_stats_exit(&s->lock_hold_times);
+	}
 
 	if (c->btree_trans_barrier_initialized)
 		cleanup_srcu_struct(&c->btree_trans_barrier);
@@ -3132,11 +3134,16 @@ void bch2_fs_btree_iter_exit(struct bch_fs *c)
 
 int bch2_fs_btree_iter_init(struct bch_fs *c)
 {
-	unsigned i, nr = BTREE_ITER_MAX;
+	struct btree_transaction_stats *s;
+	unsigned nr = BTREE_ITER_MAX;
 	int ret;
 
-	for (i = 0; i < ARRAY_SIZE(c->btree_transaction_stats); i++)
-		mutex_init(&c->btree_transaction_stats[i].lock);
+	for (s = c->btree_transaction_stats;
+	     s < c->btree_transaction_stats + ARRAY_SIZE(c->btree_transaction_stats);
+	     s++) {
+		mutex_init(&s->lock);
+		bch2_time_stats_init(&s->lock_hold_times);
+	}
 
 	INIT_LIST_HEAD(&c->btree_trans_list);
 	mutex_init(&c->btree_trans_lock);
