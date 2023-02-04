@@ -989,7 +989,6 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 	struct bch_dev *ca;
 	struct bkey_i_alloc_v4 *a;
 	struct printbuf buf = PRINTBUF;
-	bool did_discard = false;
 	int ret = 0;
 
 	ca = bch_dev_bkey_exists(c, pos.inode);
@@ -1058,14 +1057,12 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 				     k.k->p.offset * ca->mi.bucket_size,
 				     ca->mi.bucket_size,
 				     GFP_KERNEL);
+		*discard_pos_done = iter.pos;
 
 		ret = bch2_trans_relock_notrace(trans);
 		if (ret)
 			goto out;
 	}
-
-	*discard_pos_done = iter.pos;
-	did_discard = true;
 
 	SET_BCH_ALLOC_V4_NEED_DISCARD(&a->v, false);
 	a->v.data_type = alloc_data_type(a->v, a->v.data_type);
@@ -1076,10 +1073,8 @@ write:
 	if (ret)
 		goto out;
 
-	if (did_discard) {
-		this_cpu_inc(c->counters[BCH_COUNTER_bucket_discard]);
-		(*discarded)++;
-	}
+	this_cpu_inc(c->counters[BCH_COUNTER_bucket_discard]);
+	(*discarded)++;
 out:
 	(*seen)++;
 	bch2_trans_iter_exit(trans, &iter);
