@@ -11,6 +11,8 @@
 #include <linux/six.h>
 #include <linux/slab.h>
 
+#include <trace/events/lock.h>
+
 #ifdef DEBUG
 #define EBUG_ON(cond)		BUG_ON(cond)
 #else
@@ -498,10 +500,11 @@ static int __six_lock_type_slowpath(struct six_lock *lock, enum six_lock_type ty
 		smp_mb__after_atomic();
 	}
 
+	trace_contention_begin(lock, 0);
+	lock_contended(&lock->dep_map, ip);
+
 	if (six_optimistic_spin(lock, type))
 		goto out;
-
-	lock_contended(&lock->dep_map, ip);
 
 	wait->task		= current;
 	wait->lock_want		= type;
@@ -569,6 +572,7 @@ out:
 					    &lock->state.counter);
 		six_lock_wakeup(lock, old, SIX_LOCK_read);
 	}
+	trace_contention_end(lock, 0);
 
 	return ret;
 }
