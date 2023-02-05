@@ -9,38 +9,6 @@
 
 #include <linux/mm.h>
 
-/*
- * Convert from pos in backpointer btree to pos of corresponding bucket in alloc
- * btree:
- */
-static inline struct bpos bp_pos_to_bucket(const struct bch_fs *c,
-					   struct bpos bp_pos)
-{
-	struct bch_dev *ca = bch_dev_bkey_exists(c, bp_pos.inode);
-	u64 bucket_sector = bp_pos.offset >> MAX_EXTENT_COMPRESS_RATIO_SHIFT;
-
-	return POS(bp_pos.inode, sector_to_bucket(ca, bucket_sector));
-}
-
-/*
- * Convert from pos in alloc btree + bucket offset to pos in backpointer btree:
- */
-static inline struct bpos bucket_pos_to_bp(const struct bch_fs *c,
-					   struct bpos bucket,
-					   u64 bucket_offset)
-{
-	struct bch_dev *ca = bch_dev_bkey_exists(c, bucket.inode);
-	struct bpos ret;
-
-	ret = POS(bucket.inode,
-		  (bucket_to_sector(ca, bucket.offset) <<
-		   MAX_EXTENT_COMPRESS_RATIO_SHIFT) + bucket_offset);
-
-	BUG_ON(!bkey_eq(bucket, bp_pos_to_bucket(c, ret)));
-
-	return ret;
-}
-
 static bool extent_matches_bp(struct bch_fs *c,
 			      enum btree_id btree_id, unsigned level,
 			      struct bkey_s_c k,
@@ -198,112 +166,6 @@ found:
 err:
 	bch2_trans_iter_exit(trans, &iter);
 	return ret;
-}
-
-int bch2_bucket_backpointer_del(struct btree_trans *trans,
-				struct bkey_i_alloc_v4 *a,
-				struct bch_backpointer bp,
-				struct bkey_s_c orig_k)
-{
-	struct bch_fs *c = trans->c;
-	struct bch_backpointer *bps = alloc_v4_backpointers(&a->v);
-	unsigned i, nr = BCH_ALLOC_V4_NR_BACKPOINTERS(&a->v);
-	struct bkey_i *delete;
-	int ret;
-
-	for (i = 0; i < nr; i++) {
-		int cmp = backpointer_cmp(bps[i], bp) ?:
-			memcmp(&bps[i], &bp, sizeof(bp));
-		if (!cmp)
-			goto found;
-		if (cmp >= 0)
-			break;
-	}
-
-	goto btree;
-found:
-	array_remove_item(bps, nr, i);
-	SET_BCH_ALLOC_V4_NR_BACKPOINTERS(&a->v, nr);
-	set_alloc_v4_u64s(a);
-	return 0;
-btree:
-	delete = bch2_trans_kmalloc_nomemzero(trans, sizeof(*delete));
-	ret = PTR_ERR_OR_ZERO(delete);
-	if (ret)
-		return ret;
-
-	bkey_init(&delete->k);
-	delete->k.p = bucket_pos_to_bp(c, a->k.p, bp.bucket_offset);
-
-	return bch2_trans_update_buffered(trans, BTREE_ID_backpointers, delete);
-}
-
-int bch2_bucket_backpointer_add(struct btree_trans *trans,
-				struct bkey_i_alloc_v4 *a,
-				struct bch_backpointer bp,
-				struct bkey_s_c orig_k)
-{
-	struct bch_fs *c = trans->c;
-	struct bkey_i_backpointer *bp_k;
-	int ret;
-
-	if (0) {
-		struct bch_backpointer *bps = alloc_v4_backpointers(&a->v);
-		unsigned i, nr = BCH_ALLOC_V4_NR_BACKPOINTERS(&a->v);
-		/* Check for duplicates: */
-		for (i = 0; i < nr; i++) {
-			int cmp = backpointer_cmp(bps[i], bp);
-			if (cmp >= 0)
-				break;
-		}
-
-		if ((i &&
-		     (bps[i - 1].bucket_offset +
-		      bps[i - 1].bucket_len > bp.bucket_offset)) ||
-		    (i < nr &&
-		     (bp.bucket_offset + bp.bucket_len > bps[i].bucket_offset))) {
-			struct printbuf buf = PRINTBUF;
-
-			prt_printf(&buf, "overlapping backpointer found when inserting ");
-			bch2_backpointer_to_text(&buf, &bp);
-			prt_newline(&buf);
-			printbuf_indent_add(&buf, 2);
-
-			prt_printf(&buf, "into ");
-			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&a->k_i));
-			prt_newline(&buf);
-
-			prt_printf(&buf, "for ");
-			bch2_bkey_val_to_text(&buf, c, orig_k);
-
-			bch_err(c, "%s", buf.buf);
-			printbuf_exit(&buf);
-			if (test_bit(BCH_FS_CHECK_BACKPOINTERS_DONE, &c->flags)) {
-				bch2_inconsistent_error(c);
-				return -EIO;
-			}
-		}
-
-		if (nr < BCH_ALLOC_V4_NR_BACKPOINTERS_MAX) {
-			array_insert_item(bps, nr, i, bp);
-			SET_BCH_ALLOC_V4_NR_BACKPOINTERS(&a->v, nr);
-			set_alloc_v4_u64s(a);
-			return 0;
-		}
-
-		/* Overflow: use backpointer btree */
-	}
-
-	bp_k = bch2_trans_kmalloc_nomemzero(trans, sizeof(struct bkey_i_backpointer));
-	ret = PTR_ERR_OR_ZERO(bp_k);
-	if (ret)
-		return ret;
-
-	bkey_backpointer_init(&bp_k->k_i);
-	bp_k->k.p = bucket_pos_to_bp(c, a->k.p, bp.bucket_offset);
-	bp_k->v = bp;
-
-	return bch2_trans_update_buffered(trans, BTREE_ID_backpointers, &bp_k->k_i);
 }
 
 /*
@@ -625,7 +487,7 @@ missing:
 		struct bkey_i_alloc_v4 *a = bch2_alloc_to_v4_mut(trans, alloc_k);
 
 		ret   = PTR_ERR_OR_ZERO(a) ?:
-			bch2_bucket_backpointer_add(trans, a, bp, orig_k) ?:
+			bch2_bucket_backpointer_mod(trans, a, bp, false) ?:
 			bch2_trans_update(trans, &alloc_iter, &a->k_i, 0);
 	}
 
