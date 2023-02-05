@@ -69,6 +69,24 @@ trans_commit:
 				  BTREE_INSERT_JOURNAL_RECLAIM);
 }
 
+static union btree_write_buffer_state btree_write_buffer_switch(struct btree_write_buffer *wb)
+{
+	union btree_write_buffer_state old, new;
+	u64 v = READ_ONCE(wb->state.v);
+
+	do {
+		old.v = new.v = v;
+
+		new.nr = 0;
+		new.idx++;
+	} while ((v = atomic64_cmpxchg_acquire(&wb->state.counter, old.v, new.v)) != old.v);
+
+	while (old.idx == 0 ? wb->state.ref0 : wb->state.ref1)
+		cpu_relax();
+
+	return old;
+}
+
 int __bch2_btree_write_buffer_flush(struct btree_trans *trans, unsigned commit_flags,
 				    bool locked)
 {
@@ -76,10 +94,11 @@ int __bch2_btree_write_buffer_flush(struct btree_trans *trans, unsigned commit_f
 	struct journal *j = &c->journal;
 	struct btree_write_buffer *wb = &c->btree_write_buffer;
 	struct journal_entry_pin pin;
-	struct btree_write_buffered_key *i, *dst;
+	struct btree_write_buffered_key *i, *dst, *keys;
 	struct btree_iter iter = { NULL };
 	size_t nr = 0, skipped = 0, fast = 0;
 	bool write_locked = false;
+	union btree_write_buffer_state s;
 	int ret = 0;
 
 	memset(&pin, 0, sizeof(pin));
@@ -87,13 +106,11 @@ int __bch2_btree_write_buffer_flush(struct btree_trans *trans, unsigned commit_f
 	if (!locked && !mutex_trylock(&wb->flush_lock))
 		return 0;
 
-	mutex_lock(&wb->lock);
-	swap(wb->keys, wb->flushing);
-	swap(wb->nr, nr);
-
 	bch2_journal_pin_copy(j, &pin, &wb->journal_pin, NULL);
 	bch2_journal_pin_drop(j, &wb->journal_pin);
-	mutex_unlock(&wb->lock);
+
+	s = btree_write_buffer_switch(wb);
+	keys = wb->keys[s.idx];
 
 	/*
 	 * We first sort so that we can detect and skip redundant updates, and
@@ -111,15 +128,11 @@ int __bch2_btree_write_buffer_flush(struct btree_trans *trans, unsigned commit_f
 	 * flushing, this time dropping journal pins as we go.
 	 */
 
-	sort(wb->flushing, nr,
-	     sizeof(wb->flushing[0]),
-	     btree_write_buffered_key_cmp,
-	     NULL);
+	sort(keys, nr, sizeof(keys[0]),
+	     btree_write_buffered_key_cmp, NULL);
 
-	for (i = wb->flushing;
-	     i < wb->flushing + nr && !ret;
-	     i++) {
-		if (i + 1 < wb->flushing + nr &&
+	for (i = keys; i < keys + nr && !ret; i++) {
+		if (i + 1 < keys + nr &&
 		    i[0].btree == i[1].btree &&
 		    bpos_eq(i[0].k.k.p, i[1].k.k.p)) {
 			skipped++;
@@ -167,13 +180,11 @@ out:
 	mutex_unlock(&wb->flush_lock);
 	return ret;
 slowpath:
-	trace_write_buffer_flush_slowpath(trans, i - wb->flushing, nr);
+	trace_write_buffer_flush_slowpath(trans, i - keys, nr);
 
-	dst = wb->flushing;
-	for (;
-	     i < wb->flushing + nr;
-	     i++) {
-		if (i + 1 < wb->flushing + nr &&
+	dst = keys;
+	for (; i < keys + nr; i++) {
+		if (i + 1 < keys + nr &&
 		    i[0].btree == i[1].btree &&
 		    bpos_eq(i[0].k.k.p, i[1].k.k.p)) {
 			if (bkey_deleted(&i[1].k.k))
@@ -184,16 +195,13 @@ slowpath:
 		*dst = *i;
 		dst++;
 	}
-	nr = dst - wb->flushing;
+	nr = dst - keys;
 
-	sort(wb->flushing, nr,
-	     sizeof(wb->flushing[0]),
+	sort(keys, nr, sizeof(keys[0]),
 	     btree_write_buffered_journal_cmp,
 	     NULL);
 
-	for (i = wb->flushing;
-	     i < wb->flushing + nr;
-	     i++) {
+	for (i = keys; i < keys + nr; i++) {
 		if (i->journal_seq > pin.seq) {
 			struct journal_entry_pin pin2;
 
@@ -233,11 +241,22 @@ static int bch2_btree_write_buffer_journal_flush(struct journal *j,
 							false));
 }
 
+static inline u64 btree_write_buffer_ref(int idx)
+{
+	return ((union btree_write_buffer_state) {
+		.ref0 = idx == 0,
+		.ref1 = idx == 1,
+	}).v;
+}
+
 int bch2_btree_insert_keys_write_buffer(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_write_buffer *wb = &c->btree_write_buffer;
 	struct btree_write_buffered_key *i;
+	union btree_write_buffer_state old, new;
+	int ret = 0;
+	u64 v;
 
 	EBUG_ON(trans->flags & BTREE_INSERT_JOURNAL_REPLAY);
 
@@ -248,44 +267,51 @@ int bch2_btree_insert_keys_write_buffer(struct btree_trans *trans)
 		i->journal_offset	= trans->journal_res.offset;
 	}
 
-	mutex_lock(&wb->lock);
-	if (wb->nr + trans->nr_wb_updates > wb->size) {
-		mutex_unlock(&wb->lock);
-		return -BCH_ERR_btree_insert_need_flush_buffer;
-	}
+	preempt_disable();
+	v = READ_ONCE(wb->state.v);
+	do {
+		old.v = new.v = v;
 
-	memcpy(wb->keys + wb->nr,
+		new.v += btree_write_buffer_ref(new.idx);
+		new.nr += trans->nr_wb_updates;
+		if (new.nr > wb->size) {
+			ret = -BCH_ERR_btree_insert_need_flush_buffer;
+			goto out;
+		}
+	} while ((v = atomic64_cmpxchg_acquire(&wb->state.counter, old.v, new.v)) != old.v);
+
+	memcpy(wb->keys[new.idx] + old.nr,
 	       trans->wb_updates,
 	       sizeof(trans->wb_updates[0]) * trans->nr_wb_updates);
-	wb->nr += trans->nr_wb_updates;
 
 	if (likely(!(trans->flags & BTREE_INSERT_JOURNAL_REPLAY)))
 		bch2_journal_pin_add(&c->journal, trans->journal_res.seq, &wb->journal_pin,
 				     bch2_btree_write_buffer_journal_flush);
-	mutex_unlock(&wb->lock);
 
-	return 0;
+	atomic64_sub_return_release(btree_write_buffer_ref(new.idx), &wb->state.counter);
+out:
+	preempt_enable();
+	return ret;
 }
 
 void bch2_fs_btree_write_buffer_exit(struct bch_fs *c)
 {
 	struct btree_write_buffer *wb = &c->btree_write_buffer;
 
-	kvfree(wb->flushing);
-	kvfree(wb->keys);
+	kvfree(wb->keys[1]);
+	kvfree(wb->keys[0]);
 }
 
 int bch2_fs_btree_write_buffer_init(struct bch_fs *c)
 {
 	struct btree_write_buffer *wb = &c->btree_write_buffer;
 
-	mutex_init(&wb->lock);
 	mutex_init(&wb->flush_lock);
 	wb->size = c->opts.btree_write_buffer_size;
 
-	wb->keys = kvmalloc_array(wb->size, sizeof(wb->keys[0]), GFP_KERNEL);
-	wb->flushing = kvmalloc_array(wb->size, sizeof(wb->keys[0]), GFP_KERNEL);
-	if (!wb->keys || !wb->flushing)
+	wb->keys[0] = kvmalloc_array(wb->size, sizeof(*wb->keys[0]), GFP_KERNEL);
+	wb->keys[1] = kvmalloc_array(wb->size, sizeof(*wb->keys[1]), GFP_KERNEL);
+	if (!wb->keys[0] || !wb->keys[1])
 		return -ENOMEM;
 
 	return 0;

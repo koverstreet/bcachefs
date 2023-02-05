@@ -646,7 +646,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 	}
 
 	if (trans->nr_wb_updates &&
-	    trans->nr_wb_updates + c->btree_write_buffer.nr > c->btree_write_buffer.size)
+	    trans->nr_wb_updates + c->btree_write_buffer.state.nr > c->btree_write_buffer.size)
 		return -BCH_ERR_btree_insert_need_flush_buffer;
 
 	/*
@@ -1006,21 +1006,16 @@ int bch2_trans_commit_error(struct btree_trans *trans,
 		break;
 	case -BCH_ERR_btree_insert_need_flush_buffer: {
 		struct btree_write_buffer *wb = &c->btree_write_buffer;
-		bool need_flush;
 
 		ret = 0;
 
-		mutex_lock(&wb->lock);
-		need_flush = wb->nr > wb->size * 3 / 4;
-		mutex_unlock(&wb->lock);
-
-		if (need_flush) {
+		if (wb->state.nr > wb->size * 3 / 4) {
 			bch2_trans_reset_updates(trans);
 			bch2_trans_unlock(trans);
 
 			mutex_lock(&wb->flush_lock);
 
-			if (wb->nr > wb->size * 3 / 4)
+			if (wb->state.nr > wb->size * 3 / 4)
 				ret = __bch2_btree_write_buffer_flush(trans,
 						trans->flags|BTREE_INSERT_NOCHECK_RW,
 						true);
@@ -1122,7 +1117,7 @@ int __bch2_trans_commit(struct btree_trans *trans)
 			goto out_reset;
 	}
 
-	if (c->btree_write_buffer.nr > c->btree_write_buffer.size / 2 &&
+	if (c->btree_write_buffer.state.nr > c->btree_write_buffer.size / 2 &&
 	    mutex_trylock(&c->btree_write_buffer.flush_lock)) {
 		bch2_trans_begin(trans);
 		bch2_trans_unlock(trans);
