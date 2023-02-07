@@ -395,3 +395,13 @@ int seq_buf_hex_dump(struct seq_buf *s, const char *prefix_str, int prefix_type,
 	}
 	return 0;
 }
+
+void seq_buf_human_readable_u64(struct seq_buf *s, u64 v)
+{
+	char *buf;
+	size_t size = seq_buf_get_buf(s, &buf);
+	int wrote = string_get_size(v, 1, false, buf, size);
+
+	seq_buf_commit(s, wrote);
+}
+EXPORT_SYMBOL(seq_buf_human_readable_u64);
