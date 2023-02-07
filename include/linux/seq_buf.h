@@ -161,4 +161,6 @@ seq_buf_bprintf(struct seq_buf *s, const char *fmt, const u32 *binary);
 
 void seq_buf_do_printk(struct seq_buf *s, const char *lvl);
 
+void seq_buf_human_readable_u64(struct seq_buf *, u64);
+
 #endif /* _LINUX_SEQ_BUF_H */
