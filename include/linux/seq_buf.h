@@ -173,4 +173,8 @@ seq_buf_bprintf(struct seq_buf *s, const char *fmt, const u32 *binary);
 
 void seq_buf_do_printk(struct seq_buf *s, const char *lvl);
 
+enum string_size_units;
+void seq_buf_human_readable_u64(struct seq_buf *s, u64 v,
+				const enum string_size_units units);
+
 #endif /* _LINUX_SEQ_BUF_H */
