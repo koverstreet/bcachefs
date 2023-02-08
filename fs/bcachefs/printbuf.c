@@ -51,7 +51,10 @@ void bch2_prt_vprintf(struct printbuf *out, const char *fmt, va_list args)
 	int len;
 
 	do {
-		len = vsnprintf(out->buf + out->pos, printbuf_remaining(out), fmt, args);
+		va_list args2;
+
+		va_copy(args2, args);
+		len = vsnprintf(out->buf + out->pos, printbuf_remaining(out), fmt, args2);
 	} while (len + 1 >= printbuf_remaining(out) &&
 		 !bch2_printbuf_make_room(out, len + 1));
 
