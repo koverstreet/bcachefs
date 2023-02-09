@@ -603,7 +603,7 @@ static void bch2_write_done(struct closure *cl)
 	struct bch_fs *c = op->c;
 
 	bch2_disk_reservation_put(c, &op->res);
-	percpu_ref_put(&c->writes);
+	bch2_write_ref_put(c, BCH_WRITE_REF_write);
 	bch2_keylist_free(&op->insert_keys, op->inline_keys);
 
 	bch2_time_stats_update(&c->times[BCH_TIME_data_write], op->start_time);
@@ -1418,7 +1418,7 @@ void bch2_write(struct closure *cl)
 	}
 
 	if (c->opts.nochanges ||
-	    !percpu_ref_tryget_live(&c->writes)) {
+	    !bch2_write_ref_tryget(c, BCH_WRITE_REF_write)) {
 		op->error = -BCH_ERR_erofs_no_writes;
 		goto err;
 	}
@@ -1497,7 +1497,7 @@ static void promote_free(struct bch_fs *c, struct promote_op *op)
 	ret = rhashtable_remove_fast(&c->promote_table, &op->hash,
 				     bch_promote_params);
 	BUG_ON(ret);
-	percpu_ref_put(&c->writes);
+	bch2_write_ref_put(c, BCH_WRITE_REF_promote);
 	kfree_rcu(op, rcu);
 }
 
@@ -1545,7 +1545,7 @@ static struct promote_op *__promote_alloc(struct bch_fs *c,
 	unsigned pages = DIV_ROUND_UP(sectors, PAGE_SECTORS);
 	int ret;
 
-	if (!percpu_ref_tryget_live(&c->writes))
+	if (!bch2_write_ref_tryget(c, BCH_WRITE_REF_promote))
 		return NULL;
 
 	op = kzalloc(sizeof(*op) + sizeof(struct bio_vec) * pages, GFP_NOIO);
@@ -1602,7 +1602,7 @@ err:
 	kfree(*rbio);
 	*rbio = NULL;
 	kfree(op);
-	percpu_ref_put(&c->writes);
+	bch2_write_ref_put(c, BCH_WRITE_REF_promote);
 	return NULL;
 }
 
