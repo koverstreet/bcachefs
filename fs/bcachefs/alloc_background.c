@@ -1737,7 +1737,7 @@ static void bch2_do_discards_work(struct work_struct *work)
 	if (need_journal_commit * 2 > seen)
 		bch2_journal_flush_async(&c->journal, NULL);
 
-	percpu_ref_put(&c->writes);
+	bch2_write_ref_put(c, BCH_WRITE_REF_discard);
 
 	trace_discard_buckets(c, seen, open, need_journal_commit, discarded,
 			      bch2_err_str(ret));
@@ -1745,9 +1745,9 @@ static void bch2_do_discards_work(struct work_struct *work)
 
 void bch2_do_discards(struct bch_fs *c)
 {
-	if (percpu_ref_tryget_live(&c->writes) &&
+	if (bch2_write_ref_tryget(c, BCH_WRITE_REF_discard) &&
 	    !queue_work(system_long_wq, &c->discard_work))
-		percpu_ref_put(&c->writes);
+		bch2_write_ref_put(c, BCH_WRITE_REF_discard);
 }
 
 static int invalidate_one_bucket(struct btree_trans *trans,
@@ -1863,14 +1863,14 @@ static void bch2_do_invalidates_work(struct work_struct *work)
 	}
 
 	bch2_trans_exit(&trans);
-	percpu_ref_put(&c->writes);
+	bch2_write_ref_put(c, BCH_WRITE_REF_invalidate);
 }
 
 void bch2_do_invalidates(struct bch_fs *c)
 {
-	if (percpu_ref_tryget_live(&c->writes) &&
+	if (bch2_write_ref_tryget(c, BCH_WRITE_REF_invalidate) &&
 	    !queue_work(system_long_wq, &c->invalidate_work))
-		percpu_ref_put(&c->writes);
+		bch2_write_ref_put(c, BCH_WRITE_REF_invalidate);
 }
 
 static int bch2_dev_freespace_init(struct bch_fs *c, struct bch_dev *ca)
