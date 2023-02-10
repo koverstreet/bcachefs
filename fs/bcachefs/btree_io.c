@@ -1246,8 +1246,18 @@ start:
 	bio_put(&rb->bio);
 	printbuf_exit(&buf);
 
-	if (saw_error && !btree_node_read_error(b))
+	if (!btree_node_read_error(b) &&
+	    (saw_error ||
+	     btree_node_need_rewrite(b))) {
+		struct printbuf buf = PRINTBUF;
+
+		bch2_bpos_to_text(&buf, b->key.k.p);
+		bch_info(c, "%s: rewriting btree node at btree=%s level=%u %s due to error",
+			 __func__, bch2_btree_ids[b->c.btree_id], b->c.level, buf.buf);
+		printbuf_exit(&buf);
+
 		bch2_btree_node_rewrite_async(c, b);
+	}
 
 	clear_btree_node_read_in_flight(b);
 	wake_up_bit(&b->flags, BTREE_NODE_read_in_flight);
