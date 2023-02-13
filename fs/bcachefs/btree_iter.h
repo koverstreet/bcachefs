@@ -260,6 +260,10 @@ static inline int btree_trans_restart_nounlock(struct btree_trans *trans, int er
 	BUG_ON(err <= 0);
 	BUG_ON(!bch2_err_matches(err, BCH_ERR_transaction_restart));
 
+#ifdef CONFIG_BCACHEFS_DEBUG
+	bch2_save_backtrace(&trans->last_restarted, current);
+#endif
+
 	trans->restarted = err;
 	trans->last_restarted_ip = _THIS_IP_;
 	return -err;

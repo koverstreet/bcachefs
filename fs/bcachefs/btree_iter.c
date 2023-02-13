@@ -1175,10 +1175,17 @@ int bch2_btree_path_traverse_one(struct btree_trans *trans,
 
 	path->uptodate = BTREE_ITER_UPTODATE;
 out:
-	if (bch2_err_matches(ret, BCH_ERR_transaction_restart) != !!trans->restarted)
-		panic("ret %s (%i) trans->restarted %s (%i)\n",
-		      bch2_err_str(ret), ret,
-		      bch2_err_str(trans->restarted), trans->restarted);
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart) != !!trans->restarted) {
+		struct printbuf buf = PRINTBUF;
+
+		prt_printf(&buf, "ret %s (%i) trans->restarted %s (%i)\n",
+			   bch2_err_str(ret), ret,
+			   bch2_err_str(trans->restarted), trans->restarted);
+#ifdef CONFIG_BCACHEFS_DEBUG
+		bch2_prt_backtrace(&buf, &trans->last_restarted);
+#endif
+		panic("%s", buf.buf);
+	}
 	bch2_btree_path_verify(trans, path);
 	return ret;
 }
@@ -1366,9 +1373,15 @@ void bch2_trans_restart_error(struct btree_trans *trans, u32 restart_count)
 
 void bch2_trans_in_restart_error(struct btree_trans *trans)
 {
-	panic("in transaction restart: %s, last restarted by %pS\n",
-	      bch2_err_str(trans->restarted),
-	      (void *) trans->last_restarted_ip);
+	struct printbuf buf = PRINTBUF;
+
+	prt_printf(&buf, "in transaction restart: %s, last restarted by %pS\n",
+		   bch2_err_str(trans->restarted),
+		   (void *) trans->last_restarted_ip);
+#ifdef CONFIG_BCACHEFS_DEBUG
+	bch2_prt_backtrace(&buf, &trans->last_restarted);
+#endif
+	panic("%s", buf.buf);
 }
 
 noinline __cold
@@ -3078,6 +3091,10 @@ void bch2_trans_exit(struct btree_trans *trans)
 
 	if (trans->paths)
 		mempool_free(trans->paths, &c->btree_paths_pool);
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+	darray_exit(&trans->last_restarted);
+#endif
 
 	trans->mem	= (void *) 0x1;
 	trans->paths	= (void *) 0x1;

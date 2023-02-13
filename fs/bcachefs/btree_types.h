@@ -440,6 +440,9 @@ struct btree_trans {
 	u32			restart_count;
 	unsigned long		last_begin_ip;
 	unsigned long		last_restarted_ip;
+#ifdef CONFIG_BCACHEFS_DEBUG
+	bch_stacktrace		last_restarted;
+#endif
 	unsigned long		srcu_lock_time;
 
 	/*
