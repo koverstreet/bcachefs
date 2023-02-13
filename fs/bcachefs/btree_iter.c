@@ -1206,10 +1206,17 @@ out_uptodate:
 	path->uptodate = BTREE_ITER_UPTODATE;
 	trace_btree_path_traverse_end(trans, path);
 out:
-	if (bch2_err_matches(ret, BCH_ERR_transaction_restart) != !!trans->restarted)
-		panic("ret %s (%i) trans->restarted %s (%i)\n",
-		      bch2_err_str(ret), ret,
-		      bch2_err_str(trans->restarted), trans->restarted);
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart) != !!trans->restarted) {
+		struct printbuf buf = PRINTBUF;
+
+		prt_printf(&buf, "ret %s (%i) trans->restarted %s (%i)\n",
+			   bch2_err_str(ret), ret,
+			   bch2_err_str(trans->restarted), trans->restarted);
+#ifdef CONFIG_BCACHEFS_DEBUG
+		bch2_prt_backtrace(&buf, &trans->last_restarted);
+#endif
+		panic("%s", buf.buf);
+	}
 	bch2_btree_path_verify(trans, path);
 	return ret;
 }
@@ -1432,9 +1439,16 @@ void __noreturn bch2_trans_restart_error(struct btree_trans *trans, u32 restart_
 
 void __noreturn bch2_trans_in_restart_error(struct btree_trans *trans)
 {
-	panic("in transaction restart: %s, last restarted by %pS\n",
-	      bch2_err_str(trans->restarted),
-	      (void *) trans->last_restarted_ip);
+	struct printbuf buf = PRINTBUF;
+
+	prt_printf(&buf, "in transaction restart: %s, last restarted by %pS\n",
+		   bch2_err_str(trans->restarted),
+		   (void *) trans->last_begin_ip);
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+	bch2_prt_backtrace(&buf, &trans->last_restarted);
+#endif
+	panic("%s", buf.buf);
 }
 
 void __noreturn bch2_trans_unlocked_error(struct btree_trans *trans)
@@ -3367,6 +3381,10 @@ void bch2_trans_put(struct btree_trans *trans)
 		mempool_free(trans->mem, &c->btree_trans_mem_pool);
 	else
 		kfree(trans->mem);
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+	darray_exit(&trans->last_restarted);
+#endif
 
 	/* Userspace doesn't have a real percpu implementation: */
 	if (IS_ENABLED(__KERNEL__))

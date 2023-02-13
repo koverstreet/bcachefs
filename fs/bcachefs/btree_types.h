@@ -527,7 +527,9 @@ struct btree_trans {
 	u64			last_begin_time;
 	unsigned long		last_begin_ip;
 	unsigned long		last_restarted_ip;
-	unsigned long		last_unlock_ip;
+#ifdef CONFIG_BCACHEFS_DEBUG
+	bch_stacktrace		last_restarted;
+#endif
 	unsigned long		srcu_lock_time;
 
 	const char		*fn;
