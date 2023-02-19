@@ -640,8 +640,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans, unsigned flags,
 			marking = true;
 	}
 
-	if (trans->nr_wb_updates &&
-	    trans->nr_wb_updates + c->btree_write_buffer.state.nr > c->btree_write_buffer.size)
+	if (c->btree_write_buffer.nr > c->btree_write_buffer.size / 2)
 		return -BCH_ERR_btree_insert_need_flush_buffer;
 
 	/*
@@ -679,14 +678,6 @@ bch2_trans_commit_write_locked(struct btree_trans *trans, unsigned flags,
 	if (trans->fs_usage_deltas &&
 	    bch2_trans_fs_usage_apply(trans, trans->fs_usage_deltas))
 		return -BCH_ERR_btree_insert_need_mark_replicas;
-
-	if (trans->nr_wb_updates) {
-		EBUG_ON(flags & BTREE_INSERT_JOURNAL_REPLAY);
-
-		ret = bch2_btree_insert_keys_write_buffer(trans);
-		if (ret)
-			goto revert_fs_usage;
-	}
 
 	h = trans->hooks;
 	while (h) {
@@ -749,7 +740,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans, unsigned flags,
 
 		trans_for_each_wb_update(trans, wb) {
 			entry = bch2_journal_add_entry(j, &trans->journal_res,
-					       BCH_JSET_ENTRY_btree_keys,
+					       BCH_JSET_ENTRY_buffered_keys,
 					       wb->btree, 0,
 					       wb->k.k.u64s);
 			bkey_copy(&entry->start[0], &wb->k);
@@ -775,7 +766,6 @@ bch2_trans_commit_write_locked(struct btree_trans *trans, unsigned flags,
 	return 0;
 fatal_err:
 	bch2_fatal_error(c);
-revert_fs_usage:
 	if (trans->fs_usage_deltas)
 		bch2_trans_fs_usage_revert(trans, trans->fs_usage_deltas);
 	return ret;
@@ -1009,17 +999,15 @@ int bch2_trans_commit_error(struct btree_trans *trans, unsigned flags,
 
 		ret = 0;
 
-		if (wb->state.nr > wb->size * 3 / 4) {
+		if (wb->nr) {
 			bch2_trans_reset_updates(trans);
 			bch2_trans_unlock(trans);
 
-			mutex_lock(&wb->flush_lock);
-
-			if (wb->state.nr > wb->size * 3 / 4)
-				ret = __bch2_btree_write_buffer_flush(trans,
+			mutex_lock(&wb->lock);
+			if (wb->nr)
+				ret = bch2_btree_write_buffer_flush_locked(trans,
 						flags|BTREE_INSERT_NOCHECK_RW, true);
-			else
-				mutex_unlock(&wb->flush_lock);
+			mutex_unlock(&wb->lock);
 
 			if (!ret) {
 				trace_and_count(c, trans_restart_write_buffer_flush, trans, _THIS_IP_);
@@ -1117,13 +1105,14 @@ int __bch2_trans_commit(struct btree_trans *trans, unsigned flags)
 			goto out_reset;
 	}
 
-	if (c->btree_write_buffer.state.nr > c->btree_write_buffer.size / 2 &&
-	    mutex_trylock(&c->btree_write_buffer.flush_lock)) {
+	if (c->btree_write_buffer.nr &&
+	    mutex_trylock(&c->btree_write_buffer.lock)) {
 		bch2_trans_begin(trans);
 		bch2_trans_unlock(trans);
 
-		ret = __bch2_btree_write_buffer_flush(trans,
+		ret = bch2_btree_write_buffer_flush_locked(trans,
 					flags|BTREE_INSERT_NOCHECK_RW, true);
+		mutex_unlock(&trans->c->btree_write_buffer.lock);
 		if (!ret) {
 			trace_and_count(c, trans_restart_write_buffer_flush, trans, _THIS_IP_);
 			ret = btree_trans_restart(trans, BCH_ERR_transaction_restart_write_buffer_flush);

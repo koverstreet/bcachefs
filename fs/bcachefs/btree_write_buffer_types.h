@@ -14,31 +14,14 @@ struct btree_write_buffered_key {
 	__BKEY_PADDED(k, BTREE_WRITE_BUFERED_VAL_U64s_MAX);
 };
 
-union btree_write_buffer_state {
-	struct {
-		atomic64_t	counter;
-	};
-
-	struct {
-		u64		v;
-	};
-
-	struct {
-		u64			nr:23;
-		u64			idx:1;
-		u64			ref0:20;
-		u64			ref1:20;
-	};
-};
-
 struct btree_write_buffer {
-	struct mutex			flush_lock;
+	struct mutex			lock;
 	struct journal_entry_pin	journal_pin;
 
-	union btree_write_buffer_state	state;
+	size_t				nr;
 	size_t				size;
 
-	struct btree_write_buffered_key	*keys[2];
+	struct btree_write_buffered_key	*keys;
 };
 
 #endif /* _BCACHEFS_BTREE_WRITE_BUFFER_TYPES_H */

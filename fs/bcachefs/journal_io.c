@@ -4,6 +4,7 @@
 #include "alloc_foreground.h"
 #include "btree_io.h"
 #include "btree_update_interior.h"
+#include "btree_write_buffer.h"
 #include "buckets.h"
 #include "checksum.h"
 #include "disk_groups.h"
@@ -668,6 +669,21 @@ static int journal_entry_overwrite_validate(struct bch_fs *c,
 
 static void journal_entry_overwrite_to_text(struct printbuf *out, struct bch_fs *c,
 					    struct jset_entry *entry)
+{
+	journal_entry_btree_keys_to_text(out, c, entry);
+}
+
+static int journal_entry_buffered_keys_validate(struct bch_fs *c,
+				      struct jset *jset,
+				      struct jset_entry *entry,
+				      unsigned version, int big_endian, int write)
+{
+	return -EINVAL;
+}
+
+static void journal_entry_buffered_keys_to_text(struct printbuf *out,
+					struct bch_fs *c,
+					struct jset_entry *entry)
 {
 	journal_entry_btree_keys_to_text(out, c, entry);
 }
@@ -1624,6 +1640,9 @@ static void do_journal_write(struct closure *cl)
 static void bch2_journal_entries_postprocess(struct bch_fs *c, struct jset *jset)
 {
 	struct jset_entry *i, *next, *prev = NULL;
+	u64 seq = le64_to_cpu(jset->seq);
+
+	mutex_lock(&c->btree_write_buffer.lock);
 
 	/*
 	 * Simple compaction, dropping empty jset_entries (from journal
@@ -1642,6 +1661,16 @@ static void bch2_journal_entries_postprocess(struct bch_fs *c, struct jset *jset
 
 		if (i->type == BCH_JSET_ENTRY_btree_root)
 			bch2_journal_entry_to_btree_root(c, i);
+
+		if (i->type == BCH_JSET_ENTRY_buffered_keys) {
+			struct bkey_i *k;
+
+			vstruct_for_each(i, k)
+				bch2_write_buffer_key(c, seq, (u64 *) k - jset->_data,
+						      i->btree_id, k);
+
+			i->type = BCH_JSET_ENTRY_btree_keys;
+		}
 
 		/* Can we merge with previous entry? */
 		if (prev &&
@@ -1665,6 +1694,8 @@ static void bch2_journal_entries_postprocess(struct bch_fs *c, struct jset *jset
 
 	prev = prev ? vstruct_next(prev) : jset->start;
 	jset->u64s = cpu_to_le32((u64 *) prev - jset->_data);
+
+	mutex_unlock(&c->btree_write_buffer.lock);
 }
 
 void bch2_journal_write(struct closure *cl)

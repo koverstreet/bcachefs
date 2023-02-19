@@ -625,7 +625,7 @@ static int check_bp_exists(struct btree_trans *trans,
 			last_flushed->level = bp.level;
 			last_flushed->pos = orig_k.k->p;
 
-			ret = bch2_btree_write_buffer_flush_sync(trans) ?:
+			ret = bch2_btree_write_buffer_flush_sync(trans, 0) ?:
 				-BCH_ERR_transaction_restart_write_buffer_flush;
 			goto out;
 		}
