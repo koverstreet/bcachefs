@@ -30,6 +30,76 @@ static int btree_write_buffered_journal_cmp(const void *_l, const void *_r)
 	return  cmp_int(l->journal_seq, r->journal_seq);
 }
 
+static void do_swap(void *_a, void *_b)
+{
+	struct btree_write_buffered_key *a = _a;
+	struct btree_write_buffered_key *b = _b;
+
+	swap(*a, *b);
+}
+
+__attribute_const__ __always_inline
+static size_t parent(size_t i, unsigned int lsbit, size_t size)
+{
+	i -= size;
+	i -= size & -(i & lsbit);
+	return i / 2;
+}
+
+static void bch2_sort_wb_keys(void *base, size_t num, size_t size)
+{
+	/* pre-scale counters for performance */
+	size_t n = num * size, a = (num/2) * size;
+	const unsigned int lsbit = size & -size;  /* Used to find parent */
+
+	if (!a)		/* num < 2 || size == 0 */
+		return;
+
+	/*
+	 * Loop invariants:
+	 * 1. elements [a,n) satisfy the heap property (compare greater than
+	 *    all of their children),
+	 * 2. elements [n,num*size) are sorted, and
+	 * 3. a <= b <= c <= d <= n (whenever they are valid).
+	 */
+	for (;;) {
+		size_t b, c, d;
+
+		if (a)			/* Building heap: sift down --a */
+			a -= size;
+		else if (n -= size)	/* Sorting: Extract root to --n */
+			do_swap(base, base + n);
+		else			/* Sort complete */
+			break;
+
+		/*
+		 * Sift element at "a" down into heap.  This is the
+		 * "bottom-up" variant, which significantly reduces
+		 * calls to cmp_func(): we find the sift-down path all
+		 * the way to the leaves (one compare per level), then
+		 * backtrack to find where to insert the target element.
+		 *
+		 * Because elements tend to sift down close to the leaves,
+		 * this uses fewer compares than doing two per level
+		 * on the way down.  (A bit more than half as many on
+		 * average, 3/4 worst-case.)
+		 */
+		for (b = a; c = 2*b + size, (d = c + size) < n;)
+			b = btree_write_buffered_key_cmp(base + c, base + d) >= 0 ? c : d;
+		if (d == n)	/* Special case last leaf with no sibling */
+			b = c;
+
+		/* Now backtrack from "b" to the correct location for "a" */
+		while (b != a && btree_write_buffered_key_cmp(base + a, base + b) >= 0)
+			b = parent(b, lsbit, size);
+		c = b;			/* Where "a" belongs */
+		while (b != a) {	/* Shift it into place */
+			b = parent(b, lsbit, size);
+			do_swap(base + b, base + c);
+		}
+	}
+}
+
 static int bch2_btree_write_buffer_flush_one(struct btree_trans *trans,
 					     struct btree_iter *iter,
 					     struct btree_write_buffered_key *wb,
@@ -136,7 +206,7 @@ int __bch2_btree_write_buffer_flush(struct btree_trans *trans, unsigned commit_f
 	 * However, since we're not flushing in the order they appear in the
 	 * journal we won't be able to drop our journal pin until everything is
 	 * flushed - which means this could deadlock the journal, if we weren't
-	 * passing BTREE_INSERT_JORUNAL_RECLAIM. This causes the update to fail
+	 * passing BTREE_INSERT_JOURNAL_RECLAIM. This causes the update to fail
 	 * if it would block taking a journal reservation.
 	 *
 	 * If that happens, we sort them by the order they appeared in the
@@ -144,8 +214,7 @@ int __bch2_btree_write_buffer_flush(struct btree_trans *trans, unsigned commit_f
 	 * flushing, this time dropping journal pins as we go.
 	 */
 
-	sort(keys, nr, sizeof(keys[0]),
-	     btree_write_buffered_key_cmp, NULL);
+	bch2_sort_wb_keys(keys, nr, sizeof(keys[0]));
 
 	for (i = keys; i < keys + nr; i++) {
 		if (i + 1 < keys + nr &&
