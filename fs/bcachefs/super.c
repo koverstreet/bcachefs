@@ -1922,7 +1922,8 @@ out:
 	kfree(sb);
 	printbuf_exit(&errbuf);
 	module_put(THIS_MODULE);
-	pr_verbose_init(opts, "ret %i", PTR_ERR_OR_ZERO(c));
+	pr_verbose_init(opts, "ret %s (%i)", bch2_err_str(PTR_ERR_OR_ZERO(c)),
+			PTR_ERR_OR_ZERO(c));
 	return c;
 err_print:
 	pr_err("bch_fs_open err opening %s: %s",
