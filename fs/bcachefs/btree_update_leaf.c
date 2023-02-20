@@ -641,7 +641,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans, unsigned flags,
 	}
 
 	if (!(flags & BTREE_INSERT_WRITE_BUFFER_FLUSH) &&
-	    c->btree_write_buffer.nr > c->btree_write_buffer.size / 2)
+	    c->btree_write_buffer.nr > c->btree_write_buffer.size * 3 / 4)
 		return -BCH_ERR_btree_insert_need_flush_buffer;
 
 	/*

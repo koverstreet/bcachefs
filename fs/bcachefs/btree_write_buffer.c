@@ -149,9 +149,9 @@ trans_commit:
 		bch2_trans_commit(trans, NULL, NULL,
 				  commit_flags|
 				  BTREE_INSERT_NOFAIL|
+				  BTREE_INSERT_WRITE_BUFFER_FLUSH|
 				  BTREE_INSERT_JOURNAL_RECLAIM|
-				  BTREE_INSERT_WRITE_BUFFER_FLUSH);
-
+				  JOURNAL_WATERMARK_reserved);
 }
 
 int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans, unsigned commit_flags,
@@ -246,6 +246,7 @@ out:
 	bch2_journal_pin_drop(j, &pin);
 	return ret;
 slowpath:
+	BUG();
 	trace_write_buffer_flush_slowpath(trans, i - keys, nr);
 
 	dst = keys;
@@ -318,6 +319,34 @@ int bch2_btree_write_buffer_flush_sync(struct btree_trans *trans, unsigned commi
 	return ret;
 }
 
+static void bch2_write_buffer_flush_work(struct work_struct *work)
+{
+	struct bch_fs *c = container_of(work, struct bch_fs, btree_write_buffer.work);
+	struct btree_write_buffer *wb = &c->btree_write_buffer;
+	struct btree_trans trans;
+	int ret = 0;
+
+	bch2_trans_init(&trans, c, 0, 0);
+
+	mutex_lock(&wb->flush_lock);
+
+	while (wb->nr && !ret)
+		ret = bch2_btree_write_buffer_flush_locked(&trans, 0, true);
+
+	mutex_unlock(&wb->flush_lock);
+
+	bch2_trans_exit(&trans);
+
+	bch2_write_ref_put(c, BCH_WRITE_REF_write_buffer_flush);
+}
+
+void bch2_queue_btree_write_buffer_flush(struct bch_fs *c)
+{
+	if (bch2_write_ref_tryget(c, BCH_WRITE_REF_write_buffer_flush) &&
+	    !queue_work(system_long_wq, &c->btree_write_buffer.work))
+		bch2_write_ref_put(c, BCH_WRITE_REF_write_buffer_flush);
+}
+
 static int bch2_btree_write_buffer_journal_flush(struct journal *j,
 				struct journal_entry_pin *_pin, u64 seq)
 {
@@ -372,6 +401,7 @@ int bch2_fs_btree_write_buffer_init(struct bch_fs *c)
 	mutex_init(&wb->lock);
 	mutex_init(&wb->flush_lock);
 	wb->size = c->opts.btree_write_buffer_size;
+	INIT_WORK(&wb->work, bch2_write_buffer_flush_work);
 
 	wb->keys[0] = kvmalloc_array(wb->size, sizeof(*wb->keys[0]), GFP_KERNEL);
 	wb->keys[1] = kvmalloc_array(wb->size, sizeof(*wb->keys[1]), GFP_KERNEL);

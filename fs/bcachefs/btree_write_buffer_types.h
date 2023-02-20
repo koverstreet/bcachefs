@@ -18,6 +18,7 @@ struct btree_write_buffer {
 	struct mutex			lock;
 	struct mutex			flush_lock;
 	struct journal_entry_pin	journal_pin;
+	struct work_struct		work;
 
 	size_t				nr;
 	size_t				size;

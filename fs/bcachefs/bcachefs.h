@@ -646,6 +646,7 @@ typedef struct {
 
 #define BCH_WRITE_REFS()						\
 	x(trans)							\
+	x(write_buffer_flush)						\
 	x(write)							\
 	x(promote)							\
 	x(node_rewrite)							\

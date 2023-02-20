@@ -1700,6 +1700,8 @@ static void bch2_journal_entries_postprocess(struct bch_fs *c, struct jset *jset
 	//pr_info("write_buffer %u - %zu", nr, c->btree_write_buffer.nr);
 
 	mutex_unlock(&c->btree_write_buffer.lock);
+
+	bch2_queue_btree_write_buffer_flush(c);
 }
 
 void bch2_journal_write(struct closure *cl)
