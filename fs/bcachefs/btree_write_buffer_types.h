@@ -16,12 +16,13 @@ struct btree_write_buffered_key {
 
 struct btree_write_buffer {
 	struct mutex			lock;
+	struct mutex			flush_lock;
 	struct journal_entry_pin	journal_pin;
 
 	size_t				nr;
 	size_t				size;
 
-	struct btree_write_buffered_key	*keys;
+	struct btree_write_buffered_key	*keys[2];
 };
 
 #endif /* _BCACHEFS_BTREE_WRITE_BUFFER_TYPES_H */

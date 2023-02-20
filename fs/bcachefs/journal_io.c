@@ -1641,8 +1641,10 @@ static void bch2_journal_entries_postprocess(struct bch_fs *c, struct jset *jset
 {
 	struct jset_entry *i, *next, *prev = NULL;
 	u64 seq = le64_to_cpu(jset->seq);
+	unsigned nr;
 
 	mutex_lock(&c->btree_write_buffer.lock);
+	nr = c->btree_write_buffer.nr;
 
 	/*
 	 * Simple compaction, dropping empty jset_entries (from journal
@@ -1694,6 +1696,8 @@ static void bch2_journal_entries_postprocess(struct bch_fs *c, struct jset *jset
 
 	prev = prev ? vstruct_next(prev) : jset->start;
 	jset->u64s = cpu_to_le32((u64 *) prev - jset->_data);
+
+	//pr_info("write_buffer %u - %zu", nr, c->btree_write_buffer.nr);
 
 	mutex_unlock(&c->btree_write_buffer.lock);
 }

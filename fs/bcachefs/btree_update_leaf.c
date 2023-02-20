@@ -640,7 +640,8 @@ bch2_trans_commit_write_locked(struct btree_trans *trans, unsigned flags,
 			marking = true;
 	}
 
-	if (c->btree_write_buffer.nr > c->btree_write_buffer.size / 2)
+	if (!(flags & BTREE_INSERT_WRITE_BUFFER_FLUSH) &&
+	    c->btree_write_buffer.nr > c->btree_write_buffer.size / 2)
 		return -BCH_ERR_btree_insert_need_flush_buffer;
 
 	/*
@@ -997,17 +998,19 @@ int bch2_trans_commit_error(struct btree_trans *trans, unsigned flags,
 	case -BCH_ERR_btree_insert_need_flush_buffer: {
 		struct btree_write_buffer *wb = &c->btree_write_buffer;
 
+		BUG_ON(flags & BTREE_INSERT_WRITE_BUFFER_FLUSH);
+
 		ret = 0;
 
 		if (wb->nr) {
 			bch2_trans_reset_updates(trans);
 			bch2_trans_unlock(trans);
 
-			mutex_lock(&wb->lock);
+			mutex_lock(&wb->flush_lock);
 			if (wb->nr)
 				ret = bch2_btree_write_buffer_flush_locked(trans,
 						flags|BTREE_INSERT_NOCHECK_RW, true);
-			mutex_unlock(&wb->lock);
+			mutex_unlock(&wb->flush_lock);
 
 			if (!ret) {
 				trace_and_count(c, trans_restart_write_buffer_flush, trans, _THIS_IP_);
@@ -1106,13 +1109,13 @@ int __bch2_trans_commit(struct btree_trans *trans, unsigned flags)
 	}
 
 	if (c->btree_write_buffer.nr &&
-	    mutex_trylock(&c->btree_write_buffer.lock)) {
+	    mutex_trylock(&c->btree_write_buffer.flush_lock)) {
 		bch2_trans_begin(trans);
 		bch2_trans_unlock(trans);
 
 		ret = bch2_btree_write_buffer_flush_locked(trans,
 					flags|BTREE_INSERT_NOCHECK_RW, true);
-		mutex_unlock(&trans->c->btree_write_buffer.lock);
+		mutex_unlock(&c->btree_write_buffer.flush_lock);
 		if (!ret) {
 			trace_and_count(c, trans_restart_write_buffer_flush, trans, _THIS_IP_);
 			ret = btree_trans_restart(trans, BCH_ERR_transaction_restart_write_buffer_flush);
