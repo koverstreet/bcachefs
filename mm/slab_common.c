@@ -217,21 +217,44 @@ int alloc_slab_obj_exts(struct slab *slab, struct kmem_cache *s,
 {
 	unsigned int objects = objs_per_slab(s, slab);
 	unsigned long obj_exts;
-	void *vec;
+	struct slabobj_ext *vec;
 
 	gfp &= ~OBJCGS_CLEAR_MASK;
 	/* Prevent recursive extension vector allocation */
 	gfp |= __GFP_NO_OBJ_EXT;
 	vec = kcalloc_node(objects, sizeof(struct slabobj_ext), gfp,
 			   slab_nid(slab));
-	if (!vec)
+	if (!vec) {
+#ifdef CONFIG_MEM_ALLOC_PROFILING_DEBUG
+		if (new_slab) {
+			/* Mark vectors which failed to allocate */
+			slab->obj_exts = OBJEXTS_ALLOC_FAIL;
+#ifdef CONFIG_MEMCG
+			slab->obj_exts |= MEMCG_DATA_OBJEXTS;
+#endif
+		}
+#endif
 		return -ENOMEM;
+	}
 
 	obj_exts = (unsigned long)vec;
 #ifdef CONFIG_MEMCG
 	obj_exts |= MEMCG_DATA_OBJEXTS;
 #endif
 	if (new_slab) {
+#ifdef CONFIG_MEM_ALLOC_PROFILING_DEBUG
+		/*
+		 * If vector previously failed to allocate then we have live
+		 * objects with no tag reference. Mark all references in this
+		 * vector as empty to avoid warnings later on.
+		 */
+		if (slab->obj_exts & OBJEXTS_ALLOC_FAIL) {
+			unsigned int i;
+
+			for (i = 0; i < objects; i++)
+				set_codetag_empty(&vec[i].ref);
+		}
+#endif
 		/*
 		 * If the slab is brand new and nobody can yet access its
 		 * obj_exts, no synchronization is required and obj_exts can
