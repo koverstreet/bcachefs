@@ -1045,6 +1045,10 @@ config RT_GROUP_SCHED
 
 endif #CGROUP_SCHED
 
+config SCHED_MM_CID
+	def_bool y
+	depends on SMP && RSEQ
+
 config UCLAMP_TASK_GROUP
 	bool "Utilization clamping per group of tasks"
 	depends on CGROUP_SCHED
@@ -1869,7 +1873,6 @@ config PERF_EVENTS
 	default y if PROFILING
 	depends on HAVE_PERF_EVENTS
 	select IRQ_WORK
-	select SRCU
 	help
 	  Enable kernel support for various performance events provided
 	  by software and hardware.
@@ -1939,7 +1942,7 @@ config RUST
 	depends on !MODVERSIONS
 	depends on !GCC_PLUGINS
 	depends on !RANDSTRUCT
-	depends on !DEBUG_INFO_BTF
+	depends on !DEBUG_INFO_BTF || PAHOLE_HAS_LANG_EXCLUDE
 	select CONSTRUCTORS
 	help
 	  Enables Rust support in the kernel.

@@ -5356,7 +5356,7 @@ static int nfsd4_check_conflicting_opens(struct nfs4_client *clp,
 {
 	struct nfs4_ol_stateid *st;
 	struct file *f = fp->fi_deleg_file->nf_file;
-	struct inode *ino = locks_inode(f);
+	struct inode *ino = file_inode(f);
 	int writes;
 
 	writes = atomic_read(&ino->i_writecount);
@@ -7809,7 +7809,7 @@ check_for_locks(struct nfs4_file *fp, struct nfs4_lockowner *lowner)
 		return status;
 	}
 
-	inode = locks_inode(nf->nf_file);
+	inode = file_inode(nf->nf_file);
 	flctx = locks_inode_context(inode);
 
 	if (flctx && !list_empty_careful(&flctx->flc_posix)) {
@@ -8182,7 +8182,6 @@ nfs4_state_shutdown_net(struct net *net)
 
 	nfsd4_client_tracking_exit(net);
 	nfs4_state_destroy_net(net);
-	rhltable_destroy(&nfs4_file_rhltable);
 #ifdef CONFIG_NFSD_V4_2_INTER_SSC
 	nfsd4_ssc_shutdown_umount(nn);
 #endif
@@ -8192,6 +8191,7 @@ void
 nfs4_state_shutdown(void)
 {
 	nfsd4_destroy_callback_queue();
+	rhltable_destroy(&nfs4_file_rhltable);
 }
 
 static void
