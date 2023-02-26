@@ -102,6 +102,11 @@ void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 {
 	struct bch_dev *ca = ob_dev(c, ob);
 
+	if (ob->sectors_free) {
+		/* trace this */
+		pr_info("wasted %u", ob->sectors_free);
+	}
+
 	if (ob->ec) {
 		ec_stripe_new_put(c, ob->ec, STRIPE_REF_io);
 		return;
