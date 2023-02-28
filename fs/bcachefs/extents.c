@@ -729,6 +729,42 @@ static unsigned bch2_bkey_durability_safe(struct bch_fs *c, struct bkey_s_c k)
 	return durability;
 }
 
+int bch2_verify_extent_has_replicas(struct btree_trans *trans, struct bkey_i *e)
+{
+	struct bch_io_opts opts;
+	struct bch_inode_unpacked inode;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret;
+
+	bch2_trans_iter_init(trans, &iter, BTREE_ID_inodes,
+			     SPOS(0, e->k.p.inode, e->k.p.snapshot),
+			     BTREE_ITER_CACHED);
+	k = bch2_btree_iter_peek_slot(&iter);
+	ret = bkey_err(k);
+	if (ret)
+		goto err;
+
+	BUG_ON(!bkey_is_inode(k.k));
+
+	ret = bch2_inode_unpack(k, &inode);
+	BUG_ON(ret);
+
+	bch2_inode_opts_get(&opts, trans->c, &inode);
+
+	if (bch2_bkey_durability(trans->c, bkey_i_to_s_c(e)) != opts.data_replicas) {
+		struct printbuf buf = PRINTBUF;
+
+		bch2_bkey_val_to_text(&buf, trans->c, bkey_i_to_s_c(e));
+		pr_err("%s", buf.buf);
+		printbuf_exit(&buf);
+		ret = -1;
+	}
+err:
+	bch2_trans_iter_exit(trans, &iter);
+	return ret;
+}
+
 void bch2_bkey_extent_entry_drop(struct bkey_i *k, union bch_extent_entry *entry)
 {
 	union bch_extent_entry *end = bkey_val_end(bkey_i_to_s(k));

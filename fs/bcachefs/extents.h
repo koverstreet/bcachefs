@@ -615,6 +615,8 @@ unsigned bch2_extent_ptr_desired_durability(struct bch_fs *, struct extent_ptr_d
 unsigned bch2_extent_ptr_durability(struct bch_fs *, struct extent_ptr_decoded *);
 unsigned bch2_bkey_durability(struct bch_fs *, struct bkey_s_c);
 
+int bch2_verify_extent_has_replicas(struct btree_trans *, struct bkey_i *);
+
 void bch2_bkey_drop_device(struct bkey_s, unsigned);
 void bch2_bkey_drop_device_noerror(struct bkey_s, unsigned);
 
