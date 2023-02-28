@@ -372,6 +372,15 @@ restart_drop_extra_replicas:
 			printbuf_exit(&buf);
 		}
 
+		ret   = bch2_verify_extent_has_replicas(trans, insert);
+		if (ret == -1) {
+			print_update(m, k, bkey_i_to_s_c(&new->k_i), insert, "durability > 2");
+			bch2_fs_inconsistent(c, "durability > 2");
+			goto err;
+		}
+		if (ret)
+			goto err;
+
 		ret =   bch2_insert_snapshot_whiteouts(trans, m->btree_id,
 						k.k->p, bkey_start_pos(&insert->k)) ?:
 			bch2_insert_snapshot_whiteouts(trans, m->btree_id,
@@ -384,13 +393,14 @@ restart_drop_extra_replicas:
 				BCH_TRANS_COMMIT_no_check_rw|
 				BCH_TRANS_COMMIT_no_enospc|
 				m->data_opts.btree_insert_flags);
-		if (!ret) {
-			bch2_btree_iter_set_pos(trans, &iter, next_pos);
+		if (ret)
+			goto err;
 
-			this_cpu_add(c->counters[BCH_COUNTER_io_move_finish], new->k.size);
-			if (trace_io_move_finish_enabled())
-				trace_io_move_finish2(m, &new->k_i, insert);
-		}
+		bch2_btree_iter_set_pos(&iter, next_pos);
+
+		this_cpu_add(c->counters[BCH_COUNTER_io_move_finish], new->k.size);
+		if (trace_io_move_finish_enabled())
+			trace_io_move_finish2(m, &new->k_i, insert);
 err:
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			ret = 0;
