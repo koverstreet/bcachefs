@@ -319,7 +319,8 @@ int bch2_extent_update(struct btree_trans *trans,
 	 * aren't changing - for fsync to work properly; fsync relies on
 	 * inode->bi_journal_seq which is updated by the trigger code:
 	 */
-	ret =   bch2_extent_update_i_size_sectors(trans, iter,
+	ret =   bch2_verify_extent_has_replicas(trans, k) ?:
+		bch2_extent_update_i_size_sectors(trans, iter,
 						  min(k->k.p.offset << 9, new_i_size),
 						  i_sectors_delta) ?:
 		bch2_trans_update(trans, iter, k, 0) ?:
