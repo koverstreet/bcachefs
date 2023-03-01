@@ -503,11 +503,16 @@ static noinline int bch2_write_drop_io_error_ptrs(struct bch_write_op *op)
 	return 0;
 }
 
+enum bch_write_step {
+	BCH_WRITE_STEP_MORE,
+	BCH_WRITE_STEP_DONE,
+};
+
 /**
  * __bch2_write_index - after a write, update index to point to new data
  * @op:		bch_write_op to process
  */
-static void __bch2_write_index(struct bch_write_op *op)
+static enum bch_write_step __bch2_write_index(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
 	struct keylist *keys = &op->insert_keys;
@@ -551,7 +556,9 @@ out:
 		bch2_open_bucket_write_error(c, &op->open_buckets, dev);
 
 	bch2_open_buckets_put(c, &op->open_buckets);
-	return;
+	return op->flags & BCH_WRITE_DONE
+		? BCH_WRITE_STEP_DONE
+		: BCH_WRITE_STEP_MORE;
 err:
 	keys->top = keys->keys;
 	op->error = ret;
@@ -633,12 +640,14 @@ void bch2_write_point_do_index_updates(struct work_struct *work)
 
 		op->flags |= BCH_WRITE_IN_WORKER;
 
-		__bch2_write_index(op);
-
-		if (!(op->flags & BCH_WRITE_SUBMITTED))
+		switch (__bch2_write_index(op)) {
+		case BCH_WRITE_STEP_MORE:
 			__bch2_write(op);
-		else
+			break;
+		case BCH_WRITE_STEP_DONE:
 			bch2_write_done(&op->cl);
+			break;
+		}
 	}
 }
 
@@ -1566,11 +1575,13 @@ err:
 	     !(op->flags & BCH_WRITE_IN_WORKER))) {
 		bch2_wait_on_allocator(c, &op->cl);
 
-		__bch2_write_index(op);
-
-		if (!(op->flags & BCH_WRITE_SUBMITTED))
+		switch (__bch2_write_index(op)) {
+		case BCH_WRITE_STEP_MORE:
 			goto again;
-		bch2_write_done(&op->cl);
+		case BCH_WRITE_STEP_DONE:
+			bch2_write_done(&op->cl);
+			break;
+		}
 	} else {
 		bch2_write_queue(op, wp);
 		continue_at(&op->cl, bch2_write_index, NULL);
@@ -1619,7 +1630,7 @@ static void bch2_write_data_inline(struct bch_write_op *op, unsigned data_len)
 	set_bkey_val_bytes(&id->k, data_len);
 	bch2_keylist_push(&op->insert_keys);
 
-	__bch2_write_index(op);
+	BUG_ON(__bch2_write_index(op) != BCH_WRITE_STEP_DONE);
 err:
 	bch2_write_done(&op->cl);
 }
