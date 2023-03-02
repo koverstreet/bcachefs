@@ -300,7 +300,7 @@ retry:
 	bch2_open_bucket_get(c, wp, &ob);
 	bch2_alloc_sectors_done(c, wp);
 mem_alloc:
-	b = bch2_btree_node_mem_alloc(c, interior_node);
+	b = bch2_btree_node_mem_alloc(trans, interior_node);
 	six_unlock_write(&b->c.lock);
 	six_unlock_intent(&b->c.lock);
 
@@ -2260,7 +2260,7 @@ int bch2_btree_node_update_key(struct btree_trans *trans, struct btree_iter *ite
 				return ret;
 		}
 
-		new_hash = bch2_btree_node_mem_alloc(c, false);
+		new_hash = bch2_btree_node_mem_alloc(trans, false);
 	}
 
 	path->intent_ref++;
@@ -2323,8 +2323,9 @@ void bch2_btree_set_root_for_read(struct bch_fs *c, struct btree *b)
 	bch2_btree_set_root_inmem(c, b);
 }
 
-void bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id)
+static int __bch2_btree_root_alloc(struct btree_trans *trans, enum btree_id id)
 {
+	struct bch_fs *c = trans->c;
 	struct closure cl;
 	struct btree *b;
 	int ret;
@@ -2336,7 +2337,7 @@ void bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id)
 		closure_sync(&cl);
 	} while (ret);
 
-	b = bch2_btree_node_mem_alloc(c, false);
+	b = bch2_btree_node_mem_alloc(trans, false);
 	bch2_btree_cache_cannibalize_unlock(c);
 
 	set_btree_node_fake(b);
@@ -2365,6 +2366,12 @@ void bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id)
 
 	six_unlock_write(&b->c.lock);
 	six_unlock_intent(&b->c.lock);
+	return 0;
+}
+
+void bch2_btree_root_alloc(struct bch_fs *c, enum btree_id id)
+{
+	bch2_trans_run(c, __bch2_btree_root_alloc(&trans, id));
 }
 
 void bch2_btree_updates_to_text(struct printbuf *out, struct bch_fs *c)
