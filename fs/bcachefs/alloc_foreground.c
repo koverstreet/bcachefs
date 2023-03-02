@@ -1004,6 +1004,26 @@ unlock:
 	return ret;
 }
 
+static void verify_ec_alloc(struct bch_fs *c,
+			    struct open_buckets *ptrs,
+			    unsigned *nr_effective,
+			    unsigned nr_replicas,
+			    unsigned flags)
+{
+	if (flags & BCH_WRITE_WAIT_FOR_EC) {
+		unsigned i, nr2 = 0;
+		struct open_bucket *ob;
+
+		open_bucket_for_each(c, ptrs, ob, i)
+			nr2 += 1 + (ob->ec ? ob->ec->nr_parity : 0);
+
+		if (*nr_effective != nr2 ||
+		    (ptrs->nr > 1 && ec_open_bucket(c, ptrs)))
+			panic("\nnr %u effective %u should be %u want %u\n",
+			      ptrs->nr, *nr_effective, nr2, nr_replicas);
+	}
+}
+
 static int __open_bucket_add_buckets(struct btree_trans *trans,
 			struct open_buckets *ptrs,
 			struct write_point *wp,
@@ -1036,12 +1056,14 @@ static int __open_bucket_add_buckets(struct btree_trans *trans,
 	ret = bucket_alloc_set_writepoint(c, ptrs, wp, &devs,
 				 nr_replicas, nr_effective,
 				 have_cache, erasure_code);
+	verify_ec_alloc(c, ptrs, nr_effective, nr_replicas, flags);
 	if (ret)
 		return ret;
 
 	ret = bucket_alloc_set_partial(c, ptrs, wp, &devs,
 				 nr_replicas, nr_effective,
 				 have_cache, erasure_code, watermark);
+	verify_ec_alloc(c, ptrs, nr_effective, nr_replicas, flags);
 	if (ret)
 		return ret;
 
@@ -1051,6 +1073,7 @@ static int __open_bucket_add_buckets(struct btree_trans *trans,
 					 nr_replicas, nr_effective,
 					 have_cache,
 					 watermark, flags, _cl);
+		verify_ec_alloc(c, ptrs, nr_effective, nr_replicas, flags);
 	} else {
 retry_blocking:
 		/*
@@ -1060,6 +1083,7 @@ retry_blocking:
 		ret = bch2_bucket_alloc_set_trans(trans, ptrs, &wp->stripe, &devs,
 					nr_replicas, nr_effective, have_cache,
 					flags, wp->data_type, watermark, cl);
+		verify_ec_alloc(c, ptrs, nr_effective, nr_replicas, flags);
 		if (ret &&
 		    !bch2_err_matches(ret, BCH_ERR_transaction_restart) &&
 		    !bch2_err_matches(ret, BCH_ERR_insufficient_devices) &&
@@ -1099,6 +1123,9 @@ static int open_bucket_add_buckets(struct btree_trans *trans,
 			return ret;
 		if (*nr_effective >= nr_replicas)
 			return 0;
+
+		//if (!ec_open_bucket(trans->c, ptrs))
+		//	panic("ret %s\n", bch2_err_str(ret));
 	}
 
 	ret = __open_bucket_add_buckets(trans, ptrs, wp,
