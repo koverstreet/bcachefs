@@ -563,8 +563,9 @@ static struct btree *btree_node_cannibalize(struct bch_fs *c)
 	}
 }
 
-struct btree *bch2_btree_node_mem_alloc(struct bch_fs *c, bool pcpu_read_locks)
+struct btree *bch2_btree_node_mem_alloc(struct btree_trans *trans, bool pcpu_read_locks)
 {
+	struct bch_fs *c = trans->c;
 	struct btree_cache *bc = &c->btree_cache;
 	struct list_head *freed = pcpu_read_locks
 		? &bc->freed_pcpu
@@ -675,8 +676,7 @@ err:
 }
 
 /* Slowpath, don't want it inlined into btree_iter_traverse() */
-static noinline struct btree *bch2_btree_node_fill(struct bch_fs *c,
-				struct btree_trans *trans,
+static noinline struct btree *bch2_btree_node_fill(struct btree_trans *trans,
 				struct btree_path *path,
 				const struct bkey_i *k,
 				enum btree_id btree_id,
@@ -684,6 +684,7 @@ static noinline struct btree *bch2_btree_node_fill(struct bch_fs *c,
 				enum six_lock_type lock_type,
 				bool sync)
 {
+	struct bch_fs *c = trans->c;
 	struct btree_cache *bc = &c->btree_cache;
 	struct btree *b;
 	u32 seq;
@@ -693,14 +694,14 @@ static noinline struct btree *bch2_btree_node_fill(struct bch_fs *c,
 	 * Parent node must be locked, else we could read in a btree node that's
 	 * been freed:
 	 */
-	if (trans && !bch2_btree_node_relock(trans, path, level + 1)) {
+	if (path && !bch2_btree_node_relock(trans, path, level + 1)) {
 		trace_and_count(c, trans_restart_relock_parent_for_fill, trans, _THIS_IP_, path);
 		return ERR_PTR(btree_trans_restart(trans, BCH_ERR_transaction_restart_fill_relock));
 	}
 
-	b = bch2_btree_node_mem_alloc(c, level != 0);
+	b = bch2_btree_node_mem_alloc(trans, level != 0);
 
-	if (trans && b == ERR_PTR(-ENOMEM)) {
+	if (b == ERR_PTR(-ENOMEM)) {
 		trans->memory_allocation_failure = true;
 		trace_and_count(c, trans_restart_memory_allocation_failure, trans, _THIS_IP_, path);
 		return ERR_PTR(btree_trans_restart(trans, BCH_ERR_transaction_restart_fill_mem_alloc_fail));
@@ -746,7 +747,7 @@ static noinline struct btree *bch2_btree_node_fill(struct bch_fs *c,
 	if (!sync)
 		return NULL;
 
-	if (trans) {
+	if (path) {
 		int ret = bch2_trans_relock(trans) ?:
 			bch2_btree_path_relock_intent(trans, path);
 		if (ret) {
@@ -756,7 +757,7 @@ static noinline struct btree *bch2_btree_node_fill(struct bch_fs *c,
 	}
 
 	if (!six_relock_type(&b->c.lock, lock_type, seq)) {
-		if (trans)
+		if (path)
 			trace_and_count(c, trans_restart_relock_after_fill, trans, _THIS_IP_, path);
 		return ERR_PTR(btree_trans_restart(trans, BCH_ERR_transaction_restart_relock_after_fill));
 	}
@@ -822,7 +823,7 @@ retry:
 		 * else we could read in a btree node from disk that's been
 		 * freed:
 		 */
-		b = bch2_btree_node_fill(c, trans, path, k, path->btree_id,
+		b = bch2_btree_node_fill(trans, path, k, path->btree_id,
 					 level, lock_type, true);
 
 		/* We raced and found the btree node in the cache */
@@ -1031,7 +1032,7 @@ retry:
 		if (nofill)
 			goto out;
 
-		b = bch2_btree_node_fill(c, NULL, NULL, k, btree_id,
+		b = bch2_btree_node_fill(trans, NULL, k, btree_id,
 					 level, SIX_LOCK_read, true);
 
 		/* We raced and found the btree node in the cache */
@@ -1091,12 +1092,12 @@ out:
 	return b;
 }
 
-int bch2_btree_node_prefetch(struct bch_fs *c,
-			     struct btree_trans *trans,
+int bch2_btree_node_prefetch(struct btree_trans *trans,
 			     struct btree_path *path,
 			     const struct bkey_i *k,
 			     enum btree_id btree_id, unsigned level)
 {
+	struct bch_fs *c = trans->c;
 	struct btree_cache *bc = &c->btree_cache;
 	struct btree *b;
 
@@ -1107,7 +1108,7 @@ int bch2_btree_node_prefetch(struct bch_fs *c,
 	if (b)
 		return 0;
 
-	b = bch2_btree_node_fill(c, trans, path, k, btree_id,
+	b = bch2_btree_node_fill(trans, path, k, btree_id,
 				 level, SIX_LOCK_read, false);
 	return PTR_ERR_OR_ZERO(b);
 }
