@@ -119,7 +119,7 @@ static struct btree *__btree_node_mem_alloc(struct bch_fs *c, gfp_t gfp)
 		return NULL;
 
 	bkey_btree_ptr_init(&b->key);
-	__six_lock_init(&b->c.lock, "b->c.lock", &bch2_btree_node_lock_key);
+	bch2_btree_lock_init(&b->c);
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 	lockdep_set_no_check_recursion(&b->c.lock.dep_map);
 #endif
