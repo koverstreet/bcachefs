@@ -4,7 +4,19 @@
 #include "btree_locking.h"
 #include "btree_types.h"
 
-struct lock_class_key bch2_btree_node_lock_key;
+static struct lock_class_key bch2_btree_node_lock_key;
+
+void bch2_btree_lock_init(struct btree_bkey_cached_common *b)
+{
+	__six_lock_init(&b->lock, "b->c.lock", &bch2_btree_node_lock_key);
+}
+
+#ifdef CONFIG_LOCKDEP
+void bch2_assert_btree_nodes_not_locked(void)
+{
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
+}
+#endif
 
 /* Btree node locking: */
 
@@ -718,8 +730,8 @@ void bch2_trans_unlock(struct btree_trans *trans)
 	 * bch2_gc_btree_init_recurse() doesn't use btree iterators for walking
 	 * btree nodes, it implements its own walking:
 	 */
-	EBUG_ON(!trans->is_initial_gc &&
-		lock_class_is_held(&bch2_btree_node_lock_key));
+	if (!trans->is_initial_gc)
+		bch2_assert_btree_nodes_not_locked();
 }
 
 bool bch2_trans_locked(struct btree_trans *trans)
