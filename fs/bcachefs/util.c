@@ -757,10 +757,10 @@ void bch2_bio_map(struct bio *bio, void *base, size_t size)
 	}
 }
 
-int bch2_bio_alloc_pages(struct bio *bio, size_t size, gfp_t gfp_mask)
+int bch2_bio_alloc_pages_noprof(struct bio *bio, size_t size, gfp_t gfp_mask)
 {
 	while (size) {
-		struct page *page = alloc_pages(gfp_mask, 0);
+		struct page *page = alloc_pages_noprof(gfp_mask, 0);
 		unsigned len = min_t(size_t, PAGE_SIZE, size);
 
 		if (!page)
