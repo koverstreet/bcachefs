@@ -105,8 +105,8 @@ static void btree_bounce_free(struct bch_fs *c, size_t size,
 		vpfree(p, size);
 }
 
-static void *btree_bounce_alloc(struct bch_fs *c, size_t size,
-				bool *used_mempool)
+static void *_btree_bounce_alloc(struct bch_fs *c, size_t size,
+				 bool *used_mempool)
 {
 	unsigned flags = memalloc_nofs_save();
 	void *p;
@@ -114,7 +114,7 @@ static void *btree_bounce_alloc(struct bch_fs *c, size_t size,
 	BUG_ON(size > btree_bytes(c));
 
 	*used_mempool = false;
-	p = vpmalloc(size, __GFP_NOWARN|GFP_NOWAIT);
+	p = _vpmalloc(size, __GFP_NOWARN|GFP_NOWAIT);
 	if (!p) {
 		*used_mempool = true;
 		p = mempool_alloc(&c->btree_bounce_pool, GFP_NOIO);
@@ -122,6 +122,8 @@ static void *btree_bounce_alloc(struct bch_fs *c, size_t size,
 	memalloc_nofs_restore(flags);
 	return p;
 }
+#define btree_bounce_alloc(_c, _size, _used_mempool)		\
+	alloc_hooks(_btree_bounce_alloc(_c, _size, _used_mempool), void *, NULL)
 
 static void sort_bkey_ptrs(const struct btree *bt,
 			   struct bkey_packed **ptrs, unsigned nr)
