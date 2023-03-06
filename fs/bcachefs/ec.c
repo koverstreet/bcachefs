@@ -1193,15 +1193,6 @@ void bch2_ec_do_stripe_creates(struct bch_fs *c)
 		bch2_write_ref_put(c, BCH_WRITE_REF_stripe_create);
 }
 
-static void ec_stripe_new_put(struct bch_fs *c, struct ec_stripe_new *s)
-{
-	BUG_ON(atomic_read(&s->pin) <= 0);
-	BUG_ON(!s->err && !s->idx);
-
-	if (atomic_dec_and_test(&s->pin))
-		bch2_ec_do_stripe_creates(c);
-}
-
 static void ec_stripe_set_pending(struct bch_fs *c, struct ec_stripe_head *h)
 {
 	struct ec_stripe_new *s = h->s;
