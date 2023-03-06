@@ -1153,7 +1153,7 @@ wait_on_io:
 }
 
 void bch2_btree_node_to_text(struct printbuf *out, struct bch_fs *c,
-			     struct btree *b)
+			     const struct btree *b)
 {
 	const struct bkey_format *f = &b->format;
 	struct bset_stats stats;
@@ -1198,7 +1198,7 @@ void bch2_btree_node_to_text(struct printbuf *out, struct bch_fs *c,
 	       stats.failed);
 }
 
-void bch2_btree_cache_to_text(struct printbuf *out, struct bch_fs *c)
+void bch2_btree_cache_to_text(struct printbuf *out, const struct bch_fs *c)
 {
 	prt_printf(out, "nr nodes:\t\t%u\n", c->btree_cache.used);
 	prt_printf(out, "nr dirty:\t\t%u\n", atomic_read(&c->btree_cache.dirty));
