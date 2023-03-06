@@ -838,10 +838,10 @@ got_bucket:
 
 	ob->ec_idx	= ec_idx;
 	ob->ec		= h->s;
+	ec_stripe_new_get(h->s);
 
 	add_new_bucket(c, ptrs, devs_may_alloc,
 		       nr_effective, have_cache, flags, ob);
-	atomic_inc(&h->s->pin);
 out_put_head:
 	bch2_ec_stripe_head_put(c, h);
 	return 0;
