@@ -97,7 +97,7 @@ void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 	struct bch_dev *ca = bch_dev_bkey_exists(c, ob->dev);
 
 	if (ob->ec) {
-		bch2_ec_bucket_written(c, ob);
+		ec_stripe_new_put(c, ob->ec);
 		return;
 	}
 

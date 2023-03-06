@@ -1218,14 +1218,6 @@ static void ec_stripe_set_pending(struct bch_fs *c, struct ec_stripe_head *h)
 	ec_stripe_new_put(c, s);
 }
 
-/* have a full bucket - hand it off to be erasure coded: */
-void bch2_ec_bucket_written(struct bch_fs *c, struct open_bucket *ob)
-{
-	struct ec_stripe_new *s = ob->ec;
-
-	ec_stripe_new_put(c, s);
-}
-
 void bch2_ec_bucket_cancel(struct bch_fs *c, struct open_bucket *ob)
 {
 	struct ec_stripe_new *s = ob->ec;
