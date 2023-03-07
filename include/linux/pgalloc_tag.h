@@ -61,7 +61,7 @@ static inline void pgalloc_tag_split(struct page *page, unsigned int nr)
 
 	ref = codetag_ref_from_page_ext(page_ext);
 	if (!ref->ct)
-		return;
+		goto out;
 
 	tag = is_codetag_ctx_ref(ref) ? ctc_to_alloc_tag(ref->ctx->ctc)
 				      : ct_to_alloc_tag(ref->ct);
@@ -71,6 +71,7 @@ static inline void pgalloc_tag_split(struct page *page, unsigned int nr)
 		alloc_tag_add(codetag_ref_from_page_ext(page_ext), tag, 0);
 		page_ext = page_ext_next(page_ext);
 	}
+out:
 	page_ext_put(page_ext);
 }
 
