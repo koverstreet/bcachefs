@@ -1871,6 +1871,28 @@ err:
 		op->end_io(op);
 }
 
+const char * const bch2_write_flags[] = {
+#define x(f)	#f,
+	BCH_WRITE_FLAGS()
+#undef x
+	NULL
+};
+
+void bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
+{
+	prt_str(out, "pos: ");
+	bch2_bpos_to_text(out, op->pos);
+	prt_newline(out);
+
+	prt_str(out, "started: ");
+	bch2_pr_time_units(out, local_clock() - op->start_time);
+	prt_newline(out);
+
+	prt_str(out, "flags: ");
+	prt_bitflags(out, bch2_write_flags, op->flags);
+	prt_newline(out);
+}
+
 /* Cache promotion on read */
 
 struct promote_op {
