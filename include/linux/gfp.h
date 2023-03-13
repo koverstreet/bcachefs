@@ -251,7 +251,7 @@ _alloc_pages_node2(int nid, gfp_t gfp_mask, unsigned int order)
 	VM_BUG_ON(nid < 0 || nid >= MAX_NUMNODES);
 	warn_if_node_offline(nid, gfp_mask);
 
-	return __alloc_pages(gfp_mask, order, nid, NULL);
+	return _alloc_pages2(gfp_mask, order, nid, NULL);
 }
 
 #define  __alloc_pages_node(_nid, _gfp_mask, _order) \
@@ -264,7 +264,7 @@ struct folio *__folio_alloc_node(gfp_t gfp, unsigned int order, int nid)
 	VM_BUG_ON(nid < 0 || nid >= MAX_NUMNODES);
 	warn_if_node_offline(nid, gfp);
 
-	return __folio_alloc(gfp, order, nid, NULL);
+	return _folio_alloc2(gfp, order, nid, NULL);
 }
 
 /*
@@ -331,7 +331,10 @@ void *_alloc_pages_exact(size_t size, gfp_t gfp_mask) __alloc_size(1);
 #define alloc_pages_exact(_size, _gfp_mask) \
 		alloc_hooks(_alloc_pages_exact(_size, _gfp_mask), void *, NULL)
 void free_pages_exact(void *virt, size_t size);
-__meminit void *alloc_pages_exact_nid(int nid, size_t size, gfp_t gfp_mask) __alloc_size(2);
+
+__meminit void *_alloc_pages_exact_nid(int nid, size_t size, gfp_t gfp_mask) __alloc_size(2);
+#define alloc_pages_exact_nid(_nid, _size, _gfp_mask) \
+		alloc_hooks(_alloc_pages_exact_nid(_nid, _size, _gfp_mask), void *, NULL)
 
 #define __get_free_page(gfp_mask) \
 		__get_free_pages((gfp_mask), 0)
