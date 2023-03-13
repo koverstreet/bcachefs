@@ -207,19 +207,12 @@ unsigned long _alloc_pages_bulk_array_mempolicy(gfp_t gfp,
 					_nr_pages, _page_array), \
 					unsigned long, 0)
 
-
 /* Bulk allocate order-0 pages */
-static inline unsigned long
-alloc_pages_bulk_list(gfp_t gfp, unsigned long nr_pages, struct list_head *list)
-{
-	return __alloc_pages_bulk(gfp, numa_mem_id(), NULL, nr_pages, list, NULL);
-}
+#define alloc_pages_bulk_list(_gfp, _nr_pages, _list)				\
+	__alloc_pages_bulk(_gfp, numa_mem_id(), NULL, _nr_pages, _list, NULL)
 
-static inline unsigned long
-alloc_pages_bulk_array(gfp_t gfp, unsigned long nr_pages, struct page **page_array)
-{
-	return __alloc_pages_bulk(gfp, numa_mem_id(), NULL, nr_pages, NULL, page_array);
-}
+#define alloc_pages_bulk_array(_gfp, _nr_pages, _page_array)			\
+	__alloc_pages_bulk(_gfp, numa_mem_id(), NULL, _nr_pages, NULL, _page_array)
 
 static inline unsigned long
 _alloc_pages_bulk_array_node(gfp_t gfp, int nid, unsigned long nr_pages, struct page **page_array)
@@ -231,9 +224,8 @@ _alloc_pages_bulk_array_node(gfp_t gfp, int nid, unsigned long nr_pages, struct 
 }
 
 #define alloc_pages_bulk_array_node(_gfp, _nid, _nr_pages, _page_array) \
-		alloc_hooks(_alloc_pages_bulk_array_node(_gfp, _nid, \
-						_nr_pages, _page_array), \
-						unsigned long, 0)
+	alloc_hooks(_alloc_pages_bulk_array_node(_gfp, _nid, _nr_pages, _page_array), \
+		    unsigned long, 0)
 
 static inline void warn_if_node_offline(int this_node, gfp_t gfp_mask)
 {
