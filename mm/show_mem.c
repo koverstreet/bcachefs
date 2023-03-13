@@ -59,6 +59,13 @@ void __show_mem(unsigned int filter, nodemask_t *nodemask, int max_zone_idx)
 		seq_buf_init(&s, buf, 4096);
 		shrinkers_to_text(&s);
 		printk("%s", buf);
+
+#ifdef CONFIG_MEM_ALLOC_PROFILING
+		printk("Memory allocations:\n");
+		seq_buf_init(&s, buf, 4096);
+		alloc_tags_show_mem_report(&s);
+		printk("%s", buf);
+#endif
 		kfree(buf);
 	}
 }
