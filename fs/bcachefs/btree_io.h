@@ -200,7 +200,7 @@ static inline void compat_btree_node(unsigned level, enum btree_id btree_id,
 				     struct btree_node *bn)
 {
 	if (version < bcachefs_metadata_version_inode_btree_change &&
-	    btree_node_type_is_extents(btree_id) &&
+	    btree_node_type_is_extents(__btree_node_type(0, btree_id)) &&
 	    !bpos_eq(bn->min_key, POS_MIN) &&
 	    write)
 		bn->min_key = bpos_nosnap_predecessor(bn->min_key);
@@ -217,7 +217,7 @@ static inline void compat_btree_node(unsigned level, enum btree_id btree_id,
 		bn->max_key.snapshot = U32_MAX;
 
 	if (version < bcachefs_metadata_version_inode_btree_change &&
-	    btree_node_type_is_extents(btree_id) &&
+	    btree_node_type_is_extents(__btree_node_type(0, btree_id)) &&
 	    !bpos_eq(bn->min_key, POS_MIN) &&
 	    !write)
 		bn->min_key = bpos_nosnap_successor(bn->min_key);

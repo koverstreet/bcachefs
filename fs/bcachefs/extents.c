@@ -232,7 +232,7 @@ void bch2_btree_ptr_v2_compat(enum btree_id btree_id, unsigned version,
 	compat_bpos(0, btree_id, version, big_endian, write, &bp.v->min_key);
 
 	if (version < bcachefs_metadata_version_inode_btree_change &&
-	    btree_node_type_is_extents(btree_id) &&
+	    btree_node_type_is_extents(__btree_node_type(0,btree_id)) &&
 	    !bkey_eq(bp.v->min_key, POS_MIN))
 		bp.v->min_key = write
 			? bpos_nosnap_predecessor(bp.v->min_key)
