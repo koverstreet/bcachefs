@@ -443,10 +443,10 @@ static void __bch2_folio_set(struct folio *folio,
 			     unsigned nr_ptrs, unsigned state)
 {
 	struct bch_folio *s = bch2_folio_create(folio, __GFP_NOFAIL);
-	unsigned i;
+	unsigned i, sectors = folio_sectors(folio);
 
-	BUG_ON(pg_offset >= PAGE_SECTORS);
-	BUG_ON(pg_offset + pg_len > PAGE_SECTORS);
+	BUG_ON(pg_offset >= sectors);
+	BUG_ON(pg_offset + pg_len > sectors);
 
 	spin_lock(&s->lock);
 
@@ -455,7 +455,7 @@ static void __bch2_folio_set(struct folio *folio,
 		s->s[i].state		= state;
 	}
 
-	if (i == PAGE_SECTORS)
+	if (i == sectors)
 		s->uptodate = true;
 
 	spin_unlock(&s->lock);
@@ -656,13 +656,13 @@ static int bch2_get_folio_disk_reservation(struct bch_fs *c,
 	struct bch_folio *s = bch2_folio_create(folio, 0);
 	unsigned nr_replicas = inode_nr_replicas(c, inode);
 	struct disk_reservation disk_res = { 0 };
-	unsigned i, disk_res_sectors = 0;
+	unsigned i, sectors = folio_sectors(folio), disk_res_sectors = 0;
 	int ret;
 
 	if (!s)
 		return -ENOMEM;
 
-	for (i = 0; i < ARRAY_SIZE(s->s); i++)
+	for (i = 0; i < sectors; i++)
 		disk_res_sectors += sectors_to_reserve(&s->s[i], nr_replicas);
 
 	if (!disk_res_sectors)
@@ -676,7 +676,7 @@ static int bch2_get_folio_disk_reservation(struct bch_fs *c,
 	if (unlikely(ret))
 		return ret;
 
-	for (i = 0; i < ARRAY_SIZE(s->s); i++)
+	for (i = 0; i < sectors; i++)
 		s->s[i].replicas_reserved +=
 			sectors_to_reserve(&s->s[i], nr_replicas);
 
@@ -757,7 +757,7 @@ static void bch2_clear_folio_bits(struct folio *folio)
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_folio *s = bch2_folio(folio);
 	struct disk_reservation disk_res = { 0 };
-	int i, dirty_sectors = 0;
+	int i, sectors = folio_sectors(folio), dirty_sectors = 0;
 
 	if (!s)
 		return;
@@ -765,7 +765,7 @@ static void bch2_clear_folio_bits(struct folio *folio)
 	EBUG_ON(!folio_test_locked(folio));
 	EBUG_ON(folio_test_writeback(folio));
 
-	for (i = 0; i < ARRAY_SIZE(s->s); i++) {
+	for (i = 0; i < sectors; i++) {
 		disk_res.sectors += s->s[i].replicas_reserved;
 		s->s[i].replicas_reserved = 0;
 
@@ -3480,10 +3480,10 @@ err:
 static int folio_data_offset(struct folio *folio, unsigned offset)
 {
 	struct bch_folio *s = bch2_folio(folio);
-	unsigned i;
+	unsigned i, sectors = folio_sectors(folio);
 
 	if (s)
-		for (i = offset >> 9; i < PAGE_SECTORS; i++)
+		for (i = offset >> 9; i < sectors; i++)
 			if (s->s[i].state >= SECTOR_DIRTY)
 				return i << 9;
 
@@ -3587,12 +3587,12 @@ err:
 static int __folio_hole_offset(struct folio *folio, unsigned offset)
 {
 	struct bch_folio *s = bch2_folio(folio);
-	unsigned i;
+	unsigned i, sectors = folio_sectors(folio);
 
 	if (!s)
 		return 0;
 
-	for (i = offset >> 9; i < PAGE_SECTORS; i++)
+	for (i = offset >> 9; i < sectors; i++)
 		if (s->s[i].state < SECTOR_DIRTY)
 			return i << 9;
 
