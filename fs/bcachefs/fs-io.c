@@ -1009,14 +1009,16 @@ static int readpages_iter_init(struct readpages_iter *iter,
 	return 0;
 }
 
-static inline struct folio *readpage_iter_next(struct readpages_iter *iter)
+static inline struct folio *readpage_iter_peek(struct readpages_iter *iter)
 {
-	if (iter->idx >= iter->nr_pages)
-		return NULL;
+	return iter->idx < iter->nr_pages
+		? page_folio(iter->pages[iter->idx])
+		: NULL;
+}
 
-	EBUG_ON(iter->pages[iter->idx]->index != iter->offset + iter->idx);
-
-	return page_folio(iter->pages[iter->idx]);
+static inline void readpage_iter_advance(struct readpages_iter *iter)
+{
+	iter->idx++;
 }
 
 static bool extent_partial_reads_expensive(struct bkey_s_c k)
@@ -1038,16 +1040,16 @@ static void readpage_bio_extend(struct readpages_iter *iter,
 {
 	while (bio_sectors(bio) < sectors_this_extent &&
 	       bio->bi_vcnt < bio->bi_max_vecs) {
-		pgoff_t folio_offset = bio_end_sector(bio) >> PAGE_SECTORS_SHIFT;
-		struct folio *folio = readpage_iter_next(iter);
+		struct folio *folio = readpage_iter_peek(iter);
 		int ret;
 
 		if (folio) {
-			if (iter->offset + iter->idx != folio_offset)
-				break;
+			BUG_ON(folio_sector(folio) != bio_end_sector(bio));
 
-			iter->idx++;
+			readpage_iter_advance(iter);
 		} else {
+			pgoff_t folio_offset = bio_end_sector(bio) >> PAGE_SECTORS_SHIFT;
+
 			if (!get_more)
 				break;
 
@@ -1205,7 +1207,7 @@ void bch2_readahead(struct readahead_control *ractl)
 
 	bch2_pagecache_add_get(inode);
 
-	while ((folio = readpage_iter_next(&readpages_iter))) {
+	while ((folio = readpage_iter_peek(&readpages_iter))) {
 		pgoff_t index = readpages_iter.offset + readpages_iter.idx;
 		unsigned n = min_t(unsigned,
 				   readpages_iter.nr_pages -
@@ -1216,7 +1218,7 @@ void bch2_readahead(struct readahead_control *ractl)
 						   GFP_NOFS, &c->bio_read),
 				  opts);
 
-		readpages_iter.idx++;
+		readpage_iter_advance(&readpages_iter);
 
 		rbio->bio.bi_iter.bi_sector = (sector_t) index << PAGE_SECTORS_SHIFT;
 		rbio->bio.bi_end_io = bch2_readpages_end_io;
