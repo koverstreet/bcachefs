@@ -383,7 +383,7 @@ int __bch2_btree_node_lock_write(struct btree_trans *trans, struct btree_path *p
 	six_lock_readers_add(&b->lock, readers);
 
 	if (ret)
-		mark_btree_node_locked_noreset(path, b->level, SIX_LOCK_intent);
+		mark_btree_node_locked_noreset(path, b->level, __bch_six_to_node_lock_type(SIX_LOCK_intent));
 
 	return ret;
 }
@@ -547,7 +547,7 @@ bool bch2_btree_node_upgrade(struct btree_trans *trans,
 	trace_and_count(trans->c, btree_path_upgrade_fail, trans, _RET_IP_, path, level);
 	return false;
 success:
-	mark_btree_node_locked_noreset(path, level, SIX_LOCK_intent);
+	mark_btree_node_locked_noreset(path, level, __bch_six_to_node_lock_type(SIX_LOCK_intent));
 	return true;
 }
 
@@ -669,7 +669,7 @@ void __bch2_btree_path_downgrade(struct btree_trans *trans,
 		} else {
 			if (btree_node_intent_locked(path, l)) {
 				six_lock_downgrade(&path->l[l].b->c.lock);
-				mark_btree_node_locked_noreset(path, l, SIX_LOCK_read);
+				mark_btree_node_locked_noreset(path, l, __bch_six_to_node_lock_type(SIX_LOCK_read));
 			}
 			break;
 		}

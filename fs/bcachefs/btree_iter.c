@@ -704,8 +704,8 @@ void bch2_trans_node_add(struct btree_trans *trans, struct btree *b)
 
 			if (t != BTREE_NODE_UNLOCKED) {
 				btree_node_unlock(trans, path, b->c.level);
-				six_lock_increment(&b->c.lock, t);
-				mark_btree_node_locked(trans, path, b->c.level, t);
+				six_lock_increment(&b->c.lock, __bch_node_to_six_lock_type(t));
+				mark_btree_node_locked(trans, path, b->c.level, __bch_node_to_six_lock_type(t));
 			}
 
 			bch2_btree_path_level_init(trans, path, b);

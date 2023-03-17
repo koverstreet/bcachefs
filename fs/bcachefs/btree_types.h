@@ -653,6 +653,11 @@ static inline enum btree_node_type __btree_node_type(unsigned level, enum btree_
 	return level ? BKEY_TYPE_btree : (enum btree_node_type) id;
 }
 
+static inline enum btree_id __btree_id_type(enum btree_node_type id)
+{
+	return (enum btree_id) id;
+}
+
 /* Type of keys @b contains: */
 static inline enum btree_node_type btree_node_type(struct btree *b)
 {

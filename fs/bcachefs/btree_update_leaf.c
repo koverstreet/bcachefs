@@ -428,7 +428,7 @@ static int run_one_mem_trigger(struct btree_trans *trans,
 	if (unlikely(flags & BTREE_TRIGGER_NORUN))
 		return 0;
 
-	if (!btree_node_type_needs_gc(i->btree_id))
+	if (!btree_node_type_needs_gc(__btree_node_type(0,i->btree_id)))
 		return 0;
 
 	if (bch2_bkey_ops[old.k->type].atomic_trigger ==

@@ -239,14 +239,14 @@ int __bch2_bkey_invalid(struct bch_fs *c, struct bkey_s_c k,
 	}
 
 	if (type != BKEY_TYPE_btree &&
-	    !btree_type_has_snapshots(type) &&
+	    !btree_type_has_snapshots(__btree_id_type(type)) &&
 	    k.k->p.snapshot) {
 		prt_printf(err, "nonzero snapshot");
 		return -BCH_ERR_invalid_bkey;
 	}
 
 	if (type != BKEY_TYPE_btree &&
-	    btree_type_has_snapshots(type) &&
+	    btree_type_has_snapshots(__btree_id_type(type)) &&
 	    !k.k->p.snapshot) {
 		prt_printf(err, "snapshot == 0");
 		return -BCH_ERR_invalid_bkey;

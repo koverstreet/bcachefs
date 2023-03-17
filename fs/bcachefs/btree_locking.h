@@ -16,6 +16,7 @@
 
 void bch2_btree_lock_init(struct btree_bkey_cached_common *);
 
+
 #ifdef CONFIG_LOCKDEP
 void bch2_assert_btree_nodes_not_locked(void);
 #else
@@ -41,6 +42,16 @@ enum btree_node_locked_type {
 	BTREE_NODE_INTENT_LOCKED	= SIX_LOCK_intent,
 	BTREE_NODE_WRITE_LOCKED		= SIX_LOCK_write,
 };
+
+/* cast for implicit enum conversion warnings */
+
+static inline enum btree_node_locked_type __bch_six_to_node_lock_type(enum six_lock_type slock) {
+	return (enum btree_node_locked_type) slock;
+}
+
+static inline enum six_lock_type __bch_node_to_six_lock_type(enum btree_node_locked_type bnlock) {
+	return (enum six_lock_type) bnlock;
+}
 
 static inline int btree_node_locked_type(struct btree_path *path,
 					 unsigned level)
@@ -92,7 +103,7 @@ static inline void mark_btree_node_locked(struct btree_trans *trans,
 					  unsigned level,
 					  enum six_lock_type type)
 {
-	mark_btree_node_locked_noreset(path, level, type);
+	mark_btree_node_locked_noreset(path, level, __bch_six_to_node_lock_type(type));
 #ifdef CONFIG_BCACHEFS_LOCK_TIME_STATS
 	path->l[level].lock_taken_time = local_clock();
 #endif
@@ -179,7 +190,7 @@ bch2_btree_node_unlock_write_inlined(struct btree_trans *trans, struct btree_pat
 	EBUG_ON(path->l[b->c.level].lock_seq + 1 != b->c.lock.state.seq);
 	EBUG_ON(btree_node_locked_type(path, b->c.level) != SIX_LOCK_write);
 
-	mark_btree_node_locked_noreset(path, b->c.level, SIX_LOCK_intent);
+	mark_btree_node_locked_noreset(path, b->c.level, __bch_six_to_node_lock_type(SIX_LOCK_intent));
 
 	trans_for_each_path_with_node(trans, b, linked)
 		linked->l[b->c.level].lock_seq += 2;
@@ -245,7 +256,7 @@ static inline bool btree_node_lock_increment(struct btree_trans *trans,
 	trans_for_each_path(trans, path)
 		if (&path->l[level].b->c == b &&
 		    btree_node_locked_type(path, level) >= want) {
-			six_lock_increment(&b->lock, want);
+			six_lock_increment(&b->lock, __bch_node_to_six_lock_type(want));
 			return true;
 		}
 
@@ -265,7 +276,7 @@ static inline int btree_node_lock(struct btree_trans *trans,
 	EBUG_ON(!(trans->paths_allocated & (1ULL << path->idx)));
 
 	if (likely(six_trylock_type(&b->lock, type)) ||
-	    btree_node_lock_increment(trans, b, level, type) ||
+	    btree_node_lock_increment(trans, b, level, __bch_six_to_node_lock_type(type)) ||
 	    !(ret = btree_node_lock_nopath(trans, b, type, btree_path_ip_allocated(path)))) {
 #ifdef CONFIG_BCACHEFS_LOCK_TIME_STATS
 		path->l[b->level].lock_taken_time = local_clock();
@@ -292,7 +303,7 @@ static inline int __btree_node_lock_write(struct btree_trans *trans,
 	 * write lock: thus, we need to tell the cycle detector we have a write
 	 * lock _before_ taking the lock:
 	 */
-	mark_btree_node_locked_noreset(path, b->level, SIX_LOCK_write);
+	mark_btree_node_locked_noreset(path, b->level, __bch_six_to_node_lock_type(SIX_LOCK_write));
 
 	return likely(six_trylock_write(&b->lock))
 		? 0

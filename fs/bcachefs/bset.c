@@ -603,7 +603,7 @@ static inline unsigned bkey_mantissa(const struct bkey_packed *k,
 }
 
 __always_inline
-static inline void make_bfloat(struct btree *b, struct bset_tree *t,
+static void make_bfloat(struct btree *b, struct bset_tree *t,
 			       unsigned j,
 			       struct bkey_packed *min_key,
 			       struct bkey_packed *max_key)
