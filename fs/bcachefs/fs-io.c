@@ -3511,12 +3511,10 @@ static loff_t bch2_seek_pagecache_data(struct inode *vinode,
 
 			folio_lock(folio);
 			offset = folio_data_offset(folio,
-					folio->index == start_index
-					? start_offset & (PAGE_SIZE - 1)
-					: 0);
+					max(folio_pos(folio), start_offset) -
+					folio_pos(folio));
 			if (offset >= 0) {
-				ret = clamp(((loff_t) folio->index << PAGE_SHIFT) +
-					    offset,
+				ret = clamp(folio_pos(folio) + offset,
 					    start_offset, end_offset);
 				folio_unlock(folio);
 				folio_batch_release(&fbatch);
