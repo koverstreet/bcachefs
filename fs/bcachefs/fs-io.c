@@ -1318,33 +1318,33 @@ static void bch2_writepage_io_done(struct bch_write_op *op)
 	struct bch_fs *c = io->op.c;
 	struct bio *bio = &io->op.wbio.bio;
 	struct bvec_iter_all iter;
-	struct bio_vec bvec;
+	struct folio_vec fv;
 	unsigned i;
 
 	if (io->op.error) {
 		set_bit(EI_INODE_ERROR, &io->inode->ei_flags);
 
-		bio_for_each_segment_all(bvec, bio, iter) {
+		bio_for_each_folio_all(fv, bio, iter) {
 			struct bch_folio *s;
 
-			SetPageError(bvec.bv_page);
-			mapping_set_error(bvec.bv_page->mapping, -EIO);
+			folio_set_error(fv.fv_folio);
+			mapping_set_error(fv.fv_folio->mapping, -EIO);
 
-			s = __bch2_folio(page_folio(bvec.bv_page));
+			s = __bch2_folio(fv.fv_folio);
 			spin_lock(&s->lock);
-			for (i = 0; i < PAGE_SECTORS; i++)
+			for (i = 0; i < folio_sectors(fv.fv_folio); i++)
 				s->s[i].nr_replicas = 0;
 			spin_unlock(&s->lock);
 		}
 	}
 
 	if (io->op.flags & BCH_WRITE_WROTE_DATA_INLINE) {
-		bio_for_each_segment_all(bvec, bio, iter) {
+		bio_for_each_folio_all(fv, bio, iter) {
 			struct bch_folio *s;
 
-			s = __bch2_folio(page_folio(bvec.bv_page));
+			s = __bch2_folio(fv.fv_folio);
 			spin_lock(&s->lock);
-			for (i = 0; i < PAGE_SECTORS; i++)
+			for (i = 0; i < folio_sectors(fv.fv_folio); i++)
 				s->s[i].nr_replicas = 0;
 			spin_unlock(&s->lock);
 		}
@@ -1369,12 +1369,11 @@ static void bch2_writepage_io_done(struct bch_write_op *op)
 	 */
 	i_sectors_acct(c, io->inode, NULL, io->op.i_sectors_delta);
 
-	bio_for_each_segment_all(bvec, bio, iter) {
-		struct folio *folio = page_folio(bvec.bv_page);
-		struct bch_folio *s = __bch2_folio(folio);
+	bio_for_each_folio_all(fv, bio, iter) {
+		struct bch_folio *s = __bch2_folio(fv.fv_folio);
 
 		if (atomic_dec_and_test(&s->write_count))
-			folio_end_writeback(folio);
+			folio_end_writeback(fv.fv_folio);
 	}
 
 	bio_put(&io->op.wbio.bio);
@@ -2282,8 +2281,6 @@ static __always_inline void bch2_dio_write_end(struct dio_write *dio)
 	struct kiocb *req = dio->req;
 	struct bch_inode_info *inode = dio->inode;
 	struct bio *bio = &dio->op.wbio.bio;
-	struct bvec_iter_all iter;
-	struct bio_vec bv;
 
 	req->ki_pos	+= (u64) dio->op.written << 9;
 	dio->written	+= dio->op.written;
@@ -2302,9 +2299,13 @@ static __always_inline void bch2_dio_write_end(struct dio_write *dio)
 		mutex_unlock(&inode->ei_quota_lock);
 	}
 
-	if (likely(!bio_flagged(bio, BIO_NO_PAGE_REF)))
-		bio_for_each_segment_all(bv, bio, iter)
-			put_page(bv.bv_page);
+	if (likely(!bio_flagged(bio, BIO_NO_PAGE_REF))) {
+		struct bvec_iter_all iter;
+		struct folio_vec fv;
+
+		bio_for_each_folio_all(fv, bio, iter)
+			folio_put(fv.fv_folio);
+	}
 
 	if (unlikely(dio->op.error))
 		set_bit(EI_INODE_ERROR, &inode->ei_flags);
@@ -2425,10 +2426,10 @@ err:
 
 	if (!bio_flagged(bio, BIO_NO_PAGE_REF)) {
 		struct bvec_iter_all iter;
-		struct bio_vec bv;
+		struct folio_vec fv;
 
-		bio_for_each_segment_all(bv, bio, iter)
-			put_page(bv.bv_page);
+		bio_for_each_folio_all(fv, bio, iter)
+			folio_put(fv.fv_folio);
 	}
 
 	bch2_quota_reservation_put(c, inode, &dio->quota_res);
