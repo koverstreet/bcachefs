@@ -2016,6 +2016,9 @@ int vm_insert_page(struct vm_area_struct *vma, unsigned long addr,
 		BUG_ON(vma->vm_flags & VM_PFNMAP);
 		vm_flags_set(vma, VM_MIXEDMAP);
 	}
+	if (track_pfn_remap(vma, &vma->vm_page_prot,
+			page_to_pfn(page), addr, PAGE_SIZE))
+		return -EINVAL;
 	return insert_page(vma, addr, page, vma->vm_page_prot);
 }
 EXPORT_SYMBOL(vm_insert_page);
