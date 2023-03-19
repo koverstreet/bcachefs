@@ -839,6 +839,7 @@ size_t copy_folio_from_iter_atomic(struct folio *folio, size_t offset,
 	if (WARN_ON_ONCE(!i->data_source))
 		return 0;
 
+#ifdef CONFIG_HIGHMEM
 	while (bytes) {
 		struct page *page = folio_page(folio, offset >> PAGE_SHIFT);
 		unsigned b = min(bytes, PAGE_SIZE - (offset & PAGE_MASK));
@@ -851,6 +852,9 @@ size_t copy_folio_from_iter_atomic(struct folio *folio, size_t offset,
 		if (r != b)
 			break;
 	}
+#else
+	ret = __copy_page_from_iter_atomic(&folio->page, offset, bytes, i);
+#endif
 
 	return ret;
 }
