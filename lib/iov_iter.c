@@ -800,18 +800,10 @@ size_t iov_iter_zero(size_t bytes, struct iov_iter *i)
 }
 EXPORT_SYMBOL(iov_iter_zero);
 
-size_t copy_page_from_iter_atomic(struct page *page, unsigned offset, size_t bytes,
-				  struct iov_iter *i)
+static inline size_t __copy_page_from_iter_atomic(struct page *page, unsigned offset,
+						  size_t bytes, struct iov_iter *i)
 {
 	char *kaddr = kmap_atomic(page), *p = kaddr + offset;
-	if (!page_copy_sane(page, offset, bytes)) {
-		kunmap_atomic(kaddr);
-		return 0;
-	}
-	if (WARN_ON_ONCE(!i->data_source)) {
-		kunmap_atomic(kaddr);
-		return 0;
-	}
 	iterate_and_advance(i, bytes, base, len, off,
 		copyin(p + off, base, len),
 		memcpy(p + off, base, len)
@@ -819,7 +811,48 @@ size_t copy_page_from_iter_atomic(struct page *page, unsigned offset, size_t byt
 	kunmap_atomic(kaddr);
 	return bytes;
 }
+
+size_t copy_page_from_iter_atomic(struct page *page, unsigned offset, size_t bytes,
+				  struct iov_iter *i)
+{
+	if (!page_copy_sane(page, offset, bytes))
+		return 0;
+	if (WARN_ON_ONCE(!i->data_source))
+		return 0;
+	return __copy_page_from_iter_atomic(page, offset, bytes, i);
+}
 EXPORT_SYMBOL(copy_page_from_iter_atomic);
+
+size_t copy_folio_from_iter_atomic(struct folio *folio, size_t offset,
+				   size_t bytes, struct iov_iter *i)
+{
+	size_t ret = 0;
+
+	if (WARN_ON(offset + bytes > folio_size(folio)))
+		return 0;
+	if (WARN_ON_ONCE(!i->data_source))
+		return 0;
+
+#ifdef CONFIG_HIGHMEM
+	while (bytes) {
+		struct page *page = folio_page(folio, offset >> PAGE_SHIFT);
+		unsigned b = min(bytes, PAGE_SIZE - (offset & PAGE_MASK));
+		unsigned r = __copy_page_from_iter_atomic(page, offset, b, i);
+
+		offset	+= r;
+		bytes	-= r;
+		ret	+= r;
+
+		if (r != b)
+			break;
+	}
+#else
+	ret = __copy_page_from_iter_atomic(&folio->page, offset, bytes, i);
+#endif
+
+	return ret;
+}
+EXPORT_SYMBOL(copy_folio_from_iter_atomic);
 
 static void pipe_advance(struct iov_iter *i, size_t size)
 {
