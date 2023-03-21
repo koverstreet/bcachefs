@@ -330,6 +330,10 @@ struct btree_path {
 
 	enum btree_id		btree_id:5;
 	bool			cached:1;
+	/*
+	 * btree_path should be retained & retraversed on transaction restart -
+	 * i.e. this is a path we started iterating from:
+	 */
 	bool			preserve:1;
 	enum btree_path_uptodate uptodate:2;
 	/*
