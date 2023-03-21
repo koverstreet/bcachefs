@@ -1348,15 +1348,6 @@ void bch2_path_put(struct btree_trans *trans, btree_path_idx_t path_idx, bool in
 	__bch2_path_free(trans, path_idx);
 }
 
-static void bch2_path_put_nokeep(struct btree_trans *trans, btree_path_idx_t path,
-				 bool intent)
-{
-	if (!__btree_path_put(trans->paths + path, intent))
-		return;
-
-	__bch2_path_free(trans, path);
-}
-
 void __noreturn bch2_trans_restart_error(struct btree_trans *trans, u32 restart_count)
 {
 	panic("trans->restart_count %u, should be %u, last restarted by %pS\n",
@@ -2131,8 +2122,8 @@ struct bkey_s_c bch2_btree_iter_peek_upto(struct btree_iter *iter, struct bpos e
 	EBUG_ON((iter->flags & BTREE_ITER_FILTER_SNAPSHOTS) && bkey_eq(end, POS_MAX));
 
 	if (iter->update_path) {
-		bch2_path_put_nokeep(trans, iter->update_path,
-				     iter->flags & BTREE_ITER_INTENT);
+		bch2_path_put(trans, iter->update_path,
+			      iter->flags & BTREE_ITER_INTENT);
 		iter->update_path = 0;
 	}
 
@@ -2160,8 +2151,8 @@ struct bkey_s_c bch2_btree_iter_peek_upto(struct btree_iter *iter, struct bpos e
 
 		if (iter->update_path &&
 		    !bkey_eq(trans->paths[iter->update_path].pos, k.k->p)) {
-			bch2_path_put_nokeep(trans, iter->update_path,
-					     iter->flags & BTREE_ITER_INTENT);
+			bch2_path_put(trans, iter->update_path,
+				      iter->flags & BTREE_ITER_INTENT);
 			iter->update_path = 0;
 		}
 
@@ -2346,7 +2337,7 @@ struct bkey_s_c bch2_btree_iter_peek_prev(struct btree_iter *iter)
 				 * that candidate
 				 */
 				if (saved_path && !bkey_eq(k.k->p, saved_k.p)) {
-					bch2_path_put_nokeep(trans, iter->path,
+					bch2_path_put(trans, iter->path,
 						      iter->flags & BTREE_ITER_INTENT);
 					iter->path = saved_path;
 					saved_path = 0;
@@ -2359,7 +2350,7 @@ struct bkey_s_c bch2_btree_iter_peek_prev(struct btree_iter *iter)
 							      iter->snapshot,
 							      k.k->p.snapshot)) {
 					if (saved_path)
-						bch2_path_put_nokeep(trans, saved_path,
+						bch2_path_put(trans, saved_path,
 						      iter->flags & BTREE_ITER_INTENT);
 					saved_path = btree_path_clone(trans, iter->path,
 								iter->flags & BTREE_ITER_INTENT);
@@ -2403,7 +2394,7 @@ got_key:
 		iter->pos.snapshot = iter->snapshot;
 out_no_locked:
 	if (saved_path)
-		bch2_path_put_nokeep(trans, saved_path, iter->flags & BTREE_ITER_INTENT);
+		bch2_path_put(trans, saved_path, iter->flags & BTREE_ITER_INTENT);
 
 	bch2_btree_iter_verify_entry_exit(iter);
 	bch2_btree_iter_verify(iter);
@@ -2705,7 +2696,7 @@ static inline void btree_path_list_add(struct btree_trans *trans,
 void bch2_trans_iter_exit(struct btree_trans *trans, struct btree_iter *iter)
 {
 	if (iter->update_path)
-		bch2_path_put_nokeep(trans, iter->update_path,
+		bch2_path_put(trans, iter->update_path,
 			      iter->flags & BTREE_ITER_INTENT);
 	if (iter->path)
 		bch2_path_put(trans, iter->path,
