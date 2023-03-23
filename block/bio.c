@@ -1371,11 +1371,11 @@ EXPORT_SYMBOL(bio_copy_data);
 
 void bio_free_pages(struct bio *bio)
 {
-	struct bio_vec *bvec;
-	struct bvec_iter_all iter_all;
+	struct bvec_iter_all iter;
+	struct bio_vec bvec;
 
-	bio_for_each_segment_all(bvec, bio, iter_all)
-		__free_page(bvec->bv_page);
+	bio_for_each_segment_all(bvec, bio, iter)
+		__free_page(bvec.bv_page);
 }
 EXPORT_SYMBOL(bio_free_pages);
 

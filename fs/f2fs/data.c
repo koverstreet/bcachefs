@@ -181,11 +181,11 @@ static void f2fs_verify_bio(struct work_struct *work)
 	 * as those were handled separately by f2fs_end_read_compressed_page().
 	 */
 	if (may_have_compressed_pages) {
-		struct bio_vec *bv;
+		struct bio_vec bv;
 		struct bvec_iter_all iter_all;
 
 		bio_for_each_segment_all(bv, bio, iter_all) {
-			struct page *page = bv->bv_page;
+			struct page *page = bv.bv_page;
 
 			if (!f2fs_is_compressed_page(page) &&
 			    !fsverity_verify_page(page)) {
@@ -233,13 +233,13 @@ static void f2fs_verify_and_finish_bio(struct bio *bio, bool in_task)
 static void f2fs_handle_step_decompress(struct bio_post_read_ctx *ctx,
 		bool in_task)
 {
-	struct bio_vec *bv;
+	struct bio_vec bv;
 	struct bvec_iter_all iter_all;
 	bool all_compressed = true;
 	block_t blkaddr = ctx->fs_blkaddr;
 
 	bio_for_each_segment_all(bv, ctx->bio, iter_all) {
-		struct page *page = bv->bv_page;
+		struct page *page = bv.bv_page;
 
 		if (f2fs_is_compressed_page(page))
 			f2fs_end_read_compressed_page(page, false, blkaddr,
@@ -548,7 +548,7 @@ static void __submit_merged_bio(struct f2fs_bio_info *io)
 static bool __has_merged_page(struct bio *bio, struct inode *inode,
 						struct page *page, nid_t ino)
 {
-	struct bio_vec *bvec;
+	struct bio_vec bvec;
 	struct bvec_iter_all iter_all;
 
 	if (!bio)
@@ -558,7 +558,7 @@ static bool __has_merged_page(struct bio *bio, struct inode *inode,
 		return true;
 
 	bio_for_each_segment_all(bvec, bio, iter_all) {
-		struct page *target = bvec->bv_page;
+		struct page *target = bvec.bv_page;
 
 		if (fscrypt_is_bounce_page(target)) {
 			target = fscrypt_pagecache_page(target);
