@@ -99,15 +99,15 @@ static void buffer_io_error(struct buffer_head *bh)
 
 static void ext4_finish_bio(struct bio *bio)
 {
-	struct bio_vec *bvec;
+	struct bio_vec bvec;
 	struct bvec_iter_all iter_all;
 
 	bio_for_each_segment_all(bvec, bio, iter_all) {
-		struct page *page = bvec->bv_page;
+		struct page *page = bvec.bv_page;
 		struct page *bounce_page = NULL;
 		struct buffer_head *bh, *head;
-		unsigned bio_start = bvec->bv_offset;
-		unsigned bio_end = bio_start + bvec->bv_len;
+		unsigned bio_start = bvec.bv_offset;
+		unsigned bio_end = bio_start + bvec.bv_len;
 		unsigned under_io = 0;
 		unsigned long flags;
 

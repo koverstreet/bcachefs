@@ -68,8 +68,7 @@ static int zstd_uncompress(struct squashfs_sb_info *msblk, void *strm,
 	int error = 0;
 	zstd_in_buffer in_buf = { NULL, 0, 0 };
 	zstd_out_buffer out_buf = { NULL, 0, 0 };
-	struct bvec_iter_all iter_all = {};
-	struct bio_vec *bvec = bvec_init_iter_all(&iter_all);
+	struct bvec_iter_all iter;
 
 	stream = zstd_init_dstream(wksp->window_size, wksp->mem, wksp->mem_size);
 
@@ -85,25 +84,27 @@ static int zstd_uncompress(struct squashfs_sb_info *msblk, void *strm,
 		goto finish;
 	}
 
+	bvec_iter_all_init(&iter);
+	bio_iter_all_advance(bio, &iter, offset);
+
 	for (;;) {
 		size_t zstd_err;
 
 		if (in_buf.pos == in_buf.size) {
-			const void *data;
-			int avail;
+			struct bio_vec bvec = bio_iter_all_peek(bio, &iter);
+			unsigned avail = min_t(unsigned, length, bvec.bv_len);
 
-			if (!bio_next_segment(bio, &iter_all)) {
+			if (iter.idx >= bio->bi_vcnt) {
 				error = -EIO;
 				break;
 			}
 
-			avail = min(length, ((int)bvec->bv_len) - offset);
-			data = bvec_virt(bvec);
 			length -= avail;
-			in_buf.src = data + offset;
+			in_buf.src = bvec_virt(&bvec);
 			in_buf.size = avail;
 			in_buf.pos = 0;
-			offset = 0;
+
+			bio_iter_all_advance(bio, &iter, avail);
 		}
 
 		if (out_buf.pos == out_buf.size) {
