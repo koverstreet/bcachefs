@@ -188,15 +188,15 @@ struct buffer_head *gfs2_meta_new(struct gfs2_glock *gl, u64 blkno)
 
 static void gfs2_meta_read_endio(struct bio *bio)
 {
-	struct bio_vec *bvec;
+	struct bio_vec bvec;
 	struct bvec_iter_all iter_all;
 
 	bio_for_each_segment_all(bvec, bio, iter_all) {
-		struct page *page = bvec->bv_page;
+		struct page *page = bvec.bv_page;
 		struct buffer_head *bh = page_buffers(page);
-		unsigned int len = bvec->bv_len;
+		unsigned int len = bvec.bv_len;
 
-		while (bh_offset(bh) < bvec->bv_offset)
+		while (bh_offset(bh) < bvec.bv_offset)
 			bh = bh->b_this_page;
 		do {
 			struct buffer_head *next = bh->b_this_page;
