@@ -35,30 +35,33 @@ static int copy_bio_to_actor(struct bio *bio,
 			     int offset, int req_length)
 {
 	void *actor_addr;
-	struct bvec_iter_all iter_all = {};
-	struct bio_vec *bvec = bvec_init_iter_all(&iter_all);
+	struct bvec_iter_all iter;
+	struct bio_vec bvec;
 	int copied_bytes = 0;
 	int actor_offset = 0;
+	int bytes_to_copy;
 
 	squashfs_actor_nobuff(actor);
 	actor_addr = squashfs_first_page(actor);
 
-	if (WARN_ON_ONCE(!bio_next_segment(bio, &iter_all)))
-		return 0;
+	bvec_iter_all_init(&iter);
+	bio_iter_all_advance(bio, &iter, offset);
 
-	while (copied_bytes < req_length) {
-		int bytes_to_copy = min_t(int, bvec->bv_len - offset,
+	while (copied_bytes < req_length &&
+	       iter.idx < bio->bi_vcnt) {
+		bvec = bio_iter_all_peek(bio, &iter);
+
+		bytes_to_copy = min_t(int, bvec.bv_len,
 					  PAGE_SIZE - actor_offset);
 
 		bytes_to_copy = min_t(int, bytes_to_copy,
 				      req_length - copied_bytes);
 		if (!IS_ERR(actor_addr))
-			memcpy(actor_addr + actor_offset, bvec_virt(bvec) +
-					offset, bytes_to_copy);
+			memcpy(actor_addr + actor_offset, bvec_virt(&bvec),
+			       bytes_to_copy);
 
 		actor_offset += bytes_to_copy;
 		copied_bytes += bytes_to_copy;
-		offset += bytes_to_copy;
 
 		if (actor_offset >= PAGE_SIZE) {
 			actor_addr = squashfs_next_page(actor);
@@ -66,11 +69,8 @@ static int copy_bio_to_actor(struct bio *bio,
 				break;
 			actor_offset = 0;
 		}
-		if (offset >= bvec->bv_len) {
-			if (!bio_next_segment(bio, &iter_all))
-				break;
-			offset = 0;
-		}
+
+		bio_iter_all_advance(bio, &iter, bytes_to_copy);
 	}
 	squashfs_finish_page(actor);
 	return copied_bytes;
@@ -85,12 +85,12 @@ static int squashfs_bio_read_cached(struct bio *fullbio,
 	int start_idx = 0, end_idx = 0;
 	struct bvec_iter_all iter_all;
 	struct bio *bio = NULL;
-	struct bio_vec *bv;
+	struct bio_vec bv;
 	int idx = 0;
 	int err = 0;
 
 	bio_for_each_segment_all(bv, fullbio, iter_all) {
-		struct page *page = bv->bv_page;
+		struct page *page = bv.bv_page;
 
 		if (page->mapping == cache_mapping) {
 			idx++;
@@ -282,8 +282,10 @@ int squashfs_read_data(struct super_block *sb, u64 index, int length,
 		 * Metadata block.
 		 */
 		const u8 *data;
-		struct bvec_iter_all iter_all = {};
-		struct bio_vec *bvec = bvec_init_iter_all(&iter_all);
+		struct bvec_iter_all iter;
+		struct bio_vec bvec;
+
+		bvec_iter_all_init(&iter);
 
 		if (index + 2 > msblk->bytes_used) {
 			res = -EIO;
@@ -293,21 +295,25 @@ int squashfs_read_data(struct super_block *sb, u64 index, int length,
 		if (res)
 			goto out;
 
-		if (WARN_ON_ONCE(!bio_next_segment(bio, &iter_all))) {
+		bvec = bio_iter_all_peek(bio, &iter);
+
+		if (WARN_ON_ONCE(!bvec.bv_len)) {
 			res = -EIO;
 			goto out_free_bio;
 		}
 		/* Extract the length of the metadata block */
-		data = bvec_virt(bvec);
+		data = bvec_virt(&bvec);
 		length = data[offset];
-		if (offset < bvec->bv_len - 1) {
+		if (offset < bvec.bv_len - 1) {
 			length |= data[offset + 1] << 8;
 		} else {
-			if (WARN_ON_ONCE(!bio_next_segment(bio, &iter_all))) {
+			bio_iter_all_advance(bio, &iter, bvec.bv_len);
+
+			if (WARN_ON_ONCE(!bvec.bv_len)) {
 				res = -EIO;
 				goto out_free_bio;
 			}
-			data = bvec_virt(bvec);
+			data = bvec_virt(&bvec);
 			length |= data[0] << 8;
 		}
 		bio_free_pages(bio);
