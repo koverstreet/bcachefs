@@ -307,7 +307,8 @@ EXPORT_SYMBOL_GPL(fsverity_verify_blocks);
  */
 void fsverity_verify_bio(struct bio *bio)
 {
-	struct folio_iter fi;
+	struct bvec_iter_all iter;
+	struct folio_vec fv;
 	unsigned long max_ra_pages = 0;
 
 	if (bio->bi_opf & REQ_RAHEAD) {
@@ -323,8 +324,8 @@ void fsverity_verify_bio(struct bio *bio)
 		max_ra_pages = bio->bi_iter.bi_size >> (PAGE_SHIFT + 2);
 	}
 
-	bio_for_each_folio_all(fi, bio) {
-		if (!verify_data_blocks(fi.folio, fi.length, fi.offset,
+	bio_for_each_folio_all(fv, bio, iter) {
+		if (!verify_data_blocks(fv.fv_folio, fv.fv_len, fv.fv_offset,
 					max_ra_pages)) {
 			bio->bi_status = BLK_STS_IOERR;
 			break;

@@ -45,15 +45,16 @@
  */
 static void mpage_read_end_io(struct bio *bio)
 {
-	struct folio_iter fi;
+	struct bvec_iter_all iter;
+	struct folio_vec fv;
 	int err = blk_status_to_errno(bio->bi_status);
 
-	bio_for_each_folio_all(fi, bio) {
+	bio_for_each_folio_all(fv, bio, iter) {
 		if (err)
-			folio_set_error(fi.folio);
+			folio_set_error(fv.fv_folio);
 		else
-			folio_mark_uptodate(fi.folio);
-		folio_unlock(fi.folio);
+			folio_mark_uptodate(fv.fv_folio);
+		folio_unlock(fv.fv_folio);
 	}
 
 	bio_put(bio);
@@ -61,15 +62,16 @@ static void mpage_read_end_io(struct bio *bio)
 
 static void mpage_write_end_io(struct bio *bio)
 {
-	struct folio_iter fi;
+	struct bvec_iter_all iter;
+	struct folio_vec fv;
 	int err = blk_status_to_errno(bio->bi_status);
 
-	bio_for_each_folio_all(fi, bio) {
+	bio_for_each_folio_all(fv, bio, iter) {
 		if (err) {
-			folio_set_error(fi.folio);
-			mapping_set_error(fi.folio->mapping, err);
+			folio_set_error(fv.fv_folio);
+			mapping_set_error(fv.fv_folio->mapping, err);
 		}
-		folio_end_writeback(fi.folio);
+		folio_end_writeback(fv.fv_folio);
 	}
 
 	bio_put(bio);
