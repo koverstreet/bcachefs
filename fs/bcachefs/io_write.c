@@ -98,11 +98,11 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
 	struct bvec_iter_all iter;
-	struct bio_vec *bv;
+	struct bio_vec bv;
 
 	bio_for_each_segment_all(bv, bio, iter)
-		if (bv->bv_page != ZERO_PAGE(0))
-			mempool_free(bv->bv_page, &c->bio_bounce_pages);
+		if (bv.bv_page != ZERO_PAGE(0))
+			mempool_free(bv.bv_page, &c->bio_bounce_pages);
 	bio->bi_vcnt = 0;
 }
 
