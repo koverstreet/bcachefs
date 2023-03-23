@@ -391,11 +391,12 @@ static void corrupt_bio_random(struct bio *bio)
 
 static void clone_free(struct bio *clone)
 {
-	struct folio_iter fi;
+	struct bvec_iter_all iter;
+	struct folio_vec fv;
 
 	if (clone->bi_vcnt > 0) { /* bio_for_each_folio_all crashes with an empty bio */
-		bio_for_each_folio_all(fi, clone)
-			folio_put(fi.folio);
+		bio_for_each_folio_all(fv, clone, iter)
+			folio_put(fv.fv_folio);
 	}
 
 	bio_uninit(clone);

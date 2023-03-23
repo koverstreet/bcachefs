@@ -68,10 +68,11 @@ struct bio_post_read_ctx {
 
 static void __read_end_io(struct bio *bio)
 {
-	struct folio_iter fi;
+	struct bvec_iter_all iter;
+	struct folio_vec fv;
 
-	bio_for_each_folio_all(fi, bio)
-		folio_end_read(fi.folio, bio->bi_status == 0);
+	bio_for_each_folio_all(fv, bio, iter)
+		folio_end_read(fv.fv_folio, bio->bi_status == 0);
 	if (bio->bi_private)
 		mempool_free(bio->bi_private, bio_post_read_ctx_pool);
 	bio_put(bio);

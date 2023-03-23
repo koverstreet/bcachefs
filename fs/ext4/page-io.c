@@ -99,14 +99,15 @@ static void buffer_io_error(struct buffer_head *bh)
 
 static void ext4_finish_bio(struct bio *bio)
 {
-	struct folio_iter fi;
+	struct bvec_iter_all iter;
+	struct folio_vec fv;
 
-	bio_for_each_folio_all(fi, bio) {
-		struct folio *folio = fi.folio;
+	bio_for_each_folio_all(fv, bio, iter) {
+		struct folio *folio = fv.fv_folio;
 		struct folio *io_folio = NULL;
 		struct buffer_head *bh, *head;
-		size_t bio_start = fi.offset;
-		size_t bio_end = bio_start + fi.length;
+		size_t bio_start = fv.fv_offset;
+		size_t bio_end = bio_start + fv.fv_len;
 		unsigned under_io = 0;
 		unsigned long flags;
 

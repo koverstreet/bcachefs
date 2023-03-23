@@ -1737,16 +1737,17 @@ have_pages:
 
 static void crypt_free_buffer_pages(struct crypt_config *cc, struct bio *clone)
 {
-	struct folio_iter fi;
+	struct bvec_iter_all iter;
+	struct folio_vec fv;
 
 	if (clone->bi_vcnt > 0) { /* bio_for_each_folio_all crashes with an empty bio */
-		bio_for_each_folio_all(fi, clone) {
-			if (folio_test_large(fi.folio)) {
+		bio_for_each_folio_all(fv, clone, iter) {
+			if (folio_test_large(fv.fv_folio)) {
 				percpu_counter_sub(&cc->n_allocated_pages,
-						1 << folio_order(fi.folio));
-				folio_put(fi.folio);
+						1 << folio_order(fv.fv_folio));
+				folio_put(fv.fv_folio);
 			} else {
-				mempool_free(&fi.folio->page, &cc->page_pool);
+				mempool_free(&fv.fv_folio->page, &cc->page_pool);
 			}
 		}
 	}
