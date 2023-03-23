@@ -68,10 +68,11 @@ struct bio_post_read_ctx {
 
 static void __read_end_io(struct bio *bio)
 {
-	struct folio_iter fi;
+	struct bvec_iter_all iter;
+	struct folio_seg fs;
 
-	bio_for_each_folio_all(fi, bio) {
-		struct folio *folio = fi.folio;
+	bio_for_each_folio_all(fs, bio, iter) {
+		struct folio *folio = fs.fs_folio;
 
 		if (bio->bi_status)
 			folio_clear_uptodate(folio);
