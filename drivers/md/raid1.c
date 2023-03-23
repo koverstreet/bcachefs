@@ -2299,7 +2299,7 @@ static void process_checks(struct r1bio *r1_bio)
 		blk_status_t status = sbio->bi_status;
 		struct page **ppages = get_resync_pages(pbio)->pages;
 		struct page **spages = get_resync_pages(sbio)->pages;
-		struct bio_vec *bi;
+		struct bio_vec bi;
 		int page_len[RESYNC_PAGES] = { 0 };
 		struct bvec_iter_all iter_all;
 
@@ -2309,7 +2309,7 @@ static void process_checks(struct r1bio *r1_bio)
 		sbio->bi_status = 0;
 
 		bio_for_each_segment_all(bi, sbio, iter_all)
-			page_len[j++] = bi->bv_len;
+			page_len[j++] = bi.bv_len;
 
 		if (!status) {
 			for (j = vcnt; j-- ; ) {
