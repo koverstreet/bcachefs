@@ -85,12 +85,6 @@ struct bvec_iter {
 						   current bvec */
 } __packed __aligned(4);
 
-struct bvec_iter_all {
-	struct bio_vec	bv;
-	int		idx;
-	unsigned	done;
-};
-
 /*
  * various member access, note that bio_data should of course not be used
  * on highmem page vectors
@@ -184,7 +178,10 @@ static inline void bvec_iter_advance_single(const struct bio_vec *bv,
 		((bvl = bvec_iter_bvec((bio_vec), (iter))), 1);	\
 	     bvec_iter_advance_single((bio_vec), &(iter), (bvl).bv_len))
 
-/* for iterating one bio from start to end */
+/*
+ * bvec_iter_all: for advancing over a bio as it was originally created, but
+ * with the usual bio_for_each_segment interface - nonstandard, do not use:
+ */
 #define BVEC_ITER_ALL_INIT (struct bvec_iter)				\
 {									\
 	.bi_sector	= 0,						\
@@ -193,33 +190,45 @@ static inline void bvec_iter_advance_single(const struct bio_vec *bv,
 	.bi_bvec_done	= 0,						\
 }
 
-static inline struct bio_vec *bvec_init_iter_all(struct bvec_iter_all *iter_all)
+/*
+ * bvec_iter_all: for advancing over individual pages in a bio, as it was when
+ * it was first created:
+ */
+struct bvec_iter_all {
+	int		idx;
+	unsigned	done;
+};
+
+static inline void bvec_iter_all_init(struct bvec_iter_all *iter_all)
 {
 	iter_all->done = 0;
 	iter_all->idx = 0;
-
-	return &iter_all->bv;
 }
 
-static inline void bvec_advance(const struct bio_vec *bvec,
-				struct bvec_iter_all *iter_all)
+static inline struct bio_vec bvec_iter_all_peek(const struct bio_vec *bvec,
+						struct bvec_iter_all *iter)
 {
-	struct bio_vec *bv = &iter_all->bv;
+	struct bio_vec bv = bvec[iter->idx];
 
-	if (iter_all->done) {
-		bv->bv_page++;
-		bv->bv_offset = 0;
-	} else {
-		bv->bv_page = bvec->bv_page + (bvec->bv_offset >> PAGE_SHIFT);
-		bv->bv_offset = bvec->bv_offset & ~PAGE_MASK;
-	}
-	bv->bv_len = min_t(unsigned int, PAGE_SIZE - bv->bv_offset,
-			   bvec->bv_len - iter_all->done);
-	iter_all->done += bv->bv_len;
+	bv.bv_offset	+= iter->done;
+	bv.bv_len	-= iter->done;
 
-	if (iter_all->done == bvec->bv_len) {
-		iter_all->idx++;
-		iter_all->done = 0;
+	bv.bv_page	+= bv.bv_offset >> PAGE_SHIFT;
+	bv.bv_offset	&= ~PAGE_MASK;
+	bv.bv_len	= min_t(unsigned, PAGE_SIZE - bv.bv_offset, bv.bv_len);
+
+	return bv;
+}
+
+static inline void bvec_iter_all_advance(const struct bio_vec *bvec,
+					 struct bvec_iter_all *iter,
+					 unsigned bytes)
+{
+	iter->done += bytes;
+
+	while (iter->done && iter->done >= bvec[iter->idx].bv_len) {
+		iter->done -= bvec[iter->idx].bv_len;
+		iter->idx++;
 	}
 }
 

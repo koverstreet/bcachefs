@@ -120,8 +120,7 @@ static int squashfs_xz_uncompress(struct squashfs_sb_info *msblk, void *strm,
 	struct bio *bio, int offset, int length,
 	struct squashfs_page_actor *output)
 {
-	struct bvec_iter_all iter_all = {};
-	struct bio_vec *bvec = bvec_init_iter_all(&iter_all);
+	struct bvec_iter_all iter;
 	int total = 0, error = 0;
 	struct squashfs_xz *stream = strm;
 
@@ -136,26 +135,28 @@ static int squashfs_xz_uncompress(struct squashfs_sb_info *msblk, void *strm,
 		goto finish;
 	}
 
+	bvec_iter_all_init(&iter);
+	bio_iter_all_advance(bio, &iter, offset);
+
 	for (;;) {
 		enum xz_ret xz_err;
 
 		if (stream->buf.in_pos == stream->buf.in_size) {
-			const void *data;
-			int avail;
+			struct bio_vec bvec = bio_iter_all_peek(bio, &iter);
+			unsigned avail = min_t(unsigned, length, bvec.bv_len);
 
-			if (!bio_next_segment(bio, &iter_all)) {
+			if (iter.idx >= bio->bi_vcnt) {
 				/* XZ_STREAM_END must be reached. */
 				error = -EIO;
 				break;
 			}
 
-			avail = min(length, ((int)bvec->bv_len) - offset);
-			data = bvec_virt(bvec);
 			length -= avail;
-			stream->buf.in = data + offset;
+			stream->buf.in = bvec_virt(&bvec);
 			stream->buf.in_size = avail;
 			stream->buf.in_pos = 0;
-			offset = 0;
+
+			bio_iter_all_advance(bio, &iter, avail);
 		}
 
 		if (stream->buf.out_pos == stream->buf.out_size) {
