@@ -75,22 +75,40 @@ static inline void *bio_data(struct bio *bio)
 	return NULL;
 }
 
-static inline bool bio_next_segment(const struct bio *bio,
-				    struct bvec_iter_all *iter)
+static inline struct bio_vec bio_iter_all_peek(const struct bio *bio,
+					       struct bvec_iter_all *iter)
 {
-	if (iter->idx >= bio->bi_vcnt)
-		return false;
+	if (WARN_ON(iter->idx >= bio->bi_vcnt))
+		return (struct bio_vec) { NULL };
 
-	bvec_advance(&bio->bi_io_vec[iter->idx], iter);
-	return true;
+	return bvec_iter_all_peek(bio->bi_io_vec, iter);
 }
+
+static inline void bio_iter_all_advance(const struct bio *bio,
+					struct bvec_iter_all *iter,
+					unsigned bytes)
+{
+	bvec_iter_all_advance(bio->bi_io_vec, iter, bytes);
+
+	WARN_ON(iter->idx > bio->bi_vcnt ||
+		(iter->idx == bio->bi_vcnt && iter->done));
+}
+
+#define bio_for_each_segment_all_continue(bvl, bio, iter)		\
+	for (;								\
+	     iter.idx < bio->bi_vcnt &&					\
+		((bvl = bio_iter_all_peek(bio, &iter)), true);		\
+	     bio_iter_all_advance((bio), &iter, bvl.bv_len))
 
 /*
  * drivers should _never_ use the all version - the bio may have been split
  * before it got to the driver and the driver won't own all of it
  */
-#define bio_for_each_segment_all(bvl, bio, iter) \
-	for (bvl = bvec_init_iter_all(&iter); bio_next_segment((bio), &iter); )
+#define bio_for_each_segment_all(bvl, bio, iter)			\
+	for (bvec_iter_all_init(&iter);					\
+	     iter.idx < (bio)->bi_vcnt &&				\
+		((bvl = bio_iter_all_peek((bio), &iter)), true);		\
+	     bio_iter_all_advance((bio), &iter, bvl.bv_len))
 
 static inline void bio_advance_iter(const struct bio *bio,
 				    struct bvec_iter *iter, unsigned int bytes)

@@ -47,21 +47,21 @@ static struct bio_map_data *bio_alloc_map_data(struct iov_iter *data,
  */
 static int bio_copy_from_iter(struct bio *bio, struct iov_iter *iter)
 {
-	struct bio_vec *bvec;
-	struct bvec_iter_all iter_all;
+	struct bvec_iter_all bv_iter;
+	struct bio_vec bvec;
 
-	bio_for_each_segment_all(bvec, bio, iter_all) {
+	bio_for_each_segment_all(bvec, bio, bv_iter) {
 		ssize_t ret;
 
-		ret = copy_page_from_iter(bvec->bv_page,
-					  bvec->bv_offset,
-					  bvec->bv_len,
+		ret = copy_page_from_iter(bvec.bv_page,
+					  bvec.bv_offset,
+					  bvec.bv_len,
 					  iter);
 
 		if (!iov_iter_count(iter))
 			break;
 
-		if (ret < bvec->bv_len)
+		if (ret < bvec.bv_len)
 			return -EFAULT;
 	}
 
@@ -78,21 +78,21 @@ static int bio_copy_from_iter(struct bio *bio, struct iov_iter *iter)
  */
 static int bio_copy_to_iter(struct bio *bio, struct iov_iter iter)
 {
-	struct bio_vec *bvec;
-	struct bvec_iter_all iter_all;
+	struct bvec_iter_all bv_iter;
+	struct bio_vec bvec;
 
-	bio_for_each_segment_all(bvec, bio, iter_all) {
+	bio_for_each_segment_all(bvec, bio, bv_iter) {
 		ssize_t ret;
 
-		ret = copy_page_to_iter(bvec->bv_page,
-					bvec->bv_offset,
-					bvec->bv_len,
+		ret = copy_page_to_iter(bvec.bv_page,
+					bvec.bv_offset,
+					bvec.bv_len,
 					&iter);
 
 		if (!iov_iter_count(&iter))
 			break;
 
-		if (ret < bvec->bv_len)
+		if (ret < bvec.bv_len)
 			return -EFAULT;
 	}
 
@@ -389,12 +389,12 @@ static void bio_copy_kern_endio(struct bio *bio)
 static void bio_copy_kern_endio_read(struct bio *bio)
 {
 	char *p = bio->bi_private;
-	struct bio_vec *bvec;
-	struct bvec_iter_all iter_all;
+	struct bvec_iter_all iter;
+	struct bio_vec bvec;
 
-	bio_for_each_segment_all(bvec, bio, iter_all) {
-		memcpy_from_bvec(p, bvec);
-		p += bvec->bv_len;
+	bio_for_each_segment_all(bvec, bio, iter) {
+		memcpy_from_bvec(p, &bvec);
+		p += bvec.bv_len;
 	}
 
 	bio_copy_kern_endio(bio);
