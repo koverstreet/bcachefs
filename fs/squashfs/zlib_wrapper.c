@@ -53,8 +53,7 @@ static int zlib_uncompress(struct squashfs_sb_info *msblk, void *strm,
 	struct bio *bio, int offset, int length,
 	struct squashfs_page_actor *output)
 {
-	struct bvec_iter_all iter_all = {};
-	struct bio_vec *bvec = bvec_init_iter_all(&iter_all);
+	struct bvec_iter_all iter;
 	int zlib_init = 0, error = 0;
 	z_stream *stream = strm;
 
@@ -67,25 +66,28 @@ static int zlib_uncompress(struct squashfs_sb_info *msblk, void *strm,
 		goto finish;
 	}
 
+	bvec_iter_all_init(&iter);
+	bio_iter_all_advance(bio, &iter, offset);
+
 	for (;;) {
 		int zlib_err;
 
 		if (stream->avail_in == 0) {
-			const void *data;
+			struct bio_vec bvec = bio_iter_all_peek(bio, &iter);
 			int avail;
 
-			if (!bio_next_segment(bio, &iter_all)) {
+			if (iter.idx >= bio->bi_vcnt) {
 				/* Z_STREAM_END must be reached. */
 				error = -EIO;
 				break;
 			}
 
-			avail = min(length, ((int)bvec->bv_len) - offset);
-			data = bvec_virt(bvec);
+			avail = min_t(unsigned, length, bvec.bv_len);
 			length -= avail;
-			stream->next_in = data + offset;
+			stream->next_in = bvec_virt(&bvec);
 			stream->avail_in = avail;
-			offset = 0;
+
+			bio_iter_all_advance(bio, &iter, avail);
 		}
 
 		if (stream->avail_out == 0) {

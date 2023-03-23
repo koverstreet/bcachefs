@@ -1713,12 +1713,12 @@ retry:
 
 static void crypt_free_buffer_pages(struct crypt_config *cc, struct bio *clone)
 {
-	struct bio_vec *bv;
-	struct bvec_iter_all iter_all;
+	struct bvec_iter_all iter;
+	struct bio_vec bv;
 
-	bio_for_each_segment_all(bv, clone, iter_all) {
-		BUG_ON(!bv->bv_page);
-		mempool_free(bv->bv_page, &cc->page_pool);
+	bio_for_each_segment_all(bv, clone, iter) {
+		BUG_ON(!bv.bv_page);
+		mempool_free(bv.bv_page, &cc->page_pool);
 	}
 }
 
