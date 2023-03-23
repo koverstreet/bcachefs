@@ -202,7 +202,7 @@ static void gfs2_end_log_write_bh(struct gfs2_sbd *sdp,
 static void gfs2_end_log_write(struct bio *bio)
 {
 	struct gfs2_sbd *sdp = bio->bi_private;
-	struct bio_vec *bvec;
+	struct bio_vec bvec;
 	struct page *page;
 	struct bvec_iter_all iter_all;
 
@@ -217,9 +217,9 @@ static void gfs2_end_log_write(struct bio *bio)
 	}
 
 	bio_for_each_segment_all(bvec, bio, iter_all) {
-		page = bvec->bv_page;
+		page = bvec.bv_page;
 		if (page_has_buffers(page))
-			gfs2_end_log_write_bh(sdp, bvec, bio->bi_status);
+			gfs2_end_log_write_bh(sdp, &bvec, bio->bi_status);
 		else
 			mempool_free(page, gfs2_page_pool);
 	}
