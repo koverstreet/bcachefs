@@ -30,13 +30,13 @@
  */
 bool fscrypt_decrypt_bio(struct bio *bio)
 {
-	struct bio_vec *bv;
+	struct bio_vec bv;
 	struct bvec_iter_all iter_all;
 
 	bio_for_each_segment_all(bv, bio, iter_all) {
-		struct page *page = bv->bv_page;
-		int err = fscrypt_decrypt_pagecache_blocks(page, bv->bv_len,
-							   bv->bv_offset);
+		struct page *page = bv.bv_page;
+		int err = fscrypt_decrypt_pagecache_blocks(page, bv.bv_len,
+							   bv.bv_offset);
 
 		if (err) {
 			bio->bi_status = errno_to_blk_status(err);

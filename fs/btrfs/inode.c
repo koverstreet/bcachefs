@@ -10317,7 +10317,7 @@ static blk_status_t btrfs_encoded_read_verify_csum(struct btrfs_bio *bbio)
 	struct btrfs_inode *inode = priv->inode;
 	struct btrfs_fs_info *fs_info = inode->root->fs_info;
 	u32 sectorsize = fs_info->sectorsize;
-	struct bio_vec *bvec;
+	struct bio_vec bvec;
 	struct bvec_iter_all iter_all;
 	u32 bio_offset = 0;
 
@@ -10327,12 +10327,12 @@ static blk_status_t btrfs_encoded_read_verify_csum(struct btrfs_bio *bbio)
 	bio_for_each_segment_all(bvec, &bbio->bio, iter_all) {
 		unsigned int i, nr_sectors, pgoff;
 
-		nr_sectors = BTRFS_BYTES_TO_BLKS(fs_info, bvec->bv_len);
-		pgoff = bvec->bv_offset;
+		nr_sectors = BTRFS_BYTES_TO_BLKS(fs_info, bvec.bv_len);
+		pgoff = bvec.bv_offset;
 		for (i = 0; i < nr_sectors; i++) {
 			ASSERT(pgoff < PAGE_SIZE);
 			if (btrfs_check_data_csum(inode, bbio, bio_offset,
-					    bvec->bv_page, pgoff))
+					    bvec.bv_page, pgoff))
 				return BLK_STS_IOERR;
 			bio_offset += sectorsize;
 			pgoff += sectorsize;

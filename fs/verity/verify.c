@@ -215,7 +215,7 @@ void fsverity_verify_bio(struct bio *bio)
 	const struct fsverity_info *vi = inode->i_verity_info;
 	const struct merkle_tree_params *params = &vi->tree_params;
 	struct ahash_request *req;
-	struct bio_vec *bv;
+	struct bio_vec bv;
 	struct bvec_iter_all iter_all;
 	unsigned long max_ra_pages = 0;
 
@@ -238,7 +238,7 @@ void fsverity_verify_bio(struct bio *bio)
 	}
 
 	bio_for_each_segment_all(bv, bio, iter_all) {
-		struct page *page = bv->bv_page;
+		struct page *page = bv.bv_page;
 		unsigned long level0_index = page->index >> params->log_arity;
 		unsigned long level0_ra_pages =
 			min(max_ra_pages, params->level0_blocks - level0_index);

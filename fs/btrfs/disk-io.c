@@ -798,15 +798,15 @@ bool btrfs_wq_submit_bio(struct btrfs_inode *inode, struct bio *bio, int mirror_
 
 static blk_status_t btree_csum_one_bio(struct bio *bio)
 {
-	struct bio_vec *bvec;
+	struct bio_vec bvec;
 	struct btrfs_root *root;
 	int ret = 0;
 	struct bvec_iter_all iter_all;
 
 	ASSERT(!bio_flagged(bio, BIO_CLONED));
 	bio_for_each_segment_all(bvec, bio, iter_all) {
-		root = BTRFS_I(bvec->bv_page->mapping->host)->root;
-		ret = csum_dirty_buffer(root->fs_info, bvec);
+		root = BTRFS_I(bvec.bv_page->mapping->host)->root;
+		ret = csum_dirty_buffer(root->fs_info, &bvec);
 		if (ret)
 			break;
 	}
@@ -3970,12 +3970,12 @@ ALLOW_ERROR_INJECTION(open_ctree, ERRNO);
 static void btrfs_end_super_write(struct bio *bio)
 {
 	struct btrfs_device *device = bio->bi_private;
-	struct bio_vec *bvec;
+	struct bio_vec bvec;
 	struct bvec_iter_all iter_all;
 	struct page *page;
 
 	bio_for_each_segment_all(bvec, bio, iter_all) {
-		page = bvec->bv_page;
+		page = bvec.bv_page;
 
 		if (bio->bi_status) {
 			btrfs_warn_rl_in_rcu(device->fs_info,
