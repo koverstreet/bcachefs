@@ -3621,12 +3621,12 @@ ALLOW_ERROR_INJECTION(open_ctree, ERRNO);
 static void btrfs_end_super_write(struct bio *bio)
 {
 	struct btrfs_device *device = bio->bi_private;
-	struct bio_vec *bvec;
+	struct bio_vec bvec;
 	struct bvec_iter_all iter_all;
 	struct page *page;
 
 	bio_for_each_segment_all(bvec, bio, iter_all) {
-		page = bvec->bv_page;
+		page = bvec.bv_page;
 
 		if (bio->bi_status) {
 			btrfs_warn_rl_in_rcu(device->fs_info,

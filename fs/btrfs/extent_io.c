@@ -460,27 +460,27 @@ static void end_bio_extent_writepage(struct btrfs_bio *bbio)
 {
 	struct bio *bio = &bbio->bio;
 	int error = blk_status_to_errno(bio->bi_status);
-	struct bio_vec *bvec;
+	struct bio_vec bvec;
 	struct bvec_iter_all iter_all;
 
 	ASSERT(!bio_flagged(bio, BIO_CLONED));
 	bio_for_each_segment_all(bvec, bio, iter_all) {
-		struct page *page = bvec->bv_page;
+		struct page *page = bvec.bv_page;
 		struct inode *inode = page->mapping->host;
 		struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
 		const u32 sectorsize = fs_info->sectorsize;
-		u64 start = page_offset(page) + bvec->bv_offset;
-		u32 len = bvec->bv_len;
+		u64 start = page_offset(page) + bvec.bv_offset;
+		u32 len = bvec.bv_len;
 
 		/* Our read/write should always be sector aligned. */
-		if (!IS_ALIGNED(bvec->bv_offset, sectorsize))
+		if (!IS_ALIGNED(bvec.bv_offset, sectorsize))
 			btrfs_err(fs_info,
 		"partial page write in btrfs with offset %u and length %u",
-				  bvec->bv_offset, bvec->bv_len);
-		else if (!IS_ALIGNED(bvec->bv_len, sectorsize))
+				  bvec.bv_offset, bvec.bv_len);
+		else if (!IS_ALIGNED(bvec.bv_len, sectorsize))
 			btrfs_info(fs_info,
 		"incomplete page write with offset %u and length %u",
-				   bvec->bv_offset, bvec->bv_len);
+				   bvec.bv_offset, bvec.bv_len);
 
 		btrfs_finish_ordered_extent(bbio->ordered, page, start, len, !error);
 		if (error)
@@ -584,7 +584,7 @@ static void begin_page_read(struct btrfs_fs_info *fs_info, struct page *page)
 static void end_bio_extent_readpage(struct btrfs_bio *bbio)
 {
 	struct bio *bio = &bbio->bio;
-	struct bio_vec *bvec;
+	struct bio_vec bvec;
 	struct processed_extent processed = { 0 };
 	/*
 	 * The offset to the beginning of a bio, since one bio can never be
@@ -596,7 +596,7 @@ static void end_bio_extent_readpage(struct btrfs_bio *bbio)
 	ASSERT(!bio_flagged(bio, BIO_CLONED));
 	bio_for_each_segment_all(bvec, bio, iter_all) {
 		bool uptodate = !bio->bi_status;
-		struct page *page = bvec->bv_page;
+		struct page *page = bvec.bv_page;
 		struct inode *inode = page->mapping->host;
 		struct btrfs_fs_info *fs_info = btrfs_sb(inode->i_sb);
 		const u32 sectorsize = fs_info->sectorsize;
@@ -616,19 +616,19 @@ static void end_bio_extent_readpage(struct btrfs_bio *bbio)
 		 * for unaligned offsets, and an error if they don't add up to
 		 * a full sector.
 		 */
-		if (!IS_ALIGNED(bvec->bv_offset, sectorsize))
+		if (!IS_ALIGNED(bvec.bv_offset, sectorsize))
 			btrfs_err(fs_info,
 		"partial page read in btrfs with offset %u and length %u",
-				  bvec->bv_offset, bvec->bv_len);
-		else if (!IS_ALIGNED(bvec->bv_offset + bvec->bv_len,
+				  bvec.bv_offset, bvec.bv_len);
+		else if (!IS_ALIGNED(bvec.bv_offset + bvec.bv_len,
 				     sectorsize))
 			btrfs_info(fs_info,
 		"incomplete page read with offset %u and length %u",
-				   bvec->bv_offset, bvec->bv_len);
+				   bvec.bv_offset, bvec.bv_len);
 
-		start = page_offset(page) + bvec->bv_offset;
-		end = start + bvec->bv_len - 1;
-		len = bvec->bv_len;
+		start = page_offset(page) + bvec.bv_offset;
+		end = start + bvec.bv_len - 1;
+		len = bvec.bv_len;
 
 		if (likely(uptodate)) {
 			loff_t i_size = i_size_read(inode);
@@ -1613,7 +1613,7 @@ static void extent_buffer_write_end_io(struct btrfs_bio *bbio)
 	struct btrfs_fs_info *fs_info = eb->fs_info;
 	bool uptodate = !bbio->bio.bi_status;
 	struct bvec_iter_all iter_all;
-	struct bio_vec *bvec;
+	struct bio_vec bvec;
 	u32 bio_offset = 0;
 
 	if (!uptodate)
@@ -1621,8 +1621,8 @@ static void extent_buffer_write_end_io(struct btrfs_bio *bbio)
 
 	bio_for_each_segment_all(bvec, &bbio->bio, iter_all) {
 		u64 start = eb->start + bio_offset;
-		struct page *page = bvec->bv_page;
-		u32 len = bvec->bv_len;
+		struct page *page = bvec.bv_page;
+		u32 len = bvec.bv_len;
 
 		btrfs_page_clear_writeback(fs_info, page, start, len);
 		bio_offset += len;
@@ -3877,7 +3877,7 @@ static void extent_buffer_read_end_io(struct btrfs_bio *bbio)
 	struct btrfs_fs_info *fs_info = eb->fs_info;
 	bool uptodate = !bbio->bio.bi_status;
 	struct bvec_iter_all iter_all;
-	struct bio_vec *bvec;
+	struct bio_vec bvec;
 	u32 bio_offset = 0;
 
 	eb->read_mirror = bbio->mirror_num;
@@ -3895,8 +3895,8 @@ static void extent_buffer_read_end_io(struct btrfs_bio *bbio)
 
 	bio_for_each_segment_all(bvec, &bbio->bio, iter_all) {
 		u64 start = eb->start + bio_offset;
-		struct page *page = bvec->bv_page;
-		u32 len = bvec->bv_len;
+		struct page *page = bvec.bv_page;
+		u32 len = bvec.bv_len;
 
 		if (uptodate)
 			btrfs_page_set_uptodate(fs_info, page, start, len);

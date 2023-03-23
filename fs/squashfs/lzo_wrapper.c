@@ -66,21 +66,24 @@ static int lzo_uncompress(struct squashfs_sb_info *msblk, void *strm,
 	struct bio *bio, int offset, int length,
 	struct squashfs_page_actor *output)
 {
-	struct bvec_iter_all iter_all = {};
-	struct bio_vec *bvec = bvec_init_iter_all(&iter_all);
+	struct bvec_iter_all iter;
+	struct bio_vec bvec;
 	struct squashfs_lzo *stream = strm;
 	void *buff = stream->input, *data;
 	int bytes = length, res;
 	size_t out_len = output->length;
 
-	while (bio_next_segment(bio, &iter_all)) {
-		int avail = min(bytes, ((int)bvec->bv_len) - offset);
+	bvec_iter_all_init(&iter);
+	bio_iter_all_advance(bio, &iter, offset);
 
-		data = bvec_virt(bvec);
-		memcpy(buff, data + offset, avail);
+	bio_for_each_segment_all_continue(bvec, bio, iter) {
+		unsigned avail = min_t(unsigned, bytes, bvec.bv_len);
+
+		memcpy(buff, bvec_virt(&bvec), avail);
 		buff += avail;
 		bytes -= avail;
-		offset = 0;
+		if (!bytes)
+			break;
 	}
 
 	res = lzo1x_decompress_safe(stream->input, (size_t)length,
