@@ -53,17 +53,20 @@ void __show_mem(unsigned int filter, nodemask_t *nodemask, int max_zone_idx)
 		printk("Unreclaimable slab info:\n");
 		seq_buf_init(&s, buf, 4096);
 		dump_unreclaimable_slab(&s);
+		seq_buf_terminate(&s);
 		printk("%s", buf);
 
 		printk("Shrinkers:\n");
 		seq_buf_init(&s, buf, 4096);
 		shrinkers_to_text(&s);
+		seq_buf_terminate(&s);
 		printk("%s", buf);
 
 #ifdef CONFIG_MEM_ALLOC_PROFILING
 		printk("Memory allocations:\n");
 		seq_buf_init(&s, buf, 4096);
 		alloc_tags_show_mem_report(&s);
+		seq_buf_terminate(&s);
 		printk("%s", buf);
 #endif
 		kfree(buf);
