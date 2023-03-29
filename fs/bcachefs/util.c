@@ -240,36 +240,6 @@ bool bch2_is_zero(const void *_p, size_t n)
 	return true;
 }
 
-static void bch2_quantiles_update(struct bch2_quantiles *q, u64 v)
-{
-	unsigned i = 0;
-
-	while (i < ARRAY_SIZE(q->entries)) {
-		struct bch2_quantile_entry *e = q->entries + i;
-
-		if (unlikely(!e->step)) {
-			e->m = v;
-			e->step = max_t(unsigned, v / 2, 1024);
-		} else if (e->m > v) {
-			e->m = e->m >= e->step
-				? e->m - e->step
-				: 0;
-		} else if (e->m < v) {
-			e->m = e->m + e->step > e->m
-				? e->m + e->step
-				: U32_MAX;
-		}
-
-		if ((e->m > v ? e->m - v : v - e->m) < e->step)
-			e->step = max_t(unsigned, e->step / 2, 1);
-
-		if (v >= e->m)
-			break;
-
-		i = eytzinger0_child(i, v > e->m);
-	}
-}
-
 void bch2_prt_u64_binary(struct printbuf *out, u64 v, unsigned nr_bits)
 {
 	while (nr_bits)
@@ -343,6 +313,36 @@ int bch2_prt_task_backtrace(struct printbuf *out, struct task_struct *task)
 /* time stats: */
 
 #ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
+static void bch2_quantiles_update(struct bch2_quantiles *q, u64 v)
+{
+	unsigned i = 0;
+
+	while (i < ARRAY_SIZE(q->entries)) {
+		struct bch2_quantile_entry *e = q->entries + i;
+
+		if (unlikely(!e->step)) {
+			e->m = v;
+			e->step = max_t(unsigned, v / 2, 1024);
+		} else if (e->m > v) {
+			e->m = e->m >= e->step
+				? e->m - e->step
+				: 0;
+		} else if (e->m < v) {
+			e->m = e->m + e->step > e->m
+				? e->m + e->step
+				: U32_MAX;
+		}
+
+		if ((e->m > v ? e->m - v : v - e->m) < e->step)
+			e->step = max_t(unsigned, e->step / 2, 1);
+
+		if (v >= e->m)
+			break;
+
+		i = eytzinger0_child(i, v > e->m);
+	}
+}
+
 static inline void bch2_time_stats_update_one(struct bch2_time_stats *stats,
 					      u64 start, u64 end)
 {
