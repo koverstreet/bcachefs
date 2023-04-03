@@ -291,6 +291,7 @@ typedef struct xfs_mount {
 #define XFS_FEAT_NREXT64	(1ULL << 26)	/* large extent counters */
 
 /* Mount features */
+#define XFS_FEAT_NODATAIO	(1ULL << 47)	/* skip all data I/O */
 #define XFS_FEAT_NOATTR2	(1ULL << 48)	/* disable attr2 creation */
 #define XFS_FEAT_NOALIGN	(1ULL << 49)	/* ignore alignment */
 #define XFS_FEAT_ALLOCSIZE	(1ULL << 50)	/* user specified allocation size */
@@ -360,6 +361,7 @@ __XFS_HAS_FEAT(large_extent_counts, NREXT64)
  * bit inodes and read-only state, are kept as operational state rather than
  * features.
  */
+__XFS_HAS_FEAT(nodataio, NODATAIO)
 __XFS_HAS_FEAT(noattr2, NOATTR2)
 __XFS_HAS_FEAT(noalign, NOALIGN)
 __XFS_HAS_FEAT(allocsize, ALLOCSIZE)
