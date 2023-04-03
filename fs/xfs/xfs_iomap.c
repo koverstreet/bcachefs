@@ -99,6 +99,9 @@ xfs_bmbt_to_iomap(
 	struct xfs_mount	*mp = ip->i_mount;
 	struct xfs_buftarg	*target = xfs_inode_buftarg(ip);
 
+	if (xfs_has_nodataio(mp))
+		iomap_flags |= IOMAP_F_NOSUBMIT;
+
 	if (unlikely(!xfs_valid_startblock(ip, imap->br_startblock)))
 		return xfs_alert_fsblock_zero(ip, imap);
 
