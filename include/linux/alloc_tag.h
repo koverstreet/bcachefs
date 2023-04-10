@@ -23,6 +23,8 @@ struct alloc_tag {
 
 #ifdef CONFIG_MEM_ALLOC_PROFILING
 
+void alloc_tags_show_mem_report(struct seq_buf *s);
+
 static inline struct alloc_tag *ctc_to_alloc_tag(struct codetag_with_ctx *ctc)
 {
 	return container_of(ctc, struct alloc_tag, ctc);
