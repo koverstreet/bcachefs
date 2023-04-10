@@ -5,6 +5,7 @@
 #include <linux/module.h>
 #include <linux/page_ext.h>
 #include <linux/proc_fs.h>
+#include <linux/seq_buf.h>
 #include <linux/seq_file.h>
 
 static struct codetag_type *alloc_tag_cttype;
@@ -82,6 +83,45 @@ static const struct seq_operations allocinfo_seq_op = {
 	.stop	= allocinfo_stop,
 	.show	= allocinfo_show,
 };
+
+void alloc_tags_show_mem_report(struct seq_buf *s)
+{
+	struct codetag_iterator iter;
+	struct codetag *ct;
+	struct {
+		struct codetag		*tag;
+		size_t			bytes;
+	} tags[10], n;
+	unsigned int i, nr = 0;
+	char buf[1024];
+
+	codetag_lock_module_list(alloc_tag_cttype, true);
+	iter = codetag_get_ct_iter(alloc_tag_cttype);
+	while ((ct = codetag_next_ct(&iter))) {
+		n.tag	= ct;
+		n.bytes = alloc_tag_read(ct_to_alloc_tag(ct));
+
+		for (i = 0; i < nr; i++)
+			if (n.bytes > tags[i].bytes)
+				break;
+
+		if (i < ARRAY_SIZE(tags)) {
+			nr -= nr == ARRAY_SIZE(tags);
+			memmove(&tags[i + 1],
+				&tags[i],
+				sizeof(tags[0]) * (nr - i));
+			nr++;
+			tags[i] = n;
+		}
+	}
+
+	for (i = 0; i < nr; i++) {
+		alloc_tag_to_text(buf, tags[i].tag);
+		seq_buf_printf(s, "%s\n", buf);
+	}
+
+	codetag_lock_module_list(alloc_tag_cttype, false);
+}
 
 static void __init procfs_init(void)
 {
