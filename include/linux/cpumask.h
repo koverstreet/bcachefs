@@ -147,7 +147,7 @@ static __always_inline void cpu_max_bits_warn(unsigned int cpu, unsigned int bit
 /* verify cpu argument to cpumask_* operators */
 static __always_inline unsigned int cpumask_check(unsigned int cpu)
 {
-	cpu_max_bits_warn(cpu, nr_cpumask_bits);
+	cpu_max_bits_warn(cpu, small_cpumask_bits);
 	return cpu;
 }
 
@@ -349,6 +349,23 @@ unsigned int __pure cpumask_next_wrap(int n, const struct cpumask *mask, int sta
  */
 #define for_each_cpu_andnot(cpu, mask1, mask2)				\
 	for_each_andnot_bit(cpu, cpumask_bits(mask1), cpumask_bits(mask2), small_cpumask_bits)
+
+/**
+ * for_each_cpu_or - iterate over every cpu present in either mask
+ * @cpu: the (optionally unsigned) integer iterator
+ * @mask1: the first cpumask pointer
+ * @mask2: the second cpumask pointer
+ *
+ * This saves a temporary CPU mask in many places.  It is equivalent to:
+ *	struct cpumask tmp;
+ *	cpumask_or(&tmp, &mask1, &mask2);
+ *	for_each_cpu(cpu, &tmp)
+ *		...
+ *
+ * After the loop, cpu is >= nr_cpu_ids.
+ */
+#define for_each_cpu_or(cpu, mask1, mask2)				\
+	for_each_or_bit(cpu, cpumask_bits(mask1), cpumask_bits(mask2), small_cpumask_bits)
 
 /**
  * cpumask_any_but - return a "random" in a cpumask, but not this one.
