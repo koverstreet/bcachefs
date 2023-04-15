@@ -36,11 +36,6 @@ else
   CFLAGS += -O6
 endif
 
-# Treat warnings as errors unless directed not to
-ifneq ($(WERROR),0)
-  CFLAGS += -Werror
-endif
-
 CFLAGS += -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE
 
 CFLAGS += -I$(srctree)/tools/include/
