@@ -25,18 +25,25 @@ static inline unsigned bkey_type_to_indirect(const struct bkey *k)
 
 /* reflink pointers */
 
-const char *bch2_reflink_p_invalid(const struct bch_fs *c, struct bkey_s_c k)
+int bch2_reflink_p_invalid(const struct bch_fs *c, struct bkey_s_c k,
+			   unsigned flags, struct printbuf *err)
 {
 	struct bkey_s_c_reflink_p p = bkey_s_c_to_reflink_p(k);
 
-	if (bkey_val_bytes(p.k) != sizeof(*p.v))
-		return "incorrect value size";
+	if (bkey_val_bytes(p.k) != sizeof(*p.v)) {
+		prt_printf(err, "incorrect value size (%zu != %zu)",
+		       bkey_val_bytes(p.k), sizeof(*p.v));
+		return -EINVAL;
+	}
 
 	if (c->sb.version >= bcachefs_metadata_version_reflink_p_fix &&
-	    le64_to_cpu(p.v->idx) < le32_to_cpu(p.v->front_pad))
-		return "idx < front_pad";
+	    le64_to_cpu(p.v->idx) < le32_to_cpu(p.v->front_pad)) {
+		prt_printf(err, "idx < front_pad (%llu < %u)",
+		       le64_to_cpu(p.v->idx), le32_to_cpu(p.v->front_pad));
+		return -EINVAL;
+	}
 
-	return NULL;
+	return 0;
 }
 
 void bch2_reflink_p_to_text(struct printbuf *out, struct bch_fs *c,
@@ -44,7 +51,7 @@ void bch2_reflink_p_to_text(struct printbuf *out, struct bch_fs *c,
 {
 	struct bkey_s_c_reflink_p p = bkey_s_c_to_reflink_p(k);
 
-	pr_buf(out, "idx %llu front_pad %u back_pad %u",
+	prt_printf(out, "idx %llu front_pad %u back_pad %u",
 	       le64_to_cpu(p.v->idx),
 	       le32_to_cpu(p.v->front_pad),
 	       le32_to_cpu(p.v->back_pad));
@@ -70,14 +77,18 @@ bool bch2_reflink_p_merge(struct bch_fs *c, struct bkey_s _l, struct bkey_s_c _r
 
 /* indirect extents */
 
-const char *bch2_reflink_v_invalid(const struct bch_fs *c, struct bkey_s_c k)
+int bch2_reflink_v_invalid(const struct bch_fs *c, struct bkey_s_c k,
+			   unsigned flags, struct printbuf *err)
 {
 	struct bkey_s_c_reflink_v r = bkey_s_c_to_reflink_v(k);
 
-	if (bkey_val_bytes(r.k) < sizeof(*r.v))
-		return "incorrect value size";
+	if (bkey_val_bytes(r.k) < sizeof(*r.v)) {
+		prt_printf(err, "incorrect value size (%zu < %zu)",
+		       bkey_val_bytes(r.k), sizeof(*r.v));
+		return -BCH_ERR_invalid_bkey;
+	}
 
-	return bch2_bkey_ptrs_invalid(c, k);
+	return bch2_bkey_ptrs_invalid(c, k, flags, err);
 }
 
 void bch2_reflink_v_to_text(struct printbuf *out, struct bch_fs *c,
@@ -85,7 +96,7 @@ void bch2_reflink_v_to_text(struct printbuf *out, struct bch_fs *c,
 {
 	struct bkey_s_c_reflink_v r = bkey_s_c_to_reflink_v(k);
 
-	pr_buf(out, "refcount: %llu ", le64_to_cpu(r.v->refcount));
+	prt_printf(out, "refcount: %llu ", le64_to_cpu(r.v->refcount));
 
 	bch2_bkey_ptrs_to_text(out, c, k);
 }
@@ -98,14 +109,37 @@ bool bch2_reflink_v_merge(struct bch_fs *c, struct bkey_s _l, struct bkey_s_c _r
 	return l.v->refcount == r.v->refcount && bch2_extent_merge(c, _l, _r);
 }
 
+int bch2_trans_mark_reflink_v(struct btree_trans *trans,
+			      enum btree_id btree_id, unsigned level,
+			      struct bkey_s_c old, struct bkey_i *new,
+			      unsigned flags)
+{
+	if (!(flags & BTREE_TRIGGER_OVERWRITE)) {
+		struct bkey_i_reflink_v *r = bkey_i_to_reflink_v(new);
+
+		if (!r->v.refcount) {
+			r->k.type = KEY_TYPE_deleted;
+			r->k.size = 0;
+			set_bkey_val_u64s(&r->k, 0);
+			return 0;
+		}
+	}
+
+	return bch2_trans_mark_extent(trans, btree_id, level, old, new, flags);
+}
+
 /* indirect inline data */
 
-const char *bch2_indirect_inline_data_invalid(const struct bch_fs *c,
-					      struct bkey_s_c k)
+int bch2_indirect_inline_data_invalid(const struct bch_fs *c, struct bkey_s_c k,
+				      unsigned flags, struct printbuf *err)
 {
-	if (bkey_val_bytes(k.k) < sizeof(struct bch_indirect_inline_data))
-		return "incorrect value size";
-	return NULL;
+	if (bkey_val_bytes(k.k) < sizeof(struct bch_indirect_inline_data)) {
+		prt_printf(err, "incorrect value size (%zu < %zu)",
+		       bkey_val_bytes(k.k), sizeof(struct bch_indirect_inline_data));
+		return -BCH_ERR_invalid_bkey;
+	}
+
+	return 0;
 }
 
 void bch2_indirect_inline_data_to_text(struct printbuf *out,
@@ -114,9 +148,28 @@ void bch2_indirect_inline_data_to_text(struct printbuf *out,
 	struct bkey_s_c_indirect_inline_data d = bkey_s_c_to_indirect_inline_data(k);
 	unsigned datalen = bkey_inline_data_bytes(k.k);
 
-	pr_buf(out, "refcount %llu datalen %u: %*phN",
+	prt_printf(out, "refcount %llu datalen %u: %*phN",
 	       le64_to_cpu(d.v->refcount), datalen,
 	       min(datalen, 32U), d.v->data);
+}
+
+int bch2_trans_mark_indirect_inline_data(struct btree_trans *trans,
+			      enum btree_id btree_id, unsigned level,
+			      struct bkey_s_c old, struct bkey_i *new,
+			      unsigned flags)
+{
+	if (!(flags & BTREE_TRIGGER_OVERWRITE)) {
+		struct bkey_i_indirect_inline_data *r =
+			bkey_i_to_indirect_inline_data(new);
+
+		if (!r->v.refcount) {
+			r->k.type = KEY_TYPE_deleted;
+			r->k.size = 0;
+			set_bkey_val_u64s(&r->k, 0);
+		}
+	}
+
+	return 0;
 }
 
 static int bch2_make_extent_indirect(struct btree_trans *trans,
@@ -136,7 +189,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 
 	for_each_btree_key_norestart(trans, reflink_iter, BTREE_ID_reflink,
 			   POS(0, c->reflink_hint),
-			   BTREE_ITER_INTENT|BTREE_ITER_SLOTS, k, ret) {
+			   BTREE_ITER_SLOTS, k, ret) {
 		if (reflink_iter.pos.inode) {
 			bch2_btree_iter_set_pos(&reflink_iter, POS_MIN);
 			continue;
@@ -180,7 +233,13 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	orig->k.type = KEY_TYPE_reflink_p;
 	r_p = bkey_i_to_reflink_p(orig);
 	set_bkey_val_bytes(&r_p->k, sizeof(r_p->v));
+
+	/* FORTIFY_SOURCE is broken here, and doesn't provide unsafe_memset() */
+#if !defined(__NO_FORTIFY) && defined(__OPTIMIZE__) && defined(CONFIG_FORTIFY_SOURCE)
+	__underlying_memset(&r_p->v, 0, sizeof(r_p->v));
+#else
 	memset(&r_p->v, 0, sizeof(r_p->v));
+#endif
 
 	r_p->v.idx = cpu_to_le64(bkey_start_offset(&r_v->k));
 
@@ -198,15 +257,15 @@ static struct bkey_s_c get_next_src(struct btree_iter *iter, struct bpos end)
 	struct bkey_s_c k;
 	int ret;
 
-	for_each_btree_key_continue_norestart(*iter, 0, k, ret) {
-		if (bkey_cmp(iter->pos, end) >= 0)
-			break;
+	for_each_btree_key_upto_continue_norestart(*iter, end, 0, k, ret) {
+		if (bkey_extent_is_unwritten(k))
+			continue;
 
 		if (bkey_extent_is_data(k.k))
 			return k;
 	}
 
-	if (bkey_cmp(iter->pos, end) >= 0)
+	if (bkey_ge(iter->pos, end))
 		bch2_btree_iter_set_pos(iter, end);
 	return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
 }
@@ -229,8 +288,8 @@ s64 bch2_remap_range(struct bch_fs *c,
 	u32 dst_snapshot, src_snapshot;
 	int ret = 0, ret2 = 0;
 
-	if (!percpu_ref_tryget(&c->writes))
-		return -EROFS;
+	if (!bch2_write_ref_tryget(c, BCH_WRITE_REF_reflink))
+		return -BCH_ERR_erofs_no_writes;
 
 	bch2_check_set_feature(c, BCH_FEATURE_reflink);
 
@@ -246,8 +305,9 @@ s64 bch2_remap_range(struct bch_fs *c,
 	bch2_trans_iter_init(&trans, &dst_iter, BTREE_ID_extents, dst_start,
 			     BTREE_ITER_INTENT);
 
-	while ((ret == 0 || ret == -EINTR) &&
-	       bkey_cmp(dst_iter.pos, dst_end) < 0) {
+	while ((ret == 0 ||
+		bch2_err_matches(ret, BCH_ERR_transaction_restart)) &&
+	       bkey_lt(dst_iter.pos, dst_end)) {
 		struct disk_reservation disk_res = { 0 };
 
 		bch2_trans_begin(&trans);
@@ -280,7 +340,7 @@ s64 bch2_remap_range(struct bch_fs *c,
 		if (ret)
 			continue;
 
-		if (bkey_cmp(src_want, src_iter.pos) < 0) {
+		if (bkey_lt(src_want, src_iter.pos)) {
 			ret = bch2_fpunch_at(&trans, &dst_iter, dst_inum,
 					min(dst_end.offset,
 					    dst_iter.pos.offset +
@@ -324,7 +384,7 @@ s64 bch2_remap_range(struct bch_fs *c,
 				    dst_end.offset - dst_iter.pos.offset));
 
 		ret = bch2_extent_update(&trans, dst_inum, &dst_iter,
-					 new_dst.k, &disk_res, NULL,
+					 new_dst.k, &disk_res,
 					 new_i_size, i_sectors_delta,
 					 true);
 		bch2_disk_reservation_put(c, &disk_res);
@@ -332,8 +392,8 @@ s64 bch2_remap_range(struct bch_fs *c,
 	bch2_trans_iter_exit(&trans, &dst_iter);
 	bch2_trans_iter_exit(&trans, &src_iter);
 
-	BUG_ON(!ret && bkey_cmp(dst_iter.pos, dst_end));
-	BUG_ON(bkey_cmp(dst_iter.pos, dst_end) > 0);
+	BUG_ON(!ret && !bkey_eq(dst_iter.pos, dst_end));
+	BUG_ON(bkey_gt(dst_iter.pos, dst_end));
 
 	dst_done = dst_iter.pos.offset - dst_start.offset;
 	new_i_size = min(dst_iter.pos.offset << 9, new_i_size);
@@ -356,13 +416,13 @@ s64 bch2_remap_range(struct bch_fs *c,
 		}
 
 		bch2_trans_iter_exit(&trans, &inode_iter);
-	} while (ret2 == -EINTR);
+	} while (bch2_err_matches(ret2, BCH_ERR_transaction_restart));
 
 	bch2_trans_exit(&trans);
 	bch2_bkey_buf_exit(&new_src, c);
 	bch2_bkey_buf_exit(&new_dst, c);
 
-	percpu_ref_put(&c->writes);
+	bch2_write_ref_put(c, BCH_WRITE_REF_reflink);
 
 	return dst_done ?: ret ?: ret2;
 }

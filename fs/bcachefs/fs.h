@@ -6,49 +6,47 @@
 #include "opts.h"
 #include "str_hash.h"
 #include "quota_types.h"
+#include "two_state_shared_lock.h"
 
 #include <linux/seqlock.h>
 #include <linux/stat.h>
 
-/*
- * Two-state lock - can be taken for add or block - both states are shared,
- * like read side of rwsem, but conflict with other state:
- */
-struct pagecache_lock {
-	atomic_long_t		v;
-	wait_queue_head_t	wait;
-};
-
-static inline void pagecache_lock_init(struct pagecache_lock *lock)
-{
-	atomic_long_set(&lock->v, 0);
-	init_waitqueue_head(&lock->wait);
-}
-
-void bch2_pagecache_add_put(struct pagecache_lock *);
-bool bch2_pagecache_add_tryget(struct pagecache_lock *);
-void bch2_pagecache_add_get(struct pagecache_lock *);
-void bch2_pagecache_block_put(struct pagecache_lock *);
-void bch2_pagecache_block_get(struct pagecache_lock *);
-
 struct bch_inode_info {
 	struct inode		v;
+	struct list_head	ei_vfs_inode_list;
 	unsigned long		ei_flags;
 
 	struct mutex		ei_update_lock;
 	u64			ei_quota_reserved;
 	unsigned long		ei_last_dirtied;
-
-	struct pagecache_lock	ei_pagecache_lock;
+	two_state_lock_t	ei_pagecache_lock;
 
 	struct mutex		ei_quota_lock;
 	struct bch_qid		ei_qid;
 
 	u32			ei_subvol;
 
+	/*
+	 * When we've been doing nocow writes we'll need to issue flushes to the
+	 * underlying block devices
+	 *
+	 * XXX: a device may have had a flush issued by some other codepath. It
+	 * would be better to keep for each device a sequence number that's
+	 * incremented when we isusue a cache flush, and track here the sequence
+	 * number that needs flushing.
+	 */
+	struct bch_devs_mask	ei_devs_need_flush;
+
 	/* copy of inode in btree: */
 	struct bch_inode_unpacked ei_inode;
 };
+
+#define bch2_pagecache_add_put(i)	bch2_two_state_unlock(&i->ei_pagecache_lock, 0)
+#define bch2_pagecache_add_tryget(i)	bch2_two_state_trylock(&i->ei_pagecache_lock, 0)
+#define bch2_pagecache_add_get(i)	bch2_two_state_lock(&i->ei_pagecache_lock, 0)
+
+#define bch2_pagecache_block_put(i)	bch2_two_state_unlock(&i->ei_pagecache_lock, 1)
+#define bch2_pagecache_block_get(i)	bch2_two_state_lock(&i->ei_pagecache_lock, 1)
 
 static inline subvol_inum inode_inum(struct bch_inode_info *inode)
 {
@@ -96,7 +94,7 @@ do {									\
 			if ((_locks) & INODE_LOCK)			\
 				down_write_nested(&a[i]->v.i_rwsem, i);	\
 			if ((_locks) & INODE_PAGECACHE_BLOCK)		\
-				bch2_pagecache_block_get(&a[i]->ei_pagecache_lock);\
+				bch2_pagecache_block_get(a[i]);\
 			if ((_locks) & INODE_UPDATE_LOCK)			\
 				mutex_lock_nested(&a[i]->ei_update_lock, i);\
 		}							\
@@ -114,7 +112,7 @@ do {									\
 			if ((_locks) & INODE_LOCK)			\
 				up_write(&a[i]->v.i_rwsem);		\
 			if ((_locks) & INODE_PAGECACHE_BLOCK)		\
-				bch2_pagecache_block_put(&a[i]->ei_pagecache_lock);\
+				bch2_pagecache_block_put(a[i]);\
 			if ((_locks) & INODE_UPDATE_LOCK)			\
 				mutex_unlock(&a[i]->ei_update_lock);	\
 		}							\
@@ -186,11 +184,12 @@ void bch2_inode_update_after_write(struct btree_trans *,
 int __must_check bch2_write_inode(struct bch_fs *, struct bch_inode_info *,
 				  inode_set_fn, void *, unsigned);
 
-int bch2_setattr_nonsize(struct bch_inode_info *,
+int bch2_setattr_nonsize(struct user_namespace *,
+			 struct bch_inode_info *,
 			 struct iattr *);
 int __bch2_unlink(struct inode *, struct dentry *, bool);
 
-void bch2_evict_subvolume_inodes(struct bch_fs *, struct snapshot_id_list *);
+void bch2_evict_subvolume_inodes(struct bch_fs *, snapshot_id_list *);
 
 void bch2_vfs_exit(void);
 int bch2_vfs_init(void);
@@ -198,7 +197,7 @@ int bch2_vfs_init(void);
 #else
 
 static inline void bch2_evict_subvolume_inodes(struct bch_fs *c,
-					       struct snapshot_id_list *s) {}
+					       snapshot_id_list *s) {}
 static inline void bch2_vfs_exit(void) {}
 static inline int bch2_vfs_init(void) { return 0; }
 

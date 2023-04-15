@@ -6,6 +6,7 @@
 #include "buckets.h"
 #include "clock.h"
 #include "disk_groups.h"
+#include "errcode.h"
 #include "extents.h"
 #include "io.h"
 #include "move.h"
@@ -22,62 +23,70 @@
  * returns -1 if it should not be moved, or
  * device of pointer that should be moved, if known, or INT_MAX if unknown
  */
-static int __bch2_rebalance_pred(struct bch_fs *c,
-				 struct bkey_s_c k,
-				 struct bch_io_opts *io_opts)
+static bool rebalance_pred(struct bch_fs *c, void *arg,
+			   struct bkey_s_c k,
+			   struct bch_io_opts *io_opts,
+			   struct data_update_opts *data_opts)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	const union bch_extent_entry *entry;
-	struct extent_ptr_decoded p;
+	unsigned i;
+
+	data_opts->rewrite_ptrs		= 0;
+	data_opts->target		= io_opts->background_target;
+	data_opts->extra_replicas	= 0;
+	data_opts->btree_insert_flags	= 0;
 
 	if (io_opts->background_compression &&
-	    !bch2_bkey_is_incompressible(k))
-		bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
+	    !bch2_bkey_is_incompressible(k)) {
+		const union bch_extent_entry *entry;
+		struct extent_ptr_decoded p;
+
+		i = 0;
+		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 			if (!p.ptr.cached &&
 			    p.crc.compression_type !=
 			    bch2_compression_opt_to_type[io_opts->background_compression])
-				return p.ptr.dev;
+				data_opts->rewrite_ptrs |= 1U << i;
+			i++;
+		}
+	}
 
-	if (io_opts->background_target)
-		bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
-			if (!p.ptr.cached &&
-			    !bch2_dev_in_target(c, p.ptr.dev, io_opts->background_target))
-				return p.ptr.dev;
+	if (io_opts->background_target) {
+		const struct bch_extent_ptr *ptr;
 
-	return -1;
+		i = 0;
+		bkey_for_each_ptr(ptrs, ptr) {
+			if (!ptr->cached &&
+			    !bch2_dev_in_target(c, ptr->dev, io_opts->background_target))
+				data_opts->rewrite_ptrs |= 1U << i;
+			i++;
+		}
+	}
+
+	return data_opts->rewrite_ptrs != 0;
 }
 
 void bch2_rebalance_add_key(struct bch_fs *c,
 			    struct bkey_s_c k,
 			    struct bch_io_opts *io_opts)
 {
-	atomic64_t *counter;
-	int dev;
+	struct data_update_opts update_opts = { 0 };
+	struct bkey_ptrs_c ptrs;
+	const struct bch_extent_ptr *ptr;
+	unsigned i;
 
-	dev = __bch2_rebalance_pred(c, k, io_opts);
-	if (dev < 0)
+	if (!rebalance_pred(c, NULL, k, io_opts, &update_opts))
 		return;
 
-	counter = dev < INT_MAX
-		? &bch_dev_bkey_exists(c, dev)->rebalance_work
-		: &c->rebalance.work_unknown_dev;
-
-	if (atomic64_add_return(k.k->size, counter) == k.k->size)
-		rebalance_wakeup(c);
-}
-
-static enum data_cmd rebalance_pred(struct bch_fs *c, void *arg,
-				    struct bkey_s_c k,
-				    struct bch_io_opts *io_opts,
-				    struct data_opts *data_opts)
-{
-	if (__bch2_rebalance_pred(c, k, io_opts) >= 0) {
-		data_opts->target		= io_opts->background_target;
-		data_opts->nr_replicas		= 1;
-		data_opts->btree_insert_flags	= 0;
-		return DATA_ADD_REPLICAS;
-	} else {
-		return DATA_SKIP;
+	i = 0;
+	ptrs = bch2_bkey_ptrs_c(k);
+	bkey_for_each_ptr(ptrs, ptr) {
+		if ((1U << i) && update_opts.rewrite_ptrs)
+			if (atomic64_add_return(k.k->size,
+					&bch_dev_bkey_exists(c, ptr->dev)->rebalance_work) ==
+			    k.k->size)
+				rebalance_wakeup(c);
+		i++;
 	}
 }
 
@@ -180,7 +189,7 @@ static int bch2_rebalance_thread(void *arg)
 	prev_start	= jiffies;
 	prev_cputime	= curr_cputime();
 
-	bch_move_stats_init(&move_stats, "rebalance");
+	bch2_move_stats_init(&move_stats, "rebalance");
 	while (!kthread_wait_freezable(r->enabled)) {
 		cond_resched();
 
@@ -245,9 +254,10 @@ static int bch2_rebalance_thread(void *arg)
 			       BTREE_ID_NR,	POS_MAX,
 			       /* ratelimiting disabled for now */
 			       NULL, /*  &r->pd.rate, */
+			       &move_stats,
 			       writepoint_ptr(&c->rebalance_write_point),
-			       rebalance_pred, NULL,
-			       &move_stats);
+			       true,
+			       rebalance_pred, NULL);
 	}
 
 	return 0;
@@ -257,35 +267,48 @@ void bch2_rebalance_work_to_text(struct printbuf *out, struct bch_fs *c)
 {
 	struct bch_fs_rebalance *r = &c->rebalance;
 	struct rebalance_work w = rebalance_work(c);
-	char h1[21], h2[21];
 
-	bch2_hprint(&PBUF(h1), w.dev_most_full_work << 9);
-	bch2_hprint(&PBUF(h2), w.dev_most_full_capacity << 9);
-	pr_buf(out, "fullest_dev (%i):\t%s/%s\n",
-	       w.dev_most_full_idx, h1, h2);
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 20);
 
-	bch2_hprint(&PBUF(h1), w.total_work << 9);
-	bch2_hprint(&PBUF(h2), c->capacity << 9);
-	pr_buf(out, "total work:\t\t%s/%s\n", h1, h2);
+	prt_printf(out, "fullest_dev (%i):", w.dev_most_full_idx);
+	prt_tab(out);
 
-	pr_buf(out, "rate:\t\t\t%u\n", r->pd.rate.rate);
+	prt_human_readable_u64(out, w.dev_most_full_work << 9);
+	prt_printf(out, "/");
+	prt_human_readable_u64(out, w.dev_most_full_capacity << 9);
+	prt_newline(out);
+
+	prt_printf(out, "total work:");
+	prt_tab(out);
+
+	prt_human_readable_u64(out, w.total_work << 9);
+	prt_printf(out, "/");
+	prt_human_readable_u64(out, c->capacity << 9);
+	prt_newline(out);
+
+	prt_printf(out, "rate:");
+	prt_tab(out);
+	prt_printf(out, "%u", r->pd.rate.rate);
+	prt_newline(out);
 
 	switch (r->state) {
 	case REBALANCE_WAITING:
-		pr_buf(out, "waiting\n");
+		prt_printf(out, "waiting");
 		break;
 	case REBALANCE_THROTTLED:
-		bch2_hprint(&PBUF(h1),
+		prt_printf(out, "throttled for %lu sec or ",
+		       (r->throttled_until_cputime - jiffies) / HZ);
+		prt_human_readable_u64(out,
 			    (r->throttled_until_iotime -
 			     atomic64_read(&c->io_clock[WRITE].now)) << 9);
-		pr_buf(out, "throttled for %lu sec or %s io\n",
-		       (r->throttled_until_cputime - jiffies) / HZ,
-		       h1);
+		prt_printf(out, " io");
 		break;
 	case REBALANCE_RUNNING:
-		pr_buf(out, "running\n");
+		prt_printf(out, "running");
 		break;
 	}
+	prt_newline(out);
 }
 
 void bch2_rebalance_stop(struct bch_fs *c)
@@ -310,6 +333,7 @@ void bch2_rebalance_stop(struct bch_fs *c)
 int bch2_rebalance_start(struct bch_fs *c)
 {
 	struct task_struct *p;
+	int ret;
 
 	if (c->rebalance.thread)
 		return 0;
@@ -318,9 +342,10 @@ int bch2_rebalance_start(struct bch_fs *c)
 		return 0;
 
 	p = kthread_create(bch2_rebalance_thread, c, "bch-rebalance/%s", c->name);
-	if (IS_ERR(p)) {
-		bch_err(c, "error creating rebalance thread: %li", PTR_ERR(p));
-		return PTR_ERR(p);
+	ret = PTR_ERR_OR_ZERO(p);
+	if (ret) {
+		bch_err(c, "error creating rebalance thread: %s", bch2_err_str(ret));
+		return ret;
 	}
 
 	get_task_struct(p);

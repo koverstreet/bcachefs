@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _BCACHEFS_BTREE_KEY_CACHE_H
 #define _BCACHEFS_BTREE_KEY_CACHE_H
 
@@ -28,18 +29,12 @@ bch2_btree_key_cache_find(struct bch_fs *, enum btree_id, struct bpos);
 int bch2_btree_path_traverse_cached(struct btree_trans *, struct btree_path *,
 				    unsigned);
 
-bool bch2_btree_insert_key_cached(struct btree_trans *,
-			struct btree_path *, struct bkey_i *);
+bool bch2_btree_insert_key_cached(struct btree_trans *, unsigned,
+			struct btree_insert_entry *);
 int bch2_btree_key_cache_flush(struct btree_trans *,
 			       enum btree_id, struct bpos);
-#ifdef CONFIG_BCACHEFS_DEBUG
-void bch2_btree_key_cache_verify_clean(struct btree_trans *,
-				enum btree_id, struct bpos);
-#else
-static inline void
-bch2_btree_key_cache_verify_clean(struct btree_trans *trans,
-				enum btree_id id, struct bpos pos) {}
-#endif
+void bch2_btree_key_cache_drop(struct btree_trans *,
+			       struct btree_path *);
 
 void bch2_fs_btree_key_cache_exit(struct btree_key_cache *);
 void bch2_fs_btree_key_cache_init_early(struct btree_key_cache *);

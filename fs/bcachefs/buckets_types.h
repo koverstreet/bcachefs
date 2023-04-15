@@ -7,33 +7,15 @@
 
 #define BUCKET_JOURNAL_SEQ_BITS		16
 
-struct bucket_mark {
-	union {
-	atomic64_t	v;
-
-	struct {
-	u8		gen;
-	u8		data_type:3,
-			owned_by_allocator:1,
-			stripe:1;
-	u16		dirty_sectors;
-	u16		cached_sectors;
-	};
-	};
-};
-
 struct bucket {
-	union {
-		struct bucket_mark	_mark;
-		const struct bucket_mark mark;
-	};
-
-	u64				io_time[2];
-	u8				oldest_gen;
-	u8				gc_gen;
-	unsigned			gen_valid:1;
-	u8				stripe_redundancy;
-	u32				stripe;
+	u8			lock;
+	u8			gen_valid:1;
+	u8			data_type:7;
+	u8			gen;
+	u8			stripe_redundancy;
+	u32			stripe;
+	u32			dirty_sectors;
+	u32			cached_sectors;
 };
 
 struct bucket_array {
@@ -52,7 +34,6 @@ struct bucket_gens {
 
 struct bch_dev_usage {
 	u64			buckets_ec;
-	u64			buckets_unavailable;
 
 	struct {
 		u64		buckets;
@@ -107,16 +88,5 @@ struct disk_reservation {
 	u32			gen;
 	unsigned		nr_replicas;
 };
-
-struct copygc_heap_entry {
-	u8			dev;
-	u8			gen;
-	u8			replicas;
-	u16			fragmentation;
-	u32			sectors;
-	u64			offset;
-};
-
-typedef HEAP(struct copygc_heap_entry) copygc_heap;
 
 #endif /* _BUCKETS_TYPES_H */

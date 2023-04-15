@@ -6,20 +6,31 @@
 
 struct bch_fs;
 struct btree;
+struct btree_trans;
 struct bkey;
 enum btree_node_type;
 
 extern const char * const bch2_bkey_types[];
 
+/*
+ * key_invalid: checks validity of @k, returns 0 if good or -EINVAL if bad. If
+ * invalid, entire key will be deleted.
+ *
+ * When invalid, error string is returned via @err. @rw indicates whether key is
+ * being read or written; more aggressive checks can be enabled when rw == WRITE.
+ */
 struct bkey_ops {
-	/* Returns reason for being invalid if invalid, else NULL: */
-	const char *	(*key_invalid)(const struct bch_fs *,
-				       struct bkey_s_c);
+	int		(*key_invalid)(const struct bch_fs *c, struct bkey_s_c k,
+				       unsigned flags, struct printbuf *err);
 	void		(*val_to_text)(struct printbuf *, struct bch_fs *,
 				       struct bkey_s_c);
 	void		(*swab)(struct bkey_s);
 	bool		(*key_normalize)(struct bch_fs *, struct bkey_s);
 	bool		(*key_merge)(struct bch_fs *, struct bkey_s, struct bkey_s_c);
+	int		(*trans_trigger)(struct btree_trans *, enum btree_id, unsigned,
+					 struct bkey_s_c, struct bkey_i *, unsigned);
+	int		(*atomic_trigger)(struct btree_trans *, enum btree_id, unsigned,
+					  struct bkey_s_c, struct bkey_s_c, unsigned);
 	void		(*compat)(enum btree_id id, unsigned version,
 				  unsigned big_endian, int write,
 				  struct bkey_s);
@@ -27,14 +38,14 @@ struct bkey_ops {
 
 extern const struct bkey_ops bch2_bkey_ops[];
 
-const char *bch2_bkey_val_invalid(struct bch_fs *, struct bkey_s_c);
-const char *__bch2_bkey_invalid(struct bch_fs *, struct bkey_s_c,
-				enum btree_node_type);
-const char *bch2_bkey_invalid(struct bch_fs *, struct bkey_s_c,
-			      enum btree_node_type);
-const char *bch2_bkey_in_btree_node(struct btree *, struct bkey_s_c);
+#define BKEY_INVALID_FROM_JOURNAL		(1 << 1)
 
-void bch2_bkey_debugcheck(struct bch_fs *, struct btree *, struct bkey_s_c);
+int bch2_bkey_val_invalid(struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *);
+int __bch2_bkey_invalid(struct bch_fs *, struct bkey_s_c,
+			enum btree_node_type, unsigned, struct printbuf *);
+int bch2_bkey_invalid(struct bch_fs *, struct bkey_s_c,
+		      enum btree_node_type, unsigned, struct printbuf *);
+int bch2_bkey_in_btree_node(struct btree *, struct bkey_s_c, struct printbuf *);
 
 void bch2_bpos_to_text(struct printbuf *, struct bpos);
 void bch2_bkey_to_text(struct printbuf *, const struct bkey *);
@@ -51,13 +62,101 @@ static inline bool bch2_bkey_maybe_mergable(const struct bkey *l, const struct b
 {
 	return l->type == r->type &&
 		!bversion_cmp(l->version, r->version) &&
-		!bpos_cmp(l->p, bkey_start_pos(r)) &&
-		(u64) l->size + r->size <= KEY_SIZE_MAX &&
-		bch2_bkey_ops[l->type].key_merge &&
-		!bch2_key_merging_disabled;
+		bpos_eq(l->p, bkey_start_pos(r));
 }
 
 bool bch2_bkey_merge(struct bch_fs *, struct bkey_s, struct bkey_s_c);
+
+static inline int bch2_mark_key(struct btree_trans *trans,
+		enum btree_id btree, unsigned level,
+		struct bkey_s_c old, struct bkey_s_c new,
+		unsigned flags)
+{
+	const struct bkey_ops *ops = &bch2_bkey_ops[old.k->type ?: new.k->type];
+
+	return ops->atomic_trigger
+		? ops->atomic_trigger(trans, btree, level, old, new, flags)
+		: 0;
+}
+
+enum btree_update_flags {
+	__BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE,
+	__BTREE_UPDATE_NOJOURNAL,
+	__BTREE_UPDATE_KEY_CACHE_RECLAIM,
+	__BTREE_UPDATE_NO_KEY_CACHE_COHERENCY,
+
+	__BTREE_TRIGGER_NORUN,		/* Don't run triggers at all */
+
+	__BTREE_TRIGGER_INSERT,
+	__BTREE_TRIGGER_OVERWRITE,
+
+	__BTREE_TRIGGER_GC,
+	__BTREE_TRIGGER_BUCKET_INVALIDATE,
+	__BTREE_TRIGGER_NOATOMIC,
+};
+
+#define BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE (1U << __BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE)
+#define BTREE_UPDATE_NOJOURNAL		(1U << __BTREE_UPDATE_NOJOURNAL)
+#define BTREE_UPDATE_KEY_CACHE_RECLAIM	(1U << __BTREE_UPDATE_KEY_CACHE_RECLAIM)
+#define BTREE_UPDATE_NO_KEY_CACHE_COHERENCY	\
+	(1U << __BTREE_UPDATE_NO_KEY_CACHE_COHERENCY)
+
+#define BTREE_TRIGGER_NORUN		(1U << __BTREE_TRIGGER_NORUN)
+
+#define BTREE_TRIGGER_INSERT		(1U << __BTREE_TRIGGER_INSERT)
+#define BTREE_TRIGGER_OVERWRITE		(1U << __BTREE_TRIGGER_OVERWRITE)
+
+#define BTREE_TRIGGER_GC		(1U << __BTREE_TRIGGER_GC)
+#define BTREE_TRIGGER_BUCKET_INVALIDATE	(1U << __BTREE_TRIGGER_BUCKET_INVALIDATE)
+#define BTREE_TRIGGER_NOATOMIC		(1U << __BTREE_TRIGGER_NOATOMIC)
+
+#define BTREE_TRIGGER_WANTS_OLD_AND_NEW		\
+	((1U << KEY_TYPE_alloc)|		\
+	 (1U << KEY_TYPE_alloc_v2)|		\
+	 (1U << KEY_TYPE_alloc_v3)|		\
+	 (1U << KEY_TYPE_alloc_v4)|		\
+	 (1U << KEY_TYPE_stripe)|		\
+	 (1U << KEY_TYPE_inode)|		\
+	 (1U << KEY_TYPE_inode_v2)|		\
+	 (1U << KEY_TYPE_snapshot))
+
+static inline int bch2_trans_mark_key(struct btree_trans *trans,
+				      enum btree_id btree_id, unsigned level,
+				      struct bkey_s_c old, struct bkey_i *new,
+				      unsigned flags)
+{
+	const struct bkey_ops *ops = &bch2_bkey_ops[old.k->type ?: new->k.type];
+
+	return ops->trans_trigger
+		? ops->trans_trigger(trans, btree_id, level, old, new, flags)
+		: 0;
+}
+
+static inline int bch2_trans_mark_old(struct btree_trans *trans,
+				      enum btree_id btree_id, unsigned level,
+				      struct bkey_s_c old, unsigned flags)
+{
+	struct bkey_i deleted;
+
+	bkey_init(&deleted.k);
+	deleted.k.p = old.k->p;
+
+	return bch2_trans_mark_key(trans, btree_id, level, old, &deleted,
+				   BTREE_TRIGGER_OVERWRITE|flags);
+}
+
+static inline int bch2_trans_mark_new(struct btree_trans *trans,
+				      enum btree_id btree_id, unsigned level,
+				      struct bkey_i *new, unsigned flags)
+{
+	struct bkey_i deleted;
+
+	bkey_init(&deleted.k);
+	deleted.k.p = new->k.p;
+
+	return bch2_trans_mark_key(trans, btree_id, level, bkey_i_to_s_c(&deleted), new,
+				   BTREE_TRIGGER_INSERT|flags);
+}
 
 void bch2_bkey_renumber(enum btree_node_type, struct bkey_packed *, int);
 

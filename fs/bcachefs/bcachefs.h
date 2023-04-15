@@ -107,7 +107,7 @@
  *
  * BTREE NODES:
  *
- * Our unit of allocation is a bucket, and we we can't arbitrarily allocate and
+ * Our unit of allocation is a bucket, and we can't arbitrarily allocate and
  * free smaller than a bucket - so, that's how big our btree nodes are.
  *
  * (If buckets are really big we'll only use part of the bucket for a btree node
@@ -206,11 +206,25 @@
 #include "bcachefs_format.h"
 #include "errcode.h"
 #include "fifo.h"
+#include "nocow_locking_types.h"
 #include "opts.h"
 #include "util.h"
 
+#ifdef CONFIG_BCACHEFS_DEBUG
+#define BCH_WRITE_REF_DEBUG
+#endif
+
+#ifndef dynamic_fault
 #define dynamic_fault(...)		0
-#define race_fault(...)			0
+#endif
+
+#define race_fault(...)			dynamic_fault("bcachefs:race")
+
+#define trace_and_count(_c, _name, ...)					\
+do {									\
+	this_cpu_inc((_c)->counters[BCH_COUNTER_##_name]);		\
+	trace_##_name(__VA_ARGS__);					\
+} while (0)
 
 #define bch2_fs_init_fault(name)					\
 	dynamic_fault("bcachefs:bch_fs_init:" name)
@@ -220,12 +234,30 @@
 	 dynamic_fault("bcachefs:meta:write:" name)
 
 #ifdef __KERNEL__
-#define bch2_fmt(_c, fmt)		"bcachefs (%s): " fmt "\n", ((_c)->name)
-#define bch2_fmt_inum(_c, _inum, fmt)	"bcachefs (%s inum %llu): " fmt "\n", ((_c)->name), (_inum)
-#else
-#define bch2_fmt(_c, fmt)		fmt "\n"
-#define bch2_fmt_inum(_c, _inum, fmt)	"inum %llu: " fmt "\n", (_inum)
+#define BCACHEFS_LOG_PREFIX
 #endif
+
+#ifdef BCACHEFS_LOG_PREFIX
+
+#define bch2_log_msg(_c, fmt)			"bcachefs (%s): " fmt, ((_c)->name)
+#define bch2_fmt_dev(_ca, fmt)			"bcachefs (%s): " fmt "\n", ((_ca)->name)
+#define bch2_fmt_dev_offset(_ca, _offset, fmt)	"bcachefs (%s sector %llu): " fmt "\n", ((_ca)->name), (_offset)
+#define bch2_fmt_inum(_c, _inum, fmt)		"bcachefs (%s inum %llu): " fmt "\n", ((_c)->name), (_inum)
+#define bch2_fmt_inum_offset(_c, _inum, _offset, fmt)			\
+	 "bcachefs (%s inum %llu offset %llu): " fmt "\n", ((_c)->name), (_inum), (_offset)
+
+#else
+
+#define bch2_log_msg(_c, fmt)			fmt
+#define bch2_fmt_dev(_ca, fmt)			"%s: " fmt "\n", ((_ca)->name)
+#define bch2_fmt_dev_offset(_ca, _offset, fmt)	"%s sector %llu: " fmt "\n", ((_ca)->name), (_offset)
+#define bch2_fmt_inum(_c, _inum, fmt)		"inum %llu: " fmt "\n", (_inum)
+#define bch2_fmt_inum_offset(_c, _inum, _offset, fmt)				\
+	 "inum %llu offset %llu: " fmt "\n", (_inum), (_offset)
+
+#endif
+
+#define bch2_fmt(_c, fmt)		bch2_log_msg(_c, fmt "\n")
 
 #define bch_info(c, fmt, ...) \
 	printk(KERN_INFO bch2_fmt(c, fmt), ##__VA_ARGS__)
@@ -235,13 +267,28 @@
 	printk(KERN_WARNING bch2_fmt(c, fmt), ##__VA_ARGS__)
 #define bch_warn_ratelimited(c, fmt, ...) \
 	printk_ratelimited(KERN_WARNING bch2_fmt(c, fmt), ##__VA_ARGS__)
+
 #define bch_err(c, fmt, ...) \
 	printk(KERN_ERR bch2_fmt(c, fmt), ##__VA_ARGS__)
+#define bch_err_dev(ca, fmt, ...) \
+	printk(KERN_ERR bch2_fmt_dev(ca, fmt), ##__VA_ARGS__)
+#define bch_err_dev_offset(ca, _offset, fmt, ...) \
+	printk(KERN_ERR bch2_fmt_dev_offset(ca, _offset, fmt), ##__VA_ARGS__)
+#define bch_err_inum(c, _inum, fmt, ...) \
+	printk(KERN_ERR bch2_fmt_inum(c, _inum, fmt), ##__VA_ARGS__)
+#define bch_err_inum_offset(c, _inum, _offset, fmt, ...) \
+	printk(KERN_ERR bch2_fmt_inum_offset(c, _inum, _offset, fmt), ##__VA_ARGS__)
 
 #define bch_err_ratelimited(c, fmt, ...) \
 	printk_ratelimited(KERN_ERR bch2_fmt(c, fmt), ##__VA_ARGS__)
+#define bch_err_dev_ratelimited(ca, fmt, ...) \
+	printk_ratelimited(KERN_ERR bch2_fmt_dev(ca, fmt), ##__VA_ARGS__)
+#define bch_err_dev_offset_ratelimited(ca, _offset, fmt, ...) \
+	printk_ratelimited(KERN_ERR bch2_fmt_dev_offset(ca, _offset, fmt), ##__VA_ARGS__)
 #define bch_err_inum_ratelimited(c, _inum, fmt, ...) \
 	printk_ratelimited(KERN_ERR bch2_fmt_inum(c, _inum, fmt), ##__VA_ARGS__)
+#define bch_err_inum_offset_ratelimited(c, _inum, _offset, fmt, ...) \
+	printk_ratelimited(KERN_ERR bch2_fmt_inum_offset(c, _inum, _offset, fmt), ##__VA_ARGS__)
 
 #define bch_verbose(c, fmt, ...)					\
 do {									\
@@ -272,18 +319,18 @@ do {									\
 		"done in memory")					\
 	BCH_DEBUG_PARAM(verify_all_btree_replicas,			\
 		"When reading btree nodes, read all replicas and "	\
-		"compare them")
+		"compare them")						\
+	BCH_DEBUG_PARAM(backpointers_no_use_write_buffer,		\
+		"Don't use the write buffer for backpointers, enabling "\
+		"extra runtime checks")
 
-/* Parameters that should only be compiled in in debug mode: */
+/* Parameters that should only be compiled in debug mode: */
 #define BCH_DEBUG_PARAMS_DEBUG()					\
 	BCH_DEBUG_PARAM(expensive_debug_checks,				\
 		"Enables various runtime debugging checks that "	\
 		"significantly affect performance")			\
 	BCH_DEBUG_PARAM(debug_check_iterators,				\
 		"Enables extra verification for btree iterators")	\
-	BCH_DEBUG_PARAM(debug_check_bkeys,				\
-		"Run bkey_debugcheck (primarily checking GC/allocation "\
-		"information) when iterating over keys")		\
 	BCH_DEBUG_PARAM(debug_check_btree_accounting,			\
 		"Verify btree accounting for keys within a node")	\
 	BCH_DEBUG_PARAM(journal_seq_verify,				\
@@ -332,9 +379,6 @@ BCH_DEBUG_PARAMS_DEBUG()
 	x(btree_interior_update_foreground)	\
 	x(btree_interior_update_total)		\
 	x(btree_gc)				\
-	x(btree_lock_contended_read)		\
-	x(btree_lock_contended_intent)		\
-	x(btree_lock_contended_write)		\
 	x(data_write)				\
 	x(data_read)				\
 	x(data_promote)				\
@@ -343,7 +387,8 @@ BCH_DEBUG_PARAMS_DEBUG()
 	x(journal_flush_seq)			\
 	x(blocked_journal)			\
 	x(blocked_allocate)			\
-	x(blocked_allocate_open_bucket)
+	x(blocked_allocate_open_bucket)		\
+	x(nocow_lock_contended)
 
 enum bch_time_stats {
 #define x(name) BCH_TIME_##name,
@@ -354,6 +399,7 @@ enum bch_time_stats {
 
 #include "alloc_types.h"
 #include "btree_types.h"
+#include "btree_write_buffer_types.h"
 #include "buckets_types.h"
 #include "buckets_waiting_for_journal_types.h"
 #include "clock_types.h"
@@ -394,6 +440,11 @@ enum gc_phase {
 	GC_PHASE_BTREE_reflink,
 	GC_PHASE_BTREE_subvolumes,
 	GC_PHASE_BTREE_snapshots,
+	GC_PHASE_BTREE_lru,
+	GC_PHASE_BTREE_freespace,
+	GC_PHASE_BTREE_need_discard,
+	GC_PHASE_BTREE_backpointers,
+	GC_PHASE_BTREE_bucket_gens,
 
 	GC_PHASE_PENDING_DELETE,
 };
@@ -438,6 +489,7 @@ struct bch_dev {
 	struct bch_sb		*sb_read_scratch;
 	int			sb_write_error;
 	dev_t			dev;
+	atomic_t		flush_seq;
 
 	struct bch_devs_mask	self;
 
@@ -450,8 +502,9 @@ struct bch_dev {
 	 * gc_lock, for device resize - holding any is sufficient for access:
 	 * Or rcu_read_lock(), but only for ptr_stale():
 	 */
-	struct bucket_array __rcu *buckets[2];
-	struct bucket_gens	*bucket_gens;
+	struct bucket_array __rcu *buckets_gc;
+	struct bucket_gens __rcu *bucket_gens;
+	u8			*oldest_gen;
 	unsigned long		*buckets_nouse;
 	struct rw_semaphore	bucket_lock;
 
@@ -461,33 +514,14 @@ struct bch_dev {
 
 	/* Allocator: */
 	u64			new_fs_bucket_idx;
-	struct task_struct __rcu *alloc_thread;
+	u64			alloc_cursor;
 
-	/*
-	 * free: Buckets that are ready to be used
-	 *
-	 * free_inc: Incoming buckets - these are buckets that currently have
-	 * cached data in them, and we can't reuse them until after we write
-	 * their new gen to disk. After prio_write() finishes writing the new
-	 * gens/prios, they'll be moved to the free list (and possibly discarded
-	 * in the process)
-	 */
-	alloc_fifo		free[RESERVE_NR];
-	alloc_fifo		free_inc;
 	unsigned		nr_open_buckets;
-
-	open_bucket_idx_t	open_buckets_partial[OPEN_BUCKETS_COUNT];
-	open_bucket_idx_t	open_buckets_partial_nr;
-
-	size_t			fifo_last_bucket;
+	unsigned		nr_btree_reserve;
 
 	size_t			inc_gen_needs_gc;
 	size_t			inc_gen_really_needs_gc;
 	size_t			buckets_waiting_on_journal;
-
-	enum allocator_states	allocator_state;
-
-	alloc_heap		alloc_heap;
 
 	atomic64_t		rebalance_work;
 
@@ -498,7 +532,7 @@ struct bch_dev {
 
 	/* The rest of this all shows up in sysfs */
 	atomic64_t		cur_latency[2];
-	struct time_stats	io_latency[2];
+	struct bch2_time_stats	io_latency[2];
 
 #define CONGESTED_MAX		1024
 	atomic_t		congested;
@@ -509,43 +543,51 @@ struct bch_dev {
 
 enum {
 	/* startup: */
-	BCH_FS_INITIALIZED,
-	BCH_FS_ALLOC_READ_DONE,
-	BCH_FS_ALLOC_CLEAN,
-	BCH_FS_ALLOCATOR_RUNNING,
-	BCH_FS_ALLOCATOR_STOPPING,
-	BCH_FS_INITIAL_GC_DONE,
-	BCH_FS_INITIAL_GC_UNFIXED,
-	BCH_FS_TOPOLOGY_REPAIR_DONE,
-	BCH_FS_FSCK_DONE,
 	BCH_FS_STARTED,
+	BCH_FS_MAY_GO_RW,
 	BCH_FS_RW,
 	BCH_FS_WAS_RW,
 
 	/* shutdown: */
 	BCH_FS_STOPPING,
 	BCH_FS_EMERGENCY_RO,
+	BCH_FS_GOING_RO,
 	BCH_FS_WRITE_DISABLE_COMPLETE,
+	BCH_FS_CLEAN_SHUTDOWN,
+
+	/* fsck passes: */
+	BCH_FS_TOPOLOGY_REPAIR_DONE,
+	BCH_FS_INITIAL_GC_DONE,		/* kill when we enumerate fsck passes */
+	BCH_FS_CHECK_ALLOC_DONE,
+	BCH_FS_CHECK_LRUS_DONE,
+	BCH_FS_CHECK_BACKPOINTERS_DONE,
+	BCH_FS_CHECK_ALLOC_TO_LRU_REFS_DONE,
+	BCH_FS_FSCK_DONE,
+	BCH_FS_INITIAL_GC_UNFIXED,	/* kill when we enumerate fsck errors */
+	BCH_FS_NEED_ANOTHER_GC,
+
+	BCH_FS_HAVE_DELETED_SNAPSHOTS,
 
 	/* errors: */
 	BCH_FS_ERROR,
 	BCH_FS_TOPOLOGY_ERROR,
 	BCH_FS_ERRORS_FIXED,
 	BCH_FS_ERRORS_NOT_FIXED,
-
-	/* misc: */
-	BCH_FS_NEED_ANOTHER_GC,
-	BCH_FS_DELETED_NODES,
-	BCH_FS_NEED_ALLOC_WRITE,
-	BCH_FS_REBUILD_REPLICAS,
-	BCH_FS_HOLD_BTREE_WRITES,
 };
 
 struct btree_debug {
 	unsigned		id;
-	struct dentry		*btree;
-	struct dentry		*btree_format;
-	struct dentry		*failed;
+};
+
+#define BCH_TRANSACTIONS_NR 128
+
+struct btree_transaction_stats {
+	struct bch2_time_stats	lock_hold_times;
+	struct mutex		lock;
+	unsigned		nr_max_paths;
+	unsigned		wb_updates_size;
+	unsigned		max_mem;
+	char			*max_paths_text;
 };
 
 struct bch_fs_pcpu {
@@ -563,17 +605,22 @@ struct journal_seq_blacklist_table {
 
 struct journal_keys {
 	struct journal_key {
+		u64		journal_seq;
+		u32		journal_offset;
 		enum btree_id	btree_id:8;
 		unsigned	level:8;
 		bool		allocated;
 		bool		overwritten;
 		struct bkey_i	*k;
-		u32		journal_seq;
-		u32		journal_offset;
 	}			*d;
+	/*
+	 * Gap buffer: instead of all the empty space in the array being at the
+	 * end of the buffer - from @nr to @size - the empty space is at @gap.
+	 * This means that sequential insertions are O(n) instead of O(n^2).
+	 */
+	size_t			gap;
 	size_t			nr;
 	size_t			size;
-	u64			journal_seq_base;
 };
 
 struct btree_path_buf {
@@ -582,26 +629,37 @@ struct btree_path_buf {
 
 #define REPLICAS_DELTA_LIST_MAX	(1U << 16)
 
-struct snapshot_t {
-	u32			parent;
-	u32			children[2];
-	u32			subvol; /* Nonzero only if a subvolume points to this node: */
-	u32			equiv;
-};
-
-typedef struct {
-	u32		subvol;
-	u64		inum;
-} subvol_inum;
-
 #define BCACHEFS_ROOT_SUBVOL_INUM					\
 	((subvol_inum) { BCACHEFS_ROOT_SUBVOL,	BCACHEFS_ROOT_INO })
+
+#define BCH_WRITE_REFS()						\
+	x(trans)							\
+	x(write)							\
+	x(promote)							\
+	x(node_rewrite)							\
+	x(stripe_create)						\
+	x(stripe_delete)						\
+	x(reflink)							\
+	x(fallocate)							\
+	x(discard)							\
+	x(invalidate)							\
+	x(delete_dead_snapshots)					\
+	x(snapshot_delete_pagecache)					\
+	x(sysfs)
+
+enum bch_write_ref {
+#define x(n) BCH_WRITE_REF_##n,
+	BCH_WRITE_REFS()
+#undef x
+	BCH_WRITE_REF_NR,
+};
 
 struct bch_fs {
 	struct closure		cl;
 
 	struct list_head	list;
 	struct kobject		kobj;
+	struct kobject		counters_kobj;
 	struct kobject		internal;
 	struct kobject		opts_dir;
 	struct kobject		time_stats;
@@ -617,7 +675,11 @@ struct bch_fs {
 	struct rw_semaphore	state_lock;
 
 	/* Counts outstanding writes, for clean transition to read-only */
+#ifdef BCH_WRITE_REF_DEBUG
+	atomic_long_t		writes[BCH_WRITE_REF_NR];
+#else
 	struct percpu_ref	writes;
+#endif
 	struct work_struct	read_only_work;
 
 	struct bch_dev __rcu	*devs[BCH_SB_MEMBERS_MAX];
@@ -673,7 +735,7 @@ struct bch_fs {
 	struct mutex		snapshot_table_lock;
 	struct work_struct	snapshot_delete_work;
 	struct work_struct	snapshot_wait_for_pagecache_and_delete_work;
-	struct snapshot_id_list	snapshots_unlinked;
+	snapshot_id_list	snapshots_unlinked;
 	struct mutex		snapshots_unlinked_lock;
 
 	/* BTREE CACHE */
@@ -705,6 +767,16 @@ struct bch_fs {
 	struct workqueue_struct	*btree_interior_update_worker;
 	struct work_struct	btree_interior_update_work;
 
+	struct list_head	pending_node_rewrites;
+	struct mutex		pending_node_rewrites_lock;
+
+	/* btree_io.c: */
+	spinlock_t		btree_write_error_lock;
+	struct btree_write_stats {
+		atomic64_t	nr;
+		atomic64_t	bytes;
+	}			btree_write_stats[BTREE_WRITE_TYPE_NR];
+
 	/* btree_iter.c: */
 	struct mutex		btree_trans_lock;
 	struct list_head	btree_trans_list;
@@ -716,11 +788,20 @@ struct bch_fs {
 	bool			btree_trans_barrier_initialized;
 
 	struct btree_key_cache	btree_key_cache;
+	unsigned		btree_key_cache_btrees;
+
+	struct btree_write_buffer btree_write_buffer;
 
 	struct workqueue_struct	*btree_update_wq;
 	struct workqueue_struct	*btree_io_complete_wq;
 	/* copygc needs its own workqueue for index updates.. */
 	struct workqueue_struct	*copygc_wq;
+	/*
+	 * Use a dedicated wq for write ref holder tasks. Required to avoid
+	 * dependency problems with other wq tasks that can block on ref
+	 * draining, such as read-only transition.
+	 */
+	struct workqueue_struct *write_ref_wq;
 
 	/* ALLOCATION */
 	struct bch_devs_mask	rw_devs[BCH_DATA_NR];
@@ -771,6 +852,9 @@ struct bch_fs {
 	struct open_bucket	open_buckets[OPEN_BUCKETS_COUNT];
 	open_bucket_idx_t	open_buckets_hash[OPEN_BUCKETS_COUNT];
 
+	open_bucket_idx_t	open_buckets_partial[OPEN_BUCKETS_COUNT];
+	open_bucket_idx_t	open_buckets_partial_nr;
+
 	struct write_point	btree_write_point;
 	struct write_point	rebalance_write_point;
 
@@ -780,6 +864,8 @@ struct bch_fs {
 	unsigned		write_points_nr;
 
 	struct buckets_waiting_for_journal buckets_waiting_for_journal;
+	struct work_struct	discard_work;
+	struct work_struct	invalidate_work;
 
 	/* GARBAGE COLLECTION */
 	struct task_struct	*gc_thread;
@@ -806,6 +892,7 @@ struct bch_fs {
 	 * it's not while a gc is in progress.
 	 */
 	struct rw_semaphore	gc_lock;
+	struct mutex		gc_gens_lock;
 
 	/* IO PATH */
 	struct semaphore	io_in_flight;
@@ -814,6 +901,8 @@ struct bch_fs {
 	struct bio_set		bio_write;
 	struct mutex		bio_bounce_pages_lock;
 	mempool_t		bio_bounce_pages;
+	struct bucket_nocow_lock_table
+				nocow_locks;
 	struct rhashtable	promote_table;
 
 	mempool_t		compression_bounce[2];
@@ -822,32 +911,40 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
 
 	mempool_t		large_bkey_pool;
 
+	/* MOVE.C */
+	struct list_head	moving_context_list;
+	struct mutex		moving_context_lock;
+
+	struct list_head	data_progress_list;
+	struct mutex		data_progress_lock;
+
 	/* REBALANCE */
 	struct bch_fs_rebalance	rebalance;
 
 	/* COPYGC */
 	struct task_struct	*copygc_thread;
-	copygc_heap		copygc_heap;
 	struct write_point	copygc_write_point;
+	s64			copygc_wait_at;
 	s64			copygc_wait;
-
-	/* DATA PROGRESS STATS */
-	struct list_head	data_progress_list;
-	struct mutex		data_progress_lock;
+	bool			copygc_running;
+	wait_queue_head_t	copygc_running_wq;
 
 	/* STRIPES: */
 	GENRADIX(struct stripe) stripes;
 	GENRADIX(struct gc_stripe) gc_stripes;
 
+	struct hlist_head	ec_stripes_new[32];
+	spinlock_t		ec_stripes_new_lock;
+
 	ec_stripes_heap		ec_stripes_heap;
-	spinlock_t		ec_stripes_heap_lock;
+	struct mutex		ec_stripes_heap_lock;
 
 	/* ERASURE CODING */
 	struct list_head	ec_stripe_head_list;
@@ -855,29 +952,29 @@ struct bch_fs {
 
 	struct list_head	ec_stripe_new_list;
 	struct mutex		ec_stripe_new_lock;
+	wait_queue_head_t	ec_stripe_new_wait;
 
 	struct work_struct	ec_stripe_create_work;
 	u64			ec_stripe_hint;
 
-	struct bio_set		ec_bioset;
-
 	struct work_struct	ec_stripe_delete_work;
-	struct llist_head	ec_stripe_delete_list;
+
+	struct bio_set		ec_bioset;
 
 	/* REFLINK */
 	u64			reflink_hint;
 	reflink_gc_table	reflink_gc_table;
 	size_t			reflink_gc_nr;
 
+	/* fs.c */
+	struct list_head	vfs_inodes_list;
+	struct mutex		vfs_inodes_lock;
+
 	/* VFS IO PATH - fs-io.c */
 	struct bio_set		writepage_bioset;
 	struct bio_set		dio_write_bioset;
 	struct bio_set		dio_read_bioset;
-
-
-	atomic64_t		btree_writes_nr;
-	atomic64_t		btree_writes_sectors;
-	spinlock_t		btree_write_error_lock;
+	struct bio_set		nocow_flush_bioset;
 
 	/* ERRORS */
 	struct list_head	fsck_errors;
@@ -888,7 +985,8 @@ struct bch_fs {
 	struct bch_memquota_type quotas[QTYP_NR];
 
 	/* DEBUG JUNK */
-	struct dentry		*debug;
+	struct dentry		*fs_debug_dir;
+	struct dentry		*btree_debug_dir;
 	struct btree_debug	btree_debug[BTREE_ID_NR];
 	struct btree		*verify_data;
 	struct btree_node	*verify_ondisk;
@@ -906,23 +1004,64 @@ struct bch_fs {
 	mempool_t		btree_bounce_pool;
 
 	struct journal		journal;
-	struct list_head	journal_entries;
+	GENRADIX(struct journal_replay *) journal_entries;
+	u64			journal_entries_base_seq;
 	struct journal_keys	journal_keys;
 	struct list_head	journal_iters;
 
 	u64			last_bucket_seq_cleanup;
 
-	/* The rest of this all shows up in sysfs */
-	atomic_long_t		read_realloc_races;
-	atomic_long_t		extent_migrate_done;
-	atomic_long_t		extent_migrate_raced;
+	u64			counters_on_mount[BCH_COUNTER_NR];
+	u64 __percpu		*counters;
 
 	unsigned		btree_gc_periodic:1;
 	unsigned		copy_gc_enabled:1;
 	bool			promote_whole_extents;
 
-	struct time_stats	times[BCH_TIME_STAT_NR];
+	struct bch2_time_stats	times[BCH_TIME_STAT_NR];
+
+	struct btree_transaction_stats btree_transaction_stats[BCH_TRANSACTIONS_NR];
 };
+
+extern struct wait_queue_head bch2_read_only_wait;
+
+static inline void bch2_write_ref_get(struct bch_fs *c, enum bch_write_ref ref)
+{
+#ifdef BCH_WRITE_REF_DEBUG
+	atomic_long_inc(&c->writes[ref]);
+#else
+	percpu_ref_get(&c->writes);
+#endif
+}
+
+static inline bool bch2_write_ref_tryget(struct bch_fs *c, enum bch_write_ref ref)
+{
+#ifdef BCH_WRITE_REF_DEBUG
+	return !test_bit(BCH_FS_GOING_RO, &c->flags) &&
+		atomic_long_inc_not_zero(&c->writes[ref]);
+#else
+	return percpu_ref_tryget_live(&c->writes);
+#endif
+}
+
+static inline void bch2_write_ref_put(struct bch_fs *c, enum bch_write_ref ref)
+{
+#ifdef BCH_WRITE_REF_DEBUG
+	long v = atomic_long_dec_return(&c->writes[ref]);
+
+	BUG_ON(v < 0);
+	if (v)
+		return;
+	for (unsigned i = 0; i < BCH_WRITE_REF_NR; i++)
+		if (atomic_long_read(&c->writes[i]))
+			return;
+
+	set_bit(BCH_FS_WRITE_DISABLE_COMPLETE, &c->flags);
+	wake_up(&bch2_read_only_wait);
+#else
+	percpu_ref_put(&c->writes);
+#endif
+}
 
 static inline void bch2_set_ra_pages(struct bch_fs *c, unsigned ra_pages)
 {
@@ -950,6 +1089,11 @@ static inline unsigned block_sectors(const struct bch_fs *c)
 static inline size_t btree_sectors(const struct bch_fs *c)
 {
 	return c->opts.btree_node_size >> 9;
+}
+
+static inline bool btree_id_cached(const struct bch_fs *c, enum btree_id btree)
+{
+	return c->btree_key_cache_btrees & (1U << btree);
 }
 
 static inline struct timespec64 bch2_time_to_timespec(const struct bch_fs *c, s64 time)
@@ -982,5 +1126,8 @@ static inline bool bch2_dev_exists2(const struct bch_fs *c, unsigned dev)
 {
 	return dev < c->sb.nr_devices && c->devs[dev];
 }
+
+#define BKEY_PADDED_ONSTACK(key, pad)				\
+	struct { struct bkey_i key; __u64 key ## _pad[pad]; }
 
 #endif /* _BCACHEFS_H */

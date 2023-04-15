@@ -6,9 +6,12 @@
 #include <linux/rhashtable.h>
 #include <linux/six.h>
 
-#include "bkey_methods.h"
+//#include "bkey_methods.h"
 #include "buckets_types.h"
+#include "darray.h"
+#include "errcode.h"
 #include "journal_types.h"
+#include "replicas_types.h"
 
 struct open_bucket;
 struct btree_update;
@@ -62,6 +65,7 @@ struct btree_bkey_cached_common {
 	struct six_lock		lock;
 	u8			level;
 	u8			btree_id;
+	bool			cached;
 };
 
 struct btree {
@@ -152,11 +156,22 @@ struct btree_cache {
 	struct mutex		lock;
 	struct list_head	live;
 	struct list_head	freeable;
-	struct list_head	freed;
+	struct list_head	freed_pcpu;
+	struct list_head	freed_nonpcpu;
 
 	/* Number of elements in live + freeable lists */
 	unsigned		used;
 	unsigned		reserve;
+	unsigned		freed;
+	unsigned		not_freed_lock_intent;
+	unsigned		not_freed_lock_write;
+	unsigned		not_freed_dirty;
+	unsigned		not_freed_read_in_flight;
+	unsigned		not_freed_write_in_flight;
+	unsigned		not_freed_noevict;
+	unsigned		not_freed_write_blocked;
+	unsigned		not_freed_will_make_reachable;
+	unsigned		not_freed_access_bit;
 	atomic_t		dirty;
 	struct shrinker		shrink;
 
@@ -179,39 +194,33 @@ struct btree_node_iter {
 /*
  * Iterate over all possible positions, synthesizing deleted keys for holes:
  */
-#define BTREE_ITER_SLOTS		(1 << 0)
+static const u16 BTREE_ITER_SLOTS		= 1 << 0;
+static const u16 BTREE_ITER_ALL_LEVELS		= 1 << 1;
 /*
  * Indicates that intent locks should be taken on leaf nodes, because we expect
  * to be doing updates:
  */
-#define BTREE_ITER_INTENT		(1 << 1)
+static const u16 BTREE_ITER_INTENT		= 1 << 2;
 /*
  * Causes the btree iterator code to prefetch additional btree nodes from disk:
  */
-#define BTREE_ITER_PREFETCH		(1 << 2)
-/*
- * Indicates that this iterator should not be reused until transaction commit,
- * either because a pending update references it or because the update depends
- * on that particular key being locked (e.g. by the str_hash code, for hash
- * table consistency)
- */
-#define BTREE_ITER_KEEP_UNTIL_COMMIT	(1 << 3)
+static const u16 BTREE_ITER_PREFETCH		= 1 << 3;
 /*
  * Used in bch2_btree_iter_traverse(), to indicate whether we're searching for
  * @pos or the first key strictly greater than @pos
  */
-#define BTREE_ITER_IS_EXTENTS		(1 << 4)
-#define BTREE_ITER_NOT_EXTENTS		(1 << 5)
-#define BTREE_ITER_ERROR		(1 << 6)
-#define BTREE_ITER_CACHED		(1 << 7)
-#define BTREE_ITER_CACHED_NOFILL	(1 << 8)
-#define BTREE_ITER_CACHED_NOCREATE	(1 << 9)
-#define BTREE_ITER_WITH_UPDATES		(1 << 10)
-#define BTREE_ITER_WITH_JOURNAL		(1 << 11)
-#define __BTREE_ITER_ALL_SNAPSHOTS	(1 << 12)
-#define BTREE_ITER_ALL_SNAPSHOTS	(1 << 13)
-#define BTREE_ITER_FILTER_SNAPSHOTS	(1 << 14)
-#define BTREE_ITER_NOPRESERVE		(1 << 15)
+static const u16 BTREE_ITER_IS_EXTENTS		= 1 << 4;
+static const u16 BTREE_ITER_NOT_EXTENTS		= 1 << 5;
+static const u16 BTREE_ITER_CACHED		= 1 << 6;
+static const u16 BTREE_ITER_WITH_KEY_CACHE	= 1 << 7;
+static const u16 BTREE_ITER_WITH_UPDATES	= 1 << 8;
+static const u16 BTREE_ITER_WITH_JOURNAL	= 1 << 9;
+static const u16 __BTREE_ITER_ALL_SNAPSHOTS	= 1 << 10;
+static const u16 BTREE_ITER_ALL_SNAPSHOTS	= 1 << 11;
+static const u16 BTREE_ITER_FILTER_SNAPSHOTS	= 1 << 12;
+static const u16 BTREE_ITER_NOPRESERVE		= 1 << 13;
+static const u16 BTREE_ITER_CACHED_NOFILL	= 1 << 14;
+static const u16 BTREE_ITER_KEY_CACHE_FILL	= 1 << 15;
 
 enum btree_path_uptodate {
 	BTREE_ITER_UPTODATE		= 0,
@@ -219,14 +228,9 @@ enum btree_path_uptodate {
 	BTREE_ITER_NEED_TRAVERSE	= 2,
 };
 
-#define BTREE_ITER_NO_NODE_GET_LOCKS	((struct btree *) 1)
-#define BTREE_ITER_NO_NODE_DROP		((struct btree *) 2)
-#define BTREE_ITER_NO_NODE_LOCK_ROOT	((struct btree *) 3)
-#define BTREE_ITER_NO_NODE_UP		((struct btree *) 4)
-#define BTREE_ITER_NO_NODE_DOWN		((struct btree *) 5)
-#define BTREE_ITER_NO_NODE_INIT		((struct btree *) 6)
-#define BTREE_ITER_NO_NODE_ERROR	((struct btree *) 7)
-#define BTREE_ITER_NO_NODE_CACHED	((struct btree *) 8)
+#if defined(CONFIG_BCACHEFS_LOCK_TIME_STATS) || defined(CONFIG_BCACHEFS_DEBUG)
+#define TRACK_PATH_ALLOCATED
+#endif
 
 struct btree_path {
 	u8			idx;
@@ -237,7 +241,7 @@ struct btree_path {
 	/* btree_iter_copy starts here: */
 	struct bpos		pos;
 
-	enum btree_id		btree_id:4;
+	enum btree_id		btree_id:5;
 	bool			cached:1;
 	bool			preserve:1;
 	enum btree_path_uptodate uptodate:2;
@@ -247,16 +251,18 @@ struct btree_path {
 	 */
 	bool			should_be_locked:1;
 	unsigned		level:3,
-				locks_want:4,
-				nodes_locked:4,
-				nodes_intent_locked:4;
+				locks_want:3;
+	u8			nodes_locked;
 
 	struct btree_path_level {
 		struct btree	*b;
 		struct btree_node_iter iter;
 		u32		lock_seq;
+#ifdef CONFIG_BCACHEFS_LOCK_TIME_STATS
+		u64             lock_taken_time;
+#endif
 	}			l[BTREE_MAX_DEPTH];
-#ifdef CONFIG_BCACHEFS_DEBUG
+#ifdef TRACK_PATH_ALLOCATED
 	unsigned long		ip_allocated;
 #endif
 };
@@ -264,6 +270,15 @@ struct btree_path {
 static inline struct btree_path_level *path_l(struct btree_path *path)
 {
 	return path->l + path->level;
+}
+
+static inline unsigned long btree_path_ip_allocated(struct btree_path *path)
+{
+#ifdef TRACK_PATH_ALLOCATED
+	return path->ip_allocated;
+#else
+	return _THIS_IP_;
+#endif
 }
 
 /*
@@ -277,9 +292,11 @@ struct btree_iter {
 	struct btree_trans	*trans;
 	struct btree_path	*path;
 	struct btree_path	*update_path;
+	struct btree_path	*key_cache_path;
 
-	enum btree_id		btree_id:4;
-	unsigned		min_depth:4;
+	enum btree_id		btree_id:8;
+	unsigned		min_depth:3;
+	unsigned		advanced:1;
 
 	/* btree_iter_copy starts here: */
 	u16			flags;
@@ -288,26 +305,36 @@ struct btree_iter {
 	unsigned		snapshot;
 
 	struct bpos		pos;
-	struct bpos		pos_after_commit;
 	/*
 	 * Current unpacked key - so that bch2_btree_iter_next()/
 	 * bch2_btree_iter_next_slot() can correctly advance pos.
 	 */
 	struct bkey		k;
-#ifdef CONFIG_BCACHEFS_DEBUG
+
+	/* BTREE_ITER_WITH_JOURNAL: */
+	size_t			journal_idx;
+	struct bpos		journal_pos;
+#ifdef TRACK_PATH_ALLOCATED
 	unsigned long		ip_allocated;
 #endif
+};
+
+struct btree_key_cache_freelist {
+	struct bkey_cached	*objs[16];
+	unsigned		nr;
 };
 
 struct btree_key_cache {
 	struct mutex		lock;
 	struct rhashtable	table;
 	bool			table_init_done;
-	struct list_head	freed;
+	struct list_head	freed_pcpu;
+	struct list_head	freed_nonpcpu;
 	struct shrinker		shrink;
 	unsigned		shrink_iter;
+	struct btree_key_cache_freelist __percpu *pcpu_freed;
 
-	size_t			nr_freed;
+	atomic_long_t		nr_freed;
 	atomic_long_t		nr_keys;
 	atomic_long_t		nr_dirty;
 };
@@ -315,7 +342,7 @@ struct btree_key_cache {
 struct bkey_cached_key {
 	u32			btree_id;
 	struct bpos		pos;
-} __attribute__((packed, aligned(4)));
+} __packed __aligned(4);
 
 #define BKEY_CACHED_ACCESSED		0
 #define BKEY_CACHED_DIRTY		1
@@ -324,7 +351,7 @@ struct bkey_cached {
 	struct btree_bkey_cached_common c;
 
 	unsigned long		flags;
-	u8			u64s;
+	u16			u64s;
 	bool			valid;
 	u32			btree_trans_barrier_seq;
 	struct bkey_cached_key	key;
@@ -334,28 +361,41 @@ struct bkey_cached {
 
 	struct journal_preres	res;
 	struct journal_entry_pin journal;
+	u64			seq;
 
 	struct bkey_i		*k;
 };
+
+static inline struct bpos btree_node_pos(struct btree_bkey_cached_common *b)
+{
+	return !b->cached
+		? container_of(b, struct btree, c)->key.k.p
+		: container_of(b, struct bkey_cached, c)->key.pos;
+}
 
 struct btree_insert_entry {
 	unsigned		flags;
 	u8			bkey_type;
 	enum btree_id		btree_id:8;
-	u8			level;
+	u8			level:4;
 	bool			cached:1;
 	bool			insert_trigger_run:1;
 	bool			overwrite_trigger_run:1;
+	bool			key_cache_already_flushed:1;
+	/*
+	 * @old_k may be a key from the journal; @old_btree_u64s always refers
+	 * to the size of the key being overwritten in the btree:
+	 */
+	u8			old_btree_u64s;
 	struct bkey_i		*k;
 	struct btree_path	*path;
+	/* key being overwritten: */
+	struct bkey		old_k;
+	const struct bch_val	*old_v;
 	unsigned long		ip_allocated;
 };
 
-#ifndef CONFIG_LOCKDEP
 #define BTREE_ITER_MAX		64
-#else
-#define BTREE_ITER_MAX		32
-#endif
 
 struct btree_trans_commit_hook;
 typedef int (btree_trans_commit_hook_fn)(struct btree_trans *, struct btree_trans_commit_hook *);
@@ -365,59 +405,120 @@ struct btree_trans_commit_hook {
 	struct btree_trans_commit_hook	*next;
 };
 
-#define BTREE_TRANS_MEM_MAX	(1U << 14)
+#define BTREE_TRANS_MEM_MAX	(1U << 16)
+
+#define BTREE_TRANS_MAX_LOCK_HOLD_TIME_NS	10000
 
 struct btree_trans {
 	struct bch_fs		*c;
 	const char		*fn;
+	struct closure		ref;
 	struct list_head	list;
-	struct btree		*locking;
-	unsigned		locking_path_idx;
-	struct bpos		locking_pos;
-	u8			locking_btree_id;
-	u8			locking_level;
-	pid_t			pid;
+	u64			last_begin_time;
+
+	u8			lock_may_not_fail;
+	u8			lock_must_abort;
+	struct btree_bkey_cached_common *locking;
+	struct six_lock_waiter	locking_wait;
+
 	int			srcu_idx;
 
+	u8			fn_idx;
 	u8			nr_sorted;
 	u8			nr_updates;
+	u8			nr_wb_updates;
+	u8			wb_updates_size;
 	bool			used_mempool:1;
 	bool			in_traverse_all:1;
-	bool			restarted:1;
+	bool			paths_sorted:1;
+	bool			memory_allocation_failure:1;
 	bool			journal_transaction_names:1;
+	bool			journal_replay_not_finished:1;
+	bool			is_initial_gc:1;
+	bool			notrace_relock_fail:1;
+	enum bch_errcode	restarted:16;
+	u32			restart_count;
+	unsigned long		last_begin_ip;
+	unsigned long		last_restarted_ip;
+	unsigned long		srcu_lock_time;
+
 	/*
 	 * For when bch2_trans_update notices we'll be splitting a compressed
 	 * extent:
 	 */
 	unsigned		extra_journal_res;
+	unsigned		nr_max_paths;
 
 	u64			paths_allocated;
 
 	unsigned		mem_top;
+	unsigned		mem_max;
 	unsigned		mem_bytes;
 	void			*mem;
 
-	u8			sorted[BTREE_ITER_MAX];
+	u8			sorted[BTREE_ITER_MAX + 8];
 	struct btree_path	*paths;
 	struct btree_insert_entry *updates;
+	struct btree_write_buffered_key *wb_updates;
 
 	/* update path: */
 	struct btree_trans_commit_hook *hooks;
-	struct jset_entry	*extra_journal_entries;
-	unsigned		extra_journal_entry_u64s;
+	darray_u64		extra_journal_entries;
 	struct journal_entry_pin *journal_pin;
 
 	struct journal_res	journal_res;
 	struct journal_preres	journal_preres;
 	u64			*journal_seq;
 	struct disk_reservation *disk_res;
-	unsigned		flags;
 	unsigned		journal_u64s;
 	unsigned		journal_preres_u64s;
 	struct replicas_delta_list *fs_usage_deltas;
 };
 
-#define BTREE_FLAG(flag)						\
+#define BCH_BTREE_WRITE_TYPES()						\
+	x(initial,		0)					\
+	x(init_next_bset,	1)					\
+	x(cache_reclaim,	2)					\
+	x(journal_reclaim,	3)					\
+	x(interior,		4)
+
+enum btree_write_type {
+#define x(t, n) BTREE_WRITE_##t,
+	BCH_BTREE_WRITE_TYPES()
+#undef x
+	BTREE_WRITE_TYPE_NR,
+};
+
+#define BTREE_WRITE_TYPE_MASK	(roundup_pow_of_two(BTREE_WRITE_TYPE_NR) - 1)
+#define BTREE_WRITE_TYPE_BITS	ilog2(roundup_pow_of_two(BTREE_WRITE_TYPE_NR))
+
+#define BTREE_FLAGS()							\
+	x(read_in_flight)						\
+	x(read_error)							\
+	x(dirty)							\
+	x(need_write)							\
+	x(write_blocked)						\
+	x(will_make_reachable)						\
+	x(noevict)							\
+	x(write_idx)							\
+	x(accessed)							\
+	x(write_in_flight)						\
+	x(write_in_flight_inner)					\
+	x(just_written)							\
+	x(dying)							\
+	x(fake)								\
+	x(need_rewrite)							\
+	x(never_write)
+
+enum btree_flags {
+	/* First bits for btree node write type */
+	BTREE_NODE_FLAGS_START = BTREE_WRITE_TYPE_BITS - 1,
+#define x(flag)	BTREE_NODE_##flag,
+	BTREE_FLAGS()
+#undef x
+};
+
+#define x(flag)								\
 static inline bool btree_node_ ## flag(struct btree *b)			\
 {	return test_bit(BTREE_NODE_ ## flag, &b->flags); }		\
 									\
@@ -427,36 +528,8 @@ static inline void set_btree_node_ ## flag(struct btree *b)		\
 static inline void clear_btree_node_ ## flag(struct btree *b)		\
 {	clear_bit(BTREE_NODE_ ## flag, &b->flags); }
 
-enum btree_flags {
-	BTREE_NODE_read_in_flight,
-	BTREE_NODE_read_error,
-	BTREE_NODE_dirty,
-	BTREE_NODE_need_write,
-	BTREE_NODE_noevict,
-	BTREE_NODE_write_idx,
-	BTREE_NODE_accessed,
-	BTREE_NODE_write_in_flight,
-	BTREE_NODE_write_in_flight_inner,
-	BTREE_NODE_just_written,
-	BTREE_NODE_dying,
-	BTREE_NODE_fake,
-	BTREE_NODE_need_rewrite,
-	BTREE_NODE_never_write,
-};
-
-BTREE_FLAG(read_in_flight);
-BTREE_FLAG(read_error);
-BTREE_FLAG(need_write);
-BTREE_FLAG(noevict);
-BTREE_FLAG(write_idx);
-BTREE_FLAG(accessed);
-BTREE_FLAG(write_in_flight);
-BTREE_FLAG(write_in_flight_inner);
-BTREE_FLAG(just_written);
-BTREE_FLAG(dying);
-BTREE_FLAG(fake);
-BTREE_FLAG(need_rewrite);
-BTREE_FLAG(never_write);
+BTREE_FLAGS()
+#undef x
 
 static inline struct btree_write *btree_current_write(struct btree *b)
 {
@@ -586,24 +659,9 @@ static inline enum btree_node_type btree_node_type(struct btree *b)
 	return __btree_node_type(b->c.level, b->c.btree_id);
 }
 
-static inline bool btree_node_type_is_extents(enum btree_node_type type)
-{
-	switch (type) {
-	case BKEY_TYPE_extents:
-	case BKEY_TYPE_reflink:
-		return true;
-	default:
-		return false;
-	}
-}
-
-static inline bool btree_node_is_extents(struct btree *b)
-{
-	return btree_node_type_is_extents(btree_node_type(b));
-}
-
 #define BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS		\
 	((1U << BKEY_TYPE_extents)|			\
+	 (1U << BKEY_TYPE_alloc)|			\
 	 (1U << BKEY_TYPE_inodes)|			\
 	 (1U << BKEY_TYPE_stripes)|			\
 	 (1U << BKEY_TYPE_reflink)|			\
@@ -618,6 +676,16 @@ static inline bool btree_node_is_extents(struct btree *b)
 #define BTREE_NODE_TYPE_HAS_TRIGGERS			\
 	(BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS|		\
 	 BTREE_NODE_TYPE_HAS_MEM_TRIGGERS)
+
+#define BTREE_ID_IS_EXTENTS				\
+	((1U << BTREE_ID_extents)|			\
+	 (1U << BTREE_ID_reflink)|			\
+	 (1U << BTREE_ID_freespace))
+
+static inline bool btree_node_type_is_extents(enum btree_node_type type)
+{
+	return (1U << type) & BTREE_ID_IS_EXTENTS;
+}
 
 #define BTREE_ID_HAS_SNAPSHOTS				\
 	((1U << BTREE_ID_extents)|			\
@@ -634,38 +702,10 @@ static inline bool btree_type_has_snapshots(enum btree_id id)
 	return (1 << id) & BTREE_ID_HAS_SNAPSHOTS;
 }
 
-enum btree_update_flags {
-	__BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE,
-
-	__BTREE_TRIGGER_NORUN,		/* Don't run triggers at all */
-
-	__BTREE_TRIGGER_INSERT,
-	__BTREE_TRIGGER_OVERWRITE,
-
-	__BTREE_TRIGGER_GC,
-	__BTREE_TRIGGER_BUCKET_INVALIDATE,
-	__BTREE_TRIGGER_NOATOMIC,
-};
-
-#define BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE (1U << __BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE)
-
-#define BTREE_TRIGGER_NORUN		(1U << __BTREE_TRIGGER_NORUN)
-
-#define BTREE_TRIGGER_INSERT		(1U << __BTREE_TRIGGER_INSERT)
-#define BTREE_TRIGGER_OVERWRITE		(1U << __BTREE_TRIGGER_OVERWRITE)
-
-#define BTREE_TRIGGER_GC		(1U << __BTREE_TRIGGER_GC)
-#define BTREE_TRIGGER_BUCKET_INVALIDATE	(1U << __BTREE_TRIGGER_BUCKET_INVALIDATE)
-#define BTREE_TRIGGER_NOATOMIC		(1U << __BTREE_TRIGGER_NOATOMIC)
-
-#define BTREE_TRIGGER_WANTS_OLD_AND_NEW		\
-	((1U << KEY_TYPE_alloc)|		\
-	 (1U << KEY_TYPE_alloc_v2)|		\
-	 (1U << KEY_TYPE_alloc_v3)|		\
-	 (1U << KEY_TYPE_stripe)|		\
-	 (1U << KEY_TYPE_inode)|		\
-	 (1U << KEY_TYPE_inode_v2)|		\
-	 (1U << KEY_TYPE_snapshot))
+static inline bool btree_type_has_ptrs(enum btree_id id)
+{
+	return (1 << id) & BTREE_ID_HAS_PTRS;
+}
 
 static inline bool btree_node_type_needs_gc(enum btree_node_type type)
 {
@@ -680,15 +720,6 @@ struct btree_root {
 	u8			level;
 	u8			alive;
 	s8			error;
-};
-
-enum btree_insert_ret {
-	BTREE_INSERT_OK,
-	/* leaf node needs to be split */
-	BTREE_INSERT_BTREE_NODE_FULL,
-	BTREE_INSERT_NEED_MARK_REPLICAS,
-	BTREE_INSERT_NEED_JOURNAL_RES,
-	BTREE_INSERT_NEED_JOURNAL_RECLAIM,
 };
 
 enum btree_gc_coalesce_fail_reason {

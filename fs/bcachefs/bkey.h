@@ -5,6 +5,7 @@
 #include <linux/bug.h>
 #include "bcachefs_format.h"
 
+#include "btree_types.h"
 #include "util.h"
 #include "vstructs.h"
 
@@ -12,7 +13,9 @@
 #define HAVE_BCACHEFS_COMPILED_UNPACK	1
 #endif
 
-void bch2_to_binary(char *, const u64 *, unsigned);
+void bch2_bkey_packed_to_binary_text(struct printbuf *,
+				     const struct bkey_format *,
+				     const struct bkey_packed *);
 
 /* bkey with split value, const */
 struct bkey_s_c {
@@ -31,7 +34,12 @@ struct bkey_s {
 	};
 };
 
-#define bkey_next(_k)		vstruct_next(_k)
+#define bkey_p_next(_k)		vstruct_next(_k)
+
+static inline struct bkey_i *bkey_next(struct bkey_i *k)
+{
+	return (struct bkey_i *) (k->_data + k->k.u64s);
+}
 
 #define bkey_val_u64s(_k)	((_k)->u64s - BKEY_U64s)
 
@@ -42,12 +50,15 @@ static inline size_t bkey_val_bytes(const struct bkey *k)
 
 static inline void set_bkey_val_u64s(struct bkey *k, unsigned val_u64s)
 {
-	k->u64s = BKEY_U64s + val_u64s;
+	unsigned u64s = BKEY_U64s + val_u64s;
+
+	BUG_ON(u64s > U8_MAX);
+	k->u64s = u64s;
 }
 
 static inline void set_bkey_val_bytes(struct bkey *k, unsigned bytes)
 {
-	k->u64s = BKEY_U64s + DIV_ROUND_UP(bytes, sizeof(u64));
+	set_bkey_val_u64s(k, DIV_ROUND_UP(bytes, sizeof(u64)));
 }
 
 #define bkey_val_end(_k)	((void *) (((u64 *) (_k).v) + bkey_val_u64s((_k).k)))
@@ -82,17 +93,6 @@ do {								\
 } while (0)
 
 struct btree;
-
-struct bkey_format_state {
-	u64 field_min[BKEY_NR_FIELDS];
-	u64 field_max[BKEY_NR_FIELDS];
-};
-
-void bch2_bkey_format_init(struct bkey_format_state *);
-void bch2_bkey_format_add_key(struct bkey_format_state *, const struct bkey *);
-void bch2_bkey_format_add_pos(struct bkey_format_state *, struct bpos);
-struct bkey_format bch2_bkey_format_done(struct bkey_format_state *);
-const char *bch2_bkey_format_validate(struct bkey_format *);
 
 __pure
 unsigned bch2_bkey_greatest_differing_bit(const struct btree *,
@@ -129,8 +129,9 @@ int bkey_cmp_left_packed(const struct btree *b,
 }
 
 /*
- * we prefer to pass bpos by ref, but it's often enough terribly convenient to
- * pass it by by val... as much as I hate c++, const ref would be nice here:
+ * The compiler generates better code when we pass bpos by ref, but it's often
+ * enough terribly convenient to pass it by val... as much as I hate c++, const
+ * ref would be nice here:
  */
 __pure __flatten
 static inline int bkey_cmp_left_packed_byval(const struct btree *b,
@@ -140,11 +141,82 @@ static inline int bkey_cmp_left_packed_byval(const struct btree *b,
 	return bkey_cmp_left_packed(b, l, &r);
 }
 
+static __always_inline bool bpos_eq(struct bpos l, struct bpos r)
+{
+	return  !((l.inode	^ r.inode) |
+		  (l.offset	^ r.offset) |
+		  (l.snapshot	^ r.snapshot));
+}
+
+static __always_inline bool bpos_lt(struct bpos l, struct bpos r)
+{
+	return  l.inode	!= r.inode ? l.inode < r.inode :
+		l.offset != r.offset ? l.offset < r.offset :
+		l.snapshot != r.snapshot ? l.snapshot < r.snapshot : false;
+}
+
+static __always_inline bool bpos_le(struct bpos l, struct bpos r)
+{
+	return  l.inode	!= r.inode ? l.inode < r.inode :
+		l.offset != r.offset ? l.offset < r.offset :
+		l.snapshot != r.snapshot ? l.snapshot < r.snapshot : true;
+}
+
+static __always_inline bool bpos_gt(struct bpos l, struct bpos r)
+{
+	return bpos_lt(r, l);
+}
+
+static __always_inline bool bpos_ge(struct bpos l, struct bpos r)
+{
+	return bpos_le(r, l);
+}
+
 static __always_inline int bpos_cmp(struct bpos l, struct bpos r)
 {
 	return  cmp_int(l.inode,    r.inode) ?:
 		cmp_int(l.offset,   r.offset) ?:
 		cmp_int(l.snapshot, r.snapshot);
+}
+
+static inline struct bpos bpos_min(struct bpos l, struct bpos r)
+{
+	return bpos_lt(l, r) ? l : r;
+}
+
+static inline struct bpos bpos_max(struct bpos l, struct bpos r)
+{
+	return bpos_gt(l, r) ? l : r;
+}
+
+static __always_inline bool bkey_eq(struct bpos l, struct bpos r)
+{
+	return  !((l.inode	^ r.inode) |
+		  (l.offset	^ r.offset));
+}
+
+static __always_inline bool bkey_lt(struct bpos l, struct bpos r)
+{
+	return  l.inode	!= r.inode
+		? l.inode < r.inode
+		: l.offset < r.offset;
+}
+
+static __always_inline bool bkey_le(struct bpos l, struct bpos r)
+{
+	return  l.inode	!= r.inode
+		? l.inode < r.inode
+		: l.offset <= r.offset;
+}
+
+static __always_inline bool bkey_gt(struct bpos l, struct bpos r)
+{
+	return bkey_lt(r, l);
+}
+
+static __always_inline bool bkey_ge(struct bpos l, struct bpos r)
+{
+	return bkey_le(r, l);
 }
 
 static __always_inline int bkey_cmp(struct bpos l, struct bpos r)
@@ -153,14 +225,14 @@ static __always_inline int bkey_cmp(struct bpos l, struct bpos r)
 		cmp_int(l.offset,   r.offset);
 }
 
-static inline struct bpos bpos_min(struct bpos l, struct bpos r)
+static inline struct bpos bkey_min(struct bpos l, struct bpos r)
 {
-	return bpos_cmp(l, r) < 0 ? l : r;
+	return bkey_lt(l, r) ? l : r;
 }
 
-static inline struct bpos bpos_max(struct bpos l, struct bpos r)
+static inline struct bpos bkey_max(struct bpos l, struct bpos r)
 {
-	return bpos_cmp(l, r) > 0 ? l : r;
+	return bkey_gt(l, r) ? l : r;
 }
 
 void bch2_bpos_swab(struct bpos *);
@@ -350,6 +422,99 @@ void bch2_bkey_unpack(const struct btree *, struct bkey_i *,
 		 const struct bkey_packed *);
 bool bch2_bkey_pack(struct bkey_packed *, const struct bkey_i *,
 	       const struct bkey_format *);
+
+typedef void (*compiled_unpack_fn)(struct bkey *, const struct bkey_packed *);
+
+static inline void
+__bkey_unpack_key_format_checked(const struct btree *b,
+			       struct bkey *dst,
+			       const struct bkey_packed *src)
+{
+	if (IS_ENABLED(HAVE_BCACHEFS_COMPILED_UNPACK)) {
+		compiled_unpack_fn unpack_fn = b->aux_data;
+		unpack_fn(dst, src);
+
+		if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) &&
+		    bch2_expensive_debug_checks) {
+			struct bkey dst2 = __bch2_bkey_unpack_key(&b->format, src);
+
+			BUG_ON(memcmp(dst, &dst2, sizeof(*dst)));
+		}
+	} else {
+		*dst = __bch2_bkey_unpack_key(&b->format, src);
+	}
+}
+
+static inline struct bkey
+bkey_unpack_key_format_checked(const struct btree *b,
+			       const struct bkey_packed *src)
+{
+	struct bkey dst;
+
+	__bkey_unpack_key_format_checked(b, &dst, src);
+	return dst;
+}
+
+static inline void __bkey_unpack_key(const struct btree *b,
+				     struct bkey *dst,
+				     const struct bkey_packed *src)
+{
+	if (likely(bkey_packed(src)))
+		__bkey_unpack_key_format_checked(b, dst, src);
+	else
+		*dst = *packed_to_bkey_c(src);
+}
+
+/**
+ * bkey_unpack_key -- unpack just the key, not the value
+ */
+static inline struct bkey bkey_unpack_key(const struct btree *b,
+					  const struct bkey_packed *src)
+{
+	return likely(bkey_packed(src))
+		? bkey_unpack_key_format_checked(b, src)
+		: *packed_to_bkey_c(src);
+}
+
+static inline struct bpos
+bkey_unpack_pos_format_checked(const struct btree *b,
+			       const struct bkey_packed *src)
+{
+#ifdef HAVE_BCACHEFS_COMPILED_UNPACK
+	return bkey_unpack_key_format_checked(b, src).p;
+#else
+	return __bkey_unpack_pos(&b->format, src);
+#endif
+}
+
+static inline struct bpos bkey_unpack_pos(const struct btree *b,
+					  const struct bkey_packed *src)
+{
+	return likely(bkey_packed(src))
+		? bkey_unpack_pos_format_checked(b, src)
+		: packed_to_bkey_c(src)->p;
+}
+
+/* Disassembled bkeys */
+
+static inline struct bkey_s_c bkey_disassemble(const struct btree *b,
+					       const struct bkey_packed *k,
+					       struct bkey *u)
+{
+	__bkey_unpack_key(b, u, k);
+
+	return (struct bkey_s_c) { u, bkeyp_val(&b->format, k), };
+}
+
+/* non const version: */
+static inline struct bkey_s __bkey_disassemble(const struct btree *b,
+					       struct bkey_packed *k,
+					       struct bkey *u)
+{
+	__bkey_unpack_key(b, u, k);
+
+	return (struct bkey_s) { .k = u, .v = bkeyp_val(&b->format, k), };
+}
 
 static inline u64 bkey_field_max(const struct bkey_format *f,
 				 enum bch_bkey_fields nr)
@@ -562,5 +727,40 @@ void bch2_bkey_pack_test(void);
 #else
 static inline void bch2_bkey_pack_test(void) {}
 #endif
+
+#define bkey_fields()							\
+	x(BKEY_FIELD_INODE,		p.inode)			\
+	x(BKEY_FIELD_OFFSET,		p.offset)			\
+	x(BKEY_FIELD_SNAPSHOT,		p.snapshot)			\
+	x(BKEY_FIELD_SIZE,		size)				\
+	x(BKEY_FIELD_VERSION_HI,	version.hi)			\
+	x(BKEY_FIELD_VERSION_LO,	version.lo)
+
+struct bkey_format_state {
+	u64 field_min[BKEY_NR_FIELDS];
+	u64 field_max[BKEY_NR_FIELDS];
+};
+
+void bch2_bkey_format_init(struct bkey_format_state *);
+
+static inline void __bkey_format_add(struct bkey_format_state *s, unsigned field, u64 v)
+{
+	s->field_min[field] = min(s->field_min[field], v);
+	s->field_max[field] = max(s->field_max[field], v);
+}
+
+/*
+ * Changes @format so that @k can be successfully packed with @format
+ */
+static inline void bch2_bkey_format_add_key(struct bkey_format_state *s, const struct bkey *k)
+{
+#define x(id, field) __bkey_format_add(s, id, k->field);
+	bkey_fields()
+#undef x
+}
+
+void bch2_bkey_format_add_pos(struct bkey_format_state *, struct bpos);
+struct bkey_format bch2_bkey_format_done(struct bkey_format_state *);
+const char *bch2_bkey_format_validate(struct bkey_format *);
 
 #endif /* _BCACHEFS_BKEY_H */

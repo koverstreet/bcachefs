@@ -39,7 +39,7 @@ void bch2_topology_error(struct bch_fs *);
 
 #define bch2_fs_inconsistent_on(cond, c, ...)				\
 ({									\
-	int _ret = !!(cond);						\
+	bool _ret = unlikely(!!(cond));					\
 									\
 	if (_ret)							\
 		bch2_fs_inconsistent(c, __VA_ARGS__);			\
@@ -59,10 +59,30 @@ do {									\
 
 #define bch2_dev_inconsistent_on(cond, ca, ...)				\
 ({									\
-	int _ret = !!(cond);						\
+	bool _ret = unlikely(!!(cond));					\
 									\
 	if (_ret)							\
 		bch2_dev_inconsistent(ca, __VA_ARGS__);			\
+	_ret;								\
+})
+
+/*
+ * When a transaction update discovers or is causing a fs inconsistency, it's
+ * helpful to also dump the pending updates:
+ */
+#define bch2_trans_inconsistent(trans, ...)				\
+({									\
+	bch_err(trans->c, __VA_ARGS__);					\
+	bch2_dump_trans_updates(trans);					\
+	bch2_inconsistent_error(trans->c);				\
+})
+
+#define bch2_trans_inconsistent_on(cond, trans, ...)			\
+({									\
+	bool _ret = unlikely(!!(cond));					\
+									\
+	if (_ret)							\
+		bch2_trans_inconsistent(trans, __VA_ARGS__);		\
 	_ret;								\
 })
 
@@ -71,14 +91,6 @@ do {									\
  * be able to repair:
  */
 
-enum {
-	BCH_FSCK_OK			= 0,
-	BCH_FSCK_ERRORS_NOT_FIXED	= 1,
-	BCH_FSCK_REPAIR_UNIMPLEMENTED	= 2,
-	BCH_FSCK_REPAIR_IMPOSSIBLE	= 3,
-	BCH_FSCK_UNKNOWN_VERSION	= 4,
-};
-
 enum fsck_err_opts {
 	FSCK_OPT_EXIT,
 	FSCK_OPT_YES,
@@ -86,19 +98,13 @@ enum fsck_err_opts {
 	FSCK_OPT_ASK,
 };
 
-enum fsck_err_ret {
-	FSCK_ERR_IGNORE	= 0,
-	FSCK_ERR_FIX	= 1,
-	FSCK_ERR_EXIT	= 2,
-	FSCK_ERR_START_TOPOLOGY_REPAIR = 3,
-};
-
 struct fsck_err_state {
 	struct list_head	list;
 	const char		*fmt;
 	u64			nr;
 	bool			ratelimited;
-	char			buf[512];
+	int			ret;
+	char			*last_msg;
 };
 
 #define FSCK_CAN_FIX		(1 << 0)
@@ -107,21 +113,20 @@ struct fsck_err_state {
 #define FSCK_NO_RATELIMIT	(1 << 3)
 
 __printf(3, 4) __cold
-enum fsck_err_ret bch2_fsck_err(struct bch_fs *,
-				unsigned, const char *, ...);
+int bch2_fsck_err(struct bch_fs *, unsigned, const char *, ...);
 void bch2_flush_fsck_errs(struct bch_fs *);
 
 #define __fsck_err(c, _flags, msg, ...)					\
 ({									\
-	int _fix = bch2_fsck_err(c, _flags, msg, ##__VA_ARGS__);\
+	int _ret = bch2_fsck_err(c, _flags, msg, ##__VA_ARGS__);	\
 									\
-	if (_fix == FSCK_ERR_EXIT) {					\
-		bch_err(c, "Unable to continue, halting");		\
-		ret = BCH_FSCK_ERRORS_NOT_FIXED;			\
+	if (_ret != -BCH_ERR_fsck_fix &&				\
+	    _ret != -BCH_ERR_fsck_ignore) {				\
+		ret = _ret;						\
 		goto fsck_err;						\
 	}								\
 									\
-	_fix;								\
+	_ret == -BCH_ERR_fsck_fix;					\
 })
 
 /* These macros return true if error should be fixed: */
@@ -129,7 +134,7 @@ void bch2_flush_fsck_errs(struct bch_fs *);
 /* XXX: mark in superblock that filesystem contains errors, if we ignore: */
 
 #define __fsck_err_on(cond, c, _flags, ...)				\
-	((cond) ? __fsck_err(c, _flags,	##__VA_ARGS__) : false)
+	(unlikely(cond) ? __fsck_err(c, _flags,	##__VA_ARGS__) : false)
 
 #define need_fsck_err_on(cond, c, ...)					\
 	__fsck_err_on(cond, c, FSCK_CAN_IGNORE|FSCK_NEED_FSCK, ##__VA_ARGS__)
@@ -164,7 +169,7 @@ do {									\
 
 #define bch2_fs_fatal_err_on(cond, c, ...)				\
 ({									\
-	int _ret = !!(cond);						\
+	bool _ret = unlikely(!!(cond));					\
 									\
 	if (_ret)							\
 		bch2_fs_fatal_error(c, __VA_ARGS__);			\
@@ -182,36 +187,25 @@ void bch2_io_error_work(struct work_struct *);
 /* Does the error handling without logging a message */
 void bch2_io_error(struct bch_dev *);
 
-/* Logs message and handles the error: */
-#define bch2_dev_io_error(ca, fmt, ...)					\
-do {									\
-	printk_ratelimited(KERN_ERR "bcachefs (%s): " fmt,		\
-		(ca)->name, ##__VA_ARGS__);				\
-	bch2_io_error(ca);						\
-} while (0)
-
-#define bch2_dev_inum_io_error(ca, _inum, _offset, fmt, ...)		\
-do {									\
-	printk_ratelimited(KERN_ERR "bcachefs (%s inum %llu offset %llu): " fmt,\
-		(ca)->name, (_inum), (_offset), ##__VA_ARGS__);		\
-	bch2_io_error(ca);						\
-} while (0)
-
 #define bch2_dev_io_err_on(cond, ca, ...)				\
 ({									\
 	bool _ret = (cond);						\
 									\
-	if (_ret)							\
-		bch2_dev_io_error(ca, __VA_ARGS__);			\
+	if (_ret) {							\
+		bch_err_dev_ratelimited(ca, __VA_ARGS__);		\
+		bch2_io_error(ca);					\
+	}								\
 	_ret;								\
 })
 
-#define bch2_dev_inum_io_err_on(cond, ca, _inum, _offset, ...)		\
+#define bch2_dev_inum_io_err_on(cond, ca, ...)				\
 ({									\
 	bool _ret = (cond);						\
 									\
-	if (_ret)							\
-		bch2_dev_inum_io_error(ca, _inum, _offset, __VA_ARGS__);\
+	if (_ret) {							\
+		bch_err_inum_offset_ratelimited(ca, __VA_ARGS__);	\
+		bch2_io_error(ca);					\
+	}								\
 	_ret;								\
 })
 

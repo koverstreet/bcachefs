@@ -25,6 +25,8 @@ struct journal_buf {
 
 	struct closure_waitlist	wait;
 	u64			last_seq;	/* copy of data->last_seq */
+	long			expires;
+	u64			flush_time;
 
 	unsigned		buf_size;	/* size in bytes of @data */
 	unsigned		sectors;	/* maximum size for current entry */
@@ -41,9 +43,15 @@ struct journal_buf {
  * flushed:
  */
 
+enum journal_pin_type {
+	JOURNAL_PIN_btree,
+	JOURNAL_PIN_key_cache,
+	JOURNAL_PIN_other,
+	JOURNAL_PIN_NR,
+};
+
 struct journal_entry_pin_list {
-	struct list_head		list;
-	struct list_head		key_cache_list;
+	struct list_head		list[JOURNAL_PIN_NR];
 	struct list_head		flushed;
 	atomic_t			count;
 	struct bch_devs_list		devs;
@@ -139,52 +147,78 @@ enum journal_space_from {
 	journal_space_nr,
 };
 
-/*
- * JOURNAL_NEED_WRITE - current (pending) journal entry should be written ASAP,
- * either because something's waiting on the write to complete or because it's
- * been dirty too long and the timer's expired.
- */
-
-enum {
+enum journal_flags {
 	JOURNAL_REPLAY_DONE,
 	JOURNAL_STARTED,
-	JOURNAL_NEED_WRITE,
-	JOURNAL_MAY_GET_UNRESERVED,
 	JOURNAL_MAY_SKIP_FLUSH,
-	JOURNAL_NOCHANGES,
+	JOURNAL_NEED_FLUSH_WRITE,
 };
+
+#define JOURNAL_WATERMARKS()		\
+	x(any)				\
+	x(copygc)			\
+	x(reserved)
+
+enum journal_watermark {
+#define x(n)	JOURNAL_WATERMARK_##n,
+	JOURNAL_WATERMARKS()
+#undef x
+};
+
+#define JOURNAL_WATERMARK_MASK	3
+
+/* Reasons we may fail to get a journal reservation: */
+#define JOURNAL_ERRORS()		\
+	x(ok)				\
+	x(blocked)			\
+	x(max_in_flight)		\
+	x(journal_full)			\
+	x(journal_pin_full)		\
+	x(journal_stuck)		\
+	x(insufficient_devices)
+
+enum journal_errors {
+#define x(n)	JOURNAL_ERR_##n,
+	JOURNAL_ERRORS()
+#undef x
+};
+
+typedef DARRAY(u64)		darray_u64;
 
 /* Embedded in struct bch_fs */
 struct journal {
 	/* Fastpath stuff up front: */
-
-	unsigned long		flags;
+	struct {
 
 	union journal_res_state reservations;
+	enum journal_watermark	watermark;
+
+	union journal_preres_state prereserved;
+
+	} __aligned(SMP_CACHE_BYTES);
+
+	unsigned long		flags;
 
 	/* Max size of current journal entry */
 	unsigned		cur_entry_u64s;
 	unsigned		cur_entry_sectors;
 
+	/* Reserved space in journal entry to be used just prior to write */
+	unsigned		entry_u64s_reserved;
+
+
 	/*
 	 * 0, or -ENOSPC if waiting on journal reclaim, or -EROFS if
 	 * insufficient devices:
 	 */
-	enum {
-		cur_entry_ok,
-		cur_entry_blocked,
-		cur_entry_journal_full,
-		cur_entry_journal_pin_full,
-		cur_entry_journal_stuck,
-		cur_entry_insufficient_devices,
-	}			cur_entry_error;
-
-	union journal_preres_state prereserved;
-
-	/* Reserved space in journal entry to be used just prior to write */
-	unsigned		entry_u64s_reserved;
+	enum journal_errors	cur_entry_error;
 
 	unsigned		buf_size_want;
+	/*
+	 * We may queue up some things to be journalled (log messages) before
+	 * the journal has actually started - stash them here:
+	 */
+	darray_u64		early_journal_entries;
 
 	/*
 	 * Two journal entries -- one is currently open for new entries, the
@@ -245,6 +279,10 @@ struct journal {
 	spinlock_t		err_lock;
 
 	struct mutex		reclaim_lock;
+	/*
+	 * Used for waiting until journal reclaim has freed up space in the
+	 * journal:
+	 */
 	wait_queue_head_t	reclaim_wait;
 	struct task_struct	*reclaim_thread;
 	bool			reclaim_kicked;
@@ -264,21 +302,20 @@ struct journal {
 	unsigned long		last_flush_write;
 
 	u64			res_get_blocked_start;
-	u64			need_write_time;
 	u64			write_start_time;
 
 	u64			nr_flush_writes;
 	u64			nr_noflush_writes;
 
-	struct time_stats	*flush_write_time;
-	struct time_stats	*noflush_write_time;
-	struct time_stats	*blocked_time;
-	struct time_stats	*flush_seq_time;
+	struct bch2_time_stats	*flush_write_time;
+	struct bch2_time_stats	*noflush_write_time;
+	struct bch2_time_stats	*blocked_time;
+	struct bch2_time_stats	*flush_seq_time;
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 	struct lockdep_map	res_map;
 #endif
-};
+} __aligned(SMP_CACHE_BYTES);
 
 /*
  * Embedded in struct bch_dev. First three fields refer to the array of journal

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include <linux/bitops.h>
+#include <linux/math.h>
 #include <linux/string.h>
 #include <asm/unaligned.h>
 

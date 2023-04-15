@@ -173,7 +173,7 @@ bch2_acl_to_xattr(struct btree_trans *trans,
 	bkey_xattr_init(&xattr->k_i);
 	xattr->k.u64s		= u64s;
 	xattr->v.x_type		= acl_to_xattr_type(type);
-	xattr->v.x_name_len	= 0,
+	xattr->v.x_name_len	= 0;
 	xattr->v.x_val_len	= cpu_to_le16(acl_len);
 
 	acl_header = xattr_val(&xattr->v);
@@ -212,9 +212,10 @@ bch2_acl_to_xattr(struct btree_trans *trans,
 	return xattr;
 }
 
-struct posix_acl *bch2_get_acl(struct inode *vinode, int type)
+struct posix_acl *bch2_get_acl(struct user_namespace *mnt_userns,
+			       struct dentry *dentry, int type)
 {
-	struct bch_inode_info *inode = to_bch_ei(vinode);
+	struct bch_inode_info *inode = to_bch_ei(dentry->d_inode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_hash_info hash = bch2_hash_info_init(c, &inode->ei_inode);
 	struct btree_trans trans;
@@ -233,7 +234,7 @@ retry:
 			&X_SEARCH(acl_to_xattr_type(type), "", 0),
 			0);
 	if (ret) {
-		if (ret == -EINTR)
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			goto retry;
 		if (ret != -ENOENT)
 			acl = ERR_PTR(ret);
@@ -289,9 +290,11 @@ int bch2_set_acl_trans(struct btree_trans *trans, subvol_inum inum,
 	return ret == -ENOENT ? 0 : ret;
 }
 
-int bch2_set_acl(struct inode *vinode, struct posix_acl *_acl, int type)
+int bch2_set_acl(struct user_namespace *mnt_userns,
+		 struct dentry *dentry,
+		 struct posix_acl *_acl, int type)
 {
-	struct bch_inode_info *inode = to_bch_ei(vinode);
+	struct bch_inode_info *inode = to_bch_ei(dentry->d_inode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct btree_trans trans;
 	struct btree_iter inode_iter = { NULL };
@@ -314,7 +317,7 @@ retry:
 	mode = inode_u.bi_mode;
 
 	if (type == ACL_TYPE_ACCESS) {
-		ret = posix_acl_update_mode(&inode->v, &mode, &acl);
+		ret = posix_acl_update_mode(mnt_userns, &inode->v, &mode, &acl);
 		if (ret)
 			goto btree_err;
 	}
@@ -331,7 +334,7 @@ retry:
 btree_err:
 	bch2_trans_iter_exit(&trans, &inode_iter);
 
-	if (ret == -EINTR)
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 	if (unlikely(ret))
 		goto err;

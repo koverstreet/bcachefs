@@ -76,6 +76,18 @@ static inline size_t extent_entry_u64s(const union bch_extent_entry *entry)
 	return extent_entry_bytes(entry) / sizeof(u64);
 }
 
+static inline void __extent_entry_insert(struct bkey_i *k,
+					 union bch_extent_entry *dst,
+					 union bch_extent_entry *new)
+{
+	union bch_extent_entry *end = bkey_val_end(bkey_i_to_s(k));
+
+	memmove_u64s_up_small((u64 *) dst + extent_entry_u64s(new),
+			      dst, (u64 *) end - (u64 *) dst);
+	k->k.u64s += extent_entry_u64s(new);
+	memcpy_u64s_small(dst, new, extent_entry_u64s(new));
+}
+
 static inline bool extent_entry_is_ptr(const union bch_extent_entry *e)
 {
 	return extent_entry_type(e) == BCH_EXTENT_ENTRY_ptr;
@@ -198,6 +210,7 @@ static inline struct bkey_ptrs_c bch2_bkey_ptrs_c(struct bkey_s_c k)
 	switch (k.k->type) {
 	case KEY_TYPE_btree_ptr: {
 		struct bkey_s_c_btree_ptr e = bkey_s_c_to_btree_ptr(k);
+
 		return (struct bkey_ptrs_c) {
 			to_entry(&e.v->start[0]),
 			to_entry(extent_entry_last(e))
@@ -205,6 +218,7 @@ static inline struct bkey_ptrs_c bch2_bkey_ptrs_c(struct bkey_s_c k)
 	}
 	case KEY_TYPE_extent: {
 		struct bkey_s_c_extent e = bkey_s_c_to_extent(k);
+
 		return (struct bkey_ptrs_c) {
 			e.v->start,
 			extent_entry_last(e)
@@ -212,6 +226,7 @@ static inline struct bkey_ptrs_c bch2_bkey_ptrs_c(struct bkey_s_c k)
 	}
 	case KEY_TYPE_stripe: {
 		struct bkey_s_c_stripe s = bkey_s_c_to_stripe(k);
+
 		return (struct bkey_ptrs_c) {
 			to_entry(&s.v->ptrs[0]),
 			to_entry(&s.v->ptrs[s.v->nr_blocks]),
@@ -227,6 +242,7 @@ static inline struct bkey_ptrs_c bch2_bkey_ptrs_c(struct bkey_s_c k)
 	}
 	case KEY_TYPE_btree_ptr_v2: {
 		struct bkey_s_c_btree_ptr_v2 e = bkey_s_c_to_btree_ptr_v2(k);
+
 		return (struct bkey_ptrs_c) {
 			to_entry(&e.v->start[0]),
 			to_entry(extent_entry_last(e))
@@ -342,7 +358,7 @@ out:									\
 
 #define extent_for_each_entry_from(_e, _entry, _start)			\
 	__bkey_extent_entry_for_each_from(_start,			\
-				extent_entry_last(_e),_entry)
+				extent_entry_last(_e), _entry)
 
 #define extent_for_each_entry(_e, _entry)				\
 	extent_for_each_entry_from(_e, _entry, (_e).v->start)
@@ -367,54 +383,60 @@ int bch2_bkey_pick_read_device(struct bch_fs *, struct bkey_s_c,
 
 /* KEY_TYPE_btree_ptr: */
 
-const char *bch2_btree_ptr_invalid(const struct bch_fs *, struct bkey_s_c);
+int bch2_btree_ptr_invalid(const struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *);
 void bch2_btree_ptr_to_text(struct printbuf *, struct bch_fs *,
 			    struct bkey_s_c);
 
-const char *bch2_btree_ptr_v2_invalid(const struct bch_fs *, struct bkey_s_c);
-void bch2_btree_ptr_v2_to_text(struct printbuf *, struct bch_fs *,
-			    struct bkey_s_c);
+int bch2_btree_ptr_v2_invalid(const struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *);
+void bch2_btree_ptr_v2_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 void bch2_btree_ptr_v2_compat(enum btree_id, unsigned, unsigned,
 			      int, struct bkey_s);
 
-#define bch2_bkey_ops_btree_ptr (struct bkey_ops) {		\
+#define bch2_bkey_ops_btree_ptr ((struct bkey_ops) {		\
 	.key_invalid	= bch2_btree_ptr_invalid,		\
 	.val_to_text	= bch2_btree_ptr_to_text,		\
 	.swab		= bch2_ptr_swab,			\
-}
+	.trans_trigger	= bch2_trans_mark_extent,		\
+	.atomic_trigger	= bch2_mark_extent,			\
+})
 
-#define bch2_bkey_ops_btree_ptr_v2 (struct bkey_ops) {		\
+#define bch2_bkey_ops_btree_ptr_v2 ((struct bkey_ops) {		\
 	.key_invalid	= bch2_btree_ptr_v2_invalid,		\
 	.val_to_text	= bch2_btree_ptr_v2_to_text,		\
 	.swab		= bch2_ptr_swab,			\
 	.compat		= bch2_btree_ptr_v2_compat,		\
-}
+	.trans_trigger	= bch2_trans_mark_extent,		\
+	.atomic_trigger	= bch2_mark_extent,			\
+})
 
 /* KEY_TYPE_extent: */
 
-const char *bch2_extent_invalid(const struct bch_fs *, struct bkey_s_c);
-void bch2_extent_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 bool bch2_extent_merge(struct bch_fs *, struct bkey_s, struct bkey_s_c);
 
-#define bch2_bkey_ops_extent (struct bkey_ops) {		\
-	.key_invalid	= bch2_extent_invalid,			\
-	.val_to_text	= bch2_extent_to_text,			\
+#define bch2_bkey_ops_extent ((struct bkey_ops) {		\
+	.key_invalid	= bch2_bkey_ptrs_invalid,		\
+	.val_to_text	= bch2_bkey_ptrs_to_text,		\
 	.swab		= bch2_ptr_swab,			\
 	.key_normalize	= bch2_extent_normalize,		\
 	.key_merge	= bch2_extent_merge,			\
-}
+	.trans_trigger	= bch2_trans_mark_extent,		\
+	.atomic_trigger	= bch2_mark_extent,			\
+})
 
 /* KEY_TYPE_reservation: */
 
-const char *bch2_reservation_invalid(const struct bch_fs *, struct bkey_s_c);
+int bch2_reservation_invalid(const struct bch_fs *, struct bkey_s_c,
+			     unsigned, struct printbuf *);
 void bch2_reservation_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 bool bch2_reservation_merge(struct bch_fs *, struct bkey_s, struct bkey_s_c);
 
-#define bch2_bkey_ops_reservation (struct bkey_ops) {		\
+#define bch2_bkey_ops_reservation ((struct bkey_ops) {		\
 	.key_invalid	= bch2_reservation_invalid,		\
 	.val_to_text	= bch2_reservation_to_text,		\
 	.key_merge	= bch2_reservation_merge,		\
-}
+	.trans_trigger	= bch2_trans_mark_reservation,		\
+	.atomic_trigger	= bch2_mark_reservation,		\
+})
 
 /* Extent checksum entries: */
 
@@ -500,6 +522,23 @@ static inline bool bkey_extent_is_allocation(const struct bkey *k)
 	}
 }
 
+static inline bool bkey_extent_is_unwritten(struct bkey_s_c k)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const struct bch_extent_ptr *ptr;
+
+	bkey_for_each_ptr(ptrs, ptr)
+		if (ptr->unwritten)
+			return true;
+	return false;
+}
+
+static inline bool bkey_extent_is_reservation(struct bkey_s_c k)
+{
+	return k.k->type == KEY_TYPE_reservation ||
+		bkey_extent_is_unwritten(k);
+}
+
 static inline struct bch_devs_list bch2_bkey_devs(struct bkey_s_c k)
 {
 	struct bch_devs_list ret = (struct bch_devs_list) { 0 };
@@ -569,17 +608,49 @@ bool bch2_bkey_is_incompressible(struct bkey_s_c);
 unsigned bch2_bkey_sectors_compressed(struct bkey_s_c);
 
 unsigned bch2_bkey_replicas(struct bch_fs *, struct bkey_s_c);
+unsigned bch2_extent_ptr_durability(struct bch_fs *, struct extent_ptr_decoded *);
 unsigned bch2_bkey_durability(struct bch_fs *, struct bkey_s_c);
 
-void bch2_bkey_mark_replicas_cached(struct bch_fs *, struct bkey_s,
-				    unsigned, unsigned);
+void bch2_bkey_drop_device(struct bkey_s, unsigned);
+void bch2_bkey_drop_device_noerror(struct bkey_s, unsigned);
+
+const struct bch_extent_ptr *bch2_bkey_has_device_c(struct bkey_s_c, unsigned);
+
+static inline struct bch_extent_ptr *bch2_bkey_has_device(struct bkey_s k, unsigned dev)
+{
+	return (void *) bch2_bkey_has_device_c(k.s_c, dev);
+}
+
+bool bch2_bkey_has_target(struct bch_fs *, struct bkey_s_c, unsigned);
 
 void bch2_bkey_extent_entry_drop(struct bkey_i *, union bch_extent_entry *);
-void bch2_bkey_append_ptr(struct bkey_i *, struct bch_extent_ptr);
+
+static inline void bch2_bkey_append_ptr(struct bkey_i *k, struct bch_extent_ptr ptr)
+{
+	EBUG_ON(bch2_bkey_has_device(bkey_i_to_s(k), ptr.dev));
+
+	switch (k->k.type) {
+	case KEY_TYPE_btree_ptr:
+	case KEY_TYPE_btree_ptr_v2:
+	case KEY_TYPE_extent:
+		EBUG_ON(bkey_val_u64s(&k->k) >= BKEY_EXTENT_VAL_U64s_MAX);
+
+		ptr.type = 1 << BCH_EXTENT_ENTRY_ptr;
+
+		memcpy((void *) &k->v + bkey_val_bytes(&k->k),
+		       &ptr,
+		       sizeof(ptr));
+		k->k.u64s++;
+		break;
+	default:
+		BUG();
+	}
+}
+
 void bch2_extent_ptr_decoded_append(struct bkey_i *,
 				    struct extent_ptr_decoded *);
-union bch_extent_entry *__bch2_bkey_drop_ptr(struct bkey_s,
-					     struct bch_extent_ptr *);
+union bch_extent_entry *bch2_bkey_drop_ptr_noerror(struct bkey_s,
+						   struct bch_extent_ptr *);
 union bch_extent_entry *bch2_bkey_drop_ptr(struct bkey_s,
 					   struct bch_extent_ptr *);
 
@@ -600,17 +671,19 @@ do {									\
 	}								\
 } while (0)
 
-void bch2_bkey_drop_device(struct bkey_s, unsigned);
-const struct bch_extent_ptr *bch2_bkey_has_device(struct bkey_s_c, unsigned);
-bool bch2_bkey_has_target(struct bch_fs *, struct bkey_s_c, unsigned);
-
 bool bch2_bkey_matches_ptr(struct bch_fs *, struct bkey_s_c,
 			   struct bch_extent_ptr, u64);
+bool bch2_extents_match(struct bkey_s_c, struct bkey_s_c);
+struct bch_extent_ptr *
+bch2_extent_has_ptr(struct bkey_s_c, struct extent_ptr_decoded, struct bkey_s);
+
+void bch2_extent_ptr_set_cached(struct bkey_s, struct bch_extent_ptr *);
 
 bool bch2_extent_normalize(struct bch_fs *, struct bkey_s);
 void bch2_bkey_ptrs_to_text(struct printbuf *, struct bch_fs *,
 			    struct bkey_s_c);
-const char *bch2_bkey_ptrs_invalid(const struct bch_fs *, struct bkey_s_c);
+int bch2_bkey_ptrs_invalid(const struct bch_fs *, struct bkey_s_c,
+			   unsigned, struct printbuf *);
 
 void bch2_ptr_swab(struct bkey_s);
 
@@ -627,9 +700,8 @@ enum bch_extent_overlap {
 static inline enum bch_extent_overlap bch2_extent_overlap(const struct bkey *k,
 							  const struct bkey *m)
 {
-	int cmp1 = bkey_cmp(k->p, m->p) < 0;
-	int cmp2 = bkey_cmp(bkey_start_pos(k),
-			    bkey_start_pos(m)) > 0;
+	int cmp1 = bkey_lt(k->p, m->p);
+	int cmp2 = bkey_gt(bkey_start_pos(k), bkey_start_pos(m));
 
 	return (cmp1 << 1) + cmp2;
 }

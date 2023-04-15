@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
 #include "checksum.h"
+#include "errcode.h"
 #include "super.h"
 #include "super-io.h"
 
@@ -11,7 +12,7 @@
 #include <linux/random.h>
 #include <linux/scatterlist.h>
 #include <crypto/algapi.h>
-#include <crypto/chacha20.h>
+#include <crypto/chacha.h>
 #include <crypto/hash.h>
 #include <crypto/poly1305.h>
 #include <crypto/skcipher.h>
@@ -93,35 +94,69 @@ static void bch2_checksum_update(struct bch2_checksum_state *state, const void *
 	}
 }
 
-static inline void do_encrypt_sg(struct crypto_skcipher *tfm,
-				 struct nonce nonce,
-				 struct scatterlist *sg, size_t len)
+static inline int do_encrypt_sg(struct crypto_sync_skcipher *tfm,
+				struct nonce nonce,
+				struct scatterlist *sg, size_t len)
 {
-	SKCIPHER_REQUEST_ON_STACK(req, tfm);
+	SYNC_SKCIPHER_REQUEST_ON_STACK(req, tfm);
 	int ret;
 
-	skcipher_request_set_tfm(req, tfm);
+	skcipher_request_set_sync_tfm(req, tfm);
 	skcipher_request_set_crypt(req, sg, sg, len, nonce.d);
 
 	ret = crypto_skcipher_encrypt(req);
-	BUG_ON(ret);
+	if (ret)
+		pr_err("got error %i from crypto_skcipher_encrypt()", ret);
+
+	return ret;
 }
 
-static inline void do_encrypt(struct crypto_skcipher *tfm,
+static inline int do_encrypt(struct crypto_sync_skcipher *tfm,
 			      struct nonce nonce,
 			      void *buf, size_t len)
 {
-	struct scatterlist sg;
+	if (!is_vmalloc_addr(buf)) {
+		struct scatterlist sg;
 
-	sg_init_one(&sg, buf, len);
-	do_encrypt_sg(tfm, nonce, &sg, len);
+		sg_init_table(&sg, 1);
+		sg_set_page(&sg,
+			    is_vmalloc_addr(buf)
+			    ? vmalloc_to_page(buf)
+			    : virt_to_page(buf),
+			    len, offset_in_page(buf));
+		return do_encrypt_sg(tfm, nonce, &sg, len);
+	} else {
+		unsigned pages = buf_pages(buf, len);
+		struct scatterlist *sg;
+		size_t orig_len = len;
+		int ret, i;
+
+		sg = kmalloc_array(pages, sizeof(*sg), GFP_KERNEL);
+		if (!sg)
+			return -BCH_ERR_ENOMEM_do_encrypt;
+
+		sg_init_table(sg, pages);
+
+		for (i = 0; i < pages; i++) {
+			unsigned offset = offset_in_page(buf);
+			unsigned pg_len = min(len, PAGE_SIZE - offset);
+
+			sg_set_page(sg + i, vmalloc_to_page(buf), pg_len, offset);
+			buf += pg_len;
+			len -= pg_len;
+		}
+
+		ret = do_encrypt_sg(tfm, nonce, sg, orig_len);
+		kfree(sg);
+		return ret;
+	}
 }
 
 int bch2_chacha_encrypt_key(struct bch_key *key, struct nonce nonce,
 			    void *buf, size_t len)
 {
-	struct crypto_skcipher *chacha20 =
-		crypto_alloc_skcipher("chacha20", 0, 0);
+	struct crypto_sync_skcipher *chacha20 =
+		crypto_alloc_sync_skcipher("chacha20", 0, 0);
 	int ret;
 
 	if (!chacha20) {
@@ -129,31 +164,36 @@ int bch2_chacha_encrypt_key(struct bch_key *key, struct nonce nonce,
 		return PTR_ERR(chacha20);
 	}
 
-	ret = crypto_skcipher_setkey(chacha20, (void *) key, sizeof(*key));
+	ret = crypto_skcipher_setkey(&chacha20->base,
+				     (void *) key, sizeof(*key));
 	if (ret) {
 		pr_err("crypto_skcipher_setkey() error: %i", ret);
 		goto err;
 	}
 
-	do_encrypt(chacha20, nonce, buf, len);
+	ret = do_encrypt(chacha20, nonce, buf, len);
 err:
-	crypto_free_skcipher(chacha20);
+	crypto_free_sync_skcipher(chacha20);
 	return ret;
 }
 
-static void gen_poly_key(struct bch_fs *c, struct shash_desc *desc,
-			 struct nonce nonce)
+static int gen_poly_key(struct bch_fs *c, struct shash_desc *desc,
+			struct nonce nonce)
 {
 	u8 key[POLY1305_KEY_SIZE];
+	int ret;
 
 	nonce.d[3] ^= BCH_NONCE_POLY;
 
 	memset(key, 0, sizeof(key));
-	do_encrypt(c->chacha20, nonce, key, sizeof(key));
+	ret = do_encrypt(c->chacha20, nonce, key, sizeof(key));
+	if (ret)
+		return ret;
 
 	desc->tfm = c->poly1305;
 	crypto_shash_init(desc);
 	crypto_shash_update(desc, key, sizeof(key));
+	return 0;
 }
 
 struct bch_csum bch2_checksum(struct bch_fs *c, unsigned type,
@@ -195,13 +235,13 @@ struct bch_csum bch2_checksum(struct bch_fs *c, unsigned type,
 	}
 }
 
-void bch2_encrypt(struct bch_fs *c, unsigned type,
+int bch2_encrypt(struct bch_fs *c, unsigned type,
 		  struct nonce nonce, void *data, size_t len)
 {
 	if (!bch2_csum_type_is_encryption(type))
-		return;
+		return 0;
 
-	do_encrypt(c->chacha20, nonce, data, len);
+	return do_encrypt(c->chacha20, nonce, data, len);
 }
 
 static struct bch_csum __bch2_checksum_bio(struct bch_fs *c, unsigned type,
@@ -230,7 +270,7 @@ static struct bch_csum __bch2_checksum_bio(struct bch_fs *c, unsigned type,
 			kunmap_atomic(p);
 		}
 #else
-		__bio_for_each_contig_segment(bv, bio, *iter, *iter)
+		__bio_for_each_bvec(bv, bio, *iter, *iter)
 			bch2_checksum_update(&state, page_address(bv.bv_page) + bv.bv_offset,
 				bv.bv_len);
 #endif
@@ -253,7 +293,7 @@ static struct bch_csum __bch2_checksum_bio(struct bch_fs *c, unsigned type,
 			kunmap_atomic(p);
 		}
 #else
-		__bio_for_each_contig_segment(bv, bio, *iter, *iter)
+		__bio_for_each_bvec(bv, bio, *iter, *iter)
 			crypto_shash_update(desc,
 				page_address(bv.bv_page) + bv.bv_offset,
 				bv.bv_len);
@@ -276,23 +316,27 @@ struct bch_csum bch2_checksum_bio(struct bch_fs *c, unsigned type,
 	return __bch2_checksum_bio(c, type, nonce, bio, &iter);
 }
 
-void bch2_encrypt_bio(struct bch_fs *c, unsigned type,
-		      struct nonce nonce, struct bio *bio)
+int __bch2_encrypt_bio(struct bch_fs *c, unsigned type,
+		     struct nonce nonce, struct bio *bio)
 {
 	struct bio_vec bv;
 	struct bvec_iter iter;
 	struct scatterlist sgl[16], *sg = sgl;
 	size_t bytes = 0;
+	int ret = 0;
 
 	if (!bch2_csum_type_is_encryption(type))
-		return;
+		return 0;
 
 	sg_init_table(sgl, ARRAY_SIZE(sgl));
 
 	bio_for_each_segment(bv, bio, iter) {
 		if (sg == sgl + ARRAY_SIZE(sgl)) {
 			sg_mark_end(sg - 1);
-			do_encrypt_sg(c->chacha20, nonce, sgl, bytes);
+
+			ret = do_encrypt_sg(c->chacha20, nonce, sgl, bytes);
+			if (ret)
+				return ret;
 
 			nonce = nonce_add(nonce, bytes);
 			bytes = 0;
@@ -306,7 +350,7 @@ void bch2_encrypt_bio(struct bch_fs *c, unsigned type,
 	}
 
 	sg_mark_end(sg - 1);
-	do_encrypt_sg(c->chacha20, nonce, sgl, bytes);
+	return do_encrypt_sg(c->chacha20, nonce, sgl, bytes);
 }
 
 struct bch_csum bch2_checksum_merge(unsigned type, struct bch_csum a,
@@ -382,8 +426,17 @@ int bch2_rechecksum_bio(struct bch_fs *c, struct bio *bio,
 		merged = bch2_checksum_bio(c, crc_old.csum_type,
 				extent_nonce(version, crc_old), bio);
 
-	if (bch2_crc_cmp(merged, crc_old.csum))
+	if (bch2_crc_cmp(merged, crc_old.csum)) {
+		bch_err(c, "checksum error in bch2_rechecksum_bio() (memory corruption or bug?)\n"
+			"expected %0llx:%0llx got %0llx:%0llx (old type %s new type %s)",
+			crc_old.csum.hi,
+			crc_old.csum.lo,
+			merged.hi,
+			merged.lo,
+			bch2_csum_types[crc_old.csum_type],
+			bch2_csum_types[new_csum_type]);
 		return -EIO;
+	}
 
 	for (i = splits; i < splits + ARRAY_SIZE(splits); i++) {
 		if (i->crc)
@@ -412,7 +465,7 @@ static int __bch2_request_key(char *key_description, struct bch_key *key)
 	const struct user_key_payload *ukp;
 	int ret;
 
-	keyring_key = request_key(&key_type_logon, key_description, NULL);
+	keyring_key = request_key(&key_type_user, key_description, NULL);
 	if (IS_ERR(keyring_key))
 		return PTR_ERR(keyring_key);
 
@@ -450,13 +503,15 @@ static int __bch2_request_key(char *key_description, struct bch_key *key)
 
 int bch2_request_key(struct bch_sb *sb, struct bch_key *key)
 {
-	char key_description[60];
-	char uuid[40];
+	struct printbuf key_description = PRINTBUF;
+	int ret;
 
-	uuid_unparse_lower(sb->user_uuid.b, uuid);
-	sprintf(key_description, "bcachefs:%s", uuid);
+	prt_printf(&key_description, "bcachefs:");
+	pr_uuid(&key_description, sb->user_uuid.b);
 
-	return __bch2_request_key(key_description, key);
+	ret = __bch2_request_key(key_description.buf, key);
+	printbuf_exit(&key_description);
+	return ret;
 }
 
 int bch2_decrypt_sb_key(struct bch_fs *c,
@@ -473,7 +528,7 @@ int bch2_decrypt_sb_key(struct bch_fs *c,
 
 	ret = bch2_request_key(c->disk_sb.sb, &user_key);
 	if (ret) {
-		bch_err(c, "error requesting encryption key: %i", ret);
+		bch_err(c, "error requesting encryption key: %s", bch2_err_str(ret));
 		goto err;
 	}
 
@@ -498,20 +553,24 @@ err:
 
 static int bch2_alloc_ciphers(struct bch_fs *c)
 {
+	int ret;
+
 	if (!c->chacha20)
-		c->chacha20 = crypto_alloc_skcipher("chacha20", 0, 0);
-	if (IS_ERR(c->chacha20)) {
-		bch_err(c, "error requesting chacha20 module: %li",
-			PTR_ERR(c->chacha20));
-		return PTR_ERR(c->chacha20);
+		c->chacha20 = crypto_alloc_sync_skcipher("chacha20", 0, 0);
+	ret = PTR_ERR_OR_ZERO(c->chacha20);
+
+	if (ret) {
+		bch_err(c, "error requesting chacha20 module: %s", bch2_err_str(ret));
+		return ret;
 	}
 
 	if (!c->poly1305)
 		c->poly1305 = crypto_alloc_shash("poly1305", 0, 0);
-	if (IS_ERR(c->poly1305)) {
-		bch_err(c, "error requesting poly1305 module: %li",
-			PTR_ERR(c->poly1305));
-		return PTR_ERR(c->poly1305);
+	ret = PTR_ERR_OR_ZERO(c->poly1305);
+
+	if (ret) {
+		bch_err(c, "error requesting poly1305 module: %s", bch2_err_str(ret));
+		return ret;
 	}
 
 	return 0;
@@ -572,7 +631,7 @@ int bch2_enable_encryption(struct bch_fs *c, bool keyed)
 	if (keyed) {
 		ret = bch2_request_key(c->disk_sb.sb, &user_key);
 		if (ret) {
-			bch_err(c, "error requesting encryption key: %i", ret);
+			bch_err(c, "error requesting encryption key: %s", bch2_err_str(ret));
 			goto err;
 		}
 
@@ -582,14 +641,14 @@ int bch2_enable_encryption(struct bch_fs *c, bool keyed)
 			goto err;
 	}
 
-	ret = crypto_skcipher_setkey(c->chacha20,
+	ret = crypto_skcipher_setkey(&c->chacha20->base,
 			(void *) &key.key, sizeof(key.key));
 	if (ret)
 		goto err;
 
 	crypt = bch2_sb_resize_crypt(&c->disk_sb, sizeof(*crypt) / sizeof(u64));
 	if (!crypt) {
-		ret = -ENOMEM; /* XXX this technically could be -ENOSPC */
+		ret = -BCH_ERR_ENOSPC_sb_crypt;
 		goto err;
 	}
 
@@ -610,7 +669,7 @@ void bch2_fs_encryption_exit(struct bch_fs *c)
 	if (!IS_ERR_OR_NULL(c->poly1305))
 		crypto_free_shash(c->poly1305);
 	if (!IS_ERR_OR_NULL(c->chacha20))
-		crypto_free_skcipher(c->chacha20);
+		crypto_free_sync_skcipher(c->chacha20);
 	if (!IS_ERR_OR_NULL(c->sha256))
 		crypto_free_shash(c->sha256);
 }
@@ -624,9 +683,9 @@ int bch2_fs_encryption_init(struct bch_fs *c)
 	pr_verbose_init(c->opts, "");
 
 	c->sha256 = crypto_alloc_shash("sha256", 0, 0);
-	if (IS_ERR(c->sha256)) {
-		bch_err(c, "error requesting sha256 module");
-		ret = PTR_ERR(c->sha256);
+	ret = PTR_ERR_OR_ZERO(c->sha256);
+	if (ret) {
+		bch_err(c, "error requesting sha256 module: %s", bch2_err_str(ret));
 		goto out;
 	}
 
@@ -642,7 +701,7 @@ int bch2_fs_encryption_init(struct bch_fs *c)
 	if (ret)
 		goto out;
 
-	ret = crypto_skcipher_setkey(c->chacha20,
+	ret = crypto_skcipher_setkey(&c->chacha20->base,
 			(void *) &key.key, sizeof(key.key));
 	if (ret)
 		goto out;

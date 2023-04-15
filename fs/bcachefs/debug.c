@@ -11,6 +11,7 @@
 #include "btree_cache.h"
 #include "btree_io.h"
 #include "btree_iter.h"
+#include "btree_locking.h"
 #include "btree_update.h"
 #include "buckets.h"
 #include "debug.h"
@@ -38,16 +39,16 @@ static bool bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 	struct bset *sorted, *inmemory = &b->data->keys;
 	struct bch_dev *ca = bch_dev_bkey_exists(c, pick.ptr.dev);
 	struct bio *bio;
-	bool failed = false;
+	bool failed = false, saw_error = false;
 
 	if (!bch2_dev_get_ioref(ca, READ))
 		return false;
 
-	bio = bio_alloc_bioset(GFP_NOIO,
-			buf_pages(n_sorted, btree_bytes(c)),
-			&c->btree_bio);
-	bio_set_dev(bio, ca->disk_sb.bdev);
-	bio->bi_opf		= REQ_OP_READ|REQ_META;
+	bio = bio_alloc_bioset(ca->disk_sb.bdev,
+			       buf_pages(n_sorted, btree_bytes(c)),
+			       REQ_OP_READ|REQ_META,
+			       GFP_NOIO,
+			       &c->btree_bio);
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bch2_bio_map(bio, n_sorted, btree_bytes(c));
 
@@ -59,7 +60,7 @@ static bool bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 	memcpy(n_ondisk, n_sorted, btree_bytes(c));
 
 	v->written = 0;
-	if (bch2_btree_node_read_done(c, ca, v, false))
+	if (bch2_btree_node_read_done(c, ca, v, false, &saw_error) || saw_error)
 		return false;
 
 	n_sorted = c->verify_data->data;
@@ -152,7 +153,7 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 
 	BUG_ON(b->nsets != 1);
 
-	for (k = inmemory->start; k != vstruct_last(inmemory); k = bkey_next(k))
+	for (k = inmemory->start; k != vstruct_last(inmemory); k = bkey_p_next(k))
 		if (k->type == KEY_TYPE_btree_ptr_v2) {
 			struct bch_btree_ptr_v2 *v = (void *) bkeyp_val(&b->format, k);
 			v->mem_ptr = 0;
@@ -169,14 +170,134 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 		failed |= bch2_btree_verify_replica(c, b, p);
 
 	if (failed) {
-		char buf[200];
+		struct printbuf buf = PRINTBUF;
 
-		bch2_bkey_val_to_text(&PBUF(buf), c, bkey_i_to_s_c(&b->key));
-		bch2_fs_fatal_error(c, "btree node verify failed for : %s\n", buf);
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&b->key));
+		bch2_fs_fatal_error(c, "btree node verify failed for : %s\n", buf.buf);
+		printbuf_exit(&buf);
 	}
 out:
 	mutex_unlock(&c->verify_lock);
 	bch2_btree_node_io_unlock(b);
+}
+
+void bch2_btree_node_ondisk_to_text(struct printbuf *out, struct bch_fs *c,
+				    const struct btree *b)
+{
+	struct btree_node *n_ondisk = NULL;
+	struct extent_ptr_decoded pick;
+	struct bch_dev *ca;
+	struct bio *bio = NULL;
+	unsigned offset = 0;
+	int ret;
+
+	if (bch2_bkey_pick_read_device(c, bkey_i_to_s_c(&b->key), NULL, &pick) <= 0) {
+		prt_printf(out, "error getting device to read from: invalid device\n");
+		return;
+	}
+
+	ca = bch_dev_bkey_exists(c, pick.ptr.dev);
+	if (!bch2_dev_get_ioref(ca, READ)) {
+		prt_printf(out, "error getting device to read from: not online\n");
+		return;
+	}
+
+	n_ondisk = kvpmalloc(btree_bytes(c), GFP_KERNEL);
+	if (!n_ondisk) {
+		prt_printf(out, "memory allocation failure\n");
+		goto out;
+	}
+
+	bio = bio_alloc_bioset(ca->disk_sb.bdev,
+			       buf_pages(n_ondisk, btree_bytes(c)),
+			       REQ_OP_READ|REQ_META,
+			       GFP_NOIO,
+			       &c->btree_bio);
+	bio->bi_iter.bi_sector	= pick.ptr.offset;
+	bch2_bio_map(bio, n_ondisk, btree_bytes(c));
+
+	ret = submit_bio_wait(bio);
+	if (ret) {
+		prt_printf(out, "IO error reading btree node: %s\n", bch2_err_str(ret));
+		goto out;
+	}
+
+	while (offset < btree_sectors(c)) {
+		struct bset *i;
+		struct nonce nonce;
+		struct bch_csum csum;
+		struct bkey_packed *k;
+		unsigned sectors;
+
+		if (!offset) {
+			i = &n_ondisk->keys;
+
+			if (!bch2_checksum_type_valid(c, BSET_CSUM_TYPE(i))) {
+				prt_printf(out, "unknown checksum type at offset %u: %llu\n",
+					   offset, BSET_CSUM_TYPE(i));
+				goto out;
+			}
+
+			nonce = btree_nonce(i, offset << 9);
+			csum = csum_vstruct(c, BSET_CSUM_TYPE(i), nonce, n_ondisk);
+
+			if (bch2_crc_cmp(csum, n_ondisk->csum)) {
+				prt_printf(out, "invalid checksum\n");
+				goto out;
+			}
+
+			bset_encrypt(c, i, offset << 9);
+
+			sectors = vstruct_sectors(n_ondisk, c->block_bits);
+		} else {
+			struct btree_node_entry *bne = (void *) n_ondisk + (offset << 9);
+
+			i = &bne->keys;
+
+			if (i->seq != n_ondisk->keys.seq)
+				break;
+
+			if (!bch2_checksum_type_valid(c, BSET_CSUM_TYPE(i))) {
+				prt_printf(out, "unknown checksum type at offset %u: %llu\n",
+					   offset, BSET_CSUM_TYPE(i));
+				goto out;
+			}
+
+			nonce = btree_nonce(i, offset << 9);
+			csum = csum_vstruct(c, BSET_CSUM_TYPE(i), nonce, bne);
+
+			if (bch2_crc_cmp(csum, bne->csum)) {
+				prt_printf(out, "invalid checksum");
+				goto out;
+			}
+
+			bset_encrypt(c, i, offset << 9);
+
+			sectors = vstruct_sectors(bne, c->block_bits);
+		}
+
+		prt_printf(out, "  offset %u version %u, journal seq %llu\n",
+			   offset,
+			   le16_to_cpu(i->version),
+			   le64_to_cpu(i->journal_seq));
+		offset += sectors;
+
+		printbuf_indent_add(out, 4);
+
+		for (k = i->start; k != vstruct_last(i); k = bkey_p_next(k)) {
+			struct bkey u;
+
+			bch2_bkey_val_to_text(out, c, bkey_disassemble(b, k, &u));
+			prt_newline(out);
+		}
+
+		printbuf_indent_sub(out, 4);
+	}
+out:
+	if (bio)
+		bio_put(bio);
+	kvpfree(n_ondisk, btree_bytes(c));
+	percpu_ref_put(&ca->io_ref);
 }
 
 #ifdef CONFIG_DEBUG_FS
@@ -184,23 +305,24 @@ out:
 /* XXX: bch_fs refcounting */
 
 struct dump_iter {
-	struct bpos		from;
-	struct bch_fs	*c;
+	struct bch_fs		*c;
 	enum btree_id		id;
+	struct bpos		from;
+	struct bpos		prev_node;
+	u64			iter;
 
-	char			buf[1 << 12];
-	size_t			bytes;	/* what's currently in buf */
+	struct printbuf		buf;
 
 	char __user		*ubuf;	/* destination user buffer */
 	size_t			size;	/* size of requested read */
 	ssize_t			ret;	/* bytes read so far */
 };
 
-static int flush_buf(struct dump_iter *i)
+static ssize_t flush_buf(struct dump_iter *i)
 {
-	if (i->bytes) {
-		size_t bytes = min(i->bytes, i->size);
-		int err = copy_to_user(i->ubuf, i->buf, bytes);
+	if (i->buf.pos) {
+		size_t bytes = min_t(size_t, i->buf.pos, i->size);
+		int err = copy_to_user(i->ubuf, i->buf.buf, bytes);
 
 		if (err)
 			return err;
@@ -208,11 +330,11 @@ static int flush_buf(struct dump_iter *i)
 		i->ret	 += bytes;
 		i->ubuf	 += bytes;
 		i->size	 -= bytes;
-		i->bytes -= bytes;
-		memmove(i->buf, i->buf + bytes, i->bytes);
+		i->buf.pos -= bytes;
+		memmove(i->buf.buf, i->buf.buf + bytes, i->buf.pos);
 	}
 
-	return 0;
+	return i->size ? 0 : i->ret;
 }
 
 static int bch2_dump_open(struct inode *inode, struct file *file)
@@ -226,15 +348,20 @@ static int bch2_dump_open(struct inode *inode, struct file *file)
 
 	file->private_data = i;
 	i->from = POS_MIN;
+	i->iter	= 0;
 	i->c	= container_of(bd, struct bch_fs, btree_debug[bd->id]);
 	i->id	= bd->id;
+	i->buf	= PRINTBUF;
 
 	return 0;
 }
 
 static int bch2_dump_release(struct inode *inode, struct file *file)
 {
-	kfree(file->private_data);
+	struct dump_iter *i = file->private_data;
+
+	printbuf_exit(&i->buf);
+	kfree(i);
 	return 0;
 }
 
@@ -245,48 +372,33 @@ static ssize_t bch2_read_btree(struct file *file, char __user *buf,
 	struct btree_trans trans;
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	int err;
+	ssize_t ret;
 
 	i->ubuf = buf;
 	i->size	= size;
 	i->ret	= 0;
 
-	err = flush_buf(i);
-	if (err)
-		return err;
-
-	if (!i->size)
-		return i->ret;
-
 	bch2_trans_init(&trans, i->c, 0, 0);
 
-	bch2_trans_iter_init(&trans, &iter, i->id, i->from,
-			     BTREE_ITER_PREFETCH|
-			     BTREE_ITER_ALL_SNAPSHOTS);
-	k = bch2_btree_iter_peek(&iter);
-
-	while (k.k && !(err = bkey_err(k))) {
-		bch2_bkey_val_to_text(&PBUF(i->buf), i->c, k);
-		i->bytes = strlen(i->buf);
-		BUG_ON(i->bytes >= sizeof(i->buf));
-		i->buf[i->bytes] = '\n';
-		i->bytes++;
-
-		k = bch2_btree_iter_next(&iter);
-		i->from = iter.pos;
-
-		err = flush_buf(i);
-		if (err)
+	ret = for_each_btree_key2(&trans, iter, i->id, i->from,
+				  BTREE_ITER_PREFETCH|
+				  BTREE_ITER_ALL_SNAPSHOTS, k, ({
+		ret = flush_buf(i);
+		if (ret)
 			break;
 
-		if (!i->size)
-			break;
-	}
-	bch2_trans_iter_exit(&trans, &iter);
+		bch2_bkey_val_to_text(&i->buf, i->c, k);
+		prt_newline(&i->buf);
+		0;
+	}));
+	i->from = iter.pos;
+
+	if (!ret)
+		ret = flush_buf(i);
 
 	bch2_trans_exit(&trans);
 
-	return err < 0 ? err : i->ret;
+	return ret ?: i->ret;
 }
 
 static const struct file_operations btree_debug_ops = {
@@ -303,44 +415,39 @@ static ssize_t bch2_read_btree_formats(struct file *file, char __user *buf,
 	struct btree_trans trans;
 	struct btree_iter iter;
 	struct btree *b;
-	int err;
+	ssize_t ret;
 
 	i->ubuf = buf;
 	i->size	= size;
 	i->ret	= 0;
 
-	err = flush_buf(i);
-	if (err)
-		return err;
+	ret = flush_buf(i);
+	if (ret)
+		return ret;
 
-	if (!i->size || !bpos_cmp(SPOS_MAX, i->from))
+	if (bpos_eq(SPOS_MAX, i->from))
 		return i->ret;
 
 	bch2_trans_init(&trans, i->c, 0, 0);
 
-	for_each_btree_node(&trans, iter, i->id, i->from, 0, b, err) {
-		bch2_btree_node_to_text(&PBUF(i->buf), i->c, b);
-		i->bytes = strlen(i->buf);
-		err = flush_buf(i);
-		if (err)
+	for_each_btree_node(&trans, iter, i->id, i->from, 0, b, ret) {
+		ret = flush_buf(i);
+		if (ret)
 			break;
 
-		/*
-		 * can't easily correctly restart a btree node traversal across
-		 * all nodes, meh
-		 */
-		i->from = bpos_cmp(SPOS_MAX, b->key.k.p)
+		bch2_btree_node_to_text(&i->buf, i->c, b);
+		i->from = !bpos_eq(SPOS_MAX, b->key.k.p)
 			? bpos_successor(b->key.k.p)
 			: b->key.k.p;
-
-		if (!i->size)
-			break;
 	}
 	bch2_trans_iter_exit(&trans, &iter);
 
 	bch2_trans_exit(&trans);
 
-	return err < 0 ? err : i->ret;
+	if (!ret)
+		ret = flush_buf(i);
+
+	return ret ?: i->ret;
 }
 
 static const struct file_operations btree_format_debug_ops = {
@@ -357,62 +464,45 @@ static ssize_t bch2_read_bfloat_failed(struct file *file, char __user *buf,
 	struct btree_trans trans;
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	struct btree *prev_node = NULL;
-	int err;
+	ssize_t ret;
 
 	i->ubuf = buf;
 	i->size	= size;
 	i->ret	= 0;
 
-	err = flush_buf(i);
-	if (err)
-		return err;
-
-	if (!i->size)
-		return i->ret;
+	ret = flush_buf(i);
+	if (ret)
+		return ret;
 
 	bch2_trans_init(&trans, i->c, 0, 0);
 
-	bch2_trans_iter_init(&trans, &iter, i->id, i->from,
-			     BTREE_ITER_PREFETCH|
-			     BTREE_ITER_ALL_SNAPSHOTS);
-
-	while ((k = bch2_btree_iter_peek(&iter)).k &&
-	       !(err = bkey_err(k))) {
+	ret = for_each_btree_key2(&trans, iter, i->id, i->from,
+				  BTREE_ITER_PREFETCH|
+				  BTREE_ITER_ALL_SNAPSHOTS, k, ({
 		struct btree_path_level *l = &iter.path->l[0];
 		struct bkey_packed *_k =
 			bch2_btree_node_iter_peek(&l->iter, l->b);
 
-		if (l->b != prev_node) {
-			bch2_btree_node_to_text(&PBUF(i->buf), i->c, l->b);
-			i->bytes = strlen(i->buf);
-			err = flush_buf(i);
-			if (err)
-				break;
+		ret = flush_buf(i);
+		if (ret)
+			break;
+
+		if (bpos_gt(l->b->key.k.p, i->prev_node)) {
+			bch2_btree_node_to_text(&i->buf, i->c, l->b);
+			i->prev_node = l->b->key.k.p;
 		}
-		prev_node = l->b;
 
-		bch2_bfloat_to_text(&PBUF(i->buf), l->b, _k);
-		i->bytes = strlen(i->buf);
-		err = flush_buf(i);
-		if (err)
-			break;
-
-		bch2_btree_iter_advance(&iter);
-		i->from = iter.pos;
-
-		err = flush_buf(i);
-		if (err)
-			break;
-
-		if (!i->size)
-			break;
-	}
-	bch2_trans_iter_exit(&trans, &iter);
+		bch2_bfloat_to_text(&i->buf, l->b, _k);
+		0;
+	}));
+	i->from = iter.pos;
 
 	bch2_trans_exit(&trans);
 
-	return err < 0 ? err : i->ret;
+	if (!ret)
+		ret = flush_buf(i);
+
+	return ret ?: i->ret;
 }
 
 static const struct file_operations bfloat_failed_debug_ops = {
@@ -422,10 +512,352 @@ static const struct file_operations bfloat_failed_debug_ops = {
 	.read		= bch2_read_bfloat_failed,
 };
 
+static void bch2_cached_btree_node_to_text(struct printbuf *out, struct bch_fs *c,
+					   struct btree *b)
+{
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 32);
+
+	prt_printf(out, "%px btree=%s l=%u ",
+	       b,
+	       bch2_btree_ids[b->c.btree_id],
+	       b->c.level);
+	prt_newline(out);
+
+	printbuf_indent_add(out, 2);
+
+	bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(&b->key));
+	prt_newline(out);
+
+	prt_printf(out, "flags: ");
+	prt_tab(out);
+	prt_bitflags(out, bch2_btree_node_flags, b->flags);
+	prt_newline(out);
+
+	prt_printf(out, "pcpu read locks: ");
+	prt_tab(out);
+	prt_printf(out, "%u", b->c.lock.readers != NULL);
+	prt_newline(out);
+
+	prt_printf(out, "written:");
+	prt_tab(out);
+	prt_printf(out, "%u", b->written);
+	prt_newline(out);
+
+	prt_printf(out, "writes blocked:");
+	prt_tab(out);
+	prt_printf(out, "%u", !list_empty_careful(&b->write_blocked));
+	prt_newline(out);
+
+	prt_printf(out, "will make reachable:");
+	prt_tab(out);
+	prt_printf(out, "%lx", b->will_make_reachable);
+	prt_newline(out);
+
+	prt_printf(out, "journal pin %px:", &b->writes[0].journal);
+	prt_tab(out);
+	prt_printf(out, "%llu", b->writes[0].journal.seq);
+	prt_newline(out);
+
+	prt_printf(out, "journal pin %px:", &b->writes[1].journal);
+	prt_tab(out);
+	prt_printf(out, "%llu", b->writes[1].journal.seq);
+	prt_newline(out);
+
+	printbuf_indent_sub(out, 2);
+}
+
+static ssize_t bch2_cached_btree_nodes_read(struct file *file, char __user *buf,
+					    size_t size, loff_t *ppos)
+{
+	struct dump_iter *i = file->private_data;
+	struct bch_fs *c = i->c;
+	bool done = false;
+	ssize_t ret = 0;
+
+	i->ubuf = buf;
+	i->size	= size;
+	i->ret	= 0;
+
+	do {
+		struct bucket_table *tbl;
+		struct rhash_head *pos;
+		struct btree *b;
+
+		ret = flush_buf(i);
+		if (ret)
+			return ret;
+
+		rcu_read_lock();
+		i->buf.atomic++;
+		tbl = rht_dereference_rcu(c->btree_cache.table.tbl,
+					  &c->btree_cache.table);
+		if (i->iter < tbl->size) {
+			rht_for_each_entry_rcu(b, pos, tbl, i->iter, hash)
+				bch2_cached_btree_node_to_text(&i->buf, c, b);
+			i->iter++;
+		} else {
+			done = true;
+		}
+		--i->buf.atomic;
+		rcu_read_unlock();
+	} while (!done);
+
+	if (i->buf.allocation_failure)
+		ret = -ENOMEM;
+
+	if (!ret)
+		ret = flush_buf(i);
+
+	return ret ?: i->ret;
+}
+
+static const struct file_operations cached_btree_nodes_ops = {
+	.owner		= THIS_MODULE,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_cached_btree_nodes_read,
+};
+
+#ifdef CONFIG_BCACHEFS_DEBUG_TRANSACTIONS
+static ssize_t bch2_btree_transactions_read(struct file *file, char __user *buf,
+					    size_t size, loff_t *ppos)
+{
+	struct dump_iter *i = file->private_data;
+	struct bch_fs *c = i->c;
+	struct btree_trans *trans;
+	ssize_t ret = 0;
+
+	i->ubuf = buf;
+	i->size	= size;
+	i->ret	= 0;
+
+	mutex_lock(&c->btree_trans_lock);
+	list_for_each_entry(trans, &c->btree_trans_list, list) {
+		if (trans->locking_wait.task->pid <= i->iter)
+			continue;
+
+		ret = flush_buf(i);
+		if (ret)
+			break;
+
+		bch2_btree_trans_to_text(&i->buf, trans);
+
+		prt_printf(&i->buf, "backtrace:");
+		prt_newline(&i->buf);
+		printbuf_indent_add(&i->buf, 2);
+		bch2_prt_task_backtrace(&i->buf, trans->locking_wait.task);
+		printbuf_indent_sub(&i->buf, 2);
+		prt_newline(&i->buf);
+
+		i->iter = trans->locking_wait.task->pid;
+	}
+	mutex_unlock(&c->btree_trans_lock);
+
+	if (i->buf.allocation_failure)
+		ret = -ENOMEM;
+
+	if (!ret)
+		ret = flush_buf(i);
+
+	return ret ?: i->ret;
+}
+
+static const struct file_operations btree_transactions_ops = {
+	.owner		= THIS_MODULE,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_btree_transactions_read,
+};
+#endif /* CONFIG_BCACHEFS_DEBUG_TRANSACTIONS */
+
+static ssize_t bch2_journal_pins_read(struct file *file, char __user *buf,
+				      size_t size, loff_t *ppos)
+{
+	struct dump_iter *i = file->private_data;
+	struct bch_fs *c = i->c;
+	bool done = false;
+	int err;
+
+	i->ubuf = buf;
+	i->size	= size;
+	i->ret	= 0;
+
+	do {
+		err = flush_buf(i);
+		if (err)
+			return err;
+
+		if (!i->size)
+			break;
+
+		done = bch2_journal_seq_pins_to_text(&i->buf, &c->journal, &i->iter);
+		i->iter++;
+	} while (!done);
+
+	if (i->buf.allocation_failure)
+		return -ENOMEM;
+
+	return i->ret;
+}
+
+static const struct file_operations journal_pins_ops = {
+	.owner		= THIS_MODULE,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_journal_pins_read,
+};
+
+static int lock_held_stats_open(struct inode *inode, struct file *file)
+{
+	struct bch_fs *c = inode->i_private;
+	struct dump_iter *i;
+
+	i = kzalloc(sizeof(struct dump_iter), GFP_KERNEL);
+
+	if (!i)
+		return -ENOMEM;
+
+	i->iter = 0;
+	i->c    = c;
+	i->buf  = PRINTBUF;
+	file->private_data = i;
+
+	return 0;
+}
+
+static int lock_held_stats_release(struct inode *inode, struct file *file)
+{
+	struct dump_iter *i = file->private_data;
+
+	printbuf_exit(&i->buf);
+	kfree(i);
+
+	return 0;
+}
+
+static ssize_t lock_held_stats_read(struct file *file, char __user *buf,
+				      size_t size, loff_t *ppos)
+{
+	struct dump_iter        *i = file->private_data;
+	struct bch_fs *c = i->c;
+	int err;
+
+	i->ubuf = buf;
+	i->size = size;
+	i->ret  = 0;
+
+	while (1) {
+		struct btree_transaction_stats *s = &c->btree_transaction_stats[i->iter];
+
+		err = flush_buf(i);
+		if (err)
+			return err;
+
+		if (!i->size)
+			break;
+
+		if (i->iter == ARRAY_SIZE(bch2_btree_transaction_fns) ||
+		    !bch2_btree_transaction_fns[i->iter])
+			break;
+
+		prt_printf(&i->buf, "%s: ", bch2_btree_transaction_fns[i->iter]);
+		prt_newline(&i->buf);
+		printbuf_indent_add(&i->buf, 2);
+
+		mutex_lock(&s->lock);
+
+		prt_printf(&i->buf, "Max mem used: %u", s->max_mem);
+		prt_newline(&i->buf);
+
+		if (IS_ENABLED(CONFIG_BCACHEFS_LOCK_TIME_STATS)) {
+			prt_printf(&i->buf, "Lock hold times:");
+			prt_newline(&i->buf);
+
+			printbuf_indent_add(&i->buf, 2);
+			bch2_time_stats_to_text(&i->buf, &s->lock_hold_times);
+			printbuf_indent_sub(&i->buf, 2);
+		}
+
+		if (s->max_paths_text) {
+			prt_printf(&i->buf, "Maximum allocated btree paths (%u):", s->nr_max_paths);
+			prt_newline(&i->buf);
+
+			printbuf_indent_add(&i->buf, 2);
+			prt_str_indented(&i->buf, s->max_paths_text);
+			printbuf_indent_sub(&i->buf, 2);
+		}
+
+		mutex_unlock(&s->lock);
+
+		printbuf_indent_sub(&i->buf, 2);
+		prt_newline(&i->buf);
+		i->iter++;
+	}
+
+	if (i->buf.allocation_failure)
+		return -ENOMEM;
+
+	return i->ret;
+}
+
+static const struct file_operations lock_held_stats_op = {
+	.owner = THIS_MODULE,
+	.open = lock_held_stats_open,
+	.release = lock_held_stats_release,
+	.read = lock_held_stats_read,
+};
+
+static ssize_t bch2_btree_deadlock_read(struct file *file, char __user *buf,
+					    size_t size, loff_t *ppos)
+{
+	struct dump_iter *i = file->private_data;
+	struct bch_fs *c = i->c;
+	struct btree_trans *trans;
+	ssize_t ret = 0;
+
+	i->ubuf = buf;
+	i->size	= size;
+	i->ret	= 0;
+
+	if (i->iter)
+		goto out;
+
+	mutex_lock(&c->btree_trans_lock);
+	list_for_each_entry(trans, &c->btree_trans_list, list) {
+		if (trans->locking_wait.task->pid <= i->iter)
+			continue;
+
+		ret = flush_buf(i);
+		if (ret)
+			break;
+
+		bch2_check_for_deadlock(trans, &i->buf);
+
+		i->iter = trans->locking_wait.task->pid;
+	}
+	mutex_unlock(&c->btree_trans_lock);
+out:
+	if (i->buf.allocation_failure)
+		ret = -ENOMEM;
+
+	if (!ret)
+		ret = flush_buf(i);
+
+	return ret ?: i->ret;
+}
+
+static const struct file_operations btree_deadlock_ops = {
+	.owner		= THIS_MODULE,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_btree_deadlock_read,
+};
+
 void bch2_fs_debug_exit(struct bch_fs *c)
 {
-	if (!IS_ERR_OR_NULL(c->debug))
-		debugfs_remove_recursive(c->debug);
+	if (!IS_ERR_OR_NULL(c->fs_debug_dir))
+		debugfs_remove_recursive(c->fs_debug_dir);
 }
 
 void bch2_fs_debug_init(struct bch_fs *c)
@@ -437,29 +869,50 @@ void bch2_fs_debug_init(struct bch_fs *c)
 		return;
 
 	snprintf(name, sizeof(name), "%pU", c->sb.user_uuid.b);
-	c->debug = debugfs_create_dir(name, bch_debug);
-	if (IS_ERR_OR_NULL(c->debug))
+	c->fs_debug_dir = debugfs_create_dir(name, bch_debug);
+	if (IS_ERR_OR_NULL(c->fs_debug_dir))
+		return;
+
+	debugfs_create_file("cached_btree_nodes", 0400, c->fs_debug_dir,
+			    c->btree_debug, &cached_btree_nodes_ops);
+
+#ifdef CONFIG_BCACHEFS_DEBUG_TRANSACTIONS
+	debugfs_create_file("btree_transactions", 0400, c->fs_debug_dir,
+			    c->btree_debug, &btree_transactions_ops);
+#endif
+
+	debugfs_create_file("journal_pins", 0400, c->fs_debug_dir,
+			    c->btree_debug, &journal_pins_ops);
+
+	debugfs_create_file("btree_transaction_stats", 0400, c->fs_debug_dir,
+			    c, &lock_held_stats_op);
+
+	debugfs_create_file("btree_deadlock", 0400, c->fs_debug_dir,
+			    c->btree_debug, &btree_deadlock_ops);
+
+	c->btree_debug_dir = debugfs_create_dir("btrees", c->fs_debug_dir);
+	if (IS_ERR_OR_NULL(c->btree_debug_dir))
 		return;
 
 	for (bd = c->btree_debug;
 	     bd < c->btree_debug + ARRAY_SIZE(c->btree_debug);
 	     bd++) {
 		bd->id = bd - c->btree_debug;
-		bd->btree = debugfs_create_file(bch2_btree_ids[bd->id],
-						0400, c->debug, bd,
-						&btree_debug_ops);
+		debugfs_create_file(bch2_btree_ids[bd->id],
+				    0400, c->btree_debug_dir, bd,
+				    &btree_debug_ops);
 
 		snprintf(name, sizeof(name), "%s-formats",
 			 bch2_btree_ids[bd->id]);
 
-		bd->btree_format = debugfs_create_file(name, 0400, c->debug, bd,
-						       &btree_format_debug_ops);
+		debugfs_create_file(name, 0400, c->btree_debug_dir, bd,
+				    &btree_format_debug_ops);
 
 		snprintf(name, sizeof(name), "%s-bfloat-failed",
 			 bch2_btree_ids[bd->id]);
 
-		bd->failed = debugfs_create_file(name, 0400, c->debug, bd,
-						 &bfloat_failed_debug_ops);
+		debugfs_create_file(name, 0400, c->btree_debug_dir, bd,
+				    &bfloat_failed_debug_ops);
 	}
 }
 

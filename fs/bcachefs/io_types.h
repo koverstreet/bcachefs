@@ -87,6 +87,7 @@ struct bch_write_bio {
 	struct bch_write_bio	*parent;
 
 	u64			submit_time;
+	u64			inode_offset;
 
 	struct bch_devs_list	failed;
 	u8			dev;
@@ -95,6 +96,7 @@ struct bch_write_bio {
 				bounce:1,
 				put_bio:1,
 				have_ioref:1,
+				nocow:1,
 				used_mempool:1,
 				first_btree_write:1;
 
@@ -117,6 +119,7 @@ struct bch_write_op {
 	unsigned		nr_replicas_required:4;
 	unsigned		alloc_reserve:3;
 	unsigned		incompressible:1;
+	unsigned		stripe_waited:1;
 
 	struct bch_devs_list	devs_have;
 	u16			target;
@@ -132,27 +135,26 @@ struct bch_write_op {
 
 	struct write_point_specifier write_point;
 
+	struct write_point	*wp;
+	struct list_head	wp_list;
+
 	struct disk_reservation	res;
 
 	struct open_buckets	open_buckets;
 
-	/*
-	 * If caller wants to flush but hasn't passed us a journal_seq ptr, we
-	 * still need to stash the journal_seq somewhere:
-	 */
-	union {
-		u64			*journal_seq_p;
-		u64			journal_seq;
-	};
 	u64			new_i_size;
 	s64			i_sectors_delta;
-
-	int			(*index_update_fn)(struct bch_write_op *);
 
 	struct bch_devs_mask	failed;
 
 	struct keylist		insert_keys;
 	u64			inline_keys[BKEY_EXTENT_U64s_MAX * 2];
+
+	/*
+	 * Bitmask of devices that have had nocow writes issued to them since
+	 * last flush:
+	 */
+	struct bch_devs_mask	*devs_need_flush;
 
 	/* Must be last: */
 	struct bch_write_bio	wbio;

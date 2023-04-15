@@ -4,17 +4,20 @@
 
 #include "ec_types.h"
 #include "buckets_types.h"
-#include "keylist_types.h"
+#include "extents_types.h"
 
-const char *bch2_stripe_invalid(const struct bch_fs *, struct bkey_s_c);
+int bch2_stripe_invalid(const struct bch_fs *, struct bkey_s_c,
+			unsigned, struct printbuf *);
 void bch2_stripe_to_text(struct printbuf *, struct bch_fs *,
 			 struct bkey_s_c);
 
-#define bch2_bkey_ops_stripe (struct bkey_ops) {	\
+#define bch2_bkey_ops_stripe ((struct bkey_ops) {	\
 	.key_invalid	= bch2_stripe_invalid,		\
 	.val_to_text	= bch2_stripe_to_text,		\
 	.swab		= bch2_ptr_swab,		\
-}
+	.trans_trigger	= bch2_trans_mark_stripe,	\
+	.atomic_trigger	= bch2_mark_stripe,		\
+})
 
 static inline unsigned stripe_csums_per_device(const struct bch_stripe *s)
 {
@@ -140,15 +143,24 @@ struct ec_stripe_buf {
 
 struct ec_stripe_head;
 
+enum ec_stripe_ref {
+	STRIPE_REF_io,
+	STRIPE_REF_stripe,
+	STRIPE_REF_NR
+};
+
 struct ec_stripe_new {
 	struct bch_fs		*c;
 	struct ec_stripe_head	*h;
 	struct mutex		lock;
 	struct list_head	list;
+
+	struct hlist_node	hash;
+	u64			idx;
+
 	struct closure		iodone;
 
-	/* counts in flight writes, stripe is created when pin == 0 */
-	atomic_t		pin;
+	atomic_t		ref[STRIPE_REF_NR];
 
 	int			err;
 
@@ -163,9 +175,6 @@ struct ec_stripe_new {
 	open_bucket_idx_t	blocks[BCH_BKEY_PTRS_MAX];
 	struct disk_reservation	res;
 
-	struct keylist		keys;
-	u64			inline_keys[BKEY_U64s * 8];
-
 	struct ec_stripe_buf	new_stripe;
 	struct ec_stripe_buf	existing_stripe;
 };
@@ -177,7 +186,7 @@ struct ec_stripe_head {
 	unsigned		target;
 	unsigned		algo;
 	unsigned		redundancy;
-	bool			copygc;
+	enum alloc_reserve	reserve;
 
 	struct bch_devs_mask	devs;
 	unsigned		nr_active_devs;
@@ -193,27 +202,51 @@ struct ec_stripe_head {
 int bch2_ec_read_extent(struct bch_fs *, struct bch_read_bio *);
 
 void *bch2_writepoint_ec_buf(struct bch_fs *, struct write_point *);
-void bch2_ob_add_backpointer(struct bch_fs *, struct open_bucket *,
-			     struct bkey *);
 
-void bch2_ec_bucket_written(struct bch_fs *, struct open_bucket *);
 void bch2_ec_bucket_cancel(struct bch_fs *, struct open_bucket *);
 
 int bch2_ec_stripe_new_alloc(struct bch_fs *, struct ec_stripe_head *);
 
 void bch2_ec_stripe_head_put(struct bch_fs *, struct ec_stripe_head *);
-struct ec_stripe_head *bch2_ec_stripe_head_get(struct bch_fs *,
-			unsigned, unsigned, unsigned, bool, struct closure *);
+struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *,
+			unsigned, unsigned, unsigned,
+			enum alloc_reserve, struct closure *);
 
 void bch2_stripes_heap_update(struct bch_fs *, struct stripe *, size_t);
 void bch2_stripes_heap_del(struct bch_fs *, struct stripe *, size_t);
 void bch2_stripes_heap_insert(struct bch_fs *, struct stripe *, size_t);
 
+void bch2_do_stripe_deletes(struct bch_fs *);
+void bch2_ec_do_stripe_creates(struct bch_fs *);
+void bch2_ec_stripe_new_free(struct bch_fs *, struct ec_stripe_new *);
+
+static inline void ec_stripe_new_get(struct ec_stripe_new *s,
+				     enum ec_stripe_ref ref)
+{
+	atomic_inc(&s->ref[ref]);
+}
+
+static inline void ec_stripe_new_put(struct bch_fs *c, struct ec_stripe_new *s,
+				     enum ec_stripe_ref ref)
+{
+	BUG_ON(atomic_read(&s->ref[ref]) <= 0);
+
+	if (atomic_dec_and_test(&s->ref[ref]))
+		switch (ref) {
+		case STRIPE_REF_stripe:
+			bch2_ec_stripe_new_free(c, s);
+			break;
+		case STRIPE_REF_io:
+			bch2_ec_do_stripe_creates(c);
+			break;
+		default:
+			unreachable();
+		}
+}
+
 void bch2_ec_stop_dev(struct bch_fs *, struct bch_dev *);
-
-void bch2_ec_flush_new_stripes(struct bch_fs *);
-
-void bch2_stripes_heap_start(struct bch_fs *);
+void bch2_fs_ec_stop(struct bch_fs *);
+void bch2_fs_ec_flush(struct bch_fs *);
 
 int bch2_stripes_read(struct bch_fs *);
 
@@ -221,6 +254,7 @@ void bch2_stripes_heap_to_text(struct printbuf *, struct bch_fs *);
 void bch2_new_stripes_to_text(struct printbuf *, struct bch_fs *);
 
 void bch2_fs_ec_exit(struct bch_fs *);
+void bch2_fs_ec_init_early(struct bch_fs *);
 int bch2_fs_ec_init(struct bch_fs *);
 
 #endif /* _BCACHEFS_EC_H */

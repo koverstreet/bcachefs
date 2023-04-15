@@ -284,6 +284,8 @@ static long bch2_ioctl_disk_set_state(struct bch_fs *c,
 		return PTR_ERR(ca);
 
 	ret = bch2_dev_set_state(c, ca, arg.new_state, arg.flags);
+	if (ret)
+		bch_err(c, "Error setting device state: %s", bch2_err_str(ret));
 
 	percpu_ref_put(&ca->ref);
 	return ret;
@@ -501,13 +503,12 @@ static long bch2_ioctl_dev_usage(struct bch_fs *c,
 	arg.state		= ca->mi.state;
 	arg.bucket_size		= ca->mi.bucket_size;
 	arg.nr_buckets		= ca->mi.nbuckets - ca->mi.first_bucket;
-	arg.available_buckets	= arg.nr_buckets - src.buckets_unavailable;
-	arg.ec_buckets		= src.buckets_ec;
-	arg.ec_sectors		= 0;
+	arg.buckets_ec		= src.buckets_ec;
 
 	for (i = 0; i < BCH_DATA_NR; i++) {
-		arg.buckets[i] = src.d[i].buckets;
-		arg.sectors[i] = src.d[i].sectors;
+		arg.d[i].buckets	= src.d[i].buckets;
+		arg.d[i].sectors	= src.d[i].sectors;
+		arg.d[i].fragmented	= src.d[i].fragmented;
 	}
 
 	percpu_ref_put(&ca->ref);
@@ -632,11 +633,14 @@ do {									\
 									\
 	if (copy_from_user(&i, arg, sizeof(i)))				\
 		return -EFAULT;						\
-	return bch2_ioctl_##_name(c, i);				\
+	ret = bch2_ioctl_##_name(c, i);					\
+	goto out;							\
 } while (0)
 
 long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 {
+	long ret;
+
 	switch (cmd) {
 	case BCH_IOCTL_QUERY_UUID:
 		return bch2_ioctl_query_uuid(c, arg);
@@ -680,6 +684,10 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 	default:
 		return -ENOTTY;
 	}
+out:
+	if (ret < 0)
+		ret = bch2_err_class(ret);
+	return ret;
 }
 
 static DEFINE_IDR(bch_chardev_minor);

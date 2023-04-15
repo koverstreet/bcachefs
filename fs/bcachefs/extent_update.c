@@ -15,17 +15,26 @@ static unsigned bch2_bkey_nr_alloc_ptrs(struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
-	unsigned ret = 0;
+	unsigned ret = 0, lru = 0;
 
 	bkey_extent_entry_for_each(ptrs, entry) {
 		switch (__extent_entry_type(entry)) {
 		case BCH_EXTENT_ENTRY_ptr:
+			/* Might also be updating LRU btree */
+			if (entry->ptr.cached)
+				lru++;
+
+			fallthrough;
 		case BCH_EXTENT_ENTRY_stripe_ptr:
 			ret++;
 		}
 	}
 
-	return ret;
+	/*
+	 * Updating keys in the alloc btree may also update keys in the
+	 * freespace or discard btrees:
+	 */
+	return lru + ret * 2;
 }
 
 static int count_iters_for_insert(struct btree_trans *trans,
@@ -64,8 +73,7 @@ static int count_iters_for_insert(struct btree_trans *trans,
 		for_each_btree_key_norestart(trans, iter,
 				   BTREE_ID_reflink, POS(0, idx + offset),
 				   BTREE_ITER_SLOTS, r_k, ret2) {
-			if (bkey_cmp(bkey_start_pos(r_k.k),
-				     POS(0, idx + sectors)) >= 0)
+			if (bkey_ge(bkey_start_pos(r_k.k), POS(0, idx + sectors)))
 				break;
 
 			/* extent_update_to_keys(), for the reflink_v update */
@@ -120,14 +128,10 @@ int bch2_extent_atomic_end(struct btree_trans *trans,
 
 	bch2_trans_copy_iter(&copy, iter);
 
-	for_each_btree_key_continue_norestart(copy, 0, k, ret) {
+	for_each_btree_key_upto_continue_norestart(copy, insert->k.p, 0, k, ret) {
 		unsigned offset = 0;
 
-		if (bkey_cmp(bkey_start_pos(k.k), *end) >= 0)
-			break;
-
-		if (bkey_cmp(bkey_start_pos(&insert->k),
-			     bkey_start_pos(k.k)) > 0)
+		if (bkey_gt(bkey_start_pos(&insert->k), bkey_start_pos(k.k)))
 			offset = bkey_start_offset(&insert->k) -
 				bkey_start_offset(k.k);
 

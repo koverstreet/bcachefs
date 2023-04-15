@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_EC_TYPES_H
 #define _BCACHEFS_EC_TYPES_H
 
-#include <linux/llist.h>
+#include "bcachefs_format.h"
 
 struct bch_replicas_padded {
 	struct bch_replicas_entry	e;
@@ -11,15 +11,10 @@ struct bch_replicas_padded {
 
 struct stripe {
 	size_t			heap_idx;
-
 	u16			sectors;
 	u8			algorithm;
-
 	u8			nr_blocks;
 	u8			nr_redundant;
-
-	unsigned		alive:1; /* does a corresponding key exist in stripes btree? */
-	unsigned		on_heap:1;
 	u8			blocks_nonempty;
 };
 

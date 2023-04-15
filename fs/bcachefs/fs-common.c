@@ -204,11 +204,18 @@ int bch2_link_trans(struct btree_trans *trans,
 		goto err;
 
 	inode_u->bi_ctime = now;
-	bch2_inode_nlink_inc(inode_u);
+	ret = bch2_inode_nlink_inc(inode_u);
+	if (ret)
+		return ret;
 
 	ret = bch2_inode_peek(trans, &dir_iter, dir_u, dir, BTREE_ITER_INTENT);
 	if (ret)
 		goto err;
+
+	if (bch2_reinherit_attrs(inode_u, dir_u)) {
+		ret = -EXDEV;
+		goto err;
+	}
 
 	dir_u->bi_mtime = dir_u->bi_ctime = now;
 
@@ -297,7 +304,7 @@ int bch2_unlink_trans(struct btree_trans *trans,
 		if (ret)
 			goto err;
 	} else {
-		bch2_inode_nlink_dec(inode_u);
+		bch2_inode_nlink_dec(trans, inode_u);
 	}
 
 	if (inode_u->bi_dir		== dirent_iter.pos.inode &&
@@ -462,7 +469,7 @@ int bch2_rename_trans(struct btree_trans *trans,
 	}
 
 	if (mode == BCH_RENAME_OVERWRITE)
-		bch2_inode_nlink_dec(dst_inode_u);
+		bch2_inode_nlink_dec(trans, dst_inode_u);
 
 	src_dir_u->bi_mtime		= now;
 	src_dir_u->bi_ctime		= now;
@@ -480,11 +487,11 @@ int bch2_rename_trans(struct btree_trans *trans,
 	ret =   bch2_inode_write(trans, &src_dir_iter, src_dir_u) ?:
 		(src_dir.inum != dst_dir.inum
 		 ? bch2_inode_write(trans, &dst_dir_iter, dst_dir_u)
-		 : 0 ) ?:
+		 : 0) ?:
 		bch2_inode_write(trans, &src_inode_iter, src_inode_u) ?:
 		(dst_inum.inum
 		 ? bch2_inode_write(trans, &dst_inode_iter, dst_inode_u)
-		 : 0 );
+		 : 0);
 err:
 	bch2_trans_iter_exit(trans, &dst_inode_iter);
 	bch2_trans_iter_exit(trans, &src_inode_iter);

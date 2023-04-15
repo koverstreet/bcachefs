@@ -103,7 +103,7 @@ int bch2_journal_seq_blacklist_add(struct bch_fs *c, u64 start, u64 end)
 	bl = bch2_sb_resize_journal_seq_blacklist(&c->disk_sb,
 					sb_blacklist_u64s(nr + 1));
 	if (!bl) {
-		ret = -ENOMEM;
+		ret = -BCH_ERR_ENOSPC_sb_journal_seq_blacklist;
 		goto out;
 	}
 
@@ -168,7 +168,7 @@ int bch2_blacklist_table_initialize(struct bch_fs *c)
 	t = kzalloc(sizeof(*t) + sizeof(t->entries[0]) * nr,
 		    GFP_KERNEL);
 	if (!t)
-		return -ENOMEM;
+		return -BCH_ERR_ENOMEM_blacklist_table_init;
 
 	t->nr = nr;
 
@@ -201,17 +201,17 @@ static int bch2_sb_journal_seq_blacklist_validate(struct bch_sb *sb,
 
 		if (le64_to_cpu(e->start) >=
 		    le64_to_cpu(e->end)) {
-			pr_buf(err, "entry %u start >= end (%llu >= %llu)",
+			prt_printf(err, "entry %u start >= end (%llu >= %llu)",
 			       i, le64_to_cpu(e->start), le64_to_cpu(e->end));
-			return -EINVAL;
+			return -BCH_ERR_invalid_sb_journal_seq_blacklist;
 		}
 
 		if (i + 1 < nr &&
 		    le64_to_cpu(e[0].end) >
 		    le64_to_cpu(e[1].start)) {
-			pr_buf(err, "entry %u out of order with next entry (%llu > %llu)",
+			prt_printf(err, "entry %u out of order with next entry (%llu > %llu)",
 			       i + 1, le64_to_cpu(e[0].end), le64_to_cpu(e[1].start));
-			return -EINVAL;
+			return -BCH_ERR_invalid_sb_journal_seq_blacklist;
 		}
 	}
 
@@ -229,12 +229,13 @@ static void bch2_sb_journal_seq_blacklist_to_text(struct printbuf *out,
 
 	for (i = bl->start; i < bl->start + nr; i++) {
 		if (i != bl->start)
-			pr_buf(out, " ");
+			prt_printf(out, " ");
 
-		pr_buf(out, "%llu-%llu",
+		prt_printf(out, "%llu-%llu",
 		       le64_to_cpu(i->start),
 		       le64_to_cpu(i->end));
 	}
+	prt_newline(out);
 }
 
 const struct bch_sb_field_ops bch_sb_field_ops_journal_seq_blacklist = {
@@ -271,7 +272,7 @@ retry:
 		       !test_bit(BCH_FS_STOPPING, &c->flags))
 			b = bch2_btree_iter_next_node(&iter);
 
-		if (ret == -EINTR)
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			goto retry;
 
 		bch2_trans_iter_exit(&trans, &iter);

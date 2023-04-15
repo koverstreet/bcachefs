@@ -80,9 +80,10 @@ union six_lock_state {
 	};
 
 	struct {
-		unsigned	read_lock:27;
+		unsigned	read_lock:26;
 		unsigned	write_locking:1;
 		unsigned	intent_lock:1;
+		unsigned	nospin:1;
 		unsigned	waiters:3;
 		/*
 		 * seq works much like in seqlocks: it's incremented every time
@@ -107,14 +108,21 @@ struct six_lock {
 	union six_lock_state	state;
 	unsigned		intent_lock_recurse;
 	struct task_struct	*owner;
-	struct optimistic_spin_queue osq;
 	unsigned __percpu	*readers;
-
+	struct optimistic_spin_queue osq;
 	raw_spinlock_t		wait_lock;
-	struct list_head	wait_list[2];
+	struct list_head	wait_list;
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 	struct lockdep_map	dep_map;
 #endif
+};
+
+struct six_lock_waiter {
+	struct list_head	list;
+	struct task_struct	*task;
+	enum six_lock_type	lock_want;
+	bool			lock_acquired;
+	u64			start_time;
 };
 
 typedef int (*six_lock_should_sleep_fn)(struct six_lock *lock, void *);
@@ -125,8 +133,7 @@ static __always_inline void __six_lock_init(struct six_lock *lock,
 {
 	atomic64_set(&lock->state.counter, 0);
 	raw_spin_lock_init(&lock->wait_lock);
-	INIT_LIST_HEAD(&lock->wait_list[SIX_LOCK_read]);
-	INIT_LIST_HEAD(&lock->wait_list[SIX_LOCK_intent]);
+	INIT_LIST_HEAD(&lock->wait_list);
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 	debug_check_no_locks_freed((void *) lock, sizeof(*lock));
 	lockdep_init_map(&lock->dep_map, name, key, 0);
@@ -143,10 +150,37 @@ do {									\
 #define __SIX_VAL(field, _v)	(((union six_lock_state) { .field = _v }).v)
 
 #define __SIX_LOCK(type)						\
-bool six_trylock_##type(struct six_lock *);				\
-bool six_relock_##type(struct six_lock *, u32);				\
-int six_lock_##type(struct six_lock *, six_lock_should_sleep_fn, void *);\
-void six_unlock_##type(struct six_lock *);
+bool six_trylock_ip_##type(struct six_lock *, unsigned long);		\
+bool six_relock_ip_##type(struct six_lock *, u32, unsigned long);	\
+int six_lock_ip_##type(struct six_lock *, six_lock_should_sleep_fn,	\
+		       void *, unsigned long);				\
+int six_lock_ip_waiter_##type(struct six_lock *, struct six_lock_waiter *,\
+			six_lock_should_sleep_fn, void *, unsigned long);\
+void six_unlock_ip_##type(struct six_lock *, unsigned long);		\
+									\
+static inline bool six_trylock_##type(struct six_lock *lock)		\
+{									\
+	return six_trylock_ip_##type(lock, _THIS_IP_);			\
+}									\
+static inline bool six_relock_##type(struct six_lock *lock, u32 seq)	\
+{									\
+	return six_relock_ip_##type(lock, seq, _THIS_IP_);		\
+}									\
+static inline int six_lock_##type(struct six_lock *lock,		\
+				  six_lock_should_sleep_fn fn, void *p)\
+{									\
+	return six_lock_ip_##type(lock, fn, p, _THIS_IP_);		\
+}									\
+static inline int six_lock_waiter_##type(struct six_lock *lock,		\
+			struct six_lock_waiter *wait,			\
+			six_lock_should_sleep_fn fn, void *p)		\
+{									\
+	return six_lock_ip_waiter_##type(lock, wait, fn, p, _THIS_IP_);	\
+}									\
+static inline void six_unlock_##type(struct six_lock *lock)		\
+{									\
+	return six_unlock_ip_##type(lock, _THIS_IP_);			\
+}
 
 __SIX_LOCK(read)
 __SIX_LOCK(intent)
@@ -182,6 +216,21 @@ static inline int six_lock_type(struct six_lock *lock, enum six_lock_type type,
 	SIX_LOCK_DISPATCH(type, six_lock, lock, should_sleep_fn, p);
 }
 
+static inline int six_lock_type_ip_waiter(struct six_lock *lock, enum six_lock_type type,
+				struct six_lock_waiter *wait,
+				six_lock_should_sleep_fn should_sleep_fn, void *p,
+				unsigned long ip)
+{
+	SIX_LOCK_DISPATCH(type, six_lock_ip_waiter, lock, wait, should_sleep_fn, p, ip);
+}
+
+static inline int six_lock_type_waiter(struct six_lock *lock, enum six_lock_type type,
+				struct six_lock_waiter *wait,
+				six_lock_should_sleep_fn should_sleep_fn, void *p)
+{
+	SIX_LOCK_DISPATCH(type, six_lock_waiter, lock, wait, should_sleep_fn, p);
+}
+
 static inline void six_unlock_type(struct six_lock *lock, enum six_lock_type type)
 {
 	SIX_LOCK_DISPATCH(type, six_unlock, lock);
@@ -196,8 +245,13 @@ void six_lock_increment(struct six_lock *, enum six_lock_type);
 
 void six_lock_wakeup_all(struct six_lock *);
 
-void six_lock_pcpu_free_rcu(struct six_lock *);
 void six_lock_pcpu_free(struct six_lock *);
 void six_lock_pcpu_alloc(struct six_lock *);
+
+struct six_lock_count {
+	unsigned n[3];
+};
+
+struct six_lock_count six_lock_counts(struct six_lock *);
 
 #endif /* _LINUX_SIX_H */

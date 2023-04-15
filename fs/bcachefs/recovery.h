@@ -2,9 +2,6 @@
 #ifndef _BCACHEFS_RECOVERY_H
 #define _BCACHEFS_RECOVERY_H
 
-#define for_each_journal_key(keys, i)				\
-	for (i = (keys).d; i < (keys).d + (keys).nr; (i)++)
-
 struct journal_iter {
 	struct list_head	list;
 	enum btree_id		btree_id;
@@ -23,16 +20,14 @@ struct btree_and_journal_iter {
 	struct bkey		unpacked;
 
 	struct journal_iter	journal;
-
-	enum last_key_returned {
-		none,
-		btree,
-		journal,
-	}			last;
+	struct bpos		pos;
+	bool			at_end;
 };
 
-size_t bch2_journal_key_search(struct journal_keys *, enum btree_id,
-			       unsigned, struct bpos);
+struct bkey_i *bch2_journal_keys_peek_upto(struct bch_fs *, enum btree_id,
+				unsigned, struct bpos, struct bpos, size_t *);
+struct bkey_i *bch2_journal_keys_peek_slot(struct bch_fs *, enum btree_id,
+					   unsigned, struct bpos);
 
 int bch2_journal_key_insert_take(struct bch_fs *, enum btree_id,
 				 unsigned, struct bkey_i *);
@@ -45,7 +40,6 @@ void bch2_journal_key_overwritten(struct bch_fs *, enum btree_id,
 
 void bch2_btree_and_journal_iter_advance(struct btree_and_journal_iter *);
 struct bkey_s_c bch2_btree_and_journal_iter_peek(struct btree_and_journal_iter *);
-struct bkey_s_c bch2_btree_and_journal_iter_next(struct btree_and_journal_iter *);
 
 void bch2_btree_and_journal_iter_exit(struct btree_and_journal_iter *);
 void __bch2_btree_and_journal_iter_init_node_iter(struct btree_and_journal_iter *,
@@ -56,7 +50,7 @@ void bch2_btree_and_journal_iter_init_node_iter(struct btree_and_journal_iter *,
 						struct btree *);
 
 void bch2_journal_keys_free(struct journal_keys *);
-void bch2_journal_entries_free(struct list_head *);
+void bch2_journal_entries_free(struct bch_fs *);
 
 int bch2_fs_recovery(struct bch_fs *);
 int bch2_fs_initialize(struct bch_fs *);

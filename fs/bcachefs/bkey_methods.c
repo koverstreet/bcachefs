@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "backpointers.h"
 #include "bkey_methods.h"
 #include "btree_types.h"
 #include "alloc_background.h"
@@ -9,6 +10,7 @@
 #include "error.h"
 #include "extents.h"
 #include "inode.h"
+#include "lru.h"
 #include "quota.h"
 #include "reflink.h"
 #include "subvolume.h"
@@ -21,53 +23,60 @@ const char * const bch2_bkey_types[] = {
 	NULL
 };
 
-static const char *deleted_key_invalid(const struct bch_fs *c,
-					struct bkey_s_c k)
+static int deleted_key_invalid(const struct bch_fs *c, struct bkey_s_c k,
+			       unsigned flags, struct printbuf *err)
 {
-	return NULL;
+	return 0;
 }
 
-#define bch2_bkey_ops_deleted (struct bkey_ops) {	\
+#define bch2_bkey_ops_deleted ((struct bkey_ops) {	\
 	.key_invalid = deleted_key_invalid,		\
-}
+})
 
-#define bch2_bkey_ops_whiteout (struct bkey_ops) {	\
+#define bch2_bkey_ops_whiteout ((struct bkey_ops) {	\
 	.key_invalid = deleted_key_invalid,		\
-}
+})
 
-static const char *empty_val_key_invalid(const struct bch_fs *c, struct bkey_s_c k)
+static int empty_val_key_invalid(const struct bch_fs *c, struct bkey_s_c k,
+				 unsigned flags, struct printbuf *err)
 {
-	if (bkey_val_bytes(k.k))
-		return "value size should be zero";
+	if (bkey_val_bytes(k.k)) {
+		prt_printf(err, "incorrect value size (%zu != 0)",
+		       bkey_val_bytes(k.k));
+		return -BCH_ERR_invalid_bkey;
+	}
 
-	return NULL;
+	return 0;
 }
 
-#define bch2_bkey_ops_error (struct bkey_ops) {		\
+#define bch2_bkey_ops_error ((struct bkey_ops) {	\
 	.key_invalid = empty_val_key_invalid,		\
-}
+})
 
-static const char *key_type_cookie_invalid(const struct bch_fs *c,
-					   struct bkey_s_c k)
+static int key_type_cookie_invalid(const struct bch_fs *c, struct bkey_s_c k,
+				   unsigned flags, struct printbuf *err)
 {
-	if (bkey_val_bytes(k.k) != sizeof(struct bch_cookie))
-		return "incorrect value size";
+	if (bkey_val_bytes(k.k) != sizeof(struct bch_cookie)) {
+		prt_printf(err, "incorrect value size (%zu != %zu)",
+		       bkey_val_bytes(k.k), sizeof(struct bch_cookie));
+		return -BCH_ERR_invalid_bkey;
+	}
 
-	return NULL;
+	return 0;
 }
 
-#define bch2_bkey_ops_cookie (struct bkey_ops) {	\
+#define bch2_bkey_ops_cookie ((struct bkey_ops) {	\
 	.key_invalid = key_type_cookie_invalid,		\
-}
+})
 
-#define bch2_bkey_ops_hash_whiteout (struct bkey_ops) {	\
+#define bch2_bkey_ops_hash_whiteout ((struct bkey_ops) {\
 	.key_invalid = empty_val_key_invalid,		\
-}
+})
 
-static const char *key_type_inline_data_invalid(const struct bch_fs *c,
-					   struct bkey_s_c k)
+static int key_type_inline_data_invalid(const struct bch_fs *c, struct bkey_s_c k,
+					unsigned flags, struct printbuf *err)
 {
-	return NULL;
+	return 0;
 }
 
 static void key_type_inline_data_to_text(struct printbuf *out, struct bch_fs *c,
@@ -76,14 +85,37 @@ static void key_type_inline_data_to_text(struct printbuf *out, struct bch_fs *c,
 	struct bkey_s_c_inline_data d = bkey_s_c_to_inline_data(k);
 	unsigned datalen = bkey_inline_data_bytes(k.k);
 
-	pr_buf(out, "datalen %u: %*phN",
+	prt_printf(out, "datalen %u: %*phN",
 	       datalen, min(datalen, 32U), d.v->data);
 }
 
-#define bch2_bkey_ops_inline_data (struct bkey_ops) {	\
+#define bch2_bkey_ops_inline_data ((struct bkey_ops) {	\
 	.key_invalid	= key_type_inline_data_invalid,	\
 	.val_to_text	= key_type_inline_data_to_text,	\
+})
+
+static int key_type_set_invalid(const struct bch_fs *c, struct bkey_s_c k,
+				unsigned flags, struct printbuf *err)
+{
+	if (bkey_val_bytes(k.k)) {
+		prt_printf(err, "incorrect value size (%zu != %zu)",
+		       bkey_val_bytes(k.k), sizeof(struct bch_cookie));
+		return -BCH_ERR_invalid_bkey;
+	}
+
+	return 0;
 }
+
+static bool key_type_set_merge(struct bch_fs *c, struct bkey_s l, struct bkey_s_c r)
+{
+	bch2_key_resize(l.k, l.k->size + r.k->size);
+	return true;
+}
+
+#define bch2_bkey_ops_set ((struct bkey_ops) {		\
+	.key_invalid	= key_type_set_invalid,		\
+	.key_merge	= key_type_set_merge,		\
+})
 
 const struct bkey_ops bch2_bkey_ops[] = {
 #define x(name, nr) [KEY_TYPE_##name]	= bch2_bkey_ops_##name,
@@ -91,12 +123,15 @@ const struct bkey_ops bch2_bkey_ops[] = {
 #undef x
 };
 
-const char *bch2_bkey_val_invalid(struct bch_fs *c, struct bkey_s_c k)
+int bch2_bkey_val_invalid(struct bch_fs *c, struct bkey_s_c k,
+			  unsigned flags, struct printbuf *err)
 {
-	if (k.k->type >= KEY_TYPE_MAX)
-		return "invalid type";
+	if (k.k->type >= KEY_TYPE_MAX) {
+		prt_printf(err, "invalid type (%u >= %u)", k.k->type, KEY_TYPE_MAX);
+		return -BCH_ERR_invalid_bkey;
+	}
 
-	return bch2_bkey_ops[k.k->type].key_invalid(c, k);
+	return bch2_bkey_ops[k.k->type].key_invalid(c, k, flags, err);
 }
 
 static unsigned bch2_key_types_allowed[] = {
@@ -114,6 +149,7 @@ static unsigned bch2_key_types_allowed[] = {
 		(1U << KEY_TYPE_whiteout)|
 		(1U << KEY_TYPE_inode)|
 		(1U << KEY_TYPE_inode_v2)|
+		(1U << KEY_TYPE_inode_v3)|
 		(1U << KEY_TYPE_inode_generation),
 	[BKEY_TYPE_dirents] =
 		(1U << KEY_TYPE_deleted)|
@@ -130,7 +166,8 @@ static unsigned bch2_key_types_allowed[] = {
 		(1U << KEY_TYPE_deleted)|
 		(1U << KEY_TYPE_alloc)|
 		(1U << KEY_TYPE_alloc_v2)|
-		(1U << KEY_TYPE_alloc_v3),
+		(1U << KEY_TYPE_alloc_v3)|
+		(1U << KEY_TYPE_alloc_v4),
 	[BKEY_TYPE_quotas] =
 		(1U << KEY_TYPE_deleted)|
 		(1U << KEY_TYPE_quota),
@@ -147,128 +184,148 @@ static unsigned bch2_key_types_allowed[] = {
 	[BKEY_TYPE_snapshots] =
 		(1U << KEY_TYPE_deleted)|
 		(1U << KEY_TYPE_snapshot),
+	[BKEY_TYPE_lru] =
+		(1U << KEY_TYPE_deleted)|
+		(1U << KEY_TYPE_set),
+	[BKEY_TYPE_freespace] =
+		(1U << KEY_TYPE_deleted)|
+		(1U << KEY_TYPE_set),
+	[BKEY_TYPE_need_discard] =
+		(1U << KEY_TYPE_deleted)|
+		(1U << KEY_TYPE_set),
+	[BKEY_TYPE_backpointers] =
+		(1U << KEY_TYPE_deleted)|
+		(1U << KEY_TYPE_backpointer),
+	[BKEY_TYPE_bucket_gens] =
+		(1U << KEY_TYPE_deleted)|
+		(1U << KEY_TYPE_bucket_gens),
 	[BKEY_TYPE_btree] =
 		(1U << KEY_TYPE_deleted)|
 		(1U << KEY_TYPE_btree_ptr)|
 		(1U << KEY_TYPE_btree_ptr_v2),
 };
 
-const char *__bch2_bkey_invalid(struct bch_fs *c, struct bkey_s_c k,
-				enum btree_node_type type)
+int __bch2_bkey_invalid(struct bch_fs *c, struct bkey_s_c k,
+			enum btree_node_type type,
+			unsigned flags, struct printbuf *err)
 {
-	if (k.k->u64s < BKEY_U64s)
-		return "u64s too small";
+	if (k.k->u64s < BKEY_U64s) {
+		prt_printf(err, "u64s too small (%u < %zu)", k.k->u64s, BKEY_U64s);
+		return -BCH_ERR_invalid_bkey;
+	}
 
-	if (!(bch2_key_types_allowed[type] & (1U << k.k->type)))
-		return "invalid key type for this btree";
-
-	if (type == BKEY_TYPE_btree &&
-	    bkey_val_u64s(k.k) > BKEY_BTREE_PTR_VAL_U64s_MAX)
-		return "value too big";
+	if (!(bch2_key_types_allowed[type] & (1U << k.k->type))) {
+		prt_printf(err, "invalid key type for btree %s (%s)",
+			   bch2_btree_ids[type], bch2_bkey_types[k.k->type]);
+		return -BCH_ERR_invalid_bkey;
+	}
 
 	if (btree_node_type_is_extents(type) && !bkey_whiteout(k.k)) {
-		if (k.k->size == 0)
-			return "bad size field";
+		if (k.k->size == 0) {
+			prt_printf(err, "size == 0");
+			return -BCH_ERR_invalid_bkey;
+		}
 
-		if (k.k->size > k.k->p.offset)
-			return "size greater than offset";
+		if (k.k->size > k.k->p.offset) {
+			prt_printf(err, "size greater than offset (%u > %llu)",
+			       k.k->size, k.k->p.offset);
+			return -BCH_ERR_invalid_bkey;
+		}
 	} else {
-		if (k.k->size)
-			return "nonzero size field";
+		if (k.k->size) {
+			prt_printf(err, "size != 0");
+			return -BCH_ERR_invalid_bkey;
+		}
 	}
 
 	if (type != BKEY_TYPE_btree &&
 	    !btree_type_has_snapshots(type) &&
-	    k.k->p.snapshot)
-		return "nonzero snapshot";
+	    k.k->p.snapshot) {
+		prt_printf(err, "nonzero snapshot");
+		return -BCH_ERR_invalid_bkey;
+	}
 
 	if (type != BKEY_TYPE_btree &&
 	    btree_type_has_snapshots(type) &&
-	    !k.k->p.snapshot)
-		return "invalid snapshot field";
+	    !k.k->p.snapshot) {
+		prt_printf(err, "snapshot == 0");
+		return -BCH_ERR_invalid_bkey;
+	}
 
 	if (type != BKEY_TYPE_btree &&
-	    !bkey_cmp(k.k->p, POS_MAX))
-		return "POS_MAX key";
-
-	return NULL;
-}
-
-const char *bch2_bkey_invalid(struct bch_fs *c, struct bkey_s_c k,
-			      enum btree_node_type type)
-{
-	return __bch2_bkey_invalid(c, k, type) ?:
-		bch2_bkey_val_invalid(c, k);
-}
-
-const char *bch2_bkey_in_btree_node(struct btree *b, struct bkey_s_c k)
-{
-	if (bpos_cmp(k.k->p, b->data->min_key) < 0)
-		return "key before start of btree node";
-
-	if (bpos_cmp(k.k->p, b->data->max_key) > 0)
-		return "key past end of btree node";
-
-	return NULL;
-}
-
-void bch2_bkey_debugcheck(struct bch_fs *c, struct btree *b, struct bkey_s_c k)
-{
-	const char *invalid;
-
-	BUG_ON(!k.k->u64s);
-
-	invalid = bch2_bkey_invalid(c, k, btree_node_type(b)) ?:
-		bch2_bkey_in_btree_node(b, k);
-	if (invalid) {
-		char buf[160];
-
-		bch2_bkey_val_to_text(&PBUF(buf), c, k);
-		bch2_fs_inconsistent(c, "invalid bkey %s: %s", buf, invalid);
+	    bkey_eq(k.k->p, POS_MAX)) {
+		prt_printf(err, "key at POS_MAX");
+		return -BCH_ERR_invalid_bkey;
 	}
+
+	return 0;
+}
+
+int bch2_bkey_invalid(struct bch_fs *c, struct bkey_s_c k,
+		      enum btree_node_type type,
+		      unsigned flags, struct printbuf *err)
+{
+	return __bch2_bkey_invalid(c, k, type, flags, err) ?:
+		bch2_bkey_val_invalid(c, k, flags, err);
+}
+
+int bch2_bkey_in_btree_node(struct btree *b, struct bkey_s_c k,
+			    struct printbuf *err)
+{
+	if (bpos_lt(k.k->p, b->data->min_key)) {
+		prt_printf(err, "key before start of btree node");
+		return -BCH_ERR_invalid_bkey;
+	}
+
+	if (bpos_gt(k.k->p, b->data->max_key)) {
+		prt_printf(err, "key past end of btree node");
+		return -BCH_ERR_invalid_bkey;
+	}
+
+	return 0;
 }
 
 void bch2_bpos_to_text(struct printbuf *out, struct bpos pos)
 {
-	if (!bpos_cmp(pos, POS_MIN))
-		pr_buf(out, "POS_MIN");
-	else if (!bpos_cmp(pos, POS_MAX))
-		pr_buf(out, "POS_MAX");
-	else if (!bpos_cmp(pos, SPOS_MAX))
-		pr_buf(out, "SPOS_MAX");
+	if (bpos_eq(pos, POS_MIN))
+		prt_printf(out, "POS_MIN");
+	else if (bpos_eq(pos, POS_MAX))
+		prt_printf(out, "POS_MAX");
+	else if (bpos_eq(pos, SPOS_MAX))
+		prt_printf(out, "SPOS_MAX");
 	else {
 		if (pos.inode == U64_MAX)
-			pr_buf(out, "U64_MAX");
+			prt_printf(out, "U64_MAX");
 		else
-			pr_buf(out, "%llu", pos.inode);
-		pr_buf(out, ":");
+			prt_printf(out, "%llu", pos.inode);
+		prt_printf(out, ":");
 		if (pos.offset == U64_MAX)
-			pr_buf(out, "U64_MAX");
+			prt_printf(out, "U64_MAX");
 		else
-			pr_buf(out, "%llu", pos.offset);
-		pr_buf(out, ":");
+			prt_printf(out, "%llu", pos.offset);
+		prt_printf(out, ":");
 		if (pos.snapshot == U32_MAX)
-			pr_buf(out, "U32_MAX");
+			prt_printf(out, "U32_MAX");
 		else
-			pr_buf(out, "%u", pos.snapshot);
+			prt_printf(out, "%u", pos.snapshot);
 	}
 }
 
 void bch2_bkey_to_text(struct printbuf *out, const struct bkey *k)
 {
 	if (k) {
-		pr_buf(out, "u64s %u type ", k->u64s);
+		prt_printf(out, "u64s %u type ", k->u64s);
 
 		if (k->type < KEY_TYPE_MAX)
-			pr_buf(out, "%s ", bch2_bkey_types[k->type]);
+			prt_printf(out, "%s ", bch2_bkey_types[k->type]);
 		else
-			pr_buf(out, "%u ", k->type);
+			prt_printf(out, "%u ", k->type);
 
 		bch2_bpos_to_text(out, k->p);
 
-		pr_buf(out, " len %u ver %llu", k->size, k->version.lo);
+		prt_printf(out, " len %u ver %llu", k->size, k->version.lo);
 	} else {
-		pr_buf(out, "(null)");
+		prt_printf(out, "(null)");
 	}
 }
 
@@ -281,7 +338,7 @@ void bch2_val_to_text(struct printbuf *out, struct bch_fs *c,
 		if (likely(ops->val_to_text))
 			ops->val_to_text(out, c, k);
 	} else {
-		pr_buf(out, "(invalid type %u)", k.k->type);
+		prt_printf(out, "(invalid type %u)", k.k->type);
 	}
 }
 
@@ -291,7 +348,7 @@ void bch2_bkey_val_to_text(struct printbuf *out, struct bch_fs *c,
 	bch2_bkey_to_text(out, k.k);
 
 	if (bkey_val_bytes(k.k)) {
-		pr_buf(out, ": ");
+		prt_printf(out, ": ");
 		bch2_val_to_text(out, c, k);
 	}
 }
@@ -317,7 +374,11 @@ bool bch2_bkey_merge(struct bch_fs *c, struct bkey_s l, struct bkey_s_c r)
 {
 	const struct bkey_ops *ops = &bch2_bkey_ops[l.k->type];
 
-	return bch2_bkey_maybe_mergable(l.k, r.k) && ops->key_merge(c, l, r);
+	return bch2_bkey_maybe_mergable(l.k, r.k) &&
+		(u64) l.k->size + r.k->size <= KEY_SIZE_MAX &&
+		bch2_bkey_ops[l.k->type].key_merge &&
+		!bch2_key_merging_disabled &&
+		ops->key_merge(c, l, r);
 }
 
 static const struct old_bkey_type {
@@ -386,6 +447,7 @@ void __bch2_bkey_compat(unsigned level, enum btree_id btree_id,
 		    btree_id == BTREE_ID_inodes) {
 			if (!bkey_packed(k)) {
 				struct bkey_i *u = packed_to_bkey(k);
+
 				swap(u->k.p.inode, u->k.p.offset);
 			} else if (f->bits_per_field[BKEY_FIELD_INODE] &&
 				   f->bits_per_field[BKEY_FIELD_OFFSET]) {

@@ -2,6 +2,7 @@
 #ifndef _BCACHEFS_REPLICAS_H
 #define _BCACHEFS_REPLICAS_H
 
+#include "bkey.h"
 #include "eytzinger.h"
 #include "replicas_types.h"
 
@@ -26,22 +27,6 @@ bool bch2_replicas_marked(struct bch_fs *, struct bch_replicas_entry *);
 int bch2_mark_replicas(struct bch_fs *,
 		       struct bch_replicas_entry *);
 
-struct replicas_delta {
-	s64			delta;
-	struct bch_replicas_entry r;
-} __packed;
-
-struct replicas_delta_list {
-	unsigned		size;
-	unsigned		used;
-
-	struct			{} memset_start;
-	u64			nr_inodes;
-	u64			persistent_reserved[BCH_REPLICAS_MAX];
-	struct			{} memset_end;
-	struct replicas_delta	d[0];
-};
-
 static inline struct replicas_delta *
 replicas_delta_next(struct replicas_delta *d)
 {
@@ -64,6 +49,7 @@ static inline void bch2_replicas_entry_cached(struct bch_replicas_entry *e,
 bool bch2_have_enough_devs(struct bch_fs *, struct bch_devs_mask,
 			   unsigned, bool);
 
+unsigned bch2_sb_dev_has_data(struct bch_sb *, unsigned);
 unsigned bch2_dev_has_data(struct bch_fs *, struct bch_dev *);
 
 int bch2_replicas_gc_end(struct bch_fs *, int);

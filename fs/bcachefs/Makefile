@@ -4,6 +4,7 @@ obj-$(CONFIG_BCACHEFS_FS)	+= bcachefs.o
 bcachefs-y		:=	\
 	alloc_background.o	\
 	alloc_foreground.o	\
+	backpointers.o		\
 	bkey.o			\
 	bkey_methods.o		\
 	bkey_sort.o		\
@@ -13,18 +14,23 @@ bcachefs-y		:=	\
 	btree_io.o		\
 	btree_iter.o		\
 	btree_key_cache.o	\
+	btree_locking.o		\
 	btree_update_interior.o	\
 	btree_update_leaf.o	\
+	btree_write_buffer.o	\
 	buckets.o		\
 	buckets_waiting_for_journal.o	\
 	chardev.o		\
 	checksum.o		\
 	clock.o			\
 	compress.o		\
+	counters.o		\
 	debug.o			\
 	dirent.o		\
 	disk_groups.o		\
+	data_update.o		\
 	ec.o			\
+	errcode.o		\
 	error.o			\
 	extents.o		\
 	extent_update.o		\
@@ -38,12 +44,16 @@ bcachefs-y		:=	\
 	journal.o		\
 	journal_io.o		\
 	journal_reclaim.o	\
+	journal_sb.o		\
 	journal_seq_blacklist.o	\
 	keylist.o		\
+	lru.o			\
 	migrate.o		\
 	move.o			\
 	movinggc.o		\
+	nocow_locking.o		\
 	opts.o			\
+	printbuf.o		\
 	quota.o			\
 	rebalance.o		\
 	recovery.o		\
@@ -56,6 +66,7 @@ bcachefs-y		:=	\
 	sysfs.o			\
 	tests.o			\
 	trace.o			\
+	two_state_shared_lock.o	\
 	util.o			\
 	varint.o		\
 	xattr.o

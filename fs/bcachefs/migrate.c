@@ -8,6 +8,7 @@
 #include "btree_update.h"
 #include "btree_update_interior.h"
 #include "buckets.h"
+#include "errcode.h"
 #include "extents.h"
 #include "io.h"
 #include "journal.h"
@@ -35,83 +36,72 @@ static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s k,
 	return 0;
 }
 
-static int __bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags,
-				   enum btree_id btree_id)
+static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
+				     struct btree_iter *iter,
+				     struct bkey_s_c k,
+				     unsigned dev_idx,
+				     int flags)
 {
-	struct btree_trans trans;
-	struct btree_iter iter;
-	struct bkey_s_c k;
-	struct bkey_buf sk;
-	int ret = 0;
+	struct bch_fs *c = trans->c;
+	struct bkey_i *n;
+	int ret;
 
-	bch2_bkey_buf_init(&sk);
-	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
+	if (!bch2_bkey_has_device_c(k, dev_idx))
+		return 0;
 
-	bch2_trans_iter_init(&trans, &iter, btree_id, POS_MIN,
-			     BTREE_ITER_PREFETCH|
-			     BTREE_ITER_ALL_SNAPSHOTS);
+	n = bch2_bkey_make_mut(trans, k);
+	ret = PTR_ERR_OR_ZERO(n);
+	if (ret)
+		return ret;
 
-	while ((bch2_trans_begin(&trans),
-		(k = bch2_btree_iter_peek(&iter)).k) &&
-	       !(ret = bkey_err(k))) {
-		if (!bch2_bkey_has_device(k, dev_idx)) {
-			bch2_btree_iter_advance(&iter);
-			continue;
-		}
+	ret = drop_dev_ptrs(c, bkey_i_to_s(n), dev_idx, flags, false);
+	if (ret)
+		return ret;
 
-		bch2_bkey_buf_reassemble(&sk, c, k);
+	/*
+	 * If the new extent no longer has any pointers, bch2_extent_normalize()
+	 * will do the appropriate thing with it (turning it into a
+	 * KEY_TYPE_error key, or just a discard if it was a cached extent)
+	 */
+	bch2_extent_normalize(c, bkey_i_to_s(n));
 
-		ret = drop_dev_ptrs(c, bkey_i_to_s(sk.k),
-				    dev_idx, flags, false);
-		if (ret)
-			break;
+	/*
+	 * Since we're not inserting through an extent iterator
+	 * (BTREE_ITER_ALL_SNAPSHOTS iterators aren't extent iterators),
+	 * we aren't using the extent overwrite path to delete, we're
+	 * just using the normal key deletion path:
+	 */
+	if (bkey_deleted(&n->k))
+		n->k.size = 0;
 
-		/*
-		 * If the new extent no longer has any pointers, bch2_extent_normalize()
-		 * will do the appropriate thing with it (turning it into a
-		 * KEY_TYPE_error key, or just a discard if it was a cached extent)
-		 */
-		bch2_extent_normalize(c, bkey_i_to_s(sk.k));
-
-		/*
-		 * Since we're not inserting through an extent iterator
-		 * (BTREE_ITER_ALL_SNAPSHOTS iterators aren't extent iterators),
-		 * we aren't using the extent overwrite path to delete, we're
-		 * just using the normal key deletion path:
-		 */
-		if (bkey_deleted(&sk.k->k))
-			sk.k->k.size = 0;
-
-		ret   = bch2_btree_iter_traverse(&iter) ?:
-			bch2_trans_update(&trans, &iter, sk.k,
-					  BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE) ?:
-			bch2_trans_commit(&trans, NULL, NULL,
-					BTREE_INSERT_NOFAIL);
-
-		/*
-		 * don't want to leave ret == -EINTR, since if we raced and
-		 * something else overwrote the key we could spuriously return
-		 * -EINTR below:
-		 */
-		if (ret == -EINTR)
-			ret = 0;
-		if (ret)
-			break;
-	}
-	bch2_trans_iter_exit(&trans, &iter);
-
-	bch2_trans_exit(&trans);
-	bch2_bkey_buf_exit(&sk, c);
-
-	BUG_ON(ret == -EINTR);
-
-	return ret;
+	return bch2_trans_update(trans, iter, n, BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE);
 }
 
 static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
 {
-	return  __bch2_dev_usrdata_drop(c, dev_idx, flags, BTREE_ID_extents) ?:
-		__bch2_dev_usrdata_drop(c, dev_idx, flags, BTREE_ID_reflink);
+	struct btree_trans trans;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	enum btree_id id;
+	int ret = 0;
+
+	bch2_trans_init(&trans, c, BTREE_ITER_MAX, 0);
+
+	for (id = 0; id < BTREE_ID_NR; id++) {
+		if (!btree_type_has_ptrs(id))
+			continue;
+
+		ret = for_each_btree_key_commit(&trans, iter, id, POS_MIN,
+				BTREE_ITER_PREFETCH|BTREE_ITER_ALL_SNAPSHOTS, k,
+				NULL, NULL, BTREE_INSERT_NOFAIL,
+			bch2_dev_usrdata_drop_key(&trans, &iter, k, dev_idx, flags));
+		if (ret)
+			break;
+	}
+
+	bch2_trans_exit(&trans);
+
+	return ret;
 }
 
 static int bch2_dev_metadata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
@@ -140,8 +130,7 @@ retry:
 		while (bch2_trans_begin(&trans),
 		       (b = bch2_btree_iter_peek_node(&iter)) &&
 		       !(ret = PTR_ERR_OR_ZERO(b))) {
-			if (!bch2_bkey_has_device(bkey_i_to_s_c(&b->key),
-						  dev_idx))
+			if (!bch2_bkey_has_device_c(bkey_i_to_s_c(&b->key), dev_idx))
 				goto next;
 
 			bch2_bkey_buf_copy(&k, c, &b->key);
@@ -154,19 +143,20 @@ retry:
 			}
 
 			ret = bch2_btree_node_update_key(&trans, &iter, b, k.k, false);
-			if (ret == -EINTR) {
+			if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
 				ret = 0;
 				continue;
 			}
 
 			if (ret) {
-				bch_err(c, "Error updating btree node key: %i", ret);
+				bch_err(c, "Error updating btree node key: %s",
+					bch2_err_str(ret));
 				break;
 			}
 next:
 			bch2_btree_iter_next_node(&iter);
 		}
-		if (ret == -EINTR)
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			goto retry;
 
 		bch2_trans_iter_exit(&trans, &iter);
@@ -175,16 +165,13 @@ next:
 			goto err;
 	}
 
-	/* flush relevant btree updates */
-	closure_wait_event(&c->btree_interior_update_wait,
-			   !bch2_btree_interior_updates_nr_pending(c));
-
+	bch2_btree_interior_updates_flush(c);
 	ret = 0;
 err:
 	bch2_trans_exit(&trans);
 	bch2_bkey_buf_exit(&k, c);
 
-	BUG_ON(ret == -EINTR);
+	BUG_ON(bch2_err_matches(ret, BCH_ERR_transaction_restart));
 
 	return ret;
 }

@@ -4,6 +4,8 @@
 
 #include "bcachefs.h"
 #include "alloc_types.h"
+#include "extents.h"
+#include "super.h"
 
 #include <linux/hash.h>
 
@@ -11,6 +13,10 @@ struct bkey;
 struct bch_dev;
 struct bch_fs;
 struct bch_devs_List;
+
+extern const char * const bch2_alloc_reserves[];
+
+void bch2_reset_alloc_cursors(struct bch_fs *);
 
 struct dev_alloc_list {
 	unsigned	nr;
@@ -25,8 +31,7 @@ void bch2_dev_stripe_increment(struct bch_dev *, struct dev_stripe_state *);
 long bch2_bucket_alloc_new_fs(struct bch_dev *);
 
 struct open_bucket *bch2_bucket_alloc(struct bch_fs *, struct bch_dev *,
-				      enum alloc_reserve, bool,
-				      struct closure *);
+				      enum alloc_reserve, struct closure *);
 
 static inline void ob_push(struct bch_fs *c, struct open_buckets *obs,
 			   struct open_bucket *ob)
@@ -77,6 +82,21 @@ static inline void bch2_open_buckets_put(struct bch_fs *c,
 	ptrs->nr = 0;
 }
 
+static inline void bch2_alloc_sectors_done_inlined(struct bch_fs *c, struct write_point *wp)
+{
+	struct open_buckets ptrs = { .nr = 0 }, keep = { .nr = 0 };
+	struct open_bucket *ob;
+	unsigned i;
+
+	open_bucket_for_each(c, &wp->ptrs, ob, i)
+		ob_push(c, !ob->sectors_free ? &ptrs : &keep, ob);
+	wp->ptrs = keep;
+
+	mutex_unlock(&wp->lock);
+
+	bch2_open_buckets_put(c, &ptrs);
+}
+
 static inline void bch2_open_bucket_get(struct bch_fs *c,
 					struct write_point *wp,
 					struct open_buckets *ptrs)
@@ -115,30 +135,74 @@ static inline bool bch2_bucket_is_open(struct bch_fs *c, unsigned dev, u64 bucke
 	return false;
 }
 
-int bch2_bucket_alloc_set(struct bch_fs *, struct open_buckets *,
-		      struct dev_stripe_state *, struct bch_devs_mask *,
-		      unsigned, unsigned *, bool *, enum alloc_reserve,
-		      unsigned, struct closure *);
+static inline bool bch2_bucket_is_open_safe(struct bch_fs *c, unsigned dev, u64 bucket)
+{
+	bool ret;
 
-struct write_point *bch2_alloc_sectors_start(struct bch_fs *,
-					     unsigned, unsigned,
-					     struct write_point_specifier,
-					     struct bch_devs_list *,
-					     unsigned, unsigned,
-					     enum alloc_reserve,
-					     unsigned,
-					     struct closure *);
+	if (bch2_bucket_is_open(c, dev, bucket))
+		return true;
+
+	spin_lock(&c->freelist_lock);
+	ret = bch2_bucket_is_open(c, dev, bucket);
+	spin_unlock(&c->freelist_lock);
+
+	return ret;
+}
+
+int bch2_bucket_alloc_set_trans(struct btree_trans *, struct open_buckets *,
+		      struct dev_stripe_state *, struct bch_devs_mask *,
+		      unsigned, unsigned *, bool *, unsigned,
+		      enum bch_data_type, enum alloc_reserve,
+		      struct closure *);
+
+int bch2_alloc_sectors_start_trans(struct btree_trans *,
+				   unsigned, unsigned,
+				   struct write_point_specifier,
+				   struct bch_devs_list *,
+				   unsigned, unsigned,
+				   enum alloc_reserve,
+				   unsigned,
+				   struct closure *,
+				   struct write_point **);
 
 struct bch_extent_ptr bch2_ob_ptr(struct bch_fs *, struct open_bucket *);
+
+/*
+ * Append pointers to the space we just allocated to @k, and mark @sectors space
+ * as allocated out of @ob
+ */
+static inline void
+bch2_alloc_sectors_append_ptrs_inlined(struct bch_fs *c, struct write_point *wp,
+				       struct bkey_i *k, unsigned sectors,
+				       bool cached)
+{
+	struct open_bucket *ob;
+	unsigned i;
+
+	BUG_ON(sectors > wp->sectors_free);
+	wp->sectors_free	-= sectors;
+	wp->sectors_allocated	+= sectors;
+
+	open_bucket_for_each(c, &wp->ptrs, ob, i) {
+		struct bch_dev *ca = bch_dev_bkey_exists(c, ob->dev);
+		struct bch_extent_ptr ptr = bch2_ob_ptr(c, ob);
+
+		ptr.cached = cached ||
+			(!ca->mi.durability &&
+			 wp->data_type == BCH_DATA_user);
+
+		bch2_bkey_append_ptr(k, ptr);
+
+		BUG_ON(sectors > ob->sectors_free);
+		ob->sectors_free -= sectors;
+	}
+}
+
 void bch2_alloc_sectors_append_ptrs(struct bch_fs *, struct write_point *,
 				    struct bkey_i *, unsigned, bool);
 void bch2_alloc_sectors_done(struct bch_fs *, struct write_point *);
 
-void bch2_open_buckets_stop_dev(struct bch_fs *, struct bch_dev *,
-				struct open_buckets *);
-
-void bch2_writepoint_stop(struct bch_fs *, struct bch_dev *,
-			  struct write_point *);
+void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *, bool);
 
 static inline struct write_point_specifier writepoint_hashed(unsigned long v)
 {
@@ -153,5 +217,8 @@ static inline struct write_point_specifier writepoint_ptr(struct write_point *wp
 void bch2_fs_allocator_foreground_init(struct bch_fs *);
 
 void bch2_open_buckets_to_text(struct printbuf *, struct bch_fs *);
+void bch2_open_buckets_partial_to_text(struct printbuf *, struct bch_fs *);
+
+void bch2_write_points_to_text(struct printbuf *, struct bch_fs *);
 
 #endif /* _BCACHEFS_ALLOC_FOREGROUND_H */

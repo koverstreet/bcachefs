@@ -26,6 +26,9 @@ struct flags_set {
 	unsigned		flags;
 
 	unsigned		projid;
+
+	bool			set_projinherit;
+	bool			projinherit;
 };
 
 static int bch2_inode_flags_set(struct bch_inode_info *inode,
@@ -49,6 +52,11 @@ static int bch2_inode_flags_set(struct bch_inode_info *inode,
 	    !S_ISDIR(bi->bi_mode) &&
 	    (newflags & (BCH_INODE_NODUMP|BCH_INODE_NOATIME)) != newflags)
 		return -EINVAL;
+
+	if (s->set_projinherit) {
+		bi->bi_fields_set &= ~(1 << Inode_opt_project);
+		bi->bi_fields_set |= ((int) s->projinherit << Inode_opt_project);
+	}
 
 	bi->bi_flags &= ~s->mask;
 	bi->bi_flags |= newflags;
@@ -85,7 +93,7 @@ static int bch2_ioc_setflags(struct bch_fs *c,
 		return ret;
 
 	inode_lock(&inode->v);
-	if (!inode_owner_or_capable(&inode->v)) {
+	if (!inode_owner_or_capable(file_mnt_user_ns(file), &inode->v)) {
 		ret = -EACCES;
 		goto setflags_out;
 	}
@@ -107,6 +115,10 @@ static int bch2_ioc_fsgetxattr(struct bch_inode_info *inode,
 	struct fsxattr fa = { 0 };
 
 	fa.fsx_xflags = map_flags(bch_flags_to_xflags, inode->ei_inode.bi_flags);
+
+	if (inode->ei_inode.bi_fields_set & (1 << Inode_opt_project))
+		fa.fsx_xflags |= FS_XFLAG_PROJINHERIT;
+
 	fa.fsx_projid = inode->ei_qid.q[QTYP_PRJ];
 
 	return copy_to_user(arg, &fa, sizeof(fa));
@@ -138,6 +150,10 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 	if (copy_from_user(&fa, arg, sizeof(fa)))
 		return -EFAULT;
 
+	s.set_projinherit = true;
+	s.projinherit = (fa.fsx_xflags & FS_XFLAG_PROJINHERIT) != 0;
+	fa.fsx_xflags &= ~FS_XFLAG_PROJINHERIT;
+
 	s.flags = map_flags_rev(bch_flags_to_xflags, fa.fsx_xflags);
 	if (fa.fsx_xflags)
 		return -EOPNOTSUPP;
@@ -156,7 +172,7 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 		return ret;
 
 	inode_lock(&inode->v);
-	if (!inode_owner_or_capable(&inode->v)) {
+	if (!inode_owner_or_capable(file_mnt_user_ns(file), &inode->v)) {
 		ret = -EACCES;
 		goto err;
 	}
@@ -268,22 +284,20 @@ static int bch2_ioc_goingdown(struct bch_fs *c, u32 __user *arg)
 	down_write(&c->vfs_sb->s_umount);
 
 	switch (flags) {
-	case FSOP_GOING_FLAGS_DEFAULT: {
-		struct super_block *sb = freeze_bdev(c->vfs_sb->s_bdev);
+	case FSOP_GOING_FLAGS_DEFAULT:
+		ret = freeze_bdev(c->vfs_sb->s_bdev);
 		if (ret)
 			goto err;
 
-		if (sb && !IS_ERR(sb)) {
-			bch2_journal_flush(&c->journal);
-			c->vfs_sb->s_flags |= SB_RDONLY;
-			bch2_fs_emergency_read_only(c);
-			thaw_bdev(c->vfs_sb->s_bdev, sb);
-		}
+		bch2_journal_flush(&c->journal);
+		c->vfs_sb->s_flags |= SB_RDONLY;
+		bch2_fs_emergency_read_only(c);
+		thaw_bdev(c->vfs_sb->s_bdev);
 		break;
-	}
 
 	case FSOP_GOING_FLAGS_LOGFLUSH:
 		bch2_journal_flush(&c->journal);
+		fallthrough;
 
 	case FSOP_GOING_FLAGS_NOLOGFLUSH:
 		c->vfs_sb->s_flags |= SB_RDONLY;
@@ -379,7 +393,8 @@ retry:
 		goto err3;
 	}
 
-	error = inode_permission(dir, MAY_WRITE | MAY_EXEC);
+	error = inode_permission(file_mnt_user_ns(filp),
+				 dir, MAY_WRITE | MAY_EXEC);
 	if (error)
 		goto err3;
 
@@ -394,7 +409,7 @@ retry:
 	    !arg.src_ptr)
 		snapshot_src.subvol = to_bch_ei(dir)->ei_inode.bi_subvol;
 
-	inode = __bch2_create(NULL, to_bch_ei(dir),
+	inode = __bch2_create(file_mnt_user_ns(filp), to_bch_ei(dir),
 			      dst_dentry, arg.mode|S_IFDIR,
 			      0, snapshot_src, create_flags);
 	error = PTR_ERR_OR_ZERO(inode);
@@ -436,17 +451,20 @@ static long bch2_ioctl_subvolume_destroy(struct bch_fs *c, struct file *filp,
 		return ret;
 
 	if (path.dentry->d_sb->s_fs_info != c) {
-		path_put(&path);
-		return -EXDEV;
+		ret = -EXDEV;
+		goto err;
 	}
 
 	dir = path.dentry->d_parent->d_inode;
 
 	ret = __bch2_unlink(dir, path.dentry, true);
-	if (!ret)
-		d_delete(path.dentry);
-	path_put(&path);
+	if (ret)
+		goto err;
 
+	fsnotify_rmdir(dir, path.dentry);
+	d_delete(path.dentry);
+err:
+	path_put(&path);
 	return ret;
 }
 
@@ -454,51 +472,67 @@ long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	struct bch_inode_info *inode = file_bch_inode(file);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	long ret;
 
 	switch (cmd) {
 	case FS_IOC_GETFLAGS:
-		return bch2_ioc_getflags(inode, (int __user *) arg);
+		ret = bch2_ioc_getflags(inode, (int __user *) arg);
+		break;
 
 	case FS_IOC_SETFLAGS:
-		return bch2_ioc_setflags(c, file, inode, (int __user *) arg);
+		ret = bch2_ioc_setflags(c, file, inode, (int __user *) arg);
+		break;
 
 	case FS_IOC_FSGETXATTR:
-		return bch2_ioc_fsgetxattr(inode, (void __user *) arg);
+		ret = bch2_ioc_fsgetxattr(inode, (void __user *) arg);
+		break;
+
 	case FS_IOC_FSSETXATTR:
-		return bch2_ioc_fssetxattr(c, file, inode,
-					   (void __user *) arg);
+		ret = bch2_ioc_fssetxattr(c, file, inode,
+					  (void __user *) arg);
+		break;
 
 	case BCHFS_IOC_REINHERIT_ATTRS:
-		return bch2_ioc_reinherit_attrs(c, file, inode,
-						(void __user *) arg);
+		ret = bch2_ioc_reinherit_attrs(c, file, inode,
+					       (void __user *) arg);
+		break;
 
 	case FS_IOC_GETVERSION:
-		return -ENOTTY;
+		ret = -ENOTTY;
+		break;
+
 	case FS_IOC_SETVERSION:
-		return -ENOTTY;
+		ret = -ENOTTY;
+		break;
 
 	case FS_IOC_GOINGDOWN:
-		return bch2_ioc_goingdown(c, (u32 __user *) arg);
+		ret = bch2_ioc_goingdown(c, (u32 __user *) arg);
+		break;
 
 	case BCH_IOCTL_SUBVOLUME_CREATE: {
 		struct bch_ioctl_subvolume i;
 
-		if (copy_from_user(&i, (void __user *) arg, sizeof(i)))
-			return -EFAULT;
-		return bch2_ioctl_subvolume_create(c, file, i);
+		ret = copy_from_user(&i, (void __user *) arg, sizeof(i))
+			? -EFAULT
+			: bch2_ioctl_subvolume_create(c, file, i);
+		break;
 	}
 
 	case BCH_IOCTL_SUBVOLUME_DESTROY: {
 		struct bch_ioctl_subvolume i;
 
-		if (copy_from_user(&i, (void __user *) arg, sizeof(i)))
-			return -EFAULT;
-		return bch2_ioctl_subvolume_destroy(c, file, i);
+		ret = copy_from_user(&i, (void __user *) arg, sizeof(i))
+			? -EFAULT
+			: bch2_ioctl_subvolume_destroy(c, file, i);
+		break;
 	}
 
 	default:
-		return bch2_fs_ioctl(c, cmd, (void __user *) arg);
+		ret = bch2_fs_ioctl(c, cmd, (void __user *) arg);
+		break;
 	}
+
+	return bch2_err_class(ret);
 }
 
 #ifdef CONFIG_COMPAT

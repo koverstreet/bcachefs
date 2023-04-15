@@ -205,109 +205,15 @@ static inline size_t btree_aux_data_u64s(const struct btree *b)
 	return btree_aux_data_bytes(b) / sizeof(u64);
 }
 
-typedef void (*compiled_unpack_fn)(struct bkey *, const struct bkey_packed *);
-
-static inline void
-__bkey_unpack_key_format_checked(const struct btree *b,
-			       struct bkey *dst,
-			       const struct bkey_packed *src)
-{
-#ifdef HAVE_BCACHEFS_COMPILED_UNPACK
-	{
-		compiled_unpack_fn unpack_fn = b->aux_data;
-		unpack_fn(dst, src);
-
-		if (bch2_expensive_debug_checks) {
-			struct bkey dst2 = __bch2_bkey_unpack_key(&b->format, src);
-
-			BUG_ON(memcmp(dst, &dst2, sizeof(*dst)));
-		}
-	}
-#else
-	*dst = __bch2_bkey_unpack_key(&b->format, src);
-#endif
-}
-
-static inline struct bkey
-bkey_unpack_key_format_checked(const struct btree *b,
-			       const struct bkey_packed *src)
-{
-	struct bkey dst;
-
-	__bkey_unpack_key_format_checked(b, &dst, src);
-	return dst;
-}
-
-static inline void __bkey_unpack_key(const struct btree *b,
-				     struct bkey *dst,
-				     const struct bkey_packed *src)
-{
-	if (likely(bkey_packed(src)))
-		__bkey_unpack_key_format_checked(b, dst, src);
-	else
-		*dst = *packed_to_bkey_c(src);
-}
-
-/**
- * bkey_unpack_key -- unpack just the key, not the value
- */
-static inline struct bkey bkey_unpack_key(const struct btree *b,
-					  const struct bkey_packed *src)
-{
-	return likely(bkey_packed(src))
-		? bkey_unpack_key_format_checked(b, src)
-		: *packed_to_bkey_c(src);
-}
-
-static inline struct bpos
-bkey_unpack_pos_format_checked(const struct btree *b,
-			       const struct bkey_packed *src)
-{
-#ifdef HAVE_BCACHEFS_COMPILED_UNPACK
-	return bkey_unpack_key_format_checked(b, src).p;
-#else
-	return __bkey_unpack_pos(&b->format, src);
-#endif
-}
-
-static inline struct bpos bkey_unpack_pos(const struct btree *b,
-					  const struct bkey_packed *src)
-{
-	return likely(bkey_packed(src))
-		? bkey_unpack_pos_format_checked(b, src)
-		: packed_to_bkey_c(src)->p;
-}
-
-/* Disassembled bkeys */
-
-static inline struct bkey_s_c bkey_disassemble(struct btree *b,
-					       const struct bkey_packed *k,
-					       struct bkey *u)
-{
-	__bkey_unpack_key(b, u, k);
-
-	return (struct bkey_s_c) { u, bkeyp_val(&b->format, k), };
-}
-
-/* non const version: */
-static inline struct bkey_s __bkey_disassemble(struct btree *b,
-					       struct bkey_packed *k,
-					       struct bkey *u)
-{
-	__bkey_unpack_key(b, u, k);
-
-	return (struct bkey_s) { .k = u, .v = bkeyp_val(&b->format, k), };
-}
-
 #define for_each_bset(_b, _t)						\
 	for (_t = (_b)->set; _t < (_b)->set + (_b)->nsets; _t++)
 
 #define bset_tree_for_each_key(_b, _t, _k)				\
 	for (_k = btree_bkey_first(_b, _t);				\
 	     _k != btree_bkey_last(_b, _t);				\
-	     _k = bkey_next(_k))
+	     _k = bkey_p_next(_k))
 
-static inline bool bset_has_ro_aux_tree(struct bset_tree *t)
+static inline bool bset_has_ro_aux_tree(const struct bset_tree *t)
 {
 	return bset_aux_tree_type(t) == BSET_RO_AUX_TREE;
 }
@@ -383,6 +289,21 @@ static inline int bkey_cmp_p_or_unp(const struct btree *b,
 		return __bch2_bkey_cmp_packed_format_checked(l, r_packed, b);
 
 	return __bch2_bkey_cmp_left_packed_format_checked(b, l, r);
+}
+
+static inline struct bset_tree *
+bch2_bkey_to_bset_inlined(struct btree *b, struct bkey_packed *k)
+{
+	unsigned offset = __btree_node_key_to_offset(b, k);
+	struct bset_tree *t;
+
+	for_each_bset(b, t)
+		if (offset <= t->end_offset) {
+			EBUG_ON(offset < btree_bkey_first_offset(t));
+			return t;
+		}
+
+	BUG();
 }
 
 struct bset_tree *bch2_bkey_to_bset(struct btree *, struct bkey_packed *);
@@ -526,6 +447,11 @@ struct bkey_s_c bch2_btree_node_iter_peek_unpack(struct btree_node_iter *,
 						struct btree *,
 						struct bkey *);
 
+#define for_each_btree_node_key(b, k, iter)				\
+	for (bch2_btree_node_iter_init_from_start((iter), (b));		\
+	     (k = bch2_btree_node_iter_peek((iter), (b)));		\
+	     bch2_btree_node_iter_advance(iter, b))
+
 #define for_each_btree_node_key_unpack(b, k, iter, unpacked)		\
 	for (bch2_btree_node_iter_init_from_start((iter), (b));		\
 	     (k = bch2_btree_node_iter_peek_unpack((iter), (b), (unpacked))).k;\
@@ -578,7 +504,7 @@ struct bset_stats {
 	size_t failed;
 };
 
-void bch2_btree_keys_stats(struct btree *, struct bset_stats *);
+void bch2_btree_keys_stats(const struct btree *, struct bset_stats *);
 void bch2_bfloat_to_text(struct printbuf *, struct btree *,
 			 struct bkey_packed *);
 
