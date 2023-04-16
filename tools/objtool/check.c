@@ -853,7 +853,7 @@ static int add_switch_table(struct objtool_file *file, struct instruction *insn,
 			break;
 
 		alt_insn = find_insn(file, rela->sym->sec, rela->addend);
-		if (!alt_insn)
+		if (!alt_insn || !alt_insn->func)
 			break;
 
 		/* Make sure the jmp dest is in the function or subfunction: */
