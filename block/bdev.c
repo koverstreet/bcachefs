@@ -922,7 +922,7 @@ EXPORT_SYMBOL(lookup_bdev);
 
 int __invalidate_device(struct block_device *bdev, bool kill_dirty)
 {
-	struct super_block *sb = get_super(bdev);
+	struct super_block *sb = try_get_super(bdev);
 	int res = 0;
 
 	if (sb) {
