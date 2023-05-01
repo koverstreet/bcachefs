@@ -791,14 +791,7 @@ void iterate_supers_type(struct file_system_type *type,
 
 EXPORT_SYMBOL(iterate_supers_type);
 
-/**
- * get_super - get the superblock of a device
- * @bdev: device to get the superblock for
- *
- * Scans the superblock list and finds the superblock of the file system
- * mounted on the device given. %NULL is returned if no match is found.
- */
-struct super_block *get_super(struct block_device *bdev)
+static struct super_block *__get_super(struct block_device *bdev, bool try)
 {
 	struct super_block *sb;
 
@@ -813,7 +806,12 @@ rescan:
 		if (sb->s_bdev == bdev) {
 			sb->s_count++;
 			spin_unlock(&sb_lock);
-			down_read(&sb->s_umount);
+
+			if (!try)
+				down_read(&sb->s_umount);
+			else if (!down_read_trylock(&sb->s_umount))
+				return NULL;
+
 			/* still alive? */
 			if (sb->s_root && (sb->s_flags & SB_BORN))
 				return sb;
@@ -826,6 +824,30 @@ rescan:
 	}
 	spin_unlock(&sb_lock);
 	return NULL;
+}
+
+/**
+ * get_super - get the superblock of a device
+ * @bdev: device to get the superblock for
+ *
+ * Scans the superblock list and finds the superblock of the file system
+ * mounted on the device given. %NULL is returned if no match is found.
+ */
+struct super_block *get_super(struct block_device *bdev)
+{
+	return __get_super(bdev, false);
+}
+
+/**
+ * try_get_super - get the superblock of a device, using trylock on sb->s_umount
+ * @bdev: device to get the superblock for
+ *
+ * Scans the superblock list and finds the superblock of the file system
+ * mounted on the device given. %NULL is returned if no match is found.
+ */
+struct super_block *try_get_super(struct block_device *bdev)
+{
+	return __get_super(bdev, true);
 }
 
 /**
