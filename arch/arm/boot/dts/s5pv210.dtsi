@@ -401,7 +401,7 @@
 			status = "disabled";
 		};
 
-		hsotg: hsotg@ec000000 {
+		hsotg: usb@ec000000 {
 			compatible = "samsung,s3c6400-hsotg";
 			reg = <0xec000000 0x20000>;
 			interrupt-parent = <&vic1>;
@@ -452,8 +452,8 @@
 			reg = <0xf1700000 0x10000>;
 			interrupt-parent = <&vic2>;
 			interrupts = <14>;
-			clocks = <&clocks DOUT_MFC>, <&clocks CLK_MFC>;
-			clock-names = "sclk_mfc", "mfc";
+			clocks = <&clocks CLK_MFC>, <&clocks DOUT_MFC>;
+			clock-names = "mfc", "sclk_mfc";
 		};
 
 		vic0: interrupt-controller@f2000000 {
@@ -549,8 +549,6 @@
 
 		camera: camera@fa600000 {
 			compatible = "samsung,fimc";
-			pinctrl-names = "default";
-			pinctrl-0 = <>;
 			clocks = <&clocks SCLK_CAM0>, <&clocks SCLK_CAM1>;
 			clock-names = "sclk_cam0", "sclk_cam1";
 			#address-cells = <1>;
