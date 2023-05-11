@@ -1707,8 +1707,7 @@ static struct page *_compaction_alloc(struct page *migratepage,
 static struct page *compaction_alloc(struct page *migratepage,
 				     unsigned long data)
 {
-	return alloc_hooks(_compaction_alloc(migratepage, data),
-			   struct page *, NULL);
+	return alloc_hooks(_compaction_alloc(migratepage, data));
 }
 
 /*
