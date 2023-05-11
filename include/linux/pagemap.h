@@ -475,8 +475,8 @@ static inline struct folio *_filemap_alloc_folio(gfp_t gfp, unsigned int order)
 }
 #endif
 
-#define filemap_alloc_folio(_gfp, _order) \
-	alloc_hooks(_filemap_alloc_folio(_gfp, _order))
+#define filemap_alloc_folio(...)				\
+	alloc_hooks(_filemap_alloc_folio(__VA_ARGS__))
 
 static inline struct page *__page_cache_alloc(gfp_t gfp)
 {
