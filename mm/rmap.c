@@ -1377,9 +1377,9 @@ void page_remove_rmap(struct page *page, struct vm_area_struct *vma,
 
 	VM_BUG_ON_PAGE(compound && !PageHead(page), page);
 
-	/* Hugetlb pages are not counted in NR_*MAPPED */
-	if (unlikely(folio_test_hugetlb(folio))) {
-		/* hugetlb pages are always mapped with pmds */
+	/* Hugetlb pages usually are not counted in NR_*MAPPED */
+	if (unlikely(folio_test_hugetlb(folio) && compound)) {
+		/* hugetlb pages are mapped with pmds */
 		atomic_dec(&folio->_entire_mapcount);
 		return;
 	}
