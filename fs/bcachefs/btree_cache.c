@@ -65,7 +65,7 @@ static void btree_node_data_free(struct bch_fs *c, struct btree *b)
 	kvpfree(b->data, btree_bytes(c));
 	b->data = NULL;
 #ifdef __KERNEL__
-	vfree(b->aux_data);
+	kfree(b->aux_data);
 #else
 	munmap(b->aux_data, btree_aux_data_bytes(b));
 #endif
@@ -100,10 +100,10 @@ static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp)
 	if (!b->data)
 		return -BCH_ERR_ENOMEM_btree_node_mem_alloc;
 #ifdef __KERNEL__
-	b->aux_data = vmalloc_exec(btree_aux_data_bytes(b), gfp);
+	b->aux_data = kmalloc(btree_aux_data_bytes(b), gfp);
 #else
 	b->aux_data = mmap(NULL, btree_aux_data_bytes(b),
-			   PROT_READ|PROT_WRITE|PROT_EXEC,
+			   PROT_READ|PROT_WRITE,
 			   MAP_PRIVATE|MAP_ANONYMOUS, 0, 0);
 	if (b->aux_data == MAP_FAILED)
 		b->aux_data = NULL;
@@ -1221,7 +1221,6 @@ void bch2_btree_node_to_text(struct printbuf *out, struct bch_fs *c,
 
 	prt_printf(out, "\n"
 	       "    format: u64s %u fields %u %u %u %u %u\n"
-	       "    unpack fn len: %u\n"
 	       "    bytes used %zu/%zu (%zu%% full)\n"
 	       "    sib u64s: %u, %u (merge threshold %u)\n"
 	       "    nr packed keys %u\n"
@@ -1234,7 +1233,6 @@ void bch2_btree_node_to_text(struct printbuf *out, struct bch_fs *c,
 	       f->bits_per_field[2],
 	       f->bits_per_field[3],
 	       f->bits_per_field[4],
-	       b->unpack_fn_len,
 	       b->nr.live_u64s * sizeof(u64),
 	       btree_bytes(c) - sizeof(struct btree_node),
 	       b->nr.live_u64s * 100 / btree_max_u64s(c),

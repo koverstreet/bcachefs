@@ -238,15 +238,8 @@ static inline void bch2_bset_set_no_aux_tree(struct btree *b,
 static inline void btree_node_set_format(struct btree *b,
 					 struct bkey_format f)
 {
-	int len;
-
 	b->format	= f;
 	b->nr_key_bits	= bkey_format_key_bits(&f);
-
-	len = bch2_compile_bkey_format(&b->format, b->aux_data);
-	BUG_ON(len < 0 || len > U8_MAX);
-
-	b->unpack_fn_len = len;
 
 	bch2_bset_set_no_aux_tree(b, b->set);
 }

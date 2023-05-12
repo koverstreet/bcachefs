@@ -9,10 +9,6 @@
 #include "util.h"
 #include "vstructs.h"
 
-#ifdef CONFIG_X86_64
-#define HAVE_BCACHEFS_COMPILED_UNPACK	1
-#endif
-
 void bch2_bkey_packed_to_binary_text(struct printbuf *,
 				     const struct bkey_format *,
 				     const struct bkey_packed *);
@@ -395,10 +391,8 @@ bool bch2_bkey_transform(const struct bkey_format *,
 struct bkey __bch2_bkey_unpack_key(const struct bkey_format *,
 				   const struct bkey_packed *);
 
-#ifndef HAVE_BCACHEFS_COMPILED_UNPACK
 struct bpos __bkey_unpack_pos(const struct bkey_format *,
 			      const struct bkey_packed *);
-#endif
 
 bool bch2_bkey_pack_key(struct bkey_packed *, const struct bkey *,
 		   const struct bkey_format *);
@@ -430,19 +424,7 @@ __bkey_unpack_key_format_checked(const struct btree *b,
 			       struct bkey *dst,
 			       const struct bkey_packed *src)
 {
-	if (IS_ENABLED(HAVE_BCACHEFS_COMPILED_UNPACK)) {
-		compiled_unpack_fn unpack_fn = b->aux_data;
-		unpack_fn(dst, src);
-
-		if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) &&
-		    bch2_expensive_debug_checks) {
-			struct bkey dst2 = __bch2_bkey_unpack_key(&b->format, src);
-
-			BUG_ON(memcmp(dst, &dst2, sizeof(*dst)));
-		}
-	} else {
-		*dst = __bch2_bkey_unpack_key(&b->format, src);
-	}
+	*dst = __bch2_bkey_unpack_key(&b->format, src);
 }
 
 static inline struct bkey
@@ -480,11 +462,7 @@ static inline struct bpos
 bkey_unpack_pos_format_checked(const struct btree *b,
 			       const struct bkey_packed *src)
 {
-#ifdef HAVE_BCACHEFS_COMPILED_UNPACK
-	return bkey_unpack_key_format_checked(b, src).p;
-#else
 	return __bkey_unpack_pos(&b->format, src);
-#endif
 }
 
 static inline struct bpos bkey_unpack_pos(const struct btree *b,
@@ -524,17 +502,6 @@ static inline u64 bkey_field_max(const struct bkey_format *f,
 		   ~(~0ULL << f->bits_per_field[nr]))
 		: U64_MAX;
 }
-
-#ifdef HAVE_BCACHEFS_COMPILED_UNPACK
-
-int bch2_compile_bkey_format(const struct bkey_format *, void *);
-
-#else
-
-static inline int bch2_compile_bkey_format(const struct bkey_format *format,
-					  void *out) { return 0; }
-
-#endif
 
 static inline void bkey_reassemble(struct bkey_i *dst,
 				   struct bkey_s_c src)

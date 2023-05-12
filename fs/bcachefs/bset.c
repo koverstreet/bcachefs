@@ -331,7 +331,7 @@ static unsigned bset_aux_tree_buf_start(const struct btree *b,
 					const struct bset_tree *t)
 {
 	return t == b->set
-		? DIV_ROUND_UP(b->unpack_fn_len, 8)
+		? 0
 		: bset_aux_tree_buf_end(t - 1);
 }
 
