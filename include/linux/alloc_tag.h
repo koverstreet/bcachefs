@@ -79,9 +79,6 @@ static inline void __alloc_tag_sub(union codetag_ref *ref, size_t bytes,
 	struct alloc_tag *tag;
 
 #ifdef CONFIG_MEM_ALLOC_PROFILING_DEBUG
-	/* The switch should be checked before this */
-	BUG_ON(!mem_alloc_profiling_enabled());
-
 	WARN_ONCE(ref && !ref->ct, "alloc_tag was not set\n");
 #endif
 	if (!ref || !ref->ct)
@@ -117,9 +114,6 @@ static inline void alloc_tag_sub_noalloc(union codetag_ref *ref, size_t bytes)
 static inline void alloc_tag_add(union codetag_ref *ref, struct alloc_tag *tag, size_t bytes)
 {
 #ifdef CONFIG_MEM_ALLOC_PROFILING_DEBUG
-	/* The switch should be checked before this */
-	BUG_ON(!mem_alloc_profiling_enabled());
-
 	WARN_ONCE(ref && ref->ct,
 		  "alloc_tag was not cleared (got tag for %s:%u)\n",\
 		  ref->ct->filename, ref->ct->lineno);

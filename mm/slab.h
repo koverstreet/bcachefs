@@ -535,9 +535,6 @@ static inline void alloc_tagging_slab_free_hook(struct kmem_cache *s, struct sla
 	struct slabobj_ext *obj_exts;
 	int i;
 
-	if (!mem_alloc_profiling_enabled())
-		return;
-
 	obj_exts = slab_obj_exts(slab);
 	if (!obj_exts)
 		return;

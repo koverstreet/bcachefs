@@ -17,19 +17,6 @@ static struct codetag_type *alloc_tag_cttype;
 
 DEFINE_STATIC_KEY_TRUE(mem_alloc_profiling_key);
 
-/*
- * Won't need to be exported once page allocation accounting is moved to the
- * correct place:
- */
-EXPORT_SYMBOL(mem_alloc_profiling_key);
-
-static int __init mem_alloc_profiling_disable(char *s)
-{
-	static_branch_disable(&mem_alloc_profiling_key);
-	return 1;
-}
-__setup("nomem_profiling", mem_alloc_profiling_disable);
-
 struct alloc_call_ctx {
 	struct codetag_ctx ctx;
 	size_t size;
@@ -447,6 +434,20 @@ struct page_ext_operations page_alloc_tagging_ops = {
 };
 EXPORT_SYMBOL(page_alloc_tagging_ops);
 
+static struct ctl_table memory_allocation_profiling_sysctls[] = {
+	{
+		.procname	= "mem_profiling",
+		.data		= &mem_alloc_profiling_key,
+#ifdef CONFIG_MEM_ALLOC_PROFILING_DEBUG
+		.mode		= 0444,
+#else
+		.mode		= 0644,
+#endif
+		.proc_handler	= proc_do_static_key,
+	},
+	{ }
+};
+
 static int __init alloc_tag_init(void)
 {
 	const struct codetag_type_desc desc = {
@@ -455,6 +456,8 @@ static int __init alloc_tag_init(void)
 		.module_unload	= alloc_tag_module_unload,
 		.free_ctx	= alloc_tag_ops_free_ctx,
 	};
+
+	register_sysctl_init("vm", memory_allocation_profiling_sysctls);
 
 	alloc_tag_cttype = codetag_register_type(&desc);
 	if (IS_ERR_OR_NULL(alloc_tag_cttype))
