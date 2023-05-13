@@ -238,7 +238,7 @@ static inline void bch2_bset_set_no_aux_tree(struct btree *b,
 static inline void btree_node_set_format(struct btree *b,
 					 struct bkey_format f)
 {
-	b->format	= f;
+	b->format	= bch2_bkey_format_postprocess(f);
 	b->nr_key_bits	= bkey_format_key_bits(&f);
 
 	bch2_bset_set_no_aux_tree(b, b->set);

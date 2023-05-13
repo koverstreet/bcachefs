@@ -393,7 +393,7 @@ void bch2_btree_sort_into(struct bch_fs *c,
 
 	nr = bch2_sort_repack(btree_bset_first(dst),
 			src, &src_iter,
-			&dst->format,
+			&dst->format.f,
 			true);
 
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_sort],
@@ -862,8 +862,7 @@ static int validate_bset_keys(struct bch_fs *c, struct btree *b,
 		/* XXX: validate k->u64s */
 		if (!write)
 			bch2_bkey_compat(b->c.level, b->c.btree_id, version,
-				    BSET_BIG_ENDIAN(i), write,
-				    &b->format, k);
+				    BSET_BIG_ENDIAN(i), write, b, k);
 
 		u = __bkey_disassemble(b, k, &tmp);
 
@@ -885,8 +884,7 @@ static int validate_bset_keys(struct bch_fs *c, struct btree *b,
 
 		if (write)
 			bch2_bkey_compat(b->c.level, b->c.btree_id, version,
-				    BSET_BIG_ENDIAN(i), write,
-				    &b->format, k);
+				    BSET_BIG_ENDIAN(i), write, b, k);
 
 		if (prev && bkey_iter_cmp(b, prev, k) > 0) {
 			struct bkey up = bkey_unpack_key(b, prev);
@@ -1935,7 +1933,7 @@ do_write:
 	BUG_ON(b->written & (block_sectors(c) - 1));
 	BUG_ON(bset_written(b, btree_bset_last(b)));
 	BUG_ON(le64_to_cpu(b->data->magic) != bset_magic(c));
-	BUG_ON(memcmp(&b->data->format, &b->format, sizeof(b->format)));
+	BUG_ON(memcmp(&b->data->format, &b->format.f, sizeof(b->format.f)));
 
 	bch2_sort_whiteouts(c, b);
 

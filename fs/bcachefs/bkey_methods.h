@@ -161,18 +161,18 @@ static inline int bch2_trans_mark_new(struct btree_trans *trans,
 void bch2_bkey_renumber(enum btree_node_type, struct bkey_packed *, int);
 
 void __bch2_bkey_compat(unsigned, enum btree_id, unsigned, unsigned,
-			int, struct bkey_format *, struct bkey_packed *);
+			int, struct btree *, struct bkey_packed *);
 
 static inline void bch2_bkey_compat(unsigned level, enum btree_id btree_id,
 			       unsigned version, unsigned big_endian,
 			       int write,
-			       struct bkey_format *f,
+			       struct btree *b,
 			       struct bkey_packed *k)
 {
 	if (version < bcachefs_metadata_version_current ||
 	    big_endian != CPU_BIG_ENDIAN)
 		__bch2_bkey_compat(level, btree_id, version,
-				   big_endian, write, f, k);
+				   big_endian, write, b, k);
 
 }
 

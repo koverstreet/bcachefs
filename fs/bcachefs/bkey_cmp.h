@@ -90,7 +90,7 @@ int __bch2_bkey_cmp_packed_format_checked_inlined(const struct bkey_packed *l,
 					  const struct bkey_packed *r,
 					  const struct btree *b)
 {
-	const struct bkey_format *f = &b->format;
+	const struct bkey_format *f = &b->format.f;
 	int ret;
 
 	EBUG_ON(!bkey_packed(l) || !bkey_packed(r));

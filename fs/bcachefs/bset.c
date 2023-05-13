@@ -646,9 +646,9 @@ static inline void make_bfloat(struct btree *b, struct bset_tree *t,
 	 * (k->_data), to get the key bits starting at exponent:
 	 */
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-	shift = (int) (b->format.key_u64s * 64 - b->nr_key_bits) + exponent;
+	shift = (int) (b->format.f.key_u64s * 64 - b->nr_key_bits) + exponent;
 
-	EBUG_ON(shift + BKEY_MANTISSA_BITS > b->format.key_u64s * 64);
+	EBUG_ON(shift + BKEY_MANTISSA_BITS > b->format.f.key_u64s * 64);
 #else
 	shift = high_bit_offset +
 		b->nr_key_bits -
@@ -997,7 +997,7 @@ void bch2_bset_insert(struct btree *b,
 		      struct bkey_i *insert,
 		      unsigned clobber_u64s)
 {
-	struct bkey_format *f = &b->format;
+	struct bkey_format_processed *f = &b->format;
 	struct bset_tree *t = bset_tree_last(b);
 	struct bkey_packed packed, *src = bkey_to_packed(insert);
 
@@ -1095,7 +1095,7 @@ static inline bool bkey_mantissa_bits_dropped(const struct btree *b,
 					      unsigned idx)
 {
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-	unsigned key_bits_start = b->format.key_u64s * 64 - b->nr_key_bits;
+	unsigned key_bits_start = b->format.f.key_u64s * 64 - b->nr_key_bits;
 
 	return f->exponent > key_bits_start;
 #else

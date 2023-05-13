@@ -125,7 +125,7 @@ bch2_sort_repack(struct bset *dst, struct btree *src,
 		 struct bkey_format *out_f,
 		 bool filter_whiteouts)
 {
-	struct bkey_format *in_f = &src->format;
+	struct bkey_format *in_f = &src->format.f;
 	struct bkey_packed *in, *out = vstruct_last(dst);
 	struct btree_nr_keys nr;
 	bool transform = memcmp(out_f, &src->format, sizeof(*out_f));
@@ -167,7 +167,7 @@ unsigned bch2_sort_keys(struct bkey_packed *dst,
 			struct sort_iter *iter,
 			bool filter_whiteouts)
 {
-	const struct bkey_format *f = &iter->b->format;
+	const struct bkey_format_processed *f = &iter->b->format;
 	struct bkey_packed *in, *next, *out = dst;
 
 	sort_iter_sort(iter, sort_keys_cmp);

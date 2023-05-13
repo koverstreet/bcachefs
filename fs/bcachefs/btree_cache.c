@@ -1204,7 +1204,7 @@ wait_on_io:
 void bch2_btree_node_to_text(struct printbuf *out, struct bch_fs *c,
 			     const struct btree *b)
 {
-	const struct bkey_format *f = &b->format;
+	const struct bkey_format *f = &b->format.f;
 	struct bset_stats stats;
 
 	memset(&stats, 0, sizeof(stats));

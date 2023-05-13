@@ -128,7 +128,7 @@ static struct bkey_format bch2_btree_calc_format(struct btree *b)
 static size_t btree_node_u64s_with_format(struct btree *b,
 					  struct bkey_format *new_f)
 {
-	struct bkey_format *old_f = &b->format;
+	struct bkey_format *old_f = &b->format.f;
 
 	/* stupid integer promotion rules */
 	ssize_t delta =
@@ -393,7 +393,7 @@ static struct btree *bch2_btree_node_alloc_replacement(struct btree_update *as,
 	 * the btree node anymore, use the old format for now:
 	 */
 	if (!bch2_btree_node_format_fits(as->c, b, &format))
-		format = b->format;
+		format = b->format.f;
 
 	SET_BTREE_NODE_SEQ(n->data, BTREE_NODE_SEQ(b->data) + 1);
 
@@ -1406,8 +1406,8 @@ static void __btree_split_node(struct btree_update *as,
 		i = u64s >= n1_u64s;
 		u64s += k->u64s;
 
-		if (bch2_bkey_transform(&n[i]->format, out[i], bkey_packed(k)
-					? &b->format: &bch2_bkey_format_current, k))
+		if (bch2_bkey_transform(&n[i]->format.f, out[i], bkey_packed(k)
+					? &b->format.f : &bch2_bkey_format_current, k))
 			out[i]->format = KEY_FORMAT_LOCAL_BTREE;
 		else
 			bch2_bkey_unpack(b, (void *) out[i], k);

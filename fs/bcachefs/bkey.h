@@ -9,6 +9,8 @@
 #include "util.h"
 #include "vstructs.h"
 
+struct bkey_format_processed bch2_bkey_format_postprocess(const struct bkey_format);
+
 void bch2_bkey_packed_to_binary_text(struct printbuf *,
 				     const struct bkey_format *,
 				     const struct bkey_packed *);
@@ -345,34 +347,34 @@ static inline struct bpos bkey_start_pos(const struct bkey *k)
 
 /* Packed helpers */
 
-static inline unsigned bkeyp_key_u64s(const struct bkey_format *format,
+static inline unsigned bkeyp_key_u64s(const struct bkey_format_processed *format,
 				      const struct bkey_packed *k)
 {
-	unsigned ret = bkey_packed(k) ? format->key_u64s : BKEY_U64s;
+	unsigned ret = bkey_packed(k) ? format->f.key_u64s : BKEY_U64s;
 
 	EBUG_ON(k->u64s < ret);
 	return ret;
 }
 
-static inline unsigned bkeyp_key_bytes(const struct bkey_format *format,
+static inline unsigned bkeyp_key_bytes(const struct bkey_format_processed *format,
 				       const struct bkey_packed *k)
 {
 	return bkeyp_key_u64s(format, k) * sizeof(u64);
 }
 
-static inline unsigned bkeyp_val_u64s(const struct bkey_format *format,
+static inline unsigned bkeyp_val_u64s(const struct bkey_format_processed *format,
 				      const struct bkey_packed *k)
 {
 	return k->u64s - bkeyp_key_u64s(format, k);
 }
 
-static inline size_t bkeyp_val_bytes(const struct bkey_format *format,
+static inline size_t bkeyp_val_bytes(const struct bkey_format_processed *format,
 				     const struct bkey_packed *k)
 {
 	return bkeyp_val_u64s(format, k) * sizeof(u64);
 }
 
-static inline void set_bkeyp_val_u64s(const struct bkey_format *format,
+static inline void set_bkeyp_val_u64s(const struct bkey_format_processed *format,
 				      struct bkey_packed *k, unsigned val_u64s)
 {
 	k->u64s = bkeyp_key_u64s(format, k) + val_u64s;
@@ -388,14 +390,14 @@ bool bch2_bkey_transform(const struct bkey_format *,
 			 const struct bkey_format *,
 			 const struct bkey_packed *);
 
-struct bkey __bch2_bkey_unpack_key(const struct bkey_format *,
+struct bkey __bch2_bkey_unpack_key(const struct bkey_format_processed *,
 				   const struct bkey_packed *);
 
-struct bpos __bkey_unpack_pos(const struct bkey_format *,
+struct bpos __bkey_unpack_pos(const struct bkey_format_processed *,
 			      const struct bkey_packed *);
 
 bool bch2_bkey_pack_key(struct bkey_packed *, const struct bkey *,
-		   const struct bkey_format *);
+			const struct bkey_format_processed *);
 
 enum bkey_pack_pos_ret {
 	BKEY_PACK_POS_EXACT,
@@ -413,9 +415,9 @@ static inline bool bkey_pack_pos(struct bkey_packed *out, struct bpos in,
 }
 
 void bch2_bkey_unpack(const struct btree *, struct bkey_i *,
-		 const struct bkey_packed *);
+		      const struct bkey_packed *);
 bool bch2_bkey_pack(struct bkey_packed *, const struct bkey_i *,
-	       const struct bkey_format *);
+		    const struct bkey_format_processed *);
 
 typedef void (*compiled_unpack_fn)(struct bkey *, const struct bkey_packed *);
 

@@ -427,9 +427,10 @@ void bch2_bkey_renumber(enum btree_node_type btree_node_type,
 void __bch2_bkey_compat(unsigned level, enum btree_id btree_id,
 			unsigned version, unsigned big_endian,
 			int write,
-			struct bkey_format *f,
+			struct btree *b,
 			struct bkey_packed *k)
 {
+	struct bkey_format_processed *f = b ? &b->format : NULL;
 	const struct bkey_ops *ops;
 	struct bkey uk;
 	struct bkey_s u;
@@ -444,7 +445,7 @@ void __bch2_bkey_compat(unsigned level, enum btree_id btree_id,
 	switch (!write ? i : nr_compat - 1 - i) {
 	case 0:
 		if (big_endian != CPU_BIG_ENDIAN)
-			bch2_bkey_swab_key(f, k);
+			bch2_bkey_swab_key(&f->f, k);
 		break;
 	case 1:
 		if (version < bcachefs_metadata_version_bkey_renumber)
@@ -457,14 +458,14 @@ void __bch2_bkey_compat(unsigned level, enum btree_id btree_id,
 				struct bkey_i *u = packed_to_bkey(k);
 
 				swap(u->k.p.inode, u->k.p.offset);
-			} else if (f->bits_per_field[BKEY_FIELD_INODE] &&
-				   f->bits_per_field[BKEY_FIELD_OFFSET]) {
-				struct bkey_format tmp = *f, *in = f, *out = &tmp;
+			} else if (f->f.bits_per_field[BKEY_FIELD_INODE] &&
+				   f->f.bits_per_field[BKEY_FIELD_OFFSET]) {
+				struct bkey_format_processed tmp = *f, *in = f, *out = &tmp;
 
-				swap(tmp.bits_per_field[BKEY_FIELD_INODE],
-				     tmp.bits_per_field[BKEY_FIELD_OFFSET]);
-				swap(tmp.field_offset[BKEY_FIELD_INODE],
-				     tmp.field_offset[BKEY_FIELD_OFFSET]);
+				swap(tmp.f.bits_per_field[BKEY_FIELD_INODE],
+				     tmp.f.bits_per_field[BKEY_FIELD_OFFSET]);
+				swap(tmp.f.field_offset[BKEY_FIELD_INODE],
+				     tmp.f.field_offset[BKEY_FIELD_OFFSET]);
 
 				if (!write)
 					swap(in, out);
@@ -484,9 +485,9 @@ void __bch2_bkey_compat(unsigned level, enum btree_id btree_id,
 				u->k.p.snapshot = write
 					? 0 : U32_MAX;
 			} else {
-				u64 min_packed = f->field_offset[BKEY_FIELD_SNAPSHOT];
+				u64 min_packed = f->f.field_offset[BKEY_FIELD_SNAPSHOT];
 				u64 max_packed = min_packed +
-					~(~0ULL << f->bits_per_field[BKEY_FIELD_SNAPSHOT]);
+					~(~0ULL << f->f.bits_per_field[BKEY_FIELD_SNAPSHOT]);
 
 				uk = __bch2_bkey_unpack_key(f, k);
 				uk.p.snapshot = write

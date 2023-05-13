@@ -17,6 +17,13 @@
 
 const struct bkey_format bch2_bkey_format_current = BKEY_FORMAT_CURRENT;
 
+struct bkey_format_processed bch2_bkey_format_postprocess(const struct bkey_format f)
+{
+	return (struct bkey_format_processed) {
+		.f = f,
+	};
+}
+
 void bch2_bkey_packed_to_binary_text(struct printbuf *out,
 				     const struct bkey_format *f,
 				     const struct bkey_packed *k)
@@ -59,7 +66,7 @@ void bch2_bkey_packed_to_binary_text(struct printbuf *out,
 
 static void bch2_bkey_pack_verify(const struct bkey_packed *packed,
 				  const struct bkey *unpacked,
-				  const struct bkey_format *format)
+				  const struct bkey_format_processed *format)
 {
 	struct bkey tmp;
 
@@ -74,12 +81,12 @@ static void bch2_bkey_pack_verify(const struct bkey_packed *packed,
 		struct printbuf buf = PRINTBUF;
 
 		prt_printf(&buf, "keys differ: format u64s %u fields %u %u %u %u %u\n",
-		      format->key_u64s,
-		      format->bits_per_field[0],
-		      format->bits_per_field[1],
-		      format->bits_per_field[2],
-		      format->bits_per_field[3],
-		      format->bits_per_field[4]);
+		      format->f.key_u64s,
+		      format->f.bits_per_field[0],
+		      format->f.bits_per_field[1],
+		      format->f.bits_per_field[2],
+		      format->f.bits_per_field[3],
+		      format->f.bits_per_field[4]);
 
 		prt_printf(&buf, "compiled unpack: ");
 		bch2_bkey_to_text(&buf, unpacked);
@@ -106,7 +113,7 @@ static void bch2_bkey_pack_verify(const struct bkey_packed *packed,
 #else
 static inline void bch2_bkey_pack_verify(const struct bkey_packed *packed,
 					const struct bkey *unpacked,
-					const struct bkey_format *format) {}
+					const struct bkey_format_processed *format) {}
 #endif
 
 struct pack_state {
@@ -262,9 +269,10 @@ bool bch2_bkey_transform(const struct bkey_format *out_f,
 	return true;
 }
 
-struct bkey __bch2_bkey_unpack_key(const struct bkey_format *format,
-			      const struct bkey_packed *in)
+struct bkey __bch2_bkey_unpack_key(const struct bkey_format_processed *format_p,
+				   const struct bkey_packed *in)
 {
+	const struct bkey_format *format = &format_p->f;
 	struct unpack_state state = unpack_state_init(format, in);
 	struct bkey out;
 
@@ -286,9 +294,10 @@ struct bkey __bch2_bkey_unpack_key(const struct bkey_format *format,
 	return out;
 }
 
-struct bpos __bkey_unpack_pos(const struct bkey_format *format,
-				     const struct bkey_packed *in)
+struct bpos __bkey_unpack_pos(const struct bkey_format_processed *format_p,
+			      const struct bkey_packed *in)
 {
+	const struct bkey_format *format = &format_p->f;
 	struct unpack_state state = unpack_state_init(format, in);
 	struct bpos out;
 
@@ -307,13 +316,13 @@ struct bpos __bkey_unpack_pos(const struct bkey_format *format,
  * bch2_bkey_pack_key -- pack just the key, not the value
  */
 bool bch2_bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
-		   const struct bkey_format *format)
+			const struct bkey_format_processed *format)
 {
-	struct pack_state state = pack_state_init(format, out);
+	struct pack_state state = pack_state_init(&format->f, out);
 	u64 *w = out->_data;
 
 	EBUG_ON((void *) in == (void *) out);
-	EBUG_ON(format->nr_fields != BKEY_NR_FIELDS);
+	EBUG_ON(format->f.nr_fields != BKEY_NR_FIELDS);
 	EBUG_ON(in->format != KEY_FORMAT_CURRENT);
 
 	*w = 0;
@@ -322,7 +331,7 @@ bool bch2_bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
 	bkey_fields()
 #undef x
 	pack_state_finish(&state, out);
-	out->u64s	= format->key_u64s + in->u64s - BKEY_U64s;
+	out->u64s	= format->f.key_u64s + in->u64s - BKEY_U64s;
 	out->format	= KEY_FORMAT_LOCAL_BTREE;
 	out->needs_whiteout = in->needs_whiteout;
 	out->type	= in->type;
@@ -335,7 +344,7 @@ bool bch2_bkey_pack_key(struct bkey_packed *out, const struct bkey *in,
  * bch2_bkey_unpack -- unpack the key and the value
  */
 void bch2_bkey_unpack(const struct btree *b, struct bkey_i *dst,
-		 const struct bkey_packed *src)
+		      const struct bkey_packed *src)
 {
 	__bkey_unpack_key(b, &dst->k, src);
 
@@ -348,17 +357,17 @@ void bch2_bkey_unpack(const struct btree *b, struct bkey_i *dst,
  * bch2_bkey_pack -- pack the key and the value
  */
 bool bch2_bkey_pack(struct bkey_packed *out, const struct bkey_i *in,
-	       const struct bkey_format *format)
+		    const struct bkey_format_processed *format)
 {
 	struct bkey_packed tmp;
 
 	if (!bch2_bkey_pack_key(&tmp, &in->k, format))
 		return false;
 
-	memmove_u64s((u64 *) out + format->key_u64s,
+	memmove_u64s((u64 *) out + format->f.key_u64s,
 		     &in->v,
 		     bkey_val_u64s(&in->k));
-	memcpy_u64s_small(out, &tmp, format->key_u64s);
+	memcpy_u64s_small(out, &tmp, format->f.key_u64s);
 
 	return true;
 }
@@ -399,7 +408,7 @@ static bool bkey_packed_successor(struct bkey_packed *out,
 				  const struct btree *b,
 				  struct bkey_packed k)
 {
-	const struct bkey_format *f = &b->format;
+	const struct bkey_format *f = &b->format.f;
 	unsigned nr_key_bits = b->nr_key_bits;
 	unsigned first_bit, offset;
 	u64 *p;
@@ -447,7 +456,7 @@ enum bkey_pack_pos_ret bch2_bkey_pack_pos_lossy(struct bkey_packed *out,
 					   struct bpos in,
 					   const struct btree *b)
 {
-	const struct bkey_format *f = &b->format;
+	const struct bkey_format *f = &b->format.f;
 	struct pack_state state = pack_state_init(f, out);
 	u64 *w = out->_data;
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -647,8 +656,8 @@ unsigned bch2_bkey_greatest_differing_bit(const struct btree *b,
 					  const struct bkey_packed *l_k,
 					  const struct bkey_packed *r_k)
 {
-	const u64 *l = high_word(&b->format, l_k);
-	const u64 *r = high_word(&b->format, r_k);
+	const u64 *l = high_word(&b->format.f, l_k);
+	const u64 *r = high_word(&b->format.f, r_k);
 	unsigned nr_key_bits = b->nr_key_bits;
 	unsigned word_bits = 64 - high_bit_offset;
 	u64 l_v, r_v;
@@ -689,7 +698,7 @@ unsigned bch2_bkey_greatest_differing_bit(const struct btree *b,
 __pure
 unsigned bch2_bkey_ffs(const struct btree *b, const struct bkey_packed *k)
 {
-	const u64 *p = high_word(&b->format, k);
+	const u64 *p = high_word(&b->format.f, k);
 	unsigned nr_key_bits = b->nr_key_bits;
 	unsigned ret = 0, offset;
 
@@ -789,19 +798,20 @@ void bch2_bkey_pack_test(void)
 	struct bkey t = KEY(4134ULL, 1250629070527416633ULL, 0);
 	struct bkey_packed p;
 
-	struct bkey_format test_format = {
-		.key_u64s	= 3,
-		.nr_fields	= BKEY_NR_FIELDS,
-		.bits_per_field = {
-			13,
-			64,
-			32,
-		},
-	};
+	struct bkey_format_processed test_format =
+		bch2_bkey_format_postprocess((struct bkey_format) {
+			.key_u64s	= 3,
+			.nr_fields	= BKEY_NR_FIELDS,
+			.bits_per_field = {
+				13,
+				64,
+				32,
+			},
+		});
 
 	struct unpack_state in_s =
 		unpack_state_init(&bch2_bkey_format_current, (void *) &t);
-	struct pack_state out_s = pack_state_init(&test_format, &p);
+	struct pack_state out_s = pack_state_init(&test_format.f, &p);
 	unsigned i;
 
 	for (i = 0; i < out_s.format->nr_fields; i++) {

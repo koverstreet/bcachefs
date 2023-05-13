@@ -68,6 +68,10 @@ struct btree_bkey_cached_common {
 	bool			cached;
 };
 
+struct bkey_format_processed {
+	struct bkey_format	f;
+};
+
 struct btree {
 	struct btree_bkey_cached_common c;
 
@@ -80,7 +84,8 @@ struct btree {
 	u8			nr_key_bits;
 	u16			version_ondisk;
 
-	struct bkey_format	format;
+	struct bkey_format_processed
+				format;
 
 	struct btree_node	*data;
 	void			*aux_data;

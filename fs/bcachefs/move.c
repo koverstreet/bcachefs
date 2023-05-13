@@ -1002,7 +1002,7 @@ static bool rewrite_old_nodes_pred(struct bch_fs *c, void *arg,
 {
 	if (b->version_ondisk != c->sb.version ||
 	    btree_node_need_rewrite(b) ||
-	    bformat_needs_redo(&b->format)) {
+	    bformat_needs_redo(&b->format.f)) {
 		data_opts->target		= 0;
 		data_opts->extra_replicas	= 0;
 		data_opts->btree_insert_flags	= 0;
