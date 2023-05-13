@@ -184,7 +184,7 @@ void bch2_alloc_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 	.swab		= bch2_alloc_v4_swab,		\
 	.trans_trigger	= bch2_trans_mark_alloc,	\
 	.atomic_trigger	= bch2_mark_alloc,		\
-	.min_val_size	= 56,				\
+	.min_val_size	= 48,				\
 })
 
 int bch2_bucket_gens_invalid(const struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *);
