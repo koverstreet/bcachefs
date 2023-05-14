@@ -23,9 +23,9 @@ struct bkey_format_processed bch2_bkey_format_postprocess(const struct bkey_form
 {
 	struct bkey_format_processed ret = { .f = f, .aligned = true };
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-	unsigned bit_offset = f.key_u64s * 64;
+	unsigned offset = f.key_u64s * 64;
 #else
-	unsigned bit_offset = KEY_PACKED_BITS_START;
+	unsigned offset = KEY_PACKED_BITS_START;
 #endif
 
 	for (unsigned i = 0; i < BKEY_NR_FIELDS; i++) {
@@ -37,13 +37,16 @@ struct bkey_format_processed bch2_bkey_format_postprocess(const struct bkey_form
 		}
 
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-		bit_offset -= bits;
+		offset -= bits;
 #endif
-		ret.offset[i]	= bit_offset / 8;
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-		bit_offset += bits;
-#endif
+
+		ret.shift[i]	= min(offset & 63, 64 - bits);
+		ret.offset[i]	= (offset - ret.shift[i]) / 8;
 		ret.mask[i]	= bits ? ~0ULL >> (64 - bits) : 0;
+
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+		offset += bits;
+#endif
 	}
 
 	return ret;
@@ -223,6 +226,7 @@ static u64 get_aligned_field(const struct bkey_format_processed *f,
 {
 	u64 v = get_unaligned((u64 *) (((u8 *) in->_data) + f->offset[field_idx]));
 
+	v >>= f->shift[field_idx];
 	v &= f->mask[field_idx];
 
 	return v + le64_to_cpu(f->f.field_offset[field_idx]);
