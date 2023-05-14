@@ -70,6 +70,9 @@ struct btree_bkey_cached_common {
 
 struct bkey_format_processed {
 	struct bkey_format	f;
+	bool			aligned;
+	u8			offset[6];
+	u64			mask[6];
 };
 
 struct btree {

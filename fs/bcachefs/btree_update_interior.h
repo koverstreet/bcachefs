@@ -181,7 +181,11 @@ static inline void btree_node_reset_sib_u64s(struct btree *b)
 
 static inline void *btree_data_end(struct bch_fs *c, struct btree *b)
 {
-	return (void *) b->data + btree_bytes(c);
+	/*
+	 * __bch2_bkey_unpack_key() may read up to 8 bytes past the end of the
+	 * input buffer:
+	 */
+	return (void *) b->data + btree_bytes(c) - 8;
 }
 
 static inline struct bkey_packed *unwritten_whiteouts_start(struct bch_fs *c,

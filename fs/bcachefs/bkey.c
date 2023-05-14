@@ -7,6 +7,8 @@
 #include "bset.h"
 #include "util.h"
 
+#include <asm/unaligned.h>
+
 #undef EBUG_ON
 
 #ifdef DEBUG_BKEYS
@@ -19,9 +21,32 @@ const struct bkey_format bch2_bkey_format_current = BKEY_FORMAT_CURRENT;
 
 struct bkey_format_processed bch2_bkey_format_postprocess(const struct bkey_format f)
 {
-	return (struct bkey_format_processed) {
-		.f = f,
-	};
+	struct bkey_format_processed ret = { .f = f, .aligned = true };
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+	unsigned bit_offset = f.key_u64s * 64;
+#else
+	unsigned bit_offset = KEY_PACKED_BITS_START;
+#endif
+
+	for (unsigned i = 0; i < BKEY_NR_FIELDS; i++) {
+		unsigned bits = f.bits_per_field[i];
+
+		if (bits & 7) {
+			ret.aligned = false;
+			break;
+		}
+
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+		bit_offset -= bits;
+#endif
+		ret.offset[i]	= bit_offset / 8;
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+		bit_offset += bits;
+#endif
+		ret.mask[i]	= bits ? ~0ULL >> (64 - bits) : 0;
+	}
+
+	return ret;
 }
 
 void bch2_bkey_packed_to_binary_text(struct printbuf *out,
@@ -192,6 +217,18 @@ static u64 get_inc_field(struct unpack_state *state, unsigned field)
 }
 
 __always_inline
+static u64 get_aligned_field(const struct bkey_format_processed *f,
+			     const struct bkey_packed *in,
+			     unsigned field_idx)
+{
+	u64 v = get_unaligned((u64 *) (((u8 *) in->_data) + f->offset[field_idx]));
+
+	v &= f->mask[field_idx];
+
+	return v + le64_to_cpu(f->f.field_offset[field_idx]);
+}
+
+__always_inline
 static bool set_inc_field(struct pack_state *state, unsigned field, u64 v)
 {
 	unsigned bits = state->format->bits_per_field[field];
@@ -269,45 +306,57 @@ bool bch2_bkey_transform(const struct bkey_format *out_f,
 	return true;
 }
 
-struct bkey __bch2_bkey_unpack_key(const struct bkey_format_processed *format_p,
+struct bkey __bch2_bkey_unpack_key(const struct bkey_format_processed *format,
 				   const struct bkey_packed *in)
 {
-	const struct bkey_format *format = &format_p->f;
-	struct unpack_state state = unpack_state_init(format, in);
 	struct bkey out;
 
-	EBUG_ON(format->nr_fields != BKEY_NR_FIELDS);
-	EBUG_ON(in->u64s < format->key_u64s);
+	EBUG_ON(format->f.nr_fields != BKEY_NR_FIELDS);
+	EBUG_ON(in->u64s < format->f.key_u64s);
 	EBUG_ON(in->format != KEY_FORMAT_LOCAL_BTREE);
-	EBUG_ON(in->u64s - format->key_u64s + BKEY_U64s > U8_MAX);
+	EBUG_ON(in->u64s - format->f.key_u64s + BKEY_U64s > U8_MAX);
 
-	out.u64s	= BKEY_U64s + in->u64s - format->key_u64s;
+	out.u64s	= BKEY_U64s + in->u64s - format->f.key_u64s;
 	out.format	= KEY_FORMAT_CURRENT;
 	out.needs_whiteout = in->needs_whiteout;
 	out.type	= in->type;
 	out.pad[0]	= 0;
 
-#define x(id, field)	out.field = get_inc_field(&state, id);
-	bkey_fields()
+	if (likely(format->aligned)) {
+#define x(id, field)	out.field = get_aligned_field(format, in, id);
+		bkey_fields()
 #undef x
+	} else {
+		struct unpack_state state = unpack_state_init(&format->f, in);
+
+#define x(id, field)	out.field = get_inc_field(&state, id);
+		bkey_fields()
+#undef x
+	}
 
 	return out;
 }
 
-struct bpos __bkey_unpack_pos(const struct bkey_format_processed *format_p,
+struct bpos __bkey_unpack_pos(const struct bkey_format_processed *format,
 			      const struct bkey_packed *in)
 {
-	const struct bkey_format *format = &format_p->f;
-	struct unpack_state state = unpack_state_init(format, in);
 	struct bpos out;
 
-	EBUG_ON(format->nr_fields != BKEY_NR_FIELDS);
-	EBUG_ON(in->u64s < format->key_u64s);
+	EBUG_ON(format->f.nr_fields != BKEY_NR_FIELDS);
+	EBUG_ON(in->u64s < format->f.key_u64s);
 	EBUG_ON(in->format != KEY_FORMAT_LOCAL_BTREE);
 
-	out.inode	= get_inc_field(&state, BKEY_FIELD_INODE);
-	out.offset	= get_inc_field(&state, BKEY_FIELD_OFFSET);
-	out.snapshot	= get_inc_field(&state, BKEY_FIELD_SNAPSHOT);
+	if (likely(format->aligned)) {
+		out.inode	= get_aligned_field(format, in, BKEY_FIELD_INODE);
+		out.offset	= get_aligned_field(format, in, BKEY_FIELD_OFFSET);
+		out.snapshot	= get_aligned_field(format, in, BKEY_FIELD_SNAPSHOT);
+	} else {
+		struct unpack_state state = unpack_state_init(&format->f, in);
+
+		out.inode	= get_inc_field(&state, BKEY_FIELD_INODE);
+		out.offset	= get_inc_field(&state, BKEY_FIELD_OFFSET);
+		out.snapshot	= get_inc_field(&state, BKEY_FIELD_SNAPSHOT);
+	}
 
 	return out;
 }
