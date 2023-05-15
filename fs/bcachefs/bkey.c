@@ -310,9 +310,10 @@ bool bch2_bkey_transform(const struct bkey_format *out_f,
 	return true;
 }
 
-struct bkey __bch2_bkey_unpack_key(const struct bkey_format_processed *format,
-				   const struct bkey_packed *in)
+static noinline struct bkey __bch2_bkey_unpack_key_unaligned(const struct bkey_format_processed *format,
+							     const struct bkey_packed *in)
 {
+	struct unpack_state state = unpack_state_init(&format->f, in);
 	struct bkey out;
 
 	EBUG_ON(format->f.nr_fields != BKEY_NR_FIELDS);
@@ -326,19 +327,55 @@ struct bkey __bch2_bkey_unpack_key(const struct bkey_format_processed *format,
 	out.type	= in->type;
 	out.pad[0]	= 0;
 
-	if (likely(format->aligned)) {
-#define x(id, field)	out.field = get_aligned_field(format, in, id);
-		bkey_fields()
-#undef x
-	} else {
-		struct unpack_state state = unpack_state_init(&format->f, in);
-
 #define x(id, field)	out.field = get_inc_field(&state, id);
-		bkey_fields()
+	bkey_fields()
 #undef x
-	}
 
 	return out;
+}
+
+struct bkey __bch2_bkey_unpack_key(const struct bkey_format_processed *format,
+				   const struct bkey_packed *in)
+{
+	if (likely(format->aligned)) {
+		struct bkey out;
+		u64 v[BKEY_NR_FIELDS];
+
+		EBUG_ON(format->f.nr_fields != BKEY_NR_FIELDS);
+		EBUG_ON(in->u64s < format->f.key_u64s);
+		EBUG_ON(in->format != KEY_FORMAT_LOCAL_BTREE);
+		EBUG_ON(in->u64s - format->f.key_u64s + BKEY_U64s > U8_MAX);
+
+		out.u64s	= BKEY_U64s + in->u64s - format->f.key_u64s;
+		out.format	= KEY_FORMAT_CURRENT;
+		out.needs_whiteout = in->needs_whiteout;
+		out.type	= in->type;
+		out.pad[0]	= 0;
+
+#define x(id, field)	v[id] = get_unaligned((u64 *) (((u8 *) in->_data) + format->offset[id]));
+		bkey_fields()
+#undef x
+
+#define x(id, field)	v[id] >>= format->shift[id];
+		bkey_fields()
+#undef x
+
+#define x(id, field)	v[id] &= format->mask[id];
+		bkey_fields()
+#undef x
+
+#define x(id, field)	v[id] += le64_to_cpu(format->f.field_offset[id]);
+		bkey_fields()
+#undef x
+
+#define x(id, field)	out.field = v[id];
+		bkey_fields()
+#undef x
+
+		return out;
+	} else {
+		return __bch2_bkey_unpack_key_unaligned(format, in);
+	}
 }
 
 struct bpos __bkey_unpack_pos(const struct bkey_format_processed *format,
