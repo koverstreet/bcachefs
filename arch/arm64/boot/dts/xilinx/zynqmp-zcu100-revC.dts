@@ -58,6 +58,15 @@
 		};
 	};
 
+	iio-hwmon {
+		compatible = "iio-hwmon";
+		io-channels = <&xilinx_ams 0>, <&xilinx_ams 1>, <&xilinx_ams 2>,
+			      <&xilinx_ams 3>, <&xilinx_ams 4>, <&xilinx_ams 5>,
+			      <&xilinx_ams 6>, <&xilinx_ams 7>, <&xilinx_ams 8>,
+			      <&xilinx_ams 9>, <&xilinx_ams 10>,
+			      <&xilinx_ams 11>, <&xilinx_ams 12>;
+	};
+
 	leds {
 		compatible = "gpio-leds";
 		led-ds2 {
@@ -545,6 +554,7 @@
 	pinctrl-0 = <&pinctrl_usb0_default>;
 	phy-names = "usb3-phy";
 	phys = <&psgtr 2 PHY_TYPE_USB3 0 0>;
+	/delete-property/ reset-gpios;
 };
 
 &dwc3_0 {
@@ -560,6 +570,7 @@
 	pinctrl-0 = <&pinctrl_usb1_default>;
 	phy-names = "usb3-phy";
 	phys = <&psgtr 3 PHY_TYPE_USB3 1 0>;
+	reset-gpios = <&modepin_gpio 1 GPIO_ACTIVE_LOW>;
 };
 
 &dwc3_1 {
@@ -569,6 +580,14 @@
 };
 
 &watchdog0 {
+	status = "okay";
+};
+
+&xilinx_ams {
+	status = "okay";
+};
+
+&ams_ps {
 	status = "okay";
 };
 

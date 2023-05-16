@@ -76,13 +76,15 @@
 };
 
 &zynqmp_dpsub {
-	status = "disabled";
+	status = "okay";
 	phy-names = "dp-phy0", "dp-phy1";
 	phys = <&psgtr 1 PHY_TYPE_DP 0 0>, <&psgtr 0 PHY_TYPE_DP 1 0>;
+	assigned-clock-rates = <27000000>, <25000000>, <300000000>;
 };
 
 &zynqmp_dpdma {
 	status = "okay";
+	assigned-clock-rates = <600000000>;
 };
 
 &usb0 {
@@ -115,6 +117,8 @@
 	clk-phase-sd-hs = <126>, <60>;
 	clk-phase-uhs-sdr25 = <120>, <60>;
 	clk-phase-uhs-ddr50 = <126>, <48>;
+	assigned-clock-rates = <187498123>;
+	bus-width = <4>;
 };
 
 &gem3 { /* required by spec */
@@ -127,16 +131,18 @@
 	mdio: mdio {
 		#address-cells = <1>;
 		#size-cells = <0>;
-		reset-gpios = <&gpio 38 GPIO_ACTIVE_LOW>;
-		reset-delay-us = <2>;
 
 		phy0: ethernet-phy@1 {
 			#phy-cells = <1>;
 			reg = <1>;
+			compatible = "ethernet-phy-id2000.a231";
 			ti,rx-internal-delay = <DP83867_RGMIIDCTL_2_25_NS>;
 			ti,tx-internal-delay = <DP83867_RGMIIDCTL_2_75_NS>;
 			ti,fifo-depth = <DP83867_PHYCR_FIFO_DEPTH_4_B_NIB>;
 			ti,dp83867-rxctrl-strap-quirk;
+			reset-assert-us = <100>;
+			reset-deassert-us = <280>;
+			reset-gpios = <&gpio 38 GPIO_ACTIVE_LOW>;
 		};
 	};
 };
