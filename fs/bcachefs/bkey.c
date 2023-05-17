@@ -983,6 +983,7 @@ int bch2_compile_bkey_format(const struct bkey_format *format, void *_out)
 
 	/* k->u64s, k->format, k->type */
 
+	/* XXX ibt - need a something here */
 	/* mov eax, [rsi] */
 	I2(0x8b, 0x06);
 
