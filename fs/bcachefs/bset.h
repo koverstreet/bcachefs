@@ -2,6 +2,7 @@
 #ifndef _BCACHEFS_BSET_H
 #define _BCACHEFS_BSET_H
 
+#include <linux/jitalloc.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
 
@@ -248,6 +249,10 @@ static inline void btree_node_set_format(struct btree *b,
 
 	len = bch2_compile_bkey_format(&b->format, b->aux_data);
 	BUG_ON(len < 0 || len > U8_MAX);
+
+	jit_free(b->unpack);
+	b->unpack = jit_alloc(b->aux_data, len);
+	BUG_ON(!b->unpack);
 
 	b->unpack_fn_len = len;
 
