@@ -105,6 +105,7 @@ static void __btree_node_data_free(struct btree_cache *bc, struct btree *b)
 
 	clear_btree_node_just_written(b);
 
+	jit_free(b->unpack);
 	kvfree(b->data);
 	b->data = NULL;
 #ifdef __KERNEL__
