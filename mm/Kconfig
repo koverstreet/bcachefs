@@ -1261,6 +1261,9 @@ config LOCK_MM_AND_FIND_VMA
 config IOMMU_MM_DATA
 	bool
 
+config JITALLOC
+	bool
+
 source "mm/damon/Kconfig"
 
 endmenu
