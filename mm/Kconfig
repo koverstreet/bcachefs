@@ -1301,6 +1301,9 @@ config ARCH_HAS_USER_SHADOW_STACK
 	  The architecture has hardware support for userspace shadow call
           stacks (eg, x86 CET, arm64 GCS or RISC-V Zicfiss).
 
+config JITALLOC
+	bool
+
 source "mm/damon/Kconfig"
 
 endmenu
