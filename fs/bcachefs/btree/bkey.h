@@ -411,16 +411,13 @@ void bch2_bkey_unpack(const struct btree *, struct bkey_i *,
 bool bch2_bkey_pack(struct bkey_packed *, const struct bkey_i *,
 	       const struct bkey_format *);
 
-typedef void (*compiled_unpack_fn)(struct bkey *, const struct bkey_packed *);
-
 static inline void
 __bkey_unpack_key_format_checked(const struct btree *b,
 			       struct bkey *dst,
 			       const struct bkey_packed *src)
 {
 	if (IS_ENABLED(HAVE_BCACHEFS_COMPILED_UNPACK)) {
-		compiled_unpack_fn unpack_fn = b->aux_data;
-		unpack_fn(dst, src);
+		b->unpack(dst, src);
 
 		if (static_branch_unlikely(&bch2_debug_check_bkey_unpack)) {
 			struct bkey dst2 = __bch2_bkey_unpack_key(&b->format, src);
