@@ -150,6 +150,7 @@ struct btree_node_bufs {
 
 static void btree_node_bufs_free(struct btree_node_bufs *b)
 {
+	jit_free(b->unpack);
 	kvfree(b->data);
 #ifdef __KERNEL__
 	kvfree(b->aux_data);

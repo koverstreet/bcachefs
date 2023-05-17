@@ -27,6 +27,8 @@ struct btree_update;
 struct btree_trans;
 struct lock_graph;
 
+typedef void (*compiled_unpack_fn)(struct bkey *, const struct bkey_packed *);
+
 /* Btree nodes: */
 
 #define MAX_BSETS		3U
@@ -106,6 +108,7 @@ struct btree {
 
 	struct btree_node	*data;
 	void			*aux_data;
+	compiled_unpack_fn	unpack;
 
 	/*
 	 * Sets of sorted keys - the real btree node - plus a binary search tree
