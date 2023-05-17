@@ -27,6 +27,7 @@ config BCACHEFS_FS
 	select SYMBOLIC_ERRNAME
 	select TIME_STATS
 	select THREAD_WITH_FILE
+	select JITALLOC
 	help
 	The bcachefs filesystem - a modern, copy on write filesystem, with
 	support for multiple devices, compression, checksumming, etc.
