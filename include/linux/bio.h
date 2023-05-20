@@ -103,9 +103,14 @@ static inline void bio_iter_all_advance(const struct bio *bio,
 		((bvl = bio_iter_all_peek(bio, &iter)), true);		\
 	     bio_iter_all_advance((bio), &iter, bvl.bv_len))
 
-/*
- * drivers should _never_ use the all version - the bio may have been split
- * before it got to the driver and the driver won't own all of it
+/**
+ * bio_for_each_segment_all - iterate over single pages in a bio
+ *
+ * Like other _all versions, this is for the filesystem, or the owner/creator of
+ * a bio; it iterates over the original contents of a bio.
+ *
+ * Drivers that are working with bios that were submitted to them should not use
+ * the _all version.
  */
 #define bio_for_each_segment_all(bvl, bio, iter)			\
 	for (bvec_iter_all_init(&iter);					\
@@ -166,6 +171,13 @@ static inline void bio_advance(struct bio *bio, unsigned int nbytes)
 		((bvl = bio_iter_iovec((bio), (iter))), 1);		\
 	     bio_advance_iter_single((bio), &(iter), (bvl).bv_len))
 
+/**
+ * bio_for_each_segment - iterate over single pages in a bio
+ *
+ * Like other non-_all versions, this iterates over what bio->bi_iter currently
+ * points to. This version is for drivers, where the bio may have previously
+ * been split or cloned.
+ */
 #define bio_for_each_segment(bvl, bio, iter)				\
 	__bio_for_each_segment(bvl, bio, iter, (bio)->bi_iter)
 
@@ -202,6 +214,13 @@ static inline struct folio_vec bio_iter_iovec_folio(struct bio *bio,
 		((bvl = bio_iter_iovec_folio((bio), (iter))), 1);	\
 	     bio_advance_iter_single((bio), &(iter), (bvl).fv_len))
 
+/**
+ * bio_for_each_folio - iterate over folios within a bio
+ *
+ * Like other non-_all versions, this iterates over what bio->bi_iter currently
+ * points to. This version is for drivers, where the bio may have previously
+ * been split or cloned.
+ */
 #define bio_for_each_folio(bvl, bio, iter)				\
 	__bio_for_each_folio(bvl, bio, iter, (bio)->bi_iter)
 
@@ -211,13 +230,30 @@ static inline struct folio_vec bio_iter_iovec_folio(struct bio *bio,
 		((bvl = mp_bvec_iter_bvec((bio)->bi_io_vec, (iter))), 1); \
 	     bio_advance_iter_single((bio), &(iter), (bvl).bv_len))
 
-/* iterate over multi-page bvec */
+/**
+ * bio_for_each_bvec - iterate over bvecs within a bio
+ *
+ * This version iterates over entire bio_vecs, which will be a range of
+ * contiguous pages.
+ *
+ * Like other non-_all versions, this iterates over what bio->bi_iter currently
+ * points to. This version is for drivers, where the bio may have previously
+ * been split or cloned.
+ */
 #define bio_for_each_bvec(bvl, bio, iter)			\
 	__bio_for_each_bvec(bvl, bio, iter, (bio)->bi_iter)
 
 /*
- * Iterate over all multi-page bvecs. Drivers shouldn't use this version for the
- * same reasons as bio_for_each_segment_all().
+ * bio_for_each_bvec_all - iterate over bvecs within a bio
+ *
+ * This version iterates over entire bio_vecs, which will be a range of
+ * contiguous pages.
+ *
+ * Like other _all versions, this is for the filesystem, or the owner/creator of
+ * a bio; it iterates over the original contents of a bio.
+ *
+ * Drivers that are working with bios that were submitted to them should not use
+ * the _all version.
  */
 #define bio_for_each_bvec_all(bvl, bio, i)		\
 	for (i = 0, bvl = bio_first_bvec_all(bio);	\
@@ -328,6 +364,12 @@ static inline struct folio_vec bio_folio_iter_all_peek(const struct bio *bio,
  * bio_for_each_folio_all - Iterate over each folio in a bio.
  * @fi: struct bio_folio_iter_all which is updated for each folio.
  * @bio: struct bio to iterate over.
+ *
+ * Like other _all versions, this is for the filesystem, or the owner/creator of
+ * a bio; it iterates over the original contents of a bio.
+ *
+ * Drivers that are working with bios that were submitted to them should not use
+ * the _all version.
  */
 #define bio_for_each_folio_all(fv, bio, iter)				\
 	for (bvec_iter_all_init(&iter);					\
