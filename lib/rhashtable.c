@@ -360,9 +360,14 @@ static int rhashtable_rehash_alloc(struct rhashtable *ht,
 
 	ASSERT_RHT_MUTEX(ht);
 
-	new_tbl = bucket_table_alloc(ht, size, GFP_KERNEL);
-	if (new_tbl == NULL)
+	new_tbl = bucket_table_alloc(ht, size, GFP_KERNEL|__GFP_NOWARN);
+	if (new_tbl == NULL) {
+		WARN("rhashtable bucket table allocation failure for %ps",
+		     (void *) ht->p.hashfn ?:
+		     (void *) ht->p.obj_hashfn ?:
+		     (void *) ht->p.obj_cmpfn);
 		return -ENOMEM;
+	}
 
 	err = rhashtable_rehash_attach(ht, old_tbl, new_tbl);
 	if (err)
