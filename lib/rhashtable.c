@@ -194,8 +194,13 @@ static struct bucket_table *bucket_table_alloc(struct rhashtable *ht,
 		nbuckets = 0;
 	}
 
-	if (tbl == NULL)
+	if (tbl == NULL) {
+		pr_warn("rhashtable bucket table allocation failure for %ps\n",
+			(void *) ht->p.hashfn ?:
+			(void *) ht->p.obj_hashfn ?:
+			(void *) ht->p.obj_cmpfn);
 		return NULL;
+	}
 
 	lockdep_init_map(&tbl->dep_map, "rhashtable_bucket", &__key, 0);
 
