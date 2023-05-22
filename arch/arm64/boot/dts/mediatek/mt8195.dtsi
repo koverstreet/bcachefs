@@ -856,6 +856,8 @@
 			compatible = "mediatek,mt8195-apmixedsys", "syscon";
 			reg = <0 0x1000c000 0 0x1000>;
 			#clock-cells = <1>;
+			assigned-clocks = <&apmixedsys CLK_APMIXED_MSDCPLL>;
+			assigned-clock-rates = <400000000>;
 		};
 
 		systimer: timer@10017000 {
