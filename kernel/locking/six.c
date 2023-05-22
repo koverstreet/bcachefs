@@ -68,36 +68,16 @@ struct six_lock_vals {
 	},								\
 }
 
-/*
- * Returns the index of the first set bit, treating @mask as an array of ulongs:
- * that is, a bit index that can be passed to test_bit()/set_bit().
- *
- * Assumes the set bit we want is in the low 4 bytes:
- */
-static inline unsigned u32_mask_to_ulong_bitnr(u32 mask)
-{
-	union ulong_u32 {
-		u32	v32;
-		ulong	vlong;
-	} v = { .v32 = mask };
-
-	return ilog2(v.vlong);
-}
-
 static inline void six_set_bitmask(struct six_lock *lock, u32 mask)
 {
-	unsigned bitnr = u32_mask_to_ulong_bitnr(mask);
-
-	if (!test_bit(bitnr, (unsigned long *) &lock->state))
-		set_bit(bitnr, (unsigned long *) &lock->state);
+	if ((atomic_read(&lock->state) & mask) != mask)
+		atomic_or(mask, &lock->state);
 }
 
 static inline void six_clear_bitmask(struct six_lock *lock, u32 mask)
 {
-	unsigned bitnr = u32_mask_to_ulong_bitnr(mask);
-
-	if (test_bit(bitnr, (unsigned long *) &lock->state))
-		clear_bit(bitnr, (unsigned long *) &lock->state);
+	if (atomic_read(&lock->state) & mask)
+		atomic_and(~mask, &lock->state);
 }
 
 static inline void six_set_owner(struct six_lock *lock, enum six_lock_type type,
