@@ -43,19 +43,21 @@
 #include <linux/mean_and_variance.h>
 #include <linux/module.h>
 
-/**
- * mean_and_variance_update() - update a mean_and_variance struct @s1 with a new sample @v1
- * and return it.
- * @s1: the mean_and_variance to update.
- * @v1: the new sample.
- *
- * see linked pdf equation 12.
- */
-struct mean_and_variance mean_and_variance_update(struct mean_and_variance s1, s64 v1)
+u128_u u128_div(u128_u n, u64 d)
 {
-	return mean_and_variance_update_inlined(s1, v1);
+	u128_u r;
+	u64 rem;
+	u64 hi = u128_hi(n);
+	u64 lo = u128_lo(n);
+	u64  h =  hi & ((u64) U32_MAX  << 32);
+	u64  l = (hi &  (u64) U32_MAX) << 32;
+
+	r =             u128_shl(u64_to_u128(div64_u64_rem(h,                d, &rem)), 64);
+	r = u128_add(r, u128_shl(u64_to_u128(div64_u64_rem(l  + (rem << 32), d, &rem)), 32));
+	r = u128_add(r,          u64_to_u128(div64_u64_rem(lo + (rem << 32), d, &rem)));
+	return r;
 }
-EXPORT_SYMBOL_GPL(mean_and_variance_update);
+EXPORT_SYMBOL_GPL(u128_div);
 
 /**
  * mean_and_variance_get_mean() - get mean from @s
@@ -74,10 +76,10 @@ EXPORT_SYMBOL_GPL(mean_and_variance_get_mean);
 u64 mean_and_variance_get_variance(struct mean_and_variance s1)
 {
 	if (s1.n) {
-		u128 s2 = u128_div(s1.sum_squares, s1.n);
+		u128_u s2 = u128_div(s1.sum_squares, s1.n);
 		u64  s3 = abs(mean_and_variance_get_mean(s1));
 
-		return u128_to_u64(u128_sub(s2, u128_square(s3)));
+		return u128_lo(u128_sub(s2, u128_square(s3)));
 	} else {
 		return 0;
 	}
@@ -101,10 +103,26 @@ EXPORT_SYMBOL_GPL(mean_and_variance_get_stddev);
  * see linked pdf: function derived from equations 140-143 where alpha = 2^w.
  * values are stored bitshifted for performance and added precision.
  */
-struct mean_and_variance_weighted mean_and_variance_weighted_update(struct mean_and_variance_weighted s1,
-								    s64 x)
+void mean_and_variance_weighted_update(struct mean_and_variance_weighted *s, s64 x)
 {
-	return mean_and_variance_weighted_update_inlined(s1, x);
+	// previous weighted variance.
+	u8 w		= s->weight;
+	u64 var_w0	= s->variance;
+	// new value weighted.
+	s64 x_w		= x << w;
+	s64 diff_w	= x_w - s->mean;
+	s64 diff	= fast_divpow2(diff_w, w);
+	// new mean weighted.
+	s64 u_w1	= s->mean + diff;
+
+	if (!s->init) {
+		s->mean = x_w;
+		s->variance = 0;
+	} else {
+		s->mean = u_w1;
+		s->variance = ((var_w0 << w) - var_w0 + ((diff_w * (x_w - u_w1)) >> w)) >> w;
+	}
+	s->init = true;
 }
 EXPORT_SYMBOL_GPL(mean_and_variance_weighted_update);
 
@@ -113,7 +131,7 @@ EXPORT_SYMBOL_GPL(mean_and_variance_weighted_update);
  */
 s64 mean_and_variance_weighted_get_mean(struct mean_and_variance_weighted s)
 {
-	return fast_divpow2(s.mean, s.w);
+	return fast_divpow2(s.mean, s.weight);
 }
 EXPORT_SYMBOL_GPL(mean_and_variance_weighted_get_mean);
 
@@ -123,7 +141,7 @@ EXPORT_SYMBOL_GPL(mean_and_variance_weighted_get_mean);
 u64 mean_and_variance_weighted_get_variance(struct mean_and_variance_weighted s)
 {
 	// always positive don't need fast divpow2
-	return s.variance >> s.w;
+	return s.variance >> s.weight;
 }
 EXPORT_SYMBOL_GPL(mean_and_variance_weighted_get_variance);
 
