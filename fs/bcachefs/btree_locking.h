@@ -114,12 +114,16 @@ btree_lock_want(struct btree_path *path, int level)
 }
 
 static void btree_trans_lock_hold_time_update(struct btree_trans *trans,
-					      struct btree_path *path, unsigned level)
+					      struct btree_path *path, unsigned level,
+					      enum six_lock_type lock_type)
 {
 #ifdef CONFIG_BCACHEFS_LOCK_TIME_STATS
+	u64 now = local_clock();
 	__bch2_time_stats_update(&btree_trans_stats(trans)->lock_hold_times,
-				 path->l[level].lock_taken_time,
-				 local_clock());
+				 path->l[level].lock_taken_time, now);
+	if (level)
+		__bch2_time_stats_update(&trans->c->times[BCH_TIME_btree_lock_read + lock_type],
+					 path->l[level].lock_taken_time, now);
 #endif
 }
 
@@ -135,7 +139,7 @@ static inline void btree_node_unlock(struct btree_trans *trans,
 
 	if (lock_type != BTREE_NODE_UNLOCKED) {
 		six_unlock_type(&path->l[level].b->c.lock, lock_type);
-		btree_trans_lock_hold_time_update(trans, path, level);
+		btree_trans_lock_hold_time_update(trans, path, level, lock_type);
 	}
 	mark_btree_node_unlocked(path, level);
 }
@@ -186,6 +190,12 @@ bch2_btree_node_unlock_write_inlined(struct btree_trans *trans, struct btree_pat
 	trans_for_each_path_with_node(trans, b, linked, i)
 		linked->l[b->c.level].lock_seq++;
 
+#ifdef CONFIG_BCACHEFS_LOCK_TIME_STATS
+	if (b->c.level)
+		__bch2_time_stats_update(&trans->c->times[BCH_TIME_btree_lock_write],
+					 path->l[b->c.level].write_lock_taken_time,
+					 local_clock());
+#endif
 	six_unlock_write(&b->c.lock);
 }
 
@@ -311,6 +321,8 @@ static inline int __btree_node_lock_write(struct btree_trans *trans,
 					  struct btree_bkey_cached_common *b,
 					  bool lock_may_not_fail)
 {
+	int ret;
+
 	EBUG_ON(&path->l[b->level].b->c != b);
 	EBUG_ON(path->l[b->level].lock_seq != six_lock_seq(&b->lock));
 	EBUG_ON(!btree_node_intent_locked(path, b->level));
@@ -322,9 +334,14 @@ static inline int __btree_node_lock_write(struct btree_trans *trans,
 	 */
 	mark_btree_node_locked_noreset(path, b->level, BTREE_NODE_WRITE_LOCKED);
 
-	return likely(six_trylock_write(&b->lock))
+	ret = likely(six_trylock_write(&b->lock))
 		? 0
 		: __bch2_btree_node_lock_write(trans, path, b, lock_may_not_fail);
+
+#ifdef CONFIG_BCACHEFS_LOCK_TIME_STATS
+	path->l[b->level].write_lock_taken_time = local_clock();
+#endif
+	return ret;
 }
 
 static inline int __must_check
