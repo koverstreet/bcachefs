@@ -467,6 +467,9 @@ BCH_DEBUG_PARAMS_ALL()
 	x(btree_node_write)			\
 	x(btree_interior_update_foreground)	\
 	x(btree_interior_update_total)		\
+	x(btree_lock_read)			\
+	x(btree_lock_intent)			\
+	x(btree_lock_write)			\
 	x(btree_write_buffer_flush)		\
 	x(btree_gc)				\
 	x(data_write)				\
