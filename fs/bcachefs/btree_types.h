@@ -344,6 +344,7 @@ struct btree_path {
 		u32		lock_seq;
 #ifdef CONFIG_BCACHEFS_LOCK_TIME_STATS
 		u64             lock_taken_time;
+		u64             write_lock_taken_time;
 #endif
 	}			l[BTREE_MAX_DEPTH];
 #ifdef TRACK_PATH_ALLOCATED
