@@ -308,20 +308,19 @@ static void verify_bh(struct work_struct *work)
 	struct buffer_head *bh = ctx->bh;
 	bool valid;
 
-	valid = fsverity_verify_blocks(page_folio(bh->b_page), bh->b_size,
-				       bh_offset(bh));
+	valid = fsverity_verify_blocks(bh->b_folio, bh->b_size, bh_offset(bh));
 	end_buffer_async_read(bh, valid);
 	kfree(ctx);
 }
 
 static bool need_fsverity(struct buffer_head *bh)
 {
-	struct page *page = bh->b_page;
-	struct inode *inode = page->mapping->host;
+	struct folio *folio = bh->b_folio;
+	struct inode *inode = folio->mapping->host;
 
 	return fsverity_active(inode) &&
 		/* needed by ext4 */
-		page->index < DIV_ROUND_UP(inode->i_size, PAGE_SIZE);
+		folio->index < DIV_ROUND_UP(inode->i_size, PAGE_SIZE);
 }
 
 static void decrypt_bh(struct work_struct *work)
@@ -331,8 +330,8 @@ static void decrypt_bh(struct work_struct *work)
 	struct buffer_head *bh = ctx->bh;
 	int err;
 
-	err = fscrypt_decrypt_pagecache_blocks(page_folio(bh->b_page),
-					       bh->b_size, bh_offset(bh));
+	err = fscrypt_decrypt_pagecache_blocks(bh->b_folio, bh->b_size,
+					       bh_offset(bh));
 	if (err == 0 && need_fsverity(bh)) {
 		/*
 		 * We use different work queues for decryption and for verity
@@ -2581,7 +2580,7 @@ int block_truncate_page(struct address_space *mapping,
 	struct inode *inode = mapping->host;
 	struct page *page;
 	struct buffer_head *bh;
-	int err;
+	int err = 0;
 
 	blocksize = i_blocksize(inode);
 	length = offset & (blocksize - 1);
@@ -2594,9 +2593,8 @@ int block_truncate_page(struct address_space *mapping,
 	iblock = (sector_t)index << (PAGE_SHIFT - inode->i_blkbits);
 	
 	page = grab_cache_page(mapping, index);
-	err = -ENOMEM;
 	if (!page)
-		goto out;
+		return -ENOMEM;
 
 	if (!page_has_buffers(page))
 		create_empty_buffers(page, blocksize, 0);
@@ -2610,7 +2608,6 @@ int block_truncate_page(struct address_space *mapping,
 		pos += blocksize;
 	}
 
-	err = 0;
 	if (!buffer_mapped(bh)) {
 		WARN_ON(bh->b_size != blocksize);
 		err = get_block(inode, iblock, bh, 0);
@@ -2634,12 +2631,11 @@ int block_truncate_page(struct address_space *mapping,
 
 	zero_user(page, offset, length);
 	mark_buffer_dirty(bh);
-	err = 0;
 
 unlock:
 	unlock_page(page);
 	put_page(page);
-out:
+
 	return err;
 }
 EXPORT_SYMBOL(block_truncate_page);

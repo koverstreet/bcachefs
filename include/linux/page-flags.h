@@ -174,9 +174,6 @@ enum pageflags {
 	/* Remapped by swiotlb-xen. */
 	PG_xen_remapped = PG_owner_priv_1,
 
-	/* SLOB */
-	PG_slob_free = PG_private,
-
 #ifdef CONFIG_MEMORY_FAILURE
 	/*
 	 * Compound pages. Stored in first tail page's flags.
@@ -483,7 +480,6 @@ PAGEFLAG(Active, active, PF_HEAD) __CLEARPAGEFLAG(Active, active, PF_HEAD)
 PAGEFLAG(Workingset, workingset, PF_HEAD)
 	TESTCLEARFLAG(Workingset, workingset, PF_HEAD)
 __PAGEFLAG(Slab, slab, PF_NO_TAIL)
-__PAGEFLAG(SlobFree, slob_free, PF_NO_TAIL)
 PAGEFLAG(Checked, checked, PF_NO_COMPOUND)	   /* Used by some filesystems */
 
 /* Xen */
@@ -765,11 +761,6 @@ bool set_page_writeback(struct page *page);
 	__folio_start_writeback(folio, false)
 #define folio_start_writeback_keepwrite(folio)	\
 	__folio_start_writeback(folio, true)
-
-static inline void set_page_writeback_keepwrite(struct page *page)
-{
-	folio_start_writeback_keepwrite(page_folio(page));
-}
 
 static inline bool test_set_page_writeback(struct page *page)
 {
