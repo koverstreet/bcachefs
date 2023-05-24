@@ -269,7 +269,7 @@ bool blk_bio_list_merge(struct request_queue *q, struct list_head *list,
  */
 #define ELV_ON_HASH(rq) ((rq)->rq_flags & RQF_HASHED)
 
-void blk_insert_flush(struct request *rq);
+bool blk_insert_flush(struct request *rq);
 
 int elevator_switch(struct request_queue *q, struct elevator_type *new_e);
 void elevator_disable(struct request_queue *q);
@@ -419,6 +419,18 @@ struct gendisk *__alloc_disk_node(struct request_queue *q, int node_id,
 int bio_add_hw_page(struct request_queue *q, struct bio *bio,
 		struct page *page, unsigned int len, unsigned int offset,
 		unsigned int max_sectors, bool *same_page);
+
+/*
+ * Clean up a page appropriately, where the page may be pinned, may have a
+ * ref taken on it or neither.
+ */
+static inline void bio_release_page(struct bio *bio, struct page *page)
+{
+	if (bio_flagged(bio, BIO_PAGE_PINNED))
+		unpin_user_page(page);
+	else if (bio_flagged(bio, BIO_PAGE_REFFED))
+		put_page(page);
+}
 
 struct request_queue *blk_alloc_queue(int node_id);
 
