@@ -1,0 +1,65 @@
+arm/soc
+
+soc/dt
+	dt/cleanup
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux-dt tags/dt64-cleanup-6.5
+	dt/cleanup32
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux-dt tags/dt-cleanup-6.5
+	renesas/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/geert/renesas-devel tags/renesas-dts-for-v6.5-tag1
+	s32/dt
+		https://github.com/chesterlintw/linux-s32g tags/s32g2-dt-6.5
+
+soc/drivers
+	renesas/drivers
+		git://git.kernel.org/pub/scm/linux/kernel/git/geert/renesas-devel tags/renesas-drivers-for-v6.5-tag1
+	drivers/reset
+		git://git.pengutronix.de/pza/linux tags/reset-for-v6.5
+	patch
+		arm-cci: add cci_enable_port_for_self prototype
+	drivers/sram
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-nomadik tags/sram-for-soc
+
+arm/defconfig
+
+arm/late
+
+soc/fixes
+
+arm/fixes
+	<no branch> (654d0310007146fae87b0c1a68f81e53ad519b14)
+		https://git.linaro.org/people/jens.wiklander/linux-tee tags/optee-async-notif-fix-for-v6.3
+	<no branch> (55b37d9c8ba23d28c584aef0801fb1e60e4a817c)
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/juno-fixes-6.4
+	<no branch> (44e8d5ad2dc01529eb1316b1521f24ac4aac8eaf)
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/scmi-fix-6.4
+	<no branch> (0f554e37dad416f445cd3ec5935f5aec1b0e7ba5)
+		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-fixes-6.4
+	patch
+		MAINTAINERS: update arm64 Microchip entries
+	<no branch> (111a833dc5cbef3d05b2a796a7e23cb7f6ff2192)
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/ffa-fixes-6.4
+
+soc/arm
+	patch
+		ARM: davinci: fix davinci_cpufreq_init() declaration
+		ARM: ep93xx: fix missing-prototype warnings
+		ARM: highbank: add missing include
+		ARM: imx: add missing include
+		ARM: lpc32xx: add missing include
+		ARM: omap1: add missing include
+		ARM: omap2: fix missing tick_broadcast() prototype
+		ARM: orion5x: fix d2net gpio initialization
+		ARM: pxa: fix missing-prototypes warnings
+		ARM: sa1100: address missing prototype warnings
+		ARM: spear: include "pl080.h" for pl080_get_signal() prototype
+		ARM: versatile: mark mmc_status() static
+	omap/gpio-desc
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-gpio tags/gpio-omap-descriptors-v6.5
+
+soc/defconfig
+	renesas/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/geert/renesas-devel tags/renesas-arm-defconfig-for-v6.5-tag1
+	patch
+		arm64: defconfig: Enable ARCH_SPARX5 and ARCH_REALTEK
+
