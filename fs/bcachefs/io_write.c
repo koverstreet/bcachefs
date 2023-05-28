@@ -110,6 +110,8 @@ static struct page *__bio_alloc_page_pool(struct bch_fs *c, bool *using_mempool)
 {
 	struct page *page;
 
+	bch2_assert_btree_nodes_not_locked(); /* allocating memory */
+
 	if (likely(!*using_mempool)) {
 		page = alloc_page(GFP_NOFS);
 		if (unlikely(!page)) {
@@ -403,6 +405,8 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(k));
 	struct bch_write_bio *n;
+
+	bch2_assert_btree_nodes_not_locked(); /* allocating memory */
 
 	BUG_ON(c->opts.nochanges);
 
@@ -784,6 +788,8 @@ static struct bio *bch2_write_bio_alloc(struct bch_fs *c,
 
 	pages = min(pages, BIO_MAX_VECS);
 
+	bch2_assert_btree_nodes_not_locked(); /* allocating memory */
+
 	bio = bio_alloc_bioset(NULL, pages, 0,
 			       GFP_NOFS, &c->bio_write);
 	wbio			= wbio_init(bio);
@@ -1135,6 +1141,7 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 
 	if (dst == src && more) {
 		BUG_ON(total_output != total_input);
+		bch2_assert_btree_nodes_not_locked(); /* allocating memory */
 
 		dst = bio_split(src, total_input >> 9,
 				GFP_NOFS, &c->bio_write);

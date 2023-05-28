@@ -108,6 +108,7 @@ int bch2_set_bucket_needs_journal_commit(struct buckets_waiting_for_journal *b,
 
 	new_bits = t->bits + (nr_elements * 3 > size);
 
+	/* XXX GFP_KERNEL while holding btree locks, but rare: */
 	n = kvmalloc(sizeof(*n) + (sizeof(n->d[0]) << new_bits), GFP_KERNEL);
 	if (!n) {
 		ret = -BCH_ERR_ENOMEM_buckets_waiting_for_journal_set;

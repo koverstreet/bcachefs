@@ -901,4 +901,10 @@ void bch2_fs_btree_iter_exit(struct bch_fs *);
 void bch2_fs_btree_iter_init_early(struct bch_fs *);
 int bch2_fs_btree_iter_init(struct bch_fs *);
 
+#ifdef CONFIG_LOCKDEP
+void bch2_assert_btree_nodes_not_locked(void);
+#else
+static inline void bch2_assert_btree_nodes_not_locked(void) {}
+#endif
+
 #endif /* _BCACHEFS_BTREE_ITER_H */

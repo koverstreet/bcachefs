@@ -172,6 +172,8 @@ static struct promote_op *__promote_alloc(struct btree_trans *trans,
 	unsigned pages = DIV_ROUND_UP(sectors, PAGE_SECTORS);
 	int ret;
 
+	bch2_assert_btree_nodes_not_locked(); /* allocating memory */
+
 	if (!bch2_write_ref_tryget(c, BCH_WRITE_REF_promote))
 		return ERR_PTR(-BCH_ERR_nopromote_no_writes);
 
@@ -937,6 +939,8 @@ retry_pick:
 		pick.crc.live_size		= bvec_iter_sectors(iter);
 	}
 get_bio:
+	bch2_assert_btree_nodes_not_locked(); /* allocating memory */
+
 	if (rbio) {
 		/*
 		 * promote already allocated bounce rbio:
