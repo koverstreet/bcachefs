@@ -16,12 +16,6 @@
 
 void bch2_btree_lock_init(struct btree_bkey_cached_common *, enum six_lock_init_flags);
 
-#ifdef CONFIG_LOCKDEP
-void bch2_assert_btree_nodes_not_locked(void);
-#else
-static inline void bch2_assert_btree_nodes_not_locked(void) {}
-#endif
-
 #ifdef CONFIG_BCACHEFS_DEBUG
 void bch2_trans_verify_relock(struct btree_trans *);
 #else
