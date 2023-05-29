@@ -507,8 +507,8 @@ static __init void __test_string_get_size(const u64 size, const u64 blk_size,
 	char buf10[string_get_size_maxbuf];
 	char buf2[string_get_size_maxbuf];
 
-	string_get_size(size, blk_size, STRING_UNITS_10, buf10, sizeof(buf10));
-	string_get_size(size, blk_size, STRING_UNITS_2, buf2, sizeof(buf2));
+	string_get_size(size, blk_size, 0, buf10, sizeof(buf10));
+	string_get_size(size, blk_size, STRING_SIZE_BASE2, buf2, sizeof(buf2));
 
 	test_string_get_size_check("STRING_UNITS_10", exp_result10, buf10,
 				   size, blk_size);

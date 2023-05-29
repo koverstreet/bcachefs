@@ -103,7 +103,8 @@ static void alloc_tag_to_text(struct seq_buf *out, struct codetag *ct)
 	char buf[10];
 
 	string_get_size(lazy_percpu_counter_read(&tag->bytes_allocated), 1,
-			STRING_UNITS_2, buf, sizeof(buf));
+			STRING_SIZE_BASE2|STRING_SIZE_NOSPACE,
+			buf, sizeof(buf));
 
 	seq_buf_printf(out, "%8s ", buf);
 	codetag_to_text(out, ct);
