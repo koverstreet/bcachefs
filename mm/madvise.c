@@ -409,8 +409,10 @@ static int madvise_cold_or_pageout_pte_range(pmd_t *pmd,
 			if (folio_isolate_lru(folio)) {
 				if (folio_test_unevictable(folio))
 					folio_putback_lru(folio);
-				else
+				else {
+					folio_clear_workingset(folio);
 					list_add(&folio->lru, &folio_list);
+				}
 			}
 		} else
 			folio_deactivate(folio);
@@ -503,8 +505,10 @@ regular_folio:
 			if (folio_isolate_lru(folio)) {
 				if (folio_test_unevictable(folio))
 					folio_putback_lru(folio);
-				else
+				else {
+					folio_clear_workingset(folio);
 					list_add(&folio->lru, &folio_list);
+				}
 			}
 		} else
 			folio_deactivate(folio);
