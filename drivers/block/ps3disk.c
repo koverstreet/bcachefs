@@ -86,7 +86,7 @@ static void ps3disk_scatter_gather(struct ps3_storage_device *dev,
 
 	rq_for_each_segment(bvec, req, iter) {
 		if (gather)
-			memcpy_from_bvec(dev->bounce_buf + offset, &bvec);
+			memcpy_from_bvec(dev->bounce_buf + offset, bvec);
 		else
 			memcpy_to_bvec(&bvec, dev->bounce_buf + offset);
 	}

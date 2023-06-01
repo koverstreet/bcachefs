@@ -257,9 +257,9 @@ static inline void *bvec_kmap_local(struct bio_vec *bvec)
  *
  * Must be called on single-page bvecs only.
  */
-static inline void memcpy_from_bvec(char *to, struct bio_vec *bvec)
+static inline void memcpy_from_bvec(char *to, struct bio_vec bvec)
 {
-	memcpy_from_page(to, bvec->bv_page, bvec->bv_offset, bvec->bv_len);
+	memcpy_from_page(to, bvec.bv_page, bvec.bv_offset, bvec.bv_len);
 }
 
 /**
@@ -268,9 +268,9 @@ static inline void memcpy_from_bvec(char *to, struct bio_vec *bvec)
  *
  * Must be called on single-page bvecs only.
  */
-static inline void memcpy_to_bvec(struct bio_vec *bvec, const char *from)
+static inline void memcpy_to_bvec(struct bio_vec bvec, const char *from)
 {
-	memcpy_to_page(bvec->bv_page, bvec->bv_offset, from, bvec->bv_len);
+	memcpy_to_page(bvec.bv_page, bvec.bv_offset, from, bvec.bv_len);
 }
 
 /**

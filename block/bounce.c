@@ -92,7 +92,7 @@ static void copy_to_high_bio_irq(struct bio *to, struct bio *from)
 			 * been modified by the block layer, so use the original
 			 * copy, bounce_copy_vec already uses tovec->bv_len
 			 */
-			memcpy_to_bvec(&tovec, page_address(fromvec.bv_page) +
+			memcpy_to_bvec(tovec, page_address(fromvec.bv_page) +
 				       tovec.bv_offset);
 		}
 		bio_advance_iter(from, &from_iter, tovec.bv_len);
@@ -249,7 +249,7 @@ struct bio *__blk_queue_bounce(struct bio *bio_orig, struct request_queue *q)
 
 		if (rw == WRITE) {
 			flush_dcache_page(to->bv_page);
-			memcpy_from_bvec(page_address(bounce_page), to);
+			memcpy_from_bvec(page_address(bounce_page), *to);
 		}
 		to->bv_page = bounce_page;
 	}

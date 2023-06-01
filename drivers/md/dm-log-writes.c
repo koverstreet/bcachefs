@@ -744,7 +744,7 @@ static int log_writes_map(struct dm_target *ti, struct bio *bio)
 		}
 
 		dst = kmap_local_page(page);
-		memcpy_from_bvec(dst, &bv);
+		memcpy_from_bvec(dst, bv);
 		kunmap_local(dst);
 		block->vecs[i].bv_page = page;
 		block->vecs[i].bv_len = bv.bv_len;

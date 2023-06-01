@@ -450,7 +450,7 @@ static int aha1542_queuecommand(struct Scsi_Host *sh, struct scsi_cmnd *cmd)
 		struct bio_vec bv;
 
 		rq_for_each_segment(bv, rq, iter) {
-			memcpy_from_bvec(buf, &bv);
+			memcpy_from_bvec(buf, bv);
 			buf += bv.bv_len;
 		}
 	}

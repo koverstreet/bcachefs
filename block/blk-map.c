@@ -447,7 +447,7 @@ static void bio_copy_kern_endio_read(struct bio *bio)
 	struct bio_vec bvec;
 
 	bio_for_each_segment_all(bvec, bio, iter) {
-		memcpy_from_bvec(p, &bvec);
+		memcpy_from_bvec(p, bvec);
 		p += bvec.bv_len;
 	}
 

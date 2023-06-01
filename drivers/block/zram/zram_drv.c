@@ -1396,7 +1396,7 @@ static int zram_bvec_read_partial(struct zram *zram, struct bio_vec *bvec,
 		return -ENOMEM;
 	ret = zram_read_page(zram, page, index, NULL);
 	if (likely(!ret))
-		memcpy_to_bvec(bvec, page_address(page) + offset);
+		memcpy_to_bvec(*bvec, page_address(page) + offset);
 	__free_page(page);
 	return ret;
 }
@@ -1548,7 +1548,7 @@ static int zram_bvec_write_partial(struct zram *zram, struct bio_vec *bvec,
 
 	ret = zram_read_page(zram, page, index, bio);
 	if (!ret) {
-		memcpy_from_bvec(page_address(page) + offset, bvec);
+		memcpy_from_bvec(page_address(page) + offset, *bvec);
 		ret = zram_write_page(zram, page, index);
 	}
 	__free_page(page);
