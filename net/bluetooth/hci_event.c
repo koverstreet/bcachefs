@@ -3807,6 +3807,7 @@ static u8 hci_cc_le_set_cig_params(struct hci_dev *hdev, void *data,
 	struct hci_cp_le_set_cig_params *cp;
 	struct hci_conn *conn;
 	u8 status = rp->status;
+	bool pending = false;
 	int i;
 
 	bt_dev_dbg(hdev, "status 0x%2.2x", rp->status);
@@ -3848,13 +3849,15 @@ static u8 hci_cc_le_set_cig_params(struct hci_dev *hdev, void *data,
 
 		bt_dev_dbg(hdev, "%p handle 0x%4.4x parent %p", conn,
 			   conn->handle, conn->parent);
-
-		/* Create CIS if LE is already connected */
-		if (conn->parent && conn->parent->state == BT_CONNECTED)
-			hci_le_create_cis(conn);
+		
+		if (conn->state == BT_CONNECT)
+			pending = true;
 	}
 
 unlock:
+	if (pending)
+		hci_le_create_cis_pending(hdev);
+
 	hci_dev_unlock(hdev);
 
 	return rp->status;
@@ -4220,6 +4223,7 @@ static void hci_cmd_complete_evt(struct hci_dev *hdev, void *data,
 static void hci_cs_le_create_cis(struct hci_dev *hdev, u8 status)
 {
 	struct hci_cp_le_create_cis *cp;
+	bool pending = false;
 	int i;
 
 	bt_dev_dbg(hdev, "status 0x%2.2x", status);
@@ -4242,11 +4246,17 @@ static void hci_cs_le_create_cis(struct hci_dev *hdev, u8 status)
 
 		conn = hci_conn_hash_lookup_handle(hdev, handle);
 		if (conn) {
+			if (test_and_clear_bit(HCI_CONN_CREATE_CIS,
+					       &conn->flags))
+				pending = true;
 			conn->state = BT_CLOSED;
 			hci_connect_cfm(conn, status);
 			hci_conn_del(conn);
 		}
 	}
+
+	if (pending)
+		hci_le_create_cis_pending(hdev);
 
 	hci_dev_unlock(hdev);
 }
@@ -6790,6 +6800,7 @@ static void hci_le_cis_estabilished_evt(struct hci_dev *hdev, void *data,
 {
 	struct hci_evt_le_cis_established *ev = data;
 	struct hci_conn *conn;
+	bool pending = false;
 	u16 handle = __le16_to_cpu(ev->handle);
 
 	bt_dev_dbg(hdev, "status 0x%2.2x", ev->status);
@@ -6810,6 +6821,8 @@ static void hci_le_cis_estabilished_evt(struct hci_dev *hdev, void *data,
 			   handle);
 		goto unlock;
 	}
+
+	pending = test_and_clear_bit(HCI_CONN_CREATE_CIS, &conn->flags);
 
 	if (conn->role == HCI_ROLE_SLAVE) {
 		__le32 interval;
@@ -6836,10 +6849,14 @@ static void hci_le_cis_estabilished_evt(struct hci_dev *hdev, void *data,
 		goto unlock;
 	}
 
+	conn->state = BT_CLOSED;
 	hci_connect_cfm(conn, ev->status);
 	hci_conn_del(conn);
 
 unlock:
+	if (pending)
+		hci_le_create_cis_pending(hdev);
+
 	hci_dev_unlock(hdev);
 }
 
