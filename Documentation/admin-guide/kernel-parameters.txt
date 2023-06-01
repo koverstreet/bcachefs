@@ -4913,6 +4913,15 @@
 			test until boot completes in order to avoid
 			interference.
 
+	rcuscale.kfree_by_call_rcu= [KNL]
+			In kernels built with CONFIG_RCU_LAZY=y, test
+			call_rcu() instead of kfree_rcu().
+
+	rcuscale.kfree_mult= [KNL]
+			Instead of allocating an object of size kfree_obj,
+			allocate one of kfree_mult * sizeof(kfree_obj).
+			Defaults to 1.
+
 	rcuscale.kfree_rcu_test= [KNL]
 			Set to measure performance of kfree_rcu() flooding.
 
@@ -4958,7 +4967,7 @@
 			the same as for rcuscale.nreaders.
 			N, where N is the number of CPUs
 
-	rcuscale.perf_type= [KNL]
+	rcuscale.scale_type= [KNL]
 			Specify the RCU implementation to test.
 
 	rcuscale.shutdown= [KNL]
