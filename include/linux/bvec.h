@@ -16,6 +16,12 @@
 
 struct page;
 
+#ifdef CONFIG_BLK_DEBUG
+#define BLK_BUG_ON(cond) BUG_ON(cond)
+#else
+#define BLK_BUG_ON(cond) BUILD_BUG_ON_INVALID(cond)
+#endif
+
 /**
  * struct bio_vec - a contiguous range of physical memory addresses
  * @bv_page:   First page associated with the address range.
@@ -209,6 +215,8 @@ static inline struct bio_vec __bvec_iter_all_peek(const struct bio_vec *bvec,
 						  const struct bvec_iter_all *iter)
 {
 	struct bio_vec bv = bvec[iter->idx];
+
+	BLK_BUG_ON(iter->done >= bv.bv_len);
 
 	bv.bv_offset	+= iter->done;
 	bv.bv_len	-= iter->done;

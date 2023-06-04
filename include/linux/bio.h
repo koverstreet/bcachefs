@@ -87,6 +87,8 @@ static inline bool bio_iter_all_end(const struct bio *bio,
 static inline struct bio_vec bio_iter_all_peek(const struct bio *bio,
 					       const struct bvec_iter_all *iter)
 {
+	BLK_BUG_ON(iter->idx >= bio->bi_vcnt);
+
 	return bvec_iter_all_peek(bio->bi_io_vec, iter);
 }
 
@@ -95,6 +97,9 @@ static inline void bio_iter_all_advance(const struct bio *bio,
 					unsigned bytes)
 {
 	bvec_iter_all_advance(bio->bi_io_vec, iter, bytes);
+
+	BLK_BUG_ON(iter->idx > bio->bi_vcnt ||
+		   (iter->idx == bio->bi_vcnt && iter->done));
 }
 
 #define bio_for_each_segment_all_continue(bvl, bio, iter)		\
