@@ -27,18 +27,16 @@ arm/late
 soc/fixes
 
 arm/fixes
-	<no branch> (654d0310007146fae87b0c1a68f81e53ad519b14)
-		https://git.linaro.org/people/jens.wiklander/linux-tee tags/optee-async-notif-fix-for-v6.3
-	<no branch> (55b37d9c8ba23d28c584aef0801fb1e60e4a817c)
-		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/juno-fixes-6.4
-	<no branch> (44e8d5ad2dc01529eb1316b1521f24ac4aac8eaf)
-		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/scmi-fix-6.4
-	<no branch> (0f554e37dad416f445cd3ec5935f5aec1b0e7ba5)
-		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-fixes-6.4
+	<no branch> (925a80af6106a55fa6bcfedc5bd2f02b0b835495)
+		https://git.kernel.org/pub/scm/linux/kernel/git/qcom/linux tags/qcom-dts-fixes-for-6.4
+	<no branch> (cbd77119b6355872cd308a60e99f9ca678435d15)
+		https://git.kernel.org/pub/scm/linux/kernel/git/qcom/linux tags/qcom-driver-fixes-for-6.4
+	<no branch> (661a4f089317c877aecd598fb70cd46510cc8d29)
+		https://git.kernel.org/pub/scm/linux/kernel/git/qcom/linux tags/qcom-arm64-fixes-for-6.4
+	<no branch> (6b0db163ff9200a55dc77a652dad1d4b0a853f63)
+		https://git.kernel.org/pub/scm/linux/kernel/git/at91/linux tags/at91-fixes-6.4
 	patch
-		MAINTAINERS: update arm64 Microchip entries
-	<no branch> (111a833dc5cbef3d05b2a796a7e23cb7f6ff2192)
-		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/ffa-fixes-6.4
+		ARM: dts: Fix erroneous ADS touchscreen polarities
 
 soc/arm
 	patch
@@ -62,4 +60,8 @@ soc/defconfig
 		git://git.kernel.org/pub/scm/linux/kernel/git/geert/renesas-devel tags/renesas-arm-defconfig-for-v6.5-tag1
 	patch
 		arm64: defconfig: Enable ARCH_SPARX5 and ARCH_REALTEK
+
+soc/newsoc
+	nuvoton/ma35d1
+		Merge branch 'nuvoton/ma35d1' into soc/newsoc
 
