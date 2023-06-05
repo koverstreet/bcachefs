@@ -4,7 +4,7 @@
  *
  * (C) Copyright 2014 - 2021, Xilinx, Inc.
  *
- * Michal Simek <michal.simek@xilinx.com>
+ * Michal Simek <michal.simek@amd.com>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -155,6 +155,10 @@
 			     <0 144 4>,
 			     <0 145 4>,
 			     <0 146 4>;
+		interrupt-affinity = <&cpu0>,
+				     <&cpu1>,
+				     <&cpu2>,
+				     <&cpu3>;
 	};
 
 	psci {
