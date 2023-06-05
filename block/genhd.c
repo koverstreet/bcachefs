@@ -318,18 +318,6 @@ void blk_free_ext_minor(unsigned int minor)
 	ida_free(&ext_devt_ida, minor);
 }
 
-static char *bdevt_str(dev_t devt, char *buf)
-{
-	if (MAJOR(devt) <= 0xff && MINOR(devt) <= 0xff) {
-		char tbuf[BDEVT_SIZE];
-		snprintf(tbuf, BDEVT_SIZE, "%02x%02x", MAJOR(devt), MINOR(devt));
-		snprintf(buf, BDEVT_SIZE, "%-9s", tbuf);
-	} else
-		snprintf(buf, BDEVT_SIZE, "%03x:%05x", MAJOR(devt), MINOR(devt));
-
-	return buf;
-}
-
 void disk_uevent(struct gendisk *disk, enum kobject_action action)
 {
 	struct block_device *part;
@@ -370,13 +358,15 @@ int disk_scan_partitions(struct gendisk *disk, fmode_t mode)
 	 * scanners.
 	 */
 	if (!(mode & FMODE_EXCL)) {
-		ret = bd_prepare_to_claim(disk->part0, disk_scan_partitions);
+		ret = bd_prepare_to_claim(disk->part0, disk_scan_partitions,
+					  NULL);
 		if (ret)
 			return ret;
 	}
 
 	set_bit(GD_NEED_PART_SCAN, &disk->state);
-	bdev = blkdev_get_by_dev(disk_devt(disk), mode & ~FMODE_EXCL, NULL);
+	bdev = blkdev_get_by_dev(disk_devt(disk), mode & ~FMODE_EXCL, NULL,
+				 NULL);
 	if (IS_ERR(bdev))
 		ret =  PTR_ERR(bdev);
 	else
@@ -563,6 +553,28 @@ out_exit_elevator:
 }
 EXPORT_SYMBOL(device_add_disk);
 
+static void blk_report_disk_dead(struct gendisk *disk)
+{
+	struct block_device *bdev;
+	unsigned long idx;
+
+	rcu_read_lock();
+	xa_for_each(&disk->part_tbl, idx, bdev) {
+		if (!kobject_get_unless_zero(&bdev->bd_device.kobj))
+			continue;
+		rcu_read_unlock();
+
+		mutex_lock(&bdev->bd_holder_lock);
+		if (bdev->bd_holder_ops && bdev->bd_holder_ops->mark_dead)
+			bdev->bd_holder_ops->mark_dead(bdev);
+		mutex_unlock(&bdev->bd_holder_lock);
+
+		put_device(&bdev->bd_device);
+		rcu_read_lock();
+	}
+	rcu_read_unlock();
+}
+
 /**
  * blk_mark_disk_dead - mark a disk as dead
  * @disk: disk to mark as dead
@@ -572,13 +584,26 @@ EXPORT_SYMBOL(device_add_disk);
  */
 void blk_mark_disk_dead(struct gendisk *disk)
 {
-	set_bit(GD_DEAD, &disk->state);
-	blk_queue_start_drain(disk->queue);
+	/*
+	 * Fail any new I/O.
+	 */
+	if (test_and_set_bit(GD_DEAD, &disk->state))
+		return;
+
+	if (test_bit(GD_OWNS_QUEUE, &disk->state))
+		blk_queue_flag_set(QUEUE_FLAG_DYING, disk->queue);
 
 	/*
 	 * Stop buffered writers from dirtying pages that can't be written out.
 	 */
-	set_capacity_and_notify(disk, 0);
+	set_capacity(disk, 0);
+
+	/*
+	 * Prevent new I/O from crossing bio_queue_enter().
+	 */
+	blk_queue_start_drain(disk->queue);
+
+	blk_report_disk_dead(disk);
 }
 EXPORT_SYMBOL_GPL(blk_mark_disk_dead);
 
@@ -604,6 +629,8 @@ EXPORT_SYMBOL_GPL(blk_mark_disk_dead);
 void del_gendisk(struct gendisk *disk)
 {
 	struct request_queue *q = disk->queue;
+	struct block_device *part;
+	unsigned long idx;
 
 	might_sleep();
 
@@ -612,26 +639,27 @@ void del_gendisk(struct gendisk *disk)
 
 	disk_del_events(disk);
 
+	/*
+	 * Prevent new openers by unlinked the bdev inode, and write out
+	 * dirty data before marking the disk dead and stopping all I/O.
+	 */
 	mutex_lock(&disk->open_mutex);
-	remove_inode_hash(disk->part0->bd_inode);
-	blk_drop_partitions(disk);
+	xa_for_each(&disk->part_tbl, idx, part) {
+		remove_inode_hash(part->bd_inode);
+		fsync_bdev(part);
+		__invalidate_device(part, true);
+	}
 	mutex_unlock(&disk->open_mutex);
 
-	fsync_bdev(disk->part0);
-	__invalidate_device(disk->part0, true);
+	blk_mark_disk_dead(disk);
 
 	/*
-	 * Fail any new I/O.
+	 * Drop all partitions now that the disk is marked dead.
 	 */
-	set_bit(GD_DEAD, &disk->state);
-	if (test_bit(GD_OWNS_QUEUE, &disk->state))
-		blk_queue_flag_set(QUEUE_FLAG_DYING, q);
-	set_capacity(disk, 0);
-
-	/*
-	 * Prevent new I/O from crossing bio_queue_enter().
-	 */
-	blk_queue_start_drain(q);
+	mutex_lock(&disk->open_mutex);
+	xa_for_each_start(&disk->part_tbl, idx, part, 1)
+		drop_partition(part);
+	mutex_unlock(&disk->open_mutex);
 
 	if (!(disk->flags & GENHD_FL_HIDDEN)) {
 		sysfs_remove_link(&disk_to_dev(disk)->kobj, "bdi");
@@ -754,57 +782,6 @@ void blk_request_module(dev_t devt)
 		request_module("block-major-%d", MAJOR(devt));
 }
 #endif /* CONFIG_BLOCK_LEGACY_AUTOLOAD */
-
-/*
- * print a full list of all partitions - intended for places where the root
- * filesystem can't be mounted and thus to give the victim some idea of what
- * went wrong
- */
-void __init printk_all_partitions(void)
-{
-	struct class_dev_iter iter;
-	struct device *dev;
-
-	class_dev_iter_init(&iter, &block_class, NULL, &disk_type);
-	while ((dev = class_dev_iter_next(&iter))) {
-		struct gendisk *disk = dev_to_disk(dev);
-		struct block_device *part;
-		char devt_buf[BDEVT_SIZE];
-		unsigned long idx;
-
-		/*
-		 * Don't show empty devices or things that have been
-		 * suppressed
-		 */
-		if (get_capacity(disk) == 0 || (disk->flags & GENHD_FL_HIDDEN))
-			continue;
-
-		/*
-		 * Note, unlike /proc/partitions, I am showing the numbers in
-		 * hex - the same format as the root= option takes.
-		 */
-		rcu_read_lock();
-		xa_for_each(&disk->part_tbl, idx, part) {
-			if (!bdev_nr_sectors(part))
-				continue;
-			printk("%s%s %10llu %pg %s",
-			       bdev_is_partition(part) ? "  " : "",
-			       bdevt_str(part->bd_dev, devt_buf),
-			       bdev_nr_sectors(part) >> 1, part,
-			       part->bd_meta_info ?
-					part->bd_meta_info->uuid : "");
-			if (bdev_is_partition(part))
-				printk("\n");
-			else if (dev->parent && dev->parent->driver)
-				printk(" driver: %s\n",
-					dev->parent->driver->name);
-			else
-				printk(" (driver?)\n");
-		}
-		rcu_read_unlock();
-	}
-	class_dev_iter_exit(&iter);
-}
 
 #ifdef CONFIG_PROC_FS
 /* iterator */
@@ -1336,35 +1313,6 @@ dev_t part_devt(struct gendisk *disk, u8 partno)
 		devt = part->bd_dev;
 	rcu_read_unlock();
 
-	return devt;
-}
-
-dev_t blk_lookup_devt(const char *name, int partno)
-{
-	dev_t devt = MKDEV(0, 0);
-	struct class_dev_iter iter;
-	struct device *dev;
-
-	class_dev_iter_init(&iter, &block_class, NULL, &disk_type);
-	while ((dev = class_dev_iter_next(&iter))) {
-		struct gendisk *disk = dev_to_disk(dev);
-
-		if (strcmp(dev_name(dev), name))
-			continue;
-
-		if (partno < disk->minors) {
-			/* We need to return the right devno, even
-			 * if the partition doesn't exist yet.
-			 */
-			devt = MKDEV(MAJOR(dev->devt),
-				     MINOR(dev->devt) + partno);
-		} else {
-			devt = part_devt(disk, partno);
-			if (devt)
-				break;
-		}
-	}
-	class_dev_iter_exit(&iter);
 	return devt;
 }
 

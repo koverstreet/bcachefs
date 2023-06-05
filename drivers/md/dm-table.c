@@ -324,23 +324,13 @@ static int upgrade_mode(struct dm_dev_internal *dd, fmode_t new_mode,
 }
 
 /*
- * Convert the path to a device
- */
-dev_t dm_get_dev_t(const char *path)
-{
-	dev_t dev;
-
-	if (lookup_bdev(path, &dev))
-		dev = name_to_dev_t(path);
-	return dev;
-}
-EXPORT_SYMBOL_GPL(dm_get_dev_t);
-
-/*
  * Add a device to the list, or just increment the usage count if
  * it's already present.
+ *
+ * Note: the __ref annotation is because this function can call the __init
+ * marked early_lookup_bdev when called during early boot code from dm-init.c.
  */
-int dm_get_device(struct dm_target *ti, const char *path, fmode_t mode,
+int __ref dm_get_device(struct dm_target *ti, const char *path, fmode_t mode,
 		  struct dm_dev **result)
 {
 	int r;
@@ -358,9 +348,13 @@ int dm_get_device(struct dm_target *ti, const char *path, fmode_t mode,
 		if (MAJOR(dev) != major || MINOR(dev) != minor)
 			return -EOVERFLOW;
 	} else {
-		dev = dm_get_dev_t(path);
-		if (!dev)
-			return -ENODEV;
+		r = lookup_bdev(path, &dev);
+#ifndef MODULE
+		if (r && system_state < SYSTEM_RUNNING)
+			r = early_lookup_bdev(path, &dev);
+#endif
+		if (r)
+			return r;
 	}
 	if (dev == disk_devt(t->md->disk))
 		return -EINVAL;

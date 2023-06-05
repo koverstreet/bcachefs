@@ -102,7 +102,7 @@ int truncate_bdev_range(struct block_device *bdev, fmode_t mode,
 	 * under live filesystem.
 	 */
 	if (!(mode & FMODE_EXCL)) {
-		int err = bd_prepare_to_claim(bdev, truncate_bdev_range);
+		int err = bd_prepare_to_claim(bdev, truncate_bdev_range, NULL);
 		if (err)
 			goto invalidate;
 	}
@@ -308,7 +308,7 @@ EXPORT_SYMBOL(thaw_bdev);
  * pseudo-fs
  */
 
-static  __cacheline_aligned_in_smp DEFINE_SPINLOCK(bdev_lock);
+static  __cacheline_aligned_in_smp DEFINE_MUTEX(bdev_lock);
 static struct kmem_cache * bdev_cachep __read_mostly;
 
 static struct inode *bdev_alloc_inode(struct super_block *sb)
@@ -415,6 +415,7 @@ struct block_device *bdev_alloc(struct gendisk *disk, u8 partno)
 	bdev = I_BDEV(inode);
 	mutex_init(&bdev->bd_fsfreeze_mutex);
 	spin_lock_init(&bdev->bd_size_lock);
+	mutex_init(&bdev->bd_holder_lock);
 	bdev->bd_partno = partno;
 	bdev->bd_inode = inode;
 	bdev->bd_queue = disk->queue;
@@ -463,39 +464,48 @@ long nr_blockdev_pages(void)
 /**
  * bd_may_claim - test whether a block device can be claimed
  * @bdev: block device of interest
- * @whole: whole block device containing @bdev, may equal @bdev
  * @holder: holder trying to claim @bdev
+ * @hops: holder ops
  *
  * Test whether @bdev can be claimed by @holder.
- *
- * CONTEXT:
- * spin_lock(&bdev_lock).
  *
  * RETURNS:
  * %true if @bdev can be claimed, %false otherwise.
  */
-static bool bd_may_claim(struct block_device *bdev, struct block_device *whole,
-			 void *holder)
+static bool bd_may_claim(struct block_device *bdev, void *holder,
+		const struct blk_holder_ops *hops)
 {
-	if (bdev->bd_holder == holder)
-		return true;	 /* already a holder */
-	else if (bdev->bd_holder != NULL)
-		return false; 	 /* held by someone else */
-	else if (whole == bdev)
-		return true;  	 /* is a whole device which isn't held */
+	struct block_device *whole = bdev_whole(bdev);
 
-	else if (whole->bd_holder == bd_may_claim)
-		return true; 	 /* is a partition of a device that is being partitioned */
-	else if (whole->bd_holder != NULL)
-		return false;	 /* is a partition of a held device */
-	else
-		return true;	 /* is a partition of an un-held device */
+	lockdep_assert_held(&bdev_lock);
+
+	if (bdev->bd_holder) {
+		/*
+		 * The same holder can always re-claim.
+		 */
+		if (bdev->bd_holder == holder) {
+			if (WARN_ON_ONCE(bdev->bd_holder_ops != hops))
+				return false;
+			return true;
+		}
+		return false;
+	}
+
+	/*
+	 * If the whole devices holder is set to bd_may_claim, a partition on
+	 * the device is claimed, but not the whole device.
+	 */
+	if (whole != bdev &&
+	    whole->bd_holder && whole->bd_holder != bd_may_claim)
+		return false;
+	return true;
 }
 
 /**
  * bd_prepare_to_claim - claim a block device
  * @bdev: block device of interest
  * @holder: holder trying to claim @bdev
+ * @hops: holder ops.
  *
  * Claim @bdev.  This function fails if @bdev is already claimed by another
  * holder and waits if another claiming is in progress. return, the caller
@@ -504,17 +514,18 @@ static bool bd_may_claim(struct block_device *bdev, struct block_device *whole,
  * RETURNS:
  * 0 if @bdev can be claimed, -EBUSY otherwise.
  */
-int bd_prepare_to_claim(struct block_device *bdev, void *holder)
+int bd_prepare_to_claim(struct block_device *bdev, void *holder,
+		const struct blk_holder_ops *hops)
 {
 	struct block_device *whole = bdev_whole(bdev);
 
 	if (WARN_ON_ONCE(!holder))
 		return -EINVAL;
 retry:
-	spin_lock(&bdev_lock);
+	mutex_lock(&bdev_lock);
 	/* if someone else claimed, fail */
-	if (!bd_may_claim(bdev, whole, holder)) {
-		spin_unlock(&bdev_lock);
+	if (!bd_may_claim(bdev, holder, hops)) {
+		mutex_unlock(&bdev_lock);
 		return -EBUSY;
 	}
 
@@ -524,7 +535,7 @@ retry:
 		DEFINE_WAIT(wait);
 
 		prepare_to_wait(wq, &wait, TASK_UNINTERRUPTIBLE);
-		spin_unlock(&bdev_lock);
+		mutex_unlock(&bdev_lock);
 		schedule();
 		finish_wait(wq, &wait);
 		goto retry;
@@ -532,7 +543,7 @@ retry:
 
 	/* yay, all mine */
 	whole->bd_claiming = holder;
-	spin_unlock(&bdev_lock);
+	mutex_unlock(&bdev_lock);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(bd_prepare_to_claim); /* only for the loop driver */
@@ -554,12 +565,13 @@ static void bd_clear_claiming(struct block_device *whole, void *holder)
  * Finish exclusive open of a block device. Mark the device as exlusively
  * open by the holder and wake up all waiters for exclusive open to finish.
  */
-static void bd_finish_claiming(struct block_device *bdev, void *holder)
+static void bd_finish_claiming(struct block_device *bdev, void *holder,
+		const struct blk_holder_ops *hops)
 {
 	struct block_device *whole = bdev_whole(bdev);
 
-	spin_lock(&bdev_lock);
-	BUG_ON(!bd_may_claim(bdev, whole, holder));
+	mutex_lock(&bdev_lock);
+	BUG_ON(!bd_may_claim(bdev, holder, hops));
 	/*
 	 * Note that for a whole device bd_holders will be incremented twice,
 	 * and bd_holder will be set to bd_may_claim before being set to holder
@@ -567,9 +579,12 @@ static void bd_finish_claiming(struct block_device *bdev, void *holder)
 	whole->bd_holders++;
 	whole->bd_holder = bd_may_claim;
 	bdev->bd_holders++;
+	mutex_lock(&bdev->bd_holder_lock);
 	bdev->bd_holder = holder;
+	bdev->bd_holder_ops = hops;
+	mutex_unlock(&bdev->bd_holder_lock);
 	bd_clear_claiming(whole, holder);
-	spin_unlock(&bdev_lock);
+	mutex_unlock(&bdev_lock);
 }
 
 /**
@@ -583,11 +598,45 @@ static void bd_finish_claiming(struct block_device *bdev, void *holder)
  */
 void bd_abort_claiming(struct block_device *bdev, void *holder)
 {
-	spin_lock(&bdev_lock);
+	mutex_lock(&bdev_lock);
 	bd_clear_claiming(bdev_whole(bdev), holder);
-	spin_unlock(&bdev_lock);
+	mutex_unlock(&bdev_lock);
 }
 EXPORT_SYMBOL(bd_abort_claiming);
+
+static void bd_end_claim(struct block_device *bdev)
+{
+	struct block_device *whole = bdev_whole(bdev);
+	bool unblock = false;
+
+	/*
+	 * Release a claim on the device.  The holder fields are protected with
+	 * bdev_lock.  open_mutex is used to synchronize disk_holder unlinking.
+	 */
+	mutex_lock(&bdev_lock);
+	WARN_ON_ONCE(--bdev->bd_holders < 0);
+	WARN_ON_ONCE(--whole->bd_holders < 0);
+	if (!bdev->bd_holders) {
+		mutex_lock(&bdev->bd_holder_lock);
+		bdev->bd_holder = NULL;
+		bdev->bd_holder_ops = NULL;
+		mutex_unlock(&bdev->bd_holder_lock);
+		if (bdev->bd_write_holder)
+			unblock = true;
+	}
+	if (!whole->bd_holders)
+		whole->bd_holder = NULL;
+	mutex_unlock(&bdev_lock);
+
+	/*
+	 * If this was the last claim, remove holder link and unblock evpoll if
+	 * it was a write holder.
+	 */
+	if (unblock) {
+		disk_unblock_events(bdev->bd_disk);
+		bdev->bd_write_holder = false;
+	}
+}
 
 static void blkdev_flush_mapping(struct block_device *bdev)
 {
@@ -701,6 +750,7 @@ void blkdev_put_no_open(struct block_device *bdev)
  * @dev: device number of block device to open
  * @mode: FMODE_* mask
  * @holder: exclusive holder identifier
+ * @hops: holder operations
  *
  * Open the block device described by device number @dev. If @mode includes
  * %FMODE_EXCL, the block device is opened with exclusive access.  Specifying
@@ -717,7 +767,8 @@ void blkdev_put_no_open(struct block_device *bdev)
  * RETURNS:
  * Reference to the block_device on success, ERR_PTR(-errno) on failure.
  */
-struct block_device *blkdev_get_by_dev(dev_t dev, fmode_t mode, void *holder)
+struct block_device *blkdev_get_by_dev(dev_t dev, fmode_t mode, void *holder,
+		const struct blk_holder_ops *hops)
 {
 	bool unblock_events = true;
 	struct block_device *bdev;
@@ -737,7 +788,7 @@ struct block_device *blkdev_get_by_dev(dev_t dev, fmode_t mode, void *holder)
 	disk = bdev->bd_disk;
 
 	if (mode & FMODE_EXCL) {
-		ret = bd_prepare_to_claim(bdev, holder);
+		ret = bd_prepare_to_claim(bdev, holder, hops);
 		if (ret)
 			goto put_blkdev;
 	}
@@ -757,7 +808,7 @@ struct block_device *blkdev_get_by_dev(dev_t dev, fmode_t mode, void *holder)
 	if (ret)
 		goto put_module;
 	if (mode & FMODE_EXCL) {
-		bd_finish_claiming(bdev, holder);
+		bd_finish_claiming(bdev, holder, hops);
 
 		/*
 		 * Block event polling for write claims if requested.  Any write
@@ -808,7 +859,7 @@ EXPORT_SYMBOL(blkdev_get_by_dev);
  * Reference to the block_device on success, ERR_PTR(-errno) on failure.
  */
 struct block_device *blkdev_get_by_path(const char *path, fmode_t mode,
-					void *holder)
+		void *holder, const struct blk_holder_ops *hops)
 {
 	struct block_device *bdev;
 	dev_t dev;
@@ -818,7 +869,7 @@ struct block_device *blkdev_get_by_path(const char *path, fmode_t mode,
 	if (error)
 		return ERR_PTR(error);
 
-	bdev = blkdev_get_by_dev(dev, mode, holder);
+	bdev = blkdev_get_by_dev(dev, mode, holder, hops);
 	if (!IS_ERR(bdev) && (mode & FMODE_WRITE) && bdev_read_only(bdev)) {
 		blkdev_put(bdev, mode);
 		return ERR_PTR(-EACCES);
@@ -843,36 +894,8 @@ void blkdev_put(struct block_device *bdev, fmode_t mode)
 		sync_blockdev(bdev);
 
 	mutex_lock(&disk->open_mutex);
-	if (mode & FMODE_EXCL) {
-		struct block_device *whole = bdev_whole(bdev);
-		bool bdev_free;
-
-		/*
-		 * Release a claim on the device.  The holder fields
-		 * are protected with bdev_lock.  open_mutex is to
-		 * synchronize disk_holder unlinking.
-		 */
-		spin_lock(&bdev_lock);
-
-		WARN_ON_ONCE(--bdev->bd_holders < 0);
-		WARN_ON_ONCE(--whole->bd_holders < 0);
-
-		if ((bdev_free = !bdev->bd_holders))
-			bdev->bd_holder = NULL;
-		if (!whole->bd_holders)
-			whole->bd_holder = NULL;
-
-		spin_unlock(&bdev_lock);
-
-		/*
-		 * If this was the last claim, remove holder link and
-		 * unblock evpoll if it was a write holder.
-		 */
-		if (bdev_free && bdev->bd_write_holder) {
-			disk_unblock_events(disk);
-			bdev->bd_write_holder = false;
-		}
-	}
+	if (mode & FMODE_EXCL)
+		bd_end_claim(bdev);
 
 	/*
 	 * Trigger event checking and tell drivers to flush MEDIA_CHANGE

@@ -377,6 +377,17 @@ disable_dax:
 	return 0;
 }
 
+static void
+xfs_bdev_mark_dead(
+	struct block_device	*bdev)
+{
+	xfs_force_shutdown(bdev->bd_holder, SHUTDOWN_DEVICE_REMOVED);
+}
+
+static const struct blk_holder_ops xfs_holder_ops = {
+	.mark_dead		= xfs_bdev_mark_dead,
+};
+
 STATIC int
 xfs_blkdev_get(
 	xfs_mount_t		*mp,
@@ -386,7 +397,7 @@ xfs_blkdev_get(
 	int			error = 0;
 
 	*bdevp = blkdev_get_by_path(name, FMODE_READ|FMODE_WRITE|FMODE_EXCL,
-				    mp);
+				    mp, &xfs_holder_ops);
 	if (IS_ERR(*bdevp)) {
 		error = PTR_ERR(*bdevp);
 		xfs_warn(mp, "Invalid device [%s], error=%d", name, error);
@@ -1159,6 +1170,13 @@ xfs_fs_free_cached_objects(
 	return xfs_reclaim_inodes_nr(XFS_M(sb), sc->nr_to_scan);
 }
 
+static void
+xfs_fs_shutdown(
+	struct super_block	*sb)
+{
+	xfs_force_shutdown(XFS_M(sb), SHUTDOWN_DEVICE_REMOVED);
+}
+
 static const struct super_operations xfs_super_operations = {
 	.alloc_inode		= xfs_fs_alloc_inode,
 	.destroy_inode		= xfs_fs_destroy_inode,
@@ -1172,6 +1190,7 @@ static const struct super_operations xfs_super_operations = {
 	.show_options		= xfs_fs_show_options,
 	.nr_cached_objects	= xfs_fs_nr_cached_objects,
 	.free_cached_objects	= xfs_fs_free_cached_objects,
+	.shutdown		= xfs_fs_shutdown,
 };
 
 static int
