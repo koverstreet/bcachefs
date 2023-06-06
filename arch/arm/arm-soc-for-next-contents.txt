@@ -9,6 +9,14 @@ soc/dt
 		git://git.kernel.org/pub/scm/linux/kernel/git/geert/renesas-devel tags/renesas-dts-for-v6.5-tag1
 	s32/dt
 		https://github.com/chesterlintw/linux-s32g tags/s32g2-dt-6.5
+	ux500/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-nomadik tags/ux500-dts-for-v6.5
+	at91/dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/at91/linux tags/at91-dt-6.5
+	samsung/dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-dt-6.5
+	omap/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v6.5/dt-signed
 
 soc/drivers
 	renesas/drivers
@@ -37,6 +45,8 @@ arm/fixes
 		https://git.kernel.org/pub/scm/linux/kernel/git/at91/linux tags/at91-fixes-6.4
 	patch
 		ARM: dts: Fix erroneous ADS touchscreen polarities
+	<no branch> (3aa0519a4780f1b8e11966bd879d4a2934ba455f)
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/ffa-fix-6.4-2
 
 soc/arm
 	patch
@@ -64,4 +74,7 @@ soc/defconfig
 soc/newsoc
 	nuvoton/ma35d1
 		Merge branch 'nuvoton/ma35d1' into soc/newsoc
+	patch
+		reset: RESET_NUVOTON_MA35D1 should depend on ARCH_MA35
+		Documentation/process: add soc maintainer handbook
 
