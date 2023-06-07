@@ -764,6 +764,7 @@ static int afs_writepages_region(struct address_space *mapping,
 					if (skips >= 5 || need_resched()) {
 						*_next = start;
 						_leave(" = 0 [%llx]", *_next);
+						folio_batch_release(&fbatch);
 						return 0;
 					}
 					skips++;
