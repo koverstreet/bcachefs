@@ -95,6 +95,7 @@
 
 #include "timeout.h"
 #include "poll.h"
+#include "rw.h"
 #include "alloc_cache.h"
 
 #define IORING_MAX_ENTRIES	32768
@@ -934,20 +935,19 @@ bool io_post_aux_cqe(struct io_ring_ctx *ctx, u64 user_data, s32 res, u32 cflags
 	return __io_post_aux_cqe(ctx, user_data, res, cflags, true);
 }
 
-bool io_aux_cqe(struct io_ring_ctx *ctx, bool defer, u64 user_data, s32 res, u32 cflags,
+bool io_aux_cqe(const struct io_kiocb *req, bool defer, s32 res, u32 cflags,
 		bool allow_overflow)
 {
+	struct io_ring_ctx *ctx = req->ctx;
+	u64 user_data = req->cqe.user_data;
 	struct io_uring_cqe *cqe;
-	unsigned int length;
 
 	if (!defer)
 		return __io_post_aux_cqe(ctx, user_data, res, cflags, allow_overflow);
 
-	length = ARRAY_SIZE(ctx->submit_state.cqes);
-
 	lockdep_assert_held(&ctx->uring_lock);
 
-	if (ctx->submit_state.cqes_count == length) {
+	if (ctx->submit_state.cqes_count == ARRAY_SIZE(ctx->submit_state.cqes)) {
 		__io_cq_lock(ctx);
 		__io_flush_post_cqes(ctx);
 		/* no need to flush - flush is deferred */
@@ -1205,7 +1205,9 @@ static unsigned int handle_tw_list(struct llist_node *node,
 			ts->locked = mutex_trylock(&(*ctx)->uring_lock);
 			percpu_ref_get(&(*ctx)->refs);
 		}
-		req->io_task_work.func(req, ts);
+		INDIRECT_CALL_2(req->io_task_work.func,
+				io_poll_task_func, io_req_rw_complete,
+				req, ts);
 		node = next;
 		count++;
 		if (unlikely(need_resched())) {
@@ -1415,7 +1417,9 @@ again:
 		struct io_kiocb *req = container_of(node, struct io_kiocb,
 						    io_task_work.node);
 		prefetch(container_of(next, struct io_kiocb, io_task_work.node));
-		req->io_task_work.func(req, ts);
+		INDIRECT_CALL_2(req->io_task_work.func,
+				io_poll_task_func, io_req_rw_complete,
+				req, ts);
 		ret++;
 		node = next;
 	}
