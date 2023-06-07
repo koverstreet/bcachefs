@@ -1035,10 +1035,12 @@ whole_folios:
 					truncate_inode_folio(mapping, folio);
 				} else if (truncate_inode_partial_folio(folio, lstart, lend)) {
 					/*
-					 * If we split a page, reset the loop so that we
-					 * pick up the new sub pages. Otherwise the THP
-					 * was entirely dropped or the target range was
-					 * zeroed, so just continue the loop as is.
+					 * If we split a page, reset the loop so
+					 * that we pick up the new sub pages.
+					 * Otherwise the THP was entirely
+					 * dropped or the target range was
+					 * zeroed, so just continue the loop as
+					 * is.
 					 */
 					if (!folio_test_large(folio)) {
 						folio_unlock(folio);
