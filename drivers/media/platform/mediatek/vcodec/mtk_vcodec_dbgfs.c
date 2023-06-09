@@ -166,7 +166,7 @@ void mtk_vcodec_dbgfs_remove(struct mtk_vcodec_dev *vcodec_dev, int ctx_id)
 	struct mtk_vcodec_dbgfs_inst *dbgfs_inst;
 
 	list_for_each_entry(dbgfs_inst, &vcodec_dev->dbgfs.dbgfs_head, node) {
-		if (dbgfs_inst->inst_id == ctx_id) {
+		if (dbgfs_inst && dbgfs_inst->inst_id == ctx_id) {
 			vcodec_dev->dbgfs.inst_count--;
 			break;
 		}
