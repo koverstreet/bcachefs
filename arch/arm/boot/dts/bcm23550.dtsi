@@ -30,11 +30,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* BCM23550 and BCM21664 have almost identical clocks */
+#include <dt-bindings/clock/bcm21664.h>
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/interrupt-controller/irq.h>
-
-/* BCM23550 and BCM21664 have almost identical clocks */
-#include "dt-bindings/clock/bcm21664.h"
 
 / {
 	#address-cells = <1>;
@@ -130,32 +129,32 @@
 
 		uartb: serial@0 {
 			compatible = "snps,dw-apb-uart";
-			status = "disabled";
 			reg = <0x00000000 0x118>;
 			clocks = <&slave_ccu BCM21664_SLAVE_CCU_UARTB>;
 			interrupts = <GIC_SPI 67 IRQ_TYPE_LEVEL_HIGH>;
 			reg-shift = <2>;
 			reg-io-width = <4>;
+			status = "disabled";
 		};
 
 		uartb2: serial@1000 {
 			compatible = "snps,dw-apb-uart";
-			status = "disabled";
 			reg = <0x00001000 0x118>;
 			clocks = <&slave_ccu BCM21664_SLAVE_CCU_UARTB2>;
 			interrupts = <GIC_SPI 66 IRQ_TYPE_LEVEL_HIGH>;
 			reg-shift = <2>;
 			reg-io-width = <4>;
+			status = "disabled";
 		};
 
 		uartb3: serial@2000 {
 			compatible = "snps,dw-apb-uart";
-			status = "disabled";
 			reg = <0x00002000 0x118>;
 			clocks = <&slave_ccu BCM21664_SLAVE_CCU_UARTB3>;
 			interrupts = <GIC_SPI 65 IRQ_TYPE_LEVEL_HIGH>;
 			reg-shift = <2>;
 			reg-io-width = <4>;
+			status = "disabled";
 		};
 
 		bsc1: i2c@16000 {
@@ -372,21 +371,21 @@
 		};
 
 		root_ccu: root_ccu@35001000 {
-			compatible = BCM21664_DT_ROOT_CCU_COMPAT;
+			compatible = "brcm,bcm21664-root-ccu";
 			reg = <0x35001000 0x0f00>;
 			#clock-cells = <1>;
 			clock-output-names = "frac_1m";
 		};
 
 		aon_ccu: aon_ccu@35002000 {
-			compatible = BCM21664_DT_AON_CCU_COMPAT;
+			compatible = "brcm,bcm21664-aon-ccu";
 			reg = <0x35002000 0x0f00>;
 			#clock-cells = <1>;
 			clock-output-names = "hub_timer";
 		};
 
 		slave_ccu: slave_ccu@3e011000 {
-			compatible = BCM21664_DT_SLAVE_CCU_COMPAT;
+			compatible = "brcm,bcm21664-slave-ccu";
 			reg = <0x3e011000 0x0f00>;
 			#clock-cells = <1>;
 			clock-output-names = "uartb",
@@ -399,7 +398,7 @@
 		};
 
 		master_ccu: master_ccu@3f001000 {
-			compatible = BCM21664_DT_MASTER_CCU_COMPAT;
+			compatible = "brcm,bcm21664-master-ccu";
 			reg = <0x3f001000 0x0f00>;
 			#clock-cells = <1>;
 			clock-output-names = "sdio1",
