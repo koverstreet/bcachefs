@@ -482,8 +482,8 @@ failed:
 
 /**
  * start_isolate_page_range() - mark page range MIGRATE_ISOLATE
- * @start_pfn:		The lower PFN of the range to be isolated.
- * @end_pfn:		The upper PFN of the range to be isolated.
+ * @start_pfn:		The first PFN of the range to be isolated.
+ * @end_pfn:		The last PFN of the range to be isolated.
  * @migratetype:	Migrate type to set in error recovery.
  * @flags:		The following flags are allowed (they can be combined in
  *			a bit mask)
@@ -572,8 +572,8 @@ int start_isolate_page_range(unsigned long start_pfn, unsigned long end_pfn,
 
 /**
  * undo_isolate_page_range - undo effects of start_isolate_page_range()
- * @start_pfn:		The lower PFN of the isolated range
- * @end_pfn:		The upper PFN of the isolated range
+ * @start_pfn:		The first PFN of the isolated range
+ * @end_pfn:		The last PFN of the isolated range
  * @migratetype:	New migrate type to set on the range
  *
  * This finds every MIGRATE_ISOLATE page block in the given range
