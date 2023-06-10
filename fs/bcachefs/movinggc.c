@@ -140,6 +140,7 @@ static bool bucket_in_flight(struct buckets_in_flight *list,
 
 typedef DARRAY(struct move_bucket) move_buckets;
 
+noinline
 static int bch2_copygc_get_buckets(struct moving_context *ctxt,
 			struct buckets_in_flight *buckets_in_flight,
 			move_buckets *buckets)
@@ -196,9 +197,9 @@ err:
 		ret2;
 	}));
 
-	pr_debug("have: %zu (%zu) saw %zu in flight %zu not movable %zu got %zu (%zu)/%zu buckets ret %i",
+	pr_debug("have: %zu (%zu) saw %zu in flight %zu not movable %zu got %zu/%zu buckets (%zu sectors) ret %i",
 		 buckets_in_flight->nr, buckets_in_flight->sectors,
-		 saw, in_flight, not_movable, buckets->nr, sectors, nr_to_get, ret);
+		 saw, in_flight, not_movable, buckets->nr, nr_to_get, sectors, ret);
 
 	return ret < 0 ? ret : 0;
 }

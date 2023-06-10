@@ -20,6 +20,7 @@
 #include "extents.h"
 #include "fsck.h"
 #include "inode.h"
+#include "move.h"
 #include "super.h"
 
 #include <linux/console.h>
@@ -893,6 +894,38 @@ static const struct file_operations btree_deadlock_ops = {
 	.read		= bch2_btree_deadlock_read,
 };
 
+static ssize_t bch2_moving_ctxts_read(struct file *file, char __user *buf,
+				      size_t size, loff_t *ppos)
+{
+	struct dump_iter *i = file->private_data;
+	struct bch_fs *c = i->c;
+	ssize_t ret = 0;
+
+	i->ubuf = buf;
+	i->size	= size;
+	i->ret	= 0;
+
+	if (!i->iter) {
+		bch2_fs_moving_ctxts_to_text(&i->buf, c);
+		i->iter++;
+	}
+
+	if (i->buf.allocation_failure)
+		ret = -ENOMEM;
+
+	if (!ret)
+		ret = flush_buf(i);
+
+	return ret ?: i->ret;
+}
+
+static const struct file_operations moving_ctxts_ops = {
+	.owner		= THIS_MODULE,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_moving_ctxts_read,
+};
+
 void bch2_fs_debug_exit(struct bch_fs *c)
 {
 	if (!IS_ERR_OR_NULL(c->fs_debug_dir))
@@ -943,6 +976,9 @@ void bch2_fs_debug_init(struct bch_fs *c)
 
 	debugfs_create_file("btree_deadlock", 0400, c->fs_debug_dir,
 			    c->btree_debug, &btree_deadlock_ops);
+
+	debugfs_create_file("moving_ctxts", 0400, c->fs_debug_dir,
+			    c->btree_debug, &moving_ctxts_ops);
 
 	c->btree_debug_dir = debugfs_create_dir("btrees", c->fs_debug_dir);
 	if (IS_ERR_OR_NULL(c->btree_debug_dir))
