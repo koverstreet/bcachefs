@@ -339,7 +339,7 @@ void disk_uevent(struct gendisk *disk, enum kobject_action action)
 }
 EXPORT_SYMBOL_GPL(disk_uevent);
 
-int disk_scan_partitions(struct gendisk *disk, fmode_t mode)
+int disk_scan_partitions(struct gendisk *disk, blk_mode_t mode)
 {
 	struct block_device *bdev;
 	int ret = 0;
@@ -357,7 +357,7 @@ int disk_scan_partitions(struct gendisk *disk, fmode_t mode)
 	 * synchronize with other exclusive openers and other partition
 	 * scanners.
 	 */
-	if (!(mode & FMODE_EXCL)) {
+	if (!(mode & BLK_OPEN_EXCL)) {
 		ret = bd_prepare_to_claim(disk->part0, disk_scan_partitions,
 					  NULL);
 		if (ret)
@@ -365,12 +365,11 @@ int disk_scan_partitions(struct gendisk *disk, fmode_t mode)
 	}
 
 	set_bit(GD_NEED_PART_SCAN, &disk->state);
-	bdev = blkdev_get_by_dev(disk_devt(disk), mode & ~FMODE_EXCL, NULL,
-				 NULL);
+	bdev = blkdev_get_by_dev(disk_devt(disk), mode, NULL, NULL);
 	if (IS_ERR(bdev))
 		ret =  PTR_ERR(bdev);
 	else
-		blkdev_put(bdev, mode & ~FMODE_EXCL);
+		blkdev_put(bdev, NULL);
 
 	/*
 	 * If blkdev_get_by_dev() failed early, GD_NEED_PART_SCAN is still set,
@@ -378,7 +377,7 @@ int disk_scan_partitions(struct gendisk *disk, fmode_t mode)
 	 * creat partition for underlying disk.
 	 */
 	clear_bit(GD_NEED_PART_SCAN, &disk->state);
-	if (!(mode & FMODE_EXCL))
+	if (!(mode & BLK_OPEN_EXCL))
 		bd_abort_claiming(disk->part0, disk_scan_partitions);
 	return ret;
 }
@@ -506,7 +505,7 @@ int __must_check device_add_disk(struct device *parent, struct gendisk *disk,
 
 		bdev_add(disk->part0, ddev->devt);
 		if (get_capacity(disk))
-			disk_scan_partitions(disk, FMODE_READ);
+			disk_scan_partitions(disk, BLK_OPEN_READ);
 
 		/*
 		 * Announce the disk and partitions after all partitions are
