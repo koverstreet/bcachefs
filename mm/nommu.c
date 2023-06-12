@@ -583,7 +583,8 @@ static int delete_vma_from_mm(struct vm_area_struct *vma)
 {
 	VMA_ITERATOR(vmi, vma->vm_mm, vma->vm_start);
 
-	if (vma_iter_prealloc(&vmi)) {
+	vma_iter_config(&vmi, vma->vm_start, vma->vm_end);
+	if (vma_iter_prealloc(&vmi, vma)) {
 		pr_warn("Allocation of vma tree for process %d failed\n",
 		       current->pid);
 		return -ENOMEM;
@@ -591,7 +592,7 @@ static int delete_vma_from_mm(struct vm_area_struct *vma)
 	cleanup_vma_from_mm(vma);
 
 	/* remove from the MM's tree and list */
-	vma_iter_clear(&vmi, vma->vm_start, vma->vm_end);
+	vma_iter_clear(&vmi);
 	return 0;
 }
 /*
@@ -1041,9 +1042,6 @@ unsigned long do_mmap(struct file *file,
 	if (!vma)
 		goto error_getting_vma;
 
-	if (vma_iter_prealloc(&vmi))
-		goto error_vma_iter_prealloc;
-
 	region->vm_usage = 1;
 	region->vm_flags = vm_flags;
 	region->vm_pgoff = pgoff;
@@ -1185,6 +1183,10 @@ unsigned long do_mmap(struct file *file,
 
 share:
 	BUG_ON(!vma->vm_region);
+	vma_iter_config(&vmi, vma->vm_start, vma->vm_end);
+	if (vma_iter_prealloc(&vmi, vma))
+		goto error_just_free;
+
 	setup_vma_to_mm(vma, current->mm);
 	current->mm->map_count++;
 	/* add the VMA to the tree */
@@ -1231,14 +1233,6 @@ error_getting_region:
 			len, current->pid);
 	show_free_areas(0, NULL);
 	return -ENOMEM;
-
-error_vma_iter_prealloc:
-	kmem_cache_free(vm_region_jar, region);
-	vm_area_free(vma);
-	pr_warn("Allocation of vma tree for process %d failed\n", current->pid);
-	show_free_areas(0, NULL);
-	return -ENOMEM;
-
 }
 
 unsigned long ksys_mmap_pgoff(unsigned long addr, unsigned long len,
@@ -1323,12 +1317,6 @@ int split_vma(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	if (!new)
 		goto err_vma_dup;
 
-	if (vma_iter_prealloc(vmi)) {
-		pr_warn("Allocation of vma tree for process %d failed\n",
-			current->pid);
-		goto err_vmi_preallocate;
-	}
-
 	/* most fields are the same, copy all, and then fixup */
 	*region = *vma->vm_region;
 	new->vm_region = region;
@@ -1340,6 +1328,13 @@ int split_vma(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	} else {
 		region->vm_start = new->vm_start = addr;
 		region->vm_pgoff = new->vm_pgoff += npages;
+	}
+
+	vma_iter_config(vmi, new->vm_start, new->vm_end);
+	if (vma_iter_prealloc(vmi, vma)) {
+		pr_warn("Allocation of vma tree for process %d failed\n",
+			current->pid);
+		goto err_vmi_preallocate;
 	}
 
 	if (new->vm_ops && new->vm_ops->open)
