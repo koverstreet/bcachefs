@@ -1095,6 +1095,10 @@ static inline int vma_iter_store_gfp(struct vma_iterator *vmi,
 	return 0;
 }
 
+void unmap_vmas(struct mmu_gather *tlb, struct maple_tree *mt,
+		struct vm_area_struct *vma, unsigned long start_addr,
+		unsigned long end_addr, bool mm_wr_locked);
+
 /*
  * VMA lock generalization
  */
