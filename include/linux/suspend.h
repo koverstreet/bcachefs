@@ -202,6 +202,7 @@ struct platform_s2idle_ops {
 };
 
 #ifdef CONFIG_SUSPEND
+extern suspend_state_t pm_suspend_target_state;
 extern suspend_state_t mem_sleep_current;
 extern suspend_state_t mem_sleep_default;
 
@@ -337,6 +338,8 @@ extern bool sync_on_suspend_enabled;
 #else /* !CONFIG_SUSPEND */
 #define suspend_valid_only_mem	NULL
 
+#define pm_suspend_target_state	(PM_SUSPEND_ON)
+
 static inline void pm_suspend_clear_flags(void) {}
 static inline void pm_set_suspend_via_firmware(void) {}
 static inline void pm_set_resume_via_firmware(void) {}
@@ -468,6 +471,8 @@ static inline int hibernate_quiet_exec(int (*func)(void *data), void *data) {
 }
 #endif /* CONFIG_HIBERNATION */
 
+int arch_resume_nosmt(void);
+
 #ifdef CONFIG_HIBERNATION_SNAPSHOT_DEV
 int is_hibernate_resume_dev(dev_t dev);
 #else
@@ -503,7 +508,6 @@ extern void pm_report_max_hw_sleep(u64 t);
 
 /* drivers/base/power/wakeup.c */
 extern bool events_check_enabled;
-extern suspend_state_t pm_suspend_target_state;
 
 extern bool pm_wakeup_pending(void);
 extern void pm_system_wakeup(void);
