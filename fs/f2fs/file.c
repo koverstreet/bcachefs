@@ -554,7 +554,7 @@ static int f2fs_file_open(struct inode *inode, struct file *filp)
 	if (err)
 		return err;
 
-	filp->f_mode |= FMODE_NOWAIT | FMODE_BUF_RASYNC;
+	filp->f_mode |= FMODE_NOWAIT | FMODE_BUF_RASYNC | FMODE_BUF_WASYNC;
 
 	return dquot_file_open(inode, filp);
 }
@@ -4522,9 +4522,6 @@ static ssize_t f2fs_buffered_write_iter(struct kiocb *iocb,
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file_inode(file);
 	ssize_t ret;
-
-	if (iocb->ki_flags & IOCB_NOWAIT)
-		return -EOPNOTSUPP;
 
 	current->backing_dev_info = inode_to_bdi(inode);
 	ret = generic_perform_write(iocb, from);
