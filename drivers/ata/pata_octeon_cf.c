@@ -854,8 +854,8 @@ static int octeon_cf_probe(struct platform_device *pdev)
 					of_node_put(dma_node);
 					return -EINVAL;
 				}
-				cf_port->dma_base = (u64)devm_ioremap(&pdev->dev, res_dma->start,
-									 resource_size(res_dma));
+				cf_port->dma_base = (uintptr_t)devm_ioremap(&pdev->dev, res_dma->start,
+									    resource_size(res_dma));
 				if (!cf_port->dma_base) {
 					put_device(&dma_dev->dev);
 					of_node_put(dma_node);
