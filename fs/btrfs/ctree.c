@@ -5166,7 +5166,7 @@ int __init btrfs_ctree_init(void)
 {
 	btrfs_path_cachep = kmem_cache_create("btrfs_path",
 			sizeof(struct btrfs_path), 0,
-			SLAB_MEM_SPREAD, NULL);
+			BTRFS_DEBUG_SLAB_NO_MERGE | SLAB_MEM_SPREAD, NULL);
 	if (!btrfs_path_cachep)
 		return -ENOMEM;
 	return 0;

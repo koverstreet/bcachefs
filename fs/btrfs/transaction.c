@@ -2641,7 +2641,8 @@ int __init btrfs_transaction_init(void)
 {
 	btrfs_trans_handle_cachep = kmem_cache_create("btrfs_trans_handle",
 			sizeof(struct btrfs_trans_handle), 0,
-			SLAB_TEMPORARY | SLAB_MEM_SPREAD, NULL);
+			BTRFS_DEBUG_SLAB_NO_MERGE | SLAB_TEMPORARY | SLAB_MEM_SPREAD,
+			NULL);
 	if (!btrfs_trans_handle_cachep)
 		return -ENOMEM;
 	return 0;

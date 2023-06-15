@@ -8,6 +8,19 @@
 #include <linux/math64.h>
 #include <linux/rbtree.h>
 
+/*
+ * Don't merge slabs in debug build so we can verify leaks when reloading module.
+ */
+#ifdef CONFIG_BTRFS_DEBUG
+#ifdef SLAB_NO_MERGE
+#define BTRFS_DEBUG_SLAB_NO_MERGE		SLAB_NO_MERGE
+#else
+#define BTRFS_DEBUG_SLAB_NO_MERGE		0
+#endif
+#else
+#define BTRFS_DEBUG_SLAB_NO_MERGE		0
+#endif
+
 #define in_range(b, first, len) ((b) >= (first) && (b) < (first) + (len))
 
 /*
