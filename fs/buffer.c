@@ -2617,8 +2617,8 @@ int block_truncate_page(struct address_space *mapping,
 	iblock = (sector_t)index << (PAGE_SHIFT - inode->i_blkbits);
 	
 	folio = filemap_grab_folio(mapping, index);
-	if (!folio)
-		return -ENOMEM;
+	if (IS_ERR(folio))
+		return PTR_ERR(folio);
 
 	bh = folio_buffers(folio);
 	if (!bh) {
