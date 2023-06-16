@@ -303,9 +303,6 @@ bool six_trylock_ip(struct six_lock *lock, enum six_lock_type type, unsigned lon
 
 	if (type != SIX_LOCK_write)
 		six_acquire(&lock->dep_map, 1, type == SIX_LOCK_read, ip);
-	else
-		lock->seq++;
-
 	return true;
 }
 EXPORT_SYMBOL_GPL(six_trylock_ip);
@@ -598,8 +595,6 @@ int six_lock_ip_waiter(struct six_lock *lock, enum six_lock_type type,
 
 	ret = do_six_trylock(lock, type, true) ? 0
 		: six_lock_slowpath(lock, type, wait, should_sleep_fn, p, ip);
-
-	lock->seq += !ret && type == SIX_LOCK_write;
 
 	if (ret && type != SIX_LOCK_write)
 		six_release(&lock->dep_map, ip);
