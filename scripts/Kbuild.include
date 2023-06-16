@@ -277,3 +277,13 @@ ifneq ($(and $(filter notintermediate, $(.FEATURES)),$(filter-out 4.4,$(MAKE_VER
 else
 .SECONDARY:
 endif
+
+ # expand_parents(a/b/c) = a/b/c a/b a
+expand_parents2 = $(if $(subst .,,$(1)),$(call expand_parents,$(1)),)
+expand_parents  = $(1) $(call expand_parents2,$(patsubst %/,%,$(dir $(1))))
+
+# flatten_dirs(a/b/c) = a_b_c a_b a
+flatten_dirs = $(subst /,_,$(call expand_parents,$(1)))
+
+# eval_vars(X_,a/b/c) = $(X_a_b_c) $(X_a_b) $(X_a)
+eval_vars = $(foreach var,$(call flatten_dirs,$(2)),$($(1)$(var)))
