@@ -1987,7 +1987,7 @@ static isolate_migrate_t isolate_migratepages(struct compact_control *cc)
 
 			next_pfn = skip_offline_sections(block_start_pfn);
 			if (next_pfn)
-				block_end_pfn = next_pfn;
+				block_end_pfn = min(next_pfn, cc->free_pfn);
 			continue;
 		}
 
