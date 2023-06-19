@@ -268,6 +268,7 @@ static void notrace start_secondary(void *unused)
 	cpuhp_ap_sync_alive();
 
 	cpu_init();
+	fpu__init_cpu();
 	rcu_cpu_starting(raw_smp_processor_id());
 	x86_cpuinit.early_percpu_clock_init();
 
