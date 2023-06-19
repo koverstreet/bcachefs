@@ -70,6 +70,7 @@ struct arch {
 	struct ins_ops  *(*associate_instruction_ops)(struct arch *arch, const char *name);
 	bool		sorted_instructions;
 	bool		initialized;
+	const char	*insn_suffix;
 	void		*priv;
 	unsigned int	model;
 	unsigned int	family;
@@ -179,6 +180,7 @@ static struct arch architectures[] = {
 		.init = x86__annotate_init,
 		.instructions = x86__instructions,
 		.nr_instructions = ARRAY_SIZE(x86__instructions),
+		.insn_suffix = "bwlq",
 		.objdump =  {
 			.comment_char = '#',
 		},
@@ -558,13 +560,26 @@ static int mov__parse(struct arch *arch, struct ins_operands *ops, struct map_sy
 		return -1;
 
 	*s = '\0';
+
+	/*
+	 * x86 SIB addressing has something like 0x8(%rax, %rcx, 1)
+	 * then it needs to have the closing parenthesis.
+	 */
+	if (strchr(ops->raw, '(')) {
+		*s = ',';
+		s = strchr(ops->raw, ')');
+		if (s == NULL || s[1] != ',')
+			return -1;
+		*++s = '\0';
+	}
+
 	ops->source.raw = strdup(ops->raw);
 	*s = ',';
 
 	if (ops->source.raw == NULL)
 		return -1;
 
-	target = ++s;
+	target = skip_spaces(++s);
 	comment = strchr(s, arch->objdump.comment_char);
 
 	if (comment != NULL)
@@ -707,6 +722,26 @@ static struct ins_ops *__ins__find(struct arch *arch, const char *name)
 	}
 
 	ins = bsearch(name, arch->instructions, nmemb, sizeof(struct ins), ins__key_cmp);
+	if (ins)
+		return ins->ops;
+
+	if (arch->insn_suffix) {
+		char tmp[32];
+		char suffix;
+		size_t len = strlen(name);
+
+		if (len == 0 || len >= sizeof(tmp))
+			return NULL;
+
+		suffix = name[len - 1];
+		if (strchr(arch->insn_suffix, suffix) == NULL)
+			return NULL;
+
+		strcpy(tmp, name);
+		tmp[len - 1] = '\0'; /* remove the suffix and check again */
+
+		ins = bsearch(tmp, arch->instructions, nmemb, sizeof(struct ins), ins__key_cmp);
+	}
 	return ins ? ins->ops : NULL;
 }
 
@@ -1183,7 +1218,7 @@ static void annotation_line__init(struct annotation_line *al,
 
 static void annotation_line__exit(struct annotation_line *al)
 {
-	free_srcline(al->path);
+	zfree_srcline(&al->path);
 	zfree(&al->line);
 }
 
@@ -1511,6 +1546,7 @@ static int symbol__parse_objdump_line(struct symbol *sym,
 	/* /filename:linenr ? Save line number and ignore. */
 	if (regexec(&file_lineno, parsed_line, 2, match, 0) == 0) {
 		*line_nr = atoi(parsed_line + match[1].rm_so);
+		free(*fileloc);
 		*fileloc = strdup(parsed_line);
 		return 0;
 	}
@@ -1559,7 +1595,6 @@ static int symbol__parse_objdump_line(struct symbol *sym,
 	}
 
 	annotation_line__add(&dl->al, &notes->src->source);
-
 	return 0;
 }
 
@@ -1696,7 +1731,10 @@ fallback:
 		 * cache, or is just a kallsyms file, well, lets hope that this
 		 * DSO is the same as when 'perf record' ran.
 		 */
-		__symbol__join_symfs(filename, filename_size, dso->long_name);
+		if (dso->kernel && dso->long_name[0] == '/')
+			snprintf(filename, filename_size, "%s", dso->long_name);
+		else
+			__symbol__join_symfs(filename, filename_size, dso->long_name);
 
 		mutex_lock(&dso->lock);
 		if (access(filename, R_OK) && errno == ENOENT && dso->nsinfo) {
@@ -2101,6 +2139,7 @@ static int symbol__disassemble(struct symbol *sym, struct annotate_args *args)
 		nline++;
 	}
 	free(line);
+	free(fileloc);
 
 	err = finish_command(&objdump_process);
 	if (err)
