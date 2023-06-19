@@ -24,6 +24,9 @@ config DMA_OPS_BYPASS
 config ARCH_HAS_DMA_MAP_DIRECT
 	bool
 
+config NEED_SG_DMA_FLAGS
+	bool
+
 config NEED_SG_DMA_LENGTH
 	bool
 
@@ -87,6 +90,10 @@ config SWIOTLB
 	bool
 	select NEED_DMA_MAP_STATE
 
+config DMA_BOUNCE_UNALIGNED_KMALLOC
+	bool
+	depends on SWIOTLB
+
 config DMA_RESTRICTED_POOL
 	bool "DMA Restricted Pool"
 	depends on OF && OF_RESERVED_MEM && SWIOTLB
@@ -140,10 +147,10 @@ if  DMA_CMA
 
 config DMA_PERNUMA_CMA
 	bool "Enable separate DMA Contiguous Memory Area for each NUMA Node"
-	default NUMA && ARM64
+	default NUMA
 	help
-	  Enable this option to get pernuma CMA areas so that devices like
-	  ARM64 SMMU can get local memory by DMA coherent APIs.
+	  Enable this option to get pernuma CMA areas so that NUMA devices
+	  can get local memory by DMA coherent APIs.
 
 	  You can set the size of pernuma CMA by specifying "cma_pernuma=size"
 	  on the kernel's command line.

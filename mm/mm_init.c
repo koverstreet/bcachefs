@@ -1509,6 +1509,8 @@ void __ref free_area_init_core_hotplug(struct pglist_data *pgdat)
 	pgdat->kswapd_order = 0;
 	pgdat->kswapd_highest_zoneidx = 0;
 	pgdat->node_start_pfn = 0;
+	pgdat->node_present_pages = 0;
+
 	for_each_online_cpu(cpu) {
 		struct per_cpu_nodestat *p;
 
@@ -1516,8 +1518,17 @@ void __ref free_area_init_core_hotplug(struct pglist_data *pgdat)
 		memset(p, 0, sizeof(*p));
 	}
 
-	for (z = 0; z < MAX_NR_ZONES; z++)
-		zone_init_internals(&pgdat->node_zones[z], z, nid, 0);
+	/*
+	 * When memory is hot-added, all the memory is in offline state. So
+	 * clear all zones' present_pages and managed_pages because they will
+	 * be updated in online_pages() and offline_pages().
+	 */
+	for (z = 0; z < MAX_NR_ZONES; z++) {
+		struct zone *zone = pgdat->node_zones + z;
+
+		zone->present_pages = 0;
+		zone_init_internals(zone, z, nid, 0);
+	}
 }
 #endif
 
@@ -1724,7 +1735,7 @@ static void __init free_area_init_node(int nid)
 }
 
 /* Any regular or high memory on that node ? */
-static void check_for_memory(pg_data_t *pgdat, int nid)
+static void check_for_memory(pg_data_t *pgdat)
 {
 	enum zone_type zone_type;
 
@@ -1732,9 +1743,9 @@ static void check_for_memory(pg_data_t *pgdat, int nid)
 		struct zone *zone = &pgdat->node_zones[zone_type];
 		if (populated_zone(zone)) {
 			if (IS_ENABLED(CONFIG_HIGHMEM))
-				node_set_state(nid, N_HIGH_MEMORY);
+				node_set_state(pgdat->node_id, N_HIGH_MEMORY);
 			if (zone_type <= ZONE_NORMAL)
-				node_set_state(nid, N_NORMAL_MEMORY);
+				node_set_state(pgdat->node_id, N_NORMAL_MEMORY);
 			break;
 		}
 	}
@@ -1886,7 +1897,7 @@ void __init free_area_init(unsigned long *max_zone_pfn)
 		/* Any memory on that node */
 		if (pgdat->node_present_pages)
 			node_set_state(nid, N_MEMORY);
-		check_for_memory(pgdat, nid);
+		check_for_memory(pgdat);
 	}
 
 	memmap_init();

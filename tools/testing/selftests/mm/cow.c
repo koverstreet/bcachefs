@@ -15,6 +15,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <assert.h>
+#include <linux/mman.h>
 #include <sys/mman.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
@@ -28,13 +29,6 @@
 #include "../../../../mm/gup_test.h"
 #include "../kselftest.h"
 #include "vm_util.h"
-
-#ifndef MADV_PAGEOUT
-#define MADV_PAGEOUT 21
-#endif
-#ifndef MADV_COLLAPSE
-#define MADV_COLLAPSE 25
-#endif
 
 static size_t pagesize;
 static int pagemap_fd;
