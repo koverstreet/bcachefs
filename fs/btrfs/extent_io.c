@@ -149,7 +149,7 @@ int __init extent_buffer_init_cachep(void)
 {
 	extent_buffer_cache = kmem_cache_create("btrfs_extent_buffer",
 			sizeof(struct extent_buffer), 0,
-			SLAB_MEM_SPREAD, NULL);
+			BTRFS_DEBUG_SLAB_NO_MERGE | SLAB_MEM_SPREAD, NULL);
 	if (!extent_buffer_cache)
 		return -ENOMEM;
 
