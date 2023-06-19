@@ -719,8 +719,13 @@ cpu_attach_domain(struct sched_domain *sd, struct root_domain *rd, int cpu)
 
 		if (sd_parent_degenerate(tmp, parent)) {
 			tmp->parent = parent->parent;
-			if (parent->parent)
+
+			if (parent->parent) {
 				parent->parent->child = tmp;
+				if (tmp->flags & SD_SHARE_CPUCAPACITY)
+					parent->parent->groups->flags |= SD_SHARE_CPUCAPACITY;
+			}
+
 			/*
 			 * Transfer SD_PREFER_SIBLING down in case of a
 			 * degenerate parent; the spans match for this
@@ -1676,7 +1681,7 @@ static struct sched_domain_topology_level *sched_domain_topology_saved;
 #define for_each_sd_topology(tl)			\
 	for (tl = sched_domain_topology; tl->mask; tl++)
 
-void set_sched_topology(struct sched_domain_topology_level *tl)
+void __init set_sched_topology(struct sched_domain_topology_level *tl)
 {
 	if (WARN_ON_ONCE(sched_smp_initialized))
 		return;
