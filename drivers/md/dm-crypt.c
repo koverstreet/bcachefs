@@ -1700,8 +1700,7 @@ retry:
 
 		len = (remaining_size > PAGE_SIZE) ? PAGE_SIZE : remaining_size;
 
-		bio_add_page(clone, page, len, 0);
-
+		__bio_add_page(clone, page, len, 0);
 		remaining_size -= len;
 	}
 
