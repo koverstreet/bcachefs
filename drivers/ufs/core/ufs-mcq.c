@@ -20,12 +20,10 @@
 #define MAX_QUEUE_SUP GENMASK(7, 0)
 #define UFS_MCQ_MIN_RW_QUEUES 2
 #define UFS_MCQ_MIN_READ_QUEUES 0
-#define UFS_MCQ_NUM_DEV_CMD_QUEUES 1
 #define UFS_MCQ_MIN_POLL_QUEUES 0
 #define QUEUE_EN_OFFSET 31
 #define QUEUE_ID_OFFSET 16
 
-#define MAX_DEV_CMD_ENTRIES	2
 #define MCQ_CFG_MAC_MASK	GENMASK(16, 8)
 #define MCQ_QCFG_SIZE		0x40
 #define MCQ_ENTRY_SIZE_IN_DWORD	8
@@ -115,8 +113,7 @@ struct ufs_hw_queue *ufshcd_mcq_req_to_hwq(struct ufs_hba *hba,
 	u32 utag = blk_mq_unique_tag(req);
 	u32 hwq = blk_mq_unique_tag_to_hwq(utag);
 
-	/* uhq[0] is used to serve device commands */
-	return &hba->uhq[hwq + UFSHCD_MCQ_IO_QUEUE_OFFSET];
+	return &hba->uhq[hwq];
 }
 
 /**
@@ -160,8 +157,7 @@ static int ufshcd_mcq_config_nr_queues(struct ufs_hba *hba)
 	/* maxq is 0 based value */
 	hba_maxq = FIELD_GET(MAX_QUEUE_SUP, hba->mcq_capabilities) + 1;
 
-	tot_queues = UFS_MCQ_NUM_DEV_CMD_QUEUES + read_queues + poll_queues +
-			rw_queues;
+	tot_queues = read_queues + poll_queues + rw_queues;
 
 	if (hba_maxq < tot_queues) {
 		dev_err(hba->dev, "Total queues (%d) exceeds HC capacity (%d)\n",
@@ -169,7 +165,7 @@ static int ufshcd_mcq_config_nr_queues(struct ufs_hba *hba)
 		return -EOPNOTSUPP;
 	}
 
-	rem = hba_maxq - UFS_MCQ_NUM_DEV_CMD_QUEUES;
+	rem = hba_maxq;
 
 	if (rw_queues) {
 		hba->nr_queues[HCTX_TYPE_DEFAULT] = rw_queues;
@@ -195,7 +191,7 @@ static int ufshcd_mcq_config_nr_queues(struct ufs_hba *hba)
 	for (i = 0; i < HCTX_MAX_TYPES; i++)
 		host->nr_hw_queues += hba->nr_queues[i];
 
-	hba->nr_hw_queues = host->nr_hw_queues + UFS_MCQ_NUM_DEV_CMD_QUEUES;
+	hba->nr_hw_queues = host->nr_hw_queues;
 	return 0;
 }
 
@@ -445,8 +441,6 @@ int ufshcd_mcq_init(struct ufs_hba *hba)
 
 	/* The very first HW queue serves device commands */
 	hba->dev_cmd_queue = &hba->uhq[0];
-	/* Give dev_cmd_queue the minimal number of entries */
-	hba->dev_cmd_queue->max_entries = MAX_DEV_CMD_ENTRIES;
 
 	host->host_tagset = 1;
 	return 0;
@@ -457,6 +451,9 @@ static int ufshcd_mcq_sq_stop(struct ufs_hba *hba, struct ufs_hw_queue *hwq)
 	void __iomem *reg;
 	u32 id = hwq->id, val;
 	int err;
+
+	if (hba->quirks & UFSHCD_QUIRK_MCQ_BROKEN_RTC)
+		return -ETIMEDOUT;
 
 	writel(SQ_STOP, mcq_opr_base(hba, OPR_SQD, id) + REG_SQRTC);
 	reg = mcq_opr_base(hba, OPR_SQD, id) + REG_SQRTS;
@@ -473,6 +470,9 @@ static int ufshcd_mcq_sq_start(struct ufs_hba *hba, struct ufs_hw_queue *hwq)
 	void __iomem *reg;
 	u32 id = hwq->id, val;
 	int err;
+
+	if (hba->quirks & UFSHCD_QUIRK_MCQ_BROKEN_RTC)
+		return -ETIMEDOUT;
 
 	writel(SQ_START, mcq_opr_base(hba, OPR_SQD, id) + REG_SQRTC);
 	reg = mcq_opr_base(hba, OPR_SQD, id) + REG_SQRTS;
@@ -500,6 +500,9 @@ int ufshcd_mcq_sq_cleanup(struct ufs_hba *hba, int task_tag)
 	void __iomem *reg, *opr_sqd_base;
 	u32 nexus, id, val;
 	int err;
+
+	if (hba->quirks & UFSHCD_QUIRK_MCQ_BROKEN_RTC)
+		return -ETIMEDOUT;
 
 	if (task_tag != hba->nutrs - UFSHCD_NUM_RESERVED) {
 		if (!cmd)
@@ -582,6 +585,9 @@ static bool ufshcd_mcq_sqe_search(struct ufs_hba *hba,
 	bool ret = false;
 	u64 addr, match;
 	u32 sq_head_slot;
+
+	if (hba->quirks & UFSHCD_QUIRK_MCQ_BROKEN_RTC)
+		return true;
 
 	mutex_lock(&hwq->sq_mutex);
 
