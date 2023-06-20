@@ -35,7 +35,7 @@ ieee80211_link_or_deflink(struct ieee80211_sub_if_data *sdata, int link_id,
 		 * the return value at all (if it's not a pairwise key),
 		 * so in that case (require_valid==false) don't error.
 		 */
-		if (require_valid && sdata->vif.valid_links)
+		if (require_valid && ieee80211_vif_is_mld(&sdata->vif))
 			return ERR_PTR(-EINVAL);
 
 		return &sdata->deflink;
@@ -228,7 +228,7 @@ static int ieee80211_change_iface(struct wiphy *wiphy,
 			return 0;
 
 		/* FIXME: no support for 4-addr MLO yet */
-		if (sdata->vif.valid_links)
+		if (ieee80211_vif_is_mld(&sdata->vif))
 			return -EOPNOTSUPP;
 
 		sdata->u.mgd.use_4addr = params->use_4addr;
@@ -4868,7 +4868,7 @@ static int ieee80211_add_intf_link(struct wiphy *wiphy,
 		return -EOPNOTSUPP;
 
 	mutex_lock(&sdata->local->mtx);
-	res = ieee80211_vif_set_links(sdata, wdev->valid_links);
+	res = ieee80211_vif_set_links(sdata, wdev->valid_links, 0);
 	mutex_unlock(&sdata->local->mtx);
 
 	return res;
@@ -4881,7 +4881,7 @@ static void ieee80211_del_intf_link(struct wiphy *wiphy,
 	struct ieee80211_sub_if_data *sdata = IEEE80211_WDEV_TO_SUB_IF(wdev);
 
 	mutex_lock(&sdata->local->mtx);
-	ieee80211_vif_set_links(sdata, wdev->valid_links);
+	ieee80211_vif_set_links(sdata, wdev->valid_links, 0);
 	mutex_unlock(&sdata->local->mtx);
 }
 
@@ -5050,6 +5050,7 @@ const struct cfg80211_ops mac80211_config_ops = {
 	.join_ocb = ieee80211_join_ocb,
 	.leave_ocb = ieee80211_leave_ocb,
 	.change_bss = ieee80211_change_bss,
+	.inform_bss = ieee80211_inform_bss,
 	.set_txq_params = ieee80211_set_txq_params,
 	.set_monitor_channel = ieee80211_set_monitor_channel,
 	.suspend = ieee80211_suspend,

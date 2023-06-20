@@ -108,7 +108,7 @@ struct ieee80211_regdomain *iwl_mvm_get_regdomain(struct wiphy *wiphy,
 	struct ieee80211_regdomain *regd = NULL;
 	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
 	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
-	struct iwl_mcc_update_resp *resp;
+	struct iwl_mcc_update_resp_v8 *resp;
 	u8 resp_ver;
 
 	IWL_DEBUG_LAR(mvm, "Getting regdomain data for %s from FW\n", alpha2);
@@ -138,7 +138,7 @@ struct ieee80211_regdomain *iwl_mvm_get_regdomain(struct wiphy *wiphy,
 				      resp->channels,
 				      __le16_to_cpu(resp->mcc),
 				      __le16_to_cpu(resp->geo_info),
-				      __le16_to_cpu(resp->cap), resp_ver);
+				      le32_to_cpu(resp->cap), resp_ver);
 	/* Store the return source id */
 	src_id = resp->source_id;
 	if (IS_ERR_OR_NULL(regd)) {
@@ -245,12 +245,21 @@ static const u8 tm_if_types_ext_capa_sta[] = {
 /* Additional interface types for which extended capabilities are
  * specified separately
  */
+
+#define IWL_MVM_EMLSR_CAPA	(IEEE80211_EML_CAP_EMLSR_SUPP | \
+				 IEEE80211_EML_CAP_EMLSR_PADDING_DELAY_32US << \
+					__bf_shf(IEEE80211_EML_CAP_EMLSR_PADDING_DELAY) | \
+				 IEEE80211_EML_CAP_EMLSR_TRANSITION_DELAY_64US << \
+					__bf_shf(IEEE80211_EML_CAP_EMLSR_TRANSITION_DELAY))
+
 static const struct wiphy_iftype_ext_capab add_iftypes_ext_capa[] = {
 	{
 		.iftype = NL80211_IFTYPE_STATION,
 		.extended_capabilities = he_if_types_ext_capa_sta,
 		.extended_capabilities_mask = he_if_types_ext_capa_sta,
 		.extended_capabilities_len = sizeof(he_if_types_ext_capa_sta),
+		/* relevant only if EHT is supported */
+		.eml_capabilities = IWL_MVM_EMLSR_CAPA,
 	},
 	{
 		.iftype = NL80211_IFTYPE_STATION,
@@ -258,7 +267,7 @@ static const struct wiphy_iftype_ext_capab add_iftypes_ext_capa[] = {
 		.extended_capabilities_mask = tm_if_types_ext_capa_sta,
 		.extended_capabilities_len = sizeof(tm_if_types_ext_capa_sta),
 		/* relevant only if EHT is supported */
-		.eml_capabilities = IEEE80211_EML_CAP_EMLSR_SUPP,
+		.eml_capabilities = IWL_MVM_EMLSR_CAPA,
 	},
 };
 
@@ -1029,6 +1038,7 @@ static void iwl_mvm_cleanup_iterator(void *data, u8 *mac,
 		mvmvif->link[link_id]->fw_link_id = IWL_MVM_FW_LINK_ID_INVALID;
 		mvmvif->link[link_id]->phy_ctxt = NULL;
 		mvmvif->link[link_id]->active = 0;
+		mvmvif->link[link_id]->igtk = NULL;
 	}
 
 	probe_data = rcu_dereference_protected(mvmvif->deflink.probe_resp_data,
@@ -1233,7 +1243,7 @@ void __iwl_mvm_mac_stop(struct iwl_mvm *mvm)
 
 	/* async_handlers_wk is now blocked */
 
-	if (iwl_fw_lookup_cmd_ver(mvm->fw, ADD_STA, 0) < 12)
+	if (!iwl_mvm_has_new_station_api(mvm->fw))
 		iwl_mvm_rm_aux_sta(mvm);
 
 	iwl_mvm_stop_device(mvm);
@@ -2269,8 +2279,7 @@ bool iwl_mvm_is_nic_ack_enabled(struct iwl_mvm *mvm, struct ieee80211_vif *vif)
 	 * so take it from one of them.
 	 */
 	sband = mvm->hw->wiphy->bands[NL80211_BAND_2GHZ];
-	own_he_cap = ieee80211_get_he_iftype_cap(sband,
-						 ieee80211_vif_type_p2p(vif));
+	own_he_cap = ieee80211_get_he_iftype_cap_vif(sband, vif);
 
 	return (own_he_cap && (own_he_cap->he_cap_elem.mac_cap_info[2] &
 			       IEEE80211_HE_MAC_CAP2_ACK_EN));
@@ -2882,7 +2891,7 @@ static int iwl_mvm_start_ap_ibss(struct ieee80211_hw *hw,
 	if (iwl_mvm_phy_ctx_count(mvm) > 1)
 		iwl_mvm_teardown_tdls_peers(mvm);
 
-	iwl_mvm_ftm_restart_responder(mvm, vif);
+	iwl_mvm_ftm_restart_responder(mvm, vif, &vif->bss_conf);
 
 	goto out_unlock;
 
@@ -3024,7 +3033,7 @@ iwl_mvm_bss_info_changed_ap_ibss(struct iwl_mvm *mvm,
 		IWL_WARN(mvm, "Failed updating beacon data\n");
 
 	if (changes & BSS_CHANGED_FTM_RESPONDER) {
-		int ret = iwl_mvm_ftm_start_responder(mvm, vif);
+		int ret = iwl_mvm_ftm_start_responder(mvm, vif, &vif->bss_conf);
 
 		if (ret)
 			IWL_WARN(mvm, "Failed to enable FTM responder (%d)\n",
@@ -3452,8 +3461,7 @@ static void iwl_mvm_reset_cca_40mhz_workaround(struct iwl_mvm *mvm,
 
 	sband->ht_cap.cap |= IEEE80211_HT_CAP_SUP_WIDTH_20_40;
 
-	he_cap = ieee80211_get_he_iftype_cap(sband,
-					     ieee80211_vif_type_p2p(vif));
+	he_cap = ieee80211_get_he_iftype_cap_vif(sband, vif);
 
 	if (he_cap) {
 		/* we know that ours is writable */
@@ -4513,7 +4521,7 @@ static int iwl_mvm_add_aux_sta_for_hs20(struct iwl_mvm *mvm, u32 lmac_id)
 		return -EINVAL;
 	}
 
-	if (iwl_fw_lookup_cmd_ver(mvm->fw, ADD_STA, 0) >= 12) {
+	if (iwl_mvm_has_new_station_api(mvm->fw)) {
 		ret = iwl_mvm_add_aux_sta(mvm, lmac_id);
 		WARN(ret, "Failed to allocate aux station");
 	}
@@ -4588,7 +4596,7 @@ int iwl_mvm_roc_common(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
 
 	switch (vif->type) {
 	case NL80211_IFTYPE_STATION:
-		lmac_id = iwl_mvm_get_lmac_id(mvm->fw, channel->band);
+		lmac_id = iwl_mvm_get_lmac_id(mvm, channel->band);
 
 		/* Use aux roc framework (HS20) */
 		ret = ops->add_aux_sta_for_hs20(mvm, lmac_id);
@@ -6134,10 +6142,6 @@ static bool iwl_mvm_mac_can_aggregate(struct ieee80211_hw *hw,
 {
 	struct iwl_mvm *mvm = IWL_MAC80211_GET_MVM(hw);
 
-	if (iwl_mvm_has_new_tx_csum(mvm))
-		return iwl_mvm_tx_csum_bz(mvm, head, true) ==
-		       iwl_mvm_tx_csum_bz(mvm, skb, true);
-
 	/* For now don't aggregate IPv6 in AMSDU */
 	if (skb->protocol != htons(ETH_P_IP))
 		return false;
@@ -6257,7 +6261,7 @@ const struct ieee80211_ops iwl_mvm_hw_ops = {
 
 	.can_aggregate_in_amsdu = iwl_mvm_mac_can_aggregate,
 #ifdef CONFIG_IWLWIFI_DEBUGFS
-	.sta_add_debugfs = iwl_mvm_sta_add_debugfs,
+	.link_sta_add_debugfs = iwl_mvm_link_sta_add_debugfs,
 #endif
 	.set_hw_timestamp = iwl_mvm_set_hw_timestamp,
 };
