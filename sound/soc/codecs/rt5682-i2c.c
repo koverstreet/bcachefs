@@ -11,7 +11,6 @@
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/pm.h>
-#include <linux/pm_runtime.h>
 #include <linux/i2c.h>
 #include <linux/platform_device.h>
 #include <linux/spi/spi.h>
@@ -334,7 +333,7 @@ static struct i2c_driver rt5682_i2c_driver = {
 		.acpi_match_table = rt5682_acpi_match,
 		.probe_type = PROBE_PREFER_ASYNCHRONOUS,
 	},
-	.probe_new = rt5682_i2c_probe,
+	.probe = rt5682_i2c_probe,
 	.remove = rt5682_i2c_remove,
 	.shutdown = rt5682_i2c_shutdown,
 	.id_table = rt5682_i2c_id,
