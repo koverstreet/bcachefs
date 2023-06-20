@@ -490,18 +490,6 @@ static struct twl4030_gpio_platform_data *of_gpio_twl4030(struct device *dev)
 	return omap_twl_info;
 }
 
-/* Cannot use as gpio_twl4030_probe() calls us */
-static int gpio_twl4030_remove(struct platform_device *pdev)
-{
-	struct gpio_twl4030_priv *priv = platform_get_drvdata(pdev);
-
-	gpiochip_remove(&priv->gpio_chip);
-
-	/* REVISIT no support yet for deregistering all the IRQs */
-	WARN_ON(!is_module());
-	return 0;
-}
-
 /* Called from the registered devm action */
 static void gpio_twl4030_power_off_action(void *data)
 {
@@ -582,12 +570,11 @@ no_irqs:
 	if (pdata->use_leds)
 		priv->gpio_chip.ngpio += 2;
 
-	ret = gpiochip_add_data(&priv->gpio_chip, priv);
+	ret = devm_gpiochip_add_data(&pdev->dev, &priv->gpio_chip, priv);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "could not register gpiochip, %d\n", ret);
 		priv->gpio_chip.ngpio = 0;
-		gpio_twl4030_remove(pdev);
-		goto out;
+		return ret;
 	}
 
 	/*
@@ -615,9 +602,7 @@ no_irqs:
 
 	}
 
-	platform_set_drvdata(pdev, priv);
-out:
-	return ret;
+	return 0;
 }
 
 static const struct of_device_id twl_gpio_match[] = {
@@ -635,7 +620,6 @@ static struct platform_driver gpio_twl4030_driver = {
 		.of_match_table = twl_gpio_match,
 	},
 	.probe		= gpio_twl4030_probe,
-	.remove		= gpio_twl4030_remove,
 };
 
 static int __init gpio_twl4030_init(void)
