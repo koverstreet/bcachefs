@@ -2993,7 +2993,7 @@ void __bch2_trans_init(struct btree_trans *trans, struct bch_fs *c, unsigned fn_
 	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG_TRANSACTIONS)) {
 		struct btree_trans *pos;
 
-		mutex_lock(&c->btree_trans_lock);
+		seqmutex_lock(&c->btree_trans_lock);
 		list_for_each_entry(pos, &c->btree_trans_list, list) {
 			/*
 			 * We'd much prefer to be stricter here and completely
@@ -3011,7 +3011,7 @@ void __bch2_trans_init(struct btree_trans *trans, struct bch_fs *c, unsigned fn_
 		}
 		list_add_tail(&trans->list, &c->btree_trans_list);
 list_add_done:
-		mutex_unlock(&c->btree_trans_lock);
+		seqmutex_unlock(&c->btree_trans_lock);
 	}
 }
 
@@ -3046,6 +3046,12 @@ void bch2_trans_exit(struct btree_trans *trans)
 
 	bch2_trans_unlock(trans);
 
+	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG_TRANSACTIONS)) {
+		seqmutex_lock(&c->btree_trans_lock);
+		list_del(&trans->list);
+		seqmutex_unlock(&c->btree_trans_lock);
+	}
+
 	closure_sync(&trans->ref);
 
 	if (s)
@@ -3056,12 +3062,6 @@ void bch2_trans_exit(struct btree_trans *trans)
 	trans->nr_updates		= 0;
 
 	check_btree_paths_leaked(trans);
-
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG_TRANSACTIONS)) {
-		mutex_lock(&c->btree_trans_lock);
-		list_del(&trans->list);
-		mutex_unlock(&c->btree_trans_lock);
-	}
 
 	srcu_read_unlock(&c->btree_trans_barrier, trans->srcu_idx);
 
@@ -3200,7 +3200,7 @@ int bch2_fs_btree_iter_init(struct bch_fs *c)
 	}
 
 	INIT_LIST_HEAD(&c->btree_trans_list);
-	mutex_init(&c->btree_trans_lock);
+	seqmutex_init(&c->btree_trans_lock);
 
 	ret   = mempool_init_kmalloc_pool(&c->btree_paths_pool, 1,
 			sizeof(struct btree_path) * nr +
