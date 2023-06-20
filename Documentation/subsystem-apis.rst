@@ -64,3 +64,4 @@ Human interfaces
    scheduler/index
    mhi/index
    peci/index
+   wmi/index
