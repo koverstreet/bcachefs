@@ -8,6 +8,19 @@
 #include <linux/math64.h>
 #include <linux/rbtree.h>
 
+/*
+ * Don't merge slabs in debug build so we can verify leaks when reloading module.
+ */
+#ifdef CONFIG_BTRFS_DEBUG
+#ifdef SLAB_NO_MERGE
+#define BTRFS_DEBUG_SLAB_NO_MERGE		SLAB_NO_MERGE
+#else
+#define BTRFS_DEBUG_SLAB_NO_MERGE		0
+#endif
+#else
+#define BTRFS_DEBUG_SLAB_NO_MERGE		0
+#endif
+
 #define in_range(b, first, len) ((b) >= (first) && (b) < (first) + (len))
 
 /*
@@ -141,6 +154,26 @@ static inline struct rb_node *rb_simple_insert(struct rb_root *root, u64 bytenr,
 	rb_link_node(node, parent, p);
 	rb_insert_color(node, root);
 	return NULL;
+}
+
+static inline bool bitmap_test_range_all_set(const unsigned long *addr,
+					     unsigned long start,
+					     unsigned long nbits)
+{
+	unsigned long found_zero;
+
+	found_zero = find_next_zero_bit(addr, start + nbits, start);
+	return (found_zero == start + nbits);
+}
+
+static inline bool bitmap_test_range_all_zero(const unsigned long *addr,
+					      unsigned long start,
+					      unsigned long nbits)
+{
+	unsigned long found_set;
+
+	found_set = find_next_bit(addr, start + nbits, start);
+	return (found_set == start + nbits);
 }
 
 #endif
