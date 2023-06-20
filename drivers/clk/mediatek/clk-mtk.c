@@ -500,8 +500,10 @@ static int __mtk_clk_simple_probe(struct platform_device *pdev,
 	num_clks += mcd->num_mux_clks + mcd->num_divider_clks;
 
 	clk_data = mtk_alloc_clk_data(num_clks);
-	if (!clk_data)
-		return -ENOMEM;
+	if (!clk_data) {
+		r = -ENOMEM;
+		goto free_base;
+	}
 
 	if (mcd->fixed_clks) {
 		r = mtk_clk_register_fixed_clks(mcd->fixed_clks,
@@ -599,12 +601,13 @@ unregister_fixed_clks:
 					      mcd->num_fixed_clks, clk_data);
 free_data:
 	mtk_free_clk_data(clk_data);
+free_base:
 	if (mcd->shared_io && base)
 		iounmap(base);
 	return r;
 }
 
-static int __mtk_clk_simple_remove(struct platform_device *pdev,
+static void __mtk_clk_simple_remove(struct platform_device *pdev,
 				   struct device_node *node)
 {
 	struct clk_hw_onecell_data *clk_data = platform_get_drvdata(pdev);
@@ -629,8 +632,6 @@ static int __mtk_clk_simple_remove(struct platform_device *pdev,
 		mtk_clk_unregister_fixed_clks(mcd->fixed_clks,
 					      mcd->num_fixed_clks, clk_data);
 	mtk_free_clk_data(clk_data);
-
-	return 0;
 }
 
 int mtk_clk_pdev_probe(struct platform_device *pdev)
@@ -650,18 +651,18 @@ int mtk_clk_simple_probe(struct platform_device *pdev)
 }
 EXPORT_SYMBOL_GPL(mtk_clk_simple_probe);
 
-int mtk_clk_pdev_remove(struct platform_device *pdev)
+void mtk_clk_pdev_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct device_node *node = dev->parent->of_node;
 
-	return __mtk_clk_simple_remove(pdev, node);
+	__mtk_clk_simple_remove(pdev, node);
 }
 EXPORT_SYMBOL_GPL(mtk_clk_pdev_remove);
 
-int mtk_clk_simple_remove(struct platform_device *pdev)
+void mtk_clk_simple_remove(struct platform_device *pdev)
 {
-	return __mtk_clk_simple_remove(pdev, pdev->dev.of_node);
+	__mtk_clk_simple_remove(pdev, pdev->dev.of_node);
 }
 EXPORT_SYMBOL_GPL(mtk_clk_simple_remove);
 
