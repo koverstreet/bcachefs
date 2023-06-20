@@ -17,6 +17,12 @@
 
 #include <asm/bootparam.h>
 
+#ifdef CONFIG_X86_MEM_ENCRYPT
+void __init mem_encrypt_init(void);
+#else
+static inline void mem_encrypt_init(void) { }
+#endif
+
 #ifdef CONFIG_AMD_MEM_ENCRYPT
 
 extern u64 sme_me_mask;

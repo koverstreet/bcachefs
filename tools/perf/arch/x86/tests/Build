@@ -9,3 +9,4 @@ ifeq ($(CONFIG_EXTRA_TESTS),y)
 perf-$(CONFIG_AUXTRACE) += insn-x86.o
 endif
 perf-$(CONFIG_X86_64) += bp-modify.o
+perf-y += amd-ibs-via-core-pmu.o
