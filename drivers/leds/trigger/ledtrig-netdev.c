@@ -373,8 +373,7 @@ static int netdev_trig_notify(struct notifier_block *nb,
 		trigger_data->carrier_link_up = netif_carrier_ok(dev);
 		fallthrough;
 	case NETDEV_REGISTER:
-		if (trigger_data->net_dev)
-			dev_put(trigger_data->net_dev);
+		dev_put(trigger_data->net_dev);
 		dev_hold(dev);
 		trigger_data->net_dev = dev;
 		break;
@@ -500,8 +499,7 @@ static void netdev_trig_deactivate(struct led_classdev *led_cdev)
 
 	cancel_delayed_work_sync(&trigger_data->work);
 
-	if (trigger_data->net_dev)
-		dev_put(trigger_data->net_dev);
+	dev_put(trigger_data->net_dev);
 
 	kfree(trigger_data);
 }
