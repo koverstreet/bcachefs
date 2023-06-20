@@ -421,6 +421,10 @@
 				     <GIC_SPI 145 IRQ_TYPE_LEVEL_HIGH>;
 			interrupt-names = "global",
 					  "doorbell";
+
+			interconnects = <&system_noc MASTER_PCIE &mc_virt SLAVE_EBI_CH0>;
+			interconnect-names = "pcie-mem";
+
 			resets = <&gcc GCC_PCIE_BCR>;
 			reset-names = "core";
 			power-domains = <&gcc PCIE_GDSC>;
@@ -515,7 +519,7 @@
 			#hwlock-cells = <1>;
 		};
 
-		tcsr: syscon@1fcb000 {
+		tcsr: syscon@1fc0000 {
 			compatible = "qcom,sdx55-tcsr", "syscon";
 			reg = <0x01fc0000 0x1000>;
 		};
@@ -792,7 +796,7 @@
 			};
 		};
 
-		apps_rsc: rsc@17840000 {
+		apps_rsc: rsc@17830000 {
 			compatible = "qcom,rpmh-rsc";
 			reg = <0x17830000 0x10000>, <0x17840000 0x10000>;
 			reg-names = "drv-0", "drv-1";
