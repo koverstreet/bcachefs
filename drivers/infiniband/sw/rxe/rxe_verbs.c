@@ -1397,7 +1397,7 @@ static int rxe_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)
 	if (cleanup_err)
 		rxe_err_mr(mr, "cleanup failed, err = %d", cleanup_err);
 
-	kfree_rcu(mr);
+	kfree(mr);
 	return 0;
 
 err_out:
