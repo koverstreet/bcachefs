@@ -1451,9 +1451,8 @@ static void enetc_add_rx_buff_to_xdp(struct enetc_bdr *rx_ring, int i,
 		xdp_buff_set_frag_pfmemalloc(xdp_buff);
 
 	frag = &shinfo->frags[shinfo->nr_frags];
-	skb_frag_off_set(frag, rx_swbd->page_offset);
-	skb_frag_size_set(frag, size);
-	__skb_frag_set_page(frag, rx_swbd->page);
+	skb_frag_fill_page_desc(frag, rx_swbd->page, rx_swbd->page_offset,
+				size);
 
 	shinfo->nr_frags++;
 }
@@ -2639,7 +2638,7 @@ static void enetc_debug_tx_ring_prios(struct enetc_ndev_priv *priv)
 			   priv->tx_ring[i]->prio);
 }
 
-static void enetc_reset_tc_mqprio(struct net_device *ndev)
+void enetc_reset_tc_mqprio(struct net_device *ndev)
 {
 	struct enetc_ndev_priv *priv = netdev_priv(ndev);
 	struct enetc_hw *hw = &priv->si->hw;
@@ -2664,6 +2663,7 @@ static void enetc_reset_tc_mqprio(struct net_device *ndev)
 
 	enetc_change_preemptible_tcs(priv, 0);
 }
+EXPORT_SYMBOL_GPL(enetc_reset_tc_mqprio);
 
 int enetc_setup_tc_mqprio(struct net_device *ndev, void *type_data)
 {

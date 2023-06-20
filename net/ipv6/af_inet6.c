@@ -579,7 +579,7 @@ int inet6_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 		prot = READ_ONCE(sk->sk_prot);
 		if (!prot->ioctl)
 			return -ENOIOCTLCMD;
-		return prot->ioctl(sk, cmd, arg);
+		return sk_ioctl(sk, cmd, (void __user *)arg);
 	}
 	/*NOTREACHED*/
 	return 0;
@@ -695,6 +695,7 @@ const struct proto_ops inet6_stream_ops = {
 #ifdef CONFIG_MMU
 	.mmap		   = tcp_mmap,
 #endif
+	.splice_eof	   = inet_splice_eof,
 	.sendpage	   = inet_sendpage,
 	.sendmsg_locked    = tcp_sendmsg_locked,
 	.sendpage_locked   = tcp_sendpage_locked,

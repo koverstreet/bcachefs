@@ -568,16 +568,17 @@ void phylink_generic_validate(struct phylink_config *config,
 			      unsigned long *supported,
 			      struct phylink_link_state *state);
 
-struct phylink *phylink_create(struct phylink_config *, struct fwnode_handle *,
-			       phy_interface_t iface,
-			       const struct phylink_mac_ops *mac_ops);
+struct phylink *phylink_create(struct phylink_config *,
+			       const struct fwnode_handle *,
+			       phy_interface_t,
+			       const struct phylink_mac_ops *);
 void phylink_destroy(struct phylink *);
 bool phylink_expects_phy(struct phylink *pl);
 
 int phylink_connect_phy(struct phylink *, struct phy_device *);
 int phylink_of_phy_connect(struct phylink *, struct device_node *, u32 flags);
 int phylink_fwnode_phy_connect(struct phylink *pl,
-			       struct fwnode_handle *fwnode,
+			       const struct fwnode_handle *fwnode,
 			       u32 flags);
 void phylink_disconnect_phy(struct phylink *);
 
@@ -654,6 +655,8 @@ int phylink_mii_c22_pcs_config(struct mdio_device *pcs, unsigned int mode,
 			       phy_interface_t interface,
 			       const unsigned long *advertising);
 void phylink_mii_c22_pcs_an_restart(struct mdio_device *pcs);
+
+void phylink_resolve_c73(struct phylink_link_state *state);
 
 void phylink_mii_c45_pcs_get_state(struct mdio_device *pcs,
 				   struct phylink_link_state *state);
