@@ -1277,6 +1277,7 @@ endif	# if CRYPTO_DRBG_MENU
 config CRYPTO_JITTERENTROPY
 	tristate "CPU Jitter Non-Deterministic RNG (Random Number Generator)"
 	select CRYPTO_RNG
+	select CRYPTO_SHA3
 	help
 	  CPU Jitter RNG (Random Number Generator) from the Jitterentropy library
 
@@ -1286,6 +1287,26 @@ config CRYPTO_JITTERENTROPY
 	  This RNG does not perform any cryptographic whitening of the generated
 
 	  See https://www.chronox.de/jent.html
+
+config CRYPTO_JITTERENTROPY_TESTINTERFACE
+	bool "CPU Jitter RNG Test Interface"
+	depends on CRYPTO_JITTERENTROPY
+	help
+	  The test interface allows a privileged process to capture
+	  the raw unconditioned high resolution time stamp noise that
+	  is collected by the Jitter RNG for statistical analysis. As
+	  this data is used at the same time to generate random bits,
+	  the Jitter RNG operates in an insecure mode as long as the
+	  recording is enabled. This interface therefore is only
+	  intended for testing purposes and is not suitable for
+	  production systems.
+
+	  The raw noise data can be obtained using the jent_raw_hires
+	  debugfs file. Using the option
+	  jitterentropy_testing.boot_raw_hires_test=1 the raw noise of
+	  the first 1000 entropy events since boot can be sampled.
+
+	  If unsure, select N.
 
 config CRYPTO_KDF800108_CTR
 	tristate
@@ -1371,6 +1392,9 @@ config CRYPTO_STATS
 	depends on CRYPTO_USER
 	help
 	  Enable the gathering of crypto stats.
+
+	  Enabling this option reduces the performance of the crypto API.  It
+	  should only be enabled when there is actually a use case for it.
 
 	  This collects data sizes, numbers of requests, and numbers
 	  of errors processed by:
