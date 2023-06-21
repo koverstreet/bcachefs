@@ -131,7 +131,7 @@ void free_pid(struct pid *pid)
 
 	spin_lock_irqsave(&pidmap_lock, flags);
 	for (i = 0; i <= pid->level; i++) {
-		struct upid *upid = pid->numbers + i;
+		struct upid *upid = &pid->numbers[i];
 		struct pid_namespace *ns = upid->ns;
 		switch (--ns->pid_allocated) {
 		case 2:
@@ -265,7 +265,7 @@ struct pid *alloc_pid(struct pid_namespace *ns, pid_t *set_tid,
 	init_waitqueue_head(&pid->wait_pidfd);
 	INIT_HLIST_HEAD(&pid->inodes);
 
-	upid = pid->numbers + ns->level;
+	upid = &pid->numbers[ns->level];
 	spin_lock_irq(&pidmap_lock);
 	if (!(ns->pid_allocated & PIDNS_ADDING))
 		goto out_unlock;
@@ -285,7 +285,7 @@ out_unlock:
 out_free:
 	spin_lock_irq(&pidmap_lock);
 	while (++i <= ns->level) {
-		upid = pid->numbers + i;
+		upid = &pid->numbers[i];
 		idr_remove(&upid->ns->idr, upid->nr);
 	}
 
@@ -656,8 +656,11 @@ void __init pid_idr_init(void)
 
 	idr_init(&init_pid_ns.idr);
 
-	init_pid_ns.pid_cachep = KMEM_CACHE(pid,
-			SLAB_HWCACHE_ALIGN | SLAB_PANIC | SLAB_ACCOUNT);
+	init_pid_ns.pid_cachep = kmem_cache_create("pid",
+			struct_size((struct pid *)0, numbers, 1),
+			__alignof__(struct pid),
+			SLAB_HWCACHE_ALIGN | SLAB_PANIC | SLAB_ACCOUNT,
+			NULL);
 }
 
 static struct file *__pidfd_fget(struct task_struct *task, int fd)

@@ -14,66 +14,53 @@
 #include <linux/interrupt.h>
 #include <sound/pcm_params.h>
 #include <linux/pm_runtime.h>
+#include <linux/iopoll.h>
 
 #include "acp63.h"
 
 static int acp63_power_on(void __iomem *acp_base)
 {
 	u32 val;
-	int timeout;
 
-	val = acp63_readl(acp_base + ACP_PGFSM_STATUS);
+	val = readl(acp_base + ACP_PGFSM_STATUS);
 
 	if (!val)
 		return val;
 
 	if ((val & ACP_PGFSM_STATUS_MASK) != ACP_POWER_ON_IN_PROGRESS)
-		acp63_writel(ACP_PGFSM_CNTL_POWER_ON_MASK, acp_base + ACP_PGFSM_CONTROL);
-	timeout = 0;
-	while (++timeout < 500) {
-		val = acp63_readl(acp_base + ACP_PGFSM_STATUS);
-		if (!val)
-			return 0;
-		udelay(1);
-	}
-	return -ETIMEDOUT;
+		writel(ACP_PGFSM_CNTL_POWER_ON_MASK, acp_base + ACP_PGFSM_CONTROL);
+
+	return readl_poll_timeout(acp_base + ACP_PGFSM_STATUS, val, !val, DELAY_US, ACP_TIMEOUT);
 }
 
 static int acp63_reset(void __iomem *acp_base)
 {
 	u32 val;
-	int timeout;
+	int ret;
 
-	acp63_writel(1, acp_base + ACP_SOFT_RESET);
-	timeout = 0;
-	while (++timeout < 500) {
-		val = acp63_readl(acp_base + ACP_SOFT_RESET);
-		if (val & ACP_SOFT_RESET_SOFTRESET_AUDDONE_MASK)
-			break;
-		cpu_relax();
-	}
-	acp63_writel(0, acp_base + ACP_SOFT_RESET);
-	timeout = 0;
-	while (++timeout < 500) {
-		val = acp63_readl(acp_base + ACP_SOFT_RESET);
-		if (!val)
-			return 0;
-		cpu_relax();
-	}
-	return -ETIMEDOUT;
+	writel(1, acp_base + ACP_SOFT_RESET);
+
+	ret = readl_poll_timeout(acp_base + ACP_SOFT_RESET, val,
+				 val & ACP_SOFT_RESET_SOFTRESET_AUDDONE_MASK,
+				 DELAY_US, ACP_TIMEOUT);
+	if (ret)
+		return ret;
+
+	writel(0, acp_base + ACP_SOFT_RESET);
+
+	return readl_poll_timeout(acp_base + ACP_SOFT_RESET, val, !val, DELAY_US, ACP_TIMEOUT);
 }
 
 static void acp63_enable_interrupts(void __iomem *acp_base)
 {
-	acp63_writel(1, acp_base + ACP_EXTERNAL_INTR_ENB);
+	writel(1, acp_base + ACP_EXTERNAL_INTR_ENB);
 }
 
 static void acp63_disable_interrupts(void __iomem *acp_base)
 {
-	acp63_writel(ACP_EXT_INTR_STAT_CLEAR_MASK, acp_base +
-		     ACP_EXTERNAL_INTR_STAT);
-	acp63_writel(0, acp_base + ACP_EXTERNAL_INTR_CNTL);
-	acp63_writel(0, acp_base + ACP_EXTERNAL_INTR_ENB);
+	writel(ACP_EXT_INTR_STAT_CLEAR_MASK, acp_base + ACP_EXTERNAL_INTR_STAT);
+	writel(0, acp_base + ACP_EXTERNAL_INTR_CNTL);
+	writel(0, acp_base + ACP_EXTERNAL_INTR_ENB);
 }
 
 static int acp63_init(void __iomem *acp_base, struct device *dev)
@@ -85,7 +72,7 @@ static int acp63_init(void __iomem *acp_base, struct device *dev)
 		dev_err(dev, "ACP power on failed\n");
 		return ret;
 	}
-	acp63_writel(0x01, acp_base + ACP_CONTROL);
+	writel(0x01, acp_base + ACP_CONTROL);
 	ret = acp63_reset(acp_base);
 	if (ret) {
 		dev_err(dev, "ACP reset failed\n");
@@ -105,7 +92,7 @@ static int acp63_deinit(void __iomem *acp_base, struct device *dev)
 		dev_err(dev, "ACP reset failed\n");
 		return ret;
 	}
-	acp63_writel(0, acp_base + ACP_CONTROL);
+	writel(0, acp_base + ACP_CONTROL);
 	return 0;
 }
 
@@ -120,11 +107,11 @@ static irqreturn_t acp63_irq_handler(int irq, void *dev_id)
 	if (!adata)
 		return IRQ_NONE;
 
-	val = acp63_readl(adata->acp63_base + ACP_EXTERNAL_INTR_STAT);
+	val = readl(adata->acp63_base + ACP_EXTERNAL_INTR_STAT);
 	if (val & BIT(PDM_DMA_STAT)) {
 		pdev_index = adata->pdm_dev_index;
 		ps_pdm_data = dev_get_drvdata(&adata->pdev[pdev_index]->dev);
-		acp63_writel(BIT(PDM_DMA_STAT), adata->acp63_base + ACP_EXTERNAL_INTR_STAT);
+		writel(BIT(PDM_DMA_STAT), adata->acp63_base + ACP_EXTERNAL_INTR_STAT);
 		if (ps_pdm_data->capture_stream)
 			snd_pcm_period_elapsed(ps_pdm_data->capture_stream);
 		return IRQ_HANDLED;
@@ -301,7 +288,7 @@ static int snd_acp63_probe(struct pci_dev *pci,
 		dev_err(&pci->dev, "ACP PCI IRQ request failed\n");
 		goto de_init;
 	}
-	val = acp63_readl(adata->acp63_base + ACP_PIN_CONFIG);
+	val = readl(adata->acp63_base + ACP_PIN_CONFIG);
 	get_acp63_device_config(val, pci, adata);
 	ret = create_acp63_platform_devs(pci, adata, addr);
 	if (ret < 0) {

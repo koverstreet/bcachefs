@@ -41,6 +41,25 @@
 		};
 	};
 
+	clk_pwm: pwm {
+		compatible = "clk-pwm";
+		clocks = <&mmcc CAMSS_GP1_CLK>;
+
+		pinctrl-0 = <&vibrator_pin>;
+		pinctrl-names = "default";
+
+		#pwm-cells = <2>;
+	};
+
+	vibrator {
+		compatible = "pwm-vibrator";
+		pwms = <&clk_pwm 0 100000>;
+		pwm-names = "enable";
+
+		vcc-supply = <&pm8941_l19>;
+		enable-gpios = <&tlmm 60 GPIO_ACTIVE_HIGH>;
+	};
+
 	vreg_wlan: wlan-regulator {
 		compatible = "regulator-fixed";
 
@@ -211,7 +230,11 @@
 	};
 };
 
-&dsi0 {
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi0 {
 	status = "okay";
 
 	vdda-supply = <&pm8941_l2>;
@@ -227,25 +250,21 @@
 
 		port {
 			panel_in: endpoint {
-				remote-endpoint = <&dsi0_out>;
+				remote-endpoint = <&mdss_dsi0_out>;
 			};
 		};
 	};
 };
 
-&dsi0_out {
+&mdss_dsi0_out {
 	remote-endpoint = <&panel_in>;
 	data-lanes = <0 1 2 3>;
 };
 
-&dsi0_phy {
+&mdss_dsi0_phy {
 	status = "okay";
 
 	vddio-supply = <&pm8941_l12>;
-};
-
-&mdss {
-	status = "okay";
 };
 
 &pm8941_gpios {
@@ -633,6 +652,22 @@
 		shutdown-pins {
 			pins = "gpio41";
 			function = "gpio";
+		};
+	};
+
+	vibrator_pin: vibrator-state {
+		core-pins {
+			pins = "gpio27";
+			function = "gp1_clk";
+			drive-strength = <6>;
+			bias-disable;
+		};
+
+		enable-pins {
+			pins = "gpio60";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
 		};
 	};
 };

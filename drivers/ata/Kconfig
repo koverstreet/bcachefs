@@ -239,7 +239,7 @@ config AHCI_MVEBU
 
 config AHCI_OCTEON
 	tristate "Cavium Octeon Soc Serial ATA"
-	depends on SATA_AHCI_PLATFORM && CAVIUM_OCTEON_SOC
+	depends on SATA_AHCI_PLATFORM && MIPS && (CAVIUM_OCTEON_SOC || COMPILE_TEST)
 	default y
 	help
 	  This option enables support for Cavium Octeon SoC Serial ATA.
@@ -373,7 +373,7 @@ config PDC_ADMA
 
 config PATA_OCTEON_CF
 	tristate "OCTEON Boot Bus Compact Flash support"
-	depends on CAVIUM_OCTEON_SOC
+	depends on MIPS && (CAVIUM_OCTEON_SOC || COMPILE_TEST)
 	select PATA_TIMINGS
 	help
 	  This option enables a polled compact flash driver for use with

@@ -2635,6 +2635,9 @@ static void macb_reset_hw(struct macb *bp)
 	macb_writel(bp, TSR, -1);
 	macb_writel(bp, RSR, -1);
 
+	/* Disable RX partial store and forward and reset watermark value */
+	gem_writel(bp, PBUFRXCUT, 0);
+
 	/* Disable all interrupts */
 	for (q = 0, queue = bp->queues; q < bp->num_queues; ++q, ++queue) {
 		queue_writel(queue, IDR, -1);
@@ -2792,6 +2795,10 @@ static void macb_init_hw(struct macb *bp)
 		bp->rx_frm_len_mask = MACB_RX_JFRMLEN_MASK;
 
 	macb_configure_dma(bp);
+
+	/* Enable RX partial store and forward and set watermark */
+	if (bp->rx_watermark)
+		gem_writel(bp, PBUFRXCUT, (bp->rx_watermark | GEM_BIT(ENCUTTHRU)));
 }
 
 /* The hash address register is 64 bits long and takes up two
@@ -4117,14 +4124,12 @@ static int macb_init(struct platform_device *pdev)
 
 	/* setup appropriated routines according to adapter type */
 	if (macb_is_gem(bp)) {
-		bp->max_tx_length = GEM_MAX_TX_LEN;
 		bp->macbgem_ops.mog_alloc_rx_buffers = gem_alloc_rx_buffers;
 		bp->macbgem_ops.mog_free_rx_buffers = gem_free_rx_buffers;
 		bp->macbgem_ops.mog_init_rings = gem_init_rings;
 		bp->macbgem_ops.mog_rx = gem_rx;
 		dev->ethtool_ops = &gem_ethtool_ops;
 	} else {
-		bp->max_tx_length = MACB_MAX_TX_LEN;
 		bp->macbgem_ops.mog_alloc_rx_buffers = macb_alloc_rx_buffers;
 		bp->macbgem_ops.mog_free_rx_buffers = macb_free_rx_buffers;
 		bp->macbgem_ops.mog_init_rings = macb_init_rings;
@@ -4861,7 +4866,8 @@ static const struct macb_config mpfs_config = {
 	.clk_init = macb_clk_init,
 	.init = init_reset_optional,
 	.usrio = &macb_default_usrio,
-	.jumbo_max_len = 10240,
+	.max_tx_length = 4040, /* Cadence Erratum 1686 */
+	.jumbo_max_len = 4040,
 };
 
 static const struct macb_config sama7g5_gem_config = {
@@ -4947,6 +4953,7 @@ static int macb_probe(struct platform_device *pdev)
 	phy_interface_t interface;
 	struct net_device *dev;
 	struct resource *regs;
+	u32 wtrmrk_rst_val;
 	void __iomem *mem;
 	struct macb *bp;
 	int err, val;
@@ -5012,6 +5019,13 @@ static int macb_probe(struct platform_device *pdev)
 	if (macb_config)
 		bp->jumbo_max_len = macb_config->jumbo_max_len;
 
+	if (!hw_is_gem(bp->regs, bp->native_io))
+		bp->max_tx_length = MACB_MAX_TX_LEN;
+	else if (macb_config->max_tx_length)
+		bp->max_tx_length = macb_config->max_tx_length;
+	else
+		bp->max_tx_length = GEM_MAX_TX_LEN;
+
 	bp->wol = 0;
 	if (of_property_read_bool(np, "magic-packet"))
 		bp->wol |= MACB_WOL_HAS_MAGIC_PACKET;
@@ -5019,6 +5033,25 @@ static int macb_probe(struct platform_device *pdev)
 
 	bp->usrio = macb_config->usrio;
 
+	/* By default we set to partial store and forward mode for zynqmp.
+	 * Disable if not set in devicetree.
+	 */
+	if (GEM_BFEXT(PBUF_CUTTHRU, gem_readl(bp, DCFG6))) {
+		err = of_property_read_u32(bp->pdev->dev.of_node,
+					   "cdns,rx-watermark",
+					   &bp->rx_watermark);
+
+		if (!err) {
+			/* Disable partial store and forward in case of error or
+			 * invalid watermark value
+			 */
+			wtrmrk_rst_val = (1 << (GEM_BFEXT(RX_PBUF_ADDR, gem_readl(bp, DCFG2)))) - 1;
+			if (bp->rx_watermark > wtrmrk_rst_val || !bp->rx_watermark) {
+				dev_info(&bp->pdev->dev, "Invalid watermark value\n");
+				bp->rx_watermark = 0;
+			}
+		}
+	}
 	spin_lock_init(&bp->lock);
 
 	/* setup capabilities */

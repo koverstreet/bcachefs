@@ -284,13 +284,24 @@ static int iso_connect_bis(struct sock *sk)
 		goto unlock;
 	}
 
-	hcon = hci_connect_bis(hdev, &iso_pi(sk)->dst,
-			       le_addr_type(iso_pi(sk)->dst_type),
-			       &iso_pi(sk)->qos, iso_pi(sk)->base_len,
-			       iso_pi(sk)->base);
-	if (IS_ERR(hcon)) {
-		err = PTR_ERR(hcon);
-		goto unlock;
+	/* Just bind if DEFER_SETUP has been set */
+	if (test_bit(BT_SK_DEFER_SETUP, &bt_sk(sk)->flags)) {
+		hcon = hci_bind_bis(hdev, &iso_pi(sk)->dst,
+				    &iso_pi(sk)->qos, iso_pi(sk)->base_len,
+				    iso_pi(sk)->base);
+		if (IS_ERR(hcon)) {
+			err = PTR_ERR(hcon);
+			goto unlock;
+		}
+	} else {
+		hcon = hci_connect_bis(hdev, &iso_pi(sk)->dst,
+				       le_addr_type(iso_pi(sk)->dst_type),
+				       &iso_pi(sk)->qos, iso_pi(sk)->base_len,
+				       iso_pi(sk)->base);
+		if (IS_ERR(hcon)) {
+			err = PTR_ERR(hcon);
+			goto unlock;
+		}
 	}
 
 	conn = iso_conn_add(hcon);
@@ -315,6 +326,9 @@ static int iso_connect_bis(struct sock *sk)
 	if (hcon->state == BT_CONNECTED) {
 		iso_sock_clear_timer(sk);
 		sk->sk_state = BT_CONNECTED;
+	} else if (test_bit(BT_SK_DEFER_SETUP, &bt_sk(sk)->flags)) {
+		iso_sock_clear_timer(sk);
+		sk->sk_state = BT_CONNECT;
 	} else {
 		sk->sk_state = BT_CONNECT;
 		iso_sock_set_timer(sk, sk->sk_sndtimeo);
@@ -725,20 +739,12 @@ static struct sock *iso_sock_alloc(struct net *net, struct socket *sock,
 {
 	struct sock *sk;
 
-	sk = sk_alloc(net, PF_BLUETOOTH, prio, &iso_proto, kern);
+	sk = bt_sock_alloc(net, sock, &iso_proto, proto, prio, kern);
 	if (!sk)
 		return NULL;
 
-	sock_init_data(sock, sk);
-	INIT_LIST_HEAD(&bt_sk(sk)->accept_q);
-
 	sk->sk_destruct = iso_sock_destruct;
 	sk->sk_sndtimeo = ISO_CONN_TIMEOUT;
-
-	sock_reset_flag(sk, SOCK_ZAPPED);
-
-	sk->sk_protocol = proto;
-	sk->sk_state    = BT_OPEN;
 
 	/* Set address type as public as default src address is BDADDR_ANY */
 	iso_pi(sk)->src_type = BDADDR_LE_PUBLIC;
@@ -1667,7 +1673,7 @@ static void iso_connect_cfm(struct hci_conn *hcon, __u8 status)
 		}
 
 		/* Create CIS if pending */
-		hci_le_create_cis(hcon);
+		hci_le_create_cis_pending(hcon->hdev);
 		return;
 	}
 

@@ -55,6 +55,7 @@ do_kasan=yes
 do_kcsan=no
 do_clocksourcewd=yes
 do_rt=yes
+do_rcutasksflavors=yes
 
 # doyesno - Helper function for yes/no arguments
 function doyesno () {
@@ -73,18 +74,19 @@ usage () {
 	echo "       --configs-locktorture \"config-file list w/ repeat factor (10*LOCK01)\""
 	echo "       --configs-scftorture \"config-file list w/ repeat factor (2*CFLIST)\""
 	echo "       --do-all"
-	echo "       --do-allmodconfig / --do-no-allmodconfig"
-	echo "       --do-clocksourcewd / --do-no-clocksourcewd"
-	echo "       --do-kasan / --do-no-kasan"
-	echo "       --do-kcsan / --do-no-kcsan"
-	echo "       --do-kvfree / --do-no-kvfree"
-	echo "       --do-locktorture / --do-no-locktorture"
+	echo "       --do-allmodconfig / --do-no-allmodconfig / --no-allmodconfig"
+	echo "       --do-clocksourcewd / --do-no-clocksourcewd / --no-clocksourcewd"
+	echo "       --do-kasan / --do-no-kasan / --no-kasan"
+	echo "       --do-kcsan / --do-no-kcsan / --no-kcsan"
+	echo "       --do-kvfree / --do-no-kvfree / --no-kvfree"
+	echo "       --do-locktorture / --do-no-locktorture / --no-locktorture"
 	echo "       --do-none"
-	echo "       --do-rcuscale / --do-no-rcuscale"
-	echo "       --do-rcutorture / --do-no-rcutorture"
-	echo "       --do-refscale / --do-no-refscale"
-	echo "       --do-rt / --do-no-rt"
-	echo "       --do-scftorture / --do-no-scftorture"
+	echo "       --do-rcuscale / --do-no-rcuscale / --no-rcuscale"
+	echo "       --do-rcutasksflavors / --do-no-rcutasksflavors / --no-rcutasksflavors"
+	echo "       --do-rcutorture / --do-no-rcutorture / --no-rcutorture"
+	echo "       --do-refscale / --do-no-refscale / --no-refscale"
+	echo "       --do-rt / --do-no-rt / --no-rt"
+	echo "       --do-scftorture / --do-no-scftorture / --no-scftorture"
 	echo "       --duration [ <minutes> | <hours>h | <days>d ]"
 	echo "       --kcsan-kmake-arg kernel-make-arguments"
 	exit 1
@@ -115,6 +117,7 @@ do
 		;;
 	--do-all|--doall)
 		do_allmodconfig=yes
+		do_rcutasksflavor=yes
 		do_rcutorture=yes
 		do_locktorture=yes
 		do_scftorture=yes
@@ -126,26 +129,27 @@ do
 		do_kcsan=yes
 		do_clocksourcewd=yes
 		;;
-	--do-allmodconfig|--do-no-allmodconfig)
+	--do-allmodconfig|--do-no-allmodconfig|--no-allmodconfig)
 		do_allmodconfig=`doyesno "$1" --do-allmodconfig`
 		;;
-	--do-clocksourcewd|--do-no-clocksourcewd)
+	--do-clocksourcewd|--do-no-clocksourcewd|--no-clocksourcewd)
 		do_clocksourcewd=`doyesno "$1" --do-clocksourcewd`
 		;;
-	--do-kasan|--do-no-kasan)
+	--do-kasan|--do-no-kasan|--no-kasan)
 		do_kasan=`doyesno "$1" --do-kasan`
 		;;
-	--do-kcsan|--do-no-kcsan)
+	--do-kcsan|--do-no-kcsan|--no-kcsan)
 		do_kcsan=`doyesno "$1" --do-kcsan`
 		;;
-	--do-kvfree|--do-no-kvfree)
+	--do-kvfree|--do-no-kvfree|--no-kvfree)
 		do_kvfree=`doyesno "$1" --do-kvfree`
 		;;
-	--do-locktorture|--do-no-locktorture)
+	--do-locktorture|--do-no-locktorture|--no-locktorture)
 		do_locktorture=`doyesno "$1" --do-locktorture`
 		;;
 	--do-none|--donone)
 		do_allmodconfig=no
+		do_rcutasksflavors=no
 		do_rcutorture=no
 		do_locktorture=no
 		do_scftorture=no
@@ -157,19 +161,22 @@ do
 		do_kcsan=no
 		do_clocksourcewd=no
 		;;
-	--do-rcuscale|--do-no-rcuscale)
+	--do-rcuscale|--do-no-rcuscale|--no-rcuscale)
 		do_rcuscale=`doyesno "$1" --do-rcuscale`
 		;;
-	--do-rcutorture|--do-no-rcutorture)
+	--do-rcutasksflavors|--do-no-rcutasksflavors|--no-rcutasksflavors)
+		do_rcutasksflavors=`doyesno "$1" --do-rcutasksflavors`
+		;;
+	--do-rcutorture|--do-no-rcutorture|--no-rcutorture)
 		do_rcutorture=`doyesno "$1" --do-rcutorture`
 		;;
-	--do-refscale|--do-no-refscale)
+	--do-refscale|--do-no-refscale|--no-refscale)
 		do_refscale=`doyesno "$1" --do-refscale`
 		;;
-	--do-rt|--do-no-rt)
+	--do-rt|--do-no-rt|--no-rt)
 		do_rt=`doyesno "$1" --do-rt`
 		;;
-	--do-scftorture|--do-no-scftorture)
+	--do-scftorture|--do-no-scftorture|--no-scftorture)
 		do_scftorture=`doyesno "$1" --do-scftorture`
 		;;
 	--duration)
@@ -361,6 +368,41 @@ then
 	fi
 fi
 
+# Test building RCU Tasks flavors in isolation, both SMP and !SMP
+if test "$do_rcutasksflavors" = "yes"
+then
+	echo " --- rcutasksflavors:" Start `date` | tee -a $T/log
+	rtfdir="tools/testing/selftests/rcutorture/res/$ds/results-rcutasksflavors"
+	mkdir -p "$rtfdir"
+	cat > $T/rcutasksflavors << __EOF__
+#CHECK#CONFIG_TASKS_RCU=n
+#CHECK#CONFIG_TASKS_RUDE_RCU=n
+#CHECK#CONFIG_TASKS_TRACE_RCU=n
+__EOF__
+	for flavor in CONFIG_TASKS_RCU CONFIG_TASKS_RUDE_RCU CONFIG_TASKS_TRACE_RCU
+	do
+		forceflavor="`echo $flavor | sed -e 's/^CONFIG/CONFIG_FORCE/'`"
+		deselectedflavors="`grep -v $flavor $T/rcutasksflavors | tr '\012' ' ' | tr -s ' ' | sed -e 's/ *$//'`"
+		echo " --- Running RCU Tasks Trace flavor $flavor `date`" >> $rtfdir/log
+		tools/testing/selftests/rcutorture/bin/kvm.sh --datestamp "$ds/results-rcutasksflavors/$flavor" --buildonly --configs "TINY01 TREE04" --kconfig "CONFIG_RCU_EXPERT=y CONFIG_RCU_SCALE_TEST=y $forceflavor=y $deselectedflavors" --trust-make > $T/$flavor.out 2>&1
+		retcode=$?
+		if test "$retcode" -ne 0
+		then
+			break
+		fi
+	done
+	if test "$retcode" -eq 0
+	then
+		echo "rcutasksflavors($retcode)" $rtfdir >> $T/successes
+		echo Success >> $rtfdir/log
+	else
+		echo "rcutasksflavors($retcode)" $rtfdir >> $T/failures
+		echo " --- rcutasksflavors Test summary:" >> $rtfdir/log
+		echo " --- Summary: Exit code $retcode from $flavor, see Make.out" >> $rtfdir/log
+	fi
+	
+fi
+
 # --torture rcu
 if test "$do_rcutorture" = "yes"
 then
@@ -376,8 +418,10 @@ fi
 
 if test "$do_scftorture" = "yes"
 then
+	# Scale memory based on the number of CPUs.
+	scfmem=$((2+HALF_ALLOTED_CPUS/16))
 	torture_bootargs="scftorture.nthreads=$HALF_ALLOTED_CPUS torture.disable_onoff_at_boot csdlock_debug=1"
-	torture_set "scftorture" tools/testing/selftests/rcutorture/bin/kvm.sh --torture scf --allcpus --duration "$duration_scftorture" --configs "$configs_scftorture" --kconfig "CONFIG_NR_CPUS=$HALF_ALLOTED_CPUS" --memory 2G --trust-make
+	torture_set "scftorture" tools/testing/selftests/rcutorture/bin/kvm.sh --torture scf --allcpus --duration "$duration_scftorture" --configs "$configs_scftorture" --kconfig "CONFIG_NR_CPUS=$HALF_ALLOTED_CPUS" --memory ${scfmem}G --trust-make
 fi
 
 if test "$do_rt" = "yes"

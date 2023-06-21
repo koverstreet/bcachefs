@@ -64,6 +64,16 @@ static const int xpcs_xlgmii_features[] = {
 	__ETHTOOL_LINK_MODE_MASK_NBITS,
 };
 
+static const int xpcs_10gbaser_features[] = {
+	ETHTOOL_LINK_MODE_Pause_BIT,
+	ETHTOOL_LINK_MODE_Asym_Pause_BIT,
+	ETHTOOL_LINK_MODE_10000baseSR_Full_BIT,
+	ETHTOOL_LINK_MODE_10000baseLR_Full_BIT,
+	ETHTOOL_LINK_MODE_10000baseLRM_Full_BIT,
+	ETHTOOL_LINK_MODE_10000baseER_Full_BIT,
+	__ETHTOOL_LINK_MODE_MASK_NBITS,
+};
+
 static const int xpcs_sgmii_features[] = {
 	ETHTOOL_LINK_MODE_Pause_BIT,
 	ETHTOOL_LINK_MODE_Asym_Pause_BIT,
@@ -106,6 +116,10 @@ static const phy_interface_t xpcs_xlgmii_interfaces[] = {
 	PHY_INTERFACE_MODE_XLGMII,
 };
 
+static const phy_interface_t xpcs_10gbaser_interfaces[] = {
+	PHY_INTERFACE_MODE_10GBASER,
+};
+
 static const phy_interface_t xpcs_sgmii_interfaces[] = {
 	PHY_INTERFACE_MODE_SGMII,
 };
@@ -123,6 +137,7 @@ enum {
 	DW_XPCS_USXGMII,
 	DW_XPCS_10GKR,
 	DW_XPCS_XLGMII,
+	DW_XPCS_10GBASER,
 	DW_XPCS_SGMII,
 	DW_XPCS_1000BASEX,
 	DW_XPCS_2500BASEX,
@@ -246,6 +261,7 @@ static int xpcs_soft_reset(struct dw_xpcs *xpcs,
 
 	switch (compat->an_mode) {
 	case DW_AN_C73:
+	case DW_10GBASER:
 		dev = MDIO_MMD_PCS;
 		break;
 	case DW_AN_C37_SGMII:
@@ -271,15 +287,12 @@ static int xpcs_soft_reset(struct dw_xpcs *xpcs,
 })
 
 static int xpcs_read_fault_c73(struct dw_xpcs *xpcs,
-			       struct phylink_link_state *state)
+			       struct phylink_link_state *state,
+			       u16 pcs_stat1)
 {
 	int ret;
 
-	ret = xpcs_read(xpcs, MDIO_MMD_PCS, MDIO_STAT1);
-	if (ret < 0)
-		return ret;
-
-	if (ret & MDIO_STAT1_FAULT) {
+	if (pcs_stat1 & MDIO_STAT1_FAULT) {
 		xpcs_warn(xpcs, state, "Link fault condition detected!\n");
 		return -EFAULT;
 	}
@@ -319,37 +332,6 @@ static int xpcs_read_fault_c73(struct dw_xpcs *xpcs,
 	}
 
 	return 0;
-}
-
-static int xpcs_read_link_c73(struct dw_xpcs *xpcs)
-{
-	bool link = true;
-	int ret;
-
-	ret = xpcs_read(xpcs, MDIO_MMD_PCS, MDIO_STAT1);
-	if (ret < 0)
-		return ret;
-
-	if (!(ret & MDIO_STAT1_LSTATUS))
-		link = false;
-
-	return link;
-}
-
-static int xpcs_get_max_usxgmii_speed(const unsigned long *supported)
-{
-	int max = SPEED_UNKNOWN;
-
-	if (phylink_test(supported, 1000baseKX_Full))
-		max = SPEED_1000;
-	if (phylink_test(supported, 2500baseX_Full))
-		max = SPEED_2500;
-	if (phylink_test(supported, 10000baseKX4_Full))
-		max = SPEED_10000;
-	if (phylink_test(supported, 10000baseKR_Full))
-		max = SPEED_10000;
-
-	return max;
 }
 
 static void xpcs_config_usxgmii(struct dw_xpcs *xpcs, int speed)
@@ -478,16 +460,12 @@ static int xpcs_config_aneg_c73(struct dw_xpcs *xpcs,
 
 static int xpcs_aneg_done_c73(struct dw_xpcs *xpcs,
 			      struct phylink_link_state *state,
-			      const struct xpcs_compat *compat)
+			      const struct xpcs_compat *compat, u16 an_stat1)
 {
 	int ret;
 
-	ret = xpcs_read(xpcs, MDIO_MMD_AN, MDIO_STAT1);
-	if (ret < 0)
-		return ret;
-
-	if (ret & MDIO_AN_STAT1_COMPLETE) {
-		ret = xpcs_read(xpcs, MDIO_MMD_AN, DW_SR_AN_LP_ABL1);
+	if (an_stat1 & MDIO_AN_STAT1_COMPLETE) {
+		ret = xpcs_read(xpcs, MDIO_MMD_AN, MDIO_AN_LPA);
 		if (ret < 0)
 			return ret;
 
@@ -504,62 +482,30 @@ static int xpcs_aneg_done_c73(struct dw_xpcs *xpcs,
 }
 
 static int xpcs_read_lpa_c73(struct dw_xpcs *xpcs,
-			     struct phylink_link_state *state)
+			     struct phylink_link_state *state, u16 an_stat1)
 {
-	int ret;
+	u16 lpa[3];
+	int i, ret;
 
-	ret = xpcs_read(xpcs, MDIO_MMD_AN, MDIO_STAT1);
-	if (ret < 0)
-		return ret;
-
-	if (!(ret & MDIO_AN_STAT1_LPABLE)) {
+	if (!(an_stat1 & MDIO_AN_STAT1_LPABLE)) {
 		phylink_clear(state->lp_advertising, Autoneg);
 		return 0;
 	}
 
 	phylink_set(state->lp_advertising, Autoneg);
 
-	/* Clause 73 outcome */
-	ret = xpcs_read(xpcs, MDIO_MMD_AN, DW_SR_AN_LP_ABL3);
-	if (ret < 0)
-		return ret;
+	/* Read Clause 73 link partner advertisement */
+	for (i = ARRAY_SIZE(lpa); --i >= 0; ) {
+		ret = xpcs_read(xpcs, MDIO_MMD_AN, MDIO_AN_LPA + i);
+		if (ret < 0)
+			return ret;
 
-	if (ret & DW_C73_2500KX)
-		phylink_set(state->lp_advertising, 2500baseX_Full);
+		lpa[i] = ret;
+	}
 
-	ret = xpcs_read(xpcs, MDIO_MMD_AN, DW_SR_AN_LP_ABL2);
-	if (ret < 0)
-		return ret;
+	mii_c73_mod_linkmode(state->lp_advertising, lpa);
 
-	if (ret & DW_C73_1000KX)
-		phylink_set(state->lp_advertising, 1000baseKX_Full);
-	if (ret & DW_C73_10000KX4)
-		phylink_set(state->lp_advertising, 10000baseKX4_Full);
-	if (ret & DW_C73_10000KR)
-		phylink_set(state->lp_advertising, 10000baseKR_Full);
-
-	ret = xpcs_read(xpcs, MDIO_MMD_AN, DW_SR_AN_LP_ABL1);
-	if (ret < 0)
-		return ret;
-
-	if (ret & DW_C73_PAUSE)
-		phylink_set(state->lp_advertising, Pause);
-	if (ret & DW_C73_ASYM_PAUSE)
-		phylink_set(state->lp_advertising, Asym_Pause);
-
-	linkmode_and(state->lp_advertising, state->lp_advertising,
-		     state->advertising);
 	return 0;
-}
-
-static void xpcs_resolve_lpa_c73(struct dw_xpcs *xpcs,
-				 struct phylink_link_state *state)
-{
-	int max_speed = xpcs_get_max_usxgmii_speed(state->lp_advertising);
-
-	state->pause = MLO_PAUSE_TX | MLO_PAUSE_RX;
-	state->speed = max_speed;
-	state->duplex = DUPLEX_FULL;
 }
 
 static int xpcs_get_max_xlgmii_speed(struct dw_xpcs *xpcs,
@@ -872,6 +818,8 @@ int xpcs_do_config(struct dw_xpcs *xpcs, phy_interface_t interface,
 		return -ENODEV;
 
 	switch (compat->an_mode) {
+	case DW_10GBASER:
+		break;
 	case DW_AN_C73:
 		if (test_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, advertising)) {
 			ret = xpcs_config_aneg_c73(xpcs, compat);
@@ -924,13 +872,25 @@ static int xpcs_get_state_c73(struct dw_xpcs *xpcs,
 			      const struct xpcs_compat *compat)
 {
 	bool an_enabled;
+	int pcs_stat1;
+	int an_stat1;
 	int ret;
 
+	/* The link status bit is latching-low, so it is important to
+	 * avoid unnecessary re-reads of this register to avoid missing
+	 * a link-down event.
+	 */
+	pcs_stat1 = xpcs_read(xpcs, MDIO_MMD_PCS, MDIO_STAT1);
+	if (pcs_stat1 < 0) {
+		state->link = false;
+		return pcs_stat1;
+	}
+
 	/* Link needs to be read first ... */
-	state->link = xpcs_read_link_c73(xpcs) > 0 ? 1 : 0;
+	state->link = !!(pcs_stat1 & MDIO_STAT1_LSTATUS);
 
 	/* ... and then we check the faults. */
-	ret = xpcs_read_fault_c73(xpcs, state);
+	ret = xpcs_read_fault_c73(xpcs, state, pcs_stat1);
 	if (ret) {
 		ret = xpcs_soft_reset(xpcs, compat);
 		if (ret)
@@ -941,15 +901,38 @@ static int xpcs_get_state_c73(struct dw_xpcs *xpcs,
 		return xpcs_do_config(xpcs, state->interface, MLO_AN_INBAND, NULL);
 	}
 
+	/* There is no point doing anything else if the link is down. */
+	if (!state->link)
+		return 0;
+
 	an_enabled = linkmode_test_bit(ETHTOOL_LINK_MODE_Autoneg_BIT,
 				       state->advertising);
-	if (an_enabled && xpcs_aneg_done_c73(xpcs, state, compat)) {
-		state->an_complete = true;
-		xpcs_read_lpa_c73(xpcs, state);
-		xpcs_resolve_lpa_c73(xpcs, state);
-	} else if (an_enabled) {
-		state->link = 0;
-	} else if (state->link) {
+	if (an_enabled) {
+		/* The link status bit is latching-low, so it is important to
+		 * avoid unnecessary re-reads of this register to avoid missing
+		 * a link-down event.
+		 */
+		an_stat1 = xpcs_read(xpcs, MDIO_MMD_AN, MDIO_STAT1);
+		if (an_stat1 < 0) {
+			state->link = false;
+			return an_stat1;
+		}
+
+		state->an_complete = xpcs_aneg_done_c73(xpcs, state, compat,
+							an_stat1);
+		if (!state->an_complete) {
+			state->link = false;
+			return 0;
+		}
+
+		ret = xpcs_read_lpa_c73(xpcs, state, an_stat1);
+		if (ret < 0) {
+			state->link = false;
+			return ret;
+		}
+
+		phylink_resolve_c73(state);
+	} else {
 		xpcs_resolve_pma(xpcs, state);
 	}
 
@@ -1033,6 +1016,9 @@ static void xpcs_get_state(struct phylink_pcs *pcs,
 		return;
 
 	switch (compat->an_mode) {
+	case DW_10GBASER:
+		phylink_mii_c45_pcs_get_state(xpcs->mdiodev, state);
+		break;
 	case DW_AN_C73:
 		ret = xpcs_get_state_c73(xpcs, state, compat);
 		if (ret) {
@@ -1188,6 +1174,12 @@ static const struct xpcs_compat synopsys_xpcs_compat[DW_XPCS_INTERFACE_MAX] = {
 		.num_interfaces = ARRAY_SIZE(xpcs_xlgmii_interfaces),
 		.an_mode = DW_AN_C73,
 	},
+	[DW_XPCS_10GBASER] = {
+		.supported = xpcs_10gbaser_features,
+		.interface = xpcs_10gbaser_interfaces,
+		.num_interfaces = ARRAY_SIZE(xpcs_10gbaser_interfaces),
+		.an_mode = DW_10GBASER,
+	},
 	[DW_XPCS_SGMII] = {
 		.supported = xpcs_sgmii_features,
 		.interface = xpcs_sgmii_interfaces,
@@ -1259,8 +1251,8 @@ static const struct phylink_pcs_ops xpcs_phylink_ops = {
 	.pcs_link_up = xpcs_link_up,
 };
 
-struct dw_xpcs *xpcs_create(struct mdio_device *mdiodev,
-			    phy_interface_t interface)
+static struct dw_xpcs *xpcs_create(struct mdio_device *mdiodev,
+				   phy_interface_t interface)
 {
 	struct dw_xpcs *xpcs;
 	u32 xpcs_id;
@@ -1270,6 +1262,7 @@ struct dw_xpcs *xpcs_create(struct mdio_device *mdiodev,
 	if (!xpcs)
 		return ERR_PTR(-ENOMEM);
 
+	mdio_device_get(mdiodev);
 	xpcs->mdiodev = mdiodev;
 
 	xpcs_id = xpcs_get_id(xpcs);
@@ -1290,6 +1283,9 @@ struct dw_xpcs *xpcs_create(struct mdio_device *mdiodev,
 		}
 
 		xpcs->pcs.ops = &xpcs_phylink_ops;
+		if (compat->an_mode == DW_10GBASER)
+			return xpcs;
+
 		xpcs->pcs.poll = true;
 
 		ret = xpcs_soft_reset(xpcs, compat);
@@ -1302,16 +1298,42 @@ struct dw_xpcs *xpcs_create(struct mdio_device *mdiodev,
 	ret = -ENODEV;
 
 out:
+	mdio_device_put(mdiodev);
 	kfree(xpcs);
 
 	return ERR_PTR(ret);
 }
-EXPORT_SYMBOL_GPL(xpcs_create);
 
 void xpcs_destroy(struct dw_xpcs *xpcs)
 {
+	if (xpcs)
+		mdio_device_put(xpcs->mdiodev);
 	kfree(xpcs);
 }
 EXPORT_SYMBOL_GPL(xpcs_destroy);
+
+struct dw_xpcs *xpcs_create_mdiodev(struct mii_bus *bus, int addr,
+				    phy_interface_t interface)
+{
+	struct mdio_device *mdiodev;
+	struct dw_xpcs *xpcs;
+
+	mdiodev = mdio_device_create(bus, addr);
+	if (IS_ERR(mdiodev))
+		return ERR_CAST(mdiodev);
+
+	xpcs = xpcs_create(mdiodev, interface);
+
+	/* xpcs_create() has taken a refcount on the mdiodev if it was
+	 * successful. If xpcs_create() fails, this will free the mdio
+	 * device here. In any case, we don't need to hold our reference
+	 * anymore, and putting it here will allow mdio_device_put() in
+	 * xpcs_destroy() to automatically free the mdio device.
+	 */
+	mdio_device_put(mdiodev);
+
+	return xpcs;
+}
+EXPORT_SYMBOL_GPL(xpcs_create_mdiodev);
 
 MODULE_LICENSE("GPL v2");

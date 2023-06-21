@@ -1,0 +1,112 @@
+arm/soc
+
+soc/dt
+	dt/cleanup
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux-dt tags/dt64-cleanup-6.5
+	dt/cleanup32
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux-dt tags/dt-cleanup-6.5
+	renesas/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/geert/renesas-devel tags/renesas-dts-for-v6.5-tag1
+	s32/dt
+		https://github.com/chesterlintw/linux-s32g tags/s32g2-dt-6.5
+	ux500/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-nomadik tags/ux500-dts-for-v6.5
+	at91/dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/at91/linux tags/at91-dt-6.5
+	samsung/dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-dt-6.5
+	omap/dt
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v6.5/dt-signed
+	omap/dt-pinctrl
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v6.5/dt-pin-nodes-signed
+	zynq/dt
+		https://github.com/Xilinx/linux-xlnx tags/zynq-dt-for-v6.5
+	hisi/dt
+		https://github.com/hisilicon/linux-hisi tags/hisi-arm32-dt-for-6.5
+	hisi/dt64
+		https://github.com/hisilicon/linux-hisi tags/hisi-arm64-dt-for-6.5
+	amlogic/dt
+		https://git.kernel.org/pub/scm/linux/kernel/git/amlogic/linux tags/amlogic-arm-dt-for-v6.5
+	amlogic/dt64
+		https://git.kernel.org/pub/scm/linux/kernel/git/amlogic/linux tags/amlogic-arm64-dt-for-v6.5
+	renesas/dt-2
+		git://git.kernel.org/pub/scm/linux/kernel/git/geert/renesas-devel tags/renesas-dts-for-v6.5-tag2
+
+soc/drivers
+	renesas/drivers
+		git://git.kernel.org/pub/scm/linux/kernel/git/geert/renesas-devel tags/renesas-drivers-for-v6.5-tag1
+	drivers/reset
+		git://git.pengutronix.de/pza/linux tags/reset-for-v6.5
+	patch
+		arm-cci: add cci_enable_port_for_self prototype
+	drivers/sram
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-nomadik tags/sram-for-soc
+	renesas/drivers-2
+		git://git.kernel.org/pub/scm/linux/kernel/git/geert/renesas-devel tags/renesas-drivers-for-v6.5-tag2
+	samsung/drivers
+		https://git.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-drivers-6.5
+	omap/ti-sysc
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v6.5/ti-sysc-signed
+	zynq/soc
+		https://github.com/Xilinx/linux-xlnx tags/zynqmp-soc-for-v6.5
+
+arm/defconfig
+
+arm/late
+
+soc/fixes
+
+arm/fixes
+	<no branch> (925a80af6106a55fa6bcfedc5bd2f02b0b835495)
+		https://git.kernel.org/pub/scm/linux/kernel/git/qcom/linux tags/qcom-dts-fixes-for-6.4
+	<no branch> (cbd77119b6355872cd308a60e99f9ca678435d15)
+		https://git.kernel.org/pub/scm/linux/kernel/git/qcom/linux tags/qcom-driver-fixes-for-6.4
+	<no branch> (661a4f089317c877aecd598fb70cd46510cc8d29)
+		https://git.kernel.org/pub/scm/linux/kernel/git/qcom/linux tags/qcom-arm64-fixes-for-6.4
+	<no branch> (6b0db163ff9200a55dc77a652dad1d4b0a853f63)
+		https://git.kernel.org/pub/scm/linux/kernel/git/at91/linux tags/at91-fixes-6.4
+	patch
+		ARM: dts: Fix erroneous ADS touchscreen polarities
+	<no branch> (3aa0519a4780f1b8e11966bd879d4a2934ba455f)
+		git://git.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/ffa-fix-6.4-2
+	<no branch> (436eeae0411acdfc54521ddea80ee76d4ae8a7ea)
+		https://git.linaro.org/people/jens.wiklander/linux-tee tags/amdtee-fix-for-v6.5
+	<no branch> (9bf2e534313fcf420367668cc1f30e10469901dc)
+		git://git.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-fixes-6.4-2
+
+soc/arm
+	patch
+		ARM: davinci: fix davinci_cpufreq_init() declaration
+		ARM: ep93xx: fix missing-prototype warnings
+		ARM: highbank: add missing include
+		ARM: imx: add missing include
+		ARM: lpc32xx: add missing include
+		ARM: omap1: add missing include
+		ARM: omap2: fix missing tick_broadcast() prototype
+		ARM: orion5x: fix d2net gpio initialization
+		ARM: pxa: fix missing-prototypes warnings
+		ARM: sa1100: address missing prototype warnings
+		ARM: spear: include "pl080.h" for pl080_get_signal() prototype
+		ARM: versatile: mark mmc_status() static
+	omap/gpio-desc
+		git://git.kernel.org/pub/scm/linux/kernel/git/linusw/linux-gpio tags/gpio-omap-descriptors-v6.5
+	patch
+		Input: ads7846 - Fix usage of match data
+	omap/cleanup
+		git://git.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v6.5/cleanup-signed
+
+soc/defconfig
+	renesas/defconfig
+		git://git.kernel.org/pub/scm/linux/kernel/git/geert/renesas-devel tags/renesas-arm-defconfig-for-v6.5-tag1
+	patch
+		arm64: defconfig: Enable ARCH_SPARX5 and ARCH_REALTEK
+	renesas/defconfig-2
+		git://git.kernel.org/pub/scm/linux/kernel/git/geert/renesas-devel tags/renesas-arm-defconfig-for-v6.5-tag2
+
+soc/newsoc
+	nuvoton/ma35d1
+		Merge branch 'nuvoton/ma35d1' into soc/newsoc
+	patch
+		reset: RESET_NUVOTON_MA35D1 should depend on ARCH_MA35
+		Documentation/process: add soc maintainer handbook
+

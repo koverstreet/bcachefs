@@ -730,14 +730,12 @@ extern int ext2_inode_by_name(struct inode *dir,
 			      const struct qstr *child, ino_t *ino);
 extern int ext2_make_empty(struct inode *, struct inode *);
 extern struct ext2_dir_entry_2 *ext2_find_entry(struct inode *, const struct qstr *,
-						struct page **, void **res_page_addr);
-extern int ext2_delete_entry(struct ext2_dir_entry_2 *dir, struct page *page,
-			     char *kaddr);
+						struct page **);
+extern int ext2_delete_entry(struct ext2_dir_entry_2 *dir, struct page *page);
 extern int ext2_empty_dir (struct inode *);
-extern struct ext2_dir_entry_2 *ext2_dotdot(struct inode *dir, struct page **p, void **pa);
+extern struct ext2_dir_entry_2 *ext2_dotdot(struct inode *dir, struct page **p);
 int ext2_set_link(struct inode *dir, struct ext2_dir_entry_2 *de,
-		struct page *page, void *page_addr, struct inode *inode,
-		bool update_times);
+		struct page *page, struct inode *inode, bool update_times);
 static inline void ext2_put_page(struct page *page, void *page_addr)
 {
 	kunmap_local(page_addr);
@@ -754,6 +752,7 @@ extern unsigned long ext2_count_free (struct buffer_head *, unsigned);
 extern struct inode *ext2_iget (struct super_block *, unsigned long);
 extern int ext2_write_inode (struct inode *, struct writeback_control *);
 extern void ext2_evict_inode(struct inode *);
+void ext2_write_failed(struct address_space *mapping, loff_t to);
 extern int ext2_get_block(struct inode *, sector_t, struct buffer_head *, int);
 extern int ext2_setattr (struct mnt_idmap *, struct dentry *, struct iattr *);
 extern int ext2_getattr (struct mnt_idmap *, const struct path *,

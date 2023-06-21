@@ -9,7 +9,6 @@
 #undef pr_fmt
 #define pr_fmt(fmt) KBUILD_MODNAME " L" __stringify(__LINE__) ": " fmt
 
-#include <uapi/linux/limits.h>
 #include <linux/kobject.h>
 #include <linux/sysfs.h>
 #include <linux/stat.h>
@@ -88,8 +87,7 @@ static ssize_t read_only_show(struct kobject *kobj, struct kobj_attribute *attr,
 
 	sess_dev = container_of(kobj, struct rnbd_srv_sess_dev, kobj);
 
-	return sysfs_emit(page, "%d\n",
-			  !(sess_dev->open_flags & FMODE_WRITE));
+	return sysfs_emit(page, "%d\n", sess_dev->readonly);
 }
 
 static struct kobj_attribute rnbd_srv_dev_session_ro_attr =
@@ -104,7 +102,7 @@ static ssize_t access_mode_show(struct kobject *kobj,
 	sess_dev = container_of(kobj, struct rnbd_srv_sess_dev, kobj);
 
 	return sysfs_emit(page, "%s\n",
-			  rnbd_access_mode_str(sess_dev->access_mode));
+			  rnbd_access_modes[sess_dev->access_mode].str);
 }
 
 static struct kobj_attribute rnbd_srv_dev_session_access_mode_attr =

@@ -6,7 +6,7 @@
  * Copyright 2007-2010	Johannes Berg <johannes@sipsolutions.net>
  * Copyright 2013-2014  Intel Mobile Communications GmbH
  * Copyright(c) 2015 - 2017 Intel Deutschland GmbH
- * Copyright (C) 2018-2022 Intel Corporation
+ * Copyright (C) 2018-2023 Intel Corporation
  */
 
 #include <linux/jiffies.h>
@@ -229,7 +229,7 @@ static void __ieee80211_queue_skb_to_iface(struct ieee80211_sub_if_data *sdata,
 	}
 
 	skb_queue_tail(&sdata->skb_queue, skb);
-	ieee80211_queue_work(&sdata->local->hw, &sdata->work);
+	wiphy_work_queue(sdata->local->hw.wiphy, &sdata->work);
 	if (sta)
 		sta->deflink.rx_stats.packets++;
 }
@@ -1732,7 +1732,7 @@ ieee80211_rx_h_sta_process(struct ieee80211_rx_data *rx)
 		if (ether_addr_equal(bssid, rx->sdata->u.ibss.bssid) &&
 		    test_sta_flag(sta, WLAN_STA_AUTHORIZED)) {
 			link_sta->rx_stats.last_rx = jiffies;
-			if (ieee80211_is_data(hdr->frame_control) &&
+			if (ieee80211_is_data_present(hdr->frame_control) &&
 			    !is_multicast_ether_addr(hdr->addr1))
 				link_sta->rx_stats.last_rate =
 					sta_stats_encode_rate(status);
@@ -1746,7 +1746,7 @@ ieee80211_rx_h_sta_process(struct ieee80211_rx_data *rx)
 		 * match the current local configuration when processed.
 		 */
 		link_sta->rx_stats.last_rx = jiffies;
-		if (ieee80211_is_data(hdr->frame_control))
+		if (ieee80211_is_data_present(hdr->frame_control))
 			link_sta->rx_stats.last_rate = sta_stats_encode_rate(status);
 	}
 
@@ -2505,7 +2505,7 @@ bool ieee80211_is_our_addr(struct ieee80211_sub_if_data *sdata,
 	if (ether_addr_equal(sdata->vif.addr, addr))
 		return true;
 
-	if (!sdata->vif.valid_links)
+	if (!ieee80211_vif_is_mld(&sdata->vif))
 		return false;
 
 	for (link_id = 0; link_id < ARRAY_SIZE(sdata->vif.link_conf); link_id++) {

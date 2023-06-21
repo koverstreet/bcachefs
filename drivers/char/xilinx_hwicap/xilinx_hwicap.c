@@ -721,27 +721,6 @@ static struct hwicap_driver_config fifo_icap_config = {
 	.reset = fifo_icap_reset,
 };
 
-static int hwicap_remove(struct device *dev)
-{
-	struct hwicap_drvdata *drvdata;
-
-	drvdata = dev_get_drvdata(dev);
-
-	if (!drvdata)
-		return 0;
-
-	device_destroy(icap_class, drvdata->devt);
-	cdev_del(&drvdata->cdev);
-	iounmap(drvdata->base_address);
-	release_mem_region(drvdata->mem_start, drvdata->mem_size);
-	kfree(drvdata);
-
-	mutex_lock(&icap_sem);
-	probed_devices[MINOR(dev->devt)-XHWICAP_MINOR] = 0;
-	mutex_unlock(&icap_sem);
-	return 0;		/* success */
-}
-
 #ifdef CONFIG_OF
 static int hwicap_of_probe(struct platform_device *op,
 				     const struct hwicap_driver_config *config)
@@ -825,9 +804,22 @@ static int hwicap_drv_probe(struct platform_device *pdev)
 			&buffer_icap_config, regs);
 }
 
-static int hwicap_drv_remove(struct platform_device *pdev)
+static void hwicap_drv_remove(struct platform_device *pdev)
 {
-	return hwicap_remove(&pdev->dev);
+	struct device *dev = &pdev->dev;
+	struct hwicap_drvdata *drvdata;
+
+	drvdata = dev_get_drvdata(dev);
+
+	device_destroy(icap_class, drvdata->devt);
+	cdev_del(&drvdata->cdev);
+	iounmap(drvdata->base_address);
+	release_mem_region(drvdata->mem_start, drvdata->mem_size);
+	kfree(drvdata);
+
+	mutex_lock(&icap_sem);
+	probed_devices[MINOR(dev->devt)-XHWICAP_MINOR] = 0;
+	mutex_unlock(&icap_sem);
 }
 
 #ifdef CONFIG_OF
@@ -844,7 +836,7 @@ MODULE_DEVICE_TABLE(of, hwicap_of_match);
 
 static struct platform_driver hwicap_platform_driver = {
 	.probe = hwicap_drv_probe,
-	.remove = hwicap_drv_remove,
+	.remove_new = hwicap_drv_remove,
 	.driver = {
 		.name = DRIVER_NAME,
 		.of_match_table = hwicap_of_match,

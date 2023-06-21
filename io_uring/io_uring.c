@@ -95,6 +95,7 @@
 
 #include "timeout.h"
 #include "poll.h"
+#include "rw.h"
 #include "alloc_cache.h"
 
 #define IORING_MAX_ENTRIES	32768
@@ -934,20 +935,19 @@ bool io_post_aux_cqe(struct io_ring_ctx *ctx, u64 user_data, s32 res, u32 cflags
 	return __io_post_aux_cqe(ctx, user_data, res, cflags, true);
 }
 
-bool io_aux_cqe(struct io_ring_ctx *ctx, bool defer, u64 user_data, s32 res, u32 cflags,
+bool io_aux_cqe(const struct io_kiocb *req, bool defer, s32 res, u32 cflags,
 		bool allow_overflow)
 {
+	struct io_ring_ctx *ctx = req->ctx;
+	u64 user_data = req->cqe.user_data;
 	struct io_uring_cqe *cqe;
-	unsigned int length;
 
 	if (!defer)
 		return __io_post_aux_cqe(ctx, user_data, res, cflags, allow_overflow);
 
-	length = ARRAY_SIZE(ctx->submit_state.cqes);
-
 	lockdep_assert_held(&ctx->uring_lock);
 
-	if (ctx->submit_state.cqes_count == length) {
+	if (ctx->submit_state.cqes_count == ARRAY_SIZE(ctx->submit_state.cqes)) {
 		__io_cq_lock(ctx);
 		__io_flush_post_cqes(ctx);
 		/* no need to flush - flush is deferred */
@@ -1205,7 +1205,9 @@ static unsigned int handle_tw_list(struct llist_node *node,
 			ts->locked = mutex_trylock(&(*ctx)->uring_lock);
 			percpu_ref_get(&(*ctx)->refs);
 		}
-		req->io_task_work.func(req, ts);
+		INDIRECT_CALL_2(req->io_task_work.func,
+				io_poll_task_func, io_req_rw_complete,
+				req, ts);
 		node = next;
 		count++;
 		if (unlikely(need_resched())) {
@@ -1405,13 +1407,19 @@ static int __io_run_local_work(struct io_ring_ctx *ctx, struct io_tw_state *ts)
 	if (ctx->flags & IORING_SETUP_TASKRUN_FLAG)
 		atomic_andnot(IORING_SQ_TASKRUN, &ctx->rings->sq_flags);
 again:
-	node = io_llist_xchg(&ctx->work_llist, NULL);
+	/*
+	 * llists are in reverse order, flip it back the right way before
+	 * running the pending items.
+	 */
+	node = llist_reverse_order(io_llist_xchg(&ctx->work_llist, NULL));
 	while (node) {
 		struct llist_node *next = node->next;
 		struct io_kiocb *req = container_of(node, struct io_kiocb,
 						    io_task_work.node);
 		prefetch(container_of(next, struct io_kiocb, io_task_work.node));
-		req->io_task_work.func(req, ts);
+		INDIRECT_CALL_2(req->io_task_work.func,
+				io_poll_task_func, io_req_rw_complete,
+				req, ts);
 		ret++;
 		node = next;
 	}
@@ -1758,11 +1766,6 @@ static void io_iopoll_req_issued(struct io_kiocb *req, unsigned int issue_flags)
 	}
 }
 
-static bool io_bdev_nowait(struct block_device *bdev)
-{
-	return !bdev || bdev_nowait(bdev);
-}
-
 /*
  * If we tracked the file through the SCM inflight mechanism, we could support
  * any file. For now, just ensure that anything potentially problematic is done
@@ -1770,22 +1773,6 @@ static bool io_bdev_nowait(struct block_device *bdev)
  */
 static bool __io_file_supports_nowait(struct file *file, umode_t mode)
 {
-	if (S_ISBLK(mode)) {
-		if (IS_ENABLED(CONFIG_BLOCK) &&
-		    io_bdev_nowait(I_BDEV(file->f_mapping->host)))
-			return true;
-		return false;
-	}
-	if (S_ISSOCK(mode))
-		return true;
-	if (S_ISREG(mode)) {
-		if (IS_ENABLED(CONFIG_BLOCK) &&
-		    io_bdev_nowait(file->f_inode->i_sb->s_bdev) &&
-		    !io_is_uring_fops(file))
-			return true;
-		return false;
-	}
-
 	/* any ->read/write should understand O_NONBLOCK */
 	if (file->f_flags & O_NONBLOCK)
 		return true;
@@ -2709,11 +2696,96 @@ static void io_mem_free(void *ptr)
 		free_compound_page(page);
 }
 
+static void io_pages_free(struct page ***pages, int npages)
+{
+	struct page **page_array;
+	int i;
+
+	if (!pages)
+		return;
+	page_array = *pages;
+	for (i = 0; i < npages; i++)
+		unpin_user_page(page_array[i]);
+	kvfree(page_array);
+	*pages = NULL;
+}
+
+static void *__io_uaddr_map(struct page ***pages, unsigned short *npages,
+			    unsigned long uaddr, size_t size)
+{
+	struct page **page_array;
+	unsigned int nr_pages;
+	int ret;
+
+	*npages = 0;
+
+	if (uaddr & (PAGE_SIZE - 1) || !size)
+		return ERR_PTR(-EINVAL);
+
+	nr_pages = (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	if (nr_pages > USHRT_MAX)
+		return ERR_PTR(-EINVAL);
+	page_array = kvmalloc_array(nr_pages, sizeof(struct page *), GFP_KERNEL);
+	if (!page_array)
+		return ERR_PTR(-ENOMEM);
+
+	ret = pin_user_pages_fast(uaddr, nr_pages, FOLL_WRITE | FOLL_LONGTERM,
+					page_array);
+	if (ret != nr_pages) {
+err:
+		io_pages_free(&page_array, ret > 0 ? ret : 0);
+		return ret < 0 ? ERR_PTR(ret) : ERR_PTR(-EFAULT);
+	}
+	/*
+	 * Should be a single page. If the ring is small enough that we can
+	 * use a normal page, that is fine. If we need multiple pages, then
+	 * userspace should use a huge page. That's the only way to guarantee
+	 * that we get contigious memory, outside of just being lucky or
+	 * (currently) having low memory fragmentation.
+	 */
+	if (page_array[0] != page_array[ret - 1])
+		goto err;
+	*pages = page_array;
+	*npages = nr_pages;
+	return page_to_virt(page_array[0]);
+}
+
+static void *io_rings_map(struct io_ring_ctx *ctx, unsigned long uaddr,
+			  size_t size)
+{
+	return __io_uaddr_map(&ctx->ring_pages, &ctx->n_ring_pages, uaddr,
+				size);
+}
+
+static void *io_sqes_map(struct io_ring_ctx *ctx, unsigned long uaddr,
+			 size_t size)
+{
+	return __io_uaddr_map(&ctx->sqe_pages, &ctx->n_sqe_pages, uaddr,
+				size);
+}
+
+static void io_rings_free(struct io_ring_ctx *ctx)
+{
+	if (!(ctx->flags & IORING_SETUP_NO_MMAP)) {
+		io_mem_free(ctx->rings);
+		io_mem_free(ctx->sq_sqes);
+		ctx->rings = NULL;
+		ctx->sq_sqes = NULL;
+	} else {
+		io_pages_free(&ctx->ring_pages, ctx->n_ring_pages);
+		io_pages_free(&ctx->sqe_pages, ctx->n_sqe_pages);
+	}
+}
+
 static void *io_mem_alloc(size_t size)
 {
 	gfp_t gfp = GFP_KERNEL_ACCOUNT | __GFP_ZERO | __GFP_NOWARN | __GFP_COMP;
+	void *ret;
 
-	return (void *) __get_free_pages(gfp, get_order(size));
+	ret = (void *) __get_free_pages(gfp, get_order(size));
+	if (ret)
+		return ret;
+	return ERR_PTR(-ENOMEM);
 }
 
 static unsigned long rings_size(struct io_ring_ctx *ctx, unsigned int sq_entries,
@@ -2869,8 +2941,7 @@ static __cold void io_ring_ctx_free(struct io_ring_ctx *ctx)
 		mmdrop(ctx->mm_account);
 		ctx->mm_account = NULL;
 	}
-	io_mem_free(ctx->rings);
-	io_mem_free(ctx->sq_sqes);
+	io_rings_free(ctx);
 
 	percpu_ref_exit(&ctx->refs);
 	free_uid(ctx->user);
@@ -3050,7 +3121,18 @@ static __cold void io_ring_exit_work(struct work_struct *work)
 			/* there is little hope left, don't run it too often */
 			interval = HZ * 60;
 		}
-	} while (!wait_for_completion_timeout(&ctx->ref_comp, interval));
+		/*
+		 * This is really an uninterruptible wait, as it has to be
+		 * complete. But it's also run from a kworker, which doesn't
+		 * take signals, so it's fine to make it interruptible. This
+		 * avoids scenarios where we knowingly can wait much longer
+		 * on completions, for example if someone does a SIGSTOP on
+		 * a task that needs to finish task_work to make this loop
+		 * complete. That's a synthetic situation that should not
+		 * cause a stuck task backtrace, and hence a potential panic
+		 * on stuck tasks if that is enabled.
+		 */
+	} while (!wait_for_completion_interruptible_timeout(&ctx->ref_comp, interval));
 
 	init_completion(&exit.completion);
 	init_task_work(&exit.task_work, io_tctx_exit_cb);
@@ -3074,7 +3156,12 @@ static __cold void io_ring_exit_work(struct work_struct *work)
 			continue;
 
 		mutex_unlock(&ctx->uring_lock);
-		wait_for_completion(&exit.completion);
+		/*
+		 * See comment above for
+		 * wait_for_completion_interruptible_timeout() on why this
+		 * wait is marked as interruptible.
+		 */
+		wait_for_completion_interruptible(&exit.completion);
 		mutex_lock(&ctx->uring_lock);
 	}
 	mutex_unlock(&ctx->uring_lock);
@@ -3347,6 +3434,10 @@ static void *io_uring_validate_mmap_request(struct file *file,
 	loff_t offset = pgoff << PAGE_SHIFT;
 	struct page *page;
 	void *ptr;
+
+	/* Don't allow mmap if the ring was setup without it */
+	if (ctx->flags & IORING_SETUP_NO_MMAP)
+		return ERR_PTR(-EINVAL);
 
 	switch (offset & IORING_OFF_MMAP_MASK) {
 	case IORING_OFF_SQ_RING:
@@ -3673,6 +3764,7 @@ static __cold int io_allocate_scq_urings(struct io_ring_ctx *ctx,
 {
 	struct io_rings *rings;
 	size_t size, sq_array_offset;
+	void *ptr;
 
 	/* make sure these are sane, as we already accounted them */
 	ctx->sq_entries = p->sq_entries;
@@ -3682,9 +3774,13 @@ static __cold int io_allocate_scq_urings(struct io_ring_ctx *ctx,
 	if (size == SIZE_MAX)
 		return -EOVERFLOW;
 
-	rings = io_mem_alloc(size);
-	if (!rings)
-		return -ENOMEM;
+	if (!(ctx->flags & IORING_SETUP_NO_MMAP))
+		rings = io_mem_alloc(size);
+	else
+		rings = io_rings_map(ctx, p->cq_off.user_addr, size);
+
+	if (IS_ERR(rings))
+		return PTR_ERR(rings);
 
 	ctx->rings = rings;
 	ctx->sq_array = (u32 *)((char *)rings + sq_array_offset);
@@ -3698,34 +3794,31 @@ static __cold int io_allocate_scq_urings(struct io_ring_ctx *ctx,
 	else
 		size = array_size(sizeof(struct io_uring_sqe), p->sq_entries);
 	if (size == SIZE_MAX) {
-		io_mem_free(ctx->rings);
-		ctx->rings = NULL;
+		io_rings_free(ctx);
 		return -EOVERFLOW;
 	}
 
-	ctx->sq_sqes = io_mem_alloc(size);
-	if (!ctx->sq_sqes) {
-		io_mem_free(ctx->rings);
-		ctx->rings = NULL;
-		return -ENOMEM;
+	if (!(ctx->flags & IORING_SETUP_NO_MMAP))
+		ptr = io_mem_alloc(size);
+	else
+		ptr = io_sqes_map(ctx, p->sq_off.user_addr, size);
+
+	if (IS_ERR(ptr)) {
+		io_rings_free(ctx);
+		return PTR_ERR(ptr);
 	}
 
+	ctx->sq_sqes = ptr;
 	return 0;
 }
 
-static int io_uring_install_fd(struct io_ring_ctx *ctx, struct file *file)
+static int io_uring_install_fd(struct file *file)
 {
-	int ret, fd;
+	int fd;
 
 	fd = get_unused_fd_flags(O_RDWR | O_CLOEXEC);
 	if (fd < 0)
 		return fd;
-
-	ret = __io_uring_add_tctx_node(ctx);
-	if (ret) {
-		put_unused_fd(fd);
-		return ret;
-	}
 	fd_install(fd, file);
 	return fd;
 }
@@ -3765,6 +3858,7 @@ static __cold int io_uring_create(unsigned entries, struct io_uring_params *p,
 				  struct io_uring_params __user *params)
 {
 	struct io_ring_ctx *ctx;
+	struct io_uring_task *tctx;
 	struct file *file;
 	int ret;
 
@@ -3775,6 +3869,10 @@ static __cold int io_uring_create(unsigned entries, struct io_uring_params *p,
 			return -EINVAL;
 		entries = IORING_MAX_ENTRIES;
 	}
+
+	if ((p->flags & IORING_SETUP_REGISTERED_FD_ONLY)
+	    && !(p->flags & IORING_SETUP_NO_MMAP))
+		return -EINVAL;
 
 	/*
 	 * Use twice as many entries for the CQ ring. It's possible for the
@@ -3887,7 +3985,6 @@ static __cold int io_uring_create(unsigned entries, struct io_uring_params *p,
 	if (ret)
 		goto err;
 
-	memset(&p->sq_off, 0, sizeof(p->sq_off));
 	p->sq_off.head = offsetof(struct io_rings, sq.head);
 	p->sq_off.tail = offsetof(struct io_rings, sq.tail);
 	p->sq_off.ring_mask = offsetof(struct io_rings, sq_ring_mask);
@@ -3895,8 +3992,10 @@ static __cold int io_uring_create(unsigned entries, struct io_uring_params *p,
 	p->sq_off.flags = offsetof(struct io_rings, sq_flags);
 	p->sq_off.dropped = offsetof(struct io_rings, sq_dropped);
 	p->sq_off.array = (char *)ctx->sq_array - (char *)ctx->rings;
+	p->sq_off.resv1 = 0;
+	if (!(ctx->flags & IORING_SETUP_NO_MMAP))
+		p->sq_off.user_addr = 0;
 
-	memset(&p->cq_off, 0, sizeof(p->cq_off));
 	p->cq_off.head = offsetof(struct io_rings, cq.head);
 	p->cq_off.tail = offsetof(struct io_rings, cq.tail);
 	p->cq_off.ring_mask = offsetof(struct io_rings, cq_ring_mask);
@@ -3904,6 +4003,9 @@ static __cold int io_uring_create(unsigned entries, struct io_uring_params *p,
 	p->cq_off.overflow = offsetof(struct io_rings, cq_overflow);
 	p->cq_off.cqes = offsetof(struct io_rings, cqes);
 	p->cq_off.flags = offsetof(struct io_rings, cq_flags);
+	p->cq_off.resv1 = 0;
+	if (!(ctx->flags & IORING_SETUP_NO_MMAP))
+		p->cq_off.user_addr = 0;
 
 	p->features = IORING_FEAT_SINGLE_MMAP | IORING_FEAT_NODROP |
 			IORING_FEAT_SUBMIT_STABLE | IORING_FEAT_RW_CUR_POS |
@@ -3928,21 +4030,29 @@ static __cold int io_uring_create(unsigned entries, struct io_uring_params *p,
 		goto err;
 	}
 
+	ret = __io_uring_add_tctx_node(ctx);
+	if (ret)
+		goto err_fput;
+	tctx = current->io_uring;
+
 	/*
 	 * Install ring fd as the very last thing, so we don't risk someone
 	 * having closed it before we finish setup
 	 */
-	ret = io_uring_install_fd(ctx, file);
-	if (ret < 0) {
-		/* fput will clean it up */
-		fput(file);
-		return ret;
-	}
+	if (p->flags & IORING_SETUP_REGISTERED_FD_ONLY)
+		ret = io_ring_add_registered_file(tctx, file, 0, IO_RINGFD_REG_MAX);
+	else
+		ret = io_uring_install_fd(file);
+	if (ret < 0)
+		goto err_fput;
 
 	trace_io_uring_create(ret, ctx, p->sq_entries, p->cq_entries, p->flags);
 	return ret;
 err:
 	io_ring_ctx_wait_and_kill(ctx);
+	return ret;
+err_fput:
+	fput(file);
 	return ret;
 }
 
@@ -3969,7 +4079,8 @@ static long io_uring_setup(u32 entries, struct io_uring_params __user *params)
 			IORING_SETUP_R_DISABLED | IORING_SETUP_SUBMIT_ALL |
 			IORING_SETUP_COOP_TASKRUN | IORING_SETUP_TASKRUN_FLAG |
 			IORING_SETUP_SQE128 | IORING_SETUP_CQE32 |
-			IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN))
+			IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN |
+			IORING_SETUP_NO_MMAP | IORING_SETUP_REGISTERED_FD_ONLY))
 		return -EINVAL;
 
 	return io_uring_create(entries, &p, params);

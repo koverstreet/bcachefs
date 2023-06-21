@@ -392,7 +392,7 @@ static void prompt_percent(int *target, const char *msg)
 
 static void perf_top__prompt_symbol(struct perf_top *top, const char *msg)
 {
-	char *buf = malloc(0), *p;
+	char *buf = NULL, *p;
 	struct hist_entry *syme = top->sym_filter_entry, *n, *found = NULL;
 	struct hists *hists = evsel__hists(top->sym_evsel);
 	struct rb_node *next;
@@ -773,11 +773,12 @@ static void perf_event__process_sample(struct perf_tool *tool,
 	if (event->header.misc & PERF_RECORD_MISC_EXACT_IP)
 		top->exact_samples++;
 
+	addr_location__init(&al);
 	if (machine__resolve(machine, &al, sample) < 0)
-		return;
+		goto out;
 
 	if (top->stitch_lbr)
-		al.thread->lbr_stitch_enable = true;
+		thread__set_lbr_stitch_enable(al.thread, true);
 
 	if (!machine->kptr_restrict_warned &&
 	    symbol_conf.kptr_restrict &&
@@ -848,7 +849,8 @@ static void perf_event__process_sample(struct perf_tool *tool,
 		mutex_unlock(&hists->lock);
 	}
 
-	addr_location__put(&al);
+out:
+	addr_location__exit(&al);
 }
 
 static void
@@ -1225,6 +1227,14 @@ static void init_process_thread(struct perf_top *top)
 	cond_init(&top->qe.cond);
 }
 
+static void exit_process_thread(struct perf_top *top)
+{
+	ordered_events__free(&top->qe.data[0]);
+	ordered_events__free(&top->qe.data[1]);
+	mutex_destroy(&top->qe.mutex);
+	cond_destroy(&top->qe.cond);
+}
+
 static int __cmd_top(struct perf_top *top)
 {
 	struct record_opts *opts = &top->record_opts;
@@ -1355,6 +1365,7 @@ out_join_thread:
 	cond_signal(&top->qe.cond);
 	pthread_join(thread_process, NULL);
 	perf_set_singlethreaded();
+	exit_process_thread(top);
 	return ret;
 }
 
@@ -1440,12 +1451,15 @@ int cmd_top(int argc, const char **argv)
 		.max_stack	     = sysctl__max_stack(),
 		.nr_threads_synthesize = UINT_MAX,
 	};
+	struct parse_events_option_args parse_events_option_args = {
+		.evlistp = &top.evlist,
+	};
 	bool branch_call_mode = false;
 	struct record_opts *opts = &top.record_opts;
 	struct target *target = &opts->target;
 	const char *disassembler_style = NULL, *objdump_path = NULL, *addr2line_path = NULL;
 	const struct option options[] = {
-	OPT_CALLBACK('e', "event", &top.evlist, "event",
+	OPT_CALLBACK('e', "event", &parse_events_option_args, "event",
 		     "event selector. use 'perf list' to list available events",
 		     parse_events_option),
 	OPT_U64('c', "count", &opts->user_interval, "event period to sample"),
@@ -1650,10 +1664,12 @@ int cmd_top(int argc, const char **argv)
 	if (annotate_check_args(&top.annotation_opts) < 0)
 		goto out_delete_evlist;
 
-	if (!top.evlist->core.nr_entries &&
-	    evlist__add_default(top.evlist) < 0) {
-		pr_err("Not enough memory for event selector list\n");
-		goto out_delete_evlist;
+	if (!top.evlist->core.nr_entries) {
+		bool can_profile_kernel = perf_event_paranoid_check(1);
+		int err = parse_event(top.evlist, can_profile_kernel ? "cycles:P" : "cycles:Pu");
+
+		if (err)
+			goto out_delete_evlist;
 	}
 
 	status = evswitch__init(&top.evswitch, top.evlist, stderr);
