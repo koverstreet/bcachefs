@@ -100,7 +100,7 @@ void bch2_free_super(struct bch_sb_handle *sb)
 {
 	kfree(sb->bio);
 	if (!IS_ERR_OR_NULL(sb->bdev))
-		blkdev_put(sb->bdev, sb->mode);
+		blkdev_put(sb->bdev, sb);
 
 	kfree(sb->sb);
 	memset(sb, 0, sizeof(*sb));
@@ -595,22 +595,22 @@ int bch2_read_super(const char *path, struct bch_opts *opts,
 	pr_verbose_init(*opts, "");
 
 	memset(sb, 0, sizeof(*sb));
-	sb->mode	= FMODE_READ;
+	sb->mode	= BLK_OPEN_READ;
 	sb->have_bio	= true;
 
 	if (!opt_get(*opts, noexcl))
-		sb->mode |= FMODE_EXCL;
+		sb->mode |= BLK_OPEN_EXCL;
 
 	if (!opt_get(*opts, nochanges))
-		sb->mode |= FMODE_WRITE;
+		sb->mode |= BLK_OPEN_WRITE;
 
-	sb->bdev = blkdev_get_by_path(path, sb->mode, sb);
+	sb->bdev = blkdev_get_by_path(path, sb->mode, sb, NULL);
 	if (IS_ERR(sb->bdev) &&
 	    PTR_ERR(sb->bdev) == -EACCES &&
 	    opt_get(*opts, read_only)) {
 		sb->mode &= ~FMODE_WRITE;
 
-		sb->bdev = blkdev_get_by_path(path, sb->mode, sb);
+		sb->bdev = blkdev_get_by_path(path, sb->mode, sb, NULL);
 		if (!IS_ERR(sb->bdev))
 			opt_set(*opts, nochanges, true);
 	}

@@ -1221,8 +1221,8 @@ static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb)
 
 	/* Commit: */
 	ca->disk_sb = *sb;
-	if (sb->mode & FMODE_EXCL)
-		ca->disk_sb.bdev->bd_holder = ca;
+	if (sb->mode & BLK_OPEN_EXCL)
+		ca->disk_sb.bdev->bd_holder = &ca->disk_sb;
 	memset(sb, 0, sizeof(*sb));
 
 	ca->dev = ca->disk_sb.bdev->bd_dev;

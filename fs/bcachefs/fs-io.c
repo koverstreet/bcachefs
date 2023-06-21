@@ -2497,12 +2497,7 @@ static __always_inline void bch2_dio_write_end(struct dio_write *dio)
 		mutex_unlock(&inode->ei_quota_lock);
 	}
 
-	if (likely(!bio_flagged(bio, BIO_NO_PAGE_REF))) {
-		struct folio_iter fi;
-
-		bio_for_each_folio_all(fi, bio)
-			folio_put(fi.folio);
-	}
+	bio_release_pages(bio, false);
 
 	if (unlikely(dio->op.error))
 		set_bit(EI_INODE_ERROR, &inode->ei_flags);
@@ -2621,12 +2616,7 @@ out:
 err:
 	dio->op.error = ret;
 
-	if (!bio_flagged(bio, BIO_NO_PAGE_REF)) {
-		struct folio_iter fi;
-
-		bio_for_each_folio_all(fi, bio)
-			folio_put(fi.folio);
-	}
+	bio_release_pages(bio, false);
 
 	bch2_quota_reservation_put(c, inode, &dio->quota_res);
 	goto out;
@@ -2752,7 +2742,6 @@ ssize_t bch2_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	}
 
 	/* We can write back this queue in page reclaim */
-	current->backing_dev_info = inode_to_bdi(&inode->v);
 	inode_lock(&inode->v);
 
 	ret = generic_write_checks(iocb, from);
@@ -2772,7 +2761,6 @@ ssize_t bch2_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		iocb->ki_pos += ret;
 unlock:
 	inode_unlock(&inode->v);
-	current->backing_dev_info = NULL;
 
 	if (ret > 0)
 		ret = generic_write_sync(iocb, ret);
