@@ -2362,9 +2362,28 @@ static noinline bool bch2_dio_write_check_allocated(struct dio_write *dio)
 static void bch2_dio_write_loop_async(struct bch_write_op *);
 static __always_inline long bch2_dio_write_done(struct dio_write *dio);
 
+/*
+ * We're going to return -EIOCBQUEUED, but we haven't finished consuming the
+ * iov_iter yet, so we need to stash a copy of the iovec: it might be on the
+ * caller's stack, we're not guaranteed that it will live for the duration of
+ * the IO:
+ */
 static noinline int bch2_dio_write_copy_iov(struct dio_write *dio)
 {
 	struct iovec *iov = dio->inline_vecs;
+
+	/*
+	 * iov_iter has a single embedded iovec - nothing to do:
+	 */
+	if (iter_is_ubuf(&dio->iter))
+		return 0;
+
+	/*
+	 * We don't currently handle non-iovec iov_iters here - return an error,
+	 * and we'll fall back to doing the IO synchronously:
+	 */
+	if (!iter_is_iovec(&dio->iter))
+		return -1;
 
 	if (dio->iter.nr_segs > ARRAY_SIZE(dio->inline_vecs)) {
 		iov = kmalloc_array(dio->iter.nr_segs, sizeof(*iov),
