@@ -618,8 +618,8 @@ static const struct xattr_handler bch_xattr_bcachefs_effective_handler = {
 const struct xattr_handler *bch2_xattr_handlers[] = {
 	&bch_xattr_user_handler,
 #ifdef CONFIG_BCACHEFS_POSIX_ACL
-	&posix_acl_access_xattr_handler,
-	&posix_acl_default_xattr_handler,
+	&nop_posix_acl_access,
+	&nop_posix_acl_default,
 #endif
 	&bch_xattr_trusted_handler,
 	&bch_xattr_security_handler,
@@ -633,9 +633,9 @@ const struct xattr_handler *bch2_xattr_handlers[] = {
 static const struct xattr_handler *bch_xattr_handler_map[] = {
 	[KEY_TYPE_XATTR_INDEX_USER]			= &bch_xattr_user_handler,
 	[KEY_TYPE_XATTR_INDEX_POSIX_ACL_ACCESS]	=
-		&posix_acl_access_xattr_handler,
+		&nop_posix_acl_access,
 	[KEY_TYPE_XATTR_INDEX_POSIX_ACL_DEFAULT]	=
-		&posix_acl_default_xattr_handler,
+		&nop_posix_acl_default,
 	[KEY_TYPE_XATTR_INDEX_TRUSTED]		= &bch_xattr_trusted_handler,
 	[KEY_TYPE_XATTR_INDEX_SECURITY]		= &bch_xattr_security_handler,
 };
