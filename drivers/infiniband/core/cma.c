@@ -709,8 +709,7 @@ cma_validate_port(struct ib_device *device, u32 port,
 	}
 
 	sgid_attr = rdma_find_gid_by_port(device, gid, gid_type, port, ndev);
-	if (ndev)
-		dev_put(ndev);
+	dev_put(ndev);
 	return sgid_attr;
 }
 
@@ -2429,8 +2428,7 @@ err_unlock:
 	mutex_unlock(&listen_id->handler_mutex);
 
 net_dev_put:
-	if (net_dev)
-		dev_put(net_dev);
+	dev_put(net_dev);
 
 	return ret;
 }
@@ -3297,7 +3295,7 @@ static int cma_resolve_iboe_route(struct rdma_id_private *id_priv)
 	route->path_rec->traffic_class = tos;
 	route->path_rec->mtu = iboe_get_mtu(ndev->mtu);
 	route->path_rec->rate_selector = IB_SA_EQ;
-	route->path_rec->rate = iboe_get_rate(ndev);
+	route->path_rec->rate = IB_RATE_PORT_CURRENT;
 	dev_put(ndev);
 	route->path_rec->packet_life_time_selector = IB_SA_EQ;
 	/* In case ACK timeout is set, use this value to calculate
@@ -4966,7 +4964,7 @@ static int cma_iboe_join_multicast(struct rdma_id_private *id_priv,
 	if (!ndev)
 		return -ENODEV;
 
-	ib.rec.rate = iboe_get_rate(ndev);
+	ib.rec.rate = IB_RATE_PORT_CURRENT;
 	ib.rec.hop_limit = 1;
 	ib.rec.mtu = iboe_get_mtu(ndev->mtu);
 

@@ -159,7 +159,7 @@ static void osnoise_unregister_instance(struct trace_array *tr)
 	if (!found)
 		return;
 
-	kvfree_rcu(inst);
+	kvfree_rcu_mightsleep(inst);
 }
 
 /*
@@ -1651,6 +1651,8 @@ static enum hrtimer_restart timerlat_irq(struct hrtimer *timer)
 
 			osnoise_stop_tracing();
 			notify_new_max_latency(diff);
+
+			wake_up_process(tlat->kthread);
 
 			return HRTIMER_NORESTART;
 		}
