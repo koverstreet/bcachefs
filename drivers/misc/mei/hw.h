@@ -7,7 +7,7 @@
 #ifndef _MEI_HW_TYPES_H_
 #define _MEI_HW_TYPES_H_
 
-#include <linux/mei.h>
+#include <linux/uuid.h>
 
 /*
  * Timeouts in Seconds

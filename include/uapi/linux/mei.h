@@ -7,7 +7,7 @@
 #ifndef _LINUX_MEI_H
 #define _LINUX_MEI_H
 
-#include <linux/mei_uuid.h>
+#include <linux/uuid.h>
 
 /*
  * This IOCTL is used to associate the current file descriptor with a
