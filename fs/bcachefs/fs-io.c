@@ -2497,12 +2497,7 @@ static __always_inline void bch2_dio_write_end(struct dio_write *dio)
 		mutex_unlock(&inode->ei_quota_lock);
 	}
 
-	if (likely(!bio_flagged(bio, BIO_NO_PAGE_REF))) {
-		struct folio_iter fi;
-
-		bio_for_each_folio_all(fi, bio)
-			folio_put(fi.folio);
-	}
+	bio_release_pages(bio, false);
 
 	if (unlikely(dio->op.error))
 		set_bit(EI_INODE_ERROR, &inode->ei_flags);
