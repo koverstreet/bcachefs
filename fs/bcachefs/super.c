@@ -139,20 +139,20 @@ found:
 	return c;
 }
 
-static struct bch_fs *__bch2_uuid_to_fs(uuid_le uuid)
+static struct bch_fs *__bch2_uuid_to_fs(uuid_t uuid)
 {
 	struct bch_fs *c;
 
 	lockdep_assert_held(&bch_fs_list_lock);
 
 	list_for_each_entry(c, &bch_fs_list, list)
-		if (!memcmp(&c->disk_sb.sb->uuid, &uuid, sizeof(uuid_le)))
+		if (!memcmp(&c->disk_sb.sb->uuid, &uuid, sizeof(uuid_t)))
 			return c;
 
 	return NULL;
 }
 
-struct bch_fs *bch2_uuid_to_fs(uuid_le uuid)
+struct bch_fs *bch2_uuid_to_fs(uuid_t uuid)
 {
 	struct bch_fs *c;
 
@@ -997,7 +997,7 @@ static int bch2_dev_in_fs(struct bch_sb *fs, struct bch_sb *sb)
 		le64_to_cpu(fs->seq) > le64_to_cpu(sb->seq) ? fs : sb;
 	struct bch_sb_field_members *mi = bch2_sb_get_members(newest);
 
-	if (uuid_le_cmp(fs->uuid, sb->uuid))
+	if (!uuid_equal(&fs->uuid, &sb->uuid))
 		return -BCH_ERR_device_not_a_member_of_filesystem;
 
 	if (!bch2_dev_exists(newest, mi, sb->dev_idx))

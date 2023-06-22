@@ -79,7 +79,7 @@ static inline void bch2_check_set_feature(struct bch_fs *c, unsigned feat)
 
 static inline bool bch2_member_exists(struct bch_member *m)
 {
-	return !bch2_is_zero(m->uuid.b, sizeof(uuid_le));
+	return !bch2_is_zero(m->uuid.b, sizeof(uuid_t));
 }
 
 static inline bool bch2_dev_exists(struct bch_sb *sb,
@@ -104,7 +104,7 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 			? BCH_MEMBER_DURABILITY(mi) - 1
 			: 1,
 		.freespace_initialized = BCH_MEMBER_FREESPACE_INITIALIZED(mi),
-		.valid		= !bch2_is_zero(mi->uuid.b, sizeof(uuid_le)),
+		.valid		= !bch2_is_zero(mi->uuid.b, sizeof(uuid_t)),
 	};
 }
 

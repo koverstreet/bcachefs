@@ -1215,7 +1215,7 @@ struct bch_sb_field_journal_v2 {
 #define BCH_MIN_NR_NBUCKETS	(1 << 6)
 
 struct bch_member {
-	uuid_le			uuid;
+	uuid_t			uuid;
 	__le64			nbuckets;	/* device size */
 	__le16			first_bucket;   /* index of first bucket used */
 	__le16			bucket_size;	/* sectors */
@@ -1596,7 +1596,7 @@ static const unsigned bcachefs_metadata_required_upgrade_below = bcachefs_metada
 #define BCH_SB_MEMBERS_MAX		64 /* XXX kill */
 
 struct bch_sb_layout {
-	uuid_le			magic;	/* bcachefs superblock UUID */
+	uuid_t			magic;	/* bcachefs superblock UUID */
 	__u8			layout_type;
 	__u8			sb_max_size_bits; /* base 2 of 512 byte sectors */
 	__u8			nr_superblocks;
@@ -1627,9 +1627,9 @@ struct bch_sb {
 	__le16			version;
 	__le16			version_min;
 	__le16			pad[2];
-	uuid_le			magic;
-	uuid_le			uuid;
-	uuid_le			user_uuid;
+	uuid_t			magic;
+	uuid_t			uuid;
+	uuid_t			user_uuid;
 	__u8			label[BCH_SB_LABEL_SIZE];
 	__le64			offset;
 	__le64			seq;
@@ -1925,12 +1925,19 @@ enum bch_compression_opts {
  * xored with the first part of the cache set's UUID
  */
 
-#define BCACHE_MAGIC							\
+#define BCACHE_MAGIC_LE							\
 	UUID_LE(0xf67385c6, 0x1a4e, 0xca45,				\
 		0x82, 0x65, 0xf5, 0x7f, 0x48, 0xba, 0x6d, 0x81)
-#define BCHFS_MAGIC							\
+#define BCHFS_MAGIC_LE							\
 	UUID_LE(0xf67385c6, 0xce66, 0xa990,				\
 		0xd9, 0x6a, 0x60, 0xcf, 0x80, 0x3d, 0xf7, 0xef)
+
+#define BCACHE_MAGIC							\
+	UUID_INIT(0xc68573f6, 0x4e1a, 0x45ca,				\
+		  0x82, 0x65, 0xf5, 0x7f, 0x48, 0xba, 0x6d, 0x81)
+#define BCHFS_MAGIC							\
+	UUID_INIT(0xc68573f6, 0x66ce, 0x90a9,				\
+		  0xd9, 0x6a, 0x60, 0xcf, 0x80, 0x3d, 0xf7, 0xef)
 
 #define BCACHEFS_STATFS_MAGIC		0xca451a4e
 

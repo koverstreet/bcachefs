@@ -209,8 +209,8 @@ static int validate_sb_layout(struct bch_sb_layout *layout, struct printbuf *out
 	u64 offset, prev_offset, max_sectors;
 	unsigned i;
 
-	if (uuid_le_cmp(layout->magic, BCACHE_MAGIC) &&
-	    uuid_le_cmp(layout->magic, BCHFS_MAGIC)) {
+	if (!uuid_equal(&layout->magic, &BCACHE_MAGIC) &&
+	    !uuid_equal(&layout->magic, &BCHFS_MAGIC)) {
 		prt_printf(out, "Not a bcachefs superblock layout");
 		return -BCH_ERR_invalid_sb_layout;
 	}
@@ -298,12 +298,12 @@ static int bch2_sb_validate(struct bch_sb_handle *disk_sb, struct printbuf *out,
 		return -BCH_ERR_invalid_sb_block_size;
 	}
 
-	if (bch2_is_zero(sb->user_uuid.b, sizeof(uuid_le))) {
+	if (bch2_is_zero(sb->user_uuid.b, sizeof(uuid_t))) {
 		prt_printf(out, "Bad user UUID (got zeroes)");
 		return -BCH_ERR_invalid_sb_uuid;
 	}
 
-	if (bch2_is_zero(sb->uuid.b, sizeof(uuid_le))) {
+	if (bch2_is_zero(sb->uuid.b, sizeof(uuid_t))) {
 		prt_printf(out, "Bad intenal UUID (got zeroes)");
 		return -BCH_ERR_invalid_sb_uuid;
 	}
@@ -526,8 +526,8 @@ reread:
 		return ret;
 	}
 
-	if (uuid_le_cmp(sb->sb->magic, BCACHE_MAGIC) &&
-	    uuid_le_cmp(sb->sb->magic, BCHFS_MAGIC)) {
+	if (!uuid_equal(&sb->sb->magic, &BCACHE_MAGIC) &&
+	    !uuid_equal(&sb->sb->magic, &BCHFS_MAGIC)) {
 		prt_printf(err, "Not a bcachefs superblock");
 		return -BCH_ERR_invalid_sb_magic;
 	}

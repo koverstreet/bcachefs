@@ -489,7 +489,7 @@ struct bch_dev {
 	 * Committed by bch2_write_super() -> bch_fs_mi_update()
 	 */
 	struct bch_member_cpu	mi;
-	uuid_le			uuid;
+	uuid_t			uuid;
 	char			name[BDEVNAME_SIZE];
 
 	struct bch_sb_handle	disk_sb;
@@ -707,8 +707,8 @@ struct bch_fs {
 
 	/* Updated by bch2_sb_update():*/
 	struct {
-		uuid_le		uuid;
-		uuid_le		user_uuid;
+		uuid_t		uuid;
+		uuid_t		user_uuid;
 
 		u16		version;
 		u16		version_min;
