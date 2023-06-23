@@ -13,6 +13,7 @@ struct bch_fs;
 extern const char * const bch2_error_actions[];
 extern const char * const bch2_fsck_fix_opts[];
 extern const char * const bch2_version_upgrade_opts[];
+extern const char * const bch2_degraded_opts[];
 extern const char * const bch2_sb_features[];
 extern const char * const bch2_sb_compat[];
 extern const char * const __bch2_btree_ids[];
@@ -290,16 +291,16 @@ enum fsck_err_opts {
 	  OPT_BOOL(),							\
 	  BCH_SB_PRJQUOTA,		false,				\
 	  NULL,		"Enable project quotas")			\
-	x(degraded,			u8,				\
+	x(degraded_start,		u8,				\
 	  OPT_FS|OPT_MOUNT,						\
-	  OPT_BOOL(),							\
-	  BCH2_NO_SB_OPT,		false,				\
+	  OPT_STR(bch2_degraded_opts),					\
+	  BCH2_NO_SB_OPT,		BCH_DEGRADED_no_splitbrain,	\
 	  NULL,		"Allow mounting in degraded mode")		\
-	x(very_degraded,		u8,				\
+	x(degraded_continue,		u8,				\
 	  OPT_FS|OPT_MOUNT,						\
-	  OPT_BOOL(),							\
-	  BCH2_NO_SB_OPT,		false,				\
-	  NULL,		"Allow mounting in when data will be missing")	\
+	  OPT_STR(bch2_degraded_opts),					\
+	  BCH2_NO_SB_OPT,		BCH_DEGRADED_degraded,		\
+	  NULL,		"Allow continuing in degraded mode")		\
 	x(no_splitbrain_check,		u8,				\
 	  OPT_FS|OPT_MOUNT,						\
 	  OPT_BOOL(),							\
