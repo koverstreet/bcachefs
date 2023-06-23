@@ -56,7 +56,7 @@ void bch2_io_error_work(struct work_struct *work)
 
 	down_write(&c->state_lock);
 	dev = bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_ro,
-				    BCH_FORCE_IF_DEGRADED);
+				     BCH_FORCE_IF_DEGRADED);
 	if (dev
 	    ? __bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_ro,
 				  BCH_FORCE_IF_DEGRADED)

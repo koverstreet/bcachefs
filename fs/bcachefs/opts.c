@@ -28,6 +28,11 @@ const char * const bch2_version_upgrade_opts[] = {
 	NULL
 };
 
+const char * const bch2_degraded_opts[] = {
+	BCH_DEGRADED_OPTS()
+	NULL
+};
+
 const char * const bch2_sb_features[] = {
 	BCH_SB_FEATURES()
 	NULL
