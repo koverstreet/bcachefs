@@ -1982,6 +1982,18 @@ enum bch_error_actions {
 	BCH_ON_ERROR_NR
 };
 
+#define BCH_DEGRADED_OPTS()		\
+	x(none,			0)	\
+	x(no_splitbrain,	1)	\
+	x(degraded,		2)	\
+	x(data_missing,		3)
+
+enum bch_degraded_opts {
+#define x(t, n) BCH_DEGRADED_##t = n,
+	BCH_DEGRADED_OPTS()
+#undef x
+};
+
 #define BCH_STR_HASH_TYPES()		\
 	x(crc32c,		0)	\
 	x(crc64,		1)	\

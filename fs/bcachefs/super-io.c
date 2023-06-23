@@ -905,16 +905,12 @@ int bch2_write_super(struct bch_fs *c)
 {
 	struct closure *cl = &c->sb_write;
 	struct printbuf err = PRINTBUF;
-	unsigned sb = 0, nr_wrote;
+	unsigned sb = 0;
 	struct bch_devs_mask sb_written;
-	bool wrote, can_mount_without_written, can_mount_with_written;
-	unsigned degraded_flags = BCH_FORCE_IF_DEGRADED;
+	bool wrote;
 	int ret = 0;
 
 	trace_and_count(c, write_super, c, _RET_IP_);
-
-	if (c->opts.very_degraded)
-		degraded_flags |= BCH_FORCE_IF_LOST;
 
 	lockdep_assert_held(&c->sb_lock);
 
@@ -1034,29 +1030,9 @@ int bch2_write_super(struct bch_fs *c)
 			ca->disk_sb.seq = le64_to_cpu(ca->disk_sb.sb->seq);
 	}
 
-	nr_wrote = dev_mask_nr(&sb_written);
-
-	can_mount_with_written =
-		bch2_have_enough_devs(c, sb_written, degraded_flags, false);
-
-	for (unsigned i = 0; i < ARRAY_SIZE(sb_written.d); i++)
-		sb_written.d[i] = ~sb_written.d[i];
-
-	can_mount_without_written =
-		bch2_have_enough_devs(c, sb_written, degraded_flags, false);
-
-	/*
-	 * If we would be able to mount _without_ the devices we successfully
-	 * wrote superblocks to, we weren't able to write to enough devices:
-	 *
-	 * Exception: if we can mount without the successes because we haven't
-	 * written anything (new filesystem), we continue if we'd be able to
-	 * mount with the devices we did successfully write to:
-	 */
-	if (bch2_fs_fatal_err_on(!nr_wrote ||
-				 !can_mount_with_written ||
-				 (can_mount_without_written &&
-				  !can_mount_with_written), c,
+	if (bch2_fs_fatal_err_on(!dev_mask_nr(&sb_written) ||
+			!bch2_have_enough_devs(c, sb_written,
+					       c->opts.degraded_continue, false), c,
 		"Unable to write superblock to sufficient devices (from %ps)",
 		(void *) _RET_IP_))
 		ret = -1;

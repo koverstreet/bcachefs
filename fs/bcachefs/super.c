@@ -1411,6 +1411,14 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 {
 	struct bch_devs_mask new_online_devs;
 	int nr_rw = 0, required;
+	enum bch_degraded_opts degraded_mode;
+
+	if (flags & BCH_FORCE_IF_LOST)
+		degraded_mode = BCH_DEGRADED_data_missing;
+	else if (flags & BCH_FORCE_IF_DEGRADED)
+		degraded_mode = BCH_DEGRADED_degraded;
+	else
+		degraded_mode = BCH_DEGRADED_none;
 
 	lockdep_assert_held(&c->state_lock);
 
@@ -1444,7 +1452,7 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 		new_online_devs = bch2_online_devs(c);
 		__clear_bit(ca->dev_idx, new_online_devs.d);
 
-		return bch2_have_enough_devs(c, new_online_devs, flags, false);
+		return bch2_have_enough_devs(c, new_online_devs, degraded_mode, false);
 	default:
 		BUG();
 	}
@@ -1452,36 +1460,7 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 
 static bool bch2_fs_may_start(struct bch_fs *c)
 {
-	struct bch_dev *ca;
-	unsigned i, flags = 0;
-
-	if (c->opts.very_degraded)
-		flags |= BCH_FORCE_IF_DEGRADED|BCH_FORCE_IF_LOST;
-
-	if (c->opts.degraded)
-		flags |= BCH_FORCE_IF_DEGRADED;
-
-	if (!c->opts.degraded &&
-	    !c->opts.very_degraded) {
-		mutex_lock(&c->sb_lock);
-
-		for (i = 0; i < c->disk_sb.sb->nr_devices; i++) {
-			if (!bch2_dev_exists(c->disk_sb.sb, i))
-				continue;
-
-			ca = bch_dev_locked(c, i);
-
-			if (!bch2_dev_is_online(ca) &&
-			    (ca->mi.state == BCH_MEMBER_STATE_rw ||
-			     ca->mi.state == BCH_MEMBER_STATE_ro)) {
-				mutex_unlock(&c->sb_lock);
-				return false;
-			}
-		}
-		mutex_unlock(&c->sb_lock);
-	}
-
-	return bch2_have_enough_devs(c, bch2_online_devs(c), flags, true);
+	return bch2_have_enough_devs(c, bch2_online_devs(c), c->opts.degraded_start, true);
 }
 
 static void __bch2_dev_read_only(struct bch_fs *c, struct bch_dev *ca)

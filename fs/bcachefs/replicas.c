@@ -934,8 +934,8 @@ const struct bch_sb_field_ops bch_sb_field_ops_replicas_v0 = {
 
 /* Query replicas: */
 
-bool bch2_have_enough_devs(struct bch_fs *c, struct bch_devs_mask devs,
-			   unsigned flags, bool print)
+static bool __bch2_have_enough_devs(struct bch_fs *c, struct bch_devs_mask devs,
+				    unsigned flags, bool print)
 {
 	struct bch_replicas_entry_v1 *e;
 	bool ret = true;
@@ -985,6 +985,42 @@ bool bch2_have_enough_devs(struct bch_fs *c, struct bch_devs_mask devs,
 	percpu_up_read(&c->mark_lock);
 
 	return ret;
+}
+
+bool bch2_have_enough_devs(struct bch_fs *c, struct bch_devs_mask devs,
+			   enum bch_degraded_opts degraded, bool print)
+{
+	struct bch_devs_mask offline;
+
+	bitmap_complement(offline.d, devs.d, BCH_SB_MEMBERS_MAX);
+
+	switch (degraded) {
+	case BCH_DEGRADED_none:
+		mutex_lock(&c->sb_lock);
+		for (unsigned i = 0; i < c->disk_sb.sb->nr_devices; i++) {
+			struct bch_member m = bch2_sb_member_get(c->disk_sb.sb, i);
+
+			if (bch2_member_exists(&m) &&
+			    BCH_MEMBER_STATE(&m) != BCH_MEMBER_STATE_failed &&
+			    !test_bit(i, devs.d)) {
+				mutex_unlock(&c->sb_lock);
+				return false;
+			}
+		}
+		mutex_unlock(&c->sb_lock);
+		return true;
+	case BCH_DEGRADED_no_splitbrain:
+		if (__bch2_have_enough_devs(c, offline, BCH_FORCE_IF_DEGRADED, false))
+			return false;
+
+		return __bch2_have_enough_devs(c, devs, BCH_FORCE_IF_DEGRADED, print);
+	case BCH_DEGRADED_degraded:
+		return __bch2_have_enough_devs(c, devs, BCH_FORCE_IF_DEGRADED, print);
+	case BCH_DEGRADED_data_missing:
+		return __bch2_have_enough_devs(c, devs, BCH_FORCE_IF_DEGRADED|BCH_FORCE_IF_LOST, print);
+	default:
+		BUG();
+	}
 }
 
 unsigned bch2_sb_dev_has_data(struct bch_sb *sb, unsigned dev)
