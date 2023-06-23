@@ -298,6 +298,18 @@ static inline struct bch_devs_mask bch2_online_devs(struct bch_fs *c)
 	return devs;
 }
 
+static inline struct bch_devs_mask bch2_all_devs(struct bch_fs *c)
+{
+	struct bch_devs_mask devs;
+
+	memset(&devs, 0, sizeof(devs));
+	rcu_read_lock();
+	for_each_member_device_rcu(c, ca, NULL)
+		__set_bit(ca->dev_idx, devs.d);
+	rcu_read_unlock();
+	return devs;
+}
+
 extern const struct bch_sb_field_ops bch_sb_field_ops_members_v1;
 extern const struct bch_sb_field_ops bch_sb_field_ops_members_v2;
 
