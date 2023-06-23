@@ -44,7 +44,7 @@ static inline void bch2_replicas_entry_cached(struct bch_replicas_entry_v1 *e,
 }
 
 bool bch2_have_enough_devs(struct bch_fs *, struct bch_devs_mask,
-			   unsigned, bool);
+			   enum bch_degraded_opts, bool);
 
 unsigned bch2_sb_dev_has_data(struct bch_sb *, unsigned);
 unsigned bch2_dev_has_data(struct bch_fs *, struct bch_dev *);
