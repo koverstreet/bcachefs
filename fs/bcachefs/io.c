@@ -451,7 +451,7 @@ retry:
 				&devs_have,
 				opts.data_replicas,
 				opts.data_replicas,
-				RESERVE_none, 0, &cl, &wp);
+				BCH_WATERMARK_normal, 0, &cl, &wp);
 		if (ret) {
 			bch2_trans_unlock(trans);
 			closure_sync(&cl);

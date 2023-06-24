@@ -459,7 +459,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 		bch2_compression_opt_to_type[io_opts.background_compression ?:
 					     io_opts.compression];
 	if (m->data_opts.btree_insert_flags & BTREE_INSERT_USE_RESERVE)
-		m->op.alloc_reserve = RESERVE_movinggc;
+		m->op.alloc_reserve = BCH_WATERMARK_copygc;
 
 	bkey_for_each_ptr(ptrs, ptr)
 		percpu_ref_get(&bch_dev_bkey_exists(c, ptr->dev)->ref);
