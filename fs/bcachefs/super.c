@@ -139,20 +139,20 @@ found:
 	return c;
 }
 
-static struct bch_fs *__bch2_uuid_to_fs(uuid_t uuid)
+static struct bch_fs *__bch2_uuid_to_fs(__uuid_t uuid)
 {
 	struct bch_fs *c;
 
 	lockdep_assert_held(&bch_fs_list_lock);
 
 	list_for_each_entry(c, &bch_fs_list, list)
-		if (!memcmp(&c->disk_sb.sb->uuid, &uuid, sizeof(uuid_t)))
+		if (!memcmp(&c->disk_sb.sb->uuid, &uuid, sizeof(uuid)))
 			return c;
 
 	return NULL;
 }
 
-struct bch_fs *bch2_uuid_to_fs(uuid_t uuid)
+struct bch_fs *bch2_uuid_to_fs(__uuid_t uuid)
 {
 	struct bch_fs *c;
 

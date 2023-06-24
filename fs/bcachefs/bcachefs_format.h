@@ -78,6 +78,10 @@
 #include <linux/uuid.h>
 #include "vstructs.h"
 
+#ifdef __KERNEL__
+typedef uuid_t __uuid_t;
+#endif
+
 #define BITMASK(name, type, field, offset, end)				\
 static const unsigned	name##_OFFSET = offset;				\
 static const unsigned	name##_BITS = (end - offset);			\
@@ -1215,7 +1219,7 @@ struct bch_sb_field_journal_v2 {
 #define BCH_MIN_NR_NBUCKETS	(1 << 6)
 
 struct bch_member {
-	uuid_t			uuid;
+	__uuid_t		uuid;
 	__le64			nbuckets;	/* device size */
 	__le16			first_bucket;   /* index of first bucket used */
 	__le16			bucket_size;	/* sectors */
@@ -1596,7 +1600,7 @@ static const unsigned bcachefs_metadata_required_upgrade_below = bcachefs_metada
 #define BCH_SB_MEMBERS_MAX		64 /* XXX kill */
 
 struct bch_sb_layout {
-	uuid_t			magic;	/* bcachefs superblock UUID */
+	__uuid_t		magic;	/* bcachefs superblock UUID */
 	__u8			layout_type;
 	__u8			sb_max_size_bits; /* base 2 of 512 byte sectors */
 	__u8			nr_superblocks;
@@ -1627,9 +1631,9 @@ struct bch_sb {
 	__le16			version;
 	__le16			version_min;
 	__le16			pad[2];
-	uuid_t			magic;
-	uuid_t			uuid;
-	uuid_t			user_uuid;
+	__uuid_t		magic;
+	__uuid_t		uuid;
+	__uuid_t		user_uuid;
 	__u8			label[BCH_SB_LABEL_SIZE];
 	__le64			offset;
 	__le64			seq;

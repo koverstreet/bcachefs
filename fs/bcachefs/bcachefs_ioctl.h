@@ -93,7 +93,7 @@ struct bch_ioctl_incremental {
  * this UUID.
  */
 struct bch_ioctl_query_uuid {
-	uuid_t			uuid;
+	__uuid_t		uuid;
 };
 
 #if 0

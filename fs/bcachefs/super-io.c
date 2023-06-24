@@ -298,12 +298,12 @@ static int bch2_sb_validate(struct bch_sb_handle *disk_sb, struct printbuf *out,
 		return -BCH_ERR_invalid_sb_block_size;
 	}
 
-	if (bch2_is_zero(sb->user_uuid.b, sizeof(uuid_t))) {
+	if (bch2_is_zero(&sb->user_uuid, sizeof(sb->user_uuid))) {
 		prt_printf(out, "Bad user UUID (got zeroes)");
 		return -BCH_ERR_invalid_sb_uuid;
 	}
 
-	if (bch2_is_zero(sb->uuid.b, sizeof(uuid_t))) {
+	if (bch2_is_zero(&sb->uuid, sizeof(sb->uuid))) {
 		prt_printf(out, "Bad intenal UUID (got zeroes)");
 		return -BCH_ERR_invalid_sb_uuid;
 	}
