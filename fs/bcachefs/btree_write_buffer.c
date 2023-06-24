@@ -279,6 +279,7 @@ int bch2_btree_insert_keys_write_buffer(struct btree_trans *trans)
 	struct btree_write_buffer *wb = &c->btree_write_buffer;
 	struct btree_write_buffered_key *i;
 	union btree_write_buffer_state old, new;
+	unsigned offset = 0;
 	int ret = 0;
 	u64 v;
 
@@ -286,7 +287,8 @@ int bch2_btree_insert_keys_write_buffer(struct btree_trans *trans)
 		EBUG_ON(i->k.k.u64s > BTREE_WRITE_BUFERED_U64s_MAX);
 
 		i->journal_seq		= trans->journal_res.seq;
-		i->journal_offset	= trans->journal_res.offset;
+		i->journal_offset	= trans->journal_res.offset + offset;
+		offset++;
 	}
 
 	preempt_disable();

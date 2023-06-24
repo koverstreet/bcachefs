@@ -115,7 +115,7 @@ int bch2_bkey_get_empty_slot(struct btree_trans *, struct btree_iter *,
 int __must_check bch2_trans_update(struct btree_trans *, struct btree_iter *,
 				   struct bkey_i *, enum btree_update_flags);
 int __must_check bch2_trans_update_buffered(struct btree_trans *,
-					    enum btree_id, struct bkey_i *);
+					    enum btree_id, struct bkey_i *, bool);
 
 void bch2_trans_commit_hook(struct btree_trans *,
 			    struct btree_trans_commit_hook *);

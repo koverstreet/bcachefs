@@ -84,7 +84,7 @@ static inline int bch2_bucket_backpointer_mod(struct btree_trans *trans,
 		set_bkey_val_u64s(&bp_k->k, 0);
 	}
 
-	return bch2_trans_update_buffered(trans, BTREE_ID_backpointers, &bp_k->k_i);
+	return bch2_trans_update_buffered(trans, BTREE_ID_backpointers, &bp_k->k_i, !insert);
 }
 
 static inline enum bch_data_type bkey_ptr_data_type(enum btree_id btree_id, unsigned level,
