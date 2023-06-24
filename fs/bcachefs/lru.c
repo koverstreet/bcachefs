@@ -61,7 +61,8 @@ static int __bch2_lru_set(struct btree_trans *trans, u16 lru_id,
 	EBUG_ON(lru_pos_time(k->k.p) != time);
 	EBUG_ON(k->k.p.offset != dev_bucket);
 
-	return bch2_trans_update_buffered(trans, BTREE_ID_lru, k);
+	return bch2_trans_update_buffered(trans, BTREE_ID_lru, k,
+					  key_type == KEY_TYPE_deleted);
 }
 
 int bch2_lru_del(struct btree_trans *trans, u16 lru_id, u64 dev_bucket, u64 time)

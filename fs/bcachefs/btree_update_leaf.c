@@ -1718,20 +1718,13 @@ int __must_check bch2_trans_update(struct btree_trans *trans, struct btree_iter 
 
 int __must_check bch2_trans_update_buffered(struct btree_trans *trans,
 					    enum btree_id btree,
-					    struct bkey_i *k)
+					    struct bkey_i *k,
+					    bool head)
 {
-	struct btree_write_buffered_key *i;
-	int ret;
+	int ret, pos;
 
 	EBUG_ON(trans->nr_wb_updates > trans->wb_updates_size);
 	EBUG_ON(k->k.u64s > BTREE_WRITE_BUFERED_U64s_MAX);
-
-	trans_for_each_wb_update(trans, i) {
-		if (i->btree == btree && bpos_eq(i->k.k.p, k->k.p)) {
-			bkey_copy(&i->k, k);
-			return 0;
-		}
-	}
 
 	if (!trans->wb_updates ||
 	    trans->nr_wb_updates == trans->wb_updates_size) {
@@ -1759,13 +1752,18 @@ int __must_check bch2_trans_update_buffered(struct btree_trans *trans,
 		trans->wb_updates = u;
 	}
 
-	trans->wb_updates[trans->nr_wb_updates] = (struct btree_write_buffered_key) {
-		.btree	= btree,
-	};
+	if (head) {
+		memmove(&trans->wb_updates[1],
+			&trans->wb_updates[0],
+			sizeof(trans->wb_updates[0]) * trans->nr_wb_updates);
+		pos = 0;
+	} else {
+		pos = trans->nr_wb_updates;
+	}
 
-	bkey_copy(&trans->wb_updates[trans->nr_wb_updates].k, k);
+	trans->wb_updates[pos] = (struct btree_write_buffered_key) { .btree = btree, };
+	bkey_copy(&trans->wb_updates[pos].k, k);
 	trans->nr_wb_updates++;
-
 	return 0;
 }
 
@@ -1886,7 +1884,7 @@ int bch2_btree_delete_at_buffered(struct btree_trans *trans,
 
 	bkey_init(&k->k);
 	k->k.p = pos;
-	return bch2_trans_update_buffered(trans, btree, k);
+	return bch2_trans_update_buffered(trans, btree, k, false);
 }
 
 int bch2_btree_delete_range_trans(struct btree_trans *trans, enum btree_id id,
