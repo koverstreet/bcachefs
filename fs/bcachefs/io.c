@@ -1696,7 +1696,7 @@ again:
 				&op->devs_have,
 				op->nr_replicas,
 				op->nr_replicas_required,
-				op->alloc_reserve,
+				op->watermark,
 				op->flags,
 				(op->flags & (BCH_WRITE_ALLOC_NOWAIT|
 					      BCH_WRITE_ONLY_SPECIFIED_DEVS))
