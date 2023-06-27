@@ -797,6 +797,9 @@ void unregister_shrinker(struct shrinker *shrinker)
 
 	kfree(shrinker->nr_deferred);
 	shrinker->nr_deferred = NULL;
+
+	kfree_const(shrinker->name);
+	shrinker->name = NULL;
 }
 EXPORT_SYMBOL(unregister_shrinker);
 
