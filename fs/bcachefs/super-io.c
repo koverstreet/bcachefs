@@ -23,6 +23,30 @@
 #include <linux/backing-dev.h>
 #include <linux/sort.h>
 
+struct bch2_metadata_version_str {
+	u16		version;
+	const char	*name;
+};
+
+static const struct bch2_metadata_version_str bch2_metadata_versions[] = {
+#define x(n, v) { .version = v, .name = #n },
+	BCH_METADATA_VERSIONS()
+#undef x
+};
+
+void bch2_version_to_text(struct printbuf *out, unsigned v)
+{
+	const char *str = "(unknown version)";
+
+	for (unsigned i = 0; i < ARRAY_SIZE(bch2_metadata_versions); i++)
+		if (bch2_metadata_versions[i].version == v) {
+			str = bch2_metadata_versions[i].name;
+			break;
+		}
+
+	prt_printf(out, "%u.%u: %s", BCH_VERSION_MAJOR(v), BCH_VERSION_MINOR(v), str);
+}
+
 const char * const bch2_sb_fields[] = {
 #define x(name, nr)	#name,
 	BCH_SB_FIELDS()
@@ -250,6 +274,44 @@ static int validate_sb_layout(struct bch_sb_layout *layout, struct printbuf *out
 	return 0;
 }
 
+static int bch2_sb_compatible(struct bch_sb *sb, struct printbuf *out)
+{
+	u16 version		= le16_to_cpu(sb->version);
+	u16 version_min		= le16_to_cpu(sb->version_min);
+
+	if (!bch2_version_compatible(version)) {
+		prt_str(out, "Unsupported superblock version ");
+		bch2_version_to_text(out, version);
+		prt_str(out, " (min ");
+		bch2_version_to_text(out, bcachefs_metadata_version_min);
+		prt_str(out, ", max ");
+		bch2_version_to_text(out, bcachefs_metadata_version_current);
+		prt_str(out, ")");
+		return -BCH_ERR_invalid_sb_version;
+	}
+
+	if (!bch2_version_compatible(version_min)) {
+		prt_str(out, "Unsupported superblock version_min ");
+		bch2_version_to_text(out, version_min);
+		prt_str(out, " (min ");
+		bch2_version_to_text(out, bcachefs_metadata_version_min);
+		prt_str(out, ", max ");
+		bch2_version_to_text(out, bcachefs_metadata_version_current);
+		prt_str(out, ")");
+		return -BCH_ERR_invalid_sb_version;
+	}
+
+	if (version_min > version) {
+		prt_str(out, "Bad minimum version ");
+		bch2_version_to_text(out, version_min);
+		prt_str(out, ", greater than version field ");
+		bch2_version_to_text(out, version);
+		return -BCH_ERR_invalid_sb_version;
+	}
+
+	return 0;
+}
+
 static int bch2_sb_validate(struct bch_sb_handle *disk_sb, struct printbuf *out,
 			    int rw)
 {
@@ -257,32 +319,12 @@ static int bch2_sb_validate(struct bch_sb_handle *disk_sb, struct printbuf *out,
 	struct bch_sb_field *f;
 	struct bch_sb_field_members *mi;
 	enum bch_opt_id opt_id;
-	u32 version, version_min;
 	u16 block_size;
 	int ret;
 
-	version		= le16_to_cpu(sb->version);
-	version_min	= version >= bcachefs_metadata_version_bkey_renumber
-		? le16_to_cpu(sb->version_min)
-		: version;
-
-	if (version    >= bcachefs_metadata_version_max) {
-		prt_printf(out, "Unsupported superblock version %u (min %u, max %u)",
-		       version, bcachefs_metadata_version_min, bcachefs_metadata_version_max);
-		return -BCH_ERR_invalid_sb_version;
-	}
-
-	if (version_min < bcachefs_metadata_version_min) {
-		prt_printf(out, "Unsupported superblock version %u (min %u, max %u)",
-		       version_min, bcachefs_metadata_version_min, bcachefs_metadata_version_max);
-		return -BCH_ERR_invalid_sb_version;
-	}
-
-	if (version_min > version) {
-		prt_printf(out, "Bad minimum version %u, greater than version field %u",
-		       version_min, version);
-		return -BCH_ERR_invalid_sb_version;
-	}
+	ret = bch2_sb_compatible(sb, out);
+	if (ret)
+		return ret;
 
 	if (sb->features[1] ||
 	    (le64_to_cpu(sb->features[0]) & (~0ULL << BCH_FEATURE_NR))) {
@@ -331,7 +373,7 @@ static int bch2_sb_validate(struct bch_sb_handle *disk_sb, struct printbuf *out,
 	if (rw == READ) {
 		/*
 		 * Been seeing a bug where these are getting inexplicably
-		 * zeroed, so we'r now validating them, but we have to be
+		 * zeroed, so we're now validating them, but we have to be
 		 * careful not to preven people's filesystems from mounting:
 		 */
 		if (!BCH_SB_JOURNAL_FLUSH_DELAY(sb))
@@ -412,6 +454,7 @@ static void bch2_sb_update(struct bch_fs *c)
 	c->sb.user_uuid		= src->user_uuid;
 	c->sb.version		= le16_to_cpu(src->version);
 	c->sb.version_min	= le16_to_cpu(src->version_min);
+	c->sb.version_upgrade_complete = BCH_SB_VERSION_UPGRADE_COMPLETE(src);
 	c->sb.nr_devices	= src->nr_devices;
 	c->sb.clean		= BCH_SB_CLEAN(src);
 	c->sb.encryption_type	= BCH_SB_ENCRYPTION_TYPE(src);
@@ -512,7 +555,6 @@ int bch2_sb_from_fs(struct bch_fs *c, struct bch_dev *ca)
 static int read_one_super(struct bch_sb_handle *sb, u64 offset, struct printbuf *err)
 {
 	struct bch_csum csum;
-	u32 version, version_min;
 	size_t bytes;
 	int ret;
 reread:
@@ -532,22 +574,9 @@ reread:
 		return -BCH_ERR_invalid_sb_magic;
 	}
 
-	version		= le16_to_cpu(sb->sb->version);
-	version_min	= version >= bcachefs_metadata_version_bkey_renumber
-		? le16_to_cpu(sb->sb->version_min)
-		: version;
-
-	if (version    >= bcachefs_metadata_version_max) {
-		prt_printf(err, "Unsupported superblock version %u (min %u, max %u)",
-		       version, bcachefs_metadata_version_min, bcachefs_metadata_version_max);
-		return -BCH_ERR_invalid_sb_version;
-	}
-
-	if (version_min < bcachefs_metadata_version_min) {
-		prt_printf(err, "Unsupported superblock version %u (min %u, max %u)",
-		       version_min, bcachefs_metadata_version_min, bcachefs_metadata_version_max);
-		return -BCH_ERR_invalid_sb_version;
-	}
+	ret = bch2_sb_compatible(sb->sb, err);
+	if (ret)
+		return ret;
 
 	bytes = vstruct_bytes(sb->sb);
 
@@ -1169,7 +1198,19 @@ int bch2_fs_mark_dirty(struct bch_fs *c)
 
 	mutex_lock(&c->sb_lock);
 	SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
+
+	if (BCH_SB_VERSION_UPGRADE_COMPLETE(c->disk_sb.sb) > bcachefs_metadata_version_current)
+		SET_BCH_SB_VERSION_UPGRADE_COMPLETE(c->disk_sb.sb, bcachefs_metadata_version_current);
+
+	if (test_bit(BCH_FS_VERSION_UPGRADE, &c->flags) ||
+	    c->sb.version > bcachefs_metadata_version_current)
+		c->disk_sb.sb->version = cpu_to_le16(bcachefs_metadata_version_current);
+
+	if (test_bit(BCH_FS_VERSION_UPGRADE, &c->flags))
+		c->disk_sb.sb->features[0] |= cpu_to_le64(BCH_SB_FEATURES_ALL);
+
 	c->disk_sb.sb->features[0] |= cpu_to_le64(BCH_SB_FEATURES_ALWAYS);
+
 	c->disk_sb.sb->compat[0] &= cpu_to_le64((1ULL << BCH_COMPAT_NR) - 1);
 	ret = bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
@@ -1503,12 +1544,17 @@ void bch2_sb_to_text(struct printbuf *out, struct bch_sb *sb,
 
 	prt_str(out, "Version:");
 	prt_tab(out);
-	prt_printf(out, "%s", bch2_metadata_versions[le16_to_cpu(sb->version)]);
+	bch2_version_to_text(out, le16_to_cpu(sb->version));
+	prt_newline(out);
+
+	prt_str(out, "Version upgrade complete:");
+	prt_tab(out);
+	bch2_version_to_text(out, BCH_SB_VERSION_UPGRADE_COMPLETE(sb));
 	prt_newline(out);
 
 	prt_printf(out, "Oldest version on disk:");
 	prt_tab(out);
-	prt_printf(out, "%s", bch2_metadata_versions[le16_to_cpu(sb->version_min)]);
+	bch2_version_to_text(out, le16_to_cpu(sb->version_min));
 	prt_newline(out);
 
 	prt_printf(out, "Created:");

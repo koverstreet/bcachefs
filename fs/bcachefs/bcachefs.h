@@ -713,6 +713,7 @@ struct bch_fs {
 
 		u16		version;
 		u16		version_min;
+		u16		version_upgrade_complete;
 
 		u8		nr_devices;
 		u8		clean;

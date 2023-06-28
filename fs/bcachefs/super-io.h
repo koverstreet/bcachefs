@@ -9,6 +9,14 @@
 
 #include <asm/byteorder.h>
 
+static inline bool bch2_version_compatible(u16 version)
+{
+	return BCH_VERSION_MAJOR(version) <= BCH_VERSION_MAJOR(bcachefs_metadata_version_current) &&
+		version >= bcachefs_metadata_version_min;
+}
+
+void bch2_version_to_text(struct printbuf *, unsigned);
+
 struct bch_sb_field *bch2_sb_field_get(struct bch_sb *, enum bch_sb_field_type);
 struct bch_sb_field *bch2_sb_field_resize(struct bch_sb_handle *,
 					  enum bch_sb_field_type, unsigned);

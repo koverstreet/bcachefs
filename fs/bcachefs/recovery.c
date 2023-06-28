@@ -1114,11 +1114,16 @@ static bool should_do_version_upgrade(struct bch_fs *c)
 
 	if (!c->opts.nochanges &&
 	    c->sb.version < bcachefs_metadata_required_upgrade_below) {
-		bch_info(c, "version %s (%u) prior to %s (%u), upgrade and fsck required",
-			 bch2_metadata_versions[c->sb.version],
-			 c->sb.version,
-			 bch2_metadata_versions[bcachefs_metadata_required_upgrade_below],
-			 bcachefs_metadata_required_upgrade_below);
+		struct printbuf buf = PRINTBUF;
+
+		prt_str(&buf, "version ");
+		bch2_version_to_text(&buf, c->sb.version_upgrade_complete ?: c->sb.version);
+		prt_str(&buf, " prior to ");
+		bch2_version_to_text(&buf, bcachefs_metadata_required_upgrade_below);
+		prt_str(&buf, ", upgrade and fsck required");
+
+		bch_info(c, "%s", buf.buf);
+		printbuf_exit(&buf);
 		c->opts.fsck		= true;
 		c->opts.fix_errors	= FSCK_OPT_YES;
 		return true;
@@ -1449,8 +1454,7 @@ use_clean:
 
 	mutex_lock(&c->sb_lock);
 	if (test_bit(BCH_FS_VERSION_UPGRADE, &c->flags)) {
-		c->disk_sb.sb->version = cpu_to_le16(bcachefs_metadata_version_current);
-		c->disk_sb.sb->features[0] |= cpu_to_le64(BCH_SB_FEATURES_ALL);
+		SET_BCH_SB_VERSION_UPGRADE_COMPLETE(c->disk_sb.sb, bcachefs_metadata_version_current);
 		write_sb = true;
 	}
 
