@@ -1301,6 +1301,7 @@ struct bch_member {
 	__le64			errors[BCH_MEMBER_ERROR_NR];
 	__le64			errors_at_reset[BCH_MEMBER_ERROR_NR];
 	__le64			errors_reset_time;
+	__le64			seq;
 };
 
 #define BCH_MEMBER_V1_BYTES	56
@@ -1770,7 +1771,8 @@ struct bch_sb {
 	__le32			time_base_hi;
 	__le32			time_precision;
 
-	__le64			flags[8];
+	__le64			flags[7];
+	__le64			write_time;
 	__le64			features[2];
 	__le64			compat[2];
 
