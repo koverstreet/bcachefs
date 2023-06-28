@@ -1301,6 +1301,7 @@ struct bch_member {
 	__le64			errors[BCH_MEMBER_ERROR_NR];
 	__le64			errors_at_reset[BCH_MEMBER_ERROR_NR];
 	__le64			errors_reset_time;
+	__le64			seq;
 };
 
 #define BCH_MEMBER_V1_BYTES	56
@@ -1704,7 +1705,9 @@ LE64_BITMASK(BCH_SB_ERROR_ENTRY_NR,	struct bch_sb_field_error_entry, v, 16, 64);
 	x(deleted_inodes,		BCH_VERSION(1,  2),		\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_inodes))			\
 	x(rebalance_work,		BCH_VERSION(1,  3),		\
-	  BIT_ULL(BCH_RECOVERY_PASS_set_fs_needs_rebalance))
+	  BIT_ULL(BCH_RECOVERY_PASS_set_fs_needs_rebalance))		\
+	x(member_seq,			BCH_VERSION(1,  4),		\
+	  0)
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,
@@ -1770,7 +1773,8 @@ struct bch_sb {
 	__le32			time_base_hi;
 	__le32			time_precision;
 
-	__le64			flags[8];
+	__le64			flags[7];
+	__le64			write_time;
 	__le64			features[2];
 	__le64			compat[2];
 
