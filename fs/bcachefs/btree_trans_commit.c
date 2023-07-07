@@ -454,6 +454,43 @@ static int btree_key_can_insert_cached(struct btree_trans *trans, unsigned flags
 
 /* Triggers: */
 
+/*
+ * Trigger ordering has some subtleties:
+ *
+ * Extent triggers will add a reference to an alloc key (for a bucket) on
+ * insert, and delete that reference when the extent is removed.
+ *
+ * When the last reference to a bucket or indirect extent is deleted, the bucket
+ * will transition states to need_discard or the indirect extent will be
+ * deleted. This means that when an extent is being moved (by e.g. the
+ * finsert/fcollapse paths, or by the reflink code turning an extent into an
+ * indirect extent), if we process the trigger for the delete before the trigger
+ * for the insert Bad Things (tm) will happen.
+ *
+ * To avoid this, we always run triggers for inserts before triggers for
+ * overwrites.
+ *
+ * There's a complication: various triggers need to see both the old and the new
+ * key at the same time, if they're keys that have the same trigger - this
+ * breaks our strict insert-before-overwrite ordering, but not in a way that
+ * breaks moving extents (XXX: why?)
+ *
+ * Additionally, we run alloc triggers last - XXX, also why?
+ *
+ * Another, related trigger ordering issue not handled here: backpointers (as
+ * well as LRU entries) are inserted/removed by triggers that do simple
+ * inserts/updates - i.e. they don't increment/decrement usage counts, like
+ * alloc key/reflink btree updates.
+ *
+ * This means they have to run in the reverse order, overwrites before inserts:
+ * but the backpointers and LRU btrees do not themselves have triggers so the
+ * delete-then-recreate issue for alloc btree references does not happen here.
+ *
+ * To get the correct ordering for LRU/backpointer updates, we explicitly put
+ * the update on either the head or the tail of the list of pending updates, if
+ * it was an overwrite or an insert, respectively.
+ */
+
 static int run_one_mem_trigger(struct btree_trans *trans,
 			       struct btree_insert_entry *i,
 			       unsigned flags)
