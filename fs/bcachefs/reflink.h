@@ -21,6 +21,7 @@ int bch2_trigger_reflink_p(struct btree_trans *, enum btree_id, unsigned,
 int bch2_reflink_v_validate(struct bch_fs *, struct bkey_s_c,
 			    struct bkey_validate_context);
 void bch2_reflink_v_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
+bool bch2_reflink_v_merge(struct bch_fs *, struct bkey_s, struct bkey_s_c);
 int bch2_trigger_reflink_v(struct btree_trans *, enum btree_id, unsigned,
 			   struct bkey_s_c, struct bkey_s,
 			   enum btree_iter_update_trigger_flags);
@@ -28,6 +29,7 @@ int bch2_trigger_reflink_v(struct btree_trans *, enum btree_id, unsigned,
 #define bch2_bkey_ops_reflink_v ((struct bkey_ops) {		\
 	.key_validate	= bch2_reflink_v_validate,		\
 	.val_to_text	= bch2_reflink_v_to_text,		\
+	.key_merge	= bch2_reflink_v_merge,			\
 	.swab		= bch2_ptr_swab,			\
 	.trigger	= bch2_trigger_reflink_v,		\
 	.min_val_size	= 8,					\
