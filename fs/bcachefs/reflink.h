@@ -24,12 +24,14 @@ int bch2_reflink_v_invalid(struct bch_fs *, struct bkey_s_c,
 			   enum bkey_invalid_flags, struct printbuf *);
 void bch2_reflink_v_to_text(struct printbuf *, struct bch_fs *,
 			    struct bkey_s_c);
+bool bch2_reflink_v_merge(struct bch_fs *, struct bkey_s, struct bkey_s_c);
 int bch2_trigger_reflink_v(struct btree_trans *, enum btree_id, unsigned,
 			      struct bkey_s_c, struct bkey_s, unsigned);
 
 #define bch2_bkey_ops_reflink_v ((struct bkey_ops) {		\
 	.key_invalid	= bch2_reflink_v_invalid,		\
 	.val_to_text	= bch2_reflink_v_to_text,		\
+	.key_merge	= bch2_reflink_v_merge,			\
 	.swab		= bch2_ptr_swab,			\
 	.trigger	= bch2_trigger_reflink_v,		\
 	.min_val_size	= 8,					\
