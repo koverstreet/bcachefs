@@ -561,9 +561,12 @@ void __bch2_fs_stop(struct bch_fs *c)
 
 	cancel_work_sync(&c->read_only_work);
 
-	for (i = 0; i < c->sb.nr_devices; i++)
-		if (c->devs[i])
-			bch2_free_super(&c->devs[i]->disk_sb);
+	for (i = 0; i < c->sb.nr_devices; i++) {
+		struct bch_dev *ca = rcu_dereference_protected(c->devs[i], true);
+
+		if (ca)
+			bch2_free_super(&ca->disk_sb);
+	}
 }
 
 void bch2_fs_free(struct bch_fs *c)
@@ -753,11 +756,11 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 		goto err;
 
 	/* Compat: */
-	if (sb->version <= bcachefs_metadata_version_inode_v2 &&
+	if (le16_to_cpu(sb->version) <= bcachefs_metadata_version_inode_v2 &&
 	    !BCH_SB_JOURNAL_FLUSH_DELAY(sb))
 		SET_BCH_SB_JOURNAL_FLUSH_DELAY(sb, 1000);
 
-	if (sb->version <= bcachefs_metadata_version_inode_v2 &&
+	if (le16_to_cpu(sb->version) <= bcachefs_metadata_version_inode_v2 &&
 	    !BCH_SB_JOURNAL_RECLAIM_DELAY(sb))
 		SET_BCH_SB_JOURNAL_RECLAIM_DELAY(sb, 100);
 
@@ -2000,7 +2003,7 @@ err:
 BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
 
-unsigned bch2_metadata_version = bcachefs_metadata_version_current;
+static unsigned bch2_metadata_version = bcachefs_metadata_version_current;
 module_param_named(version, bch2_metadata_version, uint, 0400);
 
 module_exit(bcachefs_exit);
