@@ -192,6 +192,7 @@ static inline unsigned open_buckets_reserved(enum bch_watermark watermark)
 {
 	switch (watermark) {
 	case BCH_WATERMARK_reclaim:
+		return 0;
 	case BCH_WATERMARK_btree:
 	case BCH_WATERMARK_btree_copygc:
 		return OPEN_BUCKETS_COUNT / 4;
