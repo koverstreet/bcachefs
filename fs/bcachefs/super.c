@@ -653,8 +653,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	unsigned i, iter_size;
 	int ret = 0;
 
-	pr_verbose_init(opts, "");
-
 	c = kvpmalloc(sizeof(struct bch_fs), GFP_KERNEL|__GFP_ZERO);
 	if (!c) {
 		c = ERR_PTR(-BCH_ERR_ENOMEM_fs_alloc);
@@ -865,7 +863,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	if (ret)
 		goto err;
 out:
-	pr_verbose_init(opts, "ret %i", PTR_ERR_OR_ZERO(c));
 	return c;
 err:
 	bch2_fs_free(c);
@@ -1181,8 +1178,6 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	struct bch_dev *ca = NULL;
 	int ret = 0;
 
-	pr_verbose_init(c->opts, "");
-
 	if (bch2_fs_init_fault("dev_alloc"))
 		goto err;
 
@@ -1193,14 +1188,11 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	ca->fs = c;
 
 	bch2_dev_attach(c, ca, dev_idx);
-out:
-	pr_verbose_init(c->opts, "ret %i", ret);
 	return ret;
 err:
 	if (ca)
 		bch2_dev_free(ca);
-	ret = -BCH_ERR_ENOMEM_dev_alloc;
-	goto out;
+	return -BCH_ERR_ENOMEM_dev_alloc;
 }
 
 static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb)
@@ -1878,8 +1870,6 @@ struct bch_fs *bch2_fs_open(char * const *devices, unsigned nr_devices,
 	if (!try_module_get(THIS_MODULE))
 		return ERR_PTR(-ENODEV);
 
-	pr_verbose_init(opts, "");
-
 	if (!nr_devices) {
 		ret = -EINVAL;
 		goto err;
@@ -1951,8 +1941,6 @@ out:
 	kfree(sb);
 	printbuf_exit(&errbuf);
 	module_put(THIS_MODULE);
-	pr_verbose_init(opts, "ret %s (%i)", bch2_err_str(PTR_ERR_OR_ZERO(c)),
-			PTR_ERR_OR_ZERO(c));
 	return c;
 err_print:
 	pr_err("bch_fs_open err opening %s: %s",
