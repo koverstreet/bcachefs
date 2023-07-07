@@ -700,8 +700,8 @@ void bch2_trans_node_add(struct btree_trans *trans, struct btree *b)
 
 			if (t != BTREE_NODE_UNLOCKED) {
 				btree_node_unlock(trans, path, b->c.level);
-				six_lock_increment(&b->c.lock, t);
-				mark_btree_node_locked(trans, path, b->c.level, t);
+				six_lock_increment(&b->c.lock, (enum six_lock_type) t);
+				mark_btree_node_locked(trans, path, b->c.level, (enum six_lock_type) t);
 			}
 
 			bch2_btree_path_level_init(trans, path, b);
@@ -1438,7 +1438,7 @@ void bch2_btree_path_to_text(struct printbuf *out, struct btree_path *path)
 	prt_newline(out);
 }
 
-noinline __cold
+static noinline __cold
 void __bch2_trans_paths_to_text(struct printbuf *out, struct btree_trans *trans,
 				bool nosort)
 {
@@ -1458,7 +1458,7 @@ void bch2_trans_paths_to_text(struct printbuf *out, struct btree_trans *trans)
 	__bch2_trans_paths_to_text(out, trans, false);
 }
 
-noinline __cold
+static noinline __cold
 void __bch2_dump_trans_paths_updates(struct btree_trans *trans, bool nosort)
 {
 	struct printbuf buf = PRINTBUF;
@@ -1867,9 +1867,9 @@ static inline struct bkey_i *btree_trans_peek_updates(struct btree_iter *iter)
 		: NULL;
 }
 
-struct bkey_i *bch2_btree_journal_peek(struct btree_trans *trans,
-				       struct btree_iter *iter,
-				       struct bpos end_pos)
+static struct bkey_i *bch2_btree_journal_peek(struct btree_trans *trans,
+					      struct btree_iter *iter,
+					      struct bpos end_pos)
 {
 	struct bkey_i *k;
 

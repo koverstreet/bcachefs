@@ -216,7 +216,7 @@ void bch2_btree_ptr_v2_compat(enum btree_id btree_id, unsigned version,
 	compat_bpos(0, btree_id, version, big_endian, write, &bp.v->min_key);
 
 	if (version < bcachefs_metadata_version_inode_btree_change &&
-	    btree_node_type_is_extents(btree_id) &&
+	    btree_id_is_extents(btree_id) &&
 	    !bkey_eq(bp.v->min_key, POS_MIN))
 		bp.v->min_key = write
 			? bpos_nosnap_predecessor(bp.v->min_key)
@@ -514,7 +514,7 @@ static void bch2_extent_crc_pack(union bch_extent_crc *dst,
 	switch (type) {
 	case BCH_EXTENT_ENTRY_crc32:
 		set_common_fields(dst->crc32, src);
-		dst->crc32.csum	 = *((__le32 *) &src.csum.lo);
+		memcpy(&dst->crc32.csum, &src.csum.lo, sizeof(dst->crc32.csum));
 		break;
 	case BCH_EXTENT_ENTRY_crc64:
 		set_common_fields(dst->crc64, src);
