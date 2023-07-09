@@ -158,6 +158,7 @@ static struct open_bucket *bch2_open_bucket_alloc(struct bch_fs *c)
 
 static void open_bucket_free_unused(struct bch_fs *c, struct open_bucket *ob)
 {
+	EBUG_ON(!ob->sectors_free);
 	BUG_ON(c->open_buckets_partial_nr >=
 	       ARRAY_SIZE(c->open_buckets_partial));
 
@@ -758,6 +759,7 @@ static int add_new_bucket(struct bch_fs *c,
 	unsigned durability = ob_dev(c, ob)->mi.durability;
 
 	BUG_ON(*nr_effective >= nr_replicas);
+	EBUG_ON(!ob->sectors_free);
 
 	__clear_bit(ob->dev, devs_may_alloc->d);
 	*nr_effective	+= durability;
@@ -1160,6 +1162,9 @@ static void bch2_writepoint_stop(struct bch_fs *c, struct bch_dev *ca,
 		else
 			ob_push(c, &ptrs, ob);
 	wp->ptrs = ptrs;
+
+	open_bucket_for_each(c, &wp->ptrs, ob, i)
+		BUG_ON(!ob->sectors_free);
 	mutex_unlock(&wp->lock);
 }
 
@@ -1402,6 +1407,9 @@ retry:
 
 	*wp_ret = wp = writepoint_find(trans, write_point.v);
 
+	open_bucket_for_each(c, &wp->ptrs, ob, i)
+		BUG_ON(!ob->sectors_free);
+
 	ret = bch2_trans_relock(trans);
 	if (ret)
 		goto err;
@@ -1480,16 +1488,22 @@ alloc_done:
 	open_bucket_for_each(c, &wp->ptrs, ob, i)
 		wp->sectors_free = min(wp->sectors_free, ob->sectors_free);
 
-	BUG_ON(!wp->sectors_free || wp->sectors_free == UINT_MAX);
+	BUG_ON(!wp->sectors_free);
+	BUG_ON(wp->sectors_free == UINT_MAX);
 
 	return 0;
 err:
+	BUG_ON(ret >= 0);
+
 	open_bucket_for_each(c, &wp->ptrs, ob, i)
 		if (ptrs.nr < ARRAY_SIZE(ptrs.v))
 			ob_push(c, &ptrs, ob);
 		else
 			open_bucket_free_unused(c, ob);
 	wp->ptrs = ptrs;
+
+	open_bucket_for_each(c, &wp->ptrs, ob, i)
+		EBUG_ON(!ob->sectors_free);
 
 	mutex_unlock(&wp->lock);
 
