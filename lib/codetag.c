@@ -92,9 +92,9 @@ struct codetag *codetag_next_ct(struct codetag_iterator *iter)
 	return ct;
 }
 
-int codetag_to_text(char *buf, struct codetag *ct)
+void codetag_to_text(struct seq_buf *out, struct codetag *ct)
 {
-	return sprintf(buf, "%s:%u module:%s func:%s",
+	seq_buf_printf(out, "%s:%u module:%s func:%s",
 		       ct->filename, ct->lineno,
 		       ct->modname, ct->function);
 }

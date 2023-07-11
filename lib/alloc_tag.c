@@ -54,7 +54,7 @@ static void allocinfo_stop(struct seq_file *m, void *arg)
 	}
 }
 
-static void alloc_tag_to_text(char *buf, struct codetag *ct)
+static void alloc_tag_to_text(struct seq_buf *out, struct codetag *ct)
 {
 	struct alloc_tag *tag = ct_to_alloc_tag(ct);
 	s64 bytes = alloc_tag_read(tag);
@@ -69,17 +69,22 @@ static void alloc_tag_to_text(char *buf, struct codetag *ct)
 			STRING_SIZE_BASE2|STRING_SIZE_NOSPACE,
 			p, val + ARRAY_SIZE(val) - p);
 
-	buf += sprintf(buf, "%8s ", val);
-	buf += codetag_to_text(buf, ct);
+	seq_buf_printf(out, "%8s ", val);
+	codetag_to_text(out, ct);
+	seq_buf_putc(out, ' ');
+	seq_buf_putc(out, '\n');
 }
 
 static int allocinfo_show(struct seq_file *m, void *arg)
 {
 	struct codetag_iterator *iter = (struct codetag_iterator *)arg;
-	char buf[1024];
+	char *bufp;
+	size_t n = seq_get_buf(m, &bufp);
+	struct seq_buf buf;
 
-	alloc_tag_to_text(buf, iter->ct);
-	seq_printf(m, "%s\n", buf);
+	seq_buf_init(&buf, bufp, n);
+	alloc_tag_to_text(&buf, iter->ct);
+	seq_commit(m, seq_buf_used(&buf));
 	return 0;
 }
 
@@ -99,7 +104,6 @@ void alloc_tags_show_mem_report(struct seq_buf *s)
 		size_t			bytes;
 	} tags[10], n;
 	unsigned int i, nr = 0;
-	char buf[1024];
 
 	codetag_lock_module_list(alloc_tag_cttype, true);
 	iter = codetag_get_ct_iter(alloc_tag_cttype);
@@ -121,10 +125,8 @@ void alloc_tags_show_mem_report(struct seq_buf *s)
 		}
 	}
 
-	for (i = 0; i < nr; i++) {
-		alloc_tag_to_text(buf, tags[i].tag);
-		seq_buf_printf(s, "%s\n", buf);
-	}
+	for (i = 0; i < nr; i++)
+		alloc_tag_to_text(s, tags[i].tag);
 
 	codetag_lock_module_list(alloc_tag_cttype, false);
 }
