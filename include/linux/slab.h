@@ -456,7 +456,7 @@ static_assert(PAGE_SHIFT <= 20);
 #include <linux/alloc_tag.h>
 
 void *__kmalloc_noprof(size_t size, gfp_t flags) __assume_kmalloc_alignment __alloc_size(1);
-#define __kmalloc(...)			alloc_hooks(__kmalloc_noprof(__VA_ARGS__))
+#define __kmalloc(...)				alloc_hooks(__kmalloc_noprof(__VA_ARGS__))
 
 /**
  * kmem_cache_alloc - Allocate an object
@@ -496,7 +496,7 @@ static __always_inline void kfree_bulk(size_t size, void **p)
 
 void *__kmalloc_node_noprof(size_t size, gfp_t flags, int node) __assume_kmalloc_alignment
 							 __alloc_size(1);
-#define __kmalloc_node(...)		alloc_hooks(__kmalloc_node_noprof(__VA_ARGS__))
+#define __kmalloc_node(...)			alloc_hooks(__kmalloc_node_noprof(__VA_ARGS__))
 
 void *kmem_cache_alloc_node_noprof(struct kmem_cache *s, gfp_t flags, int node) __assume_slab_alignment
 									  __malloc;
@@ -657,8 +657,7 @@ static inline __realloc_size(2, 3) void * __must_check krealloc_array_noprof(voi
 
 void *kmalloc_node_track_caller_noprof(size_t size, gfp_t flags, int node,
 				  unsigned long caller) __alloc_size(1);
-#define kmalloc_node_track_caller(size, flags, node)			\
-	alloc_hooks(kmalloc_node_track_caller_noprof(size, flags, node, _RET_IP_))
+#define kmalloc_node_track_caller(...)		alloc_hooks(kmalloc_node_track_caller_noprof(__VA_ARGS__, _RET_IP_))
 
 /*
  * kmalloc_track_caller is a special version of kmalloc that records the
@@ -668,7 +667,7 @@ void *kmalloc_node_track_caller_noprof(size_t size, gfp_t flags, int node,
  * allocator where we care about the real place the memory allocation
  * request comes from.
  */
-#define kmalloc_track_caller(size, flags)	kmalloc_node_track_caller(size, flags, NUMA_NO_NODE)
+#define kmalloc_track_caller(...)		kmalloc_node_track_caller(__VA_ARGS__, NUMA_NO_NODE)
 
 static inline __alloc_size(1, 2) void *kmalloc_array_node_noprof(size_t n, size_t size, gfp_t flags,
 							  int node)
@@ -695,7 +694,11 @@ static inline __alloc_size(1, 2) void *kmalloc_array_node_noprof(size_t n, size_
  * @size: how many bytes of memory are required.
  * @flags: the type of memory to allocate (see kmalloc).
  */
-#define kzalloc(_size, _flags)			kmalloc(_size, (_flags)|__GFP_ZERO)
+static inline __alloc_size(1) void *kzalloc_noprof(size_t size, gfp_t flags)
+{
+	return kmalloc_noprof(size, flags | __GFP_ZERO);
+}
+#define kzalloc(...)				alloc_hooks(kzalloc_noprof(__VA_ARGS__))
 #define kzalloc_node(_size, _flags, _node)	kmalloc_node(_size, (_flags)|__GFP_ZERO, _node)
 
 extern void *kvmalloc_node_noprof(size_t size, gfp_t flags, int node) __alloc_size(1);
