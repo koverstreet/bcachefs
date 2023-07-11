@@ -10,7 +10,9 @@ void bch2_btree_lock_init(struct btree_bkey_cached_common *b,
 			  enum six_lock_init_flags flags)
 {
 	__six_lock_init(&b->lock, "b->c.lock", &bch2_btree_node_lock_key, flags);
-	lockdep_set_novalidate_class(&b->lock);
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+	lockdep_set_no_check_recursion(&b->lock.dep_map);
+#endif
 }
 
 #ifdef CONFIG_LOCKDEP
