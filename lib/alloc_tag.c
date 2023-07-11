@@ -57,11 +57,17 @@ static void allocinfo_stop(struct seq_file *m, void *arg)
 static void alloc_tag_to_text(char *buf, struct codetag *ct)
 {
 	struct alloc_tag *tag = ct_to_alloc_tag(ct);
-	char val[10];
+	s64 bytes = alloc_tag_read(tag);
+	char val[10], *p = val;
 
-	string_get_size(alloc_tag_read(tag), 1,
+	if (bytes < 0) {
+		*p++ = '-';
+		bytes = -bytes;
+	}
+
+	string_get_size(bytes, 1,
 			STRING_SIZE_BASE2|STRING_SIZE_NOSPACE,
-			val, sizeof(val));
+			p, val + ARRAY_SIZE(val) - p);
 
 	buf += sprintf(buf, "%8s ", val);
 	buf += codetag_to_text(buf, ct);
