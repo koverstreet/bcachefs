@@ -16,10 +16,7 @@ void bch2_btree_lock_init(struct btree_bkey_cached_common *b,
 #ifdef CONFIG_LOCKDEP
 void bch2_assert_btree_nodes_not_locked(void)
 {
-#if 0
-	//Re-enable when lock_class_is_held() is merged:
 	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
-#endif
 }
 #endif
 
