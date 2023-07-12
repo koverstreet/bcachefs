@@ -40,9 +40,8 @@
 #include <linux/limits.h>
 #include <linux/math.h>
 #include <linux/math64.h>
+#include <linux/mean_and_variance.h>
 #include <linux/module.h>
-
-#include "mean_and_variance.h"
 
 u128_u u128_div(u128_u n, u64 d)
 {

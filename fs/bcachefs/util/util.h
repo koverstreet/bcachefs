@@ -8,6 +8,7 @@
 #include <linux/errno.h>
 #include <linux/freezer.h>
 #include <linux/kernel.h>
+#include <linux/mean_and_variance.h>
 #include <linux/llist.h>
 #include <linux/log2.h>
 #include <linux/percpu.h>
@@ -22,8 +23,6 @@
 #include <linux/workqueue.h>
 
 #include "closure.h"
-#include "mean_and_variance.h"
-
 #include "time_stats.h"
 
 struct closure;

@@ -25,9 +25,9 @@
 #include <linux/sched/clock.h>
 #include <linux/sched/debug.h>
 #include <linux/sched/signal.h>
+#include <linux/mean_and_variance.h>
 
 #include "eytzinger.h"
-#include "mean_and_variance.h"
 #include "util.h"
 
 static const char si_units[] = "?kMGTPEZY";

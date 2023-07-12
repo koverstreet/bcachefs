@@ -105,7 +105,6 @@ bcachefs-y		:=			\
 	util/enumerated_ref.o			\
 	util/eytzinger.o			\
 	util/fast_list.o			\
-	util/mean_and_variance.o		\
 	util/printbuf.o				\
 	util/rcu_pending.o			\
 	util/siphash.o				\
@@ -128,10 +127,6 @@ bcachefs-y		:=			\
 
 ifdef CONFIG_DEBUG_FS
 	bcachefs-y += debug/async_objs.o
-endif
-
-ifndef BCACHEFS_DKMS
-	obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += util/mean_and_variance_test.o
 endif
 
 ifdef BCACHEFS_DKMS
