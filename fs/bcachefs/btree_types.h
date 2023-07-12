@@ -5,6 +5,7 @@
 #include <linux/darray_types.h>
 #include <linux/list.h>
 #include <linux/rhashtable.h>
+#include <linux/six.h>
 
 #include "bbpos_types.h"
 #include "btree_key_cache_types.h"
@@ -13,7 +14,6 @@
 #include "errcode.h"
 #include "journal_types.h"
 #include "replicas_types.h"
-#include "six.h"
 
 struct open_bucket;
 struct btree_update;
