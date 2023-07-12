@@ -9,6 +9,7 @@
 #include "bcachefs_format.h"
 
 extern const char * const bch2_error_actions[];
+extern const char * const bch2_fsck_fix_opts[];
 extern const char * const bch2_version_upgrade_opts[];
 extern const char * const bch2_sb_features[];
 extern const char * const bch2_sb_compat[];
@@ -318,7 +319,7 @@ enum opt_type {
 	  NULL,		"Run fsck on mount")				\
 	x(fix_errors,			u8,				\
 	  OPT_FS|OPT_MOUNT,						\
-	  OPT_BOOL(),							\
+	  OPT_STR(bch2_fsck_fix_opts),					\
 	  BCH2_NO_SB_OPT,		false,				\
 	  NULL,		"Fix errors during fsck without asking")	\
 	x(ratelimit_errors,		u8,				\

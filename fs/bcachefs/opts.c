@@ -5,6 +5,7 @@
 #include "bcachefs.h"
 #include "compress.h"
 #include "disk_groups.h"
+#include "error.h"
 #include "opts.h"
 #include "super-io.h"
 #include "util.h"
@@ -13,6 +14,11 @@
 
 const char * const bch2_error_actions[] = {
 	BCH_ERROR_ACTIONS()
+	NULL
+};
+
+const char * const bch2_fsck_fix_opts[] = {
+	BCH_FIX_ERRORS_OPTS()
 	NULL
 };
 

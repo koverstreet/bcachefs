@@ -91,11 +91,16 @@ do {									\
  * be able to repair:
  */
 
+#define BCH_FIX_ERRORS_OPTS()		\
+	x(exit,	0)			\
+	x(yes,	1)			\
+	x(no,	2)			\
+	x(ask,	3)
+
 enum fsck_err_opts {
-	FSCK_OPT_EXIT,
-	FSCK_OPT_YES,
-	FSCK_OPT_NO,
-	FSCK_OPT_ASK,
+#define x(t, n)	FSCK_OPT_##t,
+	BCH_FIX_ERRORS_OPTS()
+#undef x
 };
 
 struct fsck_err_state {
