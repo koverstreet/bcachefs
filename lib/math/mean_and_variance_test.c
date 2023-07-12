@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <kunit/test.h>
-
-#include "mean_and_variance.h"
+#include <linux/mean_and_variance.h>
 
 #define MAX_SQR (SQRT_U64_MAX*SQRT_U64_MAX)
 
