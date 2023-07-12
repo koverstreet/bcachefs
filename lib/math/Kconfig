@@ -15,3 +15,6 @@ config PRIME_NUMBERS
 
 config RATIONAL
 	tristate
+
+config MEAN_AND_VARIANCE
+	tristate
