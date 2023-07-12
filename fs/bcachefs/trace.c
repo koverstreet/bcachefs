@@ -8,9 +8,9 @@
 #include "btree_update_interior.h"
 #include "keylist.h"
 #include "opts.h"
-#include "six.h"
 
 #include <linux/blktrace_api.h>
+#include <linux/six.h>
 
 #define CREATE_TRACE_POINTS
 #include "trace.h"
