@@ -59,7 +59,6 @@ bcachefs-y		:=		\
 	keylist.o			\
 	logged_ops.o			\
 	lru.o				\
-	mean_and_variance.o		\
 	migrate.o			\
 	move.o				\
 	movinggc.o			\
@@ -89,5 +88,3 @@ bcachefs-y		:=		\
 	util.o				\
 	varint.o			\
 	xattr.o
-
-obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += mean_and_variance_test.o
