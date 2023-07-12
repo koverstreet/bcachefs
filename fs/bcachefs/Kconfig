@@ -21,6 +21,7 @@ config BCACHEFS_FS
 	select XOR_BLOCKS
 	select XXHASH
 	select SYMBOLIC_ERRNAME
+	select MEAN_AND_VARIANCE
 	help
 	The bcachefs filesystem - a modern, copy on write filesystem, with
 	support for multiple devices, compression, checksumming, etc.
@@ -95,12 +96,3 @@ config BCACHEFS_PATH_TRACEPOINTS
 config BCACHEFS_TRANS_KMALLOC_TRACE
 	bool "Trace bch2_trans_kmalloc() calls"
 	depends on BCACHEFS_FS
-
-config MEAN_AND_VARIANCE_UNIT_TEST
-	tristate "mean_and_variance unit tests" if !KUNIT_ALL_TESTS
-	depends on KUNIT
-	depends on BCACHEFS_FS
-	default KUNIT_ALL_TESTS
-	help
-	  This option enables the kunit tests for mean_and_variance module.
-	  If unsure, say N.

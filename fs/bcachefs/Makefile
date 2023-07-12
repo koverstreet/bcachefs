@@ -98,7 +98,6 @@ bcachefs-y		:=			\
 	util/enumerated_ref.o			\
 	util/eytzinger.o			\
 	util/fast_list.o			\
-	util/mean_and_variance.o		\
 	util/printbuf.o				\
 	util/rcu_pending.o			\
 	util/siphash.o				\
@@ -118,10 +117,6 @@ bcachefs-y		:=			\
 	vfs/buffered.o				\
 	vfs/direct.o				\
 	vfs/pagecache.o	
-
-ifndef BCACHEFS_DKMS
-	obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += util/mean_and_variance_test.o
-endif
 
 # Silence "note: xyz changed in GCC X.X" messages
 subdir-ccflags-y += $(call cc-disable-warning, psabi)
