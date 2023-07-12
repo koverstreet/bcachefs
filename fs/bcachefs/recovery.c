@@ -1248,12 +1248,12 @@ static int bch2_run_recovery_pass(struct bch_fs *c, enum bch_recovery_pass pass)
 		struct recovery_pass_fn *p = recovery_passes + pass;
 
 		if (!(p->when & PASS_SILENT))
-			printk(KERN_INFO bch2_log_msg(c, "%s..."), p->name);
+			bch2_print(c, KERN_INFO bch2_log_msg(c, "%s..."), p->name);
 		ret = p->fn(c);
 		if (ret)
 			return ret;
 		if (!(p->when & PASS_SILENT))
-			printk(KERN_CONT " done\n");
+			bch2_print(c, KERN_CONT " done\n");
 	}
 
 	return 0;
