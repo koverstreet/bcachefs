@@ -80,7 +80,6 @@ bcachefs-y		:=	\
 	sb-errors.o		\
 	sb-members.o		\
 	siphash.o		\
-	six.o			\
 	snapshot.o		\
 	subvolume.o		\
 	super.o			\
