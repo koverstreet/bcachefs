@@ -10,8 +10,9 @@
  * updating the iterator state
  */
 
+#include <linux/six.h>
+
 #include "btree_iter.h"
-#include "six.h"
 
 void bch2_btree_lock_init(struct btree_bkey_cached_common *, enum six_lock_init_flags);
 

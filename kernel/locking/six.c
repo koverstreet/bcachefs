@@ -8,11 +8,10 @@
 #include <linux/sched.h>
 #include <linux/sched/clock.h>
 #include <linux/sched/rt.h>
+#include <linux/six.h>
 #include <linux/slab.h>
 
 #include <trace/events/lock.h>
-
-#include "six.h"
 
 #ifdef DEBUG
 #define EBUG_ON(cond)			BUG_ON(cond)

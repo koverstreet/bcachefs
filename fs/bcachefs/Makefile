@@ -60,7 +60,6 @@ bcachefs-y		:=	\
 	reflink.o		\
 	replicas.o		\
 	siphash.o		\
-	six.o			\
 	subvolume.o		\
 	super.o			\
 	super-io.o		\

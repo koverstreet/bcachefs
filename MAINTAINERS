@@ -19407,6 +19407,14 @@ S:	Maintained
 W:	http://www.winischhofer.at/linuxsisusbvga.shtml
 F:	drivers/usb/misc/sisusbvga/
 
+SIX LOCKS
+M:	Kent Overstreet <kent.overstreet@linux.dev>
+L:	linux-bcachefs@vger.kernel.org
+S:	Supported
+C:	irc://irc.oftc.net/bcache
+F:	include/linux/six.h
+F:	kernel/locking/six.c
+
 SL28 CPLD MFD DRIVER
 M:	Michael Walle <michael@walle.cc>
 S:	Maintained
