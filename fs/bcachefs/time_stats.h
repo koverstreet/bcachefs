@@ -24,11 +24,10 @@
 #ifndef _BCACHEFS_TIME_STATS_H
 #define _BCACHEFS_TIME_STATS_H
 
+#include <linux/mean_and_variance.h>
 #include <linux/sched/clock.h>
 #include <linux/spinlock_types.h>
 #include <linux/string.h>
-
-#include "mean_and_variance.h"
 
 struct time_unit {
 	const char	*name;
