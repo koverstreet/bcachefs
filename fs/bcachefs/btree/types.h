@@ -5,6 +5,7 @@
 #include <linux/darray_types.h>
 #include <linux/list.h>
 #include <linux/rhashtable.h>
+#include <linux/six.h>
 
 #include "alloc/buckets_types.h"
 #include "alloc/replicas_types.h"
@@ -16,7 +17,6 @@
 #include "journal/types.h"
 
 #include "util/darray.h"
-#include "util/six.h"
 
 struct open_bucket;
 struct btree_update;
