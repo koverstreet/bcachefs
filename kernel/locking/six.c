@@ -9,15 +9,10 @@
 #include <linux/sched/clock.h>
 #include <linux/sched/rt.h>
 #include <linux/sched/task.h>
+#include <linux/six.h>
 #include <linux/slab.h>
 
 #include <trace/events/lock.h>
-
-#ifdef CONFIG_BCACHEFS_DEBUg
-#define DEBUG
-#endif
-
-#include "six.h"
 
 #ifdef DEBUG
 #define EBUG_ON(cond)			BUG_ON(cond)

@@ -101,7 +101,6 @@ bcachefs-y		:=			\
 	util/printbuf.o				\
 	util/rcu_pending.o			\
 	util/siphash.o				\
-	util/six.o				\
 	util/thread_with_file.o			\
 	util/two_state_shared_lock.o		\
 	util/util.o				\

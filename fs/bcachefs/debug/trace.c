@@ -13,9 +13,8 @@
 #include "data/keylist.h"
 #include "data/move_types.h"
 
-#include "util/six.h"
-
 #include <linux/blktrace_api.h>
+#include <linux/six.h>
 
 #define CREATE_TRACE_POINTS
 #include "debug/trace.h"

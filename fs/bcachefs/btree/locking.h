@@ -11,7 +11,6 @@
  */
 
 #include "btree/iter.h"
-#include "util/six.h"
 
 void __bch2_btree_path_verify_locks(struct btree_trans *, struct btree_path *);
 void __bch2_trans_verify_locks(struct btree_trans *);
