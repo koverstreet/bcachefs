@@ -79,7 +79,6 @@ bcachefs-y		:=	\
 	sb-errors.o		\
 	sb-members.o		\
 	siphash.o		\
-	six.o			\
 	snapshot.o		\
 	str_hash.o		\
 	subvolume.o		\

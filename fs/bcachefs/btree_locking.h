@@ -10,8 +10,9 @@
  * updating the iterator state
  */
 
+#include <linux/six.h>
+
 #include "btree_iter.h"
-#include "six.h"
 
 void __bch2_btree_path_verify_locks(struct btree_trans *, struct btree_path *);
 void __bch2_trans_verify_locks(struct btree_trans *);

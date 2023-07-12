@@ -19,6 +19,7 @@ config BCACHEFS_FS
 	select CRYPTO_LIB_CHACHA
 	select CRYPTO_LIB_POLY1305
 	select KEYS
+	select SIXLOCKS
 	select RAID6_PQ
 	select XOR_BLOCKS
 	select XXHASH
