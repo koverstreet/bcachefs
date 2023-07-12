@@ -66,7 +66,6 @@ bcachefs-y		:=	\
 	keylist.o		\
 	logged_ops.o		\
 	lru.o			\
-	mean_and_variance.o	\
 	migrate.o		\
 	move.o			\
 	movinggc.o		\
@@ -105,10 +104,6 @@ bcachefs-y		:=	\
 	xattr.o			\
 	vendor/closure.o	\
 	vendor/min_heap.o
-
-ifndef BCACHEFS_DKMS
-	obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += mean_and_variance_test.o
-endif
 
 # Silence "note: xyz changed in GCC X.X" messages
 subdir-ccflags-y += $(call cc-disable-warning, psabi)
