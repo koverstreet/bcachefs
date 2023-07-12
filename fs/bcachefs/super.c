@@ -64,6 +64,25 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Kent Overstreet <kent.overstreet@gmail.com>");
 
+void __bch2_print(struct bch_fs *c, const char *fmt, ...)
+{
+	va_list args;
+
+	va_start(args, fmt);
+	if (likely(!c->output)) {
+		vprintk(fmt, args);
+	} else {
+		unsigned long flags;
+
+		spin_lock_irqsave(&c->output->lock, flags);
+		prt_vprintf(&c->output->buf, fmt, args);
+		spin_unlock_irqrestore(&c->output->lock, flags);
+
+		wake_up(&c->output->wait);
+	}
+	va_end(args);
+}
+
 #define KTYPE(type)							\
 static const struct attribute_group type ## _group = {			\
 	.attrs = type ## _files						\
@@ -666,6 +685,8 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 		c = ERR_PTR(-BCH_ERR_ENOMEM_fs_alloc);
 		goto out;
 	}
+
+	c->output = (void *)(unsigned long) opts.log_output;
 
 	__module_get(THIS_MODULE);
 

@@ -30,8 +30,10 @@ struct thread_with_file {
 
 static void thread_with_file_exit(struct thread_with_file *thr)
 {
-	kthread_stop(thr->task);
-	put_task_struct(thr->task);
+	if (thr->task) {
+		kthread_stop(thr->task);
+		put_task_struct(thr->task);
+	}
 }
 
 static int run_thread_with_file(struct thread_with_file *thr,
@@ -187,8 +189,176 @@ static long bch2_ioctl_incremental(struct bch_ioctl_incremental __user *user_arg
 }
 #endif
 
+struct fsck_thread {
+	struct thread_with_file	thr;
+	struct printbuf		buf;
+	char			**devs;
+	size_t			nr_devs;
+	struct bch_opts		opts;
+
+	struct log_output	output;
+	DARRAY(char)		output2;
+};
+
+static void bch2_fsck_thread_free(struct fsck_thread *thr)
+{
+	thread_with_file_exit(&thr->thr);
+	if (thr->devs)
+		for (size_t i = 0; i < thr->nr_devs; i++)
+			kfree(thr->devs[i]);
+	darray_exit(&thr->output2);
+	printbuf_exit(&thr->output.buf);
+	kfree(thr->devs);
+	kfree(thr);
+}
+
+static int bch2_fsck_thread_release(struct inode *inode, struct file *file)
+{
+	struct fsck_thread *thr = container_of(file->private_data, struct fsck_thread, thr);
+
+	bch2_fsck_thread_free(thr);
+	return 0;
+}
+
+static ssize_t bch2_fsck_thread_read(struct file *file, char __user *buf,
+				     size_t len, loff_t *ppos)
+{
+	struct fsck_thread *thr = container_of(file->private_data, struct fsck_thread, thr);
+	size_t copied = 0, b;
+	int ret = 0;
+
+	ret = wait_event_interruptible(thr->output.wait,
+			thr->output.buf.pos || thr->output2.nr);
+	if (ret)
+		return ret;
+
+	while (len) {
+		ret = darray_make_room(&thr->output2, thr->output.buf.pos);
+		if (ret)
+			break;
+
+		spin_lock_irq(&thr->output.lock);
+		b = min_t(size_t, darray_room(thr->output2), thr->output.buf.pos);
+
+		memcpy(&darray_top(thr->output2), thr->output.buf.buf, b);
+		memmove(thr->output.buf.buf,
+			thr->output.buf.buf + b,
+			thr->output.buf.pos - b);
+
+		thr->output2.nr += b;
+		thr->output.buf.pos -= b;
+		spin_unlock_irq(&thr->output.lock);
+
+		b = min(len, thr->output2.nr);
+		if (!b)
+			break;
+
+		b -= copy_to_user(buf, thr->output2.data, b);
+		if (!b) {
+			ret = -EFAULT;
+			break;
+		}
+
+		copied	+= b;
+		buf	+= b;
+		len	-= b;
+
+		memmove(thr->output2.data,
+			thr->output2.data + b,
+			thr->output2.nr - b);
+		thr->output2.nr -= b;
+	}
+
+	return copied ?: ret;
+}
+
+static const struct file_operations fsck_thread_ops = {
+	.release	= bch2_fsck_thread_release,
+	.read		= bch2_fsck_thread_read,
+	.llseek		= no_llseek,
+};
+
+static int bch2_fsck_thread_fn(void *arg)
+{
+	struct fsck_thread *thr = container_of(arg, struct fsck_thread, thr);
+	struct bch_fs *c = bch2_fs_open(thr->devs, thr->nr_devs, thr->opts);
+
+	thr->thr.ret = PTR_ERR_OR_ZERO(c);
+	if (!thr->thr.ret)
+		bch2_fs_stop(c);
+	return 0;
+}
+
+static long bch2_ioctl_fsck(struct bch_ioctl_fsck __user *user_arg)
+{
+	struct bch_ioctl_fsck arg;
+	struct fsck_thread *thr = NULL;
+	u64 *devs = NULL;
+	long ret = 0;
+
+	if (copy_from_user(&arg, user_arg, sizeof(arg)))
+		return -EFAULT;
+
+	if (arg.flags)
+		return -EINVAL;
+
+	if (!(devs = kcalloc(arg.nr_devs, sizeof(*devs), GFP_KERNEL)) ||
+	    !(thr = kzalloc(sizeof(*thr), GFP_KERNEL)) ||
+	    !(thr->devs = kcalloc(arg.nr_devs, sizeof(*thr->devs), GFP_KERNEL))) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	thr->nr_devs = arg.nr_devs;
+	thr->output.buf	= PRINTBUF;
+	thr->output.buf.atomic++;
+	spin_lock_init(&thr->output.lock);
+	init_waitqueue_head(&thr->output.wait);
+	darray_init(&thr->output2);
+
+	if (copy_from_user(devs, &user_arg->devs[0], sizeof(user_arg->devs[0]) * arg.nr_devs)) {
+		ret = -EINVAL;
+		goto err;
+	}
+
+	for (size_t i = 0; i < arg.nr_devs; i++) {
+		thr->devs[i] = strndup_user((char __user *)(unsigned long) devs[i], PATH_MAX);
+		ret = PTR_ERR_OR_ZERO(thr->devs[i]);
+		if (ret)
+			goto err;
+	}
+
+	if (arg.opts) {
+		char *optstr = strndup_user((char __user *)(unsigned long) arg.opts, 1 << 16);
+
+		ret =   PTR_ERR_OR_ZERO(optstr) ?:
+			bch2_parse_mount_opts(NULL, &thr->opts, optstr);
+		kfree(optstr);
+
+		if (ret)
+			goto err;
+	}
+
+	opt_set(thr->opts, log_output, (u64)(unsigned long)&thr->output);
+
+	ret = run_thread_with_file(&thr->thr,
+				   &fsck_thread_ops,
+				   bch2_fsck_thread_fn,
+				   "bch-fsck");
+err:
+	if (ret < 0) {
+		if (thr)
+			bch2_fsck_thread_free(thr);
+		pr_err("ret %s", bch2_err_str(ret));
+	}
+	kfree(devs);
+	return ret;
+}
+
 static long bch2_global_ioctl(unsigned cmd, void __user *arg)
 {
+	long ret;
+
 	switch (cmd) {
 #if 0
 	case BCH_IOCTL_ASSEMBLE:
@@ -196,9 +366,18 @@ static long bch2_global_ioctl(unsigned cmd, void __user *arg)
 	case BCH_IOCTL_INCREMENTAL:
 		return bch2_ioctl_incremental(arg);
 #endif
-	default:
-		return -ENOTTY;
+	case BCH_IOCTL_FSCK: {
+		ret = bch2_ioctl_fsck(arg);
+		break;
 	}
+	default:
+		ret = -ENOTTY;
+		break;
+	}
+
+	if (ret < 0)
+		ret = bch2_err_class(ret);
+	return ret;
 }
 
 static long bch2_ioctl_query_uuid(struct bch_fs *c,
