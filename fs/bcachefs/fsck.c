@@ -1292,8 +1292,9 @@ static int check_i_sectors(struct btree_trans *trans, struct inode_walker *w)
 }
 
 struct extent_end {
-	u32			snapshot;
 	u64			offset;
+	u32			snapshot;
+	bool			seen_this_pos;
 	struct snapshots_seen	seen;
 };
 
@@ -1475,22 +1476,39 @@ static int check_overlapping_extents(struct btree_trans *trans,
 			      bool *fixed)
 {
 	struct bch_fs *c = trans->c;
+	u32 i_equiv;
 	int ret = 0;
 
 	/* transaction restart, running again */
 	if (bpos_eq(extent_ends->last_pos, k.k->p))
 		return 0;
 
-	if (extent_ends->last_pos.inode != k.k->p.inode)
+	if (extent_ends->last_pos.inode != k.k->p.inode) {
 		extent_ends_reset(extent_ends);
+	} else if (!bkey_eq(extent_ends->last_pos, k.k->p)) {
+		darray_for_each(extent_ends->e, i)
+			i->seen_this_pos = false;
+	}
 
 	darray_for_each(extent_ends->e, i) {
+		bool visible;
+
 		if (i->offset <= bkey_start_offset(k.k))
 			continue;
 
-		if (!ref_visible2(c,
-				  k.k->p.snapshot, seen,
-				  i->snapshot, &i->seen))
+		i_equiv = bch2_snapshot_equiv(c, i->snapshot);
+
+		if (i->snapshot <= k.k->p.snapshot) {
+			visible = !i->seen_this_pos && bch2_snapshot_is_ancestor(c, i_equiv, equiv);
+		} else {
+			visible = key_visible_in_snapshot(c, &i->seen, equiv, i_equiv);
+		}
+
+		BUG_ON(ref_visible2(c,
+				    k.k->p.snapshot, seen,
+				    i->snapshot, &i->seen) != visible);
+
+		if (!visible)
 			continue;
 
 		ret = overlapping_extents_found(trans, iter->btree_id,
@@ -1501,6 +1519,14 @@ static int check_overlapping_extents(struct btree_trans *trans,
 						*k.k, fixed, i);
 		if (ret)
 			goto err;
+
+		/*
+		 * XXX:
+		 * When we had repair work to do, and then a later transaction
+		 * restart, this will cause us to fail to find and repair this
+		 * entry:
+		 */
+		i->seen_this_pos = true;
 	}
 
 	extent_ends->last_pos = k.k->p;
