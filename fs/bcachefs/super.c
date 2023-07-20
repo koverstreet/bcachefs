@@ -885,7 +885,7 @@ static void print_mount_opts(struct bch_fs *c)
 	struct printbuf p = PRINTBUF;
 	bool first = true;
 
-	prt_str(&p, "mounted version ");
+	prt_str(&p, "mounting version ");
 	bch2_version_to_text(&p, c->sb.version);
 
 	if (c->opts.read_only) {
@@ -920,6 +920,8 @@ int bch2_fs_start(struct bch_fs *c)
 	time64_t now = ktime_get_real_seconds();
 	unsigned i;
 	int ret;
+
+	print_mount_opts(c);
 
 	down_write(&c->state_lock);
 
@@ -974,7 +976,6 @@ int bch2_fs_start(struct bch_fs *c)
 			goto err;
 	}
 
-	print_mount_opts(c);
 	ret = 0;
 out:
 	up_write(&c->state_lock);
