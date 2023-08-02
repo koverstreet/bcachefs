@@ -688,7 +688,7 @@ bool bch2_extent_normalize(struct bch_fs *, struct bkey_s);
 void bch2_bkey_ptrs_to_text(struct printbuf *, struct bch_fs *,
 			    struct bkey_s_c);
 int bch2_bkey_ptrs_invalid(const struct bch_fs *, struct bkey_s_c,
-			   unsigned, struct printbuf *);
+			   enum bkey_invalid_flags, struct printbuf *);
 
 void bch2_ptr_swab(struct bkey_s);
 
