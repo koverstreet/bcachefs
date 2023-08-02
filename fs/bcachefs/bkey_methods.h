@@ -55,11 +55,12 @@ static inline const struct bkey_ops *bch2_bkey_type_ops(enum bch_bkey_type type)
 		: &bch2_bkey_null_ops;
 }
 
-int bch2_bkey_val_invalid(struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *);
-int __bch2_bkey_invalid(struct bch_fs *, struct bkey_s_c,
-			enum btree_node_type, unsigned, struct printbuf *);
-int bch2_bkey_invalid(struct bch_fs *, struct bkey_s_c,
-		      enum btree_node_type, unsigned, struct printbuf *);
+int bch2_bkey_val_invalid(struct bch_fs *, struct bkey_s_c,
+			  enum bkey_invalid_flags, struct printbuf *);
+int __bch2_bkey_invalid(struct bch_fs *, struct bkey_s_c, enum btree_node_type,
+			enum bkey_invalid_flags, struct printbuf *);
+int bch2_bkey_invalid(struct bch_fs *, struct bkey_s_c, enum btree_node_type,
+		      enum bkey_invalid_flags, struct printbuf *);
 int bch2_bkey_in_btree_node(struct btree *, struct bkey_s_c, struct printbuf *);
 
 void bch2_bpos_to_text(struct printbuf *, struct bpos);
