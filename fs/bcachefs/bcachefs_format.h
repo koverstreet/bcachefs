@@ -669,7 +669,6 @@ struct bch_sb_field_ext {
 	x(snapshot_skiplists,		BCH_VERSION(1,  1))		\
 	x(deleted_inodes,		BCH_VERSION(1,  2))		\
 	x(rebalance_work,		BCH_VERSION(1,  3))		\
-	x(member_seq,			BCH_VERSION(1,  4))		\
 	x(subvolume_fs_parent,		BCH_VERSION(1,  5))		\
 	x(btree_subvolume_children,	BCH_VERSION(1,  6))		\
 	x(mi_btree_bitmap,		BCH_VERSION(1,  7))		\
@@ -678,7 +677,8 @@ struct bch_sb_field_ext {
 	x(disk_accounting_v3,		BCH_VERSION(1, 10))		\
 	x(disk_accounting_inum,		BCH_VERSION(1, 11))		\
 	x(rebalance_work_acct_fix,	BCH_VERSION(1, 12))		\
-	x(inode_has_child_snapshots,	BCH_VERSION(1, 13))
+	x(inode_has_child_snapshots,	BCH_VERSION(1, 13))		\
+	x(inode_depth,			BCH_VERSION(1, 14))
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,
