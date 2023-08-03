@@ -671,12 +671,12 @@ struct bch_sb_field_ext {
 	x(snapshot_skiplists,		BCH_VERSION(1,  1))		\
 	x(deleted_inodes,		BCH_VERSION(1,  2))		\
 	x(rebalance_work,		BCH_VERSION(1,  3))		\
-	x(member_seq,			BCH_VERSION(1,  4))		\
 	x(subvolume_fs_parent,		BCH_VERSION(1,  5))		\
 	x(btree_subvolume_children,	BCH_VERSION(1,  6))		\
 	x(mi_btree_bitmap,		BCH_VERSION(1,  7))		\
 	x(bucket_stripe_sectors,	BCH_VERSION(1,  8))		\
-	x(disk_accounting_v2,		BCH_VERSION(1,  9))
+	x(disk_accounting_v2,		BCH_VERSION(1,  9))		\
+	x(inode_depth,			BCH_VERSION(1,  10))
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,
