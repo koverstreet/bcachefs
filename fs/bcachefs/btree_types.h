@@ -4,7 +4,6 @@
 
 #include <linux/list.h>
 #include <linux/rhashtable.h>
-#include <linux/six.h>
 
 //#include "bkey_methods.h"
 #include "buckets_types.h"
@@ -12,6 +11,7 @@
 #include "errcode.h"
 #include "journal_types.h"
 #include "replicas_types.h"
+#include "six.h"
 
 struct open_bucket;
 struct btree_update;
@@ -162,16 +162,6 @@ struct btree_cache {
 	/* Number of elements in live + freeable lists */
 	unsigned		used;
 	unsigned		reserve;
-	unsigned		freed;
-	unsigned		not_freed_lock_intent;
-	unsigned		not_freed_lock_write;
-	unsigned		not_freed_dirty;
-	unsigned		not_freed_read_in_flight;
-	unsigned		not_freed_write_in_flight;
-	unsigned		not_freed_noevict;
-	unsigned		not_freed_write_blocked;
-	unsigned		not_freed_will_make_reachable;
-	unsigned		not_freed_access_bit;
 	atomic_t		dirty;
 	struct shrinker		shrink;
 
@@ -221,6 +211,7 @@ static const u16 BTREE_ITER_FILTER_SNAPSHOTS	= 1 << 12;
 static const u16 BTREE_ITER_NOPRESERVE		= 1 << 13;
 static const u16 BTREE_ITER_CACHED_NOFILL	= 1 << 14;
 static const u16 BTREE_ITER_KEY_CACHE_FILL	= 1 << 15;
+#define __BTREE_ITER_FLAGS_END			       16
 
 enum btree_path_uptodate {
 	BTREE_ITER_UPTODATE		= 0,
@@ -389,13 +380,18 @@ struct btree_insert_entry {
 	u8			old_btree_u64s;
 	struct bkey_i		*k;
 	struct btree_path	*path;
+	u64			seq;
 	/* key being overwritten: */
 	struct bkey		old_k;
 	const struct bch_val	*old_v;
 	unsigned long		ip_allocated;
 };
 
+#ifndef CONFIG_LOCKDEP
 #define BTREE_ITER_MAX		64
+#else
+#define BTREE_ITER_MAX		32
+#endif
 
 struct btree_trans_commit_hook;
 typedef int (btree_trans_commit_hook_fn)(struct btree_trans *, struct btree_trans_commit_hook *);
@@ -434,7 +430,6 @@ struct btree_trans {
 	bool			memory_allocation_failure:1;
 	bool			journal_transaction_names:1;
 	bool			journal_replay_not_finished:1;
-	bool			is_initial_gc:1;
 	bool			notrace_relock_fail:1;
 	enum bch_errcode	restarted:16;
 	u32			restart_count;
@@ -641,7 +636,7 @@ static inline unsigned bset_byte_offset(struct btree *b, void *i)
 }
 
 enum btree_node_type {
-#define x(kwd, val) BKEY_TYPE_##kwd = val,
+#define x(kwd, val, ...) BKEY_TYPE_##kwd = val,
 	BCH_BTREE_IDS()
 #undef x
 	BKEY_TYPE_btree,
@@ -660,56 +655,64 @@ static inline enum btree_node_type btree_node_type(struct btree *b)
 }
 
 #define BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS		\
-	((1U << BKEY_TYPE_extents)|			\
-	 (1U << BKEY_TYPE_alloc)|			\
-	 (1U << BKEY_TYPE_inodes)|			\
-	 (1U << BKEY_TYPE_stripes)|			\
-	 (1U << BKEY_TYPE_reflink)|			\
-	 (1U << BKEY_TYPE_btree))
+	(BIT(BKEY_TYPE_extents)|			\
+	 BIT(BKEY_TYPE_alloc)|				\
+	 BIT(BKEY_TYPE_inodes)|				\
+	 BIT(BKEY_TYPE_stripes)|			\
+	 BIT(BKEY_TYPE_reflink)|			\
+	 BIT(BKEY_TYPE_btree))
 
 #define BTREE_NODE_TYPE_HAS_MEM_TRIGGERS		\
-	((1U << BKEY_TYPE_alloc)|			\
-	 (1U << BKEY_TYPE_inodes)|			\
-	 (1U << BKEY_TYPE_stripes)|			\
-	 (1U << BKEY_TYPE_snapshots))
+	(BIT(BKEY_TYPE_alloc)|				\
+	 BIT(BKEY_TYPE_inodes)|				\
+	 BIT(BKEY_TYPE_stripes)|			\
+	 BIT(BKEY_TYPE_snapshots))
 
 #define BTREE_NODE_TYPE_HAS_TRIGGERS			\
 	(BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS|		\
 	 BTREE_NODE_TYPE_HAS_MEM_TRIGGERS)
 
-#define BTREE_ID_IS_EXTENTS				\
-	((1U << BTREE_ID_extents)|			\
-	 (1U << BTREE_ID_reflink)|			\
-	 (1U << BTREE_ID_freespace))
+static inline bool btree_node_type_needs_gc(enum btree_node_type type)
+{
+	return BTREE_NODE_TYPE_HAS_TRIGGERS & (1U << type);
+}
 
 static inline bool btree_node_type_is_extents(enum btree_node_type type)
 {
-	return (1U << type) & BTREE_ID_IS_EXTENTS;
+	const unsigned mask = 0
+#define x(name, nr, flags, ...)	|((!!((flags) & BTREE_ID_EXTENTS)) << nr)
+	BCH_BTREE_IDS()
+#undef x
+	;
+
+	return (1U << type) & mask;
 }
 
-#define BTREE_ID_HAS_SNAPSHOTS				\
-	((1U << BTREE_ID_extents)|			\
-	 (1U << BTREE_ID_inodes)|			\
-	 (1U << BTREE_ID_dirents)|			\
-	 (1U << BTREE_ID_xattrs))
-
-#define BTREE_ID_HAS_PTRS				\
-	((1U << BTREE_ID_extents)|			\
-	 (1U << BTREE_ID_reflink))
+static inline bool btree_id_is_extents(enum btree_id btree)
+{
+	return btree_node_type_is_extents((enum btree_node_type) btree);
+}
 
 static inline bool btree_type_has_snapshots(enum btree_id id)
 {
-	return (1 << id) & BTREE_ID_HAS_SNAPSHOTS;
+	const unsigned mask = 0
+#define x(name, nr, flags, ...)	|((!!((flags) & BTREE_ID_SNAPSHOTS)) << nr)
+	BCH_BTREE_IDS()
+#undef x
+	;
+
+	return (1U << id) & mask;
 }
 
 static inline bool btree_type_has_ptrs(enum btree_id id)
 {
-	return (1 << id) & BTREE_ID_HAS_PTRS;
-}
+	const unsigned mask = 0
+#define x(name, nr, flags, ...)	|((!!((flags) & BTREE_ID_DATA)) << nr)
+	BCH_BTREE_IDS()
+#undef x
+	;
 
-static inline bool btree_node_type_needs_gc(enum btree_node_type type)
-{
-	return BTREE_NODE_TYPE_HAS_TRIGGERS & (1U << type);
+	return (1U << id) & mask;
 }
 
 struct btree_root {

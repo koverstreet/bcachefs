@@ -22,9 +22,9 @@
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/sched/clock.h>
-#include <linux/mean_and_variance.h>
 
 #include "eytzinger.h"
+#include "mean_and_variance.h"
 #include "util.h"
 
 static const char si_units[] = "?kMGTPEZY";
@@ -216,6 +216,7 @@ u64 bch2_read_flag_list(char *opt, const char * const list[])
 
 	while ((p = strsep(&s, ","))) {
 		int flag = match_string(list, -1, p);
+
 		if (flag < 0) {
 			ret = -1;
 			break;
@@ -268,7 +269,26 @@ void bch2_print_string_as_lines(const char *prefix, const char *lines)
 
 int bch2_save_backtrace(bch_stacktrace *stack, struct task_struct *task)
 {
-	return 0;
+	unsigned nr_entries = 0;
+	int ret = 0;
+
+	stack->nr = 0;
+	ret = darray_make_room(stack, 32);
+	if (ret)
+		return ret;
+
+	if (!down_read_trylock(&task->signal->exec_update_lock))
+		return -1;
+
+	do {
+		nr_entries = stack_trace_save_tsk(task, stack->data, stack->size, 0);
+	} while (nr_entries == stack->size &&
+		 !(ret = darray_make_room(stack, stack->size * 2)));
+
+	stack->nr = nr_entries;
+	up_read(&task->signal->exec_update_lock);
+
+	return ret;
 }
 
 void bch2_prt_backtrace(struct printbuf *out, bch_stacktrace *stack)
@@ -331,11 +351,8 @@ static inline void bch2_time_stats_update_one(struct bch2_time_stats *stats,
 
 	if (time_after64(end, start)) {
 		duration = end - start;
-		stats->duration_stats = mean_and_variance_update_inlined(stats->duration_stats,
-								 duration);
-		stats->duration_stats_weighted = mean_and_variance_weighted_update(
-			stats->duration_stats_weighted,
-			duration);
+		mean_and_variance_update(&stats->duration_stats, duration);
+		mean_and_variance_weighted_update(&stats->duration_stats_weighted, duration);
 		stats->max_duration = max(stats->max_duration, duration);
 		stats->min_duration = min(stats->min_duration, duration);
 		bch2_quantiles_update(&stats->quantiles, duration);
@@ -343,10 +360,8 @@ static inline void bch2_time_stats_update_one(struct bch2_time_stats *stats,
 
 	if (time_after64(end, stats->last_event)) {
 		freq = end - stats->last_event;
-		stats->freq_stats = mean_and_variance_update_inlined(stats->freq_stats, freq);
-		stats->freq_stats_weighted = mean_and_variance_weighted_update(
-			stats->freq_stats_weighted,
-			freq);
+		mean_and_variance_update(&stats->freq_stats, freq);
+		mean_and_variance_weighted_update(&stats->freq_stats_weighted, freq);
 		stats->max_freq = max(stats->max_freq, freq);
 		stats->min_freq = min(stats->min_freq, freq);
 		stats->last_event = end;
@@ -575,8 +590,8 @@ void bch2_time_stats_exit(struct bch2_time_stats *stats)
 void bch2_time_stats_init(struct bch2_time_stats *stats)
 {
 	memset(stats, 0, sizeof(*stats));
-	stats->duration_stats_weighted.w = 8;
-	stats->freq_stats_weighted.w = 8;
+	stats->duration_stats_weighted.weight = 8;
+	stats->freq_stats_weighted.weight = 8;
 	stats->min_duration = U64_MAX;
 	stats->min_freq = U64_MAX;
 	spin_lock_init(&stats->lock);
@@ -742,7 +757,7 @@ void bch2_bio_map(struct bio *bio, void *base, size_t size)
 	}
 }
 
-int _bch2_bio_alloc_pages(struct bio *bio, size_t size, gfp_t gfp_mask)
+int bch2_bio_alloc_pages(struct bio *bio, size_t size, gfp_t gfp_mask)
 {
 	while (size) {
 		struct page *page = alloc_pages(gfp_mask, 0);
@@ -783,9 +798,10 @@ void memcpy_to_bio(struct bio *dst, struct bvec_iter dst_iter, const void *src)
 	struct bvec_iter iter;
 
 	__bio_for_each_segment(bv, dst, iter, dst_iter) {
-		void *dstp = kmap_atomic(bv.bv_page);
+		void *dstp = kmap_local_page(bv.bv_page);
+
 		memcpy(dstp + bv.bv_offset, src, bv.bv_len);
-		kunmap_atomic(dstp);
+		kunmap_local(dstp);
 
 		src += bv.bv_len;
 	}
@@ -797,9 +813,10 @@ void memcpy_from_bio(void *dst, struct bio *src, struct bvec_iter src_iter)
 	struct bvec_iter iter;
 
 	__bio_for_each_segment(bv, src, iter, src_iter) {
-		void *srcp = kmap_atomic(bv.bv_page);
+		void *srcp = kmap_local_page(bv.bv_page);
+
 		memcpy(dst, srcp + bv.bv_offset, bv.bv_len);
-		kunmap_atomic(srcp);
+		kunmap_local(srcp);
 
 		dst += bv.bv_len;
 	}

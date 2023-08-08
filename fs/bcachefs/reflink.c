@@ -26,15 +26,10 @@ static inline unsigned bkey_type_to_indirect(const struct bkey *k)
 /* reflink pointers */
 
 int bch2_reflink_p_invalid(const struct bch_fs *c, struct bkey_s_c k,
-			   unsigned flags, struct printbuf *err)
+			   enum bkey_invalid_flags flags,
+			   struct printbuf *err)
 {
 	struct bkey_s_c_reflink_p p = bkey_s_c_to_reflink_p(k);
-
-	if (bkey_val_bytes(p.k) != sizeof(*p.v)) {
-		prt_printf(err, "incorrect value size (%zu != %zu)",
-		       bkey_val_bytes(p.k), sizeof(*p.v));
-		return -EINVAL;
-	}
 
 	if (c->sb.version >= bcachefs_metadata_version_reflink_p_fix &&
 	    le64_to_cpu(p.v->idx) < le32_to_cpu(p.v->front_pad)) {
@@ -78,16 +73,9 @@ bool bch2_reflink_p_merge(struct bch_fs *c, struct bkey_s _l, struct bkey_s_c _r
 /* indirect extents */
 
 int bch2_reflink_v_invalid(const struct bch_fs *c, struct bkey_s_c k,
-			   unsigned flags, struct printbuf *err)
+			   enum bkey_invalid_flags flags,
+			   struct printbuf *err)
 {
-	struct bkey_s_c_reflink_v r = bkey_s_c_to_reflink_v(k);
-
-	if (bkey_val_bytes(r.k) < sizeof(*r.v)) {
-		prt_printf(err, "incorrect value size (%zu < %zu)",
-		       bkey_val_bytes(r.k), sizeof(*r.v));
-		return -BCH_ERR_invalid_bkey;
-	}
-
 	return bch2_bkey_ptrs_invalid(c, k, flags, err);
 }
 
@@ -131,14 +119,9 @@ int bch2_trans_mark_reflink_v(struct btree_trans *trans,
 /* indirect inline data */
 
 int bch2_indirect_inline_data_invalid(const struct bch_fs *c, struct bkey_s_c k,
-				      unsigned flags, struct printbuf *err)
+				      enum bkey_invalid_flags flags,
+				      struct printbuf *err)
 {
-	if (bkey_val_bytes(k.k) < sizeof(struct bch_indirect_inline_data)) {
-		prt_printf(err, "incorrect value size (%zu < %zu)",
-		       bkey_val_bytes(k.k), sizeof(struct bch_indirect_inline_data));
-		return -BCH_ERR_invalid_bkey;
-	}
-
 	return 0;
 }
 
@@ -187,23 +170,12 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	if (orig->k.type == KEY_TYPE_inline_data)
 		bch2_check_set_feature(c, BCH_FEATURE_reflink_inline_data);
 
-	for_each_btree_key_norestart(trans, reflink_iter, BTREE_ID_reflink,
-			   POS(0, c->reflink_hint),
-			   BTREE_ITER_SLOTS, k, ret) {
-		if (reflink_iter.pos.inode) {
-			bch2_btree_iter_set_pos(&reflink_iter, POS_MIN);
-			continue;
-		}
-
-		if (bkey_deleted(k.k) && orig->k.size <= k.k->size)
-			break;
-	}
-
+	bch2_trans_iter_init(trans, &reflink_iter, BTREE_ID_reflink, POS_MAX,
+			     BTREE_ITER_INTENT);
+	k = bch2_btree_iter_peek_prev(&reflink_iter);
+	ret = bkey_err(k);
 	if (ret)
 		goto err;
-
-	/* rewind iter to start of hole, if necessary: */
-	bch2_btree_iter_set_pos_to_extent_start(&reflink_iter);
 
 	r_v = bch2_trans_kmalloc(trans, sizeof(__le64) + bkey_bytes(&orig->k));
 	ret = PTR_ERR_OR_ZERO(r_v);
@@ -234,14 +206,18 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	r_p = bkey_i_to_reflink_p(orig);
 	set_bkey_val_bytes(&r_p->k, sizeof(r_p->v));
 
+	/* FORTIFY_SOURCE is broken here, and doesn't provide unsafe_memset() */
+#if !defined(__NO_FORTIFY) && defined(__OPTIMIZE__) && defined(CONFIG_FORTIFY_SOURCE)
+	__underlying_memset(&r_p->v, 0, sizeof(r_p->v));
+#else
 	memset(&r_p->v, 0, sizeof(r_p->v));
+#endif
 
 	r_p->v.idx = cpu_to_le64(bkey_start_offset(&r_v->k));
 
 	ret = bch2_trans_update(trans, extent_iter, &r_p->k_i,
 				BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE);
 err:
-	c->reflink_hint = reflink_iter.pos.offset;
 	bch2_trans_iter_exit(trans, &reflink_iter);
 
 	return ret;

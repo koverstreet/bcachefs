@@ -150,26 +150,27 @@ static inline struct bch_dev_usage bch2_dev_usage_read(struct bch_dev *ca)
 
 void bch2_dev_usage_init(struct bch_dev *);
 
-static inline u64 bch2_dev_buckets_reserved(struct bch_dev *ca, enum alloc_reserve reserve)
+static inline u64 bch2_dev_buckets_reserved(struct bch_dev *ca, enum bch_watermark watermark)
 {
 	s64 reserved = 0;
 
-	switch (reserve) {
-	case RESERVE_NR:
+	switch (watermark) {
+	case BCH_WATERMARK_NR:
 		unreachable();
-	case RESERVE_stripe:
+	case BCH_WATERMARK_stripe:
 		reserved += ca->mi.nbuckets >> 6;
 		fallthrough;
-	case RESERVE_none:
+	case BCH_WATERMARK_normal:
 		reserved += ca->mi.nbuckets >> 6;
 		fallthrough;
-	case RESERVE_movinggc:
+	case BCH_WATERMARK_copygc:
 		reserved += ca->nr_btree_reserve;
 		fallthrough;
-	case RESERVE_btree:
+	case BCH_WATERMARK_btree:
 		reserved += ca->nr_btree_reserve;
 		fallthrough;
-	case RESERVE_btree_movinggc:
+	case BCH_WATERMARK_btree_copygc:
+	case BCH_WATERMARK_reclaim:
 		break;
 	}
 
@@ -178,17 +179,17 @@ static inline u64 bch2_dev_buckets_reserved(struct bch_dev *ca, enum alloc_reser
 
 static inline u64 dev_buckets_free(struct bch_dev *ca,
 				   struct bch_dev_usage usage,
-				   enum alloc_reserve reserve)
+				   enum bch_watermark watermark)
 {
 	return max_t(s64, 0,
 		     usage.d[BCH_DATA_free].buckets -
 		     ca->nr_open_buckets -
-		     bch2_dev_buckets_reserved(ca, reserve));
+		     bch2_dev_buckets_reserved(ca, watermark));
 }
 
 static inline u64 __dev_buckets_available(struct bch_dev *ca,
 					  struct bch_dev_usage usage,
-					  enum alloc_reserve reserve)
+					  enum bch_watermark watermark)
 {
 	return max_t(s64, 0,
 		       usage.d[BCH_DATA_free].buckets
@@ -196,21 +197,35 @@ static inline u64 __dev_buckets_available(struct bch_dev *ca,
 		     + usage.d[BCH_DATA_need_gc_gens].buckets
 		     + usage.d[BCH_DATA_need_discard].buckets
 		     - ca->nr_open_buckets
-		     - bch2_dev_buckets_reserved(ca, reserve));
+		     - bch2_dev_buckets_reserved(ca, watermark));
 }
 
 static inline u64 dev_buckets_available(struct bch_dev *ca,
-					enum alloc_reserve reserve)
+					enum bch_watermark watermark)
 {
-	return __dev_buckets_available(ca, bch2_dev_usage_read(ca), reserve);
+	return __dev_buckets_available(ca, bch2_dev_usage_read(ca), watermark);
 }
 
 /* Filesystem usage: */
 
+static inline unsigned __fs_usage_u64s(unsigned nr_replicas)
+{
+	return sizeof(struct bch_fs_usage) / sizeof(u64) + nr_replicas;
+}
+
 static inline unsigned fs_usage_u64s(struct bch_fs *c)
 {
-	return sizeof(struct bch_fs_usage) / sizeof(u64) +
-		READ_ONCE(c->replicas.nr);
+	return __fs_usage_u64s(READ_ONCE(c->replicas.nr));
+}
+
+static inline unsigned __fs_usage_online_u64s(unsigned nr_replicas)
+{
+	return sizeof(struct bch_fs_usage_online) / sizeof(u64) + nr_replicas;
+}
+
+static inline unsigned fs_usage_online_u64s(struct bch_fs *c)
+{
+	return __fs_usage_online_u64s(READ_ONCE(c->replicas.nr));
 }
 
 static inline unsigned dev_usage_u64s(void)
@@ -234,6 +249,20 @@ bch2_fs_usage_read_short(struct bch_fs *);
 
 /* key/bucket marking: */
 
+static inline struct bch_fs_usage *fs_usage_ptr(struct bch_fs *c,
+						unsigned journal_seq,
+						bool gc)
+{
+	percpu_rwsem_assert_held(&c->mark_lock);
+	BUG_ON(!gc && !journal_seq);
+
+	return this_cpu_ptr(gc
+			    ? c->usage_gc
+			    : c->usage[journal_seq & JOURNAL_BUF_MASK]);
+}
+
+int bch2_replicas_deltas_realloc(struct btree_trans *, unsigned);
+
 void bch2_fs_usage_initialize(struct bch_fs *);
 
 int bch2_mark_metadata_bucket(struct bch_fs *, struct bch_dev *,
@@ -246,8 +275,6 @@ int bch2_mark_extent(struct btree_trans *, enum btree_id, unsigned,
 		     struct bkey_s_c, struct bkey_s_c, unsigned);
 int bch2_mark_stripe(struct btree_trans *, enum btree_id, unsigned,
 		     struct bkey_s_c, struct bkey_s_c, unsigned);
-int bch2_mark_inode(struct btree_trans *, enum btree_id, unsigned,
-		    struct bkey_s_c, struct bkey_s_c, unsigned);
 int bch2_mark_reservation(struct btree_trans *, enum btree_id, unsigned,
 			  struct bkey_s_c, struct bkey_s_c, unsigned);
 int bch2_mark_reflink_p(struct btree_trans *, enum btree_id, unsigned,
@@ -255,7 +282,6 @@ int bch2_mark_reflink_p(struct btree_trans *, enum btree_id, unsigned,
 
 int bch2_trans_mark_extent(struct btree_trans *, enum btree_id, unsigned, struct bkey_s_c, struct bkey_i *, unsigned);
 int bch2_trans_mark_stripe(struct btree_trans *, enum btree_id, unsigned, struct bkey_s_c, struct bkey_i *, unsigned);
-int bch2_trans_mark_inode(struct btree_trans *, enum btree_id, unsigned, struct bkey_s_c, struct bkey_i *, unsigned);
 int bch2_trans_mark_reservation(struct btree_trans *, enum btree_id, unsigned, struct bkey_s_c, struct bkey_i *, unsigned);
 int bch2_trans_mark_reflink_p(struct btree_trans *, enum btree_id, unsigned, struct bkey_s_c, struct bkey_i *, unsigned);
 

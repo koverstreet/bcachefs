@@ -14,83 +14,17 @@
 #include "move.h"
 #include "nocow_locking.h"
 #include "subvolume.h"
+#include "trace.h"
 
-#include <trace/events/bcachefs.h>
-
-static int insert_snapshot_whiteouts(struct btree_trans *trans,
-				     enum btree_id id,
-				     struct bpos old_pos,
-				     struct bpos new_pos)
+static void trace_move_extent_finish2(struct bch_fs *c, struct bkey_s_c k)
 {
-	struct bch_fs *c = trans->c;
-	struct btree_iter iter, iter2;
-	struct bkey_s_c k, k2;
-	snapshot_id_list s;
-	struct bkey_i *update;
-	int ret;
+	if (trace_move_extent_finish_enabled()) {
+		struct printbuf buf = PRINTBUF;
 
-	if (!btree_type_has_snapshots(id))
-		return 0;
-
-	darray_init(&s);
-
-	if (!bch2_snapshot_has_children(c, old_pos.snapshot))
-		return 0;
-
-	bch2_trans_iter_init(trans, &iter, id, old_pos,
-			     BTREE_ITER_NOT_EXTENTS|
-			     BTREE_ITER_ALL_SNAPSHOTS);
-	while (1) {
-		k = bch2_btree_iter_prev(&iter);
-		ret = bkey_err(k);
-		if (ret)
-			break;
-
-		if (!k.k)
-			break;
-
-		if (!bkey_eq(old_pos, k.k->p))
-			break;
-
-		if (bch2_snapshot_is_ancestor(c, k.k->p.snapshot, old_pos.snapshot) &&
-		    !snapshot_list_has_ancestor(c, &s, k.k->p.snapshot)) {
-			struct bpos whiteout_pos = new_pos;
-
-			whiteout_pos.snapshot = k.k->p.snapshot;
-
-			bch2_trans_iter_init(trans, &iter2, id, whiteout_pos,
-					     BTREE_ITER_NOT_EXTENTS|
-					     BTREE_ITER_INTENT);
-			k2 = bch2_btree_iter_peek_slot(&iter2);
-			ret = bkey_err(k2);
-
-			if (!ret && k2.k->type == KEY_TYPE_deleted) {
-				update = bch2_trans_kmalloc(trans, sizeof(struct bkey_i));
-				ret = PTR_ERR_OR_ZERO(update);
-				if (ret)
-					break;
-
-				bkey_init(&update->k);
-				update->k.p		= whiteout_pos;
-				update->k.type		= KEY_TYPE_whiteout;
-
-				ret = bch2_trans_update(trans, &iter2, update,
-							BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE);
-			}
-			bch2_trans_iter_exit(trans, &iter2);
-
-			if (ret)
-				break;
-
-			ret = snapshot_list_add(c, &s, k.k->p.snapshot);
-			if (ret)
-				break;
-		}
+		bch2_bkey_val_to_text(&buf, c, k);
+		trace_move_extent_finish(c, buf.buf);
+		printbuf_exit(&buf);
 	}
-	bch2_trans_iter_exit(trans, &iter);
-	darray_exit(&s);
-
-	return ret;
 }
 
 static void trace_move_extent_fail2(struct data_update *m,
@@ -318,19 +252,12 @@ restart_drop_extra_replicas:
 
 		next_pos = insert->k.p;
 
-		if (!bkey_eq(bkey_start_pos(&insert->k), bkey_start_pos(k.k))) {
-			ret = insert_snapshot_whiteouts(trans, m->btree_id, k.k->p,
-							bkey_start_pos(&insert->k));
-			if (ret)
-				goto err;
-		}
-
-		if (!bkey_eq(insert->k.p, k.k->p)) {
-			ret = insert_snapshot_whiteouts(trans, m->btree_id,
-							k.k->p, insert->k.p);
-			if (ret)
-				goto err;
-		}
+		ret =   bch2_insert_snapshot_whiteouts(trans, m->btree_id,
+						k.k->p, bkey_start_pos(&insert->k)) ?:
+			bch2_insert_snapshot_whiteouts(trans, m->btree_id,
+						k.k->p, insert->k.p);
+		if (ret)
+			goto err;
 
 		ret   = bch2_trans_update(trans, &iter, insert,
 				BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE) ?:
@@ -343,7 +270,7 @@ restart_drop_extra_replicas:
 			bch2_btree_iter_set_pos(&iter, next_pos);
 
 			this_cpu_add(c->counters[BCH_COUNTER_move_extent_finish], new->k.size);
-			trace_move_extent_finish(&new->k);
+			trace_move_extent_finish2(c, bkey_i_to_s_c(&new->k_i));
 		}
 err:
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
@@ -365,7 +292,7 @@ nowork:
 				     &m->ctxt->stats->sectors_raced);
 		}
 
-		this_cpu_add(c->counters[BCH_COUNTER_move_extent_fail], new->k.size);
+		this_cpu_inc(c->counters[BCH_COUNTER_move_extent_fail]);
 
 		bch2_btree_iter_advance(&iter);
 		goto next;
@@ -454,7 +381,7 @@ void bch2_update_unwritten_extent(struct btree_trans *trans,
 				&update->op.devs_have,
 				update->op.nr_replicas,
 				update->op.nr_replicas,
-				update->op.alloc_reserve,
+				update->op.watermark,
 				0, &cl, &wp);
 		if (bch2_err_matches(ret, BCH_ERR_operation_blocked)) {
 			bch2_trans_unlock(trans);
@@ -528,11 +455,8 @@ int bch2_data_update_init(struct btree_trans *trans,
 		BCH_WRITE_DATA_ENCODED|
 		BCH_WRITE_MOVE|
 		m->data_opts.write_flags;
-	m->op.compression_type =
-		bch2_compression_opt_to_type[io_opts.background_compression ?:
-					     io_opts.compression];
-	if (m->data_opts.btree_insert_flags & BTREE_INSERT_USE_RESERVE)
-		m->op.alloc_reserve = RESERVE_movinggc;
+	m->op.compression_opt	= io_opts.background_compression ?: io_opts.compression;
+	m->op.watermark		= m->data_opts.btree_insert_flags & BCH_WATERMARK_MASK;
 
 	bkey_for_each_ptr(ptrs, ptr)
 		percpu_ref_get(&bch_dev_bkey_exists(c, ptr->dev)->ref);
@@ -547,7 +471,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 			if (crc_is_compressed(p.crc))
 				reserve_sectors += k.k->size;
 
-			m->op.nr_replicas += bch2_extent_ptr_durability(c, &p);
+			m->op.nr_replicas += bch2_extent_ptr_desired_durability(c, &p);
 		} else if (!p.ptr.cached) {
 			bch2_dev_list_add_dev(&m->op.devs_have, p.ptr.dev);
 		}

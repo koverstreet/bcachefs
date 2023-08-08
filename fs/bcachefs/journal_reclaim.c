@@ -10,11 +10,10 @@
 #include "journal_reclaim.h"
 #include "replicas.h"
 #include "super.h"
+#include "trace.h"
 
 #include <linux/kthread.h>
 #include <linux/sched/mm.h>
-#include <linux/sched/task.h>
-#include <trace/events/bcachefs.h>
 
 /* Free space calculations: */
 
@@ -268,11 +267,11 @@ void bch2_journal_do_discards(struct journal *j)
 		while (should_discard_bucket(j, ja)) {
 			if (!c->opts.nochanges &&
 			    ca->mi.discard &&
-			    blk_queue_discard(bdev_get_queue(ca->disk_sb.bdev)))
+			    bdev_max_discard_sectors(ca->disk_sb.bdev))
 				blkdev_issue_discard(ca->disk_sb.bdev,
 					bucket_to_sector(ca,
 						ja->buckets[ja->discard_idx]),
-					ca->mi.bucket_size, GFP_NOIO, 0);
+					ca->mi.bucket_size, GFP_NOFS);
 
 			spin_lock(&j->lock);
 			ja->discard_idx = (ja->discard_idx + 1) % ja->nr;
@@ -346,7 +345,7 @@ static inline bool __journal_pin_drop(struct journal *j,
 	list_del_init(&pin->list);
 
 	/*
-	 * Unpinning a journal entry make make journal_next_bucket() succeed, if
+	 * Unpinning a journal entry may make journal_next_bucket() succeed, if
 	 * writing a new last_seq will now make another bucket available:
 	 */
 	return atomic_dec_and_test(&pin_list->count) &&
@@ -362,7 +361,7 @@ void bch2_journal_pin_drop(struct journal *j,
 	spin_unlock(&j->lock);
 }
 
-enum journal_pin_type journal_pin_type(journal_pin_flush_fn fn)
+static enum journal_pin_type journal_pin_type(journal_pin_flush_fn fn)
 {
 	if (fn == bch2_btree_node_flush0 ||
 	    fn == bch2_btree_node_flush1)
@@ -710,7 +709,7 @@ static int bch2_journal_reclaim_thread(void *arg)
 			j->next_reclaim = now + delay;
 
 		while (1) {
-			set_current_state(TASK_INTERRUPTIBLE);
+			set_current_state(TASK_INTERRUPTIBLE|TASK_FREEZABLE);
 			if (kthread_should_stop())
 				break;
 			if (j->reclaim_kicked)
@@ -838,8 +837,18 @@ int bch2_journal_flush_device_pins(struct journal *j, int dev_idx)
 	mutex_lock(&c->replicas_gc_lock);
 	bch2_replicas_gc_start(c, 1 << BCH_DATA_journal);
 
-	seq = 0;
+	/*
+	 * Now that we've populated replicas_gc, write to the journal to mark
+	 * active journal devices. This handles the case where the journal might
+	 * be empty. Otherwise we could clear all journal replicas and
+	 * temporarily put the fs into an unrecoverable state. Journal recovery
+	 * expects to find devices marked for journal data on unclean mount.
+	 */
+	ret = bch2_journal_meta(&c->journal);
+	if (ret)
+		goto err;
 
+	seq = 0;
 	spin_lock(&j->lock);
 	while (!ret) {
 		struct bch_replicas_padded replicas;
@@ -856,7 +865,7 @@ int bch2_journal_flush_device_pins(struct journal *j, int dev_idx)
 		spin_lock(&j->lock);
 	}
 	spin_unlock(&j->lock);
-
+err:
 	ret = bch2_replicas_gc_end(c, ret);
 	mutex_unlock(&c->replicas_gc_lock);
 

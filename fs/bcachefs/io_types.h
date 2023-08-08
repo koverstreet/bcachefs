@@ -83,6 +83,7 @@ struct bch_read_bio {
 };
 
 struct bch_write_bio {
+	struct_group(wbio,
 	struct bch_fs		*c;
 	struct bch_write_bio	*parent;
 
@@ -99,6 +100,7 @@ struct bch_write_bio {
 				nocow:1,
 				used_mempool:1,
 				first_btree_write:1;
+	);
 
 	struct bio		bio;
 };
@@ -113,11 +115,11 @@ struct bch_write_op {
 	u16			flags;
 	s16			error; /* dio write path expects it to hold -ERESTARTSYS... */
 
+	unsigned		compression_opt:8;
 	unsigned		csum_type:4;
-	unsigned		compression_type:4;
 	unsigned		nr_replicas:4;
 	unsigned		nr_replicas_required:4;
-	unsigned		alloc_reserve:3;
+	unsigned		watermark:3;
 	unsigned		incompressible:1;
 	unsigned		stripe_waited:1;
 

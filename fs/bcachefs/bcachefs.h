@@ -208,6 +208,8 @@
 #include "fifo.h"
 #include "nocow_locking_types.h"
 #include "opts.h"
+#include "recovery_types.h"
+#include "seqmutex.h"
 #include "util.h"
 
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -289,6 +291,11 @@ do {									\
 	printk_ratelimited(KERN_ERR bch2_fmt_inum(c, _inum, fmt), ##__VA_ARGS__)
 #define bch_err_inum_offset_ratelimited(c, _inum, _offset, fmt, ...) \
 	printk_ratelimited(KERN_ERR bch2_fmt_inum_offset(c, _inum, _offset, fmt), ##__VA_ARGS__)
+
+#define bch_err_fn(_c, _ret)						\
+	 bch_err(_c, "%s(): error %s", __func__, bch2_err_str(_ret))
+#define bch_err_msg(_c, _ret, _msg, ...)				\
+	 bch_err(_c, "%s(): error " _msg " %s", __func__, ##__VA_ARGS__, bch2_err_str(_ret))
 
 #define bch_verbose(c, fmt, ...)					\
 do {									\
@@ -445,6 +452,8 @@ enum gc_phase {
 	GC_PHASE_BTREE_need_discard,
 	GC_PHASE_BTREE_backpointers,
 	GC_PHASE_BTREE_bucket_gens,
+	GC_PHASE_BTREE_snapshot_trees,
+	GC_PHASE_BTREE_deleted_inodes,
 
 	GC_PHASE_PENDING_DELETE,
 };
@@ -482,7 +491,7 @@ struct bch_dev {
 	 * Committed by bch2_write_super() -> bch_fs_mi_update()
 	 */
 	struct bch_member_cpu	mi;
-	uuid_le			uuid;
+	__uuid_t		uuid;
 	char			name[BDEVNAME_SIZE];
 
 	struct bch_sb_handle	disk_sb;
@@ -556,12 +565,6 @@ enum {
 	BCH_FS_CLEAN_SHUTDOWN,
 
 	/* fsck passes: */
-	BCH_FS_TOPOLOGY_REPAIR_DONE,
-	BCH_FS_INITIAL_GC_DONE,		/* kill when we enumerate fsck passes */
-	BCH_FS_CHECK_ALLOC_DONE,
-	BCH_FS_CHECK_LRUS_DONE,
-	BCH_FS_CHECK_BACKPOINTERS_DONE,
-	BCH_FS_CHECK_ALLOC_TO_LRU_REFS_DONE,
 	BCH_FS_FSCK_DONE,
 	BCH_FS_INITIAL_GC_UNFIXED,	/* kill when we enumerate fsck errors */
 	BCH_FS_NEED_ANOTHER_GC,
@@ -700,11 +703,12 @@ struct bch_fs {
 
 	/* Updated by bch2_sb_update():*/
 	struct {
-		uuid_le		uuid;
-		uuid_le		user_uuid;
+		__uuid_t	uuid;
+		__uuid_t	user_uuid;
 
 		u16		version;
 		u16		version_min;
+		u16		version_upgrade_complete;
 
 		u8		nr_devices;
 		u8		clean;
@@ -730,9 +734,10 @@ struct bch_fs {
 	struct mutex		sb_lock;
 
 	/* snapshot.c: */
-	GENRADIX(struct snapshot_t) snapshots;
-	struct bch_snapshot_table __rcu *snapshot_table;
+	struct snapshot_table __rcu *snapshots;
+	size_t			snapshot_table_size;
 	struct mutex		snapshot_table_lock;
+
 	struct work_struct	snapshot_delete_work;
 	struct work_struct	snapshot_wait_for_pagecache_and_delete_work;
 	snapshot_id_list	snapshots_unlinked;
@@ -742,7 +747,8 @@ struct bch_fs {
 	struct bio_set		btree_bio;
 	struct workqueue_struct	*io_complete_wq;
 
-	struct btree_root	btree_roots[BTREE_ID_NR];
+	struct btree_root	btree_roots_known[BTREE_ID_NR];
+	DARRAY(struct btree_root) btree_roots_extra;
 	struct mutex		btree_root_lock;
 
 	struct btree_cache	btree_cache;
@@ -778,7 +784,7 @@ struct bch_fs {
 	}			btree_write_stats[BTREE_WRITE_TYPE_NR];
 
 	/* btree_iter.c: */
-	struct mutex		btree_trans_lock;
+	struct seqmutex		btree_trans_lock;
 	struct list_head	btree_trans_list;
 	mempool_t		btree_paths_pool;
 	mempool_t		btree_trans_mem_pool;
@@ -911,7 +917,7 @@ struct bch_fs {
 	ZSTD_parameters		zstd_params;
 
 	struct crypto_shash	*sha256;
-	struct crypto_skcipher	*chacha20;
+	struct crypto_sync_skcipher *chacha20;
 	struct crypto_shash	*poly1305;
 
 	atomic64_t		key_version;
@@ -962,7 +968,6 @@ struct bch_fs {
 	struct bio_set		ec_bioset;
 
 	/* REFLINK */
-	u64			reflink_hint;
 	reflink_gc_table	reflink_gc_table;
 	size_t			reflink_gc_nr;
 
@@ -983,6 +988,14 @@ struct bch_fs {
 
 	/* QUOTAS */
 	struct bch_memquota_type quotas[QTYP_NR];
+
+	/* RECOVERY */
+	u64			journal_replay_seq_start;
+	u64			journal_replay_seq_end;
+	enum bch_recovery_pass	curr_recovery_pass;
+	/* bitmap of explicitly enabled recovery passes: */
+	u64			recovery_passes_explicit;
+	u64			recovery_passes_complete;
 
 	/* DEBUG JUNK */
 	struct dentry		*fs_debug_dir;
@@ -1048,13 +1061,11 @@ static inline void bch2_write_ref_put(struct bch_fs *c, enum bch_write_ref ref)
 {
 #ifdef BCH_WRITE_REF_DEBUG
 	long v = atomic_long_dec_return(&c->writes[ref]);
-	unsigned i;
 
 	BUG_ON(v < 0);
 	if (v)
 		return;
-
-	for (i = 0; i < BCH_WRITE_REF_NR; i++)
+	for (unsigned i = 0; i < BCH_WRITE_REF_NR; i++)
 		if (atomic_long_read(&c->writes[i]))
 			return;
 

@@ -49,7 +49,7 @@ static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
 	if (!bch2_bkey_has_device_c(k, dev_idx))
 		return 0;
 
-	n = bch2_bkey_make_mut(trans, k);
+	n = bch2_bkey_make_mut(trans, iter, &k, BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE);
 	ret = PTR_ERR_OR_ZERO(n);
 	if (ret)
 		return ret;
@@ -73,8 +73,7 @@ static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
 	 */
 	if (bkey_deleted(&n->k))
 		n->k.size = 0;
-
-	return bch2_trans_update(trans, iter, n, BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE);
+	return 0;
 }
 
 static int bch2_dev_usrdata_drop(struct bch_fs *c, unsigned dev_idx, int flags)
@@ -142,7 +141,7 @@ retry:
 				break;
 			}
 
-			ret = bch2_btree_node_update_key(&trans, &iter, b, k.k, false);
+			ret = bch2_btree_node_update_key(&trans, &iter, b, k.k, 0, false);
 			if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
 				ret = 0;
 				continue;

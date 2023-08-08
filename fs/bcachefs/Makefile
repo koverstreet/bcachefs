@@ -48,6 +48,7 @@ bcachefs-y		:=	\
 	journal_seq_blacklist.o	\
 	keylist.o		\
 	lru.o			\
+	mean_and_variance.o	\
 	migrate.o		\
 	move.o			\
 	movinggc.o		\
@@ -60,6 +61,7 @@ bcachefs-y		:=	\
 	reflink.o		\
 	replicas.o		\
 	siphash.o		\
+	six.o			\
 	subvolume.o		\
 	super.o			\
 	super-io.o		\
@@ -72,3 +74,4 @@ bcachefs-y		:=	\
 	xattr.o
 
 bcachefs-$(CONFIG_BCACHEFS_POSIX_ACL) += acl.o
+obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += mean_and_variance_test.o

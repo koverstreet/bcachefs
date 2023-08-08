@@ -8,8 +8,11 @@
 #include <linux/sysfs.h>
 #include "bcachefs_format.h"
 
-extern const char * const bch2_metadata_versions[];
+struct bch_fs;
+
 extern const char * const bch2_error_actions[];
+extern const char * const bch2_fsck_fix_opts[];
+extern const char * const bch2_version_upgrade_opts[];
 extern const char * const bch2_sb_features[];
 extern const char * const bch2_sb_compat[];
 extern const char * const bch2_btree_ids[];
@@ -67,6 +70,11 @@ enum opt_type {
 	BCH_OPT_FN,
 };
 
+struct bch_opt_fn {
+	int (*parse)(struct bch_fs *, const char *, u64 *, struct printbuf *);
+	void (*to_text)(struct printbuf *, struct bch_fs *, struct bch_sb *, u64);
+};
+
 /**
  * x(name, shortopt, type, in mem type, mode, sb_opt)
  *
@@ -97,6 +105,18 @@ enum opt_type {
 #else
 #define BCACHEFS_VERBOSE_DEFAULT	false
 #endif
+
+#define BCH_FIX_ERRORS_OPTS()		\
+	x(exit,	0)			\
+	x(yes,	1)			\
+	x(no,	2)			\
+	x(ask,	3)
+
+enum fsck_err_opts {
+#define x(t, n)	FSCK_FIX_##t,
+	BCH_FIX_ERRORS_OPTS()
+#undef x
+};
 
 #define BCH_OPTS()							\
 	x(block_size,			u16,				\
@@ -154,12 +174,12 @@ enum opt_type {
 	  NULL,		NULL)						\
 	x(compression,			u8,				\
 	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
-	  OPT_STR(bch2_compression_opts),				\
+	  OPT_FN(bch2_opt_compression),					\
 	  BCH_SB_COMPRESSION_TYPE,	BCH_COMPRESSION_OPT_none,	\
 	  NULL,		NULL)						\
 	x(background_compression,	u8,				\
 	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
-	  OPT_STR(bch2_compression_opts),				\
+	  OPT_FN(bch2_opt_compression),					\
 	  BCH_SB_BACKGROUND_COMPRESSION_TYPE,BCH_COMPRESSION_OPT_none,	\
 	  NULL,		NULL)						\
 	x(str_hash,			u8,				\
@@ -318,8 +338,8 @@ enum opt_type {
 	  NULL,		"Run fsck on mount")				\
 	x(fix_errors,			u8,				\
 	  OPT_FS|OPT_MOUNT,						\
-	  OPT_BOOL(),							\
-	  BCH2_NO_SB_OPT,		false,				\
+	  OPT_FN(bch2_opt_fix_errors),					\
+	  BCH2_NO_SB_OPT,		FSCK_FIX_exit,			\
 	  NULL,		"Fix errors during fsck without asking")	\
 	x(ratelimit_errors,		u8,				\
 	  OPT_FS|OPT_MOUNT,						\
@@ -389,8 +409,8 @@ enum opt_type {
 	  NULL,		"Reconstruct alloc btree")			\
 	x(version_upgrade,		u8,				\
 	  OPT_FS|OPT_MOUNT,						\
-	  OPT_BOOL(),							\
-	  BCH2_NO_SB_OPT,		false,				\
+	  OPT_STR(bch2_version_upgrade_opts),				\
+	  BCH_SB_VERSION_UPGRADE,	BCH_VERSION_UPGRADE_compatible,	\
 	  NULL,		"Set superblock to latest version,\n"		\
 			"allowing any new features to be used")		\
 	x(buckets_nouse,		u8,				\
@@ -495,8 +515,8 @@ struct bch_option {
 	u64			min, max;
 
 	const char * const *choices;
-	int (*parse)(struct bch_fs *, const char *, u64 *);
-	void (*to_text)(struct printbuf *, struct bch_fs *, struct bch_sb *, u64);
+
+	struct bch_opt_fn	fn;
 
 	const char		*hint;
 	const char		*help;

@@ -16,15 +16,47 @@
 #include "inode.h"
 #include "io.h"
 #include "journal_reclaim.h"
+#include "keylist.h"
 #include "move.h"
 #include "replicas.h"
 #include "super-io.h"
-#include "keylist.h"
+#include "trace.h"
 
 #include <linux/ioprio.h>
 #include <linux/kthread.h>
 
-#include <trace/events/bcachefs.h>
+static void trace_move_extent2(struct bch_fs *c, struct bkey_s_c k)
+{
+	if (trace_move_extent_enabled()) {
+		struct printbuf buf = PRINTBUF;
+
+		bch2_bkey_val_to_text(&buf, c, k);
+		trace_move_extent(c, buf.buf);
+		printbuf_exit(&buf);
+	}
+}
+
+static void trace_move_extent_read2(struct bch_fs *c, struct bkey_s_c k)
+{
+	if (trace_move_extent_read_enabled()) {
+		struct printbuf buf = PRINTBUF;
+
+		bch2_bkey_val_to_text(&buf, c, k);
+		trace_move_extent_read(c, buf.buf);
+		printbuf_exit(&buf);
+	}
+}
+
+static void trace_move_extent_alloc_mem_fail2(struct bch_fs *c, struct bkey_s_c k)
+{
+	if (trace_move_extent_alloc_mem_fail_enabled()) {
+		struct printbuf buf = PRINTBUF;
+
+		bch2_bkey_val_to_text(&buf, c, k);
+		trace_move_extent_alloc_mem_fail(c, buf.buf);
+		printbuf_exit(&buf);
+	}
+}
 
 static void progress_list_add(struct bch_fs *c, struct bch_move_stats *stats)
 {
@@ -219,7 +251,7 @@ static int bch2_extent_drop_ptrs(struct btree_trans *trans,
 	struct bkey_i *n;
 	int ret;
 
-	n = bch2_bkey_make_mut(trans, k);
+	n = bch2_bkey_make_mut_noupdate(trans, k);
 	ret = PTR_ERR_OR_ZERO(n);
 	if (ret)
 		return ret;
@@ -270,6 +302,8 @@ static int bch2_move_extent(struct btree_trans *trans,
 	unsigned sectors = k.k->size, pages;
 	int ret = -ENOMEM;
 
+	trace_move_extent2(c, k);
+
 	bch2_data_update_opts_normalize(k, &data_opts);
 
 	if (!data_opts.rewrite_ptrs &&
@@ -300,7 +334,7 @@ static int bch2_move_extent(struct btree_trans *trans,
 	io->read_sectors	= k.k->size;
 	io->write_sectors	= k.k->size;
 
-	bio_init(&io->write.op.wbio.bio, io->bi_inline_vecs, pages);
+	bio_init(&io->write.op.wbio.bio, NULL, io->bi_inline_vecs, pages, 0);
 	bio_set_prio(&io->write.op.wbio.bio,
 		     IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
 
@@ -310,7 +344,7 @@ static int bch2_move_extent(struct btree_trans *trans,
 
 	io->rbio.c		= c;
 	io->rbio.opts		= io_opts;
-	bio_init(&io->rbio.bio, io->bi_inline_vecs, pages);
+	bio_init(&io->rbio.bio, NULL, io->bi_inline_vecs, pages, 0);
 	io->rbio.bio.bi_vcnt = pages;
 	bio_set_prio(&io->rbio.bio, IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0));
 	io->rbio.bio.bi_iter.bi_size = sectors << 9;
@@ -347,8 +381,7 @@ static int bch2_move_extent(struct btree_trans *trans,
 
 	this_cpu_add(c->counters[BCH_COUNTER_io_move], k.k->size);
 	this_cpu_add(c->counters[BCH_COUNTER_move_extent_read], k.k->size);
-	trace_move_extent_read(k.k);
-
+	trace_move_extent_read2(c, k);
 
 	mutex_lock(&ctxt->lock);
 	atomic_add(io->read_sectors, &ctxt->read_sectors);
@@ -374,7 +407,8 @@ err_free_pages:
 err_free:
 	kfree(io);
 err:
-	trace_and_count(c, move_extent_alloc_mem_fail, k.k);
+	this_cpu_inc(c->counters[BCH_COUNTER_move_extent_alloc_mem_fail]);
+	trace_move_extent_alloc_mem_fail2(c, k);
 	return ret;
 }
 
@@ -393,7 +427,7 @@ static int lookup_inode(struct btree_trans *trans, struct bpos pos,
 		goto err;
 
 	if (!k.k || !bkey_eq(k.k->p, pos)) {
-		ret = -ENOENT;
+		ret = -BCH_ERR_ENOENT_inode;
 		goto err;
 	}
 
@@ -549,7 +583,6 @@ static int __bch2_move_data(struct moving_context *ctxt,
 		 */
 		bch2_bkey_buf_reassemble(&sk, c, k);
 		k = bkey_i_to_s_c(sk.k);
-		bch2_trans_unlock(&trans);
 
 		ret2 = bch2_move_extent(&trans, &iter, ctxt, NULL,
 					io_opts, btree_id, k, data_opts);
@@ -599,12 +632,15 @@ int bch2_move_data(struct bch_fs *c,
 	bch2_moving_ctxt_init(&ctxt, c, rate, stats, wp, wait_on_copygc);
 
 	for (id = start_btree_id;
-	     id <= min_t(unsigned, end_btree_id, BTREE_ID_NR - 1);
+	     id <= min_t(unsigned, end_btree_id, btree_id_nr_alive(c) - 1);
 	     id++) {
 		stats->btree_id = id;
 
 		if (id != BTREE_ID_extents &&
 		    id != BTREE_ID_reflink)
+			continue;
+
+		if (!bch2_btree_id_root(c, id)->b)
 			continue;
 
 		ret = __bch2_move_data(&ctxt,
@@ -618,85 +654,6 @@ int bch2_move_data(struct bch_fs *c,
 	bch2_moving_ctxt_exit(&ctxt);
 
 	return ret;
-}
-
-void bch2_verify_bucket_evacuated(struct btree_trans *trans, struct bpos bucket, int gen)
-{
-	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
-	struct bkey_s_c k;
-	struct printbuf buf = PRINTBUF;
-	struct bch_backpointer bp;
-	struct bpos bp_pos = POS_MIN;
-	unsigned nr_bps = 0;
-	int ret;
-
-	bch2_trans_begin(trans);
-
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc,
-			     bucket, BTREE_ITER_CACHED);
-again:
-	ret = lockrestart_do(trans,
-			bkey_err(k = bch2_btree_iter_peek_slot(&iter)));
-
-	if (!ret && k.k->type == KEY_TYPE_alloc_v4) {
-		struct bkey_s_c_alloc_v4 a = bkey_s_c_to_alloc_v4(k);
-
-		if (a.v->gen == gen &&
-		    a.v->dirty_sectors) {
-			if (a.v->data_type == BCH_DATA_btree) {
-				bch2_trans_unlock(trans);
-				if (bch2_btree_interior_updates_flush(c))
-					goto again;
-				goto failed_to_evacuate;
-			}
-		}
-	}
-
-	set_btree_iter_dontneed(&iter);
-	bch2_trans_iter_exit(trans, &iter);
-	return;
-failed_to_evacuate:
-	bch2_trans_iter_exit(trans, &iter);
-
-	if (test_bit(BCH_FS_EMERGENCY_RO, &c->flags))
-		return;
-
-	prt_printf(&buf, bch2_log_msg(c, "failed to evacuate bucket "));
-	bch2_bkey_val_to_text(&buf, c, k);
-
-	while (1) {
-		bch2_trans_begin(trans);
-
-		ret = bch2_get_next_backpointer(trans, bucket, gen,
-						&bp_pos, &bp,
-						BTREE_ITER_CACHED);
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			continue;
-		if (ret)
-			break;
-		if (bkey_eq(bp_pos, POS_MAX))
-			break;
-
-		k = bch2_backpointer_get_key(trans, &iter, bp_pos, bp, 0);
-		ret = bkey_err(k);
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			continue;
-		if (ret)
-			break;
-		if (!k.k)
-			continue;
-		prt_newline(&buf);
-		bch2_bkey_val_to_text(&buf, c, k);
-		bch2_trans_iter_exit(trans, &iter);
-
-		if (++nr_bps > 10)
-			break;
-		bp_pos = bpos_nosnap_successor(bp_pos);
-	}
-
-	bch2_print_string_as_lines(KERN_ERR, buf.buf);
-	printbuf_exit(&buf);
 }
 
 int __bch2_evacuate_bucket(struct btree_trans *trans,
@@ -720,6 +677,8 @@ int __bch2_evacuate_bucket(struct btree_trans *trans,
 	struct bpos bp_pos = POS_MIN;
 	int ret = 0;
 
+	trace_bucket_evacuate(c, &bucket);
+
 	bch2_bkey_buf_init(&sk);
 
 	/*
@@ -734,7 +693,7 @@ int __bch2_evacuate_bucket(struct btree_trans *trans,
 	bch2_trans_iter_exit(trans, &iter);
 
 	if (ret) {
-		bch_err(c, "%s: error looking up alloc key: %s", __func__, bch2_err_str(ret));
+		bch_err_msg(c, ret, "looking up alloc key");
 		goto err;
 	}
 
@@ -745,7 +704,7 @@ int __bch2_evacuate_bucket(struct btree_trans *trans,
 
 	ret = bch2_btree_write_buffer_flush(trans);
 	if (ret) {
-		bch_err(c, "%s: error flushing btree write buffer: %s", __func__, bch2_err_str(ret));
+		bch_err_msg(c, ret, "flushing btree write buffer");
 		goto err;
 	}
 
@@ -905,9 +864,12 @@ static int bch2_move_btree(struct bch_fs *c,
 	stats->data_type = BCH_DATA_btree;
 
 	for (id = start_btree_id;
-	     id <= min_t(unsigned, end_btree_id, BTREE_ID_NR - 1);
+	     id <= min_t(unsigned, end_btree_id, btree_id_nr_alive(c) - 1);
 	     id++) {
 		stats->btree_id = id;
+
+		if (!bch2_btree_id_root(c, id)->b)
+			continue;
 
 		bch2_trans_node_iter_init(&trans, &iter, id, POS_MIN, 0, 0,
 					  BTREE_ITER_PREFETCH);
@@ -948,7 +910,7 @@ next:
 	bch2_trans_exit(&trans);
 
 	if (ret)
-		bch_err(c, "error in %s(): %s", __func__, bch2_err_str(ret));
+		bch_err_fn(c, ret);
 
 	bch2_btree_interior_updates_flush(c);
 
@@ -1073,6 +1035,8 @@ int bch2_scan_old_btree_nodes(struct bch_fs *c, struct bch_move_stats *stats)
 		mutex_unlock(&c->sb_lock);
 	}
 
+	if (ret)
+		bch_err_fn(c, ret);
 	return ret;
 }
 

@@ -92,6 +92,19 @@
 	x(ENOSPC,			ENOSPC_sb_replicas)			\
 	x(ENOSPC,			ENOSPC_sb_members)			\
 	x(ENOSPC,			ENOSPC_sb_crypt)			\
+	x(ENOSPC,			ENOSPC_btree_slot)			\
+	x(ENOSPC,			ENOSPC_snapshot_tree)			\
+	x(ENOENT,			ENOENT_bkey_type_mismatch)		\
+	x(ENOENT,			ENOENT_str_hash_lookup)			\
+	x(ENOENT,			ENOENT_str_hash_set_must_replace)	\
+	x(ENOENT,			ENOENT_inode)				\
+	x(ENOENT,			ENOENT_not_subvol)			\
+	x(ENOENT,			ENOENT_directory_dead)			\
+	x(ENOENT,			ENOENT_subvolume)			\
+	x(ENOENT,			ENOENT_snapshot_tree)			\
+	x(ENOENT,			ENOENT_dirent_doesnt_match_inode)	\
+	x(ENOENT,			ENOENT_dev_not_found)			\
+	x(ENOENT,			ENOENT_dev_idx_not_found)		\
 	x(0,				open_buckets_empty)			\
 	x(0,				freelist_empty)				\
 	x(BCH_ERR_freelist_empty,	no_buckets_found)			\
@@ -138,14 +151,13 @@
 	x(0,				backpointer_to_overwritten_btree_node)	\
 	x(0,				lock_fail_root_changed)			\
 	x(0,				journal_reclaim_would_deadlock)		\
-	x(0,				fsck)					\
+	x(EINVAL,			fsck)					\
 	x(BCH_ERR_fsck,			fsck_fix)				\
 	x(BCH_ERR_fsck,			fsck_ignore)				\
 	x(BCH_ERR_fsck,			fsck_errors_not_fixed)			\
 	x(BCH_ERR_fsck,			fsck_repair_unimplemented)		\
 	x(BCH_ERR_fsck,			fsck_repair_impossible)			\
-	x(0,				need_snapshot_cleanup)			\
-	x(0,				need_topology_repair)			\
+	x(0,				restart_recovery)			\
 	x(0,				unwritten_extent_update)		\
 	x(EINVAL,			device_state_not_allowed)		\
 	x(EINVAL,			member_info_missing)			\
@@ -158,10 +170,14 @@
 	x(EINVAL,			device_already_online)			\
 	x(EINVAL,			insufficient_devices_to_start)		\
 	x(EINVAL,			invalid)				\
+	x(EINVAL,			internal_fsck_err)			\
 	x(EROFS,			erofs_trans_commit)			\
 	x(EROFS,			erofs_no_writes)			\
 	x(EROFS,			erofs_journal_err)			\
 	x(EROFS,			erofs_sb_err)				\
+	x(EROFS,			erofs_unfixed_errors)			\
+	x(EROFS,			erofs_norecovery)			\
+	x(EROFS,			erofs_nochanges)			\
 	x(EROFS,			insufficient_devices)			\
 	x(0,				operation_blocked)			\
 	x(BCH_ERR_operation_blocked,	btree_cache_cannibalize_lock_blocked)	\
@@ -197,6 +213,12 @@
 	x(BCH_ERR_invalid_sb,		invalid_sb_quota)			\
 	x(BCH_ERR_invalid,		invalid_bkey)				\
 	x(BCH_ERR_operation_blocked,    nocow_lock_blocked)			\
+	x(EIO,				btree_node_read_err)			\
+	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_fixable)		\
+	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_want_retry)		\
+	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_must_retry)		\
+	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_bad_node)		\
+	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_incompatible)
 
 enum bch_errcode {
 	BCH_ERR_START		= 2048,
@@ -211,13 +233,13 @@ bool __bch2_err_matches(int, int);
 
 static inline bool _bch2_err_matches(int err, int class)
 {
-	return err && __bch2_err_matches(err, class);
+	return err < 0 && __bch2_err_matches(err, class);
 }
 
 #define bch2_err_matches(_err, _class)			\
 ({							\
 	BUILD_BUG_ON(!__builtin_constant_p(_class));	\
-	_bch2_err_matches(_err, _class);		\
+	unlikely(_bch2_err_matches(_err, _class));	\
 })
 
 int __bch2_err_class(int);

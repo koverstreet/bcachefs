@@ -52,14 +52,14 @@ enum __bch_write_flags {
 };
 
 enum bch_write_flags {
-#define x(f)	BCH_WRITE_##f = 1U << __BCH_WRITE_##f,
+#define x(f)	BCH_WRITE_##f = BIT(__BCH_WRITE_##f),
 	BCH_WRITE_FLAGS()
 #undef x
 };
 
 static inline struct workqueue_struct *index_update_wq(struct bch_write_op *op)
 {
-	return op->alloc_reserve == RESERVE_movinggc
+	return op->watermark == BCH_WATERMARK_copygc
 		? op->c->copygc_wq
 		: op->c->btree_update_wq;
 }
@@ -86,10 +86,10 @@ static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 	op->written		= 0;
 	op->error		= 0;
 	op->csum_type		= bch2_data_checksum_type(c, opts);
-	op->compression_type	= bch2_compression_opt_to_type[opts.compression];
+	op->compression_opt	= opts.compression;
 	op->nr_replicas		= 0;
 	op->nr_replicas_required = c->opts.data_replicas_required;
-	op->alloc_reserve	= RESERVE_none;
+	op->watermark		= BCH_WATERMARK_normal;
 	op->incompressible	= 0;
 	op->open_buckets.nr	= 0;
 	op->devs_have.nr	= 0;
@@ -113,7 +113,7 @@ static inline struct bch_write_bio *wbio_init(struct bio *bio)
 {
 	struct bch_write_bio *wbio = to_wbio(bio);
 
-	memset(wbio, 0, offsetof(struct bch_write_bio, bio));
+	memset(&wbio->wbio, 0, sizeof(wbio->wbio));
 	return wbio;
 }
 

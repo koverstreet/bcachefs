@@ -1,6 +1,6 @@
 
 config BCACHEFS_FS
-	tristate "bcachefs filesystem support"
+	tristate "bcachefs filesystem support (EXPERIMENTAL)"
 	depends on BLOCK
 	select EXPORTFS
 	select CLOSURES
@@ -9,6 +9,8 @@ config BCACHEFS_FS
 	select FS_POSIX_ACL
 	select LZ4_COMPRESS
 	select LZ4_DECOMPRESS
+	select LZ4HC_COMPRESS
+	select LZ4HC_DECOMPRESS
 	select ZLIB_DEFLATE
 	select ZLIB_INFLATE
 	select ZSTD_COMPRESS
@@ -17,7 +19,6 @@ config BCACHEFS_FS
 	select CRYPTO_CHACHA20
 	select CRYPTO_POLY1305
 	select KEYS
-	select SIXLOCKS
 	select RAID6_PQ
 	select XOR_BLOCKS
 	select XXHASH
@@ -73,3 +74,12 @@ config BCACHEFS_NO_LATENCY_ACCT
 	depends on BCACHEFS_FS
 	help
 	This disables device latency tracking and time stats, only for performance testing
+
+config MEAN_AND_VARIANCE_UNIT_TEST
+	tristate "mean_and_variance unit tests" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	select MEAN_AND_VARIANCE
+	default KUNIT_ALL_TESTS
+	help
+	  This option enables the kunit tests for mean_and_variance module.
+	  If unsure, say N.

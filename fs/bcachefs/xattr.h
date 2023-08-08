@@ -6,12 +6,14 @@
 
 extern const struct bch_hash_desc bch2_xattr_hash_desc;
 
-int bch2_xattr_invalid(const struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *);
+int bch2_xattr_invalid(const struct bch_fs *, struct bkey_s_c,
+		       enum bkey_invalid_flags, struct printbuf *);
 void bch2_xattr_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 
 #define bch2_bkey_ops_xattr ((struct bkey_ops) {	\
 	.key_invalid	= bch2_xattr_invalid,		\
 	.val_to_text	= bch2_xattr_to_text,		\
+	.min_val_size	= 8,				\
 })
 
 static inline unsigned xattr_val_u64s(unsigned name_len, unsigned val_len)
@@ -36,11 +38,9 @@ struct xattr_handler;
 struct bch_hash_info;
 struct bch_inode_info;
 
-int bch2_xattr_get(struct bch_fs *, struct bch_inode_info *,
-		  const char *, void *, size_t, int);
-
+/* Exported for cmd_migrate.c in tools: */
 int bch2_xattr_set(struct btree_trans *, subvol_inum,
-		   const struct bch_hash_info *,
+		   struct bch_inode_unpacked *, const struct bch_hash_info *,
 		   const char *, const void *, size_t, int, int);
 
 ssize_t bch2_xattr_list(struct dentry *, char *, size_t);

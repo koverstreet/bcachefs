@@ -70,16 +70,11 @@ const struct bch_hash_desc bch2_xattr_hash_desc = {
 };
 
 int bch2_xattr_invalid(const struct bch_fs *c, struct bkey_s_c k,
-		       unsigned flags, struct printbuf *err)
+		       enum bkey_invalid_flags flags,
+		       struct printbuf *err)
 {
 	const struct xattr_handler *handler;
 	struct bkey_s_c_xattr xattr = bkey_s_c_to_xattr(k);
-
-	if (bkey_val_bytes(k.k) < sizeof(struct bch_xattr)) {
-		prt_printf(err, "incorrect value size (%zu < %zu)",
-		       bkey_val_bytes(k.k), sizeof(*xattr.v));
-		return -BCH_ERR_invalid_bkey;
-	}
 
 	if (bkey_val_u64s(k.k) <
 	    xattr_val_u64s(xattr.v->x_name_len,
@@ -141,15 +136,14 @@ static int bch2_xattr_get_trans(struct btree_trans *trans, struct bch_inode_info
 				const char *name, void *buffer, size_t size, int type)
 {
 	struct bch_hash_info hash = bch2_hash_info_init(trans->c, &inode->ei_inode);
+	struct xattr_search_key search = X_SEARCH(type, name, strlen(name));
 	struct btree_iter iter;
 	struct bkey_s_c_xattr xattr;
 	struct bkey_s_c k;
 	int ret;
 
 	ret = bch2_hash_lookup(trans, &iter, bch2_xattr_hash_desc, &hash,
-			       inode_inum(inode),
-			       &X_SEARCH(type, name, strlen(name)),
-			       0);
+			       inode_inum(inode), &search, 0);
 	if (ret)
 		goto err1;
 
@@ -169,34 +163,26 @@ static int bch2_xattr_get_trans(struct btree_trans *trans, struct bch_inode_info
 err2:
 	bch2_trans_iter_exit(trans, &iter);
 err1:
-	return ret == -ENOENT ? -ENODATA : ret;
-}
-
-int bch2_xattr_get(struct bch_fs *c, struct bch_inode_info *inode,
-		   const char *name, void *buffer, size_t size, int type)
-{
-	return bch2_trans_do(c, NULL, NULL, 0,
-		bch2_xattr_get_trans(&trans, inode, name, buffer, size, type));
+	return ret < 0 && bch2_err_matches(ret, ENOENT) ? -ENODATA : ret;
 }
 
 int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
+		   struct bch_inode_unpacked *inode_u,
 		   const struct bch_hash_info *hash_info,
 		   const char *name, const void *value, size_t size,
 		   int type, int flags)
 {
+	struct bch_fs *c = trans->c;
 	struct btree_iter inode_iter = { NULL };
-	struct bch_inode_unpacked inode_u;
 	int ret;
 
-	/*
-	 * We need to do an inode update so that bi_journal_sync gets updated
-	 * and fsync works:
-	 *
-	 * Perhaps we should be updating bi_mtime too?
-	 */
+	ret = bch2_inode_peek(trans, &inode_iter, inode_u, inum, BTREE_ITER_INTENT);
+	if (ret)
+		return ret;
 
-	ret   = bch2_inode_peek(trans, &inode_iter, &inode_u, inum, BTREE_ITER_INTENT) ?:
-		bch2_inode_write(trans, &inode_iter, &inode_u);
+	inode_u->bi_ctime = bch2_current_time(c);
+
+	ret = bch2_inode_write(trans, &inode_iter, inode_u);
 	bch2_trans_iter_exit(trans, &inode_iter);
 
 	if (ret)
@@ -235,7 +221,7 @@ int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 				       hash_info, inum, &search);
 	}
 
-	if (ret == -ENOENT)
+	if (bch2_err_matches(ret, ENOENT))
 		ret = flags & XATTR_REPLACE ? -ENODATA : 0;
 
 	return ret;
@@ -371,13 +357,14 @@ static int bch2_xattr_get_handler(const struct xattr_handler *handler,
 {
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	int ret;
+	int ret = bch2_trans_do(c, NULL, NULL, 0,
+		bch2_xattr_get_trans(&trans, inode, name, buffer, size, handler->flags));
 
-	ret = bch2_xattr_get(c, inode, name, buffer, size, handler->flags);
 	return bch2_err_class(ret);
 }
 
 static int bch2_xattr_set_handler(const struct xattr_handler *handler,
+				  struct mnt_idmap *idmap,
 				  struct dentry *dentry, struct inode *vinode,
 				  const char *name, const void *value,
 				  size_t size, int flags)
@@ -385,12 +372,20 @@ static int bch2_xattr_set_handler(const struct xattr_handler *handler,
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_hash_info hash = bch2_hash_info_init(c, &inode->ei_inode);
+	struct bch_inode_unpacked inode_u;
+	struct btree_trans trans;
 	int ret;
 
-	ret = bch2_trans_do(c, NULL, NULL, 0,
-			bch2_xattr_set(&trans, inode_inum(inode), &hash,
-				       name, value, size,
+	bch2_trans_init(&trans, c, 0, 0);
+
+	ret = commit_do(&trans, NULL, NULL, 0,
+			bch2_xattr_set(&trans, inode_inum(inode), &inode_u,
+				       &hash, name, value, size,
 				       handler->flags, flags));
+	if (!ret)
+		bch2_inode_update_after_write(&trans, inode, &inode_u, ATTR_CTIME);
+	bch2_trans_exit(&trans);
+
 	return bch2_err_class(ret);
 }
 
@@ -516,6 +511,7 @@ static int inode_opt_set_fn(struct bch_inode_info *inode,
 }
 
 static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
+				   struct mnt_idmap *idmap,
 				   struct dentry *dentry, struct inode *vinode,
 				   const char *name, const void *value,
 				   size_t size, int flags)
@@ -593,7 +589,7 @@ err:
 	     opt_id == Opt_background_target))
 		bch2_rebalance_add_work(c, inode->v.i_blocks);
 
-	return ret;
+	return bch2_err_class(ret);
 }
 
 static const struct xattr_handler bch_xattr_bcachefs_handler = {
@@ -622,8 +618,8 @@ static const struct xattr_handler bch_xattr_bcachefs_effective_handler = {
 const struct xattr_handler *bch2_xattr_handlers[] = {
 	&bch_xattr_user_handler,
 #ifdef CONFIG_BCACHEFS_POSIX_ACL
-	&posix_acl_access_xattr_handler,
-	&posix_acl_default_xattr_handler,
+	&nop_posix_acl_access,
+	&nop_posix_acl_default,
 #endif
 	&bch_xattr_trusted_handler,
 	&bch_xattr_security_handler,
@@ -637,9 +633,9 @@ const struct xattr_handler *bch2_xattr_handlers[] = {
 static const struct xattr_handler *bch_xattr_handler_map[] = {
 	[KEY_TYPE_XATTR_INDEX_USER]			= &bch_xattr_user_handler,
 	[KEY_TYPE_XATTR_INDEX_POSIX_ACL_ACCESS]	=
-		&posix_acl_access_xattr_handler,
+		&nop_posix_acl_access,
 	[KEY_TYPE_XATTR_INDEX_POSIX_ACL_DEFAULT]	=
-		&posix_acl_default_xattr_handler,
+		&nop_posix_acl_default,
 	[KEY_TYPE_XATTR_INDEX_TRUSTED]		= &bch_xattr_trusted_handler,
 	[KEY_TYPE_XATTR_INDEX_SECURITY]		= &bch_xattr_security_handler,
 };

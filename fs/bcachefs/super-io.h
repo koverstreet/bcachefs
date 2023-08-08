@@ -9,6 +9,19 @@
 
 #include <asm/byteorder.h>
 
+static inline bool bch2_version_compatible(u16 version)
+{
+	return BCH_VERSION_MAJOR(version) <= BCH_VERSION_MAJOR(bcachefs_metadata_version_current) &&
+		version >= bcachefs_metadata_version_min;
+}
+
+void bch2_version_to_text(struct printbuf *, unsigned);
+unsigned bch2_latest_compatible_version(unsigned);
+
+u64 bch2_upgrade_recovery_passes(struct bch_fs *c,
+				 unsigned,
+				 unsigned);
+
 struct bch_sb_field *bch2_sb_field_get(struct bch_sb *, enum bch_sb_field_type);
 struct bch_sb_field *bch2_sb_field_resize(struct bch_sb_handle *,
 					  enum bch_sb_field_type, unsigned);
@@ -45,6 +58,7 @@ struct bch_sb_field_ops {
 static inline __le64 bch2_sb_magic(struct bch_fs *c)
 {
 	__le64 ret;
+
 	memcpy(&ret, &c->sb.uuid, sizeof(ret));
 	return ret;
 }
@@ -79,7 +93,7 @@ static inline void bch2_check_set_feature(struct bch_fs *c, unsigned feat)
 
 static inline bool bch2_member_exists(struct bch_member *m)
 {
-	return !bch2_is_zero(m->uuid.b, sizeof(uuid_le));
+	return !bch2_is_zero(&m->uuid, sizeof(m->uuid));
 }
 
 static inline bool bch2_dev_exists(struct bch_sb *sb,
@@ -104,7 +118,7 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 			? BCH_MEMBER_DURABILITY(mi) - 1
 			: 1,
 		.freespace_initialized = BCH_MEMBER_FREESPACE_INITIALIZED(mi),
-		.valid		= !bch2_is_zero(mi->uuid.b, sizeof(uuid_le)),
+		.valid		= bch2_member_exists(mi),
 	};
 }
 
@@ -114,6 +128,9 @@ void bch2_journal_super_entries_add_common(struct bch_fs *,
 					   struct jset_entry **, u64);
 
 int bch2_sb_clean_validate_late(struct bch_fs *, struct bch_sb_field_clean *, int);
+
+void bch2_sb_maybe_downgrade(struct bch_fs *);
+void bch2_sb_upgrade(struct bch_fs *, unsigned);
 
 int bch2_fs_mark_dirty(struct bch_fs *);
 void bch2_fs_mark_clean(struct bch_fs *);

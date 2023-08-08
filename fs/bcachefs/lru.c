@@ -11,16 +11,9 @@
 
 /* KEY_TYPE_lru is obsolete: */
 int bch2_lru_invalid(const struct bch_fs *c, struct bkey_s_c k,
-		     unsigned flags, struct printbuf *err)
+		     enum bkey_invalid_flags flags,
+		     struct printbuf *err)
 {
-	const struct bch_lru *lru = bkey_s_c_to_lru(k).v;
-
-	if (bkey_val_bytes(k.k) < sizeof(*lru)) {
-		prt_printf(err, "incorrect value size (%zu < %zu)",
-		       bkey_val_bytes(k.k), sizeof(*lru));
-		return -BCH_ERR_invalid_bkey;
-	}
-
 	if (!lru_pos_time(k.k->p)) {
 		prt_printf(err, "lru entry at time=0");
 		return -BCH_ERR_invalid_bkey;
@@ -48,28 +41,12 @@ void bch2_lru_pos_to_text(struct printbuf *out, struct bpos lru)
 }
 
 static int __bch2_lru_set(struct btree_trans *trans, u16 lru_id,
-			u64 dev_bucket, u64 time, unsigned key_type)
+			  u64 dev_bucket, u64 time, bool set)
 {
-	struct bkey_i *k;
-	int ret = 0;
-
-	if (!time)
-		return 0;
-
-	k = bch2_trans_kmalloc_nomemzero(trans, sizeof(*k));
-	ret = PTR_ERR_OR_ZERO(k);
-	if (unlikely(ret))
-		return ret;
-
-	bkey_init(&k->k);
-	k->k.type = key_type;
-	k->k.p = lru_pos(lru_id, dev_bucket, time);
-
-	EBUG_ON(lru_pos_id(k->k.p) != lru_id);
-	EBUG_ON(lru_pos_time(k->k.p) != time);
-	EBUG_ON(k->k.p.offset != dev_bucket);
-
-	return bch2_trans_update_buffered(trans, BTREE_ID_lru, k);
+	return time
+		? bch2_btree_bit_mod(trans, BTREE_ID_lru,
+				     lru_pos(lru_id, dev_bucket, time), set)
+		: 0;
 }
 
 int bch2_lru_del(struct btree_trans *trans, u16 lru_id, u64 dev_bucket, u64 time)
@@ -122,8 +99,7 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 			alloc_pos.inode, alloc_pos.offset))
 		return bch2_btree_delete_at(trans, lru_iter, 0);
 
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc, alloc_pos, 0);
-	k = bch2_btree_iter_peek_slot(&iter);
+	k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_alloc, alloc_pos, 0);
 	ret = bkey_err(k);
 	if (ret)
 		goto err;
@@ -169,20 +145,18 @@ fsck_err:
 
 int bch2_check_lrus(struct bch_fs *c)
 {
-	struct btree_trans trans;
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bpos last_flushed_pos = POS_MIN;
 	int ret = 0;
 
-	bch2_trans_init(&trans, c, 0, 0);
-
-	ret = for_each_btree_key_commit(&trans, iter,
-			BTREE_ID_lru, POS_MIN, BTREE_ITER_PREFETCH, k,
-			NULL, NULL, BTREE_INSERT_NOFAIL|BTREE_INSERT_LAZY_RW,
-		bch2_check_lru_key(&trans, &iter, k, &last_flushed_pos));
-
-	bch2_trans_exit(&trans);
+	ret = bch2_trans_run(c,
+		for_each_btree_key_commit(&trans, iter,
+				BTREE_ID_lru, POS_MIN, BTREE_ITER_PREFETCH, k,
+				NULL, NULL, BTREE_INSERT_NOFAIL|BTREE_INSERT_LAZY_RW,
+			bch2_check_lru_key(&trans, &iter, k, &last_flushed_pos)));
+	if (ret)
+		bch_err_fn(c, ret);
 	return ret;
 
 }

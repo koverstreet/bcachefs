@@ -6,8 +6,10 @@
 #include "buckets_types.h"
 #include "extents_types.h"
 
+enum bkey_invalid_flags;
+
 int bch2_stripe_invalid(const struct bch_fs *, struct bkey_s_c,
-			unsigned, struct printbuf *);
+			enum bkey_invalid_flags, struct printbuf *);
 void bch2_stripe_to_text(struct printbuf *, struct bch_fs *,
 			 struct bkey_s_c);
 
@@ -17,6 +19,7 @@ void bch2_stripe_to_text(struct printbuf *, struct bch_fs *,
 	.swab		= bch2_ptr_swab,		\
 	.trans_trigger	= bch2_trans_mark_stripe,	\
 	.atomic_trigger	= bch2_mark_stripe,		\
+	.min_val_size	= 8,				\
 })
 
 static inline unsigned stripe_csums_per_device(const struct bch_stripe *s)
@@ -135,10 +138,7 @@ struct ec_stripe_buf {
 
 	void			*data[BCH_BKEY_PTRS_MAX];
 
-	union {
-		struct bkey_i_stripe	key;
-		u64			pad[255];
-	};
+	__BKEY_PADDED(key, 255);
 };
 
 struct ec_stripe_head;
@@ -186,7 +186,7 @@ struct ec_stripe_head {
 	unsigned		target;
 	unsigned		algo;
 	unsigned		redundancy;
-	enum alloc_reserve	reserve;
+	enum bch_watermark	watermark;
 
 	struct bch_devs_mask	devs;
 	unsigned		nr_active_devs;
@@ -210,7 +210,7 @@ int bch2_ec_stripe_new_alloc(struct bch_fs *, struct ec_stripe_head *);
 void bch2_ec_stripe_head_put(struct bch_fs *, struct ec_stripe_head *);
 struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *,
 			unsigned, unsigned, unsigned,
-			enum alloc_reserve, struct closure *);
+			enum bch_watermark, struct closure *);
 
 void bch2_stripes_heap_update(struct bch_fs *, struct stripe *, size_t);
 void bch2_stripes_heap_del(struct bch_fs *, struct stripe *, size_t);

@@ -16,21 +16,23 @@ struct bucket_alloc_state {
 	u64	skipped_nouse;
 };
 
-struct ec_bucket_buf;
-
-#define BCH_ALLOC_RESERVES()		\
-	x(btree_movinggc)		\
+#define BCH_WATERMARKS()		\
+	x(stripe)			\
+	x(normal)			\
+	x(copygc)			\
 	x(btree)			\
-	x(movinggc)			\
-	x(none)				\
-	x(stripe)
+	x(btree_copygc)			\
+	x(reclaim)
 
-enum alloc_reserve {
-#define x(name)	RESERVE_##name,
-	BCH_ALLOC_RESERVES()
+enum bch_watermark {
+#define x(name)	BCH_WATERMARK_##name,
+	BCH_WATERMARKS()
 #undef x
-	RESERVE_NR,
+	BCH_WATERMARK_NR,
 };
+
+#define BCH_WATERMARK_BITS	3
+#define BCH_WATERMARK_MASK	~(~0U << BCH_WATERMARK_BITS)
 
 #define OPEN_BUCKETS_COUNT	1024
 
@@ -103,7 +105,7 @@ struct write_point {
 		struct dev_stripe_state	stripe;
 
 		u64			sectors_allocated;
-	} __attribute__((__aligned__(SMP_CACHE_BYTES)));
+	} __aligned(SMP_CACHE_BYTES);
 
 	struct {
 		struct work_struct	index_update_work;
@@ -114,7 +116,7 @@ struct write_point {
 		enum write_point_state	state;
 		u64			last_state_change;
 		u64			time[WRITE_POINT_STATE_NR];
-	} __attribute__((__aligned__(SMP_CACHE_BYTES)));
+	} __aligned(SMP_CACHE_BYTES);
 };
 
 struct write_point_specifier {

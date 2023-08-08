@@ -36,8 +36,8 @@ static void bch2_cpu_replicas_sort(struct bch_replicas_cpu *r)
 	eytzinger0_sort(r->entries, r->nr, r->entry_size, memcmp, NULL);
 }
 
-void bch2_replicas_entry_v0_to_text(struct printbuf *out,
-				    struct bch_replicas_entry_v0 *e)
+static void bch2_replicas_entry_v0_to_text(struct printbuf *out,
+					   struct bch_replicas_entry_v0 *e)
 {
 	unsigned i;
 
@@ -272,7 +272,7 @@ static void __replicas_table_update_pcpu(struct bch_fs_usage __percpu *dst_p,
 {
 	unsigned src_nr = sizeof(struct bch_fs_usage) / sizeof(u64) + src_r->nr;
 	struct bch_fs_usage *dst, *src = (void *)
-		bch2_acc_percpu_u64s((void *) src_p, src_nr);
+		bch2_acc_percpu_u64s((u64 __percpu *) src_p, src_nr);
 
 	preempt_disable();
 	dst = this_cpu_ptr(dst_p);
@@ -460,35 +460,13 @@ int bch2_replicas_delta_list_mark(struct bch_fs *c,
 
 int bch2_replicas_gc_end(struct bch_fs *c, int ret)
 {
-	unsigned i;
-
 	lockdep_assert_held(&c->replicas_gc_lock);
+
+	if (ret)
+		goto err;
 
 	mutex_lock(&c->sb_lock);
 	percpu_down_write(&c->mark_lock);
-
-	/*
-	 * this is kind of crappy; the replicas gc mechanism needs to be ripped
-	 * out
-	 */
-
-	for (i = 0; i < c->replicas.nr; i++) {
-		struct bch_replicas_entry *e =
-			cpu_replicas_entry(&c->replicas, i);
-		struct bch_replicas_cpu n;
-
-		if (!__replicas_has_entry(&c->replicas_gc, e) &&
-		    bch2_fs_usage_read_one(c, &c->usage_base->replicas[i])) {
-			n = cpu_replicas_add_entry(&c->replicas_gc, e);
-			if (!n.entries) {
-				ret = -BCH_ERR_ENOMEM_cpu_replicas;
-				goto err;
-			}
-
-			swap(n, c->replicas_gc);
-			kfree(n.entries);
-		}
-	}
 
 	ret = bch2_cpu_replicas_to_sb_replicas(c, &c->replicas_gc);
 	if (ret)
@@ -550,8 +528,14 @@ int bch2_replicas_gc_start(struct bch_fs *c, unsigned typemask)
 	return 0;
 }
 
-/* New much simpler mechanism for clearing out unneeded replicas entries: */
-
+/*
+ * New much simpler mechanism for clearing out unneeded replicas entries - drop
+ * replicas entries that have 0 sectors used.
+ *
+ * However, we don't track sector counts for journal usage, so this doesn't drop
+ * any BCH_DATA_journal entries; the old bch2_replicas_gc_(start|end) mechanism
+ * is retained for that.
+ */
 int bch2_replicas_gc2(struct bch_fs *c)
 {
 	struct bch_replicas_cpu new = { 0 };

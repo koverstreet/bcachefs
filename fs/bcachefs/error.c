@@ -27,9 +27,6 @@ bool bch2_inconsistent_error(struct bch_fs *c)
 
 void bch2_topology_error(struct bch_fs *c)
 {
-	if (!test_bit(BCH_FS_TOPOLOGY_REPAIR_DONE, &c->flags))
-		return;
-
 	set_bit(BCH_FS_TOPOLOGY_ERROR, &c->flags);
 	if (test_bit(BCH_FS_FSCK_DONE, &c->flags))
 		bch2_inconsistent_error(c);
@@ -65,10 +62,52 @@ void bch2_io_error(struct bch_dev *ca)
 	//queue_work(system_long_wq, &ca->io_error_work);
 }
 
+enum ask_yn {
+	YN_NO,
+	YN_YES,
+	YN_ALLNO,
+	YN_ALLYES,
+};
+
 #ifdef __KERNEL__
-#define ask_yn()	false
+#define bch2_fsck_ask_yn()	YN_NO
 #else
+
 #include "tools-util.h"
+
+enum ask_yn bch2_fsck_ask_yn(void)
+{
+	char *buf = NULL;
+	size_t buflen = 0;
+	bool ret;
+
+	while (true) {
+		fputs(" (y,n, or Y,N for all errors of this type) ", stdout);
+		fflush(stdout);
+
+		if (getline(&buf, &buflen, stdin) < 0)
+			die("error reading from standard input");
+
+		strim(buf);
+		if (strlen(buf) != 1)
+			continue;
+
+		switch (buf[0]) {
+		case 'n':
+			return YN_NO;
+		case 'y':
+			return YN_YES;
+		case 'N':
+			return YN_ALLNO;
+		case 'Y':
+			return YN_ALLYES;
+		}
+	}
+
+	free(buf);
+	return ret;
+}
+
 #endif
 
 static struct fsck_err_state *fsck_err_get(struct bch_fs *c, const char *fmt)
@@ -117,6 +156,11 @@ int bch2_fsck_err(struct bch_fs *c, unsigned flags, const char *fmt, ...)
 	mutex_lock(&c->fsck_error_lock);
 	s = fsck_err_get(c, fmt);
 	if (s) {
+		/*
+		 * We may be called multiple times for the same error on
+		 * transaction restart - this memoizes instead of asking the user
+		 * multiple times for the same error:
+		 */
 		if (s->last_msg && !strcmp(buf.buf, s->last_msg)) {
 			ret = s->ret;
 			mutex_unlock(&c->fsck_error_lock);
@@ -157,18 +201,32 @@ int bch2_fsck_err(struct bch_fs *c, unsigned flags, const char *fmt, ...)
 			prt_str(out, ", continuing");
 			ret = -BCH_ERR_fsck_ignore;
 		}
-	} else if (c->opts.fix_errors == FSCK_OPT_EXIT) {
+	} else if (c->opts.fix_errors == FSCK_FIX_exit) {
 		prt_str(out, ", exiting");
 		ret = -BCH_ERR_fsck_errors_not_fixed;
 	} else if (flags & FSCK_CAN_FIX) {
-		if (c->opts.fix_errors == FSCK_OPT_ASK) {
+		int fix = s && s->fix
+			? s->fix
+			: c->opts.fix_errors;
+
+		if (fix == FSCK_FIX_ask) {
+			int ask;
+
 			prt_str(out, ": fix?");
 			bch2_print_string_as_lines(KERN_ERR, out->buf);
 			print = false;
-			ret = ask_yn()
+
+			ask = bch2_fsck_ask_yn();
+
+			if (ask >= YN_ALLNO && s)
+				s->fix = ask == YN_ALLNO
+					? FSCK_FIX_no
+					: FSCK_FIX_yes;
+
+			ret = ask & 1
 				? -BCH_ERR_fsck_fix
 				: -BCH_ERR_fsck_ignore;
-		} else if (c->opts.fix_errors == FSCK_OPT_YES ||
+		} else if (fix == FSCK_FIX_yes ||
 			   (c->opts.nochanges &&
 			    !(flags & FSCK_CAN_IGNORE))) {
 			prt_str(out, ", fixing");
@@ -183,7 +241,7 @@ int bch2_fsck_err(struct bch_fs *c, unsigned flags, const char *fmt, ...)
 	}
 
 	if (ret == -BCH_ERR_fsck_ignore &&
-	    (c->opts.fix_errors == FSCK_OPT_EXIT ||
+	    (c->opts.fix_errors == FSCK_FIX_exit ||
 	     !(flags & FSCK_CAN_IGNORE)))
 		ret = -BCH_ERR_fsck_errors_not_fixed;
 

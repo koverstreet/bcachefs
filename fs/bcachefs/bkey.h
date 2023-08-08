@@ -9,8 +9,22 @@
 #include "util.h"
 #include "vstructs.h"
 
+enum bkey_invalid_flags {
+	BKEY_INVALID_WRITE		= (1U << 0),
+	BKEY_INVALID_COMMIT		= (1U << 1),
+	BKEY_INVALID_JOURNAL		= (1U << 2),
+};
+
+#if 0
+
+/*
+ * compiled unpack functions are disabled, pending a new interface for
+ * dynamically allocating executable memory:
+ */
+
 #ifdef CONFIG_X86_64
 #define HAVE_BCACHEFS_COMPILED_UNPACK	1
+#endif
 #endif
 
 void bch2_bkey_packed_to_binary_text(struct printbuf *,
@@ -611,20 +625,20 @@ struct bkey_s_##name {							\
 									\
 static inline struct bkey_i_##name *bkey_i_to_##name(struct bkey_i *k)	\
 {									\
-	EBUG_ON(k->k.type != KEY_TYPE_##name);				\
+	EBUG_ON(!IS_ERR_OR_NULL(k) && k->k.type != KEY_TYPE_##name);	\
 	return container_of(&k->k, struct bkey_i_##name, k);		\
 }									\
 									\
 static inline const struct bkey_i_##name *				\
 bkey_i_to_##name##_c(const struct bkey_i *k)				\
 {									\
-	EBUG_ON(k->k.type != KEY_TYPE_##name);				\
+	EBUG_ON(!IS_ERR_OR_NULL(k) && k->k.type != KEY_TYPE_##name);	\
 	return container_of(&k->k, struct bkey_i_##name, k);		\
 }									\
 									\
 static inline struct bkey_s_##name bkey_s_to_##name(struct bkey_s k)	\
 {									\
-	EBUG_ON(k.k->type != KEY_TYPE_##name);				\
+	EBUG_ON(!IS_ERR_OR_NULL(k.k) && k.k->type != KEY_TYPE_##name);	\
 	return (struct bkey_s_##name) {					\
 		.k = k.k,						\
 		.v = container_of(k.v, struct bch_##name, v),		\
@@ -633,7 +647,7 @@ static inline struct bkey_s_##name bkey_s_to_##name(struct bkey_s k)	\
 									\
 static inline struct bkey_s_c_##name bkey_s_c_to_##name(struct bkey_s_c k)\
 {									\
-	EBUG_ON(k.k->type != KEY_TYPE_##name);				\
+	EBUG_ON(!IS_ERR_OR_NULL(k.k) && k.k->type != KEY_TYPE_##name);	\
 	return (struct bkey_s_c_##name) {				\
 		.k = k.k,						\
 		.v = container_of(k.v, struct bch_##name, v),		\
@@ -659,7 +673,7 @@ name##_i_to_s_c(const struct bkey_i_##name *k)				\
 									\
 static inline struct bkey_s_##name bkey_i_to_s_##name(struct bkey_i *k)	\
 {									\
-	EBUG_ON(k->k.type != KEY_TYPE_##name);				\
+	EBUG_ON(!IS_ERR_OR_NULL(k) && k->k.type != KEY_TYPE_##name);	\
 	return (struct bkey_s_##name) {					\
 		.k = &k->k,						\
 		.v = container_of(&k->v, struct bch_##name, v),		\
@@ -669,7 +683,7 @@ static inline struct bkey_s_##name bkey_i_to_s_##name(struct bkey_i *k)	\
 static inline struct bkey_s_c_##name					\
 bkey_i_to_s_c_##name(const struct bkey_i *k)				\
 {									\
-	EBUG_ON(k->k.type != KEY_TYPE_##name);				\
+	EBUG_ON(!IS_ERR_OR_NULL(k) && k->k.type != KEY_TYPE_##name);	\
 	return (struct bkey_s_c_##name) {				\
 		.k = &k->k,						\
 		.v = container_of(&k->v, struct bch_##name, v),		\
@@ -761,6 +775,8 @@ static inline void bch2_bkey_format_add_key(struct bkey_format_state *s, const s
 
 void bch2_bkey_format_add_pos(struct bkey_format_state *, struct bpos);
 struct bkey_format bch2_bkey_format_done(struct bkey_format_state *);
-const char *bch2_bkey_format_validate(struct bkey_format *);
+int bch2_bkey_format_invalid(struct bch_fs *, struct bkey_format *,
+			     enum bkey_invalid_flags, struct printbuf *);
+void bch2_bkey_format_to_text(struct printbuf *, const struct bkey_format *);
 
 #endif /* _BCACHEFS_BKEY_H */

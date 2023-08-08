@@ -75,9 +75,10 @@ static int bch2_btree_write_buffer_flush_one(struct btree_trans *trans,
 	}
 	return 0;
 trans_commit:
-	return  bch2_trans_update(trans, iter, &wb->k, 0) ?:
+	return  bch2_trans_update_seq(trans, wb->journal_seq, iter, &wb->k, 0) ?:
 		bch2_trans_commit(trans, NULL, NULL,
 				  commit_flags|
+				  BTREE_INSERT_NOCHECK_RW|
 				  BTREE_INSERT_NOFAIL|
 				  BTREE_INSERT_JOURNAL_RECLAIM);
 }
@@ -100,6 +101,32 @@ static union btree_write_buffer_state btree_write_buffer_switch(struct btree_wri
 	smp_mb();
 
 	return old;
+}
+
+/*
+ * Update a btree with a write buffered key using the journal seq of the
+ * original write buffer insert.
+ *
+ * It is not safe to rejournal the key once it has been inserted into the write
+ * buffer because that may break recovery ordering. For example, the key may
+ * have already been modified in the active write buffer in a seq that comes
+ * before the current transaction. If we were to journal this key again and
+ * crash, recovery would process updates in the wrong order.
+ */
+static int
+btree_write_buffered_insert(struct btree_trans *trans,
+			  struct btree_write_buffered_key *wb)
+{
+	struct btree_iter iter;
+	int ret;
+
+	bch2_trans_iter_init(trans, &iter, wb->btree, bkey_start_pos(&wb->k.k),
+			     BTREE_ITER_CACHED|BTREE_ITER_INTENT);
+
+	ret   = bch2_btree_iter_traverse(&iter) ?:
+		bch2_trans_update_seq(trans, wb->journal_seq, &iter, &wb->k, 0);
+	bch2_trans_iter_exit(trans, &iter);
+	return ret;
 }
 
 int __bch2_btree_write_buffer_flush(struct btree_trans *trans, unsigned commit_flags,
@@ -127,6 +154,9 @@ int __bch2_btree_write_buffer_flush(struct btree_trans *trans, unsigned commit_f
 	s = btree_write_buffer_switch(wb);
 	keys = wb->keys[s.idx];
 	nr = s.nr;
+
+	if (race_fault())
+		goto slowpath;
 
 	/*
 	 * We first sort so that we can detect and skip redundant updates, and
@@ -212,6 +242,9 @@ slowpath:
 	     btree_write_buffered_journal_cmp,
 	     NULL);
 
+	commit_flags &= ~BCH_WATERMARK_MASK;
+	commit_flags |= BCH_WATERMARK_reclaim;
+
 	for (i = keys; i < keys + nr; i++) {
 		if (!i->journal_seq)
 			continue;
@@ -230,9 +263,8 @@ slowpath:
 		ret = commit_do(trans, NULL, NULL,
 				commit_flags|
 				BTREE_INSERT_NOFAIL|
-				BTREE_INSERT_JOURNAL_RECLAIM|
-				JOURNAL_WATERMARK_reserved,
-				__bch2_btree_insert(trans, i->btree, &i->k, 0));
+				BTREE_INSERT_JOURNAL_RECLAIM,
+				btree_write_buffered_insert(trans, i));
 		if (bch2_fs_fatal_err_on(ret, c, "%s: insert error %s", __func__, bch2_err_str(ret)))
 			break;
 	}

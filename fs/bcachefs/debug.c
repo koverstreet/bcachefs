@@ -44,11 +44,11 @@ static bool bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 	if (!bch2_dev_get_ioref(ca, READ))
 		return false;
 
-	bio = bio_alloc_bioset(GFP_NOIO,
+	bio = bio_alloc_bioset(ca->disk_sb.bdev,
 			       buf_pages(n_sorted, btree_bytes(c)),
+			       REQ_OP_READ|REQ_META,
+			       GFP_NOFS,
 			       &c->btree_bio);
-	bio_set_dev(bio, ca->disk_sb.bdev);
-	bio->bi_opf = REQ_OP_READ|REQ_META;
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bch2_bio_map(bio, n_sorted, btree_bytes(c));
 
@@ -208,11 +208,11 @@ void bch2_btree_node_ondisk_to_text(struct printbuf *out, struct bch_fs *c,
 		goto out;
 	}
 
-	bio = bio_alloc_bioset(GFP_NOIO,
+	bio = bio_alloc_bioset(ca->disk_sb.bdev,
 			       buf_pages(n_ondisk, btree_bytes(c)),
+			       REQ_OP_READ|REQ_META,
+			       GFP_NOFS,
 			       &c->btree_bio);
-	bio_set_dev(bio, ca->disk_sb.bdev);
-	bio->bi_opf = REQ_OP_READ|REQ_META;
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bch2_bio_map(bio, n_ondisk, btree_bytes(c));
 
@@ -378,25 +378,24 @@ static ssize_t bch2_read_btree(struct file *file, char __user *buf,
 	i->size	= size;
 	i->ret	= 0;
 
-	bch2_trans_init(&trans, i->c, 0, 0);
+	ret = flush_buf(i);
+	if (ret)
+		return ret;
 
+	bch2_trans_init(&trans, i->c, 0, 0);
 	ret = for_each_btree_key2(&trans, iter, i->id, i->from,
 				  BTREE_ITER_PREFETCH|
 				  BTREE_ITER_ALL_SNAPSHOTS, k, ({
-		ret = flush_buf(i);
-		if (ret)
-			break;
-
 		bch2_bkey_val_to_text(&i->buf, i->c, k);
 		prt_newline(&i->buf);
-		0;
+		drop_locks_do(&trans, flush_buf(i));
 	}));
 	i->from = iter.pos;
 
+	bch2_trans_exit(&trans);
+
 	if (!ret)
 		ret = flush_buf(i);
-
-	bch2_trans_exit(&trans);
 
 	return ret ?: i->ret;
 }
@@ -429,18 +428,23 @@ static ssize_t bch2_read_btree_formats(struct file *file, char __user *buf,
 		return i->ret;
 
 	bch2_trans_init(&trans, i->c, 0, 0);
+retry:
+	bch2_trans_begin(&trans);
 
 	for_each_btree_node(&trans, iter, i->id, i->from, 0, b, ret) {
-		ret = flush_buf(i);
-		if (ret)
-			break;
-
 		bch2_btree_node_to_text(&i->buf, i->c, b);
 		i->from = !bpos_eq(SPOS_MAX, b->key.k.p)
 			? bpos_successor(b->key.k.p)
 			: b->key.k.p;
+
+		ret = drop_locks_do(&trans, flush_buf(i));
+		if (ret)
+			break;
 	}
 	bch2_trans_iter_exit(&trans, &iter);
+
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+		goto retry;
 
 	bch2_trans_exit(&trans);
 
@@ -483,17 +487,13 @@ static ssize_t bch2_read_bfloat_failed(struct file *file, char __user *buf,
 		struct bkey_packed *_k =
 			bch2_btree_node_iter_peek(&l->iter, l->b);
 
-		ret = flush_buf(i);
-		if (ret)
-			break;
-
 		if (bpos_gt(l->b->key.k.p, i->prev_node)) {
 			bch2_btree_node_to_text(&i->buf, i->c, l->b);
 			i->prev_node = l->b->key.k.p;
 		}
 
 		bch2_bfloat_to_text(&i->buf, l->b, _k);
-		0;
+		drop_locks_do(&trans, flush_buf(i));
 	}));
 	i->from = iter.pos;
 
@@ -627,19 +627,26 @@ static ssize_t bch2_btree_transactions_read(struct file *file, char __user *buf,
 	struct bch_fs *c = i->c;
 	struct btree_trans *trans;
 	ssize_t ret = 0;
+	u32 seq;
 
 	i->ubuf = buf;
 	i->size	= size;
 	i->ret	= 0;
-
-	mutex_lock(&c->btree_trans_lock);
+restart:
+	seqmutex_lock(&c->btree_trans_lock);
 	list_for_each_entry(trans, &c->btree_trans_list, list) {
 		if (trans->locking_wait.task->pid <= i->iter)
 			continue;
 
+		closure_get(&trans->ref);
+		seq = seqmutex_seq(&c->btree_trans_lock);
+		seqmutex_unlock(&c->btree_trans_lock);
+
 		ret = flush_buf(i);
-		if (ret)
-			break;
+		if (ret) {
+			closure_put(&trans->ref);
+			goto unlocked;
+		}
 
 		bch2_btree_trans_to_text(&i->buf, trans);
 
@@ -651,9 +658,14 @@ static ssize_t bch2_btree_transactions_read(struct file *file, char __user *buf,
 		prt_newline(&i->buf);
 
 		i->iter = trans->locking_wait.task->pid;
-	}
-	mutex_unlock(&c->btree_trans_lock);
 
+		closure_put(&trans->ref);
+
+		if (!seqmutex_relock(&c->btree_trans_lock, seq))
+			goto restart;
+	}
+	seqmutex_unlock(&c->btree_trans_lock);
+unlocked:
 	if (i->buf.allocation_failure)
 		ret = -ENOMEM;
 
@@ -815,6 +827,7 @@ static ssize_t bch2_btree_deadlock_read(struct file *file, char __user *buf,
 	struct bch_fs *c = i->c;
 	struct btree_trans *trans;
 	ssize_t ret = 0;
+	u32 seq;
 
 	i->ubuf = buf;
 	i->size	= size;
@@ -822,21 +835,32 @@ static ssize_t bch2_btree_deadlock_read(struct file *file, char __user *buf,
 
 	if (i->iter)
 		goto out;
-
-	mutex_lock(&c->btree_trans_lock);
+restart:
+	seqmutex_lock(&c->btree_trans_lock);
 	list_for_each_entry(trans, &c->btree_trans_list, list) {
 		if (trans->locking_wait.task->pid <= i->iter)
 			continue;
 
+		closure_get(&trans->ref);
+		seq = seqmutex_seq(&c->btree_trans_lock);
+		seqmutex_unlock(&c->btree_trans_lock);
+
 		ret = flush_buf(i);
-		if (ret)
-			break;
+		if (ret) {
+			closure_put(&trans->ref);
+			goto out;
+		}
 
 		bch2_check_for_deadlock(trans, &i->buf);
 
 		i->iter = trans->locking_wait.task->pid;
+
+		closure_put(&trans->ref);
+
+		if (!seqmutex_relock(&c->btree_trans_lock, seq))
+			goto restart;
 	}
-	mutex_unlock(&c->btree_trans_lock);
+	seqmutex_unlock(&c->btree_trans_lock);
 out:
 	if (i->buf.allocation_failure)
 		ret = -ENOMEM;

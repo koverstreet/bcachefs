@@ -10,16 +10,13 @@
 #include "btree_cache.h"
 #include "bset.h"
 #include "eytzinger.h"
+#include "trace.h"
 #include "util.h"
 
 #include <asm/unaligned.h>
 #include <linux/console.h>
 #include <linux/random.h>
 #include <linux/prefetch.h>
-
-/* hack.. */
-#include "alloc_types.h"
-#include <trace/events/bcachefs.h>
 
 static inline void __bch2_btree_node_iter_advance(struct btree_node_iter *,
 						  struct btree *);
@@ -602,11 +599,10 @@ static inline unsigned bkey_mantissa(const struct bkey_packed *k,
 	return (u16) v;
 }
 
-__always_inline
-static inline void make_bfloat(struct btree *b, struct bset_tree *t,
-			       unsigned j,
-			       struct bkey_packed *min_key,
-			       struct bkey_packed *max_key)
+static __always_inline void make_bfloat(struct btree *b, struct bset_tree *t,
+					unsigned j,
+					struct bkey_packed *min_key,
+					struct bkey_packed *max_key)
 {
 	struct bkey_float *f = bkey_float(b, t, j);
 	struct bkey_packed *m = tree_to_bkey(b, t, j);
@@ -1025,7 +1021,7 @@ void bch2_bset_insert(struct btree *b,
 		set_btree_bset_end(b, t);
 	}
 
-	memcpy_u64s(where, src,
+	memcpy_u64s_small(where, src,
 		    bkeyp_key_u64s(f, src));
 	memcpy_u64s(bkeyp_val(f, where), &insert->v,
 		    bkeyp_val_u64s(f, src));

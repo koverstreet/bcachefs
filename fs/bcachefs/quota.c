@@ -2,6 +2,7 @@
 #include "bcachefs.h"
 #include "btree_update.h"
 #include "errcode.h"
+#include "error.h"
 #include "inode.h"
 #include "quota.h"
 #include "subvolume.h"
@@ -59,17 +60,12 @@ const struct bch_sb_field_ops bch_sb_field_ops_quota = {
 };
 
 int bch2_quota_invalid(const struct bch_fs *c, struct bkey_s_c k,
-		       unsigned flags, struct printbuf *err)
+		       enum bkey_invalid_flags flags,
+		       struct printbuf *err)
 {
 	if (k.k->p.inode >= QTYP_NR) {
 		prt_printf(err, "invalid quota type (%llu >= %u)",
 		       k.k->p.inode, QTYP_NR);
-		return -BCH_ERR_invalid_bkey;
-	}
-
-	if (bkey_val_bytes(k.k) != sizeof(struct bch_quota)) {
-		prt_printf(err, "incorrect value size (%zu != %zu)",
-		       bkey_val_bytes(k.k), sizeof(struct bch_quota));
 		return -BCH_ERR_invalid_bkey;
 	}
 
@@ -485,13 +481,13 @@ static int __bch2_quota_set(struct bch_fs *c, struct bkey_s_c k,
 		}
 
 		if (qdq && qdq->d_fieldmask & QC_SPC_TIMER)
-			mq->c[Q_SPC].timer	= cpu_to_le64(qdq->d_spc_timer);
+			mq->c[Q_SPC].timer	= qdq->d_spc_timer;
 		if (qdq && qdq->d_fieldmask & QC_SPC_WARNS)
-			mq->c[Q_SPC].warns	= cpu_to_le64(qdq->d_spc_warns);
+			mq->c[Q_SPC].warns	= qdq->d_spc_warns;
 		if (qdq && qdq->d_fieldmask & QC_INO_TIMER)
-			mq->c[Q_INO].timer	= cpu_to_le64(qdq->d_ino_timer);
+			mq->c[Q_INO].timer	= qdq->d_ino_timer;
 		if (qdq && qdq->d_fieldmask & QC_INO_WARNS)
-			mq->c[Q_INO].warns	= cpu_to_le64(qdq->d_ino_warns);
+			mq->c[Q_INO].warns	= qdq->d_ino_warns;
 
 		mutex_unlock(&q->lock);
 	}
@@ -562,23 +558,32 @@ static int bch2_fs_quota_read_inode(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct bch_inode_unpacked u;
-	struct bch_subvolume subvolume;
+	struct bch_snapshot_tree s_t;
 	int ret;
 
-	ret = bch2_snapshot_get_subvol(trans, k.k->p.snapshot, &subvolume);
+	ret = bch2_snapshot_tree_lookup(trans,
+			bch2_snapshot_tree(c, k.k->p.snapshot), &s_t);
+	bch2_fs_inconsistent_on(bch2_err_matches(ret, ENOENT), c,
+			"%s: snapshot tree %u not found", __func__,
+			snapshot_t(c, k.k->p.snapshot)->tree);
 	if (ret)
 		return ret;
 
+	if (!s_t.master_subvol)
+		goto advance;
+
+	ret = bch2_inode_find_by_inum_trans(trans,
+				(subvol_inum) {
+					le32_to_cpu(s_t.master_subvol),
+					k.k->p.offset,
+				}, &u);
 	/*
-	 * We don't do quota accounting in snapshots:
+	 * Inode might be deleted in this snapshot - the easiest way to handle
+	 * that is to just skip it here:
 	 */
-	if (BCH_SUBVOLUME_SNAP(&subvolume))
+	if (bch2_err_matches(ret, ENOENT))
 		goto advance;
 
-	if (!bkey_is_inode(k.k))
-		goto advance;
-
-	ret = bch2_inode_unpack(k, &u);
 	if (ret)
 		return ret;
 
@@ -587,7 +592,7 @@ static int bch2_fs_quota_read_inode(struct btree_trans *trans,
 	bch2_quota_acct(c, bch_qid(&u), Q_INO, 1,
 			KEY_TYPE_QUOTA_NOCHECK);
 advance:
-	bch2_btree_iter_set_pos(iter, POS(iter->pos.inode, iter->pos.offset + 1));
+	bch2_btree_iter_set_pos(iter, bpos_nosnap_successor(iter->pos));
 	return 0;
 }
 
@@ -617,10 +622,11 @@ int bch2_fs_quota_read(struct bch_fs *c)
 	      for_each_btree_key2(&trans, iter, BTREE_ID_inodes,
 			POS_MIN, BTREE_ITER_PREFETCH|BTREE_ITER_ALL_SNAPSHOTS, k,
 		bch2_fs_quota_read_inode(&trans, &iter, k));
-	if (ret)
-		bch_err(c, "err in quota_read: %s", bch2_err_str(ret));
 
 	bch2_trans_exit(&trans);
+
+	if (ret)
+		bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -896,7 +902,7 @@ static int bch2_get_next_quota(struct super_block *sb, struct kqid *kqid,
 	ret = -ENOENT;
 found:
 	mutex_unlock(&q->lock);
-	return ret;
+	return bch2_err_class(ret);
 }
 
 static int bch2_set_quota_trans(struct btree_trans *trans,
@@ -907,10 +913,8 @@ static int bch2_set_quota_trans(struct btree_trans *trans,
 	struct bkey_s_c k;
 	int ret;
 
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_quotas, new_quota->k.p,
-			     BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
-	k = bch2_btree_iter_peek_slot(&iter);
-
+	k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_quotas, new_quota->k.p,
+			       BTREE_ITER_SLOTS|BTREE_ITER_INTENT);
 	ret = bkey_err(k);
 	if (unlikely(ret))
 		return ret;
@@ -958,7 +962,7 @@ static int bch2_set_quota(struct super_block *sb, struct kqid qid,
 			    bch2_set_quota_trans(&trans, &new_quota, qdq)) ?:
 		__bch2_quota_set(c, bkey_i_to_s_c(&new_quota.k_i), qdq);
 
-	return ret;
+	return bch2_err_class(ret);
 }
 
 const struct quotactl_ops bch2_quotactl_operations = {

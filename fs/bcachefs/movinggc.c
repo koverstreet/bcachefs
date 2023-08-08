@@ -24,8 +24,8 @@
 #include "move.h"
 #include "movinggc.h"
 #include "super-io.h"
+#include "trace.h"
 
-#include <trace/events/bcachefs.h>
 #include <linux/bsearch.h>
 #include <linux/freezer.h>
 #include <linux/kthread.h>
@@ -91,12 +91,9 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 				b->k.bucket.offset))
 		return 0;
 
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc,
-			     b->k.bucket, BTREE_ITER_CACHED);
-	k = bch2_btree_iter_peek_slot(&iter);
+	k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_alloc,
+			       b->k.bucket, BTREE_ITER_CACHED);
 	ret = bkey_err(k);
-	bch2_trans_iter_exit(trans, &iter);
-
 	if (ret)
 		return ret;
 
@@ -108,14 +105,7 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 		a->fragmentation_lru &&
 		a->fragmentation_lru <= time;
 
-	if (!ret) {
-		struct printbuf buf = PRINTBUF;
-
-		bch2_bkey_val_to_text(&buf, trans->c, k);
-		pr_debug("%s", buf.buf);
-		printbuf_exit(&buf);
-	}
-
+	bch2_trans_iter_exit(trans, &iter);
 	return ret;
 }
 
@@ -133,13 +123,6 @@ static void move_buckets_wait(struct btree_trans *trans,
 
 		if (atomic_read(&i->count))
 			break;
-
-		/*
-		 * moving_ctxt_exit calls bch2_write as it flushes pending
-		 * reads, which inits another btree_trans; this one must be
-		 * unlocked:
-		 */
-		bch2_verify_bucket_evacuated(trans, i->bucket.k.bucket, i->bucket.k.gen);
 
 		list->first = i->next;
 		if (!list->first)
@@ -212,13 +195,14 @@ static int bch2_copygc_get_buckets(struct btree_trans *trans,
 	return ret < 0 ? ret : 0;
 }
 
+noinline
 static int bch2_copygc(struct btree_trans *trans,
 		       struct moving_context *ctxt,
 		       struct buckets_in_flight *buckets_in_flight)
 {
 	struct bch_fs *c = trans->c;
 	struct data_update_opts data_opts = {
-		.btree_insert_flags = BTREE_INSERT_USE_RESERVE|JOURNAL_WATERMARK_copygc,
+		.btree_insert_flags = BCH_WATERMARK_copygc,
 	};
 	move_buckets buckets = { 0 };
 	struct move_bucket_in_flight *f;
@@ -236,8 +220,10 @@ static int bch2_copygc(struct btree_trans *trans,
 
 		f = move_bucket_in_flight_add(buckets_in_flight, *i);
 		ret = PTR_ERR_OR_ZERO(f);
-		if (ret == -EEXIST) /* rare race: copygc_get_buckets returned same bucket more than once */
+		if (ret == -EEXIST) { /* rare race: copygc_get_buckets returned same bucket more than once */
+			ret = 0;
 			continue;
+		}
 		if (ret == -ENOMEM) { /* flush IO, continue later */
 			ret = 0;
 			break;
@@ -252,7 +238,7 @@ err:
 	darray_exit(&buckets);
 
 	/* no entries in LRU btree found, or got to end: */
-	if (ret == -ENOENT)
+	if (bch2_err_matches(ret, ENOENT))
 		ret = 0;
 
 	if (ret < 0 && !bch2_err_matches(ret, EROFS))
@@ -287,7 +273,7 @@ unsigned long bch2_copygc_wait_amount(struct bch_fs *c)
 	for_each_rw_member(ca, c, dev_idx) {
 		struct bch_dev_usage usage = bch2_dev_usage_read(ca);
 
-		fragmented_allowed = ((__dev_buckets_available(ca, usage, RESERVE_stripe) *
+		fragmented_allowed = ((__dev_buckets_available(ca, usage, BCH_WATERMARK_stripe) *
 				       ca->mi.bucket_size) >> 1);
 		fragmented = 0;
 
@@ -385,6 +371,7 @@ static int bch2_copygc_thread(void *arg)
 	}
 
 	move_buckets_wait(&trans, &ctxt, &move_buckets, true);
+	rhashtable_destroy(&move_buckets.table);
 	bch2_trans_exit(&trans);
 	bch2_moving_ctxt_exit(&ctxt);
 

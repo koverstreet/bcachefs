@@ -4,6 +4,7 @@
 
 #include "btree_types.h"
 
+int bch2_check_topology(struct bch_fs *);
 int bch2_gc(struct bch_fs *, bool, bool);
 int bch2_gc_gens(struct bch_fs *);
 void bch2_gc_thread_stop(struct bch_fs *);
@@ -50,7 +51,7 @@ static inline int gc_pos_cmp(struct gc_pos l, struct gc_pos r)
 static inline enum gc_phase btree_id_to_gc_phase(enum btree_id id)
 {
 	switch (id) {
-#define x(name, v) case BTREE_ID_##name: return GC_PHASE_BTREE_##name;
+#define x(name, v, ...) case BTREE_ID_##name: return GC_PHASE_BTREE_##name;
 	BCH_BTREE_IDS()
 #undef x
 	default:

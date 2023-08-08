@@ -93,7 +93,7 @@ static int bch2_ioc_setflags(struct bch_fs *c,
 		return ret;
 
 	inode_lock(&inode->v);
-	if (!inode_owner_or_capable(&inode->v)) {
+	if (!inode_owner_or_capable(file_mnt_idmap(file), &inode->v)) {
 		ret = -EACCES;
 		goto setflags_out;
 	}
@@ -172,7 +172,7 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 		return ret;
 
 	inode_lock(&inode->v);
-	if (!inode_owner_or_capable(&inode->v)) {
+	if (!inode_owner_or_capable(file_mnt_idmap(file), &inode->v)) {
 		ret = -EACCES;
 		goto err;
 	}
@@ -284,22 +284,20 @@ static int bch2_ioc_goingdown(struct bch_fs *c, u32 __user *arg)
 	down_write(&c->vfs_sb->s_umount);
 
 	switch (flags) {
-	case FSOP_GOING_FLAGS_DEFAULT: {
-		struct super_block *sb = freeze_bdev(c->vfs_sb->s_bdev);
+	case FSOP_GOING_FLAGS_DEFAULT:
+		ret = freeze_bdev(c->vfs_sb->s_bdev);
 		if (ret)
 			goto err;
 
-		if (sb && !IS_ERR(sb)) {
-			bch2_journal_flush(&c->journal);
-			c->vfs_sb->s_flags |= SB_RDONLY;
-			bch2_fs_emergency_read_only(c);
-			thaw_bdev(c->vfs_sb->s_bdev, sb);
-		}
+		bch2_journal_flush(&c->journal);
+		c->vfs_sb->s_flags |= SB_RDONLY;
+		bch2_fs_emergency_read_only(c);
+		thaw_bdev(c->vfs_sb->s_bdev);
 		break;
-	}
 
 	case FSOP_GOING_FLAGS_LOGFLUSH:
 		bch2_journal_flush(&c->journal);
+		fallthrough;
 
 	case FSOP_GOING_FLAGS_NOLOGFLUSH:
 		c->vfs_sb->s_flags |= SB_RDONLY;
@@ -384,7 +382,7 @@ retry:
 
 	dir = dst_path.dentry->d_inode;
 	if (IS_DEADDIR(dir)) {
-		error = -ENOENT;
+		error = -BCH_ERR_ENOENT_directory_dead;
 		goto err3;
 	}
 
@@ -395,7 +393,8 @@ retry:
 		goto err3;
 	}
 
-	error = inode_permission(dir, MAY_WRITE | MAY_EXEC);
+	error = inode_permission(file_mnt_idmap(filp),
+				 dir, MAY_WRITE | MAY_EXEC);
 	if (error)
 		goto err3;
 
@@ -410,7 +409,7 @@ retry:
 	    !arg.src_ptr)
 		snapshot_src.subvol = to_bch_ei(dir)->ei_inode.bi_subvol;
 
-	inode = __bch2_create(NULL, to_bch_ei(dir),
+	inode = __bch2_create(file_mnt_idmap(filp), to_bch_ei(dir),
 			      dst_dentry, arg.mode|S_IFDIR,
 			      0, snapshot_src, create_flags);
 	error = PTR_ERR_OR_ZERO(inode);
@@ -462,6 +461,7 @@ static long bch2_ioctl_subvolume_destroy(struct bch_fs *c, struct file *filp,
 	if (ret)
 		goto err;
 
+	fsnotify_rmdir(dir, path.dentry);
 	d_delete(path.dentry);
 err:
 	path_put(&path);

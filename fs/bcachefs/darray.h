@@ -23,7 +23,7 @@ static inline int __darray_make_room(darray_void *d, size_t t_size, size_t more,
 {
 	if (d->nr + more > d->size) {
 		size_t new_size = roundup_pow_of_two(d->nr + more);
-		void *data = krealloc(d->data, new_size * t_size, gfp);
+		void *data = krealloc_array(d->data, new_size, t_size, gfp);
 
 		if (!data)
 			return -ENOMEM;
@@ -54,13 +54,18 @@ static inline int __darray_make_room(darray_void *d, size_t t_size, size_t more,
 
 #define darray_push(_d, _item)	darray_push_gfp(_d, _item, GFP_KERNEL)
 
-#define darray_insert_item(_d, _pos, _item)				\
+#define darray_pop(_d)		((_d)->data[--(_d)->nr])
+
+#define darray_first(_d)	((_d).data[0])
+#define darray_last(_d)		((_d).data[(_d).nr - 1])
+
+#define darray_insert_item(_d, pos, _item)				\
 ({									\
-	size_t pos = (_pos);						\
+	size_t _pos = (pos);						\
 	int _ret = darray_make_room((_d), 1);				\
 									\
 	if (!_ret)							\
-		array_insert_item((_d)->data, (_d)->nr, pos, (_item));	\
+		array_insert_item((_d)->data, (_d)->nr, _pos, (_item));	\
 	_ret;								\
 })
 

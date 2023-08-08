@@ -114,7 +114,7 @@ static inline int bset_encrypt(struct bch_fs *c, struct bset *i, unsigned offset
 		if (ret)
 			return ret;
 
-		nonce = nonce_add(nonce, round_up(bytes, CHACHA20_BLOCK_SIZE));
+		nonce = nonce_add(nonce, round_up(bytes, CHACHA_BLOCK_SIZE));
 	}
 
 	return bch2_encrypt(c, BSET_CSUM_TYPE(i), nonce, i->_data,
@@ -143,8 +143,8 @@ enum btree_write_flags {
 	__BTREE_WRITE_ONLY_IF_NEED = BTREE_WRITE_TYPE_BITS,
 	__BTREE_WRITE_ALREADY_STARTED,
 };
-#define BTREE_WRITE_ONLY_IF_NEED	(1U << __BTREE_WRITE_ONLY_IF_NEED )
-#define BTREE_WRITE_ALREADY_STARTED	(1U << __BTREE_WRITE_ALREADY_STARTED)
+#define BTREE_WRITE_ONLY_IF_NEED	BIT(__BTREE_WRITE_ONLY_IF_NEED)
+#define BTREE_WRITE_ALREADY_STARTED	BIT(__BTREE_WRITE_ALREADY_STARTED)
 
 void __bch2_btree_node_write(struct bch_fs *, struct btree *, unsigned);
 void bch2_btree_node_write(struct bch_fs *, struct btree *,
@@ -178,7 +178,7 @@ static inline void compat_bformat(unsigned level, enum btree_id btree_id,
 
 		f->field_offset[BKEY_FIELD_SNAPSHOT] = write
 			? 0
-			: U32_MAX - max_packed;
+			: cpu_to_le64(U32_MAX - max_packed);
 	}
 }
 
@@ -200,7 +200,7 @@ static inline void compat_btree_node(unsigned level, enum btree_id btree_id,
 				     struct btree_node *bn)
 {
 	if (version < bcachefs_metadata_version_inode_btree_change &&
-	    btree_node_type_is_extents(btree_id) &&
+	    btree_id_is_extents(btree_id) &&
 	    !bpos_eq(bn->min_key, POS_MIN) &&
 	    write)
 		bn->min_key = bpos_nosnap_predecessor(bn->min_key);
@@ -217,7 +217,7 @@ static inline void compat_btree_node(unsigned level, enum btree_id btree_id,
 		bn->max_key.snapshot = U32_MAX;
 
 	if (version < bcachefs_metadata_version_inode_btree_change &&
-	    btree_node_type_is_extents(btree_id) &&
+	    btree_id_is_extents(btree_id) &&
 	    !bpos_eq(bn->min_key, POS_MIN) &&
 	    !write)
 		bn->min_key = bpos_nosnap_successor(bn->min_key);

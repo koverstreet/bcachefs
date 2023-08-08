@@ -5,6 +5,7 @@
 #include "btree_iter.h"
 #include "buckets.h"
 #include "clock.h"
+#include "compress.h"
 #include "disk_groups.h"
 #include "errcode.h"
 #include "extents.h"
@@ -12,11 +13,11 @@
 #include "move.h"
 #include "rebalance.h"
 #include "super-io.h"
+#include "trace.h"
 
 #include <linux/freezer.h>
 #include <linux/kthread.h>
 #include <linux/sched/cputime.h>
-#include <trace/events/bcachefs.h>
 
 /*
  * Check if an extent should be moved:
@@ -45,7 +46,7 @@ static bool rebalance_pred(struct bch_fs *c, void *arg,
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 			if (!p.ptr.cached &&
 			    p.crc.compression_type !=
-			    bch2_compression_opt_to_type[io_opts->background_compression])
+			    bch2_compression_opt_to_type(io_opts->background_compression))
 				data_opts->rewrite_ptrs |= 1U << i;
 			i++;
 		}
@@ -57,7 +58,8 @@ static bool rebalance_pred(struct bch_fs *c, void *arg,
 		i = 0;
 		bkey_for_each_ptr(ptrs, ptr) {
 			if (!ptr->cached &&
-			    !bch2_dev_in_target(c, ptr->dev, io_opts->background_target))
+			    !bch2_dev_in_target(c, ptr->dev, io_opts->background_target) &&
+			    bch2_target_accepts_data(c, BCH_DATA_user, io_opts->background_target))
 				data_opts->rewrite_ptrs |= 1U << i;
 			i++;
 		}

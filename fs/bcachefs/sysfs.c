@@ -202,7 +202,7 @@ read_attribute(nocow_lock_table);
 #ifdef BCH_WRITE_REF_DEBUG
 read_attribute(write_refs);
 
-const char * const bch2_write_refs[] = {
+static const char * const bch2_write_refs[] = {
 #define x(n)	#n,
 	BCH_WRITE_REFS()
 #undef x
@@ -211,11 +211,9 @@ const char * const bch2_write_refs[] = {
 
 static void bch2_write_refs_to_text(struct printbuf *out, struct bch_fs *c)
 {
-	unsigned i;
-
 	bch2_printbuf_tabstop_push(out, 24);
 
-	for (i = 0; i < ARRAY_SIZE(c->writes); i++) {
+	for (unsigned i = 0; i < ARRAY_SIZE(c->writes); i++) {
 		prt_str(out, bch2_write_refs[i]);
 		prt_tab(out);
 		prt_printf(out, "%li", atomic_long_read(&c->writes[i]));
@@ -225,6 +223,7 @@ static void bch2_write_refs_to_text(struct printbuf *out, struct bch_fs *c)
 #endif
 
 read_attribute(internal_uuid);
+read_attribute(disk_groups);
 
 read_attribute(has_data);
 read_attribute(alloc_debug);
@@ -293,7 +292,7 @@ static int bch2_compression_stats_to_text(struct printbuf *out, struct bch_fs *c
 	    incompressible_sectors = 0,
 	    compressed_sectors_compressed = 0,
 	    compressed_sectors_uncompressed = 0;
-	int ret = 0;
+	int ret;
 
 	if (!test_bit(BCH_FS_STARTED, &c->flags))
 		return -EPERM;
@@ -380,7 +379,7 @@ static void bch2_btree_wakeup_all(struct bch_fs *c)
 {
 	struct btree_trans *trans;
 
-	mutex_lock(&c->btree_trans_lock);
+	seqmutex_lock(&c->btree_trans_lock);
 	list_for_each_entry(trans, &c->btree_trans_list, list) {
 		struct btree_bkey_cached_common *b = READ_ONCE(trans->locking);
 
@@ -388,7 +387,7 @@ static void bch2_btree_wakeup_all(struct bch_fs *c)
 			six_lock_wakeup_all(&b->lock);
 
 	}
-	mutex_unlock(&c->btree_trans_lock);
+	seqmutex_unlock(&c->btree_trans_lock);
 }
 
 SHOW(bch2_fs)
@@ -430,7 +429,7 @@ SHOW(bch2_fs)
 		bch2_btree_updates_to_text(out, c);
 
 	if (attr == &sysfs_btree_cache)
-		bch2_btree_cache_to_text(out, &c->btree_cache);
+		bch2_btree_cache_to_text(out, c);
 
 	if (attr == &sysfs_btree_key_cache)
 		bch2_btree_key_cache_to_text(out, &c->btree_key_cache);
@@ -472,6 +471,9 @@ SHOW(bch2_fs)
 
 	if (attr == &sysfs_nocow_lock_table)
 		bch2_nocow_locks_to_text(out, &c->nocow_locks);
+
+	if (attr == &sysfs_disk_groups)
+		bch2_disk_groups_to_text(out, c);
 
 	return 0;
 }
@@ -683,6 +685,8 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_moving_ctxts,
 
 	&sysfs_internal_uuid,
+
+	&sysfs_disk_groups,
 	NULL
 };
 
@@ -846,8 +850,8 @@ static void dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 
 	prt_printf(out, "reserves:");
 	prt_newline(out);
-	for (i = 0; i < RESERVE_NR; i++) {
-		prt_str(out, bch2_alloc_reserves[i]);
+	for (i = 0; i < BCH_WATERMARK_NR; i++) {
+		prt_str(out, bch2_watermarks[i]);
 		prt_tab(out);
 		prt_u64(out, bch2_dev_buckets_reserved(ca, i));
 		prt_tab_rjust(out);

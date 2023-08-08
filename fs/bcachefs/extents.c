@@ -22,9 +22,8 @@
 #include "replicas.h"
 #include "super.h"
 #include "super-io.h"
+#include "trace.h"
 #include "util.h"
-
-#include <trace/events/bcachefs.h>
 
 static unsigned bch2_crc_field_size_max[] = {
 	[BCH_EXTENT_ENTRY_crc32] = CRC32_SIZE_MAX,
@@ -164,7 +163,8 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 /* KEY_TYPE_btree_ptr: */
 
 int bch2_btree_ptr_invalid(const struct bch_fs *c, struct bkey_s_c k,
-			   unsigned flags, struct printbuf *err)
+			   enum bkey_invalid_flags flags,
+			   struct printbuf *err)
 {
 	if (bkey_val_u64s(k.k) > BCH_REPLICAS_MAX) {
 		prt_printf(err, "value too big (%zu > %u)",
@@ -182,26 +182,12 @@ void bch2_btree_ptr_to_text(struct printbuf *out, struct bch_fs *c,
 }
 
 int bch2_btree_ptr_v2_invalid(const struct bch_fs *c, struct bkey_s_c k,
-			      unsigned flags, struct printbuf *err)
+			      enum bkey_invalid_flags flags,
+			      struct printbuf *err)
 {
-	struct bkey_s_c_btree_ptr_v2 bp = bkey_s_c_to_btree_ptr_v2(k);
-
-	if (bkey_val_bytes(k.k) <= sizeof(*bp.v)) {
-		prt_printf(err, "value too small (%zu <= %zu)",
-		       bkey_val_bytes(k.k), sizeof(*bp.v));
-		return -BCH_ERR_invalid_bkey;
-	}
-
 	if (bkey_val_u64s(k.k) > BKEY_BTREE_PTR_VAL_U64s_MAX) {
 		prt_printf(err, "value too big (%zu > %zu)",
 		       bkey_val_u64s(k.k), BKEY_BTREE_PTR_VAL_U64s_MAX);
-		return -BCH_ERR_invalid_bkey;
-	}
-
-	if (c->sb.version < bcachefs_metadata_version_snapshot &&
-	    bp.v->min_key.snapshot) {
-		prt_printf(err, "invalid min_key.snapshot (%u != 0)",
-		       bp.v->min_key.snapshot);
 		return -BCH_ERR_invalid_bkey;
 	}
 
@@ -232,7 +218,7 @@ void bch2_btree_ptr_v2_compat(enum btree_id btree_id, unsigned version,
 	compat_bpos(0, btree_id, version, big_endian, write, &bp.v->min_key);
 
 	if (version < bcachefs_metadata_version_inode_btree_change &&
-	    btree_node_type_is_extents(btree_id) &&
+	    btree_id_is_extents(btree_id) &&
 	    !bkey_eq(bp.v->min_key, POS_MIN))
 		bp.v->min_key = write
 			? bpos_nosnap_predecessor(bp.v->min_key)
@@ -387,15 +373,10 @@ bool bch2_extent_merge(struct bch_fs *c, struct bkey_s l, struct bkey_s_c r)
 /* KEY_TYPE_reservation: */
 
 int bch2_reservation_invalid(const struct bch_fs *c, struct bkey_s_c k,
-			     unsigned flags, struct printbuf *err)
+			     enum bkey_invalid_flags flags,
+			     struct printbuf *err)
 {
 	struct bkey_s_c_reservation r = bkey_s_c_to_reservation(k);
-
-	if (bkey_val_bytes(k.k) != sizeof(struct bch_reservation)) {
-		prt_printf(err, "incorrect value size (%zu != %zu)",
-		       bkey_val_bytes(k.k), sizeof(*r.v));
-		return -BCH_ERR_invalid_bkey;
-	}
 
 	if (!r.v->nr_replicas || r.v->nr_replicas > BCH_REPLICAS_MAX) {
 		prt_printf(err, "invalid nr_replicas (%u)",
@@ -536,13 +517,13 @@ static void bch2_extent_crc_pack(union bch_extent_crc *dst,
 	switch (type) {
 	case BCH_EXTENT_ENTRY_crc32:
 		set_common_fields(dst->crc32, src);
-		dst->crc32.csum	 = *((__le32 *) &src.csum.lo);
+		dst->crc32.csum		= (u32 __force) *((__le32 *) &src.csum.lo);
 		break;
 	case BCH_EXTENT_ENTRY_crc64:
 		set_common_fields(dst->crc64, src);
 		dst->crc64.nonce	= src.nonce;
-		dst->crc64.csum_lo	= src.csum.lo;
-		dst->crc64.csum_hi	= *((__le16 *) &src.csum.hi);
+		dst->crc64.csum_lo	= (u64 __force) src.csum.lo;
+		dst->crc64.csum_hi	= (u64 __force) *((__le16 *) &src.csum.hi);
 		break;
 	case BCH_EXTENT_ENTRY_crc128:
 		set_common_fields(dst->crc128, src);
@@ -663,9 +644,8 @@ unsigned bch2_bkey_replicas(struct bch_fs *c, struct bkey_s_c k)
 	return replicas;
 }
 
-unsigned bch2_extent_ptr_durability(struct bch_fs *c, struct extent_ptr_decoded *p)
+unsigned bch2_extent_ptr_desired_durability(struct bch_fs *c, struct extent_ptr_decoded *p)
 {
-	unsigned durability = 0;
 	struct bch_dev *ca;
 
 	if (p->ptr.cached)
@@ -673,13 +653,28 @@ unsigned bch2_extent_ptr_durability(struct bch_fs *c, struct extent_ptr_decoded 
 
 	ca = bch_dev_bkey_exists(c, p->ptr.dev);
 
-	if (ca->mi.state != BCH_MEMBER_STATE_failed)
-		durability = max_t(unsigned, durability, ca->mi.durability);
+	return ca->mi.durability +
+		(p->has_ec
+		 ? p->ec.redundancy
+		 : 0);
+}
 
-	if (p->has_ec)
-		durability += p->ec.redundancy;
+unsigned bch2_extent_ptr_durability(struct bch_fs *c, struct extent_ptr_decoded *p)
+{
+	struct bch_dev *ca;
 
-	return durability;
+	if (p->ptr.cached)
+		return 0;
+
+	ca = bch_dev_bkey_exists(c, p->ptr.dev);
+
+	if (ca->mi.state == BCH_MEMBER_STATE_failed)
+		return 0;
+
+	return ca->mi.durability +
+		(p->has_ec
+		 ? p->ec.redundancy
+		 : 0);
 }
 
 unsigned bch2_bkey_durability(struct bch_fs *c, struct bkey_s_c k)
@@ -920,11 +915,11 @@ bool bch2_extents_match(struct bkey_s_c k1, struct bkey_s_c k2)
 
 		bkey_for_each_ptr_decode(k1.k, ptrs1, p1, entry1)
 			bkey_for_each_ptr_decode(k2.k, ptrs2, p2, entry2)
-			if (p1.ptr.dev		== p2.ptr.dev &&
-			    p1.ptr.gen		== p2.ptr.gen &&
-			    (s64) p1.ptr.offset + p1.crc.offset - bkey_start_offset(k1.k) ==
-			    (s64) p2.ptr.offset + p2.crc.offset - bkey_start_offset(k2.k))
-				return true;
+				if (p1.ptr.dev		== p2.ptr.dev &&
+				    p1.ptr.gen		== p2.ptr.gen &&
+				    (s64) p1.ptr.offset + p1.crc.offset - bkey_start_offset(k1.k) ==
+				    (s64) p2.ptr.offset + p2.crc.offset - bkey_start_offset(k2.k))
+					return true;
 
 		return false;
 	} else {
@@ -1111,7 +1106,8 @@ static int extent_ptr_invalid(const struct bch_fs *c,
 }
 
 int bch2_bkey_ptrs_invalid(const struct bch_fs *c, struct bkey_s_c k,
-			   unsigned flags, struct printbuf *err)
+			   enum bkey_invalid_flags flags,
+			   struct printbuf *err)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
@@ -1210,6 +1206,8 @@ int bch2_bkey_ptrs_invalid(const struct bch_fs *c, struct bkey_s_c k,
 			}
 			have_ec = true;
 			break;
+		case BCH_EXTENT_ENTRY_rebalance:
+			break;
 		}
 	}
 
@@ -1268,6 +1266,8 @@ void bch2_ptr_swab(struct bkey_s k)
 			break;
 		case BCH_EXTENT_ENTRY_stripe_ptr:
 			break;
+		case BCH_EXTENT_ENTRY_rebalance:
+			break;
 		}
 	}
 }
@@ -1317,6 +1317,8 @@ int bch2_cut_front_s(struct bpos where, struct bkey_s k)
 				entry->crc128.offset += sub;
 				break;
 			case BCH_EXTENT_ENTRY_stripe_ptr:
+				break;
+			case BCH_EXTENT_ENTRY_rebalance:
 				break;
 			}
 

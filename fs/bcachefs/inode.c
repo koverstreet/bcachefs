@@ -2,6 +2,7 @@
 
 #include "bcachefs.h"
 #include "btree_key_cache.h"
+#include "btree_write_buffer.h"
 #include "bkey_methods.h"
 #include "btree_update.h"
 #include "buckets.h"
@@ -329,15 +330,14 @@ int bch2_inode_peek(struct btree_trans *trans,
 	if (ret)
 		return ret;
 
-	bch2_trans_iter_init(trans, iter, BTREE_ID_inodes,
-			     SPOS(0, inum.inum, snapshot),
-			     flags|BTREE_ITER_CACHED);
-	k = bch2_btree_iter_peek_slot(iter);
+	k = bch2_bkey_get_iter(trans, iter, BTREE_ID_inodes,
+			       SPOS(0, inum.inum, snapshot),
+			       flags|BTREE_ITER_CACHED);
 	ret = bkey_err(k);
 	if (ret)
-		goto err;
+		return ret;
 
-	ret = bkey_is_inode(k.k) ? 0 : -ENOENT;
+	ret = bkey_is_inode(k.k) ? 0 : -BCH_ERR_ENOENT_inode;
 	if (ret)
 		goto err;
 
@@ -348,6 +348,8 @@ int bch2_inode_peek(struct btree_trans *trans,
 	return 0;
 err:
 	bch2_trans_iter_exit(trans, iter);
+	if (!bch2_err_matches(ret, BCH_ERR_transaction_restart))
+		bch_err_msg(trans->c, ret, "looking up inum %u:%llu:", inum.subvol, inum.inum);
 	return ret;
 }
 
@@ -433,15 +435,10 @@ static int __bch2_inode_invalid(struct bkey_s_c k, struct printbuf *err)
 }
 
 int bch2_inode_invalid(const struct bch_fs *c, struct bkey_s_c k,
-		       unsigned flags, struct printbuf *err)
+		       enum bkey_invalid_flags flags,
+		       struct printbuf *err)
 {
 	struct bkey_s_c_inode inode = bkey_s_c_to_inode(k);
-
-	if (bkey_val_bytes(k.k) < sizeof(*inode.v)) {
-		prt_printf(err, "incorrect value size (%zu < %zu)",
-		       bkey_val_bytes(k.k), sizeof(*inode.v));
-		return -BCH_ERR_invalid_bkey;
-	}
 
 	if (INODE_STR_HASH(inode.v) >= BCH_STR_HASH_NR) {
 		prt_printf(err, "invalid str hash type (%llu >= %u)",
@@ -453,15 +450,10 @@ int bch2_inode_invalid(const struct bch_fs *c, struct bkey_s_c k,
 }
 
 int bch2_inode_v2_invalid(const struct bch_fs *c, struct bkey_s_c k,
-			  unsigned flags, struct printbuf *err)
+			  enum bkey_invalid_flags flags,
+			  struct printbuf *err)
 {
 	struct bkey_s_c_inode_v2 inode = bkey_s_c_to_inode_v2(k);
-
-	if (bkey_val_bytes(k.k) < sizeof(*inode.v)) {
-		prt_printf(err, "incorrect value size (%zu < %zu)",
-		       bkey_val_bytes(k.k), sizeof(*inode.v));
-		return -BCH_ERR_invalid_bkey;
-	}
 
 	if (INODEv2_STR_HASH(inode.v) >= BCH_STR_HASH_NR) {
 		prt_printf(err, "invalid str hash type (%llu >= %u)",
@@ -473,15 +465,10 @@ int bch2_inode_v2_invalid(const struct bch_fs *c, struct bkey_s_c k,
 }
 
 int bch2_inode_v3_invalid(const struct bch_fs *c, struct bkey_s_c k,
-			  unsigned flags, struct printbuf *err)
+			  enum bkey_invalid_flags flags,
+			  struct printbuf *err)
 {
 	struct bkey_s_c_inode_v3 inode = bkey_s_c_to_inode_v3(k);
-
-	if (bkey_val_bytes(k.k) < sizeof(*inode.v)) {
-		prt_printf(err, "incorrect value size (%zu < %zu)",
-		       bkey_val_bytes(k.k), sizeof(*inode.v));
-		return -BCH_ERR_invalid_bkey;
-	}
 
 	if (INODEv3_FIELDS_START(inode.v) < INODEv3_FIELDS_START_INITIAL ||
 	    INODEv3_FIELDS_START(inode.v) > bkey_val_u64s(inode.k)) {
@@ -535,17 +522,92 @@ void bch2_inode_to_text(struct printbuf *out, struct bch_fs *c, struct bkey_s_c 
 	__bch2_inode_unpacked_to_text(out, &inode);
 }
 
+static inline u64 bkey_inode_flags(struct bkey_s_c k)
+{
+	switch (k.k->type) {
+	case KEY_TYPE_inode:
+		return le32_to_cpu(bkey_s_c_to_inode(k).v->bi_flags);
+	case KEY_TYPE_inode_v2:
+		return le64_to_cpu(bkey_s_c_to_inode_v2(k).v->bi_flags);
+	case KEY_TYPE_inode_v3:
+		return le64_to_cpu(bkey_s_c_to_inode_v3(k).v->bi_flags);
+	default:
+		return 0;
+	}
+}
+
+static inline bool bkey_is_deleted_inode(struct bkey_s_c k)
+{
+	return bkey_inode_flags(k) & BCH_INODE_UNLINKED;
+}
+
+int bch2_trans_mark_inode(struct btree_trans *trans,
+			  enum btree_id btree_id, unsigned level,
+			  struct bkey_s_c old,
+			  struct bkey_i *new,
+			  unsigned flags)
+{
+	int nr = bkey_is_inode(&new->k) - bkey_is_inode(old.k);
+	bool old_deleted = bkey_is_deleted_inode(old);
+	bool new_deleted = bkey_is_deleted_inode(bkey_i_to_s_c(new));
+
+	if (nr) {
+		int ret = bch2_replicas_deltas_realloc(trans, 0);
+		struct replicas_delta_list *d = trans->fs_usage_deltas;
+
+		if (ret)
+			return ret;
+
+		d->nr_inodes += nr;
+	}
+
+	if (old_deleted != new_deleted) {
+		int ret = bch2_btree_bit_mod(trans, BTREE_ID_deleted_inodes, new->k.p, new_deleted);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+int bch2_mark_inode(struct btree_trans *trans,
+		    enum btree_id btree_id, unsigned level,
+		    struct bkey_s_c old, struct bkey_s_c new,
+		    unsigned flags)
+{
+	struct bch_fs *c = trans->c;
+	struct bch_fs_usage *fs_usage;
+	u64 journal_seq = trans->journal_res.seq;
+
+	if (flags & BTREE_TRIGGER_INSERT) {
+		struct bch_inode_v3 *v = (struct bch_inode_v3 *) new.v;
+
+		BUG_ON(!journal_seq);
+		BUG_ON(new.k->type != KEY_TYPE_inode_v3);
+
+		v->bi_journal_seq = cpu_to_le64(journal_seq);
+	}
+
+	if (flags & BTREE_TRIGGER_GC) {
+		percpu_down_read(&c->mark_lock);
+		preempt_disable();
+
+		fs_usage = fs_usage_ptr(c, journal_seq, flags & BTREE_TRIGGER_GC);
+		fs_usage->nr_inodes += bkey_is_inode(new.k);
+		fs_usage->nr_inodes -= bkey_is_inode(old.k);
+
+		preempt_enable();
+		percpu_up_read(&c->mark_lock);
+	}
+	return 0;
+}
+
 int bch2_inode_generation_invalid(const struct bch_fs *c, struct bkey_s_c k,
-				  unsigned flags, struct printbuf *err)
+				  enum bkey_invalid_flags flags,
+				  struct printbuf *err)
 {
 	if (k.k->p.inode) {
 		prt_printf(err, "nonzero k.p.inode");
-		return -BCH_ERR_invalid_bkey;
-	}
-
-	if (bkey_val_bytes(k.k) != sizeof(struct bch_inode_generation)) {
-		prt_printf(err, "incorrect value size (%zu != %zu)",
-		       bkey_val_bytes(k.k), sizeof(struct bch_inode_generation));
 		return -BCH_ERR_invalid_bkey;
 	}
 
@@ -784,11 +846,9 @@ retry:
 	if (ret)
 		goto err;
 
-	bch2_trans_iter_init(&trans, &iter, BTREE_ID_inodes,
-			     SPOS(0, inum.inum, snapshot),
-			     BTREE_ITER_INTENT|BTREE_ITER_CACHED);
-	k = bch2_btree_iter_peek_slot(&iter);
-
+	k = bch2_bkey_get_iter(&trans, &iter, BTREE_ID_inodes,
+			       SPOS(0, inum.inum, snapshot),
+			       BTREE_ITER_INTENT|BTREE_ITER_CACHED);
 	ret = bkey_err(k);
 	if (ret)
 		goto err;
@@ -892,4 +952,154 @@ void bch2_inode_opts_get(struct bch_io_opts *opts, struct bch_fs *c,
 
 	if (opts->nocow)
 		opts->compression = opts->background_compression = opts->data_checksum = opts->erasure_code = 0;
+}
+
+int bch2_inode_rm_snapshot(struct btree_trans *trans, u64 inum, u32 snapshot)
+{
+	struct bch_fs *c = trans->c;
+	struct btree_iter iter = { NULL };
+	struct bkey_i_inode_generation delete;
+	struct bch_inode_unpacked inode_u;
+	struct bkey_s_c k;
+	int ret;
+
+	do {
+		ret   = bch2_btree_delete_range_trans(trans, BTREE_ID_extents,
+						      SPOS(inum, 0, snapshot),
+						      SPOS(inum, U64_MAX, snapshot),
+						      0, NULL) ?:
+			bch2_btree_delete_range_trans(trans, BTREE_ID_dirents,
+						      SPOS(inum, 0, snapshot),
+						      SPOS(inum, U64_MAX, snapshot),
+						      0, NULL) ?:
+			bch2_btree_delete_range_trans(trans, BTREE_ID_xattrs,
+						      SPOS(inum, 0, snapshot),
+						      SPOS(inum, U64_MAX, snapshot),
+						      0, NULL);
+	} while (ret == -BCH_ERR_transaction_restart_nested);
+	if (ret)
+		goto err;
+retry:
+	bch2_trans_begin(trans);
+
+	k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_inodes,
+			       SPOS(0, inum, snapshot), BTREE_ITER_INTENT);
+	ret = bkey_err(k);
+	if (ret)
+		goto err;
+
+	if (!bkey_is_inode(k.k)) {
+		bch2_fs_inconsistent(c,
+				     "inode %llu:%u not found when deleting",
+				     inum, snapshot);
+		ret = -EIO;
+		goto err;
+	}
+
+	bch2_inode_unpack(k, &inode_u);
+
+	/* Subvolume root? */
+	if (inode_u.bi_subvol)
+		bch_warn(c, "deleting inode %llu marked as unlinked, but also a subvolume root!?", inode_u.bi_inum);
+
+	bkey_inode_generation_init(&delete.k_i);
+	delete.k.p = iter.pos;
+	delete.v.bi_generation = cpu_to_le32(inode_u.bi_generation + 1);
+
+	ret   = bch2_trans_update(trans, &iter, &delete.k_i, 0) ?:
+		bch2_trans_commit(trans, NULL, NULL,
+				BTREE_INSERT_NOFAIL);
+err:
+	bch2_trans_iter_exit(trans, &iter);
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+		goto retry;
+
+	return ret ?: -BCH_ERR_transaction_restart_nested;
+}
+
+static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos)
+{
+	struct bch_fs *c = trans->c;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	struct bch_inode_unpacked inode;
+	int ret;
+
+	if (bch2_snapshot_is_internal_node(c, pos.snapshot))
+		return 0;
+
+	if (!fsck_err_on(c->sb.clean, c,
+			 "filesystem marked as clean but have deleted inode %llu:%u",
+			 pos.offset, pos.snapshot))
+		return 0;
+
+	k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_inodes, pos, BTREE_ITER_CACHED);
+	ret = bkey_err(k);
+	if (ret)
+		return ret;
+
+	ret = bkey_is_inode(k.k) ? 0 : -BCH_ERR_ENOENT_inode;
+	if (fsck_err_on(!bkey_is_inode(k.k), c,
+			"nonexistent inode %llu:%u in deleted_inodes btree",
+			pos.offset, pos.snapshot))
+		goto delete;
+
+	ret = bch2_inode_unpack(k, &inode);
+	if (ret)
+		goto err;
+
+	if (fsck_err_on(!(inode.bi_flags & BCH_INODE_UNLINKED), c,
+			"non-deleted inode %llu:%u in deleted_inodes btree",
+			pos.offset, pos.snapshot))
+		goto delete;
+
+	return 1;
+err:
+fsck_err:
+	return ret;
+delete:
+	return bch2_btree_bit_mod(trans, BTREE_ID_deleted_inodes, pos, false);
+}
+
+int bch2_delete_dead_inodes(struct bch_fs *c)
+{
+	struct btree_trans trans;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret;
+
+	bch2_trans_init(&trans, c, 0, 0);
+
+	ret = bch2_btree_write_buffer_flush_sync(&trans);
+	if (ret)
+		goto err;
+
+	/*
+	 * Weird transaction restart handling here because on successful delete,
+	 * bch2_inode_rm_snapshot() will return a nested transaction restart,
+	 * but we can't retry because the btree write buffer won't have been
+	 * flushed and we'd spin:
+	 */
+	for_each_btree_key(&trans, iter, BTREE_ID_deleted_inodes, POS_MIN,
+			   BTREE_ITER_PREFETCH|BTREE_ITER_ALL_SNAPSHOTS, k, ret) {
+		ret = lockrestart_do(&trans, may_delete_deleted_inode(&trans, k.k->p));
+		if (ret < 0)
+			break;
+
+		if (ret) {
+			if (!test_bit(BCH_FS_RW, &c->flags)) {
+				bch2_trans_unlock(&trans);
+				bch2_fs_lazy_rw(c);
+			}
+
+			ret = bch2_inode_rm_snapshot(&trans, k.k->p.offset, k.k->p.snapshot);
+			if (ret && !bch2_err_matches(ret, BCH_ERR_transaction_restart))
+				break;
+		}
+	}
+	bch2_trans_iter_exit(&trans, &iter);
+err:
+	bch2_trans_exit(&trans);
+
+	return ret;
 }

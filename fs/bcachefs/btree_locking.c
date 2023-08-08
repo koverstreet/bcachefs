@@ -6,28 +6,24 @@
 
 static struct lock_class_key bch2_btree_node_lock_key;
 
-void bch2_btree_lock_init(struct btree_bkey_cached_common *b)
+void bch2_btree_lock_init(struct btree_bkey_cached_common *b,
+			  enum six_lock_init_flags flags)
 {
-	__six_lock_init(&b->lock, "b->c.lock", &bch2_btree_node_lock_key);
+	__six_lock_init(&b->lock, "b->c.lock", &bch2_btree_node_lock_key, flags);
+	lockdep_set_novalidate_class(&b->lock);
 }
 
 #ifdef CONFIG_LOCKDEP
 void bch2_assert_btree_nodes_not_locked(void)
 {
+#if 0
+	//Re-enable when lock_class_is_held() is merged:
+	BUG_ON(lock_class_is_held(&bch2_btree_node_lock_key));
+#endif
 }
 #endif
 
 /* Btree node locking: */
-
-static inline void six_lock_readers_add(struct six_lock *lock, int nr)
-{
-	if (lock->readers)
-		this_cpu_add(*lock->readers, nr);
-	else if (nr > 0)
-		atomic64_add(__SIX_VAL(read_lock, nr), &lock->state.counter);
-	else
-		atomic64_sub(__SIX_VAL(read_lock, -nr), &lock->state.counter);
-}
 
 struct six_lock_count bch2_btree_node_lock_counts(struct btree_trans *trans,
 						  struct btree_path *skip,
@@ -116,15 +112,19 @@ static noinline void lock_graph_pop_all(struct lock_graph *g)
 		lock_graph_up(g);
 }
 
-static void lock_graph_down(struct lock_graph *g, struct btree_trans *trans)
+static void __lock_graph_down(struct lock_graph *g, struct btree_trans *trans)
 {
-	closure_get(&trans->ref);
-
 	g->g[g->nr++] = (struct trans_waiting_for_lock) {
 		.trans		= trans,
 		.node_want	= trans->locking,
 		.lock_want	= trans->locking_wait.lock_want,
 	};
+}
+
+static void lock_graph_down(struct lock_graph *g, struct btree_trans *trans)
+{
+	closure_get(&trans->ref);
+	__lock_graph_down(g, trans);
 }
 
 static bool lock_graph_remove_non_waiters(struct lock_graph *g)
@@ -227,10 +227,14 @@ static int lock_graph_descend(struct lock_graph *g, struct btree_trans *trans,
 	struct trans_waiting_for_lock *i;
 
 	for (i = g->g; i < g->g + g->nr; i++)
-		if (i->trans == trans)
+		if (i->trans == trans) {
+			closure_put(&trans->ref);
 			return break_cycle(g, cycle);
+		}
 
 	if (g->nr == ARRAY_SIZE(g->g)) {
+		closure_put(&trans->ref);
+
 		if (orig_trans->lock_may_not_fail)
 			return 0;
 
@@ -244,7 +248,7 @@ static int lock_graph_descend(struct lock_graph *g, struct btree_trans *trans,
 		return btree_trans_restart(orig_trans, BCH_ERR_transaction_restart_deadlock_recursion_limit);
 	}
 
-	lock_graph_down(g, trans);
+	__lock_graph_down(g, trans);
 	return 0;
 }
 
@@ -259,6 +263,7 @@ int bch2_check_for_deadlock(struct btree_trans *trans, struct printbuf *cycle)
 	struct trans_waiting_for_lock *top;
 	struct btree_bkey_cached_common *b;
 	struct btree_path *path;
+	unsigned path_idx;
 	int ret;
 
 	if (trans->lock_must_abort) {
@@ -277,12 +282,12 @@ next:
 
 	top = &g.g[g.nr - 1];
 
-	trans_for_each_path_from(top->trans, path, top->path_idx) {
+	trans_for_each_path_safe_from(top->trans, path, path_idx, top->path_idx) {
 		if (!path->nodes_locked)
 			continue;
 
-		if (top->path_idx != path->idx) {
-			top->path_idx		= path->idx;
+		if (path_idx != top->path_idx) {
+			top->path_idx		= path_idx;
 			top->level		= 0;
 			top->lock_start_time	= 0;
 		}
@@ -338,9 +343,10 @@ next:
 				    !lock_type_conflicts(lock_held, trans->locking_wait.lock_want))
 					continue;
 
-				ret = lock_graph_descend(&g, trans, cycle);
+				closure_get(&trans->ref);
 				raw_spin_unlock(&b->lock.wait_lock);
 
+				ret = lock_graph_descend(&g, trans, cycle);
 				if (ret)
 					return ret;
 				goto next;
@@ -382,7 +388,7 @@ int __bch2_btree_node_lock_write(struct btree_trans *trans, struct btree_path *p
 	six_lock_readers_add(&b->lock, readers);
 
 	if (ret)
-		mark_btree_node_locked_noreset(path, b->level, SIX_LOCK_intent);
+		mark_btree_node_locked_noreset(path, b->level, BTREE_NODE_INTENT_LOCKED);
 
 	return ret;
 }
@@ -546,7 +552,7 @@ bool bch2_btree_node_upgrade(struct btree_trans *trans,
 	trace_and_count(trans->c, btree_path_upgrade_fail, trans, _RET_IP_, path, level);
 	return false;
 success:
-	mark_btree_node_locked_noreset(path, level, SIX_LOCK_intent);
+	mark_btree_node_locked_noreset(path, level, BTREE_NODE_INTENT_LOCKED);
 	return true;
 }
 
@@ -590,13 +596,6 @@ int __bch2_btree_path_relock(struct btree_trans *trans,
 	}
 
 	return 0;
-}
-
-__flatten
-bool bch2_btree_path_upgrade_norestart(struct btree_trans *trans,
-			struct btree_path *path, unsigned long trace_ip)
-{
-	return btree_path_get_locks(trans, path, true);
 }
 
 bool bch2_btree_path_upgrade_noupgrade_sibs(struct btree_trans *trans,
@@ -668,7 +667,7 @@ void __bch2_btree_path_downgrade(struct btree_trans *trans,
 		} else {
 			if (btree_node_intent_locked(path, l)) {
 				six_lock_downgrade(&path->l[l].b->c.lock);
-				mark_btree_node_locked_noreset(path, l, SIX_LOCK_read);
+				mark_btree_node_locked_noreset(path, l, BTREE_NODE_READ_LOCKED);
 			}
 			break;
 		}
@@ -718,19 +717,20 @@ int bch2_trans_relock_notrace(struct btree_trans *trans)
 	return 0;
 }
 
+void bch2_trans_unlock_noassert(struct btree_trans *trans)
+{
+	struct btree_path *path;
+
+	trans_for_each_path(trans, path)
+		__bch2_btree_path_unlock(trans, path);
+}
+
 void bch2_trans_unlock(struct btree_trans *trans)
 {
 	struct btree_path *path;
 
 	trans_for_each_path(trans, path)
 		__bch2_btree_path_unlock(trans, path);
-
-	/*
-	 * bch2_gc_btree_init_recurse() doesn't use btree iterators for walking
-	 * btree nodes, it implements its own walking:
-	 */
-	if (!trans->is_initial_gc)
-		bch2_assert_btree_nodes_not_locked();
 }
 
 bool bch2_trans_locked(struct btree_trans *trans)
@@ -746,11 +746,8 @@ bool bch2_trans_locked(struct btree_trans *trans)
 int __bch2_trans_mutex_lock(struct btree_trans *trans,
 			    struct mutex *lock)
 {
-	int ret;
+	int ret = drop_locks_do(trans, (mutex_lock(lock), 0));
 
-	bch2_trans_unlock(trans);
-	mutex_lock(lock);
-	ret = bch2_trans_relock(trans);
 	if (ret)
 		mutex_unlock(lock);
 	return ret;

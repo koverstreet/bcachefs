@@ -8,6 +8,8 @@
 #include "debug.h"
 #include "super.h"
 
+enum bkey_invalid_flags;
+
 /* How out of date a pointer gen is allowed to be: */
 #define BUCKET_GC_GEN_MAX	96U
 
@@ -147,10 +149,14 @@ struct bkey_i_alloc_v4 *bch2_alloc_to_v4_mut(struct btree_trans *, struct bkey_s
 
 int bch2_bucket_io_time_reset(struct btree_trans *, unsigned, size_t, int);
 
-int bch2_alloc_v1_invalid(const struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *);
-int bch2_alloc_v2_invalid(const struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *);
-int bch2_alloc_v3_invalid(const struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *);
-int bch2_alloc_v4_invalid(const struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *);
+int bch2_alloc_v1_invalid(const struct bch_fs *, struct bkey_s_c,
+			  enum bkey_invalid_flags, struct printbuf *);
+int bch2_alloc_v2_invalid(const struct bch_fs *, struct bkey_s_c,
+			  enum bkey_invalid_flags, struct printbuf *);
+int bch2_alloc_v3_invalid(const struct bch_fs *, struct bkey_s_c,
+			  enum bkey_invalid_flags, struct printbuf *);
+int bch2_alloc_v4_invalid(const struct bch_fs *, struct bkey_s_c,
+			  enum bkey_invalid_flags, struct printbuf *);
 void bch2_alloc_v4_swab(struct bkey_s);
 void bch2_alloc_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 
@@ -159,6 +165,7 @@ void bch2_alloc_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 	.val_to_text	= bch2_alloc_to_text,		\
 	.trans_trigger	= bch2_trans_mark_alloc,	\
 	.atomic_trigger	= bch2_mark_alloc,		\
+	.min_val_size	= 8,				\
 })
 
 #define bch2_bkey_ops_alloc_v2 ((struct bkey_ops) {	\
@@ -166,6 +173,7 @@ void bch2_alloc_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 	.val_to_text	= bch2_alloc_to_text,		\
 	.trans_trigger	= bch2_trans_mark_alloc,	\
 	.atomic_trigger	= bch2_mark_alloc,		\
+	.min_val_size	= 8,				\
 })
 
 #define bch2_bkey_ops_alloc_v3 ((struct bkey_ops) {	\
@@ -173,6 +181,7 @@ void bch2_alloc_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 	.val_to_text	= bch2_alloc_to_text,		\
 	.trans_trigger	= bch2_trans_mark_alloc,	\
 	.atomic_trigger	= bch2_mark_alloc,		\
+	.min_val_size	= 16,				\
 })
 
 #define bch2_bkey_ops_alloc_v4 ((struct bkey_ops) {	\
@@ -181,9 +190,11 @@ void bch2_alloc_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 	.swab		= bch2_alloc_v4_swab,		\
 	.trans_trigger	= bch2_trans_mark_alloc,	\
 	.atomic_trigger	= bch2_mark_alloc,		\
+	.min_val_size	= 48,				\
 })
 
-int bch2_bucket_gens_invalid(const struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *);
+int bch2_bucket_gens_invalid(const struct bch_fs *, struct bkey_s_c,
+			     enum bkey_invalid_flags, struct printbuf *);
 void bch2_bucket_gens_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 
 #define bch2_bkey_ops_bucket_gens ((struct bkey_ops) {	\
@@ -201,7 +212,6 @@ static inline bool bkey_is_alloc(const struct bkey *k)
 }
 
 int bch2_alloc_read(struct bch_fs *);
-int bch2_bucket_gens_read(struct bch_fs *);
 
 int bch2_trans_mark_alloc(struct btree_trans *, enum btree_id, unsigned,
 			  struct bkey_s_c, struct bkey_i *, unsigned);
@@ -216,7 +226,7 @@ static inline u64 should_invalidate_buckets(struct bch_dev *ca,
 	u64 free = max_t(s64, 0,
 			   u.d[BCH_DATA_free].buckets
 			 + u.d[BCH_DATA_need_discard].buckets
-			 - bch2_dev_buckets_reserved(ca, RESERVE_stripe));
+			 - bch2_dev_buckets_reserved(ca, BCH_WATERMARK_stripe));
 
 	return clamp_t(s64, want_free - free, 0, u.d[BCH_DATA_cached].buckets);
 }

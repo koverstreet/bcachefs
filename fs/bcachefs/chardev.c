@@ -578,7 +578,7 @@ static long bch2_ioctl_disk_get_idx(struct bch_fs *c,
 			return i;
 		}
 
-	return -ENOENT;
+	return -BCH_ERR_ENOENT_dev_idx_not_found;
 }
 
 static long bch2_ioctl_disk_resize(struct bch_fs *c,
@@ -753,7 +753,7 @@ int __init bch2_chardev_init(void)
 	if (bch_chardev_major < 0)
 		return bch_chardev_major;
 
-	bch_chardev_class = class_create(THIS_MODULE, "bcachefs");
+	bch_chardev_class = class_create("bcachefs");
 	if (IS_ERR(bch_chardev_class))
 		return PTR_ERR(bch_chardev_class);
 

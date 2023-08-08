@@ -2,8 +2,8 @@
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM bcachefs
 
-#if !defined(_TRACE_BCACHE_H) || defined(TRACE_HEADER_MULTI_READ)
-#define _TRACE_BCACHE_H
+#if !defined(_TRACE_BCACHEFS_H) || defined(TRACE_HEADER_MULTI_READ)
+#define _TRACE_BCACHEFS_H
 
 #include <linux/tracepoint.h>
 
@@ -33,23 +33,18 @@ DECLARE_EVENT_CLASS(bpos,
 );
 
 DECLARE_EVENT_CLASS(bkey,
-	TP_PROTO(const struct bkey *k),
-	TP_ARGS(k),
+	TP_PROTO(struct bch_fs *c, const char *k),
+	TP_ARGS(c, k),
 
 	TP_STRUCT__entry(
-		__field(u64,	inode				)
-		__field(u64,	offset				)
-		__field(u32,	size				)
+		__string(k,	k				)
 	),
 
 	TP_fast_assign(
-		__entry->inode	= k->p.inode;
-		__entry->offset	= k->p.offset;
-		__entry->size	= k->size;
+		__assign_str(k, k);
 	),
 
-	TP_printk("%llu:%llu len %u", __entry->inode,
-		  __entry->offset, __entry->size)
+	TP_printk("%s", __get_str(k))
 );
 
 DECLARE_EVENT_CLASS(btree_node,
@@ -104,10 +99,10 @@ DECLARE_EVENT_CLASS(bio,
 	),
 
 	TP_fast_assign(
-		__entry->dev		= bio->bi_disk ? bio_dev(bio) : 0;
+		__entry->dev		= bio->bi_bdev ? bio_dev(bio) : 0;
 		__entry->sector		= bio->bi_iter.bi_sector;
 		__entry->nr_sector	= bio->bi_iter.bi_size >> 9;
-		blk_fill_rwbs(__entry->rwbs, bio->bi_opf, bio->bi_iter.bi_size);
+		blk_fill_rwbs(__entry->rwbs, bio->bi_opf);
 	),
 
 	TP_printk("%d,%d  %s %llu + %u",
@@ -425,7 +420,9 @@ TRACE_EVENT(btree_path_relock_fail,
 		else
 			scnprintf(__entry->node, sizeof(__entry->node), "%px", b);
 		__entry->iter_lock_seq		= path->l[level].lock_seq;
-		__entry->node_lock_seq		= is_btree_node(path, level) ? path->l[level].b->c.lock.state.seq : 0;
+		__entry->node_lock_seq		= is_btree_node(path, level)
+			? six_lock_seq(&path->l[level].b->c.lock)
+			: 0;
 	),
 
 	TP_printk("%s %pS btree %s pos %llu:%llu:%u level %u node %s iter seq %u lock seq %u",
@@ -480,7 +477,9 @@ TRACE_EVENT(btree_path_upgrade_fail,
 		__entry->read_count		= c.n[SIX_LOCK_read];
 		__entry->intent_count		= c.n[SIX_LOCK_read];
 		__entry->iter_lock_seq		= path->l[level].lock_seq;
-		__entry->node_lock_seq		= is_btree_node(path, level) ? path->l[level].b->c.lock.state.seq : 0;
+		__entry->node_lock_seq		= is_btree_node(path, level)
+			? six_lock_seq(&path->l[level].b->c.lock)
+			: 0;
 	),
 
 	TP_printk("%s %pS btree %s pos %llu:%llu:%u level %u locked %u held %u:%u lock count %u:%u iter seq %u lock seq %u",
@@ -667,19 +666,45 @@ TRACE_EVENT(bucket_invalidate,
 
 /* Moving IO */
 
+TRACE_EVENT(bucket_evacuate,
+	TP_PROTO(struct bch_fs *c, struct bpos *bucket),
+	TP_ARGS(c, bucket),
+
+	TP_STRUCT__entry(
+		__field(dev_t,		dev			)
+		__field(u32,		dev_idx			)
+		__field(u64,		bucket			)
+	),
+
+	TP_fast_assign(
+		__entry->dev		= c->dev;
+		__entry->dev_idx	= bucket->inode;
+		__entry->bucket		= bucket->offset;
+	),
+
+	TP_printk("%d:%d %u:%llu",
+		  MAJOR(__entry->dev), MINOR(__entry->dev),
+		  __entry->dev_idx, __entry->bucket)
+);
+
+DEFINE_EVENT(bkey, move_extent,
+	TP_PROTO(struct bch_fs *c, const char *k),
+	TP_ARGS(c, k)
+);
+
 DEFINE_EVENT(bkey, move_extent_read,
-	TP_PROTO(const struct bkey *k),
-	TP_ARGS(k)
+	TP_PROTO(struct bch_fs *c, const char *k),
+	TP_ARGS(c, k)
 );
 
 DEFINE_EVENT(bkey, move_extent_write,
-	TP_PROTO(const struct bkey *k),
-	TP_ARGS(k)
+	TP_PROTO(struct bch_fs *c, const char *k),
+	TP_ARGS(c, k)
 );
 
 DEFINE_EVENT(bkey, move_extent_finish,
-	TP_PROTO(const struct bkey *k),
-	TP_ARGS(k)
+	TP_PROTO(struct bch_fs *c, const char *k),
+	TP_ARGS(c, k)
 );
 
 TRACE_EVENT(move_extent_fail,
@@ -700,8 +725,8 @@ TRACE_EVENT(move_extent_fail,
 );
 
 DEFINE_EVENT(bkey, move_extent_alloc_mem_fail,
-	TP_PROTO(const struct bkey *k),
-	TP_ARGS(k)
+	TP_PROTO(struct bch_fs *c, const char *k),
+	TP_ARGS(c, k)
 );
 
 TRACE_EVENT(move_data,
@@ -880,13 +905,6 @@ DEFINE_EVENT(transaction_event,	trans_blocked_journal_reclaim,
 	TP_ARGS(trans, caller_ip)
 );
 
-DEFINE_EVENT(transaction_event,	trans_restart_journal_res_get,
-	TP_PROTO(struct btree_trans *trans,
-		 unsigned long caller_ip),
-	TP_ARGS(trans, caller_ip)
-);
-
-
 TRACE_EVENT(trans_restart_journal_preres_get,
 	TP_PROTO(struct btree_trans *trans,
 		 unsigned long caller_ip,
@@ -910,12 +928,6 @@ TRACE_EVENT(trans_restart_journal_preres_get,
 		  __entry->flags)
 );
 
-DEFINE_EVENT(transaction_event,	trans_restart_journal_reclaim,
-	TP_PROTO(struct btree_trans *trans,
-		 unsigned long caller_ip),
-	TP_ARGS(trans, caller_ip)
-);
-
 DEFINE_EVENT(transaction_event,	trans_restart_fault_inject,
 	TP_PROTO(struct btree_trans *trans,
 		 unsigned long caller_ip),
@@ -923,12 +935,6 @@ DEFINE_EVENT(transaction_event,	trans_restart_fault_inject,
 );
 
 DEFINE_EVENT(transaction_event,	trans_traverse_all,
-	TP_PROTO(struct btree_trans *trans,
-		 unsigned long caller_ip),
-	TP_ARGS(trans, caller_ip)
-);
-
-DEFINE_EVENT(transaction_event,	trans_restart_mark_replicas,
 	TP_PROTO(struct btree_trans *trans,
 		 unsigned long caller_ip),
 	TP_ARGS(trans, caller_ip)
@@ -1229,7 +1235,13 @@ TRACE_EVENT(write_buffer_flush_slowpath,
 	TP_printk("%zu/%zu", __entry->nr, __entry->size)
 );
 
-#endif /* _TRACE_BCACHE_H */
+#endif /* _TRACE_BCACHEFS_H */
 
 /* This part must be outside protection */
+#undef TRACE_INCLUDE_PATH
+#define TRACE_INCLUDE_PATH ../../fs/bcachefs
+
+#undef TRACE_INCLUDE_FILE
+#define TRACE_INCLUDE_FILE trace
+
 #include <trace/define_trace.h>

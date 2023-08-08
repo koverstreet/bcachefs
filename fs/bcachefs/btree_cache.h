@@ -45,7 +45,11 @@ static inline u64 btree_ptr_hash_val(const struct bkey_i *k)
 	case KEY_TYPE_btree_ptr:
 		return *((u64 *) bkey_i_to_btree_ptr_c(k)->v.start);
 	case KEY_TYPE_btree_ptr_v2:
-		return bkey_i_to_btree_ptr_v2_c(k)->v.seq;
+		/*
+		 * The cast/deref is only necessary to avoid sparse endianness
+		 * warnings:
+		 */
+		return *((u64 *) &bkey_i_to_btree_ptr_v2_c(k)->v.seq);
 	default:
 		return 0;
 	}
@@ -97,10 +101,30 @@ static inline unsigned btree_blocks(struct bch_fs *c)
 	(BTREE_FOREGROUND_MERGE_THRESHOLD(c) +			\
 	 (BTREE_FOREGROUND_MERGE_THRESHOLD(c) >> 2))
 
-#define btree_node_root(_c, _b)	((_c)->btree_roots[(_b)->c.btree_id].b)
+static inline unsigned btree_id_nr_alive(struct bch_fs *c)
+{
+	return BTREE_ID_NR + c->btree_roots_extra.nr;
+}
+
+static inline struct btree_root *bch2_btree_id_root(struct bch_fs *c, unsigned id)
+{
+	if (likely(id < BTREE_ID_NR)) {
+		return &c->btree_roots_known[id];
+	} else {
+		unsigned idx = id - BTREE_ID_NR;
+
+		EBUG_ON(idx >= c->btree_roots_extra.nr);
+		return &c->btree_roots_extra.data[idx];
+	}
+}
+
+static inline struct btree *btree_node_root(struct bch_fs *c, struct btree *b)
+{
+	return bch2_btree_id_root(c, b->c.btree_id)->b;
+}
 
 void bch2_btree_node_to_text(struct printbuf *, struct bch_fs *,
 			     const struct btree *);
-void bch2_btree_cache_to_text(struct printbuf *, const struct btree_cache *);
+void bch2_btree_cache_to_text(struct printbuf *, const struct bch_fs *);
 
 #endif /* _BCACHEFS_BTREE_CACHE_H */

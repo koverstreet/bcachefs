@@ -11,6 +11,7 @@ struct bkey;
 enum btree_node_type;
 
 extern const char * const bch2_bkey_types[];
+extern const struct bkey_ops bch2_bkey_null_ops;
 
 /*
  * key_invalid: checks validity of @k, returns 0 if good or -EINVAL if bad. If
@@ -21,7 +22,7 @@ extern const char * const bch2_bkey_types[];
  */
 struct bkey_ops {
 	int		(*key_invalid)(const struct bch_fs *c, struct bkey_s_c k,
-				       unsigned flags, struct printbuf *err);
+				       enum bkey_invalid_flags flags, struct printbuf *err);
 	void		(*val_to_text)(struct printbuf *, struct bch_fs *,
 				       struct bkey_s_c);
 	void		(*swab)(struct bkey_s);
@@ -34,17 +35,26 @@ struct bkey_ops {
 	void		(*compat)(enum btree_id id, unsigned version,
 				  unsigned big_endian, int write,
 				  struct bkey_s);
+
+	/* Size of value type when first created: */
+	unsigned	min_val_size;
 };
 
 extern const struct bkey_ops bch2_bkey_ops[];
 
-#define BKEY_INVALID_FROM_JOURNAL		(1 << 1)
+static inline const struct bkey_ops *bch2_bkey_type_ops(enum bch_bkey_type type)
+{
+	return likely(type < KEY_TYPE_MAX)
+		? &bch2_bkey_ops[type]
+		: &bch2_bkey_null_ops;
+}
 
-int bch2_bkey_val_invalid(struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *);
-int __bch2_bkey_invalid(struct bch_fs *, struct bkey_s_c,
-			enum btree_node_type, unsigned, struct printbuf *);
-int bch2_bkey_invalid(struct bch_fs *, struct bkey_s_c,
-		      enum btree_node_type, unsigned, struct printbuf *);
+int bch2_bkey_val_invalid(struct bch_fs *, struct bkey_s_c,
+			  enum bkey_invalid_flags, struct printbuf *);
+int __bch2_bkey_invalid(struct bch_fs *, struct bkey_s_c, enum btree_node_type,
+			enum bkey_invalid_flags, struct printbuf *);
+int bch2_bkey_invalid(struct bch_fs *, struct bkey_s_c, enum btree_node_type,
+		      enum bkey_invalid_flags, struct printbuf *);
 int bch2_bkey_in_btree_node(struct btree *, struct bkey_s_c, struct printbuf *);
 
 void bch2_bpos_to_text(struct printbuf *, struct bpos);
@@ -72,7 +82,7 @@ static inline int bch2_mark_key(struct btree_trans *trans,
 		struct bkey_s_c old, struct bkey_s_c new,
 		unsigned flags)
 {
-	const struct bkey_ops *ops = &bch2_bkey_ops[old.k->type ?: new.k->type];
+	const struct bkey_ops *ops = bch2_bkey_type_ops(old.k->type ?: new.k->type);
 
 	return ops->atomic_trigger
 		? ops->atomic_trigger(trans, btree, level, old, new, flags)
@@ -80,10 +90,10 @@ static inline int bch2_mark_key(struct btree_trans *trans,
 }
 
 enum btree_update_flags {
-	__BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE,
+	__BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE = __BTREE_ITER_FLAGS_END,
 	__BTREE_UPDATE_NOJOURNAL,
+	__BTREE_UPDATE_PREJOURNAL,
 	__BTREE_UPDATE_KEY_CACHE_RECLAIM,
-	__BTREE_UPDATE_NO_KEY_CACHE_COHERENCY,
 
 	__BTREE_TRIGGER_NORUN,		/* Don't run triggers at all */
 
@@ -97,9 +107,8 @@ enum btree_update_flags {
 
 #define BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE (1U << __BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE)
 #define BTREE_UPDATE_NOJOURNAL		(1U << __BTREE_UPDATE_NOJOURNAL)
+#define BTREE_UPDATE_PREJOURNAL		(1U << __BTREE_UPDATE_PREJOURNAL)
 #define BTREE_UPDATE_KEY_CACHE_RECLAIM	(1U << __BTREE_UPDATE_KEY_CACHE_RECLAIM)
-#define BTREE_UPDATE_NO_KEY_CACHE_COHERENCY	\
-	(1U << __BTREE_UPDATE_NO_KEY_CACHE_COHERENCY)
 
 #define BTREE_TRIGGER_NORUN		(1U << __BTREE_TRIGGER_NORUN)
 
@@ -125,7 +134,7 @@ static inline int bch2_trans_mark_key(struct btree_trans *trans,
 				      struct bkey_s_c old, struct bkey_i *new,
 				      unsigned flags)
 {
-	const struct bkey_ops *ops = &bch2_bkey_ops[old.k->type ?: new->k.type];
+	const struct bkey_ops *ops = bch2_bkey_type_ops(old.k->type ?: new->k.type);
 
 	return ops->trans_trigger
 		? ops->trans_trigger(trans, btree_id, level, old, new, flags)

@@ -87,6 +87,40 @@ err:
 	return ret;
 }
 
+void bch2_disk_groups_to_text(struct printbuf *out, struct bch_fs *c)
+{
+	struct bch_disk_groups_cpu *g;
+	struct bch_dev *ca;
+	int i;
+	unsigned iter;
+
+	out->atomic++;
+	rcu_read_lock();
+
+	g = rcu_dereference(c->disk_groups);
+	if (!g)
+		goto out;
+
+	for (i = 0; i < g->nr; i++) {
+		if (i)
+			prt_printf(out, " ");
+
+		if (g->entries[i].deleted) {
+			prt_printf(out, "[deleted]");
+			continue;
+		}
+
+		prt_printf(out, "[parent %d devs", g->entries[i].parent);
+		for_each_member_device_rcu(ca, c, iter, &g->entries[i].devs)
+			prt_printf(out, " %s", ca->name);
+		prt_printf(out, "]");
+	}
+
+out:
+	rcu_read_unlock();
+	out->atomic--;
+}
+
 static void bch2_sb_disk_groups_to_text(struct printbuf *out,
 					struct bch_sb *sb,
 					struct bch_sb_field *f)
@@ -174,26 +208,36 @@ int bch2_sb_disk_groups_to_cpu(struct bch_fs *c)
 const struct bch_devs_mask *bch2_target_to_mask(struct bch_fs *c, unsigned target)
 {
 	struct target t = target_decode(target);
+	struct bch_devs_mask *devs;
+
+	rcu_read_lock();
 
 	switch (t.type) {
 	case TARGET_NULL:
-		return NULL;
+		devs = NULL;
+		break;
 	case TARGET_DEV: {
 		struct bch_dev *ca = t.dev < c->sb.nr_devices
 			? rcu_dereference(c->devs[t.dev])
 			: NULL;
-		return ca ? &ca->self : NULL;
+		devs = ca ? &ca->self : NULL;
+		break;
 	}
 	case TARGET_GROUP: {
 		struct bch_disk_groups_cpu *g = rcu_dereference(c->disk_groups);
 
-		return g && t.group < g->nr && !g->entries[t.group].deleted
+		devs = g && t.group < g->nr && !g->entries[t.group].deleted
 			? &g->entries[t.group].devs
 			: NULL;
+		break;
 	}
 	default:
 		BUG();
 	}
+
+	rcu_read_unlock();
+
+	return devs;
 }
 
 bool bch2_dev_in_target(struct bch_fs *c, unsigned dev, unsigned target)
@@ -416,30 +460,37 @@ int bch2_dev_group_set(struct bch_fs *c, struct bch_dev *ca, const char *name)
 	return ret;
 }
 
-int bch2_opt_target_parse(struct bch_fs *c, const char *buf, u64 *v)
+int bch2_opt_target_parse(struct bch_fs *c, const char *val, u64 *res,
+			  struct printbuf *err)
 {
 	struct bch_dev *ca;
 	int g;
 
-	if (!strlen(buf) || !strcmp(buf, "none")) {
-		*v = 0;
+	if (!val)
+		return -EINVAL;
+
+	if (!c)
+		return 0;
+
+	if (!strlen(val) || !strcmp(val, "none")) {
+		*res = 0;
 		return 0;
 	}
 
 	/* Is it a device? */
-	ca = bch2_dev_lookup(c, buf);
+	ca = bch2_dev_lookup(c, val);
 	if (!IS_ERR(ca)) {
-		*v = dev_to_target(ca->dev_idx);
+		*res = dev_to_target(ca->dev_idx);
 		percpu_ref_put(&ca->ref);
 		return 0;
 	}
 
 	mutex_lock(&c->sb_lock);
-	g = bch2_disk_path_find(&c->disk_sb, buf);
+	g = bch2_disk_path_find(&c->disk_sb, val);
 	mutex_unlock(&c->sb_lock);
 
 	if (g >= 0) {
-		*v = group_to_target(g);
+		*res = group_to_target(g);
 		return 0;
 	}
 

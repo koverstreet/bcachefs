@@ -17,16 +17,10 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/workqueue.h>
-#include <linux/mean_and_variance.h>
+
+#include "mean_and_variance.h"
 
 #include "darray.h"
-
-#define PAGE_SECTORS_SHIFT	(PAGE_SHIFT - 9)
-#define PAGE_SECTORS		(1U << PAGE_SECTORS_SHIFT)
-
-#define fallthrough		__attribute__((__fallthrough__))
-
-#define unsafe_memcpy(_dst, _src, _n, _reason)	memcpy(_dst, _src, _n)
 
 struct closure;
 
@@ -51,10 +45,6 @@ struct closure;
 	(__builtin_types_compatible_p(typeof(_val), _type) ||		\
 	 __builtin_types_compatible_p(typeof(_val), const _type))
 
-#ifndef alloc_hooks
-#define alloc_hooks(_fn, _ret, _fail)		_fn
-#endif
-
 /* Userspace doesn't align allocations as nicely as the kernel allocators: */
 static inline size_t buf_pages(void *p, size_t len)
 {
@@ -71,14 +61,12 @@ static inline void vpfree(void *p, size_t size)
 		free_pages((unsigned long) p, get_order(size));
 }
 
-static inline void *_vpmalloc(size_t size, gfp_t gfp_mask)
+static inline void *vpmalloc(size_t size, gfp_t gfp_mask)
 {
 	return (void *) __get_free_pages(gfp_mask|__GFP_NOWARN,
 					 get_order(size)) ?:
-		__vmalloc(size, gfp_mask, PAGE_KERNEL);
+		__vmalloc(size, gfp_mask);
 }
-#define vpmalloc(_size, _gfp)			\
-	alloc_hooks(_vpmalloc(_size, _gfp), void *, NULL)
 
 static inline void kvpfree(void *p, size_t size)
 {
@@ -88,14 +76,12 @@ static inline void kvpfree(void *p, size_t size)
 		vpfree(p, size);
 }
 
-static inline void *_kvpmalloc(size_t size, gfp_t gfp_mask)
+static inline void *kvpmalloc(size_t size, gfp_t gfp_mask)
 {
 	return size < PAGE_SIZE
 		? kmalloc(size, gfp_mask)
-		: _vpmalloc(size, gfp_mask);
+		: vpmalloc(size, gfp_mask);
 }
-#define kvpmalloc(_size, _gfp)			\
-	alloc_hooks(_kvpmalloc(_size, _gfp), void *, NULL)
 
 int mempool_init_kvpmalloc_pool(mempool_t *, int, size_t);
 
@@ -481,8 +467,10 @@ struct bch_pd_controller {
 	s64			last_change;
 	s64			last_target;
 
-	/* If true, the rate will not increase if bch2_ratelimit_delay()
-	 * is not being called often enough. */
+	/*
+	 * If true, the rate will not increase if bch2_ratelimit_delay()
+	 * is not being called often enough.
+	 */
 	bool			backpressure;
 };
 
@@ -545,9 +533,7 @@ static inline unsigned fract_exp_two(unsigned x, unsigned fract_bits)
 }
 
 void bch2_bio_map(struct bio *bio, void *base, size_t);
-int _bch2_bio_alloc_pages(struct bio *, size_t, gfp_t);
-#define bch2_bio_alloc_pages(_bio, _size, _gfp)				\
-	alloc_hooks(_bch2_bio_alloc_pages(_bio, _size, _gfp), int, -ENOMEM)
+int bch2_bio_alloc_pages(struct bio *, size_t, gfp_t);
 
 static inline sector_t bdev_sectors(struct block_device *bdev)
 {
@@ -620,6 +606,7 @@ static inline void __memcpy_u64s(void *dst, const void *src,
 {
 #ifdef CONFIG_X86_64
 	long d0, d1, d2;
+
 	asm volatile("rep ; movsq"
 		     : "=&c" (d0), "=&D" (d1), "=&S" (d2)
 		     : "0" (u64s), "1" (dst), "2" (src)
@@ -696,6 +683,7 @@ static inline void __memmove_u64s_up(void *_dst, const void *_src,
 
 #ifdef CONFIG_X86_64
 	long d0, d1, d2;
+
 	asm volatile("std ;\n"
 		     "rep ; movsq\n"
 		     "cld ;\n"
@@ -732,35 +720,6 @@ static inline void memset_u64s_tail(void *s, int c, unsigned bytes)
 
 	memset(s + bytes, c, rem);
 }
-
-static inline struct bio_vec next_contig_bvec(struct bio *bio,
-					      struct bvec_iter *iter)
-{
-	struct bio_vec bv = bio_iter_iovec(bio, *iter);
-
-	bio_advance_iter(bio, iter, bv.bv_len);
-#ifndef CONFIG_HIGHMEM
-	while (iter->bi_size) {
-		struct bio_vec next = bio_iter_iovec(bio, *iter);
-
-		if (page_address(bv.bv_page) + bv.bv_offset + bv.bv_len !=
-		    page_address(next.bv_page) + next.bv_offset)
-			break;
-
-		bv.bv_len += next.bv_len;
-		bio_advance_iter(bio, iter, next.bv_len);
-	}
-#endif
-	return bv;
-}
-
-#define __bio_for_each_contig_segment(bv, bio, iter, start)		\
-	for (iter = (start);						\
-	     (iter).bi_size &&						\
-		((bv = next_contig_bvec((bio), &(iter))), 1);)
-
-#define bio_for_each_contig_segment(bv, bio, iter)			\
-	__bio_for_each_contig_segment(bv, bio, iter, (bio)->bi_iter)
 
 void sort_cmp_size(void *base, size_t num, size_t size,
 	  int (*cmp_func)(const void *, const void *, size_t),
@@ -882,5 +841,7 @@ static inline int u8_cmp(u8 l, u8 r)
 {
 	return cmp_int(l, r);
 }
+
+#include <linux/uuid.h>
 
 #endif /* _BCACHEFS_UTIL_H */
