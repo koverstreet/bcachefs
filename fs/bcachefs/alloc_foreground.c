@@ -1519,6 +1519,7 @@ static const char * const bch2_write_point_states[] = {
 void bch2_write_points_to_text(struct printbuf *out, struct bch_fs *c)
 {
 	struct write_point *wp;
+	struct open_bucket *ob;
 	unsigned i;
 
 	for (wp = c->write_points;
@@ -1536,5 +1537,10 @@ void bch2_write_points_to_text(struct printbuf *out, struct bch_fs *c)
 		}
 
 		prt_newline(out);
+
+		printbuf_indent_add(out, 2);
+		open_bucket_for_each(c, &wp->ptrs, ob, i)
+			bch2_open_bucket_to_text(out, c, ob);
+		printbuf_indent_sub(out, 2);
 	}
 }
