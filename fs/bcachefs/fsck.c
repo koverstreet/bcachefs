@@ -409,6 +409,28 @@ static inline void snapshots_seen_init(struct snapshots_seen *s)
 	memset(s, 0, sizeof(*s));
 }
 
+static int snapshots_seen_add_inorder(struct bch_fs *c, struct snapshots_seen *s, u32 id)
+{
+	struct snapshots_seen_entry *i, n = {
+		.id	= id,
+		.equiv	= bch2_snapshot_equiv(c, id),
+	};
+	int ret = 0;
+
+	darray_for_each(s->ids, i) {
+		if (i->id == id)
+			return 0;
+		if (i->id > id)
+			break;
+	}
+
+	ret = darray_insert_item(&s->ids, i - s->ids.data, n);
+	if (ret)
+		bch_err(c, "error reallocating snapshots_seen table (size %zu)",
+			s->ids.size);
+	return ret;
+}
+
 static int snapshots_seen_update(struct bch_fs *c, struct snapshots_seen *s,
 				 enum btree_id btree_id, struct bpos pos)
 {
@@ -1123,7 +1145,8 @@ static int extent_ends_at(struct bch_fs *c,
 
 static int overlapping_extents_found(struct btree_trans *trans,
 				     enum btree_id btree,
-				     struct bpos pos1, struct bkey pos2,
+				     struct bpos pos1, struct snapshots_seen *pos1_seen,
+				     struct bkey pos2,
 				     bool *fixed,
 				     struct extent_end *extent_end)
 {
@@ -1209,10 +1232,24 @@ static int overlapping_extents_found(struct btree_trans *trans,
 
 		*fixed = true;
 
-		if (pos1.snapshot == pos2.p.snapshot)
+		if (pos1.snapshot == pos2.p.snapshot) {
+			/*
+			 * We overwrote the first extent, and did the overwrite
+			 * in the same snapshot:
+			 */
 			extent_end->offset = bkey_start_offset(&pos2);
-		else
+		} else if (pos1.snapshot > pos2.p.snapshot) {
+			/*
+			 * We overwrote the first extent in pos2's snapshot:
+			 */
+			ret = snapshots_seen_add_inorder(c, pos1_seen, pos2.p.snapshot);
+		} else {
+			/*
+			 * We overwrote the second extent - restart
+			 * check_extent() from the top:
+			 */
 			ret = -BCH_ERR_transaction_restart_nested;
+		}
 	}
 fsck_err:
 err:
@@ -1254,6 +1291,7 @@ static int check_overlapping_extents(struct btree_trans *trans,
 						SPOS(iter->pos.inode,
 						     i->offset,
 						     i->snapshot),
+						&i->seen,
 						*k.k, fixed, i);
 		if (ret)
 			goto err;
