@@ -13,6 +13,12 @@
 
 #include <linux/dcache.h>
 
+static inline unsigned dirent_val_u64s(unsigned len)
+{
+	return DIV_ROUND_UP(offsetof(struct bch_dirent, d_name) + len,
+			    sizeof(u64));
+}
+
 static unsigned bch2_dirent_name_bytes(struct bkey_s_c_dirent d)
 {
 	unsigned bkey_u64s = bkey_val_u64s(d.k);
