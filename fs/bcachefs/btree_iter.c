@@ -2899,7 +2899,7 @@ static void bch2_trans_alloc_paths(struct btree_trans *trans, struct bch_fs *c)
 	p = this_cpu_xchg(c->btree_paths_bufs->path, NULL);
 #endif
 	if (!p)
-		p = mempool_alloc(&trans->c->btree_paths_pool, GFP_NOFS);
+		p = mempool_alloc(&trans->c->btree_paths_pool, GFP_NOFS|__GFP_ZERO);
 	/*
 	 * paths need to be zeroed, bch2_check_for_deadlock looks at paths in
 	 * other threads
