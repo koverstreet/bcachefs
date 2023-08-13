@@ -844,7 +844,8 @@ enum inode_opt_id {
 	x(i_size_dirty,			5)	\
 	x(i_sectors_dirty,		6)	\
 	x(unlinked,			7)	\
-	x(backptr_untrusted,		8)
+	x(backptr_untrusted,		8)	\
+	x(casefolded,			9)
 
 /* bits 20+ reserved for packed fields below: */
 
@@ -903,9 +904,25 @@ struct bch_dirent {
 	 * Copy of mode bits 12-15 from the target inode - so userspace can get
 	 * the filetype without having to do a stat()
 	 */
-	__u8			d_type;
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u8			d_type:5,
+				d_unused:2,
+				d_casefold:1;
+#elif defined(__BIG_ENDIAN_BITFIELD)
+	__u8			d_casefold:1,
+				d_unused:2,
+				d_type:5;
+#endif
 
-	__u8			d_name[];
+	union {
+	struct {
+		__u8		d_pad;
+		__le16		d_name_len;
+		__le16		d_cf_name_len;
+		__u8		d_names[0];
+	} d_cf_name_block __packed;
+	__u8			d_name[0];
+	} __packed;
 } __packed __aligned(8);
 
 #define DT_SUBVOL	16
@@ -1919,7 +1936,8 @@ static inline void SET_BCH_SB_BACKGROUND_COMPRESSION_TYPE(struct bch_sb *sb, __u
 	x(new_varint,			15)	\
 	x(journal_no_flush,		16)	\
 	x(alloc_v2,			17)	\
-	x(extents_across_btree_nodes,	18)
+	x(extents_across_btree_nodes,	18)	\
+	x(casefolding,			19)
 
 #define BCH_SB_FEATURES_ALWAYS				\
 	((1ULL << BCH_FEATURE_new_extent_overwrite)|	\

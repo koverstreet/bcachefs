@@ -249,7 +249,9 @@
 	x(dir_loop,						241)	\
 	x(hash_table_key_duplicate,				242)	\
 	x(hash_table_key_wrong_offset,				243)	\
-	x(unlinked_inode_not_on_deleted_list,			244)
+	x(unlinked_inode_not_on_deleted_list,			244)	\
+	x(dirent_cf_name_too_big,				245)	\
+	x(dirent_stray_data_after_cf_name,			246)
 
 enum bch_sb_error_id {
 #define x(t, n) BCH_FSCK_ERR_##t = n,

@@ -203,6 +203,7 @@
 #include <linux/types.h>
 #include <linux/workqueue.h>
 #include <linux/zstd.h>
+#include <linux/unicode.h>
 
 #include "bcachefs_format.h"
 #include "errcode.h"
@@ -723,6 +724,8 @@ enum bch_write_ref {
 	BCH_WRITE_REF_NR,
 };
 
+#define BCH_FS_DEFAULT_UTF8_ENCODING UNICODE_AGE(12, 1, 0)
+
 struct bch_fs {
 	struct closure		cl;
 
@@ -798,6 +801,9 @@ struct bch_fs {
 		u64		compat;
 	}			sb;
 
+#if IS_ENABLED(CONFIG_UNICODE)
+	struct unicode_map 	*cf_encoding;
+#endif
 
 	struct bch_sb_handle	disk_sb;
 
