@@ -108,15 +108,15 @@ static inline int bch2_quota_reservation_add(struct bch_fs *c,
 
 #else
 
-static void __bch2_quota_reservation_put(struct bch_fs *c,
+static inline void __bch2_quota_reservation_put(struct bch_fs *c,
 					 struct bch_inode_info *inode,
 					 struct quota_res *res) {}
 
-static void bch2_quota_reservation_put(struct bch_fs *c,
+static inline void bch2_quota_reservation_put(struct bch_fs *c,
 				       struct bch_inode_info *inode,
 				       struct quota_res *res) {}
 
-static int bch2_quota_reservation_add(struct bch_fs *c,
+static inline int bch2_quota_reservation_add(struct bch_fs *c,
 				      struct bch_inode_info *inode,
 				      struct quota_res *res,
 				      unsigned sectors,
