@@ -617,6 +617,15 @@ static struct bversion journal_pos_to_bversion(struct journal_res *res, unsigned
 	};
 }
 
+static noinline void __trace_transaction_commit(struct btree_trans *trans, unsigned long ip)
+{
+	struct printbuf buf = PRINTBUF;
+
+	bch2_trans_updates_to_text(&buf, trans);
+	trace_transaction_commit(trans, ip, buf.buf);
+	printbuf_exit(&buf);
+}
+
 static inline int
 bch2_trans_commit_write_locked(struct btree_trans *trans, unsigned flags,
 			       struct btree_insert_entry **stopped_at,
@@ -734,6 +743,10 @@ bch2_trans_commit_write_locked(struct btree_trans *trans, unsigned flags,
 		if  (ret)
 			goto fatal_err;
 	}
+
+	count_event(c, transaction_commit);
+	if (trace_transaction_commit_enabled())
+		__trace_transaction_commit(trans, _RET_IP_);
 
 	if (likely(!(flags & BCH_TRANS_COMMIT_no_journal_res))) {
 		struct journal *j = &c->journal;
@@ -1160,8 +1173,6 @@ retry:
 
 	if (ret)
 		goto err;
-
-	trace_and_count(c, transaction_commit, trans, _RET_IP_);
 out:
 	if (likely(!(flags & BCH_TRANS_COMMIT_no_check_rw)))
 		bch2_write_ref_put(c, BCH_WRITE_REF_trans);
