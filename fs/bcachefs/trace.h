@@ -964,10 +964,11 @@ DECLARE_EVENT_CLASS(transaction_event,
 	TP_printk("%s %pS", __entry->trans_fn, (void *) __entry->caller_ip)
 );
 
-DEFINE_EVENT(transaction_event,	transaction_commit,
+DEFINE_EVENT(trans_str, transaction_commit,
 	TP_PROTO(struct btree_trans *trans,
-		 unsigned long caller_ip),
-	TP_ARGS(trans, caller_ip)
+		 unsigned long caller_ip,
+		 const char *updates),
+	TP_ARGS(trans, caller_ip, updates)
 );
 
 DEFINE_EVENT(transaction_event,	trans_restart_injected,
