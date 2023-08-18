@@ -782,6 +782,11 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 		btree_insert_entry_checks(trans, i);
 	}
 
+	event_inc_trace(c, transaction_commit, buf, ({
+		prt_printf(&buf, "%s\n", trans->fn);
+		bch2_trans_updates_to_text(&buf, trans);
+	}));
+
 	if (likely(!(flags & BCH_TRANS_COMMIT_no_journal_res))) {
 		struct journal *j = &c->journal;
 		struct jset_entry *entry;
@@ -1137,7 +1142,10 @@ retry:
 			goto fatal_err;
 	}
 
-	event_inc_trace(c, transaction_commit, buf, prt_str(&buf, trans->fn));
+	event_inc_trace(c, transaction_commit, buf, ({
+		prt_printf(&buf, "%s\n", trans->fn);
+		bch2_trans_updates_to_text(&buf, trans);
+	}));
 
 	return 0;
 fatal_err:
@@ -1292,8 +1300,6 @@ retry:
 
 	if (ret)
 		goto err;
-
-	event_inc_trace(c, transaction_commit, buf, prt_str(&buf, trans->fn));
 out:
 	if (likely(!(flags & BCH_TRANS_COMMIT_no_check_rw)))
 		enumerated_ref_put(&c->writes, BCH_WRITE_REF_trans);
