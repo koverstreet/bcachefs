@@ -588,6 +588,15 @@ static noinline int bch2_trans_commit_run_gc_triggers(struct btree_trans *trans)
 	return 0;
 }
 
+static noinline void __trace_transaction_commit(struct btree_trans *trans, unsigned long ip)
+{
+	struct printbuf buf = PRINTBUF;
+
+	bch2_trans_updates_to_text(&buf, trans);
+	trace_transaction_commit(trans, ip, buf.buf);
+	printbuf_exit(&buf);
+}
+
 static inline int
 bch2_trans_commit_write_locked(struct btree_trans *trans,
 			       enum bch_trans_commit_flags flags,
@@ -733,6 +742,10 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 		}
 		btree_insert_entry_checks(trans, i);
 	}
+
+	count_event(c, transaction_commit);
+	if (trace_transaction_commit_enabled())
+		__trace_transaction_commit(trans, _RET_IP_);
 
 	if (likely(!(flags & BCH_TRANS_COMMIT_no_journal_res))) {
 		struct journal *j = &c->journal;
@@ -1132,8 +1145,6 @@ retry:
 
 	if (ret)
 		goto err;
-
-	trace_and_count(c, transaction_commit, trans, _RET_IP_);
 out:
 	if (likely(!(flags & BCH_TRANS_COMMIT_no_check_rw)))
 		enumerated_ref_put(&c->writes, BCH_WRITE_REF_trans);
