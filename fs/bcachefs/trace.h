@@ -897,10 +897,26 @@ DECLARE_EVENT_CLASS(transaction_event,
 	TP_printk("%s %pS", __entry->trans_fn, (void *) __entry->caller_ip)
 );
 
-DEFINE_EVENT(transaction_event,	transaction_commit,
+TRACE_EVENT(transaction_commit,
 	TP_PROTO(struct btree_trans *trans,
-		 unsigned long caller_ip),
-	TP_ARGS(trans, caller_ip)
+		 unsigned long caller_ip,
+		 const char *updates),
+	TP_ARGS(trans, caller_ip, updates),
+
+	TP_STRUCT__entry(
+		__array(char,			trans_fn, 32	)
+		__field(unsigned long,		caller_ip	)
+		__string(updates,		updates		)
+	),
+
+	TP_fast_assign(
+		strscpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
+		__entry->caller_ip		= caller_ip;
+		__assign_str(updates, updates);
+	),
+
+	TP_printk("%s %pS:\n%s", __entry->trans_fn, (void *) __entry->caller_ip,
+		  __get_str(updates))
 );
 
 DEFINE_EVENT(transaction_event,	trans_restart_injected,

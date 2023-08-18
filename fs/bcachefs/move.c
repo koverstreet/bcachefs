@@ -391,7 +391,7 @@ err_free_pages:
 err_free:
 	kfree(io);
 err:
-	this_cpu_inc(c->counters[BCH_COUNTER_move_extent_alloc_mem_fail]);
+	count_event(c, move_extent_alloc_mem_fail);
 	trace_move_extent_alloc_mem_fail2(c, k);
 	return ret;
 }
