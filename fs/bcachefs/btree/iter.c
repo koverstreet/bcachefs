@@ -1556,6 +1556,13 @@ void bch2_trans_updates_to_text(struct printbuf *buf, struct btree_trans *trans)
 		bch2_journal_entry_to_text(buf, trans->c, e);
 		prt_newline(buf);
 	}
+
+	for (struct bkey_i *k = btree_trans_subbuf_base(trans, &trans->accounting);
+	     k != btree_trans_subbuf_top(trans, &trans->accounting);
+	     k = bkey_next(k)) {
+		bch2_bkey_val_to_text(buf, trans->c, bkey_i_to_s_c(k));
+		prt_newline(buf);
+	}
 }
 
 static void bch2_btree_path_to_text_short(struct printbuf *out, struct btree_trans *trans,
