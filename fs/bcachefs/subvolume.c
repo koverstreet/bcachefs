@@ -474,7 +474,7 @@ int bch2_delete_dead_snapshots(struct bch_fs *c)
 	bch2_trans_iter_exit(&trans, &iter);
 
 	if (ret) {
-		bch_err(c, "error walking snapshots: %s", bch2_err_str(ret));
+		bch_err_msg(c, ret, "walking snapshots");
 		goto err;
 	}
 
@@ -494,17 +494,18 @@ int bch2_delete_dead_snapshots(struct bch_fs *c)
 		darray_exit(&equiv_seen);
 
 		if (ret) {
-			bch_err(c, "error deleting snapshot keys: %s", bch2_err_str(ret));
+			bch_err_msg(c, ret, "deleting keys from dying snapshots");
 			goto err;
 		}
 	}
 
 	for (i = 0; i < deleted.nr; i++) {
+		u32 node_to_delete = deleted.data[i];
+
 		ret = commit_do(&trans, NULL, NULL, 0,
-			bch2_snapshot_node_delete(&trans, deleted.data[i]));
+			bch2_snapshot_node_delete(&trans, node_to_delete));
 		if (ret) {
-			bch_err(c, "error deleting snapshot %u: %s",
-				deleted.data[i], bch2_err_str(ret));
+			bch_err_msg(c, ret, "deleting snapshot %u", node_to_delete);
 			goto err;
 		}
 	}
