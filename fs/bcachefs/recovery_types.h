@@ -24,6 +24,7 @@
 	x(check_alloc_to_lru_refs,	PASS_FSCK)						\
 	x(fs_freespace_init,		PASS_ALWAYS|PASS_SILENT)				\
 	x(bucket_gens_init,		0)							\
+	x(resume_logged_ops,		PASS_ALWAYS)						\
 	x(check_snapshot_trees,		PASS_FSCK)						\
 	x(check_snapshots,		PASS_FSCK)						\
 	x(check_subvols,		PASS_FSCK)						\
