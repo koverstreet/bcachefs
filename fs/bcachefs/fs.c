@@ -1898,6 +1898,8 @@ static void bch2_evict_inode(struct inode *vinode)
 
 	truncate_inode_pages_final(&inode->v.i_data);
 
+	BUG_ON(inode->v.i_blocks != inode->ei_inode.bi_sectors);
+
 	clear_inode(&inode->v);
 
 	BUG_ON(!is_bad_inode(&inode->v) && inode->ei_quota_reserved);
