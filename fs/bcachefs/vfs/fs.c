@@ -1840,6 +1840,8 @@ static void bch2_evict_inode(struct inode *vinode)
 
 	cancel_delayed_work_sync(&inode->ei_writeback_timer);
 
+	BUG_ON(inode->v.i_blocks != inode->ei_inode.bi_sectors);
+
 	clear_inode(&inode->v);
 
 	BUG_ON(!is_bad_inode(&inode->v) && inode->ei_quota_reserved);
