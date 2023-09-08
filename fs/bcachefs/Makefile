@@ -2,6 +2,7 @@
 obj-$(CONFIG_BCACHEFS_FS)	+= bcachefs.o
 
 bcachefs-y		:=	\
+	acl.o			\
 	alloc_background.o	\
 	alloc_foreground.o	\
 	backpointers.o		\
@@ -79,5 +80,3 @@ bcachefs-y		:=	\
 	util.o			\
 	varint.o		\
 	xattr.o
-
-bcachefs-$(CONFIG_BCACHEFS_POSIX_ACL) += acl.o
