@@ -159,7 +159,7 @@ extern void __add_wrong_size(void)
 ({									\
 	bool success;							\
 	__typeof__(_ptr) _old = (__typeof__(_ptr))(_pold);		\
-	__typeof__(*(_ptr)) __old = *_old;				\
+	__typeof__(*(_ptr)) __old2 = *_old;				\
 	__typeof__(*(_ptr)) __new = (_new);				\
 	switch (size) {							\
 	case __X86_CASE_B:						\
@@ -169,7 +169,7 @@ extern void __add_wrong_size(void)
 			     CC_SET(z)					\
 			     : CC_OUT(z) (success),			\
 			       [ptr] "+m" (*__ptr),			\
-			       [old] "+a" (__old)			\
+			       [old] "+a" (__old2)			\
 			     : [new] "q" (__new)			\
 			     : "memory");				\
 		break;							\
@@ -181,7 +181,7 @@ extern void __add_wrong_size(void)
 			     CC_SET(z)					\
 			     : CC_OUT(z) (success),			\
 			       [ptr] "+m" (*__ptr),			\
-			       [old] "+a" (__old)			\
+			       [old] "+a" (__old2)			\
 			     : [new] "r" (__new)			\
 			     : "memory");				\
 		break;							\
@@ -193,7 +193,7 @@ extern void __add_wrong_size(void)
 			     CC_SET(z)					\
 			     : CC_OUT(z) (success),			\
 			       [ptr] "+m" (*__ptr),			\
-			       [old] "+a" (__old)			\
+			       [old] "+a" (__old2)			\
 			     : [new] "r" (__new)			\
 			     : "memory");				\
 		break;							\
@@ -205,7 +205,7 @@ extern void __add_wrong_size(void)
 			     CC_SET(z)					\
 			     : CC_OUT(z) (success),			\
 			       [ptr] "+m" (*__ptr),			\
-			       [old] "+a" (__old)			\
+			       [old] "+a" (__old2)			\
 			     : [new] "r" (__new)			\
 			     : "memory");				\
 		break;							\
@@ -214,7 +214,7 @@ extern void __add_wrong_size(void)
 		__cmpxchg_wrong_size();					\
 	}								\
 	if (unlikely(!success))						\
-		*_old = __old;						\
+		*_old = __old2;						\
 	likely(success);						\
 })
 
