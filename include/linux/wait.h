@@ -300,7 +300,7 @@ extern void init_wait_entry(struct wait_queue_entry *wq_entry, int flags);
 ({										\
 	__label__ __out;							\
 	struct wait_queue_entry __wq_entry;					\
-	long __ret = ret;	/* explicit shadow */				\
+	long _ret2 = ret;	/* explicit shadow */				\
 										\
 	init_wait_entry(&__wq_entry, exclusive ? WQ_FLAG_EXCLUSIVE : 0);	\
 	for (;;) {								\
@@ -310,14 +310,14 @@ extern void init_wait_entry(struct wait_queue_entry *wq_entry, int flags);
 			break;							\
 										\
 		if (___wait_is_interruptible(state) && __int) {			\
-			__ret = __int;						\
+			_ret2 = __int;						\
 			goto __out;						\
 		}								\
 										\
 		cmd;								\
 	}									\
 	finish_wait(&wq_head, &__wq_entry);					\
-__out:	__ret;									\
+__out:	_ret2;									\
 })
 
 #define __wait_event(wq_head, condition)					\

@@ -814,10 +814,10 @@ static inline void blk_mq_set_request_complete(struct request *rq)
  * completing it another CPU. Useful in preemptible instead of an interrupt.
  */
 static inline void blk_mq_complete_request_direct(struct request *rq,
-		   void (*complete)(struct request *rq))
+		   void (*complete_fn)(struct request *rq))
 {
 	WRITE_ONCE(rq->state, MQ_RQ_COMPLETE);
-	complete(rq);
+	complete_fn(rq);
 }
 
 void blk_mq_start_request(struct request *rq);
@@ -851,7 +851,7 @@ static inline bool blk_mq_is_reserved_rq(struct request *rq)
  */
 static inline bool blk_mq_add_to_batch(struct request *req,
 				       struct io_comp_batch *iob, int ioerror,
-				       void (*complete)(struct io_comp_batch *))
+				       void (*complete_fn)(struct io_comp_batch *))
 {
 	/*
 	 * blk_mq_end_request_batch() can't end request allocated from
@@ -862,8 +862,8 @@ static inline bool blk_mq_add_to_batch(struct request *req,
 		return false;
 
 	if (!iob->complete)
-		iob->complete = complete;
-	else if (iob->complete != complete)
+		iob->complete = complete_fn;
+	else if (iob->complete != complete_fn)
 		return false;
 	iob->need_ts |= blk_mq_need_time_stamp(req);
 	rq_list_add(&iob->req_list, req);
