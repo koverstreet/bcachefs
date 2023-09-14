@@ -1282,7 +1282,7 @@ static int bch2_check_discard_freespace_key(struct btree_trans *trans,
 	if (!btree_id_is_extents(iter->btree_id)) {
 		return __bch2_check_discard_freespace_key(trans, iter);
 	} else {
-		int ret;
+		int ret = 0;
 
 		while (!bkey_eq(iter->pos, end) &&
 		       !(ret = btree_trans_too_many_iters(trans) ?:
