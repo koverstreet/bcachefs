@@ -2,6 +2,7 @@
 #include <linux/idr.h>
 #include <linux/slab.h>
 #include <linux/debugfs.h>
+#include <linux/seq_buf.h>
 #include <linux/seq_file.h>
 #include <linux/shrinker.h>
 #include <linux/memcontrol.h>
@@ -159,6 +160,21 @@ static const struct file_operations shrinker_debugfs_scan_fops = {
 	.write	 = shrinker_debugfs_scan_write,
 };
 
+static int shrinker_debugfs_report_show(struct seq_file *m, void *v)
+{
+	struct shrinker *shrinker = m->private;
+	char *bufp;
+	size_t buflen = seq_get_buf(m, &bufp);
+	struct seq_buf out;
+
+	seq_buf_init(&out, bufp, buflen);
+	shrinker_to_text(&out, shrinker);
+	seq_commit(m, seq_buf_used(&out));
+
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(shrinker_debugfs_report);
+
 int shrinker_debugfs_add(struct shrinker *shrinker)
 {
 	struct dentry *entry;
@@ -190,6 +206,8 @@ int shrinker_debugfs_add(struct shrinker *shrinker)
 			    &shrinker_debugfs_count_fops);
 	debugfs_create_file("scan", 0220, entry, shrinker,
 			    &shrinker_debugfs_scan_fops);
+	debugfs_create_file("report", 0440, entry, shrinker,
+			    &shrinker_debugfs_report_fops);
 	return 0;
 }
 
