@@ -110,6 +110,7 @@ extern int __printf(2, 3) register_shrinker(struct shrinker *shrinker,
 extern void unregister_shrinker(struct shrinker *shrinker);
 extern void free_prealloced_shrinker(struct shrinker *shrinker);
 extern void synchronize_shrinkers(void);
+void shrinker_to_text(struct seq_buf *, struct shrinker *);
 void shrinkers_to_text(struct seq_buf *);
 
 #ifdef CONFIG_SHRINKER_DEBUG
