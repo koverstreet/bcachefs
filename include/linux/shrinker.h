@@ -143,6 +143,7 @@ __printf(2, 3)
 struct shrinker *shrinker_alloc(unsigned int flags, const char *fmt, ...);
 void shrinker_register(struct shrinker *shrinker);
 void shrinker_free(struct shrinker *shrinker);
+void shrinker_to_text(struct seq_buf *, struct shrinker *);
 void shrinkers_to_text(struct seq_buf *);
 
 static inline bool shrinker_try_get(struct shrinker *shrinker)
