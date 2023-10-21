@@ -205,6 +205,7 @@ void bch2_journal_space_available(struct journal *j)
 	j->can_discard = can_discard;
 
 	if (nr_online < metadata_replicas_required(c)) {
+		panic("online %u required %u\n", nr_online, c->opts.metadata_replicas_required);
 		ret = JOURNAL_ERR_insufficient_devices;
 		goto out;
 	}
