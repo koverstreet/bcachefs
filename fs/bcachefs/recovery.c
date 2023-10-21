@@ -1120,7 +1120,6 @@ int bch2_fs_initialize(struct bch_fs *c)
 	mutex_unlock(&c->sb_lock);
 
 	c->curr_recovery_pass = ARRAY_SIZE(recovery_pass_fns);
-	set_bit(BCH_FS_may_go_rw, &c->flags);
 
 	for (unsigned i = 0; i < BTREE_ID_NR; i++)
 		bch2_btree_root_alloc(c, i);
@@ -1128,33 +1127,31 @@ int bch2_fs_initialize(struct bch_fs *c)
 	for_each_member_device(c, ca)
 		bch2_dev_usage_init(ca);
 
-	ret = bch2_fs_journal_alloc(c);
-	if (ret)
-		goto err;
-
-	/*
-	 * journal_res_get() will crash if called before this has
-	 * set up the journal.pin FIFO and journal.cur pointer:
-	 */
-	bch2_fs_journal_start(&c->journal, 1);
-	bch2_journal_set_replay_done(&c->journal);
-
-	ret = bch2_fs_read_write_early(c);
-	if (ret)
-		goto err;
-
-	/*
-	 * Write out the superblock and journal buckets, now that we can do
-	 * btree updates
-	 */
 	bch_verbose(c, "marking superblocks");
 	ret = bch2_trans_mark_dev_sbs(c);
 	bch_err_msg(c, ret, "marking superblocks");
 	if (ret)
 		goto err;
 
+	ret = bch2_fs_journal_alloc(c);
+	bch_err_msg(c, ret, "allocating journal");
+	if (ret)
+		goto err;
+
 	for_each_online_member(c, ca)
-		ca->new_fs_bucket_idx = 0;
+		BUG_ON(ca->new_fs_bucket_idx);
+
+	set_bit(BCH_FS_MAY_GO_RW, &c->flags);
+	bch2_fs_journal_start(&c->journal, 1);
+
+	ret = bch2_fs_read_write_early(c);
+	if (ret)
+		goto err;
+
+	ret = bch2_journal_replay(c);
+	bch_err_msg(c, ret, "journal replay");
+	if (ret)
+		goto err;
 
 	ret = bch2_fs_freespace_init(c);
 	if (ret)
