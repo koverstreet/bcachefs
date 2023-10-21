@@ -304,6 +304,7 @@ static void __journal_entry_close(struct journal *j, unsigned closed_val, bool t
 
 void bch2_journal_halt(struct journal *j)
 {
+	BUG();
 	spin_lock(&j->lock);
 	__journal_entry_close(j, JOURNAL_ENTRY_ERROR_VAL, true);
 	if (!j->err_seq)
@@ -365,8 +366,10 @@ static int journal_entry_open(struct journal *j)
 	if (j->cur_entry_error)
 		return j->cur_entry_error;
 
-	if (bch2_journal_error(j))
+	if (bch2_journal_error(j)) {
+		BUG();
 		return JOURNAL_ERR_insufficient_devices; /* -EROFS */
+	}
 
 	if (!fifo_free(&j->pin))
 		return JOURNAL_ERR_journal_pin_full;
@@ -583,6 +586,8 @@ out:
 			mutex_unlock(&j->reclaim_lock);
 		}
 	}
+
+	BUG_ON(ret == JOURNAL_ERR_insufficient_devices);
 
 	return ret == JOURNAL_ERR_insufficient_devices
 		? -BCH_ERR_erofs_journal_err
@@ -1146,7 +1151,7 @@ unlock:
 	return ret;
 }
 
-int bch2_dev_journal_alloc(struct bch_dev *ca, bool new_fs)
+int bch2_dev_journal_alloc(struct bch_dev *ca)
 {
 	unsigned nr;
 	int ret;
@@ -1168,7 +1173,7 @@ int bch2_dev_journal_alloc(struct bch_dev *ca, bool new_fs)
 		     min(1 << 13,
 			 (1 << 24) / ca->mi.bucket_size));
 
-	ret = __bch2_set_nr_journal_buckets(ca, nr, new_fs, NULL);
+	ret = __bch2_set_nr_journal_buckets(ca, nr, false, NULL);
 err:
 	bch_err_fn(ca, ret);
 	return ret;
@@ -1180,7 +1185,7 @@ int bch2_fs_journal_alloc(struct bch_fs *c)
 		if (ca->journal.nr)
 			continue;
 
-		int ret = bch2_dev_journal_alloc(ca, true);
+		int ret = bch2_dev_journal_alloc(ca);
 		if (ret) {
 			percpu_ref_put(&ca->io_ref);
 			return ret;
