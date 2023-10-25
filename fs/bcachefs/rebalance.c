@@ -354,7 +354,8 @@ static int do_rebalance(struct moving_context *ctxt)
 		rebalance_wait(c);
 	}
 
-	bch_err_fn(c, ret);
+	if (!bch2_err_matches(ret, EROFS))
+		bch_err_fn(c, ret);
 	return ret;
 }
 
