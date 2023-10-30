@@ -358,6 +358,9 @@ static int bch2_copygc_thread(void *arg)
 		last = atomic64_read(&clock->now);
 		wait = bch2_copygc_wait_amount(c);
 
+		if (!wait && nothing to do)
+			/* io sleep */
+
 		if (wait > clock->max_slop) {
 			c->copygc_wait_at = last;
 			c->copygc_wait = last + wait;

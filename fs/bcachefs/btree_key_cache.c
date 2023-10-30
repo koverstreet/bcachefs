@@ -1058,12 +1058,25 @@ int bch2_fs_btree_key_cache_init(struct btree_key_cache *bc)
 
 void bch2_btree_key_cache_to_text(struct printbuf *out, struct btree_key_cache *c)
 {
+	struct btree_trans *trans, *oldest = NULL
 	prt_printf(out, "nr_freed:\t%lu",	atomic_long_read(&c->nr_freed));
 	prt_newline(out);
 	prt_printf(out, "nr_keys:\t%lu",	atomic_long_read(&c->nr_keys));
 	prt_newline(out);
 	prt_printf(out, "nr_dirty:\t%lu",	atomic_long_read(&c->nr_dirty));
 	prt_newline(out);
+
+	/* XXX print oldest srcu read lock */
+
+#if 0
+	seqmutex_lock(&c->btree_trans_lock);
+	list_for_each_entry(pos, &c->btree_trans_list, list) {
+		if (!oldest || 
+	}
+	list_add_tail(&trans->list, &c->btree_trans_list);
+list_add_done:
+	seqmutex_unlock(&c->btree_trans_lock);
+#endif
 }
 
 void bch2_btree_key_cache_exit(void)
