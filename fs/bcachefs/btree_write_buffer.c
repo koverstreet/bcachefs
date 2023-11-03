@@ -137,7 +137,7 @@ btree_write_buffered_insert(struct btree_trans *trans,
 	return ret;
 }
 
-int __bch2_btree_write_buffer_flush(struct btree_trans *trans, bool locked)
+int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;
 	struct journal *j = &c->journal;
@@ -151,9 +151,6 @@ int __bch2_btree_write_buffer_flush(struct btree_trans *trans, bool locked)
 	int ret = 0;
 
 	memset(&pin, 0, sizeof(pin));
-
-	if (!locked && !mutex_trylock(&wb->flush_lock))
-		return 0;
 
 	bch2_journal_pin_copy(j, &pin, &wb->journal_pin,
 			      bch2_btree_write_buffer_journal_flush);
@@ -237,7 +234,6 @@ int __bch2_btree_write_buffer_flush(struct btree_trans *trans, bool locked)
 	bch2_fs_fatal_err_on(ret, c, "%s: insert error %s", __func__, bch2_err_str(ret));
 out:
 	bch2_journal_pin_drop(j, &pin);
-	mutex_unlock(&wb->flush_lock);
 	return ret;
 slowpath:
 	trace_write_buffer_flush_slowpath(trans, i - keys, nr);
@@ -280,15 +276,25 @@ int bch2_btree_write_buffer_flush_sync(struct btree_trans *trans)
 		return -BCH_ERR_erofs_no_writes;
 
 	bch2_trans_unlock(trans);
-	mutex_lock(&trans->c->btree_write_buffer.flush_lock);
-	int ret = __bch2_btree_write_buffer_flush(trans, true);
+	mutex_lock(&c->btree_write_buffer.flush_lock);
+	int ret = bch2_btree_write_buffer_flush_locked(trans);
+	mutex_unlock(&c->btree_write_buffer.flush_lock);
 	bch2_write_ref_put(c, BCH_WRITE_REF_btree_write_buffer);
 	return ret;
 }
 
 int bch2_btree_write_buffer_flush_nocheck_rw(struct btree_trans *trans)
 {
-	return __bch2_btree_write_buffer_flush(trans, false);
+	struct bch_fs *c = trans->c;
+	struct btree_write_buffer *wb = &c->btree_write_buffer;
+	int ret = 0;
+
+	if (mutex_trylock(&wb->flush_lock)) {
+		ret = bch2_btree_write_buffer_flush_locked(trans);
+		mutex_unlock(&wb->flush_lock);
+	}
+
+	return ret;
 }
 
 int bch2_btree_write_buffer_flush(struct btree_trans *trans)
@@ -310,9 +316,10 @@ static int bch2_btree_write_buffer_journal_flush(struct journal *j,
 	struct btree_write_buffer *wb = &c->btree_write_buffer;
 
 	mutex_lock(&wb->flush_lock);
+	int ret = bch2_trans_run(c, bch2_btree_write_buffer_flush_locked(trans));
+	mutex_unlock(&wb->flush_lock);
 
-	return bch2_trans_run(c,
-			__bch2_btree_write_buffer_flush(trans, true));
+	return ret;
 }
 
 static inline u64 btree_write_buffer_ref(int idx)
