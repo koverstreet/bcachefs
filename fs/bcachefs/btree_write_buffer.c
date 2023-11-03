@@ -236,7 +236,7 @@ out:
 	bch2_journal_pin_drop(j, &pin);
 	return ret;
 slowpath:
-	trace_write_buffer_flush_slowpath(trans, i - keys, nr);
+	trace_write_buffer_flush_slowpath(trans, slowpath, nr);
 
 	/*
 	 * Now sort the rest by journal seq and bump the journal pin as we go.
@@ -274,6 +274,8 @@ int bch2_btree_write_buffer_flush_sync(struct btree_trans *trans)
 
 	if (!bch2_write_ref_tryget(c, BCH_WRITE_REF_btree_write_buffer))
 		return -BCH_ERR_erofs_no_writes;
+
+	trace_write_buffer_flush_sync(trans, _RET_IP_);
 
 	bch2_trans_unlock(trans);
 	mutex_lock(&c->btree_write_buffer.flush_lock);
