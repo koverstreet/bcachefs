@@ -259,7 +259,7 @@ static inline union journal_res_state journal_state_buf_put(struct journal *j, u
 {
 	union journal_res_state s;
 
-	s.v = atomic64_sub_return(((union journal_res_state) {
+	s.v = atomic64_sub_return_release(((union journal_res_state) {
 				    .buf0_count = idx == 0,
 				    .buf1_count = idx == 1,
 				    .buf2_count = idx == 2,
@@ -427,6 +427,7 @@ static inline void bch2_journal_set_replay_done(struct journal *j)
 
 void bch2_journal_unblock(struct journal *);
 void bch2_journal_block(struct journal *);
+void bch2_journal_block_reservations(struct journal *);
 
 void __bch2_journal_debug_to_text(struct printbuf *, struct journal *);
 void bch2_journal_debug_to_text(struct printbuf *, struct journal *);

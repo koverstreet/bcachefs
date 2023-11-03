@@ -147,6 +147,7 @@ void bch2_journal_buf_put_final(struct journal *j, u64 seq, bool write)
 		bch2_journal_reclaim_fast(j);
 	if (write)
 		closure_call(&j->io, bch2_journal_write, c->io_complete_wq, NULL);
+	wake_up(&j->wait);
 }
 
 /*
@@ -764,6 +765,34 @@ void bch2_journal_block(struct journal *j)
 	spin_unlock(&j->lock);
 
 	journal_quiesce(j);
+}
+
+/*
+ * XXX: ideally this would not be closing the current journal entry, but
+ * otherwise we do not have a way to avoid racing with res_get() - j->blocked
+ * will race.
+ */
+static bool journal_reservations_stopped(struct journal *j)
+{
+	union journal_res_state s;
+
+	journal_entry_close(j);
+
+	s.v = atomic64_read_acquire(&j->reservations.counter);
+
+	return  s.buf0_count == 0 &&
+		s.buf1_count == 0 &&
+		s.buf2_count == 0 &&
+		s.buf3_count == 0;
+}
+
+void bch2_journal_block_reservations(struct journal *j)
+{
+	spin_lock(&j->lock);
+	j->blocked++;
+	spin_unlock(&j->lock);
+
+	wait_event(j->wait, journal_reservations_stopped(j));
 }
 
 /* allocate journal on a device: */
