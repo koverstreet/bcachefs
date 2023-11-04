@@ -987,10 +987,27 @@ DEFINE_EVENT(transaction_event,	trans_restart_key_cache_raced,
 	TP_ARGS(trans, caller_ip)
 );
 
-DEFINE_EVENT(transaction_event,	trans_restart_too_many_iters,
+TRACE_EVENT(trans_restart_too_many_iters,
 	TP_PROTO(struct btree_trans *trans,
-		 unsigned long caller_ip),
-	TP_ARGS(trans, caller_ip)
+		 unsigned long caller_ip,
+		 const char *paths),
+	TP_ARGS(trans, caller_ip, paths),
+
+	TP_STRUCT__entry(
+		__array(char,			trans_fn, 32	)
+		__field(unsigned long,		caller_ip	)
+		__string(paths,			paths		)
+	),
+
+	TP_fast_assign(
+		strscpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
+		__entry->caller_ip		= caller_ip;
+		__assign_str(paths, paths);
+	),
+
+	TP_printk("%s %pS: %s", __entry->trans_fn,
+		  (void *) __entry->caller_ip,
+		  __get_str(paths))
 );
 
 DECLARE_EVENT_CLASS(transaction_restart_iter,

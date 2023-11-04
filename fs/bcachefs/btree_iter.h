@@ -585,6 +585,12 @@ void bch2_trans_srcu_lock(struct btree_trans *);
 
 u32 bch2_trans_begin(struct btree_trans *);
 
+void bch2_trans_updates_to_text(struct printbuf *, struct btree_trans *);
+void bch2_btree_path_to_text(struct printbuf *, struct btree_path *);
+void bch2_trans_paths_to_text(struct printbuf *, struct btree_trans *);
+void bch2_dump_trans_updates(struct btree_trans *);
+void bch2_dump_trans_paths_updates(struct btree_trans *);
+
 /*
  * XXX
  * this does not handle transaction restarts from bch2_btree_iter_next_node()
@@ -636,7 +642,15 @@ static inline struct bkey_s_c bch2_btree_iter_peek_upto_type(struct btree_iter *
 static inline int btree_trans_too_many_iters(struct btree_trans *trans)
 {
 	if (hweight64(trans->paths_allocated) > BTREE_ITER_MAX - 8) {
-		trace_and_count(trans->c, trans_restart_too_many_iters, trans, _THIS_IP_);
+		if (trace_trans_restart_too_many_iters_enabled()) {
+			struct printbuf buf = PRINTBUF;
+
+			bch2_trans_paths_to_text(&buf, trans);
+			trace_trans_restart_too_many_iters(trans, _THIS_IP_, buf.buf);
+			printbuf_exit(&buf);
+		}
+		this_cpu_inc(trans->c->counters[BCH_COUNTER_trans_restart_too_many_iters]);
+
 		return btree_trans_restart(trans, BCH_ERR_transaction_restart_too_many_iters);
 	}
 
@@ -913,12 +927,6 @@ __bch2_btree_iter_peek_upto_and_restart(struct btree_trans *trans,
 })
 
 /* new multiple iterator interface: */
-
-void bch2_trans_updates_to_text(struct printbuf *, struct btree_trans *);
-void bch2_btree_path_to_text(struct printbuf *, struct btree_path *);
-void bch2_trans_paths_to_text(struct printbuf *, struct btree_trans *);
-void bch2_dump_trans_updates(struct btree_trans *);
-void bch2_dump_trans_paths_updates(struct btree_trans *);
 
 struct btree_trans *__bch2_trans_get(struct bch_fs *, unsigned);
 void bch2_trans_put(struct btree_trans *);
