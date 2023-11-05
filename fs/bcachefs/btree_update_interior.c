@@ -513,8 +513,6 @@ static void bch2_btree_update_free(struct btree_update *as, struct btree_trans *
 		up_read(&c->gc_lock);
 	as->took_gc_lock = false;
 
-	bch2_journal_preres_put(&c->journal, &as->journal_preres);
-
 	bch2_journal_pin_drop(&c->journal, &as->journal);
 	bch2_journal_pin_flush(&c->journal, &as->journal);
 	bch2_disk_reservation_put(c, &as->disk_res);
@@ -733,8 +731,6 @@ err:
 	}
 
 	bch2_journal_pin_drop(&c->journal, &as->journal);
-
-	bch2_journal_preres_put(&c->journal, &as->journal_preres);
 
 	mutex_lock(&c->btree_interior_update_lock);
 	for (i = 0; i < as->nr_new_nodes; i++) {
@@ -1128,27 +1124,6 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 	ret = bch2_journal_error(&c->journal);
 	if (ret)
 		goto err;
-
-	ret = bch2_journal_preres_get(&c->journal, &as->journal_preres,
-				      BTREE_UPDATE_JOURNAL_RES,
-				      journal_flags|JOURNAL_RES_GET_NONBLOCK);
-	if (ret) {
-		if (flags & BTREE_INSERT_JOURNAL_RECLAIM) {
-			ret = -BCH_ERR_journal_reclaim_would_deadlock;
-			goto err;
-		}
-
-		ret = drop_locks_do(trans,
-			bch2_journal_preres_get(&c->journal, &as->journal_preres,
-					      BTREE_UPDATE_JOURNAL_RES,
-					      journal_flags));
-		if (ret == -BCH_ERR_journal_preres_get_blocked) {
-			trace_and_count(c, trans_restart_journal_preres_get, trans, _RET_IP_, journal_flags);
-			ret = btree_trans_restart(trans, BCH_ERR_transaction_restart_journal_preres_get);
-		}
-		if (ret)
-			goto err;
-	}
 
 	ret = bch2_disk_reservation_get(c, &as->disk_res,
 			(nr_nodes[0] + nr_nodes[1]) * btree_sectors(c),
