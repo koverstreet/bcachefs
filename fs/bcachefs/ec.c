@@ -1284,6 +1284,7 @@ static void ec_stripe_create(struct ec_stripe_new *s)
 	if (s->have_existing_stripe) {
 		ec_validate_checksums(c, &s->existing_stripe);
 
+		/* XXX: do recontsruct */
 		if (ec_do_recov(c, &s->existing_stripe)) {
 			bch_err(c, "error creating stripe: error reading existing stripe");
 			ret = bch_err_throw(c, ec_block_read);
