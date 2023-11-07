@@ -1583,6 +1583,7 @@ static void journal_write_done(struct closure *cl)
 	} while ((v = atomic64_cmpxchg(&j->reservations.counter,
 				       old.v, new.v)) != old.v);
 
+	bch2_journal_reclaim_fast(j);
 	bch2_journal_space_available(j);
 
 	track_event_change(&c->times[BCH_TIME_blocked_journal_max_in_flight],
