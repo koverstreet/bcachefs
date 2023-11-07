@@ -416,6 +416,7 @@ struct btree_trans {
 	bool			journal_replay_not_finished:1;
 	bool			is_initial_gc:1;
 	bool			notrace_relock_fail:1;
+	bool			write_locked:1;
 	enum bch_errcode	restarted:16;
 	u32			restart_count;
 	unsigned long		last_begin_ip;
