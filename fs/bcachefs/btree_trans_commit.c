@@ -656,6 +656,8 @@ bch2_trans_commit_write_locked(struct btree_trans *trans, unsigned flags,
 			*stopped_at = i;
 			return ret;
 		}
+
+		i->k->k.needs_whiteout = false;
 	}
 
 	if (trans->nr_wb_updates &&
@@ -778,8 +780,6 @@ bch2_trans_commit_write_locked(struct btree_trans *trans, unsigned flags,
 	}
 
 	trans_for_each_update(trans, i) {
-		i->k->k.needs_whiteout = false;
-
 		if (!i->cached) {
 			u64 seq = trans->journal_res.seq;
 
