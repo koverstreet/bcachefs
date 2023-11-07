@@ -862,12 +862,15 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans, unsigned flags
 	if (unlikely(ret))
 		return ret;
 
+	bch2_trans_verify_relock(trans);
+
 	ret = bch2_trans_commit_write_locked(trans, flags, stopped_at, trace_ip);
 
 	if (!ret && unlikely(trans->journal_replay_not_finished))
 		bch2_drop_overwrites_from_journal(trans);
 
 	bch2_trans_unlock_write(trans);
+	bch2_trans_verify_relock(trans);
 
 	if (!ret && trans->journal_pin)
 		bch2_journal_pin_add(&c->journal, trans->journal_res.seq,
@@ -997,6 +1000,10 @@ int __bch2_trans_commit(struct btree_trans *trans, unsigned flags)
 	struct btree_insert_entry *errored_at = NULL;
 	struct bch_fs *c = trans->c;
 	int ret = 0;
+
+	BUG_ON(trans->restarted);
+
+	bch2_trans_verify_relock(trans);
 
 	if (!trans->nr_updates &&
 	    !trans->journal_entries_u64s)

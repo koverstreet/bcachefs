@@ -21,6 +21,12 @@ void bch2_assert_btree_nodes_not_locked(void);
 static inline void bch2_assert_btree_nodes_not_locked(void) {}
 #endif
 
+#ifdef CONFIG_BCACHEFS_DEBUG
+void bch2_trans_verify_relock(struct btree_trans *);
+#else
+static inline void bch2_trans_verify_relock(struct btree_trans *trans) {}
+#endif
+
 void bch2_trans_unlock_noassert(struct btree_trans *);
 
 static inline bool is_btree_node(struct btree_path *path, unsigned l)
@@ -388,7 +394,17 @@ static inline int bch2_btree_path_upgrade(struct btree_trans *trans,
 
 static inline void btree_path_set_should_be_locked(struct btree_path *path)
 {
-	EBUG_ON(!btree_node_locked(path, path->level));
+#ifdef CONFIG_BCACHEFS_DEBUG
+	unsigned l = path->level;
+
+	do {
+		if (!btree_path_node(path, l))
+			break;
+		EBUG_ON(!btree_node_locked(path, l));
+		l++;
+	} while (l < path->locks_want);
+#endif
+
 	EBUG_ON(path->uptodate);
 
 	path->should_be_locked = true;

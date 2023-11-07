@@ -823,10 +823,38 @@ void bch2_trans_unlock_noassert(struct btree_trans *trans)
 #endif
 }
 
+#ifdef CONFIG_BCACHEFS_DEBUG
+/* Assertion that bch2_trans_relock() will succeed */
+void bch2_trans_verify_relock(struct btree_trans *trans)
+{
+	struct btree_path *path;
+
+	if (trans->restarted)
+		return;
+
+	trans_for_each_path(trans, path)
+		if (path->should_be_locked)
+			for (unsigned l = path->level;
+			     l < min(BTREE_MAX_DEPTH,
+				     max_t(unsigned, 1, path->locks_want)) &&
+			     btree_path_node(path, l);
+			     l++) {
+				if (!is_btree_node(path, l))
+					panic("don't have a btree node, have %s\n",
+					      bch2_err_str(PTR_ERR(path->l[l].b)));
+
+				BUG_ON(!btree_node_locked(path, l));
+				BUG_ON(path->l[l].lock_seq != path->l[l].b->c.lock.seq);
+			}
+}
+#endif
+
 void bch2_trans_unlock(struct btree_trans *trans)
 {
 	struct btree_path *path;
 	unsigned i;
+
+	bch2_trans_verify_relock(trans);
 
 	trans_for_each_path(trans, path, i)
 		__bch2_btree_path_unlock(trans, path);
