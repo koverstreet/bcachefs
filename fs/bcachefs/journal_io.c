@@ -1871,6 +1871,8 @@ void bch2_journal_write(struct closure *cl)
 	if (ret)
 		goto err;
 
+	j->entry_bytes_written += vstruct_bytes(w->data);
+
 	while (1) {
 		spin_lock(&j->lock);
 		ret = journal_write_alloc(j, w);
