@@ -14,6 +14,7 @@
 #include "buckets_waiting_for_journal.h"
 #include "clock.h"
 #include "debug.h"
+#include "disk_accounting.h"
 #include "ec.h"
 #include "error.h"
 #include "lru.h"
@@ -814,8 +815,60 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 
 		if ((flags & BTREE_TRIGGER_BUCKET_INVALIDATE) &&
 		    old_a->cached_sectors) {
-			ret = bch2_update_cached_sectors_list(trans, new.k->p.inode,
-							      -((s64) old_a->cached_sectors));
+			ret = bch2_mod_dev_cached_sectors(trans, new.k->p.inode,
+							  -((s64) old_a->cached_sectors));
+			if (ret)
+				return ret;
+		}
+
+
+		if (old_a->data_type != new_a->data_type ||
+		    old_a->dirty_sectors != new_a->dirty_sectors) {
+			struct disk_accounting_pos acc = {
+				.type = BCH_DISK_ACCOUNTING_dev_data_type,
+				.dev_data_type.dev = new.k->p.inode,
+				.dev_data_type.data_type = new_a->data_type,
+			};
+			s64 d[3];
+
+			if (old_a->data_type == new_a->data_type) {
+				d[0] = 0;
+				d[1] = (s64) new_a->dirty_sectors - (s64) old_a->dirty_sectors;
+				d[2] =  bucket_sectors_fragmented(ca, *new_a) -
+					bucket_sectors_fragmented(ca, *old_a);
+
+				ret = bch2_disk_accounting_mod(trans, &acc, d, 3);
+				if (ret)
+					return ret;
+			} else {
+				d[0] = 1;
+				d[1] = new_a->dirty_sectors;
+				d[2] = bucket_sectors_fragmented(ca, *new_a);
+
+				ret = bch2_disk_accounting_mod(trans, &acc, d, 3);
+				if (ret)
+					return ret;
+
+				acc.dev_data_type.data_type = old_a->data_type;
+				d[0] = -1;
+				d[1] = -(s64) old_a->dirty_sectors;
+				d[2] = -bucket_sectors_fragmented(ca, *old_a);
+
+				ret = bch2_disk_accounting_mod(trans, &acc, d, 3);
+				if (ret)
+					return ret;
+			}
+		}
+
+		if (!!old_a->stripe != !!new_a->stripe) {
+			struct disk_accounting_pos acc = {
+				.type = BCH_DISK_ACCOUNTING_dev_stripe_buckets,
+				.dev_stripe_buckets.dev = new.k->p.inode,
+			};
+			u64 d[1];
+
+			d[0] = (s64) !!new_a->stripe - (s64) !!old_a->stripe;
+			ret = bch2_disk_accounting_mod(trans, &acc, d, 1);
 			if (ret)
 				return ret;
 		}
@@ -858,12 +911,11 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 			}
 		}
 
-		percpu_down_read(&c->mark_lock);
-		if (new_a->gen != old_a->gen)
+		if (new_a->gen != old_a->gen) {
+			percpu_down_read(&c->mark_lock);
 			*bucket_gen(ca, new.k->p.offset) = new_a->gen;
-
-		bch2_dev_usage_update(c, ca, old_a, new_a, journal_seq, false);
-		percpu_up_read(&c->mark_lock);
+			percpu_up_read(&c->mark_lock);
+		}
 
 #define eval_state(_a, expr)		({ const struct bch_alloc_v4 *a = _a; expr; })
 #define statechange(expr)		!eval_state(old_a, expr) && eval_state(new_a, expr)
@@ -907,6 +959,8 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 
 		bucket_unlock(g);
 		percpu_up_read(&c->mark_lock);
+
+		bch2_dev_usage_update(c, ca, old_a, new_a);
 	}
 
 	return 0;

@@ -1247,9 +1247,6 @@ int bch2_fs_initialize(struct bch_fs *c)
 	for (unsigned i = 0; i < BTREE_ID_NR; i++)
 		bch2_btree_root_alloc_fake(c, i, 0);
 
-	for_each_member_device(c, ca)
-		bch2_dev_usage_init(ca);
-
 	ret = bch2_fs_journal_alloc(c);
 	if (ret)
 		goto err;
@@ -1265,6 +1262,15 @@ int bch2_fs_initialize(struct bch_fs *c)
 	ret = bch2_fs_read_write_early(c);
 	if (ret)
 		goto err;
+
+	for_each_member_device(c, ca) {
+		ret = bch2_dev_usage_init(ca);
+		bch_err_msg(c, ret, "initializing device usage");
+		if (ret) {
+			percpu_ref_put(&ca->ref);
+			goto err;
+		}
+	}
 
 	/*
 	 * Write out the superblock and journal buckets, now that we can do
