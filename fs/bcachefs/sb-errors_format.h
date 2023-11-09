@@ -275,7 +275,8 @@
 	x(subvol_snapshot_bad,					269)	\
 	x(subvol_inode_bad,					270)	\
 	x(alloc_key_stripe_sectors_wrong,			271)	\
-	x(accounting_mismatch,					272)
+	x(accounting_mismatch,					272)	\
+	x(accounting_replicas_not_marked,			273)
 
 enum bch_sb_error_id {
 #define x(t, n) BCH_FSCK_ERR_##t = n,
