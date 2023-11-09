@@ -202,7 +202,6 @@ static inline struct bch_dev_usage bch2_dev_usage_read(struct bch_dev *ca)
 	return ret;
 }
 
-void bch2_dev_usage_init(struct bch_dev *);
 void bch2_dev_usage_to_text(struct printbuf *, struct bch_dev_usage *);
 
 static inline u64 bch2_dev_buckets_reserved(struct bch_dev *ca, enum bch_watermark watermark)
@@ -262,6 +261,13 @@ static inline u64 dev_buckets_available(struct bch_dev *ca,
 	return __dev_buckets_available(ca, bch2_dev_usage_read(ca), watermark);
 }
 
+static inline s64 bucket_sectors_fragmented(struct bch_dev *ca, struct bch_alloc_v4 a)
+{
+	return a.dirty_sectors
+		? max(0, (int) ca->mi.bucket_size - (int) a.dirty_sectors)
+		: 0;
+}
+
 /* Filesystem usage: */
 
 static inline unsigned __fs_usage_u64s(unsigned nr_replicas)
@@ -305,31 +311,11 @@ bch2_fs_usage_read_short(struct bch_fs *);
 
 void bch2_dev_usage_update(struct bch_fs *, struct bch_dev *,
 			   const struct bch_alloc_v4 *,
-			   const struct bch_alloc_v4 *, u64, bool);
+			   const struct bch_alloc_v4 *);
 void bch2_dev_usage_update_m(struct bch_fs *, struct bch_dev *,
 			     struct bucket *, struct bucket *);
-
-/* key/bucket marking: */
-
-static inline struct bch_fs_usage *fs_usage_ptr(struct bch_fs *c,
-						unsigned journal_seq,
-						bool gc)
-{
-	percpu_rwsem_assert_held(&c->mark_lock);
-	BUG_ON(!gc && !journal_seq);
-
-	return this_cpu_ptr(gc
-			    ? c->usage_gc
-			    : c->usage[journal_seq & JOURNAL_BUF_MASK]);
-}
-
 int bch2_update_replicas(struct bch_fs *, struct bkey_s_c,
-			 struct bch_replicas_entry_v1 *, s64,
-			 unsigned, bool);
-int bch2_update_replicas_list(struct btree_trans *,
 			 struct bch_replicas_entry_v1 *, s64);
-int bch2_update_cached_sectors_list(struct btree_trans *, unsigned, s64);
-int bch2_replicas_deltas_realloc(struct btree_trans *, unsigned);
 
 void bch2_fs_usage_initialize(struct bch_fs *);
 
@@ -358,9 +344,6 @@ int bch2_trigger_reservation(struct btree_trans *, enum btree_id, unsigned,
 })
 
 void bch2_trans_account_disk_usage_change(struct btree_trans *);
-
-void bch2_trans_fs_usage_revert(struct btree_trans *, struct replicas_delta_list *);
-int bch2_trans_fs_usage_apply(struct btree_trans *, struct replicas_delta_list *);
 
 int bch2_trans_mark_metadata_bucket(struct btree_trans *, struct bch_dev *,
 				    size_t, enum bch_data_type, unsigned);
