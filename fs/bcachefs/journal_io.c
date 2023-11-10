@@ -1585,6 +1585,9 @@ static void journal_write_done(struct closure *cl)
 
 	bch2_journal_space_available(j);
 
+	track_event_change(&c->times[BCH_TIME_blocked_journal_max_in_flight],
+			   &j->max_in_flight_start, false);
+
 	closure_wake_up(&w->wait);
 	journal_wake(j);
 
