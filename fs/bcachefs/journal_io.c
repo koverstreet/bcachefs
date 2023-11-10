@@ -1765,6 +1765,43 @@ static CLOSURE_CALLBACK(do_journal_write)
 	continue_at(cl, journal_write_done, j->wq);
 }
 
+static inline int jset_entry_prep(struct bch_fs *c, u64 seq,
+				  struct jset_entry *i,
+				  struct journal_keys_to_wb *wb,
+				  unsigned long *btree_roots_have)
+{
+	/*
+	 * New btree roots are set by journalling them; when the journal
+	 * entry gets written we have to propagate them to
+	 * c->btree_roots
+	 *
+	 * But, every journal entry we write has to contain all the
+	 * btree roots (at least for now); so after we copy btree roots
+	 * to c->btree_roots we have to get any missing btree roots and
+	 * add them to this journal entry:
+	 */
+	switch (i->type) {
+	case BCH_JSET_ENTRY_btree_root:
+		bch2_journal_entry_to_btree_root(c, i);
+		__set_bit(i->btree_id, btree_roots_have);
+		break;
+	case BCH_JSET_ENTRY_write_buffer_keys:
+		if (!wb->wb)
+			bch2_journal_keys_to_write_buffer_start(c, wb, seq);
+
+		struct bkey_i *k;
+		jset_entry_for_each_key(i, k) {
+			int ret = bch2_journal_key_to_wb(c, wb, i->btree_id, k);
+			if (ret)
+				return ret;
+		}
+		i->type = BCH_JSET_ENTRY_btree_keys;
+		break;
+	}
+
+	return 0;
+}
+
 static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
@@ -1792,39 +1829,9 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 		if (!u64s)
 			continue;
 
-		/*
-		 * New btree roots are set by journalling them; when the journal
-		 * entry gets written we have to propagate them to
-		 * c->btree_roots
-		 *
-		 * But, every journal entry we write has to contain all the
-		 * btree roots (at least for now); so after we copy btree roots
-		 * to c->btree_roots we have to get any missing btree roots and
-		 * add them to this journal entry:
-		 */
-		switch (i->type) {
-		case BCH_JSET_ENTRY_btree_root:
-			bch2_journal_entry_to_btree_root(c, i);
-			__set_bit(i->btree_id, &btree_roots_have);
-			break;
-		case BCH_JSET_ENTRY_write_buffer_keys:
-			EBUG_ON(!w->need_flush_to_write_buffer);
-
-			if (!wb.wb)
-				bch2_journal_keys_to_write_buffer_start(c, &wb, seq);
-
-			struct bkey_i *k;
-			jset_entry_for_each_key(i, k) {
-				ret = bch2_journal_key_to_wb(c, &wb, i->btree_id, k);
-				if (ret) {
-					bch2_fs_fatal_error(c, "-ENOMEM flushing journal keys to btree write buffer");
-					bch2_journal_keys_to_write_buffer_end(c, &wb);
-					return ret;
-				}
-			}
-			i->type = BCH_JSET_ENTRY_btree_keys;
-			break;
-		}
+		int ret = jset_entry_prep(c, le64_to_cpu(jset->seq), i, &wb, &btree_roots_have);
+		if (ret)
+			return ret;
 	}
 
 	if (wb.wb)
