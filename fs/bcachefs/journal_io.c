@@ -1802,17 +1802,12 @@ static inline int jset_entry_prep(struct bch_fs *c, u64 seq,
 	return 0;
 }
 
-static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
+static int jset_compact_simple(struct journal *j, struct journal_buf *w,
+			       struct journal_keys_to_wb *wb,
+			       unsigned long *btree_roots_have)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
-	struct jset_entry *start, *end;
 	struct jset *jset = w->data;
-	struct journal_keys_to_wb wb = { NULL };
-	unsigned sectors, bytes, u64s;
-	unsigned long btree_roots_have = 0;
-	bool validate_before_checksum = false;
-	u64 seq = le64_to_cpu(jset->seq);
-	int ret;
 
 	/*
 	 * Simple compaction, dropping empty jset_entries (from journal
@@ -1829,15 +1824,38 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 		if (!u64s)
 			continue;
 
-		int ret = jset_entry_prep(c, le64_to_cpu(jset->seq), i, &wb, &btree_roots_have);
+		int ret = jset_entry_prep(c, le64_to_cpu(jset->seq), i, wb, btree_roots_have);
 		if (ret)
 			return ret;
 	}
 
+	return 0;
+}
+
+static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
+{
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+	struct jset_entry *start, *end;
+	struct journal_keys_to_wb wb = { NULL };
+	unsigned sectors, bytes, u64s;
+	unsigned long btree_roots_have = 0;
+	bool validate_before_checksum = false;
+	u64 seq = le64_to_cpu(w->data->seq);
+	int ret;
+
+	ret = jset_compact_simple(j, w, &wb, &btree_roots_have);
+
 	if (wb.wb)
 		bch2_journal_keys_to_write_buffer_end(c, &wb);
+
+	if (ret) {
+		bch2_fs_fatal_error(c, "error prepping journal write: %s", bch2_err_str(ret));
+		return ret;
+	}
+
 	w->need_flush_to_write_buffer = false;
 
+	struct jset *jset = w->data;
 	start = end = vstruct_last(jset);
 
 	end	= bch2_btree_roots_to_journal_entries(c, end, btree_roots_have);
