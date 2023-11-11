@@ -269,7 +269,7 @@ static int bch2_extent_drop_ptrs(struct btree_trans *trans,
 
 	return bch2_trans_relock(trans) ?:
 		bch2_trans_update(trans, iter, n, BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE) ?:
-		bch2_trans_commit(trans, NULL, NULL, BTREE_INSERT_NOFAIL);
+		bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 }
 
 int bch2_move_extent(struct moving_context *ctxt,
