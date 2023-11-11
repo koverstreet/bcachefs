@@ -830,7 +830,7 @@ static int bch2_inode_delete_keys(struct btree_trans *trans,
 
 		ret = bch2_trans_update(trans, &iter, &delete, 0) ?:
 		      bch2_trans_commit(trans, NULL, NULL,
-					BTREE_INSERT_NOFAIL);
+					BCH_TRANS_COMMIT_no_enospc);
 err:
 		if (ret && !bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			break;
@@ -893,7 +893,7 @@ retry:
 
 	ret   = bch2_trans_update(trans, &iter, &delete.k_i, 0) ?:
 		bch2_trans_commit(trans, NULL, NULL,
-				BTREE_INSERT_NOFAIL);
+				BCH_TRANS_COMMIT_no_enospc);
 err:
 	bch2_trans_iter_exit(trans, &iter);
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
@@ -1057,7 +1057,7 @@ retry:
 
 	ret   = bch2_trans_update(trans, &iter, &delete.k_i, 0) ?:
 		bch2_trans_commit(trans, NULL, NULL,
-				BTREE_INSERT_NOFAIL);
+				BCH_TRANS_COMMIT_no_enospc);
 err:
 	bch2_trans_iter_exit(trans, &iter);
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))

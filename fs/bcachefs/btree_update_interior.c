@@ -640,9 +640,9 @@ static void btree_update_nodes_written(struct btree_update *as)
 	 */
 	ret = commit_do(trans, &as->disk_res, &journal_seq,
 			BCH_WATERMARK_reclaim|
-			BTREE_INSERT_NOFAIL|
-			BTREE_INSERT_NOCHECK_RW|
-			BTREE_INSERT_JOURNAL_RECLAIM,
+			BCH_TRANS_COMMIT_no_enospc|
+			BCH_TRANS_COMMIT_no_check_rw|
+			BCH_TRANS_COMMIT_journal_reclaim,
 			btree_update_nodes_written_trans(trans, as));
 	bch2_trans_unlock(trans);
 
@@ -1049,7 +1049,7 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 	struct bch_fs *c = trans->c;
 	struct btree_update *as;
 	u64 start_time = local_clock();
-	int disk_res_flags = (flags & BTREE_INSERT_NOFAIL)
+	int disk_res_flags = (flags & BCH_TRANS_COMMIT_no_enospc)
 		? BCH_DISK_RESERVATION_NOFAIL : 0;
 	unsigned nr_nodes[2] = { 0, 0 };
 	unsigned update_level = level;
@@ -1068,7 +1068,7 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 	flags &= ~BCH_WATERMARK_MASK;
 	flags |= watermark;
 
-	if (flags & BTREE_INSERT_JOURNAL_RECLAIM)
+	if (flags & BCH_TRANS_COMMIT_journal_reclaim)
 		journal_flags |= JOURNAL_RES_GET_NONBLOCK;
 	journal_flags |= watermark;
 
@@ -1151,7 +1151,7 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 		 * flag
 		 */
 		if (bch2_err_matches(ret, ENOSPC) &&
-		    (flags & BTREE_INSERT_JOURNAL_RECLAIM) &&
+		    (flags & BCH_TRANS_COMMIT_journal_reclaim) &&
 		    watermark != BCH_WATERMARK_reclaim) {
 			ret = -BCH_ERR_journal_reclaim_would_deadlock;
 			goto err;
@@ -1839,7 +1839,7 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 
 	parent = btree_node_parent(path, b);
 	as = bch2_btree_update_start(trans, path, level, false,
-				     BTREE_INSERT_NOFAIL|flags);
+				     BCH_TRANS_COMMIT_no_enospc|flags);
 	ret = PTR_ERR_OR_ZERO(as);
 	if (ret)
 		goto err;
@@ -1925,7 +1925,7 @@ int bch2_btree_node_rewrite(struct btree_trans *trans,
 	struct btree_update *as;
 	int ret;
 
-	flags |= BTREE_INSERT_NOFAIL;
+	flags |= BCH_TRANS_COMMIT_no_enospc;
 
 	parent = btree_node_parent(iter->path, b);
 	as = bch2_btree_update_start(trans, iter->path, b->c.level,
