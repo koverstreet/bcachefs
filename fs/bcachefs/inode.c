@@ -1124,7 +1124,10 @@ static int may_delete_deleted_inode(struct btree_trans *trans,
 		inode.bi_flags &= ~BCH_INODE_unlinked;
 
 		ret = bch2_inode_write_flags(trans, &inode_iter, &inode,
-					     BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE);
+					     BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE) ?:
+			bch2_trans_commit(trans, NULL, NULL,
+					  BTREE_INSERT_NOFAIL|
+					  BTREE_INSERT_LAZY_RW);
 		bch_err_msg(c, ret, "clearing inode unlinked flag");
 		if (ret)
 			goto out;
