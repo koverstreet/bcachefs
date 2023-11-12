@@ -1348,6 +1348,23 @@ TRACE_EVENT(write_buffer_flush_slowpath,
 	TP_printk("%zu/%zu", __entry->nr, __entry->size)
 );
 
+TRACE_EVENT(propagate_key_to_snapshot_leaves,
+	TP_PROTO(u32 start_id, u32 end_id),
+	TP_ARGS(start_id, end_id),
+
+	TP_STRUCT__entry(
+		__field(u32,		start_id	)
+		__field(u32,		end_id		)
+	),
+
+	TP_fast_assign(
+		__entry->start_id	= start_id;
+		__entry->end_id		= end_id;
+	),
+
+	TP_printk("%u/%u", __entry->start_id, __entry->end_id)
+);
+
 #endif /* _TRACE_BCACHEFS_H */
 
 /* This part must be outside protection */

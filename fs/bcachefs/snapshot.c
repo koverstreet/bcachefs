@@ -1643,7 +1643,11 @@ int bch2_propagate_key_to_snapshot_leaves(struct btree_trans *trans,
 
 	*new_min_pos = POS_MIN;
 
-	for (u32 id = bch2_snapshot_smallest_descendent(c, k.k->p.snapshot);
+	u32 start_id = bch2_snapshot_smallest_descendent(c, k.k->p.snapshot);
+
+	trace_propagate_key_to_snapshot_leaves(start_id, k.k->p.snapshot);
+
+	for (u32 id = start_id;
 	     id < k.k->p.snapshot;
 	     id++) {
 		if (!bch2_snapshot_is_ancestor(c, id, k.k->p.snapshot) ||
