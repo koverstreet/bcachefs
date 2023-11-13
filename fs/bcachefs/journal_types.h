@@ -103,8 +103,8 @@ union journal_res_state {
 };
 
 /* bytes: */
-#define JOURNAL_ENTRY_SIZE_MIN		(64U << 10) /* 64k */
-#define JOURNAL_ENTRY_SIZE_MAX		(4U  << 20) /* 4M */
+#define JOURNAL_ENTRY_SIZE_MIN		(2U << 20) /* 64k */
+#define JOURNAL_ENTRY_SIZE_MAX		(4U << 20) /* 4M */
 
 /*
  * We stash some journal state as sentinal values in cur_entry_offset:
