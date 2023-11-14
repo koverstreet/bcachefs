@@ -930,6 +930,8 @@ static struct bkey_s_c bch2_get_key_or_hole(struct btree_iter *iter, struct bpos
 	if (bkey_err(k))
 		return k;
 
+	return k;
+
 	if (k.k->type) {
 		return k;
 	} else {
@@ -998,26 +1000,18 @@ static struct bkey_s_c bch2_get_key_or_real_bucket_hole(struct btree_iter *iter,
 	struct bch_fs *c = iter->trans->c;
 	struct bkey_s_c k;
 again:
-	k = bch2_get_key_or_hole(iter, POS_MAX, hole);
+	k = bch2_btree_iter_peek_slot(iter);
 	if (bkey_err(k))
 		return k;
 
-	if (!k.k->type) {
-		struct bpos bucket = bkey_start_pos(k.k);
+	if (!k.k->type && !bch2_dev_bucket_exists(c, k.k->p)) {
+		struct bpos bucket = k.k->p;
 
-		if (!bch2_dev_bucket_exists(c, bucket)) {
-			if (!next_bucket(c, &bucket))
-				return bkey_s_c_null;
+		if (!next_bucket(c, &bucket))
+			return bkey_s_c_null;
 
-			bch2_btree_iter_set_pos(iter, bucket);
-			goto again;
-		}
-
-		if (!bch2_dev_bucket_exists(c, k.k->p)) {
-			struct bch_dev *ca = bch_dev_bkey_exists(c, bucket.inode);
-
-			bch2_key_resize(hole, ca->mi.nbuckets - bucket.offset);
-		}
+		bch2_btree_iter_set_pos(iter, bucket);
+		goto again;
 	}
 
 	return k;
@@ -1329,6 +1323,8 @@ fsck_err:
 	printbuf_exit(&buf);
 	return ret;
 delete:
+	ret = -EINVAL;
+	goto out;
 	ret =   bch2_btree_delete_extent_at(trans, iter,
 			iter->btree_id == BTREE_ID_freespace ? 1 : 0, 0) ?:
 		bch2_trans_commit(trans, NULL, NULL,
@@ -1443,30 +1439,15 @@ int bch2_check_alloc_info(struct bch_fs *c)
 		if (!k.k)
 			break;
 
-		if (k.k->type) {
-			next = bpos_nosnap_successor(k.k->p);
+		next = bpos_nosnap_successor(k.k->p);
 
-			ret = bch2_check_alloc_key(trans,
-						   k, &iter,
-						   &discard_iter,
-						   &freespace_iter,
-						   &bucket_gens_iter);
-			if (ret)
-				goto bkey_err;
-		} else {
-			next = k.k->p;
-
-			ret = bch2_check_alloc_hole_freespace(trans,
-						    bkey_start_pos(k.k),
-						    &next,
-						    &freespace_iter) ?:
-				bch2_check_alloc_hole_bucket_gens(trans,
-						    bkey_start_pos(k.k),
-						    &next,
-						    &bucket_gens_iter);
-			if (ret)
-				goto bkey_err;
-		}
+		ret = bch2_check_alloc_key(trans,
+					   k, &iter,
+					   &discard_iter,
+					   &freespace_iter,
+					   &bucket_gens_iter);
+		if (ret)
+			goto bkey_err;
 
 		ret = bch2_trans_commit(trans, NULL, NULL,
 					BCH_TRANS_COMMIT_no_enospc);
