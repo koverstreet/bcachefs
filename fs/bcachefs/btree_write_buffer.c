@@ -294,6 +294,17 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 		    wb_key_eq(i, i + 1)) {
 			struct btree_write_buffered_key *n = &wb->flushing.keys.data[i[1].idx];
 
+			if (k->k.k.type == KEY_TYPE_accounting &&
+			    n->k.k.type == KEY_TYPE_accounting) {
+				struct bch_accounting *k_a = &bkey_i_to_accounting(&k->k)->v;
+				struct bch_accounting *n_a = &bkey_i_to_accounting(&n->k)->v;
+
+				BUG_ON(k->k.k.u64s != n->k.k.u64s);
+
+				for (unsigned j = 0; j < bkey_val_u64s(&k->k.k); j++)
+					le64_add_cpu(&n_a->d[j], le64_to_cpu(k_a->d[j]));
+			}
+
 			skipped++;
 			n->journal_seq = min_t(u64, n->journal_seq, k->journal_seq);
 			k->journal_seq = 0;
