@@ -377,7 +377,7 @@ static int bch2_copygc_thread(void *arg)
 		c->copygc_running = false;
 
 		wake_up(&c->copygc_running_wq);
-
+#if 1
 		if (!wait && !did_work) {
 			u64 min_member_capacity = bch2_min_rw_member_capacity(c);
 
@@ -385,9 +385,10 @@ static int bch2_copygc_thread(void *arg)
 				min_member_capacity = 128 * 2048;
 
 			bch2_trans_unlock_long(ctxt.trans);
-			bch2_kthread_io_clock_wait(clock, last + (min_member_capacity >> 6),
+			bch2_kthread_io_clock_wait(clock, last + (min_member_capacity >> 8) - clock->max_slop,
 					MAX_SCHEDULE_TIMEOUT);
 		}
+#endif
 	}
 
 	move_buckets_wait(&ctxt, buckets, true);
