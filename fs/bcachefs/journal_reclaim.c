@@ -660,10 +660,9 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 		if (kthread_should_stop())
 			break;
 
-		if (bch2_journal_error(j)) {
-			ret = -EIO;
+		ret = bch2_journal_error(j);
+		if (ret)
 			break;
-		}
 
 		bch2_journal_do_discards(j);
 
