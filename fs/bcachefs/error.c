@@ -13,8 +13,10 @@ bool bch2_inconsistent_error(struct bch_fs *c)
 	case BCH_ON_ERROR_continue:
 		return false;
 	case BCH_ON_ERROR_ro:
-		if (bch2_fs_emergency_read_only(c))
+		if (bch2_fs_emergency_read_only(c)) {
 			bch_err(c, "inconsistency detected - emergency read only");
+			dump_stack();
+		}
 		return true;
 	case BCH_ON_ERROR_panic:
 		panic(bch2_fmt(c, "panic after error"));
@@ -33,8 +35,10 @@ void bch2_topology_error(struct bch_fs *c)
 
 void bch2_fatal_error(struct bch_fs *c)
 {
-	if (bch2_fs_emergency_read_only(c))
+	if (bch2_fs_emergency_read_only(c)) {
 		bch_err(c, "fatal error - emergency read only");
+		dump_stack();
+	}
 }
 
 void bch2_io_error_work(struct work_struct *work)
