@@ -502,26 +502,25 @@ out:
 int bch2_move_ratelimit(struct moving_context *ctxt)
 {
 	struct bch_fs *c = ctxt->trans->c;
-	bool is_kthread = current->flags & PF_KTHREAD;
 	u64 delay;
 
 	if (ctxt->wait_on_copygc && c->copygc_running) {
 		bch2_moving_ctxt_flush_all(ctxt);
 		wait_event_killable(c->copygc_running_wq,
 				    !c->copygc_running ||
-				    (is_kthread && kthread_should_stop()));
+				    kthread_should_stop());
 	}
 
 	do {
 		delay = ctxt->rate ? bch2_ratelimit_delay(ctxt->rate) : 0;
 
-		if (is_kthread && kthread_should_stop())
+		if (kthread_should_stop())
 			return 1;
 
 		if (delay)
 			move_ctxt_wait_event_timeout(ctxt,
 					freezing(current) ||
-					(is_kthread && kthread_should_stop()),
+					kthread_should_stop(),
 					delay);
 
 		if (unlikely(freezing(current))) {
@@ -735,7 +734,6 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
-	bool is_kthread = current->flags & PF_KTHREAD;
 	struct bch_io_opts io_opts = bch2_opts_to_inode_opts(c->opts);
 	struct btree_iter iter = {}, bp_iter = {};
 	struct bkey_buf sk;
@@ -775,7 +773,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		goto err;
 
 	while (!(ret = bch2_move_ratelimit(ctxt))) {
-		if (is_kthread && kthread_should_stop())
+		if (kthread_should_stop())
 			break;
 
 		bch2_trans_begin(trans);
@@ -947,7 +945,6 @@ static int bch2_move_btree(struct bch_fs *c,
 			   move_btree_pred pred, void *arg,
 			   struct bch_move_stats *stats)
 {
-	bool kthread = (current->flags & PF_KTHREAD) != 0;
 	struct bch_io_opts io_opts = bch2_opts_to_inode_opts(c->opts);
 	struct moving_context ctxt;
 	struct btree_trans *trans;
@@ -979,7 +976,7 @@ retry:
 		while (bch2_trans_begin(trans),
 		       (b = bch2_btree_iter_peek_node(trans, &iter)) &&
 		       !(ret = PTR_ERR_OR_ZERO(b))) {
-			if (kthread && kthread_should_stop())
+			if (kthread_should_stop())
 				break;
 
 			if ((cmp_int(btree, end.btree) ?:
@@ -1004,7 +1001,7 @@ next:
 
 		bch2_trans_iter_exit(trans, &iter);
 
-		if (kthread && kthread_should_stop())
+		if (kthread_should_stop())
 			break;
 	}
 
