@@ -166,7 +166,8 @@ void free_kthread_struct(struct task_struct *k)
  */
 bool kthread_should_stop(void)
 {
-	return test_bit(KTHREAD_SHOULD_STOP, &to_kthread(current)->flags);
+	return (current->flags & PF_KTHREAD) &&
+		test_bit(KTHREAD_SHOULD_STOP, &to_kthread(current)->flags);
 }
 EXPORT_SYMBOL(kthread_should_stop);
 
