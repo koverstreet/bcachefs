@@ -1614,8 +1614,7 @@ static CLOSURE_CALLBACK(journal_write_done)
 	} else {
 		bch2_devlist_to_replicas(&replicas.e, BCH_DATA_journal,
 					 w->devs_written);
-		if (bch2_mark_replicas(c, &replicas.e))
-			err = -EIO;
+		err = bch2_mark_replicas(c, &replicas.e);
 	}
 
 	if (err)
@@ -1916,7 +1915,7 @@ static int bch2_journal_write_pick_flush(struct journal *j, struct journal_buf *
 	 * write anything at all.
 	 */
 	if (error && test_bit(JOURNAL_NEED_FLUSH_WRITE, &j->flags))
-		return -EIO;
+		return error;
 
 	if (error ||
 	    w->noflush ||
