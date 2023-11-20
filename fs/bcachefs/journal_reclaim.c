@@ -632,7 +632,6 @@ static u64 journal_seq_to_flush(struct journal *j)
 static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
-	bool kthread = (current->flags & PF_KTHREAD) != 0;
 	u64 seq_to_flush;
 	size_t min_nr, min_key_cache, nr_flushed;
 	unsigned flags;
@@ -648,7 +647,7 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 	flags = memalloc_noreclaim_save();
 
 	do {
-		if (kthread && kthread_should_stop())
+		if (kthread_should_stop())
 			break;
 
 		if (bch2_journal_error(j)) {
