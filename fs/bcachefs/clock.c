@@ -95,7 +95,6 @@ void bch2_kthread_io_clock_wait(struct io_clock *clock,
 				unsigned long io_until,
 				unsigned long cpu_timeout)
 {
-	bool kthread = (current->flags & PF_KTHREAD) != 0;
 	struct io_clock_wait wait;
 
 	wait.io_timer.expire	= io_until;
@@ -111,7 +110,7 @@ void bch2_kthread_io_clock_wait(struct io_clock *clock,
 
 	do {
 		set_current_state(TASK_INTERRUPTIBLE);
-		if (kthread && kthread_should_stop())
+		if (kthread_should_stop())
 			break;
 
 		if (wait.expired)
