@@ -347,6 +347,8 @@ extern void lock_unpin_lock(struct lockdep_map *lock, struct pin_cookie);
 #define lockdep_repin_lock(l,c)	lock_repin_lock(&(l)->dep_map, (c))
 #define lockdep_unpin_lock(l,c)	lock_unpin_lock(&(l)->dep_map, (c))
 
+int lock_class_is_held(struct lock_class_key *key);
+
 /*
  * Must use lock_map_aquire_try() with override maps to avoid
  * lockdep thinking they participate in the block chain.
@@ -445,6 +447,8 @@ extern int lockdep_is_held(const void *);
 #define lockdep_pin_lock(l)			({ struct pin_cookie cookie = { }; cookie; })
 #define lockdep_repin_lock(l, c)		do { (void)(l); (void)(c); } while (0)
 #define lockdep_unpin_lock(l, c)		do { (void)(l); (void)(c); } while (0)
+
+static inline int lock_class_is_held(struct lock_class_key *key) { return 0; }
 
 #define DEFINE_WAIT_OVERRIDE_MAP(_name, _wait_type)	\
 	struct lockdep_map __maybe_unused _name = {}
