@@ -592,10 +592,12 @@ static inline size_t large_kmalloc_size(const struct page *page)
 	return PAGE_SIZE << large_kmalloc_order(page);
 }
 
+struct seq_buf;
+
 #ifdef CONFIG_SLUB_DEBUG
-void dump_unreclaimable_slab(void);
+void dump_unreclaimable_slab(struct seq_buf *);
 #else
-static inline void dump_unreclaimable_slab(void)
+static inline void dump_unreclaimable_slab(struct seq_buf *out)
 {
 }
 #endif
