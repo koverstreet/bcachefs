@@ -7,15 +7,18 @@
 
 #include <linux/blkdev.h>
 #include <linux/cma.h>
+#include <linux/console.h>
 #include <linux/cpuset.h>
 #include <linux/highmem.h>
 #include <linux/hugetlb.h>
 #include <linux/mm.h>
 #include <linux/mmzone.h>
+#include <linux/seq_buf.h>
 #include <linux/swap.h>
 #include <linux/vmstat.h>
 
 #include "internal.h"
+#include "slab.h"
 #include "swap.h"
 
 atomic_long_t _totalram_pages __read_mostly;
@@ -392,10 +395,31 @@ static void show_free_areas(unsigned int filter, nodemask_t *nodemask, int max_z
 	show_swap_cache_info();
 }
 
+static void print_string_as_lines(const char *prefix, const char *lines)
+{
+	if (!lines) {
+		printk("%s (null)\n", prefix);
+		return;
+	}
+
+	bool locked = console_trylock();
+
+	while (1) {
+		const char *p = strchrnul(lines, '\n');
+		printk("%s%.*s\n", prefix, (int) (p - lines), lines);
+		if (!*p)
+			break;
+		lines = p + 1;
+	}
+	if (locked)
+		console_unlock();
+}
+
 void __show_mem(unsigned int filter, nodemask_t *nodemask, int max_zone_idx)
 {
 	unsigned long total = 0, reserved = 0, highmem = 0;
 	struct zone *zone;
+	char *buf;
 
 	printk("Mem-Info:\n");
 	show_free_areas(filter, nodemask, max_zone_idx);
@@ -447,4 +471,30 @@ void __show_mem(unsigned int filter, nodemask_t *nodemask, int max_zone_idx)
 		}
 	}
 #endif
+
+	const unsigned buf_size = 8192;
+	buf = kmalloc(buf_size, GFP_ATOMIC);
+	if (buf) {
+		struct seq_buf s;
+
+		printk("Unreclaimable slab info:\n");
+		seq_buf_init(&s, buf, buf_size);
+		dump_unreclaimable_slab(&s);
+		print_string_as_lines(KERN_NOTICE, seq_buf_str(&s));
+
+		static unsigned long shrinkers_last_print;
+
+		/* Ratelimit to at most once every 30 seconds */
+		if (!shrinkers_last_print ||
+		    time_after(jiffies, shrinkers_last_print + HZ * 30)) {
+			shrinkers_last_print = jiffies;
+
+			printk("Shrinkers:\n");
+			seq_buf_init(&s, buf, buf_size);
+			shrinkers_to_text(&s);
+			print_string_as_lines(KERN_NOTICE, seq_buf_str(&s));
+		}
+
+		kfree(buf);
+	}
 }
