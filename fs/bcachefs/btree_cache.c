@@ -15,6 +15,7 @@
 
 #include <linux/prefetch.h>
 #include <linux/sched/mm.h>
+#include <linux/seq_buf.h>
 #include <linux/swap.h>
 
 const char * const bch2_btree_node_flags[] = {
@@ -565,6 +566,19 @@ static unsigned long bch2_btree_cache_count(struct shrinker *shrink,
 	return btree_cache_can_free(list);
 }
 
+static void bch2_btree_cache_shrinker_to_text(struct seq_buf *s, struct shrinker *shrink)
+{
+	struct btree_cache_list *list = shrink->private_data;
+	struct btree_cache *bc = container_of(list, struct btree_cache, live[list->idx]);
+
+	char *cbuf;
+	size_t buflen = seq_buf_get_buf(s, &cbuf);
+	struct printbuf out = PRINTBUF_EXTERN(cbuf, buflen);
+
+	bch2_btree_cache_to_text(&out, bc);
+	seq_buf_commit(s, out.pos);
+}
+
 void bch2_fs_btree_cache_exit(struct bch_fs *c)
 {
 	struct btree_cache *bc = &c->btree_cache;
@@ -659,6 +673,7 @@ int bch2_fs_btree_cache_init(struct bch_fs *c)
 	bc->live[0].shrink	= shrink;
 	shrink->count_objects	= bch2_btree_cache_count;
 	shrink->scan_objects	= bch2_btree_cache_scan;
+	shrink->to_text		= bch2_btree_cache_shrinker_to_text;
 	shrink->seeks		= 2;
 	shrink->private_data	= &bc->live[0];
 	shrinker_register(shrink);
@@ -669,6 +684,7 @@ int bch2_fs_btree_cache_init(struct bch_fs *c)
 	bc->live[1].shrink	= shrink;
 	shrink->count_objects	= bch2_btree_cache_count;
 	shrink->scan_objects	= bch2_btree_cache_scan;
+	shrink->to_text		= bch2_btree_cache_shrinker_to_text;
 	shrink->seeks		= 8;
 	shrink->private_data	= &bc->live[1];
 	shrinker_register(shrink);
