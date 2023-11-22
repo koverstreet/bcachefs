@@ -854,6 +854,9 @@ void bch2_trans_unlock(struct btree_trans *trans)
 
 	trans->locked = false;
 	trans->last_unlock_ip = _RET_IP_;
+
+	if (!trans->is_initial_gc)
+		bch2_assert_btree_nodes_not_locked();
 }
 
 void bch2_trans_unlock_long(struct btree_trans *trans)
