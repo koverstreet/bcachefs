@@ -824,11 +824,11 @@ void shrinker_to_text(struct seq_buf *out, struct shrinker *shrinker)
 	seq_buf_puts(out, shrinker->name);
 	seq_buf_putc(out, '\n');
 
-	seq_buf_printf(out, "objects:             %lu", shrinker->count_objects(shrinker, &sc));
-	seq_buf_printf(out, "requested to free:   %lu", atomic_long_read(&shrinker->objects_requested_to_free));
-	seq_buf_printf(out, "objects freed:       %lu", nr_freed);
-	seq_buf_printf(out, "last freed:          %lu", atomic_long_read(&shrinker->last_freed));
-	seq_buf_printf(out, "ns per object freed: %llu", nr_freed
+	seq_buf_printf(out, "objects:             %lu\n", shrinker->count_objects(shrinker, &sc));
+	seq_buf_printf(out, "requested to free:   %lu\n", atomic_long_read(&shrinker->objects_requested_to_free));
+	seq_buf_printf(out, "objects freed:       %lu\n", nr_freed);
+	seq_buf_printf(out, "last freed:          %lu\n", atomic_long_read(&shrinker->last_freed));
+	seq_buf_printf(out, "ns per object freed: %llu\n", nr_freed
 		       ? div64_ul(atomic64_read(&shrinker->ns_run), nr_freed)
 		       : 0);
 
