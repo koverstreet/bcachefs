@@ -951,6 +951,22 @@ rehash_wait:
 	free_percpu(bc->nr_pending);
 }
 
+#ifdef HAVE_SHRINKER_TO_TEXT
+#include <linux/seq_buf.h>
+
+static void bch2_btree_key_cache_shrinker_to_text(struct seq_buf *s, struct shrinker *shrink)
+{
+	struct bch_fs *c = shrink->private_data;
+	struct bch_fs_btree_key_cache *bc = &c->btree.key_cache;
+	char *cbuf;
+	size_t buflen = seq_buf_get_buf(s, &cbuf);
+	struct printbuf out = PRINTBUF_EXTERN(cbuf, buflen);
+
+	bch2_btree_key_cache_to_text(&out, bc);
+	seq_buf_commit(s, out.pos);
+}
+#endif /* HAVE_SHRINKER_TO_TEXT */
+
 int bch2_fs_btree_key_cache_init(struct bch_fs_btree_key_cache *bc)
 {
 	struct bch_fs *c = container_of(bc, struct bch_fs, btree.key_cache);
@@ -975,6 +991,9 @@ int bch2_fs_btree_key_cache_init(struct bch_fs_btree_key_cache *bc)
 	bc->shrink = shrink;
 	shrink->count_objects	= bch2_btree_key_cache_count;
 	shrink->scan_objects	= bch2_btree_key_cache_scan;
+#ifdef HAVE_SHRINKER_TO_TEXT
+	shrink->to_text		= bch2_btree_key_cache_shrinker_to_text;
+#endif
 	shrink->batch		= 1 << 14;
 	shrink->seeks		= 0;
 	shrink->private_data	= c;
