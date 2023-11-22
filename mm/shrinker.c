@@ -410,6 +410,7 @@ static unsigned long do_shrink_slab(struct shrink_control *shrinkctl,
 
 	trace_mm_shrink_slab_start(shrinker, shrinkctl, nr,
 				   freeable, delta, total_scan, priority);
+	u64 start_time = ktime_get_ns();
 
 	/*
 	 * Normally, we should not scan less than batch_size objects in one
@@ -459,6 +460,17 @@ static unsigned long do_shrink_slab(struct shrink_control *shrinkctl,
 	 * manner that handles concurrent updates.
 	 */
 	new_nr = add_nr_deferred(next_deferred, shrinker, shrinkctl);
+
+	unsigned long now = jiffies;
+	if (freed) {
+		atomic_long_add(freed, &shrinker->objects_freed);
+		shrinker->last_freed = now;
+	}
+	shrinker->last_scanned = now;
+	atomic_long_add(scanned, &shrinker->objects_requested_to_free);
+
+	atomic64_add(ktime_get_ns() - start_time, &shrinker->ns_run);
+
 
 	trace_mm_shrink_slab_end(shrinker, shrinkctl->nid, freed, nr, new_nr, total_scan);
 	return freed;
@@ -812,9 +824,19 @@ EXPORT_SYMBOL_GPL(shrinker_free);
 void shrinker_to_text(struct seq_buf *out, struct shrinker *shrinker)
 {
 	struct shrink_control sc = { .gfp_mask = GFP_KERNEL, };
+	unsigned long nr_freed = atomic_long_read(&shrinker->objects_freed);
 
 	seq_buf_puts(out, shrinker->name);
-	seq_buf_printf(out, " objects: %lu\n", shrinker->count_objects(shrinker, &sc));
+	seq_buf_putc(out, '\n');
+
+	seq_buf_printf(out, "objects:             %lu\n", shrinker->count_objects(shrinker, &sc));
+	seq_buf_printf(out, "requested to free:   %lu\n", atomic_long_read(&shrinker->objects_requested_to_free));
+	seq_buf_printf(out, "objects freed:       %lu\n", nr_freed);
+	seq_buf_printf(out, "last scanned:        %li sec ago\n", (jiffies - shrinker->last_scanned) / HZ);
+	seq_buf_printf(out, "last freed:          %li sec ago\n", (jiffies - shrinker->last_freed) / HZ);
+	seq_buf_printf(out, "ns per object freed: %llu\n", nr_freed
+		       ? div64_ul(atomic64_read(&shrinker->ns_run), nr_freed)
+		       : 0);
 
 	if (shrinker->to_text) {
 		shrinker->to_text(out, shrinker);
