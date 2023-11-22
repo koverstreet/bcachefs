@@ -611,10 +611,12 @@ static inline size_t slab_ksize(const struct kmem_cache *s)
 	return s->size;
 }
 
+struct seq_buf;
+
 #ifdef CONFIG_SLUB_DEBUG
-void dump_unreclaimable_slab(void);
+void dump_unreclaimable_slab(struct seq_buf *);
 #else
-static inline void dump_unreclaimable_slab(void)
+static inline void dump_unreclaimable_slab(struct seq_buf *out)
 {
 }
 #endif
