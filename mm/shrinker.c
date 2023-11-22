@@ -430,13 +430,20 @@ static unsigned long do_shrink_slab(struct shrink_control *shrinkctl,
 	       total_scan >= freeable) {
 		unsigned long ret;
 		unsigned long nr_to_scan = min(batch_size, total_scan);
+		u64 start_time = ktime_get_ns();
+
+		atomic_long_add(nr_to_scan, &shrinker->objects_requested_to_free);
 
 		shrinkctl->nr_to_scan = nr_to_scan;
 		shrinkctl->nr_scanned = nr_to_scan;
 		ret = shrinker->scan_objects(shrinker, shrinkctl);
+
+		atomic64_add(ktime_get_ns() - start_time, &shrinker->ns_run);
 		if (ret == SHRINK_STOP)
 			break;
 		freed += ret;
+		atomic_long_add(ret, &shrinker->objects_freed);
+		atomic_long_set(&shrinker->last_freed, ret);
 
 		count_vm_events(SLABS_SCANNED, shrinkctl->nr_scanned);
 		total_scan -= shrinkctl->nr_scanned;
@@ -812,9 +819,18 @@ EXPORT_SYMBOL_GPL(shrinker_free);
 void shrinker_to_text(struct seq_buf *out, struct shrinker *shrinker)
 {
 	struct shrink_control sc = { .gfp_mask = GFP_KERNEL, };
+	unsigned long nr_freed = atomic_long_read(&shrinker->objects_freed);
 
 	seq_buf_puts(out, shrinker->name);
-	seq_buf_printf(out, " objects: %lu\n", shrinker->count_objects(shrinker, &sc));
+	seq_buf_putc(out, '\n');
+
+	seq_buf_printf(out, "objects:             %lu", shrinker->count_objects(shrinker, &sc));
+	seq_buf_printf(out, "requested to free:   %lu", atomic_long_read(&shrinker->objects_requested_to_free));
+	seq_buf_printf(out, "objects freed:       %lu", nr_freed);
+	seq_buf_printf(out, "last freed:          %lu", atomic_long_read(&shrinker->last_freed));
+	seq_buf_printf(out, "ns per object freed: %llu", nr_freed
+		       ? div64_ul(atomic64_read(&shrinker->ns_run), nr_freed)
+		       : 0);
 
 	if (shrinker->to_text) {
 		shrinker->to_text(out, shrinker);
