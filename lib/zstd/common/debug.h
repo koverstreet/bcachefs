@@ -32,6 +32,9 @@
 #ifndef DEBUG_H_12987983217
 #define DEBUG_H_12987983217
 
+#include <asm/bug.h>
+#include <asm/string.h>
+
 
 
 /* static assert is triggered at compile time, leaving no runtime artefact.
@@ -44,7 +47,7 @@
  * typically through compiler command line.
  * Value must be a number. */
 #ifndef DEBUGLEVEL
-#  define DEBUGLEVEL 0
+#  define DEBUGLEVEL 4
 #endif
 
 

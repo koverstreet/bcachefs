@@ -372,8 +372,11 @@ static int attempt_compress(struct bch_fs *c,
 				dst + 4,	dst_len - 4 - 7,
 				src,		src_len,
 				&c->zstd_params);
-		if (zstd_is_error(len))
+		if (zstd_is_error(len)) {
+			bch_err_ratelimited(c, "zstd error: %s %zi, src_len %zu dst_len %zu",
+					    zstd_get_error_name(len), len, src_len, dst_len);
 			return 0;
+		}
 
 		*((__le32 *) dst) = cpu_to_le32(len);
 		return len + 4;
