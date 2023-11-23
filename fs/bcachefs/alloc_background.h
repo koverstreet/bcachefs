@@ -90,6 +90,11 @@ static inline unsigned bch2_bucket_sectors_fragmented(struct bch_dev *ca,
 	return d ? max(0, ca->mi.bucket_size - d) : 0;
 }
 
+static inline unsigned bch2_bucket_sectors_unstriped(struct bch_alloc_v4 a)
+{
+	return a.data_type == BCH_DATA_stripe ? a.dirty_sectors : 0;
+}
+
 static inline u64 alloc_lru_idx_read(struct bch_alloc_v4 a)
 {
 	return a.data_type == BCH_DATA_cached ? a.io_time[READ] : 0;
