@@ -335,6 +335,7 @@ static inline struct bch_alloc_v4 bucket_m_to_alloc(struct bucket b)
 		.gen		= b.gen,
 		.data_type	= b.data_type,
 		.dirty_sectors	= b.dirty_sectors,
+		.stripe_sectors	= b.stripe_sectors,
 		.cached_sectors	= b.cached_sectors,
 		.stripe		= b.stripe,
 	};
@@ -788,15 +789,17 @@ need_mark:
 
 static int __mark_pointer(struct btree_trans *trans,
 			  struct bkey_s_c k,
-			  const struct bch_extent_ptr *ptr,
+			  const struct extent_ptr_decoded *p,
 			  s64 sectors, enum bch_data_type ptr_data_type,
 			  u8 bucket_gen, u8 *bucket_data_type,
-			  u32 *dirty_sectors, u32 *cached_sectors)
+			  u32 *dirty_sectors, u32 *cached_sectors,
+			  u32 *stripe_sectors)
 {
-	u32 *dst_sectors = !ptr->cached
-		? dirty_sectors
-		: cached_sectors;
-	int ret = bch2_check_bucket_ref(trans, k, ptr, sectors, ptr_data_type,
+	u32 *dst_sectors = p->has_ec	? stripe_sectors :
+		!p->ptr.cached		? dirty_sectors :
+					  cached_sectors;
+
+	int ret = bch2_check_bucket_ref(trans, k, &p->ptr, sectors, ptr_data_type,
 				   bucket_gen, *bucket_data_type, *dst_sectors);
 
 	if (ret)
@@ -804,7 +807,7 @@ static int __mark_pointer(struct btree_trans *trans,
 
 	*dst_sectors += sectors;
 
-	if (!*dirty_sectors && !*cached_sectors)
+	if (!*dirty_sectors && !*cached_sectors && !*cached_sectors)
 		*bucket_data_type = 0;
 	else if (*bucket_data_type != BCH_DATA_stripe)
 		*bucket_data_type = ptr_data_type;
@@ -832,9 +835,10 @@ static int bch2_trigger_pointer(struct btree_trans *trans,
 		if (ret)
 			return ret;
 
-		ret = __mark_pointer(trans, k, &p.ptr, *sectors, bp.data_type,
+		ret = __mark_pointer(trans, k, &p, *sectors, bp.data_type,
 				     a->v.gen, &a->v.data_type,
-				     &a->v.dirty_sectors, &a->v.cached_sectors) ?:
+				     &a->v.dirty_sectors, &a->v.cached_sectors,
+				     &a->v.stripe_sectors) ?:
 			bch2_trans_update(trans, &iter, &a->k_i, 0);
 		bch2_trans_iter_exit(trans, &iter);
 
@@ -859,11 +863,12 @@ static int bch2_trigger_pointer(struct btree_trans *trans,
 		struct bucket old = *g;
 
 		u8 bucket_data_type = g->data_type;
-		int ret = __mark_pointer(trans, k, &p.ptr, *sectors,
+		int ret = __mark_pointer(trans, k, &p, *sectors,
 				     data_type, g->gen,
 				     &bucket_data_type,
 				     &g->dirty_sectors,
-				     &g->cached_sectors);
+				     &g->cached_sectors,
+				     &g->stripe_sectors);
 		if (ret) {
 			bucket_unlock(g);
 			percpu_up_read(&c->mark_lock);

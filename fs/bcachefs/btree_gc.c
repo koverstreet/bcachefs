@@ -624,6 +624,7 @@ static int bch2_check_fix_ptrs(struct btree_trans *trans, enum btree_id btree_id
 				g->gen			= p.ptr.gen;
 				g->data_type		= 0;
 				g->dirty_sectors	= 0;
+				g->stripe_sectors	= 0;
 				g->cached_sectors	= 0;
 				set_bit(BCH_FS_need_another_gc, &c->flags);
 			} else {
@@ -1353,6 +1354,7 @@ static inline bool bch2_alloc_v4_cmp(struct bch_alloc_v4 l,
 		l.oldest_gen != r.oldest_gen		||
 		l.data_type != r.data_type		||
 		l.dirty_sectors	!= r.dirty_sectors	||
+		l.stripe_sectors != r.stripe_sectors	||
 		l.cached_sectors != r.cached_sectors	 ||
 		l.stripe_redundancy != r.stripe_redundancy ||
 		l.stripe != r.stripe;
@@ -1383,6 +1385,7 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	 * fix that here:
 	 */
 	type = __alloc_data_type(b->dirty_sectors,
+				 b->stripe_sectors,
 				 b->cached_sectors,
 				 b->stripe,
 				 *old,
@@ -1436,6 +1439,8 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 			  gen);
 	copy_bucket_field(alloc_key_dirty_sectors_wrong,
 			  dirty_sectors);
+	copy_bucket_field(alloc_key_stripe_sectors_wrong,
+			  stripe_sectors);
 	copy_bucket_field(alloc_key_cached_sectors_wrong,
 			  cached_sectors);
 	copy_bucket_field(alloc_key_stripe_wrong,
@@ -1523,6 +1528,7 @@ static int bch2_gc_alloc_start(struct bch_fs *c, bool metadata_only)
 			     a->data_type == BCH_DATA_parity)) {
 				g->data_type		= a->data_type;
 				g->dirty_sectors	= a->dirty_sectors;
+				g->stripe_sectors	= a->stripe_sectors;
 				g->cached_sectors	= a->cached_sectors;
 				g->stripe		= a->stripe;
 				g->stripe_redundancy	= a->stripe_redundancy;
@@ -1548,6 +1554,7 @@ static void bch2_gc_alloc_reset(struct bch_fs *c, bool metadata_only)
 				continue;
 			g->data_type = 0;
 			g->dirty_sectors = 0;
+			g->stripe_sectors = 0;
 			g->cached_sectors = 0;
 		}
 	}

@@ -250,7 +250,8 @@
 	x(hash_table_key_duplicate,				242)	\
 	x(hash_table_key_wrong_offset,				243)	\
 	x(unlinked_inode_not_on_deleted_list,			244)	\
-	x(reflink_p_front_pad_bad,				245)
+	x(reflink_p_front_pad_bad,				245)	\
+	x(alloc_key_stripe_sectors_wrong,			246)
 
 enum bch_sb_error_id {
 #define x(t, n) BCH_FSCK_ERR_##t = n,
