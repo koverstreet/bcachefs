@@ -41,6 +41,7 @@ static inline u8 alloc_gc_gen(struct bch_alloc_v4 a)
 }
 
 static inline enum bch_data_type __alloc_data_type(u32 dirty_sectors,
+						   u32 stripe_sectors,
 						   u32 cached_sectors,
 						   u32 stripe,
 						   struct bch_alloc_v4 a,
@@ -48,7 +49,7 @@ static inline enum bch_data_type __alloc_data_type(u32 dirty_sectors,
 {
 	if (stripe)
 		return data_type == BCH_DATA_parity ? data_type : BCH_DATA_stripe;
-	if (dirty_sectors)
+	if (dirty_sectors | stripe_sectors)
 		return data_type;
 	if (cached_sectors)
 		return BCH_DATA_cached;
@@ -62,7 +63,7 @@ static inline enum bch_data_type __alloc_data_type(u32 dirty_sectors,
 static inline enum bch_data_type alloc_data_type(struct bch_alloc_v4 a,
 						 enum bch_data_type data_type)
 {
-	return __alloc_data_type(a.dirty_sectors, a.cached_sectors,
+	return __alloc_data_type(a.dirty_sectors, a.stripe_sectors, a.cached_sectors,
 				 a.stripe, a, data_type);
 }
 
@@ -73,12 +74,12 @@ static inline enum bch_data_type bucket_data_type(enum bch_data_type data_type)
 
 static inline unsigned bch2_bucket_sectors(struct bch_alloc_v4 a)
 {
-	return a.dirty_sectors + a.cached_sectors;
+	return a.stripe_sectors + a.dirty_sectors + a.cached_sectors;
 }
 
 static inline unsigned bch2_bucket_sectors_dirty(struct bch_alloc_v4 a)
 {
-	return a.dirty_sectors;
+	return a.stripe_sectors + a.dirty_sectors;
 }
 
 static inline unsigned bch2_bucket_sectors_fragmented(struct bch_dev *ca,
