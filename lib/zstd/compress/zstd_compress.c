@@ -1805,6 +1805,10 @@ static size_t ZSTD_resetCCtx_internal(ZSTD_CCtx* zc,
         {   /* Check if workspace is large enough, alloc a new one if needed */
             int const workspaceTooSmall = ZSTD_cwksp_sizeof(ws) < neededSpace;
             int const workspaceWasteful = ZSTD_cwksp_check_wasteful(ws, neededSpace);
+
+	    if (workspaceTooSmall)
+		    panic("%zu < %zu\n", ZSTD_cwksp_sizeof(ws), neededSpace);
+
             resizeWorkspace = workspaceTooSmall || workspaceWasteful;
             DEBUGLOG(4, "Need %zu B workspace", neededSpace);
             DEBUGLOG(4, "windowSize: %zu - blockSize: %zu", windowSize, blockSize);
@@ -5545,6 +5549,7 @@ size_t ZSTD_compress2(ZSTD_CCtx* cctx,
             RETURN_ERROR(dstSize_tooSmall, "");
         }
         assert(iPos == srcSize);   /* all input is expected consumed */
+	BUG_ON(oPos == -64);
         return oPos;
     }
 }
