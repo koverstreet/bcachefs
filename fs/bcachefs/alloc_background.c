@@ -2067,30 +2067,25 @@ put_ref:
 static int invalidate_one_bucket(struct btree_trans *trans,
 				 struct btree_iter *lru_iter,
 				 struct bkey_s_c lru_k,
+				 struct bpos *last_flushed_pos,
 				 s64 *nr_to_invalidate)
 {
 	struct bch_fs *c = trans->c;
-	struct bkey_i_alloc_v4 *a = NULL;
-	struct printbuf buf = PRINTBUF;
-	struct bpos bucket = u64_to_bucket(lru_k.k->p.offset);
-	unsigned cached_sectors;
 	int ret = 0;
 
 	if (*nr_to_invalidate <= 0)
 		return 1;
 
-	if (!bch2_dev_bucket_exists(c, bucket)) {
-		if (fsck_err(trans, lru_entry_to_invalid_bucket,
-			     "lru key points to nonexistent device:bucket %llu:%llu",
-			     bucket.inode, bucket.offset))
-			return bch2_btree_bit_mod_buffered(trans, BTREE_ID_lru, lru_iter->pos, false);
-		goto out;
-	}
+	ret = bch2_check_lru_key(trans, lru_iter, lru_k, last_flushed_pos);
+	if (ret)
+		return ret < 0 ? ret : 0;
 
+	struct bpos bucket = u64_to_bucket(lru_k.k->p.offset);
 	if (bch2_bucket_is_open_safe(c, bucket.inode, bucket.offset))
 		return 0;
 
-	a = bch2_trans_start_alloc_update(trans, bucket, BTREE_TRIGGER_bucket_invalidate);
+	struct bkey_i_alloc_v4 *a =
+		bch2_trans_start_alloc_update(trans, bucket, BTREE_TRIGGER_bucket_invalidate);
 	ret = PTR_ERR_OR_ZERO(a);
 	if (ret)
 		goto out;
@@ -2105,7 +2100,7 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 	if (!a->v.cached_sectors)
 		bch_err(c, "invalidating empty bucket, confused");
 
-	cached_sectors = a->v.cached_sectors;
+	unsigned cached_sectors = a->v.cached_sectors;
 
 	SET_BCH_ALLOC_V4_NEED_INC_GEN(&a->v, false);
 	a->v.gen++;
@@ -2125,8 +2120,6 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 	trace_and_count(c, bucket_invalidate, c, bucket.inode, bucket.offset, cached_sectors);
 	--*nr_to_invalidate;
 out:
-fsck_err:
-	printbuf_exit(&buf);
 	return ret;
 }
 
@@ -2150,6 +2143,7 @@ static void bch2_do_invalidates_work(struct work_struct *work)
 	struct bch_dev *ca = container_of(work, struct bch_dev, invalidate_work);
 	struct bch_fs *c = ca->fs;
 	struct btree_trans *trans = bch2_trans_get(c);
+	struct bpos last_flushed_pos = POS_MIN;
 	int ret = 0;
 
 	ret = bch2_btree_write_buffer_tryflush(trans);
@@ -2176,7 +2170,8 @@ static void bch2_do_invalidates_work(struct work_struct *work)
 		if (!k.k)
 			break;
 
-		ret = invalidate_one_bucket(trans, &iter, k, &nr_to_invalidate);
+		ret = invalidate_one_bucket(trans, &iter, k, &last_flushed_pos,
+					    &nr_to_invalidate);
 restart_err:
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
