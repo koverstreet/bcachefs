@@ -187,15 +187,17 @@ static int bch2_copygc_get_buckets(struct moving_context *ctxt,
 			struct buckets_in_flight *buckets_in_flight)
 {
 	struct btree_trans *trans = ctxt->trans;
+	struct bpos last_flushed_pos = POS_MIN;
 
 	int ret = for_each_btree_key_max(trans, iter, BTREE_ID_lru,
 				  lru_start(BCH_LRU_BUCKET_FRAGMENTATION),
 				  lru_end(BCH_LRU_BUCKET_FRAGMENTATION),
-				  0, k,
+				  0, k, ({
+		bch2_check_lru_key(trans, &iter, k, &last_flushed_pos) ?:
 		try_add_copygc_bucket(trans, buckets_in_flight,
 				      u64_to_bucket(k.k->p.offset),
 				      lru_pos_time(k.k->p))
-	);
+	}));
 
 	return ret < 0 ? ret : 0;
 }
@@ -204,14 +206,21 @@ static int bch2_copygc_get_stripe_buckets(struct moving_context *ctxt,
 			struct buckets_in_flight *buckets_in_flight)
 {
 	struct btree_trans *trans = ctxt->trans;
+	struct bpos last_flushed_pos = POS_MIN;
 
 	int ret = for_each_btree_key_max(trans, iter, BTREE_ID_lru,
 				  lru_start(BCH_LRU_STRIPE_FRAGMENTATION),
 				  lru_end(BCH_LRU_STRIPE_FRAGMENTATION),
 				  0, lru_k, ({
+		int ret2 = bch2_check_lru_key(trans, &iter, k, &last_flushed_pos);
+		if (ret2) {
+			ret2 = ret2 < 0 ? ret2 : 0;
+			goto err;
+		}
+
 		CLASS(btree_iter, s_iter)(trans, BTREE_ID_stripes, POS(0, lru_k.k->p.offset), 0);
 		struct bkey_s_c s_k = bch2_btree_iter_peek_slot(&s_iter);
-		int ret2 = bkey_err(s_k);
+		ret2 = bkey_err(s_k);
 		if (ret2)
 			goto err;
 
