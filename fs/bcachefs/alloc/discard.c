@@ -672,16 +672,12 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 				 s64 *nr_to_invalidate)
 {
 	struct bch_fs *c = trans->c;
+
+	ret = bch2_check_lru_key(trans, lru_iter, lru_k, last_flushed_pos);
+	if (ret)
+		return ret < 0 ? ret : 0;
+
 	struct bpos bucket = u64_to_bucket(lru_k.k->p.offset);
-
-	if (!bch2_dev_bucket_exists(c, bucket)) {
-		if (ret_fsck_err(trans, lru_entry_to_invalid_bucket,
-			     "lru key points to nonexistent device:bucket %llu:%llu",
-			     bucket.inode, bucket.offset))
-			return bch2_btree_bit_mod_buffered(trans, BTREE_ID_lru, lru_iter->pos, false);
-		return 0;
-	}
-
 	if (bch2_bucket_is_open_safe(c, bucket.inode, bucket.offset))
 		return 0;
 

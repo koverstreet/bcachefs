@@ -75,6 +75,8 @@ int bch2_dev_remove_lrus(struct bch_fs *, struct bch_dev *);
 struct wb_maybe_flush;
 int bch2_lru_check_set(struct btree_trans *, u16, u64, u64, struct bkey_s_c,
 		       struct wb_maybe_flush *);
+int bch2_check_lru_key(struct btree_trans *, struct btree_iter *,
+		       struct bkey_s_c, struct wb_maybe_flush *);
 int bch2_check_lrus(struct bch_fs *);
 
 #endif /* _BCACHEFS_LRU_H */
