@@ -105,7 +105,9 @@ void _force_has_format_string(const char *format, ...) {
     _FORCE_HAS_FORMAT_STRING(__VA_ARGS__); \
     RAWLOG(3, ": " __VA_ARGS__); \
     RAWLOG(3, "\n"); \
-    return ERROR(err); \
+    size_t errcode = ERROR(err); \
+	  BUG_ON(errcode == -64); \
+	  return errcode; \
   }
 
 /*
@@ -120,7 +122,9 @@ void _force_has_format_string(const char *format, ...) {
     _FORCE_HAS_FORMAT_STRING(__VA_ARGS__); \
     RAWLOG(3, ": " __VA_ARGS__); \
     RAWLOG(3, "\n"); \
-    return ERROR(err); \
+    size_t r = ERROR(err); \
+	BUG_ON(r == -64);	\
+	  return r;		\
   } while(0);
 
 /*
@@ -137,6 +141,7 @@ void _force_has_format_string(const char *format, ...) {
       _FORCE_HAS_FORMAT_STRING(__VA_ARGS__); \
       RAWLOG(3, ": " __VA_ARGS__); \
       RAWLOG(3, "\n"); \
+      BUG_ON(err_code == -64); \
       return err_code; \
     } \
   } while(0);

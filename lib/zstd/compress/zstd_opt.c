@@ -1127,8 +1127,8 @@ ZSTD_compressBlock_opt_generic(ZSTD_matchState_t* ms,
                     for ( ; pos <= end ; pos++ ) {
                         U32 const matchPrice = ZSTD_getMatchPrice(offcode, pos, optStatePtr, optLevel);
                         U32 const sequencePrice = literalsPrice + matchPrice;
-                        DEBUGLOG(7, "rPos:%u => set initial price : %.2f",
-                                    pos, ZSTD_fCost(sequencePrice));
+                        //DEBUGLOG(7, "rPos:%u => set initial price : %.2f",
+                        //            pos, ZSTD_fCost(sequencePrice));
                         opt[pos].mlen = pos;
                         opt[pos].off = offcode;
                         opt[pos].litlen = litlen;
@@ -1152,17 +1152,21 @@ ZSTD_compressBlock_opt_generic(ZSTD_matchState_t* ms,
                                 - (int)ZSTD_litLengthPrice(litlen-1, optStatePtr, optLevel);
                 assert(price < 1000000000); /* overflow check */
                 if (price <= opt[cur].price) {
+#if 0
                     DEBUGLOG(7, "cPos:%zi==rPos:%u : better price (%.2f<=%.2f) using literal (ll==%u) (hist:%u,%u,%u)",
                                 inr-istart, cur, ZSTD_fCost(price), ZSTD_fCost(opt[cur].price), litlen,
                                 opt[cur-1].rep[0], opt[cur-1].rep[1], opt[cur-1].rep[2]);
+#endif
                     opt[cur].mlen = 0;
                     opt[cur].off = 0;
                     opt[cur].litlen = litlen;
                     opt[cur].price = price;
                 } else {
+#if 0
                     DEBUGLOG(7, "cPos:%zi==rPos:%u : literal would cost more (%.2f>%.2f) (hist:%u,%u,%u)",
                                 inr-istart, cur, ZSTD_fCost(price), ZSTD_fCost(opt[cur].price),
                                 opt[cur].rep[0], opt[cur].rep[1], opt[cur].rep[2]);
+#endif
                 }
             }
 
@@ -1238,16 +1242,20 @@ ZSTD_compressBlock_opt_generic(ZSTD_matchState_t* ms,
                         int const price = (int)basePrice + (int)ZSTD_getMatchPrice(offset, mlen, optStatePtr, optLevel);
 
                         if ((pos > last_pos) || (price < opt[pos].price)) {
+#if 0
                             DEBUGLOG(7, "rPos:%u (ml=%2u) => new better price (%.2f<%.2f)",
                                         pos, mlen, ZSTD_fCost(price), ZSTD_fCost(opt[pos].price));
+#endif
                             while (last_pos < pos) { opt[last_pos+1].price = ZSTD_MAX_PRICE; last_pos++; }   /* fill empty positions */
                             opt[pos].mlen = mlen;
                             opt[pos].off = offset;
                             opt[pos].litlen = litlen;
                             opt[pos].price = price;
                         } else {
+#if 0
                             DEBUGLOG(7, "rPos:%u (ml=%2u) => new price is worse (%.2f>=%.2f)",
                                         pos, mlen, ZSTD_fCost(price), ZSTD_fCost(opt[pos].price));
+#endif
                             if (optLevel==0) break;  /* early update abort; gets ~+10% speed for about -0.01 ratio loss */
                         }
             }   }   }
