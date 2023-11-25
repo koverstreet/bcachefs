@@ -40,8 +40,8 @@ void bch2_lru_pos_to_text(struct printbuf *out, struct bpos lru)
 		   u64_to_bucket(lru.offset).offset);
 }
 
-static int __bch2_lru_set(struct btree_trans *trans, u16 lru_id,
-			  u64 dev_bucket, u64 time, bool set)
+static inline int __bch2_lru_set(struct btree_trans *trans, u16 lru_id,
+				 u64 dev_bucket, u64 time, bool set)
 {
 	return time
 		? bch2_btree_bit_mod_buffered(trans, BTREE_ID_lru,
@@ -51,12 +51,12 @@ static int __bch2_lru_set(struct btree_trans *trans, u16 lru_id,
 
 int bch2_lru_del(struct btree_trans *trans, u16 lru_id, u64 dev_bucket, u64 time)
 {
-	return __bch2_lru_set(trans, lru_id, dev_bucket, time, KEY_TYPE_deleted);
+	return __bch2_lru_set(trans, lru_id, dev_bucket, time, false);
 }
 
 int bch2_lru_set(struct btree_trans *trans, u16 lru_id, u64 dev_bucket, u64 time)
 {
-	return __bch2_lru_set(trans, lru_id, dev_bucket, time, KEY_TYPE_set);
+	return __bch2_lru_set(trans, lru_id, dev_bucket, time, true);
 }
 
 int bch2_lru_change(struct btree_trans *trans,
@@ -66,8 +66,8 @@ int bch2_lru_change(struct btree_trans *trans,
 	if (old_time == new_time)
 		return 0;
 
-	return  bch2_lru_del(trans, lru_id, dev_bucket, old_time) ?:
-		bch2_lru_set(trans, lru_id, dev_bucket, new_time);
+	return  __bch2_lru_set(trans, lru_id, dev_bucket, old_time, false) ?:
+		__bch2_lru_set(trans, lru_id, dev_bucket, new_time, true);
 }
 
 static const char * const bch2_lru_types[] = {
@@ -116,10 +116,11 @@ fsck_err:
 	return ret;
 }
 
-static int bch2_check_lru_key(struct btree_trans *trans,
-			      struct btree_iter *lru_iter,
-			      struct bkey_s_c lru_k,
-			      struct bkey_buf *last_flushed)
+/* Returns 1 if key has been deleted */
+int bch2_check_lru_key(struct btree_trans *trans,
+		       struct btree_iter *lru_iter,
+		       struct bkey_s_c lru_k,
+		       struct bkey_buf *last_flushed)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
@@ -128,7 +129,6 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 	const struct bch_alloc_v4 *a;
 	struct printbuf buf1 = PRINTBUF;
 	struct printbuf buf2 = PRINTBUF;
-	enum bch_lru_type type = lru_type(lru_k);
 	struct bpos alloc_pos = u64_to_bucket(lru_k.k->p.offset);
 	u64 idx;
 	int ret;
@@ -139,7 +139,7 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 			trans, lru_entry_to_invalid_bucket,
 			"lru key points to nonexistent device:bucket %llu:%llu",
 			alloc_pos.inode, alloc_pos.offset))
-		return bch2_btree_bit_mod_buffered(trans, BTREE_ID_lru, lru_iter->pos, false);
+		goto delete;
 
 	k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_alloc, alloc_pos, 0);
 	ret = bkey_err(k);
@@ -148,6 +148,7 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 
 	a = bch2_alloc_to_v4(k, &a_convert);
 
+	enum bch_lru_type type = lru_type(lru_k);
 	switch (type) {
 	case BCH_LRU_read:
 		idx = alloc_lru_idx_read(*a);
@@ -155,6 +156,9 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 	case BCH_LRU_fragmentation:
 		idx = alloc_lru_idx_fragmentation(*a, ca);
 		break;
+	default:
+		/* unknown LRU type, don't check: */
+		goto out;
 	}
 
 	if (lru_k.k->type != KEY_TYPE_set ||
@@ -166,13 +170,15 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 		if (fsck_err(trans, lru_entry_bad,
 			     "incorrect lru entry: lru %s time %llu\n"
 			     "  %s\n"
-			     "  for %s",
+			     "for\n"
+			     "  %s",
 			     bch2_lru_types[type],
 			     lru_pos_time(lru_k.k->p),
 			     (bch2_bkey_val_to_text(&buf1, c, lru_k), buf1.buf),
 			     (bch2_bkey_val_to_text(&buf2, c, k), buf2.buf)))
-			ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_lru, lru_iter->pos, false);
+			goto delete;
 	}
+out:
 err:
 fsck_err:
 	bch2_trans_iter_exit(trans, &iter);
@@ -180,6 +186,13 @@ fsck_err:
 	printbuf_exit(&buf2);
 	printbuf_exit(&buf1);
 	return ret;
+delete:
+	ret =   bch2_btree_bit_mod_buffered(trans, BTREE_ID_lru, lru_iter->pos, false) ?:
+		bch2_trans_commit(trans, NULL, NULL,
+				  BCH_WATERMARK_btree|
+				  BCH_TRANS_COMMIT_no_enospc) ?:
+		1;
+	goto out;
 }
 
 int bch2_check_lrus(struct bch_fs *c)
@@ -190,13 +203,12 @@ int bch2_check_lrus(struct bch_fs *c)
 	bkey_init(&last_flushed.k->k);
 
 	int ret = bch2_trans_run(c,
-		for_each_btree_key_commit(trans, iter,
-				BTREE_ID_lru, POS_MIN, BTREE_ITER_prefetch, k,
-				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			bch2_check_lru_key(trans, &iter, k, &last_flushed)));
+		for_each_btree_key(trans, iter,
+				BTREE_ID_lru, POS_MIN, BTREE_ITER_prefetch, k, ({
+			int ret2 = bch2_check_lru_key(trans, &iter, k, &last_flushed);
 
-	bch2_bkey_buf_exit(&last_flushed, c);
+			ret2 < 0 ? ret2 : 0;
+		})));
 	bch_err_fn(c, ret);
 	return ret;
-
 }
