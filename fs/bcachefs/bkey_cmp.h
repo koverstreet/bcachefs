@@ -11,10 +11,10 @@ static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,
 	int cmp;
 
 	asm(".intel_syntax noprefix;"
-	    "mov ecx, %[nr_key_bits];"
-	    "and ecx, 63;"
-	    "neg ecx;"
-	    "add ecx, 63;"
+	    "mov eax, %[nr_key_bits];"
+	    "mov ecx, 63;"
+	    "and eax, ecx;"
+	    "sub ecx, eax;"
 
 	    "xor edx, edx;"
 	    "neg rdx;"
@@ -55,7 +55,7 @@ static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,
 	    ".att_syntax prefix;"
 	    : "=&a" (cmp)
 	    : [l] "r" (l), [r] "r" (r), [nr_key_bits] "r" (nr_key_bits)
-	    : "cx", "r8", "r9", "cc", "memory");
+	    : "cx", "dx", "cc", "memory");
 
 	return cmp;
 }
