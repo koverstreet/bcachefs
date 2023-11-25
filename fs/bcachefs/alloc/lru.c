@@ -46,8 +46,8 @@ void bch2_lru_pos_to_text(struct printbuf *out, struct bpos lru)
 		   u64_to_bucket(lru.offset).offset);
 }
 
-static int __bch2_lru_set(struct btree_trans *trans, u16 lru_id,
-			  u64 dev_bucket, u64 time, bool set)
+static inline int __bch2_lru_set(struct btree_trans *trans, u16 lru_id,
+				 u64 dev_bucket, u64 time, bool set)
 {
 	return time
 		? bch2_btree_bit_mod_buffered(trans, BTREE_ID_lru,
@@ -164,10 +164,10 @@ static u64 bkey_lru_type_idx(struct bch_fs *c,
 	}
 }
 
-static int bch2_check_lru_key(struct btree_trans *trans,
-			      struct btree_iter *lru_iter,
-			      struct bkey_s_c lru_k,
-			      struct wb_maybe_flush *last_flushed)
+int bch2_check_lru_key(struct btree_trans *trans,
+		       struct btree_iter *lru_iter,
+		       struct bkey_s_c lru_k,
+		       struct wb_maybe_flush *last_flushed)
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf1)();
@@ -187,12 +187,17 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 		if (ret_fsck_err(trans, lru_entry_bad,
 			     "incorrect lru entry: lru %s time %llu\n"
 			     "%s\n"
-			     "for %s",
+			     "for\n"
+			     "%s",
 			     bch2_lru_types[type],
 			     lru_pos_time(lru_k.k->p),
 			     (bch2_bkey_val_to_text(&buf1, c, lru_k), buf1.buf),
 			     (bch2_bkey_val_to_text(&buf2, c, k), buf2.buf)))
-			return bch2_btree_bit_mod_buffered(trans, BTREE_ID_lru, lru_iter->pos, false);
+			return  bch2_btree_bit_mod_buffered(trans, BTREE_ID_lru, lru_iter->pos, false) ?:
+				bch2_trans_commit(trans, NULL, NULL,
+						  BCH_WATERMARK_btree|
+						  BCH_TRANS_COMMIT_no_enospc) ?:
+				1;
 	}
 
 	return 0;
@@ -212,6 +217,9 @@ int bch2_check_lrus(struct bch_fs *c)
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 		progress_update_iter(trans, &progress, &iter) ?:
 		wb_maybe_flush_inc(&last_flushed) ?:
-		bch2_check_lru_key(trans, &iter, k, &last_flushed);
+		int ret2 = progress_update_iter(trans, &progress, &iter) ?:
+			   bch2_check_lru_key(trans, &iter, k, &last_flushed);
+
+		ret2 < 0 ? ret2 : 0;
 	}));
 }
