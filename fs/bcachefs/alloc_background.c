@@ -1778,28 +1778,25 @@ void bch2_do_discards(struct bch_fs *c)
 static int invalidate_one_bucket(struct btree_trans *trans,
 				 struct btree_iter *lru_iter,
 				 struct bkey_s_c lru_k,
+				 struct bpos *last_flushed_pos,
 				 s64 *nr_to_invalidate)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter alloc_iter = { NULL };
-	struct bkey_i_alloc_v4 *a = NULL;
-	struct printbuf buf = PRINTBUF;
-	struct bpos bucket = u64_to_bucket(lru_k.k->p.offset);
-	unsigned cached_sectors;
 	int ret = 0;
 
 	if (*nr_to_invalidate <= 0)
 		return 1;
 
-	if (!bch2_dev_bucket_exists(c, bucket)) {
-		prt_str(&buf, "lru entry points to invalid bucket");
-		goto err;
-	}
+	ret = bch2_check_lru_key(trans, lru_iter, lru_k, last_flushed_pos);
+	if (ret)
+		return ret < 0 ? ret : 0;
 
+	struct bpos bucket = u64_to_bucket(lru_k.k->p.offset);
 	if (bch2_bucket_is_open_safe(c, bucket.inode, bucket.offset))
 		return 0;
 
-	a = bch2_trans_start_alloc_update(trans, &alloc_iter, bucket);
+	struct btree_iter alloc_iter;
+	struct bkey_i_alloc_v4 *a = bch2_trans_start_alloc_update(trans, &alloc_iter, bucket);
 	ret = PTR_ERR_OR_ZERO(a);
 	if (ret)
 		goto out;
@@ -1813,7 +1810,7 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 	if (!a->v.cached_sectors)
 		bch_err(c, "invalidating empty bucket, confused");
 
-	cached_sectors = a->v.cached_sectors;
+	unsigned cached_sectors = a->v.cached_sectors;
 
 	SET_BCH_ALLOC_V4_NEED_INC_GEN(&a->v, false);
 	a->v.gen++;
@@ -1836,34 +1833,14 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 	--*nr_to_invalidate;
 out:
 	bch2_trans_iter_exit(trans, &alloc_iter);
-	printbuf_exit(&buf);
 	return ret;
-err:
-	prt_str(&buf, "\n  lru key: ");
-	bch2_bkey_val_to_text(&buf, c, lru_k);
-
-	prt_str(&buf, "\n  lru entry: ");
-	bch2_lru_pos_to_text(&buf, lru_iter->pos);
-
-	prt_str(&buf, "\n  alloc key: ");
-	if (!a)
-		bch2_bpos_to_text(&buf, bucket);
-	else
-		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&a->k_i));
-
-	bch_err(c, "%s", buf.buf);
-	if (c->curr_recovery_pass > BCH_RECOVERY_PASS_check_lrus) {
-		bch2_inconsistent_error(c);
-		ret = -EINVAL;
-	}
-
-	goto out;
 }
 
 static void bch2_do_invalidates_work(struct work_struct *work)
 {
 	struct bch_fs *c = container_of(work, struct bch_fs, invalidate_work);
 	struct btree_trans *trans = bch2_trans_get(c);
+	struct bpos last_flushed_pos = POS_MIN;
 	int ret = 0;
 
 	ret = bch2_btree_write_buffer_tryflush(trans);
@@ -1878,7 +1855,8 @@ static void bch2_do_invalidates_work(struct work_struct *work)
 				lru_pos(ca->dev_idx, 0, 0),
 				lru_pos(ca->dev_idx, U64_MAX, LRU_TIME_MAX),
 				BTREE_ITER_INTENT, k,
-			invalidate_one_bucket(trans, &iter, k, &nr_to_invalidate));
+			invalidate_one_bucket(trans, &iter, k, &last_flushed_pos,
+					      &nr_to_invalidate));
 
 		if (ret < 0) {
 			percpu_ref_put(&ca->ref);
