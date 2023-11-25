@@ -20,6 +20,7 @@
 #define ZSTD_FORWARD_IF_ERR(ret)            \
 	do {                                \
 		size_t const __ret = (ret); \
+		BUG_ON(__ret == -64);		\
 		if (ZSTD_isError(__ret))    \
 			return __ret;       \
 	} while (0)
