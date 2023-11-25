@@ -153,6 +153,7 @@ static int bch2_copygc_get_buckets(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	size_t nr_to_get = max_t(size_t, 16U, buckets_in_flight->nr / 4);
 	size_t saw = 0, in_flight = 0, not_movable = 0, sectors = 0;
+	struct bpos last_flushed_pos = POS_MIN;
 	int ret;
 
 	move_buckets_wait(ctxt, buckets_in_flight, false);
@@ -170,10 +171,15 @@ static int bch2_copygc_get_buckets(struct moving_context *ctxt,
 				  lru_pos(BCH_LRU_BUCKET_FRAGMENTATION, 0, 0),
 				  lru_pos(BCH_LRU_BUCKET_FRAGMENTATION, U64_MAX, LRU_TIME_MAX),
 				  0, k, ({
-		struct move_bucket b = { .k.bucket = u64_to_bucket(k.k->p.offset) };
-		int ret2 = 0;
+		int ret2 = bch2_check_lru_key(trans, &iter, k, &last_flushed_pos);
+		if (ret2) {
+			ret2 = ret2 < 0 ? ret2 : 0;
+			goto err;
+		}
 
 		saw++;
+
+		struct move_bucket b = { .k.bucket = u64_to_bucket(k.k->p.offset) };
 
 		ret2 = bch2_bucket_is_movable(trans, &b, lru_pos_time(k.k->p));
 		if (ret2 < 0)

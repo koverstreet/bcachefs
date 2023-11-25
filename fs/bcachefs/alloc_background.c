@@ -2157,14 +2157,11 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 	if (*nr_to_invalidate <= 0)
 		return 1;
 
-	if (!bch2_dev_bucket_exists(c, bucket)) {
-		if (fsck_err(trans, lru_entry_to_invalid_bucket,
-			     "lru key points to nonexistent device:bucket %llu:%llu",
-			     bucket.inode, bucket.offset))
-			return bch2_btree_bit_mod_buffered(trans, BTREE_ID_lru, lru_iter->pos, false);
-		goto out;
-	}
+	ret = bch2_check_lru_key(trans, lru_iter, lru_k, last_flushed_pos);
+	if (ret)
+		return ret < 0 ? ret : 0;
 
+	struct bpos bucket = u64_to_bucket(lru_k.k->p.offset);
 	if (bch2_bucket_is_open_safe(c, bucket.inode, bucket.offset))
 		return 0;
 
@@ -2231,6 +2228,7 @@ static void bch2_do_invalidates_work(struct work_struct *work)
 	struct bch_dev *ca = container_of(work, struct bch_dev, invalidate_work);
 	struct bch_fs *c = ca->fs;
 	struct btree_trans *trans = bch2_trans_get(c);
+	struct bpos last_flushed_pos = POS_MIN;
 	int ret = 0;
 
 	struct bkey_buf last_flushed;
