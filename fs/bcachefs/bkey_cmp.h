@@ -8,43 +8,54 @@
 static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,
 				  unsigned nr_key_bits)
 {
-	long d0, d1, d2, d3;
 	int cmp;
 
-	/* we shouldn't need asm for this, but gcc is being retarded: */
-
 	asm(".intel_syntax noprefix;"
-	    "xor eax, eax;"
+	    "mov ecx, %[nr_key_bits];"
+	    "and ecx, 63;"
+	    "neg ecx;"
+	    "add ecx, 63;"
+
 	    "xor edx, edx;"
-	    "1:;"
-	    "mov r8, [rdi];"
-	    "mov r9, [rsi];"
-	    "sub ecx, 64;"
-	    "jl 2f;"
+	    "neg rdx;"
+	    "shl rdx, 1;"
+	    "shl rdx, cl;"			// mask for low bits
 
-	    "cmp r8, r9;"
-	    "jnz 3f;"
+	    "mov ecx, %[nr_key_bits];"
+	    "shr ecx, 6;"			// number of (full) high words
+	    "neg rcx;"
+	    "lea %[l], [%[l] + 8 * rcx - 8];"
+	    "lea %[r], [%[r] + 8 * rcx - 8];"	// l, r now point to low bits
 
-	    "lea rdi, [rdi - 8];"
-	    "lea rsi, [rsi - 8];"
-	    "jmp 1b;"
+	    "add ecx, 2;"
+	    "shl ecx, 4;"			// ecx is now the size of our jump
 
-	    "2:;"
-	    "not ecx;"
-	    "shr r8, 1;"
-	    "shr r9, 1;"
-	    "shr r8, cl;"
-	    "shr r9, cl;"
-	    "cmp r8, r9;"
+	    "mov rax, [%[l]];"
+	    "and rax, rdx;"
+	    "and rdx, [%[r]];"
+	    "sub rax, rdx;"			// subtract low bits
 
-	    "3:\n"
+	    "jmp cx;"
+
+	    "xchg ax, ax;"
+	    "lea %[l], [%[l] + 8];"
+	    "lea %[r], [%[r] + 8];"
+	    "mov rax, [%[l]];"
+	    "sbb rax, [%[r]];"
+
+	    "xchg ax, ax;"
+	    "lea %[l], [%[l] + 8];"
+	    "lea %[r], [%[r] + 8];"
+	    "mov rax, [%[l]];"
+	    "sbb rax, [%[r]];"
+
 	    "seta al;"
 	    "setb dl;"
 	    "sub eax, edx;"
 	    ".att_syntax prefix;"
-	    : "=&D" (d0), "=&S" (d1), "=&d" (d2), "=&c" (d3), "=&a" (cmp)
-	    : "0" (l), "1" (r), "3" (nr_key_bits)
-	    : "r8", "r9", "cc", "memory");
+	    : "=&a" (cmp)
+	    : [l] "r" (l), [r] "r" (r), [nr_key_bits] "r" (nr_key_bits)
+	    : "cx", "r8", "r9", "cc", "memory");
 
 	return cmp;
 }
