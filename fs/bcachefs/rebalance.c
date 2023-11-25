@@ -171,6 +171,8 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 		return bkey_s_c_null;
 	}
 
+	trace_rebalance_extent(c);
+
 	return k;
 }
 

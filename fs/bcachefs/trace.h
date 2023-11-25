@@ -1366,6 +1366,23 @@ TRACE_EVENT(write_buffer_flush_slowpath,
 	TP_printk("%zu/%zu", __entry->slowpath, __entry->total)
 );
 
+/* what are we trying to do and why? */
+TRACE_EVENT(rebalance_extent,
+	TP_PROTO(struct bch_fs *c),
+	TP_ARGS(c),
+
+	TP_STRUCT__entry(
+		__field(dev_t,		dev			)
+	),
+
+	TP_fast_assign(
+		__entry->dev		= c->dev;
+	),
+
+	TP_printk("%d,%d",
+		  MAJOR(__entry->dev), MINOR(__entry->dev))
+);
+
 #endif /* _TRACE_BCACHEFS_H */
 
 /* This part must be outside protection */
