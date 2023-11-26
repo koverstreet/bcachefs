@@ -23,6 +23,14 @@
 
 #include <linux/sched/mm.h>
 
+noinline
+int __bch2_bkey_cmp_packed2(const struct bkey_packed *l,
+			    const struct bkey_packed *r,
+			    const struct btree *b)
+{
+	return bpos_cmp(bkey_unpack_pos(b, l), bkey_unpack_pos(b, r));
+}
+
 void bch2_btree_node_io_unlock(struct btree *b)
 {
 	EBUG_ON(!btree_node_write_in_flight(b));
