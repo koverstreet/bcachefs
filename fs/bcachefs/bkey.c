@@ -9,6 +9,11 @@
 
 const struct bkey_format bch2_bkey_format_current = BKEY_FORMAT_CURRENT;
 
+int bkey_cmp_bits(const u64 *l, const u64 *r, unsigned nr_key_bits)
+{
+	return __bkey_cmp_bits(l, r, nr_key_bits);
+}
+
 void bch2_bkey_packed_to_binary_text(struct printbuf *out,
 				     const struct bkey_format *f,
 				     const struct bkey_packed *k)
@@ -1017,10 +1022,26 @@ int __bch2_bkey_cmp_packed_format_checked(const struct bkey_packed *l,
 					  const struct bkey_packed *r,
 					  const struct btree *b)
 {
-	return __bch2_bkey_cmp_packed_format_checked_inlined(l, r, b);
+	int ret;
+
+	//EBUG_ON(!bkey_packed(l) || !bkey_packed(r));
+	//EBUG_ON(b->nr_key_bits != bkey_format_key_bits(f));
+
+	int ret2 = __bch2_bkey_cmp_packed2(l, r, b);
+#if 0
+	const struct bkey_format *f = &b->format;
+	ret = __bkey_cmp_bits(high_word(f, l),
+			      high_word(f, r),
+			      b->nr_key_bits);
+#endif
+	ret = __bkey_cmp_bits((u64 *) l + b->key_low_word_start,
+			      (u64 *) r + b->key_low_word_start,
+			      b->nr_key_bits);
+	BUG_ON(ret != ret2);
+	return ret;
 }
 
-__pure __flatten
+__pure
 int __bch2_bkey_cmp_left_packed_format_checked(const struct btree *b,
 					       const struct bkey_packed *l,
 					       const struct bpos *r)
@@ -1028,7 +1049,7 @@ int __bch2_bkey_cmp_left_packed_format_checked(const struct btree *b,
 	return bpos_cmp(bkey_unpack_pos_format_checked(b, l), *r);
 }
 
-__pure __flatten
+__pure
 int bch2_bkey_cmp_packed(const struct btree *b,
 			 const struct bkey_packed *l,
 			 const struct bkey_packed *r)
@@ -1036,7 +1057,7 @@ int bch2_bkey_cmp_packed(const struct btree *b,
 	return bch2_bkey_cmp_packed_inlined(b, l, r);
 }
 
-__pure __flatten
+__pure
 int __bch2_bkey_cmp_left_packed(const struct btree *b,
 				const struct bkey_packed *l,
 				const struct bpos *r)
@@ -1076,6 +1097,7 @@ void bch2_bkey_swab_key(const struct bkey_format *_f, struct bkey_packed *k)
 #ifdef CONFIG_BCACHEFS_DEBUG
 void bch2_bkey_pack_test(void)
 {
+#if 0
 	struct bkey t = KEY(4134ULL, 1250629070527416633ULL, 0);
 	struct bkey_packed p;
 
@@ -1111,7 +1133,25 @@ void bch2_bkey_pack_test(void)
 		if (!set_inc_field(&out_s, i, v))
 			panic("failed at %u\n", i);
 	}
+#endif
+	{
+		int ret;
 
-	BUG_ON(!bch2_bkey_pack_key(&p, &t, &test_format));
+		u64 l[3] = { 145ULL << 32, 0, 0 };
+		u64 r[3] = { 16380ULL << 32, 0, 0 };
+
+		ret = __bkey_cmp_bits(l, r, 160);
+		BUG_ON(ret != -1);
+#if 0
+		u64 l[3] = { 0, 16380, 0 };
+		u64 r[3] = { 0, 145, 0 };
+
+		ret = __bkey_cmp_bits(l, r, 160);
+		BUG_ON(ret != 1);
+#endif
+
+		pr_info("passed");
+	}
+
 }
 #endif

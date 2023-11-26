@@ -775,6 +775,8 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	unsigned i, iter_size;
 	int ret = 0;
 
+	bch2_bkey_pack_test();
+
 	c = kvmalloc(sizeof(struct bch_fs), GFP_KERNEL|__GFP_ZERO);
 	if (!c) {
 		c = ERR_PTR(-BCH_ERR_ENOMEM_fs_alloc);
@@ -2189,8 +2191,6 @@ static void bcachefs_exit(void)
 
 static int __init bcachefs_init(void)
 {
-	bch2_bkey_pack_test();
-
 	if (!(bcachefs_kset = kset_create_and_add("bcachefs", NULL, fs_kobj)) ||
 	    bch2_btree_key_cache_init() ||
 	    bch2_chardev_init() ||

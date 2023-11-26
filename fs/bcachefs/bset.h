@@ -245,6 +245,7 @@ static inline void btree_node_set_format(struct btree *b,
 
 	b->format	= f;
 	b->nr_key_bits	= bkey_format_key_bits(&f);
+	b->key_low_word_start = f.key_u64s - DIV_ROUND_UP(b->nr_key_bits, 64);
 
 	len = bch2_compile_bkey_format(&b->format, b->aux_data);
 	BUG_ON(len < 0 || len > U8_MAX);

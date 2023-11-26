@@ -5,10 +5,9 @@
 #include "bkey.h"
 
 #ifdef CONFIG_X86_64
-static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,
-				  unsigned nr_key_bits)
+static inline int __bkey_cmp_bits(const u64 *l, const u64 *r, unsigned nr_key_bits)
 {
-	int cmp;
+	s8 cmp;
 
 	asm(".intel_syntax noprefix;"
 	    "mov eax, %[nr_key_bits];"
@@ -16,46 +15,39 @@ static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,
 	    "and eax, ecx;"
 	    "sub ecx, eax;"
 
-	    "xor edx, edx;"
-	    "neg rdx;"
-	    "shl rdx, 1;"
-	    "shl rdx, cl;"			// mask for low bits
+	    "xor ebx, ebx;"
+	    "not rbx;"
+	    "shl rbx, 1;"
+	    "shl rbx, cl;"			// mask for low bits
 
 	    "mov ecx, %[nr_key_bits];"
 	    "shr ecx, 6;"			// number of (full) high words
-	    "neg rcx;"
-	    "lea %[l], [%[l] + 8 * rcx - 8];"
-	    "lea %[r], [%[r] + 8 * rcx - 8];"	// l, r now point to low bits
-
+	    "neg ecx;"
 	    "add ecx, 2;"
-	    "shl ecx, 4;"			// ecx is now the size of our jump
 
 	    "mov rax, [%[l]];"
-	    "and rax, rdx;"
-	    "and rdx, [%[r]];"
-	    "sub rax, rdx;"			// subtract low bits
+	    "and rax, rbx;"
+	    "and rbx, [%[r]];"
+	    "sub rax, rbx;"			// subtract low bits
 
-	    "jmp cx;"
+	    "lea rax, [1f + 8 * rcx];"
+	    "jmp rax;"
 
-	    "xchg ax, ax;"
-	    "lea %[l], [%[l] + 8];"
-	    "lea %[r], [%[r] + 8];"
-	    "mov rax, [%[l]];"
-	    "sbb rax, [%[r]];"
+	    "1:;"
 
-	    "xchg ax, ax;"
-	    "lea %[l], [%[l] + 8];"
-	    "lea %[r], [%[r] + 8];"
-	    "mov rax, [%[l]];"
-	    "sbb rax, [%[r]];"
+	    "mov rbx, [%[l] + 8];"
+	    "sbb rbx, [%[r] + 8];"
+
+	    "mov rbx, [%[l] + 16];"
+	    "sbb rbx, [%[r] + 16];"
 
 	    "seta al;"
 	    "setb dl;"
-	    "sub eax, edx;"
+	    "sub al, dl;"
 	    ".att_syntax prefix;"
-	    : "=&a" (cmp)
-	    : [l] "r" (l), [r] "r" (r), [nr_key_bits] "r" (nr_key_bits)
-	    : "cx", "dx", "cc", "memory");
+	    : "=&a" (cmp), [l] "+r" (l), [r] "+r" (r)
+	    : [nr_key_bits] "r" (nr_key_bits)
+	    : "cx", "dx", "bx", "cc", "memory");
 
 	return cmp;
 }
@@ -96,27 +88,32 @@ static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,
 }
 #endif
 
-static inline __pure __flatten
+noinline
+int __bch2_bkey_cmp_packed2(const struct bkey_packed *l,
+			    const struct bkey_packed *r,
+			    const struct btree *b);
+
+static inline __pure
 int __bch2_bkey_cmp_packed_format_checked_inlined(const struct bkey_packed *l,
 					  const struct bkey_packed *r,
 					  const struct btree *b)
 {
-	const struct bkey_format *f = &b->format;
+	//const struct bkey_format *f = &b->format;
 	int ret;
 
-	EBUG_ON(!bkey_packed(l) || !bkey_packed(r));
-	EBUG_ON(b->nr_key_bits != bkey_format_key_bits(f));
+	//EBUG_ON(!bkey_packed(l) || !bkey_packed(r));
+	//EBUG_ON(b->nr_key_bits != bkey_format_key_bits(f));
 
-	ret = __bkey_cmp_bits(high_word(f, l),
-			      high_word(f, r),
+	int ret2 = __bch2_bkey_cmp_packed2(l, r, b);
+
+	ret = __bkey_cmp_bits((u64 *) l + b->key_low_word_start,
+			      (u64 *) r + b->key_low_word_start,
 			      b->nr_key_bits);
-
-	EBUG_ON(ret != bpos_cmp(bkey_unpack_pos(b, l),
-				bkey_unpack_pos(b, r)));
+	BUG_ON(ret != ret2);
 	return ret;
 }
 
-static inline __pure __flatten
+static inline __pure
 int bch2_bkey_cmp_packed_inlined(const struct btree *b,
 			 const struct bkey_packed *l,
 			 const struct bkey_packed *r)
@@ -124,7 +121,7 @@ int bch2_bkey_cmp_packed_inlined(const struct btree *b,
 	struct bkey unpacked;
 
 	if (likely(bkey_packed(l) && bkey_packed(r)))
-		return __bch2_bkey_cmp_packed_format_checked_inlined(l, r, b);
+		return __bch2_bkey_cmp_packed_format_checked(l, r, b);
 
 	if (bkey_packed(l)) {
 		__bkey_unpack_key_format_checked(b, &unpacked, l);
