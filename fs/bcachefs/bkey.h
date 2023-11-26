@@ -107,18 +107,43 @@ static __always_inline bool bpos_eq(struct bpos l, struct bpos r)
 		  (l.snapshot	^ r.snapshot));
 }
 
-static __always_inline bool bpos_lt(struct bpos l, struct bpos r)
+static __always_inline bool __bpos_lt(struct bpos l, struct bpos r)
 {
 	return  l.inode	!= r.inode ? l.inode < r.inode :
 		l.offset != r.offset ? l.offset < r.offset :
 		l.snapshot != r.snapshot ? l.snapshot < r.snapshot : false;
 }
 
+static __always_inline bool bpos_lt(struct bpos l, struct bpos r)
+{
+#ifdef CONFIG_X86_64
+#ifdef CONFIG_BCACHEFS_DEBUG
+	int cmp2 = __bpos_lt(l, r);
+#endif
+	int cmp;
+
+	asm(".intel_syntax noprefix;"
+	    "mov rax, [%[l]];"
+	    "sub rax, [%[r]];"
+	    "mov rax, [%[l] + 8];"
+	    "sbb rax, [%[r] + 8];"
+	    "mov eax, [%[l] + 16];"
+	    "sbb eax, [%[r] + 16];"
+	    ".att_syntax prefix;"
+	    : "=@ccb" (cmp)
+	    : [l] "r" (&l), [r] "r" (&r)
+	    : "rax", "cc", "memory");
+
+	EBUG_ON(cmp != cmp2);
+	return cmp;
+#else
+	return __bpos_lt(l, r);
+#endif
+}
+
 static __always_inline bool bpos_le(struct bpos l, struct bpos r)
 {
-	return  l.inode	!= r.inode ? l.inode < r.inode :
-		l.offset != r.offset ? l.offset < r.offset :
-		l.snapshot != r.snapshot ? l.snapshot < r.snapshot : true;
+	return !bpos_lt(r, l);
 }
 
 static __always_inline bool bpos_gt(struct bpos l, struct bpos r)
