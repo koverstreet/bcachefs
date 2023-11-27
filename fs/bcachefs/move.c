@@ -1126,7 +1126,8 @@ static void bch2_moving_ctxt_to_text(struct printbuf *out, struct bch_fs *c, str
 {
 	struct moving_io *io;
 
-	bch2_move_stats_to_text(out, ctxt->stats);
+	if (ctxt->stats)
+		bch2_move_stats_to_text(out, ctxt->stats);
 	printbuf_indent_add(out, 2);
 
 	prt_printf(out, "reads: ios %u/%u sectors %u/%u",
