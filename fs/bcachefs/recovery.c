@@ -533,7 +533,7 @@ static int bch2_set_may_go_rw(struct bch_fs *c)
 	keys->gap = keys->nr;
 
 	set_bit(BCH_FS_may_go_rw, &c->flags);
-	if (keys->nr)
+	if (keys->nr || c->opts.fsck)
 		return bch2_fs_read_write_early(c);
 	return 0;
 }
