@@ -508,13 +508,16 @@ static void inode_lru_list_del(struct inode *inode)
 void inode_sb_list_add(struct inode *inode)
 {
 	dlock_lists_add(&inode->i_sb_list, &inode->i_sb->s_inodes);
+	this_cpu_inc(*inode->i_sb->s_inodes_nr);
 }
 EXPORT_SYMBOL_GPL(inode_sb_list_add);
 
 static inline void inode_sb_list_del(struct inode *inode)
 {
-	if (!list_empty(&inode->i_sb_list.list))
+	if (!list_empty(&inode->i_sb_list.list)) {
+		this_cpu_dec(*inode->i_sb->s_inodes_nr);
 		dlock_lists_del(&inode->i_sb_list);
+	}
 }
 
 /*

@@ -1319,6 +1319,7 @@ struct super_block {
 
 	/* The internal per-list locks protect s_inodes */
 	struct dlock_list_heads s_inodes;	/* all inodes */
+	size_t __percpu		*s_inodes_nr;
 
 	spinlock_t		s_inode_wblist_lock;
 	struct list_head	s_inodes_wb;	/* writeback inodes */
