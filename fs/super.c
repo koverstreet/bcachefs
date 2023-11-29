@@ -283,6 +283,7 @@ static void destroy_super_work(struct work_struct *work)
 							destroy_work);
 	int i;
 
+	free_percpu(s->s_dentry_nr);
 	free_percpu(s->s_inodes_nr);
 	for (i = 0; i < SB_FREEZE_LEVELS; i++)
 		percpu_free_rwsem(&s->s_writers.rw_sem[i]);
@@ -304,6 +305,7 @@ static void destroy_unused_super(struct super_block *s)
 	super_unlock_excl(s);
 	list_lru_destroy(&s->s_dentry_lru);
 	list_lru_destroy(&s->s_inode_lru);
+	free_percpu(s->s_dentry_nr);
 	free_percpu(s->s_inodes_nr);
 	free_dlock_list_heads(&s->s_inodes);
 	security_sb_free(s);
@@ -389,6 +391,10 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags,
 
 	s->s_inodes_nr = alloc_percpu(size_t);
 	if (!s->s_inodes_nr)
+		goto fail;
+
+	s->s_dentry_nr = alloc_percpu(size_t);
+	if (!s->s_dentry_nr)
 		goto fail;
 
 	s->s_shrink = shrinker_alloc(SHRINKER_NUMA_AWARE | SHRINKER_MEMCG_AWARE,
