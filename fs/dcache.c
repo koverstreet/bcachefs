@@ -601,6 +601,7 @@ static struct dentry *__dentry_kill(struct dentry *dentry)
 	else
 		spin_unlock(&dentry->d_lock);
 	this_cpu_dec(nr_dentry);
+	this_cpu_dec(*dentry->d_sb->s_dentry_nr);
 	if (dentry->d_op && dentry->d_op->d_release)
 		dentry->d_op->d_release(dentry);
 
@@ -1683,6 +1684,7 @@ static struct dentry *__d_alloc(struct super_block *sb, const struct qstr *name)
 	}
 
 	this_cpu_inc(nr_dentry);
+	this_cpu_inc(*sb->s_dentry_nr);
 
 	return dentry;
 }
