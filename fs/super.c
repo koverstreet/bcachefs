@@ -36,6 +36,7 @@
 #include <linux/lockdep.h>
 #include <linux/user_namespace.h>
 #include <linux/fs_context.h>
+#include <linux/seq_buf.h>
 #include <uapi/linux/mount.h>
 #include "internal.h"
 
@@ -270,6 +271,17 @@ static unsigned long super_cache_count(struct shrinker *shrink,
 	return total_objects;
 }
 
+static void super_cache_to_text(struct seq_buf *out, struct shrinker *shrink)
+{
+	struct super_block *sb = shrink->private_data;
+
+	seq_buf_printf(out, "sb:       %s\n", sb->s_id);
+	seq_buf_printf(out, "inodes:   total %zu shrinkable %lu\n",
+		       per_cpu_sum(*sb->s_inodes_nr), list_lru_count(&sb->s_inode_lru));
+	seq_buf_printf(out, "dentries: toal %zu shrinkbale %lu\n",
+		       per_cpu_sum(*sb->s_dentry_nr), list_lru_count(&sb->s_dentry_lru));
+}
+
 static void destroy_super_work(struct work_struct *work)
 {
 	struct super_block *s = container_of(work, struct super_block,
@@ -396,6 +408,7 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags,
 
 	s->s_shrink->scan_objects = super_cache_scan;
 	s->s_shrink->count_objects = super_cache_count;
+	s->s_shrink->to_text = super_cache_to_text;
 	s->s_shrink->batch = 1024;
 	s->s_shrink->private_data = s;
 
