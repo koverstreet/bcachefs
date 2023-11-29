@@ -276,6 +276,7 @@ static void destroy_super_work(struct work_struct *work)
 							destroy_work);
 	int i;
 
+	free_percpu(s->s_dentry_nr);
 	free_percpu(s->s_inodes_nr);
 	for (i = 0; i < SB_FREEZE_LEVELS; i++)
 		percpu_free_rwsem(&s->s_writers.rw_sem[i]);
@@ -297,13 +298,7 @@ static void destroy_unused_super(struct super_block *s)
 	super_unlock_excl(s);
 	list_lru_destroy(&s->s_dentry_lru);
 	list_lru_destroy(&s->s_inode_lru);
-<<<<<<< HEAD
-||||||| parent of 5d4f4401a309 (fs: Add super_block->s_inodes_nr)
-	free_dlock_list_heads(&s->s_inodes);
-=======
 	free_percpu(s->s_inodes_nr);
-	free_dlock_list_heads(&s->s_inodes);
->>>>>>> 5d4f4401a309 (fs: Add super_block->s_inodes_nr)
 	security_sb_free(s);
 	put_user_ns(s->s_user_ns);
 	kfree(s->s_subtype);
@@ -397,7 +392,15 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags,
 	if (!s->s_inodes_nr)
 		goto fail;
 
+<<<<<<< HEAD
 >>>>>>> 5d4f4401a309 (fs: Add super_block->s_inodes_nr)
+||||||| parent of 7bcd51320f19 (fs/dcache: Add per-sb accounting for nr dentries)
+=======
+	s->s_dentry_nr = alloc_percpu(size_t);
+	if (!s->s_dentry_nr)
+		goto fail;
+
+>>>>>>> 7bcd51320f19 (fs/dcache: Add per-sb accounting for nr dentries)
 	s->s_shrink = shrinker_alloc(SHRINKER_NUMA_AWARE | SHRINKER_MEMCG_AWARE,
 				     "sb-%s", type->name);
 	if (!s->s_shrink)
