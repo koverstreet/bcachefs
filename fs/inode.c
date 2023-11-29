@@ -619,13 +619,21 @@ static void inode_wait_for_lru_isolating(struct inode *inode)
  */
 void inode_sb_list_add(struct inode *inode)
 {
-	*genradix_ptr_inlined(&inode->i_sb->s_inodes.items, inode->i_sb_list_idx) = inode;
+	if (!(inode->i_state & I_ON_SB_LIST)) {
+		*genradix_ptr_inlined(&inode->i_sb->s_inodes.items, inode->i_sb_list_idx) = inode;
+		this_cpu_inc(*inode->i_sb->s_inodes_nr);
+		inode->i_state |= I_ON_SB_LIST;
+	}
 }
 EXPORT_SYMBOL_GPL(inode_sb_list_add);
 
 static inline void inode_sb_list_del(struct inode *inode)
 {
-	*genradix_ptr(&inode->i_sb->s_inodes.items, inode->i_sb_list_idx) = NULL;
+	if (inode->i_state & I_ON_SB_LIST) {
+		inode->i_state &= ~I_ON_SB_LIST;
+		this_cpu_dec(*inode->i_sb->s_inodes_nr);
+		*genradix_ptr(&inode->i_sb->s_inodes.items, inode->i_sb_list_idx) = NULL;
+	}
 	inode->i_sb_list_idx = 0;
 }
 
