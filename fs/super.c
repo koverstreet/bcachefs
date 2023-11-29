@@ -279,6 +279,7 @@ static void destroy_super_work(struct work_struct *work)
 	security_sb_free(s);
 	put_user_ns(s->s_user_ns);
 	kfree(s->s_subtype);
+	free_percpu(s->s_inodes_nr);
 	for (int i = 0; i < SB_FREEZE_LEVELS; i++)
 		percpu_free_rwsem(&s->s_writers.rw_sem[i]);
 	kfree(s);
@@ -299,6 +300,7 @@ static void destroy_unused_super(struct super_block *s)
 	super_unlock_excl(s);
 	list_lru_destroy(&s->s_dentry_lru);
 	list_lru_destroy(&s->s_inode_lru);
+	free_percpu(s->s_inodes_nr);
 	shrinker_free(s->s_shrink);
 	/* no delays needed */
 	destroy_super_work(&s->destroy_work);
@@ -377,6 +379,10 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags,
 	if (fast_list_init(&s->s_inodes))
 		goto fail;
 
+	s->s_inodes_nr = alloc_percpu(size_t);
+	if (!s->s_inodes_nr)
+		goto fail;
+
 	s->s_shrink = shrinker_alloc(SHRINKER_NUMA_AWARE | SHRINKER_MEMCG_AWARE,
 				     "sb-%s", type->name);
 	if (!s->s_shrink)
@@ -410,6 +416,7 @@ static void __put_super(struct super_block *s)
 		WARN_ON(s->s_dentry_lru.node);
 		WARN_ON(s->s_inode_lru.node);
 		WARN_ON(!list_empty(&s->s_mounts));
+		WARN_ON(per_cpu_sum(*s->s_inodes_nr));
 		call_rcu(&s->rcu, destroy_super_rcu);
 	}
 }

@@ -1446,6 +1446,7 @@ struct super_block {
 	int s_stack_depth;
 
 	struct fast_list	s_inodes;	/* all inodes */
+	size_t __percpu		*s_inodes_nr;
 
 	spinlock_t		s_inode_wblist_lock;
 	struct list_head	s_inodes_wb;	/* writeback inodes */
@@ -2533,6 +2534,7 @@ static inline void kiocb_clone(struct kiocb *kiocb, struct kiocb *kiocb_src,
 #define I_DONTCACHE		(1 << 15)
 #define I_SYNC_QUEUED		(1 << 16)
 #define I_PINNING_NETFS_WB	(1 << 17)
+#define I_ON_SB_LIST		(1 << 18)
 
 #define I_DIRTY_INODE (I_DIRTY_SYNC | I_DIRTY_DATASYNC)
 #define I_DIRTY (I_DIRTY_INODE | I_DIRTY_PAGES)
