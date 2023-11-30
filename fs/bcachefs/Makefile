@@ -37,6 +37,7 @@ bcachefs-y		:=	\
 	enumerated_ref.o	\
 	errcode.o		\
 	error.o			\
+	extent_block_checksums.o	\
 	extents.o		\
 	extent_update.o		\
 	fs.o			\
