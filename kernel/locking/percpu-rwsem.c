@@ -182,16 +182,6 @@ bool __sched __percpu_down_read(struct percpu_rw_semaphore *sem, bool try)
 }
 EXPORT_SYMBOL_GPL(__percpu_down_read);
 
-#define per_cpu_sum(var)						\
-({									\
-	typeof(var) __sum = 0;						\
-	int cpu;							\
-	compiletime_assert_atomic_type(__sum);				\
-	for_each_possible_cpu(cpu)					\
-		__sum += per_cpu(var, cpu);				\
-	__sum;								\
-})
-
 bool percpu_is_read_locked(struct percpu_rw_semaphore *sem)
 {
 	return per_cpu_sum(*sem->read_count) != 0 && !atomic_read(&sem->block);
