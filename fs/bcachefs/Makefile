@@ -39,6 +39,7 @@ bcachefs-y		:=			\
 	data/copygc.o				\
 	data/ec.o				\
 	data/extents.o				\
+	data/extent_block_checksums.o		\
 	data/extents_sb.o			\
 	data/extent_update.o			\
 	data/io_misc.o				\
