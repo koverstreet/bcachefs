@@ -9,6 +9,11 @@ static inline unsigned extent_block_checksums_nr_crcs(struct bkey_s_c_extent_blo
 	return (e.k->size + e.v->front_pad + e.v->back_pad) >> e.v->csum_blocksize_bits;
 }
 
+static inline void *extent_block_checksums_crc(struct bkey_s_extent_block_checksums e, unsigned idx)
+{
+	return (void *) &e.v->ptrs[e.v->nr_ptrs] + idx * bch_crc_bytes[e.v->csum_type];
+}
+
 static inline unsigned extent_block_checksums_crc_bytes(struct bkey_s_c_extent_block_checksums e)
 {
 	return round_up(extent_block_checksums_nr_crcs(e) * bch_crc_bytes[e.v->csum_type], sizeof(u64));
