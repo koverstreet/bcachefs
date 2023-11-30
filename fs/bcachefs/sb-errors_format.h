@@ -310,7 +310,12 @@ enum bch_fsck_flags {
 	x(accounting_key_replicas_devs_unsorted,		280,	FSCK_AUTOFIX,	0)	\
 	x(accounting_key_version_0,				282,	FSCK_AUTOFIX,	0)	\
 	x(logged_op_but_clean,					283,	FSCK_AUTOFIX,	0)	\
-	x(MAX,							290,	0,		0)
+	x(extent_block_checksums_csum_type_unknown,		290,	0,		0)	\
+	x(extent_block_checksums_front_pad_bad,			291,	0,		0)	\
+	x(extent_block_checksums_back_pad_bad,			292,	0,		0)	\
+	x(extent_block_checksums_misaligned,			293,	0,		0)	\
+	x(extent_block_checksums_val_size_bad,			294,	0,		0)	\
+	x(MAX,							295,	0,		0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,

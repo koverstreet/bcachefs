@@ -269,6 +269,14 @@ static inline struct bkey_ptrs_c bch2_bkey_ptrs_c(struct bkey_s_c k)
 			to_entry(extent_entry_last(e))
 		};
 	}
+	case KEY_TYPE_extent_block_checksums: {
+		struct bkey_s_c_extent_block_checksums e = bkey_s_c_to_extent_block_checksums(k);
+
+		return (struct bkey_ptrs_c) {
+			to_entry(&e.v->ptrs[0]),
+			to_entry(&e.v->ptrs[e.v->nr_ptrs]),
+		};
+	}
 	default:
 		return (struct bkey_ptrs_c) { NULL, NULL };
 	}

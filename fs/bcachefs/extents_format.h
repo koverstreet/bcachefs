@@ -260,6 +260,17 @@ struct bch_extent {
 	union bch_extent_entry	start[];
 } __packed __aligned(8);
 
+struct bch_extent_block_checksums {
+	struct bch_val		v;
+	__u8			csum_type;
+	__u8			csum_blocksize_bits;
+	__u8			front_pad;
+	__u8			back_pad;
+	__u8			nr_ptrs;
+	__u8			pad[3];
+	struct bch_extent_ptr	ptrs[];
+} __packed __aligned(8);
+
 /* Maximum size (in u64s) a single pointer could be: */
 #define BKEY_EXTENT_PTR_U64s_MAX\
 	((sizeof(struct bch_extent_crc128) +			\

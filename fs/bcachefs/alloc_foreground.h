@@ -180,8 +180,8 @@ struct bch_extent_ptr bch2_ob_ptr(struct bch_fs *, struct open_bucket *);
  */
 static inline void
 bch2_alloc_sectors_append_ptrs_inlined(struct bch_fs *c, struct write_point *wp,
-				       struct bkey_i *k, unsigned sectors,
-				       bool cached)
+				       unsigned sectors, bool cached,
+				       struct bch_extent_ptr *ptrs)
 {
 	struct open_bucket *ob;
 	unsigned i;
@@ -192,13 +192,13 @@ bch2_alloc_sectors_append_ptrs_inlined(struct bch_fs *c, struct write_point *wp,
 
 	open_bucket_for_each(c, &wp->ptrs, ob, i) {
 		struct bch_dev *ca = ob_dev(c, ob);
-		struct bch_extent_ptr ptr = bch2_ob_ptr(c, ob);
 
-		ptr.cached = cached ||
+		*ptrs = bch2_ob_ptr(c, ob);
+		ptrs->type = 1 << BCH_EXTENT_ENTRY_ptr;
+		ptrs->cached = cached ||
 			(!ca->mi.durability &&
 			 wp->data_type == BCH_DATA_user);
-
-		bch2_bkey_append_ptr(k, ptr);
+		ptrs++;
 
 		BUG_ON(sectors > ob->sectors_free);
 		ob->sectors_free -= sectors;

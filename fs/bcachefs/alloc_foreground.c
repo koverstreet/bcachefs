@@ -1525,7 +1525,10 @@ void bch2_alloc_sectors_append_ptrs(struct bch_fs *c, struct write_point *wp,
 				    struct bkey_i *k, unsigned sectors,
 				    bool cached)
 {
-	bch2_alloc_sectors_append_ptrs_inlined(c, wp, k, sectors, cached);
+	struct bch_extent_ptr *ptrs = bkey_val_end(bkey_i_to_s(k));
+
+	k->k.u64s += wp->ptrs.nr;
+	bch2_alloc_sectors_append_ptrs_inlined(c, wp, sectors, cached, ptrs);
 }
 
 /*
