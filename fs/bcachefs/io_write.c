@@ -689,7 +689,7 @@ static void bch2_write_endio(struct bio *bio)
 static inline bool use_block_checksums(struct bch_write_op *op,
 				       struct bch_extent_crc_unpacked crc)
 {
-	if (!crc.csum_type &&
+	if (!crc.csum_type ||
 	    crc.compression_type ||
 	    !op->opts.checksum_blocksize)
 		return false;
@@ -733,8 +733,16 @@ static void init_append_extent(struct bch_write_op *op,
 		e->v.csum_blocksize_bits = ilog2(op->opts.checksum_blocksize >> 9);
 		e->v.nr_ptrs = wp->ptrs.nr;
 
+		struct bkey_s_extent_block_checksums e_s = extent_block_checksums_i_to_s(e);
+
+		unsigned nr_crcs = extent_block_checksums_nr_crcs(e_s.c);
+		for (unsigned i = 0; i < nr_crcs; i++) {
+			void *crc = extent_block_checksums_crc(e_s, i);
+
+		}
+
 		ptrs = e->v.ptrs;
-		set_bkey_val_u64s(&e->k, extent_block_checksums_val_u64s(extent_block_checksums_i_to_s_c(e)));
+		set_bkey_val_u64s(&e->k, extent_block_checksums_val_u64s(e_s.c));
 	}
 
 	bch2_alloc_sectors_append_ptrs_inlined(op->c, wp, crc.compressed_size,
@@ -952,7 +960,6 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 	case PREP_ENCODED_CHECKSUM_ERR:
 		goto csum_err;
 	case PREP_ENCODED_DO_WRITE:
-		/* XXX look for bug here */
 		if (ec_buf) {
 			dst = bch2_write_bio_alloc(c, wp, src,
 						   &page_alloc_failed,
