@@ -12,6 +12,7 @@
 
 #include "data/ec.h"
 #include "data/extents.h"
+#include "data/extent_block_checksums.h"
 #include "data/io_misc.h"
 #include "data/reflink.h"
 

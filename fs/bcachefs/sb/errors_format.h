@@ -347,8 +347,12 @@ enum bch_fsck_flags {
 	x(rebalance_bp_to_leaf_node_key,			336,	FSCK_AUTOFIX)	\
 	x(btree_ptr_with_no_rebalance_bp,			333,	FSCK_AUTOFIX)	\
 	x(btree_ptr_with_bad_rebalance_bp,			334,	FSCK_AUTOFIX)	\
-	x(btree_ptr_to_bad_rebalance_bp,			335,	FSCK_AUTOFIX)	\
-	x(MAX,							337,	0)
+	x(extent_block_checksums_csum_type_unknown,		337,	0)		\
+	x(extent_block_checksums_front_pad_bad,			338,	0)		\
+	x(extent_block_checksums_back_pad_bad,			339,	0)		\
+	x(extent_block_checksums_misaligned,			340,	0)		\
+	x(extent_block_checksums_val_size_bad,			341,	0)		\
+	x(MAX,							342,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
