@@ -379,40 +379,41 @@ static inline void bkey_init(struct bkey *k)
  * - WHITEOUT: for hash table btrees
  */
 #define BCH_BKEY_TYPES()				\
-	x(deleted,		0)			\
-	x(whiteout,		1)			\
-	x(error,		2)			\
-	x(cookie,		3)			\
-	x(hash_whiteout,	4)			\
-	x(btree_ptr,		5)			\
-	x(extent,		6)			\
-	x(reservation,		7)			\
-	x(inode,		8)			\
-	x(inode_generation,	9)			\
-	x(dirent,		10)			\
-	x(xattr,		11)			\
-	x(alloc,		12)			\
-	x(quota,		13)			\
-	x(stripe,		14)			\
-	x(reflink_p,		15)			\
-	x(reflink_v,		16)			\
-	x(inline_data,		17)			\
-	x(btree_ptr_v2,		18)			\
-	x(indirect_inline_data,	19)			\
-	x(alloc_v2,		20)			\
-	x(subvolume,		21)			\
-	x(snapshot,		22)			\
-	x(inode_v2,		23)			\
-	x(alloc_v3,		24)			\
-	x(set,			25)			\
-	x(lru,			26)			\
-	x(alloc_v4,		27)			\
-	x(backpointer,		28)			\
-	x(inode_v3,		29)			\
-	x(bucket_gens,		30)			\
-	x(snapshot_tree,	31)			\
-	x(logged_op_truncate,	32)			\
-	x(logged_op_finsert,	33)
+	x(deleted,			0)		\
+	x(whiteout,			1)		\
+	x(error,			2)		\
+	x(cookie,			3)		\
+	x(hash_whiteout,		4)		\
+	x(btree_ptr,			5)		\
+	x(extent,			6)		\
+	x(reservation,			7)		\
+	x(inode,			8)		\
+	x(inode_generation,		9)		\
+	x(dirent,			10)		\
+	x(xattr,			11)		\
+	x(alloc,			12)		\
+	x(quota,			13)		\
+	x(stripe,			14)		\
+	x(reflink_p,			15)		\
+	x(reflink_v,			16)		\
+	x(inline_data,			17)		\
+	x(btree_ptr_v2,			18)		\
+	x(indirect_inline_data,		19)		\
+	x(alloc_v2,			20)		\
+	x(subvolume,			21)		\
+	x(snapshot,			22)		\
+	x(inode_v2,			23)		\
+	x(alloc_v3,			24)		\
+	x(set,				25)		\
+	x(lru,				26)		\
+	x(alloc_v4,			27)		\
+	x(backpointer,			28)		\
+	x(inode_v3,			29)		\
+	x(bucket_gens,			30)		\
+	x(snapshot_tree,		31)		\
+	x(logged_op_truncate,		32)		\
+	x(logged_op_finsert,		33)		\
+	x(extent_block_checksums,	34)
 
 enum bch_bkey_type {
 #define x(name, nr) KEY_TYPE_##name	= nr,

@@ -263,7 +263,12 @@
 	x(subvol_root_fs_path_parent_nonzero,			255)	\
 	x(subvol_children_not_set,				256)	\
 	x(subvol_children_bad,					257)	\
-	x(alloc_key_stripe_sectors_wrong,			258)
+	x(alloc_key_stripe_sectors_wrong,			258)	\
+	x(extent_block_checksums_csum_type_unknown,		259)	\
+	x(extent_block_checksums_front_pad_bad,			260)	\
+	x(extent_block_checksums_back_pad_bad,			261)	\
+	x(extent_block_checksums_misaligned,			262)	\
+	x(extent_block_checksums_val_size_bad,			263)
 
 enum bch_sb_error_id {
 #define x(t, n) BCH_FSCK_ERR_##t = n,
