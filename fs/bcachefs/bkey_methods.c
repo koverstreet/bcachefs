@@ -10,6 +10,7 @@
 #include "disk_accounting.h"
 #include "ec.h"
 #include "error.h"
+#include "extent_block_checksums.h"
 #include "extents.h"
 #include "inode.h"
 #include "io_misc.h"

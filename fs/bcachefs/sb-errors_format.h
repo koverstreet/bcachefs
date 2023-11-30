@@ -317,7 +317,12 @@ enum bch_fsck_flags {
 	x(directory_size_mismatch,				303,	FSCK_AUTOFIX)	\
 	x(dirent_cf_name_too_big,				304,	0)		\
 	x(dirent_stray_data_after_cf_name,			305,	0)		\
-	x(MAX,							307,	0)
+	x(extent_block_checksums_csum_type_unknown,		307,	0)		\
+	x(extent_block_checksums_front_pad_bad,			308,	0)		\
+	x(extent_block_checksums_back_pad_bad,			309,	0)		\
+	x(extent_block_checksums_misaligned,			310,	0)		\
+	x(extent_block_checksums_val_size_bad,			311,	0)		\
+	x(MAX,							312,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
