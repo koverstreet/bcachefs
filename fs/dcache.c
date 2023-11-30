@@ -162,29 +162,19 @@ static struct dentry_stat_t dentry_stat = {
  */
 static long get_nr_dentry(void)
 {
-	int i;
-	long sum = 0;
-	for_each_possible_cpu(i)
-		sum += per_cpu(nr_dentry, i);
+	long sum = per_cpu_sum(nr_dentry);
 	return sum < 0 ? 0 : sum;
 }
 
 static long get_nr_dentry_unused(void)
 {
-	int i;
-	long sum = 0;
-	for_each_possible_cpu(i)
-		sum += per_cpu(nr_dentry_unused, i);
+	long sum = per_cpu_sum(nr_dentry_unused);
 	return sum < 0 ? 0 : sum;
 }
 
 static long get_nr_dentry_negative(void)
 {
-	int i;
-	long sum = 0;
-
-	for_each_possible_cpu(i)
-		sum += per_cpu(nr_dentry_negative, i);
+	long sum = per_cpu_sum(nr_dentry_negative);
 	return sum < 0 ? 0 : sum;
 }
 
