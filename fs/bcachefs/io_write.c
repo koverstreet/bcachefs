@@ -16,6 +16,7 @@
 #include "debug.h"
 #include "ec.h"
 #include "error.h"
+#include "extent_block_checksums.h"
 #include "extent_update.h"
 #include "inode.h"
 #include "io_write.h"
@@ -685,27 +686,59 @@ static void bch2_write_endio(struct bio *bio)
 		closure_put(cl);
 }
 
+static inline bool use_block_checksums(struct bch_write_op *op,
+				       struct bch_extent_crc_unpacked crc)
+{
+	if (!crc.csum_type &&
+	    crc.compression_type ||
+	    !op->opts.checksum_blocksize)
+		return false;
+
+	unsigned blocksize_mask = (op->opts.checksum_blocksize >> 9) - 1;
+	if ((op->pos.offset & blocksize_mask) ||
+	    (crc.uncompressed_size & blocksize_mask))
+		return false;
+
+	return true;
+}
+
 static void init_append_extent(struct bch_write_op *op,
 			       struct write_point *wp,
 			       struct bversion version,
 			       struct bch_extent_crc_unpacked crc)
 {
-	struct bkey_i_extent *e;
+	struct bch_extent_ptr *ptrs;
 
 	op->pos.offset += crc.uncompressed_size;
 
-	e = bkey_extent_init(op->insert_keys.top);
-	e->k.p		= op->pos;
-	e->k.size	= crc.uncompressed_size;
-	e->k.version	= version;
+	if (likely(!use_block_checksums(op, crc))) {
+		struct bkey_i_extent *e = bkey_extent_init(op->insert_keys.top);
 
-	if (crc.csum_type ||
-	    crc.compression_type ||
-	    crc.nonce)
-		bch2_extent_crc_append(&e->k_i, crc);
+		e->k.p		= op->pos;
+		e->k.size	= crc.uncompressed_size;
+		e->k.version	= version;
 
-	bch2_alloc_sectors_append_ptrs_inlined(op->c, wp, &e->k_i, crc.compressed_size,
-				       op->flags & BCH_WRITE_CACHED);
+		if (crc.csum_type ||
+		    crc.compression_type ||
+		    crc.nonce)
+			bch2_extent_crc_append(&e->k_i, crc);
+
+		ptrs = bkey_val_end(bkey_i_to_s(&e->k_i));
+		e->k.u64s += wp->ptrs.nr;
+	} else {
+		struct bkey_i_extent_block_checksums *e =
+			bkey_extent_block_checksums_init(op->insert_keys.top);
+
+		e->v.csum_type = crc.csum_type;
+		e->v.csum_blocksize_bits = ilog2(op->opts.checksum_blocksize >> 9);
+		e->v.nr_ptrs = wp->ptrs.nr;
+
+		ptrs = e->v.ptrs;
+		set_bkey_val_u64s(&e->k, extent_block_checksums_val_u64s(extent_block_checksums_i_to_s_c(e)));
+	}
+
+	bch2_alloc_sectors_append_ptrs_inlined(op->c, wp, crc.compressed_size,
+					       op->flags & BCH_WRITE_CACHED, ptrs);
 
 	bch2_keylist_push(&op->insert_keys);
 }

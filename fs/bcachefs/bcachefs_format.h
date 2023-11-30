@@ -418,7 +418,8 @@ static inline void bkey_init(struct bkey *k)
 	x(snapshot_tree,	31)			\
 	x(logged_op_truncate,	32)			\
 	x(logged_op_finsert,	33)			\
-	x(accounting,		34)
+	x(accounting,		34)			\
+	x(extent_block_checksums, 35)
 
 enum bch_bkey_type {
 #define x(name, nr) KEY_TYPE_##name	= nr,

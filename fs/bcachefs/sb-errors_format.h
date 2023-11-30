@@ -286,7 +286,12 @@ enum bch_fsck_flags {
 	x(accounting_mismatch,					272,	0)		\
 	x(accounting_replicas_not_marked,			273,	0)		\
 	x(invalid_btree_id,					274,	0)		\
-	x(alloc_key_io_time_bad,				275,	0)
+	x(alloc_key_io_time_bad,				275,	0)		\
+	x(extent_block_checksums_csum_type_unknown,		276,	0)		\
+	x(extent_block_checksums_front_pad_bad,			277,	0)		\
+	x(extent_block_checksums_back_pad_bad,			278,	0)		\
+	x(extent_block_checksums_misaligned,			279,	0)		\
+	x(extent_block_checksums_val_size_bad,			280,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
