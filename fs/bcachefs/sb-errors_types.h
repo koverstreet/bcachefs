@@ -251,7 +251,12 @@
 	x(hash_table_key_wrong_offset,				243)	\
 	x(unlinked_inode_not_on_deleted_list,			244)	\
 	x(reflink_p_front_pad_bad,				245)	\
-	x(alloc_key_stripe_sectors_wrong,			246)
+	x(alloc_key_stripe_sectors_wrong,			246)	\
+	x(extent_block_checksums_csum_type_unknown,		247)	\
+	x(extent_block_checksums_front_pad_bad,			248)	\
+	x(extent_block_checksums_back_pad_bad,			249)	\
+	x(extent_block_checksums_misaligned,			250)	\
+	x(extent_block_checksums_val_size_bad,			251)
 
 enum bch_sb_error_id {
 #define x(t, n) BCH_FSCK_ERR_##t = n,

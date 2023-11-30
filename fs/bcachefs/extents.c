@@ -18,6 +18,7 @@
 #include "debug.h"
 #include "disk_groups.h"
 #include "error.h"
+#include "extent_block_checksums.h"
 #include "extents.h"
 #include "inode.h"
 #include "journal.h"
@@ -1462,6 +1463,25 @@ int bch2_cut_front_s(struct bpos where, struct bkey_s k)
 		new_val_u64s -= sub >> 3;
 		break;
 	}
+	case KEY_TYPE_extent_block_checksums: {
+		struct bkey_s_extent_block_checksums e = bkey_s_to_extent_block_checksums(k);
+		unsigned csum_blocksize_mask = ((1U << e.v->csum_blocksize_bits) - 1);
+		unsigned front_pad = e.v->front_pad + sub;
+		unsigned crcs_to_remove = front_pad >> e.v->csum_blocksize_bits;
+		unsigned crc_bytes_to_remove = crcs_to_remove * bch_crc_bytes[e.v->csum_type];
+
+		for (unsigned i = 0; i < e.v->nr_ptrs; i++)
+			e.v->ptrs[i].offset += front_pad & ~csum_blocksize_mask;
+		e.v->front_pad = front_pad & csum_blocksize_mask;
+
+		void *crc_start = &e.v->ptrs[e.v->nr_ptrs];
+
+		memmove(crc_start,
+			crc_start + crc_bytes_to_remove,
+			extent_block_checksums_crc_bytes(e.c) - crc_bytes_to_remove);
+
+		new_val_u64s = extent_block_checksums_val_u64s(e.c);
+	}
 	}
 
 	val_u64s_delta = bkey_val_u64s(k.k) - new_val_u64s;
@@ -1476,19 +1496,20 @@ int bch2_cut_back_s(struct bpos where, struct bkey_s k)
 {
 	unsigned new_val_u64s = bkey_val_u64s(k.k);
 	int val_u64s_delta;
-	u64 len = 0;
 
 	if (bkey_ge(where, k.k->p))
 		return 0;
 
 	EBUG_ON(bkey_lt(where, bkey_start_pos(k.k)));
 
-	len = where.offset - bkey_start_offset(k.k);
+	unsigned new_size = where.offset - bkey_start_offset(k.k);
+
+	unsigned sub = k.k->size - new_size;
 
 	k.k->p.offset = where.offset;
-	k.k->size = len;
+	k.k->size = new_size;
 
-	if (!len) {
+	if (!k.k->size) {
 		k.k->type = KEY_TYPE_deleted;
 		new_val_u64s = 0;
 	}
@@ -1499,6 +1520,14 @@ int bch2_cut_back_s(struct bpos where, struct bkey_s k)
 		new_val_u64s = (bkey_inline_data_offset(k.k) +
 				min(bkey_inline_data_bytes(k.k), k.k->size << 9)) >> 3;
 		break;
+	case KEY_TYPE_extent_block_checksums: {
+		struct bkey_s_extent_block_checksums e = bkey_s_to_extent_block_checksums(k);
+		unsigned csum_blocksize_mask = ((1U << e.v->csum_blocksize_bits) - 1);
+
+		e.v->back_pad = (e.v->back_pad + sub) & csum_blocksize_mask;
+
+		new_val_u64s = extent_block_checksums_val_u64s(e.c);
+	}
 	}
 
 	val_u64s_delta = bkey_val_u64s(k.k) - new_val_u64s;
