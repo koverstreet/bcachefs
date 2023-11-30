@@ -314,7 +314,12 @@ enum bch_fsck_flags {
 	x(compression_opt_not_marked_in_sb,			295,	FSCK_AUTOFIX)	\
 	x(compression_type_not_marked_in_sb,			296,	FSCK_AUTOFIX)	\
 	x(directory_size_mismatch,				303,	FSCK_AUTOFIX)	\
-	x(MAX,							304,	0)
+	x(extent_block_checksums_csum_type_unknown,		304,	0)		\
+	x(extent_block_checksums_front_pad_bad,			305,	0)		\
+	x(extent_block_checksums_back_pad_bad,			306,	0)		\
+	x(extent_block_checksums_misaligned,			307,	0)		\
+	x(extent_block_checksums_val_size_bad,			308,	0)		\
+	x(MAX,							309,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
