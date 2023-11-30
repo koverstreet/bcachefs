@@ -584,16 +584,6 @@ do {									\
 	}								\
 } while (0)
 
-#define per_cpu_sum(_p)							\
-({									\
-	typeof(*_p) _ret = 0;						\
-									\
-	int cpu;							\
-	for_each_possible_cpu(cpu)					\
-		_ret += *per_cpu_ptr(_p, cpu);				\
-	_ret;								\
-})
-
 static inline u64 percpu_u64_get(u64 __percpu *src)
 {
 	return per_cpu_sum(src);

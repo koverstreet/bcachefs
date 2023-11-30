@@ -162,4 +162,14 @@ extern phys_addr_t per_cpu_ptr_to_phys(void *addr);
 
 extern unsigned long pcpu_nr_pages(void);
 
+#define per_cpu_sum(_p)							\
+({									\
+	typeof(*(_p)) sum = 0;						\
+	int cpu;							\
+									\
+	for_each_possible_cpu(cpu)					\
+		sum += *per_cpu_ptr(_p, cpu);				\
+	sum;								\
+})
+
 #endif /* __LINUX_PERCPU_H */
