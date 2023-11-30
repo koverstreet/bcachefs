@@ -473,7 +473,9 @@ enum bch_bkey_type_flags {
 	  "Whiteout specific to the extents btree, blocking "		\
 	  "visibility of ancestor snapshot extent versions")		\
 	x(logged_op_stripe_update, 37,	BKEY_TYPE_strict_btree_checks,	\
-	  "Logged stripe creation/update operation for crash recovery")
+	  "Logged stripe creation/update operation for crash recovery")	\
+	x(extent_block_checksums, 38,	BKEY_TYPE_strict_btree_checks,	\
+	  "Extent with variable per-block checksums")
 
 enum bch_bkey_type {
 #define x(name, nr, ...) KEY_TYPE_##name	= nr,

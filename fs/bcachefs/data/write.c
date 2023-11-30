@@ -717,6 +717,7 @@
 #include "data/compress.h"
 #include "data/ec/create.h"
 #include "data/extent_update.h"
+#include "data/extent_block_checksums.h"
 #include "data/keylist.h"
 #include "data/move.h"
 #include "data/nocow_locking.h"
@@ -1603,28 +1604,110 @@ static void bch2_write_endio(struct bio *bio)
 		closure_put(cl);
 }
 
+static void bch2_write_endio_err(struct work_struct *work)
+{
+	struct bch_write_bio *wbio	= container_of(work, struct bch_write_bio, work);
+	struct bio *bio			= &wbio->bio;
+	struct closure *cl		= bio->bi_private;
+	struct bch_write_op *op		= container_of(cl, struct bch_write_op, cl);
+	struct bch_fs *c		= op->c;
+	struct bch_dev *ca		= wbio->have_ioref
+		? bch2_dev_have_ref(c, wbio->dev)
+		: NULL;
+
+	struct printbuf buf = PRINTBUF;
+	bch2_write_op_error(&buf, op);
+	prt_printf(&buf, "data write error: %s", bch2_blk_status_to_str(bio->bi_status));
+	if (ca)
+		bch_err_ratelimited(ca, "%s", buf.buf);
+	else
+		bch_err_ratelimited(c, "%s", buf.buf);
+	printbuf_exit(&buf);
+
+	if (ca)
+		bch2_io_error(ca, BCH_MEMBER_ERROR_write);
+
+	set_bit(wbio->dev, op->failed.d);
+	op->flags |= BCH_WRITE_IO_ERROR;
+
+	__bch2_write_endio(bio);
+}
+
+static void bch2_write_endio(struct bio *bio)
+{
+	struct bch_write_bio *wbio	= to_wbio(bio);
+	struct bch_fs *c		= wbio->c;
+	struct bch_dev *ca		= wbio->have_ioref
+		? bch2_dev_have_ref(c, wbio->dev)
+		: NULL;
+
+	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_write,
+				   wbio->submit_time, !bio->bi_status);
+
+	if (unlikely(bio->bi_status)) {
+		struct bch_write_bio *wbio = to_wbio(bio);
+		INIT_WORK(&wbio->work, bch2_write_endio_err);
+		queue_work(system_unbound_wq, &wbio->work);
+	} else {
+		__bch2_write_endio(bio);
+	}
+}
+
+static inline bool use_block_checksums(struct bch_write_op *op,
+				       struct bch_extent_crc_unpacked crc)
+{
+	if (!crc.csum_type &&
+	    crc.compression_type ||
+	    !op->opts.checksum_blocksize)
+		return false;
+
+	unsigned blocksize_mask = (op->opts.checksum_blocksize >> 9) - 1;
+	if ((op->pos.offset & blocksize_mask) ||
+	    (crc.uncompressed_size & blocksize_mask))
+		return false;
+
+	return true;
+}
+
 static void init_append_extent(struct bch_write_op *op,
 			       struct write_point *wp,
 			       struct bversion version,
 			       struct bch_extent_crc_unpacked crc)
 {
 	struct bch_fs *c = op->c;
+	struct bch_extent_ptr *ptrs;
 
 	//op->pos.offset += crc.uncompressed_size;
 
-	struct bkey_i_extent *e = bkey_extent_init(op->insert_keys.top);
-	e->k.p		= op->pos;
-	e->k.p.offset	+= op->submitted + crc.uncompressed_size;
-	e->k.size	= crc.uncompressed_size;
-	e->k.bversion	= version;
+	if (likely(!use_block_checksums(op, crc))) {
+		struct bkey_i_extent *e = bkey_extent_init(op->insert_keys.top);
 
-	if (crc.csum_type ||
-	    crc.compression_type ||
-	    crc.nonce)
-		bch2_extent_crc_append(c, &e->k_i, crc);
+		e->k.p		= op->pos;
+		e->k.p.offset	+= op->submitted + crc.uncompressed_size;
+		e->k.size	= crc.uncompressed_size;
+		e->k.bversion	= version;
 
-	bch2_alloc_sectors_append_ptrs_inlined(op->c, wp, &e->k_i, crc.compressed_size,
-				       op->flags & BCH_WRITE_cached);
+		if (crc.csum_type ||
+		    crc.compression_type ||
+		    crc.nonce)
+			bch2_extent_crc_append(&e->k_i, crc);
+
+		ptrs = bkey_val_end(bkey_i_to_s(&e->k_i));
+		e->k.u64s += wp->ptrs.nr;
+	} else {
+		struct bkey_i_extent_block_checksums *e =
+			bkey_extent_block_checksums_init(op->insert_keys.top);
+
+		e->v.csum_type = crc.csum_type;
+		e->v.csum_blocksize_bits = ilog2(op->opts.checksum_blocksize >> 9);
+		e->v.nr_ptrs = wp->ptrs.nr;
+
+		ptrs = e->v.ptrs;
+		set_bkey_val_u64s(&e->k, extent_block_checksums_val_u64s(extent_block_checksums_i_to_s_c(e)));
+	}
+
+	bch2_alloc_sectors_append_ptrs_inlined(op->c, wp, crc.compressed_size,
+					       op->flags & BCH_WRITE_cached, ptrs);
 	bch2_keylist_push(&op->insert_keys);
 }
 
