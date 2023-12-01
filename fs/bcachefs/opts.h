@@ -219,6 +219,12 @@ enum fsck_err_opts {
 	  OPT_BOOL(),							\
 	  BCH_SB_ERASURE_CODE,		false,				\
 	  NULL,		"Enable erasure coding (DO NOT USE YET)")	\
+	x(checksum_blocksize,		u16,				\
+	  OPT_HUMAN_READABLE|OPT_MUST_BE_POW_2|OPT_SB_FIELD_SECTORS|	\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_UINT(0, 1U << 16),					\
+	  BCH_SB_CSUM_BLOCKSIZE,	0,				\
+	  NULL,		"Checksum blocksize")				\
 	x(inodes_32bit,			u8,				\
 	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
 	  OPT_BOOL(),							\
