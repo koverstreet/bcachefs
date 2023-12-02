@@ -671,10 +671,29 @@ static void btree_update_nodes_written(struct btree_update *as)
 {
 	struct bch_fs *c = as->c;
 	struct btree *b;
-	struct btree_trans *trans = bch2_trans_get(c);
 	u64 journal_seq = 0;
 	unsigned i;
 	int ret;
+
+	/*
+	 * Wait for any in flight writes to finish before we free the old nodes
+	 * on disk:
+	 */
+	for (i = 0; i < as->nr_old_nodes; i++) {
+		__le64 seq;
+
+		b = as->old_nodes[i];
+
+		six_lock_read(&b->c.lock, NULL, NULL);
+		seq = b->data ? b->data->keys.seq : 0;
+		six_unlock_read(&b->c.lock);
+
+		if (seq == as->old_nodes_seq[i])
+			wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight_inner,
+				       TASK_UNINTERRUPTIBLE);
+	}
+
+	struct btree_trans *trans = bch2_trans_get(c);
 
 	/*
 	 * If we're already in an error state, it might be because a btree node
@@ -689,24 +708,6 @@ static void btree_update_nodes_written(struct btree_update *as)
 
 	if (!btree_update_new_nodes_marked_sb(as))
 		btree_update_new_nodes_mark_sb(as);
-
-	/*
-	 * Wait for any in flight writes to finish before we free the old nodes
-	 * on disk:
-	 */
-	for (i = 0; i < as->nr_old_nodes; i++) {
-		__le64 seq;
-
-		b = as->old_nodes[i];
-
-		btree_node_lock_nopath_nofail(trans, &b->c, SIX_LOCK_read);
-		seq = b->data ? b->data->keys.seq : 0;
-		six_unlock_read(&b->c.lock);
-
-		if (seq == as->old_nodes_seq[i])
-			wait_on_bit_io(&b->flags, BTREE_NODE_write_in_flight_inner,
-				       TASK_UNINTERRUPTIBLE);
-	}
 
 	/*
 	 * We did an update to a parent node where the pointers we added pointed
