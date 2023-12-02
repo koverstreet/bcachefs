@@ -689,6 +689,13 @@ static void bch2_write_endio(struct bio *bio)
 static inline bool use_block_checksums(struct bch_write_op *op,
 				       struct bch_extent_crc_unpacked crc)
 {
+	/*
+	 * We don't need to carry around block checksums for the move path:
+	 * they'll still be in the btree node key
+	 */
+	if (op->flags & BCH_WRITE_MOVE)
+		return false;
+
 	if (!crc.csum_type ||
 	    crc.compression_type ||
 	    !op->opts.checksum_blocksize)
@@ -857,7 +864,6 @@ static enum prep_encoded_ret {
 	PREP_ENCODED_OK,
 	PREP_ENCODED_ERR,
 	PREP_ENCODED_CHECKSUM_ERR,
-	PREP_ENCODED_DO_WRITE,
 } bch2_write_prep_encoded_data(struct bch_write_op *op, struct write_point *wp)
 {
 	struct bch_fs *c = op->c;
@@ -865,23 +871,6 @@ static enum prep_encoded_ret {
 
 	if (!(op->flags & BCH_WRITE_DATA_ENCODED))
 		return PREP_ENCODED_OK;
-
-	BUG_ON(bio_sectors(bio) != op->crc.compressed_size);
-
-	/* Can we just write the entire extent as is? */
-	if (op->crc.uncompressed_size == op->crc.live_size &&
-	    op->crc.uncompressed_size <= c->opts.encoded_extent_max >> 9 &&
-	    op->crc.compressed_size <= wp->sectors_free &&
-	    (op->crc.compression_type == bch2_compression_opt_to_type(op->compression_opt) ||
-	     op->incompressible)) {
-		if (!crc_is_compressed(op->crc) &&
-		    op->csum_type != op->crc.csum_type &&
-		    bch2_write_rechecksum(c, op, op->csum_type) &&
-		    !c->opts.no_data_io)
-			return PREP_ENCODED_CHECKSUM_ERR;
-
-		return PREP_ENCODED_DO_WRITE;
-	}
 
 	/*
 	 * If the data is compressed and we couldn't write the entire extent as
@@ -935,6 +924,18 @@ static enum prep_encoded_ret {
 	return PREP_ENCODED_OK;
 }
 
+static inline bool write_full_encoded_extent(struct bch_write_op *op, struct write_point *wp)
+{
+	struct bch_fs *c = op->c;
+
+	return (op->flags & BCH_WRITE_DATA_ENCODED) &&
+		op->crc.uncompressed_size == op->crc.live_size &&
+		op->crc.uncompressed_size <= c->opts.encoded_extent_max >> 9 &&
+		op->crc.compressed_size <= wp->sectors_free &&
+		(op->crc.compression_type == bch2_compression_opt_to_type(op->compression_opt) ||
+		 op->incompressible);
+}
+
 static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 			     struct bio **_dst)
 {
@@ -948,18 +949,17 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 	int ret, more = 0;
 
 	BUG_ON(!bio_sectors(src));
+	BUG_ON((op->flags & BCH_WRITE_DATA_ENCODED) &&
+	       bio_sectors(bio) != op->crc.compressed_size);
 
 	ec_buf = bch2_writepoint_ec_buf(c, wp);
 
-	switch (bch2_write_prep_encoded_data(op, wp)) {
-	case PREP_ENCODED_OK:
-		break;
-	case PREP_ENCODED_ERR:
-		ret = -EIO;
-		goto err;
-	case PREP_ENCODED_CHECKSUM_ERR:
-		goto csum_err;
-	case PREP_ENCODED_DO_WRITE:
+	if (write_full_encoded_extent(op, wp)) {
+		if (op->csum_type != op->crc.csum_type &&
+		    bch2_write_rechecksum(c, op, op->csum_type) &&
+		    !c->opts.no_data_io)
+			goto csum_err;
+
 		if (ec_buf) {
 			dst = bch2_write_bio_alloc(c, wp, src,
 						   &page_alloc_failed,
@@ -969,6 +969,16 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 		}
 		init_append_extent(op, wp, op->version, op->crc);
 		goto do_write;
+	}
+
+	switch (bch2_write_prep_encoded_data(op, wp)) {
+	case PREP_ENCODED_OK:
+		break;
+	case PREP_ENCODED_ERR:
+		ret = -EIO;
+		goto err;
+	case PREP_ENCODED_CHECKSUM_ERR:
+		goto csum_err;
 	}
 
 	if (ec_buf ||
@@ -1038,9 +1048,14 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 		    !crc_is_compressed(crc) &&
 		    bch2_csum_type_is_encryption(op->crc.csum_type) ==
 		    bch2_csum_type_is_encryption(op->csum_type)) {
-			u8 compression_type = crc.compression_type;
-			u16 nonce = crc.nonce;
 			/*
+			 * Generate new checksum with rechecksum_bio():
+			 *
+			 * This verifies the new checksum against the old
+			 * checksum (when splitting) by generating new checksums
+			 * for each split, combining them, and comparing against
+			 * the old checksum:
+			 *
 			 * Note: when we're using rechecksum(), we need to be
 			 * checksumming @src because it has all the data our
 			 * existing checksum covers - if we bounced (because we
@@ -1051,21 +1066,26 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 			 * because part of the reason for bouncing is so the
 			 * data can't be modified (by userspace) while it's in
 			 * flight.
+			 *
+			 * We have to save and restore the compression_type for
+			 * incompressible data:
 			 */
+			u8 compression_type	= crc.compression_type;
+			u16 nonce		= crc.nonce;
 			if (bch2_rechecksum_bio(c, src, version, op->crc,
 					&crc, &op->crc,
 					src_len >> 9,
 					bio_sectors(src) - (src_len >> 9),
 					op->csum_type))
 				goto csum_err;
-			/*
-			 * rchecksum_bio sets compression_type on crc from op->crc,
-			 * this isn't always correct as sometimes we're changing
-			 * an extent from uncompressed to incompressible.
-			 */
-			crc.compression_type = compression_type;
-			crc.nonce = nonce;
+			crc.compression_type	= compression_type;
+			crc.nonce		= nonce;
 		} else {
+			/*
+			 * We can't generate the new checksum with
+			 * rechecksum(), but we still want to update op->crc
+			 * with a checksum that refers to the remaining data:
+			 */
 			if ((op->flags & BCH_WRITE_DATA_ENCODED) &&
 			    bch2_rechecksum_bio(c, src, version, op->crc,
 					NULL, &op->crc,
@@ -1074,16 +1094,15 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 					op->crc.csum_type))
 				goto csum_err;
 
-			crc.compressed_size	= dst_len >> 9;
-			crc.uncompressed_size	= src_len >> 9;
-			crc.live_size		= src_len >> 9;
-
 			swap(dst->bi_iter.bi_size, dst_len);
 			ret = bch2_encrypt_bio(c, op->csum_type,
 					       extent_nonce(version, crc), dst);
 			if (ret)
 				goto err;
 
+			crc.compressed_size	= dst_len >> 9;
+			crc.uncompressed_size	= src_len >> 9;
+			crc.live_size		= src_len >> 9;
 			crc.csum = bch2_checksum_bio(c, op->csum_type,
 					 extent_nonce(version, crc), dst);
 			crc.csum_type = op->csum_type;
