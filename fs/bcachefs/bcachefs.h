@@ -1056,6 +1056,7 @@ struct bch_fs {
 	/* bitmap of explicitly enabled recovery passes: */
 	u64			recovery_passes_explicit;
 	u64			recovery_passes_complete;
+	struct semaphore	online_fsck_mutex;
 
 	/* DEBUG JUNK */
 	struct dentry		*fs_debug_dir;
