@@ -2353,7 +2353,10 @@ __setup("ihash_entries=", set_ihash_entries);
  */
 void __init inode_init_early(void)
 {
-	/* If hashes are distributed across NUMA nodes, defer
+	int i;
+
+	/*
+	 * If hashes are distributed across NUMA nodes, defer
 	 * hash allocation until vmalloc space is available.
 	 */
 	if (hashdist)
@@ -2369,10 +2372,18 @@ void __init inode_init_early(void)
 					&i_hash_mask,
 					0,
 					0);
+	/*
+	 * The value returned in i_hash_shift tells us the size of the
+	 * hash table that was allocated as a log2 value.
+	 */
+	for (i = 0; i < (1 << i_hash_shift); i++)
+		INIT_HLIST_BL_HEAD(&inode_hashtable[i]);
 }
 
 void __init inode_init(void)
 {
+	int i;
+
 	/* inode slab cache */
 	inode_cachep = kmem_cache_create("inode_cache",
 					 sizeof(struct inode),
@@ -2395,6 +2406,12 @@ void __init inode_init(void)
 					&i_hash_mask,
 					0,
 					0);
+	/*
+	 * The value returned in i_hash_shift tells us the size of the
+	 * hash table that was allocated as a log2 value.
+	 */
+	for (i = 0; i < (1 << i_hash_shift); i++)
+		INIT_HLIST_BL_HEAD(&inode_hashtable[i]);
 }
 
 void init_special_inode(struct inode *inode, umode_t mode, dev_t rdev)

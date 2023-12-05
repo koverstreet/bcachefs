@@ -92,6 +92,9 @@ static int __init fscache_init(void)
 		goto error_cookie_jar;
 	}
 
+	fscache_volume_hash_init();
+	fscache_cookie_hash_init();
+
 	pr_notice("Loaded\n");
 	return 0;
 

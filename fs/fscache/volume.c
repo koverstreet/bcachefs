@@ -17,6 +17,14 @@ static LIST_HEAD(fscache_volumes);
 
 static void fscache_create_volume_work(struct work_struct *work);
 
+void fscache_volume_hash_init(void)
+{
+	int i;
+
+	for (i = 0; i < (1 << fscache_volume_hash_shift); i++)
+		INIT_HLIST_BL_HEAD(&fscache_volume_hash[i]);
+}
+
 struct fscache_volume *fscache_get_volume(struct fscache_volume *volume,
 					  enum fscache_volume_trace where)
 {

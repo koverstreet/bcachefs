@@ -3284,7 +3284,10 @@ __setup("dhash_entries=", set_dhash_entries);
 
 static void __init dcache_init_early(void)
 {
-	/* If hashes are distributed across NUMA nodes, defer
+	int i;
+
+	/*
+	 * If hashes are distributed across NUMA nodes, defer
 	 * hash allocation until vmalloc space is available.
 	 */
 	if (hashdist)
@@ -3300,11 +3303,20 @@ static void __init dcache_init_early(void)
 					NULL,
 					0,
 					0);
+	/*
+	 * The value returned in d_hash_shift tells us the size of the
+	 * hash table that was allocated as a log2 value.
+	 */
+	for (i = 0; i < (1 << d_hash_shift); i++)
+		INIT_HLIST_BL_HEAD(&dentry_hashtable[i]);
+
 	d_hash_shift = 32 - d_hash_shift;
 }
 
 static void __init dcache_init(void)
 {
+	int i;
+
 	/*
 	 * A constructor could be added for stable state like the lists,
 	 * but it is probably not worth it because of the cache nature
@@ -3328,6 +3340,13 @@ static void __init dcache_init(void)
 					NULL,
 					0,
 					0);
+	/*
+	 * The value returned in d_hash_shift tells us the size of the
+	 * hash table that was allocated as a log2 value.
+	 */
+	for (i = 0; i < (1 << d_hash_shift); i++)
+		INIT_HLIST_BL_HEAD(&dentry_hashtable[i]);
+
 	d_hash_shift = 32 - d_hash_shift;
 }
 

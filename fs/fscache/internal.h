@@ -61,8 +61,9 @@ extern const struct seq_operations fscache_cookies_seq_ops;
 #endif
 extern struct timer_list fscache_cookie_lru_timer;
 
-extern void fscache_print_cookie(struct fscache_cookie *cookie, char prefix);
-extern bool fscache_begin_cookie_access(struct fscache_cookie *cookie,
+void fscache_cookie_hash_init(void);
+void fscache_print_cookie(struct fscache_cookie *cookie, char prefix);
+bool fscache_begin_cookie_access(struct fscache_cookie *cookie,
 					enum fscache_access_trace why);
 
 static inline void fscache_see_cookie(struct fscache_cookie *cookie,
@@ -143,6 +144,7 @@ int fscache_stats_show(struct seq_file *m, void *v);
 extern const struct seq_operations fscache_volumes_seq_ops;
 #endif
 
+void fscache_volume_hash_init(void);
 struct fscache_volume *fscache_get_volume(struct fscache_volume *volume,
 					  enum fscache_volume_trace where);
 void fscache_put_volume(struct fscache_volume *volume,

@@ -32,6 +32,14 @@ static DECLARE_WORK(fscache_cookie_lru_work, fscache_cookie_lru_worker);
 static const char fscache_cookie_states[FSCACHE_COOKIE_STATE__NR] = "-LCAIFUWRD";
 static unsigned int fscache_lru_cookie_timeout = 10 * HZ;
 
+void fscache_cookie_hash_init(void)
+{
+	int i;
+
+	for (i = 0; i < (1 << fscache_cookie_hash_shift); i++)
+		INIT_HLIST_BL_HEAD(&fscache_cookie_hash[i]);
+}
+
 void fscache_print_cookie(struct fscache_cookie *cookie, char prefix)
 {
 	const u8 *k;
