@@ -1738,22 +1738,24 @@ static int gfs2_meta_init_fs_context(struct fs_context *fc)
  * attempt will time out.  Since inodes are evicted sequentially, this can add
  * up quickly.
  *
- * Function evict_inodes() tries to keep the s_inode_list_lock list locked over
- * a long time, which prevents other inodes from being evicted concurrently.
- * This precludes the cooperative behavior we are looking for.  This special
- * version of evict_inodes() avoids that.
- *
  * Modeled after drop_pagecache_sb().
+ *
+ * XXX(dgc): this is particularly awful. With the dlist for inodes, concurrent
+ * access to the inode list can occur and evict_inodes() will drop the per-cpu
+ * list lock if the CPU needs rescheduling. Hence if this exists just because
+ * evict_inodes() holds the s_inode_list_lock for long periods preventing
+ * concurrent inode eviction work from being done, this can probably go away
+ * entirely now.
  */
 static void gfs2_evict_inodes(struct super_block *sb)
 {
 	struct inode *inode, *toput_inode = NULL;
 	struct gfs2_sbd *sdp = sb->s_fs_info;
+	DEFINE_DLOCK_LIST_ITER(iter, &sb->s_inodes);
 
 	set_bit(SDF_EVICTING, &sdp->sd_flags);
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+	dlist_for_each_entry(inode, &iter, i_sb_list) {
 		spin_lock(&inode->i_lock);
 		if ((inode->i_state & (I_FREEING|I_WILL_FREE|I_NEW)) &&
 		    !need_resched()) {
@@ -1762,15 +1764,14 @@ static void gfs2_evict_inodes(struct super_block *sb)
 		}
 		atomic_inc(&inode->i_count);
 		spin_unlock(&inode->i_lock);
-		spin_unlock(&sb->s_inode_list_lock);
+		dlock_list_unlock(&iter);
 
 		iput(toput_inode);
 		toput_inode = inode;
 
 		cond_resched();
-		spin_lock(&sb->s_inode_list_lock);
+		dlock_list_relock(&iter);
 	}
-	spin_unlock(&sb->s_inode_list_lock);
 	iput(toput_inode);
 }
 

@@ -844,12 +844,12 @@ static void hook_inode_free_security(struct inode *const inode)
 static void hook_sb_delete(struct super_block *const sb)
 {
 	struct inode *inode, *prev_inode = NULL;
+	DEFINE_DLOCK_LIST_ITER(iter, &sb->s_inodes);
 
 	if (!landlock_initialized)
 		return;
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+	dlist_for_each_entry(inode, &iter, i_sb_list) {
 		struct landlock_object *object;
 
 		/* Only handles referenced inodes. */
@@ -883,6 +883,7 @@ static void hook_sb_delete(struct super_block *const sb)
 		/* Keeps a reference to this inode until the next loop walk. */
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
+		dlock_list_unlock(&iter);
 
 		/*
 		 * If there is no concurrent release_inode() ongoing, then we
@@ -917,25 +918,11 @@ static void hook_sb_delete(struct super_block *const sb)
 			rcu_read_unlock();
 		}
 
-		if (prev_inode) {
-			/*
-			 * At this point, we still own the __iget() reference
-			 * that we just set in this loop walk.  Therefore we
-			 * can drop the list lock and know that the inode won't
-			 * disappear from under us until the next loop walk.
-			 */
-			spin_unlock(&sb->s_inode_list_lock);
-			/*
-			 * We can now actually put the inode reference from the
-			 * previous loop walk, which is not needed anymore.
-			 */
-			iput(prev_inode);
-			cond_resched();
-			spin_lock(&sb->s_inode_list_lock);
-		}
+		iput(prev_inode);
 		prev_inode = inode;
+		cond_resched();
+		dlock_list_relock(&iter);
 	}
-	spin_unlock(&sb->s_inode_list_lock);
 
 	/* Puts the inode reference from the last loop walk, if any. */
 	if (prev_inode)

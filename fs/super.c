@@ -303,6 +303,7 @@ static void destroy_unused_super(struct super_block *s)
 	super_unlock_excl(s);
 	list_lru_destroy(&s->s_dentry_lru);
 	list_lru_destroy(&s->s_inode_lru);
+	free_dlock_list_heads(&s->s_inodes);
 	security_sb_free(s);
 	put_user_ns(s->s_user_ns);
 	kfree(s->s_subtype);
@@ -367,8 +368,6 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags,
 	INIT_HLIST_NODE(&s->s_instances);
 	INIT_HLIST_BL_HEAD(&s->s_roots);
 	mutex_init(&s->s_sync_lock);
-	INIT_LIST_HEAD(&s->s_inodes);
-	spin_lock_init(&s->s_inode_list_lock);
 	INIT_LIST_HEAD(&s->s_inodes_wb);
 	spin_lock_init(&s->s_inode_wblist_lock);
 
@@ -382,6 +381,9 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags,
 	s->s_time_gran = 1000000000;
 	s->s_time_min = TIME64_MIN;
 	s->s_time_max = TIME64_MAX;
+
+	if (alloc_dlock_list_heads(&s->s_inodes))
+		goto fail;
 
 	s->s_shrink = shrinker_alloc(SHRINKER_NUMA_AWARE | SHRINKER_MEMCG_AWARE,
 				     "sb-%s", type->name);
@@ -695,7 +697,7 @@ void generic_shutdown_super(struct super_block *sb)
 		if (sop->put_super)
 			sop->put_super(sb);
 
-		if (CHECK_DATA_CORRUPTION(!list_empty(&sb->s_inodes),
+		if (CHECK_DATA_CORRUPTION(!dlock_lists_empty(&sb->s_inodes),
 				"VFS: Busy inodes after unmount of %s (%s)",
 				sb->s_id, sb->s_type->name)) {
 			/*
@@ -704,14 +706,13 @@ void generic_shutdown_super(struct super_block *sb)
 			 * iput_final() or such crashes cleanly.
 			 */
 			struct inode *inode;
+			DEFINE_DLOCK_LIST_ITER(iter, &sb->s_inodes);
 
-			spin_lock(&sb->s_inode_list_lock);
-			list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+			dlist_for_each_entry(inode, &iter, i_sb_list) {
 				inode->i_op = VFS_PTR_POISON;
 				inode->i_sb = VFS_PTR_POISON;
 				inode->i_mapping = VFS_PTR_POISON;
 			}
-			spin_unlock(&sb->s_inode_list_lock);
 		}
 	}
 	/*

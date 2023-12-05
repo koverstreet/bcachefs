@@ -437,11 +437,11 @@ long nr_blockdev_pages(void)
 {
 	struct inode *inode;
 	long ret = 0;
+	DEFINE_DLOCK_LIST_ITER(iter, &blockdev_superblock->s_inodes);
 
-	spin_lock(&blockdev_superblock->s_inode_list_lock);
-	list_for_each_entry(inode, &blockdev_superblock->s_inodes, i_sb_list)
+	dlist_for_each_entry(inode, &iter, i_sb_list) {
 		ret += inode->i_mapping->nrpages;
-	spin_unlock(&blockdev_superblock->s_inode_list_lock);
+	}
 
 	return ret;
 }
@@ -1032,9 +1032,9 @@ EXPORT_SYMBOL_GPL(bdev_mark_dead);
 void sync_bdevs(bool wait)
 {
 	struct inode *inode, *old_inode = NULL;
+	DEFINE_DLOCK_LIST_ITER(iter, &blockdev_superblock->s_inodes);
 
-	spin_lock(&blockdev_superblock->s_inode_list_lock);
-	list_for_each_entry(inode, &blockdev_superblock->s_inodes, i_sb_list) {
+	dlist_for_each_entry(inode, &iter, i_sb_list) {
 		struct address_space *mapping = inode->i_mapping;
 		struct block_device *bdev;
 
@@ -1046,15 +1046,8 @@ void sync_bdevs(bool wait)
 		}
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
-		spin_unlock(&blockdev_superblock->s_inode_list_lock);
-		/*
-		 * We hold a reference to 'inode' so it couldn't have been
-		 * removed from s_inodes list while we dropped the
-		 * s_inode_list_lock  We cannot iput the inode now as we can
-		 * be holding the last reference and we cannot iput it under
-		 * s_inode_list_lock. So we keep the reference and iput it
-		 * later.
-		 */
+		dlock_list_unlock(&iter);
+
 		iput(old_inode);
 		old_inode = inode;
 		bdev = I_BDEV(inode);
@@ -1075,9 +1068,8 @@ void sync_bdevs(bool wait)
 		}
 		mutex_unlock(&bdev->bd_disk->open_mutex);
 
-		spin_lock(&blockdev_superblock->s_inode_list_lock);
+		dlock_list_relock(&iter);
 	}
-	spin_unlock(&blockdev_superblock->s_inode_list_lock);
 	iput(old_inode);
 }
 
