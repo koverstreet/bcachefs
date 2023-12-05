@@ -8,6 +8,18 @@
 #include <linux/list_bl.h>
 #include <linux/rcupdate.h>
 
+#ifdef LIST_BL_USE_SPINLOCKS
+static inline void hlist_bl_set_first_rcu(struct hlist_bl_head *h,
+					struct hlist_bl_node *n)
+{
+	rcu_assign_pointer(h->first, n);
+}
+
+static inline struct hlist_bl_node *hlist_bl_first_rcu(struct hlist_bl_head *h)
+{
+	return rcu_dereference_check(h->first, hlist_bl_is_locked(h));
+}
+#else /* !LIST_BL_USE_SPINLOCKS */
 static inline void hlist_bl_set_first_rcu(struct hlist_bl_head *h,
 					struct hlist_bl_node *n)
 {
@@ -23,6 +35,7 @@ static inline struct hlist_bl_node *hlist_bl_first_rcu(struct hlist_bl_head *h)
 	return (struct hlist_bl_node *)
 		((unsigned long)rcu_dereference_check(h->first, hlist_bl_is_locked(h)) & ~LIST_BL_LOCKMASK);
 }
+#endif /* LIST_BL_USE_SPINLOCKS */
 
 /**
  * hlist_bl_del_rcu - deletes entry from hash list without re-initialization

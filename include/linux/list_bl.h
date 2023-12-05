@@ -4,14 +4,27 @@
 
 #include <linux/list.h>
 #include <linux/bit_spinlock.h>
+#include <linux/spinlock.h>
 
 /*
  * Special version of lists, where head of the list has a lock in the lowest
  * bit. This is useful for scalable hash tables without increasing memory
  * footprint overhead.
  *
- * For modification operations, the 0 bit of hlist_bl_head->first
- * pointer must be set.
+ * Whilst the general use of bit spin locking is considered safe, PREEMPT_RT
+ * introduces a problem with nesting spin locks inside bit locks: spin locks
+ * become sleeping locks, and we can't sleep inside spinning locks such as bit
+ * locks. However, for RTPREEMPT, performance is less of an issue than
+ * correctness, so we trade off the memory and cache footprint of a spinlock per
+ * list so the list locks are converted to sleeping locks and work correctly
+ * with PREEMPT_RT kernels.
+ *
+ * An added advantage of this is that we can use the same trick when lockdep is
+ * enabled (again, performance doesn't matter) and gain lockdep coverage of all
+ * the hash-bl operations.
+ *
+ * For modification operations when using pure bit locking, the 0 bit of
+ * hlist_bl_head->first pointer must be set.
  *
  * With some small modifications, this can easily be adapted to store several
  * arbitrary bits (not just a single lock bit), if the need arises to store
@@ -30,16 +43,21 @@
 #define LIST_BL_BUG_ON(x)
 #endif
 
+#undef LIST_BL_USE_SPINLOCKS
+#if defined(CONFIG_PREEMPT_RT) || defined(CONFIG_LOCKDEP)
+#define LIST_BL_USE_SPINLOCKS	1
+#endif
 
 struct hlist_bl_head {
 	struct hlist_bl_node *first;
+#ifdef LIST_BL_USE_SPINLOCKS
+	spinlock_t lock;
+#endif
 };
 
 struct hlist_bl_node {
 	struct hlist_bl_node *next, **pprev;
 };
-#define INIT_HLIST_BL_HEAD(ptr) \
-	((ptr)->first = NULL)
 
 static inline void INIT_HLIST_BL_NODE(struct hlist_bl_node *h)
 {
@@ -52,6 +70,69 @@ static inline void INIT_HLIST_BL_NODE(struct hlist_bl_node *h)
 static inline bool  hlist_bl_unhashed(const struct hlist_bl_node *h)
 {
 	return !h->pprev;
+}
+
+#ifdef LIST_BL_USE_SPINLOCKS
+#define INIT_HLIST_BL_HEAD(ptr) do { \
+	(ptr)->first = NULL; \
+	spin_lock_init(&(ptr)->lock); \
+} while (0)
+
+static inline void hlist_bl_lock(struct hlist_bl_head *b)
+{
+	spin_lock(&b->lock);
+}
+
+static inline void hlist_bl_unlock(struct hlist_bl_head *b)
+{
+	spin_unlock(&b->lock);
+}
+
+static inline bool hlist_bl_is_locked(struct hlist_bl_head *b)
+{
+	return spin_is_locked(&b->lock);
+}
+
+static inline struct hlist_bl_node *hlist_bl_first(struct hlist_bl_head *h)
+{
+	return h->first;
+}
+
+static inline void hlist_bl_set_first(struct hlist_bl_head *h,
+					struct hlist_bl_node *n)
+{
+	h->first = n;
+}
+
+static inline void hlist_bl_set_before(struct hlist_bl_node **pprev,
+					struct hlist_bl_node *n)
+{
+	WRITE_ONCE(*pprev, n);
+}
+
+static inline bool hlist_bl_empty(const struct hlist_bl_head *h)
+{
+	return !READ_ONCE(h->first);
+}
+
+#else /* !LIST_BL_USE_SPINLOCKS */
+
+#define INIT_HLIST_BL_HEAD(ptr) \
+	((ptr)->first = NULL)
+
+static inline void hlist_bl_lock(struct hlist_bl_head *b)
+{
+	bit_spin_lock(0, (unsigned long *)b);
+}
+
+static inline void hlist_bl_unlock(struct hlist_bl_head *b)
+{
+	__bit_spin_unlock(0, (unsigned long *)b);
+}
+
+static inline bool hlist_bl_is_locked(struct hlist_bl_head *b)
+{
+	return bit_spin_is_locked(0, (unsigned long *)b);
 }
 
 static inline struct hlist_bl_node *hlist_bl_first(struct hlist_bl_head *h)
@@ -69,10 +150,20 @@ static inline void hlist_bl_set_first(struct hlist_bl_head *h,
 	h->first = (struct hlist_bl_node *)((unsigned long)n | LIST_BL_LOCKMASK);
 }
 
+static inline void hlist_bl_set_before(struct hlist_bl_node **pprev,
+					struct hlist_bl_node *n)
+{
+	WRITE_ONCE(*pprev,
+		   (struct hlist_bl_node *)
+			((uintptr_t)n | ((uintptr_t)*pprev & LIST_BL_LOCKMASK)));
+}
+
 static inline bool hlist_bl_empty(const struct hlist_bl_head *h)
 {
 	return !((unsigned long)READ_ONCE(h->first) & ~LIST_BL_LOCKMASK);
 }
+
+#endif /* LIST_BL_USE_SPINLOCKS */
 
 static inline void hlist_bl_add_head(struct hlist_bl_node *n,
 					struct hlist_bl_head *h)
@@ -94,11 +185,7 @@ static inline void hlist_bl_add_before(struct hlist_bl_node *n,
 	n->pprev = pprev;
 	n->next = next;
 	next->pprev = &n->next;
-
-	/* pprev may be `first`, so be careful not to lose the lock bit */
-	WRITE_ONCE(*pprev,
-		   (struct hlist_bl_node *)
-			((uintptr_t)n | ((uintptr_t)*pprev & LIST_BL_LOCKMASK)));
+	hlist_bl_set_before(pprev, n);
 }
 
 static inline void hlist_bl_add_behind(struct hlist_bl_node *n,
@@ -119,11 +206,7 @@ static inline void __hlist_bl_del(struct hlist_bl_node *n)
 
 	LIST_BL_BUG_ON((unsigned long)n & LIST_BL_LOCKMASK);
 
-	/* pprev may be `first`, so be careful not to lose the lock bit */
-	WRITE_ONCE(*pprev,
-		   (struct hlist_bl_node *)
-			((unsigned long)next |
-			 ((unsigned long)*pprev & LIST_BL_LOCKMASK)));
+	hlist_bl_set_before(pprev, next);
 	if (next)
 		next->pprev = pprev;
 }
@@ -163,21 +246,6 @@ static inline void hlist_bl_add_fake(struct hlist_bl_node *n)
 static inline bool hlist_bl_fake(struct hlist_bl_node *n)
 {
 	return n->pprev == &n->next;
-}
-
-static inline void hlist_bl_lock(struct hlist_bl_head *b)
-{
-	bit_spin_lock(0, (unsigned long *)b);
-}
-
-static inline void hlist_bl_unlock(struct hlist_bl_head *b)
-{
-	__bit_spin_unlock(0, (unsigned long *)b);
-}
-
-static inline bool hlist_bl_is_locked(struct hlist_bl_head *b)
-{
-	return bit_spin_is_locked(0, (unsigned long *)b);
 }
 
 /**
