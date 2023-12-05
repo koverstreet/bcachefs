@@ -83,6 +83,11 @@ static inline void hlist_bl_lock(struct hlist_bl_head *b)
 	spin_lock(&b->lock);
 }
 
+static inline void hlist_bl_lock_nested(struct hlist_bl_head *b, int subclass)
+{
+	spin_lock_nested(&b->lock, subclass);
+}
+
 static inline void hlist_bl_unlock(struct hlist_bl_head *b)
 {
 	spin_unlock(&b->lock);
@@ -123,6 +128,11 @@ static inline bool hlist_bl_empty(const struct hlist_bl_head *h)
 static inline void hlist_bl_lock(struct hlist_bl_head *b)
 {
 	bit_spin_lock(0, (unsigned long *)b);
+}
+
+static inline void hlist_bl_lock_nested(struct hlist_bl_head *b, int subclass)
+{
+	hlist_bl_lock(b);
 }
 
 static inline void hlist_bl_unlock(struct hlist_bl_head *b)
