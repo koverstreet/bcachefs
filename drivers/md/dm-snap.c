@@ -645,7 +645,7 @@ static void dm_exception_table_lock_init(struct dm_snapshot *s, chunk_t chunk,
 static void dm_exception_table_lock(struct dm_exception_table_lock *lock)
 {
 	hlist_bl_lock(lock->complete_slot);
-	hlist_bl_lock(lock->pending_slot);
+	hlist_bl_lock_nested(lock->pending_slot, SINGLE_DEPTH_NESTING);
 }
 
 static void dm_exception_table_unlock(struct dm_exception_table_lock *lock)
