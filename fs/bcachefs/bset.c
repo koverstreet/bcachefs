@@ -52,13 +52,13 @@ struct bset_tree *bch2_bkey_to_bset(struct btree *b, struct bkey_packed *k)
  * by the time we actually do the insert will all be deleted.
  */
 
-void bch2_dump_bset(struct bch_fs *c, struct btree *b,
-		    struct bset *i, unsigned set)
+void bch2_bset_to_text(struct printbuf *out,
+		       struct bch_fs *c, struct btree *b,
+		       struct bset *i, unsigned set)
 {
 	struct bkey_packed *_k, *_n;
 	struct bkey uk, n;
 	struct bkey_s_c k;
-	struct printbuf buf = PRINTBUF;
 
 	if (!i->u64s)
 		return;
@@ -68,15 +68,16 @@ void bch2_dump_bset(struct bch_fs *c, struct btree *b,
 	     _k = _n) {
 		_n = bkey_p_next(_k);
 
+		prt_printf(out, "block %u key %5zu: \n", set,
+			   _k->_data - i->_data);
+
 		k = bkey_disassemble(b, _k, &uk);
 
-		printbuf_reset(&buf);
 		if (c)
-			bch2_bkey_val_to_text(&buf, c, k);
+			bch2_bkey_val_to_text(out, c, k);
 		else
-			bch2_bkey_to_text(&buf, k.k);
-		printk(KERN_ERR "block %u key %5zu: %s\n", set,
-		       _k->_data - i->_data, buf.buf);
+			bch2_bkey_to_text(out, k.k);
+		prt_newline(out);
 
 		if (_n == vstruct_last(i))
 			continue;
@@ -84,14 +85,22 @@ void bch2_dump_bset(struct bch_fs *c, struct btree *b,
 		n = bkey_unpack_key(b, _n);
 
 		if (bpos_lt(n.p, k.k->p)) {
-			printk(KERN_ERR "Key skipped backwards\n");
+			prt_printf(out, "Key skipped backwards\n");
 			continue;
 		}
 
 		if (!bkey_deleted(k.k) && bpos_eq(n.p, k.k->p))
-			printk(KERN_ERR "Duplicate keys\n");
+			prt_printf(out, "Duplicate keys\n");
 	}
+}
 
+void bch2_dump_bset(struct bch_fs *c, struct btree *b,
+		    struct bset *i, unsigned set)
+{
+	struct printbuf buf = PRINTBUF;
+
+	bch2_bset_to_text(&buf, c, b, i, set);
+	bch2_print_string_as_lines(KERN_ERR, buf.buf);
 	printbuf_exit(&buf);
 }
 

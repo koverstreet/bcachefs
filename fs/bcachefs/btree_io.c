@@ -2007,6 +2007,27 @@ do_write:
 	/* buffer must be a multiple of the block size */
 	bytes = round_up(bytes, block_bytes(c));
 
+	if (bytes > btree_bytes(c)) {
+		struct printbuf buf = PRINTBUF;
+
+		prt_printf(&buf, "bytes to write %u greater than btree bytes %zu\n",
+			   bytes, btree_bytes(c));
+		prt_printf(&buf, "whiteout_u64s %u\n", b->whiteout_u64s);
+
+		for_each_bset(b, t) {
+			i = bset(b, t);
+
+			if (!bset_written(b, i))
+				bch2_bset_to_text(&buf, c, b, i, t - b->set);
+		}
+
+		bch2_print_string_as_lines(KERN_ERR, buf.buf);
+		printbuf_exit(&buf);
+		bch2_fatal_error(c);
+		sectors_to_write = 1;
+		goto err;
+	}
+
 	data = btree_bounce_alloc(c, bytes, &used_mempool);
 
 	if (!b->written) {
