@@ -340,26 +340,11 @@ static struct inode_security_struct *backing_inode_security(struct dentry *dentr
 static void inode_free_security(struct inode *inode)
 {
 	struct inode_security_struct *isec = selinux_inode(inode);
-	struct superblock_security_struct *sbsec;
 
 	if (!isec)
 		return;
-	sbsec = selinux_superblock(inode->i_sb);
-	/*
-	 * As not all inode security structures are in a list, we check for
-	 * empty list outside of the lock to make sure that we won't waste
-	 * time taking a lock doing nothing.
-	 *
-	 * The list_del_init() function can be safely called more than once.
-	 * It should not be possible for this function to be called with
-	 * concurrent list_add(), but for better safety against future changes
-	 * in the code, we use list_empty_careful() here.
-	 */
-	if (!list_empty_careful(&isec->list)) {
-		spin_lock(&sbsec->isec_lock);
-		list_del_init(&isec->list);
-		spin_unlock(&sbsec->isec_lock);
-	}
+	if (!list_empty(&isec->list.list))
+		dlock_lists_del(&isec->list);
 }
 
 struct selinux_mnt_opts {
@@ -547,6 +532,8 @@ static int sb_finish_set_opts(struct super_block *sb)
 	struct superblock_security_struct *sbsec = selinux_superblock(sb);
 	struct dentry *root = sb->s_root;
 	struct inode *root_inode = d_backing_inode(root);
+	struct dlock_list_iter iter;
+	struct inode_security_struct *isec, *n;
 	int rc = 0;
 
 	if (sbsec->behavior == SECURITY_FS_USE_XATTR) {
@@ -570,27 +557,28 @@ static int sb_finish_set_opts(struct super_block *sb)
 	/* Initialize the root inode. */
 	rc = inode_doinit_with_dentry(root_inode, root);
 
-	/* Initialize any other inodes associated with the superblock, e.g.
-	   inodes created prior to initial policy load or inodes created
-	   during get_sb by a pseudo filesystem that directly
-	   populates itself. */
-	spin_lock(&sbsec->isec_lock);
-	while (!list_empty(&sbsec->isec_head)) {
-		struct inode_security_struct *isec =
-				list_first_entry(&sbsec->isec_head,
-					   struct inode_security_struct, list);
+	/*
+	 * Initialize any other inodes associated with the superblock, e.g.
+	 * inodes created prior to initial policy load or inodes created during
+	 * get_sb by a pseudo filesystem that directly populates itself.
+	 */
+	init_dlock_list_iter(&iter, &sbsec->isec_head);
+	dlist_for_each_entry_safe(isec, n, &iter, list) {
 		struct inode *inode = isec->inode;
-		list_del_init(&isec->list);
-		spin_unlock(&sbsec->isec_lock);
+
+		dlock_list_del_iter(&iter, &isec->list);
+		dlock_list_unlock(&iter);
+
 		inode = igrab(inode);
 		if (inode) {
 			if (!IS_PRIVATE(inode))
 				inode_doinit_with_dentry(inode, NULL);
 			iput(inode);
 		}
-		spin_lock(&sbsec->isec_lock);
+
+		dlock_list_relock(&iter);
 	}
-	spin_unlock(&sbsec->isec_lock);
+	WARN_ON_ONCE(!dlock_lists_empty(&sbsec->isec_head));
 	return rc;
 }
 
@@ -1428,10 +1416,8 @@ static int inode_doinit_with_dentry(struct inode *inode, struct dentry *opt_dent
 		/* Defer initialization until selinux_complete_init,
 		   after the initial policy is loaded and the security
 		   server is ready to handle calls. */
-		spin_lock(&sbsec->isec_lock);
-		if (list_empty(&isec->list))
-			list_add(&isec->list, &sbsec->isec_head);
-		spin_unlock(&sbsec->isec_lock);
+		if (list_empty(&isec->list.list))
+			dlock_lists_add(&isec->list, &sbsec->isec_head);
 		goto out_unlock;
 	}
 
@@ -2546,14 +2532,24 @@ static int selinux_sb_alloc_security(struct super_block *sb)
 {
 	struct superblock_security_struct *sbsec = selinux_superblock(sb);
 
+	if (alloc_dlock_list_heads(&sbsec->isec_head))
+		return -ENOMEM;
+
 	mutex_init(&sbsec->lock);
-	INIT_LIST_HEAD(&sbsec->isec_head);
-	spin_lock_init(&sbsec->isec_lock);
 	sbsec->sid = SECINITSID_UNLABELED;
 	sbsec->def_sid = SECINITSID_FILE;
 	sbsec->mntpoint_sid = SECINITSID_UNLABELED;
 
 	return 0;
+}
+
+static void selinux_sb_free_security(struct super_block *sb)
+{
+	struct superblock_security_struct *sbsec = selinux_superblock(sb);
+
+	if (!sbsec)
+		return;
+	free_dlock_list_heads(&sbsec->isec_head);
 }
 
 static inline int opt_len(const char *s)
@@ -2839,7 +2835,7 @@ static int selinux_inode_alloc_security(struct inode *inode)
 	u32 sid = current_sid();
 
 	spin_lock_init(&isec->lock);
-	INIT_LIST_HEAD(&isec->list);
+	init_dlock_list_node(&isec->list);
 	isec->inode = inode;
 	isec->sid = SECINITSID_UNLABELED;
 	isec->sclass = SECCLASS_FILE;
@@ -2917,6 +2913,7 @@ static int selinux_inode_init_security(struct inode *inode, struct inode *dir,
 		&newsid);
 	if (rc)
 		return rc;
+
 
 	/* Possibly defer initialization to selinux_complete_init. */
 	if (sbsec->flags & SE_SBINITIALIZED) {
@@ -7209,6 +7206,7 @@ static struct security_hook_list selinux_hooks[] __ro_after_init = {
 		      selinux_msg_queue_alloc_security),
 	LSM_HOOK_INIT(shm_alloc_security, selinux_shm_alloc_security),
 	LSM_HOOK_INIT(sb_alloc_security, selinux_sb_alloc_security),
+	LSM_HOOK_INIT(sb_free_security, selinux_sb_free_security),
 	LSM_HOOK_INIT(inode_alloc_security, selinux_inode_alloc_security),
 	LSM_HOOK_INIT(sem_alloc_security, selinux_sem_alloc_security),
 	LSM_HOOK_INIT(secid_to_secctx, selinux_secid_to_secctx),

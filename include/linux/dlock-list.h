@@ -132,6 +132,15 @@ extern void dlock_lists_add(struct dlock_list_node *node,
 			    struct dlock_list_heads *dlist);
 extern void dlock_lists_del(struct dlock_list_node *node);
 
+static inline void
+dlock_list_del_iter(struct dlock_list_iter *iter,
+		struct dlock_list_node *node)
+{
+	WARN_ON_ONCE((iter->entry != READ_ONCE(node->head)));
+	list_del_init(&node->list);
+	WRITE_ONCE(node->head, NULL);
+}
+
 /*
  * Find the first entry of the next available list.
  */

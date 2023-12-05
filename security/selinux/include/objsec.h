@@ -24,6 +24,7 @@
 #include <linux/spinlock.h>
 #include <linux/lsm_hooks.h>
 #include <linux/msg.h>
+#include <linux/dlock-list.h>
 #include <net/net_namespace.h>
 #include "flask.h"
 #include "avc.h"
@@ -45,7 +46,7 @@ enum label_initialized {
 
 struct inode_security_struct {
 	struct inode *inode;	/* back pointer to inode object */
-	struct list_head list;	/* list of inode_security_struct */
+	struct dlock_list_node list;	/* list of inode_security_struct */
 	u32 task_sid;		/* SID of creating task */
 	u32 sid;		/* SID of this object */
 	u16 sclass;		/* security class of this object */
@@ -67,8 +68,7 @@ struct superblock_security_struct {
 	unsigned short behavior;	/* labeling behavior */
 	unsigned short flags;		/* which mount options were specified */
 	struct mutex lock;
-	struct list_head isec_head;
-	spinlock_t isec_lock;
+	struct dlock_list_heads isec_head;
 };
 
 struct msg_security_struct {
