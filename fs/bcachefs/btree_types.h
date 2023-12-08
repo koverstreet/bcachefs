@@ -222,6 +222,8 @@ enum btree_path_uptodate {
 #define TRACK_PATH_ALLOCATED
 #endif
 
+typedef u16 btree_path_idx_t;
+
 struct btree_path {
 	u8			idx;
 	u8			sorted_idx;
@@ -716,3 +718,5 @@ enum btree_node_sibling {
 };
 
 #endif /* _BCACHEFS_BTREE_TYPES_H */
+
+
