@@ -682,6 +682,7 @@ static int bch2_run_recovery_passes(struct bch_fs *c)
 			c->recovery_passes_complete |= BIT_ULL(c->curr_recovery_pass);
 		}
 		c->curr_recovery_pass++;
+		c->recovery_pass_done = max(c->recovery_pass_done, c->curr_recovery_pass);
 	}
 
 	return ret;
