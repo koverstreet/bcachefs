@@ -39,7 +39,7 @@
 	x(check_dirents,			PASS_FSCK)			\
 	x(check_xattrs,				PASS_FSCK)			\
 	x(check_root,				PASS_ONLINE|PASS_FSCK)		\
-	x(check_directory_structure,		PASS_FSCK)			\
+	x(check_directory_structure,		PASS_ONLINE|PASS_FSCK)		\
 	x(check_nlinks,				PASS_FSCK)			\
 	x(delete_dead_inodes,			PASS_FSCK|PASS_UNCLEAN)		\
 	x(fix_reflink_p,			0)				\
