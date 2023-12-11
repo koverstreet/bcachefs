@@ -240,8 +240,9 @@ static void bch2_btree_path_verify(struct btree_trans *trans,
 void bch2_trans_verify_paths(struct btree_trans *trans)
 {
 	struct btree_path *path;
+	unsigned iter;
 
-	trans_for_each_path(trans, path)
+	trans_for_each_path(trans, path, iter)
 		bch2_btree_path_verify(trans, path);
 }
 
@@ -962,7 +963,8 @@ static int bch2_btree_path_traverse_all(struct btree_trans *trans)
 	struct bch_fs *c = trans->c;
 	struct btree_path *path;
 	unsigned long trace_ip = _RET_IP_;
-	int i, ret = 0;
+	unsigned i;
+	int ret = 0;
 
 	if (trans->in_traverse_all)
 		return -BCH_ERR_transaction_restart_in_traverse_all;
@@ -972,7 +974,7 @@ retry_all:
 	trans->restarted = 0;
 	trans->last_restarted_ip = 0;
 
-	trans_for_each_path(trans, path)
+	trans_for_each_path(trans, path, i)
 		path->should_be_locked = false;
 
 	btree_trans_sort_paths(trans);
@@ -2520,9 +2522,9 @@ static void btree_trans_verify_sorted_refs(struct btree_trans *trans)
 
 	BUG_ON(trans->nr_sorted != bitmap_weight(trans->paths_allocated, BTREE_ITER_MAX) - 1);
 
-	trans_for_each_path(trans, path) {
+	trans_for_each_path(trans, path, i) {
 		BUG_ON(path->sorted_idx >= trans->nr_sorted);
-		BUG_ON(trans->sorted[path->sorted_idx] != path->idx);
+		BUG_ON(trans->sorted[path->sorted_idx] != i);
 	}
 
 	for (i = 0; i < trans->nr_sorted; i++) {
@@ -2764,8 +2766,9 @@ void bch2_trans_srcu_unlock(struct btree_trans *trans)
 	if (trans->srcu_held) {
 		struct bch_fs *c = trans->c;
 		struct btree_path *path;
+		unsigned i;
 
-		trans_for_each_path(trans, path)
+		trans_for_each_path(trans, path, i)
 			if (path->cached && !btree_node_locked(path, 0))
 				path->l[0].b = ERR_PTR(-BCH_ERR_no_btree_node_srcu_reset);
 
@@ -2797,6 +2800,7 @@ void bch2_trans_srcu_lock(struct btree_trans *trans)
 u32 bch2_trans_begin(struct btree_trans *trans)
 {
 	struct btree_path *path;
+	unsigned i;
 	u64 now;
 
 	bch2_trans_reset_updates(trans);
@@ -2805,7 +2809,7 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 	trans->mem_top			= 0;
 	trans->journal_entries		= NULL;
 
-	trans_for_each_path(trans, path) {
+	trans_for_each_path(trans, path, i) {
 		path->should_be_locked = false;
 
 		/*
@@ -2822,7 +2826,7 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 		 * iterators if we do that
 		 */
 		if (!path->ref && !path->preserve)
-			__bch2_path_free(trans, path->idx);
+			__bch2_path_free(trans, i);
 		else
 			path->preserve = false;
 	}
@@ -2962,14 +2966,15 @@ static void check_btree_paths_leaked(struct btree_trans *trans)
 #ifdef CONFIG_BCACHEFS_DEBUG
 	struct bch_fs *c = trans->c;
 	struct btree_path *path;
+	unsigned i;
 
-	trans_for_each_path(trans, path)
+	trans_for_each_path(trans, path, i)
 		if (path->ref)
 			goto leaked;
 	return;
 leaked:
 	bch_err(c, "btree paths leaked from %s!", trans->fn);
-	trans_for_each_path(trans, path)
+	trans_for_each_path(trans, path, i)
 		if (path->ref)
 			printk(KERN_ERR "  btree %s %pS\n",
 			       bch2_btree_id_str(path->btree_id),
