@@ -2015,6 +2015,29 @@ do_write:
 	/* buffer must be a multiple of the block size */
 	bytes = round_up(bytes, block_bytes(c));
 
+	if (bytes > btree_bytes(c)) {
+		struct printbuf buf = PRINTBUF;
+
+		prt_printf(&buf, "btree node write bounce buffer overrun: %u > %zu\n",
+			   bytes, btree_bytes(c));
+
+		prt_printf(&buf, "header: %zu\n", b->written
+			   ? sizeof(struct btree_node)
+			   : sizeof(struct btree_node_entry));
+		prt_printf(&buf, "unwritten: %zu\n", b->whiteout_u64s * sizeof(u64));
+
+		for_each_bset(b, t) {
+			i = bset(b, t);
+
+			if (bset_written(b, i))
+				continue;
+			prt_printf(&buf, "bset %zu: %zu\n", t - b->set, le16_to_cpu(i->u64s) * sizeof(u64));
+		}
+
+		panic("%s", buf.buf);
+		printbuf_exit(&buf);
+	}
+
 	data = btree_bounce_alloc(c, bytes, &used_mempool);
 
 	if (!b->written) {
