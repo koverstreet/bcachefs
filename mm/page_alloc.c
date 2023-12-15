@@ -4526,6 +4526,8 @@ failed:
 }
 EXPORT_SYMBOL_GPL(__alloc_pages_bulk);
 
+extern struct lock_class_key bch2_btree_node_lock_key;
+
 /*
  * This is the 'heart' of the zoned buddy allocator.
  */
@@ -4536,6 +4538,8 @@ struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
 	unsigned int alloc_flags = ALLOC_WMARK_LOW;
 	gfp_t alloc_gfp; /* The gfp_t that was actually used for allocation */
 	struct alloc_context ac = { };
+
+	WARN_ON((gfp & GFP_KERNEL) && lock_class_is_held(&bch2_btree_node_lock_key));
 
 	/*
 	 * There are several places where we assume that the order value is sane

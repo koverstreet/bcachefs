@@ -4,7 +4,7 @@
 #include "btree_locking.h"
 #include "btree_types.h"
 
-static struct lock_class_key bch2_btree_node_lock_key;
+struct lock_class_key bch2_btree_node_lock_key;
 
 void bch2_btree_lock_init(struct btree_bkey_cached_common *b,
 			  enum six_lock_init_flags flags)

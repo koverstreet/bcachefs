@@ -3440,6 +3440,8 @@ static __always_inline void maybe_wipe_obj_freeptr(struct kmem_cache *s,
 			0, sizeof(void *));
 }
 
+extern struct lock_class_key bch2_btree_node_lock_key;
+
 /*
  * Inlined fastpath so that allocation functions (kmalloc, kmem_cache_alloc)
  * have the fastpath folded into their functions. So no function call
@@ -3456,6 +3458,8 @@ static __fastpath_inline void *slab_alloc_node(struct kmem_cache *s, struct list
 	void *object;
 	struct obj_cgroup *objcg = NULL;
 	bool init = false;
+
+	WARN_ON((gfpflags & GFP_KERNEL) && lock_class_is_held(&bch2_btree_node_lock_key));
 
 	s = slab_pre_alloc_hook(s, lru, &objcg, 1, gfpflags);
 	if (!s)
