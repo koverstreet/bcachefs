@@ -252,8 +252,7 @@ static int snapshot_tree_ptr_repair(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	u32 root_id = bch2_snapshot_root(c, k.k->p.offset);
 
-	CLASS(btree_iter, root_iter)(trans, BTREE_ID_snapshots, POS(0, root_id),
-				     BTREE_ITER_with_updates);
+	CLASS(btree_iter, root_iter)(trans, BTREE_ID_snapshots, POS(0, root_id), 0);
 	struct bkey_s_c_snapshot root = bkey_try(bch2_bkey_get_typed(&root_iter, snapshot));
 
 	u32 tree_id = le32_to_cpu(root.v->tree);

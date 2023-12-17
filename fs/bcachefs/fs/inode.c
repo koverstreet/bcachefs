@@ -659,18 +659,17 @@ static inline bool bkey_is_unlinked_inode(struct bkey_s_c k)
 
 static struct bkey_s_c
 bch2_bkey_get_iter_snapshot_parent(struct btree_trans *trans, struct btree_iter *iter,
-				   enum btree_id btree, struct bpos pos,
-				   unsigned flags)
+				   enum btree_id btree, struct bpos pos)
 {
 	struct bch_fs *c = trans->c;
 	struct bkey_s_c k;
 	int ret = 0;
 
 	bch2_trans_iter_init(trans, iter, btree, bpos_successor(pos),
-			     flags|BTREE_ITER_all_snapshots);
+			     BTREE_ITER_all_snapshots);
 
 	for_each_btree_key_max_continue_norestart(*iter, SPOS(pos.inode, pos.offset, U32_MAX),
-						  flags|BTREE_ITER_all_snapshots, k, ret)
+						  BTREE_ITER_all_snapshots, k, ret)
 		if (bch2_snapshot_is_ancestor(c, pos.snapshot, k.k->p.snapshot))
 			return k;
 
@@ -679,11 +678,11 @@ bch2_bkey_get_iter_snapshot_parent(struct btree_trans *trans, struct btree_iter 
 
 static struct bkey_s_c
 bch2_inode_get_iter_snapshot_parent(struct btree_trans *trans, struct btree_iter *iter,
-				    struct bpos pos, unsigned flags)
+				    struct bpos pos)
 {
 	while (1) {
 		struct bkey_s_c k =
-			bch2_bkey_get_iter_snapshot_parent(trans, iter, BTREE_ID_inodes, pos, flags);
+			bch2_bkey_get_iter_snapshot_parent(trans, iter, BTREE_ID_inodes, pos);
 		if (!k.k ||
 		    bkey_err(k) ||
 		    bkey_is_inode(k.k))
@@ -701,8 +700,7 @@ int __bch2_inode_has_child_snapshots(struct btree_trans *trans, struct bpos pos)
 
 	for_each_btree_key_max_norestart(trans, iter,
 			BTREE_ID_inodes, POS(0, pos.offset), bpos_predecessor(pos),
-			BTREE_ITER_all_snapshots|
-			BTREE_ITER_with_updates, k, ret)
+			BTREE_ITER_all_snapshots, k, ret)
 		if (bch2_snapshot_is_ancestor(c, k.k->p.snapshot, pos.snapshot) &&
 		    bkey_is_inode(k.k)) {
 			ret = 1;
@@ -732,8 +730,7 @@ static int update_parent_inode_has_children(struct btree_trans *trans, struct bp
 					    bool have_child)
 {
 	CLASS(btree_iter_uninit, iter)(trans);
-	struct bkey_s_c k = bkey_try(bch2_inode_get_iter_snapshot_parent(trans,
-						&iter, pos, BTREE_ITER_with_updates));
+	struct bkey_s_c k = bkey_try(bch2_inode_get_iter_snapshot_parent(trans, &iter, pos));
 	if (!k.k)
 		return 0;
 
@@ -1207,7 +1204,7 @@ static int delete_ancestor_snapshot_inodes(struct btree_trans *trans, struct bpo
 		struct bkey_s_c k;
 
 		try(lockrestart_do(trans,
-			bkey_err(k = bch2_inode_get_iter_snapshot_parent(trans, &iter, pos, 0))));
+			bkey_err(k = bch2_inode_get_iter_snapshot_parent(trans, &iter, pos))));
 
 		if (!k.k || !bkey_is_unlinked_inode(k))
 			return 0;

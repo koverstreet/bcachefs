@@ -56,7 +56,7 @@ int bch2_snapshot_tree_lookup(struct btree_trans *trans, u32 id,
 			      struct bch_snapshot_tree *s)
 {
 	int ret = bch2_bkey_get_val_typed(trans, BTREE_ID_snapshot_trees, POS(0, id),
-					  BTREE_ITER_with_updates, snapshot_tree, s);
+					  0, snapshot_tree, s);
 
 	if (bch2_err_matches(ret, ENOENT))
 		ret = bch_err_throw(trans->c, ENOENT_snapshot_tree);
@@ -371,8 +371,7 @@ u32 bch2_snapshot_tree_next(struct snapshot_table *t, u32 id)
 int bch2_snapshot_lookup(struct btree_trans *trans, u32 id,
 			 struct bch_snapshot *s)
 {
-	return bch2_bkey_get_val_typed(trans, BTREE_ID_snapshots, POS(0, id),
-				       BTREE_ITER_with_updates, snapshot, s);
+	return bch2_bkey_get_val_typed(trans, BTREE_ID_snapshots, POS(0, id), 0, snapshot, s);
 }
 
 static int snapshot_list_add_merge_sibs(struct bch_fs *c, snapshot_id_list *s, u32 id)

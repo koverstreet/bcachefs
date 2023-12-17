@@ -50,7 +50,7 @@ int bch2_create_trans(struct btree_trans *trans,
 
 	try(bch2_subvolume_get_snapshot(trans, dir.subvol, &snapshot));
 
-	try(bch2_inode_peek(trans, &dir_iter, dir_u, dir, BTREE_ITER_intent|BTREE_ITER_with_updates));
+	try(bch2_inode_peek(trans, &dir_iter, dir_u, dir, BTREE_ITER_intent));
 
 	if (!(flags & BCH_CREATE_SNAPSHOT)) {
 		/* Normal create path - allocate a new inode: */
@@ -141,7 +141,7 @@ int bch2_create_trans(struct btree_trans *trans,
 					   name,
 					   dir_target,
 					   &dir_offset,
-					   STR_HASH_must_create|BTREE_ITER_with_updates));
+					   STR_HASH_must_create));
 		try(bch2_inode_write(trans, &dir_iter, dir_u));
 
 		new_inode->bi_dir		= dir_u->bi_inum;
@@ -793,8 +793,7 @@ static int bch2_propagate_has_case_insensitive(struct btree_trans *trans, subvol
 	while (true) {
 		CLASS(btree_iter_uninit, iter)(trans);
 		struct bch_inode_unpacked inode;
-		try(bch2_inode_peek(trans, &iter, &inode, inum,
-				      BTREE_ITER_intent|BTREE_ITER_with_updates));
+		try(bch2_inode_peek(trans, &iter, &inode, inum));
 
 		if (inode.bi_flags & BCH_INODE_has_case_insensitive)
 			break;

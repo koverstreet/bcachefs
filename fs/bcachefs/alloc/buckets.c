@@ -677,8 +677,7 @@ static int bch2_trigger_stripe_ptr(struct btree_trans *trans,
 	if (flags & BTREE_TRIGGER_transactional) {
 		struct bkey_i_stripe *s = bch2_bkey_get_mut_typed(trans,
 							BTREE_ID_stripes, POS(0, p.ec.idx),
-							BTREE_ITER_with_updates,
-							stripe);
+							0, stripe);
 		int ret = PTR_ERR_OR_ZERO(s);
 		if (unlikely(ret)) {
 			bch2_trans_inconsistent_on(bch2_err_matches(ret, ENOENT), trans,
