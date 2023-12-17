@@ -154,9 +154,7 @@ int bch2_bucket_backpointer_mod_nowritebuffer(struct btree_trans *trans,
 				struct bkey_i_backpointer *bp,
 				bool insert)
 {
-	CLASS(btree_iter, bp_iter)(trans, BTREE_ID_backpointers, bp->k.p,
-				   BTREE_ITER_intent|
-				   BTREE_ITER_with_updates);
+	CLASS(btree_iter, bp_iter)(trans, BTREE_ID_backpointers, bp->k.p, BTREE_ITER_intent);
 	struct bkey_s_c k = bch2_btree_iter_peek_slot(&bp_iter);
 	int ret = bkey_err(k);
 	if (ret)

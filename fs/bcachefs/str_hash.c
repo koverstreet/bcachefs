@@ -266,7 +266,6 @@ int bch2_str_hash_repair_key(struct btree_trans *trans,
 				       (subvol_inum) { 0, new->k.p.inode },
 				       new->k.p.snapshot, new,
 				       STR_HASH_must_create|
-				       BTREE_ITER_with_updates|
 				       BTREE_UPDATE_internal_snapshot_node);
 		ret = bkey_err(dup_k);
 		if (ret)
