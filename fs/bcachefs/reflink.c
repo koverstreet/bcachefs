@@ -303,9 +303,8 @@ static int trans_trigger_reflink_p_segment(struct btree_trans *trans,
 
 	s64 offset_into_extent = *idx - REFLINK_P_IDX(p.v);
 	CLASS(btree_iter_uninit, iter)();
-	struct bkey_s_c k = bch2_lookup_indirect_extent(trans, &iter, &offset_into_extent, p, false,
-							BTREE_ITER_intent|
-							BTREE_ITER_with_updates);
+	struct bkey_s_c k = bch2_lookup_indirect_extent(trans, &iter, &offset_into_extent, p,
+							false, BTREE_ITER_intent);
 	int ret = bkey_err(k);
 	if (ret)
 		return ret;

@@ -52,7 +52,7 @@ int bch2_snapshot_tree_lookup(struct btree_trans *trans, u32 id,
 			      struct bch_snapshot_tree *s)
 {
 	int ret = bch2_bkey_get_val_typed(trans, BTREE_ID_snapshot_trees, POS(0, id),
-					  BTREE_ITER_with_updates, snapshot_tree, s);
+					  0, snapshot_tree, s);
 
 	if (bch2_err_matches(ret, ENOENT))
 		ret = bch_err_throw(trans->c, ENOENT_snapshot_tree);
@@ -359,8 +359,7 @@ int bch2_mark_snapshot(struct btree_trans *trans,
 int bch2_snapshot_lookup(struct btree_trans *trans, u32 id,
 			 struct bch_snapshot *s)
 {
-	return bch2_bkey_get_val_typed(trans, BTREE_ID_snapshots, POS(0, id),
-				       BTREE_ITER_with_updates, snapshot, s);
+	return bch2_bkey_get_val_typed(trans, BTREE_ID_snapshots, POS(0, id), 0, snapshot, s);
 }
 
 /* fsck: */
@@ -625,8 +624,7 @@ static int snapshot_tree_ptr_repair(struct btree_trans *trans,
 	struct bkey_i_snapshot *u;
 	u32 root_id = bch2_snapshot_root(c, k.k->p.offset);
 
-	CLASS(btree_iter, root_iter)(trans, BTREE_ID_snapshots, POS(0, root_id),
-				     BTREE_ITER_with_updates);
+	CLASS(btree_iter, root_iter)(trans, BTREE_ID_snapshots, POS(0, root_id), 0);
 	struct bkey_s_c_snapshot root = bch2_bkey_get_typed(&root_iter, snapshot);
 	int ret = bkey_err(root);
 	if (ret)
