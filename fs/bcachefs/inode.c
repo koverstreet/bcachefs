@@ -655,8 +655,7 @@ int __bch2_inode_has_child_snapshots(struct btree_trans *trans, struct bpos pos)
 
 	for_each_btree_key_max_norestart(trans, iter,
 			BTREE_ID_inodes, POS(0, pos.offset), bpos_predecessor(pos),
-			BTREE_ITER_all_snapshots|
-			BTREE_ITER_with_updates, k, ret)
+			BTREE_ITER_all_snapshots, k, ret)
 		if (bch2_snapshot_is_ancestor(c, k.k->p.snapshot, pos.snapshot) &&
 		    bkey_is_inode(k.k)) {
 			ret = 1;
@@ -688,7 +687,7 @@ static int update_parent_inode_has_children(struct btree_trans *trans, struct bp
 {
 	struct btree_iter iter;
 	struct bkey_s_c k = bch2_inode_get_iter_snapshot_parent(trans,
-						&iter, pos, BTREE_ITER_with_updates);
+						&iter, pos, 0);
 	int ret = bkey_err(k);
 	if (ret)
 		return ret;

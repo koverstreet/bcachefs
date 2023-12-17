@@ -296,7 +296,6 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 
 	bch2_trans_iter_init(trans, &iter, btree_id, bkey_start_pos(&insert->k),
 			     BTREE_ITER_intent|
-			     BTREE_ITER_with_updates|
 			     BTREE_ITER_not_extents);
 	k = bch2_btree_iter_peek_max(trans, &iter, POS(insert->k.p.inode, U64_MAX));
 	if ((ret = bkey_err(k)))
