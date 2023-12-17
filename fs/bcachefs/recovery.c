@@ -343,14 +343,11 @@ static int journal_replay_entry_early(struct bch_fs *c,
 static int journal_replay_early(struct bch_fs *c,
 				struct bch_sb_field_clean *clean)
 {
-	struct jset_entry *entry;
-	int ret;
-
 	if (clean) {
-		for (entry = clean->start;
+		for (struct jset_entry *entry = clean->start;
 		     entry != vstruct_end(&clean->field);
 		     entry = vstruct_next(entry)) {
-			ret = journal_replay_entry_early(c, entry);
+			int ret = journal_replay_entry_early(c, entry);
 			if (ret)
 				return ret;
 		}
@@ -365,7 +362,7 @@ static int journal_replay_early(struct bch_fs *c,
 				continue;
 
 			vstruct_for_each(&i->j, entry) {
-				ret = journal_replay_entry_early(c, entry);
+				int ret = journal_replay_entry_early(c, entry);
 				if (ret)
 					return ret;
 			}
