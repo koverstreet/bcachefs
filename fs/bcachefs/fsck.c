@@ -329,8 +329,7 @@ static int maybe_delete_dirent(struct btree_trans *trans, struct bpos d_pos, u32
 	struct btree_iter iter;
 	struct bkey_s_c k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_dirents,
 					SPOS(d_pos.inode, d_pos.offset, snapshot),
-					BTREE_ITER_intent|
-					BTREE_ITER_with_updates);
+					BTREE_ITER_intent);
 	int ret = bkey_err(k);
 	if (ret)
 		return ret;
