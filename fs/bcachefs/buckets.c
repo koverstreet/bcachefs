@@ -889,8 +889,7 @@ static int bch2_trigger_stripe_ptr(struct btree_trans *trans,
 	if (flags & BTREE_TRIGGER_TRANSACTIONAL) {
 		struct btree_iter iter;
 		struct bkey_i_stripe *s = bch2_bkey_get_mut_typed(trans, &iter,
-				BTREE_ID_stripes, POS(0, p.ec.idx),
-				BTREE_ITER_WITH_UPDATES, stripe);
+				BTREE_ID_stripes, POS(0, p.ec.idx), 0, stripe);
 		int ret = PTR_ERR_OR_ZERO(s);
 		if (unlikely(ret)) {
 			bch2_trans_inconsistent_on(bch2_err_matches(ret, ENOENT), trans,

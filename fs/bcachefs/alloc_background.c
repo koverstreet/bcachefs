@@ -445,7 +445,6 @@ bch2_trans_start_alloc_update(struct btree_trans *trans, struct btree_iter *iter
 	int ret;
 
 	k = bch2_bkey_get_iter(trans, iter, BTREE_ID_alloc, pos,
-			     BTREE_ITER_WITH_UPDATES|
 			     BTREE_ITER_CACHED|
 			     BTREE_ITER_INTENT);
 	ret = bkey_err(k);
@@ -708,8 +707,7 @@ static noinline int bch2_bucket_gen_update(struct btree_trans *trans,
 		return ret;
 
 	k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_bucket_gens, pos,
-			       BTREE_ITER_INTENT|
-			       BTREE_ITER_WITH_UPDATES);
+			       BTREE_ITER_INTENT);
 	ret = bkey_err(k);
 	if (ret)
 		return ret;
