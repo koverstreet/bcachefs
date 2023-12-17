@@ -303,8 +303,7 @@ bch2_subvolume_get_inlined(struct btree_trans *trans, unsigned subvol,
 			   struct bch_subvolume *s)
 {
 	int ret = bch2_bkey_get_val_typed(trans, BTREE_ID_subvolumes, POS(0, subvol),
-					  BTREE_ITER_cached|
-					  BTREE_ITER_with_updates, subvolume, s);
+					  BTREE_ITER_cached, subvolume, s);
 	if (bch2_err_matches(ret, ENOENT) && inconsistent_if_not_found)
 		ret = bch2_subvolume_missing(trans->c, subvol) ?: ret;
 	return ret;
@@ -345,8 +344,7 @@ int bch2_snapshot_get_subvol(struct btree_trans *trans, u32 snapshot,
 int __bch2_subvolume_get_snapshot(struct btree_trans *trans, u32 subvolid,
 				  u32 *snapid, bool warn)
 {
-	CLASS(btree_iter, iter)(trans, BTREE_ID_subvolumes, POS(0, subvolid),
-				BTREE_ITER_cached|BTREE_ITER_with_updates);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_subvolumes, POS(0, subvolid), BTREE_ITER_cached);
 	struct bkey_s_c_subvolume subvol = bch2_bkey_get_typed(&iter, subvolume);
 	int ret = bkey_err(subvol);
 

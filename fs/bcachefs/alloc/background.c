@@ -470,7 +470,6 @@ bch2_trans_start_alloc_update_noupdate(struct btree_trans *trans, struct btree_i
 				       struct bpos pos)
 {
 	bch2_trans_iter_init(trans, iter, BTREE_ID_alloc, pos,
-			     BTREE_ITER_with_updates|
 			     BTREE_ITER_cached|
 			     BTREE_ITER_intent);
 	struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
@@ -486,7 +485,6 @@ struct bkey_i_alloc_v4 *bch2_trans_start_alloc_update(struct btree_trans *trans,
 						      enum btree_iter_update_trigger_flags flags)
 {
 	CLASS(btree_iter, iter)(trans, BTREE_ID_alloc, pos,
-				BTREE_ITER_with_updates|
 				BTREE_ITER_cached|
 				BTREE_ITER_intent);
 	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
@@ -700,8 +698,7 @@ static noinline int bch2_bucket_gen_update(struct btree_trans *trans,
 	unsigned offset;
 	struct bpos pos = alloc_gens_pos(bucket, &offset);
 
-	CLASS(btree_iter, iter)(trans, BTREE_ID_bucket_gens, pos,
-				BTREE_ITER_intent|BTREE_ITER_with_updates);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_bucket_gens, pos, BTREE_ITER_intent);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	if (k.k->type != KEY_TYPE_bucket_gens) {

@@ -295,9 +295,7 @@ static inline struct bch_backpointer rb_bp(enum btree_id btree, unsigned level, 
 static int reconcile_bp_del(struct btree_trans *trans, enum btree_id btree, unsigned level,
 			    struct bkey_s_c k, struct bpos bp_pos)
 {
-	CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan, bp_pos,
-				BTREE_ITER_intent|
-				BTREE_ITER_with_updates);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan, bp_pos, BTREE_ITER_intent);
 	struct bkey_s_c bp_k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	struct bch_backpointer bp = rb_bp(btree, level, k);
