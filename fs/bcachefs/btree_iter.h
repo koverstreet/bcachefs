@@ -729,6 +729,8 @@ transaction_restart:							\
 #define for_each_btree_key_upto(_trans, _iter, _btree_id,		\
 				_start, _end, _flags, _k, _do)		\
 ({									\
+	struct btree_iter _iter;					\
+	struct bkey_s_c _k;						\
 	int _ret3 = 0;							\
 									\
 	bch2_trans_iter_init((_trans), &(_iter), (_btree_id),		\
@@ -757,6 +759,8 @@ transaction_restart:							\
 #define for_each_btree_key_reverse(_trans, _iter, _btree_id,		\
 				   _start, _flags, _k, _do)		\
 ({									\
+	struct btree_iter _iter;					\
+	struct bkey_s_c _k;						\
 	int _ret3 = 0;							\
 									\
 	bch2_trans_iter_init((_trans), &(_iter), (_btree_id),		\
