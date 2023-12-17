@@ -223,7 +223,6 @@ struct btree_node_iter {
 	x(not_extents)				\
 	x(cached)				\
 	x(with_key_cache)			\
-	x(with_updates)				\
 	x(with_journal)				\
 	x(snapshot_field)			\
 	x(all_snapshots)			\
