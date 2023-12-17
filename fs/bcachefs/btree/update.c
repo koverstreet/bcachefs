@@ -243,7 +243,6 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 
 	CLASS(btree_iter, iter)(trans, btree_id, bkey_start_pos(&insert->k),
 				BTREE_ITER_intent|
-				BTREE_ITER_with_updates|
 				BTREE_ITER_not_extents|
 				BTREE_ITER_nofilter_whiteouts);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_max(&iter, POS(insert->k.p.inode, U64_MAX)));
@@ -574,7 +573,7 @@ void *__bch2_trans_subbuf_alloc(struct btree_trans *trans,
 int bch2_bkey_get_empty_slot(struct btree_trans *trans, struct btree_iter *iter,
 			     enum btree_id btree, struct bpos start, struct bpos end)
 {
-	bch2_trans_iter_init(trans, iter, btree, end, BTREE_ITER_intent|BTREE_ITER_with_updates);
+	bch2_trans_iter_init(trans, iter, btree, end, BTREE_ITER_intent);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_prev(iter));
 
 	if (bpos_lt(iter->pos, start))

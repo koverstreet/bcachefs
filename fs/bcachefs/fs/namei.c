@@ -52,7 +52,7 @@ int bch2_create_trans(struct btree_trans *trans,
 
 	try(bch2_subvolume_get_snapshot(trans, dir.subvol, &snapshot));
 
-	try(bch2_inode_peek(trans, &dir_iter, dir_u, dir, BTREE_ITER_intent|BTREE_ITER_with_updates));
+	try(bch2_inode_peek(trans, &dir_iter, dir_u, dir, BTREE_ITER_intent));
 
 	if (!(flags & BCH_CREATE_SNAPSHOT)) {
 		/* Normal create path - allocate a new inode: */
@@ -143,7 +143,7 @@ int bch2_create_trans(struct btree_trans *trans,
 					   name,
 					   dir_target,
 					   &dir_offset,
-					   STR_HASH_must_create|BTREE_ITER_with_updates));
+					   STR_HASH_must_create));
 		try(bch2_inode_write(trans, &dir_iter, dir_u));
 
 		new_inode->bi_dir		= dir_u->bi_inum;
@@ -553,8 +553,7 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 					BTREE_ID_inodes,
 					POS(0, inum),
 					SPOS(0, inum, U32_MAX),
-					BTREE_ITER_all_snapshots|
-					BTREE_ITER_with_updates, k, ret) {
+					BTREE_ITER_all_snapshots, k, ret) {
 				if (bkey_is_inode(k.k)) {
 					snapshot = k.k->p.snapshot;
 					break;
@@ -576,8 +575,7 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 		try(darray_push(&inums, n));
 
 		struct bch_inode_unpacked inode;
-		ret = bch2_inode_find_by_inum_snapshot(trans, inum, snapshot, &inode,
-						       BTREE_ITER_with_updates);
+		ret = bch2_inode_find_by_inum_snapshot(trans, inum, snapshot, &inode, 0);
 		if (ret)
 			break;
 
@@ -598,8 +596,7 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 		}
 
 		CLASS(btree_iter, d_iter)(trans, BTREE_ID_dirents,
-					  SPOS(inode.bi_dir, inode.bi_dir_offset, snapshot),
-					  BTREE_ITER_with_updates);
+					  SPOS(inode.bi_dir, inode.bi_dir_offset, snapshot), 0);
 		struct bkey_s_c_dirent d = bch2_bkey_get_typed(&d_iter, dirent);
 		ret = bkey_err(d.s_c);
 		if (ret)
@@ -812,8 +809,7 @@ static int bch2_propagate_has_case_insensitive(struct btree_trans *trans, subvol
 	while (true) {
 		CLASS(btree_iter_uninit, iter)(trans);
 		struct bch_inode_unpacked inode;
-		try(bch2_inode_peek(trans, &iter, &inode, inum,
-				      BTREE_ITER_intent|BTREE_ITER_with_updates));
+		try(bch2_inode_peek(trans, &iter, &inode, inum, 0));
 
 		if (inode.bi_flags & BCH_INODE_has_case_insensitive)
 			break;

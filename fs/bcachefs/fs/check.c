@@ -284,14 +284,15 @@ static int maybe_delete_dirent(struct btree_trans *trans, struct bpos d_pos, u32
 {
 	CLASS(btree_iter, iter)(trans, BTREE_ID_dirents,
 				SPOS(d_pos.inode, d_pos.offset, snapshot),
-				BTREE_ITER_intent|
-				BTREE_ITER_with_updates);
+				BTREE_ITER_intent);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	if (bpos_eq(k.k->p, d_pos)) {
 		/*
-		 * delet_at() doesn't work because the update path doesn't
+		 * delete_at() doesn't work because the update path doesn't
 		 * internally use BTREE_ITER_with_updates yet
+		 *
+		 * XXX not true anymore
 		 */
 		struct bkey_i *k = errptr_try(bch2_trans_kmalloc(trans, sizeof(*k)));
 
