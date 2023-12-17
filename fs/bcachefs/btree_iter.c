@@ -2077,8 +2077,7 @@ static struct bkey_s_c __bch2_btree_iter_peek(struct btree_iter *iter, struct bp
 		if (unlikely(iter->flags & BTREE_ITER_WITH_JOURNAL))
 			k = btree_trans_peek_journal(trans, iter, k);
 
-		if (unlikely((iter->flags & BTREE_ITER_WITH_UPDATES) &&
-			     trans->nr_updates))
+		if (unlikely(trans->nr_updates))
 			bch2_btree_trans_peek_updates(trans, iter, &k);
 
 		if (k.k && bkey_deleted(k.k)) {
@@ -2333,8 +2332,7 @@ struct bkey_s_c bch2_btree_iter_peek_prev(struct btree_iter *iter)
 		     : bpos_gt(k.k->p, search_key)))
 			k = btree_path_level_prev(trans, path, &path->l[0], &iter->k);
 
-		if (unlikely((iter->flags & BTREE_ITER_WITH_UPDATES) &&
-			     trans->nr_updates))
+		if (unlikely(trans->nr_updates))
 			bch2_btree_trans_peek_prev_updates(trans, iter, &k);
 
 		if (likely(k.k)) {
@@ -2463,8 +2461,7 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 	    !(iter->flags & (BTREE_ITER_IS_EXTENTS|BTREE_ITER_FILTER_SNAPSHOTS))) {
 		k = bkey_s_c_null;
 
-		if (unlikely((iter->flags & BTREE_ITER_WITH_UPDATES) &&
-			     trans->nr_updates)) {
+		if (unlikely(trans->nr_updates)) {
 			bch2_btree_trans_peek_slot_updates(trans, iter, &k);
 			if (k.k)
 				goto out;

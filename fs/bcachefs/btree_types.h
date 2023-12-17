@@ -202,15 +202,14 @@ static const __maybe_unused u16 BTREE_ITER_IS_EXTENTS		= 1 << 3;
 static const __maybe_unused u16 BTREE_ITER_NOT_EXTENTS		= 1 << 4;
 static const __maybe_unused u16 BTREE_ITER_CACHED		= 1 << 5;
 static const __maybe_unused u16 BTREE_ITER_WITH_KEY_CACHE	= 1 << 6;
-static const __maybe_unused u16 BTREE_ITER_WITH_UPDATES		= 1 << 7;
-static const __maybe_unused u16 BTREE_ITER_WITH_JOURNAL		= 1 << 8;
-static const __maybe_unused u16 __BTREE_ITER_ALL_SNAPSHOTS	= 1 << 9;
-static const __maybe_unused u16 BTREE_ITER_ALL_SNAPSHOTS	= 1 << 10;
-static const __maybe_unused u16 BTREE_ITER_FILTER_SNAPSHOTS	= 1 << 11;
-static const __maybe_unused u16 BTREE_ITER_NOPRESERVE		= 1 << 12;
-static const __maybe_unused u16 BTREE_ITER_CACHED_NOFILL	= 1 << 13;
-static const __maybe_unused u16 BTREE_ITER_KEY_CACHE_FILL	= 1 << 14;
-#define __BTREE_ITER_FLAGS_END					       15
+static const __maybe_unused u16 BTREE_ITER_WITH_JOURNAL		= 1 << 7;
+static const __maybe_unused u16 __BTREE_ITER_ALL_SNAPSHOTS	= 1 << 8;
+static const __maybe_unused u16 BTREE_ITER_ALL_SNAPSHOTS	= 1 << 9;
+static const __maybe_unused u16 BTREE_ITER_FILTER_SNAPSHOTS	= 1 << 10;
+static const __maybe_unused u16 BTREE_ITER_NOPRESERVE		= 1 << 11;
+static const __maybe_unused u16 BTREE_ITER_CACHED_NOFILL	= 1 << 12;
+static const __maybe_unused u16 BTREE_ITER_KEY_CACHE_FILL	= 1 << 13;
+#define __BTREE_ITER_FLAGS_END					       14
 
 enum btree_path_uptodate {
 	BTREE_ITER_UPTODATE		= 0,

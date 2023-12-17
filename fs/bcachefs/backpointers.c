@@ -164,8 +164,7 @@ int bch2_bucket_backpointer_mod_nowritebuffer(struct btree_trans *trans,
 	k = bch2_bkey_get_iter(trans, &bp_iter, BTREE_ID_backpointers,
 			       bp_k->k.p,
 			       BTREE_ITER_INTENT|
-			       BTREE_ITER_SLOTS|
-			       BTREE_ITER_WITH_UPDATES);
+			       BTREE_ITER_SLOTS);
 	ret = bkey_err(k);
 	if (ret)
 		goto err;

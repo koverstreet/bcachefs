@@ -275,8 +275,7 @@ retry:
 	inum.subvol = inode_u.bi_subvol ?: dir->ei_subvol;
 	inum.inum = inode_u.bi_inum;
 
-	ret   = bch2_subvolume_get(trans, inum.subvol, true,
-				   BTREE_ITER_WITH_UPDATES, &subvol) ?:
+	ret   = bch2_subvolume_get(trans, inum.subvol, true, 0, &subvol) ?:
 		bch2_trans_commit(trans, NULL, &journal_seq, 0);
 	if (unlikely(ret)) {
 		bch2_quota_acct(c, bch_qid(&inode_u), Q_INO, -1,

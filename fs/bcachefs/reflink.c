@@ -87,7 +87,7 @@ static int trans_trigger_reflink_p_segment(struct btree_trans *trans,
 
 	k = bch2_bkey_get_mut_noupdate(trans, &iter,
 			BTREE_ID_reflink, POS(0, *idx),
-			BTREE_ITER_WITH_UPDATES);
+			0);
 	ret = PTR_ERR_OR_ZERO(k);
 	if (ret)
 		goto err;

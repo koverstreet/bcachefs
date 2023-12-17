@@ -174,7 +174,7 @@ int bch2_subvolume_get_snapshot(struct btree_trans *trans, u32 subvolid,
 
 	subvol = bch2_bkey_get_iter_typed(trans, &iter,
 					  BTREE_ID_subvolumes, POS(0, subvolid),
-					  BTREE_ITER_CACHED|BTREE_ITER_WITH_UPDATES,
+					  BTREE_ITER_CACHED,
 					  subvolume);
 	ret = bkey_err(subvol);
 	bch2_fs_inconsistent_on(bch2_err_matches(ret, ENOENT), trans->c,
