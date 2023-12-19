@@ -1461,6 +1461,10 @@ err:
 			op->flags |= BCH_WRITE_DONE;
 
 			if (ret < 0) {
+				bch_err_inum_offset_ratelimited(c,
+					op->pos.inode,
+					op->pos.offset << 9,
+					"%s(): error: %s", __func__, bch2_err_str(ret));
 				op->error = ret;
 				break;
 			}
