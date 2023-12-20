@@ -675,6 +675,7 @@ struct bch_btree_ptr_v2 {
 } __packed __aligned(8);
 
 LE16_BITMASK(BTREE_PTR_RANGE_UPDATED,	struct bch_btree_ptr_v2, flags, 0, 1);
+LE16_BITMASK(BTREE_PTR_NONCE,		struct bch_btree_ptr_v2, flags, 1, 16);
 
 struct bch_extent {
 	struct bch_val		v;

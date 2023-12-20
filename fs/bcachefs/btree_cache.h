@@ -51,7 +51,7 @@ static inline u64 btree_ptr_hash_val(const struct bkey_i *k)
 		 */
 		return *((u64 *) &bkey_i_to_btree_ptr_v2_c(k)->v.seq);
 	default:
-		return 0;
+		BUG();
 	}
 }
 

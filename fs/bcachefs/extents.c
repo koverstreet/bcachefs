@@ -1117,7 +1117,7 @@ int bch2_bkey_ptrs_invalid(struct bch_fs *c, struct bkey_s_c k,
 	int ret = 0;
 
 	if (bkey_is_btree_ptr(k.k))
-		size_ondisk = btree_sectors(c);
+		size_ondisk = btree_ptr_sectors_written(k) ?: btree_sectors(c);
 
 	bkey_extent_entry_for_each(ptrs, entry) {
 		bkey_fsck_err_on(__extent_entry_type(entry) >= BCH_EXTENT_ENTRY_MAX, c, err,
@@ -1206,7 +1206,7 @@ int bch2_bkey_ptrs_invalid(struct bch_fs *c, struct bkey_s_c k,
 		}
 	}
 
-	bkey_fsck_err_on(!nr_ptrs, c, err,
+	bkey_fsck_err_on(k.k->type != KEY_TYPE_btree_ptr_v2 && !nr_ptrs, c, err,
 			 extent_ptrs_no_ptrs,
 			 "no ptrs");
 	bkey_fsck_err_on(nr_ptrs > BCH_BKEY_PTRS_MAX, c, err,

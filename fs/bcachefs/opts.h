@@ -419,6 +419,11 @@ enum fsck_err_opts {
 	  OPT_UINT(0, S64_MAX),						\
 	  BCH2_NO_SB_OPT,		false,				\
 	  NULL,		"Pointer to a struct log_output")		\
+	x(delalloc_btree_nodes,		u8,				\
+	  0,								\
+	  OPT_BOOL(),							\
+	  BCH2_NO_SB_OPT,		true,				\
+	  NULL,		NULL)						\
 	x(project,			u8,				\
 	  OPT_INODE,							\
 	  OPT_BOOL(),							\

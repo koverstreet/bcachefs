@@ -258,6 +258,11 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 		: 0;
 	int ret;
 
+	bkey_btree_ptr_v2_init(&tmp.k);
+
+	if (c->opts.delalloc_btree_nodes)
+		goto mem_alloc;
+
 	mutex_lock(&c->btree_reserve_cache_lock);
 	if (c->btree_reserve_cache_nr > nr_reserve) {
 		struct btree_alloc *a =
@@ -270,7 +275,6 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 	}
 	mutex_unlock(&c->btree_reserve_cache_lock);
 
-	bkey_btree_ptr_v2_init(&tmp.k);
 	ret = bch2_alloc_sectors_trans(trans,
 				      c->opts.metadata_target ?:
 				      c->opts.foreground_target,
@@ -1236,11 +1240,11 @@ static void bch2_insert_fixup_btree_ptr(struct btree_trans *trans,
 	unsigned long old, new, v;
 
 	BUG_ON(insert->k.type == KEY_TYPE_btree_ptr_v2 &&
-	       !btree_ptr_sectors_written(insert));
+	       !btree_ptr_sectors_written(bkey_i_to_s_c(insert)));
 
 	if (unlikely(!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags)))
 		bch2_journal_key_overwritten(c, b->c.btree_id, b->c.level, insert->k.p);
-
+#if 0
 	if (bch2_bkey_invalid(c, bkey_i_to_s_c(insert),
 			      btree_node_type(b), WRITE, &buf) ?:
 	    bch2_bkey_in_btree_node(c, b, bkey_i_to_s_c(insert), &buf)) {
@@ -1255,7 +1259,7 @@ static void bch2_insert_fixup_btree_ptr(struct btree_trans *trans,
 		bch2_fs_inconsistent(c, "%s", buf.buf);
 		dump_stack();
 	}
-
+#endif
 	while ((k = bch2_btree_node_iter_peek_all(node_iter, b)) &&
 	       bkey_iter_pos_cmp(b, k, &insert->k.p) < 0)
 		bch2_btree_node_iter_advance(node_iter, b);
@@ -2116,20 +2120,25 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 					bool skip_triggers)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter2 = { NULL };
+	struct btree_iter iter2 = {};
 	struct btree *parent;
+	struct disk_reservation disk_res = {};
 	int ret;
 
 	if (!skip_triggers) {
-		ret = bch2_trans_mark_old(trans, b->c.btree_id, b->c.level + 1,
-					  bkey_i_to_s_c(&b->key), 0);
-		if (ret)
-			return ret;
+		int ptrs_delta = bch2_bkey_nr_ptrs(bkey_i_to_s_c(new_key)) -
+			bch2_bkey_nr_ptrs(bkey_i_to_s_c(&b->key));
 
-		ret = bch2_trans_mark_new(trans, b->c.btree_id, b->c.level + 1,
-					  new_key, 0);
+		bch2_disk_reservation_add(c, &disk_res,
+					  max(ptrs_delta, 0) * btree_sectors(c),
+					  BCH_DISK_RESERVATION_NOFAIL);
+
+		ret =   bch2_trans_mark_old(trans, b->c.btree_id, b->c.level + 1,
+					    bkey_i_to_s_c(&b->key), 0) ?:
+			bch2_trans_mark_new(trans, b->c.btree_id, b->c.level + 1,
+					    new_key, 0);
 		if (ret)
-			return ret;
+			goto err;
 	}
 
 	if (new_hash) {
@@ -2174,7 +2183,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 				  new_key, new_key->k.u64s);
 	}
 
-	ret = bch2_trans_commit(trans, NULL, NULL, commit_flags);
+	ret = bch2_trans_commit(trans, &disk_res, NULL, commit_flags);
 	if (ret)
 		goto err;
 
@@ -2196,6 +2205,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 	bch2_btree_node_unlock_write(trans, btree_iter_path(trans, iter), b);
 out:
 	bch2_trans_iter_exit(trans, &iter2);
+	bch2_disk_reservation_put(c, &disk_res);
 	return ret;
 err:
 	if (new_hash) {
@@ -2215,6 +2225,8 @@ int bch2_btree_node_update_key(struct btree_trans *trans, struct btree_iter *ite
 	struct btree_path *path = btree_iter_path(trans, iter);
 	struct closure cl;
 	int ret = 0;
+
+	BUG_ON(new_key->k.type != KEY_TYPE_btree_ptr_v2);
 
 	ret = bch2_btree_path_upgrade(trans, path, b->c.level + 1);
 	if (ret)
@@ -2262,6 +2274,8 @@ int bch2_btree_node_update_key_get_iter(struct btree_trans *trans,
 	struct btree_iter iter;
 	int ret;
 
+	BUG_ON(new_key->k.type != KEY_TYPE_btree_ptr_v2);
+
 	bch2_trans_node_iter_init(trans, &iter, b->c.btree_id, b->key.k.p,
 				  BTREE_MAX_DEPTH, b->c.level,
 				  BTREE_ITER_INTENT);
@@ -2278,9 +2292,11 @@ int bch2_btree_node_update_key_get_iter(struct btree_trans *trans,
 
 	BUG_ON(!btree_node_hashed(b));
 
-	struct bch_extent_ptr *ptr;
-	bch2_bkey_drop_ptrs(bkey_i_to_s(new_key), ptr,
-			    !bch2_bkey_has_device(bkey_i_to_s(&b->key), ptr->dev));
+	if (!trans->c->opts.delalloc_btree_nodes) {
+		struct bch_extent_ptr *ptr;
+		bch2_bkey_drop_ptrs(bkey_i_to_s(new_key), ptr,
+				    !bch2_bkey_has_device(bkey_i_to_s(&b->key), ptr->dev));
+	}
 
 	ret = bch2_btree_node_update_key(trans, &iter, b, new_key,
 					 commit_flags, skip_triggers);
