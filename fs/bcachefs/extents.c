@@ -25,6 +25,7 @@
 #include "super-io.h"
 #include "trace.h"
 #include "util.h"
+#include "zone.h"
 
 static unsigned bch2_crc_field_size_max[] = {
 	[BCH_EXTENT_ENTRY_crc32] = CRC32_SIZE_MAX,
@@ -1063,8 +1064,6 @@ static int extent_ptr_invalid(struct bch_fs *c,
 			      struct printbuf *err)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	u64 bucket;
-	u32 bucket_offset;
 	struct bch_dev *ca;
 	int ret = 0;
 
@@ -1087,15 +1086,16 @@ static int extent_ptr_invalid(struct bch_fs *c,
 				 ptr_to_duplicate_device,
 				 "multiple pointers to same device (%u)", ptr->dev);
 
-	bucket = sector_to_bucket_and_offset(ca, ptr->offset, &bucket_offset);
+	u32 bucket_offset;
+	u64 bucket = sector_to_bucket_and_offset(ca, ptr->offset, &bucket_offset);
 
+	bkey_fsck_err_on(bucket < ca->mi.first_bucket, c, err,
+			 ptr_before_first_bucket,
+			 "pointer before first bucket (%llu < %u)", bucket, ca->mi.first_bucket);
 	bkey_fsck_err_on(bucket >= ca->mi.nbuckets, c, err,
 			 ptr_after_last_bucket,
 			 "pointer past last bucket (%llu > %llu)", bucket, ca->mi.nbuckets);
-	bkey_fsck_err_on(ptr->offset < bucket_to_sector(ca, ca->mi.first_bucket), c, err,
-			 ptr_before_first_bucket,
-			 "pointer before first bucket (%llu < %u)", bucket, ca->mi.first_bucket);
-	bkey_fsck_err_on(bucket_offset + size_ondisk > ca->mi.bucket_size, c, err,
+	bkey_fsck_err_on(bucket_offset + size_ondisk > bucket_capacity(ca, bucket), c, err,
 			 ptr_spans_multiple_buckets,
 			 "pointer spans multiple buckets (%u + %u > %u)",
 		       bucket_offset, size_ondisk, ca->mi.bucket_size);

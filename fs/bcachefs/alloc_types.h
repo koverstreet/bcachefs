@@ -61,6 +61,7 @@ struct open_bucket {
 
 	u8			dev;
 	u8			gen;
+	u32			bucket_size;
 	u32			sectors_free;
 	u64			bucket;
 	struct ec_stripe_new	*ec;

@@ -1145,6 +1145,7 @@ static void bch2_dev_free(struct bch_dev *ca)
 	if (ca->kobj.state_in_sysfs)
 		kobject_del(&ca->kobj);
 
+	bch2_dev_zones_exit(ca);
 	bch2_free_super(&ca->disk_sb);
 	bch2_dev_journal_exit(ca);
 
@@ -1330,19 +1331,9 @@ static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb)
 		return -BCH_ERR_device_size_too_small;
 	}
 
-	ca->zoned = bdev_nr_zones(sb->bdev) != 0;
-	if (ca->zoned) {
-		struct blk_zone zone;
-
-		ret = bch2_zone_report(sb->bdev, 0, &zone);
-		if (ret)
-			return ret;
-
-		if (zone.len != ca->mi.bucket_size) {
-			bch_err(ca, "zone size doesn't match bucket size");
-			return -EINVAL;
-		}
-	}
+	ret = bch2_dev_zones_init(ca, sb);
+	if (ret)
+		return ret;
 
 	ret = bch2_dev_journal_init(ca, sb->sb);
 	if (ret)

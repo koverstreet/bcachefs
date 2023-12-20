@@ -19,6 +19,7 @@
 #include "journal_sb.h"
 #include "journal_seq_blacklist.h"
 #include "trace.h"
+#include "zone.h"
 
 static const char * const bch2_journal_errors[] = {
 #define x(n)	#n,
@@ -852,7 +853,7 @@ static int __bch2_set_nr_journal_buckets(struct bch_dev *ca, unsigned nr,
 			ret = bch2_trans_run(c,
 				bch2_trans_mark_metadata_bucket(trans, ca,
 						ob[nr_got]->bucket, BCH_DATA_journal,
-						ca->mi.bucket_size));
+						bucket_capacity(ca, ob[nr_got]->bucket)));
 			if (ret) {
 				bch2_open_bucket_put(c, ob[nr_got]);
 				bch_err_msg(c, ret, "marking new journal buckets");

@@ -30,6 +30,7 @@
 #include "movinggc.h"
 #include "nocow_locking.h"
 #include "trace.h"
+#include "zone.h"
 
 #include <linux/math64.h>
 #include <linux/rculist.h>
@@ -254,7 +255,8 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 	spin_lock(&ob->lock);
 
 	ob->valid	= true;
-	ob->sectors_free = ca->mi.bucket_size;
+	ob->bucket_size	= bucket_capacity(ca, bucket);
+	ob->sectors_free = ob->bucket_size;
 	ob->dev		= ca->dev_idx;
 	ob->gen		= a->gen;
 	ob->bucket	= bucket;
@@ -1497,7 +1499,7 @@ struct bch_extent_ptr bch2_ob_ptr(struct bch_fs *c, struct open_bucket *ob)
 		.gen	= ob->gen,
 		.dev	= ob->dev,
 		.offset	= bucket_to_sector(ca, ob->bucket) +
-			ca->mi.bucket_size -
+			ob->bucket_size -
 			ob->sectors_free,
 	};
 }
