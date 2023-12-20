@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "buckets.h"
 #include "checksum.h"
 #include "counters.h"
 #include "disk_groups.h"
@@ -171,9 +172,8 @@ void bch2_free_super(struct bch_sb_handle *sb)
 	memset(sb, 0, sizeof(*sb));
 }
 
-int bch2_sb_realloc(struct bch_sb_handle *sb, unsigned u64s)
+static int __bch2_sb_realloc(struct bch_sb_handle *sb, size_t new_bytes)
 {
-	size_t new_bytes = __vstruct_bytes(struct bch_sb, u64s);
 	size_t new_buffer_size;
 	struct bch_sb *new_sb;
 	struct bio *bio;
@@ -224,6 +224,12 @@ int bch2_sb_realloc(struct bch_sb_handle *sb, unsigned u64s)
 	sb->buffer_size = new_buffer_size;
 
 	return 0;
+}
+
+int bch2_sb_realloc(struct bch_sb_handle *sb, unsigned u64s)
+{
+	return __bch2_sb_realloc(sb,
+		__vstruct_bytes(struct bch_sb, u64s));
 }
 
 struct bch_sb_field *bch2_sb_field_resize_id(struct bch_sb_handle *sb,
@@ -593,17 +599,23 @@ int bch2_sb_from_fs(struct bch_fs *c, struct bch_dev *ca)
 
 /* read superblock: */
 
+static int submit_read_sync(struct bio *bio, struct block_device *bdev,
+			    size_t count, u64 offset, void *buf)
+{
+	bio_reset(bio, bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
+	bio->bi_iter.bi_sector = offset;
+	bch2_bio_map(bio, buf, count);
+
+	return submit_bio_wait(bio);
+}
+
 static int read_one_super(struct bch_sb_handle *sb, u64 offset, struct printbuf *err)
 {
 	struct bch_csum csum;
 	size_t bytes;
 	int ret;
 reread:
-	bio_reset(sb->bio, sb->bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
-	sb->bio->bi_iter.bi_sector = offset;
-	bch2_bio_map(sb->bio, sb->sb, sb->buffer_size);
-
-	ret = submit_bio_wait(sb->bio);
+	ret = submit_read_sync(sb->bio, sb->bdev, sb->buffer_size, offset, sb->sb);
 	if (ret) {
 		prt_printf(err, "IO error: %i", ret);
 		return ret;
@@ -618,6 +630,12 @@ reread:
 	ret = bch2_sb_compatible(sb->sb, err);
 	if (ret)
 		return ret;
+
+	if (offset != le64_to_cpu(sb->sb->offset)) {
+		prt_printf(err, "Invalid superblock: not at correct offset (read from %llu , sb offset %llu)",
+			   offset, le64_to_cpu(sb->sb->offset));
+		return -EINVAL;
+	}
 
 	bytes = vstruct_bytes(sb->sb);
 
@@ -648,8 +666,105 @@ reread:
 		return -BCH_ERR_invalid_sb_csum;
 	}
 
-	sb->seq = le64_to_cpu(sb->sb->seq);
+	return 0;
+}
 
+static int zone_0_is_normal(struct block_device *bdev)
+{
+	struct blk_zone zone;
+	int ret;
+
+	if (!bdev_nr_zones(bdev))
+		return 1;
+
+	ret = bch2_zone_report(bdev, 0, &zone);
+	if (ret)
+		return ret;
+
+	return zone.type == BLK_ZONE_TYPE_CONVENTIONAL;
+}
+
+static int ringbuffer_read_super(struct bch_sb_handle *sb, struct printbuf *err)
+{
+	struct blk_zone zone;
+	u64 best_seq = 0;
+	unsigned bucket;
+	int ret;
+
+	ret = __bch2_sb_realloc(sb, 1U << 20);
+	if (ret)
+		return ret;
+
+	ret = bch2_zone_report(sb->bdev, 0, &zone);
+	if (ret) {
+		pr_err("error getting zone %u: %s", 0, bch2_err_str(ret));
+		return ret;
+	}
+
+	for (bucket = 0; bucket < 2; bucket++) {
+		u64 offset	= zone.len * bucket;
+		u64 end_offset	= zone.len * (bucket + 1);
+		u64 next_offset;
+		unsigned buf_offset, bytes;
+
+		while (offset < end_offset) {
+reread:
+			ret = submit_read_sync(sb->bio, sb->bdev, sb->buffer_size,
+					       offset, sb->sb);
+			if (ret) {
+				prt_printf(err, "IO error: %s", bch2_err_str(ret));
+				return ret;
+			}
+
+			next_offset = min(offset + (sb->buffer_size >> 9), end_offset);
+			buf_offset = 0;
+
+			while (offset < next_offset) {
+				struct bch_sb *i = (void *) sb->sb + buf_offset;
+				struct bch_csum csum;
+
+				if (!uuid_equal(&i->magic, &BCHFS_MAGIC))
+					goto next_offset;
+
+				if (offset != le64_to_cpu(i->offset))
+					goto next_offset;
+
+				if (BCH_SB_CSUM_TYPE(i) >= BCH_CSUM_NR)
+					goto next_offset;
+
+				bytes = vstruct_bytes(i);
+				if (buf_offset + bytes > sb->buffer_size) {
+					if (bch2_sb_realloc(sb, le32_to_cpu(i->u64s)))
+						return -ENOMEM;
+					goto reread;
+				}
+
+				csum = csum_vstruct(NULL, BCH_SB_CSUM_TYPE(i), null_nonce(), i);
+
+				if (bch2_crc_cmp(csum, i->csum))
+					goto next_offset;
+
+				if (le64_to_cpu(i->seq) > best_seq) {
+					best_seq = le64_to_cpu(i->seq);
+					sb->ringbuffer_last_offset = offset;
+				}
+next_offset:
+				offset++;
+				buf_offset += 512;
+			}
+		}
+	}
+
+	if (!best_seq)
+		return ret ?: -EINVAL;
+
+	ret = read_one_super(sb, sb->ringbuffer_last_offset, err);
+	if (ret)
+		return ret;
+
+	sb->ringbuffer_last_sectors =
+		     roundup((size_t) vstruct_bytes(sb->sb),
+			     bdev_logical_block_size(sb->bdev)) >> 9;
 	return 0;
 }
 
@@ -715,12 +830,28 @@ retry:
 		goto err;
 	}
 
+	if (opt_defined(*opts, sb)) {
+		ret = read_one_super(sb, offset, &err);
+		if (!ret)
+			goto got_super;
+		goto err;
+	}
+
+	ret = zone_0_is_normal(sb->bdev);
+	if (ret < 0)
+		goto err;
+
+	sb->sb_ringbuffer = !ret;
+	if (sb->sb_ringbuffer) {
+		ret = ringbuffer_read_super(sb, &err);
+		if (ret)
+			goto err;
+		goto got_super;
+	}
+
 	ret = read_one_super(sb, offset, &err);
 	if (!ret)
 		goto got_super;
-
-	if (opt_defined(*opts, sb))
-		goto err;
 
 	prt_printf(&err2, "bcachefs (%s): error reading default superblock: %s\n",
 	       path, err.buf);
@@ -735,16 +866,12 @@ retry:
 	/*
 	 * Error reading primary superblock - read location of backup
 	 * superblocks:
-	 */
-	bio_reset(sb->bio, sb->bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
-	sb->bio->bi_iter.bi_sector = BCH_SB_LAYOUT_SECTOR;
-	/*
+	 *
 	 * use sb buffer to read layout, since sb buffer is page aligned but
 	 * layout won't be:
 	 */
-	bch2_bio_map(sb->bio, sb->sb, sizeof(struct bch_sb_layout));
-
-	ret = submit_bio_wait(sb->bio);
+	ret = submit_read_sync(sb->bio, sb->bdev, sizeof(struct bch_sb_layout),
+			       BCH_SB_LAYOUT_SECTOR, sb->sb);
 	if (ret) {
 		prt_printf(&err, "IO error: %i", ret);
 		goto err;
@@ -785,15 +912,15 @@ got_super:
 		goto err;
 	}
 
-	ret = 0;
-	sb->have_layout = true;
-
 	ret = bch2_sb_validate(sb, &err, READ);
 	if (ret) {
 		printk(KERN_ERR "bcachefs (%s): error validating superblock: %s\n",
 		       path, err.buf);
 		goto err_no_print;
 	}
+
+	sb->have_layout = true;
+	sb->seq	= le64_to_cpu(sb->sb->seq);
 out:
 	printbuf_exit(&err);
 	return ret;
@@ -846,7 +973,9 @@ static void read_back_super(struct bch_fs *c, struct bch_dev *ca)
 	struct bio *bio = ca->disk_sb.bio;
 
 	bio_reset(bio, ca->disk_sb.bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
-	bio->bi_iter.bi_sector	= le64_to_cpu(sb->layout.sb_offset[0]);
+	bio->bi_iter.bi_sector	= !ca->disk_sb.sb_ringbuffer
+		? le64_to_cpu(sb->layout.sb_offset[0])
+		: ca->disk_sb.ringbuffer_last_offset;
 	bio->bi_end_io		= write_super_endio;
 	bio->bi_private		= ca;
 	bch2_bio_map(bio, ca->sb_read_scratch, PAGE_SIZE);
@@ -858,12 +987,49 @@ static void read_back_super(struct bch_fs *c, struct bch_dev *ca)
 	closure_bio_submit(bio, &c->sb_write);
 }
 
-static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
+/* Returns true if we did work: */
+static bool write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 {
 	struct bch_sb *sb = ca->disk_sb.sb;
 	struct bio *bio = ca->disk_sb.bio;
+	unsigned sectors = roundup((size_t) vstruct_bytes(sb),
+			     bdev_logical_block_size(ca->disk_sb.bdev)) >> 9;
 
-	sb->offset = sb->layout.sb_offset[idx];
+	if (ca->sb_write_error)
+		return false;
+
+	if (!ca->disk_sb.sb_ringbuffer) {
+		if (idx >= ca->disk_sb.sb->layout.nr_superblocks)
+			return false;
+
+		sb->offset = sb->layout.sb_offset[idx];
+	} else {
+		unsigned bucket, sectors;
+		u64 offset, end;
+
+		if (idx)
+			return false;
+
+		offset = ca->disk_sb.ringbuffer_last_offset +
+			ca->disk_sb.ringbuffer_last_sectors;
+		end = offset + sectors;
+
+		bucket = sector_to_bucket(ca, offset);
+
+		if (end > bucket_to_sector(ca, bucket + 1)) {
+			/* Switch to writing to the other bucket: */
+			bch2_bucket_finish(ca, bucket);
+
+			bucket ^= 1;
+			offset = bucket_to_sector(ca, bucket);
+
+			bch2_bucket_discard(ca, bucket);
+		}
+
+		ca->disk_sb.ringbuffer_last_offset	= offset;
+		ca->disk_sb.ringbuffer_last_sectors	= sectors;
+		sb->offset = cpu_to_le64(offset);
+	}
 
 	SET_BCH_SB_CSUM_TYPE(sb, bch2_csum_opt_to_type(c->opts.metadata_checksum, false));
 	sb->csum = csum_vstruct(c, BCH_SB_CSUM_TYPE(sb),
@@ -873,15 +1039,14 @@ static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 	bio->bi_iter.bi_sector	= le64_to_cpu(sb->offset);
 	bio->bi_end_io		= write_super_endio;
 	bio->bi_private		= ca;
-	bch2_bio_map(bio, sb,
-		     roundup((size_t) vstruct_bytes(sb),
-			     bdev_logical_block_size(ca->disk_sb.bdev)));
+	bch2_bio_map(bio, sb, sectors << 9);
 
 	this_cpu_add(ca->io_done->sectors[WRITE][BCH_DATA_sb],
 		     bio_sectors(bio));
 
 	percpu_ref_get(&ca->io_ref);
 	closure_bio_submit(bio, &c->sb_write);
+	return true;
 }
 
 int bch2_write_super(struct bch_fs *c)
@@ -1000,11 +1165,8 @@ int bch2_write_super(struct bch_fs *c)
 	do {
 		wrote = false;
 		for_each_online_member(c, ca)
-			if (!ca->sb_write_error &&
-			    sb < ca->disk_sb.sb->layout.nr_superblocks) {
-				write_one_super(c, ca, sb);
+			if (write_one_super(c, ca, sb))
 				wrote = true;
-			}
 		closure_sync(cl);
 		sb++;
 	} while (wrote);

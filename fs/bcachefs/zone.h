@@ -4,6 +4,8 @@
 
 #include "eytzinger.h"
 
+int bch2_zone_report(struct block_device *, sector_t, struct blk_zone *);
+
 static inline bool blk_zone_writeable(struct blk_zone zone)
 {
 	return (zone.cond == BLK_ZONE_COND_EMPTY ||

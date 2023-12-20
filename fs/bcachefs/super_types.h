@@ -10,10 +10,13 @@ struct bch_sb_handle {
 	void			*holder;
 	size_t			buffer_size;
 	blk_mode_t		mode;
-	unsigned		have_layout:1;
-	unsigned		have_bio:1;
-	unsigned		fs_sb:1;
+	bool			have_layout:1;
+	bool			have_bio:1;
+	bool			fs_sb:1;
+	bool			sb_ringbuffer:1;
 	u64			seq;
+	u64			ringbuffer_last_offset;
+	unsigned		ringbuffer_last_sectors;
 };
 
 struct bch_devs_mask {

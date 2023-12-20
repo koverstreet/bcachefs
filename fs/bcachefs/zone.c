@@ -15,7 +15,7 @@ static int zone_report_cb(struct blk_zone *src, unsigned idx, void *data)
 	return 0;
 }
 
-static int bch2_zone_report(struct block_device *bdev, sector_t sector, struct blk_zone *zone)
+int bch2_zone_report(struct block_device *bdev, sector_t sector, struct blk_zone *zone)
 {
 	int ret = blkdev_report_zones(bdev, sector, 1, zone_report_cb, zone);
 
