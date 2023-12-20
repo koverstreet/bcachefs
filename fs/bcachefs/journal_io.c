@@ -1110,6 +1110,38 @@ found:
 	BUG_ON(!wrote);
 	ja->sectors_free = cur_bucket_capacity - min(wrote, cur_bucket_capacity);
 
+	if (ca->zoned) {
+		struct blk_zone zone;
+		unsigned i;
+
+		if (!bch2_zone_report(ca->disk_sb.bdev,
+				      bucket_to_sector(ca, ja->buckets[ja->cur_idx]),
+				      &zone) &&
+		    zone.type != BLK_ZONE_TYPE_CONVENTIONAL &&
+		    blk_zone_writeable(zone)) {
+			if (bch2_fs_inconsistent_on(zone.capacity - zone.wp > ja->sectors_free, c,
+					"device claims %llu sectors written to current journal bucket but found %u",
+					zone.wp, ca->mi.bucket_size - ja->sectors_free)) {
+				ret = -EINVAL;
+				goto out;
+			}
+
+			ja->sectors_free = zone.capacity - zone.wp;
+		}
+
+		/* Make sure all other nonempty journal buckets are closed: */
+		for (i = 0; i < ja->nr; i++) {
+			if (i == ja->cur_idx)
+				continue;
+
+			if (!bch2_zone_report(ca->disk_sb.bdev,
+					      bucket_to_sector(ca, ja->buckets[ja->cur_idx]),
+					      &zone) &&
+			    zone.cond != BLK_ZONE_COND_EMPTY)
+				bch2_bucket_finish(ca, ja->buckets[i]);
+		}
+	}
+
 	/*
 	 * Set dirty_idx to indicate the entire journal is full and needs to be
 	 * reclaimed - journal reclaim will immediately reclaim whatever isn't
@@ -1374,6 +1406,34 @@ fsck_err:
 
 /* journal write: */
 
+static void journal_close_buckets(struct journal *j, unsigned sectors)
+{
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+
+	for_each_rw_member(c, ca) {
+		struct journal_device *ja = &ca->journal;
+
+		if (sectors > ja->sectors_free &&
+		    sectors <= ca->mi.bucket_size &&
+		    bch2_journal_dev_buckets_available(j, ja,
+					journal_space_discarded)) {
+			spin_unlock(&j->lock);
+			bch2_bucket_finish(ca, ja->buckets[ja->cur_idx]);
+			spin_lock(&j->lock);
+
+			ja->cur_idx = (ja->cur_idx + 1) % ja->nr;
+			ja->sectors_free = bucket_capacity(ca, ja->buckets[ja->cur_idx]);
+
+			/*
+			 * ja->bucket_seq[ja->cur_idx] must always have
+			 * something sensible:
+			 */
+			ja->bucket_seq[ja->cur_idx] =
+				le64_to_cpu(journal_last_unwritten_seq(j));
+		}
+	}
+}
+
 static void __journal_write_alloc(struct journal *j,
 				  struct journal_buf *w,
 				  struct dev_alloc_list *devs_sorted,
@@ -1441,59 +1501,37 @@ static int journal_write_alloc(struct journal *j, struct journal_buf *w)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct bch_devs_mask devs;
-	struct journal_device *ja;
-	struct bch_dev *ca;
 	struct dev_alloc_list devs_sorted;
 	unsigned sectors = vstruct_sectors(w->data, c->block_bits);
 	unsigned target = c->opts.metadata_target ?:
 		c->opts.foreground_target;
-	unsigned i, replicas = 0, replicas_want =
+	unsigned replicas = 0, replicas_want =
 		READ_ONCE(c->opts.metadata_replicas);
+	bool did_close = false;
 
-	rcu_read_lock();
 retry:
+	rcu_read_lock();
 	devs = target_rw_devs(c, BCH_DATA_journal, target);
-
 	devs_sorted = bch2_dev_alloc_list(c, &j->wp.stripe, &devs);
 
 	__journal_write_alloc(j, w, &devs_sorted,
 			      sectors, &replicas, replicas_want);
+	rcu_read_unlock();
 
-	if (replicas >= replicas_want)
-		goto done;
-
-	for (i = 0; i < devs_sorted.nr; i++) {
-		ca = rcu_dereference(c->devs[devs_sorted.devs[i]]);
-		if (!ca)
-			continue;
-
-		ja = &ca->journal;
-
-		if (sectors > ja->sectors_free &&
-		    sectors <= ca->mi.bucket_size &&
-		    bch2_journal_dev_buckets_available(j, ja,
-					journal_space_discarded)) {
-			ja->cur_idx = (ja->cur_idx + 1) % ja->nr;
-			ja->sectors_free = bucket_capacity(ca, ja->buckets[ja->cur_idx]);
-
-			/*
-			 * ja->bucket_seq[ja->cur_idx] must always have
-			 * something sensible:
-			 */
-			ja->bucket_seq[ja->cur_idx] = le64_to_cpu(w->data->seq);
-		}
+	if (replicas < replicas_want && !did_close) {
+		journal_close_buckets(j, sectors);
+		did_close = true;
+		goto retry;
 	}
 
-	__journal_write_alloc(j, w, &devs_sorted,
-			      sectors, &replicas, replicas_want);
-
 	if (replicas < replicas_want && target) {
-		/* Retry from all devices: */
+		/*
+		 * Retry from all devices
+		 * XXX: this should be configurable
+		 */
 		target = 0;
 		goto retry;
 	}
-done:
-	rcu_read_unlock();
 
 	BUG_ON(bkey_val_u64s(&w->key.k) > BCH_REPLICAS_MAX);
 
