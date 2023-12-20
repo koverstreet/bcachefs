@@ -13,6 +13,7 @@
 #include "replicas.h"
 #include "sb-members.h"
 #include "trace.h"
+#include "zone.h"
 
 #include <linux/kthread.h>
 #include <linux/sched/mm.h>
@@ -266,13 +267,7 @@ void bch2_journal_do_discards(struct journal *j)
 		struct journal_device *ja = &ca->journal;
 
 		while (should_discard_bucket(j, ja)) {
-			if (!c->opts.nochanges &&
-			    ca->mi.discard &&
-			    bdev_max_discard_sectors(ca->disk_sb.bdev))
-				blkdev_issue_discard(ca->disk_sb.bdev,
-					bucket_to_sector(ca,
-						ja->buckets[ja->discard_idx]),
-					ca->mi.bucket_size, GFP_NOFS);
+			bch2_bucket_discard(ca, ja->buckets[ja->discard_idx]);
 
 			spin_lock(&j->lock);
 			ja->discard_idx = (ja->discard_idx + 1) % ja->nr;

@@ -19,6 +19,7 @@
 #include "super.h"
 #include "trace.h"
 #include "vstructs.h"
+#include "zone.h"
 
 #include <linux/backing-dev.h>
 #include <linux/sort.h>

@@ -20,6 +20,7 @@
 #include "recovery.h"
 #include "trace.h"
 #include "varint.h"
+#include "zone.h"
 
 #include <linux/kthread.h>
 #include <linux/math64.h>
@@ -1631,10 +1632,7 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 		 * thread that removes items from the need_discard tree
 		 */
 		bch2_trans_unlock(trans);
-		blkdev_issue_discard(ca->disk_sb.bdev,
-				     k.k->p.offset * ca->mi.bucket_size,
-				     ca->mi.bucket_size,
-				     GFP_KERNEL);
+		bch2_bucket_discard(ca, k.k->p.offset);
 		*discard_pos_done = iter.pos;
 
 		ret = bch2_trans_relock_notrace(trans);

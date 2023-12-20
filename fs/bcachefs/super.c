@@ -57,6 +57,7 @@
 #include "super-io.h"
 #include "sysfs.h"
 #include "trace.h"
+#include "zone.h"
 
 #include <linux/backing-dev.h>
 #include <linux/blkdev.h>
@@ -1313,7 +1314,9 @@ err:
 
 static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb)
 {
-	unsigned ret;
+	int ret;
+
+	BUG_ON(!percpu_ref_is_zero(&ca->io_ref));
 
 	if (bch2_dev_is_online(ca)) {
 		bch_err(ca, "already have device online in slot %u",
@@ -1327,7 +1330,19 @@ static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb)
 		return -BCH_ERR_device_size_too_small;
 	}
 
-	BUG_ON(!percpu_ref_is_zero(&ca->io_ref));
+	ca->zoned = bdev_nr_zones(sb->bdev) != 0;
+	if (ca->zoned) {
+		struct blk_zone zone;
+
+		ret = bch2_zone_report(sb->bdev, 0, &zone);
+		if (ret)
+			return ret;
+
+		if (zone.len != ca->mi.bucket_size) {
+			bch_err(ca, "zone size doesn't match bucket size");
+			return -EINVAL;
+		}
+	}
 
 	ret = bch2_dev_journal_init(ca, sb->sb);
 	if (ret)

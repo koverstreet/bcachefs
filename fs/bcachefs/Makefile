@@ -85,6 +85,7 @@ bcachefs-y		:=	\
 	two_state_shared_lock.o	\
 	util.o			\
 	varint.o		\
-	xattr.o
+	xattr.o			\
+	zone.o
 
 obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += mean_and_variance_test.o
