@@ -1785,7 +1785,7 @@ static void btree_node_write_work(struct work_struct *work)
 	struct btree_write_bio *wbio =
 		container_of(work, struct btree_write_bio, work);
 	struct bch_fs *c	= wbio->wbio.c;
-	struct btree *b		= wbio->wbio.bio.bi_private;
+	struct btree *b		= wbio->b;
 	struct bch_extent_ptr *ptr;
 	int ret = 0;
 
@@ -1833,7 +1833,7 @@ static void btree_node_write_endio(struct bio *bio)
 	struct bch_write_bio *orig	= parent ?: wbio;
 	struct btree_write_bio *wb	= container_of(orig, struct btree_write_bio, wbio);
 	struct bch_fs *c		= wbio->c;
-	struct btree *b			= wbio->bio.bi_private;
+	struct btree *b			= wb->b;
 	struct bch_dev *ca		= bch_dev_bkey_exists(c, wbio->dev);
 	unsigned long flags;
 
@@ -1893,14 +1893,32 @@ static int validate_bset_for_write(struct bch_fs *c, struct btree *b,
 static void btree_write_submit(struct work_struct *work)
 {
 	struct btree_write_bio *wbio = container_of(work, struct btree_write_bio, work);
-	BKEY_PADDED_ONSTACK(k, BKEY_BTREE_PTR_VAL_U64s_MAX) tmp;
+	struct bch_fs *c = wbio->wbio.c;
+	struct btree *b = wbio->b;
 
+	struct btree_update *as = (void *) (b->will_make_reachable & ~1UL);
+	if (as) {
+		spin_lock(&as->journal_entries_lock);
+		BUG_ON(as->journal_u64s + jset_u64s(wbio->key.k.u64s) >
+		       ARRAY_SIZE(as->journal_entries));
+		as->journal_u64s +=
+			journal_entry_set((void *) &as->journal_entries[as->journal_u64s],
+					  btree_node_is_root(b)
+					  ? BCH_JSET_ENTRY_btree_root
+					  : BCH_JSET_ENTRY_btree_keys,
+					  b->c.btree_id,
+					  b->c.level + !btree_node_is_root(b),
+					  &wbio->key, wbio->key.k.u64s);
+		spin_unlock(&as->journal_entries_lock);
+	}
+
+	BKEY_PADDED_ONSTACK(k, BKEY_BTREE_PTR_VAL_U64s_MAX) tmp;
 	bkey_copy(&tmp.k, &wbio->key);
 
 	bkey_for_each_ptr(bch2_bkey_ptrs(bkey_i_to_s(&tmp.k)), ptr)
 		ptr->offset += wbio->sector_offset;
 
-	bch2_submit_wbio_replicas(&wbio->wbio, wbio->wbio.c, BCH_DATA_btree,
+	bch2_submit_wbio_replicas(&wbio->wbio, c, BCH_DATA_btree,
 				  &tmp.k, false);
 }
 
@@ -2124,6 +2142,7 @@ do_write:
 				&c->btree_bio),
 			    struct btree_write_bio, wbio.bio);
 	wbio_init(&wbio->wbio.bio);
+	wbio->b				= b;
 	wbio->data			= data;
 	wbio->data_bytes		= bytes;
 	wbio->sector_offset		= b->written;
@@ -2131,7 +2150,6 @@ do_write:
 	wbio->wbio.used_mempool		= used_mempool;
 	wbio->wbio.first_btree_write	= !b->written;
 	wbio->wbio.bio.bi_end_io	= btree_node_write_endio;
-	wbio->wbio.bio.bi_private	= b;
 
 	bch2_bio_map(&wbio->wbio.bio, data, sectors_to_write << 9);
 

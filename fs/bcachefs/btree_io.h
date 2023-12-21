@@ -48,6 +48,7 @@ struct btree_read_bio {
 
 struct btree_write_bio {
 	struct work_struct	work;
+	struct btree		*b;
 	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
 	void			*data;
 	unsigned		data_bytes;

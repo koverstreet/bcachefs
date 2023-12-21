@@ -99,6 +99,7 @@ struct btree_update {
 						     BCH_REPLICAS_MAX];
 	open_bucket_idx_t		nr_open_buckets;
 
+	spinlock_t			journal_entries_lock;
 	unsigned			journal_u64s;
 	u64				journal_entries[BTREE_UPDATE_JOURNAL_RES];
 

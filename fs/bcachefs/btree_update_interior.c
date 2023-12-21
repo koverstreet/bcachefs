@@ -830,19 +830,9 @@ static void btree_update_reparent(struct btree_update *as,
 
 static void btree_update_updated_root(struct btree_update *as, struct btree *b)
 {
-	struct bkey_i *insert = &b->key;
 	struct bch_fs *c = as->c;
 
 	BUG_ON(as->mode != BTREE_INTERIOR_NO_UPDATE);
-
-	BUG_ON(as->journal_u64s + jset_u64s(insert->k.u64s) >
-	       ARRAY_SIZE(as->journal_entries));
-
-	as->journal_u64s +=
-		journal_entry_set((void *) &as->journal_entries[as->journal_u64s],
-				  BCH_JSET_ENTRY_btree_root,
-				  b->c.btree_id, b->c.level,
-				  insert, insert->k.u64s);
 
 	mutex_lock(&c->btree_interior_update_lock);
 	list_add_tail(&as->unwritten_list, &c->btree_interior_updates_unwritten);
@@ -1125,6 +1115,7 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 	bch2_keylist_init(&as->old_keys, as->_old_keys);
 	bch2_keylist_init(&as->new_keys, as->_new_keys);
 	bch2_keylist_init(&as->parent_keys, as->inline_keys);
+	spin_lock_init(&as->journal_entries_lock);
 
 	mutex_lock(&c->btree_interior_update_lock);
 	list_add_tail(&as->list, &c->btree_interior_update_list);
@@ -1199,6 +1190,8 @@ err:
 
 static void bch2_btree_set_root_inmem(struct bch_fs *c, struct btree *b)
 {
+	set_btree_node_is_root(b);
+
 	/* Root nodes cannot be reaped */
 	mutex_lock(&c->btree_cache.lock);
 	list_del_init(&b->list);
@@ -1249,14 +1242,13 @@ static void bch2_btree_set_root(struct btree_update *as,
 
 /* Interior node updates: */
 
-static void bch2_insert_fixup_btree_ptr(struct btree_update *as,
-					struct btree_trans *trans,
+static void bch2_insert_fixup_btree_ptr(struct btree_trans *trans,
 					struct btree_path *path,
 					struct btree *b,
 					struct btree_node_iter *node_iter,
 					struct bkey_i *insert)
 {
-	struct bch_fs *c = as->c;
+	struct bch_fs *c = trans->c;
 	struct bkey_packed *k;
 	struct printbuf buf = PRINTBUF;
 	unsigned long old, new, v;
@@ -1281,15 +1273,6 @@ static void bch2_insert_fixup_btree_ptr(struct btree_update *as,
 		bch2_fs_inconsistent(c, "%s", buf.buf);
 		dump_stack();
 	}
-
-	BUG_ON(as->journal_u64s + jset_u64s(insert->k.u64s) >
-	       ARRAY_SIZE(as->journal_entries));
-
-	as->journal_u64s +=
-		journal_entry_set((void *) &as->journal_entries[as->journal_u64s],
-				  BCH_JSET_ENTRY_btree_keys,
-				  b->c.btree_id, b->c.level,
-				  insert, insert->k.u64s);
 
 	while ((k = bch2_btree_node_iter_peek_all(node_iter, b)) &&
 	       bkey_iter_pos_cmp(b, k, &insert->k.p) < 0)
@@ -1333,7 +1316,7 @@ __bch2_btree_insert_keys_interior(struct btree_update *as,
 		if (bpos_gt(insert->k.p, b->key.k.p))
 			break;
 
-		bch2_insert_fixup_btree_ptr(as, trans, path, b, &node_iter, insert);
+		bch2_insert_fixup_btree_ptr(trans, path, b, &node_iter, insert);
 		bch2_keylist_pop_front(keys);
 	}
 }
