@@ -838,6 +838,9 @@ void bch2_trans_unlock_noassert(struct btree_trans *trans)
 {
 	__bch2_trans_unlock(trans);
 
+	if (trans->locked && IS_ENABLED(CONFIG_LOCKDEP))
+		lock_release(&trans->dep_map, _THIS_IP_);
+
 	trans->locked = false;
 	trans->last_unlock_ip = _RET_IP_;
 }
@@ -845,6 +848,9 @@ void bch2_trans_unlock_noassert(struct btree_trans *trans)
 void bch2_trans_unlock(struct btree_trans *trans)
 {
 	__bch2_trans_unlock(trans);
+
+	if (trans->locked && IS_ENABLED(CONFIG_LOCKDEP))
+		lock_release(&trans->dep_map, _THIS_IP_);
 
 	trans->locked = false;
 	trans->last_unlock_ip = _RET_IP_;
