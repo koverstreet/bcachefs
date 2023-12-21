@@ -786,6 +786,13 @@ void bch2_trans_unlock_noassert(struct btree_trans *trans)
 
 	trans_for_each_path(trans, path, i)
 		__bch2_btree_path_unlock(trans, path);
+
+#ifdef CONFIG_LOCKDEP
+	if (trans->locks_held) {
+		lock_release(&trans->dep_map, _THIS_IP_);
+		trans->locks_held = false;
+	}
+#endif
 }
 
 void bch2_trans_unlock(struct btree_trans *trans)
@@ -795,6 +802,13 @@ void bch2_trans_unlock(struct btree_trans *trans)
 
 	trans_for_each_path(trans, path, i)
 		__bch2_btree_path_unlock(trans, path);
+
+#ifdef CONFIG_LOCKDEP
+	if (trans->locks_held) {
+		lock_release(&trans->dep_map, _THIS_IP_);
+		trans->locks_held = false;
+	}
+#endif
 }
 
 void bch2_trans_unlock_long(struct btree_trans *trans)
