@@ -199,13 +199,18 @@ static inline int __btree_node_lock_nopath(struct btree_trans *trans,
 					 bool lock_may_not_fail,
 					 unsigned long ip)
 {
-	int ret;
+#ifdef CONFIG_LOCKDEP
+	if (!trans->locks_held) {
+		lock_acquire_exclusive(&trans->dep_map, 0, 0, NULL, ip);
+		trans->locks_held = true;
+	}
+#endif
 
 	trans->lock_may_not_fail = lock_may_not_fail;
 	trans->lock_must_abort	= false;
 	trans->locking		= b;
 
-	ret = six_lock_ip_waiter(&b->lock, type, &trans->locking_wait,
+	int ret = six_lock_ip_waiter(&b->lock, type, &trans->locking_wait,
 				 bch2_six_check_for_deadlock, trans, ip);
 	WRITE_ONCE(trans->locking, NULL);
 	WRITE_ONCE(trans->locking_wait.start_time, 0);

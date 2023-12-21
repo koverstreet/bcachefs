@@ -3024,6 +3024,9 @@ got_trans:
 
 	trans->paths_allocated[0] = 1;
 
+	static struct lock_class_key lockdep_key;
+	lockdep_init_map(&trans->dep_map, "bcachefs_btree", &lockdep_key, 0);
+
 	if (fn_idx < BCH_TRANSACTIONS_NR) {
 		trans->fn = bch2_btree_transaction_fns[fn_idx];
 
@@ -3285,7 +3288,19 @@ int bch2_fs_btree_iter_init(struct bch_fs *c)
 		mempool_init_kmalloc_pool(&c->btree_trans_mem_pool, 1,
 					  BTREE_TRANS_MEM_MAX) ?:
 		init_srcu_struct(&c->btree_trans_barrier);
-	if (!ret)
-		c->btree_trans_barrier_initialized = true;
-	return ret;
+	if (ret)
+		return ret;
+
+#ifdef CONFIG_LOCKDEP
+	fs_reclaim_acquire(GFP_KERNEL);
+	struct btree_trans *trans = bch2_trans_get(c);
+	lock_acquire_exclusive(&trans->dep_map, 0, 0, NULL, _THIS_IP_);
+	trans->locks_held = true;
+	bch2_trans_put(trans);
+	fs_reclaim_release(GFP_KERNEL);
+
+#endif
+	c->btree_trans_barrier_initialized = true;
+	return 0;
+
 }

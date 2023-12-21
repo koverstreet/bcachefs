@@ -398,6 +398,9 @@ struct btree_trans {
 	u8			lock_must_abort;
 	bool			lock_may_not_fail:1;
 	bool			srcu_held:1;
+#ifdef CONFIG_LOCKDEP
+	bool			locks_held:1;
+#endif
 	bool			used_mempool:1;
 	bool			in_traverse_all:1;
 	bool			paths_sorted:1;
@@ -437,6 +440,9 @@ struct btree_trans {
 	unsigned		extra_disk_res; /* XXX kill */
 	struct replicas_delta_list *fs_usage_deltas;
 
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+	struct lockdep_map	dep_map;
+#endif
 	/* Entries before this are zeroed out on every bch2_trans_get() call */
 
 	struct list_head	list;
