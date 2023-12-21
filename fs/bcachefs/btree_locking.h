@@ -194,6 +194,15 @@ int bch2_six_check_for_deadlock(struct six_lock *lock, void *p);
 
 /* lock: */
 
+static inline void trans_set_locked(struct btree_trans *trans)
+{
+	if (!trans->locked) {
+		lock_acquire_exclusive(&trans->dep_map, 0, 0, NULL, _THIS_IP_);
+		trans->locked = true;
+		trans->last_unlock_ip = 0;
+	}
+}
+
 static inline int __btree_node_lock_nopath(struct btree_trans *trans,
 					 struct btree_bkey_cached_common *b,
 					 enum six_lock_type type,

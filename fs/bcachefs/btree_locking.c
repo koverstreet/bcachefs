@@ -792,8 +792,7 @@ static inline int __bch2_trans_relock(struct btree_trans *trans, bool trace)
 			return bch2_trans_relock_fail(trans, path, &f, trace);
 	}
 
-	trans->locked = true;
-	trans->last_unlock_ip = 0;
+	trans_set_locked(trans);
 out:
 	bch2_trans_verify_locks(trans);
 	return 0;
@@ -813,6 +812,8 @@ void bch2_trans_unlock_noassert(struct btree_trans *trans)
 {
 	__bch2_trans_unlock(trans);
 
+	if (trans->locked)
+		lock_release(&trans->dep_map, _THIS_IP_);
 	trans->locked = false;
 	trans->last_unlock_ip = _RET_IP_;
 }
@@ -821,6 +822,8 @@ void bch2_trans_unlock(struct btree_trans *trans)
 {
 	__bch2_trans_unlock(trans);
 
+	if (trans->locked)
+		lock_release(&trans->dep_map, _THIS_IP_);
 	trans->locked = false;
 	trans->last_unlock_ip = _RET_IP_;
 }
