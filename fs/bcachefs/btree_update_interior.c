@@ -249,11 +249,9 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 					     unsigned flags)
 {
 	struct bch_fs *c = trans->c;
-	struct write_point *wp;
 	struct btree *b;
 	BKEY_PADDED_ONSTACK(k, BKEY_BTREE_PTR_VAL_U64s_MAX) tmp;
 	struct open_buckets obs = { .nr = 0 };
-	struct bch_devs_list devs_have = (struct bch_devs_list) { 0 };
 	enum bch_watermark watermark = flags & BCH_WATERMARK_MASK;
 	unsigned nr_reserve = watermark > BCH_WATERMARK_reclaim
 		? BTREE_NODE_RESERVE
@@ -272,36 +270,20 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 	}
 	mutex_unlock(&c->btree_reserve_cache_lock);
 
-retry:
-	ret = bch2_alloc_sectors_start_trans(trans,
+	bkey_btree_ptr_v2_init(&tmp.k);
+	ret = bch2_alloc_sectors_trans(trans,
 				      c->opts.metadata_target ?:
 				      c->opts.foreground_target,
 				      0,
 				      writepoint_ptr(&c->btree_write_point),
-				      &devs_have,
 				      res->nr_replicas,
 				      c->opts.metadata_replicas_required,
-				      watermark, 0, cl, &wp);
+				      watermark, 0,
+				      btree_sectors(c),
+				      cl, &obs, &tmp.k);
 	if (unlikely(ret))
 		return ERR_PTR(ret);
 
-	if (wp->sectors_free < btree_sectors(c)) {
-		struct open_bucket *ob;
-		unsigned i;
-
-		open_bucket_for_each(c, &wp->ptrs, ob, i)
-			if (ob->sectors_free < btree_sectors(c))
-				ob->sectors_free = 0;
-
-		bch2_alloc_sectors_done(c, wp);
-		goto retry;
-	}
-
-	bkey_btree_ptr_v2_init(&tmp.k);
-	bch2_alloc_sectors_append_ptrs(c, wp, &tmp.k, btree_sectors(c), false);
-
-	bch2_open_bucket_get(c, wp, &obs);
-	bch2_alloc_sectors_done(c, wp);
 mem_alloc:
 	b = bch2_btree_node_mem_alloc(trans, interior_node);
 	six_unlock_write(&b->c.lock);

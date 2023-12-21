@@ -164,6 +164,15 @@ int bch2_alloc_sectors_start_trans(struct btree_trans *,
 				   unsigned,
 				   struct closure *,
 				   struct write_point **);
+int bch2_alloc_sectors_trans(struct btree_trans *,
+			     unsigned, unsigned,
+			     struct write_point_specifier,
+			     unsigned, unsigned,
+			     enum bch_watermark,
+			     unsigned, unsigned,
+			     struct closure *,
+			     struct open_buckets *,
+			     struct bkey_i *);
 
 struct bch_extent_ptr bch2_ob_ptr(struct bch_fs *, struct open_bucket *);
 

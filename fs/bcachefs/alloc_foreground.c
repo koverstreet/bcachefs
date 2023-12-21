@@ -1443,6 +1443,51 @@ err:
 	return ret;
 }
 
+int bch2_alloc_sectors_trans(struct btree_trans *trans,
+			     unsigned target,
+			     unsigned erasure_code,
+			     struct write_point_specifier write_point,
+			     unsigned nr_replicas,
+			     unsigned nr_replicas_required,
+			     enum bch_watermark watermark,
+			     unsigned flags,
+			     unsigned sectors,
+			     struct closure *cl,
+			     struct open_buckets *obs,
+			     struct bkey_i *k)
+{
+	struct bch_fs *c = trans->c;
+retry:
+	struct bch_devs_list devs_have = (struct bch_devs_list) { 0 };
+	struct write_point *wp;
+	int ret = bch2_alloc_sectors_start_trans(trans,
+				      target, erasure_code, write_point,
+				      &devs_have,
+				      nr_replicas,
+				      nr_replicas_required,
+				      watermark, 0, cl, &wp);
+	if (unlikely(ret))
+		return ret;
+
+	if (wp->sectors_free < sectors) {
+		struct open_bucket *ob;
+		unsigned i;
+
+		open_bucket_for_each(c, &wp->ptrs, ob, i)
+			if (ob->sectors_free < sectors)
+				ob->sectors_free = 0;
+
+		bch2_alloc_sectors_done(c, wp);
+		goto retry;
+	}
+
+	bch2_alloc_sectors_append_ptrs(c, wp, k, sectors, false);
+
+	bch2_open_bucket_get(c, wp, obs);
+	bch2_alloc_sectors_done(c, wp);
+	return 0;
+}
+
 struct bch_extent_ptr bch2_ob_ptr(struct bch_fs *c, struct open_bucket *ob)
 {
 	struct bch_dev *ca = bch_dev_bkey_exists(c, ob->dev);
