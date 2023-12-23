@@ -83,8 +83,10 @@ static int sk_diag_dump_icons(struct sock *sk, struct sk_buff *nlskb)
 			 * The state lock is outer for the same sk's
 			 * queue lock. With the other's queue locked it's
 			 * OK to lock the state.
+			 * ???
+			 * What is the previous lock, what is our lock ordering?
 			 */
-			unix_state_lock_nested(req);
+			unix_state_lock(req);
 			peer = unix_sk(req)->peer;
 			buf[i++] = (peer ? sock_i_ino(peer) : 0);
 			unix_state_unlock(req);
