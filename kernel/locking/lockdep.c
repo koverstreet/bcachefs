@@ -4919,6 +4919,12 @@ struct lock_class_key __lockdep_no_validate__;
 EXPORT_SYMBOL_GPL(__lockdep_no_validate__);
 
 #ifdef CONFIG_PROVE_LOCKING
+int lockdep_ptr_order_cmp_fn(const struct lockdep_map *a,
+			     const struct lockdep_map *b)
+{
+	return cmp_int((unsigned long) a, (unsigned long) b);
+}
+
 void lockdep_set_lock_cmp_fn(struct lockdep_map *lock, lock_cmp_fn cmp_fn,
 			     lock_print_fn print_fn)
 {

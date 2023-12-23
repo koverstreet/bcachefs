@@ -448,12 +448,15 @@ extern int lockdep_is_held(const void *);
 #endif /* !LOCKDEP */
 
 #ifdef CONFIG_PROVE_LOCKING
+int lockdep_ptr_order_cmp_fn(const struct lockdep_map *, const struct lockdep_map *);
 void lockdep_set_lock_cmp_fn(struct lockdep_map *, lock_cmp_fn, lock_print_fn);
 
 #define lock_set_cmp_fn(lock, ...)	lockdep_set_lock_cmp_fn(&(lock)->dep_map, __VA_ARGS__)
 #else
 #define lock_set_cmp_fn(lock, ...)	do { } while (0)
 #endif
+
+#define lock_set_cmp_fn_ptr_order(lock)	lock_set_cmp_fn(lock, lockdep_ptr_order_cmp_fn);
 
 enum xhlock_context_t {
 	XHLOCK_HARD,

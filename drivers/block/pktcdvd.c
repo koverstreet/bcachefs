@@ -332,7 +332,7 @@ static ssize_t device_map_show(const struct class *c, const struct class_attribu
 {
 	int n = 0;
 	int idx;
-	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
+	mutex_lock(&ctl_mutex);
 	for (idx = 0; idx < MAX_WRITERS; idx++) {
 		struct pktcdvd_device *pd = pkt_devs[idx];
 		if (!pd)
@@ -2639,7 +2639,7 @@ static int pkt_setup_dev(dev_t dev, dev_t* pkt_dev)
 	struct pktcdvd_device *pd;
 	struct gendisk *disk;
 
-	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
+	mutex_lock(&ctl_mutex);
 
 	for (idx = 0; idx < MAX_WRITERS; idx++)
 		if (!pkt_devs[idx])
@@ -2729,7 +2729,7 @@ static int pkt_remove_dev(dev_t pkt_dev)
 	int idx;
 	int ret = 0;
 
-	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
+	mutex_lock(&ctl_mutex);
 
 	for (idx = 0; idx < MAX_WRITERS; idx++) {
 		pd = pkt_devs[idx];
@@ -2780,7 +2780,7 @@ static void pkt_get_status(struct pkt_ctrl_command *ctrl_cmd)
 {
 	struct pktcdvd_device *pd;
 
-	mutex_lock_nested(&ctl_mutex, SINGLE_DEPTH_NESTING);
+	mutex_lock(&ctl_mutex);
 
 	pd = pkt_find_dev_from_minor(ctrl_cmd->dev_index);
 	if (pd) {

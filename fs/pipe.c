@@ -78,14 +78,6 @@ static unsigned long pipe_user_pages_soft = PIPE_DEF_BUFFERS * INR_OPEN_CUR;
 
 #define cmp_int(l, r)		((l > r) - (l < r))
 
-#ifdef CONFIG_PROVE_LOCKING
-static int pipe_lock_cmp_fn(const struct lockdep_map *a,
-			    const struct lockdep_map *b)
-{
-	return cmp_int((unsigned long) a, (unsigned long) b);
-}
-#endif
-
 void pipe_lock(struct pipe_inode_info *pipe)
 {
 	if (pipe->files)
@@ -817,7 +809,7 @@ struct pipe_inode_info *alloc_pipe_info(void)
 		pipe->nr_accounted = pipe_bufs;
 		pipe->user = user;
 		mutex_init(&pipe->mutex);
-		lock_set_cmp_fn(&pipe->mutex, pipe_lock_cmp_fn, NULL);
+		lock_set_cmp_fn_ptr_order(&pipe->mutex);
 		return pipe;
 	}
 
