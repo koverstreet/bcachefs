@@ -629,6 +629,12 @@ __flatten
 bool bch2_btree_path_relock_norestart(struct btree_trans *trans,
 			struct btree_path *path, unsigned long trace_ip)
 {
+#ifdef CONFIG_LOCKDEP
+	if (!trans->locks_held) {
+		lock_map_acquire(&trans->dep_map);
+		trans->locks_held = true;
+	}
+#endif
 	struct get_locks_fail f;
 
 	return btree_path_get_locks(trans, path, false, &f);
@@ -805,7 +811,7 @@ void bch2_trans_unlock(struct btree_trans *trans)
 
 #ifdef CONFIG_LOCKDEP
 	if (trans->locks_held) {
-		lock_release(&trans->dep_map, _THIS_IP_);
+		lock_map_release(&trans->dep_map);
 		trans->locks_held = false;
 	}
 #endif

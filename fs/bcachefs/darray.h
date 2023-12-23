@@ -17,6 +17,7 @@ struct {								\
 }
 
 typedef DARRAY(void) darray_void;
+typedef DARRAY(char *) darray_string;
 
 int __bch2_darray_resize(darray_void *, size_t, size_t, gfp_t);
 

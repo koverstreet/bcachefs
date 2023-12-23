@@ -106,7 +106,7 @@ struct held_lock {
 	struct lockdep_map		*instance;
 	struct lockdep_map		*nest_lock;
 #ifdef CONFIG_LOCK_STAT
-	u64 				waittime_stamp;
+	u64				waittime_stamp;
 	u64				holdtime_stamp;
 #endif
 	/*

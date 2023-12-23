@@ -1410,6 +1410,7 @@ static int add_lock_to_list(struct lock_class *this,
 			    u16 distance, u8 dep,
 			    const struct lock_trace *trace)
 {
+	trace_printk("%s -> %s\n", links_to->name, this->name);
 	struct lock_list *entry;
 	/*
 	 * Lock not present yet - get a new dependency struct and
@@ -1783,6 +1784,15 @@ static enum bfs_result __bfs(struct lock_list *source_entry,
 		 */
 		if (skip && skip(lock, data))
 			continue;
+
+		{
+			struct lock_class *next = hlock_class((struct held_lock *)data);
+
+			if (!strcmp("bcachefs_btree", lock->class->name) ||
+			    !strcmp("bcachefs_btree", next->name))
+				trace_printk("considering %s -> %s\n",
+					     lock->class->name, next->name);
+		}
 
 		if (match(lock, data)) {
 			*target_entry = lock;

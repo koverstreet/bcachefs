@@ -204,7 +204,7 @@ static inline int __btree_node_lock_nopath(struct btree_trans *trans,
 {
 #ifdef CONFIG_LOCKDEP
 	if (!trans->locks_held) {
-		lock_acquire_exclusive(&trans->dep_map, 0, 0, NULL, ip);
+		lock_map_acquire(&trans->dep_map);
 		trans->locks_held = true;
 	}
 #endif
@@ -270,6 +270,13 @@ static inline int btree_node_lock(struct btree_trans *trans,
 	int ret = 0;
 
 	EBUG_ON(level >= BTREE_MAX_DEPTH);
+
+#ifdef CONFIG_LOCKDEP
+	if (!trans->locks_held) {
+		lock_map_acquire(&trans->dep_map);
+		trans->locks_held = true;
+	}
+#endif
 
 	if (likely(six_trylock_type(&b->lock, type)) ||
 	    btree_node_lock_increment(trans, b, level, (enum btree_node_locked_type) type) ||

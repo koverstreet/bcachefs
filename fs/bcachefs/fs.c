@@ -1596,26 +1596,20 @@ static struct bch_fs *bch2_path_to_fs(const char *path)
 	return c ?: ERR_PTR(-ENOENT);
 }
 
-static char **split_devs(const char *_dev_name, unsigned *nr)
+static darray_string bch2_split_devs(const char *_dev_name, unsigned *nr)
 {
 	char *dev_name = NULL, **devs = NULL, *s;
 	size_t i = 0, nr_devs = 0;
+	DARRAY(
 
-	dev_name = kstrdup(_dev_name, GFP_KERNEL);
+	char *dev_name = kstrdup(_dev_name, GFP_KERNEL), *s = dev_name;
 	if (!dev_name)
 		return NULL;
 
-	for (s = dev_name; s; s = strchr(s + 1, ':'))
-		nr_devs++;
+	while ((s = strsep(&dev_name, ":"))) {
 
-	devs = kcalloc(nr_devs + 1, sizeof(const char *), GFP_KERNEL);
-	if (!devs) {
-		kfree(dev_name);
-		return NULL;
-	}
-
-	while ((s = strsep(&dev_name, ":")))
 		devs[i++] = s;
+	}
 
 	*nr = nr_devs;
 	return devs;

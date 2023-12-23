@@ -2913,6 +2913,8 @@ unsigned bch2_trans_get_fn_idx(const char *fn)
 	return i;
 }
 
+static struct lock_class_key key;
+
 struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 	__acquires(&c->btree_trans_barrier)
 {
@@ -2976,8 +2978,8 @@ got_trans:
 
 	trans->paths_allocated[0] = 1;
 
-	static struct lock_class_key lockdep_key;
-	lockdep_init_map(&trans->dep_map, "bcachefs_btree", &lockdep_key, 0);
+	//lockdep_init_map(&trans->dep_map, "bcachefs_btree", &key, 0);
+	lockdep_init_map_wait(&trans->dep_map, "bcachefs_btree", &key, 0, LD_WAIT_SLEEP);
 
 	if (fn_idx < BCH_TRANSACTIONS_NR) {
 		trans->fn = bch2_btree_transaction_fns[fn_idx];
@@ -3226,6 +3228,10 @@ void bch2_fs_btree_iter_init_early(struct bch_fs *c)
 	seqmutex_init(&c->btree_trans_lock);
 }
 
+#include <linux/delay.h>
+
+static DEFINE_MUTEX(test_mutex);
+
 int bch2_fs_btree_iter_init(struct bch_fs *c)
 {
 	int ret;
@@ -3242,15 +3248,46 @@ int bch2_fs_btree_iter_init(struct bch_fs *c)
 	if (ret)
 		return ret;
 
-#ifdef CONFIG_LOCKDEP
+	struct btree_trans *trans;
+#if 0
 	fs_reclaim_acquire(GFP_KERNEL);
-	struct btree_trans *trans = bch2_trans_get(c);
-	lock_acquire_exclusive(&trans->dep_map, 0, 0, NULL, _THIS_IP_);
+	mutex_lock(&test_mutex);
+	mutex_unlock(&test_mutex);
+	fs_reclaim_release(GFP_KERNEL);
+
+	mutex_lock(&test_mutex);
+	fs_reclaim_acquire(GFP_KERNEL);
+	fs_reclaim_release(GFP_KERNEL);
+	mutex_unlock(&test_mutex);
+
+	mutex_lock(&test_mutex);
+	trans = bch2_trans_get(c);
+	lock_map_acquire(&trans->dep_map);
+	trans->locks_held = true;
+	bch2_trans_put(trans);
+	mutex_unlock(&test_mutex);
+
+	trans = bch2_trans_get(c);
+	lock_map_acquire(&trans->dep_map);
+	trans->locks_held = true;
+	mutex_lock(&test_mutex);
+	mutex_unlock(&test_mutex);
+	bch2_trans_put(trans);
+#endif
+	fs_reclaim_acquire(GFP_KERNEL);
+	trans = bch2_trans_get(c);
+	lock_map_acquire(&trans->dep_map);
 	trans->locks_held = true;
 	bch2_trans_put(trans);
 	fs_reclaim_release(GFP_KERNEL);
 
-#endif
+	trans = bch2_trans_get(c);
+	lock_map_acquire(&trans->dep_map);
+	trans->locks_held = true;
+	fs_reclaim_acquire(GFP_KERNEL);
+	fs_reclaim_release(GFP_KERNEL);
+	bch2_trans_put(trans);
+
 	c->btree_trans_barrier_initialized = true;
 	return 0;
 
