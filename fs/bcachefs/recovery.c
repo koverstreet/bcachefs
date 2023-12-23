@@ -741,7 +741,7 @@ int bch2_fs_recovery(struct bch_fs *c)
 		goto err;
 	}
 
-	if (c->opts.fsck || !(c->opts.nochanges && c->opts.norecovery))
+	if (!(c->opts.nochanges && c->opts.norecovery))
 		check_version_upgrade(c);
 
 	if (c->opts.fsck && c->opts.norecovery) {
