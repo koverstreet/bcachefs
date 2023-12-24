@@ -447,10 +447,6 @@ void __bch2_time_stats_update(struct bch2_time_stats *stats, u64 start, u64 end)
 {
 	unsigned long flags;
 
-	WARN_RATELIMIT(!stats->min_duration || !stats->min_freq,
-		       "time_stats: min_duration = %llu, min_freq = %llu",
-		       stats->min_duration, stats->min_freq);
-
 	if (!stats->buffer) {
 		spin_lock_irqsave(&stats->lock, flags);
 		bch2_time_stats_update_one(stats, start, end);
