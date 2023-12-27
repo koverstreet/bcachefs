@@ -308,6 +308,13 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 			    bpos_gt(k->k.k.p, path->l[0].b->key.k.p)) {
 				bch2_btree_node_unlock_write(trans, path, path->l[0].b);
 				write_locked = false;
+
+				ret = lockrestart_do(trans,
+					bch2_btree_iter_traverse(&iter) ?:
+					bch2_foreground_maybe_merge(trans, iter.path, 0,
+							BCH_TRANS_COMMIT_journal_reclaim));
+				if (ret)
+					goto err;
 			}
 		}
 
