@@ -3026,6 +3026,9 @@ got_trans:
 
 	static struct lock_class_key lockdep_key;
 	lockdep_init_map(&trans->dep_map, "bcachefs_btree", &lockdep_key, 0);
+	//pr_info("registering %px : %px", &trans->dep_map, trans->dep_map.key);
+
+	BUG_ON(!trans->dep_map.key);
 
 	if (fn_idx < BCH_TRANSACTIONS_NR) {
 		trans->fn = bch2_btree_transaction_fns[fn_idx];
@@ -3292,13 +3295,21 @@ int bch2_fs_btree_iter_init(struct bch_fs *c)
 		return ret;
 
 #ifdef CONFIG_LOCKDEP
+	pr_info("foo");
+	struct btree_trans *trans;
+
 	fs_reclaim_acquire(GFP_KERNEL);
-	struct btree_trans *trans = bch2_trans_get(c);
+	trans = bch2_trans_get(c);
 	lock_acquire_exclusive(&trans->dep_map, 0, 0, NULL, _THIS_IP_);
 	trans->locks_held = true;
-	bch2_trans_put(trans);
+	bch2_trans_unlock(trans);
 	fs_reclaim_release(GFP_KERNEL);
 
+	lock_acquire_exclusive(&trans->dep_map, 0, 0, NULL, _THIS_IP_);
+	trans->locks_held = true;
+	fs_reclaim_acquire(GFP_KERNEL);
+	fs_reclaim_release(GFP_KERNEL);
+	bch2_trans_put(trans);
 #endif
 	c->btree_trans_barrier_initialized = true;
 	return 0;
