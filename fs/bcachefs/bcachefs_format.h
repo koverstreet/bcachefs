@@ -416,7 +416,8 @@ static inline void bkey_init(struct bkey *k)
 	x(bucket_gens,		30)			\
 	x(snapshot_tree,	31)			\
 	x(logged_op_truncate,	32)			\
-	x(logged_op_finsert,	33)
+	x(logged_op_finsert,	33)			\
+	x(accounting,		34)
 
 enum bch_bkey_type {
 #define x(name, nr) KEY_TYPE_##name	= nr,
@@ -501,17 +502,19 @@ struct bch_sb_field {
 	x(downgrade,			14)
 
 #include "alloc_background_format.h"
+#include "dirent_format.h"
+#include "disk_accounting_format.h"
 #include "extents_format.h"
-#include "reflink_format.h"
 #include "ec_format.h"
 #include "inode_format.h"
-#include "dirent_format.h"
-#include "xattr_format.h"
-#include "quota_format.h"
 #include "logged_ops_format.h"
+#include "quota_format.h"
+#include "reflink_format.h"
+#include "replicas_format.h"
+#include "sb-counters_format.h"
 #include "snapshot_format.h"
 #include "subvolume_format.h"
-#include "sb-counters_format.h"
+#include "xattr_format.h"
 
 enum bch_sb_field_type {
 #define x(f, nr)	BCH_SB_FIELD_##f = nr,
@@ -680,68 +683,10 @@ LE64_BITMASK(BCH_KDF_SCRYPT_P,	struct bch_sb_field_crypt, kdf_flags, 32, 48);
 
 /* BCH_SB_FIELD_replicas: */
 
-#define BCH_DATA_TYPES()		\
-	x(free,		0)		\
-	x(sb,		1)		\
-	x(journal,	2)		\
-	x(btree,	3)		\
-	x(user,		4)		\
-	x(cached,	5)		\
-	x(parity,	6)		\
-	x(stripe,	7)		\
-	x(need_gc_gens,	8)		\
-	x(need_discard,	9)
-
-enum bch_data_type {
-#define x(t, n) BCH_DATA_##t,
-	BCH_DATA_TYPES()
-#undef x
-	BCH_DATA_NR
-};
-
-static inline bool data_type_is_empty(enum bch_data_type type)
-{
-	switch (type) {
-	case BCH_DATA_free:
-	case BCH_DATA_need_gc_gens:
-	case BCH_DATA_need_discard:
-		return true;
-	default:
-		return false;
-	}
-}
-
-static inline bool data_type_is_hidden(enum bch_data_type type)
-{
-	switch (type) {
-	case BCH_DATA_sb:
-	case BCH_DATA_journal:
-		return true;
-	default:
-		return false;
-	}
-}
-
-struct bch_replicas_entry_v0 {
-	__u8			data_type;
-	__u8			nr_devs;
-	__u8			devs[];
-} __packed;
-
 struct bch_sb_field_replicas_v0 {
 	struct bch_sb_field	field;
 	struct bch_replicas_entry_v0 entries[];
 } __packed __aligned(8);
-
-struct bch_replicas_entry_v1 {
-	__u8			data_type;
-	__u8			nr_devs;
-	__u8			nr_required;
-	__u8			devs[];
-} __packed;
-
-#define replicas_entry_bytes(_i)					\
-	(offsetof(typeof(*(_i)), devs) + (_i)->nr_devs)
 
 struct bch_sb_field_replicas {
 	struct bch_sb_field	field;
@@ -876,7 +821,8 @@ struct bch_sb_field_downgrade {
 	x(rebalance_work,		BCH_VERSION(1,  3))		\
 	x(member_seq,			BCH_VERSION(1,  4))		\
 	x(subvolume_fs_parent,		BCH_VERSION(1,  5))		\
-	x(btree_subvolume_children,	BCH_VERSION(1,  6))
+	x(btree_subvolume_children,	BCH_VERSION(1,  6))		\
+	x(disk_accounting_v2,		BCH_VERSION(1,  7))
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,
@@ -1526,7 +1472,9 @@ enum btree_id_flags {
 	x(rebalance_work,	18,	BTREE_ID_SNAPSHOT_FIELD,		\
 	  BIT_ULL(KEY_TYPE_set)|BIT_ULL(KEY_TYPE_cookie))			\
 	x(subvolume_children,	19,	0,					\
-	  BIT_ULL(KEY_TYPE_set))
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(accounting,		20,	BTREE_ID_SNAPSHOT_FIELD,		\
+	  BIT_ULL(KEY_TYPE_accounting))						\
 
 enum btree_id {
 #define x(name, nr, ...) BTREE_ID_##name = nr,
