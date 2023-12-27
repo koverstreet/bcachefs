@@ -51,9 +51,15 @@
 	  BCH_FSCK_ERR_subvol_fs_path_parent_wrong)		\
 	x(btree_subvolume_children,				\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_subvols),		\
-	  BCH_FSCK_ERR_subvol_children_not_set)
+	  BCH_FSCK_ERR_subvol_children_not_set)			\
+	x(disk_accounting_v2,					\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_allocations),		\
+	  BCH_FSCK_ERR_accounting_mismatch)
 
-#define DOWNGRADE_TABLE()
+#define DOWNGRADE_TABLE()					\
+	x(disk_accounting_v2,					\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_alloc_info),		\
+	  BCH_FSCK_ERR_dev_usage_buckets_wrong)
 
 struct upgrade_downgrade_entry {
 	u64		recovery_passes;
@@ -107,7 +113,7 @@ void bch2_sb_set_upgrade(struct bch_fs *c,
 		}
 }
 
-#define x(ver, passes, ...) static const u16 downgrade_ver_##errors[] = { __VA_ARGS__ };
+#define x(ver, passes, ...) static const u16 downgrade_##ver##_errors[] = { __VA_ARGS__ };
 DOWNGRADE_TABLE()
 #undef x
 
