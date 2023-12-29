@@ -1732,7 +1732,9 @@ struct bch_sb_field_downgrade {
 	x(rebalance_work,		BCH_VERSION(1,  3),		\
 	  BIT_ULL(BCH_RECOVERY_PASS_set_fs_needs_rebalance))		\
 	x(member_seq,			BCH_VERSION(1,  4),		\
-	  0)
+	  0)								\
+	x(disk_accounting_v2,		BCH_VERSION(1,  5),		\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_alloc_info))
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,

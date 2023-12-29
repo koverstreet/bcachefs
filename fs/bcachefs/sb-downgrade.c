@@ -20,7 +20,10 @@
  * x(version, recovery_passes, errors...)
  */
 
-#define DOWNGRADE_TABLE()
+#define DOWNGRADE_TABLE()					\
+	x(disk_accounting_v2,					\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_alloc_info),		\
+	  BCH_FSCK_ERR_dev_usage_buckets_wrong)
 
 struct downgrade_entry {
 	u64		recovery_passes;
