@@ -27,6 +27,7 @@
 #include "recovery.h"
 #include "replicas.h"
 #include "sb-clean.h"
+#include "sb-downgrade.h"
 #include "snapshot.h"
 #include "subvolume.h"
 #include "super-io.h"
@@ -798,6 +799,34 @@ int bch2_fs_recovery(struct bch_fs *c)
 			bch_info(c, "%s", buf.buf);
 			printbuf_exit(&buf);
 			c->recovery_passes_explicit |= sb_passes;
+		}
+
+		if (bcachefs_metadata_version_current < c->sb.version) {
+			struct printbuf buf = PRINTBUF;
+
+			prt_str(&buf, "Version downgrade required:\n");
+
+			u64 passes = ext->recovery_passes_required[0];
+			ret = bch2_sb_set_downgrade(c,
+					BCH_VERSION_MINOR(bcachefs_metadata_version_current),
+					BCH_VERSION_MINOR(c->sb.version));
+			if (ret) {
+				mutex_unlock(&c->sb_lock);
+				goto err;
+			}
+
+			passes = ext->recovery_passes_required[0] & ~passes;
+			if (passes) {
+				prt_str(&buf, "  running recovery passes: ");
+				prt_bitflags(&buf, bch2_recovery_passes,
+					     bch2_recovery_passes_from_stable(le64_to_cpu(passes)));
+			}
+
+			bch_info(c, "%s", buf.buf);
+			printbuf_exit(&buf);
+
+			bch2_sb_maybe_downgrade(c);
+			write_sb = true;
 		}
 
 		if (check_version_upgrade(c))

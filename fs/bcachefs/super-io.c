@@ -13,6 +13,7 @@
 #include "replicas.h"
 #include "quota.h"
 #include "sb-clean.h"
+#include "sb-downgrade.h"
 #include "sb-errors.h"
 #include "sb-members.h"
 #include "super-io.h"
@@ -958,6 +959,7 @@ int bch2_write_super(struct bch_fs *c)
 	bch2_sb_members_from_cpu(c);
 	bch2_sb_members_cpy_v2_v1(&c->disk_sb);
 	bch2_sb_errors_from_cpu(c);
+	bch2_sb_downgrade_update(c);
 
 	for_each_online_member(c, ca)
 		bch2_sb_from_fs(c, ca);
@@ -1113,6 +1115,10 @@ void bch2_sb_maybe_downgrade(struct bch_fs *c)
 void bch2_sb_upgrade(struct bch_fs *c, unsigned new_version)
 {
 	lockdep_assert_held(&c->sb_lock);
+
+	if (BCH_VERSION_MAJOR(new_version) >
+	    BCH_VERSION_MAJOR(le16_to_cpu(c->disk_sb.sb->version)))
+		bch2_sb_field_resize(&c->disk_sb, downgrade, 0);
 
 	c->disk_sb.sb->version = cpu_to_le16(new_version);
 	c->disk_sb.sb->features[0] |= cpu_to_le64(BCH_SB_FEATURES_ALL);
