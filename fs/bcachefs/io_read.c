@@ -451,6 +451,10 @@ static void bch2_rbio_retry(struct work_struct *work)
 
 		__bch2_read(c, rbio, iter, inum, &failed, flags);
 	}
+
+	/*
+	 * repair bad replica here
+	 */
 }
 
 static void bch2_rbio_error(struct bch_read_bio *rbio, int retry,
