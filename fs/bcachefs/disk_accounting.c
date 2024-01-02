@@ -381,6 +381,20 @@ int bch2_accounting_read(struct bch_fs *c)
 		case BCH_DISK_ACCOUNTING_replicas:
 			fs_usage_data_type_to_base(usage, k.replicas.data_type, v[0]);
 			break;
+		case BCH_DISK_ACCOUNTING_dev_data_type:
+			if (bch2_dev_exists2(c, k.dev_data_type.dev)) {
+				struct bch_dev *ca = bch_dev_bkey_exists(c, k.dev_data_type.dev);
+				struct bch_dev_usage_type __percpu *d = &ca->usage->d[k.dev_data_type.data_type];
+
+				percpu_u64_set(&d->buckets,	v[0]);
+				percpu_u64_set(&d->sectors,	v[1]);
+				percpu_u64_set(&d->fragmented,	v[2]);
+
+				if (k.dev_data_type.data_type == BCH_DATA_sb ||
+				    k.dev_data_type.data_type == BCH_DATA_journal)
+					usage->hidden += v[0] * ca->mi.bucket_size;
+			}
+			break;
 		}
 	}
 	preempt_enable();
