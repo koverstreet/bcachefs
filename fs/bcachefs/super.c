@@ -223,22 +223,6 @@ struct bch_fs *bch2_uuid_to_fs(__uuid_t uuid)
 	return c;
 }
 
-static void bch2_dev_usage_journal_reserve(struct bch_fs *c)
-{
-	unsigned nr = 0, u64s =
-		((sizeof(struct jset_entry_dev_usage) +
-		  sizeof(struct jset_entry_dev_usage_type) * BCH_DATA_NR)) /
-		sizeof(u64);
-
-	rcu_read_lock();
-	for_each_member_device_rcu(c, ca, NULL)
-		nr++;
-	rcu_read_unlock();
-
-	bch2_journal_entry_res_resize(&c->journal,
-			&c->dev_usage_journal_res, u64s * nr);
-}
-
 /* Filesystem RO/RW: */
 
 /*
@@ -940,7 +924,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	bch2_journal_entry_res_resize(&c->journal,
 			&c->btree_root_journal_res,
 			BTREE_ID_NR * (JSET_KEYS_U64s + BKEY_BTREE_PTR_U64s_MAX));
-	bch2_dev_usage_journal_reserve(c);
 	bch2_journal_entry_res_resize(&c->journal,
 			&c->clock_journal_res,
 			(sizeof(struct jset_entry_clock) / sizeof(u64)) * 2);
@@ -1708,8 +1691,6 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 
 	mutex_unlock(&c->sb_lock);
 	up_write(&c->state_lock);
-
-	bch2_dev_usage_journal_reserve(c);
 	return 0;
 err:
 	if (ca->mi.state == BCH_MEMBER_STATE_rw &&
@@ -1837,8 +1818,6 @@ have_slot:
 
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
-
-	bch2_dev_usage_journal_reserve(c);
 
 	ret = bch2_dev_usage_init(ca);
 	if (ret)
