@@ -2818,11 +2818,34 @@ void *__bch2_trans_kmalloc(struct btree_trans *trans, size_t size)
 	return p;
 }
 
+#include "sb-members.h"
+
 static inline void check_srcu_held_too_long(struct btree_trans *trans)
 {
-	WARN(trans->srcu_held && time_after(jiffies, trans->srcu_lock_time + HZ * 10),
-	     "btree trans held srcu lock (delaying memory reclaim) for %lu seconds",
-	     (jiffies - trans->srcu_lock_time) / HZ);
+	if (trans->srcu_held && time_after(jiffies, trans->srcu_lock_time + HZ * 10)) {
+		struct printbuf buf = PRINTBUF;
+
+		prt_str(&buf, "btree node read time:\n");
+		bch2_time_stats_to_text(&buf, &trans->c->times[BCH_TIME_btree_node_read]);
+
+		prt_str(&buf, "btree node read_done time:\n");
+		bch2_time_stats_to_text(&buf, &trans->c->times[BCH_TIME_btree_node_read_done]);
+
+		for_each_member_device(trans->c, ca) {
+			prt_printf(&buf, "device %u read time:\n", ca->dev_idx);
+			bch2_time_stats_to_text(&buf, &ca->io_latency[READ]);
+		}
+
+		struct btree_transaction_stats *s = btree_trans_stats(trans);
+		prt_str(&buf, "transaction duration:\n");
+		bch2_time_stats_to_text(&buf, &s->duration);
+
+		WARN(trans->srcu_held && time_after(jiffies, trans->srcu_lock_time + HZ * 10),
+		     "btree trans held srcu lock (delaying memory reclaim) for %lu seconds",
+		     (jiffies - trans->srcu_lock_time) / HZ);
+		bch2_print_string_as_lines(KERN_ERR, buf.buf);
+		printbuf_exit(&buf);
+	}
 }
 
 void bch2_trans_srcu_unlock(struct btree_trans *trans)

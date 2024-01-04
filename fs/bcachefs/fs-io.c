@@ -194,6 +194,16 @@ int bch2_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	int ret;
 
+	/*
+	 * check if unlinked, disable/defer until relink
+	 */
+
+	/*
+	 * also: add a mode where a file is a tmpfile until fully,
+	 * asynchronously written
+	 */
+
+
 	ret = file_write_and_wait_range(file, start, end);
 	if (ret)
 		goto out;
