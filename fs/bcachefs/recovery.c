@@ -503,8 +503,6 @@ static int journal_replay_early(struct bch_fs *c,
 		}
 	}
 
-	bch2_fs_usage_initialize(c);
-
 	return 0;
 }
 
