@@ -5,6 +5,7 @@
 #include "btree_update.h"
 #include "btree_write_buffer.h"
 #include "buckets.h"
+#include "compress.h"
 #include "disk_accounting.h"
 #include "error.h"
 #include "journal_io.h"
@@ -138,6 +139,9 @@ void bch2_accounting_key_to_text(struct printbuf *out, struct disk_accounting_po
 		break;
 	case BCH_DISK_ACCOUNTING_dev_stripe_buckets:
 		prt_printf(out, "dev=%u", k->dev_stripe_buckets.dev);
+		break;
+	case BCH_DISK_ACCOUNTING_compression:
+		bch2_prt_compression_type(out, k->compression.type);
 		break;
 	}
 }
