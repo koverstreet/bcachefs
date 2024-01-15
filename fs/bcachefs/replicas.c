@@ -812,6 +812,12 @@ static int bch2_cpu_replicas_to_sb_replicas(struct bch_fs *c,
 	return 0;
 }
 
+/* Some (buggy!) compilers don't allow memcmp to be passed as a pointer */
+static int bch2_memcmp(const void *l, const void *r, size_t size)
+{
+	return memcmp(l, r, size);
+}
+
 static int bch2_cpu_replicas_validate(struct bch_replicas_cpu *cpu_r,
 				      struct bch_sb *sb,
 				      struct printbuf *err)
@@ -821,7 +827,7 @@ static int bch2_cpu_replicas_validate(struct bch_replicas_cpu *cpu_r,
 	sort_cmp_size(cpu_r->entries,
 		      cpu_r->nr,
 		      cpu_r->entry_size,
-		      memcmp, NULL);
+		      bch2_memcmp, NULL);
 
 	for (i = 0; i < cpu_r->nr; i++) {
 		struct bch_replicas_entry_v1 *e =
