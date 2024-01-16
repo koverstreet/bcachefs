@@ -155,7 +155,7 @@ static inline int wb_flush_one(struct btree_trans *trans, struct btree_iter *ite
 		*write_locked = true;
 	}
 
-	if (unlikely(!bch2_btree_node_insert_fits(c, path->l[0].b, wb->k.k.u64s))) {
+	if (unlikely(!bch2_btree_node_insert_fits(path->l[0].b, wb->k.k.u64s))) {
 		*write_locked = false;
 		return wb_flush_one_slowpath(trans, iter, wb);
 	}
