@@ -1960,6 +1960,12 @@ static void bch2_discard_one_bucket_fast(struct bch_fs *c, struct bpos bucket)
 		bch2_write_ref_put(c, BCH_WRITE_REF_discard_fast);
 }
 
+struct invalidate_buckets_state {
+	s64		nr_to_invalidate;
+	u64		skipped_open;
+	u64		skipped_lru;
+};
+
 static int invalidate_one_bucket(struct btree_trans *trans,
 				 struct btree_iter *lru_iter,
 				 struct bkey_s_c lru_k,
@@ -1989,7 +1995,8 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 		goto out;
 
 	/* We expect harmless races here due to the btree write buffer: */
-	if (lru_pos_time(lru_iter->pos) != alloc_lru_idx_read(a->v))
+	if (!alloc_lru_idx_read(a->v) ||
+	    alloc_lru_idx_read(a->v) > lru_pos_time(lru_iter->pos))
 		goto out;
 
 	BUG_ON(a->v.data_type != BCH_DATA_cached);

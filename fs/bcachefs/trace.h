@@ -730,6 +730,12 @@ TRACE_EVENT(discard_buckets,
 		  __entry->err)
 );
 
+DEFINE_EVENT(fs_str, invalidate_buckets,
+	TP_PROTO(struct bch_fs *c, const char *str),
+	TP_ARGS(c, str)
+);
+
+
 TRACE_EVENT(bucket_invalidate,
 	TP_PROTO(struct bch_fs *c, unsigned dev, u64 bucket, u32 sectors),
 	TP_ARGS(c, dev, bucket, sectors),
