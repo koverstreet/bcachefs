@@ -260,7 +260,9 @@
 	x(dirent_to_missing_parent_subvol,			252)	\
 	x(dirent_not_visible_in_parent_subvol,			253)	\
 	x(subvol_fs_path_parent_wrong,				254)	\
-	x(subvol_root_fs_path_parent_nonzero,			255)
+	x(subvol_root_fs_path_parent_nonzero,			255)	\
+	x(subvol_children_not_set,				256)	\
+	x(subvol_children_bad,					257)
 
 enum bch_sb_error_id {
 #define x(t, n) BCH_FSCK_ERR_##t = n,
