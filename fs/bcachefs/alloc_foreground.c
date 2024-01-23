@@ -665,6 +665,16 @@ err:
 	if (!ob)
 		ob = ERR_PTR(-BCH_ERR_no_buckets_found);
 
+	if (false && PTR_ERR_OR_ZERO(ob) == -BCH_ERR_open_buckets_empty) {
+		struct printbuf buf = PRINTBUF;
+
+		bch2_open_buckets_to_text(&buf, c);
+		bch2_write_points_to_text(&buf, c);
+		bch2_print_string_as_lines(KERN_ERR, buf.buf);
+		printbuf_exit(&buf);
+		panic("\n");
+	}
+
 	if (!IS_ERR(ob))
 		ob->data_type = data_type;
 
@@ -1851,4 +1861,12 @@ void bch2_print_allocator_stuck(struct bch_fs *c)
 
 	bch2_print_string_as_lines(KERN_ERR, buf.buf);
 	printbuf_exit(&buf);
+}
+
+void bch2_fs_alloc_foreground_exit(struct bch_fs *c)
+{
+	for (struct open_bucket *ob = c->open_buckets;
+	     ob < c->open_buckets + ARRAY_SIZE(c->open_buckets);
+	     ob++)
+		BUG_ON(atomic_read(&ob->pin));
 }

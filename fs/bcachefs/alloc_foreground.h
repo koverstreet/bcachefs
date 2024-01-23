@@ -232,4 +232,6 @@ void bch2_dev_alloc_debug_to_text(struct printbuf *, struct bch_dev *);
 
 void bch2_print_allocator_stuck(struct bch_fs *);
 
+void bch2_fs_alloc_foreground_exit(struct bch_fs *);
+
 #endif /* _BCACHEFS_ALLOC_FOREGROUND_H */

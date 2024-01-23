@@ -553,6 +553,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_fs_btree_cache_exit(c);
 	bch2_fs_btree_iter_exit(c);
 	bch2_fs_replicas_exit(c);
+	bch2_fs_alloc_foreground_exit(c);
 	bch2_fs_journal_exit(&c->journal);
 	bch2_io_clock_exit(&c->io_clock[WRITE]);
 	bch2_io_clock_exit(&c->io_clock[READ]);

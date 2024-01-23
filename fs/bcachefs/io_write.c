@@ -616,7 +616,7 @@ static inline void bch2_write_queue(struct bch_write_op *op, struct write_point 
 static inline s64 blocked_time(void)
 {
 #ifdef CONFIG_SCHEDSTATS
-	return current->stats.sum_block_runtime;
+	return current->stats.sum_sleep_runtime;
 #else
 	return 0;
 #endif
@@ -628,6 +628,8 @@ void bch2_write_point_do_index_updates(struct work_struct *work)
 		container_of(work, struct write_point, index_update_work);
 	struct bch_write_op *op;
 	u64 blocked = blocked_time();
+
+	current->flags |= PF_TRACE;
 
 	while (1) {
 		spin_lock_irq(&wp->writes_lock);
@@ -655,6 +657,8 @@ void bch2_write_point_do_index_updates(struct work_struct *work)
 
 		wp->index_updates_done++;
 	}
+
+	current->flags &= ~PF_TRACE;
 }
 
 static void bch2_write_endio(struct bio *bio)
