@@ -142,6 +142,9 @@ static inline bool track_event_change(struct bch2_time_stats *stats, bool v)
 	return false;
 }
 
+struct seq_buf;
+void bch2_time_stats_to_seq_buf(struct seq_buf *, struct bch2_time_stats *);
+
 void bch2_time_stats_exit(struct bch2_time_stats *);
 void bch2_time_stats_init(struct bch2_time_stats *);
 
