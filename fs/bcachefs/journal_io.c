@@ -1603,9 +1603,9 @@ static CLOSURE_CALLBACK(journal_write_done)
 	u64 v, seq = le64_to_cpu(w->data->seq);
 	int err = 0;
 
-	bch2_time_stats_update(!JSET_NO_FLUSH(w->data)
-			       ? j->flush_write_time
-			       : j->noflush_write_time, j->write_start_time);
+	time_stats_update(!JSET_NO_FLUSH(w->data)
+			  ? j->flush_write_time
+			  : j->noflush_write_time, j->write_start_time);
 
 	if (!w->devs_written.nr) {
 		bch_err(c, "unable to write journal to sufficient devices");
@@ -1675,8 +1675,7 @@ static CLOSURE_CALLBACK(journal_write_done)
 		bch2_journal_reclaim_fast(j);
 		bch2_journal_space_available(j);
 
-		track_event_change(&c->times[BCH_TIME_blocked_journal_max_in_flight],
-				   &j->max_in_flight_start, false);
+		track_event_change(&c->times[BCH_TIME_blocked_journal_max_in_flight], false);
 
 		closure_wake_up(&w->wait);
 		journal_wake(j);

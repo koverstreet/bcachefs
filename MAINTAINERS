@@ -22133,6 +22133,12 @@ F:	kernel/time/ntp.c
 F:	kernel/time/time*.c
 F:	tools/testing/selftests/timers/
 
+TIME STATS:
+M:	Kent Overstreet <kent.overstreet@linux.dev>
+S:	Maintained
+F:	include/linux/time_stats.h
+F:	lib/time_stats.c
+
 TIPC NETWORK LAYER
 M:	Jon Maloy <jmaloy@redhat.com>
 M:	Ying Xue <ying.xue@windriver.com>
