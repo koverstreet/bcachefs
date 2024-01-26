@@ -435,7 +435,7 @@ static inline unsigned __bch2_btree_iter_flags(struct btree_trans *trans,
 		flags |= BTREE_ITER_is_extents;
 
 	if (!btree_type_has_snapshot_field(btree_id))
-		flags &= ~map_bit(~flags, _BTREE_ITER_snapshot_field, BTREE_ITER_all_snapshots);
+		flags &= ~map_bit(~flags, BTREE_ITER_snapshot_field, BTREE_ITER_all_snapshots);
 
 	if (btree_type_has_snapshots(btree_id))
 		flags |= map_bit(~flags, BTREE_ITER_all_snapshots, BTREE_ITER_filter_snapshots);

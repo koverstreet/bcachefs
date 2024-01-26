@@ -222,6 +222,7 @@ struct btree_node_iter {
 
 #define BTREE_UPDATE_FLAGS()			\
 	x(internal_snapshot_node)		\
+	x(snapshot_whiteout_check_done)		\
 	x(nojournal)				\
 	x(key_cache_reclaim)
 
@@ -793,6 +794,17 @@ static inline bool btree_type_has_snapshots(enum btree_id id)
 	;
 
 	return BIT_ULL(id) & mask;
+}
+
+static inline bool btree_type_snapshots_unreffed(enum btree_id id)
+{
+	const unsigned mask = 0
+#define x(name, nr, flags, ...)	|((!!((flags) & BTREE_ID_SNAPSHOTS_UNREFFED)) << nr)
+	BCH_BTREE_IDS()
+#undef x
+	;
+
+	return (1U << id) & mask;
 }
 
 static inline bool btree_type_has_snapshot_field(enum btree_id id)

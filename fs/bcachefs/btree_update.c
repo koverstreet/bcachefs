@@ -120,6 +120,133 @@ static int need_whiteout_for_snapshot(struct btree_trans *trans,
 	return ret;
 }
 
+/*
+ * We're overwriting a key at @pos in snapshot @snapshot, so we need to insert a
+ * whiteout: that might be in @snapshot, or if there are overwites in sibling
+ * snapshots, find the common ancestor where @pos is overwritten in every
+ * descendent and insert the whiteout there - which might be at @pos.
+ */
+static int delete_interior_snapshot_key(struct btree_trans *trans,
+					enum btree_id btree,
+					struct bpos whiteout, bool deleting,
+					struct bpos overwrite, bool old_is_whiteout)
+{
+	struct bch_fs *c = trans->c;
+	struct bpos orig_whiteout = whiteout, sib = whiteout;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret;
+
+	sib.snapshot = bch2_snapshot_sibling(c, sib.snapshot);
+
+	for_each_btree_key_norestart(trans, iter, btree, sib,
+				     BTREE_ITER_ALL_SNAPSHOTS|BTREE_ITER_INTENT, k, ret) {
+		BUG_ON(bpos_gt(k.k->p, overwrite));
+
+		if (bpos_lt(k.k->p, sib)) /* unrelated branch - skip */
+			continue;
+		if (bpos_gt(k.k->p, sib)) /* did not find @sib */
+			break;
+
+		/* @overwrite is also written in @sib, now check parent */
+		whiteout.snapshot = bch2_snapshot_parent(c, whiteout.snapshot);
+		if (bpos_eq(whiteout, overwrite))
+			break;
+
+		sib = whiteout;
+		sib.snapshot = bch2_snapshot_sibling(c, sib.snapshot);
+	}
+
+	if (ret)
+		goto err;
+
+	if (!deleting && bpos_eq(whiteout, orig_whiteout))
+		goto out;
+
+	if (!bpos_eq(iter.pos, whiteout)) {
+		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_init(trans, &iter, btree, whiteout, BTREE_ITER_INTENT);
+		k = bch2_btree_iter_peek_slot(&iter);
+		ret = bkey_err(k);
+		if (ret)
+			goto err;
+	}
+
+	iter.flags &= ~BTREE_ITER_ALL_SNAPSHOTS;
+	iter.flags |= BTREE_ITER_FILTER_SNAPSHOTS;
+
+	struct bkey_i *delete = bch2_trans_kmalloc(trans, sizeof(*delete));
+	ret = PTR_ERR_OR_ZERO(delete);
+	if (ret)
+		goto err;
+
+	bkey_init(&delete->k);
+	delete->k.p = whiteout;
+
+	ret = !bpos_eq(whiteout, overwrite)
+		? !old_is_whiteout
+		: need_whiteout_for_snapshot(trans, btree, whiteout);
+	if (ret < 0)
+		goto err;
+	if (ret)
+		delete->k.type = KEY_TYPE_whiteout;
+
+	ret = bch2_trans_update(trans, &iter, delete,
+				BTREE_UPDATE_INTERNAL_SNAPSHOT_NODE|
+				BTREE_UPDATE_SNAPSHOT_WHITEOUT_CHECKS_DONE);
+out:
+err:
+	bch2_trans_iter_exit(trans, &iter);
+	return ret;
+}
+
+/*
+ * We're overwriting a key in a snapshot that has ancestors: if we're
+ * overwriting a key in a different snapshot, we need to check if it is now
+ * fully overritten and can be deleted, and if we're deleting a key in the
+ * current snapshot we need to check if we need to leave a whiteout.
+ */
+static noinline int
+overwrite_interior_snapshot_key(struct btree_trans *trans,
+				struct btree_iter *iter,
+				struct bkey_i *k)
+{
+	struct bkey_s_c old = bch2_btree_iter_peek_slot(iter);
+
+	int ret = bkey_err(old);
+	if (ret)
+		return ret;
+
+	if (!bkey_deleted(old.k)) {
+		if (btree_type_snapshots_unreffed(iter->btree_id) &&
+		    old.k->p.snapshot != k->k.p.snapshot) {
+			/*
+			 * We're overwriting a key in a different snapshot:
+			 * check if it's also been overwritten in siblings
+			 */
+			ret = delete_interior_snapshot_key(trans, iter->btree_id,
+							   k->k.p,   bkey_deleted(&k->k),
+							   old.k->p, bkey_whiteout(old.k));
+			if (ret)
+				return ret;
+			if (bkey_deleted(&k->k))
+				return 1;
+		} else if (bkey_deleted(&k->k)) {
+			/*
+			 * We're deleting a key in the current snapshot:
+			 * check if we need to leave a whiteout
+			 */
+			ret = need_whiteout_for_snapshot(trans, iter->btree_id, k->k.p);
+			if (unlikely(ret < 0))
+				return ret;
+			if (ret)
+				k->k.type = KEY_TYPE_whiteout;
+		}
+	}
+
+	return 0;
+}
+
 int __bch2_insert_snapshot_whiteouts(struct btree_trans *trans,
 				   enum btree_id id,
 				   struct bpos old_pos,
@@ -508,31 +635,30 @@ int __must_check bch2_trans_update(struct btree_trans *trans, struct btree_iter 
 				   struct bkey_i *k, enum btree_iter_update_trigger_flags flags)
 {
 	btree_path_idx_t path_idx = iter->update_path ?: iter->path;
-	int ret;
 
 	if (iter->flags & BTREE_ITER_is_extents)
 		return bch2_trans_update_extent(trans, iter, k, flags);
 
-	if (bkey_deleted(&k->k) &&
-	    !(flags & BTREE_UPDATE_key_cache_reclaim) &&
-	    (iter->flags & BTREE_ITER_filter_snapshots)) {
-		ret = need_whiteout_for_snapshot(trans, iter->btree_id, k->k.p);
-		if (unlikely(ret < 0))
-			return ret;
-
+	if (!(flags & (BTREE_UPDATE_snapshot_whiteout_checks_done|
+		       BTREE_UPDATE_key_cache_reclaim)) &&
+	    (iter->flags & BTREE_ITER_filter_snapshots) &&
+	    bch2_snapshot_parent(trans->c, k->k.p.snapshot)) {
+		int ret = overwrite_interior_snapshot_key(trans, iter, k);
 		if (ret)
-			k->k.type = KEY_TYPE_whiteout;
+			return ret < 0 ? ret : 0;
 	}
 
 	/*
 	 * Ensure that updates to cached btrees go to the key cache:
 	 */
+	btree_path_idx_t path_idx = iter->update_path ?: iter->path;
 	struct btree_path *path = trans->paths + path_idx;
+
 	if (!(flags & BTREE_UPDATE_key_cache_reclaim) &&
 	    !path->cached &&
 	    !path->level &&
 	    btree_id_cached(trans->c, path->btree_id)) {
-		ret = bch2_trans_update_get_key_cache(trans, iter, path);
+		int ret = bch2_trans_update_get_key_cache(trans, iter, path);
 		if (ret)
 			return ret;
 

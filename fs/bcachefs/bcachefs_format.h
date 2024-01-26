@@ -1272,14 +1272,17 @@ LE32_BITMASK(JSET_NO_FLUSH,	struct jset, flags, 5, 6);
 /* Btree: */
 
 enum btree_id_flags {
-	BTREE_ID_EXTENTS	= BIT(0),
-	BTREE_ID_SNAPSHOTS	= BIT(1),
-	BTREE_ID_SNAPSHOT_FIELD	= BIT(2),
-	BTREE_ID_DATA		= BIT(3),
+	/* key size field is nonzero, btree iterators handle as ranges  */
+	BTREE_ID_EXTENTS		= BIT(0),
+	BTREE_ID_SNAPSHOTS		= BIT(1),
+	BTREE_ID_SNAPSHOT_FIELD		= BIT(2),
+	BTREE_ID_SNAPSHOTS_UNREFFED	= BIT(3),
+	BTREE_ID_DATA			= BIT(3),
 };
 
 #define BCH_BTREE_IDS()								\
-	x(extents,		0,	BTREE_ID_EXTENTS|BTREE_ID_SNAPSHOTS|BTREE_ID_DATA,\
+	x(extents,		0,	BTREE_ID_EXTENTS|BTREE_ID_SNAPSHOTS|	\
+					BTREE_ID_SNAPSHOTS_UNREFFED|BTREE_ID_DATA,\
 	  BIT_ULL(KEY_TYPE_whiteout)|						\
 	  BIT_ULL(KEY_TYPE_error)|						\
 	  BIT_ULL(KEY_TYPE_cookie)|						\
@@ -1297,7 +1300,7 @@ enum btree_id_flags {
 	  BIT_ULL(KEY_TYPE_whiteout)|						\
 	  BIT_ULL(KEY_TYPE_hash_whiteout)|					\
 	  BIT_ULL(KEY_TYPE_dirent))						\
-	x(xattrs,		3,	BTREE_ID_SNAPSHOTS,			\
+	x(xattrs,		3,	BTREE_ID_SNAPSHOTS|BTREE_ID_SNAPSHOTS_UNREFFED,\
 	  BIT_ULL(KEY_TYPE_whiteout)|						\
 	  BIT_ULL(KEY_TYPE_cookie)|						\
 	  BIT_ULL(KEY_TYPE_hash_whiteout)|					\
