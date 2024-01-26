@@ -358,14 +358,14 @@ void bch2_prt_datetime(struct printbuf *out, time64_t sec)
 
 void bch2_pr_time_units(struct printbuf *out, u64 ns)
 {
-	const struct time_unit *u = bch2_pick_time_units(ns);
+	const struct time_unit *u = pick_time_units(ns);
 
 	prt_printf(out, "%llu %s", div64_u64(ns, u->nsecs), u->name);
 }
 
 static void bch2_pr_time_units_aligned(struct printbuf *out, u64 ns)
 {
-	const struct time_unit *u = bch2_pick_time_units(ns);
+	const struct time_unit *u = pick_time_units(ns);
 
 	prt_printf(out, "%llu \r%s", div64_u64(ns, u->nsecs), u->name);
 }
@@ -379,7 +379,7 @@ static inline void pr_name_and_units(struct printbuf *out, const char *name, u64
 
 #define TABSTOP_SIZE 12
 
-void bch2_time_stats_to_text(struct printbuf *out, struct bch2_time_stats *stats)
+void bch2_time_stats_to_text(struct printbuf *out, struct time_stats *stats)
 {
 	struct quantiles *quantiles = time_stats_to_quantiles(stats);
 	s64 f_mean = 0, d_mean = 0;
@@ -390,7 +390,7 @@ void bch2_time_stats_to_text(struct printbuf *out, struct bch2_time_stats *stats
 
 		spin_lock_irq(&stats->lock);
 		for_each_possible_cpu(cpu)
-			__bch2_time_stats_clear_buffer(stats, per_cpu_ptr(stats->buffer, cpu));
+			__time_stats_clear_buffer(stats, per_cpu_ptr(stats->buffer, cpu));
 		spin_unlock_irq(&stats->lock);
 	}
 
@@ -469,7 +469,7 @@ void bch2_time_stats_to_text(struct printbuf *out, struct bch2_time_stats *stats
 	if (quantiles) {
 		int i = eytzinger0_first(NR_QUANTILES);
 		const struct time_unit *u =
-			bch2_pick_time_units(quantiles->entries[i].m);
+			pick_time_units(quantiles->entries[i].m);
 		u64 last_q = 0;
 
 		prt_printf(out, "quantiles (%s):\t", u->name);

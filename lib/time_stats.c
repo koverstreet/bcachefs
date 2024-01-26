@@ -6,9 +6,8 @@
 #include <linux/percpu.h>
 #include <linux/preempt.h>
 #include <linux/time.h>
+#include <linux/time_stats.h>
 #include <linux/spinlock.h>
-
-#include "time_stats.h"
 
 static const struct time_unit time_units[] = {
 	{ "ns",		1		 },
@@ -23,7 +22,7 @@ static const struct time_unit time_units[] = {
 	{ "eon",        U64_MAX          },
 };
 
-const struct time_unit *bch2_pick_time_units(u64 ns)
+const struct time_unit *pick_time_units(u64 ns)
 {
 	const struct time_unit *u;
 
@@ -35,6 +34,7 @@ const struct time_unit *bch2_pick_time_units(u64 ns)
 
 	return u;
 }
+EXPORT_SYMBOL_GPL(pick_time_units);
 
 static void quantiles_update(struct quantiles *q, u64 v)
 {
@@ -66,7 +66,7 @@ static void quantiles_update(struct quantiles *q, u64 v)
 	}
 }
 
-static inline void time_stats_update_one(struct bch2_time_stats *stats,
+static inline void time_stats_update_one(struct time_stats *stats,
 					      u64 start, u64 end)
 {
 	u64 duration, freq;
@@ -99,8 +99,8 @@ static inline void time_stats_update_one(struct bch2_time_stats *stats,
 	stats->last_event = end;
 }
 
-void __bch2_time_stats_clear_buffer(struct bch2_time_stats *stats,
-				    struct time_stat_buffer *b)
+void __time_stats_clear_buffer(struct time_stats *stats,
+			       struct time_stat_buffer *b)
 {
 	for (struct time_stat_buffer_entry *i = b->entries;
 	     i < b->entries + ARRAY_SIZE(b->entries);
@@ -108,18 +108,19 @@ void __bch2_time_stats_clear_buffer(struct bch2_time_stats *stats,
 		time_stats_update_one(stats, i->start, i->end);
 	b->nr = 0;
 }
+EXPORT_SYMBOL_GPL(__time_stats_clear_buffer);
 
-static noinline void time_stats_clear_buffer(struct bch2_time_stats *stats,
+static noinline void time_stats_clear_buffer(struct time_stats *stats,
 					     struct time_stat_buffer *b)
 {
 	unsigned long flags;
 
 	spin_lock_irqsave(&stats->lock, flags);
-	__bch2_time_stats_clear_buffer(stats, b);
+	__time_stats_clear_buffer(stats, b);
 	spin_unlock_irqrestore(&stats->lock, flags);
 }
 
-void __bch2_time_stats_update(struct bch2_time_stats *stats, u64 start, u64 end)
+void __time_stats_update(struct time_stats *stats, u64 start, u64 end)
 {
 	unsigned long flags;
 
@@ -150,11 +151,12 @@ void __bch2_time_stats_update(struct bch2_time_stats *stats, u64 start, u64 end)
 		preempt_enable();
 	}
 }
+EXPORT_SYMBOL_GPL(__time_stats_update);
 
-void bch2_time_stats_reset(struct bch2_time_stats *stats)
+void time_stats_reset(struct time_stats *stats)
 {
 	spin_lock_irq(&stats->lock);
-	unsigned offset = offsetof(struct bch2_time_stats, min_duration);
+	unsigned offset = offsetof(struct time_stats, min_duration);
 	memset((void *) stats + offset, 0, sizeof(*stats) - offset);
 
 	if (stats->buffer) {
@@ -169,17 +171,17 @@ void bch2_time_stats_reset(struct bch2_time_stats *stats)
 
 static void seq_buf_time_units_aligned(struct seq_buf *out, u64 ns)
 {
-	const struct time_unit *u = bch2_pick_time_units(ns);
+	const struct time_unit *u = pick_time_units(ns);
 
 	seq_buf_printf(out, "%8llu %s", div64_u64(ns, u->nsecs), u->name);
 }
 
-static inline u64 time_stats_lifetime(const struct bch2_time_stats *stats)
+static inline u64 time_stats_lifetime(const struct time_stats *stats)
 {
 	return local_clock() - stats->start_time;
 }
 
-void bch2_time_stats_to_seq_buf(struct seq_buf *out, struct bch2_time_stats *stats,
+void time_stats_to_seq_buf(struct seq_buf *out, struct time_stats *stats,
 		const char *epoch_name, unsigned int flags)
 {
 	struct quantiles *quantiles = time_stats_to_quantiles(stats);
@@ -192,7 +194,7 @@ void bch2_time_stats_to_seq_buf(struct seq_buf *out, struct bch2_time_stats *sta
 
 		spin_lock_irq(&stats->lock);
 		for_each_possible_cpu(cpu)
-			__bch2_time_stats_clear_buffer(stats, per_cpu_ptr(stats->buffer, cpu));
+			__time_stats_clear_buffer(stats, per_cpu_ptr(stats->buffer, cpu));
 		spin_unlock_irq(&stats->lock);
 	}
 
@@ -261,7 +263,7 @@ void bch2_time_stats_to_seq_buf(struct seq_buf *out, struct bch2_time_stats *sta
 	if (quantiles) {
 		int i = eytzinger0_first(NR_QUANTILES);
 		const struct time_unit *u =
-			bch2_pick_time_units(quantiles->entries[i].m);
+			pick_time_units(quantiles->entries[i].m);
 		u64 last_q = 0;
 
 		seq_buf_printf(out, "quantiles (%s):\t", u->name);
@@ -276,13 +278,15 @@ void bch2_time_stats_to_seq_buf(struct seq_buf *out, struct bch2_time_stats *sta
 		}
 	}
 }
+EXPORT_SYMBOL_GPL(time_stats_to_seq_buf);
 
-void bch2_time_stats_exit(struct bch2_time_stats *stats)
+void time_stats_exit(struct time_stats *stats)
 {
 	free_percpu(stats->buffer);
 }
+EXPORT_SYMBOL_GPL(time_stats_exit);
 
-void bch2_time_stats_init(struct bch2_time_stats *stats)
+void time_stats_init(struct time_stats *stats)
 {
 	memset(stats, 0, sizeof(*stats));
 	stats->min_duration = U64_MAX;
@@ -290,3 +294,7 @@ void bch2_time_stats_init(struct bch2_time_stats *stats)
 	stats->start_time = local_clock();
 	spin_lock_init(&stats->lock);
 }
+EXPORT_SYMBOL_GPL(time_stats_init);
+
+MODULE_AUTHOR("Kent Overstreet");
+MODULE_LICENSE("GPL");
