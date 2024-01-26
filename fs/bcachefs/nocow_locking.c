@@ -85,7 +85,7 @@ void __bch2_bucket_nocow_lock(struct bucket_nocow_lock_table *t,
 		u64 start_time = local_clock();
 
 		__closure_wait_event(&l->wait, __bch2_bucket_nocow_trylock(l, dev_bucket, flags));
-		bch2_time_stats_update(&c->times[BCH_TIME_nocow_lock_contended], start_time);
+		time_stats_update(&c->times[BCH_TIME_nocow_lock_contended], start_time);
 	}
 }
 

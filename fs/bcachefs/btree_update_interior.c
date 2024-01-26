@@ -559,7 +559,7 @@ static void bch2_btree_update_free(struct btree_update *as, struct btree_trans *
 	bch2_disk_reservation_put(c, &as->disk_res);
 	bch2_btree_reserve_put(as, trans);
 
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_interior_update_total],
+	time_stats_update(&c->times[BCH_TIME_btree_interior_update_total],
 			       as->start_time);
 
 	mutex_lock(&c->btree_interior_update_lock);
@@ -1111,7 +1111,7 @@ static void bch2_btree_update_done(struct btree_update *as, struct btree_trans *
 	continue_at(&as->cl, btree_update_set_nodes_written,
 		    as->c->btree_interior_update_worker);
 
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_interior_update_foreground],
+	time_stats_update(&c->times[BCH_TIME_btree_interior_update_foreground],
 			       start_time);
 }
 
@@ -1738,7 +1738,7 @@ out:
 
 	bch2_trans_verify_locks(trans);
 
-	bch2_time_stats_update(&c->times[n2
+	time_stats_update(&c->times[n2
 			       ? BCH_TIME_btree_node_split
 			       : BCH_TIME_btree_node_compact],
 			       start_time);
@@ -2106,7 +2106,7 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 
 	bch2_btree_update_done(as, trans);
 
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_merge], start_time);
+	time_stats_update(&c->times[BCH_TIME_btree_node_merge], start_time);
 out:
 err:
 	if (new_path)

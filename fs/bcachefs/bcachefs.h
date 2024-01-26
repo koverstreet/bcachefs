@@ -200,6 +200,7 @@
 #include <linux/seqlock.h>
 #include <linux/shrinker.h>
 #include <linux/srcu.h>
+#include <linux/time_stats.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
 #include <linux/zstd.h>
@@ -214,7 +215,6 @@
 #include "recovery_passes_types.h"
 #include "sb-errors_types.h"
 #include "seqmutex.h"
-#include "time_stats.h"
 #include "util.h"
 
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -587,7 +587,7 @@ struct bch_dev {
 
 	/* The rest of this all shows up in sysfs */
 	atomic64_t		cur_latency[2];
-	struct bch2_time_stats_quantiles io_latency[2];
+	struct time_stats_quantiles	io_latency[2];
 
 #define CONGESTED_MAX		1024
 	atomic_t		congested;
@@ -639,8 +639,8 @@ struct btree_debug {
 #define BCH_TRANSACTIONS_NR 128
 
 struct btree_transaction_stats {
-	struct bch2_time_stats	duration;
-	struct bch2_time_stats	lock_hold_times;
+	struct time_stats	duration;
+	struct time_stats	lock_hold_times;
 	struct mutex		lock;
 	unsigned		nr_max_paths;
 	unsigned		journal_entries_size;
@@ -1086,7 +1086,7 @@ struct bch_fs {
 	u64			counters_on_mount[BCH_COUNTER_NR];
 	u64 __percpu		*counters;
 
-	struct bch2_time_stats	times[BCH_TIME_STAT_NR];
+	struct time_stats	times[BCH_TIME_STAT_NR];
 
 	struct btree_transaction_stats btree_transaction_stats[BCH_TRANSACTIONS_NR];
 

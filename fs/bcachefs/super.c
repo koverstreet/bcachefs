@@ -546,7 +546,7 @@ int bch2_fs_read_write_early(struct bch_fs *c)
 static void __bch2_fs_free(struct bch_fs *c)
 {
 	for (unsigned i = 0; i < BCH_TIME_STAT_NR; i++)
-		bch2_time_stats_exit(&c->times[i]);
+		time_stats_exit(&c->times[i]);
 
 	bch2_find_btree_nodes_exit(&c->found_btree_nodes);
 	bch2_free_pending_node_rewrites(c);
@@ -783,7 +783,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	sema_init(&c->online_fsck_mutex, 1);
 
 	for (i = 0; i < BCH_TIME_STAT_NR; i++)
-		bch2_time_stats_init(&c->times[i]);
+		time_stats_init(&c->times[i]);
 
 	bch2_fs_copygc_init(c);
 	bch2_fs_btree_key_cache_init_early(&c->btree_key_cache);
@@ -1206,8 +1206,8 @@ static void bch2_dev_free(struct bch_dev *ca)
 	bch2_dev_buckets_free(ca);
 	kfree(ca->sb_read_scratch);
 
-	bch2_time_stats_quantiles_exit(&ca->io_latency[WRITE]);
-	bch2_time_stats_quantiles_exit(&ca->io_latency[READ]);
+	time_stats_quantiles_exit(&ca->io_latency[WRITE]);
+	time_stats_quantiles_exit(&ca->io_latency[READ]);
 
 	percpu_ref_exit(&ca->io_ref);
 #ifndef CONFIG_BCACHEFS_DEBUG
@@ -1317,8 +1317,8 @@ static struct bch_dev *__bch2_dev_alloc(struct bch_fs *c,
 
 	INIT_WORK(&ca->io_error_work, bch2_io_error_work);
 
-	bch2_time_stats_quantiles_init(&ca->io_latency[READ]);
-	bch2_time_stats_quantiles_init(&ca->io_latency[WRITE]);
+	time_stats_quantiles_init(&ca->io_latency[READ]);
+	time_stats_quantiles_init(&ca->io_latency[WRITE]);
 
 	ca->mi = bch2_mi_to_cpu(member);
 

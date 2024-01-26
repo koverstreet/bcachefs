@@ -87,7 +87,7 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 
 	bch2_congested_acct(ca, io_latency, now, rw);
 
-	__bch2_time_stats_update(&ca->io_latency[rw].stats, submit_time, now);
+	__time_stats_update(&ca->io_latency[rw].stats, submit_time, now);
 }
 
 #endif
@@ -480,7 +480,7 @@ static void bch2_write_done(struct closure *cl)
 
 	EBUG_ON(op->open_buckets.nr);
 
-	bch2_time_stats_update(&c->times[BCH_TIME_data_write], op->start_time);
+	time_stats_update(&c->times[BCH_TIME_data_write], op->start_time);
 	bch2_disk_reservation_put(c, &op->res);
 
 	if (!(op->flags & BCH_WRITE_move))

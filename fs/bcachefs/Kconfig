@@ -27,6 +27,7 @@ config BCACHEFS_FS
 	select SYMBOLIC_ERRNAME
 	select MIN_HEAP
 	select MEAN_AND_VARIANCE
+	select TIME_STATS
 	help
 	The bcachefs filesystem - a modern, copy on write filesystem, with
 	support for multiple devices, compression, checksumming, etc.

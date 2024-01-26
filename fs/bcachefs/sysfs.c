@@ -708,7 +708,7 @@ STORE(bch2_fs_time_stats)
 
 #define x(name)								\
 	if (attr == &sysfs_time_stat_##name)				\
-		bch2_time_stats_reset(&c->times[BCH_TIME_##name]);
+		time_stats_reset(&c->times[BCH_TIME_##name]);
 	BCH_TIME_STATS()
 #undef x
 	return size;
