@@ -758,3 +758,7 @@ config UNION_FIND
 
 config MIN_HEAP
 	bool
+
+config TIME_STATS
+	tristate
+	select MEAN_AND_VARIANCE
