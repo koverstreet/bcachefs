@@ -1177,6 +1177,7 @@ struct bkey *bch_btree_iter_next_filter(struct btree_iter *iter,
 
 void bch_bset_sort_state_free(struct bset_sort_state *state)
 {
+	time_stats_exit(&state->time);
 	mempool_exit(&state->pool);
 }
 
@@ -1184,6 +1185,7 @@ int bch_bset_sort_state_init(struct bset_sort_state *state,
 			     unsigned int page_order)
 {
 	spin_lock_init(&state->time.lock);
+	time_stats_init(&state->time);
 
 	state->page_order = page_order;
 	state->crit_factor = int_sqrt(1 << page_order);
@@ -1286,7 +1288,7 @@ static void __btree_sort(struct btree_keys *b, struct btree_iter *iter,
 	bch_bset_build_written_tree(b);
 
 	if (!start)
-		bch_time_stats_update(&state->time, start_time);
+		time_stats_update(&state->time, start_time);
 }
 
 void bch_btree_sort_partial(struct btree_keys *b, unsigned int start,
@@ -1329,7 +1331,7 @@ void bch_btree_sort_into(struct btree_keys *b, struct btree_keys *new,
 
 	btree_mergesort(b, new->set->data, &iter, false, true);
 
-	bch_time_stats_update(&state->time, start_time);
+	time_stats_update(&state->time, start_time);
 
 	new->set->size = 0; // XXX: why?
 }
