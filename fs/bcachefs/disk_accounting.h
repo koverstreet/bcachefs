@@ -3,8 +3,9 @@
 #define _BCACHEFS_DISK_ACCOUNTING_H
 
 #include "btree_update.h"
-#include "eytzinger.h"
 #include "sb-members.h"
+
+#include <linux/eytzinger.h>
 
 static inline void bch2_u64s_neg(u64 *v, unsigned nr)
 {

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef _EYTZINGER_H
-#define _EYTZINGER_H
+#ifndef _LINUX_EYTZINGER_H
+#define _LINUX_EYTZINGER_H
 
 #include <linux/bitops.h>
 #include <linux/log2.h>
@@ -297,4 +297,4 @@ void eytzinger0_sort_r(void *, size_t, size_t,
 		       cmp_r_func_t, swap_r_func_t, const void *);
 void eytzinger0_sort(void *, size_t, size_t, cmp_func_t, swap_func_t);
 
-#endif /* _EYTZINGER_H */
+#endif /* _LINUX_EYTZINGER_H */
