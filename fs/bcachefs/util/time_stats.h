@@ -143,6 +143,10 @@ static inline bool track_event_change(struct bch2_time_stats *stats, bool v)
 }
 
 void bch2_time_stats_reset(struct bch2_time_stats *);
+
+struct seq_buf;
+void bch2_time_stats_to_seq_buf(struct seq_buf *, struct bch2_time_stats *);
+
 void bch2_time_stats_exit(struct bch2_time_stats *);
 void bch2_time_stats_init(struct bch2_time_stats *);
 void bch2_time_stats_init_no_pcpu(struct bch2_time_stats *);
