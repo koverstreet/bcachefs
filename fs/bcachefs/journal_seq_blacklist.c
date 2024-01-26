@@ -2,9 +2,10 @@
 
 #include "bcachefs.h"
 #include "btree_iter.h"
-#include "eytzinger.h"
 #include "journal_seq_blacklist.h"
 #include "super-io.h"
+
+#include <linux/eytzinger.h>
 
 /*
  * journal_seq_blacklist machinery:

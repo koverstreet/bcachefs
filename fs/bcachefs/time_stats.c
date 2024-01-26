@@ -7,7 +7,7 @@
 #include <linux/time.h>
 #include <linux/spinlock.h>
 
-#include "eytzinger.h"
+#include <linux/eytzinger.h>
 #include "time_stats.h"
 
 static const struct time_unit time_units[] = {
