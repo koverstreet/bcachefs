@@ -575,7 +575,7 @@ int bch2_fs_read_write_early(struct bch_fs *c)
 static void __bch2_fs_free(struct bch_fs *c)
 {
 	for (unsigned i = 0; i < BCH_TIME_STAT_NR; i++)
-		bch2_time_stats_exit(&c->times[i]);
+		time_stats_exit(&c->times[i]);
 
 #if IS_ENABLED(CONFIG_UNICODE)
 	utf8_unload(c->cf_encoding);
@@ -1098,7 +1098,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 	init_waitqueue_head(&c->ro_ref_wait);
 
 	for (i = 0; i < BCH_TIME_STAT_NR; i++)
-		bch2_time_stats_init(&c->times[i]);
+		time_stats_init(&c->times[i]);
 
 	bch2_fs_allocator_background_init(c);
 	bch2_fs_allocator_foreground_init(c);
