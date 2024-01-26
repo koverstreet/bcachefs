@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 
+#include <linux/eytzinger.h>
 #include <linux/jiffies.h>
 #include <linux/module.h>
 #include <linux/percpu.h>
@@ -7,7 +8,6 @@
 #include <linux/time.h>
 #include <linux/spinlock.h>
 
-#include "eytzinger.h"
 #include "time_stats.h"
 
 /* disable automatic switching to percpu mode */

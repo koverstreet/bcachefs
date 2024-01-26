@@ -96,7 +96,6 @@ bcachefs-y		:=			\
 	util/clock.o				\
 	util/darray.o				\
 	util/enumerated_ref.o			\
-	util/eytzinger.o			\
 	util/fast_list.o			\
 	util/printbuf.o				\
 	util/rcu_pending.o			\

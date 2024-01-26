@@ -10,11 +10,11 @@
 #include "btree/cache.h"
 #include "btree/bset.h"
 
-#include "util/eytzinger.h"
 #include "util/util.h"
 
 #include <linux/unaligned.h>
 #include <linux/console.h>
+#include <linux/eytzinger.h>
 #include <linux/random.h>
 #include <linux/prefetch.h>
 

@@ -4,7 +4,8 @@
 
 #include "btree/bkey.h"
 #include "alloc/replicas_types.h"
-#include "util/eytzinger.h"
+
+#include <linux/eytzinger.h>
 
 void bch2_replicas_entry_sort(struct bch_replicas_entry_v1 *);
 void bch2_replicas_entry_to_text(struct printbuf *,
