@@ -11,6 +11,7 @@
 #include <linux/console.h>
 #include <linux/ctype.h>
 #include <linux/debugfs.h>
+#include <linux/eytzinger.h>
 #include <linux/freezer.h>
 #include <linux/kthread.h>
 #include <linux/log2.h>
@@ -24,7 +25,6 @@
 #include <linux/sched/clock.h>
 #include <linux/mean_and_variance.h>
 
-#include "eytzinger.h"
 #include "util.h"
 
 static const char si_units[] = "?kMGTPEZY";
