@@ -7,7 +7,7 @@
 
 #include "sb/io.h"
 
-#include "util/eytzinger.h"
+#include <linux/eytzinger.h>
 
 /*
  * journal_seq_blacklist machinery:

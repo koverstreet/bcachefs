@@ -8,6 +8,7 @@
 #include "util/eytzinger.h"
 
 #include <asm/byteorder.h>
+#include <linux/eytzinger.h>
 
 #define BCH_SB_READ_SCRATCH_BUF_SIZE		4096
 

@@ -6,6 +6,8 @@
 #include "sb/members.h"
 #include "util/eytzinger.h"
 
+#include <linux/eytzinger.h>
+
 static inline void bch2_u64s_neg(u64 *v, unsigned nr)
 {
 	for (unsigned i = 0; i < nr; i++)
