@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "eytzinger.h"
 #include "journal.h"
 #include "journal_seq_blacklist.h"
 #include "super-io.h"
+
+#include <linux/eytzinger.h>
 
 /*
  * journal_seq_blacklist machinery:
