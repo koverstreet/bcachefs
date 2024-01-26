@@ -649,3 +649,7 @@ config UNION_FIND
 
 config MIN_HEAP
 	bool "Generic minheap algorithm"
+
+config TIME_STATS
+	tristate
+	select MEAN_AND_VARIANCE
