@@ -1632,12 +1632,12 @@ extern struct pid *cad_pid;
 #define PF_KSWAPD		0x00020000	/* I am kswapd */
 #define PF_MEMALLOC_NOFS	0x00040000	/* All allocation requests will inherit GFP_NOFS */
 #define PF_MEMALLOC_NOIO	0x00080000	/* All allocation requests will inherit GFP_NOIO */
-#define PF_LOCAL_THROTTLE	0x00100000	/* Throttle writes only against the bdi I write to,
+#define PF_MEMALLOC_NORECLAIM	0x00100000	/* All allocation requests will inherit __GFP_NOWARN */
+#define PF_MEMALLOC_NOWARN	0x00200000	/* All allocation requests will inherit __GFP_NOWARN */
+#define PF_LOCAL_THROTTLE	0x00400000	/* Throttle writes only against the bdi I write to,
 						 * I am cleaning dirty pages from some other bdi. */
-#define PF_KTHREAD		0x00200000	/* I am a kernel thread */
-#define PF_RANDOMIZE		0x00400000	/* Randomize virtual address space */
-#define PF__HOLE__00800000	0x00800000
-#define PF__HOLE__01000000	0x01000000
+#define PF_KTHREAD		0x00800000	/* I am a kernel thread */
+#define PF_RANDOMIZE		0x01000000	/* Randomize virtual address space */
 #define PF__HOLE__02000000	0x02000000
 #define PF_NO_SETAFFINITY	0x04000000	/* Userland is not allowed to meddle with cpus_mask */
 #define PF_MCE_EARLY		0x08000000      /* Early kill for mce process policy */
