@@ -2899,7 +2899,7 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 
 	if (!IS_ENABLED(CONFIG_BCACHEFS_NO_LATENCY_ACCT) &&
 	    time_after64(now, trans->last_begin_time + 10))
-		__bch2_time_stats_update(&btree_trans_stats(trans)->duration,
+		__time_stats_update(&btree_trans_stats(trans)->duration,
 					 trans->last_begin_time, now);
 
 	if (!trans->restarted &&
@@ -3224,7 +3224,7 @@ void bch2_fs_btree_iter_exit(struct bch_fs *c)
 	     s < c->btree_transaction_stats + ARRAY_SIZE(c->btree_transaction_stats);
 	     s++) {
 		kfree(s->max_paths_text);
-		bch2_time_stats_exit(&s->lock_hold_times);
+		time_stats_exit(&s->lock_hold_times);
 	}
 
 	if (c->btree_trans_barrier_initialized)
@@ -3240,8 +3240,8 @@ void bch2_fs_btree_iter_init_early(struct bch_fs *c)
 	for (s = c->btree_transaction_stats;
 	     s < c->btree_transaction_stats + ARRAY_SIZE(c->btree_transaction_stats);
 	     s++) {
-		bch2_time_stats_init(&s->duration);
-		bch2_time_stats_init(&s->lock_hold_times);
+		time_stats_init(&s->duration);
+		time_stats_init(&s->lock_hold_times);
 		mutex_init(&s->lock);
 	}
 
