@@ -650,7 +650,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 	BUG_ON(atomic_read(&c->journal_keys.ref));
 
 	for (unsigned i = 0; i < BCH_TIME_STAT_NR; i++)
-		bch2_time_stats_exit(&c->times[i]);
+		time_stats_exit(&c->times[i]);
 
 #if IS_ENABLED(CONFIG_UNICODE)
 	utf8_unload(c->cf_encoding);
@@ -1154,7 +1154,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	mutex_init(&c->opt_change_lock);
 
 	for (unsigned i = 0; i < BCH_TIME_STAT_NR; i++)
-		bch2_time_stats_init(&c->times[i]);
+		time_stats_init(&c->times[i]);
 
 	bch2_fs_allocator_background_init(c);
 	bch2_fs_allocator_foreground_init(c);

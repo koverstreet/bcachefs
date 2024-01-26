@@ -855,7 +855,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 	}
 fsck_err:
 	mempool_free(iter, &c->btree.fill_iter);
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read_done], start_time);
+	time_stats_update(&c->times[BCH_TIME_btree_node_read_done], start_time);
 	return ret;
 }
 
@@ -961,8 +961,6 @@ static void btree_node_read_work(struct work_struct *work)
 		bch2_print_str(c, ret ? KERN_ERR : KERN_NOTICE, buf.buf);
 
 	async_object_list_del(c, btree_read_bio, rb->list_idx);
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read],
-			       rb->start_time);
 
 	if (!ret &&
 	    !static_branch_unlikely(&bch2_btree_node_merging_disabled) &&
@@ -978,6 +976,7 @@ static void btree_node_read_work(struct work_struct *work)
 		bch2_async_btree_op(c, b, ASYNC_BTREE_merge_no_read);
 	}
 
+	time_stats_update(&c->times[BCH_TIME_btree_node_read], rb->start_time);
 	bio_put(&rb->bio);
 	clear_btree_node_read_in_flight(b);
 	smp_mb__after_atomic();

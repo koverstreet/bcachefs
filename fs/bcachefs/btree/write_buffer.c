@@ -780,7 +780,7 @@ err:
 
 	bch2_fs_fatal_err_on(ret, c, "%s", bch2_err_str(ret));
 
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_write_buffer_flush], start_time);
+	time_stats_update(&c->times[BCH_TIME_btree_write_buffer_flush], start_time);
 
 	wb->nr_flushes++;
 	wb->nr_flushes_caller[caller]++;
