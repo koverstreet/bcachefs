@@ -344,6 +344,8 @@ obj-$(CONFIG_SBITMAP) += sbitmap.o
 
 obj-$(CONFIG_PARMAN) += parman.o
 
+obj-$(CONFIG_TIME_STATS) += time_stats.o
+
 obj-y += group_cpus.o
 
 # GCC library routines

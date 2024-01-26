@@ -109,7 +109,7 @@ static void btree_trans_lock_hold_time_update(struct btree_trans *trans,
 					      struct btree_path *path, unsigned level)
 {
 #ifdef CONFIG_BCACHEFS_LOCK_TIME_STATS
-	__bch2_time_stats_update(&btree_trans_stats(trans)->lock_hold_times,
+	__time_stats_update(&btree_trans_stats(trans)->lock_hold_times,
 				 path->l[level].lock_taken_time,
 				 local_clock());
 #endif

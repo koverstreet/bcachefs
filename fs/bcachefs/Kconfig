@@ -27,6 +27,7 @@ config BCACHEFS_FS
 	select MIN_HEAP
 	select XARRAY_MULTI
 	select MEAN_AND_VARIANCE
+	select TIME_STATS
 	help
 	The bcachefs filesystem - a modern, copy on write filesystem, with
 	support for multiple devices, compression, checksumming, etc.

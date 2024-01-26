@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * bch2_time_stats - collect statistics on events that have a duration, with nicely
+ * time_stats - collect statistics on events that have a duration, with nicely
  * formatted textual output on demand
  *
  * - percpu buffering of event collection: cheap enough to shotgun
@@ -21,8 +21,8 @@
  *
  * Particularly useful for tracking down latency issues.
  */
-#ifndef _BCACHEFS_TIME_STATS_H
-#define _BCACHEFS_TIME_STATS_H
+#ifndef _LINUX_TIME_STATS_H
+#define _LINUX_TIME_STATS_H
 
 #include <linux/mean_and_variance.h>
 #include <linux/sched/clock.h>
@@ -37,12 +37,12 @@ struct time_unit {
 /*
  * given a nanosecond value, pick the preferred time units for printing:
  */
-const struct time_unit *bch2_pick_time_units(u64 ns);
+const struct time_unit *pick_time_units(u64 ns);
 
 /*
  * quantiles - do not use:
  *
- * Only enabled if bch2_time_stats->quantiles_enabled has been manually set - don't
+ * Only enabled if time_stats->quantiles_enabled has been manually set - don't
  * use in new code.
  */
 
@@ -66,7 +66,7 @@ struct time_stat_buffer {
 	}		entries[31];
 };
 
-struct bch2_time_stats {
+struct time_stats {
 	spinlock_t	lock;
 	bool		have_quantiles;
 	struct time_stat_buffer __percpu *buffer;
@@ -90,48 +90,48 @@ struct bch2_time_stats {
 	struct mean_and_variance_weighted freq_stats_weighted;
 };
 
-struct bch2_time_stats_quantiles {
-	struct bch2_time_stats	stats;
+struct time_stats_quantiles {
+	struct time_stats	stats;
 	struct quantiles	quantiles;
 };
 
-static inline struct quantiles *time_stats_to_quantiles(struct bch2_time_stats *stats)
+static inline struct quantiles *time_stats_to_quantiles(struct time_stats *stats)
 {
 	return stats->have_quantiles
-		? &container_of(stats, struct bch2_time_stats_quantiles, stats)->quantiles
+		? &container_of(stats, struct time_stats_quantiles, stats)->quantiles
 		: NULL;
 }
 
-void __bch2_time_stats_clear_buffer(struct bch2_time_stats *, struct time_stat_buffer *);
-void __bch2_time_stats_update(struct bch2_time_stats *stats, u64, u64);
+void __time_stats_clear_buffer(struct time_stats *, struct time_stat_buffer *);
+void __time_stats_update(struct time_stats *stats, u64, u64);
 
 /**
  * time_stats_update - collect a new event being tracked
  *
- * @stats	- bch2_time_stats to update
+ * @stats	- time_stats to update
  * @start	- start time of event, recorded with local_clock()
  *
  * The end duration of the event will be the current time
  */
-static inline void bch2_time_stats_update(struct bch2_time_stats *stats, u64 start)
+static inline void time_stats_update(struct time_stats *stats, u64 start)
 {
-	__bch2_time_stats_update(stats, start, local_clock());
+	__time_stats_update(stats, start, local_clock());
 }
 
 /**
  * track_event_change - track state change events
  *
- * @stats	- bch2_time_stats to update
+ * @stats	- time_stats to update
  * @v		- new state, true or false
  *
  * Use this when tracking time stats for state changes, i.e. resource X becoming
  * blocked/unblocked.
  */
-static inline bool track_event_change(struct bch2_time_stats *stats, bool v)
+static inline bool track_event_change(struct time_stats *stats, bool v)
 {
 	if (v != !!stats->last_event_start) {
 		if (!v) {
-			bch2_time_stats_update(stats, stats->last_event_start);
+			time_stats_update(stats, stats->last_event_start);
 			stats->last_event_start = 0;
 		} else {
 			stats->last_event_start = local_clock() ?: 1;
@@ -142,26 +142,26 @@ static inline bool track_event_change(struct bch2_time_stats *stats, bool v)
 	return false;
 }
 
-void bch2_time_stats_reset(struct bch2_time_stats *);
+void time_stats_reset(struct time_stats *);
 
 #define TIME_STATS_PRINT_NO_ZEROES	(1U << 0)	/* print nothing if zero count */
 struct seq_buf;
-void bch2_time_stats_to_seq_buf(struct seq_buf *, struct bch2_time_stats *,
-				const char *epoch_name, unsigned int flags);
+void time_stats_to_seq_buf(struct seq_buf *, struct time_stats *,
+		const char *epoch_name, unsigned int flags);
 
-void bch2_time_stats_exit(struct bch2_time_stats *);
-void bch2_time_stats_init(struct bch2_time_stats *);
-void bch2_time_stats_init_no_pcpu(struct bch2_time_stats *);
+void time_stats_exit(struct time_stats *);
+void time_stats_init(struct time_stats *);
+void time_stats_init_no_pcpu(struct bch2_time_stats *);
 
-static inline void bch2_time_stats_quantiles_exit(struct bch2_time_stats_quantiles *statq)
+static inline void time_stats_quantiles_exit(struct time_stats_quantiles *statq)
 {
-	bch2_time_stats_exit(&statq->stats);
+	time_stats_exit(&statq->stats);
 }
-static inline void bch2_time_stats_quantiles_init(struct bch2_time_stats_quantiles *statq)
+static inline void time_stats_quantiles_init(struct time_stats_quantiles *statq)
 {
-	bch2_time_stats_init(&statq->stats);
+	time_stats_init(&statq->stats);
 	statq->stats.have_quantiles = true;
 	memset(&statq->quantiles, 0, sizeof(statq->quantiles));
 }
 
-#endif /* _BCACHEFS_TIME_STATS_H */
+#endif /* _LINUX_TIME_STATS_H */

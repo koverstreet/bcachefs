@@ -291,9 +291,9 @@ struct journal {
 	u64			nr_noflush_writes;
 	u64			entry_bytes_written;
 
-	struct bch2_time_stats	*flush_write_time;
-	struct bch2_time_stats	*noflush_write_time;
-	struct bch2_time_stats	*flush_seq_time;
+	struct time_stats	*flush_write_time;
+	struct time_stats	*noflush_write_time;
+	struct time_stats	*flush_seq_time;
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 	struct lockdep_map	res_map;
