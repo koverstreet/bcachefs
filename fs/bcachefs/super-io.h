@@ -3,12 +3,12 @@
 #define _BCACHEFS_SUPER_IO_H
 
 #include "extents.h"
-#include "eytzinger.h"
 #include "super_types.h"
 #include "super.h"
 #include "sb-members.h"
 
 #include <asm/byteorder.h>
+#include <linux/eytzinger.h>
 
 #define BCH_SB_READ_SCRATCH_BUF_SIZE		4096
 
