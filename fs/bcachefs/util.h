@@ -382,6 +382,7 @@ struct bch2_time_stat_buffer {
 
 struct bch2_time_stats {
 	spinlock_t	lock;
+	bool		quantiles_enabled;
 	/* all fields are in nanoseconds */
 	u64             min_duration;
 	u64		max_duration;
@@ -434,6 +435,9 @@ static inline bool track_event_change(struct bch2_time_stats *stats,
 #endif
 
 void bch2_time_stats_to_text(struct printbuf *, struct bch2_time_stats *);
+
+struct seq_buf;
+void bch2_time_stats_to_seq_buf(struct seq_buf *, struct bch2_time_stats *);
 
 void bch2_time_stats_exit(struct bch2_time_stats *);
 void bch2_time_stats_init(struct bch2_time_stats *);
