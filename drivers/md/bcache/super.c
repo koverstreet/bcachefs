@@ -1676,6 +1676,9 @@ static CLOSURE_CALLBACK(cache_set_free)
 
 	debugfs_remove(c->debug);
 
+	time_stats_exit(&c->btree_read_time);
+	time_stats_exit(&c->btree_split_time);
+	time_stats_exit(&c->btree_gc_time);
 	bch_open_buckets_free(c);
 	bch_btree_cache_free(c);
 	bch_journal_free(c);
@@ -1912,6 +1915,10 @@ struct cache_set *bch_cache_set_alloc(struct cache_sb *sb)
 	INIT_LIST_HEAD(&c->btree_cache_freeable);
 	INIT_LIST_HEAD(&c->btree_cache_freed);
 	INIT_LIST_HEAD(&c->data_buckets);
+
+	time_stats_init(&c->btree_gc_time);
+	time_stats_init(&c->btree_split_time);
+	time_stats_init(&c->btree_read_time);
 
 	iter_size = ((meta_bucket_pages(sb) * PAGE_SECTORS) / sb->block_size + 1) *
 		sizeof(struct btree_iter_set);

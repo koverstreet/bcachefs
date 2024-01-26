@@ -14,6 +14,7 @@
 #include "features.h"
 
 #include <linux/blkdev.h>
+#include <linux/seq_buf.h>
 #include <linux/sort.h>
 #include <linux/sched/clock.h>
 
@@ -79,10 +80,10 @@ read_attribute(active_journal_entries);
 read_attribute(backing_dev_name);
 read_attribute(backing_dev_uuid);
 
-sysfs_time_stats_attribute(btree_gc,	sec, ms);
-sysfs_time_stats_attribute(btree_split, sec, us);
-sysfs_time_stats_attribute(btree_sort,	ms,  us);
-sysfs_time_stats_attribute(btree_read,	ms,  us);
+read_attribute(btree_gc_times);
+read_attribute(btree_split_times);
+read_attribute(btree_sort_times);
+read_attribute(btree_read_times);
 
 read_attribute(btree_nodes);
 read_attribute(btree_used_percent);
@@ -743,10 +744,10 @@ SHOW(__bch_cache_set)
 	sysfs_print(btree_cache_max_chain,	bch_cache_max_chain(c));
 	sysfs_print(cache_available_percent,	100 - c->gc_stats.in_use);
 
-	sysfs_print_time_stats(&c->btree_gc_time,	btree_gc, sec, ms);
-	sysfs_print_time_stats(&c->btree_split_time,	btree_split, sec, us);
-	sysfs_print_time_stats(&c->sort.time,		btree_sort, ms, us);
-	sysfs_print_time_stats(&c->btree_read_time,	btree_read, ms, us);
+	sysfs_print_time_stats(&c->btree_gc_time,	btree_gc_times);
+	sysfs_print_time_stats(&c->btree_split_time,	btree_split_times);
+	sysfs_print_time_stats(&c->sort.time,		btree_sort_times);
+	sysfs_print_time_stats(&c->btree_read_time,	btree_read_times);
 
 	sysfs_print(btree_used_percent,	bch_btree_used(c));
 	sysfs_print(btree_nodes,	c->gc_stats.nodes);
@@ -989,10 +990,10 @@ KTYPE(bch_cache_set);
 static struct attribute *bch_cache_set_internal_attrs[] = {
 	&sysfs_active_journal_entries,
 
-	sysfs_time_stats_attribute_list(btree_gc, sec, ms)
-	sysfs_time_stats_attribute_list(btree_split, sec, us)
-	sysfs_time_stats_attribute_list(btree_sort, ms, us)
-	sysfs_time_stats_attribute_list(btree_read, ms, us)
+	&sysfs_btree_gc_times,
+	&sysfs_btree_split_times,
+	&sysfs_btree_sort_times,
+	&sysfs_btree_read_times,
 
 	&sysfs_btree_nodes,
 	&sysfs_btree_used_percent,
