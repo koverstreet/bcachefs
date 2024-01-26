@@ -169,6 +169,107 @@ void bch2_time_stats_reset(struct bch2_time_stats *stats)
 	spin_unlock_irq(&stats->lock);
 }
 
+#include <linux/seq_buf.h>
+
+static void seq_buf_time_units_aligned(struct seq_buf *out, u64 ns)
+{
+	const struct time_unit *u = bch2_pick_time_units(ns);
+
+	seq_buf_printf(out, "%8llu %s", div64_u64(ns, u->nsecs), u->name);
+}
+
+void bch2_time_stats_to_seq_buf(struct seq_buf *out, struct bch2_time_stats *stats)
+{
+	struct quantiles *quantiles = time_stats_to_quantiles(stats);
+	s64 f_mean = 0, d_mean = 0;
+	u64 f_stddev = 0, d_stddev = 0;
+
+	if (stats->buffer) {
+		int cpu;
+
+		spin_lock_irq(&stats->lock);
+		for_each_possible_cpu(cpu)
+			__bch2_time_stats_clear_buffer(stats, per_cpu_ptr(stats->buffer, cpu));
+		spin_unlock_irq(&stats->lock);
+	}
+
+	/*
+	 * avoid divide by zero
+	 */
+	if (stats->freq_stats.n) {
+		f_mean = mean_and_variance_get_mean(stats->freq_stats);
+		f_stddev = mean_and_variance_get_stddev(stats->freq_stats);
+		d_mean = mean_and_variance_get_mean(stats->duration_stats);
+		d_stddev = mean_and_variance_get_stddev(stats->duration_stats);
+	}
+
+	seq_buf_printf(out, "count: %llu\n", stats->duration_stats.n);
+
+	seq_buf_printf(out, "                       since mount        recent\n");
+
+	seq_buf_printf(out, "duration of events\n");
+
+	seq_buf_printf(out, "  min:                     ");
+	seq_buf_time_units_aligned(out, stats->min_duration);
+	seq_buf_printf(out, "\n");
+
+	seq_buf_printf(out, "  max:                     ");
+	seq_buf_time_units_aligned(out, stats->max_duration);
+	seq_buf_printf(out, "\n");
+
+	seq_buf_printf(out, "  total:                   ");
+	seq_buf_time_units_aligned(out, stats->total_duration);
+	seq_buf_printf(out, "\n");
+
+	seq_buf_printf(out, "  mean:                    ");
+	seq_buf_time_units_aligned(out, d_mean);
+	seq_buf_time_units_aligned(out, mean_and_variance_weighted_get_mean(stats->duration_stats_weighted, TIME_STATS_MV_WEIGHT));
+	seq_buf_printf(out, "\n");
+
+	seq_buf_printf(out, "  stddev:                  ");
+	seq_buf_time_units_aligned(out, d_stddev);
+	seq_buf_time_units_aligned(out, mean_and_variance_weighted_get_stddev(stats->duration_stats_weighted, TIME_STATS_MV_WEIGHT));
+	seq_buf_printf(out, "\n");
+
+	seq_buf_printf(out, "time between events\n");
+
+	seq_buf_printf(out, "  min:                     ");
+	seq_buf_time_units_aligned(out, stats->min_freq);
+	seq_buf_printf(out, "\n");
+
+	seq_buf_printf(out, "  max:                     ");
+	seq_buf_time_units_aligned(out, stats->max_freq);
+	seq_buf_printf(out, "\n");
+
+	seq_buf_printf(out, "  mean:                    ");
+	seq_buf_time_units_aligned(out, f_mean);
+	seq_buf_time_units_aligned(out, mean_and_variance_weighted_get_mean(stats->freq_stats_weighted, TIME_STATS_MV_WEIGHT));
+	seq_buf_printf(out, "\n");
+
+	seq_buf_printf(out, "  stddev:                  ");
+	seq_buf_time_units_aligned(out, f_stddev);
+	seq_buf_time_units_aligned(out, mean_and_variance_weighted_get_stddev(stats->freq_stats_weighted, TIME_STATS_MV_WEIGHT));
+	seq_buf_printf(out, "\n");
+
+	if (quantiles) {
+		int i = eytzinger0_first(NR_QUANTILES);
+		const struct time_unit *u =
+			bch2_pick_time_units(quantiles->entries[i].m);
+		u64 last_q = 0;
+
+		seq_buf_printf(out, "quantiles (%s):\t", u->name);
+		eytzinger0_for_each(i, NR_QUANTILES) {
+			bool is_last = eytzinger0_next(i, NR_QUANTILES) == -1;
+
+			u64 q = max(quantiles->entries[i].m, last_q);
+			seq_buf_printf(out, "%llu ", div_u64(q, u->nsecs));
+			if (is_last)
+				seq_buf_printf(out, "\n");
+			last_q = q;
+		}
+	}
+}
+
 void bch2_time_stats_exit(struct bch2_time_stats *stats)
 {
 	if ((unsigned long) stats->buffer > TIME_STATS_NONPCPU)
