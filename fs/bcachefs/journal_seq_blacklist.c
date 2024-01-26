@@ -2,9 +2,10 @@
 
 #include "bcachefs.h"
 #include "btree_iter.h"
-#include "eytzinger.h"
 #include "journal_seq_blacklist.h"
 #include "super-io.h"
+
+#include <linux/eytzinger.h>
 
 /*
  * journal_seq_blacklist machinery:
@@ -119,8 +120,7 @@ out:
 	return ret ?: bch2_blacklist_table_initialize(c);
 }
 
-static int journal_seq_blacklist_table_cmp(const void *_l,
-					   const void *_r, size_t size)
+static int journal_seq_blacklist_table_cmp(const void *_l, const void *_r)
 {
 	const struct journal_seq_blacklist_table_entry *l = _l;
 	const struct journal_seq_blacklist_table_entry *r = _r;
