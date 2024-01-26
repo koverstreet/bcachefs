@@ -327,7 +327,7 @@ static void btree_node_sort(struct bch_fs *c, struct btree *b,
 	BUG_ON(vstruct_end(&out->keys) > (void *) out + bytes);
 
 	if (sorting_entire_node)
-		bch2_time_stats_update(&c->times[BCH_TIME_btree_node_sort],
+		time_stats_update(&c->times[BCH_TIME_btree_node_sort],
 				       start_time);
 
 	/* Make sure we preserve bset journal_seq: */
@@ -397,7 +397,7 @@ void bch2_btree_sort_into(struct bch_fs *c,
 			&dst->format,
 			true);
 
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_sort],
+	time_stats_update(&c->times[BCH_TIME_btree_node_sort],
 			       start_time);
 
 	set_btree_bset_end(dst, dst->set);
@@ -1251,7 +1251,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 out:
 	mempool_free(iter, &c->fill_iter);
 	printbuf_exit(&buf);
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read_done], start_time);
+	time_stats_update(&c->times[BCH_TIME_btree_node_read_done], start_time);
 	return retry_read;
 fsck_err:
 	if (ret == -BCH_ERR_btree_node_read_err_want_retry ||
@@ -1323,7 +1323,7 @@ start:
 		}
 	}
 
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read],
+	time_stats_update(&c->times[BCH_TIME_btree_node_read],
 			       rb->start_time);
 	bio_put(&rb->bio);
 

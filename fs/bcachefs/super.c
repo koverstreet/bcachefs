@@ -520,7 +520,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 	unsigned i;
 
 	for (i = 0; i < BCH_TIME_STAT_NR; i++)
-		bch2_time_stats_exit(&c->times[i]);
+		time_stats_exit(&c->times[i]);
 
 	bch2_free_pending_node_rewrites(c);
 	bch2_fs_sb_errors_exit(c);
@@ -753,7 +753,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	c->journal_keys.initial_ref_held = true;
 
 	for (i = 0; i < BCH_TIME_STAT_NR; i++)
-		bch2_time_stats_init(&c->times[i]);
+		time_stats_init(&c->times[i]);
 
 	bch2_fs_copygc_init(c);
 	bch2_fs_btree_key_cache_init_early(&c->btree_key_cache);
@@ -1168,8 +1168,8 @@ static void bch2_dev_free(struct bch_dev *ca)
 	bch2_dev_buckets_free(ca);
 	free_page((unsigned long) ca->sb_read_scratch);
 
-	bch2_time_stats_exit(&ca->io_latency[WRITE]);
-	bch2_time_stats_exit(&ca->io_latency[READ]);
+	time_stats_exit(&ca->io_latency[WRITE]);
+	time_stats_exit(&ca->io_latency[READ]);
 
 	percpu_ref_exit(&ca->io_ref);
 	percpu_ref_exit(&ca->ref);
@@ -1260,8 +1260,8 @@ static struct bch_dev *__bch2_dev_alloc(struct bch_fs *c,
 
 	INIT_WORK(&ca->io_error_work, bch2_io_error_work);
 
-	bch2_time_stats_init(&ca->io_latency[READ]);
-	bch2_time_stats_init(&ca->io_latency[WRITE]);
+	time_stats_init(&ca->io_latency[READ]);
+	time_stats_init(&ca->io_latency[WRITE]);
 	ca->io_latency[READ].quantiles_enabled = true;
 	ca->io_latency[WRITE].quantiles_enabled = true;
 
