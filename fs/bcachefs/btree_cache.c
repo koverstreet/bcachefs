@@ -862,7 +862,7 @@ out:
 	b->whiteout_u64s	= 0;
 	bch2_btree_keys_init(b);
 
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_mem_alloc],
+	time_stats_update(&c->times[BCH_TIME_btree_node_mem_alloc],
 			       start_time);
 
 	int ret = bch2_trans_relock(trans);

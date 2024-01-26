@@ -376,7 +376,7 @@ static void btree_node_sort(struct bch_fs *c, struct btree *b,
 	BUG_ON(vstruct_end(&out->keys) > (void *) out + bytes);
 
 	if (sorting_entire_node)
-		bch2_time_stats_update(&c->times[BCH_TIME_btree_node_sort],
+		time_stats_update(&c->times[BCH_TIME_btree_node_sort],
 				       start_time);
 
 	/* Make sure we preserve bset journal_seq: */
@@ -446,7 +446,7 @@ void bch2_btree_sort_into(struct bch_fs *c,
 			&dst->format,
 			true);
 
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_sort],
+	time_stats_update(&c->times[BCH_TIME_btree_node_sort],
 			       start_time);
 
 	set_btree_bset_end(dst, dst->set);
@@ -1418,7 +1418,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 	}
 fsck_err:
 	mempool_free(iter, &c->fill_iter);
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read_done], start_time);
+	time_stats_update(&c->times[BCH_TIME_btree_node_read_done], start_time);
 	return ret;
 }
 
@@ -1516,8 +1516,7 @@ start:
 	bch2_btree_node_set_blocksize(c, b);
 
 	async_object_list_del(c, btree_read_bio, rb->list_idx);
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read],
-			       rb->start_time);
+	time_stats_update(&c->times[BCH_TIME_btree_node_read], rb->start_time);
 	bio_put(&rb->bio);
 	clear_btree_node_read_in_flight(b);
 	smp_mb__after_atomic();
@@ -2162,7 +2161,7 @@ static void __btree_node_write_done(struct bch_fs *c, struct btree *b, u64 start
 	bch2_btree_complete_write(c, b, w);
 
 	if (start_time)
-		bch2_time_stats_update(&c->times[BCH_TIME_btree_node_write], start_time);
+		time_stats_update(&c->times[BCH_TIME_btree_node_write], start_time);
 
 	old = READ_ONCE(b->flags);
 	do {

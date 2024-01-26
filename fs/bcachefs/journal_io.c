@@ -1764,9 +1764,9 @@ static CLOSURE_CALLBACK(journal_write_done)
 	u64 seq = le64_to_cpu(w->data->seq);
 	int err = 0;
 
-	bch2_time_stats_update(!JSET_NO_FLUSH(w->data)
-			       ? j->flush_write_time
-			       : j->noflush_write_time, j->write_start_time);
+	time_stats_update(!JSET_NO_FLUSH(w->data)
+			  ? j->flush_write_time
+			  : j->noflush_write_time, j->write_start_time);
 
 	if (!w->devs_written.nr) {
 		err = bch_err_throw(c, journal_write_err);
