@@ -824,7 +824,7 @@ int bch2_journal_flush_seq(struct journal *j, u64 seq, unsigned task_state)
 			       task_state);
 
 	if (!ret)
-		bch2_time_stats_update(j->flush_seq_time, start_time);
+		time_stats_update(j->flush_seq_time, start_time);
 
 	return ret ?: ret2 < 0 ? ret2 : 0;
 }
