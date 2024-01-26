@@ -470,8 +470,7 @@ void bch2_btree_node_sort(struct bch_fs *c, struct btree *b,
 	BUG_ON(vstruct_end(&out->keys) > (void *) out + bytes);
 
 	if (sorting_entire_node)
-		bch2_time_stats_update(&c->times[BCH_TIME_btree_node_sort],
-				       start_time);
+		time_stats_update(&c->times[BCH_TIME_btree_node_sort], start_time);
 
 	/* Make sure we preserve bset journal_seq: */
 	for (t = b->set + start_idx; t < b->set + end_idx; t++)
@@ -540,8 +539,7 @@ void bch2_btree_sort_into(struct bch_fs *c,
 			&dst->format,
 			true);
 
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_sort],
-			       start_time);
+	time_stats_update(&c->times[BCH_TIME_btree_node_sort], start_time);
 
 	set_btree_bset_end(dst, dst->set);
 

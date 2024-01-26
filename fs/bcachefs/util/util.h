@@ -18,14 +18,12 @@
 #include <linux/sched/clock.h>
 #include <linux/slab.h>
 #include <linux/sort.h>
+#include <linux/time_stats.h>
 #include <linux/version.h>
 #include <linux/vmalloc.h>
 #include <linux/workqueue.h>
 
 #include "closure.h"
-#include "time_stats.h"
-
-struct closure;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 #define EBUG_ON(cond)		BUG_ON(cond)
@@ -243,7 +241,7 @@ static inline void prt_bdevname(struct printbuf *out, struct block_device *bdev)
 #endif
 }
 
-void bch2_time_stats_to_text(struct printbuf *, struct bch2_time_stats *);
+void bch2_time_stats_to_text(struct printbuf *, struct time_stats *);
 
 #define ewma_add(ewma, val, weight)					\
 ({									\

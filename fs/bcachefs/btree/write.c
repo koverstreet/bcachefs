@@ -45,7 +45,7 @@ static void __btree_node_write_done(struct bch_fs *c, struct btree *b, u64 start
 	bch2_btree_complete_write(c, b, w);
 
 	if (start_time)
-		bch2_time_stats_update(&c->times[BCH_TIME_btree_node_write], start_time);
+		time_stats_update(&c->times[BCH_TIME_btree_node_write], start_time);
 
 	old = READ_ONCE(b->flags);
 	do {

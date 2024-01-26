@@ -952,7 +952,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 	}
 fsck_err:
 	mempool_free(iter, &c->fill_iter);
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read_done], start_time);
+	time_stats_update(&c->times[BCH_TIME_btree_node_read_done], start_time);
 	return ret;
 }
 
@@ -1050,8 +1050,7 @@ start:
 		bch2_print_str_ratelimited(c, KERN_ERR, buf.buf);
 
 	async_object_list_del(c, btree_read_bio, rb->list_idx);
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read],
-			       rb->start_time);
+	time_stats_update(&c->times[BCH_TIME_btree_node_read], rb->start_time);
 	bio_put(&rb->bio);
 	clear_btree_node_read_in_flight(b);
 	smp_mb__after_atomic();

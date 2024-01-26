@@ -564,7 +564,7 @@ static void throttle_writes(struct bch_fs *c, unsigned replicas_want, struct clo
 	BUG_ON(closure_nr_remaining(cl) > 1);
 
 	if (start)
-		bch2_time_stats_update(&c->times[BCH_TIME_blocked_writeback_throttle], start);
+		time_stats_update(&c->times[BCH_TIME_blocked_writeback_throttle], start);
 }
 
 static int __bch2_writepage(struct folio *folio,

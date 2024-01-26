@@ -180,7 +180,7 @@ retake_all:
 			__closure_wait_event(&i->l->wait,
 					(ret = __bch2_bucket_nocow_trylock(c, i->l, i->b, flags)) != -BCH_ERR_nocow_trylock_contended);
 		if (!ret) {
-			bch2_time_stats_update(&c->times[BCH_TIME_nocow_lock_contended], start_time);
+			time_stats_update(&c->times[BCH_TIME_nocow_lock_contended], start_time);
 			continue;
 		}
 
@@ -193,7 +193,7 @@ retake_all:
 		}
 
 		__closure_wait_event(&i->l->wait, nocow_bucket_empty(i->l));
-		bch2_time_stats_update(&c->times[BCH_TIME_nocow_lock_contended], start_time);
+		time_stats_update(&c->times[BCH_TIME_nocow_lock_contended], start_time);
 		goto retake_all;
 	}
 

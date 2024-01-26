@@ -515,7 +515,7 @@ err:
 		wb->flushing.keys.nr = 0;
 	}
 
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_write_buffer_flush], start_time);
+	time_stats_update(&c->times[BCH_TIME_btree_write_buffer_flush], start_time);
 	bch2_fs_fatal_err_on(ret, c, "%s", bch2_err_str(ret));
 	trace_write_buffer_flush(trans, nr_flushing, overwritten, fast, noop);
 	return ret;

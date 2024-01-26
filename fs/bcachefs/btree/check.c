@@ -1165,7 +1165,7 @@ int bch2_gc_gens(struct bch_fs *c)
 
 	c->gc_count++;
 
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_gc], start_time);
+	time_stats_update(&c->times[BCH_TIME_btree_gc], start_time);
 	trace_and_count(c, gc_gens_end, c);
 
 	if (!(c->sb.compat & BIT_ULL(BCH_COMPAT_no_stale_ptrs))) {

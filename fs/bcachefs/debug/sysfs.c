@@ -369,12 +369,12 @@ static int bch2_read_fua_test(struct printbuf *out, struct bch_dev *ca)
 	void *buf = NULL;
 	unsigned bs = c->opts.block_size, iters;
 	u64 end, test_duration = NSEC_PER_SEC * 2;
-	struct bch2_time_stats stats_nofua, stats_fua, stats_random;
+	struct time_stats stats_nofua, stats_fua, stats_random;
 	int ret = 0;
 
-	bch2_time_stats_init_no_pcpu(&stats_nofua);
-	bch2_time_stats_init_no_pcpu(&stats_fua);
-	bch2_time_stats_init_no_pcpu(&stats_random);
+	time_stats_init_no_pcpu(&stats_nofua);
+	time_stats_init_no_pcpu(&stats_fua);
+	time_stats_init_no_pcpu(&stats_random);
 
 	if (!bch2_dev_get_ioref(c, ca->dev_idx, READ, BCH_DEV_READ_REF_read_fua_test)) {
 		prt_str(out, "offline\n");
@@ -400,7 +400,7 @@ static int bch2_read_fua_test(struct printbuf *out, struct bch_dev *ca)
 
 		u64 submit_time = ktime_get_ns();
 		ret = submit_bio_wait(bio);
-		bch2_time_stats_update(&stats_nofua, submit_time);
+		time_stats_update(&stats_nofua, submit_time);
 
 		if (ret)
 			goto err;
@@ -413,7 +413,7 @@ static int bch2_read_fua_test(struct printbuf *out, struct bch_dev *ca)
 
 		u64 submit_time = ktime_get_ns();
 		ret = submit_bio_wait(bio);
-		bch2_time_stats_update(&stats_fua, submit_time);
+		time_stats_update(&stats_fua, submit_time);
 
 		if (ret)
 			goto err;
@@ -429,7 +429,7 @@ static int bch2_read_fua_test(struct printbuf *out, struct bch_dev *ca)
 
 		u64 submit_time = ktime_get_ns();
 		ret = submit_bio_wait(bio);
-		bch2_time_stats_update(&stats_random, submit_time);
+		time_stats_update(&stats_random, submit_time);
 
 		if (ret)
 			goto err;
@@ -938,7 +938,7 @@ STORE(bch2_fs_time_stats)
 
 #define x(name)								\
 	if (attr == &sysfs_time_stat_##name)				\
-		bch2_time_stats_reset(&c->times[BCH_TIME_##name]);
+		time_stats_reset(&c->times[BCH_TIME_##name]);
 	BCH_TIME_STATS()
 #undef x
 	return size;
