@@ -1262,6 +1262,8 @@ static struct bch_dev *__bch2_dev_alloc(struct bch_fs *c,
 
 	bch2_time_stats_init(&ca->io_latency[READ]);
 	bch2_time_stats_init(&ca->io_latency[WRITE]);
+	ca->io_latency[READ].quantiles_enabled = true;
+	ca->io_latency[WRITE].quantiles_enabled = true;
 
 	ca->mi = bch2_mi_to_cpu(member);
 
