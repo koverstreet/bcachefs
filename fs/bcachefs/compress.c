@@ -349,11 +349,9 @@ static int attempt_compress(struct bch_fs *c,
 	}
 	case BCH_COMPRESSION_TYPE_zstd: {
 		/*
-		 * rescale:
-		 * zstd max compression level is 22, our max level is 15
+		 * only use zstd compression levels 1-15
 		 */
-		unsigned level = min((compression.level * 3) / 2, zstd_max_clevel());
-		ZSTD_parameters params = zstd_get_params(level, c->opts.encoded_extent_max);
+		ZSTD_parameters params = zstd_get_params(compression.level, c->opts.encoded_extent_max);
 		ZSTD_CCtx *ctx = zstd_init_cctx(workspace, c->zstd_workspace_size);
 
 		/*
