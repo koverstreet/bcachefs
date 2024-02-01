@@ -69,6 +69,8 @@ static inline void time_stats_update_one(struct time_stats *stats,
 	u64 duration, freq;
 
 	if (time_after64(end, start)) {
+		struct quantiles *quantiles = time_stats_to_quantiles(stats);
+
 		duration = end - start;
 		mean_and_variance_update(&stats->duration_stats, duration);
 		mean_and_variance_weighted_update(&stats->duration_stats_weighted, duration);
@@ -76,8 +78,8 @@ static inline void time_stats_update_one(struct time_stats *stats,
 		stats->min_duration = min(stats->min_duration, duration);
 		stats->total_duration += duration;
 
-		if (stats->quantiles_enabled)
-			quantiles_update(&stats->quantiles, duration);
+		if (quantiles)
+			quantiles_update(quantiles, duration);
 	}
 
 	if (stats->last_event && time_after64(end, stats->last_event)) {
@@ -160,11 +162,12 @@ static void seq_buf_time_units_aligned(struct seq_buf *out, u64 ns)
 
 static inline u64 time_stats_lifetime(const struct time_stats *stats)
 {
-	return local_clock() - stats->start_time;
+	return local_clock() - (stats->start_time & ~TIME_STATS_HAVE_QUANTILES);
 }
 
 void time_stats_to_seq_buf(struct seq_buf *out, struct time_stats *stats)
 {
+	struct quantiles *quantiles = time_stats_to_quantiles(stats);
 	s64 f_mean = 0, d_mean = 0;
 	u64 f_stddev = 0, d_stddev = 0;
 	u64 lifetime = time_stats_lifetime(stats);
@@ -239,17 +242,17 @@ void time_stats_to_seq_buf(struct seq_buf *out, struct time_stats *stats)
 	seq_buf_time_units_aligned(out, mean_and_variance_weighted_get_stddev(stats->freq_stats_weighted));
 	seq_buf_printf(out, "\n");
 
-	if (stats->quantiles_enabled) {
+	if (quantiles) {
 		int i = eytzinger0_first(NR_QUANTILES);
 		const struct time_unit *u =
-			pick_time_units(stats->quantiles.entries[i].m);
+			pick_time_units(quantiles->entries[i].m);
 		u64 last_q = 0;
 
 		seq_buf_printf(out, "quantiles (%s):\t", u->name);
 		eytzinger0_for_each(i, NR_QUANTILES) {
 			bool is_last = eytzinger0_next(i, NR_QUANTILES) == -1;
 
-			u64 q = max(stats->quantiles.entries[i].m, last_q);
+			u64 q = max(quantiles->entries[i].m, last_q);
 			seq_buf_printf(out, "%llu ", div_u64(q, u->nsecs));
 			if (is_last)
 				seq_buf_printf(out, "\n");
@@ -272,7 +275,7 @@ void time_stats_init(struct time_stats *stats)
 	stats->freq_stats_weighted.weight = 8;
 	stats->min_duration = U64_MAX;
 	stats->min_freq = U64_MAX;
-	stats->start_time = local_clock();
+	stats->start_time = local_clock() & ~TIME_STATS_HAVE_QUANTILES;
 	spin_lock_init(&stats->lock);
 }
 EXPORT_SYMBOL_GPL(time_stats_init);
