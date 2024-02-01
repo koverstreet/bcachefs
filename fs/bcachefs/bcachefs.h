@@ -594,7 +594,7 @@ struct bch_dev {
 
 	/* The rest of this all shows up in sysfs */
 	atomic64_t		cur_latency[2];
-	struct time_stats	io_latency[2];
+	struct time_stats_quantiles	io_latency[2];
 
 #define CONGESTED_MAX		1024
 	atomic_t		congested;
