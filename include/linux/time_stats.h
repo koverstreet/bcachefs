@@ -27,6 +27,7 @@
 #include <linux/mean_and_variance.h>
 #include <linux/sched/clock.h>
 #include <linux/spinlock_types.h>
+#include <linux/string.h>
 
 struct time_unit {
 	const char	*name;
@@ -67,7 +68,6 @@ struct time_stat_buffer {
 
 struct time_stats {
 	spinlock_t	lock;
-	bool		quantiles_enabled;
 	/* all fields are in nanoseconds */
 	u64             min_duration;
 	u64		max_duration;
@@ -76,7 +76,12 @@ struct time_stats {
 	u64             min_freq;
 	u64		last_event;
 	u64		last_event_start;
-	struct quantiles quantiles;
+
+/*
+ * Is this really a struct time_stats_quantiled?  Hide this flag in the least
+ * significant bit of the start time to avoid blowing up the structure size.
+ */
+#define TIME_STATS_HAVE_QUANTILES	(1ULL << 0)
 
 	u64		start_time;
 
@@ -86,6 +91,22 @@ struct time_stats {
 	struct mean_and_variance_weighted freq_stats_weighted;
 	struct time_stat_buffer __percpu *buffer;
 };
+
+struct time_stats_quantiles {
+	struct time_stats	stats;
+	struct quantiles	quantiles;
+};
+
+static inline struct quantiles *time_stats_to_quantiles(struct time_stats *stats)
+{
+	struct time_stats_quantiles *statq;
+
+	if (!(stats->start_time & TIME_STATS_HAVE_QUANTILES))
+		return NULL;
+
+	statq = container_of(stats, struct time_stats_quantiles, stats);
+	return &statq->quantiles;
+}
 
 void __time_stats_clear_buffer(struct time_stats *, struct time_stat_buffer *);
 void __time_stats_update(struct time_stats *stats, u64, u64);
@@ -132,5 +153,16 @@ void time_stats_to_seq_buf(struct seq_buf *, struct time_stats *);
 
 void time_stats_exit(struct time_stats *);
 void time_stats_init(struct time_stats *);
+
+static inline void time_stats_quantiles_exit(struct time_stats_quantiles *statq)
+{
+	time_stats_exit(&statq->stats);
+}
+static inline void time_stats_quantiles_init(struct time_stats_quantiles *statq)
+{
+	time_stats_init(&statq->stats);
+	statq->stats.start_time |= TIME_STATS_HAVE_QUANTILES;
+	memset(&statq->quantiles, 0, sizeof(statq->quantiles));
+}
 
 #endif /* _LINUX_TIME_STATS_H */
