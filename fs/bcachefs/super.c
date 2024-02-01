@@ -1177,8 +1177,8 @@ static void bch2_dev_free(struct bch_dev *ca)
 	bch2_dev_buckets_free(ca);
 	free_page((unsigned long) ca->sb_read_scratch);
 
-	time_stats_exit(&ca->io_latency[WRITE]);
-	time_stats_exit(&ca->io_latency[READ]);
+	time_stats_quantiles_exit(&ca->io_latency[WRITE]);
+	time_stats_quantiles_exit(&ca->io_latency[READ]);
 
 	percpu_ref_exit(&ca->io_ref);
 	percpu_ref_exit(&ca->ref);
@@ -1269,10 +1269,8 @@ static struct bch_dev *__bch2_dev_alloc(struct bch_fs *c,
 
 	INIT_WORK(&ca->io_error_work, bch2_io_error_work);
 
-	time_stats_init(&ca->io_latency[READ]);
-	time_stats_init(&ca->io_latency[WRITE]);
-	ca->io_latency[READ].quantiles_enabled = true;
-	ca->io_latency[WRITE].quantiles_enabled = true;
+	time_stats_quantiles_init(&ca->io_latency[READ]);
+	time_stats_quantiles_init(&ca->io_latency[WRITE]);
 
 	ca->mi = bch2_mi_to_cpu(member);
 
