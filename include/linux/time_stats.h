@@ -77,6 +77,12 @@ struct time_stats {
 	u64		last_event;
 	u64		last_event_start;
 
+	struct mean_and_variance	  duration_stats;
+	struct mean_and_variance	  freq_stats;
+	struct mean_and_variance_weighted duration_stats_weighted;
+	struct mean_and_variance_weighted freq_stats_weighted;
+	struct time_stat_buffer __percpu *buffer;
+
 /*
  * Is this really a struct time_stats_quantiled?  Hide this flag in the least
  * significant bit of the start time to avoid blowing up the structure size.
@@ -84,12 +90,6 @@ struct time_stats {
 #define TIME_STATS_HAVE_QUANTILES	(1ULL << 0)
 
 	u64		start_time;
-
-	struct mean_and_variance	  duration_stats;
-	struct mean_and_variance_weighted duration_stats_weighted;
-	struct mean_and_variance	  freq_stats;
-	struct mean_and_variance_weighted freq_stats_weighted;
-	struct time_stat_buffer __percpu *buffer;
 };
 
 struct time_stats_quantiles {
