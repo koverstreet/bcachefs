@@ -1881,6 +1881,9 @@ got_sb:
 	c->vfs_sb		= sb;
 	strscpy(sb->s_id, c->name, sizeof(sb->s_id));
 
+	super_set_uuid(sb, c->sb.user_uuid.b, 16);
+	super_set_sysfs_name_uuid(sb);
+
 	ret = super_setup_bdi(sb);
 	if (ret)
 		goto err_put_super;
