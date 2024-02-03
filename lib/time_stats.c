@@ -168,7 +168,8 @@ static inline u64 time_stats_lifetime(const struct time_stats *stats)
 	return local_clock() - (stats->start_time & ~TIME_STATS_HAVE_QUANTILES);
 }
 
-void time_stats_to_seq_buf(struct seq_buf *out, struct time_stats *stats)
+void time_stats_to_seq_buf(struct seq_buf *out, struct time_stats *stats,
+		unsigned int flags)
 {
 	struct quantiles *quantiles = time_stats_to_quantiles(stats);
 	s64 f_mean = 0, d_mean = 0;
@@ -184,14 +185,15 @@ void time_stats_to_seq_buf(struct seq_buf *out, struct time_stats *stats)
 		spin_unlock_irq(&stats->lock);
 	}
 
-	/*
-	 * avoid divide by zero
-	 */
 	if (stats->freq_stats.n) {
+		/* avoid divide by zero */
 		f_mean = mean_and_variance_get_mean(stats->freq_stats);
 		f_stddev = mean_and_variance_get_stddev(stats->freq_stats);
 		d_mean = mean_and_variance_get_mean(stats->duration_stats);
 		d_stddev = mean_and_variance_get_stddev(stats->duration_stats);
+	} else if (flags & TIME_STATS_PRINT_NO_ZEROES) {
+		/* unless we didn't want zeroes anyway */
+		return;
 	}
 
 	seq_buf_printf(out, "count: %llu\n", stats->duration_stats.n);
