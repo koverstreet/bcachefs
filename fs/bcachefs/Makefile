@@ -81,7 +81,6 @@ bcachefs-y		:=	\
 	super-io.o		\
 	sysfs.o			\
 	tests.o			\
-	thread_with_file.o	\
 	trace.o			\
 	two_state_shared_lock.o	\
 	util.o			\

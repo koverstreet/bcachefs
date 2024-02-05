@@ -3,7 +3,7 @@
 #include "error.h"
 #include "recovery.h"
 #include "super.h"
-#include "thread_with_file.h"
+#include <linux/thread_with_file.h>
 
 #define FSCK_ERR_RATELIMIT_NR	10
 
@@ -111,7 +111,7 @@ static enum ask_yn bch2_fsck_ask_yn(struct bch_fs *c)
 	do {
 		bch2_print(c, " (y,n, or Y,N for all errors of this type) ");
 
-		int r = bch2_stdio_redirect_readline(stdio, buf, sizeof(buf) - 1);
+		int r = stdio_redirect_readline(stdio, buf, sizeof(buf) - 1);
 		if (r < 0)
 			return YN_NO;
 		buf[r] = '\0';

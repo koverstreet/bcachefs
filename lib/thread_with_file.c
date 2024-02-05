@@ -1,27 +1,194 @@
 // SPDX-License-Identifier: GPL-2.0
-#ifndef NO_BCACHEFS_FS
-
-#include "bcachefs.h"
-#include "thread_with_file.h"
-
+/*
+ * (C) 2022-2024 Kent Overstreet <kent.overstreet@linux.dev>
+ */
 #include <linux/anon_inodes.h>
+#include <linux/darray.h>
 #include <linux/file.h>
 #include <linux/kthread.h>
+#include <linux/module.h>
 #include <linux/pagemap.h>
 #include <linux/poll.h>
 #include <linux/sched/sysctl.h>
+#include <linux/thread_with_file.h>
 
-void bch2_thread_with_file_exit(struct thread_with_file *thr)
+/* stdio_redirect */
+
+#define STDIO_REDIRECT_BUFSIZE		4096
+
+static bool stdio_redirect_has_input(struct stdio_redirect *stdio)
+{
+	return stdio->input.buf.nr || stdio->done;
+}
+
+static bool stdio_redirect_has_output(struct stdio_redirect *stdio)
+{
+	return stdio->output.buf.nr || stdio->done;
+}
+
+static bool stdio_redirect_has_input_space(struct stdio_redirect *stdio)
+{
+	return stdio->input.buf.nr < STDIO_REDIRECT_BUFSIZE || stdio->done;
+}
+
+static bool stdio_redirect_has_output_space(struct stdio_redirect *stdio)
+{
+	return stdio->output.buf.nr < STDIO_REDIRECT_BUFSIZE || stdio->done;
+}
+
+static void stdio_buf_init(struct stdio_buf *buf)
+{
+	spin_lock_init(&buf->lock);
+	init_waitqueue_head(&buf->wait);
+	darray_init(&buf->buf);
+}
+
+int stdio_redirect_read(struct stdio_redirect *stdio, char *ubuf, size_t len)
+{
+	struct stdio_buf *buf = &stdio->input;
+
+	/*
+	 * we're waiting on user input (or for the file descriptor to be
+	 * closed), don't want a hung task warning:
+	 */
+	do {
+		wait_event_timeout(buf->wait, stdio_redirect_has_input(stdio),
+				   sysctl_hung_task_timeout_secs * HZ / 2);
+	} while (!stdio_redirect_has_input(stdio));
+
+	if (stdio->done)
+		return -1;
+
+	spin_lock(&buf->lock);
+	int ret = min(len, buf->buf.nr);
+	memcpy(ubuf, buf->buf.data, ret);
+	darray_remove_items(&buf->buf, buf->buf.data, ret);
+	spin_unlock(&buf->lock);
+
+	wake_up(&buf->wait);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(stdio_redirect_read);
+
+int stdio_redirect_readline(struct stdio_redirect *stdio, char *ubuf, size_t len)
+{
+	struct stdio_buf *buf = &stdio->input;
+	size_t copied = 0;
+	ssize_t ret = 0;
+again:
+	do {
+		wait_event_timeout(buf->wait, stdio_redirect_has_input(stdio),
+				   sysctl_hung_task_timeout_secs * HZ / 2);
+	} while (!stdio_redirect_has_input(stdio));
+
+	if (stdio->done) {
+		ret = -1;
+		goto out;
+	}
+
+	spin_lock(&buf->lock);
+	size_t b = min(len, buf->buf.nr);
+	char *n = memchr(buf->buf.data, '\n', b);
+	if (n)
+		b = min_t(size_t, b, n + 1 - buf->buf.data);
+	memcpy(ubuf, buf->buf.data, b);
+	darray_remove_items(&buf->buf, buf->buf.data, b);
+	ubuf += b;
+	len -= b;
+	copied += b;
+	spin_unlock(&buf->lock);
+
+	wake_up(&buf->wait);
+
+	if (!n && len)
+		goto again;
+out:
+	return copied ?: ret;
+}
+EXPORT_SYMBOL_GPL(stdio_redirect_readline);
+
+__printf(3, 0)
+static ssize_t darray_vprintf(darray_char *out, gfp_t gfp, const char *fmt, va_list args)
+{
+	ssize_t ret;
+
+	do {
+		va_list args2;
+		size_t len;
+
+		va_copy(args2, args);
+		len = vsnprintf(out->data + out->nr, darray_room(*out), fmt, args2);
+		va_end(args2);
+
+		if (len + 1 <= darray_room(*out)) {
+			out->nr += len;
+			return len;
+		}
+
+		ret = darray_make_room_gfp(out, len + 1, gfp);
+	} while (ret == 0);
+
+	return ret;
+}
+
+ssize_t stdio_redirect_vprintf(struct stdio_redirect *stdio, bool nonblocking,
+			       const char *fmt, va_list args)
+{
+	struct stdio_buf *buf = &stdio->output;
+	unsigned long flags;
+	ssize_t ret;
+
+again:
+	spin_lock_irqsave(&buf->lock, flags);
+	ret = darray_vprintf(&buf->buf, GFP_NOWAIT, fmt, args);
+	spin_unlock_irqrestore(&buf->lock, flags);
+
+	if (ret < 0) {
+		if (nonblocking)
+			return -EAGAIN;
+
+		ret = wait_event_interruptible(buf->wait,
+				stdio_redirect_has_output_space(stdio));
+		if (ret)
+			return ret;
+		goto again;
+	}
+
+	wake_up(&buf->wait);
+	return ret;
+
+}
+EXPORT_SYMBOL_GPL(stdio_redirect_vprintf);
+
+ssize_t stdio_redirect_printf(struct stdio_redirect *stdio, bool nonblocking,
+			      const char *fmt, ...)
+{
+
+	va_list args;
+	ssize_t ret;
+
+	va_start(args, fmt);
+	ret = stdio_redirect_vprintf(stdio, nonblocking, fmt, args);
+	va_end(args);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(stdio_redirect_printf);
+
+/* thread with file: */
+
+void thread_with_file_exit(struct thread_with_file *thr)
 {
 	if (thr->task) {
 		kthread_stop(thr->task);
 		put_task_struct(thr->task);
 	}
 }
+EXPORT_SYMBOL_GPL(thread_with_file_exit);
 
-int bch2_run_thread_with_file(struct thread_with_file *thr,
-			      const struct file_operations *fops,
-			      int (*fn)(void *))
+int run_thread_with_file(struct thread_with_file *thr,
+			 const struct file_operations *fops,
+			 int (*fn)(void *))
 {
 	struct file *file = NULL;
 	int ret, fd = -1;
@@ -64,37 +231,7 @@ err:
 		kthread_stop(thr->task);
 	return ret;
 }
-
-/* stdio_redirect */
-
-static bool stdio_redirect_has_input(struct stdio_redirect *stdio)
-{
-	return stdio->input.buf.nr || stdio->done;
-}
-
-static bool stdio_redirect_has_output(struct stdio_redirect *stdio)
-{
-	return stdio->output.buf.nr || stdio->done;
-}
-
-#define STDIO_REDIRECT_BUFSIZE		4096
-
-static bool stdio_redirect_has_input_space(struct stdio_redirect *stdio)
-{
-	return stdio->input.buf.nr < STDIO_REDIRECT_BUFSIZE || stdio->done;
-}
-
-static bool stdio_redirect_has_output_space(struct stdio_redirect *stdio)
-{
-	return stdio->output.buf.nr < STDIO_REDIRECT_BUFSIZE || stdio->done;
-}
-
-static void stdio_buf_init(struct stdio_buf *buf)
-{
-	spin_lock_init(&buf->lock);
-	init_waitqueue_head(&buf->wait);
-	darray_init(&buf->buf);
-}
+EXPORT_SYMBOL_GPL(run_thread_with_file);
 
 /* thread_with_stdio */
 
@@ -135,28 +272,12 @@ static ssize_t thread_with_stdio_read(struct file *file, char __user *ubuf,
 			ubuf	+= b;
 			len	-= b;
 			copied	+= b;
-			buf->buf.nr -= b;
-			memmove(buf->buf.data,
-				buf->buf.data + b,
-				buf->buf.nr);
+			darray_remove_items(&buf->buf, buf->buf.data, b);
 		}
 		spin_unlock_irq(&buf->lock);
 	}
 
 	return copied ?: ret;
-}
-
-static int thread_with_stdio_release(struct inode *inode, struct file *file)
-{
-	struct thread_with_stdio *thr =
-		container_of(file->private_data, struct thread_with_stdio, thr);
-
-	thread_with_stdio_done(thr);
-	bch2_thread_with_file_exit(&thr->thr);
-	darray_exit(&thr->stdio.input.buf);
-	darray_exit(&thr->stdio.output.buf);
-	thr->ops->exit(thr);
-	return 0;
 }
 
 static ssize_t thread_with_stdio_write(struct file *file, const char __user *ubuf,
@@ -231,6 +352,19 @@ static __poll_t thread_with_stdio_poll(struct file *file, struct poll_table_stru
 	return mask;
 }
 
+static int thread_with_stdio_release(struct inode *inode, struct file *file)
+{
+	struct thread_with_stdio *thr =
+		container_of(file->private_data, struct thread_with_stdio, thr);
+
+	thread_with_stdio_done(thr);
+	thread_with_file_exit(&thr->thr);
+	darray_exit(&thr->stdio.input.buf);
+	darray_exit(&thr->stdio.output.buf);
+	thr->ops->exit(thr);
+	return 0;
+}
+
 static __poll_t thread_with_stdout_poll(struct file *file, struct poll_table_struct *wait)
 {
 	struct thread_with_stdio *thr =
@@ -294,157 +428,27 @@ static int thread_with_stdio_fn(void *arg)
 	return 0;
 }
 
-int bch2_run_thread_with_stdio(struct thread_with_stdio *thr,
-			       const struct thread_with_stdio_ops *ops)
+int run_thread_with_stdio(struct thread_with_stdio *thr,
+			  const struct thread_with_stdio_ops *ops)
 {
 	stdio_buf_init(&thr->stdio.input);
 	stdio_buf_init(&thr->stdio.output);
 	thr->ops = ops;
 
-	return bch2_run_thread_with_file(&thr->thr, &thread_with_stdio_fops, thread_with_stdio_fn);
+	return run_thread_with_file(&thr->thr, &thread_with_stdio_fops, thread_with_stdio_fn);
 }
+EXPORT_SYMBOL_GPL(run_thread_with_stdio);
 
-int bch2_run_thread_with_stdout(struct thread_with_stdio *thr,
-				const struct thread_with_stdio_ops *ops)
+int run_thread_with_stdout(struct thread_with_stdio *thr,
+			   const struct thread_with_stdio_ops *ops)
 {
 	stdio_buf_init(&thr->stdio.input);
 	stdio_buf_init(&thr->stdio.output);
 	thr->ops = ops;
 
-	return bch2_run_thread_with_file(&thr->thr, &thread_with_stdout_fops, thread_with_stdio_fn);
+	return run_thread_with_file(&thr->thr, &thread_with_stdout_fops, thread_with_stdio_fn);
 }
-EXPORT_SYMBOL_GPL(bch2_run_thread_with_stdout);
+EXPORT_SYMBOL_GPL(run_thread_with_stdout);
 
-int bch2_stdio_redirect_read(struct stdio_redirect *stdio, char *ubuf, size_t len)
-{
-	struct stdio_buf *buf = &stdio->input;
-
-	/*
-	 * we're waiting on user input (or for the file descriptor to be
-	 * closed), don't want a hung task warning:
-	 */
-	do {
-		wait_event_timeout(buf->wait, stdio_redirect_has_input(stdio),
-				   sysctl_hung_task_timeout_secs * HZ / 2);
-	} while (!stdio_redirect_has_input(stdio));
-
-	if (stdio->done)
-		return -1;
-
-	spin_lock(&buf->lock);
-	int ret = min(len, buf->buf.nr);
-	buf->buf.nr -= ret;
-	memcpy(ubuf, buf->buf.data, ret);
-	memmove(buf->buf.data,
-		buf->buf.data + ret,
-		buf->buf.nr);
-	spin_unlock(&buf->lock);
-
-	wake_up(&buf->wait);
-	return ret;
-}
-
-int bch2_stdio_redirect_readline(struct stdio_redirect *stdio, char *ubuf, size_t len)
-{
-	struct stdio_buf *buf = &stdio->input;
-	size_t copied = 0;
-	ssize_t ret = 0;
-again:
-	do {
-		wait_event_timeout(buf->wait, stdio_redirect_has_input(stdio),
-				   sysctl_hung_task_timeout_secs * HZ / 2);
-	} while (!stdio_redirect_has_input(stdio));
-
-	if (stdio->done) {
-		ret = -1;
-		goto out;
-	}
-
-	spin_lock(&buf->lock);
-	size_t b = min(len, buf->buf.nr);
-	char *n = memchr(buf->buf.data, '\n', b);
-	if (n)
-		b = min_t(size_t, b, n + 1 - buf->buf.data);
-	buf->buf.nr -= b;
-	memcpy(ubuf, buf->buf.data, b);
-	memmove(buf->buf.data,
-		buf->buf.data + b,
-		buf->buf.nr);
-	ubuf += b;
-	len -= b;
-	copied += b;
-	spin_unlock(&buf->lock);
-
-	wake_up(&buf->wait);
-
-	if (!n && len)
-		goto again;
-out:
-	return copied ?: ret;
-}
-
-__printf(3, 0)
-static ssize_t bch2_darray_vprintf(darray_char *out, gfp_t gfp, const char *fmt, va_list args)
-{
-	ssize_t ret;
-
-	do {
-		va_list args2;
-		size_t len;
-
-		va_copy(args2, args);
-		len = vsnprintf(out->data + out->nr, darray_room(*out), fmt, args2);
-		va_end(args2);
-
-		if (len + 1 <= darray_room(*out)) {
-			out->nr += len;
-			return len;
-		}
-
-		ret = darray_make_room_gfp(out, len + 1, gfp);
-	} while (ret == 0);
-
-	return ret;
-}
-
-ssize_t bch2_stdio_redirect_vprintf(struct stdio_redirect *stdio, bool nonblocking,
-				    const char *fmt, va_list args)
-{
-	struct stdio_buf *buf = &stdio->output;
-	unsigned long flags;
-	ssize_t ret;
-
-again:
-	spin_lock_irqsave(&buf->lock, flags);
-	ret = bch2_darray_vprintf(&buf->buf, GFP_NOWAIT, fmt, args);
-	spin_unlock_irqrestore(&buf->lock, flags);
-
-	if (ret < 0) {
-		if (nonblocking)
-			return -EAGAIN;
-
-		ret = wait_event_interruptible(buf->wait,
-				stdio_redirect_has_output_space(stdio));
-		if (ret)
-			return ret;
-		goto again;
-	}
-
-	wake_up(&buf->wait);
-	return ret;
-}
-
-ssize_t bch2_stdio_redirect_printf(struct stdio_redirect *stdio, bool nonblocking,
-				const char *fmt, ...)
-{
-	va_list args;
-	ssize_t ret;
-
-	va_start(args, fmt);
-	ret = bch2_stdio_redirect_vprintf(stdio, nonblocking, fmt, args);
-	va_end(args);
-
-	return ret;
-}
-
-#endif /* NO_BCACHEFS_FS */
+MODULE_AUTHOR("Kent Overstreet");
+MODULE_LICENSE("GPL");

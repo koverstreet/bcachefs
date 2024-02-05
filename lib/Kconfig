@@ -789,3 +789,6 @@ config FIRMWARE_TABLE
 config TIME_STATS
 	tristate
 	select MEAN_AND_VARIANCE
+
+config THREAD_WITH_FILE
+	tristate

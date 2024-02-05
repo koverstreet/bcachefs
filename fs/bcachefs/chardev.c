@@ -11,7 +11,6 @@
 #include "replicas.h"
 #include "super.h"
 #include "super-io.h"
-#include "thread_with_file.h"
 
 #include <linux/cdev.h>
 #include <linux/device.h>
@@ -20,6 +19,7 @@
 #include <linux/major.h>
 #include <linux/sched/task.h>
 #include <linux/slab.h>
+#include <linux/thread_with_file.h>
 #include <linux/uaccess.h>
 
 /* returns with ref on ca->ref */
@@ -166,9 +166,9 @@ static int bch2_fsck_offline_thread_fn(struct thread_with_stdio *stdio)
 	bch2_fs_stop(c);
 
 	if (ret & 1)
-		bch2_stdio_redirect_printf(&stdio->stdio, false, "%s: errors fixed\n", c->name);
+		stdio_redirect_printf(&stdio->stdio, false, "%s: errors fixed\n", c->name);
 	if (ret & 4)
-		bch2_stdio_redirect_printf(&stdio->stdio, false, "%s: still has errors\n", c->name);
+		stdio_redirect_printf(&stdio->stdio, false, "%s: still has errors\n", c->name);
 
 	return ret;
 }
@@ -230,7 +230,7 @@ static long bch2_ioctl_fsck_offline(struct bch_ioctl_fsck_offline __user *user_a
 
 	opt_set(thr->opts, stdio, (u64)(unsigned long)&thr->thr.stdio);
 
-	ret = bch2_run_thread_with_stdio(&thr->thr, &bch2_offline_fsck_ops);
+	ret = run_thread_with_stdio(&thr->thr, &bch2_offline_fsck_ops);
 err:
 	if (ret < 0) {
 		if (thr)
@@ -433,7 +433,7 @@ static int bch2_data_job_release(struct inode *inode, struct file *file)
 {
 	struct bch_data_ctx *ctx = container_of(file->private_data, struct bch_data_ctx, thr);
 
-	bch2_thread_with_file_exit(&ctx->thr);
+	thread_with_file_exit(&ctx->thr);
 	kfree(ctx);
 	return 0;
 }
@@ -483,7 +483,7 @@ static long bch2_ioctl_data(struct bch_fs *c,
 	ctx->c = c;
 	ctx->arg = arg;
 
-	ret = bch2_run_thread_with_file(&ctx->thr,
+	ret = run_thread_with_file(&ctx->thr,
 			&bcachefs_data_ops,
 			bch2_data_thread);
 	if (ret < 0)
@@ -851,7 +851,7 @@ static long bch2_ioctl_fsck_online(struct bch_fs *c,
 			goto err;
 	}
 
-	ret = bch2_run_thread_with_stdio(&thr->thr, &bch2_online_fsck_ops);
+	ret = run_thread_with_stdio(&thr->thr, &bch2_online_fsck_ops);
 err:
 	if (ret < 0) {
 		bch_err_fn(c, ret);

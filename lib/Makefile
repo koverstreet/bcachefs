@@ -371,6 +371,7 @@ obj-$(CONFIG_SBITMAP) += sbitmap.o
 obj-$(CONFIG_PARMAN) += parman.o
 
 obj-$(CONFIG_TIME_STATS) += time_stats.o
+obj-$(CONFIG_THREAD_WITH_FILE) += thread_with_file.o
 
 obj-y += group_cpus.o
 
