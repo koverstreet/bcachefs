@@ -6,11 +6,12 @@
  */
 
 #include "bcachefs.h"
-#include "darray.h"
 #include "recovery_passes.h"
 #include "sb-downgrade.h"
 #include "sb-errors.h"
 #include "super-io.h"
+
+#include <linux/darray.h>
 
 #define RECOVERY_PASS_ALL_FSCK		BIT_ULL(63)
 
