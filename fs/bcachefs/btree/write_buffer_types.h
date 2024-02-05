@@ -2,8 +2,8 @@
 #ifndef _BCACHEFS_BTREE_WRITE_BUFFER_TYPES_H
 #define _BCACHEFS_BTREE_WRITE_BUFFER_TYPES_H
 
-#include "util/darray.h"
 #include "journal/types.h"
+#include <linux/darray_types.h>
 
 #define BTREE_WRITE_BUFERED_VAL_U64s_MAX	4
 #define BTREE_WRITE_BUFERED_U64s_MAX	(BKEY_U64s + BTREE_WRITE_BUFERED_VAL_U64s_MAX)

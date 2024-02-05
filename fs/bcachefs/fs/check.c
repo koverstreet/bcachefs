@@ -26,6 +26,7 @@
 #include "util/darray.h"
 #include "util/thread_with_file.h"
 
+#include <linux/darray.h>
 #include <linux/dcache.h> /* struct qstr */
 
 void bch2_dirent_inode_mismatch_msg(struct printbuf *out, struct bch_fs *c,

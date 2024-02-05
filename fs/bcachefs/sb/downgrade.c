@@ -13,7 +13,7 @@
 
 #include "init/passes.h"
 
-#include "util/darray.h"
+#include <linux/darray.h>
 
 #define RECOVERY_PASS_ALL_FSCK		BIT_ULL(63)
 

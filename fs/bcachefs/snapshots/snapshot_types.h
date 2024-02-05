@@ -6,6 +6,8 @@
 #include "subvolume_types.h"
 #include "util/darray.h"
 
+#include <linux/darray_types.h>
+
 DEFINE_DARRAY_NAMED(snapshot_id_list, u32);
 
 #define IS_ANCESTOR_BITMAP	128
