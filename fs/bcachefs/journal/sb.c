@@ -5,8 +5,7 @@
 #include "journal/read.h"
 #include "journal/sb.h"
 
-#include "util/darray.h"
-
+#include <linux/darray.h>
 #include <linux/sort.h>
 
 /* BCH_SB_FIELD_journal: */

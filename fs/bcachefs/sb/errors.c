@@ -5,7 +5,7 @@
 #include "sb/errors.h"
 #include "sb/io.h"
 
-#include "util/darray.h"
+#include <linux/darray.h>
 
 const char * const bch2_sb_error_strs[] = {
 #define x(t, n, ...) [n] = #t,

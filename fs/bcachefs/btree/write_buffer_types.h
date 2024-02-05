@@ -4,8 +4,8 @@
 
 #include <linux/workqueue.h>
 
-#include "util/darray.h"
 #include "journal/types.h"
+#include <linux/darray_types.h>
 
 /*
  * Subset of BCH_BTREE_IDS() that are marked BTREE_IS_write_buffer, enumerated

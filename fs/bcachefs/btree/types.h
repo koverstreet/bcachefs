@@ -2,6 +2,7 @@
 #ifndef _BCACHEFS_BTREE_TYPES_H
 #define _BCACHEFS_BTREE_TYPES_H
 
+#include <linux/darray_types.h>
 #include <linux/list.h>
 #include <linux/rhashtable.h>
 
@@ -17,7 +18,6 @@
 
 #include "journal/types.h"
 
-#include "util/darray.h"
 #include "util/printbuf.h"
 #include "util/fast_list.h"
 #include "util/six.h"

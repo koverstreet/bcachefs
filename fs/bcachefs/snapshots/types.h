@@ -4,7 +4,8 @@
 
 #include "btree/bbpos_types.h"
 #include "init/progress.h"
-#include "util/darray.h"
+
+#include <linux/darray_types.h>
 
 DEFINE_DARRAY_NAMED(snapshot_id_list, u32);
 
