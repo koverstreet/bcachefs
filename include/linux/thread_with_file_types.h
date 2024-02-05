@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef _BCACHEFS_THREAD_WITH_FILE_TYPES_H
-#define _BCACHEFS_THREAD_WITH_FILE_TYPES_H
+#ifndef _LINUX_THREAD_WITH_FILE_TYPES_H
+#define _LINUX_THREAD_WITH_FILE_TYPES_H
 
 #include <linux/darray_types.h>
+#include <linux/spinlock_types.h>
+#include <linux/wait.h>
 
 struct stdio_buf {
 	spinlock_t		lock;
@@ -20,4 +22,4 @@ struct stdio_redirect {
 	bool			done;
 };
 
-#endif /* _BCACHEFS_THREAD_WITH_FILE_TYPES_H */
+#endif /* _LINUX_THREAD_WITH_FILE_TYPES_H */

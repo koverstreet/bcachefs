@@ -200,6 +200,7 @@
 #include <linux/seqlock.h>
 #include <linux/shrinker.h>
 #include <linux/srcu.h>
+#include <linux/thread_with_file_types.h>
 #include <linux/time_stats.h>
 #include <linux/types.h>
 #include <linux/workqueue.h>
@@ -466,7 +467,6 @@ enum bch_time_stats {
 #include "replicas_types.h"
 #include "subvolume_types.h"
 #include "super_types.h"
-#include "thread_with_file_types.h"
 
 /* Number of nodes btree coalesce will try to coalesce at once */
 #define GC_MERGE_NODES		4U
