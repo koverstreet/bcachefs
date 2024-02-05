@@ -363,7 +363,7 @@ do {									\
 	if (attr == &sysfs_##name) {					\
 		struct seq_buf seq;					\
 		seq_buf_init(&seq, buf, PAGE_SIZE);			\
-		time_stats_to_seq_buf(&seq, stats, 0);			\
+		time_stats_to_seq_buf(&seq, stats, "startup", 0);	\
 		return seq.len;						\
 	}								\
 } while (0)
