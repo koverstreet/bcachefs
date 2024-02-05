@@ -1,8 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef _BCACHEFS_THREAD_WITH_FILE_H
-#define _BCACHEFS_THREAD_WITH_FILE_H
+/*
+ * (C) 2022-2024 Kent Overstreet <kent.overstreet@linux.dev>
+ */
+#ifndef _LINUX_THREAD_WITH_FILE_H
+#define _LINUX_THREAD_WITH_FILE_H
 
-#include "thread_with_file_types.h"
+#include <linux/thread_with_file_types.h>
 
 /*
  * Thread with file: Run a kthread and connect it to a file descriptor, so that
@@ -13,7 +16,7 @@
  *
  * thread_with_file, the low level version.
  * You get to define the full file_operations, including your release function,
- * which means that you must call bch2_thread_with_file_exit() from your
+ * which means that you must call thread_with_file_exit() from your
  * .release method
  *
  * thread_with_stdio, the higher level version
@@ -44,10 +47,10 @@ struct thread_with_file {
 	bool			done;
 };
 
-void bch2_thread_with_file_exit(struct thread_with_file *);
-int bch2_run_thread_with_file(struct thread_with_file *,
-			      const struct file_operations *,
-			      int (*fn)(void *));
+void thread_with_file_exit(struct thread_with_file *);
+int run_thread_with_file(struct thread_with_file *,
+			 const struct file_operations *,
+			 int (*fn)(void *));
 
 struct thread_with_stdio {
 	struct thread_with_file	thr;
@@ -56,13 +59,13 @@ struct thread_with_stdio {
 	void			(*fn)(struct thread_with_stdio *);
 };
 
-int bch2_run_thread_with_stdio(struct thread_with_stdio *,
-			       void (*exit)(struct thread_with_stdio *),
-			       void (*fn)(struct thread_with_stdio *));
-int bch2_stdio_redirect_read(struct stdio_redirect *, char *, size_t);
-int bch2_stdio_redirect_readline(struct stdio_redirect *, char *, size_t);
+int run_thread_with_stdio(struct thread_with_stdio *,
+			  void (*exit)(struct thread_with_stdio *),
+			  void (*fn)(struct thread_with_stdio *));
+int stdio_redirect_read(struct stdio_redirect *, char *, size_t);
+int stdio_redirect_readline(struct stdio_redirect *, char *, size_t);
 
-__printf(3, 0) void bch2_stdio_redirect_vprintf(struct stdio_redirect *, bool, const char *, va_list);
-__printf(3, 4) void bch2_stdio_redirect_printf(struct stdio_redirect *, bool, const char *, ...);
+__printf(3, 0) void stdio_redirect_vprintf(struct stdio_redirect *, bool, const char *, va_list);
+__printf(3, 4) void stdio_redirect_printf(struct stdio_redirect *, bool, const char *, ...);
 
-#endif /* _BCACHEFS_THREAD_WITH_FILE_H */
+#endif /* _LINUX_THREAD_WITH_FILE_H */
