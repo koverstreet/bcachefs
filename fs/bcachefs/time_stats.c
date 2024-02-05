@@ -178,11 +178,17 @@ static void seq_buf_time_units_aligned(struct seq_buf *out, u64 ns)
 	seq_buf_printf(out, "%8llu %s", div64_u64(ns, u->nsecs), u->name);
 }
 
+static inline u64 time_stats_lifetime(const struct bch2_time_stats *stats)
+{
+	return local_clock() - stats->start_time;
+}
+
 void bch2_time_stats_to_seq_buf(struct seq_buf *out, struct bch2_time_stats *stats)
 {
 	struct quantiles *quantiles = time_stats_to_quantiles(stats);
 	s64 f_mean = 0, d_mean = 0;
 	u64 f_stddev = 0, d_stddev = 0;
+	u64 lifetime = time_stats_lifetime(stats);
 
 	if (stats->buffer) {
 		int cpu;
@@ -204,6 +210,9 @@ void bch2_time_stats_to_seq_buf(struct seq_buf *out, struct bch2_time_stats *sta
 	}
 
 	seq_buf_printf(out, "count: %llu\n", stats->duration_stats.n);
+	seq_buf_printf(out, "lifetime: ");
+	seq_buf_time_units_aligned(out, lifetime);
+	seq_buf_printf(out, "\n");
 
 	seq_buf_printf(out, "                       since mount        recent\n");
 
@@ -282,6 +291,7 @@ void bch2_time_stats_init(struct bch2_time_stats *stats)
 	memset(stats, 0, sizeof(*stats));
 	stats->min_duration = U64_MAX;
 	stats->min_freq = U64_MAX;
+	stats->start_time = local_clock();
 	spin_lock_init(&stats->lock);
 }
 
