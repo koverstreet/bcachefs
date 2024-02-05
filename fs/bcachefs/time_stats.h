@@ -78,6 +78,7 @@ struct bch2_time_stats {
 	u64             min_freq;
 	u64		last_event;
 	u64		last_event_start;
+	u64		start_time;
 
 	struct mean_and_variance	  duration_stats;
 	struct mean_and_variance	  freq_stats;
