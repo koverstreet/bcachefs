@@ -34,7 +34,6 @@ bcachefs-y		:=	\
 	checksum.o		\
 	clock.o			\
 	compress.o		\
-	darray.o		\
 	data_update.o		\
 	debug.o			\
 	dirent.o		\
