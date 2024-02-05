@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_BTREE_NODE_SCAN_TYPES_H
 #define _BCACHEFS_BTREE_NODE_SCAN_TYPES_H
 
-#include "darray.h"
+#include <linux/darray.h>
 
 struct found_btree_node {
 	bool			range_updated:1;
