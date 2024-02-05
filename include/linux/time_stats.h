@@ -151,7 +151,7 @@ static inline bool track_event_change(struct time_stats *stats, bool v)
 #define TIME_STATS_PRINT_NO_ZEROES	(1U << 0)	/* print nothing if zero count */
 struct seq_buf;
 void time_stats_to_seq_buf(struct seq_buf *, struct time_stats *,
-		unsigned int flags);
+		const char *epoch_name, unsigned int flags);
 
 void time_stats_exit(struct time_stats *);
 void time_stats_init(struct time_stats *);
