@@ -3,8 +3,9 @@
 #define _BCACHEFS_SNAPSHOT_TYPES_H
 
 #include "bbpos_types.h"
-#include "darray.h"
 #include "subvolume_types.h"
+
+#include <linux/darray_types.h>
 
 typedef DARRAY(u32) snapshot_id_list;
 
