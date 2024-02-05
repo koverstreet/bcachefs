@@ -184,7 +184,7 @@ static inline u64 time_stats_lifetime(const struct bch2_time_stats *stats)
 }
 
 void bch2_time_stats_to_seq_buf(struct seq_buf *out, struct bch2_time_stats *stats,
-				unsigned int flags)
+		const char *epoch_name, unsigned int flags)
 {
 	struct quantiles *quantiles = time_stats_to_quantiles(stats);
 	s64 f_mean = 0, d_mean = 0;
@@ -216,7 +216,7 @@ void bch2_time_stats_to_seq_buf(struct seq_buf *out, struct bch2_time_stats *sta
 	seq_buf_time_units_aligned(out, lifetime);
 	seq_buf_printf(out, "\n");
 
-	seq_buf_printf(out, "                       since mount        recent\n");
+	seq_buf_printf(out, "                       since %-12s recent\n", epoch_name);
 
 	seq_buf_printf(out, "duration of events\n");
 
