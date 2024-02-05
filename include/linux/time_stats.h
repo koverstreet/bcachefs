@@ -78,6 +78,8 @@ struct time_stats {
 	u64		last_event_start;
 	struct quantiles quantiles;
 
+	u64		start_time;
+
 	struct mean_and_variance	  duration_stats;
 	struct mean_and_variance_weighted duration_stats_weighted;
 	struct mean_and_variance	  freq_stats;
