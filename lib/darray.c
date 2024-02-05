@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0
+/*
+ * (C) 2022-2024 Kent Overstreet <kent.overstreet@linux.dev>
+ */
 
+#include <linux/darray.h>
+#include <linux/export.h>
 #include <linux/log2.h>
 #include <linux/rcupdate.h>
 #include <linux/slab.h>
 #include <linux/version.h>
 #include <linux/vmalloc.h>
-#include "darray.h"
 
-int __bch2_darray_resize_noprof(darray_char *d, size_t element_size, size_t new_size, gfp_t gfp,
-				bool rcu)
+int __darray_resize_slowpath(darray_char *d, size_t element_size, size_t new_size, gfp_t gfp,
+			     bool rcu)
 {
 	if (new_size > d->size) {
 		new_size = roundup_pow_of_two(new_size);
@@ -52,3 +56,4 @@ int __bch2_darray_resize_noprof(darray_char *d, size_t element_size, size_t new_
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(__darray_resize_slowpath);

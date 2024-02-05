@@ -4,7 +4,8 @@
 
 #include "btree/bkey_types.h"
 #include "util/enumerated_ref.h"
-#include "util/darray.h"
+
+#include <linux/darray.h>
 
 extern char * const bch2_member_error_strs[];
 

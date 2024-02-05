@@ -1,46 +1,27 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef _BCACHEFS_DARRAY_H
-#define _BCACHEFS_DARRAY_H
+/*
+ * (C) 2022-2024 Kent Overstreet <kent.overstreet@linux.dev>
+ */
+#ifndef _LINUX_DARRAY_H
+#define _LINUX_DARRAY_H
 
 /*
- * Dynamic arrays:
+ * Dynamic arrays
  *
  * Inspired by CCAN's darray
  */
 
 #include <linux/cleanup.h>
+#include <linux/darray_types.h>
 #include <linux/slab.h>
 
-#define DARRAY_PREALLOCATED(_type, _nr)					\
-struct {								\
-	size_t nr, size;						\
-	_type *data;							\
-	_type preallocated[_nr];					\
-}
-
-#define DARRAY(_type) DARRAY_PREALLOCATED(_type, 0)
-
-typedef DARRAY(char)	darray_char;
-typedef DARRAY(char *)	darray_str;
-typedef DARRAY(const char *) darray_const_str;
-
-typedef DARRAY(u8)	darray_u8;
-typedef DARRAY(u16)	darray_u16;
-typedef DARRAY(u32)	darray_u32;
-typedef DARRAY(u64)	darray_u64;
-
-typedef DARRAY(s8)	darray_s8;
-typedef DARRAY(s16)	darray_s16;
-typedef DARRAY(s32)	darray_s32;
-typedef DARRAY(s64)	darray_s64;
-
-int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t, bool);
+int __darray_resize_slowpath(darray_char *, size_t, size_t, gfp_t, bool);
 
 #define __bch2_darray_resize(...)	alloc_hooks(__bch2_darray_resize_noprof(__VA_ARGS__))
 
 #define __darray_resize(_d, _element_size, _new_size, _gfp, _rcu)	\
 	(unlikely((_new_size) > (_d)->size)				\
-	 ? __bch2_darray_resize((_d), (_element_size), (_new_size), (_gfp), _rcu)\
+	 ? __darray_resize_slowpath((_d), (_element_size), (_new_size), (_gfp), _rcu)\
 	 : 0)
 
 #define darray_resize_gfp(_d, _new_size, _gfp)				\
@@ -81,6 +62,28 @@ int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t, bool);
 #define darray_first(_d)	((_d).data[0])
 #define darray_last(_d)		((_d).data[(_d).nr - 1])
 
+/* Insert/remove items into the middle of a darray: */
+
+#define array_insert_item(_array, _nr, _pos, _new_item)			\
+do {									\
+	memmove(&(_array)[(_pos) + 1],					\
+		&(_array)[(_pos)],					\
+		sizeof((_array)[0]) * ((_nr) - (_pos)));		\
+	(_nr)++;							\
+	(_array)[(_pos)] = (_new_item);					\
+} while (0)
+
+#define array_remove_items(_array, _nr, _pos, _nr_to_remove)		\
+do {									\
+	(_nr) -= (_nr_to_remove);					\
+	memmove(&(_array)[(_pos)],					\
+		&(_array)[(_pos) + (_nr_to_remove)],			\
+		sizeof((_array)[0]) * ((_nr) - (_pos)));		\
+} while (0)
+
+#define array_remove_item(_array, _nr, _pos)				\
+	array_remove_items(_array, _nr, _pos, 1)
+
 #define darray_insert_item(_d, pos, _item)				\
 ({									\
 	size_t _pos = (pos);						\
@@ -91,8 +94,11 @@ int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t, bool);
 	_ret;								\
 })
 
+#define darray_remove_items(_d, _pos, _nr_to_remove)			\
+	array_remove_items((_d)->data, (_d)->nr, (_pos) - (_d)->data, _nr_to_remove)
+
 #define darray_remove_item(_d, _pos)					\
-	array_remove_item((_d)->data, (_d)->nr, (_pos) - (_d)->data)
+	darray_remove_items(_d, _pos, 1)
 
 #define darray_find_p(_d, _i, cond)					\
 ({									\
@@ -167,4 +173,4 @@ DEFINE_DARRAY_CLASS(darray_s16)
 DEFINE_DARRAY_CLASS(darray_s32)
 DEFINE_DARRAY_CLASS(darray_s64)
 
-#endif /* _BCACHEFS_DARRAY_H */
+#endif /* _LINUX_DARRAY_H */

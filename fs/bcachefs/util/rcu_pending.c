@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #define pr_fmt(fmt) "%s() " fmt "\n", __func__
 
+#include <linux/darray.h>
 #include <linux/generic-radix-tree.h>
 #include <linux/mm.h>
 #include <linux/percpu.h>
@@ -9,8 +10,6 @@
 #include <linux/vmalloc.h>
 
 #include "rcu_pending.h"
-#include "darray.h"
-#include "util.h"
 
 #define static_array_for_each(_a, _i)			\
 	for (typeof(&(_a)[0]) _i = _a;			\
