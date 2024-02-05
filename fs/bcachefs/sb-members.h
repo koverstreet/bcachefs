@@ -2,8 +2,8 @@
 #ifndef _BCACHEFS_SB_MEMBERS_H
 #define _BCACHEFS_SB_MEMBERS_H
 
-#include "darray.h"
 #include "bkey_types.h"
+#include <linux/darray.h>
 
 extern char * const bch2_member_error_strs[];
 
