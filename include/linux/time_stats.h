@@ -68,6 +68,7 @@ struct time_stat_buffer {
 
 struct time_stats {
 	spinlock_t	lock;
+	bool		have_quantiles;
 	/* all fields are in nanoseconds */
 	u64             min_duration;
 	u64		max_duration;
@@ -87,12 +88,6 @@ struct time_stats {
 	struct mean_and_variance_weighted freq_stats_weighted;
 	struct time_stat_buffer __percpu *buffer;
 
-/*
- * Is this really a struct time_stats_quantiled?  Hide this flag in the least
- * significant bit of the start time to avoid blowing up the structure size.
- */
-#define TIME_STATS_HAVE_QUANTILES	(1ULL << 0)
-
 	u64		start_time;
 };
 
@@ -103,13 +98,9 @@ struct time_stats_quantiles {
 
 static inline struct quantiles *time_stats_to_quantiles(struct time_stats *stats)
 {
-	struct time_stats_quantiles *statq;
-
-	if (!(stats->start_time & TIME_STATS_HAVE_QUANTILES))
-		return NULL;
-
-	statq = container_of(stats, struct time_stats_quantiles, stats);
-	return &statq->quantiles;
+	return stats->have_quantiles
+		? &container_of(stats, struct time_stats_quantiles, stats)->quantiles
+		: NULL;
 }
 
 void __time_stats_clear_buffer(struct time_stats *, struct time_stat_buffer *);
@@ -169,7 +160,7 @@ static inline void time_stats_quantiles_exit(struct time_stats_quantiles *statq)
 static inline void time_stats_quantiles_init(struct time_stats_quantiles *statq)
 {
 	time_stats_init(&statq->stats);
-	statq->stats.start_time |= TIME_STATS_HAVE_QUANTILES;
+	statq->stats.have_quantiles = true;
 	memset(&statq->quantiles, 0, sizeof(statq->quantiles));
 }
 
