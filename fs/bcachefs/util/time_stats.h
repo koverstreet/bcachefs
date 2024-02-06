@@ -149,6 +149,8 @@ void bch2_time_stats_reset(struct bch2_time_stats *);
 struct seq_buf;
 void bch2_time_stats_to_seq_buf(struct seq_buf *, struct bch2_time_stats *,
 				const char *epoch_name, unsigned int flags);
+void bch2_time_stats_to_json(struct seq_buf *, struct bch2_time_stats *,
+			     const char *epoch_name, unsigned int flags);
 
 void bch2_time_stats_exit(struct bch2_time_stats *);
 void bch2_time_stats_init(struct bch2_time_stats *);
