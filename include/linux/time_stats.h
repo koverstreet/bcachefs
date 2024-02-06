@@ -156,6 +156,8 @@ static inline bool track_event_change(struct time_stats *stats, bool v)
 struct seq_buf;
 void time_stats_to_seq_buf(struct seq_buf *, struct time_stats *,
 		const char *epoch_name, unsigned int flags);
+void time_stats_to_json(struct seq_buf *, struct time_stats *,
+		const char *epoch_name, unsigned int flags);
 
 void time_stats_exit(struct time_stats *);
 void time_stats_init(struct time_stats *);
