@@ -164,7 +164,7 @@ static void seq_buf_time_units_aligned(struct seq_buf *out, u64 ns)
 
 static inline u64 time_stats_lifetime(const struct time_stats *stats)
 {
-	return local_clock() - (stats->start_time & ~TIME_STATS_HAVE_QUANTILES);
+	return local_clock() - stats->start_time;
 }
 
 void time_stats_to_seq_buf(struct seq_buf *out, struct time_stats *stats,
@@ -364,7 +364,7 @@ void time_stats_init(struct time_stats *stats)
 	memset(stats, 0, sizeof(*stats));
 	stats->min_duration = U64_MAX;
 	stats->min_freq = U64_MAX;
-	stats->start_time = local_clock() & ~TIME_STATS_HAVE_QUANTILES;
+	stats->start_time = local_clock();
 	spin_lock_init(&stats->lock);
 }
 EXPORT_SYMBOL_GPL(time_stats_init);
