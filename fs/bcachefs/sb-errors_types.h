@@ -253,7 +253,9 @@
 	x(reflink_p_front_pad_bad,				245)	\
 	x(journal_entry_dup_same_device,			246)	\
 	x(inode_bi_subvol_missing,				247)	\
-	x(inode_bi_subvol_wrong,				248)
+	x(inode_bi_subvol_wrong,				248)	\
+	x(inode_points_to_missing_dirent,			249)	\
+	x(inode_points_to_wrong_dirent,				250)
 
 enum bch_sb_error_id {
 #define x(t, n) BCH_FSCK_ERR_##t = n,
