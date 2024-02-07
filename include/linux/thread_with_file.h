@@ -68,7 +68,7 @@ int run_thread_with_stdout(struct thread_with_stdio *,
 int stdio_redirect_read(struct stdio_redirect *, char *, size_t);
 int stdio_redirect_readline(struct stdio_redirect *, char *, size_t);
 
-__printf(3, 0) void stdio_redirect_vprintf(struct stdio_redirect *, bool, const char *, va_list);
-__printf(3, 4) void stdio_redirect_printf(struct stdio_redirect *, bool, const char *, ...);
+__printf(3, 0) ssize_t stdio_redirect_vprintf(struct stdio_redirect *, bool, const char *, va_list);
+__printf(3, 4) ssize_t stdio_redirect_printf(struct stdio_redirect *, bool, const char *, ...);
 
 #endif /* _LINUX_THREAD_WITH_FILE_H */
