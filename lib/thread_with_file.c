@@ -344,11 +344,34 @@ static int thread_with_stdio_release(struct inode *inode, struct file *file)
 	return 0;
 }
 
+static __poll_t thread_with_stdout_poll(struct file *file, struct poll_table_struct *wait)
+{
+	struct thread_with_stdio *thr =
+		container_of(file->private_data, struct thread_with_stdio, thr);
+
+	poll_wait(file, &thr->stdio.output.wait, wait);
+
+	__poll_t mask = 0;
+
+	if (stdio_redirect_has_output(&thr->stdio))
+		mask |= EPOLLIN;
+	if (thr->thr.done)
+		mask |= EPOLLHUP|EPOLLERR;
+	return mask;
+}
+
 static const struct file_operations thread_with_stdio_fops = {
 	.llseek		= no_llseek,
 	.read		= thread_with_stdio_read,
 	.write		= thread_with_stdio_write,
 	.poll		= thread_with_stdio_poll,
+	.release	= thread_with_stdio_release,
+};
+
+static const struct file_operations thread_with_stdout_fops = {
+	.llseek		= no_llseek,
+	.read		= thread_with_stdio_read,
+	.poll		= thread_with_stdout_poll,
 	.release	= thread_with_stdio_release,
 };
 
@@ -374,6 +397,19 @@ int run_thread_with_stdio(struct thread_with_stdio *thr,
 	return run_thread_with_file(&thr->thr, &thread_with_stdio_fops, thread_with_stdio_fn);
 }
 EXPORT_SYMBOL_GPL(run_thread_with_stdio);
+
+int run_thread_with_stdout(struct thread_with_stdio *thr,
+			  void (*exit)(struct thread_with_stdio *),
+			  void (*fn)(struct thread_with_stdio *))
+{
+	stdio_buf_init(&thr->stdio.input);
+	stdio_buf_init(&thr->stdio.output);
+	thr->exit	= exit;
+	thr->fn		= fn;
+
+	return run_thread_with_file(&thr->thr, &thread_with_stdout_fops, thread_with_stdio_fn);
+}
+EXPORT_SYMBOL_GPL(run_thread_with_stdout);
 
 MODULE_AUTHOR("Kent Overstreet");
 MODULE_LICENSE("GPL");

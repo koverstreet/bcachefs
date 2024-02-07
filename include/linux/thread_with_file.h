@@ -62,6 +62,9 @@ struct thread_with_stdio {
 int run_thread_with_stdio(struct thread_with_stdio *,
 			  void (*exit)(struct thread_with_stdio *),
 			  void (*fn)(struct thread_with_stdio *));
+int run_thread_with_stdout(struct thread_with_stdio *,
+			  void (*exit)(struct thread_with_stdio *),
+			  void (*fn)(struct thread_with_stdio *));
 int stdio_redirect_read(struct stdio_redirect *, char *, size_t);
 int stdio_redirect_readline(struct stdio_redirect *, char *, size_t);
 
