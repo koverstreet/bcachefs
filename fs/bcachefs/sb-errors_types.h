@@ -256,7 +256,9 @@
 	x(inode_bi_subvol_wrong,				248)	\
 	x(inode_points_to_missing_dirent,			249)	\
 	x(inode_points_to_wrong_dirent,				250)	\
-	x(inode_bi_parent_nonzero,				251)
+	x(inode_bi_parent_nonzero,				251)	\
+	x(dirent_to_missing_parent_subvol,			252)	\
+	x(dirent_not_visible_in_parent_subvol,			253)
 
 enum bch_sb_error_id {
 #define x(t, n) BCH_FSCK_ERR_##t = n,
