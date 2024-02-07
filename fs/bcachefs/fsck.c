@@ -1716,8 +1716,8 @@ fsck_err:
 	return ret;
 }
 
-static int check_subvol_dirent(struct btree_trans *trans, struct btree_iter *iter,
-			       struct bkey_s_c_dirent d)
+static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *iter,
+				  struct bkey_s_c_dirent d)
 {
 	struct bch_fs *c = trans->c;
 	struct bch_inode_unpacked subvol_root;
@@ -1727,7 +1727,7 @@ static int check_subvol_dirent(struct btree_trans *trans, struct btree_iter *ite
 	int ret = 0;
 
 	ret = subvol_lookup(trans, target_subvol,
-			      &target_snapshot, &target_inum);
+			    &target_snapshot, &target_inum);
 	if (ret && !bch2_err_matches(ret, ENOENT))
 		return ret;
 
@@ -1740,25 +1740,6 @@ static int check_subvol_dirent(struct btree_trans *trans, struct btree_iter *ite
 			   &subvol_root, &target_snapshot);
 	if (ret && !bch2_err_matches(ret, ENOENT))
 		return ret;
-
-	if (fsck_err_on(ret, c, subvol_to_missing_root,
-			"subvolume %u points to missing subvolume root %llu",
-			target_subvol,
-			target_inum)) {
-		bch_err(c, "repair not implemented yet");
-		return -EINVAL;
-	}
-
-	if (fsck_err_on(subvol_root.bi_subvol != target_subvol,
-			c, subvol_root_wrong_bi_subvol,
-			"subvol root %llu has wrong bi_subvol field: got %u, should be %u",
-			target_inum,
-			subvol_root.bi_subvol, target_subvol)) {
-		subvol_root.bi_subvol = target_subvol;
-		ret = __bch2_fsck_write_inode(trans, &subvol_root, target_snapshot);
-		if (ret)
-			return ret;
-	}
 
 	ret = check_dirent_target(trans, iter, d, &subvol_root,
 				  target_snapshot);
@@ -1852,7 +1833,7 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 	d = bkey_s_c_to_dirent(k);
 
 	if (d.v->d_type == DT_SUBVOL) {
-		ret = check_subvol_dirent(trans, iter, d);
+		ret = check_dirent_to_subvol(trans, iter, d);
 		if (ret)
 			goto err;
 	} else {
