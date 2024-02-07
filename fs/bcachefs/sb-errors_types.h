@@ -231,7 +231,7 @@
 	x(dirent_name_dot_or_dotdot,				223)	\
 	x(dirent_name_has_slash,				224)	\
 	x(dirent_d_type_wrong,					225)	\
-	x(dirent_d_parent_subvol_wrong,				226)	\
+	x(inode_bi_parent_wrong,				226)	\
 	x(dirent_in_missing_dir_inode,				227)	\
 	x(dirent_in_non_dir_inode,				228)	\
 	x(dirent_to_missing_inode,				229)	\
@@ -256,7 +256,7 @@
 	x(inode_bi_subvol_wrong,				248)	\
 	x(inode_points_to_missing_dirent,			249)	\
 	x(inode_points_to_wrong_dirent,				250)	\
-	x(inode_bi_parent_subvol_nonzero,			251)
+	x(inode_bi_parent_nonzero,				251)
 
 enum bch_sb_error_id {
 #define x(t, n) BCH_FSCK_ERR_##t = n,
