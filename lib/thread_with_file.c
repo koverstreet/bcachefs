@@ -9,6 +9,7 @@
 #include <linux/module.h>
 #include <linux/pagemap.h>
 #include <linux/poll.h>
+#include <linux/sched/sysctl.h>
 #include <linux/thread_with_file.h>
 
 /* stdio_redirect */
@@ -46,7 +47,15 @@ int stdio_redirect_read(struct stdio_redirect *stdio, char *ubuf, size_t len)
 {
 	struct stdio_buf *buf = &stdio->input;
 
-	wait_event(buf->wait, stdio_redirect_has_input(stdio));
+	/*
+	 * we're waiting on user input (or for the file descriptor to be
+	 * closed), don't want a hung task warning:
+	 */
+	do {
+		wait_event_timeout(buf->wait, stdio_redirect_has_input(stdio),
+				   sysctl_hung_task_timeout_secs * HZ / 2);
+	} while (!stdio_redirect_has_input(stdio));
+
 	if (stdio->done)
 		return -1;
 
@@ -67,7 +76,11 @@ int stdio_redirect_readline(struct stdio_redirect *stdio, char *ubuf, size_t len
 	size_t copied = 0;
 	ssize_t ret = 0;
 again:
-	wait_event(buf->wait, stdio_redirect_has_input(stdio));
+	do {
+		wait_event_timeout(buf->wait, stdio_redirect_has_input(stdio),
+				   sysctl_hung_task_timeout_secs * HZ / 2);
+	} while (!stdio_redirect_has_input(stdio));
+
 	if (stdio->done) {
 		ret = -1;
 		goto out;
