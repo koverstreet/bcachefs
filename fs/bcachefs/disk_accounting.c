@@ -433,7 +433,7 @@ int bch2_accounting_gc_done(struct bch_fs *c)
 			for (unsigned j = 0; j < nr; j++)
 				src_v[j] -= dst_v[j];
 
-			if (fsck_err(c, accounting_mismatch, "%s", buf.buf)) {
+			if (fsck_err(trans, accounting_mismatch, "%s", buf.buf)) {
 				ret = commit_do(trans, NULL, NULL, 0,
 						bch2_disk_accounting_mod(trans, &acc_k, src_v, nr, false));
 				if (ret)
@@ -464,7 +464,7 @@ fsck_err:
 	return ret;
 }
 
-static int accounting_read_key(struct bch_fs *c, struct bkey_s_c k)
+static int accounting_read_key(struct bch_fs *c, struct btree_trans *trans, struct bkey_s_c k)
 {
 	struct printbuf buf = PRINTBUF;
 
@@ -483,7 +483,7 @@ static int accounting_read_key(struct bch_fs *c, struct bkey_s_c k)
 	bpos_to_disk_accounting_pos(&acc, k.k->p);
 
 	if (fsck_err_on(ret == -BCH_ERR_btree_insert_need_mark_replicas,
-			c, accounting_replicas_not_marked,
+			trans, accounting_replicas_not_marked,
 			"accounting not marked in superblock replicas\n  %s",
 			(bch2_accounting_key_to_text(&buf, &acc),
 			 buf.buf)))
@@ -507,7 +507,7 @@ int bch2_accounting_read(struct bch_fs *c)
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k, ({
 			struct bkey u;
 			struct bkey_s_c k = bch2_btree_path_peek_slot_exact(btree_iter_path(trans, &iter), &u);
-			accounting_read_key(c, k);
+			accounting_read_key(c, trans, k);
 		})));
 	if (ret)
 		goto err;
@@ -541,7 +541,7 @@ int bch2_accounting_read(struct bch_fs *c)
 				continue;
 			}
 
-			ret = accounting_read_key(c, k);
+			ret = accounting_read_key(c, NULL, k);
 			if (ret)
 				goto err;
 		}
