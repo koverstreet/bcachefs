@@ -201,6 +201,14 @@ EXPORT_SYMBOL_GPL(run_thread_with_file);
 
 /* thread_with_stdio */
 
+static void thread_with_stdio_done(struct thread_with_stdio *thr)
+{
+	thr->thr.done = true;
+	thr->stdio.done = true;
+	wake_up(&thr->stdio.input.wait);
+	wake_up(&thr->stdio.output.wait);
+}
+
 static ssize_t thread_with_stdio_read(struct file *file, char __user *ubuf,
 				      size_t len, loff_t *ppos)
 {
@@ -315,6 +323,7 @@ static int thread_with_stdio_release(struct inode *inode, struct file *file)
 	struct thread_with_stdio *thr =
 		container_of(file->private_data, struct thread_with_stdio, thr);
 
+	thread_with_stdio_done(thr);
 	thread_with_file_exit(&thr->thr);
 	darray_exit(&thr->stdio.input.buf);
 	darray_exit(&thr->stdio.output.buf);
@@ -336,10 +345,7 @@ static int thread_with_stdio_fn(void *arg)
 
 	thr->fn(thr);
 
-	thr->thr.done = true;
-	thr->stdio.done = true;
-	wake_up(&thr->stdio.input.wait);
-	wake_up(&thr->stdio.output.wait);
+	thread_with_stdio_done(thr);
 	return 0;
 }
 
