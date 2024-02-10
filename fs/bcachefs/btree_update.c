@@ -86,35 +86,38 @@ static noinline int extent_back_merge(struct btree_trans *trans,
 	return 0;
 }
 
-/*
- * When deleting, check if we need to emit a whiteout (because we're overwriting
- * something in an ancestor snapshot)
- */
-static int need_whiteout_for_snapshot(struct btree_trans *trans,
-				      enum btree_id btree_id, struct bpos pos)
+static struct bkey_s_c peek_slot_including_whiteouts(struct btree_trans *trans, struct btree_iter *iter,
+						     enum btree_id btree, struct bpos pos)
 {
-	struct btree_iter iter;
 	struct bkey_s_c k;
-	u32 snapshot = pos.snapshot;
 	int ret;
 
-	if (!bch2_snapshot_parent(trans->c, pos.snapshot))
-		return 0;
-
-	pos.snapshot++;
-
-	for_each_btree_key_norestart(trans, iter, btree_id, pos,
+	for_each_btree_key_norestart(trans, *iter, btree, pos,
 			   BTREE_ITER_all_snapshots|
 			   BTREE_ITER_nopreserve, k, ret) {
 		if (!bkey_eq(k.k->p, pos))
 			break;
-
-		if (bch2_snapshot_is_ancestor(trans->c, snapshot,
-					      k.k->p.snapshot)) {
-			ret = !bkey_whiteout(k.k);
-			break;
-		}
+		if (bch2_snapshot_is_ancestor(trans->c, pos.snapshot, k.k->p.snapshot))
+			return k;
 	}
+	bch2_trans_iter_exit(trans, iter);
+
+	return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
+}
+
+/*
+ * When deleting, check if we need to emit a whiteout (because we're overwriting
+ * something in an ancestor snapshot)
+ */
+static int need_whiteout_for_snapshot(struct btree_trans *trans, enum btree_id btree, struct bpos pos)
+{
+	pos.snapshot = bch2_snapshot_parent(trans->c, pos.snapshot);
+	if (!pos.snapshot)
+		return 0;
+
+	struct btree_iter iter;
+	struct bkey_s_c k = peek_slot_including_whiteouts(trans, &iter, btree, pos);
+	int ret = bkey_err(k) ?: k.k && !bkey_whiteout(k.k);
 	bch2_trans_iter_exit(trans, &iter);
 
 	return ret;
