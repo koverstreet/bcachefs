@@ -522,7 +522,7 @@ int bch2_empty_dir_snapshot(struct btree_trans *trans, u64 dir, u32 snapshot)
 			   SPOS(dir, 0, snapshot),
 			   POS(dir, U64_MAX), 0, k, ret)
 		if (k.k->type == KEY_TYPE_dirent) {
-			ret = -ENOTEMPTY;
+			ret = -BCH_ERR_ENOTEMPTY_dir_not_empty;
 			break;
 		}
 	bch2_trans_iter_exit(trans, &iter);
