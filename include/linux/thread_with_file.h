@@ -52,19 +52,23 @@ int run_thread_with_file(struct thread_with_file *,
 			 const struct file_operations *,
 			 int (*fn)(void *));
 
+struct thread_with_stdio;
+
+struct thread_with_stdio_ops {
+	void (*exit)(struct thread_with_stdio *);
+	void (*fn)(struct thread_with_stdio *);
+};
+
 struct thread_with_stdio {
 	struct thread_with_file	thr;
 	struct stdio_redirect	stdio;
-	void			(*exit)(struct thread_with_stdio *);
-	void			(*fn)(struct thread_with_stdio *);
+	const struct thread_with_stdio_ops	*ops;
 };
 
 int run_thread_with_stdio(struct thread_with_stdio *,
-			  void (*exit)(struct thread_with_stdio *),
-			  void (*fn)(struct thread_with_stdio *));
+			  const struct thread_with_stdio_ops *);
 int run_thread_with_stdout(struct thread_with_stdio *,
-			  void (*exit)(struct thread_with_stdio *),
-			  void (*fn)(struct thread_with_stdio *));
+			  const struct thread_with_stdio_ops *);
 int stdio_redirect_read(struct stdio_redirect *, char *, size_t);
 int stdio_redirect_readline(struct stdio_redirect *, char *, size_t);
 
