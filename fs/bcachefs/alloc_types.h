@@ -89,7 +89,8 @@ struct dev_stripe_state {
 	x(stopped)			\
 	x(waiting_io)			\
 	x(waiting_work)			\
-	x(running)
+	x(running)			\
+	x(worker_blocked)
 
 enum write_point_state {
 #define x(n)	WRITE_POINT_##n,
@@ -120,9 +121,11 @@ struct write_point {
 
 		struct list_head	writes;
 		spinlock_t		writes_lock;
+		struct task_struct	*worker;
 
 		enum write_point_state	state;
 		u64			last_state_change;
+		u64			index_updates_done;
 		u64			time[WRITE_POINT_STATE_NR];
 	} __aligned(SMP_CACHE_BYTES);
 };

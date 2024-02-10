@@ -613,23 +613,37 @@ static inline void bch2_write_queue(struct bch_write_op *op, struct write_point 
 	}
 }
 
+static inline s64 blocked_time(void)
+{
+#ifdef CONFIG_SCHEDSTATS
+	return current->stats.sum_block_runtime;
+#else
+	return 0;
+#endif
+}
+
 void bch2_write_point_do_index_updates(struct work_struct *work)
 {
 	struct write_point *wp =
 		container_of(work, struct write_point, index_update_work);
 	struct bch_write_op *op;
+	u64 blocked = blocked_time();
 
 	while (1) {
 		spin_lock_irq(&wp->writes_lock);
 		op = list_first_entry_or_null(&wp->writes, struct bch_write_op, wp_list);
 		if (op)
 			list_del(&op->wp_list);
+		wp->worker = op ? current : NULL;
 		wp_update_state(wp, op != NULL);
+
+		u64 blocked2 = blocked_time();
+		wp->time[WRITE_POINT_worker_blocked] += blocked2 - blocked;
+		blocked = blocked2;
 		spin_unlock_irq(&wp->writes_lock);
 
 		if (!op)
 			break;
-
 		op->flags |= BCH_WRITE_IN_WORKER;
 
 		__bch2_write_index(op);
@@ -638,6 +652,8 @@ void bch2_write_point_do_index_updates(struct work_struct *work)
 			__bch2_write(op);
 		else
 			bch2_write_done(&op->cl);
+
+		wp->index_updates_done++;
 	}
 }
 

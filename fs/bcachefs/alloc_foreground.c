@@ -1655,40 +1655,100 @@ static void bch2_write_point_to_text(struct printbuf *out, struct bch_fs *c,
 	struct open_bucket *ob;
 	unsigned i;
 
-	prt_printf(out, "%lu: ", wp->write_point);
-	prt_human_readable_u64(out, wp->sectors_allocated);
+	bch2_printbuf_make_room(out, 4096);
 
-	prt_printf(out, " last wrote: ");
+	spin_lock(&wp->writes_lock);
+	out->atomic++;
+
+	prt_printf(out, "%lu: ", wp->write_point);
+	prt_newline(out);
+	printbuf_indent_add(out, 2);
+
+	prt_str(out, "written:");
+	prt_tab(out);
+	prt_human_readable_u64(out, wp->sectors_allocated);
+	prt_newline(out);
+
+	prt_str(out, "state:");
+	prt_tab(out);
+	prt_str(out, bch2_write_point_states[wp->state]);
+	prt_newline(out);
+
+	prt_str(out, "nr index updates:");
+	prt_tab(out);
+	prt_printf(out, "%llu", wp->index_updates_done);
+	prt_newline(out);
+
+	prt_printf(out, "last wrote: ");
+	prt_tab(out);
 	bch2_pr_time_units(out, sched_clock() - wp->last_used);
+	prt_newline(out);
 
 	for (i = 0; i < WRITE_POINT_STATE_NR; i++) {
-		prt_printf(out, " %s: ", bch2_write_point_states[i]);
-		bch2_pr_time_units(out, wp->time[i]);
+		u64 ns = wp->time[i];
+		if (wp->state == i)
+			ns += ktime_get_ns() - wp->last_state_change;
+
+		prt_printf(out, "%s:", bch2_write_point_states[i]);
+		prt_tab(out);
+		bch2_pr_time_units(out, ns);
+		prt_newline(out);
 	}
 
+	if (wp->worker) {
+		prt_str(out, "Worker:");
+		prt_newline(out);
+		printbuf_indent_add(out, 2);
+		bch2_prt_task_backtrace(out, wp->worker, 0, GFP_NOWAIT);
+		printbuf_indent_sub(out, 2);
+	}
+
+	prt_str(out, "Open buckets:");
 	prt_newline(out);
 
 	printbuf_indent_add(out, 2);
 	open_bucket_for_each(c, &wp->ptrs, ob, i)
 		bch2_open_bucket_to_text(out, c, ob);
 	printbuf_indent_sub(out, 2);
+
+	prt_str(out, "Write ops:");
+	prt_newline(out);
+
+	printbuf_indent_add(out, 2);
+
+	struct bch_write_op *op;
+	list_for_each_entry(op, &wp->writes, wp_list)
+		bch2_write_op_to_text(out, op);
+
+	printbuf_indent_sub(out, 2);
+	printbuf_indent_sub(out, 2);
+
+	--out->atomic;
+	spin_unlock(&wp->writes_lock);
 }
 
 void bch2_write_points_to_text(struct printbuf *out, struct bch_fs *c)
 {
 	struct write_point *wp;
 
+	printbuf_tabstop_push(out, 32);
+
 	prt_str(out, "Foreground write points\n");
 	for (wp = c->write_points;
 	     wp < c->write_points + ARRAY_SIZE(c->write_points);
 	     wp++)
-		bch2_write_point_to_text(out, c, wp);
+		if (wp->sectors_allocated)
+			bch2_write_point_to_text(out, c, wp);
 
-	prt_str(out, "Copygc write point\n");
-	bch2_write_point_to_text(out, c, &c->copygc_write_point);
+	if (c->copygc_write_point.sectors_allocated) {
+		prt_str(out, "Copygc write point\n");
+		bch2_write_point_to_text(out, c, &c->copygc_write_point);
+	}
 
-	prt_str(out, "Rebalance write point\n");
-	bch2_write_point_to_text(out, c, &c->rebalance_write_point);
+	if (c->rebalance_write_point.sectors_allocated) {
+		prt_str(out, "Rebalance write point\n");
+		bch2_write_point_to_text(out, c, &c->rebalance_write_point);
+	}
 
 	prt_str(out, "Btree write point\n");
 	bch2_write_point_to_text(out, c, &c->btree_write_point);
