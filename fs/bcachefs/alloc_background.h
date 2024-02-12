@@ -228,6 +228,8 @@ static inline bool bkey_is_alloc(const struct bkey *k)
 
 int bch2_alloc_read(struct bch_fs *);
 
+int bch2_bucket_to_dev_counters(struct btree_trans *, struct bch_dev *,
+				struct bucket *, struct bucket *, unsigned);
 int bch2_trigger_alloc(struct btree_trans *, enum btree_id, unsigned,
 		       struct bkey_s_c, struct bkey_s, unsigned);
 int bch2_check_alloc_info(struct bch_fs *);

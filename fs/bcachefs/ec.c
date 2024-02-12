@@ -238,10 +238,8 @@ err:
 	return ret;
 }
 
-static int mark_stripe_bucket(struct btree_trans *trans,
-			      struct bkey_s_c k,
-			      unsigned ptr_idx,
-			      unsigned flags)
+static int mark_stripe_bucket(struct btree_trans *trans, struct bkey_s_c k,
+			      unsigned ptr_idx, unsigned flags)
 {
 	struct bch_fs *c = trans->c;
 	const struct bch_stripe *s = bkey_s_c_to_stripe(k).v;
@@ -287,13 +285,16 @@ static int mark_stripe_bucket(struct btree_trans *trans,
 	g->stripe		= k.k->p.offset;
 	g->stripe_redundancy	= s->nr_redundant;
 	new = *g;
-err:
 	bucket_unlock(g);
-	if (!ret)
-		bch2_dev_usage_update_m(c, ca, &old, &new);
 	percpu_up_read(&c->mark_lock);
+	ret = bch2_bucket_to_dev_counters(trans, ca, &old, &new, flags);
+out:
 	printbuf_exit(&buf);
 	return ret;
+err:
+	bucket_unlock(g);
+	percpu_up_read(&c->mark_lock);
+	goto out;
 }
 
 int bch2_trigger_stripe(struct btree_trans *trans,
@@ -309,7 +310,12 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 	const struct bch_stripe *new_s = new.k->type == KEY_TYPE_stripe
 		? bkey_s_c_to_stripe(new).v : NULL;
 
-	if (flags & BTREE_TRIGGER_TRANSACTIONAL) {
+	BUG_ON(new_s && old_s &&
+	       (new_s->nr_blocks	!= old_s->nr_blocks ||
+		new_s->nr_redundant	!= old_s->nr_redundant));
+
+
+	if (flags & (BTREE_TRIGGER_TRANSACTIONAL|BTREE_TRIGGER_GC)) {
 		/*
 		 * If the pointers aren't changing, we don't need to do anything:
 		 */
@@ -320,9 +326,34 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 			    new_s->nr_blocks * sizeof(struct bch_extent_ptr)))
 			return 0;
 
-		BUG_ON(new_s && old_s &&
-		       (new_s->nr_blocks	!= old_s->nr_blocks ||
-			new_s->nr_redundant	!= old_s->nr_redundant));
+		struct gc_stripe *gc = NULL;
+		if (flags & BTREE_TRIGGER_GC) {
+			gc = genradix_ptr_alloc(&c->gc_stripes, idx, GFP_KERNEL);
+			if (!gc) {
+				bch_err(c, "error allocating memory for gc_stripes, idx %llu", idx);
+				return -BCH_ERR_ENOMEM_mark_stripe;
+			}
+
+			/*
+			 * This will be wrong when we bring back runtime gc: we should
+			 * be unmarking the old key and then marking the new key
+			 *
+			 * Also: when we bring back runtime gc, locking
+			 */
+			gc->alive	= true;
+			gc->sectors	= le16_to_cpu(new_s->sectors);
+			gc->nr_blocks	= new_s->nr_blocks;
+			gc->nr_redundant	= new_s->nr_redundant;
+
+			for (unsigned i = 0; i < new_s->nr_blocks; i++)
+				gc->ptrs[i] = new_s->ptrs[i];
+
+			/*
+			 * gc recalculates this field from stripe ptr
+			 * references:
+			 */
+			memset(gc->block_sectors, 0, sizeof(gc->block_sectors));
+		}
 
 		if (new_s) {
 			s64 sectors = (u64) le16_to_cpu(new_s->sectors) * new_s->nr_redundant;
@@ -331,9 +362,12 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 				.type = BCH_DISK_ACCOUNTING_replicas,
 			};
 			bch2_bkey_to_replicas(&acc.replicas, new);
-			int ret = bch2_disk_accounting_mod(trans, &acc, &sectors, 1);
+			int ret = bch2_disk_accounting_mod(trans, &acc, &sectors, 1, gc);
 			if (ret)
 				return ret;
+
+			if (gc)
+				memcpy(&gc->r.e, &acc.replicas, replicas_entry_bytes(&acc.replicas));
 		}
 
 		if (old_s) {
@@ -343,29 +377,42 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 				.type = BCH_DISK_ACCOUNTING_replicas,
 			};
 			bch2_bkey_to_replicas(&acc.replicas, old);
-			int ret = bch2_disk_accounting_mod(trans, &acc, &sectors, 1);
+			int ret = bch2_disk_accounting_mod(trans, &acc, &sectors, 1, gc);
 			if (ret)
 				return ret;
 		}
 
 		unsigned nr_blocks = new_s ? new_s->nr_blocks : old_s->nr_blocks;
-		for (unsigned i = 0; i < nr_blocks; i++) {
-			if (new_s && old_s &&
-			    !memcmp(&new_s->ptrs[i],
-				    &old_s->ptrs[i],
-				    sizeof(new_s->ptrs[i])))
-				continue;
 
-			if (new_s) {
-				int ret = bch2_trans_mark_stripe_bucket(trans,
-						bkey_s_c_to_stripe(new), i, false);
-				if (ret)
-					return ret;
+		if (flags & BTREE_TRIGGER_TRANSACTIONAL) {
+			for (unsigned i = 0; i < nr_blocks; i++) {
+				if (new_s && old_s &&
+				    !memcmp(&new_s->ptrs[i],
+					    &old_s->ptrs[i],
+					    sizeof(new_s->ptrs[i])))
+					continue;
+
+				if (new_s) {
+					int ret = bch2_trans_mark_stripe_bucket(trans,
+							bkey_s_c_to_stripe(new), i, false);
+					if (ret)
+						return ret;
+				}
+
+				if (old_s) {
+					int ret = bch2_trans_mark_stripe_bucket(trans,
+							bkey_s_c_to_stripe(old), i, true);
+					if (ret)
+						return ret;
+				}
 			}
+		}
 
-			if (old_s) {
-				int ret = bch2_trans_mark_stripe_bucket(trans,
-						bkey_s_c_to_stripe(old), i, true);
+		if (flags & BTREE_TRIGGER_GC) {
+			BUG_ON(old_s);
+
+			for (unsigned i = 0; i < nr_blocks; i++) {
+				int ret = mark_stripe_bucket(trans, new, i, flags);
 				if (ret)
 					return ret;
 			}
@@ -408,53 +455,6 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 				bch2_stripes_heap_insert(c, m, idx);
 			else
 				bch2_stripes_heap_update(c, m, idx);
-		}
-	}
-
-	if (flags & BTREE_TRIGGER_GC) {
-		struct gc_stripe *m =
-			genradix_ptr_alloc(&c->gc_stripes, idx, GFP_KERNEL);
-
-		if (!m) {
-			bch_err(c, "error allocating memory for gc_stripes, idx %llu",
-				idx);
-			return -BCH_ERR_ENOMEM_mark_stripe;
-		}
-		/*
-		 * This will be wrong when we bring back runtime gc: we should
-		 * be unmarking the old key and then marking the new key
-		 */
-		m->alive	= true;
-		m->sectors	= le16_to_cpu(new_s->sectors);
-		m->nr_blocks	= new_s->nr_blocks;
-		m->nr_redundant	= new_s->nr_redundant;
-
-		for (unsigned i = 0; i < new_s->nr_blocks; i++)
-			m->ptrs[i] = new_s->ptrs[i];
-
-		bch2_bkey_to_replicas(&m->r.e, new);
-
-		/*
-		 * gc recalculates this field from stripe ptr
-		 * references:
-		 */
-		memset(m->block_sectors, 0, sizeof(m->block_sectors));
-
-		for (unsigned i = 0; i < new_s->nr_blocks; i++) {
-			int ret = mark_stripe_bucket(trans, new, i, flags);
-			if (ret)
-				return ret;
-		}
-
-		int ret = bch2_update_replicas(c, new, &m->r.e,
-				      ((s64) m->sectors * m->nr_redundant));
-		if (ret) {
-			struct printbuf buf = PRINTBUF;
-
-			bch2_bkey_val_to_text(&buf, c, new);
-			bch2_fs_fatal_error(c, ": no replicas entry for %s", buf.buf);
-			printbuf_exit(&buf);
-			return ret;
 		}
 	}
 

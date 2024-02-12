@@ -732,6 +732,96 @@ static noinline int bch2_bucket_gen_update(struct btree_trans *trans,
 	return ret;
 }
 
+static int bch2_alloc_key_to_dev_counters(struct btree_trans *trans, struct bch_dev *ca,
+					  const struct bch_alloc_v4 *old_a,
+					  const struct bch_alloc_v4 *new_a,
+					  unsigned flags)
+{
+	bool gc = flags & BTREE_TRIGGER_GC;
+
+	if ((flags & BTREE_TRIGGER_BUCKET_INVALIDATE) &&
+	    old_a->cached_sectors) {
+		int ret = bch2_mod_dev_cached_sectors(trans, ca->dev_idx,
+				 -((s64) old_a->cached_sectors), gc);
+		if (ret)
+			return ret;
+	}
+
+	if (old_a->data_type != new_a->data_type ||
+	    old_a->dirty_sectors != new_a->dirty_sectors) {
+		struct disk_accounting_pos acc = {
+			.type = BCH_DISK_ACCOUNTING_dev_data_type,
+			.dev_data_type.dev = ca->dev_idx,
+			.dev_data_type.data_type = new_a->data_type,
+		};
+		s64 d[3];
+
+		if (old_a->data_type == new_a->data_type) {
+			d[0] = 0;
+			d[1] = (s64) new_a->dirty_sectors - (s64) old_a->dirty_sectors;
+			d[2] =  bucket_sectors_fragmented(ca, *new_a) -
+				bucket_sectors_fragmented(ca, *old_a);
+
+			int ret = bch2_disk_accounting_mod(trans, &acc, d, 3, gc);
+			if (ret)
+				return ret;
+		} else {
+			d[0] = 1;
+			d[1] = new_a->dirty_sectors;
+			d[2] = bucket_sectors_fragmented(ca, *new_a);
+
+			int ret = bch2_disk_accounting_mod(trans, &acc, d, 3, gc);
+			if (ret)
+				return ret;
+
+			acc.dev_data_type.data_type = old_a->data_type;
+			d[0] = -1;
+			d[1] = -(s64) old_a->dirty_sectors;
+			d[2] = -bucket_sectors_fragmented(ca, *old_a);
+
+			ret = bch2_disk_accounting_mod(trans, &acc, d, 3, gc);
+			if (ret)
+				return ret;
+		}
+	}
+
+	if (!!old_a->stripe != !!new_a->stripe) {
+		struct disk_accounting_pos acc = {
+			.type = BCH_DISK_ACCOUNTING_dev_stripe_buckets,
+			.dev_stripe_buckets.dev = ca->dev_idx,
+		};
+		u64 d[1];
+
+		d[0] = (s64) !!new_a->stripe - (s64) !!old_a->stripe;
+		int ret = bch2_disk_accounting_mod(trans, &acc, d, 1, gc);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static inline struct bch_alloc_v4 bucket_m_to_alloc(struct bucket b)
+{
+	return (struct bch_alloc_v4) {
+		.gen		= b.gen,
+		.data_type	= b.data_type,
+		.dirty_sectors	= b.dirty_sectors,
+		.cached_sectors	= b.cached_sectors,
+		.stripe		= b.stripe,
+	};
+}
+
+int bch2_bucket_to_dev_counters(struct btree_trans *trans, struct bch_dev *ca,
+				struct bucket *old, struct bucket *new,
+				unsigned flags)
+{
+	struct bch_alloc_v4 old_a = bucket_m_to_alloc(*old);
+	struct bch_alloc_v4 new_a = bucket_m_to_alloc(*new);
+
+	return bch2_alloc_key_to_dev_counters(trans, ca, &old_a, &new_a, flags);
+}
+
 int bch2_trigger_alloc(struct btree_trans *trans,
 		       enum btree_id btree, unsigned level,
 		       struct bkey_s_c old, struct bkey_s new,
@@ -808,70 +898,9 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 				return ret;
 		}
 
-		/*
-		 * need to know if we're getting called from the invalidate path or
-		 * not:
-		 */
-
-		if ((flags & BTREE_TRIGGER_BUCKET_INVALIDATE) &&
-		    old_a->cached_sectors) {
-			ret = bch2_mod_dev_cached_sectors(trans, new.k->p.inode,
-							  -((s64) old_a->cached_sectors));
-			if (ret)
-				return ret;
-		}
-
-
-		if (old_a->data_type != new_a->data_type ||
-		    old_a->dirty_sectors != new_a->dirty_sectors) {
-			struct disk_accounting_pos acc = {
-				.type = BCH_DISK_ACCOUNTING_dev_data_type,
-				.dev_data_type.dev = new.k->p.inode,
-				.dev_data_type.data_type = new_a->data_type,
-			};
-			s64 d[3];
-
-			if (old_a->data_type == new_a->data_type) {
-				d[0] = 0;
-				d[1] = (s64) new_a->dirty_sectors - (s64) old_a->dirty_sectors;
-				d[2] =  bucket_sectors_fragmented(ca, *new_a) -
-					bucket_sectors_fragmented(ca, *old_a);
-
-				ret = bch2_disk_accounting_mod(trans, &acc, d, 3);
-				if (ret)
-					return ret;
-			} else {
-				d[0] = 1;
-				d[1] = new_a->dirty_sectors;
-				d[2] = bucket_sectors_fragmented(ca, *new_a);
-
-				ret = bch2_disk_accounting_mod(trans, &acc, d, 3);
-				if (ret)
-					return ret;
-
-				acc.dev_data_type.data_type = old_a->data_type;
-				d[0] = -1;
-				d[1] = -(s64) old_a->dirty_sectors;
-				d[2] = -bucket_sectors_fragmented(ca, *old_a);
-
-				ret = bch2_disk_accounting_mod(trans, &acc, d, 3);
-				if (ret)
-					return ret;
-			}
-		}
-
-		if (!!old_a->stripe != !!new_a->stripe) {
-			struct disk_accounting_pos acc = {
-				.type = BCH_DISK_ACCOUNTING_dev_stripe_buckets,
-				.dev_stripe_buckets.dev = new.k->p.inode,
-			};
-			u64 d[1];
-
-			d[0] = (s64) !!new_a->stripe - (s64) !!old_a->stripe;
-			ret = bch2_disk_accounting_mod(trans, &acc, d, 1);
-			if (ret)
-				return ret;
-		}
+		ret = bch2_alloc_key_to_dev_counters(trans, ca, old_a, new_a, flags);
+		if (ret)
+			return ret;
 	}
 
 	if ((flags & BTREE_TRIGGER_ATOMIC) && (flags & BTREE_TRIGGER_INSERT)) {
@@ -937,30 +966,6 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 
 		if (statechange(a->data_type == BCH_DATA_need_gc_gens))
 			bch2_do_gc_gens(c);
-	}
-
-	if ((flags & BTREE_TRIGGER_GC) &&
-	    (flags & BTREE_TRIGGER_BUCKET_INVALIDATE)) {
-		struct bch_alloc_v4 new_a_convert;
-		const struct bch_alloc_v4 *new_a = bch2_alloc_to_v4(new.s_c, &new_a_convert);
-
-		percpu_down_read(&c->mark_lock);
-		struct bucket *g = gc_bucket(ca, new.k->p.offset);
-
-		bucket_lock(g);
-
-		g->gen_valid		= 1;
-		g->gen			= new_a->gen;
-		g->data_type		= new_a->data_type;
-		g->stripe		= new_a->stripe;
-		g->stripe_redundancy	= new_a->stripe_redundancy;
-		g->dirty_sectors	= new_a->dirty_sectors;
-		g->cached_sectors	= new_a->cached_sectors;
-
-		bucket_unlock(g);
-		percpu_up_read(&c->mark_lock);
-
-		bch2_dev_usage_update(c, ca, old_a, new_a);
 	}
 
 	return 0;
