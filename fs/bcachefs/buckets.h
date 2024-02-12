@@ -261,24 +261,19 @@ static inline u64 dev_buckets_available(struct bch_dev *ca,
 	return __dev_buckets_available(ca, bch2_dev_usage_read(ca), watermark);
 }
 
-static inline s64 bucket_sectors_fragmented(struct bch_dev *ca, struct bch_alloc_v4 a)
+static inline s64 __bucket_sectors_fragmented(struct bch_dev *ca, unsigned dirty_sectors)
 {
-	return a.dirty_sectors
-		? max(0, (int) ca->mi.bucket_size - (int) a.dirty_sectors)
+	return dirty_sectors
+		? max(0, (int) ca->mi.bucket_size - (int) dirty_sectors)
 		: 0;
 }
 
+static inline s64 bucket_sectors_fragmented(struct bch_dev *ca, struct bch_alloc_v4 a)
+{
+	return __bucket_sectors_fragmented(ca, a.dirty_sectors);
+}
+
 /* Filesystem usage: */
-
-static inline unsigned __fs_usage_u64s(unsigned nr_replicas)
-{
-	return sizeof(struct bch_fs_usage) / sizeof(u64) + nr_replicas;
-}
-
-static inline unsigned fs_usage_u64s(struct bch_fs *c)
-{
-	return __fs_usage_u64s(READ_ONCE(c->replicas.nr));
-}
 
 static inline unsigned dev_usage_u64s(void)
 {
@@ -288,19 +283,11 @@ static inline unsigned dev_usage_u64s(void)
 struct bch_fs_usage_short
 bch2_fs_usage_read_short(struct bch_fs *);
 
-void bch2_dev_usage_update(struct bch_fs *, struct bch_dev *,
-			   const struct bch_alloc_v4 *,
-			   const struct bch_alloc_v4 *);
-void bch2_dev_usage_update_m(struct bch_fs *, struct bch_dev *,
-			     struct bucket *, struct bucket *);
-int bch2_update_replicas(struct bch_fs *, struct bkey_s_c,
-			 struct bch_replicas_entry_v1 *, s64);
-
 int bch2_check_bucket_ref(struct btree_trans *, struct bkey_s_c,
 			  const struct bch_extent_ptr *,
 			  s64, enum bch_data_type, u8, u8, u32);
 
-int bch2_mark_metadata_bucket(struct bch_fs *, struct bch_dev *,
+int bch2_mark_metadata_bucket(struct btree_trans *, struct bch_dev *,
 			      size_t, enum bch_data_type, unsigned,
 			      struct gc_pos, unsigned);
 
