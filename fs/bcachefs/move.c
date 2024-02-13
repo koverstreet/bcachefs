@@ -932,14 +932,18 @@ static bool rereplicate_pred(struct bch_fs *c, void *arg,
 	}
 	rcu_read_unlock();
 
-	if (!data_opts->kill_ptrs &&
-	    (!nr_good || nr_good >= replicas))
-		return false;
+	bool ret = !(!data_opts->kill_ptrs &&
+	    (!nr_good || nr_good >= replicas));
 
-	data_opts->target		= 0;
-	data_opts->extra_replicas	= replicas - nr_good;
-	data_opts->btree_insert_flags	= 0;
-	return true;
+	pr_info("ret %u", ret);
+
+	if (ret) {
+		data_opts->target		= 0;
+		data_opts->extra_replicas	= replicas - nr_good;
+		data_opts->btree_insert_flags	= 0;
+	}
+
+	return ret;
 }
 
 static bool migrate_pred(struct bch_fs *c, void *arg,
