@@ -349,9 +349,13 @@ static int attempt_compress(struct bch_fs *c,
 	}
 	case BCH_COMPRESSION_TYPE_zstd: {
 		/*
-		 * only use zstd compression levels 1-15
+		 * rescale:
+		 * maps our 15 levels to zstd's 22 levels
+		 * prioritizing granularity at the lower levels
 		 */
-		ZSTD_parameters params = zstd_get_params(compression.level, c->opts.encoded_extent_max);
+		unsigned level = compression.level < 10 : compression.level ?
+				compression.level < 15 : compression.level * 2 - 9 ? 22;
+		ZSTD_parameters params = zstd_get_params(level, c->opts.encoded_extent_max);
 		ZSTD_CCtx *ctx = zstd_init_cctx(workspace, c->zstd_workspace_size);
 
 		/*
