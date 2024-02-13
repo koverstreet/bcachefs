@@ -1117,7 +1117,7 @@ static int may_delete_deleted_inode(struct btree_trans *trans,
 		goto out;
 
 	if (S_ISDIR(inode.bi_mode)) {
-		ret = bch2_empty_dir_snapshot(trans, pos.offset, pos.snapshot);
+		ret = bch2_empty_dir_snapshot(trans, pos.offset, 0, pos.snapshot);
 		if (fsck_err_on(bch2_err_matches(ret, ENOTEMPTY),
 				c, deleted_inode_is_dir,
 				"non empty directory %llu:%u in deleted_inodes btree",
