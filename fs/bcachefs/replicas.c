@@ -457,6 +457,14 @@ retry:
 		u64 v = 0;
 		bch2_accounting_mem_read(c, disk_accounting_pos_to_bpos(&k), &v, 1);
 
+		{
+			struct printbuf buf = PRINTBUF;
+
+			bch2_replicas_entry_to_text(&buf, e);
+			pr_info("%s: %llu", buf.buf, v);
+			printbuf_exit(&buf);
+		}
+
 		if (e->data_type == BCH_DATA_journal || v)
 			memcpy(cpu_replicas_entry(&new, new.nr++),
 			       e, new.entry_size);
