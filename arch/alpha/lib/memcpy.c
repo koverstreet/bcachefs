@@ -18,6 +18,7 @@
 
 #include <linux/types.h>
 #include <linux/export.h>
+#include <linux/string.h>
 
 /*
  * This should be done in one go with ldq_u*2/mask/stq_u. Do it
