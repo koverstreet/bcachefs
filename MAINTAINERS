@@ -21896,8 +21896,8 @@ M:	Kent Overstreet <kent.overstreet@linux.dev>
 M:	Darrick J. Wong <djwong@kernel.org>
 L:	linux-bcachefs@vger.kernel.org
 S:	Maintained
-F:	include/linux/thread_with_file.c
-F:	include/linux/thread_with_file_types.c
+F:	include/linux/thread_with_file.h
+F:	include/linux/thread_with_file_types.h
 F:	lib/thread_with_file.c
 
 THUNDERBOLT DMA TRAFFIC TEST DRIVER
