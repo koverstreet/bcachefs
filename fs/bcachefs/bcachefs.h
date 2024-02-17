@@ -506,7 +506,7 @@ struct bch_dev {
 	struct percpu_ref	ref;
 #endif
 	struct completion	ref_completion;
-	struct percpu_ref	io_ref;
+	struct percpu_ref	io_ref[2]; /* read and write */
 	struct completion	io_ref_completion;
 
 	struct bch_fs		*fs;
