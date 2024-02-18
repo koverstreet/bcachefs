@@ -381,6 +381,14 @@ static __poll_t thread_with_stdout_poll(struct file *file, struct poll_table_str
 	return mask;
 }
 
+static int thread_with_stdio_flush(struct file *file, fl_owner_t id)
+{
+	struct thread_with_stdio *thr =
+		container_of(file->private_data, struct thread_with_stdio, thr);
+
+	return thr->thr.ret;
+}
+
 static long thread_with_stdio_ioctl(struct file *file, unsigned int cmd, unsigned long p)
 {
 	struct thread_with_stdio *thr =
@@ -396,6 +404,7 @@ static const struct file_operations thread_with_stdio_fops = {
 	.read		= thread_with_stdio_read,
 	.write		= thread_with_stdio_write,
 	.poll		= thread_with_stdio_poll,
+	.flush		= thread_with_stdio_flush,
 	.release	= thread_with_stdio_release,
 	.unlocked_ioctl	= thread_with_stdio_ioctl,
 };
@@ -404,6 +413,7 @@ static const struct file_operations thread_with_stdout_fops = {
 	.llseek		= no_llseek,
 	.read		= thread_with_stdio_read,
 	.poll		= thread_with_stdout_poll,
+	.flush		= thread_with_stdio_flush,
 	.release	= thread_with_stdio_release,
 	.unlocked_ioctl	= thread_with_stdio_ioctl,
 };
@@ -412,7 +422,7 @@ static int thread_with_stdio_fn(void *arg)
 {
 	struct thread_with_stdio *thr = arg;
 
-	thr->ops->fn(thr);
+	thr->thr.ret = thr->ops->fn(thr);
 
 	thread_with_stdio_done(thr);
 	return 0;
