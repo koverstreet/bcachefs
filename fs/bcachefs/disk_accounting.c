@@ -549,6 +549,38 @@ int bch2_dev_usage_init(struct bch_dev *ca, bool gc)
 	return ret;
 }
 
+void bch2_verify_accounting_clean(struct bch_fs *c)
+{
+	bool mismatch = false;
+
+	bch2_trans_run(c,
+		for_each_btree_key(trans, iter,
+				   BTREE_ID_accounting, POS_MIN,
+				   BTREE_ITER_ALL_SNAPSHOTS, k, ({
+			u64 v[BCH_ACCOUNTING_MAX_COUNTERS];
+			struct bkey_s_c_accounting a = bkey_s_c_to_accounting(k);
+			unsigned nr = bch2_accounting_counters(k.k);
+
+			bch2_accounting_mem_read(c, k.k->p, v, nr);
+
+			if (memcmp(a.v->d, v, nr * sizeof(u64))) {
+				struct printbuf buf = PRINTBUF;
+
+				bch2_bkey_val_to_text(&buf, c, k);
+				prt_str(&buf, " !=");
+				for (unsigned j = 0; j < nr; j++)
+					prt_printf(&buf, " %llu", v[j]);
+
+				pr_err("%s", buf.buf);
+				printbuf_exit(&buf);
+				mismatch = true;
+			}
+			0;
+		})));
+
+	WARN_ON(mismatch);
+}
+
 void bch2_accounting_free(struct bch_accounting_mem *acc)
 {
 	darray_exit(&acc->k);
