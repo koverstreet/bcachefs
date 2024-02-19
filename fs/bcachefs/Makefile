@@ -85,3 +85,6 @@ bcachefs-y		:=	\
 	util.o			\
 	varint.o		\
 	xattr.o
+
+# Silence "note: xyz changed in GCC X.X" messages
+subdir-ccflags-y += $(call cc-disable-warning, psabi)
