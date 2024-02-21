@@ -1169,12 +1169,13 @@ void bch2_fs_journal_stop(struct journal *j)
 	bch2_journal_meta(j);
 
 	journal_quiesce(j);
+	cancel_delayed_work_sync(&j->write_work);
 
 	BUG_ON(!bch2_journal_error(j) &&
 	       test_bit(JOURNAL_REPLAY_DONE, &j->flags) &&
 	       j->last_empty_seq != journal_cur_seq(j));
 
-	cancel_delayed_work_sync(&j->write_work);
+	clear_bit(JOURNAL_RUNNING, &j->flags);
 }
 
 int bch2_fs_journal_start(struct journal *j, u64 cur_seq)
@@ -1248,7 +1249,7 @@ int bch2_fs_journal_start(struct journal *j, u64 cur_seq)
 
 	spin_lock(&j->lock);
 
-	set_bit(JOURNAL_STARTED, &j->flags);
+	set_bit(JOURNAL_RUNNING, &j->flags);
 	j->last_flush_write = jiffies;
 
 	j->reservations.idx = j->reservations.unwritten_idx = journal_cur_seq(j);
