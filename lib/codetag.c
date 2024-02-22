@@ -1,28 +1,68 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <linux/codetag.h>
-#include <linux/idr.h>
+#include <linux/darray.h>
+#include <linux/eytzinger.h>
 #include <linux/kallsyms.h>
 #include <linux/module.h>
 #include <linux/seq_buf.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 
-struct codetag_type {
-	struct list_head link;
-	unsigned int count;
-	struct idr mod_idr;
-	struct rw_semaphore mod_lock; /* protects mod_idr */
-	struct codetag_type_desc desc;
-};
+#ifdef DEBUG
+#define EBUG_ON(cond)	BUG_ON(cond)
+#else
+#define EBUG_ON(cond)	do {} while (0)
+#endif
 
-struct codetag_range {
-	struct codetag *start;
-	struct codetag *stop;
+struct codetag_eytz_entry {
+	u16				idx;
 };
 
 struct codetag_module {
-	struct module *mod;
-	struct codetag_range range;
+	unsigned			idx;
+	unsigned			nr;
+	struct codetag			*start;
+	struct module			*mod;
+};
+
+struct codetag_modules {
+	struct rcu_head			rcu;
+	u16				nr_modules;
+	u16				eytz_extra;
+	struct codetag_eytz_entry	e[];
+	/*
+	 * Additionally, we have an array of @nr_modules codetag_modules after
+	 * e[nr_modules]
+	 */
+};
+
+static inline size_t codetag_modules_bytes(unsigned nr_modules)
+{
+	return sizeof(struct codetag_modules) +
+		sizeof(struct codetag_eytz_entry) * nr_modules +
+		sizeof(struct codetag_module) * nr_modules;
+}
+
+static inline struct codetag_module *codetag_mods_array(struct codetag_modules *m)
+{
+	return (void *) &m->e[m->nr_modules];
+}
+
+static void codetag_modules_init_eytz(struct codetag_modules *mods)
+{
+	mods->eytz_extra = eytzinger0_extra(mods->nr_modules);
+
+	for (unsigned i = 0; i < mods->nr_modules; i++)
+		mods->e[__inorder_to_eytzinger0(i, mods->nr_modules, mods->eytz_extra)].idx =
+			codetag_mods_array(mods)[i].idx;
+}
+
+struct codetag_type {
+	struct list_head		link;
+	unsigned int			count;
+	struct rw_semaphore		mod_lock; /* protects mods */
+	struct codetag_modules __rcu	*mods_rcu;
+	struct codetag_type_desc	desc;
 };
 
 static DEFINE_MUTEX(codetag_lock);
@@ -41,88 +81,91 @@ bool codetag_trylock_module_list(struct codetag_type *cttype)
 	return down_read_trylock(&cttype->mod_lock) != 0;
 }
 
-struct codetag_iterator codetag_get_ct_iter(struct codetag_type *cttype)
-{
-	struct codetag_iterator iter = {
-		.cttype = cttype,
-		.cmod = NULL,
-		.mod_id = 0,
-		.ct = NULL,
-	};
+#define cmp_int(l, r)		((l > r) - (l < r))
 
-	return iter;
+static inline int codetag_eytz_entry_cmp(const void *_l, const void *_r)
+{
+	const struct codetag_eytz_entry *l = _l;
+	const struct codetag_eytz_entry *r = _r;
+
+	return cmp_int(l->idx, r->idx);
 }
 
-static inline struct codetag *get_first_module_ct(struct codetag_module *cmod)
+__always_inline
+static inline struct codetag_module *codetag_idx_to_cmod(struct codetag_modules *mods, unsigned idx)
 {
-	return cmod->range.start < cmod->range.stop ? cmod->range.start : NULL;
-}
-
-static inline
-struct codetag *get_next_module_ct(struct codetag_iterator *iter)
-{
-	struct codetag *res = (struct codetag *)
-			((char *)iter->ct + iter->cttype->desc.tag_size);
-
-	return res < iter->cmod->range.stop ? res : NULL;
-}
-
-struct codetag *codetag_next_ct(struct codetag_iterator *iter)
-{
-	struct codetag_type *cttype = iter->cttype;
-	struct codetag_module *cmod;
-	struct codetag *ct;
-
-	lockdep_assert_held(&cttype->mod_lock);
-
-	if (unlikely(idr_is_empty(&cttype->mod_idr)))
+	struct codetag_eytz_entry search = { .idx = idx };
+	unsigned e = eytzinger0_find_le(mods->e,
+					mods->nr_modules,
+					sizeof(mods->e[0]),
+					codetag_eytz_entry_cmp,
+					&search);
+	if (e >= mods->nr_modules)
 		return NULL;
 
-	ct = NULL;
-	while (true) {
-		cmod = idr_find(&cttype->mod_idr, iter->mod_id);
+	struct codetag_module *mod = codetag_mods_array(mods) +
+		__eytzinger0_to_inorder(e, mods->nr_modules, mods->eytz_extra);
 
-		/* If module was removed move to the next one */
-		if (!cmod)
-			cmod = idr_get_next_ul(&cttype->mod_idr,
-					       &iter->mod_id);
+	EBUG_ON(mods->e[e].idx != mod->idx);
+	return mod;
+}
 
-		/* Exit if no more modules */
-		if (!cmod)
-			break;
+static struct codetag *__idx_to_codetag(struct codetag_type *cttype,
+					struct codetag_module *cmod,
+					unsigned idx)
+{
+	EBUG_ON(idx < cmod->idx);
+	EBUG_ON(idx >= cmod->idx + cmod->nr);
 
-		if (cmod != iter->cmod) {
-			iter->cmod = cmod;
-			ct = get_first_module_ct(cmod);
-		} else
-			ct = get_next_module_ct(iter);
+	return (void *) cmod->start + (idx - cmod->idx) * cttype->desc.tag_size;
+}
 
-		if (ct)
-			break;
+/* @idx must point to a valid codetag, not a gap */
+struct codetag *idx_to_codetag(struct codetag_type *cttype, unsigned idx)
+{
+	rcu_read_lock();
+	struct codetag_modules *mods = rcu_dereference(cttype->mods_rcu);
+	struct codetag *ct = __idx_to_codetag(cttype, codetag_idx_to_cmod(mods, idx), idx);
+	rcu_read_unlock();
+	return ct;
+}
 
-		iter->mod_id++;
+/* finds the first valid codetag at idx >= iter->idx, or returns NULL */
+static struct codetag *__codetag_iter_peek(struct codetag_iter *iter)
+{
+	struct codetag_type *cttype = iter->cttype;
+	struct codetag_modules *mods = rcu_dereference(cttype->mods_rcu);
+
+	iter->cmod = codetag_idx_to_cmod(mods, iter->idx);
+	if (!iter->cmod)
+		return NULL;
+
+	if (iter->cmod->idx + iter->cmod->nr <= iter->idx) {
+		iter->cmod++;
+		if (iter->cmod == codetag_mods_array(mods) + mods->nr_modules)
+			return NULL;
 	}
 
-	iter->ct = ct;
+	iter->idx = max(iter->idx, iter->cmod->idx);
+
+	return __idx_to_codetag(cttype, iter->cmod, iter->idx);
+}
+
+struct codetag *codetag_iter_peek(struct codetag_iter *iter)
+{
+	rcu_read_lock();
+	struct codetag *ct = __codetag_iter_peek(iter);
+	rcu_read_unlock();
 	return ct;
+
 }
 
 void codetag_to_text(struct seq_buf *out, struct codetag *ct)
 {
+	seq_buf_printf(out, "%s:%u", ct->filename, ct->lineno);
 	if (ct->modname)
-		seq_buf_printf(out, "%s:%u [%s] func:%s",
-			       ct->filename, ct->lineno,
-			       ct->modname, ct->function);
-	else
-		seq_buf_printf(out, "%s:%u func:%s",
-			       ct->filename, ct->lineno, ct->function);
-}
-
-static inline size_t range_size(const struct codetag_type *cttype,
-				const struct codetag_range *range)
-{
-	return ((char *)range->stop - (char *)range->start) /
-			cttype->desc.tag_size;
+		seq_buf_printf(out, " [%s]", ct->modname);
+	seq_buf_printf(out, " func:%s", ct->function);
 }
 
 #ifdef CONFIG_MODULES
@@ -146,57 +189,71 @@ static void *get_symbol(struct module *mod, const char *prefix, const char *name
 	return ret;
 }
 
-static struct codetag_range get_section_range(struct module *mod,
-					      const char *section)
+static int __codetag_module_init(struct codetag_type *cttype, struct module *mod)
 {
-	return (struct codetag_range) {
-		get_symbol(mod, "__start_", section),
-		get_symbol(mod, "__stop_", section),
+	struct codetag *start	= get_symbol(mod, "__start_", cttype->desc.section);
+	struct codetag *stop	= get_symbol(mod, "__stop_", cttype->desc.section);
+
+	BUG_ON(start > stop);
+
+	if (!start || !stop) {
+		pr_warn("Failed to load code tags of type %s from the module %s\n",
+			cttype->desc.section, mod ? mod->name : "(built-in)");
+		return -EINVAL;
+	}
+
+	struct codetag_module cmod = {
+		.nr	= ((void *) stop - (void *) start) / cttype->desc.tag_size,
+		.start	= start,
+		.mod	= mod,
 	};
+
+	/* Ignore empty ranges */
+	if (!cmod.nr)
+		return 0;
+
+	struct codetag_modules *old_mods =
+		rcu_dereference_protected(cttype->mods_rcu, lockdep_is_held(&cttype->mod_lock));
+	unsigned old_nr_modules = old_mods ? old_mods->nr_modules : 0;
+	unsigned new_nr_modules = old_nr_modules + 1;
+	struct codetag_modules *new_mods = kzalloc(codetag_modules_bytes(new_nr_modules), GFP_KERNEL);
+
+	if (!new_mods)
+		return -ENOMEM;
+
+	new_mods->nr_modules = new_nr_modules;
+	struct codetag_module *mod_a = codetag_mods_array(new_mods);
+
+	if (old_mods)
+		memcpy(mod_a, codetag_mods_array(old_mods),
+		       sizeof(struct codetag_module) * old_mods->nr_modules);
+
+
+	for (unsigned i = 0; i < old_nr_modules; i++) {
+		if (cmod.idx + cmod.nr <= mod_a[i].idx) {
+			array_insert_item(mod_a, old_nr_modules, i, cmod);
+			goto insert_done;
+		}
+
+		cmod.idx = mod_a[i].idx + mod_a[i].nr;
+	}
+
+	mod_a[old_nr_modules] = cmod;
+insert_done:
+	codetag_modules_init_eytz(new_mods);
+
+	rcu_assign_pointer(cttype->mods_rcu, new_mods);
+	kfree_rcu(old_mods, rcu);
+	return 0;
 }
 
 static int codetag_module_init(struct codetag_type *cttype, struct module *mod)
 {
-	struct codetag_range range;
-	struct codetag_module *cmod;
-	int err;
-
-	range = get_section_range(mod, cttype->desc.section);
-	if (!range.start || !range.stop) {
-		pr_warn("Failed to load code tags of type %s from the module %s\n",
-			cttype->desc.section,
-			mod ? mod->name : "(built-in)");
-		return -EINVAL;
-	}
-
-	/* Ignore empty ranges */
-	if (range.start == range.stop)
-		return 0;
-
-	BUG_ON(range.start > range.stop);
-
-	cmod = kmalloc(sizeof(*cmod), GFP_KERNEL);
-	if (unlikely(!cmod))
-		return -ENOMEM;
-
-	cmod->mod = mod;
-	cmod->range = range;
-
 	down_write(&cttype->mod_lock);
-	err = idr_alloc(&cttype->mod_idr, cmod, 0, 0, GFP_KERNEL);
-	if (err >= 0) {
-		cttype->count += range_size(cttype, &range);
-		if (cttype->desc.module_load)
-			cttype->desc.module_load(cttype, cmod);
-	}
+	int ret = __codetag_module_init(cttype, mod);
 	up_write(&cttype->mod_lock);
 
-	if (err < 0) {
-		kfree(cmod);
-		return err;
-	}
-
-	return 0;
+	return ret;
 }
 
 #else /* CONFIG_MODULES */
@@ -216,7 +273,6 @@ codetag_register_type(const struct codetag_type_desc *desc)
 		return ERR_PTR(-ENOMEM);
 
 	cttype->desc = *desc;
-	idr_init(&cttype->mod_idr);
 	init_rwsem(&cttype->mod_lock);
 
 	err = codetag_module_init(cttype, NULL);
@@ -245,6 +301,50 @@ void codetag_load_module(struct module *mod)
 	mutex_unlock(&codetag_lock);
 }
 
+static bool cttype_unload_module(struct codetag_type *cttype, struct module *mod)
+{
+	bool unload_ok = true;
+
+	struct codetag_modules *new_mods = NULL;
+	struct codetag_modules *old_mods =
+		rcu_dereference_protected(cttype->mods_rcu, lockdep_is_held(&cttype->mod_lock));
+	struct codetag_module *mod_a = codetag_mods_array(old_mods);
+
+	unsigned pos;
+	for (pos = 0; pos < old_mods->nr_modules; pos++)
+		if (mod_a[pos].mod == mod)
+			goto found;
+	return true;
+found:
+	if (cttype->desc.module_unload &&
+	    !cttype->desc.module_unload(cttype, &mod_a[pos]))
+		unload_ok = false;
+	cttype->count -= mod_a[pos].nr;
+
+	unsigned new_nr = old_mods->nr_modules - 1;
+	if (!new_nr)
+		goto out;
+
+	new_mods = kzalloc(codetag_modules_bytes(old_mods->nr_modules), GFP_KERNEL);
+	if (!new_mods)
+		return false;
+
+	new_mods->nr_modules = new_nr;
+	mod_a = codetag_mods_array(new_mods);
+
+	memcpy(mod_a, codetag_mods_array(old_mods),
+	       sizeof(struct codetag_module) * old_mods->nr_modules);
+	memmove(&mod_a[pos],
+		&mod_a[pos + 1],
+		sizeof(mod_a[0]) * new_nr - pos);
+
+	codetag_modules_init_eytz(new_mods);
+out:
+	rcu_assign_pointer(cttype->mods_rcu, new_mods);
+	kfree_rcu(old_mods, rcu);
+	return unload_ok;
+}
+
 bool codetag_unload_module(struct module *mod)
 {
 	struct codetag_type *cttype;
@@ -255,26 +355,9 @@ bool codetag_unload_module(struct module *mod)
 
 	mutex_lock(&codetag_lock);
 	list_for_each_entry(cttype, &codetag_types, link) {
-		struct codetag_module *found = NULL;
-		struct codetag_module *cmod;
-		unsigned long mod_id, tmp;
-
 		down_write(&cttype->mod_lock);
-		idr_for_each_entry_ul(&cttype->mod_idr, cmod, tmp, mod_id) {
-			if (cmod->mod && cmod->mod == mod) {
-				found = cmod;
-				break;
-			}
-		}
-		if (found) {
-			if (cttype->desc.module_unload)
-				if (!cttype->desc.module_unload(cttype, cmod))
-					unload_ok = false;
-
-			cttype->count -= range_size(cttype, &cmod->range);
-			idr_remove(&cttype->mod_idr, mod_id);
-			kfree(cmod);
-		}
+		if (!cttype_unload_module(cttype, mod))
+			unload_ok = false;
 		up_write(&cttype->mod_lock);
 	}
 	mutex_unlock(&codetag_lock);
