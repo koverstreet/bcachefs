@@ -19,11 +19,12 @@ struct module;
  * an array of these.
  */
 struct codetag {
-	unsigned int flags; /* used in later patches */
-	unsigned int lineno;
-	const char *modname;
-	const char *function;
-	const char *filename;
+	u16		idx;
+	u16		flags; /* used in later patches */
+	u32		lineno;
+	const char	*modname;
+	const char	*function;
+	const char	*filename;
 } __aligned(8);
 
 union codetag_ref {

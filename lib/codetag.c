@@ -244,6 +244,10 @@ insert_done:
 
 	rcu_assign_pointer(cttype->mods_rcu, new_mods);
 	kfree_rcu(old_mods, rcu);
+
+	for (unsigned i = 0; i < cmod.nr; i++)
+		__idx_to_codetag(cttype, &cmod, cmod.idx + i)->idx = cmod.idx + i;
+
 	return 0;
 }
 
