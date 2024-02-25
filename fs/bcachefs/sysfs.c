@@ -204,6 +204,7 @@ read_attribute(disk_groups);
 
 read_attribute(has_data);
 read_attribute(alloc_debug);
+read_attribute(accounting);
 
 #define x(t, n, ...) read_attribute(t);
 BCH_PERSISTENT_COUNTERS()
@@ -412,6 +413,9 @@ SHOW(bch2_fs)
 
 	if (attr == &sysfs_disk_groups)
 		bch2_disk_groups_to_text(out, c);
+
+	if (attr == &sysfs_accounting)
+		bch2_fs_accounting_to_text(out, c);
 
 	return 0;
 }
@@ -625,6 +629,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_internal_uuid,
 
 	&sysfs_disk_groups,
+	&sysfs_accounting,
 	NULL
 };
 
