@@ -1203,7 +1203,7 @@ int bch2_fs_journal_start(struct journal *j, u64 cur_seq)
 	genradix_for_each_reverse(&c->journal_entries, iter, _i) {
 		i = *_i;
 
-		if (!i || i->ignore)
+		if (journal_replay_ignore(i))
 			continue;
 
 		last_seq = le64_to_cpu(i->j.last_seq);
@@ -1236,7 +1236,7 @@ int bch2_fs_journal_start(struct journal *j, u64 cur_seq)
 	genradix_for_each(&c->journal_entries, iter, _i) {
 		i = *_i;
 
-		if (!i || i->ignore)
+		if (journal_replay_ignore(i))
 			continue;
 
 		seq = le64_to_cpu(i->j.seq);
