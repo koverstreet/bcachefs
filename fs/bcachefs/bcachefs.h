@@ -644,8 +644,9 @@ struct journal_keys {
 		u32		journal_offset;
 		enum btree_id	btree_id:8;
 		unsigned	level:8;
-		bool		allocated;
-		bool		overwritten;
+		bool		allocated:1;
+		bool		overwritten:1;
+		bool		backwards:1;
 		struct bkey_i	*k;
 	}			*data;
 	/*

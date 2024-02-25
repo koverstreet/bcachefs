@@ -300,9 +300,11 @@ inline void bch2_btree_insert_key_leaf(struct btree_trans *trans,
 					&path_l(path)->iter, insert)))
 		return;
 
-	i->journal_seq = cpu_to_le64(max(journal_seq, le64_to_cpu(i->journal_seq)));
-
-	bch2_btree_add_journal_pin(c, b, journal_seq);
+	/* journal_seq == 0 only when doing backwards journal replay */
+	if (likely(journal_seq)) {
+		i->journal_seq = cpu_to_le64(max(journal_seq, le64_to_cpu(i->journal_seq)));
+		bch2_btree_add_journal_pin(c, b, journal_seq);
+	}
 
 	if (unlikely(!btree_node_dirty(b))) {
 		EBUG_ON(test_bit(BCH_FS_clean_shutdown, &c->flags));

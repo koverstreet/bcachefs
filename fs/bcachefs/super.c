@@ -365,6 +365,7 @@ void bch2_fs_read_only(struct bch_fs *c)
 	    !test_bit(BCH_FS_emergency_ro, &c->flags) &&
 	    test_bit(BCH_FS_started, &c->flags) &&
 	    test_bit(BCH_FS_clean_shutdown, &c->flags) &&
+	    !c->opts.replay_journal_backwards &&
 	    c->recovery_pass_done >= BCH_RECOVERY_PASS_journal_replay) {
 		BUG_ON(c->journal.last_empty_seq != journal_cur_seq(&c->journal));
 		BUG_ON(atomic_read(&c->btree_cache.dirty));

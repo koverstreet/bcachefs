@@ -765,24 +765,28 @@ bool bch2_btree_insert_key_cached(struct btree_trans *trans,
 			kick_reclaim = true;
 	}
 
-	/*
-	 * To minimize lock contention, we only add the journal pin here and
-	 * defer pin updates to the flush callback via ->seq. Be careful not to
-	 * update ->seq on nojournal commits because we don't want to update the
-	 * pin to a seq that doesn't include journal updates on disk. Otherwise
-	 * we risk losing the update after a crash.
-	 *
-	 * The only exception is if the pin is not active in the first place. We
-	 * have to add the pin because journal reclaim drives key cache
-	 * flushing. The flush callback will not proceed unless ->seq matches
-	 * the latest pin, so make sure it starts with a consistent value.
-	 */
-	if (!(insert_entry->flags & BTREE_UPDATE_nojournal) ||
-	    !journal_pin_active(&ck->journal)) {
-		ck->seq = trans->journal_res.seq;
+	if (likely(trans->journal_res.seq)) {
+		/*
+		 * To minimize lock contention, we only add the journal pin here
+		 * and defer pin updates to the flush callback via ->seq. Be
+		 * careful not to update ->seq on nojournal commits because we
+		 * don't want to update the pin to a seq that doesn't include
+		 * journal updates on disk. Otherwise we risk losing the update
+		 * after a crash.
+		 *
+		 * The only exception is if the pin is not active in the first
+		 * place. We have to add the pin because journal reclaim drives
+		 * key cache flushing. The flush callback will not proceed
+		 * unless ->seq matches the latest pin, so make sure it starts
+		 * with a consistent value.
+		 */
+		if (!(insert_entry->flags & BTREE_UPDATE_nojournal) ||
+		    !journal_pin_active(&ck->journal))
+			ck->seq = trans->journal_res.seq;
+
+		bch2_journal_pin_add(&c->journal, trans->journal_res.seq,
+				     &ck->journal, bch2_btree_key_cache_journal_flush);
 	}
-	bch2_journal_pin_add(&c->journal, trans->journal_res.seq,
-			     &ck->journal, bch2_btree_key_cache_journal_flush);
 
 	if (kick_reclaim)
 		journal_reclaim_kick(&c->journal);
@@ -984,6 +988,7 @@ void bch2_fs_btree_key_cache_exit(struct btree_key_cache *bc)
 
 	if (atomic_long_read(&bc->nr_dirty) &&
 	    !bch2_journal_error(&c->journal) &&
+	    !c->opts.replay_journal_backwards &&
 	    test_bit(BCH_FS_was_rw, &c->flags))
 		panic("btree key cache shutdown error: nr_dirty nonzero (%li)\n",
 		      atomic_long_read(&bc->nr_dirty));

@@ -376,7 +376,7 @@ enum fsck_err_opts {
 	  BCH2_NO_SB_OPT,		false,				\
 	  NULL,		"Don't free journal entries/keys, scanned btree nodes after startup")\
 	x(read_entire_journal,		u8,				\
-	  0,								\
+	  OPT_MOUNT,							\
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,		false,				\
 	  NULL,		"Read all journal entries, not just dirty ones")\
@@ -385,6 +385,11 @@ enum fsck_err_opts {
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,		false,				\
 	  NULL,		"Only read the journal, skip the rest of recovery")\
+	x(replay_journal_backwards,	u64,				\
+	  OPT_MOUNT,							\
+	  OPT_UINT(0, U64_MAX),						\
+	  BCH2_NO_SB_OPT,		0,				\
+	  NULL,		"Replay the journal backwards to given sequence number")\
 	x(journal_transaction_names,	u8,				\
 	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
 	  OPT_BOOL(),							\

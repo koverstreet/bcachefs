@@ -149,6 +149,9 @@ static int journal_entry_add(struct bch_fs *c, struct bch_dev *ca,
 	    le64_to_cpu(j->seq) < c->journal.oldest_seq_found_ondisk)
 		c->journal.oldest_seq_found_ondisk = le64_to_cpu(j->seq);
 
+	if (c->opts.replay_journal_backwards)
+		last_seq = min(last_seq, c->opts.replay_journal_backwards);
+
 	/* Is this entry older than the range we need? */
 	if (!c->opts.read_entire_journal &&
 	    le64_to_cpu(j->seq) < jlist->last_seq)

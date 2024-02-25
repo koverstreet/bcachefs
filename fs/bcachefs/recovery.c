@@ -188,7 +188,7 @@ static int bch2_journal_replay_key(struct btree_trans *trans,
 	if (k->overwritten)
 		return 0;
 
-	trans->journal_res.seq = k->journal_seq;
+	trans->journal_res.seq = !k->backwards ? k->journal_seq : 0;
 
 	/*
 	 * BTREE_UPDATE_key_cache_reclaim disables key cache lookup/update to
@@ -713,7 +713,10 @@ int bch2_fs_recovery(struct bch_fs *c)
 
 	bch2_journal_pos_from_member_info_resume(c);
 
-	if (!c->sb.clean || c->opts.retain_recovery_info) {
+	if (c->opts.replay_journal_backwards)
+		c->opts.read_entire_journal = true;
+
+	if (!c->sb.clean || c->opts.retain_recovery_info || c->opts.replay_journal_backwards) {
 		struct genradix_iter iter;
 		struct journal_replay **i;
 

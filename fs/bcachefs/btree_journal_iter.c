@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "bbpos.h"
 #include "bkey_buf.h"
 #include "bset.h"
 #include "btree_cache.h"
 #include "btree_journal_iter.h"
 #include "journal_io.h"
 
+#include <linux/bsearch.h>
 #include <linux/sort.h>
 
 /*
@@ -491,19 +493,6 @@ void bch2_journal_entries_free(struct bch_fs *c)
 	genradix_free(&c->journal_entries);
 }
 
-/*
- * When keys compare equal, oldest compares first:
- */
-static int journal_sort_key_cmp(const void *_l, const void *_r)
-{
-	const struct journal_key *l = _l;
-	const struct journal_key *r = _r;
-
-	return  journal_key_cmp(l, r) ?:
-		cmp_int(l->journal_seq, r->journal_seq) ?:
-		cmp_int(l->journal_offset, r->journal_offset);
-}
-
 void bch2_journal_keys_put(struct bch_fs *c)
 {
 	struct journal_keys *keys = &c->journal_keys;
@@ -526,9 +515,35 @@ void bch2_journal_keys_put(struct bch_fs *c)
 	bch2_journal_entries_free(c);
 }
 
-static void __journal_keys_sort(struct journal_keys *keys)
+/*
+ * When keys compare equal, oldest compares first:
+ */
+static int journal_sort_key_cmp(const void *_l, const void *_r)
 {
-	sort(keys->data, keys->nr, sizeof(keys->data[0]), journal_sort_key_cmp, NULL);
+	const struct journal_key *l = _l;
+	const struct journal_key *r = _r;
+
+	return  journal_key_cmp(l, r) ?:
+		cmp_int(l->journal_seq, r->journal_seq) ?:
+		cmp_int(l->journal_offset, r->journal_offset);
+}
+
+static int journal_sort_key_backwards_cmp(const void *_l, const void *_r)
+{
+	const struct journal_key *l = _l;
+	const struct journal_key *r = _r;
+
+	return journal_key_cmp(l, r) ?:
+		-(cmp_int(l->journal_seq, r->journal_seq) ?:
+		  cmp_int(l->journal_offset, r->journal_offset));
+}
+
+static void __journal_keys_sort(struct journal_keys *keys, bool backwards)
+{
+	sort(keys->data, keys->nr, sizeof(keys->data[0]),
+	     !backwards
+	     ? journal_sort_key_cmp
+	     : journal_sort_key_backwards_cmp, NULL);
 
 	struct journal_key *dst = keys->data;
 
@@ -549,51 +564,171 @@ static void __journal_keys_sort(struct journal_keys *keys)
 	keys->nr = dst - keys->data;
 }
 
+static int journal_key_add(struct bch_fs *c, struct journal_keys *keys,
+			   bool backwards, struct journal_key n)
+{
+	if (darray_push(keys, n)) {
+		__journal_keys_sort(keys, backwards);
+
+		if (keys->nr * 8 > keys->size * 7) {
+			bch_err(c, "Too many journal keys for slowpath; have %zu compacted, buf size %zu, at seq %llu",
+				keys->nr, keys->size, n.journal_seq);
+			return -BCH_ERR_ENOMEM_journal_keys_sort;
+		}
+
+		BUG_ON(darray_push(keys, n));
+	}
+
+	return 0;
+}
+
+static inline bool replaying_backwards(struct bch_fs *c, struct jset *j, struct jset_entry *entry)
+{
+	return c->opts.replay_journal_backwards &&
+		le64_to_cpu(j->seq) >= c->opts.replay_journal_backwards;
+}
+
+static inline bool btree_uses_write_buffer(enum btree_id btree)
+{
+	switch (btree) {
+	case BTREE_ID_lru:
+	case BTREE_ID_backpointers:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static int bbpos_sort_cmp(const void *_l, const void *_r)
+{
+	const struct bbpos *l = _l;
+	const struct bbpos *r = _r;
+
+	return bbpos_cmp(*l, *r);
+}
+
+static int bbpos_journal_key_cmp(const void *_l, const void *_r)
+{
+	const struct bbpos *l = _l;
+	const struct journal_key *r = _r;
+
+	return __journal_key_cmp(l->btree, 0, l->pos, r);
+}
+
 int bch2_journal_keys_sort(struct bch_fs *c)
 {
 	struct genradix_iter iter;
 	struct journal_replay *i, **_i;
 	struct journal_keys *keys = &c->journal_keys;
+	struct journal_keys backwards_keys = {};
+	DARRAY(struct bbpos) backwards_holes = {};
+	bool backwards = false;
 	size_t nr_read = 0;
+	int ret = 0;
 
 	genradix_for_each(&c->journal_entries, iter, _i) {
 		i = *_i;
 
-		if (journal_replay_ignore(i))
+		if (!i || i->ignore_blacklisted)
 			continue;
+
+		if (!c->opts.replay_journal_backwards) {
+			if (i->ignore_not_dirty)
+				continue;
+		} else {
+			if (le64_to_cpu(i->j.seq) < c->opts.replay_journal_backwards)
+				continue;
+		}
 
 		cond_resched();
 
-		for_each_jset_key(k, entry, &i->j) {
-			struct journal_key n = (struct journal_key) {
-				.btree_id	= entry->btree_id,
-				.level		= entry->level,
-				.k		= k,
-				.journal_seq	= le64_to_cpu(i->j.seq),
-				.journal_offset	= k->_data - i->j._data,
-			};
+		vstruct_for_each(&i->j, entry) {
+			if (replaying_backwards(c, &i->j, entry))
+				backwards = true;
+			//if (replaying_backwards(c, &i->j, entry) &&
+			//    entry_is_transaction_start(entry))
+			//	backwards = true;
 
-			if (darray_push(keys, n)) {
-				__journal_keys_sort(keys);
+			if (entry->type != BCH_JSET_ENTRY_btree_keys &&
+			    entry->type != BCH_JSET_ENTRY_overwrite)
+				continue;
 
-				if (keys->nr * 8 > keys->size * 7) {
-					bch_err(c, "Too many journal keys for slowpath; have %zu compacted, buf size %zu, processed %zu keys at seq %llu",
-						keys->nr, keys->size, nr_read, le64_to_cpu(i->j.seq));
-					return -BCH_ERR_ENOMEM_journal_keys_sort;
+			bool backwards_entry = backwards && !entry->level;
+
+			jset_entry_for_each_key(entry, k) {
+				struct journal_key n = (struct journal_key) {
+					.btree_id	= entry->btree_id,
+					.level		= entry->level,
+					.backwards	= backwards_entry,
+					.k		= k,
+					.journal_seq	= le64_to_cpu(i->j.seq),
+					.journal_offset	= k->_data - i->j._data,
+				};
+
+				if (!backwards_entry &&
+				    !i->ignore_not_dirty &&
+				    entry->type == BCH_JSET_ENTRY_btree_keys) {
+					ret = journal_key_add(c, keys, false, n);
+					if (ret)
+						goto err;
 				}
 
-				BUG_ON(darray_push(keys, n));
-			}
+				if (backwards_entry &&
+				    entry->type == BCH_JSET_ENTRY_overwrite) {
+					ret = journal_key_add(c, &backwards_keys, true, n);
+					if (ret)
+						goto err;
+				}
 
-			nr_read++;
+				if (backwards_entry &&
+				    entry->type == BCH_JSET_ENTRY_btree_keys &&
+				    btree_uses_write_buffer(entry->btree_id)) {
+					ret = darray_push(&backwards_holes, BBPOS(entry->btree_id, k->k.p));
+					if (ret)
+						goto err;
+				}
+
+				nr_read++;
+			}
 		}
 	}
 
-	__journal_keys_sort(keys);
+	__journal_keys_sort(keys, false);
+
+	sort(backwards_holes.data, backwards_holes.nr, sizeof(backwards_holes.data[0]),
+	     bbpos_sort_cmp, NULL);
+
+	struct bbpos *dst = backwards_holes.data;
+	darray_for_each(backwards_holes, src) {
+		if (src + 1 < &darray_top(backwards_holes) &&
+		    !bbpos_cmp(src[0], src[1]))
+			continue;
+
+		if (bsearch(src, keys->data, keys->nr, sizeof(keys->data[0]), bbpos_journal_key_cmp))
+			continue;
+
+		*dst++ = *src;
+	}
+	backwards_holes.nr = dst - backwards_holes.data;
+
+	if (backwards_holes.nr)
+		bch_err(c, "replaying backwards but have holes");
+
+	__journal_keys_sort(&backwards_keys, true);
+	darray_for_each(backwards_keys, i) {
+		ret = journal_key_add(c, keys, false, *i);
+		if (ret)
+			goto err;
+	}
+
+	__journal_keys_sort(keys, false);
 	keys->gap = keys->nr;
 
 	bch_verbose(c, "Journal keys: %zu read, %zu after sorting and compacting", nr_read, keys->nr);
-	return 0;
+err:
+	darray_exit(&backwards_holes);
+	kvfree(backwards_keys.data);
+	return ret;
 }
 
 void bch2_shoot_down_journal_keys(struct bch_fs *c, enum btree_id btree,

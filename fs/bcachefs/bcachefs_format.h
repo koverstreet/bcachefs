@@ -1220,6 +1220,11 @@ struct jset_entry_log {
 	u8			d[];
 } __packed __aligned(8);
 
+static inline bool entry_is_transaction_start(struct jset_entry *entry)
+{
+	return entry->type == BCH_JSET_ENTRY_log && !entry->level;
+}
+
 struct jset_entry_datetime {
 	struct jset_entry	entry;
 	__le64			seconds;

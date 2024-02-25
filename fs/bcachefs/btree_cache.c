@@ -512,6 +512,7 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 	}
 
 	BUG_ON(!bch2_journal_error(&c->journal) &&
+	       !c->opts.replay_journal_backwards &&
 	       atomic_read(&c->btree_cache.dirty));
 
 	list_splice(&bc->freed_pcpu, &bc->freed_nonpcpu);
