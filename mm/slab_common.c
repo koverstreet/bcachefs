@@ -972,6 +972,19 @@ size_t __ksize(const void *object)
 	return slab_ksize(folio_slab(folio)->slab_cache);
 }
 
+/**
+ * __kvsize -- Report full size of underlying allocation
+ * @object: pointer to the object
+ *
+ * __ksize equivalent, but for kvmalloc
+ */
+size_t __kvsize(const void *addr)
+{
+	return is_vmalloc_addr(addr)
+		? vmalloc_bytes(addr)
+		: __ksize(addr);
+}
+
 gfp_t kmalloc_fix_flags(gfp_t flags)
 {
 	gfp_t invalid_mask = flags & GFP_SLAB_BUG_MASK;
