@@ -2849,6 +2849,26 @@ void vfree(const void *addr)
 EXPORT_SYMBOL(vfree);
 
 /**
+ * vmalloc_bytes - Return size of a vmalloc() allocation
+ * @addr:  Memory base address
+ *
+ * Returns the size of the allocation as passed to vmalloc() rounded up to
+ * PAGE_SIZE; does not include extra internal allocations.
+ */
+size_t vmalloc_bytes(const void *addr)
+{
+	struct vm_struct *vm = find_vm_area(addr);
+	if (unlikely(!vm)) {
+		WARN(1, KERN_ERR "vmalloc_bytes() called on nonexistent vm area (%p)\n",
+		     addr);
+		return 0;
+	}
+
+	return vm->nr_pages * PAGE_SIZE;
+}
+EXPORT_SYMBOL(vmalloc_bytes);
+
+/**
  * vunmap - release virtual mapping obtained by vmap()
  * @addr:   memory base address
  *
