@@ -1632,16 +1632,6 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	if (ret)
 		goto err;
 
-	/*
-	 * We need to flush the entire journal to get rid of keys that reference
-	 * the device being removed before removing the superblock entry
-	 */
-	bch2_journal_flush_all_pins(&c->journal);
-
-	/*
-	 * this is really just needed for the bch2_replicas_gc_(start|end)
-	 * calls, and could be cleaned up:
-	 */
 	ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
 	bch_err_msg(ca, ret, "bch2_journal_flush_device_pins()");
 	if (ret)
@@ -1678,6 +1668,17 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	wait_for_completion(&ca->ref_completion);
 
 	bch2_dev_free(ca);
+
+	/*
+	 * At this point the device object has been removed in-core, but the
+	 * on-disk journal might still refer to the device index via sb device
+	 * usage entries. Recovery fails if it sees usage information for an
+	 * invalid device. Flush journal pins to push the back of the journal
+	 * past now invalid device index references before we update the
+	 * superblock, but after the device object has been removed so any
+	 * further journal writes elide usage info for the device.
+	 */
+	bch2_journal_flush_all_pins(&c->journal);
 
 	/*
 	 * Free this device's slot in the bch_member array - all pointers to
