@@ -5,6 +5,7 @@
 #include <linux/uuid.h>
 #include <asm/ioctl.h>
 #include "bcachefs_format.h"
+#include "bkey_types.h"
 
 /*
  * Flags common to multiple ioctls:
@@ -87,6 +88,7 @@ struct bch_ioctl_incremental {
 #define BCH_IOCTL_FSCK_ONLINE	_IOW(0xbc,	20,  struct bch_ioctl_fsck_online)
 #define BCH_IOCTL_SUBVOLUME_LIST _IOW(0xbc,	21,  struct bch_ioctl_subvolume_list)
 #define BCH_IOCTL_SUBVOLUME_PATH _IOW(0xbc,	22,  struct bch_ioctl_subvolume_path)
+#define BCH_IOCTL_QUERY_ACCOUNTING _IOW(0xbc,	23,  struct bch_ioctl_query_accounting)
 
 /* ioctl below act on a particular file, not the filesystem as a whole: */
 
@@ -264,6 +266,7 @@ replicas_usage_next(struct bch_replicas_usage *u)
 	return (void *) u + replicas_usage_bytes(u);
 }
 
+/* Obsolete */
 /*
  * BCH_IOCTL_FS_USAGE: query filesystem disk space usage
  *
@@ -289,6 +292,7 @@ struct bch_ioctl_fs_usage {
 	struct bch_replicas_usage replicas[];
 };
 
+/* Obsolete */
 /*
  * BCH_IOCTL_DEV_USAGE: query device disk space usage
  *
@@ -313,6 +317,7 @@ struct bch_ioctl_dev_usage {
 	}			d[10];
 };
 
+/* Obsolete */
 struct bch_ioctl_dev_usage_v2 {
 	__u64			dev;
 	__u32			flags;
@@ -431,6 +436,30 @@ struct bch_ioctl_subvolume_path {
 	__u64			subvolid;
 	__u64			buflen;
 	__u8			buf[];
+};
+
+/*
+ * BCH_IOCTL_QUERY_ACCOUNTING: query filesystem disk accounting
+ *
+ * Returns disk space usage broken out by data type, number of replicas, and
+ * by component device
+ *
+ * @replica_entries_bytes - size, in bytes, allocated for replica usage entries
+ *
+ * On success, @replica_entries_bytes will be changed to indicate the number of
+ * bytes actually used.
+ *
+ * Returns -ERANGE if @replica_entries_bytes was too small
+ */
+struct bch_ioctl_query_accounting {
+	__u64			capacity;
+	__u64			used;
+	__u64			online_reserved;
+
+	__u32			accounting_u64s; /* input parameter */
+	__u32			accounting_types_mask; /* input parameter */
+
+	struct bkey_i_accounting accounting[];
 };
 
 #endif /* _BCACHEFS_IOCTL_H */
