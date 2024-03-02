@@ -85,6 +85,8 @@ struct bch_ioctl_incremental {
 
 #define BCH_IOCTL_FSCK_OFFLINE	_IOW(0xbc,	19,  struct bch_ioctl_fsck_offline)
 #define BCH_IOCTL_FSCK_ONLINE	_IOW(0xbc,	20,  struct bch_ioctl_fsck_online)
+#define BCH_IOCTL_SUBVOLUME_LIST _IOW(0xbc,	21,  struct bch_ioctl_subvolume_list)
+#define BCH_IOCTL_SUBVOLUME_PATH _IOW(0xbc,	22,  struct bch_ioctl_subvolume_path)
 
 /* ioctl below act on a particular file, not the filesystem as a whole: */
 
@@ -407,6 +409,23 @@ struct bch_ioctl_fsck_offline {
 struct bch_ioctl_fsck_online {
 	__u64			flags;
 	__u64			opts;		/* string */
+};
+
+/*
+ * BCH_IOCTL_SUBVOLUME_LIST: List child subvolumes of current subvolume
+ */
+struct bch_ioctl_subvolume_list {
+	__u64			buflen;
+	__u64			buf[];
+};
+
+/*
+ * BCH_IOCTL_SUBVOLUME_PATH: Get path to a given subvolid
+ */
+struct bch_ioctl_subvolume_path {
+	__u64			subvolid;
+	__u64			buflen;
+	__u8			buf[];
 };
 
 #endif /* _BCACHEFS_IOCTL_H */

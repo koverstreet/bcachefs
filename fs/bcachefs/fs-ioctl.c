@@ -476,6 +476,47 @@ err:
 	return ret;
 }
 
+static long bch2_ioctl_subvolume_list(struct bch_fs *c, struct file *file,
+				      struct bch_ioctl_subvolume_list __user *user_arg)
+{
+	struct bch_inode_info *inode = file_bch_inode(file);
+	struct bch_ioctl_subvolume_list arg;
+	DARRAY(u64) children = {};
+
+	int ret = copy_from_user_errcode(&arg, user_arg, sizeof(arg)) ?:
+		  bch2_trans_run(c,
+		  for_each_btree_key_upto(trans, iter, BTREE_ID_subvolume_children,
+					  POS(inode->ei_subvol, 0),
+					  POS(inode->ei_subvol, U64_MAX), 0, k, ({
+			darray_push(&children, k.k->p.offset);
+		}))) ?:
+		(children.nr > arg.buflen ? -ERANGE : 0) ?:
+		(arg.buflen = children.nr, 0) ?:
+		copy_to_user_errcode(user_arg, &arg, sizeof(arg)) ?:
+		copy_to_user_errcode(&user_arg->buf, children.data,
+				     sizeof(children.data[0]) * children.nr);
+
+	darray_exit(&children);
+	return ret;
+}
+
+static long bch2_ioctl_subvolume_path(struct bch_fs *c, struct file *file,
+				      struct bch_ioctl_subvolume_path __user *user_arg)
+{
+	struct bch_ioctl_subvolume_path arg;
+	darray_char path = {};
+
+	int ret = copy_from_user_errcode(&arg, user_arg, sizeof(arg)) ?:
+		  bch2_subvol_to_path_checked(c, file->f_path.mnt, arg.subvolid, &path);
+		  (path.nr > arg.buflen ? -ERANGE : 0) ?:
+		  (arg.buflen = path.nr, 0) ?:
+		  copy_to_user_errcode(user_arg, &arg, sizeof(arg)) ?:
+		  copy_to_user_errcode(&user_arg->buf, path.data, path.nr);
+
+	darray_exit(&path);
+	return ret;
+}
+
 long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	struct bch_inode_info *inode = file_bch_inode(file);
@@ -534,6 +575,14 @@ long bch2_fs_file_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 			: bch2_ioctl_subvolume_destroy(c, file, i);
 		break;
 	}
+
+	case BCH_IOCTL_SUBVOLUME_LIST:
+		ret = bch2_ioctl_subvolume_list(c, file, (void __user *) arg);
+		break;
+
+	case BCH_IOCTL_SUBVOLUME_PATH:
+		ret = bch2_ioctl_subvolume_path(c, file, (void __user *) arg);
+		break;
 
 	default:
 		ret = bch2_fs_ioctl(c, cmd, (void __user *) arg);

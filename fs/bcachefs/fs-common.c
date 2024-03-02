@@ -557,9 +557,12 @@ static void memreverse(char *dst, const char *src, size_t len)
 
 static void memreverse_inplace(char *p1, size_t len)
 {
-	char *p2  = p1 + len;
-	while (p2 > p1)
-		swap(*p1++, *--p2);
+	char *p2 = p1 + len;
+	while (p2 > p1) {
+		--p2;
+		swap(*p1, *p2);
+		p1++;
+	}
 }
 
 int bch2_inum_to_path_trans(struct btree_trans *trans, subvol_inum inum, darray_char *path)
@@ -570,9 +573,11 @@ int bch2_inum_to_path_trans(struct btree_trans *trans, subvol_inum inum, darray_
 	darray_init(path);
 
 	while (true) {
-		ret = darray_push(path, '/');
-		if (ret)
-			goto err;
+		if (path->nr) {
+			ret = darray_push(path, '/');
+			if (ret)
+				goto err;
+		}
 
 		if (inum.subvol == BCACHEFS_ROOT_SUBVOL &&
 		    inum.inum	== BCACHEFS_ROOT_INO)
@@ -580,13 +585,10 @@ int bch2_inum_to_path_trans(struct btree_trans *trans, subvol_inum inum, darray_
 
 		struct bch_inode_unpacked inode_u;
 		ret = bch2_inode_find_by_inum_trans(trans, inum, &inode_u);
+		if (!ret && !inode_u.bi_dir)
+			ret = -BCH_ERR_ENOENT_no_backpointer;
 		if (ret)
 			goto err;
-
-		if (!inode_u.bi_dir) {
-			ret = -BCH_ERR_ENOENT_no_backpointer;
-			goto err;
-		}
 
 		u32 subvol = inode_u.bi_parent_subvol ?: inum.subvol;
 		u32 snapshot;
@@ -619,9 +621,9 @@ int bch2_inum_to_path_trans(struct btree_trans *trans, subvol_inum inum, darray_
 
 	ret = darray_push(path, '\0');
 err:
+	bch2_trans_iter_exit(trans, &iter);
 	if (ret)
 		darray_exit(path);
-	bch2_trans_iter_exit(trans, &iter);
 	return ret;
 }
 
@@ -629,6 +631,6 @@ int bch2_subvol_to_path_trans(struct btree_trans *trans, u32 subvol, darray_char
 {
 	struct bch_subvolume s;
 
-	return  bch2_subvolume_get(trans, subvol, true, 0, &s) ?:
+	return  bch2_subvolume_get(trans, subvol, false, 0, &s) ?:
 		bch2_inum_to_path_trans(trans, (subvol_inum) { subvol, le64_to_cpu(s.inode) }, path);
 }
