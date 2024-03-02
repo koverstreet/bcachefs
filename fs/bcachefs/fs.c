@@ -32,6 +32,7 @@
 #include <linux/exportfs.h>
 #include <linux/fiemap.h>
 #include <linux/module.h>
+#include <linux/namei.h>
 #include <linux/pagemap.h>
 #include <linux/posix_acl.h>
 #include <linux/random.h>
@@ -1437,6 +1438,36 @@ static const struct export_operations bch_export_ops = {
 	.get_parent	= bch2_get_parent,
 	.get_name	= bch2_get_name,
 };
+
+static int path_permission_check(struct vfsmount *mnt, const char *path)
+{
+	struct path vfspath;
+	int ret = vfs_path_lookup(mnt->mnt_root, mnt, path, 0, &vfspath);
+	path_put(&vfspath);
+	return ret;
+}
+
+int bch2_inum_to_path_checked(struct bch_fs *c, struct vfsmount *mnt,
+			      subvol_inum inum, darray_char *path)
+{
+	int ret = bch2_trans_do(c, NULL, NULL, 0,
+				bch2_inum_to_path_trans(trans, inum, path)) ?:
+		path_permission_check(mnt, path->data);
+	if (ret)
+		darray_exit(path);
+	return ret;
+}
+
+int bch2_subvol_to_path_checked(struct bch_fs *c, struct vfsmount *mnt,
+				u32 subvol, darray_char *path)
+{
+	int ret = bch2_trans_do(c, NULL, NULL, 0,
+				bch2_subvol_to_path_trans(trans, subvol, path)) ?:
+		path_permission_check(mnt, path->data);
+	if (ret)
+		darray_exit(path);
+	return ret;
+}
 
 static void bch2_vfs_inode_init(struct btree_trans *trans, subvol_inum inum,
 				struct bch_inode_info *inode,

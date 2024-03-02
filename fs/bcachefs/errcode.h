@@ -114,6 +114,7 @@
 	x(ENOENT,			ENOENT_dirent_doesnt_match_inode)	\
 	x(ENOENT,			ENOENT_dev_not_found)			\
 	x(ENOENT,			ENOENT_dev_idx_not_found)		\
+	x(ENOENT,			ENOENT_no_backpointer)			\
 	x(ENOTEMPTY,			ENOTEMPTY_dir_not_empty)		\
 	x(ENOTEMPTY,			ENOTEMPTY_subvol_not_empty)		\
 	x(0,				open_buckets_empty)			\
