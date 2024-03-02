@@ -40,4 +40,7 @@ int bch2_rename_trans(struct btree_trans *,
 bool bch2_reinherit_attrs(struct bch_inode_unpacked *,
 			  struct bch_inode_unpacked *);
 
+int bch2_inum_to_path_trans(struct btree_trans *, subvol_inum, darray_char *);
+int bch2_subvol_to_path_trans(struct btree_trans *, u32, darray_char *);
+
 #endif /* _BCACHEFS_FS_COMMON_H */

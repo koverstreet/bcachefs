@@ -143,6 +143,11 @@ struct bch_inode_unpacked;
 
 #ifndef NO_BCACHEFS_FS
 
+int bch2_inum_to_path_checked(struct bch_fs *, struct vfsmount *,
+			      subvol_inum, darray_char *);
+int bch2_subvol_to_path_checked(struct bch_fs *, struct vfsmount *,
+				u32, darray_char *);
+
 struct bch_inode_info *
 __bch2_create(struct mnt_idmap *, struct bch_inode_info *,
 	      struct dentry *, umode_t, dev_t, subvol_inum, unsigned);

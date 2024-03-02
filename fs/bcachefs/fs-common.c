@@ -547,3 +547,88 @@ err:
 	bch2_trans_iter_exit(trans, &src_dir_iter);
 	return ret;
 }
+
+static void memreverse(char *dst, const char *src, size_t len)
+{
+	src += len;
+	while (len--)
+		*dst++ = *--src;
+}
+
+static void memreverse_inplace(char *p1, size_t len)
+{
+	char *p2  = p1 + len;
+	while (p2 > p1)
+		swap(*p1++, *--p2);
+}
+
+int bch2_inum_to_path_trans(struct btree_trans *trans, subvol_inum inum, darray_char *path)
+{
+	struct btree_iter iter = {};
+	int ret;
+
+	darray_init(path);
+
+	while (true) {
+		ret = darray_push(path, '/');
+		if (ret)
+			goto err;
+
+		if (inum.subvol == BCACHEFS_ROOT_SUBVOL &&
+		    inum.inum	== BCACHEFS_ROOT_INO)
+			break;
+
+		struct bch_inode_unpacked inode_u;
+		ret = bch2_inode_find_by_inum_trans(trans, inum, &inode_u);
+		if (ret)
+			goto err;
+
+		if (!inode_u.bi_dir) {
+			ret = -BCH_ERR_ENOENT_no_backpointer;
+			goto err;
+		}
+
+		u32 subvol = inode_u.bi_parent_subvol ?: inum.subvol;
+		u32 snapshot;
+
+		ret = bch2_subvolume_get_snapshot(trans, subvol, &snapshot);
+		if (ret)
+			goto err;
+
+		struct bkey_s_c_dirent d =
+			bch2_bkey_get_iter_typed(trans, &iter, BTREE_ID_dirents,
+					SPOS(inode_u.bi_dir, inode_u.bi_dir_offset, snapshot),
+					0, dirent);
+		ret = bkey_err(d);
+		if (ret)
+			goto err;
+
+		struct qstr name = bch2_dirent_get_name(d);
+		ret = darray_make_room(path, name.len);
+		if (ret)
+			goto err;
+		memreverse(&darray_top(*path), name.name, name.len);
+		path->nr += name.len;
+		bch2_trans_iter_exit(trans, &iter);
+
+		inum.inum = inode_u.bi_dir;
+		inum.subvol = subvol;
+	}
+
+	memreverse_inplace(path->data, path->nr);
+
+	ret = darray_push(path, '\0');
+err:
+	if (ret)
+		darray_exit(path);
+	bch2_trans_iter_exit(trans, &iter);
+	return ret;
+}
+
+int bch2_subvol_to_path_trans(struct btree_trans *trans, u32 subvol, darray_char *path)
+{
+	struct bch_subvolume s;
+
+	return  bch2_subvolume_get(trans, subvol, true, 0, &s) ?:
+		bch2_inum_to_path_trans(trans, (subvol_inum) { subvol, le64_to_cpu(s.inode) }, path);
+}
