@@ -84,7 +84,7 @@ struct slab {
 		};
 		struct rcu_head rcu_head;
 	};
-	unsigned int __unused;
+	unsigned int object_size;
 
 	atomic_t __page_refcount;
 #ifdef CONFIG_MEMCG

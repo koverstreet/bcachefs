@@ -2366,6 +2366,7 @@ static struct slab *allocate_slab(struct kmem_cache *s, gfp_t flags, int node)
 	}
 
 	slab->objects = oo_objects(oo);
+	slab->object_size = slab_ksize(s);
 	slab->inuse = 0;
 	slab->frozen = 0;
 
@@ -2414,6 +2415,7 @@ static void __free_slab(struct kmem_cache *s, struct slab *slab)
 	int order = folio_order(folio);
 	int pages = 1 << order;
 
+	slab->object_size = -1; /* page->_mapcount */
 	__slab_clear_pfmemalloc(slab);
 	folio->mapping = NULL;
 	/* Make the mapping reset visible before clearing the flag */

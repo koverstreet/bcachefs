@@ -963,13 +963,12 @@ size_t __ksize(const void *object)
 		if (WARN_ON(object != folio_address(folio)))
 			return 0;
 		return folio_size(folio);
-	}
-
+	} else {
 #ifdef CONFIG_SLUB_DEBUG
-	skip_orig_size_check(folio_slab(folio)->slab_cache, object);
+		skip_orig_size_check(folio_slab(folio)->slab_cache, object);
 #endif
-
-	return slab_ksize(folio_slab(folio)->slab_cache);
+		return folio_slab(folio)->object_size;
+	}
 }
 
 /**
