@@ -71,8 +71,7 @@ u64 bch2_recovery_passes_to_stable(u64 v)
 {
 	u64 ret = 0;
 	for (unsigned i = 0; i < ARRAY_SIZE(passes_to_stable_map); i++)
-		if (v & BIT_ULL(i))
-			ret |= BIT_ULL(passes_to_stable_map[i]);
+		ret |= map_bit(v, BIT_ULL(i), BIT_ULL(passes_to_stable_map[i]));
 	return ret;
 }
 
@@ -86,8 +85,7 @@ u64 bch2_recovery_passes_from_stable(u64 v)
 
 	u64 ret = 0;
 	for (unsigned i = 0; i < ARRAY_SIZE(map); i++)
-		if (v & BIT_ULL(i))
-			ret |= BIT_ULL(map[i]);
+		ret |= map_bit(v, BIT_ULL(i), BIT_ULL(map[i]));
 	return ret;
 }
 
@@ -152,8 +150,7 @@ u64 bch2_fsck_recovery_passes(void)
 	u64 ret = 0;
 
 	for (unsigned i = 0; i < ARRAY_SIZE(recovery_pass_fns); i++)
-		if (recovery_pass_fns[i].when & PASS_FSCK)
-			ret |= BIT_ULL(i);
+		ret |= map_bit(recovery_pass_fns[i].when, PASS_FSCK, BIT_ULL(i));
 	return ret;
 }
 

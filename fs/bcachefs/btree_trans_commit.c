@@ -1062,13 +1062,12 @@ int __bch2_trans_commit(struct btree_trans *trans, unsigned flags)
 	if (ret)
 		goto out_reset;
 
+	enum bkey_invalid_flags invalid_flags = 0;
+	invalid_flags |= map_bit(~flags, BCH_TRANS_COMMIT_no_journal_res, BKEY_INVALID_WRITE);
+	invalid_flags |= map_bit(~flags, BCH_TRANS_COMMIT_no_journal_res, BKEY_INVALID_COMMIT);
+
 	trans_for_each_update(trans, i) {
 		struct printbuf buf = PRINTBUF;
-		enum bch_validate_flags invalid_flags = 0;
-
-		if (!(flags & BCH_TRANS_COMMIT_no_journal_res))
-			invalid_flags |= BCH_VALIDATE_write|BCH_VALIDATE_commit;
-
 		if (unlikely(bch2_bkey_invalid(c, bkey_i_to_s_c(i->k),
 					       i->bkey_type, invalid_flags, &buf)))
 			ret = bch2_trans_commit_bkey_invalid(trans, invalid_flags, i, &buf);
@@ -1082,11 +1081,6 @@ int __bch2_trans_commit(struct btree_trans *trans, unsigned flags)
 	for (struct jset_entry *i = trans->journal_entries;
 	     i != (void *) ((u64 *) trans->journal_entries + trans->journal_entries_u64s);
 	     i = vstruct_next(i)) {
-		enum bch_validate_flags invalid_flags = 0;
-
-		if (!(flags & BCH_TRANS_COMMIT_no_journal_res))
-			invalid_flags |= BCH_VALIDATE_write|BCH_VALIDATE_commit;
-
 		if (unlikely(bch2_journal_entry_validate(c, NULL, i,
 					bcachefs_metadata_version_current,
 					CPU_BIG_ENDIAN, invalid_flags)))

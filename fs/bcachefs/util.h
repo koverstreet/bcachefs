@@ -804,4 +804,22 @@ static inline bool test_bit_le64(size_t bit, __le64 *addr)
 	return (addr[bit / 64] & cpu_to_le64(BIT_ULL(bit % 64))) != 0;
 }
 
+static inline void set_bit_p(unsigned nr, unsigned long *addr, bool v)
+{
+	if (v)
+		set_bit(nr, addr);
+	else
+		clear_bit(nr, addr);
+}
+
+/* shift _w by _s; left if positive, right if negative */
+#define signed_shift(_w, _s)							\
+	((_s) > 0								\
+	 ? (_w) << (_s)								\
+	 : (_w) >> -(_s))
+
+/* branchless if masks are constants */
+#define map_bit(_src, _src_mask, _dst_mask)					\
+	signed_shift((_src) & _src_mask, ilog2(_dst_mask) - ilog2(_src_mask))
+
 #endif /* _BCACHEFS_UTIL_H */

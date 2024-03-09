@@ -595,7 +595,7 @@ static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
 	for (i = compression_types;
 	     i < compression_types + ARRAY_SIZE(compression_types);
 	     i++)
-		have_compressed |= (features & (1 << i->feature)) != 0;
+		have_compressed |= (features & BIT_ULL(i->feature)) != 0;
 
 	if (!have_compressed)
 		return 0;
@@ -616,7 +616,7 @@ static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
 		decompress_workspace_size =
 			max(decompress_workspace_size, i->decompress_workspace);
 
-		if (!(features & (1 << i->feature)))
+		if (!(features & BIT_ULL(i->feature)))
 			continue;
 
 		if (mempool_initialized(&c->compress_workspace[i->type]))

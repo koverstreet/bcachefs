@@ -50,8 +50,7 @@ int bch2_create_trans(struct btree_trans *trans,
 		/* Normal create path - allocate a new inode: */
 		bch2_inode_init_late(new_inode, now, uid, gid, mode, rdev, dir_u);
 
-		if (flags & BCH_CREATE_TMPFILE)
-			new_inode->bi_flags |= BCH_INODE_unlinked;
+		new_inode->bi_flags |= map_bit(flags, BCH_CREATE_TMPFILE, BCH_INODE_unlinked);
 
 		ret = bch2_inode_create(trans, &inode_iter, new_inode, snapshot, cpu);
 		if (ret)

@@ -434,16 +434,13 @@ static inline unsigned __bch2_btree_iter_flags(struct btree_trans *trans,
 	    btree_id_is_extents(btree_id))
 		flags |= BTREE_ITER_is_extents;
 
-	if (!(flags & BTREE_ITER_snapshot_field) &&
-	    !btree_type_has_snapshot_field(btree_id))
-		flags &= ~BTREE_ITER_all_snapshots;
+	if (!btree_type_has_snapshot_field(btree_id))
+		flags &= ~map_bit(~flags, _BTREE_ITER_snapshot_field, BTREE_ITER_all_snapshots);
 
-	if (!(flags & BTREE_ITER_all_snapshots) &&
-	    btree_type_has_snapshots(btree_id))
-		flags |= BTREE_ITER_filter_snapshots;
+	if (btree_type_has_snapshots(btree_id))
+		flags |= map_bit(~flags, BTREE_ITER_all_snapshots, BTREE_ITER_filter_snapshots);
 
-	if (trans->journal_replay_not_finished)
-		flags |= BTREE_ITER_with_journal;
+	flags |= map_bit(trans->journal_replay_not_finished, 1, BTREE_ITER_with_journal);
 
 	return flags;
 }
@@ -455,8 +452,9 @@ static inline unsigned bch2_btree_iter_flags(struct btree_trans *trans,
 	if (!btree_id_cached(trans->c, btree_id)) {
 		flags &= ~BTREE_ITER_cached;
 		flags &= ~BTREE_ITER_with_key_cache;
-	} else if (!(flags & BTREE_ITER_cached))
-		flags |= BTREE_ITER_with_key_cache;
+	} else {
+		flags |= map_bit(~flags, BTREE_ITER_cached, BTREE_ITER_with_key_cache);
+	}
 
 	return __bch2_btree_iter_flags(trans, btree_id, flags);
 }

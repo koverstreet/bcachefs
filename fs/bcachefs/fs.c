@@ -886,16 +886,12 @@ static int bch2_getattr(struct mnt_idmap *idmap,
 		stat->btime = bch2_time_to_timespec(c, inode->ei_inode.bi_otime);
 	}
 
-	if (inode->ei_inode.bi_flags & BCH_INODE_immutable)
-		stat->attributes |= STATX_ATTR_IMMUTABLE;
+	stat->attributes |= map_bit(inode->ei_inode.bi_flags, BCH_INODE_immutable, STATX_ATTR_IMMUTABLE);
+	stat->attributes |= map_bit(inode->ei_inode.bi_flags, BCH_INODE_append, STATX_ATTR_APPEND);
+	stat->attributes |= map_bit(inode->ei_inode.bi_flags, BCH_INODE_nodump, STATX_ATTR_NODUMP);
+
 	stat->attributes_mask	 |= STATX_ATTR_IMMUTABLE;
-
-	if (inode->ei_inode.bi_flags & BCH_INODE_append)
-		stat->attributes |= STATX_ATTR_APPEND;
 	stat->attributes_mask	 |= STATX_ATTR_APPEND;
-
-	if (inode->ei_inode.bi_flags & BCH_INODE_nodump)
-		stat->attributes |= STATX_ATTR_NODUMP;
 	stat->attributes_mask	 |= STATX_ATTR_NODUMP;
 
 	return 0;
@@ -1519,10 +1515,7 @@ static void bch2_vfs_inode_init(struct btree_trans *trans, subvol_inum inum,
 	bch2_iget5_set(&inode->v, &inum);
 	bch2_inode_update_after_write(trans, inode, bi, ~0);
 
-	if (BCH_SUBVOLUME_SNAP(subvol))
-		set_bit(EI_INODE_SNAPSHOT, &inode->ei_flags);
-	else
-		clear_bit(EI_INODE_SNAPSHOT, &inode->ei_flags);
+	set_bit_p(EI_INODE_SNAPSHOT, &inode->ei_flags, BCH_SUBVOLUME_SNAP(subvol));
 
 	inode->v.i_blocks	= bi->bi_sectors;
 	inode->v.i_ino		= bi->bi_inum;

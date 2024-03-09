@@ -707,15 +707,11 @@ retry:
 	}
 
 #ifndef __KERNEL__
-	if (opt_get(*opts, direct_io) == false)
-		sb->mode |= BLK_OPEN_BUFFERED;
+	sb->mode |= map_bit(!opt_get(*opts, direct_io), 1, BLK_OPEN_BUFFERED);
 #endif
 
-	if (!opt_get(*opts, noexcl))
-		sb->mode |= BLK_OPEN_EXCL;
-
-	if (!opt_get(*opts, nochanges))
-		sb->mode |= BLK_OPEN_WRITE;
+	sb->mode |= map_bit(!opt_get(*opts, noexcl), 1, BLK_OPEN_EXCL);
+	sb->mode |= map_bit(!opt_get(*opts, nochanges), 1, BLK_OPEN_WRITE);
 
 	sb->s_bdev_file = bdev_file_open_by_path(path, sb->mode, sb->holder, &bch2_sb_handle_bdev_ops);
 	if (IS_ERR(sb->s_bdev_file) &&
@@ -1110,8 +1106,8 @@ out:
 void __bch2_check_set_feature(struct bch_fs *c, unsigned feat)
 {
 	mutex_lock(&c->sb_lock);
-	if (!(c->sb.features & (1ULL << feat))) {
-		c->disk_sb.sb->features[0] |= cpu_to_le64(1ULL << feat);
+	if (!(c->sb.features & BIT_ULL(feat))) {
+		c->disk_sb.sb->features[0] |= cpu_to_le64(BIT_ULL(feat));
 
 		bch2_write_super(c);
 	}
@@ -1352,7 +1348,7 @@ void bch2_sb_to_text(struct printbuf *out, struct bch_sb *sb,
 
 	prt_printf(out, "Sections:\t");
 	vstruct_for_each(sb, f)
-		fields_have |= 1 << le32_to_cpu(f->type);
+		fields_have |= BIT_ULL(le32_to_cpu(f->type));
 	prt_bitflags(out, bch2_sb_fields, fields_have);
 	prt_newline(out);
 

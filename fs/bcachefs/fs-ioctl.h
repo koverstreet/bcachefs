@@ -31,48 +31,33 @@ static const __maybe_unused unsigned bch_flags_to_xflags[] = {
 	//[__BCH_INODE_PROJINHERIT] = FS_XFLAG_PROJINHERIT;
 };
 
-#define set_flags(_map, _in, _out)					\
-do {									\
-	unsigned _i;							\
-									\
-	for (_i = 0; _i < ARRAY_SIZE(_map); _i++)			\
-		if ((_in) & (1 << _i))					\
-			(_out) |= _map[_i];				\
-		else							\
-			(_out) &= ~_map[_i];				\
-} while (0)
-
 #define map_flags(_map, _in)						\
 ({									\
 	unsigned _out = 0;						\
 									\
-	set_flags(_map, _in, _out);					\
+	for (unsigned _i = 0; _i < ARRAY_SIZE(_map); _i++)		\
+		_out |= map_bit((_in), _map[_i], BIT(1U));		\
 	_out;								\
 })
 
 #define map_flags_rev(_map, _in)					\
 ({									\
-	unsigned _i, _out = 0;						\
+	unsigned _out = 0;						\
 									\
-	for (_i = 0; _i < ARRAY_SIZE(_map); _i++)			\
-		if ((_in) & _map[_i]) {					\
-			(_out) |= 1 << _i;				\
-			(_in) &= ~_map[_i];				\
-		}							\
+	for (unsigned _i = 0; _i < ARRAY_SIZE(_map); _i++)		\
+		_out |= map_bit((_in), BIT(1U), _map[_i]);		\
 	(_out);								\
 })
 
-#define map_defined(_map)						\
-({									\
-	unsigned _in = ~0;						\
-									\
-	map_flags_rev(_map, _in);					\
-})
+#define map_out_defined(_map)	map_flags(_map, ~0UL)
+#define map_in_defined(_map)	map_flags_rev(_map, ~0UL)
 
 /* Set VFS inode flags from bcachefs inode: */
 static inline void bch2_inode_flags_to_vfs(struct bch_inode_info *inode)
 {
-	set_flags(bch_flags_to_vfs, inode->ei_inode.bi_flags, inode->v.i_flags);
+	unsigned v = map_flags(bch_flags_to_vfs, inode->ei_inode.bi_flags);
+	inode->v.i_flags &= v | ~map_out_defined(bch_flags_to_vfs);
+	inode->v.i_flags |= v;
 }
 
 long bch2_fs_file_ioctl(struct file *, unsigned, unsigned long);

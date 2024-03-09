@@ -43,9 +43,8 @@ static int bch2_inode_flags_set(struct btree_trans *trans,
 	 */
 	struct flags_set *s = p;
 	unsigned newflags = s->flags;
-	unsigned oldflags = bi->bi_flags & s->mask;
 
-	if (((newflags ^ oldflags) & (BCH_INODE_append|BCH_INODE_immutable)) &&
+	if (((newflags ^ bi->bi_flags) & (BCH_INODE_append|BCH_INODE_immutable)) &&
 	    !capable(CAP_LINUX_IMMUTABLE))
 		return -EPERM;
 
@@ -78,16 +77,19 @@ static int bch2_ioc_setflags(struct bch_fs *c,
 			     struct bch_inode_info *inode,
 			     void __user *arg)
 {
-	struct flags_set s = { .mask = map_defined(bch_flags_to_uflags) };
 	unsigned uflags;
 	int ret;
 
 	if (get_user(uflags, (int __user *) arg))
 		return -EFAULT;
 
-	s.flags = map_flags_rev(bch_flags_to_uflags, uflags);
-	if (uflags)
+	if (uflags & ~map_out_defined(bch_flags_to_uflags))
 		return -EOPNOTSUPP;
+
+	struct flags_set s = {
+		.mask = map_in_defined(bch_flags_to_uflags),
+		.flags = map_flags_rev(bch_flags_to_uflags, uflags)
+	};
 
 	ret = mnt_want_write_file(file);
 	if (ret)
@@ -101,8 +103,7 @@ static int bch2_ioc_setflags(struct bch_fs *c,
 
 	mutex_lock(&inode->ei_update_lock);
 	ret   = bch2_subvol_is_ro(c, inode->ei_subvol) ?:
-		bch2_write_inode(c, inode, bch2_inode_flags_set, &s,
-			       ATTR_CTIME);
+		bch2_write_inode(c, inode, bch2_inode_flags_set, &s, ATTR_CTIME);
 	mutex_unlock(&inode->ei_update_lock);
 
 setflags_out:
@@ -114,19 +115,13 @@ setflags_out:
 static int bch2_ioc_fsgetxattr(struct bch_inode_info *inode,
 			       struct fsxattr __user *arg)
 {
-	struct fsxattr fa = { 0 };
+	struct fsxattr fa = {
+		.fsx_xflags = map_flags(bch_flags_to_xflags, inode->ei_inode.bi_flags)|
+			      map_bit(inode->ei_inode.bi_fields_set, BIT(Inode_opt_project), FS_XFLAG_PROJINHERIT),
+		.fsx_projid = inode->ei_qid.q[QTYP_PRJ],
+	};
 
-	fa.fsx_xflags = map_flags(bch_flags_to_xflags, inode->ei_inode.bi_flags);
-
-	if (inode->ei_inode.bi_fields_set & (1 << Inode_opt_project))
-		fa.fsx_xflags |= FS_XFLAG_PROJINHERIT;
-
-	fa.fsx_projid = inode->ei_qid.q[QTYP_PRJ];
-
-	if (copy_to_user(arg, &fa, sizeof(fa)))
-		return -EFAULT;
-
-	return 0;
+	return copy_to_user_errcode(arg, &fa, sizeof(fa));
 }
 
 static int fssetxattr_inode_update_fn(struct btree_trans *trans,
@@ -136,10 +131,9 @@ static int fssetxattr_inode_update_fn(struct btree_trans *trans,
 {
 	struct flags_set *s = p;
 
-	if (s->projid != bi->bi_project) {
-		bi->bi_fields_set |= 1U << Inode_opt_project;
-		bi->bi_project = s->projid;
-	}
+	if (s->projid != bi->bi_project)
+		bi->bi_fields_set |= BIT(Inode_opt_project);
+	bi->bi_project = s->projid;
 
 	return bch2_inode_flags_set(trans, inode, bi, p);
 }
@@ -149,29 +143,29 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 			       struct bch_inode_info *inode,
 			       struct fsxattr __user *arg)
 {
-	struct flags_set s = { .mask = map_defined(bch_flags_to_xflags) };
 	struct fsxattr fa;
 	int ret;
 
 	if (copy_from_user(&fa, arg, sizeof(fa)))
 		return -EFAULT;
 
-	s.set_projinherit = true;
-	s.projinherit = (fa.fsx_xflags & FS_XFLAG_PROJINHERIT) != 0;
-	fa.fsx_xflags &= ~FS_XFLAG_PROJINHERIT;
-
-	s.flags = map_flags_rev(bch_flags_to_xflags, fa.fsx_xflags);
-	if (fa.fsx_xflags)
+	if (fa.fsx_xflags & ~(map_out_defined(bch_flags_to_xflags)|FS_XFLAG_PROJINHERIT))
 		return -EOPNOTSUPP;
 
 	if (fa.fsx_projid >= U32_MAX)
 		return -EINVAL;
 
-	/*
-	 * inode fields accessible via the xattr interface are stored with a +1
-	 * bias, so that 0 means unset:
-	 */
-	s.projid = fa.fsx_projid + 1;
+	struct flags_set s = {
+		.mask = map_in_defined(bch_flags_to_xflags),
+		.flags = map_flags_rev(bch_flags_to_xflags, fa.fsx_xflags),
+		/*
+		 * inode fields accessible via the xattr interface are stored with a +1
+		 * bias, so that 0 means unset:
+		 */
+		.projid = fa.fsx_projid + 1,
+		.set_projinherit = true,
+		.projinherit = (fa.fsx_xflags & FS_XFLAG_PROJINHERIT) != 0,
+	};
 
 	ret = mnt_want_write_file(file);
 	if (ret)
@@ -186,8 +180,7 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 	mutex_lock(&inode->ei_update_lock);
 	ret   = bch2_subvol_is_ro(c, inode->ei_subvol) ?:
 		bch2_set_projid(c, inode, fa.fsx_projid) ?:
-		bch2_write_inode(c, inode, fssetxattr_inode_update_fn, &s,
-			       ATTR_CTIME);
+		bch2_write_inode(c, inode, fssetxattr_inode_update_fn, &s, ATTR_CTIME);
 	mutex_unlock(&inode->ei_update_lock);
 err:
 	inode_unlock(&inode->v);
@@ -395,11 +388,8 @@ static long __bch2_ioctl_subvolume_create(struct bch_fs *c, struct file *filp,
 	     (arg.flags & BCH_SUBVOL_SNAPSHOT_RO)))
 		return -EINVAL;
 
-	if (arg.flags & BCH_SUBVOL_SNAPSHOT_CREATE)
-		create_flags |= BCH_CREATE_SNAPSHOT;
-
-	if (arg.flags & BCH_SUBVOL_SNAPSHOT_RO)
-		create_flags |= BCH_CREATE_SNAPSHOT_RO;
+	create_flags |= map_bit(arg.flags, BCH_SUBVOL_SNAPSHOT_CREATE,	BCH_CREATE_SNAPSHOT);
+	create_flags |= map_bit(arg.flags, BCH_SUBVOL_SNAPSHOT_RO,	BCH_CREATE_SNAPSHOT_RO);
 
 	if (arg.flags & BCH_SUBVOL_SNAPSHOT_CREATE) {
 		/* sync_inodes_sb enforce s_umount is locked */
