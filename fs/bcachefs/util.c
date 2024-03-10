@@ -867,3 +867,27 @@ err:
 	kfree(orig);
 	return -ENOMEM;
 }
+
+u64 bch2_bitindex_map(const struct bitindex_map *map, u64 src)
+{
+	u64 ret = 0;
+
+	while (map->dst || map->src) {
+		ret |= ((src >> map->src) & 1) << map->dst;
+		map++;
+	}
+
+	return ret;
+}
+
+u64 bch2_bitindex_map_rev(const struct bitindex_map *map, u64 src)
+{
+	u64 ret = 0;
+
+	while (map->dst || map->src) {
+		ret |= ((src >> map->dst) & 1) << map->src;
+		map++;
+	}
+
+	return ret;
+}

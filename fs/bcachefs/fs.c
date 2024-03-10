@@ -50,6 +50,45 @@ static void bch2_vfs_inode_init(struct btree_trans *, subvol_inum,
 				struct bch_inode_unpacked *,
 				struct bch_subvolume *);
 
+/* bcachefs inode flags -> vfs inode flags: */
+static const struct bitindex_map bch2_flags_to_vfs[] = {
+	{__BCH_INODE_sync,		ilog2(S_SYNC)},
+	{__BCH_INODE_immutable,		ilog2(S_IMMUTABLE)},
+	{__BCH_INODE_append,		ilog2(S_APPEND)},
+	{__BCH_INODE_noatime,		ilog2(S_NOATIME)},
+	{},
+};
+
+/* bcachefs inode flags -> FS_IOC_GETFLAGS: */
+const struct bitindex_map bch2_flags_to_uflags[] = {
+	{__BCH_INODE_sync,		ilog2(FS_SYNC_FL)},
+	{__BCH_INODE_immutable,		ilog2(FS_IMMUTABLE_FL)},
+	{__BCH_INODE_append,		ilog2(FS_APPEND_FL)},
+	{__BCH_INODE_nodump,		ilog2(FS_NODUMP_FL)},
+	{__BCH_INODE_noatime,		ilog2(FS_NOATIME_FL)},
+	{},
+};
+
+/* bcachefs inode flags -> FS_IOC_FSGETXATTR: */
+const struct bitindex_map bch2_flags_to_xflags[] = {
+	{__BCH_INODE_sync,		ilog2(FS_XFLAG_SYNC)},
+	{__BCH_INODE_immutable,		ilog2(FS_XFLAG_IMMUTABLE)},
+	{__BCH_INODE_append,		ilog2(FS_XFLAG_APPEND)},
+	{__BCH_INODE_nodump,		ilog2(FS_XFLAG_NODUMP)},
+	{__BCH_INODE_noatime,		ilog2(FS_XFLAG_NOATIME)},
+	//{__BCH_INODE_projinherit,	ilog2(FS_XFLAG_PROJINHERIT)};
+	{},
+};
+
+/* Set VFS inode flags from bcachefs inode: */
+static inline void bch2_inode_flags_to_vfs(struct bch_inode_info *inode)
+{
+	unsigned v = bch2_bitindex_map(bch2_flags_to_vfs, inode->ei_inode.bi_flags);
+
+	inode->v.i_flags &= v | ~bch2_bitindex_map_defined(bch2_flags_to_vfs);
+	inode->v.i_flags |= v;
+}
+
 void bch2_inode_update_after_write(struct btree_trans *trans,
 				   struct bch_inode_info *inode,
 				   struct bch_inode_unpacked *bi,

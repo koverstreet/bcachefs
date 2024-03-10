@@ -143,6 +143,9 @@ struct bch_inode_unpacked;
 
 #ifndef NO_BCACHEFS_FS
 
+extern const struct bitindex_map bch2_flags_to_uflags[];
+extern const struct bitindex_map bch2_flags_to_xflags[];
+
 int bch2_inum_to_path_checked(struct bch_fs *, struct vfsmount *,
 			      subvol_inum, darray_char *);
 int bch2_subvol_to_path_checked(struct bch_fs *, struct vfsmount *,

@@ -67,7 +67,7 @@ static int bch2_inode_flags_set(struct btree_trans *trans,
 
 static int bch2_ioc_getflags(struct bch_inode_info *inode, int __user *arg)
 {
-	unsigned flags = map_flags(bch_flags_to_uflags, inode->ei_inode.bi_flags);
+	unsigned flags = bch2_bitindex_map(bch2_flags_to_uflags, inode->ei_inode.bi_flags);
 
 	return put_user(flags, arg);
 }
@@ -83,12 +83,12 @@ static int bch2_ioc_setflags(struct bch_fs *c,
 	if (get_user(uflags, (int __user *) arg))
 		return -EFAULT;
 
-	if (uflags & ~map_out_defined(bch_flags_to_uflags))
+	if (uflags & ~bch2_bitindex_map_defined(bch2_flags_to_uflags))
 		return -EOPNOTSUPP;
 
 	struct flags_set s = {
-		.mask = map_in_defined(bch_flags_to_uflags),
-		.flags = map_flags_rev(bch_flags_to_uflags, uflags)
+		.mask = bch2_bitindex_map_rev_defined(bch2_flags_to_uflags),
+		.flags = bch2_bitindex_map_rev(bch2_flags_to_uflags, uflags)
 	};
 
 	ret = mnt_want_write_file(file);
@@ -116,7 +116,7 @@ static int bch2_ioc_fsgetxattr(struct bch_inode_info *inode,
 			       struct fsxattr __user *arg)
 {
 	struct fsxattr fa = {
-		.fsx_xflags = map_flags(bch_flags_to_xflags, inode->ei_inode.bi_flags)|
+		.fsx_xflags = bch2_bitindex_map(bch2_flags_to_xflags, inode->ei_inode.bi_flags)|
 			      map_bit(inode->ei_inode.bi_fields_set, BIT(Inode_opt_project), FS_XFLAG_PROJINHERIT),
 		.fsx_projid = inode->ei_qid.q[QTYP_PRJ],
 	};
@@ -149,15 +149,15 @@ static int bch2_ioc_fssetxattr(struct bch_fs *c,
 	if (copy_from_user(&fa, arg, sizeof(fa)))
 		return -EFAULT;
 
-	if (fa.fsx_xflags & ~(map_out_defined(bch_flags_to_xflags)|FS_XFLAG_PROJINHERIT))
+	if (fa.fsx_xflags & ~(bch2_bitindex_map_defined(bch2_flags_to_xflags)|FS_XFLAG_PROJINHERIT))
 		return -EOPNOTSUPP;
 
 	if (fa.fsx_projid >= U32_MAX)
 		return -EINVAL;
 
 	struct flags_set s = {
-		.mask = map_in_defined(bch_flags_to_xflags),
-		.flags = map_flags_rev(bch_flags_to_xflags, fa.fsx_xflags),
+		.mask = bch2_bitindex_map_rev_defined(bch2_flags_to_xflags),
+		.flags = bch2_bitindex_map_rev(bch2_flags_to_xflags, fa.fsx_xflags),
 		/*
 		 * inode fields accessible via the xattr interface are stored with a +1
 		 * bias, so that 0 means unset:

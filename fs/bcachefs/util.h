@@ -822,4 +822,21 @@ static inline void set_bit_p(unsigned nr, unsigned long *addr, bool v)
 #define map_bit(_src, _src_mask, _dst_mask)					\
 	signed_shift((_src) & _src_mask, ilog2(_dst_mask) - ilog2(_src_mask))
 
+struct bitindex_map {
+	u8	src, dst;
+};
+
+u64 bch2_bitindex_map(const struct bitindex_map *, u64);
+u64 bch2_bitindex_map_rev(const struct bitindex_map *, u64);
+
+static inline u64 bch2_bitindex_map_defined(const struct bitindex_map *map)
+{
+	return bch2_bitindex_map(map, ~0ULL);
+}
+
+static inline u64 bch2_bitindex_map_rev_defined(const struct bitindex_map *map)
+{
+	return bch2_bitindex_map_rev(map, ~0ULL);
+}
+
 #endif /* _BCACHEFS_UTIL_H */
