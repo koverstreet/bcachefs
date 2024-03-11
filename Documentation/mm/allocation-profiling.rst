@@ -9,11 +9,13 @@ tracked by file and line number.
 
 Usage:
 kconfig options:
- - CONFIG_MEM_ALLOC_PROFILING
- - CONFIG_MEM_ALLOC_PROFILING_ENABLED_BY_DEFAULT
- - CONFIG_MEM_ALLOC_PROFILING_DEBUG
-   adds warnings for allocations that weren't accounted because of a
-   missing annotation
+- CONFIG_MEM_ALLOC_PROFILING
+
+- CONFIG_MEM_ALLOC_PROFILING_ENABLED_BY_DEFAULT
+
+- CONFIG_MEM_ALLOC_PROFILING_DEBUG
+  adds warnings for allocations that weren't accounted because of a
+  missing annotation
 
 Boot parameter:
   sysctl.vm.mem_profiling=0|1|never
@@ -29,7 +31,8 @@ sysctl:
 Runtime info:
   /proc/allocinfo
 
-Example output:
+Example output::
+
   root@moria-kvm:~# sort -g /proc/allocinfo|tail|numfmt --to=iec
         2.8M    22648 fs/kernfs/dir.c:615 func:__kernfs_new_node
         3.8M      953 mm/memory.c:4214 func:alloc_anon_folio
@@ -42,6 +45,7 @@ Example output:
          15M     3656 mm/readahead.c:247 func:page_cache_ra_unbounded
          55M     4887 mm/slub.c:2259 func:alloc_slab_page
         122M    31168 mm/page_ext.c:270 func:alloc_page_ext
+
 ===================
 Theory of operation
 ===================
@@ -53,10 +57,10 @@ some way, hence code tagging) and then finding and operating on them at runtime
 
 To add accounting for an allocation call, we replace it with a macro
 invocation, alloc_hooks(), that
- - declares a code tag
- - stashes a pointer to it in task_struct
- - calls the real allocation function
- - and finally, restores the task_struct alloc tag pointer to its previous value.
+- declares a code tag
+- stashes a pointer to it in task_struct
+- calls the real allocation function
+- and finally, restores the task_struct alloc tag pointer to its previous value.
 
 This allows for alloc_hooks() calls to be nested, with the most recent one
 taking effect. This is important for allocations internal to the mm/ code that
@@ -71,10 +75,13 @@ we'll generally want the accounting to happen in the callers of these helpers,
 not in the helpers themselves.
 
 To fix up a given helper, for example foo(), do the following:
- - switch its allocation call to the _noprof() version, e.g. kmalloc_noprof()
- - rename it to foo_noprof()
- - define a macro version of foo() like so:
-   #define foo(...) alloc_hooks(foo_noprof(__VA_ARGS__))
+- switch its allocation call to the _noprof() version, e.g. kmalloc_noprof()
+
+- rename it to foo_noprof()
+
+- define a macro version of foo() like so:
+
+  #define foo(...) alloc_hooks(foo_noprof(__VA_ARGS__))
 
 It's also possible to stash a pointer to an alloc tag in your own data structures.
 
@@ -84,8 +91,10 @@ instead of seeing a large line in /proc/allocinfo for rhashtable.c, we can
 break it out by rhashtable type.
 
 To do so:
- - Hook your data structure's init function, like any other allocation function
- - Within your init function, use the convenience macro alloc_tag_record() to
-   record alloc tag in your data structure.
- - Then, use the following form for your allocations:
-   alloc_hooks_tag(ht->your_saved_tag, kmalloc_noprof(...))
+- Hook your data structure's init function, like any other allocation function
+
+- Within your init function, use the convenience macro alloc_tag_record() to
+  record alloc tag in your data structure.
+
+- Then, use the following form for your allocations:
+  alloc_hooks_tag(ht->your_saved_tag, kmalloc_noprof(...))
