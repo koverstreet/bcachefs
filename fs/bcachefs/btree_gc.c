@@ -12,6 +12,7 @@
 #include "btree_journal_iter.h"
 #include "btree_key_cache.h"
 #include "btree_locking.h"
+#include "btree_node_scan.h"
 #include "btree_update_interior.h"
 #include "btree_io.h"
 #include "btree_gc.h"
@@ -550,12 +551,16 @@ int bch2_check_topology(struct bch_fs *c)
 	for (i = 0; i < btree_id_nr_alive(c) && !ret; i++) {
 		struct btree_root *r = bch2_btree_id_root(c, i);
 
-		if (!r->alive)
-			continue;
+		if (r->error) {
+			bch2_btree_root_alloc_fake(c, i, r->level);
+			r->error = 0;
+
+			ret = bch2_repair_missing_btree_node(c, i, r->level, POS_MIN, SPOS_MAX);
+			if (ret)
+				break;
+		}
 
 		b = r->b;
-		if (btree_node_fake(b))
-			continue;
 
 		btree_node_lock_nopath_nofail(trans, &b->c, SIX_LOCK_read);
 		ret = bch2_btree_repair_topology_recurse(trans, b);
