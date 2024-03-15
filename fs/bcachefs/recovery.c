@@ -1162,7 +1162,7 @@ int bch2_fs_initialize(struct bch_fs *c)
 	set_bit(BCH_FS_may_go_rw, &c->flags);
 
 	for (unsigned i = 0; i < BTREE_ID_NR; i++)
-		bch2_btree_root_alloc(c, i);
+		bch2_btree_root_alloc_fake(c, i);
 
 	for_each_member_device(c, ca)
 		bch2_dev_usage_init(ca);
