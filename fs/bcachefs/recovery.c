@@ -466,6 +466,7 @@ static int read_btree_roots(struct bch_fs *c)
 			if (btree_id_is_alloc(i))
 				c->sb.compat &= ~(1ULL << BCH_COMPAT_alloc_info);
 			ret = 0;
+			set_bit(i, &c->btrees_lost_data);
 		}
 	}
 
