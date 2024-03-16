@@ -29,37 +29,92 @@ static int check_subvol(struct btree_trans *trans,
 			struct bkey_s_c k)
 {
 	struct bch_fs *c = trans->c;
-	struct bkey_s_c_subvolume subvol;
 	struct btree_iter subvol_children_iter = {};
-	struct bch_snapshot snapshot;
 	struct printbuf buf = PRINTBUF;
-	unsigned snapid;
 	int ret = 0;
 
 	if (k.k->type != KEY_TYPE_subvolume)
 		return 0;
 
-	subvol = bkey_s_c_to_subvolume(k);
-	snapid = le32_to_cpu(subvol.v->snapshot);
-	ret = bch2_snapshot_lookup(trans, snapid, &snapshot);
+	struct bkey_s_c_subvolume subvol = bkey_s_c_to_subvolume(k);
+	bool unlinked = BCH_SUBVOLUME_UNLINKED(subvol.v);
 
-	if (bch2_err_matches(ret, ENOENT))
-		bch_err(c, "subvolume %llu points to nonexistent snapshot %u",
-			k.k->p.offset, snapid);
-	if (ret)
-		return ret;
+	struct bch_snapshot snapshot;
+	ret = bch2_snapshot_lookup(trans, le32_to_cpu(subvol.v->snapshot), &snapshot);
+	if (ret && !bch2_err_matches(ret, ENOENT))
+		goto err;
 
-	if (BCH_SUBVOLUME_UNLINKED(subvol.v)) {
-		ret = bch2_subvolume_delete(trans, iter->pos.offset);
-		bch_err_msg(c, ret, "deleting subvolume %llu", iter->pos.offset);
-		return ret ?: -BCH_ERR_transaction_restart_nested;
+	if (fsck_err_on(ret, c, subvol_to_missing_snapshot,
+			"subvolume points to nonexistent snapshot\n  %s",
+			(printbuf_reset(&buf),
+			 bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
+		if (!test_bit(BTREE_ID_snapshots, &c->btrees_lost_data) || unlinked)
+			goto delete;
+
+		u32 tree_id;
+		ret = bch2_snapshot_tree_create(trans,
+						le32_to_cpu(subvol.v->snapshot),
+						subvol.k->p.offset,
+						&tree_id);
+		if (ret)
+			goto err;
+
+		struct bkey_i_snapshot *snapshot = bch2_trans_kmalloc(trans, sizeof(*snapshot));
+		ret = PTR_ERR_OR_ZERO(snapshot);
+		if (ret)
+			goto err;
+
+		bkey_snapshot_init(&snapshot->k_i);
+		snapshot->k.p		= POS(0, le32_to_cpu(subvol.v->snapshot));
+		snapshot->v.subvol	= cpu_to_le32(k.k->p.offset);
+		snapshot->v.tree	= cpu_to_le32(tree_id);
+		snapshot->v.btime.lo	= cpu_to_le64(bch2_current_time(c));
+		SET_BCH_SNAPSHOT_SUBVOL(&snapshot->v, true);
+
+		ret =   bch2_btree_insert_trans(trans, BTREE_ID_snapshots, &snapshot->k_i, 0) ?:
+			bch2_mark_snapshot(trans, BTREE_ID_snapshots, 0,
+					   bkey_s_c_null, bkey_i_to_s(&snapshot->k_i), 0) ?:
+			bch2_snapshot_set_equiv(trans, bkey_i_to_s_c(&snapshot->k_i));
+		if (ret)
+			goto err;
+	}
+
+	if (unlinked)
+		goto delete;
+
+	struct bch_inode_unpacked inode;
+	struct btree_iter inode_iter = {};
+	ret = bch2_inode_peek_nowarn(trans, &inode_iter, &inode,
+			(subvol_inum) { k.k->p.offset, le64_to_cpu(subvol.v->inode) },
+			0);
+	bch2_trans_iter_exit(trans, &inode_iter);
+
+	if (ret && !bch2_err_matches(ret, ENOENT))
+		goto err;
+
+	if (fsck_err_on(ret, c, subvol_to_missing_root,
+			"subvolume points to missing subvolume root\n  %s",
+			(printbuf_reset(&buf),
+			 bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
+		goto delete;
+
+	if (fsck_err_on(inode.bi_subvol != subvol.k->p.offset,
+			c, subvol_root_wrong_bi_subvol,
+			"subvol root %llu:%u has wrong bi_subvol field: got %u, should be %llu",
+			inode.bi_inum, inode_iter.k.p.snapshot,
+			inode.bi_subvol, subvol.k->p.offset)) {
+		inode.bi_subvol = subvol.k->p.offset;
+		ret = __bch2_fsck_write_inode(trans, &inode, le32_to_cpu(subvol.v->snapshot));
+		if (ret)
+			goto err;
 	}
 
 	if (fsck_err_on(subvol.k->p.offset == BCACHEFS_ROOT_SUBVOL &&
 			subvol.v->fs_path_parent,
 			c, subvol_root_fs_path_parent_nonzero,
 			"root subvolume has nonzero fs_path_parent\n%s",
-			(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
+			(printbuf_reset(&buf),
+			 bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
 		struct bkey_i_subvolume *n =
 			bch2_bkey_make_mut_typed(trans, iter, &subvol.s_c, 0, subvolume);
 		ret = PTR_ERR_OR_ZERO(n);
@@ -91,45 +146,14 @@ static int check_subvol(struct btree_trans *trans,
 		}
 	}
 
-	struct bch_inode_unpacked inode;
-	struct btree_iter inode_iter = {};
-	ret = bch2_inode_peek_nowarn(trans, &inode_iter, &inode,
-				    (subvol_inum) { k.k->p.offset, le64_to_cpu(subvol.v->inode) },
-				    0);
-	bch2_trans_iter_exit(trans, &inode_iter);
-
-	if (ret && !bch2_err_matches(ret, ENOENT))
-		return ret;
-
-	if (fsck_err_on(ret, c, subvol_to_missing_root,
-			"subvolume %llu points to missing subvolume root %llu:%u",
-			k.k->p.offset, le64_to_cpu(subvol.v->inode),
-			le32_to_cpu(subvol.v->snapshot))) {
-		ret = bch2_subvolume_delete(trans, iter->pos.offset);
-		bch_err_msg(c, ret, "deleting subvolume %llu", iter->pos.offset);
-		return ret ?: -BCH_ERR_transaction_restart_nested;
-	}
-
-	if (fsck_err_on(inode.bi_subvol != subvol.k->p.offset,
-			c, subvol_root_wrong_bi_subvol,
-			"subvol root %llu:%u has wrong bi_subvol field: got %u, should be %llu",
-			inode.bi_inum, inode_iter.k.p.snapshot,
-			inode.bi_subvol, subvol.k->p.offset)) {
-		inode.bi_subvol = subvol.k->p.offset;
-		ret = __bch2_fsck_write_inode(trans, &inode, le32_to_cpu(subvol.v->snapshot));
-		if (ret)
-			goto err;
-	}
-
 	if (!BCH_SUBVOLUME_SNAP(subvol.v)) {
 		u32 snapshot_root = bch2_snapshot_root(c, le32_to_cpu(subvol.v->snapshot));
-		u32 snapshot_tree;
-		struct bch_snapshot_tree st;
 
 		rcu_read_lock();
-		snapshot_tree = snapshot_t(c, snapshot_root)->tree;
+		u32 snapshot_tree = snapshot_t(c, snapshot_root)->tree;
 		rcu_read_unlock();
 
+		struct bch_snapshot_tree st;
 		ret = bch2_snapshot_tree_lookup(trans, snapshot_tree, &st);
 
 		bch2_fs_inconsistent_on(bch2_err_matches(ret, ENOENT), c,
@@ -151,11 +175,17 @@ static int check_subvol(struct btree_trans *trans,
 			SET_BCH_SUBVOLUME_SNAP(&s->v, true);
 		}
 	}
+out:
 err:
 fsck_err:
 	bch2_trans_iter_exit(trans, &subvol_children_iter);
 	printbuf_exit(&buf);
 	return ret;
+delete:
+	ret = bch2_subvolume_delete(trans, iter->pos.offset) ?:
+		-BCH_ERR_transaction_restart_nested;
+	bch_err_msg(c, ret, "deleting subvolume %llu", iter->pos.offset);
+	goto out;
 }
 
 int bch2_check_subvols(struct bch_fs *c)

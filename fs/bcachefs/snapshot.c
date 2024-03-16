@@ -74,8 +74,8 @@ __bch2_snapshot_tree_create(struct btree_trans *trans)
 	return ret ? ERR_PTR(ret) : s_t;
 }
 
-static int bch2_snapshot_tree_create(struct btree_trans *trans,
-				u32 root_id, u32 subvol_id, u32 *tree_id)
+int bch2_snapshot_tree_create(struct btree_trans *trans,
+			      u32 root_id, u32 subvol_id, u32 *tree_id)
 {
 	struct bkey_i_snapshot_tree *n_tree =
 		__bch2_snapshot_tree_create(trans);
@@ -383,7 +383,7 @@ static int bch2_snapshot_live(struct btree_trans *trans, u32 id)
  * it's part of such a linear chain: this correctly sets equivalence classes on
  * startup if we run leaf to root (i.e. in natural key order).
  */
-static int bch2_snapshot_set_equiv(struct btree_trans *trans, struct bkey_s_c k)
+int bch2_snapshot_set_equiv(struct btree_trans *trans, struct bkey_s_c k)
 {
 	struct bch_fs *c = trans->c;
 	unsigned i, nr_live = 0, live_idx = 0;
