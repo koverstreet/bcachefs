@@ -825,6 +825,7 @@ struct bch_fs {
 	struct btree_root	btree_roots_known[BTREE_ID_NR];
 	DARRAY(struct btree_root) btree_roots_extra;
 	struct mutex		btree_root_lock;
+	unsigned long		btrees_lost_data; /* bitmask */
 
 	struct btree_cache	btree_cache;
 
