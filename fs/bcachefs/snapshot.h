@@ -15,6 +15,7 @@ int bch2_snapshot_tree_invalid(struct bch_fs *, struct bkey_s_c,
 })
 
 struct bkey_i_snapshot_tree *__bch2_snapshot_tree_create(struct btree_trans *);
+int bch2_snapshot_tree_create(struct btree_trans *, u32, u32, u32 *);
 
 int bch2_snapshot_tree_lookup(struct btree_trans *, u32, struct bch_snapshot_tree *);
 
@@ -23,6 +24,7 @@ int bch2_snapshot_invalid(struct bch_fs *, struct bkey_s_c,
 			  enum bkey_invalid_flags, struct printbuf *);
 int bch2_mark_snapshot(struct btree_trans *, enum btree_id, unsigned,
 		       struct bkey_s_c, struct bkey_s, unsigned);
+int bch2_snapshot_set_equiv(struct btree_trans *, struct bkey_s_c);
 
 #define bch2_bkey_ops_snapshot ((struct bkey_ops) {		\
 	.key_invalid	= bch2_snapshot_invalid,		\
