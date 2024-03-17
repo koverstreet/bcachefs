@@ -552,10 +552,12 @@ int bch2_check_topology(struct bch_fs *c)
 		struct btree_root *r = bch2_btree_id_root(c, i);
 
 		if (r->error) {
-			bch2_btree_root_alloc_fake(c, i, r->level);
+			bch2_btree_root_alloc_fake(c, i, 1);
+			r->alive = false;
 			r->error = 0;
 
-			ret = bch2_repair_missing_btree_node(c, i, r->level, POS_MIN, SPOS_MAX);
+			bch2_shoot_down_journal_keys(c, i, 1, BTREE_MAX_DEPTH, POS_MIN, SPOS_MAX);
+			ret = bch2_repair_missing_btree_node(c, i, 0, POS_MIN, SPOS_MAX);
 			if (ret)
 				break;
 		}
@@ -567,8 +569,13 @@ int bch2_check_topology(struct bch_fs *c)
 		six_unlock_read(&b->c.lock);
 
 		if (ret == DROP_THIS_NODE) {
-			bch_err(c, "empty btree root - repair unimplemented");
-			ret = -BCH_ERR_fsck_repair_unimplemented;
+			bch_err(c, "empty btree root %s", bch2_btree_id_str(i));
+			bch2_btree_node_hash_remove(&c->btree_cache, b);
+			mutex_lock(&c->btree_cache.lock);
+			list_move(&b->list, &c->btree_cache.freeable);
+			mutex_unlock(&c->btree_cache.lock);
+			bch2_btree_root_alloc_fake(c, i, 0);
+			ret = 0;
 		}
 	}
 
