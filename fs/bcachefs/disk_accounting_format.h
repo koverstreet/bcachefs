@@ -102,7 +102,8 @@ static inline bool data_type_is_hidden(enum bch_data_type type)
 	x(dev_stripe_buckets,	4)		\
 	x(compression,		5)		\
 	x(snapshot,		6)		\
-	x(btree,		7)
+	x(btree,		7)		\
+	x(rebalance_work,	8)
 
 enum disk_accounting_type {
 #define x(f, nr)	BCH_DISK_ACCOUNTING_##f	= nr,
