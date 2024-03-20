@@ -79,21 +79,21 @@ static int trans_trigger_reflink_p_segment(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
-	struct bkey_i *k;
 	__le64 *refcount;
 	int add = !(flags & BTREE_TRIGGER_OVERWRITE) ? 1 : -1;
 	struct printbuf buf = PRINTBUF;
 	int ret;
 
-	k = bch2_bkey_get_mut_noupdate(trans, &iter,
-			BTREE_ID_reflink, POS(0, *idx),
+	bch2_trans_iter_init(trans, &iter,
+			BTREE_ID_reflink, POS(0, *idx + 1),
+			BTREE_ITER_NOT_EXTENTS|
 			BTREE_ITER_WITH_UPDATES);
-	ret = PTR_ERR_OR_ZERO(k);
+	struct bkey_s_c k = bch2_btree_iter_peek(&iter);
+	ret = bkey_err(k);
 	if (ret)
 		goto err;
 
-	refcount = bkey_refcount(bkey_i_to_s(k));
-	if (!refcount) {
+	if (bpos_gt(bkey_start_pos(k.k), iter.pos)) {
 		bch2_bkey_val_to_text(&buf, c, p.s_c);
 		bch2_trans_inconsistent(trans,
 			"nonexistent indirect extent at %llu while marking\n  %s",
@@ -102,6 +102,12 @@ static int trans_trigger_reflink_p_segment(struct btree_trans *trans,
 		goto err;
 	}
 
+	struct bkey_i *u = bch2_bkey_make_mut(trans, &iter, &k, 0);
+	ret = PTR_ERR_OR_ZERO(u);
+	if (ret)
+		goto err;
+
+	refcount = bkey_refcount(bkey_i_to_s(u));
 	if (!*refcount && (flags & BTREE_TRIGGER_OVERWRITE)) {
 		bch2_bkey_val_to_text(&buf, c, p.s_c);
 		bch2_trans_inconsistent(trans,
@@ -116,24 +122,19 @@ static int trans_trigger_reflink_p_segment(struct btree_trans *trans,
 		u64 pad;
 
 		pad = max_t(s64, le32_to_cpu(v->front_pad),
-			    le64_to_cpu(v->idx) - bkey_start_offset(&k->k));
+			    le64_to_cpu(v->idx) - bkey_start_offset(&u->k));
 		BUG_ON(pad > U32_MAX);
 		v->front_pad = cpu_to_le32(pad);
 
 		pad = max_t(s64, le32_to_cpu(v->back_pad),
-			    k->k.p.offset - p.k->size - le64_to_cpu(v->idx));
+			    u->k.p.offset - p.k->size - le64_to_cpu(v->idx));
 		BUG_ON(pad > U32_MAX);
 		v->back_pad = cpu_to_le32(pad);
 	}
 
 	le64_add_cpu(refcount, add);
 
-	bch2_btree_iter_set_pos_to_extent_start(&iter);
-	ret = bch2_trans_update(trans, &iter, k, 0);
-	if (ret)
-		goto err;
-
-	*idx = k->k.p.offset;
+	*idx = u->k.p.offset;
 err:
 	bch2_trans_iter_exit(trans, &iter);
 	printbuf_exit(&buf);
