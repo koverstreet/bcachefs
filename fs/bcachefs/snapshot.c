@@ -574,6 +574,13 @@ static int check_snapshot_tree(struct btree_trans *trans,
 		u32 subvol_id;
 
 		ret = bch2_snapshot_tree_master_subvol(trans, root_id, &subvol_id);
+
+		if (bch2_err_matches(ret, ENOENT)) { /* nothing to be done here */
+			ret = 0;
+			goto err;
+		}
+
+		bch_err_fn(c, ret);
 		if (ret)
 			goto err;
 
@@ -731,7 +738,6 @@ static int check_snapshot(struct btree_trans *trans,
 	u32 parent_id = bch2_snapshot_parent_early(c, k.k->p.offset);
 	u32 real_depth;
 	struct printbuf buf = PRINTBUF;
-	bool should_have_subvol;
 	u32 i, id;
 	int ret = 0;
 
@@ -777,7 +783,7 @@ static int check_snapshot(struct btree_trans *trans,
 		}
 	}
 
-	should_have_subvol = BCH_SNAPSHOT_SUBVOL(&s) &&
+	bool should_have_subvol = BCH_SNAPSHOT_SUBVOL(&s) &&
 		!BCH_SNAPSHOT_DELETED(&s);
 
 	if (should_have_subvol) {
@@ -863,18 +869,163 @@ fsck_err:
 	return ret;
 }
 
+static int check_snapshot_exists(struct btree_trans *trans, u32 id)
+{
+	struct bch_fs *c = trans->c;
+
+	if (bch2_snapshot_equiv(c, id))
+		return 0;
+
+	u32 tree_id;
+	int ret = bch2_snapshot_tree_create(trans, id, 0, &tree_id);
+	if (ret)
+		return ret;
+
+	struct bkey_i_snapshot *snapshot = bch2_trans_kmalloc(trans, sizeof(*snapshot));
+	ret = PTR_ERR_OR_ZERO(snapshot);
+	if (ret)
+		return ret;
+
+	bkey_snapshot_init(&snapshot->k_i);
+	snapshot->k.p		= POS(0, id);
+	snapshot->v.tree	= cpu_to_le32(tree_id);
+	snapshot->v.btime.lo	= cpu_to_le64(bch2_current_time(c));
+	//SET_BCH_SNAPSHOT_SUBVOL(&snapshot->v, true);
+
+	return  bch2_btree_insert_trans(trans, BTREE_ID_snapshots, &snapshot->k_i, 0) ?:
+		bch2_mark_snapshot(trans, BTREE_ID_snapshots, 0,
+				   bkey_s_c_null, bkey_i_to_s(&snapshot->k_i), 0) ?:
+		bch2_snapshot_set_equiv(trans, bkey_i_to_s_c(&snapshot->k_i));
+}
+
+/* Figure out which snapshot nodes belong in the same tree: */
+struct snapshot_tree_reconstruct {
+	enum btree_id			btree;
+	struct bpos			cur_pos;
+	snapshot_id_list		cur_ids;
+	DARRAY(snapshot_id_list)	trees;
+};
+
+static void snapshot_tree_reconstruct_exit(struct snapshot_tree_reconstruct *r)
+{
+	darray_for_each(r->trees, i)
+		darray_exit(i);
+	darray_exit(&r->trees);
+	darray_exit(&r->cur_ids);
+}
+
+static inline bool same_snapshot(struct snapshot_tree_reconstruct *r, struct bpos pos)
+{
+	return r->btree == BTREE_ID_inodes
+		? r->cur_pos.offset == pos.offset
+		: r->cur_pos.inode == pos.inode;
+}
+
+static inline bool snapshot_id_lists_have_common(snapshot_id_list *l, snapshot_id_list *r)
+{
+	darray_for_each(*l, i)
+		if (snapshot_list_has_id(r, *i))
+			return true;
+	return false;
+}
+
+static void snapshot_id_list_to_text(struct printbuf *out, snapshot_id_list *s)
+{
+	bool first = true;
+	darray_for_each(*s, i) {
+		if (!first)
+			prt_char(out, ' ');
+		first = false;
+		prt_printf(out, "%u", *i);
+	}
+}
+
+static int snapshot_tree_reconstruct_next(struct bch_fs *c, struct snapshot_tree_reconstruct *r)
+{
+	if (r->cur_ids.nr) {
+		darray_for_each(r->trees, i)
+			if (snapshot_id_lists_have_common(i, &r->cur_ids)) {
+				int ret = snapshot_list_merge(c, i, &r->cur_ids);
+				if (ret)
+					return ret;
+				goto out;
+			}
+		darray_push(&r->trees, r->cur_ids);
+		darray_init(&r->cur_ids);
+	}
+out:
+	r->cur_ids.nr = 0;
+	return 0;
+}
+
+static int get_snapshot_trees(struct bch_fs *c, struct snapshot_tree_reconstruct *r, struct bpos pos)
+{
+	if (!same_snapshot(r, pos))
+		snapshot_tree_reconstruct_next(c, r);
+	r->cur_pos = pos;
+	return snapshot_list_add_nodup(c, &r->cur_ids, pos.snapshot);
+}
+
 int bch2_check_snapshots(struct bch_fs *c)
 {
+	struct btree_trans *trans = bch2_trans_get(c);
+	struct printbuf buf = PRINTBUF;
+	struct snapshot_tree_reconstruct r = {};
+	int ret = 0;
+
+	if (test_bit(BTREE_ID_snapshots, &c->btrees_lost_data)) {
+		for (unsigned btree = 0; btree < BTREE_ID_NR; btree++) {
+			if (btree_type_has_snapshots(btree)) {
+				r.btree = btree;
+
+				ret = for_each_btree_key(trans, iter, btree, POS_MIN,
+						BTREE_ITER_ALL_SNAPSHOTS|BTREE_ITER_PREFETCH, k, ({
+					get_snapshot_trees(c, &r, k.k->p);
+				}));
+				if (ret)
+					goto err;
+
+				snapshot_tree_reconstruct_next(c, &r);
+			}
+		}
+
+		darray_for_each(r.trees, t) {
+			printbuf_reset(&buf);
+			snapshot_id_list_to_text(&buf, t);
+
+			darray_for_each(*t, id) {
+				if (fsck_err_on(!bch2_snapshot_equiv(c, *id),
+						c, snapshot_node_missing,
+						"snapshot node %u from tree %s missing, recreate?", *id, buf.buf)) {
+					if (t->nr > 1) {
+						bch_err(c, "cannot reconstruct snapshot trees with multiple nodes");
+						ret = -BCH_ERR_fsck_repair_unimplemented;
+						goto err;
+					}
+
+					ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+							check_snapshot_exists(trans, *id));
+					if (ret)
+						goto err;
+				}
+			}
+		}
+	}
+
 	/*
 	 * We iterate backwards as checking/fixing the depth field requires that
 	 * the parent's depth already be correct:
 	 */
-	int ret = bch2_trans_run(c,
-		for_each_btree_key_reverse_commit(trans, iter,
+	ret = for_each_btree_key_reverse_commit(trans, iter,
 				BTREE_ID_snapshots, POS_MAX,
 				BTREE_ITER_PREFETCH, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			check_snapshot(trans, &iter, k)));
+			check_snapshot(trans, &iter, k));
+fsck_err:
+err:
+	bch2_trans_put(trans);
+	snapshot_tree_reconstruct_exit(&r);
+	printbuf_exit(&buf);
 	bch_err_fn(c, ret);
 	return ret;
 }

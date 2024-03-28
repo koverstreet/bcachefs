@@ -209,13 +209,32 @@ static inline bool snapshot_list_has_ancestor(struct bch_fs *c, snapshot_id_list
 
 static inline int snapshot_list_add(struct bch_fs *c, snapshot_id_list *s, u32 id)
 {
-	int ret;
-
 	BUG_ON(snapshot_list_has_id(s, id));
-	ret = darray_push(s, id);
+	int ret = darray_push(s, id);
 	if (ret)
 		bch_err(c, "error reallocating snapshot_id_list (size %zu)", s->size);
 	return ret;
+}
+
+static inline int snapshot_list_add_nodup(struct bch_fs *c, snapshot_id_list *s, u32 id)
+{
+	int ret = snapshot_list_has_id(s, id)
+		? 0
+		: darray_push(s, id);
+	if (ret)
+		bch_err(c, "error reallocating snapshot_id_list (size %zu)", s->size);
+	return ret;
+}
+
+static inline int snapshot_list_merge(struct bch_fs *c, snapshot_id_list *dst, snapshot_id_list *src)
+{
+	darray_for_each(*src, i) {
+		int ret = snapshot_list_add_nodup(c, dst, *i);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
 }
 
 int bch2_snapshot_lookup(struct btree_trans *trans, u32 id,
