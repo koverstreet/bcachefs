@@ -590,6 +590,9 @@ int bch2_fs_recovery(struct bch_fs *c)
 		goto err;
 	}
 
+	c->opts.keep_journal		|= c->opts.norecovery;
+	c->opts.nochanges		|= c->opts.norecovery;
+
 	if (!c->opts.nochanges) {
 		mutex_lock(&c->sb_lock);
 		bool write_sb = false;
