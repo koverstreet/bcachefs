@@ -35,6 +35,7 @@
 #include <linux/pagemap.h>
 #include <linux/posix_acl.h>
 #include <linux/random.h>
+#include <linux/security.h>
 #include <linux/seq_file.h>
 #include <linux/statfs.h>
 #include <linux/string.h>
@@ -261,6 +262,34 @@ struct inode *bch2_vfs_inode_get(struct bch_fs *c, subvol_inum inum)
 	return ret ? ERR_PTR(ret) : &inode->v;
 }
 
+struct initxattr_params {
+	struct bch_fs *c;
+	struct btree_trans *trans;
+	struct bch_inode_info *inode;
+	subvol_inum inum;
+};
+
+static int bch2_initxattrs(struct inode *vinode,
+			   const struct xattr *xattr_array, void *fs_info)
+{
+	const struct xattr *xattr;
+	struct initxattr_params *params = fs_info;
+	struct bch_hash_info hash =
+		bch2_hash_info_init(params->c, &params->inode->ei_inode);
+	int ret;
+
+	for (xattr = xattr_array; xattr->name != NULL; xattr++) {
+		ret = __bch2_xattr_set_inner(
+			params->trans, inode_inum(params->inode), &hash,
+			xattr->name, xattr->value, xattr->value_len,
+			KEY_TYPE_XATTR_INDEX_SECURITY, XATTR_CREATE);
+
+		if (ret < 0)
+			break;
+	}
+	return ret;
+}
+
 struct bch_inode_info *
 __bch2_create(struct mnt_idmap *idmap,
 	      struct bch_inode_info *dir, struct dentry *dentry,
@@ -273,6 +302,7 @@ __bch2_create(struct mnt_idmap *idmap,
 	struct bch_inode_info *inode;
 	struct bch_inode_unpacked inode_u;
 	struct posix_acl *default_acl = NULL, *acl = NULL;
+	struct initxattr_params sec_params;
 	subvol_inum inum;
 	struct bch_subvolume subvol;
 	u64 journal_seq = 0;
@@ -341,6 +371,17 @@ err_before_quota:
 
 	set_cached_acl(&inode->v, ACL_TYPE_ACCESS, acl);
 	set_cached_acl(&inode->v, ACL_TYPE_DEFAULT, default_acl);
+
+	sec_params.c = c;
+	sec_params.trans = trans;
+	sec_params.inode = inode;
+	sec_params.inum = inum;
+
+	ret = security_inode_init_security(&inode->v, &dir->v, &dentry->d_name,
+					   &bch2_initxattrs, &sec_params);
+
+	if (unlikely(ret))
+		goto err_trans;
 
 	/*
 	 * we must insert the new inode into the inode cache before calling

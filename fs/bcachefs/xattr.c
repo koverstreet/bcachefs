@@ -166,6 +166,37 @@ err1:
 	return ret < 0 && bch2_err_matches(ret, ENOENT) ? -ENODATA : ret;
 }
 
+int __bch2_xattr_set_inner(struct btree_trans *trans, subvol_inum inum,
+			   const struct bch_hash_info *hash_info,
+			   const char *name, const void *value, size_t size,
+			   int type, int flags)
+{
+	struct bkey_i_xattr *xattr;
+	unsigned namelen = strlen(name);
+	unsigned u64s = BKEY_U64s + xattr_val_u64s(namelen, size);
+
+	if (u64s > U8_MAX)
+		return -ERANGE;
+
+	xattr = bch2_trans_kmalloc(trans, u64s * sizeof(u64));
+	if (IS_ERR(xattr))
+		return PTR_ERR(xattr);
+
+	bkey_xattr_init(&xattr->k_i);
+	xattr->k.u64s = u64s;
+	xattr->v.x_type = type;
+	xattr->v.x_name_len = namelen;
+	xattr->v.x_val_len = cpu_to_le16(size);
+	memcpy(xattr->v.x_name, name, namelen);
+	memcpy(xattr_val(&xattr->v), value, size);
+
+	return bch2_hash_set(
+		trans, bch2_xattr_hash_desc, hash_info, inum, &xattr->k_i,
+		(flags & XATTR_CREATE ? BCH_HASH_SET_MUST_CREATE : 0) |
+			(flags & XATTR_REPLACE ? BCH_HASH_SET_MUST_REPLACE :
+						 0));
+}
+
 int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 		   struct bch_inode_unpacked *inode_u,
 		   const struct bch_hash_info *hash_info,
@@ -190,30 +221,8 @@ int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 		return ret;
 
 	if (value) {
-		struct bkey_i_xattr *xattr;
-		unsigned namelen = strlen(name);
-		unsigned u64s = BKEY_U64s +
-			xattr_val_u64s(namelen, size);
-
-		if (u64s > U8_MAX)
-			return -ERANGE;
-
-		xattr = bch2_trans_kmalloc(trans, u64s * sizeof(u64));
-		if (IS_ERR(xattr))
-			return PTR_ERR(xattr);
-
-		bkey_xattr_init(&xattr->k_i);
-		xattr->k.u64s		= u64s;
-		xattr->v.x_type		= type;
-		xattr->v.x_name_len	= namelen;
-		xattr->v.x_val_len	= cpu_to_le16(size);
-		memcpy(xattr->v.x_name, name, namelen);
-		memcpy(xattr_val(&xattr->v), value, size);
-
-		ret = bch2_hash_set(trans, bch2_xattr_hash_desc, hash_info,
-			      inum, &xattr->k_i,
-			      (flags & XATTR_CREATE ? BCH_HASH_SET_MUST_CREATE : 0)|
-			      (flags & XATTR_REPLACE ? BCH_HASH_SET_MUST_REPLACE : 0));
+		return __bch2_xattr_set_inner(trans, inum, hash_info, name,
+					      value, size, type, flags);
 	} else {
 		struct xattr_search_key search =
 			X_SEARCH(type, name, strlen(name));

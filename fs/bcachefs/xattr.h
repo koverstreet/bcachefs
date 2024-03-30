@@ -38,6 +38,11 @@ struct xattr_handler;
 struct bch_hash_info;
 struct bch_inode_info;
 
+int __bch2_xattr_set_inner(struct btree_trans *trans, subvol_inum inum,
+			   const struct bch_hash_info *hash_info,
+			   const char *name, const void *value, size_t size,
+			   int type, int flags);
+
 /* Exported for cmd_migrate.c in tools: */
 int bch2_xattr_set(struct btree_trans *, subvol_inum,
 		   struct bch_inode_unpacked *, const struct bch_hash_info *,
