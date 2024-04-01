@@ -801,8 +801,6 @@ use_clean:
 	if (ret)
 		goto err;
 
-	clear_bit(BCH_FS_fsck_running, &c->flags);
-
 	/* fsync if we fixed errors */
 	if (test_bit(BCH_FS_errors_fixed, &c->flags)) {
 		bch2_journal_flush_all_pins(&c->journal);
@@ -833,6 +831,8 @@ use_clean:
 
 		set_bit(BCH_FS_errors_fixed, &c->flags);
 	}
+
+	clear_bit(BCH_FS_fsck_running, &c->flags);
 
 	if (enabled_qtypes(c)) {
 		bch_verbose(c, "reading quotas");
