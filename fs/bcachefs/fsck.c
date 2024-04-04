@@ -2457,7 +2457,7 @@ static int check_path(struct btree_trans *trans, pathbuf *p, struct bkey_s_c ino
 	struct btree_iter inode_iter = {};
 	struct bch_inode_unpacked inode;
 	struct printbuf buf = PRINTBUF;
-	u32 snapshot = bch2_snapshot_equiv(c, inode_k.k->p.snapshot);
+	u32 snapshot = inode_k.k->p.snapshot;
 	int ret = 0;
 
 	p->nr = 0;
@@ -2717,8 +2717,7 @@ static int check_nlinks_walk_dirents(struct bch_fs *c, struct nlink_table *links
 				if (d.v->d_type != DT_DIR &&
 				    d.v->d_type != DT_SUBVOL)
 					inc_link(c, &s, links, range_start, range_end,
-						 le64_to_cpu(d.v->d_inum),
-						 bch2_snapshot_equiv(c, d.k->p.snapshot));
+						 le64_to_cpu(d.v->d_inum), d.k->p.snapshot);
 			}
 			0;
 		})));
