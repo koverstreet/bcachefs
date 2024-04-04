@@ -1018,7 +1018,8 @@ static void __mod_memcg_lruvec_state(struct lruvec *lruvec,
 				pr_warn("stat item index: %d\n", idx);
 			break;
 		default:
-			if (VM_WARN_ON_IRQS_ENABLED())
+			VM_WARN_ON_IRQS_ENABLED();
+			if (!irqs_disabled())
 				pr_warn("stat item index: %d\n", idx);
 		}
 	}
