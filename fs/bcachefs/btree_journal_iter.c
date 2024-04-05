@@ -271,6 +271,11 @@ int bch2_journal_key_delete(struct bch_fs *c, enum btree_id id,
 	bkey_init(&whiteout.k);
 	whiteout.k.p = pos;
 
+	struct printbuf buf = PRINTBUF;
+	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&whiteout));
+	pr_info("%s l=%u %s", bch2_btree_id_str(id), level, buf.buf);
+	printbuf_exit(&buf);
+
 	return bch2_journal_key_insert(c, id, level, &whiteout);
 }
 

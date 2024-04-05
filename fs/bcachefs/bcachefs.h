@@ -342,7 +342,7 @@ do {									\
 #define bch_err_msg(_c, _ret, _msg, ...)				\
 do {									\
 	if (should_print_err(_ret))					\
-		bch_err(_c, "%s(): error " _msg " %s", __func__,	\
+		bch_err(_c, "%s(): error " _msg ": %s", __func__,	\
 			##__VA_ARGS__, bch2_err_str(_ret));		\
 } while (0)
 
