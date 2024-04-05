@@ -226,7 +226,7 @@ static int btree_check_node_boundaries(struct bch_fs *c, struct btree *b,
 	if (bpos_eq(expected_start, cur->data->min_key))
 		return 0;
 
-	prt_printf(&buf, "  at btree %s level %u:\n  parent: ",
+	prt_printf(&buf, " at btree %s level %u:\n  parent: ",
 		   bch2_btree_id_str(b->c.btree_id), b->c.level);
 	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&b->key));
 
@@ -293,7 +293,7 @@ static int btree_repair_node_end(struct bch_fs *c, struct btree *b,
 	if (bpos_eq(child->key.k.p, b->key.k.p))
 		return 0;
 
-	prt_printf(&buf, "at btree %s level %u:\n  parent: ",
+	prt_printf(&buf, " at btree %s level %u:\n  parent: ",
 		   bch2_btree_id_str(b->c.btree_id), b->c.level);
 	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&b->key));
 

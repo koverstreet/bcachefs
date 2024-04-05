@@ -1340,11 +1340,20 @@ start:
 	bio_put(&rb->bio);
 
 	if (saw_error && !btree_node_read_error(b)) {
+		if (b->c.level) {
+			/*
+			 * did we recover from good replica? otherwise,
+			 * kick off a btree node scan?
+			 */
+
+		}
+#if 0
 		printbuf_reset(&buf);
 		bch2_bpos_to_text(&buf, b->key.k.p);
 		bch_err_ratelimited(c, "%s: rewriting btree node at btree=%s level=%u %s due to error",
 			 __func__, bch2_btree_id_str(b->c.btree_id), b->c.level, buf.buf);
 
+#endif
 		bch2_btree_node_rewrite_async(c, b);
 	}
 
