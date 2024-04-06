@@ -5,6 +5,7 @@
 #include "btree_cache.h"
 #include "btree_locking.h"
 #include "btree_update.h"
+#include "error.h"
 
 #define BTREE_UPDATE_NODES_MAX		((BTREE_MAX_DEPTH - 2) * 2 + GC_MERGE_NODES)
 
@@ -142,7 +143,17 @@ static inline int bch2_foreground_maybe_merge_sibling(struct btree_trans *trans,
 	struct btree_path *path = trans->paths + path_idx;
 	struct btree *b;
 
-	EBUG_ON(!btree_node_locked(path, level));
+	if (!btree_node_locked(path, level)) {
+		struct printbuf buf = PRINTBUF;
+		bch2_btree_path_to_text(&buf, trans, path_idx);
+		bch2_fs_fatal_error(trans->c, "node not locked at level %u\n"
+				    "trans->restarted %s\n"
+				    "%s", level,
+				    bch2_err_str(trans->restarted),
+				    buf.buf);
+		printbuf_exit(&buf);
+		return 0;
+	}
 
 	if (bch2_btree_node_merging_disabled)
 		return 0;
