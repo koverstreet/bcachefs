@@ -253,6 +253,9 @@ struct btree_node_iter {
  * locks, and we know the transaction is going to commit (returning an error
  * here is a fatal error, causing us to go emergency read-only)
  *
+ * BTREE_TRIGGER_early_gc - we haven't gone rw yet, we're just setting
+ * ca->buckets_nouse
+ *
  * BTREE_TRIGGER_gc - we're in gc/fsck: running triggers to recalculate e.g. disk usage
  *
  * BTREE_TRIGGER_insert - @new is entering the btree
@@ -265,6 +268,7 @@ struct btree_node_iter {
 	x(norun)				\
 	x(transactional)			\
 	x(atomic)				\
+	x(early_gc)				\
 	x(check_repair)				\
 	x(gc)					\
 	x(insert)				\

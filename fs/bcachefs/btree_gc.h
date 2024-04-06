@@ -7,6 +7,7 @@
 #include "btree_types.h"
 
 int bch2_check_topology(struct bch_fs *);
+int bch2_check_allocations_early(struct bch_fs *);
 int bch2_check_allocations(struct bch_fs *);
 
 /*
