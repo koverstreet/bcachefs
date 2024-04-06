@@ -20,6 +20,7 @@
 	x(stripes_read,				 1, PASS_ALWAYS)		\
 	x(initialize_subvolumes,		 2, 0)				\
 	x(snapshots_read,			 3, PASS_ALWAYS)		\
+	x(check_allocations_early,		40, PASS_FSCK)			\
 	x(check_allocations,			 5, PASS_FSCK)			\
 	x(trans_mark_dev_sbs,			 6, PASS_ALWAYS|PASS_SILENT)	\
 	x(fs_journal_alloc,			 7, PASS_ALWAYS|PASS_SILENT)	\
