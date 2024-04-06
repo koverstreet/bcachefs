@@ -52,6 +52,10 @@
 	  "Populate in-memory snapshot table with ancestry "					\
 	  "bitmaps and depth info by iterating snapshot "					\
 	  "btree in reverse order")								\
+	x(check_allocations_early,		48, PASS_FSCK_ALLOC,				\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_topology),						\
+	  "Minimal check_allocations pass; only mark out buckets we know are in use "		\
+	  "so we can go RW for actual repair")							\
 	x(check_allocations,			 5, PASS_FSCK_ALLOC,				\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_topology),						\
 	  "Full GC pass: walk all btrees marking referenced "					\
