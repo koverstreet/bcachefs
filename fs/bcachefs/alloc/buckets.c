@@ -1069,12 +1069,15 @@ int bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 	if (b >= ca->mi.nbuckets)
 		return 0;
 
-	if (flags & BTREE_TRIGGER_gc)
+	if (flags & BTREE_TRIGGER_early_gc) {
+		__set_bit(b, ca->buckets_nouse);
+		return 0;
+	} else if (flags & BTREE_TRIGGER_gc) {
 		return bch2_mark_metadata_bucket(trans, ca, b, type, sectors, flags);
-	else if (flags & BTREE_TRIGGER_transactional)
+	} else if (flags & BTREE_TRIGGER_transactional) {
 		return commit_do(trans, NULL, NULL, 0,
 				 __bch2_trans_mark_metadata_bucket(trans, ca, b, type, sectors));
-	else
+	} else
 		BUG();
 }
 

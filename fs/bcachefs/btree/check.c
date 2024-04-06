@@ -623,12 +623,91 @@ recover:
 	return ret;
 }
 
+static int bch2_mark_superblocks(struct bch_fs *c)
+{
+	gc_pos_set(c, gc_phase(GC_PHASE_sb));
+
+	return bch2_trans_mark_dev_sbs_flags(c, BTREE_TRIGGER_gc);
+}
+
+static int mark_allocation_early(struct btree_trans *trans, enum btree_id btree, struct bkey_s_c k)
+{
+	struct bch_fs *c = trans->c;
+	struct printbuf buf = PRINTBUF;
+	int ret = 0;
+
+	BUG_ON(bch2_journal_seq_verify &&
+	       k.k->bversion.lo > atomic64_read(&c->journal.seq));
+
+	if (fsck_err_on(btree != BTREE_ID_accounting &&
+			k.k->bversion.lo > atomic64_read(&c->key_version),
+			trans, bkey_version_in_future,
+			"key version number higher than recorded %llu\n%s",
+			atomic64_read(&c->key_version),
+			(bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
+		atomic64_set(&c->key_version, k.k->bversion.lo);
+
+	rcu_read_lock();
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	bkey_for_each_ptr(ptrs, ptr) {
+		struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
+		if (ca)
+			__set_bit(PTR_BUCKET_NR(ca, ptr), ca->buckets_nouse);
+	}
+	rcu_read_unlock();
+fsck_err:
+	printbuf_exit(&buf);
+	return ret;
+}
+
+int bch2_check_allocations_early(struct bch_fs *c)
+{
+	int ret = bch2_buckets_nouse_alloc(c);
+	if (ret)
+		return ret;
+
+	ret = bch2_trans_mark_dev_sbs_flags(c, BTREE_TRIGGER_early_gc);
+	BUG_ON(ret);
+
+	struct btree_trans *trans = bch2_trans_get(c);
+
+	for (unsigned btree = 0; btree < btree_id_nr_alive(c) && !ret; btree++) {
+		struct btree *b = bch2_btree_id_root(c, btree)->b;
+		if (IS_ERR_OR_NULL(b))
+			continue;
+
+		ret = mark_allocation_early(trans, btree, bkey_i_to_s_c(&b->key));
+		if (ret)
+			break;
+
+		/*
+		 * We need to make sure every leaf node is readable before going RW
+		int target_depth = btree_type_has_ptrs(btree) ? 0 : 1;
+		*/
+		int target_depth = 0;
+
+		for (int level = b->c.level; level >= target_depth; --level) {
+			struct btree_iter iter;
+			bch2_trans_node_iter_init(trans, &iter, btree, POS_MIN, 0, level,
+						  BTREE_ITER_prefetch);
+
+			ret = for_each_btree_key_continue(trans, iter, 0, k,
+				mark_allocation_early(trans, btree, k));
+			if (ret)
+				break;
+		}
+	}
+
+	bch2_trans_put(trans);
+	bch_err_fn(c, ret);
+	return ret;
+}
+
 /* marking of btree keys/nodes: */
 
 static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 			    unsigned level, struct btree **prev,
-			    struct btree_iter *iter, struct bkey_s_c k,
-			    bool initial)
+			    struct btree_iter *iter, struct bkey_s_c k)
 {
 	struct bch_fs *c = trans->c;
 
@@ -647,19 +726,6 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 	int ret = 0;
 
 	deleted.p = k.k->p;
-
-	if (initial) {
-		BUG_ON(static_branch_unlikely(&bch2_journal_seq_verify) &&
-		       k.k->bversion.lo > atomic64_read(&c->journal.seq));
-
-		if (fsck_err_on(btree_id != BTREE_ID_accounting &&
-				k.k->bversion.lo > atomic64_read(&c->key_version),
-				trans, bkey_version_in_future,
-				"key version number higher than recorded %llu\n%s",
-				atomic64_read(&c->key_version),
-				(bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
-			atomic64_set(&c->key_version, k.k->bversion.lo);
-	}
 
 	if (mustfix_fsck_err_on(level && !bch2_dev_btree_bitmap_marked(c, k),
 				trans, btree_bitmap_not_marked,
@@ -694,7 +760,7 @@ fsck_err:
 	return ret;
 }
 
-static int bch2_gc_btree_root(struct btree_trans *trans, enum btree_id btree, bool initial)
+static int bch2_gc_btree_root(struct btree_trans *trans, enum btree_id btree)
 {
 	struct bch_fs *c = trans->c;
 	CLASS(btree_node_iter, iter)(trans, btree, POS_MIN, 0,
@@ -706,13 +772,12 @@ static int bch2_gc_btree_root(struct btree_trans *trans, enum btree_id btree, bo
 
 	gc_pos_set(c, gc_pos_btree(btree, b->c.level + 1, SPOS_MAX));
 	struct bkey_s_c k = bkey_i_to_s_c(&b->key);
-	return bch2_gc_mark_key(trans, btree, b->c.level + 1, NULL, NULL, k, initial);
+	return bch2_gc_mark_key(trans, btree, b->c.level + 1, NULL, NULL, k);
 }
 
 static int bch2_gc_btree(struct btree_trans *trans,
 			 struct progress_indicator *progress,
-			 enum btree_id btree, unsigned target_depth,
-			 bool initial)
+			 enum btree_id btree, unsigned target_depth)
 {
 	for (unsigned level = target_depth; level < BTREE_MAX_DEPTH; level++) {
 		struct btree *prev = NULL;
@@ -721,11 +786,11 @@ static int bch2_gc_btree(struct btree_trans *trans,
 		try(for_each_btree_key_continue(trans, iter, 0, k, ({
 			gc_pos_set(trans->c, gc_pos_btree(btree, level, k.k->p));
 			bch2_progress_update_iter(trans, progress, &iter, "check_allocations") ?:
-			bch2_gc_mark_key(trans, btree, level, &prev, &iter, k, initial);
+			bch2_gc_mark_key(trans, btree, level, &prev, &iter, k);
 		})));
 	}
 
-	return lockrestart_do(trans, bch2_gc_btree_root(trans, btree, initial));
+	return lockrestart_do(trans, bch2_gc_btree_root(trans, btree));
 }
 
 static inline int btree_id_gc_phase_cmp(enum btree_id l, enum btree_id r)
@@ -767,18 +832,11 @@ static int bch2_gc_btrees(struct bch_fs *c)
 		if (test_bit(BCH_FS_in_fsck, &c->flags))
 			target_depth = 0;
 
-		ret = bch2_gc_btree(trans, &progress, btree, target_depth, true);
+		ret = bch2_gc_btree(trans, &progress, btree, target_depth);
 	}
 
 	bch_err_fn(c, ret);
 	return ret;
-}
-
-static int bch2_mark_superblocks(struct bch_fs *c)
-{
-	gc_pos_set(c, gc_phase(GC_PHASE_sb));
-
-	return bch2_trans_mark_dev_sbs_flags(c, BTREE_TRIGGER_gc);
 }
 
 static void bch2_gc_free(struct bch_fs *c)
