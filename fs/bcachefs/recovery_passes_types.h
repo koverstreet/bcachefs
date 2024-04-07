@@ -28,11 +28,11 @@
 	x(initialize_subvolumes,		 2, 0)					\
 	x(snapshots_read,			 3, PASS_ALWAYS)			\
 	x(check_allocations_early,		42, PASS_FSCK)				\
-	x(check_allocations,			 5, PASS_FSCK)				\
 	x(trans_mark_dev_sbs,			 6, PASS_ALWAYS|PASS_SILENT)		\
 	x(fs_journal_alloc,			 7, PASS_ALWAYS|PASS_SILENT)		\
 	x(set_may_go_rw,			 8, PASS_ALWAYS|PASS_SILENT)		\
 	x(journal_replay,			 9, PASS_ALWAYS)			\
+	x(check_allocations,			 5, PASS_ONLINE|PASS_FSCK)		\
 	x(check_alloc_info,			10, PASS_ONLINE|PASS_FSCK)		\
 	x(check_lrus,				11, PASS_ONLINE|PASS_FSCK)		\
 	x(check_btree_backpointers,		12, PASS_ONLINE|PASS_FSCK)		\
