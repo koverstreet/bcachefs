@@ -56,11 +56,6 @@
 	  BIT_ULL(BCH_RECOVERY_PASS_check_topology),						\
 	  "Minimal check_allocations pass; only mark out buckets we know are in use "		\
 	  "so we can go RW for actual repair")							\
-	x(check_allocations,			 5, PASS_FSCK_ALLOC,				\
-	  BIT_ULL(BCH_RECOVERY_PASS_check_topology),						\
-	  "Full GC pass: walk all btrees marking referenced "					\
-	  "buckets, then compare against alloc btree to "					\
-	  "repair data_type, sector counts, and stripe refs")					\
 	x(trans_mark_dev_sbs,			 6, PASS_ALWAYS|PASS_SILENT|PASS_ALLOC,	0,	\
 	  "Mark superblock and journal regions in alloc btree")					\
 	x(fs_journal_alloc,			 7, PASS_ALWAYS|PASS_SILENT|PASS_ALLOC,	0,	\
@@ -74,6 +69,11 @@
 	  "Replay pending journal keys into btrees, "						\
 	  "accounting keys first; sorted-order bulk insert "					\
 	  "with per-key fallback for journal deadlocks")					\
+	x(check_allocations,			 5, PASS_FSCK_ALLOC,				\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_topology),						\
+	  "Full GC pass: walk all btrees marking referenced "					\
+	  "buckets, then compare against alloc btree to "					\
+	  "repair data_type, sector counts, and stripe refs")					\
 	x(merge_btree_nodes,			45, PASS_ONLINE,			0,	\
 	  "Merge adjacent underfull btree nodes to reclaim "					\
 	  "wasted space")									\
