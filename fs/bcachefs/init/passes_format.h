@@ -31,11 +31,11 @@
 	x(snapshots_read,			 3, PASS_ALWAYS)			\
 	x(delete_dead_interior_snapshots,	44, 0)					\
 	x(check_allocations_early,		45, PASS_FSCK_ALLOC)			\
-	x(check_allocations,			 5, PASS_FSCK_ALLOC)			\
 	x(trans_mark_dev_sbs,			 6, PASS_ALWAYS|PASS_SILENT|PASS_ALLOC)	\
 	x(fs_journal_alloc,			 7, PASS_ALWAYS|PASS_SILENT|PASS_ALLOC)	\
 	x(set_may_go_rw,			 8, PASS_ALWAYS|PASS_SILENT)		\
 	x(journal_replay,			 9, PASS_ALWAYS)			\
+	x(check_allocations,			 5, PASS_ONLINE|PASS_FSCK_ALLOC)	\
 	x(merge_btree_nodes,			45, PASS_ONLINE)			\
 	x(check_alloc_info,			10, PASS_ONLINE|PASS_FSCK_ALLOC)	\
 	x(check_lrus,				11, PASS_ONLINE|PASS_FSCK_ALLOC)	\
