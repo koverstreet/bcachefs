@@ -458,7 +458,6 @@ again:
 
 	while ((k = bch2_btree_and_journal_iter_peek(c, &iter)).k) {
 		bch2_bkey_buf_reassemble(&cur_k, k);
-		bch2_btree_and_journal_iter_advance(&iter);
 
 		cur = bch2_btree_node_get_noiter(trans, cur_k.k,
 					b->c.btree_id, b->c.level - 1,
@@ -484,6 +483,8 @@ again:
 			goto err;
 
 		have_child = true;
+
+		bch2_btree_and_journal_iter_advance(&iter);
 	}
 
 	printbuf_reset(&buf);
