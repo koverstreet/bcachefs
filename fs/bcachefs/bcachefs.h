@@ -965,7 +965,6 @@ struct bch_fs {
 	 * The allocation code needs gc_mark in struct bucket to be correct, but
 	 * it's not while a gc is in progress.
 	 */
-	struct rw_semaphore	gc_lock;
 	struct mutex		gc_gens_lock;
 
 	/* IO PATH */
