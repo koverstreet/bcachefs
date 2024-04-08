@@ -768,7 +768,6 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	init_waitqueue_head(&c->ro_ref_wait);
 	sema_init(&c->online_fsck_mutex, 1);
 
-	init_rwsem(&c->gc_lock);
 	mutex_init(&c->gc_gens_lock);
 	atomic_set(&c->journal_keys.ref, 1);
 	c->journal_keys.initial_ref_held = true;
