@@ -999,6 +999,7 @@ retry_all:
 
 	bch2_trans_unlock(trans);
 	cond_resched();
+	trans->locked = true;
 
 	if (unlikely(trans->memory_allocation_failure)) {
 		struct closure cl;
@@ -3004,7 +3005,8 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 	if (!trans->restarted &&
 	    (need_resched() ||
 	     time_after64(now, trans->last_begin_time + BTREE_TRANS_MAX_LOCK_HOLD_TIME_NS))) {
-		drop_locks_do(trans, (cond_resched(), 0));
+		bch2_trans_unlock(trans);
+		cond_resched();
 		now = local_clock();
 	}
 	trans->last_begin_time = now;
@@ -3014,6 +3016,8 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 		bch2_trans_srcu_unlock(trans);
 
 	trans->last_begin_ip = _RET_IP_;
+	trans->locked  = true;
+
 	if (trans->restarted) {
 		bch2_btree_path_traverse_all(trans);
 		trans->notrace_relock_fail = false;
@@ -3071,7 +3075,7 @@ struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 			 */
 			BUG_ON(pos_task &&
 			       pid == pos_task->pid &&
-			       bch2_trans_locked(pos));
+			       pos->locked);
 
 			if (pos_task && pid < pos_task->pid) {
 				list_add_tail(&trans->list, &pos->list);
@@ -3087,6 +3091,7 @@ got_trans:
 	trans->last_begin_time	= local_clock();
 	trans->fn_idx		= fn_idx;
 	trans->locking_wait.task = current;
+	trans->locked		= true;
 	trans->journal_replay_not_finished =
 		unlikely(!test_bit(JOURNAL_REPLAY_DONE, &c->journal.flags)) &&
 		atomic_inc_not_zero(&c->journal_keys.ref);
