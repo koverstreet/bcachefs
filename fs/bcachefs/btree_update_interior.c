@@ -1601,6 +1601,7 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 	u64 start_time = local_clock();
 	int ret = 0;
 
+	bch2_trans_verify_locks(trans);
 	bch2_verify_btree_nr_keys(b);
 	BUG_ON(!parent && (b != btree_node_root(c, b)));
 	BUG_ON(parent && !btree_node_intent_locked(trans->paths + path, b->c.level + 1));
@@ -1733,11 +1734,11 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 	bch2_trans_node_add(trans, trans->paths + path1, n1);
 out:
 	if (path2) {
-		__bch2_btree_path_unlock(trans, trans->paths + path2);
+		bch2_btree_path_unlock_dontneed(trans, trans->paths + path2);
 		bch2_path_put(trans, path2, true);
 	}
 	if (path1) {
-		__bch2_btree_path_unlock(trans, trans->paths + path1);
+		bch2_btree_path_unlock_dontneed(trans, trans->paths + path1);
 		bch2_path_put(trans, path1, true);
 	}
 
