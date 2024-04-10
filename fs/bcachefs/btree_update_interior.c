@@ -729,9 +729,6 @@ err:
 	 */
 	b = READ_ONCE(as->b);
 	if (b) {
-		btree_path_idx_t path_idx = get_unlocked_mut_path(trans,
-						as->btree_id, b->c.level, b->key.k.p);
-		struct btree_path *path = trans->paths + path_idx;
 		/*
 		 * @b is the node we did the final insert into:
 		 *
@@ -755,6 +752,10 @@ err:
 		 * have here:
 		 */
 		bch2_trans_unlock(trans);
+		bch2_trans_begin(trans);
+		btree_path_idx_t path_idx = get_unlocked_mut_path(trans,
+						as->btree_id, b->c.level, b->key.k.p);
+		struct btree_path *path = trans->paths + path_idx;
 		btree_node_lock_nopath_nofail(trans, &b->c, SIX_LOCK_intent);
 		mark_btree_node_locked(trans, path, b->c.level, BTREE_NODE_INTENT_LOCKED);
 		path->l[b->c.level].lock_seq = six_lock_seq(&b->c.lock);
