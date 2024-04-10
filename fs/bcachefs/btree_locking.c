@@ -628,7 +628,7 @@ bool bch2_btree_path_upgrade_nounlock(struct btree_trans *trans,
 		}
 	}
 
-	bch2_btree_path_verify_locks(path);
+	bch2_btree_path_verify_locks(trans, path);
 	return path->locks_want == new_locks_want;
 }
 
@@ -656,8 +656,10 @@ bool __bch2_btree_path_upgrade(struct btree_trans *trans,
 	path->locks_want = new_locks_want;
 
 	bool ret = btree_path_get_locks(trans, path, true, f);
-	if (ret)
-		goto out;
+	if (ret) {
+		bch2_trans_verify_locks(trans);
+		return true;
+	}
 
 	/*
 	 * XXX: this is ugly - we'd prefer to not be mucking with other
@@ -691,9 +693,8 @@ bool __bch2_btree_path_upgrade(struct btree_trans *trans,
 				btree_path_get_locks(trans, linked, true, NULL);
 			}
 	}
-out:
-	bch2_trans_verify_locks(trans);
-	return ret;
+
+	return false;
 }
 
 void __bch2_btree_path_downgrade(struct btree_trans *trans,
@@ -722,7 +723,7 @@ void __bch2_btree_path_downgrade(struct btree_trans *trans,
 		}
 	}
 
-	bch2_btree_path_verify_locks(path);
+	bch2_btree_path_verify_locks(trans, path);
 
 	trace_path_downgrade(trans, _RET_IP_, path, old_locks_want);
 }
@@ -856,16 +857,17 @@ int __bch2_trans_mutex_lock(struct btree_trans *trans,
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 
-void bch2_btree_path_verify_locks(struct btree_path *path)
+void bch2_btree_path_verify_locks(struct btree_trans *trans, struct btree_path *path)
 {
-	/*
-	 * A path may be uptodate and yet have nothing locked if and only if
-	 * there is no node at path->level, which generally means we were
-	 * iterating over all nodes and got to the end of the btree
-	 */
-	BUG_ON(path->uptodate == BTREE_ITER_UPTODATE &&
-	       btree_path_node(path, path->level) &&
-	       !path->nodes_locked);
+	if (!path->nodes_locked && btree_path_node(path, path->level)) {
+		/*
+		 * A path may be uptodate and yet have nothing locked if and only if
+		 * there is no node at path->level, which generally means we were
+		 * iterating over all nodes and got to the end of the btree
+		 */
+		BUG_ON(path->uptodate == BTREE_ITER_UPTODATE);
+		BUG_ON(path->should_be_locked && trans->locked && !trans->restarted);
+	}
 
 	if (!path->nodes_locked)
 		return;
@@ -905,7 +907,7 @@ void bch2_trans_verify_locks(struct btree_trans *trans)
 	unsigned i;
 
 	trans_for_each_path(trans, path, i)
-		bch2_btree_path_verify_locks(path);
+		bch2_btree_path_verify_locks(trans, path);
 }
 
 #endif

@@ -158,6 +158,13 @@ static inline void __bch2_btree_path_unlock(struct btree_trans *trans,
 		btree_node_unlock(trans, path, btree_path_lowest_level_locked(path));
 }
 
+static inline void bch2_btree_path_unlock_dontneed(struct btree_trans *trans,
+						   struct btree_path *path)
+{
+	path->should_be_locked = false;
+	__bch2_btree_path_unlock(trans, path);
+}
+
 /*
  * Updates the saved lock sequence number, so that bch2_btree_node_relock() will
  * succeed:
@@ -437,10 +444,10 @@ struct six_lock_count bch2_btree_node_lock_counts(struct btree_trans *,
 int bch2_check_for_deadlock(struct btree_trans *, struct printbuf *);
 
 #ifdef CONFIG_BCACHEFS_DEBUG
-void bch2_btree_path_verify_locks(struct btree_path *);
+void bch2_btree_path_verify_locks(struct btree_trans *, struct btree_path *);
 void bch2_trans_verify_locks(struct btree_trans *);
 #else
-static inline void bch2_btree_path_verify_locks(struct btree_path *path) {}
+static inline void bch2_btree_path_verify_locks(struct btree_trans *, struct btree_path *path) {}
 static inline void bch2_trans_verify_locks(struct btree_trans *trans) {}
 #endif
 
