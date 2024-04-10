@@ -232,7 +232,7 @@ static void bch2_btree_path_verify(struct btree_trans *trans,
 		bch2_btree_path_verify_level(trans, path, i);
 	}
 
-	bch2_btree_path_verify_locks(path);
+	bch2_btree_path_verify_locks(trans, path);
 }
 
 void bch2_trans_verify_paths(struct btree_trans *trans)
@@ -958,7 +958,7 @@ static __always_inline int btree_path_down(struct btree_trans *trans,
 	path->level = level;
 	bch2_btree_path_level_init(trans, path, b);
 
-	bch2_btree_path_verify_locks(path);
+	bch2_btree_path_verify_locks(trans, path);
 err:
 	bch2_bkey_buf_exit(&tmp, c);
 	return ret;
