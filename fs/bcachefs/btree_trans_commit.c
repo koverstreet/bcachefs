@@ -558,7 +558,9 @@ static int bch2_trans_commit_run_triggers(struct btree_trans *trans)
 			return ret;
 	}
 
-	trans_for_each_update(trans, i) {
+	for (unsigned idx = 0; idx < trans->nr_updates; idx++) {
+		struct btree_insert_entry *i = trans->updates + idx;
+
 		if (i->btree_id > BTREE_ID_alloc)
 			break;
 		if (i->btree_id == BTREE_ID_alloc) {
@@ -826,7 +828,8 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans, unsigned flags
 	struct bch_fs *c = trans->c;
 	int ret = 0, u64s_delta = 0;
 
-	trans_for_each_update(trans, i) {
+	for (unsigned idx = 0; idx < trans->nr_updates; idx++) {
+		struct btree_insert_entry *i = trans->updates + idx;
 		if (i->cached)
 			continue;
 
