@@ -1819,8 +1819,15 @@ btree_path_idx_t bch2_path_get(struct btree_trans *trans,
 	 */
 
 	locks_want = min(locks_want, BTREE_MAX_DEPTH);
-	if (locks_want > path->locks_want)
-		bch2_btree_path_upgrade_noupgrade_sibs(trans, path, locks_want, NULL);
+	if (locks_want > path->locks_want) {
+		if (!path->should_be_locked) {
+			bch2_btree_path_upgrade_norestart(trans, path, locks_want);
+		} else if (!bch2_btree_path_upgrade_nounlock(trans, path, locks_want)) {
+			path_idx = __bch2_btree_path_make_mut(trans, path_idx, intent, _THIS_IP_);
+			path = trans->paths + path_idx;
+			bch2_btree_path_upgrade_norestart(trans, path, locks_want);
+		}
+	}
 
 	return path_idx;
 }
