@@ -612,16 +612,36 @@ int __bch2_btree_path_relock(struct btree_trans *trans,
 	return 0;
 }
 
-bool bch2_btree_path_upgrade_noupgrade_sibs(struct btree_trans *trans,
+bool bch2_btree_path_upgrade_nounlock(struct btree_trans *trans,
+				      struct btree_path *path,
+				      unsigned new_locks_want)
+{
+	while (path->locks_want < new_locks_want) {
+		unsigned l = path->locks_want++;
+
+		if (!btree_path_node(path, l))
+			break;
+
+		if (!bch2_btree_node_upgrade(trans, path, l)) {
+			path->locks_want = l;
+			break;
+		}
+	}
+
+	bch2_btree_path_verify_locks(path);
+	return path->locks_want == new_locks_want;
+}
+
+bool bch2_btree_path_upgrade_norestart(struct btree_trans *trans,
 			       struct btree_path *path,
-			       unsigned new_locks_want,
-			       struct get_locks_fail *f)
+			       unsigned new_locks_want)
 {
 	EBUG_ON(path->locks_want >= new_locks_want);
+	EBUG_ON(path->should_be_locked);
 
 	path->locks_want = new_locks_want;
 
-	bool ret = btree_path_get_locks(trans, path, true, f);
+	bool ret = btree_path_get_locks(trans, path, true, NULL);
 	bch2_trans_verify_locks(trans);
 	return ret;
 }
@@ -631,7 +651,11 @@ bool __bch2_btree_path_upgrade(struct btree_trans *trans,
 			       unsigned new_locks_want,
 			       struct get_locks_fail *f)
 {
-	bool ret = bch2_btree_path_upgrade_noupgrade_sibs(trans, path, new_locks_want, f);
+	EBUG_ON(path->locks_want >= new_locks_want);
+
+	path->locks_want = new_locks_want;
+
+	bool ret = btree_path_get_locks(trans, path, true, f);
 	if (ret)
 		goto out;
 
