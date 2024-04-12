@@ -163,7 +163,7 @@ static void member_to_text(struct printbuf *out,
 	u64 bucket_size = le16_to_cpu(m.bucket_size);
 	u64 device_size = le64_to_cpu(m.nbuckets) * bucket_size;
 
-	if (!bch2_member_exists(&m))
+	if (!bch2_member_alive(&m))
 		return;
 
 	prt_printf(out, "Device:\t%u\n", i);
