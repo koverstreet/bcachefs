@@ -362,11 +362,8 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 	}
 
 	ob = __try_alloc_bucket(c, ca, b, watermark, a, s, cl);
-	if (!ob)
-		bch2_set_btree_iter_dontneed(&iter);
 err:
-	if (iter.path)
-		bch2_set_btree_iter_dontneed(&iter);
+	bch2_set_btree_iter_dontneed(&iter);
 	bch2_trans_iter_exit(trans, &iter);
 	printbuf_exit(&buf);
 	return ob;
@@ -520,10 +517,9 @@ again:
 
 			ob = try_alloc_bucket(trans, ca, watermark,
 					      alloc_cursor, s, k, cl);
-			if (ob) {
-				bch2_set_btree_iter_dontneed(&iter);
+			bch2_set_btree_iter_dontneed(&iter);
+			if (ob)
 				break;
-			}
 		}
 
 		if (ob || ret)
