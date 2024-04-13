@@ -186,6 +186,53 @@ DEFINE_EVENT(sched_wakeup_template, sched_wakeup_new,
 	     TP_PROTO(struct task_struct *p),
 	     TP_ARGS(p));
 
+TRACE_EVENT(sched_wakeup_backtrace,
+	TP_PROTO(struct task_struct *p, unsigned sleep_ns, unsigned long *bt, unsigned bt_nr),
+
+	TP_ARGS(p, sleep_ns, bt, bt_nr),
+
+	TP_STRUCT__entry(
+		__array(	char,	comm,	TASK_COMM_LEN	)
+		__field(	pid_t,	pid			)
+		__field(	unsigned, sleep_us)
+		__field(	unsigned, bt_nr			)
+		__array(	ulong,	bt,	10	)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->comm, p->comm, TASK_COMM_LEN);
+		__entry->pid		= p->pid;
+		__entry->sleep_us	= sleep_ns / 1000;
+		__entry->bt_nr		= bt_nr;
+		memset(__entry->bt, 0, sizeof(__entry->bt));
+		memcpy(__entry->bt, bt, bt_nr * sizeof(bt[0]));
+	),
+
+	TP_printk("comm=%s pid=%d sleep=%u\n"
+		  "  %pB\n"
+		  "  %pB\n"
+		  "  %pB\n"
+		  "  %pB\n"
+		  "  %pB\n"
+		  "  %pB\n"
+		  "  %pB\n"
+		  "  %pB\n"
+		  "  %pB\n"
+		  "  %pB\n",
+		  __entry->comm, __entry->pid,
+		  __entry->sleep_us,
+		  (void *) __entry->bt[0],
+		  (void *) __entry->bt[1],
+		  (void *) __entry->bt[2],
+		  (void *) __entry->bt[3],
+		  (void *) __entry->bt[4],
+		  (void *) __entry->bt[5],
+		  (void *) __entry->bt[6],
+		  (void *) __entry->bt[7],
+		  (void *) __entry->bt[8],
+		  (void *) __entry->bt[9])
+);
+
 #ifdef CREATE_TRACE_POINTS
 static inline long __trace_sched_switch_state(bool preempt,
 					      unsigned int prev_state,
