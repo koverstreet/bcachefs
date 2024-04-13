@@ -3961,4 +3961,8 @@ void sched_enq_and_set_task(struct sched_enq_and_set_ctx *ctx);
 
 #include "ext.h"
 
+extern struct dentry *debugfs_sched;
+
+void sched_wakeup_backtrace(struct task_struct *task, u64 start_time);
+
 #endif /* _KERNEL_SCHED_SCHED_H */

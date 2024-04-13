@@ -472,7 +472,7 @@ static const struct file_operations fair_server_period_fops = {
 	.release	= single_release,
 };
 
-static struct dentry *debugfs_sched;
+struct dentry *debugfs_sched;
 
 static void debugfs_fair_server_init(void)
 {
