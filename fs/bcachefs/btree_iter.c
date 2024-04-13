@@ -3033,10 +3033,12 @@ out_change_top:
 
 static inline void check_srcu_held_too_long(struct btree_trans *trans)
 {
-	if (trans->srcu_held && time_after(jiffies, trans->srcu_lock_time + HZ * 10))
+	if (trans->srcu_held && time_after(jiffies, trans->srcu_lock_time + HZ * 10)) {
 		bch_warn(trans->c,
 			 "btree trans held srcu lock (delaying memory reclaim) for %lu seconds",
 			 (jiffies - trans->srcu_lock_time) / HZ);
+		BUG();
+	}
 }
 
 void bch2_trans_srcu_unlock(struct btree_trans *trans)
