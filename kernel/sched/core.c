@@ -4051,6 +4051,22 @@ bool ttwu_state_match(struct task_struct *p, unsigned int state, int *success)
 	return match > 0;
 }
 
+static noinline void do_trace_sched_wakeup_backtrace(struct task_struct *task, u64 start_time)
+{
+	u64 duration = ktime_get_ns() - start_time;
+
+	if (duration < 100 * NSEC_PER_MSEC)
+		return;
+
+	if (task->__state & TASK_NOLOAD)
+		return;
+
+	unsigned long bt[10];
+	unsigned bt_nr = stack_trace_save_tsk(task, bt, ARRAY_SIZE(bt), 0);
+
+	trace_sched_wakeup_backtrace(task, duration, bt, bt_nr);
+}
+
 /*
  * Notes on Program-Order guarantees on SMP systems.
  *
@@ -4202,6 +4218,12 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 		ttwu_do_wakeup(p);
 		goto out;
 	}
+
+	u64 sleep_start;
+	if (p->sleep_timestamp &&
+	    trace_sched_wakeup_backtrace_enabled() &&
+	    (sleep_start = xchg(&p->sleep_timestamp, 0)))
+		do_trace_sched_wakeup_backtrace(p, sleep_start);
 
 	/*
 	 * If we are going to wake up a thread waiting for CONDITION we

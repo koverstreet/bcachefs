@@ -231,19 +231,33 @@ struct user_event_mm;
  *
  * Also see the comments of try_to_wake_up().
  */
-#define __set_current_state(state_value)				\
+
+extern ktime_t ktime_get(void);
+
+#define set_task_sleep_time(task, state_value)				\
+do {									\
+	if (((state_value) & TASK_NORMAL) && !((task)->__state & TASK_NORMAL))\
+		task->sleep_timestamp = ktime_get();			\
+} while (0)
+
+#define __set_task_state(task, type, state_value)			\
 	do {								\
 		debug_normal_state_change((state_value));		\
 		trace_set_current_state(state_value);			\
+		set_task_sleep_time(task, state_value);			\
 		WRITE_ONCE(current->__state, (state_value));		\
 	} while (0)
 
-#define set_current_state(state_value)					\
+#define set_task_state(task, type, state_value)				\
 	do {								\
 		debug_normal_state_change((state_value));		\
 		trace_set_current_state(state_value);			\
+		set_task_sleep_time(task, state_value);			\
 		smp_store_mb(current->__state, (state_value));		\
 	} while (0)
+
+#define __set_current_state(state_value)	__set_task_state(current, normal, state_value)
+#define set_current_state(state_value)		set_task_state(current, normal, state_value)
 
 /*
  * set_special_state() should be used for those states when the blocking task
@@ -256,7 +270,6 @@ struct user_event_mm;
 		unsigned long flags; /* may shadow */			\
 									\
 		raw_spin_lock_irqsave(&current->pi_lock, flags);	\
-		debug_special_state_change((state_value));		\
 		trace_set_current_state(state_value);			\
 		WRITE_ONCE(current->__state, (state_value));		\
 		raw_spin_unlock_irqrestore(&current->pi_lock, flags);	\
@@ -822,6 +835,8 @@ struct task_struct {
 
 	/* saved state for "spinlock sleepers" */
 	unsigned int			saved_state;
+
+	u64				sleep_timestamp;
 
 	/*
 	 * This begins the randomizable portion of task_struct. Only
