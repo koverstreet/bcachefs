@@ -164,8 +164,10 @@ static inline int wb_flush_one(struct btree_trans *trans, struct btree_iter *ite
 	 * We can't clone a path that has write locks: unshare it now, before
 	 * set_pos and traverse():
 	 */
-	if (btree_iter_path(trans, iter)->ref > 1)
+	if (btree_iter_path(trans, iter)->ref > 1) {
 		iter->path = __bch2_btree_path_make_mut(trans, iter->path, true, _THIS_IP_);
+		btree_iter_path(trans, iter)->should_be_locked = true;
+	}
 
 	path = btree_iter_path(trans, iter);
 
