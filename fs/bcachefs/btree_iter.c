@@ -1058,6 +1058,16 @@ err:
 	return ret;
 }
 
+static inline bool __btree_path_check_pos_in_node(struct btree_path *path, unsigned l,
+						  struct bpos new_pos, int cmp)
+{
+	if (cmp < 0 && bpos_lt(new_pos, path->l[l].b->data->min_key))
+		return false;
+	if (cmp > 0 && bpos_gt(new_pos, path->l[l].b->key.k.p))
+		return false;
+	return true;
+}
+
 static inline bool btree_path_check_pos_in_node(struct btree_path *path,
 						unsigned l, int check_pos)
 {
@@ -1240,6 +1250,9 @@ static inline void btree_path_copy(struct btree_trans *trans, struct btree_path 
 		if (t != BTREE_NODE_UNLOCKED)
 			six_lock_increment(&dst->l[i].b->c.lock, t);
 	}
+
+	dst->preserve		= false;
+	dst->should_be_locked	= false;
 }
 
 static btree_path_idx_t btree_path_clone(struct btree_trans *trans, btree_path_idx_t src,
@@ -1262,8 +1275,14 @@ btree_path_idx_t __bch2_btree_path_make_mut(struct btree_trans *trans,
 	__btree_path_put(trans, trans->paths + path, intent);
 	path = btree_path_clone(trans, path, intent, ip);
 	trace_btree_path_clone(trans, old, trans->paths + path);
-	trans->paths[path].preserve = false;
 	return path;
+}
+
+static inline bool new_pos_will_unlock(struct btree_path *path, struct bpos new_pos, int cmp)
+{
+	return path->should_be_locked &&
+		(path->cached ||
+		 !__btree_path_check_pos_in_node(path, path->level, new_pos, cmp));
 }
 
 btree_path_idx_t __must_check
@@ -1271,16 +1290,24 @@ __bch2_btree_path_set_pos(struct btree_trans *trans,
 			  btree_path_idx_t path_idx, struct bpos new_pos,
 			  bool intent, unsigned long ip)
 {
-	int cmp = bpos_cmp(new_pos, trans->paths[path_idx].pos);
+	struct btree_path *path = trans->paths + path_idx;
 
 	bch2_trans_verify_not_unlocked_or_in_restart(trans);
-	EBUG_ON(!trans->paths[path_idx].ref);
+	bch2_trans_verify_locks(trans);
+	EBUG_ON(!path->ref);
+	EBUG_ON(!trans->locked); /* if the trans isn't locked, this screws up should_be_locked */
 
 	trace_btree_path_set_pos(trans, trans->paths + path_idx, &new_pos);
 
-	path_idx = bch2_btree_path_make_mut(trans, path_idx, intent, ip);
+	int cmp = bpos_cmp(new_pos, path->pos);
 
-	struct btree_path *path = trans->paths + path_idx;
+	if (path->ref > 1 ||
+	    path->preserve ||
+	    new_pos_will_unlock(path, new_pos, cmp)) {
+		path_idx = __bch2_btree_path_make_mut(trans, path_idx, intent, ip);
+		path = trans->paths + path_idx;
+	}
+
 	path->pos		= new_pos;
 	trans->paths_sorted	= false;
 
@@ -1778,8 +1805,7 @@ btree_path_idx_t bch2_path_get(struct btree_trans *trans,
 		trace_btree_path_alloc(trans, path);
 	}
 
-	if (!(flags & BTREE_ITER_nopreserve))
-		path->preserve = true;
+	path->preserve |= !(flags & BTREE_ITER_nopreserve);
 
 	if (path->intent_ref)
 		locks_want = max(locks_want, level + 1);
