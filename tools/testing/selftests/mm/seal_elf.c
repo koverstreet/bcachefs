@@ -12,9 +12,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <assert.h>
 #include <fcntl.h>
-#include <assert.h>
 #include <sys/ioctl.h>
 #include <sys/vfs.h>
 #include <sys/stat.h>
@@ -179,5 +177,4 @@ int main(int argc, char **argv)
 	test_seal_elf();
 
 	ksft_finished();
-	return 0;
 }
