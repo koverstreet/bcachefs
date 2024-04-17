@@ -202,4 +202,12 @@ static inline void alloc_tag_sub(union codetag_ref *ref, size_t bytes) {}
 	alloc_hooks_tag(&_alloc_tag, _do_alloc);			\
 })
 
+#define alloc_hooks_void(_do)						\
+do {									\
+	DEFINE_ALLOC_TAG(_tag);						\
+	struct alloc_tag * __maybe_unused _old = alloc_tag_save(&_tag);	\
+	_do;								\
+	alloc_tag_restore(&_tag, _old);					\
+} while (0)
+
 #endif /* _LINUX_ALLOC_TAG_H */

@@ -10,41 +10,36 @@ struct bkey_buf {
 	u64		onstack[12];
 };
 
-static inline void bch2_bkey_buf_realloc(struct bkey_buf *s,
+static inline void bch2_bkey_buf_realloc_noprof(struct bkey_buf *s,
 					 struct bch_fs *c, unsigned u64s)
 {
 	if (s->k == (void *) s->onstack &&
 	    u64s > ARRAY_SIZE(s->onstack)) {
-		s->k = mempool_alloc(&c->large_bkey_pool, GFP_NOFS);
+		s->k = mempool_alloc_noprof(&c->large_bkey_pool, GFP_NOFS);
 		memcpy(s->k, s->onstack, sizeof(s->onstack));
 	}
 }
 
-static inline void bch2_bkey_buf_reassemble(struct bkey_buf *s,
-					    struct bch_fs *c,
-					    struct bkey_s_c k)
-{
-	bch2_bkey_buf_realloc(s, c, k.k->u64s);
-	bkey_reassemble(s->k, k);
-}
+#define bch2_bkey_buf_realloc(...)	alloc_hooks_void(bch2_bkey_buf_realloc_noprof(__VA_ARGS__))
 
-static inline void bch2_bkey_buf_copy(struct bkey_buf *s,
-				      struct bch_fs *c,
-				      struct bkey_i *src)
-{
-	bch2_bkey_buf_realloc(s, c, src->k.u64s);
-	bkey_copy(s->k, src);
-}
+#define bch2_bkey_buf_reassemble(_s, _c, _k)				\
+do {									\
+	bch2_bkey_buf_realloc(_s, _c, (_k).k->u64s);			\
+	bkey_reassemble((_s)->k, _k);					\
+} while (0)
 
-static inline void bch2_bkey_buf_unpack(struct bkey_buf *s,
-					struct bch_fs *c,
-					struct btree *b,
-					struct bkey_packed *src)
-{
-	bch2_bkey_buf_realloc(s, c, BKEY_U64s +
-			      bkeyp_val_u64s(&b->format, src));
-	bch2_bkey_unpack(b, s->k, src);
-}
+#define bch2_bkey_buf_copy(_s, _c, _src)				\
+do {									\
+	bch2_bkey_buf_realloc(_s, _c, (_src)->k.u64s);			\
+	bkey_copy((_s)->k, _src);					\
+} while (0)
+
+#define bch2_bkey_buf_unpack(_s, _c, _b, _src)				\
+do {									\
+	bch2_bkey_buf_realloc(_s, _c, BKEY_U64s +			\
+			      bkeyp_val_u64s(&_b->format, _src));	\
+	bch2_bkey_unpack(_b, (_s)->k, _src);				\
+} while (0)
 
 static inline void bch2_bkey_buf_init(struct bkey_buf *s)
 {
