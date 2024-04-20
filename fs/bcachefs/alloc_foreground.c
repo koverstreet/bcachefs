@@ -203,7 +203,7 @@ static inline unsigned open_buckets_reserved(enum bch_watermark watermark)
 }
 
 static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *ca,
-					      u64 bucket,
+					      u64 *bucket,
 					      enum bch_watermark watermark,
 					      const struct bch_alloc_v4 *a,
 					      struct bucket_alloc_state *s,
@@ -211,23 +211,34 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 {
 	struct open_bucket *ob;
 
-	if (unlikely(ca->buckets_nouse && test_bit(bucket, ca->buckets_nouse))) {
+	if (unlikely(ca->buckets_nouse && test_bit(*bucket, ca->buckets_nouse))) {
 		s->skipped_nouse++;
 		return NULL;
 	}
 
-	if (bch2_bucket_is_open(c, ca->dev_idx, bucket)) {
+	if (s->mi_btree_bitmap_only &&
+	    unlikely(!bch2_dev_btree_bitmap_marked_sectors(ca,
+					bucket_to_sector(ca, *bucket), ca->mi.bucket_size))) {
+
+		u64 sector = bucket_to_sector(ca, *bucket);
+		sector = round_up(sector, 1ULL << ca->mi.btree_bitmap_shift);
+		*bucket = sector_to_bucket(ca, sector);
+		s->skipped_mi_btree_bitmap++;
+		return NULL;
+	}
+
+	if (bch2_bucket_is_open(c, ca->dev_idx, *bucket)) {
 		s->skipped_open++;
 		return NULL;
 	}
 
 	if (bch2_bucket_needs_journal_commit(&c->buckets_waiting_for_journal,
-			c->journal.flushed_seq_ondisk, ca->dev_idx, bucket)) {
+			c->journal.flushed_seq_ondisk, ca->dev_idx, *bucket)) {
 		s->skipped_need_journal_commit++;
 		return NULL;
 	}
 
-	if (bch2_bucket_nocow_is_locked(&c->nocow_locks, POS(ca->dev_idx, bucket))) {
+	if (bch2_bucket_nocow_is_locked(&c->nocow_locks, POS(ca->dev_idx, *bucket))) {
 		s->skipped_nocow++;
 		return NULL;
 	}
@@ -244,7 +255,7 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 	}
 
 	/* Recheck under lock: */
-	if (bch2_bucket_is_open(c, ca->dev_idx, bucket)) {
+	if (bch2_bucket_is_open(c, ca->dev_idx, *bucket)) {
 		spin_unlock(&c->freelist_lock);
 		s->skipped_open++;
 		return NULL;
@@ -258,7 +269,7 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 	ob->sectors_free = ca->mi.bucket_size;
 	ob->dev		= ca->dev_idx;
 	ob->gen		= a->gen;
-	ob->bucket	= bucket;
+	ob->bucket	= *bucket;
 	spin_unlock(&ob->lock);
 
 	ca->nr_open_buckets++;
@@ -272,7 +283,8 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c, struct bch_dev *
 }
 
 static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bch_dev *ca,
-					    enum bch_watermark watermark, u64 free_entry,
+					    enum bch_watermark watermark,
+					    u64 *b, unsigned genbits,
 					    struct bucket_alloc_state *s,
 					    struct bkey_s_c freespace_k,
 					    struct closure *cl)
@@ -283,12 +295,10 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 	struct open_bucket *ob;
 	struct bch_alloc_v4 a_convert;
 	const struct bch_alloc_v4 *a;
-	u64 b = free_entry & ~(~0ULL << 56);
-	unsigned genbits = free_entry >> 56;
 	struct printbuf buf = PRINTBUF;
 	int ret;
 
-	if (b < ca->mi.first_bucket || b >= ca->mi.nbuckets) {
+	if (*b < ca->mi.first_bucket || *b >= ca->mi.nbuckets) {
 		prt_printf(&buf, "freespace btree has bucket outside allowed range %u-%llu\n"
 		       "  freespace key ",
 			ca->mi.first_bucket, ca->mi.nbuckets);
@@ -299,7 +309,7 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 	}
 
 	k = bch2_bkey_get_iter(trans, &iter,
-			       BTREE_ID_alloc, POS(ca->dev_idx, b),
+			       BTREE_ID_alloc, POS(ca->dev_idx, *b),
 			       BTREE_ITER_cached);
 	ret = bkey_err(k);
 	if (ret) {
@@ -342,7 +352,7 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 		struct bch_backpointer bp;
 		struct bpos bp_pos = POS_MIN;
 
-		ret = bch2_get_next_backpointer(trans, POS(ca->dev_idx, b), -1,
+		ret = bch2_get_next_backpointer(trans, POS(ca->dev_idx, *b), -1,
 						&bp_pos, &bp,
 						BTREE_ITER_nopreserve);
 		if (ret) {
@@ -407,6 +417,7 @@ again:
 			   BTREE_ITER_slots, k, ret) {
 		struct bch_alloc_v4 a_convert;
 		const struct bch_alloc_v4 *a;
+		u64 bucket = k.k->p.offset;
 
 		if (bkey_ge(k.k->p, POS(ca->dev_idx, ca->mi.nbuckets)))
 			break;
@@ -431,12 +442,20 @@ again:
 
 		s->buckets_seen++;
 
-		ob = __try_alloc_bucket(trans->c, ca, k.k->p.offset, watermark, a, s, cl);
+		ob = __try_alloc_bucket(trans->c, ca, &bucket, watermark, a, s, cl);
 next:
 		set_btree_iter_dontneed(&citer);
 		bch2_trans_iter_exit(trans, &citer);
 		if (ob)
 			break;
+
+		/*
+		 * are we skipping over a range due to the mi_btree_allocated
+		 * check?
+		 * -1 because the iterator will still be advanced
+		 */
+		if (bucket > k.k->p.offset)
+			bch2_btree_iter_set_pos(&iter, POS(ca->dev_idx, bucket - 1));
 	}
 	bch2_trans_iter_exit(trans, &iter);
 
@@ -485,12 +504,22 @@ again:
 
 			s->buckets_seen++;
 
+			u64 b = alloc_cursor & ~(~0ULL << 56);
+			u64 genbits = alloc_cursor >> 56;
+
 			ob = try_alloc_bucket(trans, ca, watermark,
-					      alloc_cursor, s, k, cl);
+					      &b, genbits, s, k, cl);
 			if (ob) {
 				set_btree_iter_dontneed(&iter);
 				break;
 			}
+
+			/*
+			 * are we skipping over a range due to the
+			 * mi_btree_allocated check?
+			 */
+			if (b > (alloc_cursor & ~(~0ULL << 56)))
+				alloc_cursor = (b - 1) | (genbits << 56);
 		}
 
 		if (ob || ret)
@@ -533,7 +562,9 @@ static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 	struct open_bucket *ob = NULL;
 	bool freespace = READ_ONCE(ca->mi.freespace_initialized);
 	u64 avail;
-	struct bucket_alloc_state s = { 0 };
+	struct bucket_alloc_state s = {
+		.mi_btree_bitmap_only = data_type == BCH_DATA_btree,
+	};
 	bool waiting = false;
 again:
 	bch2_dev_usage_read_fast(ca, usage);
@@ -570,6 +601,11 @@ alloc:
 
 	if (s.skipped_need_journal_commit * 2 > avail)
 		bch2_journal_flush_async(&c->journal, NULL);
+
+	if (!ob && s.mi_btree_bitmap_only) {
+		s.mi_btree_bitmap_only = false;
+		goto alloc;
+	}
 
 	if (!ob && freespace && c->curr_recovery_pass <= BCH_RECOVERY_PASS_check_alloc_info) {
 		freespace = false;
