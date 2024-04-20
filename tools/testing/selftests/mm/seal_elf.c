@@ -72,7 +72,7 @@ static void *sys_mmap(void *addr, unsigned long len, unsigned long prot,
 	return sret;
 }
 
-inline int sys_mprotect(void *ptr, size_t size, unsigned long prot)
+static inline int sys_mprotect(void *ptr, size_t size, unsigned long prot)
 {
 	int sret;
 
