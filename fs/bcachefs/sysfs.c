@@ -138,8 +138,8 @@ do {									\
 write_attribute(trigger_gc);
 write_attribute(trigger_discards);
 write_attribute(trigger_invalidates);
-write_attribute(prune_cache);
-write_attribute(btree_wakeup);
+write_attribute(trigger_btree_cache_shrink);
+write_attribute(trigger_btree_key_cache_shrink);
 rw_attribute(btree_gc_periodic);
 rw_attribute(gc_gens_pos);
 
@@ -345,21 +345,6 @@ static void bch2_gc_gens_pos_to_text(struct printbuf *out, struct bch_fs *c)
 	prt_printf(out, "\n");
 }
 
-static void bch2_btree_wakeup_all(struct bch_fs *c)
-{
-	struct btree_trans *trans;
-
-	seqmutex_lock(&c->btree_trans_lock);
-	list_for_each_entry(trans, &c->btree_trans_list, list) {
-		struct btree_bkey_cached_common *b = READ_ONCE(trans->locking);
-
-		if (b)
-			six_lock_wakeup_all(&b->lock);
-
-	}
-	seqmutex_unlock(&c->btree_trans_lock);
-}
-
 SHOW(bch2_fs)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
@@ -488,7 +473,7 @@ STORE(bch2_fs)
 	if (!test_bit(BCH_FS_rw, &c->flags))
 		return -EROFS;
 
-	if (attr == &sysfs_prune_cache) {
+	if (attr == &sysfs_trigger_btree_cache_shrink) {
 		struct shrink_control sc;
 
 		sc.gfp_mask = GFP_KERNEL;
@@ -496,8 +481,13 @@ STORE(bch2_fs)
 		c->btree_cache.shrink->scan_objects(c->btree_cache.shrink, &sc);
 	}
 
-	if (attr == &sysfs_btree_wakeup)
-		bch2_btree_wakeup_all(c);
+	if (attr == &sysfs_trigger_btree_key_cache_shrink) {
+		struct shrink_control sc;
+
+		sc.gfp_mask = GFP_KERNEL;
+		sc.nr_to_scan = strtoul_or_return(buf);
+		c->btree_key_cache.shrink->scan_objects(c->btree_cache.shrink, &sc);
+	}
 
 	if (attr == &sysfs_trigger_gc)
 		bch2_gc_gens(c);
@@ -624,8 +614,8 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_trigger_gc,
 	&sysfs_trigger_discards,
 	&sysfs_trigger_invalidates,
-	&sysfs_prune_cache,
-	&sysfs_btree_wakeup,
+	&sysfs_trigger_btree_cache_shrink,
+	&sysfs_trigger_btree_key_cache_shrink,
 
 	&sysfs_gc_gens_pos,
 
