@@ -861,7 +861,8 @@ void bch2_journal_block(struct journal *j)
 	journal_quiesce(j);
 }
 
-static struct journal_buf *__bch2_next_write_buffer_flush_journal_buf(struct journal *j, u64 max_seq)
+static struct journal_buf *__bch2_next_write_buffer_flush_journal_buf(struct journal *j,
+						u64 min_seq, u64 max_seq, bool *blocked)
 {
 	struct journal_buf *ret = NULL;
 
@@ -871,20 +872,23 @@ static struct journal_buf *__bch2_next_write_buffer_flush_journal_buf(struct jou
 	spin_lock(&j->lock);
 	max_seq = min(max_seq, journal_cur_seq(j));
 
-	for (u64 seq = journal_last_unwritten_seq(j);
+	for (u64 seq = max(min_seq, journal_last_unwritten_seq(j));
 	     seq <= max_seq;
 	     seq++) {
 		unsigned idx = seq & JOURNAL_BUF_MASK;
 		struct journal_buf *buf = j->buf + idx;
 
 		if (buf->need_flush_to_write_buffer) {
-			if (seq == journal_cur_seq(j))
-				__journal_entry_close(j, JOURNAL_ENTRY_CLOSED_VAL, true);
+			if (seq == journal_cur_seq(j) && !*blocked) {
+				*blocked = true;
+				j->blocked++;
+			}
 
 			union journal_res_state s;
 			s.v = atomic64_read_acquire(&j->reservations.counter);
 
-			ret = journal_state_count(s, idx)
+			unsigned expected_ref = seq == journal_cur_seq(j);
+			ret = journal_state_count(s, idx) > expected_ref
 				? ERR_PTR(-EAGAIN)
 				: buf;
 			break;
@@ -897,11 +901,17 @@ static struct journal_buf *__bch2_next_write_buffer_flush_journal_buf(struct jou
 	return ret;
 }
 
-struct journal_buf *bch2_next_write_buffer_flush_journal_buf(struct journal *j, u64 max_seq)
+struct journal_buf *bch2_next_write_buffer_flush_journal_buf(struct journal *j,
+						u64 min_seq, u64 max_seq, bool *blocked)
 {
 	struct journal_buf *ret;
+	*blocked = false;
 
-	wait_event(j->wait, (ret = __bch2_next_write_buffer_flush_journal_buf(j, max_seq)) != ERR_PTR(-EAGAIN));
+	wait_event(j->wait, (ret = __bch2_next_write_buffer_flush_journal_buf(j,
+						min_seq, max_seq, blocked)) != ERR_PTR(-EAGAIN));
+	if (IS_ERR_OR_NULL(ret) && *blocked)
+		bch2_journal_unblock(j);
+
 	return ret;
 }
 
