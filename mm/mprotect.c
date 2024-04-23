@@ -749,7 +749,7 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
 	 * checking if memory is sealed.
 	 * can_modify_mm assumes we have acquired the lock on MM.
 	 */
-	if (!can_modify_mm(current->mm, start, end)) {
+	if (unlikely(!can_modify_mm(current->mm, start, end))) {
 		error = -EPERM;
 		goto out;
 	}

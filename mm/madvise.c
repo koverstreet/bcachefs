@@ -1449,7 +1449,7 @@ int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, int beh
 	 * Check if the address range is sealed for do_madvise().
 	 * can_modify_mm_madv assumes we have acquired the lock on MM.
 	 */
-	if (!can_modify_mm_madv(mm, start, end, behavior)) {
+	if (unlikely(!can_modify_mm_madv(mm, start, end, behavior))) {
 		error = -EPERM;
 		goto out;
 	}

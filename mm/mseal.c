@@ -32,7 +32,7 @@ static inline void set_vma_sealed(struct vm_area_struct *vma)
  */
 static bool can_modify_vma(struct vm_area_struct *vma)
 {
-	if (vma_is_sealed(vma))
+	if (unlikely(vma_is_sealed(vma)))
 		return false;
 
 	return true;
@@ -75,7 +75,7 @@ bool can_modify_mm(struct mm_struct *mm, unsigned long start, unsigned long end)
 
 	/* going through each vma to check. */
 	for_each_vma_range(vmi, vma, end) {
-		if (!can_modify_vma(vma))
+		if (unlikely(!can_modify_vma(vma)))
 			return false;
 	}
 
@@ -100,7 +100,7 @@ bool can_modify_mm_madv(struct mm_struct *mm, unsigned long start, unsigned long
 
 	/* going through each vma to check. */
 	for_each_vma_range(vmi, vma, end)
-		if (is_ro_anon(vma) && !can_modify_vma(vma))
+		if (unlikely(is_ro_anon(vma) && !can_modify_vma(vma)))
 			return false;
 
 	/* Allow by default. */

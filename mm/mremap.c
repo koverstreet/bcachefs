@@ -912,7 +912,7 @@ static unsigned long mremap_to(unsigned long addr, unsigned long old_len,
 	 *
 	 * can_modify_mm assumes we have acquired the lock on MM.
 	 */
-	if (!can_modify_mm(mm, addr, addr + old_len))
+	if (unlikely(!can_modify_mm(mm, addr, addr + old_len)))
 		return -EPERM;
 
 	if (flags & MREMAP_FIXED) {
@@ -1087,7 +1087,7 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 	 * Place can_modify_mm here so we can keep the logic related to
 	 * shrink/expand together.
 	 */
-	if (!can_modify_mm(mm, addr, addr + old_len)) {
+	if (unlikely(!can_modify_mm(mm, addr, addr + old_len))) {
 		ret = -EPERM;
 		goto out;
 	}
