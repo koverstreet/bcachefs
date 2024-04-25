@@ -356,6 +356,8 @@ again:
 			ob = may_alloc_bucket(c, req, k.k->p)
 				? __try_alloc_bucket(c, req, k.k->p.offset, a->gen)
 				: NULL;
+			if (ob && !IS_ERR(ob))
+				bch2_set_btree_iter_dontneed(&iter);
 			if (ob)
 				break;
 		}
