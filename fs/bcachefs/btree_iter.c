@@ -1643,6 +1643,7 @@ static noinline void btree_path_overflow(struct btree_trans *trans)
 {
 	bch2_dump_trans_paths_updates(trans);
 	bch_err(trans->c, "trans path overflow");
+	BUG();
 }
 
 static noinline void btree_paths_realloc(struct btree_trans *trans)
@@ -1861,19 +1862,29 @@ hole:
 	return (struct bkey_s_c) { u, NULL };
 }
 
+static inline void set_path_dontneed(struct btree_trans *trans, btree_path_idx_t path_idx)
+{
+	if (!path_idx)
+		return;
+
+	struct btree_path *path = trans->paths + path_idx;
+	path->preserve		= false;
+	if (path->ref == 1)
+		path->should_be_locked	= false;
+}
 
 void bch2_set_btree_iter_dontneed(struct btree_iter *iter)
 {
 	struct btree_trans *trans = iter->trans;
 
-	if (!iter->path || trans->restarted)
+	if (trans->restarted)
 		return;
 
-	struct btree_path *path = btree_iter_path(trans, iter);
-	path->preserve		= false;
-	if (path->ref == 1)
-		path->should_be_locked	= false;
+	set_path_dontneed(trans, iter->path);
+	set_path_dontneed(trans, iter->update_path);
+	set_path_dontneed(trans, iter->key_cache_path);
 }
+
 /* Btree iterators: */
 
 int __must_check

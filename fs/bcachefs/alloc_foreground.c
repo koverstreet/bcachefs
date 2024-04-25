@@ -452,6 +452,8 @@ next:
 		if (ob)
 			break;
 	}
+
+	bch2_set_btree_iter_dontneed(&iter);
 	bch2_trans_iter_exit(trans, &iter);
 
 	alloc_cursor = iter.pos.offset;
