@@ -424,6 +424,8 @@ again:
 			     may_alloc_bucket_journal_seq(c, req, a->journal_seq_empty)
 				? __try_alloc_bucket(c, req, k.k->p.offset, a->gen)
 				: NULL;
+			if (ob && !IS_ERR(ob))
+				bch2_set_btree_iter_dontneed(&iter);
 			if (ob)
 				break;
 		}
