@@ -804,6 +804,10 @@ use_clean:
 	if (ret)
 		goto err;
 
+	set_bit(BCH_FS_btree_running, &c->flags);
+
+	ret = bch2_sb_set_upgrade_extra(c);
+
 	ret = bch2_run_recovery_passes(c);
 	if (ret)
 		goto err;
@@ -963,6 +967,7 @@ int bch2_fs_initialize(struct bch_fs *c)
 	mutex_unlock(&c->sb_lock);
 
 	c->curr_recovery_pass = BCH_RECOVERY_PASS_NR;
+	set_bit(BCH_FS_btree_running, &c->flags);
 	set_bit(BCH_FS_may_go_rw, &c->flags);
 
 	for (unsigned i = 0; i < BTREE_ID_NR; i++)
