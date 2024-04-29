@@ -8,4 +8,5 @@ bcachefs Documentation
    :maxdepth: 2
    :numbered:
 
+   developer-guide
    errorcodes
