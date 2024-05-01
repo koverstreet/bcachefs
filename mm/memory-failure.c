@@ -2162,6 +2162,37 @@ out:
 	return rc;
 }
 
+/*
+ * The calling condition is as such: thp split failed, page might have
+ * been GUP longterm pinned, not much can be done for recovery.
+ * But a SIGBUS should be delivered with vaddr provided so that the user
+ * application has a chance to recover. Also, application processes'
+ * election for MCE early killed will be honored.
+ */
+static int kill_procs_now(struct page *p, unsigned long pfn, int flags,
+			struct page *hpage)
+{
+	struct folio *folio = page_folio(hpage);
+	LIST_HEAD(tokill);
+	int res = -EHWPOISON;
+
+	/* deal with user pages only */
+	if (PageReserved(p) || PageSlab(p) || PageTable(p) || PageOffline(p))
+		res = -EBUSY;
+	if (!(PageLRU(hpage) || PageHuge(p)))
+		res = -EBUSY;
+
+	if (res == -EHWPOISON) {
+		collect_procs(folio, p, &tokill, flags & MF_ACTION_REQUIRED);
+		kill_procs(&tokill, true, pfn, flags);
+	}
+
+	if (flags & MF_COUNT_INCREASED)
+		put_page(p);
+
+	return res;
+}
+
 /**
  * memory_failure - Handle memory failure of a page.
  * @pfn: Page Number of the corrupted page
@@ -2291,6 +2322,11 @@ try_again:
 		 */
 		folio_set_has_hwpoisoned(folio);
 		if (try_to_split_thp_page(p) < 0) {
+			if (flags & MF_ACTION_REQUIRED) {
+				pr_err("%#lx: thp split failed\n", pfn);
+				res = kill_procs_now(p, pfn, flags, hpage);
+				goto unlock_mutex;
+			}
 			res = action_result(pfn, MF_MSG_UNSPLIT_THP, MF_IGNORED);
 			goto unlock_mutex;
 		}
