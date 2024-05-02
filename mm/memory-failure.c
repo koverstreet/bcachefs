@@ -2170,16 +2170,15 @@ out:
  * election for MCE early killed will be honored.
  */
 static int kill_procs_now(struct page *p, unsigned long pfn, int flags,
-			struct page *hpage)
+			struct folio *folio)
 {
-	struct folio *folio = page_folio(hpage);
 	LIST_HEAD(tokill);
 	int res = -EHWPOISON;
 
 	/* deal with user pages only */
 	if (PageReserved(p) || PageSlab(p) || PageTable(p) || PageOffline(p))
 		res = -EBUSY;
-	if (!(PageLRU(hpage) || PageHuge(p)))
+	if (!(folio_test_lru(folio) || PageHuge(p)))
 		res = -EBUSY;
 
 	if (res == -EHWPOISON) {
@@ -2324,7 +2323,7 @@ try_again:
 		if (try_to_split_thp_page(p) < 0) {
 			if (flags & MF_ACTION_REQUIRED) {
 				pr_err("%#lx: thp split failed\n", pfn);
-				res = kill_procs_now(p, pfn, flags, hpage);
+				res = kill_procs_now(p, pfn, flags, folio);
 				goto unlock_mutex;
 			}
 			res = action_result(pfn, MF_MSG_UNSPLIT_THP, MF_IGNORED);
