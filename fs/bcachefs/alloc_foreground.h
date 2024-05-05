@@ -228,6 +228,7 @@ void bch2_open_buckets_partial_to_text(struct printbuf *, struct bch_fs *);
 void bch2_write_points_to_text(struct printbuf *, struct bch_fs *);
 
 void bch2_fs_alloc_debug_to_text(struct printbuf *, struct bch_fs *);
+void bch2_dev_alloc_debug_to_text(struct printbuf *, struct bch_dev *);
 
 void bch2_print_allocator_stuck(struct bch_fs *);
 
