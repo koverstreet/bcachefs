@@ -441,7 +441,7 @@ enum fsck_err_opts {
 	  OPT_BOOL(),							\
 	  BCH_SB_NOCOW,			false,				\
 	  NULL,		"Nocow mode: Writes will be done in place when possible.\n"\
-			"Snapshots and reflink will still caused writes to be COW\n"\
+			"Snapshots and reflink will still cause writes to be COW\n"\
 			"Implicitly disables data checksumming, compression and encryption")\
 	x(nocow_enabled,		u8,				\
 	  OPT_FS|OPT_MOUNT,						\
