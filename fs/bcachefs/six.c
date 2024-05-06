@@ -21,7 +21,7 @@
 #define EBUG_ON(cond)			do {} while (0)
 #endif
 
-#define six_acquire(l, t, r, ip)	lock_acquire(l, 0, t, r, 1, NULL, ip)
+#define six_acquire(l, t, r, ip)	lock_acquire(l, 0, t, r, 0, NULL, ip)
 #define six_release(l, ip)		lock_release(l, ip)
 
 static void do_six_unlock_type(struct six_lock *lock, enum six_lock_type type);
