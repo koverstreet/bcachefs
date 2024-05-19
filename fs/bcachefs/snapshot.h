@@ -32,7 +32,7 @@ int bch2_mark_snapshot(struct btree_trans *, enum btree_id, unsigned,
 	.min_val_size	= 24,					\
 })
 
-static inline struct snapshot_t *__snapshot_t(struct snapshot_table *t, u32 id)
+static inline struct snapshot_t *__snapshot_t_noerror(struct snapshot_table *t, u32 id)
 {
 	u32 idx = U32_MAX - id;
 
@@ -41,9 +41,26 @@ static inline struct snapshot_t *__snapshot_t(struct snapshot_table *t, u32 id)
 		: NULL;
 }
 
+void bch2_invalid_snapshot_id(struct bch_fs *, u32);
+
+static inline struct snapshot_t *__snapshot_t(struct bch_fs *c, struct snapshot_table *t, u32 id)
+{
+	struct snapshot_t *s = __snapshot_t_noerror(t, id);
+	if (unlikely(!s || !s->equiv)) {
+		bch2_invalid_snapshot_id(c, id);
+		s = NULL;
+	}
+	return s;
+}
+
+static inline const struct snapshot_t *snapshot_t_noerror(struct bch_fs *c, u32 id)
+{
+	return __snapshot_t_noerror(rcu_dereference(c->snapshots), id);
+}
+
 static inline const struct snapshot_t *snapshot_t(struct bch_fs *c, u32 id)
 {
-	return __snapshot_t(rcu_dereference(c->snapshots), id);
+	return __snapshot_t(c, rcu_dereference(c->snapshots), id);
 }
 
 static inline u32 bch2_snapshot_tree(struct bch_fs *c, u32 id)
@@ -134,6 +151,16 @@ static inline u32 bch2_snapshot_equiv(struct bch_fs *c, u32 id)
 	rcu_read_unlock();
 
 	return id;
+}
+
+static inline u32 bch2_snapshot_exists(struct bch_fs *c, u32 id)
+{
+	rcu_read_lock();
+	const struct snapshot_t *s = snapshot_t_noerror(c, id);
+	bool ret = s && s->equiv;
+	rcu_read_unlock();
+
+	return ret;
 }
 
 static inline int bch2_snapshot_is_internal_node(struct bch_fs *c, u32 id)

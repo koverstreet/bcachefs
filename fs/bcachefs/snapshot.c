@@ -92,10 +92,19 @@ static int bch2_snapshot_tree_create(struct btree_trans *trans,
 
 /* Snapshot nodes: */
 
-static bool __bch2_snapshot_is_ancestor_early(struct snapshot_table *t, u32 id, u32 ancestor)
+void bch2_invalid_snapshot_id(struct bch_fs *c, u32 id)
+{
+	bch_err(c, "reference to invalid snapshot ID %u", id);
+
+	if (c->curr_recovery_pass == BCH_RECOVERY_PASS_NR)
+		bch2_inconsistent_error(c);
+}
+
+static bool __bch2_snapshot_is_ancestor_early(struct bch_fs *c, struct snapshot_table *t,
+					      u32 id, u32 ancestor)
 {
 	while (id && id < ancestor) {
-		const struct snapshot_t *s = __snapshot_t(t, id);
+		const struct snapshot_t *s = __snapshot_t(c, t, id);
 		id = s ? s->parent : 0;
 	}
 	return id == ancestor;
@@ -104,15 +113,15 @@ static bool __bch2_snapshot_is_ancestor_early(struct snapshot_table *t, u32 id, 
 static bool bch2_snapshot_is_ancestor_early(struct bch_fs *c, u32 id, u32 ancestor)
 {
 	rcu_read_lock();
-	bool ret = __bch2_snapshot_is_ancestor_early(rcu_dereference(c->snapshots), id, ancestor);
+	bool ret = __bch2_snapshot_is_ancestor_early(c, rcu_dereference(c->snapshots), id, ancestor);
 	rcu_read_unlock();
 
 	return ret;
 }
 
-static inline u32 get_ancestor_below(struct snapshot_table *t, u32 id, u32 ancestor)
+static inline u32 get_ancestor_below(struct bch_fs *c, struct snapshot_table *t, u32 id, u32 ancestor)
 {
-	const struct snapshot_t *s = __snapshot_t(t, id);
+	const struct snapshot_t *s = __snapshot_t(c, t, id);
 	if (!s)
 		return 0;
 
@@ -125,9 +134,9 @@ static inline u32 get_ancestor_below(struct snapshot_table *t, u32 id, u32 ances
 	return s->parent;
 }
 
-static bool test_ancestor_bitmap(struct snapshot_table *t, u32 id, u32 ancestor)
+static bool test_ancestor_bitmap(struct bch_fs *c, struct snapshot_table *t, u32 id, u32 ancestor)
 {
-	const struct snapshot_t *s = __snapshot_t(t, id);
+	const struct snapshot_t *s = __snapshot_t(c, t, id);
 	if (!s)
 		return false;
 
@@ -142,18 +151,18 @@ bool __bch2_snapshot_is_ancestor(struct bch_fs *c, u32 id, u32 ancestor)
 	struct snapshot_table *t = rcu_dereference(c->snapshots);
 
 	if (unlikely(c->recovery_pass_done < BCH_RECOVERY_PASS_check_snapshots)) {
-		ret = __bch2_snapshot_is_ancestor_early(t, id, ancestor);
+		ret = __bch2_snapshot_is_ancestor_early(c, t, id, ancestor);
 		goto out;
 	}
 
 	while (id && id < ancestor - IS_ANCESTOR_BITMAP)
-		id = get_ancestor_below(t, id, ancestor);
+		id = get_ancestor_below(c, t, id, ancestor);
 
 	ret = id && id < ancestor
-		? test_ancestor_bitmap(t, id, ancestor)
+		? test_ancestor_bitmap(c, t, id, ancestor)
 		: id == ancestor;
 
-	EBUG_ON(ret != __bch2_snapshot_is_ancestor_early(t, id, ancestor));
+	EBUG_ON(ret != __bch2_snapshot_is_ancestor_early(c, t, id, ancestor));
 out:
 	rcu_read_unlock();
 
@@ -321,6 +330,7 @@ static int __bch2_mark_snapshot(struct btree_trans *trans,
 		t->children[1]	= le32_to_cpu(s.v->children[1]);
 		t->subvol	= BCH_SNAPSHOT_SUBVOL(s.v) ? le32_to_cpu(s.v->subvol) : 0;
 		t->tree		= le32_to_cpu(s.v->tree);
+		t->equiv	= id;
 
 		if (bkey_val_bytes(s.k) > offsetof(struct bch_snapshot, depth)) {
 			t->depth	= le32_to_cpu(s.v->depth);
@@ -1050,7 +1060,7 @@ int bch2_check_key_has_snapshot(struct btree_trans *trans,
 	struct printbuf buf = PRINTBUF;
 	int ret = 0;
 
-	if (fsck_err_on(!bch2_snapshot_equiv(c, k.k->p.snapshot), c,
+	if (fsck_err_on(!bch2_snapshot_exists(c, k.k->p.snapshot), c,
 			bkey_in_missing_snapshot,
 			"key in missing snapshot %s, delete?",
 			(bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
