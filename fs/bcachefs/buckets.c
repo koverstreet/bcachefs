@@ -479,9 +479,8 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 
 	percpu_down_read(&c->mark_lock);
 
-	rcu_read_lock();
 	bkey_for_each_ptr_decode(k.k, ptrs_c, p, entry_c) {
-		struct bch_dev *ca = bch2_dev_rcu(c, p.ptr.dev);
+		struct bch_dev *ca = bch2_dev_tryget(c, p.ptr.dev);
 		if (!ca) {
 			if (fsck_err(c, ptr_to_invalid_device,
 				     "pointer to missing device %u\n"
@@ -558,7 +557,7 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 			do_update = true;
 
 		if (data_type != BCH_DATA_btree && p.ptr.gen != g->gen)
-			continue;
+			goto next;
 
 		if (fsck_err_on(bucket_data_type_mismatch(g->data_type, data_type),
 				c, ptr_bucket_data_type_mismatch,
@@ -601,8 +600,9 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 					 bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
 				do_update = true;
 		}
+next:
+		bch2_dev_put(ca);
 	}
-	rcu_read_unlock();
 
 	if (do_update) {
 		if (flags & BTREE_TRIGGER_is_root) {
