@@ -221,8 +221,8 @@
 	x(deleted_inode_is_dir,					213)	\
 	x(deleted_inode_not_unlinked,				214)	\
 	x(extent_overlapping,					215)	\
-	x(extent_in_missing_inode,				216)	\
-	x(extent_in_non_reg_inode,				217)	\
+	x(key_in_missing_inode,					216)	\
+	x(key_in_wrong_inode_type,				217)	\
 	x(extent_past_end_of_inode,				218)	\
 	x(dirent_empty_name,					219)	\
 	x(dirent_val_too_big,					220)	\
