@@ -173,26 +173,41 @@ static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 	unsigned d_type = 0;
 	int ret;
 
+	/*
+	 * First, we need the root inode number, which we get from the
+	 * subvolume. It doesn't matter which subvolume in this snapshot tree we
+	 * use, they'll all have the same root inode number and the same hash
+	 * seed.
+	 *
+	 * Since it doesn't matter which subvolume, use the master (original)
+	 * subvolume for the current snapshot tree:
+	 */
+	u32 snapshot_tree = bch2_snapshot_tree(c, snapshot);
 	struct bch_snapshot_tree st;
-	ret = bch2_snapshot_tree_lookup(trans,
-			bch2_snapshot_tree(c, snapshot), &st);
+	ret = bch2_snapshot_tree_lookup(trans, snapshot_tree, &st);
+	bch_err_msg(c, ret, "looking up snapshot tree %u for snapshot %u",
+		    snapshot_tree, snapshot);
 	if (ret)
 		return ret;
 
 	subvol_inum root_inum = { .subvol = le32_to_cpu(st.master_subvol) };
 
 	struct bch_subvolume subvol;
-	ret = bch2_subvolume_get(trans, le32_to_cpu(st.master_subvol),
-				 false, 0, &subvol);
-	bch_err_msg(c, ret, "looking up root subvol %u for snapshot %u",
-		    le32_to_cpu(st.master_subvol), snapshot);
+	ret = bch2_subvolume_get(trans, root_inum.subvol, false, 0, &subvol);
+	bch_err_msg(c, ret, "looking up master subvol %u for snapshot %u, snapshot tree %u",
+		    root_inum.subvol, snapshot, snapshot_tree);
 	if (ret)
 		return ret;
 
 	if (!subvol.inode) {
+		/*
+		 * If the subvolume doesn't have a root inode, that means we
+		 * just reconstructed it, and the first inode number we
+		 * encounter that needs reattaching should be the root inode:
+		 */
 		struct btree_iter iter;
 		struct bkey_i_subvolume *subvol = bch2_bkey_get_mut_typed(trans, &iter,
-				BTREE_ID_subvolumes, POS(0, le32_to_cpu(st.master_subvol)),
+				BTREE_ID_subvolumes, POS(0, root_inum.subvol),
 				0, subvolume);
 		ret = PTR_ERR_OR_ZERO(subvol);
 		if (ret)
@@ -209,7 +224,7 @@ static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 	u32 root_inode_snapshot = snapshot;
 	ret = lookup_inode(trans, root_inum.inum, &root_inode, &root_inode_snapshot);
 	bch_err_msg(c, ret, "looking up root inode %llu for subvol %u",
-		    root_inum.inum, le32_to_cpu(st.master_subvol));
+		    root_inum.inum, root_inum.subvol);
 	if (ret)
 		return ret;
 
@@ -239,12 +254,7 @@ static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 	return ret;
 
 create_lostfound:
-	/*
-	 * XXX: we could have a nicer log message here  if we had a nice way to
-	 * walk backpointers to print a path
-	 */
-	bch_notice(c, "creating lost+found in snapshot %u", le32_to_cpu(st.root_snapshot));
-
+	u32 root_snapshot = le32_to_cpu(st.root_snapshot);
 	u64 now = bch2_current_time(c);
 	struct btree_iter lostfound_iter = { NULL };
 	u64 cpu = raw_smp_processor_id();
@@ -255,17 +265,17 @@ create_lostfound:
 
 	root_inode.bi_nlink++;
 
-	ret = bch2_inode_create(trans, &lostfound_iter, lostfound, snapshot, cpu);
+	ret = bch2_inode_create(trans, &lostfound_iter, lostfound, root_snapshot, cpu);
 	if (ret)
 		goto err;
 
-	bch2_btree_iter_set_snapshot(&lostfound_iter, snapshot);
+	bch2_btree_iter_set_snapshot(&lostfound_iter, root_snapshot);
 	ret = bch2_btree_iter_traverse(&lostfound_iter);
 	if (ret)
 		goto err;
 
 	ret =   bch2_dirent_create_snapshot(trans,
-				0, root_inode.bi_inum, snapshot, &root_hash_info,
+				0, root_inode.bi_inum, root_snapshot, &root_hash_info,
 				mode_to_type(lostfound->bi_mode),
 				&lostfound_str,
 				lostfound->bi_inum,
@@ -273,6 +283,14 @@ create_lostfound:
 				STR_HASH_must_create) ?:
 		bch2_inode_write_flags(trans, &lostfound_iter, lostfound,
 				       BTREE_UPDATE_internal_snapshot_node);
+	if (ret)
+		goto err;
+	/*
+	 * XXX: we could have a nicer log message here if we had a nice way to
+	 * walk backpointers to print a path
+	 */
+	bch_notice(c, "created lost+found %llu:%u, root inode %llu, for snapshot %u",
+		   lostfound->bi_inum, root_snapshot, root_inum.inum, snapshot);
 err:
 	bch_err_msg(c, ret, "creating lost+found");
 	bch2_trans_iter_exit(trans, &lostfound_iter);
@@ -1265,7 +1283,8 @@ static int check_i_sectors_notnested(struct btree_trans *trans, struct inode_wal
 		if (i->count != count2) {
 			bch_err_ratelimited(c, "fsck counted i_sectors wrong for inode %llu:%u: got %llu should be %llu",
 					    w->last_pos.inode, i->snapshot, i->count, count2);
-			return -BCH_ERR_internal_fsck_err;
+			i->count = count2;
+			//return -BCH_ERR_internal_fsck_err;
 		}
 
 		if (fsck_err_on(!(i->inode.bi_flags & BCH_INODE_i_sectors_dirty),
