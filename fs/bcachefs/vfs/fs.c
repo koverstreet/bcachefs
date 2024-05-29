@@ -2141,6 +2141,7 @@ static int bch2_fs_get_tree(struct fs_context *fc)
 
 	opt_set(opts, read_only, (fc->sb_flags & SB_RDONLY) != 0);
 	opt_set(opts, nostart, true);
+	opt_set(opts, fs_context, (unsigned long)fc);
 
 	if (!fc->source || strlen(fc->source) == 0)
 		return -EINVAL;
@@ -2165,6 +2166,9 @@ static int bch2_fs_get_tree(struct fs_context *fc)
 	if (opt_defined(opts, discard))
 		set_bit(BCH_FS_discard_mount_opt_set, &c->flags);
 	set_mount_opts(c, &opts);
+
+	/* for logging messages to mount */
+	c->fs_context = fc;
 
 	/* Some options can't be parsed until after the fs is started: */
 	opts = bch2_opts_empty();
@@ -2272,6 +2276,10 @@ got_sb:
 
 	sb->s_flags |= SB_ACTIVE;
 out:
+	mutex_lock(&c->fs_context_print_lock);
+	c->fs_context = NULL;
+	mutex_unlock(&c->fs_context_print_lock);
+
 	fc->root = dget(sb->s_root);
 err:
 	darray_exit(&devs_to_fs);
