@@ -753,20 +753,30 @@ const char *bch2_btree_node_type_str(enum btree_node_type);
 	(BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS|		\
 	 BTREE_NODE_TYPE_HAS_ATOMIC_TRIGGERS)
 
-static inline bool btree_node_type_needs_gc(enum btree_node_type type)
+static inline bool btree_node_type_has_trans_triggers(enum btree_node_type type)
 {
-	return BTREE_NODE_TYPE_HAS_TRIGGERS & BIT_ULL(type);
+	return BIT_ULL(type) & BTREE_NODE_TYPE_HAS_TRANS_TRIGGERS;
+}
+
+static inline bool btree_node_type_has_atomic_triggers(enum btree_node_type type)
+{
+	return BIT_ULL(type) & BTREE_NODE_TYPE_HAS_ATOMIC_TRIGGERS;
+}
+
+static inline bool btree_node_type_has_triggers(enum btree_node_type type)
+{
+	return BIT_ULL(type) & BTREE_NODE_TYPE_HAS_TRIGGERS;
 }
 
 static inline bool btree_node_type_is_extents(enum btree_node_type type)
 {
-	const unsigned mask = 0
+	const u64 mask = 0
 #define x(name, nr, flags, ...)	|((!!((flags) & BTREE_ID_EXTENTS)) << (nr + 1))
 	BCH_BTREE_IDS()
 #undef x
 	;
 
-	return (1U << type) & mask;
+	return BIT_ULL(type) & mask;
 }
 
 static inline bool btree_id_is_extents(enum btree_id btree)
@@ -776,35 +786,35 @@ static inline bool btree_id_is_extents(enum btree_id btree)
 
 static inline bool btree_type_has_snapshots(enum btree_id id)
 {
-	const unsigned mask = 0
+	const u64 mask = 0
 #define x(name, nr, flags, ...)	|((!!((flags) & BTREE_ID_SNAPSHOTS)) << nr)
 	BCH_BTREE_IDS()
 #undef x
 	;
 
-	return (1U << id) & mask;
+	return BIT_ULL(id) & mask;
 }
 
 static inline bool btree_type_has_snapshot_field(enum btree_id id)
 {
-	const unsigned mask = 0
+	const u64 mask = 0
 #define x(name, nr, flags, ...)	|((!!((flags) & (BTREE_ID_SNAPSHOT_FIELD|BTREE_ID_SNAPSHOTS))) << nr)
 	BCH_BTREE_IDS()
 #undef x
 	;
 
-	return (1U << id) & mask;
+	return BIT_ULL(id) & mask;
 }
 
 static inline bool btree_type_has_ptrs(enum btree_id id)
 {
-	const unsigned mask = 0
+	const u64 mask = 0
 #define x(name, nr, flags, ...)	|((!!((flags) & BTREE_ID_DATA)) << nr)
 	BCH_BTREE_IDS()
 #undef x
 	;
 
-	return (1U << id) & mask;
+	return BIT_ULL(id) & mask;
 }
 
 struct btree_root {
