@@ -427,18 +427,15 @@ err_fc:
 EXPORT_SYMBOL(vfs_dup_fs_context);
 
 /**
- * logfc - Log a message to a filesystem context
+ * vlogfc - Log a message to a filesystem context
  * @log: The filesystem context to log to, or NULL to use printk.
  * @prefix: A string to prefix the output with, or NULL.
  * @level: 'w' for a warning, 'e' for an error.  Anything else is a notice.
  * @fmt: The format of the buffer.
+ * @args: va_list
  */
-void logfc(struct fc_log *log, const char *prefix, char level, const char *fmt, ...)
+void vlogfc(struct fc_log *log, const char *prefix, char level, struct va_format vaf)
 {
-	va_list va;
-	struct va_format vaf = {.fmt = fmt, .va = &va};
-
-	va_start(va, fmt);
 	if (!log) {
 		switch (level) {
 		case 'w':
@@ -478,6 +475,21 @@ void logfc(struct fc_log *log, const char *prefix, char level, const char *fmt, 
 			log->need_free &= ~(1 << index);
 		log->head++;
 	}
+}
+EXPORT_SYMBOL(vlogfc);
+
+/**
+ * logfc - Log a message to a filesystem context
+ * @log: The filesystem context to log to, or NULL to use printk.
+ * @prefix: A string to prefix the output with, or NULL.
+ * @level: 'w' for a warning, 'e' for an error.  Anything else is a notice.
+ * @fmt: The format of the buffer.
+ */
+void logfc(struct fc_log *log, const char *prefix, char level, const char *fmt, ...)
+{
+	va_list va;
+	va_start(va, fmt);
+	vlogfc(log, prefix, level, (struct va_format) { .fmt = fmt, .va = &va});
 	va_end(va);
 }
 EXPORT_SYMBOL(logfc);
