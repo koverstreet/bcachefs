@@ -65,6 +65,7 @@
 #include <linux/blkdev.h>
 #include <linux/debugfs.h>
 #include <linux/device.h>
+#include <linux/fs_context.h>
 #include <linux/idr.h>
 #include <linux/module.h>
 #include <linux/percpu.h>
@@ -102,39 +103,77 @@ void bch2_print_str(struct bch_fs *c, const char *str)
 	bch2_print_string_as_lines(KERN_ERR, str);
 }
 
-__printf(2, 0)
-static void bch2_print_maybe_redirect(struct stdio_redirect *stdio, const char *fmt, va_list args)
+static inline char kern_level_to_fc_prefix(char kern_level)
+{
+	return 'e';
+	switch (kern_level) {
+	case '0':
+	case '1':
+	case '2':
+	case '3':
+		return 'e';
+	case '4':
+		return 'w';
+	default:
+		return 'i';
+	}
+}
+
+__printf(3, 0)
+static void bch2_print_maybe_redirect(struct stdio_redirect *stdio,
+				      struct fs_context *fc,
+				      const char *fmt, va_list *args)
 {
 #ifdef __KERNEL__
 	if (unlikely(stdio)) {
 		if (fmt[0] == KERN_SOH[0])
 			fmt += 2;
 
-		bch2_stdio_redirect_vprintf(stdio, true, fmt, args);
+		bch2_stdio_redirect_vprintf(stdio, true, fmt, *args);
 		return;
 	}
 #endif
-	vprintk(fmt, args);
+
+	if (fc && fc->log.log) {
+		pr_info("logging to fs_context");
+		struct va_format vaf = { .fmt = fmt + 2, .va = args};
+
+		vlogfc(fc->log.log, NULL, kern_level_to_fc_prefix(fmt[2]), vaf);
+	}
+
+	vprintk(fmt, *args);
 }
 
 void bch2_print_opts(struct bch_opts *opts, const char *fmt, ...)
 {
-	struct stdio_redirect *stdio = (void *)(unsigned long)opts->stdio;
+	struct stdio_redirect *stdio	= (void *)(unsigned long)opts->stdio;
+	struct fs_context *fc		= (void *)(unsigned long)opts->fs_context;
 
 	va_list args;
 	va_start(args, fmt);
-	bch2_print_maybe_redirect(stdio, fmt, args);
+	bch2_print_maybe_redirect(stdio, fc, fmt, &args);
 	va_end(args);
 }
 
 void __bch2_print(struct bch_fs *c, const char *fmt, ...)
 {
-	struct stdio_redirect *stdio = bch2_fs_stdio_redirect(c);
+	struct stdio_redirect *stdio	= bch2_fs_stdio_redirect(c);
+	struct fs_context *fc		= NULL;
+
+	if (c->fs_context) {
+		mutex_lock(&c->fs_context_print_lock);
+		fc = c->fs_context;
+		if (!fc)
+			mutex_unlock(&c->fs_context_print_lock);
+	}
 
 	va_list args;
 	va_start(args, fmt);
-	bch2_print_maybe_redirect(stdio, fmt, args);
+	bch2_print_maybe_redirect(stdio, fc, fmt, &args);
 	va_end(args);
+
+	if (fc)
+		mutex_unlock(&c->fs_context_print_lock);
 }
 
 #define KTYPE(type)							\
@@ -758,6 +797,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts opts)
 	c->minor		= -1;
 	c->disk_sb.fs_sb	= true;
 
+	mutex_init(&c->fs_context_print_lock);
 	init_rwsem(&c->state_lock);
 	mutex_init(&c->sb_lock);
 	mutex_init(&c->replicas_gc_lock);
