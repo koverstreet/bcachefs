@@ -183,6 +183,8 @@ struct fc_log {
 	char		*buffer[8];
 };
 
+void vlogfc(struct fc_log *log, const char *prefix, char level, struct va_format vaf);
+
 extern __attribute__((format(printf, 4, 5)))
 void logfc(struct fc_log *log, const char *prefix, char level, const char *fmt, ...);
 
