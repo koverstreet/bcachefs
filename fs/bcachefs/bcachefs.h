@@ -781,6 +781,8 @@ struct bch_fs {
 	int			minor;
 	struct device		*chardev;
 	struct super_block	*vfs_sb;
+	struct fs_context	*fs_context;
+	struct mutex		fs_context_print_lock;
 	dev_t			dev;
 	char			name[40];
 	struct stdio_redirect	*stdio;
