@@ -635,29 +635,14 @@ fsck_err:
 static int bch2_gc_btree(struct btree_trans *trans, enum btree_id btree, bool initial)
 {
 	struct bch_fs *c = trans->c;
-	int level = 0, target_depth = btree_node_type_needs_gc(__btree_node_type(0, btree)) ? 0 : 1;
+	unsigned target_depth = btree_node_type_needs_gc(__btree_node_type(0, btree)) ? 0 : 1;
 	int ret = 0;
 
 	/* We need to make sure every leaf node is readable before going RW */
 	if (initial)
 		target_depth = 0;
 
-	/* root */
-	mutex_lock(&c->btree_root_lock);
-	struct btree *b = bch2_btree_id_root(c, btree)->b;
-	if (!btree_node_fake(b)) {
-		gc_pos_set(c, gc_pos_btree(btree, b->c.level + 1, SPOS_MAX));
-		ret = lockrestart_do(trans,
-			bch2_gc_mark_key(trans, b->c.btree_id, b->c.level + 1,
-					 NULL, NULL, bkey_i_to_s_c(&b->key), initial));
-		level = b->c.level;
-	}
-	mutex_unlock(&c->btree_root_lock);
-
-	if (ret)
-		return ret;
-
-	for (; level >= target_depth; --level) {
+	for (unsigned level = target_depth; level < BTREE_MAX_DEPTH; level++) {
 		struct btree *prev = NULL;
 		struct btree_iter iter;
 		bch2_trans_node_iter_init(trans, &iter, btree, POS_MIN, 0, level,
@@ -668,9 +653,21 @@ static int bch2_gc_btree(struct btree_trans *trans, enum btree_id btree, bool in
 			bch2_gc_mark_key(trans, btree, level, &prev, &iter, k, initial);
 		}));
 		if (ret)
-			break;
+			goto err;
 	}
 
+	/* root */
+	mutex_lock(&c->btree_root_lock);
+	struct btree *b = bch2_btree_id_root(c, btree)->b;
+	if (!btree_node_fake(b)) {
+		gc_pos_set(c, gc_pos_btree(btree, b->c.level + 1, SPOS_MAX));
+		ret = lockrestart_do(trans,
+			bch2_gc_mark_key(trans, b->c.btree_id, b->c.level + 1,
+					 NULL, NULL, bkey_i_to_s_c(&b->key), initial));
+	}
+	mutex_unlock(&c->btree_root_lock);
+err:
+	bch_err_fn(c, ret);
 	return ret;
 }
 
