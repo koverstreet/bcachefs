@@ -454,6 +454,11 @@ enum fsck_err_opts {
 	  OPT_UINT(0, S64_MAX),						\
 	  BCH2_NO_SB_OPT,		false,				\
 	  NULL,		"Pointer to a struct stdio_redirect")		\
+	x(fs_context,			u64,				\
+	  0,								\
+	  OPT_UINT(0, S64_MAX),						\
+	  BCH2_NO_SB_OPT,		false,				\
+	  NULL,		"Pointer to a struct fs_context")		\
 	x(project,			u8,				\
 	  OPT_INODE,							\
 	  OPT_BOOL(),							\
