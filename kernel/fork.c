@@ -103,6 +103,7 @@
 #include <linux/rseq.h>
 #include <uapi/linux/pidfd.h>
 #include <linux/pidfs.h>
+#include <linux/ringbuffer_sys.h>
 
 #include <asm/pgalloc.h>
 #include <linux/uaccess.h>
@@ -1340,6 +1341,7 @@ static inline void __mmput(struct mm_struct *mm)
 	VM_BUG_ON(atomic_read(&mm->mm_users));
 
 	uprobe_clear_state(mm);
+	ringbuffer_mm_exit(mm);
 	exit_aio(mm);
 	ksm_exit(mm);
 	khugepaged_exit(mm); /* must run before exit_mmap */

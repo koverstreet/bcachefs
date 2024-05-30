@@ -1673,6 +1673,15 @@ config IO_URING
 	  applications to submit and complete IO through submission and
 	  completion rings that are shared between the kernel and application.
 
+config RINGBUFFER
+	bool "Enable ringbuffer() syscall" if EXPERT
+	select XARRAY_MULTI
+	default y
+	help
+	  This option adds support for generic ringbuffers, which can be
+	  attached to any (supported) file descriptor, allowing for reading and
+	  writing without syscall overhead.
+
 config ADVISE_SYSCALLS
 	bool "Enable madvise/fadvise syscalls" if EXPERT
 	default y

@@ -1996,6 +1996,7 @@ struct offset_ctx;
 
 typedef unsigned int __bitwise fop_flags_t;
 
+struct ringbuffer;
 struct file_operations {
 	struct module *owner;
 	fop_flags_t fop_flags;
@@ -2004,6 +2005,7 @@ struct file_operations {
 	ssize_t (*write) (struct file *, const char __user *, size_t, loff_t *);
 	ssize_t (*read_iter) (struct kiocb *, struct iov_iter *);
 	ssize_t (*write_iter) (struct kiocb *, struct iov_iter *);
+	struct ringbuffer *(*ringbuffer)(struct file *, int);
 	int (*iopoll)(struct kiocb *kiocb, struct io_comp_batch *,
 			unsigned int flags);
 	int (*iterate_shared) (struct file *, struct dir_context *);

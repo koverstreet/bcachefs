@@ -5,6 +5,7 @@
 #include <linux/mm_types_task.h>
 
 #include <linux/auxvec.h>
+#include <linux/darray_types.h>
 #include <linux/kref.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
@@ -910,6 +911,9 @@ struct mm_struct {
 #ifdef CONFIG_AIO
 		spinlock_t			ioctx_lock;
 		struct kioctx_table __rcu	*ioctx_table;
+#endif
+#ifdef CONFIG_RINGBUFFER
+		DARRAY(struct ringbuffer *)	ringbuffers;
 #endif
 #ifdef CONFIG_MEMCG
 		/*
