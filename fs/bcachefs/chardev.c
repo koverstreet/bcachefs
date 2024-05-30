@@ -308,7 +308,7 @@ struct bch_data_ctx {
 	struct bch_move_stats		stats;
 };
 
-static int bch2_data_thread(void *arg)
+static void bch2_data_thread(void *arg)
 {
 	struct bch_data_ctx *ctx = container_of(arg, struct bch_data_ctx, thr);
 
@@ -319,7 +319,6 @@ static int bch2_data_thread(void *arg)
 		ctx->stats.ret = BCH_IOCTL_DATA_EVENT_RET_done;
 		ctx->stats.data_type = (int) DATA_PROGRESS_DATA_TYPE_done;
 	}
-	return 0;
 }
 
 static int bch2_data_job_release(struct inode *inode, struct file *file)
