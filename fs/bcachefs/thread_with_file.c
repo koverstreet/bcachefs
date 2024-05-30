@@ -13,15 +13,21 @@
 
 void bch2_thread_with_file_exit(struct thread_with_file *thr)
 {
-	if (thr->task) {
-		kthread_stop(thr->task);
+	if (thr->task)
 		put_task_struct(thr->task);
-	}
+}
+
+static int thr_with_file_fn(void *p)
+{
+	struct thread_with_file *thr = p;
+
+	thr->fn(thr);
+	do_exit(0);
 }
 
 int bch2_run_thread_with_file(struct thread_with_file *thr,
 			      const struct file_operations *fops,
-			      int (*fn)(void *))
+			      void (*fn)(void *))
 {
 	struct file *file = NULL;
 	int ret, fd = -1;
@@ -38,10 +44,14 @@ int bch2_run_thread_with_file(struct thread_with_file *thr,
 	get_task_comm(name, current);
 
 	thr->ret = 0;
-	thr->task = kthread_create(fn, thr, "%s", name);
+	thr->fn = fn;
+	thr->task = create_io_thread(thr_with_file_fn, thr, NUMA_NO_NODE);
 	ret = PTR_ERR_OR_ZERO(thr->task);
 	if (ret)
 		return ret;
+
+	set_task_comm(thr->task, name);
+	set_cpus_allowed_ptr(thr->task, cpu_possible_mask);
 
 	ret = get_unused_fd_flags(fd_flags);
 	if (ret < 0)
@@ -54,14 +64,15 @@ int bch2_run_thread_with_file(struct thread_with_file *thr,
 		goto err;
 
 	get_task_struct(thr->task);
-	wake_up_process(thr->task);
+	wake_up_new_task(thr->task);
 	fd_install(fd, file);
+
 	return fd;
 err:
 	if (fd >= 0)
 		put_unused_fd(fd);
 	if (thr->task)
-		kthread_stop(thr->task);
+		put_task_struct(thr->task);
 	return ret;
 }
 
@@ -291,14 +302,12 @@ static const struct file_operations thread_with_stdout_fops = {
 	.unlocked_ioctl	= thread_with_stdio_ioctl,
 };
 
-static int thread_with_stdio_fn(void *arg)
+static void thread_with_stdio_fn(void *arg)
 {
 	struct thread_with_stdio *thr = arg;
 
 	thr->thr.ret = thr->ops->fn(thr);
-
 	thread_with_stdio_done(thr);
-	return 0;
 }
 
 void bch2_thread_with_stdio_init(struct thread_with_stdio *thr,

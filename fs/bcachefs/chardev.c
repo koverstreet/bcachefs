@@ -430,13 +430,12 @@ struct bch_data_ctx {
 	struct bch_move_stats		stats;
 };
 
-static int bch2_data_thread(void *arg)
+static void bch2_data_thread(void *arg)
 {
 	struct bch_data_ctx *ctx = container_of(arg, struct bch_data_ctx, thr);
 
 	ctx->thr.ret = bch2_data_job(ctx->c, &ctx->stats, ctx->arg);
 	ctx->stats.data_type = U8_MAX;
-	return 0;
 }
 
 static int bch2_data_job_release(struct inode *inode, struct file *file)
