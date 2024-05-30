@@ -978,6 +978,8 @@ static inline int ra_has_index(struct file_ra_state *ra, pgoff_t index)
 		index <  ra->start + ra->size);
 }
 
+struct ringbuffer;
+
 /*
  * f_{lock,count,pos_lock} members can be highly contended and share
  * the same cacheline. f_{lock,mode} are very frequently used together
@@ -1024,6 +1026,12 @@ struct file {
 	struct address_space	*f_mapping;
 	errseq_t		f_wb_err;
 	errseq_t		f_sb_err; /* for syncfs */
+
+	/*
+	 * Ringbuffers for reading/writing without syncall overhead, created by
+	 * ringbuffer(2)
+	 */
+	struct ringbuffer	*ringbuffer[2];
 } __randomize_layout
   __attribute__((aligned(4)));	/* lest something weird decides that 2 is OK */
 
@@ -2051,6 +2059,10 @@ struct file_operations {
 #define FOP_DIO_PARALLEL_WRITE	((__force fop_flags_t)(1 << 3))
 /* Contains huge pages */
 #define FOP_HUGE_PAGES		((__force fop_flags_t)(1 << 4))
+/* Supports read ringbuffers */
+#define FOP_RINGBUFFER_READ	((__force fop_flags_t)(1 << 5))
+/* Supports write ringbuffers */
+#define FOP_RINGBUFFER_WRITE	((__force fop_flags_t)(1 << 6))
 
 /* Wrap a directory iterator that needs exclusive inode access */
 int wrap_directory_iterator(struct file *, struct dir_context *,

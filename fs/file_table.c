@@ -25,6 +25,7 @@
 #include <linux/sysctl.h>
 #include <linux/percpu_counter.h>
 #include <linux/percpu.h>
+#include <linux/ringbuffer_sys.h>
 #include <linux/task_work.h>
 #include <linux/swap.h>
 #include <linux/kmemleak.h>
@@ -412,6 +413,7 @@ static void __fput(struct file *file)
 	 */
 	eventpoll_release(file);
 	locks_remove_file(file);
+	ringbuffer_release(file);
 
 	security_file_release(file);
 	if (unlikely(file->f_flags & FASYNC)) {
