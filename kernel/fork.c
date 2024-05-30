@@ -2552,6 +2552,7 @@ struct task_struct *create_io_thread(int (*fn)(void *), void *arg, int node)
 
 	return copy_process(NULL, 0, node, &args);
 }
+EXPORT_SYMBOL_GPL(create_io_thread);
 
 /*
  *  Ok, this is the main fork-routine.
