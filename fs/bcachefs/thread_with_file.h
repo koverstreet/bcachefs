@@ -40,6 +40,7 @@ struct task_struct;
 
 struct thread_with_file {
 	struct task_struct	*task;
+	void			(*fn)(void *);
 	int			ret;
 	bool			done;
 };
@@ -47,7 +48,7 @@ struct thread_with_file {
 void bch2_thread_with_file_exit(struct thread_with_file *);
 int bch2_run_thread_with_file(struct thread_with_file *,
 			      const struct file_operations *,
-			      int (*fn)(void *));
+			      void (*fn)(void *));
 
 struct thread_with_stdio;
 
