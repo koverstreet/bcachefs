@@ -300,19 +300,20 @@ struct bch_data_ctx {
 	struct bch_move_stats		stats;
 };
 
-static int bch2_data_thread(void *arg)
+static void bch2_data_thread(void *arg)
 {
 	struct bch_data_ctx *ctx = container_of(arg, struct bch_data_ctx, thr);
+	struct bch_fs *c = ctx->c;
 
-	ctx->thr.ret = bch2_data_job(ctx->c, &ctx->stats, &ctx->arg);
+	ctx->thr.ret = bch2_data_job(c, &ctx->stats, &ctx->arg);
 	if (ctx->thr.ret == -BCH_ERR_device_offline)
 		ctx->stats.ret = BCH_IOCTL_DATA_EVENT_RET_device_offline;
 	else {
 		ctx->stats.ret = BCH_IOCTL_DATA_EVENT_RET_done;
 		ctx->stats.data_type = (int) DATA_PROGRESS_DATA_TYPE_done;
 	}
-	enumerated_ref_put(&ctx->c->writes, BCH_WRITE_REF_ioctl_data);
-	return 0;
+
+	enumerated_ref_put(&c->writes, BCH_WRITE_REF_ioctl_data);
 }
 
 static int bch2_data_job_release(struct inode *inode, struct file *file)
