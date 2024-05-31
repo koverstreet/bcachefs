@@ -3758,6 +3758,9 @@ void kvfree_call_rcu(struct rcu_head *head, void *ptr)
 	struct kfree_rcu_cpu *krcp;
 	bool success;
 
+	if (!is_vmalloc_addr(ptr))
+		verify_slab_obj_has_alloc_tag(ptr);
+
 	/*
 	 * Please note there is a limitation for the head-less
 	 * variant, that is why there is a clear rule for such

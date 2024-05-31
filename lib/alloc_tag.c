@@ -16,6 +16,23 @@ EXPORT_SYMBOL(_shared_alloc_tag);
 DEFINE_STATIC_KEY_MAYBE(CONFIG_MEM_ALLOC_PROFILING_ENABLED_BY_DEFAULT,
 			mem_alloc_profiling_key);
 
+#ifdef CONFIG_MEM_ALLOC_PROFILING_DEBUG
+void verify_obj_has_alloc_tag(void *ptr)
+{
+	if (!mem_alloc_profiling_enabled())
+		return;
+
+#if 0
+	if (is_vmalloc_addr(ptr))
+		verify_vmalloc_obj_has_alloc_tag(ptr);
+	else if (folio_test_slab(virt_to_folio(ptr)))
+		verify_slab_obj_has_alloc_tag(ptr);
+	else
+		verify_page_obj_has_alloc_tag(ptr);
+#endif
+}
+#endif
+
 struct allocinfo_private {
 	struct codetag_iterator iter;
 	bool print_header;

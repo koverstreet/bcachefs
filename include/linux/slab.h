@@ -835,6 +835,12 @@ unsigned int kmem_cache_size(struct kmem_cache *s);
  */
 size_t kmalloc_size_roundup(size_t size);
 
+#ifdef CONFIG_MEM_ALLOC_PROFILING_DEBUG
+void verify_slab_obj_has_alloc_tag(void *ptr);
+#else
+static inline void verify_slab_obj_has_alloc_tag(void *ptr) {}
+#endif
+
 void __init kmem_cache_init_late(void);
 
 #endif	/* _LINUX_SLAB_H */

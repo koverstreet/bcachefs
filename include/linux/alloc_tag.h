@@ -127,7 +127,9 @@ static inline void alloc_tag_add_check(union codetag_ref *ref, struct alloc_tag 
 
 static inline void alloc_tag_sub_check(union codetag_ref *ref)
 {
-	WARN_ONCE(ref && !ref->ct, "alloc_tag was not set\n");
+	if (ref && !ref->ct)
+		printk(KERN_WARNING "alloc_tag was not set\n");
+	//WARN_ONCE(ref && !ref->ct, "alloc_tag was not set\n");
 }
 #else
 static inline void alloc_tag_add_check(union codetag_ref *ref, struct alloc_tag *tag) {}

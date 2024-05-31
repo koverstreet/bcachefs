@@ -4494,6 +4494,32 @@ static inline struct kmem_cache *cache_from_obj(struct kmem_cache *s, void *x)
 	return cachep;
 }
 
+#ifdef CONFIG_MEM_ALLOC_PROFILING_DEBUG
+void verify_slab_obj_has_alloc_tag(void *ptr)
+{
+	if (!mem_alloc_profiling_enabled())
+		return;
+
+	if (!ptr)
+		return;
+
+	struct kmem_cache *s = cache_from_obj(s, ptr);
+	struct slab *slab = virt_to_slab(ptr);
+	if (!slab)
+		return;
+
+	struct slabobj_ext *obj_exts = slab_obj_exts(slab);
+	if (!obj_exts)
+		return;
+
+	unsigned idx = obj_to_index(s, slab, ptr);
+	if (idx >= objs_per_slab(s, slab))
+		return;
+
+	alloc_tag_sub_check(&obj_exts[idx].ref);
+}
+#endif
+
 /**
  * kmem_cache_free - Deallocate an object
  * @s: The cache the allocation was from.
