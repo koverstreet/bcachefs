@@ -1,4 +1,4 @@
-#!/bin/sed -f
+#!/usr/bin/env -S sed -f
 # SPDX-License-Identifier: GPL-2.0-only
 #
 # sed script to filter out symbols that are not needed for System.map,
