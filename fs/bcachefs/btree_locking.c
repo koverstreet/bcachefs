@@ -793,6 +793,7 @@ static inline int __bch2_trans_relock(struct btree_trans *trans, bool trace)
 	}
 
 	trans->locked = true;
+	trans->last_unlock_ip = 0;
 out:
 	bch2_trans_verify_locks(trans);
 	return 0;
