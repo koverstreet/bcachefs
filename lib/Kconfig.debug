@@ -2957,6 +2957,11 @@ config TEST_OBJPOOL
 
 	  If unsure, say N.
 
+config RINGBUFFER_TEST
+	bool "Test driver for sys_ringbuffer"
+	default n
+	depends on RINGBUFFER
+
 endif # RUNTIME_TESTING_MENU
 
 config ARCH_USE_MEMTEST
