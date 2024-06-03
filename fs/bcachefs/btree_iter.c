@@ -1002,6 +1002,7 @@ retry_all:
 	bch2_trans_unlock(trans);
 	cond_resched();
 	trans->locked = true;
+	trans->last_unlock_ip = 0;
 
 	if (unlikely(trans->memory_allocation_failure)) {
 		struct closure cl;
@@ -3095,6 +3096,7 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 
 	trans->last_begin_ip = _RET_IP_;
 	trans->locked  = true;
+	trans->last_unlock_ip = 0;
 
 	if (trans->restarted) {
 		bch2_btree_path_traverse_all(trans);
