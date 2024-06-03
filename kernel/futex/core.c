@@ -169,7 +169,7 @@ futex_setup_timer(ktime_t *time, struct hrtimer_sleeper *timeout,
  * for PI futexes that can mess up the state. The above argues that false-negatives
  * are only possible for malformed programs.
  */
-static u64 get_inode_sequence_number(struct inode *inode)
+u64 get_inode_sequence_number(struct inode *inode)
 {
 	static atomic64_t i_seq;
 	u64 old;
@@ -189,6 +189,10 @@ static u64 get_inode_sequence_number(struct inode *inode)
 			return old;
 		return new;
 	}
+}
+
+static int inode_futex_key(union futex_key *key)
+{
 }
 
 /**

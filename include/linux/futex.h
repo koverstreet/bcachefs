@@ -50,6 +50,8 @@ union futex_key {
 	} both;
 };
 
+u64 get_inode_sequence_number(struct inode *);
+
 #define FUTEX_KEY_INIT (union futex_key) { .both = { .ptr = 0ULL } }
 
 #ifdef CONFIG_FUTEX

@@ -6,6 +6,7 @@
 #include <linux/errname.h>
 #include <linux/file.h>
 #include <linux/fs.h>
+#include <linux/futex.h>
 #include <linux/init.h>
 #include <linux/mman.h>
 #include <linux/mount.h>
@@ -266,6 +267,14 @@ struct ringbuffer *ringbuffer_alloc(u32 size)
 	rb->ptrs->size	= size;
 	rb->ptrs->mask	= size - 1;
 	rb->ptrs->data_offset = PAGE_SIZE;
+
+	if (!rb->rb_file) {
+		int ret = ringbuffer_alloc_inode(rb);
+		if (ret) {
+			ringbuffer_free(rb);
+			return ERR_PTR(ret);
+		}
+	}
 	return rb;
 }
 
@@ -324,6 +333,19 @@ err_unlock:
 err:
 	fdput(f);
 	return ret;
+}
+
+static void ringbuffer_futex_key(struct ringbuffer *rb, int rw,
+				 union futex_key *key)
+{
+	struct inode *inode = rb->rb_file->f_inode;
+
+	key->both.offset |= FUT_OFF_INODE; /* inode-based key */
+	key->shared.i_seq = get_inode_sequence_number(inode);
+	key->shared.pgoff = (1U << rb->order) - 1;
+	key->shared.offset = rw == READ
+		? offsetof(struct ringbuffer_ptrs, head)
+		: offsetof(struct ringbuffer_ptrs, tail);
 }
 
 ssize_t ringbuffer_read_iter(struct ringbuffer *rb, struct iov_iter *iter, bool nonblocking)
