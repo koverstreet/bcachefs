@@ -4,6 +4,8 @@
 
 #include "thread_with_file_types.h"
 
+#include <linux/pipe_fs_i.h>
+
 /*
  * Thread with file: Run a kthread and connect it to a file descriptor, so that
  * it can be interacted with via fd read/write methods and closing the file
@@ -59,13 +61,16 @@ struct thread_with_stdio_ops {
 };
 
 struct thread_with_stdio {
-	struct thread_with_file	thr;
-	struct stdio_redirect	stdio;
+	struct thread_with_file			thr;
+	struct pipe_inode_info			*in;
+	struct pipe_inode_info			*out;
 	const struct thread_with_stdio_ops	*ops;
 };
 
-void bch2_thread_with_stdio_init(struct thread_with_stdio *,
-				 const struct thread_with_stdio_ops *);
+void bch2_thread_with_stdio_exit(struct thread_with_stdio *);
+int bch2_thread_with_stdio_init(struct thread_with_stdio *,
+				const struct thread_with_stdio_ops *);
+
 int __bch2_run_thread_with_stdio(struct thread_with_stdio *);
 int bch2_run_thread_with_stdio(struct thread_with_stdio *,
 			       const struct thread_with_stdio_ops *);
