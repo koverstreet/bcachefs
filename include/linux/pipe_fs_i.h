@@ -270,6 +270,14 @@ void pipe_wait_writable(struct pipe_inode_info *);
 struct pipe_inode_info *alloc_pipe_info(void);
 void free_pipe_info(struct pipe_inode_info *);
 
+ssize_t do_pipe_read(struct pipe_inode_info *pipe,
+		     struct iov_iter *to,
+		     bool nonblock);
+ssize_t do_pipe_write(struct pipe_inode_info *pipe,
+		      struct iov_iter *to,
+		      bool nonblock,
+		      bool is_packetized);
+
 /* Generic pipe buffer ops functions */
 bool generic_pipe_buf_get(struct pipe_inode_info *, struct pipe_buffer *);
 bool generic_pipe_buf_try_steal(struct pipe_inode_info *, struct pipe_buffer *);
