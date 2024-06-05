@@ -76,6 +76,7 @@ err:
 	return ret;
 }
 
+#if 0
 /* stdio_redirect */
 
 static bool stdio_redirect_has_more_input(struct stdio_redirect *stdio, size_t seen)
@@ -111,55 +112,14 @@ static void stdio_buf_init(struct stdio_buf *buf)
 	init_waitqueue_head(&buf->wait);
 	darray_init(&buf->buf);
 }
+#endif
 
 /* thread_with_stdio */
 
 static void thread_with_stdio_done(struct thread_with_stdio *thr)
 {
-	thr->thr.done = true;
-	thr->stdio.done = true;
-	wake_up(&thr->stdio.input.wait);
-	wake_up(&thr->stdio.output.wait);
-}
-
-static ssize_t thread_with_stdio_read(struct file *file, char __user *ubuf,
-				      size_t len, loff_t *ppos)
-{
-	struct thread_with_stdio *thr =
-		container_of(file->private_data, struct thread_with_stdio, thr);
-	struct stdio_buf *buf = &thr->stdio.output;
-	size_t copied = 0, b;
-	int ret = 0;
-
-	if (!(file->f_flags & O_NONBLOCK)) {
-		ret = wait_event_interruptible(buf->wait, stdio_redirect_has_output(&thr->stdio));
-		if (ret)
-			return ret;
-	} else if (!stdio_redirect_has_output(&thr->stdio))
-		return -EAGAIN;
-
-	while (len && buf->buf.nr) {
-		if (fault_in_writeable(ubuf, len) == len) {
-			ret = -EFAULT;
-			break;
-		}
-
-		spin_lock_irq(&buf->lock);
-		b = min_t(size_t, len, buf->buf.nr);
-
-		if (b && !copy_to_user_nofault(ubuf, buf->buf.data, b)) {
-			ubuf	+= b;
-			len	-= b;
-			copied	+= b;
-			buf->buf.nr -= b;
-			memmove(buf->buf.data,
-				buf->buf.data + b,
-				buf->buf.nr);
-		}
-		spin_unlock_irq(&buf->lock);
-	}
-
-	return copied ?: ret;
+	thr->in->writers--;
+	thr->out->readers--;
 }
 
 static int thread_with_stdio_release(struct inode *inode, struct file *file)
@@ -168,68 +128,22 @@ static int thread_with_stdio_release(struct inode *inode, struct file *file)
 		container_of(file->private_data, struct thread_with_stdio, thr);
 
 	thread_with_stdio_done(thr);
-	bch2_thread_with_file_exit(&thr->thr);
-	darray_exit(&thr->stdio.input.buf);
-	darray_exit(&thr->stdio.output.buf);
 	thr->ops->exit(thr);
 	return 0;
 }
 
-static ssize_t thread_with_stdio_write(struct file *file, const char __user *ubuf,
-				       size_t len, loff_t *ppos)
+static ssize_t thread_with_stdio_read(struct kiocb *kiocb, struct iov_iter *iter)
 {
 	struct thread_with_stdio *thr =
-		container_of(file->private_data, struct thread_with_stdio, thr);
-	struct stdio_buf *buf = &thr->stdio.input;
-	size_t copied = 0;
-	ssize_t ret = 0;
+		container_of(kiocb->ki_filp->private_data, struct thread_with_stdio, thr);
+	return do_pipe_read(kiocb, iter, thr->in);
+}
 
-	while (len) {
-		if (thr->thr.done) {
-			ret = -EPIPE;
-			break;
-		}
-
-		size_t b = len - fault_in_readable(ubuf, len);
-		if (!b) {
-			ret = -EFAULT;
-			break;
-		}
-
-		spin_lock(&buf->lock);
-		size_t makeroom = b;
-		if (!buf->waiting_for_line || memchr(buf->buf.data, '\n', buf->buf.nr))
-			makeroom = min_t(ssize_t, makeroom,
-				   max_t(ssize_t, STDIO_REDIRECT_BUFSIZE - buf->buf.nr,
-						  0));
-		darray_make_room_gfp(&buf->buf, makeroom, GFP_NOWAIT);
-
-		b = min(len, darray_room(buf->buf));
-
-		if (b && !copy_from_user_nofault(&darray_top(buf->buf), ubuf, b)) {
-			buf->buf.nr += b;
-			ubuf	+= b;
-			len	-= b;
-			copied	+= b;
-		}
-		spin_unlock(&buf->lock);
-
-		if (b) {
-			wake_up(&buf->wait);
-		} else {
-			if ((file->f_flags & O_NONBLOCK)) {
-				ret = -EAGAIN;
-				break;
-			}
-
-			ret = wait_event_interruptible(buf->wait,
-					stdio_redirect_has_input_space(&thr->stdio));
-			if (ret)
-				break;
-		}
-	}
-
-	return copied ?: ret;
+static ssize_t thread_with_stdio_write(struct kiocb *kiocb, struct iov_iter *iter)
+{
+	struct thread_with_stdio *thr =
+		container_of(kiocb->ki_filp->private_data, struct thread_with_stdio, thr);
+	return do_pipe_write(kiocb, iter, thr->out);
 }
 
 static __poll_t thread_with_stdio_poll(struct file *file, struct poll_table_struct *wait)
@@ -237,33 +151,20 @@ static __poll_t thread_with_stdio_poll(struct file *file, struct poll_table_stru
 	struct thread_with_stdio *thr =
 		container_of(file->private_data, struct thread_with_stdio, thr);
 
-	poll_wait(file, &thr->stdio.output.wait, wait);
-	poll_wait(file, &thr->stdio.input.wait, wait);
+	if (file->f_mode & FMODE_READ)
+		poll_wait(file, &thr->in->rd_wait, wait);
+	if (file->f_mode & FMODE_WRITE)
+		poll_wait(file, &thr->out->wr_wait, wait);
 
 	__poll_t mask = 0;
-
+#if 0
 	if (stdio_redirect_has_output(&thr->stdio))
 		mask |= EPOLLIN;
 	if (stdio_redirect_has_input_space(&thr->stdio))
 		mask |= EPOLLOUT;
 	if (thr->thr.done)
 		mask |= EPOLLHUP|EPOLLERR;
-	return mask;
-}
-
-static __poll_t thread_with_stdout_poll(struct file *file, struct poll_table_struct *wait)
-{
-	struct thread_with_stdio *thr =
-		container_of(file->private_data, struct thread_with_stdio, thr);
-
-	poll_wait(file, &thr->stdio.output.wait, wait);
-
-	__poll_t mask = 0;
-
-	if (stdio_redirect_has_output(&thr->stdio))
-		mask |= EPOLLIN;
-	if (thr->thr.done)
-		mask |= EPOLLHUP|EPOLLERR;
+#endif
 	return mask;
 }
 
@@ -287,8 +188,8 @@ static long thread_with_stdio_ioctl(struct file *file, unsigned int cmd, unsigne
 
 static const struct file_operations thread_with_stdio_fops = {
 	.llseek		= no_llseek,
-	.read		= thread_with_stdio_read,
-	.write		= thread_with_stdio_write,
+	.read_iter	= thread_with_stdio_read,
+	.write_iter	= thread_with_stdio_write,
 	.poll		= thread_with_stdio_poll,
 	.flush		= thread_with_stdio_flush,
 	.release	= thread_with_stdio_release,
@@ -297,8 +198,8 @@ static const struct file_operations thread_with_stdio_fops = {
 
 static const struct file_operations thread_with_stdout_fops = {
 	.llseek		= no_llseek,
-	.read		= thread_with_stdio_read,
-	.poll		= thread_with_stdout_poll,
+	.read_iter	= thread_with_stdio_read,
+	.poll		= thread_with_stdio_poll,
 	.flush		= thread_with_stdio_flush,
 	.release	= thread_with_stdio_release,
 	.unlocked_ioctl	= thread_with_stdio_ioctl,
@@ -312,12 +213,30 @@ static void thread_with_stdio_fn(void *arg)
 	thread_with_stdio_done(thr);
 }
 
-void bch2_thread_with_stdio_init(struct thread_with_stdio *thr,
-				 const struct thread_with_stdio_ops *ops)
+void bch2_thread_with_stdio_exit(struct thread_with_stdio *thr)
 {
-	stdio_buf_init(&thr->stdio.input);
-	stdio_buf_init(&thr->stdio.output);
+	bch2_thread_with_file_exit(&thr->thr);
+	if (thr->in)
+		free_pipe_info(thr->in);
+	if (thr->out)
+		free_pipe_info(thr->out);
+	thr->in = thr->out = NULL;
+}
+
+int bch2_thread_with_stdio_init(struct thread_with_stdio *thr,
+				const struct thread_with_stdio_ops *ops)
+{
 	thr->ops = ops;
+	thr->in = alloc_pipe_info();
+	thr->out = alloc_pipe_info();
+	if (!thr->in || !thr->out) {
+		bch2_thread_with_stdio_exit(thr);
+		return -ENOMEM;
+	}
+
+	thr->in->writers++;
+	thr->in->readers++;
+	return 0;
 }
 
 int __bch2_run_thread_with_stdio(struct thread_with_stdio *thr)
@@ -328,9 +247,8 @@ int __bch2_run_thread_with_stdio(struct thread_with_stdio *thr)
 int bch2_run_thread_with_stdio(struct thread_with_stdio *thr,
 			       const struct thread_with_stdio_ops *ops)
 {
-	bch2_thread_with_stdio_init(thr, ops);
-
-	return __bch2_run_thread_with_stdio(thr);
+	return bch2_thread_with_stdio_init(thr, ops) ?:
+		__bch2_run_thread_with_stdio(thr);
 }
 
 int bch2_run_thread_with_stdout(struct thread_with_stdio *thr,
@@ -346,6 +264,7 @@ EXPORT_SYMBOL_GPL(bch2_run_thread_with_stdout);
 
 int bch2_stdio_redirect_read(struct stdio_redirect *stdio, char *ubuf, size_t len)
 {
+	return do_pipe_read();
 	struct stdio_buf *buf = &stdio->input;
 
 	/*
