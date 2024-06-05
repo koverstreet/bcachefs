@@ -247,12 +247,11 @@ static inline unsigned int pipe_update_tail(struct pipe_inode_info *pipe,
 	return tail;
 }
 
-static ssize_t
-pipe_read(struct kiocb *iocb, struct iov_iter *to)
+ssize_t do_pipe_read(struct pipe_inode_info *pipe,
+		     struct iov_iter *to,
+		     bool nonblock)
 {
 	size_t total_len = iov_iter_count(to);
-	struct file *filp = iocb->ki_filp;
-	struct pipe_inode_info *pipe = filp->private_data;
 	bool was_full, wake_next_reader = false;
 	ssize_t ret;
 
@@ -353,8 +352,7 @@ pipe_read(struct kiocb *iocb, struct iov_iter *to)
 			break;
 		if (ret)
 			break;
-		if ((filp->f_flags & O_NONBLOCK) ||
-		    (iocb->ki_flags & IOCB_NOWAIT)) {
+		if (nonblock) {
 			ret = -EAGAIN;
 			break;
 		}
@@ -403,6 +401,18 @@ pipe_read(struct kiocb *iocb, struct iov_iter *to)
 	if (wake_next_reader)
 		wake_up_interruptible_sync_poll(&pipe->rd_wait, EPOLLIN | EPOLLRDNORM);
 	kill_fasync(&pipe->fasync_writers, SIGIO, POLL_OUT);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(do_pipe_read);
+
+static ssize_t pipe_read(struct kiocb *iocb, struct iov_iter *to)
+{
+	struct file *filp = iocb->ki_filp;
+	struct pipe_inode_info *pipe = filp->private_data;
+	bool nonblock = (filp->f_flags & O_NONBLOCK) ||
+		(iocb->ki_flags & IOCB_NOWAIT);
+
+	ssize_t ret = do_pipe_read(pipe, to, nonblock);
 	if (ret > 0)
 		file_accessed(filp);
 	return ret;
@@ -424,11 +434,11 @@ static inline bool pipe_writable(const struct pipe_inode_info *pipe)
 		!READ_ONCE(pipe->readers);
 }
 
-static ssize_t
-pipe_write(struct kiocb *iocb, struct iov_iter *from)
+ssize_t do_pipe_write(struct pipe_inode_info *pipe,
+		      struct iov_iter *from,
+		      bool nonblock,
+		      bool is_packetized)
 {
-	struct file *filp = iocb->ki_filp;
-	struct pipe_inode_info *pipe = filp->private_data;
 	unsigned int head;
 	ssize_t ret = 0;
 	size_t total_len = iov_iter_count(from);
@@ -531,7 +541,7 @@ pipe_write(struct kiocb *iocb, struct iov_iter *from)
 			buf->ops = &anon_pipe_buf_ops;
 			buf->offset = 0;
 			buf->len = 0;
-			if (is_packetized(filp))
+			if (is_packetized)
 				buf->flags = PIPE_BUF_FLAG_PACKET;
 			else
 				buf->flags = PIPE_BUF_FLAG_CAN_MERGE;
@@ -554,8 +564,7 @@ pipe_write(struct kiocb *iocb, struct iov_iter *from)
 			continue;
 
 		/* Wait for buffer space to become available. */
-		if ((filp->f_flags & O_NONBLOCK) ||
-		    (iocb->ki_flags & IOCB_NOWAIT)) {
+		if (nonblock) {
 			if (!ret)
 				ret = -EAGAIN;
 			break;
@@ -603,6 +612,19 @@ out:
 	kill_fasync(&pipe->fasync_readers, SIGIO, POLL_IN);
 	if (wake_next_writer)
 		wake_up_interruptible_sync_poll(&pipe->wr_wait, EPOLLOUT | EPOLLWRNORM);
+	return ret;
+}
+EXPORT_SYMBOL(do_pipe_write);
+
+static ssize_t
+pipe_write(struct kiocb *iocb, struct iov_iter *from)
+{
+	struct file *filp = iocb->ki_filp;
+	struct pipe_inode_info *pipe = filp->private_data;
+	bool nonblock = (filp->f_flags & O_NONBLOCK) ||
+		(iocb->ki_flags & IOCB_NOWAIT);
+
+	ssize_t ret = do_pipe_write(pipe, from, nonblock, is_packetized(filp));
 	if (ret > 0 && sb_start_write_trylock(file_inode(filp)->i_sb)) {
 		int err = file_update_time(filp);
 		if (err)
