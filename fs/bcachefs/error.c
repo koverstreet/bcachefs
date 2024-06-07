@@ -203,6 +203,8 @@ int bch2_fsck_err(struct bch_fs *c,
 	int ret = -BCH_ERR_fsck_ignore;
 	const char *action_orig = "fix?", *action = action_orig;
 
+	might_sleep();
+
 	if ((flags & FSCK_CAN_FIX) &&
 	    test_bit(err, c->sb.errors_silent))
 		return -BCH_ERR_fsck_fix;
