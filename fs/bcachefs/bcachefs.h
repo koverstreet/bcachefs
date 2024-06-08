@@ -1186,6 +1186,7 @@ static inline unsigned block_sectors(const struct bch_fs *c)
 
 static inline bool btree_id_cached(const struct bch_fs *c, enum btree_id btree)
 {
+	return false;
 	return c->btree_key_cache_btrees & (1U << btree);
 }
 
