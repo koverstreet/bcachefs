@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_BTREE_KEY_CACHE_TYPES_H
 #define _BCACHEFS_BTREE_KEY_CACHE_TYPES_H
 
-#include "util/rcu_pending.h"
+#include <linux/rcu_pending.h>
 
 struct btree_key_cache {
 	struct rhashtable	table;
