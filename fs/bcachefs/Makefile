@@ -67,7 +67,6 @@ bcachefs-y		:=	\
 	progress.o		\
 	quota.o			\
 	rebalance.o		\
-	rcu_pending.o		\
 	recovery.o		\
 	recovery_passes.o	\
 	reflink.o		\
