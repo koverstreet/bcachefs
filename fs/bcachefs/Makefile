@@ -68,6 +68,7 @@ bcachefs-y		:=	\
 	opts.o			\
 	printbuf.o		\
 	quota.o			\
+	rcu_pending.o		\
 	rebalance.o		\
 	recovery.o		\
 	recovery_passes.o	\
