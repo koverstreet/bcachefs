@@ -5,11 +5,10 @@
 #include <linux/generic-radix-tree.h>
 #include <linux/mm.h>
 #include <linux/percpu.h>
+#include <linux/rcu_pending.h>
 #include <linux/slab.h>
 #include <linux/srcu.h>
 #include <linux/vmalloc.h>
-
-#include "rcu_pending.h"
 
 #define static_array_for_each(_a, _i)			\
 	for (typeof(&(_a)[0]) _i = _a;			\
