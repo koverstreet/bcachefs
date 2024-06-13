@@ -78,7 +78,7 @@ static inline void six_set_bitmask(struct six_lock *lock, u32 mask)
 static inline void six_clear_bitmask(struct six_lock *lock, u32 mask)
 {
 	if (atomic_read(&lock->state) & mask)
-		atomic_and(~mask, &lock->state);
+		atomic_andnot(mask, &lock->state);
 }
 
 static inline void six_set_owner(struct six_lock *lock, enum six_lock_type type,
