@@ -729,10 +729,28 @@ fsck_err:
 static int bch2_gc_btree(struct btree_trans *trans, enum btree_id btree)
 {
 	struct bch_fs *c = trans->c;
-	unsigned target_depth = btree_node_type_has_triggers(__btree_node_type(0, btree)) ? 0 : 1;
+	unsigned level = 0;
 	int ret = 0;
 
-	for (unsigned level = target_depth; level < BTREE_MAX_DEPTH; level++) {
+	if (btree_node_type_has_triggers(__btree_node_type(0, btree))) {
+		struct btree *prev = NULL;
+		struct btree_iter iter;
+		bch2_trans_node_iter_init(trans, &iter, btree, POS_MIN, 0, level,
+					  BTREE_ITER_prefetch);
+
+		ret = for_each_btree_key_continue(trans, iter, 0, k, ({
+			gc_pos_set(c, gc_pos_btree(btree, level, k.k->p));
+			bch2_gc_mark_key(trans, btree, level, &prev, &iter, k);
+		}));
+		if (ret)
+			goto err;
+	}
+
+	down_write(&c->gc_lock);
+
+	bch2_btree_interior_updates_flush(c);
+
+	for (level = 1; level < BTREE_MAX_DEPTH; level++) {
 		struct btree *prev = NULL;
 		struct btree_iter iter;
 		bch2_trans_node_iter_init(trans, &iter, btree, POS_MIN, 0, level,
@@ -756,6 +774,8 @@ static int bch2_gc_btree(struct btree_trans *trans, enum btree_id btree)
 					 NULL, NULL, bkey_i_to_s_c(&b->key)));
 	}
 	mutex_unlock(&c->btree_root_lock);
+
+	up_write(&c->gc_lock);
 err:
 	bch_err_fn(c, ret);
 	return ret;
@@ -1168,10 +1188,6 @@ int bch2_check_allocations(struct bch_fs *c)
 
 	lockdep_assert_held(&c->state_lock);
 
-	down_write(&c->gc_lock);
-
-	bch2_btree_interior_updates_flush(c);
-
 	ret   = bch2_gc_accounting_start(c) ?:
 		bch2_gc_start(c) ?:
 		bch2_gc_alloc_start(c) ?:
@@ -1203,8 +1219,6 @@ out:
 
 	bch2_gc_free(c);
 	percpu_up_write(&c->mark_lock);
-
-	up_write(&c->gc_lock);
 
 	bch2_buckets_nouse_free(c);
 
