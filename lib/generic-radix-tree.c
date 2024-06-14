@@ -97,7 +97,7 @@ void *__genradix_ptr_alloc(struct __genradix *radix, size_t offset,
 	struct genradix_root *v = READ_ONCE(radix->root);
 	struct genradix_node *n, *new_node = NULL;
 	unsigned level;
-
+tree_was_freed:
 	/* Increase tree depth if necessary: */
 	while (1) {
 		struct genradix_root *r = v, *new_root;
@@ -137,8 +137,19 @@ void *__genradix_ptr_alloc(struct __genradix *radix, size_t offset,
 					return NULL;
 			}
 
+			read_lock(&radix->free_lock);
+			/*
+			 * Are we possibly racing with the tree being freed (and
+			 * reused?
+			 */
+			if (v != READ_ONCE(radix->root)) {
+				read_unlock(&radix->free_lock);
+				goto tree_was_freed;
+			}
+
 			if (!(n = cmpxchg_release(p, NULL, new_node)))
 				swap(n, new_node);
+			read_unlock(&radix->free_lock);
 		}
 	}
 
@@ -288,7 +299,9 @@ EXPORT_SYMBOL(__genradix_prealloc);
 
 void __genradix_free(struct __genradix *radix)
 {
+	write_lock(&radix->free_lock);
 	struct genradix_root *r = xchg(&radix->root, NULL);
+	write_unlock(&radix->free_lock);
 
 	genradix_free_recurse(genradix_root_to_node(r),
 			      genradix_root_to_depth(r));
