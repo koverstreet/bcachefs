@@ -95,6 +95,7 @@ static void printbuf_insert_spaces(struct printbuf *out, unsigned pos, unsigned 
 static void __printbuf_do_indent(struct printbuf *out, unsigned pos)
 {
 	while (true) {
+		BUG_ON(pos > out->pos);
 		int pad;
 		unsigned len = out->pos - pos;
 		char *p = out->buf + pos;
