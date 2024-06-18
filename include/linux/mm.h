@@ -1193,6 +1193,13 @@ unsigned long vmalloc_to_pfn(const void *addr);
  * is no special casing required.
  */
 #ifdef CONFIG_MMU
+static inline bool is_vmalloc_addr_inlined(const void *x)
+{
+	unsigned long addr = (unsigned long)kasan_reset_tag(x);
+
+	return addr >= VMALLOC_START && addr < VMALLOC_END;
+}
+
 extern bool is_vmalloc_addr(const void *x);
 extern int is_vmalloc_or_module_addr(const void *x);
 #else
