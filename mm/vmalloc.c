@@ -78,9 +78,7 @@ static const bool vmap_allow_huge = false;
 
 bool is_vmalloc_addr(const void *x)
 {
-	unsigned long addr = (unsigned long)kasan_reset_tag(x);
-
-	return addr >= VMALLOC_START && addr < VMALLOC_END;
+	return is_vmalloc_addr_inlined(x);
 }
 EXPORT_SYMBOL(is_vmalloc_addr);
 

@@ -443,7 +443,7 @@ restart:
 	 * that we can do kfree_bulk() - vmalloc pointers always use the linked
 	 * list:
 	 */
-	if (ptr && unlikely(is_vmalloc_addr(ptr)))
+	if (ptr && unlikely(is_vmalloc_addr_inlined(ptr)))
 		goto list_add;
 
 	objs = get_object_radix(p, seq);
