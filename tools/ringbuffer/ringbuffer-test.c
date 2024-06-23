@@ -22,7 +22,7 @@
 typedef uint32_t u32;
 typedef unsigned long ulong;
 
-static inline struct ringbuffer_ptrs *ringbuffer(int fd, int rw, u32 size)
+static inline struct ringbuffer_desc *ringbuffer(int fd, int rw, u32 size)
 {
 	ulong addr = 0;
 	int ret = syscall(463, fd, rw, size, &addr);
@@ -41,7 +41,7 @@ static inline int ringbuffer_wakeup(int fd, int rw)
 	return syscall(465, fd, rw);
 }
 
-static ssize_t ringbuffer_read(int fd, struct ringbuffer_ptrs *rb,
+static ssize_t ringbuffer_read(int fd, struct ringbuffer_desc *rb,
 			       void *buf, size_t len)
 {
 	void *rb_data = (void *) rb + rb->data_offset;
@@ -73,7 +73,7 @@ static ssize_t ringbuffer_read(int fd, struct ringbuffer_ptrs *rb,
 	return tail - orig_tail;
 }
 
-static ssize_t ringbuffer_write(int fd, struct ringbuffer_ptrs *rb,
+static ssize_t ringbuffer_write(int fd, struct ringbuffer_desc *rb,
 				void *buf, size_t len)
 {
 	void *rb_data = (void *) rb + rb->data_offset;
@@ -116,7 +116,7 @@ static void usage(void)
 	     "  -h, --help                Display this help and exit\n");
 }
 
-static inline ssize_t rb_test_read(int fd, struct ringbuffer_ptrs *rb,
+static inline ssize_t rb_test_read(int fd, struct ringbuffer_desc *rb,
 				   void *buf, size_t len)
 {
 	return rb
@@ -124,7 +124,7 @@ static inline ssize_t rb_test_read(int fd, struct ringbuffer_ptrs *rb,
 		: read(fd, buf, len);
 }
 
-static inline ssize_t rb_test_write(int fd, struct ringbuffer_ptrs *rb,
+static inline ssize_t rb_test_write(int fd, struct ringbuffer_desc *rb,
 				    void *buf, size_t len)
 {
 	return rb
@@ -182,7 +182,7 @@ int main(int argc, char *argv[])
 		exit(EXIT_FAILURE);
 	}
 
-	struct ringbuffer_ptrs *rb = NULL;
+	struct ringbuffer_desc *rb = NULL;
 	if (use_ringbuffer) {
 		rb = ringbuffer(fd, rw, 4096);
 		if (!rb) {

@@ -33,7 +33,7 @@ struct ringbuffer {
 	u32			mask;	/* size - 1 */
 	unsigned		order;
 	wait_queue_head_t	wait[2];
-	struct ringbuffer_ptrs	*ptrs;
+	struct ringbuffer_desc	*ptrs;
 	void			*data;
 	/* hidden internal file for the mmap */
 	struct file		*rb_file;
@@ -344,8 +344,8 @@ static void ringbuffer_futex_key(struct ringbuffer *rb, int rw,
 	key->shared.i_seq = get_inode_sequence_number(inode);
 	key->shared.pgoff = (1U << rb->order) - 1;
 	key->shared.offset = rw == READ
-		? offsetof(struct ringbuffer_ptrs, head)
-		: offsetof(struct ringbuffer_ptrs, tail);
+		? offsetof(struct ringbuffer_desc, head)
+		: offsetof(struct ringbuffer_desc, tail);
 }
 
 ssize_t ringbuffer_read_iter(struct ringbuffer *rb, struct iov_iter *iter, bool nonblocking)
@@ -441,7 +441,7 @@ SYSCALL_DEFINE2(ringbuffer_wait, unsigned, fd, int, rw)
 		goto err;
 	}
 
-	struct ringbuffer_ptrs *rp = rb->ptrs;
+	struct ringbuffer_desc *rp = rb->ptrs;
 	wait_event(rb->wait[rw], rw == READ
 		   ? rp->head != rp->tail
 		   : rp->head - rp->tail < rb->size);

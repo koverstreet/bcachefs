@@ -5,10 +5,10 @@
 #include <uapi/linux/types.h>
 
 /*
- * ringbuffer_ptrs - head and tail pointers for a ringbuffer, mappped to
+ * ringbuffer_desc - head and tail pointers for a ringbuffer, mappped to
  * userspace:
  */
-struct ringbuffer_ptrs {
+struct ringbuffer_desc {
 	/*
 	 * We use u32s because this type is shared between the kernel and
 	 * userspace - ulong/size_t won't work here, we might be 32bit userland
