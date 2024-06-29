@@ -515,7 +515,7 @@ static int inode_update_times_fn(struct btree_trans *trans,
 	return 0;
 }
 
-static long bchfs_fpunch(struct bch_inode_info *inode, loff_t offset, loff_t len)
+static noinline long bchfs_fpunch(struct bch_inode_info *inode, loff_t offset, loff_t len)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	u64 end		= offset + len;
@@ -554,7 +554,7 @@ err:
 	return ret;
 }
 
-static long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
+static noinline long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
 				   loff_t offset, loff_t len,
 				   bool insert)
 {
@@ -590,7 +590,7 @@ static long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
 	return ret;
 }
 
-static int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
+static noinline int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 			     u64 start_sector, u64 end_sector)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
@@ -711,7 +711,7 @@ bkey_err:
 	return ret;
 }
 
-static long bchfs_fallocate(struct bch_inode_info *inode, int mode,
+static noinline long bchfs_fallocate(struct bch_inode_info *inode, int mode,
 			    loff_t offset, loff_t len)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
