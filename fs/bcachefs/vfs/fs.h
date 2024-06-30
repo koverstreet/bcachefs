@@ -50,6 +50,7 @@ struct bch_inode_info {
 #define bch2_pagecache_add_get(i)	bch2_two_state_lock(&(i)->ei_pagecache_lock, 0)
 
 #define bch2_pagecache_block_put(i)	bch2_two_state_unlock(&(i)->ei_pagecache_lock, 1)
+#define bch2_pagecache_block_put_nolockdep(i)	bch2_two_state_unlock_nolockdep(&i->ei_pagecache_lock, 1)
 #define bch2_pagecache_block_get(i)	bch2_two_state_lock(&(i)->ei_pagecache_lock, 1)
 
 DEFINE_GUARD(bch2_pagecache_add, struct bch_inode_info *,
