@@ -259,6 +259,8 @@ void bch2_readahead(struct readahead_control *ractl)
 	struct readpages_iter readpages_iter;
 	struct blk_plug plug;
 
+	lockdep_assert_held(&inode->ei_pagecache_lock);
+
 	bch2_inode_opts_get(&opts, c, &inode->ei_inode);
 
 	int ret = readpages_iter_init(&readpages_iter, ractl);
@@ -275,7 +277,6 @@ void bch2_readahead(struct readahead_control *ractl)
 	 * scheduling.
 	 */
 	blk_start_plug(&plug);
-	bch2_pagecache_add_get(inode);
 
 	struct btree_trans *trans = bch2_trans_get(c);
 	while ((folio = readpage_iter_peek(&readpages_iter))) {
@@ -301,7 +302,6 @@ void bch2_readahead(struct readahead_control *ractl)
 	}
 	bch2_trans_put(trans);
 
-	bch2_pagecache_add_put(inode);
 	blk_finish_plug(&plug);
 	darray_exit(&readpages_iter.folios);
 }
