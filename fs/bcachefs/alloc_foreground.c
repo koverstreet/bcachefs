@@ -626,8 +626,14 @@ again:
 	if (usage->d[BCH_DATA_need_gc_gens].buckets > avail)
 		bch2_gc_gens_async(c);
 
-	if (should_invalidate_buckets(ca, *usage))
+	if (should_invalidate_buckets(ca, *usage)) {
 		bch2_dev_do_invalidates(ca);
+		rcu_read_lock();
+		struct task_struct *t = rcu_dereference(c->copygc_thread);
+		if (t)
+			wake_up_process(t);
+		rcu_read_unlock();
+	}
 
 	if (!avail) {
 		if (cl && !waiting) {
