@@ -446,6 +446,12 @@ static void bch2_vfs_writeback_fn(struct work_struct *work)
 	iput(&inode->v);
 }
 
+static __maybe_unused int ptrcmp_fn(const struct lockdep_map *l,
+				    const struct lockdep_map *r)
+{
+	return cmp_int(l, r);
+}
+
 static struct bch_inode_info *__bch2_new_inode(struct bch_fs *c, gfp_t gfp)
 {
 	struct bch_inode_info *inode = alloc_inode_sb(c->vfs_sb, bch2_inode_cache, gfp);
@@ -456,6 +462,7 @@ static struct bch_inode_info *__bch2_new_inode(struct bch_fs *c, gfp_t gfp)
 	mutex_init(&inode->ei_update_lock);
 	two_state_lock_init(&inode->ei_pagecache_lock);
 	INIT_LIST_HEAD(&inode->ei_vfs_inode_list);
+	lock_set_cmp_fn(&inode->ei_pagecache_lock, ptrcmp_fn, NULL);
 	inode->ei_flags = 0;
 	mutex_init(&inode->ei_quota_lock);
 	memset(&inode->ei_devs_need_flush, 0, sizeof(inode->ei_devs_need_flush));

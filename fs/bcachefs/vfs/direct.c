@@ -393,7 +393,7 @@ static __always_inline long bch2_dio_write_done(struct dio_write *dio)
 			return -EIOCBQUEUED;
 	}
 
-	bch2_pagecache_block_put(inode);
+	bch2_pagecache_block_put_nolockdep(inode);
 
 	kfree(dio->iov);
 
@@ -663,15 +663,17 @@ ssize_t bch2_direct_write(struct kiocb *req, struct iov_iter *iter)
 	}
 
 	ret = bch2_dio_write_loop(dio);
+	lock_release(&inode->ei_pagecache_lock.dep_map, _THIS_IP_);
 out:
 	if (locked)
 		inode_unlock(&inode->v);
 	return ret;
 err_put_bio:
-	bch2_pagecache_block_put(inode);
+	bch2_pagecache_block_put_nolockdep(inode);
 	bio_put(bio);
 	inode_dio_end(&inode->v);
 err_put_write_ref:
+	lock_release(&inode->ei_pagecache_lock.dep_map, _THIS_IP_);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_dio_write);
 	goto out;
 }
