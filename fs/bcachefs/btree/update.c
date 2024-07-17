@@ -201,7 +201,17 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 					  BTREE_UPDATE_internal_snapshot_node|flags));
 	}
 
-	if (!back_split) {
+	if (back_split) {
+		update = errptr_try(bch2_bkey_make_mut_noupdate(trans, old));
+
+		bch2_cut_front(new.k->p, update);
+
+		try(bch2_trans_update_by_path(trans, iter->path, update,
+					      BTREE_UPDATE_internal_snapshot_node|
+					      flags, _RET_IP_));
+	} else if (!bkey_deleted(new.k)
+		   ? bkey_lt(old.k->p, new.k->p)
+		   : bkey_le(old.k->p, new.k->p)) {
 		update = errptr_try(bch2_trans_kmalloc(trans, sizeof(*update)));
 
 		bkey_init(&update->k);
@@ -219,14 +229,6 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 		}
 
 		try(bch2_trans_update_by_path(trans, iter->update_path ?: iter->path, update,
-					      BTREE_UPDATE_internal_snapshot_node|
-					      flags, _RET_IP_));
-	} else {
-		update = errptr_try(bch2_bkey_make_mut_noupdate(trans, old));
-
-		bch2_cut_front(c, new.k->p, update);
-
-		try(bch2_trans_update_by_path(trans, iter->path, update,
 					      BTREE_UPDATE_internal_snapshot_node|
 					      flags, _RET_IP_));
 	}
