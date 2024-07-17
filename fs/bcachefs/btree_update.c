@@ -242,7 +242,9 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 			return ret;
 	}
 
-	if (bkey_le(old.k->p, new.k->p)) {
+	if (!bkey_deleted(new.k)
+	    ? bkey_lt(old.k->p, new.k->p)
+	    : bkey_le(old.k->p, new.k->p)) {
 		update = bch2_trans_kmalloc(trans, sizeof(*update));
 		if ((ret = PTR_ERR_OR_ZERO(update)))
 			return ret;
