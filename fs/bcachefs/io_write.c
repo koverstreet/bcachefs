@@ -856,8 +856,10 @@ static enum prep_encoded_ret {
 		csum = bch2_checksum_bio(c, op->crc.csum_type,
 					 extent_nonce(op->version, op->crc),
 					 bio);
-		if (bch2_crc_cmp(op->crc.csum, csum) && !c->opts.no_data_io)
+		if (bch2_crc_cmp(op->crc.csum, csum) && !c->opts.no_data_io) {
+			/* checksum error message */
 			return PREP_ENCODED_CHECKSUM_ERR;
+		}
 
 		if (bch2_bio_uncompress_inplace(c, bio, &op->crc))
 			return PREP_ENCODED_ERR;
@@ -884,8 +886,10 @@ static enum prep_encoded_ret {
 	if ((op->compression_opt ||
 	     bch2_csum_type_is_encryption(op->crc.csum_type) !=
 	     bch2_csum_type_is_encryption(op->csum_type)) &&
-	    bch2_write_decrypt(op))
+	    bch2_write_decrypt(op)) {
+		/* decrypt error message */
 		return PREP_ENCODED_CHECKSUM_ERR;
+	}
 
 	return PREP_ENCODED_OK;
 }
