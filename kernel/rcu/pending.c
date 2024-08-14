@@ -601,3 +601,23 @@ int rcu_pending_init(struct rcu_pending *pending,
 
 	return 0;
 }
+
+#ifndef CONFIG_TINY_RCU
+/* kvfree_rcu */
+
+static struct rcu_pending kvfree_rcu_pending;
+
+void kvfree_call_rcu(struct rcu_head *head, void *ptr)
+{
+	BUG_ON(!ptr);
+
+	__rcu_pending_enqueue(&kvfree_rcu_pending, head, ptr, head == NULL);
+}
+EXPORT_SYMBOL_GPL(kvfree_call_rcu);
+
+void __init kvfree_rcu_pending_init(void)
+{
+	if (rcu_pending_init(&kvfree_rcu_pending, NULL, RCU_PENDING_KVFREE_FN))
+		panic("%s failed\n", __func__);
+}
+#endif
