@@ -22,4 +22,6 @@ int rcu_pending_init(struct rcu_pending *pending,
 		     struct srcu_struct *srcu,
 		     rcu_pending_process_fn process);
 
+void __init kvfree_rcu_pending_init(void);
+
 #endif /* _LINUX_RCU_PENDING_H */
