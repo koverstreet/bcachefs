@@ -997,11 +997,8 @@ static ssize_t bch2_buffered_write(struct kiocb *iocb, struct iov_iter *iter)
 	 * track (written2) the most we ever wrote.
 	 */
 
-	if ((iocb->ki_flags & IOCB_APPEND) ||
-	    (iocb->ki_pos + iov_iter_count(iter) > i_size_read(&inode->v))) {
-		inode_lock(&inode->v);
-		inode_locked = true;
-	}
+	inode_lock(&inode->v);
+	inode_locked = true;
 
 	ret = generic_write_checks(iocb, iter);
 	if (ret <= 0)
