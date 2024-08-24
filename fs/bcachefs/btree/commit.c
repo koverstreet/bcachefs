@@ -583,6 +583,25 @@ static noinline int bch2_trans_commit_run_gc_triggers(struct btree_trans *trans)
 	return 0;
 }
 
+static noinline void bch2_trans_commit_run_fsck_triggers(struct btree_trans *trans)
+{
+	struct bch_fs *c = trans->c;
+	fsck_trigger_fn fsck_trigger = READ_ONCE(c->fsck_trigger);
+
+	if (!fsck_trigger)
+		return;
+
+	trans_for_each_update(trans, i) {
+		if (i->level)
+			continue;
+
+		struct bkey_s_c old = { &i->old_k, i->old_v };
+		struct bkey_s_c new = bkey_i_to_s_c(i->k);
+
+		fsck_trigger(c, i->btree_id, old, new);
+	}
+}
+
 static noinline void __trace_transaction_commit(struct btree_trans *trans, unsigned long ip)
 {
 	CLASS(printbuf, buf)();
@@ -667,6 +686,9 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 		try(h->fn(trans, h));
 		h = h->next;
 	}
+
+	if (unlikely(c->fsck_trigger))
+		bch2_trans_commit_run_fsck_triggers(trans);
 
 	struct bkey_i *accounting;
 
