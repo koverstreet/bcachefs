@@ -2297,6 +2297,11 @@ int bch2_check_dirents(struct bch_fs *c)
 	return ret;
 }
 
+static void fsck_trigger(struct bch_fs *c, enum btree_id btree,
+			 struct bkey_s_c old, struct bkey_s_c new)
+{
+}
+
 static int check_xattr(struct btree_trans *trans, struct btree_iter *iter,
 		       struct bkey_s_c k,
 		       struct bch_hash_info *hash_info,

@@ -467,6 +467,7 @@ enum bch_time_stats {
 };
 
 #include "alloc_types.h"
+#include "bkey.h"
 #include "btree_gc_types.h"
 #include "btree_types.h"
 #include "btree_node_scan_types.h"
@@ -706,6 +707,9 @@ enum bch_write_ref {
 };
 
 #define BCH_FS_DEFAULT_UTF8_ENCODING UNICODE_AGE(12, 1, 0)
+
+typedef void (*fsck_trigger_fn)(struct bch_fs *, enum btree_id,
+				struct bkey_s_c, struct bkey_s_c);
 
 struct bch_fs {
 	struct closure		cl;
@@ -962,8 +966,10 @@ struct bch_fs {
 	 */
 	seqcount_t		gc_pos_lock;
 	struct gc_pos		gc_pos;
-	struct percpu_rw_semaphore
 				check_allocations_done_lock;
+
+	fsck_trigger_fn		fsck_trigger;
+	void			*fsck_trigger_priv;
 
 	struct mutex		gc_gens_lock;
 
