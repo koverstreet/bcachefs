@@ -76,6 +76,7 @@
 #include "alloc/replicas_types.h"
 #include "alloc/types.h"
 
+#include "btree/bkey.h"
 #include "btree/check_types.h"
 #include "btree/journal_overlay_types.h"
 #include "btree/types.h"
@@ -666,6 +667,9 @@ enum bch_write_ref {
 
 #define BCH_FS_DEFAULT_UTF8_ENCODING UNICODE_AGE(12, 1, 0)
 
+typedef void (*fsck_trigger_fn)(struct bch_fs *, enum btree_id,
+				struct bkey_s_c, struct bkey_s_c);
+
 struct bch_fs {
 	struct closure		cl;
 
@@ -755,6 +759,9 @@ struct bch_fs {
 
 	struct bch_fs_gc			gc;
 	struct bch_fs_gc_gens			gc_gens;
+
+	fsck_trigger_fn		fsck_trigger;
+	void			*fsck_trigger_priv;
 
 	struct bch_accounting_mem		accounting;
 	struct bch_replicas_cpu			replicas;
