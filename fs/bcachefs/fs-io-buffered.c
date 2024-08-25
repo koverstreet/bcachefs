@@ -1100,6 +1100,14 @@ get_inode_lock:
 			inode_locked = true;
 			bch2_pagecache_add_get(inode);
 
+			/*
+			 * After a short write, for atomicity we have to retry
+			 * the write from the beginning.
+			 *
+			 * Note that if the retry fails, we need to return the
+			 * most we ever successfully wrote, which is tracked in
+			 * written2.
+			 */
 			iov_iter_revert(iter, written);
 			pos -= written;
 			written = 0;
@@ -1111,9 +1119,11 @@ unlock:
 	if (inode_locked)
 		inode_unlock(&inode->v);
 
+	written = max(written, written2);
+
 	iocb->ki_pos += written;
 
-	ret = max(written, written2) ?: ret;
+	ret = written ?: ret;
 	if (ret > 0)
 		ret = generic_write_sync(iocb, ret);
 	return ret;
