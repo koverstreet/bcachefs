@@ -816,15 +816,6 @@ static int __bch2_buffered_write(struct bch_inode_info *inode,
 
 	BUG_ON(!fs.nr);
 
-	/*
-	 * If we're not using the inode lock, we need to lock all the folios for
-	 * atomiticity of writes vs. other writes:
-	 */
-	if (!inode_locked && folio_end_pos(darray_last(fs)) < end) {
-		ret = -BCH_ERR_need_inode_lock;
-		goto out;
-	}
-
 	f = darray_first(fs);
 	if (pos != folio_pos(f) && !folio_test_uptodate(f)) {
 		ret = bch2_read_single_folio(f, mapping);
@@ -1027,8 +1018,12 @@ static ssize_t bch2_buffered_write(struct kiocb *iocb, struct iov_iter *iter)
 	bch2_pagecache_add_get(inode);
 
 	if (!inode_locked &&
-	    (iocb->ki_pos + iov_iter_count(iter) > i_size_read(&inode->v)))
-		goto get_inode_lock;
+	    (iocb->ki_pos + iov_iter_count(iter) > i_size_read(&inode->v))) {
+		bch2_pagecache_add_put(inode);
+		inode_lock(&inode->v);
+		inode_locked = true;
+		bch2_pagecache_add_get(inode);
+	}
 
 	do {
 		unsigned offset = pos & (PAGE_SIZE - 1);
@@ -1054,17 +1049,12 @@ again:
 			}
 		}
 
-		if (unlikely(bytes != iov_iter_count(iter) && !inode_locked))
-			goto get_inode_lock;
-
 		if (unlikely(fatal_signal_pending(current))) {
 			ret = -EINTR;
 			break;
 		}
 
 		ret = __bch2_buffered_write(inode, mapping, iter, pos, bytes, inode_locked);
-		if (ret == -BCH_ERR_need_inode_lock)
-			goto get_inode_lock;
 		if (unlikely(ret < 0))
 			break;
 
@@ -1086,21 +1076,9 @@ again:
 		pos += ret;
 		written += ret;
 		written2 = max(written, written2);
-
-		if (ret != bytes && !inode_locked)
-			goto get_inode_lock;
 		ret = 0;
 
 		balance_dirty_pages_ratelimited(mapping);
-
-		if (0) {
-get_inode_lock:
-			bch2_pagecache_add_put(inode);
-			inode_lock(&inode->v);
-			inode_locked = true;
-			bch2_pagecache_add_get(inode);
-			ret = 0;
-		}
 	} while (iov_iter_count(iter));
 	bch2_pagecache_add_put(inode);
 unlock:
