@@ -1099,18 +1099,6 @@ get_inode_lock:
 			inode_lock(&inode->v);
 			inode_locked = true;
 			bch2_pagecache_add_get(inode);
-
-			/*
-			 * After a short write, for atomicity we have to retry
-			 * the write from the beginning.
-			 *
-			 * Note that if the retry fails, we need to return the
-			 * most we ever successfully wrote, which is tracked in
-			 * written2.
-			 */
-			iov_iter_revert(iter, written);
-			pos -= written;
-			written = 0;
 			ret = 0;
 		}
 	} while (iov_iter_count(iter));
