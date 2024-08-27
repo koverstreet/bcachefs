@@ -1892,8 +1892,10 @@ again:
 		if (!snapshot_list_has_id(s, inode->ei_inum.subvol))
 			continue;
 
-		if (!(inode->v.i_state & I_DONTCACHE) &&
-		    !(inode->v.i_state & I_FREEING) &&
+		unsigned s = inode->v.i_state;
+
+		if (!(s & I_DONTCACHE) &&
+		    !(s & I_FREEING) &&
 		    igrab(&inode->v)) {
 			this_pass_clean = false;
 
@@ -1910,7 +1912,14 @@ again:
 					      TASK_UNINTERRUPTIBLE);
 			rcu_read_unlock();
 
-			schedule();
+			if (!schedule_timeout(HZ * 10)) {
+				pr_info("waited 10 seconds for inode %llu:%llu to go away: ref %u state %u",
+					inode->ei_inum.inum,
+					inode->ei_inum.subvol,
+					atomic_read(&inode->v.i_count),
+					s);
+			}
+
 			finish_wait(wq_head, &wqe.wq_entry);
 			goto again;
 		}
