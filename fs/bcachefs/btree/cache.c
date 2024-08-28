@@ -842,7 +842,8 @@ got_node:
 
 	mutex_unlock(&bc->lock);
 
-	if (btree_node_data_alloc(c, b, GFP_NOWAIT)) {
+	if (memalloc_flags_do(PF_MEMALLOC_NORECLAIM,
+			      btree_node_data_alloc(c, b, GFP_KERNEL|__GFP_NOWARN))) {
 		bch2_trans_unlock(trans);
 		if (btree_node_data_alloc(c, b, GFP_KERNEL|__GFP_NOWARN))
 			goto err;

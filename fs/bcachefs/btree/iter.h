@@ -5,6 +5,8 @@
 #include "btree/bset.h"
 #include "btree/types.h"
 
+#include <linux/sched/mm.h>
+
 void bch2_trans_updates_to_text(struct printbuf *, struct btree_trans *);
 void bch2_btree_path_to_text(struct printbuf *, struct btree_trans *,
 			     btree_path_idx_t, struct btree_path *);
@@ -996,29 +998,33 @@ struct bkey_s_c bch2_btree_iter_peek_and_restart_outlined(struct btree_iter *);
 	(_do) ?: bch2_trans_relock(_trans);				\
 })
 
-#define allocate_dropping_locks_errcode(_trans, _do)			\
-({									\
-	gfp_t _gfp = GFP_NOWAIT;					\
-	int _ret = _do;							\
-									\
-	if (bch2_err_matches(_ret, ENOMEM)) {				\
-		_gfp = GFP_KERNEL;					\
-		_ret = drop_locks_do(_trans, _do);			\
-	}								\
-	_ret;								\
+#define memalloc_flags_do(_flags, _do)						\
+({										\
+	unsigned _saved_flags = memalloc_flags_save(_flags);			\
+	typeof(_do) _ret = _do;							\
+	memalloc_noreclaim_restore(_saved_flags);				\
+	_ret;									\
 })
 
-#define allocate_dropping_locks(_trans, _ret, _do)			\
-({									\
-	gfp_t _gfp = GFP_NOWAIT;					\
-	typeof(_do) _p = _do;						\
-									\
-	_ret = 0;							\
-	if (unlikely(!_p)) {						\
-		_gfp = GFP_KERNEL;					\
-		_ret = drop_locks_do(_trans, ((_p = _do), 0));		\
-	}								\
-	_p;								\
+#define allocate_dropping_locks_errcode(_trans, _do)				\
+({										\
+	int _ret = memalloc_flags_do(PF_MEMALLOC_NORECLAIM, _do);		\
+										\
+	if (bch2_err_matches(_ret, ENOMEM)) {					\
+		_ret = drop_locks_do(_trans, _do);				\
+	}									\
+	_ret;									\
+})
+
+#define allocate_dropping_locks(_trans, _ret, _do)				\
+({										\
+	typeof(_do) _p = memalloc_flags_do(PF_MEMALLOC_NORECLAIM, _do);		\
+										\
+	_ret = 0;								\
+	if (unlikely(!_p)) {							\
+		_ret = drop_locks_do(_trans, ((_p = _do), 0));			\
+	}									\
+	_p;									\
 })
 
 #define allocate_dropping_locks_norelock(_trans, _lock_dropped, _do)	\
