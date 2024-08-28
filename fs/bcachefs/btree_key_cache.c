@@ -117,14 +117,14 @@ static void bkey_cached_free(struct btree_key_cache *bc,
 	this_cpu_inc(*bc->nr_pending);
 }
 
-static struct bkey_cached *__bkey_cached_alloc(unsigned key_u64s, gfp_t gfp)
+static struct bkey_cached *__bkey_cached_alloc(unsigned key_u64s)
 {
-	gfp |= __GFP_ACCOUNT|__GFP_RECLAIMABLE;
+	gfp_t gfp = GFP_KERNEL|__GFP_ACCOUNT|__GFP_RECLAIMABLE;
 
 	struct bkey_cached *ck = kmem_cache_zalloc(bch2_key_cache, gfp);
 	if (unlikely(!ck))
 		return NULL;
-	ck->k = kmalloc(key_u64s * sizeof(u64), gfp);
+	ck->k = kmalloc(key_u64s * sizeof(u64), GFP_KERNEL);
 	if (unlikely(!ck->k)) {
 		kmem_cache_free(bch2_key_cache, ck);
 		return NULL;
@@ -148,7 +148,7 @@ bkey_cached_alloc(struct btree_trans *trans, struct btree_path *path, unsigned k
 		goto lock;
 
 	ck = allocate_dropping_locks(trans, ret,
-				     __bkey_cached_alloc(key_u64s, _gfp));
+				     __bkey_cached_alloc(key_u64s));
 	if (ret) {
 		if (ck)
 			kfree(ck->k);
@@ -244,7 +244,7 @@ static int btree_key_cache_create(struct btree_trans *trans,
 		mark_btree_node_locked_noreset(ck_path, 0, BTREE_NODE_UNLOCKED);
 
 		struct bkey_i *new_k = allocate_dropping_locks(trans, ret,
-				kmalloc(key_u64s * sizeof(u64), _gfp));
+						kmalloc(key_u64s * sizeof(u64), GFP_KERNEL));
 		if (unlikely(!new_k)) {
 			bch_err(trans->c, "error allocating memory for key cache key, btree %s u64s %u",
 				bch2_btree_id_str(ck->key.btree_id), key_u64s);

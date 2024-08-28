@@ -899,10 +899,54 @@ err:
 
 /* stripe bucket accounting: */
 
-static int __ec_stripe_mem_alloc(struct bch_fs *c, size_t idx, gfp_t gfp)
+static int __ec_stripe_mem_alloc(struct bch_fs *c, size_t idx)
 {
+<<<<<<< HEAD
+||||||| parent of 0c5864ec29a4 (bcachefs: Switch to memalloc_flags_do() for vmalloc allocations)
+	ec_stripes_heap n, *h = &c->ec_stripes_heap;
+
+	if (idx >= h->size) {
+		if (!init_heap(&n, max(1024UL, roundup_pow_of_two(idx + 1)), gfp))
+			return -BCH_ERR_ENOMEM_ec_stripe_mem_alloc;
+
+		mutex_lock(&c->ec_stripes_heap_lock);
+		if (n.size > h->size) {
+			memcpy(n.data, h->data, h->nr * sizeof(h->data[0]));
+			n.nr = h->nr;
+			swap(*h, n);
+		}
+		mutex_unlock(&c->ec_stripes_heap_lock);
+
+		free_heap(&n);
+	}
+
+	if (!genradix_ptr_alloc(&c->stripes, idx, gfp))
+		return -BCH_ERR_ENOMEM_ec_stripe_mem_alloc;
+
+=======
+	ec_stripes_heap n, *h = &c->ec_stripes_heap;
+
+	if (idx >= h->size) {
+		if (!init_heap(&n, max(1024UL, roundup_pow_of_two(idx + 1)), GFP_KERNEL))
+			return -BCH_ERR_ENOMEM_ec_stripe_mem_alloc;
+
+		mutex_lock(&c->ec_stripes_heap_lock);
+		if (n.size > h->size) {
+			memcpy(n.data, h->data, h->nr * sizeof(h->data[0]));
+			n.nr = h->nr;
+			swap(*h, n);
+		}
+		mutex_unlock(&c->ec_stripes_heap_lock);
+
+		free_heap(&n);
+	}
+
+	if (!genradix_ptr_alloc(&c->stripes, idx, GFP_KERNEL))
+		return -BCH_ERR_ENOMEM_ec_stripe_mem_alloc;
+
+>>>>>>> 0c5864ec29a4 (bcachefs: Switch to memalloc_flags_do() for vmalloc allocations)
 	if (c->gc_pos.phase != GC_PHASE_not_running &&
-	    !genradix_ptr_alloc(&c->gc_stripes, idx, gfp))
+	    !genradix_ptr_alloc(&c->gc_stripes, idx, GFP_KERNEL))
 		return -BCH_ERR_ENOMEM_ec_stripe_mem_alloc;
 
 	return 0;
@@ -912,7 +956,7 @@ static int ec_stripe_mem_alloc(struct btree_trans *trans,
 			       struct btree_iter *iter)
 {
 	return allocate_dropping_locks_errcode(trans,
-			__ec_stripe_mem_alloc(trans->c, iter->pos.offset, _gfp));
+			__ec_stripe_mem_alloc(trans->c, iter->pos.offset));
 }
 
 /*
