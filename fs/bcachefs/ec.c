@@ -886,10 +886,10 @@ err:
 
 /* stripe bucket accounting: */
 
-static int __ec_stripe_mem_alloc(struct bch_fs *c, size_t idx, gfp_t gfp)
+static int __ec_stripe_mem_alloc(struct bch_fs *c, size_t idx)
 {
 	if (c->gc_pos.phase != GC_PHASE_not_running &&
-	    !genradix_ptr_alloc(&c->gc_stripes, idx, gfp))
+	    !genradix_ptr_alloc(&c->gc_stripes, idx, GFP_KERNEL))
 		return bch_err_throw(c, ENOMEM_ec_stripe_mem_alloc);
 
 	return 0;
@@ -899,7 +899,7 @@ static int ec_stripe_mem_alloc(struct btree_trans *trans,
 			       struct btree_iter *iter)
 {
 	return allocate_dropping_locks_errcode(trans,
-			__ec_stripe_mem_alloc(trans->c, iter->pos.offset, _gfp));
+			__ec_stripe_mem_alloc(trans->c, iter->pos.offset));
 }
 
 /*
