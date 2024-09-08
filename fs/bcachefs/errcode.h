@@ -288,6 +288,7 @@
 	x(EIO,				extent_poisened)			\
 	x(EIO,				missing_indirect_extent)		\
 	x(EIO,				invalidate_stripe_to_dev)		\
+	x(EIO,				evacuate_stripe)			\
 	x(EIO,				no_encryption_key)			\
 	x(EIO,				insufficient_journal_devices)		\
 	x(EIO,				device_offline)				\

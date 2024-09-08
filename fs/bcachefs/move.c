@@ -1247,6 +1247,7 @@ int bch2_data_job(struct bch_fs *c,
 					  true,
 					  migrate_pred, &op) ?: ret;
 		bch2_btree_interior_updates_flush(c);
+		ret = bch2_dev_evacuate_stripes(c, op.migrate.dev) ?: ret;
 		ret = bch2_replicas_gc2(c) ?: ret;
 		break;
 	case BCH_DATA_OP_rewrite_old_nodes:
