@@ -288,6 +288,7 @@ static inline void ec_stripe_new_put(struct bch_fs *c, struct ec_stripe_new *s,
 		}
 }
 
+int bch2_dev_evacuate_stripes(struct bch_fs *, unsigned);
 int bch2_invalidate_stripe_to_dev(struct btree_trans *, struct btree_iter *,
 				  struct bkey_s_c, unsigned,
 				  unsigned, struct printbuf *);
