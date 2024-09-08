@@ -1087,6 +1087,7 @@ int bch2_data_job(struct bch_fs *c,
 				     writepoint_hashed((unsigned long) current),
 				     true,
 				     migrate_pred, &op) ?: ret;
+		ret = bch2_stripe_evacuate(c, op.migrate.dev) ?: ret;
 		ret = bch2_replicas_gc2(c) ?: ret;
 		break;
 	case BCH_DATA_OP_rewrite_old_nodes:

@@ -2212,6 +2212,49 @@ err:
 	return ERR_PTR(ret);
 }
 
+/* device evacuate */
+
+static int bch2_evacuate_stripe_to_dev(struct btree_trans *trans, struct bkey_s_c k, unsigned dev_idx)
+{
+	if (!bch2_bkey_has_device_c(k, dev_idx))
+		return 0;
+
+	struct bch_fs *c = trans->c;
+	struct bkey_s_c_stripe s = bkey_s_c_to_stripe(k);
+	unsigned disk_label = s.v->disk_label;
+	struct ec_stripe_head *h;
+retry:
+	h = __bch2_ec_stripe_head_get(trans, disk_label, s.v->algorithm,
+				      s.v->nr_redundant, BCH_WATERMARK_normal);
+	int ret = PTR_ERR_OR_ZERO(h);
+	if (ret)
+		return ret;
+
+	if (!h) {
+		if (disk_label) {
+			disk_label = 0;
+			goto retry;
+		}
+
+		bch_err(c, "evacuate error: insufficient devices to rewrite stripe");
+		return -BCH_ERR_evacuate_stripe;
+	}
+
+
+
+	return 0;
+}
+
+int bch2_dev_evacuate_stripes(struct bch_fs *c, unsigned dev_idx)
+{
+	return bch2_trans_run(c,
+		for_each_btree_key(trans, iter,
+				   BTREE_ID_stripes, POS_MIN,
+				   0, k, ({
+			bch2_evacuate_stripe_to_dev(trans, k, dev_idx);
+	})));
+}
+
 /* device removal */
 
 static int bch2_invalidate_stripe_to_dev(struct btree_trans *trans, struct bkey_s_c k_a)
