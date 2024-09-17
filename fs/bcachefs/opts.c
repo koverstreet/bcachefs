@@ -534,9 +534,8 @@ int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
 		val = "0";
 	}
 
-	/* Unknown options are ignored: */
 	if (id < 0)
-		return 0;
+		goto bad_opt;
 
 	if (!(bch2_opt_table[id].flags & OPT_MOUNT))
 		goto bad_opt;
