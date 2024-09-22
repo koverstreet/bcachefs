@@ -213,7 +213,7 @@ static void prt_actioning(struct printbuf *out, const char *action)
 }
 
 static const u8 fsck_flags_extra[] = {
-#define x(t, n, flags)		[BCH_FSCK_ERR_##t] = flags,
+#define x(t, n, flags, ...)	[BCH_FSCK_ERR_##t] = flags,
 	BCH_SB_ERRS()
 #undef x
 };
