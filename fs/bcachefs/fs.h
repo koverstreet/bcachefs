@@ -54,8 +54,6 @@ static inline subvol_inum inode_inum(struct bch_inode_info *inode)
 	return inode->ei_inum;
 }
 
-struct bch_inode_info *__bch2_inode_hash_find(struct bch_fs *, subvol_inum);
-
 /*
  * Set if we've gotten a btree error for this inode, and thus the vfs inode and
  * btree inode may be inconsistent:
@@ -147,6 +145,8 @@ struct bch_inode_unpacked;
 struct bch_inode_info *
 __bch2_create(struct mnt_idmap *, struct bch_inode_info *,
 	      struct dentry *, umode_t, dev_t, subvol_inum, unsigned);
+
+struct bch_inode_info *__bch2_inode_hash_find(struct bch_fs *, subvol_inum);
 
 int bch2_fs_quota_transfer(struct bch_fs *,
 			   struct bch_inode_info *,
