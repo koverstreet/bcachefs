@@ -1027,6 +1027,10 @@ int __bch2_trans_commit(struct btree_trans *trans, unsigned flags)
 	bch2_trans_verify_not_unlocked(trans);
 	bch2_trans_verify_not_in_restart(trans);
 
+	ret = trans_maybe_inject_restart(trans, _RET_IP_);
+	if (unlikely(ret))
+		goto out_reset;
+
 	if (!trans->nr_updates &&
 	    !trans->journal_entries_u64s)
 		goto out_reset;
