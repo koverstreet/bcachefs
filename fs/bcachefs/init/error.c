@@ -491,6 +491,11 @@ int __bch2_fsck_err(struct bch_fs *c,
 	prt_vprintf(out, fmt, args);
 	va_end(args);
 
+	if (out->allocation_failure) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
 	/* Custom fix/continue/recreate/etc.? */
 	if (out->buf[out->pos - 1] == '?') {
 		const char *p = strrchr(out->buf, ',');
