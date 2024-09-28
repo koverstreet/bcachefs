@@ -3361,9 +3361,10 @@ void *__bch2_trans_kmalloc(struct btree_trans *trans, size_t size, unsigned long
 
 static inline void check_srcu_held_too_long(struct btree_trans *trans)
 {
-	WARN(trans->srcu_held && time_after(jiffies, trans->srcu_lock_time + HZ * 10),
-	     "btree trans held srcu lock (delaying memory reclaim) for %lu seconds",
-	     (jiffies - trans->srcu_lock_time) / HZ);
+	if (trans->srcu_held && time_after(jiffies, trans->srcu_lock_time + HZ * 10))
+		bch_warn(trans->c,
+			 "btree trans held srcu lock (delaying memory reclaim) for %lu seconds",
+			 (jiffies - trans->srcu_lock_time) / HZ);
 }
 
 void bch2_trans_srcu_unlock(struct btree_trans *trans)
