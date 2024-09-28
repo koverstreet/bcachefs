@@ -1023,7 +1023,9 @@ use_clean:
 		bool saved_fixed        = test_and_clear_bit(BCH_FS_errors_fixed,        &c->flags);
 		bool saved_fixed_silent = test_and_clear_bit(BCH_FS_errors_fixed_silent, &c->flags);
 
+		set_bit(BCH_FS_fsck_verify_pass, &c->flags);
 		try(bch2_run_recovery_passes_startup(c, BCH_RECOVERY_PASS_check_alloc_info));
+		clear_bit(BCH_FS_fsck_verify_pass, &c->flags);
 
 		if (test_bit(BCH_FS_errors_fixed,        &c->flags) ||
 		    test_bit(BCH_FS_errors_fixed_silent, &c->flags) ||
