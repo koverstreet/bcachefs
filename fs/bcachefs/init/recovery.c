@@ -810,7 +810,9 @@ use_clean:
 		clear_bit(BCH_FS_errors_fixed, &c->flags);
 		clear_bit(BCH_FS_errors_fixed_silent, &c->flags);
 
+		set_bit(BCH_FS_fsck_verify_pass, &c->flags);
 		try(bch2_run_recovery_passes_startup(c, BCH_RECOVERY_PASS_check_alloc_info));
+		clear_bit(BCH_FS_fsck_verify_pass, &c->flags);
 
 		if (errors_fixed ||
 		    test_bit(BCH_FS_errors_not_fixed, &c->flags)) {
