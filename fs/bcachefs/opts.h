@@ -373,6 +373,16 @@ enum fsck_err_opts {
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,		false,				\
 	  NULL,		"Exit recovery immediately prior to journal replay")\
+	x(recovery_passes,		u64,				\
+	  OPT_FS|OPT_MOUNT,						\
+	  OPT_BITFIELD(bch2_recovery_passes),				\
+	  BCH2_NO_SB_OPT,		0,				\
+	  NULL,		"Recovery passes to run explicitly")		\
+	x(recovery_passes_exclude,	u64,				\
+	  OPT_FS|OPT_MOUNT,						\
+	  OPT_BITFIELD(bch2_recovery_passes),				\
+	  BCH2_NO_SB_OPT,		0,				\
+	  NULL,		"Recovery passes to exclude")			\
 	x(recovery_pass_last,		u8,				\
 	  OPT_FS|OPT_MOUNT,						\
 	  OPT_STR_NOLIMIT(bch2_recovery_passes),			\
@@ -595,6 +605,10 @@ int bch2_opt_parse(struct bch_fs *, const struct bch_option *,
 
 void bch2_opt_to_text(struct printbuf *, struct bch_fs *, struct bch_sb *,
 		      const struct bch_option *, u64, unsigned);
+void bch2_opts_to_text(struct printbuf *,
+		       struct bch_opts,
+		       struct bch_fs *, struct bch_sb *,
+		       unsigned, unsigned, unsigned);
 
 int bch2_opt_check_may_set(struct bch_fs *, int, u64);
 int bch2_opts_check_may_set(struct bch_fs *);

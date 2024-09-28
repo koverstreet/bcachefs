@@ -777,7 +777,7 @@ int __bch2_read_indirect_extent(struct btree_trans *trans,
 			orig_k->k->k.size,
 			reflink_offset);
 		bch2_inconsistent_error(trans->c);
-		ret = -EIO;
+		ret = -BCH_ERR_missing_indirect_extent;
 		goto err;
 	}
 
@@ -869,9 +869,15 @@ retry_pick:
 		goto hole;
 
 	if (pick_ret < 0) {
+		struct printbuf buf = PRINTBUF;
+		bch2_bkey_val_to_text(&buf, c, k);
+
 		bch_err_inum_offset_ratelimited(c,
 				read_pos.inode, read_pos.offset << 9,
-				"no device to read from");
+				"no device to read from: %s\n  %s",
+				bch2_err_str(pick_ret),
+				buf.buf);
+		printbuf_exit(&buf);
 		goto err;
 	}
 
@@ -1086,7 +1092,7 @@ get_bio:
 		trans->notrace_relock_fail = true;
 	} else {
 		/* Attempting reconstruct read: */
-		if (bch2_ec_read_extent(trans, rbio)) {
+		if (bch2_ec_read_extent(trans, rbio, k)) {
 			bch2_rbio_error(rbio, READ_RETRY_AVOID, BLK_STS_IOERR);
 			goto out;
 		}

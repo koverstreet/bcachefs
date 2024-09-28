@@ -137,7 +137,7 @@ static struct posix_acl *bch2_acl_from_disk(struct btree_trans *trans,
 		return NULL;
 
 	acl = allocate_dropping_locks(trans, ret,
-			posix_acl_alloc(count, _gfp));
+			posix_acl_alloc(count, GFP_KERNEL));
 	if (!acl)
 		return ERR_PTR(-ENOMEM);
 	if (ret) {
@@ -427,7 +427,8 @@ int bch2_acl_chmod(struct btree_trans *trans, subvol_inum inum,
 	if (ret)
 		goto err;
 
-	ret = allocate_dropping_locks_errcode(trans, __posix_acl_chmod(&acl, _gfp, mode));
+	ret = allocate_dropping_locks_errcode(trans,
+					 __posix_acl_chmod(&acl, GFP_KERNEL, mode));
 	if (ret)
 		goto err;
 

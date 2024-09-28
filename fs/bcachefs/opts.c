@@ -432,11 +432,40 @@ void bch2_opt_to_text(struct printbuf *out,
 		else
 			prt_str(out, opt->choices[v]);
 		break;
+	case BCH_OPT_BITFIELD:
+		prt_bitflags(out, opt->choices, v);
+		break;
 	case BCH_OPT_FN:
 		opt->fn.to_text(out, c, sb, v);
 		break;
 	default:
 		BUG();
+	}
+}
+
+void bch2_opts_to_text(struct printbuf *out,
+		       struct bch_opts opts,
+		       struct bch_fs *c, struct bch_sb *sb,
+		       unsigned show_mask, unsigned hide_mask,
+		       unsigned flags)
+{
+	bool first = true;
+
+	for (enum bch_opt_id i = 0; i < bch2_opts_nr; i++) {
+		const struct bch_option *opt = &bch2_opt_table[i];
+
+		if ((opt->flags & hide_mask) || !(opt->flags & show_mask))
+			continue;
+
+		u64 v = bch2_opt_get_by_id(&opts, i);
+		if (v == bch2_opt_get_by_id(&bch2_opts_default, i))
+			continue;
+
+		if (!first)
+			prt_char(out, ',');
+		first = false;
+
+		bch2_opt_to_text(out, c, sb, opt, v, flags);
 	}
 }
 
