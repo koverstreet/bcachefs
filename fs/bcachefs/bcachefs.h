@@ -622,6 +622,7 @@ struct bch_dev {
 	x(error)			\
 	x(topology_error)		\
 	x(errors_fixed)			\
+	x(fsck_verify_pass)		\
 	x(errors_not_fixed)		\
 	x(no_invalid_checks)		\
 	x(discard_mount_opt_set)	\

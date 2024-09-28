@@ -969,7 +969,9 @@ use_clean:
 
 		c->curr_recovery_pass = BCH_RECOVERY_PASS_check_alloc_info;
 
+		set_bit(BCH_FS_fsck_verify_pass, &c->flags);
 		ret = bch2_run_recovery_passes(c);
+		clear_bit(BCH_FS_fsck_verify_pass, &c->flags);
 		if (ret)
 			goto err;
 
