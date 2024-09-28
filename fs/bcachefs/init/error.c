@@ -514,9 +514,13 @@ int __bch2_fsck_err(struct bch_fs *c,
 		goto err_unlock;
 	}
 
-	if ((flags & FSCK_AUTOFIX) &&
-	    (c->opts.errors == BCH_ON_ERROR_continue ||
-	     c->opts.errors == BCH_ON_ERROR_fix_safe)) {
+	if (test_bit(BCH_FS_fsck_verify_pass, &c->flags)) {
+		prt_str(out, ", shutting down");
+		inconsistent = true;
+		ret = -BCH_ERR_fsck_errors_not_fixed;
+	} else if ((flags & FSCK_AUTOFIX) &&
+		   (c->opts.errors == BCH_ON_ERROR_continue ||
+		    c->opts.errors == BCH_ON_ERROR_fix_safe)) {
 		prt_str(out, ", ");
 		if (flags & FSCK_CAN_FIX) {
 			prt_actioning(out, action);
