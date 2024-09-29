@@ -410,12 +410,7 @@ retry:
 		BUG_ON(ret);
 
 		inode_fake_hash(&inode->v);
-
 		inode_sb_list_add(&inode->v);
-
-		mutex_lock(&c->vfs_inodes_lock);
-		list_add(&inode->ei_vfs_inode_list, &c->vfs_inodes_list);
-		mutex_unlock(&c->vfs_inodes_lock);
 		return inode;
 	}
 }
@@ -449,7 +444,6 @@ static struct bch_inode_info *__bch2_new_inode(struct bch_fs *c, gfp_t gfp)
 	inode_init_once(&inode->v);
 	mutex_init(&inode->ei_update_lock);
 	two_state_lock_init(&inode->ei_pagecache_lock);
-	INIT_LIST_HEAD(&inode->ei_vfs_inode_list);
 	lock_set_cmp_fn(&inode->ei_pagecache_lock, ptrcmp_fn, NULL);
 	inode->ei_flags = 0;
 	mutex_init(&inode->ei_quota_lock);
@@ -1900,15 +1894,13 @@ static void bch2_evict_inode(struct inode *vinode)
 		 */
 		bch2_inode_hash_remove(c, inode);
 	}
-
-	mutex_lock(&c->vfs_inodes_lock);
-	list_del_init(&inode->ei_vfs_inode_list);
-	mutex_unlock(&c->vfs_inodes_lock);
 }
 
 void bch2_evict_subvolume_inodes(struct bch_fs *c, snapshot_id_list *s)
 {
-	struct bch_inode_info *inode;
+	struct super_block *sb = c->vfs_sb;
+	struct genradix_iter iter;
+	void **i;
 	DARRAY(struct bch_inode_info *) grabbed;
 	bool clean_pass = false, this_pass_clean;
 
@@ -1926,8 +1918,14 @@ again:
 	cond_resched();
 	this_pass_clean = true;
 
-	mutex_lock(&c->vfs_inodes_lock);
-	list_for_each_entry(inode, &c->vfs_inodes_list, ei_vfs_inode_list) {
+	rcu_read_lock();
+	genradix_for_each(&sb->s_inodes.items, iter, i) {
+		struct inode *vinode = *((struct inode **) i);
+		if (!vinode)
+			continue;
+
+		struct bch_inode_info *inode = container_of(vinode, struct bch_inode_info, v);
+
 		if (!snapshot_list_has_id(s, inode->ei_inum.subvol))
 			continue;
 
@@ -1947,17 +1945,17 @@ again:
 			wq_head = inode_bit_waitqueue(&wqe, &inode->v, __I_NEW);
 			prepare_to_wait_event(wq_head, &wqe.wq_entry,
 					      TASK_UNINTERRUPTIBLE);
-			mutex_unlock(&c->vfs_inodes_lock);
+			rcu_read_unlock();
 
 			schedule();
 			finish_wait(wq_head, &wqe.wq_entry);
 			goto again;
 		}
 	}
-	mutex_unlock(&c->vfs_inodes_lock);
+	rcu_read_unlock();
 
 	darray_for_each(grabbed, i) {
-		inode = *i;
+		struct bch_inode_info *inode = *i;
 		d_mark_dontcache(&inode->v);
 		d_prune_aliases(&inode->v);
 		iput(&inode->v);
