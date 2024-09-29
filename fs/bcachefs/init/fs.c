@@ -1101,9 +1101,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 
 	sema_init(&c->io_in_flight, 128);
 
-	INIT_LIST_HEAD(&c->vfs_inodes_list);
-	mutex_init(&c->vfs_inodes_lock);
-
 	c->journal.flush_write_time	= &c->times[BCH_TIME_journal_flush_write];
 	c->journal.noflush_write_time	= &c->times[BCH_TIME_journal_noflush_write];
 	c->journal.flush_seq_time	= &c->times[BCH_TIME_journal_flush_seq];

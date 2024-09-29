@@ -1108,8 +1108,6 @@ struct bch_fs {
 	size_t			reflink_gc_nr;
 
 	/* fs.c */
-	struct list_head	vfs_inodes_list;
-	struct mutex		vfs_inodes_lock;
 	struct rhashtable	vfs_inodes_table;
 	struct rhltable		vfs_inodes_by_inum_table;
 	struct workqueue_struct	*vfs_writeback_wq;
