@@ -793,8 +793,6 @@ static void evict(struct inode *inode)
 	if (!list_empty(&inode->i_io_list))
 		inode_io_list_del(inode);
 
-	inode_sb_list_del(inode);
-
 	spin_lock(&inode->i_lock);
 	inode_wait_for_lru_isolating(inode);
 
@@ -806,6 +804,13 @@ static void evict(struct inode *inode)
 	 */
 	inode_wait_for_writeback(inode);
 	spin_unlock(&inode->i_lock);
+
+	/*
+	 * Don't remove until IO has finished to this inode; bcachefs uses this
+	 * list for evicting/waiting on inodes within a subvolume on subvolume
+	 * deletion
+	 */
+	inode_sb_list_del(inode);
 
 	if (op->evict_inode) {
 		op->evict_inode(inode);
