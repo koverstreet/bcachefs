@@ -1736,13 +1736,18 @@ static int gfs2_meta_init_fs_context(struct fs_context *fc)
  */
 static void gfs2_evict_inodes(struct super_block *sb)
 {
-	struct inode *inode, *toput_inode = NULL;
+	struct genradix_iter iter;
+	void **i;
 	struct gfs2_sbd *sdp = sb->s_fs_info;
 
 	set_bit(SDF_EVICTING, &sdp->sd_flags);
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+	rcu_read_lock();
+	genradix_for_each(&sb->s_inodes.items, iter, i) {
+		struct inode *inode = *((struct inode **) i);
+		if (!inode)
+			continue;
+
 		spin_lock(&inode->i_lock);
 		if ((inode->i_state & (I_FREEING|I_WILL_FREE|I_NEW)) &&
 		    !need_resched()) {
@@ -1751,16 +1756,13 @@ static void gfs2_evict_inodes(struct super_block *sb)
 		}
 		atomic_inc(&inode->i_count);
 		spin_unlock(&inode->i_lock);
-		spin_unlock(&sb->s_inode_list_lock);
 
-		iput(toput_inode);
-		toput_inode = inode;
-
+		rcu_read_unlock();
+		iput(inode);
 		cond_resched();
-		spin_lock(&sb->s_inode_list_lock);
+		rcu_read_lock();
 	}
-	spin_unlock(&sb->s_inode_list_lock);
-	iput(toput_inode);
+	rcu_read_unlock();
 }
 
 static void gfs2_kill_sb(struct super_block *sb)
