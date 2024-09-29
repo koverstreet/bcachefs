@@ -38,14 +38,19 @@ void __fsnotify_mntns_delete(struct mnt_namespace *mntns)
  * @sb: superblock being unmounted.
  *
  * Called during unmount with no locks held, so needs to be safe against
- * concurrent modifiers. We temporarily drop sb->s_inode_list_lock and CAN block.
+ * concurrent modifiers. Can block.
  */
 static void fsnotify_unmount_inodes(struct super_block *sb)
 {
-	struct inode *inode, *iput_inode = NULL;
+	struct genradix_iter iter;
+	void **i;
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+	rcu_read_lock();
+	genradix_for_each(&sb->s_inodes.items, iter, i) {
+		struct inode *inode = *((struct inode **) i);
+		if (!inode)
+			continue;
+
 		/*
 		 * We cannot __iget() an inode in state I_FREEING,
 		 * I_WILL_FREE, or I_NEW which is fine because by that point
@@ -73,23 +78,19 @@ static void fsnotify_unmount_inodes(struct super_block *sb)
 
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
-		spin_unlock(&sb->s_inode_list_lock);
-
-		iput(iput_inode);
+		rcu_read_unlock();
 
 		/* for each watch, send FS_UNMOUNT and then remove it */
 		fsnotify_inode(inode, FS_UNMOUNT);
 
 		fsnotify_inode_delete(inode);
 
-		iput_inode = inode;
+		iput(inode);
 
 		cond_resched();
-		spin_lock(&sb->s_inode_list_lock);
+		rcu_read_lock();
 	}
-	spin_unlock(&sb->s_inode_list_lock);
-
-	iput(iput_inode);
+	rcu_read_unlock();
 }
 
 void fsnotify_sb_delete(struct super_block *sb)

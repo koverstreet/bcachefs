@@ -18,10 +18,15 @@ static int sysctl_drop_caches;
 
 static void drop_pagecache_sb(struct super_block *sb, void *unused)
 {
-	struct inode *inode, *toput_inode = NULL;
+	struct genradix_iter iter;
+	void **i;
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+	rcu_read_lock();
+	genradix_for_each(&sb->s_inodes.items, iter, i) {
+		struct inode *inode = *((struct inode **) i);
+		if (!inode)
+			continue;
+
 		spin_lock(&inode->i_lock);
 		/*
 		 * We must skip inodes in unusual state. We may also skip
@@ -35,17 +40,15 @@ static void drop_pagecache_sb(struct super_block *sb, void *unused)
 		}
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
-		spin_unlock(&sb->s_inode_list_lock);
+		rcu_read_unlock();
 
 		invalidate_mapping_pages(inode->i_mapping, 0, -1);
-		iput(toput_inode);
-		toput_inode = inode;
+		iput(inode);
 
 		cond_resched();
-		spin_lock(&sb->s_inode_list_lock);
+		rcu_read_lock();
 	}
-	spin_unlock(&sb->s_inode_list_lock);
-	iput(toput_inode);
+	rcu_read_unlock();
 }
 
 static int drop_caches_sysctl_handler(const struct ctl_table *table, int write,
