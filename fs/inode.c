@@ -303,8 +303,15 @@ int inode_init_always_gfp(struct super_block *sb, struct inode *inode, gfp_t gfp
 #endif
 	inode->i_flctx = NULL;
 
-	if (unlikely(security_inode_alloc(inode, gfp)))
+	int idx = fast_list_get_idx(&sb->s_inodes);
+	if (idx < 0)
 		return -ENOMEM;
+	inode->i_sb_list_idx = idx;
+
+	if (unlikely(security_inode_alloc(inode, gfp))) {
+		fast_list_remove(&sb->s_inodes, idx);
+		return -ENOMEM;
+	}
 
 	this_cpu_inc(nr_inodes);
 
@@ -498,7 +505,6 @@ void inode_init_once(struct inode *inode)
 	INIT_LIST_HEAD(&inode->i_io_list);
 	INIT_LIST_HEAD(&inode->i_wb_list);
 	INIT_LIST_HEAD(&inode->i_lru);
-	INIT_LIST_HEAD(&inode->i_sb_list);
 	__address_space_init_once(&inode->i_data);
 	i_size_ordered_init(inode);
 }
@@ -613,19 +619,14 @@ static void inode_wait_for_lru_isolating(struct inode *inode)
  */
 void inode_sb_list_add(struct inode *inode)
 {
-	spin_lock(&inode->i_sb->s_inode_list_lock);
-	list_add(&inode->i_sb_list, &inode->i_sb->s_inodes);
-	spin_unlock(&inode->i_sb->s_inode_list_lock);
+	*genradix_ptr_inlined(&inode->i_sb->s_inodes.items, inode->i_sb_list_idx) = inode;
 }
 EXPORT_SYMBOL_GPL(inode_sb_list_add);
 
 static inline void inode_sb_list_del(struct inode *inode)
 {
-	if (!list_empty(&inode->i_sb_list)) {
-		spin_lock(&inode->i_sb->s_inode_list_lock);
-		list_del_init(&inode->i_sb_list);
-		spin_unlock(&inode->i_sb->s_inode_list_lock);
-	}
+	*genradix_ptr(&inode->i_sb->s_inodes.items, inode->i_sb_list_idx) = NULL;
+	inode->i_sb_list_idx = 0;
 }
 
 static unsigned long hash(struct super_block *sb, unsigned long hashval)
@@ -858,12 +859,16 @@ static void dispose_list(struct list_head *head)
  */
 void evict_inodes(struct super_block *sb)
 {
-	struct inode *inode, *next;
+	struct genradix_iter iter;
+	void **i;
 	LIST_HEAD(dispose);
-
 again:
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry_safe(inode, next, &sb->s_inodes, i_sb_list) {
+	rcu_read_lock();
+	genradix_for_each(&sb->s_inodes.items, iter, i) {
+		struct inode *inode = *((struct inode **) i);
+		if (!inode)
+			continue;
+
 		if (atomic_read(&inode->i_count))
 			continue;
 
@@ -888,13 +893,13 @@ again:
 		 * bit so we don't livelock.
 		 */
 		if (need_resched()) {
-			spin_unlock(&sb->s_inode_list_lock);
+			rcu_read_unlock();
 			cond_resched();
 			dispose_list(&dispose);
 			goto again;
 		}
 	}
-	spin_unlock(&sb->s_inode_list_lock);
+	rcu_read_unlock();
 
 	dispose_list(&dispose);
 }
@@ -908,12 +913,16 @@ EXPORT_SYMBOL_GPL(evict_inodes);
  */
 void invalidate_inodes(struct super_block *sb)
 {
-	struct inode *inode, *next;
+	struct genradix_iter iter;
+	void **i;
 	LIST_HEAD(dispose);
-
 again:
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry_safe(inode, next, &sb->s_inodes, i_sb_list) {
+	rcu_read_lock();
+	genradix_for_each(&sb->s_inodes.items, iter, i) {
+		struct inode *inode = *((struct inode **) i);
+		if (!inode)
+			continue;
+
 		spin_lock(&inode->i_lock);
 		if (inode->i_state & (I_NEW | I_FREEING | I_WILL_FREE)) {
 			spin_unlock(&inode->i_lock);
@@ -929,13 +938,13 @@ again:
 		spin_unlock(&inode->i_lock);
 		list_add(&inode->i_lru, &dispose);
 		if (need_resched()) {
-			spin_unlock(&sb->s_inode_list_lock);
+			rcu_read_unlock();
 			cond_resched();
 			dispose_list(&dispose);
 			goto again;
 		}
 	}
-	spin_unlock(&sb->s_inode_list_lock);
+	rcu_read_unlock();
 
 	dispose_list(&dispose);
 }
@@ -1361,12 +1370,7 @@ again:
 	hlist_add_head_rcu(&inode->i_hash, head);
 	spin_unlock(&inode->i_lock);
 
-	/*
-	 * Add inode to the sb list if it's not already. It has I_NEW at this
-	 * point, so it should be safe to test i_sb_list locklessly.
-	 */
-	if (list_empty(&inode->i_sb_list))
-		inode_sb_list_add(inode);
+	inode_sb_list_add(inode);
 unlock:
 	spin_unlock(&inode_hash_lock);
 
