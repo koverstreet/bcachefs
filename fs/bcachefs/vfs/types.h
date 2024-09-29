@@ -3,8 +3,6 @@
 #define _BCACHEFS_VFS_TYPES_H
 
 struct bch_fs_vfs {
-	struct list_head	inodes_list;
-	struct mutex		inodes_lock;
 	struct rhashtable	inodes_table;
 	struct rhltable		inodes_by_inum_table;
 
