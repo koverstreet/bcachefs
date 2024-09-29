@@ -2543,13 +2543,15 @@ static int check_path(struct btree_trans *trans, pathbuf *p, struct bkey_s_c ino
 			bch2_trans_iter_exit(trans, &dirent_iter);
 
 		if (bch2_err_matches(ret, ENOENT)) {
-			ret = 0;
 			if (fsck_err(trans, inode_unreachable,
-				     "unreachable inode\n%s",
+				     "unreachable inode: %s\n%s",
+				     bch2_err_str(ret),
 				     (printbuf_reset(&buf),
 				      bch2_bkey_val_to_text(&buf, c, inode_k),
 				      buf.buf)))
 				ret = reattach_inode(trans, &inode, snapshot);
+			else
+				ret = 0;
 			goto out;
 		}
 
