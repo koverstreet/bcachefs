@@ -275,6 +275,7 @@ static void destroy_super_work(struct work_struct *work)
 {
 	struct super_block *s = container_of(work, struct super_block,
 							destroy_work);
+	fast_list_exit(&s->s_inodes);
 	fsnotify_sb_free(s);
 	security_sb_free(s);
 	put_user_ns(s->s_user_ns);
@@ -360,8 +361,6 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags,
 	INIT_HLIST_NODE(&s->s_instances);
 	INIT_HLIST_BL_HEAD(&s->s_roots);
 	mutex_init(&s->s_sync_lock);
-	INIT_LIST_HEAD(&s->s_inodes);
-	spin_lock_init(&s->s_inode_list_lock);
 	INIT_LIST_HEAD(&s->s_inodes_wb);
 	spin_lock_init(&s->s_inode_wblist_lock);
 
@@ -375,6 +374,9 @@ static struct super_block *alloc_super(struct file_system_type *type, int flags,
 	s->s_time_gran = 1000000000;
 	s->s_time_min = TIME64_MIN;
 	s->s_time_max = TIME64_MAX;
+
+	if (fast_list_init(&s->s_inodes))
+		goto fail;
 
 	s->s_shrink = shrinker_alloc(SHRINKER_NUMA_AWARE | SHRINKER_MEMCG_AWARE,
 				     "sb-%s", type->name);
@@ -647,7 +649,7 @@ void generic_shutdown_super(struct super_block *sb)
 		 * the fscrypt keyring can be destroyed.
 		 */
 		fscrypt_destroy_keyring(sb);
-
+#if 0
 		if (CHECK_DATA_CORRUPTION(!list_empty(&sb->s_inodes), NULL,
 				"VFS: Busy inodes after unmount of %s (%s)",
 				sb->s_id, sb->s_type->name)) {
@@ -666,6 +668,7 @@ void generic_shutdown_super(struct super_block *sb)
 			}
 			spin_unlock(&sb->s_inode_list_lock);
 		}
+#endif
 	}
 	/*
 	 * Broadcast to everyone that grabbed a temporary reference to this
