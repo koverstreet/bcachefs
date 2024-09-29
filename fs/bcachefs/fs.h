@@ -16,10 +16,7 @@ struct bch_inode_info {
 	struct rhash_head	hash;
 	struct rhlist_head	by_inum_hash;
 	subvol_inum		ei_inum;
-
-	struct list_head	ei_vfs_inode_list;
 	unsigned long		ei_flags;
-
 	struct mutex		ei_update_lock;
 	u64			ei_quota_reserved;
 	unsigned long		ei_last_dirtied;
