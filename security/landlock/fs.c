@@ -1270,13 +1270,18 @@ static void hook_inode_free_security_rcu(void *inode_security)
  */
 static void hook_sb_delete(struct super_block *const sb)
 {
-	struct inode *inode, *prev_inode = NULL;
+	struct genradix_iter iter;
+	void **i;
 
 	if (!landlock_initialized)
 		return;
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+	rcu_read_lock();
+	genradix_for_each(&sb->s_inodes.items, iter, i) {
+		struct inode *inode = *((struct inode **) i);
+		if (!inode)
+			continue;
+
 		struct landlock_object *object;
 
 		/* Only handles referenced inodes. */
@@ -1300,10 +1305,8 @@ static void hook_sb_delete(struct super_block *const sb)
 			continue;
 		}
 
-		rcu_read_lock();
 		object = rcu_dereference(landlock_inode(inode)->object);
 		if (!object) {
-			rcu_read_unlock();
 			spin_unlock(&inode->i_lock);
 			continue;
 		}
@@ -1320,7 +1323,6 @@ static void hook_sb_delete(struct super_block *const sb)
 		if (object->underobj == inode) {
 			object->underobj = NULL;
 			spin_unlock(&object->lock);
-			rcu_read_unlock();
 
 			/*
 			 * Because object->underobj was not NULL,
@@ -1341,32 +1343,15 @@ static void hook_sb_delete(struct super_block *const sb)
 			iput(inode);
 		} else {
 			spin_unlock(&object->lock);
-			rcu_read_unlock();
 		}
 
-		if (prev_inode) {
-			/*
-			 * At this point, we still own the __iget() reference
-			 * that we just set in this loop walk.  Therefore we
-			 * can drop the list lock and know that the inode won't
-			 * disappear from under us until the next loop walk.
-			 */
-			spin_unlock(&sb->s_inode_list_lock);
-			/*
-			 * We can now actually put the inode reference from the
-			 * previous loop walk, which is not needed anymore.
-			 */
-			iput(prev_inode);
-			cond_resched();
-			spin_lock(&sb->s_inode_list_lock);
-		}
-		prev_inode = inode;
+		rcu_read_unlock();
+		iput(inode);
+		cond_resched();
+		rcu_read_lock();
 	}
-	spin_unlock(&sb->s_inode_list_lock);
+	rcu_read_unlock();
 
-	/* Puts the inode reference from the last loop walk, if any. */
-	if (prev_inode)
-		iput(prev_inode);
 	/* Waits for pending iput() in release_inode(). */
 	wait_var_event(&landlock_superblock(sb)->inode_refs,
 		       !atomic_long_read(&landlock_superblock(sb)->inode_refs));
