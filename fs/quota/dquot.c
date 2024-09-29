@@ -1021,14 +1021,19 @@ static int dqinit_needed(struct inode *inode, int type)
 /* This routine is guarded by s_umount semaphore */
 static int add_dquot_ref(struct super_block *sb, int type)
 {
-	struct inode *inode, *old_inode = NULL;
+	void **i;
+	struct genradix_iter iter;
 #ifdef CONFIG_QUOTA_DEBUG
 	int reserved = 0;
 #endif
 	int err = 0;
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+	rcu_read_lock();
+	genradix_for_each(&sb->s_inodes.items, iter, i) {
+		struct inode *inode = *((struct inode **) i);
+		if (!inode)
+			continue;
+
 		spin_lock(&inode->i_lock);
 		if ((inode->i_state & (I_FREEING|I_WILL_FREE|I_NEW)) ||
 		    !atomic_read(&inode->i_writecount) ||
@@ -1038,33 +1043,21 @@ static int add_dquot_ref(struct super_block *sb, int type)
 		}
 		__iget(inode);
 		spin_unlock(&inode->i_lock);
-		spin_unlock(&sb->s_inode_list_lock);
+		rcu_read_unlock();
 
 #ifdef CONFIG_QUOTA_DEBUG
 		if (unlikely(inode_get_rsv_space(inode) > 0))
 			reserved = 1;
 #endif
-		iput(old_inode);
 		err = __dquot_initialize(inode, type);
-		if (err) {
-			iput(inode);
+		iput(inode);
+		if (err)
 			goto out;
-		}
 
-		/*
-		 * We hold a reference to 'inode' so it couldn't have been
-		 * removed from s_inodes list while we dropped the
-		 * s_inode_list_lock. We cannot iput the inode now as we can be
-		 * holding the last reference and we cannot iput it under
-		 * s_inode_list_lock. So we keep the reference and iput it
-		 * later.
-		 */
-		old_inode = inode;
 		cond_resched();
-		spin_lock(&sb->s_inode_list_lock);
+		rcu_read_lock();
 	}
-	spin_unlock(&sb->s_inode_list_lock);
-	iput(old_inode);
+	rcu_read_unlock();
 out:
 #ifdef CONFIG_QUOTA_DEBUG
 	if (reserved) {
@@ -1078,13 +1071,25 @@ out:
 
 static void remove_dquot_ref(struct super_block *sb, int type)
 {
-	struct inode *inode;
+	struct genradix_iter iter;
+	void **i;
 #ifdef CONFIG_QUOTA_DEBUG
 	int reserved = 0;
 #endif
 
-	spin_lock(&sb->s_inode_list_lock);
-	list_for_each_entry(inode, &sb->s_inodes, i_sb_list) {
+	rcu_read_lock();
+	genradix_for_each(&sb->s_inodes.items, iter, i) {
+		struct inode *inode = *((struct inode **) i);
+		if (!inode)
+			continue;
+
+		spin_lock(&inode->i_lock);
+		bool on_list = inode->i_sb_list_idx != 0;
+		spin_unlock(&inode->i_lock);
+
+		if (!on_list)
+			continue;
+
 		/*
 		 *  We have to scan also I_NEW inodes because they can already
 		 *  have quota pointer initialized. Luckily, we need to touch
@@ -1108,7 +1113,7 @@ static void remove_dquot_ref(struct super_block *sb, int type)
 		}
 		spin_unlock(&dq_data_lock);
 	}
-	spin_unlock(&sb->s_inode_list_lock);
+	rcu_read_unlock();
 #ifdef CONFIG_QUOTA_DEBUG
 	if (reserved) {
 		printk(KERN_WARNING "VFS (%s): Writes happened after quota"
