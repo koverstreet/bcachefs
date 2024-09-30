@@ -475,8 +475,32 @@ static int reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *
 					break;
 			}
 		}
-		darray_exit(&whiteouts_done);
 		bch2_trans_iter_exit(trans, &iter);
+
+		if (S_ISDIR(inode->bi_mode)) {
+			for_each_btree_key_upto_norestart(trans, iter,
+					BTREE_ID_inodes, POS(0, lostfound.bi_inum),
+					SPOS(0, lostfound.bi_inum, inode->bi_snapshot - 1),
+					BTREE_ITER_intent|
+					BTREE_ITER_all_snapshots|
+					BTREE_ITER_with_updates,
+					k, ret) {
+				if (bkey_is_inode(k.k) &&
+				    bch2_snapshot_is_ancestor(c, k.k->p.inode, lostfound.bi_snapshot) &&
+				    !snapshot_list_has_ancestor(c, &whiteouts_done, k.k->p.snapshot)) {
+					struct bch_inode_unpacked child_lostfound;
+
+					bch2_inode_unpack(k, &child_lostfound);
+					child_lostfound.bi_nlink++;
+					ret = bch2_inode_write_flags(trans, &iter, &child_lostfound,
+								     BTREE_UPDATE_internal_snapshot_node);
+					if (ret)
+						break;
+				}
+			}
+		}
+
+		darray_exit(&whiteouts_done);
 	}
 
 	return ret;
