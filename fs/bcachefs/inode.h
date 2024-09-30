@@ -17,6 +17,7 @@ int bch2_inode_v3_validate(struct bch_fs *, struct bkey_s_c,
 			  enum bch_validate_flags);
 void bch2_inode_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 
+int bch2_inode_has_child_snapshots(struct btree_trans *, struct bpos);
 int bch2_trigger_inode(struct btree_trans *, enum btree_id, unsigned,
 		       struct bkey_s_c, struct bkey_s,
 		       enum btree_iter_update_trigger_flags);

@@ -586,9 +586,38 @@ static inline u64 bkey_inode_flags(struct bkey_s_c k)
 	}
 }
 
-static inline bool bkey_is_deleted_inode(struct bkey_s_c k)
+static inline bool bkey_is_unlinked_inode(struct bkey_s_c k)
 {
-	return bkey_inode_flags(k) & BCH_INODE_unlinked;
+	unsigned f = bkey_inode_flags(k) & BCH_INODE_unlinked;
+
+	return (f & BCH_INODE_unlinked) && !(f & BCH_INODE_has_child_snapshot);
+}
+
+int bch2_inode_has_child_snapshots(struct btree_trans *trans, struct bpos pos)
+{
+	if (bch2_snapshot_is_leaf(trans->c, pos.snapshot) > 0)
+		return 0;
+
+	struct bch_fs *c = trans->c;
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret;
+
+	for_each_btree_key_reverse_norestart(trans, iter,
+					     BTREE_ID_inodes, bpos_predecessor(pos),
+					     BTREE_ITER_all_snapshots, k, ret) {
+		if (!bkey_eq(pos, k.k->p))
+			break;
+
+		if (bch2_snapshot_is_ancestor(c, k.k->p.snapshot, pos.snapshot) &&
+		    bkey_is_inode(k.k)) {
+			ret = 1;
+			break;
+		}
+	}
+	bch2_trans_iter_exit(trans, &iter);
+
+	return ret;
 }
 
 int bch2_trigger_inode(struct btree_trans *trans,
@@ -597,6 +626,8 @@ int bch2_trigger_inode(struct btree_trans *trans,
 		       struct bkey_s new,
 		       enum btree_iter_update_trigger_flags flags)
 {
+	struct bch_fs *c = trans->c;
+
 	if ((flags & BTREE_TRIGGER_atomic) && (flags & BTREE_TRIGGER_insert)) {
 		BUG_ON(!trans->journal_res.seq);
 		bkey_s_to_inode_v3(new).v->bi_journal_seq = cpu_to_le64(trans->journal_res.seq);
@@ -610,13 +641,19 @@ int bch2_trigger_inode(struct btree_trans *trans,
 			return ret;
 	}
 
-	int deleted_delta =	(int) bkey_is_deleted_inode(new.s_c) -
-				(int) bkey_is_deleted_inode(old);
-	if ((flags & BTREE_TRIGGER_transactional) && deleted_delta) {
-		int ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_deleted_inodes,
-						      new.k->p, deleted_delta > 0);
-		if (ret)
-			return ret;
+	if (flags & BTREE_TRIGGER_transactional) {
+		int deleted_delta =	(int) bkey_is_unlinked_inode(new.s_c) -
+					(int) bkey_is_unlinked_inode(old);
+		if (deleted_delta) {
+			int ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_deleted_inodes,
+							      new.k->p, deleted_delta > 0);
+			if (ret)
+				return ret;
+		}
+
+		if (!bkey_is_inode(new.k) &&
+		    bch2_snapshot_parent(c, new.k->p.snapshot)) {
+		}
 	}
 
 	return 0;
@@ -1110,34 +1147,29 @@ static int may_delete_deleted_inode(struct btree_trans *trans,
 			pos.offset, pos.snapshot))
 		goto delete;
 
+	ret = bch2_inode_has_child_snapshots(trans, k.k->p);
+	if (ret < 0)
+		goto out;
+
+	/*
+	 * This isn't an error because it's an inherent race in taking a
+	 * snapshot while an unlinked file is open, and then reattaching
+	 * it in the child snapshot
+	 */
+	if (ret) {
+		inode.bi_flags |= BCH_INODE_has_child_snapshot;
+
+		ret = bch2_inode_write_flags(trans, &inode_iter, &inode,
+					     BTREE_UPDATE_internal_snapshot_node);
+		bch_err_msg(c, ret, "clearing inode unlinked flag");
+		goto out;
+	}
+
 	if (test_bit(BCH_FS_clean_recovery, &c->flags) &&
 	    !fsck_err(trans, deleted_inode_but_clean,
 		      "filesystem marked as clean but have deleted inode %llu:%u",
 		      pos.offset, pos.snapshot)) {
 		ret = 0;
-		goto out;
-	}
-
-	if (bch2_snapshot_is_internal_node(c, pos.snapshot)) {
-		struct bpos new_min_pos;
-
-		ret = bch2_propagate_key_to_snapshot_leaves(trans, inode_iter.btree_id, k, &new_min_pos);
-		if (ret)
-			goto out;
-
-		inode.bi_flags &= ~BCH_INODE_unlinked;
-
-		ret = bch2_inode_write_flags(trans, &inode_iter, &inode,
-					     BTREE_UPDATE_internal_snapshot_node);
-		bch_err_msg(c, ret, "clearing inode unlinked flag");
-		if (ret)
-			goto out;
-
-		/*
-		 * We'll need another write buffer flush to pick up the new
-		 * unlinked inodes in the snapshot leaves:
-		 */
-		*need_another_pass = true;
 		goto out;
 	}
 
