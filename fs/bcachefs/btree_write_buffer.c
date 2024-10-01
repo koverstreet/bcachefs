@@ -578,6 +578,14 @@ int bch2_btree_write_buffer_maybe_flush(struct btree_trans *trans,
 	if (!bkey_and_val_eq(referring_k, bkey_i_to_s_c(last_flushed->k))) {
 		bch2_bkey_buf_reassemble(&tmp, c, referring_k);
 
+		if (trace_write_buffer_maybe_flush_enabled()) {
+			struct printbuf buf = PRINTBUF;
+
+			bch2_bkey_val_to_text(&buf, c, referring_k);
+			trace_write_buffer_maybe_flush(trans, buf.buf);
+			printbuf_exit(&buf);
+		}
+
 		if (bkey_is_btree_ptr(referring_k.k)) {
 			bch2_trans_unlock(trans);
 			bch2_btree_interior_updates_flush(c);

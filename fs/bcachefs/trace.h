@@ -1414,6 +1414,23 @@ TRACE_EVENT(write_buffer_flush_slowpath,
 	TP_printk("%zu/%zu", __entry->slowpath, __entry->total)
 );
 
+TRACE_EVENT(write_buffer_maybe_flush,
+	TP_PROTO(struct btree_trans *trans, const char *bkey),
+	TP_ARGS(trans, bkey),
+
+	TP_STRUCT__entry(
+		__string(bkey,		bkey		)
+		__field(unsigned long,	caller_ip		)
+	),
+
+	TP_fast_assign(
+		__assign_str(bkey);
+		__entry->caller_ip	= _RET_IP_;
+	),
+
+	TP_printk("%pS: %s", (void *) __entry->caller_ip, __get_str(bkey))
+);
+
 DEFINE_EVENT(fs_str, rebalance_extent,
 	TP_PROTO(struct bch_fs *c, const char *str),
 	TP_ARGS(c, str)
