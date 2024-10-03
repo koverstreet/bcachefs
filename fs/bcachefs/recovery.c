@@ -979,8 +979,7 @@ use_clean:
 	}
 
 	/* If we fixed errors, verify that fs is actually clean now: */
-	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) &&
-	    test_bit(BCH_FS_errors_fixed, &c->flags) &&
+	if (test_bit(BCH_FS_errors_fixed, &c->flags) &&
 	    !test_bit(BCH_FS_errors_not_fixed, &c->flags) &&
 	    !test_bit(BCH_FS_error, &c->flags)) {
 		bch2_flush_fsck_errs(c);
