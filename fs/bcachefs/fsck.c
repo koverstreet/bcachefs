@@ -421,6 +421,9 @@ static int reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *
 	 * update the backpointer field, if they should not be we need to emit
 	 * whiteouts for the dirent we just created.
 	 */
+	if (S_ISDIR(inode->bi_mode))
+		pr_info("reattaching dir, snap %u", inode->bi_snapshot);
+
 	if (!inode->bi_subvol && bch2_snapshot_is_leaf(c, inode->bi_snapshot) <= 0) {
 		snapshot_id_list whiteouts_done;
 		struct btree_iter iter;
@@ -469,6 +472,10 @@ static int reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *
 		bch2_trans_iter_exit(trans, &iter);
 
 		if (S_ISDIR(inode->bi_mode)) {
+			pr_info("reattaching dir %llu:%u to lostfound %llu:%u",
+				inode->bi_inum, inode->bi_snapshot,
+				lostfound.bi_inum, lostfound.bi_snapshot);
+
 			for_each_btree_key_upto_norestart(trans, iter,
 					BTREE_ID_inodes, POS(0, lostfound.bi_inum),
 					SPOS(0, lostfound.bi_inum, inode->bi_snapshot - 1),
@@ -476,17 +483,21 @@ static int reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *
 					BTREE_ITER_all_snapshots,
 					k, ret) {
 				if (bkey_is_inode(k.k) &&
-				    bch2_snapshot_is_ancestor(c, k.k->p.snapshot, lostfound.bi_snapshot) &&
-				    !snapshot_list_has_ancestor(c, &whiteouts_done, k.k->p.snapshot)) {
-					struct bch_inode_unpacked child_lostfound;
+				    bch2_snapshot_is_ancestor(c, k.k->p.snapshot, lostfound.bi_snapshot)) {
+					if (!snapshot_list_has_ancestor(c, &whiteouts_done, k.k->p.snapshot)) {
+						struct bch_inode_unpacked child_lostfound;
 
-					bch2_inode_unpack(k, &child_lostfound);
-					child_lostfound.bi_nlink++;
-					iter.snapshot = child_lostfound.bi_snapshot;
-					ret = bch2_inode_write_flags(trans, &iter, &child_lostfound,
-								     BTREE_UPDATE_internal_snapshot_node);
-					if (ret)
-						break;
+						pr_info("incrementing child lost+found %u", k.k->p.snapshot);
+						bch2_inode_unpack(k, &child_lostfound);
+						child_lostfound.bi_nlink++;
+						iter.snapshot = k.k->p.snapshot;
+						ret = bch2_inode_write_flags(trans, &iter, &child_lostfound,
+									     BTREE_UPDATE_internal_snapshot_node);
+						if (ret)
+							break;
+					} else {
+						pr_info("not incrementing child lost+found %u", k.k->p.snapshot);
+					}
 				}
 			}
 		}
