@@ -1460,6 +1460,17 @@ int __bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
 					 offset_into_extent, failed, flags, -1);
 		swap(bvec_iter.bi_size, bytes);
 
+		if (failed) {
+			struct printbuf buf = PRINTBUF;
+			bch2_bkey_val_to_text(&buf, c, k);
+			prt_newline(&buf);
+			bch2_io_failures_to_text(&buf, failed);
+			prt_newline(&buf);
+
+			pr_debug("ret %s\n%s", bch2_err_str(ret), buf.buf);
+			printbuf_exit(&buf);
+		}
+
 		if (ret)
 			goto err;
 
