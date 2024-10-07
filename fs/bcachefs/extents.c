@@ -47,6 +47,15 @@ static void bch2_extent_crc_pack(union bch_extent_crc *,
 				 struct bch_extent_crc_unpacked,
 				 enum bch_extent_entry_type);
 
+void bch2_io_failures_to_text(struct printbuf *out, struct bch_io_failures *f)
+{
+	prt_printf(out, "failures: %u\n", f->nr);
+
+	for (struct bch_dev_io_failures *i = f->devs; i < f->devs + f->nr; i++)
+		prt_printf(out, "dev=%u idx=%u nr_afiled=%u nr_retries=%u\n",
+			   i->dev, i->idx, i->nr_failed, i->nr_retries);
+}
+
 struct bch_dev_io_failures *bch2_dev_io_failures(struct bch_io_failures *f,
 						 unsigned dev)
 {
