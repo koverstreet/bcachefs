@@ -1285,6 +1285,17 @@ void __bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
 		ret = __bch2_read_extent(trans, rbio, bvec_iter, iter.pos,
 					 data_btree, k,
 					 offset_into_extent, failed, flags, -1);
+		if (failed) {
+			struct printbuf buf = PRINTBUF;
+			bch2_bkey_val_to_text(&buf, c, k);
+			prt_newline(&buf);
+			bch2_io_failures_to_text(&buf, failed);
+			prt_newline(&buf);
+
+			pr_debug("ret %s\n%s", bch2_err_str(ret), buf.buf);
+			printbuf_exit(&buf);
+		}
+
 		if (ret)
 			goto err;
 
