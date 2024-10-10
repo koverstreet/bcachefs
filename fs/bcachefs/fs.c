@@ -383,14 +383,6 @@ retry:
 	}
 }
 
-#define memalloc_flags_do(_flags, _do)						\
-({										\
-	unsigned _saved_flags = memalloc_flags_save(_flags);			\
-	typeof(_do) _ret = _do;							\
-	memalloc_noreclaim_restore(_saved_flags);				\
-	_ret;									\
-})
-
 static struct inode *bch2_alloc_inode(struct super_block *sb)
 {
 	BUG();

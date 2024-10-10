@@ -353,7 +353,7 @@ static struct open_bucket *try_alloc_bucket(struct btree_trans *trans, struct bc
 		if (!bkey_eq(bp_pos, POS_MAX)) {
 			/*
 			 * Bucket may have data in it - we don't call
-			 * bc2h_trans_inconnsistent() because fsck hasn't
+			 * bc2h_trans_inconsistent() because fsck hasn't
 			 * finished yet
 			 */
 			ob = NULL;
@@ -1552,7 +1552,7 @@ void bch2_fs_allocator_foreground_init(struct bch_fs *c)
 	mutex_init(&c->write_points_hash_lock);
 	c->write_points_nr = ARRAY_SIZE(c->write_points);
 
-	/* open bucket 0 is a sentinal NULL: */
+	/* open bucket 0 is a sentinel NULL: */
 	spin_lock_init(&c->open_buckets[0].lock);
 
 	for (ob = c->open_buckets + 1;

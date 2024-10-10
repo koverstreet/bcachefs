@@ -167,7 +167,7 @@ journal_error_check_stuck(struct journal *j, int error, unsigned flags)
 	j->err_seq = journal_cur_seq(j);
 	spin_unlock(&j->lock);
 
-	bch_err(c, "Journal stuck! Hava a pre-reservation but journal full (error %s)",
+	bch_err(c, "Journal stuck! Have a pre-reservation but journal full (error %s)",
 		bch2_journal_errors[error]);
 	bch2_journal_debug_to_text(&buf, j);
 	bch_err(c, "%s", buf.buf);
@@ -816,7 +816,7 @@ bool bch2_journal_noflush_seq(struct journal *j, u64 seq)
 	     unwritten_seq++) {
 		struct journal_buf *buf = journal_seq_to_buf(j, unwritten_seq);
 
-		/* journal flush already in flight, or flush requseted */
+		/* journal flush already in flight, or flush requested */
 		if (buf->must_flush)
 			goto out;
 

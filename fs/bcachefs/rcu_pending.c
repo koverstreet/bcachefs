@@ -338,7 +338,7 @@ rcu_pending_enqueue_list(struct rcu_pending_pcpu *p, unsigned long seq,
 			/*
 			 * kvfree_rcu_mightsleep(): we weren't passed an
 			 * rcu_head, but we need one: use the low bit of the
-			 * ponter to free to flag that the head needs to be
+			 * pointer to free to flag that the head needs to be
 			 * freed as well:
 			 */
 			ptr = (void *)(((unsigned long) ptr)|1UL);
@@ -385,7 +385,7 @@ again:
 
 /*
  * __rcu_pending_enqueue: enqueue a pending RCU item, to be processed (via
- * pending->pracess) once grace period elapses.
+ * pending->process) once grace period elapses.
  *
  * Attempt to enqueue items onto a radix tree; if memory allocation fails, fall
  * back to a linked list.

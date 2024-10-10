@@ -152,7 +152,7 @@ struct mean_and_variance {
 	u128_u	sum_squares;
 };
 
-/* expontentially weighted variant */
+/* exponentially weighted variant */
 struct mean_and_variance_weighted {
 	s64	mean;
 	u64	variance;
@@ -200,4 +200,4 @@ u64 mean_and_variance_weighted_get_variance(struct mean_and_variance_weighted s,
 u32 mean_and_variance_weighted_get_stddev(struct mean_and_variance_weighted s,
 		u8 weight);
 
-#endif // MEAN_AND_VAIRANCE_H_
+#endif // MEAN_AND_VARIANCE_H_

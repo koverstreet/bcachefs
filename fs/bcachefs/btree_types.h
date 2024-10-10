@@ -446,7 +446,7 @@ struct btree_insert_entry {
 /* Number of btree paths we preallocate, usually enough */
 #define BTREE_ITER_INITIAL		64
 /*
- * Lmiit for btree_trans_too_many_iters(); this is enough that almost all code
+ * Limit for btree_trans_too_many_iters(); this is enough that almost all code
  * paths should run inside this limit, and if they don't it usually indicates a
  * bug (leaking/duplicated btree paths).
  *

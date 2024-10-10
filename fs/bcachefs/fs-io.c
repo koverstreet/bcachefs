@@ -877,7 +877,7 @@ loff_t bch2_remap_file_range(struct file *file_src, loff_t pos_src,
 		goto err;
 
 	/*
-	 * due to alignment, we might have remapped slightly more than requsted
+	 * due to alignment, we might have remapped slightly more than requested
 	 */
 	ret = min((u64) ret << 9, (u64) len);
 
