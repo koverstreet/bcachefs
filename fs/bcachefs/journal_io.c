@@ -157,7 +157,7 @@ static int journal_entry_add(struct bch_fs *c, struct bch_dev *ca,
 	/*
 	 * genradixes are indexed by a ulong, not a u64, so we can't index them
 	 * by sequence number directly: Assume instead that they will all fall
-	 * within the range of +-2billion of the filrst one we find.
+	 * within the range of +-2billion of the first one we find.
 	 */
 	if (!c->journal_entries_base_seq)
 		c->journal_entries_base_seq = max_t(s64, 1, le64_to_cpu(j->seq) - S32_MAX);

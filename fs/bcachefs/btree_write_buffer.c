@@ -451,7 +451,7 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 		 * journal replay has to split/rewrite nodes to make room for
 		 * its updates.
 		 *
-		 * And for those new acounting updates, updates to the same
+		 * And for those new accounting updates, updates to the same
 		 * counters get accumulated as they're flushed from the journal
 		 * to the write buffer - see the patch for eytzingcer tree
 		 * accumulated. So we could only overflow if the number of

@@ -451,7 +451,7 @@ void bch2_rebalance_stop(struct bch_fs *c)
 	c->rebalance.thread = NULL;
 
 	if (p) {
-		/* for sychronizing with rebalance_wakeup() */
+		/* for synchronizing with rebalance_wakeup() */
 		synchronize_rcu();
 
 		kthread_stop(p);

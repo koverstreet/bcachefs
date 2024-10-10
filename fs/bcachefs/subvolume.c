@@ -389,7 +389,7 @@ static int bch2_subvolume_reparent(struct btree_trans *trans,
  * structure of how snapshot subvolumes were created - the parent subvolume of
  * each snapshot subvolume.
  *
- * When a subvolume is deleted, we scan for child subvolumes and reparant them,
+ * When a subvolume is deleted, we scan for children subvolumes and fix them,
  * to avoid dangling references:
  */
 static int bch2_subvolumes_reparent(struct btree_trans *trans, u32 subvolid_to_delete)
