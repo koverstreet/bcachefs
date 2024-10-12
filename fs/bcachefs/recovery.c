@@ -692,7 +692,7 @@ int bch2_fs_recovery(struct bch_fs *c)
 	}
 
 	if (c->opts.norecovery)
-		c->opts.recovery_pass_last = BCH_RECOVERY_PASS_journal_replay - 1;
+		c->opts.recovery_pass_last = BCH_RECOVERY_PASS_snapshots_read;
 
 	mutex_lock(&c->sb_lock);
 	struct bch_sb_field_ext *ext = bch2_sb_field_get(c->disk_sb.sb, ext);
