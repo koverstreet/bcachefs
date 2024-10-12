@@ -2121,6 +2121,14 @@ static int bch2_unfreeze(struct super_block *sb)
 	return ret;
 }
 
+static void bch2_fs_shutdown(struct super_block *sb)
+{
+	struct bch_fs *c = sb->s_fs_info;
+
+	bch2_journal_flush(&c->journal);
+	bch2_fs_emergency_read_only(c);
+}
+
 static const struct super_operations bch_super_operations = {
 	.alloc_inode	= bch2_alloc_inode,
 	.free_inode	= bch2_free_inode,
@@ -2133,6 +2141,7 @@ static const struct super_operations bch_super_operations = {
 	.put_super	= bch2_put_super,
 	.freeze_fs	= bch2_freeze,
 	.unfreeze_fs	= bch2_unfreeze,
+	.shutdown	= bch2_fs_shutdown,
 };
 
 static int bch2_set_super(struct super_block *s, void *data)
