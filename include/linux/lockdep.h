@@ -249,6 +249,11 @@ static inline int lock_is_held(const struct lockdep_map *lock)
 	return lock_is_held_type(lock, -1);
 }
 
+int lock_class_is_held(struct lockdep_map *lock);
+
+#define lockdep_assert_class_not_held(lock)			\
+	BUG_ON(lock_class_is_held(&(lock)->dep_map) == LOCK_STATE_HELD)
+
 #define lockdep_is_held(lock)		lock_is_held(&(lock)->dep_map)
 #define lockdep_is_held_type(lock, r)	lock_is_held_type(&(lock)->dep_map, (r))
 
