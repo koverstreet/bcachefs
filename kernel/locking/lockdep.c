@@ -5607,6 +5607,42 @@ int __lock_is_held(const struct lockdep_map *lock, int read)
 	return LOCK_STATE_NOT_HELD;
 }
 
+static int __lock_class_is_held(struct lockdep_map *lock)
+{
+	struct task_struct *curr = current;
+	struct lock_class *class = lock->class_cache[0];
+
+	for (unsigned i = 0; i < curr->lockdep_depth; i++) {
+		struct held_lock *hlock = curr->held_locks + i;
+
+		if (class == hlock_class(hlock))
+			return LOCK_STATE_HELD;
+	}
+
+	return LOCK_STATE_NOT_HELD;
+}
+
+int lock_class_is_held(struct lockdep_map *lock)
+{
+	unsigned long flags;
+	int ret = LOCK_STATE_NOT_HELD;
+
+	/*
+	 * Avoid false negative lockdep_assert_held() and
+	 * lockdep_assert_not_held().
+	 */
+	if (unlikely(!lockdep_enabled()))
+		return LOCK_STATE_UNKNOWN;
+
+	raw_local_irq_save(flags);
+	lockdep_recursion_inc();
+	ret = __lock_class_is_held(lock);
+	lockdep_recursion_finish();
+	raw_local_irq_restore(flags);
+
+	return ret;
+}
+
 static struct pin_cookie __lock_pin_lock(struct lockdep_map *lock)
 {
 	struct pin_cookie cookie = NIL_COOKIE;
