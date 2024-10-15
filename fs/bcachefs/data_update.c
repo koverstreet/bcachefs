@@ -229,7 +229,7 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 		 * other updates
 		 * @new: extent with new pointers that we'll be adding to @insert
 		 *
-		 * Fist, drop rewrite_ptrs from @new:
+		 * First, drop rewrite_ptrs from @new:
 		 */
 		i = 0;
 		bkey_for_each_ptr_decode(old.k, bch2_bkey_ptrs_c(old), p, entry_c) {
@@ -702,7 +702,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 
 	/*
 	 * If device(s) were set to durability=0 after data was written to them
-	 * we can end up with a duribilty=0 extent, and the normal algorithm
+	 * we can end up with a durability=0 extent, and the normal algorithm
 	 * that tries not to increase durability doesn't work:
 	 */
 	if (!(durability_have + durability_removing))

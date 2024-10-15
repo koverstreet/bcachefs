@@ -12,7 +12,7 @@
  *  - sum of all event durations
  *  - average event duration, standard and weighted
  *  - standard deviation of event durations, standard and weighted
- * and analagous statistics for the frequency of events
+ * and analogous statistics for the frequency of events
  *
  * We provide both mean and weighted mean (exponentially weighted), and standard
  * deviation and weighted standard deviation, to give an efficient-to-compute

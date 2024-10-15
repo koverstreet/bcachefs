@@ -1459,7 +1459,7 @@ static int delete_dead_snapshots_process_key(struct btree_trans *trans,
 	 * position, we're only going to keep the one in the newest
 	 * snapshot (we delete the others above) - the rest have been
 	 * overwritten and are redundant, and for the key we're going to keep we
-	 * need to move it to the equivalance class ID if it's not there
+	 * need to move it to the equivalence class ID if it's not there
 	 * already.
 	 */
 	if (equiv != k.k->p.snapshot) {

@@ -25,7 +25,7 @@
  *    expensive, so we also have
  *
  *  - In memory accounting, where accounting is stored as an array of percpu
- *    counters, indexed by an eytzinger array of disk acounting keys/bpos (which
+ *    counters, indexed by an eytzinger array of disk accounting keys/bpos (which
  *    are the same thing, excepting byte swabbing on big endian).
  *
  *    Cheap to read, but non persistent.
@@ -384,7 +384,7 @@ void bch2_accounting_mem_gc(struct bch_fs *c)
  * Read out accounting keys for replicas entries, as an array of
  * bch_replicas_usage entries.
  *
- * Note: this may be deprecated/removed at smoe point in the future and replaced
+ * Note: this may be deprecated/removed at some point in the future and replaced
  * with something more general, it exists to support the ioctl used by the
  * 'bcachefs fs usage' command.
  */

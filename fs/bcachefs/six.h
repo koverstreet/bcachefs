@@ -79,7 +79,7 @@
  *     six_unlock_read(&foo->lock);
  *   foo->lock is now fully unlocked.
  *
- *   Since the intent state supercedes read, it's legal to increment the read
+ *   Since the intent state supersedes read, it's legal to increment the read
  *   counter when holding an intent lock, but not the reverse.
  *
  *   A lock may only be held once for write: six_lock_increment(.., SIX_LOCK_write)
@@ -296,7 +296,7 @@ void six_unlock_ip(struct six_lock *lock, enum six_lock_type type, unsigned long
  * @lock:	lock to unlock
  * @type:	SIX_LOCK_read, SIX_LOCK_intent, or SIX_LOCK_write
  *
- * When a lock is held multiple times (because six_lock_incement()) was used),
+ * When a lock is held multiple times (because six_lock_increment()) was used),
  * this decrements the 'lock held' counter by one.
  *
  * For example:

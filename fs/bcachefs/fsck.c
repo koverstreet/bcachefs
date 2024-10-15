@@ -719,7 +719,7 @@ static bool key_visible_in_snapshot(struct bch_fs *c, struct snapshots_seen *see
 	/*
 	 * We know that @id is a descendant of @ancestor, we're checking if
 	 * we've seen a key that overwrote @ancestor - i.e. also a descendent of
-	 * @ascestor and with @id as a descendent.
+	 * @ancestor and with @id as a descendent.
 	 *
 	 * But we already know that we're scanning IDs between @id and @ancestor
 	 * numerically, since snapshot ID lists are kept sorted, so if we find
@@ -2210,7 +2210,7 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 
 	if (fsck_err_on(le32_to_cpu(s.v->fs_path_parent) != parent_subvol,
 			trans, subvol_fs_path_parent_wrong,
-			"subvol with wrong fs_path_parent, should be be %u\n%s",
+			"subvol with wrong fs_path_parent, should be %u\n%s",
 			parent_subvol,
 			(bch2_bkey_val_to_text(&buf, c, s.s_c), buf.buf))) {
 		struct bkey_i_subvolume *n =

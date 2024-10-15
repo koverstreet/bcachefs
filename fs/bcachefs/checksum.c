@@ -22,7 +22,7 @@
 /*
  * bch2_checksum state is an abstraction of the checksum state calculated over different pages.
  * it features page merging without having the checksum algorithm lose its state.
- * for native checksum aglorithms (like crc), a default seed value will do.
+ * for native checksum algorithms (like crc), a default seed value will do.
  * for hash-like algorithms, a state needs to be stored
  */
 

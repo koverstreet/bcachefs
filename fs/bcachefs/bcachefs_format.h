@@ -239,7 +239,7 @@ struct bkey {
  *
  * Specifically, when i was designing bkey, I wanted the header to be no
  * bigger than necessary so that bkey_packed could use the rest. That means that
- * decently offten extent keys will fit into only 8 bytes, instead of spilling over
+ * decently often extent keys will fit into only 8 bytes, instead of spilling over
  * to 16.
  *
  * But packed_bkey treats the part after the header - the packed section -
@@ -251,7 +251,7 @@ struct bkey {
  * So that constrains the key part of a bkig endian bkey to start right
  * after the header.
  *
- * If we ever do a bkey_v2 and need to expand the hedaer by another byte for
+ * If we ever do a bkey_v2 and need to expand the header by another byte for
  * some reason - that will clean up this wart.
  */
 __aligned(8)
@@ -641,7 +641,7 @@ struct bch_sb_field_ext {
 /*
  * field 1:		version name
  * field 2:		BCH_VERSION(major, minor)
- * field 3:		recovery passess required on upgrade
+ * field 3:		recovery passes required on upgrade
  */
 #define BCH_METADATA_VERSIONS()						\
 	x(bkey_renumber,		BCH_VERSION(0, 10))		\
@@ -757,7 +757,7 @@ struct bch_sb {
 
 /*
  * Flags:
- * BCH_SB_INITALIZED	- set on first mount
+ * BCH_SB_INITIALIZED	- set on first mount
  * BCH_SB_CLEAN		- did we shut down cleanly? Just a hint, doesn't affect
  *			  behaviour of mount/recovery path:
  * BCH_SB_INODE_32BIT	- limit inode numbers to 32 bits

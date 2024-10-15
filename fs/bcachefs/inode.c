@@ -1359,7 +1359,7 @@ again:
 	/*
 	 * if we ran check_inodes() unlinked inodes will have already been
 	 * cleaned up but the write buffer will be out of sync; therefore we
-	 * alway need a write buffer flush
+	 * always need a write buffer flush
 	 */
 	ret = bch2_btree_write_buffer_flush_sync(trans);
 	if (ret)

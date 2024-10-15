@@ -33,7 +33,7 @@ struct bch_inode_info {
 	 *
 	 * XXX: a device may have had a flush issued by some other codepath. It
 	 * would be better to keep for each device a sequence number that's
-	 * incremented when we isusue a cache flush, and track here the sequence
+	 * incremented when we issue a cache flush, and track here the sequence
 	 * number that needs flushing.
 	 */
 	struct bch_devs_mask	ei_devs_need_flush;

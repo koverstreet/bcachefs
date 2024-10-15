@@ -111,7 +111,7 @@ static inline unsigned pcpu_read_count(struct six_lock *lock)
  * Returns 1 on success, 0 on failure
  *
  * In percpu reader mode, a failed trylock may cause a spurious trylock failure
- * for anoter thread taking the competing lock type, and we may havve to do a
+ * for another thread taking the competing lock type, and we may have to do a
  * wakeup: when a wakeup is required, we return -1 - wakeup_type.
  */
 static int __do_six_trylock(struct six_lock *lock, enum six_lock_type type,
@@ -234,7 +234,7 @@ again:
 
 		/*
 		 * Similar to percpu_rwsem_wake_function(), we need to guard
-		 * against the wakee noticing w->lock_acquired, returning, and
+		 * against the wake noticing w->lock_acquired, returning, and
 		 * then exiting before we do the wakeup:
 		 */
 		task = get_task_struct(w->task);
@@ -597,7 +597,7 @@ static void do_six_unlock_type(struct six_lock *lock, enum six_lock_type type)
  * @type:	SIX_LOCK_read, SIX_LOCK_intent, or SIX_LOCK_write
  * @ip:		ip parameter for lockdep/lockstat, i.e. _THIS_IP_
  *
- * When a lock is held multiple times (because six_lock_incement()) was used),
+ * When a lock is held multiple times (because six_lock_increment()) was used),
  * this decrements the 'lock held' counter by one.
  *
  * For example:
@@ -631,7 +631,7 @@ EXPORT_SYMBOL_GPL(six_unlock_ip);
 
 /**
  * six_lock_downgrade - convert an intent lock to a read lock
- * @lock:	lock to dowgrade
+ * @lock:	lock to downgrade
  *
  * @lock will have read count incremented and intent count decremented
  */
@@ -750,7 +750,7 @@ EXPORT_SYMBOL_GPL(six_lock_increment);
  * six_lock_wakeup_all - wake up all waiters on @lock
  * @lock:	lock to wake up waiters for
  *
- * Wakeing up waiters will cause them to re-run should_sleep_fn, which may then
+ * Waking up waiters will cause them to re-run should_sleep_fn, which may then
  * abort the lock operation.
  *
  * This function is never needed in a bug-free program; it's only useful in
@@ -798,7 +798,7 @@ EXPORT_SYMBOL_GPL(six_lock_counts);
  * @lock:	lock to add/subtract readers for
  * @nr:		reader count to add/subtract
  *
- * When an upper layer is implementing lock reentrency, we may have both read
+ * When an upper layer is implementing lock reentrancy, we may have both read
  * and intent locks on the same lock.
  *
  * When we need to take a write lock, the read locks will cause self-deadlock,
@@ -829,7 +829,7 @@ EXPORT_SYMBOL_GPL(six_lock_readers_add);
  * six_lock_exit - release resources held by a lock prior to freeing
  * @lock:	lock to exit
  *
- * When a lock was initialized in percpu mode (SIX_OLCK_INIT_PCPU), this is
+ * When a lock was initialized in percpu mode (SIX_LOCK_INIT_PCPU), this is
  * required to free the percpu read counts.
  */
 void six_lock_exit(struct six_lock *lock)

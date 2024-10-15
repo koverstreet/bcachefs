@@ -743,7 +743,7 @@ struct bch_fs {
 	struct percpu_ref	writes;
 #endif
 	/*
-	 * Analagous to c->writes, for asynchronous ops that don't necessarily
+	 * Analogous to c->writes, for asynchronous ops that don't necessarily
 	 * need fs to be read-write
 	 */
 	refcount_t		ro_ref;

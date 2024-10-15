@@ -82,7 +82,7 @@ int __bch2_insert_snapshot_whiteouts(struct btree_trans *, enum btree_id,
  * For use when splitting extents in existing snapshots:
  *
  * If @old_pos is an interior snapshot node, iterate over descendent snapshot
- * nodes: for every descendent snapshot in whiche @old_pos is overwritten and
+ * nodes: for every descendent snapshot in which @old_pos is overwritten and
  * not visible, emit a whiteout at @new_pos.
  */
 static inline int bch2_insert_snapshot_whiteouts(struct btree_trans *trans,

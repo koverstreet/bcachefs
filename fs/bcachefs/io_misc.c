@@ -133,7 +133,7 @@ err_noprint:
 }
 
 /*
- * Returns -BCH_ERR_transacton_restart if we had to drop locks:
+ * Returns -BCH_ERR_transaction_restart if we had to drop locks:
  */
 int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 		   subvol_inum inum, u64 end,

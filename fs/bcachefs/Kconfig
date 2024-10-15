@@ -38,7 +38,7 @@ config BCACHEFS_ERASURE_CODING
 	depends on BCACHEFS_FS
 	select QUOTACTL
 	help
-	This enables the "erasure_code" filesysystem and inode option, which
+	This enables the "erasure_code" filesystem and inode option, which
 	organizes data into reed-solomon stripes instead of ordinary
 	replication.
 

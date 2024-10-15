@@ -405,7 +405,7 @@ static int bch2_sb_validate(struct bch_sb_handle *disk_sb,
 		/*
 		 * Been seeing a bug where these are getting inexplicably
 		 * zeroed, so we're now validating them, but we have to be
-		 * careful not to preven people's filesystems from mounting:
+		 * careful not to prevent people's filesystems from mounting:
 		 */
 		if (!BCH_SB_JOURNAL_FLUSH_DELAY(sb))
 			SET_BCH_SB_JOURNAL_FLUSH_DELAY(sb, 1000);

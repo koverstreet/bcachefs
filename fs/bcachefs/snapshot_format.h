@@ -23,7 +23,7 @@ LE32_BITMASK(BCH_SNAPSHOT_SUBVOL,	struct bch_snapshot, flags,  1,  2)
 /*
  * Snapshot trees:
  *
- * The snapshot_trees btree gives us persistent indentifier for each tree of
+ * The snapshot_trees btree gives us persistent identifier for each tree of
  * bch_snapshot nodes, and allow us to record and easily find the root/master
  * subvolume that other snapshots were created from:
  */

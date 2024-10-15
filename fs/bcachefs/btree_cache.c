@@ -804,7 +804,8 @@ got_node:
 
 	mutex_unlock(&bc->lock);
 
-	if (btree_node_data_alloc(c, b, GFP_NOWAIT|__GFP_NOWARN)) {
+	if (memalloc_flags_do(PF_MEMALLOC_NORECLAIM,
+			      btree_node_data_alloc(c, b, GFP_KERNEL|__GFP_NOWARN))) {
 		bch2_trans_unlock(trans);
 		if (btree_node_data_alloc(c, b, GFP_KERNEL|__GFP_NOWARN))
 			goto err;
@@ -1151,7 +1152,7 @@ struct btree *bch2_btree_node_get(struct btree_trans *trans, struct btree_path *
 	/*
 	 * Check b->hash_val _before_ calling btree_node_lock() - this might not
 	 * be the node we want anymore, and trying to lock the wrong node could
-	 * cause an unneccessary transaction restart:
+	 * cause an unnecessary transaction restart:
 	 */
 	if (unlikely(!c->opts.btree_node_mem_ptr_optimization ||
 		     !b ||

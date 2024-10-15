@@ -503,7 +503,7 @@ enum fsck_err_opts {
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,		true,				\
-	  NULL,		"BTREE_ITER_prefetch casuse btree nodes to be\n"\
+	  NULL,		"BTREE_ITER_prefetch causes btree nodes to be\n"\
 	  " prefetched sequentially")
 
 #define BCH_DEV_OPT_SETTERS()						\

@@ -1494,7 +1494,7 @@ err:
 	/*
 	 * Sync or no?
 	 *
-	 * If we're running asynchronously, wne may still want to block
+	 * If we're running asynchronously, we may still want to block
 	 * synchronously here if we weren't able to submit all of the IO at
 	 * once, as that signals backpressure to the caller.
 	 */

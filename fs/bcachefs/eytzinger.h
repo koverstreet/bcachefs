@@ -12,7 +12,7 @@
 #endif
 
 /*
- * Traversal for trees in eytzinger layout - a full binary tree layed out in an
+ * Traversal for trees in eytzinger layout - a full binary tree laid out in an
  * array.
  *
  * Consider using an eytzinger tree any time you would otherwise be doing binary
