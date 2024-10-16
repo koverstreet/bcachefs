@@ -857,7 +857,7 @@ int bch2_dev_usage_init(struct bch_dev *ca, bool gc)
 	};
 	u64 v[3] = { ca->mi.nbuckets - ca->mi.first_bucket, 0, 0 };
 
-	int ret = bch2_trans_do(c, NULL, NULL, 0,
+	int ret = bch2_trans_commit_do(c, NULL, NULL, 0,
 			bch2_disk_accounting_mod(trans, &acc, v, ARRAY_SIZE(v), gc));
 	bch_err_fn(c, ret);
 	return ret;
