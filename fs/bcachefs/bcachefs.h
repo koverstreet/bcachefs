@@ -995,7 +995,7 @@ struct bch_fs {
 	struct bch_fs_rebalance	rebalance;
 
 	/* COPYGC */
-	struct task_struct	*copygc_thread;
+	struct task_struct __rcu *copygc_thread;
 	struct write_point	copygc_write_point;
 	s64			copygc_wait_at;
 	s64			copygc_wait;

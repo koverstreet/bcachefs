@@ -822,6 +822,14 @@ int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 		}
 	}
 
+	if (bch2_err_matches(ret, BCH_ERR_freelist_empty)) {
+		rcu_read_lock();
+		struct task_struct *t = rcu_dereference(c->copygc_thread);
+		if (t)
+			wake_up_process(t);
+		rcu_read_unlock();
+	}
+
 	return ret;
 }
 

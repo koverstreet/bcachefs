@@ -363,19 +363,18 @@ static int bch2_copygc_thread(void *arg)
 		}
 
 		last = atomic64_read(&clock->now);
-		wait = bch2_copygc_wait_amount(c);
+		wait = max_t(long, 0, bch2_copygc_wait_amount(c) - clock->max_slop);
 
-		if (wait > clock->max_slop) {
+		if (wait > 0) {
 			c->copygc_wait_at = last;
 			c->copygc_wait = last + wait;
 			move_buckets_wait(&ctxt, buckets, true);
-			trace_and_count(c, copygc_wait, c, wait, last + wait);
-			bch2_kthread_io_clock_wait(clock, last + wait,
-					MAX_SCHEDULE_TIMEOUT);
+			trace_and_count(c, copygc_wait, c, wait, c->copygc_wait);
+			bch2_io_clock_schedule_timeout(clock, c->copygc_wait);
 			continue;
 		}
 
-		c->copygc_wait = 0;
+		c->copygc_wait = c->copygc_wait_at = 0;
 
 		c->copygc_running = true;
 		ret = bch2_copygc(&ctxt, buckets, &did_work);
@@ -407,9 +406,10 @@ static int bch2_copygc_thread(void *arg)
 
 void bch2_copygc_stop(struct bch_fs *c)
 {
-	if (c->copygc_thread) {
-		kthread_stop(c->copygc_thread);
-		put_task_struct(c->copygc_thread);
+	struct task_struct *t = rcu_dereference_protected(c->copygc_thread, true);
+	if (t) {
+		kthread_stop(t);
+		put_task_struct(t);
 	}
 	c->copygc_thread = NULL;
 }
@@ -436,8 +436,8 @@ int bch2_copygc_start(struct bch_fs *c)
 
 	get_task_struct(t);
 
-	c->copygc_thread = t;
-	wake_up_process(c->copygc_thread);
+	rcu_assign_pointer(c->copygc_thread, t);
+	wake_up_process(t);
 
 	return 0;
 }
