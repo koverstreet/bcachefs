@@ -510,7 +510,7 @@ static int bch2_copygc_thread(void *arg)
 			c->copygc.wait_at = last;
 			c->copygc.wait = last + wait;
 			move_buckets_wait(&ctxt, &buckets, true);
-			bch2_kthread_io_clock_wait(clock, last + wait,
+			bch2_kthread_io_clock_wait_once(clock, last + wait,
 					MAX_SCHEDULE_TIMEOUT);
 			continue;
 		}
@@ -530,7 +530,7 @@ static int bch2_copygc_thread(void *arg)
 				min_member_capacity = 128 * 2048;
 
 			move_buckets_wait(&ctxt, &buckets, true);
-			bch2_kthread_io_clock_wait(clock, last + (min_member_capacity >> 6),
+			bch2_kthread_io_clock_wait_once(clock, last + (min_member_capacity >> 6),
 					MAX_SCHEDULE_TIMEOUT);
 		}
 	}
@@ -547,9 +547,10 @@ err:
 
 void bch2_copygc_stop(struct bch_fs *c)
 {
-	if (c->copygc.thread) {
-		kthread_stop(c->copygc.thread);
-		put_task_struct(c->copygc.thread);
+	struct task_struct *t = rcu_dereference_protected(c->copygc.thread, true);
+	if (t) {
+		kthread_stop(t);
+		put_task_struct(t);
 	}
 	c->copygc.thread = NULL;
 }
@@ -578,6 +579,7 @@ int bch2_copygc_start(struct bch_fs *c)
 		get_task_struct(t);
 
 		c->copygc.thread = t;
+		rcu_assign_pointer(c->copygc.thread, t);
 		wake_up_process(c->copygc.thread);
 	}
 

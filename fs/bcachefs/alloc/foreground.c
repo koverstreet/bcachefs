@@ -1338,8 +1338,11 @@ err:
 		ret = bch_err_throw(c, bucket_alloc_blocked);
 
 	if (cl && !(req->flags & BCH_WRITE_alloc_nowait) &&
-	    bch2_err_matches(ret, BCH_ERR_freelist_empty))
+	    bch2_err_matches(ret, BCH_ERR_freelist_empty)) {
+		bch2_copygc_wakeup(c);
+
 		ret = bch_err_throw(c, bucket_alloc_blocked);
+	}
 
 	return ret;
 }
