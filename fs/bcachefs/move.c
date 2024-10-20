@@ -549,9 +549,10 @@ static int bch2_move_data_btree(struct moving_context *ctxt,
 	struct per_snapshot_io_opts snapshot_io_opts;
 	struct bch_io_opts *io_opts;
 	struct bkey_buf sk;
-	struct btree_iter iter;
+	struct btree_iter iter, reflink_iter = {};
 	struct bkey_s_c k;
 	struct data_update_opts data_opts;
+	bool walk_indirect = start.inode == end.inode;
 	int ret = 0, ret2;
 
 	per_snapshot_io_opts_init(&snapshot_io_opts, c);
@@ -571,6 +572,8 @@ static int bch2_move_data_btree(struct moving_context *ctxt,
 		bch2_ratelimit_reset(ctxt->rate);
 
 	while (!bch2_move_ratelimit(ctxt)) {
+		struct btree_iter *extent_iter = &iter;
+
 		bch2_trans_begin(trans);
 
 		k = bch2_btree_iter_peek(&iter);
@@ -588,6 +591,21 @@ static int bch2_move_data_btree(struct moving_context *ctxt,
 
 		if (ctxt->stats)
 			ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
+
+		if (walk_indirect && k.k->type == KEY_TYPE_reflink_p) {
+			u64 reflink_offset = le64_to_cpu(bkey_s_c_to_reflink_p(k).v->idx);
+
+			bch2_trans_iter_exit(trans, &reflink_iter);
+			k = bch2_bkey_get_iter(trans, &reflink_iter, BTREE_ID_reflink,
+					       POS(0, reflink_offset), BTREE_ITER_not_extents);
+			ret = bkey_err(k);
+			if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+				continue;
+			if (ret)
+				break;
+
+			extent_iter = &reflink_iter;
+		}
 
 		if (!bkey_extent_is_direct_data(k.k))
 			goto next_nondata;
@@ -608,7 +626,7 @@ static int bch2_move_data_btree(struct moving_context *ctxt,
 		bch2_bkey_buf_reassemble(&sk, c, k);
 		k = bkey_i_to_s_c(sk.k);
 
-		ret2 = bch2_move_extent(ctxt, NULL, &iter, k, *io_opts, data_opts);
+		ret2 = bch2_move_extent(ctxt, NULL, extent_iter, k, *io_opts, data_opts);
 		if (ret2) {
 			if (bch2_err_matches(ret2, BCH_ERR_transaction_restart))
 				continue;
@@ -629,6 +647,7 @@ next_nondata:
 		bch2_btree_iter_advance(&iter);
 	}
 
+	bch2_trans_iter_exit(trans, &reflink_iter);
 	bch2_trans_iter_exit(trans, &iter);
 	bch2_bkey_buf_exit(&sk, c);
 	per_snapshot_io_opts_exit(&snapshot_io_opts);
