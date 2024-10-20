@@ -1420,55 +1420,38 @@ incompressible:
 	return sectors;
 }
 
-int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bkey_i *_k,
-				  struct bch_io_opts *opts)
+static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_io_opts *opts)
 {
-	struct bkey_s k = bkey_i_to_s(_k);
-	struct bch_extent_rebalance *r;
-	unsigned target = opts->background_target;
-	unsigned compression = opts->background_compression;
-	bool needs_rebalance;
+	return (struct bch_extent_rebalance) {
+		.type = BIT(BCH_EXTENT_ENTRY_rebalance),
+#define x(_name)							\
+		._name = opts->_name,
+		BCH_REBALANCE_OPTS()
+#undef x
+	};
+};
 
-	if (!bkey_extent_is_direct_data(k.k))
+int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_io_opts *opts,
+				  struct bkey_i *_k)
+{
+	if (!bkey_extent_is_direct_data(&_k->k))
 		return 0;
 
-	/* get existing rebalance entry: */
-	r = (struct bch_extent_rebalance *) bch2_bkey_rebalance_opts(k.s_c);
-	if (r) {
-		if (k.k->type == KEY_TYPE_reflink_v) {
-			/*
-			 * indirect extents: existing options take precedence,
-			 * so that we don't move extents back and forth if
-			 * they're referenced by different inodes with different
-			 * options:
-			 */
-			if (r->background_target)
-				target = r->background_target;
-			if (r->background_compression)
-				compression = r->background_compression;
+	struct bkey_s k = bkey_i_to_s(_k);
+	struct bch_extent_rebalance *old =
+		(struct bch_extent_rebalance *) bch2_bkey_rebalance_opts(k.s_c);
+
+	if (k.k->type == KEY_TYPE_reflink_v ||
+	    bch2_bkey_ptrs_need_rebalance(c, k.s_c, opts->background_target, opts->background_compression)) {
+		if (!old) {
+			old = bkey_val_end(k);
+			k.k->u64s += sizeof(*old) / sizeof(u64);
 		}
 
-		r->background_target		= target;
-		r->background_compression	= compression;
-	}
-
-	needs_rebalance = bch2_bkey_ptrs_need_rebalance(c, k.s_c, target, compression);
-
-	if (needs_rebalance && !r) {
-		union bch_extent_entry *new = bkey_val_end(k);
-
-		new->rebalance.type			= 1U << BCH_EXTENT_ENTRY_rebalance;
-		new->rebalance.background_compression	= compression;
-		new->rebalance.background_target	= target;
-		new->rebalance.unused			= 0;
-		k.k->u64s += extent_entry_u64s(new);
-	} else if (!needs_rebalance && r && k.k->type != KEY_TYPE_reflink_v) {
-		/*
-		 * For indirect extents, don't delete the rebalance entry when
-		 * we're finished so that we know we specifically moved it or
-		 * compressed it to its current location/compression type
-		 */
-		extent_entry_drop(k, (union bch_extent_entry *) r);
+		*old = io_opts_to_rebalance_opts(opts);
+	} else {
+		if (old)
+			extent_entry_drop(k, (union bch_extent_entry *) old);
 	}
 
 	return 0;
