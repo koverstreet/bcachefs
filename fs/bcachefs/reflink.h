@@ -4,6 +4,8 @@
 
 enum bch_validate_flags;
 
+int bch2_indirect_extent_error(struct btree_trans *, struct bkey_s_c_reflink_p);
+
 int bch2_reflink_p_validate(struct bch_fs *, struct bkey_s_c, enum bch_validate_flags);
 void bch2_reflink_p_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 bool bch2_reflink_p_merge(struct bch_fs *, struct bkey_s, struct bkey_s_c);
