@@ -15,6 +15,7 @@
 
 struct bch_write_bio {
 	struct_group(wbio,
+	struct work_struct	work;	/* for when we need to print an error message */
 	struct bch_fs		*c;
 	struct bch_write_bio	*parent;
 
