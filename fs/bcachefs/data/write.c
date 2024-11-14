@@ -829,7 +829,7 @@ void bch2_write_point_do_index_updates(struct work_struct *work)
 	}
 }
 
-static void bch2_write_endio(struct bio *bio)
+static inline void __bch2_write_endio(struct bio *bio)
 {
 	struct closure *cl		= bio->bi_private;
 	struct bch_write_op *op		= container_of(cl, struct bch_write_op, cl);
@@ -839,28 +839,6 @@ static void bch2_write_endio(struct bio *bio)
 	struct bch_dev *ca		= wbio->have_ioref
 		? bch2_dev_have_ref(c, wbio->dev)
 		: NULL;
-
-	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_write,
-				   wbio->submit_time, !bio->bi_status);
-
-	if (unlikely(bio->bi_status)) {
-		/* retry these immediately, like btree write errors */
-
-		if (ca)
-			bch_err_inum_offset_ratelimited(ca,
-					    op->pos.inode,
-					    wbio->inode_offset << 9,
-					    "data write error: %s",
-					    bch2_blk_status_to_str(bio->bi_status));
-		else
-			bch_err_inum_offset_ratelimited(c,
-					    op->pos.inode,
-					    wbio->inode_offset << 9,
-					    "data write error: %s",
-					    bch2_blk_status_to_str(bio->bi_status));
-		set_bit(wbio->dev, op->failed.d);
-		op->io_error = true;
-	}
 
 	if (wbio->nocow) {
 		bch2_bucket_nocow_unlock(&c->nocow_locks,
@@ -883,6 +861,55 @@ static void bch2_write_endio(struct bio *bio)
 		bio_endio(&parent->bio);
 	else
 		closure_put(cl);
+}
+
+static void bch2_write_endio_err(struct work_struct *work)
+{
+	struct bch_write_bio *wbio	= container_of(work, struct bch_write_bio, work);
+	struct bio *bio			= &wbio->bio;
+	struct closure *cl		= bio->bi_private;
+	struct bch_write_op *op		= container_of(cl, struct bch_write_op, cl);
+	struct bch_fs *c		= op->c;
+	struct bch_dev *ca		= wbio->have_ioref
+		? bch2_dev_have_ref(c, wbio->dev)
+		: NULL;
+
+	struct printbuf buf = PRINTBUF;
+	bch2_write_op_error(&buf, op);
+	prt_printf(&buf, "data write error: %s", bch2_blk_status_to_str(bio->bi_status));
+	if (ca)
+		bch_err_ratelimited(ca, "%s", buf.buf);
+	else
+		bch_err_ratelimited(c, "%s", buf.buf);
+	printbuf_exit(&buf);
+
+	if (ca)
+		bch2_io_error(ca, BCH_MEMBER_ERROR_write);
+
+	set_bit(wbio->dev, op->failed.d);
+	op->flags |= BCH_WRITE_IO_ERROR;
+
+	__bch2_write_endio(bio);
+}
+
+static void bch2_write_endio(struct bio *bio)
+{
+	struct bch_write_bio *wbio	= to_wbio(bio);
+	struct bch_fs *c		= wbio->c;
+	struct bch_dev *ca		= wbio->have_ioref
+		? bch2_dev_have_ref(c, wbio->dev)
+		: NULL;
+
+	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_write,
+				   wbio->submit_time, !bio->bi_status);
+
+	if (unlikely(bio->bi_status)) {
+		struct bch_write_bio *wbio = to_wbio(bio);
+		INIT_WORK(&wbio->work, bch2_write_endio_err);
+		queue_work(system_unbound_wq, &wbio->work);
+	} else {
+		__bch2_write_endio(bio);
+	}
 }
 
 static void init_append_extent(struct bch_write_op *op,
