@@ -557,6 +557,8 @@ struct bch_dev {
 	unsigned long		*buckets_nouse;
 	struct rw_semaphore	bucket_lock;
 
+	unsigned long		*bucket_backpointer_mismatches;
+
 	struct bch_dev_usage __percpu	*usage;
 
 	/* Allocator: */
