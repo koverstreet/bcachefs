@@ -284,6 +284,15 @@ err:
 	return ret;
 }
 
+struct inode_hash_find_counters {
+	size_t		calls;
+	size_t		finds;
+	size_t		founds;
+	size_t		unhashed;
+	size_t		i_freeing;
+	size_t		i_will_free;
+};
+
 static struct bch_inode_info *__bch2_inode_hash_find(struct bch_fs *c, subvol_inum inum)
 {
 	return rhashtable_lookup_fast(&c->vfs_inodes_table, &inum, bch2_vfs_inodes_params);
@@ -306,18 +315,39 @@ static void __wait_on_freeing_inode(struct bch_fs *c,
 }
 
 static struct bch_inode_info *bch2_inode_hash_find(struct bch_fs *c, struct btree_trans *trans,
-						   subvol_inum inum)
+						   subvol_inum inum,
+						   struct inode_hash_find_counters *s)
 {
 	struct bch_inode_info *inode;
+
+	s->calls++;
 repeat:
+	s->finds++;
+	if (s->finds > 10)
+		pr_info_ratelimited("%ps calls %zu finds %zu founds %zu unhashed %zu i_freeing %zu i_will_free %zu",
+				    (void *) _RET_IP_,
+				    s->calls,
+				    s->finds,
+				    s->founds,
+				    s->unhashed,
+				    s->i_freeing,
+				    s->i_will_free);
+
 	inode = __bch2_inode_hash_find(c, inum);
 	if (inode) {
+		s->founds++;
+
 		spin_lock(&inode->v.i_lock);
 		if (!test_bit(EI_INODE_HASHED, &inode->ei_flags)) {
 			spin_unlock(&inode->v.i_lock);
+			s->unhashed++;
 			return NULL;
 		}
+
 		if ((inode->v.i_state & (I_FREEING|I_WILL_FREE))) {
+			s->i_freeing	+= (inode->v.i_state & I_FREEING) != 0;
+			s->i_will_free	+= (inode->v.i_state & I_WILL_FREE) != 0;
+
 			if (!trans) {
 				__wait_on_freeing_inode(c, inode, inum);
 			} else {
@@ -360,14 +390,18 @@ static struct bch_inode_info *bch2_inode_hash_insert(struct bch_fs *c,
 						     struct bch_inode_info *inode)
 {
 	struct bch_inode_info *old = inode;
+	struct inode_hash_find_counters s = {};
 
 	set_bit(EI_INODE_HASHED, &inode->ei_flags);
+	smp_mb__after_atomic();
 retry:
-	if (unlikely(rhashtable_lookup_insert_key(&c->vfs_inodes_table,
+	int ret = rhashtable_lookup_insert_key(&c->vfs_inodes_table,
 					&inode->ei_inum,
 					&inode->hash,
-					bch2_vfs_inodes_params))) {
-		old = bch2_inode_hash_find(c, trans, inode->ei_inum);
+					bch2_vfs_inodes_params);
+	if (unlikely(ret)) {
+		pr_info("%s", bch2_err_str(ret));
+		old = bch2_inode_hash_find(c, trans, inode->ei_inum, &s);
 		if (!old)
 			goto retry;
 
@@ -387,16 +421,16 @@ retry:
 		set_nlink(&inode->v, 1);
 		discard_new_inode(&inode->v);
 		return old;
-	} else {
-		inode_fake_hash(&inode->v);
-
-		inode_sb_list_add(&inode->v);
-
-		mutex_lock(&c->vfs_inodes_lock);
-		list_add(&inode->ei_vfs_inode_list, &c->vfs_inodes_list);
-		mutex_unlock(&c->vfs_inodes_lock);
-		return inode;
 	}
+
+	inode_fake_hash(&inode->v);
+
+	inode_sb_list_add(&inode->v);
+
+	mutex_lock(&c->vfs_inodes_lock);
+	list_add(&inode->ei_vfs_inode_list, &c->vfs_inodes_list);
+	mutex_unlock(&c->vfs_inodes_lock);
+	return inode;
 }
 
 #define memalloc_flags_do(_flags, _do)						\
@@ -472,7 +506,8 @@ static struct bch_inode_info *bch2_inode_hash_init_insert(struct btree_trans *tr
 
 struct inode *bch2_vfs_inode_get(struct bch_fs *c, subvol_inum inum)
 {
-	struct bch_inode_info *inode = bch2_inode_hash_find(c, NULL, inum);
+	struct inode_hash_find_counters s = {};
+	struct bch_inode_info *inode = bch2_inode_hash_find(c, NULL, inum, &s);
 	if (inode)
 		return &inode->v;
 
@@ -611,6 +646,7 @@ static struct bch_inode_info *bch2_lookup_trans(struct btree_trans *trans,
 			const struct qstr *name)
 {
 	struct bch_fs *c = trans->c;
+	struct inode_hash_find_counters s = {};
 	struct btree_iter dirent_iter = {};
 	subvol_inum inum = {};
 	struct printbuf buf = PRINTBUF;
@@ -627,7 +663,7 @@ static struct bch_inode_info *bch2_lookup_trans(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
-	struct bch_inode_info *inode = bch2_inode_hash_find(c, trans, inum);
+	struct bch_inode_info *inode = bch2_inode_hash_find(c, trans, inum, &s);
 	if (inode)
 		goto out;
 
