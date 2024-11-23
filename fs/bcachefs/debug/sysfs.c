@@ -54,6 +54,7 @@
 #include "util/util.h"
 
 #include <linux/blkdev.h>
+#include <linux/delay.h>
 #include <linux/sort.h>
 #include <linux/string_choices.h>
 #include <linux/sched/clock.h>
@@ -158,6 +159,7 @@ write_attribute(trigger_invalidates);
 write_attribute(trigger_journal_commit);
 write_attribute(trigger_journal_flush);
 write_attribute(trigger_journal_writes);
+write_attribute(trigger_journal_block);
 write_attribute(trigger_btree_cache_shrink);
 write_attribute(trigger_btree_key_cache_shrink);
 write_attribute(trigger_btree_write_buffer_flush);
@@ -628,6 +630,12 @@ STORE(bch2_fs)
 	if (attr == &sysfs_trigger_journal_writes)
 		bch2_journal_do_writes(&c->journal);
 
+	if (attr == &sysfs_trigger_journal_block) {
+		bch2_journal_block(&c->journal);
+		msleep(get_random_u32() & 1023);
+		bch2_journal_unblock(&c->journal);
+	}
+
 	if (attr == &sysfs_trigger_freelist_wakeup)
 		closure_wake_up(&c->freelist_wait);
 
@@ -780,6 +788,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_trigger_journal_commit,
 	&sysfs_trigger_journal_flush,
 	&sysfs_trigger_journal_writes,
+	&sysfs_trigger_journal_block,
 	&sysfs_trigger_btree_cache_shrink,
 	&sysfs_trigger_btree_key_cache_shrink,
 	&sysfs_trigger_btree_write_buffer_flush,
