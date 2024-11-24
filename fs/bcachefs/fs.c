@@ -39,6 +39,7 @@
 #include <linux/posix_acl.h>
 #include <linux/random.h>
 #include <linux/seq_file.h>
+#include <linux/siphash.h>
 #include <linux/statfs.h>
 #include <linux/string.h>
 #include <linux/xattr.h>
@@ -176,8 +177,9 @@ static bool subvol_inum_eq(subvol_inum a, subvol_inum b)
 static u32 bch2_vfs_inode_hash_fn(const void *data, u32 len, u32 seed)
 {
 	const subvol_inum *inum = data;
+	siphash_key_t k = { .key[0] = seed };
 
-	return jhash(&inum->inum, sizeof(inum->inum), seed);
+	return siphash_2u64(inum->subvol, inum->inum, &k);
 }
 
 static u32 bch2_vfs_inode_obj_hash_fn(const void *data, u32 len, u32 seed)
