@@ -463,6 +463,8 @@ bch2_trans_start_alloc_update_noupdate(struct btree_trans *trans, struct btree_i
 	if (unlikely(ret))
 		return ERR_PTR(ret);
 
+	BUG_ON(!btree_iter_path(trans, iter)->cached);
+
 	struct bkey_i_alloc_v4 *a = bch2_alloc_to_v4_mut_inlined(trans, k);
 	ret = PTR_ERR_OR_ZERO(a);
 	if (unlikely(ret))
