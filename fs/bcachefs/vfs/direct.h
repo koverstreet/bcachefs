@@ -21,6 +21,7 @@ struct dio_write {
 	struct mm_struct		*mm;
 	const struct iovec		*iov;
 	unsigned			loop:1,
+					have_mm_ref:1,
 					extending:1,
 					sync:1,
 					sync_done:1,
