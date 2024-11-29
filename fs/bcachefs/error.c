@@ -477,8 +477,8 @@ int __bch2_bkey_fsck_err(struct bch_fs *c,
 
 	unsigned fsck_flags = 0;
 	if (!(from.flags & (BCH_VALIDATE_write|BCH_VALIDATE_commit))) {
-		if (test_bit(err, c->sb.errors_silent))
-			return -BCH_ERR_fsck_delete_bkey;
+		//if (test_bit(err, c->sb.errors_silent))
+		//	return -BCH_ERR_fsck_delete_bkey;
 
 		fsck_flags |= FSCK_AUTOFIX|FSCK_CAN_FIX;
 	}
