@@ -86,7 +86,12 @@
 	  BIT_ULL(BCH_RECOVERY_PASS_check_backpointers_to_extents)|\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_extents_to_backpointers),\
 	  BCH_FSCK_ERR_backpointer_to_missing_ptr,		\
-	  BCH_FSCK_ERR_ptr_to_missing_backpointer)
+	  BCH_FSCK_ERR_ptr_to_missing_backpointer)		\
+	x(disk_accounting_big_endian,				\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_allocations),		\
+	  BCH_FSCK_ERR_accounting_mismatch,			\
+	  BCH_FSCK_ERR_accounting_key_replicas_nr_devs_0,	\
+	  BCH_FSCK_ERR_accounting_key_junk_at_end)
 
 #define DOWNGRADE_TABLE()					\
 	x(bucket_stripe_sectors,				\
@@ -129,7 +134,12 @@
 	  BIT_ULL(BCH_RECOVERY_PASS_check_extents_to_backpointers),\
 	  BCH_FSCK_ERR_backpointer_bucket_offset_wrong,		\
 	  BCH_FSCK_ERR_backpointer_to_missing_ptr,		\
-	  BCH_FSCK_ERR_ptr_to_missing_backpointer)
+	  BCH_FSCK_ERR_ptr_to_missing_backpointer)		\
+	x(disk_accounting_big_endian,				\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_allocations),		\
+	  BCH_FSCK_ERR_accounting_mismatch,			\
+	  BCH_FSCK_ERR_accounting_key_replicas_nr_devs_0,	\
+	  BCH_FSCK_ERR_accounting_key_junk_at_end)
 
 struct upgrade_downgrade_entry {
 	u64		recovery_passes;

@@ -63,20 +63,24 @@ static inline void fs_usage_data_type_to_base(struct bch_fs_usage_base *fs_usage
 
 static inline void bpos_to_disk_accounting_pos(struct disk_accounting_pos *acc, struct bpos p)
 {
-	acc->_pad = p;
+	BUILD_BUG_ON(sizeof(*acc) != sizeof(p));
+
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-	bch2_bpos_swab(&acc->_pad);
+	acc->_pad = p;
+#else
+	memcpy_swab(acc, &p, sizeof(p));
 #endif
 }
 
-static inline struct bpos disk_accounting_pos_to_bpos(struct disk_accounting_pos *k)
+static inline struct bpos disk_accounting_pos_to_bpos(struct disk_accounting_pos *acc)
 {
-	struct bpos ret = k->_pad;
-
+	struct bpos p;
 #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-	bch2_bpos_swab(&ret);
+	p = acc->_pad;
+#else
+	memcpy_swab(&p, acc, sizeof(p));
 #endif
-	return ret;
+	return p;
 }
 
 int bch2_disk_accounting_mod(struct btree_trans *, struct disk_accounting_pos *,
@@ -114,6 +118,11 @@ enum bch_accounting_mode {
 int bch2_accounting_mem_insert(struct bch_fs *, struct bkey_s_c_accounting, enum bch_accounting_mode);
 void bch2_accounting_mem_gc(struct bch_fs *);
 
+static inline bool bch2_accounting_is_mem(struct disk_accounting_pos acc)
+{
+	return acc.type != BCH_DISK_ACCOUNTING_inum;
+}
+
 /*
  * Update in memory counters so they match the btree update we're doing; called
  * from transaction commit path
@@ -130,7 +139,7 @@ static inline int bch2_accounting_mem_mod_locked(struct btree_trans *trans,
 
 	EBUG_ON(gc && !acc->gc_running);
 
-	if (acc_k.type == BCH_DISK_ACCOUNTING_inum)
+	if (!bch2_accounting_is_mem(acc_k))
 		return 0;
 
 	if (mode == BCH_ACCOUNTING_normal) {
