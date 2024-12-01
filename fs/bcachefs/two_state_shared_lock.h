@@ -37,7 +37,7 @@ do {									\
 	__two_state_lock_init((_lock), #_lock, &__key);			\
 } while (0)
 
-static inline void bch2_two_state_unlock(two_state_lock_t *lock, int s)
+static inline void bch2_two_state_unlock_nolockdep(two_state_lock_t *lock, int s)
 {
 	long i = s ? 1 : -1;
 
@@ -45,7 +45,11 @@ static inline void bch2_two_state_unlock(two_state_lock_t *lock, int s)
 
 	if (atomic_long_sub_return_release(i, &lock->v) == 0)
 		wake_up_all(&lock->wait);
+}
 
+static inline void bch2_two_state_unlock(two_state_lock_t *lock, int s)
+{
+	bch2_two_state_unlock_nolockdep(lock, s);
 	lock_release(&lock->dep_map, _THIS_IP_);
 }
 
