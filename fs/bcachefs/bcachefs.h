@@ -1064,9 +1064,6 @@ struct bch_fs {
 	struct btree_node	*verify_ondisk;
 	struct mutex		verify_lock;
 
-	u64			*unused_inode_hints;
-	unsigned		inode_shard_bits;
-
 	/*
 	 * A btree node on disk could have too many bsets for an iterator to fit
 	 * on the stack - have to dynamically allocate them

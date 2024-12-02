@@ -165,4 +165,12 @@ LE64_BITMASK(INODEv3_FIELDS_START,
 				struct bch_inode_v3, bi_flags, 31, 36);
 LE64_BITMASK(INODEv3_MODE,	struct bch_inode_v3, bi_flags, 36, 52);
 
+struct bch_inode_alloc_cursor {
+	struct bch_val		v;
+	__u8			bits;
+	__u8			pad;
+	__le32			gen;
+	__le64			idx;
+};
+
 #endif /* _BCACHEFS_INODE_FORMAT_H */
