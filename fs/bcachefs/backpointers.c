@@ -325,8 +325,28 @@ struct btree *bch2_backpointer_get_node(struct btree_trans *trans,
 		return b;
 
 	if (btree_node_will_make_reachable(b)) {
+		{
+			struct printbuf buf = PRINTBUF;
+
+			prt_str(&buf, "will_make_reachable:\n");
+			bch2_bkey_val_to_text(&buf, c, bp.s_c);
+			prt_newline(&buf);
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&b->key));
+			trace_printk("%s", buf.buf);
+			printbuf_exit(&buf);
+		}
 		b = ERR_PTR(-BCH_ERR_backpointer_to_overwritten_btree_node);
 	} else {
+		if (!bkey_and_val_eq(bp.s_c, bkey_i_to_s_c(last_flushed->k))) {
+			struct printbuf buf = PRINTBUF;
+
+			prt_str(&buf, "flushing write buffer:\n");
+			bch2_bkey_val_to_text(&buf, c, bp.s_c);
+			prt_newline(&buf);
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&b->key));
+			trace_printk("%s", buf.buf);
+			printbuf_exit(&buf);
+		}
 		int ret = backpointer_target_not_found(trans, bp, bkey_i_to_s_c(&b->key), last_flushed);
 		b = ret ? ERR_PTR(ret) : NULL;
 	}
