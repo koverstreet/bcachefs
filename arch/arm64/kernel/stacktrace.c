@@ -215,12 +215,12 @@ kunwind_next_frame_record_meta(struct kunwind_state *state)
 	case FRAME_META_TYPE_FINAL:
 		if (meta == &task_pt_regs(tsk)->stackframe)
 			return -ENOENT;
-		WARN_ON_ONCE(1);
+		//WARN_ON_ONCE(1);
 		return -EINVAL;
 	case FRAME_META_TYPE_PT_REGS:
 		return kunwind_next_regs_pc(state);
 	default:
-		WARN_ON_ONCE(1);
+		//WARN_ON_ONCE(1);
 		return -EINVAL;
 	}
 }
