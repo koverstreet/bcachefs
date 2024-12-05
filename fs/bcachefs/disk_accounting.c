@@ -735,6 +735,10 @@ int bch2_accounting_read(struct bch_fs *c)
 
 			struct disk_accounting_pos acc_k;
 			bpos_to_disk_accounting_pos(&acc_k, k.k->p);
+
+			if (acc_k.type >= BCH_DISK_ACCOUNTING_TYPE_NR)
+				break;
+
 			if (!bch2_accounting_is_mem(acc_k)) {
 				struct disk_accounting_pos next = { .type = acc_k.type + 1 };
 				bch2_btree_iter_set_pos(&iter, disk_accounting_pos_to_bpos(&next));
@@ -754,7 +758,9 @@ int bch2_accounting_read(struct bch_fs *c)
 		if (i->k->k.type == KEY_TYPE_accounting) {
 			struct disk_accounting_pos acc_k;
 			bpos_to_disk_accounting_pos(&acc_k, i->k->k.p);
-			if (!bch2_accounting_is_mem(acc_k))
+
+			if (!bch2_accounting_is_mem(acc_k) ||
+			    acc_k.type >= BCH_DISK_ACCOUNTING_TYPE_NR)
 				continue;
 
 			struct bkey_s_c k = bkey_i_to_s_c(i->k);
