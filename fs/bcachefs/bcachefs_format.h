@@ -1587,7 +1587,7 @@ LE64_BITMASK(BTREE_NODE_NEW_EXTENT_OVERWRITE,
 				struct btree_node, flags,  8,  9);
 LE64_BITMASK(BTREE_NODE_ID_HI,	struct btree_node, flags,  9, 25);
 /* 25-32 unused */
-LE64_BITMASK(BTREE_NODE_SEQ,	struct btree_node, flags, 32, 64);
+LE64_BITMASK(BTREE_NODE_SEQ,	struct btree_node, flags, 32, 56);
 
 static inline __u64 BTREE_NODE_ID(struct btree_node *n)
 {

@@ -466,6 +466,7 @@ static struct btree *bch2_btree_node_alloc_replacement(struct btree_update *as,
 		format = b->format;
 
 	SET_BTREE_NODE_SEQ(n->data, BTREE_NODE_SEQ(b->data) + 1);
+	bkey_i_to_btree_ptr_v2(&n->key)->v.counter = BTREE_NODE_SEQ(n->data);
 
 	btree_set_min(n, b->data->min_key);
 	btree_set_max(n, b->data->max_key);
@@ -1568,6 +1569,7 @@ static void __btree_split_node(struct btree_update *as,
 		out[i] = bsets[i]->start;
 
 		SET_BTREE_NODE_SEQ(n[i]->data, BTREE_NODE_SEQ(b->data) + 1);
+		bkey_i_to_btree_ptr_v2(&n[i]->key)->v.counter = BTREE_NODE_SEQ(n[i]->data);
 		bch2_bkey_format_init(&format[i]);
 	}
 
@@ -2219,6 +2221,7 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	SET_BTREE_NODE_SEQ(n->data,
 			   max(BTREE_NODE_SEQ(b->data),
 			       BTREE_NODE_SEQ(m->data)) + 1);
+	bkey_i_to_btree_ptr_v2(&n->key)->v.counter = BTREE_NODE_SEQ(n->data);
 
 	btree_set_min(n, prev->data->min_key);
 	btree_set_max(n, next->data->max_key);

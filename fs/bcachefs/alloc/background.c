@@ -894,6 +894,13 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 			    bch2_journal_noflush_seq(&c->journal,
 						     new_a->journal_seq_nonempty,
 						     transaction_seq)) {
+				trace_printk("reusing bucket %llu gen %u, was live %llu-%llu, flushed_seq_ondisk %llu seq_ondisk %llu\n",
+					     old.k->p.offset,
+					     old_a->gen,
+					     new_a->journal_seq_nonempty,
+					     transaction_seq,
+					     c->journal.flushed_seq_ondisk,
+					     c->journal.seq_ondisk);
 				new_a->journal_seq_nonempty = new_a->journal_seq_empty = 0;
 			} else {
 				new_a->journal_seq_empty = transaction_seq;
