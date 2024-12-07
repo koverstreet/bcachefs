@@ -708,7 +708,8 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 		prt_str(&buf, "-");
 		bch2_bpos_to_text(&buf, b->data->max_key);
 
-		btree_err_on(b->data->keys.seq != bp->seq,
+		btree_err_on(b->data->keys.seq != bp->seq ||
+			     BTREE_NODE_SEQ(b->data) != bp->counter,
 			     -BCH_ERR_btree_node_read_err_must_retry,
 			     c, ca, b, NULL, NULL,
 			     btree_node_bad_seq,
