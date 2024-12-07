@@ -256,6 +256,8 @@ struct bch_btree_ptr_v2 {
 	__le16			sectors_written;
 	__le16			flags;
 	struct bpos		min_key;
+	__le32			counter;
+	__le32			pad;
 	__u64			_data[0];
 	struct bch_extent_ptr	start[];
 } __packed __aligned(8);
