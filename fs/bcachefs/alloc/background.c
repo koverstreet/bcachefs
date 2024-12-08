@@ -866,6 +866,11 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 		int is_empty_delta = (int) data_type_is_empty(new_a->data_type) -
 				     (int) data_type_is_empty(old_a->data_type);
 
+		EBUG_ON(is_empty_delta < 0 &&
+			new_a->data_type != BCH_DATA_sb &&
+			new_a->data_type != BCH_DATA_journal &&
+			!bch2_bucket_is_open_safe(c, new.k->p.inode, new.k->p.offset));
+
 		/*
 		 * Record journal sequence number of empty -> nonempty transition:
 		 * Note that there may be multiple empty -> nonempty
