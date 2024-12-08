@@ -1338,6 +1338,11 @@ int bch2_trigger_alloc(struct btree_trans *trans, struct btree_trigger_op op)
 			*gen = new_a->gen;
 		}
 
+		EBUG_ON(statechange_to(!data_type_is_empty(a->data_type)) &&
+			new_a->data_type != BCH_DATA_sb &&
+			new_a->data_type != BCH_DATA_journal &&
+			!bch2_bucket_is_open_safe(c, new.k->p.inode, new.k->p.offset));
+
 		if (statechange_to(a->data_type == BCH_DATA_free)) {
 			/*
 			 * Transitioning to free: should not have NEED_DISCARD set.
