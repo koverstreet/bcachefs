@@ -273,6 +273,8 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 	bch_verbose(c, "flushing journal and stopping allocators, journal seq %llu",
 		    journal_cur_seq(&c->journal));
 
+	unsigned long start_time = jiffies;
+
 	do {
 		clean_passes++;
 
@@ -300,6 +302,12 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 	bch_info(c, "%sclean shutdown complete, journal seq %llu",
 		 test_bit(BCH_FS_clean_shutdown, &c->flags) ? "" : "un",
 		 c->journal.seq_ondisk);
+
+	unsigned long end_time = jiffies;
+	unsigned time = (end_time - start_time) / HZ;
+	pr_info("ro took %u secs", time);
+	BUG_ON(time > 10);
+
 
 	/*
 	 * After stopping journal:
