@@ -473,6 +473,7 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 
 		try(bch2_trans_update(trans, &b_iter, ck->k,
 				      BTREE_UPDATE_internal_snapshot_node|
+				      BTREE_UPDATE_no_snapshot_whiteouts|
 				      BTREE_UPDATE_key_cache_reclaim|
 				      BTREE_TRIGGER_norun));
 		try(bch2_trans_commit(trans, NULL, NULL,
