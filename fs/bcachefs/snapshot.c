@@ -1403,7 +1403,8 @@ static int delete_dead_snapshots_process_key(struct btree_trans *trans,
 {
 	if (snapshot_list_has_id(delete_leaves, k.k->p.snapshot))
 		return bch2_btree_delete_at(trans, iter,
-					    BTREE_UPDATE_internal_snapshot_node);
+					    BTREE_UPDATE_internal_snapshot_node|
+					    BTREE_UPDATE_no_snapshot_whiteouts);
 
 	u32 live_child = interior_delete_has_id(delete_interior, k.k->p.snapshot);
 	if (live_child) {
@@ -1428,7 +1429,8 @@ static int delete_dead_snapshots_process_key(struct btree_trans *trans,
 					     BTREE_UPDATE_internal_snapshot_node)
 			 : 0) ?:
 			bch2_btree_delete_at(trans, iter,
-					     BTREE_UPDATE_internal_snapshot_node);
+					     BTREE_UPDATE_internal_snapshot_node|
+					     BTREE_UPDATE_no_snapshot_whiteouts);
 		bch2_trans_iter_exit(trans, &dst_iter);
 		return ret;
 	}

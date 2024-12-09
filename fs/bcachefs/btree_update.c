@@ -523,7 +523,7 @@ int __must_check bch2_trans_update(struct btree_trans *trans, struct btree_iter 
 		return bch2_trans_update_extent(trans, iter, k, flags);
 
 	if (bkey_deleted(&k->k) &&
-	    !(flags & BTREE_UPDATE_key_cache_reclaim) &&
+	    !(flags & BTREE_UPDATE_no_snapshot_whiteouts) &&
 	    (iter->flags & BTREE_ITER_filter_snapshots)) {
 		ret = need_whiteout_for_snapshot(trans, iter->btree_id, k->k.p);
 		if (unlikely(ret < 0))

@@ -240,6 +240,7 @@ struct btree_node_iter {
 
 #define BTREE_UPDATE_FLAGS()			\
 	x(internal_snapshot_node)		\
+	x(no_snapshot_whiteouts)		\
 	x(nojournal)				\
 	x(key_cache_reclaim)
 
