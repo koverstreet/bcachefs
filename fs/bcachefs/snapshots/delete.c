@@ -374,12 +374,14 @@ static int delete_dead_snapshots_process_key(struct btree_trans *trans,
 
 			new->k.p = dst;
 			try(bch2_trans_update(trans, &dst_iter, new,
-					      BTREE_UPDATE_internal_snapshot_node));
+					      BTREE_UPDATE_internal_snapshot_node|
+					      BTREE_UPDATE_no_snapshot_whiteouts));
 		}
 	}
 
 	try(bch2_btree_delete_at(trans, iter,
-				 BTREE_UPDATE_internal_snapshot_node));
+				 BTREE_UPDATE_internal_snapshot_node|
+				 BTREE_UPDATE_no_snapshot_whiteouts));
 	return 0;
 }
 
