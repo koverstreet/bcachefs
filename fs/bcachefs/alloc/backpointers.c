@@ -83,6 +83,16 @@ void bch2_backpointer_swab(const struct bch_fs *c, struct bkey_s k)
 	bch2_bpos_swab(&bp.v->pos);
 }
 
+static inline bool bp_eq(struct bch_backpointer bp1, struct bch_backpointer bp2)
+{
+	return  bp1.btree_id	== bp2.btree_id &&
+		bp1.level	== bp2.level &&
+		bp1.data_type	== bp2.data_type &&
+		bp1.bucket_gen	== bp2.bucket_gen &&
+		bp1.bucket_len	== bp2.bucket_len &&
+		bpos_eq(bp1.pos, bp2.pos);
+}
+
 static bool extent_matches_bp(struct bch_fs *c,
 			      enum btree_id btree_id, unsigned level,
 			      struct bkey_s_c k,
@@ -96,8 +106,7 @@ static bool extent_matches_bp(struct bch_fs *c,
 		struct bkey_i_backpointer bp2;
 		bch2_extent_ptr_to_bp(c, btree_id, level, k, p, entry, &bp2);
 
-		if (bpos_eq(bp.k->p, bp2.k.p) &&
-		    !memcmp(bp.v, &bp2.v, sizeof(bp2.v)))
+		if (bpos_eq(bp.k->p, bp2.k.p) && bp_eq(*bp.v, bp2.v))
 			return true;
 	}
 
@@ -164,8 +173,9 @@ int bch2_bucket_backpointer_mod_nowritebuffer(struct btree_trans *trans,
 	if (insert
 	    ? k.k->type
 	    : (k.k->type != KEY_TYPE_backpointer ||
-	       memcmp(bkey_s_c_to_backpointer(k).v, &bp->v, sizeof(bp->v))))
+	       !bp_eq(*bkey_s_c_to_backpointer(k).v, bp->v))) {
 		try(backpointer_mod_err(trans, orig_k, bp, k, insert));
+	}
 
 	if (!insert) {
 		bp->k.type = KEY_TYPE_deleted;
@@ -626,7 +636,7 @@ static int check_bp_exists(struct btree_trans *trans,
 	if (bp_found.k->type != KEY_TYPE_backpointer) {
 		try(bch2_btree_write_buffer_maybe_flush(trans, extent, &s->last_flushed));
 		try(bp_missing(trans, extent, bp, bp_found));
-	} else if (memcmp(bkey_s_c_to_backpointer(bp_found).v, &bp->v, sizeof(bp->v))) {
+	} else if (!bp_eq(*bkey_s_c_to_backpointer(bp_found).v, bp->v)) {
 		try(bch2_btree_write_buffer_maybe_flush(trans, extent, &s->last_flushed));
 		try(check_bp_dup(trans, s, extent, bp, bkey_s_c_to_backpointer(bp_found)));
 	}
