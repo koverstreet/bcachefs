@@ -331,7 +331,9 @@ static int downgrade_table_extra(struct bch_fs *c, darray_char *table)
 			unsigned b = BCH_RECOVERY_PASS_STABLE_check_allocations;
 			dst->recovery_passes[b / 64] |= cpu_to_le64(BIT_ULL(b % 64));
 
-			dst->errors[nr_errors++] = cpu_to_le16(BCH_FSCK_ERR_alloc_key_dirty_sectors_wrong);
+			nr_errors++;
+			dst->nr_errors = cpu_to_le16(nr_errors);
+			dst->errors[nr_errors] = cpu_to_le16(BCH_FSCK_ERR_alloc_key_dirty_sectors_wrong);
 		}
 		break;
 	}
