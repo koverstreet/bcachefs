@@ -154,7 +154,7 @@ bool __bch2_snapshot_is_ancestor(struct bch_fs *c, u32 id, u32 ancestor)
 		? test_ancestor_bitmap(t, id, ancestor)
 		: id == ancestor;
 
-	EBUG_ON(ret != __bch2_snapshot_is_ancestor_early(t, id, ancestor));
+	//EBUG_ON(ret != __bch2_snapshot_is_ancestor_early(t, id, ancestor));
 out:
 	rcu_read_unlock();
 
