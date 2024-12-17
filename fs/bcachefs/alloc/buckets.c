@@ -677,7 +677,7 @@ static int bch2_trigger_pointer(struct btree_trans *trans,
 	CLASS(bch2_dev_tryget, ca)(c, p.ptr.dev);
 	if (unlikely(!ca)) {
 		if (insert && p.ptr.dev != BCH_SB_MEMBER_INVALID)
-			return bch_err_throw(c, trigger_pointer);
+			return bch_err_throw(c, trigger_pointer_to_missing_dev);
 		return 0;
 	}
 

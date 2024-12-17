@@ -318,6 +318,7 @@
 	x(EIO,				bucket_ref_update)			\
 	x(EIO,				trigger_alloc)				\
 	x(EIO,				trigger_pointer)			\
+	x(EIO,				trigger_pointer_to_missing_dev)		\
 	x(EIO,				trigger_stripe_pointer)			\
 	x(EIO,				metadata_bucket_inconsistency)		\
 	x(EIO,				mark_stripe)				\
