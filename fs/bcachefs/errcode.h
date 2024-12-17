@@ -267,6 +267,7 @@
 	x(EIO,				btree_need_topology_repair)		\
 	x(EIO,				bucket_ref_update)			\
 	x(EIO,				trigger_pointer)			\
+	x(EIO,				trigger_pointer_to_missing_dev)		\
 	x(EIO,				trigger_stripe_pointer)			\
 	x(EIO,				metadata_bucket_inconsistency)		\
 	x(EIO,				mark_stripe)				\
