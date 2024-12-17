@@ -37,7 +37,6 @@ static const char * const bch2_btree_update_modes[] = {
 
 static int bch2_btree_insert_node(struct btree_update *, struct btree_trans *,
 				  btree_path_idx_t, struct btree *, struct keylist *);
-static void bch2_btree_update_add_new_node(struct btree_update *, struct btree *);
 
 /*
  * Verify that child nodes correctly span parent node's range:
@@ -578,6 +577,9 @@ static void bch2_btree_update_free(struct btree_update *as, struct btree_trans *
 static void btree_update_add_key(struct btree_update *as,
 				 struct keylist *keys, struct btree *b)
 {
+	if (btree_node_fake(b))
+		return;
+
 	struct bkey_i *k = &b->key;
 
 	BUG_ON(bch2_keylist_u64s(keys) + k->k.u64s >
@@ -644,6 +646,40 @@ static int btree_update_nodes_written_trans(struct btree_trans *trans,
 	}
 
 	return 0;
+}
+
+static int btree_update_run_gc_triggers(struct btree_update *as,
+					struct btree_trans *trans)
+{
+	struct bch_fs *c = trans->c;
+	int ret = 0;
+
+	for_each_keylist_key(&as->old_keys, k) {
+		unsigned level = bkey_i_to_btree_ptr_v2(k)->v.mem_ptr;
+
+		BUG_ON(!level);
+		if (gc_visited(c, gc_pos_btree(as->btree_id, level, k->k.p))) {
+			ret = bch2_key_trigger_old(trans, as->btree_id, level, bkey_i_to_s_c(k),
+						   BTREE_TRIGGER_gc);
+			if (ret)
+				goto err;
+		}
+	}
+
+	for_each_keylist_key(&as->new_keys, k) {
+		unsigned level = bkey_i_to_btree_ptr_v2(k)->v.mem_ptr;
+
+		BUG_ON(!level);
+		if (gc_visited(c, gc_pos_btree(as->btree_id, level, k->k.p))) {
+			ret = bch2_key_trigger_new(trans, as->btree_id, level, bkey_i_to_s(k),
+						   BTREE_TRIGGER_gc);
+			if (ret)
+				goto err;
+		}
+	}
+err:
+	bch2_fs_fatal_err_on(ret && !bch2_journal_error(&c->journal), c, "%s", bch2_err_str(ret));
+	return ret;
 }
 
 /* If the node has been reused, we might be reading uninitialized memory - that's fine: */
@@ -1087,8 +1123,6 @@ static void bch2_btree_interior_update_will_free_node(struct btree_update *as,
 	 */
 	btree_update_drop_new_node(c, b);
 
-	btree_update_add_key(as, &as->old_keys, b);
-
 	as->old_nodes[as->nr_old_nodes] = b;
 	as->old_nodes_seq[as->nr_old_nodes] = b->data->keys.seq;
 	as->nr_old_nodes++;
@@ -1296,6 +1330,10 @@ static int bch2_btree_set_root(struct btree_update *as,
 			       struct btree_path *path,
 			       struct btree *b)
 {
+	int ret = btree_update_run_gc_triggers(as, trans);
+	if (ret)
+		return ret;
+
 	struct bch_fs *c = as->c;
 
 	trace_and_count(c, btree_node_set_root, trans, b);
@@ -1577,6 +1615,8 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 	if (ret)
 		return ret;
 
+	btree_update_add_key(as, &as->old_keys, b);
+
 	if (b->nr.live_u64s > BTREE_SPLIT_THRESHOLD(c)) {
 		struct btree *n[2];
 
@@ -1767,7 +1807,11 @@ static int bch2_btree_insert_node(struct btree_update *as, struct btree_trans *t
 
 	ret = bch2_btree_node_check_topology(trans, b);
 	if (ret)
-		goto out_unlock;
+		goto out;
+
+	ret = btree_update_run_gc_triggers(as, trans);
+	if (ret)
+		goto out;
 
 	bch2_btree_insert_keys_interior(as, trans, path, b,
 					path->l[b->c.level].iter, keys);
@@ -1800,11 +1844,11 @@ split:
 	if (b->c.level >= as->update_level_end) {
 		trace_and_count(c, trans_restart_split_race, trans, _THIS_IP_, b);
 		ret = btree_trans_restart(trans, BCH_ERR_transaction_restart_split_race);
-		goto out_unlock;
+		goto out;
 	}
 
 	ret = btree_split(as, trans, path_idx, b, keys);
-out_unlock:
+out:
 	bch2_trans_verify_locks(trans);
 	return ret;
 }
@@ -2073,6 +2117,9 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 
 	bch2_trans_verify_paths(trans);
 
+	btree_update_add_key(as, &as->old_keys, b);
+	btree_update_add_key(as, &as->old_keys, m);
+
 	ret = bch2_btree_insert_node(as, trans, path, parent, &as->parent_keys);
 	if (ret)
 		goto err_free_new_node;
@@ -2162,6 +2209,8 @@ int bch2_btree_node_rewrite(struct btree_trans *trans,
 	int ret = PTR_ERR_OR_ZERO(as);
 	if (ret)
 		goto out;
+
+	btree_update_add_key(as, &as->old_keys, b);
 
 	ret = bch2_btree_node_lock_write(trans, path, &b->c);
 	if (ret)
