@@ -25,7 +25,7 @@
  * everything to the kernel log buffer, and then those pretty-printers can be
  * used by other code that outputs to kernel log, sysfs, debugfs, etc.
  *
- * Memory allocation: Outputing to a printbuf may allocate memory. This
+ * Memory allocation: Outputting to a printbuf may allocate memory. This
  * allocation is done with GFP_KERNEL, by default: use the newer
  * memalloc_*_(save|restore) functions as needed.
  *
@@ -56,7 +56,7 @@
  * next tabstop - right justifying it.
  *
  * Make sure you use prt_newline() instead of \n in the format string for indent
- * level and tabstops to work corretly.
+ * level and tabstops to work correctly.
  *
  * Output units: printbuf->units exists to tell pretty-printers how to output
  * numbers: a raw value (e.g. directly from a superblock field), as bytes, or as
