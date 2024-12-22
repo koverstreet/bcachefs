@@ -116,7 +116,7 @@ struct btree_update {
 	struct keylist			parent_keys;
 	/*
 	 * Enough room for btree_split's keys without realloc - btree node
-	 * pointers never have crc/compression info, so we only need to acount
+	 * pointers never have crc/compression info, so we only need to account
 	 * for the pointers for three keys
 	 */
 	u64				inline_keys[BKEY_BTREE_PTR_U64s_MAX * 3];

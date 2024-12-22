@@ -45,7 +45,7 @@
  * 4 in memory - we lazily resort as needed.
  *
  * We implement code here for creating and maintaining auxiliary search trees
- * (described below) for searching an individial bset, and on top of that we
+ * (described below) for searching an individual bset, and on top of that we
  * implement a btree iterator.
  *
  * BTREE ITERATOR:
@@ -178,7 +178,7 @@ static inline enum bset_aux_tree_type bset_aux_tree_type(const struct bset_tree 
  * it used to be 64, but I realized the lookup code would touch slightly less
  * memory if it was 128.
  *
- * It definites the number of bytes (in struct bset) per struct bkey_float in
+ * It defines the number of bytes (in struct bset) per struct bkey_float in
  * the auxiliar search tree - when we're done searching the bset_float tree we
  * have this many bytes left that we do a linear search over.
  *
