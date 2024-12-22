@@ -396,7 +396,7 @@ again:
 					 POS(ca->dev_idx, U64_MAX),
 					 0, k, ret) {
 		/*
-		 * peek normally dosen't trim extents - they can span iter.pos,
+		 * peek normally doesn't trim extents - they can span iter.pos,
 		 * which is not what we want here:
 		 */
 		iter.k.size = iter.k.p.offset - iter.pos.offset;
@@ -1465,7 +1465,7 @@ void bch2_fs_allocator_foreground_init(struct bch_fs *c)
 	mutex_init(&c->write_points_hash_lock);
 	c->write_points_nr = ARRAY_SIZE(c->write_points);
 
-	/* open bucket 0 is a sentinal NULL: */
+	/* open bucket 0 is a sentinel NULL: */
 	spin_lock_init(&c->open_buckets[0].lock);
 
 	for (ob = c->open_buckets + 1;
