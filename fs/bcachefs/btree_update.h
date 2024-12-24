@@ -28,7 +28,8 @@ void bch2_btree_insert_key_leaf(struct btree_trans *, struct btree_path *,
 			"pin journal entry referred to by trans->journal_res.seq")	\
 	x(journal_reclaim, "operation required for journal reclaim; may return error"	\
 			"instead of deadlocking if BCH_WATERMARK_reclaim not specified")\
-	x(skip_accounting_apply, "we're in journal replay - accounting updates have already been applied")
+	x(skip_accounting_apply, "we're in journal replay - accounting updates have already been applied")\
+	x(check_allocations_lock_held, "check_allocations_lock_held")
 
 enum __bch_trans_commit_flags {
 	/* First bits for bch_watermark: */
