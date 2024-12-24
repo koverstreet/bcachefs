@@ -36,12 +36,6 @@ typedef GENRADIX(struct reflink_gc) reflink_gc_table;
 struct bch_fs_gc {
 	seqcount_t		pos_lock;
 	struct gc_pos		pos;
-
-	/*
-	 * The allocation code needs gc_mark in struct bucket to be correct, but
-	 * it's not while a gc is in progress.
-	 */
-	struct rw_semaphore	lock;
 };
 
 struct bch_fs_gc_gens {
