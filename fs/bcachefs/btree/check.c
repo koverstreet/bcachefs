@@ -972,7 +972,9 @@ static int bch2_gc_alloc_done(struct bch_fs *c)
 					POS(ca->dev_idx, ca->mi.first_bucket),
 					POS(ca->dev_idx, ca->mi.nbuckets - 1),
 					BTREE_ITER_slots|BTREE_ITER_prefetch, k,
-					NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+					NULL, NULL,
+					BCH_TRANS_COMMIT_no_enospc|
+					BCH_TRANS_COMMIT_check_allocations_lock_held,
 				bch2_alloc_write_key(trans, &iter, ca, k)));
 
 	return 0;
@@ -1039,7 +1041,9 @@ static int bch2_gc_stripes_done(struct bch_fs *c)
 	return for_each_btree_key_commit(trans, iter,
 				BTREE_ID_stripes, POS_MIN,
 				BTREE_ITER_prefetch, k,
-				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+				NULL, NULL,
+				BCH_TRANS_COMMIT_no_enospc|
+				BCH_TRANS_COMMIT_check_allocations_lock_held,
 			bch2_gc_write_stripes_key(trans, &iter, k));
 }
 
@@ -1091,10 +1095,14 @@ int bch2_check_allocations(struct bch_fs *c)
 
 	c->gc_count++;
 
+	percpu_down_write(&c->check_allocations_done_lock);
+	bch2_btree_interior_updates_flush(c);
+
 	ret   = bch2_gc_alloc_done(c) ?:
 		bch2_gc_accounting_done(c) ?:
 		bch2_gc_stripes_done(c) ?:
 		bch2_gc_reflink_done(c);
+	percpu_up_write(&c->check_allocations_done_lock);
 out:
 	scoped_guard(percpu_write, &c->mark_lock) {
 		/* Indicates that gc is no longer in progress: */
@@ -1312,10 +1320,24 @@ int bch2_merge_btree_nodes(struct bch_fs *c)
 	return 0;
 }
 
+void bch2_fs_btree_gc_exit(struct bch_fs *c)
+{
+	percpu_free_rwsem(&c->check_allocations_done_lock);
+}
+
 void bch2_fs_btree_gc_init_early(struct bch_fs *c)
 {
 	seqcount_init(&c->gc_pos_lock);
 	INIT_WORK(&c->gc_gens_work, bch2_gc_gens_work);
 
+	int ret = percpu_init_rwsem(&c->check_allocations_done_lock);
+	if (ret)
+		return ret;
+
 	mutex_init(&c->gc_gens_lock);
+}
+
+int bch2_fs_btree_gc_init(struct bch_fs *c)
+{
+	return percpu_init_rwsem(&c->check_allocations_done_lock);
 }

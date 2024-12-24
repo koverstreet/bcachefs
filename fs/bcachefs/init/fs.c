@@ -1174,6 +1174,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	try(bch2_fs_async_obj_init(c));
 	try(bch2_blacklist_table_initialize(c));
 	try(bch2_fs_btree_cache_init(c));
+	try(bch2_fs_btree_gc_init(c));
 	try(bch2_fs_btree_iter_init(c));
 	try(bch2_fs_btree_key_cache_init(&c->btree_key_cache));
 	try(bch2_fs_buckets_waiting_for_journal_init(c));

@@ -136,7 +136,8 @@ static void btree_node_write_work(struct work_struct *work)
 		BCH_WATERMARK_interior_updates|
 		BCH_TRANS_COMMIT_journal_reclaim|
 		BCH_TRANS_COMMIT_no_enospc|
-		BCH_TRANS_COMMIT_no_check_rw;
+		BCH_TRANS_COMMIT_no_check_rw|
+		BCH_TRANS_COMMIT_check_allocations_lock_held;
 	u64 start_time		= wbio->start_time;
 	int ret = 0;
 

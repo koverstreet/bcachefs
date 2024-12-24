@@ -872,7 +872,8 @@ static void btree_update_nodes_written(struct btree_update *as)
 				BCH_WATERMARK_interior_updates|
 				BCH_TRANS_COMMIT_no_enospc|
 				BCH_TRANS_COMMIT_no_check_rw|
-				BCH_TRANS_COMMIT_journal_reclaim,
+				BCH_TRANS_COMMIT_journal_reclaim|
+				BCH_TRANS_COMMIT_check_allocations_lock_held,
 				btree_update_nodes_written_trans(trans, as));
 		bch2_fs_fatal_err_on(ret && !bch2_journal_error(&c->journal),
 				     c, "%s", bch2_err_str(ret));
@@ -2303,15 +2304,23 @@ static int bch2_btree_node_rewrite(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct btree *parent;
 	btree_path_idx_t new_path = 0;
+	int ret = 0;
 
 	commit_flags |= BCH_TRANS_COMMIT_no_enospc;
+
+	if (unlikely(!percpu_down_read_trylock(&c->check_allocations_done_lock))) {
+		ret = drop_locks_do(trans,
+				    (percpu_down_read(&c->check_allocations_done_lock), 0));
+		if (ret)
+			goto out;
+	}
 
 	struct btree_path *path = btree_iter_path(trans, iter);
 	parent = btree_node_parent(path, b);
 	struct btree_update *as =
 		bch2_btree_update_start(trans, path, b->c.level, false, target,
 					commit_flags, write_flags);
-	int ret = PTR_ERR_OR_ZERO(as);
+	ret = PTR_ERR_OR_ZERO(as);
 	if (ret)
 		goto out;
 
@@ -2357,6 +2366,7 @@ out:
 	if (new_path)
 		bch2_path_put(trans, new_path, true);
 	bch2_trans_downgrade(trans);
+	percpu_up_read(&c->check_allocations_done_lock);
 	return ret;
 err_free_node:
 	bch2_btree_node_free_never_used(as, trans, n);

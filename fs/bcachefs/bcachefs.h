@@ -1044,6 +1044,8 @@ struct bch_fs {
 	 */
 	seqcount_t		gc_pos_lock;
 	struct gc_pos		gc_pos;
+	struct percpu_rw_semaphore
+				check_allocations_done_lock;
 
 	struct mutex		gc_gens_lock;
 
