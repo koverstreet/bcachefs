@@ -647,7 +647,7 @@ static int __mark_pointer(struct btree_trans *trans, struct bch_dev *ca,
 			  const struct extent_ptr_decoded *p,
 			  s64 sectors, enum bch_data_type ptr_data_type,
 			  struct bch_alloc_v4 *a,
-			  bool insert)
+			  enum btree_iter_update_trigger_flags flags)
 {
 	u32 *dst_sectors = p->has_ec	? &a->stripe_sectors :
 		!p->ptr.cached		? &a->dirty_sectors :
@@ -657,7 +657,8 @@ static int __mark_pointer(struct btree_trans *trans, struct bch_dev *ca,
 
 	if (ret)
 		return ret;
-	if (insert)
+	if (!(flags & BTREE_TRIGGER_overwrite) ||
+	    (flags & BTREE_TRIGGER_gc))
 		alloc_data_type_set(a, ptr_data_type);
 	return 0;
 }
@@ -697,7 +698,7 @@ static int bch2_trigger_pointer(struct btree_trans *trans,
 	if (flags & BTREE_TRIGGER_transactional) {
 		struct bkey_i_alloc_v4 *a = bch2_trans_start_alloc_update(trans, bucket, 0);
 		return PTR_ERR_OR_ZERO(a) ?:
-			__mark_pointer(trans, ca, k, &p, *sectors, bp.v.data_type, &a->v, insert) ?:
+			__mark_pointer(trans, ca, k, &p, *sectors, bp.v.data_type, &a->v, flags) ?:
 			bch2_bucket_backpointer_mod(trans, k, &bp, insert);
 	}
 
@@ -711,7 +712,7 @@ static int bch2_trigger_pointer(struct btree_trans *trans,
 
 		bucket_lock(g);
 		struct bch_alloc_v4 old = bucket_m_to_alloc(*g), new = old;
-		int ret = __mark_pointer(trans, ca, k, &p, *sectors, bp.v.data_type, &new, insert);
+		int ret = __mark_pointer(trans, ca, k, &p, *sectors, bp.v.data_type, &new, flags);
 		alloc_to_bucket(g, new);
 		bucket_unlock(g);
 
