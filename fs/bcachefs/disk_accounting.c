@@ -570,7 +570,9 @@ int bch2_gc_accounting_done(struct bch_fs *c)
 
 			if (fsck_err(trans, accounting_mismatch, "%s", buf.buf)) {
 				percpu_up_write(&c->mark_lock);
-				ret = commit_do(trans, NULL, NULL, 0,
+				ret = commit_do(trans, NULL, NULL,
+						BCH_TRANS_COMMIT_no_enospc|
+						BCH_TRANS_COMMIT_check_allocations_lock_held,
 						bch2_disk_accounting_mod(trans, &acc_k, src_v, nr, false));
 				percpu_down_write(&c->mark_lock);
 				if (ret)
