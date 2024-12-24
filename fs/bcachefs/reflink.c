@@ -826,7 +826,9 @@ int bch2_gc_reflink_done(struct bch_fs *c)
 		for_each_btree_key_commit(trans, iter,
 				BTREE_ID_reflink, POS_MIN,
 				BTREE_ITER_prefetch, k,
-				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+				NULL, NULL,
+				BCH_TRANS_COMMIT_no_enospc|
+				BCH_TRANS_COMMIT_check_allocations_lock_held,
 			bch2_gc_write_reflink_key(trans, &iter, k, &idx)));
 	c->reflink_gc_nr = 0;
 	return ret;
