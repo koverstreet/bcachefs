@@ -570,10 +570,6 @@ static void bch2_btree_update_free(struct btree_update *as, struct btree_trans *
 
 	bch2_trans_unlock_write(trans);
 
-	if (as->took_gc_lock)
-		up_read(&c->gc_lock);
-	as->took_gc_lock = false;
-
 	bch2_journal_pin_drop(&c->journal, &as->journal);
 	bch2_journal_pin_flush(&c->journal, &as->journal);
 	bch2_disk_reservation_put(c, &as->disk_res);
@@ -1208,10 +1204,6 @@ static void bch2_btree_update_done(struct btree_update *as, struct btree_trans *
 
 	BUG_ON(as->mode == BTREE_UPDATE_none);
 
-	if (as->took_gc_lock)
-		up_read(&as->c->gc_lock);
-	as->took_gc_lock = false;
-
 	bch2_btree_reserve_put(as, trans);
 
 	continue_at(&as->cl, btree_update_set_nodes_written,
@@ -1293,14 +1285,6 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 		split = path->l[level_end].b->nr.live_u64s > BTREE_SPLIT_THRESHOLD(c);
 	}
 
-	if (!down_read_trylock(&c->gc_lock)) {
-		ret = drop_locks_do(trans, (down_read(&c->gc_lock), 0));
-		if (ret) {
-			up_read(&c->gc_lock);
-			return ERR_PTR(ret);
-		}
-	}
-
 	as = mempool_alloc(&c->btree_interior_update_pool, GFP_NOFS);
 	memset(as, 0, sizeof(*as));
 	closure_init(&as->cl, NULL);
@@ -1309,7 +1293,6 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 	as->ip_started		= _RET_IP_;
 	as->mode		= BTREE_UPDATE_none;
 	as->flags		= commit_flags;
-	as->took_gc_lock	= true;
 	as->btree_id		= path->btree_id;
 	as->update_level_start	= level_start;
 	as->update_level_end	= level_end;
@@ -1893,7 +1876,6 @@ static int bch2_btree_insert_node(struct btree_update *as, struct btree_trans *t
 	int live_u64s_added, u64s_added;
 	int ret;
 
-	lockdep_assert_held(&c->gc_lock);
 	BUG_ON(!b->c.level);
 	BUG_ON(!as || as->b);
 	bch2_verify_keylist_sorted(keys);

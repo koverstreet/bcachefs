@@ -65,7 +65,6 @@ struct btree_update {
 	enum btree_update_mode		mode;
 	enum bch_trans_commit_flags	flags;
 	unsigned			nodes_written:1;
-	unsigned			took_gc_lock:1;
 
 	enum btree_id			btree_id;
 	struct bpos			node_start;

@@ -1070,9 +1070,6 @@ int bch2_check_allocations(struct bch_fs *c)
 	int ret;
 
 	guard(rwsem_read)(&c->state_lock);
-	guard(rwsem_write)(&c->gc_lock);
-
-	bch2_btree_interior_updates_flush(c);
 
 	ret   = bch2_gc_accounting_start(c) ?:
 		bch2_gc_start(c) ?:
@@ -1104,12 +1101,6 @@ out:
 		__gc_pos_set(c, gc_phase(GC_PHASE_not_running));
 		bch2_gc_free(c);
 	}
-
-	/*
-	 * At startup, allocations can happen directly instead of via the
-	 * allocator thread - issue wakeup in case they blocked on gc_lock:
-	 */
-	closure_wake_up(&c->freelist_wait);
 
 	if (!ret && !test_bit(BCH_FS_errors_not_fixed, &c->flags))
 		bch2_sb_members_clean_deleted(c);
@@ -1326,6 +1317,5 @@ void bch2_fs_btree_gc_init_early(struct bch_fs *c)
 	seqcount_init(&c->gc_pos_lock);
 	INIT_WORK(&c->gc_gens_work, bch2_gc_gens_work);
 
-	init_rwsem(&c->gc_lock);
 	mutex_init(&c->gc_gens_lock);
 }
