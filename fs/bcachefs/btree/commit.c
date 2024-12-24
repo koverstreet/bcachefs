@@ -1297,6 +1297,9 @@ retry:
 		trans->extra_journal_u64s;
 
 	ret = do_bch2_trans_commit(trans, flags, &errored_at, _RET_IP_);
+unlock:
+	if (likely(!(flags & BCH_TRANS_COMMIT_check_allocations_lock_held)))
+		percpu_up_read(&c->check_allocations_done_lock);
 
 	/* make sure we didn't drop or screw up locks: */
 	bch2_trans_verify_locks(trans);

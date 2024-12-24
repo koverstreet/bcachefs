@@ -588,6 +588,8 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans,
 	bool accounting_replay_done = test_bit(BCH_FS_accounting_replay_done, &c->flags);
 	int ret = 0;
 
+	lockdep_assert_not_held(&c->check_allocations_done_lock);
+
 	try(bch2_journal_error(&c->journal));
 
 	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {

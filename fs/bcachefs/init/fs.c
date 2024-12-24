@@ -1298,6 +1298,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 #ifdef CONFIG_DEBUG_FS
 	try(bch2_fs_async_obj_init(c));
 #endif
+	try(bch2_fs_btree_gc_init(c));
 	try(bch2_fs_btree_init(c));
 	try(bch2_fs_compress_init(c));
 	try(bch2_fs_counters_init(c));

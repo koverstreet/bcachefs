@@ -34,8 +34,9 @@ struct reflink_gc {
 typedef GENRADIX(struct reflink_gc) reflink_gc_table;
 
 struct bch_fs_gc {
-	seqcount_t		pos_lock;
-	struct gc_pos		pos;
+	seqcount_t			pos_lock;
+	struct gc_pos			pos;
+	struct percpu_rw_semaphore	done_lock;
 };
 
 struct bch_fs_gc_gens {
