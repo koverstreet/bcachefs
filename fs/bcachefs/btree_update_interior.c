@@ -1669,6 +1669,8 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 
 	bch2_btree_interior_update_will_free_node(as, b);
 
+	bch2_trans_verify_locks(trans);
+
 	if (n3) {
 		bch2_btree_update_get_open_buckets(as, n3);
 		bch2_btree_node_write_trans(trans, n3, SIX_LOCK_write, 0);
@@ -1679,6 +1681,8 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 	}
 	bch2_btree_update_get_open_buckets(as, n1);
 	bch2_btree_node_write_trans(trans, n1, SIX_LOCK_write, 0);
+
+	bch2_trans_verify_locks(trans);
 
 	/*
 	 * The old node must be freed (in memory) _before_ unlocking the new
@@ -1693,7 +1697,6 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 	if (n2)
 		bch2_trans_node_add(trans, trans->paths + path2, n2);
 	bch2_trans_node_add(trans, trans->paths + path1, n1);
-
 out:
 	if (path2) {
 		__bch2_btree_path_unlock(trans, trans->paths + path2);
