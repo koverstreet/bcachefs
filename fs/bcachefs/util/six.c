@@ -13,6 +13,10 @@
 
 #include <trace/events/lock.h>
 
+#ifdef CONFIG_BCACHEFS_DEBUg
+#define DEBUG
+#endif
+
 #include "six.h"
 
 #ifdef DEBUG
