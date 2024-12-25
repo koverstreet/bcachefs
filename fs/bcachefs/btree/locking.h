@@ -13,6 +13,22 @@
 #include "btree/iter.h"
 #include "util/six.h"
 
+void __bch2_btree_path_verify_locks(struct btree_trans *, struct btree_path *);
+void __bch2_trans_verify_locks(struct btree_trans *);
+
+static inline void bch2_btree_path_verify_locks(struct btree_trans *trans,
+						struct btree_path *path)
+{
+	if (static_branch_unlikely(&bch2_debug_check_btree_locking))
+		__bch2_btree_path_verify_locks(trans, path);
+}
+
+static inline void bch2_trans_verify_locks(struct btree_trans *trans)
+{
+	if (static_branch_unlikely(&bch2_debug_check_btree_locking))
+		__bch2_trans_verify_locks(trans);
+}
+
 void bch2_btree_lock_init(struct btree_bkey_cached_common *, enum six_lock_init_flags, gfp_t gfp);
 
 void bch2_trans_unlock_write(struct btree_trans *);
@@ -191,6 +207,7 @@ bch2_btree_node_unlock_write_inlined(struct btree_trans *trans, struct btree_pat
 	EBUG_ON(path->l[b->c.level].b != b);
 	EBUG_ON(path->l[b->c.level].lock_seq != six_lock_seq(&b->c.lock));
 	EBUG_ON(btree_node_locked_type(path, b->c.level) != SIX_LOCK_write);
+	bch2_trans_verify_locks(trans);
 
 	mark_btree_node_locked_noreset(path, b->c.level, BTREE_NODE_INTENT_LOCKED);
 	__bch2_btree_node_unlock_write(trans, b);
@@ -455,21 +472,5 @@ struct six_lock_count bch2_btree_node_lock_counts(struct btree_trans *,
 				unsigned);
 
 int bch2_check_for_deadlock(struct btree_trans *, struct printbuf *);
-
-void __bch2_btree_path_verify_locks(struct btree_trans *, struct btree_path *);
-void __bch2_trans_verify_locks(struct btree_trans *);
-
-static inline void bch2_btree_path_verify_locks(struct btree_trans *trans,
-						struct btree_path *path)
-{
-	if (static_branch_unlikely(&bch2_debug_check_btree_locking))
-		__bch2_btree_path_verify_locks(trans, path);
-}
-
-static inline void bch2_trans_verify_locks(struct btree_trans *trans)
-{
-	if (static_branch_unlikely(&bch2_debug_check_btree_locking))
-		__bch2_trans_verify_locks(trans);
-}
 
 #endif /* _BCACHEFS_BTREE_LOCKING_H */
