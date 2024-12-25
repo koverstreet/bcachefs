@@ -478,7 +478,7 @@ static struct rw_aux_tree *rw_aux_tree(const struct btree *b,
  * maintain a full search tree, we just keep a simple lookup table in t->prev.
  */
 static struct bkey_packed *rw_aux_to_bkey(const struct btree *b,
-					  struct bset_tree *t,
+					  const struct bset_tree *t,
 					  unsigned j)
 {
 	return __btree_node_offset_to_key(b, rw_aux_tree(b, t)[j].offset);
@@ -495,14 +495,10 @@ static void rw_aux_tree_set(const struct btree *b, struct bset_tree *t,
 	};
 }
 
-static void bch2_bset_verify_rw_aux_tree(struct btree *b,
-					struct bset_tree *t)
+static void bch2_bset_verify_rw_aux_tree(const struct btree *b, const struct bset_tree *t)
 {
 	struct bkey_packed *k = btree_bkey_first(b, t);
 	unsigned j = 0;
-
-	if (!bch2_expensive_debug_checks)
-		return;
 
 	BUG_ON(bset_has_ro_aux_tree(t));
 
@@ -823,8 +819,12 @@ static struct bkey_packed *__bkey_prev(struct btree *b, struct bset_tree *t,
 	unsigned offset;
 	int j;
 
-	EBUG_ON(k < btree_bkey_first(b, t) ||
-		k > btree_bkey_last(b, t));
+	if (k < btree_bkey_first(b, t) ||
+	    k > btree_bkey_last(b, t)) {
+		bch2_bset_verify_rw_aux_tree(b, t);
+		panic("k %px first %px last %px\n",
+		      k, btree_bkey_first(b, t), btree_bkey_last(b, t));
+	}
 
 	if (k == btree_bkey_first(b, t))
 		return NULL;
@@ -851,6 +851,7 @@ static struct bkey_packed *__bkey_prev(struct btree *b, struct bset_tree *t,
 		break;
 	}
 
+	BUG_ON(p >= k);
 	return p;
 }
 
@@ -869,16 +870,15 @@ struct bkey_packed *bch2_bkey_prev_filter(struct btree *b,
 		k = p;
 	}
 
-	if (bch2_expensive_debug_checks) {
-		BUG_ON(ret >= orig_k);
+	EBUG_ON(ret >= orig_k);
 
+	if (bch2_expensive_debug_checks)
 		for (i = ret
 			? bkey_p_next(ret)
 			: btree_bkey_first(b, t);
 		     i != orig_k;
 		     i = bkey_p_next(i))
 			BUG_ON(i->type >= min_key_type);
-	}
 
 	return ret;
 }
@@ -1043,6 +1043,8 @@ static struct bkey_packed *bset_search_write_set(const struct btree *b,
 				struct bset_tree *t,
 				struct bpos *search)
 {
+	bch2_bset_verify_rw_aux_tree(b, t);
+
 	unsigned l = 0, r = t->size;
 
 	while (l + 1 != r) {
@@ -1054,7 +1056,16 @@ static struct bkey_packed *bset_search_write_set(const struct btree *b,
 			r = m;
 	}
 
-	return rw_aux_to_bkey(b, t, l);
+	struct bkey_packed *k = rw_aux_to_bkey(b, t, l);
+
+	if (k < btree_bkey_first(b, t) ||
+	    k > btree_bkey_last(b, t)) {
+		bch2_bset_verify_rw_aux_tree(b, t);
+		panic("k %px first %px last %px l %u\n",
+		      k, btree_bkey_first(b, t), btree_bkey_last(b, t), l);
+	}
+
+	return k;
 }
 
 static inline void prefetch_four_cachelines(void *p)
@@ -1184,24 +1195,62 @@ struct bkey_packed *bch2_bset_search_linear(struct btree *b,
 				const struct bkey_packed *lossy_packed_search,
 				struct bkey_packed *m)
 {
+	struct bkey_packed *prev = bch2_bkey_prev_all(b, t, m);
+	if (prev && bkey_iter_cmp_p_or_unp(b, prev, packed_search, search) >= 0) {
+		struct printbuf buf = PRINTBUF;
+
+		prt_printf(&buf, "\nlookup error:");
+		prt_printf(&buf, "\ntree type: %u\n", bset_aux_tree_type(t));
+		bch2_bkey_format_to_text(&buf, &b->format);
+
+		if (1) {
+			prt_str(&buf, "\nprev:    ");
+			struct bkey u = bkey_unpack_key(b, prev);
+			bch2_bkey_to_text(&buf, &u);
+		}
+
+		if (m != btree_bkey_last(b, t)) {
+			prt_str(&buf, "\npos:     ");
+			struct bkey u = bkey_unpack_key(b, m);
+			bch2_bkey_to_text(&buf, &u);
+		}
+
+		if (lossy_packed_search) {
+			prt_str(&buf, "\nlossy:   ");
+			struct bkey u = bkey_unpack_key(b, lossy_packed_search);
+			bch2_bkey_to_text(&buf, &u);
+		}
+
+		if (packed_search) {
+			prt_str(&buf, "\npacked:  ");
+			struct bkey u = bkey_unpack_key(b, packed_search);
+			bch2_bkey_to_text(&buf, &u);
+		}
+
+		if (1) {
+			prt_str(&buf, "\nsearch:  ");
+			bch2_bpos_to_text(&buf, *search);
+		}
+
+		panic("%s", buf.buf);
+	}
+
 	if (lossy_packed_search)
 		while (m != btree_bkey_last(b, t) &&
 		       bkey_iter_cmp_p_or_unp(b, m,
 					lossy_packed_search, search) < 0)
 			m = bkey_p_next(m);
 
+	prev = bch2_bkey_prev_all(b, t, m);
+	BUG_ON(prev && bkey_iter_cmp_p_or_unp(b, prev, packed_search, search) >= 0);
+
 	if (!packed_search)
 		while (m != btree_bkey_last(b, t) &&
 		       bkey_iter_pos_cmp(b, m, search) < 0)
 			m = bkey_p_next(m);
 
-	if (bch2_expensive_debug_checks) {
-		struct bkey_packed *prev = bch2_bkey_prev_all(b, t, m);
-
-		BUG_ON(prev &&
-		       bkey_iter_cmp_p_or_unp(b, prev,
-					packed_search, search) >= 0);
-	}
+	prev = bch2_bkey_prev_all(b, t, m);
+	BUG_ON(prev && bkey_iter_cmp_p_or_unp(b, prev, packed_search, search) >= 0);
 
 	return m;
 }
