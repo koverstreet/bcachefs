@@ -276,7 +276,7 @@ extern void lock_unpin_lock(struct lockdep_map *lock, struct pin_cookie);
 #define lockdep_depth(tsk)	(debug_locks ? (tsk)->lockdep_depth : 0)
 
 #define lockdep_assert(cond)		\
-	do { WARN_ON(debug_locks && !(cond)); } while (0)
+	do { BUG_ON(debug_locks && !(cond)); } while (0)
 
 #define lockdep_assert_once(cond)	\
 	do { WARN_ON_ONCE(debug_locks && !(cond)); } while (0)

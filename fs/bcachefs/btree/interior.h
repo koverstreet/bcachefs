@@ -162,6 +162,37 @@ static inline int bch2_foreground_maybe_merge(struct btree_trans *trans,
 		__bch2_foreground_maybe_merge(trans, path_idx, level, flags, merge_count, btree_next_sib);
 }
 
+static inline int bch2_foreground_maybe_merge_unlocked(struct btree_trans *trans,
+					      btree_path_idx_t path,
+					      unsigned level,
+					      unsigned flags)
+{
+	bch2_trans_verify_not_unlocked_or_in_restart(trans);
+
+	struct bch_fs *c = trans->c;
+	struct btree_path *path = trans->paths + path_idx;
+	struct btree *b = path->l[level].b;
+
+	EBUG_ON(!btree_node_locked(path, level));
+
+	if (likely(!btree_node_needs_merge(trans, b, u64s_delta)))
+		return 0;
+
+	return  __bch2_foreground_maybe_merge(trans, path_idx, level, flags, btree_prev_sib) ?:
+		__bch2_foreground_maybe_merge(trans, path_idx, level, flags, btree_next_sib);
+	if (unlikely(!percpu_down_read_trylock(&c->check_allocations_done_lock))) {
+		ret = drop_locks_do(trans, (percpu_down_read(&c->check_allocations_done_lock), 0));
+		if (ret)
+			goto out;
+	}
+
+	ret =   __bch2_foreground_maybe_merge(trans, path_idx, level, flags, btree_prev_sib) ?:
+		__bch2_foreground_maybe_merge(trans, path_idx, level, flags, btree_next_sib);
+out:
+	percpu_up_read(&c->check_allocations_done_lock);
+	return ret;
+}
+
 int bch2_btree_node_get_iter(struct btree_trans *, struct btree_iter *, struct btree *);
 
 int bch2_btree_node_rewrite_key(struct btree_trans *,

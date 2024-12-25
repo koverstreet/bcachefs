@@ -213,7 +213,7 @@ static inline int wb_flush_one(struct btree_trans *trans, struct btree_iter *ite
 
 		lockrestart_do(trans,
 			bch2_btree_iter_traverse(iter) ?:
-			bch2_foreground_maybe_merge(trans, iter->path, 0,
+			bch2_foreground_maybe_merge_unlocked(trans, iter->path, 0,
 						    BCH_WATERMARK_reclaim|
 						    BCH_TRANS_COMMIT_journal_reclaim|
 						    BCH_TRANS_COMMIT_no_check_rw|
@@ -320,6 +320,8 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 	bool write_locked = false;
 	bool accounting_replay_done = test_bit(BCH_FS_accounting_replay_done, &c->flags);
 	int ret = 0;
+
+	lockdep_assert_not_held(&c->check_allocations_done_lock);
 
 	try(bch2_journal_error(&c->journal));
 

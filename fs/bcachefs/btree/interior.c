@@ -873,7 +873,8 @@ static void btree_update_nodes_written(struct btree_update *as)
 				BCH_TRANS_COMMIT_no_enospc|
 				BCH_TRANS_COMMIT_no_check_rw|
 				BCH_TRANS_COMMIT_journal_reclaim|
-				BCH_TRANS_COMMIT_check_allocations_lock_held,
+				BCH_TRANS_COMMIT_check_allocations_lock_held|
+				BCH_TRANS_COMMIT_interior_update_path,
 				btree_update_nodes_written_trans(trans, as));
 		bch2_fs_fatal_err_on(ret && !bch2_journal_error(&c->journal),
 				     c, "%s", bch2_err_str(ret));
@@ -1240,6 +1241,9 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 	u32 restart_count = trans->restart_count;
 
 	BUG_ON(!path->should_be_locked);
+
+	if (!(flags & BCH_TRANS_COMMIT_interior_update_path))
+		lockdep_assert_held(&c->check_allocations_done_lock);
 
 	if (watermark == BCH_WATERMARK_copygc)
 		watermark = BCH_WATERMARK_btree_copygc;
@@ -1952,17 +1956,25 @@ int bch2_btree_split_leaf(struct btree_trans *trans,
 			  btree_path_idx_t path,
 			  unsigned flags)
 {
-	/* btree_split & merge may both cause paths array to be reallocated */
-	struct btree *b = path_l(trans->paths + path)->b;
-	struct btree_update *as;
-	unsigned l;
+	struct bch_fs *c = trans->c;
 	int ret = 0;
 
-	as = bch2_btree_update_start(trans, trans->paths + path,
-				     trans->paths[path].level,
-				     true, 0, flags, 0);
-	if (IS_ERR(as))
-		return PTR_ERR(as);
+	if (likely(!(flags & BCH_TRANS_COMMIT_check_allocations_lock_held)) &&
+	    unlikely(!percpu_down_read_trylock(&c->check_allocations_done_lock))) {
+		ret = drop_locks_do(trans, (percpu_down_read(&c->check_allocations_done_lock), 0));
+		if (ret)
+			goto err_unlock;
+	}
+
+	/* btree_split & merge may both cause paths array to be reallocated */
+	struct btree *b = path_l(trans->paths + path)->b;
+
+	struct btree_update *as = bch2_btree_update_start(trans, trans->paths + path,
+					     trans->paths[path].level,
+					     true, 0, flags, 0);
+	ret = PTR_ERR_OR_ZERO(as);
+	if (ret)
+		goto err_unlock;
 
 	ret = bch2_btree_node_lock_write(trans, trans->paths + path, &b->c);
 	if (ret)
@@ -1974,15 +1986,18 @@ int bch2_btree_split_leaf(struct btree_trans *trans,
 
 	bch2_btree_update_done(as, trans);
 
-	for (l = trans->paths[path].level + 1;
+	for (unsigned l = trans->paths[path].level + 1;
 	     btree_node_intent_locked(&trans->paths[path], l) && !ret;
 	     l++)
 		ret = bch2_foreground_maybe_merge(trans, path, l, flags, 0, NULL);
 
+err_unlock:
+	if (likely(!(flags & BCH_TRANS_COMMIT_check_allocations_lock_held)))
+		percpu_up_read(&c->check_allocations_done_lock);
 	return ret;
 err:
 	bch2_btree_update_free(as, trans);
-	return ret;
+	goto err_unlock;
 }
 
 static int __btree_increase_depth(struct btree_update *as, struct btree_trans *trans,
@@ -2035,24 +2050,33 @@ int bch2_btree_increase_depth(struct btree_trans *trans, btree_path_idx_t path, 
 {
 	struct bch_fs *c = trans->c;
 	struct btree *b = bch2_btree_id_root(c, trans->paths[path].btree_id)->b;
+	int ret = 0;
 
 	if (btree_node_fake(b))
 		return bch2_btree_split_leaf(trans, path, flags);
+
+	if (unlikely(!percpu_down_read_trylock(&c->check_allocations_done_lock))) {
+		ret = drop_locks_do(trans, (percpu_down_read(&c->check_allocations_done_lock), 0));
+		if (ret)
+			goto err;
+	}
 
 	struct btree_update *as =
 		bch2_btree_update_start(trans, trans->paths + path, b->c.level,
 					true, 0, flags, 0);
 	if (IS_ERR(as))
-		return PTR_ERR(as);
+		goto err;
 
-	int ret = __btree_increase_depth(as, trans, path);
+	ret = __btree_increase_depth(as, trans, path);
 	if (ret) {
 		bch2_btree_update_free(as, trans);
-		return ret;
+		goto err;
 	}
 
 	bch2_btree_update_done(as, trans);
-	return 0;
+err:
+	percpu_up_read(&c->check_allocations_done_lock);
+	return ret;
 }
 
 int __bch2_foreground_maybe_merge(struct btree_trans *trans,
@@ -2309,8 +2333,7 @@ static int bch2_btree_node_rewrite(struct btree_trans *trans,
 	commit_flags |= BCH_TRANS_COMMIT_no_enospc;
 
 	if (unlikely(!percpu_down_read_trylock(&c->check_allocations_done_lock))) {
-		ret = drop_locks_do(trans,
-				    (percpu_down_read(&c->check_allocations_done_lock), 0));
+		ret = drop_locks_do(trans, (percpu_down_read(&c->check_allocations_done_lock), 0));
 		if (ret)
 			goto out;
 	}

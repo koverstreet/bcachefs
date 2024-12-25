@@ -1057,18 +1057,9 @@ int __bch2_trans_commit(struct btree_trans *trans, enum bch_trans_commit_flags f
 	if (!bch2_trans_has_updates(trans))
 		goto out_reset;
 
-	if (likely(!(flags & BCH_TRANS_COMMIT_check_allocations_lock_held))) {
-		if (unlikely(!percpu_down_read_trylock(&c->check_allocations_done_lock))) {
-			ret = drop_locks_do(trans,
-				(percpu_down_read(&c->check_allocations_done_lock), 0));
-			if (ret)
-				goto out_reset_unlock;
-		}
-	}
-
 	ret = bch2_trans_commit_run_triggers(trans);
 	if (ret)
-		goto out_reset_unlock;
+		goto out_reset;
 
 	if (likely(!(flags & BCH_TRANS_COMMIT_no_skip_noops))) {
 		struct btree_insert_entry *dst = trans->updates;
@@ -1099,7 +1090,7 @@ int __bch2_trans_commit(struct btree_trans *trans, enum bch_trans_commit_flags f
 			ret = do_bch2_trans_commit_to_journal_replay(trans, flags);
 		else
 			ret = bch_err_throw(c, erofs_trans_commit);
-		goto out_reset_unlock;
+		goto out_reset;
 	}
 
 	EBUG_ON(test_bit(BCH_FS_clean_shutdown, &c->flags));
@@ -1155,7 +1146,17 @@ retry:
 
 	trans->journal_u64s = journal_u64s + trans->journal_entries.u64s;
 
+	if (likely(!(flags & BCH_TRANS_COMMIT_check_allocations_lock_held)) &&
+	    unlikely(!percpu_down_read_trylock(&c->check_allocations_done_lock))) {
+		ret = drop_locks_do(trans, (percpu_down_read(&c->check_allocations_done_lock), 0));
+		if (ret)
+			goto unlock;
+	}
+
 	ret = do_bch2_trans_commit(trans, flags, &errored_at, _RET_IP_);
+unlock:
+	if (likely(!(flags & BCH_TRANS_COMMIT_check_allocations_lock_held)))
+		percpu_up_read(&c->check_allocations_done_lock);
 
 	/* make sure we didn't drop or screw up locks: */
 	bch2_trans_verify_locks(trans);
@@ -1165,9 +1166,6 @@ retry:
 out:
 	if (likely(!(flags & BCH_TRANS_COMMIT_no_check_rw)))
 		enumerated_ref_put(&c->writes, BCH_WRITE_REF_trans);
-out_reset_unlock:
-	if (likely(!(flags & BCH_TRANS_COMMIT_check_allocations_lock_held)))
-		percpu_up_read(&c->check_allocations_done_lock);
 out_reset:
 	if (!ret)
 		bch2_trans_downgrade(trans);
