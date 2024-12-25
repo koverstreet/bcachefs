@@ -133,24 +133,32 @@ int bch2_btree_increase_depth(struct btree_trans *, btree_path_idx_t, unsigned);
 int __bch2_foreground_maybe_merge(struct btree_trans *, btree_path_idx_t,
 				  unsigned, unsigned, enum btree_node_sibling);
 
-static inline int bch2_foreground_maybe_merge_sibling(struct btree_trans *trans,
-					btree_path_idx_t path_idx,
-					unsigned level, unsigned flags,
-					enum btree_node_sibling sib)
+static bool btree_node_should_merge(struct btree_trans *trans,
+				    btree_path_idx_t path_idx,
+				    unsigned level,
+				    enum btree_node_sibling sib)
 {
+	bch2_trans_verify_not_unlocked_or_in_restart(trans);
+
 	struct btree_path *path = trans->paths + path_idx;
-	struct btree *b;
 
 	EBUG_ON(!btree_node_locked(path, level));
 
 	if (bch2_btree_node_merging_disabled)
 		return 0;
 
-	b = path->l[level].b;
-	if (b->sib_u64s[sib] > trans->c->btree_foreground_merge_threshold)
-		return 0;
+	struct btree *b = path->l[level].b;
+	return b->sib_u64s[sib] <= trans->c->btree_foreground_merge_threshold;
+}
 
-	return __bch2_foreground_maybe_merge(trans, path_idx, level, flags, sib);
+static inline int bch2_foreground_maybe_merge_sibling(struct btree_trans *trans,
+					btree_path_idx_t path_idx,
+					unsigned level, unsigned flags,
+					enum btree_node_sibling sib)
+{
+	return btree_node_should_merge(trans, path_idx, level, sib)
+		? __bch2_foreground_maybe_merge(trans, path_idx, level, flags, sib)
+		: 0;
 }
 
 static inline int bch2_foreground_maybe_merge(struct btree_trans *trans,
@@ -158,12 +166,50 @@ static inline int bch2_foreground_maybe_merge(struct btree_trans *trans,
 					      unsigned level,
 					      unsigned flags)
 {
-	bch2_trans_verify_not_unlocked_or_in_restart(trans);
+	for (unsigned sib = 0; sib < 2; sib++) {
+		int ret = bch2_foreground_maybe_merge_sibling(trans, path, level, flags, sib);
+		if (ret)
+			return ret;
+	}
 
-	return  bch2_foreground_maybe_merge_sibling(trans, path, level, flags,
-						    btree_prev_sib) ?:
-		bch2_foreground_maybe_merge_sibling(trans, path, level, flags,
-						    btree_next_sib);
+	return 0;
+}
+
+static inline int bch2_foreground_maybe_merge_sibling_unlocked(struct btree_trans *trans,
+					btree_path_idx_t path_idx,
+					unsigned level, unsigned flags,
+					enum btree_node_sibling sib)
+{
+	if (!btree_node_should_merge(trans, path_idx, level, sib))
+		return 0;
+
+	struct bch_fs *c = trans->c;
+	int ret = 0;
+	if (unlikely(!percpu_down_read_trylock(&c->check_allocations_done_lock))) {
+		ret = drop_locks_do(trans, (percpu_down_read(&c->check_allocations_done_lock), 0));
+		if (ret)
+			goto out;
+	}
+
+	ret = __bch2_foreground_maybe_merge(trans, path_idx, level, flags, sib);
+out:
+	percpu_up_read(&c->check_allocations_done_lock);
+	return ret;
+}
+
+static inline int bch2_foreground_maybe_merge_unlocked(struct btree_trans *trans,
+					      btree_path_idx_t path,
+					      unsigned level,
+					      unsigned flags)
+{
+	for (unsigned sib = 0; sib < 2; sib++) {
+		int ret = bch2_foreground_maybe_merge_sibling_unlocked(trans, path,
+								       level, flags, sib);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
 }
 
 int bch2_btree_node_rewrite(struct btree_trans *, struct btree_iter *,
