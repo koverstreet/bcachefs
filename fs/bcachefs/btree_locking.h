@@ -185,6 +185,8 @@ bch2_btree_node_unlock_write_inlined(struct btree_trans *trans, struct btree_pat
 
 	mark_btree_node_locked_noreset(path, b->c.level, BTREE_NODE_INTENT_LOCKED);
 	__bch2_btree_node_unlock_write(trans, b);
+
+	bch2_trans_verify_locks(trans);
 }
 
 int bch2_six_check_for_deadlock(struct six_lock *lock, void *p);
@@ -306,6 +308,8 @@ static inline int __btree_node_lock_write(struct btree_trans *trans,
 					  struct btree_bkey_cached_common *b,
 					  bool lock_may_not_fail)
 {
+	bch2_trans_verify_locks(trans);
+
 	EBUG_ON(&path->l[b->level].b->c != b);
 	EBUG_ON(path->l[b->level].lock_seq != six_lock_seq(&b->lock));
 	EBUG_ON(!btree_node_intent_locked(path, b->level));
