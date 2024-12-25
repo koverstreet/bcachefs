@@ -221,7 +221,7 @@ static inline bool bset_has_ro_aux_tree(const struct bset_tree *t)
 	return bset_aux_tree_type(t) == BSET_RO_AUX_TREE;
 }
 
-static inline bool bset_has_rw_aux_tree(struct bset_tree *t)
+static inline bool bset_has_rw_aux_tree(const struct bset_tree *t)
 {
 	return bset_aux_tree_type(t) == BSET_RW_AUX_TREE;
 }
