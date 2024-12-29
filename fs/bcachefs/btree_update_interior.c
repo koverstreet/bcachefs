@@ -2189,6 +2189,26 @@ err:
 	goto out;
 }
 
+int bch2_btree_node_rewrite_key(struct btree_trans *trans,
+				enum btree_id btree, unsigned level,
+				struct bpos pos, unsigned flags)
+{
+	BUG_ON(!level);
+
+	/* Traverse one depth lower to get a pointer to the node itself: */
+	struct btree_iter iter;
+	bch2_trans_node_iter_init(trans, &iter, btree, pos, 0, level - 1, 0);
+	struct btree *b = bch2_btree_iter_peek_node(&iter);
+	int ret = PTR_ERR_OR_ZERO(b);
+	if (ret)
+		goto err;
+
+	ret = bch2_btree_node_rewrite(trans, &iter, b, flags);
+err:
+	bch2_trans_iter_exit(trans, &iter);
+	return ret;
+}
+
 struct async_btree_rewrite {
 	struct bch_fs		*c;
 	struct work_struct	work;
