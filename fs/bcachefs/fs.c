@@ -1210,13 +1210,12 @@ static int bch2_setattr(struct mnt_idmap *idmap,
 	lockdep_assert_held(&inode->v.i_rwsem);
 
 	ret   = bch2_subvol_is_ro(c, inode->ei_inum.subvol) ?:
-		setattr_prepare(idmap, dentry, iattr);
-	if (ret)
-		return ret;
-
-	return iattr->ia_valid & ATTR_SIZE
-		? bchfs_truncate(idmap, inode, iattr)
-		: bch2_setattr_nonsize(idmap, inode, iattr);
+		setattr_prepare(idmap, dentry, iattr) ?:
+		(iattr->ia_valid & ATTR_SIZE
+		 ? bchfs_truncate(idmap, inode, iattr)
+		 : bch2_setattr_nonsize(idmap, inode, iattr));
+	BUG_ON(ret > 0);
+	return ret;
 }
 
 static int bch2_tmpfile(struct mnt_idmap *idmap,
