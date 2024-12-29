@@ -488,6 +488,7 @@ static void bch2_rbio_error(struct bch_read_bio *rbio, int retry,
 			    blk_status_t error)
 {
 	rbio->retry = retry;
+	rbio->saw_error = true;
 
 	if (rbio->flags & BCH_READ_in_retry)
 		return;
