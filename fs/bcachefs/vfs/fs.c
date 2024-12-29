@@ -1199,6 +1199,7 @@ static int bch2_setattr(struct mnt_idmap *idmap,
 		 ? bchfs_truncate(idmap, inode, iattr)
 		 : bch2_setattr_nonsize(idmap, inode, iattr));
 
+	BUG_ON(ret > 0);
 	return bch2_err_class(ret);
 }
 
