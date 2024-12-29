@@ -16,6 +16,9 @@ struct data_update_opts {
 	u8		extra_replicas;
 	unsigned	btree_insert_flags;
 	unsigned	write_flags;
+
+	int		read_dev;
+	bool		scrub;
 };
 
 void bch2_data_update_opts_to_text(struct printbuf *, struct bch_fs *,
