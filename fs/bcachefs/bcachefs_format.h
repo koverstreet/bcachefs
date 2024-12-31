@@ -1238,6 +1238,10 @@ LE64_BITMASK(BCH_SB_EC_MAX_DATA_BLOCKS,	struct bch_sb, flags[6], 50, 58);
 
 #define BCH_SB_EXTENT_BP_SHIFT_DEFAULT	10
 
+#if 0
+LE64_BITMASK(BCH_SB_LAST_FSCK_VERSION,	struct bch_sb_ext, flags[6], 40, 56);
+#endif
+
 static inline __u64 BCH_SB_COMPRESSION_TYPE(const struct bch_sb *sb)
 {
 	return BCH_SB_COMPRESSION_TYPE_LO(sb) | (BCH_SB_COMPRESSION_TYPE_HI(sb) << 4);
