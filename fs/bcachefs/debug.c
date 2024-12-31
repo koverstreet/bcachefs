@@ -15,6 +15,7 @@
 #include "btree_update.h"
 #include "btree_update_interior.h"
 #include "buckets.h"
+#include "data_update.h"
 #include "debug.h"
 #include "error.h"
 #include "extents.h"
@@ -875,6 +876,50 @@ static const struct file_operations btree_deadlock_ops = {
 	.read		= bch2_btree_deadlock_read,
 };
 
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+static ssize_t bch2_promote_list_read(struct file *file, char __user *buf,
+				      size_t size, loff_t *ppos)
+{
+	struct dump_iter *i = file->private_data;
+	struct bch_fs *c = i->c;
+	ssize_t ret = 0;
+
+	i->ubuf = buf;
+	i->size	= size;
+	i->ret	= 0;
+
+	struct genradix_iter iter;
+	struct promote_op *op;
+	fast_list_for_each_from(&c->promote_list, iter, op, i->iter) {
+		ret = flush_buf(i);
+		if (ret)
+			return ret;
+
+		if (!i->size)
+			break;
+
+		bch2_data_update_to_text(&i->buf, &op->write);
+	}
+
+	if (i->buf.allocation_failure)
+		ret = -ENOMEM;
+	else
+		i->iter = iter.pos;
+
+	if (!ret)
+		ret = flush_buf(i);
+
+	return ret ?: i->ret;
+}
+
+static const struct file_operations promote_list_ops = {
+	.owner		= THIS_MODULE,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_promote_list_read,
+};
+#endif /* CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS */
+
 void bch2_fs_debug_exit(struct bch_fs *c)
 {
 	if (!IS_ERR_OR_NULL(c->fs_debug_dir))
@@ -925,6 +970,11 @@ void bch2_fs_debug_init(struct bch_fs *c)
 
 	debugfs_create_file("btree_deadlock", 0400, c->fs_debug_dir,
 			    c->btree_debug, &btree_deadlock_ops);
+
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+	debugfs_create_file("promotes", 0400, c->fs_debug_dir,
+			    c->btree_debug, &promote_list_ops);
+#endif /* CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS */
 
 	c->btree_debug_dir = debugfs_create_dir("btrees", c->fs_debug_dir);
 	if (IS_ERR_OR_NULL(c->btree_debug_dir))

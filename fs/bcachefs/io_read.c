@@ -71,19 +71,27 @@ static bool bch2_target_congested(struct bch_fs *c, u16 target)
 
 #endif
 
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+static inline void async_object_list_del(struct fast_list *head, unsigned idx)
+{
+	fast_list_remove(head, idx);
+}
+
+static inline int async_object_list_add(struct fast_list *head, void *obj, unsigned *idx)
+{
+	int ret = fast_list_add(head, obj);
+	if (ret < 0)
+		return ret;
+
+	*idx = ret;
+	return 0;
+}
+#else
+#define async_object_list_del(head, idx)		do {} while (0)
+#define async_object_list_add(head, obj, idx)		0
+#endif
+
 /* Cache promotion on read */
-
-struct promote_op {
-	struct rcu_head		rcu;
-	u64			start_time;
-
-	struct rhash_head	hash;
-	struct bpos		pos;
-
-	struct work_struct	work;
-	struct data_update	write;
-	struct bio_vec		bi_inline_vecs[]; /* must be last */
-};
 
 static const struct rhashtable_params bch_promote_params = {
 	.head_offset		= offsetof(struct promote_op, hash),
@@ -154,6 +162,8 @@ static noinline void promote_free(struct bch_read_bio *rbio)
 	int ret = rhashtable_remove_fast(&c->promote_table, &op->hash,
 					 bch_promote_params);
 	BUG_ON(ret);
+
+	async_object_list_del(&c->promote_list, op->list_idx);
 
 	bch2_data_update_exit(&op->write);
 
@@ -241,6 +251,10 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 		goto err;
 	}
 
+	ret = async_object_list_add(&c->promote_list, op, &op->list_idx);
+	if (ret < 0)
+		goto err_remove_hash;
+
 	ret = bch2_data_update_init(trans, NULL, NULL, &op->write,
 			writepoint_hashed((unsigned long) current),
 			orig->opts,
@@ -251,7 +265,7 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 	 * -BCH_ERR_ENOSPC_disk_reservation:
 	 */
 	if (ret)
-		goto err_remove_hash;
+		goto err_remove_list;
 
 	rbio_init_fragment(&op->write.rbio.bio, orig);
 	op->write.rbio.bounce	= true;
@@ -259,6 +273,8 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 	op->write.op.end_io = promote_done;
 
 	return &op->write.rbio;
+err_remove_list:
+	async_object_list_del(&c->promote_list, op->list_idx);
 err_remove_hash:
 	BUG_ON(rhashtable_remove_fast(&c->promote_table, &op->hash,
 				      bch_promote_params));
@@ -1330,6 +1346,9 @@ void bch2_read_bio_to_text(struct printbuf *out, struct bch_read_bio *rbio)
 
 void bch2_fs_io_read_exit(struct bch_fs *c)
 {
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+	fast_list_exit(&c->promote_list);
+#endif
 	if (c->promote_table.tbl)
 		rhashtable_destroy(&c->promote_table);
 	bioset_exit(&c->bio_read_split);
@@ -1348,6 +1367,10 @@ int bch2_fs_io_read_init(struct bch_fs *c)
 
 	if (rhashtable_init(&c->promote_table, &bch_promote_params))
 		return -BCH_ERR_ENOMEM_promote_table_init;
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+	if (fast_list_init(&c->promote_list))
+		return -BCH_ERR_ENOMEM_promote_table_init;
+#endif
 
 	return 0;
 }

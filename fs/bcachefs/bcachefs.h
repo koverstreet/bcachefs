@@ -187,6 +187,7 @@
 #include <linux/bug.h>
 #include <linux/bio.h>
 #include <linux/closure.h>
+#include <linux/fast_list.h>
 #include <linux/kobject.h>
 #include <linux/list.h>
 #include <linux/math64.h>
@@ -965,6 +966,10 @@ struct bch_fs {
 	struct bucket_nocow_lock_table
 				nocow_locks;
 	struct rhashtable	promote_table;
+
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+	struct fast_list	promote_list;
+#endif
 
 	mempool_t		compression_bounce[2];
 	mempool_t		compress_workspace[BCH_COMPRESSION_OPT_NR];
