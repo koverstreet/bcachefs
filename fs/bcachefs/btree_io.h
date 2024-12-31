@@ -53,6 +53,9 @@ struct btree_write_bio {
 	unsigned		data_bytes;
 	unsigned		sector_offset;
 	u64			start_time;
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+	unsigned		list_idx;
+#endif
 	struct bch_write_bio	wbio;
 };
 

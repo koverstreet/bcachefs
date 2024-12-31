@@ -210,6 +210,7 @@
 #include "btree_journal_iter_types.h"
 #include "disk_accounting_types.h"
 #include "errcode.h"
+#include "fast_list.h"
 #include "fifo.h"
 #include "nocow_locking_types.h"
 #include "opts.h"
@@ -988,6 +989,12 @@ struct bch_fs {
 				nocow_locks;
 	struct rhashtable	promote_table;
 
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+	struct fast_list	promote_list;
+	struct fast_list	rbio_list;
+	struct fast_list	btree_write_bio_list;
+#endif
+
 	mempool_t		compression_bounce[2];
 	mempool_t		compress_workspace[BCH_COMPRESSION_OPT_NR];
 	size_t			zstd_workspace_size;
@@ -1264,5 +1271,22 @@ static inline unsigned data_replicas_required(struct bch_fs *c)
 
 #define BKEY_PADDED_ONSTACK(key, pad)				\
 	struct { struct bkey_i key; __u64 key ## _pad[pad]; }
+
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+static inline void async_object_list_del(struct fast_list *head, unsigned idx)
+{
+	fast_list_remove(head, idx);
+}
+
+static inline int async_object_list_add(struct fast_list *head, void *obj, unsigned *idx)
+{
+	int ret = fast_list_add(head, obj);
+	*idx = ret > 0 ? ret : 0;
+	return ret < 0 ? ret : 0;
+}
+#else
+#define async_object_list_del(head, idx)		do {} while (0)
+#define async_object_list_add(head, obj, idx)		0
+#endif
 
 #endif /* _BCACHEFS_H */
