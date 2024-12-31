@@ -2115,6 +2115,8 @@ static void btree_node_write_work(struct work_struct *work)
 		}
 	}
 
+	async_object_list_del(&c->btree_write_bio_list, wbio->list_idx);
+	wbio->list_idx = 0;
 	bio_put(&wbio->wbio.bio);
 	btree_node_write_done(c, b, start_time);
 }
@@ -2447,6 +2449,8 @@ do_write:
 
 	atomic64_inc(&c->btree_write_stats[type].nr);
 	atomic64_add(bytes_to_write, &c->btree_write_stats[type].bytes);
+
+	async_object_list_add(&c->btree_write_bio_list, wbio, &wbio->list_idx);
 
 	INIT_WORK(&wbio->work, btree_write_submit);
 	queue_work(c->btree_write_submit_wq, &wbio->work);
