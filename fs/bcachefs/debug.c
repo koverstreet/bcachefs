@@ -16,6 +16,7 @@
 #include "btree_update.h"
 #include "btree_update_interior.h"
 #include "buckets.h"
+#include "data_update.h"
 #include "debug.h"
 #include "error.h"
 #include "extents.h"
@@ -905,6 +906,110 @@ static const struct file_operations write_points_ops = {
 	.read		= bch2_write_points_read,
 };
 
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+typedef void (*void_obj_to_text)(struct printbuf *, void *);
+
+static ssize_t obj_list_read(struct file *file, char __user *buf,
+			     size_t size, loff_t *ppos,
+			     struct fast_list *list,
+			     void_obj_to_text to_text)
+{
+	struct dump_iter *i = file->private_data;
+	ssize_t ret = 0;
+
+	i->ubuf = buf;
+	i->size	= size;
+	i->ret	= 0;
+
+	struct genradix_iter iter;
+	void *obj;
+	fast_list_for_each_from(list, iter, obj, i->iter) {
+		ret = flush_buf(i);
+		if (ret)
+			return ret;
+
+		if (!i->size)
+			break;
+
+		to_text(&i->buf, obj);
+	}
+
+	if (i->buf.allocation_failure)
+		ret = -ENOMEM;
+	else
+		i->iter = iter.pos;
+
+	if (!ret)
+		ret = flush_buf(i);
+
+	return ret ?: i->ret;
+}
+
+static void promote_obj_to_text(struct printbuf *out, void *obj)
+{
+	bch2_promote_op_to_text(out, obj);
+}
+
+static ssize_t bch2_promote_list_read(struct file *file, char __user *buf,
+				      size_t size, loff_t *ppos)
+{
+	struct dump_iter *i = file->private_data;
+	struct bch_fs *c = i->c;
+
+	return obj_list_read(file, buf, size, ppos, &c->promote_list, promote_obj_to_text);
+}
+
+static const struct file_operations promote_list_ops = {
+	.owner		= THIS_MODULE,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_promote_list_read,
+};
+
+static void rbio_obj_to_text(struct printbuf *out, void *obj)
+{
+	bch2_read_bio_to_text(out, obj);
+}
+
+static ssize_t bch2_rbio_list_read(struct file *file, char __user *buf,
+				   size_t size, loff_t *ppos)
+{
+	struct dump_iter *i = file->private_data;
+	struct bch_fs *c = i->c;
+
+	return obj_list_read(file, buf, size, ppos, &c->rbio_list, rbio_obj_to_text);
+}
+
+static const struct file_operations rbio_list_ops = {
+	.owner		= THIS_MODULE,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_rbio_list_read,
+};
+
+static void btree_write_bio_obj_to_text(struct printbuf *out, void *obj)
+{
+	struct btree_write_bio *wbio = obj;
+	bch2_bio_to_text(out, &wbio->wbio.bio);
+}
+
+static ssize_t bch2_btree_write_bio_list_read(struct file *file, char __user *buf,
+				   size_t size, loff_t *ppos)
+{
+	struct dump_iter *i = file->private_data;
+	struct bch_fs *c = i->c;
+
+	return obj_list_read(file, buf, size, ppos, &c->btree_write_bio_list, btree_write_bio_obj_to_text);
+}
+
+static const struct file_operations btree_write_bio_list_ops = {
+	.owner		= THIS_MODULE,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_btree_write_bio_list_read,
+};
+#endif /* CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS */
+
 void bch2_fs_debug_exit(struct bch_fs *c)
 {
 	if (!IS_ERR_OR_NULL(c->fs_debug_dir))
@@ -962,6 +1067,15 @@ void bch2_fs_debug_init(struct bch_fs *c)
 
 	debugfs_create_file("write_points", 0400, c->fs_debug_dir,
 			    c->btree_debug, &write_points_ops);
+
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+	debugfs_create_file("promotes", 0400, c->fs_debug_dir,
+			    c->btree_debug, &promote_list_ops);
+	debugfs_create_file("read_bios", 0400, c->fs_debug_dir,
+			    c->btree_debug, &rbio_list_ops);
+	debugfs_create_file("btree_write_bios", 0400, c->fs_debug_dir,
+			    c->btree_debug, &btree_write_bio_list_ops);
+#endif /* CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS */
 
 	c->btree_debug_dir = debugfs_create_dir("btrees", c->fs_debug_dir);
 	if (IS_ERR_OR_NULL(c->btree_debug_dir))
