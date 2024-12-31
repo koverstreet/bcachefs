@@ -415,6 +415,8 @@ int bch2_data_update_index_update(struct bch_write_op *op)
 void bch2_data_update_read_done(struct data_update *m,
 				struct bch_extent_crc_unpacked crc)
 {
+	m->read_done = true;
+
 	/* write bio must own pages: */
 	BUG_ON(!m->op.wbio.bio.bi_vcnt);
 
@@ -524,35 +526,43 @@ void bch2_data_update_opts_to_text(struct printbuf *out, struct bch_fs *c,
 				   struct bch_io_opts *io_opts,
 				   struct data_update_opts *data_opts)
 {
-	printbuf_tabstop_push(out, 20);
-	prt_str(out, "rewrite ptrs:\t");
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 20);
+
+	prt_printf(out, "rewrite ptrs:\t");
 	bch2_prt_u64_base2(out, data_opts->rewrite_ptrs);
 	prt_newline(out);
 
-	prt_str(out, "kill ptrs:\t");
+	prt_printf(out, "kill ptrs:\t");
 	bch2_prt_u64_base2(out, data_opts->kill_ptrs);
 	prt_newline(out);
 
-	prt_str(out, "target:\t");
+	prt_printf(out, "target:\t");
 	bch2_target_to_text(out, c, data_opts->target);
 	prt_newline(out);
 
-	prt_str(out, "compression:\t");
+	prt_printf(out, "compression:\t");
 	bch2_compression_opt_to_text(out, io_opts->background_compression);
 	prt_newline(out);
 
-	prt_str(out, "opts.replicas:\t");
+	prt_printf(out, "opts.replicas:\t");
 	prt_u64(out, io_opts->data_replicas);
+	prt_newline(out);
 
-	prt_str(out, "extra replicas:\t");
+	prt_printf(out, "extra replicas:\t");
 	prt_u64(out, data_opts->extra_replicas);
+	prt_newline(out);
 }
 
 void bch2_data_update_to_text(struct printbuf *out, struct data_update *m)
 {
 	bch2_bkey_val_to_text(out, m->op.c, bkey_i_to_s_c(m->k.k));
 	prt_newline(out);
+	printbuf_indent_add(out, 2);
 	bch2_data_update_opts_to_text(out, m->op.c, &m->op.opts, &m->data_opts);
+	prt_printf(out, "read_done:\t\%u\n", m->read_done);
+	bch2_write_op_to_text(out, &m->op);
+	printbuf_indent_sub(out, 2);
 }
 
 int bch2_extent_drop_ptrs(struct btree_trans *trans,

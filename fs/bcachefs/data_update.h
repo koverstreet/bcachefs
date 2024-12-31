@@ -22,6 +22,7 @@ void bch2_data_update_opts_to_text(struct printbuf *, struct bch_fs *,
 
 struct data_update {
 	/* extent being updated: */
+	bool			read_done;
 	enum btree_id		btree_id;
 	struct bkey_buf		k;
 	struct data_update_opts	data_opts;
