@@ -139,18 +139,16 @@ static inline void bch2_read_extent(struct btree_trans *trans,
 }
 
 void __bch2_read(struct bch_fs *, struct bch_read_bio *, struct bvec_iter,
-		 subvol_inum, struct bch_io_failures *, unsigned flags);
+		 struct bpos, struct bch_io_failures *, unsigned flags);
 
-static inline void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
-			     subvol_inum inum)
+static inline void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio)
 {
 	struct bch_io_failures failed = { .nr = 0 };
 
 	BUG_ON(rbio->_state);
 
-	rbio->subvol = inum.subvol;
-
-	__bch2_read(c, rbio, rbio->bio.bi_iter, inum, &failed,
+	__bch2_read(c, rbio, rbio->bio.bi_iter, rbio->read_pos,
+		    &failed,
 		    BCH_READ_retry_if_stale|
 		    BCH_READ_may_promote|
 		    BCH_READ_user_mapped);
@@ -172,7 +170,7 @@ static inline struct bch_read_bio *rbio_init_fragment(struct bio *bio,
 	return rbio;
 }
 
-static inline struct bch_read_bio *rbio_init(struct bio *bio,
+static inline struct bch_read_bio *rbio_init_move(struct bio *bio,
 					     struct bch_fs *c,
 					     struct bch_io_opts opts,
 					     bio_end_io_t end_io)
@@ -180,6 +178,7 @@ static inline struct bch_read_bio *rbio_init(struct bio *bio,
 	struct bch_read_bio *rbio = to_rbio(bio);
 
 	rbio->start_time	= local_clock();
+	rbio->submit_time	= 0;
 	rbio->c			= c;
 	rbio->_state		= 0;
 	rbio->flags		= 0;
@@ -188,6 +187,23 @@ static inline struct bch_read_bio *rbio_init(struct bio *bio,
 #ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
 	rbio->list_idx	= 0;
 #endif
+
+	rbio->subvol		= 0;
+	rbio->read_pos		= POS_MAX;
+	return rbio;
+}
+
+static inline struct bch_read_bio *rbio_init(struct bio *bio,
+					     struct bch_fs *c,
+					     u32 subvol,
+					     struct bpos pos,
+					     struct bch_io_opts opts,
+					     bio_end_io_t end_io)
+{
+	struct bch_read_bio *rbio = rbio_init_move(bio, c, opts, end_io);
+
+	rbio->subvol		= subvol;
+	rbio->read_pos		= pos;
 	return rbio;
 }
 

@@ -822,7 +822,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 	if (bch2_bio_alloc_pages(&m->op.wbio.bio, buf_bytes, GFP_KERNEL))
 		goto enomem;
 
-	rbio_init(&m->rbio.bio, c, io_opts, NULL);
+	rbio_init_move(&m->rbio.bio, c, io_opts, NULL);
 	m->rbio.bio.bi_iter.bi_size	= buf_bytes;
 	m->rbio.bio.bi_iter.bi_sector	= bkey_start_offset(k.k);
 

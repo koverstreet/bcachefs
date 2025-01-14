@@ -487,10 +487,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 	struct bch_fs *c	= rbio->c;
 	struct bvec_iter iter	= rbio->bvec_iter;
 	unsigned flags		= rbio->flags;
-	subvol_inum inum = {
-		.subvol = rbio->subvol,
-		.inum	= rbio->read_pos.inode,
-	};
+	struct bpos read_pos	= rbio->read_pos;
 	struct bch_io_failures failed = { .nr = 0 };
 
 	trace_and_count(c, read_retry, &rbio->bio);
@@ -511,7 +508,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 	if (flags & BCH_READ_data_update)
 		bch2_read_retry_nodecode(c, rbio, iter, &failed, flags);
 	else
-		__bch2_read(c, rbio, iter, inum, &failed, flags);
+		__bch2_read(c, rbio, iter, read_pos, &failed, flags);
 }
 
 static void bch2_rbio_error(struct bch_read_bio *rbio, int retry,
@@ -1226,7 +1223,8 @@ out_read_done:
 }
 
 void __bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
-		 struct bvec_iter bvec_iter, subvol_inum inum,
+		 struct bvec_iter bvec_iter,
+		 struct bpos read_pos,
 		 struct bch_io_failures *failed, unsigned flags)
 {
 	struct btree_trans *trans = bch2_trans_get(c);
@@ -1239,7 +1237,7 @@ void __bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
 
 	bch2_bkey_buf_init(&sk);
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_extents,
-			     POS(inum.inum, bvec_iter.bi_sector),
+			     read_pos,
 			     BTREE_ITER_slots);
 
 	while (1) {
@@ -1248,14 +1246,11 @@ void __bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
 		bch2_trans_begin(trans);
 
 		u32 snapshot;
-		ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot);
+		ret = bch2_subvolume_get_snapshot(trans, rbio->subvol, &snapshot);
 		if (ret)
 			goto err;
 
 		bch2_btree_iter_set_snapshot(&iter, snapshot);
-
-		bch2_btree_iter_set_pos(&iter,
-				POS(inum.inum, bvec_iter.bi_sector));
 
 		k = bch2_btree_iter_peek_slot(&iter);
 		ret = bkey_err(k);
@@ -1298,6 +1293,9 @@ void __bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
 
 		swap(bvec_iter.bi_size, bytes);
 		bio_advance_iter(&rbio->bio, &bvec_iter, bytes);
+
+		read_pos.offset += bytes >> 9;
+		bch2_btree_iter_set_pos(&iter, read_pos);
 err:
 		if (ret &&
 		    !bch2_err_matches(ret, BCH_ERR_transaction_restart) &&
@@ -1310,7 +1308,7 @@ err:
 
 	if (ret) {
 		struct printbuf buf = PRINTBUF;
-		bch2_inum_offset_err_msg_trans(trans, &buf, inum, bvec_iter.bi_sector << 9);
+		bch2_read_err_msg_trans(c, &buf, rbio, read_pos);
 		prt_printf(&buf, "read error %i from btree lookup", ret);
 		bch_err_ratelimited(c, "%s", buf.buf);
 		printbuf_exit(&buf);

@@ -163,12 +163,14 @@ start:
 		struct bch_read_bio *rbio =
 			rbio_init(bio,
 				  c,
+				  inode->ei_inum.subvol,
+				  POS(inode->ei_inum.inum, offset >> 9),
 				  opts,
 				  split
 				  ? bch2_direct_IO_read_split_endio
 				  : bch2_direct_IO_read_endio);
 
-		bch2_read(c, rbio, inode_inum(inode));
+		bch2_read(c, rbio);
 	}
 
 	blk_finish_plug(&plug);

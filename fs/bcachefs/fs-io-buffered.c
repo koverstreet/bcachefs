@@ -143,7 +143,6 @@ static int readpage_bio_extend(struct btree_trans *trans,
 
 static void bchfs_read(struct btree_trans *trans,
 		       struct bch_read_bio *rbio,
-		       subvol_inum inum,
 		       struct readpages_iter *readpages_iter)
 {
 	struct bch_fs *c = trans->c;
@@ -153,12 +152,10 @@ static void bchfs_read(struct btree_trans *trans,
 		BCH_READ_may_promote;
 	int ret = 0;
 
-	rbio->subvol = inum.subvol;
-
 	bch2_bkey_buf_init(&sk);
 	bch2_trans_begin(trans);
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_extents,
-			     POS(inum.inum, rbio->bio.bi_iter.bi_sector),
+			     rbio->read_pos,
 			     BTREE_ITER_slots);
 	while (1) {
 		struct bkey_s_c k;
@@ -169,14 +166,11 @@ static void bchfs_read(struct btree_trans *trans,
 		bch2_trans_begin(trans);
 
 		u32 snapshot;
-		ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot);
+		ret = bch2_subvolume_get_snapshot(trans, rbio->subvol, &snapshot);
 		if (ret)
 			goto err;
 
 		bch2_btree_iter_set_snapshot(&iter, snapshot);
-
-		bch2_btree_iter_set_pos(&iter,
-				POS(inum.inum, rbio->bio.bi_iter.bi_sector));
 
 		k = bch2_btree_iter_peek_slot(&iter);
 		ret = bkey_err(k);
@@ -221,6 +215,10 @@ static void bchfs_read(struct btree_trans *trans,
 
 		swap(rbio->bio.bi_iter.bi_size, bytes);
 		bio_advance(&rbio->bio, bytes);
+
+		struct bpos new_pos = iter.pos;
+		new_pos.offset += bytes >> 9;
+		bch2_btree_iter_set_pos(&iter, new_pos);
 err:
 		if (ret &&
 		    !bch2_err_matches(ret, BCH_ERR_transaction_restart))
@@ -230,7 +228,9 @@ err:
 
 	if (ret) {
 		struct printbuf buf = PRINTBUF;
-		bch2_inum_offset_err_msg_trans(trans, &buf, inum, iter.pos.offset << 9);
+		bch2_inum_offset_err_msg_trans(trans, &buf,
+				(subvol_inum) { rbio->subvol, rbio->read_pos.inode },
+				iter.pos.offset << 9);
 		prt_printf(&buf, "read error %i from btree lookup", ret);
 		bch_err_ratelimited(c, "%s", buf.buf);
 		printbuf_exit(&buf);
@@ -279,16 +279,16 @@ void bch2_readahead(struct readahead_control *ractl)
 			rbio_init(bio_alloc_bioset(NULL, n, REQ_OP_READ,
 						   GFP_KERNEL, &c->bio_read),
 				  c,
+				  inode->ei_inum.subvol,
+				  POS(inode->ei_inum.inum, folio_sector(folio)),
 				  opts,
 				  bch2_readpages_end_io);
 
 		readpage_iter_advance(&readpages_iter);
 
-		rbio->bio.bi_iter.bi_sector = folio_sector(folio);
 		BUG_ON(!bio_add_folio(&rbio->bio, folio, folio_size(folio), 0));
 
-		bchfs_read(trans, rbio, inode_inum(inode),
-			   &readpages_iter);
+		bchfs_read(trans, rbio, &readpages_iter);
 		bch2_trans_unlock(trans);
 	}
 	bch2_trans_put(trans);
@@ -323,15 +323,16 @@ int bch2_read_single_folio(struct folio *folio, struct address_space *mapping)
 
 	rbio = rbio_init(bio_alloc_bioset(NULL, 1, REQ_OP_READ, GFP_KERNEL, &c->bio_read),
 			 c,
+			 inode->ei_inum.subvol,
+			 POS(inode->ei_inum.inum, folio_sector(folio)),
 			 opts,
 			 bch2_read_single_folio_end_io);
 	rbio->bio.bi_private = &done;
 	rbio->bio.bi_opf = REQ_OP_READ|REQ_SYNC;
-	rbio->bio.bi_iter.bi_sector = folio_sector(folio);
 	BUG_ON(!bio_add_folio(&rbio->bio, folio, folio_size(folio), 0));
 
 	blk_start_plug(&plug);
-	bch2_trans_run(c, (bchfs_read(trans, rbio, inode_inum(inode), NULL), 0));
+	bch2_trans_run(c, (bchfs_read(trans, rbio, NULL), 0));
 	blk_finish_plug(&plug);
 	wait_for_completion(&done);
 
