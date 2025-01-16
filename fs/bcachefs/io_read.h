@@ -60,12 +60,6 @@ struct bch_read_bio {
 	u32			subvol;
 	struct bpos		read_pos;
 
-	/*
-	 * start pos of data we read (may not be pos of data we want) - for
-	 * promote, narrow extents paths:
-	 */
-	enum btree_id		data_btree;
-	struct bpos		data_pos;
 	struct bversion		version;
 
 	struct bch_io_opts	opts;
