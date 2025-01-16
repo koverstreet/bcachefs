@@ -955,7 +955,10 @@ retry_pick:
 	 * Unlock the iterator while the btree node's lock is still in
 	 * cache, before doing the IO:
 	 */
-	bch2_trans_unlock(trans);
+	if (!(flags & BCH_READ_IN_RETRY))
+		bch2_trans_unlock(trans);
+	else
+		bch2_trans_unlock_long(trans);
 
 	if (flags & BCH_READ_NODECODE) {
 		/*
