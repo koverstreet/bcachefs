@@ -1032,6 +1032,9 @@ int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
 	struct data_update *u = rbio_data_update(orig);
 	int ret = 0;
 
+	BUG_ON((orig->flags & BCH_READ_data_update) &&
+	       !(flags & BCH_READ_data_update));
+
 	if (bkey_extent_is_inline_data(k.k)) {
 		unsigned bytes = min_t(unsigned, iter.bi_size,
 				       bkey_inline_data_bytes(k.k));
@@ -1337,6 +1340,8 @@ out:
 	}
 
 err:
+	BUG_ON(rbio && rbio != orig);
+
 	if (flags & BCH_READ_in_retry)
 		return ret;
 
@@ -1357,6 +1362,8 @@ hole:
 
 	zero_fill_bio_iter(&orig->bio, iter);
 out_read_done:
+	BUG_ON(rbio && rbio != orig);
+
 	if ((flags & BCH_READ_last_fragment) &&
 	    !(flags & BCH_READ_in_retry))
 		bch2_rbio_done(orig);
