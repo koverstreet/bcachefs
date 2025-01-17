@@ -380,6 +380,7 @@ int bch2_move_extent(struct moving_context *ctxt,
 	 * ctxt when doing wakeup
 	 */
 	closure_get(&ctxt->cl);
+	io->write.rbio.flags = BCH_READ_data_update;
 	__bch2_read_extent(trans, &io->write.rbio,
 			   io->write.rbio.bio.bi_iter,
 			   bkey_start_pos(k.k),
