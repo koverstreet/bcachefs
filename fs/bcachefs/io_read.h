@@ -182,7 +182,8 @@ static inline struct bch_read_bio *rbio_init(struct bio *bio,
 	rbio->start_time	= local_clock();
 	rbio->c			= c;
 	rbio->_state		= 0;
-	rbio->ret	= 0;
+	rbio->flags		= 0;
+	rbio->ret		= 0;
 	rbio->opts		= opts;
 	rbio->bio.bi_end_io	= end_io;
 	return rbio;
