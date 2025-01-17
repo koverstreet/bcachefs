@@ -882,6 +882,9 @@ int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
 	struct bpos data_pos = bkey_start_pos(k.k);
 	int pick_ret;
 
+	BUG_ON((orig->flags & BCH_READ_data_update) &&
+	       !(flags & BCH_READ_data_update));
+
 	if (bkey_extent_is_inline_data(k.k)) {
 		unsigned bytes = min_t(unsigned, iter.bi_size,
 				       bkey_inline_data_bytes(k.k));
@@ -1162,6 +1165,8 @@ out:
 	}
 
 err:
+	BUG_ON(rbio && rbio != orig);
+
 	if (flags & BCH_READ_in_retry)
 		return READ_ERR;
 
@@ -1179,6 +1184,8 @@ hole:
 
 	zero_fill_bio_iter(&orig->bio, iter);
 out_read_done:
+	BUG_ON(rbio && rbio != orig);
+
 	if (flags & BCH_READ_last_fragment)
 		bch2_rbio_done(orig);
 	return 0;
@@ -1291,9 +1298,34 @@ static const char * const bch2_read_bio_flags[] = {
 
 void bch2_read_bio_to_text(struct printbuf *out, struct bch_read_bio *rbio)
 {
+	u64 now = local_clock();
+	prt_printf(out, "start_time:\t%llu\n", rbio->start_time ? now - rbio->start_time : 0);
+	prt_printf(out, "submit_time:\t%llu\n", rbio->submit_time ? now - rbio->submit_time : 0);
+
+	if (!rbio->split)
+		prt_printf(out, "end_io:\t%ps\n", rbio->end_io);
+	else
+		prt_printf(out, "parent:\t%px\n", rbio->parent);
+
+	prt_printf(out, "bi_end_io:\t%ps\n", rbio->bio.bi_end_io);
+
+	prt_printf(out, "promote:\t%u\n",	rbio->promote);
+	prt_printf(out, "bounce:\t%u\n",	rbio->bounce);
+	prt_printf(out, "split:\t%u\n",		rbio->split);
+	prt_printf(out, "have_ioref:\t%u\n",	rbio->have_ioref);
+	prt_printf(out, "narrow_crcs:\t%u\n",	rbio->narrow_crcs);
+	prt_printf(out, "hole:\t%u\n",		rbio->hole);
+	prt_printf(out, "retry:\t%u\n",		rbio->retry);
+	prt_printf(out, "context:\t%u\n",	rbio->context);
+
 	prt_printf(out, "flags:\t");
 	bch2_prt_bitflags(out, bch2_read_bio_flags, rbio->flags);
 	prt_newline(out);
+
+	prt_printf(out, "bi_remaining:\t%u\n",
+		   atomic_read(&rbio->bio.__bi_remaining));
+	prt_printf(out, "bi_status:\t%u\n",
+		   rbio->bio.bi_status);
 }
 
 void bch2_fs_io_read_exit(struct bch_fs *c)
