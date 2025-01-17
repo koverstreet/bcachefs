@@ -969,6 +969,7 @@ struct bch_fs {
 
 #ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
 	struct fast_list	promote_list;
+	struct fast_list	rbio_list;
 #endif
 
 	mempool_t		compression_bounce[2];

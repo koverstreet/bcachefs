@@ -47,6 +47,9 @@ struct bch_read_bio {
 	};
 	u16			_state;
 	};
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+	unsigned		list_idx;
+#endif
 
 	struct extent_ptr_decoded pick;
 
@@ -169,6 +172,9 @@ static inline struct bch_read_bio *rbio_init_fragment(struct bio *bio,
 	rbio->split	= true;
 	rbio->parent	= orig;
 	rbio->opts	= orig->opts;
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+	rbio->list_idx	= 0;
+#endif
 	return rbio;
 }
 
@@ -185,6 +191,9 @@ static inline struct bch_read_bio *rbio_init(struct bio *bio,
 	rbio->flags		= 0;
 	rbio->opts		= opts;
 	rbio->bio.bi_end_io	= end_io;
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+	rbio->list_idx	= 0;
+#endif
 	return rbio;
 }
 

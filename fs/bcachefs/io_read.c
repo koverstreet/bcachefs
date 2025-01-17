@@ -399,6 +399,8 @@ static inline struct bch_read_bio *bch2_rbio_free(struct bch_read_bio *rbio)
 			else
 				promote_free(rbio);
 		} else {
+			async_object_list_del(&rbio->c->rbio_list, rbio->list_idx);
+
 			if (rbio->bounce)
 				bch2_bio_free_pages_pool(rbio->c, &rbio->bio);
 
@@ -1051,6 +1053,8 @@ retry_pick:
 
 		bch2_bio_alloc_pages_pool(c, &rbio->bio, sectors << 9);
 		rbio->bounce	= true;
+
+		async_object_list_add(&c->rbio_list, rbio, &rbio->list_idx);
 	} else if (flags & BCH_READ_must_clone) {
 		/*
 		 * Have to clone if there were any splits, due to error
@@ -1064,6 +1068,8 @@ retry_pick:
 						 &c->bio_read_split),
 				 orig);
 		rbio->bio.bi_iter = iter;
+
+		async_object_list_add(&c->rbio_list, rbio, &rbio->list_idx);
 	} else {
 		rbio = orig;
 		rbio->bio.bi_iter = iter;
