@@ -340,6 +340,18 @@ nopromote:
 	return NULL;
 }
 
+void bch2_promote_op_to_text(struct printbuf *out, struct promote_op *op)
+{
+	if (!op->write.read_done) {
+		prt_printf(out, "parent read: %px\n", op->write.rbio.parent);
+		printbuf_indent_add(out, 2);
+		bch2_read_bio_to_text(out, op->write.rbio.parent);
+		printbuf_indent_sub(out, 2);
+	}
+
+	bch2_data_update_to_text(out, &op->write);
+}
+
 /* Read */
 
 static int bch2_read_err_msg_trans(struct btree_trans *trans, struct printbuf *out,

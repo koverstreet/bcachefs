@@ -197,6 +197,8 @@ static inline struct bch_read_bio *rbio_init(struct bio *bio,
 	return rbio;
 }
 
+struct promote_op;
+void bch2_promote_op_to_text(struct printbuf *, struct promote_op *);
 void bch2_read_bio_to_text(struct printbuf *, struct bch_read_bio *);
 
 void bch2_fs_io_read_exit(struct bch_fs *);

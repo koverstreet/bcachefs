@@ -917,9 +917,7 @@ static ssize_t obj_list_read(struct file *file, char __user *buf,
 
 static void promote_obj_to_text(struct printbuf *out, void *obj)
 {
-	struct promote_op *op = obj;
-
-	bch2_data_update_to_text(out, &op->write);
+	bch2_promote_op_to_text(out, obj);
 }
 
 static ssize_t bch2_promote_list_read(struct file *file, char __user *buf,
