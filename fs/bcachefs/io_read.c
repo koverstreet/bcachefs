@@ -232,7 +232,7 @@ static struct promote_op *__promote_alloc(struct btree_trans *trans,
 	if (!have_io_error(failed)) {
 		update_opts.target = opts.promote_target;
 		update_opts.extra_replicas = 1;
-		update_opts.write_flags = BCH_WRITE_ALLOC_NOWAIT|BCH_WRITE_CACHED;
+		update_opts.write_flags = BCH_WRITE_alloc_nowait|BCH_WRITE_cached;
 	} else {
 		update_opts.target = opts.foreground_target;
 
@@ -1098,7 +1098,7 @@ get_bio:
 	if (rbio->bounce)
 		trace_and_count(c, read_bounce, &rbio->bio);
 
-	if (!(flags & BCH_READ_NODECODE))
+	if (!(flags & BCH_READ_data_update))
 		this_cpu_add(c->counters[BCH_COUNTER_io_read], bio_sectors(&rbio->bio));
 	bch2_increment_clock(c, bio_sectors(&rbio->bio), READ);
 
