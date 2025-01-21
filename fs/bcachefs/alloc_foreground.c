@@ -479,7 +479,30 @@ static noinline void trace_bucket_alloc2(struct bch_fs *c,
 		prt_printf(&buf, "allocated\t%llu\n", ob->bucket);
 		trace_bucket_alloc(c, buf.buf);
 	} else {
-		prt_printf(&buf, "err\t%s\n", bch2_err_str(PTR_ERR(ob)));
+		int ret = PTR_ERR(ob);
+		prt_printf(&buf, "err\t%s\n", bch2_err_str(ret));
+
+		if (ret == -BCH_ERR_open_buckets_empty) {
+			unsigned nr_btree = 0;
+			unsigned nr_user = 0;
+			unsigned nr_partial = 0;
+
+			for (ob = c->open_buckets;
+			     ob < c->open_buckets + ARRAY_SIZE(c->open_buckets);
+			     ob++)
+				if (ob->valid) {
+					if (ob->on_partial_list)
+						nr_partial++;
+					else if (ob->data_type == BCH_DATA_btree)
+						nr_btree++;
+					else
+						nr_user++;
+				}
+
+			prt_printf(&buf, "open_buckets partial:\t%u\n", nr_partial);
+			prt_printf(&buf, "open_buckets btree:\t%u\n", nr_btree);
+			prt_printf(&buf, "open_buckets user:\t%u\n", nr_user);
+		}
 		trace_bucket_alloc_fail(c, buf.buf);
 	}
 
