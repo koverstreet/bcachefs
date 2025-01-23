@@ -79,7 +79,6 @@ struct journal_entry_pin {
 
 struct journal_res {
 	bool			ref;
-	u8			idx;
 	u16			u64s;
 	u32			offset;
 	u64			seq;
