@@ -37,6 +37,7 @@
 #include <linux/bug.h>
 #include <linux/bio.h>
 #include <linux/kobject.h>
+#include <linux/fast_list.h>
 #include <linux/list.h>
 #include <linux/math64.h>
 #include <linux/mutex.h>
@@ -64,7 +65,6 @@
 
 #include "util/clock_types.h"
 #include "util/enumerated_ref_types.h"
-#include "util/fast_list.h"
 #include "util/fifo.h"
 #include "util/seqmutex.h"
 #include "util/thread_with_file_types.h"
