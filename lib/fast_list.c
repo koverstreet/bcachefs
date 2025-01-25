@@ -13,7 +13,7 @@
  * except when refilling/emptying the percpu slot buffers.
  */
 
-#include "fast_list.h"
+#include <linux/fast_list.h>
 
 struct fast_list_pcpu {
 	u32			nr;
