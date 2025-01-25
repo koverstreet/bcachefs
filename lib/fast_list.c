@@ -12,8 +12,7 @@
  * except when refilling/emptying the percpu slot buffers.
  */
 
-#include "bcachefs.h"
-#include "fast_list.h"
+#include <linux/fast_list.h>
 
 #ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
 
