@@ -5,7 +5,9 @@
 struct bch_extent_rebalance {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	__u64			type:6,
-				unused:3,
+				unused:1,
+
+				wont_recompress_smaller:1,
 
 				promote_target_from_inode:1,
 				erasure_code_from_inode:1,
@@ -35,7 +37,9 @@ struct bch_extent_rebalance {
 				erasure_code_from_inode:1,
 				promote_target_from_inode:1,
 
-				unused:3,
+				wont_recompress_smaller:1,
+
+				unused:2,
 				type:6;
 #endif
 };

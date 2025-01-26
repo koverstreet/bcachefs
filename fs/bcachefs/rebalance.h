@@ -8,7 +8,8 @@
 #include "rebalance_types.h"
 
 static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_fs *c,
-								    struct bch_io_opts *opts)
+						const struct bch_extent_rebalance *old,
+						struct bch_io_opts *opts)
 {
 	struct bch_extent_rebalance r = {
 		.type = BIT(BCH_EXTENT_ENTRY_rebalance),
@@ -22,6 +23,9 @@ static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_f
 	if (r.background_target &&
 	    !bch2_target_accepts_data(c, BCH_DATA_user, r.background_target))
 		r.background_target = 0;
+
+	if (old)
+		r.wont_recompress_smaller = old->wont_recompress_smaller;
 
 	return r;
 };
