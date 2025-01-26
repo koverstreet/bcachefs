@@ -728,6 +728,7 @@ void eytzinger1_test(void)
 
 			inorder++;
 		}
+		BUG_ON(inorder - 1 != size);
 	}
 }
 
@@ -761,6 +762,7 @@ void eytzinger0_test(void)
 
 			inorder++;
 		}
+		BUG_ON(inorder != size);
 	}
 }
 
