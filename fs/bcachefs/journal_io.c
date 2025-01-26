@@ -1884,6 +1884,7 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 	 * If we wanted to be really fancy here, we could sort all the keys in
 	 * the jset and drop keys that were overwritten - probably not worth it:
 	 */
+	end = jset->start;
 	vstruct_for_each(jset, i) {
 		unsigned u64s = le16_to_cpu(i->u64s);
 
@@ -1924,7 +1925,13 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 			i->type = BCH_JSET_ENTRY_btree_keys;
 			break;
 		}
+
+		if (i->type != BCH_JSET_ENTRY_write_buffer_keys) {
+			memmove_u64s_down(end, i, jset_u64s(u64s));
+			end = vstruct_end(end);
+		}
 	}
+	jset->u64s = cpu_to_le32((u64 *) end - jset->_data);
 
 	if (wb.wb) {
 		ret = bch2_journal_keys_to_write_buffer_end(c, &wb);
