@@ -117,9 +117,12 @@ u64 bch2_bkey_sectors_need_rebalance(struct bch_fs *c, struct bkey_s_c k)
 	struct extent_ptr_decoded p;
 	u64 sectors = 0;
 
-	if (opts->background_compression) {
-		unsigned compression_type = bch2_compression_opt_to_type(opts->background_compression);
+	unsigned compression_type = opts->background_compression &&
+		!opts->wont_recompress_smaller
+		? bch2_compression_opt_to_type(opts->background_compression)
+		: 0;
 
+	if (compression_type)
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 			if (p.crc.compression_type == BCH_COMPRESSION_TYPE_incompressible ||
 			    p.ptr.unwritten) {
@@ -130,7 +133,6 @@ u64 bch2_bkey_sectors_need_rebalance(struct bch_fs *c, struct bkey_s_c k)
 			if (!p.ptr.cached && p.crc.compression_type != compression_type)
 				sectors += p.crc.compressed_size;
 		}
-	}
 incompressible:
 	if (opts->background_target)
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
@@ -149,7 +151,8 @@ static bool bch2_bkey_rebalance_needs_update(struct bch_fs *c, struct bch_io_opt
 	const struct bch_extent_rebalance *old = bch2_bkey_rebalance_opts(k);
 
 	if (k.k->type == KEY_TYPE_reflink_v || bch2_bkey_ptrs_need_rebalance(c, opts, k)) {
-		struct bch_extent_rebalance new = io_opts_to_rebalance_opts(c, opts);
+		struct bch_extent_rebalance new = io_opts_to_rebalance_opts(c, old, opts);
+
 		return old == NULL || memcmp(old, &new, sizeof(new));
 	} else {
 		return old != NULL;
@@ -172,7 +175,7 @@ int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_io_opts *opts,
 			k.k->u64s += sizeof(*old) / sizeof(u64);
 		}
 
-		*old = io_opts_to_rebalance_opts(c, opts);
+		*old = io_opts_to_rebalance_opts(c, old, opts);
 	} else {
 		if (old)
 			extent_entry_drop(k, (union bch_extent_entry *) old);
