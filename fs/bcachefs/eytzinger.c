@@ -253,7 +253,7 @@ void eytzinger0_sort(void *base, size_t n, size_t size,
 	return eytzinger0_sort_r(base, n, size, _CMP_WRAPPER, SWAP_WRAPPER, &w);
 }
 
-#if 0
+#if 1
 #include <linux/slab.h>
 #include <linux/random.h>
 #include <linux/ktime.h>
@@ -274,7 +274,7 @@ static int mycmp(const void *a, const void *b)
 		return 0;
 }
 
-static int test(void)
+void eytzinger_sort_test(void)
 {
 	size_t N, i;
 	ktime_t start, end;
@@ -299,17 +299,11 @@ static int test(void)
 		u32 prev = 0;
 
 		eytzinger0_for_each(i, N) {
-			if (prev > arr[i])
-				goto err;
+			BUG_ON(prev > arr[i]);
 			prev = arr[i];
 		}
 
 		kfree(arr);
 	}
-	return 0;
-
-err:
-	kfree(arr);
-	return -1;
 }
 #endif

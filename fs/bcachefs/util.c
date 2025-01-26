@@ -698,7 +698,7 @@ void memcpy_from_bio(void *dst, struct bio *src, struct bvec_iter src_iter)
 	}
 }
 
-#if 0
+#if 1
 void eytzinger1_test(void)
 {
 	unsigned inorder, size;

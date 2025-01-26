@@ -696,4 +696,8 @@ static inline bool test_bit_le64(size_t bit, __le64 *addr)
 	return (addr[bit / 64] & cpu_to_le64(BIT_ULL(bit % 64))) != 0;
 }
 
+void eytzinger1_test(void);
+void eytzinger0_test(void);
+void eytzinger0_find_test(void);
+
 #endif /* _BCACHEFS_UTIL_H */

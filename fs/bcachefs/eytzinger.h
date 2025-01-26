@@ -5,6 +5,8 @@
 #include <linux/bitops.h>
 #include <linux/log2.h>
 
+#define EYTZINGER_DEBUG
+
 #ifdef EYTZINGER_DEBUG
 #include <linux/bug.h>
 #define EYTZINGER_BUG_ON(cond)		BUG_ON(cond)
@@ -296,5 +298,7 @@ static inline int eytzinger0_find_ge(void *base, size_t nr, size_t size,
 void eytzinger0_sort_r(void *, size_t, size_t,
 		       cmp_r_func_t, swap_r_func_t, const void *);
 void eytzinger0_sort(void *, size_t, size_t, cmp_func_t, swap_func_t);
+
+void eytzinger_sort_test(void);
 
 #endif /* _EYTZINGER_H */
