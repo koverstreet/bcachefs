@@ -364,7 +364,16 @@ next:
 		ptr_idx <<= 1;
 	}
 
-	if (unwritten || incompressible) {
+	const struct bch_extent_rebalance *old = bch2_bkey_ptrs_rebalance_opts(ptrs);
+	if (old && !(old->need_rb & ~r.need_rb))
+		r.pending = old->pending;
+
+	if (old)
+		r.wont_recompress_smaller = old->wont_recompress_smaller;
+
+	if (unwritten ||
+	    incompressible ||
+	    r.wont_recompress_smaller) {
 		*compress_ptrs = 0;
 		r.need_rb &= ~BIT(BCH_REBALANCE_background_compression);
 	}
@@ -379,9 +388,6 @@ next:
 	if (!unwritten && r.erasure_code != ec)
 		r.need_rb |= BIT(BCH_REBALANCE_erasure_code);
 
-	const struct bch_extent_rebalance *old = bch2_bkey_ptrs_rebalance_opts(ptrs);
-	if (old && !(old->need_rb & ~r.need_rb))
-		r.pending = old->pending;
 	return r;
 }
 

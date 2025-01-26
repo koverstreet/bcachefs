@@ -3,6 +3,10 @@
 #define _BCACHEFS_REBALANCE_FORMAT_H
 
 struct bch_extent_rebalance {
+#if 0
+				wont_recompress_smaller:1,
+#endif
+
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	__u64			type:6,
 				unused:5,
