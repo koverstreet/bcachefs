@@ -12,7 +12,8 @@ int bch2_extent_rebalance_validate(struct bch_fs *, struct bkey_s_c,
 				   const struct bch_extent_rebalance *);
 
 static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_fs *c,
-								    struct bch_inode_opts *opts)
+						const struct bch_extent_rebalance *old,
+						struct bch_inode_opts *opts)
 {
 	return (struct bch_extent_rebalance) {
 		.type = BIT(BCH_EXTENT_ENTRY_rebalance),
@@ -22,6 +23,10 @@ static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_f
 		BCH_REBALANCE_OPTS()
 #undef x
 	};
+	if (old)
+		r.wont_recompress_smaller = old->wont_recompress_smaller;
+
+	return r;
 };
 
 void bch2_extent_rebalance_to_text(struct printbuf *, struct bch_fs *,

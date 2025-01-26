@@ -275,7 +275,8 @@ next:
 
 	if (unwritten)
 		*compress_ptrs = *csum_ptrs = 0;
-	if (incompressible)
+	if (incompressible ||
+	    (rb_opts && rb_opts->wont_recompress_smaller))
 		*compress_ptrs = 0;
 
 	if (*csum_ptrs)
