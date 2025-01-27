@@ -20,7 +20,6 @@ static bool is_aligned(const void *base, size_t size, unsigned char align)
 {
 	unsigned char lsbits = (unsigned char)size;
 
-	(void)base;
 #ifndef CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS
 	lsbits |= (unsigned char)(uintptr_t)base;
 #endif
