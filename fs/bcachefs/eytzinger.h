@@ -8,6 +8,7 @@
 #define EYTZINGER_DEBUG
 
 #ifdef EYTZINGER_DEBUG
+#include <linux/bug.h>
 #define EYTZINGER_BUG_ON(cond)		BUG_ON(cond)
 #else
 #define EYTZINGER_BUG_ON(cond)
