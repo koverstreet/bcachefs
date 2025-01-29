@@ -4923,11 +4923,6 @@ static void intel_pmu_check_hybrid_pmus(struct x86_hybrid_pmu *pmu)
 	else
 		pmu->intel_ctrl &= ~(1ULL << GLOBAL_CTRL_EN_PERF_METRICS);
 
-	if (pmu->intel_cap.pebs_output_pt_available)
-		pmu->pmu.capabilities |= PERF_PMU_CAP_AUX_OUTPUT;
-	else
-		pmu->pmu.capabilities &= ~PERF_PMU_CAP_AUX_OUTPUT;
-
 	intel_pmu_check_event_constraints(pmu->event_constraints,
 					  pmu->cntr_mask64,
 					  pmu->fixed_cntr_mask64,
@@ -5004,9 +4999,6 @@ static bool init_hybrid_pmu(int cpu)
 		return false;
 
 	pr_info("%s PMU driver: ", pmu->name);
-
-	if (pmu->intel_cap.pebs_output_pt_available)
-		pr_cont("PEBS-via-PT ");
 
 	pr_cont("\n");
 
@@ -6362,11 +6354,9 @@ static __always_inline int intel_pmu_init_hybrid(enum hybrid_pmu_type pmus)
 		pmu->intel_cap.capabilities = x86_pmu.intel_cap.capabilities;
 		if (pmu->pmu_type & hybrid_small_tiny) {
 			pmu->intel_cap.perf_metrics = 0;
-			pmu->intel_cap.pebs_output_pt_available = 1;
 			pmu->mid_ack = true;
 		} else if (pmu->pmu_type & hybrid_big) {
 			pmu->intel_cap.perf_metrics = 1;
-			pmu->intel_cap.pebs_output_pt_available = 0;
 			pmu->late_ack = true;
 		}
 	}
