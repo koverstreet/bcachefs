@@ -1479,6 +1479,50 @@ err:
 	return ret;
 }
 
+static const char * const bch2_read_bio_flags[] = {
+#define x(n)	#n,
+	BCH_READ_FLAGS()
+#undef x
+	NULL
+};
+
+static void bch2_bio_to_text(struct printbuf *out, struct bio *bio)
+{
+	prt_printf(out, "bi_remaining:\t%u\n",
+		   atomic_read(&bio->__bi_remaining));
+	prt_printf(out, "bi_status:\t%u\n",
+		   bio->bi_status);
+}
+
+void bch2_read_bio_to_text(struct printbuf *out, struct bch_read_bio *rbio)
+{
+	u64 now = local_clock();
+	prt_printf(out, "start_time:\t%llu\n", rbio->start_time ? now - rbio->start_time : 0);
+	prt_printf(out, "submit_time:\t%llu\n", rbio->submit_time ? now - rbio->submit_time : 0);
+
+	if (!rbio->split)
+		prt_printf(out, "end_io:\t%ps\n", rbio->end_io);
+	else
+		prt_printf(out, "parent:\t%px\n", rbio->parent);
+
+	prt_printf(out, "bi_end_io:\t%ps\n", rbio->bio.bi_end_io);
+
+	prt_printf(out, "promote:\t%u\n",	rbio->promote);
+	prt_printf(out, "bounce:\t%u\n",	rbio->bounce);
+	prt_printf(out, "split:\t%u\n",		rbio->split);
+	prt_printf(out, "have_ioref:\t%u\n",	rbio->have_ioref);
+	prt_printf(out, "narrow_crcs:\t%u\n",	rbio->narrow_crcs);
+	prt_printf(out, "hole:\t%u\n",		rbio->hole);
+	prt_printf(out, "retry:\t%u\n",		rbio->retry);
+	prt_printf(out, "context:\t%u\n",	rbio->context);
+
+	prt_printf(out, "flags:\t");
+	bch2_prt_bitflags(out, bch2_read_bio_flags, rbio->flags);
+	prt_newline(out);
+
+	bch2_bio_to_text(out, &rbio->bio);
+}
+
 void bch2_fs_io_read_exit(struct bch_fs *c)
 {
 	if (c->promote_table.tbl)
