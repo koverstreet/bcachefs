@@ -538,6 +538,9 @@ static void amd_pstate_update(struct amd_cpudata *cpudata, u8 min_perf,
 	struct cpufreq_policy *policy = cpufreq_cpu_get(cpudata->cpu);
 	u8 nominal_perf = READ_ONCE(cpudata->nominal_perf);
 
+	if (!policy)
+		return;
+
 	des_perf = clamp_t(u8, des_perf, min_perf, max_perf);
 
 	max_freq = READ_ONCE(cpudata->max_limit_freq);
