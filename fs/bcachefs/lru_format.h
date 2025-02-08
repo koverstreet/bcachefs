@@ -9,7 +9,8 @@ struct bch_lru {
 
 #define BCH_LRU_TYPES()		\
 	x(read)			\
-	x(fragmentation)
+	x(fragmentation)	\
+	x(stripes)
 
 enum bch_lru_type {
 #define x(n) BCH_LRU_##n,
