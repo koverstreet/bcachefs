@@ -200,7 +200,7 @@ int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 
 	bkey_reassemble(n, k);
 
-	/* On successfull transaction commit, @k was invalidated: */
+	/* On successful transaction commit, @k was invalidated: */
 
 	return bch2_bkey_set_needs_rebalance(trans->c, io_opts, n) ?:
 		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node) ?:
@@ -635,7 +635,7 @@ void bch2_rebalance_stop(struct bch_fs *c)
 	c->rebalance.thread = NULL;
 
 	if (p) {
-		/* for sychronizing with rebalance_wakeup() */
+		/* for synchronizing with rebalance_wakeup() */
 		synchronize_rcu();
 
 		kthread_stop(p);
