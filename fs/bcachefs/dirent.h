@@ -31,11 +31,6 @@ static inline unsigned dirent_val_u64s(unsigned len)
 			    sizeof(u64));
 }
 
-static inline unsigned int dirent_occupied_size(const struct qstr *name)
-{
-	return (BKEY_U64s + dirent_val_u64s(name->len)) * sizeof(u64);
-}
-
 int bch2_dirent_read_target(struct btree_trans *, subvol_inum,
 			    struct bkey_s_c_dirent, subvol_inum *);
 
@@ -52,7 +47,7 @@ int bch2_dirent_create_snapshot(struct btree_trans *, u32, u64, u32,
 			enum btree_iter_update_trigger_flags);
 int bch2_dirent_create(struct btree_trans *, subvol_inum,
 		       const struct bch_hash_info *, u8,
-		       const struct qstr *, u64, u64 *,
+		       const struct qstr *, u64, u64 *, u64 *,
 		       enum btree_iter_update_trigger_flags);
 
 static inline unsigned vfs_d_type(unsigned type)
@@ -67,8 +62,8 @@ enum bch_rename_mode {
 };
 
 int bch2_dirent_rename(struct btree_trans *,
-		       subvol_inum, struct bch_hash_info *,
-		       subvol_inum, struct bch_hash_info *,
+		       subvol_inum, struct bch_hash_info *, u64 *,
+		       subvol_inum, struct bch_hash_info *, u64 *,
 		       const struct qstr *, subvol_inum *, u64 *,
 		       const struct qstr *, subvol_inum *, u64 *,
 		       enum bch_rename_mode);
