@@ -146,6 +146,7 @@ write_attribute(trigger_journal_writes);
 write_attribute(trigger_btree_cache_shrink);
 write_attribute(trigger_btree_key_cache_shrink);
 write_attribute(trigger_freelist_wakeup);
+write_attribute(trigger_btree_updates);
 read_attribute(gc_gens_pos);
 
 read_attribute(uuid);
@@ -451,6 +452,9 @@ STORE(bch2_fs)
 	if (attr == &sysfs_trigger_freelist_wakeup)
 		closure_wake_up(&c->freelist_wait);
 
+	if (attr == &sysfs_trigger_btree_updates)
+		queue_work(c->btree_interior_update_worker, &c->btree_interior_update_work);
+
 #ifdef CONFIG_BCACHEFS_TESTS
 	if (attr == &sysfs_perf_test) {
 		char *tmp = kstrdup(buf, GFP_KERNEL), *p = tmp;
@@ -580,6 +584,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_trigger_btree_cache_shrink,
 	&sysfs_trigger_btree_key_cache_shrink,
 	&sysfs_trigger_freelist_wakeup,
+	&sysfs_trigger_btree_updates,
 
 	&sysfs_gc_gens_pos,
 
