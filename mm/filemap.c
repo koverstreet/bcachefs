@@ -973,6 +973,11 @@ int filemap_add_folio(struct address_space *mapping, struct folio *folio,
 	void *shadow = NULL;
 	int ret;
 
+	if (WARN(folio_order(folio) < mapping_min_folio_order(mapping),
+		 "folio order %u < mapping min order %u\n",
+		 folio_order(folio), mapping_min_folio_order(mapping)))
+		return -EINVAL;
+
 	ret = mem_cgroup_charge(folio, NULL, gfp);
 	if (ret)
 		return ret;
