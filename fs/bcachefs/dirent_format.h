@@ -44,9 +44,9 @@ struct bch_dirent {
 		__u8		d_pad;
 		__le16		d_name_len;
 		__le16		d_cf_name_len;
-		__u8		d_names[0];
+		__u8		d_names[];
 	} d_cf_name_block __packed;
-	__u8			d_name[0];
+	__DECLARE_FLEX_ARRAY(__u8, d_name);
 	} __packed;
 } __packed __aligned(8);
 
