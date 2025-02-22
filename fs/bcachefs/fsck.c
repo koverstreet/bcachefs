@@ -2470,7 +2470,8 @@ int bch2_check_dirents(struct bch_fs *c)
 				POS(BCACHEFS_ROOT_INO, 0),
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
 			check_dirent(trans, &iter, k, &hash_info, &dir, &target, &s)) ?:
-		check_subdir_count_notnested(trans, &dir));
+		check_subdir_count_notnested(trans, &dir) ?:
+		check_dir_i_size_notnested(trans, &dir));
 
 	snapshots_seen_exit(&s);
 	inode_walker_exit(&dir);
