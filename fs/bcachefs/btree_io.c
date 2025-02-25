@@ -2222,6 +2222,11 @@ static void btree_node_write_work(struct work_struct *work)
 		container_of(work, struct btree_write_bio, work);
 	struct bch_fs *c	= wbio->wbio.c;
 	struct btree *b		= wbio->wbio.bio.bi_private;
+	unsigned commit_flags =
+		BCH_WATERMARK_interior_updates|
+		BCH_TRANS_COMMIT_journal_reclaim|
+		BCH_TRANS_COMMIT_no_enospc|
+		BCH_TRANS_COMMIT_no_check_rw;
 	u64 start_time		= wbio->start_time;
 	int ret = 0;
 
@@ -2230,45 +2235,30 @@ static void btree_node_write_work(struct work_struct *work)
 		wbio->wbio.used_mempool,
 		wbio->data);
 
-	bch2_bkey_drop_ptrs(bkey_i_to_s(&wbio->key), ptr,
-		bch2_dev_list_has_dev(wbio->wbio.failed, ptr->dev));
-
-	if (!bch2_bkey_nr_ptrs(bkey_i_to_s_c(&wbio->key))) {
-		ret = bch_err_throw(c, btree_node_write_all_failed);
-		goto err;
-	}
-
-	if (wbio->wbio.first_btree_write) {
-		if (wbio->wbio.failed.nr) {
-
-		}
-	} else {
+	if (wbio->wbio.failed.nr) {
+		ret = bch2_trans_do(c,
+			bch2_btree_node_rewrite_key_get_iter(trans, b,
+					commit_flags));
+	} else if (!wbio->wbio.first_btree_write) {
 		CLASS(btree_trans, trans)(c);
 		ret = lockrestart_do(trans,
 			bch2_btree_node_update_key_get_iter(trans, b, &wbio->key,
-					BCH_WATERMARK_interior_updates|
-					BCH_TRANS_COMMIT_journal_reclaim|
-					BCH_TRANS_COMMIT_no_enospc|
-					BCH_TRANS_COMMIT_no_check_rw,
-					!wbio->wbio.failed.nr));
-		if (ret)
-			goto err;
+					commit_flags, true));
 	}
-out:
+
+	if (ret) {
+		set_btree_node_noevict(b);
+		if (!bch2_err_matches(ret, EROFS)) {
+			CLASS(printbuf, buf)();
+			prt_printf(&buf, "writing btree node: %s\n  ", bch2_err_str(ret));
+			bch2_btree_pos_to_text(&buf, c, b);
+			bch2_fs_fatal_error(c, "%s", buf.buf);
+		}
+	}
+
 	async_object_list_del(c, btree_write_bio, wbio->list_idx);
 	bio_put(&wbio->wbio.bio);
 	btree_node_write_done(c, b, start_time);
-	return;
-err:
-	set_btree_node_noevict(b);
-
-	if (!bch2_err_matches(ret, EROFS)) {
-		CLASS(printbuf, buf)();
-		prt_printf(&buf, "writing btree node: %s\n  ", bch2_err_str(ret));
-		bch2_btree_pos_to_text(&buf, c, b);
-		bch2_fs_fatal_error(c, "%s", buf.buf);
-	}
-	goto out;
 }
 
 static void btree_node_write_endio(struct bio *bio)
