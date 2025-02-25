@@ -1894,26 +1894,23 @@ static void btree_node_write_work(struct work_struct *work)
 		wbio->wbio.used_mempool,
 		wbio->data);
 
-	bch2_bkey_drop_ptrs(bkey_i_to_s(&wbio->key), ptr,
-		bch2_dev_list_has_dev(wbio->wbio.failed, ptr->dev));
-
-	if (!bch2_bkey_nr_ptrs(bkey_i_to_s_c(&wbio->key))) {
-		ret = -BCH_ERR_btree_node_write_all_failed;
-		goto err;
-	}
-
-	if (wbio->wbio.first_btree_write) {
-		if (wbio->wbio.failed.nr) {
-
-		}
-	} else {
+	if (wbio->wbio.failed.nr) {
+		ret = bch2_trans_do(c,
+			bch2_btree_node_rewrite_key_get_iter(trans, b,
+					BCH_WATERMARK_interior_updates|
+					BCH_TRANS_COMMIT_journal_reclaim|
+					BCH_TRANS_COMMIT_no_enospc|
+					BCH_TRANS_COMMIT_no_check_rw));
+		if (ret)
+			goto err;
+	} else if (!wbio->wbio.first_btree_write) {
 		ret = bch2_trans_do(c,
 			bch2_btree_node_update_key_get_iter(trans, b, &wbio->key,
 					BCH_WATERMARK_interior_updates|
 					BCH_TRANS_COMMIT_journal_reclaim|
 					BCH_TRANS_COMMIT_no_enospc|
 					BCH_TRANS_COMMIT_no_check_rw,
-					!wbio->wbio.failed.nr));
+					true));
 		if (ret)
 			goto err;
 	}
