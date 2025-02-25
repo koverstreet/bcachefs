@@ -92,7 +92,8 @@ static void btree_node_write_done(struct bch_fs *c, struct btree *b, u64 start_t
 }
 
 static int btree_node_write_update_key(struct btree_trans *trans,
-				       struct btree_write_bio *wbio, struct btree *b)
+				       struct btree_write_bio *wbio, struct btree *b,
+				       unsigned commit_flags)
 {
 	struct bch_fs *c = trans->c;
 
@@ -122,11 +123,7 @@ static int btree_node_write_update_key(struct btree_trans *trans,
 						  SET_NEEDS_REBALANCE_opt_change, 0));
 	}
 
-	return bch2_btree_node_update_key(trans, &iter, b, n,
-					  BCH_WATERMARK_interior_updates|
-					  BCH_TRANS_COMMIT_journal_reclaim|
-					  BCH_TRANS_COMMIT_no_enospc|
-					  BCH_TRANS_COMMIT_no_check_rw);
+	return bch2_btree_node_update_key(trans, &iter, b, n, commit_flags);
 }
 
 static void btree_node_write_work(struct work_struct *work)
@@ -135,24 +132,33 @@ static void btree_node_write_work(struct work_struct *work)
 		container_of(work, struct btree_write_bio, work);
 	struct bch_fs *c	= wbio->wbio.c;
 	struct btree *b		= wbio->wbio.bio.bi_private;
+	unsigned commit_flags =
+		BCH_WATERMARK_interior_updates|
+		BCH_TRANS_COMMIT_journal_reclaim|
+		BCH_TRANS_COMMIT_no_enospc|
+		BCH_TRANS_COMMIT_no_check_rw;
 	u64 start_time		= wbio->start_time;
+	int ret = 0;
 
-	bch2_btree_bounce_free(c,
+	btree_bounce_free(c,
 		wbio->data_bytes,
 		wbio->wbio.used_mempool,
 		wbio->data);
 
-	if (!wbio->wbio.first_btree_write || wbio->wbio.failed.nr) {
-		int ret = bch2_trans_do(c, btree_node_write_update_key(trans, wbio, b));
-		if (ret) {
-			set_btree_node_noevict(b);
+	if (wbio->wbio.failed.nr)
+		ret = bch2_trans_do(c,
+			bch2_btree_node_rewrite_key_get_iter(trans, b, commit_flags));
+	else if (!wbio->wbio.first_btree_write)
+		ret = bch2_trans_do(c, btree_node_write_update_key(trans, wbio, b, commit_flags));
 
-			if (!bch2_err_matches(ret, EROFS)) {
-				CLASS(printbuf, buf)();
-				prt_printf(&buf, "writing btree node: %s\n  ", bch2_err_str(ret));
-				bch2_btree_pos_to_text(&buf, c, b);
-				bch2_fs_fatal_error(c, "%s", buf.buf);
-			}
+	if (ret) {
+		set_btree_node_noevict(b);
+
+		if (!bch2_err_matches(ret, EROFS)) {
+			CLASS(printbuf, buf)();
+			prt_printf(&buf, "writing btree node: %s\n  ", bch2_err_str(ret));
+			bch2_btree_pos_to_text(&buf, c, b);
+			bch2_fs_fatal_error(c, "%s", buf.buf);
 		}
 	}
 
