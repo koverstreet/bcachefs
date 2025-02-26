@@ -54,25 +54,57 @@ void bch2_io_error_work(struct work_struct *work)
 {
 	struct bch_dev *ca = container_of(work, struct bch_dev, io_error_work);
 	struct bch_fs *c = ca->fs;
-	bool dev;
+
+	/* XXX: if it's reads or checksums that are failing, set it to failed */
 
 	down_write(&c->state_lock);
-	dev = bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_ro,
-				    BCH_FORCE_IF_DEGRADED);
-	if (dev
-	    ? __bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_ro,
-				  BCH_FORCE_IF_DEGRADED)
-	    : bch2_fs_emergency_read_only(c))
-		bch_err(ca,
-			"too many IO errors, setting %s RO",
-			dev ? "device" : "filesystem");
+	unsigned err_type;
+
+	for (err_type = 0; err_type < BCH_MEMBER_ERROR_NR; err_type++)
+		if (atomic64_read(&ca->errors_consecutive[err_type]) > c->opts.io_error_threshold)
+			break;
+
+	enum bch_member_state new_state;
+	switch (err_type) {
+	case BCH_MEMBER_ERROR_write:
+		new_state = BCH_MEMBER_STATE_ro;
+		break;
+	case BCH_MEMBER_ERROR_read:
+	case BCH_MEMBER_ERROR_checksum:
+		new_state = BCH_MEMBER_STATE_failed;
+		break;
+	case BCH_MEMBER_ERROR_NR:
+		goto out;
+	}
+
+	if (ca->mi.state >= new_state)
+		goto out;
+
+	bool dev = !__bch2_dev_set_state(c, ca, new_state, BCH_FORCE_IF_DEGRADED);
+
+	if (!dev)
+		new_state = BCH_MEMBER_STATE_ro;
+
+	bch_err(ca,
+		"too many %s IO errors (%u), setting %s %s",
+		bch2_member_error_strs[err_type],
+		c->opts.io_error_threshold,
+		dev ? "device" : "filesystem",
+		bch2_member_states[new_state]);
+	if (!dev)
+		bch2_fs_emergency_read_only(c);
+out:
 	up_write(&c->state_lock);
 }
 
 void bch2_io_error(struct bch_dev *ca, enum bch_member_error_type type)
 {
 	atomic64_inc(&ca->errors[type]);
-	//queue_work(system_long_wq, &ca->io_error_work);
+	u64 nr_consecutive = atomic64_inc_return(&ca->errors_consecutive[type]);
+
+	if (nr_consecutive &&
+	    nr_consecutive > ca->fs->opts.io_error_threshold)
+		queue_work(system_long_wq, &ca->io_error_work);
 }
 
 enum ask_yn {

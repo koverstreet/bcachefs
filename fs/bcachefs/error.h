@@ -226,8 +226,12 @@ static inline void bch2_account_io_success_fail(struct bch_dev *ca,
 						enum bch_member_error_type type,
 						bool success)
 {
-	if (!success)
+	if (likely(success)) {
+		if (unlikely(atomic64_read(&ca->errors_consecutive[type])))
+			atomic64_set(&ca->errors_consecutive[type], 0);
+	} else {
 		bch2_io_error(ca, type);
+	}
 }
 
 static inline void bch2_account_io_completion(struct bch_dev *ca,
