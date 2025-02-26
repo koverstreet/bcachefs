@@ -96,7 +96,10 @@
 	  BCH_FSCK_ERR_ptr_to_missing_backpointer)		\
 	x(stripe_backpointers,					\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_extents_to_backpointers),\
-	  BCH_FSCK_ERR_ptr_to_missing_backpointer)
+	  BCH_FSCK_ERR_ptr_to_missing_backpointer)		\
+	x(directory_size_v2,					\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_dirents),		\
+	  BCH_FSCK_ERR_directory_size_mismatch)
 
 #define DOWNGRADE_TABLE()					\
 	x(bucket_stripe_sectors,				\

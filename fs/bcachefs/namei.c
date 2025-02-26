@@ -268,8 +268,16 @@ int bch2_unlink_trans(struct btree_trans *trans,
 
 	dir_hash = bch2_hash_info_init(c, dir_u);
 
-	ret = bch2_dirent_lookup_trans(trans, &dirent_iter, dir, &dir_hash,
-				       name, &inum, BTREE_ITER_intent);
+	struct bkey_s_c dirent_k =
+		bch2_hash_lookup(trans, &dirent_iter, bch2_dirent_hash_desc,
+				 &dir_hash, dir, name, BTREE_ITER_intent);
+	ret = bkey_err(dirent_k);
+	if (ret)
+		goto err;
+
+	ret = bch2_dirent_read_target(trans, dir, bkey_s_c_to_dirent(dirent_k), &inum);
+	if (ret > 0)
+		ret = -ENOENT;
 	if (ret)
 		goto err;
 
@@ -326,6 +334,7 @@ int bch2_unlink_trans(struct btree_trans *trans,
 
 	dir_u->bi_mtime = dir_u->bi_ctime = inode_u->bi_ctime = now;
 	dir_u->bi_nlink -= is_subdir_for_nlink(inode_u);
+	dir_u->bi_size	-= bkey_bytes(dirent_k.k);
 
 	ret =   bch2_hash_delete_at(trans, bch2_dirent_hash_desc,
 				    &dir_hash, &dirent_iter,
