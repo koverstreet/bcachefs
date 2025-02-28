@@ -47,11 +47,11 @@ struct bch_write_bio {
 	struct bch_write_bio	*parent;
 
 	u64			submit_time;
-	u64			inode_offset;
 	u64			nocow_bucket;
 
-	struct bch_devs_list	failed;
+	unsigned		submitted;
 	u8			dev;
+	struct bch_devs_list	failed;
 
 	unsigned		split:1,
 				bounce:1,
@@ -71,7 +71,8 @@ struct bch_write_op {
 	void			(*end_io)(struct bch_write_op *);
 	u64			start_time;
 
-	unsigned		written; /* sectors */
+	unsigned		submitted;	/* sectors */
+	unsigned		written;	/* sectors */
 	u16			flags;
 	s16			error; /* dio write path expects it to hold -ERESTARTSYS... */
 
