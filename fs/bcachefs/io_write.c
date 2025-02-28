@@ -1877,6 +1877,13 @@ void bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
 	bch2_devs_list_to_text(out, &op->devs_have);
 	prt_newline(out);
 
+	if (op->devs_have.nr) {
+		prt_printf(out, "devs_have:\t");
+		darray_for_each(op->devs_have, i)
+			prt_printf(out, "%u ", *i);
+		prt_newline(out);
+	}
+
 	prt_printf(out, "ref:\t%u\n", closure_nr_remaining(&op->cl));
 	prt_printf(out, "ret\t%s\n", bch2_err_str(op->error));
 }
