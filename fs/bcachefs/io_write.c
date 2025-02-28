@@ -1719,6 +1719,13 @@ void bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
 	prt_printf(out, "nr_replicas:\t%u\n", op->nr_replicas);
 	prt_printf(out, "nr_replicas_required:\t%u\n", op->nr_replicas_required);
 
+	if (op->devs_have.nr) {
+		prt_printf(out, "devs_have:\t");
+		darray_for_each(op->devs_have, i)
+			prt_printf(out, "%u ", *i);
+		prt_newline(out);
+	}
+
 	prt_printf(out, "ref:\t%u\n", closure_nr_remaining(&op->cl));
 
 	printbuf_indent_sub(out, 2);
