@@ -578,6 +578,7 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 			n->bio.bi_end_io	= wbio->bio.bi_end_io;
 			n->bio.bi_private	= wbio->bio.bi_private;
 			n->parent		= wbio;
+			n->submitted		= wbio->submitted;
 			n->split		= true;
 			n->bounce		= false;
 			n->put_bio		= true;
@@ -593,7 +594,6 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 		n->have_ioref		= ca != NULL;
 		n->nocow		= nocow;
 		n->submit_time		= local_clock();
-		n->inode_offset		= bkey_start_offset(&k->k);
 		if (nocow)
 			n->nocow_bucket	= PTR_BUCKET_NR(ca, ptr);
 		n->bio.bi_iter.bi_sector = ptr->offset;
@@ -844,6 +844,8 @@ static void bch2_write_endio(struct bio *bio)
 				   wbio->submit_time, !bio->bi_status);
 
 	if (unlikely(bio->bi_status)) {
+		/* retry these immediately, like btree write errors */
+
 		if (ca)
 			bch_err_inum_offset_ratelimited(ca,
 					    op->pos.inode,
@@ -890,10 +892,11 @@ static void init_append_extent(struct bch_write_op *op,
 {
 	struct bch_fs *c = op->c;
 
-	op->pos.offset += crc.uncompressed_size;
+	//op->pos.offset += crc.uncompressed_size;
 
 	struct bkey_i_extent *e = bkey_extent_init(op->insert_keys.top);
 	e->k.p		= op->pos;
+	e->k.p.offset	+= op->submitted + crc.uncompressed_size;
 	e->k.size	= crc.uncompressed_size;
 	e->k.bversion	= version;
 
