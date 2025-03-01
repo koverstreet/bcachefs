@@ -1233,6 +1233,22 @@ static void bch2_dev_free(struct bch_dev *ca)
 	kobject_put(&ca->kobj);
 }
 
+static void bch2_dev_io_ref_stop(struct bch_dev *ca)
+{
+	lockdep_assert_held(&ca->io_ref_statechange_lock);
+
+	reinit_completion(&ca->io_ref_completion);
+	percpu_ref_kill(&ca->io_ref);
+	wait_for_completion(&ca->io_ref_completion);
+}
+
+static void bch2_dev_io_ref_start(struct bch_dev *ca)
+{
+	lockdep_assert_held(&ca->io_ref_statechange_lock);
+
+	percpu_ref_reinit(&ca->io_ref);
+}
+
 static void __bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca)
 {
 
@@ -1243,13 +1259,14 @@ static void __bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca)
 
 	__bch2_dev_read_only(c, ca);
 
-	reinit_completion(&ca->io_ref_completion);
-	percpu_ref_kill(&ca->io_ref);
-	wait_for_completion(&ca->io_ref_completion);
-
 	bch2_dev_unlink(ca);
 
+	mutex_lock(&ca->io_ref_statechange_lock);
+	bch2_dev_io_ref_stop(ca);
+
 	bch2_free_super(&ca->disk_sb);
+	mutex_unlock(&ca->io_ref_statechange_lock);
+
 	bch2_dev_journal_exit(ca);
 }
 
@@ -1331,6 +1348,8 @@ static struct bch_dev *__bch2_dev_alloc(struct bch_fs *c,
 	kobject_init(&ca->kobj, &bch2_dev_ktype);
 	init_completion(&ca->ref_completion);
 	init_completion(&ca->io_ref_completion);
+	mutex_init(&ca->io_ref_statechange_lock);
+	init_waitqueue_head(&ca->frozen_wait);
 
 	INIT_WORK(&ca->io_error_work, bch2_io_error_work);
 
@@ -1425,6 +1444,8 @@ static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb)
 	if (ret)
 		return ret;
 
+	mutex_lock(&ca->io_ref_statechange_lock);
+
 	/* Commit: */
 	ca->disk_sb = *sb;
 	memset(sb, 0, sizeof(*sb));
@@ -1438,7 +1459,9 @@ static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb)
 
 	ca->dev = ca->disk_sb.bdev->bd_dev;
 
-	percpu_ref_reinit(&ca->io_ref);
+	if (!ca->frozen)
+		bch2_dev_io_ref_start(ca);
+	mutex_unlock(&ca->io_ref_statechange_lock);
 
 	return 0;
 }
@@ -2110,9 +2133,63 @@ static void bch2_fs_bdev_sync(struct block_device *bdev)
 	bch2_ro_ref_put(c);
 }
 
+static int bch2_fs_bdev_freeze(struct block_device *bdev)
+{
+	int ret = -EINVAL;
+	struct bch_fs *c = bdev_get_fs(bdev);
+	if (!c)
+		return ret;
+
+	struct bch_dev *ca = bdev_to_bch_dev(c, bdev);
+	if (!ca)
+		goto err;
+
+	mutex_lock(&ca->io_ref_statechange_lock);
+	ca->frozen++;
+	smp_mb();
+	bch2_dev_io_ref_stop(ca);
+	mutex_unlock(&ca->io_ref_statechange_lock);
+
+	ret = sync_blockdev(bdev);
+
+	bch2_dev_put(ca);
+err:
+	bch2_ro_ref_put(c);
+	return ret;
+}
+
+static int bch2_fs_bdev_thaw(struct block_device *bdev)
+{
+	int ret = -EINVAL;
+	struct bch_fs *c = bdev_get_fs(bdev);
+	if (!c)
+		return ret;
+
+	struct bch_dev *ca = bdev_to_bch_dev(c, bdev);
+	if (!ca)
+		goto err;
+
+	mutex_lock(&ca->io_ref_statechange_lock);
+	if (ca->disk_sb.bdev &&
+	    ca->frozen == 1)
+		bch2_dev_io_ref_start(ca);
+	--ca->frozen;
+	wake_up(&ca->frozen_wait);
+	mutex_unlock(&ca->io_ref_statechange_lock);
+
+	ret = 0;
+
+	bch2_dev_put(ca);
+err:
+	bch2_ro_ref_put(c);
+	return ret;
+}
+
 const struct blk_holder_ops bch2_sb_handle_bdev_ops = {
 	.mark_dead		= bch2_fs_bdev_mark_dead,
 	.sync			= bch2_fs_bdev_sync,
+	.freeze			= bch2_fs_bdev_freeze,
+	.thaw			= bch2_fs_bdev_thaw,
 };
 
 /* Filesystem open: */
