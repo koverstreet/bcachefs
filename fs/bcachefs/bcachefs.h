@@ -592,6 +592,9 @@ struct bch_dev {
 #endif
 	struct completion	ref_completion;
 	struct enumerated_ref	io_ref[2];
+	struct mutex		io_ref_statechange_lock;
+	unsigned		frozen;
+	wait_queue_head_t	frozen_wait;
 
 	struct bch_fs		*fs;
 

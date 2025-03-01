@@ -52,6 +52,56 @@ void bch2_dev_bucket_missing(struct bch_dev *ca, u64 bucket)
 		bucket, ca->name, ca->mi.first_bucket, ca->mi.nbuckets);
 }
 
+/*
+ * Use of bch2_dev_get_ioref() is subject to deadlocks if used incorrectly, and
+ * we cannot write asserts for correct usage, so: pay attention, because this is
+ * where we implement freeze.
+ *
+ * Waiting on an outstanding freeze to complete will indirectly wait on all
+ * other outstanding io_refs to be released. That means:
+ *
+ * - Don't use bch2_dev_get_ioref() if you already have an io_ref, use
+ *   percpu_ref_get(). Since dev_get_ioref() has tryget() semantics, that's what
+ *   you should be doing anyways.
+ *
+ * - All io_refs must be released without blocking on locks that might be held
+ *   while calling dev_get_ioref(). This is easy to obey since we generally
+ *   release io_refs from endio functions.
+ *
+ */
+struct bch_dev *bch2_dev_get_ioref(struct bch_fs *c, unsigned dev,
+				   int rw, unsigned ref_idx)
+{
+	might_sleep();
+again:
+	rcu_read_lock();
+	struct bch_dev *ca = bch2_dev_rcu(c, dev);
+	if (likely(ca)) {
+		if (unlikely(!enumerated_ref_tryget(&ca->io_ref[rw], ref_idx))) {
+			smp_mb();
+			if (ca->frozen) {
+				bch2_dev_get(ca);
+				rcu_read_unlock();
+
+				wait_event(ca->frozen_wait, !ca->frozen);
+				bch2_dev_put(ca);
+				goto again;
+			}
+			ca = NULL;
+		}
+	}
+	rcu_read_unlock();
+
+	if (ca &&
+	    (ca->mi.state == BCH_MEMBER_STATE_rw ||
+	    (ca->mi.state == BCH_MEMBER_STATE_ro && rw == READ)))
+		return ca;
+
+	if (ca)
+		enumerated_ref_put(&ca->io_ref[rw], ref_idx);
+	return NULL;
+}
+
 #define x(t, n, ...) [n] = #t,
 static const char * const bch2_iops_measurements[] = {
 	BCH_IOPS_MEASUREMENTS()
