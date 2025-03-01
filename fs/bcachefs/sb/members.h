@@ -352,22 +352,7 @@ static inline struct bch_dev *bch2_dev_iterate(struct bch_fs *c, struct bch_dev 
 	return bch2_dev_tryget(c, dev_idx);
 }
 
-static inline struct bch_dev *bch2_dev_get_ioref(struct bch_fs *c, unsigned dev,
-						 int rw, unsigned ref_idx)
-{
-	might_sleep();
-
-	guard(rcu)();
-	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
-	if (!ca || !enumerated_ref_tryget(&ca->io_ref[rw], ref_idx))
-		return NULL;
-
-	if (ca->mi.state == BCH_MEMBER_STATE_rw || rw == READ)
-		return ca;
-
-	enumerated_ref_put(&ca->io_ref[rw], ref_idx);
-	return NULL;
-}
+struct bch_dev *bch2_dev_get_ioref(struct bch_fs *, unsigned, int, unsigned);
 
 /* Member properties: */
 
