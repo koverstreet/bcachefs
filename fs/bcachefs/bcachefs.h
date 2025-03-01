@@ -527,6 +527,9 @@ struct bch_dev {
 	struct completion	ref_completion;
 	struct percpu_ref	io_ref[2];
 	struct completion	io_ref_completion[2];
+	struct mutex		io_ref_statechange_lock;
+	unsigned		frozen;
+	wait_queue_head_t	frozen_wait;
 
 	struct bch_fs		*fs;
 
