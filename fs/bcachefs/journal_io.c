@@ -1734,6 +1734,11 @@ static void journal_write_endio(struct bio *bio)
 	struct journal *j = &ca->fs->journal;
 	struct journal_buf *w = j->buf + jbio->buf_idx;
 
+	/*
+	 * XXX: errors need to be retried, if a fua write fails and can't be
+	 * retried we _have_ to kick the device out
+	 */
+
 	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_write,
 				   jbio->submit_time, !bio->bi_status);
 
