@@ -166,6 +166,7 @@ void time_stats_reset(struct time_stats *stats)
 	}
 	spin_unlock_irq(&stats->lock);
 }
+EXPORT_SYMBOL_GPL(time_stats_reset);
 
 #include <linux/seq_buf.h>
 
