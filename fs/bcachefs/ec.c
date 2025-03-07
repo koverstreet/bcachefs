@@ -1540,6 +1540,8 @@ static void ec_stripe_create(struct ec_stripe_new *s)
 	if (ret)
 		goto err;
 err:
+	trace_stripe_create(c, s->idx, ret);
+
 	bch2_disk_reservation_put(c, &s->res);
 
 	for (i = 0; i < v->nr_blocks; i++)
