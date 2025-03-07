@@ -331,4 +331,4 @@ static inline long bch2_err_class(long err)
 #include <linux/blk_types.h>
 const char *bch2_blk_status_to_str(blk_status_t);
 
-#endif /* _BCACHFES_ERRCODE_H */
+#endif /* _BCACHEFS_ERRCODE_H */
