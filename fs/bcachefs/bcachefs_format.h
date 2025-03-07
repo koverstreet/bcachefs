@@ -863,6 +863,7 @@ LE64_BITMASK(BCH_SB_VERSION_INCOMPAT_ALLOWED,
 LE64_BITMASK(BCH_SB_SHARD_INUMS_NBITS,	struct bch_sb, flags[6],  0,  4);
 LE64_BITMASK(BCH_SB_WRITE_ERROR_TIMEOUT,struct bch_sb, flags[6],  4, 14);
 LE64_BITMASK(BCH_SB_CSUM_ERR_RETRY_NR,	struct bch_sb, flags[6], 14, 20);
+LE64_BITMASK(BCH_SB_IO_ERROR_THRESHOLD,	struct bch_sb, flags[6], 20, 36);
 
 static inline __u64 BCH_SB_COMPRESSION_TYPE(const struct bch_sb *sb)
 {
