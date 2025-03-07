@@ -148,6 +148,11 @@ enum fsck_err_opts {
 	  OPT_UINT(1, 300),						\
 	  BCH_SB_WRITE_ERROR_TIMEOUT,	30,				\
 	  NULL,		"Number of consecutive write errors allowed before kicking out a device")\
+	x(io_error_threshold,		u16,				\
+	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
+	  OPT_UINT(0, 65535),						\
+	  BCH_SB_IO_ERROR_THRESHOLD,	100,				\
+	  NULL,		"Fraction of IOs that may be errors before kicking out a device")\
 	x(metadata_replicas,		u8,				\
 	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
 	  OPT_UINT(1, BCH_REPLICAS_MAX),				\
