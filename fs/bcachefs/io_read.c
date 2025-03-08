@@ -472,6 +472,8 @@ static void bch2_rbio_retry(struct work_struct *work)
 		.inum	= rbio->read_pos.inode,
 	};
 	struct bch_io_failures failed = { .nr = 0 };
+	unsigned csum_retry = 0;
+	int ret = 0;
 
 	trace_io_read_retry(&rbio->bio);
 	this_cpu_add(c->counters[BCH_COUNTER_io_read_retry],
@@ -495,9 +497,15 @@ static void bch2_rbio_retry(struct work_struct *work)
 	flags &= ~BCH_READ_last_fragment;
 	flags |= BCH_READ_must_clone;
 
-	int ret = flags & BCH_READ_data_update
-		? bch2_read_retry_nodecode(c, rbio, iter, &failed, flags)
-		: __bch2_read(c, rbio, iter, inum, &failed, flags);
+	do {
+		failed.saw_csum_err = false;
+
+		ret = flags & BCH_READ_data_update
+			? bch2_read_retry_nodecode(c, rbio, iter, &failed, flags)
+			: __bch2_read(c, rbio, iter, inum, &failed, flags);
+
+		failed.nr = 0;
+	} while (ret && failed.saw_csum_err && ++csum_retry <= 3);
 
 	if (ret) {
 		rbio->ret = ret;

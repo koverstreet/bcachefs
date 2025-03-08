@@ -29,6 +29,7 @@ struct extent_ptr_decoded {
 
 struct bch_io_failures {
 	u8			nr;
+	bool			saw_csum_err;
 	struct bch_dev_io_failures {
 		u8		dev;
 		u8		idx;
