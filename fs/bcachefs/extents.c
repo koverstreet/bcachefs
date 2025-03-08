@@ -45,6 +45,8 @@ static void bch2_extent_crc_pack(union bch_extent_crc *,
 				 struct bch_extent_crc_unpacked,
 				 enum bch_extent_entry_type);
 
+#define BCH_MAX_CSUM_RETRIES		3
+
 struct bch_dev_io_failures *bch2_dev_io_failures(struct bch_io_failures *f,
 						 unsigned dev)
 {
@@ -58,7 +60,8 @@ struct bch_dev_io_failures *bch2_dev_io_failures(struct bch_io_failures *f,
 }
 
 void bch2_mark_io_failure(struct bch_io_failures *failed,
-			  struct extent_ptr_decoded *p)
+			  struct extent_ptr_decoded *p,
+			  bool csum_error)
 {
 	struct bch_dev_io_failures *f = bch2_dev_io_failures(failed, p->ptr.dev);
 
@@ -66,17 +69,16 @@ void bch2_mark_io_failure(struct bch_io_failures *failed,
 		BUG_ON(failed->nr >= ARRAY_SIZE(failed->devs));
 
 		f = &failed->devs[failed->nr++];
-		f->dev		= p->ptr.dev;
-		f->idx		= p->idx;
-		f->nr_failed	= 1;
-		f->nr_retries	= 0;
-	} else if (p->idx != f->idx) {
-		f->idx		= p->idx;
-		f->nr_failed	= 1;
-		f->nr_retries	= 0;
-	} else {
-		f->nr_failed++;
+		memset(f, 0, sizeof(*f));
+		f->dev = p->ptr.dev;
 	}
+
+	if (p->do_ec_reconstruct)
+		f->failed_ec = true;
+	else if (!csum_error)
+		f->failed_io = true;
+	else
+		f->failed_csum_nr++;
 }
 
 static inline u64 dev_latency(struct bch_dev *ca)
@@ -96,7 +98,8 @@ static inline bool ptr_better(struct bch_fs *c,
 			      const struct extent_ptr_decoded p1,
 			      const struct extent_ptr_decoded p2)
 {
-	if (likely(!p1.idx && !p2.idx)) {
+	if (likely(!p1.do_ec_reconstruct &&
+		   !p2.do_ec_reconstruct)) {
 		struct bch_dev *ca1 = bch2_dev_rcu(c, p1.ptr.dev);
 		struct bch_dev *ca2 = bch2_dev_rcu(c, p2.ptr.dev);
 
@@ -122,9 +125,9 @@ static inline bool ptr_better(struct bch_fs *c,
 	}
 
 	if (bch2_force_reconstruct_read)
-		return p1.idx > p2.idx;
+		return p1.do_ec_reconstruct > p2.do_ec_reconstruct;
 
-	return p1.idx < p2.idx;
+	return p1.do_ec_reconstruct < p2.do_ec_reconstruct;
 }
 
 /*
@@ -133,14 +136,16 @@ static inline bool ptr_better(struct bch_fs *c,
  * other devices, it will still pick a pointer from avoid.
  */
 int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
-			      struct bch_io_failures *failed,
-			      struct extent_ptr_decoded *pick,
-			      int dev)
+			       struct bch_io_failures *failed,
+			       struct extent_ptr_decoded *pick,
+			       int dev)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
 	struct bch_dev_io_failures *f;
+	unsigned csum_retry = 0;
+	bool have_csum_retries = false;
 	int ret = 0;
 
 	if (k.k->type == KEY_TYPE_error)
@@ -148,7 +153,7 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 
 	if (bch2_bkey_extent_ptrs_flags(ptrs) & BIT_ULL(BCH_EXTENT_FLAG_poisoned))
 		return -BCH_ERR_extent_poisened;
-
+again:
 	rcu_read_lock();
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 		/*
@@ -176,20 +181,28 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 		if (p.ptr.cached && (!ca || dev_ptr_stale_rcu(ca, &p.ptr)))
 			continue;
 
-		f = failed ? bch2_dev_io_failures(failed, p.ptr.dev) : NULL;
-		if (f)
-			p.idx = f->nr_failed < f->nr_retries
-				? f->idx
-				: f->idx + 1;
+		if (unlikely(failed) &&
+		    (f = bch2_dev_io_failures(failed, p.ptr.dev))) {
+			have_csum_retries |= !f->failed_io && f->failed_csum_nr < BCH_MAX_CSUM_RETRIES;
 
-		if (!p.idx && (!ca || !bch2_dev_is_online(ca)))
-			p.idx++;
+			if (p.has_ec &&
+			    !f->failed_ec &&
+			    (f->failed_io || f->failed_csum_nr))
+				p.do_ec_reconstruct = true;
+			else if (f->failed_io ||
+				 f->failed_csum_nr > csum_retry)
+				continue;
+		}
 
-		if (!p.idx && p.has_ec && bch2_force_reconstruct_read)
-			p.idx++;
+		if (!ca || !bch2_dev_is_online(ca)) {
+			if (p.has_ec)
+				p.do_ec_reconstruct = true;
+			else
+				continue;
+		}
 
-		if (p.idx > (unsigned) p.has_ec)
-			continue;
+		if (p.has_ec && bch2_force_reconstruct_read)
+			p.do_ec_reconstruct = true;
 
 		if (ret > 0 && !ptr_better(c, p, *pick))
 			continue;
@@ -198,6 +211,13 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 		ret = 1;
 	}
 	rcu_read_unlock();
+
+	if (unlikely(ret == -BCH_ERR_no_device_to_read_from &&
+		     have_csum_retries &&
+		     csum_retry < BCH_MAX_CSUM_RETRIES)) {
+		csum_retry++;
+		goto again;
+	}
 
 	return ret;
 }
