@@ -176,6 +176,9 @@ static int parse_features(struct dm_arg_set *as, struct flakey_c *fc,
 		}
 
 		if (!strcasecmp(arg_name, "random_read_corrupt")) {
+			fc->random_read_corrupt = 10000000;
+			fc->random_write_corrupt = 10000000;
+			/* 
 			if (!argc) {
 				ti->error = "Feature random_read_corrupt requires a parameter";
 				return -EINVAL;
@@ -184,6 +187,7 @@ static int parse_features(struct dm_arg_set *as, struct flakey_c *fc,
 			if (r)
 				return r;
 			argc--;
+			*/
 
 			continue;
 		}
@@ -426,7 +430,7 @@ static struct bio *clone_bio(struct dm_target *ti, struct flakey_c *fc, struct b
 	if (!clone)
 		return NULL;
 
-	bio_init(clone, fc->dev->bdev, bio->bi_inline_vecs, nr_iovecs, bio->bi_opf);
+	bio_init(clone, fc->dev->bdev, clone->bi_inline_vecs, nr_iovecs, bio->bi_opf);
 
 	clone->bi_iter.bi_sector = flakey_map_sector(ti, bio->bi_iter.bi_sector);
 	clone->bi_private = bio;
@@ -467,6 +471,8 @@ retry_alloc_pages:
 			to_copy -= this_step;
 			virt += this_step;
 		} while (to_copy);
+
+		BUG_ON(clone->bi_vcnt >= clone->bi_max_vecs);
 
 		__bio_add_page(clone, pages, size_to_add, 0);
 		remaining_size -= size_to_add;
