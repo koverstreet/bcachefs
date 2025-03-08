@@ -176,6 +176,9 @@ static int parse_features(struct dm_arg_set *as, struct flakey_c *fc,
 		}
 
 		if (!strcasecmp(arg_name, "random_read_corrupt")) {
+			fc->random_read_corrupt = 10000000;
+			fc->random_write_corrupt = 10000000;
+			/* 
 			if (!argc) {
 				ti->error = "Feature random_read_corrupt requires a parameter";
 				return -EINVAL;
@@ -184,6 +187,7 @@ static int parse_features(struct dm_arg_set *as, struct flakey_c *fc,
 			if (r)
 				return r;
 			argc--;
+			*/
 
 			continue;
 		}
@@ -467,6 +471,8 @@ retry_alloc_pages:
 			to_copy -= this_step;
 			virt += this_step;
 		} while (to_copy);
+
+		BUG_ON(clone->bi_vcnt >= clone->bi_max_vecs);
 
 		__bio_add_page(clone, pages, size_to_add, 0);
 		remaining_size -= size_to_add;
