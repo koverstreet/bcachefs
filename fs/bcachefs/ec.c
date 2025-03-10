@@ -1839,10 +1839,10 @@ static int __get_existing_stripe(struct btree_trans *trans,
 	if (stripe_lru_pos(s.v) <= 1)
 		goto out;
 
-	if (s.v->disk_label	== head->disk_label &&
-	    s.v->algorithm	== head->algo &&
-	    s.v->nr_redundant	== head->redundancy &&
-	    s.v->sectors	== head->blocksize &&
+	if (s.v->disk_label		== head->disk_label &&
+	    s.v->algorithm		== head->algo &&
+	    s.v->nr_redundant		== head->redundancy &&
+	    le16_to_cpu(s.v->sectors)	== head->blocksize &&
 	    bch2_try_open_stripe(c, head->s, idx)) {
 		bkey_reassemble(&stripe->key, k);
 		ret = 1;
