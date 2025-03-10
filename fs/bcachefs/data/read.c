@@ -66,12 +66,6 @@ module_param_named(read_corrupt_device, bch2_read_corrupt_device, int, 0644);
 MODULE_PARM_DESC(read_corrupt_device, "");
 #endif
 
-static bool bch2_poison_extents_on_checksum_error = true;
-module_param_named(poison_extents_on_checksum_error,
-		   bch2_poison_extents_on_checksum_error, bool, 0644);
-MODULE_PARM_DESC(poison_extents_on_checksum_error,
-		 "Extents with checksum errors are marked as poisoned - unsafe without read fua support");
-
 static void bch2_read_bio_to_text_atomic(struct printbuf *, struct bch_read_bio *);
 
 #ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
@@ -540,9 +534,6 @@ static int get_rbio_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 static noinline int maybe_poison_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 					enum btree_id btree, struct bkey_s_c read_k)
 {
-	if (!bch2_poison_extents_on_checksum_error)
-		return 0;
-
 	struct bch_fs *c = trans->c;
 
 	/* Can't commit during recovery — will be handled after going rw */
@@ -1243,6 +1234,10 @@ static inline struct bch_read_bio *read_extent_rbio_alloc(struct btree_trans *tr
 		event_inc_trace(c, data_read_split, buf,
 				bch2_read_bio_to_text_atomic(&buf, rbio));
 	}
+
+	/* XXX: also nvme read recovery level */
+	if (unlikely(failed && bch2_dev_io_failures(failed, pick.ptr.dev)))
+		rbio->bio.bi_opf |= REQ_FUA;
 
 	if (rbio->bounce)
 		event_inc_trace(c, data_read_bounce, buf,
