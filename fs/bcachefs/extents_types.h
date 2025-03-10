@@ -27,6 +27,8 @@ struct extent_ptr_decoded {
 	struct bch_extent_stripe_ptr	ec;
 };
 
+#define BCH_MAX_CSUM_RETRIES		3
+
 struct bch_io_failures {
 	u8			nr;
 	struct bch_dev_io_failures {

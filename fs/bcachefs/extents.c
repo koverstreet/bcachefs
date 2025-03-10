@@ -45,8 +45,6 @@ static void bch2_extent_crc_pack(union bch_extent_crc *,
 				 struct bch_extent_crc_unpacked,
 				 enum bch_extent_entry_type);
 
-#define BCH_MAX_CSUM_RETRIES		3
-
 struct bch_dev_io_failures *bch2_dev_io_failures(struct bch_io_failures *f,
 						 unsigned dev)
 {

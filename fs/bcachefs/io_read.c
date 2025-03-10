@@ -456,6 +456,57 @@ static void mark_io_failure_if_current_extent_matches(struct btree_trans *trans,
 	bch2_trans_iter_exit(trans, &iter);
 }
 
+static noinline int maybe_poison_extent(struct btree_trans *trans, enum btree_id btree,
+					struct bkey_s_c read_k, struct bch_io_failures *failed)
+{
+	u64 flags = bch2_bkey_extent_flags(read_k);
+	if (flags & BIT_ULL(BCH_EXTENT_FLAG_poisoned))
+		return 0;
+
+	struct btree_iter iter;
+	struct bkey_s_c k = bch2_bkey_get_iter(trans, &iter, btree, bkey_start_pos(read_k.k),
+					       BTREE_ITER_intent);
+	int ret = bkey_err(k);
+	if (ret)
+		return ret;
+
+	if (!bkey_and_val_eq(k, read_k))
+		goto out;
+
+	struct bch_fs *c = trans->c;
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+
+	/*
+	 * Make sure we actually attempt to read and got checksum failures from
+	 * every replica
+	 */
+
+	rcu_read_lock();
+	bkey_for_each_ptr(ptrs, ptr) {
+		struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
+		if (!ca || ca->mi.state == BCH_MEMBER_STATE_failed)
+			continue;
+
+		struct bch_dev_io_failures *f = bch2_dev_io_failures(failed, ptr->dev);
+		if (!f || f->failed_csum_nr != BCH_MAX_CSUM_RETRIES) {
+			rcu_read_unlock();
+			return 0;
+		}
+	}
+	rcu_read_unlock();
+
+	struct bkey_i *new = bch2_trans_kmalloc(trans,
+					bkey_bytes(k.k) + sizeof(struct bch_extent_flags));
+	ret = PTR_ERR_OR_ZERO(new) ?:
+		(bkey_reassemble(new, k), 0) ?:
+		bch2_bkey_extent_flags_set(c, new, flags|BIT_ULL(BCH_EXTENT_FLAG_poisoned)) ?:
+		bch2_trans_update(trans, &iter, new, BTREE_UPDATE_internal_snapshot_node) ?:
+		bch2_trans_commit(trans, NULL, NULL, 0);
+out:
+	bch2_trans_iter_exit(trans, &iter);
+	return ret;
+}
+
 static noinline int bch2_read_retry_nodecode(struct btree_trans *trans,
 					struct bch_read_bio *rbio,
 					struct bvec_iter bvec_iter,
@@ -493,6 +544,12 @@ err:
 		goto retry;
 
 	if (ret) {
+		/* right, we unlocked, @k is invalid */
+		if (ret == -BCH_ERR_no_device_to_read_from && failed)
+			commit_do(trans, NULL, NULL, 0,
+				  maybe_poison_extent(trans, u->btree_id,
+						      bkey_i_to_s_c(u->k.k), failed));
+
 		rbio->bio.bi_status	= BLK_STS_IOERR;
 		rbio->ret		= ret;
 	}
@@ -1288,6 +1345,7 @@ int __bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
 	struct btree_iter iter;
 	struct bkey_buf sk;
 	struct bkey_s_c k;
+	enum btree_id data_btree;
 	int ret;
 
 	BUG_ON(flags & BCH_READ_data_update);
@@ -1298,7 +1356,7 @@ int __bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
 			     BTREE_ITER_slots);
 
 	while (1) {
-		enum btree_id data_btree = BTREE_ID_extents;
+		data_btree = BTREE_ID_extents;
 
 		bch2_trans_begin(trans);
 
@@ -1380,9 +1438,12 @@ err:
 			break;
 	}
 
-	bch2_trans_iter_exit(trans, &iter);
+	if (unlikely(ret)) {
+		if (ret == -BCH_ERR_no_device_to_read_from && failed)
+			commit_do(trans, NULL, NULL, 0,
+				  maybe_poison_extent(trans, data_btree,
+						      bkey_i_to_s_c(sk.k), failed));
 
-	if (ret) {
 		struct printbuf buf = PRINTBUF;
 		lockrestart_do(trans,
 			bch2_inum_offset_err_msg_trans(trans, &buf, inum,
@@ -1398,6 +1459,7 @@ err:
 			bch2_rbio_done(rbio);
 	}
 
+	bch2_trans_iter_exit(trans, &iter);
 	bch2_bkey_buf_exit(&sk, c);
 	return ret;
 }
