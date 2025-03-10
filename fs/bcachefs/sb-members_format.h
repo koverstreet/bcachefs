@@ -9,7 +9,7 @@
 #define BCH_SB_MEMBERS_MAX		64
 
 /*
- * Sentinal value - indicates a device that does not exist
+ * Sentinel value - indicates a device that does not exist
  */
 #define BCH_SB_MEMBER_INVALID		255
 

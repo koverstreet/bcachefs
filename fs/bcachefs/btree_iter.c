@@ -2448,7 +2448,7 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 		}
 
 		/*
-		 * iter->pos should be mononotically increasing, and always be
+		 * iter->pos should be monotonically increasing, and always be
 		 * equal to the key we just returned - except extents can
 		 * straddle iter->pos:
 		 */
@@ -3255,7 +3255,7 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 
 		/*
 		 * If the transaction wasn't restarted, we're presuming to be
-		 * doing something new: dont keep iterators excpt the ones that
+		 * doing something new: don't keep iterators except the ones that
 		 * are in use - except for the subvolumes btree:
 		 */
 		if (!trans->restarted && path->btree_id != BTREE_ID_subvolumes)

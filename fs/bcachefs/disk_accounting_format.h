@@ -10,7 +10,7 @@
  * Here, the key has considerably more structure than a typical key (bpos); an
  * accounting key is 'struct disk_accounting_pos', which is a union of bpos.
  *
- * More specifically: a key is just a muliword integer (where word endianness
+ * More specifically: a key is just a multiword integer (where word endianness
  * matches native byte order), so we're treating bpos as an opaque 20 byte
  * integer and mapping bch_accounting_key to that.
  *

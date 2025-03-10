@@ -236,7 +236,7 @@ void bch2_printbuf_tabstop_pop(struct printbuf *buf)
  * bch2_printbuf_tabstop_set() - add a tabstop, n spaces from the previous tabstop
  *
  * @buf: printbuf to control
- * @spaces: number of spaces from previous tabpstop
+ * @spaces: number of spaces from previous tabstop
  *
  * In the future this function may allocate memory if setting more than
  * PRINTBUF_INLINE_TABSTOPS or setting tabstops more than 255 spaces from start
@@ -388,7 +388,7 @@ void bch2_prt_tab_rjust(struct printbuf *buf)
  * @str:	string to print
  * @count:	number of bytes to print
  *
- * The following contol characters are handled as so:
+ * The following control characters are handled as so:
  *   \n: prt_newline	newline that obeys current indent level
  *   \t: prt_tab	advance to next tabstop
  *   \r: prt_tab_rjust	advance to next tabstop, with right justification
@@ -435,7 +435,7 @@ void bch2_prt_human_readable_s64(struct printbuf *out, s64 v)
  * @out:	output printbuf
  * @v:		integer to print
  *
- * Units are either raw (default), or human reabable units (controlled via
+ * Units are either raw (default), or human readable units (controlled via
  * @buf->human_readable_units)
  */
 void bch2_prt_units_u64(struct printbuf *out, u64 v)
@@ -451,7 +451,7 @@ void bch2_prt_units_u64(struct printbuf *out, u64 v)
  * @out:	output printbuf
  * @v:		integer to print
  *
- * Units are either raw (default), or human reabable units (controlled via
+ * Units are either raw (default), or human readable units (controlled via
  * @buf->human_readable_units)
  */
 void bch2_prt_units_s64(struct printbuf *out, s64 v)

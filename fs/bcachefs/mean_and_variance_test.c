@@ -25,7 +25,7 @@ static void mean_and_variance_basic_test(struct kunit *test)
 }
 
 /*
- * Test values computed using a spreadsheet from the psuedocode at the bottom:
+ * Test values computed using a spreadsheet from the pseudocode at the bottom:
  * https://fanf2.user.srcf.net/hermes/doc/antiforgery/stats.pdf
  */
 
