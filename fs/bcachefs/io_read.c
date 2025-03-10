@@ -37,12 +37,6 @@ module_param_named(read_corrupt_ratio, bch2_read_corrupt_ratio, uint, 0644);
 MODULE_PARM_DESC(read_corrupt_ratio, "");
 #endif
 
-static bool bch2_poison_extents_on_checksum_error;
-module_param_named(poison_extents_on_checksum_error,
-		   bch2_poison_extents_on_checksum_error, bool, 0644);
-MODULE_PARM_DESC(poison_extents_on_checksum_error,
-		 "Extents with checksum errors are marked as poisoned - unsafe without read fua support");
-
 #ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
 
 static bool bch2_target_congested(struct bch_fs *c, u16 target)
@@ -481,9 +475,6 @@ static void get_rbio_extent(struct btree_trans *trans,
 static noinline int maybe_poison_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 					enum btree_id btree, struct bkey_s_c read_k)
 {
-	if (!bch2_poison_extents_on_checksum_error)
-		return 0;
-
 	struct bch_fs *c = trans->c;
 
 	struct data_update *u = rbio_data_update(rbio);
@@ -1227,6 +1218,10 @@ retry_pick:
 	rbio->bio.bi_opf	= orig->bio.bi_opf;
 	rbio->bio.bi_iter.bi_sector = pick.ptr.offset;
 	rbio->bio.bi_end_io	= bch2_read_endio;
+
+	/* XXX: also nvme read recovery level */
+	if (unlikely(failed && bch2_dev_io_failures(failed, pick.ptr.dev)))
+		rbio->bio.bi_opf |= REQ_FUA;
 
 	if (rbio->bounce)
 		trace_and_count(c, io_read_bounce, &rbio->bio);
