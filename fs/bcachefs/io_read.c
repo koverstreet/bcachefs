@@ -1124,6 +1124,10 @@ retry_pick:
 	rbio->bio.bi_iter.bi_sector = pick.ptr.offset;
 	rbio->bio.bi_end_io	= bch2_read_endio;
 
+	/* XXX: also nvme read recovery level */
+	if (unlikely(failed && bch2_dev_io_failures(failed, pick.ptr.dev)))
+		rbio->bio.bi_opf |= REQ_FUA;
+
 	if (rbio->bounce)
 		trace_and_count(c, io_read_bounce, &rbio->bio);
 
