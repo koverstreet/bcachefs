@@ -1333,7 +1333,8 @@ err:
 		bch_err_ratelimited(c, "%s", buf.buf);
 		printbuf_exit(&buf);
 
-		rbio->bio.bi_status = BLK_STS_IOERR;
+		rbio->bio.bi_status	= BLK_STS_IOERR;
+		rbio->ret		= ret;
 
 		if (!(flags & BCH_READ_in_retry))
 			bch2_rbio_done(rbio);
