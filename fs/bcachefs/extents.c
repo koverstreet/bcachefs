@@ -177,9 +177,11 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 			p.crc_retry_nr	   = f->failed_csum_nr;
 			p.has_ec	  &= ~f->failed_ec;
 
-			have_io_errors	  |= f->failed_io;
-			have_io_errors	  |= f->failed_ec;
-			have_csum_errors  |= !!f->failed_csum_nr;
+			if (ca && ca->mi.state != BCH_MEMBER_STATE_failed) {
+				have_io_errors	|= f->failed_io;
+				have_io_errors	|= f->failed_ec;
+			}
+			have_csum_errors	|= !!f->failed_csum_nr;
 
 			if (p.has_ec && (f->failed_io || f->failed_csum_nr))
 				p.do_ec_reconstruct = true;
@@ -188,8 +190,9 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 				continue;
 		}
 
+		have_missing_devs |= ca && !bch2_dev_is_online(ca);
+
 		if (!ca || !bch2_dev_is_online(ca)) {
-			have_missing_devs = true;
 			if (!p.has_ec)
 				continue;
 			p.do_ec_reconstruct = true;
@@ -209,7 +212,15 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 		return 1;
 	if (!have_dirty_ptrs)
 		return 0;
-	return -BCH_ERR_no_device_to_read_from;
+	if (have_missing_devs)
+		return -BCH_ERR_no_device_to_read_from;
+	if (have_csum_errors)
+		return -BCH_ERR_data_read_csum_err;
+	if (have_io_errors)
+		return -BCH_ERR_data_read_io_err;
+
+	WARN_ONCE(1, "unhandled error case in %s\n", __func__);
+	return -EINVAL;
 }
 
 /* KEY_TYPE_btree_ptr: */
