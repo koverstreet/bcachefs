@@ -96,36 +96,37 @@ static inline bool ptr_better(struct bch_fs *c,
 			      const struct extent_ptr_decoded p1,
 			      const struct extent_ptr_decoded p2)
 {
-	if (likely(!p1.do_ec_reconstruct &&
-		   !p2.do_ec_reconstruct)) {
-		struct bch_dev *ca1 = bch2_dev_rcu(c, p1.ptr.dev);
-		struct bch_dev *ca2 = bch2_dev_rcu(c, p2.ptr.dev);
+	struct bch_dev *ca1 = bch2_dev_rcu(c, p1.ptr.dev);
+	struct bch_dev *ca2 = bch2_dev_rcu(c, p2.ptr.dev);
 
-		int failed_delta = dev_failed(ca1) - dev_failed(ca2);
+	int failed_delta = dev_failed(ca1) - dev_failed(ca2);
+	if (unlikely(failed_delta))
+		return failed_delta < 0;
 
-		if (failed_delta)
-			return failed_delta < 0;
-
-		u64 l1 = dev_latency(ca1);
-		u64 l2 = dev_latency(ca2);
-
-		/*
-		 * Square the latencies, to bias more in favor of the faster
-		 * device - we never want to stop issuing reads to the slower
-		 * device altogether, so that we can update our latency numbers:
-		 */
-		l1 *= l1;
-		l2 *= l2;
-
-		/* Pick at random, biased in favor of the faster device: */
-
-		return bch2_rand_range(l1 + l2) > l1;
-	}
-
-	if (bch2_force_reconstruct_read)
+	if (unlikely(bch2_force_reconstruct_read))
 		return p1.do_ec_reconstruct > p2.do_ec_reconstruct;
 
-	return p1.do_ec_reconstruct < p2.do_ec_reconstruct;
+	if (unlikely(p1.do_ec_reconstruct || p2.do_ec_reconstruct))
+		return p1.do_ec_reconstruct < p2.do_ec_reconstruct;
+
+	int crc_retry_delta = (int) p1.crc_retry_nr - (int) p2.crc_retry_nr;
+	if (unlikely(crc_retry_delta))
+		return crc_retry_delta < 0;
+
+	u64 l1 = dev_latency(ca1);
+	u64 l2 = dev_latency(ca2);
+
+	/*
+	 * Square the latencies, to bias more in favor of the faster
+	 * device - we never want to stop issuing reads to the slower
+	 * device altogether, so that we can update our latency numbers:
+	 */
+	l1 *= l1;
+	l2 *= l2;
+
+	/* Pick at random, biased in favor of the faster device: */
+
+	return bch2_rand_range(l1 + l2) > l1;
 }
 
 /*
@@ -138,83 +139,77 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 			       struct extent_ptr_decoded *pick,
 			       int dev)
 {
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	const union bch_extent_entry *entry;
-	struct extent_ptr_decoded p;
-	struct bch_dev_io_failures *f;
-	unsigned csum_retry = 0;
-	bool have_csum_retries = false;
-	int ret = 0;
+	bool have_csum_errors = false, have_io_errors = false, have_missing_devs = false;
+	bool have_dirty_ptrs = false, have_pick = false;
 
 	if (k.k->type == KEY_TYPE_error)
 		return -BCH_ERR_key_type_error;
-again:
+
 	rcu_read_lock();
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		have_dirty_ptrs |= !p.ptr.cached;
+
 		/*
 		 * Unwritten extent: no need to actually read, treat it as a
 		 * hole and return 0s:
 		 */
 		if (p.ptr.unwritten) {
-			ret = 0;
-			break;
+			rcu_read_unlock();
+			return 0;
 		}
 
 		/* Are we being asked to read from a specific device? */
 		if (dev >= 0 && p.ptr.dev != dev)
 			continue;
 
-		/*
-		 * If there are any dirty pointers it's an error if we can't
-		 * read:
-		 */
-		if (!ret && !p.ptr.cached)
-			ret = -BCH_ERR_no_device_to_read_from;
-
 		struct bch_dev *ca = bch2_dev_rcu(c, p.ptr.dev);
 
 		if (p.ptr.cached && (!ca || dev_ptr_stale_rcu(ca, &p.ptr)))
 			continue;
 
-		if (unlikely(failed) &&
-		    (f = bch2_dev_io_failures(failed, p.ptr.dev))) {
-			have_csum_retries |= !f->failed_io && f->failed_csum_nr < c->opts.checksum_err_retry_nr;
+		struct bch_dev_io_failures *f =
+			unlikely(failed) ? bch2_dev_io_failures(failed, p.ptr.dev) : NULL;
+		if (unlikely(f)) {
+			p.crc_retry_nr	   = f->failed_csum_nr;
+			p.has_ec	  &= ~f->failed_ec;
 
-			if (p.has_ec &&
-			    !f->failed_ec &&
-			    (f->failed_io || f->failed_csum_nr))
+			have_io_errors	  |= f->failed_io;
+			have_io_errors	  |= f->failed_ec;
+			have_csum_errors  |= !!f->failed_csum_nr;
+
+			if (p.has_ec && (f->failed_io || f->failed_csum_nr))
 				p.do_ec_reconstruct = true;
 			else if (f->failed_io ||
-				 f->failed_csum_nr > csum_retry)
+				 f->failed_csum_nr >= c->opts.checksum_err_retry_nr)
 				continue;
 		}
 
 		if (!ca || !bch2_dev_is_online(ca)) {
-			if (p.has_ec)
-				p.do_ec_reconstruct = true;
-			else
+			have_missing_devs = true;
+			if (!p.has_ec)
 				continue;
+			p.do_ec_reconstruct = true;
 		}
 
-		if (p.has_ec && bch2_force_reconstruct_read)
+		if (bch2_force_reconstruct_read && p.has_ec)
 			p.do_ec_reconstruct = true;
 
-		if (ret > 0 && !ptr_better(c, p, *pick))
-			continue;
-
-		*pick = p;
-		ret = 1;
+		if (!have_pick || ptr_better(c, p, *pick)) {
+			*pick = p;
+			have_pick = true;
+		}
 	}
 	rcu_read_unlock();
 
-	if (unlikely(ret == -BCH_ERR_no_device_to_read_from &&
-		     have_csum_retries &&
-		     csum_retry < c->opts.checksum_err_retry_nr)) {
-		csum_retry++;
-		goto again;
-	}
-
-	return ret;
+	if (have_pick)
+		return 1;
+	if (!have_dirty_ptrs)
+		return 0;
+	return -BCH_ERR_no_device_to_read_from;
 }
 
 /* KEY_TYPE_btree_ptr: */

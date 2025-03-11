@@ -21,7 +21,8 @@ struct bch_extent_crc_unpacked {
 
 struct extent_ptr_decoded {
 	bool				has_ec;
-	unsigned			do_ec_reconstruct;
+	bool				do_ec_reconstruct;
+	u8				crc_retry_nr;
 	struct bch_extent_crc_unpacked	crc;
 	struct bch_extent_ptr		ptr;
 	struct bch_extent_stripe_ptr	ec;
