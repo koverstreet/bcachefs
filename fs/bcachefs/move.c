@@ -132,7 +132,7 @@ static void move_write(struct moving_io *io)
 	 * new checksum in order to move it - but the poison bit will ensure
 	 * that userspace still gets the appropriate error.
 	 */
-	if (unlikely(rbio->ret == -BCH_ERR_data_read_csum_err &&
+	if (unlikely(rbio->ret == -BCH_ERR_data_read_retry_csum_err &&
 		     (bch2_bkey_extent_flags(bkey_i_to_s_c(io->write.k.k)) & BIT_ULL(BCH_EXTENT_FLAG_poisoned)))) {
 		struct bch_extent_crc_unpacked crc = rbio->pick.crc;
 		struct nonce nonce = extent_nonce(rbio->version, crc);
