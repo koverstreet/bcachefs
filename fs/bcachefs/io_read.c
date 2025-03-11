@@ -488,7 +488,7 @@ static noinline int maybe_poison_extent(struct btree_trans *trans, enum btree_id
 			continue;
 
 		struct bch_dev_io_failures *f = bch2_dev_io_failures(failed, ptr->dev);
-		if (!f || f->failed_csum_nr != BCH_MAX_CSUM_RETRIES) {
+		if (!f || f->failed_csum_nr != c->opts.checksum_err_retry_nr) {
 			rcu_read_unlock();
 			return 0;
 		}

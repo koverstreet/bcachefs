@@ -181,7 +181,7 @@ again:
 
 		if (unlikely(failed) &&
 		    (f = bch2_dev_io_failures(failed, p.ptr.dev))) {
-			have_csum_retries |= !f->failed_io && f->failed_csum_nr < BCH_MAX_CSUM_RETRIES;
+			have_csum_retries |= !f->failed_io && f->failed_csum_nr < c->opts.checksum_err_retry_nr;
 
 			if (p.has_ec &&
 			    !f->failed_ec &&
@@ -212,7 +212,7 @@ again:
 
 	if (unlikely(ret == -BCH_ERR_no_device_to_read_from &&
 		     have_csum_retries &&
-		     csum_retry < BCH_MAX_CSUM_RETRIES)) {
+		     csum_retry < c->opts.checksum_err_retry_nr)) {
 		csum_retry++;
 		goto again;
 	}
