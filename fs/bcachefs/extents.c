@@ -148,9 +148,6 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 
 	if (k.k->type == KEY_TYPE_error)
 		return -BCH_ERR_key_type_error;
-
-	if (bch2_bkey_extent_ptrs_flags(ptrs) & BIT_ULL(BCH_EXTENT_FLAG_poisoned))
-		return -BCH_ERR_extent_poisened;
 again:
 	rcu_read_lock();
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
