@@ -6,6 +6,7 @@
 #include <linux/bug.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
+#include <linux/math64.h>
 
 #include <uapi/linux/random.h>
 
@@ -87,6 +88,27 @@ static inline u32 get_random_u32_below(u32 ceil)
 			if (likely(is_power_of_2(ceil) || (u32)mult >= -ceil % ceil))
 				return mult >> 32;
 		}
+	}
+}
+
+u64 __get_random_u64_below(u64 ceil);
+
+static inline u64 get_random_u64_below(u64 ceil)
+{
+	if (!__builtin_constant_p(ceil))
+		return __get_random_u64_below(ceil);
+
+	BUILD_BUG_ON_MSG(!ceil, "get_random_u64_below() must take ceil > 0");
+	if (ceil <= 1)
+		return 0;
+	if (ceil <= U32_MAX)
+		return get_random_u32_below(ceil);
+
+	for (;;) {
+		u64 rand = get_random_u64();
+		u64 mult = ceil * rand;
+		if (likely(mult >= -ceil % ceil))
+			return mul_u64_u64_shr(ceil, rand, 64);
 	}
 }
 
