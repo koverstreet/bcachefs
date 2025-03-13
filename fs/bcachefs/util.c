@@ -653,27 +653,6 @@ int bch2_bio_alloc_pages(struct bio *bio, size_t size, gfp_t gfp_mask)
 	return 0;
 }
 
-u64 bch2_get_random_u64_below(u64 ceil)
-{
-	if (ceil <= U32_MAX)
-		return __get_random_u32_below(ceil);
-
-	/* this is the same (clever) algorithm as in __get_random_u32_below() */
-	u64 rand = get_random_u64();
-	u64 mult = ceil * rand;
-
-	if (unlikely(mult < ceil)) {
-		u64 bound;
-		div64_u64_rem(-ceil, ceil, &bound);
-		while (unlikely(mult < bound)) {
-			rand = get_random_u64();
-			mult = ceil * rand;
-		}
-	}
-
-	return mul_u64_u64_shr(ceil, rand, 64);
-}
-
 void memcpy_to_bio(struct bio *dst, struct bvec_iter dst_iter, const void *src)
 {
 	struct bio_vec bv;
