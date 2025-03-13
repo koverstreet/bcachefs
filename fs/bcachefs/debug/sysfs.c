@@ -433,7 +433,7 @@ static int bch2_read_fua_test(struct printbuf *out, struct bch_dev *ca)
 	end = ktime_get_ns() + test_duration;
 	for (iters = 0; iters < 1000 && time_before64(ktime_get_ns(), end); iters++) {
 		bio_init(bio, bdev, bio->bi_inline_vecs, 1, READ);
-		bio->bi_iter.bi_sector = (bch2_get_random_u64_below(dev_size) & ~((u64) bs - 1)) >> 9;
+		bio->bi_iter.bi_sector = (get_random_u64_below(dev_size) & ~((u64) bs - 1)) >> 9;
 		bch2_bio_map(bio, buf, bs);
 
 		u64 submit_time = ktime_get_ns();
