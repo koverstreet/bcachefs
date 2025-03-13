@@ -28,6 +28,8 @@
 #include "trace.h"
 #include "util.h"
 
+#include <linux/random.h>
+
 static const char * const bch2_extent_flags_strs[] = {
 #define x(n, v)	[BCH_EXTENT_FLAG_##n] = #n,
 	BCH_EXTENT_FLAGS()
@@ -117,7 +119,7 @@ static inline bool ptr_better(struct bch_fs *c,
 
 	/* Pick at random, biased in favor of the faster device: */
 
-	return bch2_get_random_u64_below(p1_latency + p2_latency) > p1_latency;
+	return get_random_u64_below(p1_latency + p2_latency) > p1_latency;
 }
 
 /*
