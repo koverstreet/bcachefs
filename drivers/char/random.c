@@ -588,6 +588,29 @@ u32 __get_random_u32_below(u32 ceil)
 }
 EXPORT_SYMBOL(__get_random_u32_below);
 
+u64 __get_random_u64_below(u64 ceil)
+{
+	if (unlikely(!ceil))
+		return get_random_u64();
+	if (ceil <= U32_MAX)
+		return __get_random_u32_below(ceil);
+
+	u64 rand = get_random_u64();
+	u64 mult = ceil * rand;
+
+	if (unlikely(mult < ceil)) {
+		u64 bound;
+		div64_u64_rem(-ceil, ceil, &bound);
+		while (unlikely(mult < bound)) {
+			rand = get_random_u64();
+			mult = ceil * rand;
+		}
+	}
+
+	return mul_u64_u64_shr(ceil, rand, 64);
+}
+EXPORT_SYMBOL(__get_random_u64_below);
+
 #ifdef CONFIG_SMP
 /*
  * This function is called when the CPU is coming up, with entry
