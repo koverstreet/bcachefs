@@ -712,3 +712,58 @@ void bch2_fs_rebalance_init(struct bch_fs *c)
 {
 	bch2_pd_controller_init(&c->rebalance.pd);
 }
+
+static int check_rebalance_work_extent(struct btree_trans *trans, struct bkey_s_c extent_k,
+				       struct bkey_buf *last_flushed)
+{
+	struct bch_fs *c = trans->c;
+
+	if (!bch2_bkey_sectors_need_rebalance(c, extent_k))
+		return 0;
+
+	struct btree_iter iter;
+	struct bkey_s_c k = bch2_bkey_get_iter(trans, &iter,
+				BTREE_ID_rebalance_work, extent_k.k->p, 0);
+	int ret = bkey_err(k);
+	if (ret)
+		return ret;
+
+	if (k.k->type == KEY_TYPE_set)
+		goto out;
+
+	ret = bch2_btree_write_buffer_maybe_flush(trans, extent_k, last_flushed);
+	if (ret)
+		goto err;
+
+	if (fsck_err(trans, rebalance_work_not_set,
+		     "rebalance work not set")) {
+		ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work,
+						  extent.k->p, true);
+		if (ret)
+			goto out;
+	}
+out:
+fsck_err:
+	bch2_trans_iter_exit(trans, &iter):
+	return 0;
+}
+
+int bch2_check_rebalance_work(struct bch_fs *c)
+{
+	struct btree_trans *trans = bch2_trans_get(c);
+
+	struct bkey_buf last_flushed;
+	bch2_bkey_buf_init(&last_flushed);
+	bkey_init(&last_flushed.k->k);
+
+	int ret = for_each_btree_key(trans, iter, BTREE_ID_extents,
+				     POS_MIN, BTREE_ITER_prefetch, k,
+			check_rebalance_work_extent(trans, k, &last_flushed)) ?:
+		  for_each_btree_key(trans, iter, BTREE_ID_reflink,
+				     POS_MIN, BTREE_ITER_prefetch, k,
+			check_rebalance_work_extent(trans, k, &last_flushed));
+
+	bch2_bkey_buf_exit(&last_flushed, c);
+	bch2_trans_put(trans);
+	return ret;
+}
