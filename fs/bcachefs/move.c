@@ -581,6 +581,21 @@ static int bch2_move_data_btree(struct moving_context *ctxt,
 			struct bkey_s_c_reflink_p p = bkey_s_c_to_reflink_p(k);
 			s64 offset_into_extent	= iter.pos.offset - bkey_start_offset(k.k);
 
+			if (offset_into_extent < -((s64) le32_to_cpu(p.v->front_pad)) ||
+			    offset_into_extent >= p.k->size + le32_to_cpu(p.v->back_pad)) {
+				struct printbuf buf = PRINTBUF;
+
+				prt_printf(&buf, "%s: offset_into_extent inconsistency\n  "
+					   "offset_into_extent %lli, iter.pos %llu\n  ",
+					   __func__,
+					   offset_into_extent, iter.pos.offset);
+				bch2_bkey_val_to_text(&buf, c, k);
+
+				bch_err(c, "%s", buf.buf);
+				printbuf_exit(&buf);
+				goto next_nondata;
+			}
+
 			bch2_trans_iter_exit(trans, &reflink_iter);
 			k = bch2_lookup_indirect_extent(trans, &reflink_iter, &offset_into_extent, p, true, 0);
 			ret = bkey_err(k);
