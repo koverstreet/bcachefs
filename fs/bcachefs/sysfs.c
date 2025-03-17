@@ -41,6 +41,7 @@
 
 #include <linux/blkdev.h>
 #include <linux/sort.h>
+#include <linux/string_choices.h>
 #include <linux/sched/clock.h>
 
 #include "util.h"
@@ -149,6 +150,7 @@ write_attribute(trigger_btree_key_cache_shrink);
 write_attribute(trigger_freelist_wakeup);
 write_attribute(trigger_btree_updates);
 read_attribute(gc_gens_pos);
+__sysfs_attribute(read_fua_test, 0400);
 
 read_attribute(uuid);
 read_attribute(minor);
@@ -291,6 +293,116 @@ static void bch2_fs_usage_base_to_text(struct printbuf *out, struct bch_fs *c)
 	prt_printf(out, "cached:\t%llu\n",	b.cached);
 	prt_printf(out, "reserved:\t\t%llu\n",	b.reserved);
 	prt_printf(out, "nr_inodes:\t%llu\n",	b.nr_inodes);
+}
+
+static int bch2_read_fua_test(struct printbuf *out, struct bch_dev *ca)
+{
+	struct bch_fs *c = ca->fs;
+	struct bio *bio = NULL;
+	void *buf = NULL;
+	unsigned bs = c->opts.block_size, iters;
+	u64 end, test_duration = NSEC_PER_SEC * 2;
+	struct bch2_time_stats stats_nofua, stats_fua, stats_random;
+	int ret = 0;
+
+	bch2_time_stats_init_no_pcpu(&stats_nofua);
+	bch2_time_stats_init_no_pcpu(&stats_fua);
+	bch2_time_stats_init_no_pcpu(&stats_random);
+
+	if (!bch2_dev_get_ioref(c, ca->dev_idx, READ, BCH_DEV_READ_REF_read_fua_test)) {
+		prt_str(out, "offline\n");
+		return 0;
+	}
+
+	struct block_device *bdev = ca->disk_sb.bdev;
+
+	bio = bio_kmalloc(1, GFP_KERNEL);
+	if (!bio) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	buf = kmalloc(bs, GFP_KERNEL);
+	if (!buf)
+		goto err;
+
+	end = ktime_get_ns() + test_duration;
+	for (iters = 0; iters < 1000 && time_before64(ktime_get_ns(), end); iters++) {
+		bio_init(bio, bdev, bio->bi_inline_vecs, 1, READ);
+		bch2_bio_map(bio, buf, bs);
+
+		u64 submit_time = ktime_get_ns();
+		ret = submit_bio_wait(bio);
+		bch2_time_stats_update(&stats_nofua, submit_time);
+
+		if (ret)
+			goto err;
+	}
+
+	end = ktime_get_ns() + test_duration;
+	for (iters = 0; iters < 1000 && time_before64(ktime_get_ns(), end); iters++) {
+		bio_init(bio, bdev, bio->bi_inline_vecs, 1, REQ_FUA|READ);
+		bch2_bio_map(bio, buf, bs);
+
+		u64 submit_time = ktime_get_ns();
+		ret = submit_bio_wait(bio);
+		bch2_time_stats_update(&stats_fua, submit_time);
+
+		if (ret)
+			goto err;
+	}
+
+	u64 dev_size = ca->mi.nbuckets * bucket_bytes(ca);
+
+	end = ktime_get_ns() + test_duration;
+	for (iters = 0; iters < 1000 && time_before64(ktime_get_ns(), end); iters++) {
+		bio_init(bio, bdev, bio->bi_inline_vecs, 1, READ);
+		bio->bi_iter.bi_sector = (bch2_get_random_u64_below(dev_size) & ~((u64) bs - 1)) >> 9;
+		bch2_bio_map(bio, buf, bs);
+
+		u64 submit_time = ktime_get_ns();
+		ret = submit_bio_wait(bio);
+		bch2_time_stats_update(&stats_random, submit_time);
+
+		if (ret)
+			goto err;
+	}
+
+	u64 ns_nofua		= mean_and_variance_get_mean(stats_nofua.duration_stats);
+	u64 ns_fua		= mean_and_variance_get_mean(stats_fua.duration_stats);
+	u64 ns_rand		= mean_and_variance_get_mean(stats_random.duration_stats);
+
+	u64 stddev_nofua	= mean_and_variance_get_stddev(stats_nofua.duration_stats);
+	u64 stddev_fua		= mean_and_variance_get_stddev(stats_fua.duration_stats);
+	u64 stddev_rand		= mean_and_variance_get_stddev(stats_random.duration_stats);
+
+	printbuf_tabstop_push(out, 8);
+	printbuf_tabstop_push(out, 12);
+	printbuf_tabstop_push(out, 12);
+	prt_printf(out, "This test must be run on an idle drive for accurate results\n");
+	prt_printf(out, "%s\n", dev_name(&ca->disk_sb.bdev->bd_device));
+	prt_printf(out, "fua support advertized: %s\n", str_yes_no(bdev_fua(bdev)));
+	prt_newline(out);
+	prt_printf(out, "ns:\tlatency\rstddev\r\n");
+	prt_printf(out, "nofua\t%llu\r%llu\r\n",	ns_nofua,	stddev_nofua);
+	prt_printf(out, "fua\t%llu\r%llu\r\n",		ns_fua,		stddev_fua);
+	prt_printf(out, "random\t%llu\r%llu\r\n",	ns_rand,	stddev_rand);
+
+	bool read_cache = ns_nofua * 2 < ns_rand;
+	bool fua_cached	= read_cache && ns_fua < (ns_nofua + ns_rand) / 2;
+
+	if (!read_cache)
+		prt_str(out, "reads don't appear to be cached - safe\n");
+	else if (!fua_cached)
+		prt_str(out, "fua reads don't appear to be cached - safe\n");
+	else
+		prt_str(out, "fua reads appear to be cached - unsafe\n");
+err:
+	kfree(buf);
+	kfree(bio);
+	enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_read_fua_test);
+	bch_err_fn(c, ret);
+	return ret;
 }
 
 SHOW(bch2_fs)
@@ -781,6 +893,9 @@ SHOW(bch2_dev)
 	if (attr == &sysfs_open_buckets)
 		bch2_open_buckets_to_text(out, c, ca);
 
+	if (attr == &sysfs_read_fua_test)
+		return bch2_read_fua_test(out, ca);
+
 	int opt_id = bch2_opt_lookup(attr->name);
 	if (opt_id >= 0)
 		return sysfs_opt_show(c, ca, opt_id, out);
@@ -842,6 +957,8 @@ struct attribute *bch2_dev_files[] = {
 	&sysfs_io_latency_stats_read,
 	&sysfs_io_latency_stats_write,
 	&sysfs_congested,
+
+	&sysfs_read_fua_test,
 
 	/* debug: */
 	&sysfs_alloc_debug,
