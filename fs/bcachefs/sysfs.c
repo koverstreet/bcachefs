@@ -148,6 +148,7 @@ write_attribute(trigger_btree_key_cache_shrink);
 write_attribute(trigger_freelist_wakeup);
 write_attribute(trigger_btree_updates);
 read_attribute(gc_gens_pos);
+__sysfs_attribute(read_fua_test, 0400);
 
 read_attribute(uuid);
 read_attribute(minor);
@@ -308,6 +309,95 @@ static void bch2_fs_usage_base_to_text(struct printbuf *out, struct bch_fs *c)
 	prt_printf(out, "cached:\t%llu\n",	b.cached);
 	prt_printf(out, "reserved:\t\t%llu\n",	b.reserved);
 	prt_printf(out, "nr_inodes:\t%llu\n",	b.nr_inodes);
+}
+
+static void bch2_read_fua_test(struct printbuf *out, struct bch_dev *ca)
+{
+	struct bch_fs *c = ca->fs;
+	struct bio *bio = NULL;
+	void *buf = NULL;
+	unsigned bs = c->opts.block_size, iters;
+	u64 start, now;
+	int ret = 0;
+
+	if (!bch2_dev_get_ioref(c, ca->dev_idx, READ)) {
+		prt_str(out, "offline\n");
+		return;
+	}
+
+	bio = bio_kmalloc(1, GFP_KERNEL);
+	if (!bio) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	buf = kmalloc(bs, GFP_KERNEL);
+	if (!buf)
+		goto err;
+
+	start = ktime_get_ns();
+	for (iters = 0; iters < 1000; iters++) {
+		bio_init(bio, ca->disk_sb.bdev, bio->bi_inline_vecs, 1, READ);
+		bch2_bio_map(bio, buf, bs);
+		ret = submit_bio_wait(bio);
+		if (ret)
+			goto err;
+
+		now = ktime_get_ns();
+		if (now - start > NSEC_PER_SEC)
+			break;
+	}
+	u64 ns_nofua = div64_u64(now - start, iters);
+
+	start = ktime_get_ns();
+	for (iters = 0; iters < 1000; iters++) {
+		bio_init(bio, ca->disk_sb.bdev, bio->bi_inline_vecs, 1, REQ_FUA|READ);
+		bch2_bio_map(bio, buf, bs);
+		ret = submit_bio_wait(bio);
+		if (ret)
+			goto err;
+
+		now = ktime_get_ns();
+		if (now - start > NSEC_PER_SEC)
+			break;
+	}
+	u64 ns_fua = div64_u64(now - start, iters);
+
+	u64 dev_size = ca->mi.nbuckets * bucket_bytes(ca);
+
+	start = ktime_get_ns();
+	for (iters = 0; iters < 1000; iters++) {
+		bio_init(bio, ca->disk_sb.bdev, bio->bi_inline_vecs, 1, READ);
+		bio->bi_iter.bi_sector = (bch2_get_random_u64_below(dev_size) & ~((u64) bs - 1)) >> 9;
+		bch2_bio_map(bio, buf, bs);
+		ret = submit_bio_wait(bio);
+		if (ret)
+			goto err;
+
+		now = ktime_get_ns();
+		if (now - start > NSEC_PER_SEC)
+			break;
+	}
+	u64 ns_rand = div64_u64(now - start, iters);
+
+	prt_printf(out, "ns  nofua %llu\n", ns_nofua);
+	prt_printf(out, "ns    fua %llu\n", ns_fua);
+	prt_printf(out, "ns random %llu\n", ns_rand);
+
+	bool read_cache = ns_nofua * 2 < ns_rand;
+	bool fua_cached	= read_cache && ns_fua < (ns_nofua + ns_rand) / 2;
+
+	if (!read_cache)
+		prt_str(out, "reads don't appear to be cached - safe\n");
+	else if (!fua_cached)
+		prt_str(out, "fua reads don't appear to be cached - safe\n");
+	else
+		prt_str(out, "fua reads appear to be cached - unsafe\n");
+err:
+	kfree(buf);
+	kfree(bio);
+	percpu_ref_put(&ca->io_ref);
+	bch_err_fn(c, ret);
 }
 
 SHOW(bch2_fs)
@@ -823,6 +913,9 @@ SHOW(bch2_dev)
 	if (attr == &sysfs_open_buckets)
 		bch2_open_buckets_to_text(out, c, ca);
 
+	if (attr == &sysfs_read_fua_test)
+		bch2_read_fua_test(out, ca);
+
 	int opt_id = bch2_opt_lookup(attr->name);
 	if (opt_id >= 0)
 		return sysfs_opt_show(c, ca, opt_id, out);
@@ -878,6 +971,8 @@ struct attribute *bch2_dev_files[] = {
 	&sysfs_io_latency_stats_read,
 	&sysfs_io_latency_stats_write,
 	&sysfs_congested,
+
+	&sysfs_read_fua_test,
 
 	/* debug: */
 	&sysfs_alloc_debug,
