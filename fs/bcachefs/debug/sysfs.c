@@ -455,6 +455,11 @@ static int bch2_read_fua_test(struct printbuf *out, struct bch_dev *ca)
 	prt_printf(out, "fua\t%llu\r%llu\r\n",		ns_fua,		stddev_fua);
 	prt_printf(out, "random\t%llu\r%llu\r\n",	ns_rand,	stddev_rand);
 
+	/*
+	 * XXX: add a correctness test, verify that we get the same data with
+	 * fua and non fua reads
+	 */
+
 	bool read_cache = ns_nofua * 2 < ns_rand;
 	bool fua_cached	= read_cache && ns_fua < (ns_nofua + ns_rand) / 2;
 
