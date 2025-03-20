@@ -341,6 +341,8 @@ void kmsan_handle_dma(struct page *page, size_t offset, size_t size,
 {
 	u64 page_offset, to_go, addr;
 
+	if (!kmsan_enabled || kmsan_in_runtime())
+		return;
 	if (PageHighMem(page))
 		return;
 	addr = (u64)page_address(page) + offset;
