@@ -95,4 +95,6 @@ static inline void kmsan_memmove(void *to, const void *from, size_t to_copy)
 
 #endif
 
+#define kmsan_check_var(_v)	kmsan_check_memory(&(_v), sizeof(_v))
+
 #endif /* _LINUX_KMSAN_CHECKS_H */
