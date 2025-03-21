@@ -7,6 +7,7 @@
 
 #include "bbpos_types.h"
 #include "btree_key_cache_types.h"
+#include "btree_locking_types.h"
 #include "buckets_types.h"
 #include "darray.h"
 #include "errcode.h"
@@ -536,6 +537,7 @@ struct btree_trans {
 	struct btree_bkey_cached_common *locking;
 	struct six_lock_waiter	locking_wait;
 	int			srcu_idx;
+	struct lock_graph	cycle_detector_graph;
 
 	/* update path: */
 	u16			journal_entries_u64s;

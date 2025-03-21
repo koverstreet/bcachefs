@@ -51,25 +51,6 @@ void bch2_btree_node_unlock_write(struct btree_trans *trans,
 
 /* lock */
 
-/*
- * @trans wants to lock @b with type @type
- */
-struct trans_waiting_for_lock {
-	struct btree_trans		*trans;
-	struct btree_bkey_cached_common	*node_want;
-	enum six_lock_type		lock_want;
-
-	/* for iterating over held locks :*/
-	u8				path_idx;
-	u8				level;
-	u64				lock_start_time;
-};
-
-struct lock_graph {
-	struct trans_waiting_for_lock	g[8];
-	unsigned			nr;
-};
-
 static noinline void print_cycle(struct printbuf *out, struct lock_graph *g)
 {
 	struct trans_waiting_for_lock *i;
@@ -288,33 +269,33 @@ static bool lock_type_conflicts(enum six_lock_type t1, enum six_lock_type t2)
 
 int bch2_check_for_deadlock(struct btree_trans *trans, struct printbuf *cycle)
 {
-	struct lock_graph g;
+	struct lock_graph *g = &trans->cycle_detector_graph;
 	struct trans_waiting_for_lock *top;
 	struct btree_bkey_cached_common *b;
 	btree_path_idx_t path_idx;
 	int ret = 0;
 
-	g.nr = 0;
+	g->nr = 0;
 
 	if (trans->lock_must_abort && !trans->lock_may_not_fail) {
 		if (cycle)
 			return -1;
 
-		trace_would_deadlock(&g, trans);
+		trace_would_deadlock(g, trans);
 		return btree_trans_restart(trans, BCH_ERR_transaction_restart_would_deadlock);
 	}
 
-	lock_graph_down(&g, trans);
+	lock_graph_down(g, trans);
 
 	/* trans->paths is rcu protected vs. freeing */
 	rcu_read_lock();
 	if (cycle)
 		cycle->atomic++;
 next:
-	if (!g.nr)
+	if (!g->nr)
 		goto out;
 
-	top = &g.g[g.nr - 1];
+	top = &g->g[g->nr - 1];
 
 	struct btree_path *paths = rcu_dereference(top->trans->paths);
 	if (!paths)
@@ -351,7 +332,7 @@ next:
 				 * structures - which means it can't be blocked
 				 * waiting on a lock:
 				 */
-				if (!lock_graph_remove_non_waiters(&g, g.g)) {
+				if (!lock_graph_remove_non_waiters(g, g->g)) {
 					/*
 					 * If lock_graph_remove_non_waiters()
 					 * didn't do anything, it must be
@@ -361,7 +342,7 @@ next:
 					 * aren't actually waiting on anything.
 					 * Just bail out:
 					 */
-					lock_graph_pop_all(&g);
+					lock_graph_pop_all(g);
 				}
 
 				goto next;
@@ -388,7 +369,7 @@ next:
 				closure_get(&trans->ref);
 				raw_spin_unlock(&b->lock.wait_lock);
 
-				ret = lock_graph_descend(&g, trans, cycle);
+				ret = lock_graph_descend(g, trans, cycle);
 				if (ret)
 					goto out;
 				goto next;
@@ -398,9 +379,9 @@ next:
 		}
 	}
 up:
-	if (g.nr > 1 && cycle)
-		print_chain(cycle, &g);
-	lock_graph_up(&g);
+	if (g->nr > 1 && cycle)
+		print_chain(cycle, g);
+	lock_graph_up(g);
 	goto next;
 out:
 	if (cycle)
