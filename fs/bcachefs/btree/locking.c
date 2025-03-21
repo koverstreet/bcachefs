@@ -308,6 +308,16 @@ static void wake_up_trans(struct btree_trans *trans)
 static int abort_lock(struct lock_graph *g, struct trans_waiting_for_lock *i,
 		      int err)
 {
+#if 1
+	BUG_ON(task_stack_end_corrupted(current));
+
+	int ret;
+	ssize_t remaining = (void *) &ret - (void *) end_of_stack(current);
+	if (remaining < 3000)
+		panic("remaining %zi\n", remaining);
+	if (remaining < 5000)
+		pr_info_ratelimited("stack remaining: %zi", (void *) &ret - (void *) end_of_stack(current));
+#endif
 	if (i == g->g) {
 		trace_would_deadlock(g, i->trans);
 		return btree_trans_restart_foreign_task(i->trans,
