@@ -276,7 +276,7 @@ static bool lock_type_conflicts(enum six_lock_type t1, enum six_lock_type t2)
 
 int bch2_check_for_deadlock(struct btree_trans *trans, struct printbuf *cycle)
 {
-	struct lock_graph _g, *g = &_g;
+	struct lock_graph *g = &trans->cycle_detector_graph;
 	struct trans_waiting_for_lock *top;
 	struct btree_bkey_cached_common *b;
 	btree_path_idx_t path_idx;

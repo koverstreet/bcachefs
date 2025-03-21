@@ -548,6 +548,7 @@ struct btree_trans {
 	struct btree_bkey_cached_common *locking;
 	struct six_lock_waiter	locking_wait;
 	int			srcu_idx;
+	struct lock_graph	cycle_detector_graph;
 
 	/* update path: */
 	struct btree_trans_subbuf journal_entries;
