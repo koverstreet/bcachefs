@@ -2092,7 +2092,7 @@ err:
 static int bch2_invalidate_stripe_to_dev(struct btree_trans *trans, struct bkey_s_c k_a)
 {
 	struct bch_alloc_v4 a_convert;
-	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k_a, &a_convert);
+	const struct bch_alloc_v4 *a = bch2_alloc_to_v4_onstack(k_a, &a_convert);
 
 	if (!a->stripe)
 		return 0;

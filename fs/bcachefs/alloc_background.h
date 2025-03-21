@@ -220,9 +220,10 @@ struct bkey_i_alloc_v4 *
 bch2_trans_start_alloc_update(struct btree_trans *, struct bpos,
 			      enum btree_iter_update_trigger_flags);
 
-void __bch2_alloc_to_v4(struct bkey_s_c, struct bch_alloc_v4 *);
+void __bch2_alloc_to_v4_copy(struct bkey_s_c, struct bch_alloc_v4 *);
+const struct bch_alloc_v4 *__bch2_alloc_to_v4(struct btree_trans *, struct bkey_s_c);
 
-static inline const struct bch_alloc_v4 *bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *convert)
+static inline const struct bch_alloc_v4 *bch2_alloc_to_v4(struct btree_trans *trans, struct bkey_s_c k)
 {
 	const struct bch_alloc_v4 *ret;
 
@@ -235,7 +236,23 @@ static inline const struct bch_alloc_v4 *bch2_alloc_to_v4(struct bkey_s_c k, str
 
 	return ret;
 slowpath:
-	__bch2_alloc_to_v4(k, convert);
+	return __bch2_alloc_to_v4(trans, k);
+}
+
+static inline const struct bch_alloc_v4 *bch2_alloc_to_v4_onstack(struct bkey_s_c k, struct bch_alloc_v4 *convert)
+{
+	const struct bch_alloc_v4 *ret;
+
+	if (unlikely(k.k->type != KEY_TYPE_alloc_v4))
+		goto slowpath;
+
+	ret = bkey_s_c_to_alloc_v4(k).v;
+	if (BCH_ALLOC_V4_BACKPOINTERS_START(ret) != BCH_ALLOC_V4_U64s)
+		goto slowpath;
+
+	return ret;
+slowpath:
+	__bch2_alloc_to_v4_copy(k, convert);
 	return convert;
 }
 

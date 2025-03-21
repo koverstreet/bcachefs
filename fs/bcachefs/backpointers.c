@@ -807,7 +807,7 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 {
 	struct bch_fs *c = trans->c;
 	struct bch_alloc_v4 a_convert;
-	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(alloc_k, &a_convert);
+	const struct bch_alloc_v4 *a = bch2_alloc_to_v4_onstack(alloc_k, &a_convert);
 	bool need_commit = false;
 
 	if (a->data_type == BCH_DATA_sb ||

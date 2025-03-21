@@ -94,7 +94,7 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 		goto out_put;
 
 	struct bch_alloc_v4 _a;
-	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &_a);
+	const struct bch_alloc_v4 *a = bch2_alloc_to_v4_onstack(k, &_a);
 	b->k.gen	= a->gen;
 	b->sectors	= bch2_bucket_sectors_dirty(*a);
 	u64 lru_idx	= alloc_lru_idx_fragmentation(*a, ca);

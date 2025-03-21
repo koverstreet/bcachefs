@@ -338,7 +338,7 @@ void bch2_alloc_v4_swab(struct bkey_s k)
 void bch2_alloc_to_text(struct printbuf *out, struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bch_alloc_v4 _a;
-	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &_a);
+	const struct bch_alloc_v4 *a = bch2_alloc_to_v4_onstack(k, &_a);
 	struct bch_dev *ca = c ? bch2_dev_bucket_tryget_noerror(c, k.k->p) : NULL;
 
 	prt_newline(out);
@@ -367,7 +367,7 @@ void bch2_alloc_to_text(struct printbuf *out, struct bch_fs *c, struct bkey_s_c 
 	bch2_dev_put(ca);
 }
 
-void __bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *out)
+void __bch2_alloc_to_v4_copy(struct bkey_s_c k, struct bch_alloc_v4 *out)
 {
 	if (k.k->type == KEY_TYPE_alloc_v4) {
 		void *src, *dst;
@@ -403,6 +403,15 @@ void __bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *out)
 	}
 }
 
+const struct bch_alloc_v4 *__bch2_alloc_to_v4(struct btree_trans *trans, struct bkey_s_c k)
+{
+	struct bch_alloc_v4 *out = bch2_trans_kmalloc(trans, sizeof(*out));
+	if (!IS_ERR(out))
+		__bch2_alloc_to_v4_copy(k, out);
+
+	return out;
+}
+
 static noinline struct bkey_i_alloc_v4 *
 __bch2_alloc_to_v4_mut(struct btree_trans *trans, struct bkey_s_c k)
 {
@@ -429,7 +438,7 @@ __bch2_alloc_to_v4_mut(struct btree_trans *trans, struct bkey_s_c k)
 	} else {
 		bkey_alloc_v4_init(&ret->k_i);
 		ret->k.p = k.k->p;
-		bch2_alloc_to_v4(k, &ret->v);
+		__bch2_alloc_to_v4_copy(k, &ret->v);
 	}
 	return ret;
 }
@@ -552,7 +561,7 @@ int bch2_bucket_gens_init(struct bch_fs *c)
 			continue;
 
 		struct bch_alloc_v4 a;
-		u8 gen = bch2_alloc_to_v4(k, &a)->gen;
+		u8 gen = bch2_alloc_to_v4_onstack(k, &a)->gen;
 		unsigned offset;
 		struct bpos pos = alloc_gens_pos(iter.pos, &offset);
 		int ret2 = 0;
@@ -644,7 +653,7 @@ int bch2_alloc_read(struct bch_fs *c)
 			}
 
 			struct bch_alloc_v4 a;
-			*bucket_gen(ca, k.k->p.offset) = bch2_alloc_to_v4(k, &a)->gen;
+			*bucket_gen(ca, k.k->p.offset) = bch2_alloc_to_v4_onstack(k, &a)->gen;
 			0;
 		}));
 	}
@@ -837,8 +846,12 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 	if (!ca)
 		return -BCH_ERR_trigger_alloc;
 
+	/*
+	 * We have to use the _onstack version here as we're called for atomic
+	 * triggers where we can't take a transaction restart:
+	 */
 	struct bch_alloc_v4 old_a_convert;
-	const struct bch_alloc_v4 *old_a = bch2_alloc_to_v4(old, &old_a_convert);
+	const struct bch_alloc_v4 *old_a = bch2_alloc_to_v4_onstack(old, &old_a_convert);
 
 	struct bch_alloc_v4 *new_a;
 	if (likely(new.k->type == KEY_TYPE_alloc_v4)) {
@@ -1146,7 +1159,6 @@ int bch2_check_alloc_key(struct btree_trans *trans,
 			 struct btree_iter *bucket_gens_iter)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_alloc_v4 a_convert;
 	const struct bch_alloc_v4 *a;
 	unsigned gens_offset;
 	struct bkey_s_c k;
@@ -1165,7 +1177,10 @@ int bch2_check_alloc_key(struct btree_trans *trans,
 	if (!ca->mi.freespace_initialized)
 		goto out;
 
-	a = bch2_alloc_to_v4(alloc_k, &a_convert);
+	a = bch2_alloc_to_v4(trans, alloc_k);
+	ret = PTR_ERR_OR_ZERO(a);
+	if (unlikely(ret))
+		goto err;
 
 	bch2_btree_iter_set_pos(trans, discard_iter, alloc_k.k->p);
 	k = bch2_btree_iter_peek_slot(trans, discard_iter);
@@ -1414,8 +1429,10 @@ int bch2_check_discard_freespace_key(struct btree_trans *trans, struct btree_ite
 		goto out;
 	}
 
-	struct bch_alloc_v4 a_convert;
-	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(alloc_k, &a_convert);
+	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(trans, alloc_k);
+	ret = PTR_ERR_OR_ZERO(a);
+	if (unlikely(ret))
+		goto err;
 
 	if (a->data_type != state ||
 	    (state == BCH_DATA_free &&
@@ -1435,6 +1452,7 @@ int bch2_check_discard_freespace_key(struct btree_trans *trans, struct btree_ite
 
 	*gen = a->gen;
 out:
+err:
 fsck_err:
 	bch2_set_btree_iter_dontneed(trans, &alloc_iter);
 	bch2_trans_iter_exit(trans, &alloc_iter);
@@ -1680,8 +1698,6 @@ static int bch2_check_alloc_to_lru_ref(struct btree_trans *trans,
 				       struct bkey_buf *last_flushed)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_alloc_v4 a_convert;
-	const struct bch_alloc_v4 *a;
 	struct bkey_s_c alloc_k;
 	struct printbuf buf = PRINTBUF;
 	int ret;
@@ -1698,7 +1714,10 @@ static int bch2_check_alloc_to_lru_ref(struct btree_trans *trans,
 	if (!ca)
 		return 0;
 
-	a = bch2_alloc_to_v4(alloc_k, &a_convert);
+	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(trans, alloc_k);
+	ret = PTR_ERR_OR_ZERO(a);
+	if (unlikely(ret))
+		goto err;
 
 	u64 lru_idx = alloc_lru_idx_fragmentation(*a, ca);
 	if (lru_idx) {
@@ -2160,8 +2179,10 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 	if (ret)
 		return ret;
 
-	struct bch_alloc_v4 a_convert;
-	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(alloc_k, &a_convert);
+	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(trans, alloc_k);
+	ret = PTR_ERR_OR_ZERO(a);
+	if (unlikely(ret))
+		goto err;
 
 	/* We expect harmless races here due to the btree write buffer: */
 	if (lru_pos_time(lru_iter->pos) != alloc_lru_idx_read(*a))
@@ -2190,6 +2211,7 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 	trace_and_count(c, bucket_invalidate, c, bucket.inode, bucket.offset, cached_sectors);
 	--*nr_to_invalidate;
 out:
+err:
 fsck_err:
 	bch2_trans_iter_exit(trans, &alloc_iter);
 	printbuf_exit(&buf);
@@ -2334,7 +2356,7 @@ int bch2_dev_freespace_init(struct bch_fs *c, struct bch_dev *ca,
 			 * time:
 			 */
 			struct bch_alloc_v4 a_convert;
-			const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &a_convert);
+			const struct bch_alloc_v4 *a = bch2_alloc_to_v4_onstack(k, &a_convert);
 
 			ret =   bch2_bucket_do_index(trans, ca, k, a, true) ?:
 				bch2_trans_commit(trans, NULL, NULL,
