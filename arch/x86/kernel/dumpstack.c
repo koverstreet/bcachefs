@@ -65,11 +65,13 @@ bool noinstr in_entry_stack(unsigned long *stack, struct stack_info *info)
 	return true;
 }
 
-static void printk_stack_address(unsigned long address, int reliable,
+static void printk_stack_address(unsigned long address,
+				 unsigned long framesize,
+				 int reliable,
 				 const char *log_lvl)
 {
 	touch_nmi_watchdog();
-	printk("%s %s%pBb\n", log_lvl, reliable ? "" : "? ", (void *)address);
+	printk("%s %s%4lu %pBb\n", log_lvl, reliable ? "" : "? ", framesize, (void *)address);
 }
 
 static int copy_code(struct pt_regs *regs, u8 *buf, unsigned long src,
@@ -248,6 +250,7 @@ static void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
 		 * This also serves as a failsafe option in case the unwinder
 		 * goes off in the weeds.
 		 */
+		unsigned long *prev_ret_addr_p = NULL;
 		for (; stack < stack_info.end; stack++) {
 			unsigned long real_addr;
 			int reliable = 0;
@@ -280,8 +283,15 @@ static void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
 			real_addr = ftrace_graph_ret_addr(task, &graph_idx,
 							  addr, stack);
 			if (real_addr != addr)
-				printk_stack_address(addr, 0, log_lvl);
-			printk_stack_address(real_addr, reliable, log_lvl);
+				printk_stack_address(addr, 0, 0, log_lvl);
+
+			unsigned framesize = 0;
+			if (prev_ret_addr_p)
+				framesize = (unsigned long) ret_addr_p -
+					(unsigned long) prev_ret_addr_p;
+			prev_ret_addr_p = ret_addr_p;
+
+			printk_stack_address(real_addr, framesize, reliable, log_lvl);
 
 			if (!reliable)
 				continue;
