@@ -139,12 +139,17 @@ static u64 bkey_lru_type_idx(struct bch_fs *c,
 	struct bch_alloc_v4 a_convert;
 	const struct bch_alloc_v4 *a;
 
+	/*
+	 * XXX: if we ever start calling bch2_check_lru_key() at runtime, not
+	 * just during fsck, this needs tobe converted to bch2_alloc_to_v4()
+	 */
+
 	switch (type) {
 	case BCH_LRU_read:
-		a = bch2_alloc_to_v4(k, &a_convert);
+		a = bch2_alloc_to_v4_onstack(k, &a_convert);
 		return alloc_lru_idx_read(*a);
 	case BCH_LRU_fragmentation: {
-		a = bch2_alloc_to_v4(k, &a_convert);
+		a = bch2_alloc_to_v4_onstack(k, &a_convert);
 
 		rcu_read_lock();
 		struct bch_dev *ca = bch2_dev_rcu_noerror(c, k.k->p.inode);

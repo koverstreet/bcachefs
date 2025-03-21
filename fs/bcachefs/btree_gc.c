@@ -806,7 +806,7 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	if (!bucket_valid(ca, k.k->p.offset))
 		return 0;
 
-	old = bch2_alloc_to_v4(k, &old_convert);
+	old = bch2_alloc_to_v4_onstack(k, &old_convert);
 	gc = new = *old;
 
 	__bucket_m_to_alloc(&gc, *gc_bucket(ca, iter->pos.offset));
@@ -1119,7 +1119,7 @@ static int bch2_alloc_write_oldest_gen(struct btree_trans *trans, struct bch_dev
 				       struct btree_iter *iter, struct bkey_s_c k)
 {
 	struct bch_alloc_v4 a_convert;
-	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &a_convert);
+	const struct bch_alloc_v4 *a = bch2_alloc_to_v4_onstack(k, &a_convert);
 	struct bkey_i_alloc_v4 *a_mut;
 	int ret;
 

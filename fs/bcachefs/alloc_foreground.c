@@ -333,8 +333,11 @@ again:
 			continue;
 		}
 
-		struct bch_alloc_v4 a_convert;
-		const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &a_convert);
+		const struct bch_alloc_v4 *a = bch2_alloc_to_v4(trans, k);
+		ret = PTR_ERR_OR_ZERO(a);
+		if (unlikely(ret))
+			break;
+
 		if (a->data_type != BCH_DATA_free)
 			continue;
 
@@ -344,7 +347,13 @@ again:
 		if (ret)
 			break;
 
-		a = bch2_alloc_to_v4(ck, &a_convert);
+		a = bch2_alloc_to_v4(trans, ck);
+		ret = PTR_ERR_OR_ZERO(a);
+		if (unlikely(ret)) {
+			bch2_trans_iter_exit(trans, &citer);
+			break;
+		}
+
 		if (a->data_type != BCH_DATA_free)
 			goto next;
 
