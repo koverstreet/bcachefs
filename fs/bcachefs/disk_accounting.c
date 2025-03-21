@@ -727,7 +727,7 @@ int bch2_accounting_read(struct bch_fs *c)
 
 			if (!bch2_accounting_is_mem(acc_k)) {
 				struct disk_accounting_pos next = { .type = acc_k.type + 1 };
-				bch2_btree_iter_set_pos(&iter, disk_accounting_pos_to_bpos(&next));
+				bch2_btree_iter_set_pos(trans, &iter, disk_accounting_pos_to_bpos(&next));
 				continue;
 			}
 
@@ -918,7 +918,7 @@ void bch2_verify_accounting_clean(struct bch_fs *c)
 
 			if (!bch2_accounting_is_mem(acc_k)) {
 				struct disk_accounting_pos next = { .type = acc_k.type + 1 };
-				bch2_btree_iter_set_pos(&iter, disk_accounting_pos_to_bpos(&next));
+				bch2_btree_iter_set_pos(trans, &iter, disk_accounting_pos_to_bpos(&next));
 				continue;
 			}
 
