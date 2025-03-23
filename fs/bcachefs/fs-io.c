@@ -626,6 +626,10 @@ static noinline int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 		u64 hole_start, hole_end;
 		u32 snapshot;
 
+		ret = unlikely(signal_pending(current)) ? -ERESTARTSYS : 0;
+		if (ret)
+			break;
+
 		bch2_trans_begin(trans);
 
 		if (bkey_ge(iter.pos, end_pos))
