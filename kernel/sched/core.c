@@ -4200,15 +4200,19 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 			goto out;
 
 		trace_sched_waking(p);
+
+		if (p->sleep_timestamp)
+			sched_wakeup_backtrace(p, p->sleep_timestamp);
+		p->sleep_timestamp = 0;
 		ttwu_do_wakeup(p);
 		goto out;
 	}
-
+#if 0
 	u64 sleep_start;
 	if (p->sleep_timestamp &&
 	    (sleep_start = xchg(&p->sleep_timestamp, 0)))
 		sched_wakeup_backtrace(p, sleep_start);
-
+#endif
 	/*
 	 * If we are going to wake up a thread waiting for CONDITION we
 	 * need to ensure that CONDITION=1 done by the caller can not be
@@ -4221,6 +4225,10 @@ int try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 			break;
 
 		trace_sched_waking(p);
+
+		if (p->sleep_timestamp)
+			sched_wakeup_backtrace(p, p->sleep_timestamp);
+		p->sleep_timestamp = 0;
 
 		/*
 		 * Ensure we load p->on_rq _after_ p->state, otherwise it would
@@ -6763,6 +6771,7 @@ picked:
 		psi_sched_switch(prev, next, !task_on_rq_queued(prev) ||
 					     prev->se.sched_delayed);
 
+		prev->sleep_timestamp = ktime_get_ns();
 		trace_sched_switch(preempt, prev, next, prev_state);
 
 		/* Also unlocks the rq: */

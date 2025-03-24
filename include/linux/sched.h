@@ -228,8 +228,6 @@ extern ktime_t ktime_get(void);
 
 #define set_task_sleep_time(task, state_value)				\
 do {									\
-	if (((state_value) & TASK_NORMAL) && !((task)->__state & TASK_NORMAL))\
-		task->sleep_timestamp = ktime_get();			\
 } while (0)
 
 #define __set_task_state(task, type, state_value)			\
