@@ -1176,7 +1176,8 @@ void bch2_extent_ptr_to_text(struct printbuf *out, struct bch_fs *c, const struc
 
 void bch2_extent_crc_unpacked_to_text(struct printbuf *out, struct bch_extent_crc_unpacked *crc)
 {
-	prt_printf(out, "crc: c_size %u size %u offset %u nonce %u csum ",
+	prt_printf(out, "crc: live %u c_size %u size %u offset %u nonce %u csum ",
+		   crc->live_size,
 		   crc->compressed_size,
 		   crc->uncompressed_size,
 		   crc->offset, crc->nonce);
