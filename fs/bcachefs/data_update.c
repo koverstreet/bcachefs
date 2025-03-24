@@ -431,6 +431,8 @@ int bch2_data_update_index_update(struct bch_write_op *op)
 
 void bch2_data_update_read_done(struct data_update *m)
 {
+	struct bch_fs *c = m->op.c;
+
 	m->read_done = true;
 
 	/* write bio must own pages: */
@@ -439,7 +441,26 @@ void bch2_data_update_read_done(struct data_update *m)
 	m->op.crc = m->rbio.pick.crc;
 	m->op.wbio.bio.bi_iter.bi_size = m->op.crc.compressed_size << 9;
 
-	this_cpu_add(m->op.c->counters[BCH_COUNTER_io_move_write], m->k.k->k.size);
+	struct nonce nonce = extent_nonce(m->op.version, m->op.crc);
+	struct bch_csum csum = bch2_checksum_bio(c, m->op.crc.csum_type, nonce, &m->op.wbio.bio);
+	if (bch2_crc_cmp(m->op.crc.csum, csum) && !c->opts.no_data_io) {
+		struct printbuf buf = PRINTBUF;
+		prt_printf(&buf, "checksum error in %s() (memory corruption or bug?)\n"
+			   "  expected %0llx:%0llx got %0llx:%0llx type ",
+			   __func__,
+			   m->op.crc.csum.hi,
+			   m->op.crc.csum.lo,
+			   csum.hi,
+			   csum.lo);
+		bch2_prt_csum_type(&buf, m->op.crc.csum_type);
+		WARN_RATELIMIT(1, "%s", buf.buf);
+		printbuf_exit(&buf);
+
+		m->op.end_io(&m->op);
+		return;
+	}
+
+	this_cpu_add(c->counters[BCH_COUNTER_io_move_write], m->k.k->k.size);
 
 	closure_call(&m->op.cl, bch2_write, NULL, NULL);
 }
