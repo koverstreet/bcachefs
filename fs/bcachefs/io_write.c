@@ -434,10 +434,15 @@ void bch2_write_op_error(struct bch_write_op *op, u64 offset, const char *fmt, .
 	printbuf_exit(&buf);
 }
 
-static void bch2_write_csum_err_msg(struct bch_write_op *op)
+static void bch2_write_csum_err_msg(struct bch_write_op *op, const char *msg)
 {
+	struct printbuf buf = PRINTBUF;
+
+	bch2_extent_crc_unpacked_to_text(&buf, &op->crc);
 	bch2_write_op_error(op, op->pos.offset,
-			    "error verifying existing checksum while rewriting existing data (memory corruption?)");
+		"error verifying existing checksum while rewriting existing data (memory corruption?) - %s\n"
+		"  %s", msg, buf.buf);
+	printbuf_exit(&buf);
 }
 
 void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
@@ -867,8 +872,10 @@ static noinline int bch2_write_prep_encoded_data(struct bch_write_op *op, struct
 	if (crc_is_compressed(op->crc)) {
 		/* Last point we can still verify checksum: */
 		struct bch_csum csum = bch2_checksum_bio(c, op->crc.csum_type, nonce, bio);
-		if (bch2_crc_cmp(op->crc.csum, csum) && !c->opts.no_data_io)
-			goto csum_err;
+		if (bch2_crc_cmp(op->crc.csum, csum) && !c->opts.no_data_io) {
+			bch2_write_csum_err_msg(op, "for decompress");
+			return -EIO;
+		}
 
 		if (bch2_csum_type_is_encryption(op->crc.csum_type)) {
 			ret = bch2_encrypt_bio(c, op->crc.csum_type, nonce, bio);
@@ -906,8 +913,10 @@ static noinline int bch2_write_prep_encoded_data(struct bch_write_op *op, struct
 	if (bch2_csum_type_is_encryption(op->crc.csum_type) &&
 	    (op->compression_opt || op->crc.csum_type != op->csum_type)) {
 		struct bch_csum csum = bch2_checksum_bio(c, op->crc.csum_type, nonce, bio);
-		if (bch2_crc_cmp(op->crc.csum, csum) && !c->opts.no_data_io)
-			goto csum_err;
+		if (bch2_crc_cmp(op->crc.csum, csum) && !c->opts.no_data_io) {
+			bch2_write_csum_err_msg(op, "for decrypt");
+			return -EIO;
+		}
 
 		ret = bch2_encrypt_bio(c, op->crc.csum_type, nonce, bio);
 		if (ret)
@@ -918,9 +927,6 @@ static noinline int bch2_write_prep_encoded_data(struct bch_write_op *op, struct
 	}
 
 	return 0;
-csum_err:
-	bch2_write_csum_err_msg(op);
-	return -EIO;
 }
 
 static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
@@ -1126,7 +1132,7 @@ do_write:
 	*_dst = dst;
 	return more;
 csum_err:
-	bch2_write_csum_err_msg(op);
+	bch2_write_csum_err_msg(op, "in write_extent()");
 	ret = -EIO;
 err:
 	if (to_wbio(dst)->bounce)
