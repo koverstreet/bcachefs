@@ -30,6 +30,21 @@ static inline unsigned cur_tabstop(struct printbuf *buf)
 		: 0;
 }
 
+static bool at_start_of_line(struct printbuf *buf)
+{
+	bool ret = !buf->pos || buf->last_newline + buf->indent == buf->pos;
+
+	bool ret2 = true;
+	for (int p = buf->pos - 1; p >= 0 && buf->buf[p] != '\n'; --p)
+		if (buf->buf[p] != ' ') {
+			ret2 = false;
+			break;
+		}
+
+	BUG_ON(ret != ret2);
+	return ret;
+}
+
 int bch2_printbuf_make_room(struct printbuf *out, unsigned extra)
 {
 	/* Reserved space for terminating nul: */
@@ -111,9 +126,13 @@ static void __printbuf_do_indent(struct printbuf *out, unsigned pos)
 		switch (*n) {
 		case '\n':
 			pos++;
+			n++;
+			bool at_end = !*n;
 			out->last_newline = pos;
 
 			printbuf_insert_spaces(out, pos, out->indent);
+
+			BUG_ON(at_end && out->last_newline + out->indent != out->pos);
 
 			pos = min(pos + out->indent, out->pos);
 			out->last_field = pos;
@@ -153,6 +172,7 @@ static inline void printbuf_do_indent(struct printbuf *out, unsigned pos)
 {
 	if (out->has_indent_or_tabstops && !out->suppress_indent_tabstop_handling)
 		__printbuf_do_indent(out, pos);
+	at_start_of_line(out);
 }
 
 void bch2_prt_vprintf(struct printbuf *out, const char *fmt, va_list args)
@@ -329,14 +349,28 @@ void bch2_prt_newline(struct printbuf *buf)
 
 	__prt_chars_reserved(buf, ' ', buf->indent);
 
+	BUG_ON(buf->last_newline + buf->indent != buf->pos);
+
 	printbuf_nul_terminate_reserved(buf);
+
+	BUG_ON(buf->last_newline + buf->indent != buf->pos);
 
 	buf->last_field		= buf->pos;
 	buf->cur_tabstop	= 0;
 }
 
+void bch2_prt_nondup_newline(struct printbuf *buf)
+{
+	if (!at_start_of_line(buf))
+		bch2_prt_newline(buf);
+
+	at_start_of_line(buf);
+}
+
 void bch2_printbuf_strip_trailing_newline(struct printbuf *out)
 {
+	at_start_of_line(out);
+
 	for (int p = out->pos - 1; p >= 0; --p) {
 		if (out->buf[p] == '\n') {
 			out->pos = p;

@@ -124,6 +124,7 @@ void bch2_printbuf_indent_sub(struct printbuf *, unsigned);
 })
 
 void bch2_prt_newline(struct printbuf *);
+void bch2_prt_nondup_newline(struct printbuf *);
 void bch2_printbuf_strip_trailing_newline(struct printbuf *);
 void bch2_prt_tab(struct printbuf *);
 void bch2_prt_tab_rjust(struct printbuf *);

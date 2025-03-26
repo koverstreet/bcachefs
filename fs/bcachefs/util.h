@@ -99,6 +99,7 @@ do {									\
 #define printbuf_indent_sub(_out, _n)	bch2_printbuf_indent_sub(_out, _n)
 
 #define prt_newline(_out)		bch2_prt_newline(_out)
+#define prt_nondup_newline(_out)	bch2_prt_nondup_newline(_out)
 #define prt_tab(_out)			bch2_prt_tab(_out)
 #define prt_tab_rjust(_out)		bch2_prt_tab_rjust(_out)
 
