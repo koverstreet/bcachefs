@@ -319,7 +319,7 @@ static void __wait_on_freeing_inode(struct bch_fs *c,
 	spin_unlock(&inode->v.i_lock);
 
 	if (__bch2_inode_hash_find(c, inum) == inode)
-		schedule_timeout(HZ * 10);
+		schedule();
 	finish_wait(wq, &wait.wq_entry);
 }
 
