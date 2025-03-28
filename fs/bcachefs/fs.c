@@ -33,6 +33,7 @@
 #include <linux/backing-dev.h>
 #include <linux/exportfs.h>
 #include <linux/fiemap.h>
+#include <linux/fileattr.h>
 #include <linux/fs_context.h>
 #include <linux/module.h>
 #include <linux/pagemap.h>
@@ -1448,6 +1449,27 @@ static int bch2_open(struct inode *vinode, struct file *file)
 	return generic_file_open(vinode, file);
 }
 
+static int bch2_fileattr_get(struct dentry *dentry,
+			     struct fileattr *fa)
+{
+	struct bch_inode_info *inode = to_bch_ei(d_inode(dentry));
+
+	if (d_is_special(dentry))
+		return -ENOTTY;
+
+	fileattr_fill_xflags(fa, map_flags(bch_flags_to_xflags, inode->ei_inode.bi_flags));
+
+	fa->fsx_projid = inode->ei_inode.bi_project;
+
+	return 0;
+}
+
+static int bch2_fileattr_set(struct mnt_idmap *idmap,
+			     struct dentry *dentry,
+			     struct fileattr *fa)
+{
+}
+
 static const struct file_operations bch_file_operations = {
 	.open		= bch2_open,
 	.llseek		= bch2_llseek,
@@ -1475,6 +1497,8 @@ static const struct inode_operations bch_file_inode_operations = {
 	.get_inode_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
 #endif
+	.fileattr_get	= bch2_fileattr_get,
+	.fileattr_set	= bch2_fileattr_set,
 };
 
 static const struct inode_operations bch_dir_inode_operations = {
@@ -1495,6 +1519,8 @@ static const struct inode_operations bch_dir_inode_operations = {
 	.get_inode_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
 #endif
+	.fileattr_get	= bch2_fileattr_get,
+	.fileattr_set	= bch2_fileattr_set,
 };
 
 static const struct file_operations bch_dir_file_operations = {
@@ -1517,6 +1543,8 @@ static const struct inode_operations bch_symlink_inode_operations = {
 	.get_inode_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
 #endif
+	.fileattr_get	= bch2_fileattr_get,
+	.fileattr_set	= bch2_fileattr_set,
 };
 
 static const struct inode_operations bch_special_inode_operations = {
@@ -1527,6 +1555,8 @@ static const struct inode_operations bch_special_inode_operations = {
 	.get_inode_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
 #endif
+	.fileattr_get	= bch2_fileattr_get,
+	.fileattr_set	= bch2_fileattr_set,
 };
 
 static const struct address_space_operations bch_address_space_operations = {
