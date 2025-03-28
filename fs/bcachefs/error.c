@@ -268,7 +268,8 @@ static enum ask_yn bch2_fsck_ask_yn(struct bch_fs *c, struct btree_trans *trans)
 
 #endif
 
-static struct fsck_err_state *fsck_err_get(struct bch_fs *c, const char *fmt)
+static struct fsck_err_state *fsck_err_get(struct bch_fs *c,
+					   enum bch_sb_error_id id)
 {
 	struct fsck_err_state *s;
 
@@ -276,7 +277,7 @@ static struct fsck_err_state *fsck_err_get(struct bch_fs *c, const char *fmt)
 		return NULL;
 
 	list_for_each_entry(s, &c->fsck_error_msgs, list)
-		if (s->fmt == fmt) {
+		if (s->id == id) {
 			/*
 			 * move it to the head of the list: repeated fsck errors
 			 * are common
@@ -294,7 +295,7 @@ static struct fsck_err_state *fsck_err_get(struct bch_fs *c, const char *fmt)
 	}
 
 	INIT_LIST_HEAD(&s->list);
-	s->fmt = fmt;
+	s->id = id;
 	list_add(&s->list, &c->fsck_error_msgs);
 	return s;
 }
@@ -344,6 +345,51 @@ static int do_fsck_ask_yn(struct bch_fs *c,
 	return ask;
 }
 
+int __bch2_count_fsck_err(struct bch_fs *c,
+			  enum bch_sb_error_id id, const char *msg,
+			  bool *repeat, bool *print, bool *suppress)
+{
+	int ret = 0;
+
+	bch2_sb_error_count(c, id);
+
+	mutex_lock(&c->fsck_error_msgs_lock);
+	struct fsck_err_state *s = fsck_err_get(c, id);
+	if (s) {
+		/*
+		 * We may be called multiple times for the same error on
+		 * transaction restart - this memoizes instead of asking the user
+		 * multiple times for the same error:
+		 */
+		if (s->last_msg && !strcmp(msg, s->last_msg)) {
+			*repeat = true;
+			*print = false;
+			ret = s->ret;
+			goto out;
+		}
+
+		kfree(s->last_msg);
+		s->last_msg = kstrdup(msg, GFP_KERNEL);
+		if (!s->last_msg) {
+			ret = -ENOMEM;
+			goto out;
+		}
+
+		if (c->opts.ratelimit_errors &&
+		    s->nr >= FSCK_ERR_RATELIMIT_NR) {
+			if (s->nr == FSCK_ERR_RATELIMIT_NR)
+				*suppress = true;
+			else
+				*print = false;
+		}
+
+		s->nr++;
+	}
+out:
+	mutex_unlock(&c->fsck_error_msgs_lock);
+	return ret;
+}
+
 int __bch2_fsck_err(struct bch_fs *c,
 		  struct btree_trans *trans,
 		  enum bch_fsck_flags flags,
@@ -352,7 +398,6 @@ int __bch2_fsck_err(struct bch_fs *c,
 {
 	struct fsck_err_state *s = NULL;
 	va_list args;
-	bool print = true, suppressing = false, inconsistent = false, exiting = false;
 	struct printbuf buf = PRINTBUF, *out = &buf;
 	int ret = -BCH_ERR_fsck_ignore;
 	const char *action_orig = "fix?", *action = action_orig;
@@ -387,8 +432,6 @@ int __bch2_fsck_err(struct bch_fs *c,
 			? -BCH_ERR_fsck_fix
 			: -BCH_ERR_fsck_ignore;
 
-	bch2_sb_error_count(c, err);
-
 	printbuf_indent_add_nextline(out, 2);
 
 #ifdef BCACHEFS_LOG_PREFIX
@@ -413,37 +456,11 @@ int __bch2_fsck_err(struct bch_fs *c,
 		}
 	}
 
-	mutex_lock(&c->fsck_error_msgs_lock);
-	s = fsck_err_get(c, fmt);
-	if (s) {
-		/*
-		 * We may be called multiple times for the same error on
-		 * transaction restart - this memoizes instead of asking the user
-		 * multiple times for the same error:
-		 */
-		if (s->last_msg && !strcmp(buf.buf, s->last_msg)) {
-			ret = s->ret;
-			goto err_unlock;
-		}
-
-		kfree(s->last_msg);
-		s->last_msg = kstrdup(buf.buf, GFP_KERNEL);
-		if (!s->last_msg) {
-			ret = -ENOMEM;
-			goto err_unlock;
-		}
-
-		if (c->opts.ratelimit_errors &&
-		    !(flags & FSCK_NO_RATELIMIT) &&
-		    s->nr >= FSCK_ERR_RATELIMIT_NR) {
-			if (s->nr == FSCK_ERR_RATELIMIT_NR)
-				suppressing = true;
-			else
-				print = false;
-		}
-
-		s->nr++;
-	}
+	bool repeat = false, print = true, suppress = false;
+	bool inconsistent = false, exiting = false;
+	ret = __bch2_count_fsck_err(c, err, buf.buf, &repeat, &print, &suppress);
+	if (repeat)
+		goto err;
 
 	if ((flags & FSCK_AUTOFIX) &&
 	    (c->opts.errors == BCH_ON_ERROR_continue ||
@@ -486,7 +503,7 @@ int __bch2_fsck_err(struct bch_fs *c,
 
 			ret = do_fsck_ask_yn(c, trans, out, action);
 			if (ret < 0)
-				goto err_unlock;
+				goto err;
 
 			if (ret >= YN_ALLNO && s)
 				s->fix = ret == YN_ALLNO
@@ -528,7 +545,7 @@ print:
 		__bch2_inconsistent_error(c, out);
 	else if (exiting)
 		prt_printf(out, "Unable to continue, halting\n");
-	else if (suppressing)
+	else if (suppress)
 		prt_printf(out, "Ratelimiting new instances of previous error\n");
 
 	if (print) {
@@ -559,8 +576,6 @@ print:
 			set_bit(BCH_FS_error, &c->flags);
 		}
 	}
-err_unlock:
-	mutex_unlock(&c->fsck_error_msgs_lock);
 err:
 	if (action != action_orig)
 		kfree(action);
