@@ -115,6 +115,14 @@ void bch2_printbuf_indent_add(struct printbuf *, unsigned);
 void bch2_printbuf_indent_add_nextline(struct printbuf *, unsigned);
 void bch2_printbuf_indent_sub(struct printbuf *, unsigned);
 
+#define printbuf_do_indented(_out, _indent, _do)		\
+({								\
+	printbuf_indent_add(_out, _indent);			\
+	typeof(_do) _ret = (_do);				\
+	printbuf_indent_sub(_out, _indent);			\
+	_ret;							\
+})
+
 void bch2_prt_newline(struct printbuf *);
 void bch2_printbuf_strip_trailing_newline(struct printbuf *);
 void bch2_prt_tab(struct printbuf *);
