@@ -468,7 +468,7 @@ static int bucket_ref_update_err(struct btree_trans *trans, struct printbuf *buf
 {
 	struct bch_fs *c = trans->c;
 
-	prt_printf(buf, "\nwhile marking ");
+	prt_printf(buf, "\nwhile marking %s ", insert ? "insert" : "delete");
 	bch2_bkey_val_to_text(buf, c, k);
 	prt_newline(buf);
 
@@ -513,6 +513,7 @@ int bch2_bucket_ref_update(struct btree_trans *trans, struct bch_dev *ca,
 
 	if (unlikely(gen_after(ptr->gen, b_gen))) {
 		bch2_log_msg_start(c, &buf);
+		prt_printf(&buf, "%s -> %s\n", trans->fn, __func__);
 		prt_printf(&buf,
 			"bucket %u:%zu gen %u data type %s: ptr gen %u newer than bucket gen",
 			ptr->dev, bucket_nr, b_gen,
@@ -525,6 +526,7 @@ int bch2_bucket_ref_update(struct btree_trans *trans, struct bch_dev *ca,
 
 	if (unlikely(gen_cmp(b_gen, ptr->gen) > BUCKET_GC_GEN_MAX)) {
 		bch2_log_msg_start(c, &buf);
+		prt_printf(&buf, "%s -> %s\n", trans->fn, __func__);
 		prt_printf(&buf,
 			"bucket %u:%zu gen %u data type %s: ptr gen %u too stale",
 			ptr->dev, bucket_nr, b_gen,
@@ -549,6 +551,7 @@ int bch2_bucket_ref_update(struct btree_trans *trans, struct bch_dev *ca,
 
 	if (unlikely(b_gen != ptr->gen)) {
 		bch2_log_msg_start(c, &buf);
+		prt_printf(&buf, "%s -> %s\n", trans->fn, __func__);
 		prt_printf(&buf,
 			"bucket %u:%zu gen %u (mem gen %u) data type %s: stale dirty ptr (gen %u)",
 			ptr->dev, bucket_nr, b_gen,
@@ -562,6 +565,7 @@ int bch2_bucket_ref_update(struct btree_trans *trans, struct bch_dev *ca,
 
 	if (unlikely(bucket_data_type_mismatch(bucket_data_type, ptr_data_type))) {
 		bch2_log_msg_start(c, &buf);
+		prt_printf(&buf, "%s -> %s\n", trans->fn, __func__);
 		prt_printf(&buf, "bucket %u:%zu gen %u different types of data in same bucket: %s, %s",
 			   ptr->dev, bucket_nr, b_gen,
 			   bch2_data_type_str(bucket_data_type),
@@ -573,6 +577,7 @@ int bch2_bucket_ref_update(struct btree_trans *trans, struct bch_dev *ca,
 
 	if (unlikely((u64) *bucket_sectors + sectors > U32_MAX)) {
 		bch2_log_msg_start(c, &buf);
+		prt_printf(&buf, "%s -> %s\n", trans->fn, __func__);
 		prt_printf(&buf,
 			"bucket %u:%zu gen %u data type %s sector count overflow: %u + %lli > U32_MAX",
 			ptr->dev, bucket_nr, b_gen,
