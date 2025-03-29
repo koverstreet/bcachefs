@@ -642,8 +642,11 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 		goto out;
 
 	if (trans->nr_updates) {
+		pr_info("committing");
 		ret = bch2_trans_commit(trans, NULL, NULL, 0) ?:
 			-BCH_ERR_transaction_restart_nested;
+		if (!ret)
+			pr_info("committed");
 		goto out;
 	}
 

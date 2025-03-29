@@ -107,6 +107,7 @@ void bch2_dev_usage_to_text(struct printbuf *out,
 }
 
 static int bch2_check_fix_ptr(struct btree_trans *trans,
+			      unsigned level,
 			      struct bkey_s_c k,
 			      struct extent_ptr_decoded p,
 			      const union bch_extent_entry *entry,
@@ -120,8 +121,9 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 	if (!ca) {
 		if (fsck_err_on(p.ptr.dev != BCH_SB_MEMBER_INVALID,
 				trans, ptr_to_invalid_device,
-				"pointer to missing device %u\n"
+				"%s(): pointer to missing device %u\n"
 				"while marking %s",
+				__func__,
 				p.ptr.dev,
 				(printbuf_reset(&buf),
 				 bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
@@ -132,8 +134,9 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 	struct bucket *g = PTR_GC_BUCKET(ca, &p.ptr);
 	if (!g) {
 		if (fsck_err(trans, ptr_to_invalid_device,
-			     "pointer to invalid bucket on device %u\n"
+			     "%s(): pointer to invalid bucket on device %u\n"
 			     "while marking %s",
+			     __func__,
 			     p.ptr.dev,
 			     (printbuf_reset(&buf),
 			      bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
@@ -145,8 +148,9 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 
 	if (fsck_err_on(!g->gen_valid,
 			trans, ptr_to_missing_alloc_key,
-			"bucket %u:%zu data type %s ptr gen %u missing in alloc btree\n"
+			"%s(): bucket %u:%zu data type %s ptr gen %u missing in alloc btree\n"
 			"while marking %s",
+			__func__,
 			p.ptr.dev, PTR_BUCKET_NR(ca, &p.ptr),
 			bch2_data_type_str(ptr_data_type(k.k, &p.ptr)),
 			p.ptr.gen,
@@ -162,8 +166,9 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 
 	if (fsck_err_on(gen_cmp(p.ptr.gen, g->gen) > 0,
 			trans, ptr_gen_newer_than_bucket_gen,
-			"bucket %u:%zu data type %s ptr gen in the future: %u > %u\n"
+			"%s(): bucket %u:%zu data type %s ptr gen in the future: %u > %u\n"
 			"while marking %s",
+			__func__,
 			p.ptr.dev, PTR_BUCKET_NR(ca, &p.ptr),
 			bch2_data_type_str(ptr_data_type(k.k, &p.ptr)),
 			p.ptr.gen, g->gen,
@@ -185,8 +190,9 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 
 	if (fsck_err_on(gen_cmp(g->gen, p.ptr.gen) > BUCKET_GC_GEN_MAX,
 			trans, ptr_gen_newer_than_bucket_gen,
-			"bucket %u:%zu gen %u data type %s: ptr gen %u too stale\n"
+			"%s(): bucket %u:%zu gen %u data type %s: ptr gen %u too stale\n"
 			"while marking %s",
+			__func__,
 			p.ptr.dev, PTR_BUCKET_NR(ca, &p.ptr), g->gen,
 			bch2_data_type_str(ptr_data_type(k.k, &p.ptr)),
 			p.ptr.gen,
@@ -196,22 +202,27 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 
 	if (fsck_err_on(!p.ptr.cached && gen_cmp(p.ptr.gen, g->gen) < 0,
 			trans, stale_dirty_ptr,
-			"bucket %u:%zu data type %s stale dirty ptr: %u < %u\n"
+			"%s(): bucket %u:%zu data type %s level %u stale dirty ptr: %u < %u\n"
 			"while marking %s",
+			__func__,
 			p.ptr.dev, PTR_BUCKET_NR(ca, &p.ptr),
 			bch2_data_type_str(ptr_data_type(k.k, &p.ptr)),
+			level,
 			p.ptr.gen, g->gen,
 			(printbuf_reset(&buf),
-			 bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
+			 bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
+		pr_info("setting do_update");
 		*do_update = true;
+	}
 
 	if (data_type != BCH_DATA_btree && p.ptr.gen != g->gen)
 		goto out;
 
 	if (fsck_err_on(bucket_data_type_mismatch(g->data_type, data_type),
 			trans, ptr_bucket_data_type_mismatch,
-			"bucket %u:%zu gen %u different types of data in same bucket: %s, %s\n"
+			"%s(): bucket %u:%zu gen %u different types of data in same bucket: %s, %s\n"
 			"while marking %s",
+			__func__,
 			p.ptr.dev, PTR_BUCKET_NR(ca, &p.ptr), g->gen,
 			bch2_data_type_str(g->data_type),
 			bch2_data_type_str(data_type),
@@ -270,7 +281,7 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 	int ret = 0;
 
 	bkey_for_each_ptr_decode(k.k, ptrs_c, p, entry_c) {
-		ret = bch2_check_fix_ptr(trans, k, p, entry_c, &do_update);
+		ret = bch2_check_fix_ptr(trans, level, k, p, entry_c, &do_update);
 		if (ret)
 			goto err;
 	}
@@ -292,6 +303,7 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 		rcu_read_unlock();
 
 		if (level) {
+			pr_info("checking ptr gen mismatches");
 			/*
 			 * We don't want to drop btree node pointers - if the
 			 * btree node isn't there anymore, the read path will
@@ -303,7 +315,15 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 				struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
 				struct bucket *g = PTR_GC_BUCKET(ca, ptr);
 
-				ptr->gen = g->gen;
+				if (ptr->gen != g->gen) {
+					struct printbuf buf = PRINTBUF;
+
+					bch2_bkey_val_to_text(&buf, c, k);
+					pr_info("setting ptr dev %u gen from %u to %u\n  %s",
+						ptr->gen, ptr->gen, g->gen, buf.buf);
+					printbuf_exit(&buf);
+					ptr->gen = g->gen;
+				}
 			}
 			rcu_read_unlock();
 		} else {
