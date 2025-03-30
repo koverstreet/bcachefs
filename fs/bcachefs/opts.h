@@ -482,7 +482,7 @@ enum fsck_err_opts {
 	x(rebalance_enabled,		u8,				\
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\
-	  BCH2_NO_SB_OPT,			true,			\
+	  BCH2_SB_REBALANCE_ENABLED,		true,			\
 	  NULL,		"Enable rebalance: disable for debugging, or to\n"\
 			"quiet the system when doing performance testing\n")\
 	x(no_data_io,			u8,				\
