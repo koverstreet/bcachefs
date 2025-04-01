@@ -241,6 +241,7 @@ out:
 	if (!ret)
 		ret = err;
 
+	bch_err_fn(c, ret);
 	return ret;
 }
 
