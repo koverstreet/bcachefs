@@ -192,6 +192,8 @@
 	x(BCH_ERR_data_update_done,	data_update_done_no_rw_devs)		\
 	x(EINVAL,			device_state_not_allowed)		\
 	x(EINVAL,			member_info_missing)			\
+	x(EINVAL,			single_device_filesystem)		\
+	x(EINVAL,			not_single_device_filesystem)		\
 	x(EINVAL,			mismatched_block_size)			\
 	x(EINVAL,			block_size_too_small)			\
 	x(EINVAL,			bucket_size_too_small)			\

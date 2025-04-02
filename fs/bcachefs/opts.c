@@ -498,6 +498,14 @@ int bch2_opt_check_may_set(struct bch_fs *c, struct bch_dev *ca, int id, u64 v)
 		if (v)
 			bch2_check_set_feature(c, BCH_FEATURE_ec);
 		break;
+	case Opt_single_device:
+		if (v) {
+			mutex_lock(&c->sb_lock);
+			if (bch2_sb_nr_devices(c->disk_sb.sb) > 1)
+				ret = -BCH_ERR_not_single_device_filesystem;
+			mutex_unlock(&c->sb_lock);
+		}
+		break;
 	}
 
 	return ret;
