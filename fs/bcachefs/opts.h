@@ -517,7 +517,7 @@ enum fsck_err_opts {
 	  BCH_MEMBER_DATA_ALLOWED,	BIT(BCH_DATA_journal)|BIT(BCH_DATA_btree)|BIT(BCH_DATA_user),\
 	  "types",	"Allowed data types for this device: journal, btree, and/or user")\
 	x(discard,			u8,				\
-	  OPT_MOUNT|OPT_DEVICE|OPT_RUNTIME,				\
+	  OPT_MOUNT|OPT_FS|OPT_DEVICE|OPT_RUNTIME,			\
 	  OPT_BOOL(),							\
 	  BCH_MEMBER_DISCARD,		true,				\
 	  NULL,		"Enable discard/TRIM support")			\
@@ -525,8 +525,13 @@ enum fsck_err_opts {
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,		true,				\
-	  NULL,		"BTREE_ITER_prefetch casuse btree nodes to be\n"\
-	  " prefetched sequentially")
+	  NULL,		"BTREE_ITER_prefetch causes btree nodes to be\n"\
+	  " prefetched sequentially")					\
+	x(single_device,		u8,				\
+	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
+	  OPT_BOOL(),							\
+	  BCH_SB_SINGLE_DEVICE,		false,				\
+	  NULL,		"Devices with the same UUID may be mounted simultaneously")
 
 struct bch_opts {
 #define x(_name, _bits, ...)	unsigned _name##_defined:1;
