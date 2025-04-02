@@ -794,6 +794,8 @@ static int bucket_alloc_from_stripe(struct btree_trans *trans,
 				ob->ec		= h->s;
 				ec_stripe_new_get(h->s, STRIPE_REF_io);
 
+				/* XXX: are we striping correctly here? */
+
 				ret = add_new_bucket(c, req, ob);
 				goto out;
 			}
