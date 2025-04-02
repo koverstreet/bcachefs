@@ -1471,35 +1471,37 @@ void *bch2_writepoint_ec_buf(struct bch_fs *c, struct write_point *wp)
 	return ob->ec->new_stripe.data[ob->ec_idx] + (offset << 9);
 }
 
-static int unsigned_cmp(const void *_l, const void *_r)
+static int u32_cmp(const void *_l, const void *_r)
 {
-	unsigned l = *((const unsigned *) _l);
-	unsigned r = *((const unsigned *) _r);
+	u32 l = *((const u32 *) _l);
+	u32 r = *((const u32 *) _r);
 
 	return cmp_int(l, r);
 }
 
 /* pick most common bucket size: */
-static unsigned pick_blocksize(struct bch_fs *c,
-			       struct bch_devs_mask *devs)
+static u32 pick_blocksize(struct bch_fs *c, struct bch_devs_mask *devs)
 {
-	unsigned nr = 0, sizes[BCH_SB_MEMBERS_MAX];
-	struct {
-		unsigned nr, size;
-	} cur = { 0, 0 }, best = { 0, 0 };
+	struct { u32 nr, size; } cur = { 0, 0 }, best = { 0, 0 };
 
+	darray_u32 sizes;
+	darray_init(&sizes);
+	darray_make_room_gfp(&sizes, dev_mask_nr(devs), GFP_KERNEL|__GFP_NOFAIL);
+
+	rcu_read_lock();
 	for_each_member_device_rcu(c, ca, devs)
-		sizes[nr++] = ca->mi.bucket_size;
+		darray_push_gfp(&sizes, ca->mi.bucket_size, 0);
+	rcu_read_unlock();
 
-	sort(sizes, nr, sizeof(unsigned), unsigned_cmp, NULL);
+	sort(sizes.data, sizes.nr, sizeof(sizes.data[0]), u32_cmp, NULL);
 
-	for (unsigned i = 0; i < nr; i++) {
-		if (sizes[i] != cur.size) {
+	darray_for_each(sizes, i) {
+		if (*i != cur.size) {
 			if (cur.nr > best.nr)
 				best = cur;
 
 			cur.nr = 0;
-			cur.size = sizes[i];
+			cur.size = *i;
 		}
 
 		cur.nr++;
@@ -1508,6 +1510,7 @@ static unsigned pick_blocksize(struct bch_fs *c,
 	if (cur.nr > best.nr)
 		best = cur;
 
+	darray_exit(&sizes);
 	return best.size;
 }
 
@@ -1585,9 +1588,11 @@ static void ec_stripe_head_devs_update(struct bch_fs *c, struct ec_stripe_head *
 			if (!ca->mi.durability)
 				__clear_bit(ca->dev_idx, h->devs.d);
 		nr_devs_with_durability = dev_mask_nr(&h->devs);
+	}
 
-		h->blocksize = pick_blocksize(c, &h->devs);
+	h->blocksize = pick_blocksize(c, &h->devs);
 
+	scoped_guard(rcu) {
 		h->nr_active_devs = 0;
 		for_each_member_device_rcu(c, ca, &h->devs)
 			if (ca->mi.bucket_size == h->blocksize)
