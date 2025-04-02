@@ -2408,8 +2408,6 @@ int bch2_check_root(struct bch_fs *c)
 	return ret;
 }
 
-typedef DARRAY(u32) darray_u32;
-
 static bool darray_u32_has(darray_u32 *d, u32 v)
 {
 	darray_for_each(*d, i)
