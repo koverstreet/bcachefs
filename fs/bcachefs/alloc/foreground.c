@@ -734,6 +734,11 @@ retry_blocking:
 			continue;
 		}
 
+		/*
+		 * XXX: check for allocations that can't be satisfied due to
+		 * mismatched device sizes
+		 */
+
 		struct open_bucket *ob = bch2_bucket_alloc_trans(trans, req);
 		if (!IS_ERR(ob))
 			bch2_dev_stripe_increment_inlined(req->ca, stripe, &req->usage);
