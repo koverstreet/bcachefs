@@ -543,11 +543,17 @@ int bch2_fs_read_write(struct bch_fs *c)
 	if (c->opts.nochanges)
 		return -BCH_ERR_erofs_nochanges;
 
+	if (c->sb.features & BIT_ULL(BCH_FEATURE_no_alloc_info))
+		return -BCH_ERR_erofs_no_alloc_info;
+
 	return __bch2_fs_read_write(c, false);
 }
 
 int bch2_fs_read_write_early(struct bch_fs *c)
 {
+	if (WARN_ON(c->sb.features & BIT_ULL(BCH_FEATURE_no_alloc_info)))
+		return -BCH_ERR_erofs_no_alloc_info;
+
 	down_write(&c->state_lock);
 	int ret = __bch2_fs_read_write(c, true);
 	up_write(&c->state_lock);
