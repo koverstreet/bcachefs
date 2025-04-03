@@ -726,6 +726,11 @@ int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 			continue;
 		}
 
+		/*
+		 * XXX: check for allocations that can't be satisfied due to
+		 * mismatched device sizes
+		 */
+
 		struct open_bucket *ob = bch2_bucket_alloc_trans(trans, req, cl,
 							req->flags & BCH_WRITE_alloc_nowait);
 		if (!IS_ERR(ob))
