@@ -945,6 +945,11 @@ int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 		req->will_retry_set_devices =
 			i + 1 < req->devs_sorted.data + req->devs_sorted.nr;
 
+		/*
+		 * XXX: check for allocations that can't be satisfied due to
+		 * mismatched device sizes
+		 */
+
 		struct open_bucket *ob = bch2_bucket_alloc_trans(trans, req);
 		if (!IS_ERR(ob))
 			bch2_dev_stripe_increment_inlined(req->ca, stripe, &req->usage);
