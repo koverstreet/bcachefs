@@ -2177,7 +2177,7 @@ static void btree_node_write_endio(struct bio *bio)
 	clear_btree_node_write_in_flight_inner(b);
 	wake_up_bit(&b->flags, BTREE_NODE_write_in_flight_inner);
 	INIT_WORK(&wb->work, btree_node_write_work);
-	queue_work(c->btree_io_complete_wq, &wb->work);
+	queue_work(c->btree_write_complete_wq, &wb->work);
 }
 
 static int validate_bset_for_write(struct bch_fs *c, struct btree *b,
