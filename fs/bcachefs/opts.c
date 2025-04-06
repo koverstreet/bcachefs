@@ -19,6 +19,11 @@ const char * const bch2_error_actions[] = {
 	NULL
 };
 
+const char * const bch2_degraded_actions[] = {
+	BCH_DEGRADED_ACTIONS()
+	NULL
+};
+
 const char * const bch2_fsck_fix_opts[] = {
 	BCH_FIX_ERRORS_OPTS()
 	NULL
@@ -273,25 +278,49 @@ int bch2_opt_lookup(const char *name)
 	return -1;
 }
 
-struct synonym {
+struct opt_synonym {
 	const char	*s1, *s2;
 };
 
-static const struct synonym bch_opt_synonyms[] = {
+static const struct opt_synonym bch2_opt_synonyms[] = {
 	{ "quota",	"usrquota" },
 };
 
 static int bch2_mount_opt_lookup(const char *name)
 {
-	const struct synonym *i;
+	const struct opt_synonym *i;
 
-	for (i = bch_opt_synonyms;
-	     i < bch_opt_synonyms + ARRAY_SIZE(bch_opt_synonyms);
+	for (i = bch2_opt_synonyms;
+	     i < bch2_opt_synonyms + ARRAY_SIZE(bch2_opt_synonyms);
 	     i++)
 		if (!strcmp(name, i->s1))
 			name = i->s2;
 
 	return bch2_opt_lookup(name);
+}
+
+struct opt_val_synonym {
+	const char	*opt, *v1, *v2;
+};
+
+static const struct opt_val_synonym bch2_opt_val_synonyms[] = {
+	{ "degraded",	"true",		"yes" },
+	{ "degraded",	"false",	"no"  },
+	{ "degraded",	"1",		"yes" },
+	{ "degraded",	"0",		"no"  },
+};
+
+static const char *bch2_opt_val_synonym_lookup(const char *opt, const char *val)
+{
+	const struct opt_val_synonym *i;
+
+	for (i = bch2_opt_val_synonyms;
+	     i < bch2_opt_val_synonyms + ARRAY_SIZE(bch2_opt_val_synonyms);
+	     i++)
+		if (!strcmp(opt, i->opt) && !strcmp(val, i->v1))
+			return i->v2;
+
+	return val;
 }
 
 int bch2_opt_validate(const struct bch_option *opt, u64 v, struct printbuf *err)
@@ -339,19 +368,14 @@ int bch2_opt_parse(struct bch_fs *c,
 
 	switch (opt->type) {
 	case BCH_OPT_BOOL:
-		if (val) {
-			ret = lookup_constant(bool_names, val, -BCH_ERR_option_not_bool);
-			if (ret != -BCH_ERR_option_not_bool) {
-				*res = ret;
-			} else {
-				if (err)
-					prt_printf(err, "%s: must be bool", opt->attr.name);
-				return ret;
-			}
+		ret = lookup_constant(bool_names, val, -BCH_ERR_option_not_bool);
+		if (ret != -BCH_ERR_option_not_bool) {
+			*res = ret;
 		} else {
-			*res = 1;
+			if (err)
+				prt_printf(err, "%s: must be bool", opt->attr.name);
+			return ret;
 		}
-
 		break;
 	case BCH_OPT_UINT:
 		if (!val) {
@@ -549,6 +573,12 @@ int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
 	/* Unknown options are ignored: */
 	if (id < 0)
 		return 0;
+
+	/* must have a value for synonym lookup - but OPT_FN is weird */
+	if (!val && bch2_opt_table[id].type != BCH_OPT_FN)
+		val = "1";
+
+	val = bch2_opt_val_synonym_lookup(name, val);
 
 	if (!(bch2_opt_table[id].flags & OPT_MOUNT))
 		goto bad_opt;
