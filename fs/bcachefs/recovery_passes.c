@@ -12,6 +12,7 @@
 #include "journal.h"
 #include "lru.h"
 #include "logged_ops.h"
+#include "movinggc.h"
 #include "rebalance.h"
 #include "recovery.h"
 #include "recovery_passes.h"
@@ -312,10 +313,11 @@ int bch2_run_recovery_passes(struct bch_fs *c)
 	c->opts.recovery_passes_exclude &= ~BCH_RECOVERY_PASS_set_may_go_rw;
 
 	while (c->curr_recovery_pass < ARRAY_SIZE(recovery_pass_fns) && !ret) {
-		c->next_recovery_pass = c->curr_recovery_pass + 1;
-
 		spin_lock_irq(&c->recovery_pass_lock);
+		unsigned prev_done = c->recovery_pass_done;
 		unsigned pass = c->curr_recovery_pass;
+
+		c->next_recovery_pass = pass + 1;
 
 		if (c->opts.recovery_pass_last &&
 		    c->curr_recovery_pass > c->opts.recovery_pass_last) {
@@ -323,21 +325,18 @@ int bch2_run_recovery_passes(struct bch_fs *c)
 			break;
 		}
 
-		if (!should_run_recovery_pass(c, pass)) {
-			c->curr_recovery_pass++;
-			c->recovery_pass_done = max(c->recovery_pass_done, pass);
+		if (should_run_recovery_pass(c, pass)) {
 			spin_unlock_irq(&c->recovery_pass_lock);
-			continue;
+
+			ret =   bch2_run_recovery_pass(c, pass) ?:
+				bch2_journal_flush(&c->journal);
+
+			if (!ret && !test_bit(BCH_FS_error, &c->flags))
+				bch2_clear_recovery_pass_required(c, pass);
+
+			spin_lock_irq(&c->recovery_pass_lock);
 		}
-		spin_unlock_irq(&c->recovery_pass_lock);
 
-		ret =   bch2_run_recovery_pass(c, pass) ?:
-			bch2_journal_flush(&c->journal);
-
-		if (!ret && !test_bit(BCH_FS_error, &c->flags))
-			bch2_clear_recovery_pass_required(c, pass);
-
-		spin_lock_irq(&c->recovery_pass_lock);
 		if (c->next_recovery_pass < c->curr_recovery_pass) {
 			/*
 			 * bch2_run_explicit_recovery_pass() was called: we
@@ -352,7 +351,14 @@ int bch2_run_recovery_passes(struct bch_fs *c)
 			c->recovery_pass_done = max(c->recovery_pass_done, pass);
 		}
 		c->curr_recovery_pass = c->next_recovery_pass;
+
 		spin_unlock_irq(&c->recovery_pass_lock);
+
+		if (prev_done <= BCH_RECOVERY_PASS_check_snapshots &&
+		    c->recovery_pass_done > BCH_RECOVERY_PASS_check_snapshots) {
+			bch2_copygc_wakeup(c);
+			bch2_rebalance_wakeup(c);
+		}
 	}
 
 	return ret;
