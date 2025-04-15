@@ -954,6 +954,8 @@ use_clean:
 	set_bit(BCH_FS_btree_running, &c->flags);
 
 	ret = bch2_sb_set_upgrade_extra(c);
+	if (ret)
+		goto err;
 
 	ret = bch2_run_recovery_passes(c);
 	if (ret)

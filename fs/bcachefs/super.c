@@ -197,6 +197,7 @@ static int bch2_dev_sysfs_online(struct bch_fs *, struct bch_dev *);
 static void bch2_dev_io_ref_stop(struct bch_dev *, int);
 static void __bch2_dev_read_only(struct bch_fs *, struct bch_dev *);
 static int bch2_fs_init_rw(struct bch_fs *);
+static int bch2_fs_resize_on_mount(struct bch_fs *);
 
 struct bch_fs *bch2_dev_to_fs(dev_t dev)
 {
@@ -1136,7 +1137,14 @@ int bch2_fs_start(struct bch_fs *c)
 	for_each_online_member(c, ca)
 		bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx)->last_mount = cpu_to_le64(now);
 
+	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
+
+	ret = bch2_fs_resize_on_mount(c);
+	if (ret) {
+		up_write(&c->state_lock);
+		goto err;
+	}
 
 	for_each_rw_member(c, ca)
 		bch2_dev_allocator_add(c, ca);
@@ -2034,6 +2042,18 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags)
 	return 0;
 }
 
+static int __bch2_dev_resize_alloc(struct bch_dev *ca, u64 old_nbuckets, u64 new_nbuckets)
+{
+	struct bch_fs *c = ca->fs;
+	u64 v[3] = { new_nbuckets - old_nbuckets, 0, 0 };
+
+	return bch2_trans_commit_do(ca->fs, NULL, NULL, 0,
+			bch2_disk_accounting_mod2(trans, false, v, dev_data_type,
+						  .dev = ca->dev_idx,
+						  .data_type = BCH_DATA_free)) ?:
+		bch2_dev_freespace_init(c, ca, old_nbuckets, new_nbuckets);
+}
+
 int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 {
 	struct bch_member *m;
@@ -2081,13 +2101,7 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 	mutex_unlock(&c->sb_lock);
 
 	if (ca->mi.freespace_initialized) {
-		u64 v[3] = { nbuckets - old_nbuckets, 0, 0 };
-
-		ret   = bch2_trans_commit_do(ca->fs, NULL, NULL, 0,
-				bch2_disk_accounting_mod2(trans, false, v, dev_data_type,
-							  .dev = ca->dev_idx,
-							  .data_type = BCH_DATA_free)) ?:
-			bch2_dev_freespace_init(c, ca, old_nbuckets, nbuckets);
+		ret = __bch2_dev_resize_alloc(ca, old_nbuckets, nbuckets);
 		if (ret)
 			goto err;
 	}
@@ -2096,6 +2110,47 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 err:
 	up_write(&c->state_lock);
 	return ret;
+}
+
+static int bch2_fs_resize_on_mount(struct bch_fs *c)
+{
+	for_each_online_member(c, ca) {
+		u64 old_nbuckets = ca->mi.nbuckets;
+		u64 new_nbuckets = div64_u64(get_capacity(ca->disk_sb.bdev->bd_disk),
+					 ca->mi.bucket_size);
+
+		if (ca->mi.resize_on_mount &&
+		    new_nbuckets > ca->mi.nbuckets) {
+			bch_info(ca, "resizing to size %llu", new_nbuckets * ca->mi.bucket_size);
+			int ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
+			bch_err_fn(ca, ret);
+			if (ret) {
+				percpu_ref_put(&ca->io_ref[READ]);
+				up_write(&c->state_lock);
+				return ret;
+			}
+
+			mutex_lock(&c->sb_lock);
+			struct bch_member *m =
+				bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+			m->nbuckets = cpu_to_le64(new_nbuckets);
+			SET_BCH_MEMBER_RESIZE_ON_MOUNT(m, false);
+
+			c->disk_sb.sb->features[0] &= ~BIT_ULL(BCH_FEATURE_small_image);
+			bch2_write_super(c);
+			mutex_unlock(&c->sb_lock);
+
+			if (ca->mi.freespace_initialized) {
+				ret = __bch2_dev_resize_alloc(ca, old_nbuckets, new_nbuckets);
+				if (ret) {
+					percpu_ref_put(&ca->io_ref[READ]);
+					up_write(&c->state_lock);
+					return ret;
+				}
+			}
+		}
+	}
+	return 0;
 }
 
 /* return with ref on ca->ref: */
