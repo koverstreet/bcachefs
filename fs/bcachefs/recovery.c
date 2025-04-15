@@ -949,6 +949,10 @@ use_clean:
 
 	ret = bch2_sb_set_upgrade_extra(c);
 
+	ret = bch2_fs_resize_on_mount(c);
+	if (ret)
+		goto err;
+
 	ret = bch2_run_recovery_passes(c);
 	if (ret)
 		goto err;
