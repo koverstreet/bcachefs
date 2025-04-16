@@ -59,6 +59,13 @@ struct bch_folio_sector {
 	u8			state;
 };
 
+/* Atomic writes (RWF_ATOMIC) may straddle multiple folios: */
+struct bch_atomic_write {
+	atomic_long_t		folio_count;
+	u64			start_offset;
+	u64			size;
+};
+
 struct bch_folio {
 	spinlock_t		lock;
 	atomic_t		write_count;
@@ -67,6 +74,8 @@ struct bch_folio {
 	 * (Not the data itself)
 	 */
 	bool			uptodate;
+	bool			atomic;
+	struct bch_atomic_write	*atomic_write;
 	struct bch_folio_sector	s[];
 };
 
