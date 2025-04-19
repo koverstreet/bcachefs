@@ -492,10 +492,14 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 
 	clear_bit(BCH_FS_clean_shutdown, &c->flags);
 
-	__for_each_online_member(c, ca, BIT(BCH_MEMBER_STATE_rw), READ) {
-		bch2_dev_allocator_add(c, ca);
-		percpu_ref_reinit(&ca->io_ref[WRITE]);
-	}
+	rcu_read_lock();
+	for_each_member_device_rcu(c, ca, NULL)
+		if (ca->mi.state == BCH_MEMBER_STATE_rw) {
+			bch2_dev_allocator_add(c, ca);
+			percpu_ref_reinit(&ca->io_ref[WRITE]);
+		}
+	rcu_read_unlock();
+
 	bch2_recalc_capacity(c);
 
 	/*
@@ -1107,14 +1111,20 @@ int bch2_fs_start(struct bch_fs *c)
 		goto err;
 	}
 
-	for_each_online_member(c, ca)
-		bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx)->last_mount = cpu_to_le64(now);
+	rcu_read_lock();
+	for_each_online_member_rcu(c, ca)
+		bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx)->last_mount =
+		cpu_to_le64(now);
+	rcu_read_unlock();
 
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
 
-	for_each_rw_member(c, ca)
-		bch2_dev_allocator_add(c, ca);
+	rcu_read_lock();
+	for_each_member_device_rcu(c, ca, NULL)
+		if (ca->mi.state == BCH_MEMBER_STATE_rw)
+			bch2_dev_allocator_add(c, ca);
+	rcu_read_unlock();
 	bch2_recalc_capacity(c);
 	up_write(&c->state_lock);
 
@@ -1264,6 +1274,9 @@ static int bch2_dev_in_fs(struct bch_sb_handle *fs,
 
 static void bch2_dev_io_ref_stop(struct bch_dev *ca, int rw)
 {
+	if (rw == READ)
+		clear_bit(ca->dev_idx, ca->fs->online_devs.d);
+
 	if (!percpu_ref_is_zero(&ca->io_ref[rw])) {
 		reinit_completion(&ca->io_ref_completion[rw]);
 		percpu_ref_kill(&ca->io_ref[rw]);
@@ -1547,6 +1560,8 @@ static int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb)
 	if (ret)
 		return ret;
 
+	set_bit(ca->dev_idx, c->online_devs.d);
+
 	bch2_dev_sysfs_online(c, ca);
 
 	struct printbuf name = PRINTBUF;
@@ -1604,7 +1619,7 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 			return true;
 
 		/* do we have enough devices to read from?  */
-		new_online_devs = bch2_online_devs(c);
+		new_online_devs = c->online_devs;
 		__clear_bit(ca->dev_idx, new_online_devs.d);
 
 		return bch2_have_enough_devs(c, new_online_devs, flags, false);
@@ -1644,7 +1659,7 @@ static bool bch2_fs_may_start(struct bch_fs *c)
 		break;
 	}
 
-	return bch2_have_enough_devs(c, bch2_online_devs(c), flags, true);
+	return bch2_have_enough_devs(c, c->online_devs, flags, true);
 }
 
 static void __bch2_dev_read_only(struct bch_fs *c, struct bch_dev *ca)

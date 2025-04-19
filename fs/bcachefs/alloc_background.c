@@ -2503,7 +2503,8 @@ void bch2_recalc_capacity(struct bch_fs *c)
 
 	lockdep_assert_held(&c->state_lock);
 
-	for_each_online_member(c, ca) {
+	rcu_read_lock();
+	for_each_online_member_rcu(c, ca) {
 		struct backing_dev_info *bdi = ca->disk_sb.bdev->bd_disk->bdi;
 
 		ra_pages += bdi->ra_pages;
@@ -2511,7 +2512,7 @@ void bch2_recalc_capacity(struct bch_fs *c)
 
 	bch2_set_ra_pages(c, ra_pages);
 
-	__for_each_online_member(c, ca, BIT(BCH_MEMBER_STATE_rw), READ) {
+	for_each_rw_member_rcu(c, ca) {
 		u64 dev_reserve = 0;
 
 		/*
@@ -2548,6 +2549,7 @@ void bch2_recalc_capacity(struct bch_fs *c)
 		bucket_size_max = max_t(unsigned, bucket_size_max,
 					ca->mi.bucket_size);
 	}
+	rcu_read_unlock();
 
 	gc_reserve = c->opts.gc_reserve_bytes
 		? c->opts.gc_reserve_bytes >> 9
@@ -2570,8 +2572,10 @@ u64 bch2_min_rw_member_capacity(struct bch_fs *c)
 {
 	u64 ret = U64_MAX;
 
-	for_each_rw_member(c, ca)
+	rcu_read_lock();
+	for_each_rw_member_rcu(c, ca)
 		ret = min(ret, ca->mi.nbuckets * ca->mi.bucket_size);
+	rcu_read_unlock();
 	return ret;
 }
 
@@ -2595,6 +2599,11 @@ static bool bch2_dev_has_open_write_point(struct bch_fs *c, struct bch_dev *ca)
 
 void bch2_dev_allocator_set_rw(struct bch_fs *c, struct bch_dev *ca, bool rw)
 {
+	if (rw)
+		set_bit(ca->dev_idx, c->rw_devs_all.d);
+	else
+		clear_bit(ca->dev_idx, c->rw_devs_all.d);
+
 	for (unsigned i = 0; i < ARRAY_SIZE(c->rw_devs); i++)
 		if (rw && (ca->mi.data_allowed & BIT(i)))
 			set_bit(ca->dev_idx, c->rw_devs[i].d);
