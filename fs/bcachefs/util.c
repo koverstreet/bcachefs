@@ -327,6 +327,14 @@ int bch2_prt_task_backtrace(struct printbuf *out, struct task_struct *task, unsi
 	return ret;
 }
 
+void bch2_bio_to_text(struct printbuf *out, struct bio *bio)
+{
+	prt_printf(out, "bi_remaining:\t%u\n",
+		   atomic_read(&bio->__bi_remaining));
+	prt_printf(out, "bi_status:\t%u\n",
+		   bio->bi_status);
+}
+
 #ifndef __KERNEL__
 #include <time.h>
 void bch2_prt_datetime(struct printbuf *out, time64_t sec)

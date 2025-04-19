@@ -219,6 +219,8 @@ int bch2_save_backtrace(bch_stacktrace *stack, struct task_struct *, unsigned, g
 void bch2_prt_backtrace(struct printbuf *, bch_stacktrace *);
 int bch2_prt_task_backtrace(struct printbuf *, struct task_struct *, unsigned, gfp_t);
 
+void bch2_bio_to_text(struct printbuf *, struct bio *);
+
 static inline void prt_bdevname(struct printbuf *out, struct block_device *bdev)
 {
 #ifdef __KERNEL__

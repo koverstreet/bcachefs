@@ -989,6 +989,7 @@ struct bch_fs {
 #ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
 	struct fast_list	promote_list;
 	struct fast_list	rbio_list;
+	struct fast_list	btree_read_bio_list;
 	struct fast_list	btree_write_bio_list;
 #endif
 

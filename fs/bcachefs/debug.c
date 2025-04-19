@@ -987,6 +987,28 @@ static const struct file_operations rbio_list_ops = {
 	.read		= bch2_rbio_list_read,
 };
 
+static void btree_read_bio_obj_to_text(struct printbuf *out, void *obj)
+{
+	struct btree_read_bio *rbio = obj;
+	bch2_btree_read_bio_to_text(out, rbio);
+}
+
+static ssize_t bch2_btree_read_bio_list_read(struct file *file, char __user *buf,
+				   size_t size, loff_t *ppos)
+{
+	struct dump_iter *i = file->private_data;
+	struct bch_fs *c = i->c;
+
+	return obj_list_read(file, buf, size, ppos, &c->btree_write_bio_list, btree_read_bio_obj_to_text);
+}
+
+static const struct file_operations btree_read_bio_list_ops = {
+	.owner		= THIS_MODULE,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_btree_read_bio_list_read,
+};
+
 static void btree_write_bio_obj_to_text(struct printbuf *out, void *obj)
 {
 	struct btree_write_bio *wbio = obj;
@@ -1073,6 +1095,8 @@ void bch2_fs_debug_init(struct bch_fs *c)
 			    c->btree_debug, &promote_list_ops);
 	debugfs_create_file("read_bios", 0400, c->fs_debug_dir,
 			    c->btree_debug, &rbio_list_ops);
+	debugfs_create_file("btree_read_bios", 0400, c->fs_debug_dir,
+			    c->btree_debug, &btree_read_bio_list_ops);
 	debugfs_create_file("btree_write_bios", 0400, c->fs_debug_dir,
 			    c->btree_debug, &btree_write_bio_list_ops);
 #endif /* CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS */

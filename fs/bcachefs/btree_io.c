@@ -1374,6 +1374,7 @@ start:
 		}
 	}
 
+	async_object_list_del(&c->btree_read_bio_list, rb->list_idx);
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read],
 			       rb->start_time);
 	bio_put(&rb->bio);
@@ -1411,6 +1412,11 @@ static void btree_node_read_endio(struct bio *bio)
 				   rb->start_time, !bio->bi_status);
 
 	queue_work(c->btree_read_complete_wq, &rb->work);
+}
+
+void bch2_btree_read_bio_to_text(struct printbuf *out, struct btree_read_bio *rbio)
+{
+	bch2_bio_to_text(out, &rbio->bio);
 }
 
 struct btree_node_read_all {
@@ -1740,6 +1746,8 @@ void bch2_btree_node_read(struct btree_trans *trans, struct btree *b,
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bio->bi_end_io		= btree_node_read_endio;
 	bch2_bio_map(bio, b->data, btree_buf_bytes(b));
+
+	async_object_list_add(&c->btree_read_bio_list, rb, &rb->list_idx);
 
 	if (rb->have_ioref) {
 		this_cpu_add(ca->io_done->sectors[READ][BCH_DATA_btree],

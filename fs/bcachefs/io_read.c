@@ -1500,14 +1500,6 @@ static const char * const bch2_read_bio_flags[] = {
 	NULL
 };
 
-void bch2_bio_to_text(struct printbuf *out, struct bio *bio)
-{
-	prt_printf(out, "bi_remaining:\t%u\n",
-		   atomic_read(&bio->__bi_remaining));
-	prt_printf(out, "bi_status:\t%u\n",
-		   bio->bi_status);
-}
-
 void bch2_read_bio_to_text(struct printbuf *out, struct bch_read_bio *rbio)
 {
 	u64 now = local_clock();
@@ -1540,6 +1532,7 @@ void bch2_fs_io_read_exit(struct bch_fs *c)
 {
 #ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
 	fast_list_exit(&c->btree_write_bio_list);
+	fast_list_exit(&c->btree_read_bio_list);
 	fast_list_exit(&c->rbio_list);
 	fast_list_exit(&c->promote_list);
 #endif
@@ -1572,6 +1565,7 @@ int bch2_fs_io_read_init(struct bch_fs *c)
 #ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
 	if (fast_list_init(&c->promote_list) ||
 	    fast_list_init(&c->rbio_list) ||
+	    fast_list_init(&c->btree_read_bio_list) ||
 	    fast_list_init(&c->btree_write_bio_list))
 		return -BCH_ERR_ENOMEM_promote_table_init;
 #endif
