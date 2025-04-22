@@ -397,7 +397,8 @@ int bch2_validate_bset(struct bch_fs *c, struct bch_dev *ca,
 		     bset_empty,
 		     "empty bset");
 
-	btree_err_on(BSET_OFFSET(i) && BSET_OFFSET(i) != offset,
+	btree_err_on((!write && !get_random_u32_below(256)) ||
+		     (BSET_OFFSET(i) && BSET_OFFSET(i) != offset),
 		     -BCH_ERR_btree_node_read_err_want_retry,
 		     c, ca, b, i, NULL,
 		     bset_wrong_sector_offset,
