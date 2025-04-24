@@ -1303,7 +1303,6 @@ fsck_err:
 		retry_read = 1;
 	} else {
 		set_btree_node_read_error(b);
-		bch2_btree_lost_data(c, b->c.btree_id);
 	}
 	goto out;
 }
@@ -1371,15 +1370,16 @@ start:
 
 		if (!can_retry) {
 			set_btree_node_read_error(b);
-			bch2_btree_lost_data(c, b->c.btree_id);
 			break;
 		}
 	}
-
-	async_object_list_del(c, btree_read_bio, rb->list_idx);
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read],
-			       rb->start_time);
-	bio_put(&rb->bio);
+	if (btree_node_read_error(b)) {
+		struct printbuf buf = PRINTBUF;
+		bch2_btree_lost_data(c, &buf, b->c.btree_id);
+		if (buf.pos)
+			bch_err(c, "%s", buf.buf);
+		printbuf_exit(&buf);
+	}
 
 	if ((saw_error ||
 	     btree_node_need_rewrite(b)) &&
@@ -1397,6 +1397,10 @@ start:
 		bch2_btree_node_rewrite_async(c, b);
 	}
 
+	async_object_list_del(c, btree_read_bio, rb->list_idx);
+	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read],
+			       rb->start_time);
+	bio_put(&rb->bio);
 	printbuf_exit(&buf);
 	clear_btree_node_read_in_flight(b);
 	wake_up_bit(&b->flags, BTREE_NODE_read_in_flight);
@@ -1585,7 +1589,12 @@ fsck_err:
 
 	if (ret) {
 		set_btree_node_read_error(b);
-		bch2_btree_lost_data(c, b->c.btree_id);
+
+		struct printbuf buf = PRINTBUF;
+		bch2_btree_lost_data(c, &buf, b->c.btree_id);
+		if (buf.pos)
+			bch_err(c, "%s", buf.buf);
+		printbuf_exit(&buf);
 	} else if (*saw_error)
 		bch2_btree_node_rewrite_async(c, b);
 
@@ -1718,6 +1727,8 @@ void bch2_btree_node_read(struct btree_trans *trans, struct btree *b,
 
 		prt_str(&buf, "btree node read error: no device to read from\n at ");
 		bch2_btree_pos_to_text(&buf, c, b);
+		prt_newline(&buf);
+		bch2_btree_lost_data(c, &buf, b->c.btree_id);
 		bch_err_ratelimited(c, "%s", buf.buf);
 
 		if (c->opts.recovery_passes & BIT_ULL(BCH_RECOVERY_PASS_check_topology) &&
@@ -1725,7 +1736,6 @@ void bch2_btree_node_read(struct btree_trans *trans, struct btree *b,
 			bch2_fatal_error(c);
 
 		set_btree_node_read_error(b);
-		bch2_btree_lost_data(c, b->c.btree_id);
 		clear_btree_node_read_in_flight(b);
 		wake_up_bit(&b->flags, BTREE_NODE_read_in_flight);
 		printbuf_exit(&buf);
