@@ -311,7 +311,7 @@ static int bch2_read_fua_test(struct printbuf *out, struct bch_dev *ca)
 	struct bch_fs *c = ca->fs;
 	struct bio *bio = NULL;
 	void *buf = NULL;
-	unsigned bs = c->opts.block_size, iters;
+	unsigned bs = 512 << ca->block_bits_phys, iters;
 	u64 end, test_duration = NSEC_PER_SEC * 2;
 	struct bch2_time_stats stats_nofua, stats_fua, stats_random;
 	int ret = 0;
