@@ -1066,6 +1066,11 @@ static int journal_read_buf_realloc(struct bch_fs *c, struct journal_read_buf *b
 	return 0;
 }
 
+static inline unsigned jset_block_bits(struct bch_fs *c, struct jset *j)
+{
+	return JSET_BLOCK_BITS(j) ? JSET_BLOCK_BITS(j) - 1 : c->block_bits;
+}
+
 static int journal_read_bucket(struct bch_dev *ca,
 			       struct journal_read_buf *buf,
 			       struct journal_list *jlist,
@@ -1128,7 +1133,7 @@ reread:
 				    end - offset, sectors_read);
 		switch (ret) {
 		case 0:
-			sectors = vstruct_sectors(j, c->block_bits);
+			sectors = vstruct_sectors(j, jset_block_bits(c, j));
 			break;
 		case JOURNAL_ENTRY_REREAD:
 			if (vstruct_bytes(j) > buf->size) {
@@ -1345,7 +1350,8 @@ static int bch2_journal_check_for_missing(struct bch_fs *c, u64 start_seq, u64 e
 			if (prev) {
 				prt_printf(&buf, "\n%llu at ", le64_to_cpu(prev->j.seq));
 				bch2_journal_ptrs_to_text(&buf, c, prev);
-				prt_printf(&buf, " size %zu", vstruct_sectors(&prev->j, c->block_bits));
+				prt_printf(&buf, " size %zu",
+					   vstruct_sectors(&prev->j, jset_block_bits(c, &prev->j)));
 			}
 
 			prt_printf(&buf, "\n%llu at ", le64_to_cpu(i->j.seq));
@@ -2211,6 +2217,8 @@ CLOSURE_CALLBACK(bch2_journal_write)
 
 	if (unlikely(ret))
 		goto err_allocate_write;
+
+	SET_JSET_BLOCK_BITS(w->data, c->block_bits + 1);
 
 	ret = bch2_journal_write_checksum(j, w);
 	if (unlikely(ret))
