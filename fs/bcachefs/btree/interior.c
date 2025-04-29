@@ -2105,10 +2105,10 @@ split:
 	if (b->c.level >= as->update_level_end) {
 		event_inc_trace(c, trans_restart_split_race, buf, ({
 			prt_printf(&buf, "%s\n", trans->fn);
-			prt_printf(&buf, "l=%u written %u/%u u64s remaining %zu",
+			prt_printf(&buf, "l=%u written %u/%zu u64s remaining %zu",
 				   b->c.level,
 				   b->written,
-				   btree_blocks(c),
+				   btree_sectors(c),
 				   bch2_btree_keys_u64s_remaining(b));
 		}));
 

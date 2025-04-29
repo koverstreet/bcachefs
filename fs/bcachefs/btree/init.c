@@ -317,7 +317,7 @@ int bch2_fs_btree_init(struct bch_fs *c)
 	c->btree.foreground_merge_threshold = BTREE_FOREGROUND_MERGE_THRESHOLD(c);
 
 	unsigned iter_size = sizeof(struct sort_iter) +
-		(btree_blocks(c) + 1) * 2 *
+		(btree_sectors(c) + 1) * 2 *
 		sizeof(struct sort_iter_set);
 
 	if (!(c->btree.read_complete_wq = alloc_workqueue("bcachefs_btree_read_complete",
