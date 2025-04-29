@@ -1784,7 +1784,7 @@ static CLOSURE_CALLBACK(journal_write_submit)
 					BCH_DEV_WRITE_REF_journal_write);
 		if (!ca) {
 			/* XXX: fix this */
-			bch_err(c, "missing device for journal write\n");
+			bch_err(c, "missing device %u for journal write", ptr->dev);
 			continue;
 		}
 
