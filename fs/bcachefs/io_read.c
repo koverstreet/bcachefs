@@ -1172,8 +1172,6 @@ retry_pick:
 
 		bch2_bio_alloc_pages_pool(c, &rbio->bio, sectors << 9);
 		rbio->bounce	= true;
-
-		async_object_list_add(c, rbio, rbio, &rbio->list_idx);
 	} else if (flags & BCH_READ_must_clone) {
 		/*
 		 * Have to clone if there were any splits, due to error
@@ -1187,8 +1185,6 @@ retry_pick:
 						 &c->bio_read_split),
 				 orig);
 		rbio->bio.bi_iter = iter;
-
-		async_object_list_add(c, rbio, rbio, &rbio->list_idx);
 	} else {
 		rbio = orig;
 		rbio->bio.bi_iter = iter;
@@ -1218,6 +1214,8 @@ retry_pick:
 	rbio->bio.bi_opf	= orig->bio.bi_opf;
 	rbio->bio.bi_iter.bi_sector = pick.ptr.offset;
 	rbio->bio.bi_end_io	= bch2_read_endio;
+
+	async_object_list_add(c, rbio, rbio, &rbio->list_idx);
 
 	/* XXX: also nvme read recovery level */
 	if (unlikely(failed && bch2_dev_io_failures(failed, pick.ptr.dev)))
