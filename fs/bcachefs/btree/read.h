@@ -20,6 +20,16 @@ static inline unsigned btree_ptr_sectors_written(struct bkey_s_c k)
 
 void bch2_btree_node_set_blocksize(struct bch_fs *, struct btree *);
 
+static inline unsigned bset_block_bits(struct bch_fs *c, struct bset *b)
+{
+	return BSET_BLOCK_BITS(b) ? BSET_BLOCK_BITS(b) - 1 : c->block_bits;
+}
+
+static inline unsigned bset_block_bytes(struct bch_fs *c, struct bset *b)
+{
+	return 512 << bset_block_bits(c, b);
+}
+
 struct btree_read_bio {
 	struct bch_fs		*c;
 	struct btree		*b;
