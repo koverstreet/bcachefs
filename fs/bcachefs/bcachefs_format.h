@@ -1336,6 +1336,7 @@ struct jset {
 LE32_BITMASK(JSET_CSUM_TYPE,	struct jset, flags, 0, 4);
 LE32_BITMASK(JSET_BIG_ENDIAN,	struct jset, flags, 4, 5);
 LE32_BITMASK(JSET_NO_FLUSH,	struct jset, flags, 5, 6);
+LE32_BITMASK(JSET_BLOCK_BITS,	struct jset, flags, 6, 10);
 
 #define BCH_JOURNAL_BUCKETS_MIN		8
 
@@ -1544,7 +1545,8 @@ LE32_BITMASK(BSET_SEPARATE_WHITEOUTS,
 				struct bset, flags, 5, 6);
 
 /* Sector offset within the btree node: */
-LE32_BITMASK(BSET_OFFSET,	struct bset, flags, 16, 32);
+LE32_BITMASK(BSET_OFFSET,	struct bset, flags, 16, 28);
+LE32_BITMASK(BSET_BLOCK_BITS,	struct bset, flags, 28, 32);
 
 struct btree_node {
 	struct bch_csum		csum;

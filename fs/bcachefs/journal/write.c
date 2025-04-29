@@ -699,6 +699,8 @@ CLOSURE_CALLBACK(bch2_journal_write)
 	if (unlikely(ret))
 		goto err_allocate_write;
 
+	SET_JSET_BLOCK_BITS(w->data, c->block_bits + 1);
+
 	ret = bch2_journal_write_checksum(j, w);
 	if (unlikely(ret))
 		goto err;

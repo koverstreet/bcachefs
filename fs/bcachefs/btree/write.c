@@ -378,6 +378,13 @@ do_write:
 	i->journal_seq	= cpu_to_le64(seq);
 	i->u64s		= 0;
 
+	/*
+	 * We stole bits from BSET_OFFSET, don't set BSET_BLOCK_BITS if it's not
+	 * needed and might be read by an old version:
+	 */
+	if (b->block_bits != c->block_bits)
+		SET_BSET_BLOCK_BITS(i, b->block_bits + 1);
+
 	sort_iter_add(&sort_iter.iter,
 		      unwritten_whiteouts_start(b),
 		      unwritten_whiteouts_end(b));

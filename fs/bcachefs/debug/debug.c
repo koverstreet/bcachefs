@@ -97,15 +97,15 @@ static bool bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 		while (offset < v->written) {
 			if (!offset) {
 				i = &n_ondisk->keys;
-				sectors = vstruct_blocks(n_ondisk, c->block_bits) <<
-					c->block_bits;
+				sectors = vstruct_blocks(n_ondisk, bset_block_bits(c, i)) <<
+					bset_block_bits(c, i);
 			} else {
 				struct btree_node_entry *bne =
 					(void *) n_ondisk + (offset << 9);
 				i = &bne->keys;
 
-				sectors = vstruct_blocks(bne, c->block_bits) <<
-					c->block_bits;
+				sectors = vstruct_blocks(bne, bset_block_bits(c, i)) <<
+					bset_block_bits(c, i);
 			}
 
 			printk(KERN_ERR "*** on disk block %u:\n", offset);
@@ -252,7 +252,7 @@ void bch2_btree_node_ondisk_to_text(struct printbuf *out, struct bch_fs *c,
 
 			bset_encrypt(c, i, offset << 9);
 
-			sectors = vstruct_sectors(n_ondisk, c->block_bits);
+			sectors = vstruct_sectors(n_ondisk, bset_block_bits(c, i));
 		} else {
 			struct btree_node_entry *bne = (void *) n_ondisk + (offset << 9);
 
@@ -277,7 +277,7 @@ void bch2_btree_node_ondisk_to_text(struct printbuf *out, struct bch_fs *c,
 
 			bset_encrypt(c, i, offset << 9);
 
-			sectors = vstruct_sectors(bne, c->block_bits);
+			sectors = vstruct_sectors(bne, bset_block_bits(c, i));
 		}
 
 		prt_printf(out, "  offset %u version %u, journal seq %llu\n",
