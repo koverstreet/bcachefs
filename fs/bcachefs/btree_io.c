@@ -1186,7 +1186,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 			     "unknown checksum type %llu", BSET_CSUM_TYPE(i));
 
 		if (first) {
-			sectors = vstruct_sectors(b->data, c->block_bits);
+			sectors = vstruct_sectors(b->data, bset_block_bits(c, &b->data->keys));
 			if (btree_err_on(b->written + sectors > (ptr_written ?: btree_sectors(c)),
 					 -BCH_ERR_btree_node_read_err_fixable,
 					 c, ca, b, i, NULL,
@@ -1222,7 +1222,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 				     btree_node_unsupported_version,
 				     "btree node does not have NEW_EXTENT_OVERWRITE set");
 		} else {
-			sectors = vstruct_sectors(bne, c->block_bits);
+			sectors = vstruct_sectors(bne, bset_block_bits(c, &bne->keys));
 			if (btree_err_on(b->written + sectors > (ptr_written ?: btree_sectors(c)),
 					 -BCH_ERR_btree_node_read_err_fixable,
 					 c, ca, b, i, NULL,
@@ -1309,7 +1309,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 	} else {
 		for (bne = write_block(b);
 		     bset_byte_offset(b, bne) < btree_buf_bytes(b);
-		     bne = (void *) bne + block_bytes(c))
+		     bne = (void *) bne + bset_block_bytes(c, &bne->keys))
 			btree_err_on(bne->keys.seq == b->data->keys.seq &&
 				     !bch2_journal_seq_is_blacklisted(c,
 								      le64_to_cpu(bne->keys.journal_seq),
@@ -1571,12 +1571,12 @@ static unsigned btree_node_sectors_written(struct bch_fs *c, void *data)
 
 	while (offset < btree_sectors(c)) {
 		if (!offset) {
-			offset += vstruct_sectors(bn, c->block_bits);
+			offset += vstruct_sectors(bn, bset_block_bits(c, &bn->keys));
 		} else {
 			bne = data + (offset << 9);
 			if (bne->keys.seq != bn->keys.seq)
 				break;
-			offset += vstruct_sectors(bne, c->block_bits);
+			offset += vstruct_sectors(bne, bset_block_bits(c, &bne->keys));
 		}
 	}
 
@@ -1671,12 +1671,12 @@ fsck_err:
 
 			while (offset < btree_sectors(c)) {
 				if (!offset) {
-					sectors = vstruct_sectors(bn, c->block_bits);
+					sectors = vstruct_sectors(bn, bset_block_bits(c, &bn->keys));
 				} else {
 					bne = ra->buf[i] + (offset << 9);
 					if (bne->keys.seq != bn->keys.seq)
 						break;
-					sectors = vstruct_sectors(bne, c->block_bits);
+					sectors = vstruct_sectors(bn, bset_block_bits(c, &bne->keys));
 				}
 
 				prt_printf(&buf, " %u-%u", offset, offset + sectors);
@@ -1693,7 +1693,7 @@ fsck_err:
 						prt_printf(&buf, " GAP");
 					gap = true;
 
-					sectors = vstruct_sectors(bne, c->block_bits);
+					sectors = vstruct_sectors(bn, bset_block_bits(c, &bne->keys));
 					prt_printf(&buf, " %u-%u", offset, offset + sectors);
 					if (bch2_journal_seq_is_blacklisted(c,
 							le64_to_cpu(bne->keys.journal_seq), false))
@@ -2026,7 +2026,7 @@ static bool btree_node_scrub_check(struct bch_fs *c, struct btree_node *data, un
 				}
 			}
 
-			written += vstruct_sectors(data, c->block_bits);
+			written += vstruct_sectors(data, bset_block_bits(c, &data->keys));
 		} else {
 			if (good_csum_type) {
 				struct bch_csum csum = csum_vstruct(c, BSET_CSUM_TYPE(i), nonce, bne);
@@ -2036,7 +2036,7 @@ static bool btree_node_scrub_check(struct bch_fs *c, struct btree_node *data, un
 				}
 			}
 
-			written += vstruct_sectors(bne, c->block_bits);
+			written += vstruct_sectors(bne, bset_block_bits(c, &bne->keys));
 		}
 	}
 
@@ -2431,7 +2431,6 @@ do_write:
 
 	BUG_ON(btree_node_fake(b));
 	BUG_ON((b->will_make_reachable != 0) != !b->written);
-
 	BUG_ON(b->written >= btree_sectors(c));
 	BUG_ON(b->written & (btree_block_sectors(b) - 1));
 	BUG_ON(bset_written(b, btree_bset_last(b)));
@@ -2483,6 +2482,13 @@ do_write:
 
 	i->journal_seq	= cpu_to_le64(seq);
 	i->u64s		= 0;
+
+	/*
+	 * We stole bits from BSET_OFFSET, don't set BSET_BLOCK_BITS if it's not
+	 * needed and might be read by an old version:
+	 */
+	if (b->block_bits != c->block_bits)
+		SET_BSET_BLOCK_BITS(i, b->block_bits + 1);
 
 	sort_iter_add(&sort_iter.iter,
 		      unwritten_whiteouts_start(b),
