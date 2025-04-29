@@ -111,7 +111,7 @@ void bch2_btree_node_ondisk_to_text(struct printbuf *out, struct bch_fs *c,
 
 			bset_encrypt(c, i, offset << 9);
 
-			sectors = vstruct_sectors(n_ondisk, c->block_bits);
+			sectors = vstruct_sectors(n_ondisk, bset_block_bits(c, i));
 		} else {
 			struct btree_node_entry *bne = (void *) n_ondisk + (offset << 9);
 
@@ -136,7 +136,7 @@ void bch2_btree_node_ondisk_to_text(struct printbuf *out, struct bch_fs *c,
 
 			bset_encrypt(c, i, offset << 9);
 
-			sectors = vstruct_sectors(bne, c->block_bits);
+			sectors = vstruct_sectors(bne, bset_block_bits(c, i));
 		}
 
 		prt_printf(out, "  offset %u version %u, journal seq %llu\n",

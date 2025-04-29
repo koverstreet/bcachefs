@@ -659,7 +659,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 			     "unknown checksum type %llu", BSET_CSUM_TYPE(i));
 
 		if (first) {
-			sectors = vstruct_sectors(b->data, c->block_bits);
+			sectors = vstruct_sectors(b->data, bset_block_bits(c, &b->data->keys));
 			if (btree_err_on(b->written + sectors > (ptr_written ?: btree_sectors(c)),
 					 FSCK_CAN_FIX,
 					 c, ca, b, i, NULL,
@@ -723,7 +723,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 				     btree_node_unsupported_version,
 				     "btree node does not have NEW_EXTENT_OVERWRITE set");
 		} else {
-			sectors = vstruct_sectors(bne, c->block_bits);
+			sectors = vstruct_sectors(bne, bset_block_bits(c, &bne->keys));
 			if (btree_err_on(b->written + sectors > (ptr_written ?: btree_sectors(c)),
 					 FSCK_CAN_FIX,
 					 c, ca, b, i, NULL,
@@ -810,7 +810,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 	} else {
 		for (bne = write_block(b);
 		     bset_byte_offset(b, bne) < btree_buf_bytes(b);
-		     bne = (void *) bne + block_bytes(c))
+		     bne = (void *) bne + bset_block_bytes(c, &bne->keys))
 			btree_err_on(bne->keys.seq == b->data->keys.seq &&
 				     !bch2_journal_seq_is_blacklisted(c,
 								      le64_to_cpu(bne->keys.journal_seq),
@@ -1224,7 +1224,7 @@ static bool btree_node_scrub_check(struct bch_fs *c, struct btree_node *data, un
 				}
 			}
 
-			written += vstruct_sectors(data, c->block_bits);
+			written += vstruct_sectors(data, bset_block_bits(c, &data->keys));
 		} else {
 			if (good_csum_type) {
 				struct bch_csum csum = csum_vstruct(c, BSET_CSUM_TYPE(i), nonce, bne);
@@ -1234,7 +1234,7 @@ static bool btree_node_scrub_check(struct bch_fs *c, struct btree_node *data, un
 				}
 			}
 
-			written += vstruct_sectors(bne, c->block_bits);
+			written += vstruct_sectors(bne, bset_block_bits(c, &bne->keys));
 		}
 	}
 

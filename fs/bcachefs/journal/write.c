@@ -836,6 +836,8 @@ CLOSURE_CALLBACK(bch2_journal_write)
 		trace_printk("seq %llu\n%s\n", le64_to_cpu(w->data->seq), buf.buf);
 	}
 
+	SET_JSET_BLOCK_BITS(w->data, c->block_bits + 1);
+
 	ret = bch2_journal_write_checksum(j, w);
 	if (unlikely(ret))
 		goto err;
