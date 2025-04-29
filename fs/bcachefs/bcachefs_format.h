@@ -743,6 +743,9 @@ struct bch_sb_layout {
 
 #define BCH_SB_LAYOUT_SECTOR	7
 
+#define BCH_BLOCK_SIZE_BITS_MAX		14
+#define BCH_BLOCK_SIZE_MAX		(1U << BCH_BLOCK_SIZE_BITS_MAX)
+
 /*
  * @offset	- sector where this sb was written
  * @version	- on disk format version

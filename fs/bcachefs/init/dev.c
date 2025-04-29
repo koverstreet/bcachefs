@@ -443,6 +443,9 @@ static int __bch2_dev_attach_bdev(struct bch_fs *c, struct bch_dev *ca,
 		return bch_err_throw(ca->fs, device_already_online);
 	}
 
+	BUG_ON(!enumerated_ref_is_zero(&ca->io_ref[READ]));
+	BUG_ON(!enumerated_ref_is_zero(&ca->io_ref[WRITE]));
+
 	if (get_capacity(sb->bdev->bd_disk) <
 	    ca->mi.bucket_size * ca->mi.nbuckets) {
 		prt_printf(err, "Cannot online %s: device too small (capacity %llu filesystem size %llu nbuckets %llu)\n",
@@ -453,8 +456,44 @@ static int __bch2_dev_attach_bdev(struct bch_fs *c, struct bch_dev *ca,
 		return bch_err_throw(ca->fs, device_size_too_small);
 	}
 
-	BUG_ON(!enumerated_ref_is_zero(&ca->io_ref[READ]));
-	BUG_ON(!enumerated_ref_is_zero(&ca->io_ref[WRITE]));
+	unsigned bs = bdev_logical_block_size(sb->bdev);
+	if (!is_power_of_2(bs)) {
+		bch_err(ca, "cannot online: logical block size %u not a power of 2", bs);
+		return -BCH_ERR_device_bad_blocksize;
+	}
+
+	if (bs > BCH_BLOCK_SIZE_MAX) {
+		bch_err(ca, "cannot online: logical block size %u too big", bs);
+		return -BCH_ERR_device_bad_blocksize;
+	}
+
+	ca->block_bits_log = ilog2(bs >> 9);
+
+	bs = bdev_physical_block_size(sb->bdev);
+	if (!is_power_of_2(bs)) {
+		bch_err(ca, "cannot online: physical block size %u not a power of 2", bs);
+		return -BCH_ERR_device_bad_blocksize;
+	}
+
+	if (bs > BCH_BLOCK_SIZE_MAX) {
+		bch_err(ca, "cannot online: physical block size %u too big", bs);
+		return -BCH_ERR_device_bad_blocksize;
+	}
+
+	if (!IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE) &&
+	   bs > PAGE_SIZE) {
+		bch_err(ca, "cannot mount bs > ps filesystem without CONFIG_TRANSPARENT_HUGEPAGE");
+		return -BCH_ERR_device_bad_blocksize;
+	}
+
+	ca->block_bits_phys = ilog2(bs >> 9);
+
+	if (ca->block_bits_log > ca->block_bits_phys) {
+		bch_err(ca, "cannot online: logical block size %u > physical block size %u",
+			512 << ca->block_bits_log,
+			512 << ca->block_bits_phys);
+		return -BCH_ERR_device_bad_blocksize;
+	}
 
 	try(bch2_dev_journal_init(ca, sb->sb));
 
@@ -518,6 +557,9 @@ int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb, struct prin
 	struct bch_dev *ca = bch2_dev_locked(c, sb->sb->dev_idx);
 
 	try(__bch2_dev_attach_bdev(c, ca, sb, err));
+
+	c->block_bits_max_phys = max(c->block_bits_max_phys, ca->block_bits_phys);
+	c->block_bits_max_log = max(c->block_bits_max_log, ca->block_bits_log);
 
 	set_bit(ca->dev_idx, c->online_devs.d);
 
@@ -841,6 +883,9 @@ int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 
 			dev_mi.last_mount = cpu_to_le64(ktime_get_real_seconds());
 			*bch2_members_v2_get_mut(c->disk_sb.sb, dev_idx) = dev_mi;
+
+			c->block_bits_max_phys = max(c->block_bits_max_phys, ca->block_bits_phys);
+			c->block_bits_max_log = max(c->block_bits_max_log, ca->block_bits_log);
 
 			ca->disk_sb.sb->dev_idx	= dev_idx;
 			bch2_dev_attach(c, ca, dev_idx);
