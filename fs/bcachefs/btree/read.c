@@ -649,7 +649,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 	b->written = 0;
 
 	iter = mempool_alloc(&c->fill_iter, GFP_NOFS);
-	sort_iter_init(iter, b, (btree_blocks(c) + 1) * 2);
+	sort_iter_init(iter, b, (btree_sectors(c) + 1) * 2);
 
 	if (bch2_meta_read_fault("btree"))
 		btree_err(-BCH_ERR_btree_node_read_err_must_retry,
