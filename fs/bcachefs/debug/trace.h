@@ -978,24 +978,25 @@ TRACE_EVENT(trans_restart_split_race,
 		__array(char,			trans_fn, 32	)
 		__field(unsigned long,		caller_ip	)
 		__field(u8,			level		)
-		__field(u16,			written		)
-		__field(u16,			blocks		)
+		__field(u16,			sectors_written		)
+		__field(u16,			sectors_allocated	)
 		__field(u16,			u64s_remaining	)
 	),
 
 	TP_fast_assign(
 		strscpy(__entry->trans_fn, trans->fn, sizeof(__entry->trans_fn));
 		__entry->caller_ip		= caller_ip;
-		__entry->level		= b->c.level;
-		__entry->written	= b->written;
-		__entry->blocks		= btree_blocks(trans->c);
-		__entry->u64s_remaining	= bch2_btree_keys_u64s_remaining(b);
+		__entry->level			= b->c.level;
+		__entry->sectors_written	= b->written;
+		__entry->sectors_allocated	= btree_sectors(trans->c);
+		__entry->u64s_remaining		= bch2_btree_keys_u64s_remaining(b);
 	),
 
 	TP_printk("%s %pS l=%u written %u/%u u64s remaining %u",
 		  __entry->trans_fn, (void *) __entry->caller_ip,
 		  __entry->level,
-		  __entry->written, __entry->blocks,
+		  __entry->sectors_written,
+		  __entry->sectors_allocated,
 		  __entry->u64s_remaining)
 );
 

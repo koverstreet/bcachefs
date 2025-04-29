@@ -1152,7 +1152,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	strscpy(c->name, name.buf, sizeof(c->name));
 
 	iter_size = sizeof(struct sort_iter) +
-		(btree_blocks(c) + 1) * 2 *
+		(btree_sectors(c) + 1) * 2 *
 		sizeof(struct sort_iter_set);
 
 	if (!(c->btree_read_complete_wq = alloc_workqueue("bcachefs_btree_read_complete",
