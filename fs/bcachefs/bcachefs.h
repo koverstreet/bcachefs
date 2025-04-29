@@ -485,6 +485,13 @@ struct bch_dev {
 	struct bch_fs		*fs;
 
 	u8			dev_idx;
+
+	/* Preferred blocksize for this device */
+	u8			block_bits_phys;
+
+	/* Minimum possible blocksize for this device */
+	u8			block_bits_log;
+
 	/*
 	 * Cached version of this device's member info from superblock
 	 * Committed by bch2_write_super() -> bch_fs_mi_update()
@@ -716,6 +723,8 @@ struct bch_fs {
 	struct unicode_map	*cf_encoding;
 
 	unsigned short		block_bits;	/* ilog2(block_size) */
+	u8			block_bits_max_phys;
+	u8			block_bits_max_log;
 
 	struct delayed_work	maybe_schedule_btree_bitmap_gc;
 
