@@ -1222,20 +1222,28 @@ retry:
 
 	req->wp->ptrs = req->ptrs;
 
+	bool dyn_blocksize =
+		c->sb.version_incompat >= bcachefs_metadata_version_dynamic_blocksize;
+	req->wp->block_bits	= 0;
 	req->wp->sectors_free	= UINT_MAX;
-	req->wp->block_bits	= c->block_bits;
 
 	open_bucket_for_each(c, &req->wp->ptrs, ob, i) {
+		struct bch_dev *ca = ob_dev(c, ob);
+		unsigned block_bits = dyn_blocksize
+			? ca->block_bits_phys
+			: c->block_bits;
+
+		req->wp->block_bits = max(req->wp->block_bits, block_bits);
+
 		/*
 		 * Ensure proper write alignment - either due to misaligned
 		 * bucket sizes (from buggy bcachefs-tools), or writes that mix
 		 * logical/physical alignment:
 		 */
-		struct bch_dev *ca = ob_dev(c, ob);
 		u64 offset = bucket_to_sector(ca, ob->bucket) +
 			ca->mi.bucket_size -
 			ob->sectors_free;
-		unsigned align = round_up(offset, block_sectors(c)) - offset;
+		unsigned align = round_up(offset, BIT(block_bits)) - offset;
 
 		ob->sectors_free = max_t(int, 0, ob->sectors_free - align);
 

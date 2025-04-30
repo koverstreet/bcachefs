@@ -1237,6 +1237,9 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 
 	try(bch2_fs_opt_version_init(c, out));
 
+	if (c->block_bits_max_phys > c->block_bits)
+		bch2_request_incompat_feature(c, bcachefs_metadata_version_dynamic_blocksize);
+
 	/*
 	 * just make sure this is always allocated if we might need it - mount
 	 * failing due to kthread_create() failing is _very_ annoying

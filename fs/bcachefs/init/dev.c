@@ -906,6 +906,9 @@ int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 		if (ret)
 			goto err_late;
 
+		if (c->block_bits_max_phys > c->block_bits)
+			bch2_request_incompat_feature(c, bcachefs_metadata_version_dynamic_blocksize);
+
 		if (test_bit(BCH_FS_started, &c->flags)) {
 			ret = bch2_trans_mark_dev_sb(c, ca, BTREE_TRIGGER_transactional);
 			if (ret) {
@@ -984,6 +987,9 @@ int bch2_dev_online(struct bch_fs *c, const char *path, struct printbuf *err)
 	}
 
 	try(bch2_dev_attach_bdev(c, &sb, err));
+
+	if (c->block_bits_max_phys > c->block_bits)
+		bch2_request_incompat_feature(c, bcachefs_metadata_version_dynamic_blocksize);
 
 	struct bch_dev *ca = bch2_dev_locked(c, dev_idx);
 

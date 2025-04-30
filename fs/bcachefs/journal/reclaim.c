@@ -246,7 +246,8 @@ void bch2_journal_space_available(struct journal *j)
 	}
 
 	j->can_discard = can_discard;
-	j->cur_entry_dyn_blocksize = false;
+	j->cur_entry_dyn_blocksize =
+		c->sb.version_incompat >= bcachefs_metadata_version_dynamic_blocksize;
 	j->cur_entry_block_bits	= j->cur_entry_dyn_blocksize
 		? cur_entry_block_bits
 		: c->block_bits;
