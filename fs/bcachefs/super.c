@@ -1370,6 +1370,9 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 	if (ret)
 		goto err;
 
+	if (c->block_bits_max_phys > c->block_bits)
+		bch2_request_incompat_feature(c, bcachefs_metadata_version_dynamic_blocksize);
+
 	/*
 	 * start workqueues/kworkers early - kthread creation checks for pending
 	 * signals, which is _very_ annoying
@@ -2276,6 +2279,9 @@ int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 		if (ret)
 			goto err_late;
 
+		if (c->block_bits_max_phys > c->block_bits)
+			bch2_request_incompat_feature(c, bcachefs_metadata_version_dynamic_blocksize);
+
 		if (test_bit(BCH_FS_started, &c->flags)) {
 			ret = bch2_trans_mark_dev_sb(c, ca, BTREE_TRIGGER_transactional);
 			if (ret) {
@@ -2356,6 +2362,9 @@ int bch2_dev_online(struct bch_fs *c, const char *path, struct printbuf *err)
 	ret = bch2_dev_attach_bdev(c, &sb, err);
 	if (ret)
 		goto err;
+
+	if (c->block_bits_max_phys > c->block_bits)
+		bch2_request_incompat_feature(c, bcachefs_metadata_version_dynamic_blocksize);
 
 	ca = bch2_dev_locked(c, dev_idx);
 

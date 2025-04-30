@@ -708,7 +708,8 @@ struct bch_sb_field_ext {
 	x(extent_snapshot_whiteouts,	BCH_VERSION(1, 29))		\
 	x(31bit_dirent_offset,		BCH_VERSION(1, 30))		\
 	x(btree_node_accounting,	BCH_VERSION(1, 31))		\
-	x(rebalance_v2,			BCH_VERSION(1, 32))
+	x(rebalance_v2,			BCH_VERSION(1, 32))		\
+	x(dynamic_blocksize,		BCH_VERSION(1, 33))
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,
