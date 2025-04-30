@@ -33,6 +33,41 @@ module_param_named(btree_read_corrupt_ratio, bch2_btree_read_corrupt_ratio, uint
 MODULE_PARM_DESC(btree_read_corrupt_ratio, "");
 #endif
 
+void bch2_btree_node_set_blocksize(struct bch_fs *c, struct btree *b)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(&b->key));
+	unsigned block_bits = 0;
+
+	bkey_for_each_ptr(ptrs, ptr) {
+		/*
+		 * We need to know that the device is online and
+		 * ca->block_bits_phys has been initialized:
+		 */
+		struct bch_dev *ca = bch2_dev_get_ioref(c, ptr->dev, READ,
+					BCH_DEV_READ_REF_btree_node_set_blocksize);
+		if (!ca) {
+			set_btree_node_need_rewrite(b);
+			return;
+		}
+
+		block_bits = max(block_bits, ca->block_bits_phys);
+		enumerated_ref_put(&ca->io_ref[READ],
+				   BCH_DEV_READ_REF_btree_node_set_blocksize);
+	}
+
+	bool dyn_blocksize = false;
+	b->block_bits = dyn_blocksize
+		? block_bits
+		: c->block_bits;
+
+	/*
+	 * If the device blocksize changed underneath us and we'd now be doing
+	 * an unaligned write - force a rewrite:
+	 */
+	if (b->written & (btree_block_sectors(b) - 1))
+		set_btree_node_need_rewrite(b);
+}
+
 static void bch2_btree_node_header_to_text(struct printbuf *out, struct btree_node *bn)
 {
 	bch2_btree_id_level_to_text(out, BTREE_NODE_ID(bn), BTREE_NODE_LEVEL(bn));
@@ -1478,6 +1513,8 @@ start:
 	if (ret || failed.nr)
 		bch2_print_str_ratelimited(c, KERN_ERR, buf.buf);
 
+	bch2_btree_node_set_blocksize(c, b);
+
 	async_object_list_del(c, btree_read_bio, rb->list_idx);
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read],
 			       rb->start_time);
@@ -1686,6 +1723,8 @@ fsck_err:
 
 	closure_debug_destroy(&ra->cl);
 	kfree(ra);
+
+	bch2_btree_node_set_blocksize(c, b);
 
 	clear_btree_node_read_in_flight(b);
 	smp_mb__after_atomic();
@@ -2387,7 +2426,7 @@ do_write:
 	BUG_ON((b->will_make_reachable != 0) != !b->written);
 
 	BUG_ON(b->written >= btree_sectors(c));
-	BUG_ON(b->written & (block_sectors(c) - 1));
+	BUG_ON(b->written & (btree_block_sectors(b) - 1));
 	BUG_ON(bset_written(b, btree_bset_last(b)));
 	BUG_ON(le64_to_cpu(b->data->magic) != bset_magic(c));
 	BUG_ON(memcmp(&b->data->format, &b->format, sizeof(b->format)));
@@ -2421,7 +2460,7 @@ do_write:
 	bytes += 8;
 
 	/* buffer must be a multiple of the block size */
-	bytes = round_up(bytes, block_bytes(c));
+	bytes = round_up(bytes, btree_block_bytes(b));
 
 	data = btree_bounce_alloc(c, bytes, &used_mempool);
 
@@ -2457,7 +2496,7 @@ do_write:
 		goto nowrite;
 
 	bytes_to_write = vstruct_end(i) - data;
-	sectors_to_write = round_up(bytes_to_write, block_bytes(c)) >> 9;
+	sectors_to_write = round_up(bytes_to_write, btree_block_bytes(b)) >> 9;
 
 	if (!b->written &&
 	    b->key.k.type == KEY_TYPE_btree_ptr_v2)
