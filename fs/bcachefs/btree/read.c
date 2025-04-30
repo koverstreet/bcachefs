@@ -64,7 +64,7 @@ void bch2_btree_node_set_blocksize(struct bch_fs *c, struct btree *b)
 				   BCH_DEV_READ_REF_btree_node_set_blocksize);
 	}
 
-	bool dyn_blocksize = false;
+	bool dyn_blocksize = c->sb.version_incompat >= bcachefs_metadata_version_dynamic_blocksize;
 	b->block_bits = dyn_blocksize
 		? block_bits
 		: c->block_bits;

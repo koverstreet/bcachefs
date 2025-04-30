@@ -1321,6 +1321,9 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 	if (ret)
 		goto err;
 
+	if (c->block_bits_max_phys > c->block_bits)
+		bch2_request_incompat_feature(c, bcachefs_metadata_version_dynamic_blocksize);
+
 	/*
 	 * start workqueues/kworkers early - kthread creation checks for pending
 	 * signals, which is _very_ annoying
