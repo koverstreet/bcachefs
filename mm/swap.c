@@ -45,6 +45,7 @@
 
 /* How many pages do we try to swap or page in/out together? As a power of 2 */
 int page_cluster;
+int bcachefs_shutdown;
 static const int page_cluster_max = 31;
 
 struct cpu_fbatches {
@@ -105,6 +106,13 @@ void __folio_put(struct folio *folio)
 		free_huge_folio(folio);
 		return;
 	}
+
+	if (folio_test_bcachefs_warn(folio) && bcachefs_shutdown) {
+		BUG();
+		dump_stack();
+	}
+
+	folio_clear_bcachefs_warn(folio);
 
 	page_cache_release(folio);
 	folio_unqueue_deferred_split(folio);

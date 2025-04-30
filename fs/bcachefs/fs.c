@@ -45,6 +45,8 @@
 #include <linux/string.h>
 #include <linux/xattr.h>
 
+extern int bcachefs_shutdown;
+
 static struct kmem_cache *bch2_inode_cache;
 
 static void bch2_vfs_inode_init(struct btree_trans *, subvol_inum,
@@ -2380,6 +2382,7 @@ static void bch2_put_super(struct super_block *sb)
 {
 	struct bch_fs *c = sb->s_fs_info;
 
+	bcachefs_shutdown = 1;
 	__bch2_fs_stop(c);
 }
 
@@ -2610,6 +2613,8 @@ err:
 	 * userspace as that causes util-linux to retry the mount RO - which is
 	 * confusing:
 	 */
+
+	bcachefs_shutdown = 0;
 	if (bch2_err_matches(ret, EROFS) && ret != -EROFS)
 		ret = -EIO;
 	return bch2_err_class(ret);

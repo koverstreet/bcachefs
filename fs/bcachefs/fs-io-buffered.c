@@ -140,6 +140,7 @@ static int readpage_bio_extend(struct btree_trans *trans,
 				break;
 			}
 
+			folio_set_bcachefs_warn(folio);
 			folio_put(folio);
 		}
 
