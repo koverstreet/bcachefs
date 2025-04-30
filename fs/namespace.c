@@ -1456,8 +1456,10 @@ static void mntput_no_expire(struct mount *mnt)
 			if (!task_work_add(task, &mnt->mnt_rcu, TWA_RESUME))
 				return;
 		}
-		if (llist_add(&mnt->mnt_llist, &delayed_mntput_list))
+		if (llist_add(&mnt->mnt_llist, &delayed_mntput_list)) {
+			BUG();
 			schedule_delayed_work(&delayed_mntput_work, 1);
+		}
 		return;
 	}
 	cleanup_mnt(mnt);

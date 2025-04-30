@@ -1266,10 +1266,19 @@ static inline void pgalloc_tag_add(struct page *page, struct task_struct *task,
 		__pgalloc_tag_add(page, task, nr);
 }
 
+int bcachefs_shutdown;
+
 /* Should be called only if mem_alloc_profiling_enabled() */
 static noinline
 void __pgalloc_tag_sub(struct page *page, unsigned int nr)
 {
+	if (PageBcachefsWarn(page) && bcachefs_shutdown) {
+		BUG();
+		dump_stack();
+	}
+
+	ClearPageBcachefsWarn(page);
+
 	union pgtag_ref_handle handle;
 	union codetag_ref ref;
 
