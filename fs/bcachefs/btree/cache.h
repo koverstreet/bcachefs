@@ -165,6 +165,16 @@ static inline size_t btree_sectors(const struct bch_fs *c)
 	return c->opts.btree_node_size >> SECTOR_SHIFT;
 }
 
+static inline unsigned btree_block_sectors(struct btree *b)
+{
+	return 1U << b->block_bits;
+}
+
+static inline unsigned btree_block_bytes(struct btree *b)
+{
+	return 512U << b->block_bits;
+}
+
 #define BTREE_WRITE_IO_LIMIT(c)			64
 
 #define BTREE_SPLIT_THRESHOLD(c)		(btree_max_u64s(c) * 3 / 4)
