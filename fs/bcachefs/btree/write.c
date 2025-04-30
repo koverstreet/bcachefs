@@ -327,7 +327,7 @@ do_write:
 	BUG_ON((b->will_make_reachable != 0) != !b->written);
 
 	BUG_ON(b->written >= btree_sectors(c));
-	BUG_ON(b->written & (block_sectors(c) - 1));
+	BUG_ON(b->written & (btree_block_sectors(b) - 1));
 	BUG_ON(bset_written(b, btree_bset_last(b)));
 	BUG_ON(le64_to_cpu(b->data->magic) != bset_magic(c));
 	BUG_ON(memcmp(&b->data->format, &b->format, sizeof(b->format)));
@@ -361,7 +361,7 @@ do_write:
 	bytes += 8;
 
 	/* buffer must be a multiple of the block size */
-	bytes = round_up(bytes, block_bytes(c));
+	bytes = round_up(bytes, btree_block_bytes(b));
 
 	data = bch2_btree_bounce_alloc(c, bytes, &used_mempool);
 
@@ -397,7 +397,7 @@ do_write:
 		goto nowrite;
 
 	bytes_to_write = vstruct_end(i) - data;
-	sectors_to_write = round_up(bytes_to_write, block_bytes(c)) >> 9;
+	sectors_to_write = round_up(bytes_to_write, btree_block_bytes(b)) >> 9;
 
 	if (!b->written &&
 	    b->key.k.type == KEY_TYPE_btree_ptr_v2)

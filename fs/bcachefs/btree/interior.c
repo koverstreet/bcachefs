@@ -382,6 +382,8 @@ out:
 	six_unlock_write(&b->c.lock);
 	six_unlock_intent(&b->c.lock);
 
+	bch2_btree_node_set_blocksize(c, b);
+
 	return b;
 err:
 	bch2_btree_node_to_freelist(c, b);
@@ -1078,7 +1080,7 @@ static void bch2_btree_update_add_new_node(struct btree_update *as, struct btree
 
 	if (b->key.k.type == KEY_TYPE_btree_ptr_v2) {
 		unsigned bytes = vstruct_end(&b->data->keys) - (void *) b->data;
-		unsigned sectors = round_up(bytes, block_bytes(c)) >> 9;
+		unsigned sectors = round_up(bytes, btree_block_bytes(b)) >> 9;
 
 		bkey_i_to_btree_ptr_v2(&b->key)->v.sectors_written =
 			cpu_to_le16(sectors);

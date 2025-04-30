@@ -287,7 +287,7 @@ static inline struct btree_node_entry *want_new_bset(struct bch_fs *c, struct bt
 		__bch2_btree_u64s_remaining(b, bne->keys.start);
 
 	if (unlikely(bset_written(b, bset(b, t)))) {
-		if (b->written + block_sectors(c) <= btree_sectors(c))
+		if (b->written + btree_block_sectors(b) <= btree_sectors(c))
 			return bne;
 	} else {
 		if (unlikely(bset_u64s(t) * sizeof(u64) > btree_write_set_buffer(b)) &&

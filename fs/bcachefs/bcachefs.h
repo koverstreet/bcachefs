@@ -539,6 +539,7 @@ struct discard_in_flight {
 	x(sb_journal_sort)				\
 	x(probe_data_type)				\
 	x(btree_node_read)				\
+	x(btree_node_set_blocksize)			\
 	x(btree_node_read_all_replicas)			\
 	x(btree_node_scrub)				\
 	x(btree_node_write)				\

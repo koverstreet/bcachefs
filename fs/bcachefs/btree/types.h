@@ -101,6 +101,7 @@ struct btree {
 	u16			sib_u64s[2];
 	u16			whiteout_u64s;
 	u8			byte_order;
+	u8			block_bits;
 	u8			unpack_fn_len;
 
 	struct btree_write	writes[2];

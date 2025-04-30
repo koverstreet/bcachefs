@@ -18,6 +18,8 @@ static inline unsigned btree_ptr_sectors_written(struct bkey_s_c k)
 		: 0;
 }
 
+void bch2_btree_node_set_blocksize(struct bch_fs *, struct btree *);
+
 struct btree_read_bio {
 	struct bch_fs		*c;
 	struct btree		*b;

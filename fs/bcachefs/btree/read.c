@@ -42,6 +42,41 @@ module_param_named(btree_read_corrupt_device, bch2_btree_read_corrupt_device, in
 MODULE_PARM_DESC(btree_read_corrupt_ratio, "");
 #endif
 
+void bch2_btree_node_set_blocksize(struct bch_fs *c, struct btree *b)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(&b->key));
+	unsigned block_bits = 0;
+
+	bkey_for_each_ptr(ptrs, ptr) {
+		/*
+		 * We need to know that the device is online and
+		 * ca->block_bits_phys has been initialized:
+		 */
+		struct bch_dev *ca = bch2_dev_get_ioref(c, ptr->dev, READ,
+					BCH_DEV_READ_REF_btree_node_set_blocksize);
+		if (!ca) {
+			set_btree_node_need_rewrite(b);
+			return;
+		}
+
+		block_bits = max(block_bits, ca->block_bits_phys);
+		enumerated_ref_put(&ca->io_ref[READ],
+				   BCH_DEV_READ_REF_btree_node_set_blocksize);
+	}
+
+	bool dyn_blocksize = false;
+	b->block_bits = dyn_blocksize
+		? block_bits
+		: c->block_bits;
+
+	/*
+	 * If the device blocksize changed underneath us and we'd now be doing
+	 * an unaligned write - force a rewrite:
+	 */
+	if (b->written & (btree_block_sectors(b) - 1))
+		set_btree_node_need_rewrite(b);
+}
+
 static void bch2_btree_node_header_to_text(struct printbuf *out, struct btree_node *bn)
 {
 	bch2_btree_id_level_to_text(out, BTREE_NODE_ID(bn), BTREE_NODE_LEVEL(bn));
@@ -1052,6 +1087,8 @@ start:
 
 	if (ret || failed.nr)
 		bch2_print_str_ratelimited(c, KERN_ERR, buf.buf);
+
+	bch2_btree_node_set_blocksize(c, b);
 
 	async_object_list_del(c, btree_read_bio, rb->list_idx);
 	time_stats_update(&c->times[BCH_TIME_btree_node_read], rb->start_time);
