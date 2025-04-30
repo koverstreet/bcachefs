@@ -11,6 +11,7 @@
 
 #include "btree/bbpos_types.h"
 #include "btree/key_cache_types.h"
+#include "btree/locking_types.h"
 
 #include "journal/types.h"
 
