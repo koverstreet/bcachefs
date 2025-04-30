@@ -7,6 +7,7 @@
 
 #include "bbpos_types.h"
 #include "btree_key_cache_types.h"
+#include "btree_locking_types.h"
 #include "buckets_types.h"
 #include "darray.h"
 #include "errcode.h"
