@@ -1052,6 +1052,9 @@ LE64_BITMASK(BCH_SB_EXT_DISCARD_BUFFER,		struct bch_sb_field_ext, flags0, 38, 42
 	x(need_discard_by_journal_seq,	BCH_VERSION(1, 38),			\
 	  "need_discard btree reindexed by journal seq for O(1) "		\
 	  "discard eligibility checks",				"2026-03")	\
+	x(dynamic_blocksize,		BCH_VERSION(1, 39),			\
+	  "Filesystems no longer have fixed blocksizes; blocksize is "		\
+	  "determined on a per-write basis")
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,
