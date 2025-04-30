@@ -111,6 +111,7 @@ enum pageflags {
 	PG_swapbacked,		/* Page is backed by RAM/swap */
 	PG_unevictable,		/* Page is "unevictable"  */
 	PG_dropbehind,		/* drop pages on IO completion */
+	PG_bcachefs_warn,
 #ifdef CONFIG_MMU
 	PG_mlocked,		/* Page is vma mlocked */
 #endif
@@ -677,6 +678,9 @@ FOLIO_FLAG_FALSE(young)
 FOLIO_TEST_CLEAR_FLAG_FALSE(young)
 FOLIO_FLAG_FALSE(idle)
 #endif
+
+//FOLIO_FLAG(bcachefs_warn, FOLIO_HEAD_PAGE)
+PAGEFLAG(BcachefsWarn, bcachefs_warn, PF_NO_COMPOUND)
 
 /*
  * PageReported() is used to track reported free pages within the Buddy
