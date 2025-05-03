@@ -240,6 +240,7 @@ static int bch2_inode_unpack_v3(struct bkey_s_c k,
 	u64 v[2];
 
 	unpacked->bi_inum	= inode.k->p.offset;
+	unpacked->bi_snapshot	= inode.k->p.snapshot;
 	unpacked->bi_journal_seq= le64_to_cpu(inode.v->bi_journal_seq);
 	unpacked->bi_hash_seed	= inode.v->bi_hash_seed;
 	unpacked->bi_flags	= le64_to_cpu(inode.v->bi_flags);
@@ -284,13 +285,12 @@ static noinline int bch2_inode_unpack_slowpath(struct bkey_s_c k,
 {
 	memset(unpacked, 0, sizeof(*unpacked));
 
-	unpacked->bi_snapshot = k.k->p.snapshot;
-
 	switch (k.k->type) {
 	case KEY_TYPE_inode: {
 		struct bkey_s_c_inode inode = bkey_s_c_to_inode(k);
 
 		unpacked->bi_inum	= inode.k->p.offset;
+		unpacked->bi_snapshot	= inode.k->p.snapshot;
 		unpacked->bi_journal_seq= 0;
 		unpacked->bi_hash_seed	= inode.v->bi_hash_seed;
 		unpacked->bi_flags	= le32_to_cpu(inode.v->bi_flags);
@@ -309,6 +309,7 @@ static noinline int bch2_inode_unpack_slowpath(struct bkey_s_c k,
 		struct bkey_s_c_inode_v2 inode = bkey_s_c_to_inode_v2(k);
 
 		unpacked->bi_inum	= inode.k->p.offset;
+		unpacked->bi_snapshot	= inode.k->p.snapshot;
 		unpacked->bi_journal_seq= le64_to_cpu(inode.v->bi_journal_seq);
 		unpacked->bi_hash_seed	= inode.v->bi_hash_seed;
 		unpacked->bi_flags	= le64_to_cpu(inode.v->bi_flags);
@@ -326,8 +327,6 @@ static noinline int bch2_inode_unpack_slowpath(struct bkey_s_c k,
 int bch2_inode_unpack(struct bkey_s_c k,
 		      struct bch_inode_unpacked *unpacked)
 {
-	unpacked->bi_snapshot = k.k->p.snapshot;
-
 	return likely(k.k->type == KEY_TYPE_inode_v3)
 		? bch2_inode_unpack_v3(k, unpacked)
 		: bch2_inode_unpack_slowpath(k, unpacked);
