@@ -1130,7 +1130,7 @@ reread:
 			 * field of the journal entry we read, so try reading
 			 * again at next block boundary:
 			 */
-			sectors = block_sectors(c);
+			sectors = BIT(min(c->block_bits, ca->block_bits_phys));
 			goto next_block;
 		default:
 			return ret;

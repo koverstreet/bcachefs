@@ -42,6 +42,8 @@ struct journal_buf {
 	unsigned		disk_sectors;	/* maximum size entry could have been, if
 						   buf_size was bigger */
 	unsigned		u64s_reserved;
+	u8			block_bits;
+	bool			dyn_blocksize:1;
 	bool			noflush:1;	/* write has already been kicked off, and was noflush */
 	bool			must_flush:1;	/* something wants a flush */
 	bool			separate_flush:1;
@@ -191,13 +193,15 @@ struct journal {
 
 	/* Reserved space in journal entry to be used just prior to write */
 	unsigned		entry_u64s_reserved;
+	u8			cur_entry_block_bits;
+	u8			cur_entry_dyn_blocksize:1;
 
 
 	/*
 	 * 0, or -ENOSPC if waiting on journal reclaim, or -EROFS if
 	 * insufficient devices:
 	 */
-	int			cur_entry_error;
+	s16			cur_entry_error;
 	unsigned		cur_entry_offset_if_blocked;
 
 	unsigned		buf_size_want;

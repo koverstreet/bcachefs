@@ -251,8 +251,8 @@ static void __journal_entry_close(struct journal *j, unsigned closed_val, bool t
 		trace_journal_entry_close(c, err.buf);
 	}
 
-	sectors = vstruct_blocks_plus(buf->data, c->block_bits,
-				      buf->u64s_reserved) << c->block_bits;
+	sectors = vstruct_blocks_plus(buf->data, buf->block_bits,
+				      buf->u64s_reserved) << buf->block_bits;
 	if (unlikely(sectors > buf->sectors)) {
 		CLASS(printbuf, err)();
 		guard(printbuf_atomic)(&err);
@@ -262,7 +262,7 @@ static void __journal_entry_close(struct journal *j, unsigned closed_val, bool t
 		prt_printf(&err, "buf u64s %u u64s reserved %u cur_entry_u64s %u block_bits %u\n",
 			   le32_to_cpu(buf->data->u64s), buf->u64s_reserved,
 			   j->cur_entry_u64s,
-			   c->block_bits);
+			   buf->block_bits);
 		prt_printf(&err, "fatal error - emergency read only");
 		bch2_journal_halt_locked(j);
 
@@ -402,6 +402,8 @@ static int journal_entry_open(struct journal *j)
 	buf->u64s_reserved	= j->entry_u64s_reserved;
 	buf->disk_sectors	= j->cur_entry_sectors;
 	buf->sectors		= min(buf->disk_sectors, buf->buf_size >> 9);
+	buf->block_bits		= j->cur_entry_block_bits;
+	buf->dyn_blocksize	= j->cur_entry_dyn_blocksize;
 
 	u64s = (int) (buf->sectors << 9) / sizeof(u64) -
 		journal_entry_overhead(j);

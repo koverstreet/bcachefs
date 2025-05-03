@@ -87,10 +87,10 @@ static struct journal_space
 journal_dev_space_available(struct journal *j, struct bch_dev *ca,
 			    enum journal_space_from from)
 {
-	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_device *ja = &ca->journal;
 	unsigned sectors, buckets, unwritten;
-	unsigned bucket_size_aligned = round_down(ca->mi.bucket_size, block_sectors(c));
+	unsigned block_size = 1U << j->cur_entry_block_bits;
+	unsigned bucket_size_aligned = round_down(ca->mi.bucket_size, block_size);
 	u64 seq;
 
 	if (from == journal_space_total)
@@ -100,7 +100,7 @@ journal_dev_space_available(struct journal *j, struct bch_dev *ca,
 		};
 
 	buckets = bch2_journal_dev_buckets_available(j, ja, from);
-	sectors = round_down(ja->sectors_free, block_sectors(c));
+	sectors = round_down(ja->sectors_free, block_size);
 
 	/*
 	 * We that we don't allocate the space for a journal entry
@@ -199,6 +199,7 @@ void bch2_journal_space_available(struct journal *j)
 				       j->buf[1].buf_size >> 9);
 	unsigned nr_online = 0, nr_devs_want;
 	bool can_discard = false;
+	unsigned cur_entry_block_bits = 0;
 
 	lockdep_assert_held(&j->lock);
 	guard(rcu)();
@@ -219,13 +220,15 @@ void bch2_journal_space_available(struct journal *j)
 
 		can_discard |= __should_discard_bucket(j, ja);
 
+		cur_entry_block_bits = max(cur_entry_block_bits, ca->block_bits_phys);
+
 		max_entry_size = min_t(unsigned, max_entry_size, ca->mi.bucket_size);
 		nr_online++;
 	}
 
 	j->can_discard = can_discard;
 
-	if (!nr_online) {
+	if (nr_online < metadata_replicas_required(c)) {
 		if (!(c->sb.features & BIT_ULL(BCH_FEATURE_small_image))) {
 			CLASS(printbuf, buf)();
 			guard(printbuf_atomic)(&buf);
@@ -241,6 +244,12 @@ void bch2_journal_space_available(struct journal *j)
 		j->cur_entry_error	= bch_err_throw(c, insufficient_journal_devices);
 		return;
 	}
+
+	j->can_discard = can_discard;
+	j->cur_entry_dyn_blocksize = false;
+	j->cur_entry_block_bits	= j->cur_entry_dyn_blocksize
+		? cur_entry_block_bits
+		: c->block_bits;
 
 	nr_devs_want = min_t(unsigned, nr_online, c->opts.metadata_replicas);
 
