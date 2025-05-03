@@ -1151,7 +1151,7 @@ reread:
 			 * field of the journal entry we read, so try reading
 			 * again at next block boundary:
 			 */
-			sectors = block_sectors(c);
+			sectors = BIT(min(c->block_bits, ca->block_bits_phys));
 			goto next_block;
 		default:
 			return ret;
@@ -1598,6 +1598,7 @@ static void journal_advance_devs_to_next_bucket(struct journal *j,
 static void __journal_write_alloc(struct journal *j,
 				  struct journal_buf *w,
 				  struct dev_alloc_list *devs,
+				  unsigned orig_block_bits,
 				  unsigned sectors,
 				  unsigned *replicas,
 				  unsigned replicas_want)
@@ -1625,6 +1626,12 @@ static void __journal_write_alloc(struct journal *j,
 			continue;
 		}
 
+		/* brand new device, using it will screw up our blocksize
+		 * calculations */
+		if (w->dyn_blocksize &&
+		    ca->block_bits_phys > orig_block_bits)
+			continue;
+
 		bch2_dev_stripe_increment(ca, &j->wp.stripe);
 
 		bch2_bkey_append_ptr(&w->key,
@@ -1636,10 +1643,12 @@ static void __journal_write_alloc(struct journal *j,
 				  .dev = ca->dev_idx,
 		});
 
-		ja->sectors_free -= sectors;
 		ja->bucket_seq[ja->cur_idx] = le64_to_cpu(w->data->seq);
 
 		*replicas += ca->mi.durability;
+
+		if (w->dyn_blocksize)
+			w->block_bits = max(w->block_bits, ca->block_bits_phys);
 
 		if (*replicas >= replicas_want)
 			break;
@@ -1647,12 +1656,13 @@ static void __journal_write_alloc(struct journal *j,
 }
 
 static int journal_write_alloc(struct journal *j, struct journal_buf *w,
-			       unsigned *replicas)
+			       unsigned *replicas,
+			       unsigned orig_block_bits,
+			       unsigned sectors)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct bch_devs_mask devs;
 	struct dev_alloc_list devs_sorted;
-	unsigned sectors = vstruct_sectors(w->data, c->block_bits);
 	unsigned target = c->opts.metadata_target ?:
 		c->opts.foreground_target;
 	unsigned replicas_want = READ_ONCE(c->opts.metadata_replicas);
@@ -1662,7 +1672,9 @@ retry_target:
 	devs = target_rw_devs(c, BCH_DATA_journal, target);
 	bch2_dev_alloc_list(c, &j->wp.stripe, &devs, &devs_sorted);
 retry_alloc:
-	__journal_write_alloc(j, w, &devs_sorted, sectors, replicas, replicas_want);
+	__journal_write_alloc(j, w, &devs_sorted,
+			     orig_block_bits, sectors,
+			     replicas, replicas_want);
 
 	if (likely(*replicas >= replicas_want))
 		goto done;
@@ -1692,7 +1704,23 @@ done:
 	}
 #endif
 
-	return *replicas ? 0 : -BCH_ERR_insufficient_journal_devices;
+	if (!*replicas) {
+		rcu_read_unlock();
+		return -BCH_ERR_insufficient_journal_devices;
+	}
+
+	/* recalculate, now that we know the real w->block_bits for this write: */
+	sectors = vstruct_sectors(w->data, w->block_bits);
+
+	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
+		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
+		struct journal_device *ja = &ca->journal;
+
+		ja->sectors_free -= sectors;
+	}
+
+	rcu_read_unlock();
+	return 0;
 }
 
 static void journal_buf_realloc(struct journal *j, struct journal_buf *buf)
@@ -1888,7 +1916,7 @@ static CLOSURE_CALLBACK(journal_write_submit)
 	closure_type(w, struct journal_buf, io);
 	struct journal *j = container_of(w, struct journal, buf[w->idx]);
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
-	unsigned sectors = vstruct_sectors(w->data, c->block_bits);
+	unsigned sectors = vstruct_sectors(w->data, w->block_bits);
 
 	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
 		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
@@ -2065,7 +2093,7 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 
 	le32_add_cpu(&jset->u64s, u64s);
 
-	unsigned sectors = vstruct_sectors(jset, c->block_bits);
+	unsigned sectors = vstruct_sectors(jset, w->block_bits);
 
 	if (sectors > w->sectors) {
 		bch2_fs_fatal_error(c, ": journal write overran available space, %zu > %u (extra %u reserved %u/%u)",
@@ -2117,7 +2145,7 @@ static int bch2_journal_write_checksum(struct journal *j, struct journal_buf *w)
 	    (ret = jset_validate(c, NULL, jset, 0, WRITE)))
 		return ret;
 
-	unsigned sectors = vstruct_sectors(jset, c->block_bits);
+	unsigned sectors = vstruct_sectors(jset, w->block_bits);
 	unsigned bytes	= vstruct_bytes(jset);
 	memset((void *) jset + bytes, 0, (sectors << 9) - bytes);
 	return 0;
@@ -2205,8 +2233,15 @@ CLOSURE_CALLBACK(bch2_journal_write)
 		goto err;
 
 	unsigned replicas_allocated = 0;
+	unsigned orig_block_bits = w->block_bits;
+	unsigned sectors = vstruct_sectors(w->data, w->block_bits);
+
+	/* recalculated by __journal_write_alloc */
+	if (w->dyn_blocksize)
+		w->block_bits = 0;
+
 	while (1) {
-		ret = journal_write_alloc(j, w, &replicas_allocated);
+		ret = journal_write_alloc(j, w, &replicas_allocated, orig_block_bits, sectors);
 		if (!ret || !j->can_discard)
 			break;
 
@@ -2216,7 +2251,7 @@ CLOSURE_CALLBACK(bch2_journal_write)
 	if (unlikely(ret))
 		goto err_allocate_write;
 
-	SET_JSET_BLOCK_BITS(w->data, c->block_bits + 1);
+	SET_JSET_BLOCK_BITS(w->data, w->block_bits + 1);
 
 	ret = bch2_journal_write_checksum(j, w);
 	if (unlikely(ret))
@@ -2266,7 +2301,7 @@ err_allocate_write:
 		bch2_journal_debug_to_text(&buf, j);
 		prt_printf(&buf, bch2_fmt(c, "Unable to allocate journal write at seq %llu for %zu sectors: %s"),
 					  le64_to_cpu(w->data->seq),
-					  vstruct_sectors(w->data, c->block_bits),
+					  vstruct_sectors(w->data, w->block_bits),
 					  bch2_err_str(ret));
 		bch2_print_str(c, KERN_ERR, buf.buf);
 	}
