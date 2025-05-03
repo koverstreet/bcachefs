@@ -125,9 +125,8 @@ static struct journal_space
 journal_dev_space_available(struct journal *j, struct bch_dev *ca,
 			    enum journal_space_from from)
 {
-	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_device *ja = &ca->journal;
-	unsigned bucket_size_aligned = round_down(ca->mi.bucket_size, block_sectors(c));
+	unsigned bucket_size_aligned = round_down(ca->mi.bucket_size, block_size);
 
 	if (from == journal_space_total)
 		return (struct journal_space) {
@@ -136,7 +135,7 @@ journal_dev_space_available(struct journal *j, struct bch_dev *ca,
 		};
 
 	unsigned buckets = bch2_journal_dev_buckets_available(j, ja, from);
-	unsigned sectors = round_down(ja->sectors_free, block_sectors(c));
+	unsigned sectors = round_down(ja->sectors_free, block_size);
 
 	/*
 	 * We that we don't allocate the space for a journal entry
@@ -247,6 +246,7 @@ void bch2_journal_space_available(struct journal *j)
 
 	unsigned nr_online = 0, nr_devs_want;
 	bool can_discard = false;
+	unsigned cur_entry_block_bits = 0;
 
 	lockdep_assert_held(&j->lock);
 	guard(rcu)();
@@ -264,6 +264,8 @@ void bch2_journal_space_available(struct journal *j)
 		while (ja->dirty_idx_ondisk != ja->dirty_idx &&
 		       ja->bucket_seq[ja->dirty_idx_ondisk] < j->last_seq_ondisk)
 			ja->dirty_idx_ondisk = (ja->dirty_idx_ondisk + 1) % ja->nr;
+
+		cur_entry_block_bits = max(cur_entry_block_bits, ca->block_bits_phys);
 
 		max_entry_size = min_t(unsigned, max_entry_size, ca->mi.bucket_size);
 		nr_online++;
@@ -293,6 +295,12 @@ void bch2_journal_space_available(struct journal *j)
 		j->cur_entry_error	= bch_err_throw(c, insufficient_journal_devices);
 		return;
 	}
+
+	j->can_discard = can_discard;
+	j->cur_entry_dyn_blocksize = false;
+	j->cur_entry_block_bits	= j->cur_entry_dyn_blocksize
+		? cur_entry_block_bits
+		: c->block_bits;
 
 	nr_devs_want = min_t(unsigned, nr_online, c->opts.metadata_replicas);
 
