@@ -90,6 +90,7 @@ struct write_point {
 		unsigned long		write_point;
 		enum bch_data_type	data_type;
 
+		u8			block_bits;
 		/* calculated based on how many pointers we're actually going to use: */
 		unsigned		sectors_free;
 

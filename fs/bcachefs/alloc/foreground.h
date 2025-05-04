@@ -164,7 +164,7 @@ static inline void bch2_alloc_sectors_done_inlined(struct bch_fs *c, struct writ
 	unsigned i;
 
 	open_bucket_for_each(c, &wp->ptrs, ob, i)
-		ob_push(c, ob->sectors_free < block_sectors(c)
+		ob_push(c, ob->sectors_free < BIT(wp->block_bits)
 			? &ptrs
 			: &keep, ob);
 	wp->ptrs = keep;

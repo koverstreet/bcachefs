@@ -1222,7 +1222,8 @@ retry:
 
 	req->wp->ptrs = req->ptrs;
 
-	req->wp->sectors_free = UINT_MAX;
+	req->wp->sectors_free	= UINT_MAX;
+	req->wp->block_bits	= c->block_bits;
 
 	open_bucket_for_each(c, &req->wp->ptrs, ob, i) {
 		/*
@@ -1241,7 +1242,7 @@ retry:
 		req->wp->sectors_free = min(req->wp->sectors_free, ob->sectors_free);
 	}
 
-	req->wp->sectors_free = rounddown(req->wp->sectors_free, block_sectors(c));
+	req->wp->sectors_free = rounddown(req->wp->sectors_free, BIT(req->wp->block_bits));
 
 	/* Did alignment use up space in an open_bucket? */
 	if (unlikely(!req->wp->sectors_free)) {
