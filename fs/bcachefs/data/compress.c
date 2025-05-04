@@ -461,13 +461,14 @@ static unsigned bch2_compress(struct bch_fs *c,
 			      void *dst, size_t *dst_len,
 			      void *src, size_t *src_len,
 			      unsigned compression_opt,
+			      unsigned block_bytes,
 			      struct bpos write_pos)
 {
 	union bch_compression_opt compression =
 		(union bch_compression_opt) { .value = compression_opt };
 
 	/* If it's only one block, don't bother trying to compress: */
-	if (*src_len <= c->opts.block_size)
+	if (*src_len <= block_bytes)
 		return BCH_COMPRESSION_TYPE_incompressible;
 
 	enum bch_compression_type compression_type =
@@ -497,7 +498,7 @@ static unsigned bch2_compress(struct bch_fs *c,
 	 * how much would fit, like LZ4 does:
 	 */
 	while (1) {
-		if (*src_len <= block_bytes(c)) {
+		if (*src_len <= block_bytes) {
 			ret = -1;
 			break;
 		}
@@ -527,7 +528,7 @@ static unsigned bch2_compress(struct bch_fs *c,
 			*src_len = -ret;
 		else
 			*src_len -= (*src_len - *dst_len) / 2;
-		*src_len = round_down(*src_len, block_bytes(c));
+		*src_len = round_down(*src_len, block_bytes);
 	}
 
 	mempool_free(workspace, workspace_pool);
@@ -536,10 +537,10 @@ static unsigned bch2_compress(struct bch_fs *c,
 		return BCH_COMPRESSION_TYPE_incompressible;
 
 	/* Didn't get smaller: */
-	if (round_up(*dst_len, block_bytes(c)) >= *src_len)
+	if (round_up(*dst_len, block_bytes) >= *src_len)
 		return BCH_COMPRESSION_TYPE_incompressible;
 
-	unsigned pad = round_up(*dst_len, block_bytes(c)) - *dst_len;
+	unsigned pad = round_up(*dst_len, block_bytes) - *dst_len;
 
 	memset(dst + *dst_len, 0, pad);
 	*dst_len += pad;
@@ -569,8 +570,8 @@ static unsigned bch2_compress(struct bch_fs *c,
 		}
 	}
 
-	BUG_ON(*dst_len & (block_bytes(c) - 1));
-	BUG_ON(*src_len & (block_bytes(c) - 1));
+	BUG_ON(*dst_len & (block_bytes - 1));
+	BUG_ON(*src_len & (block_bytes - 1));
 	return compression_type;
 }
 
@@ -578,6 +579,7 @@ unsigned bch2_bio_compress(struct bch_fs *c,
 			   struct bio *dst, size_t *dst_len,
 			   struct bio *src, size_t *src_len,
 			   unsigned compression_opt,
+			   unsigned block_bytes,
 			   struct bpos write_pos,
 			   bool bounce_source)
 {
@@ -602,6 +604,7 @@ unsigned bch2_bio_compress(struct bch_fs *c,
 			      dst_data.b, dst_len,
 			      src_data.b, src_len,
 			      compression_opt,
+			      block_bytes,
 			      write_pos);
 
 	if (compression_type != BCH_COMPRESSION_TYPE_none &&
