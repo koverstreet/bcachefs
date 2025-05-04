@@ -47,9 +47,13 @@ static int bch2_fill_extent(struct bch_fs *c,
 			else
 				offset += p.crc.offset;
 
-			if ((offset & (block_sectors(c) - 1)) ||
-			    (k.k->size & (block_sectors(c) - 1)))
+			rcu_read_lock();
+			struct bch_dev *ca = bch2_dev_rcu_noerror(c, p.ptr.dev);
+			if (ca &&
+			    ((offset & (BIT(ca->block_bits_log) - 1)) ||
+			     (k.k->size & (BIT(ca->block_bits_log) - 1))))
 				flags2 |= FIEMAP_EXTENT_NOT_ALIGNED;
+			rcu_read_unlock();
 
 			try(fiemap_fill_next_extent(info,
 						bkey_start_offset(k.k) << 9,
