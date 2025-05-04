@@ -426,7 +426,8 @@ static int attempt_compress(struct bch_fs *c,
 static unsigned __bio_compress(struct bch_fs *c,
 			       struct bio *dst, size_t *dst_len,
 			       struct bio *src, size_t *src_len,
-			       union bch_compression_opt compression)
+			       union bch_compression_opt compression,
+			       unsigned block_bytes)
 {
 	struct bbuf src_data = { NULL }, dst_data = { NULL };
 	void *workspace;
@@ -452,7 +453,7 @@ static unsigned __bio_compress(struct bch_fs *c,
 	}
 
 	/* If it's only one block, don't bother trying to compress: */
-	if (src->bi_iter.bi_size <= c->opts.block_size)
+	if (src->bi_iter.bi_size <= block_bytes)
 		return BCH_COMPRESSION_TYPE_incompressible;
 
 	dst_data = bio_map_or_bounce(c, dst, WRITE);
@@ -468,7 +469,7 @@ static unsigned __bio_compress(struct bch_fs *c,
 	 * how much would fit, like LZ4 does:
 	 */
 	while (1) {
-		if (*src_len <= block_bytes(c)) {
+		if (*src_len <= block_bytes) {
 			ret = -1;
 			break;
 		}
@@ -498,7 +499,7 @@ static unsigned __bio_compress(struct bch_fs *c,
 			*src_len = -ret;
 		else
 			*src_len -= (*src_len - *dst_len) / 2;
-		*src_len = round_down(*src_len, block_bytes(c));
+		*src_len = round_down(*src_len, block_bytes);
 	}
 
 	mempool_free(workspace, workspace_pool);
@@ -507,10 +508,10 @@ static unsigned __bio_compress(struct bch_fs *c,
 		goto err;
 
 	/* Didn't get smaller: */
-	if (round_up(*dst_len, block_bytes(c)) >= *src_len)
+	if (round_up(*dst_len, block_bytes) >= *src_len)
 		goto err;
 
-	pad = round_up(*dst_len, block_bytes(c)) - *dst_len;
+	pad = round_up(*dst_len, block_bytes) - *dst_len;
 
 	memset(dst_data.b + *dst_len, 0, pad);
 	*dst_len += pad;
@@ -521,8 +522,8 @@ static unsigned __bio_compress(struct bch_fs *c,
 
 	BUG_ON(!*dst_len || *dst_len > dst->bi_iter.bi_size);
 	BUG_ON(!*src_len || *src_len > src->bi_iter.bi_size);
-	BUG_ON(*dst_len & (block_bytes(c) - 1));
-	BUG_ON(*src_len & (block_bytes(c) - 1));
+	BUG_ON(*dst_len & (block_bytes - 1));
+	BUG_ON(*src_len & (block_bytes - 1));
 	ret = compression_type;
 out:
 	bio_unmap_or_unbounce(c, src_data);
@@ -539,7 +540,8 @@ fsck_err:
 unsigned bch2_bio_compress(struct bch_fs *c,
 			   struct bio *dst, size_t *dst_len,
 			   struct bio *src, size_t *src_len,
-			   unsigned compression_opt)
+			   unsigned compression_opt,
+			   unsigned block_bytes)
 {
 	unsigned orig_dst = dst->bi_iter.bi_size;
 	unsigned orig_src = src->bi_iter.bi_size;
@@ -553,7 +555,14 @@ unsigned bch2_bio_compress(struct bch_fs *c,
 
 	compression_type =
 		__bio_compress(c, dst, dst_len, src, src_len,
+<<<<<<< HEAD
 			       (union bch_compression_opt){ .value = compression_opt });
+||||||| parent of e6323fdaca74 (bcachefs: writepoint.block_bits)
+			       bch2_compression_decode(compression_opt));
+=======
+			       bch2_compression_decode(compression_opt),
+			       block_bytes);
+>>>>>>> e6323fdaca74 (bcachefs: writepoint.block_bits)
 
 	dst->bi_iter.bi_size = orig_dst;
 	src->bi_iter.bi_size = orig_src;
