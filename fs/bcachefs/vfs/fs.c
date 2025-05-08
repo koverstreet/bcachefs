@@ -1160,7 +1160,7 @@ static int bch2_getattr(struct mnt_idmap *idmap,
 		 * and checking the alignment of open devices
 		 */
 		stat->dio_mem_align = SECTOR_SIZE;
-		stat->dio_offset_align = block_bytes(c);
+		stat->dio_offset_align = 512U << c->block_bits_max_phys;
 	}
 
 	if (request_mask & STATX_BTIME) {
