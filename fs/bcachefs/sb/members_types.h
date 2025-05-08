@@ -5,8 +5,8 @@
 struct bch_member_cpu {
 	u64			nbuckets;	/* device size */
 	u64			nbuckets_minus_first;
+	u32			bucket_size;	/* sectors */
 	u16			first_bucket;   /* index of first bucket used */
-	u16			bucket_size;	/* sectors */
 	u16			group;
 	u8			state;
 	u8			discard;
