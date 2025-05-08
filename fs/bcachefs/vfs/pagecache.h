@@ -117,6 +117,7 @@ struct bch_folio *bch2_folio_create(struct folio *, gfp_t);
 struct bch2_folio_reservation {
 	struct disk_reservation	disk;
 	struct quota_res	quota;
+	unsigned		block_size;
 };
 
 static inline unsigned inode_nr_replicas(struct bch_fs *c, struct bch_inode_info *inode)
@@ -131,9 +132,10 @@ static inline void bch2_folio_reservation_init(struct bch_fs *c,
 			struct bch_inode_info *inode,
 			struct bch2_folio_reservation *res)
 {
-	memset(res, 0, sizeof(*res));
-
-	res->disk.nr_replicas = inode_nr_replicas(c, inode);
+	*res = (struct bch2_folio_reservation) {
+		.disk.nr_replicas	= inode_nr_replicas(c, inode),
+		.block_size		= 512U << READ_ONCE(c->block_bits_max_phys),
+	};
 }
 
 int bch2_folio_set(struct bch_fs *, subvol_inum, struct folio **, unsigned);
@@ -164,7 +166,7 @@ void bch2_set_folio_dirty(struct bch_fs *,
 			  struct bch_inode_info *,
 			  struct folio *,
 			  struct bch2_folio_reservation *,
-			  unsigned, unsigned);
+			  size_t, size_t);
 
 vm_fault_t bch2_page_fault(struct vm_fault *);
 vm_fault_t bch2_page_mkwrite(struct vm_fault *);
