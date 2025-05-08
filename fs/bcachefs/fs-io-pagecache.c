@@ -411,8 +411,8 @@ static int __bch2_folio_reservation_get(struct bch_fs *c,
 
 	BUG_ON(!s->uptodate);
 
-	for (i = round_down(offset, block_bytes(c)) >> 9;
-	     i < round_up(offset + len, block_bytes(c)) >> 9;
+	for (i = round_down(offset, res->block_size) >> 9;
+	     i < round_up(offset + len, res->block_size) >> 9;
 	     i++) {
 		disk_sectors += sectors_to_reserve(&s->s[i], res->disk.nr_replicas);
 		quota_sectors += s->s[i].state == SECTOR_unallocated;
@@ -427,8 +427,8 @@ static int __bch2_folio_reservation_get(struct bch_fs *c,
 		if (unlikely(disk_res.sectors != disk_sectors)) {
 			disk_sectors = quota_sectors = 0;
 
-			for (i = round_down(offset, block_bytes(c)) >> 9;
-			     i < round_up(offset + len, block_bytes(c)) >> 9;
+			for (i = round_down(offset, res->block_size) >> 9;
+			     i < round_up(offset + len, res->block_size) >> 9;
 			     i++) {
 				disk_sectors += sectors_to_reserve(&s->s[i], res->disk.nr_replicas);
 				if (disk_sectors > disk_res.sectors) {
@@ -436,8 +436,10 @@ static int __bch2_folio_reservation_get(struct bch_fs *c,
 					 * Make sure to get a reservation that's
 					 * aligned to the filesystem blocksize:
 					 */
-					unsigned reserved_offset = round_down(i << 9, block_bytes(c));
-					reserved = clamp(reserved_offset, offset, offset + len) - offset;
+					unsigned reserved_offset =
+						round_down(i << 9, res->block_size);
+					reserved = clamp(reserved_offset, offset,
+							 offset + len) - offset;
 
 					if (!reserved) {
 						bch2_disk_reservation_put(c, &disk_res);
@@ -513,19 +515,23 @@ void bch2_set_folio_dirty(struct bch_fs *c,
 			  struct bch_inode_info *inode,
 			  struct folio *folio,
 			  struct bch2_folio_reservation *res,
-			  unsigned offset, unsigned len)
+			  size_t offset, size_t len)
 {
 	struct bch_folio *s = bch2_folio(folio);
 	unsigned i, dirty_sectors = 0;
 
+	/*
+	 * XXX: we may need to add a field in the superblock for "max block size
+	 * we wrote with" for the "extent past end of i_size" checks
+	 */
 	WARN_ON((u64) folio_pos(folio) + offset + len >
-		round_up((u64) i_size_read(&inode->v), block_bytes(c)));
+		round_up((u64) i_size_read(&inode->v), res->block_size));
 
 	BUG_ON(!s->uptodate);
 
 	scoped_guard(spinlock, &s->lock)
-		for (i = round_down(offset, block_bytes(c)) >> 9;
-		     i < round_up(offset + len, block_bytes(c)) >> 9;
+		for (i = round_down(offset, res->block_size) >> 9;
+		     i < round_up(offset + len, res->block_size) >> 9;
 		     i++) {
 			unsigned sectors = sectors_to_reserve(&s->s[i],
 							res->disk.nr_replicas);
