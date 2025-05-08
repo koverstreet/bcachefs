@@ -53,7 +53,7 @@ static int bch2_dev_may_add(struct bch_sb *sb, struct bch_fs *c)
 	if (le16_to_cpu(sb->block_size) != block_sectors(c))
 		return bch_err_throw(c, mismatched_block_size);
 
-	if (le16_to_cpu(m.bucket_size) <
+	if (BCH_MEMBER_BUCKET_SIZE(&m) <
 	    BCH_SB_BTREE_NODE_SIZE(c->disk_sb.sb))
 		return bch_err_throw(c, bucket_size_too_small);
 

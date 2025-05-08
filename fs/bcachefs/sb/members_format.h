@@ -52,7 +52,7 @@ struct bch_member {
 	__uuid_t		uuid;
 	__le64			nbuckets;	/* device size */
 	__le16			first_bucket;   /* index of first bucket used */
-	__le16			bucket_size;	/* sectors */
+	__le16			bucket_size_lo;	/* sectors */
 	__u8			btree_bitmap_shift;
 	__u8			pad[3];
 	__le64			last_mount;	/* time_t */
@@ -90,7 +90,6 @@ struct bch_member {
 
 #define BCH_MEMBER_V1_BYTES	56
 
-LE16_BITMASK(BCH_MEMBER_BUCKET_SIZE,	struct bch_member, bucket_size,  0, 16)
 LE64_BITMASK(BCH_MEMBER_STATE,		struct bch_member, flags,  0,  4)
 /* 4-14 unused, was TIER, HAS_(META)DATA, REPLACEMENT */
 LE64_BITMASK(BCH_MEMBER_DISCARD,	struct bch_member, flags, 14, 15)
@@ -101,6 +100,21 @@ LE64_BITMASK(BCH_MEMBER_FREESPACE_INITIALIZED,
 					struct bch_member, flags, 30, 31)
 LE64_BITMASK(BCH_MEMBER_RESIZE_ON_MOUNT,
 					struct bch_member, flags, 31, 32)
+LE64_BITMASK(BCH_MEMBER_BUCKET_SIZE_HI, struct bch_member, flags, 32, 48)
+
+LE16_BITMASK(BCH_MEMBER_BUCKET_SIZE_LO,	struct bch_member, bucket_size_lo,  0, 16)
+
+static inline __u64 BCH_MEMBER_BUCKET_SIZE(const struct bch_member *m)
+{
+	return ((BCH_MEMBER_BUCKET_SIZE_LO(m) << 0) |
+		(BCH_MEMBER_BUCKET_SIZE_HI(m) << 16));
+}
+
+static inline void SET_BCH_MEMBER_BUCKET_SIZE(struct bch_member *m, __u64 v)
+{
+	SET_BCH_MEMBER_BUCKET_SIZE_LO(m, v);
+	SET_BCH_MEMBER_BUCKET_SIZE_HI(m, v >> 16);
+}
 
 #if 0
 LE64_BITMASK(BCH_MEMBER_NR_READ_ERRORS,	struct bch_member, flags[1], 0,  20);

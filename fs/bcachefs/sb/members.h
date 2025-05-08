@@ -368,7 +368,7 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 		.nbuckets_minus_first = le64_to_cpu(mi->nbuckets) -
 			le16_to_cpu(mi->first_bucket),
 		.first_bucket	= le16_to_cpu(mi->first_bucket),
-		.bucket_size	= le16_to_cpu(mi->bucket_size),
+		.bucket_size	= BCH_MEMBER_BUCKET_SIZE(mi),
 		.group		= BCH_MEMBER_GROUP(mi),
 		.state		= BCH_MEMBER_STATE(mi),
 		.discard	= BCH_MEMBER_DISCARD(mi),

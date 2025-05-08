@@ -165,17 +165,17 @@ static int validate_member(struct printbuf *err,
 		return -BCH_ERR_invalid_sb_members;
 	}
 
-	if (le16_to_cpu(m.bucket_size) <
+	if (BCH_MEMBER_BUCKET_SIZE(&m) <
 	    le16_to_cpu(sb->block_size)) {
-		prt_printf(err, "device %u: bucket size %u smaller than block size %u",
-			   i, le16_to_cpu(m.bucket_size), le16_to_cpu(sb->block_size));
+		prt_printf(err, "device %u: bucket size %llu smaller than block size %u",
+			   i, BCH_MEMBER_BUCKET_SIZE(&m), le16_to_cpu(sb->block_size));
 		return -BCH_ERR_invalid_sb_members;
 	}
 
-	if (le16_to_cpu(m.bucket_size) <
+	if (BCH_MEMBER_BUCKET_SIZE(&m) <
 	    BCH_SB_BTREE_NODE_SIZE(sb)) {
-		prt_printf(err, "device %u: bucket size %u smaller than btree node size %llu",
-			   i, le16_to_cpu(m.bucket_size), BCH_SB_BTREE_NODE_SIZE(sb));
+		prt_printf(err, "device %u: bucket size %llu smaller than btree node size %llu",
+			   i, BCH_MEMBER_BUCKET_SIZE(&m), BCH_SB_BTREE_NODE_SIZE(sb));
 		return -BCH_ERR_invalid_sb_members;
 	}
 
@@ -199,7 +199,7 @@ void bch2_member_to_text(struct printbuf *out,
 			 struct bch_sb *sb,
 			 unsigned idx)
 {
-	u64 bucket_size = le16_to_cpu(m->bucket_size);
+	u64 bucket_size = BCH_MEMBER_BUCKET_SIZE(m);
 	u64 device_size = le64_to_cpu(m->nbuckets) * bucket_size;
 
 	prt_printf(out, "Label:\t");
