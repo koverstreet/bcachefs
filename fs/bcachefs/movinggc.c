@@ -63,6 +63,8 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 	if (bch2_bucket_is_open(c, b->k.bucket.inode, b->k.bucket.offset))
 		return 0;
 
+	/* Check if it's missing backpointers */
+
 	struct btree_iter iter;
 	struct bkey_s_c k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_alloc,
 				       b->k.bucket, BTREE_ITER_cached);
@@ -73,6 +75,17 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 	struct bch_dev *ca = bch2_dev_tryget(c, k.k->p.inode);
 	if (!ca)
 		goto out;
+
+	for (struct bucket_bitmap *i = ca->bucket_backpointer_mismatches;
+	     i < ca->bucket_backpointer_mismatches + ARRAY_SIZE(ca->bucket_backpointer_mismatches);
+	     i++)
+		if (i->buckets) {
+			mutex_lock(&i->lock);
+			bool missing = i->buckets && test_bit(b->k.bucket.offset, i->buckets);
+			mutex_unlock(&i->lock);
+			if (missing)
+				goto out_put;
+		}
 
 	if (ca->mi.state != BCH_MEMBER_STATE_rw ||
 	    !bch2_dev_is_online(ca))
