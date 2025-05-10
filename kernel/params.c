@@ -14,6 +14,7 @@
 #include <linux/overflow.h>
 #include <linux/security.h>
 #include <linux/slab.h>
+#include <linux/static_key.h>
 #include <linux/string.h>
 
 #ifdef CONFIG_SYSFS
@@ -411,6 +412,40 @@ const struct kernel_param_ops param_ops_bint = {
 	.get = param_get_int,
 };
 EXPORT_SYMBOL(param_ops_bint);
+
+int param_set_static_key_t(const char *val, const struct kernel_param *kp)
+{
+	/* Match bool exactly, by re-using it. */
+	struct kernel_param boolkp = *kp;
+	bool v;
+	int ret;
+
+	boolkp.arg = &v;
+
+	ret = param_set_bool(val, &boolkp);
+	if (ret)
+		return ret;
+	if (v)
+		static_key_enable(kp->arg);
+	else
+		static_key_disable(kp->arg);
+	return 0;
+}
+EXPORT_SYMBOL(param_set_static_key_t);
+
+int param_get_static_key_t(char *buffer, const struct kernel_param *kp)
+{
+	struct static_key *key = kp->arg;
+	return sprintf(buffer, "%c\n", static_key_enabled(key) ? 'Y' : 'N');
+}
+EXPORT_SYMBOL(param_get_static_key_t);
+
+const struct kernel_param_ops param_ops_static_key_t = {
+	.flags = KERNEL_PARAM_OPS_FL_NOARG,
+	.set = param_set_static_key_t,
+	.get = param_get_static_key_t,
+};
+EXPORT_SYMBOL(param_ops_static_key_t);
 
 /* We break the rule and mangle the string. */
 static int param_array(struct module *mod,
