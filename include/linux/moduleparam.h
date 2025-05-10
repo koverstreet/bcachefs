@@ -127,6 +127,7 @@ struct kparam_array
  *	charp: a character pointer
  *	bool: a bool, values 0/1, y/n, Y/N.
  *	invbool: the above, only sense-reversed (N = true).
+ *	static_key_t: same as bool, but updates a 'struct static_key'
  */
 #define module_param(name, type, perm)				\
 	module_param_named(name, name, type, perm)
@@ -491,6 +492,12 @@ extern const struct kernel_param_ops param_ops_bint;
 extern int param_set_bint(const char *val, const struct kernel_param *kp);
 #define param_get_bint param_get_int
 #define param_check_bint param_check_int
+
+/* A static key, which can only be set like a bool */
+extern const struct kernel_param_ops param_ops_static_key_t;
+extern int param_set_static_key_t(const char *val, const struct kernel_param *kp);
+extern int param_get_static_key_t(char *buffer, const struct kernel_param *kp);
+#define param_check_static_key_t(name, p) __param_check(name, p, struct static_key)
 
 /**
  * module_param_array - a parameter which is an array of some type
