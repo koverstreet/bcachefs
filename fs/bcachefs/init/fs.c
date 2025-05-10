@@ -1570,43 +1570,8 @@ err:
 BCH_DEBUG_PARAMS_ALL()
 #undef BCH_DEBUG_PARAM
 
-static int bch2_param_set_static_key_t(const char *val, const struct kernel_param *kp)
-{
-	/* Match bool exactly, by re-using it. */
-	struct static_key *key = kp->arg;
-	struct kernel_param boolkp = *kp;
-	bool v;
-	int ret;
-
-	boolkp.arg = &v;
-
-	ret = param_set_bool(val, &boolkp);
-	if (ret)
-		return ret;
-	if (v)
-		static_key_enable(key);
-	else
-		static_key_disable(key);
-	return 0;
-}
-
-static int bch2_param_get_static_key_t(char *buffer, const struct kernel_param *kp)
-{
-	struct static_key *key = kp->arg;
-	return sprintf(buffer, "%c\n", static_key_enabled(key) ? 'N' : 'Y');
-}
-
-/* this is unused in userspace - silence the warning */
-__maybe_unused
-static const struct kernel_param_ops bch2_param_ops_static_key_t = {
-	.flags = KERNEL_PARAM_OPS_FL_NOARG,
-	.set = bch2_param_set_static_key_t,
-	.get = bch2_param_get_static_key_t,
-};
-
 #define BCH_DEBUG_PARAM(name, description)				\
-	module_param_cb(name, &bch2_param_ops_static_key_t, &bch2_##name.key, 0644);\
-	__MODULE_PARM_TYPE(name, "static_key_t");			\
+	module_param_named(name, bch2_##name.key, static_key_t, 0644);	\
 	MODULE_PARM_DESC(name, description);
 BCH_DEBUG_PARAMS()
 #undef BCH_DEBUG_PARAM
