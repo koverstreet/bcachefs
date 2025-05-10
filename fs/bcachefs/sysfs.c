@@ -35,6 +35,7 @@
 #include "nocow_locking.h"
 #include "opts.h"
 #include "rebalance.h"
+#include "recovery_passes.h"
 #include "replicas.h"
 #include "super-io.h"
 #include "tests.h"
@@ -202,6 +203,7 @@ read_attribute(copy_gc_wait);
 sysfs_pd_controller_attribute(rebalance);
 read_attribute(rebalance_status);
 read_attribute(snapshot_delete_status);
+read_attribute(recovery_status);
 
 read_attribute(new_stripes);
 
@@ -437,6 +439,9 @@ SHOW(bch2_fs)
 	if (attr == &sysfs_snapshot_delete_status)
 		bch2_snapshot_delete_status_to_text(out, c);
 
+	if (attr == &sysfs_recovery_status)
+		bch2_recovery_pass_status_to_text(out, c);
+
 	/* Debugging: */
 
 	if (attr == &sysfs_journal_debug)
@@ -587,6 +592,7 @@ struct attribute *bch2_fs_files[] = {
 
 	&sysfs_rebalance_status,
 	&sysfs_snapshot_delete_status,
+	&sysfs_recovery_status,
 
 	&sysfs_compression_stats,
 
