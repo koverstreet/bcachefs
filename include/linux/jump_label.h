@@ -107,6 +107,8 @@ struct static_key {
 #endif	/* CONFIG_JUMP_LABEL */
 };
 
+typedef struct static_key static_key_t;
+
 #endif /* __ASSEMBLY__ */
 
 #ifdef CONFIG_JUMP_LABEL
