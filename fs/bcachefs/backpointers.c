@@ -234,8 +234,21 @@ static int backpointer_target_not_found(struct btree_trans *trans,
 		if (ret || !commit)
 			goto out;
 
-		ret = bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
-			-BCH_ERR_transaction_restart_nested;
+		/*
+		 * Normally, on transaction commit from inside a transaction,
+		 * we'll return -BCH_ERR_transaction_restart_nested, since a
+		 * transaction commit invalidates pointers given out by peek().
+		 *
+		 * However, since we're updating a write buffer btree, if we
+		 * return a transaction restart and loop we won't see that the
+		 * backpointer has been deleted without an additional write
+		 * buffer flush - and those are expensive.
+		 *
+		 * So we're relying on the caller immediately advancing to the
+		 * next backpointer and starting a new transaction immediately
+		 * after backpointer_get_key() returns NULL:
+		 */
+		ret = bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 	}
 out:
 fsck_err:
