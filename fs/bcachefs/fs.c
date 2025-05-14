@@ -1338,6 +1338,9 @@ static int
 bch2_fiemap_hole_pagecache(struct inode *vinode, u64 *start, u64 *end,
 			   bool nonblock)
 {
+	trace_printk("%s: start %llu end %llu nonblock %u\n",
+		     __func__, *start, *end, nonblock);
+
 	loff_t	dstart, dend;
 
 	dstart = bch2_seek_pagecache_data(vinode, *start, *end, 0, nonblock);

@@ -696,21 +696,30 @@ loff_t bch2_seek_pagecache_data(struct inode *vinode,
 	pgoff_t start_index	= start_offset >> PAGE_SHIFT;
 	pgoff_t end_index	= end_offset >> PAGE_SHIFT;
 	pgoff_t index		= start_index;
-	unsigned i;
 	loff_t ret;
 	int offset;
 
 	folio_batch_init(&fbatch);
 
-	while (filemap_get_folios(vinode->i_mapping,
-				  &index, end_index, &fbatch)) {
-		for (i = 0; i < folio_batch_count(&fbatch); i++) {
+	while (true) {
+		bool found = filemap_get_folios(vinode->i_mapping,
+						&index, end_index, &fbatch) != 0;
+
+		trace_printk("%s: index %lu end %lu nonblock %u get_folios %u\n",
+			     __func__, index , end_index, nonblock, found);
+
+		if (!found)
+			break;
+
+		for (unsigned i = 0; i < folio_batch_count(&fbatch); i++) {
 			struct folio *folio = fbatch.folios[i];
 
 			if (!nonblock) {
 				folio_lock(folio);
 			} else if (!folio_trylock(folio)) {
 				folio_batch_release(&fbatch);
+				trace_printk("%s: index %lu end %lu -EAGAIN\n",
+					     __func__, index , end_index);
 				return -EAGAIN;
 			}
 
@@ -722,6 +731,8 @@ loff_t bch2_seek_pagecache_data(struct inode *vinode,
 					    start_offset, end_offset);
 				folio_unlock(folio);
 				folio_batch_release(&fbatch);
+				trace_printk("%s: start %llu end %llu ret %llu\n",
+					     __func__, start_offset, end_offset, ret);
 				return ret;
 			}
 			folio_unlock(folio);
