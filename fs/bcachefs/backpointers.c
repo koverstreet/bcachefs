@@ -215,6 +215,13 @@ static int backpointer_target_not_found(struct btree_trans *trans,
 	if (ret)
 		return ret;
 
+	/*
+	 * Can we avoid building up the error message if we're ratelimiting this
+	 * error?
+	 */
+	if (test_bit(BCH_FSCK_ERR_backpointer_to_missing_ptr, c->sb.errors_silent))
+		goto fix;
+
 	prt_printf(&buf, "backpointer doesn't match %s it points to:\n",
 		   bp.v->level ? "btree node" : "extent");
 	bch2_bkey_val_to_text(&buf, c, bp.s_c);
@@ -233,28 +240,28 @@ static int backpointer_target_not_found(struct btree_trans *trans,
 			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&bp2.k_i));
 		}
 
-	if (fsck_err(trans, backpointer_to_missing_ptr,
-		     "%s", buf.buf)) {
-		ret = bch2_backpointer_del(trans, bp.k->p);
-		if (ret || !commit)
-			return ret;
+	if (!fsck_err(trans, backpointer_to_missing_ptr, "%s", buf.buf))
+		return 0;
+fix:
+	ret = bch2_backpointer_del(trans, bp.k->p);
+	if (ret || !commit)
+		return ret;
 
-		/*
-		 * Normally, on transaction commit from inside a transaction,
-		 * we'll return -BCH_ERR_transaction_restart_nested, since a
-		 * transaction commit invalidates pointers given out by peek().
-		 *
-		 * However, since we're updating a write buffer btree, if we
-		 * return a transaction restart and loop we won't see that the
-		 * backpointer has been deleted without an additional write
-		 * buffer flush - and those are expensive.
-		 *
-		 * So we're relying on the caller immediately advancing to the
-		 * next backpointer and starting a new transaction immediately
-		 * after backpointer_get_key() returns NULL:
-		 */
-		ret = bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
-	}
+	/*
+	 * Normally, on transaction commit from inside a transaction, we'll
+	 * return -BCH_ERR_transaction_restart_nested, since a transaction
+	 * commit invalidates pointers given out by peek().
+	 *
+	 * However, since we're updating a write buffer btree, if we return a
+	 * transaction restart and loop we won't see that the backpointer has
+	 * been deleted without an additional write buffer flush - and those are
+	 * expensive.
+	 *
+	 * So we're relying on the caller immediately advancing to the next
+	 * backpointer and starting a new transaction immediately after
+	 * backpointer_get_key() returns NULL:
+	 */
+	ret = bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 fsck_err:
 	return ret;
 }
