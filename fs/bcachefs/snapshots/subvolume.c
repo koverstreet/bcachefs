@@ -641,6 +641,10 @@ static int __bch2_fs_upgrade_for_subvolumes(struct btree_trans *trans)
 	return bch2_inode_write(trans, &iter, &inode);
 }
 
+static void bch2_subvolumes_to_text(struct printbuf *out, struct bch_fs *c)
+{
+}
+
 /* set bi_subvol on root inode */
 int bch2_fs_upgrade_for_subvolumes(struct bch_fs *c)
 {
