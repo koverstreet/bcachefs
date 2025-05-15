@@ -1490,25 +1490,6 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 		return 0;
 	}
 
-	if (le32_to_cpu(s.v->fs_path_parent) != parent_subvol) {
-		printbuf_reset(&buf);
-
-		prt_printf(&buf, "subvol with wrong fs_path_parent, should be be %u\n",
-			   parent_subvol);
-
-		try(bch2_inum_to_path(trans, (subvol_inum) { s.k->p.offset,
-				      le64_to_cpu(s.v->inode) }, &buf));
-		prt_newline(&buf);
-		bch2_bkey_val_to_text(&buf, c, s.s_c);
-
-		if (fsck_err(trans, subvol_fs_path_parent_wrong, "%s", buf.buf)) {
-			struct bkey_i_subvolume *n =
-				errptr_try(bch2_bkey_make_mut_typed(trans, &subvol_iter, &s.s_c, 0, subvolume));
-
-			n->v.fs_path_parent = cpu_to_le32(parent_subvol);
-		}
-	}
-
 	u64 target_inum = le64_to_cpu(s.v->inode);
 	u32 target_snapshot = le32_to_cpu(s.v->snapshot);
 
@@ -1522,7 +1503,39 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 		return bch_err_throw(c, fsck_repair_unimplemented);
 	}
 
-	if (fsck_err_on(!ret && parent_subvol != subvol_root.bi_parent_subvol,
+	if (le32_to_cpu(s.v->fs_path_parent) != parent_subvol) {
+		printbuf_reset(&buf);
+
+		prt_printf(&buf, "subvol with wrong fs_path_parent, dirent claims %u\n",
+			   parent_subvol);
+		prt_printf(&buf, "inode claims %u\n", subvol_root.bi_parent_subvol);
+
+		ret = bch2_inum_to_path(trans, (subvol_inum) { s.k->p.offset,
+					le64_to_cpu(s.v->inode) }, &buf);
+		if (ret)
+			goto err;
+
+		/* print out path of other option */
+
+		ret = bch2_inum_to_path(trans, (subvol_inum) { parent_subvol, d.k->p.inode }, &buf);
+		if (ret)
+			goto err;
+
+		prt_newline(&buf);
+		bch2_bkey_val_to_text(&buf, c, s.s_c);
+
+		if (fsck_err(trans, subvol_fs_path_parent_wrong, "%s", buf.buf)) {
+			struct bkey_i_subvolume *n =
+				bch2_bkey_make_mut_typed(trans, &subvol_iter, &s.s_c, 0, subvolume);
+			ret = PTR_ERR_OR_ZERO(n);
+			if (ret)
+				goto err;
+
+			n->v.fs_path_parent = cpu_to_le32(parent_subvol);
+		}
+	}
+
+	if (fsck_err_on(parent_subvol != subvol_root.bi_parent_subvol,
 			trans, inode_bi_parent_wrong,
 			"subvol root %llu has wrong bi_parent_subvol: got %u, should be %u",
 			target_inum,
