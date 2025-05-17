@@ -209,18 +209,23 @@ static inline void trans_set_locked(struct btree_trans *trans, bool try)
 
 		trans->pf_memalloc_nofs = (current->flags & PF_MEMALLOC_NOFS) != 0;
 		current->flags |= PF_MEMALLOC_NOFS;
+
+		trans->saved_task_prio = current->prio;
+		current->prio = MAX_RT_PRIO;
 	}
 }
 
 static inline void trans_set_unlocked(struct btree_trans *trans)
 {
 	if (trans->locked) {
-		lock_release(&trans->dep_map, _THIS_IP_);
-		trans->locked = false;
-		trans->last_unlock_ip = _RET_IP_;
+		current->prio = trans->saved_task_prio;
 
 		if (!trans->pf_memalloc_nofs)
 			current->flags &= ~PF_MEMALLOC_NOFS;
+
+		lock_release(&trans->dep_map, _THIS_IP_);
+		trans->locked = false;
+		trans->last_unlock_ip = _RET_IP_;
 	}
 }
 
