@@ -229,20 +229,33 @@ static inline void trans_set_locked(struct btree_trans *trans, bool try)
 
 		trans->pf_memalloc_nofs = (current->flags & PF_MEMALLOC_NOFS) != 0;
 		current->flags |= PF_MEMALLOC_NOFS;
+
+		/*
+		 * Boost to the top of CFS while holding btree locks to reduce
+		 * scheduler preemption of trans-holders. Skip for RT tasks
+		 * (prio < MAX_RT_PRIO) — setting their prio to MAX_RT_PRIO
+		 * would demote them out of RT. Save is unconditional so the
+		 * paired restore is always a no-op when we didn't change it.
+		 */
+		trans->saved_task_prio = current->prio;
+		if (current->prio > MAX_RT_PRIO)
+			current->prio = MAX_RT_PRIO;
 	}
 }
 
 static inline void trans_set_unlocked(struct btree_trans *trans)
 {
 	if (trans->locked) {
-		lock_release(&trans->dep_map, _THIS_IP_);
-		trans->locked = false;
-		trans->last_unlock_ip = _RET_IP_;
+		current->prio = trans->saved_task_prio;
 
 		if (!trans->pf_memalloc_nofs)
 			current->flags &= ~PF_MEMALLOC_NOFS;
 
 		migrate_enable();
+
+		lock_release(&trans->dep_map, _THIS_IP_);
+		trans->locked = false;
+		trans->last_unlock_ip = _RET_IP_;
 	}
 }
 

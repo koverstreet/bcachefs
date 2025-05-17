@@ -664,6 +664,7 @@ struct btree_trans {
 	u32			restart_count_this_trans;
 #endif
 
+	int			saved_task_prio;
 	u64			last_begin_time_nonrestarted;
 	u64			last_begin_time;
 	unsigned long		last_begin_ip;
