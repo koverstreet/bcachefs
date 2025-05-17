@@ -3380,12 +3380,20 @@ void bch2_trans_srcu_unlock(struct btree_trans *trans)
 		check_srcu_held_too_long(trans);
 		srcu_read_unlock(&c->btree_trans_barrier, trans->srcu_idx);
 		trans->srcu_held = false;
+
+		current->prio = trans->saved_task_prio;
 	}
 }
 
 static void bch2_trans_srcu_lock(struct btree_trans *trans)
 {
 	if (!trans->srcu_held) {
+		struct task_struct *p = current;
+
+		trans->saved_task_prio = p->prio;
+		if (p->prio > MAX_RT_PRIO)
+			p->prio = MAX_RT_PRIO;
+
 		trans->srcu_idx = srcu_read_lock(&trans->c->btree_trans_barrier);
 		trans->srcu_lock_time	= jiffies;
 		trans->srcu_held = true;
@@ -3466,18 +3474,21 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 		__time_stats_update(&btree_trans_stats(trans)->duration,
 					 trans->last_begin_time, now);
 
+	if (unlikely(trans->srcu_held &&
+		     time_after(jiffies, trans->srcu_lock_time + msecs_to_jiffies(100))))
+		bch2_trans_srcu_unlock(trans);
+
 	if (!trans->restarted &&
 	    (need_resched() ||
 	     time_after64(now, trans->last_begin_time + BTREE_TRANS_MAX_LOCK_HOLD_TIME_NS))) {
 		bch2_trans_unlock(trans);
+		if (need_resched())
+			bch2_trans_srcu_unlock(trans);
+
 		cond_resched();
 		now = local_clock();
 	}
 	trans->last_begin_time = now;
-
-	if (unlikely(trans->srcu_held &&
-		     time_after(jiffies, trans->srcu_lock_time + msecs_to_jiffies(10))))
-		bch2_trans_srcu_unlock(trans);
 
 	trans->last_begin_ip = _RET_IP_;
 
