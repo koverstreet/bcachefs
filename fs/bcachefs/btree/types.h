@@ -473,7 +473,7 @@ struct btree_trans_commit_hook {
 
 #define BTREE_TRANS_MEM_MAX	(1U << 16)
 
-#define BTREE_TRANS_MAX_LOCK_HOLD_TIME_NS	10000
+#define BTREE_TRANS_MAX_LOCK_HOLD_TIME_NS	100000
 
 struct btree_trans_paths {
 	unsigned long		nr_paths;
@@ -532,6 +532,7 @@ struct btree_trans {
 	u32			restart_count_this_trans;
 #endif
 
+	int			saved_task_prio;
 	u64			last_begin_time;
 	unsigned long		last_begin_ip;
 	unsigned long		last_restarted_ip;
