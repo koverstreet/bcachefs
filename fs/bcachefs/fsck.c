@@ -422,7 +422,8 @@ static int reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *
 				BTREE_UPDATE_internal_snapshot_node|
 				STR_HASH_must_create);
 	if (ret) {
-		bch_err_msg(c, ret, "error creating dirent");
+		bch_err_msg(c, ret, "error creating dirent %s in dir %u:%llu",
+			    name_buf, inode->bi_parent_subvol, lostfound.bi_inum);
 		return ret;
 	}
 
@@ -535,12 +536,15 @@ static int reattach_subvol(struct btree_trans *trans, struct bkey_s_c_subvolume 
 	int ret = bch2_inode_find_by_inum_trans(trans,
 				(subvol_inum) { s.k->p.offset, le64_to_cpu(s.v->inode) },
 				&inode);
+	bch_err_msg(c, ret, "error getting root inode %llu of subvol %llu",
+		    le64_to_cpu(s.v->inode), s.k->p.offset);
 	if (ret)
 		return ret;
 
 	ret = remove_backpointer(trans, &inode);
-	if (!bch2_err_matches(ret, ENOENT))
-		bch_err_msg(c, ret, "removing dirent");
+	if (bch2_err_matches(ret, ENOENT))
+		ret = 0;
+	bch_err_msg(c, ret, "removing dirent");
 	if (ret)
 		return ret;
 
@@ -2628,6 +2632,8 @@ static int check_subvol_path(struct btree_trans *trans, struct btree_iter *iter,
 		ret = bch2_inode_find_by_inum_trans(trans,
 					(subvol_inum) { s.k->p.offset, le64_to_cpu(s.v->inode) },
 					&subvol_root);
+		bch_err_msg(c, ret, "error getting root inode %llu of subvol %llu",
+			    le64_to_cpu(s.v->inode), s.k->p.offset);
 		if (ret)
 			break;
 
