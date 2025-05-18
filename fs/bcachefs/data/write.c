@@ -154,16 +154,18 @@ void bch2_bio_alloc_pages_pool(struct bch_fs *c, struct bio *bio,
 
 /* Extent update path: */
 
-int bch2_sum_sector_overwrites(struct btree_trans *trans,
+static inline int __bch2_sum_sector_overwrites(struct btree_trans *trans,
 			       struct btree_iter *extent_iter,
-			       struct bkey_i *new,
+			       struct bpos end,
 			       bool *usage_increasing,
 			       s64 *i_sectors_delta,
-			       s64 *disk_sectors_delta)
+			       s64 *disk_sectors_delta,
+			       bool new_is_allocation,
+			       bool new_compressed,
+			       unsigned new_replicas,
+			       unsigned new_ptrs_allocated)
 {
 	struct bch_fs *c = trans->c;
-	unsigned new_replicas = bch2_bkey_replicas(c, bkey_i_to_s_c(new));
-	bool new_compressed = bch2_bkey_sectors_compressed(c, bkey_i_to_s_c(new));
 
 	*usage_increasing	= false;
 	*i_sectors_delta	= 0;
@@ -173,31 +175,48 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 	struct bkey_s_c old;
 	int ret = 0;
 	for_each_btree_key_max_continue_norestart(iter,
-				new->k.p, BTREE_ITER_slots, old, ret) {
-		s64 sectors = min(new->k.p.offset, old.k->p.offset) -
-			max(bkey_start_offset(&new->k),
+				end, BTREE_ITER_slots, old, ret) {
+		s64 sectors = min(end.offset, old.k->p.offset) -
+			max(iter.pos.offset,
 			    bkey_start_offset(old.k));
 
 		*i_sectors_delta += sectors *
-			(bkey_extent_is_allocation(&new->k) -
+			(new_is_allocation -
 			 bkey_extent_is_allocation(old.k));
 
-		*disk_sectors_delta += sectors * bch2_bkey_nr_ptrs_allocated(c, bkey_i_to_s_c(new));
-		*disk_sectors_delta -= new->k.p.snapshot == old.k->p.snapshot
-			? sectors * bch2_bkey_nr_ptrs_fully_allocated(c, old)
+		*disk_sectors_delta += sectors * new_ptrs_allocated;
+		*disk_sectors_delta -= iter.snapshot == old.k->p.snapshot
+			? sectors * bch2_bkey_nr_ptrs_fully_allocated(old)
 			: 0;
 
 		if (!*usage_increasing &&
-		    (new->k.p.snapshot != old.k->p.snapshot ||
+		    (iter.snapshot != old.k->p.snapshot ||
 		     new_replicas > bch2_bkey_replicas(c, old) ||
 		     (!new_compressed && bch2_bkey_sectors_compressed(c, old))))
 			*usage_increasing = true;
 
-		if (bkey_ge(old.k->p, new->k.p))
+		if (bkey_ge(old.k->p, end))
 			break;
 	}
 
 	return ret;
+}
+
+int bch2_sum_sector_overwrites(struct btree_trans *trans,
+			       struct btree_iter *extent_iter,
+			       struct bkey_i *new,
+			       bool *usage_increasing,
+			       s64 *i_sectors_delta,
+			       s64 *disk_sectors_delta)
+{
+	return __bch2_sum_sector_overwrites(trans, extent_iter, new->k.p,
+				usage_increasing,
+				i_sectors_delta,
+				disk_sectors_delta,
+				bkey_extent_is_allocation(&new->k),
+				bch2_bkey_sectors_compressed(bkey_i_to_s_c(new)),
+				bch2_bkey_replicas(trans->c, bkey_i_to_s_c(new)),
+				bch2_bkey_nr_ptrs_allocated(bkey_i_to_s_c(new)));
 }
 
 static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
@@ -366,60 +385,130 @@ static int bch2_write_index_default(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
 	struct keylist *keys = &op->insert_keys;
-	struct bkey_i *k = bch2_keylist_front(keys);
-	subvol_inum inum = {
-		.subvol = op->subvol,
-		.inum	= k->k.p.inode,
-	};
+	struct btree_iter insert_iter;
+	int ret;
 
-	BUG_ON(!inum.subvol);
+	BUG_ON(!op->subvol);
 
 	CLASS(btree_trans, trans)(c);
+	bool compressed = false;
+	unsigned new_replicas = UINT_MAX, new_ptrs_allocated = UINT_MAX;
+	struct bpos insert_end;
+	for_each_keylist_key(keys, k) {
+		insert_end = k->k.p;
 
-	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&sk);
+		compressed |= bch2_bkey_sectors_compressed(bkey_i_to_s_c(k));
+		new_replicas = min(new_replicas, bch2_bkey_replicas(c, bkey_i_to_s_c(k)));
+		new_ptrs_allocated = min(new_ptrs_allocated, bch2_bkey_nr_ptrs_allocated(bkey_i_to_s_c(k)));
+	}
 
-	do {
+	while (true) {
 		bch2_trans_begin(trans);
 
-		k = bch2_keylist_front(keys);
-
-		/*
-		 * If we did a degraded write, bch2_bkey_set_needs_reconcile() will add
-		 * pointers to BCH_SB_MEMBER_INVALID so the extent is accounted as
-		 * degraded
-		 */
-		bch2_bkey_buf_realloc(&sk, k->k.u64s + 1 + BCH_REPLICAS_MAX);
-		bch2_bkey_buf_copy(&sk, k);
-
-		int ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &sk.k->k.p.snapshot);
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			continue;
+		struct bkey_i *k = bch2_keylist_front(keys);
+		u32 snapshot;
+		ret = bch2_subvolume_get_snapshot(trans, op->subvol, &snapshot);
 		if (ret)
-			return ret;
+			goto err1;
 
+		k->k.p.snapshot = snapshot;
 		CLASS(btree_iter, iter)(trans, BTREE_ID_extents,
-					bkey_start_pos(&sk.k->k),
+					bkey_start_pos(&k->k),
 					BTREE_ITER_slots|BTREE_ITER_intent);
 
-		ret =   bch2_extent_update(trans, inum, &iter, sk.k,
-					&op->res,
-					op->new_i_size, &op->i_sectors_delta,
-					op->flags & BCH_WRITE_check_enospc,
-					op->opts.change_cookie);
-
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			continue;
+		ret = __bch2_btree_iter_traverse(&iter);
 		if (ret)
-			return ret;
+			goto err1;
 
-		if (bkey_ge(iter.pos, k->k.p))
+		struct bpos atomic_end = insert_end;
+		ret = bch2_extent_atomic_end(&iter, &atomic_end);
+		if (ret)
+			goto err1;
+
+		s64 i_sectors_delta = 0, disk_sectors_delta = 0;
+		bool usage_increasing;
+
+		ret = __bch2_sum_sector_overwrites(trans, &iter, atomic_end,
+					&usage_increasing,
+					&i_sectors_delta,
+					&disk_sectors_delta,
+					true,
+					compressed,
+					new_replicas,
+					new_ptrs_allocated);
+		if (ret)
+			goto err1;
+
+		if (disk_sectors_delta > (s64) op->res.sectors) {
+			ret = bch2_disk_reservation_add(trans->c, &op->res,
+						disk_sectors_delta - op->res.sectors,
+						(!(op->flags & BCH_WRITE_check_enospc) ||
+						 !usage_increasing)
+						? BCH_DISK_RESERVATION_NOFAIL : 0);
+			if (ret)
+				goto err1;
+		}
+
+		bch2_trans_copy_iter(&insert_iter, &iter);
+
+		for_each_keylist_key(keys, k) {
+			struct bkey_i *n = bch2_trans_kmalloc_nomemzero(trans,
+							bkey_bytes(&k->k) +
+							sizeof(struct bch_extent_rebalance) +
+							sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX);
+			ret = PTR_ERR_OR_ZERO(n);
+			if (ret)
+				goto err2;
+
+			bkey_copy(n, k);
+			n->k.p.snapshot = snapshot;
+			bch2_cut_back(atomic_end, n);
+			bool last = bkey_eq(atomic_end, n->k.p);
+
+			if (k != bch2_keylist_front(keys))
+				bch2_btree_iter_set_pos(&insert_iter, bkey_start_pos(&n->k));
+
+			ret =   bch2_bkey_set_needs_rebalance(trans, NULL,
+							      &op->opts, k,
+							      SET_NEEDS_REBALANCE_foreground,
+							      op->opts.change_cookie) ?:
+				bch2_trans_update(trans, &insert_iter, n, 0);
+			if (ret)
+				goto err2;
+
+			if (last)
+				break;
+		}
+
+		ret =   bch2_extent_update_i_size_sectors(trans, &iter,
+						min(atomic_end.offset << 9, op->new_i_size),
+						i_sectors_delta) ?:
+			bch2_trans_commit(trans, &op->res, NULL,
+					BCH_TRANS_COMMIT_no_check_rw|
+					BCH_TRANS_COMMIT_no_enospc);
+err2:
+		bch2_trans_iter_exit(&insert_iter);
+err1:
+
+		if (ret) {
+			if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+				continue;
+			break;
+		}
+
+		op->i_sectors_delta += i_sectors_delta;
+
+		while (!bch2_keylist_empty(keys) &&
+		       bkey_ge(atomic_end, bch2_keylist_front(keys)->k.p))
 			bch2_keylist_pop_front(&op->insert_keys);
-		else
-			bch2_cut_front(c, iter.pos, k);
-	} while (!bch2_keylist_empty(keys));
 
-	return 0;
+		if (bch2_keylist_empty(keys))
+			break;
+
+		bch2_cut_front(atomic_end, bch2_keylist_front(keys));
+	}
+
+	return ret;
 }
 
 /* Writes */
