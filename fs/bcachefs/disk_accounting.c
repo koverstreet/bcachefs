@@ -105,7 +105,7 @@ int bch2_disk_accounting_mod(struct btree_trans *trans,
 
 	if (likely(!gc)) {
 		struct bkey_i_accounting *a;
-#if 0
+#if 1
 		for (a = btree_trans_subbuf_base(trans, &trans->accounting);
 		     a != btree_trans_subbuf_top(trans, &trans->accounting);
 		     a = (void *) bkey_next(&a->k_i))
