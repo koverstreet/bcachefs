@@ -103,6 +103,59 @@ static int count_iters_for_insert(struct btree_trans *trans,
 	return ret2 ?: ret;
 }
 
+/* Not valid for deletions, due to whiteout type */
+int bch2_extent_atomic_end(struct btree_iter *iter,
+			   unsigned *nr_iters,
+			   struct bpos *end)
+{
+	struct btree_trans *trans = iter->trans;
+	enum bch_bkey_type whiteout_type = KEY_TYPE_whiteout;
+
+	CLASS(btree_iter_copy, copy)(iter);
+	copy.flags |= BTREE_ITER_nofilter_whiteouts;
+
+	try(bch2_btree_iter_traverse(&copy));
+
+	/*
+	 * We're doing our own whiteout filtering, but we still need to pass a
+	 * max key to avoid popping an assert in bch2_snapshot_is_ancestor():
+	 */
+	struct bkey_s_c k;
+	int ret = 0;
+	for_each_btree_key_max_continue_norestart(copy,
+			POS(end->inode, U64_MAX), 0, k, ret) {
+		unsigned offset = 0;
+
+		if (bkey_gt(iter->pos, bkey_start_pos(k.k)))
+			offset = iter->pos.offset - bkey_start_offset(k.k);
+
+		if (bkey_extent_whiteout(k.k)) {
+			if (bpos_gt(k.k->p, *end)) {
+				if (k.k->type == KEY_TYPE_extent_whiteout)
+					break;
+				else
+					continue;
+			} else if (k.k->type != whiteout_type) {
+				*nr_iters += 1;
+				if (*nr_iters >= EXTENT_ITERS_MAX) {
+					*end = bpos_min(*end, k.k->p);
+					break;
+				}
+			}
+		} else {
+			if (bpos_ge(bkey_start_pos(k.k), *end))
+				break;
+
+			*nr_iters += 1;
+			ret = count_iters_for_insert(trans, k, offset, end, nr_iters);
+			if (ret)
+				break;
+		}
+	}
+
+	return ret;
+}
+
 int bch2_extent_trim_atomic(struct btree_trans *trans,
 			    struct btree_iter *iter,
 			    struct bkey_i *insert)
