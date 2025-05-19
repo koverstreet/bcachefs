@@ -3,6 +3,7 @@
 #define __LINUX_DCACHE_H
 
 #include <linux/atomic.h>
+#include <linux/darray_types.h>
 #include <linux/list.h>
 #include <linux/math.h>
 #include <linux/rculist.h>
@@ -603,5 +604,16 @@ static inline struct dentry *d_next_sibling(const struct dentry *dentry)
 {
 	return hlist_entry_safe(dentry->d_sib.next, struct dentry, d_sib);
 }
+
+void d_casefold_disabled_put(struct dentry *dentry);
+int d_casefold_disabled_get(struct dentry *dentry);
+
+struct d_casefold_enable {
+	DARRAY(struct dentry *)	refs;
+	struct super_block	*sb;
+	bool			rename_mutex_held;
+};
+int d_casefold_enable(struct dentry *dentry, struct d_casefold_enable *e, bool);
+void d_casefold_enable_commit(struct d_casefold_enable *e, int ret);
 
 #endif	/* __LINUX_DCACHE_H */

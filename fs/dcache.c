@@ -32,6 +32,8 @@
 #include <linux/bit_spinlock.h>
 #include <linux/rculist_bl.h>
 #include <linux/list_lru.h>
+#include <linux/rhashtable.h>
+#include <linux/darray.h>
 #include "internal.h"
 #include "mount.h"
 
@@ -3149,6 +3151,263 @@ ino_t d_parent_ino(struct dentry *dentry)
 }
 EXPORT_SYMBOL(d_parent_ino);
 
+static struct rhashtable no_casefold_dentries;
+
+enum no_casefold_dentry_ref {
+	ref_casefold_disable,
+	ref_casefold_enable,
+};
+
+struct no_casefold_dentry {
+	struct rhash_head	hash;
+	struct dentry		*dentry;
+	unsigned long		ref[2];
+};
+
+static const struct rhashtable_params no_casefold_dentries_params = {
+	.head_offset		= offsetof(struct no_casefold_dentry, hash),
+	.key_offset		= offsetof(struct no_casefold_dentry, dentry),
+	.key_len		= sizeof(struct dentry *),
+	.automatic_shrinking	= true,
+};
+
+static int no_casefold_dentry_get(struct dentry *dentry,
+				  enum no_casefold_dentry_ref ref)
+{
+	struct no_casefold_dentry *n =
+		rhashtable_lookup_fast(&no_casefold_dentries,
+				       &dentry,
+				       no_casefold_dentries_params);
+	if (n) {
+		if (n->ref[!ref])
+			return -EINVAL;
+
+		n->ref[ref]++;
+		return 0;
+	}
+
+	n = kzalloc(sizeof(*n), GFP_KERNEL);
+	if (!n)
+		return -ENOMEM;
+
+	n->dentry = dget(dentry);
+	n->ref[ref]++;
+
+	int ret = rhashtable_lookup_insert_fast(&no_casefold_dentries,
+				&n->hash, no_casefold_dentries_params);
+	if (WARN_ON(ret)) {
+		kfree(n);
+		return ret;
+	}
+
+	return 0;
+}
+
+static void no_casefold_dentry_put(struct dentry *dentry,
+				   enum no_casefold_dentry_ref ref)
+{
+	struct no_casefold_dentry *n =
+		rhashtable_lookup_fast(&no_casefold_dentries,
+				       &dentry,
+				       no_casefold_dentries_params);
+	if (WARN_ON(!n))
+		return;
+
+	if (--n->ref[ref])
+		return;
+
+	dput(n->dentry);
+	int ret = rhashtable_remove_fast(&no_casefold_dentries,
+					 &n->hash, no_casefold_dentries_params);
+	WARN_ON(ret);
+}
+
+/**
+ * d_casefold_disabled_put - drop a "casefold disabled" ref
+ *
+ * Only for overlayfs.
+ */
+void d_casefold_disabled_put(struct dentry *dentry)
+{
+	struct super_block *sb = dentry->d_sb;
+
+	if (!(sb->s_flags & SB_CASEFOLD))
+		return;
+
+	guard(mutex)(&sb->s_casefold_enable_lock);
+	no_casefold_dentry_put(dentry, ref_casefold_disable);
+}
+EXPORT_SYMBOL_GPL(d_casefold_disabled_put);
+
+/**
+ * d_casefold_disabled_get - attempt to disable casefold on a tree
+ *
+ * Only for overlayfs.
+ *
+ * Returns -EINVAL if casefolding is in use on any subdirectory; this must be
+ * tracked by the filesystem.
+ *
+ * On success, returns with a reference held that must be released by
+ * d_casefold_disabled_put(); this ref blocks casefold from being enabled
+ * by d_casefold_enable().
+ */
+int d_casefold_disabled_get(struct dentry *dentry)
+{
+	struct super_block *sb = dentry->d_sb;
+
+	if (!(sb->s_flags & SB_CASEFOLD))
+		return 0;
+
+	guard(mutex)(&sb->s_casefold_enable_lock);
+
+	if (!(dentry->d_inode->i_flags & S_NO_CASEFOLD))
+		return -EINVAL;
+
+	return no_casefold_dentry_get(dentry, ref_casefold_disable);
+}
+EXPORT_SYMBOL_GPL(d_casefold_disabled_get);
+
+/* Crabwalk: releases @dentry after getting ref on parent */
+static struct dentry *dget_parent_this_sb(struct dentry *dentry)
+{
+	struct dentry *parent = dentry != dentry->d_sb->s_root
+		? dget_parent(dentry)
+		: NULL;
+	dput(dentry);
+	return parent;
+}
+
+/**
+ * d_casefold_enable - check if casefolding may be enabled on a dentry
+ *
+ * @dentry:	dentry to enable casefolding on
+ * @e:		state object, released by d_casefold_enable_commit()
+ * @rename:	Are we in the rename path?
+ *		If so, we expect s_vfs_rename_mutex to be held, if not (called
+ *		from setflags), we aquire it if necessary, and release in
+ *		commit.
+ *
+ * The rename mutex is required because we're operating on a whole path,
+ * potentially up to the filesystem root, and we need it to be stable until
+ * commit (i.e. we don't want to be renamed into a tree overlayfs is exporting
+ * after we've returned success).
+ *
+ * For rename, this should only be called for cross-directory rename.
+ * S_NO_CASEFOLD doesn't need to change on rename within a directory, and
+ * s_vfs_rename_mutex won't be held on non cross-directory rename.
+ *
+ * Returns -EINVAL if casefolding has been disabled on any parent directory (by
+ * overlayfs).
+ *
+ * On success, the d_casefold_enable object must be committed with
+ * d_casefold_enable_commit(), after the filesystem has updated its internal
+ * state.
+ *
+ * Commit will clear S_NO_CASEFOLD on all inodes up to the filesystem root,
+ * informing overlayfs that this tree has casefolding enabled somewhere in it.
+ */
+int d_casefold_enable(struct dentry *dentry, struct d_casefold_enable *e,
+		      bool rename)
+{
+	int ret = 0;
+
+	memset(e, 0, sizeof(*e));
+	e->sb = dentry->d_sb;
+
+	if (!(e->sb->s_flags & SB_CASEFOLD))
+		return 0;
+
+	/*
+	 * On rename, we're passed the dentry being renamed (the filesystem is
+	 * not passed the dentry of the directory we're renaming to), but it's
+	 * the parent that may need to have S_NO_CASEFOLD cleared:
+	 */
+	dentry = rename
+		? dget_parent(dentry)
+		: dget(dentry);
+
+	if (!(dentry->d_inode->i_flags & S_NO_CASEFOLD)) {
+		dput(dentry);
+		return 0;
+	}
+
+	if (rename) {
+		lockdep_assert_held(&e->sb->s_vfs_rename_mutex);
+	} else {
+		mutex_lock(&e->sb->s_vfs_rename_mutex);
+		e->rename_mutex_held = true;
+	}
+
+	guard(mutex)(&e->sb->s_casefold_enable_lock);
+
+	for (struct dentry *i = dentry; i; i = dget_parent_this_sb(i)) {
+		if (!(i->d_inode->i_flags & S_NO_CASEFOLD)) {
+			dput(i);
+			break;
+		}
+
+		ret = darray_push(&e->refs, i);
+		if (ret) {
+			dput(i);
+			goto err;
+		}
+
+		ret = no_casefold_dentry_get(i, ref_casefold_enable);
+		if (ret) {
+			dput(i);
+			--e->refs.nr;
+			goto err;
+		}
+	}
+
+	return 0;
+err:
+	darray_for_each(e->refs, i)
+		no_casefold_dentry_put(*i, ref_casefold_enable);
+	darray_exit(&e->refs);
+
+	if (e->rename_mutex_held)
+		mutex_unlock(&e->sb->s_vfs_rename_mutex);
+	e->rename_mutex_held = false;
+	return ret;
+}
+EXPORT_SYMBOL_GPL(d_casefold_enable);
+
+/**
+ * d_casefold_enable_commit - finish operation started by d_casefold_enable()
+ *
+ * @e:		state object, started by d_casefold_enable_commit()
+ * @ret:	Success or failure of the operation, from the filesystem
+ *
+ * On success (@ret == 0), clear S_NO_CASEFOLD on all inodes up to the
+ * filesystem root that have it set, which d_casefold_enable() previously took
+ * references to.
+ */
+void d_casefold_enable_commit(struct d_casefold_enable *e, int ret)
+{
+	if (e->refs.nr) {
+		guard(mutex)(&e->sb->s_casefold_enable_lock);
+
+		darray_for_each(e->refs, i) {
+			if (!ret) {
+				struct inode *inode = (*i)->d_inode;
+
+				spin_lock(&inode->i_lock);
+				inode->i_flags &= ~S_NO_CASEFOLD;
+				spin_unlock(&inode->i_lock);
+			}
+
+			no_casefold_dentry_put(*i, ref_casefold_enable);
+		}
+		darray_exit(&e->refs);
+	}
+
+	if (e->rename_mutex_held)
+		mutex_unlock(&e->sb->s_vfs_rename_mutex);
+	e->rename_mutex_held = false;
+}
+EXPORT_SYMBOL_GPL(d_casefold_enable_commit);
+
 static __initdata unsigned long dhash_entries;
 static int __init set_dhash_entries(char *str)
 {
@@ -3193,6 +3452,10 @@ static void __init dcache_init(void)
 	dentry_cache = KMEM_CACHE_USERCOPY(dentry,
 		SLAB_RECLAIM_ACCOUNT|SLAB_PANIC|SLAB_ACCOUNT,
 		d_shortname.string);
+
+	int ret = rhashtable_init(&no_casefold_dentries, &no_casefold_dentries_params);
+	if (ret)
+		panic("error initializing no_casefold_dentries: %i\n", ret);
 
 	/* Hash may have been set up in dcache_init_early */
 	if (!hashdist)
