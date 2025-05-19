@@ -48,6 +48,7 @@
 #include <linux/rw_hint.h>
 #include <linux/file_ref.h>
 #include <linux/unicode.h>
+#include <linux/rhashtable-types.h>
 
 #include <asm/byteorder.h>
 #include <uapi/linux/fs.h>
@@ -1397,6 +1398,7 @@ struct super_block {
 	 * even looking at it. You had been warned.
 	 */
 	struct mutex s_vfs_rename_mutex;	/* Kludge */
+	struct mutex s_casefold_enable_lock;
 
 	/*
 	 * Filesystem subtype.  If non-empty the filesystem type field
@@ -1439,6 +1441,7 @@ struct super_block {
 	struct work_struct	destroy_work;
 
 	struct mutex		s_sync_lock;	/* sync serialisation lock */
+
 
 	/*
 	 * Indicates how deep in a filesystem stack this SB is
@@ -2345,6 +2348,7 @@ struct super_operations {
 #define S_CASEFOLD	(1 << 15) /* Casefolded file */
 #define S_VERITY	(1 << 16) /* Verity file (using fs/verity/) */
 #define S_KERNEL_FILE	(1 << 17) /* File is in use by the kernel (eg. fs/cachefiles) */
+#define S_NO_CASEFOLD	(1 << 18) /* Directory, and all descendents, are not casefolded */
 
 /*
  * Note that nosuid etc flags are inode-specific: setting some file-system
