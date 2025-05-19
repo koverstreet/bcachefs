@@ -1959,6 +1959,7 @@ void generic_set_sb_d_ops(struct super_block *sb)
 {
 #if IS_ENABLED(CONFIG_UNICODE)
 	if (sb->s_encoding) {
+		sb->s_flags |= SB_CASEFOLD;
 		sb->s_d_op = &generic_ci_dentry_ops;
 		return;
 	}

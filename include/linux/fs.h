@@ -1238,6 +1238,7 @@ extern int send_sigurg(struct file *file);
 #define SB_SYNCHRONOUS  BIT(4)	/* Writes are synced at once */
 #define SB_MANDLOCK     BIT(6)	/* Allow mandatory locks on an FS */
 #define SB_DIRSYNC      BIT(7)	/* Directory modifications are synchronous */
+#define SB_CASEFOLD	BIT(8)	/* Superblock supports casefolding */
 #define SB_NOATIME      BIT(10)	/* Do not update access times. */
 #define SB_NODIRATIME   BIT(11)	/* Do not update directory access times */
 #define SB_SILENT       BIT(15)
