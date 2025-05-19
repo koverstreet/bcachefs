@@ -287,7 +287,8 @@ static int ovl_mount_dir_check(struct fs_context *fc, const struct path *path,
 	 * with overlayfs.  Check explicitly to prevent post-mount
 	 * failures.
 	 */
-	if (sb_has_encoding(path->mnt->mnt_sb))
+	if ((path->mnt->mnt_sb->s_flags & SB_CASEFOLD) &&
+	    !(path->dentry->d_inode->i_flags & S_NO_CASEFOLD))
 		return invalfc(fc, "case-insensitive capable filesystem on %s not supported", name);
 
 	if (ovl_dentry_weird(path->dentry))
@@ -411,19 +412,31 @@ static int ovl_do_parse_layer(struct fs_context *fc, const char *layer_name,
 	if (!name)
 		return -ENOMEM;
 
-	upper = is_upper_layer(layer);
-	err = ovl_mount_dir_check(fc, layer_path, layer, name, upper);
-	if (err)
-		return err;
-
-	if (!upper) {
-		err = ovl_ctx_realloc_lower(fc);
+	if (layer != Opt_workdir &&
+	    layer != Opt_upperdir) {
+		err = d_casefold_disabled_get(layer_path->dentry);
 		if (err)
 			return err;
 	}
 
+	upper = is_upper_layer(layer);
+	err = ovl_mount_dir_check(fc, layer_path, layer, name, upper);
+	if (err)
+		goto err_put;
+
+	if (!upper) {
+		err = ovl_ctx_realloc_lower(fc);
+		if (err)
+			goto err_put;
+	}
+
 	/* Store the user provided path string in ctx to show in mountinfo */
 	ovl_add_layer(fc, layer, layer_path, &name);
+	return err;
+err_put:
+	if (layer != Opt_workdir &&
+	    layer != Opt_upperdir)
+		d_casefold_disabled_put(layer_path->dentry);
 	return err;
 }
 
@@ -475,6 +488,7 @@ static void ovl_reset_lowerdirs(struct ovl_fs_context *ctx)
 	ctx->lowerdir_all = NULL;
 
 	for (size_t nr = 0; nr < ctx->nr; nr++, l++) {
+		d_casefold_disabled_put(l->path.dentry);
 		path_put(&l->path);
 		kfree(l->name);
 		l->name = NULL;

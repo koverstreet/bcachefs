@@ -206,10 +206,21 @@ bool ovl_dentry_weird(struct dentry *dentry)
 	if (!d_can_lookup(dentry) && !d_is_file(dentry) && !d_is_symlink(dentry))
 		return true;
 
-	return dentry->d_flags & (DCACHE_NEED_AUTOMOUNT |
-				  DCACHE_MANAGE_TRANSIT |
-				  DCACHE_OP_HASH |
-				  DCACHE_OP_COMPARE);
+	if (dentry->d_flags & (DCACHE_NEED_AUTOMOUNT |
+			       DCACHE_MANAGE_TRANSIT))
+		return true;
+
+	/*
+	 * The filesystem might support casefolding, but we've already checked
+	 * that casefolding isn't present on this tree: we only need to check
+	 * for non-casefolding hash/compare ops
+	 */
+	if (!(dentry->d_sb->s_flags & SB_CASEFOLD) &&
+	    (dentry->d_flags & (DCACHE_OP_HASH |
+				DCACHE_OP_COMPARE)))
+		return true;
+
+	return false;
 }
 
 enum ovl_path_type ovl_path_type(struct dentry *dentry)
