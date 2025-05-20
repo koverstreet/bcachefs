@@ -68,6 +68,11 @@ static inline void bch2_inode_flags_to_vfs(struct bch_fs *c, struct bch_inode_in
 		inode->v.i_flags |= S_CASEFOLD;
 	else
 		inode->v.i_flags &= ~S_CASEFOLD;
+
+	if (inode->ei_inode.bi_flags & BCH_INODE_has_case_insensitive)
+		inode->v.i_flags &= ~S_NO_CASEFOLD;
+	else
+		inode->v.i_flags |= S_NO_CASEFOLD;
 }
 
 void bch2_inode_update_after_write(struct btree_trans *trans,
@@ -920,6 +925,8 @@ static int bch2_rename2(struct mnt_idmap *idmap,
 	struct bch_inode_info *dst_inode = to_bch_ei(dst_dentry->d_inode);
 	struct bch_inode_unpacked dst_dir_u, src_dir_u;
 	struct bch_inode_unpacked src_inode_u, dst_inode_u, *whiteout_inode_u;
+	struct d_casefold_enable casefold_enable_src = {};
+	struct d_casefold_enable casefold_enable_dst = {};
 	struct btree_trans *trans;
 	enum bch_rename_mode mode = flags & RENAME_EXCHANGE
 		? BCH_RENAME_EXCHANGE
@@ -943,6 +950,21 @@ static int bch2_rename2(struct mnt_idmap *idmap,
 			 dst_dir,
 			 src_inode,
 			 dst_inode);
+
+	if (src_dir != dst_dir) {
+		if (bch2_inode_casefold(c, &src_inode->ei_inode)) {
+			ret = d_casefold_enable(dst_dentry, &casefold_enable_dst, true);
+			if (ret)
+				goto err;
+		}
+
+		if (mode == BCH_RENAME_EXCHANGE &&
+		    bch2_inode_casefold(c, &dst_inode->ei_inode)) {
+			ret = d_casefold_enable(src_dentry, &casefold_enable_src, true);
+			if (ret)
+				goto err;
+		}
+	}
 
 	trans = bch2_trans_get(c);
 
@@ -1047,6 +1069,9 @@ err:
 			   dst_dir,
 			   src_inode,
 			   dst_inode);
+
+	d_casefold_enable_commit(&casefold_enable_dst, ret);
+	d_casefold_enable_commit(&casefold_enable_src, ret);
 
 	return bch2_err_class(ret);
 }
@@ -1687,6 +1712,7 @@ static int bch2_fileattr_set(struct mnt_idmap *idmap,
 	struct bch_inode_info *inode = to_bch_ei(d_inode(dentry));
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct flags_set s = {};
+	struct d_casefold_enable casefold_enable = {};
 	int ret;
 
 	if (fa->fsx_valid) {
@@ -1719,19 +1745,29 @@ static int bch2_fileattr_set(struct mnt_idmap *idmap,
 		s.casefold = (fa->flags & FS_CASEFOLD_FL) != 0;
 		fa->flags &= ~FS_CASEFOLD_FL;
 
+		if (s.casefold && s.casefold != bch2_inode_casefold(c, &inode->ei_inode)) {
+			ret = d_casefold_enable(dentry, &casefold_enable, false);
+			if (ret)
+				goto err;
+		}
+
 		s.flags |= map_flags_rev(bch_flags_to_uflags, fa->flags);
-		if (fa->flags)
-			return -EOPNOTSUPP;
+		if (fa->flags) {
+			ret = -EOPNOTSUPP;
+			goto err;
+		}
 	}
 
-	mutex_lock(&inode->ei_update_lock);
-	ret   = bch2_subvol_is_ro(c, inode->ei_inum.subvol) ?:
-		(s.set_project
-		 ? bch2_set_projid(c, inode, fa->fsx_projid)
-		 : 0) ?:
-		bch2_write_inode(c, inode, fssetxattr_inode_update_fn, &s,
-			       ATTR_CTIME);
-	mutex_unlock(&inode->ei_update_lock);
+	scoped_guard(mutex, &inode->ei_update_lock)
+		ret   = bch2_subvol_is_ro(c, inode->ei_inum.subvol) ?:
+			(s.set_project
+			 ? bch2_set_projid(c, inode, fa->fsx_projid)
+			 : 0) ?:
+			bch2_write_inode(c, inode, fssetxattr_inode_update_fn, &s,
+				       ATTR_CTIME);
+err:
+	d_casefold_enable_commit(&casefold_enable, ret);
+
 	return ret;
 }
 
