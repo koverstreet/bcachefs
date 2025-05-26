@@ -764,12 +764,6 @@ static int bucket_alloc_from_stripe(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	int ret = 0;
 
-	if (req->nr_replicas < 2)
-		return 0;
-
-	if (ec_open_bucket(c, &req->ptrs))
-		return 0;
-
 	struct ec_stripe_head *h =
 		bch2_ec_stripe_head_get(trans, req, 0, cl);
 	if (IS_ERR(h))
@@ -879,58 +873,6 @@ static int bucket_alloc_set_partial(struct bch_fs *c,
 	}
 
 	return 0;
-}
-
-static int __open_bucket_add_buckets(struct btree_trans *trans,
-				     struct alloc_request *req,
-				     struct closure *cl)
-{
-	struct bch_fs *c = trans->c;
-	struct open_bucket *ob;
-	unsigned i;
-	int ret;
-
-	req->devs_may_alloc = target_rw_devs(c, req->wp->data_type, req->target);
-
-	/* Don't allocate from devices we already have pointers to: */
-	darray_for_each(*req->devs_have, i)
-		__clear_bit(*i, req->devs_may_alloc.d);
-
-	open_bucket_for_each(c, &req->ptrs, ob, i)
-		__clear_bit(ob->dev, req->devs_may_alloc.d);
-
-	try(bucket_alloc_set_writepoint(c, req));
-
-	try(bucket_alloc_set_partial(c, req));
-
-	return req->ec
-		? bucket_alloc_from_stripe(trans, req, cl)
-		: bch2_bucket_alloc_set_trans(trans, req, &req->wp->stripe, cl);
-}
-
-static int open_bucket_add_buckets(struct btree_trans *trans,
-				   struct alloc_request *req,
-				   struct closure *cl)
-{
-	int ret;
-
-	if (req->ec && !ec_open_bucket(trans->c, &req->ptrs)) {
-		ret = __open_bucket_add_buckets(trans, req, cl);
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart) ||
-		    bch2_err_matches(ret, BCH_ERR_operation_blocked) ||
-		    bch2_err_matches(ret, BCH_ERR_freelist_empty) ||
-		    bch2_err_matches(ret, BCH_ERR_open_buckets_empty))
-			return ret;
-		if (req->nr_effective >= req->nr_replicas)
-			return 0;
-	}
-
-	bool ec = false;
-	swap(ec, req->ec);
-	ret = __open_bucket_add_buckets(trans, req, cl);
-	swap(ec, req->ec);
-
-	return ret < 0 ? ret : 0;
 }
 
 /**
@@ -1199,7 +1141,7 @@ int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
 			     unsigned nr_replicas_required,
 			     enum bch_watermark watermark,
 			     enum bch_write_flags flags,
-			     struct closure *cl,
+			     struct closure *_cl,
 			     struct write_point **wp_ret)
 {
 	struct bch_fs *c = trans->c;
@@ -1212,15 +1154,18 @@ int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
 	if (!IS_ENABLED(CONFIG_BCACHEFS_ERASURE_CODING))
 		erasure_code = false;
 
+	if (nr_replicas < 2)
+		erasure_code = false;
+
 	req->nr_replicas	= nr_replicas;
 	req->target		= target;
-	req->ec			= erasure_code;
 	req->watermark		= watermark;
 	req->flags		= flags;
 	req->devs_have		= devs_have;
 
 	BUG_ON(!nr_replicas || !nr_replicas_required);
 retry:
+	req->ec			= erasure_code;
 	req->ptrs.nr		= 0;
 	req->nr_effective	= 0;
 	req->have_cache		= false;
@@ -1230,54 +1175,77 @@ retry:
 
 	req->data_type		= req->wp->data_type;
 
-	int ret = bch2_trans_relock(trans);
-	if (ret)
-		goto err;
-
 	/* metadata may not allocate on cache devices: */
 	if (req->data_type != BCH_DATA_user)
 		req->have_cache = true;
 
-	if (target && !(flags & BCH_WRITE_only_specified_devs)) {
-		ret = open_bucket_add_buckets(trans, req, NULL);
-		if (!ret ||
-		    bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			goto alloc_done;
+	/* If we're going to fall back to the whole fs, try nonblocking first */
+	struct closure *cl = req->target && !(flags & BCH_WRITE_only_specified_devs)
+		? _cl
+		: NULL;
+
+	int ret = bch2_trans_relock(trans);
+	if (ret)
+		goto err;
+
+	while (1) {
+		req->devs_may_alloc = target_rw_devs(c, req->wp->data_type, req->target);
+
+		/* Don't allocate from devices we already have pointers to: */
+		darray_for_each(*req->devs_have, i)
+			__clear_bit(*i, req->devs_may_alloc.d);
+
+		open_bucket_for_each(c, &req->ptrs, ob, i)
+			__clear_bit(ob->dev, req->devs_may_alloc.d);
+
+		ret =   bucket_alloc_set_writepoint(c, req) ?:
+			bucket_alloc_set_partial(c, req) ?:
+			(req->ec
+			 ? bucket_alloc_from_stripe(trans, req, _cl)
+			 : bch2_bucket_alloc_set_trans(trans, req, &req->wp->stripe, cl));
+
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+			goto err;
 
 		/* Don't retry from all devices if we're out of open buckets: */
-		if (bch2_err_matches(ret, BCH_ERR_open_buckets_empty)) {
-			int ret2 = open_bucket_add_buckets(trans, req, cl);
-			if (!ret2 ||
-			    bch2_err_matches(ret2, BCH_ERR_transaction_restart) ||
-			    bch2_err_matches(ret2, BCH_ERR_open_buckets_empty)) {
-				ret = ret2;
-				goto alloc_done;
-			}
+		if (ret == -BCH_ERR_open_buckets_empty)
+			goto retry_blocking;
+
+		if (ret == -BCH_ERR_freelist_empty) {
+			if (req->target && !(flags & BCH_WRITE_only_specified_devs))
+				goto retry_all;
+			goto retry_blocking;
 		}
 
+		if (ret == -BCH_ERR_insufficient_devices && req->target)
+			goto retry_all;
+
+		if (req->nr_effective < req->nr_replicas && req->ec) {
+			req->ec = false;
+			continue;
+		}
+
+		if (ret == -BCH_ERR_insufficient_devices) {
+			if (!req->nr_effective)
+				goto err;
+			ret = 0;
+		}
+
+		BUG_ON(ret < 0);
+		break;
+retry_blocking:
+		if (cl == _cl)
+			goto err;
+		cl = _cl;
+		continue;
+retry_all:
 		/*
 		 * Only try to allocate cache (durability = 0 devices) from the
 		 * specified target:
 		 */
 		req->have_cache	= true;
 		req->target	= 0;
-
-		ret = open_bucket_add_buckets(trans, req, cl);
-	} else {
-		ret = open_bucket_add_buckets(trans, req, cl);
 	}
-alloc_done:
-	BUG_ON(!ret && req->nr_effective < req->nr_replicas);
-
-	if (erasure_code && !ec_open_bucket(c, &req->ptrs))
-		pr_debug("failed to get ec bucket: ret %u", ret);
-
-	if (ret == -BCH_ERR_insufficient_devices &&
-	    req->nr_effective >= nr_replicas_required)
-		ret = 0;
-
-	if (ret)
-		goto err;
 
 	if (req->nr_effective > req->nr_replicas)
 		deallocate_extra_replicas(c, req);
