@@ -653,6 +653,7 @@ int bch2_fs_recovery(struct bch_fs *c)
 		if (ret)
 			goto err;
 	} else {
+		clear_bit(BCH_FS_clean_shutdown, &c->flags);
 		bch_info(c, "recovering from unclean shutdown");
 	}
 
