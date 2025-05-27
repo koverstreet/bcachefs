@@ -697,13 +697,19 @@ static int add_new_bucket(struct bch_fs *c,
 inline int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 				       struct alloc_request *req,
 				       struct dev_stripe_state *stripe,
-				       struct closure *cl)
+				       struct closure *_cl)
 {
 	struct bch_fs *c = trans->c;
+	struct closure *cl = NULL;
 	int ret = 0;
 
 	BUG_ON(req->nr_effective >= req->nr_replicas);
 
+	/*
+	 * Try nonblocking first, so that if one device is full we'll try from
+	 * other devices:
+	 */
+retry_blocking:
 	bch2_dev_alloc_list(c, stripe, &req->devs_may_alloc, &req->devs_sorted);
 
 	darray_for_each(req->devs_sorted, i) {
@@ -729,16 +735,18 @@ inline int bch2_bucket_alloc_set_trans(struct btree_trans *trans,
 			continue;
 		}
 
-		ret = add_new_bucket(c, req, ob);
-		if (ret)
-			break;
+		if (add_new_bucket(c, req, ob))
+			return 0;
 	}
 
-	if (ret == 1)
-		return 0;
-	if (ret)
-		return ret;
-	return bch_err_throw(c, insufficient_devices);
+	if (ret &&
+	    !bch2_err_matches(ret, BCH_ERR_transaction_restart) &&
+	    cl != _cl) {
+		cl = _cl;
+		goto retry_blocking;
+	}
+
+	return ret ?: bch_err_throw(c, insufficient_devices);
 }
 
 /* Allocate from stripes: */
@@ -875,11 +883,10 @@ static int bucket_alloc_set_partial(struct bch_fs *c,
 
 static int __open_bucket_add_buckets(struct btree_trans *trans,
 				     struct alloc_request *req,
-				     struct closure *_cl)
+				     struct closure *cl)
 {
 	struct bch_fs *c = trans->c;
 	struct open_bucket *ob;
-	struct closure *cl = NULL;
 	unsigned i;
 	int ret;
 
@@ -896,25 +903,9 @@ static int __open_bucket_add_buckets(struct btree_trans *trans,
 
 	try(bucket_alloc_set_partial(c, req));
 
-	if (req->ec) {
-		ret = bucket_alloc_from_stripe(trans, req, _cl);
-	} else {
-retry_blocking:
-		/*
-		 * Try nonblocking first, so that if one device is full we'll try from
-		 * other devices:
-		 */
-		ret = bch2_bucket_alloc_set_trans(trans, req, &req->wp->stripe, cl);
-		if (ret &&
-		    !bch2_err_matches(ret, BCH_ERR_transaction_restart) &&
-		    !bch2_err_matches(ret, BCH_ERR_insufficient_devices) &&
-		    !cl && _cl) {
-			cl = _cl;
-			goto retry_blocking;
-		}
-	}
-
-	return ret;
+	return req->ec
+		? bucket_alloc_from_stripe(trans, req, cl)
+		: bch2_bucket_alloc_set_trans(trans, req, &req->wp->stripe, cl);
 }
 
 static int open_bucket_add_buckets(struct btree_trans *trans,
