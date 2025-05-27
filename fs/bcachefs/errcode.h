@@ -199,8 +199,8 @@
 	x(EEXIST,			EEXIST_str_hash_set)			\
 	x(EEXIST,			EEXIST_discard_in_flight_add)		\
 	x(EEXIST,			EEXIST_subvolume_create)		\
-	x(ENOSPC,			open_buckets_empty)			\
-	x(ENOSPC,			freelist_empty)				\
+	x(EAGAIN,			open_buckets_empty)			\
+	x(EAGAIN,			freelist_empty)				\
 	x(ENOSPC,			ec_alloc_failed)			\
 	x(BCH_ERR_freelist_empty,	no_buckets_found)			\
 	x(0,				transaction_restart)			\
@@ -327,6 +327,9 @@
 	x(0,				operation_blocked)			\
 	x(BCH_ERR_operation_blocked,	btree_cache_cannibalize_lock_blocked)	\
 	x(BCH_ERR_operation_blocked,	journal_res_blocked)			\
+	x(BCH_ERR_operation_blocked,	bucket_alloc_blocked)			\
+	x(BCH_ERR_operation_blocked,	open_bucket_alloc_blocked)		\
+	x(BCH_ERR_operation_blocked,	stripe_alloc_blocked)			\
 	x(BCH_ERR_journal_res_blocked,	journal_blocked)			\
 	x(BCH_ERR_journal_res_blocked,	journal_max_in_flight)			\
 	x(BCH_ERR_journal_res_blocked,	journal_max_open)			\
@@ -335,8 +338,6 @@
 	x(BCH_ERR_journal_res_blocked,	journal_buf_enomem)			\
 	x(BCH_ERR_journal_res_blocked,	journal_stuck)				\
 	x(BCH_ERR_journal_res_blocked,	journal_retry_open)			\
-	x(BCH_ERR_journal_res_blocked,	bucket_alloc_blocked)			\
-	x(BCH_ERR_journal_res_blocked,	stripe_alloc_blocked)			\
 	x(BCH_ERR_invalid,		invalid_sb)				\
 	x(BCH_ERR_invalid_sb,		invalid_sb_magic)			\
 	x(BCH_ERR_invalid_sb,		invalid_sb_version)			\

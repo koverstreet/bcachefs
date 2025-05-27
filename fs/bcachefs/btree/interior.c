@@ -327,8 +327,7 @@ static bool can_use_btree_node(struct bch_fs *c,
 static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 					     struct disk_reservation *res,
 					     bool interior_node,
-					     struct alloc_request *req,
-					     struct closure *cl)
+					     struct alloc_request *req)
 {
 	struct bch_fs *c = trans->c;
 	struct write_point *wp;
@@ -343,7 +342,7 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 retry:
 	ret = bch2_alloc_sectors_req(trans, req,
 				     writepoint_ptr(&c->allocator.btree_write_point),
-				     cl, &wp);
+				     &wp);
 	if (unlikely(ret))
 		goto err;
 
@@ -540,8 +539,7 @@ static void bch2_btree_reserve_put(struct btree_update *as, struct btree_trans *
 static int bch2_btree_reserve_get(struct btree_trans *trans,
 				  struct btree_update *as,
 				  unsigned nr_nodes[2],
-				  struct alloc_request *req,
-				  struct closure *cl)
+				  struct alloc_request *req)
 {
 	BUG_ON(nr_nodes[0] + nr_nodes[1] > BTREE_RESERVE_MAX);
 
@@ -549,7 +547,7 @@ static int bch2_btree_reserve_get(struct btree_trans *trans,
 	 * Protects reaping from the btree node cache and using the btree node
 	 * open bucket reserve:
 	 */
-	try(bch2_btree_cache_cannibalize_lock(trans, cl));
+	try(bch2_btree_cache_cannibalize_lock(trans, req->cl));
 
 	int ret = 0;
 	for (unsigned interior = 0; interior < 2; interior++) {
@@ -557,7 +555,7 @@ static int bch2_btree_reserve_get(struct btree_trans *trans,
 
 		while (p->nr < nr_nodes[interior]) {
 			struct btree *b = __bch2_btree_node_alloc(trans, &as->disk_res,
-								  interior, req, cl);
+								  interior, req);
 			ret = PTR_ERR_OR_ZERO(b);
 			if (ret)
 				goto err;
@@ -1323,13 +1321,14 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 				      as->disk_res.nr_replicas,
 				      as->disk_res.nr_replicas,
 				      watermark,
-				      write_flags);
+				      write_flags,
+				      NULL);
 	ret = PTR_ERR_OR_ZERO(req);
 	if (ret)
 		goto err;
 
-	ret = bch2_btree_reserve_get(trans, as, nr_nodes, req, NULL);
-	if (bch2_err_matches(ret, ENOSPC) ||
+	ret = bch2_btree_reserve_get(trans, as, nr_nodes, req);
+	if (bch2_err_matches(ret, EAGAIN) ||
 	    bch2_err_matches(ret, ENOMEM)) {
 		/*
 		 * XXX: this should probably be a separate BTREE_INSERT_NONBLOCK
@@ -1343,9 +1342,10 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 		}
 
 		CLASS(closure_stack, cl)();
+		req->cl = &cl;
 
 		do {
-			ret = bch2_btree_reserve_get(trans, as, nr_nodes, req, &cl);
+			ret = bch2_btree_reserve_get(trans, as, nr_nodes, req);
 			if (!bch2_err_matches(ret, BCH_ERR_operation_blocked))
 				break;
 			bch2_trans_unlock(trans);
