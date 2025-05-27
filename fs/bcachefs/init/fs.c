@@ -373,6 +373,12 @@ void bch2_fs_read_only(struct bch_fs *c)
 	    test_bit(BCH_FS_started, &c->flags) &&
 	    test_bit(BCH_FS_clean_shutdown, &c->flags) &&
 	    c->recovery.pass_done >= BCH_RECOVERY_PASS_journal_replay) {
+		/*
+		 * If we error out partway through journal replay, do we
+		 * accidentally mark the fs as clean?
+		 *
+		 * Can we verify directly that the journal is empty?
+		 */
 		BUG_ON(c->journal.last_empty_seq != journal_cur_seq(&c->journal));
 		BUG_ON(!c->sb.clean);
 		BUG_ON(atomic_long_read(&c->btree_cache.nr_dirty));

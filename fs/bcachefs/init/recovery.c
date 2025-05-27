@@ -621,6 +621,7 @@ static int __bch2_fs_recovery(struct bch_fs *c)
 
 		try(bch2_sb_journal_sort(c));
 	} else {
+		clear_bit(BCH_FS_clean_shutdown, &c->flags);
 		bch_info(c, "recovering from unclean shutdown");
 	}
 
