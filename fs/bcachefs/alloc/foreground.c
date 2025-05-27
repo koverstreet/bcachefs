@@ -685,6 +685,12 @@ static int add_new_bucket(struct bch_fs *c,
 {
 	unsigned durability = ob_dev(c, ob)->mi.durability;
 
+	BUG_ON(!test_bit(ob->dev, req->devs_may_alloc.d));
+	struct open_bucket *ob2;
+	unsigned i;
+	open_bucket_for_each(c, &req->ptrs, ob2, i)
+		BUG_ON(ob2->dev == ob->dev);
+
 	BUG_ON(req->nr_effective >= req->nr_replicas);
 
 	__clear_bit(ob->dev, req->devs_may_alloc.d);
