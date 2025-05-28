@@ -229,6 +229,7 @@ struct btree_node_iter {
 	x(snapshot_field)			\
 	x(all_snapshots)			\
 	x(filter_snapshots)			\
+	x(nofilter_whiteouts)			\
 	x(nopreserve)				\
 	x(cached_nofill)			\
 	x(key_cache_fill)			\
