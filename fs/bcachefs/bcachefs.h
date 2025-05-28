@@ -425,6 +425,7 @@ struct io_count {
 	x(fs_journal_alloc)				\
 	x(fs_resize_on_mount)				\
 	x(sb_journal_sort)				\
+	x(probe_data_type)				\
 	x(btree_node_read)				\
 	x(btree_node_read_all_replicas)			\
 	x(btree_node_scrub)				\
