@@ -24,9 +24,54 @@
 #include "reflink.h"
 #include "replicas.h"
 #include "subvolume.h"
+#include "super-io.h"
 #include "trace.h"
 
 #include <linux/preempt.h>
+
+static int probe_data_type(struct bch_dev *ca, u64 bucket)
+{
+	if (bch2_is_superblock_bucket(ca, bucket))
+		return BCH_DATA_sb;
+
+	struct bch_fs *c = ca->fs;
+	int ret = 0;
+
+	if (!enumerated_ref_tryget(&ca->io_ref[READ], BCH_DEV_READ_REF_probe_data_type)) {
+		bch_err(ca, "%s(): device not online", __func__);
+		return -EIO;
+	}
+
+	void *data_buf __free(kvfree) = kvmalloc(block_bytes(c), GFP_KERNEL);
+	if (!data_buf) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	struct bio *bio = bio_alloc(ca->disk_sb.bdev, buf_pages(data_buf, block_bytes(c)),
+				    REQ_OP_READ, GFP_KERNEL);
+
+	bio->bi_iter.bi_sector = bucket_to_sector(ca, bucket);
+	bch2_bio_map(bio, data_buf, block_bytes(c));
+	ret = submit_bio_wait(bio);
+	if (ret)
+		goto err_put;
+
+	struct jset *j = data_buf;
+
+	if (j->magic == cpu_to_le64(jset_magic(c)))
+		ret = BCH_DATA_journal;
+
+	if (j->magic == cpu_to_le64(bset_magic(c)))
+		ret = BCH_DATA_btree;
+
+	ret = BCH_DATA_free;
+err_put:
+	bio_put(bio);
+err:
+	enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_probe_data_type);
+	return ret;
+}
 
 void bch2_dev_usage_read_fast(struct bch_dev *ca, struct bch_dev_usage *usage)
 {
@@ -999,12 +1044,21 @@ static int bch2_mark_metadata_bucket(struct btree_trans *trans, struct bch_dev *
 	bucket_lock(g);
 	struct bch_alloc_v4 old = bucket_m_to_alloc(*g);
 
-	if (bch2_fs_inconsistent_on(g->data_type &&
-			g->data_type != data_type, c,
-			"different types of data in same bucket: %s, %s",
-			bch2_data_type_str(g->data_type),
-			bch2_data_type_str(data_type)))
-		goto err_unlock;
+	if (g->dataa_type && g->data_type != data_type) {
+		ret = probe_data_type(ca, b);
+		if (ret < 0) {
+			bucket_unlock(g);
+			return ret;
+		}
+
+		if (bch2_fs_inconsistent(c,
+					 "different types of data in same bucket: %s, %s",
+					 bch2_data_type_str(g->data_type),
+					 bch2_data_type_str(data_type))) {
+
+			goto err_unlock;
+		}
+	}
 
 	if (bch2_fs_inconsistent_on((u64) g->dirty_sectors + sectors > ca->mi.bucket_size, c,
 			"bucket %u:%llu gen %u data type %s sector count overflow: %u + %u > bucket size",
