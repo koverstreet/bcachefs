@@ -325,6 +325,7 @@ static noinline int btree_key_cache_fill(struct btree_trans *trans,
 
 	CLASS(btree_iter, iter)(trans, ck_path->btree_id, ck_path->pos,
 				BTREE_ITER_intent|
+				BTREE_ITER_nofilter_whiteouts|
 				BTREE_ITER_key_cache_fill|
 				BTREE_ITER_cached_nofill);
 	iter.flags &= ~BTREE_ITER_with_journal;

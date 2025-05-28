@@ -2451,7 +2451,7 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 			}
 
 			if (bkey_whiteout(k.k) &&
-			    !(iter->flags & BTREE_ITER_key_cache_fill)) {
+			    !(iter->flags & BTREE_ITER_nofilter_whiteouts)) {
 				search_key = bkey_successor(iter, k.k->p);
 				continue;
 			}
@@ -2867,7 +2867,7 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 
 		if (unlikely(k.k->type == KEY_TYPE_whiteout &&
 			     (iter->flags & BTREE_ITER_filter_snapshots) &&
-			     !(iter->flags & BTREE_ITER_key_cache_fill)))
+			     !(iter->flags & BTREE_ITER_nofilter_whiteouts)))
 			iter->k.type = KEY_TYPE_deleted;
 	} else {
 		struct bpos next;
