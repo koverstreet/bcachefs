@@ -1052,6 +1052,20 @@ fsck_err:
 	return ret;
 }
 
+static int snapshot_list_add_merge_sibs(struct bch_fs *c, snapshot_id_list *s, u32 id)
+{
+	u32 sib, *sibp;
+
+	while ((sib = bch2_snapshot_sibling(c, id)) &&
+	       (sibp = darray_find(*s, sib))) {
+		*sibp = darray_pop(s);
+		id = bch2_snapshot_parent(c, id);
+		BUG_ON(!id);
+	}
+
+	return snapshot_list_add(c, s, id);
+}
+
 int __bch2_get_snapshot_overwrites(struct btree_trans *trans,
 				   enum btree_id btree, struct bpos pos,
 				   snapshot_id_list *s)
@@ -1069,7 +1083,7 @@ int __bch2_get_snapshot_overwrites(struct btree_trans *trans,
 		    snapshot_list_has_ancestor(c, s, k.k->p.snapshot))
 			continue;
 
-		ret = snapshot_list_add(c, s, k.k->p.snapshot);
+		ret = snapshot_list_add_merge_sibs(c, s, k.k->p.snapshot);
 		if (ret)
 			break;
 	}
