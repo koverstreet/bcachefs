@@ -99,6 +99,25 @@ static inline u32 bch2_snapshot_parent(struct bch_fs *c, u32 id)
 	return __bch2_snapshot_parent(rcu_dereference(c->snapshots), id);
 }
 
+static inline u32 bch2_snapshot_sibling(struct bch_fs *c, u32 id)
+{
+	guard(rcu)();
+	struct snapshot_table *t = rcu_dereference(c->snapshots);
+	if (!t)
+		return 0;
+
+	const struct snapshot_t *s = __snapshot_t(t, id);
+	u32 parent = s ? s->parent : 0;
+	if (!parent)
+		return 0;
+
+	s = __snapshot_t(t, parent);
+	if (!s)
+		return 0;
+
+	return s->children[id == s->children[0]];
+}
+
 static inline u32 bch2_snapshot_nth_parent(struct bch_fs *c, u32 id, u32 n)
 {
 	guard(rcu)();
