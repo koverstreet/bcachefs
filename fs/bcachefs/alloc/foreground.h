@@ -26,9 +26,12 @@ struct dev_alloc_list {
 };
 
 struct alloc_request {
+	struct closure		*cl;
 	unsigned		nr_replicas;
 	unsigned		target;
-	bool			ec;
+	bool			ec:1;
+	bool			will_retry_target_devices:1;
+	bool			will_retry_all_devices:1;
 	enum bch_watermark	watermark;
 	enum bch_write_flags	flags;
 	enum bch_data_type	data_type;
@@ -219,7 +222,7 @@ static inline bool bch2_bucket_is_open_safe(struct bch_fs *c, unsigned dev, u64 
 
 enum bch_write_flags;
 int bch2_bucket_alloc_set_trans(struct btree_trans *, struct alloc_request *,
-				struct dev_stripe_state *, struct closure *);
+				struct dev_stripe_state *);
 
 int bch2_alloc_sectors_start_trans(struct btree_trans *,
 				   unsigned, unsigned,

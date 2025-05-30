@@ -1620,8 +1620,7 @@ err:
 
 static int new_stripe_alloc_buckets(struct btree_trans *trans,
 				    struct alloc_request *req,
-				    struct ec_stripe_head *h, struct ec_stripe_new *s,
-				    struct closure *cl)
+				    struct ec_stripe_head *h, struct ec_stripe_new *s)
 {
 	struct bch_fs *c = trans->c;
 	struct open_bucket *ob;
@@ -1671,7 +1670,7 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 		req->nr_effective	= nr_have_parity;
 		req->data_type		= BCH_DATA_parity;
 
-		ret = bch2_bucket_alloc_set_trans(trans, req, &h->parity_stripe, cl);
+		ret = bch2_bucket_alloc_set_trans(trans, req, &h->parity_stripe);
 
 		open_bucket_for_each(c, &req->ptrs, ob, i) {
 			j = find_next_zero_bit(s->blocks_gotten,
@@ -1694,7 +1693,7 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 		req->nr_effective	= nr_have_data;
 		req->data_type		= BCH_DATA_user;
 
-		ret = bch2_bucket_alloc_set_trans(trans, req, &h->block_stripe, cl);
+		ret = bch2_bucket_alloc_set_trans(trans, req, &h->block_stripe);
 
 		open_bucket_for_each(c, &req->ptrs, ob, i) {
 			j = find_next_zero_bit(s->blocks_gotten,
@@ -1817,7 +1816,7 @@ static int __bch2_ec_stripe_head_reuse(struct btree_trans *trans, struct ec_stri
 			break;
 	}
 	if (!ret)
-		ret = bch_err_throw(c, stripe_alloc_blocked);
+		return bch_err_throw(c, stripe_alloc_blocked);
 	if (ret == 1)
 		ret = 0;
 	if (ret)
@@ -1877,8 +1876,7 @@ static int __bch2_ec_stripe_head_reserve(struct btree_trans *trans, struct ec_st
 
 struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 					       struct alloc_request *req,
-					       unsigned algo,
-					       struct closure *cl)
+					       unsigned algo)
 {
 	struct bch_fs *c = trans->c;
 	unsigned redundancy = req->nr_replicas - 1;
@@ -1920,12 +1918,18 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 	if (s->have_existing_stripe)
 		goto alloc_existing;
 
+
 	/* First, try to allocate a full stripe: */
 	enum bch_watermark saved_watermark = BCH_WATERMARK_stripe;
-	swap(req->watermark, saved_watermark);
-	ret =   new_stripe_alloc_buckets(trans, req, h, s, NULL) ?:
+	unsigned saved_flags = req->flags | BCH_WRITE_alloc_nowait;
+	swap(req->watermark,	saved_watermark);
+	swap(req->flags,	saved_flags);
+
+	ret =   new_stripe_alloc_buckets(trans, req, h, s) ?:
 		__bch2_ec_stripe_head_reserve(trans, h, s);
-	swap(req->watermark, saved_watermark);
+
+	swap(req->watermark,	saved_watermark);
+	swap(req->flags,	saved_flags);
 
 	if (!ret)
 		goto allocate_buf;
@@ -1941,19 +1945,25 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 		ret = __bch2_ec_stripe_head_reuse(trans, h, s);
 		if (!ret)
 			break;
-		if (waiting || !cl || ret != -BCH_ERR_stripe_alloc_blocked)
+		if (waiting ||
+		    (req->flags & BCH_WRITE_alloc_nowait) ||
+		    ret != -BCH_ERR_stripe_alloc_blocked)
 			goto err;
 
 		if (req->watermark == BCH_WATERMARK_copygc) {
-			ret =   new_stripe_alloc_buckets(trans, req, h, s, NULL) ?:
+			/* Don't self-deadlock copygc */
+			swap(req->flags, saved_flags);
+			ret =   new_stripe_alloc_buckets(trans, req, h, s) ?:
 				__bch2_ec_stripe_head_reserve(trans, h, s);
+			swap(req->flags, saved_flags);
+
 			if (ret)
 				goto err;
 			goto allocate_buf;
 		}
 
 		/* XXX freelist_wait? */
-		closure_wait(&c->freelist_wait, cl);
+		closure_wait(&c->freelist_wait, req->cl);
 		waiting = true;
 	}
 
@@ -1964,7 +1974,7 @@ alloc_existing:
 	 * Retry allocating buckets, with the watermark for this
 	 * particular write:
 	 */
-	ret = new_stripe_alloc_buckets(trans, req, h, s, cl);
+	ret = new_stripe_alloc_buckets(trans, req, h, s);
 	if (ret)
 		goto err;
 
