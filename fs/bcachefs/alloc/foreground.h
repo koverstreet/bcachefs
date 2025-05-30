@@ -27,9 +27,12 @@ struct dev_alloc_list {
 };
 
 struct alloc_request {
+	struct closure		*cl;
 	unsigned		nr_replicas;
 	unsigned		target;
-	bool			ec;
+	bool			ec:1;
+	bool			will_retry_target_devices:1;
+	bool			will_retry_all_devices:1;
 	enum bch_watermark	watermark;
 	enum bch_write_flags	flags;
 	enum bch_data_type	data_type;
@@ -220,11 +223,11 @@ static inline bool bch2_bucket_is_open_safe(struct bch_fs *c, unsigned dev, u64 
 
 enum bch_write_flags;
 int bch2_bucket_alloc_set_trans(struct btree_trans *, struct alloc_request *,
-				struct dev_stripe_state *, struct closure *);
+				struct dev_stripe_state *);
 
 int bch2_alloc_sectors_req(struct btree_trans *, struct alloc_request *,
 			   struct write_point_specifier,
-			   struct closure *, struct write_point **);
+			   struct write_point **);
 
 static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
 						      unsigned target,
@@ -232,7 +235,8 @@ static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
 						      struct bch_devs_list *devs_have,
 						      unsigned nr_replicas,
 						      enum bch_watermark watermark,
-						      enum bch_write_flags flags)
+						      enum bch_write_flags flags,
+						      struct closure *cl)
 {
 	struct alloc_request *req = bch2_trans_kmalloc_nomemzero(trans, sizeof(*req));
 	if (IS_ERR(req))
@@ -244,6 +248,7 @@ static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
 	if (nr_replicas < 2)
 		erasure_code = false;
 
+	req->cl			= cl;
 	req->nr_replicas	= nr_replicas;
 	req->target		= target;
 	req->ec			= erasure_code;
@@ -266,8 +271,8 @@ static inline int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
 {
 	struct alloc_request *req = errptr_try(alloc_request_get(trans, target, erasure_code,
 								 devs_have, nr_replicas,
-								 watermark, flags));
-	return bch2_alloc_sectors_req(trans, req, write_point, cl, wp_ret);
+								 watermark, flags, cl));
+	return bch2_alloc_sectors_req(trans, req, write_point, wp_ret);
 }
 
 static inline struct hlist_head *writepoint_hash(struct bch_fs *c,
