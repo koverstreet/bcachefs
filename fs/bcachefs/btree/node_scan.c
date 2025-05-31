@@ -83,22 +83,53 @@ static int found_btree_node_cmp_cookie(const void *_l, const void *_r)
  * Given two found btree nodes, if their sequence numbers are equal, take the
  * one that's readable:
  */
-static int found_btree_node_cmp_time(const struct found_btree_node *l,
-				     const struct found_btree_node *r)
+static int found_btree_node_cmp_time(struct bch_fs *c,
+				     struct found_btree_node *l,
+				     struct found_btree_node *r)
 {
-	return  cmp_int(l->seq, r->seq) ?:
-		cmp_int(l->journal_seq, r->journal_seq);
+	int cmp1 = l->journal_seq && r->journal_seq
+		? cmp_int(l->journal_seq, r->journal_seq)
+		: 0;
+	int cmp2 = cmp_int(l->seq, r->seq);
+	int cmp = cmp1 ?: cmp2;
+
+	if (!cmp || (cmp1 && cmp2 && cmp1 != cmp2)) {
+		struct printbuf buf = PRINTBUF;
+		bch2_log_msg_start(c, &buf);
+
+		if (cmp)
+			prt_printf(&buf, "found btree nodes in scan where seq, journal seq disagree on node age\n");
+		else
+			prt_printf(&buf, "found btree nodes where we don't know which is newer\n");
+		found_btree_node_to_text(&buf, c, l);
+		found_btree_node_to_text(&buf, c, r);
+
+		bch2_print_str(c, KERN_ERR, buf.buf);
+		printbuf_exit(&buf);
+	}
+
+	return cmp;
+}
+
+static int found_btree_node_cmp_time_nowarn(const struct found_btree_node *l,
+					    const struct found_btree_node *r)
+{
+	int cmp1 = l->journal_seq && r->journal_seq
+		? cmp_int(l->journal_seq, r->journal_seq)
+		: 0;
+	int cmp2 = cmp_int(l->seq, r->seq);
+	return cmp1 ?: cmp2;
 }
 
 static int found_btree_node_cmp_pos(const void *_l, const void *_r)
 {
-	const struct found_btree_node *l = _l;
-	const struct found_btree_node *r = _r;
+	const struct found_btree_node *l = (void *) _l;
+	const struct found_btree_node *r = (void *) _r;
 
 	return  cmp_int(l->btree_id,	r->btree_id) ?:
 	       -cmp_int(l->level,	r->level) ?:
 		bpos_cmp(l->min_key,	r->min_key) ?:
-	       -found_btree_node_cmp_time(l, r);
+	       -found_btree_node_cmp_time_nowarn(l, r);
 }
 
 static inline bool found_btree_node_cmp_pos_less(const void *l, const void *r, void *arg)
@@ -336,7 +367,7 @@ static int handle_overwrites(struct bch_fs *c,
 
 	while ((r = min_heap_peek(nodes_heap)) &&
 	       nodes_overlap(l, r)) {
-		int cmp = found_btree_node_cmp_time(l, r);
+		int cmp = found_btree_node_cmp_time(c, l, r);
 
 		if (cmp > 0) {
 			if (bpos_cmp(l->max_key, r->max_key) >= 0)
