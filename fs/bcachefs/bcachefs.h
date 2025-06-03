@@ -1285,7 +1285,7 @@ static inline bool bch2_discard_opt_enabled(struct bch_fs *c, struct bch_dev *ca
 
 static inline bool bch2_fs_casefold_enabled(struct bch_fs *c)
 {
-#ifdef CONFIG_UNICODE
+#if IS_ENABLED(CONFIG_UNICODE)
 	return !c->opts.casefold_disabled;
 #else
 	return false;

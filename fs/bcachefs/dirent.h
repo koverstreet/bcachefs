@@ -23,7 +23,7 @@ struct bch_fs;
 struct bch_hash_info;
 struct bch_inode_info;
 
-#ifdef CONFIG_UNICODE
+#if IS_ENABLED(CONFIG_UNICODE)
 int bch2_casefold(struct btree_trans *, const struct bch_hash_info *,
 		  const struct qstr *, struct qstr *);
 #else
