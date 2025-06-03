@@ -2563,7 +2563,7 @@ got_sb:
 
 	sb->s_shrink->seeks = 0;
 
-#ifdef CONFIG_UNICODE
+#if IS_ENABLED(CONFIG_UNICODE)
 	if (bch2_fs_casefold_enabled(c))
 		sb->s_encoding = c->cf_encoding;
 	generic_set_sb_d_ops(sb);
