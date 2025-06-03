@@ -1265,7 +1265,7 @@ int bch2_inode_set_casefold(struct btree_trans *trans, subvol_inum inum,
 {
 	struct bch_fs *c = trans->c;
 
-#ifndef CONFIG_UNICODE
+#if !IS_ENABLED(CONFIG_UNICODE)
 	bch_err(c, "Cannot use casefolding on a kernel without CONFIG_UNICODE");
 	return -EOPNOTSUPP;
 #endif

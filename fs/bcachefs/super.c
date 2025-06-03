@@ -585,7 +585,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 	for (unsigned i = 0; i < BCH_TIME_STAT_NR; i++)
 		bch2_time_stats_exit(&c->times[i]);
 
-#ifdef CONFIG_UNICODE
+#if IS_ENABLED(CONFIG_UNICODE)
 	utf8_unload(c->cf_encoding);
 #endif
 
@@ -1024,7 +1024,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 			goto err;
 	}
 
-#ifdef CONFIG_UNICODE
+#if IS_ENABLED(CONFIG_UNICODE)
 	if (bch2_fs_casefold_enabled(c)) {
 		/* Default encoding until we can potentially have more as an option. */
 		c->cf_encoding = utf8_load(BCH_FS_DEFAULT_UTF8_ENCODING);
