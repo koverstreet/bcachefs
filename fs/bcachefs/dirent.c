@@ -13,7 +13,7 @@
 
 #include <linux/dcache.h>
 
-#ifdef CONFIG_UNICODE
+#if IS_ENABLED(CONFIG_UNICODE)
 int bch2_casefold(struct btree_trans *trans, const struct bch_hash_info *info,
 		  const struct qstr *str, struct qstr *out_cf)
 {
@@ -256,7 +256,7 @@ int bch2_dirent_init_name(struct bch_fs *c,
 		if (!bch2_fs_casefold_enabled(c))
 			return -EOPNOTSUPP;
 
-#ifdef CONFIG_UNICODE
+#if IS_ENABLED(CONFIG_UNICODE)
 		memcpy(&dirent->v.d_cf_name_block.d_names[0], name->name, name->len);
 
 		char *cf_out = &dirent->v.d_cf_name_block.d_names[name->len];
