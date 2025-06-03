@@ -18,7 +18,7 @@ int bch2_casefold(struct btree_trans *trans, const struct bch_hash_info *info,
 {
 	*out_cf = (struct qstr) QSTR_INIT(NULL, 0);
 
-#ifdef CONFIG_UNICODE
+#if IS_ENABLED(CONFIG_UNICODE)
 	unsigned char *buf = bch2_trans_kmalloc(trans, BCH_NAME_MAX + 1);
 	int ret = PTR_ERR_OR_ZERO(buf);
 	if (ret)
