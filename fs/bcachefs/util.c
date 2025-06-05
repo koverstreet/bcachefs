@@ -617,17 +617,10 @@ void bch2_pd_controller_debug_to_text(struct printbuf *out, struct bch_pd_contro
 
 void bch2_bio_map(struct bio *bio, void *base, size_t size)
 {
-	while (size) {
-		struct page *page = is_vmalloc_addr(base)
-				? vmalloc_to_page(base)
-				: virt_to_page(base);
-		unsigned offset = offset_in_page(base);
-		unsigned len = min_t(size_t, PAGE_SIZE - offset, size);
-
-		BUG_ON(!bio_add_page(bio, page, len, offset));
-		size -= len;
-		base += len;
-	}
+	if (is_vmalloc_addr(base))
+		bio_add_vmalloc(bio, base, size);
+	else
+		bio_add_virt_nofail(bio, base, size);
 }
 
 int bch2_bio_alloc_pages(struct bio *bio, size_t size, gfp_t gfp_mask)
