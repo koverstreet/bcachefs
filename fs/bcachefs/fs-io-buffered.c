@@ -145,7 +145,7 @@ static int readpage_bio_extend(struct btree_trans *trans,
 
 		BUG_ON(folio_sector(folio) != bio_end_sector(bio));
 
-		BUG_ON(!bio_add_folio(bio, folio, folio_size(folio), 0));
+		bio_add_folio_nofail(bio, folio, folio_size(folio), 0);
 	}
 
 	return bch2_trans_relock(trans);
@@ -311,7 +311,7 @@ void bch2_readahead(struct readahead_control *ractl)
 		readpage_iter_advance(&readpages_iter);
 
 		rbio->bio.bi_iter.bi_sector = folio_sector(folio);
-		BUG_ON(!bio_add_folio(&rbio->bio, folio, folio_size(folio), 0));
+		bio_add_folio_nofail(&rbio->bio, folio, folio_size(folio), 0);
 
 		bchfs_read(trans, rbio, inode_inum(inode),
 			   &readpages_iter);
@@ -354,7 +354,7 @@ int bch2_read_single_folio(struct folio *folio, struct address_space *mapping)
 	rbio->bio.bi_private = &done;
 	rbio->bio.bi_opf = REQ_OP_READ|REQ_SYNC;
 	rbio->bio.bi_iter.bi_sector = folio_sector(folio);
-	BUG_ON(!bio_add_folio(&rbio->bio, folio, folio_size(folio), 0));
+	bio_add_folio_nofail(&rbio->bio, folio, folio_size(folio), 0);
 
 	blk_start_plug(&plug);
 	bch2_trans_run(c, (bchfs_read(trans, rbio, inode_inum(inode), NULL), 0));
@@ -639,8 +639,8 @@ do_io:
 		atomic_inc(&s->write_count);
 
 		BUG_ON(inode != w->io->inode);
-		BUG_ON(!bio_add_folio(&w->io->op.wbio.bio, folio,
-				     sectors << 9, offset << 9));
+		bio_add_folio_nofail(&w->io->op.wbio.bio, folio,
+				     sectors << 9, offset << 9);
 
 		w->io->op.res.sectors += reserved_sectors;
 		w->io->op.i_sectors_delta -= dirty_sectors;
