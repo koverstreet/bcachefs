@@ -626,8 +626,9 @@ static void __bch2_write_index(struct bch_write_op *op)
 	runtime = current->se.sum_exec_runtime - runtime;
 
 	time_stats_update(&c->times[BCH_TIME_data_write_btree_update], now);
-
 	__time_stats_update(&c->times[BCH_TIME_data_write_btree_update_runtime], now - runtime, now);
+
+	/* how about we re-verify checksums here */
 out:
 	/* If some a bucket wasn't written, we can't erasure code it: */
 	for_each_set_bit(dev, op->failed.d, BCH_SB_MEMBERS_MAX)

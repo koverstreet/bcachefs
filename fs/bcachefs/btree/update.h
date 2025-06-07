@@ -235,6 +235,10 @@ static inline int __must_check bch2_trans_update_buffered(struct btree_trans *tr
 	 * But accounting updates don't overwrite, they're deltas, and they have
 	 * to be flushed to the btree strictly in order for journal replay to be
 	 * able to tell which updates need to be applied:
+	 *
+	 * XXX
+	 *
+	 * kill this, it causes deadlocks when we have to do too many rewrites
 	 */
 	if (k->k.type != KEY_TYPE_accounting &&
 	    unlikely(trans->journal_replay_not_finished))
