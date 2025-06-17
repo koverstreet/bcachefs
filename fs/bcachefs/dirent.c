@@ -19,11 +19,12 @@ int bch2_casefold(struct btree_trans *trans, const struct bch_hash_info *info,
 {
 	*out_cf = (struct qstr) QSTR_INIT(NULL, 0);
 
-	if (!bch2_fs_casefold_enabled(trans->c))
-		return -EOPNOTSUPP;
+	int ret = bch2_fs_casefold_enabled(trans->c);
+	if (ret)
+		return ret;
 
 	unsigned char *buf = bch2_trans_kmalloc(trans, BCH_NAME_MAX + 1);
-	int ret = PTR_ERR_OR_ZERO(buf);
+	ret = PTR_ERR_OR_ZERO(buf);
 	if (ret)
 		return ret;
 
@@ -253,8 +254,9 @@ int bch2_dirent_init_name(struct bch_fs *c,
 		       offsetof(struct bch_dirent, d_name) -
 		       name->len);
 	} else {
-		if (!bch2_fs_casefold_enabled(c))
-			return -EOPNOTSUPP;
+		int ret = bch2_fs_casefold_enabled(c);
+		if (ret)
+			return ret;
 
 #if IS_ENABLED(CONFIG_UNICODE)
 		memcpy(&dirent->v.d_cf_name_block.d_names[0], name->name, name->len);
