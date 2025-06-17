@@ -1283,13 +1283,13 @@ static inline bool bch2_discard_opt_enabled(struct bch_fs *c, struct bch_dev *ca
 		: ca->mi.discard;
 }
 
-static inline bool bch2_fs_casefold_enabled(struct bch_fs *c)
+static inline int bch2_fs_casefold_enabled(struct bch_fs *c)
 {
-#if IS_ENABLED(CONFIG_UNICODE)
-	return !c->opts.casefold_disabled;
-#else
-	return false;
-#endif
+	if (!IS_ENABLED(CONFIG_UNICODE))
+		return bch_err_throw(c, no_casefolding_without_utf8);
+	if (!c->opts.casefold_disabled)
+		return bch_err_throw(c, casefolding_disabled);
+	return 0;
 }
 
 #endif /* _BCACHEFS_H */
