@@ -10,41 +10,27 @@ static const unsigned __bch2_compression_opt_to_type[] = {
 #undef x
 };
 
-struct bch_compression_opt {
-	u8		type:4,
-			level:4;
-};
-
-static inline struct bch_compression_opt __bch2_compression_decode(unsigned v)
-{
-	return (struct bch_compression_opt) {
-		.type	= v & 15,
-		.level	= v >> 4,
+union bch_compression_opt {
+	u8 value;
+	struct {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+		u8 type:4, level:4;
+#elif defined(__BIG_ENDIAN_BITFIELD)
+		u8 level:4, type:4;
+#endif
 	};
-}
+};
 
 static inline bool bch2_compression_opt_valid(unsigned v)
 {
-	struct bch_compression_opt opt = __bch2_compression_decode(v);
+	union bch_compression_opt opt = { .value = v };
 
 	return opt.type < ARRAY_SIZE(__bch2_compression_opt_to_type) && !(!opt.type && opt.level);
 }
 
-static inline struct bch_compression_opt bch2_compression_decode(unsigned v)
-{
-	return bch2_compression_opt_valid(v)
-		? __bch2_compression_decode(v)
-		: (struct bch_compression_opt) { 0 };
-}
-
-static inline unsigned bch2_compression_encode(struct bch_compression_opt opt)
-{
-	return opt.type|(opt.level << 4);
-}
-
 static inline enum bch_compression_type bch2_compression_opt_to_type(unsigned v)
 {
-	return __bch2_compression_opt_to_type[bch2_compression_decode(v).type];
+	return __bch2_compression_opt_to_type[((union bch_compression_opt){ .value = v }).type];
 }
 
 struct bch_write_op;
