@@ -1025,7 +1025,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 	}
 
 #if IS_ENABLED(CONFIG_UNICODE)
-	if (bch2_fs_casefold_enabled(c)) {
+	if (!bch2_fs_casefold_enabled(c)) {
 		/* Default encoding until we can potentially have more as an option. */
 		c->cf_encoding = utf8_load(BCH_FS_DEFAULT_UTF8_ENCODING);
 		if (IS_ERR(c->cf_encoding)) {
