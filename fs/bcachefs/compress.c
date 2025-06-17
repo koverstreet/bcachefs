@@ -336,7 +336,7 @@ static int attempt_compress(struct bch_fs *c,
 			    void *workspace,
 			    void *dst, size_t dst_len,
 			    void *src, size_t src_len,
-			    struct bch_compression_opt compression)
+			    union bch_compression_opt compression)
 {
 	enum bch_compression_type compression_type =
 		__bch2_compression_opt_to_type[compression.type];
@@ -426,7 +426,7 @@ static int attempt_compress(struct bch_fs *c,
 static unsigned __bio_compress(struct bch_fs *c,
 			       struct bio *dst, size_t *dst_len,
 			       struct bio *src, size_t *src_len,
-			       struct bch_compression_opt compression)
+			       union bch_compression_opt compression)
 {
 	struct bbuf src_data = { NULL }, dst_data = { NULL };
 	void *workspace;
@@ -553,7 +553,7 @@ unsigned bch2_bio_compress(struct bch_fs *c,
 
 	compression_type =
 		__bio_compress(c, dst, dst_len, src, src_len,
-			       bch2_compression_decode(compression_opt));
+			       (union bch_compression_opt){ .value = compression_opt });
 
 	dst->bi_iter.bi_size = orig_dst;
 	src->bi_iter.bi_size = orig_src;
@@ -602,7 +602,8 @@ static int __bch2_check_set_has_compressed_data(struct bch_fs *c, u64 f)
 int bch2_check_set_has_compressed_data(struct bch_fs *c,
 				       unsigned compression_opt)
 {
-	unsigned compression_type = bch2_compression_decode(compression_opt).type;
+	unsigned int compression_type = ((union bch_compression_opt){ .value = compression_opt })
+					.type;
 
 	BUG_ON(compression_type >= ARRAY_SIZE(bch2_compression_opt_to_feature));
 
@@ -683,7 +684,7 @@ static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
 
 static u64 compression_opt_to_feature(unsigned v)
 {
-	unsigned type = bch2_compression_decode(v).type;
+	unsigned int type = ((union bch_compression_opt){ .value = v }).type;
 
 	return BIT_ULL(bch2_compression_opt_to_feature[type]);
 }
@@ -703,7 +704,7 @@ int bch2_opt_compression_parse(struct bch_fs *c, const char *_val, u64 *res,
 {
 	char *val = kstrdup(_val, GFP_KERNEL);
 	char *p = val, *type_str, *level_str;
-	struct bch_compression_opt opt = { 0 };
+	union bch_compression_opt opt = { 0 };
 	int ret;
 
 	if (!val)
@@ -736,7 +737,7 @@ int bch2_opt_compression_parse(struct bch_fs *c, const char *_val, u64 *res,
 		opt.level = level;
 	}
 
-	*res = bch2_compression_encode(opt);
+	*res = opt.value;
 err:
 	kfree(val);
 	return ret;
@@ -744,7 +745,7 @@ err:
 
 void bch2_compression_opt_to_text(struct printbuf *out, u64 v)
 {
-	struct bch_compression_opt opt = bch2_compression_decode(v);
+	union bch_compression_opt opt = { .value = v };
 
 	if (opt.type < BCH_COMPRESSION_OPT_NR)
 		prt_str(out, bch2_compression_opts[opt.type]);
