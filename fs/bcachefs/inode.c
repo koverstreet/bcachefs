@@ -1265,18 +1265,15 @@ int bch2_inode_set_casefold(struct btree_trans *trans, subvol_inum inum,
 {
 	struct bch_fs *c = trans->c;
 
-#if !IS_ENABLED(CONFIG_UNICODE)
-	bch_err(c, "Cannot use casefolding on a kernel without CONFIG_UNICODE");
-	return -EOPNOTSUPP;
-#endif
+	int ret = bch2_fs_casefold_enabled(c);
+	if (ret) {
+		bch_err_ratelimited(c, "Cannot enable casefolding: %s", bch2_err_str(ret));
+		return ret;
+	}
 
-	if (c->opts.casefold_disabled)
-		return -EOPNOTSUPP;
-
-	int ret = 0;
 	/* Not supported on individual files. */
 	if (!S_ISDIR(bi->bi_mode))
-		return -EOPNOTSUPP;
+		return bch_err_throw(c, casefold_opt_is_dir_only);
 
 	/*
 	 * Make sure the dir is empty, as otherwise we'd need to
