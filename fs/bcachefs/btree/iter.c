@@ -1652,13 +1652,16 @@ void bch2_trans_paths_to_text(struct printbuf *out, struct btree_trans *trans)
 }
 
 static noinline __cold
-void __bch2_dump_trans_paths_updates(struct btree_trans *trans, bool nosort)
+void __bch2_dump_trans_paths_updates(struct btree_trans *trans,
+				     bool paths, bool paths_nosort, bool updates)
 {
 	CLASS(printbuf, buf)();
 	bch2_log_msg_start(trans->c, &buf);
 
-	__bch2_trans_paths_to_text(&buf, trans, nosort);
-	bch2_trans_updates_to_text(&buf, trans);
+	if (paths)
+		__bch2_trans_paths_to_text(&buf, trans, paths_nosort);
+	if (updates)
+		bch2_trans_updates_to_text(&buf, trans);
 
 	bch2_print_str(trans->c, KERN_ERR, buf.buf);
 }
@@ -1666,7 +1669,13 @@ void __bch2_dump_trans_paths_updates(struct btree_trans *trans, bool nosort)
 noinline __cold
 void bch2_dump_trans_paths_updates(struct btree_trans *trans)
 {
-	__bch2_dump_trans_paths_updates(trans, false);
+	__bch2_dump_trans_paths_updates(trans, true, false, true);
+}
+
+noinline __cold
+void bch2_dump_trans_updates(struct btree_trans *trans)
+{
+	__bch2_dump_trans_paths_updates(trans, false, false, true);
 }
 
 noinline __cold
@@ -3091,7 +3100,7 @@ static void btree_trans_verify_sorted(struct btree_trans *trans)
 
 	trans_for_each_path_inorder(trans, path, iter) {
 		if (prev && btree_path_cmp(prev, path) > 0) {
-			__bch2_dump_trans_paths_updates(trans, true);
+			__bch2_dump_trans_paths_updates(trans, true, true, false);
 			panic("trans paths out of order!\n");
 		}
 		prev = path;
