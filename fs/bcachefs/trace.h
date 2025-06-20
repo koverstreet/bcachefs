@@ -1330,6 +1330,11 @@ DEFINE_EVENT(fs_str, data_update,
 	TP_ARGS(c, str)
 );
 
+DEFINE_EVENT(fs_str, data_update_done_no_rw_devs,
+	TP_PROTO(struct bch_fs *c, const char *str),
+	TP_ARGS(c, str)
+);
+
 DEFINE_EVENT(fs_str, io_move_pred,
 	TP_PROTO(struct bch_fs *c, const char *str),
 	TP_ARGS(c, str)
