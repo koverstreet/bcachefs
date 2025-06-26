@@ -1796,7 +1796,7 @@ void bch2_btree_node_read(struct btree_trans *trans, struct btree *b,
 	struct bio *bio;
 	int ret;
 
-	trace_and_count(c, btree_node_read, trans, b);
+	trace_btree_node(c, b, btree_node_read);
 
 	if (static_branch_unlikely(&bch2_verify_all_btree_replicas) &&
 	    !btree_node_read_all_replicas(c, b, sync))
@@ -2530,7 +2530,17 @@ do_write:
 	    c->opts.nochanges)
 		goto err;
 
-	trace_and_count(c, btree_node_write, b, bytes_to_write, sectors_to_write);
+	if (trace_btree_node_write_enabled()) {
+		CLASS(printbuf, buf)();
+		printbuf_indent_add(&buf, 2);
+		prt_printf(&buf, "offset %u sectors %u bytes %u\n",
+			   b->written,
+			   sectors_to_write,
+			   bytes_to_write);
+		bch2_btree_pos_to_text(&buf, c, b);
+		trace_btree_node_write(c, buf.buf);
+	}
+	count_event(c, btree_node_write);
 
 	wbio = container_of(bio_alloc_bioset(NULL,
 				buf_pages(data, sectors_to_write << 9),
