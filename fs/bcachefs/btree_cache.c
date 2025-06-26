@@ -440,7 +440,8 @@ retry_unlocked:
 	}
 
 	if (b->hash_val && !ret)
-		trace_and_count(c, btree_cache_reap, c, b);
+		trace_btree_node(c, b, btree_cache_reap);
+
 	return 0;
 }
 
