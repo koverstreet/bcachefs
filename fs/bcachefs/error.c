@@ -401,7 +401,8 @@ int bch2_fsck_err_opt(struct bch_fs *c,
 	if (!WARN_ON(err >= ARRAY_SIZE(fsck_flags_extra)))
 		flags |= fsck_flags_extra[err];
 
-	if (test_bit(BCH_FS_in_fsck, &c->flags)) {
+	if (test_bit(BCH_FS_in_fsck, &c->flags) ||
+	    test_bit(BCH_FS_in_recovery, &c->flags)) {
 		if (!(flags & (FSCK_CAN_FIX|FSCK_CAN_IGNORE)))
 			return bch_err_throw(c, fsck_repair_unimplemented);
 
