@@ -1018,6 +1018,7 @@ int bch2_inode_create(struct btree_trans *trans,
 
 	u64 start = le64_to_cpu(cursor->v.idx);
 	u64 pos = start;
+	u64 gen = 0;
 
 	bch2_trans_iter_init(trans, iter, BTREE_ID_inodes, POS(0, pos),
 			     BTREE_ITER_all_snapshots|
@@ -1029,6 +1030,12 @@ again:
 	       bkey_lt(k.k->p, POS(0, max))) {
 		if (pos < iter->pos.offset)
 			goto found_slot;
+
+		if (bch2_snapshot_is_ancestor(trans->c, snapshot, k.k->p.snapshot) &&
+		    k.k->type == KEY_TYPE_inode_generation) {
+			gen = le32_to_cpu(bkey_s_c_to_inode_generation(k).v->bi_generation);
+			goto found_slot;
+		}
 
 		/*
 		 * We don't need to iterate over keys in every snapshot once
@@ -1064,7 +1071,7 @@ found_slot:
 	}
 
 	inode_u->bi_inum	= k.k->p.offset;
-	inode_u->bi_generation	= le64_to_cpu(cursor->v.gen);
+	inode_u->bi_generation	= max(gen, le64_to_cpu(cursor->v.gen));
 	cursor->v.idx		= cpu_to_le64(k.k->p.offset + 1);
 	return 0;
 }
