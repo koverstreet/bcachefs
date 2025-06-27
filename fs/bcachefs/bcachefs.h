@@ -1287,7 +1287,7 @@ static inline int bch2_fs_casefold_enabled(struct bch_fs *c)
 {
 	if (!IS_ENABLED(CONFIG_UNICODE))
 		return bch_err_throw(c, no_casefolding_without_utf8);
-	if (!c->opts.casefold_disabled)
+	if (c->opts.casefold_disabled)
 		return bch_err_throw(c, casefolding_disabled);
 	return 0;
 }

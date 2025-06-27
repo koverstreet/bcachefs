@@ -1683,7 +1683,7 @@ __bch2_ec_stripe_head_get(struct btree_trans *trans,
 		return ERR_PTR(ret);
 
 	if (test_bit(BCH_FS_going_ro, &c->flags)) {
-		h = ERR_PTR(-BCH_ERR_erofs_no_writes);
+		h = ERR_PTR(bch_err_throw(c, erofs_no_writes));
 		goto err;
 	}
 
@@ -1702,7 +1702,7 @@ __bch2_ec_stripe_head_get(struct btree_trans *trans,
 
 	h = ec_new_stripe_head_alloc(c, disk_label, algo, redundancy, watermark);
 	if (!h) {
-		h = ERR_PTR(-BCH_ERR_ENOMEM_stripe_head_alloc);
+		h = ERR_PTR(bch_err_throw(c, ENOMEM_stripe_head_alloc));
 		goto err;
 	}
 found:
