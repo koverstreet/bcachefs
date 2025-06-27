@@ -1319,7 +1319,7 @@ static noinline int __bch2_inode_rm_snapshot(struct btree_trans *trans, u64 inum
 						      SPOS(inum, 0, snapshot),
 						      SPOS(inum, U64_MAX, snapshot),
 						      0, NULL);
-	} while (ret == -BCH_ERR_transaction_restart_nested);
+	} while (bch2_err_matches(ret, BCH_ERR_transaction_restart));
 	if (ret)
 		goto err;
 retry:
@@ -1357,7 +1357,7 @@ err:
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 
-	return ret ?: -BCH_ERR_transaction_restart_nested;
+	return ret ?: bch_err_throw(c, transaction_restart_nested);
 }
 
 /*

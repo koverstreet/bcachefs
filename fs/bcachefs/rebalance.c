@@ -220,7 +220,7 @@ int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 	return bch2_bkey_set_needs_rebalance(trans->c, io_opts, n) ?:
 		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node) ?:
 		bch2_trans_commit(trans, NULL, NULL, 0) ?:
-		-BCH_ERR_transaction_restart_nested;
+		bch_err_throw(trans->c, transaction_restart_nested);
 }
 
 #define REBALANCE_WORK_SCAN_OFFSET	(U64_MAX - 1)

@@ -167,7 +167,7 @@ static int bch2_indirect_extent_not_missing(struct btree_trans *trans, struct bk
 		return 0;
 
 	return bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
-		-BCH_ERR_transaction_restart_nested;
+		bch_err_throw(trans->c, transaction_restart_nested);
 }
 
 static int bch2_indirect_extent_missing_error(struct btree_trans *trans,
@@ -242,7 +242,7 @@ static int bch2_indirect_extent_missing_error(struct btree_trans *trans,
 
 		if (should_commit)
 			ret =   bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
-				-BCH_ERR_transaction_restart_nested;
+				bch_err_throw(c, transaction_restart_nested);
 	}
 err:
 fsck_err:
