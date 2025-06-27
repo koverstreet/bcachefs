@@ -70,7 +70,7 @@ static int check_subvol(struct btree_trans *trans,
 	if (BCH_SUBVOLUME_UNLINKED(subvol.v)) {
 		ret = bch2_subvolume_delete(trans, iter->pos.offset);
 		bch_err_msg(c, ret, "deleting subvolume %llu", iter->pos.offset);
-		return ret ?: -BCH_ERR_transaction_restart_nested;
+		return ret ?: bch_err_throw(c, transaction_restart_nested);
 	}
 
 	if (fsck_err_on(subvol.k->p.offset == BCACHEFS_ROOT_SUBVOL &&
@@ -310,7 +310,7 @@ int bch2_subvol_has_children(struct btree_trans *trans, u32 subvol)
 	bch2_trans_iter_exit(trans, &iter);
 
 	return bkey_err(k) ?: k.k && k.k->p.inode == subvol
-		? -BCH_ERR_ENOTEMPTY_subvol_not_empty
+		? bch_err_throw(trans->c, ENOTEMPTY_subvol_not_empty)
 		: 0;
 }
 

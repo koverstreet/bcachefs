@@ -1027,7 +1027,7 @@ fsck_err:
 
 	if (repairing_parents) {
 		return bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
-			-BCH_ERR_transaction_restart_nested;
+			bch_err_throw(trans->c, transaction_restart_nested);
 	}
 
 	return 0;
