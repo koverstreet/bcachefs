@@ -1573,6 +1573,44 @@ reconstruct:
 	goto out;
 }
 
+static int maybe_reconstruct_inum_btree(struct btree_trans *trans,
+					u64 inum, u32 snapshot,
+					enum btree_id btree)
+{
+	struct btree_iter iter;
+	struct bkey_s_c k;
+	int ret = 0;
+
+	for_each_btree_key_max_norestart(trans, iter, btree,
+					 SPOS(inum, 0, snapshot),
+					 POS(inum, U64_MAX),
+					 0, k, ret) {
+		ret = 1;
+		break;
+	}
+	bch2_trans_iter_exit(trans, &iter);
+
+	if (ret <= 0)
+		return ret;
+
+	if (fsck_err(trans, missing_inode_with_contents,
+		     "inode %llu:%u type %s missing, but contents found: reconstruct?",
+		     inum, snapshot,
+		     btree == BTREE_ID_extents ? "reg" : "dir"))
+		return  reconstruct_inode(trans, btree, snapshot, inum) ?:
+			bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
+			bch_err_throw(trans->c, transaction_restart_commit);
+fsck_err:
+	return ret;
+}
+
+static int maybe_reconstruct_inum(struct btree_trans *trans,
+				  u64 inum, u32 snapshot)
+{
+	return  maybe_reconstruct_inum_btree(trans, inum, snapshot, BTREE_ID_extents) ?:
+		maybe_reconstruct_inum_btree(trans, inum, snapshot, BTREE_ID_dirents);
+}
+
 static int check_i_sectors_notnested(struct btree_trans *trans, struct inode_walker *w)
 {
 	struct bch_fs *c = trans->c;
@@ -2344,6 +2382,13 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 		ret = get_visible_inodes(trans, target, s, le64_to_cpu(d.v->d_inum));
 		if (ret)
 			goto err;
+
+		if (!target->inodes.nr) {
+			ret = maybe_reconstruct_inum(trans, le64_to_cpu(d.v->d_inum),
+						     d.k->p.snapshot);
+			if (ret)
+				return ret;
+		}
 
 		if (fsck_err_on(!target->inodes.nr,
 				trans, dirent_to_missing_inode,
