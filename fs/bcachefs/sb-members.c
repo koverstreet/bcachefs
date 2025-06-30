@@ -15,10 +15,15 @@ int bch2_dev_missing_bkey(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
 	struct printbuf buf = PRINTBUF;
 	bch2_log_msg_start(c, &buf);
 
-	prt_printf(&buf, "pointer to nonexistent device %u in key\n", dev);
+	bool removed = test_bit(dev, c->devs_removed.d);
+
+	prt_printf(&buf, "pointer to %s device %u in key\n",
+		   removed ? "removed" : "nonexistent", dev);
 	bch2_bkey_val_to_text(&buf, c, k);
 
-	bool print = bch2_count_fsck_err(c, ptr_to_invalid_device, &buf);
+	bool print = removed
+		? bch2_count_fsck_err(c, ptr_to_removed_device, &buf)
+		: bch2_count_fsck_err(c, ptr_to_invalid_device, &buf);
 
 	int ret = bch2_run_explicit_recovery_pass(c, &buf,
 					BCH_RECOVERY_PASS_check_allocations, 0);
@@ -32,7 +37,9 @@ int bch2_dev_missing_bkey(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
 void bch2_dev_missing_atomic(struct bch_fs *c, unsigned dev)
 {
 	if (dev != BCH_SB_MEMBER_INVALID)
-		bch2_fs_inconsistent(c, "pointer to nonexistent device %u", dev);
+		bch2_fs_inconsistent(c, "pointer to %s device %u",
+				     test_bit(dev, c->devs_removed.d)
+				     ? "removed" : "nonexistent", dev);
 }
 
 void bch2_dev_bucket_missing(struct bch_dev *ca, u64 bucket)
