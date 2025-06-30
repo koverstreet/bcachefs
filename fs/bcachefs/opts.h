@@ -392,6 +392,11 @@ enum fsck_err_opts {
 	  OPT_UINT(0, U64_MAX),						\
 	  BCH2_NO_SB_OPT,		0,				\
 	  NULL,		"Rewind journal")				\
+	x(journal_rewind_no_extents,	bool,				\
+	  OPT_FS|OPT_MOUNT,						\
+	  OPT_BOOL(),							\
+	  BCH2_NO_SB_OPT,		0,				\
+	  NULL,		"Don't rewind extents when rewinding journal")	\
 	x(recovery_passes,		u64,				\
 	  OPT_FS|OPT_MOUNT,						\
 	  OPT_BITFIELD(bch2_recovery_passes),				\

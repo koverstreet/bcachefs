@@ -796,6 +796,18 @@ static void __journal_keys_sort(struct journal_keys *keys)
 	keys->nr = dst - keys->data;
 }
 
+static bool should_rewind_entry(struct bch_fs *c, struct jset_entry *entry)
+{
+	if (entry->level)
+		return false;
+	if (btree_id_is_alloc(entry->btree_id))
+		return false;
+	if (c->opts.journal_rewind_no_extents &&
+	    entry->btree_id == BTREE_ID_extents)
+		return false;
+	return true;
+}
+
 int bch2_journal_keys_sort(struct bch_fs *c)
 {
 	struct genradix_iter iter;
@@ -814,9 +826,8 @@ int bch2_journal_keys_sort(struct bch_fs *c)
 		cond_resched();
 
 		vstruct_for_each(&i->j, entry) {
-			bool rewind = !entry->level &&
-				!btree_id_is_alloc(entry->btree_id) &&
-				le64_to_cpu(i->j.seq) >= rewind_seq;
+			bool rewind = le64_to_cpu(i->j.seq) >= rewind_seq &&
+				should_rewind_entry(c, entry);
 
 			if (entry->type != (rewind
 					    ? BCH_JSET_ENTRY_overwrite
