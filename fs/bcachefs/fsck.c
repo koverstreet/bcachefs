@@ -1501,6 +1501,10 @@ static int check_key_has_inode(struct btree_trans *trans,
 					 SPOS(k.k->p.inode, 0, k.k->p.snapshot),
 					 POS(k.k->p.inode, U64_MAX),
 					 0, k2, ret) {
+		if (k.k->type == KEY_TYPE_error ||
+		    k.k->type == KEY_TYPE_hash_whiteout)
+			continue;
+
 		nr_keys++;
 		if (nr_keys <= 10) {
 			bch2_bkey_val_to_text(&buf, c, k2);
@@ -1513,9 +1517,11 @@ static int check_key_has_inode(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
+	unsigned reconstruct_limit = iter->btree_id == BTREE_ID_extents ? 3 : 0;
+
 	if (nr_keys > 100)
 		prt_printf(&buf, "found > %u keys for this missing inode\n", nr_keys);
-	else if (nr_keys > 10)
+	else if (nr_keys > reconstruct_limit)
 		prt_printf(&buf, "found %u keys for this missing inode\n", nr_keys);
 
 	if (!have_inode) {
