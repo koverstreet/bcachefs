@@ -158,6 +158,7 @@ enum bch_fsck_flags {
 	x(extent_ptrs_unwritten,				140,	0)		\
 	x(extent_ptrs_written_and_unwritten,			141,	0)		\
 	x(ptr_to_invalid_device,				142,	0)		\
+	x(ptr_to_removed_device,				322,	0)		\
 	x(ptr_to_duplicate_device,				143,	0)		\
 	x(ptr_after_last_bucket,				144,	0)		\
 	x(ptr_before_first_bucket,				145,	0)		\
@@ -333,7 +334,7 @@ enum bch_fsck_flags {
 	x(dirent_stray_data_after_cf_name,			305,	0)		\
 	x(rebalance_work_incorrectly_set,			309,	FSCK_AUTOFIX)	\
 	x(rebalance_work_incorrectly_unset,			310,	FSCK_AUTOFIX)	\
-	x(MAX,							322,	0)
+	x(MAX,							323,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
