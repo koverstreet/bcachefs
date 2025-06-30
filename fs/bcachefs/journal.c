@@ -1361,7 +1361,6 @@ int bch2_dev_journal_alloc(struct bch_dev *ca, bool new_fs)
 		return bch_err_throw(c, erofs_filesystem_full);
 	}
 
-	unsigned nr;
 	int ret;
 
 	if (dynamic_fault("bcachefs:add:journal_alloc")) {
@@ -1370,16 +1369,19 @@ int bch2_dev_journal_alloc(struct bch_dev *ca, bool new_fs)
 	}
 
 	/* 1/128th of the device by default: */
-	nr = ca->mi.nbuckets >> 7;
+	unsigned nr = ca->mi.nbuckets >> 7;
 
 	/*
-	 * clamp journal size to 8192 buckets or 8GB (in sectors), whichever
-	 * is smaller:
+	 * clamp journal size to 8GB, or 32GB with large_journal option:
 	 */
+	unsigned max_sectors = 1 << 24;
+
+	if (c->opts.large_journal)
+		max_sectors *= 4;
+
 	nr = clamp_t(unsigned, nr,
 		     BCH_JOURNAL_BUCKETS_MIN,
-		     min(1 << 13,
-			 (1 << 24) / ca->mi.bucket_size));
+		     max_sectors / ca->mi.bucket_size);
 
 	ret = bch2_set_nr_journal_buckets_loop(c, ca, nr, new_fs);
 err:
