@@ -299,17 +299,12 @@ int bch2_save_backtrace(bch_stacktrace *stack, struct task_struct *task, unsigne
 	if (ret)
 		return ret;
 
-	if (!down_read_trylock(&task->signal->exec_update_lock))
-		return -1;
-
 	do {
 		nr_entries = stack_trace_save_tsk(task, stack->data, stack->size, skipnr + 1);
 	} while (nr_entries == stack->size &&
 		 !(ret = darray_make_room_gfp(stack, stack->size * 2, gfp)));
 
 	stack->nr = nr_entries;
-	up_read(&task->signal->exec_update_lock);
-
 	return ret;
 #else
 	return 0;
