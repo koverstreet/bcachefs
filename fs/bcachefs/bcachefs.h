@@ -819,6 +819,7 @@ struct bch_fs {
 	struct work_struct	read_only_work;
 
 	struct bch_dev __rcu	*devs[BCH_SB_MEMBERS_MAX];
+	struct bch_devs_mask	devs_removed;
 
 	struct bch_accounting_mem accounting;
 

@@ -365,6 +365,7 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 }
 
 void bch2_sb_members_from_cpu(struct bch_fs *);
+void bch2_sb_members_to_cpu(struct bch_fs *);
 
 void bch2_dev_io_errors_to_text(struct printbuf *, struct bch_dev *);
 void bch2_dev_errors_reset(struct bch_dev *);

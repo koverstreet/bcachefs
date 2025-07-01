@@ -1188,8 +1188,9 @@ int bch2_fs_initialize(struct bch_fs *c)
 	for_each_member_device(c, ca) {
 		m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
 		SET_BCH_MEMBER_FREESPACE_INITIALIZED(m, false);
-		ca->mi = bch2_mi_to_cpu(m);
 	}
+
+	bch2_sb_members_to_cpu(c);
 
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
