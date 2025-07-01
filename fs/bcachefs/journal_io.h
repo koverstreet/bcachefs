@@ -71,6 +71,13 @@ void bch2_journal_entry_to_text(struct printbuf *, struct bch_fs *,
 void bch2_journal_ptrs_to_text(struct printbuf *, struct bch_fs *,
 			       struct journal_replay *);
 
+struct u64_range {
+	u64	start;
+	u64	end;
+};
+
+struct u64_range bch2_journal_entry_missing_range(struct bch_fs *, u64, u64);
+
 int bch2_journal_read(struct bch_fs *, u64 *, u64 *, u64 *);
 
 CLOSURE_CALLBACK(bch2_journal_write);
