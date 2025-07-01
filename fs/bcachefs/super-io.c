@@ -632,10 +632,7 @@ static void bch2_sb_update(struct bch_fs *c)
 		c->sb.btrees_lost_data = le64_to_cpu(ext->btrees_lost_data);
 	}
 
-	for_each_member_device(c, ca) {
-		struct bch_member m = bch2_sb_member_get(src, ca->dev_idx);
-		ca->mi = bch2_mi_to_cpu(&m);
-	}
+	bch2_sb_members_to_cpu(c);
 }
 
 static int __copy_super(struct bch_sb_handle *dst_handle, struct bch_sb *src)

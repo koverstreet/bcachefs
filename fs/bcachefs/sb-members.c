@@ -413,6 +413,22 @@ void bch2_sb_members_from_cpu(struct bch_fs *c)
 	}
 }
 
+void bch2_sb_members_to_cpu(struct bch_fs *c)
+{
+	for_each_member_device(c, ca) {
+		struct bch_member m = bch2_sb_member_get(c->disk_sb.sb, ca->dev_idx);
+		ca->mi = bch2_mi_to_cpu(&m);
+	}
+
+	struct bch_sb_field_members_v2 *mi2 = bch2_sb_field_get(c->disk_sb.sb, members_v2);
+	if (mi2)
+		for (unsigned i = 0; i < c->sb.nr_devices; i++) {
+			struct bch_member m = members_v2_get(mi2, i);
+			bool removed = uuid_equal(&m.uuid, &BCH_SB_MEMBER_DELETED_UUID);
+			mod_bit(i, c->devs_removed.d, removed);
+		}
+}
+
 void bch2_dev_io_errors_to_text(struct printbuf *out, struct bch_dev *ca)
 {
 	struct bch_fs *c = ca->fs;
