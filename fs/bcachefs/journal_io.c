@@ -1245,6 +1245,8 @@ noinline_for_stack
 static void bch2_journal_print_checksum_error(struct bch_fs *c, struct journal_replay *j)
 {
 	struct printbuf buf = PRINTBUF;
+	bch2_log_msg_start(c, &buf);
+
 	enum bch_csum_type csum_type = JSET_CSUM_TYPE(&j->j);
 	bool have_good = false;
 
