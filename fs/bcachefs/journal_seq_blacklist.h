@@ -11,6 +11,9 @@ blacklist_nr_entries(struct bch_sb_field_journal_seq_blacklist *bl)
 		: 0;
 }
 
+u64 bch2_journal_seq_next_blacklisted(struct bch_fs *, u64);
+u64 bch2_journal_seq_next_nonblacklisted(struct bch_fs *, u64);
+
 bool bch2_journal_seq_is_blacklisted(struct bch_fs *, u64, bool);
 u64 bch2_journal_last_blacklisted_seq(struct bch_fs *);
 int bch2_journal_seq_blacklist_add(struct bch_fs *c, u64, u64);
