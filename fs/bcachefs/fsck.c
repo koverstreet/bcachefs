@@ -1638,7 +1638,8 @@ static int check_i_sectors_notnested(struct btree_trans *trans, struct inode_wal
 			i->count = count2;
 		}
 
-		if (fsck_err_on(!(i->inode.bi_flags & BCH_INODE_i_sectors_dirty),
+		if (fsck_err_on(!(i->inode.bi_flags & BCH_INODE_i_sectors_dirty) &&
+				i->inode.bi_sectors != i->count,
 				trans, inode_i_sectors_wrong,
 				"inode %llu:%u has incorrect i_sectors: got %llu, should be %llu",
 				w->last_pos.inode, i->inode.bi_snapshot,
