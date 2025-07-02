@@ -1279,20 +1279,14 @@ struct u64_range bch2_journal_entry_missing_range(struct bch_fs *c, u64 start, u
 	if (start == end)
 		return (struct u64_range) {};
 
-	while (start < end &&
-	       bch2_journal_seq_is_blacklisted(c, start, false))
-		start++;
-
-	if (start == end)
+	start = bch2_journal_seq_next_nonblacklisted(c, start);
+	if (start >= end)
 		return (struct u64_range) {};
 
-	struct u64_range missing = { .start = start };
-
-	while (start < end &&
-	       !bch2_journal_seq_is_blacklisted(c, start, false))
-		start++;
-
-	missing.end = start - 1;
+	struct u64_range missing = {
+		.start	= start,
+		.end	= min(end, bch2_journal_seq_next_blacklisted(c, start)),
+	};
 
 	if (missing.start == missing.end)
 		return (struct u64_range) {};
@@ -1324,7 +1318,7 @@ static int bch2_journal_check_for_missing(struct bch_fs *c, u64 start_seq, u64 e
 		while ((missing = bch2_journal_entry_missing_range(c, seq, le64_to_cpu(i->j.seq))).start) {
 			printbuf_reset(&buf);
 			prt_printf(&buf, "journal entries %llu-%llu missing! (replaying %llu-%llu)",
-				   missing.start, missing.end,
+				   missing.start, missing.end - 1,
 				   start_seq, end_seq);
 
 			if (prev) {
@@ -1339,7 +1333,7 @@ static int bch2_journal_check_for_missing(struct bch_fs *c, u64 start_seq, u64 e
 
 			fsck_err(c, journal_entries_missing, "%s", buf.buf);
 
-			seq = missing.end + 1;
+			seq = missing.end;
 		}
 
 		prev = i;
