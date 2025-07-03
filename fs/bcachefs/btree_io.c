@@ -26,6 +26,12 @@
 
 #include <linux/sched/mm.h>
 
+#ifdef CONFIG_BCACHEFS_DEBUG
+static unsigned bch2_btree_read_corrupt_ratio;
+module_param_named(btree_read_corrupt_ratio, bch2_btree_read_corrupt_ratio, uint, 0644);
+MODULE_PARM_DESC(btree_read_corrupt_ratio, "");
+#endif
+
 static void bch2_btree_node_header_to_text(struct printbuf *out, struct btree_node *bn)
 {
 	bch2_btree_id_level_to_text(out, BTREE_NODE_ID(bn), BTREE_NODE_LEVEL(bn));
@@ -1436,6 +1442,11 @@ start:
 			bch2_mark_io_failure(&failed, &rb->pick, false);
 			continue;
 		}
+
+		memset(&bio->bi_iter, 0, sizeof(bio->bi_iter));
+		bio->bi_iter.bi_size	= btree_buf_bytes(b);
+
+		bch2_maybe_corrupt_bio(bio, bch2_btree_read_corrupt_ratio);
 
 		ret = bch2_btree_node_read_done(c, ca, b, &failed, &buf);
 		if (ret == -BCH_ERR_btree_node_read_err_want_retry ||
