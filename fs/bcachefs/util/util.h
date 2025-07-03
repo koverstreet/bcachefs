@@ -421,6 +421,14 @@ void memcpy_to_bio(struct bio *, struct bvec_iter, const void *);
 void memcpy_from_bio(void *, struct bio *, struct bvec_iter);
 
 #ifdef CONFIG_BCACHEFS_DEBUG
+void bch2_corrupt_bio_offset(struct bio *, u32);
+static inline void bch2_maybe_corrupt_bio_offset(struct bio *bio, unsigned ratio,
+						 unsigned offset)
+{
+	if (ratio && !get_random_u32_below(ratio))
+		bch2_corrupt_bio_offset(bio, offset);
+}
+
 void bch2_corrupt_bio(struct bio *);
 
 static inline void bch2_maybe_corrupt_bio(struct bio *bio, unsigned ratio)

@@ -703,11 +703,10 @@ void memcpy_from_bio(void *dst, struct bio *src, struct bvec_iter src_iter)
 }
 
 #ifdef CONFIG_BCACHEFS_DEBUG
-void bch2_corrupt_bio(struct bio *bio)
+void bch2_corrupt_bio_offset(struct bio *bio, u32 offset)
 {
 	struct bvec_iter iter;
 	struct bio_vec bv;
-	unsigned offset = get_random_u32_below(bio->bi_iter.bi_size / sizeof(u64));
 
 	bio_for_each_segment(bv, bio, iter) {
 		unsigned u64s = bv.bv_len / sizeof(u64);
@@ -720,6 +719,12 @@ void bch2_corrupt_bio(struct bio *bio)
 		}
 		offset -= u64s;
 	}
+}
+
+void bch2_corrupt_bio(struct bio *bio)
+{
+	bch2_corrupt_bio_offset(bio,
+		get_random_u32_below(bio->bi_iter.bi_size / sizeof(u64)));
 }
 #endif
 
