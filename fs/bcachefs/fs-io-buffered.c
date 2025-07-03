@@ -257,7 +257,7 @@ err:
 		struct printbuf buf = PRINTBUF;
 		lockrestart_do(trans,
 			bch2_inum_offset_err_msg_trans(trans, &buf, inum, iter.pos.offset << 9));
-		prt_printf(&buf, "read error %i from btree lookup", ret);
+		prt_printf(&buf, "read error %s from btree lookup", bch2_err_str(ret));
 		bch_err_ratelimited(c, "%s", buf.buf);
 		printbuf_exit(&buf);
 
