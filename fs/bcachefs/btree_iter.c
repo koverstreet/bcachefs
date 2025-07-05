@@ -1346,8 +1346,15 @@ __bch2_btree_path_set_pos(struct btree_trans *trans,
 		 * is expensive).
 		 */
 		if (cmp < 0 ||
-		    !btree_path_advance_to_pos(path, l, 8))
+		    !btree_path_advance_to_pos(path, l, 8)) {
 			bch2_btree_node_iter_init(&l->iter, l->b, &path->pos);
+			/*
+			 * If path->pos points to a deleted key, we may need to
+			 * skip past it - this only strictly matters for
+			 * interior nodes:
+			 */
+			btree_path_advance_to_pos(path, l, 8);
+		}
 
 		/*
 		 * Iterators to interior nodes should always be pointed at the first non
