@@ -2530,6 +2530,8 @@ static int bch2_param_get_static_key_t(char *buffer, const struct kernel_param *
 	return sprintf(buffer, "%c\n", static_key_enabled(key) ? 'N' : 'Y');
 }
 
+/* this is unused in userspace - silence the warning */
+__maybe_unused
 static const struct kernel_param_ops bch2_param_ops_static_key_t = {
 	.flags = KERNEL_PARAM_OPS_FL_NOARG,
 	.set = bch2_param_set_static_key_t,
