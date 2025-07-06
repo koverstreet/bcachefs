@@ -661,21 +661,22 @@ int bch2_btree_insert_trans(struct btree_trans *trans, enum btree_id id,
  * @k:			key to insert
  * @disk_res:		must be non-NULL whenever inserting or potentially
  *			splitting data extents
- * @flags:		transaction commit flags
+ * @commit_flags:	transaction commit flags
  * @iter_flags:		btree iter update trigger flags
  *
  * Returns:		0 on success, error code on failure
  */
 int bch2_btree_insert(struct bch_fs *c, enum btree_id id, struct bkey_i *k,
-		      struct disk_reservation *disk_res, int flags,
+		      struct disk_reservation *disk_res,
+		      enum bch_trans_commit_flags commit_flags,
 		      enum btree_iter_update_trigger_flags iter_flags)
 {
-	return bch2_trans_commit_do(c, disk_res, NULL, flags,
+	return bch2_trans_commit_do(c, disk_res, NULL, commit_flags,
 			     bch2_btree_insert_trans(trans, id, k, iter_flags));
 }
 
-int bch2_btree_delete_at(struct btree_trans *trans,
-			 struct btree_iter *iter, unsigned update_flags)
+int bch2_btree_delete_at(struct btree_trans *trans, struct btree_iter *iter,
+			 enum btree_iter_update_trigger_flags flags)
 {
 	struct bkey_i *k = bch2_trans_kmalloc(trans, sizeof(*k));
 	int ret = PTR_ERR_OR_ZERO(k);
@@ -684,12 +685,12 @@ int bch2_btree_delete_at(struct btree_trans *trans,
 
 	bkey_init(&k->k);
 	k->k.p = iter->pos;
-	return bch2_trans_update(trans, iter, k, update_flags);
+	return bch2_trans_update(trans, iter, k, flags);
 }
 
 int bch2_btree_delete(struct btree_trans *trans,
 		      enum btree_id btree, struct bpos pos,
-		      unsigned update_flags)
+		      enum btree_iter_update_trigger_flags flags)
 {
 	struct btree_iter iter;
 	int ret;
@@ -698,7 +699,7 @@ int bch2_btree_delete(struct btree_trans *trans,
 			     BTREE_ITER_cached|
 			     BTREE_ITER_intent);
 	ret   = bch2_btree_iter_traverse(trans, &iter) ?:
-		bch2_btree_delete_at(trans, &iter, update_flags);
+		bch2_btree_delete_at(trans, &iter, flags);
 	bch2_trans_iter_exit(trans, &iter);
 
 	return ret;
@@ -706,7 +707,7 @@ int bch2_btree_delete(struct btree_trans *trans,
 
 int bch2_btree_delete_range_trans(struct btree_trans *trans, enum btree_id id,
 				  struct bpos start, struct bpos end,
-				  unsigned update_flags,
+				  enum btree_iter_update_trigger_flags flags,
 				  u64 *journal_seq)
 {
 	u32 restart_count = trans->restart_count;
@@ -714,7 +715,7 @@ int bch2_btree_delete_range_trans(struct btree_trans *trans, enum btree_id id,
 	struct bkey_s_c k;
 	int ret = 0;
 
-	bch2_trans_iter_init(trans, &iter, id, start, BTREE_ITER_intent);
+	bch2_trans_iter_init(trans, &iter, id, start, BTREE_ITER_intent|flags);
 	while ((k = bch2_btree_iter_peek_max(trans, &iter, end)).k) {
 		struct disk_reservation disk_res =
 			bch2_disk_reservation_init(trans->c, 0);
@@ -747,7 +748,7 @@ int bch2_btree_delete_range_trans(struct btree_trans *trans, enum btree_id id,
 					bpos_min(end, k.k->p).offset -
 					iter.pos.offset);
 
-		ret   = bch2_trans_update(trans, &iter, &delete, update_flags) ?:
+		ret   = bch2_trans_update(trans, &iter, &delete, flags) ?:
 			bch2_trans_commit(trans, &disk_res, journal_seq,
 					  BCH_TRANS_COMMIT_no_enospc);
 		bch2_disk_reservation_put(trans->c, &disk_res);
@@ -777,12 +778,12 @@ err:
  */
 int bch2_btree_delete_range(struct bch_fs *c, enum btree_id id,
 			    struct bpos start, struct bpos end,
-			    unsigned update_flags,
+			    enum btree_iter_update_trigger_flags flags,
 			    u64 *journal_seq)
 {
 	int ret = bch2_trans_run(c,
 			bch2_btree_delete_range_trans(trans, id, start, end,
-						      update_flags, journal_seq));
+						      flags, journal_seq));
 	if (ret == -BCH_ERR_transaction_restart_nested)
 		ret = 0;
 	return ret;
