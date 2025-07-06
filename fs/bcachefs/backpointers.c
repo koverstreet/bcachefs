@@ -144,7 +144,8 @@ static noinline int backpointer_mod_err(struct btree_trans *trans,
 	if (!will_check && __bch2_inconsistent_error(c, &buf))
 		ret = bch_err_throw(c, erofs_unfixed_errors);
 
-	bch_err(c, "%s", buf.buf);
+	if (buf.buf)
+		bch_err(c, "%s", buf.buf);
 	printbuf_exit(&buf);
 	return ret;
 }
