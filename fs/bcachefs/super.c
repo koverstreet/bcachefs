@@ -1974,11 +1974,15 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 	ca->disk_sb.sb->dev_idx	= dev_idx;
 	bch2_dev_attach(c, ca, dev_idx);
 
+	set_bit(ca->dev_idx, c->online_devs.d);
+
 	if (BCH_MEMBER_GROUP(&dev_mi)) {
 		ret = __bch2_dev_group_set(c, ca, label.buf);
 		bch_err_msg(c, ret, "creating new label");
-		if (ret)
-			goto err_unlock;
+		if (ret) {
+			mutex_unlock(&c->sb_lock);
+			goto err_late;
+		}
 	}
 
 	bch2_write_super(c);
