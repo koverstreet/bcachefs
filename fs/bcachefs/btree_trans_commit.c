@@ -1008,7 +1008,7 @@ do_bch2_trans_commit_to_journal_replay(struct btree_trans *trans)
 	return 0;
 }
 
-int __bch2_trans_commit(struct btree_trans *trans, unsigned flags)
+int __bch2_trans_commit(struct btree_trans *trans, enum bch_trans_commit_flags flags)
 {
 	struct btree_insert_entry *errored_at = NULL;
 	struct bch_fs *c = trans->c;
