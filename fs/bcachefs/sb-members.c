@@ -20,6 +20,7 @@ int bch2_dev_missing_bkey(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
 	prt_printf(&buf, "pointer to %s device %u in key\n",
 		   removed ? "removed" : "nonexistent", dev);
 	bch2_bkey_val_to_text(&buf, c, k);
+	prt_newline(&buf);
 
 	bool print = removed
 		? bch2_count_fsck_err(c, ptr_to_removed_device, &buf)
