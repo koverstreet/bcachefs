@@ -24,6 +24,7 @@
 #include "super-io.h"
 #include "trace.h"
 
+#include <linux/moduleparam.h>
 #include <linux/sched/mm.h>
 
 #ifdef CONFIG_BCACHEFS_DEBUG
