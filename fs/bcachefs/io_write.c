@@ -32,6 +32,7 @@
 #include "trace.h"
 
 #include <linux/blkdev.h>
+#include <linux/moduleparam.h>
 #include <linux/prefetch.h>
 #include <linux/random.h>
 #include <linux/sched/mm.h>
