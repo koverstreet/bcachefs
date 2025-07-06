@@ -47,22 +47,27 @@ enum bch_trans_commit_flags {
 
 void bch2_trans_commit_flags_to_text(struct printbuf *, enum bch_trans_commit_flags);
 
-int bch2_btree_delete_at(struct btree_trans *, struct btree_iter *, unsigned);
-int bch2_btree_delete(struct btree_trans *, enum btree_id, struct bpos, unsigned);
+int bch2_btree_delete_at(struct btree_trans *, struct btree_iter *,
+			 enum btree_iter_update_trigger_flags);
+int bch2_btree_delete(struct btree_trans *, enum btree_id, struct bpos,
+		      enum btree_iter_update_trigger_flags);
 
 int bch2_btree_insert_nonextent(struct btree_trans *, enum btree_id,
 				struct bkey_i *, enum btree_iter_update_trigger_flags);
 
 int bch2_btree_insert_trans(struct btree_trans *, enum btree_id, struct bkey_i *,
 			enum btree_iter_update_trigger_flags);
-int bch2_btree_insert(struct bch_fs *, enum btree_id, struct bkey_i *, struct
-		disk_reservation *, int flags, enum
-		btree_iter_update_trigger_flags iter_flags);
+int bch2_btree_insert(struct bch_fs *, enum btree_id, struct bkey_i *,
+		      struct disk_reservation *,
+		      enum bch_trans_commit_flags,
+		      enum btree_iter_update_trigger_flags);
 
 int bch2_btree_delete_range_trans(struct btree_trans *, enum btree_id,
-				  struct bpos, struct bpos, unsigned, u64 *);
+				  struct bpos, struct bpos,
+				  enum btree_iter_update_trigger_flags, u64 *);
 int bch2_btree_delete_range(struct bch_fs *, enum btree_id,
-			    struct bpos, struct bpos, unsigned, u64 *);
+			    struct bpos, struct bpos,
+			    enum btree_iter_update_trigger_flags, u64 *);
 
 int bch2_btree_bit_mod_iter(struct btree_trans *, struct btree_iter *, bool);
 int bch2_btree_bit_mod(struct btree_trans *, enum btree_id, struct bpos, bool);
@@ -226,7 +231,7 @@ static inline int __must_check bch2_trans_update_buffered(struct btree_trans *tr
 
 void bch2_trans_commit_hook(struct btree_trans *,
 			    struct btree_trans_commit_hook *);
-int __bch2_trans_commit(struct btree_trans *, unsigned);
+int __bch2_trans_commit(struct btree_trans *, enum bch_trans_commit_flags);
 
 int bch2_trans_log_str(struct btree_trans *, const char *);
 int bch2_trans_log_msg(struct btree_trans *, struct printbuf *);
