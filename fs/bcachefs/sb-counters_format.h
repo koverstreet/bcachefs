@@ -12,6 +12,7 @@ enum counters_flags {
 	x(io_read_inline,				80,	TYPE_SECTORS)	\
 	x(io_read_hole,					81,	TYPE_SECTORS)	\
 	x(io_read_promote,				30,	TYPE_COUNTER)	\
+	x(io_read_nopromote,				85,	TYPE_COUNTER)	\
 	x(io_read_bounce,				31,	TYPE_COUNTER)	\
 	x(io_read_split,				33,	TYPE_COUNTER)	\
 	x(io_read_reuse_race,				34,	TYPE_COUNTER)	\
