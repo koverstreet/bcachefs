@@ -1593,7 +1593,7 @@ void bch2_dev_journal_exit(struct bch_dev *ca)
 	struct journal_device *ja = &ca->journal;
 
 	for (unsigned i = 0; i < ARRAY_SIZE(ja->bio); i++) {
-		kfree(ja->bio[i]);
+		kvfree(ja->bio[i]);
 		ja->bio[i] = NULL;
 	}
 
@@ -1630,7 +1630,16 @@ int bch2_dev_journal_init(struct bch_dev *ca, struct bch_sb *sb)
 	unsigned nr_bvecs = DIV_ROUND_UP(JOURNAL_ENTRY_SIZE_MAX, PAGE_SIZE);
 
 	for (unsigned i = 0; i < ARRAY_SIZE(ja->bio); i++) {
-		ja->bio[i] = kzalloc(struct_size(ja->bio[i], bio.bi_inline_vecs,
+		/*
+		 * kvzalloc() is not what we want to be using here:
+		 * JOURNAL_ENTRY_SIZE_MAX is probably quite a bit bigger than it
+		 * needs to be.
+		 *
+		 * But changing that will require performance testing -
+		 * performance can be sensitive to anything that affects journal
+		 * pipelining.
+		 */
+		ja->bio[i] = kvzalloc(struct_size(ja->bio[i], bio.bi_inline_vecs,
 				     nr_bvecs), GFP_KERNEL);
 		if (!ja->bio[i])
 			return bch_err_throw(c, ENOMEM_dev_journal_init);
