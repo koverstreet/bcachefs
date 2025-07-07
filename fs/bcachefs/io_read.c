@@ -350,7 +350,16 @@ static struct bch_read_bio *promote_alloc(struct btree_trans *trans,
 
 	return promote;
 nopromote:
-	trace_io_read_nopromote(c, ret);
+	if (trace_io_read_nopromote_enabled()) {
+		CLASS(printbuf, buf)();
+		printbuf_indent_add_nextline(&buf, 2);
+		prt_printf(&buf, "%s\n", bch2_err_str(ret));
+		bch2_bkey_val_to_text(&buf, c, k);
+
+		trace_io_read_nopromote(c, buf.buf);
+	}
+	count_event(c, io_read_nopromote);
+
 	return NULL;
 }
 
