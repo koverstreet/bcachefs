@@ -285,7 +285,7 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 					     struct closure *cl,
 					     bool interior_node,
 					     unsigned target,
-					     unsigned flags)
+					     enum bch_trans_commit_flags flags)
 {
 	struct bch_fs *c = trans->c;
 	struct write_point *wp;
@@ -1139,7 +1139,8 @@ static const char * const btree_node_reawrite_reason_strs[] = {
 static struct btree_update *
 bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 			unsigned level_start, bool split,
-			unsigned target, unsigned flags)
+			unsigned target,
+			enum bch_trans_commit_flags flags)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_update *as;
@@ -2222,7 +2223,7 @@ int bch2_btree_node_rewrite(struct btree_trans *trans,
 			    struct btree_iter *iter,
 			    struct btree *b,
 			    unsigned target,
-			    unsigned flags)
+			    enum bch_trans_commit_flags flags)
 {
 	struct bch_fs *c = trans->c;
 	struct btree *n, *parent;
@@ -2287,7 +2288,8 @@ err:
 
 int bch2_btree_node_rewrite_key(struct btree_trans *trans,
 				enum btree_id btree, unsigned level,
-				struct bkey_i *k, unsigned flags)
+				struct bkey_i *k,
+				enum bch_trans_commit_flags flags)
 {
 	struct btree_iter iter;
 	bch2_trans_node_iter_init(trans, &iter,
@@ -2311,7 +2313,7 @@ int bch2_btree_node_rewrite_pos(struct btree_trans *trans,
 				enum btree_id btree, unsigned level,
 				struct bpos pos,
 				unsigned target,
-				unsigned flags)
+				enum bch_trans_commit_flags flags)
 {
 	BUG_ON(!level);
 
@@ -2330,7 +2332,8 @@ err:
 }
 
 int bch2_btree_node_rewrite_key_get_iter(struct btree_trans *trans,
-					 struct btree *b, unsigned flags)
+					 struct btree *b,
+					 enum bch_trans_commit_flags flags)
 {
 	struct btree_iter iter;
 	int ret = get_iter_to_node(trans, &iter, b);
