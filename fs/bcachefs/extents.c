@@ -1023,6 +1023,18 @@ bool bch2_bkey_has_target(struct bch_fs *c, struct bkey_s_c k, unsigned target)
 	return false;
 }
 
+bool bch2_bkey_in_target(struct bch_fs *c, struct bkey_s_c k, unsigned target)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+
+	guard(rcu)();
+	bkey_for_each_ptr(ptrs, ptr)
+		if (!bch2_dev_in_target(c, ptr->dev, target))
+			return false;
+
+	return true;
+}
+
 bool bch2_bkey_matches_ptr(struct bch_fs *c, struct bkey_s_c k,
 			   struct bch_extent_ptr m, u64 offset)
 {

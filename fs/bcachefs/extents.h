@@ -615,6 +615,7 @@ static inline struct bch_extent_ptr *bch2_bkey_has_device(struct bkey_s k, unsig
 }
 
 bool bch2_bkey_has_target(struct bch_fs *, struct bkey_s_c, unsigned);
+bool bch2_bkey_in_target(struct bch_fs *, struct bkey_s_c, unsigned);
 
 void bch2_bkey_extent_entry_drop(struct bkey_i *, union bch_extent_entry *);
 
