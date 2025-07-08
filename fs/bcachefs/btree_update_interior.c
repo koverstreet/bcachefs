@@ -305,13 +305,18 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 
 	mutex_lock(&c->btree_reserve_cache_lock);
 	if (c->btree_reserve_cache_nr > nr_reserve) {
-		struct btree_alloc *a =
-			&c->btree_reserve_cache[--c->btree_reserve_cache_nr];
+		for (struct btree_alloc *a = c->btree_reserve_cache;
+		     a < c->btree_reserve_cache + c->btree_reserve_cache_nr;
+		     a++) {
+			if (target && !bch2_bkey_in_target(c, bkey_i_to_s_c(&a->k), target))
+				continue;
 
-		bkey_copy(&b->key, &a->k);
-		b->ob = a->ob;
-		mutex_unlock(&c->btree_reserve_cache_lock);
-		goto out;
+			bkey_copy(&b->key, &a->k);
+			b->ob = a->ob;
+			*a = c->btree_reserve_cache[--c->btree_reserve_cache_nr];
+			mutex_unlock(&c->btree_reserve_cache_lock);
+			goto out;
+		}
 	}
 	mutex_unlock(&c->btree_reserve_cache_lock);
 retry:
