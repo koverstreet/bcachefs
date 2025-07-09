@@ -468,7 +468,7 @@ struct bch_io_opts *bch2_move_get_io_opts(struct btree_trans *trans,
 	struct bch_io_opts *opts_ret = &io_opts->fs_io_opts;
 	int ret = 0;
 
-	if (extent_iter->min_depth)
+	if (btree_iter_path(trans, extent_iter)->level)
 		return opts_ret;
 
 	if (extent_k.k->type == KEY_TYPE_reflink_v)
@@ -672,8 +672,7 @@ retry_root:
 
 		k = bkey_i_to_s_c(&b->key);
 
-		io_opts = bch2_move_get_io_opts(trans, &snapshot_io_opts,
-						iter.pos, &iter, k);
+		io_opts = &snapshot_io_opts.fs_io_opts;
 		ret = PTR_ERR_OR_ZERO(io_opts);
 		if (ret)
 			goto root_err;
