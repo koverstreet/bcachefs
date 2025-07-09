@@ -191,19 +191,29 @@ int bch2_btree_insert_clone_trans(struct btree_trans *, enum btree_id, struct bk
 
 int bch2_btree_write_buffer_insert_err(struct bch_fs *, enum btree_id, struct bkey_i *);
 
+static inline int bch2_btree_write_buffer_insert_checks(struct bch_fs *c, enum btree_id btree,
+							struct bkey_i *k)
+{
+	if (unlikely(!btree_type_uses_write_buffer(btree) ||
+		     k->k.u64s > BTREE_WRITE_BUFERED_U64s_MAX)) {
+		int ret = bch2_btree_write_buffer_insert_err(c, btree, k);
+		dump_stack();
+		return ret;
+	}
+
+	return 0;
+}
+
 static inline int __must_check bch2_trans_update_buffered(struct btree_trans *trans,
 					    enum btree_id btree,
 					    struct bkey_i *k)
 {
 	kmsan_check_memory(k, bkey_bytes(&k->k));
 
-	EBUG_ON(k->k.u64s > BTREE_WRITE_BUFERED_U64s_MAX);
-
-	if (unlikely(!btree_type_uses_write_buffer(btree))) {
-		int ret = bch2_btree_write_buffer_insert_err(trans->c, btree, k);
-		dump_stack();
+	int ret = bch2_btree_write_buffer_insert_checks(trans->c, btree, k);
+	if (unlikely(ret))
 		return ret;
-	}
+
 	/*
 	 * Most updates skip the btree write buffer until journal replay is
 	 * finished because synchronization with journal replay relies on having
@@ -220,7 +230,7 @@ static inline int __must_check bch2_trans_update_buffered(struct btree_trans *tr
 		return bch2_btree_insert_clone_trans(trans, btree, k);
 
 	struct jset_entry *e = bch2_trans_jset_entry_alloc(trans, jset_u64s(k->k.u64s));
-	int ret = PTR_ERR_OR_ZERO(e);
+	ret = PTR_ERR_OR_ZERO(e);
 	if (ret)
 		return ret;
 
