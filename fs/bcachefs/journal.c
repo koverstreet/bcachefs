@@ -1151,16 +1151,14 @@ static int bch2_set_nr_journal_buckets_iter(struct bch_dev *ca, unsigned nr,
 		if (ret)
 			break;
 
-		if (!new_fs) {
-			ret = bch2_trans_run(c,
-				bch2_trans_mark_metadata_bucket(trans, ca,
-						ob[nr_got]->bucket, BCH_DATA_journal,
-						ca->mi.bucket_size, BTREE_TRIGGER_transactional));
-			if (ret) {
-				bch2_open_bucket_put(c, ob[nr_got]);
-				bch_err_msg(c, ret, "marking new journal buckets");
-				break;
-			}
+		ret = bch2_trans_run(c,
+			bch2_trans_mark_metadata_bucket(trans, ca,
+					ob[nr_got]->bucket, BCH_DATA_journal,
+					ca->mi.bucket_size, BTREE_TRIGGER_transactional));
+		if (ret) {
+			bch2_open_bucket_put(c, ob[nr_got]);
+			bch_err_msg(c, ret, "marking new journal buckets");
+			break;
 		}
 
 		bu[nr_got] = ob[nr_got]->bucket;
@@ -1230,7 +1228,7 @@ err_unblock:
 		mutex_unlock(&c->sb_lock);
 	}
 
-	if (ret && !new_fs)
+	if (ret)
 		for (i = 0; i < nr_got; i++)
 			bch2_trans_run(c,
 				bch2_trans_mark_metadata_bucket(trans, ca,
