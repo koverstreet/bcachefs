@@ -1196,7 +1196,6 @@ int bch2_fs_initialize(struct bch_fs *c)
 	mutex_unlock(&c->sb_lock);
 
 	set_bit(BCH_FS_btree_running, &c->flags);
-	set_bit(BCH_FS_may_go_rw, &c->flags);
 
 	for (unsigned i = 0; i < BTREE_ID_NR; i++)
 		bch2_btree_root_alloc_fake(c, i, 0);
@@ -1213,6 +1212,7 @@ int bch2_fs_initialize(struct bch_fs *c)
 	if (ret)
 		goto err;
 
+	set_bit(BCH_FS_may_go_rw, &c->flags);
 	ret = bch2_fs_read_write_early(c);
 	if (ret)
 		goto err;
