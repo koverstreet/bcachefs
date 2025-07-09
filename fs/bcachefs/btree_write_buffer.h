@@ -89,11 +89,9 @@ static inline int bch2_journal_key_to_wb(struct bch_fs *c,
 			     struct journal_keys_to_wb *dst,
 			     enum btree_id btree, struct bkey_i *k)
 {
-	if (unlikely(!btree_type_uses_write_buffer(btree))) {
-		int ret = bch2_btree_write_buffer_insert_err(c, btree, k);
-		dump_stack();
+	int ret = bch2_btree_write_buffer_insert_checks(c, btree, k);
+	if (unlikely(ret))
 		return ret;
-	}
 
 	EBUG_ON(!dst->seq);
 
