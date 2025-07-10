@@ -26,7 +26,8 @@ const char *bch2_err_str(int err)
 
 	err = abs(err);
 
-	BUG_ON(err >= BCH_ERR_MAX);
+	if (err >= BCH_ERR_MAX)
+		return "(Invalid error)";
 
 	if (err >= BCH_ERR_START)
 		errstr = bch2_errcode_strs[err - BCH_ERR_START];
