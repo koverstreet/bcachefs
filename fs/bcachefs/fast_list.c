@@ -138,8 +138,21 @@ void fast_list_remove(struct fast_list *l, unsigned idx)
 
 void fast_list_exit(struct fast_list *l)
 {
-	/* XXX: warn if list isn't empty */
-	free_percpu(l->buffer);
+	if (l->buffer) {
+		int cpu;
+		for_each_possible_cpu(cpu) {
+			struct fast_list_pcpu *lp = per_cpu_ptr(l->buffer, cpu);
+
+			while (lp->nr)
+				ida_free(&l->slots_allocated, lp->entries[--lp->nr]);
+		}
+
+		free_percpu(l->buffer);
+	}
+
+	WARN(ida_find_first(&l->slots_allocated) >= 0,
+	     "fast_list still has objects on exit\n");
+
 	ida_destroy(&l->slots_allocated);
 	genradix_free(&l->items);
 }
