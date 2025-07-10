@@ -520,7 +520,7 @@ static void bch2_rbio_done(struct bch_read_bio *rbio)
 	if (rbio->list_idx)
 		async_object_list_del(rbio->c, rbio, rbio->list_idx);
 #endif
-	bio_endio(&rbio->bio);
+	rbio->bio.bi_end_io(&rbio->bio);
 }
 
 static int get_rbio_extent(struct btree_trans *trans, struct bch_read_bio *rbio, struct bkey_buf *sk)
