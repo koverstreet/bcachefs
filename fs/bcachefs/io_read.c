@@ -1488,9 +1488,12 @@ static const char * const bch2_read_bio_flags[] = {
 
 void bch2_read_bio_to_text(struct printbuf *out, struct bch_read_bio *rbio)
 {
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 20);
+
 	u64 now = local_clock();
-	prt_printf(out, "start_time:\t%llu\n", rbio->start_time ? now - rbio->start_time : 0);
-	prt_printf(out, "submit_time:\t%llu\n", rbio->submit_time ? now - rbio->submit_time : 0);
+	prt_printf(out, "start_time:\t%llu\n", (rbio->start_time ? now - rbio->start_time : 0) / NSEC_PER_MSEC);
+	prt_printf(out, "submit_time:\t%llu ms ago\n", (rbio->submit_time ? now - rbio->submit_time : 0) / NSEC_PER_MSEC);
 
 	if (!rbio->split)
 		prt_printf(out, "end_io:\t%ps\n", rbio->end_io);
