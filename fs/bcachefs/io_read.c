@@ -465,6 +465,10 @@ static void bch2_rbio_done(struct bch_read_bio *rbio)
 	if (rbio->start_time)
 		bch2_time_stats_update(&rbio->c->times[BCH_TIME_data_read],
 				       rbio->start_time);
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+	if (rbio->list_idx)
+		async_object_list_del(rbio->c, rbio, rbio->list_idx);
+#endif
 	bio_endio(&rbio->bio);
 }
 
