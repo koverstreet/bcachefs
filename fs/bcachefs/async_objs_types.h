@@ -18,7 +18,7 @@ enum bch_async_obj_lists {
 
 struct async_obj_list {
 	struct fast_list	list;
-	void			(*obj_to_text)(struct printbuf *, void *);
+	void			(*obj_to_text)(struct printbuf *, struct bch_fs *, void *);
 	unsigned		idx;
 };
 
