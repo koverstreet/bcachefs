@@ -13,28 +13,38 @@
 
 #include <linux/debugfs.h>
 
-static void promote_obj_to_text(struct printbuf *out, void *obj)
+static void promote_obj_to_text(struct printbuf *out,
+				struct bch_fs *c,
+				void *obj)
 {
-	bch2_promote_op_to_text(out, obj);
+	bch2_promote_op_to_text(out, c, obj);
 }
 
-static void rbio_obj_to_text(struct printbuf *out, void *obj)
+static void rbio_obj_to_text(struct printbuf *out,
+			     struct bch_fs *c,
+			     void *obj)
 {
-	bch2_read_bio_to_text(out, obj);
+	bch2_read_bio_to_text(out, c, obj);
 }
 
-static void write_op_obj_to_text(struct printbuf *out, void *obj)
+static void write_op_obj_to_text(struct printbuf *out,
+				 struct bch_fs *c,
+				 void *obj)
 {
 	bch2_write_op_to_text(out, obj);
 }
 
-static void btree_read_bio_obj_to_text(struct printbuf *out, void *obj)
+static void btree_read_bio_obj_to_text(struct printbuf *out,
+				       struct bch_fs *c,
+				       void *obj)
 {
 	struct btree_read_bio *rbio = obj;
 	bch2_btree_read_bio_to_text(out, rbio);
 }
 
-static void btree_write_bio_obj_to_text(struct printbuf *out, void *obj)
+static void btree_write_bio_obj_to_text(struct printbuf *out,
+					struct bch_fs *c,
+					void *obj)
 {
 	struct btree_write_bio *wbio = obj;
 	bch2_bio_to_text(out, &wbio->wbio.bio);
@@ -79,7 +89,7 @@ static ssize_t bch2_async_obj_list_read(struct file *file, char __user *buf,
 		if (!i->size)
 			break;
 
-		list->obj_to_text(&i->buf, obj);
+		list->obj_to_text(&i->buf, i->c, obj);
 		i->iter = iter.pos;
 	}
 

@@ -363,12 +363,14 @@ nopromote:
 	return NULL;
 }
 
-void bch2_promote_op_to_text(struct printbuf *out, struct promote_op *op)
+void bch2_promote_op_to_text(struct printbuf *out,
+			     struct bch_fs *c,
+			     struct promote_op *op)
 {
 	if (!op->write.read_done) {
 		prt_printf(out, "parent read: %px\n", op->write.rbio.parent);
 		printbuf_indent_add(out, 2);
-		bch2_read_bio_to_text(out, op->write.rbio.parent);
+		bch2_read_bio_to_text(out, c, op->write.rbio.parent);
 		printbuf_indent_sub(out, 2);
 	}
 
@@ -1486,21 +1488,33 @@ static const char * const bch2_read_bio_flags[] = {
 	NULL
 };
 
-void bch2_read_bio_to_text(struct printbuf *out, struct bch_read_bio *rbio)
+void bch2_read_bio_to_text(struct printbuf *out,
+			   struct bch_fs *c,
+			   struct bch_read_bio *rbio)
 {
 	if (!out->nr_tabstops)
 		printbuf_tabstop_push(out, 20);
 
+	bch2_read_err_msg(c, out, rbio, rbio->read_pos);
+	prt_newline(out);
+
+	/* Are we in a retry? */
+
+	printbuf_indent_add(out, 2);
+
 	u64 now = local_clock();
-	prt_printf(out, "start_time:\t%llu\n", (rbio->start_time ? now - rbio->start_time : 0) / NSEC_PER_MSEC);
-	prt_printf(out, "submit_time:\t%llu ms ago\n", (rbio->submit_time ? now - rbio->submit_time : 0) / NSEC_PER_MSEC);
+	prt_printf(out, "start_time:\t");
+	bch2_pr_time_units(out, max_t(s64, 0, now - rbio->start_time));
+	prt_newline(out);
+
+	prt_printf(out, "submit_time:\t");
+	bch2_pr_time_units(out, max_t(s64, 0, now - rbio->submit_time));
+	prt_newline(out);
 
 	if (!rbio->split)
 		prt_printf(out, "end_io:\t%ps\n", rbio->end_io);
 	else
 		prt_printf(out, "parent:\t%px\n", rbio->parent);
-
-	prt_printf(out, "bi_end_io:\t%ps\n", rbio->bio.bi_end_io);
 
 	prt_printf(out, "promote:\t%u\n",	rbio->promote);
 	prt_printf(out, "bounce:\t%u\n",	rbio->bounce);
@@ -1520,6 +1534,7 @@ void bch2_read_bio_to_text(struct printbuf *out, struct bch_read_bio *rbio)
 	prt_newline(out);
 
 	bch2_bio_to_text(out, &rbio->bio);
+	printbuf_indent_sub(out, 2);
 }
 
 void bch2_fs_io_read_exit(struct bch_fs *c)
