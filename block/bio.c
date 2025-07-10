@@ -1579,8 +1579,13 @@ static inline bool bio_remaining_done(struct bio *bio)
 	 * If we're not chaining, then ->__bi_remaining is always 1 and
 	 * we always end io on the first invocation.
 	 */
-	if (!bio_flagged(bio, BIO_CHAIN))
+	if (!bio_flagged(bio, BIO_CHAIN)) {
+		WARN(atomic_read(&bio->__bi_remaining) != 1,
+		     "__bi_remaing %i, should be 1",
+		     atomic_read(&bio->__bi_remaining));
+		atomic_set(&bio->__bi_remaining, 0);
 		return true;
+	}
 
 	BUG_ON(atomic_read(&bio->__bi_remaining) <= 0);
 
