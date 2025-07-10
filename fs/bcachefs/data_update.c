@@ -675,7 +675,7 @@ void bch2_data_update_inflight_to_text(struct printbuf *out, struct data_update 
 	if (!m->read_done) {
 		prt_printf(out, "read:\n");
 		printbuf_indent_add(out, 2);
-		bch2_read_bio_to_text(out, &m->rbio);
+		bch2_read_bio_to_text(out, m->op.c, &m->rbio);
 	} else {
 		prt_printf(out, "write:\n");
 		printbuf_indent_add(out, 2);
