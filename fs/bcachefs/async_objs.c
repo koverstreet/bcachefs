@@ -80,12 +80,11 @@ static ssize_t bch2_async_obj_list_read(struct file *file, char __user *buf,
 			break;
 
 		list->obj_to_text(&i->buf, obj);
+		i->iter = iter.pos;
 	}
 
 	if (i->buf.allocation_failure)
 		ret = -ENOMEM;
-	else
-		i->iter = iter.pos;
 
 	if (!ret)
 		ret = bch2_debugfs_flush_buf(i);
