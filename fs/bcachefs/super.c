@@ -1092,6 +1092,8 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 
 	if (ret)
 		goto err;
+
+	c->recovery_task = current;
 out:
 	return c;
 err:
@@ -1234,7 +1236,6 @@ int bch2_fs_start(struct bch_fs *c)
 	bch2_recalc_capacity(c);
 	up_write(&c->state_lock);
 
-	c->recovery_task = current;
 	ret = BCH_SB_INITIALIZED(c->disk_sb.sb)
 		? bch2_fs_recovery(c)
 		: bch2_fs_initialize(c);
@@ -2014,11 +2015,11 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 	bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
 
-	if (test_bit(BCH_FS_started, &c->flags)) {
-		ret = bch2_dev_usage_init(ca, false);
-		if (ret)
-			goto err_late;
+	ret = bch2_dev_usage_init(ca, false);
+	if (ret)
+		goto err_late;
 
+	if (test_bit(BCH_FS_started, &c->flags)) {
 		ret = bch2_trans_mark_dev_sb(c, ca, BTREE_TRIGGER_transactional);
 		bch_err_msg(ca, ret, "marking new superblock");
 		if (ret)
