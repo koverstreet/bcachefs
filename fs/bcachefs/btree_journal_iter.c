@@ -5,6 +5,7 @@
 #include "bset.h"
 #include "btree_cache.h"
 #include "btree_journal_iter.h"
+#include "disk_accounting.h"
 #include "journal_io.h"
 
 #include <linux/sort.h>
@@ -278,12 +279,23 @@ int bch2_journal_key_insert_take(struct bch_fs *c, enum btree_id id,
 
 	if (idx < keys->size &&
 	    journal_key_cmp(&n, &keys->data[idx]) == 0) {
+		struct bkey_i *o = keys->data[idx].k;
+
+		if (k->k.type == KEY_TYPE_accounting &&
+		    o->k.type == KEY_TYPE_accounting) {
+			if (!keys->data[idx].allocated)
+				goto insert;
+
+			bch2_accounting_accumulate(bkey_i_to_accounting(k),
+						   bkey_i_to_s_c_accounting(o));
+		}
+
 		if (keys->data[idx].allocated)
 			kfree(keys->data[idx].k);
 		keys->data[idx] = n;
 		return 0;
 	}
-
+insert:
 	if (idx > keys->gap)
 		idx -= keys->size - keys->nr;
 
