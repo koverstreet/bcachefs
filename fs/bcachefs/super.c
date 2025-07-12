@@ -103,7 +103,7 @@ const char * const bch2_dev_write_refs[] = {
 };
 #undef x
 
-static void __bch2_print_str(struct bch_fs *c, const char *prefix,
+void bch2_print_str(struct bch_fs *c, const char *prefix,
 			     const char *str)
 {
 #ifdef __KERNEL__
@@ -115,11 +115,6 @@ static void __bch2_print_str(struct bch_fs *c, const char *prefix,
 	}
 #endif
 	bch2_print_string_as_lines(KERN_ERR, str);
-}
-
-void bch2_print_str(struct bch_fs *c, const char *prefix, const char *str)
-{
-	__bch2_print_str(c, prefix, str);
 }
 
 __printf(2, 0)
