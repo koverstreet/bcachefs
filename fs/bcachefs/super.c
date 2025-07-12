@@ -103,9 +103,32 @@ const char * const bch2_dev_write_refs[] = {
 };
 #undef x
 
-void bch2_print_str(struct bch_fs *c, const char *prefix,
-			     const char *str)
+static bool should_print_loglevel(struct bch_fs *c, const char *fmt)
 {
+	unsigned loglevel_opt = c->loglevel ?: c->opts.verbose ? 7: 6;
+
+	bool have_soh = fmt[0] == KERN_SOH[0];
+	bool have_loglevel = have_soh && fmt[1] >= '0' && fmt[1] <= '9';
+
+	unsigned loglevel = have_loglevel
+		? fmt[1] - '0'
+		: c->prev_loglevel;
+
+	if (have_loglevel)
+		c->prev_loglevel = loglevel;
+
+	return loglevel <= loglevel_opt;
+}
+
+void bch2_print_str(struct bch_fs *c, const char *prefix, const char *str)
+{
+	if (!should_print_loglevel(c, prefix))
+		return;
+
+#ifndef __KERNEL__
+	prefix = "";
+#endif
+
 #ifdef __KERNEL__
 	struct stdio_redirect *stdio = bch2_fs_stdio_redirect(c);
 
@@ -114,7 +137,7 @@ void bch2_print_str(struct bch_fs *c, const char *prefix,
 		return;
 	}
 #endif
-	bch2_print_string_as_lines(KERN_ERR, str);
+	bch2_print_string_as_lines(prefix, str);
 }
 
 __printf(2, 0)
@@ -144,6 +167,14 @@ void bch2_print_opts(struct bch_opts *opts, const char *fmt, ...)
 
 void __bch2_print(struct bch_fs *c, const char *fmt, ...)
 {
+	if (!should_print_loglevel(c, fmt))
+		return;
+
+#ifndef __KERNEL__
+	if (fmt[0] == KERN_SOH[0])
+		fmt += 2;
+#endif
+
 	struct stdio_redirect *stdio = bch2_fs_stdio_redirect(c);
 
 	va_list args;

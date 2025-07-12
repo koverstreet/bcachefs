@@ -341,6 +341,8 @@ do {									\
 #define bch_notice(c, ...)		bch_log(c, KERN_NOTICE, __VA_ARGS__)
 #define bch_info(c, ...)		bch_log(c, KERN_INFO, __VA_ARGS__)
 #define bch_info_ratelimited(c, ...)	bch_log_ratelimited(c, KERN_INFO, __VA_ARGS__)
+#define bch_verbose(c, ...)		bch_log(c, KERN_DEBUG, __VA_ARGS__)
+#define bch_verbose_ratelimited(c, ...)	bch_log_ratelimited(c, KERN_DEBUG, __VA_ARGS__)
 
 #define bch_err_dev(ca, fmt, ...) \
 	bch2_print(c, KERN_ERR bch2_fmt_dev(ca, fmt), ##__VA_ARGS__)
@@ -382,18 +384,6 @@ do {									\
 	if (should_print_err(_ret))					\
 		bch_err(_c, "%s(): error " _msg " %s", __func__,	\
 			##__VA_ARGS__, bch2_err_str(_ret));		\
-} while (0)
-
-#define bch_verbose(c, fmt, ...)					\
-do {									\
-	if ((c)->opts.verbose)						\
-		bch_info(c, fmt, ##__VA_ARGS__);			\
-} while (0)
-
-#define bch_verbose_ratelimited(c, fmt, ...)				\
-do {									\
-	if ((c)->opts.verbose)						\
-		bch_info_ratelimited(c, fmt, ##__VA_ARGS__);		\
 } while (0)
 
 static inline int __bch2_err_trace(struct bch_fs *c, int err)
@@ -825,6 +815,8 @@ struct bch_fs {
 	struct bch_disk_groups_cpu __rcu *disk_groups;
 
 	struct bch_opts		opts;
+	unsigned		loglevel;
+	unsigned		prev_loglevel;
 
 	/* Updated by bch2_sb_update():*/
 	struct {
