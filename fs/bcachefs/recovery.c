@@ -1200,6 +1200,24 @@ int bch2_fs_initialize(struct bch_fs *c)
 	for (unsigned i = 0; i < BTREE_ID_NR; i++)
 		bch2_btree_root_alloc_fake(c, i, 0);
 
+	for_each_member_device(c, ca) {
+		ret = bch2_dev_usage_init(ca, false);
+		if (ret) {
+			bch2_dev_put(ca);
+			goto err;
+		}
+	}
+
+	/*
+	 * Write out the superblock and journal buckets, now that we can do
+	 * btree updates
+	 */
+	bch_verbose(c, "marking superblocks");
+	ret = bch2_trans_mark_dev_sbs(c);
+	bch_err_msg(c, ret, "marking superblocks");
+	if (ret)
+		goto err;
+
 	ret = bch2_fs_journal_alloc(c);
 	if (ret)
 		goto err;
@@ -1218,24 +1236,6 @@ int bch2_fs_initialize(struct bch_fs *c)
 		goto err;
 
 	ret = bch2_journal_replay(c);
-	if (ret)
-		goto err;
-
-	for_each_member_device(c, ca) {
-		ret = bch2_dev_usage_init(ca, false);
-		if (ret) {
-			bch2_dev_put(ca);
-			goto err;
-		}
-	}
-
-	/*
-	 * Write out the superblock and journal buckets, now that we can do
-	 * btree updates
-	 */
-	bch_verbose(c, "marking superblocks");
-	ret = bch2_trans_mark_dev_sbs(c);
-	bch_err_msg(c, ret, "marking superblocks");
 	if (ret)
 		goto err;
 
