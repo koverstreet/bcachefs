@@ -3210,6 +3210,8 @@ static int bch2_fsck_offline_thread_fn(struct thread_with_stdio *stdio)
 	if (ret)
 		return ret;
 
+	thr->c->recovery_task = current;
+
 	ret = bch2_fs_start(thr->c);
 	if (ret)
 		goto err;
