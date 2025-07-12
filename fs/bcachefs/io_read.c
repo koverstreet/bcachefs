@@ -160,6 +160,7 @@ static noinline void promote_free(struct bch_read_bio *rbio)
 	BUG_ON(ret);
 
 	async_object_list_del(c, promote, op->list_idx);
+	async_object_list_del(c, rbio, rbio->list_idx);
 
 	bch2_data_update_exit(&op->write);
 
