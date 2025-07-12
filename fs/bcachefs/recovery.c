@@ -1217,8 +1217,9 @@ int bch2_fs_initialize(struct bch_fs *c)
 	if (ret)
 		goto err;
 
-	set_bit(BCH_FS_accounting_replay_done, &c->flags);
-	bch2_journal_set_replay_done(&c->journal);
+	ret = bch2_journal_replay(c);
+	if (ret)
+		goto err;
 
 	for_each_member_device(c, ca) {
 		ret = bch2_dev_usage_init(ca, false);
