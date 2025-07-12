@@ -3,9 +3,10 @@
 #define _BCACHEFS_ASYNC_OBJS_H
 
 #ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
-static inline void __async_object_list_del(struct fast_list *head, unsigned idx)
+static inline void __async_object_list_del(struct fast_list *head, unsigned *idx)
 {
-	fast_list_remove(head, idx);
+	fast_list_remove(head, *idx);
+	*idx = 0;
 }
 
 static inline int __async_object_list_add(struct fast_list *head, void *obj, unsigned *idx)
@@ -16,7 +17,7 @@ static inline int __async_object_list_add(struct fast_list *head, void *obj, uns
 }
 
 #define async_object_list_del(_c, _list, idx)		\
-	__async_object_list_del(&(_c)->async_objs[BCH_ASYNC_OBJ_LIST_##_list].list, idx)
+	__async_object_list_del(&(_c)->async_objs[BCH_ASYNC_OBJ_LIST_##_list].list, &idx)
 
 #define async_object_list_add(_c, _list, obj, idx)		\
 	__async_object_list_add(&(_c)->async_objs[BCH_ASYNC_OBJ_LIST_##_list].list, obj, idx)
