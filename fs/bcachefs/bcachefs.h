@@ -329,19 +329,19 @@ do {									\
 		bch2_print_str(_c, __VA_ARGS__);			\
 } while (0)
 
-#define bch_info(c, fmt, ...) \
-	bch2_print(c, KERN_INFO bch2_fmt(c, fmt), ##__VA_ARGS__)
-#define bch_info_ratelimited(c, fmt, ...) \
-	bch2_print_ratelimited(c, KERN_INFO bch2_fmt(c, fmt), ##__VA_ARGS__)
-#define bch_notice(c, fmt, ...) \
-	bch2_print(c, KERN_NOTICE bch2_fmt(c, fmt), ##__VA_ARGS__)
-#define bch_warn(c, fmt, ...) \
-	bch2_print(c, KERN_WARNING bch2_fmt(c, fmt), ##__VA_ARGS__)
-#define bch_warn_ratelimited(c, fmt, ...) \
-	bch2_print_ratelimited(c, KERN_WARNING bch2_fmt(c, fmt), ##__VA_ARGS__)
+#define bch_log(c, loglevel, fmt, ...) \
+	bch2_print(c, loglevel bch2_fmt(c, fmt), ##__VA_ARGS__)
+#define bch_log_ratelimited(c, loglevel, fmt, ...) \
+	bch2_print_ratelimited(c, loglevel bch2_fmt(c, fmt), ##__VA_ARGS__)
 
-#define bch_err(c, fmt, ...) \
-	bch2_print(c, KERN_ERR bch2_fmt(c, fmt), ##__VA_ARGS__)
+#define bch_err(c, ...)			bch_log(c, KERN_ERR, __VA_ARGS__)
+#define bch_err_ratelimited(c, ...)	bch_log_ratelimited(c, KERN_ERR, __VA_ARGS__)
+#define bch_warn(c, ...)		bch_log(c, KERN_WARNING, __VA_ARGS__)
+#define bch_warn_ratelimited(c, ...)	bch_log_ratelimited(c, KERN_WARNING, __VA_ARGS__)
+#define bch_notice(c, ...)		bch_log(c, KERN_NOTICE, __VA_ARGS__)
+#define bch_info(c, ...)		bch_log(c, KERN_INFO, __VA_ARGS__)
+#define bch_info_ratelimited(c, ...)	bch_log_ratelimited(c, KERN_INFO, __VA_ARGS__)
+
 #define bch_err_dev(ca, fmt, ...) \
 	bch2_print(c, KERN_ERR bch2_fmt_dev(ca, fmt), ##__VA_ARGS__)
 #define bch_err_dev_offset(ca, _offset, fmt, ...) \
@@ -351,8 +351,6 @@ do {									\
 #define bch_err_inum_offset(c, _inum, _offset, fmt, ...) \
 	bch2_print(c, KERN_ERR bch2_fmt_inum_offset(c, _inum, _offset, fmt), ##__VA_ARGS__)
 
-#define bch_err_ratelimited(c, fmt, ...) \
-	bch2_print_ratelimited(c, KERN_ERR bch2_fmt(c, fmt), ##__VA_ARGS__)
 #define bch_err_dev_ratelimited(ca, fmt, ...) \
 	bch2_print_ratelimited(ca, KERN_ERR bch2_fmt_dev(ca, fmt), ##__VA_ARGS__)
 #define bch_err_dev_offset_ratelimited(ca, _offset, fmt, ...) \
@@ -396,12 +394,6 @@ do {									\
 do {									\
 	if ((c)->opts.verbose)						\
 		bch_info_ratelimited(c, fmt, ##__VA_ARGS__);		\
-} while (0)
-
-#define pr_verbose_init(opts, fmt, ...)					\
-do {									\
-	if (opt_get(opts, verbose))					\
-		pr_info(fmt, ##__VA_ARGS__);				\
 } while (0)
 
 static inline int __bch2_err_trace(struct bch_fs *c, int err)
