@@ -171,22 +171,32 @@ static inline int should_promote(struct bch_fs *c, struct bkey_s_c k,
 	if (!have_io_error(failed)) {
 		BUG_ON(!opts.promote_target);
 
-		if (!(flags & BCH_READ_may_promote))
+		if (!(flags & BCH_READ_may_promote)) {
+			count_event(c, io_read_nopromote_may_not);
 			return bch_err_throw(c, nopromote_may_not);
+		}
 
-		if (bch2_bkey_has_target(c, k, opts.promote_target))
+		if (bch2_bkey_has_target(c, k, opts.promote_target)) {
+			count_event(c, io_read_nopromote_already_promoted);
 			return bch_err_throw(c, nopromote_already_promoted);
+		}
 
-		if (bkey_extent_is_unwritten(k))
+		if (bkey_extent_is_unwritten(k)) {
+			count_event(c, io_read_nopromote_unwritten);
 			return bch_err_throw(c, nopromote_unwritten);
+		}
 
-		if (bch2_target_congested(c, opts.promote_target))
+		if (bch2_target_congested(c, opts.promote_target)) {
+			count_event(c, io_read_nopromote_congested);
 			return bch_err_throw(c, nopromote_congested);
+		}
 	}
 
 	if (rhashtable_lookup_fast(&c->promote_table, &pos,
-				   bch_promote_params))
+				   bch_promote_params)) {
+		count_event(c, io_read_nopromote_in_flight);
 		return bch_err_throw(c, nopromote_in_flight);
+	}
 
 	return 0;
 }
