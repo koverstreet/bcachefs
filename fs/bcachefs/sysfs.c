@@ -170,7 +170,9 @@ read_attribute(io_latency_read);
 read_attribute(io_latency_write);
 read_attribute(io_latency_stats_read);
 read_attribute(io_latency_stats_write);
+#ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
 read_attribute(congested);
+#endif
 
 read_attribute(btree_write_stats);
 
@@ -830,9 +832,10 @@ SHOW(bch2_dev)
 	if (attr == &sysfs_io_latency_stats_write)
 		bch2_time_stats_to_text(out, &ca->io_latency[WRITE].stats);
 
-	sysfs_printf(congested,			"%u%%",
-		     clamp(atomic_read(&ca->congested), 0, CONGESTED_MAX)
-		     * 100 / CONGESTED_MAX);
+#ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
+	if (attr == &sysfs_congested)
+		bch2_dev_congested_to_text(out, ca);
+#endif
 
 	if (attr == &sysfs_alloc_debug)
 		bch2_dev_alloc_debug_to_text(out, ca);
@@ -900,7 +903,9 @@ struct attribute *bch2_dev_files[] = {
 	&sysfs_io_latency_write,
 	&sysfs_io_latency_stats_read,
 	&sysfs_io_latency_stats_write,
+#ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
 	&sysfs_congested,
+#endif
 
 	/* debug: */
 	&sysfs_alloc_debug,

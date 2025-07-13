@@ -45,36 +45,71 @@ MODULE_PARM_DESC(poison_extents_on_checksum_error,
 
 #ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
 
+static inline u32 bch2_dev_congested_read(struct bch_dev *ca, u64 now)
+{
+	s64 congested = atomic_read(&ca->congested);
+	u64 last = READ_ONCE(ca->congested_last);
+	if (time_after64(now, last))
+		congested -= (now - last) >> 12;
+
+	return clamp(congested, 0LL, CONGESTED_MAX);
+}
+
 static bool bch2_target_congested(struct bch_fs *c, u16 target)
 {
 	const struct bch_devs_mask *devs;
 	unsigned d, nr = 0, total = 0;
-	u64 now = local_clock(), last;
-	s64 congested;
-	struct bch_dev *ca;
-
-	if (!target)
-		return false;
+	u64 now = local_clock();
 
 	guard(rcu)();
 	devs = bch2_target_to_mask(c, target) ?:
 		&c->rw_devs[BCH_DATA_user];
 
 	for_each_set_bit(d, devs->d, BCH_SB_MEMBERS_MAX) {
-		ca = rcu_dereference(c->devs[d]);
+		struct bch_dev *ca = rcu_dereference(c->devs[d]);
 		if (!ca)
 			continue;
 
-		congested = atomic_read(&ca->congested);
-		last = READ_ONCE(ca->congested_last);
-		if (time_after64(now, last))
-			congested -= (now - last) >> 12;
-
-		total += max(congested, 0LL);
+		total += bch2_dev_congested_read(ca, now);
 		nr++;
 	}
 
 	return get_random_u32_below(nr * CONGESTED_MAX) < total;
+}
+
+void bch2_dev_congested_to_text(struct printbuf *out, struct bch_dev *ca)
+{
+	printbuf_tabstop_push(out, 32);
+
+	prt_printf(out, "current:\t%u%%\n",
+		   bch2_dev_congested_read(ca, local_clock()) *
+		   100 / CONGESTED_MAX);
+
+	prt_printf(out, "raw:\t%i/%u\n", atomic_read(&ca->congested), CONGESTED_MAX);
+
+	prt_printf(out, "last io over threshold:\t");
+	bch2_pr_time_units(out, local_clock() - ca->congested_last);
+	prt_newline(out);
+
+	prt_printf(out, "read latency threshold:\t");
+	bch2_pr_time_units(out,
+			   ca->io_latency[READ].quantiles.entries[QUANTILE_IDX(1)].m << 2);
+	prt_newline(out);
+
+	prt_printf(out, "median read latency:\t");
+	bch2_pr_time_units(out,
+			   ca->io_latency[READ].quantiles.entries[QUANTILE_IDX(7)].m);
+	prt_newline(out);
+
+	prt_printf(out, "write latency threshold:\t");
+	bch2_pr_time_units(out,
+			   ca->io_latency[WRITE].quantiles.entries[QUANTILE_IDX(1)].m << 3);
+	prt_newline(out);
+
+	prt_printf(out, "median write latency:\t");
+	bch2_pr_time_units(out,
+			   ca->io_latency[WRITE].quantiles.entries[QUANTILE_IDX(7)].m);
+	prt_newline(out);
 }
 
 #else
