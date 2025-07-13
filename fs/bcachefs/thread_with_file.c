@@ -60,8 +60,7 @@ int bch2_run_thread_with_file(struct thread_with_file *thr,
 err:
 	if (fd >= 0)
 		put_unused_fd(fd);
-	if (thr->task)
-		kthread_stop(thr->task);
+	kthread_stop(thr->task);
 	return ret;
 }
 
