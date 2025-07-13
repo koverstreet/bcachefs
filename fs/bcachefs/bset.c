@@ -362,27 +362,6 @@ static struct bkey_float *bkey_float(const struct btree *b,
 	return ro_aux_tree_base(b, t)->f + idx;
 }
 
-static void __bset_aux_tree_verify(struct btree *b)
-{
-	for_each_bset(b, t) {
-		if (t->aux_data_offset == U16_MAX)
-			continue;
-
-		BUG_ON(t != b->set &&
-		       t[-1].aux_data_offset == U16_MAX);
-
-		BUG_ON(t->aux_data_offset < bset_aux_tree_buf_start(b, t));
-		BUG_ON(t->aux_data_offset > btree_aux_data_u64s(b));
-		BUG_ON(bset_aux_tree_buf_end(t) > btree_aux_data_u64s(b));
-	}
-}
-
-static inline void bset_aux_tree_verify(struct btree *b)
-{
-	if (static_branch_unlikely(&bch2_debug_check_bset_lookups))
-		__bset_aux_tree_verify(b);
-}
-
 void bch2_btree_keys_init(struct btree *b)
 {
 	unsigned i;
@@ -536,6 +515,51 @@ static inline void bch2_bset_verify_rw_aux_tree(struct btree *b,
 {
 	if (static_branch_unlikely(&bch2_debug_check_bset_lookups))
 		__bch2_bset_verify_rw_aux_tree(b, t);
+}
+
+static void __bset_aux_tree_verify_ro(struct btree *b, struct bset_tree *t)
+{
+	struct bkey_packed *k = btree_bkey_first(b, t);
+
+	eytzinger1_for_each(j, t->size - 1) {
+		while (tree_to_bkey(b, t, j) > k &&
+		       k != btree_bkey_last(b, t))
+			k = bkey_p_next(k);
+
+		BUG_ON(tree_to_bkey(b, t, j) != k);
+	}
+}
+
+static void __bset_aux_tree_verify(struct btree *b)
+{
+	for_each_bset(b, t) {
+		if (t->aux_data_offset == U16_MAX)
+			continue;
+
+		BUG_ON(t != b->set &&
+		       t[-1].aux_data_offset == U16_MAX);
+
+		BUG_ON(t->aux_data_offset < bset_aux_tree_buf_start(b, t));
+		BUG_ON(t->aux_data_offset > btree_aux_data_u64s(b));
+		BUG_ON(bset_aux_tree_buf_end(t) > btree_aux_data_u64s(b));
+
+		switch (bset_aux_tree_type(t)) {
+		case BSET_RO_AUX_TREE:
+			__bset_aux_tree_verify_ro(b, t);
+			break;
+		case BSET_RW_AUX_TREE:
+			__bch2_bset_verify_rw_aux_tree(b, t);
+			break;
+		default:
+			break;
+		}
+	}
+}
+
+static inline void bset_aux_tree_verify(struct btree *b)
+{
+	if (static_branch_unlikely(&bch2_debug_check_bset_lookups))
+		__bset_aux_tree_verify(b);
 }
 
 /* returns idx of first entry >= offset: */
