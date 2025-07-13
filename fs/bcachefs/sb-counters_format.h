@@ -13,6 +13,11 @@ enum counters_flags {
 	x(io_read_hole,					81,	TYPE_SECTORS)	\
 	x(io_read_promote,				30,	TYPE_COUNTER)	\
 	x(io_read_nopromote,				85,	TYPE_COUNTER)	\
+	x(io_read_nopromote_may_not,			86,	TYPE_COUNTER)	\
+	x(io_read_nopromote_already_promoted,		87,	TYPE_COUNTER)	\
+	x(io_read_nopromote_unwritten,			88,	TYPE_COUNTER)	\
+	x(io_read_nopromote_congested,			89,	TYPE_COUNTER)	\
+	x(io_read_nopromote_in_flight,			90,	TYPE_COUNTER)	\
 	x(io_read_bounce,				31,	TYPE_COUNTER)	\
 	x(io_read_split,				33,	TYPE_COUNTER)	\
 	x(io_read_reuse_race,				34,	TYPE_COUNTER)	\
