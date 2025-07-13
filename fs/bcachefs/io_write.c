@@ -55,14 +55,9 @@ static inline void bch2_congested_acct(struct bch_dev *ca, u64 io_latency,
 	s64 latency_over = io_latency - latency_threshold;
 
 	if (latency_threshold && latency_over > 0) {
-		/*
-		 * bump up congested by approximately latency_over * 4 /
-		 * latency_threshold - we don't need much accuracy here so don't
-		 * bother with the divide:
-		 */
 		if (atomic_read(&ca->congested) < CONGESTED_MAX)
-			atomic_add(latency_over >>
-				   max_t(int, ilog2(latency_threshold) - 2, 0),
+			atomic_add((u32) min(U32_MAX, io_latency * 2) /
+				   (u32) min(U32_MAX, latency_threshold),
 				   &ca->congested);
 
 		ca->congested_last = now;
