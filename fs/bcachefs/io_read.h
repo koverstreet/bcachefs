@@ -7,6 +7,10 @@
 #include "extents_types.h"
 #include "reflink.h"
 
+#ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
+void bch2_dev_congested_to_text(struct printbuf *, struct bch_dev *);
+#endif
+
 struct bch_read_bio {
 	struct bch_fs		*c;
 	u64			start_time;
