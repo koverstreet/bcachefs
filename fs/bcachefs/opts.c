@@ -584,7 +584,7 @@ void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 		break;
 	case Opt_discard:
 		if (!ca) {
-			mutex_lock(&c->sb_lock);
+			guard(mutex)(&c->sb_lock);
 			for_each_member_device(c, ca) {
 				struct bch_member *m =
 					bch2_members_v2_get_mut(ca->disk_sb.sb, ca->dev_idx);
@@ -592,7 +592,6 @@ void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 			}
 
 			bch2_write_super(c);
-			mutex_unlock(&c->sb_lock);
 		}
 		break;
 	case Opt_version_upgrade:
@@ -613,7 +612,6 @@ int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
 			     struct printbuf *parse_later,
 			     const char *name, const char *val)
 {
-	struct printbuf err = PRINTBUF;
 	u64 v;
 	int ret, id;
 
@@ -638,46 +636,36 @@ int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
 	val = bch2_opt_val_synonym_lookup(name, val);
 
 	if (!(bch2_opt_table[id].flags & OPT_MOUNT))
-		goto bad_opt;
+		return -BCH_ERR_option_name;
 
 	if (id == Opt_acl &&
 	    !IS_ENABLED(CONFIG_BCACHEFS_POSIX_ACL))
-		goto bad_opt;
+		return -BCH_ERR_option_name;
 
 	if ((id == Opt_usrquota ||
 	     id == Opt_grpquota) &&
 	    !IS_ENABLED(CONFIG_BCACHEFS_QUOTA))
-		goto bad_opt;
+		return -BCH_ERR_option_name;
 
+	CLASS(printbuf, err)();
 	ret = bch2_opt_parse(c, &bch2_opt_table[id], val, &v, &err);
 	if (ret == -BCH_ERR_option_needs_open_fs) {
-		ret = 0;
-
 		if (parse_later) {
 			prt_printf(parse_later, "%s=%s,", name, val);
 			if (parse_later->allocation_failure)
-				ret = -ENOMEM;
+				return -ENOMEM;
 		}
 
-		goto out;
+		return 0;
 	}
 
 	if (ret < 0)
-		goto bad_val;
+		return -BCH_ERR_option_value;
 
 	if (opts)
 		bch2_opt_set_by_id(opts, id, v);
 
-	ret = 0;
-out:
-	printbuf_exit(&err);
-	return ret;
-bad_opt:
-	ret = -BCH_ERR_option_name;
-	goto out;
-bad_val:
-	ret = -BCH_ERR_option_value;
-	goto out;
+	return 0;
 }
 
 int bch2_parse_mount_opts(struct bch_fs *c, struct bch_opts *opts,
@@ -805,11 +793,10 @@ bool __bch2_opt_set_sb(struct bch_sb *sb, int dev_idx,
 bool bch2_opt_set_sb(struct bch_fs *c, struct bch_dev *ca,
 		     const struct bch_option *opt, u64 v)
 {
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 	bool changed = __bch2_opt_set_sb(c->disk_sb.sb, ca ? ca->dev_idx : -1, opt, v);
 	if (changed)
 		bch2_write_super(c);
-	mutex_unlock(&c->sb_lock);
 	return changed;
 }
 
