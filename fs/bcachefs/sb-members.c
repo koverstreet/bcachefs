@@ -12,7 +12,7 @@
 
 int bch2_dev_missing_bkey(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
 {
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	bch2_log_msg_start(c, &buf);
 
 	bool removed = test_bit(dev, c->devs_removed.d);
@@ -31,7 +31,6 @@ int bch2_dev_missing_bkey(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
 
 	if (print)
 		bch2_print_str(c, KERN_ERR, buf.buf);
-	printbuf_exit(&buf);
 	return ret;
 }
 
@@ -442,9 +441,8 @@ void bch2_dev_io_errors_to_text(struct printbuf *out, struct bch_dev *ca)
 	struct bch_fs *c = ca->fs;
 	struct bch_member m;
 
-	mutex_lock(&ca->fs->sb_lock);
-	m = bch2_sb_member_get(c->disk_sb.sb, ca->dev_idx);
-	mutex_unlock(&ca->fs->sb_lock);
+	scoped_guard(mutex, &ca->fs->sb_lock)
+		m = bch2_sb_member_get(c->disk_sb.sb, ca->dev_idx);
 
 	printbuf_tabstop_push(out, 12);
 
@@ -471,16 +469,15 @@ void bch2_dev_io_errors_to_text(struct printbuf *out, struct bch_dev *ca)
 void bch2_dev_errors_reset(struct bch_dev *ca)
 {
 	struct bch_fs *c = ca->fs;
-	struct bch_member *m;
 
-	mutex_lock(&c->sb_lock);
-	m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+	guard(mutex)(&c->sb_lock);
+
+	struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
 	for (unsigned i = 0; i < ARRAY_SIZE(m->errors_at_reset); i++)
 		m->errors_at_reset[i] = cpu_to_le64(atomic64_read(&ca->errors[i]));
 	m->errors_reset_time = cpu_to_le64(ktime_get_real_seconds());
 
 	bch2_write_super(c);
-	mutex_unlock(&c->sb_lock);
 }
 
 /*
@@ -612,7 +609,7 @@ have_slot:
 
 void bch2_sb_members_clean_deleted(struct bch_fs *c)
 {
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 	bool write_sb = false;
 
 	for (unsigned i = 0; i < c->sb.nr_devices; i++) {
@@ -626,5 +623,4 @@ void bch2_sb_members_clean_deleted(struct bch_fs *c)
 
 	if (write_sb)
 		bch2_write_super(c);
-	mutex_unlock(&c->sb_lock);
 }
