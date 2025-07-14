@@ -394,12 +394,10 @@ static int __bch2_quota_set(struct bch_fs *c, struct bkey_s_c k,
 		dq = bkey_s_c_to_quota(k);
 		q = &c->quotas[k.k->p.inode];
 
-		mutex_lock(&q->lock);
+		guard(mutex)(&q->lock);
 		mq = genradix_ptr_alloc(&q->table, k.k->p.offset, GFP_KERNEL);
-		if (!mq) {
-			mutex_unlock(&q->lock);
+		if (!mq)
 			return -ENOMEM;
-		}
 
 		for (i = 0; i < Q_COUNTERS; i++) {
 			mq->c[i].hardlimit = le64_to_cpu(dq.v->c[i].hardlimit);
@@ -414,8 +412,6 @@ static int __bch2_quota_set(struct bch_fs *c, struct bkey_s_c k,
 			mq->c[Q_INO].timer	= qdq->d_ino_timer;
 		if (qdq && qdq->d_fieldmask & QC_INO_WARNS)
 			mq->c[Q_INO].warns	= qdq->d_ino_warns;
-
-		mutex_unlock(&q->lock);
 	}
 
 	return 0;
@@ -522,24 +518,21 @@ advance:
 
 int bch2_fs_quota_read(struct bch_fs *c)
 {
+	scoped_guard(mutex, &c->sb_lock) {
+		struct bch_sb_field_quota *sb_quota = bch2_sb_get_or_create_quota(&c->disk_sb);
+		if (!sb_quota)
+			return bch_err_throw(c, ENOSPC_sb_quota);
 
-	mutex_lock(&c->sb_lock);
-	struct bch_sb_field_quota *sb_quota = bch2_sb_get_or_create_quota(&c->disk_sb);
-	if (!sb_quota) {
-		mutex_unlock(&c->sb_lock);
-		return bch_err_throw(c, ENOSPC_sb_quota);
+		bch2_sb_quota_read(c);
 	}
 
-	bch2_sb_quota_read(c);
-	mutex_unlock(&c->sb_lock);
-
-	int ret = bch2_trans_run(c,
-		for_each_btree_key(trans, iter, BTREE_ID_quotas, POS_MIN,
+	CLASS(btree_trans, trans)(c);
+	int ret = for_each_btree_key(trans, iter, BTREE_ID_quotas, POS_MIN,
 				   BTREE_ITER_prefetch, k,
 			__bch2_quota_set(c, k, NULL)) ?:
 		for_each_btree_key(trans, iter, BTREE_ID_inodes, POS_MIN,
 				   BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
-			bch2_fs_quota_read_inode(trans, &iter, k)));
+			bch2_fs_quota_read_inode(trans, &iter, k));
 	bch_err_fn(c, ret);
 	return ret;
 }
@@ -550,7 +543,6 @@ static int bch2_quota_enable(struct super_block	*sb, unsigned uflags)
 {
 	struct bch_fs *c = sb->s_fs_info;
 	struct bch_sb_field_quota *sb_quota;
-	int ret = 0;
 
 	if (sb->s_flags & SB_RDONLY)
 		return -EROFS;
@@ -569,11 +561,12 @@ static int bch2_quota_enable(struct super_block	*sb, unsigned uflags)
 	if (uflags & FS_QUOTA_PDQ_ENFD && !c->opts.prjquota)
 		return -EINVAL;
 
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 	sb_quota = bch2_sb_get_or_create_quota(&c->disk_sb);
 	if (!sb_quota) {
-		ret = bch_err_throw(c, ENOSPC_sb_quota);
-		goto unlock;
+		int ret = bch_err_throw(c, ENOSPC_sb_quota);
+		bch_err_fn(c, ret);
+		return ret;
 	}
 
 	if (uflags & FS_QUOTA_UDQ_ENFD)
@@ -586,10 +579,7 @@ static int bch2_quota_enable(struct super_block	*sb, unsigned uflags)
 		SET_BCH_SB_PRJQUOTA(c->disk_sb.sb, true);
 
 	bch2_write_super(c);
-unlock:
-	mutex_unlock(&c->sb_lock);
-
-	return bch2_err_class(ret);
+	return 0;
 }
 
 static int bch2_quota_disable(struct super_block *sb, unsigned uflags)
@@ -599,7 +589,7 @@ static int bch2_quota_disable(struct super_block *sb, unsigned uflags)
 	if (sb->s_flags & SB_RDONLY)
 		return -EROFS;
 
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 	if (uflags & FS_QUOTA_UDQ_ENFD)
 		SET_BCH_SB_USRQUOTA(c->disk_sb.sb, false);
 
@@ -610,8 +600,6 @@ static int bch2_quota_disable(struct super_block *sb, unsigned uflags)
 		SET_BCH_SB_PRJQUOTA(c->disk_sb.sb, false);
 
 	bch2_write_super(c);
-	mutex_unlock(&c->sb_lock);
-
 	return 0;
 }
 
@@ -700,14 +688,12 @@ static int bch2_quota_set_info(struct super_block *sb, int type,
 {
 	struct bch_fs *c = sb->s_fs_info;
 	struct bch_sb_field_quota *sb_quota;
-	int ret = 0;
 
 	if (0) {
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 
 		qc_info_to_text(&buf, info);
 		pr_info("setting:\n%s", buf.buf);
-		printbuf_exit(&buf);
 	}
 
 	if (sb->s_flags & SB_RDONLY)
@@ -723,11 +709,12 @@ static int bch2_quota_set_info(struct super_block *sb, int type,
 	    ~(QC_SPC_TIMER|QC_INO_TIMER|QC_SPC_WARNS|QC_INO_WARNS))
 		return -EINVAL;
 
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 	sb_quota = bch2_sb_get_or_create_quota(&c->disk_sb);
 	if (!sb_quota) {
-		ret = bch_err_throw(c, ENOSPC_sb_quota);
-		goto unlock;
+		int ret = bch_err_throw(c, ENOSPC_sb_quota);
+		bch_err_fn(c, ret);
+		return bch2_err_class(ret);
 	}
 
 	if (info->i_fieldmask & QC_SPC_TIMER)
@@ -749,10 +736,7 @@ static int bch2_quota_set_info(struct super_block *sb, int type,
 	bch2_sb_quota_read(c);
 
 	bch2_write_super(c);
-unlock:
-	mutex_unlock(&c->sb_lock);
-
-	return bch2_err_class(ret);
+	return 0;
 }
 
 /* Get/set individual quotas: */
@@ -778,15 +762,13 @@ static int bch2_get_quota(struct super_block *sb, struct kqid kqid,
 	struct bch_fs *c		= sb->s_fs_info;
 	struct bch_memquota_type *q	= &c->quotas[kqid.type];
 	qid_t qid			= from_kqid(&init_user_ns, kqid);
-	struct bch_memquota *mq;
 
 	memset(qdq, 0, sizeof(*qdq));
 
-	mutex_lock(&q->lock);
-	mq = genradix_ptr(&q->table, qid);
+	guard(mutex)(&q->lock);
+	struct bch_memquota *mq = genradix_ptr(&q->table, qid);
 	if (mq)
 		__bch2_quota_get(qdq, mq);
-	mutex_unlock(&q->lock);
 
 	return 0;
 }
@@ -799,21 +781,17 @@ static int bch2_get_next_quota(struct super_block *sb, struct kqid *kqid,
 	qid_t qid			= from_kqid(&init_user_ns, *kqid);
 	struct genradix_iter iter;
 	struct bch_memquota *mq;
-	int ret = 0;
 
-	mutex_lock(&q->lock);
+	guard(mutex)(&q->lock);
 
 	genradix_for_each_from(&q->table, iter, mq, qid)
 		if (memcmp(mq, page_address(ZERO_PAGE(0)), sizeof(*mq))) {
 			__bch2_quota_get(qdq, mq);
 			*kqid = make_kqid(current_user_ns(), kqid->type, iter.pos);
-			goto found;
+			return 0;
 		}
 
-	ret = -ENOENT;
-found:
-	mutex_unlock(&q->lock);
-	return bch2_err_class(ret);
+	return -ENOENT;
 }
 
 static int bch2_set_quota_trans(struct btree_trans *trans,
@@ -821,12 +799,10 @@ static int bch2_set_quota_trans(struct btree_trans *trans,
 				struct qc_dqblk *qdq)
 {
 	struct btree_iter iter;
-	struct bkey_s_c k;
-	int ret;
-
-	k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_quotas, new_quota->k.p,
-			       BTREE_ITER_slots|BTREE_ITER_intent);
-	ret = bkey_err(k);
+	struct bkey_s_c k =
+		bch2_bkey_get_iter(trans, &iter, BTREE_ID_quotas, new_quota->k.p,
+				   BTREE_ITER_slots|BTREE_ITER_intent);
+	int ret = bkey_err(k);
 	if (unlikely(ret))
 		return ret;
 
@@ -852,24 +828,22 @@ static int bch2_set_quota(struct super_block *sb, struct kqid qid,
 			  struct qc_dqblk *qdq)
 {
 	struct bch_fs *c = sb->s_fs_info;
-	struct bkey_i_quota new_quota;
-	int ret;
 
 	if (0) {
-		struct printbuf buf = PRINTBUF;
-
+		CLASS(printbuf, buf)();
 		qc_dqblk_to_text(&buf, qdq);
 		pr_info("setting:\n%s", buf.buf);
-		printbuf_exit(&buf);
 	}
 
 	if (sb->s_flags & SB_RDONLY)
 		return -EROFS;
 
+	struct bkey_i_quota new_quota;
 	bkey_quota_init(&new_quota.k_i);
 	new_quota.k.p = POS(qid.type, from_kqid(&init_user_ns, qid));
 
-	ret = bch2_trans_commit_do(c, NULL, NULL, 0,
+	CLASS(btree_trans, trans)(c);
+	int ret = commit_do(trans, NULL, NULL, 0,
 			    bch2_set_quota_trans(trans, &new_quota, qdq)) ?:
 		__bch2_quota_set(c, bkey_i_to_s_c(&new_quota.k_i), qdq);
 
