@@ -42,15 +42,14 @@ bool __bch2_inconsistent_error(struct bch_fs *c, struct printbuf *out)
 
 bool bch2_inconsistent_error(struct bch_fs *c)
 {
-	struct printbuf buf = PRINTBUF;
-	buf.atomic++;
+	CLASS(printbuf, buf)();
+	guard(printbuf_atomic)(&buf);
 
 	printbuf_indent_add_nextline(&buf, 2);
 
 	bool ret = __bch2_inconsistent_error(c, &buf);
 	if (ret)
 		bch_err(c, "%s", buf.buf);
-	printbuf_exit(&buf);
 	return ret;
 }
 
@@ -58,8 +57,8 @@ __printf(3, 0)
 static bool bch2_fs_trans_inconsistent(struct bch_fs *c, struct btree_trans *trans,
 				       const char *fmt, va_list args)
 {
-	struct printbuf buf = PRINTBUF;
-	buf.atomic++;
+	CLASS(printbuf, buf)();
+	guard(printbuf_atomic)(&buf);
 
 	bch2_log_msg_start(c, &buf);
 
@@ -70,8 +69,6 @@ static bool bch2_fs_trans_inconsistent(struct bch_fs *c, struct btree_trans *tra
 		bch2_trans_updates_to_text(&buf, trans);
 	bool ret = __bch2_inconsistent_error(c, &buf);
 	bch2_print_str(c, KERN_ERR, buf.buf);
-
-	printbuf_exit(&buf);
 	return ret;
 }
 
@@ -109,8 +106,7 @@ int __bch2_topology_error(struct bch_fs *c, struct printbuf *out)
 
 int bch2_fs_topology_error(struct bch_fs *c, const char *fmt, ...)
 {
-	struct printbuf buf = PRINTBUF;
-
+	CLASS(printbuf, buf)();
 	bch2_log_msg_start(c, &buf);
 
 	va_list args;
@@ -120,8 +116,6 @@ int bch2_fs_topology_error(struct bch_fs *c, const char *fmt, ...)
 
 	int ret = __bch2_topology_error(c, &buf);
 	bch2_print_str(c, KERN_ERR, buf.buf);
-
-	printbuf_exit(&buf);
 	return ret;
 }
 
@@ -138,18 +132,18 @@ void bch2_io_error_work(struct work_struct *work)
 
 	/* XXX: if it's reads or checksums that are failing, set it to failed */
 
-	down_write(&c->state_lock);
+	guard(rwsem_write)(&c->state_lock);
 	unsigned long write_errors_start = READ_ONCE(ca->write_errors_start);
 
 	if (write_errors_start &&
 	    time_after(jiffies,
 		       write_errors_start + c->opts.write_error_timeout * HZ)) {
 		if (ca->mi.state >= BCH_MEMBER_STATE_ro)
-			goto out;
+			return;
 
 		bool dev = !__bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_ro,
 						 BCH_FORCE_IF_DEGRADED);
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 		__bch2_log_msg_start(ca->name, &buf);
 
 		prt_printf(&buf, "writes erroring for %u seconds, setting %s ro",
@@ -159,10 +153,7 @@ void bch2_io_error_work(struct work_struct *work)
 			bch2_fs_emergency_read_only2(c, &buf);
 
 		bch2_print_str(c, KERN_ERR, buf.buf);
-		printbuf_exit(&buf);
 	}
-out:
-	up_write(&c->state_lock);
 }
 
 void bch2_io_error(struct bch_dev *ca, enum bch_member_error_type type)
@@ -382,11 +373,10 @@ bool __bch2_count_fsck_err(struct bch_fs *c,
 {
 	bch2_sb_error_count(c, id);
 
-	mutex_lock(&c->fsck_error_msgs_lock);
 	bool print = true, repeat = false, suppress = false;
 
-	count_fsck_err_locked(c, id, msg->buf, &repeat, &print, &suppress);
-	mutex_unlock(&c->fsck_error_msgs_lock);
+	scoped_guard(mutex, &c->fsck_error_msgs_lock)
+		count_fsck_err_locked(c, id, msg->buf, &repeat, &print, &suppress);
 
 	if (suppress)
 		prt_printf(msg, "Ratelimiting new instances of previous error\n");
@@ -444,7 +434,8 @@ int __bch2_fsck_err(struct bch_fs *c,
 		  const char *fmt, ...)
 {
 	va_list args;
-	struct printbuf buf = PRINTBUF, *out = &buf;
+	CLASS(printbuf, buf)();
+	struct printbuf *out = &buf;
 	int ret = 0;
 	const char *action_orig = "fix?", *action = action_orig;
 
@@ -648,7 +639,6 @@ err:
 
 	if (action != action_orig)
 		kfree(action);
-	printbuf_exit(&buf);
 
 	BUG_ON(!ret);
 	return ret;
@@ -680,7 +670,7 @@ int __bch2_bkey_fsck_err(struct bch_fs *c,
 	if (!WARN_ON(err >= ARRAY_SIZE(fsck_flags_extra)))
 		fsck_flags |= fsck_flags_extra[err];
 
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	prt_printf(&buf, "invalid bkey in %s",
 		   bch2_bkey_validate_contexts[from.from]);
 
@@ -701,7 +691,6 @@ int __bch2_bkey_fsck_err(struct bch_fs *c,
 	va_end(args);
 
 	int ret = __bch2_fsck_err(c, NULL, fsck_flags, err, "%s, delete?", buf.buf);
-	printbuf_exit(&buf);
 	return ret;
 }
 
@@ -709,7 +698,7 @@ static void __bch2_flush_fsck_errs(struct bch_fs *c, bool print)
 {
 	struct fsck_err_state *s, *n;
 
-	mutex_lock(&c->fsck_error_msgs_lock);
+	guard(mutex)(&c->fsck_error_msgs_lock);
 
 	list_for_each_entry_safe(s, n, &c->fsck_error_msgs, list) {
 		if (print && s->ratelimited && s->last_msg)
@@ -719,8 +708,6 @@ static void __bch2_flush_fsck_errs(struct bch_fs *c, bool print)
 		kfree(s->last_msg);
 		kfree(s);
 	}
-
-	mutex_unlock(&c->fsck_error_msgs_lock);
 }
 
 void bch2_flush_fsck_errs(struct bch_fs *c)
@@ -754,7 +741,8 @@ int bch2_inum_offset_err_msg_trans(struct btree_trans *trans, struct printbuf *o
 void bch2_inum_offset_err_msg(struct bch_fs *c, struct printbuf *out,
 			      subvol_inum inum, u64 offset)
 {
-	bch2_trans_do(c, bch2_inum_offset_err_msg_trans(trans, out, inum, offset));
+	CLASS(btree_trans, trans)(c);
+	lockrestart_do(trans, bch2_inum_offset_err_msg_trans(trans, out, inum, offset));
 }
 
 int bch2_inum_snap_offset_err_msg_trans(struct btree_trans *trans, struct printbuf *out,
@@ -771,5 +759,6 @@ int bch2_inum_snap_offset_err_msg_trans(struct btree_trans *trans, struct printb
 void bch2_inum_snap_offset_err_msg(struct bch_fs *c, struct printbuf *out,
 				  struct bpos pos)
 {
-	bch2_trans_do(c, bch2_inum_snap_offset_err_msg_trans(trans, out, pos));
+	CLASS(btree_trans, trans)(c);
+	lockrestart_do(trans, bch2_inum_snap_offset_err_msg_trans(trans, out, pos));
 }
