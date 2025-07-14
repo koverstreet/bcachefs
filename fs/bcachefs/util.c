@@ -321,11 +321,10 @@ void bch2_prt_backtrace(struct printbuf *out, bch_stacktrace *stack)
 
 int bch2_prt_task_backtrace(struct printbuf *out, struct task_struct *task, unsigned skipnr, gfp_t gfp)
 {
-	bch_stacktrace stack = { 0 };
+	CLASS(bch_stacktrace, stack)();
 	int ret = bch2_save_backtrace(&stack, task, skipnr + 1, gfp);
 
 	bch2_prt_backtrace(out, &stack);
-	darray_exit(&stack);
 	return ret;
 }
 
@@ -982,9 +981,8 @@ u64 *bch2_acc_percpu_u64s(u64 __percpu *p, unsigned nr)
 	int cpu;
 
 	/* access to pcpu vars has to be blocked by other locking */
-	preempt_disable();
-	ret = this_cpu_ptr(p);
-	preempt_enable();
+	scoped_guard(preempt)
+		ret = this_cpu_ptr(p);
 
 	for_each_possible_cpu(cpu) {
 		u64 *i = per_cpu_ptr(p, cpu);
