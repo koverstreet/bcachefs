@@ -125,7 +125,7 @@ int bch2_repair_inode_hash_info(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	bool need_commit = false;
 	int ret = 0;
 
@@ -183,7 +183,7 @@ int bch2_repair_inode_hash_info(struct btree_trans *trans,
 		goto err;
 
 	if (!need_commit) {
-		struct printbuf buf = PRINTBUF;
+		printbuf_reset(&buf);
 		bch2_log_msg_start(c, &buf);
 
 		prt_printf(&buf, "inode %llu hash info mismatch with root, but mismatch not found\n",
@@ -198,7 +198,6 @@ int bch2_repair_inode_hash_info(struct btree_trans *trans,
 		prt_printf(&buf, " %llx %llx", hash_info->siphash_key.k0, hash_info->siphash_key.k1);
 #endif
 		bch2_print_str(c, KERN_ERR, buf.buf);
-		printbuf_exit(&buf);
 		ret = bch_err_throw(c, fsck_repair_unimplemented);
 		goto err;
 	}
@@ -207,7 +206,6 @@ int bch2_repair_inode_hash_info(struct btree_trans *trans,
 		bch_err_throw(c, transaction_restart_nested);
 err:
 fsck_err:
-	printbuf_exit(&buf);
 	bch2_trans_iter_exit(trans, &iter);
 	return ret;
 }
@@ -244,7 +242,7 @@ int bch2_str_hash_repair_key(struct btree_trans *trans,
 			     bool *updated_before_k_pos)
 {
 	struct bch_fs *c = trans->c;
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	bool free_snapshots_seen = false;
 	int ret = 0;
 
@@ -331,7 +329,6 @@ duplicate_entries:
 out:
 fsck_err:
 	bch2_trans_iter_exit(trans, dup_iter);
-	printbuf_exit(&buf);
 	if (free_snapshots_seen)
 		darray_exit(&s->ids);
 	return ret;
@@ -346,7 +343,7 @@ int __bch2_str_hash_check_key(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter = {};
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	struct bkey_s_c k;
 	int ret = 0;
 
@@ -375,9 +372,7 @@ int __bch2_str_hash_check_key(struct btree_trans *trans,
 			goto bad_hash;
 	}
 	bch2_trans_iter_exit(trans, &iter);
-out:
 fsck_err:
-	printbuf_exit(&buf);
 	return ret;
 bad_hash:
 	bch2_trans_iter_exit(trans, &iter);
@@ -386,7 +381,7 @@ bad_hash:
 	 */
 	ret = check_inode_hash_info_matches_root(trans, hash_k.k->p.inode, hash_info);
 	if (ret)
-		goto out;
+		return ret;
 
 	if (fsck_err(trans, hash_table_key_wrong_offset,
 		     "hash table key at wrong offset: should be at %llu\n%s",
@@ -396,5 +391,5 @@ bad_hash:
 					       k_iter, hash_k,
 					       &iter, bkey_s_c_null,
 					       updated_before_k_pos);
-	goto out;
+	return ret;
 }
