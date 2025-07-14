@@ -77,9 +77,8 @@ static inline void bch2_quota_reservation_put(struct bch_fs *c,
 				       struct quota_res *res)
 {
 	if (res->sectors) {
-		mutex_lock(&inode->ei_quota_lock);
+		guard(mutex)(&inode->ei_quota_lock);
 		__bch2_quota_reservation_put(c, inode, res);
-		mutex_unlock(&inode->ei_quota_lock);
 	}
 }
 
@@ -94,16 +93,15 @@ static inline int bch2_quota_reservation_add(struct bch_fs *c,
 	if (test_bit(EI_INODE_SNAPSHOT, &inode->ei_flags))
 		return 0;
 
-	mutex_lock(&inode->ei_quota_lock);
+	guard(mutex)(&inode->ei_quota_lock);
 	ret = bch2_quota_acct(c, inode->ei_qid, Q_SPC, sectors,
 			      check_enospc ? KEY_TYPE_QUOTA_PREALLOC : KEY_TYPE_QUOTA_NOCHECK);
-	if (likely(!ret)) {
-		inode->ei_quota_reserved += sectors;
-		res->sectors += sectors;
-	}
-	mutex_unlock(&inode->ei_quota_lock);
+	if (ret)
+		return ret;
 
-	return ret;
+	inode->ei_quota_reserved += sectors;
+	res->sectors += sectors;
+	return 0;
 }
 
 #else
@@ -134,9 +132,8 @@ static inline void bch2_i_sectors_acct(struct bch_fs *c, struct bch_inode_info *
 				       struct quota_res *quota_res, s64 sectors)
 {
 	if (sectors) {
-		mutex_lock(&inode->ei_quota_lock);
+		guard(mutex)(&inode->ei_quota_lock);
 		__bch2_i_sectors_acct(c, inode, quota_res, sectors);
-		mutex_unlock(&inode->ei_quota_lock);
 	}
 }
 
