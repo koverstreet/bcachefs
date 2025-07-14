@@ -621,13 +621,12 @@ u64 bch2_dirent_lookup(struct bch_fs *c, subvol_inum dir,
 		       const struct bch_hash_info *hash_info,
 		       const struct qstr *name, subvol_inum *inum)
 {
-	struct btree_trans *trans = bch2_trans_get(c);
+	CLASS(btree_trans, trans)(c);
 	struct btree_iter iter = {};
 
 	int ret = lockrestart_do(trans,
 		bch2_dirent_lookup_trans(trans, &iter, dir, hash_info, name, inum, 0));
 	bch2_trans_iter_exit(trans, &iter);
-	bch2_trans_put(trans);
 	return ret;
 }
 
@@ -687,8 +686,8 @@ int bch2_readdir(struct bch_fs *c, subvol_inum inum,
 	struct bkey_buf sk;
 	bch2_bkey_buf_init(&sk);
 
-	int ret = bch2_trans_run(c,
-		for_each_btree_key_in_subvolume_max(trans, iter, BTREE_ID_dirents,
+	CLASS(btree_trans, trans)(c);
+	int ret = for_each_btree_key_in_subvolume_max(trans, iter, BTREE_ID_dirents,
 				   POS(inum.inum, ctx->pos),
 				   POS(inum.inum, U64_MAX),
 				   inum.subvol, 0, k, ({
@@ -709,7 +708,7 @@ int bch2_readdir(struct bch_fs *c, subvol_inum inum,
 				continue;
 
 			ret2 ?: (bch2_trans_unlock(trans), bch2_dir_emit(ctx, dirent, target));
-		})));
+		}));
 
 	bch2_bkey_buf_exit(&sk, c);
 
