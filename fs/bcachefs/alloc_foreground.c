@@ -106,20 +106,20 @@ void __bch2_open_bucket_put(struct bch_fs *c, struct open_bucket *ob)
 		return;
 	}
 
-	spin_lock(&ob->lock);
-	ob->valid = false;
-	ob->data_type = 0;
-	spin_unlock(&ob->lock);
+	scoped_guard(spinlock, &ob->lock) {
+		ob->valid = false;
+		ob->data_type = 0;
+	}
 
-	spin_lock(&c->freelist_lock);
-	bch2_open_bucket_hash_remove(c, ob);
+	scoped_guard(spinlock, &c->freelist_lock) {
+		bch2_open_bucket_hash_remove(c, ob);
 
-	ob->freelist = c->open_buckets_freelist;
-	c->open_buckets_freelist = ob - c->open_buckets;
+		ob->freelist = c->open_buckets_freelist;
+		c->open_buckets_freelist = ob - c->open_buckets;
 
-	c->open_buckets_nr_free++;
-	ca->nr_open_buckets--;
-	spin_unlock(&c->freelist_lock);
+		c->open_buckets_nr_free++;
+		ca->nr_open_buckets--;
+	}
 
 	closure_wake_up(&c->open_buckets_wait);
 }
@@ -164,14 +164,14 @@ static void open_bucket_free_unused(struct bch_fs *c, struct open_bucket *ob)
 	BUG_ON(c->open_buckets_partial_nr >=
 	       ARRAY_SIZE(c->open_buckets_partial));
 
-	spin_lock(&c->freelist_lock);
-	scoped_guard(rcu)
+	scoped_guard(spinlock, &c->freelist_lock) {
+		guard(rcu)();
 		bch2_dev_rcu(c, ob->dev)->nr_partial_buckets++;
 
-	ob->on_partial_list = true;
-	c->open_buckets_partial[c->open_buckets_partial_nr++] =
-		ob - c->open_buckets;
-	spin_unlock(&c->freelist_lock);
+		ob->on_partial_list = true;
+		c->open_buckets_partial[c->open_buckets_partial_nr++] =
+			ob - c->open_buckets;
+	}
 
 	closure_wake_up(&c->open_buckets_wait);
 	closure_wake_up(&c->freelist_wait);
@@ -219,33 +219,31 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c,
 		return NULL;
 	}
 
-	spin_lock(&c->freelist_lock);
+	guard(spinlock)(&c->freelist_lock);
 
 	if (unlikely(c->open_buckets_nr_free <= bch2_open_buckets_reserved(req->watermark))) {
 		if (cl)
 			closure_wait(&c->open_buckets_wait, cl);
 
 		track_event_change(&c->times[BCH_TIME_blocked_allocate_open_bucket], true);
-		spin_unlock(&c->freelist_lock);
 		return ERR_PTR(bch_err_throw(c, open_buckets_empty));
 	}
 
 	/* Recheck under lock: */
 	if (bch2_bucket_is_open(c, ca->dev_idx, bucket)) {
-		spin_unlock(&c->freelist_lock);
 		req->counters.skipped_open++;
 		return NULL;
 	}
 
 	struct open_bucket *ob = bch2_open_bucket_alloc(c);
 
-	spin_lock(&ob->lock);
-	ob->valid	= true;
-	ob->sectors_free = ca->mi.bucket_size;
-	ob->dev		= ca->dev_idx;
-	ob->gen		= gen;
-	ob->bucket	= bucket;
-	spin_unlock(&ob->lock);
+	scoped_guard(spinlock, &ob->lock) {
+		ob->valid	= true;
+		ob->sectors_free = ca->mi.bucket_size;
+		ob->dev		= ca->dev_idx;
+		ob->gen		= gen;
+		ob->bucket	= bucket;
+	}
 
 	ca->nr_open_buckets++;
 	bch2_open_bucket_hash_add(c, ob);
@@ -253,7 +251,6 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c,
 	track_event_change(&c->times[BCH_TIME_blocked_allocate_open_bucket], false);
 	track_event_change(&c->times[BCH_TIME_blocked_allocate], false);
 
-	spin_unlock(&c->freelist_lock);
 	return ob;
 }
 
@@ -453,7 +450,7 @@ static noinline void trace_bucket_alloc2(struct bch_fs *c,
 					 struct closure *cl,
 					 struct open_bucket *ob)
 {
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 
 	printbuf_tabstop_push(&buf, 24);
 
@@ -480,8 +477,6 @@ static noinline void trace_bucket_alloc2(struct bch_fs *c,
 		prt_printf(&buf, "err\t%s\n", bch2_err_str(PTR_ERR(ob)));
 		trace_bucket_alloc_fail(c, buf.buf);
 	}
-
-	printbuf_exit(&buf);
 }
 
 /**
@@ -589,7 +584,8 @@ struct open_bucket *bch2_bucket_alloc(struct bch_fs *c, struct bch_dev *ca,
 		.ca		= ca,
 	};
 
-	bch2_trans_do(c,
+	CLASS(btree_trans, trans)(c);
+	lockrestart_do(trans,
 		PTR_ERR_OR_ZERO(ob = bch2_bucket_alloc_trans(trans, &req, cl, false)));
 	return ob;
 }
@@ -848,17 +844,15 @@ static int bucket_alloc_set_writepoint(struct bch_fs *c,
 static int bucket_alloc_set_partial(struct bch_fs *c,
 				    struct alloc_request *req)
 {
-	int i, ret = 0;
+	if (!c->open_buckets_partial_nr)
+		return 0;
+
+	guard(spinlock)(&c->freelist_lock);
 
 	if (!c->open_buckets_partial_nr)
 		return 0;
 
-	spin_lock(&c->freelist_lock);
-
-	if (!c->open_buckets_partial_nr)
-		goto unlock;
-
-	for (i = c->open_buckets_partial_nr - 1; i >= 0; --i) {
+	for (int i = c->open_buckets_partial_nr - 1; i >= 0; --i) {
 		struct open_bucket *ob = c->open_buckets + c->open_buckets_partial[i];
 
 		if (want_bucket(c, req, ob)) {
@@ -878,14 +872,13 @@ static int bucket_alloc_set_partial(struct bch_fs *c,
 			scoped_guard(rcu)
 				bch2_dev_rcu(c, ob->dev)->nr_partial_buckets--;
 
-			ret = add_new_bucket(c, req, ob);
+			int ret = add_new_bucket(c, req, ob);
 			if (ret)
-				break;
+				return ret;
 		}
 	}
-unlock:
-	spin_unlock(&c->freelist_lock);
-	return ret;
+
+	return 0;
 }
 
 static int __open_bucket_add_buckets(struct btree_trans *trans,
@@ -981,23 +974,18 @@ static bool should_drop_bucket(struct open_bucket *ob, struct bch_fs *c,
 		return ob->ec != NULL;
 	} else if (ca) {
 		bool drop = ob->dev == ca->dev_idx;
-		struct open_bucket *ob2;
-		unsigned i;
 
 		if (!drop && ob->ec) {
-			unsigned nr_blocks;
+			guard(mutex)(&ob->ec->lock);
+			unsigned nr_blocks = bkey_i_to_stripe(&ob->ec->new_stripe.key)->v.nr_blocks;
 
-			mutex_lock(&ob->ec->lock);
-			nr_blocks = bkey_i_to_stripe(&ob->ec->new_stripe.key)->v.nr_blocks;
-
-			for (i = 0; i < nr_blocks; i++) {
+			for (unsigned i = 0; i < nr_blocks; i++) {
 				if (!ob->ec->blocks[i])
 					continue;
 
-				ob2 = c->open_buckets + ob->ec->blocks[i];
+				struct open_bucket *ob2 = c->open_buckets + ob->ec->blocks[i];
 				drop |= ob2->dev == ca->dev_idx;
 			}
-			mutex_unlock(&ob->ec->lock);
 		}
 
 		return drop;
@@ -1013,14 +1001,13 @@ static void bch2_writepoint_stop(struct bch_fs *c, struct bch_dev *ca,
 	struct open_bucket *ob;
 	unsigned i;
 
-	mutex_lock(&wp->lock);
+	guard(mutex)(&wp->lock);
 	open_bucket_for_each(c, &wp->ptrs, ob, i)
 		if (should_drop_bucket(ob, c, ca, ec))
 			bch2_open_bucket_put(c, ob);
 		else
 			ob_push(c, &ptrs, ob);
 	wp->ptrs = ptrs;
-	mutex_unlock(&wp->lock);
 }
 
 void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *ca,
@@ -1036,39 +1023,37 @@ void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *ca,
 	bch2_writepoint_stop(c, ca, ec, &c->rebalance_write_point);
 	bch2_writepoint_stop(c, ca, ec, &c->btree_write_point);
 
-	mutex_lock(&c->btree_reserve_cache_lock);
-	while (c->btree_reserve_cache_nr) {
-		struct btree_alloc *a =
-			&c->btree_reserve_cache[--c->btree_reserve_cache_nr];
+	scoped_guard(mutex, &c->btree_reserve_cache_lock)
+		while (c->btree_reserve_cache_nr) {
+			struct btree_alloc *a =
+				&c->btree_reserve_cache[--c->btree_reserve_cache_nr];
 
-		bch2_open_buckets_put(c, &a->ob);
-	}
-	mutex_unlock(&c->btree_reserve_cache_lock);
-
-	spin_lock(&c->freelist_lock);
-	i = 0;
-	while (i < c->open_buckets_partial_nr) {
-		struct open_bucket *ob =
-			c->open_buckets + c->open_buckets_partial[i];
-
-		if (should_drop_bucket(ob, c, ca, ec)) {
-			--c->open_buckets_partial_nr;
-			swap(c->open_buckets_partial[i],
-			     c->open_buckets_partial[c->open_buckets_partial_nr]);
-
-			ob->on_partial_list = false;
-
-			scoped_guard(rcu)
-				bch2_dev_rcu(c, ob->dev)->nr_partial_buckets--;
-
-			spin_unlock(&c->freelist_lock);
-			bch2_open_bucket_put(c, ob);
-			spin_lock(&c->freelist_lock);
-		} else {
-			i++;
+			bch2_open_buckets_put(c, &a->ob);
 		}
-	}
-	spin_unlock(&c->freelist_lock);
+
+	i = 0;
+	scoped_guard(spinlock, &c->freelist_lock)
+		while (i < c->open_buckets_partial_nr) {
+			struct open_bucket *ob =
+				c->open_buckets + c->open_buckets_partial[i];
+
+			if (should_drop_bucket(ob, c, ca, ec)) {
+				--c->open_buckets_partial_nr;
+				swap(c->open_buckets_partial[i],
+				     c->open_buckets_partial[c->open_buckets_partial_nr]);
+
+				ob->on_partial_list = false;
+
+				scoped_guard(rcu)
+					bch2_dev_rcu(c, ob->dev)->nr_partial_buckets--;
+
+				spin_unlock(&c->freelist_lock);
+				bch2_open_bucket_put(c, ob);
+				spin_lock(&c->freelist_lock);
+			} else {
+				i++;
+			}
+		}
 
 	bch2_ec_stop_dev(c, ca);
 }
@@ -1122,22 +1107,17 @@ static noinline bool try_decrease_writepoints(struct btree_trans *trans, unsigne
 	struct open_bucket *ob;
 	unsigned i;
 
-	mutex_lock(&c->write_points_hash_lock);
-	if (c->write_points_nr < old_nr) {
-		mutex_unlock(&c->write_points_hash_lock);
-		return true;
+	scoped_guard(mutex, &c->write_points_hash_lock) {
+		if (c->write_points_nr < old_nr)
+			return true;
+
+		if (c->write_points_nr == 1 ||
+		    !too_many_writepoints(c, 8))
+			return false;
+
+		wp = c->write_points + --c->write_points_nr;
+		hlist_del_rcu(&wp->node);
 	}
-
-	if (c->write_points_nr == 1 ||
-	    !too_many_writepoints(c, 8)) {
-		mutex_unlock(&c->write_points_hash_lock);
-		return false;
-	}
-
-	wp = c->write_points + --c->write_points_nr;
-
-	hlist_del_rcu(&wp->node);
-	mutex_unlock(&c->write_points_hash_lock);
 
 	bch2_trans_mutex_lock_norelock(trans, &wp->lock);
 	open_bucket_for_each(c, &wp->ptrs, ob, i)
@@ -1471,35 +1451,25 @@ void bch2_open_bucket_to_text(struct printbuf *out, struct bch_fs *c, struct ope
 void bch2_open_buckets_to_text(struct printbuf *out, struct bch_fs *c,
 			       struct bch_dev *ca)
 {
-	struct open_bucket *ob;
+	guard(printbuf_atomic)(out);
 
-	out->atomic++;
-
-	for (ob = c->open_buckets;
+	for (struct open_bucket *ob = c->open_buckets;
 	     ob < c->open_buckets + ARRAY_SIZE(c->open_buckets);
 	     ob++) {
-		spin_lock(&ob->lock);
+		guard(spinlock)(&ob->lock);
 		if (ob->valid && (!ca || ob->dev == ca->dev_idx))
 			bch2_open_bucket_to_text(out, c, ob);
-		spin_unlock(&ob->lock);
 	}
-
-	--out->atomic;
 }
 
 void bch2_open_buckets_partial_to_text(struct printbuf *out, struct bch_fs *c)
 {
-	unsigned i;
+	guard(printbuf_atomic)(out);
+	guard(spinlock)(&c->freelist_lock);
 
-	out->atomic++;
-	spin_lock(&c->freelist_lock);
-
-	for (i = 0; i < c->open_buckets_partial_nr; i++)
+	for (unsigned i = 0; i < c->open_buckets_partial_nr; i++)
 		bch2_open_bucket_to_text(out, c,
 				c->open_buckets + c->open_buckets_partial[i]);
-
-	spin_unlock(&c->freelist_lock);
-	--out->atomic;
 }
 
 static const char * const bch2_write_point_states[] = {
@@ -1515,7 +1485,7 @@ static void bch2_write_point_to_text(struct printbuf *out, struct bch_fs *c,
 	struct open_bucket *ob;
 	unsigned i;
 
-	mutex_lock(&wp->lock);
+	guard(mutex)(&wp->lock);
 
 	prt_printf(out, "%lu: ", wp->write_point);
 	prt_human_readable_u64(out, wp->sectors_allocated << 9);
@@ -1534,8 +1504,6 @@ static void bch2_write_point_to_text(struct printbuf *out, struct bch_fs *c,
 	open_bucket_for_each(c, &wp->ptrs, ob, i)
 		bch2_open_bucket_to_text(out, c, ob);
 	printbuf_indent_sub(out, 2);
-
-	mutex_unlock(&wp->lock);
 }
 
 void bch2_write_points_to_text(struct printbuf *out, struct bch_fs *c)
@@ -1622,7 +1590,7 @@ void bch2_dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 
 static noinline void bch2_print_allocator_stuck(struct bch_fs *c)
 {
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 
 	prt_printf(&buf, "Allocator stuck? Waited for %u seconds\n",
 		   c->opts.allocator_stuck_timeout);
@@ -1635,8 +1603,8 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c)
 
 	bch2_printbuf_make_room(&buf, 4096);
 
-	buf.atomic++;
-	scoped_guard(rcu)
+	scoped_guard(rcu) {
+		guard(printbuf_atomic)(&buf);
 		for_each_online_member_rcu(c, ca) {
 			prt_printf(&buf, "Dev %u:\n", ca->dev_idx);
 			printbuf_indent_add(&buf, 2);
@@ -1644,7 +1612,7 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c)
 			printbuf_indent_sub(&buf, 2);
 			prt_newline(&buf);
 		}
-	--buf.atomic;
+	}
 
 	prt_printf(&buf, "Copygc debug:\n");
 	printbuf_indent_add(&buf, 2);
@@ -1658,7 +1626,6 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c)
 	printbuf_indent_sub(&buf, 2);
 
 	bch2_print_str(c, KERN_ERR, buf.buf);
-	printbuf_exit(&buf);
 }
 
 static inline unsigned allocator_wait_timeout(struct bch_fs *c)
