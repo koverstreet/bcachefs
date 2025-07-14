@@ -46,7 +46,7 @@ void bch2_progress_update_iter(struct btree_trans *trans,
 	s->last_node = b;
 
 	if (progress_update_p(s)) {
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 		unsigned percent = s->nodes_total
 			? div64_u64(s->nodes_seen * 100, s->nodes_total)
 			: 0;
@@ -56,6 +56,5 @@ void bch2_progress_update_iter(struct btree_trans *trans,
 		bch2_bbpos_to_text(&buf, BBPOS(iter->btree_id, iter->pos));
 
 		bch_info(c, "%s", buf.buf);
-		printbuf_exit(&buf);
 	}
 }
