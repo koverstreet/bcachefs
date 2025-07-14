@@ -1165,7 +1165,7 @@ static inline bool bch2_ro_ref_tryget(struct bch_fs *c)
 
 static inline void bch2_ro_ref_put(struct bch_fs *c)
 {
-	if (refcount_dec_and_test(&c->ro_ref))
+	if (c && refcount_dec_and_test(&c->ro_ref))
 		wake_up(&c->ro_ref_wait);
 }
 
