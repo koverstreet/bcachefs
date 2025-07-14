@@ -462,9 +462,8 @@ void bch2_journal_key_overwritten(struct bch_fs *c, enum btree_id btree,
 	    keys->data[idx].level	== level &&
 	    bpos_eq(keys->data[idx].k->k.p, pos) &&
 	    !keys->data[idx].overwritten) {
-		mutex_lock(&keys->overwrite_lock);
+		guard(mutex)(&keys->overwrite_lock);
 		__bch2_journal_key_overwritten(keys, idx);
-		mutex_unlock(&keys->overwrite_lock);
 	}
 }
 
@@ -815,7 +814,7 @@ void bch2_shoot_down_journal_keys(struct bch_fs *c, enum btree_id btree,
 void bch2_journal_keys_dump(struct bch_fs *c)
 {
 	struct journal_keys *keys = &c->journal_keys;
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 
 	pr_info("%zu keys:", keys->nr);
 
@@ -829,7 +828,6 @@ void bch2_journal_keys_dump(struct bch_fs *c)
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(i->k));
 		pr_err("%s", buf.buf);
 	}
-	printbuf_exit(&buf);
 }
 
 void bch2_fs_journal_keys_init(struct bch_fs *c)
