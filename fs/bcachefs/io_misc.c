@@ -114,12 +114,11 @@ err:
 	if (!ret && sectors_allocated)
 		bch2_increment_clock(c, sectors_allocated, WRITE);
 	if (should_print_err(ret)) {
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 		lockrestart_do(trans,
 			bch2_inum_offset_err_msg_trans(trans, &buf, inum, iter->pos.offset << 9));
 		prt_printf(&buf, "fallocate error: %s", bch2_err_str(ret));
 		bch_err_ratelimited(c, "%s", buf.buf);
-		printbuf_exit(&buf);
 	}
 err_noprint:
 	bch2_open_buckets_put(c, &open_buckets);
@@ -222,23 +221,18 @@ int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 int bch2_fpunch(struct bch_fs *c, subvol_inum inum, u64 start, u64 end,
 		s64 *i_sectors_delta)
 {
-	struct btree_trans *trans = bch2_trans_get(c);
-	struct btree_iter iter;
-	int ret;
+	CLASS(btree_trans, trans)(c);
 
+	struct btree_iter iter;
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_extents,
 			     POS(inum.inum, start),
 			     BTREE_ITER_intent);
 
-	ret = bch2_fpunch_at(trans, &iter, inum, end, i_sectors_delta);
+	int ret = bch2_fpunch_at(trans, &iter, inum, end, i_sectors_delta);
 
 	bch2_trans_iter_exit(trans, &iter);
-	bch2_trans_put(trans);
 
-	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-		ret = 0;
-
-	return ret;
+	return bch2_err_matches(ret, BCH_ERR_transaction_restart) ? 0 : ret;
 }
 
 /* truncate: */
@@ -319,17 +313,13 @@ int bch2_truncate(struct bch_fs *c, subvol_inum inum, u64 new_i_size, u64 *i_sec
 	 * snapshot while they're in progress, then crashing, will result in the
 	 * resume only proceeding in one of the snapshots
 	 */
-	down_read(&c->snapshot_create_lock);
-	struct btree_trans *trans = bch2_trans_get(c);
+	guard(rwsem_read)(&c->snapshot_create_lock);
+	CLASS(btree_trans, trans)(c);
 	int ret = bch2_logged_op_start(trans, &op.k_i);
 	if (ret)
-		goto out;
+		return ret;
 	ret = __bch2_resume_logged_op_truncate(trans, &op.k_i, i_sectors_delta);
 	ret = bch2_logged_op_finish(trans, &op.k_i) ?: ret;
-out:
-	bch2_trans_put(trans);
-	up_read(&c->snapshot_create_lock);
-
 	return ret;
 }
 
@@ -555,16 +545,12 @@ int bch2_fcollapse_finsert(struct bch_fs *c, subvol_inum inum,
 	 * snapshot while they're in progress, then crashing, will result in the
 	 * resume only proceeding in one of the snapshots
 	 */
-	down_read(&c->snapshot_create_lock);
-	struct btree_trans *trans = bch2_trans_get(c);
+	guard(rwsem_read)(&c->snapshot_create_lock);
+	CLASS(btree_trans, trans)(c);
 	int ret = bch2_logged_op_start(trans, &op.k_i);
 	if (ret)
-		goto out;
+		return ret;
 	ret = __bch2_resume_logged_op_finsert(trans, &op.k_i, i_sectors_delta);
 	ret = bch2_logged_op_finish(trans, &op.k_i) ?: ret;
-out:
-	bch2_trans_put(trans);
-	up_read(&c->snapshot_create_lock);
-
 	return ret;
 }
