@@ -191,7 +191,7 @@ int bch2_sb_set_upgrade_extra(struct bch_fs *c)
 	bool write_sb = false;
 	int ret = 0;
 
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 	struct bch_sb_field_ext *ext = bch2_sb_field_get(c->disk_sb.sb, ext);
 
 	if (old_version <  bcachefs_metadata_version_bucket_stripe_sectors &&
@@ -205,7 +205,6 @@ int bch2_sb_set_upgrade_extra(struct bch_fs *c)
 
 	if (write_sb)
 		bch2_write_super(c);
-	mutex_unlock(&c->sb_lock);
 
 	return ret < 0 ? ret : 0;
 }
@@ -372,7 +371,7 @@ int bch2_sb_downgrade_update(struct bch_fs *c)
 	if (!test_bit(BCH_FS_btree_running, &c->flags))
 		return 0;
 
-	darray_char table = {};
+	CLASS(darray_char, table)();
 	int ret = 0;
 
 	for (const struct upgrade_downgrade_entry *src = downgrade_table;
@@ -389,7 +388,7 @@ int bch2_sb_downgrade_update(struct bch_fs *c)
 
 		ret = darray_make_room(&table, bytes);
 		if (ret)
-			goto out;
+			return ret;
 
 		dst = (void *) &darray_top(table);
 		dst->version = cpu_to_le16(src->version);
@@ -401,7 +400,7 @@ int bch2_sb_downgrade_update(struct bch_fs *c)
 
 		ret = downgrade_table_extra(c, &table);
 		if (ret)
-			goto out;
+			return ret;
 
 		if (!dst->recovery_passes[0] &&
 		    !dst->recovery_passes[1] &&
@@ -416,18 +415,14 @@ int bch2_sb_downgrade_update(struct bch_fs *c)
 	unsigned sb_u64s = DIV_ROUND_UP(sizeof(*d) + table.nr, sizeof(u64));
 
 	if (d && le32_to_cpu(d->field.u64s) > sb_u64s)
-		goto out;
+		return 0;
 
 	d = bch2_sb_field_resize(&c->disk_sb, downgrade, sb_u64s);
-	if (!d) {
-		ret = bch_err_throw(c, ENOSPC_sb_downgrade);
-		goto out;
-	}
+	if (!d)
+		return bch_err_throw(c, ENOSPC_sb_downgrade);
 
 	memcpy(d->entries, table.data, table.nr);
 	memset_u64s_tail(d->entries, 0, table.nr);
-out:
-	darray_exit(&table);
 	return ret;
 }
 
