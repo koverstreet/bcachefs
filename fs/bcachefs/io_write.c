@@ -1218,6 +1218,7 @@ static bool bch2_extent_is_writeable(struct bch_write_op *op,
 
 static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 						  struct btree_iter *iter,
+						  struct bch_write_op *op,
 						  struct bkey_i *orig,
 						  struct bkey_s_c k,
 						  u64 new_i_size)
@@ -1227,17 +1228,21 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 		return 0;
 	}
 
-	struct bkey_i *new = bch2_bkey_make_mut_noupdate(trans, k);
+	struct bkey_i *new = bch2_trans_kmalloc_nomemzero(trans,
+				bkey_bytes(k.k) + sizeof(struct bch_extent_rebalance));
 	int ret = PTR_ERR_OR_ZERO(new);
 	if (ret)
 		return ret;
 
+	bkey_reassemble(new, k);
 	bch2_cut_front(bkey_start_pos(&orig->k), new);
 	bch2_cut_back(orig->k.p, new);
 
 	struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(new));
 	bkey_for_each_ptr(ptrs, ptr)
 		ptr->unwritten = 0;
+
+	bch2_bkey_set_needs_rebalance(op->c, &op->opts, new);
 
 	/*
 	 * Note that we're not calling bch2_subvol_get_snapshot() in this path -
@@ -1263,7 +1268,7 @@ static void bch2_nocow_write_convert_unwritten(struct bch_write_op *op)
 				     bkey_start_pos(&orig->k), orig->k.p,
 				     BTREE_ITER_intent, k,
 				     NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-			bch2_nocow_write_convert_one_unwritten(trans, &iter, orig, k, op->new_i_size);
+			bch2_nocow_write_convert_one_unwritten(trans, &iter, op, orig, k, op->new_i_size);
 		}));
 		if (ret)
 			break;
