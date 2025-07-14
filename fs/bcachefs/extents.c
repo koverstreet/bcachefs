@@ -63,15 +63,14 @@ void bch2_io_failures_to_text(struct printbuf *out,
 			((!!f->failed_ec)		<< 3);
 
 		bch2_printbuf_make_room(out, 1024);
-		out->atomic++;
 		scoped_guard(rcu) {
+			guard(printbuf_atomic)(out);
 			struct bch_dev *ca = bch2_dev_rcu_noerror(c, f->dev);
 			if (ca)
 				prt_str(out, ca->name);
 			else
 				prt_printf(out, "(invalid device %u)", f->dev);
 		}
-		--out->atomic;
 
 		prt_char(out, ' ');
 
@@ -1237,7 +1236,7 @@ restart_drop_ptrs:
 
 void bch2_extent_ptr_to_text(struct printbuf *out, struct bch_fs *c, const struct bch_extent_ptr *ptr)
 {
-	out->atomic++;
+	guard(printbuf_atomic)(out);
 	guard(rcu)();
 	struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
 	if (!ca) {
@@ -1262,7 +1261,6 @@ void bch2_extent_ptr_to_text(struct printbuf *out, struct bch_fs *c, const struc
 		else if (stale)
 			prt_printf(out, " invalid");
 	}
-	--out->atomic;
 }
 
 void bch2_extent_crc_unpacked_to_text(struct printbuf *out, struct bch_extent_crc_unpacked *crc)
