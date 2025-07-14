@@ -152,16 +152,16 @@ static int __do_six_trylock(struct six_lock *lock, enum six_lock_type type,
 	 * here.
 	 */
 	if (type == SIX_LOCK_read && lock->readers) {
-		preempt_disable();
-		this_cpu_inc(*lock->readers); /* signal that we own lock */
+		scoped_guard(preempt) {
+			this_cpu_inc(*lock->readers); /* signal that we own lock */
 
-		smp_mb();
+			smp_mb();
 
-		old = atomic_read(&lock->state);
-		ret = !(old & l[type].lock_fail);
+			old = atomic_read(&lock->state);
+			ret = !(old & l[type].lock_fail);
 
-		this_cpu_sub(*lock->readers, !ret);
-		preempt_enable();
+			this_cpu_sub(*lock->readers, !ret);
+		}
 
 		if (!ret) {
 			smp_mb();
@@ -360,7 +360,7 @@ static inline bool six_optimistic_spin(struct six_lock *lock,
 	if (atomic_read(&lock->state) & SIX_LOCK_NOSPIN)
 		return false;
 
-	preempt_disable();
+	guard(preempt)();
 	end_time = sched_clock() + 10 * NSEC_PER_USEC;
 
 	while (!need_resched() && six_owner_running(lock)) {
@@ -369,10 +369,8 @@ static inline bool six_optimistic_spin(struct six_lock *lock,
 		 * wait->lock_acquired: pairs with the smp_store_release in
 		 * __six_lock_wakeup
 		 */
-		if (smp_load_acquire(&wait->lock_acquired)) {
-			preempt_enable();
+		if (smp_load_acquire(&wait->lock_acquired))
 			return true;
-		}
 
 		if (!(++loop & 0xf) && (time_after64(sched_clock(), end_time))) {
 			six_set_bitmask(lock, SIX_LOCK_NOSPIN);
@@ -388,7 +386,6 @@ static inline bool six_optimistic_spin(struct six_lock *lock,
 		cpu_relax();
 	}
 
-	preempt_enable();
 	return false;
 }
 
