@@ -210,16 +210,11 @@ static inline bool bch2_bucket_is_open(struct bch_fs *c, unsigned dev, u64 bucke
 
 static inline bool bch2_bucket_is_open_safe(struct bch_fs *c, unsigned dev, u64 bucket)
 {
-	bool ret;
-
 	if (bch2_bucket_is_open(c, dev, bucket))
 		return true;
 
-	spin_lock(&c->freelist_lock);
-	ret = bch2_bucket_is_open(c, dev, bucket);
-	spin_unlock(&c->freelist_lock);
-
-	return ret;
+	guard(spinlock)(&c->freelist_lock);
+	return bch2_bucket_is_open(c, dev, bucket);
 }
 
 enum bch_write_flags;
