@@ -235,10 +235,10 @@ static int __btree_node_flush(struct journal *j, struct journal_entry_pin *pin,
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct btree_write *w = container_of(pin, struct btree_write, journal);
 	struct btree *b = container_of(w, struct btree, writes[i]);
-	struct btree_trans *trans = bch2_trans_get(c);
 	unsigned long old, new;
 	unsigned idx = w - b->writes;
 
+	CLASS(btree_trans, trans)(c);
 	btree_node_lock_nopath_nofail(trans, &b->c, SIX_LOCK_read);
 
 	old = READ_ONCE(b->flags);
@@ -257,8 +257,6 @@ static int __btree_node_flush(struct journal *j, struct journal_entry_pin *pin,
 
 	btree_node_write_if_need(trans, b, SIX_LOCK_read);
 	six_unlock_read(&b->c.lock);
-
-	bch2_trans_put(trans);
 	return 0;
 }
 
@@ -674,16 +672,20 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 
 	struct bkey_i *accounting;
 
-	percpu_down_read(&c->mark_lock);
-	for (accounting = btree_trans_subbuf_base(trans, &trans->accounting);
-	     accounting != btree_trans_subbuf_top(trans, &trans->accounting);
-	     accounting = bkey_next(accounting)) {
-		ret = bch2_accounting_trans_commit_hook(trans,
-					bkey_i_to_accounting(accounting), flags);
-		if (ret)
-			goto revert_fs_usage;
-	}
-	percpu_up_read(&c->mark_lock);
+	scoped_guard(percpu_read, &c->mark_lock)
+		for (accounting = btree_trans_subbuf_base(trans, &trans->accounting);
+		     accounting != btree_trans_subbuf_top(trans, &trans->accounting);
+		     accounting = bkey_next(accounting)) {
+			ret = bch2_accounting_trans_commit_hook(trans,
+						bkey_i_to_accounting(accounting), flags);
+			if (unlikely(ret)) {
+				for (struct bkey_i *i = btree_trans_subbuf_base(trans, &trans->accounting);
+				     i != accounting;
+				     i = bkey_next(i))
+					bch2_accounting_trans_commit_revert(trans, bkey_i_to_accounting(i), flags);
+				return ret;
+			}
+		}
 
 	/* XXX: we only want to run this if deltas are nonzero */
 	bch2_trans_account_disk_usage_change(trans);
@@ -795,13 +797,6 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 	return 0;
 fatal_err:
 	bch2_fs_fatal_error(c, "fatal error in transaction commit: %s", bch2_err_str(ret));
-	percpu_down_read(&c->mark_lock);
-revert_fs_usage:
-	for (struct bkey_i *i = btree_trans_subbuf_base(trans, &trans->accounting);
-	     i != accounting;
-	     i = bkey_next(i))
-		bch2_accounting_trans_commit_revert(trans, bkey_i_to_accounting(i), flags);
-	percpu_up_read(&c->mark_lock);
 	return ret;
 }
 
