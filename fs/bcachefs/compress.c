@@ -579,23 +579,17 @@ static int __bch2_check_set_has_compressed_data(struct bch_fs *c, u64 f)
 	if ((c->sb.features & f) == f)
 		return 0;
 
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 
-	if ((c->sb.features & f) == f) {
-		mutex_unlock(&c->sb_lock);
+	if ((c->sb.features & f) == f)
 		return 0;
-	}
 
 	ret = __bch2_fs_compress_init(c, c->sb.features|f);
-	if (ret) {
-		mutex_unlock(&c->sb_lock);
+	if (ret)
 		return ret;
-	}
 
 	c->disk_sb.sb->features[0] |= cpu_to_le64(f);
 	bch2_write_super(c);
-	mutex_unlock(&c->sb_lock);
-
 	return 0;
 }
 
