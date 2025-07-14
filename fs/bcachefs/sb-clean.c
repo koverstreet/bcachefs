@@ -89,8 +89,8 @@ int bch2_verify_superblock_clean(struct bch_fs *c,
 {
 	unsigned i;
 	struct bch_sb_field_clean *clean = *cleanp;
-	struct printbuf buf1 = PRINTBUF;
-	struct printbuf buf2 = PRINTBUF;
+	CLASS(printbuf, buf1)();
+	CLASS(printbuf, buf2)();
 	int ret = 0;
 
 	if (mustfix_fsck_err_on(j->seq != clean->journal_seq, c,
@@ -140,8 +140,6 @@ int bch2_verify_superblock_clean(struct bch_fs *c,
 			l2, buf2.buf);
 	}
 fsck_err:
-	printbuf_exit(&buf2);
-	printbuf_exit(&buf1);
 	return ret;
 }
 
@@ -150,7 +148,7 @@ struct bch_sb_field_clean *bch2_read_superblock_clean(struct bch_fs *c)
 	struct bch_sb_field_clean *clean, *sb_clean;
 	int ret;
 
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 	sb_clean = bch2_sb_field_get(c->disk_sb.sb, clean);
 
 	if (fsck_err_on(!sb_clean, c,
@@ -158,29 +156,22 @@ struct bch_sb_field_clean *bch2_read_superblock_clean(struct bch_fs *c)
 			"superblock marked clean but clean section not present")) {
 		SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
 		c->sb.clean = false;
-		mutex_unlock(&c->sb_lock);
 		return ERR_PTR(-BCH_ERR_invalid_sb_clean);
 	}
 
 	clean = kmemdup(sb_clean, vstruct_bytes(&sb_clean->field),
 			GFP_KERNEL);
-	if (!clean) {
-		mutex_unlock(&c->sb_lock);
+	if (!clean)
 		return ERR_PTR(-BCH_ERR_ENOMEM_read_superblock_clean);
-	}
 
 	ret = bch2_sb_clean_validate_late(c, clean, READ);
 	if (ret) {
 		kfree(clean);
-		mutex_unlock(&c->sb_lock);
 		return ERR_PTR(ret);
 	}
 
-	mutex_unlock(&c->sb_lock);
-
 	return clean;
 fsck_err:
-	mutex_unlock(&c->sb_lock);
 	return ERR_PTR(ret);
 }
 
@@ -265,21 +256,16 @@ const struct bch_sb_field_ops bch_sb_field_ops_clean = {
 
 int bch2_fs_mark_dirty(struct bch_fs *c)
 {
-	int ret;
-
 	/*
 	 * Unconditionally write superblock, to verify it hasn't changed before
 	 * we go rw:
 	 */
 
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 	SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
 	c->disk_sb.sb->features[0] |= cpu_to_le64(BCH_SB_FEATURES_ALWAYS);
 
-	ret = bch2_write_super(c);
-	mutex_unlock(&c->sb_lock);
-
-	return ret;
+	return bch2_write_super(c);
 }
 
 void bch2_fs_mark_clean(struct bch_fs *c)
@@ -289,9 +275,9 @@ void bch2_fs_mark_clean(struct bch_fs *c)
 	unsigned u64s;
 	int ret;
 
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 	if (BCH_SB_CLEAN(c->disk_sb.sb))
-		goto out;
+		return;
 
 	SET_BCH_SB_CLEAN(c->disk_sb.sb, true);
 
@@ -305,7 +291,7 @@ void bch2_fs_mark_clean(struct bch_fs *c)
 	sb_clean = bch2_sb_field_resize(&c->disk_sb, clean, u64s);
 	if (!sb_clean) {
 		bch_err(c, "error resizing superblock while setting filesystem clean");
-		goto out;
+		return;
 	}
 
 	sb_clean->flags		= 0;
@@ -329,12 +315,10 @@ void bch2_fs_mark_clean(struct bch_fs *c)
 	ret = bch2_sb_clean_validate_late(c, sb_clean, WRITE);
 	if (ret) {
 		bch_err(c, "error writing marking filesystem clean: validate error");
-		goto out;
+		return;
 	}
 
 	bch2_journal_pos_from_member_info_set(c);
 
 	bch2_write_super(c);
-out:
-	mutex_unlock(&c->sb_lock);
 }
