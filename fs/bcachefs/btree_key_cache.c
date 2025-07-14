@@ -300,13 +300,12 @@ static noinline_for_stack void do_trace_key_cache_fill(struct btree_trans *trans
 						       struct btree_path *ck_path,
 						       struct bkey_s_c k)
 {
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 
 	bch2_bpos_to_text(&buf, ck_path->pos);
 	prt_char(&buf, ' ');
 	bch2_bkey_val_to_text(&buf, trans->c, k);
 	trace_key_cache_fill(trans, buf.buf);
-	printbuf_exit(&buf);
 }
 
 static noinline int btree_key_cache_fill(struct btree_trans *trans,
@@ -539,10 +538,10 @@ int bch2_btree_key_cache_journal_flush(struct journal *j,
 	struct bkey_cached *ck =
 		container_of(pin, struct bkey_cached, journal);
 	struct bkey_cached_key key;
-	struct btree_trans *trans = bch2_trans_get(c);
 	int srcu_idx = srcu_read_lock(&c->btree_trans_barrier);
 	int ret = 0;
 
+	CLASS(btree_trans, trans)(c);
 	btree_node_lock_nopath_nofail(trans, &ck->c, SIX_LOCK_read);
 	key = ck->key;
 
@@ -565,8 +564,6 @@ int bch2_btree_key_cache_journal_flush(struct journal *j,
 				BCH_TRANS_COMMIT_journal_reclaim, false));
 unlock:
 	srcu_read_unlock(&c->btree_trans_barrier, srcu_idx);
-
-	bch2_trans_put(trans);
 	return ret;
 }
 
