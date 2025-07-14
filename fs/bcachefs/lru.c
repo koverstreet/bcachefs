@@ -86,7 +86,7 @@ int bch2_lru_check_set(struct btree_trans *trans,
 		       struct bkey_buf *last_flushed)
 {
 	struct bch_fs *c = trans->c;
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	struct btree_iter lru_iter;
 	struct bkey_s_c lru_k =
 		bch2_bkey_get_iter(trans, &lru_iter, BTREE_ID_lru,
@@ -112,7 +112,6 @@ int bch2_lru_check_set(struct btree_trans *trans,
 err:
 fsck_err:
 	bch2_trans_iter_exit(trans, &lru_iter);
-	printbuf_exit(&buf);
 	return ret;
 }
 
@@ -166,8 +165,8 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 			      struct bkey_buf *last_flushed)
 {
 	struct bch_fs *c = trans->c;
-	struct printbuf buf1 = PRINTBUF;
-	struct printbuf buf2 = PRINTBUF;
+	CLASS(printbuf, buf1)();
+	CLASS(printbuf, buf2)();
 
 	struct bbpos bp = lru_pos_to_bp(lru_k);
 
@@ -198,8 +197,6 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 err:
 fsck_err:
 	bch2_trans_iter_exit(trans, &iter);
-	printbuf_exit(&buf2);
-	printbuf_exit(&buf1);
 	return ret;
 }
 
@@ -210,11 +207,11 @@ int bch2_check_lrus(struct bch_fs *c)
 	bch2_bkey_buf_init(&last_flushed);
 	bkey_init(&last_flushed.k->k);
 
-	int ret = bch2_trans_run(c,
-		for_each_btree_key_commit(trans, iter,
+	CLASS(btree_trans, trans)(c);
+	int ret = for_each_btree_key_commit(trans, iter,
 				BTREE_ID_lru, POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			bch2_check_lru_key(trans, &iter, k, &last_flushed)));
+			bch2_check_lru_key(trans, &iter, k, &last_flushed));
 
 	bch2_bkey_buf_exit(&last_flushed, c);
 	bch_err_fn(c, ret);
