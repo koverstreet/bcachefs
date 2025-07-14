@@ -35,7 +35,7 @@ static int resume_logged_op(struct btree_trans *trans, struct btree_iter *iter,
 {
 	struct bch_fs *c = trans->c;
 	u32 restart_count = trans->restart_count;
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	int ret = 0;
 
 	fsck_err_on(test_bit(BCH_FS_clean_recovery, &c->flags),
@@ -56,19 +56,18 @@ static int resume_logged_op(struct btree_trans *trans, struct btree_iter *iter,
 
 	bch2_bkey_buf_exit(&sk, c);
 fsck_err:
-	printbuf_exit(&buf);
 	return ret ?: trans_was_restarted(trans, restart_count);
 }
 
 int bch2_resume_logged_ops(struct bch_fs *c)
 {
-	int ret = bch2_trans_run(c,
-		for_each_btree_key_max(trans, iter,
+	CLASS(btree_trans, trans)(c);
+	int ret = for_each_btree_key_max(trans, iter,
 				   BTREE_ID_logged_ops,
 				   POS(LOGGED_OPS_INUM_logged_ops, 0),
 				   POS(LOGGED_OPS_INUM_logged_ops, U64_MAX),
 				   BTREE_ITER_prefetch, k,
-			resume_logged_op(trans, &iter, k)));
+			resume_logged_op(trans, &iter, k));
 	bch_err_fn(c, ret);
 	return ret;
 }
@@ -107,12 +106,11 @@ int bch2_logged_op_finish(struct btree_trans *trans, struct bkey_i *k)
 	 */
 	if (ret) {
 		struct bch_fs *c = trans->c;
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(k));
 		bch2_fs_fatal_error(c, "deleting logged operation %s: %s",
 				    buf.buf, bch2_err_str(ret));
-		printbuf_exit(&buf);
 	}
 
 	return ret;
