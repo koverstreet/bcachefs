@@ -111,9 +111,8 @@ static int bch2_ioc_getlabel(struct bch_fs *c, char __user *user_label)
 
 	BUILD_BUG_ON(BCH_SB_LABEL_SIZE >= FSLABEL_MAX);
 
-	mutex_lock(&c->sb_lock);
-	memcpy(label, c->disk_sb.sb->label, BCH_SB_LABEL_SIZE);
-	mutex_unlock(&c->sb_lock);
+	scoped_guard(mutex, &c->sb_lock)
+		memcpy(label, c->disk_sb.sb->label, BCH_SB_LABEL_SIZE);
 
 	len = strnlen(label, BCH_SB_LABEL_SIZE);
 	if (len == BCH_SB_LABEL_SIZE) {
@@ -152,10 +151,10 @@ static int bch2_ioc_setlabel(struct bch_fs *c,
 	if (ret)
 		return ret;
 
-	mutex_lock(&c->sb_lock);
-	strscpy(c->disk_sb.sb->label, label, BCH_SB_LABEL_SIZE);
-	ret = bch2_write_super(c);
-	mutex_unlock(&c->sb_lock);
+	scoped_guard(mutex, &c->sb_lock) {
+		strscpy(c->disk_sb.sb->label, label, BCH_SB_LABEL_SIZE);
+		ret = bch2_write_super(c);
+	}
 
 	mnt_drop_write_file(file);
 	return ret;
@@ -172,7 +171,7 @@ static int bch2_ioc_goingdown(struct bch_fs *c, u32 __user *arg)
 	if (get_user(flags, arg))
 		return -EFAULT;
 
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	bch2_log_msg_start(c, &buf);
 
 	prt_printf(&buf, "shutdown by ioctl type %u", flags);
@@ -193,13 +192,10 @@ static int bch2_ioc_goingdown(struct bch_fs *c, u32 __user *arg)
 		bch2_fs_emergency_read_only2(c, &buf);
 		break;
 	default:
-		ret = -EINVAL;
-		goto noprint;
+		return -EINVAL;
 	}
 
 	bch2_print_str(c, KERN_ERR, buf.buf);
-noprint:
-	printbuf_exit(&buf);
 	return ret;
 }
 
@@ -234,9 +230,8 @@ static long bch2_ioctl_subvolume_create(struct bch_fs *c, struct file *filp,
 
 	if (arg.flags & BCH_SUBVOL_SNAPSHOT_CREATE) {
 		/* sync_inodes_sb enforce s_umount is locked */
-		down_read(&c->vfs_sb->s_umount);
+		guard(rwsem_read)(&c->vfs_sb->s_umount);
 		sync_inodes_sb(c->vfs_sb);
-		up_read(&c->vfs_sb->s_umount);
 	}
 
 	if (arg.src_ptr) {
@@ -301,12 +296,10 @@ static long bch2_ioctl_subvolume_create(struct bch_fs *c, struct file *filp,
 	    !arg.src_ptr)
 		snapshot_src.subvol = inode_inum(to_bch_ei(dir)).subvol;
 
-	down_write(&c->snapshot_create_lock);
-	inode = __bch2_create(file_mnt_idmap(filp), to_bch_ei(dir),
-			      dst_dentry, arg.mode|S_IFDIR,
-			      0, snapshot_src, create_flags);
-	up_write(&c->snapshot_create_lock);
-
+	scoped_guard(rwsem_write, &c->snapshot_create_lock)
+		inode = __bch2_create(file_mnt_idmap(filp), to_bch_ei(dir),
+				      dst_dentry, arg.mode|S_IFDIR,
+				      0, snapshot_src, create_flags);
 	error = PTR_ERR_OR_ZERO(inode);
 	if (error)
 		goto err3;
