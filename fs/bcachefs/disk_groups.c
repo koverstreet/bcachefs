@@ -375,7 +375,7 @@ void bch2_disk_groups_to_text(struct printbuf *out, struct bch_fs *c)
 {
 	bch2_printbuf_make_room(out, 4096);
 
-	out->atomic++;
+	guard(printbuf_atomic)(out);
 	guard(rcu)();
 	struct bch_disk_groups_cpu *g = rcu_dereference(c->disk_groups);
 
@@ -396,16 +396,13 @@ void bch2_disk_groups_to_text(struct printbuf *out, struct bch_fs *c)
 next:
 		prt_newline(out);
 	}
-
-	out->atomic--;
 }
 
 void bch2_disk_path_to_text(struct printbuf *out, struct bch_fs *c, unsigned v)
 {
-	out->atomic++;
+	guard(printbuf_atomic)(out);
 	guard(rcu)();
-	__bch2_disk_path_to_text(out, rcu_dereference(c->disk_groups), v),
-	--out->atomic;
+	__bch2_disk_path_to_text(out, rcu_dereference(c->disk_groups), v);
 }
 
 void bch2_disk_path_to_text_sb(struct printbuf *out, struct bch_sb *sb, unsigned v)
@@ -471,14 +468,9 @@ int __bch2_dev_group_set(struct bch_fs *c, struct bch_dev *ca, const char *name)
 
 int bch2_dev_group_set(struct bch_fs *c, struct bch_dev *ca, const char *name)
 {
-	int ret;
-
-	mutex_lock(&c->sb_lock);
-	ret = __bch2_dev_group_set(c, ca, name) ?:
+	guard(mutex)(&c->sb_lock);
+	return __bch2_dev_group_set(c, ca, name) ?:
 		bch2_write_super(c);
-	mutex_unlock(&c->sb_lock);
-
-	return ret;
 }
 
 int bch2_opt_target_parse(struct bch_fs *c, const char *val, u64 *res,
@@ -506,9 +498,8 @@ int bch2_opt_target_parse(struct bch_fs *c, const char *val, u64 *res,
 		return 0;
 	}
 
-	mutex_lock(&c->sb_lock);
-	g = bch2_disk_path_find(&c->disk_sb, val);
-	mutex_unlock(&c->sb_lock);
+	scoped_guard(mutex, &c->sb_lock)
+		g = bch2_disk_path_find(&c->disk_sb, val);
 
 	if (g >= 0) {
 		*res = group_to_target(g);
@@ -527,7 +518,7 @@ void bch2_target_to_text(struct printbuf *out, struct bch_fs *c, unsigned v)
 		prt_printf(out, "none");
 		return;
 	case TARGET_DEV: {
-		out->atomic++;
+		guard(printbuf_atomic)(out);
 		guard(rcu)();
 		struct bch_dev *ca = t.dev < c->sb.nr_devices
 			? rcu_dereference(c->devs[t.dev])
@@ -539,8 +530,6 @@ void bch2_target_to_text(struct printbuf *out, struct bch_fs *c, unsigned v)
 			prt_printf(out, "offline device %u", t.dev);
 		else
 			prt_printf(out, "invalid device %u", t.dev);
-
-		out->atomic--;
 		return;
 	}
 	case TARGET_GROUP:
