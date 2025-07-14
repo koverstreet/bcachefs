@@ -25,25 +25,20 @@ static void bucket_table_init(struct buckets_waiting_for_journal_table *t, size_
 u64 bch2_bucket_journal_seq_ready(struct buckets_waiting_for_journal *b,
 				  unsigned dev, u64 bucket)
 {
-	struct buckets_waiting_for_journal_table *t;
 	u64 dev_bucket = (u64) dev << 56 | bucket;
-	u64 ret = 0;
 
-	mutex_lock(&b->lock);
-	t = b->t;
+	guard(mutex)(&b->lock);
+
+	struct buckets_waiting_for_journal_table *t = b->t;
 
 	for (unsigned i = 0; i < ARRAY_SIZE(t->hash_seeds); i++) {
 		struct bucket_hashed *h = bucket_hash(t, i, dev_bucket);
 
-		if (h->dev_bucket == dev_bucket) {
-			ret = h->journal_seq;
-			break;
-		}
+		if (h->dev_bucket == dev_bucket)
+			return h->journal_seq;
 	}
 
-	mutex_unlock(&b->lock);
-
-	return ret;
+	return 0;
 }
 
 static bool bucket_table_insert(struct buckets_waiting_for_journal_table *t,
@@ -92,12 +87,11 @@ int bch2_set_bucket_needs_journal_commit(struct buckets_waiting_for_journal *b,
 		.journal_seq	= journal_seq,
 	};
 	size_t i, size, new_bits, nr_elements = 1, nr_rehashes = 0, nr_rehashes_this_size = 0;
-	int ret = 0;
 
-	mutex_lock(&b->lock);
+	guard(mutex)(&b->lock);
 
 	if (likely(bucket_table_insert(b->t, &new, flushed_seq)))
-		goto out;
+		return 0;
 
 	t = b->t;
 	size = 1UL << t->bits;
@@ -109,8 +103,7 @@ realloc:
 	n = kvmalloc(sizeof(*n) + (sizeof(n->d[0]) << new_bits), GFP_KERNEL);
 	if (!n) {
 		struct bch_fs *c = container_of(b, struct bch_fs, buckets_waiting_for_journal);
-		ret = bch_err_throw(c, ENOMEM_buckets_waiting_for_journal_set);
-		goto out;
+		return bch_err_throw(c, ENOMEM_buckets_waiting_for_journal_set);
 	}
 
 retry_rehash:
@@ -143,10 +136,7 @@ retry_rehash:
 
 	pr_debug("took %zu rehashes, table at %zu/%lu elements",
 		 nr_rehashes, nr_elements, 1UL << b->t->bits);
-out:
-	mutex_unlock(&b->lock);
-
-	return ret;
+	return 0;
 }
 
 void bch2_fs_buckets_waiting_for_journal_exit(struct bch_fs *c)
