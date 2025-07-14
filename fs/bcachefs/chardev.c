@@ -52,6 +52,11 @@ static struct bch_dev *bch2_device_lookup(struct bch_fs *c, u64 dev,
 	return ca;
 }
 
+DEFINE_CLASS(bch2_device_lookup, struct bch_dev *,
+      bch2_dev_put(_T),
+      bch2_device_lookup(c, dev, flags),
+      struct bch_fs *c, u64 dev, unsigned flags);
+
 #if 0
 static long bch2_ioctl_assemble(struct bch_ioctl_assemble __user *user_arg)
 {
@@ -207,8 +212,6 @@ static long bch2_ioctl_disk_add(struct bch_fs *c, struct bch_ioctl_disk arg)
 
 static long bch2_ioctl_disk_remove(struct bch_fs *c, struct bch_ioctl_disk arg)
 {
-	struct bch_dev *ca;
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
@@ -219,7 +222,7 @@ static long bch2_ioctl_disk_remove(struct bch_fs *c, struct bch_ioctl_disk arg)
 	    arg.pad)
 		return -EINVAL;
 
-	ca = bch2_device_lookup(c, arg.dev, arg.flags);
+	struct bch_dev *ca = bch2_device_lookup(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
@@ -249,9 +252,6 @@ static long bch2_ioctl_disk_online(struct bch_fs *c, struct bch_ioctl_disk arg)
 
 static long bch2_ioctl_disk_offline(struct bch_fs *c, struct bch_ioctl_disk arg)
 {
-	struct bch_dev *ca;
-	int ret;
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
@@ -262,21 +262,16 @@ static long bch2_ioctl_disk_offline(struct bch_fs *c, struct bch_ioctl_disk arg)
 	    arg.pad)
 		return -EINVAL;
 
-	ca = bch2_device_lookup(c, arg.dev, arg.flags);
+	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
-	ret = bch2_dev_offline(c, ca, arg.flags);
-	bch2_dev_put(ca);
-	return ret;
+	return bch2_dev_offline(c, ca, arg.flags);
 }
 
 static long bch2_ioctl_disk_set_state(struct bch_fs *c,
 			struct bch_ioctl_disk_set_state arg)
 {
-	struct bch_dev *ca;
-	int ret;
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
@@ -288,15 +283,12 @@ static long bch2_ioctl_disk_set_state(struct bch_fs *c,
 	    arg.new_state >= BCH_MEMBER_STATE_NR)
 		return -EINVAL;
 
-	ca = bch2_device_lookup(c, arg.dev, arg.flags);
+	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
-	ret = bch2_dev_set_state(c, ca, arg.new_state, arg.flags);
-	if (ret)
-		bch_err(c, "Error setting device state: %s", bch2_err_str(ret));
-
-	bch2_dev_put(ca);
+	int ret = bch2_dev_set_state(c, ca, arg.new_state, arg.flags);
+	bch_err_msg(ca, ret, "setting device state");
 	return ret;
 }
 
@@ -349,14 +341,13 @@ static ssize_t bch2_data_job_read(struct file *file, char __user *buf,
 	};
 
 	if (ctx->arg.op == BCH_DATA_OP_scrub) {
-		struct bch_dev *ca = bch2_dev_tryget(c, ctx->arg.scrub.dev);
+		CLASS(bch2_dev_tryget_noerror, ca)(c, ctx->arg.scrub.dev);
 		if (ca) {
 			struct bch_dev_usage_full u;
 			bch2_dev_usage_full_read_fast(ca, &u);
 			for (unsigned i = BCH_DATA_btree; i < ARRAY_SIZE(u.d); i++)
 				if (ctx->arg.scrub.data_types & BIT(i))
 					e.p.sectors_total += u.d[i].sectors;
-			bch2_dev_put(ca);
 		}
 	} else {
 		e.p.sectors_total	= bch2_fs_usage_read_short(c).used;
@@ -418,9 +409,8 @@ static noinline_for_stack long bch2_ioctl_fs_usage(struct bch_fs *c,
 				struct bch_ioctl_fs_usage __user *user_arg)
 {
 	struct bch_ioctl_fs_usage arg = {};
-	darray_char replicas = {};
+	CLASS(darray_char, replicas)();
 	u32 replica_entries_bytes;
-	int ret = 0;
 
 	if (!test_bit(BCH_FS_started, &c->flags))
 		return -EINVAL;
@@ -428,11 +418,11 @@ static noinline_for_stack long bch2_ioctl_fs_usage(struct bch_fs *c,
 	if (get_user(replica_entries_bytes, &user_arg->replica_entries_bytes))
 		return -EFAULT;
 
-	ret   = bch2_fs_replicas_usage_read(c, &replicas) ?:
+	int ret = bch2_fs_replicas_usage_read(c, &replicas) ?:
 		(replica_entries_bytes < replicas.nr ? -ERANGE : 0) ?:
 		copy_to_user_errcode(&user_arg->replicas, replicas.data, replicas.nr);
 	if (ret)
-		goto err;
+		return ret;
 
 	struct bch_fs_usage_short u = bch2_fs_usage_read_short(c);
 	arg.capacity		= c->capacity;
@@ -449,52 +439,41 @@ static noinline_for_stack long bch2_ioctl_fs_usage(struct bch_fs *c,
 					 &arg.persistent_reserved[i], 1);
 	}
 
-	ret = copy_to_user_errcode(user_arg, &arg, sizeof(arg));
-err:
-	darray_exit(&replicas);
-	return ret;
+	return copy_to_user_errcode(user_arg, &arg, sizeof(arg));
 }
 
 static long bch2_ioctl_query_accounting(struct bch_fs *c,
 			struct bch_ioctl_query_accounting __user *user_arg)
 {
 	struct bch_ioctl_query_accounting arg;
-	darray_char accounting = {};
-	int ret = 0;
+	CLASS(darray_char, accounting)();
 
 	if (!test_bit(BCH_FS_started, &c->flags))
 		return -EINVAL;
 
-	ret   = copy_from_user_errcode(&arg, user_arg, sizeof(arg)) ?:
+	int ret = copy_from_user_errcode(&arg, user_arg, sizeof(arg)) ?:
 		bch2_fs_accounting_read(c, &accounting, arg.accounting_types_mask) ?:
 		(arg.accounting_u64s * sizeof(u64) < accounting.nr ? -ERANGE : 0) ?:
 		copy_to_user_errcode(&user_arg->accounting, accounting.data, accounting.nr);
 	if (ret)
-		goto err;
+		return ret;
 
 	arg.capacity		= c->capacity;
 	arg.used		= bch2_fs_usage_read_short(c).used;
 	arg.online_reserved	= percpu_u64_get(c->online_reserved);
 	arg.accounting_u64s	= accounting.nr / sizeof(u64);
 
-	ret = copy_to_user_errcode(user_arg, &arg, sizeof(arg));
-err:
-	darray_exit(&accounting);
-	return ret;
+	return copy_to_user_errcode(user_arg, &arg, sizeof(arg));
 }
 
 /* obsolete, didn't allow for new data types: */
 static noinline_for_stack long bch2_ioctl_dev_usage(struct bch_fs *c,
 				 struct bch_ioctl_dev_usage __user *user_arg)
 {
-	struct bch_ioctl_dev_usage arg;
-	struct bch_dev_usage_full src;
-	struct bch_dev *ca;
-	unsigned i;
-
 	if (!test_bit(BCH_FS_started, &c->flags))
 		return -EINVAL;
 
+	struct bch_ioctl_dev_usage arg;
 	if (copy_from_user(&arg, user_arg, sizeof(arg)))
 		return -EFAULT;
 
@@ -504,23 +483,21 @@ static noinline_for_stack long bch2_ioctl_dev_usage(struct bch_fs *c,
 	    arg.pad[2])
 		return -EINVAL;
 
-	ca = bch2_device_lookup(c, arg.dev, arg.flags);
+	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
-	src = bch2_dev_usage_full_read(ca);
+	struct bch_dev_usage_full src = bch2_dev_usage_full_read(ca);
 
 	arg.state		= ca->mi.state;
 	arg.bucket_size		= ca->mi.bucket_size;
 	arg.nr_buckets		= ca->mi.nbuckets - ca->mi.first_bucket;
 
-	for (i = 0; i < ARRAY_SIZE(arg.d); i++) {
+	for (unsigned i = 0; i < ARRAY_SIZE(arg.d); i++) {
 		arg.d[i].buckets	= src.d[i].buckets;
 		arg.d[i].sectors	= src.d[i].sectors;
 		arg.d[i].fragmented	= src.d[i].fragmented;
 	}
-
-	bch2_dev_put(ca);
 
 	return copy_to_user_errcode(user_arg, &arg, sizeof(arg));
 }
@@ -528,14 +505,10 @@ static noinline_for_stack long bch2_ioctl_dev_usage(struct bch_fs *c,
 static long bch2_ioctl_dev_usage_v2(struct bch_fs *c,
 				 struct bch_ioctl_dev_usage_v2 __user *user_arg)
 {
-	struct bch_ioctl_dev_usage_v2 arg;
-	struct bch_dev_usage_full src;
-	struct bch_dev *ca;
-	int ret = 0;
-
 	if (!test_bit(BCH_FS_started, &c->flags))
 		return -EINVAL;
 
+	struct bch_ioctl_dev_usage_v2 arg;
 	if (copy_from_user(&arg, user_arg, sizeof(arg)))
 		return -EFAULT;
 
@@ -545,20 +518,20 @@ static long bch2_ioctl_dev_usage_v2(struct bch_fs *c,
 	    arg.pad[2])
 		return -EINVAL;
 
-	ca = bch2_device_lookup(c, arg.dev, arg.flags);
+	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
-	src = bch2_dev_usage_full_read(ca);
+	struct bch_dev_usage_full src = bch2_dev_usage_full_read(ca);
 
 	arg.state		= ca->mi.state;
 	arg.bucket_size		= ca->mi.bucket_size;
 	arg.nr_data_types	= min(arg.nr_data_types, BCH_DATA_NR);
 	arg.nr_buckets		= ca->mi.nbuckets - ca->mi.first_bucket;
 
-	ret = copy_to_user_errcode(user_arg, &arg, sizeof(arg));
+	int ret = copy_to_user_errcode(user_arg, &arg, sizeof(arg));
 	if (ret)
-		goto err;
+		return ret;
 
 	for (unsigned i = 0; i < arg.nr_data_types; i++) {
 		struct bch_ioctl_dev_usage_type t = {
@@ -569,11 +542,10 @@ static long bch2_ioctl_dev_usage_v2(struct bch_fs *c,
 
 		ret = copy_to_user_errcode(&user_arg->d[i], &t, sizeof(t));
 		if (ret)
-			goto err;
+			return ret;
 	}
-err:
-	bch2_dev_put(ca);
-	return ret;
+
+	return 0;
 }
 
 static long bch2_ioctl_read_super(struct bch_fs *c,
@@ -590,13 +562,13 @@ static long bch2_ioctl_read_super(struct bch_fs *c,
 	    arg.pad)
 		return -EINVAL;
 
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 
 	if (arg.flags & BCH_READ_DEV) {
 		ca = bch2_device_lookup(c, arg.dev, arg.flags);
 		ret = PTR_ERR_OR_ZERO(ca);
 		if (ret)
-			goto err_unlock;
+			return ret;
 
 		sb = ca->disk_sb.sb;
 	} else {
@@ -612,8 +584,6 @@ static long bch2_ioctl_read_super(struct bch_fs *c,
 				   vstruct_bytes(sb));
 err:
 	bch2_dev_put(ca);
-err_unlock:
-	mutex_unlock(&c->sb_lock);
 	return ret;
 }
 
@@ -639,9 +609,6 @@ static long bch2_ioctl_disk_get_idx(struct bch_fs *c,
 static long bch2_ioctl_disk_resize(struct bch_fs *c,
 				   struct bch_ioctl_disk_resize arg)
 {
-	struct bch_dev *ca;
-	int ret;
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
@@ -649,22 +616,16 @@ static long bch2_ioctl_disk_resize(struct bch_fs *c,
 	    arg.pad)
 		return -EINVAL;
 
-	ca = bch2_device_lookup(c, arg.dev, arg.flags);
+	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
-	ret = bch2_dev_resize(c, ca, arg.nbuckets);
-
-	bch2_dev_put(ca);
-	return ret;
+	return bch2_dev_resize(c, ca, arg.nbuckets);
 }
 
 static long bch2_ioctl_disk_resize_journal(struct bch_fs *c,
 				   struct bch_ioctl_disk_resize_journal arg)
 {
-	struct bch_dev *ca;
-	int ret;
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
@@ -675,14 +636,11 @@ static long bch2_ioctl_disk_resize_journal(struct bch_fs *c,
 	if (arg.nbuckets > U32_MAX)
 		return -EINVAL;
 
-	ca = bch2_device_lookup(c, arg.dev, arg.flags);
+	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
-	ret = bch2_set_nr_journal_buckets(c, ca, arg.nbuckets);
-
-	bch2_dev_put(ca);
-	return ret;
+	return bch2_set_nr_journal_buckets(c, ca, arg.nbuckets);
 }
 
 #define BCH_IOCTL(_name, _argtype)					\
