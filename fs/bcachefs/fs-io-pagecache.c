@@ -125,11 +125,9 @@ folio_sector_reserve(enum bch_folio_sector_state state)
 /* for newly allocated folios: */
 struct bch_folio *__bch2_folio_create(struct folio *folio, gfp_t gfp)
 {
-	struct bch_folio *s;
-
-	s = kzalloc(sizeof(*s) +
-		    sizeof(struct bch_folio_sector) *
-		    folio_sectors(folio), gfp);
+	struct bch_folio *s = kzalloc(sizeof(*s) +
+				      sizeof(struct bch_folio_sector) *
+				      folio_sectors(folio), gfp);
 	if (!s)
 		return NULL;
 
@@ -162,7 +160,7 @@ static void __bch2_folio_set(struct folio *folio,
 	BUG_ON(pg_offset >= sectors);
 	BUG_ON(pg_offset + pg_len > sectors);
 
-	spin_lock(&s->lock);
+	guard(spinlock)(&s->lock);
 
 	for (i = pg_offset; i < pg_offset + pg_len; i++) {
 		s->s[i].nr_replicas	= nr_ptrs;
@@ -171,8 +169,6 @@ static void __bch2_folio_set(struct folio *folio,
 
 	if (i == sectors)
 		s->uptodate = true;
-
-	spin_unlock(&s->lock);
 }
 
 /*
@@ -276,10 +272,9 @@ void bch2_mark_pagecache_unallocated(struct bch_inode_info *inode,
 			s = bch2_folio(folio);
 
 			if (s) {
-				spin_lock(&s->lock);
+				guard(spinlock)(&s->lock);
 				for (j = folio_offset; j < folio_offset + folio_len; j++)
 					s->s[j].nr_replicas = 0;
-				spin_unlock(&s->lock);
 			}
 
 			folio_unlock(folio);
@@ -330,13 +325,12 @@ int bch2_mark_pagecache_reserved(struct bch_inode_info *inode,
 				unsigned folio_offset = max(*start, folio_start) - folio_start;
 				unsigned folio_len = min(end, folio_end) - folio_offset - folio_start;
 
-				spin_lock(&s->lock);
+				guard(spinlock)(&s->lock);
 				for (unsigned j = folio_offset; j < folio_offset + folio_len; j++) {
 					i_sectors_delta -= s->s[j].state == SECTOR_dirty;
 					bch2_folio_sector_set(folio, s, j,
 						folio_sector_reserve(s->s[j].state));
 				}
-				spin_unlock(&s->lock);
 			}
 
 			folio_unlock(folio);
@@ -529,29 +523,26 @@ void bch2_set_folio_dirty(struct bch_fs *c,
 
 	BUG_ON(!s->uptodate);
 
-	spin_lock(&s->lock);
+	scoped_guard(spinlock, &s->lock)
+		for (i = round_down(offset, block_bytes(c)) >> 9;
+		     i < round_up(offset + len, block_bytes(c)) >> 9;
+		     i++) {
+			unsigned sectors = sectors_to_reserve(&s->s[i],
+							res->disk.nr_replicas);
 
-	for (i = round_down(offset, block_bytes(c)) >> 9;
-	     i < round_up(offset + len, block_bytes(c)) >> 9;
-	     i++) {
-		unsigned sectors = sectors_to_reserve(&s->s[i],
-						res->disk.nr_replicas);
+			/*
+			 * This can happen if we race with the error path in
+			 * bch2_writepage_io_done():
+			 */
+			sectors = min_t(unsigned, sectors, res->disk.sectors);
 
-		/*
-		 * This can happen if we race with the error path in
-		 * bch2_writepage_io_done():
-		 */
-		sectors = min_t(unsigned, sectors, res->disk.sectors);
+			s->s[i].replicas_reserved += sectors;
+			res->disk.sectors -= sectors;
 
-		s->s[i].replicas_reserved += sectors;
-		res->disk.sectors -= sectors;
+			dirty_sectors += s->s[i].state == SECTOR_unallocated;
 
-		dirty_sectors += s->s[i].state == SECTOR_unallocated;
-
-		bch2_folio_sector_set(folio, s, i, folio_sector_dirty(s->s[i].state));
-	}
-
-	spin_unlock(&s->lock);
+			bch2_folio_sector_set(folio, s, i, folio_sector_dirty(s->s[i].state));
+		}
 
 	bch2_i_sectors_acct(c, inode, &res->quota, dirty_sectors);
 
