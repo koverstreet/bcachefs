@@ -17,7 +17,7 @@ static int bch2_subvolume_delete(struct btree_trans *, u32);
 
 static int bch2_subvolume_missing(struct bch_fs *c, u32 subvolid)
 {
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	bch2_log_msg_start(c, &buf);
 
 	prt_printf(&buf, "missing subvolume %u", subvolid);
@@ -27,7 +27,6 @@ static int bch2_subvolume_missing(struct bch_fs *c, u32 subvolid)
 					BCH_RECOVERY_PASS_check_inodes, 0);
 	if (print)
 		bch2_print_str(c, KERN_ERR, buf.buf);
-	printbuf_exit(&buf);
 	return ret;
 }
 
@@ -50,7 +49,7 @@ static int check_subvol(struct btree_trans *trans,
 	struct btree_iter subvol_children_iter = {};
 	struct bch_subvolume subvol;
 	struct bch_snapshot snapshot;
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	unsigned snapid;
 	int ret = 0;
 
@@ -178,17 +177,16 @@ static int check_subvol(struct btree_trans *trans,
 err:
 fsck_err:
 	bch2_trans_iter_exit(trans, &subvol_children_iter);
-	printbuf_exit(&buf);
 	return ret;
 }
 
 int bch2_check_subvols(struct bch_fs *c)
 {
-	int ret = bch2_trans_run(c,
-		for_each_btree_key_commit(trans, iter,
+	CLASS(btree_trans, trans)(c);
+	int ret = for_each_btree_key_commit(trans, iter,
 				BTREE_ID_subvolumes, POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			check_subvol(trans, &iter, k)));
+			check_subvol(trans, &iter, k));
 	bch_err_fn(c, ret);
 	return ret;
 }
@@ -219,11 +217,11 @@ fsck_err:
 
 int bch2_check_subvol_children(struct bch_fs *c)
 {
-	int ret = bch2_trans_run(c,
-		for_each_btree_key_commit(trans, iter,
+	CLASS(btree_trans, trans)(c);
+	int ret = for_each_btree_key_commit(trans, iter,
 				BTREE_ID_subvolume_children, POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			check_subvol_child(trans, &iter, k)));
+			check_subvol_child(trans, &iter, k));
 	bch_err_fn(c, ret);
 	return 0;
 }
@@ -348,7 +346,8 @@ int bch2_subvol_is_ro_trans(struct btree_trans *trans, u32 subvol)
 
 int bch2_subvol_is_ro(struct bch_fs *c, u32 subvol)
 {
-	return bch2_trans_do(c, bch2_subvol_is_ro_trans(trans, subvol));
+	CLASS(btree_trans, trans)(c);
+	return lockrestart_do(trans, bch2_subvol_is_ro_trans(trans, subvol));
 }
 
 int bch2_snapshot_get_subvol(struct btree_trans *trans, u32 snapshot,
@@ -514,18 +513,22 @@ static void bch2_subvolume_wait_for_pagecache_and_delete(struct work_struct *wor
 	int ret = 0;
 
 	while (!ret) {
-		mutex_lock(&c->snapshots_unlinked_lock);
-		snapshot_id_list s = c->snapshots_unlinked;
-		darray_init(&c->snapshots_unlinked);
-		mutex_unlock(&c->snapshots_unlinked_lock);
+		snapshot_id_list s;
+
+		scoped_guard(mutex, &c->snapshots_unlinked_lock) {
+			s = c->snapshots_unlinked;
+			darray_init(&c->snapshots_unlinked);
+		}
 
 		if (!s.nr)
 			break;
 
 		bch2_evict_subvolume_inodes(c, &s);
 
+		CLASS(btree_trans, trans)(c);
+
 		darray_for_each(s, id) {
-			ret = bch2_trans_run(c, bch2_subvolume_delete(trans, *id));
+			ret = bch2_subvolume_delete(trans, *id);
 			bch_err_msg(c, ret, "deleting subvolume %u", *id);
 			if (ret)
 				break;
@@ -549,10 +552,9 @@ static int bch2_subvolume_wait_for_pagecache_and_delete_hook(struct btree_trans 
 	struct bch_fs *c = trans->c;
 	int ret = 0;
 
-	mutex_lock(&c->snapshots_unlinked_lock);
-	if (!snapshot_list_has_id(&c->snapshots_unlinked, h->subvol))
-		ret = snapshot_list_add(c, &c->snapshots_unlinked, h->subvol);
-	mutex_unlock(&c->snapshots_unlinked_lock);
+	scoped_guard(mutex, &c->snapshots_unlinked_lock)
+		if (!snapshot_list_has_id(&c->snapshots_unlinked, h->subvol))
+			ret = snapshot_list_add(c, &c->snapshots_unlinked, h->subvol);
 
 	if (ret)
 		return ret;
@@ -739,8 +741,9 @@ err:
 /* set bi_subvol on root inode */
 int bch2_fs_upgrade_for_subvolumes(struct bch_fs *c)
 {
-	int ret = bch2_trans_commit_do(c, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-				       __bch2_fs_upgrade_for_subvolumes(trans));
+	CLASS(btree_trans, trans)(c);
+	int ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+			    __bch2_fs_upgrade_for_subvolumes(trans));
 	bch_err_fn(c, ret);
 	return ret;
 }
