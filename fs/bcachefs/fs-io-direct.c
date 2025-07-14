@@ -252,7 +252,7 @@ static bool bch2_check_range_allocated(struct bch_fs *c, subvol_inum inum,
 				       u64 offset, u64 size,
 				       unsigned nr_replicas, bool compressed)
 {
-	struct btree_trans *trans = bch2_trans_get(c);
+	CLASS(btree_trans, trans)(c);
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	u64 end = offset + size;
@@ -285,7 +285,6 @@ retry:
 err:
 	if (bch2_err_matches(err, BCH_ERR_transaction_restart))
 		goto retry;
-	bch2_trans_put(trans);
 
 	return err ? false : ret;
 }
@@ -428,17 +427,15 @@ static __always_inline void bch2_dio_write_end(struct dio_write *dio)
 	dio->written	+= dio->op.written;
 
 	if (dio->extending) {
-		spin_lock(&inode->v.i_lock);
+		guard(spinlock)(&inode->v.i_lock);
 		if (req->ki_pos > inode->v.i_size)
 			i_size_write(&inode->v, req->ki_pos);
-		spin_unlock(&inode->v.i_lock);
 	}
 
 	if (dio->op.i_sectors_delta || dio->quota_res.sectors) {
-		mutex_lock(&inode->ei_quota_lock);
+		guard(mutex)(&inode->ei_quota_lock);
 		__bch2_i_sectors_acct(c, inode, &dio->quota_res, dio->op.i_sectors_delta);
 		__bch2_quota_reservation_put(c, inode, &dio->quota_res);
-		mutex_unlock(&inode->ei_quota_lock);
 	}
 
 	bio_release_pages(bio, false);
