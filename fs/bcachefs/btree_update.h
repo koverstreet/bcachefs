@@ -278,6 +278,7 @@ static inline int bch2_trans_commit(struct btree_trans *trans,
 	nested_lockrestart_do(_trans, _do ?: bch2_trans_commit(_trans, (_disk_res),\
 					(_journal_seq), (_flags)))
 
+/* deprecated, prefer CLASS(btree_trans) */
 #define bch2_trans_commit_do(_c, _disk_res, _journal_seq, _flags, _do)		\
 	bch2_trans_run(_c, commit_do(trans, _disk_res, _journal_seq, _flags, _do))
 

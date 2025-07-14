@@ -671,8 +671,9 @@ int bch2_btree_insert(struct bch_fs *c, enum btree_id id, struct bkey_i *k,
 		      enum bch_trans_commit_flags commit_flags,
 		      enum btree_iter_update_trigger_flags iter_flags)
 {
-	return bch2_trans_commit_do(c, disk_res, NULL, commit_flags,
-			     bch2_btree_insert_trans(trans, id, k, iter_flags));
+	CLASS(btree_trans, trans)(c);
+	return commit_do(trans, disk_res, NULL, commit_flags,
+			 bch2_btree_insert_trans(trans, id, k, iter_flags));
 }
 
 int bch2_btree_delete_at(struct btree_trans *trans, struct btree_iter *iter,
@@ -781,9 +782,8 @@ int bch2_btree_delete_range(struct bch_fs *c, enum btree_id id,
 			    enum btree_iter_update_trigger_flags flags,
 			    u64 *journal_seq)
 {
-	int ret = bch2_trans_run(c,
-			bch2_btree_delete_range_trans(trans, id, start, end,
-						      flags, journal_seq));
+	CLASS(btree_trans, trans)(c);
+	int ret = bch2_btree_delete_range_trans(trans, id, start, end, flags, journal_seq);
 	if (ret == -BCH_ERR_transaction_restart_nested)
 		ret = 0;
 	return ret;
@@ -877,31 +877,31 @@ static int
 __bch2_fs_log_msg(struct bch_fs *c, unsigned commit_flags, const char *fmt,
 		  va_list args)
 {
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	prt_vprintf(&buf, fmt, args);
 
 	unsigned u64s = DIV_ROUND_UP(buf.pos, sizeof(u64));
 
 	int ret = buf.allocation_failure ? -BCH_ERR_ENOMEM_trans_log_msg : 0;
 	if (ret)
-		goto err;
+		return ret;
 
 	if (!test_bit(JOURNAL_running, &c->journal.flags)) {
 		ret = darray_make_room(&c->journal.early_journal_entries, jset_u64s(u64s));
 		if (ret)
-			goto err;
+			return ret;
 
 		struct jset_entry_log *l = (void *) &darray_top(c->journal.early_journal_entries);
 		journal_entry_init(&l->entry, BCH_JSET_ENTRY_log, 0, 1, u64s);
 		memcpy_and_pad(l->d, u64s * sizeof(u64), buf.buf, buf.pos, 0);
 		c->journal.early_journal_entries.nr += jset_u64s(u64s);
 	} else {
-		ret = bch2_trans_commit_do(c, NULL, NULL, commit_flags,
-			bch2_trans_log_msg(trans, &buf));
+		CLASS(btree_trans, trans)(c);
+		ret = commit_do(trans, NULL, NULL, commit_flags,
+				bch2_trans_log_msg(trans, &buf));
 	}
-err:
-	printbuf_exit(&buf);
-	return ret;
+
+	return 0;
 }
 
 __printf(2, 3)
