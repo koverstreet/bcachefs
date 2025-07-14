@@ -237,8 +237,9 @@ static int bch2_lookup_root_inode(struct bch_fs *c)
 	subvol_inum inum = BCACHEFS_ROOT_SUBVOL_INUM;
 	struct bch_inode_unpacked inode_u;
 	struct bch_subvolume subvol;
+	CLASS(btree_trans, trans)(c);
 
-	return bch2_trans_do(c,
+	return lockrestart_do(trans,
 		bch2_subvolume_get(trans, inum.subvol, true, &subvol) ?:
 		bch2_inode_find_by_inum_trans(trans, inum, &inode_u));
 }
@@ -346,13 +347,11 @@ int __bch2_run_explicit_recovery_pass(struct bch_fs *c,
 	lockdep_assert_held(&c->sb_lock);
 
 	bch2_printbuf_make_room(out, 1024);
-	out->atomic++;
-
-	unsigned long lockflags;
-	spin_lock_irqsave(&r->lock, lockflags);
+	guard(printbuf_atomic)(out);
+	guard(spinlock_irq)(&r->lock);
 
 	if (!recovery_pass_needs_set(c, pass, &flags))
-		goto out;
+		return 0;
 
 	bool in_recovery = test_bit(BCH_FS_in_recovery, &c->flags);
 	bool rewind = in_recovery &&
@@ -369,8 +368,7 @@ int __bch2_run_explicit_recovery_pass(struct bch_fs *c,
 	    (!in_recovery || r->curr_pass >= BCH_RECOVERY_PASS_set_may_go_rw)) {
 		prt_printf(out, "need recovery pass %s (%u), but already rw\n",
 			   bch2_recovery_passes[pass], pass);
-		ret = bch_err_throw(c, cannot_rewind_recovery);
-		goto out;
+		return bch_err_throw(c, cannot_rewind_recovery);
 	}
 
 	if (ratelimit)
@@ -400,9 +398,7 @@ int __bch2_run_explicit_recovery_pass(struct bch_fs *c,
 		if (p->when & PASS_ONLINE)
 			bch2_run_async_recovery_passes(c);
 	}
-out:
-	spin_unlock_irqrestore(&r->lock, lockflags);
-	--out->atomic;
+
 	return ret;
 }
 
@@ -458,16 +454,14 @@ int bch2_run_print_explicit_recovery_pass(struct bch_fs *c, enum bch_recovery_pa
 	if (!recovery_pass_needs_set(c, pass, &flags))
 		return 0;
 
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	bch2_log_msg_start(c, &buf);
 
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 	int ret = __bch2_run_explicit_recovery_pass(c, &buf, pass,
 						RUN_RECOVERY_PASS_nopersistent);
-	mutex_unlock(&c->sb_lock);
 
 	bch2_print_str(c, KERN_NOTICE, buf.buf);
-	printbuf_exit(&buf);
 	return ret;
 }
 
