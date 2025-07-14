@@ -361,7 +361,7 @@ int bch2_rechecksum_bio(struct bch_fs *c, struct bio *bio,
 				extent_nonce(version, crc_old), bio);
 
 	if (bch2_crc_cmp(merged, crc_old.csum) && !c->opts.no_data_io) {
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 		prt_printf(&buf, "checksum error in %s() (memory corruption or bug?)\n"
 			   "  expected %0llx:%0llx got %0llx:%0llx (old type ",
 			   __func__,
@@ -374,7 +374,6 @@ int bch2_rechecksum_bio(struct bch_fs *c, struct bio *bio,
 		bch2_prt_csum_type(&buf, new_csum_type);
 		prt_str(&buf, ")");
 		WARN_RATELIMIT(1, "%s", buf.buf);
-		printbuf_exit(&buf);
 		return bch_err_throw(c, recompute_checksum);
 	}
 
@@ -438,23 +437,21 @@ const struct bch_sb_field_ops bch_sb_field_ops_crypt = {
 #ifdef __KERNEL__
 static int __bch2_request_key(char *key_description, struct bch_key *key)
 {
-	struct key *keyring_key;
-	const struct user_key_payload *ukp;
 	int ret;
 
-	keyring_key = request_key(&key_type_user, key_description, NULL);
+	struct key *keyring_key = request_key(&key_type_user, key_description, NULL);
 	if (IS_ERR(keyring_key))
 		return PTR_ERR(keyring_key);
 
-	down_read(&keyring_key->sem);
-	ukp = dereference_key_locked(keyring_key);
-	if (ukp->datalen == sizeof(*key)) {
-		memcpy(key, ukp->data, ukp->datalen);
-		ret = 0;
-	} else {
-		ret = -EINVAL;
+	scoped_guard(rwsem_read, &keyring_key->sem) {
+		const struct user_key_payload *ukp = dereference_key_locked(keyring_key);
+		if (ukp->datalen == sizeof(*key)) {
+			memcpy(key, ukp->data, ukp->datalen);
+			ret = 0;
+		} else {
+			ret = -EINVAL;
+		}
 	}
-	up_read(&keyring_key->sem);
 	key_put(keyring_key);
 
 	return ret;
@@ -495,14 +492,13 @@ got_key:
 
 int bch2_request_key(struct bch_sb *sb, struct bch_key *key)
 {
-	struct printbuf key_description = PRINTBUF;
+	CLASS(printbuf, key_description)();
 	int ret;
 
 	prt_printf(&key_description, "bcachefs:");
 	pr_uuid(&key_description, sb->user_uuid.b);
 
 	ret = __bch2_request_key(key_description.buf, key);
-	printbuf_exit(&key_description);
 
 #ifndef __KERNEL__
 	if (ret) {
@@ -524,13 +520,12 @@ int bch2_request_key(struct bch_sb *sb, struct bch_key *key)
 int bch2_revoke_key(struct bch_sb *sb)
 {
 	key_serial_t key_id;
-	struct printbuf key_description = PRINTBUF;
+	CLASS(printbuf, key_description)();
 
 	prt_printf(&key_description, "bcachefs:");
 	pr_uuid(&key_description, sb->user_uuid.b);
 
 	key_id = request_key("user", key_description.buf, NULL, KEY_SPEC_USER_KEYRING);
-	printbuf_exit(&key_description);
 	if (key_id < 0)
 		return errno;
 
@@ -584,34 +579,28 @@ err:
  */
 int bch2_disable_encryption(struct bch_fs *c)
 {
-	struct bch_sb_field_crypt *crypt;
-	struct bch_key key;
-	int ret = -EINVAL;
+	guard(mutex)(&c->sb_lock);
 
-	mutex_lock(&c->sb_lock);
-
-	crypt = bch2_sb_field_get(c->disk_sb.sb, crypt);
+	struct bch_sb_field_crypt *crypt = bch2_sb_field_get(c->disk_sb.sb, crypt);
 	if (!crypt)
-		goto out;
+		return -EINVAL;
 
 	/* is key encrypted? */
 	ret = 0;
 	if (bch2_key_is_encrypted(&crypt->key))
-		goto out;
+		return 0;
 
-	ret = bch2_decrypt_sb_key(c, crypt, &key);
+	struct bch_key key;
+	int ret = bch2_decrypt_sb_key(c, crypt, &key);
 	if (ret)
-		goto out;
+		return ret;
 
 	crypt->key.magic	= cpu_to_le64(BCH_KEY_MAGIC);
 	crypt->key.key		= key;
 
 	SET_BCH_SB_ENCRYPTION_TYPE(c->disk_sb.sb, 0);
 	bch2_write_super(c);
-out:
-	mutex_unlock(&c->sb_lock);
-
-	return ret;
+	return 0;
 }
 
 /*
@@ -625,7 +614,7 @@ int bch2_enable_encryption(struct bch_fs *c, bool keyed)
 	struct bch_sb_field_crypt *crypt;
 	int ret = -EINVAL;
 
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 
 	/* Do we already have an encryption key? */
 	if (bch2_sb_field_get(c->disk_sb.sb, crypt))
@@ -669,7 +658,6 @@ int bch2_enable_encryption(struct bch_fs *c, bool keyed)
 	SET_BCH_SB_ENCRYPTION_TYPE(c->disk_sb.sb, 1);
 	bch2_write_super(c);
 err:
-	mutex_unlock(&c->sb_lock);
 	memzero_explicit(&user_key, sizeof(user_key));
 	memzero_explicit(&key, sizeof(key));
 	return ret;
