@@ -58,7 +58,7 @@ void bch2_dump_bset(struct bch_fs *c, struct btree *b,
 	struct bkey_packed *_k, *_n;
 	struct bkey uk, n;
 	struct bkey_s_c k;
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 
 	if (!i->u64s)
 		return;
@@ -97,8 +97,6 @@ void bch2_dump_bset(struct bch_fs *c, struct btree *b,
 		if (!bkey_deleted(k.k) && bpos_eq(n.p, k.k->p))
 			printk(KERN_ERR "Duplicate keys\n");
 	}
-
-	printbuf_exit(&buf);
 }
 
 void bch2_dump_btree_node(struct bch_fs *c, struct btree *b)
@@ -113,7 +111,7 @@ void bch2_dump_btree_node_iter(struct btree *b,
 			      struct btree_node_iter *iter)
 {
 	struct btree_node_iter_set *set;
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 
 	printk(KERN_ERR "btree node iter with %u/%u sets:\n",
 	       __btree_node_iter_used(iter), b->nsets);
@@ -128,8 +126,6 @@ void bch2_dump_btree_node_iter(struct btree *b,
 		printk(KERN_ERR "set %zu key %u: %s\n",
 		       t - b->set, set->k, buf.buf);
 	}
-
-	printbuf_exit(&buf);
 }
 
 struct btree_nr_keys bch2_btree_node_count_keys(struct btree *b)
