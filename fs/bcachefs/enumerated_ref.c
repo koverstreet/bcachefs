@@ -75,13 +75,11 @@ void enumerated_ref_stop(struct enumerated_ref *ref,
 {
 	enumerated_ref_stop_async(ref);
 	while (!wait_for_completion_timeout(&ref->stop_complete, HZ * 10)) {
-		struct printbuf buf = PRINTBUF;
-
+		CLASS(printbuf, buf)();
 		prt_str(&buf, "Waited for 10 seconds to shutdown enumerated ref\n");
 		prt_str(&buf, "Outstanding refs:\n");
 		enumerated_ref_to_text(&buf, ref, names);
 		printk(KERN_ERR "%s", buf.buf);
-		printbuf_exit(&buf);
 	}
 }
 
