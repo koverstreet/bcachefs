@@ -165,11 +165,11 @@ static inline void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
 
 	rbio->subvol = inum.subvol;
 
-	bch2_trans_run(c,
-		__bch2_read(trans, rbio, rbio->bio.bi_iter, inum, NULL, NULL,
-			    BCH_READ_retry_if_stale|
-			    BCH_READ_may_promote|
-			    BCH_READ_user_mapped));
+	CLASS(btree_trans, trans)(c);
+	__bch2_read(trans, rbio, rbio->bio.bi_iter, inum, NULL, NULL,
+		    BCH_READ_retry_if_stale|
+		    BCH_READ_may_promote|
+		    BCH_READ_user_mapped);
 }
 
 static inline struct bch_read_bio *rbio_init_fragment(struct bio *bio,
