@@ -259,9 +259,8 @@ out:
 					bch2_btree_write_buffer_journal_flush);
 
 	if (j->watermark) {
-		spin_lock(&j->lock);
+		guard(spinlock)(&j->lock);
 		bch2_journal_set_watermark(j);
-		spin_unlock(&j->lock);
 	}
 
 	BUG_ON(wb->sorted.size < wb->flushing.keys.nr);
@@ -270,7 +269,7 @@ out:
 int bch2_btree_write_buffer_insert_err(struct bch_fs *c,
 				       enum btree_id btree, struct bkey_i *k)
 {
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 
 	prt_printf(&buf, "attempting to do write buffer update on non wb btree=");
 	bch2_btree_id_to_text(&buf, btree);
@@ -278,7 +277,6 @@ int bch2_btree_write_buffer_insert_err(struct bch_fs *c,
 	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(k));
 
 	bch2_fs_inconsistent(c, "%s", buf.buf);
-	printbuf_exit(&buf);
 	return -EROFS;
 }
 
@@ -300,9 +298,8 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 	bch2_trans_unlock(trans);
 	bch2_trans_begin(trans);
 
-	mutex_lock(&wb->inc.lock);
-	move_keys_from_inc_to_flushing(wb);
-	mutex_unlock(&wb->inc.lock);
+	scoped_guard(mutex, &wb->inc.lock)
+		move_keys_from_inc_to_flushing(wb);
 
 	for (size_t i = 0; i < wb->flushing.keys.nr; i++) {
 		wb->sorted.data[i].idx = i;
@@ -533,9 +530,8 @@ static int fetch_wb_keys_from_journal(struct bch_fs *c, u64 max_seq)
 		ret = bch2_journal_keys_to_write_buffer(c, buf);
 
 		if (!blocked && !ret) {
-			spin_lock(&j->lock);
+			guard(spinlock)(&j->lock);
 			buf->need_flush_to_write_buffer = false;
-			spin_unlock(&j->lock);
 		}
 
 		mutex_unlock(&j->buf_lock);
@@ -567,9 +563,8 @@ static int btree_write_buffer_flush_seq(struct btree_trans *trans, u64 max_seq,
 		 * On memory allocation failure, bch2_btree_write_buffer_flush_locked()
 		 * is not guaranteed to empty wb->inc:
 		 */
-		mutex_lock(&wb->flushing.lock);
-		ret = bch2_btree_write_buffer_flush_locked(trans);
-		mutex_unlock(&wb->flushing.lock);
+		scoped_guard(mutex, &wb->flushing.lock)
+			ret = bch2_btree_write_buffer_flush_locked(trans);
 	} while (!ret &&
 		 (fetch_from_journal_err ||
 		  (wb->inc.pin.seq && wb->inc.pin.seq <= max_seq) ||
@@ -582,9 +577,10 @@ static int bch2_btree_write_buffer_journal_flush(struct journal *j,
 				struct journal_entry_pin *_pin, u64 seq)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+	CLASS(btree_trans, trans)(c);
 	bool did_work = false;
 
-	return bch2_trans_run(c, btree_write_buffer_flush_seq(trans, seq, &did_work));
+	return btree_write_buffer_flush_seq(trans, seq, &did_work);
 }
 
 int bch2_btree_write_buffer_flush_sync(struct btree_trans *trans)
@@ -606,9 +602,9 @@ bool bch2_btree_write_buffer_flush_going_ro(struct bch_fs *c)
 	if (bch2_journal_error(&c->journal))
 		return false;
 
+	CLASS(btree_trans, trans)(c);
 	bool did_work = false;
-	bch2_trans_run(c, btree_write_buffer_flush_seq(trans,
-				journal_cur_seq(&c->journal), &did_work));
+	btree_write_buffer_flush_seq(trans, journal_cur_seq(&c->journal), &did_work);
 	return did_work;
 }
 
@@ -655,11 +651,10 @@ int bch2_btree_write_buffer_maybe_flush(struct btree_trans *trans,
 
 	if (!bkey_and_val_eq(referring_k, bkey_i_to_s_c(last_flushed->k))) {
 		if (trace_write_buffer_maybe_flush_enabled()) {
-			struct printbuf buf = PRINTBUF;
+			CLASS(printbuf, buf)();
 
 			bch2_bkey_val_to_text(&buf, c, referring_k);
 			trace_write_buffer_maybe_flush(trans, _RET_IP_, buf.buf);
-			printbuf_exit(&buf);
 		}
 
 		bch2_bkey_buf_reassemble(&tmp, c, referring_k);
@@ -690,11 +685,12 @@ static void bch2_btree_write_buffer_flush_work(struct work_struct *work)
 	struct btree_write_buffer *wb = &c->btree_write_buffer;
 	int ret;
 
-	mutex_lock(&wb->flushing.lock);
-	do {
-		ret = bch2_trans_run(c, bch2_btree_write_buffer_flush_locked(trans));
-	} while (!ret && bch2_btree_write_buffer_should_flush(c));
-	mutex_unlock(&wb->flushing.lock);
+	scoped_guard(mutex, &wb->flushing.lock) {
+		CLASS(btree_trans, trans)(c);
+		do {
+			ret = bch2_btree_write_buffer_flush_locked(trans);
+		} while (!ret && bch2_btree_write_buffer_should_flush(c));
+	}
 
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_btree_write_buffer);
 }
