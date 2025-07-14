@@ -133,7 +133,7 @@ static inline void __bch2_dev_put(struct bch_dev *ca)
 
 static inline void bch2_dev_put(struct bch_dev *ca)
 {
-	if (ca)
+	if (!IS_ERR_OR_NULL(ca))
 		__bch2_dev_put(ca);
 }
 
