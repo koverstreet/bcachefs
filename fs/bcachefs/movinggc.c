@@ -71,7 +71,7 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 	if (ret)
 		return ret;
 
-	struct bch_dev *ca = bch2_dev_bucket_tryget(c, k.k->p);
+	CLASS(bch2_dev_bucket_tryget, ca)(c, k.k->p);
 	if (!ca)
 		goto out;
 
@@ -90,7 +90,6 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 
 	ret = lru_idx && lru_idx <= time;
 out:
-	bch2_dev_put(ca);
 	bch2_trans_iter_exit(trans, &iter);
 	return ret;
 }
@@ -320,8 +319,8 @@ void bch2_copygc_wait_to_text(struct printbuf *out, struct bch_fs *c)
 	bch2_printbuf_make_room(out, 4096);
 
 	struct task_struct *t;
-	out->atomic++;
 	scoped_guard(rcu) {
+		guard(printbuf_atomic)(out);
 		prt_printf(out, "Currently calculated wait:\n");
 		for_each_rw_member_rcu(c, ca) {
 			prt_printf(out, "  %s:\t", ca->name);
@@ -333,7 +332,6 @@ void bch2_copygc_wait_to_text(struct printbuf *out, struct bch_fs *c)
 		if (t)
 			get_task_struct(t);
 	}
-	--out->atomic;
 
 	if (t) {
 		bch2_prt_task_backtrace(out, t, 0, GFP_KERNEL);
