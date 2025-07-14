@@ -417,7 +417,8 @@ int bch2_inode_find_by_inum_trans(struct btree_trans *trans,
 int bch2_inode_find_by_inum(struct bch_fs *c, subvol_inum inum,
 			    struct bch_inode_unpacked *inode)
 {
-	return bch2_trans_do(c, bch2_inode_find_by_inum_trans(trans, inum, inode));
+	CLASS(btree_trans, trans)(c);
+	return lockrestart_do(trans, bch2_inode_find_by_inum_trans(trans, inum, inode));
 }
 
 int bch2_inode_find_snapshot_root(struct btree_trans *trans, u64 inum,
@@ -1132,7 +1133,7 @@ err:
 
 int bch2_inode_rm(struct bch_fs *c, subvol_inum inum)
 {
-	struct btree_trans *trans = bch2_trans_get(c);
+	CLASS(btree_trans, trans)(c);
 	struct btree_iter iter = {};
 	struct bkey_s_c k;
 	struct bch_inode_unpacked inode;
@@ -1141,7 +1142,7 @@ int bch2_inode_rm(struct bch_fs *c, subvol_inum inum)
 
 	ret = lockrestart_do(trans, may_delete_deleted_inum(trans, inum, &inode));
 	if (ret)
-		goto err2;
+		return ret;
 
 	/*
 	 * If this was a directory, there shouldn't be any real dirents left -
@@ -1156,7 +1157,7 @@ int bch2_inode_rm(struct bch_fs *c, subvol_inum inum)
 		 : bch2_inode_delete_keys(trans, inum, BTREE_ID_dirents)) ?:
 		bch2_inode_delete_keys(trans, inum, BTREE_ID_xattrs);
 	if (ret)
-		goto err2;
+		return ret;
 retry:
 	bch2_trans_begin(trans);
 
@@ -1188,12 +1189,9 @@ err:
 		goto retry;
 
 	if (ret)
-		goto err2;
+		return ret;
 
-	ret = delete_ancestor_snapshot_inodes(trans, SPOS(0, inum.inum, snapshot));
-err2:
-	bch2_trans_put(trans);
-	return ret;
+	return delete_ancestor_snapshot_inodes(trans, SPOS(0, inum.inum, snapshot));
 }
 
 int bch2_inode_nlink_inc(struct bch_inode_unpacked *bi)
@@ -1413,7 +1411,7 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 	struct bch_fs *c = trans->c;
 	struct btree_iter inode_iter;
 	struct bkey_s_c k;
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	int ret;
 
 	k = bch2_bkey_get_iter(trans, &inode_iter, BTREE_ID_inodes, pos, BTREE_ITER_cached);
@@ -1506,7 +1504,6 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 out:
 fsck_err:
 	bch2_trans_iter_exit(trans, &inode_iter);
-	printbuf_exit(&buf);
 	return ret;
 delete:
 	ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_deleted_inodes, pos, false);
@@ -1524,7 +1521,7 @@ static int may_delete_deleted_inum(struct btree_trans *trans, subvol_inum inum,
 
 int bch2_delete_dead_inodes(struct bch_fs *c)
 {
-	struct btree_trans *trans = bch2_trans_get(c);
+	CLASS(btree_trans, trans)(c);
 	int ret;
 
 	/*
@@ -1568,7 +1565,6 @@ int bch2_delete_dead_inodes(struct bch_fs *c)
 		ret;
 	}));
 err:
-	bch2_trans_put(trans);
 	bch_err_fn(c, ret);
 	return ret;
 }
