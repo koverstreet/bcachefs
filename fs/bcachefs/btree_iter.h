@@ -1007,13 +1007,19 @@ static inline void class_btree_trans_destructor(struct btree_trans **p)
 
 #define class_btree_trans_constructor(_c)	bch2_trans_get(_c)
 
+/* deprecated, prefer CLASS(btree_trans) */
 #define bch2_trans_run(_c, _do)						\
 ({									\
 	CLASS(btree_trans, trans)(_c);					\
 	(_do);								\
 })
 
-#define bch2_trans_do(_c, _do)	bch2_trans_run(_c, lockrestart_do(trans, _do))
+/* deprecated, prefer CLASS(btree_trans) */
+#define bch2_trans_do(_c, _do)						\
+({									\
+	CLASS(btree_trans, trans)(_c);					\
+	lockrestart_do(trans, _do);					\
+})
 
 void bch2_btree_trans_to_text(struct printbuf *, struct btree_trans *);
 
