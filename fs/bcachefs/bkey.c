@@ -624,10 +624,8 @@ struct bkey_format bch2_bkey_format_done(struct bkey_format_state *s)
 	}
 
 	if (static_branch_unlikely(&bch2_debug_check_bkey_unpack)) {
-		struct printbuf buf = PRINTBUF;
-
+		CLASS(printbuf, buf)();
 		BUG_ON(bch2_bkey_format_invalid(NULL, &ret, 0, &buf));
-		printbuf_exit(&buf);
 	}
 
 	return ret;
