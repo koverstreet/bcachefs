@@ -279,7 +279,7 @@ struct posix_acl *bch2_get_acl(struct inode *vinode, int type, bool rcu)
 	if (rcu)
 		return ERR_PTR(-ECHILD);
 
-	struct btree_trans *trans = bch2_trans_get(c);
+	CLASS(btree_trans, trans)(c);
 retry:
 	bch2_trans_begin(trans);
 
@@ -304,7 +304,6 @@ err:
 		set_cached_acl(&inode->v, type, acl);
 
 	bch2_trans_iter_exit(trans, &iter);
-	bch2_trans_put(trans);
 	return acl;
 }
 
@@ -350,8 +349,8 @@ int bch2_set_acl(struct mnt_idmap *idmap,
 	umode_t mode;
 	int ret;
 
-	mutex_lock(&inode->ei_update_lock);
-	struct btree_trans *trans = bch2_trans_get(c);
+	guard(mutex)(&inode->ei_update_lock);
+	CLASS(btree_trans, trans)(c);
 retry:
 	bch2_trans_begin(trans);
 	acl = _acl;
@@ -385,17 +384,13 @@ btree_err:
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 	if (unlikely(ret))
-		goto err;
+		return ret;
 
 	bch2_inode_update_after_write(trans, inode, &inode_u,
 				      ATTR_CTIME|ATTR_MODE);
 
 	set_cached_acl(&inode->v, type, acl);
-err:
-	bch2_trans_put(trans);
-	mutex_unlock(&inode->ei_update_lock);
-
-	return ret;
+	return 0;
 }
 
 int bch2_acl_chmod(struct btree_trans *trans, subvol_inum inum,
