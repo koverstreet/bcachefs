@@ -443,7 +443,8 @@ static int bch2_read_err_msg_trans(struct btree_trans *trans, struct printbuf *o
 static void bch2_read_err_msg(struct bch_fs *c, struct printbuf *out,
 			      struct bch_read_bio *rbio, struct bpos read_pos)
 {
-	bch2_trans_run(c, bch2_read_err_msg_trans(trans, out, rbio, read_pos));
+	CLASS(btree_trans, trans)(c);
+	bch2_read_err_msg_trans(trans, out, rbio, read_pos);
 }
 
 enum rbio_context {
@@ -647,7 +648,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 	};
 	struct bch_io_failures failed = { .nr = 0 };
 
-	struct btree_trans *trans = bch2_trans_get(c);
+	CLASS(btree_trans, trans)(c);
 
 	struct bkey_buf sk;
 	bch2_bkey_buf_init(&sk);
@@ -689,7 +690,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 	}
 
 	if (failed.nr || ret) {
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 		bch2_log_msg_start(c, &buf);
 
 		lockrestart_do(trans,
@@ -717,12 +718,10 @@ static void bch2_rbio_retry(struct work_struct *work)
 		bch2_io_failures_to_text(&buf, c, &failed);
 
 		bch2_print_str_ratelimited(c, KERN_ERR, buf.buf);
-		printbuf_exit(&buf);
 	}
 
 	bch2_rbio_done(rbio);
 	bch2_bkey_buf_exit(&sk, c);
-	bch2_trans_put(trans);
 }
 
 static void bch2_rbio_error(struct bch_read_bio *rbio,
@@ -810,8 +809,9 @@ out:
 
 static noinline void bch2_rbio_narrow_crcs(struct bch_read_bio *rbio)
 {
-	bch2_trans_commit_do(rbio->c, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			     __bch2_rbio_narrow_crcs(trans, rbio));
+	CLASS(btree_trans, trans)(rbio->c);
+	commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+		  __bch2_rbio_narrow_crcs(trans, rbio));
 }
 
 static void bch2_read_decompress_err(struct work_struct *work)
@@ -819,7 +819,7 @@ static void bch2_read_decompress_err(struct work_struct *work)
 	struct bch_read_bio *rbio =
 		container_of(work, struct bch_read_bio, work);
 	struct bch_fs *c	= rbio->c;
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 
 	bch2_read_err_msg(c, &buf, rbio, rbio->read_pos);
 	prt_str(&buf, "decompression error");
@@ -831,7 +831,6 @@ static void bch2_read_decompress_err(struct work_struct *work)
 		bch_err_ratelimited(c, "%s", buf.buf);
 
 	bch2_rbio_error(rbio, -BCH_ERR_data_read_decompress_err, BLK_STS_IOERR);
-	printbuf_exit(&buf);
 }
 
 static void bch2_read_decrypt_err(struct work_struct *work)
@@ -839,7 +838,7 @@ static void bch2_read_decrypt_err(struct work_struct *work)
 	struct bch_read_bio *rbio =
 		container_of(work, struct bch_read_bio, work);
 	struct bch_fs *c	= rbio->c;
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 
 	bch2_read_err_msg(c, &buf, rbio, rbio->read_pos);
 	prt_str(&buf, "decrypt error");
@@ -851,7 +850,6 @@ static void bch2_read_decrypt_err(struct work_struct *work)
 		bch_err_ratelimited(c, "%s", buf.buf);
 
 	bch2_rbio_error(rbio, -BCH_ERR_data_read_decrypt_err, BLK_STS_IOERR);
-	printbuf_exit(&buf);
 }
 
 /* Inner part that may run in process context */
@@ -1033,7 +1031,7 @@ static noinline void read_from_stale_dirty_pointer(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	int ret;
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc,
@@ -1070,7 +1068,6 @@ static noinline void read_from_stale_dirty_pointer(struct btree_trans *trans,
 	bch2_fs_inconsistent(c, "%s", buf.buf);
 
 	bch2_trans_iter_exit(trans, &iter);
-	printbuf_exit(&buf);
 }
 
 int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
@@ -1122,25 +1119,22 @@ retry_pick:
 			trace_and_count(c, io_read_fail_and_poison, &orig->bio);
 		}
 
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 		bch2_read_err_msg_trans(trans, &buf, orig, read_pos);
 		prt_printf(&buf, "%s\n  ", bch2_err_str(ret));
 		bch2_bkey_val_to_text(&buf, c, k);
-
 		bch_err_ratelimited(c, "%s", buf.buf);
-		printbuf_exit(&buf);
 		goto err;
 	}
 
 	if (unlikely(bch2_csum_type_is_encryption(pick.crc.csum_type)) &&
 	    !c->chacha20_key_set) {
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 		bch2_read_err_msg_trans(trans, &buf, orig, read_pos);
 		prt_printf(&buf, "attempting to read encrypted data without encryption key\n  ");
 		bch2_bkey_val_to_text(&buf, c, k);
 
 		bch_err_ratelimited(c, "%s", buf.buf);
-		printbuf_exit(&buf);
 		ret = bch_err_throw(c, data_read_no_encryption_key);
 		goto err;
 	}
@@ -1505,13 +1499,12 @@ err:
 
 	if (unlikely(ret)) {
 		if (ret != -BCH_ERR_extent_poisoned) {
-			struct printbuf buf = PRINTBUF;
+			CLASS(printbuf, buf)();
 			lockrestart_do(trans,
 				       bch2_inum_offset_err_msg_trans(trans, &buf, inum,
 								      bvec_iter.bi_sector << 9));
 			prt_printf(&buf, "data read error: %s", bch2_err_str(ret));
 			bch_err_ratelimited(c, "%s", buf.buf);
-			printbuf_exit(&buf);
 		}
 
 		rbio->bio.bi_status	= BLK_STS_IOERR;
