@@ -295,4 +295,8 @@ static inline void printbuf_atomic_dec(struct printbuf *buf)
 	buf->atomic--;
 }
 
+DEFINE_GUARD(printbuf_atomic, struct printbuf *,
+	     printbuf_atomic_inc(_T),
+	     printbuf_atomic_dec(_T));
+
 #endif /* _BCACHEFS_PRINTBUF_H */
