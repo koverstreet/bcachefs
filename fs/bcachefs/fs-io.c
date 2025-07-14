@@ -148,7 +148,7 @@ void __bch2_i_sectors_acct(struct bch_fs *c, struct bch_inode_info *inode,
 			   struct quota_res *quota_res, s64 sectors)
 {
 	if (unlikely((s64) inode->v.i_blocks + sectors < 0)) {
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 		bch2_log_msg_start(c, &buf);
 		prt_printf(&buf, "inode %lu i_blocks underflow: %llu + %lli < 0 (ondisk %lli)",
 			   inode->v.i_ino, (u64) inode->v.i_blocks, sectors,
@@ -157,7 +157,6 @@ void __bch2_i_sectors_acct(struct bch_fs *c, struct bch_inode_info *inode,
 		bool print = bch2_count_fsck_err(c, vfs_inode_i_blocks_underflow, &buf);
 		if (print)
 			bch2_print_str(c, KERN_ERR, buf.buf);
-		printbuf_exit(&buf);
 
 		if (sectors < 0)
 			sectors = -inode->v.i_blocks;
@@ -187,7 +186,6 @@ void __bch2_i_sectors_acct(struct bch_fs *c, struct bch_inode_info *inode,
 static int bch2_get_inode_journal_seq_trans(struct btree_trans *trans, subvol_inum inum,
 					    u64 *seq)
 {
-	struct printbuf buf = PRINTBUF;
 	struct bch_inode_unpacked u;
 	struct btree_iter iter;
 	int ret = bch2_inode_peek(trans, &iter, &u, inum, 0);
@@ -197,6 +195,7 @@ static int bch2_get_inode_journal_seq_trans(struct btree_trans *trans, subvol_in
 	u64 cur_seq = journal_cur_seq(&trans->c->journal);
 	*seq = min(cur_seq, u.bi_journal_seq);
 
+	CLASS(printbuf, buf)();
 	if (fsck_err_on(u.bi_journal_seq > cur_seq,
 			trans, inode_journal_seq_in_future,
 			"inode journal seq in future (currently at %llu)\n%s",
@@ -208,7 +207,6 @@ static int bch2_get_inode_journal_seq_trans(struct btree_trans *trans, subvol_in
 	}
 fsck_err:
 	bch2_trans_iter_exit(trans, &iter);
-	printbuf_exit(&buf);
 	return ret;
 }
 
@@ -227,7 +225,7 @@ static int bch2_flush_inode(struct bch_fs *c,
 
 	u64 seq;
 	int ret = bch2_trans_commit_do(c, NULL, NULL, 0,
-			bch2_get_inode_journal_seq_trans(trans, inode_inum(inode), &seq)) ?:
+			    bch2_get_inode_journal_seq_trans(trans, inode_inum(inode), &seq)) ?:
 		  bch2_journal_flush_seq(&c->journal, seq, TASK_INTERRUPTIBLE) ?:
 		  bch2_inode_flush_nocow_writes(c, inode);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_fsync);
@@ -267,11 +265,11 @@ static inline int range_has_data(struct bch_fs *c, u32 subvol,
 				 struct bpos start,
 				 struct bpos end)
 {
-	return bch2_trans_run(c,
-		for_each_btree_key_in_subvolume_max(trans, iter, BTREE_ID_extents, start, end,
+	CLASS(btree_trans, trans)(c);
+	return for_each_btree_key_in_subvolume_max(trans, iter, BTREE_ID_extents, start, end,
 						    subvol, 0, k, ({
-			bkey_extent_is_data(k.k) && !bkey_extent_is_unwritten(k);
-		})));
+		bkey_extent_is_data(k.k) && !bkey_extent_is_unwritten(k);
+	}));
 }
 
 static int __bch2_truncate_folio(struct bch_inode_info *inode,
@@ -521,7 +519,7 @@ int bchfs_truncate(struct mnt_idmap *idmap,
 
 	if (unlikely(!inode->v.i_size && inode->v.i_blocks &&
 		     !bch2_journal_error(&c->journal))) {
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 		bch2_log_msg_start(c, &buf);
 		prt_printf(&buf,
 			   "inode %lu truncated to 0 but i_blocks %llu (ondisk %lli)",
@@ -531,7 +529,6 @@ int bchfs_truncate(struct mnt_idmap *idmap,
 		bool print = bch2_count_fsck_err(c, vfs_inode_i_blocks_not_zero_at_truncate, &buf);
 		if (print)
 			bch2_print_str(c, KERN_ERR, buf.buf);
-		printbuf_exit(&buf);
 	}
 
 	ret = bch2_setattr_nonsize(idmap, inode, iattr);
@@ -559,11 +556,10 @@ static noinline long bchfs_fpunch(struct bch_inode_info *inode, loff_t offset, l
 	u64 block_start	= round_up(offset, block_bytes(c));
 	u64 block_end	= round_down(end, block_bytes(c));
 	bool truncated_last_page;
-	int ret = 0;
 
-	ret = bch2_truncate_folios(inode, offset, end);
+	int ret = bch2_truncate_folios(inode, offset, end);
 	if (unlikely(ret < 0))
-		goto err;
+		return ret;
 
 	truncated_last_page = ret;
 
@@ -576,19 +572,18 @@ static noinline long bchfs_fpunch(struct bch_inode_info *inode, loff_t offset, l
 				  block_start >> 9, block_end >> 9,
 				  &i_sectors_delta);
 		bch2_i_sectors_acct(c, inode, NULL, i_sectors_delta);
+
+		if (ret)
+			return ret;
 	}
 
-	mutex_lock(&inode->ei_update_lock);
-	if (end >= inode->v.i_size && !truncated_last_page) {
-		ret = bch2_write_inode_size(c, inode, inode->v.i_size,
-					    ATTR_MTIME|ATTR_CTIME);
-	} else {
-		ret = bch2_write_inode(c, inode, inode_update_times_fn, NULL,
+	guard(mutex)(&inode->ei_update_lock);
+	if (end >= inode->v.i_size && !truncated_last_page)
+		return bch2_write_inode_size(c, inode, inode->v.i_size,
+					     ATTR_MTIME|ATTR_CTIME);
+	else
+		return bch2_write_inode(c, inode, inode_update_times_fn, NULL,
 				       ATTR_MTIME|ATTR_CTIME);
-	}
-	mutex_unlock(&inode->ei_update_lock);
-err:
-	return ret;
 }
 
 static noinline long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
@@ -631,7 +626,7 @@ static noinline int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 			     u64 start_sector, u64 end_sector)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	struct btree_trans *trans = bch2_trans_get(c);
+	CLASS(btree_trans, trans)(c);
 	struct btree_iter iter;
 	struct bpos end_pos = POS(inode->v.i_ino, end_sector);
 	struct bch_io_opts opts;
@@ -753,7 +748,6 @@ bkey_err:
 	}
 
 	bch2_trans_iter_exit(trans, &iter);
-	bch2_trans_put(trans);
 	return ret;
 }
 
@@ -802,13 +796,11 @@ static noinline long bchfs_fallocate(struct bch_inode_info *inode, int mode,
 	if (end >= inode->v.i_size &&
 	    (((mode & FALLOC_FL_ZERO_RANGE) && !truncated_last_page) ||
 	     !(mode & FALLOC_FL_KEEP_SIZE))) {
-		spin_lock(&inode->v.i_lock);
-		i_size_write(&inode->v, end);
-		spin_unlock(&inode->v.i_lock);
+		scoped_guard(spinlock, &inode->v.i_lock)
+			i_size_write(&inode->v, end);
 
-		mutex_lock(&inode->ei_update_lock);
-		ret2 = bch2_write_inode_size(c, inode, end, 0);
-		mutex_unlock(&inode->ei_update_lock);
+		scoped_guard(mutex, &inode->ei_update_lock)
+			ret2 = bch2_write_inode_size(c, inode, end, 0);
 	}
 
 	return ret ?: ret2;
@@ -861,8 +853,8 @@ static int quota_reserve_range(struct bch_inode_info *inode,
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	u64 sectors = end - start;
 
-	int ret = bch2_trans_run(c,
-		for_each_btree_key_in_subvolume_max(trans, iter,
+	CLASS(btree_trans, trans)(c);
+	int ret = for_each_btree_key_in_subvolume_max(trans, iter,
 				BTREE_ID_extents,
 				POS(inode->v.i_ino, start),
 				POS(inode->v.i_ino, end - 1),
@@ -875,7 +867,7 @@ static int quota_reserve_range(struct bch_inode_info *inode,
 			}
 
 			0;
-		})));
+		}));
 
 	return ret ?: bch2_quota_reservation_add(c, inode, res, sectors, true);
 }
@@ -955,10 +947,9 @@ loff_t bch2_remap_file_range(struct file *file_src, loff_t pos_src,
 
 	bch2_i_sectors_acct(c, dst, &quota_res, i_sectors_delta);
 
-	spin_lock(&dst->v.i_lock);
-	if (pos_dst + ret > dst->v.i_size)
-		i_size_write(&dst->v, pos_dst + ret);
-	spin_unlock(&dst->v.i_lock);
+	scoped_guard(spinlock, &dst->v.i_lock)
+		if (pos_dst + ret > dst->v.i_size)
+			i_size_write(&dst->v, pos_dst + ret);
 
 	if ((file_dst->f_flags & (__O_SYNC | O_DSYNC)) ||
 	    IS_SYNC(file_inode(file_dst)))
@@ -1020,38 +1011,38 @@ static loff_t bch2_seek_hole(struct file *file, u64 offset)
 	if (offset >= isize)
 		return -ENXIO;
 
-	int ret = bch2_trans_run(c,
-		for_each_btree_key_in_subvolume_max(trans, iter, BTREE_ID_extents,
+	CLASS(btree_trans, trans)(c);
+	int ret = for_each_btree_key_in_subvolume_max(trans, iter, BTREE_ID_extents,
 				   POS(inode->v.i_ino, offset >> 9),
 				   POS(inode->v.i_ino, U64_MAX),
 				   inum.subvol, BTREE_ITER_slots, k, ({
-			if (k.k->p.inode != inode->v.i_ino ||
-			    !bkey_extent_is_data(k.k)) {
-				loff_t start_offset = k.k->p.inode == inode->v.i_ino
-					? max(offset, bkey_start_offset(k.k) << 9)
-					: offset;
-				loff_t end_offset = k.k->p.inode == inode->v.i_ino
-					? MAX_LFS_FILESIZE
-					: k.k->p.offset << 9;
+		if (k.k->p.inode != inode->v.i_ino ||
+		    !bkey_extent_is_data(k.k)) {
+			loff_t start_offset = k.k->p.inode == inode->v.i_ino
+				? max(offset, bkey_start_offset(k.k) << 9)
+				: offset;
+			loff_t end_offset = k.k->p.inode == inode->v.i_ino
+				? MAX_LFS_FILESIZE
+				: k.k->p.offset << 9;
 
-				/*
-				 * Found a hole in the btree, now make sure it's
-				 * a hole in the pagecache. We might have to
-				 * keep searching if this hole is entirely dirty
-				 * in the page cache:
-				 */
-				bch2_trans_unlock(trans);
-				loff_t pagecache_hole = bch2_seek_pagecache_hole(&inode->v,
-								start_offset, end_offset, 0, false);
-				if (pagecache_hole < end_offset) {
-					next_hole = pagecache_hole;
-					break;
-				}
-			} else {
-				offset = max(offset, bkey_start_offset(k.k) << 9);
+			/*
+			 * Found a hole in the btree, now make sure it's
+			 * a hole in the pagecache. We might have to
+			 * keep searching if this hole is entirely dirty
+			 * in the page cache:
+			 */
+			bch2_trans_unlock(trans);
+			loff_t pagecache_hole = bch2_seek_pagecache_hole(&inode->v,
+							start_offset, end_offset, 0, false);
+			if (pagecache_hole < end_offset) {
+				next_hole = pagecache_hole;
+				break;
 			}
-			0;
-		})));
+		} else {
+			offset = max(offset, bkey_start_offset(k.k) << 9);
+		}
+		0;
+	}));
 	if (ret)
 		return ret;
 
