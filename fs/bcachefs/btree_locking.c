@@ -159,13 +159,11 @@ static void trace_would_deadlock(struct lock_graph *g, struct btree_trans *trans
 	count_event(c, trans_restart_would_deadlock);
 
 	if (trace_trans_restart_would_deadlock_enabled()) {
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
+		guard(printbuf_atomic)(&buf);
 
-		buf.atomic++;
 		print_cycle(&buf, g);
-
 		trace_trans_restart_would_deadlock(trans, buf.buf);
-		printbuf_exit(&buf);
 	}
 }
 
@@ -196,8 +194,8 @@ static int btree_trans_abort_preference(struct btree_trans *trans)
 
 static noinline __noreturn void break_cycle_fail(struct lock_graph *g)
 {
-	struct printbuf buf = PRINTBUF;
-	buf.atomic++;
+	CLASS(printbuf, buf)();
+	guard(printbuf_atomic)(&buf);
 
 	prt_printf(&buf, bch2_fmt(g->g->trans->c, "cycle of nofail locks"));
 
@@ -214,7 +212,6 @@ static noinline __noreturn void break_cycle_fail(struct lock_graph *g)
 	}
 
 	bch2_print_str(g->g->trans->c, KERN_ERR, buf.buf);
-	printbuf_exit(&buf);
 	BUG();
 }
 
@@ -692,7 +689,7 @@ int __bch2_btree_path_upgrade(struct btree_trans *trans,
 
 	count_event(trans->c, trans_restart_upgrade);
 	if (trace_trans_restart_upgrade_enabled()) {
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 
 		prt_printf(&buf, "%s %pS\n", trans->fn, (void *) _RET_IP_);
 		prt_printf(&buf, "btree %s pos\n", bch2_btree_id_str(path->btree_id));
@@ -708,7 +705,6 @@ int __bch2_btree_path_upgrade(struct btree_trans *trans,
 			   path->l[f.l].lock_seq);
 
 		trace_trans_restart_upgrade(trans->c, buf.buf);
-		printbuf_exit(&buf);
 	}
 out:
 	bch2_trans_verify_locks(trans);
@@ -777,7 +773,7 @@ static noinline __cold void bch2_trans_relock_fail(struct btree_trans *trans, st
 		goto out;
 
 	if (trace_trans_restart_relock_enabled()) {
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 
 		bch2_bpos_to_text(&buf, path->pos);
 		prt_printf(&buf, " %s l=%u seq=%u node seq=",
@@ -797,7 +793,6 @@ static noinline __cold void bch2_trans_relock_fail(struct btree_trans *trans, st
 		}
 
 		trace_trans_restart_relock(trans, ip, buf.buf);
-		printbuf_exit(&buf);
 	}
 
 	count_event(trans->c, trans_restart_relock);
