@@ -184,23 +184,23 @@ static ssize_t thread_with_stdio_write(struct file *file, const char __user *ubu
 			break;
 		}
 
-		spin_lock(&buf->lock);
-		size_t makeroom = b;
-		if (!buf->waiting_for_line || memchr(buf->buf.data, '\n', buf->buf.nr))
-			makeroom = min_t(ssize_t, makeroom,
-				   max_t(ssize_t, STDIO_REDIRECT_BUFSIZE - buf->buf.nr,
-						  0));
-		darray_make_room_gfp(&buf->buf, makeroom, GFP_NOWAIT);
+		scoped_guard(spinlock, &buf->lock) {
+			size_t makeroom = b;
+			if (!buf->waiting_for_line || memchr(buf->buf.data, '\n', buf->buf.nr))
+				makeroom = min_t(ssize_t, makeroom,
+					   max_t(ssize_t, STDIO_REDIRECT_BUFSIZE - buf->buf.nr,
+							  0));
+			darray_make_room_gfp(&buf->buf, makeroom, GFP_NOWAIT);
 
-		b = min(len, darray_room(buf->buf));
+			b = min(len, darray_room(buf->buf));
 
-		if (b && !copy_from_user_nofault(&darray_top(buf->buf), ubuf, b)) {
-			buf->buf.nr += b;
-			ubuf	+= b;
-			len	-= b;
-			copied	+= b;
+			if (b && !copy_from_user_nofault(&darray_top(buf->buf), ubuf, b)) {
+				buf->buf.nr += b;
+				ubuf	+= b;
+				len	-= b;
+				copied	+= b;
+			}
 		}
-		spin_unlock(&buf->lock);
 
 		if (b) {
 			wake_up(&buf->wait);
@@ -348,14 +348,15 @@ int bch2_stdio_redirect_read(struct stdio_redirect *stdio, char *ubuf, size_t le
 	if (stdio->done)
 		return -1;
 
-	spin_lock(&buf->lock);
-	int ret = min(len, buf->buf.nr);
-	buf->buf.nr -= ret;
-	memcpy(ubuf, buf->buf.data, ret);
-	memmove(buf->buf.data,
-		buf->buf.data + ret,
-		buf->buf.nr);
-	spin_unlock(&buf->lock);
+	int ret;
+	scoped_guard(spinlock, &buf->lock) {
+		ret = min(len, buf->buf.nr);
+		buf->buf.nr -= ret;
+		memcpy(ubuf, buf->buf.data, ret);
+		memmove(buf->buf.data,
+			buf->buf.data + ret,
+			buf->buf.nr);
+	}
 
 	wake_up(&buf->wait);
 	return ret;
