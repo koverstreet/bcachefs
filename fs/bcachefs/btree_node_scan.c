@@ -196,17 +196,15 @@ static void try_read_btree_node(struct find_btree_nodes *f, struct bch_dev *ca,
 		n.journal_seq		= le64_to_cpu(bn->keys.journal_seq),
 		n.sectors_written	= b->written;
 
-		mutex_lock(&f->lock);
+		guard(mutex)(&f->lock);
 		if (BSET_BIG_ENDIAN(&bn->keys) != CPU_BIG_ENDIAN) {
 			bch_err(c, "try_read_btree_node() can't handle endian conversion");
 			f->ret = -EINVAL;
-			goto unlock;
+			return;
 		}
 
 		if (darray_push(&f->nodes, n))
 			f->ret = -ENOMEM;
-unlock:
-		mutex_unlock(&f->lock);
 	}
 }
 
@@ -361,7 +359,7 @@ static int handle_overwrites(struct bch_fs *c,
 int bch2_scan_for_btree_nodes(struct bch_fs *c)
 {
 	struct find_btree_nodes *f = &c->found_btree_nodes;
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	found_btree_nodes nodes_heap = {};
 	size_t dst;
 	int ret = 0;
@@ -468,7 +466,6 @@ int bch2_scan_for_btree_nodes(struct bch_fs *c)
 	eytzinger0_sort(f->nodes.data, f->nodes.nr, sizeof(f->nodes.data[0]), found_btree_node_cmp_pos, NULL);
 err:
 	darray_exit(&nodes_heap);
-	printbuf_exit(&buf);
 	return ret;
 }
 
@@ -540,7 +537,7 @@ int bch2_get_scanned_nodes(struct bch_fs *c, enum btree_id btree,
 		return ret;
 
 	if (c->opts.verbose) {
-		struct printbuf buf = PRINTBUF;
+		CLASS(printbuf, buf)();
 
 		prt_str(&buf, "recovery ");
 		bch2_btree_id_level_to_text(&buf, btree, level);
@@ -550,7 +547,6 @@ int bch2_get_scanned_nodes(struct bch_fs *c, enum btree_id btree,
 		bch2_bpos_to_text(&buf, node_max);
 
 		bch_info(c, "%s(): %s", __func__, buf.buf);
-		printbuf_exit(&buf);
 	}
 
 	struct found_btree_node search = {
@@ -574,10 +570,9 @@ int bch2_get_scanned_nodes(struct bch_fs *c, enum btree_id btree,
 		found_btree_node_to_key(&tmp.k, &n);
 
 		if (c->opts.verbose) {
-			struct printbuf buf = PRINTBUF;
+			CLASS(printbuf, buf)();
 			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&tmp.k));
 			bch_verbose(c, "%s(): recovering %s", __func__, buf.buf);
-			printbuf_exit(&buf);
 		}
 
 		BUG_ON(bch2_bkey_validate(c, bkey_i_to_s_c(&tmp.k),
