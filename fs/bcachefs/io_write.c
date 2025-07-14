@@ -256,7 +256,7 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 		s64 bi_sectors = le64_to_cpu(inode->v.bi_sectors);
 		if (unlikely(bi_sectors + i_sectors_delta < 0)) {
 			struct bch_fs *c = trans->c;
-			struct printbuf buf = PRINTBUF;
+			CLASS(printbuf, buf)();
 			bch2_log_msg_start(c, &buf);
 			prt_printf(&buf, "inode %llu i_sectors underflow: %lli + %lli < 0",
 				   extent_iter->pos.inode, bi_sectors, i_sectors_delta);
@@ -264,7 +264,6 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 			bool print = bch2_count_fsck_err(c, inode_i_sectors_underflow, &buf);
 			if (print)
 				bch2_print_str(c, KERN_ERR, buf.buf);
-			printbuf_exit(&buf);
 
 			if (i_sectors_delta < 0)
 				i_sectors_delta = -bi_sectors;
@@ -370,7 +369,6 @@ static int bch2_write_index_default(struct bch_write_op *op)
 	struct bkey_buf sk;
 	struct keylist *keys = &op->insert_keys;
 	struct bkey_i *k = bch2_keylist_front(keys);
-	struct btree_trans *trans = bch2_trans_get(c);
 	struct btree_iter iter;
 	subvol_inum inum = {
 		.subvol = op->subvol,
@@ -380,6 +378,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 
 	BUG_ON(!inum.subvol);
 
+	CLASS(btree_trans, trans)(c);
 	bch2_bkey_buf_init(&sk);
 
 	do {
@@ -416,7 +415,6 @@ static int bch2_write_index_default(struct bch_write_op *op)
 			bch2_cut_front(iter.pos, k);
 	} while (!bch2_keylist_empty(keys));
 
-	bch2_trans_put(trans);
 	bch2_bkey_buf_exit(&sk, c);
 
 	return ret;
@@ -426,7 +424,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 
 void bch2_write_op_error(struct bch_write_op *op, u64 offset, const char *fmt, ...)
 {
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 
 	if (op->subvol) {
 		bch2_inum_offset_err_msg(op->c, &buf,
@@ -453,7 +451,6 @@ void bch2_write_op_error(struct bch_write_op *op, u64 offset, const char *fmt, .
 	}
 
 	bch_err_ratelimited(op->c, "%s", buf.buf);
-	printbuf_exit(&buf);
 }
 
 void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
@@ -1477,7 +1474,7 @@ err_bucket_stale:
 			break;
 	}
 
-	struct printbuf buf = PRINTBUF;
+	CLASS(printbuf, buf)();
 	if (bch2_fs_inconsistent_on(stale < 0, c,
 				    "pointer to invalid bucket in nocow path on device %llu\n  %s",
 				    stale_at->b.inode,
@@ -1487,7 +1484,6 @@ err_bucket_stale:
 		/* We can retry this: */
 		ret = bch_err_throw(c, transaction_restart);
 	}
-	printbuf_exit(&buf);
 
 	goto err_get_ioref;
 }
@@ -1531,7 +1527,7 @@ again:
 		 * freeing up space on specific disks, which means that
 		 * allocations for specific disks may hang arbitrarily long:
 		 */
-		ret = bch2_trans_run(c, lockrestart_do(trans,
+		ret = bch2_trans_do(c,
 			bch2_alloc_sectors_start_trans(trans,
 				op->target,
 				op->opts.erasure_code && !(op->flags & BCH_WRITE_cached),
@@ -1541,7 +1537,7 @@ again:
 				op->nr_replicas_required,
 				op->watermark,
 				op->flags,
-				&op->cl, &wp)));
+				&op->cl, &wp));
 		if (unlikely(ret)) {
 			if (bch2_err_matches(ret, BCH_ERR_operation_blocked))
 				break;
