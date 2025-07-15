@@ -99,7 +99,9 @@ int bch2_create_trans(struct btree_trans *trans,
 		 * If we're not root, we have to own the subvolume being
 		 * snapshotted:
 		 */
-		if (uid && new_inode->bi_uid != uid) {
+		if (uid &&
+		    !capable(CAP_FOWNER) &&
+		    new_inode->bi_uid != uid) {
 			ret = -EPERM;
 			goto err;
 		}
