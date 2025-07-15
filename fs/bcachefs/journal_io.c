@@ -1869,7 +1869,11 @@ static CLOSURE_CALLBACK(journal_write_submit)
 
 		jbio->submit_time	= local_clock();
 
-		bio_reset(bio, ca->disk_sb.bdev, REQ_OP_WRITE|REQ_SYNC|REQ_META);
+		/*
+		 * blk-wbt.c throttles all writes except those that have both
+		 * REQ_SYNC and REQ_IDLE set...
+		 */
+		bio_reset(bio, ca->disk_sb.bdev, REQ_OP_WRITE|REQ_SYNC|REQ_IDLE|REQ_META);
 		bio->bi_iter.bi_sector	= ptr->offset;
 		bio->bi_end_io		= journal_write_endio;
 		bio->bi_private		= ca;
