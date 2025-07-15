@@ -574,13 +574,11 @@ fsck_err:
 int bch2_check_snapshot_trees(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key_commit(trans, iter,
+	return for_each_btree_key_commit(trans, iter,
 			BTREE_ID_snapshot_trees, POS_MIN,
 			BTREE_ITER_prefetch, k,
 			NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 		check_snapshot_tree(trans, &iter, k));
-	bch_err_fn(c, ret);
-	return ret;
 }
 
 /*
@@ -842,13 +840,11 @@ int bch2_check_snapshots(struct bch_fs *c)
 	 * the parent's depth already be correct:
 	 */
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key_reverse_commit(trans, iter,
+	return for_each_btree_key_reverse_commit(trans, iter,
 				BTREE_ID_snapshots, POS_MAX,
 				BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			check_snapshot(trans, &iter, k));
-	bch_err_fn(c, ret);
-	return ret;
 }
 
 static int check_snapshot_exists(struct btree_trans *trans, u32 id)
@@ -1016,7 +1012,6 @@ int bch2_reconstruct_snapshots(struct bch_fs *c)
 fsck_err:
 err:
 	snapshot_tree_reconstruct_exit(&r);
-	bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -1894,8 +1889,6 @@ err:
 	bch2_recovery_pass_set_no_ratelimit(c, BCH_RECOVERY_PASS_check_snapshots);
 
 	mutex_unlock(&d->lock);
-	if (!bch2_err_matches(ret, EROFS))
-		bch_err_fn(c, ret);
 	return ret;
 }
 

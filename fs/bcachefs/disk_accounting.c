@@ -785,7 +785,7 @@ int bch2_accounting_read(struct bch_fs *c)
 			accounting_read_key(trans, k);
 		}));
 	if (ret)
-		goto err;
+		return ret;
 
 	struct journal_keys *keys = &c->journal_keys;
 	struct journal_key *dst = keys->data;
@@ -824,7 +824,7 @@ int bch2_accounting_read(struct bch_fs *c)
 
 			ret = accounting_read_key(trans, k);
 			if (ret)
-				goto err;
+				return ret;
 		}
 
 		*dst++ = *i;
@@ -863,7 +863,7 @@ int bch2_accounting_read(struct bch_fs *c)
 		}
 
 		if (ret)
-			goto fsck_err;
+			return ret;
 	}
 
 	eytzinger0_sort(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
@@ -904,9 +904,7 @@ int bch2_accounting_read(struct bch_fs *c)
 			}
 		}
 	}
-fsck_err:
-err:
-	bch_err_fn(c, ret);
+
 	return ret;
 }
 

@@ -1522,28 +1522,22 @@ static int may_delete_deleted_inum(struct btree_trans *trans, subvol_inum inum,
 int bch2_delete_dead_inodes(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret;
-
 	/*
 	 * if we ran check_inodes() unlinked inodes will have already been
 	 * cleaned up but the write buffer will be out of sync; therefore we
 	 * alway need a write buffer flush
-	 */
-	ret = bch2_btree_write_buffer_flush_sync(trans);
-	if (ret)
-		goto err;
-
-	/*
+	 *
 	 * Weird transaction restart handling here because on successful delete,
 	 * bch2_inode_rm_snapshot() will return a nested transaction restart,
 	 * but we can't retry because the btree write buffer won't have been
 	 * flushed and we'd spin:
 	 */
-	ret = for_each_btree_key_commit(trans, iter, BTREE_ID_deleted_inodes, POS_MIN,
+	return  bch2_btree_write_buffer_flush_sync(trans) ?:
+		for_each_btree_key_commit(trans, iter, BTREE_ID_deleted_inodes, POS_MIN,
 					BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
 					NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 		struct bch_inode_unpacked inode;
-		ret = may_delete_deleted_inode(trans, k.k->p, &inode, true);
+		int ret = may_delete_deleted_inode(trans, k.k->p, &inode, true);
 		if (ret > 0) {
 			bch_verbose_ratelimited(c, "deleting unlinked inode %llu:%u",
 						k.k->p.offset, k.k->p.snapshot);
@@ -1564,7 +1558,4 @@ int bch2_delete_dead_inodes(struct bch_fs *c)
 
 		ret;
 	}));
-err:
-	bch_err_fn(c, ret);
-	return ret;
 }

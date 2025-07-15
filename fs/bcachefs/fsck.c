@@ -1331,14 +1331,11 @@ int bch2_check_inodes(struct bch_fs *c)
 	CLASS(btree_trans, trans)(c);
 	CLASS(snapshots_seen, s)();
 
-	int ret = for_each_btree_key_commit(trans, iter, BTREE_ID_inodes,
+	return for_each_btree_key_commit(trans, iter, BTREE_ID_inodes,
 				POS_MIN,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			check_inode(trans, &iter, k, &snapshot_root, &s));
-
-	bch_err_fn(c, ret);
-	return ret;
 }
 
 static int find_oldest_inode_needs_reattach(struct btree_trans *trans,
@@ -1426,13 +1423,11 @@ fsck_err:
 int bch2_check_unreachable_inodes(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key_commit(trans, iter, BTREE_ID_inodes,
+	return for_each_btree_key_commit(trans, iter, BTREE_ID_inodes,
 				POS_MIN,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			check_unreachable_inode(trans, &iter, k));
-	bch_err_fn(c, ret);
-	return ret;
 }
 
 static inline bool btree_matches_i_mode(enum btree_id btree, unsigned mode)
@@ -2033,8 +2028,6 @@ int bch2_check_extents(struct bch_fs *c)
 		check_i_sectors_notnested(trans, &w);
 
 	bch2_disk_reservation_put(c, &res);
-
-	bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -2053,7 +2046,6 @@ int bch2_check_indirect_extents(struct bch_fs *c)
 		}));
 
 	bch2_disk_reservation_put(c, &res);
-	bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -2479,7 +2471,6 @@ again:
 		ret = -EINVAL;
 	}
 
-	bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -2533,7 +2524,6 @@ int bch2_check_xattrs(struct bch_fs *c)
 			NULL, NULL,
 			BCH_TRANS_COMMIT_no_enospc,
 		check_xattr(trans, &iter, k, &hash_info, &inode));
-	bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -2599,10 +2589,8 @@ fsck_err:
 int bch2_check_root(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			    check_root_trans(trans));
-	bch_err_fn(c, ret);
-	return ret;
+	return commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+			 check_root_trans(trans));
 }
 
 static int check_subvol_path(struct btree_trans *trans, struct btree_iter *iter, struct bkey_s_c k)
@@ -2677,12 +2665,10 @@ err:
 int bch2_check_subvolume_structure(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key_commit(trans, iter,
+	return for_each_btree_key_commit(trans, iter,
 				BTREE_ID_subvolumes, POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			check_subvol_path(trans, &iter, k));
-	bch_err_fn(c, ret);
-	return ret;
 }
 
 static int bch2_bi_depth_renumber_one(struct btree_trans *trans,
@@ -2851,7 +2837,7 @@ fsck_err:
 int bch2_check_directory_structure(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key_reverse_commit(trans, iter, BTREE_ID_inodes, POS_MIN,
+	return for_each_btree_key_reverse_commit(trans, iter, BTREE_ID_inodes, POS_MIN,
 					  BTREE_ITER_intent|
 					  BTREE_ITER_prefetch|
 					  BTREE_ITER_all_snapshots, k,
@@ -2864,9 +2850,6 @@ int bch2_check_directory_structure(struct bch_fs *c)
 
 			check_path_loop(trans, k);
 		}));
-
-	bch_err_fn(c, ret);
-	return ret;
 }
 
 struct nlink_table {
@@ -3116,7 +3099,6 @@ int bch2_check_nlinks(struct bch_fs *c)
 	} while (next_iter_range_start != U64_MAX);
 
 	kvfree(links.d);
-	bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -3152,14 +3134,12 @@ int bch2_fix_reflink_p(struct bch_fs *c)
 		return 0;
 
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key_commit(trans, iter,
+	return for_each_btree_key_commit(trans, iter,
 				BTREE_ID_extents, POS_MIN,
 				BTREE_ITER_intent|BTREE_ITER_prefetch|
 				BTREE_ITER_all_snapshots, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			fix_reflink_p_key(trans, &iter, k));
-	bch_err_fn(c, ret);
-	return ret;
 }
 
 #ifndef NO_BCACHEFS_CHARDEV
