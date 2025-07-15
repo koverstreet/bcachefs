@@ -1099,7 +1099,6 @@ out:
 	if (!ret && !test_bit(BCH_FS_errors_not_fixed, &c->flags))
 		bch2_sb_members_clean_deleted(c);
 
-	bch_err_fn(c, ret);
 	return ret;
 }
 

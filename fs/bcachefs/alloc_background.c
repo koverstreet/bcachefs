@@ -609,7 +609,6 @@ iter_err:
 				BCH_TRANS_COMMIT_no_enospc,
 			bch2_btree_insert_trans(trans, BTREE_ID_bucket_gens, &g.k_i, 0));
 
-	bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -678,7 +677,6 @@ int bch2_alloc_read(struct bch_fs *c)
 	}
 
 	bch2_dev_put(ca);
-	bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -1619,14 +1617,14 @@ bkey_err:
 	ca = NULL;
 
 	if (ret < 0)
-		goto err;
+		return ret;
 
 	ret = for_each_btree_key(trans, iter,
 			BTREE_ID_need_discard, POS_MIN,
 			BTREE_ITER_prefetch, k,
 		bch2_check_discard_freespace_key(trans, &iter));
 	if (ret)
-		goto err;
+		return ret;
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_freespace, POS_MIN,
 			     BTREE_ITER_prefetch);
@@ -1653,15 +1651,14 @@ bkey_err:
 	}
 	bch2_trans_iter_exit(trans, &iter);
 	if (ret)
-		goto err;
+		return ret;
 
 	ret = for_each_btree_key_commit(trans, iter,
 			BTREE_ID_bucket_gens, POS_MIN,
 			BTREE_ITER_prefetch, k,
 			NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 		bch2_check_bucket_gens_key(trans, &iter, k));
-err:
-	bch_err_fn(c, ret);
+
 	return ret;
 }
 
@@ -1743,7 +1740,6 @@ int bch2_check_alloc_to_lru_refs(struct bch_fs *c)
 		bch2_check_stripe_to_lru_refs(trans);
 
 	bch2_bkey_buf_exit(&last_flushed, c);
-	bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -2352,7 +2348,6 @@ int bch2_fs_freespace_init(struct bch_fs *c)
 {
 	if (c->sb.features & BIT_ULL(BCH_FEATURE_small_image))
 		return 0;
-
 
 	/*
 	 * We can crash during the device add path, so we need to check this on
