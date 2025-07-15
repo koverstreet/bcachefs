@@ -465,8 +465,8 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 	struct bch_write_bio *n;
 	unsigned ref_rw  = type == BCH_DATA_btree ? READ : WRITE;
 	unsigned ref_idx = type == BCH_DATA_btree
-		? BCH_DEV_READ_REF_btree_node_write
-		: BCH_DEV_WRITE_REF_io_write;
+		? (unsigned) BCH_DEV_READ_REF_btree_node_write
+		: (unsigned) BCH_DEV_WRITE_REF_io_write;
 
 	BUG_ON(c->opts.nochanges);
 
