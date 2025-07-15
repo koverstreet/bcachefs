@@ -262,6 +262,7 @@ int bch2_dirent_init_name(struct bch_fs *c,
 		memcpy(&dirent->v.d_cf_name_block.d_names[0], name->name, name->len);
 
 		char *cf_out = &dirent->v.d_cf_name_block.d_names[name->len];
+		void *val_end = bkey_val_end(bkey_i_to_s(&dirent->k_i));
 
 		if (cf_name) {
 			cf_len = cf_name->len;
@@ -269,16 +270,14 @@ int bch2_dirent_init_name(struct bch_fs *c,
 			memcpy(cf_out, cf_name->name, cf_name->len);
 		} else {
 			cf_len = utf8_casefold(hash_info->cf_encoding, name,
-					       cf_out,
-					       bkey_val_end(bkey_i_to_s(&dirent->k_i)) - (void *) cf_out);
+					       cf_out, val_end - (void *) cf_out);
 			if (cf_len <= 0)
 				return cf_len;
 		}
 
-		memset(&dirent->v.d_cf_name_block.d_names[name->len + cf_len], 0,
-		       bkey_val_bytes(&dirent->k) -
-		       offsetof(struct bch_dirent, d_cf_name_block.d_names) -
-		       name->len + cf_len);
+		void *name_end = &dirent->v.d_cf_name_block.d_names[name->len + cf_len];
+		BUG_ON(name_end > val_end);
+		memset(name_end, 0, val_end - name_end);
 
 		dirent->v.d_cf_name_block.d_name_len = cpu_to_le16(name->len);
 		dirent->v.d_cf_name_block.d_cf_name_len = cpu_to_le16(cf_len);
