@@ -2540,9 +2540,14 @@ do_write:
 	}
 	count_event(c, btree_node_write);
 
+	/*
+	 * blk-wbt.c throttles all writes except those that have both REQ_SYNC
+	 * and REQ_IDLE set...
+	 */
+
 	wbio = container_of(bio_alloc_bioset(NULL,
 				buf_pages(data, sectors_to_write << 9),
-				REQ_OP_WRITE|REQ_META,
+				REQ_OP_WRITE|REQ_META|REQ_SYNC|REQ_IDLE,
 				GFP_NOFS,
 				&c->btree_bio),
 			    struct btree_write_bio, wbio.bio);
