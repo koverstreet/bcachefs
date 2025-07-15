@@ -703,8 +703,8 @@ static void ec_block_endio(struct bio *bio)
 	struct closure *cl = bio->bi_private;
 	int rw = ec_bio->rw;
 	unsigned ref = rw == READ
-		? BCH_DEV_READ_REF_ec_block
-		: BCH_DEV_WRITE_REF_ec_block;
+		? (unsigned) BCH_DEV_READ_REF_ec_block
+		: (unsigned) BCH_DEV_WRITE_REF_ec_block;
 
 	bch2_account_io_completion(ca, bio_data_dir(bio),
 				   ec_bio->submit_time, !bio->bi_status);
@@ -741,8 +741,8 @@ static void ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
 		: BCH_DATA_parity;
 	int rw = op_is_write(opf);
 	unsigned ref = rw == READ
-		? BCH_DEV_READ_REF_ec_block
-		: BCH_DEV_WRITE_REF_ec_block;
+		? (unsigned) BCH_DEV_READ_REF_ec_block
+		: (unsigned) BCH_DEV_WRITE_REF_ec_block;
 
 	struct bch_dev *ca = bch2_dev_get_ioref(c, ptr->dev, rw, ref);
 	if (!ca) {
