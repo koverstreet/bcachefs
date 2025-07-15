@@ -1611,7 +1611,10 @@ static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb)
 
 	if (get_capacity(sb->bdev->bd_disk) <
 	    ca->mi.bucket_size * ca->mi.nbuckets) {
-		bch_err(ca, "cannot online: device too small");
+		bch_err(ca, "cannot online: device too small (capacity %llu filesystem size %llu nbuckets %llu)",
+			get_capacity(sb->bdev->bd_disk),
+			ca->mi.bucket_size * ca->mi.nbuckets,
+			ca->mi.nbuckets);
 		return bch_err_throw(ca->fs, device_size_too_small);
 	}
 
