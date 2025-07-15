@@ -1342,18 +1342,18 @@ static bool scrub_pred(struct bch_fs *c, void *_arg,
 
 int bch2_data_job(struct bch_fs *c,
 		  struct bch_move_stats *stats,
-		  struct bch_ioctl_data op)
+		  struct bch_ioctl_data *op)
 {
-	struct bbpos start	= BBPOS(op.start_btree, op.start_pos);
-	struct bbpos end	= BBPOS(op.end_btree, op.end_pos);
+	struct bbpos start	= BBPOS(op->start_btree, op->start_pos);
+	struct bbpos end	= BBPOS(op->end_btree, op->end_pos);
 	int ret = 0;
 
-	if (op.op >= BCH_DATA_OP_NR)
+	if (op->op >= BCH_DATA_OP_NR)
 		return -EINVAL;
 
-	bch2_move_stats_init(stats, bch2_data_ops_strs[op.op]);
+	bch2_move_stats_init(stats, bch2_data_ops_strs[op->op]);
 
-	switch (op.op) {
+	switch (op->op) {
 	case BCH_DATA_OP_scrub:
 		/*
 		 * prevent tests from spuriously failing, make sure we see all
@@ -1361,13 +1361,13 @@ int bch2_data_job(struct bch_fs *c,
 		 */
 		bch2_btree_interior_updates_flush(c);
 
-		ret = bch2_move_data_phys(c, op.scrub.dev, 0, U64_MAX,
-					  op.scrub.data_types,
+		ret = bch2_move_data_phys(c, op->scrub.dev, 0, U64_MAX,
+					  op->scrub.data_types,
 					  NULL,
 					  stats,
 					  writepoint_hashed((unsigned long) current),
 					  false,
-					  scrub_pred, &op) ?: ret;
+					  scrub_pred, op) ?: ret;
 		break;
 
 	case BCH_DATA_OP_rereplicate:
@@ -1384,18 +1384,18 @@ int bch2_data_job(struct bch_fs *c,
 		ret = bch2_replicas_gc2(c) ?: ret;
 		break;
 	case BCH_DATA_OP_migrate:
-		if (op.migrate.dev >= c->sb.nr_devices)
+		if (op->migrate.dev >= c->sb.nr_devices)
 			return -EINVAL;
 
 		stats->data_type = BCH_DATA_journal;
-		ret = bch2_journal_flush_device_pins(&c->journal, op.migrate.dev);
-		ret = bch2_move_data_phys(c, op.migrate.dev, 0, U64_MAX,
+		ret = bch2_journal_flush_device_pins(&c->journal, op->migrate.dev);
+		ret = bch2_move_data_phys(c, op->migrate.dev, 0, U64_MAX,
 					  ~0,
 					  NULL,
 					  stats,
 					  writepoint_hashed((unsigned long) current),
 					  true,
-					  migrate_pred, &op) ?: ret;
+					  migrate_pred, op) ?: ret;
 		bch2_btree_interior_updates_flush(c);
 		ret = bch2_replicas_gc2(c) ?: ret;
 		break;
