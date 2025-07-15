@@ -214,7 +214,6 @@ int bch2_check_lrus(struct bch_fs *c)
 			bch2_check_lru_key(trans, &iter, k, &last_flushed));
 
 	bch2_bkey_buf_exit(&last_flushed, c);
-	bch_err_fn(c, ret);
 	return ret;
 
 }
