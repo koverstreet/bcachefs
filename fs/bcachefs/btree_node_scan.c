@@ -65,16 +65,6 @@ static void found_btree_node_to_key(struct bkey_i *k, const struct found_btree_n
 	memcpy(bp->v.start, f->ptrs, sizeof(struct bch_extent_ptr) * f->nr_ptrs);
 }
 
-static inline u64 bkey_journal_seq(struct bkey_s_c k)
-{
-	switch (k.k->type) {
-	case KEY_TYPE_inode_v3:
-		return le64_to_cpu(bkey_s_c_to_inode_v3(k).v->bi_journal_seq);
-	default:
-		return 0;
-	}
-}
-
 static int found_btree_node_cmp_cookie(const void *_l, const void *_r)
 {
 	const struct found_btree_node *l = _l;
