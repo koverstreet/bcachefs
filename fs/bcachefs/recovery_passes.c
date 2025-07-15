@@ -408,13 +408,17 @@ int bch2_run_explicit_recovery_pass(struct bch_fs *c,
 				    enum bch_recovery_pass pass,
 				    enum bch_run_recovery_pass_flags flags)
 {
-	int ret = 0;
+	/*
+	 * With RUN_RECOVERY_PASS_ratelimit, recovery_pass_needs_set needs
+	 * sb_lock
+	 */
+	if (!(flags & RUN_RECOVERY_PASS_ratelimit) &&
+	    !recovery_pass_needs_set(c, pass, &flags))
+		return 0;
 
-	if (recovery_pass_needs_set(c, pass, &flags)) {
-		guard(mutex)(&c->sb_lock);
-		ret = __bch2_run_explicit_recovery_pass(c, out, pass, flags);
-		bch2_write_super(c);
-	}
+	guard(mutex)(&c->sb_lock);
+	int ret = __bch2_run_explicit_recovery_pass(c, out, pass, flags);
+	bch2_write_super(c);
 
 	return ret;
 }
