@@ -246,11 +246,12 @@ static int bch2_lookup_root_inode(struct bch_fs *c)
 
 struct recovery_pass_fn {
 	int		(*fn)(struct bch_fs *);
+	const char	*name;
 	unsigned	when;
 };
 
 static struct recovery_pass_fn recovery_pass_fns[] = {
-#define x(_fn, _id, _when)	{ .fn = bch2_##_fn, .when = _when },
+#define x(_fn, _id, _when)	{ .fn = bch2_##_fn, .name = #_fn, .when = _when },
 	BCH_RECOVERY_PASSES()
 #undef x
 };
@@ -480,6 +481,7 @@ static int bch2_run_recovery_pass(struct bch_fs *c, enum bch_recovery_pass pass)
 	r->passes_to_run &= ~BIT_ULL(pass);
 
 	if (ret) {
+		bch_err(c, "%s(): error %s", p->name, bch2_err_str(ret));
 		r->passes_failing |= BIT_ULL(pass);
 		return ret;
 	}

@@ -183,12 +183,10 @@ fsck_err:
 int bch2_check_subvols(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key_commit(trans, iter,
+	return for_each_btree_key_commit(trans, iter,
 				BTREE_ID_subvolumes, POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			check_subvol(trans, &iter, k));
-	bch_err_fn(c, ret);
-	return ret;
 }
 
 static int check_subvol_child(struct btree_trans *trans,
@@ -218,12 +216,10 @@ fsck_err:
 int bch2_check_subvol_children(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key_commit(trans, iter,
+	return for_each_btree_key_commit(trans, iter,
 				BTREE_ID_subvolume_children, POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			check_subvol_child(trans, &iter, k));
-	bch_err_fn(c, ret);
-	return 0;
 }
 
 /* Subvolumes: */
@@ -679,7 +675,6 @@ int bch2_initialize_subvolumes(struct bch_fs *c)
 	struct bkey_i_snapshot_tree	root_tree;
 	struct bkey_i_snapshot		root_snapshot;
 	struct bkey_i_subvolume		root_volume;
-	int ret;
 
 	bkey_snapshot_tree_init(&root_tree.k_i);
 	root_tree.k.p.offset		= 1;
@@ -700,11 +695,9 @@ int bch2_initialize_subvolumes(struct bch_fs *c)
 	root_volume.v.snapshot	= cpu_to_le32(U32_MAX);
 	root_volume.v.inode	= cpu_to_le64(BCACHEFS_ROOT_INO);
 
-	ret =   bch2_btree_insert(c, BTREE_ID_snapshot_trees,	&root_tree.k_i, NULL, 0, 0) ?:
+	return  bch2_btree_insert(c, BTREE_ID_snapshot_trees,	&root_tree.k_i, NULL, 0, 0) ?:
 		bch2_btree_insert(c, BTREE_ID_snapshots,	&root_snapshot.k_i, NULL, 0, 0) ?:
 		bch2_btree_insert(c, BTREE_ID_subvolumes,	&root_volume.k_i, NULL, 0, 0);
-	bch_err_fn(c, ret);
-	return ret;
 }
 
 static int __bch2_fs_upgrade_for_subvolumes(struct btree_trans *trans)
@@ -742,10 +735,8 @@ err:
 int bch2_fs_upgrade_for_subvolumes(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+	return commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			    __bch2_fs_upgrade_for_subvolumes(trans));
-	bch_err_fn(c, ret);
-	return ret;
 }
 
 void bch2_fs_subvolumes_init_early(struct bch_fs *c)
