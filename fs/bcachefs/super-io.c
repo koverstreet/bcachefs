@@ -991,7 +991,12 @@ static void write_one_super(struct bch_fs *c, struct bch_dev *ca, unsigned idx)
 	sb->csum = csum_vstruct(c, BCH_SB_CSUM_TYPE(sb),
 				null_nonce(), sb);
 
-	bio_reset(bio, ca->disk_sb.bdev, REQ_OP_WRITE|REQ_SYNC|REQ_META);
+	/*
+	 * blk-wbt.c throttles all writes except those that have both REQ_SYNC
+	 * and REQ_IDLE set...
+	 */
+
+	bio_reset(bio, ca->disk_sb.bdev, REQ_OP_WRITE|REQ_SYNC|REQ_IDLE|REQ_META);
 	bio->bi_iter.bi_sector	= le64_to_cpu(sb->offset);
 	bio->bi_end_io		= write_super_endio;
 	bio->bi_private		= ca;
