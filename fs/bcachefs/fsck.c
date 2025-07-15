@@ -2440,12 +2440,18 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 			}
 	}
 
+	/*
+	 * Cannot access key values after doing a transaction commit without
+	 * revalidating:
+	 */
+	bool have_dir = d.v->d_type == DT_DIR;
+
 	ret = bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 	if (ret)
 		goto err;
 
 	for_each_visible_inode(c, s, dir, d.k->p.snapshot, i) {
-		if (d.v->d_type == DT_DIR)
+		if (have_dir)
 			i->count++;
 		i->i_size += bkey_bytes(d.k);
 	}
