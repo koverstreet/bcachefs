@@ -312,7 +312,7 @@ static int bch2_data_thread(void *arg)
 {
 	struct bch_data_ctx *ctx = container_of(arg, struct bch_data_ctx, thr);
 
-	ctx->thr.ret = bch2_data_job(ctx->c, &ctx->stats, ctx->arg);
+	ctx->thr.ret = bch2_data_job(ctx->c, &ctx->stats, &ctx->arg);
 	if (ctx->thr.ret == -BCH_ERR_device_offline)
 		ctx->stats.ret = BCH_IOCTL_DATA_EVENT_RET_device_offline;
 	else {

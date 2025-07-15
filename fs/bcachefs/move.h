@@ -152,7 +152,7 @@ int bch2_evacuate_bucket(struct moving_context *,
 			   struct data_update_opts);
 int bch2_data_job(struct bch_fs *,
 		  struct bch_move_stats *,
-		  struct bch_ioctl_data);
+		  struct bch_ioctl_data *);
 
 void bch2_move_stats_to_text(struct printbuf *, struct bch_move_stats *);
 void bch2_move_stats_exit(struct bch_move_stats *, struct bch_fs *);
