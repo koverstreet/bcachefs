@@ -1627,23 +1627,28 @@ static int check_i_sectors_notnested(struct btree_trans *trans, struct inode_wal
 		if (i->inode.bi_sectors == i->count)
 			continue;
 
+		CLASS(printbuf, buf)();
+		lockrestart_do(trans,
+			bch2_inum_snapshot_to_path(trans,
+						   i->inode.bi_inum,
+						   i->inode.bi_snapshot, NULL, &buf));
+
 		count2 = bch2_count_inode_sectors(trans, w->last_pos.inode, i->inode.bi_snapshot);
 
 		if (w->recalculate_sums)
 			i->count = count2;
 
 		if (i->count != count2) {
-			bch_err_ratelimited(c, "fsck counted i_sectors wrong for inode %llu:%u: got %llu should be %llu",
-					    w->last_pos.inode, i->inode.bi_snapshot, i->count, count2);
+			bch_err_ratelimited(c, "fsck counted i_sectors wrong: got %llu should be %llu\n%s",
+					    i->count, count2, buf.buf);
 			i->count = count2;
 		}
 
 		if (fsck_err_on(!(i->inode.bi_flags & BCH_INODE_i_sectors_dirty) &&
 				i->inode.bi_sectors != i->count,
 				trans, inode_i_sectors_wrong,
-				"inode %llu:%u has incorrect i_sectors: got %llu, should be %llu",
-				w->last_pos.inode, i->inode.bi_snapshot,
-				i->inode.bi_sectors, i->count)) {
+				"incorrect i_sectors: got %llu, should be %llu\n%s",
+				i->inode.bi_sectors, i->count, buf.buf)) {
 			i->inode.bi_sectors = i->count;
 			ret = bch2_fsck_write_inode(trans, &i->inode);
 			if (ret)
