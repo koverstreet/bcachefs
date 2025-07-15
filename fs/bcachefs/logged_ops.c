@@ -62,14 +62,12 @@ fsck_err:
 int bch2_resume_logged_ops(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key_max(trans, iter,
+	return for_each_btree_key_max(trans, iter,
 				   BTREE_ID_logged_ops,
 				   POS(LOGGED_OPS_INUM_logged_ops, 0),
 				   POS(LOGGED_OPS_INUM_logged_ops, U64_MAX),
 				   BTREE_ITER_prefetch, k,
 			resume_logged_op(trans, &iter, k));
-	bch_err_fn(c, ret);
-	return ret;
 }
 
 static int __bch2_logged_op_start(struct btree_trans *trans, struct bkey_i *k)
