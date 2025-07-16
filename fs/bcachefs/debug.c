@@ -465,7 +465,7 @@ static void bch2_cached_btree_node_to_text(struct printbuf *out, struct bch_fs *
 					   struct btree *b)
 {
 	if (!out->nr_tabstops)
-		printbuf_tabstop_push(out, 32);
+		printbuf_tabstop_push(out, 36);
 
 	prt_printf(out, "%px ", b);
 	bch2_btree_id_level_to_text(out, b->c.btree_id, b->c.level);
