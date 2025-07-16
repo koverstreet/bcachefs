@@ -30,7 +30,8 @@ int bch2_run_print_explicit_recovery_pass(struct bch_fs *, enum bch_recovery_pas
 
 int __bch2_run_explicit_recovery_pass(struct bch_fs *, struct printbuf *,
 				      enum bch_recovery_pass,
-				      enum bch_run_recovery_pass_flags);
+				      enum bch_run_recovery_pass_flags,
+				      bool *);
 int bch2_run_explicit_recovery_pass(struct bch_fs *, struct printbuf *,
 				    enum bch_recovery_pass,
 				    enum bch_run_recovery_pass_flags);

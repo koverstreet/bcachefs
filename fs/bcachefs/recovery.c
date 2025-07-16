@@ -37,78 +37,79 @@ int bch2_btree_lost_data(struct bch_fs *c,
 			 struct printbuf *msg,
 			 enum btree_id btree)
 {
-	u64 b = BIT_ULL(btree);
 	int ret = 0;
 
 	guard(mutex)(&c->sb_lock);
+	bool write_sb = false;
 	struct bch_sb_field_ext *ext = bch2_sb_field_get(c->disk_sb.sb, ext);
 
-	if (!(c->sb.btrees_lost_data & b)) {
+	if (!(c->sb.btrees_lost_data & BIT_ULL(btree))) {
 		prt_printf(msg, "flagging btree ");
 		bch2_btree_id_to_text(msg, btree);
 		prt_printf(msg, " lost data\n");
 
-		ext->btrees_lost_data |= cpu_to_le64(b);
+		write_sb |= !__test_and_set_bit_le64(btree, &ext->btrees_lost_data);
 	}
 
 	/* Once we have runtime self healing for topology errors we won't need this: */
-	ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_topology, 0) ?: ret;
+	ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_topology, 0, &write_sb) ?: ret;
 
 	/* Btree node accounting will be off: */
-	__set_bit_le64(BCH_FSCK_ERR_accounting_mismatch, ext->errors_silent);
-	ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_allocations, 0) ?: ret;
+	write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_accounting_mismatch, ext->errors_silent);
+	ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_allocations, 0, &write_sb) ?: ret;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 	/*
 	 * These are much more minor, and don't need to be corrected right away,
 	 * but in debug mode we want the next fsck run to be clean:
 	 */
-	ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_lrus, 0) ?: ret;
-	ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_backpointers_to_extents, 0) ?: ret;
+	ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_lrus, 0, &write_sb) ?: ret;
+	ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_backpointers_to_extents, 0, &write_sb) ?: ret;
 #endif
 
 	switch (btree) {
 	case BTREE_ID_alloc:
-		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0) ?: ret;
+		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0, &write_sb) ?: ret;
 
-		__set_bit_le64(BCH_FSCK_ERR_alloc_key_data_type_wrong, ext->errors_silent);
-		__set_bit_le64(BCH_FSCK_ERR_alloc_key_gen_wrong, ext->errors_silent);
-		__set_bit_le64(BCH_FSCK_ERR_alloc_key_dirty_sectors_wrong, ext->errors_silent);
-		__set_bit_le64(BCH_FSCK_ERR_alloc_key_cached_sectors_wrong, ext->errors_silent);
-		__set_bit_le64(BCH_FSCK_ERR_alloc_key_stripe_wrong, ext->errors_silent);
-		__set_bit_le64(BCH_FSCK_ERR_alloc_key_stripe_redundancy_wrong, ext->errors_silent);
+		write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_alloc_key_data_type_wrong, ext->errors_silent);
+		write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_alloc_key_gen_wrong, ext->errors_silent);
+		write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_alloc_key_dirty_sectors_wrong, ext->errors_silent);
+		write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_alloc_key_cached_sectors_wrong, ext->errors_silent);
+		write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_alloc_key_stripe_wrong, ext->errors_silent);
+		write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_alloc_key_stripe_redundancy_wrong, ext->errors_silent);
 		goto out;
 	case BTREE_ID_backpointers:
-		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_btree_backpointers, 0) ?: ret;
-		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_extents_to_backpointers, 0) ?: ret;
+		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_btree_backpointers, 0, &write_sb) ?: ret;
+		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_extents_to_backpointers, 0, &write_sb) ?: ret;
 		goto out;
 	case BTREE_ID_need_discard:
-		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0) ?: ret;
+		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0, &write_sb) ?: ret;
 		goto out;
 	case BTREE_ID_freespace:
-		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0) ?: ret;
+		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0, &write_sb) ?: ret;
 		goto out;
 	case BTREE_ID_bucket_gens:
-		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0) ?: ret;
+		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0, &write_sb) ?: ret;
 		goto out;
 	case BTREE_ID_lru:
-		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0) ?: ret;
+		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0, &write_sb) ?: ret;
 		goto out;
 	case BTREE_ID_accounting:
-		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_allocations, 0) ?: ret;
+		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_allocations, 0, &write_sb) ?: ret;
 		goto out;
 	case BTREE_ID_snapshots:
-		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_reconstruct_snapshots, 0) ?: ret;
-		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_topology, 0) ?: ret;
-		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_scan_for_btree_nodes, 0) ?: ret;
+		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_reconstruct_snapshots, 0, &write_sb) ?: ret;
+		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_topology, 0, &write_sb) ?: ret;
+		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_scan_for_btree_nodes, 0, &write_sb) ?: ret;
 		goto out;
 	default:
-		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_topology, 0) ?: ret;
-		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_scan_for_btree_nodes, 0) ?: ret;
+		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_topology, 0, &write_sb) ?: ret;
+		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_scan_for_btree_nodes, 0, &write_sb) ?: ret;
 		goto out;
 	}
 out:
-	bch2_write_super(c);
+	if (write_sb)
+		bch2_write_super(c);
 	return ret;
 }
 
