@@ -772,12 +772,13 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 		trans->journal_res.offset	+= trans->journal_entries.u64s;
 		trans->journal_res.u64s		-= trans->journal_entries.u64s;
 
-		memcpy_u64s_small(bch2_journal_add_entry(j, &trans->journal_res,
-						BCH_JSET_ENTRY_write_buffer_keys,
-						BTREE_ID_accounting, 0,
-						trans->accounting.u64s)->_data,
-				  btree_trans_subbuf_base(trans, &trans->accounting),
-				  trans->accounting.u64s);
+		if (trans->accounting.u64s)
+			memcpy_u64s_small(bch2_journal_add_entry(j, &trans->journal_res,
+							BCH_JSET_ENTRY_write_buffer_keys,
+							BTREE_ID_accounting, 0,
+							trans->accounting.u64s)->_data,
+					  btree_trans_subbuf_base(trans, &trans->accounting),
+					  trans->accounting.u64s);
 
 		if (trans->journal_seq)
 			*trans->journal_seq = trans->journal_res.seq;
@@ -1069,10 +1070,14 @@ int __bch2_trans_commit(struct btree_trans *trans, enum bch_trans_commit_flags f
 
 	EBUG_ON(test_bit(BCH_FS_clean_shutdown, &c->flags));
 
-	journal_u64s = jset_u64s(trans->accounting.u64s);
+	journal_u64s = 0;
+
 	trans->journal_transaction_names = READ_ONCE(c->opts.journal_transaction_names);
 	if (trans->journal_transaction_names)
 		journal_u64s += jset_u64s(JSET_ENTRY_LOG_U64s);
+
+	if (trans->accounting.u64s)
+		journal_u64s += jset_u64s(trans->accounting.u64s);
 
 	trans_for_each_update(trans, i) {
 		struct btree_path *path = trans->paths + i->path;
