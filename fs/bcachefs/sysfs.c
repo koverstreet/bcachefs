@@ -18,6 +18,7 @@
 #include "btree_key_cache.h"
 #include "btree_update.h"
 #include "btree_update_interior.h"
+#include "btree_write_buffer.h"
 #include "btree_gc.h"
 #include "buckets.h"
 #include "clock.h"
@@ -149,6 +150,7 @@ write_attribute(trigger_journal_flush);
 write_attribute(trigger_journal_writes);
 write_attribute(trigger_btree_cache_shrink);
 write_attribute(trigger_btree_key_cache_shrink);
+write_attribute(trigger_btree_write_buffer_flush);
 write_attribute(trigger_btree_updates);
 write_attribute(trigger_freelist_wakeup);
 write_attribute(trigger_recalc_capacity);
@@ -427,6 +429,11 @@ STORE(bch2_fs)
 		c->btree_key_cache.shrink->scan_objects(c->btree_key_cache.shrink, &sc);
 	}
 
+	if (attr == &sysfs_trigger_btree_write_buffer_flush)
+		bch2_trans_do(c,
+			      (bch2_btree_write_buffer_flush_sync(trans),
+			       bch2_trans_begin(trans)));
+
 	if (attr == &sysfs_trigger_gc)
 		bch2_gc_gens(c);
 
@@ -597,6 +604,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_trigger_journal_writes,
 	&sysfs_trigger_btree_cache_shrink,
 	&sysfs_trigger_btree_key_cache_shrink,
+	&sysfs_trigger_btree_write_buffer_flush,
 	&sysfs_trigger_btree_updates,
 	&sysfs_trigger_freelist_wakeup,
 	&sysfs_trigger_recalc_capacity,
