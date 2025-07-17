@@ -2060,6 +2060,9 @@ allocated:
 	BUG_ON(trans->restarted);
 	return h;
 err:
+	if (waiting &&
+	    !bch2_err_matches(ret, BCH_ERR_operation_blocked))
+		closure_wake_up(&c->freelist_wait);
 	bch2_ec_stripe_head_put(c, h);
 	return ERR_PTR(ret);
 }
