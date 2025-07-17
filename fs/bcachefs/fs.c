@@ -1295,8 +1295,14 @@ static int bch2_fill_extent(struct bch_fs *c,
 					       flags|
 					       FIEMAP_EXTENT_DELALLOC|
 					       FIEMAP_EXTENT_UNWRITTEN);
+	} else if (k.k->type == KEY_TYPE_error) {
+		return 0;
 	} else {
-		BUG();
+		WARN_ONCE(1, "unhandled key type %s",
+			  k.k->type < KEY_TYPE_MAX
+			  ? bch2_bkey_types[k.k->type]
+			  : "(unknown)");
+		return 0;
 	}
 }
 
