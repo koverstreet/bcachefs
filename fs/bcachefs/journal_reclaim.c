@@ -874,7 +874,34 @@ static int journal_flush_done(struct journal *j, u64 seq_to_flush,
 	     --type)
 		if (journal_flush_pins_or_still_flushing(j, seq_to_flush, BIT(type))) {
 			*did_work = true;
-			return ret;
+
+			/*
+			 * Question from Dan Carpenter, on the early return:
+			 *
+			 * If journal_flush_pins_or_still_flushing() returns
+			 * true, then the flush hasn't complete and we must
+			 * return 0; we want the outer closure_wait_event() in
+			 * journal_flush_pins() to continue.
+			 *
+			 * The early return is there because we don't want to
+			 * call journal_entry_close() until we've finished
+			 * flushing all outstanding journal pins - otherwise
+			 * seq_to_flush can be U64_MAX, and we'll close a bunch
+			 * of journal entries and write tiny ones completely
+			 * unnecessarily.
+			 *
+			 * Having the early return be in the loop where we loop
+			 * over types is important, because flushing one journal
+			 * pin can cause new journal pins to be added (even of
+			 * the same type, btree node writes may generate more
+			 * btree node writes, when updating the parent pointer
+			 * has a full node and has to trigger a split/compact).
+			 *
+			 * This is part of our shutdown sequence, where order of
+			 * flushing is important in order to make sure that it
+			 * terminates...
+			 */
+			return 0;
 		}
 
 	if (seq_to_flush > journal_cur_seq(j))
