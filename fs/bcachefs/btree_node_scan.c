@@ -270,6 +270,9 @@ static int read_btree_nodes(struct find_btree_nodes *f)
 	int ret = 0;
 
 	closure_init_stack(&cl);
+	CLASS(printbuf, buf)();
+
+	prt_printf(&buf, "scanning for btree nodes on");
 
 	for_each_online_member(c, ca, BCH_DEV_READ_REF_btree_node_scan) {
 		if (!(ca->mi.data_allowed & BIT(BCH_DATA_btree)))
@@ -295,10 +298,14 @@ static int read_btree_nodes(struct find_btree_nodes *f)
 			break;
 		}
 
+		prt_printf(&buf, " %s", ca->name);
+
 		closure_get(&cl);
 		enumerated_ref_get(&ca->io_ref[READ], BCH_DEV_READ_REF_btree_node_scan);
 		wake_up_process(t);
 	}
+
+	bch_notice(c, "%s", buf.buf);
 err:
 	while (closure_sync_timeout(&cl, sysctl_hung_task_timeout_secs * HZ / 2))
 		;
