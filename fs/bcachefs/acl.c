@@ -138,8 +138,8 @@ static struct posix_acl *bch2_acl_from_disk(struct btree_trans *trans,
 
 	acl = allocate_dropping_locks(trans, ret,
 			posix_acl_alloc(count, _gfp));
-	if (!acl)
-		return ERR_PTR(-ENOMEM);
+	if (!acl && !ret)
+		ret = bch_err_throw(trans->c, ENOMEM_acl);
 	if (ret) {
 		kfree(acl);
 		return ERR_PTR(ret);
