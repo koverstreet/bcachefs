@@ -127,7 +127,7 @@ static int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter)
 	 * the dirtying of requests that are internal from the kernel (i.e. from
 	 * loopback), because we'll deadlock on page_lock.
 	 */
-	dio->should_dirty = iter_is_iovec(iter);
+	dio->should_dirty = user_backed_iter(iter);
 
 	blk_start_plug(&plug);
 
