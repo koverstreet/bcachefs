@@ -253,11 +253,13 @@ static int btree_key_cache_create(struct btree_trans *trans,
 
 		struct bkey_i *new_k = allocate_dropping_locks(trans, ret,
 				kmalloc(key_u64s * sizeof(u64), _gfp));
-		if (unlikely(!new_k)) {
+		if (unlikely(!new_k && !ret)) {
 			bch_err(trans->c, "error allocating memory for key cache key, btree %s u64s %u",
 				bch2_btree_id_str(ck->key.btree_id), key_u64s);
 			ret = bch_err_throw(c, ENOMEM_btree_key_cache_fill);
-		} else if (ret) {
+		}
+
+		if (unlikely(ret)) {
 			kfree(new_k);
 			goto err;
 		}

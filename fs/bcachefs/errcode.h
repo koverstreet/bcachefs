@@ -90,6 +90,8 @@
 	x(ENOMEM,			ENOMEM_disk_accounting)			\
 	x(ENOMEM,			ENOMEM_stripe_head_alloc)		\
 	x(ENOMEM,                       ENOMEM_journal_read_bucket)             \
+	x(ENOMEM,                       ENOMEM_acl)				\
+	x(ENOMEM,                       ENOMEM_move_extent)			\
 	x(ENOSPC,			ENOSPC_disk_reservation)		\
 	x(ENOSPC,			ENOSPC_bucket_alloc)			\
 	x(ENOSPC,			ENOSPC_disk_label_add)			\
