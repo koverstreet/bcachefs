@@ -218,9 +218,13 @@
 	x(EINVAL,			varint_decode_error)			\
 	x(EINVAL,			erasure_coding_found_btree_node)	\
 	x(EINVAL,			option_negative)			\
+	x(EINVAL,			topology_repair)			\
+	x(BCH_ERR_topology_repair,	topology_repair_drop_this_node)		\
+	x(BCH_ERR_topology_repair,	topology_repair_drop_prev_node)		\
+	x(BCH_ERR_topology_repair,	topology_repair_did_fill_from_scan)	\
 	x(EOPNOTSUPP,			may_not_use_incompat_feature)		\
 	x(EOPNOTSUPP,			no_casefolding_without_utf8)		\
-	x(EOPNOTSUPP,			casefolding_disabled)		\
+	x(EOPNOTSUPP,			casefolding_disabled)			\
 	x(EOPNOTSUPP,			casefold_opt_is_dir_only)		\
 	x(EOPNOTSUPP,			unsupported_fsx_flag)			\
 	x(EOPNOTSUPP,			unsupported_fa_flag)			\
