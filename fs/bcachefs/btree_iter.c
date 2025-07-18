@@ -2860,8 +2860,9 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_trans *trans, struct btre
 		    !bkey_deleted(k.k) &&
 		    (k2 = btree_trans_peek_key_cache(trans, iter, iter->pos)).k) {
 			k = k2;
-			if (!bkey_err(k))
-				iter->k = *k.k;
+			if (bkey_err(k))
+				goto out;
+			iter->k = *k.k;
 		}
 
 		if (unlikely(k.k->type == KEY_TYPE_whiteout &&
