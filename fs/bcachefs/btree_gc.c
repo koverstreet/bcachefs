@@ -44,10 +44,6 @@
 #include <linux/rcupdate.h>
 #include <linux/sched/task.h>
 
-#define DROP_THIS_NODE		10
-#define DROP_PREV_NODE		11
-#define DID_FILL_FROM_SCAN	12
-
 /*
  * Returns true if it's a btree we can easily reconstruct, or otherwise won't
  * cause data loss if it's missing:
@@ -252,7 +248,7 @@ static int btree_check_node_boundaries(struct btree_trans *trans, struct btree *
 				return ret;
 
 			*pulled_from_scan = cur->data->min_key;
-			ret = DID_FILL_FROM_SCAN;
+			ret = bch_err_throw(c, topology_repair_did_fill_from_scan);
 		} else {
 			if (mustfix_fsck_err(trans, btree_node_topology_bad_min_key,
 					     "btree node with incorrect min_key%s", buf.buf))
@@ -263,7 +259,7 @@ static int btree_check_node_boundaries(struct btree_trans *trans, struct btree *
 			if (bpos_ge(prev->data->min_key, cur->data->min_key)) {		/* fully? */
 				if (mustfix_fsck_err(trans, btree_node_topology_overwritten_by_next_node,
 						     "btree node overwritten by next node%s", buf.buf))
-					ret = DROP_PREV_NODE;
+					ret = bch_err_throw(c, topology_repair_drop_prev_node);
 			} else {
 				if (mustfix_fsck_err(trans, btree_node_topology_bad_max_key,
 						     "btree node with incorrect max_key%s", buf.buf))
@@ -274,7 +270,7 @@ static int btree_check_node_boundaries(struct btree_trans *trans, struct btree *
 			if (bpos_ge(expected_start, cur->data->max_key)) {		/* fully? */
 				if (mustfix_fsck_err(trans, btree_node_topology_overwritten_by_prev_node,
 						     "btree node overwritten by prev node%s", buf.buf))
-					ret = DROP_THIS_NODE;
+					ret = bch_err_throw(c, topology_repair_drop_this_node);
 			} else {
 				if (mustfix_fsck_err(trans, btree_node_topology_bad_min_key,
 						     "btree node with incorrect min_key%s", buf.buf))
@@ -314,7 +310,7 @@ static int btree_repair_node_end(struct btree_trans *trans, struct btree *b,
 				return ret;
 
 			*pulled_from_scan = b->key.k.p;
-			ret = DID_FILL_FROM_SCAN;
+			ret = bch_err_throw(c, topology_repair_did_fill_from_scan);
 		} else {
 			ret = set_node_max(c, child, b->key.k.p);
 		}
@@ -391,15 +387,15 @@ again:
 
 		ret = lockrestart_do(trans,
 			btree_check_node_boundaries(trans, b, prev, cur, pulled_from_scan));
-		if (ret < 0)
+		if (ret && !bch2_err_matches(ret, BCH_ERR_topology_repair))
 			goto err;
 
-		if (ret == DID_FILL_FROM_SCAN) {
+		if (bch2_err_matches(ret, BCH_ERR_topology_repair_did_fill_from_scan)) {
 			new_pass = true;
 			ret = 0;
 		}
 
-		if (ret == DROP_THIS_NODE) {
+		if (bch2_err_matches(ret, BCH_ERR_topology_repair_drop_this_node)) {
 			six_unlock_read(&cur->c.lock);
 			bch2_btree_node_evict(trans, cur_k.k);
 			ret = bch2_journal_key_delete(c, b->c.btree_id,
@@ -414,7 +410,7 @@ again:
 			six_unlock_read(&prev->c.lock);
 		prev = NULL;
 
-		if (ret == DROP_PREV_NODE) {
+		if (bch2_err_matches(ret, BCH_ERR_topology_repair_drop_prev_node)) {
 			bch_info(c, "dropped prev node");
 			bch2_btree_node_evict(trans, prev_k.k);
 			ret = bch2_journal_key_delete(c, b->c.btree_id,
@@ -436,7 +432,7 @@ again:
 		BUG_ON(cur);
 		ret = lockrestart_do(trans,
 			btree_repair_node_end(trans, b, prev, pulled_from_scan));
-		if (ret == DID_FILL_FROM_SCAN) {
+		if (bch2_err_matches(ret, BCH_ERR_topology_repair_did_fill_from_scan)) {
 			new_pass = true;
 			ret = 0;
 		}
@@ -477,7 +473,7 @@ again:
 		six_unlock_read(&cur->c.lock);
 		cur = NULL;
 
-		if (ret == DROP_THIS_NODE) {
+		if (bch2_err_matches(ret, BCH_ERR_topology_repair_drop_this_node)) {
 			bch2_btree_node_evict(trans, cur_k.k);
 			ret = bch2_journal_key_delete(c, b->c.btree_id,
 						      b->c.level, cur_k.k->k.p);
@@ -504,7 +500,7 @@ again:
 	if (mustfix_fsck_err_on(!have_child,
 			c, btree_node_topology_interior_node_empty,
 			"empty interior btree node at %s", buf.buf))
-		ret = DROP_THIS_NODE;
+		ret = bch_err_throw(c, topology_repair_drop_this_node);
 err:
 fsck_err:
 	if (!IS_ERR_OR_NULL(prev))
@@ -521,7 +517,8 @@ fsck_err:
 
 	bch2_bkey_buf_exit(&prev_k, c);
 	bch2_bkey_buf_exit(&cur_k, c);
-	bch_err_fn(c, ret);
+	if (!bch2_err_matches(ret, BCH_ERR_topology_repair))
+		bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -592,7 +589,7 @@ recover:
 		ret = bch2_btree_repair_topology_recurse(trans, b, &pulled_from_scan);
 		six_unlock_read(&b->c.lock);
 
-		if (ret == DROP_THIS_NODE) {
+		if (bch2_err_matches(ret, BCH_ERR_topology_repair_drop_this_node)) {
 			scoped_guard(mutex, &c->btree_cache.lock)
 				bch2_btree_node_hash_remove(&c->btree_cache, b);
 
