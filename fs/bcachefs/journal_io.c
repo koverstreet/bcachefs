@@ -1819,6 +1819,8 @@ static CLOSURE_CALLBACK(journal_write_done)
 
 	if (do_discards)
 		bch2_do_discards(c);
+
+	closure_put(&c->cl);
 }
 
 static void journal_write_endio(struct bio *bio)
