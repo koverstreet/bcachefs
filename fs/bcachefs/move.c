@@ -330,7 +330,7 @@ int bch2_move_extent(struct moving_context *ctxt,
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
-	int ret = -ENOMEM;
+	int ret = 0;
 
 	if (trace_io_move_enabled())
 		trace_io_move2(c, k, &io_opts, &data_opts);
@@ -351,11 +351,10 @@ int bch2_move_extent(struct moving_context *ctxt,
 
 	struct moving_io *io = allocate_dropping_locks(trans, ret,
 				kzalloc(sizeof(struct moving_io), _gfp));
-	if (!io)
-		goto err;
-
+	if (!io && !ret)
+		ret = bch_err_throw(c, ENOMEM_move_extent);
 	if (ret)
-		goto err_free;
+		goto err;
 
 	INIT_LIST_HEAD(&io->io_list);
 	io->write.ctxt		= ctxt;
@@ -366,7 +365,7 @@ int bch2_move_extent(struct moving_context *ctxt,
 		ret = bch2_data_update_init(trans, iter, ctxt, &io->write, ctxt->wp,
 					    &io_opts, data_opts, iter->btree_id, k);
 		if (ret)
-			goto err_free;
+			goto err;
 
 		io->write.op.end_io	= move_write_done;
 	} else {
@@ -380,7 +379,7 @@ int bch2_move_extent(struct moving_context *ctxt,
 
 		ret = bch2_data_update_bios_init(&io->write, c, &io_opts);
 		if (ret)
-			goto err_free;
+			goto err;
 	}
 
 	io->write.rbio.bio.bi_end_io = move_read_endio;
@@ -423,9 +422,8 @@ int bch2_move_extent(struct moving_context *ctxt,
 			   BCH_READ_last_fragment,
 			   data_opts.scrub ?  data_opts.read_dev : -1);
 	return 0;
-err_free:
-	kfree(io);
 err:
+	kfree(io);
 	if (bch2_err_matches(ret, EROFS) ||
 	    bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		return ret;
