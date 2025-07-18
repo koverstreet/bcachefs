@@ -14,6 +14,7 @@
 #include "btree_locking.h"
 #include "buckets.h"
 #include "clock.h"
+#include "disk_groups.h"
 #include "enumerated_ref.h"
 #include "error.h"
 #include "extents.h"
@@ -277,6 +278,36 @@ static void bch2_btree_node_free_never_used(struct btree_update *as,
 	bch2_trans_node_drop(trans, b);
 }
 
+static bool can_use_btree_node(struct bch_fs *c,
+			       struct disk_reservation *res,
+			       unsigned target,
+			       struct bkey_s_c k)
+{
+	if (!bch2_bkey_devs_rw(c, k))
+		return false;
+
+	if (target && !bch2_bkey_in_target(c, k, target))
+		return false;
+
+	unsigned durability = bch2_bkey_durability(c, k);
+
+	if (durability >= res->nr_replicas)
+		return true;
+
+	struct bch_devs_mask devs = target_rw_devs(c, BCH_DATA_btree, target);
+
+	guard(rcu)();
+
+	unsigned durability_available = 0, i;
+	for_each_set_bit(i, devs.d, BCH_SB_MEMBERS_MAX) {
+		struct bch_dev *ca = bch2_dev_rcu_noerror(c, i);
+		if (ca)
+			durability_available += ca->mi.durability;
+	}
+
+	return durability >= durability_available;
+}
+
 static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 					     struct disk_reservation *res,
 					     struct closure *cl,
@@ -303,10 +334,14 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 	mutex_lock(&c->btree_reserve_cache_lock);
 	if (c->btree_reserve_cache_nr > nr_reserve) {
 		for (struct btree_alloc *a = c->btree_reserve_cache;
-		     a < c->btree_reserve_cache + c->btree_reserve_cache_nr;
-		     a++) {
-			if (target && !bch2_bkey_in_target(c, bkey_i_to_s_c(&a->k), target))
+		     a < c->btree_reserve_cache + c->btree_reserve_cache_nr;) {
+			/* check if it has sufficient durability */
+
+			if (!can_use_btree_node(c, res, target, bkey_i_to_s_c(&a->k))) {
+				bch2_open_buckets_put(c, &a->ob);
+				*a = c->btree_reserve_cache[--c->btree_reserve_cache_nr];
 				continue;
+			}
 
 			bkey_copy(&b->key, &a->k);
 			b->ob = a->ob;

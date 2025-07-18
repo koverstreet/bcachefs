@@ -1006,6 +1006,20 @@ const struct bch_extent_ptr *bch2_bkey_has_device_c(struct bkey_s_c k, unsigned 
 	return NULL;
 }
 
+bool bch2_bkey_devs_rw(struct bch_fs *c, struct bkey_s_c k)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+
+	guard(rcu)();
+	bkey_for_each_ptr(ptrs, ptr) {
+		CLASS(bch2_dev_tryget, ca)(c, ptr->dev);
+		if (!ca || ca->mi.state != BCH_MEMBER_STATE_rw)
+			return false;
+	}
+
+	return true;
+}
+
 bool bch2_bkey_has_target(struct bch_fs *c, struct bkey_s_c k, unsigned target)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
