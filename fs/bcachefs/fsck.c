@@ -1976,6 +1976,10 @@ static int check_extent(struct btree_trans *trans, struct btree_iter *iter,
 		}
 	}
 
+	ret = check_extent_overbig(trans, iter, k);
+	if (ret)
+		goto err;
+
 	ret = bch2_trans_commit(trans, res, NULL, BCH_TRANS_COMMIT_no_enospc);
 	if (ret)
 		goto err;
@@ -2022,8 +2026,7 @@ int bch2_check_extents(struct bch_fs *c)
 				POS(BCACHEFS_ROOT_INO, 0),
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k, ({
 			bch2_disk_reservation_put(c, &res);
-			check_extent(trans, &iter, k, &w, &s, &extent_ends, &res) ?:
-			check_extent_overbig(trans, &iter, k);
+			check_extent(trans, &iter, k, &w, &s, &extent_ends, &res);
 		})) ?:
 		check_i_sectors_notnested(trans, &w);
 
