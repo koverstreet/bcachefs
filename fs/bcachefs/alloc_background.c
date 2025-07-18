@@ -337,9 +337,10 @@ void bch2_alloc_v4_swab(struct bkey_s k)
 }
 
 static inline void __bch2_alloc_v4_to_text(struct printbuf *out, struct bch_fs *c,
-					   unsigned dev, const struct bch_alloc_v4 *a)
+					   struct bkey_s_c k,
+					   const struct bch_alloc_v4 *a)
 {
-	struct bch_dev *ca = c ? bch2_dev_tryget_noerror(c, dev) : NULL;
+	struct bch_dev *ca = c ? bch2_dev_tryget_noerror(c, k.k->p.inode) : NULL;
 
 	prt_newline(out);
 	printbuf_indent_add(out, 2);
@@ -348,11 +349,14 @@ static inline void __bch2_alloc_v4_to_text(struct printbuf *out, struct bch_fs *
 	bch2_prt_data_type(out, a->data_type);
 	prt_newline(out);
 	prt_printf(out, "journal_seq_nonempty %llu\n",	a->journal_seq_nonempty);
-	prt_printf(out, "journal_seq_empty    %llu\n",	a->journal_seq_empty);
+	if (bkey_val_bytes(k.k) > offsetof(struct bch_alloc_v4, journal_seq_empty))
+		prt_printf(out, "journal_seq_empty    %llu\n",	a->journal_seq_empty);
+
 	prt_printf(out, "need_discard         %llu\n",	BCH_ALLOC_V4_NEED_DISCARD(a));
 	prt_printf(out, "need_inc_gen         %llu\n",	BCH_ALLOC_V4_NEED_INC_GEN(a));
 	prt_printf(out, "dirty_sectors        %u\n",	a->dirty_sectors);
-	prt_printf(out, "stripe_sectors       %u\n",	a->stripe_sectors);
+	if (bkey_val_bytes(k.k) > offsetof(struct bch_alloc_v4, stripe_sectors))
+		prt_printf(out, "stripe_sectors       %u\n",	a->stripe_sectors);
 	prt_printf(out, "cached_sectors       %u\n",	a->cached_sectors);
 	prt_printf(out, "stripe               %u\n",	a->stripe);
 	prt_printf(out, "stripe_redundancy    %u\n",	a->stripe_redundancy);
@@ -372,12 +376,12 @@ void bch2_alloc_to_text(struct printbuf *out, struct bch_fs *c, struct bkey_s_c 
 	struct bch_alloc_v4 _a;
 	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &_a);
 
-	__bch2_alloc_v4_to_text(out, c, k.k->p.inode, a);
+	__bch2_alloc_v4_to_text(out, c, k, a);
 }
 
 void bch2_alloc_v4_to_text(struct printbuf *out, struct bch_fs *c, struct bkey_s_c k)
 {
-	__bch2_alloc_v4_to_text(out, c, k.k->p.inode, bkey_s_c_to_alloc_v4(k).v);
+	__bch2_alloc_v4_to_text(out, c, k, bkey_s_c_to_alloc_v4(k).v);
 }
 
 void __bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *out)
