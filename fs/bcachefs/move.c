@@ -1346,6 +1346,7 @@ int bch2_data_job(struct bch_fs *c,
 				     writepoint_hashed((unsigned long) current),
 				     true,
 				     rereplicate_pred, c) ?: ret;
+		bch2_btree_interior_updates_flush(c);
 		ret = bch2_replicas_gc2(c) ?: ret;
 		break;
 	case BCH_DATA_OP_migrate:
