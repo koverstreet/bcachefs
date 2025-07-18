@@ -406,7 +406,7 @@ int bch2_btree_path_traverse_cached(struct btree_trans *trans,
 			btree_node_unlock(trans, path, 0);
 			path->l[0].b = ERR_PTR(ret);
 		}
-	} else {
+	} else if (!(flags & BTREE_ITER_cached_nofill)) {
 		BUG_ON(path->uptodate);
 		BUG_ON(!path->nodes_locked);
 	}
