@@ -282,9 +282,9 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 
 	if (have_pick)
 		return 1;
-	if (!have_dirty_ptrs)
+	if (!have_dirty_ptrs && !bkey_is_btree_ptr(k.k))
 		return 0;
-	if (have_missing_devs)
+	if (have_missing_devs || !have_dirty_ptrs)
 		return bch_err_throw(c, no_device_to_read_from);
 	if (have_csum_errors)
 		return bch_err_throw(c, data_read_csum_err);
