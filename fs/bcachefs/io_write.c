@@ -89,7 +89,12 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 		new = ewma_add(old, io_latency, 5);
 	} while (!atomic64_try_cmpxchg(latency, &old, new));
 
-	bch2_congested_acct(ca, io_latency, now, rw);
+	/*
+	 * Only track read latency for congestion accounting: writes are subject
+	 * to heavy queuing delays from page cache writeback:
+	 */
+	if (rw == READ)
+		bch2_congested_acct(ca, io_latency, now, rw);
 
 	__bch2_time_stats_update(&ca->io_latency[rw].stats, submit_time, now);
 }
