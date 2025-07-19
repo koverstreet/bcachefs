@@ -729,6 +729,8 @@ void __bch2_fs_stop(struct bch_fs *c)
 		cancel_work_sync(&ca->io_error_work);
 
 	cancel_work_sync(&c->read_only_work);
+
+	flush_work(&c->btree_interior_update_work);
 }
 
 void bch2_fs_free(struct bch_fs *c)
