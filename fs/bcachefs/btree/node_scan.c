@@ -159,9 +159,6 @@ static void try_read_btree_node(struct find_btree_nodes *f, struct bch_dev *ca,
 	if (BTREE_NODE_LEVEL(bn) >= BTREE_MAX_DEPTH)
 		return;
 
-	if (BTREE_NODE_ID(bn) >= BTREE_ID_NR_MAX)
-		return;
-
 	rcu_read_lock();
 	struct found_btree_node n = {
 		.btree_id	= BTREE_NODE_ID(bn),
@@ -189,7 +186,15 @@ static void try_read_btree_node(struct find_btree_nodes *f, struct bch_dev *ca,
 	found_btree_node_to_key(&b->key, &n);
 
 	CLASS(printbuf, buf)();
-	if (!bch2_btree_node_read_done(c, ca, b, NULL, &buf)) {
+
+	found_btree_node_to_text(&buf, c, &n);
+	prt_newline(&buf);
+
+	int ret = bch2_btree_node_read_done(c, ca, b, NULL, &buf);
+
+	bch_verbose(ca, "attempted to read, ret %s\n%s", bch2_err_str(ret), buf.buf);
+
+	if (!ret) {
 		/* read_done will swap out b->data for another buffer */
 		bn = b->data;
 		/*
