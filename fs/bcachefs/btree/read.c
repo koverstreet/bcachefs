@@ -135,15 +135,11 @@ static int __btree_err(int ret,
 		       struct printbuf *err_msg,
 		       const char *fmt, ...)
 {
-	if (c->recovery.curr_pass == BCH_RECOVERY_PASS_scan_for_btree_nodes)
-		return ret == -BCH_ERR_btree_node_read_err_fixable
-			? bch_err_throw(c, fsck_fix)
-			: ret;
-
+	bool in_scan = c->recovery.curr_pass == BCH_RECOVERY_PASS_scan_for_btree_nodes;
 	bool have_retry = false;
 	int ret2;
 
-	if (ca) {
+	if (ca && !in_scan) {
 		bch2_mark_btree_validate_failure(failed, ca->dev_idx);
 
 		struct extent_ptr_decoded pick;
@@ -157,12 +153,14 @@ static int __btree_err(int ret,
 	if (!have_retry && ret == -BCH_ERR_btree_node_read_err_must_retry)
 		ret = bch_err_throw(c, btree_node_read_err_bad_node);
 
-	bch2_sb_error_count(c, err_type);
+	if (!in_scan)
+		bch2_sb_error_count(c, err_type);
 
 	bool print_deferred = err_msg &&
 		rw == READ &&
-		!(test_bit(BCH_FS_in_fsck, &c->flags) &&
-		  c->opts.fix_errors == FSCK_FIX_ask);
+		(!(test_bit(BCH_FS_in_fsck, &c->flags) &&
+		   c->opts.fix_errors == FSCK_FIX_ask) ||
+		 in_scan);
 
 	CLASS(printbuf, out)();
 	bch2_log_msg_start(c, &out);
@@ -175,11 +173,17 @@ static int __btree_err(int ret,
 	va_list args;
 	va_start(args, fmt);
 	prt_vprintf(err_msg, fmt, args);
-	va_end(args);
+	va_end(args);;
 
-	if (print_deferred) {
+	if (print_deferred)
 		prt_newline(err_msg);
 
+	if (in_scan)
+		return ret == -BCH_ERR_btree_node_read_err_fixable
+			? bch_err_throw(c, fsck_fix)
+			: ret;
+
+	if (print_deferred) {
 		switch (ret) {
 		case -BCH_ERR_btree_node_read_err_fixable:
 			ret2 = bch2_fsck_err_opt(c, FSCK_CAN_FIX, err_type);
