@@ -389,7 +389,7 @@ void __bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *out)
 	if (k.k->type == KEY_TYPE_alloc_v4) {
 		void *src, *dst;
 
-		*out = *bkey_s_c_to_alloc_v4(k).v;
+		bkey_val_copy(out, bkey_s_c_to_alloc_v4(k));
 
 		src = alloc_v4_backpointers(out);
 		SET_BCH_ALLOC_V4_BACKPOINTERS_START(out, BCH_ALLOC_V4_U64s);
