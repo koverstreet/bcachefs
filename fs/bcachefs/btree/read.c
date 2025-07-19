@@ -116,12 +116,10 @@ static int __btree_err(enum bch_fsck_flags flags,
 		       struct printbuf *err_msg,
 		       const char *fmt, ...)
 {
-	if (c->recovery.current_pass == BCH_RECOVERY_PASS_scan_for_btree_nodes)
-		return flags & FSCK_CAN_FIX
-			? bch_err_throw(c, fsck_fix)
-			: bch_err_throw(c, btree_node_validate_err);
+	bool in_scan = c->recovery.current_pass == BCH_RECOVERY_PASS_scan_for_btree_nodes;
 
-	bch2_sb_error_count(c, err_type);
+	if (!in_scan)
+		bch2_sb_error_count(c, err_type);
 
 	if (rw == READ) {
 		va_list args;
@@ -131,6 +129,11 @@ static int __btree_err(enum bch_fsck_flags flags,
 
 		bch2_dev_io_failures_mut(failed, ca->dev_idx)->errcode =
 			bch_err_throw(c, btree_node_validate_err);
+
+		if (in_scan)
+			return (flags & FSCK_CAN_FIX)
+				? bch_err_throw(c, fsck_fix)
+				: bch_err_throw(c, btree_node_validate_err);
 
 		struct extent_ptr_decoded pick;
 		bool have_retry = bch2_bkey_pick_read_device(c,
