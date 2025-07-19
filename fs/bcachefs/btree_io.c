@@ -1405,10 +1405,8 @@ static void btree_node_read_work(struct work_struct *work)
 		ret = bch2_bkey_pick_read_device(c,
 					bkey_i_to_s_c(&b->key),
 					&failed, &rb->pick, -1);
-		if (ret <= 0) {
-			set_btree_node_read_error(b);
+		if (ret <= 0)
 			break;
-		}
 
 		ca = bch2_dev_get_ioref(c, rb->pick.ptr.dev, READ, BCH_DEV_READ_REF_btree_node_read);
 		rb->have_ioref		= ca != NULL;
@@ -1442,27 +1440,21 @@ start:
 		bch2_maybe_corrupt_bio(bio, bch2_btree_read_corrupt_ratio);
 
 		ret = bch2_btree_node_read_done(c, ca, b, &failed, &buf);
-		if (ret == -BCH_ERR_btree_node_read_err_want_retry ||
-		    ret == -BCH_ERR_btree_node_read_err_must_retry)
-			continue;
-
-		if (ret)
-			set_btree_node_read_error(b);
-
-		break;
+		if (ret != -BCH_ERR_btree_node_read_err_want_retry &&
+		    ret != -BCH_ERR_btree_node_read_err_must_retry)
+			break;
 	}
 
 	bch2_io_failures_to_text(&buf, c, &failed);
 
-	if (btree_node_read_error(b))
-		bch2_btree_lost_data(c, &buf, b->c.btree_id);
-
 	/*
 	 * only print retry success if we read from a replica with no errors
 	 */
-	if (btree_node_read_error(b))
+	if (ret) {
+		set_btree_node_read_error(b);
+		bch2_btree_lost_data(c, &buf, b->c.btree_id);
 		prt_printf(&buf, "ret %s", bch2_err_str(ret));
-	else if (failed.nr) {
+	} else if (failed.nr) {
 		if (!bch2_dev_io_failures(&failed, rb->pick.ptr.dev))
 			prt_printf(&buf, "retry success");
 		else
