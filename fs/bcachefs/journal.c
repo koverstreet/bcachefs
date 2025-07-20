@@ -1471,6 +1471,10 @@ int bch2_fs_journal_start(struct journal *j, u64 last_seq, u64 cur_seq)
 		last_seq = cur_seq;
 
 	u64 nr = cur_seq - last_seq;
+	if (nr * sizeof(struct journal_entry_pin_list) > 1U << 30) {
+		bch_err(c, "too many ntjournal fifo (%llu open entries)", nr);
+		return bch_err_throw(c, ENOMEM_journal_pin_fifo);
+	}
 
 	/*
 	 * Extra fudge factor, in case we crashed when the journal pin fifo was
@@ -1483,7 +1487,7 @@ int bch2_fs_journal_start(struct journal *j, u64 last_seq, u64 cur_seq)
 	nr = max(nr, JOURNAL_PIN);
 	init_fifo(&j->pin, roundup_pow_of_two(nr), GFP_KERNEL);
 	if (!j->pin.data) {
-		bch_err(c, "error reallocating journal fifo (%llu open entries)", nr);
+		bch_err(c, "error allocating journal fifo (%llu open entries)", nr);
 		return bch_err_throw(c, ENOMEM_journal_pin_fifo);
 	}
 
