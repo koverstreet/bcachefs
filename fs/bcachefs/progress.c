@@ -52,7 +52,8 @@ void bch2_progress_update_iter(struct btree_trans *trans,
 			: 0;
 
 		prt_printf(&buf, "%s: %d%%, done %llu/%llu nodes, at ",
-			   msg, percent, s->nodes_seen, s->nodes_total);
+			   strip_bch2(msg),
+			   percent, s->nodes_seen, s->nodes_total);
 		bch2_bbpos_to_text(&buf, BBPOS(iter->btree_id, iter->pos));
 
 		bch_info(c, "%s", buf.buf);
