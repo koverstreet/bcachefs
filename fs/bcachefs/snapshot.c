@@ -143,7 +143,7 @@ bool __bch2_snapshot_is_ancestor(struct bch_fs *c, u32 id, u32 ancestor)
 	guard(rcu)();
 	struct snapshot_table *t = rcu_dereference(c->snapshots);
 
-	if (unlikely(c->recovery.pass_done < BCH_RECOVERY_PASS_check_snapshots))
+	if (unlikely(recovery_pass_will_run(c, BCH_RECOVERY_PASS_check_snapshots)))
 		return __bch2_snapshot_is_ancestor_early(t, id, ancestor);
 
 	if (likely(ancestor >= IS_ANCESTOR_BITMAP))
