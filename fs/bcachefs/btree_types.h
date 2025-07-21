@@ -854,15 +854,15 @@ static inline bool btree_node_type_is_extents(enum btree_node_type type)
 	return type != BKEY_TYPE_btree && btree_id_is_extents(type - 1);
 }
 
+static const u64 btree_has_snapshots_mask = 0
+#define x(name, nr, flags, ...)	|((!!((flags) & BTREE_IS_snapshots)) << nr)
+BCH_BTREE_IDS()
+#undef x
+;
+
 static inline bool btree_type_has_snapshots(enum btree_id btree)
 {
-	const u64 mask = 0
-#define x(name, nr, flags, ...)	|((!!((flags) & BTREE_IS_snapshots)) << nr)
-	BCH_BTREE_IDS()
-#undef x
-	;
-
-	return BIT_ULL(btree) & mask;
+	return BIT_ULL(btree) & btree_has_snapshots_mask;
 }
 
 static inline bool btree_type_has_snapshot_field(enum btree_id btree)

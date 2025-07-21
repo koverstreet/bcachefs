@@ -26,4 +26,7 @@ void bch2_progress_update_iter(struct btree_trans *,
 			       struct btree_iter *,
 			       const char *);
 
+#define progress_update_iter(trans, p, iter)			\
+	bch2_progress_update_iter(trans, p, iter, __func__)
+
 #endif /* _BCACHEFS_PROGRESS_H */

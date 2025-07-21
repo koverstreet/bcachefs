@@ -1277,4 +1277,11 @@ static inline int bch2_fs_casefold_enabled(struct bch_fs *c)
 	return 0;
 }
 
+static inline const char *strip_bch2(const char *msg)
+{
+	if (!strncmp("bch2_", msg, 5))
+		return msg + 5;
+	return msg;
+}
+
 #endif /* _BCACHEFS_H */

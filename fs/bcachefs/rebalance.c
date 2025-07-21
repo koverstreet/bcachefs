@@ -15,6 +15,7 @@
 #include "inode.h"
 #include "io_write.h"
 #include "move.h"
+#include "progress.h"
 #include "rebalance.h"
 #include "subvolume.h"
 #include "super-io.h"
@@ -858,7 +859,12 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 	bch2_bkey_buf_init(&last_flushed);
 	bkey_init(&last_flushed.k->k);
 
+	struct progress_indicator_state progress;
+	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_rebalance_work));
+
 	while (!ret) {
+		progress_update_iter(trans, &progress, &rebalance_iter);
+
 		bch2_trans_begin(trans);
 
 		ret = check_rebalance_work_one(trans, &extent_iter, &rebalance_iter, &last_flushed);

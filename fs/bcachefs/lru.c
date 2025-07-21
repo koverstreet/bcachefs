@@ -9,6 +9,7 @@
 #include "ec.h"
 #include "error.h"
 #include "lru.h"
+#include "progress.h"
 #include "recovery.h"
 
 /* KEY_TYPE_lru is obsolete: */
@@ -207,11 +208,16 @@ int bch2_check_lrus(struct bch_fs *c)
 	bch2_bkey_buf_init(&last_flushed);
 	bkey_init(&last_flushed.k->k);
 
+	struct progress_indicator_state progress;
+	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_lru));
+
 	CLASS(btree_trans, trans)(c);
 	int ret = for_each_btree_key_commit(trans, iter,
 				BTREE_ID_lru, POS_MIN, BTREE_ITER_prefetch, k,
-				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			bch2_check_lru_key(trans, &iter, k, &last_flushed));
+				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+		progress_update_iter(trans, &progress, &iter);
+		bch2_check_lru_key(trans, &iter, k, &last_flushed);
+	}));
 
 	bch2_bkey_buf_exit(&last_flushed, c);
 	return ret;
