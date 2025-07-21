@@ -15,6 +15,7 @@
 #include "io_misc.h"
 #include "keylist.h"
 #include "namei.h"
+#include "progress.h"
 #include "recovery_passes.h"
 #include "snapshot.h"
 #include "super.h"
@@ -1331,11 +1332,16 @@ int bch2_check_inodes(struct bch_fs *c)
 	CLASS(btree_trans, trans)(c);
 	CLASS(snapshots_seen, s)();
 
+	struct progress_indicator_state progress;
+	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_inodes));
+
 	return for_each_btree_key_commit(trans, iter, BTREE_ID_inodes,
 				POS_MIN,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
-				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			check_inode(trans, &iter, k, &snapshot_root, &s));
+				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+		progress_update_iter(trans, &progress, &iter);
+		check_inode(trans, &iter, k, &snapshot_root, &s);
+	}));
 }
 
 static int find_oldest_inode_needs_reattach(struct btree_trans *trans,
@@ -1422,12 +1428,17 @@ fsck_err:
  */
 int bch2_check_unreachable_inodes(struct bch_fs *c)
 {
+	struct progress_indicator_state progress;
+	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_inodes));
+
 	CLASS(btree_trans, trans)(c);
 	return for_each_btree_key_commit(trans, iter, BTREE_ID_inodes,
 				POS_MIN,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
-				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			check_unreachable_inode(trans, &iter, k));
+				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+		progress_update_iter(trans, &progress, &iter);
+		check_unreachable_inode(trans, &iter, k);
+	}));
 }
 
 static inline bool btree_matches_i_mode(enum btree_id btree, unsigned mode)
@@ -2022,9 +2033,13 @@ int bch2_check_extents(struct bch_fs *c)
 	CLASS(inode_walker, w)();
 	CLASS(extent_ends, extent_ends)();
 
+	struct progress_indicator_state progress;
+	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_extents));
+
 	int ret = for_each_btree_key(trans, iter, BTREE_ID_extents,
 				POS(BCACHEFS_ROOT_INO, 0),
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k, ({
+			progress_update_iter(trans, &progress, &iter);
 			bch2_disk_reservation_put(c, &res);
 			check_extent(trans, &iter, k, &w, &s, &extent_ends, &res);
 		})) ?:
@@ -2039,11 +2054,15 @@ int bch2_check_indirect_extents(struct bch_fs *c)
 	CLASS(btree_trans, trans)(c);
 	struct disk_reservation res = { 0 };
 
+	struct progress_indicator_state progress;
+	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_reflink));
+
 	int ret = for_each_btree_key_commit(trans, iter, BTREE_ID_reflink,
 				POS_MIN,
 				BTREE_ITER_prefetch, k,
 				&res, NULL,
 				BCH_TRANS_COMMIT_no_enospc, ({
+			progress_update_iter(trans, &progress, &iter);
 			bch2_disk_reservation_put(c, &res);
 			check_extent_overbig(trans, &iter, k);
 		}));
@@ -2452,15 +2471,20 @@ int bch2_check_dirents(struct bch_fs *c)
 	CLASS(snapshots_seen, s)();
 	CLASS(inode_walker, dir)();
 	CLASS(inode_walker, target)();
+	struct progress_indicator_state progress;
 	bool need_second_pass = false, did_second_pass = false;
 	int ret;
 again:
+	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_dirents));
+
 	ret = for_each_btree_key_commit(trans, iter, BTREE_ID_dirents,
 				POS(BCACHEFS_ROOT_INO, 0),
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
-				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+			progress_update_iter(trans, &progress, &iter);
 			check_dirent(trans, &iter, k, &hash_info, &dir, &target, &s,
-				     &need_second_pass)) ?:
+				     &need_second_pass);
+		})) ?:
 		check_subdir_count_notnested(trans, &dir);
 
 	if (!ret && need_second_pass && !did_second_pass) {
@@ -2520,13 +2544,18 @@ int bch2_check_xattrs(struct bch_fs *c)
 	CLASS(btree_trans, trans)(c);
 	CLASS(inode_walker, inode)();
 
+	struct progress_indicator_state progress;
+	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_xattrs));
+
 	int ret = for_each_btree_key_commit(trans, iter, BTREE_ID_xattrs,
 			POS(BCACHEFS_ROOT_INO, 0),
 			BTREE_ITER_prefetch|BTREE_ITER_all_snapshots,
 			k,
 			NULL, NULL,
-			BCH_TRANS_COMMIT_no_enospc,
-		check_xattr(trans, &iter, k, &hash_info, &inode));
+			BCH_TRANS_COMMIT_no_enospc, ({
+		progress_update_iter(trans, &progress, &iter);
+		check_xattr(trans, &iter, k, &hash_info, &inode);
+	}));
 	return ret;
 }
 
@@ -2668,10 +2697,16 @@ err:
 int bch2_check_subvolume_structure(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
+
+	struct progress_indicator_state progress;
+	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_subvolumes));
+
 	return for_each_btree_key_commit(trans, iter,
 				BTREE_ID_subvolumes, POS_MIN, BTREE_ITER_prefetch, k,
-				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			check_subvol_path(trans, &iter, k));
+				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+			progress_update_iter(trans, &progress, &iter);
+			check_subvol_path(trans, &iter, k);
+	}));
 }
 
 static int bch2_bi_depth_renumber_one(struct btree_trans *trans,
