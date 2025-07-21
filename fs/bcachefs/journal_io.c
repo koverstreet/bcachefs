@@ -428,15 +428,22 @@ static void journal_entry_btree_keys_to_text(struct printbuf *out, struct bch_fs
 	bool first = true;
 
 	jset_entry_for_each_key(entry, k) {
-		/* We may be called on entries that haven't been validated: */
-		if (!k->k.u64s)
-			break;
-
 		if (!first) {
 			prt_newline(out);
 			bch2_prt_jset_entry_type(out, entry->type);
 			prt_str(out, ": ");
 		}
+		/* We may be called on entries that haven't been validated: */
+		if (!k->k.u64s) {
+			prt_str(out, "(invalid, k->u64s 0)");
+			break;
+		}
+
+		if (bkey_next(k) > vstruct_last(entry)) {
+			prt_str(out, "(invalid, bkey overruns jset_entry)");
+			break;
+		}
+
 		bch2_btree_id_level_to_text(out, entry->btree_id, entry->level);
 		prt_char(out, ' ');
 		bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(k));
