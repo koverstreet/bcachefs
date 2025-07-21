@@ -26,6 +26,12 @@ static inline bool go_rw_in_recovery(struct bch_fs *c)
 		(c->opts.fsck && !(c->sb.features & BIT_ULL(BCH_FEATURE_no_alloc_info))));
 }
 
+static inline bool recovery_pass_will_run(struct bch_fs *c, enum bch_recovery_pass pass)
+{
+	return unlikely(test_bit(BCH_FS_in_recovery, &c->flags) &&
+			c->recovery.passes_to_run & BIT_ULL(pass));
+}
+
 int bch2_run_print_explicit_recovery_pass(struct bch_fs *, enum bch_recovery_pass);
 
 int __bch2_run_explicit_recovery_pass(struct bch_fs *, struct printbuf *,
