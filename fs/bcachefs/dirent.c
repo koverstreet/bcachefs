@@ -214,11 +214,13 @@ void bch2_dirent_to_text(struct printbuf *out, struct bch_fs *c, struct bkey_s_c
 	struct bkey_s_c_dirent d = bkey_s_c_to_dirent(k);
 	struct qstr d_name = bch2_dirent_get_name(d);
 
-	prt_printf(out, "%.*s", d_name.len, d_name.name);
+	prt_bytes(out, d_name.name, d_name.len);
 
 	if (d.v->d_casefold) {
+		prt_str(out, " (casefold ");
 		struct qstr d_name = bch2_dirent_get_lookup_name(d);
-		prt_printf(out, " (casefold %.*s)", d_name.len, d_name.name);
+		prt_bytes(out, d_name.name, d_name.len);
+		prt_char(out, ')');
 	}
 
 	prt_str(out, " ->");
