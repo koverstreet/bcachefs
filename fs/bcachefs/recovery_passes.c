@@ -639,6 +639,8 @@ void bch2_recovery_pass_status_to_text(struct printbuf *out, struct bch_fs *c)
 		prt_printf(out, "Current pass:\t%s\n", bch2_recovery_passes[r->curr_pass]);
 		prt_passes(out, "Current passes", r->passes_to_run);
 	}
+
+	prt_printf(out, "Pass done:\t%s\n", bch2_recovery_passes[r->pass_done]);
 }
 
 void bch2_fs_recovery_passes_init(struct bch_fs *c)
