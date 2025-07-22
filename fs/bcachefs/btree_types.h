@@ -485,7 +485,7 @@ typedef DARRAY(struct trans_kmalloc_trace) darray_trans_kmalloc_trace;
 struct btree_trans_subbuf {
 	u16			base;
 	u16			u64s;
-	u16			size;;
+	u16			size;
 };
 
 struct btree_trans {
