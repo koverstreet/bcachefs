@@ -1431,38 +1431,22 @@ static inline u32 interior_delete_has_id(interior_delete_list *l, u32 id)
 	return i ? i->live_child : 0;
 }
 
-static unsigned __live_child(struct snapshot_table *t, u32 id,
-			     snapshot_id_list *delete_leaves,
-			     interior_delete_list *delete_interior)
-{
-	struct snapshot_t *s = __snapshot_t(t, id);
-	if (!s)
-		return 0;
-
-	for (unsigned i = 0; i < ARRAY_SIZE(s->children); i++)
-		if (s->children[i] &&
-		    !snapshot_list_has_id(delete_leaves, s->children[i]) &&
-		    !interior_delete_has_id(delete_interior, s->children[i]))
-			return s->children[i];
-
-	for (unsigned i = 0; i < ARRAY_SIZE(s->children); i++) {
-		u32 live_child = s->children[i]
-			? __live_child(t, s->children[i], delete_leaves, delete_interior)
-			: 0;
-		if (live_child)
-			return live_child;
-	}
-
-	return 0;
-}
-
-static unsigned live_child(struct bch_fs *c, u32 id)
+static unsigned live_child(struct bch_fs *c, u32 start)
 {
 	struct snapshot_delete *d = &c->snapshot_delete;
 
 	guard(rcu)();
-	return __live_child(rcu_dereference(c->snapshots), id,
-			    &d->delete_leaves, &d->delete_interior);
+	struct snapshot_table *t = rcu_dereference(c->snapshots);
+
+	for (u32 id = bch2_snapshot_tree_next(t, start);
+	     id && id != start;
+	     id = bch2_snapshot_tree_next(t, id))
+		if (bch2_snapshot_is_leaf(c, id) &&
+		    !snapshot_list_has_id(&d->delete_leaves, id) &&
+		    !interior_delete_has_id(&d->delete_interior, id))
+			return id;
+
+	return 0;
 }
 
 static bool snapshot_id_dying(struct snapshot_delete *d, unsigned id)
