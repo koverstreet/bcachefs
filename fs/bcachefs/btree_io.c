@@ -2011,7 +2011,7 @@ static void btree_node_scrub_work(struct work_struct *work)
 			bch_err_fn_ratelimited(c, ret);
 	}
 
-	bch2_bkey_buf_exit(&scrub->key, c);;
+	bch2_bkey_buf_exit(&scrub->key, c);
 	btree_bounce_free(c, c->opts.btree_node_size, scrub->used_mempool, scrub->buf);
 	enumerated_ref_put(&scrub->ca->io_ref[READ], BCH_DEV_READ_REF_btree_node_scrub);
 	kfree(scrub);

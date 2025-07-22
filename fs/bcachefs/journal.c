@@ -1296,7 +1296,7 @@ int bch2_dev_journal_bucket_delete(struct bch_dev *ca, u64 b)
 		return -EINVAL;
 	}
 
-	u64 *new_buckets = kcalloc(ja->nr, sizeof(u64), GFP_KERNEL);;
+	u64 *new_buckets = kcalloc(ja->nr, sizeof(u64), GFP_KERNEL);
 	if (!new_buckets)
 		return bch_err_throw(c, ENOMEM_set_nr_journal_buckets);
 

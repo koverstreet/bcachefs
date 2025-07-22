@@ -9,7 +9,7 @@ struct fast_list_pcpu;
 
 struct fast_list {
 	GENRADIX(void *)	items;
-	struct ida		slots_allocated;;
+	struct ida		slots_allocated;
 	struct fast_list_pcpu __percpu
 				*buffer;
 };
