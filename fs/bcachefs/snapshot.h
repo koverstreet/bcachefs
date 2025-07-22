@@ -63,19 +63,19 @@ static inline u32 bch2_snapshot_parent_early(struct bch_fs *c, u32 id)
 	return __bch2_snapshot_parent_early(c, id);
 }
 
-static inline u32 __bch2_snapshot_parent(struct bch_fs *c, u32 id)
+static inline u32 __bch2_snapshot_parent(struct snapshot_table *t, u32 id)
 {
-	const struct snapshot_t *s = snapshot_t(c, id);
+	const struct snapshot_t *s = __snapshot_t(t, id);
 	if (!s)
 		return 0;
 
 	u32 parent = s->parent;
 	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) &&
 	    parent &&
-	    s->depth != snapshot_t(c, parent)->depth + 1)
+	    s->depth != __snapshot_t(t, parent)->depth + 1)
 		panic("id %u depth=%u parent %u depth=%u\n",
-		      id, snapshot_t(c, id)->depth,
-		      parent, snapshot_t(c, parent)->depth);
+		      id, __snapshot_t(t, id)->depth,
+		      parent, __snapshot_t(t, parent)->depth);
 
 	return parent;
 }
@@ -83,14 +83,16 @@ static inline u32 __bch2_snapshot_parent(struct bch_fs *c, u32 id)
 static inline u32 bch2_snapshot_parent(struct bch_fs *c, u32 id)
 {
 	guard(rcu)();
-	return __bch2_snapshot_parent(c, id);
+	return __bch2_snapshot_parent(rcu_dereference(c->snapshots), id);
 }
 
 static inline u32 bch2_snapshot_nth_parent(struct bch_fs *c, u32 id, u32 n)
 {
 	guard(rcu)();
+	struct snapshot_table *t = rcu_dereference(c->snapshots);
+
 	while (n--)
-		id = __bch2_snapshot_parent(c, id);
+		id = __bch2_snapshot_parent(t, id);
 	return id;
 }
 
@@ -100,23 +102,29 @@ u32 bch2_snapshot_skiplist_get(struct bch_fs *, u32);
 static inline u32 bch2_snapshot_root(struct bch_fs *c, u32 id)
 {
 	guard(rcu)();
+	struct snapshot_table *t = rcu_dereference(c->snapshots);
 
 	u32 parent;
-	while ((parent = __bch2_snapshot_parent(c, id)))
+	while ((parent = __bch2_snapshot_parent(t, id)))
 		id = parent;
 	return id;
 }
 
-static inline enum snapshot_id_state __bch2_snapshot_id_state(struct bch_fs *c, u32 id)
+static inline enum snapshot_id_state __bch2_snapshot_id_state(struct snapshot_table *t, u32 id)
 {
-	const struct snapshot_t *s = snapshot_t(c, id);
+	const struct snapshot_t *s = __snapshot_t(t, id);
 	return s ? s->state : SNAPSHOT_ID_empty;
 }
 
 static inline enum snapshot_id_state bch2_snapshot_id_state(struct bch_fs *c, u32 id)
 {
 	guard(rcu)();
-	return __bch2_snapshot_id_state(c, id);
+	return __bch2_snapshot_id_state(rcu_dereference(c->snapshots), id);
+}
+
+static inline bool __bch2_snapshot_exists(struct snapshot_table *t, u32 id)
+{
+	return __bch2_snapshot_id_state(t, id) == SNAPSHOT_ID_live;
 }
 
 static inline bool bch2_snapshot_exists(struct bch_fs *c, u32 id)
