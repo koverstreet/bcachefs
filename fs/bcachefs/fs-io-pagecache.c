@@ -635,6 +635,8 @@ vm_fault_t bch2_page_mkwrite(struct vm_fault *vmf)
 		goto out;
 	}
 
+	inode->ei_last_dirtied = (unsigned long) current;
+
 	bch2_set_folio_dirty(c, inode, folio, &res, offset, len);
 	bch2_folio_reservation_put(c, inode, &res);
 
