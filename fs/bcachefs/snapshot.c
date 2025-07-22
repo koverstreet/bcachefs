@@ -365,31 +365,32 @@ int bch2_snapshot_lookup(struct btree_trans *trans, u32 id,
 
 /* fsck: */
 
-static u32 bch2_snapshot_child(struct bch_fs *c, u32 id, unsigned child)
+static u32 bch2_snapshot_child(struct snapshot_table *t,
+			       u32 id, unsigned child)
 {
-	return snapshot_t(c, id)->children[child];
+	return __snapshot_t(t, id)->children[child];
 }
 
-static u32 bch2_snapshot_left_child(struct bch_fs *c, u32 id)
+static u32 bch2_snapshot_left_child(struct snapshot_table *t, u32 id)
 {
-	return bch2_snapshot_child(c, id, 0);
+	return bch2_snapshot_child(t, id, 0);
 }
 
-static u32 bch2_snapshot_right_child(struct bch_fs *c, u32 id)
+static u32 bch2_snapshot_right_child(struct snapshot_table *t, u32 id)
 {
-	return bch2_snapshot_child(c, id, 1);
+	return bch2_snapshot_child(t, id, 1);
 }
 
-static u32 bch2_snapshot_tree_next(struct bch_fs *c, u32 id)
+static u32 bch2_snapshot_tree_next(struct snapshot_table *t, u32 id)
 {
 	u32 n, parent;
 
-	n = bch2_snapshot_left_child(c, id);
+	n = bch2_snapshot_left_child(t, id);
 	if (n)
 		return n;
 
-	while ((parent = bch2_snapshot_parent(c, id))) {
-		n = bch2_snapshot_right_child(c, parent);
+	while ((parent = __bch2_snapshot_parent(t, id))) {
+		n = bch2_snapshot_right_child(t, parent);
 		if (n && n != id)
 			return n;
 		id = parent;
@@ -402,17 +403,18 @@ u32 bch2_snapshot_oldest_subvol(struct bch_fs *c, u32 snapshot_root,
 				snapshot_id_list *skip)
 {
 	guard(rcu)();
+	struct snapshot_table *t = rcu_dereference(c->snapshots);
 	u32 id, subvol = 0, s;
 retry:
 	id = snapshot_root;
-	while (id && bch2_snapshot_exists(c, id)) {
+	while (id && __bch2_snapshot_exists(t, id)) {
 		if (!(skip && snapshot_list_has_id(skip, id))) {
-			s = snapshot_t(c, id)->subvol;
+			s = __snapshot_t(t, id)->subvol;
 
 			if (s && (!subvol || s < subvol))
 				subvol = s;
 		}
-		id = bch2_snapshot_tree_next(c, id);
+		id = bch2_snapshot_tree_next(t, id);
 		if (id == snapshot_root)
 			break;
 	}
@@ -1717,12 +1719,14 @@ static inline u32 bch2_snapshot_nth_parent_skip(struct bch_fs *c, u32 id, u32 n,
 						interior_delete_list *skip)
 {
 	guard(rcu)();
+	struct snapshot_table *t = rcu_dereference(c->snapshots);
+
 	while (interior_delete_has_id(skip, id))
-		id = __bch2_snapshot_parent(c, id);
+		id = __bch2_snapshot_parent(t, id);
 
 	while (n--) {
 		do {
-			id = __bch2_snapshot_parent(c, id);
+			id = __bch2_snapshot_parent(t, id);
 		} while (interior_delete_has_id(skip, id));
 	}
 
