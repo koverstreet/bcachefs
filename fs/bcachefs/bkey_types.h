@@ -44,6 +44,11 @@ static inline void set_bkey_val_bytes(struct bkey *k, unsigned bytes)
 #define bkey_whiteout(_k)				\
 	((_k)->type == KEY_TYPE_deleted || (_k)->type == KEY_TYPE_whiteout)
 
+#define bkey_extent_whiteout(_k)				\
+	((_k)->type == KEY_TYPE_deleted ||			\
+	 (_k)->type == KEY_TYPE_whiteout ||			\
+	 (_k)->type == KEY_TYPE_extent_whiteout)
+
 /* bkey with split value, const */
 struct bkey_s_c {
 	const struct bkey	*k;
