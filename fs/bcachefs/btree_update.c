@@ -12,6 +12,7 @@
 #include "extents.h"
 #include "keylist.h"
 #include "snapshot.h"
+#include "super-io.h"
 #include "trace.h"
 
 #include <linux/string_helpers.h>
@@ -158,6 +159,21 @@ int __bch2_insert_snapshot_whiteouts(struct btree_trans *trans,
 	return ret;
 }
 
+static inline enum bch_bkey_type extent_whiteout_type(struct bch_fs *c, enum btree_id btree, const struct bkey *k)
+{
+	/*
+	 * KEY_TYPE_extent_whiteout indicates that there isn't a real extent
+	 * present at that position: key start positions inclusive of
+	 * KEY_TYPE_extent_whiteout (but not KEY_TYPE_whiteout) are
+	 * monotonically increasing
+	 */
+	return btree_id_is_extents_snapshots(btree) &&
+		bkey_deleted(k) &&
+		!bch2_request_incompat_feature(c, bcachefs_metadata_version_extent_snapshot_whiteouts)
+		? KEY_TYPE_extent_whiteout
+		: KEY_TYPE_whiteout;
+}
+
 int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 				       struct btree_iter *iter,
 				       enum btree_iter_update_trigger_flags flags,
@@ -224,14 +240,14 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 		update->k.p = old.k->p;
 		update->k.p.snapshot = new.k->p.snapshot;
 
-		if (new.k->p.snapshot != old.k->p.snapshot) {
-			update->k.type = KEY_TYPE_whiteout;
-		} else if (btree_type_has_snapshots(btree_id)) {
-			ret = need_whiteout_for_snapshot(trans, btree_id, update->k.p);
+		if (btree_type_has_snapshots(btree_id)) {
+			ret =   new.k->p.snapshot != old.k->p.snapshot
+				? 1
+				: need_whiteout_for_snapshot(trans, btree_id, update->k.p);
 			if (ret < 0)
 				return ret;
 			if (ret)
-				update->k.type = KEY_TYPE_whiteout;
+				update->k.type = extent_whiteout_type(trans->c, iter->btree_id, new.k);
 		}
 
 		ret = bch2_btree_insert_nonextent(trans, btree_id, update,
@@ -265,7 +281,8 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 	CLASS(btree_iter, iter)(trans, btree_id, bkey_start_pos(&insert->k),
 				BTREE_ITER_intent|
 				BTREE_ITER_with_updates|
-				BTREE_ITER_not_extents);
+				BTREE_ITER_not_extents|
+				BTREE_ITER_nofilter_whiteouts);
 	struct bkey_s_c k = bch2_btree_iter_peek_max(&iter, POS(insert->k.p.inode, U64_MAX));
 	int ret = bkey_err(k);
 	if (ret)
@@ -283,12 +300,40 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 		goto next;
 	}
 
-	while (bkey_gt(insert->k.p, bkey_start_pos(k.k))) {
-		bool done = bkey_lt(insert->k.p, k.k->p);
+	while (true) {
+		BUG_ON(bkey_le(k.k->p, bkey_start_pos(&insert->k)));
 
-		ret = bch2_trans_update_extent_overwrite(trans, &iter, flags, k, bkey_i_to_s_c(insert));
-		if (ret)
-			return ret;
+		/*
+		 * When KEY_TYPE_whiteout is included, bkey_start_pos is not
+		 * monotonically increasing
+		 */
+		if (k.k->type != KEY_TYPE_whiteout && bkey_le(insert->k.p, bkey_start_pos(k.k)))
+			break;
+
+		bool done = k.k->type != KEY_TYPE_whiteout && bkey_lt(insert->k.p, k.k->p);
+
+		if (bkey_extent_whiteout(k.k)) {
+			enum bch_bkey_type whiteout_type = extent_whiteout_type(trans->c, btree_id, &insert->k);
+
+			if (bkey_le(k.k->p, insert->k.p) &&
+			    k.k->type != whiteout_type) {
+				struct bkey_i *update = bch2_bkey_make_mut_noupdate(trans, k);
+				ret = PTR_ERR_OR_ZERO(update);
+				if (ret)
+					return ret;
+
+				update->k.p.snapshot = iter.snapshot;
+				update->k.type = whiteout_type;
+
+				ret = bch2_trans_update(trans, &iter, update, 0);
+				if (ret)
+					return ret;
+			}
+		} else {
+			ret = bch2_trans_update_extent_overwrite(trans, &iter, flags, k, bkey_i_to_s_c(insert));
+			if (ret)
+				return ret;
+		}
 
 		if (done)
 			goto out;
