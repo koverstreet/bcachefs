@@ -423,7 +423,8 @@ enum bch_bkey_type_flags {
 	x(logged_op_truncate,	32,	BKEY_TYPE_strict_btree_checks)	\
 	x(logged_op_finsert,	33,	BKEY_TYPE_strict_btree_checks)	\
 	x(accounting,		34,	BKEY_TYPE_strict_btree_checks)	\
-	x(inode_alloc_cursor,	35,	BKEY_TYPE_strict_btree_checks)
+	x(inode_alloc_cursor,	35,	BKEY_TYPE_strict_btree_checks)	\
+	x(extent_whiteout,	36,	BKEY_TYPE_strict_btree_checks)
 
 enum bch_bkey_type {
 #define x(name, nr, ...) KEY_TYPE_##name	= nr,
@@ -437,6 +438,10 @@ struct bch_deleted {
 };
 
 struct bch_whiteout {
+	struct bch_val		v;
+};
+
+struct bch_extent_whiteout {
 	struct bch_val		v;
 };
 
@@ -700,7 +705,8 @@ struct bch_sb_field_ext {
 	x(extent_flags,			BCH_VERSION(1, 25))		\
 	x(snapshot_deletion_v2,		BCH_VERSION(1, 26))		\
 	x(fast_device_removal,		BCH_VERSION(1, 27))		\
-	x(inode_has_case_insensitive,	BCH_VERSION(1, 28))
+	x(inode_has_case_insensitive,	BCH_VERSION(1, 28))		\
+	x(extent_snapshot_whiteouts,	BCH_VERSION(1, 29))
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,
@@ -1340,6 +1346,7 @@ enum btree_id_flags {
 	  BTREE_IS_snapshots|							\
 	  BTREE_IS_data,							\
 	  BIT_ULL(KEY_TYPE_whiteout)|						\
+	  BIT_ULL(KEY_TYPE_extent_whiteout)|					\
 	  BIT_ULL(KEY_TYPE_error)|						\
 	  BIT_ULL(KEY_TYPE_cookie)|						\
 	  BIT_ULL(KEY_TYPE_extent)|						\

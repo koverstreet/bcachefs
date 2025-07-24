@@ -1444,7 +1444,7 @@ static int check_key_has_inode(struct btree_trans *trans,
 	if (ret)
 		return ret;
 
-	if (k.k->type == KEY_TYPE_whiteout)
+	if (bkey_extent_whiteout(k.k))
 		return 0;
 
 	bool have_inode = i && !i->whiteout;
@@ -1924,7 +1924,9 @@ static int check_extent(struct btree_trans *trans, struct btree_iter *iter,
 						&inode->recalculate_sums);
 		if (ret)
 			goto err;
+	}
 
+	if (!bkey_extent_whiteout(k.k)) {
 		/*
 		 * Check inodes in reverse order, from oldest snapshots to
 		 * newest, starting from the inode that matches this extent's

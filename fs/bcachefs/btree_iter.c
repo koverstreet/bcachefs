@@ -2450,7 +2450,7 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 				continue;
 			}
 
-			if (bkey_whiteout(k.k) &&
+			if (bkey_extent_whiteout(k.k) &&
 			    !(iter->flags & BTREE_ITER_nofilter_whiteouts)) {
 				search_key = bkey_successor(iter, k.k->p);
 				continue;
@@ -2711,7 +2711,7 @@ struct bkey_s_c bch2_btree_iter_peek_prev_min(struct btree_iter *iter, struct bp
 					saved_path = 0;
 				}
 
-				if (!bkey_whiteout(k.k)) {
+				if (!bkey_extent_whiteout(k.k)) {
 					saved_path = btree_path_clone(trans, iter->path,
 								iter->flags & BTREE_ITER_intent,
 								_THIS_IP_);
@@ -2724,7 +2724,7 @@ struct bkey_s_c bch2_btree_iter_peek_prev_min(struct btree_iter *iter, struct bp
 				continue;
 			}
 
-			if (bkey_whiteout(k.k)) {
+			if (bkey_extent_whiteout(k.k)) {
 				search_key = bkey_predecessor(iter, k.k->p);
 				search_key.snapshot = U32_MAX;
 				continue;
@@ -2865,7 +2865,7 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 			iter->k = *k.k;
 		}
 
-		if (unlikely(k.k->type == KEY_TYPE_whiteout &&
+		if (unlikely(bkey_extent_whiteout(k.k) &&
 			     (iter->flags & BTREE_ITER_filter_snapshots) &&
 			     !(iter->flags & BTREE_ITER_nofilter_whiteouts)))
 			iter->k.type = KEY_TYPE_deleted;
