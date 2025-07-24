@@ -2415,6 +2415,7 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 	struct bpos search_key = btree_iter_search_key(iter);
 	struct bkey_s_c k;
 	struct bpos iter_pos = iter->pos;
+	struct bpos orig_search = iter->pos;
 	int ret;
 
 	bch2_trans_verify_not_unlocked_or_in_restart(trans);
@@ -2576,6 +2577,11 @@ out_no_locked:
 
 	if (trace_btree_iter_peek_max_enabled()) {
 		CLASS(printbuf, buf)();
+
+		bch2_bpos_to_text(&buf, orig_search);
+		prt_str(&buf, " -> ");
+		bch2_bpos_to_text(&buf, end);
+		prt_newline(&buf);
 
 		int ret = bkey_err(k);
 		if (ret)
