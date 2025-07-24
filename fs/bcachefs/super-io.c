@@ -79,7 +79,7 @@ int bch2_set_version_incompat(struct bch_fs *c, enum bcachefs_metadata_version v
 	} else {
 		darray_for_each(c->incompat_versions_requested, i)
 			if (version == *i)
-				return -BCH_ERR_may_not_use_incompat_feature;
+				return bch_err_throw(c, may_not_use_incompat_feature);
 
 		darray_push(&c->incompat_versions_requested, version);
 		CLASS(printbuf, buf)();
@@ -90,7 +90,7 @@ int bch2_set_version_incompat(struct bch_fs *c, enum bcachefs_metadata_version v
 		prt_printf(&buf, "\n  set version_upgrade=incompat to enable");
 
 		bch_notice(c, "%s", buf.buf);
-		return -BCH_ERR_may_not_use_incompat_feature;
+		return bch_err_throw(c, may_not_use_incompat_feature);
 	}
 }
 
