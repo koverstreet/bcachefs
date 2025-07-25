@@ -2895,30 +2895,39 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 
 		EBUG_ON(btree_iter_path(trans, iter)->level);
 
-		if (iter->flags & BTREE_ITER_intent) {
-			struct btree_iter iter2;
+		struct btree_iter iter2;
 
-			bch2_trans_copy_iter(&iter2, iter);
+		bch2_trans_copy_iter(&iter2, iter);
+		iter2.flags |= BTREE_ITER_nofilter_whiteouts;
+
+		while (1) {
 			k = bch2_btree_iter_peek_max(&iter2, end);
-
-			if (k.k && !bkey_err(k)) {
-				swap(iter->key_cache_path, iter2.key_cache_path);
-				iter->k = iter2.k;
-				k.k = &iter->k;
+			if ((iter2.flags & BTREE_ITER_is_extents) &&
+			    k.k &&
+			    !bkey_err(k) &&
+			    k.k->type == KEY_TYPE_whiteout) {
+				bch2_btree_iter_set_pos(&iter2, k.k->p);
+				continue;
 			}
-			bch2_trans_iter_exit(&iter2);
-		} else {
-			struct bpos pos = iter->pos;
 
-			k = bch2_btree_iter_peek_max(iter, end);
-			if (unlikely(bkey_err(k)))
-				bch2_btree_iter_set_pos(iter, pos);
-			else
-				iter->pos = pos;
+			break;
 		}
+
+		if (k.k && !bkey_err(k)) {
+			swap(iter->key_cache_path, iter2.key_cache_path);
+			iter->k = iter2.k;
+			k.k = &iter->k;
+		}
+		bch2_trans_iter_exit(&iter2);
 
 		if (unlikely(bkey_err(k)))
 			goto out;
+
+		if (unlikely(k.k &&
+			     bkey_extent_whiteout(k.k) &&
+			     (iter->flags & BTREE_ITER_filter_snapshots) &&
+			     !(iter->flags & BTREE_ITER_nofilter_whiteouts)))
+			iter->k.type = KEY_TYPE_deleted;
 
 		next = k.k ? bkey_start_pos(k.k) : POS_MAX;
 
