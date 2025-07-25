@@ -2450,10 +2450,27 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 				continue;
 			}
 
-			if (bkey_extent_whiteout(k.k) &&
-			    !(iter->flags & BTREE_ITER_nofilter_whiteouts)) {
-				search_key = bkey_successor(iter, k.k->p);
-				continue;
+			if (!(iter->flags & BTREE_ITER_nofilter_whiteouts)) {
+				/*
+				 * KEY_TYPE_extent_whiteout indicates that there
+				 * are no extents that overlap with this
+				 * whiteout - meaning bkey_start_pos() is
+				 * monotonically increasing when including
+				 * KEY_TYPE_extent_whiteout (not
+				 * KEY_TYPE_whiteout).
+				 *
+				 * Without this @end wouldn't be able to
+				 * terminate searches and we'd have to scan
+				 * through tons of whiteouts:
+				 */
+				if (k.k->type == KEY_TYPE_extent_whiteout &&
+				    bkey_ge(k.k->p, end))
+					goto end;
+
+				if (bkey_extent_whiteout(k.k)) {
+					search_key = bkey_successor(iter, k.k->p);
+					continue;
+				}
 			}
 		}
 
