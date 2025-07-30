@@ -297,11 +297,8 @@ int bch2_subvolume_trigger(struct btree_trans *trans,
 
 int bch2_subvol_has_children(struct btree_trans *trans, u32 subvol)
 {
-	struct btree_iter iter;
-
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_subvolume_children, POS(subvol, 0), 0);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_subvolume_children, POS(subvol, 0), 0);
 	struct bkey_s_c k = bch2_btree_iter_peek(&iter);
-	bch2_trans_iter_exit(&iter);
 
 	return bkey_err(k) ?: k.k && k.k->p.inode == subvol
 		? bch_err_throw(trans->c, ENOTEMPTY_subvol_not_empty)

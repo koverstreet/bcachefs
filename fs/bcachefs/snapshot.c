@@ -1270,35 +1270,30 @@ static int create_snapids(struct btree_trans *trans, u32 parent, u32 tree,
 			  unsigned nr_snapids)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
 	struct bkey_i_snapshot *n;
-	struct bkey_s_c k;
-	unsigned i, j;
 	u32 depth = bch2_snapshot_depth(c, parent);
-	int ret;
 
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_snapshots,
-			     POS_MIN, BTREE_ITER_intent);
-	k = bch2_btree_iter_peek(&iter);
-	ret = bkey_err(k);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_snapshots,
+				POS_MIN, BTREE_ITER_intent);
+	struct bkey_s_c k = bch2_btree_iter_peek(&iter);
+	int ret = bkey_err(k);
 	if (ret)
-		goto err;
+		return ret;
 
-	for (i = 0; i < nr_snapids; i++) {
+	for (unsigned i = 0; i < nr_snapids; i++) {
 		k = bch2_btree_iter_prev_slot(&iter);
 		ret = bkey_err(k);
 		if (ret)
-			goto err;
+			return ret;
 
 		if (!k.k || !k.k->p.offset) {
-			ret = bch_err_throw(c, ENOSPC_snapshot_create);
-			goto err;
+			return bch_err_throw(c, ENOSPC_snapshot_create);
 		}
 
 		n = bch2_bkey_alloc(trans, &iter, 0, snapshot);
 		ret = PTR_ERR_OR_ZERO(n);
 		if (ret)
-			goto err;
+			return ret;
 
 		n->v.flags	= 0;
 		n->v.parent	= cpu_to_le32(parent);
@@ -1308,7 +1303,7 @@ static int create_snapids(struct btree_trans *trans, u32 parent, u32 tree,
 		n->v.btime.lo	= cpu_to_le64(bch2_current_time(c));
 		n->v.btime.hi	= 0;
 
-		for (j = 0; j < ARRAY_SIZE(n->v.skip); j++)
+		for (unsigned j = 0; j < ARRAY_SIZE(n->v.skip); j++)
 			n->v.skip[j] = cpu_to_le32(bch2_snapshot_skiplist_get(c, parent));
 
 		bubble_sort(n->v.skip, ARRAY_SIZE(n->v.skip), cmp_le32);
@@ -1317,13 +1312,12 @@ static int create_snapids(struct btree_trans *trans, u32 parent, u32 tree,
 		ret = __bch2_mark_snapshot(trans, BTREE_ID_snapshots, 0,
 					 bkey_s_c_null, bkey_i_to_s_c(&n->k_i), 0);
 		if (ret)
-			goto err;
+			return ret;
 
 		new_snapids[i]	= iter.pos.offset;
 	}
-err:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+
+	return 0;
 }
 
 /*
