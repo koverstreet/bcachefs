@@ -121,7 +121,6 @@ int bch2_repair_inode_hash_info(struct btree_trans *trans,
 				struct bch_inode_unpacked *snapshot_root)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	CLASS(printbuf, buf)();
 	bool need_commit = false;
@@ -178,7 +177,7 @@ int bch2_repair_inode_hash_info(struct btree_trans *trans,
 	}
 
 	if (ret)
-		goto err;
+		return ret;
 
 	if (!need_commit) {
 		printbuf_reset(&buf);
@@ -196,15 +195,12 @@ int bch2_repair_inode_hash_info(struct btree_trans *trans,
 		prt_printf(&buf, " %llx %llx", hash_info->siphash_key.k0, hash_info->siphash_key.k1);
 #endif
 		bch2_print_str(c, KERN_ERR, buf.buf);
-		ret = bch_err_throw(c, fsck_repair_unimplemented);
-		goto err;
+		return bch_err_throw(c, fsck_repair_unimplemented);
 	}
 
 	ret = bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
 		bch_err_throw(c, transaction_restart_nested);
-err:
 fsck_err:
-	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -349,10 +345,14 @@ int __bch2_str_hash_check_key(struct btree_trans *trans,
 	if (hash_k.k->p.offset < hash)
 		goto bad_hash;
 
-	for_each_btree_key_norestart(trans, iter, desc->btree_id,
-				     SPOS(hash_k.k->p.inode, hash, hash_k.k->p.snapshot),
-				     BTREE_ITER_slots|
-				     BTREE_ITER_with_updates, k, ret) {
+	bch2_trans_iter_init(trans, &iter, desc->btree_id,
+			     SPOS(hash_k.k->p.inode, hash, hash_k.k->p.snapshot),
+			     BTREE_ITER_slots|
+			     BTREE_ITER_with_updates);
+
+	for_each_btree_key_continue_norestart(iter,
+			BTREE_ITER_slots|
+			BTREE_ITER_with_updates, k, ret) {
 		if (bkey_eq(k.k->p, hash_k.k->p))
 			break;
 
