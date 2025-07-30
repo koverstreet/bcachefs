@@ -285,7 +285,6 @@ bch2_bucket_alloc_early(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct bch_dev *ca = req->ca;
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct open_bucket *ob = NULL;
 	u64 first_bucket = ca->mi.first_bucket;
@@ -306,7 +305,7 @@ bch2_bucket_alloc_early(struct btree_trans *trans,
 again:
 	for_each_btree_key_norestart(trans, iter, BTREE_ID_alloc, POS(ca->dev_idx, alloc_cursor),
 			   BTREE_ITER_slots, k, ret) {
-		u64 bucket = k.k->p.offset;
+		u64 bucket = alloc_cursor = k.k->p.offset;
 
 		if (bkey_ge(k.k->p, POS(ca->dev_idx, ca->mi.nbuckets)))
 			break;
@@ -350,9 +349,6 @@ again:
 				break;
 		}
 	}
-	bch2_trans_iter_exit(&iter);
-
-	alloc_cursor = iter.pos.offset;
 
 	if (!ob && ret)
 		ob = ERR_PTR(ret);
@@ -372,7 +368,6 @@ static struct open_bucket *bch2_bucket_alloc_freelist(struct btree_trans *trans,
 						      struct closure *cl)
 {
 	struct bch_dev *ca = req->ca;
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct open_bucket *ob = NULL;
 	u64 *dev_alloc_cursor = &ca->alloc_cursor[req->btree_bitmap];
@@ -427,7 +422,6 @@ next:
 			break;
 	}
 fail:
-	bch2_trans_iter_exit(&iter);
 
 	BUG_ON(ob && ret);
 

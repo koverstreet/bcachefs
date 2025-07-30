@@ -95,7 +95,6 @@ static noinline int extent_back_merge(struct btree_trans *trans,
 static int need_whiteout_for_snapshot(struct btree_trans *trans,
 				      enum btree_id btree_id, struct bpos pos)
 {
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	u32 snapshot = pos.snapshot;
 	int ret;
@@ -117,7 +116,6 @@ static int need_whiteout_for_snapshot(struct btree_trans *trans,
 			break;
 		}
 	}
-	bch2_trans_iter_exit(&iter);
 
 	return ret;
 }

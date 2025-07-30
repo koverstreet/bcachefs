@@ -1849,7 +1849,6 @@ static int __bch2_ec_stripe_head_reuse(struct btree_trans *trans, struct ec_stri
 	if (may_create_new_stripe(c))
 		return -1;
 
-	struct btree_iter lru_iter;
 	struct bkey_s_c lru_k;
 	int ret = 0;
 
@@ -1861,7 +1860,6 @@ static int __bch2_ec_stripe_head_reuse(struct btree_trans *trans, struct ec_stri
 		if (ret)
 			break;
 	}
-	bch2_trans_iter_exit(&lru_iter);
 	if (!ret)
 		ret = bch_err_throw(c, stripe_alloc_blocked);
 	if (ret == 1)
@@ -1876,7 +1874,6 @@ static int __bch2_ec_stripe_head_reserve(struct btree_trans *trans, struct ec_st
 					 struct ec_stripe_new *s)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bpos min_pos = POS(0, 1);
 	struct bpos start_pos = bpos_max(min_pos, POS(0, c->ec_stripe_hint));
@@ -1897,6 +1894,8 @@ static int __bch2_ec_stripe_head_reserve(struct btree_trans *trans, struct ec_st
 	 */
 	for_each_btree_key_norestart(trans, iter, BTREE_ID_stripes, start_pos,
 			   BTREE_ITER_slots|BTREE_ITER_intent, k, ret) {
+		c->ec_stripe_hint = iter.pos.offset;
+
 		if (bkey_gt(k.k->p, POS(0, U32_MAX))) {
 			if (start_pos.offset) {
 				start_pos = min_pos;
@@ -1909,28 +1908,18 @@ static int __bch2_ec_stripe_head_reserve(struct btree_trans *trans, struct ec_st
 		}
 
 		if (bkey_deleted(k.k) &&
-		    bch2_try_open_stripe(c, s, k.k->p.offset))
+		    bch2_try_open_stripe(c, s, k.k->p.offset)) {
+			ret = ec_stripe_mem_alloc(trans, &iter);
+			if (ret)
+				bch2_stripe_close(c, s);
+			s->new_stripe.key.k.p = iter.pos;
 			break;
+		}
 	}
-
-	c->ec_stripe_hint = iter.pos.offset;
 
 	if (ret)
-		goto err;
-
-	ret = ec_stripe_mem_alloc(trans, &iter);
-	if (ret) {
-		bch2_stripe_close(c, s);
-		goto err;
-	}
-
-	s->new_stripe.key.k.p = iter.pos;
-out:
-	bch2_trans_iter_exit(&iter);
+		bch2_disk_reservation_put(c, &s->res);
 	return ret;
-err:
-	bch2_disk_reservation_put(c, &s->res);
-	goto out;
 }
 
 struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
