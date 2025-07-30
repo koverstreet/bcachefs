@@ -108,14 +108,14 @@ int bch2_extent_atomic_end(struct btree_trans *trans,
 	unsigned nr_iters = 0;
 
 	struct btree_iter copy;
-	bch2_trans_copy_iter(trans, &copy, iter);
+	bch2_trans_copy_iter(&copy, iter);
 
-	int ret = bch2_btree_iter_traverse(trans, &copy);
+	int ret = bch2_btree_iter_traverse(&copy);
 	if (ret)
 		goto err;
 
 	struct bkey_s_c k;
-	for_each_btree_key_max_continue_norestart(trans, copy, *end, 0, k, ret) {
+	for_each_btree_key_max_continue_norestart(copy, *end, 0, k, ret) {
 		unsigned offset = 0;
 
 		if (bkey_gt(iter->pos, bkey_start_pos(k.k)))

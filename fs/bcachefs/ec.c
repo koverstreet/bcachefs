@@ -1809,7 +1809,7 @@ static int __get_existing_stripe(struct btree_trans *trans,
 		ret = 1;
 	}
 out:
-	bch2_set_btree_iter_dontneed(trans, &iter);
+	bch2_set_btree_iter_dontneed(&iter);
 err:
 	bch2_trans_iter_exit(trans, &iter);
 	return ret;
@@ -1922,7 +1922,7 @@ static int __bch2_ec_stripe_head_reserve(struct btree_trans *trans, struct ec_st
 		if (bkey_gt(k.k->p, POS(0, U32_MAX))) {
 			if (start_pos.offset) {
 				start_pos = min_pos;
-				bch2_btree_iter_set_pos(trans, &iter, start_pos);
+				bch2_btree_iter_set_pos(&iter, start_pos);
 				continue;
 			}
 

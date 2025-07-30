@@ -657,9 +657,9 @@ static noinline int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 		if (ret)
 			goto bkey_err;
 
-		bch2_btree_iter_set_snapshot(trans, &iter, snapshot);
+		bch2_btree_iter_set_snapshot(&iter, snapshot);
 
-		k = bch2_btree_iter_peek_slot(trans, &iter);
+		k = bch2_btree_iter_peek_slot(&iter);
 		if ((ret = bkey_err(k)))
 			goto bkey_err;
 
@@ -670,13 +670,13 @@ static noinline int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 		/* already reserved */
 		if (bkey_extent_is_reservation(k) &&
 		    bch2_bkey_nr_ptrs_fully_allocated(k) >= opts.data_replicas) {
-			bch2_btree_iter_advance(trans, &iter);
+			bch2_btree_iter_advance(&iter);
 			continue;
 		}
 
 		if (bkey_extent_is_data(k.k) &&
 		    !(mode & FALLOC_FL_ZERO_RANGE)) {
-			bch2_btree_iter_advance(trans, &iter);
+			bch2_btree_iter_advance(&iter);
 			continue;
 		}
 
@@ -697,7 +697,7 @@ static noinline int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 				if (ret)
 					goto bkey_err;
 			}
-			bch2_btree_iter_set_pos(trans, &iter, POS(iter.pos.inode, hole_start));
+			bch2_btree_iter_set_pos(&iter, POS(iter.pos.inode, hole_start));
 
 			if (ret)
 				goto bkey_err;
