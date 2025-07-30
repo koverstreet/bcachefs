@@ -68,7 +68,6 @@ static int count_iters_for_insert(struct btree_trans *trans,
 		u64 idx = REFLINK_P_IDX(p.v);
 		unsigned sectors = bpos_min(*end, p.k->p).offset -
 			bkey_start_offset(p.k);
-		struct btree_iter iter;
 		struct bkey_s_c r_k;
 
 		for_each_btree_key_norestart(trans, iter,
@@ -88,11 +87,9 @@ static int count_iters_for_insert(struct btree_trans *trans,
 						    r_k.k->p.offset - idx);
 
 				*end = bpos_min(*end, pos);
-				ret = 1;
-				break;
+				return 1;
 			}
 		}
-		bch2_trans_iter_exit(&iter);
 
 		break;
 	}

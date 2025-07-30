@@ -420,7 +420,6 @@ int bch2_inode_find_by_inum(struct bch_fs *c, subvol_inum inum,
 int bch2_inode_find_snapshot_root(struct btree_trans *trans, u64 inum,
 				  struct bch_inode_unpacked *root)
 {
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret = 0;
 
@@ -429,15 +428,11 @@ int bch2_inode_find_snapshot_root(struct btree_trans *trans, u64 inum,
 					     BTREE_ITER_all_snapshots, k, ret) {
 		if (k.k->p.offset != inum)
 			break;
-		if (bkey_is_inode(k.k)) {
-			ret = bch2_inode_unpack(k, root);
-			goto out;
-		}
+		if (bkey_is_inode(k.k))
+			return bch2_inode_unpack(k, root);
 	}
 	/* We're only called when we know we have an inode for @inum */
 	BUG_ON(!ret);
-out:
-	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -692,10 +687,11 @@ bch2_bkey_get_iter_snapshot_parent(struct btree_trans *trans, struct btree_iter 
 	struct bkey_s_c k;
 	int ret = 0;
 
-	for_each_btree_key_max_norestart(trans, *iter, btree,
-					  bpos_successor(pos),
-					  SPOS(pos.inode, pos.offset, U32_MAX),
-					  flags|BTREE_ITER_all_snapshots, k, ret)
+	bch2_trans_iter_init(trans, iter, btree, bpos_successor(pos),
+			     flags|BTREE_ITER_all_snapshots);
+
+	for_each_btree_key_max_continue_norestart(*iter, SPOS(pos.inode, pos.offset, U32_MAX),
+						  flags|BTREE_ITER_all_snapshots, k, ret)
 		if (bch2_snapshot_is_ancestor(c, pos.snapshot, k.k->p.snapshot))
 			return k;
 
@@ -723,7 +719,6 @@ again:
 int __bch2_inode_has_child_snapshots(struct btree_trans *trans, struct bpos pos)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret = 0;
 
@@ -736,7 +731,6 @@ int __bch2_inode_has_child_snapshots(struct btree_trans *trans, struct bpos pos)
 			ret = 1;
 			break;
 		}
-	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
