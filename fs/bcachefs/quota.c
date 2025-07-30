@@ -820,7 +820,7 @@ static int bch2_set_quota_trans(struct btree_trans *trans,
 		new_quota->v.c[Q_INO].hardlimit = cpu_to_le64(qdq->d_ino_hardlimit);
 
 	ret = bch2_trans_update(trans, &iter, &new_quota->k_i, 0);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

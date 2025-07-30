@@ -527,7 +527,7 @@ int bch2_move_get_io_opts_one(struct btree_trans *trans,
 		bch2_inode_unpack(inode_k, &inode);
 		bch2_inode_opts_get(io_opts, c, &inode);
 	}
-	bch2_trans_iter_exit(trans, &inode_iter);
+	bch2_trans_iter_exit(&inode_iter);
 	/* seem to be spinning here? */
 out:
 	return bch2_get_update_rebalance_opts(trans, io_opts, extent_iter, extent_k);
@@ -596,12 +596,12 @@ static struct bkey_s_c bch2_lookup_indirect_extent_for_move(struct btree_trans *
 
 	struct bkey_s_c k = bch2_btree_iter_peek(iter);
 	if (!k.k || bkey_err(k)) {
-		bch2_trans_iter_exit(trans, iter);
+		bch2_trans_iter_exit(iter);
 		return k;
 	}
 
 	if (bkey_lt(reflink_pos, bkey_start_pos(k.k))) {
-		bch2_trans_iter_exit(trans, iter);
+		bch2_trans_iter_exit(iter);
 		return bkey_s_c_null;
 	}
 
@@ -652,7 +652,7 @@ retry_root:
 			goto root_err;
 
 		if (b != btree_node_root(c, b)) {
-			bch2_trans_iter_exit(trans, &iter);
+			bch2_trans_iter_exit(&iter);
 			goto retry_root;
 		}
 
@@ -676,7 +676,7 @@ retry_root:
 
 root_err:
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
-			bch2_trans_iter_exit(trans, &iter);
+			bch2_trans_iter_exit(&iter);
 			goto retry_root;
 		}
 
@@ -717,7 +717,7 @@ root_err:
 		    REFLINK_P_MAY_UPDATE_OPTIONS(bkey_s_c_to_reflink_p(k).v)) {
 			struct bkey_s_c_reflink_p p = bkey_s_c_to_reflink_p(k);
 
-			bch2_trans_iter_exit(trans, &reflink_iter);
+			bch2_trans_iter_exit(&reflink_iter);
 			k = bch2_lookup_indirect_extent_for_move(trans, &reflink_iter, p);
 			ret = bkey_err(k);
 			if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
@@ -785,8 +785,8 @@ next_nondata:
 			break;
 	}
 out:
-	bch2_trans_iter_exit(trans, &reflink_iter);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&reflink_iter);
+	bch2_trans_iter_exit(&iter);
 	bch2_bkey_buf_exit(&sk, c);
 	per_snapshot_io_opts_exit(&snapshot_io_opts);
 
@@ -936,7 +936,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		if (!bp.v->level) {
 			ret = bch2_move_get_io_opts_one(trans, &io_opts, &iter, k);
 			if (ret) {
-				bch2_trans_iter_exit(trans, &iter);
+				bch2_trans_iter_exit(&iter);
 				continue;
 			}
 		}
@@ -949,13 +949,13 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 					    pred, arg, p);
 
 		if (!p) {
-			bch2_trans_iter_exit(trans, &iter);
+			bch2_trans_iter_exit(&iter);
 			goto next;
 		}
 
 		if (data_opts.scrub &&
 		    !bch2_dev_idx_is_online(c, data_opts.read_dev)) {
-			bch2_trans_iter_exit(trans, &iter);
+			bch2_trans_iter_exit(&iter);
 			ret = bch_err_throw(c, device_offline);
 			break;
 		}
@@ -974,7 +974,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		else
 			ret = bch2_btree_node_scrub(trans, bp.v->btree_id, bp.v->level, k, data_opts.read_dev);
 
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
@@ -996,7 +996,7 @@ next:
 		bch2_check_bucket_backpointer_mismatch(trans, ca, check_mismatch_done++,
 						       copygc, &last_flushed);
 err:
-	bch2_trans_iter_exit(trans, &bp_iter);
+	bch2_trans_iter_exit(&bp_iter);
 	bch2_bkey_buf_exit(&sk, c);
 	bch2_bkey_buf_exit(&last_flushed, c);
 	return ret;
@@ -1137,7 +1137,7 @@ next:
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			goto retry;
 
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 
 		if (kthread && kthread_should_stop())
 			break;

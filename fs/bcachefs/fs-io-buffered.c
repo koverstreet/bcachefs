@@ -251,7 +251,7 @@ err:
 		    !bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			break;
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	if (ret) {
 		CLASS(printbuf, buf)();

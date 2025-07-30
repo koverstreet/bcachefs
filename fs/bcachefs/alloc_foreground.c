@@ -349,11 +349,11 @@ again:
 			: NULL;
 next:
 		bch2_set_btree_iter_dontneed(&citer);
-		bch2_trans_iter_exit(trans, &citer);
+		bch2_trans_iter_exit(&citer);
 		if (ob)
 			break;
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	alloc_cursor = iter.pos.offset;
 
@@ -430,7 +430,7 @@ next:
 			break;
 	}
 fail:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	BUG_ON(ob && ret);
 

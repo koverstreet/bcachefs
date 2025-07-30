@@ -540,7 +540,7 @@ static void get_rbio_extent(struct btree_trans *trans,
 			break;
 		}
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 }
 
 static noinline int maybe_poison_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
@@ -585,7 +585,7 @@ static noinline int maybe_poison_extent(struct btree_trans *trans, struct bch_re
 	if (u && !ret)
 		bch2_bkey_buf_copy(&u->k, c, new);
 out:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -620,7 +620,7 @@ retry:
 				 bkey_i_to_s_c(u->k.k),
 				 0, failed, flags, -1);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart) ||
 	    bch2_err_matches(ret, BCH_ERR_data_read_retry))
@@ -803,7 +803,7 @@ static int __bch2_rbio_narrow_crcs(struct btree_trans *trans,
 	ret = bch2_trans_update(trans, &iter, new,
 				BTREE_UPDATE_internal_snapshot_node);
 out:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1067,7 +1067,7 @@ static noinline void read_from_stale_dirty_pointer(struct btree_trans *trans,
 
 	bch2_fs_inconsistent(c, "%s", buf.buf);
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 }
 
 int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
@@ -1514,7 +1514,7 @@ err:
 			bch2_rbio_done(rbio);
 	}
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	bch2_bkey_buf_exit(&sk, c);
 	return ret;
 }

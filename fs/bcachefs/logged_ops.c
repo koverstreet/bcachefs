@@ -81,7 +81,7 @@ static int __bch2_logged_op_start(struct btree_trans *trans, struct bkey_i *k)
 	k->k.p = iter.pos;
 
 	ret = bch2_trans_update(trans, &iter, k, 0);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
