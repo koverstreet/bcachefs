@@ -222,15 +222,10 @@ int bch2_fpunch(struct bch_fs *c, subvol_inum inum, u64 start, u64 end,
 		s64 *i_sectors_delta)
 {
 	CLASS(btree_trans, trans)(c);
-
-	struct btree_iter iter;
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_extents,
-			     POS(inum.inum, start),
-			     BTREE_ITER_intent);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_extents, POS(inum.inum, start),
+				BTREE_ITER_intent);
 
 	int ret = bch2_fpunch_at(trans, &iter, inum, end, i_sectors_delta);
-
-	bch2_trans_iter_exit(&iter);
 
 	return bch2_err_matches(ret, BCH_ERR_transaction_restart) ? 0 : ret;
 }
@@ -268,7 +263,6 @@ static int __bch2_resume_logged_op_truncate(struct btree_trans *trans,
 					    u64 *i_sectors_delta)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter fpunch_iter;
 	struct bkey_i_logged_op_truncate *op = bkey_i_to_logged_op_truncate(op_k);
 	subvol_inum inum = { le32_to_cpu(op->v.subvol), le64_to_cpu(op->v.inum) };
 	u64 new_i_size = le64_to_cpu(op->v.new_i_size);
@@ -280,14 +274,15 @@ static int __bch2_resume_logged_op_truncate(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
-	bch2_trans_iter_init(trans, &fpunch_iter, BTREE_ID_extents,
-			     POS(inum.inum, round_up(new_i_size, block_bytes(c)) >> 9),
-			     BTREE_ITER_intent);
-	ret = bch2_fpunch_at(trans, &fpunch_iter, inum, U64_MAX, i_sectors_delta);
-	bch2_trans_iter_exit(&fpunch_iter);
+	{
+		CLASS(btree_iter, fpunch_iter)(trans, BTREE_ID_extents,
+					       POS(inum.inum, round_up(new_i_size, block_bytes(c)) >> 9),
+					       BTREE_ITER_intent);
+		ret = bch2_fpunch_at(trans, &fpunch_iter, inum, U64_MAX, i_sectors_delta);
 
-	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-		ret = 0;
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+			ret = 0;
+	}
 err:
 	if (warn_errors)
 		bch_err_fn(c, ret);
