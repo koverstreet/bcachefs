@@ -48,12 +48,11 @@ bch2_btree_iter_peek_in_subvolume_max_type(struct btree_iter *iter, struct bpos 
 #define for_each_btree_key_in_subvolume_max_continue(_trans, _iter,		\
 					 _end, _subvolid, _flags, _k, _do)	\
 ({										\
-	struct bkey_s_c _k;							\
 	int _ret3 = 0;								\
 										\
 	do {									\
 		_ret3 = lockrestart_do(_trans, ({				\
-			(_k) = bch2_btree_iter_peek_in_subvolume_max_type(&(_iter),	\
+			struct bkey_s_c _k = bch2_btree_iter_peek_in_subvolume_max_type(&(_iter),\
 						_end, _subvolid, (_flags));	\
 			if (!(_k).k)						\
 				break;						\
@@ -68,14 +67,10 @@ bch2_btree_iter_peek_in_subvolume_max_type(struct btree_iter *iter, struct bpos 
 #define for_each_btree_key_in_subvolume_max(_trans, _iter, _btree_id,		\
 				_start, _end, _subvolid, _flags, _k, _do)	\
 ({										\
-	struct btree_iter _iter;						\
-	bch2_trans_iter_init((_trans), &(_iter), (_btree_id),			\
-			     (_start), (_flags));				\
+	CLASS(btree_iter, _iter)((_trans), (_btree_id), (_start), (_flags));	\
 										\
-	int _ret = for_each_btree_key_in_subvolume_max_continue(_trans, _iter,	\
+	for_each_btree_key_in_subvolume_max_continue(_trans, _iter,		\
 					_end, _subvolid, _flags, _k, _do);	\
-	bch2_trans_iter_exit(&(_iter));						\
-	_ret;									\
 })
 
 int bch2_subvolume_unlink(struct btree_trans *, u32);

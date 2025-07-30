@@ -235,14 +235,13 @@ static const char * const bch2_rebalance_state_strs[] = {
 
 int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, u64 inum)
 {
-	struct btree_iter iter;
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_rebalance_work,
-			     SPOS(inum, REBALANCE_WORK_SCAN_OFFSET, U32_MAX),
-			     BTREE_ITER_intent);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_rebalance_work,
+				SPOS(inum, REBALANCE_WORK_SCAN_OFFSET, U32_MAX),
+				BTREE_ITER_intent);
 	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 	int ret = bkey_err(k);
 	if (ret)
-		goto err;
+		return ret;
 
 	u64 v = k.k->type == KEY_TYPE_cookie
 		? le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie)
@@ -251,16 +250,13 @@ int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, u64 inum)
 	struct bkey_i_cookie *cookie = bch2_trans_kmalloc(trans, sizeof(*cookie));
 	ret = PTR_ERR_OR_ZERO(cookie);
 	if (ret)
-		goto err;
+		return ret;
 
 	bkey_cookie_init(&cookie->k_i);
 	cookie->k.p = iter.pos;
 	cookie->v.cookie = cpu_to_le64(v + 1);
 
-	ret = bch2_trans_update(trans, &iter, &cookie->k_i, 0);
-err:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return bch2_trans_update(trans, &iter, &cookie->k_i, 0);
 }
 
 int bch2_set_rebalance_needs_scan(struct bch_fs *c, u64 inum)
@@ -279,24 +275,21 @@ int bch2_set_fs_needs_rebalance(struct bch_fs *c)
 
 static int bch2_clear_rebalance_needs_scan(struct btree_trans *trans, u64 inum, u64 cookie)
 {
-	struct btree_iter iter;
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_rebalance_work,
-			     SPOS(inum, REBALANCE_WORK_SCAN_OFFSET, U32_MAX),
-			     BTREE_ITER_intent);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_rebalance_work,
+				SPOS(inum, REBALANCE_WORK_SCAN_OFFSET, U32_MAX),
+				BTREE_ITER_intent);
 	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 	int ret = bkey_err(k);
 	if (ret)
-		goto err;
+		return ret;
 
 	u64 v = k.k->type == KEY_TYPE_cookie
 		? le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie)
 		: 0;
 
-	if (v == cookie)
-		ret = bch2_btree_delete_at(trans, &iter, 0);
-err:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return v == cookie
+		? bch2_btree_delete_at(trans, &iter, 0)
+		: 0;
 }
 
 static struct bkey_s_c next_rebalance_entry(struct btree_trans *trans,
@@ -531,7 +524,7 @@ static int do_rebalance(struct moving_context *ctxt)
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	struct bch_fs_rebalance *r = &c->rebalance;
-	struct btree_iter rebalance_work_iter, extent_iter = { NULL };
+	struct btree_iter extent_iter = { NULL };
 	struct bkey_s_c k;
 	u32 kick = r->kick;
 	int ret = 0;
@@ -541,9 +534,9 @@ static int do_rebalance(struct moving_context *ctxt)
 	bch2_move_stats_init(&r->work_stats, "rebalance_work");
 	bch2_move_stats_init(&r->scan_stats, "rebalance_scan");
 
-	bch2_trans_iter_init(trans, &rebalance_work_iter,
-			     BTREE_ID_rebalance_work, POS_MIN,
-			     BTREE_ITER_all_snapshots);
+	CLASS(btree_iter, rebalance_work_iter)(trans,
+					       BTREE_ID_rebalance_work, POS_MIN,
+					       BTREE_ITER_all_snapshots);
 
 	while (!bch2_move_ratelimit(ctxt)) {
 		if (!bch2_rebalance_enabled(c)) {
@@ -577,7 +570,6 @@ static int do_rebalance(struct moving_context *ctxt)
 	}
 
 	bch2_trans_iter_exit(&extent_iter);
-	bch2_trans_iter_exit(&rebalance_work_iter);
 	bch2_move_stats_exit(&r->scan_stats, c);
 
 	if (!ret &&
@@ -845,15 +837,10 @@ fsck_err:
 int bch2_check_rebalance_work(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	struct btree_iter rebalance_iter, extent_iter;
-	int ret = 0;
-
-	bch2_trans_iter_init(trans, &extent_iter,
-			     BTREE_ID_reflink, POS_MIN,
-			     BTREE_ITER_prefetch);
-	bch2_trans_iter_init(trans, &rebalance_iter,
-			     BTREE_ID_rebalance_work, POS_MIN,
-			     BTREE_ITER_prefetch);
+	CLASS(btree_iter, extent_iter)(trans, BTREE_ID_reflink, POS_MIN,
+				       BTREE_ITER_prefetch);
+	CLASS(btree_iter, rebalance_iter)(trans, BTREE_ID_rebalance_work, POS_MIN,
+					  BTREE_ITER_prefetch);
 
 	struct bkey_buf last_flushed;
 	bch2_bkey_buf_init(&last_flushed);
@@ -862,6 +849,7 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 	struct progress_indicator_state progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_rebalance_work));
 
+	int ret = 0;
 	while (!ret) {
 		progress_update_iter(trans, &progress, &rebalance_iter);
 
@@ -874,7 +862,5 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 	}
 
 	bch2_bkey_buf_exit(&last_flushed, c);
-	bch2_trans_iter_exit(&extent_iter);
-	bch2_trans_iter_exit(&rebalance_iter);
 	return ret < 0 ? ret : 0;
 }

@@ -1398,21 +1398,20 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 	if (ret)
 		return ret;
 
-	struct btree_iter iter;
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_extents,
-			     SPOS(inode->ei_inum.inum, start, snapshot), 0);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_extents,
+				SPOS(inode->ei_inum.inum, start, snapshot), 0);
 
 	struct bkey_s_c k =
 		bch2_btree_iter_peek_max(&iter, POS(inode->ei_inum.inum, end));
 	ret = bkey_err(k);
 	if (ret)
-		goto err;
+		return ret;
 
 	u64 pagecache_end = k.k ? max(start, bkey_start_offset(k.k)) : end;
 
 	ret = bch2_next_fiemap_pagecache_extent(trans, inode, start, pagecache_end, cur);
 	if (ret)
-		goto err;
+		return ret;
 
 	struct bpos pagecache_start = bkey_start_pos(&cur->kbuf.k->k);
 
@@ -1448,7 +1447,7 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 		ret = bch2_read_indirect_extent(trans, &data_btree, &offset_into_extent,
 						&cur->kbuf);
 		if (ret)
-			goto err;
+			return ret;
 
 		struct bkey_i *k = cur->kbuf.k;
 		sectors = min_t(unsigned, sectors, k->k.size - offset_into_extent);
@@ -1460,9 +1459,8 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 		k->k.p = iter.pos;
 		k->k.p.offset += k->k.size;
 	}
-err:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+
+	return 0;
 }
 
 static int bch2_fiemap(struct inode *vinode, struct fiemap_extent_info *info,
@@ -1967,8 +1965,6 @@ static int bch2_get_name(struct dentry *parent, char *name, struct dentry *child
 	struct bch_inode_info *inode	= to_bch_ei(child->d_inode);
 	struct bch_inode_info *dir	= to_bch_ei(parent->d_inode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	struct btree_iter iter1;
-	struct btree_iter iter2;
 	struct bkey_s_c k;
 	struct bkey_s_c_dirent d;
 	struct bch_inode_unpacked inode_u;
@@ -1982,10 +1978,10 @@ static int bch2_get_name(struct dentry *parent, char *name, struct dentry *child
 		return -EINVAL;
 
 	CLASS(btree_trans, trans)(c);
-	bch2_trans_iter_init(trans, &iter1, BTREE_ID_dirents,
-			     POS(dir->ei_inode.bi_inum, 0), 0);
-	bch2_trans_iter_init(trans, &iter2, BTREE_ID_dirents,
-			     POS(dir->ei_inode.bi_inum, 0), 0);
+	CLASS(btree_iter, iter1)(trans, BTREE_ID_dirents,
+				 POS(dir->ei_inode.bi_inum, 0), 0);
+	CLASS(btree_iter, iter2)(trans, BTREE_ID_dirents,
+				 POS(dir->ei_inode.bi_inum, 0), 0);
 retry:
 	bch2_trans_begin(trans);
 
@@ -2058,8 +2054,6 @@ err:
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 
-	bch2_trans_iter_exit(&iter1);
-	bch2_trans_iter_exit(&iter2);
 	return ret;
 }
 

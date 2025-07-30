@@ -1030,13 +1030,10 @@ static noinline void read_from_stale_dirty_pointer(struct btree_trans *trans,
 						   struct bch_extent_ptr ptr)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
 	CLASS(printbuf, buf)();
-	int ret;
-
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc,
-			     PTR_BUCKET_POS(ca, &ptr),
-			     BTREE_ITER_cached);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_alloc,
+				PTR_BUCKET_POS(ca, &ptr),
+				BTREE_ITER_cached);
 
 	int gen = bucket_gen_get(ca, iter.pos.offset);
 	if (gen >= 0) {
@@ -1048,7 +1045,7 @@ static noinline void read_from_stale_dirty_pointer(struct btree_trans *trans,
 
 		prt_printf(&buf, "memory gen: %u", gen);
 
-		ret = lockrestart_do(trans, bkey_err(k = bch2_btree_iter_peek_slot(&iter)));
+		int ret = lockrestart_do(trans, bkey_err(k = bch2_btree_iter_peek_slot(&iter)));
 		if (!ret) {
 			prt_newline(&buf);
 			bch2_bkey_val_to_text(&buf, c, k);
@@ -1066,8 +1063,6 @@ static noinline void read_from_stale_dirty_pointer(struct btree_trans *trans,
 	}
 
 	bch2_fs_inconsistent(c, "%s", buf.buf);
-
-	bch2_trans_iter_exit(&iter);
 }
 
 int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
@@ -1411,7 +1406,6 @@ int __bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
 		unsigned flags)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
 	struct bkey_buf sk;
 	struct bkey_s_c k;
 	enum btree_id data_btree;
@@ -1420,9 +1414,9 @@ int __bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
 	EBUG_ON(rbio->data_update);
 
 	bch2_bkey_buf_init(&sk);
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_extents,
-			     POS(inum.inum, bvec_iter.bi_sector),
-			     BTREE_ITER_slots);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_extents,
+				POS(inum.inum, bvec_iter.bi_sector),
+				BTREE_ITER_slots);
 
 	while (1) {
 		data_btree = BTREE_ID_extents;
@@ -1514,7 +1508,6 @@ err:
 			bch2_rbio_done(rbio);
 	}
 
-	bch2_trans_iter_exit(&iter);
 	bch2_bkey_buf_exit(&sk, c);
 	return ret;
 }
