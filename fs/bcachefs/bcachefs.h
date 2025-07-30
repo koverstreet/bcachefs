@@ -845,8 +845,8 @@ struct bch_fs {
 		unsigned long	errors_silent[BITS_TO_LONGS(BCH_FSCK_ERR_MAX)];
 		u64		btrees_lost_data;
 	}			sb;
-	DARRAY(enum bcachefs_metadata_version)
-				incompat_versions_requested;
+
+	unsigned long		incompat_versions_requested[BITS_TO_LONGS(BCH_VERSION_MINOR(bcachefs_metadata_version_current))];
 
 	struct unicode_map	*cf_encoding;
 
