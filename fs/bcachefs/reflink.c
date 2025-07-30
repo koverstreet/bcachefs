@@ -497,13 +497,12 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	if (orig->k.type == KEY_TYPE_inline_data)
 		bch2_check_set_feature(c, BCH_FEATURE_reflink_inline_data);
 
-	struct btree_iter reflink_iter;
-	bch2_trans_iter_init(trans, &reflink_iter, BTREE_ID_reflink, POS_MAX,
-			     BTREE_ITER_intent);
+	CLASS(btree_iter, reflink_iter)(trans, BTREE_ID_reflink, POS_MAX,
+					BTREE_ITER_intent);
 	struct bkey_s_c k = bch2_btree_iter_peek_prev(&reflink_iter);
 	int ret = bkey_err(k);
 	if (ret)
-		goto err;
+		return ret;
 
 	/*
 	 * XXX: we're assuming that 56 bits will be enough for the life of the
@@ -516,7 +515,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	struct bkey_i *r_v = bch2_trans_kmalloc(trans, sizeof(__le64) + bkey_bytes(&orig->k));
 	ret = PTR_ERR_OR_ZERO(r_v);
 	if (ret)
-		goto err;
+		return ret;
 
 	bkey_init(&r_v->k);
 	r_v->k.type	= bkey_type_to_indirect(&orig->k);
@@ -532,7 +531,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 
 	ret = bch2_trans_update(trans, &reflink_iter, r_v, 0);
 	if (ret)
-		goto err;
+		return ret;
 
 	/*
 	 * orig is in a bkey_buf which statically allocates 5 64s for the val,
@@ -555,12 +554,8 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	if (reflink_p_may_update_opts_field)
 		SET_REFLINK_P_MAY_UPDATE_OPTIONS(&r_p->v, true);
 
-	ret = bch2_trans_update(trans, extent_iter, &r_p->k_i,
-				BTREE_UPDATE_internal_snapshot_node);
-err:
-	bch2_trans_iter_exit(&reflink_iter);
-
-	return ret;
+	return bch2_trans_update(trans, extent_iter, &r_p->k_i,
+				 BTREE_UPDATE_internal_snapshot_node);
 }
 
 static struct bkey_s_c get_next_src(struct btree_iter *iter, struct bpos end)

@@ -374,7 +374,6 @@ static int bch2_write_index_default(struct bch_write_op *op)
 	struct bkey_buf sk;
 	struct keylist *keys = &op->insert_keys;
 	struct bkey_i *k = bch2_keylist_front(keys);
-	struct btree_iter iter;
 	subvol_inum inum = {
 		.subvol = op->subvol,
 		.inum	= k->k.p.inode,
@@ -399,15 +398,14 @@ static int bch2_write_index_default(struct bch_write_op *op)
 		if (ret)
 			break;
 
-		bch2_trans_iter_init(trans, &iter, BTREE_ID_extents,
-				     bkey_start_pos(&sk.k->k),
-				     BTREE_ITER_slots|BTREE_ITER_intent);
+		CLASS(btree_iter, iter)(trans, BTREE_ID_extents,
+					bkey_start_pos(&sk.k->k),
+					BTREE_ITER_slots|BTREE_ITER_intent);
 
 		ret =   bch2_extent_update(trans, inum, &iter, sk.k,
 					&op->res,
 					op->new_i_size, &op->i_sectors_delta,
 					op->flags & BCH_WRITE_check_enospc);
-		bch2_trans_iter_exit(&iter);
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;

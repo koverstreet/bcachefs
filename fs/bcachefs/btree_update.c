@@ -268,18 +268,16 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 				    struct bkey_i *insert,
 				    enum btree_iter_update_trigger_flags flags)
 {
-	struct btree_iter iter;
-	struct bkey_s_c k;
 	enum btree_id btree_id = orig_iter->btree_id;
-	int ret = 0;
 
-	bch2_trans_iter_init(trans, &iter, btree_id, bkey_start_pos(&insert->k),
-			     BTREE_ITER_intent|
-			     BTREE_ITER_with_updates|
-			     BTREE_ITER_not_extents);
-	k = bch2_btree_iter_peek_max(&iter, POS(insert->k.p.inode, U64_MAX));
-	if ((ret = bkey_err(k)))
-		goto err;
+	CLASS(btree_iter, iter)(trans, btree_id, bkey_start_pos(&insert->k),
+				BTREE_ITER_intent|
+				BTREE_ITER_with_updates|
+				BTREE_ITER_not_extents);
+	struct bkey_s_c k = bch2_btree_iter_peek_max(&iter, POS(insert->k.p.inode, U64_MAX));
+	int ret = bkey_err(k);
+	if (ret)
+		return ret;
 	if (!k.k)
 		goto out;
 
@@ -287,7 +285,7 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 		if (bch2_bkey_maybe_mergable(k.k, &insert->k)) {
 			ret = extent_front_merge(trans, &iter, k, &insert, flags);
 			if (ret)
-				goto err;
+				return ret;
 		}
 
 		goto next;
@@ -298,7 +296,7 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 
 		ret = bch2_trans_update_extent_overwrite(trans, &iter, flags, k, bkey_i_to_s_c(insert));
 		if (ret)
-			goto err;
+			return ret;
 
 		if (done)
 			goto out;
@@ -306,7 +304,7 @@ next:
 		bch2_btree_iter_advance(&iter);
 		k = bch2_btree_iter_peek_max(&iter, POS(insert->k.p.inode, U64_MAX));
 		if ((ret = bkey_err(k)))
-			goto err;
+			return ret;
 		if (!k.k)
 			goto out;
 	}
@@ -314,15 +312,12 @@ next:
 	if (bch2_bkey_maybe_mergable(&insert->k, k.k)) {
 		ret = extent_back_merge(trans, &iter, insert, k);
 		if (ret)
-			goto err;
+			return ret;
 	}
 out:
-	if (!bkey_deleted(&insert->k))
-		ret = bch2_btree_insert_nonextent(trans, btree_id, insert, flags);
-err:
-	bch2_trans_iter_exit(&iter);
-
-	return ret;
+	return !bkey_deleted(&insert->k)
+		? bch2_btree_insert_nonextent(trans, btree_id, insert, flags)
+		: 0;
 }
 
 static inline struct btree_insert_entry *
@@ -629,29 +624,21 @@ int bch2_btree_insert_nonextent(struct btree_trans *trans,
 				enum btree_id btree, struct bkey_i *k,
 				enum btree_iter_update_trigger_flags flags)
 {
-	struct btree_iter iter;
-	int ret;
-
-	bch2_trans_iter_init(trans, &iter, btree, k->k.p,
-			     BTREE_ITER_cached|
-			     BTREE_ITER_not_extents|
-			     BTREE_ITER_intent);
-	ret   = bch2_btree_iter_traverse(&iter) ?:
+	CLASS(btree_iter, iter)(trans, btree, k->k.p,
+				BTREE_ITER_cached|
+				BTREE_ITER_not_extents|
+				BTREE_ITER_intent);
+	return  bch2_btree_iter_traverse(&iter) ?:
 		bch2_trans_update(trans, &iter, k, flags);
-	bch2_trans_iter_exit(&iter);
-	return ret;
 }
 
-int bch2_btree_insert_trans(struct btree_trans *trans, enum btree_id id,
+int bch2_btree_insert_trans(struct btree_trans *trans, enum btree_id btree,
 			    struct bkey_i *k, enum btree_iter_update_trigger_flags flags)
 {
-	struct btree_iter iter;
-	bch2_trans_iter_init(trans, &iter, id, bkey_start_pos(&k->k),
-			     BTREE_ITER_intent|flags);
-	int ret = bch2_btree_iter_traverse(&iter) ?:
-		  bch2_trans_update(trans, &iter, k, flags);
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	CLASS(btree_iter, iter)(trans, btree, bkey_start_pos(&k->k),
+				BTREE_ITER_intent|flags);
+	return  bch2_btree_iter_traverse(&iter) ?:
+		bch2_trans_update(trans, &iter, k, flags);
 }
 
 /**
@@ -693,30 +680,24 @@ int bch2_btree_delete(struct btree_trans *trans,
 		      enum btree_id btree, struct bpos pos,
 		      enum btree_iter_update_trigger_flags flags)
 {
-	struct btree_iter iter;
-	int ret;
-
-	bch2_trans_iter_init(trans, &iter, btree, pos,
-			     BTREE_ITER_cached|
-			     BTREE_ITER_intent);
-	ret   = bch2_btree_iter_traverse(&iter) ?:
+	CLASS(btree_iter, iter)(trans, btree, pos,
+				BTREE_ITER_cached|
+				BTREE_ITER_intent);
+	return  bch2_btree_iter_traverse(&iter) ?:
 		bch2_btree_delete_at(trans, &iter, flags);
-	bch2_trans_iter_exit(&iter);
-
-	return ret;
 }
 
-int bch2_btree_delete_range_trans(struct btree_trans *trans, enum btree_id id,
+int bch2_btree_delete_range_trans(struct btree_trans *trans, enum btree_id btree,
 				  struct bpos start, struct bpos end,
 				  enum btree_iter_update_trigger_flags flags,
 				  u64 *journal_seq)
 {
 	u32 restart_count = trans->restart_count;
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret = 0;
 
-	bch2_trans_iter_init(trans, &iter, id, start, BTREE_ITER_intent|flags);
+	CLASS(btree_iter, iter)(trans, btree, start, BTREE_ITER_intent|flags);
+
 	while ((k = bch2_btree_iter_peek_max(&iter, end)).k) {
 		struct disk_reservation disk_res =
 			bch2_disk_reservation_init(trans->c, 0);
@@ -767,7 +748,6 @@ err:
 		if (ret)
 			break;
 	}
-	bch2_trans_iter_exit(&iter);
 
 	return ret ?: trans_was_restarted(trans, restart_count);
 }
@@ -808,13 +788,10 @@ int bch2_btree_bit_mod_iter(struct btree_trans *trans, struct btree_iter *iter, 
 int bch2_btree_bit_mod(struct btree_trans *trans, enum btree_id btree,
 		       struct bpos pos, bool set)
 {
-	struct btree_iter iter;
-	bch2_trans_iter_init(trans, &iter, btree, pos, BTREE_ITER_intent);
+	CLASS(btree_iter, iter)(trans, btree, pos, BTREE_ITER_intent);
 
-	int ret = bch2_btree_iter_traverse(&iter) ?:
-		  bch2_btree_bit_mod_iter(trans, &iter, set);
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return  bch2_btree_iter_traverse(&iter) ?:
+		bch2_btree_bit_mod_iter(trans, &iter, set);
 }
 
 int bch2_btree_bit_mod_buffered(struct btree_trans *trans, enum btree_id btree,

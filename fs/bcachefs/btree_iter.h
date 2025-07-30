@@ -535,7 +535,8 @@ static inline void bch2_trans_iter_init_common(struct btree_trans *trans,
 
 void bch2_trans_iter_init_outlined(struct btree_trans *, struct btree_iter *,
 			  enum btree_id, struct bpos,
-			  enum btree_iter_update_trigger_flags);
+			  enum btree_iter_update_trigger_flags,
+			  unsigned long ip);
 
 static inline void bch2_trans_iter_init(struct btree_trans *trans,
 			  struct btree_iter *iter,
@@ -546,10 +547,24 @@ static inline void bch2_trans_iter_init(struct btree_trans *trans,
 	    __builtin_constant_p(flags))
 		bch2_trans_iter_init_common(trans, iter, btree, pos, 0, 0,
 				bch2_btree_iter_flags(trans, btree, 0, flags),
-				_THIS_IP_);
+				_RET_IP_);
 	else
-		bch2_trans_iter_init_outlined(trans, iter, btree, pos, flags);
+		bch2_trans_iter_init_outlined(trans, iter, btree, pos, flags, _RET_IP_);
 }
+
+#define bch2_trans_iter_class_init(_trans, _btree, _pos, _flags)		\
+({										\
+	struct btree_iter iter;							\
+	bch2_trans_iter_init(_trans, &iter, (_btree), (_pos), (_flags));	\
+	iter;									\
+})
+
+DEFINE_CLASS(btree_iter, struct btree_iter,
+	     bch2_trans_iter_exit(&_T),
+	     bch2_trans_iter_class_init(trans, btree, pos, flags),
+	     struct btree_trans *trans,
+	     enum btree_id btree, struct bpos pos,
+	     enum btree_iter_update_trigger_flags flags);
 
 void bch2_trans_node_iter_init(struct btree_trans *, struct btree_iter *,
 			       enum btree_id, struct bpos,
@@ -806,7 +821,7 @@ transaction_restart:							\
 	if (!_ret2)							\
 		bch2_trans_verify_not_restarted(_trans, _restart_count);\
 									\
-	_ret2 ?: trans_was_restarted(_trans, _orig_restart_count);		\
+	_ret2 ?: trans_was_restarted(_trans, _orig_restart_count);	\
 })
 
 #define for_each_btree_key_max_continue(_trans, _iter,			\
@@ -832,48 +847,37 @@ transaction_restart:							\
 #define for_each_btree_key_continue(_trans, _iter, _flags, _k, _do)	\
 	for_each_btree_key_max_continue(_trans, _iter, SPOS_MAX, _flags, _k, _do)
 
-#define for_each_btree_key_max(_trans, _iter, _btree_id,		\
-				_start, _end, _flags, _k, _do)		\
-({									\
-	bch2_trans_begin(trans);					\
-									\
-	struct btree_iter _iter;					\
-	bch2_trans_iter_init((_trans), &(_iter), (_btree_id),		\
-			     (_start), (_flags));			\
-									\
-	int _ret = for_each_btree_key_max_continue(_trans, _iter, _end, _flags, _k, _do);\
-	bch2_trans_iter_exit(&(_iter));					\
-	_ret;								\
+#define for_each_btree_key_max(_trans, _iter, _btree_id,			\
+				_start, _end, _flags, _k, _do)			\
+({										\
+	bch2_trans_begin(trans);						\
+										\
+	CLASS(btree_iter, _iter)((_trans), (_btree_id), (_start), (_flags));	\
+	for_each_btree_key_max_continue(_trans, _iter, _end, _flags, _k, _do);	\
 })
 
-#define for_each_btree_key(_trans, _iter, _btree_id,			\
-			   _start, _flags, _k, _do)			\
-	for_each_btree_key_max(_trans, _iter, _btree_id, _start,	\
-				 SPOS_MAX, _flags, _k, _do)
+#define for_each_btree_key(_trans, _iter, _btree_id, _start, _flags, _k, _do)	\
+	for_each_btree_key_max(_trans, _iter, _btree_id, _start, SPOS_MAX, _flags, _k, _do)
 
-#define for_each_btree_key_reverse(_trans, _iter, _btree_id,		\
-				   _start, _flags, _k, _do)		\
-({									\
-	struct btree_iter _iter;					\
-	struct bkey_s_c _k;						\
-	int _ret3 = 0;							\
-									\
-	bch2_trans_iter_init((_trans), &(_iter), (_btree_id),		\
-			     (_start), (_flags));			\
-									\
-	do {								\
-		_ret3 = lockrestart_do(_trans, ({			\
-			(_k) = bch2_btree_iter_peek_prev_type(&(_iter),	\
-							(_flags));	\
-			if (!(_k).k)					\
-				break;					\
-									\
-			bkey_err(_k) ?: (_do);				\
-		}));							\
-	} while (!_ret3 && bch2_btree_iter_rewind(&(_iter)));		\
-									\
-	bch2_trans_iter_exit(&(_iter));					\
-	_ret3;								\
+#define for_each_btree_key_reverse(_trans, _iter, _btree_id,			\
+				   _start, _flags, _k, _do)			\
+({										\
+	int _ret3 = 0;								\
+										\
+	CLASS(btree_iter, iter)((_trans), (_btree_id), (_start), (_flags));	\
+										\
+	do {									\
+		_ret3 = lockrestart_do(_trans, ({				\
+			struct bkey_s_c _k =					\
+				bch2_btree_iter_peek_prev_type(&(_iter), (_flags));\
+			if (!(_k).k)						\
+				break;						\
+										\
+			bkey_err(_k) ?: (_do);					\
+		}));								\
+	} while (!_ret3 && bch2_btree_iter_rewind(&(_iter)));			\
+										\
+	_ret3;									\
 })
 
 #define for_each_btree_key_commit(_trans, _iter, _btree_id,		\

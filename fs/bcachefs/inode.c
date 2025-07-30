@@ -1080,7 +1080,6 @@ found_slot:
 static int bch2_inode_delete_keys(struct btree_trans *trans,
 				  subvol_inum inum, enum btree_id id)
 {
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bkey_i delete;
 	struct bpos end = POS(inum.inum, U64_MAX);
@@ -1091,8 +1090,7 @@ static int bch2_inode_delete_keys(struct btree_trans *trans,
 	 * We're never going to be deleting partial extents, no need to use an
 	 * extent iterator:
 	 */
-	bch2_trans_iter_init(trans, &iter, id, POS(inum.inum, 0),
-			     BTREE_ITER_intent);
+	CLASS(btree_iter, iter)(trans, id, POS(inum.inum, 0), BTREE_ITER_intent);
 
 	while (1) {
 		bch2_trans_begin(trans);
@@ -1127,7 +1125,6 @@ err:
 			break;
 	}
 
-	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

@@ -203,19 +203,14 @@ static int
 btree_write_buffered_insert(struct btree_trans *trans,
 			  struct btree_write_buffered_key *wb)
 {
-	struct btree_iter iter;
-	int ret;
-
-	bch2_trans_iter_init(trans, &iter, wb->btree, bkey_start_pos(&wb->k.k),
-			     BTREE_ITER_cached|BTREE_ITER_intent);
+	CLASS(btree_iter, iter)(trans, wb->btree, bkey_start_pos(&wb->k.k),
+				BTREE_ITER_cached|BTREE_ITER_intent);
 
 	trans->journal_res.seq = wb->journal_seq;
 
-	ret   = bch2_btree_iter_traverse(&iter) ?:
+	return  bch2_btree_iter_traverse(&iter) ?:
 		bch2_trans_update(trans, &iter, &wb->k,
 				  BTREE_UPDATE_internal_snapshot_node);
-	bch2_trans_iter_exit(&iter);
-	return ret;
 }
 
 static void move_keys_from_inc_to_flushing(struct btree_write_buffer *wb)

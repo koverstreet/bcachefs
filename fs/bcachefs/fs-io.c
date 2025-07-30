@@ -626,15 +626,14 @@ static noinline int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 			     u64 start_sector, u64 end_sector)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	CLASS(btree_trans, trans)(c);
-	struct btree_iter iter;
 	struct bpos end_pos = POS(inode->v.i_ino, end_sector);
 	struct bch_io_opts opts;
 	int ret = 0;
 
 	bch2_inode_opts_get(&opts, c, &inode->ei_inode);
 
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_extents,
+	CLASS(btree_trans, trans)(c);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_extents,
 			POS(inode->v.i_ino, start_sector),
 			BTREE_ITER_slots|BTREE_ITER_intent);
 
@@ -747,7 +746,6 @@ bkey_err:
 		bch2_quota_reservation_put(c, inode, &quota_res);
 	}
 
-	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

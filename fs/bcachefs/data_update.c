@@ -258,11 +258,10 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 					   struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
-	struct btree_iter iter;
 	struct data_update *m = container_of(op, struct data_update, op);
 	int ret = 0;
 
-	bch2_trans_iter_init(trans, &iter, m->btree_id,
+	CLASS(btree_iter, iter)(trans, m->btree_id,
 			     bkey_start_pos(&bch2_keylist_front(&op->insert_keys)->k),
 			     BTREE_ITER_slots|BTREE_ITER_intent);
 
@@ -487,7 +486,6 @@ nowork:
 		goto next;
 	}
 out:
-	bch2_trans_iter_exit(&iter);
 	BUG_ON(bch2_err_matches(ret, BCH_ERR_transaction_restart));
 	return ret;
 }
