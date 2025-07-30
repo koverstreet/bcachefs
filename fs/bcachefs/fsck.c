@@ -137,7 +137,6 @@ static int lookup_dirent_in_snapshot(struct btree_trans *trans,
 static int find_snapshot_tree_subvol(struct btree_trans *trans,
 				     u32 tree_id, u32 *subvol)
 {
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret;
 
@@ -151,13 +150,11 @@ static int find_snapshot_tree_subvol(struct btree_trans *trans,
 
 		if (s.v->subvol) {
 			*subvol = le32_to_cpu(s.v->subvol);
-			goto found;
+			return 0;
 		}
 	}
-	ret = bch_err_throw(trans->c, ENOENT_no_snapshot_tree_subvol);
-found:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+
+	return ret ?: bch_err_throw(trans->c, ENOENT_no_snapshot_tree_subvol);
 }
 
 /* Get lost+found, create if it doesn't exist: */
@@ -454,7 +451,6 @@ static int reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *
 	 */
 	if (!inode->bi_subvol && bch2_snapshot_is_leaf(c, inode->bi_snapshot) <= 0) {
 		CLASS(snapshot_id_list, whiteouts_done)();
-		struct btree_iter iter;
 		struct bkey_s_c k;
 
 		darray_init(&whiteouts_done);
@@ -473,19 +469,16 @@ static int reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *
 			struct bch_inode_unpacked child_inode;
 			ret = bch2_inode_unpack(k, &child_inode);
 			if (ret)
-				break;
+				return ret;
 
 			if (!inode_should_reattach(&child_inode)) {
-				ret = maybe_delete_dirent(trans,
-							  SPOS(lostfound.bi_inum, inode->bi_dir_offset,
-							       dirent_snapshot),
-							  k.k->p.snapshot);
+				ret =   maybe_delete_dirent(trans,
+							    SPOS(lostfound.bi_inum, inode->bi_dir_offset,
+								 dirent_snapshot),
+							    k.k->p.snapshot) ?:
+					snapshot_list_add(c, &whiteouts_done, k.k->p.snapshot);
 				if (ret)
-					break;
-
-				ret = snapshot_list_add(c, &whiteouts_done, k.k->p.snapshot);
-				if (ret)
-					break;
+					return ret;
 			} else {
 				iter.snapshot = k.k->p.snapshot;
 				child_inode.bi_dir = inode->bi_dir;
@@ -494,10 +487,9 @@ static int reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *
 				ret = bch2_inode_write_flags(trans, &iter, &child_inode,
 							     BTREE_UPDATE_internal_snapshot_node);
 				if (ret)
-					break;
+					return ret;
 			}
 		}
-		bch2_trans_iter_exit(&iter);
 	}
 
 	return ret;
@@ -843,7 +835,6 @@ static int get_inodes_all_snapshots(struct btree_trans *trans,
 				    struct inode_walker *w, u64 inum)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret;
 
@@ -863,7 +854,6 @@ static int get_inodes_all_snapshots(struct btree_trans *trans,
 		if (ret)
 			break;
 	}
-	bch2_trans_iter_exit(&iter);
 
 	if (ret)
 		return ret;
@@ -879,7 +869,6 @@ static int get_visible_inodes(struct btree_trans *trans,
 			      u64 inum)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret;
 
@@ -903,7 +892,6 @@ static int get_visible_inodes(struct btree_trans *trans,
 		if (ret)
 			break;
 	}
-	bch2_trans_iter_exit(&iter);
 
 	return ret;
 }
@@ -1342,7 +1330,6 @@ static int find_oldest_inode_needs_reattach(struct btree_trans *trans,
 					    struct bch_inode_unpacked *inode)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret = 0;
 
@@ -1374,7 +1361,6 @@ static int find_oldest_inode_needs_reattach(struct btree_trans *trans,
 
 		*inode = parent_inode;
 	}
-	bch2_trans_iter_exit(&iter);
 
 	return ret;
 }
@@ -1457,13 +1443,12 @@ static int check_key_has_inode(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
-	struct btree_iter iter2 = {};
 	int ret = PTR_ERR_OR_ZERO(i);
 	if (ret)
 		return ret;
 
 	if (k.k->type == KEY_TYPE_whiteout)
-		goto out;
+		return 0;
 
 	bool have_inode = i && !i->whiteout;
 
@@ -1471,7 +1456,7 @@ static int check_key_has_inode(struct btree_trans *trans,
 		goto reconstruct;
 
 	if (have_inode && btree_matches_i_mode(iter->btree_id, i->inode.bi_mode))
-		goto out;
+		return 0;
 
 	prt_printf(&buf, ", ");
 
@@ -1551,7 +1536,6 @@ static int check_key_has_inode(struct btree_trans *trans,
 out:
 err:
 fsck_err:
-	bch2_trans_iter_exit(&iter2);
 	bch_err_fn(c, ret);
 	return ret;
 delete:
@@ -1577,7 +1561,6 @@ static int maybe_reconstruct_inum_btree(struct btree_trans *trans,
 					u64 inum, u32 snapshot,
 					enum btree_id btree)
 {
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret = 0;
 
@@ -1588,7 +1571,6 @@ static int maybe_reconstruct_inum_btree(struct btree_trans *trans,
 		ret = 1;
 		break;
 	}
-	bch2_trans_iter_exit(&iter);
 
 	if (ret <= 0)
 		return ret;
@@ -2120,7 +2102,6 @@ static int check_subdir_dirents_count(struct btree_trans *trans, struct inode_wa
 /* find a subvolume that's a descendent of @snapshot: */
 static int find_snapshot_subvol(struct btree_trans *trans, u32 snapshot, u32 *subvolid)
 {
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret;
 
@@ -2132,14 +2113,11 @@ static int find_snapshot_subvol(struct btree_trans *trans, u32 snapshot, u32 *su
 		if (bch2_snapshot_is_ancestor(trans->c, le32_to_cpu(s.v->snapshot), snapshot)) {
 			bch2_trans_iter_exit(&iter);
 			*subvolid = k.k->p.offset;
-			goto found;
+			return 0;
 		}
 	}
-	if (!ret)
-		ret = -ENOENT;
-found:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+
+	return ret ?: -ENOENT;
 }
 
 noinline_for_stack
