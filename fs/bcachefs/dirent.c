@@ -633,7 +633,6 @@ u64 bch2_dirent_lookup(struct bch_fs *c, subvol_inum dir,
 
 int bch2_empty_dir_snapshot(struct btree_trans *trans, u64 dir, u32 subvol, u32 snapshot)
 {
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret;
 
@@ -647,7 +646,6 @@ int bch2_empty_dir_snapshot(struct btree_trans *trans, u64 dir, u32 subvol, u32 
 			ret = bch_err_throw(trans->c, ENOTEMPTY_dir_not_empty);
 			break;
 		}
-	bch2_trans_iter_exit(&iter);
 
 	return ret;
 }
@@ -721,7 +719,6 @@ int bch2_readdir(struct bch_fs *c, subvol_inum inum,
 static int lookup_first_inode(struct btree_trans *trans, u64 inode_nr,
 			      struct bch_inode_unpacked *inode)
 {
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret;
 
@@ -737,7 +734,6 @@ static int lookup_first_inode(struct btree_trans *trans, u64 inode_nr,
 	ret = bch_err_throw(trans->c, ENOENT_inode);
 found:
 	bch_err_msg(trans->c, ret, "fetching inode %llu", inode_nr);
-	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
