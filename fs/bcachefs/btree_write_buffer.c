@@ -214,7 +214,7 @@ btree_write_buffered_insert(struct btree_trans *trans,
 	ret   = bch2_btree_iter_traverse(&iter) ?:
 		bch2_trans_update(trans, &iter, &wb->k,
 				  BTREE_UPDATE_internal_snapshot_node);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -378,7 +378,7 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 		}
 
 		if (!iter.path || iter.btree_id != k->btree) {
-			bch2_trans_iter_exit(trans, &iter);
+			bch2_trans_iter_exit(&iter);
 			bch2_trans_iter_init(trans, &iter, k->btree, k->k.k.p,
 					     BTREE_ITER_intent|BTREE_ITER_all_snapshots);
 		}
@@ -412,7 +412,7 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 		struct btree_path *path = btree_iter_path(trans, &iter);
 		bch2_btree_node_unlock_write(trans, path, path->l[0].b);
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	if (ret)
 		goto err;

@@ -90,7 +90,7 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 
 	ret = lru_idx && lru_idx <= time;
 out:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

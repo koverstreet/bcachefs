@@ -303,7 +303,7 @@ err:
 	if (!IS_ERR_OR_NULL(acl))
 		set_cached_acl(&inode->v, type, acl);
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return acl;
 }
 
@@ -379,7 +379,7 @@ retry:
 	ret =   bch2_inode_write(trans, &inode_iter, &inode_u) ?:
 		bch2_trans_commit(trans, NULL, NULL, 0);
 btree_err:
-	bch2_trans_iter_exit(trans, &inode_iter);
+	bch2_trans_iter_exit(&inode_iter);
 
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
@@ -431,7 +431,7 @@ int bch2_acl_chmod(struct btree_trans *trans, subvol_inum inum,
 	*new_acl = acl;
 	acl = NULL;
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	if (!IS_ERR_OR_NULL(acl))
 		kfree(acl);
 	return ret;

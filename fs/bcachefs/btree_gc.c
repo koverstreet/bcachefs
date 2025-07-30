@@ -731,7 +731,7 @@ retry_root:
 			goto err_root;
 
 		if (b != btree_node_root(c, b)) {
-			bch2_trans_iter_exit(trans, &iter);
+			bch2_trans_iter_exit(&iter);
 			goto retry_root;
 		}
 
@@ -739,7 +739,7 @@ retry_root:
 		struct bkey_s_c k = bkey_i_to_s_c(&b->key);
 		ret = bch2_gc_mark_key(trans, btree, b->c.level + 1, NULL, NULL, k, initial);
 err_root:
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 	} while (bch2_err_matches(ret, BCH_ERR_transaction_restart));
 err:
 	bch_err_fn(c, ret);

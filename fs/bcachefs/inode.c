@@ -364,7 +364,7 @@ int __bch2_inode_peek(struct btree_trans *trans,
 err:
 	if (warn)
 		bch_err_msg(trans->c, ret, "looking up inum %llu:%llu:", inum.subvol, inum.inum);
-	bch2_trans_iter_exit(trans, iter);
+	bch2_trans_iter_exit(iter);
 	return ret;
 }
 
@@ -384,7 +384,7 @@ int bch2_inode_find_by_inum_snapshot(struct btree_trans *trans,
 		? bch2_inode_unpack(k, inode)
 		: -BCH_ERR_ENOENT_inode;
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -397,7 +397,7 @@ int bch2_inode_find_by_inum_nowarn_trans(struct btree_trans *trans,
 
 	ret = bch2_inode_peek_nowarn(trans, &iter, inode, inum, 0);
 	if (!ret)
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -410,7 +410,7 @@ int bch2_inode_find_by_inum_trans(struct btree_trans *trans,
 
 	ret = bch2_inode_peek(trans, &iter, inode, inum, 0);
 	if (!ret)
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -441,7 +441,7 @@ int bch2_inode_find_snapshot_root(struct btree_trans *trans, u64 inum,
 	/* We're only called when we know we have an inode for @inum */
 	BUG_ON(!ret);
 out:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -703,7 +703,7 @@ bch2_bkey_get_iter_snapshot_parent(struct btree_trans *trans, struct btree_iter 
 		if (bch2_snapshot_is_ancestor(c, pos.snapshot, k.k->p.snapshot))
 			return k;
 
-	bch2_trans_iter_exit(trans, iter);
+	bch2_trans_iter_exit(iter);
 	return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
 }
 
@@ -719,7 +719,7 @@ again:
 	    bkey_is_inode(k.k))
 		return k;
 
-	bch2_trans_iter_exit(trans, iter);
+	bch2_trans_iter_exit(iter);
 	pos = k.k->p;
 	goto again;
 }
@@ -740,7 +740,7 @@ int __bch2_inode_has_child_snapshots(struct btree_trans *trans, struct bpos pos)
 			ret = 1;
 			break;
 		}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -792,7 +792,7 @@ static int update_parent_inode_has_children(struct btree_trans *trans, struct bp
 		bkey_inode_flags_set(bkey_i_to_s(update), f ^ BCH_INODE_has_child_snapshot);
 	}
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -998,7 +998,7 @@ bch2_inode_alloc_cursor_get(struct btree_trans *trans, u64 cpu, u64 *min, u64 *m
 		le32_add_cpu(&cursor->v.gen, 1);
 	}
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret ? ERR_PTR(ret) : cursor;
 }
 
@@ -1053,7 +1053,7 @@ again:
 		ret = bch_err_throw(trans->c, ENOSPC_inode_create);
 
 	if (ret) {
-		bch2_trans_iter_exit(trans, iter);
+		bch2_trans_iter_exit(iter);
 		return ret;
 	}
 
@@ -1067,7 +1067,7 @@ found_slot:
 	k = bch2_btree_iter_peek_slot(iter);
 	ret = bkey_err(k);
 	if (ret) {
-		bch2_trans_iter_exit(trans, iter);
+		bch2_trans_iter_exit(iter);
 		return ret;
 	}
 
@@ -1127,7 +1127,7 @@ err:
 			break;
 	}
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1184,7 +1184,7 @@ retry:
 		bch2_trans_commit(trans, NULL, NULL,
 				BCH_TRANS_COMMIT_no_enospc);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 
@@ -1358,7 +1358,7 @@ retry:
 		bch2_trans_commit(trans, NULL, NULL,
 				BCH_TRANS_COMMIT_no_enospc);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 
@@ -1383,7 +1383,7 @@ next_parent:
 
 	bool unlinked = bkey_is_unlinked_inode(k);
 	pos = k.k->p;
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	if (!unlinked)
 		return 0;
@@ -1503,7 +1503,7 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 	}
 out:
 fsck_err:
-	bch2_trans_iter_exit(trans, &inode_iter);
+	bch2_trans_iter_exit(&inode_iter);
 	return ret;
 delete:
 	ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_deleted_inodes, pos, false);

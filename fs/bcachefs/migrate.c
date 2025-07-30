@@ -111,7 +111,7 @@ static int bch2_dev_btree_drop_key(struct btree_trans *trans,
 
 	ret = drop_btree_ptrs(trans, &iter, b, dev_idx, flags);
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -184,7 +184,7 @@ next:
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			goto retry;
 
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 
 		if (ret)
 			goto err;
@@ -228,7 +228,7 @@ static int data_drop_bp(struct btree_trans *trans, unsigned dev_idx,
 	else
 		ret = bch2_dev_usrdata_drop_key(trans, &iter, k, dev_idx, flags);
 out:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

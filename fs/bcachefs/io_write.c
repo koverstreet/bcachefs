@@ -198,7 +198,7 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 			break;
 	}
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -295,7 +295,7 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 				BTREE_UPDATE_internal_snapshot_node|
 				inode_update_flags);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -407,7 +407,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 					&op->res,
 					op->new_i_size, &op->i_sectors_delta,
 					op->flags & BCH_WRITE_check_enospc);
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
@@ -1433,7 +1433,7 @@ retry:
 		bch2_btree_iter_advance(&iter);
 	}
 out:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 err:
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;

@@ -487,7 +487,7 @@ bch2_trans_start_alloc_update_noupdate(struct btree_trans *trans, struct btree_i
 		goto err;
 	return a;
 err:
-	bch2_trans_iter_exit(trans, iter);
+	bch2_trans_iter_exit(iter);
 	return ERR_PTR(ret);
 }
 
@@ -506,18 +506,18 @@ struct bkey_i_alloc_v4 *bch2_trans_start_alloc_update(struct btree_trans *trans,
 
 	if ((void *) k.v >= trans->mem &&
 	    (void *) k.v <  trans->mem + trans->mem_top) {
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 		return container_of(bkey_s_c_to_alloc_v4(k).v, struct bkey_i_alloc_v4, v);
 	}
 
 	struct bkey_i_alloc_v4 *a = bch2_alloc_to_v4_mut_inlined(trans, k);
 	if (IS_ERR(a)) {
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 		return a;
 	}
 
 	ret = bch2_trans_update_ip(trans, &iter, &a->k_i, flags, _RET_IP_);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return unlikely(ret) ? ERR_PTR(ret) : a;
 }
 
@@ -757,7 +757,7 @@ static int bch2_bucket_do_index(struct btree_trans *trans,
 
 	ret = bch2_btree_bit_mod_iter(trans, &iter, set);
 fsck_err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -793,7 +793,7 @@ static noinline int bch2_bucket_gen_update(struct btree_trans *trans,
 	g->v.gens[offset] = gen;
 
 	ret = bch2_trans_update(trans, &iter, &g->k_i, 0);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1071,7 +1071,7 @@ static struct bkey_s_c bch2_get_key_or_hole(struct btree_iter *iter, struct bpos
 		 */
 		k = bch2_btree_iter_peek_max(&iter2, end);
 		next = iter2.pos;
-		bch2_trans_iter_exit(iter->trans, &iter2);
+		bch2_trans_iter_exit(&iter2);
 
 		BUG_ON(next.offset >= iter->pos.offset + U32_MAX);
 
@@ -1363,7 +1363,7 @@ static int bch2_recheck_discard_freespace_key(struct btree_trans *trans, struct 
 	ret = k.k->type != KEY_TYPE_set
 		? __bch2_check_discard_freespace_key(trans, &iter, &gen, FSCK_ERR_SILENT)
 		: 0;
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1435,7 +1435,7 @@ int __bch2_check_discard_freespace_key(struct btree_trans *trans, struct btree_i
 out:
 fsck_err:
 	bch2_set_btree_iter_dontneed(&alloc_iter);
-	bch2_trans_iter_exit(trans, &alloc_iter);
+	bch2_trans_iter_exit(&alloc_iter);
 	return ret;
 delete:
 	if (!async_repair) {
@@ -1617,10 +1617,10 @@ bkey_err:
 		if (ret)
 			break;
 	}
-	bch2_trans_iter_exit(trans, &bucket_gens_iter);
-	bch2_trans_iter_exit(trans, &freespace_iter);
-	bch2_trans_iter_exit(trans, &discard_iter);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&bucket_gens_iter);
+	bch2_trans_iter_exit(&freespace_iter);
+	bch2_trans_iter_exit(&discard_iter);
+	bch2_trans_iter_exit(&iter);
 	bch2_dev_put(ca);
 	ca = NULL;
 
@@ -1657,7 +1657,7 @@ bkey_err:
 
 		bch2_btree_iter_set_pos(&iter, bpos_nosnap_successor(iter.pos));
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	if (ret)
 		return ret;
 
@@ -1890,7 +1890,7 @@ fsck_err:
 		discard_in_flight_remove(ca, iter.pos.offset);
 	if (!ret)
 		s->seen++;
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1970,7 +1970,7 @@ static int bch2_do_discards_fast_one(struct btree_trans *trans,
 	ret = bch2_discard_one_bucket(trans, ca, &need_discard_iter, discard_pos_done, s, true);
 out:
 fsck_err:
-	bch2_trans_iter_exit(trans, &need_discard_iter);
+	bch2_trans_iter_exit(&need_discard_iter);
 	return ret;
 }
 
@@ -2063,7 +2063,7 @@ static int invalidate_one_bp(struct btree_trans *trans,
 
 	bch2_bkey_drop_device(bkey_i_to_s(n), ca->dev_idx);
 err:
-	bch2_trans_iter_exit(trans, &extent_iter);
+	bch2_trans_iter_exit(&extent_iter);
 	return ret;
 }
 
@@ -2164,7 +2164,7 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 	--*nr_to_invalidate;
 out:
 fsck_err:
-	bch2_trans_iter_exit(trans, &alloc_iter);
+	bch2_trans_iter_exit(&alloc_iter);
 	return ret;
 }
 
@@ -2227,7 +2227,7 @@ restart_err:
 
 		bch2_btree_iter_advance(&iter);
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 err:
 	bch2_bkey_buf_exit(&last_flushed, c);
 	enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_do_invalidates);
@@ -2341,7 +2341,7 @@ bkey_err:
 			break;
 	}
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	if (ret < 0) {
 		bch_err_msg(ca, ret, "initializing free space");
@@ -2445,7 +2445,7 @@ static int __bch2_bucket_io_time_reset(struct btree_trans *trans, unsigned dev,
 	ret   = bch2_trans_update(trans, &iter, &a->k_i, 0) ?:
 		bch2_trans_commit(trans, NULL, NULL, 0);
 out:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

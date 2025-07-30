@@ -112,7 +112,7 @@ int bch2_lru_check_set(struct btree_trans *trans,
 	}
 err:
 fsck_err:
-	bch2_trans_iter_exit(trans, &lru_iter);
+	bch2_trans_iter_exit(&lru_iter);
 	return ret;
 }
 
@@ -197,7 +197,7 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 	}
 err:
 fsck_err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

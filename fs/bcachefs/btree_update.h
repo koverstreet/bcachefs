@@ -382,7 +382,7 @@ static inline struct bkey_i *__bch2_bkey_get_mut_noupdate(struct btree_trans *tr
 		? ERR_CAST(k.k)
 		: __bch2_bkey_make_mut_noupdate(trans, k, 0, min_bytes);
 	if (IS_ERR(ret))
-		bch2_trans_iter_exit(trans, iter);
+		bch2_trans_iter_exit(iter);
 	return ret;
 }
 
@@ -409,7 +409,7 @@ static inline struct bkey_i *__bch2_bkey_get_mut(struct btree_trans *trans,
 
 	ret = bch2_trans_update(trans, iter, mut, flags);
 	if (ret) {
-		bch2_trans_iter_exit(trans, iter);
+		bch2_trans_iter_exit(iter);
 		return ERR_PTR(ret);
 	}
 
