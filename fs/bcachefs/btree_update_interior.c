@@ -2066,7 +2066,7 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 
 	sib_path = bch2_path_get(trans, btree, sib_pos,
 				 U8_MAX, level, BTREE_ITER_intent, _THIS_IP_);
-	ret = bch2_btree_path_traverse(trans, sib_path, false);
+	ret = bch2_btree_path_traverse(trans, sib_path, 0);
 	if (ret)
 		goto err;
 
