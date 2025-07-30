@@ -1279,13 +1279,13 @@ static int create_snapids(struct btree_trans *trans, u32 parent, u32 tree,
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_snapshots,
 			     POS_MIN, BTREE_ITER_intent);
-	k = bch2_btree_iter_peek(trans, &iter);
+	k = bch2_btree_iter_peek(&iter);
 	ret = bkey_err(k);
 	if (ret)
 		goto err;
 
 	for (i = 0; i < nr_snapids; i++) {
-		k = bch2_btree_iter_prev_slot(trans, &iter);
+		k = bch2_btree_iter_prev_slot(&iter);
 		ret = bkey_err(k);
 		if (ret)
 			goto err;
@@ -1517,7 +1517,7 @@ static bool skip_unrelated_snapshot_tree(struct btree_trans *trans, struct btree
 		pos.snapshot = 0;
 		if (iter->btree_id != BTREE_ID_inodes)
 			pos.offset = U64_MAX;
-		bch2_btree_iter_set_pos(trans, iter, bpos_nosnap_successor(pos));
+		bch2_btree_iter_set_pos(iter, bpos_nosnap_successor(pos));
 	}
 
 	return ret;
@@ -1595,7 +1595,7 @@ static int delete_dead_snapshot_keys_v2(struct btree_trans *trans)
 	while (1) {
 		struct bkey_s_c k;
 		ret = lockrestart_do(trans,
-				bkey_err(k = bch2_btree_iter_peek(trans, &iter)));
+				bkey_err(k = bch2_btree_iter_peek(&iter)));
 		if (ret)
 			break;
 
@@ -1618,9 +1618,9 @@ static int delete_dead_snapshot_keys_v2(struct btree_trans *trans)
 			if (ret)
 				break;
 
-			bch2_btree_iter_set_pos(trans, &iter, POS(0, k.k->p.offset + 1));
+			bch2_btree_iter_set_pos(&iter, POS(0, k.k->p.offset + 1));
 		} else {
-			bch2_btree_iter_advance(trans, &iter);
+			bch2_btree_iter_advance(&iter);
 		}
 	}
 	bch2_trans_iter_exit(trans, &iter);

@@ -2220,7 +2220,7 @@ static int get_iter_to_node(struct btree_trans *trans, struct btree_iter *iter,
 	bch2_trans_node_iter_init(trans, iter, b->c.btree_id, b->key.k.p,
 				  BTREE_MAX_DEPTH, b->c.level,
 				  BTREE_ITER_intent);
-	int ret = bch2_btree_iter_traverse(trans, iter);
+	int ret = bch2_btree_iter_traverse(iter);
 	if (ret)
 		goto err;
 
@@ -2315,7 +2315,7 @@ int bch2_btree_node_rewrite_key(struct btree_trans *trans,
 	bch2_trans_node_iter_init(trans, &iter,
 				  btree, k->k.p,
 				  BTREE_MAX_DEPTH, level, 0);
-	struct btree *b = bch2_btree_iter_peek_node(trans, &iter);
+	struct btree *b = bch2_btree_iter_peek_node(&iter);
 	int ret = PTR_ERR_OR_ZERO(b);
 	if (ret)
 		goto out;
@@ -2340,7 +2340,7 @@ int bch2_btree_node_rewrite_pos(struct btree_trans *trans,
 	/* Traverse one depth lower to get a pointer to the node itself: */
 	struct btree_iter iter;
 	bch2_trans_node_iter_init(trans, &iter, btree, pos, 0, level - 1, 0);
-	struct btree *b = bch2_btree_iter_peek_node(trans, &iter);
+	struct btree *b = bch2_btree_iter_peek_node(&iter);
 	int ret = PTR_ERR_OR_ZERO(b);
 	if (ret)
 		goto err;
@@ -2484,7 +2484,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 					bool skip_triggers)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter2 = {};
+	struct btree_iter iter2 = { NULL };
 	struct btree *parent;
 	int ret;
 
@@ -2508,7 +2508,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 
 	parent = btree_node_parent(btree_iter_path(trans, iter), b);
 	if (parent) {
-		bch2_trans_copy_iter(trans, &iter2, iter);
+		bch2_trans_copy_iter(&iter2, iter);
 
 		iter2.path = bch2_btree_path_make_mut(trans, iter2.path,
 				iter2.flags & BTREE_ITER_intent,
@@ -2522,7 +2522,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 
 		trans->paths_sorted = false;
 
-		ret   = bch2_btree_iter_traverse(trans, &iter2) ?:
+		ret   = bch2_btree_iter_traverse(&iter2) ?:
 			bch2_trans_update(trans, &iter2, new_key, BTREE_TRIGGER_norun);
 		if (ret)
 			goto err;

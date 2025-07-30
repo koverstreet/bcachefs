@@ -321,7 +321,7 @@ again:
 			bucket = sector_to_bucket(ca,
 					round_up(bucket_to_sector(ca, bucket) + 1,
 						 1ULL << ca->mi.btree_bitmap_shift));
-			bch2_btree_iter_set_pos(trans, &iter, POS(ca->dev_idx, bucket));
+			bch2_btree_iter_set_pos(&iter, POS(ca->dev_idx, bucket));
 			req->counters.buckets_seen++;
 			req->counters.skipped_mi_btree_bitmap++;
 			continue;
@@ -348,7 +348,7 @@ again:
 			? __try_alloc_bucket(c, req, k.k->p.offset, a->gen, cl)
 			: NULL;
 next:
-		bch2_set_btree_iter_dontneed(trans, &citer);
+		bch2_set_btree_iter_dontneed(&citer);
 		bch2_trans_iter_exit(trans, &citer);
 		if (ob)
 			break;
@@ -409,7 +409,7 @@ again:
 							 1ULL << ca->mi.btree_bitmap_shift));
 				alloc_cursor = bucket|(iter.pos.offset & (~0ULL << 56));
 
-				bch2_btree_iter_set_pos(trans, &iter, POS(ca->dev_idx, alloc_cursor));
+				bch2_btree_iter_set_pos(&iter, POS(ca->dev_idx, alloc_cursor));
 				req->counters.skipped_mi_btree_bitmap++;
 				goto next;
 			}
@@ -418,7 +418,7 @@ again:
 			if (ob) {
 				if (!IS_ERR(ob))
 					*dev_alloc_cursor = iter.pos.offset;
-				bch2_set_btree_iter_dontneed(trans, &iter);
+				bch2_set_btree_iter_dontneed(&iter);
 				break;
 			}
 

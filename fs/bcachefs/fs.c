@@ -1403,7 +1403,7 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 			     SPOS(inode->ei_inum.inum, start, snapshot), 0);
 
 	struct bkey_s_c k =
-		bch2_btree_iter_peek_max(trans, &iter, POS(inode->ei_inum.inum, end));
+		bch2_btree_iter_peek_max(&iter, POS(inode->ei_inum.inum, end));
 	ret = bkey_err(k);
 	if (ret)
 		goto err;
@@ -1993,17 +1993,17 @@ retry:
 	if (ret)
 		goto err;
 
-	bch2_btree_iter_set_snapshot(trans, &iter1, snapshot);
-	bch2_btree_iter_set_snapshot(trans, &iter2, snapshot);
+	bch2_btree_iter_set_snapshot(&iter1, snapshot);
+	bch2_btree_iter_set_snapshot(&iter2, snapshot);
 
 	ret = bch2_inode_find_by_inum_trans(trans, inode_inum(inode), &inode_u);
 	if (ret)
 		goto err;
 
 	if (inode_u.bi_dir == dir->ei_inode.bi_inum) {
-		bch2_btree_iter_set_pos(trans, &iter1, POS(inode_u.bi_dir, inode_u.bi_dir_offset));
+		bch2_btree_iter_set_pos(&iter1, POS(inode_u.bi_dir, inode_u.bi_dir_offset));
 
-		k = bch2_btree_iter_peek_slot(trans, &iter1);
+		k = bch2_btree_iter_peek_slot(&iter1);
 		ret = bkey_err(k);
 		if (ret)
 			goto err;
@@ -2027,7 +2027,7 @@ retry:
 		 * File with multiple hardlinks and our backref is to the wrong
 		 * directory - linear search:
 		 */
-		for_each_btree_key_continue_norestart(trans, iter2, 0, k, ret) {
+		for_each_btree_key_continue_norestart(iter2, 0, k, ret) {
 			if (k.k->p.inode > dir->ei_inode.bi_inum)
 				break;
 

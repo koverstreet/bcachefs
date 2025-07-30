@@ -239,7 +239,7 @@ int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, u64 inum)
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_rebalance_work,
 			     SPOS(inum, REBALANCE_WORK_SCAN_OFFSET, U32_MAX),
 			     BTREE_ITER_intent);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(trans, &iter);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 	int ret = bkey_err(k);
 	if (ret)
 		goto err;
@@ -283,7 +283,7 @@ static int bch2_clear_rebalance_needs_scan(struct btree_trans *trans, u64 inum, 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_rebalance_work,
 			     SPOS(inum, REBALANCE_WORK_SCAN_OFFSET, U32_MAX),
 			     BTREE_ITER_intent);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(trans, &iter);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 	int ret = bkey_err(k);
 	if (ret)
 		goto err;
@@ -303,7 +303,7 @@ static struct bkey_s_c next_rebalance_entry(struct btree_trans *trans,
 					    struct btree_iter *work_iter)
 {
 	return !kthread_should_stop()
-		? bch2_btree_iter_peek(trans, work_iter)
+		? bch2_btree_iter_peek(work_iter)
 		: bkey_s_c_null;
 }
 
@@ -337,7 +337,7 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 			     work_pos.inode ? BTREE_ID_extents : BTREE_ID_reflink,
 			     work_pos,
 			     BTREE_ITER_all_snapshots);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(trans, extent_iter);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(extent_iter);
 	if (bkey_err(k))
 		return k;
 
@@ -531,7 +531,7 @@ static int do_rebalance(struct moving_context *ctxt)
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	struct bch_fs_rebalance *r = &c->rebalance;
-	struct btree_iter rebalance_work_iter, extent_iter = {};
+	struct btree_iter rebalance_work_iter, extent_iter = { NULL };
 	struct bkey_s_c k;
 	u32 kick = r->kick;
 	int ret = 0;
@@ -573,7 +573,7 @@ static int do_rebalance(struct moving_context *ctxt)
 		if (ret)
 			break;
 
-		bch2_btree_iter_advance(trans, &rebalance_work_iter);
+		bch2_btree_iter_advance(&rebalance_work_iter);
 	}
 
 	bch2_trans_iter_exit(trans, &extent_iter);
@@ -770,8 +770,8 @@ static int check_rebalance_work_one(struct btree_trans *trans,
 	struct bkey_s_c extent_k, rebalance_k;
 	CLASS(printbuf, buf)();
 
-	int ret = bkey_err(extent_k	= bch2_btree_iter_peek(trans, extent_iter)) ?:
-		  bkey_err(rebalance_k	= bch2_btree_iter_peek(trans, rebalance_iter));
+	int ret = bkey_err(extent_k	= bch2_btree_iter_peek(extent_iter)) ?:
+		  bkey_err(rebalance_k	= bch2_btree_iter_peek(rebalance_iter));
 	if (ret)
 		return ret;
 
@@ -835,9 +835,9 @@ static int check_rebalance_work_one(struct btree_trans *trans,
 	}
 
 	if (cmp <= 0)
-		bch2_btree_iter_advance(trans, extent_iter);
+		bch2_btree_iter_advance(extent_iter);
 	if (cmp >= 0)
-		bch2_btree_iter_advance(trans, rebalance_iter);
+		bch2_btree_iter_advance(rebalance_iter);
 fsck_err:
 	return ret;
 }

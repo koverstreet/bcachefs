@@ -206,7 +206,7 @@ static int bch2_journal_replay_accounting_key(struct btree_trans *trans,
 	bch2_trans_node_iter_init(trans, &iter, k->btree_id, k->k->k.p,
 				  BTREE_MAX_DEPTH, k->level,
 				  BTREE_ITER_intent);
-	int ret = bch2_btree_iter_traverse(trans, &iter);
+	int ret = bch2_btree_iter_traverse(&iter);
 	if (ret)
 		goto out;
 
@@ -269,7 +269,7 @@ static int bch2_journal_replay_key(struct btree_trans *trans,
 	bch2_trans_node_iter_init(trans, &iter, k->btree_id, k->k->k.p,
 				  BTREE_MAX_DEPTH, k->level,
 				  iter_flags);
-	ret = bch2_btree_iter_traverse(trans, &iter);
+	ret = bch2_btree_iter_traverse(&iter);
 	if (ret)
 		goto out;
 
@@ -300,7 +300,7 @@ static int bch2_journal_replay_key(struct btree_trans *trans,
 		bch2_trans_iter_exit(trans, &iter);
 		bch2_trans_node_iter_init(trans, &iter, k->btree_id, k->k->k.p,
 					  BTREE_MAX_DEPTH, 0, iter_flags);
-		ret =   bch2_btree_iter_traverse(trans, &iter) ?:
+		ret =   bch2_btree_iter_traverse(&iter) ?:
 			bch2_btree_increase_depth(trans, iter.path, 0) ?:
 			-BCH_ERR_transaction_restart_nested;
 		goto out;
