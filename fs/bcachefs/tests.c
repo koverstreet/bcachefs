@@ -65,7 +65,7 @@ static int test_delete(struct bch_fs *c, u64 nr)
 	if (ret)
 		goto err;
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -99,7 +99,7 @@ static int test_delete_written(struct bch_fs *c, u64 nr)
 	if (ret)
 		goto err;
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -355,7 +355,7 @@ static int test_peek_end(struct bch_fs *c, u64 nr)
 	lockrestart_do(trans, bkey_err(k = bch2_btree_iter_peek_max(&iter, POS(0, U64_MAX))));
 	BUG_ON(k.k);
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return 0;
 }
 
@@ -376,7 +376,7 @@ static int test_peek_end_extents(struct bch_fs *c, u64 nr)
 	lockrestart_do(trans, bkey_err(k = bch2_btree_iter_peek_max(&iter, POS(0, U64_MAX))));
 	BUG_ON(k.k);
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return 0;
 }
 
@@ -488,7 +488,7 @@ static int test_snapshot_filter(struct bch_fs *c, u32 snapid_lo, u32 snapid_hi)
 
 	BUG_ON(k.k->p.snapshot != U32_MAX);
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -599,7 +599,7 @@ static int rand_lookup(struct bch_fs *c, u64 nr)
 			break;
 	}
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -646,7 +646,7 @@ static int rand_mixed(struct bch_fs *c, u64 nr)
 			break;
 	}
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -668,7 +668,7 @@ static int __do_delete(struct btree_trans *trans, struct bpos pos)
 
 	ret = bch2_btree_delete_at(trans, &iter, 0);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

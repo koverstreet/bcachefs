@@ -176,7 +176,7 @@ static int check_subvol(struct btree_trans *trans,
 	}
 err:
 fsck_err:
-	bch2_trans_iter_exit(trans, &subvol_children_iter);
+	bch2_trans_iter_exit(&subvol_children_iter);
 	return ret;
 }
 
@@ -301,7 +301,7 @@ int bch2_subvol_has_children(struct btree_trans *trans, u32 subvol)
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_subvolume_children, POS(subvol, 0), 0);
 	struct bkey_s_c k = bch2_btree_iter_peek(&iter);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	return bkey_err(k) ?: k.k && k.k->p.inode == subvol
 		? bch_err_throw(trans->c, ENOTEMPTY_subvol_not_empty)
@@ -373,7 +373,7 @@ int __bch2_subvolume_get_snapshot(struct btree_trans *trans, u32 subvolid,
 
 	if (likely(!ret))
 		*snapid = le32_to_cpu(subvol.v->snapshot);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -486,9 +486,9 @@ static int __bch2_subvolume_delete(struct btree_trans *trans, u32 subvolid)
 	ret =   bch2_btree_delete_at(trans, &subvol_iter, 0) ?:
 		bch2_snapshot_node_set_deleted(trans, snapid);
 err:
-	bch2_trans_iter_exit(trans, &snapshot_tree_iter);
-	bch2_trans_iter_exit(trans, &snapshot_iter);
-	bch2_trans_iter_exit(trans, &subvol_iter);
+	bch2_trans_iter_exit(&snapshot_tree_iter);
+	bch2_trans_iter_exit(&snapshot_iter);
+	bch2_trans_iter_exit(&subvol_iter);
 	return ret;
 }
 
@@ -590,7 +590,7 @@ int bch2_subvolume_unlink(struct btree_trans *trans, u32 subvolid)
 
 	SET_BCH_SUBVOLUME_UNLINKED(&n->v, true);
 	n->v.fs_path_parent = 0;
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -665,8 +665,8 @@ int bch2_subvolume_create(struct btree_trans *trans, u64 inode,
 	*new_subvolid	= new_subvol->k.p.offset;
 	*new_snapshotid	= new_nodes[0];
 err:
-	bch2_trans_iter_exit(trans, &src_iter);
-	bch2_trans_iter_exit(trans, &dst_iter);
+	bch2_trans_iter_exit(&src_iter);
+	bch2_trans_iter_exit(&dst_iter);
 	return ret;
 }
 
@@ -727,7 +727,7 @@ static int __bch2_fs_upgrade_for_subvolumes(struct btree_trans *trans)
 
 	ret = bch2_inode_write(trans, &iter, &inode);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

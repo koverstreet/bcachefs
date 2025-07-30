@@ -315,7 +315,7 @@ static int __bch2_btree_iter_verify_ret(struct btree_iter *iter, struct bkey_s_c
 		      buf1.buf, buf2.buf);
 	}
 out:
-	bch2_trans_iter_exit(trans, &copy);
+	bch2_trans_iter_exit(&copy);
 	return ret;
 }
 
@@ -2893,7 +2893,7 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 				iter->k = iter2.k;
 				k.k = &iter->k;
 			}
-			bch2_trans_iter_exit(trans, &iter2);
+			bch2_trans_iter_exit(&iter2);
 		} else {
 			struct bpos pos = iter->pos;
 
@@ -3105,8 +3105,10 @@ static inline void btree_path_list_add(struct btree_trans *trans,
 	btree_trans_verify_sorted_refs(trans);
 }
 
-void bch2_trans_iter_exit(struct btree_trans *trans, struct btree_iter *iter)
+void bch2_trans_iter_exit(struct btree_iter *iter)
 {
+	struct btree_trans *trans = iter->trans;
+
 	if (iter->update_path)
 		bch2_path_put(trans, iter->update_path,
 			      iter->flags & BTREE_ITER_intent);
