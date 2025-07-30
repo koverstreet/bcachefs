@@ -157,7 +157,7 @@ static int bch2_xattr_get_trans(struct btree_trans *trans, struct bch_inode_info
 		else
 			memcpy(buffer, xattr_val(xattr.v), ret);
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -184,7 +184,7 @@ int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 	inode_u->bi_ctime = bch2_current_time(c);
 
 	ret = bch2_inode_write(trans, &inode_iter, inode_u);
-	bch2_trans_iter_exit(trans, &inode_iter);
+	bch2_trans_iter_exit(&inode_iter);
 
 	if (ret)
 		return ret;

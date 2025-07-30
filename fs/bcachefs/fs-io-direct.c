@@ -280,7 +280,7 @@ retry:
 	}
 
 	offset = iter.pos.offset;
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 err:
 	if (bch2_err_matches(err, BCH_ERR_transaction_restart))
 		goto retry;

@@ -487,7 +487,7 @@ nowork:
 		goto next;
 	}
 out:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	BUG_ON(bch2_err_matches(ret, BCH_ERR_transaction_restart));
 	return ret;
 }
@@ -556,7 +556,7 @@ int bch2_update_unwritten_extent(struct btree_trans *trans,
 			k = bch2_btree_iter_peek_slot(&iter);
 			bkey_err(k);
 		}));
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 
 		if (ret || !bch2_extents_match(k, bkey_i_to_s_c(update->k.k)))
 			break;

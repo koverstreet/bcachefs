@@ -142,7 +142,7 @@ retry:
 	if (!ret)
 		bch2_inode_update_after_write(trans, inode, &inode_u, fields);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
@@ -693,7 +693,7 @@ static struct bch_inode_info *bch2_lookup_trans(struct btree_trans *trans,
 	if (ret)
 		goto err;
 out:
-	bch2_trans_iter_exit(trans, &dirent_iter);
+	bch2_trans_iter_exit(&dirent_iter);
 	return inode;
 err:
 	inode = ERR_PTR(ret);
@@ -1132,7 +1132,7 @@ retry:
 		bch2_trans_commit(trans, NULL, NULL,
 				  BCH_TRANS_COMMIT_no_enospc);
 btree_err:
-	bch2_trans_iter_exit(trans, &inode_iter);
+	bch2_trans_iter_exit(&inode_iter);
 
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
@@ -1461,7 +1461,7 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 		k->k.p.offset += k->k.size;
 	}
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -2058,8 +2058,8 @@ err:
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 
-	bch2_trans_iter_exit(trans, &iter1);
-	bch2_trans_iter_exit(trans, &iter2);
+	bch2_trans_iter_exit(&iter1);
+	bch2_trans_iter_exit(&iter2);
 	return ret;
 }
 

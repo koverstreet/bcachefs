@@ -62,7 +62,7 @@ bch2_btree_iter_peek_in_subvolume_max_type(struct btree_iter *iter, struct bpos 
 		}));								\
 	} while (!_ret3 && bch2_btree_iter_advance(&(_iter)));			\
 										\
-	bch2_trans_iter_exit((_trans), &(_iter));				\
+	bch2_trans_iter_exit(&(_iter));						\
 	_ret3;									\
 })
 

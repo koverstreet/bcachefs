@@ -376,7 +376,7 @@ found:
 				bch2_trans_update(trans, &iter, new,
 						  BTREE_UPDATE_internal_snapshot_node|
 						  BTREE_TRIGGER_norun);
-			bch2_trans_iter_exit(trans, &iter);
+			bch2_trans_iter_exit(&iter);
 			if (ret)
 				return ret;
 
@@ -694,7 +694,7 @@ static int bch2_trigger_stripe_ptr(struct btree_trans *trans,
 		acc.replicas.data_type = data_type;
 		ret = bch2_disk_accounting_mod(trans, &acc, &sectors, 1, false);
 err:
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 		return ret;
 	}
 
@@ -995,7 +995,7 @@ static int __bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 		ret = bch2_trans_update(trans, &iter, &a->k_i, 0);
 	}
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

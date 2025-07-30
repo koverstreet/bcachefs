@@ -230,7 +230,7 @@ int bch2_fpunch(struct bch_fs *c, subvol_inum inum, u64 start, u64 end,
 
 	int ret = bch2_fpunch_at(trans, &iter, inum, end, i_sectors_delta);
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	return bch2_err_matches(ret, BCH_ERR_transaction_restart) ? 0 : ret;
 }
@@ -259,7 +259,7 @@ static int truncate_set_isize(struct btree_trans *trans,
 		(inode_u.bi_size = new_i_size, 0) ?:
 		bch2_inode_write(trans, &iter, &inode_u);
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -284,7 +284,7 @@ static int __bch2_resume_logged_op_truncate(struct btree_trans *trans,
 			     POS(inum.inum, round_up(new_i_size, block_bytes(c)) >> 9),
 			     BTREE_ITER_intent);
 	ret = bch2_fpunch_at(trans, &fpunch_iter, inum, U64_MAX, i_sectors_delta);
-	bch2_trans_iter_exit(trans, &fpunch_iter);
+	bch2_trans_iter_exit(&fpunch_iter);
 
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		ret = 0;
@@ -366,7 +366,7 @@ static int adjust_i_size(struct btree_trans *trans, subvol_inum inum,
 
 	ret = bch2_inode_write(trans, &iter, &inode_u);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -515,7 +515,7 @@ case LOGGED_OP_FINSERT_finish:
 	break;
 	}
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	if (warn_errors)
 		bch_err_fn(c, ret);
 	return ret;
