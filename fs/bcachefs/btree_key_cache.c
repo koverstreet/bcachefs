@@ -322,19 +322,16 @@ static noinline int btree_key_cache_fill(struct btree_trans *trans,
 	}
 
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
-	struct bkey_s_c k;
-	int ret;
 
-	bch2_trans_iter_init(trans, &iter, ck_path->btree_id, ck_path->pos,
-			     BTREE_ITER_intent|
-			     BTREE_ITER_key_cache_fill|
-			     BTREE_ITER_cached_nofill);
+	CLASS(btree_iter, iter)(trans, ck_path->btree_id, ck_path->pos,
+				BTREE_ITER_intent|
+				BTREE_ITER_key_cache_fill|
+				BTREE_ITER_cached_nofill);
 	iter.flags &= ~BTREE_ITER_with_journal;
-	k = bch2_btree_iter_peek_slot(&iter);
-	ret = bkey_err(k);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
+	int ret = bkey_err(k);
 	if (ret)
-		goto err;
+		return ret;
 
 	/* Recheck after btree lookup, before allocating: */
 	ck_path = trans->paths + ck_path_idx;
@@ -344,15 +341,13 @@ static noinline int btree_key_cache_fill(struct btree_trans *trans,
 
 	ret = btree_key_cache_create(trans, btree_iter_path(trans, &iter), ck_path, k);
 	if (ret)
-		goto err;
+		return ret;
 
 	if (trace_key_cache_fill_enabled())
 		do_trace_key_cache_fill(trans, ck_path, k);
 out:
 	/* We're not likely to need this iterator again: */
 	bch2_set_btree_iter_dontneed(&iter);
-err:
-	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -424,35 +419,34 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct journal *j = &c->journal;
-	struct btree_iter c_iter, b_iter;
 	struct bkey_cached *ck = NULL;
 	int ret;
 
-	bch2_trans_iter_init(trans, &b_iter, key.btree_id, key.pos,
-			     BTREE_ITER_slots|
-			     BTREE_ITER_intent|
-			     BTREE_ITER_all_snapshots);
-	bch2_trans_iter_init(trans, &c_iter, key.btree_id, key.pos,
-			     BTREE_ITER_cached|
-			     BTREE_ITER_intent);
+	CLASS(btree_iter, b_iter)(trans, key.btree_id, key.pos,
+				  BTREE_ITER_slots|
+				  BTREE_ITER_intent|
+				  BTREE_ITER_all_snapshots);
+	CLASS(btree_iter, c_iter)(trans, key.btree_id, key.pos,
+				  BTREE_ITER_cached|
+				  BTREE_ITER_intent);
 	b_iter.flags &= ~BTREE_ITER_with_key_cache;
 
 	ret = bch2_btree_iter_traverse(&c_iter);
 	if (ret)
-		goto out;
+		return ret;
 
 	ck = (void *) btree_iter_path(trans, &c_iter)->l[0].b;
 	if (!ck)
-		goto out;
+		return 0;
 
 	if (!test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
 		if (evict)
 			goto evict;
-		goto out;
+		return 0;
 	}
 
 	if (journal_seq && ck->journal.seq != journal_seq)
-		goto out;
+		return 0;
 
 	trans->journal_res.seq = ck->journal.seq;
 
@@ -528,8 +522,6 @@ evict:
 		}
 	}
 out:
-	bch2_trans_iter_exit(&b_iter);
-	bch2_trans_iter_exit(&c_iter);
 	return ret;
 }
 

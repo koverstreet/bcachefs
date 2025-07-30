@@ -645,11 +645,8 @@ static int reconstruct_inode(struct btree_trans *trans, enum btree_id btree, u32
 
 	switch (btree) {
 	case BTREE_ID_extents: {
-		struct btree_iter iter = {};
-
-		bch2_trans_iter_init(trans, &iter, BTREE_ID_extents, SPOS(inum, U64_MAX, snapshot), 0);
+		CLASS(btree_iter, iter)(trans, BTREE_ID_extents, SPOS(inum, U64_MAX, snapshot), 0);
 		struct bkey_s_c k = bch2_btree_iter_peek_prev_min(&iter, POS(inum, 0));
-		bch2_trans_iter_exit(&iter);
 		int ret = bkey_err(k);
 		if (ret)
 			return ret;
@@ -1740,15 +1737,15 @@ static int overlapping_extents_found(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
-	struct btree_iter iter1, iter2 = {};
+	struct btree_iter iter2 = {};
 	struct bkey_s_c k1, k2;
 	int ret;
 
 	BUG_ON(bkey_le(pos1, bkey_start_pos(&pos2)));
 
-	bch2_trans_iter_init(trans, &iter1, btree, pos1,
-			     BTREE_ITER_all_snapshots|
-			     BTREE_ITER_not_extents);
+	CLASS(btree_iter, iter1)(trans, btree, pos1,
+				 BTREE_ITER_all_snapshots|
+				 BTREE_ITER_not_extents);
 	k1 = bch2_btree_iter_peek_max(&iter1, POS(pos1.inode, U64_MAX));
 	ret = bkey_err(k1);
 	if (ret)
@@ -1844,7 +1841,6 @@ static int overlapping_extents_found(struct btree_trans *trans,
 fsck_err:
 err:
 	bch2_trans_iter_exit(&iter2);
-	bch2_trans_iter_exit(&iter1);
 	return ret;
 }
 
@@ -2424,8 +2420,7 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 					(printbuf_reset(&buf),
 					 bch2_bkey_val_to_text(&buf, c, k),
 					 buf.buf))) {
-				struct btree_iter delete_iter;
-				bch2_trans_iter_init(trans, &delete_iter,
+				CLASS(btree_iter, delete_iter)(trans,
 						     BTREE_ID_dirents,
 						     SPOS(k.k->p.inode, k.k->p.offset, *i),
 						     BTREE_ITER_intent);
@@ -2434,7 +2429,6 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 							  hash_info,
 							  &delete_iter,
 							  BTREE_UPDATE_internal_snapshot_node);
-				bch2_trans_iter_exit(&delete_iter);
 				if (ret)
 					return ret;
 
@@ -2628,13 +2622,14 @@ int bch2_check_root(struct bch_fs *c)
 static int check_subvol_path(struct btree_trans *trans, struct btree_iter *iter, struct bkey_s_c k)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter parent_iter = {};
 	CLASS(darray_u32, subvol_path)();
 	CLASS(printbuf, buf)();
 	int ret = 0;
 
 	if (k.k->type != KEY_TYPE_subvolume)
 		return 0;
+
+	CLASS(btree_iter, parent_iter)(trans, BTREE_ID_subvolumes, POS_MIN, 0);
 
 	subvol_inum start = {
 		.subvol = k.k->p.offset,
@@ -2644,7 +2639,7 @@ static int check_subvol_path(struct btree_trans *trans, struct btree_iter *iter,
 	while (k.k->p.offset != BCACHEFS_ROOT_SUBVOL) {
 		ret = darray_push(&subvol_path, k.k->p.offset);
 		if (ret)
-			goto err;
+			return ret;
 
 		struct bkey_s_c_subvolume s = bkey_s_c_to_subvolume(k);
 
@@ -2663,20 +2658,18 @@ static int check_subvol_path(struct btree_trans *trans, struct btree_iter *iter,
 
 			ret = bch2_inum_to_path(trans, start, &buf);
 			if (ret)
-				goto err;
+				return ret;
 
 			if (fsck_err(trans, subvol_loop, "%s", buf.buf))
 				ret = reattach_subvol(trans, s);
 			break;
 		}
 
-		bch2_trans_iter_exit(&parent_iter);
-		bch2_trans_iter_init(trans, &parent_iter,
-				     BTREE_ID_subvolumes, POS(0, parent), 0);
+		bch2_btree_iter_set_pos(&parent_iter, POS(0, parent));
 		k = bch2_btree_iter_peek_slot(&parent_iter);
 		ret = bkey_err(k);
 		if (ret)
-			goto err;
+			return ret;
 
 		if (fsck_err_on(k.k->type != KEY_TYPE_subvolume,
 				trans, subvol_unreachable,
@@ -2684,13 +2677,10 @@ static int check_subvol_path(struct btree_trans *trans, struct btree_iter *iter,
 				(printbuf_reset(&buf),
 				 bch2_bkey_val_to_text(&buf, c, s.s_c),
 				 buf.buf))) {
-			ret = reattach_subvol(trans, s);
-			break;
+			return reattach_subvol(trans, s);
 		}
 	}
 fsck_err:
-err:
-	bch2_trans_iter_exit(&parent_iter);
 	return ret;
 }
 

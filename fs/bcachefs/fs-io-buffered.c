@@ -157,7 +157,6 @@ static void bchfs_read(struct btree_trans *trans,
 		       struct readpages_iter *readpages_iter)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
 	struct bkey_buf sk;
 	int flags = BCH_READ_retry_if_stale|
 		BCH_READ_may_promote;
@@ -167,7 +166,7 @@ static void bchfs_read(struct btree_trans *trans,
 
 	bch2_bkey_buf_init(&sk);
 	bch2_trans_begin(trans);
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_extents,
+	CLASS(btree_iter, iter)(trans, BTREE_ID_extents,
 			     POS(inum.inum, rbio->bio.bi_iter.bi_sector),
 			     BTREE_ITER_slots);
 	while (1) {
@@ -251,7 +250,6 @@ err:
 		    !bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			break;
 	}
-	bch2_trans_iter_exit(&iter);
 
 	if (ret) {
 		CLASS(printbuf, buf)();

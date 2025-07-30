@@ -275,9 +275,6 @@ static void __bch2_btree_iter_verify_entry_exit(struct btree_iter *iter)
 static int __bch2_btree_iter_verify_ret(struct btree_iter *iter, struct bkey_s_c k)
 {
 	struct btree_trans *trans = iter->trans;
-	struct btree_iter copy;
-	struct bkey_s_c prev;
-	int ret = 0;
 
 	if (!(iter->flags & BTREE_ITER_filter_snapshots))
 		return 0;
@@ -289,16 +286,16 @@ static int __bch2_btree_iter_verify_ret(struct btree_iter *iter, struct bkey_s_c
 					  iter->snapshot,
 					  k.k->p.snapshot));
 
-	bch2_trans_iter_init(trans, &copy, iter->btree_id, iter->pos,
-			     BTREE_ITER_nopreserve|
-			     BTREE_ITER_all_snapshots);
-	prev = bch2_btree_iter_prev(&copy);
+	CLASS(btree_iter, copy)(trans, iter->btree_id, iter->pos,
+				BTREE_ITER_nopreserve|
+				BTREE_ITER_all_snapshots);
+	struct bkey_s_c prev = bch2_btree_iter_prev(&copy);
 	if (!prev.k)
-		goto out;
+		return 0;
 
-	ret = bkey_err(prev);
+	int ret = bkey_err(prev);
 	if (ret)
-		goto out;
+		return ret;
 
 	if (bkey_eq(prev.k->p, k.k->p) &&
 	    bch2_snapshot_is_ancestor(trans->c, iter->snapshot,
@@ -314,9 +311,8 @@ static int __bch2_btree_iter_verify_ret(struct btree_iter *iter, struct bkey_s_c
 		      iter->snapshot,
 		      buf1.buf, buf2.buf);
 	}
-out:
-	bch2_trans_iter_exit(&copy);
-	return ret;
+
+	return 0;
 }
 
 void __bch2_assert_pos_locked(struct btree_trans *trans, enum btree_id id,
@@ -3127,11 +3123,12 @@ void bch2_trans_iter_exit(struct btree_iter *iter)
 void bch2_trans_iter_init_outlined(struct btree_trans *trans,
 			  struct btree_iter *iter,
 			  enum btree_id btree_id, struct bpos pos,
-			  enum btree_iter_update_trigger_flags flags)
+			  enum btree_iter_update_trigger_flags flags,
+			  unsigned long ip)
 {
 	bch2_trans_iter_init_common(trans, iter, btree_id, pos, 0, 0,
 			       bch2_btree_iter_flags(trans, btree_id, 0, flags),
-			       _RET_IP_);
+			       ip);
 }
 
 void bch2_trans_node_iter_init(struct btree_trans *trans,

@@ -853,7 +853,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	bool is_kthread = current->flags & PF_KTHREAD;
 	struct bch_io_opts io_opts = bch2_opts_to_inode_opts(c->opts);
-	struct btree_iter iter = {}, bp_iter = {};
+	struct btree_iter iter = {};
 	struct bkey_buf sk;
 	struct bkey_s_c k;
 	struct bkey_buf last_flushed;
@@ -878,7 +878,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	 */
 	bch2_trans_begin(trans);
 
-	bch2_trans_iter_init(trans, &bp_iter, BTREE_ID_backpointers, bp_start, 0);
+	CLASS(btree_iter, bp_iter)(trans, BTREE_ID_backpointers, bp_start, 0);
 
 	ret = bch2_btree_write_buffer_tryflush(trans);
 	if (!bch2_err_matches(ret, EROFS))
@@ -996,7 +996,6 @@ next:
 		bch2_check_bucket_backpointer_mismatch(trans, ca, check_mismatch_done++,
 						       copygc, &last_flushed);
 err:
-	bch2_trans_iter_exit(&bp_iter);
 	bch2_bkey_buf_exit(&sk, c);
 	bch2_bkey_buf_exit(&last_flushed, c);
 	return ret;
