@@ -126,7 +126,7 @@ static int lookup_dirent_in_snapshot(struct btree_trans *trans,
 	struct bkey_s_c_dirent d = bkey_s_c_to_dirent(k);
 	*target = le64_to_cpu(d.v->d_inum);
 	*type = d.v->d_type;
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return 0;
 }
 
@@ -156,7 +156,7 @@ static int find_snapshot_tree_subvol(struct btree_trans *trans,
 	}
 	ret = bch_err_throw(trans->c, ENOENT_no_snapshot_tree_subvol);
 found:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -202,7 +202,7 @@ static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 			return ret;
 
 		subvol->v.inode = cpu_to_le64(reattaching_inum);
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 	}
 
 	subvol_inum root_inum = {
@@ -292,7 +292,7 @@ create_lostfound:
 				       BTREE_UPDATE_internal_snapshot_node);
 err:
 	bch_err_msg(c, ret, "creating lost+found");
-	bch2_trans_iter_exit(trans, &lostfound_iter);
+	bch2_trans_iter_exit(&lostfound_iter);
 	return ret;
 }
 
@@ -358,7 +358,7 @@ static int maybe_delete_dirent(struct btree_trans *trans, struct bpos d_pos, u32
 		ret = bch2_trans_update(trans, &iter, k, BTREE_UPDATE_internal_snapshot_node);
 	}
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -383,7 +383,7 @@ static int reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *
 			return ret;
 
 		subvol->v.fs_path_parent = BCACHEFS_ROOT_SUBVOL;
-		bch2_trans_iter_exit(trans, &subvol_iter);
+		bch2_trans_iter_exit(&subvol_iter);
 
 		u64 root_inum;
 		ret = subvol_lookup(trans, inode->bi_parent_subvol,
@@ -498,7 +498,7 @@ static int reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *
 					break;
 			}
 		}
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 	}
 
 	return ret;
@@ -532,7 +532,7 @@ static int remove_backpointer(struct btree_trans *trans,
 	int ret = bkey_err(d) ?:
 		  dirent_points_to_inode(c, d, inode) ?:
 		  bch2_fsck_remove_dirent(trans, d.k->p);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -585,7 +585,7 @@ static int reconstruct_subvol(struct btree_trans *trans, u32 snapshotid, u32 sub
 		int ret = bch2_inode_create(trans, &inode_iter, &new_inode, snapshotid, cpu) ?:
 			  bch2_btree_iter_traverse(&inode_iter) ?:
 			  bch2_inode_write(trans, &inode_iter, &new_inode);
-		bch2_trans_iter_exit(trans, &inode_iter);
+		bch2_trans_iter_exit(&inode_iter);
 		if (ret)
 			return ret;
 
@@ -620,7 +620,7 @@ static int reconstruct_subvol(struct btree_trans *trans, u32 snapshotid, u32 sub
 
 	s->v.subvol = cpu_to_le32(subvolid);
 	SET_BCH_SNAPSHOT_SUBVOL(&s->v, true);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	struct bkey_i_snapshot_tree *st = bch2_bkey_get_mut_typed(trans, &iter,
 			BTREE_ID_snapshot_trees, POS(0, snapshot_tree),
@@ -633,7 +633,7 @@ static int reconstruct_subvol(struct btree_trans *trans, u32 snapshotid, u32 sub
 	if (!st->v.master_subvol)
 		st->v.master_subvol = cpu_to_le32(subvolid);
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return 0;
 }
 
@@ -649,7 +649,7 @@ static int reconstruct_inode(struct btree_trans *trans, enum btree_id btree, u32
 
 		bch2_trans_iter_init(trans, &iter, BTREE_ID_extents, SPOS(inum, U64_MAX, snapshot), 0);
 		struct bkey_s_c k = bch2_btree_iter_peek_prev_min(&iter, POS(inum, 0));
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 		int ret = bkey_err(k);
 		if (ret)
 			return ret;
@@ -867,7 +867,7 @@ static int get_inodes_all_snapshots(struct btree_trans *trans,
 		if (ret)
 			break;
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	if (ret)
 		return ret;
@@ -907,7 +907,7 @@ static int get_visible_inodes(struct btree_trans *trans,
 		if (ret)
 			break;
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	return ret;
 }
@@ -1049,7 +1049,7 @@ static int check_inode_deleted_list(struct btree_trans *trans, struct bpos p)
 	struct btree_iter iter;
 	struct bkey_s_c k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_deleted_inodes, p, 0);
 	int ret = bkey_err(k) ?: k.k->type == KEY_TYPE_set;
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1107,7 +1107,7 @@ static int check_inode_dirent_inode(struct btree_trans *trans,
 out:
 	ret = 0;
 fsck_err:
-	bch2_trans_iter_exit(trans, &dirent_iter);
+	bch2_trans_iter_exit(&dirent_iter);
 	bch_err_fn(c, ret);
 	return ret;
 }
@@ -1380,7 +1380,7 @@ static int find_oldest_inode_needs_reattach(struct btree_trans *trans,
 
 		*inode = parent_inode;
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	return ret;
 }
@@ -1557,7 +1557,7 @@ static int check_key_has_inode(struct btree_trans *trans,
 out:
 err:
 fsck_err:
-	bch2_trans_iter_exit(trans, &iter2);
+	bch2_trans_iter_exit(&iter2);
 	bch_err_fn(c, ret);
 	return ret;
 delete:
@@ -1594,7 +1594,7 @@ static int maybe_reconstruct_inum_btree(struct btree_trans *trans,
 		ret = 1;
 		break;
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	if (ret <= 0)
 		return ret;
@@ -1843,8 +1843,8 @@ static int overlapping_extents_found(struct btree_trans *trans,
 	}
 fsck_err:
 err:
-	bch2_trans_iter_exit(trans, &iter2);
-	bch2_trans_iter_exit(trans, &iter1);
+	bch2_trans_iter_exit(&iter2);
+	bch2_trans_iter_exit(&iter1);
 	return ret;
 }
 
@@ -2136,7 +2136,7 @@ static int find_snapshot_subvol(struct btree_trans *trans, u32 snapshot, u32 *su
 
 		struct bkey_s_c_subvolume s = bkey_s_c_to_subvolume(k);
 		if (bch2_snapshot_is_ancestor(trans->c, le32_to_cpu(s.v->snapshot), snapshot)) {
-			bch2_trans_iter_exit(trans, &iter);
+			bch2_trans_iter_exit(&iter);
 			*subvolid = k.k->p.offset;
 			goto found;
 		}
@@ -2144,7 +2144,7 @@ static int find_snapshot_subvol(struct btree_trans *trans, u32 snapshot, u32 *su
 	if (!ret)
 		ret = -ENOENT;
 found:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -2283,7 +2283,7 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 out:
 err:
 fsck_err:
-	bch2_trans_iter_exit(trans, &subvol_iter);
+	bch2_trans_iter_exit(&subvol_iter);
 	return ret;
 }
 
@@ -2434,7 +2434,7 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 							  hash_info,
 							  &delete_iter,
 							  BTREE_UPDATE_internal_snapshot_node);
-				bch2_trans_iter_exit(trans, &delete_iter);
+				bch2_trans_iter_exit(&delete_iter);
 				if (ret)
 					return ret;
 
@@ -2670,7 +2670,7 @@ static int check_subvol_path(struct btree_trans *trans, struct btree_iter *iter,
 			break;
 		}
 
-		bch2_trans_iter_exit(trans, &parent_iter);
+		bch2_trans_iter_exit(&parent_iter);
 		bch2_trans_iter_init(trans, &parent_iter,
 				     BTREE_ID_subvolumes, POS(0, parent), 0);
 		k = bch2_btree_iter_peek_slot(&parent_iter);
@@ -2690,7 +2690,7 @@ static int check_subvol_path(struct btree_trans *trans, struct btree_iter *iter,
 	}
 fsck_err:
 err:
-	bch2_trans_iter_exit(trans, &parent_iter);
+	bch2_trans_iter_exit(&parent_iter);
 	return ret;
 }
 
@@ -2730,7 +2730,7 @@ static int bch2_bi_depth_renumber_one(struct btree_trans *trans,
 			bch2_trans_commit(trans, NULL, NULL, 0);
 	}
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -2788,7 +2788,7 @@ static int check_path_loop(struct btree_trans *trans, struct bkey_s_c inode_k)
 			goto out;
 
 		if (!ret && (ret = dirent_points_to_inode(c, d, &inode)))
-			bch2_trans_iter_exit(trans, &dirent_iter);
+			bch2_trans_iter_exit(&dirent_iter);
 
 		if (bch2_err_matches(ret, ENOENT)) {
 			printbuf_reset(&buf);
@@ -2798,13 +2798,13 @@ static int check_path_loop(struct btree_trans *trans, struct bkey_s_c inode_k)
 			goto out;
 		}
 
-		bch2_trans_iter_exit(trans, &dirent_iter);
+		bch2_trans_iter_exit(&dirent_iter);
 
 		ret = darray_push(&path, inode.bi_inum);
 		if (ret)
 			return ret;
 
-		bch2_trans_iter_exit(trans, &inode_iter);
+		bch2_trans_iter_exit(&inode_iter);
 		inode_k = bch2_bkey_get_iter(trans, &inode_iter, BTREE_ID_inodes,
 					     SPOS(0, inode.bi_dir, snapshot), 0);
 
@@ -2863,7 +2863,7 @@ static int check_path_loop(struct btree_trans *trans, struct bkey_s_c inode_k)
 		ret = bch2_bi_depth_renumber(trans, &path, snapshot, min_bi_depth);
 out:
 fsck_err:
-	bch2_trans_iter_exit(trans, &inode_iter);
+	bch2_trans_iter_exit(&inode_iter);
 	bch_err_fn(c, ret);
 	return ret;
 }

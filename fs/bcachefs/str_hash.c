@@ -26,7 +26,7 @@ static int bch2_dirent_has_target(struct btree_trans *trans, struct bkey_s_c_dir
 			return ret;
 
 		ret = bkey_is_inode(k.k);
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 		return ret;
 	}
 }
@@ -206,7 +206,7 @@ int bch2_repair_inode_hash_info(struct btree_trans *trans,
 		bch_err_throw(c, transaction_restart_nested);
 err:
 fsck_err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -328,7 +328,7 @@ duplicate_entries:
 	}
 out:
 fsck_err:
-	bch2_trans_iter_exit(trans, dup_iter);
+	bch2_trans_iter_exit(dup_iter);
 	if (free_snapshots_seen)
 		darray_exit(&s->ids);
 	return ret;
@@ -371,11 +371,11 @@ int __bch2_str_hash_check_key(struct btree_trans *trans,
 		if (bkey_deleted(k.k))
 			goto bad_hash;
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 fsck_err:
 	return ret;
 bad_hash:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	/*
 	 * Before doing any repair, check hash_info itself:
 	 */

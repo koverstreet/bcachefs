@@ -259,7 +259,7 @@ int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, u64 inum)
 
 	ret = bch2_trans_update(trans, &iter, &cookie->k_i, 0);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -295,7 +295,7 @@ static int bch2_clear_rebalance_needs_scan(struct btree_trans *trans, u64 inum, 
 	if (v == cookie)
 		ret = bch2_btree_delete_at(trans, &iter, 0);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -332,7 +332,7 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
-	bch2_trans_iter_exit(trans, extent_iter);
+	bch2_trans_iter_exit(extent_iter);
 	bch2_trans_iter_init(trans, extent_iter,
 			     work_pos.inode ? BTREE_ID_extents : BTREE_ID_reflink,
 			     work_pos,
@@ -576,8 +576,8 @@ static int do_rebalance(struct moving_context *ctxt)
 		bch2_btree_iter_advance(&rebalance_work_iter);
 	}
 
-	bch2_trans_iter_exit(trans, &extent_iter);
-	bch2_trans_iter_exit(trans, &rebalance_work_iter);
+	bch2_trans_iter_exit(&extent_iter);
+	bch2_trans_iter_exit(&rebalance_work_iter);
 	bch2_move_stats_exit(&r->scan_stats, c);
 
 	if (!ret &&
@@ -779,7 +779,7 @@ static int check_rebalance_work_one(struct btree_trans *trans,
 	    extent_iter->btree_id == BTREE_ID_reflink &&
 	    (!rebalance_k.k ||
 	     rebalance_k.k->p.inode >= BCACHEFS_ROOT_INO)) {
-		bch2_trans_iter_exit(trans, extent_iter);
+		bch2_trans_iter_exit(extent_iter);
 		bch2_trans_iter_init(trans, extent_iter,
 				     BTREE_ID_extents, POS_MIN,
 				     BTREE_ITER_prefetch|
@@ -874,7 +874,7 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 	}
 
 	bch2_bkey_buf_exit(&last_flushed, c);
-	bch2_trans_iter_exit(trans, &extent_iter);
-	bch2_trans_iter_exit(trans, &rebalance_iter);
+	bch2_trans_iter_exit(&extent_iter);
+	bch2_trans_iter_exit(&rebalance_iter);
 	return ret < 0 ? ret : 0;
 }

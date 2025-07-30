@@ -206,7 +206,7 @@ static int bch2_get_inode_journal_seq_trans(struct btree_trans *trans, subvol_in
 		ret = bch2_inode_write(trans, &iter, &u);
 	}
 fsck_err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -747,7 +747,7 @@ bkey_err:
 		bch2_quota_reservation_put(c, inode, &quota_res);
 	}
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

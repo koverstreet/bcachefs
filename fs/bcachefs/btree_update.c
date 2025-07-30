@@ -117,7 +117,7 @@ static int need_whiteout_for_snapshot(struct btree_trans *trans,
 			break;
 		}
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	return ret;
 }
@@ -143,7 +143,7 @@ int __bch2_insert_snapshot_whiteouts(struct btree_trans *trans,
 			struct bkey_i *update = bch2_trans_kmalloc(trans, sizeof(struct bkey_i));
 			ret = PTR_ERR_OR_ZERO(update);
 			if (ret) {
-				bch2_trans_iter_exit(trans, &iter);
+				bch2_trans_iter_exit(&iter);
 				break;
 			}
 
@@ -154,7 +154,7 @@ int __bch2_insert_snapshot_whiteouts(struct btree_trans *trans,
 			ret = bch2_trans_update(trans, &iter, update,
 						BTREE_UPDATE_internal_snapshot_node);
 		}
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 
 		if (ret)
 			break;
@@ -320,7 +320,7 @@ out:
 	if (!bkey_deleted(&insert->k))
 		ret = bch2_btree_insert_nonextent(trans, btree_id, insert, flags);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	return ret;
 }
@@ -614,7 +614,7 @@ int bch2_bkey_get_empty_slot(struct btree_trans *trans, struct btree_iter *iter,
 
 	return 0;
 err:
-	bch2_trans_iter_exit(trans, iter);
+	bch2_trans_iter_exit(iter);
 	return ret;
 }
 
@@ -638,7 +638,7 @@ int bch2_btree_insert_nonextent(struct btree_trans *trans,
 			     BTREE_ITER_intent);
 	ret   = bch2_btree_iter_traverse(&iter) ?:
 		bch2_trans_update(trans, &iter, k, flags);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -650,7 +650,7 @@ int bch2_btree_insert_trans(struct btree_trans *trans, enum btree_id id,
 			     BTREE_ITER_intent|flags);
 	int ret = bch2_btree_iter_traverse(&iter) ?:
 		  bch2_trans_update(trans, &iter, k, flags);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -701,7 +701,7 @@ int bch2_btree_delete(struct btree_trans *trans,
 			     BTREE_ITER_intent);
 	ret   = bch2_btree_iter_traverse(&iter) ?:
 		bch2_btree_delete_at(trans, &iter, flags);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	return ret;
 }
@@ -767,7 +767,7 @@ err:
 		if (ret)
 			break;
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	return ret ?: trans_was_restarted(trans, restart_count);
 }
@@ -813,7 +813,7 @@ int bch2_btree_bit_mod(struct btree_trans *trans, enum btree_id btree,
 
 	int ret = bch2_btree_iter_traverse(&iter) ?:
 		  bch2_btree_bit_mod_iter(trans, &iter, set);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

@@ -277,13 +277,13 @@ struct bkey_s_c bch2_lookup_indirect_extent(struct btree_trans *trans,
 		int ret = bch2_indirect_extent_missing_error(trans, p, reflink_offset,
 							     missing_end, should_commit);
 		if (ret) {
-			bch2_trans_iter_exit(trans, iter);
+			bch2_trans_iter_exit(iter);
 			return bkey_s_c_err(ret);
 		}
 	} else if (unlikely(REFLINK_P_ERROR(p.v))) {
 		int ret = bch2_indirect_extent_not_missing(trans, p, should_commit);
 		if (ret) {
-			bch2_trans_iter_exit(trans, iter);
+			bch2_trans_iter_exit(iter);
 			return bkey_s_c_err(ret);
 		}
 	}
@@ -357,7 +357,7 @@ next:
 	*idx = k.k->p.offset;
 err:
 fsck_err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -558,7 +558,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	ret = bch2_trans_update(trans, extent_iter, &r_p->k_i,
 				BTREE_UPDATE_internal_snapshot_node);
 err:
-	bch2_trans_iter_exit(trans, &reflink_iter);
+	bch2_trans_iter_exit(&reflink_iter);
 
 	return ret;
 }
@@ -721,8 +721,8 @@ s64 bch2_remap_range(struct bch_fs *c,
 					true);
 		bch2_disk_reservation_put(c, &disk_res);
 	}
-	bch2_trans_iter_exit(trans, &dst_iter);
-	bch2_trans_iter_exit(trans, &src_iter);
+	bch2_trans_iter_exit(&dst_iter);
+	bch2_trans_iter_exit(&src_iter);
 
 	BUG_ON(!ret && !bkey_eq(dst_iter.pos, dst_end));
 	BUG_ON(bkey_gt(dst_iter.pos, dst_end));
@@ -747,7 +747,7 @@ s64 bch2_remap_range(struct bch_fs *c,
 						  BCH_TRANS_COMMIT_no_enospc);
 		}
 
-		bch2_trans_iter_exit(trans, &inode_iter);
+		bch2_trans_iter_exit(&inode_iter);
 	} while (bch2_err_matches(ret2, BCH_ERR_transaction_restart));
 err:
 	bch2_bkey_buf_exit(&new_src, c);

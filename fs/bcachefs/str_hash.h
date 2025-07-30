@@ -173,7 +173,7 @@ bch2_hash_lookup_in_snapshot(struct btree_trans *trans,
 			break;
 		}
 	}
-	bch2_trans_iter_exit(trans, iter);
+	bch2_trans_iter_exit(iter);
 
 	return bkey_s_c_err(ret ?: bch_err_throw(trans->c, ENOENT_str_hash_lookup));
 }
@@ -215,7 +215,7 @@ bch2_hash_hole(struct btree_trans *trans,
 			   BTREE_ITER_slots|BTREE_ITER_intent, k, ret)
 		if (!is_visible_key(desc, inum, k))
 			return 0;
-	bch2_trans_iter_exit(trans, iter);
+	bch2_trans_iter_exit(iter);
 
 	return ret ?: bch_err_throw(trans->c, ENOSPC_str_hash_create);
 }
@@ -246,7 +246,7 @@ int bch2_hash_needs_whiteout(struct btree_trans *trans,
 		}
 	}
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -289,14 +289,14 @@ struct bkey_s_c bch2_hash_set_or_get_in_snapshot(struct btree_trans *trans,
 	if (!ret)
 		ret = bch_err_throw(c, ENOSPC_str_hash_create);
 out:
-	bch2_trans_iter_exit(trans, &slot);
-	bch2_trans_iter_exit(trans, iter);
+	bch2_trans_iter_exit(&slot);
+	bch2_trans_iter_exit(iter);
 	return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
 found:
 	found = true;
 not_found:
 	if (found && (flags & STR_HASH_must_create)) {
-		bch2_trans_iter_exit(trans, &slot);
+		bch2_trans_iter_exit(&slot);
 		return k;
 	} else if (!found && (flags & STR_HASH_must_replace)) {
 		ret = bch_err_throw(c, ENOENT_str_hash_set_must_replace);
@@ -326,7 +326,7 @@ int bch2_hash_set_in_snapshot(struct btree_trans *trans,
 	if (ret)
 		return ret;
 	if (k.k) {
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 		return bch_err_throw(trans->c, EEXIST_str_hash_set);
 	}
 
@@ -389,7 +389,7 @@ int bch2_hash_delete(struct btree_trans *trans,
 		return ret;
 
 	ret = bch2_hash_delete_at(trans, desc, info, &iter, 0);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

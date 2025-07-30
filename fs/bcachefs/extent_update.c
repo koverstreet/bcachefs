@@ -92,7 +92,7 @@ static int count_iters_for_insert(struct btree_trans *trans,
 				break;
 			}
 		}
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 
 		break;
 	}
@@ -126,7 +126,7 @@ int bch2_extent_atomic_end(struct btree_trans *trans,
 			break;
 	}
 err:
-	bch2_trans_iter_exit(trans, &copy);
+	bch2_trans_iter_exit(&copy);
 	return ret < 0 ? ret : 0;
 }
 

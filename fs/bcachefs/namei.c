@@ -197,8 +197,8 @@ int bch2_create_trans(struct btree_trans *trans,
 	ret   = bch2_btree_iter_traverse(&inode_iter) ?:
 		bch2_inode_write(trans, &inode_iter, new_inode);
 err:
-	bch2_trans_iter_exit(trans, &inode_iter);
-	bch2_trans_iter_exit(trans, &dir_iter);
+	bch2_trans_iter_exit(&inode_iter);
+	bch2_trans_iter_exit(&dir_iter);
 	return ret;
 }
 
@@ -254,8 +254,8 @@ int bch2_link_trans(struct btree_trans *trans,
 	ret =   bch2_inode_write(trans, &dir_iter, dir_u) ?:
 		bch2_inode_write(trans, &inode_iter, inode_u);
 err:
-	bch2_trans_iter_exit(trans, &dir_iter);
-	bch2_trans_iter_exit(trans, &inode_iter);
+	bch2_trans_iter_exit(&dir_iter);
+	bch2_trans_iter_exit(&inode_iter);
 	return ret;
 }
 
@@ -347,9 +347,9 @@ int bch2_unlink_trans(struct btree_trans *trans,
 		bch2_inode_write(trans, &dir_iter, dir_u) ?:
 		bch2_inode_write(trans, &inode_iter, inode_u);
 err:
-	bch2_trans_iter_exit(trans, &inode_iter);
-	bch2_trans_iter_exit(trans, &dirent_iter);
-	bch2_trans_iter_exit(trans, &dir_iter);
+	bch2_trans_iter_exit(&inode_iter);
+	bch2_trans_iter_exit(&dirent_iter);
+	bch2_trans_iter_exit(&dir_iter);
 	return ret;
 }
 
@@ -393,7 +393,7 @@ static int subvol_update_parent(struct btree_trans *trans, u32 subvol, u32 new_p
 		return ret;
 
 	s->v.fs_path_parent = cpu_to_le32(new_parent);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return 0;
 }
 
@@ -582,10 +582,10 @@ int bch2_rename_trans(struct btree_trans *trans,
 		 ? bch2_inode_write(trans, &dst_inode_iter, dst_inode_u)
 		 : 0);
 err:
-	bch2_trans_iter_exit(trans, &dst_inode_iter);
-	bch2_trans_iter_exit(trans, &src_inode_iter);
-	bch2_trans_iter_exit(trans, &dst_dir_iter);
-	bch2_trans_iter_exit(trans, &src_dir_iter);
+	bch2_trans_iter_exit(&dst_inode_iter);
+	bch2_trans_iter_exit(&src_inode_iter);
+	bch2_trans_iter_exit(&dst_dir_iter);
+	bch2_trans_iter_exit(&src_dir_iter);
 	return ret;
 }
 
@@ -701,7 +701,7 @@ static int __bch2_inum_to_path(struct btree_trans *trans,
 
 		prt_char(path, '/');
 
-		bch2_trans_iter_exit(trans, &d_iter);
+		bch2_trans_iter_exit(&d_iter);
 	}
 
 	if (orig_pos == path->pos)
@@ -854,7 +854,7 @@ static int bch2_check_dirent_inode_dirent(struct btree_trans *trans,
 out:
 err:
 fsck_err:
-	bch2_trans_iter_exit(trans, &bp_iter);
+	bch2_trans_iter_exit(&bp_iter);
 	bch_err_fn(c, ret);
 	return ret;
 }
@@ -931,14 +931,14 @@ static int bch2_propagate_has_case_insensitive(struct btree_trans *trans, subvol
 		if (ret)
 			break;
 
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 		if (subvol_inum_eq(inum, BCACHEFS_ROOT_SUBVOL_INUM))
 			break;
 
 		inum = parent_inum(inum, &inode);
 	}
 
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

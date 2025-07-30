@@ -800,7 +800,7 @@ static int get_stripe_key_trans(struct btree_trans *trans, u64 idx,
 	}
 	bkey_reassemble(&stripe->key, k);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -967,7 +967,7 @@ static int ec_stripe_delete(struct btree_trans *trans, u64 idx)
 	    stripe_lru_pos(bkey_s_c_to_stripe(k).v) == 1)
 		ret = bch2_btree_delete_at(trans, &iter, 0);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1063,7 +1063,7 @@ static int ec_stripe_key_update(struct btree_trans *trans,
 
 	ret = bch2_trans_update(trans, &iter, &new->k_i, 0);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1087,7 +1087,7 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 	if (bp.v->level) {
 		struct btree_iter node_iter;
 		struct btree *b = bch2_backpointer_get_node(trans, bp, &node_iter, last_flushed);
-		bch2_trans_iter_exit(trans, &node_iter);
+		bch2_trans_iter_exit(&node_iter);
 
 		if (!b)
 			return 0;
@@ -1149,7 +1149,7 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 
 	ret = bch2_trans_update(trans, &iter, n, 0);
 out:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1811,7 +1811,7 @@ static int __get_existing_stripe(struct btree_trans *trans,
 out:
 	bch2_set_btree_iter_dontneed(&iter);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1883,7 +1883,7 @@ static int __bch2_ec_stripe_head_reuse(struct btree_trans *trans, struct ec_stri
 		if (ret)
 			break;
 	}
-	bch2_trans_iter_exit(trans, &lru_iter);
+	bch2_trans_iter_exit(&lru_iter);
 	if (!ret)
 		ret = bch_err_throw(c, stripe_alloc_blocked);
 	if (ret == 1)
@@ -1948,7 +1948,7 @@ static int __bch2_ec_stripe_head_reserve(struct btree_trans *trans, struct ec_st
 
 	s->new_stripe.key.k.p = iter.pos;
 out:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 err:
 	bch2_disk_reservation_put(c, &s->res);
@@ -2155,7 +2155,7 @@ static int bch2_invalidate_stripe_to_dev_from_alloc(struct btree_trans *trans, s
 		return ret;
 
 	ret = bch2_invalidate_stripe_to_dev(trans, &iter, s.s_c, k_a.k->p.inode, flags);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

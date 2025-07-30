@@ -2235,7 +2235,7 @@ static int get_iter_to_node(struct btree_trans *trans, struct btree_iter *iter,
 	BUG_ON(!btree_node_hashed(b));
 	return 0;
 err:
-	bch2_trans_iter_exit(trans, iter);
+	bch2_trans_iter_exit(iter);
 	return ret;
 }
 
@@ -2325,7 +2325,7 @@ int bch2_btree_node_rewrite_key(struct btree_trans *trans,
 		? bch2_btree_node_rewrite(trans, &iter, b, 0, flags)
 		: -ENOENT;
 out:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -2347,7 +2347,7 @@ int bch2_btree_node_rewrite_pos(struct btree_trans *trans,
 
 	ret = bch2_btree_node_rewrite(trans, &iter, b, target, flags);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -2361,7 +2361,7 @@ int bch2_btree_node_rewrite_key_get_iter(struct btree_trans *trans,
 		return ret == -BCH_ERR_btree_node_dying ? 0 : ret;
 
 	ret = bch2_btree_node_rewrite(trans, &iter, b, 0, flags);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -2562,7 +2562,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 
 	bch2_btree_node_unlock_write(trans, btree_iter_path(trans, iter), b);
 out:
-	bch2_trans_iter_exit(trans, &iter2);
+	bch2_trans_iter_exit(&iter2);
 	return ret;
 err:
 	if (new_hash) {
@@ -2633,7 +2633,7 @@ int bch2_btree_node_update_key_get_iter(struct btree_trans *trans,
 
 	ret = bch2_btree_node_update_key(trans, &iter, b, new_key,
 					 commit_flags, skip_triggers);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

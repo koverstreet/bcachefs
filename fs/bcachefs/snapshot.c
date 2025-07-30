@@ -74,7 +74,7 @@ __bch2_snapshot_tree_create(struct btree_trans *trans)
 
 	s_t = bch2_bkey_alloc(trans, &iter, 0, snapshot_tree);
 	ret = PTR_ERR_OR_ZERO(s_t);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret ? ERR_PTR(ret) : s_t;
 }
 
@@ -450,7 +450,7 @@ static int bch2_snapshot_tree_master_subvol(struct btree_trans *trans,
 			break;
 		}
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	if (!ret && !found) {
 		struct bkey_i_subvolume *u;
@@ -563,7 +563,7 @@ static int check_snapshot_tree(struct btree_trans *trans,
 out:
 err:
 fsck_err:
-	bch2_trans_iter_exit(trans, &snapshot_iter);
+	bch2_trans_iter_exit(&snapshot_iter);
 	return ret;
 }
 
@@ -685,7 +685,7 @@ static int snapshot_tree_ptr_repair(struct btree_trans *trans,
 		*s = u->v;
 	}
 err:
-	bch2_trans_iter_exit(trans, &root_iter);
+	bch2_trans_iter_exit(&root_iter);
 	return ret;
 }
 
@@ -868,7 +868,7 @@ static int check_snapshot_exists(struct btree_trans *trans, u32 id)
 			break;
 		}
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	if (ret)
 		return ret;
@@ -898,7 +898,7 @@ static int check_snapshot_exists(struct btree_trans *trans, u32 id)
 			break;
 		}
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	return  bch2_snapshot_table_make_room(c, id) ?:
 		bch2_btree_insert_trans(trans, BTREE_ID_snapshots, &snapshot->k_i, 0);
@@ -1100,7 +1100,7 @@ int __bch2_get_snapshot_overwrites(struct btree_trans *trans,
 		if (ret)
 			break;
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	if (ret)
 		darray_exit(s);
 
@@ -1132,7 +1132,7 @@ int bch2_snapshot_node_set_deleted(struct btree_trans *trans, u32 id)
 	SET_BCH_SNAPSHOT_SUBVOL(&s->v, false);
 	s->v.subvol = 0;
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1257,10 +1257,10 @@ static int bch2_snapshot_node_delete(struct btree_trans *trans, u32 id)
 		set_bkey_val_u64s(&s->k, 0);
 	}
 err:
-	bch2_trans_iter_exit(trans, &tree_iter);
-	bch2_trans_iter_exit(trans, &p_iter);
-	bch2_trans_iter_exit(trans, &c_iter);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&tree_iter);
+	bch2_trans_iter_exit(&p_iter);
+	bch2_trans_iter_exit(&c_iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1322,7 +1322,7 @@ static int create_snapids(struct btree_trans *trans, u32 parent, u32 tree,
 		new_snapids[i]	= iter.pos.offset;
 	}
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1364,7 +1364,7 @@ static int bch2_snapshot_node_create_children(struct btree_trans *trans, u32 par
 	n_parent->v.subvol = 0;
 	SET_BCH_SNAPSHOT_SUBVOL(&n_parent->v, false);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -1489,7 +1489,7 @@ static int delete_dead_snapshots_process_key(struct btree_trans *trans,
 			 : 0) ?:
 			bch2_btree_delete_at(trans, iter,
 					     BTREE_UPDATE_internal_snapshot_node);
-		bch2_trans_iter_exit(trans, &dst_iter);
+		bch2_trans_iter_exit(&dst_iter);
 		return ret;
 	}
 
@@ -1623,7 +1623,7 @@ static int delete_dead_snapshot_keys_v2(struct btree_trans *trans)
 			bch2_btree_iter_advance(&iter);
 		}
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	if (ret)
 		goto err;
@@ -1953,7 +1953,7 @@ int __bch2_key_has_snapshot_overwrites(struct btree_trans *trans,
 			break;
 		}
 	}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	return ret;
 }

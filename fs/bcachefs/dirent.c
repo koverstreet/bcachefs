@@ -586,8 +586,8 @@ out_set_src:
 		*src_offset = new_src->k.p.offset;
 	*dst_offset = new_dst->k.p.offset;
 out:
-	bch2_trans_iter_exit(trans, &src_iter);
-	bch2_trans_iter_exit(trans, &dst_iter);
+	bch2_trans_iter_exit(&src_iter);
+	bch2_trans_iter_exit(&dst_iter);
 	return ret;
 }
 
@@ -614,7 +614,7 @@ int bch2_dirent_lookup_trans(struct btree_trans *trans,
 		ret = -ENOENT;
 err:
 	if (ret)
-		bch2_trans_iter_exit(trans, iter);
+		bch2_trans_iter_exit(iter);
 	return ret;
 }
 
@@ -627,7 +627,7 @@ u64 bch2_dirent_lookup(struct bch_fs *c, subvol_inum dir,
 
 	int ret = lockrestart_do(trans,
 		bch2_dirent_lookup_trans(trans, &iter, dir, hash_info, name, inum, 0));
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -647,7 +647,7 @@ int bch2_empty_dir_snapshot(struct btree_trans *trans, u64 dir, u32 subvol, u32 
 			ret = bch_err_throw(trans->c, ENOTEMPTY_dir_not_empty);
 			break;
 		}
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 
 	return ret;
 }
@@ -737,7 +737,7 @@ static int lookup_first_inode(struct btree_trans *trans, u64 inode_nr,
 	ret = bch_err_throw(trans->c, ENOENT_inode);
 found:
 	bch_err_msg(trans->c, ret, "fetching inode %llu", inode_nr);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -761,7 +761,7 @@ int bch2_fsck_remove_dirent(struct btree_trans *trans, struct bpos pos)
 		bch2_hash_delete_at(trans, bch2_dirent_hash_desc,
 				    &dir_hash_info, &iter,
 				    BTREE_UPDATE_internal_snapshot_node);
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 err:
 	bch_err_fn(c, ret);
 	return ret;

@@ -478,7 +478,7 @@ static inline void bch2_btree_iter_set_snapshot(struct btree_iter *iter, u32 sna
 	bch2_btree_iter_set_pos(iter, pos);
 }
 
-void bch2_trans_iter_exit(struct btree_trans *, struct btree_iter *);
+void bch2_trans_iter_exit(struct btree_iter *);
 
 static inline enum btree_iter_update_trigger_flags
 bch2_btree_iter_flags(struct btree_trans *trans,
@@ -641,7 +641,7 @@ static inline struct bkey_s_c __bch2_bkey_get_iter(struct btree_trans *trans,
 	if (!bkey_err(k) && type && k.k->type != type)
 		k = bkey_s_c_err(-BCH_ERR_ENOENT_bkey_type_mismatch);
 	if (unlikely(bkey_err(k)))
-		bch2_trans_iter_exit(trans, iter);
+		bch2_trans_iter_exit(iter);
 	return k;
 }
 
@@ -682,7 +682,7 @@ static inline int __bch2_bkey_get_val_typed(struct btree_trans *trans,
 	int ret = bkey_err(k);
 	if (!ret) {
 		__bkey_val_copy(val, val_size, k);
-		bch2_trans_iter_exit(trans, &iter);
+		bch2_trans_iter_exit(&iter);
 	}
 
 	return ret;
@@ -717,7 +717,7 @@ u32 bch2_trans_begin(struct btree_trans *);
 			PTR_ERR_OR_ZERO(bch2_btree_iter_next_node(&_iter)));	\
 	} while (!_ret3);							\
 										\
-	bch2_trans_iter_exit((_trans), &(_iter));				\
+	bch2_trans_iter_exit(&(_iter));						\
 	_ret3;									\
 })
 
@@ -826,7 +826,7 @@ transaction_restart:							\
 		}));							\
 	} while (!_ret3 && bch2_btree_iter_advance(&(_iter)));		\
 									\
-	bch2_trans_iter_exit((_trans), &(_iter));			\
+	bch2_trans_iter_exit(&(_iter));					\
 	_ret3;								\
 })
 
@@ -871,7 +871,7 @@ transaction_restart:							\
 		}));							\
 	} while (!_ret3 && bch2_btree_iter_rewind(&(_iter)));		\
 									\
-	bch2_trans_iter_exit((_trans), &(_iter));			\
+	bch2_trans_iter_exit(&(_iter));					\
 	_ret3;								\
 })
 

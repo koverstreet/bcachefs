@@ -352,7 +352,7 @@ out:
 	/* We're not likely to need this iterator again: */
 	bch2_set_btree_iter_dontneed(&iter);
 err:
-	bch2_trans_iter_exit(trans, &iter);
+	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -528,8 +528,8 @@ evict:
 		}
 	}
 out:
-	bch2_trans_iter_exit(trans, &b_iter);
-	bch2_trans_iter_exit(trans, &c_iter);
+	bch2_trans_iter_exit(&b_iter);
+	bch2_trans_iter_exit(&c_iter);
 	return ret;
 }
 
