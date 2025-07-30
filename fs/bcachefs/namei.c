@@ -591,6 +591,22 @@ err:
 
 /* inum_to_path */
 
+static inline void reverse_bytes(void *b, size_t n)
+{
+	char *e = b + n, *s = b;
+
+	while (s < e) {
+		--e;
+		swap(*s, *e);
+		s++;
+	}
+}
+
+static inline void printbuf_reverse_from(struct printbuf *out, unsigned pos)
+{
+	reverse_bytes(out->buf + pos, out->pos - pos);
+}
+
 static inline void prt_bytes_reversed(struct printbuf *out, const void *b, unsigned n)
 {
 	bch2_printbuf_make_room(out, n);
@@ -610,15 +626,17 @@ static inline void prt_str_reversed(struct printbuf *out, const char *s)
 	prt_bytes_reversed(out, s, strlen(s));
 }
 
-static inline void reverse_bytes(void *b, size_t n)
+__printf(2, 3)
+static inline void prt_printf_reversed(struct printbuf *out, const char *fmt, ...)
 {
-	char *e = b + n, *s = b;
+	unsigned orig_pos = out->pos;
 
-	while (s < e) {
-		--e;
-		swap(*s, *e);
-		s++;
-	}
+	va_list args;
+	va_start(args, fmt);
+	prt_vprintf(out, fmt, args);
+	va_end(args);
+
+	printbuf_reverse_from(out, orig_pos);
 }
 
 static int __bch2_inum_to_path(struct btree_trans *trans,
@@ -639,7 +657,7 @@ static int __bch2_inum_to_path(struct btree_trans *trans,
 		subvol_inum n = (subvol_inum) { subvol ?: snapshot, inum };
 
 		if (darray_find_p(inums, i, i->subvol == n.subvol && i->inum == n.inum)) {
-			prt_str_reversed(path, "(loop)");
+			prt_printf_reversed(path, "(loop at %llu:%u)", inum, snapshot);
 			break;
 		}
 
@@ -689,21 +707,21 @@ static int __bch2_inum_to_path(struct btree_trans *trans,
 	if (orig_pos == path->pos)
 		prt_char(path, '/');
 out:
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+		goto err;
+
 	ret = path->allocation_failure ? -ENOMEM : 0;
 	if (ret)
 		goto err;
 
-	reverse_bytes(path->buf + orig_pos, path->pos - orig_pos);
+	printbuf_reverse_from(path, orig_pos);
 	darray_exit(&inums);
 	return 0;
 err:
 	darray_exit(&inums);
 	return ret;
 disconnected:
-	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-		goto err;
-
-	prt_str_reversed(path, "(disconnected)");
+	prt_printf_reversed(path, "(disconnected at %llu.%u)", inum, snapshot);
 	goto out;
 }
 
