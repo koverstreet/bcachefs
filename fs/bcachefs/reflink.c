@@ -500,7 +500,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	struct btree_iter reflink_iter;
 	bch2_trans_iter_init(trans, &reflink_iter, BTREE_ID_reflink, POS_MAX,
 			     BTREE_ITER_intent);
-	struct bkey_s_c k = bch2_btree_iter_peek_prev(trans, &reflink_iter);
+	struct bkey_s_c k = bch2_btree_iter_peek_prev(&reflink_iter);
 	int ret = bkey_err(k);
 	if (ret)
 		goto err;
@@ -563,13 +563,12 @@ err:
 	return ret;
 }
 
-static struct bkey_s_c get_next_src(struct btree_trans *trans,
-				    struct btree_iter *iter, struct bpos end)
+static struct bkey_s_c get_next_src(struct btree_iter *iter, struct bpos end)
 {
 	struct bkey_s_c k;
 	int ret;
 
-	for_each_btree_key_max_continue_norestart(trans, *iter, end, 0, k, ret) {
+	for_each_btree_key_max_continue_norestart(*iter, end, 0, k, ret) {
 		if (bkey_extent_is_unwritten(k))
 			continue;
 
@@ -578,7 +577,7 @@ static struct bkey_s_c get_next_src(struct btree_trans *trans,
 	}
 
 	if (bkey_ge(iter->pos, end))
-		bch2_btree_iter_set_pos(trans, iter, end);
+		bch2_btree_iter_set_pos(iter, end);
 	return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
 }
 
@@ -641,27 +640,27 @@ s64 bch2_remap_range(struct bch_fs *c,
 		if (ret)
 			continue;
 
-		bch2_btree_iter_set_snapshot(trans, &src_iter, src_snapshot);
+		bch2_btree_iter_set_snapshot(&src_iter, src_snapshot);
 
 		ret = bch2_subvolume_get_snapshot(trans, dst_inum.subvol,
 						  &dst_snapshot);
 		if (ret)
 			continue;
 
-		bch2_btree_iter_set_snapshot(trans, &dst_iter, dst_snapshot);
+		bch2_btree_iter_set_snapshot(&dst_iter, dst_snapshot);
 
 		if (dst_inum.inum < src_inum.inum) {
 			/* Avoid some lock cycle transaction restarts */
-			ret = bch2_btree_iter_traverse(trans, &dst_iter);
+			ret = bch2_btree_iter_traverse(&dst_iter);
 			if (ret)
 				continue;
 		}
 
 		dst_done = dst_iter.pos.offset - dst_start.offset;
 		src_want = POS(src_start.inode, src_start.offset + dst_done);
-		bch2_btree_iter_set_pos(trans, &src_iter, src_want);
+		bch2_btree_iter_set_pos(&src_iter, src_want);
 
-		src_k = get_next_src(trans, &src_iter, src_end);
+		src_k = get_next_src(&src_iter, src_end);
 		ret = bkey_err(src_k);
 		if (ret)
 			continue;
@@ -733,7 +732,7 @@ s64 bch2_remap_range(struct bch_fs *c,
 
 	do {
 		struct bch_inode_unpacked inode_u;
-		struct btree_iter inode_iter = {};
+		struct btree_iter inode_iter = { NULL };
 
 		bch2_trans_begin(trans);
 

@@ -406,8 +406,8 @@ int bch2_dirent_rename(struct btree_trans *trans,
 		enum bch_rename_mode mode)
 {
 	struct qstr src_name_lookup, dst_name_lookup;
-	struct btree_iter src_iter = {};
-	struct btree_iter dst_iter = {};
+	struct btree_iter src_iter = { NULL };
+	struct btree_iter dst_iter = { NULL };
 	struct bkey_s_c old_src, old_dst = bkey_s_c_null;
 	struct bkey_i_dirent *new_src = NULL, *new_dst = NULL;
 	struct bpos dst_pos =
@@ -567,16 +567,16 @@ out_set_src:
 	}
 
 	if (delete_src) {
-		bch2_btree_iter_set_snapshot(trans, &src_iter, old_src.k->p.snapshot);
-		ret =   bch2_btree_iter_traverse(trans, &src_iter) ?:
+		bch2_btree_iter_set_snapshot(&src_iter, old_src.k->p.snapshot);
+		ret =   bch2_btree_iter_traverse(&src_iter) ?:
 			bch2_btree_delete_at(trans, &src_iter, BTREE_UPDATE_internal_snapshot_node);
 		if (ret)
 			goto out;
 	}
 
 	if (delete_dst) {
-		bch2_btree_iter_set_snapshot(trans, &dst_iter, old_dst.k->p.snapshot);
-		ret =   bch2_btree_iter_traverse(trans, &dst_iter) ?:
+		bch2_btree_iter_set_snapshot(&dst_iter, old_dst.k->p.snapshot);
+		ret =   bch2_btree_iter_traverse(&dst_iter) ?:
 			bch2_btree_delete_at(trans, &dst_iter, BTREE_UPDATE_internal_snapshot_node);
 		if (ret)
 			goto out;
@@ -757,7 +757,7 @@ int bch2_fsck_remove_dirent(struct btree_trans *trans, struct bpos pos)
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_dirents, pos, BTREE_ITER_intent);
 
-	ret =   bch2_btree_iter_traverse(trans, &iter) ?:
+	ret =   bch2_btree_iter_traverse(&iter) ?:
 		bch2_hash_delete_at(trans, bch2_dirent_hash_desc,
 				    &dir_hash_info, &iter,
 				    BTREE_UPDATE_internal_snapshot_node);
