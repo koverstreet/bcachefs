@@ -68,28 +68,33 @@ enum bcachefs_metadata_version bch2_latest_compatible_version(enum bcachefs_meta
 
 int bch2_set_version_incompat(struct bch_fs *c, enum bcachefs_metadata_version version)
 {
-	guard(mutex)(&c->sb_lock);
-
 	if (((c->sb.features & BIT_ULL(BCH_FEATURE_incompat_version_field)) &&
 	     version <= c->sb.version_incompat_allowed)) {
-		SET_BCH_SB_VERSION_INCOMPAT(c->disk_sb.sb,
-			max(BCH_SB_VERSION_INCOMPAT(c->disk_sb.sb), version));
-		bch2_write_super(c);
+		guard(mutex)(&c->sb_lock);
+
+		if (version > c->sb.version_incompat) {
+			SET_BCH_SB_VERSION_INCOMPAT(c->disk_sb.sb,
+				max(BCH_SB_VERSION_INCOMPAT(c->disk_sb.sb), version));
+			bch2_write_super(c);
+		}
 		return 0;
 	} else {
-		darray_for_each(c->incompat_versions_requested, i)
-			if (version == *i)
-				return bch_err_throw(c, may_not_use_incompat_feature);
+		BUILD_BUG_ON(BCH_VERSION_MAJOR(bcachefs_metadata_version_current) != 1);
 
-		darray_push(&c->incompat_versions_requested, version);
-		CLASS(printbuf, buf)();
-		prt_str(&buf, "requested incompat feature ");
-		bch2_version_to_text(&buf, version);
-		prt_str(&buf, " currently not enabled, allowed up to ");
-		bch2_version_to_text(&buf, version);
-		prt_printf(&buf, "\n  set version_upgrade=incompat to enable");
+		unsigned minor = BCH_VERSION_MINOR(version);
 
-		bch_notice(c, "%s", buf.buf);
+		if (!test_bit(minor, c->incompat_versions_requested) &&
+		    !test_and_set_bit(minor, c->incompat_versions_requested)) {
+			CLASS(printbuf, buf)();
+			prt_str(&buf, "requested incompat feature ");
+			bch2_version_to_text(&buf, version);
+			prt_str(&buf, " currently not enabled, allowed up to ");
+			bch2_version_to_text(&buf, version);
+			prt_printf(&buf, "\n  set version_upgrade=incompat to enable");
+
+			bch_notice(c, "%s", buf.buf);
+		}
+
 		return bch_err_throw(c, may_not_use_incompat_feature);
 	}
 }
