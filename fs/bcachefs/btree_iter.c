@@ -891,7 +891,7 @@ static noinline void btree_node_mem_ptr_set(struct btree_trans *trans,
 
 static noinline int btree_node_iter_and_journal_peek(struct btree_trans *trans,
 						     struct btree_path *path,
-						     unsigned flags)
+						     enum btree_iter_update_trigger_flags flags)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_path_level *l = path_l(path);
@@ -943,7 +943,7 @@ static noinline_for_stack int btree_node_missing_err(struct btree_trans *trans,
 
 static __always_inline int btree_path_down(struct btree_trans *trans,
 					   struct btree_path *path,
-					   unsigned flags,
+					   enum btree_iter_update_trigger_flags flags,
 					   unsigned long trace_ip)
 {
 	struct bch_fs *c = trans->c;
@@ -1151,7 +1151,7 @@ static inline unsigned btree_path_up_until_good_node(struct btree_trans *trans,
  */
 int bch2_btree_path_traverse_one(struct btree_trans *trans,
 				 btree_path_idx_t path_idx,
-				 unsigned flags,
+				 enum btree_iter_update_trigger_flags flags,
 				 unsigned long trace_ip)
 {
 	struct btree_path *path = &trans->paths[path_idx];
@@ -1732,7 +1732,8 @@ static inline btree_path_idx_t btree_path_alloc(struct btree_trans *trans,
 btree_path_idx_t bch2_path_get(struct btree_trans *trans,
 			     enum btree_id btree_id, struct bpos pos,
 			     unsigned locks_want, unsigned level,
-			     unsigned flags, unsigned long ip)
+			     enum btree_iter_update_trigger_flags flags,
+			     unsigned long ip)
 {
 	struct btree_path *path;
 	bool cached = flags & BTREE_ITER_cached;
@@ -3120,7 +3121,7 @@ void bch2_trans_iter_exit(struct btree_trans *trans, struct btree_iter *iter)
 void bch2_trans_iter_init_outlined(struct btree_trans *trans,
 			  struct btree_iter *iter,
 			  enum btree_id btree_id, struct bpos pos,
-			  unsigned flags)
+			  enum btree_iter_update_trigger_flags flags)
 {
 	bch2_trans_iter_init_common(trans, iter, btree_id, pos, 0, 0,
 			       bch2_btree_iter_flags(trans, btree_id, 0, flags),
@@ -3133,7 +3134,7 @@ void bch2_trans_node_iter_init(struct btree_trans *trans,
 			       struct bpos pos,
 			       unsigned locks_want,
 			       unsigned depth,
-			       unsigned flags)
+			       enum btree_iter_update_trigger_flags flags)
 {
 	flags |= BTREE_ITER_not_extents;
 	flags |= BTREE_ITER_snapshot_field;
