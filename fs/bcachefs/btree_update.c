@@ -131,10 +131,8 @@ int __bch2_insert_snapshot_whiteouts(struct btree_trans *trans,
 	darray_for_each(*s, id) {
 		pos.snapshot = *id;
 
-		struct btree_iter iter;
-		struct bkey_s_c k = bch2_bkey_get_iter(trans, &iter, btree, pos,
-						       BTREE_ITER_not_extents|
-						       BTREE_ITER_intent);
+		CLASS(btree_iter, iter)(trans, btree, pos, BTREE_ITER_not_extents|BTREE_ITER_intent);
+		struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 		ret = bkey_err(k);
 		if (ret)
 			break;
@@ -143,7 +141,6 @@ int __bch2_insert_snapshot_whiteouts(struct btree_trans *trans,
 			struct bkey_i *update = bch2_trans_kmalloc(trans, sizeof(struct bkey_i));
 			ret = PTR_ERR_OR_ZERO(update);
 			if (ret) {
-				bch2_trans_iter_exit(&iter);
 				break;
 			}
 
@@ -154,7 +151,6 @@ int __bch2_insert_snapshot_whiteouts(struct btree_trans *trans,
 			ret = bch2_trans_update(trans, &iter, update,
 						BTREE_UPDATE_internal_snapshot_node);
 		}
-		bch2_trans_iter_exit(&iter);
 
 		if (ret)
 			break;

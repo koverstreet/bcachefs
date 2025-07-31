@@ -285,8 +285,8 @@ bch2_bucket_alloc_early(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct bch_dev *ca = req->ca;
-	struct btree_iter iter, citer;
-	struct bkey_s_c k, ck;
+	struct btree_iter iter;
+	struct bkey_s_c k;
 	struct open_bucket *ob = NULL;
 	u64 first_bucket = ca->mi.first_bucket;
 	u64 *dev_alloc_cursor = &ca->alloc_cursor[req->btree_bitmap];
@@ -333,25 +333,22 @@ again:
 			continue;
 
 		/* now check the cached key to serialize concurrent allocs of the bucket */
-		ck = bch2_bkey_get_iter(trans, &citer, BTREE_ID_alloc, k.k->p, BTREE_ITER_cached);
+		CLASS(btree_iter, citer)(trans, BTREE_ID_alloc, k.k->p, BTREE_ITER_cached|BTREE_ITER_nopreserve);
+		struct bkey_s_c ck = bch2_btree_iter_peek_slot(&citer);
 		ret = bkey_err(ck);
 		if (ret)
 			break;
 
 		a = bch2_alloc_to_v4(ck, &a_convert);
-		if (a->data_type != BCH_DATA_free)
-			goto next;
+		if (a->data_type == BCH_DATA_free) {
+			req->counters.buckets_seen++;
 
-		req->counters.buckets_seen++;
-
-		ob = may_alloc_bucket(c, req, k.k->p)
-			? __try_alloc_bucket(c, req, k.k->p.offset, a->gen, cl)
-			: NULL;
-next:
-		bch2_set_btree_iter_dontneed(&citer);
-		bch2_trans_iter_exit(&citer);
-		if (ob)
-			break;
+			ob = may_alloc_bucket(c, req, k.k->p)
+				? __try_alloc_bucket(c, req, k.k->p.offset, a->gen, cl)
+				: NULL;
+			if (ob)
+				break;
+		}
 	}
 	bch2_trans_iter_exit(&iter);
 
