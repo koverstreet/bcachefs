@@ -499,7 +499,11 @@ static struct bkey_s_c_dirent dirent_get_by_pos(struct btree_trans *trans,
 						struct btree_iter *iter,
 						struct bpos pos)
 {
-	return bch2_bkey_get_iter_typed(trans, iter, BTREE_ID_dirents, pos, 0, dirent);
+	bch2_trans_iter_init(trans, iter, BTREE_ID_dirents, pos, 0);
+	struct bkey_s_c_dirent d = bch2_bkey_get_typed(iter, dirent);
+	if (bkey_err(d.s_c))
+		bch2_trans_iter_exit(iter);
+	return d;
 }
 
 static int remove_backpointer(struct btree_trans *trans,
@@ -2177,15 +2181,13 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 		struct bkey_i_dirent *new_dirent = bch2_bkey_make_mut_typed(trans, iter, &d.s_c, 0, dirent);
 		ret = PTR_ERR_OR_ZERO(new_dirent);
 		if (ret)
-			goto err;
+			return ret;
 
 		new_dirent->v.d_parent_subvol = cpu_to_le32(new_parent_subvol);
 	}
 
-	struct bkey_s_c_subvolume s =
-		bch2_bkey_get_iter_typed(trans, &subvol_iter,
-					 BTREE_ID_subvolumes, POS(0, target_subvol),
-					 0, subvolume);
+	bch2_trans_iter_init(trans, &subvol_iter, BTREE_ID_subvolumes, POS(0, target_subvol), 0);
+	struct bkey_s_c_subvolume s = bch2_bkey_get_typed(&subvol_iter, subvolume);
 	ret = bkey_err(s.s_c);
 	if (ret && !bch2_err_matches(ret, ENOENT))
 		goto err;

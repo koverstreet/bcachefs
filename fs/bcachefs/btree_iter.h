@@ -654,7 +654,7 @@ static inline struct bkey_s_c __bch2_bkey_get_iter(struct btree_trans *trans,
 	k = bch2_btree_iter_peek_slot(iter);
 
 	if (!bkey_err(k) && type && k.k->type != type)
-		k = bkey_s_c_err(-BCH_ERR_ENOENT_bkey_type_mismatch);
+		k = bkey_s_c_err(bch_err_throw(trans->c, ENOENT_bkey_type_mismatch));
 	if (unlikely(bkey_err(k)))
 		bch2_trans_iter_exit(iter);
 	return k;
@@ -668,9 +668,18 @@ static inline struct bkey_s_c bch2_bkey_get_iter(struct btree_trans *trans,
 	return __bch2_bkey_get_iter(trans, iter, btree, pos, flags, 0);
 }
 
-#define bch2_bkey_get_iter_typed(_trans, _iter, _btree_id, _pos, _flags, _type)\
-	bkey_s_c_to_##_type(__bch2_bkey_get_iter(_trans, _iter,			\
-				       _btree_id, _pos, _flags, KEY_TYPE_##_type))
+static inline struct bkey_s_c __bch2_bkey_get_typed(struct btree_iter *iter,
+						    enum bch_bkey_type type)
+{
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
+
+	if (!bkey_err(k) && k.k->type != type)
+		k = bkey_s_c_err(bch_err_throw(iter->trans->c, ENOENT_bkey_type_mismatch));
+	return k;
+}
+
+#define bch2_bkey_get_typed(_iter, _type)						\
+	bkey_s_c_to_##_type(__bch2_bkey_get_typed(_iter, KEY_TYPE_##_type))
 
 static inline void __bkey_val_copy(void *dst_v, unsigned dst_size, struct bkey_s_c src_k)
 {
