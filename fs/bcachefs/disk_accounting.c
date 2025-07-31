@@ -784,6 +784,7 @@ int bch2_accounting_read(struct bch_fs *c)
 
 			accounting_read_key(trans, k);
 		}));
+	bch2_trans_iter_exit(&iter);
 	if (ret)
 		return ret;
 

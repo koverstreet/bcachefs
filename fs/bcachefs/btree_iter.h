@@ -826,7 +826,6 @@ transaction_restart:							\
 		}));							\
 	} while (!_ret3 && bch2_btree_iter_advance(&(_iter)));		\
 									\
-	bch2_trans_iter_exit(&(_iter));					\
 	_ret3;								\
 })
 
@@ -842,7 +841,9 @@ transaction_restart:							\
 	bch2_trans_iter_init((_trans), &(_iter), (_btree_id),		\
 			     (_start), (_flags));			\
 									\
-	for_each_btree_key_max_continue(_trans, _iter, _end, _flags, _k, _do);\
+	int _ret = for_each_btree_key_max_continue(_trans, _iter, _end, _flags, _k, _do);\
+	bch2_trans_iter_exit(&(_iter));					\
+	_ret;								\
 })
 
 #define for_each_btree_key(_trans, _iter, _btree_id,			\

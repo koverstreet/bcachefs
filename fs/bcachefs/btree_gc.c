@@ -713,6 +713,7 @@ static int bch2_gc_btree(struct btree_trans *trans,
 			gc_pos_set(c, gc_pos_btree(btree, level, k.k->p));
 			bch2_gc_mark_key(trans, btree, level, &prev, &iter, k, initial);
 		}));
+		bch2_trans_iter_exit(&iter);
 		if (ret)
 			goto err;
 	}
