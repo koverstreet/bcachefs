@@ -687,10 +687,9 @@ static int __bch2_inum_to_path(struct btree_trans *trans,
 				goto disconnected;
 		}
 
-		struct btree_iter d_iter;
-		struct bkey_s_c_dirent d = bch2_bkey_get_iter_typed(trans, &d_iter,
-				BTREE_ID_dirents, SPOS(inode.bi_dir, inode.bi_dir_offset, snapshot),
-				0, dirent);
+		CLASS(btree_iter, d_iter)(trans, BTREE_ID_dirents,
+					  SPOS(inode.bi_dir, inode.bi_dir_offset, snapshot), 0);
+		struct bkey_s_c_dirent d = bch2_bkey_get_typed(&d_iter, dirent);
 		ret = bkey_err(d.s_c);
 		if (ret)
 			goto disconnected;
@@ -700,8 +699,6 @@ static int __bch2_inum_to_path(struct btree_trans *trans,
 		prt_bytes_reversed(path, dirent_name.name, dirent_name.len);
 
 		prt_char(path, '/');
-
-		bch2_trans_iter_exit(&d_iter);
 	}
 
 	if (orig_pos == path->pos)
@@ -779,10 +776,9 @@ static int bch2_check_dirent_inode_dirent(struct btree_trans *trans,
 		return __bch2_fsck_write_inode(trans, target);
 	}
 
-	struct bkey_s_c_dirent bp_dirent =
-		bch2_bkey_get_iter_typed(trans, &bp_iter, BTREE_ID_dirents,
-			      SPOS(target->bi_dir, target->bi_dir_offset, target->bi_snapshot),
-			      0, dirent);
+	bch2_trans_iter_init(trans, &bp_iter, BTREE_ID_dirents,
+			     SPOS(target->bi_dir, target->bi_dir_offset, target->bi_snapshot), 0);
+	struct bkey_s_c_dirent bp_dirent = bch2_bkey_get_typed(&bp_iter, dirent);
 	ret = bkey_err(bp_dirent);
 	if (ret && !bch2_err_matches(ret, ENOENT))
 		goto err;
