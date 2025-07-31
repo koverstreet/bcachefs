@@ -511,25 +511,22 @@ int bch2_move_get_io_opts_one(struct btree_trans *trans,
 	*io_opts = bch2_opts_to_inode_opts(c->opts);
 
 	/* reflink btree? */
-	if (!extent_k.k->p.inode)
-		goto out;
+	if (extent_k.k->p.inode) {
+		CLASS(btree_iter, inode_iter)(trans, BTREE_ID_inodes,
+				       SPOS(0, extent_k.k->p.inode, extent_k.k->p.snapshot),
+				       BTREE_ITER_cached);
+		struct bkey_s_c inode_k = bch2_btree_iter_peek_slot(&inode_iter);
+		int ret = bkey_err(inode_k);
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+			return ret;
 
-	struct btree_iter inode_iter;
-	struct bkey_s_c inode_k = bch2_bkey_get_iter(trans, &inode_iter, BTREE_ID_inodes,
-			       SPOS(0, extent_k.k->p.inode, extent_k.k->p.snapshot),
-			       BTREE_ITER_cached);
-	int ret = bkey_err(inode_k);
-	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-		return ret;
-
-	if (!ret && bkey_is_inode(inode_k.k)) {
-		struct bch_inode_unpacked inode;
-		bch2_inode_unpack(inode_k, &inode);
-		bch2_inode_opts_get(io_opts, c, &inode);
+		if (!ret && bkey_is_inode(inode_k.k)) {
+			struct bch_inode_unpacked inode;
+			bch2_inode_unpack(inode_k, &inode);
+			bch2_inode_opts_get(io_opts, c, &inode);
+		}
 	}
-	bch2_trans_iter_exit(&inode_iter);
-	/* seem to be spinning here? */
-out:
+
 	return bch2_get_update_rebalance_opts(trans, io_opts, extent_iter, extent_k);
 }
 
