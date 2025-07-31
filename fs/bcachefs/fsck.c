@@ -190,8 +190,7 @@ static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 		return ret;
 
 	if (!subvol.inode) {
-		struct btree_iter iter;
-		struct bkey_i_subvolume *subvol = bch2_bkey_get_mut_typed(trans, &iter,
+		struct bkey_i_subvolume *subvol = bch2_bkey_get_mut_typed(trans,
 				BTREE_ID_subvolumes, POS(0, subvolid),
 				0, subvolume);
 		ret = PTR_ERR_OR_ZERO(subvol);
@@ -199,7 +198,6 @@ static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 			return ret;
 
 		subvol->v.inode = cpu_to_le64(reattaching_inum);
-		bch2_trans_iter_exit(&iter);
 	}
 
 	subvol_inum root_inum = {
@@ -369,9 +367,8 @@ static int reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *
 	if (inode->bi_subvol) {
 		inode->bi_parent_subvol = BCACHEFS_ROOT_SUBVOL;
 
-		struct btree_iter subvol_iter;
 		struct bkey_i_subvolume *subvol =
-			bch2_bkey_get_mut_typed(trans, &subvol_iter,
+			bch2_bkey_get_mut_typed(trans,
 						BTREE_ID_subvolumes, POS(0, inode->bi_subvol),
 						0, subvolume);
 		ret = PTR_ERR_OR_ZERO(subvol);
@@ -379,7 +376,6 @@ static int reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *
 			return ret;
 
 		subvol->v.fs_path_parent = BCACHEFS_ROOT_SUBVOL;
-		bch2_trans_iter_exit(&subvol_iter);
 
 		u64 root_inum;
 		ret = subvol_lookup(trans, inode->bi_parent_subvol,
@@ -602,8 +598,7 @@ static int reconstruct_subvol(struct btree_trans *trans, u32 snapshotid, u32 sub
 	if (ret)
 		return ret;
 
-	struct btree_iter iter;
-	struct bkey_i_snapshot *s = bch2_bkey_get_mut_typed(trans, &iter,
+	struct bkey_i_snapshot *s = bch2_bkey_get_mut_typed(trans,
 			BTREE_ID_snapshots, POS(0, snapshotid),
 			0, snapshot);
 	ret = PTR_ERR_OR_ZERO(s);
@@ -615,9 +610,8 @@ static int reconstruct_subvol(struct btree_trans *trans, u32 snapshotid, u32 sub
 
 	s->v.subvol = cpu_to_le32(subvolid);
 	SET_BCH_SNAPSHOT_SUBVOL(&s->v, true);
-	bch2_trans_iter_exit(&iter);
 
-	struct bkey_i_snapshot_tree *st = bch2_bkey_get_mut_typed(trans, &iter,
+	struct bkey_i_snapshot_tree *st = bch2_bkey_get_mut_typed(trans,
 			BTREE_ID_snapshot_trees, POS(0, snapshot_tree),
 			0, snapshot_tree);
 	ret = PTR_ERR_OR_ZERO(st);
@@ -627,8 +621,6 @@ static int reconstruct_subvol(struct btree_trans *trans, u32 snapshotid, u32 sub
 
 	if (!st->v.master_subvol)
 		st->v.master_subvol = cpu_to_le32(subvolid);
-
-	bch2_trans_iter_exit(&iter);
 	return 0;
 }
 
