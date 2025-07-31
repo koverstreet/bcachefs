@@ -798,10 +798,9 @@ static int bch2_set_quota_trans(struct btree_trans *trans,
 				struct bkey_i_quota *new_quota,
 				struct qc_dqblk *qdq)
 {
-	struct btree_iter iter;
-	struct bkey_s_c k =
-		bch2_bkey_get_iter(trans, &iter, BTREE_ID_quotas, new_quota->k.p,
-				   BTREE_ITER_slots|BTREE_ITER_intent);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_quotas, new_quota->k.p,
+				BTREE_ITER_slots|BTREE_ITER_intent);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 	int ret = bkey_err(k);
 	if (unlikely(ret))
 		return ret;
@@ -819,9 +818,7 @@ static int bch2_set_quota_trans(struct btree_trans *trans,
 	if (qdq->d_fieldmask & QC_INO_HARD)
 		new_quota->v.c[Q_INO].hardlimit = cpu_to_le64(qdq->d_ino_hardlimit);
 
-	ret = bch2_trans_update(trans, &iter, &new_quota->k_i, 0);
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return bch2_trans_update(trans, &iter, &new_quota->k_i, 0);
 }
 
 static int bch2_set_quota(struct super_block *sb, struct kqid qid,

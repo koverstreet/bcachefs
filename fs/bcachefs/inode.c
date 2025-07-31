@@ -345,12 +345,12 @@ int __bch2_inode_peek(struct btree_trans *trans,
 	if (ret)
 		return ret;
 
-	struct bkey_s_c k = bch2_bkey_get_iter(trans, iter, BTREE_ID_inodes,
-					       SPOS(0, inum.inum, snapshot),
-					       flags|BTREE_ITER_cached);
+	bch2_trans_iter_init(trans, iter, BTREE_ID_inodes, SPOS(0, inum.inum, snapshot),
+			     flags|BTREE_ITER_cached);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
 	ret = bkey_err(k);
 	if (ret)
-		return ret;
+		goto err;
 
 	ret = bkey_is_inode(k.k) ? 0 : -BCH_ERR_ENOENT_inode;
 	if (ret)
@@ -373,19 +373,15 @@ int bch2_inode_find_by_inum_snapshot(struct btree_trans *trans,
 					    struct bch_inode_unpacked *inode,
 					    unsigned flags)
 {
-	struct btree_iter iter;
-	struct bkey_s_c k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_inodes,
-					       SPOS(0, inode_nr, snapshot), flags);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_inodes, SPOS(0, inode_nr, snapshot), flags);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 	int ret = bkey_err(k);
 	if (ret)
-		goto err;
+		return ret;
 
-	ret = bkey_is_inode(k.k)
+	return bkey_is_inode(k.k)
 		? bch2_inode_unpack(k, inode)
 		: -BCH_ERR_ENOENT_inode;
-err:
-	bch2_trans_iter_exit(&iter);
-	return ret;
 }
 
 int bch2_inode_find_by_inum_nowarn_trans(struct btree_trans *trans,
@@ -961,11 +957,10 @@ bch2_inode_alloc_cursor_get(struct btree_trans *trans, u64 cpu, u64 *min, u64 *m
 
 	cursor_idx &= ~(~0ULL << c->opts.shard_inode_numbers_bits);
 
-	struct btree_iter iter;
-	struct bkey_s_c k = bch2_bkey_get_iter(trans, &iter,
-					BTREE_ID_logged_ops,
-					POS(LOGGED_OPS_INUM_inode_cursors, cursor_idx),
-					BTREE_ITER_cached);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_logged_ops,
+				POS(LOGGED_OPS_INUM_inode_cursors, cursor_idx),
+				BTREE_ITER_cached);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 	int ret = bkey_err(k);
 	if (ret)
 		return ERR_PTR(ret);
@@ -974,9 +969,8 @@ bch2_inode_alloc_cursor_get(struct btree_trans *trans, u64 cpu, u64 *min, u64 *m
 		k.k->type == KEY_TYPE_inode_alloc_cursor
 		? bch2_bkey_make_mut_typed(trans, &iter, &k, 0, inode_alloc_cursor)
 		: bch2_bkey_alloc(trans, &iter, 0, inode_alloc_cursor);
-	ret = PTR_ERR_OR_ZERO(cursor);
-	if (ret)
-		goto err;
+	if (IS_ERR(cursor))
+		return cursor;
 
 	if (c->opts.inodes_32bit) {
 		*min = BLOCKDEV_INODE_MAX;
@@ -997,9 +991,8 @@ bch2_inode_alloc_cursor_get(struct btree_trans *trans, u64 cpu, u64 *min, u64 *m
 		cursor->v.idx = cpu_to_le64(*min);
 		le32_add_cpu(&cursor->v.gen, 1);
 	}
-err:
-	bch2_trans_iter_exit(&iter);
-	return ret ? ERR_PTR(ret) : cursor;
+
+	return cursor;
 }
 
 /*
@@ -1303,9 +1296,6 @@ static noinline int __bch2_inode_rm_snapshot(struct btree_trans *trans, u64 inum
 {
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter = { NULL };
-	struct bkey_i_inode_generation delete;
-	struct bch_inode_unpacked inode_u;
-	struct bkey_s_c k;
 	int ret;
 
 	do {
@@ -1327,8 +1317,8 @@ static noinline int __bch2_inode_rm_snapshot(struct btree_trans *trans, u64 inum
 retry:
 	bch2_trans_begin(trans);
 
-	k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_inodes,
-			       SPOS(0, inum, snapshot), BTREE_ITER_intent);
+	struct bkey_s_c k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_inodes,
+					       SPOS(0, inum, snapshot), BTREE_ITER_intent);
 	ret = bkey_err(k);
 	if (ret)
 		goto err;
@@ -1341,12 +1331,14 @@ retry:
 		goto err;
 	}
 
+	struct bch_inode_unpacked inode_u;
 	bch2_inode_unpack(k, &inode_u);
 
 	/* Subvolume root? */
 	if (inode_u.bi_subvol)
 		bch_warn(c, "deleting inode %llu marked as unlinked, but also a subvolume root!?", inode_u.bi_inum);
 
+	struct bkey_i_inode_generation delete;
 	bkey_inode_generation_init(&delete.k_i);
 	delete.k.p = iter.pos;
 	delete.v.bi_generation = cpu_to_le32(inode_u.bi_generation + 1);
@@ -1406,12 +1398,11 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 				    bool from_deleted_inodes)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter inode_iter;
-	struct bkey_s_c k;
 	CLASS(printbuf, buf)();
 	int ret;
 
-	k = bch2_bkey_get_iter(trans, &inode_iter, BTREE_ID_inodes, pos, BTREE_ITER_cached);
+	CLASS(btree_iter, inode_iter)(trans, BTREE_ID_inodes, pos, BTREE_ITER_cached);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(&inode_iter);
 	ret = bkey_err(k);
 	if (ret)
 		return ret;
@@ -1423,11 +1414,11 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 			pos.offset, pos.snapshot))
 		goto delete;
 	if (ret)
-		goto out;
+		return ret;
 
 	ret = bch2_inode_unpack(k, inode);
 	if (ret)
-		goto out;
+		return ret;
 
 	if (S_ISDIR(inode->bi_mode)) {
 		ret = bch2_empty_dir_snapshot(trans, pos.offset, 0, pos.snapshot);
@@ -1438,7 +1429,7 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 				pos.offset, pos.snapshot))
 			goto delete;
 		if (ret)
-			goto out;
+			return ret;
 	}
 
 	ret = inode->bi_flags & BCH_INODE_unlinked ? 0 : bch_err_throw(c, inode_not_unlinked);
@@ -1448,7 +1439,7 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 			pos.offset, pos.snapshot))
 		goto delete;
 	if (ret)
-		goto out;
+		return ret;
 
 	ret = !(inode->bi_flags & BCH_INODE_has_child_snapshot)
 		? 0 : bch_err_throw(c, inode_has_child_snapshot);
@@ -1459,11 +1450,11 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 			pos.offset, pos.snapshot))
 		goto delete;
 	if (ret)
-		goto out;
+		return ret;
 
 	ret = bch2_inode_has_child_snapshots(trans, k.k->p);
 	if (ret < 0)
-		goto out;
+		return ret;
 
 	if (ret) {
 		if (fsck_err(trans, inode_has_child_snapshots_wrong,
@@ -1474,13 +1465,12 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 			inode->bi_flags |= BCH_INODE_has_child_snapshot;
 			ret = __bch2_fsck_write_inode(trans, inode);
 			if (ret)
-				goto out;
+				return ret;
 		}
 
 		if (!from_deleted_inodes) {
-			ret =   bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
+			return  bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
 				bch_err_throw(c, inode_has_child_snapshot);
-			goto out;
 		}
 
 		goto delete;
@@ -1491,20 +1481,15 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 		if (test_bit(BCH_FS_clean_recovery, &c->flags) &&
 		    !fsck_err(trans, deleted_inode_but_clean,
 			      "filesystem marked as clean but have deleted inode %llu:%u",
-			      pos.offset, pos.snapshot)) {
-			ret = 0;
-			goto out;
-		}
+			      pos.offset, pos.snapshot))
+			return 0;
 
 		ret = 1;
 	}
-out:
 fsck_err:
-	bch2_trans_iter_exit(&inode_iter);
 	return ret;
 delete:
-	ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_deleted_inodes, pos, false);
-	goto out;
+	return bch2_btree_bit_mod_buffered(trans, BTREE_ID_deleted_inodes, pos, false);
 }
 
 static int may_delete_deleted_inum(struct btree_trans *trans, subvol_inum inum,

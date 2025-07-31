@@ -264,32 +264,32 @@ struct bkey_s_c bch2_lookup_indirect_extent(struct btree_trans *trans,
 
 	u64 reflink_offset = REFLINK_P_IDX(p.v) + *offset_into_extent;
 
-	struct bkey_s_c k = bch2_bkey_get_iter(trans, iter, BTREE_ID_reflink,
-				       POS(0, reflink_offset), iter_flags);
-	if (bkey_err(k))
-		return k;
+	bch2_trans_iter_init(trans, iter, BTREE_ID_reflink, POS(0, reflink_offset), iter_flags);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
+	int ret = bkey_err(k);
+	if (ret)
+		goto err;
 
 	if (unlikely(!bkey_extent_is_reflink_data(k.k))) {
 		u64 missing_end = min(k.k->p.offset,
 				      REFLINK_P_IDX(p.v) + p.k->size + le32_to_cpu(p.v->back_pad));
 		BUG_ON(reflink_offset == missing_end);
 
-		int ret = bch2_indirect_extent_missing_error(trans, p, reflink_offset,
-							     missing_end, should_commit);
-		if (ret) {
-			bch2_trans_iter_exit(iter);
-			return bkey_s_c_err(ret);
-		}
+		ret = bch2_indirect_extent_missing_error(trans, p, reflink_offset,
+							 missing_end, should_commit);
+		if (ret)
+			goto err;
 	} else if (unlikely(REFLINK_P_ERROR(p.v))) {
-		int ret = bch2_indirect_extent_not_missing(trans, p, should_commit);
-		if (ret) {
-			bch2_trans_iter_exit(iter);
-			return bkey_s_c_err(ret);
-		}
+		ret = bch2_indirect_extent_not_missing(trans, p, should_commit);
+		if (ret)
+			goto err;
 	}
 
 	*offset_into_extent = reflink_offset - bkey_start_offset(k.k);
 	return k;
+err:
+	bch2_trans_iter_exit(iter);
+	return bkey_s_c_err(ret);
 }
 
 /* reflink pointer trigger */
