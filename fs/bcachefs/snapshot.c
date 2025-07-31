@@ -1468,23 +1468,19 @@ static int delete_dead_snapshots_process_key(struct btree_trans *trans,
 
 		new->k.p.snapshot = live_child;
 
-		struct btree_iter dst_iter;
-		struct bkey_s_c dst_k = bch2_bkey_get_iter(trans, &dst_iter,
-							   iter->btree_id, new->k.p,
-							   BTREE_ITER_all_snapshots|
-							   BTREE_ITER_intent);
+		CLASS(btree_iter, dst_iter)(trans, iter->btree_id, new->k.p,
+					    BTREE_ITER_all_snapshots|BTREE_ITER_intent);
+		struct bkey_s_c dst_k = bch2_btree_iter_peek_slot(&dst_iter);
 		ret = bkey_err(dst_k);
 		if (ret)
 			return ret;
 
-		ret =   (bkey_deleted(dst_k.k)
+		return (bkey_deleted(dst_k.k)
 			 ? bch2_trans_update(trans, &dst_iter, new,
 					     BTREE_UPDATE_internal_snapshot_node)
 			 : 0) ?:
 			bch2_btree_delete_at(trans, iter,
 					     BTREE_UPDATE_internal_snapshot_node);
-		bch2_trans_iter_exit(&dst_iter);
-		return ret;
 	}
 
 	return 0;

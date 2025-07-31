@@ -64,23 +64,22 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 	if (bch2_bucket_is_open(c, b->k.bucket.inode, b->k.bucket.offset))
 		return 0;
 
-	struct btree_iter iter;
-	struct bkey_s_c k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_alloc,
-				       b->k.bucket, BTREE_ITER_cached);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_alloc, b->k.bucket, BTREE_ITER_cached);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 	int ret = bkey_err(k);
 	if (ret)
 		return ret;
 
 	CLASS(bch2_dev_bucket_tryget, ca)(c, k.k->p);
 	if (!ca)
-		goto out;
+		return 0;
 
 	if (bch2_bucket_bitmap_test(&ca->bucket_backpointer_mismatch, b->k.bucket.offset))
-		goto out;
+		return 0;
 
 	if (ca->mi.state != BCH_MEMBER_STATE_rw ||
 	    !bch2_dev_is_online(ca))
-		goto out;
+		return 0;
 
 	struct bch_alloc_v4 _a;
 	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &_a);
@@ -88,10 +87,7 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 	b->sectors	= bch2_bucket_sectors_dirty(*a);
 	u64 lru_idx	= alloc_lru_idx_fragmentation(*a, ca);
 
-	ret = lru_idx && lru_idx <= time;
-out:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return lru_idx && lru_idx <= time;
 }
 
 static void move_bucket_free(struct buckets_in_flight *list,

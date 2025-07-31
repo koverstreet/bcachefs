@@ -220,13 +220,13 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 	 */
 	unsigned inode_update_flags = BTREE_UPDATE_nojournal;
 
-	struct btree_iter iter;
-	struct bkey_s_c k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_inodes,
-			      SPOS(0,
-				   extent_iter->pos.inode,
-				   extent_iter->snapshot),
-			      BTREE_ITER_intent|
-			      BTREE_ITER_cached);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_inodes,
+				SPOS(0,
+				     extent_iter->pos.inode,
+				     extent_iter->snapshot),
+				BTREE_ITER_intent|
+				BTREE_ITER_cached);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 	int ret = bkey_err(k);
 	if (unlikely(ret))
 		return ret;
@@ -238,7 +238,7 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 	struct bkey_i *k_mut = bch2_trans_kmalloc_nomemzero(trans, bkey_bytes(k.k) + 8);
 	ret = PTR_ERR_OR_ZERO(k_mut);
 	if (unlikely(ret))
-		goto err;
+		return ret;
 
 	bkey_reassemble(k_mut, k);
 
@@ -246,7 +246,7 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 		k_mut = bch2_inode_to_v3(trans, k_mut);
 		ret = PTR_ERR_OR_ZERO(k_mut);
 		if (unlikely(ret))
-			goto err;
+			return ret;
 	}
 
 	struct bkey_i_inode_v3 *inode = bkey_i_to_inode_v3(k_mut);
@@ -291,12 +291,9 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 		inode_update_flags = 0;
 	}
 
-	ret = bch2_trans_update(trans, &iter, &inode->k_i,
-				BTREE_UPDATE_internal_snapshot_node|
-				inode_update_flags);
-err:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return bch2_trans_update(trans, &iter, &inode->k_i,
+				 BTREE_UPDATE_internal_snapshot_node|
+				 inode_update_flags);
 }
 
 int bch2_extent_update(struct btree_trans *trans,

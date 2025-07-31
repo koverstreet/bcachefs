@@ -18,16 +18,14 @@ static int bch2_dirent_has_target(struct btree_trans *trans, struct bkey_s_c_dir
 			return ret;
 		return !ret;
 	} else {
-		struct btree_iter iter;
-		struct bkey_s_c k = bch2_bkey_get_iter(trans, &iter, BTREE_ID_inodes,
+		CLASS(btree_iter, iter)(trans, BTREE_ID_inodes,
 				SPOS(0, le64_to_cpu(d.v->d_inum), d.k->p.snapshot), 0);
+		struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 		int ret = bkey_err(k);
 		if (ret)
 			return ret;
 
-		ret = bkey_is_inode(k.k);
-		bch2_trans_iter_exit(&iter);
-		return ret;
+		return bkey_is_inode(k.k);
 	}
 }
 
