@@ -62,7 +62,6 @@ bch2_btree_iter_peek_in_subvolume_max_type(struct btree_iter *iter, struct bpos 
 		}));								\
 	} while (!_ret3 && bch2_btree_iter_advance(&(_iter)));			\
 										\
-	bch2_trans_iter_exit(&(_iter));						\
 	_ret3;									\
 })
 
@@ -73,8 +72,10 @@ bch2_btree_iter_peek_in_subvolume_max_type(struct btree_iter *iter, struct bpos 
 	bch2_trans_iter_init((_trans), &(_iter), (_btree_id),			\
 			     (_start), (_flags));				\
 										\
-	for_each_btree_key_in_subvolume_max_continue(_trans, _iter,		\
+	int _ret = for_each_btree_key_in_subvolume_max_continue(_trans, _iter,	\
 					_end, _subvolid, _flags, _k, _do);	\
+	bch2_trans_iter_exit(&(_iter));						\
+	_ret;									\
 })
 
 int bch2_subvolume_unlink(struct btree_trans *, u32);

@@ -835,6 +835,7 @@ static int bch2_check_extents_to_backpointers_pass(struct btree_trans *trans,
 				check_extent_to_backpointers(trans, s, btree_id, level, k) ?:
 				bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 			}));
+			bch2_trans_iter_exit(&iter);
 			if (ret)
 				return ret;
 
@@ -1060,6 +1061,7 @@ static int bch2_pin_backpointer_nodes_with_missing(struct btree_trans *trans,
 
 		bch2_btree_node_prefetch(trans, path, tmp.k, path->btree_id, path->level - 1);
 	}));
+	bch2_trans_iter_exit(&iter);
 	if (ret)
 		return ret;
 
@@ -1089,6 +1091,7 @@ static int bch2_pin_backpointer_nodes_with_missing(struct btree_trans *trans,
 
 		ret;
 	}));
+	bch2_trans_iter_exit(&iter);
 	if (ret)
 		return ret;
 
