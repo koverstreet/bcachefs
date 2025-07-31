@@ -701,14 +701,11 @@ static inline int __bch2_bkey_get_val_typed(struct btree_trans *trans,
 				enum bch_bkey_type type,
 				unsigned val_size, void *val)
 {
-	struct btree_iter iter;
-	struct bkey_s_c k = __bch2_bkey_get_iter(trans, &iter, btree, pos, flags, type);
+	CLASS(btree_iter, iter)(trans, btree, pos, flags);
+	struct bkey_s_c k = __bch2_bkey_get_typed(&iter, type);
 	int ret = bkey_err(k);
-	if (!ret) {
+	if (!ret)
 		__bkey_val_copy(val, val_size, k);
-		bch2_trans_iter_exit(&iter);
-	}
-
 	return ret;
 }
 
