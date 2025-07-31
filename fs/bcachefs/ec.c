@@ -2113,17 +2113,13 @@ static int bch2_invalidate_stripe_to_dev_from_alloc(struct btree_trans *trans, s
 		return bch_err_throw(c, invalidate_stripe_to_dev);
 	}
 
-	struct btree_iter iter;
-	struct bkey_s_c_stripe s =
-		bch2_bkey_get_iter_typed(trans, &iter, BTREE_ID_stripes, POS(0, a->stripe),
-					 BTREE_ITER_slots, stripe);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, a->stripe), 0);
+	struct bkey_s_c_stripe s = bch2_bkey_get_typed(&iter, stripe);
 	int ret = bkey_err(s);
 	if (ret)
 		return ret;
 
-	ret = bch2_invalidate_stripe_to_dev(trans, &iter, s.s_c, k_a.k->p.inode, flags);
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return bch2_invalidate_stripe_to_dev(trans, &iter, s.s_c, k_a.k->p.inode, flags);
 }
 
 int bch2_dev_remove_stripes(struct bch_fs *c, unsigned dev_idx, unsigned flags)
