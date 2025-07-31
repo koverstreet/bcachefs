@@ -663,24 +663,23 @@ static int bch2_trigger_stripe_ptr(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 
 	if (flags & BTREE_TRIGGER_transactional) {
-		struct btree_iter iter;
-		struct bkey_i_stripe *s = bch2_bkey_get_mut_typed(trans, &iter,
-				BTREE_ID_stripes, POS(0, p.ec.idx),
-				BTREE_ITER_with_updates, stripe);
+		struct bkey_i_stripe *s = bch2_bkey_get_mut_typed(trans,
+							BTREE_ID_stripes, POS(0, p.ec.idx),
+							BTREE_ITER_with_updates,
+							stripe);
 		int ret = PTR_ERR_OR_ZERO(s);
 		if (unlikely(ret)) {
 			bch2_trans_inconsistent_on(bch2_err_matches(ret, ENOENT), trans,
 				"pointer to nonexistent stripe %llu",
 				(u64) p.ec.idx);
-			goto err;
+			return ret;
 		}
 
 		if (!bch2_ptr_matches_stripe(&s->v, p)) {
 			bch2_trans_inconsistent(trans,
 				"stripe pointer doesn't match stripe %llu",
 				(u64) p.ec.idx);
-			ret = bch_err_throw(c, trigger_stripe_pointer);
-			goto err;
+			return bch_err_throw(c, trigger_stripe_pointer);
 		}
 
 		stripe_blockcount_set(&s->v, p.ec.block,
@@ -692,10 +691,7 @@ static int bch2_trigger_stripe_ptr(struct btree_trans *trans,
 		acc.type = BCH_DISK_ACCOUNTING_replicas;
 		bch2_bkey_to_replicas(&acc.replicas, bkey_i_to_s_c(&s->k_i));
 		acc.replicas.data_type = data_type;
-		ret = bch2_disk_accounting_mod(trans, &acc, &sectors, 1, false);
-err:
-		bch2_trans_iter_exit(&iter);
-		return ret;
+		return bch2_disk_accounting_mod(trans, &acc, &sectors, 1, false);
 	}
 
 	if (flags & BTREE_TRIGGER_gc) {
