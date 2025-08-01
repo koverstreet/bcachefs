@@ -463,9 +463,10 @@ int __bch2_fsck_write_inode(struct btree_trans *trans, struct bch_inode_unpacked
 	bch2_inode_pack(inode_p, inode);
 	inode_p->inode.k.p.snapshot = inode->bi_snapshot;
 
-	return bch2_btree_insert_nonextent(trans, BTREE_ID_inodes,
-				&inode_p->inode.k_i,
-				BTREE_UPDATE_internal_snapshot_node);
+	return bch2_btree_insert_trans(trans, BTREE_ID_inodes,
+				       &inode_p->inode.k_i,
+				       BTREE_ITER_cached|
+				       BTREE_UPDATE_internal_snapshot_node);
 }
 
 int bch2_fsck_write_inode(struct btree_trans *trans, struct bch_inode_unpacked *inode)
