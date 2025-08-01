@@ -282,6 +282,41 @@ fsck_err:
 	return ret;
 }
 
+static int btree_check_root_boundaries(struct btree_trans *trans, struct btree *b)
+{
+	struct bch_fs *c = trans->c;
+	struct printbuf buf = PRINTBUF;
+	int ret = 0;
+
+	BUG_ON(b->key.k.type == KEY_TYPE_btree_ptr_v2 &&
+	       !bpos_eq(bkey_i_to_btree_ptr_v2(&b->key)->v.min_key,
+			b->data->min_key));
+
+	prt_str(&buf, "  at ");
+	bch2_btree_pos_to_text(&buf, c, b);
+
+	if (mustfix_fsck_err_on(!bpos_eq(b->data->min_key, POS_MIN),
+				trans, btree_node_topology_bad_root_min_key,
+			     "btree root with incorrect min_key%s", buf.buf)) {
+		ret = set_node_min(c, b, POS_MIN);
+		if (ret)
+			goto err;
+	}
+
+	if (mustfix_fsck_err_on(!bpos_eq(b->data->max_key, SPOS_MAX),
+				trans, btree_node_topology_bad_root_max_key,
+			     "btree root with incorrect min_key%s", buf.buf)) {
+		ret = set_node_max(c, b, SPOS_MAX);
+		if (ret)
+			goto err;
+	}
+
+err:
+fsck_err:
+	printbuf_exit(&buf);
+	return ret;
+}
+
 static int btree_repair_node_end(struct btree_trans *trans, struct btree *b,
 				 struct btree *child, struct bpos *pulled_from_scan)
 {
@@ -586,7 +621,8 @@ recover:
 		struct btree *b = r->b;
 
 		btree_node_lock_nopath_nofail(trans, &b->c, SIX_LOCK_read);
-		ret = bch2_btree_repair_topology_recurse(trans, b, &pulled_from_scan);
+		ret =   btree_check_root_boundaries(trans, b) ?:
+			bch2_btree_repair_topology_recurse(trans, b, &pulled_from_scan);
 		six_unlock_read(&b->c.lock);
 
 		if (bch2_err_matches(ret, BCH_ERR_topology_repair_drop_this_node)) {
