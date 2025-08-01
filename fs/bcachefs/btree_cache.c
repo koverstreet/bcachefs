@@ -214,7 +214,7 @@ void bch2_node_pin(struct bch_fs *c, struct btree *b)
 	struct btree_cache *bc = &c->btree_cache;
 
 	guard(mutex)(&bc->lock);
-	if (b != btree_node_root(c, b) && !btree_node_pinned(b)) {
+	if (!btree_node_is_root(c, b) && !btree_node_pinned(b)) {
 		set_btree_node_pinned(b);
 		list_move(&b->list, &bc->live[1].list);
 		bc->live[0].nr--;
