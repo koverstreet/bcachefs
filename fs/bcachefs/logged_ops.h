@@ -10,7 +10,7 @@
 
 static inline int bch2_logged_op_update(struct btree_trans *trans, struct bkey_i *op)
 {
-	return bch2_btree_insert_nonextent(trans, BTREE_ID_logged_ops, op, 0);
+	return bch2_btree_insert_trans(trans, BTREE_ID_logged_ops, op, BTREE_ITER_cached);
 }
 
 int bch2_resume_logged_ops(struct bch_fs *);
