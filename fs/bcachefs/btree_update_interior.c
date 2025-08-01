@@ -66,6 +66,10 @@ int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
 	bkey_init(&prev.k->k);
 	bch2_btree_and_journal_iter_init_node_iter(trans, &iter, b);
 
+	/*
+	 * Don't use btree_node_is_root(): we're called by btree split, after
+	 * creating a new root but before setting it
+	 */
 	if (b == btree_node_root(c, b)) {
 		if (!bpos_eq(b->data->min_key, POS_MIN)) {
 			bch2_log_msg_start(c, &buf);
@@ -1655,7 +1659,7 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 	int ret = 0;
 
 	bch2_verify_btree_nr_keys(b);
-	BUG_ON(!parent && (b != btree_node_root(c, b)));
+	BUG_ON(!parent && !btree_node_is_root(c, b));
 	BUG_ON(parent && !btree_node_intent_locked(trans->paths + path, b->c.level + 1));
 
 	ret = bch2_btree_node_check_topology(trans, b);
@@ -2527,7 +2531,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 		if (ret)
 			goto err;
 	} else {
-		BUG_ON(btree_node_root(c, b) != b);
+		BUG_ON(!btree_node_is_root(c, b));
 
 		struct jset_entry *e = bch2_trans_jset_entry_alloc(trans,
 				       jset_u64s(new_key->k.u64s));
