@@ -234,8 +234,9 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 				update->k.type = extent_whiteout_type(trans->c, iter->btree_id, new.k);
 		}
 
-		ret = bch2_btree_insert_nonextent(trans, btree_id, update,
-					  BTREE_UPDATE_internal_snapshot_node|flags);
+		ret = bch2_trans_update_by_path(trans, iter->update_path ?: iter->path, update,
+						BTREE_UPDATE_internal_snapshot_node|
+						flags, _RET_IP_);
 		if (ret)
 			return ret;
 	} else {
@@ -246,8 +247,8 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 		bch2_cut_front(new.k->p, update);
 
 		ret = bch2_trans_update_by_path(trans, iter->path, update,
-					  BTREE_UPDATE_internal_snapshot_node|
-					  flags, _RET_IP_);
+						BTREE_UPDATE_internal_snapshot_node|
+						flags, _RET_IP_);
 		if (ret)
 			return ret;
 	}
