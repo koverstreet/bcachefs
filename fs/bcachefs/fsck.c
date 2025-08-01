@@ -923,9 +923,10 @@ lookup_inode_for_snapshot(struct btree_trans *trans, struct inode_walker *w, str
 			bkey_init(&whiteout.k);
 			whiteout.k.type = KEY_TYPE_whiteout;
 			whiteout.k.p = SPOS(0, i->inode.bi_inum, k.k->p.snapshot);
-			ret = bch2_btree_insert_nonextent(trans, BTREE_ID_inodes,
-							  &whiteout,
-							  BTREE_UPDATE_internal_snapshot_node);
+			ret = bch2_btree_insert_trans(trans, BTREE_ID_inodes,
+						      &whiteout,
+						      BTREE_ITER_cached|
+						      BTREE_UPDATE_internal_snapshot_node);
 		}
 
 		if (ret)
