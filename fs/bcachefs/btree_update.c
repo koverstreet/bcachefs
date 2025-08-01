@@ -215,7 +215,7 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 			return ret;
 	}
 
-	if (bkey_le(old.k->p, new.k->p)) {
+	if (!back_split) {
 		update = bch2_trans_kmalloc(trans, sizeof(*update));
 		if ((ret = PTR_ERR_OR_ZERO(update)))
 			return ret;
@@ -238,9 +238,7 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 					  BTREE_UPDATE_internal_snapshot_node|flags);
 		if (ret)
 			return ret;
-	}
-
-	if (back_split) {
+	} else {
 		update = bch2_bkey_make_mut_noupdate(trans, old);
 		if ((ret = PTR_ERR_OR_ZERO(update)))
 			return ret;
