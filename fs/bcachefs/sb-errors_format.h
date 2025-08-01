@@ -76,6 +76,8 @@ enum bch_fsck_flags {
 	x(btree_node_read_error,				 62,	FSCK_AUTOFIX)	\
 	x(btree_node_topology_bad_min_key,			 63,	FSCK_AUTOFIX)	\
 	x(btree_node_topology_bad_max_key,			 64,	FSCK_AUTOFIX)	\
+	x(btree_node_topology_bad_root_min_key,			 323,	FSCK_AUTOFIX)	\
+	x(btree_node_topology_bad_root_max_key,			 324,	FSCK_AUTOFIX)	\
 	x(btree_node_topology_overwritten_by_prev_node,		 65,	FSCK_AUTOFIX)	\
 	x(btree_node_topology_overwritten_by_next_node,		 66,	FSCK_AUTOFIX)	\
 	x(btree_node_topology_interior_node_empty,		 67,	FSCK_AUTOFIX)	\
@@ -334,7 +336,7 @@ enum bch_fsck_flags {
 	x(dirent_stray_data_after_cf_name,			305,	0)		\
 	x(rebalance_work_incorrectly_set,			309,	FSCK_AUTOFIX)	\
 	x(rebalance_work_incorrectly_unset,			310,	FSCK_AUTOFIX)	\
-	x(MAX,							323,	0)
+	x(MAX,							325,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
