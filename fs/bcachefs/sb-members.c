@@ -68,34 +68,13 @@ struct bch_member *bch2_members_v2_get_mut(struct bch_sb *sb, int i)
 	return __bch2_members_v2_get_mut(bch2_sb_field_get(sb, members_v2), i);
 }
 
-static struct bch_member members_v2_get(struct bch_sb_field_members_v2 *mi, int i)
-{
-	struct bch_member ret, *p = __bch2_members_v2_get_mut(mi, i);
-	memset(&ret, 0, sizeof(ret));
-	memcpy(&ret, p, min_t(size_t, le16_to_cpu(mi->member_bytes), sizeof(ret)));
-	return ret;
-}
-
-static struct bch_member *members_v1_get_mut(struct bch_sb_field_members_v1 *mi, int i)
-{
-	return (void *) mi->_members + (i * BCH_MEMBER_V1_BYTES);
-}
-
-static struct bch_member members_v1_get(struct bch_sb_field_members_v1 *mi, int i)
-{
-	struct bch_member ret, *p = members_v1_get_mut(mi, i);
-	memset(&ret, 0, sizeof(ret));
-	memcpy(&ret, p, min_t(size_t, BCH_MEMBER_V1_BYTES, sizeof(ret)));
-	return ret;
-}
-
 struct bch_member bch2_sb_member_get(struct bch_sb *sb, int i)
 {
 	struct bch_sb_field_members_v2 *mi2 = bch2_sb_field_get(sb, members_v2);
 	if (mi2)
-		return members_v2_get(mi2, i);
+		return bch2_members_v2_get(mi2, i);
 	struct bch_sb_field_members_v1 *mi1 = bch2_sb_field_get(sb, members_v1);
-	return members_v1_get(mi1, i);
+	return bch2_members_v1_get(mi1, i);
 }
 
 static int sb_members_v2_resize_entries(struct bch_fs *c)
@@ -211,33 +190,25 @@ static int validate_member(struct printbuf *err,
 	return 0;
 }
 
-static void member_to_text(struct printbuf *out,
-			   struct bch_member m,
-			   struct bch_sb_field_disk_groups *gi,
-			   struct bch_sb *sb,
-			   int i)
+void bch2_member_to_text(struct printbuf *out,
+			 struct bch_member *m,
+			 struct bch_sb_field_disk_groups *gi,
+			 struct bch_sb *sb,
+			 unsigned idx)
 {
-	unsigned data_have = bch2_sb_dev_has_data(sb, i);
-	u64 bucket_size = le16_to_cpu(m.bucket_size);
-	u64 device_size = le64_to_cpu(m.nbuckets) * bucket_size;
-
-	if (!bch2_member_alive(&m))
-		return;
-
-	prt_printf(out, "Device:\t%u\n", i);
-
-	printbuf_indent_add(out, 2);
+	u64 bucket_size = le16_to_cpu(m->bucket_size);
+	u64 device_size = le64_to_cpu(m->nbuckets) * bucket_size;
 
 	prt_printf(out, "Label:\t");
-	if (BCH_MEMBER_GROUP(&m))
+	if (BCH_MEMBER_GROUP(m))
 		bch2_disk_path_to_text_sb(out, sb,
-				BCH_MEMBER_GROUP(&m) - 1);
+				BCH_MEMBER_GROUP(m) - 1);
 	else
 		prt_printf(out, "(none)");
 	prt_newline(out);
 
 	prt_printf(out, "UUID:\t");
-	pr_uuid(out, m.uuid.b);
+	pr_uuid(out, m->uuid.b);
 	prt_newline(out);
 
 	prt_printf(out, "Size:\t");
@@ -245,40 +216,41 @@ static void member_to_text(struct printbuf *out,
 	prt_newline(out);
 
 	for (unsigned i = 0; i < BCH_MEMBER_ERROR_NR; i++)
-		prt_printf(out, "%s errors:\t%llu\n", bch2_member_error_strs[i], le64_to_cpu(m.errors[i]));
+		prt_printf(out, "%s errors:\t%llu\n", bch2_member_error_strs[i], le64_to_cpu(m->errors[i]));
 
 	for (unsigned i = 0; i < BCH_IOPS_NR; i++)
-		prt_printf(out, "%s iops:\t%u\n", bch2_iops_measurements[i], le32_to_cpu(m.iops[i]));
+		prt_printf(out, "%s iops:\t%u\n", bch2_iops_measurements[i], le32_to_cpu(m->iops[i]));
 
 	prt_printf(out, "Bucket size:\t");
 	prt_units_u64(out, bucket_size << 9);
 	prt_newline(out);
 
-	prt_printf(out, "First bucket:\t%u\n", le16_to_cpu(m.first_bucket));
-	prt_printf(out, "Buckets:\t%llu\n", le64_to_cpu(m.nbuckets));
+	prt_printf(out, "First bucket:\t%u\n", le16_to_cpu(m->first_bucket));
+	prt_printf(out, "Buckets:\t%llu\n", le64_to_cpu(m->nbuckets));
 
 	prt_printf(out, "Last mount:\t");
-	if (m.last_mount)
-		bch2_prt_datetime(out, le64_to_cpu(m.last_mount));
+	if (m->last_mount)
+		bch2_prt_datetime(out, le64_to_cpu(m->last_mount));
 	else
 		prt_printf(out, "(never)");
 	prt_newline(out);
 
-	prt_printf(out, "Last superblock write:\t%llu\n", le64_to_cpu(m.seq));
+	prt_printf(out, "Last superblock write:\t%llu\n", le64_to_cpu(m->seq));
 
 	prt_printf(out, "State:\t%s\n",
-		   BCH_MEMBER_STATE(&m) < BCH_MEMBER_STATE_NR
-		   ? bch2_member_states[BCH_MEMBER_STATE(&m)]
+		   BCH_MEMBER_STATE(m) < BCH_MEMBER_STATE_NR
+		   ? bch2_member_states[BCH_MEMBER_STATE(m)]
 		   : "unknown");
 
 	prt_printf(out, "Data allowed:\t");
-	if (BCH_MEMBER_DATA_ALLOWED(&m))
-		prt_bitflags(out, __bch2_data_types, BCH_MEMBER_DATA_ALLOWED(&m));
+	if (BCH_MEMBER_DATA_ALLOWED(m))
+		prt_bitflags(out, __bch2_data_types, BCH_MEMBER_DATA_ALLOWED(m));
 	else
 		prt_printf(out, "(none)");
 	prt_newline(out);
 
 	prt_printf(out, "Has data:\t");
+	unsigned data_have = bch2_sb_dev_has_data(sb, idx);
 	if (data_have)
 		prt_bitflags(out, __bch2_data_types, data_have);
 	else
@@ -286,22 +258,36 @@ static void member_to_text(struct printbuf *out,
 	prt_newline(out);
 
 	prt_printf(out, "Btree allocated bitmap blocksize:\t");
-	if (m.btree_bitmap_shift < 64)
-		prt_units_u64(out, 1ULL << m.btree_bitmap_shift);
+	if (m->btree_bitmap_shift < 64)
+		prt_units_u64(out, 1ULL << m->btree_bitmap_shift);
 	else
-		prt_printf(out, "(invalid shift %u)", m.btree_bitmap_shift);
+		prt_printf(out, "(invalid shift %u)", m->btree_bitmap_shift);
 	prt_newline(out);
 
 	prt_printf(out, "Btree allocated bitmap:\t");
-	bch2_prt_u64_base2_nbits(out, le64_to_cpu(m.btree_allocated_bitmap), 64);
+	bch2_prt_u64_base2_nbits(out, le64_to_cpu(m->btree_allocated_bitmap), 64);
 	prt_newline(out);
 
-	prt_printf(out, "Durability:\t%llu\n", BCH_MEMBER_DURABILITY(&m) ? BCH_MEMBER_DURABILITY(&m) - 1 : 1);
+	prt_printf(out, "Durability:\t%llu\n", BCH_MEMBER_DURABILITY(m) ? BCH_MEMBER_DURABILITY(m) - 1 : 1);
 
-	prt_printf(out, "Discard:\t%llu\n", BCH_MEMBER_DISCARD(&m));
-	prt_printf(out, "Freespace initialized:\t%llu\n", BCH_MEMBER_FREESPACE_INITIALIZED(&m));
-	prt_printf(out, "Resize on mount:\t%llu\n", BCH_MEMBER_RESIZE_ON_MOUNT(&m));
+	prt_printf(out, "Discard:\t%llu\n", BCH_MEMBER_DISCARD(m));
+	prt_printf(out, "Freespace initialized:\t%llu\n", BCH_MEMBER_FREESPACE_INITIALIZED(m));
+	prt_printf(out, "Resize on mount:\t%llu\n", BCH_MEMBER_RESIZE_ON_MOUNT(m));
+}
 
+static void member_to_text(struct printbuf *out,
+			   struct bch_member m,
+			   struct bch_sb_field_disk_groups *gi,
+			   struct bch_sb *sb,
+			   unsigned idx)
+{
+	if (!bch2_member_alive(&m))
+		return;
+
+	prt_printf(out, "Device:\t%u\n", idx);
+
+	printbuf_indent_add(out, 2);
+	bch2_member_to_text(out, &m, gi, sb, idx);
 	printbuf_indent_sub(out, 2);
 }
 
@@ -317,7 +303,7 @@ static int bch2_sb_members_v1_validate(struct bch_sb *sb, struct bch_sb_field *f
 	}
 
 	for (i = 0; i < sb->nr_devices; i++) {
-		struct bch_member m = members_v1_get(mi, i);
+		struct bch_member m = bch2_members_v1_get(mi, i);
 
 		int ret = validate_member(err, m, sb, i);
 		if (ret)
@@ -343,7 +329,7 @@ static void bch2_sb_members_v1_to_text(struct printbuf *out, struct bch_sb *sb,
 		prt_printf(out, "nr_devices mismatch: have %i entries, should be %u", nr, sb->nr_devices);
 
 	for (unsigned i = 0; i < min(sb->nr_devices, nr); i++)
-		member_to_text(out, members_v1_get(mi, i), gi, sb, i);
+		member_to_text(out, bch2_members_v1_get(mi, i), gi, sb, i);
 }
 
 const struct bch_sb_field_ops bch_sb_field_ops_members_v1 = {
@@ -377,7 +363,7 @@ static void bch2_sb_members_v2_to_text(struct printbuf *out, struct bch_sb *sb,
 	 */
 
 	for (unsigned i = 0; i < min(sb->nr_devices, nr); i++)
-		member_to_text(out, members_v2_get(mi, i), gi, sb, i);
+		member_to_text(out, bch2_members_v2_get(mi, i), gi, sb, i);
 }
 
 static int bch2_sb_members_v2_validate(struct bch_sb *sb, struct bch_sb_field *f,
@@ -394,7 +380,7 @@ static int bch2_sb_members_v2_validate(struct bch_sb *sb, struct bch_sb_field *f
 	}
 
 	for (unsigned i = 0; i < sb->nr_devices; i++) {
-		int ret = validate_member(err, members_v2_get(mi, i), sb, i);
+		int ret = validate_member(err, bch2_members_v2_get(mi, i), sb, i);
 		if (ret)
 			return ret;
 	}
@@ -430,7 +416,7 @@ void bch2_sb_members_to_cpu(struct bch_fs *c)
 	struct bch_sb_field_members_v2 *mi2 = bch2_sb_field_get(c->disk_sb.sb, members_v2);
 	if (mi2)
 		for (unsigned i = 0; i < c->sb.nr_devices; i++) {
-			struct bch_member m = members_v2_get(mi2, i);
+			struct bch_member m = bch2_members_v2_get(mi2, i);
 			bool removed = uuid_equal(&m.uuid, &BCH_SB_MEMBER_DELETED_UUID);
 			mod_bit(i, c->devs_removed.d, removed);
 		}
