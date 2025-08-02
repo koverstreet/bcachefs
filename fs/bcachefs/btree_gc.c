@@ -292,6 +292,9 @@ static int btree_check_root_boundaries(struct btree_trans *trans, struct btree *
 	       !bpos_eq(bkey_i_to_btree_ptr_v2(&b->key)->v.min_key,
 			b->data->min_key));
 
+	prt_str(&buf, "  at ");
+	bch2_btree_pos_to_text(&buf, c, b);
+
 	if (mustfix_fsck_err_on(!bpos_eq(b->data->min_key, POS_MIN),
 				trans, btree_node_topology_bad_root_min_key,
 			     "btree root with incorrect min_key%s", buf.buf)) {
