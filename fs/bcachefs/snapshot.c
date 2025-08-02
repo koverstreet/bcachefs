@@ -1146,7 +1146,7 @@ static int bch2_snapshot_node_delete(struct btree_trans *trans, u32 id)
 		if (bch2_fs_inconsistent_on(i == 2, c,
 					"snapshot %u missing child pointer to %u",
 					parent_id, id))
-			return ret;
+			return bch_err_throw(c, ENOENT_snapshot);
 
 		parent->v.children[i] = cpu_to_le32(child_id);
 
