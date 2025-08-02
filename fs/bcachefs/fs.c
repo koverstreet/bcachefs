@@ -512,8 +512,8 @@ struct inode *bch2_vfs_inode_get(struct bch_fs *c, subvol_inum inum)
 	struct bch_subvolume subvol;
 	int ret = lockrestart_do(trans,
 		bch2_subvolume_get(trans, inum.subvol, true, &subvol) ?:
-		bch2_inode_find_by_inum_trans(trans, inum, &inode_u)) ?:
-		PTR_ERR_OR_ZERO(inode = bch2_inode_hash_init_insert(trans, inum, &inode_u, &subvol));
+		bch2_inode_find_by_inum_trans(trans, inum, &inode_u) ?:
+		PTR_ERR_OR_ZERO(inode = bch2_inode_hash_init_insert(trans, inum, &inode_u, &subvol)));
 
 	return ret ? ERR_PTR(ret) : &inode->v;
 }
