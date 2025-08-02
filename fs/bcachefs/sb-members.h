@@ -14,10 +14,35 @@ __bch2_members_v2_get_mut(struct bch_sb_field_members_v2 *mi, unsigned i)
 	return (void *) mi->_members + (i * le16_to_cpu(mi->member_bytes));
 }
 
+static inline struct bch_member bch2_members_v2_get(struct bch_sb_field_members_v2 *mi, int i)
+{
+	struct bch_member ret, *p = __bch2_members_v2_get_mut(mi, i);
+	memset(&ret, 0, sizeof(ret));
+	memcpy(&ret, p, min_t(size_t, le16_to_cpu(mi->member_bytes), sizeof(ret)));
+	return ret;
+}
+
+static inline struct bch_member *members_v1_get_mut(struct bch_sb_field_members_v1 *mi, int i)
+{
+	return (void *) mi->_members + (i * BCH_MEMBER_V1_BYTES);
+}
+
+static inline struct bch_member bch2_members_v1_get(struct bch_sb_field_members_v1 *mi, int i)
+{
+	struct bch_member ret, *p = members_v1_get_mut(mi, i);
+	memset(&ret, 0, sizeof(ret));
+	memcpy(&ret, p, min_t(size_t, BCH_MEMBER_V1_BYTES, sizeof(ret)));
+	return ret;
+}
+
 int bch2_sb_members_v2_init(struct bch_fs *c);
 int bch2_sb_members_cpy_v2_v1(struct bch_sb_handle *disk_sb);
 struct bch_member *bch2_members_v2_get_mut(struct bch_sb *sb, int i);
 struct bch_member bch2_sb_member_get(struct bch_sb *sb, int i);
+
+void bch2_member_to_text(struct printbuf *, struct bch_member *,
+			 struct bch_sb_field_disk_groups *,
+			 struct bch_sb *, unsigned);
 
 static inline bool bch2_dev_is_online(struct bch_dev *ca)
 {
