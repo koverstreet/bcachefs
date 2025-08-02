@@ -344,9 +344,13 @@ int bch2_move_extent(struct moving_context *ctxt,
 	if (!data_opts.rewrite_ptrs &&
 	    !data_opts.extra_replicas &&
 	    !data_opts.scrub) {
-		if (data_opts.kill_ptrs)
+		if (data_opts.kill_ptrs) {
+			this_cpu_add(c->counters[BCH_COUNTER_io_move_drop_only], k.k->size);
 			return bch2_extent_drop_ptrs(trans, iter, k, &io_opts, &data_opts);
-		return 0;
+		} else {
+			this_cpu_add(c->counters[BCH_COUNTER_io_move_noop], k.k->size);
+			return 0;
+		}
 	}
 
 	struct moving_io *io = allocate_dropping_locks(trans, ret,
