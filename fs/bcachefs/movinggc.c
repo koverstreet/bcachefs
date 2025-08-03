@@ -14,6 +14,7 @@
 #include "btree_write_buffer.h"
 #include "buckets.h"
 #include "clock.h"
+#include "ec.h"
 #include "errcode.h"
 #include "error.h"
 #include "lru.h"
@@ -131,72 +132,153 @@ static bool bucket_in_flight(struct buckets_in_flight *list,
 	return rhashtable_lookup_fast(list->table, &k, bch_move_bucket_params);
 }
 
+static int try_add_copygc_bucket(struct btree_trans *trans,
+				 struct buckets_in_flight *buckets_in_flight,
+				 struct bpos bucket, u64 lru_time)
+{
+	struct move_bucket b = { .k.bucket = bucket };
+
+	int ret = bch2_bucket_is_movable(trans, &b, lru_time);
+	if (ret <= 0)
+		return ret;
+
+	if (bucket_in_flight(buckets_in_flight, b.k))
+		return 0;
+
+	struct move_bucket *b_i = kmalloc(sizeof(*b_i), GFP_KERNEL);
+	if (!b_i)
+		return -ENOMEM;
+
+	*b_i = b;
+
+	ret = darray_push(&buckets_in_flight->to_evacuate, b_i);
+	if (ret) {
+		kfree(b_i);
+		return ret;
+	}
+
+	ret = rhashtable_lookup_insert_fast(buckets_in_flight->table, &b_i->hash,
+					    bch_move_bucket_params);
+	BUG_ON(ret);
+
+	size_t nr_to_get = max_t(size_t, 16U, buckets_in_flight->nr / 4);
+	return buckets_in_flight->to_evacuate.nr >= nr_to_get;
+}
+
 static int bch2_copygc_get_buckets(struct moving_context *ctxt,
 			struct buckets_in_flight *buckets_in_flight)
 {
 	struct btree_trans *trans = ctxt->trans;
-	struct bch_fs *c = trans->c;
-	size_t nr_to_get = max_t(size_t, 16U, buckets_in_flight->nr / 4);
-	size_t saw = 0, in_flight = 0, not_movable = 0, sectors = 0;
-	int ret;
 
-	move_buckets_wait(ctxt, buckets_in_flight, false);
+	int ret = for_each_btree_key_max(trans, iter, BTREE_ID_lru,
+				  lru_start(BCH_LRU_BUCKET_FRAGMENTATION),
+				  lru_end(BCH_LRU_BUCKET_FRAGMENTATION),
+				  0, k,
+		try_add_copygc_bucket(trans, buckets_in_flight,
+				      u64_to_bucket(k.k->p.offset),
+				      lru_pos_time(k.k->p))
+	);
 
-	ret = bch2_btree_write_buffer_tryflush(trans);
-	if (bch2_err_matches(ret, EROFS))
-		return ret;
+	return ret < 0 ? ret : 0;
+}
 
-	if (bch2_fs_fatal_err_on(ret, c, "%s: from bch2_btree_write_buffer_tryflush()", bch2_err_str(ret)))
-		return ret;
+static int bch2_copygc_get_stripe_buckets(struct moving_context *ctxt,
+			struct buckets_in_flight *buckets_in_flight)
+{
+	struct btree_trans *trans = ctxt->trans;
 
-	ret = for_each_btree_key_max(trans, iter, BTREE_ID_lru,
-				  lru_pos(BCH_LRU_BUCKET_FRAGMENTATION, 0, 0),
-				  lru_pos(BCH_LRU_BUCKET_FRAGMENTATION, U64_MAX, LRU_TIME_MAX),
-				  0, k, ({
-		struct move_bucket b = { .k.bucket = u64_to_bucket(k.k->p.offset) };
-		int ret2 = 0;
-
-		saw++;
-
-		ret2 = bch2_bucket_is_movable(trans, &b, lru_pos_time(k.k->p));
-		if (ret2 < 0)
+	int ret = for_each_btree_key_max(trans, iter, BTREE_ID_lru,
+				  lru_start(BCH_LRU_STRIPE_FRAGMENTATION),
+				  lru_end(BCH_LRU_STRIPE_FRAGMENTATION),
+				  0, lru_k, ({
+		CLASS(btree_iter, s_iter)(trans, BTREE_ID_stripes, POS(0, lru_k.k->p.offset), 0);
+		struct bkey_s_c s_k = bch2_btree_iter_peek_slot(&s_iter);
+		int ret2 = bkey_err(s_k);
+		if (ret2)
 			goto err;
 
-		if (!ret2)
-			not_movable++;
-		else if (bucket_in_flight(buckets_in_flight, b.k))
-			in_flight++;
-		else {
-			struct move_bucket *b_i = kmalloc(sizeof(*b_i), GFP_KERNEL);
-			ret2 = b_i ? 0 : -ENOMEM;
+		if (s_k.k->type != KEY_TYPE_stripe)
+			continue;
+
+		const struct bch_stripe *s = bkey_s_c_to_stripe(s_k).v;
+
+		/* write buffer race? */
+		if (stripe_lru_pos(s) != lru_pos_time(lru_k.k->p))
+			continue;
+
+		unsigned nr_data = s->nr_blocks - s->nr_redundant;
+		for (unsigned i = 0; i < nr_data; i++) {
+			if (!stripe_blockcount_get(s, i))
+				continue;
+
+			const struct bch_extent_ptr *ptr = s->ptrs + i;
+			CLASS(bch2_dev_tryget, ca)(trans->c, ptr->dev);
+			if (unlikely(!ca))
+				continue;
+
+			ret2 = try_add_copygc_bucket(trans, buckets_in_flight,
+						     PTR_BUCKET_POS(ca, ptr), U64_MAX);
 			if (ret2)
-				goto err;
-
-			*b_i = b;
-
-			ret2 = darray_push(&buckets_in_flight->to_evacuate, b_i);
-			if (ret2) {
-				kfree(b_i);
-				goto err;
-			}
-
-			ret2 = rhashtable_lookup_insert_fast(buckets_in_flight->table, &b_i->hash,
-							     bch_move_bucket_params);
-			BUG_ON(ret2);
-
-			sectors += b.sectors;
+				break;
 		}
-
-		ret2 = buckets_in_flight->to_evacuate.nr >= nr_to_get;
 err:
 		ret2;
 	}));
 
-	pr_debug("have: %zu (%zu) saw %zu in flight %zu not movable %zu got %zu (%zu)/%zu buckets ret %i",
-		 buckets_in_flight->nr, buckets_in_flight->sectors,
-		 saw, in_flight, not_movable, buckets_in_flight->to_evacuate.nr, sectors, nr_to_get, ret);
-
 	return ret < 0 ? ret : 0;
+}
+
+static bool should_do_ec_copygc(struct btree_trans *trans)
+{
+	u64 stripe_frag_ratio = 0;
+
+	for_each_btree_key_max(trans, iter, BTREE_ID_lru,
+			       lru_start(BCH_LRU_STRIPE_FRAGMENTATION),
+			       lru_end(BCH_LRU_STRIPE_FRAGMENTATION),
+			       0, lru_k, ({
+		CLASS(btree_iter, s_iter)(trans, BTREE_ID_stripes, POS(0, lru_k.k->p.offset), 0);
+		struct bkey_s_c s_k = bch2_btree_iter_peek_slot(&s_iter);
+		int ret = bkey_err(s_k);
+		if (ret)
+			goto err;
+
+		if (s_k.k->type != KEY_TYPE_stripe)
+			continue;
+
+		const struct bch_stripe *s = bkey_s_c_to_stripe(s_k).v;
+
+		/* write buffer race? */
+		if (stripe_lru_pos(s) != lru_pos_time(lru_k.k->p))
+			continue;
+
+		unsigned nr_data = s->nr_blocks - s->nr_redundant, blocks_nonempty = 0;
+		for (unsigned i = 0; i < nr_data; i++)
+			blocks_nonempty += !!stripe_blockcount_get(s, i);
+
+		/* stripe is pending delete */
+		if (!blocks_nonempty)
+			continue;
+
+		/* This matches the calculation in alloc_lru_idx_fragmentation, so we can
+		 * directly compare without actually looking up the bucket pointed to by the
+		 * bucket fragmentation lru:
+		 */
+		stripe_frag_ratio = div_u64(blocks_nonempty * (1ULL << 31), nr_data);
+		break;
+err:
+		ret;
+	}));
+
+	CLASS(btree_iter, iter)(trans, BTREE_ID_lru, lru_start(BCH_LRU_BUCKET_FRAGMENTATION), 0);
+	struct bkey_s_c lru_k;
+
+	lockrestart_do(trans, bkey_err(lru_k = bch2_btree_iter_peek_max(&iter,
+							lru_end(BCH_LRU_BUCKET_FRAGMENTATION))));
+
+	u64 bucket_frag_ratio = lru_k.k && !bkey_err(lru_k) ? lru_pos_time(lru_k.k->p) : 0;
+
+	/* Prefer normal bucket copygc */
+	return stripe_frag_ratio && stripe_frag_ratio * 2 < bucket_frag_ratio;
 }
 
 noinline
@@ -213,7 +295,18 @@ static int bch2_copygc(struct moving_context *ctxt,
 	u64 sectors_moved	= atomic64_read(&ctxt->stats->sectors_moved);
 	int ret = 0;
 
-	ret = bch2_copygc_get_buckets(ctxt, buckets_in_flight);
+	move_buckets_wait(ctxt, buckets_in_flight, false);
+
+	ret = bch2_btree_write_buffer_tryflush(trans);
+	if (bch2_err_matches(ret, EROFS))
+		goto err;
+
+	if (bch2_fs_fatal_err_on(ret, c, "%s: from bch2_btree_write_buffer_tryflush()", bch2_err_str(ret)))
+		goto err;
+
+	ret = should_do_ec_copygc(trans)
+		? bch2_copygc_get_stripe_buckets(ctxt, buckets_in_flight)
+		: bch2_copygc_get_buckets(ctxt, buckets_in_flight);
 	if (ret)
 		goto err;
 
@@ -265,7 +358,8 @@ static u64 bch2_copygc_dev_wait_amount(struct bch_dev *ca)
 
 	for (unsigned i = 0; i < BCH_DATA_NR; i++)
 		if (data_type_movable(i))
-			fragmented += usage_full.d[i].fragmented;
+			fragmented += usage_full.d[i].buckets * ca->mi.bucket_size -
+				usage_full.d[i].sectors;
 
 	return max(0LL, fragmented_allowed - fragmented);
 }
