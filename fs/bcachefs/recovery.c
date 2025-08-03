@@ -626,93 +626,6 @@ fsck_err:
 	return ret;
 }
 
-static bool check_version_upgrade(struct bch_fs *c)
-{
-	unsigned latest_version	= bcachefs_metadata_version_current;
-	unsigned latest_compatible = min(latest_version,
-					 bch2_latest_compatible_version(c->sb.version));
-	unsigned old_version = c->sb.version_upgrade_complete ?: c->sb.version;
-	unsigned new_version = 0;
-	bool ret = false;
-
-	if (old_version < bcachefs_metadata_required_upgrade_below) {
-		if (c->opts.version_upgrade == BCH_VERSION_UPGRADE_incompatible ||
-		    latest_compatible < bcachefs_metadata_required_upgrade_below)
-			new_version = latest_version;
-		else
-			new_version = latest_compatible;
-	} else {
-		switch (c->opts.version_upgrade) {
-		case BCH_VERSION_UPGRADE_compatible:
-			new_version = latest_compatible;
-			break;
-		case BCH_VERSION_UPGRADE_incompatible:
-			new_version = latest_version;
-			break;
-		case BCH_VERSION_UPGRADE_none:
-			new_version = min(old_version, latest_version);
-			break;
-		}
-	}
-
-	if (new_version > old_version) {
-		CLASS(printbuf, buf)();
-
-		if (old_version < bcachefs_metadata_required_upgrade_below)
-			prt_str(&buf, "Version upgrade required:\n");
-
-		if (old_version != c->sb.version) {
-			prt_str(&buf, "Version upgrade from ");
-			bch2_version_to_text(&buf, c->sb.version_upgrade_complete);
-			prt_str(&buf, " to ");
-			bch2_version_to_text(&buf, c->sb.version);
-			prt_str(&buf, " incomplete\n");
-		}
-
-		prt_printf(&buf, "Doing %s version upgrade from ",
-			   BCH_VERSION_MAJOR(old_version) != BCH_VERSION_MAJOR(new_version)
-			   ? "incompatible" : "compatible");
-		bch2_version_to_text(&buf, old_version);
-		prt_str(&buf, " to ");
-		bch2_version_to_text(&buf, new_version);
-		prt_newline(&buf);
-
-		struct bch_sb_field_ext *ext = bch2_sb_field_get(c->disk_sb.sb, ext);
-		__le64 passes = ext->recovery_passes_required[0];
-		bch2_sb_set_upgrade(c, old_version, new_version);
-		passes = ext->recovery_passes_required[0] & ~passes;
-
-		if (passes) {
-			prt_str(&buf, "  running recovery passes: ");
-			prt_bitflags(&buf, bch2_recovery_passes,
-				     bch2_recovery_passes_from_stable(le64_to_cpu(passes)));
-		}
-
-		bch_notice(c, "%s", buf.buf);
-		ret = true;
-	}
-
-	if (new_version > c->sb.version_incompat_allowed &&
-	    c->opts.version_upgrade == BCH_VERSION_UPGRADE_incompatible) {
-		CLASS(printbuf, buf)();
-
-		prt_str(&buf, "Now allowing incompatible features up to ");
-		bch2_version_to_text(&buf, new_version);
-		prt_str(&buf, ", previously allowed up to ");
-		bch2_version_to_text(&buf, c->sb.version_incompat_allowed);
-		prt_newline(&buf);
-
-		bch_notice(c, "%s", buf.buf);
-		ret = true;
-	}
-
-	if (ret)
-		bch2_sb_upgrade(c, new_version,
-				c->opts.version_upgrade == BCH_VERSION_UPGRADE_incompatible);
-
-	return ret;
-}
-
 int bch2_fs_recovery(struct bch_fs *c)
 {
 	struct bch_sb_field_clean *clean = NULL;
@@ -730,108 +643,6 @@ int bch2_fs_recovery(struct bch_fs *c)
 			 le64_to_cpu(clean->journal_seq));
 	} else {
 		bch_info(c, "recovering from unclean shutdown");
-	}
-
-	if (!(c->sb.features & (1ULL << BCH_FEATURE_new_extent_overwrite))) {
-		bch_err(c, "feature new_extent_overwrite not set, filesystem no longer supported");
-		ret = -EINVAL;
-		goto err;
-	}
-
-	if (!c->sb.clean &&
-	    !(c->sb.features & (1ULL << BCH_FEATURE_extents_above_btree_updates))) {
-		bch_err(c, "filesystem needs recovery from older version; run fsck from older bcachefs-tools to fix");
-		ret = -EINVAL;
-		goto err;
-	}
-
-	if (c->opts.norecovery) {
-		c->opts.recovery_pass_last = c->opts.recovery_pass_last
-			? min(c->opts.recovery_pass_last, BCH_RECOVERY_PASS_snapshots_read)
-			: BCH_RECOVERY_PASS_snapshots_read;
-		c->opts.nochanges = true;
-	}
-
-	if (c->opts.nochanges)
-		c->opts.read_only = true;
-
-	if (c->opts.journal_rewind) {
-		bch_info(c, "rewinding journal, fsck required");
-		c->opts.fsck = true;
-	}
-
-	if (go_rw_in_recovery(c)) {
-		/*
-		 * start workqueues/kworkers early - kthread creation checks for
-		 * pending signals, which is _very_ annoying
-		 */
-		ret = bch2_fs_init_rw(c);
-		if (ret)
-			goto err;
-	}
-
-	mutex_lock(&c->sb_lock);
-	struct bch_sb_field_ext *ext = bch2_sb_field_get(c->disk_sb.sb, ext);
-	bool write_sb = false;
-
-	if (BCH_SB_HAS_TOPOLOGY_ERRORS(c->disk_sb.sb)) {
-		ext->recovery_passes_required[0] |=
-			cpu_to_le64(bch2_recovery_passes_to_stable(BIT_ULL(BCH_RECOVERY_PASS_check_topology)));
-		write_sb = true;
-	}
-
-	u64 sb_passes = bch2_recovery_passes_from_stable(le64_to_cpu(ext->recovery_passes_required[0]));
-	if (sb_passes) {
-		CLASS(printbuf, buf)();
-		prt_str(&buf, "superblock requires following recovery passes to be run:\n  ");
-		prt_bitflags(&buf, bch2_recovery_passes, sb_passes);
-		bch_info(c, "%s", buf.buf);
-	}
-
-	if (bch2_check_version_downgrade(c)) {
-		CLASS(printbuf, buf)();
-
-		prt_str(&buf, "Version downgrade required:");
-
-		__le64 passes = ext->recovery_passes_required[0];
-		bch2_sb_set_downgrade(c,
-				      BCH_VERSION_MINOR(bcachefs_metadata_version_current),
-				      BCH_VERSION_MINOR(c->sb.version));
-		passes = ext->recovery_passes_required[0] & ~passes;
-		if (passes) {
-			prt_str(&buf, "\n  running recovery passes: ");
-			prt_bitflags(&buf, bch2_recovery_passes,
-				     bch2_recovery_passes_from_stable(le64_to_cpu(passes)));
-		}
-
-		bch_info(c, "%s", buf.buf);
-		write_sb = true;
-	}
-
-	if (check_version_upgrade(c))
-		write_sb = true;
-
-	c->opts.recovery_passes |= bch2_recovery_passes_from_stable(le64_to_cpu(ext->recovery_passes_required[0]));
-
-	if (c->sb.version_upgrade_complete < bcachefs_metadata_version_autofix_errors) {
-		SET_BCH_SB_ERROR_ACTION(c->disk_sb.sb, BCH_ON_ERROR_fix_safe);
-		write_sb = true;
-	}
-
-	if (write_sb)
-		bch2_write_super(c);
-	mutex_unlock(&c->sb_lock);
-
-	if (c->sb.clean)
-		set_bit(BCH_FS_clean_recovery, &c->flags);
-	if (c->opts.fsck)
-		set_bit(BCH_FS_in_fsck, &c->flags);
-	set_bit(BCH_FS_in_recovery, &c->flags);
-
-	ret = bch2_blacklist_table_initialize(c);
-	if (ret) {
-		bch_err(c, "error initializing blacklist table");
-		goto err;
 	}
 
 	bch2_journal_pos_from_member_info_resume(c);
@@ -1053,8 +864,8 @@ use_clean:
 	}
 
 	mutex_lock(&c->sb_lock);
-	ext = bch2_sb_field_get(c->disk_sb.sb, ext);
-	write_sb = false;
+	struct bch_sb_field_ext *ext = bch2_sb_field_get(c->disk_sb.sb, ext);
+	bool write_sb = false;
 
 	if (BCH_SB_VERSION_UPGRADE_COMPLETE(c->disk_sb.sb) != le16_to_cpu(c->disk_sb.sb->version)) {
 		SET_BCH_SB_VERSION_UPGRADE_COMPLETE(c->disk_sb.sb, le16_to_cpu(c->disk_sb.sb->version));
