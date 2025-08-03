@@ -292,12 +292,48 @@ static int bch2_clear_rebalance_needs_scan(struct btree_trans *trans, u64 inum, 
 		: 0;
 }
 
-static struct bkey_s_c next_rebalance_entry(struct btree_trans *trans,
-					    struct btree_iter *work_iter)
+#define REBALANCE_WORK_BUF_NR		1024
+DEFINE_DARRAY_NAMED(darray_rebalance_work, struct bkey_i_cookie);
+
+static struct bkey_i *next_rebalance_entry(struct btree_trans *trans,
+					 darray_rebalance_work *buf, struct bpos *work_pos)
 {
-	return !kthread_should_stop()
-		? bch2_btree_iter_peek(work_iter)
-		: bkey_s_c_null;
+	if (unlikely(!buf->nr)) {
+		/*
+		 * Avoid contention with write buffer flush: buffer up rebalance
+		 * work entries in a darray
+		 */
+
+		BUG_ON(!buf->size);;
+
+		bch2_trans_begin(trans);
+
+		for_each_btree_key(trans, iter, BTREE_ID_rebalance_work, *work_pos,
+				   BTREE_ITER_all_snapshots|BTREE_ITER_prefetch, k, ({
+			/* we previously used darray_make_room */
+			BUG_ON(bkey_bytes(k.k) > sizeof(buf->data[0]));
+
+			bkey_reassemble(&darray_top(*buf).k_i, k);
+			buf->nr++;
+
+			*work_pos = bpos_successor(iter.pos);
+			if (buf->nr == buf->size)
+				break;
+			0;
+		}));
+
+		if (!buf->nr)
+			return NULL;
+
+		unsigned l = 0, r = buf->nr - 1;
+		while (l < r) {
+			swap(buf->data[l], buf->data[r]);
+			l++;
+			--r;
+		}
+	}
+
+	return &(&darray_pop(buf))->k_i;
 }
 
 static int bch2_bkey_clear_needs_rebalance(struct btree_trans *trans,
@@ -408,8 +444,9 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 
 	bch2_bkey_buf_init(&sk);
 
-	ret = bkey_err(k = next_rebalance_extent(trans, work_pos,
-				extent_iter, &io_opts, &data_opts));
+	ret = lockrestart_do(trans,
+		bkey_err(k = next_rebalance_extent(trans, work_pos,
+				extent_iter, &io_opts, &data_opts)));
 	if (ret || !k.k)
 		goto out;
 
@@ -464,10 +501,9 @@ static int do_rebalance_scan(struct moving_context *ctxt, u64 inum, u64 cookie)
 	per_snapshot_io_opts_init(&snapshot_io_opts, c);
 
 	int ret = for_each_btree_key_max(trans, iter, BTREE_ID_extents,
-				      r->scan_start.pos, r->scan_end.pos,
-				      BTREE_ITER_all_snapshots|
-				      BTREE_ITER_not_extents|
-				      BTREE_ITER_prefetch, k, ({
+					 r->scan_start.pos, r->scan_end.pos,
+					 BTREE_ITER_all_snapshots|
+					 BTREE_ITER_prefetch, k, ({
 		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
 
 		struct bch_io_opts *io_opts = bch2_move_get_io_opts(trans,
@@ -524,49 +560,37 @@ static int do_rebalance(struct moving_context *ctxt)
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	struct bch_fs_rebalance *r = &c->rebalance;
-	struct btree_iter extent_iter = { NULL };
-	struct bkey_s_c k;
+	struct btree_iter extent_iter = {};
 	u32 kick = r->kick;
-	int ret = 0;
 
-	bch2_trans_begin(trans);
+	struct bpos work_pos = POS_MIN;
+	CLASS(darray_rebalance_work, work)();
+	int ret = darray_make_room(&work, REBALANCE_WORK_BUF_NR);
+	if (ret)
+		return ret;
 
 	bch2_move_stats_init(&r->work_stats, "rebalance_work");
 	bch2_move_stats_init(&r->scan_stats, "rebalance_scan");
-
-	CLASS(btree_iter, rebalance_work_iter)(trans,
-					       BTREE_ID_rebalance_work, POS_MIN,
-					       BTREE_ITER_all_snapshots);
 
 	while (!bch2_move_ratelimit(ctxt)) {
 		if (!bch2_rebalance_enabled(c)) {
 			bch2_moving_ctxt_flush_all(ctxt);
 			kthread_wait_freezable(bch2_rebalance_enabled(c) ||
 					       kthread_should_stop());
+			if (kthread_should_stop())
+				break;
 		}
 
-		if (kthread_should_stop())
+		struct bkey_i *k = next_rebalance_entry(trans, &work, &work_pos);
+		if (!k)
 			break;
 
-		bch2_trans_begin(trans);
-
-		ret = bkey_err(k = next_rebalance_entry(trans, &rebalance_work_iter));
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			continue;
-		if (ret || !k.k)
-			break;
-
-		ret = k.k->type == KEY_TYPE_cookie
-			? do_rebalance_scan(ctxt, k.k->p.inode,
-					    le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie))
-			: do_rebalance_extent(ctxt, k.k->p, &extent_iter);
-
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			continue;
+		ret = k->k.type == KEY_TYPE_cookie
+			? do_rebalance_scan(ctxt, k->k.p.inode,
+					    le64_to_cpu(bkey_i_to_cookie(k)->v.cookie))
+			: do_rebalance_extent(ctxt, k->k.p, &extent_iter);
 		if (ret)
 			break;
-
-		bch2_btree_iter_advance(&rebalance_work_iter);
 	}
 
 	bch2_trans_iter_exit(&extent_iter);
