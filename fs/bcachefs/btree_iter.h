@@ -954,7 +954,7 @@ struct bkey_s_c bch2_btree_iter_peek_and_restart_outlined(struct btree_iter *);
 
 #define allocate_dropping_locks_errcode(_trans, _do)			\
 ({									\
-	gfp_t _gfp = GFP_NOWAIT|__GFP_NOWARN;				\
+	gfp_t _gfp = GFP_NOWAIT;					\
 	int _ret = _do;							\
 									\
 	if (bch2_err_matches(_ret, ENOMEM)) {				\
@@ -966,7 +966,7 @@ struct bkey_s_c bch2_btree_iter_peek_and_restart_outlined(struct btree_iter *);
 
 #define allocate_dropping_locks(_trans, _ret, _do)			\
 ({									\
-	gfp_t _gfp = GFP_NOWAIT|__GFP_NOWARN;				\
+	gfp_t _gfp = GFP_NOWAIT;					\
 	typeof(_do) _p = _do;						\
 									\
 	_ret = 0;							\
@@ -979,7 +979,7 @@ struct bkey_s_c bch2_btree_iter_peek_and_restart_outlined(struct btree_iter *);
 
 #define allocate_dropping_locks_norelock(_trans, _lock_dropped, _do)	\
 ({									\
-	gfp_t _gfp = GFP_NOWAIT|__GFP_NOWARN;				\
+	gfp_t _gfp = GFP_NOWAIT;					\
 	typeof(_do) _p = _do;						\
 	_lock_dropped = false;						\
 	if (unlikely(!_p)) {						\
