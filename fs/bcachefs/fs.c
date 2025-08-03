@@ -827,14 +827,6 @@ int __bch2_unlink(struct inode *vdir, struct dentry *dentry,
 	bch2_inode_update_after_write(trans, inode, &inode_u,
 				      ATTR_MTIME);
 
-	if (inode_u.bi_subvol) {
-		/*
-		 * Subvolume deletion is asynchronous, but we still want to tell
-		 * the VFS that it's been deleted here:
-		 */
-		set_nlink(&inode->v, 0);
-	}
-
 	if (IS_CASEFOLDED(vdir))
 		d_invalidate(dentry);
 err:
