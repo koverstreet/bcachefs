@@ -24,6 +24,16 @@ static inline struct bpos lru_pos(u16 lru_id, u64 dev_bucket, u64 time)
 	return pos;
 }
 
+static inline struct bpos lru_start(u16 lru_id)
+{
+	return lru_pos(lru_id, 0, 0);
+}
+
+static inline struct bpos lru_end(u16 lru_id)
+{
+	return lru_pos(lru_id, U64_MAX, LRU_TIME_MAX);
+}
+
 static inline enum bch_lru_type lru_type(struct bkey_s_c l)
 {
 	u16 lru_id = l.k->p.inode >> 48;
