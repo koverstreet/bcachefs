@@ -336,6 +336,20 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 	BUG_ON(b->ob.nr);
 
 	mutex_lock(&c->btree_reserve_cache_lock);
+	if (unlikely(c->open_buckets_nr_free <= bch2_open_buckets_reserved(watermark))) {
+		guard(spinlock)(&c->freelist_lock);
+		if (c->open_buckets_nr_free <= bch2_open_buckets_reserved(watermark)) {
+			if (cl)
+				closure_wait(&c->open_buckets_wait, cl);
+
+			ret = cl
+				? bch_err_throw(c, bucket_alloc_blocked)
+				: bch_err_throw(c, open_buckets_empty);
+			mutex_unlock(&c->btree_reserve_cache_lock);
+			goto err;
+		}
+	}
+
 	if (c->btree_reserve_cache_nr > nr_reserve) {
 		for (struct btree_alloc *a = c->btree_reserve_cache;
 		     a < c->btree_reserve_cache + c->btree_reserve_cache_nr;) {
