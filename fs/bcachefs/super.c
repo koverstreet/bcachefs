@@ -55,6 +55,7 @@
 #include "replicas.h"
 #include "sb-clean.h"
 #include "sb-counters.h"
+#include "sb-downgrade.h"
 #include "sb-errors.h"
 #include "sb-members.h"
 #include "snapshot.h"
@@ -236,6 +237,7 @@ static int bch2_dev_alloc(struct bch_fs *, unsigned);
 static int bch2_dev_sysfs_online(struct bch_fs *, struct bch_dev *);
 static void bch2_dev_io_ref_stop(struct bch_dev *, int);
 static void __bch2_dev_read_only(struct bch_fs *, struct bch_dev *);
+static int bch2_dev_attach_bdev(struct bch_fs *, struct bch_sb_handle *);
 
 struct bch_fs *bch2_dev_to_fs(dev_t dev)
 {
@@ -842,6 +844,238 @@ int bch2_fs_init_rw(struct bch_fs *c)
 	return 0;
 }
 
+static bool check_version_upgrade(struct bch_fs *c)
+{
+	unsigned latest_version	= bcachefs_metadata_version_current;
+	unsigned latest_compatible = min(latest_version,
+					 bch2_latest_compatible_version(c->sb.version));
+	unsigned old_version = c->sb.version_upgrade_complete ?: c->sb.version;
+	unsigned new_version = 0;
+	bool ret = false;
+
+	if (old_version < bcachefs_metadata_required_upgrade_below) {
+		if (c->opts.version_upgrade == BCH_VERSION_UPGRADE_incompatible ||
+		    latest_compatible < bcachefs_metadata_required_upgrade_below)
+			new_version = latest_version;
+		else
+			new_version = latest_compatible;
+	} else {
+		switch (c->opts.version_upgrade) {
+		case BCH_VERSION_UPGRADE_compatible:
+			new_version = latest_compatible;
+			break;
+		case BCH_VERSION_UPGRADE_incompatible:
+			new_version = latest_version;
+			break;
+		case BCH_VERSION_UPGRADE_none:
+			new_version = min(old_version, latest_version);
+			break;
+		}
+	}
+
+	if (new_version > old_version) {
+		CLASS(printbuf, buf)();
+
+		if (old_version < bcachefs_metadata_required_upgrade_below)
+			prt_str(&buf, "Version upgrade required:\n");
+
+		if (old_version != c->sb.version) {
+			prt_str(&buf, "Version upgrade from ");
+			bch2_version_to_text(&buf, c->sb.version_upgrade_complete);
+			prt_str(&buf, " to ");
+			bch2_version_to_text(&buf, c->sb.version);
+			prt_str(&buf, " incomplete\n");
+		}
+
+		prt_printf(&buf, "Doing %s version upgrade from ",
+			   BCH_VERSION_MAJOR(old_version) != BCH_VERSION_MAJOR(new_version)
+			   ? "incompatible" : "compatible");
+		bch2_version_to_text(&buf, old_version);
+		prt_str(&buf, " to ");
+		bch2_version_to_text(&buf, new_version);
+		prt_newline(&buf);
+
+		struct bch_sb_field_ext *ext = bch2_sb_field_get(c->disk_sb.sb, ext);
+		__le64 passes = ext->recovery_passes_required[0];
+		bch2_sb_set_upgrade(c, old_version, new_version);
+		passes = ext->recovery_passes_required[0] & ~passes;
+
+		if (passes) {
+			prt_str(&buf, "  running recovery passes: ");
+			prt_bitflags(&buf, bch2_recovery_passes,
+				     bch2_recovery_passes_from_stable(le64_to_cpu(passes)));
+		}
+
+		bch_notice(c, "%s", buf.buf);
+		ret = true;
+	}
+
+	if (new_version > c->sb.version_incompat_allowed &&
+	    c->opts.version_upgrade == BCH_VERSION_UPGRADE_incompatible) {
+		CLASS(printbuf, buf)();
+
+		prt_str(&buf, "Now allowing incompatible features up to ");
+		bch2_version_to_text(&buf, new_version);
+		prt_str(&buf, ", previously allowed up to ");
+		bch2_version_to_text(&buf, c->sb.version_incompat_allowed);
+		prt_newline(&buf);
+
+		bch_notice(c, "%s", buf.buf);
+		ret = true;
+	}
+
+	if (ret)
+		bch2_sb_upgrade(c, new_version,
+				c->opts.version_upgrade == BCH_VERSION_UPGRADE_incompatible);
+
+	return ret;
+}
+
+noinline_for_stack
+static int bch2_fs_opt_version_init(struct bch_fs *c)
+{
+	int ret = 0;
+
+	if (c->opts.norecovery) {
+		c->opts.recovery_pass_last = c->opts.recovery_pass_last
+			? min(c->opts.recovery_pass_last, BCH_RECOVERY_PASS_snapshots_read)
+			: BCH_RECOVERY_PASS_snapshots_read;
+		c->opts.nochanges = true;
+	}
+
+	if (c->opts.nochanges)
+		c->opts.read_only = true;
+
+	if (c->opts.journal_rewind)
+		c->opts.fsck = true;
+
+	CLASS(printbuf, p)();
+	bch2_log_msg_start(c, &p);
+
+	prt_str(&p, "starting version ");
+	bch2_version_to_text(&p, c->sb.version);
+
+	bool first = true;
+	for (enum bch_opt_id i = 0; i < bch2_opts_nr; i++) {
+		const struct bch_option *opt = &bch2_opt_table[i];
+		u64 v = bch2_opt_get_by_id(&c->opts, i);
+
+		if (!(opt->flags & OPT_MOUNT))
+			continue;
+
+		if (v == bch2_opt_get_by_id(&bch2_opts_default, i))
+			continue;
+
+		prt_str(&p, first ? " opts=" : ",");
+		first = false;
+		bch2_opt_to_text(&p, c, c->disk_sb.sb, opt, v, OPT_SHOW_MOUNT_STYLE);
+	}
+
+	if (c->sb.version_incompat_allowed != c->sb.version) {
+		prt_printf(&p, "\nallowing incompatible features above ");
+		bch2_version_to_text(&p, c->sb.version_incompat_allowed);
+	}
+
+	if (c->opts.verbose) {
+		prt_printf(&p, "\nfeatures: ");
+		prt_bitflags(&p, bch2_sb_features, c->sb.features);
+	}
+
+	if (c->sb.multi_device) {
+		prt_printf(&p, "\nwith devices");
+		for_each_online_member(c, ca, BCH_DEV_READ_REF_bch2_online_devs) {
+			prt_char(&p, ' ');
+			prt_str(&p, ca->name);
+		}
+	}
+
+	/* cf_encoding log message should be here, but it breaks xfstests - sigh */
+
+	if (c->opts.journal_rewind)
+		prt_printf(&p, "\nrewinding journal, fsck required");
+
+	scoped_guard(mutex, &c->sb_lock) {
+		struct bch_sb_field_ext *ext = bch2_sb_field_get_minsize(&c->disk_sb, ext,
+				sizeof(struct bch_sb_field_ext) / sizeof(u64));
+		if (!ext)
+			return bch_err_throw(c, ENOSPC_sb);
+
+		ret = bch2_sb_members_v2_init(c);
+		if (ret)
+			return ret;
+
+		__le64 now = cpu_to_le64(ktime_get_real_seconds());
+		scoped_guard(rcu)
+			for_each_online_member_rcu(c, ca)
+				bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx)->last_mount = now;
+
+		if (BCH_SB_HAS_TOPOLOGY_ERRORS(c->disk_sb.sb))
+			ext->recovery_passes_required[0] |=
+				cpu_to_le64(bch2_recovery_passes_to_stable(BIT_ULL(BCH_RECOVERY_PASS_check_topology)));
+
+		u64 sb_passes = bch2_recovery_passes_from_stable(le64_to_cpu(ext->recovery_passes_required[0]));
+		if (sb_passes) {
+			prt_str(&p, "\nsuperblock requires following recovery passes to be run:\n  ");
+			prt_bitflags(&p, bch2_recovery_passes, sb_passes);
+		}
+
+		if (bch2_check_version_downgrade(c)) {
+			prt_str(&p, "\nVersion downgrade required:");
+
+			__le64 passes = ext->recovery_passes_required[0];
+			bch2_sb_set_downgrade(c,
+					      BCH_VERSION_MINOR(bcachefs_metadata_version_current),
+					      BCH_VERSION_MINOR(c->sb.version));
+			passes = ext->recovery_passes_required[0] & ~passes;
+			if (passes) {
+				prt_str(&p, "\nrunning recovery passes: ");
+				prt_bitflags(&p, bch2_recovery_passes,
+					     bch2_recovery_passes_from_stable(le64_to_cpu(passes)));
+			}
+		}
+
+		check_version_upgrade(c);
+
+		c->opts.recovery_passes |= bch2_recovery_passes_from_stable(le64_to_cpu(ext->recovery_passes_required[0]));
+
+		if (c->sb.version_upgrade_complete < bcachefs_metadata_version_autofix_errors)
+			SET_BCH_SB_ERROR_ACTION(c->disk_sb.sb, BCH_ON_ERROR_fix_safe);
+
+		/* Don't write the superblock, defer that until we go rw */
+	}
+
+	if (c->sb.clean)
+		set_bit(BCH_FS_clean_recovery, &c->flags);
+	if (c->opts.fsck)
+		set_bit(BCH_FS_in_fsck, &c->flags);
+	set_bit(BCH_FS_in_recovery, &c->flags);
+
+	bch2_print_str(c, KERN_INFO, p.buf);
+
+	/* this really should be part of our one multi line mount message, but -
+	 * xfstests... */
+	if (c->cf_encoding)
+		bch_info(c, "Using encoding defined by superblock: utf8-%u.%u.%u",
+			   unicode_major(BCH_FS_DEFAULT_UTF8_ENCODING),
+			   unicode_minor(BCH_FS_DEFAULT_UTF8_ENCODING),
+			   unicode_rev(BCH_FS_DEFAULT_UTF8_ENCODING));
+
+	if (BCH_SB_INITIALIZED(c->disk_sb.sb)) {
+		if (!(c->sb.features & (1ULL << BCH_FEATURE_new_extent_overwrite))) {
+			bch_err(c, "feature new_extent_overwrite not set, filesystem no longer supported");
+			return -EINVAL;
+		}
+
+		if (!c->sb.clean &&
+		    !(c->sb.features & (1ULL << BCH_FEATURE_extents_above_btree_updates))) {
+			bch_err(c, "filesystem needs recovery from older version; run fsck from older bcachefs-tools to fix");
+			return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+
 static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 				    bch_sb_handles *sbs)
 {
@@ -1013,6 +1247,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 
 	ret =
 	    bch2_fs_async_obj_init(c) ?:
+	    bch2_blacklist_table_initialize(c) ?:
 	    bch2_fs_btree_cache_init(c) ?:
 	    bch2_fs_btree_iter_init(c) ?:
 	    bch2_fs_btree_key_cache_init(&c->btree_key_cache) ?:
@@ -1063,7 +1298,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 	}
 #endif
 
-	for (i = 0; i < c->sb.nr_devices; i++) {
+	for (unsigned i = 0; i < c->sb.nr_devices; i++) {
 		if (!bch2_member_exists(c->disk_sb.sb, i))
 			continue;
 		ret = bch2_dev_alloc(c, i);
@@ -1078,6 +1313,28 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 			&c->clock_journal_res,
 			(sizeof(struct jset_entry_clock) / sizeof(u64)) * 2);
 
+	scoped_guard(rwsem_write, &c->state_lock)
+		darray_for_each(*sbs, sb) {
+			CLASS(printbuf, err)();
+			ret = bch2_dev_attach_bdev(c, sb);
+			if (ret)
+				goto err;
+		}
+
+	ret = bch2_fs_opt_version_init(c);
+	if (ret)
+		goto err;
+
+	/*
+	 * start workqueues/kworkers early - kthread creation checks for pending
+	 * signals, which is _very_ annoying
+	 */
+	if (go_rw_in_recovery(c)) {
+		ret = bch2_fs_init_rw(c);
+		if (ret)
+			goto err;
+	}
+
 	scoped_guard(mutex, &bch_fs_list_lock)
 		ret = bch2_fs_online(c);
 
@@ -1091,53 +1348,6 @@ err:
 	bch2_fs_free(c);
 	c = ERR_PTR(ret);
 	goto out;
-}
-
-noinline_for_stack
-static void print_mount_opts(struct bch_fs *c)
-{
-	enum bch_opt_id i;
-	CLASS(printbuf, p)();
-	bch2_log_msg_start(c, &p);
-
-	prt_str(&p, "starting version ");
-	bch2_version_to_text(&p, c->sb.version);
-
-	bool first = true;
-	for (i = 0; i < bch2_opts_nr; i++) {
-		const struct bch_option *opt = &bch2_opt_table[i];
-		u64 v = bch2_opt_get_by_id(&c->opts, i);
-
-		if (!(opt->flags & OPT_MOUNT))
-			continue;
-
-		if (v == bch2_opt_get_by_id(&bch2_opts_default, i))
-			continue;
-
-		prt_str(&p, first ? " opts=" : ",");
-		first = false;
-		bch2_opt_to_text(&p, c, c->disk_sb.sb, opt, v, OPT_SHOW_MOUNT_STYLE);
-	}
-
-	if (c->sb.version_incompat_allowed != c->sb.version) {
-		prt_printf(&p, "\nallowing incompatible features above ");
-		bch2_version_to_text(&p, c->sb.version_incompat_allowed);
-	}
-
-	if (c->opts.verbose) {
-		prt_printf(&p, "\nfeatures: ");
-		prt_bitflags(&p, bch2_sb_features, c->sb.features);
-	}
-
-	if (c->sb.multi_device) {
-		prt_printf(&p, "\nwith devices");
-		for_each_online_member(c, ca, BCH_DEV_READ_REF_bch2_online_devs) {
-			prt_char(&p, ' ');
-			prt_str(&p, ca->name);
-		}
-	}
-
-	bch2_print_str(c, KERN_INFO, p.buf);
 }
 
 static bool bch2_fs_may_start(struct bch_fs *c)
@@ -1174,38 +1384,16 @@ static bool bch2_fs_may_start(struct bch_fs *c)
 
 int bch2_fs_start(struct bch_fs *c)
 {
-	time64_t now = ktime_get_real_seconds();
 	int ret = 0;
 
 	BUG_ON(test_bit(BCH_FS_started, &c->flags));
-
-	print_mount_opts(c);
-
-	if (c->cf_encoding)
-		bch_info(c, "Using encoding defined by superblock: utf8-%u.%u.%u",
-			 unicode_major(BCH_FS_DEFAULT_UTF8_ENCODING),
-			 unicode_minor(BCH_FS_DEFAULT_UTF8_ENCODING),
-			 unicode_rev(BCH_FS_DEFAULT_UTF8_ENCODING));
 
 	if (!bch2_fs_may_start(c))
 		return bch_err_throw(c, insufficient_devices_to_start);
 
 	scoped_guard(rwsem_write, &c->state_lock) {
-		guard(mutex)(&c->sb_lock);
-		if (!bch2_sb_field_get_minsize(&c->disk_sb, ext,
-				sizeof(struct bch_sb_field_ext) / sizeof(u64))) {
-			ret = bch_err_throw(c, ENOSPC_sb);
-			goto err;
-		}
-
-		ret = bch2_sb_members_v2_init(c);
-		if (ret)
-			goto err;
-
 		scoped_guard(rcu)
 			for_each_online_member_rcu(c, ca) {
-				bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx)->last_mount =
-					cpu_to_le64(now);
 				if (ca->mi.state == BCH_MEMBER_STATE_rw)
 					bch2_dev_allocator_add(c, ca);
 			}
@@ -2397,13 +2585,6 @@ struct bch_fs *bch2_fs_open(darray_const_str *devices,
 	ret = PTR_ERR_OR_ZERO(c);
 	if (ret)
 		goto err;
-
-	scoped_guard(rwsem_write, &c->state_lock)
-		darray_for_each(sbs, sb) {
-			ret = bch2_dev_attach_bdev(c, sb);
-			if (ret)
-				goto err;
-		}
 
 	if (!c->opts.nostart) {
 		ret = bch2_fs_start(c);
