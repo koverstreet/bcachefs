@@ -542,7 +542,7 @@ int bch2_move_ratelimit(struct moving_context *ctxt)
 
 	if (ctxt->wait_on_copygc && c->copygc_running) {
 		bch2_moving_ctxt_flush_all(ctxt);
-		wait_event_killable(c->copygc_running_wq,
+		wait_event_freezable(c->copygc_running_wq,
 				    !c->copygc_running ||
 				    (is_kthread && kthread_should_stop()));
 	}
