@@ -788,7 +788,7 @@ struct btree *bch2_btree_node_mem_alloc(struct btree_trans *trans, bool pcpu_rea
 			goto got_node;
 		}
 
-	b = __btree_node_mem_alloc(c, GFP_NOWAIT|__GFP_NOWARN);
+	b = __btree_node_mem_alloc(c, GFP_NOWAIT);
 	if (b) {
 		bch2_btree_lock_init(&b->c, pcpu_read_locks ? SIX_LOCK_INIT_PCPU : 0, GFP_NOWAIT);
 	} else {
@@ -826,7 +826,7 @@ got_node:
 
 	mutex_unlock(&bc->lock);
 
-	if (btree_node_data_alloc(c, b, GFP_NOWAIT|__GFP_NOWARN)) {
+	if (btree_node_data_alloc(c, b, GFP_NOWAIT)) {
 		bch2_trans_unlock(trans);
 		if (btree_node_data_alloc(c, b, GFP_KERNEL|__GFP_NOWARN))
 			goto err;

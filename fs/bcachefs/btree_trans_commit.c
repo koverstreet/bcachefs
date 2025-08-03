@@ -449,7 +449,7 @@ static int btree_key_can_insert_cached(struct btree_trans *trans, unsigned flags
 		return 0;
 
 	new_u64s	= roundup_pow_of_two(u64s);
-	new_k		= krealloc(ck->k, new_u64s * sizeof(u64), GFP_NOWAIT|__GFP_NOWARN);
+	new_k		= krealloc(ck->k, new_u64s * sizeof(u64), GFP_NOWAIT);
 	if (unlikely(!new_k))
 		return btree_key_can_insert_cached_slowpath(trans, flags, path, new_u64s);
 
