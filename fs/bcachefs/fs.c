@@ -269,7 +269,7 @@ restart:
 		rht_for_each_entry_rcu_from(inode, he, rht_ptr_rcu(bkt), tbl, hash, hash) {
 			if (inode->ei_inum.inum == inum) {
 				ret = darray_push_gfp(&subvols, inode->ei_inum.subvol,
-						      GFP_NOWAIT|__GFP_NOWARN);
+						      GFP_NOWAIT);
 				if (ret) {
 					rcu_read_unlock();
 					ret = darray_make_room(&subvols, 1);
