@@ -184,6 +184,9 @@ int bch2_accounting_validate(struct bch_fs *c, struct bkey_s_c k,
 	void *end = &acc_k + 1;
 	int ret = 0;
 
+	if (acc_k.type >= BCH_DISK_ACCOUNTING_TYPE_NR)
+		return 0;
+
 	bkey_fsck_err_on((from.flags & BCH_VALIDATE_commit) &&
 			 bversion_zero(k.k->bversion),
 			 c, accounting_key_version_0,
