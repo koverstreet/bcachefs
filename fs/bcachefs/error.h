@@ -173,7 +173,8 @@ do {									\
 	if (!bch2_err_matches(_ret, BCH_ERR_fsck_fix) &&		\
 	    !bch2_err_matches(_ret, BCH_ERR_fsck_ignore))		\
 		ret = _ret;						\
-	ret = bch_err_throw(c, fsck_delete_bkey);			\
+	else								\
+		ret = bch_err_throw(c, fsck_delete_bkey);		\
 	goto fsck_err;							\
 } while (0)
 
