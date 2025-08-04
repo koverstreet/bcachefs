@@ -992,7 +992,7 @@ static int ec_stripe_delete(struct btree_trans *trans, u64 idx, bool warn)
 	 * Important: check stripe_is_open with stripe key locked:
 	 */
 	if (k.k->type != KEY_TYPE_stripe ||
-	    stripe_lru_pos(bkey_s_c_to_stripe(k).v) != 1) {
+	    stripe_lru_pos(bkey_s_c_to_stripe(k).v) != STRIPE_LRU_POS_EMPTY) {
 		CLASS(printbuf, buf)();
 		bch2_fs_inconsistent_on(warn,
 					c, "error deleting stripe: got non or nonempty stripe\n%s",
@@ -1849,8 +1849,19 @@ static int __get_old_stripe(struct btree_trans *trans,
 		return 0;
 
 	struct bkey_s_c_stripe s = bkey_s_c_to_stripe(k);
-	if (stripe_lru_pos(s.v) <= 1)
-		return 0;
+
+	if (stripe_lru_pos(s.v) == STRIPE_LRU_POS_EMPTY) {
+		/*
+		 * We can't guarantee that the trigger will always delete
+		 * stripes - the stripe might still be open when the last data
+		 * in it was deleted
+		 */
+		return !bch2_stripe_is_open(c, idx)
+			? bch2_btree_delete_at(trans, &iter, 0) ?:
+			  bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
+			  bch_err_throw(c, transaction_restart_commit)
+			: 0;
+	}
 
 	if (s.v->disk_label		== head->disk_label &&
 	    s.v->algorithm		== head->algo &&
