@@ -12,7 +12,6 @@
 #include "extents.h"
 #include "keylist.h"
 #include "snapshot.h"
-#include "super-io.h"
 #include "trace.h"
 
 #include <linux/string_helpers.h>
@@ -157,21 +156,6 @@ int __bch2_insert_snapshot_whiteouts(struct btree_trans *trans,
 
 	darray_exit(s);
 	return ret;
-}
-
-static inline enum bch_bkey_type extent_whiteout_type(struct bch_fs *c, enum btree_id btree, const struct bkey *k)
-{
-	/*
-	 * KEY_TYPE_extent_whiteout indicates that there isn't a real extent
-	 * present at that position: key start positions inclusive of
-	 * KEY_TYPE_extent_whiteout (but not KEY_TYPE_whiteout) are
-	 * monotonically increasing
-	 */
-	return btree_id_is_extents_snapshots(btree) &&
-		bkey_deleted(k) &&
-		!bch2_request_incompat_feature(c, bcachefs_metadata_version_extent_snapshot_whiteouts)
-		? KEY_TYPE_extent_whiteout
-		: KEY_TYPE_whiteout;
 }
 
 int bch2_trans_update_extent_overwrite(struct btree_trans *trans,

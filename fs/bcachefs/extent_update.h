@@ -4,8 +4,6 @@
 
 #include "bcachefs.h"
 
-int bch2_extent_atomic_end(struct btree_trans *, struct btree_iter *,
-			   struct bpos *);
 int bch2_extent_trim_atomic(struct btree_trans *, struct btree_iter *,
 			    struct bkey_i *);
 
