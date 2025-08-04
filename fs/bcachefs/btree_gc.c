@@ -44,27 +44,6 @@
 #include <linux/rcupdate.h>
 #include <linux/sched/task.h>
 
-/*
- * Returns true if it's a btree we can easily reconstruct, or otherwise won't
- * cause data loss if it's missing:
- */
-static bool btree_id_important(enum btree_id btree)
-{
-	if (btree_id_is_alloc(btree))
-		return false;
-
-	switch (btree) {
-	case BTREE_ID_quotas:
-	case BTREE_ID_snapshot_trees:
-	case BTREE_ID_logged_ops:
-	case BTREE_ID_rebalance_work:
-	case BTREE_ID_subvolume_children:
-		return false;
-	default:
-		return true;
-	}
-}
-
 static const char * const bch2_gc_phase_strs[] = {
 #define x(n)	#n,
 	GC_PHASES()
@@ -576,7 +555,7 @@ static int bch2_check_root(struct btree_trans *trans, enum btree_id btree,
 
 		if (!ret) {
 			__fsck_err(trans,
-				   FSCK_CAN_FIX|(!btree_id_important(btree) ? FSCK_AUTOFIX : 0),
+				   FSCK_CAN_FIX|(btree_id_can_reconstruct(btree) ? FSCK_AUTOFIX : 0),
 				   btree_root_unreadable_and_scan_found_nothing,
 				   "no nodes found for btree %s, continue?", buf.buf);
 
