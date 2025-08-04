@@ -12,6 +12,7 @@ struct moving_context;
 struct data_update_opts {
 	unsigned	rewrite_ptrs;
 	unsigned	kill_ptrs;
+	unsigned	kill_ec_ptrs;
 	u16		target;
 	u8		extra_replicas;
 	unsigned	btree_insert_flags;
