@@ -995,6 +995,22 @@ void bch2_bkey_drop_device_noerror(struct bkey_s k, unsigned dev)
 	bch2_bkey_drop_ptrs_noerror(k, ptr, ptr->dev == dev);
 }
 
+void bch2_bkey_drop_ec(struct bkey_i *k, unsigned dev)
+{
+	struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(k));
+	union bch_extent_entry *entry, *ec = NULL;
+
+	bkey_extent_entry_for_each(ptrs, entry) {
+		if (extent_entry_type(entry) == BCH_EXTENT_ENTRY_stripe_ptr)
+			ec = entry;
+		else if (extent_entry_type(entry) == BCH_EXTENT_ENTRY_ptr &&
+			 entry->ptr.dev == dev) {
+			bch2_bkey_extent_entry_drop(k, ec);
+			return;
+		}
+	}
+}
+
 const struct bch_extent_ptr *bch2_bkey_has_device_c(struct bkey_s_c k, unsigned dev)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
@@ -1757,3 +1773,4 @@ int bch2_cut_back_s(struct bpos where, struct bkey_s k)
 	memset(bkey_val_end(k), 0, val_u64s_delta * sizeof(u64));
 	return -val_u64s_delta;
 }
+
