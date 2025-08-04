@@ -39,6 +39,8 @@
 #include <linux/sort.h>
 #include <linux/string_choices.h>
 
+static bool bch2_stripe_is_open(struct bch_fs *, u64);
+
 #ifdef __KERNEL__
 
 #include <linux/raid/pq.h>
@@ -412,12 +414,22 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 	       (new_s->nr_blocks	!= old_s->nr_blocks ||
 		new_s->nr_redundant	!= old_s->nr_redundant));
 
-	if (flags & BTREE_TRIGGER_transactional)
+	if (flags & BTREE_TRIGGER_transactional) {
+		u64 old_lru_pos = stripe_lru_pos(old_s);
+		u64 new_lru_pos = stripe_lru_pos(new_s);
+
+		if (new_lru_pos == STRIPE_LRU_POS_EMPTY	&&
+		    !bch2_stripe_is_open(c, idx)) {
+			_new.k->type = KEY_TYPE_deleted;
+			set_bkey_val_u64s(_new.k, 0);
+			new_s = NULL;
+			new_lru_pos = 0;
+		}
+
 		try(bch2_lru_change(trans,
-				    BCH_LRU_STRIPE_FRAGMENTATION,
-				    idx,
-				    stripe_lru_pos(old_s),
-				    stripe_lru_pos(new_s)));
+				    BCH_LRU_STRIPE_FRAGMENTATION, idx,
+				    old_lru_pos, new_lru_pos));
+	}
 
 	if (flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) {
 		/*
@@ -1006,13 +1018,13 @@ static void bch2_stripe_handle_put(struct bch_fs *c, struct ec_stripe_handle *s)
 
 /* stripe deletion */
 
-static int ec_stripe_delete(struct btree_trans *trans, u64 idx, bool warn)
+static int ec_stripe_delete(struct btree_trans *trans, u64 idx, bool is_open)
 {
 	struct bch_fs *c = trans->c;
 	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, idx), BTREE_ITER_intent);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
-	if (bch2_stripe_is_open(c, idx))
+	if (!is_open && bch2_stripe_is_open(c, idx))
 		return 0;
 
 	/*
@@ -1022,7 +1034,7 @@ static int ec_stripe_delete(struct btree_trans *trans, u64 idx, bool warn)
 	if (k.k->type != KEY_TYPE_stripe ||
 	    stripe_lru_pos(bkey_s_c_to_stripe(k).v) != 1) {
 		CLASS(printbuf, buf)();
-		bch2_fs_inconsistent_on(warn,
+		bch2_fs_inconsistent_on(is_open,
 					c, "error deleting stripe: got non or nonempty stripe\n%s",
 					(bch2_bkey_val_to_text(&buf, c, k), buf.buf));
 		return 0;
@@ -1395,17 +1407,11 @@ static int __ec_stripe_create(struct ec_stripe_new *s)
 	}
 
 	try(bch2_trans_commit_do(c, &s->res, NULL,
-		BCH_TRANS_COMMIT_no_check_rw|
-		BCH_TRANS_COMMIT_no_enospc,
-		ec_stripe_key_update(trans,
-				     bkey_i_to_stripe(&s->new_stripe.key))));
-	try(ec_stripe_update_extents(c, s));
+				 BCH_TRANS_COMMIT_no_check_rw|
+				 BCH_TRANS_COMMIT_no_enospc,
+		ec_stripe_key_update(trans, bkey_i_to_stripe(&s->new_stripe.key))));
 
-	if (s->have_old_stripe)
-		try(bch2_trans_commit_do(c, NULL, NULL,
-				BCH_TRANS_COMMIT_no_check_rw|
-				BCH_TRANS_COMMIT_no_enospc,
-			ec_stripe_delete(trans, s->old_stripe.key.k.p.offset, true)));
+	try(ec_stripe_update_extents(c, s));
 
 	return 0;
 }
