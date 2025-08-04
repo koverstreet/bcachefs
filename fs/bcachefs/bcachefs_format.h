@@ -1438,9 +1438,9 @@ enum btree_id {
  */
 #define BTREE_ID_NR_MAX		63
 
-static inline bool btree_id_is_alloc(enum btree_id id)
+static inline bool btree_id_is_alloc(enum btree_id btree)
 {
-	switch (id) {
+	switch (btree) {
 	case BTREE_ID_alloc:
 	case BTREE_ID_backpointers:
 	case BTREE_ID_need_discard:
@@ -1452,6 +1452,33 @@ static inline bool btree_id_is_alloc(enum btree_id id)
 	default:
 		return false;
 	}
+}
+
+/* We can reconstruct these btrees from information in other btrees */
+static inline bool btree_id_can_reconstruct(enum btree_id btree)
+{
+	if (btree_id_is_alloc(btree))
+		return true;
+
+	switch (btree) {
+	case BTREE_ID_snapshot_trees:
+	case BTREE_ID_deleted_inodes:
+	case BTREE_ID_rebalance_work:
+	case BTREE_ID_subvolume_children:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/*
+ * We can reconstruct BTREE_ID_alloc, but reconstucting it from scratch is not
+ * so cheap and OOMs on huge filesystems (until we have online
+ * check_allocations)
+ */
+static inline bool btree_id_recovers_from_scan(enum btree_id btree)
+{
+	return btree == BTREE_ID_alloc || !btree_id_can_reconstruct(btree);
 }
 
 #define BTREE_MAX_DEPTH		4U
