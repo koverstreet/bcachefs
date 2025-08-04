@@ -701,8 +701,16 @@ int bch2_accounting_key_to_wb_slowpath(struct bch_fs *c, enum btree_id btree,
 				       struct bkey_i_accounting *k)
 {
 	struct btree_write_buffer *wb = &c->btree_write_buffer;
-	struct btree_write_buffered_key new = { .btree = btree };
 
+	if (trace_accounting_key_to_wb_slowpath_enabled()) {
+		CLASS(printbuf, buf)();
+		prt_printf(&buf, "have: %zu\n", wb->accounting.nr);
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&k->k_i));
+		trace_accounting_key_to_wb_slowpath(c, buf.buf);
+	}
+	count_event(c, accounting_key_to_wb_slowpath);
+
+	struct btree_write_buffered_key new = { .btree = btree };
 	bkey_copy(&new.k, &k->k_i);
 
 	int ret = darray_push(&wb->accounting, new);

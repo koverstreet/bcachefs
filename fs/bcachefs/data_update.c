@@ -225,7 +225,7 @@ static void trace_io_move_created_rebalance2(struct data_update *m,
 
 	trace_io_move_created_rebalance(c, buf.buf);
 
-	this_cpu_inc(c->counters[BCH_COUNTER_io_move_created_rebalance]);
+	count_event(c, io_move_created_rebalance);
 }
 
 noinline_for_stack
