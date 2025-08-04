@@ -98,11 +98,13 @@ static int count_iters_for_insert(struct btree_trans *trans,
 	return ret2 ?: ret;
 }
 
-int bch2_extent_atomic_end(struct btree_trans *trans,
-			   struct btree_iter *iter,
-			   struct bpos *end)
+int bch2_extent_trim_atomic(struct btree_trans *trans,
+			    struct btree_iter *iter,
+			    struct bkey_i *insert)
 {
-	unsigned nr_iters = 0;
+	enum bch_bkey_type whiteout_type =
+		extent_whiteout_type(trans->c, iter->btree_id, &insert->k);
+	struct bpos end = insert->k.p;
 
 	struct btree_iter copy;
 	bch2_trans_copy_iter(&copy, iter);
@@ -111,42 +113,60 @@ int bch2_extent_atomic_end(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
+	copy.flags |= BTREE_ITER_nofilter_whiteouts;
+
+	/*
+	 * We're doing our own whiteout filtering, but we still need to pass a
+	 * max key to avoid popping an assert in bch2_snapshot_is_ancestor():
+	 */
 	struct bkey_s_c k;
-	for_each_btree_key_max_continue_norestart(copy, *end, 0, k, ret) {
+	unsigned nr_iters = 0;
+	for_each_btree_key_max_continue_norestart(copy,
+						  POS(insert->k.p.inode, U64_MAX),
+						  0, k, ret) {
 		unsigned offset = 0;
 
 		if (bkey_gt(iter->pos, bkey_start_pos(k.k)))
 			offset = iter->pos.offset - bkey_start_offset(k.k);
 
-		ret = count_iters_for_insert(trans, k, offset, end, &nr_iters);
-		if (ret)
-			break;
+		if (bkey_extent_whiteout(k.k)) {
+			if (bpos_gt(k.k->p, insert->k.p)) {
+				if (k.k->type == KEY_TYPE_extent_whiteout)
+					break;
+				else
+					continue;
+			} else if (k.k->type != whiteout_type) {
+				nr_iters += 1;
+				if (nr_iters >= EXTENT_ITERS_MAX) {
+					end = bpos_min(end, k.k->p);
+					break;
+				}
+			}
+		} else {
+			if (bpos_ge(bkey_start_pos(k.k), end))
+				break;
+
+			ret = count_iters_for_insert(trans, k, offset, &end, &nr_iters);
+			if (ret)
+				break;
+		}
 	}
 err:
 	bch2_trans_iter_exit(&copy);
-	return ret < 0 ? ret : 0;
-}
-
-int bch2_extent_trim_atomic(struct btree_trans *trans,
-			    struct btree_iter *iter,
-			    struct bkey_i *k)
-{
-	struct bpos end = k->k.p;
-	int ret = bch2_extent_atomic_end(trans, iter, &end);
-	if (ret)
+	if (ret < 0)
 		return ret;
 
 	/* tracepoint */
 
-	if (bpos_lt(end, k->k.p)) {
+	if (bpos_lt(end, insert->k.p)) {
 		if (trace_extent_trim_atomic_enabled()) {
 			CLASS(printbuf, buf)();
 			bch2_bpos_to_text(&buf, end);
 			prt_newline(&buf);
-			bch2_bkey_val_to_text(&buf, trans->c, bkey_i_to_s_c(k));
+			bch2_bkey_val_to_text(&buf, trans->c, bkey_i_to_s_c(insert));
 			trace_extent_trim_atomic(trans->c, buf.buf);
 		}
-		bch2_cut_back(end, k);
+		bch2_cut_back(end, insert);
 	}
 	return 0;
 }
