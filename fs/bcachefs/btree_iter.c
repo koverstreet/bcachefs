@@ -2366,7 +2366,9 @@ struct bkey_s_c bch2_btree_iter_peek_max(struct btree_iter *iter, struct bpos en
 
 	bch2_trans_verify_not_unlocked_or_in_restart(trans);
 	bch2_btree_iter_verify_entry_exit(iter);
-	EBUG_ON((iter->flags & BTREE_ITER_filter_snapshots) && bkey_eq(end, POS_MAX));
+	EBUG_ON((iter->flags & BTREE_ITER_filter_snapshots) &&
+		!(iter->flags & BTREE_ITER_nofilter_whiteouts) &&
+		bkey_eq(end, POS_MAX));
 
 	ret = trans_maybe_inject_restart(trans, _RET_IP_);
 	if (unlikely(ret)) {
