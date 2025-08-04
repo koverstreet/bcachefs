@@ -650,6 +650,7 @@ void bch2_bkey_drop_ptr(struct bkey_s, struct bch_extent_ptr *);
 
 void bch2_bkey_drop_device_noerror(struct bkey_s, unsigned);
 void bch2_bkey_drop_device(struct bkey_s, unsigned);
+void bch2_bkey_drop_ec(struct bkey_i *k, unsigned);
 
 #define bch2_bkey_drop_ptrs_noerror(_k, _ptr, _cond)			\
 do {									\

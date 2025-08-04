@@ -693,6 +693,15 @@ int bch2_extent_drop_ptrs(struct btree_trans *trans,
 	if (ret)
 		return ret;
 
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+	unsigned i = 0;
+	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs_c(k), p, entry) {
+		if (data_opts->kill_ec_ptrs & BIT(i))
+			bch2_bkey_drop_ec(n, p.ptr.dev);
+		i++;
+	}
+
 	while (data_opts->kill_ptrs) {
 		unsigned i = 0, drop = __fls(data_opts->kill_ptrs);
 
