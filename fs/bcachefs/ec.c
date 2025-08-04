@@ -36,6 +36,8 @@
 #include <linux/raid/pq.h>
 #include <linux/raid/xor.h>
 
+static bool bch2_stripe_is_open(struct bch_fs *, u64);
+
 static void raid5_recov(unsigned disks, unsigned failed_idx,
 			size_t size, void **data)
 {
@@ -387,11 +389,20 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 		new_s->nr_redundant	!= old_s->nr_redundant));
 
 	if (flags & BTREE_TRIGGER_transactional) {
+		u64 old_lru_pos = stripe_lru_pos(old_s);
+		u64 new_lru_pos = stripe_lru_pos(new_s);
+
+		if (new_lru_pos == STRIPE_LRU_POS_EMPTY	&&
+		    !bch2_stripe_is_open(c, idx)) {
+			_new.k->type = KEY_TYPE_deleted;
+			set_bkey_val_u64s(_new.k, 0);
+			new_s = NULL;
+			new_lru_pos = 0;
+		}
+
 		int ret = bch2_lru_change(trans,
-					  BCH_LRU_STRIPE_FRAGMENTATION,
-					  idx,
-					  stripe_lru_pos(old_s),
-					  stripe_lru_pos(new_s));
+					  BCH_LRU_STRIPE_FRAGMENTATION, idx,
+					  old_lru_pos, new_lru_pos);
 		if (ret)
 			return ret;
 	}
