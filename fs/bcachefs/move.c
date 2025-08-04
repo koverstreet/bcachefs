@@ -150,7 +150,7 @@ static void move_write_done(struct bch_write_op *op)
 			bch2_write_op_to_text(&buf, op);
 			trace_io_move_write_fail(c, buf.buf);
 		}
-		this_cpu_inc(c->counters[BCH_COUNTER_io_move_write_fail]);
+		count_event(c, io_move_write_fail);
 
 		ctxt->write_error = true;
 	}
