@@ -344,7 +344,7 @@ int bch2_move_extent(struct moving_context *ctxt,
 	if (!data_opts.rewrite_ptrs &&
 	    !data_opts.extra_replicas &&
 	    !data_opts.scrub) {
-		if (data_opts.kill_ptrs) {
+		if (data_opts.kill_ptrs|data_opts.kill_ec_ptrs) {
 			this_cpu_add(c->counters[BCH_COUNTER_io_move_drop_only], k.k->size);
 			return bch2_extent_drop_ptrs(trans, iter, k, &io_opts, &data_opts);
 		} else {
@@ -1280,7 +1280,17 @@ static bool drop_extra_replicas_pred(struct bch_fs *c, void *arg,
 		i++;
 	}
 
-	return data_opts->kill_ptrs != 0;
+	i = 0;
+	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs_c(k), p, entry) {
+		if (p.has_ec && durability - p.ec.redundancy >= replicas) {
+			data_opts->kill_ec_ptrs |= BIT(i);
+			durability -= p.ec.redundancy;
+		}
+
+		i++;
+	}
+
+	return (data_opts->kill_ptrs|data_opts->kill_ec_ptrs) != 0;
 }
 
 static bool scrub_pred(struct bch_fs *c, void *_arg,
