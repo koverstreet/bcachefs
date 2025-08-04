@@ -771,7 +771,6 @@ int bch2_write_end(
 	struct bch2_folio_reservation *res = fsdata;
 	unsigned offset = pos - folio_pos(folio);
 
-	lockdep_assert_held(&inode->v.i_rwsem);
 	BUG_ON(offset + copied > folio_size(folio));
 
 	if (unlikely(copied < len && !folio_test_uptodate(folio))) {
