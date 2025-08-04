@@ -145,6 +145,16 @@ static inline bool bch2_accounting_is_mem(struct disk_accounting_pos *acc)
 		acc->type != BCH_DISK_ACCOUNTING_inum;
 }
 
+static inline bool bch2_bkey_is_accounting_mem(struct bkey *k)
+{
+	if (k->type != KEY_TYPE_accounting)
+		return false;
+
+	struct disk_accounting_pos acc_k;
+	bpos_to_disk_accounting_pos(&acc_k, k->p);
+	return bch2_accounting_is_mem(&acc_k);
+}
+
 /*
  * Update in memory counters so they match the btree update we're doing; called
  * from transaction commit path
