@@ -1179,6 +1179,11 @@ DEFINE_EVENT(transaction_event,	trans_restart_write_buffer_flush,
 	TP_ARGS(trans, caller_ip)
 );
 
+DEFINE_EVENT(fs_str, accounting_key_to_wb_slowpath,
+	TP_PROTO(struct bch_fs *c, const char *str),
+	TP_ARGS(c, str)
+);
+
 TRACE_EVENT(path_downgrade,
 	TP_PROTO(struct btree_trans *trans,
 		 unsigned long caller_ip,
