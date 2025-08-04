@@ -607,7 +607,7 @@ static int read_btree_roots(struct bch_fs *c)
 					c, btree_root_read_error,
 					"error reading btree root %s: %s",
 					buf.buf, bch2_err_str(ret))) {
-			if (btree_id_is_alloc(i))
+			if (btree_id_can_reconstruct(i))
 				r->error = 0;
 			ret = 0;
 		}
