@@ -536,45 +536,55 @@ fsck_err:
 	return ret;
 }
 
-static int bch2_check_root(struct btree_trans *trans, enum btree_id btree,
+static int bch2_topology_check_root(struct btree_trans *trans, enum btree_id btree,
 			   bool *reconstructed_root)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_root *r = bch2_btree_id_root(c, btree);
+
+	if (!r->error)
+		return 0;
+
 	CLASS(printbuf, buf)();
 	int ret = 0;
 
-	bch2_btree_id_to_text(&buf, btree);
-
-	if (r->error) {
-		bch_info(c, "btree root %s unreadable, must recover from scan", buf.buf);
-
-		ret = bch2_btree_has_scanned_nodes(c, btree);
-		if (ret < 0)
-			goto err;
-
-		if (!ret) {
-			__fsck_err(trans,
-				   FSCK_CAN_FIX|(btree_id_can_reconstruct(btree) ? FSCK_AUTOFIX : 0),
-				   btree_root_unreadable_and_scan_found_nothing,
-				   "no nodes found for btree %s, continue?", buf.buf);
-
-			r->alive = false;
-			r->error = 0;
-			bch2_btree_root_alloc_fake_trans(trans, btree, 0);
-		} else {
-			r->alive = false;
-			r->error = 0;
-			bch2_btree_root_alloc_fake_trans(trans, btree, 1);
-
-			bch2_shoot_down_journal_keys(c, btree, 1, BTREE_MAX_DEPTH, POS_MIN, SPOS_MAX);
-			ret = bch2_get_scanned_nodes(c, btree, 0, POS_MIN, SPOS_MAX);
-			if (ret)
-				return ret;
-		}
-
-		*reconstructed_root = true;
+	if (!btree_id_recovers_from_scan(btree)) {
+		r->alive = false;
+		r->error = 0;
+		bch2_btree_root_alloc_fake_trans(trans, btree, 0);
+		ret = bch2_btree_lost_data(c, &buf, btree);
+		bch2_print_str(c, KERN_NOTICE, buf.buf);
+		goto out;
 	}
+
+	bch2_btree_id_to_text(&buf, btree);
+	bch_info(c, "btree root %s unreadable, must recover from scan", buf.buf);
+
+	ret = bch2_btree_has_scanned_nodes(c, btree);
+	if (ret < 0)
+		goto err;
+
+	if (!ret) {
+		__fsck_err(trans,
+			   FSCK_CAN_FIX|(btree_id_can_reconstruct(btree) ? FSCK_AUTOFIX : 0),
+			   btree_root_unreadable_and_scan_found_nothing,
+			   "no nodes found for btree %s, continue?", buf.buf);
+
+		r->alive = false;
+		r->error = 0;
+		bch2_btree_root_alloc_fake_trans(trans, btree, 0);
+	} else {
+		r->alive = false;
+		r->error = 0;
+		bch2_btree_root_alloc_fake_trans(trans, btree, 1);
+
+		bch2_shoot_down_journal_keys(c, btree, 1, BTREE_MAX_DEPTH, POS_MIN, SPOS_MAX);
+		ret = bch2_get_scanned_nodes(c, btree, 0, POS_MIN, SPOS_MAX);
+		if (ret)
+			return ret;
+	}
+out:
+	*reconstructed_root = true;
 err:
 fsck_err:
 	bch_err_fn(c, ret);
@@ -592,7 +602,7 @@ int bch2_check_topology(struct bch_fs *c)
 	for (unsigned i = 0; i < btree_id_nr_alive(c) && !ret; i++) {
 		bool reconstructed_root = false;
 recover:
-		ret = lockrestart_do(trans, bch2_check_root(trans, i, &reconstructed_root));
+		ret = lockrestart_do(trans, bch2_topology_check_root(trans, i, &reconstructed_root));
 		if (ret)
 			break;
 
