@@ -5,6 +5,7 @@
 #include "btree_iter.h"
 #include "journal.h"
 #include "snapshot.h"
+#include "super-io.h"
 
 struct bch_fs;
 struct btree;
@@ -108,6 +109,22 @@ static inline int bch2_insert_snapshot_whiteouts(struct btree_trans *trans,
 	return s.nr
 		? __bch2_insert_snapshot_whiteouts(trans, btree, new_pos, &s)
 		: 0;
+}
+
+static inline enum bch_bkey_type extent_whiteout_type(struct bch_fs *c, enum btree_id btree,
+						      const struct bkey *k)
+{
+	/*
+	 * KEY_TYPE_extent_whiteout indicates that there isn't a real extent
+	 * present at that position: key start positions inclusive of
+	 * KEY_TYPE_extent_whiteout (but not KEY_TYPE_whiteout) are
+	 * monotonically increasing
+	 */
+	return btree_id_is_extents_snapshots(btree) &&
+		bkey_deleted(k) &&
+		!bch2_request_incompat_feature(c, bcachefs_metadata_version_extent_snapshot_whiteouts)
+		? KEY_TYPE_extent_whiteout
+		: KEY_TYPE_whiteout;
 }
 
 int bch2_trans_update_extent_overwrite(struct btree_trans *, struct btree_iter *,
