@@ -246,6 +246,7 @@ void bch2_dev_free(struct bch_dev *ca)
 
 	bch2_bucket_bitmap_free(&ca->bucket_backpointer_mismatch);
 	bch2_bucket_bitmap_free(&ca->bucket_backpointer_empty);
+	genradix_free(&ca->buckets_gc);
 
 	bch2_free_super(&ca->disk_sb);
 	bch2_dev_allocator_background_exit(ca);
