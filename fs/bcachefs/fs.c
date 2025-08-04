@@ -858,9 +858,7 @@ static int bch2_symlink(struct mnt_idmap *idmap,
 	if (IS_ERR(inode))
 		return bch2_err_class(PTR_ERR(inode));
 
-	inode_lock(&inode->v);
 	ret = page_symlink(&inode->v, symname, strlen(symname) + 1);
-	inode_unlock(&inode->v);
 
 	if (unlikely(ret))
 		goto err;
