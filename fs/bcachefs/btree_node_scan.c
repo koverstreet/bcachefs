@@ -149,7 +149,7 @@ static void try_read_btree_node(struct find_btree_nodes *f, struct bch_dev *ca,
 		bch2_encrypt(c, BSET_CSUM_TYPE(&bn->keys), nonce, &bn->flags, bytes);
 	}
 
-	if (btree_id_is_alloc(BTREE_NODE_ID(bn)))
+	if (btree_id_can_reconstruct(BTREE_NODE_ID(bn)))
 		return;
 
 	if (BTREE_NODE_LEVEL(bn) >= BTREE_MAX_DEPTH)
@@ -534,7 +534,7 @@ int bch2_btree_has_scanned_nodes(struct bch_fs *c, enum btree_id btree)
 int bch2_get_scanned_nodes(struct bch_fs *c, enum btree_id btree,
 			   unsigned level, struct bpos node_min, struct bpos node_max)
 {
-	if (btree_id_is_alloc(btree))
+	if (!btree_id_recovers_from_scan(btree))
 		return 0;
 
 	struct find_btree_nodes *f = &c->found_btree_nodes;
