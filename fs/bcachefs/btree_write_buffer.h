@@ -95,7 +95,7 @@ static inline int bch2_journal_key_to_wb(struct bch_fs *c,
 
 	EBUG_ON(!dst->seq);
 
-	return k->k.type == KEY_TYPE_accounting
+	return bch2_bkey_is_accounting_mem(&k->k)
 		? bch2_accounting_key_to_wb(c, btree, bkey_i_to_accounting(k))
 		: __bch2_journal_key_to_wb(c, dst, btree, k);
 }
