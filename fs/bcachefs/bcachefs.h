@@ -386,14 +386,6 @@ do {									\
 			##__VA_ARGS__, bch2_err_str(_ret));		\
 } while (0)
 
-static inline int __bch2_err_trace(struct bch_fs *c, int err)
-{
-	trace_error_throw(c, err, _THIS_IP_);
-	return err;
-}
-
-#define bch_err_throw(_c, _err) __bch2_err_trace(_c, -BCH_ERR_##_err)
-
 /* Parameters that are useful for debugging, but should always be compiled in: */
 #define BCH_DEBUG_PARAMS_ALWAYS()					\
 	BCH_DEBUG_PARAM(key_merging_disabled,				\
@@ -1152,6 +1144,15 @@ struct bch_fs {
 	bch_sb_errors_cpu	fsck_error_counts;
 	struct mutex		fsck_error_counts_lock;
 };
+
+static inline int __bch2_err_trace(struct bch_fs *c, int err)
+{
+	this_cpu_inc(c->counters[BCH_COUNTER_error_throw]);
+	trace_error_throw(c, err, _THIS_IP_);
+	return err;
+}
+
+#define bch_err_throw(_c, _err) __bch2_err_trace(_c, -BCH_ERR_##_err)
 
 extern struct wait_queue_head bch2_read_only_wait;
 
