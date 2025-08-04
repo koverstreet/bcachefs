@@ -101,7 +101,8 @@ enum counters_flags {
 	x(trans_restart_write_buffer_flush,		75,	TYPE_COUNTER)	\
 	x(trans_restart_split_race,			76,	TYPE_COUNTER)	\
 	x(write_buffer_flush_slowpath,			77,	TYPE_COUNTER)	\
-	x(write_buffer_flush_sync,			78,	TYPE_COUNTER)
+	x(write_buffer_flush_sync,			78,	TYPE_COUNTER)	\
+	x(error_throw,					93,	TYPE_COUNTER)
 
 enum bch_persistent_counters {
 #define x(t, n, ...) BCH_COUNTER_##t,
