@@ -34,6 +34,7 @@ bch2_str_hash_opt_to_type(struct bch_fs *c, enum bch_str_hash_opts opt)
 struct bch_hash_info {
 	u32			inum_snapshot;
 	u8			type;
+	bool			is_31bit;
 	struct unicode_map	*cf_encoding;
 	/*
 	 * For crc32 or crc64 string hashes the first key value of
@@ -48,6 +49,7 @@ bch2_hash_info_init(struct bch_fs *c, const struct bch_inode_unpacked *bi)
 	struct bch_hash_info info = {
 		.inum_snapshot	= bi->bi_snapshot,
 		.type		= INODE_STR_HASH(bi),
+		.is_31bit	= bi->bi_flags & BCH_INODE_31bit_dirent_offset,
 		.cf_encoding	= bch2_inode_casefold(c, bi) ? c->cf_encoding : NULL,
 		.siphash_key	= { .k0 = bi->bi_hash_seed }
 	};
@@ -112,8 +114,8 @@ static inline void bch2_str_hash_update(struct bch_str_hash_ctx *ctx,
 	}
 }
 
-static inline u64 bch2_str_hash_end(struct bch_str_hash_ctx *ctx,
-				   const struct bch_hash_info *info)
+static inline u64 __bch2_str_hash_end(struct bch_str_hash_ctx *ctx,
+				      const struct bch_hash_info *info)
 {
 	switch (info->type) {
 	case BCH_STR_HASH_crc32c:
@@ -126,6 +128,14 @@ static inline u64 bch2_str_hash_end(struct bch_str_hash_ctx *ctx,
 	default:
 		BUG();
 	}
+}
+
+static inline u64 bch2_str_hash_end(struct bch_str_hash_ctx *ctx,
+				    const struct bch_hash_info *info,
+				    bool maybe_31bit)
+{
+	return __bch2_str_hash_end(ctx, info) &
+		(maybe_31bit && info->is_31bit ? INT_MAX : U64_MAX);
 }
 
 struct bch_hash_desc {
