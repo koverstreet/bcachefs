@@ -95,7 +95,7 @@ static u64 bch2_dirent_hash(const struct bch_hash_info *info,
 	bch2_str_hash_update(&ctx, info, name->name, name->len);
 
 	/* [0,2) reserved for dots */
-	return max_t(u64, bch2_str_hash_end(&ctx, info), 2);
+	return max_t(u64, bch2_str_hash_end(&ctx, info, true), 2);
 }
 
 static u64 dirent_hash_key(const struct bch_hash_info *info, const void *key)

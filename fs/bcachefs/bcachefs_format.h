@@ -706,7 +706,8 @@ struct bch_sb_field_ext {
 	x(snapshot_deletion_v2,		BCH_VERSION(1, 26))		\
 	x(fast_device_removal,		BCH_VERSION(1, 27))		\
 	x(inode_has_case_insensitive,	BCH_VERSION(1, 28))		\
-	x(extent_snapshot_whiteouts,	BCH_VERSION(1, 29))
+	x(extent_snapshot_whiteouts,	BCH_VERSION(1, 29))		\
+	x(31bit_dirent_offset,		BCH_VERSION(1, 30))
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,
