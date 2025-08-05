@@ -144,7 +144,8 @@ enum inode_opt_id {
 	x(unlinked,			7)	\
 	x(backptr_untrusted,		8)	\
 	x(has_child_snapshot,		9)	\
-	x(has_case_insensitive,		10)
+	x(has_case_insensitive,		10)	\
+	x(31bit_dirent_offset,		11)
 
 /* bits 20+ reserved for packed fields below: */
 

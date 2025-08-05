@@ -4,6 +4,7 @@
 #include "acl.h"
 #include "bkey_methods.h"
 #include "btree_update.h"
+#include "dirent.h"
 #include "extents.h"
 #include "fs.h"
 #include "rebalance.h"
@@ -25,7 +26,7 @@ static u64 bch2_xattr_hash(const struct bch_hash_info *info,
 	bch2_str_hash_update(&ctx, info, &key->type, sizeof(key->type));
 	bch2_str_hash_update(&ctx, info, key->name.name, key->name.len);
 
-	return bch2_str_hash_end(&ctx, info);
+	return bch2_str_hash_end(&ctx, info, false);
 }
 
 static u64 xattr_hash_key(const struct bch_hash_info *info, const void *key)
@@ -482,6 +483,22 @@ static int inode_opt_set_fn(struct btree_trans *trans,
 		int ret = bch2_inode_set_casefold(trans, inode_inum(inode), bi, s->v);
 		if (ret)
 			return ret;
+	}
+
+	if (s->id == Inode_opt_inodes_32bit &&
+	    !bch2_request_incompat_feature(trans->c, bcachefs_metadata_version_31bit_dirent_offset)) {
+		/*
+		 * Make sure the dir is empty, as otherwise we'd need to
+		 * rehash everything and update the dirent keys.
+		 */
+		int ret = bch2_empty_dir_trans(trans, inode_inum(inode));
+		if (ret < 0)
+			return ret;
+
+		if (s->defined)
+			bi->bi_flags |= BCH_INODE_31bit_dirent_offset;
+		else
+			bi->bi_flags &= ~BCH_INODE_31bit_dirent_offset;
 	}
 
 	if (s->defined)
