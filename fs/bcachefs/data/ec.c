@@ -1939,14 +1939,21 @@ static bool may_reuse_stripe(struct ec_stripe_head *h, const struct bch_stripe *
 	return dev_mask_nr(&devs_may_alloc) > h->redundancy;
 }
 
-static int __get_old_stripe(struct btree_trans *trans,
-				 struct ec_stripe_head *head,
-				 struct ec_stripe_buf *stripe,
-				 u64 idx)
+static int get_old_stripe(struct btree_trans *trans,
+			  struct ec_stripe_head *head,
+			  struct ec_stripe_buf *stripe,
+			  u64 idx)
 {
 	struct bch_fs *c = trans->c;
 
-	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, idx), BTREE_ITER_nopreserve);
+	/*
+	 * We require an intent lock here until we have the stripe open, for
+	 * exclusion with bch2_trigger_stripe() - which will delete empty
+	 * stripes if they're not open, but it can't actually open them:
+	 */
+	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, idx),
+				BTREE_ITER_intent|
+				BTREE_ITER_nopreserve);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	/* We expect write buffer races here */
@@ -2009,8 +2016,8 @@ static int init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 	return 0;
 }
 
-static int __bch2_ec_stripe_reuse(struct btree_trans *trans, struct ec_stripe_head *h,
-				       struct ec_stripe_new *s)
+static int stripe_reuse(struct btree_trans *trans, struct ec_stripe_head *h,
+			struct ec_stripe_new *s)
 {
 	struct bch_fs *c = trans->c;
 
@@ -2028,7 +2035,7 @@ static int __bch2_ec_stripe_reuse(struct btree_trans *trans, struct ec_stripe_he
 			lru_pos(BCH_LRU_STRIPE_FRAGMENTATION, 2, 0),
 			lru_pos(BCH_LRU_STRIPE_FRAGMENTATION, 2, LRU_TIME_MAX),
 			0, lru_k, ret) {
-		ret = __get_old_stripe(trans, h, &s->old_stripe, lru_k.k->p.offset);
+		ret = get_old_stripe(trans, h, &s->old_stripe, lru_k.k->p.offset);
 		if (ret)
 			break;
 	}
@@ -2111,7 +2118,7 @@ static int stripe_alloc_or_reuse(struct btree_trans *trans,
 			 * oldstripe:
 			 */
 			while (1) {
-				ret = __bch2_ec_stripe_reuse(trans, h, s);
+				ret = stripe_reuse(trans, h, s);
 				if (!ret)
 					break;
 				if (*waiting ||
