@@ -2556,11 +2556,6 @@ struct bch_fs *bch2_fs_open(darray_const_str *devices,
 		BUG_ON(darray_push(&sbs, sb));
 	}
 
-	if (opts->nochanges && !opts->read_only) {
-		ret = bch_err_throw(c, erofs_nochanges);
-		goto err_print;
-	}
-
 	darray_for_each(sbs, sb)
 		if (!best || sb_cmp(sb->sb, best->sb) > 0)
 			best = sb;
