@@ -394,17 +394,11 @@ restart_drop_extra_replicas:
 		this_cpu_add(c->counters[BCH_COUNTER_io_move_finish], new->k.size);
 		if (trace_io_move_finish_enabled())
 			trace_io_move_finish2(m, &new->k_i, insert);
+		goto next;
 err:
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			ret = 0;
-		if (ret)
+		if (!bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			break;
-next:
-		while (bkey_ge(iter.pos, bch2_keylist_front(&op->insert_keys)->k.p)) {
-			bch2_keylist_pop_front(&op->insert_keys);
-			if (bch2_keylist_empty(&op->insert_keys))
-				goto out;
-		}
+
 		continue;
 nowork:
 		if (m->stats) {
@@ -413,11 +407,15 @@ nowork:
 			atomic64_add(k.k->p.offset - iter.pos.offset,
 				     &m->stats->sectors_raced);
 		}
-
 		count_event(c, io_move_fail);
 
 		bch2_btree_iter_advance(&iter);
-		goto next;
+next:
+		while (bkey_ge(iter.pos, bch2_keylist_front(&op->insert_keys)->k.p)) {
+			bch2_keylist_pop_front(&op->insert_keys);
+			if (bch2_keylist_empty(&op->insert_keys))
+				goto out;
+		}
 	}
 out:
 	BUG_ON(bch2_err_matches(ret, BCH_ERR_transaction_restart));
