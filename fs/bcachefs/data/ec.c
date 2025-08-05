@@ -1725,7 +1725,14 @@ static int __get_existing_stripe(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
-	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, idx), BTREE_ITER_nopreserve);
+	/*
+	 * We require an intent lock here until we have the stripe open, for
+	 * exclusion with bch2_trigger_stripe() - which will delete empty
+	 * stripes if they're not open, but it can't actually open them:
+	 */
+	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, idx),
+				BTREE_ITER_intent|
+				BTREE_ITER_nopreserve);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	/* We expect write buffer races here */
