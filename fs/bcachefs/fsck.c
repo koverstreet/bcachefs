@@ -266,7 +266,8 @@ create_lostfound:
 
 	root_inode.bi_nlink++;
 
-	ret = bch2_inode_create(trans, &lostfound_iter, lostfound, snapshot, cpu);
+	ret = bch2_inode_create(trans, &lostfound_iter, lostfound, snapshot, cpu,
+				inode_opt_get(c, &root_inode, inodes_32bit));
 	if (ret)
 		goto err;
 
@@ -573,7 +574,7 @@ static int reconstruct_subvol(struct btree_trans *trans, u32 snapshotid, u32 sub
 
 		new_inode.bi_subvol = subvolid;
 
-		int ret = bch2_inode_create(trans, &inode_iter, &new_inode, snapshotid, cpu) ?:
+		int ret = bch2_inode_create(trans, &inode_iter, &new_inode, snapshotid, cpu, false) ?:
 			  bch2_btree_iter_traverse(&inode_iter) ?:
 			  bch2_inode_write(trans, &inode_iter, &new_inode);
 		bch2_trans_iter_exit(&inode_iter);
