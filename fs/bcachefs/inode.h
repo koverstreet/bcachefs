@@ -172,7 +172,7 @@ void bch2_inode_init(struct bch_fs *, struct bch_inode_unpacked *,
 		     struct bch_inode_unpacked *);
 
 int bch2_inode_create(struct btree_trans *, struct btree_iter *,
-		      struct bch_inode_unpacked *, u32, u64);
+		      struct bch_inode_unpacked *, u32, u64, bool);
 
 int bch2_inode_rm(struct bch_fs *, subvol_inum);
 
