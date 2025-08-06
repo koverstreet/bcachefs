@@ -89,7 +89,7 @@ int bch2_set_version_incompat(struct bch_fs *c, enum bcachefs_metadata_version v
 			prt_str(&buf, "requested incompat feature ");
 			bch2_version_to_text(&buf, version);
 			prt_str(&buf, " currently not enabled, allowed up to ");
-			bch2_version_to_text(&buf, version);
+			bch2_version_to_text(&buf, c->sb.version_incompat_allowed);
 			prt_printf(&buf, "\n  set version_upgrade=incompat to enable");
 
 			bch_notice(c, "%s", buf.buf);
