@@ -64,6 +64,17 @@ static int readpages_iter_init(struct readpages_iter *iter,
 	return 0;
 }
 
+static void readpages_iter_exit(struct readpages_iter *iter,
+			        struct readahead_control *ractl)
+{
+	darray_for_each_reverse(iter->folios, folio) {
+		bch2_folio_release(*folio);
+		ractl->_nr_pages += folio_nr_pages(*folio);
+		ractl->_index -= folio_nr_pages(*folio);
+		folio_get(*folio);
+	}
+}
+
 static inline struct folio *readpage_iter_peek(struct readpages_iter *iter)
 {
 	if (iter->idx >= iter->folios.nr)
@@ -290,7 +301,10 @@ void bch2_readahead(struct readahead_control *ractl)
 	 * scheduling.
 	 */
 	blk_start_plug(&plug);
-	bch2_pagecache_add_get(inode);
+	if (!bch2_pagecache_add_tryget(inode)) {
+		readpages_iter_exit(&readpages_iter, ractl);
+		goto out;
+	}
 
 	struct btree_trans *trans = bch2_trans_get(c);
 	while ((folio = readpage_iter_peek(&readpages_iter))) {
@@ -317,6 +331,7 @@ void bch2_readahead(struct readahead_control *ractl)
 	bch2_trans_put(trans);
 
 	bch2_pagecache_add_put(inode);
+out:
 	blk_finish_plug(&plug);
 	darray_exit(&readpages_iter.folios);
 }
