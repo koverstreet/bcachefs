@@ -51,6 +51,17 @@ static inline u32 bch2_snapshot_tree(struct bch_fs *c, u32 id)
 	return s ? s->tree : 0;
 }
 
+static inline bool bch2_snapshots_same_tree(struct bch_fs *c, u32 id1, u32 id2)
+{
+	if (id1 == id2)
+		return true;
+
+	guard(rcu)();
+	const struct snapshot_t *s1 = snapshot_t(c, id1);
+	const struct snapshot_t *s2 = snapshot_t(c, id2);
+	return s1 && s2 && s1->tree == s2->tree;
+}
+
 static inline u32 __bch2_snapshot_parent_early(struct bch_fs *c, u32 id)
 {
 	const struct snapshot_t *s = snapshot_t(c, id);
@@ -157,6 +168,10 @@ bool __bch2_snapshot_is_ancestor(struct bch_fs *, u32, u32);
 
 static inline bool bch2_snapshot_is_ancestor(struct bch_fs *c, u32 id, u32 ancestor)
 {
+	EBUG_ON(!id);
+	EBUG_ON(!ancestor);
+	EBUG_ON(!bch2_snapshots_same_tree(c, id, ancestor));
+
 	return id == ancestor
 		? true
 		: __bch2_snapshot_is_ancestor(c, id, ancestor);
