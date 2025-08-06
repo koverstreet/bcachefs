@@ -42,6 +42,14 @@ struct readpages_iter {
 	folios			folios;
 };
 
+static inline void readpages_iter_folio_revert(struct readahead_control *ractl,
+					       struct folio *folio)
+{
+	bch2_folio_release(folio);
+	ractl->_nr_pages += folio_nr_pages(folio);
+	ractl->_index -= folio_nr_pages(folio);
+}
+
 static int readpages_iter_init(struct readpages_iter *iter,
 			       struct readahead_control *ractl)
 {
@@ -52,9 +60,7 @@ static int readpages_iter_init(struct readpages_iter *iter,
 	while ((folio = __readahead_folio(ractl))) {
 		if (!bch2_folio_create(folio, GFP_KERNEL) ||
 		    darray_push(&iter->folios, folio)) {
-			bch2_folio_release(folio);
-			ractl->_nr_pages += folio_nr_pages(folio);
-			ractl->_index -= folio_nr_pages(folio);
+			readpages_iter_folio_revert(ractl, folio);
 			return iter->folios.nr ? 0 : -ENOMEM;
 		}
 
@@ -68,9 +74,7 @@ static void readpages_iter_exit(struct readpages_iter *iter,
 			        struct readahead_control *ractl)
 {
 	darray_for_each_reverse(iter->folios, folio) {
-		bch2_folio_release(*folio);
-		ractl->_nr_pages += folio_nr_pages(*folio);
-		ractl->_index -= folio_nr_pages(*folio);
+		readpages_iter_folio_revert(ractl, *folio);
 		folio_get(*folio);
 	}
 }
