@@ -125,6 +125,10 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c,
 		if (!btree_type_has_ptrs(id))
 			continue;
 
+		/* Stripe keys have pointers, but are handled separately */
+		if (id == BTREE_ID_stripes)
+			continue;
+
 		int ret = for_each_btree_key_commit(trans, iter, id, POS_MIN,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
