@@ -1378,7 +1378,8 @@ enum btree_id_flags {
 	  BIT_ULL(KEY_TYPE_alloc_v4))						\
 	x(quotas,		5,	0,					\
 	  BIT_ULL(KEY_TYPE_quota))						\
-	x(stripes,		6,	0,					\
+	x(stripes,		6,						\
+	  BTREE_IS_data,							\
 	  BIT_ULL(KEY_TYPE_stripe))						\
 	x(reflink,		7,						\
 	  BTREE_IS_extents|							\

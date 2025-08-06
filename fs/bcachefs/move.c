@@ -819,7 +819,9 @@ static int bch2_move_data(struct bch_fs *c,
 
 		unsigned min_depth_this_btree = min_depth;
 
-		if (!btree_type_has_ptrs(id))
+		/* Stripe keys have pointers, but are handled separately */
+		if (!btree_type_has_ptrs(id) ||
+		    id == BTREE_ID_stripes)
 			min_depth_this_btree = max(min_depth_this_btree, 1);
 
 		for (unsigned level = min_depth_this_btree;
