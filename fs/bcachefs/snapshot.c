@@ -1673,7 +1673,8 @@ static int bch2_fix_child_of_deleted_snapshot(struct btree_trans *trans,
 		return ret;
 
 	darray_for_each(*deleted, i)
-		nr_deleted_ancestors += bch2_snapshot_is_ancestor(c, s->k.p.offset, i->id);
+		nr_deleted_ancestors += bch2_snapshots_same_tree(c, s->k.p.offset, i->id) &&
+		bch2_snapshot_is_ancestor(c, s->k.p.offset, i->id);
 
 	if (!nr_deleted_ancestors)
 		return 0;
