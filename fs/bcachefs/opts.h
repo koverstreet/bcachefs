@@ -242,7 +242,7 @@ enum fsck_err_opts {
 	x(inodes_32bit,			u8,				\
 	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
 	  OPT_BOOL(),							\
-	  BCH_SB_INODE_32BIT,		true,				\
+	  BCH_SB_INODE_32BIT,		false,				\
 	  NULL,		"Constrain inode numbers to 32 bits")		\
 	x(shard_inode_numbers_bits,	u8,				\
 	  OPT_FS|OPT_FORMAT,						\
