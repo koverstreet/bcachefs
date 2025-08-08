@@ -31,14 +31,13 @@ static int remove_backpointer(struct btree_trans *trans,
 		try(bch2_subvolume_get_snapshot(trans, inode->bi_parent_subvol, &snapshot));
 
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
-	struct bkey_s_c_dirent d = dirent_get_by_pos(trans, &iter,
-				     SPOS(inode->bi_dir, inode->bi_dir_offset, snapshot));
-	int ret = bkey_err(d) ?:
-		  dirent_points_to_inode(c, d, inode) ?:
-		  bch2_fsck_remove_dirent(trans, d.k->p);
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	CLASS(btree_iter_uninit, iter)(trans);
+	struct bkey_s_c_dirent d = bkey_try(dirent_get_by_pos(trans, &iter,
+				     SPOS(inode->bi_dir, inode->bi_dir_offset, snapshot)));
+
+	try(dirent_points_to_inode(c, d, inode));
+	try(bch2_fsck_remove_dirent(trans, d.k->p));
+	return 0;
 }
 
 static int reattach_subvol(struct btree_trans *trans, struct bkey_s_c_subvolume s)
@@ -198,27 +197,20 @@ static int check_path_loop(struct btree_trans *trans, struct bkey_s_c inode_k)
 	 */
 	while (!inode.bi_subvol &&
 	       bch2_inode_has_backpointer(&inode)) {
-		struct btree_iter dirent_iter;
-		struct bkey_s_c_dirent d;
-
-		d = dirent_get_by_pos(trans, &dirent_iter,
+		CLASS(btree_iter_uninit, dirent_iter)(trans);
+		struct bkey_s_c_dirent d = dirent_get_by_pos(trans, &dirent_iter,
 				      SPOS(inode.bi_dir, inode.bi_dir_offset, snapshot));
 		ret = bkey_err(d.s_c);
 		if (ret && !bch2_err_matches(ret, ENOENT))
-			goto out;
-
-		if (!ret && (ret = dirent_points_to_inode(c, d, &inode)))
-			bch2_trans_iter_exit(&dirent_iter);
+			return ret;
 
 		if (bch2_err_matches(ret, ENOENT)) {
 			printbuf_reset(&buf);
 			bch2_bkey_val_to_text(&buf, c, inode_k);
 			bch_err(c, "unreachable inode in check_directory_structure: %s\n%s",
 				bch2_err_str(ret), buf.buf);
-			goto out;
+			return ret;
 		}
-
-		bch2_trans_iter_exit(&dirent_iter);
 
 		try(darray_push(&path, inode.bi_inum));
 
@@ -232,7 +224,7 @@ static int check_path_loop(struct btree_trans *trans, struct bkey_s_c inode_k)
 		if (ret) {
 			/* Should have been caught in dirents pass */
 			bch_err_msg(c, ret, "error looking up parent directory");
-			goto out;
+			return ret;
 		}
 
 		min_bi_depth = parent_inode.bi_depth;
@@ -249,9 +241,7 @@ static int check_path_loop(struct btree_trans *trans, struct bkey_s_c inode_k)
 			prt_printf(&buf, "directory structure loop in snapshot %u: ",
 				   snapshot);
 
-			ret = bch2_inum_snapshot_to_path(trans, start.offset, start.snapshot, NULL, &buf);
-			if (ret)
-				goto out;
+			try(bch2_inum_snapshot_to_path(trans, start.offset, start.snapshot, NULL, &buf));
 
 			if (c->opts.verbose) {
 				prt_newline(&buf);
@@ -263,13 +253,13 @@ static int check_path_loop(struct btree_trans *trans, struct bkey_s_c inode_k)
 				ret = remove_backpointer(trans, &inode);
 				bch_err_msg(c, ret, "removing dirent");
 				if (ret)
-					goto out;
+					return ret;
 
 				ret = bch2_reattach_inode(trans, &inode);
 				bch_err_msg(c, ret, "reattaching inode %llu", inode.bi_inum);
 			}
 
-			goto out;
+			break;
 		}
 	}
 
@@ -277,10 +267,8 @@ static int check_path_loop(struct btree_trans *trans, struct bkey_s_c inode_k)
 		min_bi_depth = 0;
 
 	if (redo_bi_depth)
-		ret = bch2_bi_depth_renumber(trans, &path, snapshot, min_bi_depth);
-out:
+		try(bch2_bi_depth_renumber(trans, &path, snapshot, min_bi_depth));
 fsck_err:
-	bch_err_fn(c, ret);
 	return ret;
 }
 

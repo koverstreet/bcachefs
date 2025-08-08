@@ -2344,14 +2344,12 @@ int bch2_btree_node_rewrite_key_get_iter(struct btree_trans *trans,
 					 struct btree *b,
 					 enum bch_trans_commit_flags flags)
 {
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)(trans);
 	int ret = get_iter_to_node(trans, &iter, b);
 	if (ret)
 		return ret == -BCH_ERR_btree_node_dying ? 0 : ret;
 
-	ret = bch2_btree_node_rewrite(trans, &iter, b, 0, flags);
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return bch2_btree_node_rewrite(trans, &iter, b, 0, flags);
 }
 
 struct async_btree_rewrite {
@@ -2602,7 +2600,7 @@ int bch2_btree_node_update_key_get_iter(struct btree_trans *trans,
 					struct btree *b, struct bkey_i *new_key,
 					unsigned commit_flags, bool skip_triggers)
 {
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)(trans);
 	int ret = get_iter_to_node(trans, &iter, b);
 	if (ret)
 		return ret == -BCH_ERR_btree_node_dying ? 0 : ret;
@@ -2610,10 +2608,8 @@ int bch2_btree_node_update_key_get_iter(struct btree_trans *trans,
 	bch2_bkey_drop_ptrs(bkey_i_to_s(new_key), ptr,
 			    !bch2_bkey_has_device(bkey_i_to_s(&b->key), ptr->dev));
 
-	ret = bch2_btree_node_update_key(trans, &iter, b, new_key,
-					 commit_flags, skip_triggers);
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return bch2_btree_node_update_key(trans, &iter, b, new_key,
+					  commit_flags, skip_triggers);
 }
 
 /* Init code: */

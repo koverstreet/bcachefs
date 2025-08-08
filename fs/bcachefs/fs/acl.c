@@ -273,13 +273,13 @@ struct posix_acl *bch2_get_acl(struct inode *vinode, int type, bool rcu)
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_hash_info hash = bch2_hash_info_init(c, &inode->ei_inode);
 	struct xattr_search_key search = X_SEARCH(acl_to_xattr_type(type), "", 0);
-	struct btree_iter iter = { NULL };
 	struct posix_acl *acl = NULL;
 
 	if (rcu)
 		return ERR_PTR(-ECHILD);
 
 	CLASS(btree_trans, trans)(c);
+	CLASS(btree_iter_uninit, iter)(trans);
 retry:
 	bch2_trans_begin(trans);
 
@@ -303,7 +303,6 @@ err:
 	if (!IS_ERR_OR_NULL(acl))
 		set_cached_acl(&inode->v, type, acl);
 
-	bch2_trans_iter_exit(&iter);
 	return acl;
 }
 

@@ -192,7 +192,7 @@ static int bch2_get_inode_journal_seq_trans(struct btree_trans *trans, subvol_in
 					    u64 *seq)
 {
 	struct bch_inode_unpacked u;
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)(trans);
 	try(bch2_inode_peek(trans, &iter, &u, inum, 0));
 
 	u64 cur_seq = journal_cur_seq(&trans->c->journal);
@@ -211,7 +211,6 @@ static int bch2_get_inode_journal_seq_trans(struct btree_trans *trans, subvol_in
 		ret = bch2_inode_write(trans, &iter, &u);
 	}
 fsck_err:
-	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
