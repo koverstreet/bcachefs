@@ -37,7 +37,7 @@
 	x(check_alloc_info,			10, PASS_ONLINE|PASS_FSCK_ALLOC)	\
 	x(check_lrus,				11, PASS_ONLINE|PASS_FSCK_ALLOC)	\
 	x(check_btree_backpointers,		12, PASS_ONLINE|PASS_FSCK_ALLOC)	\
-	x(check_backpointers_to_extents,	13, PASS_ONLINE|PASS_FSCK_DEBUG)	\
+	x(check_backpointers_to_extents,	13, PASS_ONLINE)			\
 	x(check_extents_to_backpointers,	14, PASS_ONLINE|PASS_FSCK_ALLOC)	\
 	x(check_alloc_to_lru_refs,		15, PASS_ONLINE|PASS_FSCK_ALLOC)	\
 	x(fs_freespace_init,			16, PASS_ALWAYS|PASS_SILENT)		\
