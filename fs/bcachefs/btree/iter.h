@@ -572,6 +572,17 @@ DEFINE_CLASS(btree_iter, struct btree_iter,
 	     enum btree_id btree, struct bpos pos,
 	     enum btree_iter_update_trigger_flags flags);
 
+#define bch2_trans_iter_uninit_class_init()					\
+({										\
+	struct btree_iter iter = {};						\
+	iter;									\
+})
+
+DEFINE_CLASS(btree_iter_uninit, struct btree_iter,
+	     bch2_trans_iter_exit(&_T),
+	     bch2_trans_iter_uninit_class_init(),
+	     struct btree_trans *trans)
+
 void bch2_trans_node_iter_init(struct btree_trans *, struct btree_iter *,
 			       enum btree_id, struct bpos,
 			       unsigned, unsigned,

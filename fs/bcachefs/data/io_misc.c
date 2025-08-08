@@ -249,16 +249,12 @@ static int truncate_set_isize(struct btree_trans *trans,
 			      u64 new_i_size,
 			      bool warn)
 {
-	struct btree_iter iter = { NULL };
+	CLASS(btree_iter_uninit, iter)(trans);
 	struct bch_inode_unpacked inode_u;
-	int ret;
 
-	ret   = __bch2_inode_peek(trans, &iter, &inode_u, inum, BTREE_ITER_intent, warn) ?:
+	return __bch2_inode_peek(trans, &iter, &inode_u, inum, BTREE_ITER_intent, warn) ?:
 		(inode_u.bi_size = new_i_size, 0) ?:
 		bch2_inode_write(trans, &iter, &inode_u);
-
-	bch2_trans_iter_exit(&iter);
-	return ret;
 }
 
 static int __bch2_resume_logged_op_truncate(struct btree_trans *trans,
@@ -334,34 +330,26 @@ void bch2_logged_op_finsert_to_text(struct printbuf *out, struct bch_fs *c, stru
 static int adjust_i_size(struct btree_trans *trans, subvol_inum inum,
 			 u64 offset, s64 len, bool warn)
 {
-	struct btree_iter iter;
-	struct bch_inode_unpacked inode_u;
-	int ret;
-
 	offset	<<= 9;
 	len	<<= 9;
+
+	CLASS(btree_iter_uninit, iter)(trans);
+	struct bch_inode_unpacked inode_u;
 
 	try(__bch2_inode_peek(trans, &iter, &inode_u, inum, BTREE_ITER_intent, warn));
 
 	if (len > 0) {
-		if (MAX_LFS_FILESIZE - inode_u.bi_size < len) {
-			ret = -EFBIG;
-			goto err;
-		}
+		if (MAX_LFS_FILESIZE - inode_u.bi_size < len)
+			return -EFBIG;
 
-		if (offset >= inode_u.bi_size) {
-			ret = -EINVAL;
-			goto err;
-		}
+		if (offset >= inode_u.bi_size)
+			return -EINVAL;
 	}
 
 	inode_u.bi_size += len;
 	inode_u.bi_mtime = inode_u.bi_ctime = bch2_current_time(trans->c);
 
-	ret = bch2_inode_write(trans, &iter, &inode_u);
-err:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return bch2_inode_write(trans, &iter, &inode_u);
 }
 
 static int __bch2_resume_logged_op_finsert(struct btree_trans *trans,

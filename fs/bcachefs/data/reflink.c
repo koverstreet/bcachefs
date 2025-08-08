@@ -301,10 +301,10 @@ static int trans_trigger_reflink_p_segment(struct btree_trans *trans,
 	int ret = 0;
 
 	s64 offset_into_extent = *idx - REFLINK_P_IDX(p.v);
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bkey_try(bch2_lookup_indirect_extent(trans, &iter, &offset_into_extent, p, false,
-								 BTREE_ITER_intent|
-								 BTREE_ITER_with_updates));
+							BTREE_ITER_intent|
+							BTREE_ITER_with_updates));
 
 	if (!bkey_refcount_c(k)) {
 		if (!(flags & BTREE_TRIGGER_overwrite))
@@ -312,10 +312,7 @@ static int trans_trigger_reflink_p_segment(struct btree_trans *trans,
 		goto next;
 	}
 
-	struct bkey_i *new = bch2_bkey_make_mut_noupdate(trans, k);
-	ret = PTR_ERR_OR_ZERO(new);
-	if (ret)
-		goto err;
+	struct bkey_i *new = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
 
 	__le64 *refcount = bkey_refcount(bkey_i_to_s(new));
 	if (!*refcount && (flags & BTREE_TRIGGER_overwrite)) {
@@ -346,14 +343,10 @@ static int trans_trigger_reflink_p_segment(struct btree_trans *trans,
 	le64_add_cpu(refcount, !(flags & BTREE_TRIGGER_overwrite) ? 1 : -1);
 
 	bch2_btree_iter_set_pos_to_extent_start(&iter);
-	ret = bch2_trans_update(trans, &iter, new, 0);
-	if (ret)
-		goto err;
+	try(bch2_trans_update(trans, &iter, new, 0));
 next:
 	*idx = k.k->p.offset;
-err:
 fsck_err:
-	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -568,7 +561,6 @@ s64 bch2_remap_range(struct bch_fs *c,
 		     u64 new_i_size, s64 *i_sectors_delta,
 		     bool may_change_src_io_path_opts)
 {
-	struct btree_iter dst_iter, src_iter;
 	struct bkey_s_c src_k;
 	struct bkey_buf new_dst, new_src;
 	struct bpos dst_start = POS(dst_inum.inum, dst_offset);
@@ -593,10 +585,8 @@ s64 bch2_remap_range(struct bch_fs *c,
 	bch2_bkey_buf_init(&new_src);
 	CLASS(btree_trans, trans)(c);
 
-	bch2_trans_iter_init(trans, &src_iter, BTREE_ID_extents, src_start,
-			     BTREE_ITER_intent);
-	bch2_trans_iter_init(trans, &dst_iter, BTREE_ID_extents, dst_start,
-			     BTREE_ITER_intent);
+	CLASS(btree_iter, src_iter)(trans, BTREE_ID_extents, src_start, BTREE_ITER_intent);
+	CLASS(btree_iter, dst_iter)(trans, BTREE_ID_extents, dst_start, BTREE_ITER_intent);
 
 	while ((ret == 0 ||
 		bch2_err_matches(ret, BCH_ERR_transaction_restart)) &&
@@ -695,8 +685,6 @@ s64 bch2_remap_range(struct bch_fs *c,
 					 true, 0);
 		bch2_disk_reservation_put(c, &disk_res);
 	}
-	bch2_trans_iter_exit(&dst_iter);
-	bch2_trans_iter_exit(&src_iter);
 
 	BUG_ON(!ret && !bkey_eq(dst_iter.pos, dst_end));
 	BUG_ON(bkey_gt(dst_iter.pos, dst_end));
@@ -706,10 +694,10 @@ s64 bch2_remap_range(struct bch_fs *c,
 
 	do {
 		struct bch_inode_unpacked inode_u;
-		struct btree_iter inode_iter = { NULL };
 
 		bch2_trans_begin(trans);
 
+		CLASS(btree_iter_uninit, inode_iter)(trans);
 		ret2 = bch2_inode_peek(trans, &inode_iter, &inode_u,
 				       dst_inum, BTREE_ITER_intent);
 
@@ -720,8 +708,6 @@ s64 bch2_remap_range(struct bch_fs *c,
 				bch2_trans_commit(trans, NULL, NULL,
 						  BCH_TRANS_COMMIT_no_enospc);
 		}
-
-		bch2_trans_iter_exit(&inode_iter);
 	} while (bch2_err_matches(ret2, BCH_ERR_transaction_restart));
 
 	bch2_bkey_buf_exit(&new_src, c);

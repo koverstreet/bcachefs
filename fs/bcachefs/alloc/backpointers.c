@@ -1273,16 +1273,12 @@ static int check_one_backpointer(struct btree_trans *trans,
 	    bbpos_cmp(pos, end) > 0)
 		return 0;
 
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bch2_backpointer_get_key(trans, bp, &iter, 0, last_flushed);
 	int ret = bkey_err(k);
-	if (ret == -BCH_ERR_backpointer_to_overwritten_btree_node)
-		return 0;
-	if (ret)
-		return ret;
-
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return ret == -BCH_ERR_backpointer_to_overwritten_btree_node
+		? 0
+		: ret;
 }
 
 static int check_bucket_backpointers_to_extents(struct btree_trans *trans,
