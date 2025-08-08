@@ -1118,17 +1118,18 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 	if (ret)
 		goto err;
 
-	u64 nr_buckets = 0, nr_mismatches = 0;
+	u64 nr_buckets = 0, nr_mismatches = 0, nr_empty = 0;
 	for_each_member_device(c, ca) {
 		nr_buckets	+= ca->mi.nbuckets;
 		nr_mismatches	+= ca->bucket_backpointer_mismatch.nr;
+		nr_empty	+= ca->bucket_backpointer_empty.nr;
 	}
 
 	if (!nr_mismatches)
 		goto err;
 
-	bch_info(c, "scanning for missing backpointers in %llu/%llu buckets",
-		 nr_mismatches, nr_buckets);
+	bch_info(c, "scanning for missing backpointers in %llu/%llu buckets, %llu buckets with no backpointers",
+		 nr_mismatches - nr_empty, nr_buckets, nr_empty);
 
 	while (1) {
 		ret = bch2_pin_backpointer_nodes_with_missing(trans, s.bp_start, &s.bp_end);
