@@ -109,52 +109,49 @@ void bch2_inode_update_after_write(struct btree_trans *trans,
 	bch2_inode_flags_to_vfs(c, inode);
 }
 
+static int bch2_write_inode_trans(struct btree_trans *trans,
+				  struct bch_inode_info *inode,
+				  inode_set_fn set,
+				  void *p, unsigned fields,
+				  bool *rebalance_changed)
+{
+	struct bch_fs *c = trans->c;
+	CLASS(btree_iter_uninit, iter)(trans);
+	struct bch_inode_unpacked inode_u;
+	try(bch2_inode_peek(trans, &iter, &inode_u, inode_inum(inode), BTREE_ITER_intent));
+
+	struct bch_extent_rebalance old_r = bch2_inode_rebalance_opts_get(c, &inode_u);
+
+	if (set)
+	       try(set(trans, inode, &inode_u, p));
+
+	struct bch_extent_rebalance new_r = bch2_inode_rebalance_opts_get(c, &inode_u);
+	*rebalance_changed = memcmp(&old_r, &new_r, sizeof(new_r));
+	if (*rebalance_changed)
+		try(bch2_set_rebalance_needs_scan_trans(trans, inode_u.bi_inum));
+
+	try(bch2_inode_write(trans, &iter, &inode_u));
+	try(bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
+
+	/*
+	 * the btree node lock protects inode->ei_inode, not ei_update_lock;
+	 * this is important for inode updates via bchfs_write_index_update
+	 */
+	bch2_inode_update_after_write(trans, inode, &inode_u, fields);
+	return 0;
+}
+
 int __must_check bch2_write_inode(struct bch_fs *c,
 				  struct bch_inode_info *inode,
 				  inode_set_fn set,
 				  void *p, unsigned fields)
 {
 	CLASS(btree_trans, trans)(c);
-retry:
-	bch2_trans_begin(trans);
+	bool rebalance_changed = false;
+	int ret = lockrestart_do(trans, bch2_write_inode_trans(trans, inode, set, p,
+							       fields, &rebalance_changed));
 
-	struct btree_iter iter = {};
-	struct bch_inode_unpacked inode_u;
-	int ret = bch2_inode_peek(trans, &iter, &inode_u, inode_inum(inode), BTREE_ITER_intent);
-	if (ret)
-		goto err;
-
-	struct bch_extent_rebalance old_r = bch2_inode_rebalance_opts_get(c, &inode_u);
-
-	ret = (set ? set(trans, inode, &inode_u, p) : 0);
-	if (ret)
-		goto err;
-
-	struct bch_extent_rebalance new_r = bch2_inode_rebalance_opts_get(c, &inode_u);
-	bool rebalance_changed = memcmp(&old_r, &new_r, sizeof(new_r));
-
-	if (rebalance_changed) {
-		ret = bch2_set_rebalance_needs_scan_trans(trans, inode_u.bi_inum);
-		if (ret)
-			goto err;
-	}
-
-	ret   = bch2_inode_write(trans, &iter, &inode_u) ?:
-		bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
-
-	/*
-	 * the btree node lock protects inode->ei_inode, not ei_update_lock;
-	 * this is important for inode updates via bchfs_write_index_update
-	 */
-	if (!ret)
-		bch2_inode_update_after_write(trans, inode, &inode_u, fields);
-err:
-	bch2_trans_iter_exit(&iter);
-
-	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-		goto retry;
-
-	if (rebalance_changed)
+	if (!ret && rebalance_changed)
 		bch2_rebalance_wakeup(c);
 
 	bch2_fs_fatal_err_on(bch2_err_matches(ret, ENOENT), c,
@@ -645,7 +642,7 @@ static struct bch_inode_info *bch2_lookup_trans(struct btree_trans *trans,
 	if (ret)
 		return ERR_PTR(ret);
 
-	struct btree_iter dirent_iter = {};
+	CLASS(btree_iter_uninit, dirent_iter)(trans);
 	struct bkey_s_c k = bch2_hash_lookup(trans, &dirent_iter, bch2_dirent_hash_desc,
 					     dir_hash_info, dir, &lookup_name, 0);
 	ret = bkey_err(k);
@@ -658,11 +655,11 @@ static struct bch_inode_info *bch2_lookup_trans(struct btree_trans *trans,
 	if (ret > 0)
 		ret = -ENOENT;
 	if (ret)
-		goto err;
+		return ERR_PTR(ret);
 
 	struct bch_inode_info *inode = bch2_inode_hash_find(c, trans, inum);
 	if (inode)
-		goto out;
+		return inode;
 
 	/*
 	 * Note: if check/repair needs it, we commit before
@@ -687,13 +684,8 @@ static struct bch_inode_info *bch2_lookup_trans(struct btree_trans *trans,
 				c, "dirent to missing inode:\n%s",
 				(bch2_bkey_val_to_text(&buf, c, d.s_c), buf.buf));
 	if (ret)
-		goto err;
-out:
-	bch2_trans_iter_exit(&dirent_iter);
+		return ERR_PTR(ret);
 	return inode;
-err:
-	inode = ERR_PTR(ret);
-	goto out;
 }
 
 static struct dentry *bch2_lookup(struct inode *vdir, struct dentry *dentry,

@@ -98,19 +98,16 @@ static inline int bch2_read_indirect_extent(struct btree_trans *trans,
 	*data_btree = BTREE_ID_reflink;
 
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bkey_try(bch2_lookup_indirect_extent(trans, &iter,
 						offset_into_extent,
 						bkey_i_to_s_c_reflink_p(extent->k),
 						true, 0));
 
-	if (bkey_deleted(k.k)) {
-		bch2_trans_iter_exit(&iter);
+	if (bkey_deleted(k.k))
 		return bch_err_throw(c, missing_indirect_extent);
-	}
 
 	bch2_bkey_buf_reassemble(extent, c, k);
-	bch2_trans_iter_exit(&iter);
 	return 0;
 }
 

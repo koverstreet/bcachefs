@@ -39,24 +39,18 @@ int bch2_create_trans(struct btree_trans *trans,
 		      unsigned flags)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter dir_iter = { NULL };
-	struct btree_iter inode_iter = { NULL };
+	CLASS(btree_iter_uninit, dir_iter)(trans);
+	CLASS(btree_iter_uninit, inode_iter)(trans);
 	subvol_inum new_inum = dir;
 	u64 now = bch2_current_time(c);
 	u64 cpu = raw_smp_processor_id();
 	u64 dir_target;
 	u32 snapshot;
 	unsigned dir_type = mode_to_type(mode);
-	int ret;
 
-	ret = bch2_subvolume_get_snapshot(trans, dir.subvol, &snapshot);
-	if (ret)
-		goto err;
+	try(bch2_subvolume_get_snapshot(trans, dir.subvol, &snapshot));
 
-	ret = bch2_inode_peek(trans, &dir_iter, dir_u, dir,
-			      BTREE_ITER_intent|BTREE_ITER_with_updates);
-	if (ret)
-		goto err;
+	try(bch2_inode_peek(trans, &dir_iter, dir_u, dir, BTREE_ITER_intent|BTREE_ITER_with_updates));
 
 	if (!(flags & BCH_CREATE_SNAPSHOT)) {
 		/* Normal create path - allocate a new inode: */
@@ -65,10 +59,8 @@ int bch2_create_trans(struct btree_trans *trans,
 		if (flags & BCH_CREATE_TMPFILE)
 			new_inode->bi_flags |= BCH_INODE_unlinked;
 
-		ret = bch2_inode_create(trans, &inode_iter, new_inode, snapshot, cpu,
-					inode_opt_get(c, dir_u, inodes_32bit));
-		if (ret)
-			goto err;
+		try(bch2_inode_create(trans, &inode_iter, new_inode, snapshot, cpu,
+				      inode_opt_get(c, dir_u, inodes_32bit)));
 
 		snapshot_src = (subvol_inum) { 0 };
 	} else {
@@ -81,23 +73,15 @@ int bch2_create_trans(struct btree_trans *trans,
 		if (!snapshot_src.inum) {
 			/* Inode wasn't specified, just snapshot: */
 			struct bch_subvolume s;
-			ret = bch2_subvolume_get(trans, snapshot_src.subvol, true, &s);
-			if (ret)
-				goto err;
+			try(bch2_subvolume_get(trans, snapshot_src.subvol, true, &s));
 
 			snapshot_src.inum = le64_to_cpu(s.inode);
 		}
 
-		ret = bch2_inode_peek(trans, &inode_iter, new_inode, snapshot_src,
-				      BTREE_ITER_intent);
-		if (ret)
-			goto err;
+		try(bch2_inode_peek(trans, &inode_iter, new_inode, snapshot_src, BTREE_ITER_intent));
 
-		if (new_inode->bi_subvol != snapshot_src.subvol) {
-			/* Not a subvolume root: */
-			ret = -EINVAL;
-			goto err;
-		}
+		if (new_inode->bi_subvol != snapshot_src.subvol) /* Not a subvolume root? */
+			return -EINVAL;
 
 		/*
 		 * If we're not root, we have to own the subvolume being
@@ -105,10 +89,8 @@ int bch2_create_trans(struct btree_trans *trans,
 		 */
 		if (uid &&
 		    !capable(CAP_FOWNER) &&
-		    new_inode->bi_uid != uid) {
-			ret = -EPERM;
-			goto err;
-		}
+		    new_inode->bi_uid != uid)
+			return -EPERM;
 
 		flags |= BCH_CREATE_SUBVOL;
 	}
@@ -119,13 +101,11 @@ int bch2_create_trans(struct btree_trans *trans,
 	if (flags & BCH_CREATE_SUBVOL) {
 		u32 new_subvol, dir_snapshot;
 
-		ret = bch2_subvolume_create(trans, new_inode->bi_inum,
-					    dir.subvol,
-					    snapshot_src.subvol,
-					    &new_subvol, &snapshot,
-					    (flags & BCH_CREATE_SNAPSHOT_RO) != 0);
-		if (ret)
-			goto err;
+		try(bch2_subvolume_create(trans, new_inode->bi_inum,
+					  dir.subvol,
+					  snapshot_src.subvol,
+					  &new_subvol, &snapshot,
+					  (flags & BCH_CREATE_SNAPSHOT_RO) != 0));
 
 		new_inode->bi_parent_subvol	= dir.subvol;
 		new_inode->bi_subvol		= new_subvol;
@@ -133,30 +113,19 @@ int bch2_create_trans(struct btree_trans *trans,
 		dir_target			= new_subvol;
 		dir_type			= DT_SUBVOL;
 
-		ret = bch2_subvolume_get_snapshot(trans, dir.subvol, &dir_snapshot);
-		if (ret)
-			goto err;
+		try(bch2_subvolume_get_snapshot(trans, dir.subvol, &dir_snapshot));
 
 		bch2_btree_iter_set_snapshot(&dir_iter, dir_snapshot);
-		ret = bch2_btree_iter_traverse(&dir_iter);
-		if (ret)
-			goto err;
+		try(bch2_btree_iter_traverse(&dir_iter));
 	}
 
 	if (!(flags & BCH_CREATE_SNAPSHOT)) {
-		if (default_acl) {
-			ret = bch2_set_acl_trans(trans, new_inum, new_inode,
-						 default_acl, ACL_TYPE_DEFAULT);
-			if (ret)
-				goto err;
-		}
+		if (default_acl)
+			try(bch2_set_acl_trans(trans, new_inum, new_inode,
+					       default_acl, ACL_TYPE_DEFAULT));
 
-		if (acl) {
-			ret = bch2_set_acl_trans(trans, new_inum, new_inode,
-						 acl, ACL_TYPE_ACCESS);
-			if (ret)
-				goto err;
-		}
+		if (acl)
+			try(bch2_set_acl_trans(trans, new_inum, new_inode, acl, ACL_TYPE_ACCESS));
 	}
 
 	if (!(flags & BCH_CREATE_TMPFILE)) {
@@ -167,29 +136,24 @@ int bch2_create_trans(struct btree_trans *trans,
 			dir_u->bi_nlink++;
 		dir_u->bi_mtime = dir_u->bi_ctime = now;
 
-		ret =   bch2_dirent_create(trans, dir, &dir_hash,
+		try(bch2_dirent_create(trans, dir, &dir_hash,
 					   dir_type,
 					   name,
 					   dir_target,
 					   &dir_offset,
-					   STR_HASH_must_create|BTREE_ITER_with_updates) ?:
-			bch2_inode_write(trans, &dir_iter, dir_u);
-		if (ret)
-			goto err;
+					   STR_HASH_must_create|BTREE_ITER_with_updates));
+		try(bch2_inode_write(trans, &dir_iter, dir_u));
 
 		new_inode->bi_dir		= dir_u->bi_inum;
 		new_inode->bi_dir_offset	= dir_offset;
 	}
 
-	if (S_ISDIR(mode)) {
-		ret = bch2_maybe_propagate_has_case_insensitive(trans,
+	if (S_ISDIR(mode))
+		try(bch2_maybe_propagate_has_case_insensitive(trans,
 				(subvol_inum) {
 					new_inode->bi_subvol ?: dir.subvol,
 					new_inode->bi_inum },
-				new_inode);
-		if (ret)
-			goto err;
-	}
+				new_inode));
 
 	if (S_ISDIR(mode) &&
 	    !new_inode->bi_subvol)
@@ -198,12 +162,10 @@ int bch2_create_trans(struct btree_trans *trans,
 	inode_iter.flags &= ~BTREE_ITER_all_snapshots;
 	bch2_btree_iter_set_snapshot(&inode_iter, snapshot);
 
-	ret   = bch2_btree_iter_traverse(&inode_iter) ?:
-		bch2_inode_write(trans, &inode_iter, new_inode);
-err:
-	bch2_trans_iter_exit(&inode_iter);
-	bch2_trans_iter_exit(&dir_iter);
-	return ret;
+	try(bch2_btree_iter_traverse(&inode_iter));
+	try(bch2_inode_write(trans, &inode_iter, new_inode));
+
+	return 0;
 }
 
 int bch2_link_trans(struct btree_trans *trans,
@@ -212,55 +174,42 @@ int bch2_link_trans(struct btree_trans *trans,
 		    const struct qstr *name)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter dir_iter = { NULL };
-	struct btree_iter inode_iter = { NULL };
+	CLASS(btree_iter_uninit, dir_iter)(trans);
+	CLASS(btree_iter_uninit, inode_iter)(trans);
 	struct bch_hash_info dir_hash;
 	u64 now = bch2_current_time(c);
 	u64 dir_offset = 0;
-	int ret;
 
 	if (dir.subvol != inum.subvol)
 		return -EXDEV;
 
-	ret = bch2_inode_peek(trans, &inode_iter, inode_u, inum, BTREE_ITER_intent);
-	if (ret)
-		return ret;
+	try(bch2_inode_peek(trans, &inode_iter, inode_u, inum, BTREE_ITER_intent));
 
 	inode_u->bi_ctime = now;
-	ret = bch2_inode_nlink_inc(inode_u);
-	if (ret)
-		goto err;
+	try(bch2_inode_nlink_inc(inode_u));
 
-	ret = bch2_inode_peek(trans, &dir_iter, dir_u, dir, BTREE_ITER_intent);
-	if (ret)
-		goto err;
+	try(bch2_inode_peek(trans, &dir_iter, dir_u, dir, BTREE_ITER_intent));
 
-	if (bch2_reinherit_attrs(inode_u, dir_u)) {
-		ret = -EXDEV;
-		goto err;
-	}
+	if (bch2_reinherit_attrs(inode_u, dir_u))
+		return -EXDEV;
 
 	dir_u->bi_mtime = dir_u->bi_ctime = now;
 
 	dir_hash = bch2_hash_info_init(c, dir_u);
 
-	ret = bch2_dirent_create(trans, dir, &dir_hash,
-				 mode_to_type(inode_u->bi_mode),
-				 name, inum.inum,
-				 &dir_offset,
-				 STR_HASH_must_create);
-	if (ret)
-		goto err;
+	try(bch2_dirent_create(trans, dir, &dir_hash,
+			       mode_to_type(inode_u->bi_mode),
+			       name, inum.inum,
+			       &dir_offset,
+			       STR_HASH_must_create));
 
 	inode_u->bi_dir		= dir.inum;
 	inode_u->bi_dir_offset	= dir_offset;
 
-	ret =   bch2_inode_write(trans, &dir_iter, dir_u) ?:
-		bch2_inode_write(trans, &inode_iter, inode_u);
-err:
-	bch2_trans_iter_exit(&dir_iter);
-	bch2_trans_iter_exit(&inode_iter);
-	return ret;
+	try(bch2_inode_write(trans, &dir_iter, dir_u));
+	try(bch2_inode_write(trans, &inode_iter, inode_u));
+
+	return 0;
 }
 
 int bch2_unlink_trans(struct btree_trans *trans,
@@ -271,67 +220,42 @@ int bch2_unlink_trans(struct btree_trans *trans,
 		      bool deleting_subvol)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter dir_iter = { NULL };
-	struct btree_iter dirent_iter = { NULL };
-	struct btree_iter inode_iter = { NULL };
-	struct bch_hash_info dir_hash;
-	subvol_inum inum;
+	CLASS(btree_iter_uninit, dir_iter)(trans);
+	CLASS(btree_iter_uninit, dirent_iter)(trans);
+	CLASS(btree_iter_uninit, inode_iter)(trans);
 	u64 now = bch2_current_time(c);
-	struct bkey_s_c k;
-	int ret;
 
-	ret = bch2_inode_peek(trans, &dir_iter, dir_u, dir, BTREE_ITER_intent);
-	if (ret)
-		goto err;
+	try(bch2_inode_peek(trans, &dir_iter, dir_u, dir, BTREE_ITER_intent));
 
-	dir_hash = bch2_hash_info_init(c, dir_u);
+	struct bch_hash_info dir_hash = bch2_hash_info_init(c, dir_u);
 
-	ret = bch2_dirent_lookup_trans(trans, &dirent_iter, dir, &dir_hash,
-				       name, &inum, BTREE_ITER_intent);
-	if (ret)
-		goto err;
+	subvol_inum inum;
+	try(bch2_dirent_lookup_trans(trans, &dirent_iter, dir, &dir_hash,
+				     name, &inum, BTREE_ITER_intent));
 
-	ret = bch2_inode_peek(trans, &inode_iter, inode_u, inum,
-			      BTREE_ITER_intent);
-	if (ret)
-		goto err;
+	try(bch2_inode_peek(trans, &inode_iter, inode_u, inum, BTREE_ITER_intent));
 
-	if (!deleting_subvol && S_ISDIR(inode_u->bi_mode)) {
-		ret = bch2_empty_dir_trans(trans, inum);
-		if (ret)
-			goto err;
-	}
+	if (!deleting_subvol && S_ISDIR(inode_u->bi_mode))
+		try(bch2_empty_dir_trans(trans, inum));
 
-	if (deleting_subvol && !inode_u->bi_subvol) {
-		ret = bch_err_throw(c, ENOENT_not_subvol);
-		goto err;
-	}
+	if (deleting_subvol && !inode_u->bi_subvol)
+		return bch_err_throw(c, ENOENT_not_subvol);
 
-	if (inode_u->bi_subvol) {
-		/* Recursive subvolume destroy not allowed (yet?) */
-		ret = bch2_subvol_has_children(trans, inode_u->bi_subvol);
-		if (ret)
-			goto err;
-	}
+	/* Recursive subvolume destroy not allowed (yet?) */
+	if (inode_u->bi_subvol)
+		try(bch2_subvol_has_children(trans, inode_u->bi_subvol));
 
 	if (deleting_subvol || inode_u->bi_subvol) {
-		ret = bch2_subvolume_unlink(trans, inode_u->bi_subvol);
-		if (ret)
-			goto err;
+		try(bch2_subvolume_unlink(trans, inode_u->bi_subvol));
 
-		k = bch2_btree_iter_peek_slot(&dirent_iter);
-		ret = bkey_err(k);
-		if (ret)
-			goto err;
+		struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&dirent_iter));
 
 		/*
 		 * If we're deleting a subvolume, we need to really delete the
 		 * dirent, not just emit a whiteout in the current snapshot:
 		 */
 		bch2_btree_iter_set_snapshot(&dirent_iter, k.k->p.snapshot);
-		ret = bch2_btree_iter_traverse(&dirent_iter);
-		if (ret)
-			goto err;
+		try(bch2_btree_iter_traverse(&dirent_iter));
 	} else {
 		bch2_inode_nlink_dec(trans, inode_u);
 	}
@@ -345,16 +269,13 @@ int bch2_unlink_trans(struct btree_trans *trans,
 	dir_u->bi_mtime = dir_u->bi_ctime = inode_u->bi_ctime = now;
 	dir_u->bi_nlink -= is_subdir_for_nlink(inode_u);
 
-	ret =   bch2_hash_delete_at(trans, bch2_dirent_hash_desc,
-				    &dir_hash, &dirent_iter,
-				    BTREE_UPDATE_internal_snapshot_node) ?:
-		bch2_inode_write(trans, &dir_iter, dir_u) ?:
-		bch2_inode_write(trans, &inode_iter, inode_u);
-err:
-	bch2_trans_iter_exit(&inode_iter);
-	bch2_trans_iter_exit(&dirent_iter);
-	bch2_trans_iter_exit(&dir_iter);
-	return ret;
+	try(bch2_hash_delete_at(trans, bch2_dirent_hash_desc,
+				&dir_hash, &dirent_iter,
+				BTREE_UPDATE_internal_snapshot_node));
+	try(bch2_inode_write(trans, &dir_iter, dir_u));
+	try(bch2_inode_write(trans, &inode_iter, inode_u));
+
+	return 0;
 }
 
 bool bch2_reinherit_attrs(struct bch_inode_unpacked *dst_u,
@@ -406,28 +327,21 @@ int bch2_rename_trans(struct btree_trans *trans,
 		      enum bch_rename_mode mode)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter src_dir_iter = { NULL };
-	struct btree_iter dst_dir_iter = { NULL };
-	struct btree_iter src_inode_iter = { NULL };
-	struct btree_iter dst_inode_iter = { NULL };
+	CLASS(btree_iter_uninit, src_dir_iter)(trans);
+	CLASS(btree_iter_uninit, dst_dir_iter)(trans);
+	CLASS(btree_iter_uninit, src_inode_iter)(trans);
+	CLASS(btree_iter_uninit, dst_inode_iter)(trans);
 	struct bch_hash_info src_hash, dst_hash;
 	subvol_inum src_inum, dst_inum;
 	u64 src_offset, dst_offset;
 	u64 now = bch2_current_time(c);
-	int ret;
 
-	ret = bch2_inode_peek(trans, &src_dir_iter, src_dir_u, src_dir,
-			      BTREE_ITER_intent);
-	if (ret)
-		goto err;
+	try(bch2_inode_peek(trans, &src_dir_iter, src_dir_u, src_dir, BTREE_ITER_intent));
 
 	src_hash = bch2_hash_info_init(c, src_dir_u);
 
 	if (!subvol_inum_eq(dst_dir, src_dir)) {
-		ret = bch2_inode_peek(trans, &dst_dir_iter, dst_dir_u, dst_dir,
-				      BTREE_ITER_intent);
-		if (ret)
-			goto err;
+		try(bch2_inode_peek(trans, &dst_dir_iter, dst_dir_u, dst_dir, BTREE_ITER_intent));
 
 		dst_hash = bch2_hash_info_init(c, dst_dir_u);
 	} else {
@@ -435,49 +349,32 @@ int bch2_rename_trans(struct btree_trans *trans,
 		dst_hash = src_hash;
 	}
 
-	ret = bch2_dirent_rename(trans,
-				 src_dir, &src_hash,
-				 dst_dir, &dst_hash,
-				 src_name, &src_inum, &src_offset,
-				 dst_name, &dst_inum, &dst_offset,
-				 mode);
-	if (ret)
-		goto err;
+	try(bch2_dirent_rename(trans,
+			       src_dir, &src_hash,
+			       dst_dir, &dst_hash,
+			       src_name, &src_inum, &src_offset,
+			       dst_name, &dst_inum, &dst_offset,
+			       mode));
 
-	ret = bch2_inode_peek(trans, &src_inode_iter, src_inode_u, src_inum,
-			      BTREE_ITER_intent);
-	if (ret)
-		goto err;
+	try(bch2_inode_peek(trans, &src_inode_iter, src_inode_u, src_inum, BTREE_ITER_intent));
 
-	if (dst_inum.inum) {
-		ret = bch2_inode_peek(trans, &dst_inode_iter, dst_inode_u, dst_inum,
-				      BTREE_ITER_intent);
-		if (ret)
-			goto err;
-	}
+	if (dst_inum.inum)
+		try(bch2_inode_peek(trans, &dst_inode_iter, dst_inode_u, dst_inum, BTREE_ITER_intent));
 
 	if (src_inode_u->bi_subvol &&
-	    dst_dir.subvol != src_inode_u->bi_parent_subvol) {
-		ret = subvol_update_parent(trans, src_inode_u->bi_subvol, dst_dir.subvol);
-		if (ret)
-			goto err;
-	}
+	    dst_dir.subvol != src_inode_u->bi_parent_subvol)
+		try(subvol_update_parent(trans, src_inode_u->bi_subvol, dst_dir.subvol));
 
 	if (mode == BCH_RENAME_EXCHANGE &&
 	    dst_inode_u->bi_subvol &&
-	    src_dir.subvol != dst_inode_u->bi_parent_subvol) {
-		ret = subvol_update_parent(trans, dst_inode_u->bi_subvol, src_dir.subvol);
-		if (ret)
-			goto err;
-	}
+	    src_dir.subvol != dst_inode_u->bi_parent_subvol)
+		try(subvol_update_parent(trans, dst_inode_u->bi_subvol, src_dir.subvol));
 
 	/* Can't move across subvolumes, unless it's a subvolume root: */
 	if (src_dir.subvol != dst_dir.subvol &&
 	    (!src_inode_u->bi_subvol ||
-	     (dst_inum.inum && !dst_inode_u->bi_subvol))) {
-		ret = -EXDEV;
-		goto err;
-	}
+	     (dst_inum.inum && !dst_inode_u->bi_subvol)))
+		return -EXDEV;
 
 	if (src_inode_u->bi_parent_subvol)
 		src_inode_u->bi_parent_subvol = dst_dir.subvol;
@@ -503,38 +400,26 @@ int bch2_rename_trans(struct btree_trans *trans,
 
 	if (mode == BCH_RENAME_OVERWRITE) {
 		if (S_ISDIR(src_inode_u->bi_mode) !=
-		    S_ISDIR(dst_inode_u->bi_mode)) {
-			ret = -ENOTDIR;
-			goto err;
-		}
+		    S_ISDIR(dst_inode_u->bi_mode))
+			return -ENOTDIR;
 
-		if (S_ISDIR(dst_inode_u->bi_mode)) {
-			ret = bch2_empty_dir_trans(trans, dst_inum);
-			if (ret)
-				goto err;
-		}
+		if (S_ISDIR(dst_inode_u->bi_mode))
+			try(bch2_empty_dir_trans(trans, dst_inum));
 	}
 
 	if (!subvol_inum_eq(dst_dir, src_dir)) {
 		if (bch2_reinherit_attrs(src_inode_u, dst_dir_u) &&
-		    S_ISDIR(src_inode_u->bi_mode)) {
-			ret = -EXDEV;
-			goto err;
-		}
+		    S_ISDIR(src_inode_u->bi_mode))
+			return -EXDEV;
 
 		if (mode == BCH_RENAME_EXCHANGE &&
 		    bch2_reinherit_attrs(dst_inode_u, src_dir_u) &&
-		    S_ISDIR(dst_inode_u->bi_mode)) {
-			ret = -EXDEV;
-			goto err;
-		}
+		    S_ISDIR(dst_inode_u->bi_mode))
+			return -EXDEV;
 
-		ret =   bch2_maybe_propagate_has_case_insensitive(trans, src_inum, src_inode_u) ?:
-			(mode == BCH_RENAME_EXCHANGE
-			 ? bch2_maybe_propagate_has_case_insensitive(trans, dst_inum, dst_inode_u)
-			 : 0);
-		if (ret)
-			goto err;
+		try(bch2_maybe_propagate_has_case_insensitive(trans, src_inum, src_inode_u));
+		if (mode == BCH_RENAME_EXCHANGE)
+			try(bch2_maybe_propagate_has_case_insensitive(trans, dst_inum, dst_inode_u));
 
 		if (is_subdir_for_nlink(src_inode_u)) {
 			src_dir_u->bi_nlink--;
@@ -572,20 +457,15 @@ int bch2_rename_trans(struct btree_trans *trans,
 	if (dst_inum.inum)
 		dst_inode_u->bi_ctime	= now;
 
-	ret =   bch2_inode_write(trans, &src_dir_iter, src_dir_u) ?:
-		(src_dir.inum != dst_dir.inum
-		 ? bch2_inode_write(trans, &dst_dir_iter, dst_dir_u)
-		 : 0) ?:
-		bch2_inode_write(trans, &src_inode_iter, src_inode_u) ?:
-		(dst_inum.inum
-		 ? bch2_inode_write(trans, &dst_inode_iter, dst_inode_u)
-		 : 0);
-err:
-	bch2_trans_iter_exit(&dst_inode_iter);
-	bch2_trans_iter_exit(&src_inode_iter);
-	bch2_trans_iter_exit(&dst_dir_iter);
-	bch2_trans_iter_exit(&src_dir_iter);
-	return ret;
+	try(bch2_inode_write(trans, &src_dir_iter, src_dir_u));
+	if (!subvol_inum_eq(dst_dir, src_dir))
+		try(bch2_inode_write(trans, &dst_dir_iter, dst_dir_u));
+
+	try(bch2_inode_write(trans, &src_inode_iter, src_inode_u));
+	if (dst_inum.inum)
+		try(bch2_inode_write(trans, &dst_inode_iter, dst_inode_u));
+
+	return 0;
 }
 
 /* inum_to_path */
@@ -743,8 +623,8 @@ static int bch2_check_dirent_inode_dirent(struct btree_trans *trans,
 					  bool in_fsck)
 {
 	struct bch_fs *c = trans->c;
+	CLASS(btree_iter_uninit, bp_iter)(trans);
 	CLASS(printbuf, buf)();
-	struct btree_iter bp_iter = {};
 	int ret = 0;
 
 	if (inode_points_to_dirent(target, d))
@@ -826,8 +706,6 @@ static int bch2_check_dirent_inode_dirent(struct btree_trans *trans,
 						S_ISDIR(target->bi_mode) ? "directory" : "subvolume",
 						target->bi_inum, target->bi_snapshot, buf.buf);
 			}
-
-			goto out;
 		} else {
 			/*
 			 * hardlinked file with nlink 0:
@@ -846,10 +724,8 @@ static int bch2_check_dirent_inode_dirent(struct btree_trans *trans,
 			}
 		}
 	}
-out:
 err:
 fsck_err:
-	bch2_trans_iter_exit(&bp_iter);
 	bch_err_fn(c, ret);
 	return ret;
 }

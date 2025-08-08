@@ -105,16 +105,13 @@ static int bch2_dev_btree_drop_key(struct btree_trans *trans,
 				   struct bkey_buf *last_flushed,
 				   unsigned flags, struct printbuf *err)
 {
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)(trans);
 	struct btree *b = bch2_backpointer_get_node(trans, bp, &iter, last_flushed);
 	int ret = PTR_ERR_OR_ZERO(b);
 	if (ret)
 		return ret == -BCH_ERR_backpointer_to_overwritten_btree_node ? 0 : ret;
 
-	ret = drop_btree_ptrs(trans, &iter, b, dev_idx, flags, err);
-
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return drop_btree_ptrs(trans, &iter, b, dev_idx, flags, err);
 }
 
 static int bch2_dev_usrdata_drop(struct bch_fs *c,
@@ -213,7 +210,7 @@ static int data_drop_bp(struct btree_trans *trans, unsigned dev_idx,
 			struct bkey_s_c_backpointer bp, struct bkey_buf *last_flushed,
 			unsigned flags, struct printbuf *err)
 {
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bch2_backpointer_get_key(trans, bp, &iter, BTREE_ITER_intent,
 						     last_flushed);
 	int ret = bkey_err(k);
@@ -223,7 +220,7 @@ static int data_drop_bp(struct btree_trans *trans, unsigned dev_idx,
 		return ret;
 
 	if (!k.k || !bch2_bkey_has_device_c(k, dev_idx))
-		goto out;
+		return 0;
 
 	/*
 	 * XXX: pass flags arg to invalidate_stripe_to_dev and handle it
@@ -231,14 +228,11 @@ static int data_drop_bp(struct btree_trans *trans, unsigned dev_idx,
 	 */
 
 	if (bkey_is_btree_ptr(k.k))
-		ret = bch2_dev_btree_drop_key(trans, bp, dev_idx, last_flushed, flags, err);
+		return bch2_dev_btree_drop_key(trans, bp, dev_idx, last_flushed, flags, err);
 	else if (k.k->type == KEY_TYPE_stripe)
-		ret = bch2_invalidate_stripe_to_dev(trans, &iter, k, dev_idx, flags, err);
+		return bch2_invalidate_stripe_to_dev(trans, &iter, k, dev_idx, flags, err);
 	else
-		ret = bch2_dev_usrdata_drop_key(trans, &iter, k, dev_idx, flags, err);
-out:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+		return bch2_dev_usrdata_drop_key(trans, &iter, k, dev_idx, flags, err);
 }
 
 int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, unsigned dev_idx, unsigned flags,
