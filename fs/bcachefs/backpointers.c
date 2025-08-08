@@ -929,6 +929,14 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 	if (sectors[ALLOC_dirty]  != a->dirty_sectors ||
 	    sectors[ALLOC_cached] != a->cached_sectors ||
 	    sectors[ALLOC_stripe] != a->stripe_sectors) {
+		/*
+		 * Post 1.14 upgrade, we assume that backpointers are mostly
+		 * correct and a sector count mismatch is probably due to a
+		 * write buffer race
+		 *
+		 * Pre upgrade, we expect all the buckets to be wrong, a write
+		 * buffer flush is pointless:
+		 */
 		if (c->sb.version_upgrade_complete >= bcachefs_metadata_version_backpointer_bucket_gen) {
 			ret = bch2_backpointers_maybe_flush(trans, alloc_k, last_flushed);
 			if (ret)
