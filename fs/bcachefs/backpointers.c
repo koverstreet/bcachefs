@@ -976,12 +976,22 @@ static bool backpointer_node_has_missing(struct bch_fs *c, struct bkey_s_c k)
 				goto next;
 
 			struct bpos bucket = bp_pos_to_bucket(ca, pos);
-			u64 next = ca->mi.nbuckets;
+			u64 next = min(bucket.offset, ca->mi.nbuckets);
 
-			unsigned long *bitmap = READ_ONCE(ca->bucket_backpointer_mismatch.buckets);
-			if (bitmap)
-				next = min_t(u64, next,
-					     find_next_bit(bitmap, ca->mi.nbuckets, bucket.offset));
+			unsigned long *mismatch = READ_ONCE(ca->bucket_backpointer_mismatch.buckets);
+			unsigned long *empty = READ_ONCE(ca->bucket_backpointer_empty.buckets);
+			/*
+			 * Find the first bucket with mismatches - but
+			 * not empty buckets; we don't need to pin those
+			 * because we just recreate all backpointers in
+			 * those buckets
+			 */
+			if (mismatch && empty)
+				next = find_next_andnot_bit(mismatch, empty, ca->mi.nbuckets, next);
+			else if (mismatch)
+				next = find_next_bit(mismatch, ca->mi.nbuckets, next);
+			else
+				next = ca->mi.nbuckets;
 
 			bucket.offset = next;
 			if (bucket.offset == ca->mi.nbuckets)
