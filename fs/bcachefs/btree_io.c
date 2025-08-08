@@ -1470,7 +1470,7 @@ start:
 	}
 	prt_newline(&buf);
 
-	if (failed.nr)
+	if (ret || failed.nr)
 		bch2_print_str_ratelimited(c, KERN_ERR, buf.buf);
 
 	async_object_list_del(c, btree_read_bio, rb->list_idx);
