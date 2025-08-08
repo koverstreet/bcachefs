@@ -959,7 +959,7 @@ static int __bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 				    unsigned sectors)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)();
 	int ret = 0;
 
 	struct bkey_i_alloc_v4 *a =
@@ -984,9 +984,7 @@ static int __bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 
 		/* Always print, this is always fatal */
 		bch2_print_str(c, KERN_ERR, buf.buf);
-		if (!ret)
-			ret = bch_err_throw(c, metadata_bucket_inconsistency);
-		goto err;
+		return ret ?: bch_err_throw(c, metadata_bucket_inconsistency);
 	}
 
 	if (a->v.data_type	!= type ||
@@ -995,8 +993,7 @@ static int __bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 		a->v.dirty_sectors	= sectors;
 		ret = bch2_trans_update(trans, &iter, &a->k_i, 0);
 	}
-err:
-	bch2_trans_iter_exit(&iter);
+
 	return ret;
 }
 

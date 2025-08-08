@@ -302,7 +302,7 @@ static int trans_trigger_reflink_p_segment(struct btree_trans *trans,
 	CLASS(printbuf, buf)();
 
 	s64 offset_into_extent = *idx - REFLINK_P_IDX(p.v);
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)();
 	struct bkey_s_c k = bch2_lookup_indirect_extent(trans, &iter, &offset_into_extent, p, false,
 							BTREE_ITER_intent|
 							BTREE_ITER_with_updates);
@@ -319,7 +319,7 @@ static int trans_trigger_reflink_p_segment(struct btree_trans *trans,
 	struct bkey_i *new = bch2_bkey_make_mut_noupdate(trans, k);
 	ret = PTR_ERR_OR_ZERO(new);
 	if (ret)
-		goto err;
+		return ret;
 
 	__le64 *refcount = bkey_refcount(bkey_i_to_s(new));
 	if (!*refcount && (flags & BTREE_TRIGGER_overwrite)) {
@@ -352,12 +352,10 @@ static int trans_trigger_reflink_p_segment(struct btree_trans *trans,
 	bch2_btree_iter_set_pos_to_extent_start(&iter);
 	ret = bch2_trans_update(trans, &iter, new, 0);
 	if (ret)
-		goto err;
+		return ret;
 next:
 	*idx = k.k->p.offset;
-err:
 fsck_err:
-	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

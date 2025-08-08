@@ -116,7 +116,7 @@ static int lookup_dirent_in_snapshot(struct btree_trans *trans,
 			   subvol_inum dir, struct qstr *name,
 			   u64 *target, unsigned *type, u32 snapshot)
 {
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)();
 	struct bkey_s_c k = bch2_hash_lookup_in_snapshot(trans, &iter, bch2_dirent_hash_desc,
 							 &hash_info, dir, name, 0, snapshot);
 	int ret = bkey_err(k);
@@ -126,7 +126,6 @@ static int lookup_dirent_in_snapshot(struct btree_trans *trans,
 	struct bkey_s_c_dirent d = bkey_s_c_to_dirent(k);
 	*target = le64_to_cpu(d.v->d_inum);
 	*type = d.v->d_type;
-	bch2_trans_iter_exit(&iter);
 	return 0;
 }
 
@@ -164,7 +163,7 @@ static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 {
 	struct bch_fs *c = trans->c;
 	struct qstr lostfound_str = QSTR("lost+found");
-	struct btree_iter lostfound_iter = { NULL };
+	CLASS(btree_iter_uninit, lostfound_iter)();
 	u64 inum = 0;
 	unsigned d_type = 0;
 	int ret;
@@ -288,7 +287,6 @@ create_lostfound:
 				       BTREE_UPDATE_internal_snapshot_node);
 err:
 	bch_err_msg(c, ret, "creating lost+found");
-	bch2_trans_iter_exit(&lostfound_iter);
 	return ret;
 }
 

@@ -388,26 +388,16 @@ int bch2_inode_find_by_inum_nowarn_trans(struct btree_trans *trans,
 				  subvol_inum inum,
 				  struct bch_inode_unpacked *inode)
 {
-	struct btree_iter iter;
-	int ret;
-
-	ret = bch2_inode_peek_nowarn(trans, &iter, inode, inum, 0);
-	if (!ret)
-		bch2_trans_iter_exit(&iter);
-	return ret;
+	CLASS(btree_iter_uninit, iter)();
+	return bch2_inode_peek_nowarn(trans, &iter, inode, inum, 0);
 }
 
 int bch2_inode_find_by_inum_trans(struct btree_trans *trans,
 				  subvol_inum inum,
 				  struct bch_inode_unpacked *inode)
 {
-	struct btree_iter iter;
-	int ret;
-
-	ret = bch2_inode_peek(trans, &iter, inode, inum, 0);
-	if (!ret)
-		bch2_trans_iter_exit(&iter);
-	return ret;
+	CLASS(btree_iter_uninit, iter)();
+	return bch2_inode_peek(trans, &iter, inode, inum, 0);
 }
 
 int bch2_inode_find_by_inum(struct bch_fs *c, subvol_inum inum,
