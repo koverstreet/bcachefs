@@ -73,14 +73,13 @@ static int lookup_dirent_in_snapshot(struct btree_trans *trans,
 			   subvol_inum dir, struct qstr *name,
 			   u64 *target, unsigned *type, u32 snapshot)
 {
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bkey_try(bch2_hash_lookup_in_snapshot(trans, &iter, bch2_dirent_hash_desc,
 							 &hash_info, dir, name, 0, snapshot));
 
 	struct bkey_s_c_dirent d = bkey_s_c_to_dirent(k);
 	*target = le64_to_cpu(d.v->d_inum);
 	*type = d.v->d_type;
-	bch2_trans_iter_exit(&iter);
 	return 0;
 }
 
@@ -118,7 +117,7 @@ static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 {
 	struct bch_fs *c = trans->c;
 	struct qstr lostfound_str = QSTR("lost+found");
-	struct btree_iter lostfound_iter = { NULL };
+	CLASS(btree_iter_uninit, lostfound_iter)(trans);
 	u64 inum = 0;
 	unsigned d_type = 0;
 	int ret;
@@ -236,7 +235,6 @@ create_lostfound:
 				       BTREE_UPDATE_internal_snapshot_node);
 err:
 	bch_err_msg(c, ret, "creating lost+found");
-	bch2_trans_iter_exit(&lostfound_iter);
 	return ret;
 }
 
@@ -429,7 +427,7 @@ static int reconstruct_subvol(struct btree_trans *trans, u32 snapshotid, u32 sub
 	 * would have found it there:
 	 */
 	if (!inum) {
-		struct btree_iter inode_iter = {};
+		CLASS(btree_iter_uninit, inode_iter)(trans);
 		struct bch_inode_unpacked new_inode;
 		u64 cpu = raw_smp_processor_id();
 
@@ -438,12 +436,9 @@ static int reconstruct_subvol(struct btree_trans *trans, u32 snapshotid, u32 sub
 
 		new_inode.bi_subvol = subvolid;
 
-		int ret = bch2_inode_create(trans, &inode_iter, &new_inode, snapshotid, cpu, false) ?:
-			  bch2_btree_iter_traverse(&inode_iter) ?:
-			  bch2_inode_write(trans, &inode_iter, &new_inode);
-		bch2_trans_iter_exit(&inode_iter);
-		if (ret)
-			return ret;
+		try(bch2_inode_create(trans, &inode_iter, &new_inode, snapshotid, cpu, false));
+		try(bch2_btree_iter_traverse(&inode_iter));
+		try(bch2_inode_write(trans, &inode_iter, &new_inode));
 
 		inum = new_inode.bi_inum;
 	}
@@ -824,7 +819,7 @@ static int check_inode_dirent_inode(struct btree_trans *trans,
 	CLASS(printbuf, buf)();
 
 	u32 inode_snapshot = inode->bi_snapshot;
-	struct btree_iter dirent_iter = {};
+	CLASS(btree_iter_uninit, dirent_iter)(trans);
 	struct bkey_s_c_dirent d = inode_get_dirent(trans, &dirent_iter, inode, &inode_snapshot);
 	int ret = bkey_err(d);
 	if (ret && !bch2_err_matches(ret, ENOENT))
@@ -844,7 +839,7 @@ static int check_inode_dirent_inode(struct btree_trans *trans,
 		inode->bi_dir = 0;
 		inode->bi_dir_offset = 0;
 		*write_inode = true;
-		goto out;
+		return 0;
 	}
 
 	if (fsck_err_on(ret,
@@ -867,10 +862,9 @@ static int check_inode_dirent_inode(struct btree_trans *trans,
 		inode->bi_dir_offset = 0;
 		*write_inode = true;
 	}
-out:
+
 	ret = 0;
 fsck_err:
-	bch2_trans_iter_exit(&dirent_iter);
 	bch_err_fn(c, ret);
 	return ret;
 }
@@ -1434,7 +1428,6 @@ static int find_snapshot_subvol(struct btree_trans *trans, u32 snapshot, u32 *su
 
 		struct bkey_s_c_subvolume s = bkey_s_c_to_subvolume(k);
 		if (bch2_snapshot_is_ancestor(trans->c, le32_to_cpu(s.v->snapshot), snapshot)) {
-			bch2_trans_iter_exit(&iter);
 			*subvolid = k.k->p.offset;
 			return 0;
 		}
@@ -1448,7 +1441,7 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 				  struct bkey_s_c_dirent d)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter subvol_iter = {};
+	CLASS(btree_iter_uninit, subvol_iter)(trans);
 	struct bch_inode_unpacked subvol_root;
 	u32 parent_subvol = le32_to_cpu(d.v->d_parent_subvol);
 	u32 target_subvol = le32_to_cpu(d.v->d_child_subvol);
@@ -1464,9 +1457,9 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 
 	if (ret ||
 	    (!ret && !bch2_snapshot_is_ancestor(c, parent_snapshot, d.k->p.snapshot))) {
-		int ret2 = find_snapshot_subvol(trans, d.k->p.snapshot, &new_parent_subvol);
-		if (ret2 && !bch2_err_matches(ret, ENOENT))
-			return ret2;
+		ret = find_snapshot_subvol(trans, d.k->p.snapshot, &new_parent_subvol);
+		if (ret && !bch2_err_matches(ret, ENOENT))
+			return ret;
 	}
 
 	if (ret &&
@@ -1504,15 +1497,14 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 	struct bkey_s_c_subvolume s = bch2_bkey_get_typed(&subvol_iter, subvolume);
 	ret = bkey_err(s.s_c);
 	if (ret && !bch2_err_matches(ret, ENOENT))
-		goto err;
+		return ret;
 
 	if (ret) {
 		if (fsck_err(trans, dirent_to_missing_subvol,
 			     "dirent points to missing subvolume\n%s",
 			     (bch2_bkey_val_to_text(&buf, c, d.s_c), buf.buf)))
 			return bch2_fsck_remove_dirent(trans, d.k->p);
-		ret = 0;
-		goto out;
+		return 0;
 	}
 
 	if (le32_to_cpu(s.v->fs_path_parent) != parent_subvol) {
@@ -1521,10 +1513,8 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 		prt_printf(&buf, "subvol with wrong fs_path_parent, should be be %u\n",
 			   parent_subvol);
 
-		ret = bch2_inum_to_path(trans, (subvol_inum) { s.k->p.offset,
-					le64_to_cpu(s.v->inode) }, &buf);
-		if (ret)
-			goto err;
+		try(bch2_inum_to_path(trans, (subvol_inum) { s.k->p.offset,
+				      le64_to_cpu(s.v->inode) }, &buf));
 		prt_newline(&buf);
 		bch2_bkey_val_to_text(&buf, c, s.s_c);
 
@@ -1542,12 +1532,11 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 	ret = bch2_inode_find_by_inum_snapshot(trans, target_inum, target_snapshot,
 					       &subvol_root, 0);
 	if (ret && !bch2_err_matches(ret, ENOENT))
-		goto err;
+		return ret;
 
 	if (ret) {
 		bch_err(c, "subvol %u points to missing inode root %llu", target_subvol, target_inum);
-		ret = bch_err_throw(c, fsck_repair_unimplemented);
-		goto err;
+		return bch_err_throw(c, fsck_repair_unimplemented);
 	}
 
 	if (fsck_err_on(!ret && parent_subvol != subvol_root.bi_parent_subvol,
@@ -1557,18 +1546,11 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 			subvol_root.bi_parent_subvol, parent_subvol)) {
 		subvol_root.bi_parent_subvol = parent_subvol;
 		subvol_root.bi_snapshot = le32_to_cpu(s.v->snapshot);
-		ret = __bch2_fsck_write_inode(trans, &subvol_root);
-		if (ret)
-			goto err;
+		try(__bch2_fsck_write_inode(trans, &subvol_root));
 	}
 
-	ret = bch2_check_dirent_target(trans, iter, d, &subvol_root, true);
-	if (ret)
-		goto err;
-out:
-err:
+	try(bch2_check_dirent_target(trans, iter, d, &subvol_root, true));
 fsck_err:
-	bch2_trans_iter_exit(&subvol_iter);
 	return ret;
 }
 

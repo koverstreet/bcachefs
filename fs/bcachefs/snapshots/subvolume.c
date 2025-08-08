@@ -540,13 +540,12 @@ int bch2_subvolume_create(struct btree_trans *trans, u64 inode,
 			  bool ro)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter dst_iter;
 	struct bkey_i_subvolume *new_subvol = NULL;
 	struct bkey_i_subvolume *src_subvol = NULL;
 	u32 parent = 0, new_nodes[2], snapshot_subvols[2];
-	int ret = 0;
 
-	ret = bch2_bkey_get_empty_slot(trans, &dst_iter,
+	CLASS(btree_iter_uninit, dst_iter)(trans);
+	int ret = bch2_bkey_get_empty_slot(trans, &dst_iter,
 				BTREE_ID_subvolumes, POS(0, U32_MAX));
 	if (ret == -BCH_ERR_ENOSPC_btree_slot)
 		ret = bch_err_throw(c, ENOSPC_subvolume_create);
@@ -565,24 +564,19 @@ int bch2_subvolume_create(struct btree_trans *trans, u64 inode,
 		if (bch2_err_matches(ret, ENOENT))
 			ret = bch2_subvolume_missing(trans->c, src_subvolid) ?: ret;
 		if (unlikely(ret))
-			goto err;
+			return ret;
 
 		parent = le32_to_cpu(src_subvol->v.snapshot);
 	}
 
-	ret = bch2_snapshot_node_create(trans, parent, new_nodes,
-					snapshot_subvols,
-					src_subvolid ? 2 : 1);
-	if (ret)
-		goto err;
+	try(bch2_snapshot_node_create(trans, parent, new_nodes,
+				      snapshot_subvols,
+				      src_subvolid ? 2 : 1));
 
 	if (src_subvolid)
 		src_subvol->v.snapshot = cpu_to_le32(new_nodes[1]);
 
-	new_subvol = bch2_bkey_alloc(trans, &dst_iter, 0, subvolume);
-	ret = PTR_ERR_OR_ZERO(new_subvol);
-	if (ret)
-		goto err;
+	new_subvol = errptr_try(bch2_bkey_alloc(trans, &dst_iter, 0, subvolume));
 
 	new_subvol->v.flags		= 0;
 	new_subvol->v.snapshot		= cpu_to_le32(new_nodes[0]);
@@ -597,9 +591,7 @@ int bch2_subvolume_create(struct btree_trans *trans, u64 inode,
 
 	*new_subvolid	= new_subvol->k.p.offset;
 	*new_snapshotid	= new_nodes[0];
-err:
-	bch2_trans_iter_exit(&dst_iter);
-	return ret;
+	return 0;
 }
 
 int bch2_initialize_subvolumes(struct bch_fs *c)

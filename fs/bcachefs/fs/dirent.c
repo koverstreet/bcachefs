@@ -387,91 +387,65 @@ int bch2_dirent_rename(struct btree_trans *trans,
 		enum bch_rename_mode mode)
 {
 	struct qstr src_name_lookup, dst_name_lookup;
-	struct btree_iter src_iter = { NULL };
-	struct btree_iter dst_iter = { NULL };
+	CLASS(btree_iter_uninit, src_iter)(trans);
+	CLASS(btree_iter_uninit, dst_iter)(trans);
 	struct bkey_s_c old_src, old_dst = bkey_s_c_null;
 	struct bkey_i_dirent *new_src = NULL, *new_dst = NULL;
 	struct bpos dst_pos =
 		POS(dst_dir.inum, bch2_dirent_hash(dst_hash, dst_name));
 	unsigned src_update_flags = 0;
 	bool delete_src, delete_dst;
-	int ret = 0;
 
 	memset(src_inum, 0, sizeof(*src_inum));
 	memset(dst_inum, 0, sizeof(*dst_inum));
 
 	/* Lookup src: */
-	ret = bch2_maybe_casefold(trans, src_hash, src_name, &src_name_lookup);
-	if (ret)
-		goto out;
-	old_src = bch2_hash_lookup(trans, &src_iter, bch2_dirent_hash_desc,
-				   src_hash, src_dir, &src_name_lookup,
-				   BTREE_ITER_intent);
-	ret = bkey_err(old_src);
-	if (ret)
-		goto out;
+	try(bch2_maybe_casefold(trans, src_hash, src_name, &src_name_lookup));
 
-	ret = bch2_dirent_read_target(trans, src_dir,
-			bkey_s_c_to_dirent(old_src), src_inum);
-	if (ret)
-		goto out;
+	old_src = bkey_try(bch2_hash_lookup(trans, &src_iter, bch2_dirent_hash_desc,
+				   src_hash, src_dir, &src_name_lookup,
+				   BTREE_ITER_intent));
+
+	try(bch2_dirent_read_target(trans, src_dir, bkey_s_c_to_dirent(old_src), src_inum));
 
 	/* Lookup dst: */
-	ret = bch2_maybe_casefold(trans, dst_hash, dst_name, &dst_name_lookup);
-	if (ret)
-		goto out;
+	try(bch2_maybe_casefold(trans, dst_hash, dst_name, &dst_name_lookup));
+
 	if (mode == BCH_RENAME) {
 		/*
 		 * Note that we're _not_ checking if the target already exists -
 		 * we're relying on the VFS to do that check for us for
 		 * correctness:
 		 */
-		ret = bch2_hash_hole(trans, &dst_iter, bch2_dirent_hash_desc,
-				     dst_hash, dst_dir, &dst_name_lookup);
-		if (ret)
-			goto out;
+		try(bch2_hash_hole(trans, &dst_iter, bch2_dirent_hash_desc,
+				   dst_hash, dst_dir, &dst_name_lookup));
 	} else {
-		old_dst = bch2_hash_lookup(trans, &dst_iter, bch2_dirent_hash_desc,
+		old_dst = bkey_try(bch2_hash_lookup(trans, &dst_iter, bch2_dirent_hash_desc,
 					    dst_hash, dst_dir, &dst_name_lookup,
-					    BTREE_ITER_intent);
-		ret = bkey_err(old_dst);
-		if (ret)
-			goto out;
+					    BTREE_ITER_intent));
 
-		ret = bch2_dirent_read_target(trans, dst_dir,
-				bkey_s_c_to_dirent(old_dst), dst_inum);
-		if (ret)
-			goto out;
+		try(bch2_dirent_read_target(trans, dst_dir, bkey_s_c_to_dirent(old_dst), dst_inum));
 	}
 
 	if (mode != BCH_RENAME_EXCHANGE)
 		*src_offset = dst_iter.pos.offset;
 
 	/* Create new dst key: */
-	new_dst = bch2_dirent_create_key(trans, dst_hash, dst_dir, 0, dst_name,
-					 dst_hash->cf_encoding ? &dst_name_lookup : NULL, 0);
-	ret = PTR_ERR_OR_ZERO(new_dst);
-	if (ret)
-		goto out;
+	new_dst = errptr_try(bch2_dirent_create_key(trans, dst_hash, dst_dir, 0, dst_name,
+					 dst_hash->cf_encoding ? &dst_name_lookup : NULL, 0));
 
 	dirent_copy_target(new_dst, bkey_s_c_to_dirent(old_src));
 	new_dst->k.p = dst_iter.pos;
 
 	/* Create new src key: */
 	if (mode == BCH_RENAME_EXCHANGE) {
-		new_src = bch2_dirent_create_key(trans, src_hash, src_dir, 0, src_name,
-						 src_hash->cf_encoding ? &src_name_lookup : NULL, 0);
-		ret = PTR_ERR_OR_ZERO(new_src);
-		if (ret)
-			goto out;
+		new_src = errptr_try(bch2_dirent_create_key(trans, src_hash, src_dir, 0, src_name,
+						 src_hash->cf_encoding ? &src_name_lookup : NULL, 0));
 
 		dirent_copy_target(new_src, bkey_s_c_to_dirent(old_dst));
 		new_src->k.p = src_iter.pos;
 	} else {
-		new_src = bch2_trans_kmalloc(trans, sizeof(struct bkey_i));
-		ret = PTR_ERR_OR_ZERO(new_src);
-		if (ret)
-			goto out;
+		new_src = errptr_try(bch2_trans_kmalloc(trans, sizeof(struct bkey_i)));
 
 		bkey_init(&new_src->k);
 		new_src->k.p = src_iter.pos;
@@ -503,10 +477,10 @@ int bch2_dirent_rename(struct btree_trans *trans,
 			}
 		} else {
 			/* Check if we need a whiteout to delete src: */
-			ret = bch2_hash_needs_whiteout(trans, bch2_dirent_hash_desc,
+			int ret = bch2_hash_needs_whiteout(trans, bch2_dirent_hash_desc,
 						       src_hash, &src_iter);
 			if (ret < 0)
-				goto out;
+				return ret;
 
 			if (ret)
 				new_src->k.type = KEY_TYPE_hash_whiteout;
@@ -520,9 +494,7 @@ int bch2_dirent_rename(struct btree_trans *trans,
 	    new_src->v.d_type == DT_SUBVOL)
 		new_src->v.d_parent_subvol = cpu_to_le32(src_dir.subvol);
 
-	ret = bch2_trans_update(trans, &dst_iter, &new_dst->k_i, 0);
-	if (ret)
-		goto out;
+	try(bch2_trans_update(trans, &dst_iter, &new_dst->k_i, 0));
 out_set_src:
 	/*
 	 * If we're deleting a subvolume we need to really delete the dirent,
@@ -541,35 +513,26 @@ out_set_src:
 		bkey_s_c_to_dirent(old_dst).v->d_type == DT_SUBVOL &&
 		new_dst->k.p.snapshot != old_dst.k->p.snapshot;
 
-	if (!delete_src || !bkey_deleted(&new_src->k)) {
-		ret = bch2_trans_update(trans, &src_iter, &new_src->k_i, src_update_flags);
-		if (ret)
-			goto out;
-	}
+	if (!delete_src || !bkey_deleted(&new_src->k))
+		try(bch2_trans_update(trans, &src_iter, &new_src->k_i, src_update_flags));
 
 	if (delete_src) {
 		bch2_btree_iter_set_snapshot(&src_iter, old_src.k->p.snapshot);
-		ret =   bch2_btree_iter_traverse(&src_iter) ?:
-			bch2_btree_delete_at(trans, &src_iter, BTREE_UPDATE_internal_snapshot_node);
-		if (ret)
-			goto out;
+		try(bch2_btree_iter_traverse(&src_iter));
+		try(bch2_btree_delete_at(trans, &src_iter, BTREE_UPDATE_internal_snapshot_node));
 	}
 
 	if (delete_dst) {
 		bch2_btree_iter_set_snapshot(&dst_iter, old_dst.k->p.snapshot);
-		ret =   bch2_btree_iter_traverse(&dst_iter) ?:
-			bch2_btree_delete_at(trans, &dst_iter, BTREE_UPDATE_internal_snapshot_node);
-		if (ret)
-			goto out;
+		try(bch2_btree_iter_traverse(&dst_iter));
+		try(bch2_btree_delete_at(trans, &dst_iter, BTREE_UPDATE_internal_snapshot_node));
 	}
 
 	if (mode == BCH_RENAME_EXCHANGE)
 		*src_offset = new_src->k.p.offset;
 	*dst_offset = new_dst->k.p.offset;
-out:
-	bch2_trans_iter_exit(&src_iter);
-	bch2_trans_iter_exit(&dst_iter);
-	return ret;
+
+	return 0;
 }
 
 int bch2_dirent_lookup_trans(struct btree_trans *trans,
@@ -602,12 +565,10 @@ u64 bch2_dirent_lookup(struct bch_fs *c, subvol_inum dir,
 		       const struct qstr *name, subvol_inum *inum)
 {
 	CLASS(btree_trans, trans)(c);
-	struct btree_iter iter = {};
+	CLASS(btree_iter_uninit, iter)(trans);
 
-	int ret = lockrestart_do(trans,
+	return lockrestart_do(trans,
 		bch2_dirent_lookup_trans(trans, &iter, dir, hash_info, name, inum, 0));
-	bch2_trans_iter_exit(&iter);
-	return ret;
 }
 
 int bch2_empty_dir_snapshot(struct btree_trans *trans, u64 dir, u32 subvol, u32 snapshot)

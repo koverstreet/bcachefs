@@ -1033,29 +1033,23 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 {
 	struct bch_stripe *v = &bkey_i_to_stripe(&s->key)->v;
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
-	const struct bch_extent_ptr *ptr_c;
-	struct bch_extent_ptr *ec_ptr = NULL;
-	struct bch_extent_stripe_ptr stripe_ptr;
-	struct bkey_i *n;
-	int ret = 0, dev, block;
 
 	if (bp.v->level) {
-		struct btree_iter node_iter;
-		struct btree *b = bch2_backpointer_get_node(trans, bp, &node_iter, last_flushed);
-		bch2_trans_iter_exit(&node_iter);
-
-		if (!b)
-			return 0;
+		CLASS(btree_iter_uninit, iter)(trans);
+		struct btree *b = errptr_try(bch2_backpointer_get_node(trans, bp, &iter, last_flushed));
 
 		CLASS(printbuf, buf)();
-		prt_printf(&buf, "found btree node in erasure coded bucket: b=%px\n", b);
-		bch2_bkey_val_to_text(&buf, c, bp.s_c);
+		prt_printf(&buf, "found btree node in erasure coded bucket:\n");
+		if (b)
+			bch2_bkey_val_to_text(&buf, c, bp.s_c);
+		else
+			prt_str(&buf, "(not found)");
 
 		bch2_fs_inconsistent(c, "%s", buf.buf);
 		return bch_err_throw(c, erasure_coding_found_btree_node);
 	}
 
+	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k =
 		bkey_try(bch2_backpointer_get_key(trans, bp, &iter, BTREE_ITER_intent, last_flushed));
 	if (!k.k) {
@@ -1067,35 +1061,33 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 	}
 
 	if (extent_has_stripe_ptr(k, s->key.k.p.offset))
-		goto out;
+		return 0;
 
-	ptr_c = bkey_matches_stripe(v, k, &block);
+	unsigned block;
+	const struct bch_extent_ptr *ptr_c = bkey_matches_stripe(v, k, &block);
 	/*
 	 * It doesn't generally make sense to erasure code cached ptrs:
 	 * XXX: should we be incrementing a counter?
 	 */
 	if (!ptr_c || ptr_c->cached)
-		goto out;
+		return 0;
 
-	dev = v->ptrs[block].dev;
+	unsigned dev = v->ptrs[block].dev;
 
-	n = bch2_trans_kmalloc(trans, bkey_bytes(k.k) + sizeof(stripe_ptr));
-	ret = PTR_ERR_OR_ZERO(n);
-	if (ret)
-		goto out;
-
-	bkey_reassemble(n, k);
-
-	bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(n), ptr, ptr->dev != dev);
-	ec_ptr = bch2_bkey_has_device(bkey_i_to_s(n), dev);
-	BUG_ON(!ec_ptr);
-
-	stripe_ptr = (struct bch_extent_stripe_ptr) {
+	struct bch_extent_stripe_ptr stripe_ptr = (struct bch_extent_stripe_ptr) {
 		.type = 1 << BCH_EXTENT_ENTRY_stripe_ptr,
 		.block		= block,
 		.redundancy	= v->nr_redundant,
 		.idx		= s->key.k.p.offset,
 	};
+
+	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) + sizeof(stripe_ptr)));
+
+	bkey_reassemble(n, k);
+
+	bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(n), ptr, ptr->dev != dev);
+	struct bch_extent_ptr *ec_ptr = bch2_bkey_has_device(bkey_i_to_s(n), dev);
+	BUG_ON(!ec_ptr);
 
 	__extent_entry_insert(n,
 			(union bch_extent_entry *) ec_ptr,
@@ -1103,14 +1095,13 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 
 	struct bch_inode_opts opts;
 
-	ret =   bch2_extent_get_io_opts_one(trans, &opts, &iter, bkey_i_to_s_c(n),
-					    SET_NEEDS_REBALANCE_other) ?:
-		bch2_bkey_set_needs_rebalance(trans->c, &opts, n,
-					      SET_NEEDS_REBALANCE_other, 0) ?:
-		bch2_trans_update(trans, &iter, n, 0);
-out:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	try(bch2_extent_get_io_opts_one(trans, &opts, &iter, bkey_i_to_s_c(n),
+					SET_NEEDS_REBALANCE_other));
+	try(bch2_bkey_set_needs_rebalance(trans->c, &opts, n,
+					  SET_NEEDS_REBALANCE_other, 0));
+	try(bch2_trans_update(trans, &iter, n, 0));
+
+	return 0;
 }
 
 static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_buf *s,

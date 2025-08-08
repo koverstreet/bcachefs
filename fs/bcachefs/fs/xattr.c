@@ -147,7 +147,7 @@ static int bch2_xattr_get_trans(struct btree_trans *trans, struct bch_inode_info
 {
 	struct bch_hash_info hash = bch2_hash_info_init(trans->c, &inode->ei_inode);
 	struct xattr_search_key search = X_SEARCH(type, name, strlen(name));
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bkey_try(bch2_hash_lookup(trans, &iter, bch2_xattr_hash_desc, &hash,
 						      inode_inum(inode), &search, 0));
 
@@ -155,11 +155,9 @@ static int bch2_xattr_get_trans(struct btree_trans *trans, struct bch_inode_info
 	int ret = le16_to_cpu(xattr.v->x_val_len);
 	if (buffer) {
 		if (ret > size)
-			ret = -ERANGE;
-		else
-			memcpy(buffer, xattr_val(xattr.v), ret);
+			return -ERANGE;
+		memcpy(buffer, xattr_val(xattr.v), ret);
 	}
-	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
@@ -170,13 +168,11 @@ int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 		   int type, int flags)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter inode_iter = { NULL };
-	int ret;
 
-	ret   = bch2_subvol_is_ro_trans(trans, inum.subvol) ?:
-		bch2_inode_peek(trans, &inode_iter, inode_u, inum, BTREE_ITER_intent);
-	if (ret)
-		return ret;
+	try(bch2_subvol_is_ro_trans(trans, inum.subvol));
+
+	CLASS(btree_iter_uninit, inode_iter)(trans);
+	try(bch2_inode_peek(trans, &inode_iter, inode_u, inum, BTREE_ITER_intent));
 
 	/*
 	 * Besides the ctime update, extents, dirents and xattrs updates require
@@ -185,12 +181,9 @@ int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 	 */
 	inode_u->bi_ctime = bch2_current_time(c);
 
-	ret = bch2_inode_write(trans, &inode_iter, inode_u);
-	bch2_trans_iter_exit(&inode_iter);
+	try(bch2_inode_write(trans, &inode_iter, inode_u));
 
-	if (ret)
-		return ret;
-
+	int ret;
 	if (value) {
 		struct bkey_i_xattr *xattr;
 		unsigned namelen = strlen(name);
