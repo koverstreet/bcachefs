@@ -379,7 +379,7 @@ static int bch2_sb_compatible(struct bch_sb *sb, struct printbuf *out)
 	return 0;
 }
 
-int bch2_sb_validate(struct bch_sb *sb, u64 read_offset,
+int bch2_sb_validate(struct bch_sb *sb, struct bch_opts *opts, u64 read_offset,
 		     enum bch_validate_flags flags, struct printbuf *out)
 {
 	enum bch_opt_id opt_id;
@@ -389,28 +389,30 @@ int bch2_sb_validate(struct bch_sb *sb, u64 read_offset,
 	if (ret)
 		return ret;
 
-	u64 incompat = le64_to_cpu(sb->features[0]) & (~0ULL << BCH_FEATURE_NR);
-	unsigned incompat_bit = 0;
-	if (incompat)
-		incompat_bit = __ffs64(incompat);
-	else if (sb->features[1])
-		incompat_bit = 64 + __ffs64(le64_to_cpu(sb->features[1]));
+	if (!opts->no_version_check) {
+		u64 incompat = le64_to_cpu(sb->features[0]) & (~0ULL << BCH_FEATURE_NR);
+		unsigned incompat_bit = 0;
+		if (incompat)
+			incompat_bit = __ffs64(incompat);
+		else if (sb->features[1])
+			incompat_bit = 64 + __ffs64(le64_to_cpu(sb->features[1]));
 
-	if (incompat_bit) {
-		prt_printf(out, "Filesystem has incompatible feature bit %u, highest supported %s (%u)",
-			   incompat_bit,
-			   bch2_sb_features[BCH_FEATURE_NR - 1],
-			   BCH_FEATURE_NR - 1);
-		return -BCH_ERR_invalid_sb_features;
-	}
+		if (incompat_bit) {
+			prt_printf(out, "Filesystem has incompatible feature bit %u, highest supported %s (%u)",
+				   incompat_bit,
+				   bch2_sb_features[BCH_FEATURE_NR - 1],
+				   BCH_FEATURE_NR - 1);
+			return -BCH_ERR_invalid_sb_features;
+		}
 
-	if (BCH_VERSION_MAJOR(le16_to_cpu(sb->version)) > BCH_VERSION_MAJOR(bcachefs_metadata_version_current) ||
-	    BCH_SB_VERSION_INCOMPAT(sb) > bcachefs_metadata_version_current) {
-		prt_str(out, "Filesystem has incompatible version ");
-		bch2_version_to_text(out, le16_to_cpu(sb->version));
-		prt_str(out, ", current version ");
-		bch2_version_to_text(out, bcachefs_metadata_version_current);
-		return -BCH_ERR_invalid_sb_features;
+		if (BCH_VERSION_MAJOR(le16_to_cpu(sb->version)) > BCH_VERSION_MAJOR(bcachefs_metadata_version_current) ||
+		    BCH_SB_VERSION_INCOMPAT(sb) > bcachefs_metadata_version_current) {
+			prt_str(out, "Filesystem has incompatible version ");
+			bch2_version_to_text(out, le16_to_cpu(sb->version));
+			prt_str(out, ", current version ");
+			bch2_version_to_text(out, bcachefs_metadata_version_current);
+			return -BCH_ERR_invalid_sb_features;
+		}
 	}
 
 	if (bch2_is_zero(sb->user_uuid.b, sizeof(sb->user_uuid))) {
@@ -915,7 +917,7 @@ got_super:
 
 	sb->have_layout = true;
 
-	ret = bch2_sb_validate(sb->sb, offset, 0, &err);
+	ret = bch2_sb_validate(sb->sb, opts, offset, 0, &err);
 	if (ret) {
 		bch2_print_opts(opts, KERN_ERR "bcachefs (%s): error validating superblock: %s\n",
 				path, err.buf);
@@ -1081,9 +1083,10 @@ int bch2_write_super(struct bch_fs *c)
 		bch2_sb_from_fs(c, (*ca));
 
 	darray_for_each(online_devices, ca) {
+		struct bch_opts opts = bch2_opts_empty();
 		printbuf_reset(&err);
 
-		ret = bch2_sb_validate((*ca)->disk_sb.sb, 0, BCH_VALIDATE_write, &err);
+		ret = bch2_sb_validate((*ca)->disk_sb.sb, &opts, 0, BCH_VALIDATE_write, &err);
 		if (ret) {
 			bch2_fs_inconsistent(c, "sb invalid before write: %s", err.buf);
 			goto out;
