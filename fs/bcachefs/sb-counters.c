@@ -136,7 +136,7 @@ long bch2_ioctl_query_counters(struct bch_fs *c,
 				? percpu_u64_get(&c->counters[i])
 				: c->counters_on_mount[i];
 
-			ret = put_user(v, &user_arg->d[stable]);
+			ret = copy_to_user_errcode(&user_arg->d[stable], &v, sizeof(v));
 			if (ret)
 				return ret;
 		}
