@@ -1252,7 +1252,7 @@ static int bch2_vfs_readdir(struct file *file, struct dir_context *ctx)
 	if (!dir_emit_dots(file, ctx))
 		return 0;
 
-	int ret = bch2_readdir(c, inode_inum(inode), &hash, ctx);
+	int ret = bch2_readdir(c, inode_inum(inode), &hash, ctx, file->private_data);
 
 	bch_err_fn(c, ret);
 	return bch2_err_class(ret);
@@ -1470,6 +1470,8 @@ static const struct inode_operations bch_dir_inode_operations = {
 };
 
 static const struct file_operations bch_dir_file_operations = {
+	.open		= bch2_dir_open,
+	.release	= bch2_release_dir,
 	.llseek		= bch2_dir_llseek,
 	.read		= generic_read_dir,
 	.iterate_shared	= bch2_vfs_readdir,
