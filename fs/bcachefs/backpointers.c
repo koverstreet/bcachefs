@@ -532,10 +532,6 @@ static int check_bp_exists(struct btree_trans *trans,
 	struct btree_iter other_extent_iter = {};
 	CLASS(printbuf, buf)();
 
-	if (bpos_lt(bp->k.p, s->bp_start) ||
-	    bpos_gt(bp->k.p, s->bp_end))
-		return 0;
-
 	CLASS(btree_iter, bp_iter)(trans, BTREE_ID_backpointers, bp->k.p, 0);
 	struct bkey_s_c bp_k = bch2_btree_iter_peek_slot(&bp_iter);
 	int ret = bkey_err(bp_k);
@@ -689,6 +685,10 @@ static int check_extent_to_backpointers(struct btree_trans *trans,
 
 		struct bkey_i_backpointer bp;
 		bch2_extent_ptr_to_bp(c, btree, level, k, p, entry, &bp);
+
+		if (bpos_lt(bp.k.p, s->bp_start) ||
+		    bpos_gt(bp.k.p, s->bp_end))
+			continue;
 
 		int ret = !empty
 			? check_bp_exists(trans, s, &bp, k)
