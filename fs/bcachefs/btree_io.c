@@ -1014,6 +1014,7 @@ static int validate_bset_keys(struct bch_fs *c, struct btree *b,
 		k = bkey_p_next(k);
 		continue;
 drop_this_key:
+		ret = 0;
 		next_good_key = k->u64s;
 
 		if (!next_good_key ||
