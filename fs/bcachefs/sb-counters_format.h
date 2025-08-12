@@ -129,6 +129,7 @@ static inline void __maybe_unused check_bch_counter_ids_unique(void) {
 #define x(t, n, ...) case (n):
         BCH_PERSISTENT_COUNTERS()
 #undef x
+		;
 	}
 }
 
