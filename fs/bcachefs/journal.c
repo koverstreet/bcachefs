@@ -120,6 +120,7 @@ static void journal_pin_list_init(struct journal_entry_pin_list *p, int count)
 		INIT_LIST_HEAD(&p->flushed[i]);
 	atomic_set(&p->count, count);
 	p->devs.nr = 0;
+	p->bytes = 0;
 }
 
 /*
@@ -263,6 +264,11 @@ static void __journal_entry_close(struct journal *j, unsigned closed_val, bool t
 
 	/* Close out old buffer: */
 	buf->data->u64s		= cpu_to_le32(old.cur_entry_offset);
+
+	struct journal_entry_pin_list *pin_list =
+		journal_seq_pin(j, journal_cur_seq(j));
+	pin_list->bytes = roundup_pow_of_two(vstruct_bytes(buf->data));
+	j->dirty_entry_bytes += pin_list->bytes;
 
 	if (trace_journal_entry_close_enabled() && trace) {
 		CLASS(printbuf, err)();
