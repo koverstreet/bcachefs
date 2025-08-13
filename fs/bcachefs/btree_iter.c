@@ -848,7 +848,7 @@ static int btree_path_prefetch_j(struct btree_trans *trans, struct btree_path *p
 			break;
 
 		bch2_btree_and_journal_iter_advance(jiter);
-		k = bch2_btree_and_journal_iter_peek(jiter);
+		k = bch2_btree_and_journal_iter_peek(c, jiter);
 		if (!k.k)
 			break;
 
@@ -898,7 +898,7 @@ static noinline int btree_node_iter_and_journal_peek(struct btree_trans *trans,
 
 	__bch2_btree_and_journal_iter_init_node_iter(trans, &jiter, l->b, l->iter, path->pos);
 
-	k = bch2_btree_and_journal_iter_peek(&jiter);
+	k = bch2_btree_and_journal_iter_peek(c, &jiter);
 	if (!k.k) {
 		CLASS(printbuf, buf)();
 

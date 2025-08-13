@@ -356,7 +356,7 @@ again:
 	bch2_btree_and_journal_iter_init_node_iter(trans, &iter, b);
 	iter.prefetch = true;
 
-	while ((k = bch2_btree_and_journal_iter_peek(&iter)).k) {
+	while ((k = bch2_btree_and_journal_iter_peek(c, &iter)).k) {
 		BUG_ON(bpos_lt(k.k->p, b->data->min_key));
 		BUG_ON(bpos_gt(k.k->p, b->data->max_key));
 
@@ -470,7 +470,7 @@ again:
 	bch2_btree_and_journal_iter_init_node_iter(trans, &iter, b);
 	iter.prefetch = true;
 
-	while ((k = bch2_btree_and_journal_iter_peek(&iter)).k) {
+	while ((k = bch2_btree_and_journal_iter_peek(c, &iter)).k) {
 		bch2_bkey_buf_reassemble(&cur_k, c, k);
 		bch2_btree_and_journal_iter_advance(&iter);
 
