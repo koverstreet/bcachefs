@@ -73,9 +73,9 @@ static size_t bch2_journal_key_search(struct journal_keys *keys,
 }
 
 /* Returns first non-overwritten key >= search key: */
-struct bkey_i *bch2_journal_keys_peek_max(struct bch_fs *c, enum btree_id btree_id,
-					   unsigned level, struct bpos pos,
-					   struct bpos end_pos, size_t *idx)
+const struct bkey_i *bch2_journal_keys_peek_max(struct bch_fs *c, enum btree_id btree_id,
+						unsigned level, struct bpos pos,
+						struct bpos end_pos, size_t *idx)
 {
 	struct journal_keys *keys = &c->journal_keys;
 	unsigned iters = 0;
@@ -96,7 +96,7 @@ search:
 		}
 	}
 
-	struct bkey_i *ret = NULL;
+	const struct bkey_i *ret = NULL;
 	rcu_read_lock(); /* for overwritten_ranges */
 
 	while ((k = *idx < keys->nr ? idx_to_key(keys, *idx) : NULL)) {
@@ -129,9 +129,9 @@ search:
 	return ret;
 }
 
-struct bkey_i *bch2_journal_keys_peek_prev_min(struct bch_fs *c, enum btree_id btree_id,
-					   unsigned level, struct bpos pos,
-					   struct bpos end_pos, size_t *idx)
+const struct bkey_i *bch2_journal_keys_peek_prev_min(struct bch_fs *c, enum btree_id btree_id,
+						     unsigned level, struct bpos pos,
+						     struct bpos end_pos, size_t *idx)
 {
 	struct journal_keys *keys = &c->journal_keys;
 	unsigned iters = 0;
@@ -194,8 +194,8 @@ search:
 	return ret;
 }
 
-struct bkey_i *bch2_journal_keys_peek_slot(struct bch_fs *c, enum btree_id btree_id,
-					   unsigned level, struct bpos pos)
+const struct bkey_i *bch2_journal_keys_peek_slot(struct bch_fs *c, enum btree_id btree_id,
+						 unsigned level, struct bpos pos)
 {
 	size_t idx = 0;
 
