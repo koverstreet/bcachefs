@@ -29,6 +29,12 @@ struct btree_and_journal_iter {
 	bool			fail_if_too_many_whiteouts;
 };
 
+static inline struct bkey_i *journal_key_k(struct bch_fs *c,
+					   const struct journal_key *k)
+{
+	return k->k;
+}
+
 static inline int __journal_key_btree_cmp(enum btree_id	l_btree_id,
 					  unsigned	l_level,
 					  const struct journal_key *r)
@@ -37,18 +43,21 @@ static inline int __journal_key_btree_cmp(enum btree_id	l_btree_id,
 		cmp_int(l_btree_id,	r->btree_id);
 }
 
-static inline int __journal_key_cmp(enum btree_id	l_btree_id,
+static inline int __journal_key_cmp(struct bch_fs *c,
+				    enum btree_id	l_btree_id,
 				    unsigned		l_level,
 				    struct bpos	l_pos,
 				    const struct journal_key *r)
 {
 	return __journal_key_btree_cmp(l_btree_id, l_level, r) ?:
-		bpos_cmp(l_pos,	r->k->k.p);
+		bpos_cmp(l_pos, journal_key_k(c, r)->k.p);
 }
 
-static inline int journal_key_cmp(const struct journal_key *l, const struct journal_key *r)
+static inline int journal_key_cmp(struct bch_fs *c,
+				  const struct journal_key *l, const struct journal_key *r)
 {
-	return __journal_key_cmp(l->btree_id, l->level, l->k->k.p, r);
+	return __journal_key_cmp(c, l->btree_id, l->level,
+				 journal_key_k(c, l)->k.p, r);
 }
 
 const struct bkey_i *bch2_journal_keys_peek_max(struct bch_fs *, enum btree_id,
@@ -71,7 +80,7 @@ bool bch2_key_deleted_in_journal(struct btree_trans *, enum btree_id, unsigned, 
 void bch2_journal_key_overwritten(struct bch_fs *, enum btree_id, unsigned, struct bpos);
 
 void bch2_btree_and_journal_iter_advance(struct btree_and_journal_iter *);
-struct bkey_s_c bch2_btree_and_journal_iter_peek(struct btree_and_journal_iter *);
+struct bkey_s_c bch2_btree_and_journal_iter_peek(struct bch_fs *, struct btree_and_journal_iter *);
 
 void bch2_btree_and_journal_iter_exit(struct btree_and_journal_iter *);
 void __bch2_btree_and_journal_iter_init_node_iter(struct btree_trans *,
