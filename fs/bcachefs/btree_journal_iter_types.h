@@ -2,6 +2,29 @@
 #ifndef _BCACHEFS_BTREE_JOURNAL_ITER_TYPES_H
 #define _BCACHEFS_BTREE_JOURNAL_ITER_TYPES_H
 
+struct journal_ptr {
+	bool		csum_good;
+	struct bch_csum	csum;
+	u8		dev;
+	u32		bucket;
+	u32		bucket_offset;
+	u64		sector;
+};
+
+/*
+ * Only used for holding the journal entries we read in btree_journal_read()
+ * during cache_registration
+ */
+struct journal_replay {
+	DARRAY_PREALLOCATED(struct journal_ptr, 8) ptrs;
+
+	bool			csum_good;
+	bool			ignore_blacklisted;
+	bool			ignore_not_dirty;
+	/* must be last: */
+	struct jset		j;
+};
+
 struct journal_key_range_overwritten {
 	size_t			start, end;
 };

@@ -796,14 +796,15 @@ int bch2_accounting_read(struct bch_fs *c)
 	move_gap(keys, keys->nr);
 
 	darray_for_each(*keys, i) {
-		if (i->k->k.type == KEY_TYPE_accounting) {
+		struct bkey_s_c k = bkey_i_to_s_c(journal_key_k(c, i));
+
+		if (k.k->type == KEY_TYPE_accounting) {
 			struct disk_accounting_pos acc_k;
-			bpos_to_disk_accounting_pos(&acc_k, i->k->k.p);
+			bpos_to_disk_accounting_pos(&acc_k, k.k->p);
 
 			if (!bch2_accounting_is_mem(&acc_k))
 				continue;
 
-			struct bkey_s_c k = bkey_i_to_s_c(i->k);
 			unsigned idx = eytzinger0_find(acc->k.data, acc->k.nr,
 						sizeof(acc->k.data[0]),
 						accounting_pos_cmp, &k.k->p);
@@ -815,13 +816,15 @@ int bch2_accounting_read(struct bch_fs *c)
 				continue;
 
 			if (i + 1 < &darray_top(*keys) &&
-			    i[1].k->k.type == KEY_TYPE_accounting &&
-			    !journal_key_cmp(i, i + 1)) {
-				WARN_ON(bversion_cmp(i[0].k->k.bversion, i[1].k->k.bversion) >= 0);
+			    journal_key_k(c, &i[1])->k.type == KEY_TYPE_accounting &&
+			    !journal_key_cmp(c, i, i + 1)) {
+				struct bkey_i *n = journal_key_k(c, &i[1]);
+
+				WARN_ON(bversion_cmp(k.k->bversion, n->k.bversion) >= 0);
 
 				i[1].journal_seq = i[0].journal_seq;
 
-				bch2_accounting_accumulate(bkey_i_to_accounting(i[1].k),
+				bch2_accounting_accumulate(bkey_i_to_accounting(n),
 							   bkey_s_c_to_accounting(k));
 				continue;
 			}
