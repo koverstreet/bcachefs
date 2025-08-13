@@ -95,7 +95,7 @@ int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
 	if (!b->c.level)
 		goto out;
 
-	while ((k = bch2_btree_and_journal_iter_peek(&iter)).k) {
+	while ((k = bch2_btree_and_journal_iter_peek(c, &iter)).k) {
 		if (k.k->type != KEY_TYPE_btree_ptr_v2)
 			goto out;
 

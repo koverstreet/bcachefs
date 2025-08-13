@@ -7,29 +7,6 @@
 void bch2_journal_pos_from_member_info_set(struct bch_fs *);
 void bch2_journal_pos_from_member_info_resume(struct bch_fs *);
 
-struct journal_ptr {
-	bool		csum_good;
-	struct bch_csum	csum;
-	u8		dev;
-	u32		bucket;
-	u32		bucket_offset;
-	u64		sector;
-};
-
-/*
- * Only used for holding the journal entries we read in btree_journal_read()
- * during cache_registration
- */
-struct journal_replay {
-	DARRAY_PREALLOCATED(struct journal_ptr, 8) ptrs;
-
-	bool			csum_good;
-	bool			ignore_blacklisted;
-	bool			ignore_not_dirty;
-	/* must be last: */
-	struct jset		j;
-};
-
 static inline bool journal_replay_ignore(struct journal_replay *i)
 {
 	return !i || i->ignore_blacklisted || i->ignore_not_dirty;
