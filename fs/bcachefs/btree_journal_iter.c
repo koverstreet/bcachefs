@@ -265,13 +265,8 @@ int bch2_journal_key_insert_take(struct bch_fs *c, enum btree_id id,
 	struct journal_key n = {
 		.btree_id	= id,
 		.level		= level,
-		.k		= k,
 		.allocated	= true,
-		/*
-		 * Ensure these keys are done last by journal replay, to unblock
-		 * journal reclaim:
-		 */
-		.journal_seq	= U64_MAX,
+		.allocated_k	= k,
 	};
 	struct journal_keys *keys = &c->journal_keys;
 	size_t idx = bch2_journal_key_search(keys, id, level, k->k.p);
@@ -292,7 +287,7 @@ int bch2_journal_key_insert_take(struct bch_fs *c, enum btree_id id,
 		}
 
 		if (keys->data[idx].allocated)
-			kfree(keys->data[idx].k);
+			kfree(keys->data[idx].allocated_k);
 		keys->data[idx] = n;
 		return 0;
 	}
@@ -702,7 +697,7 @@ void bch2_journal_keys_put(struct bch_fs *c)
 			kfree(i->overwritten_range);
 
 		if (i->allocated)
-			kfree(i->k);
+			kfree(i->allocated_k);
 	}
 
 	kvfree(keys->data);
@@ -781,7 +776,6 @@ int bch2_journal_keys_sort(struct bch_fs *c)
 					.btree_id	= entry->btree_id,
 					.level		= entry->level,
 					.rewind		= rewind,
-					.k		= k,
 					.journal_seq	= le64_to_cpu(i->j.seq),
 					.journal_offset	= k->_data - i->j._data,
 				};
@@ -828,6 +822,8 @@ void bch2_shoot_down_journal_keys(struct bch_fs *c, enum btree_id btree,
 		      bpos_ge(k->k.p, start) &&
 		      bpos_le(k->k.p, end)))
 			keys->data[dst++] = *i;
+		else if (i->allocated)
+			kfree(i->allocated_k);
 	}
 	keys->nr = keys->gap = dst;
 }
