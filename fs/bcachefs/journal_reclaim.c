@@ -328,9 +328,17 @@ void bch2_journal_reclaim_fast(struct journal *j)
 	 * Unpin journal entries whose reference counts reached zero, meaning
 	 * all btree nodes got written out
 	 */
+	struct journal_entry_pin_list *pin_list;
 	while (!fifo_empty(&j->pin) &&
 	       j->pin.front <= j->seq_ondisk &&
-	       !atomic_read(&fifo_peek_front(&j->pin).count)) {
+	       !atomic_read(&(pin_list = &fifo_peek_front(&j->pin))->count)) {
+
+		if (WARN_ON(j->dirty_entry_bytes < pin_list->bytes))
+			pin_list->bytes = j->dirty_entry_bytes;
+
+		j->dirty_entry_bytes -= pin_list->bytes;
+		pin_list->bytes = 0;
+
 		j->pin.front++;
 		popped = true;
 	}

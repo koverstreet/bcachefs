@@ -71,6 +71,7 @@ struct journal_entry_pin_list {
 	struct list_head		flushed[JOURNAL_PIN_TYPE_NR];
 	atomic_t			count;
 	struct bch_devs_list		devs;
+	size_t				bytes;
 };
 
 struct journal;
@@ -253,6 +254,7 @@ struct journal {
 		u64 front, back, size, mask;
 		struct journal_entry_pin_list *data;
 	}			pin;
+	size_t			dirty_entry_bytes;
 
 	struct journal_space	space[journal_space_nr];
 
