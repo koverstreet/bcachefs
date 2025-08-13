@@ -403,7 +403,7 @@ __btree_trans_update_by_path(struct btree_trans *trans,
 		i->old_btree_u64s = !bkey_deleted(&i->old_k) ? i->old_k.u64s : 0;
 
 		if (unlikely(trans->journal_replay_not_finished)) {
-			struct bkey_i *j_k =
+			const struct bkey_i *j_k =
 				bch2_journal_keys_peek_slot(c, n.btree_id, n.level, k->k.p);
 
 			if (j_k) {
