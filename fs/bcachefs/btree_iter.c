@@ -650,7 +650,7 @@ static void bch2_trans_revalidate_updates_in_node(struct btree_trans *trans, str
 			i->old_v = bch2_btree_path_peek_slot(trans->paths + i->path, &i->old_k).v;
 
 			if (unlikely(trans->journal_replay_not_finished)) {
-				struct bkey_i *j_k =
+				const struct bkey_i *j_k =
 					bch2_journal_keys_peek_slot(c, i->btree_id, i->level,
 								    i->k->k.p);
 
@@ -2120,10 +2120,10 @@ void bch2_btree_trans_peek_slot_updates(struct btree_trans *trans, struct btree_
 		}
 }
 
-static struct bkey_i *bch2_btree_journal_peek(struct btree_trans *trans,
-					      struct btree_iter *iter,
-					      struct bpos search_pos,
-					      struct bpos end_pos)
+static const struct bkey_i *bch2_btree_journal_peek(struct btree_trans *trans,
+						    struct btree_iter *iter,
+						    struct bpos search_pos,
+						    struct bpos end_pos)
 {
 	struct btree_path *path = btree_iter_path(trans, iter);
 
@@ -2139,7 +2139,7 @@ struct bkey_s_c btree_trans_peek_slot_journal(struct btree_trans *trans,
 					      struct btree_iter *iter)
 {
 	struct btree_path *path = btree_iter_path(trans, iter);
-	struct bkey_i *k = bch2_btree_journal_peek(trans, iter, path->pos, path->pos);
+	const struct bkey_i *k = bch2_btree_journal_peek(trans, iter, path->pos, path->pos);
 
 	if (k) {
 		iter->k = k->k;
@@ -2156,7 +2156,7 @@ void btree_trans_peek_journal(struct btree_trans *trans,
 			      struct bkey_s_c *k)
 {
 	struct btree_path *path = btree_iter_path(trans, iter);
-	struct bkey_i *next_journal =
+	const struct bkey_i *next_journal =
 		bch2_btree_journal_peek(trans, iter, search_key,
 				k->k ? k->k->p : path_l(path)->b->key.k.p);
 	if (next_journal) {
@@ -2165,10 +2165,10 @@ void btree_trans_peek_journal(struct btree_trans *trans,
 	}
 }
 
-static struct bkey_i *bch2_btree_journal_peek_prev(struct btree_trans *trans,
-					      struct btree_iter *iter,
-					      struct bpos search_key,
-					      struct bpos end_pos)
+static const struct bkey_i *bch2_btree_journal_peek_prev(struct btree_trans *trans,
+							 struct btree_iter *iter,
+							 struct bpos search_key,
+							 struct bpos end_pos)
 {
 	struct btree_path *path = btree_iter_path(trans, iter);
 
@@ -2186,7 +2186,7 @@ void btree_trans_peek_prev_journal(struct btree_trans *trans,
 				   struct bkey_s_c *k)
 {
 	struct btree_path *path = btree_iter_path(trans, iter);
-	struct bkey_i *next_journal =
+	const struct bkey_i *next_journal =
 		bch2_btree_journal_peek_prev(trans, iter, search_key,
 				k->k ? k->k->p : path_l(path)->b->data->min_key);
 

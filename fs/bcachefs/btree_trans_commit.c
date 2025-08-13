@@ -54,7 +54,7 @@ static void verify_update_old_key(struct btree_trans *trans, struct btree_insert
 	struct bkey_s_c k = bch2_btree_path_peek_slot_exact(trans->paths + i->path, &u);
 
 	if (unlikely(trans->journal_replay_not_finished)) {
-		struct bkey_i *j_k =
+		const struct bkey_i *j_k =
 			bch2_journal_keys_peek_slot(c, i->btree_id, i->level, i->k->k.p);
 
 		if (j_k)
