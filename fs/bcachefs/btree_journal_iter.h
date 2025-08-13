@@ -29,10 +29,21 @@ struct btree_and_journal_iter {
 	bool			fail_if_too_many_whiteouts;
 };
 
+static inline u32 journal_entry_radix_idx(struct bch_fs *c, u64 seq)
+{
+	return (seq - c->journal_entries_base_seq) & (~0U >> 1);
+}
+
 static inline struct bkey_i *journal_key_k(struct bch_fs *c,
 					   const struct journal_key *k)
 {
-	return k->k;
+	if (k->allocated)
+		return k->allocated_k;
+
+	struct journal_replay *i =
+		*genradix_ptr(&c->journal_entries, journal_entry_radix_idx(c, k->journal_seq));
+
+	return (struct bkey_i *) (i->j._data + k->journal_offset);
 }
 
 static inline int __journal_key_btree_cmp(enum btree_id	l_btree_id,
