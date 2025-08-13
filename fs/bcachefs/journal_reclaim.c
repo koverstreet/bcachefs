@@ -148,6 +148,9 @@ static struct journal_space __journal_space_available(struct journal *j, unsigne
 
 	BUG_ON(nr_devs_want > ARRAY_SIZE(dev_space));
 
+	size_t mem_limit = max_t(ssize_t, 0,
+			(totalram_pages() * PAGE_SIZE) / 4 - j->dirty_entry_bytes);
+
 	for_each_member_device_rcu(c, ca, &c->rw_devs[BCH_DATA_journal]) {
 		if (!ca->journal.nr ||
 		    !ca->mi.durability)
@@ -180,6 +183,7 @@ static struct journal_space __journal_space_available(struct journal *j, unsigne
 	 * @nr_devs_want largest devices:
 	 */
 	space = dev_space[nr_devs_want - 1];
+	space.total = min(space.total, mem_limit >> 9);
 	space.next_entry = min(space.next_entry, min_bucket_size);
 	return space;
 }
