@@ -3,6 +3,7 @@
 #include "alloc_background.h"
 #include "alloc_foreground.h"
 #include "btree_io.h"
+#include "btree_journal_iter.h"
 #include "btree_update_interior.h"
 #include "btree_write_buffer.h"
 #include "buckets.h"
@@ -104,11 +105,6 @@ static bool jset_csum_good(struct bch_fs *c, struct jset *j, struct bch_csum *cs
 
 	*csum = csum_vstruct(c, JSET_CSUM_TYPE(j), journal_nonce(j), j);
 	return !bch2_crc_cmp(j->csum, *csum);
-}
-
-static inline u32 journal_entry_radix_idx(struct bch_fs *c, u64 seq)
-{
-	return (seq - c->journal_entries_base_seq) & (~0U >> 1);
 }
 
 static void __journal_replay_free(struct bch_fs *c,
