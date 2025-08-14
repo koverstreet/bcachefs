@@ -23,6 +23,9 @@
 	(size_t) (offsetof(_type, _data) + (_u64s) * sizeof(u64));	\
 })
 
+#define vstruct_u64s(_s)						\
+	(offsetof(typeof(*(_s)), _data) / sizeof(u64) + __vstruct_u64s(_s))
+
 #define vstruct_bytes(_s)						\
 	__vstruct_bytes(typeof(*(_s)), __vstruct_u64s(_s))
 
