@@ -107,8 +107,11 @@ int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t);
 #define __darray_for_each(_d, _i)					\
 	for ((_i) = (_d).data; _i < (_d).data + (_d).nr; _i++)
 
+#define darray_for_each_from(_d, _i, _start)					\
+	for (typeof(&(_d).data[0]) _i = _start; _i < (_d).data + (_d).nr; _i++)
+
 #define darray_for_each(_d, _i)						\
-	for (typeof(&(_d).data[0]) _i = (_d).data; _i < (_d).data + (_d).nr; _i++)
+	darray_for_each_from(_d, _i, (_d).data)
 
 #define darray_for_each_reverse(_d, _i)					\
 	for (typeof(&(_d).data[0]) _i = (_d).data + (_d).nr - 1; _i >= (_d).data && (_d).nr; --_i)
