@@ -40,8 +40,7 @@ static inline struct bkey_i *journal_key_k(struct bch_fs *c,
 	if (k->allocated)
 		return k->allocated_k;
 
-	struct journal_replay *i =
-		*genradix_ptr(&c->journal_entries, journal_entry_radix_idx(c, k->journal_seq));
+	struct journal_replay *i = *genradix_ptr(&c->journal_entries, k->journal_seq_offset);
 
 	return (struct bkey_i *) (i->j._data + k->journal_offset);
 }

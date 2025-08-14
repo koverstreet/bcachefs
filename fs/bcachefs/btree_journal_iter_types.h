@@ -31,10 +31,12 @@ struct journal_key_range_overwritten {
 
 struct journal_key {
 	union {
-		u64		journal_seq;
+	struct {
+		u32		journal_seq_offset;
+		u32		journal_offset;
+	};
 		struct bkey_i	*allocated_k;
 	};
-	u32			journal_offset;
 	enum btree_id		btree_id:8;
 	unsigned		level:8;
 	bool			allocated:1;
