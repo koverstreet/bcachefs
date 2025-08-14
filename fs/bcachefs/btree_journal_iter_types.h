@@ -42,8 +42,7 @@ struct journal_key {
 	bool			allocated:1;
 	bool			overwritten:1;
 	bool			rewind:1;
-	struct journal_key_range_overwritten __rcu *
-				overwritten_range;
+	u32			overwritten_range;
 };
 
 struct journal_keys {
@@ -58,7 +57,9 @@ struct journal_keys {
 	size_t			gap;
 	atomic_t		ref;
 	bool			initial_ref_held;
+
 	struct mutex		overwrite_lock;
+	DARRAY(struct journal_key_range_overwritten) overwrites;
 };
 
 #endif /* _BCACHEFS_BTREE_JOURNAL_ITER_TYPES_H */
