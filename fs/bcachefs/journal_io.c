@@ -191,6 +191,27 @@ static int journal_entry_add(struct bch_fs *c, struct bch_dev *ca,
 		}
 	}
 
+	/* Drop overwrites, log entries if we don't need them: */
+	if (!c->opts.retain_recovery_info &&
+	    !c->opts.journal_rewind) {
+		vstruct_for_each_safe(j, src)
+			if (vstruct_end(src) > vstruct_end(j))
+				goto nocompact;
+
+		struct jset_entry *dst = j->start;
+		vstruct_for_each_safe(j, src) {
+			if (src->type == BCH_JSET_ENTRY_log ||
+			    src->type == BCH_JSET_ENTRY_overwrite)
+				continue;
+
+			memmove_u64s_down(dst, src, vstruct_u64s(src));
+			dst = vstruct_next(dst);
+		}
+
+		j->u64s = cpu_to_le32((u64 *) dst - j->_data);
+		bytes = vstruct_bytes(j);
+	}
+nocompact:
 	jlist->last_seq = max(jlist->last_seq, last_seq);
 
 	if (seq <  c->journal_entries_base_seq ||
