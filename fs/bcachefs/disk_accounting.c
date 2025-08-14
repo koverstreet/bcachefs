@@ -734,6 +734,37 @@ invalid_device:
 	goto fsck_err;
 }
 
+static struct journal_key *accumulate_newer_accounting_keys(struct bch_fs *c, struct journal_key *i)
+{
+	struct journal_keys *keys = &c->journal_keys;
+	struct bkey_i *k = journal_key_k(c, i);
+
+	darray_for_each_from(*keys, j, i + 1) {
+		if (journal_key_cmp(c, i, j))
+			return j;
+
+		struct bkey_i *n = journal_key_k(c, j);
+		if (n->k.type == KEY_TYPE_accounting) {
+			WARN_ON(bversion_cmp(k->k.bversion, n->k.bversion) >= 0);
+
+			bch2_accounting_accumulate(bkey_i_to_accounting(k),
+						   bkey_i_to_s_c_accounting(n));
+			j->overwritten = true;
+		}
+	}
+
+	return &darray_top(*keys);
+}
+
+static struct journal_key *accumulate_and_read_journal_accounting(struct btree_trans *trans, struct journal_key *i)
+{
+	struct bch_fs *c = trans->c;
+	struct journal_key *next = accumulate_newer_accounting_keys(c, i);
+
+	int ret = accounting_read_key(trans, bkey_i_to_s_c(journal_key_k(c, i)));
+	return ret ? ERR_PTR(ret) : next;
+}
+
 /*
  * At startup time, initialize the in memory accounting from the btree (and
  * journal)
@@ -759,6 +790,20 @@ int bch2_accounting_read(struct bch_fs *c)
 		percpu_memset(c->usage, 0, sizeof(*c->usage));
 	}
 
+	struct journal_keys *keys = &c->journal_keys;
+	struct journal_key *jk = keys->data;
+
+	move_gap(keys, keys->nr);
+
+	while (jk < &darray_top(*keys) &&
+	       __journal_key_cmp(c, BTREE_ID_accounting, 0, POS_MIN, jk) > 0)
+		jk++;
+
+	struct journal_key *end = jk;
+	while (end < &darray_top(*keys) &&
+	       __journal_key_cmp(c, BTREE_ID_accounting, 0, SPOS_MAX, end) > 0)
+		end++;
+
 	struct btree_iter iter;
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_accounting, POS_MIN,
 			     BTREE_ITER_prefetch|BTREE_ITER_all_snapshots);
@@ -771,6 +816,21 @@ int bch2_accounting_read(struct bch_fs *c)
 		if (k.k->type != KEY_TYPE_accounting)
 			continue;
 
+		while (jk < end &&
+		       __journal_key_cmp(c, BTREE_ID_accounting, 0, k.k->p, jk) > 0)
+			jk = accumulate_and_read_journal_accounting(trans, jk);
+
+		while (jk < end &&
+		       __journal_key_cmp(c, BTREE_ID_accounting, 0, k.k->p, jk) == 0 &&
+		       bversion_cmp(journal_key_k(c, jk)->k.bversion, k.k->bversion) <= 0) {
+			jk->overwritten = true;
+			jk++;
+		}
+
+		if (jk < end &&
+		    __journal_key_cmp(c, BTREE_ID_accounting, 0, k.k->p, jk) == 0)
+			jk = accumulate_and_read_journal_accounting(trans, jk);
+
 		struct disk_accounting_pos acc_k;
 		bpos_to_disk_accounting_pos(&acc_k, k.k->p);
 
@@ -778,10 +838,14 @@ int bch2_accounting_read(struct bch_fs *c)
 			break;
 
 		if (!bch2_accounting_is_mem(&acc_k)) {
-			struct disk_accounting_pos next;
-			memset(&next, 0, sizeof(next));
-			next.type = acc_k.type + 1;
-			bch2_btree_iter_set_pos(&iter, disk_accounting_pos_to_bpos(&next));
+			struct disk_accounting_pos next_acc;
+			memset(&next_acc, 0, sizeof(next_acc));
+			next_acc.type = acc_k.type + 1;
+			struct bpos next = disk_accounting_pos_to_bpos(&next_acc);
+			if (jk < end)
+				next = bpos_min(next, journal_key_k(c, jk)->k.p);
+
+			bch2_btree_iter_set_pos(&iter, next);
 			continue;
 		}
 
@@ -791,51 +855,14 @@ int bch2_accounting_read(struct bch_fs *c)
 	if (ret)
 		return ret;
 
-	struct journal_keys *keys = &c->journal_keys;
-	move_gap(keys, keys->nr);
+	while (jk < end)
+		jk = accumulate_and_read_journal_accounting(trans, jk);
 
-	darray_for_each(*keys, i) {
-		if (i->overwritten)
-			continue;
-
-		struct bkey_i *k = journal_key_k(c, i);
-
-		if (k->k.type == KEY_TYPE_accounting) {
-			struct disk_accounting_pos acc_k;
-			bpos_to_disk_accounting_pos(&acc_k, k->k.p);
-
-			if (!bch2_accounting_is_mem(&acc_k))
-				continue;
-
-			unsigned idx = eytzinger0_find(acc->k.data, acc->k.nr,
-						sizeof(acc->k.data[0]),
-						accounting_pos_cmp, &k->k.p);
-
-			bool applied = idx < acc->k.nr &&
-				bversion_cmp(acc->k.data[idx].bversion, k->k.bversion) >= 0;
-
-			if (applied)
-				continue;
-
-			darray_for_each_from(*keys, j, i + 1) {
-				if (journal_key_cmp(c, i, j))
-					break;
-
-				struct bkey_i *n = journal_key_k(c, j);
-				if (n->k.type == KEY_TYPE_accounting) {
-					WARN_ON(bversion_cmp(k->k.bversion, n->k.bversion) >= 0);
-
-					bch2_accounting_accumulate(bkey_i_to_accounting(k),
-								   bkey_i_to_s_c_accounting(n));
-					j->overwritten = true;
-				}
-			}
-
-			ret = accounting_read_key(trans, bkey_i_to_s_c(k));
-			if (ret)
-				return ret;
-		}
-	}
+	struct journal_key *dst = keys->data;
+	darray_for_each(*keys, i)
+		if (!i->overwritten)
+			*dst++ = *i;
+	keys->gap = keys->nr = dst - keys->data;
 
 	guard(percpu_write)(&c->mark_lock);
 
