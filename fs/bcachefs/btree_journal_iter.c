@@ -675,7 +675,7 @@ static int journal_sort_key_cmp(const void *_l, const void *_r, const void *priv
 	if (l->allocated || r->allocated)
 		return cmp_int(l->allocated, r->allocated);
 
-	return ((cmp_int(l->journal_seq, r->journal_seq) ?:
+	return ((cmp_int(l->journal_seq_offset, r->journal_seq_offset) ?:
 		 cmp_int(l->journal_offset, r->journal_offset)) * rewind);
 }
 
@@ -776,7 +776,7 @@ int bch2_journal_keys_sort(struct bch_fs *c)
 					.btree_id	= entry->btree_id,
 					.level		= entry->level,
 					.rewind		= rewind,
-					.journal_seq	= le64_to_cpu(i->j.seq),
+					.journal_seq_offset = journal_entry_radix_idx(c, le64_to_cpu(i->j.seq)),
 					.journal_offset	= k->_data - i->j._data,
 				};
 
