@@ -36,10 +36,12 @@ int bch2_dev_missing_bkey(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
 
 void bch2_dev_missing_atomic(struct bch_fs *c, unsigned dev)
 {
-	if (dev != BCH_SB_MEMBER_INVALID)
+	if (dev != BCH_SB_MEMBER_INVALID) {
 		bch2_fs_inconsistent(c, "pointer to %s device %u",
 				     test_bit(dev, c->devs_removed.d)
 				     ? "removed" : "nonexistent", dev);
+		dump_stack();
+	}
 }
 
 void bch2_dev_bucket_missing(struct bch_dev *ca, u64 bucket)
