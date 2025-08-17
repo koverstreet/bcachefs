@@ -17,11 +17,14 @@ struct bch_fs *bch2_dev_to_fs(dev_t);
 struct bch_fs *bch2_uuid_to_fs(__uuid_t);
 
 bool bch2_dev_state_allowed(struct bch_fs *, struct bch_dev *,
-			   enum bch_member_state, int);
+			    enum bch_member_state, int,
+			    struct printbuf *);
 int __bch2_dev_set_state(struct bch_fs *, struct bch_dev *,
-			enum bch_member_state, int);
+			 enum bch_member_state, int,
+			 struct printbuf *);
 int bch2_dev_set_state(struct bch_fs *, struct bch_dev *,
-		      enum bch_member_state, int);
+		       enum bch_member_state, int,
+		       struct printbuf *);
 
 int bch2_dev_fail(struct bch_dev *, int);
 int bch2_dev_remove(struct bch_fs *, struct bch_dev *, int);

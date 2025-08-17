@@ -1382,10 +1382,14 @@ static bool bch2_fs_may_start(struct bch_fs *c)
 				return false;
 		}
 		break;
-	 }
+	}
 	}
 
-	return bch2_have_enough_devs(c, c->online_devs, flags, true);
+	CLASS(printbuf, err)();
+	bool ret = bch2_have_enough_devs(c, c->online_devs, flags, &err);
+	if (!ret)
+		bch2_print_str(c, KERN_ERR, err.buf);
+	return ret;
 }
 
 int bch2_fs_start(struct bch_fs *c)
@@ -1847,7 +1851,8 @@ static int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb)
  * because we got an error or what have you?
  */
 bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
-			    enum bch_member_state new_state, int flags)
+			    enum bch_member_state new_state, int flags,
+			    struct printbuf *err)
 {
 	struct bch_devs_mask new_online_devs;
 	int nr_rw = 0, required;
@@ -1884,7 +1889,7 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 		new_online_devs = c->online_devs;
 		__clear_bit(ca->dev_idx, new_online_devs.d);
 
-		return bch2_have_enough_devs(c, new_online_devs, flags, false);
+		return bch2_have_enough_devs(c, new_online_devs, flags, err);
 	default:
 		BUG();
 	}
@@ -1918,14 +1923,15 @@ static void __bch2_dev_read_write(struct bch_fs *c, struct bch_dev *ca)
 }
 
 int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
-			 enum bch_member_state new_state, int flags)
+			 enum bch_member_state new_state, int flags,
+			 struct printbuf *err)
 {
 	int ret = 0;
 
 	if (ca->mi.state == new_state)
 		return 0;
 
-	if (!bch2_dev_state_allowed(c, ca, new_state, flags))
+	if (!bch2_dev_state_allowed(c, ca, new_state, flags, err))
 		return bch_err_throw(c, device_state_not_allowed);
 
 	if (new_state != BCH_MEMBER_STATE_rw)
@@ -1948,10 +1954,11 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 }
 
 int bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
-		       enum bch_member_state new_state, int flags)
+		       enum bch_member_state new_state, int flags,
+		       struct printbuf *err)
 {
 	guard(rwsem_write)(&c->state_lock);
-	return __bch2_dev_set_state(c, ca, new_state, flags);
+	return __bch2_dev_set_state(c, ca, new_state, flags, err);
 }
 
 /* Device add/removal: */
@@ -1971,7 +1978,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	 */
 	bch2_dev_put(ca);
 
-	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_failed, flags)) {
+	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_failed, flags, NULL)) {
 		bch_err(ca, "Cannot remove without losing data");
 		ret = bch_err_throw(c, device_state_not_allowed);
 		goto err;
@@ -2292,7 +2299,7 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags)
 		return 0;
 	}
 
-	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_failed, flags)) {
+	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_failed, flags, NULL)) {
 		bch_err(ca, "Cannot offline required disk");
 		return bch_err_throw(c, device_state_not_allowed);
 	}
@@ -2469,21 +2476,20 @@ static void bch2_fs_bdev_mark_dead(struct block_device *bdev, bool surprise)
 
 	struct bch_dev *ca = bdev_to_bch_dev(c, bdev);
 	if (ca) {
+		CLASS(printbuf, buf)();
+		__bch2_log_msg_start(ca->name, &buf);
+		prt_printf(&buf, "offline from block layer\n");
+
 		bool dev = bch2_dev_state_allowed(c, ca,
 						  BCH_MEMBER_STATE_failed,
-						  BCH_FORCE_IF_DEGRADED);
-
+						  BCH_FORCE_IF_DEGRADED,
+						  &buf);
 		if (!dev && sb) {
 			if (!surprise)
 				sync_filesystem(sb);
 			shrink_dcache_sb(sb);
 			evict_inodes(sb);
 		}
-
-		CLASS(printbuf, buf)();
-		__bch2_log_msg_start(ca->name, &buf);
-
-		prt_printf(&buf, "offline from block layer");
 
 		if (dev) {
 			__bch2_dev_offline(c, ca);
