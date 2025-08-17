@@ -784,7 +784,7 @@ const struct bch_sb_field_ops bch_sb_field_ops_replicas_v0 = {
 /* Query replicas: */
 
 bool bch2_have_enough_devs(struct bch_fs *c, struct bch_devs_mask devs,
-			   unsigned flags, bool print)
+			   unsigned flags, struct printbuf *err)
 {
 	struct bch_replicas_entry_v1 *e;
 
@@ -823,16 +823,14 @@ bool bch2_have_enough_devs(struct bch_fs *c, struct bch_devs_mask devs,
 				: BCH_FORCE_IF_DATA_DEGRADED;
 
 		if (dflags & ~flags) {
-			if (print) {
-				CLASS(printbuf, buf)();
-
-				bch2_replicas_entry_to_text(&buf, e);
-				bch_err(c, "insufficient devices online (%u) for replicas entry %s",
-					nr_online, buf.buf);
+			if (err) {
+				prt_printf(err, "insufficient devices online (%u) for replicas entry ",
+					   nr_online);
+				bch2_replicas_entry_to_text(err, e);
+				prt_newline(err);
 			}
 			return false;
 		}
-
 	}
 
 	return true;
