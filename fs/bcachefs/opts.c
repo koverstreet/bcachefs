@@ -525,7 +525,7 @@ int bch2_opt_hook_pre_set(struct bch_fs *c, struct bch_dev *ca, enum bch_opt_id 
 	switch (id) {
 	case Opt_state:
 		if (ca)
-			return bch2_dev_set_state(c, ca, v, BCH_FORCE_IF_DEGRADED);
+			return bch2_dev_set_state(c, ca, v, BCH_FORCE_IF_DEGRADED, NULL);
 		break;
 
 	case Opt_compression:
