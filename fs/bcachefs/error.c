@@ -141,14 +141,16 @@ void bch2_io_error_work(struct work_struct *work)
 		if (ca->mi.state >= BCH_MEMBER_STATE_ro)
 			return;
 
-		bool dev = !__bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_ro,
-						 BCH_FORCE_IF_DEGRADED);
 		CLASS(printbuf, buf)();
 		__bch2_log_msg_start(ca->name, &buf);
 
-		prt_printf(&buf, "writes erroring for %u seconds, setting %s ro",
-			c->opts.write_error_timeout,
-			dev ? "device" : "filesystem");
+		prt_printf(&buf, "writes erroring for %u seconds\n",
+			c->opts.write_error_timeout);
+
+		bool dev = !__bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_ro,
+						 BCH_FORCE_IF_DEGRADED, &buf);
+
+		prt_printf(&buf, "setting %s ro", dev ? "device" : "filesystem");
 		if (!dev)
 			bch2_fs_emergency_read_only2(c, &buf);
 

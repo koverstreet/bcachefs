@@ -287,7 +287,8 @@ static long bch2_ioctl_disk_set_state(struct bch_fs *c,
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
-	int ret = bch2_dev_set_state(c, ca, arg.new_state, arg.flags);
+	CLASS(printbuf, err)();
+	int ret = bch2_dev_set_state(c, ca, arg.new_state, arg.flags, &err);
 	bch_err_msg(ca, ret, "setting device state");
 	return ret;
 }
