@@ -111,7 +111,7 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 	CLASS(printbuf, buf)();
 	int ret = 0;
 
-	CLASS(bch2_dev_tryget, ca)(c, p.ptr.dev);
+	CLASS(bch2_dev_tryget_noerror, ca)(c, p.ptr.dev);
 	if (!ca) {
 		if (fsck_err_on(p.ptr.dev != BCH_SB_MEMBER_INVALID,
 				trans, ptr_to_invalid_device,
