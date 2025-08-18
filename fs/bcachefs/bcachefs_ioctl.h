@@ -66,29 +66,35 @@ struct bch_ioctl_incremental {
 #define BCH_IOCTL_STOP		_IO(0xbc,	3)
 #endif
 
-#define BCH_IOCTL_DISK_ADD	_IOW(0xbc,	4,  struct bch_ioctl_disk)
-#define BCH_IOCTL_DISK_REMOVE	_IOW(0xbc,	5,  struct bch_ioctl_disk)
-#define BCH_IOCTL_DISK_ONLINE	_IOW(0xbc,	6,  struct bch_ioctl_disk)
-#define BCH_IOCTL_DISK_OFFLINE	_IOW(0xbc,	7,  struct bch_ioctl_disk)
-#define BCH_IOCTL_DISK_SET_STATE _IOW(0xbc,	8,  struct bch_ioctl_disk_set_state)
-#define BCH_IOCTL_DISK_SET_STATE_v2 _IOW(0xbc,	22,  struct bch_ioctl_disk_set_state_v2)
-#define BCH_IOCTL_DATA		_IOW(0xbc,	10, struct bch_ioctl_data)
-#define BCH_IOCTL_FS_USAGE	_IOWR(0xbc,	11, struct bch_ioctl_fs_usage)
-#define BCH_IOCTL_DEV_USAGE	_IOWR(0xbc,	11, struct bch_ioctl_dev_usage)
-#define BCH_IOCTL_READ_SUPER	_IOW(0xbc,	12, struct bch_ioctl_read_super)
-#define BCH_IOCTL_DISK_GET_IDX	_IOW(0xbc,	13,  struct bch_ioctl_disk_get_idx)
-#define BCH_IOCTL_DISK_RESIZE	_IOW(0xbc,	14,  struct bch_ioctl_disk_resize)
-#define BCH_IOCTL_DISK_RESIZE_JOURNAL _IOW(0xbc,15,  struct bch_ioctl_disk_resize_journal)
+#define BCH_IOCTL_DISK_ADD		_IOW(0xbc,	4,  struct bch_ioctl_disk)
+#define BCH_IOCTL_DISK_ADD_v2		_IOW(0xbc,	23, struct bch_ioctl_disk_v2)
+#define BCH_IOCTL_DISK_REMOVE		_IOW(0xbc,	5,  struct bch_ioctl_disk)
+#define BCH_IOCTL_DISK_REMOVE_v2	_IOW(0xbc,	24, struct bch_ioctl_disk_v2)
+#define BCH_IOCTL_DISK_ONLINE		_IOW(0xbc,	6,  struct bch_ioctl_disk)
+#define BCH_IOCTL_DISK_ONLINE_v2	_IOW(0xbc,	25, struct bch_ioctl_disk_v2)
+#define BCH_IOCTL_DISK_OFFLINE		_IOW(0xbc,	7,  struct bch_ioctl_disk)
+#define BCH_IOCTL_DISK_OFFLINE_v2	_IOW(0xbc,	26, struct bch_ioctl_disk_v2)
+#define BCH_IOCTL_DISK_SET_STATE	_IOW(0xbc,	8,  struct bch_ioctl_disk_set_state)
+#define BCH_IOCTL_DISK_SET_STATE_v2	_IOW(0xbc,	22, struct bch_ioctl_disk_set_state_v2)
+#define BCH_IOCTL_DATA			_IOW(0xbc,	10, struct bch_ioctl_data)
+#define BCH_IOCTL_FS_USAGE		_IOWR(0xbc,	11, struct bch_ioctl_fs_usage)
+#define BCH_IOCTL_DEV_USAGE		_IOWR(0xbc,	11, struct bch_ioctl_dev_usage)
+#define BCH_IOCTL_READ_SUPER		_IOW(0xbc,	12, struct bch_ioctl_read_super)
+#define BCH_IOCTL_DISK_GET_IDX		_IOW(0xbc,	13, struct bch_ioctl_disk_get_idx)
+#define BCH_IOCTL_DISK_RESIZE		_IOW(0xbc,	14, struct bch_ioctl_disk_resize)
+#define BCH_IOCTL_DISK_RESIZE_v2	_IOW(0xbc,	27, struct bch_ioctl_disk_resize_v2)
+#define BCH_IOCTL_DISK_RESIZE_JOURNAL	_IOW(0xbc,	15, struct bch_ioctl_disk_resize_journal)
+#define BCH_IOCTL_DISK_RESIZE_JOURNAL_v2 _IOW(0xbc,	28, struct bch_ioctl_disk_resize_journal_v2)
 
-#define BCH_IOCTL_SUBVOLUME_CREATE _IOW(0xbc,	16,  struct bch_ioctl_subvolume)
-#define BCH_IOCTL_SUBVOLUME_DESTROY _IOW(0xbc,	17,  struct bch_ioctl_subvolume)
+#define BCH_IOCTL_SUBVOLUME_CREATE	_IOW(0xbc,	16, struct bch_ioctl_subvolume)
+#define BCH_IOCTL_SUBVOLUME_DESTROY	_IOW(0xbc,	17, struct bch_ioctl_subvolume)
 
-#define BCH_IOCTL_DEV_USAGE_V2	_IOWR(0xbc,	18, struct bch_ioctl_dev_usage_v2)
+#define BCH_IOCTL_DEV_USAGE_V2		_IOWR(0xbc,	18, struct bch_ioctl_dev_usage_v2)
 
-#define BCH_IOCTL_FSCK_OFFLINE	_IOW(0xbc,	19,  struct bch_ioctl_fsck_offline)
-#define BCH_IOCTL_FSCK_ONLINE	_IOW(0xbc,	20,  struct bch_ioctl_fsck_online)
-#define BCH_IOCTL_QUERY_ACCOUNTING _IOW(0xbc,	21,  struct bch_ioctl_query_accounting)
-#define BCH_IOCTL_QUERY_COUNTERS _IOW(0xbc,	21,  struct bch_ioctl_query_counters)
+#define BCH_IOCTL_FSCK_OFFLINE		_IOW(0xbc,	19, struct bch_ioctl_fsck_offline)
+#define BCH_IOCTL_FSCK_ONLINE		_IOW(0xbc,	20, struct bch_ioctl_fsck_online)
+#define BCH_IOCTL_QUERY_ACCOUNTING	_IOW(0xbc,	21, struct bch_ioctl_query_accounting)
+#define BCH_IOCTL_QUERY_COUNTERS	_IOW(0xbc,	21, struct bch_ioctl_query_counters)
 
 /* ioctl below act on a particular file, not the filesystem as a whole: */
 
@@ -162,6 +168,13 @@ struct bch_ioctl_disk {
 	__u32			flags;
 	__u32			pad;
 	__u64			dev;
+};
+
+struct bch_ioctl_disk_v2 {
+	__u32				flags;
+	__u32				pad;
+	__u64				dev;
+	struct bch_ioctl_err_msg	err;
 };
 
 /*
@@ -400,6 +413,14 @@ struct bch_ioctl_disk_resize {
 	__u64			nbuckets;
 };
 
+struct bch_ioctl_disk_resize_v2 {
+	__u32				flags;
+	__u32				pad;
+	__u64				dev;
+	__u64				nbuckets;
+	struct bch_ioctl_err_msg	err;
+};
+
 /*
  * BCH_IOCTL_DISK_RESIZE_JOURNAL: resize journal on a device
  *
@@ -411,6 +432,14 @@ struct bch_ioctl_disk_resize_journal {
 	__u32			pad;
 	__u64			dev;
 	__u64			nbuckets;
+};
+
+struct bch_ioctl_disk_resize_journal_v2 {
+	__u32				flags;
+	__u32				pad;
+	__u64				dev;
+	__u64				nbuckets;
+	struct bch_ioctl_err_msg	err;
 };
 
 struct bch_ioctl_subvolume {
