@@ -421,6 +421,7 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 
 		trace_rebalance_extent(c, buf.buf);
 	}
+	count_event(c, rebalance_extent);
 
 	return k;
 }
