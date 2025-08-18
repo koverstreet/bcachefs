@@ -203,10 +203,12 @@ static long bch2_ioctl_disk_add(struct bch_fs *c, struct bch_ioctl_disk arg)
 	if (ret)
 		return ret;
 
-	ret = bch2_dev_add(c, path);
-	if (!IS_ERR(path))
-		kfree(path);
+	CLASS(printbuf, err)();
+	ret = bch2_dev_add(c, path, &err);
+	if (ret)
+		bch_err(c, "%s", err.buf);
 
+	kfree(path);
 	return ret;
 }
 
@@ -226,7 +228,11 @@ static long bch2_ioctl_disk_remove(struct bch_fs *c, struct bch_ioctl_disk arg)
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
-	return bch2_dev_remove(c, ca, arg.flags);
+	CLASS(printbuf, err)();
+	int ret = bch2_dev_remove(c, ca, arg.flags, &err);
+	if (ret)
+		bch_err(ca, "%s", err.buf);
+	return ret;
 }
 
 static long bch2_ioctl_disk_online(struct bch_fs *c, struct bch_ioctl_disk arg)
@@ -245,7 +251,10 @@ static long bch2_ioctl_disk_online(struct bch_fs *c, struct bch_ioctl_disk arg)
 	if (ret)
 		return ret;
 
-	ret = bch2_dev_online(c, path);
+	CLASS(printbuf, err)();
+	ret = bch2_dev_online(c, path, &err);
+	if (ret)
+		bch_err(c, "%s", err.buf);
 	kfree(path);
 	return ret;
 }
@@ -266,7 +275,11 @@ static long bch2_ioctl_disk_offline(struct bch_fs *c, struct bch_ioctl_disk arg)
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
-	return bch2_dev_offline(c, ca, arg.flags);
+	CLASS(printbuf, err)();
+	int ret = bch2_dev_offline(c, ca, arg.flags, &err);
+	if (ret)
+		bch_err(ca, "%s", err.buf);
+	return ret;
 }
 
 static long bch2_ioctl_disk_set_state(struct bch_fs *c,
@@ -655,7 +668,11 @@ static long bch2_ioctl_disk_resize(struct bch_fs *c,
 	if (IS_ERR(ca))
 		return PTR_ERR(ca);
 
-	return bch2_dev_resize(c, ca, arg.nbuckets);
+	CLASS(printbuf, err)();
+	int ret = bch2_dev_resize(c, ca, arg.nbuckets, &err);
+	if (ret)
+		bch_err(ca, "%s", err.buf);
+	return ret;
 }
 
 static long bch2_ioctl_disk_resize_journal(struct bch_fs *c,
