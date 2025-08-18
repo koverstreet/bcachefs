@@ -293,6 +293,40 @@ static long bch2_ioctl_disk_set_state(struct bch_fs *c,
 	return ret;
 }
 
+static long bch2_ioctl_disk_set_state_v2(struct bch_fs *c,
+			struct bch_ioctl_disk_set_state_v2 arg)
+{
+	CLASS(printbuf, err)();
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if ((arg.flags & ~(BCH_FORCE_IF_DATA_LOST|
+			   BCH_FORCE_IF_METADATA_LOST|
+			   BCH_FORCE_IF_DEGRADED|
+			   BCH_BY_INDEX)) ||
+	    arg.pad[0] || arg.pad[1] || arg.pad[2] ||
+	    arg.new_state >= BCH_MEMBER_STATE_NR)
+		return -EINVAL;
+
+	CLASS(bch2_device_lookup, ca)(c, arg.dev, arg.flags);
+	int ret = PTR_ERR_OR_ZERO(ca);
+	if (ret) {
+		prt_printf(&err, "device %llu not found\n", arg.dev);
+		goto err;
+	}
+
+	ret = bch2_dev_set_state(c, ca, arg.new_state, arg.flags, &err);
+err:
+	if (ret) {
+		prt_printf(&err, "error=%s", bch2_err_str(ret));
+		ret = copy_to_user_errcode((void __user *)(ulong)arg.err.msg_ptr,
+					   err.buf,
+					   min(err.pos, arg.err.msg_len)) ?: ret;
+	}
+	return ret;
+}
+
 struct bch_data_ctx {
 	struct thread_with_file		thr;
 
@@ -693,6 +727,8 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 		BCH_IOCTL(disk_offline, struct bch_ioctl_disk);
 	case BCH_IOCTL_DISK_SET_STATE:
 		BCH_IOCTL(disk_set_state, struct bch_ioctl_disk_set_state);
+	case BCH_IOCTL_DISK_SET_STATE_v2:
+		BCH_IOCTL(disk_set_state_v2, struct bch_ioctl_disk_set_state_v2);
 	case BCH_IOCTL_DATA:
 		BCH_IOCTL(data, struct bch_ioctl_data);
 	case BCH_IOCTL_DISK_RESIZE:
