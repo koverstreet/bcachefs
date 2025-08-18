@@ -1754,19 +1754,20 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	return 0;
 }
 
-static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb)
+static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb,
+				  struct printbuf *err)
 {
 	unsigned ret;
 
 	if (bch2_dev_is_online(ca)) {
-		bch_err(ca, "already have device online in slot %u",
-			sb->sb->dev_idx);
+		prt_printf(err, "already have device online in slot %u\n",
+			   sb->sb->dev_idx);
 		return bch_err_throw(ca->fs, device_already_online);
 	}
 
 	if (get_capacity(sb->bdev->bd_disk) <
 	    ca->mi.bucket_size * ca->mi.nbuckets) {
-		bch_err(ca, "cannot online: device too small (capacity %llu filesystem size %llu nbuckets %llu)",
+		prt_printf(err, "cannot online: device too small (capacity %llu filesystem size %llu nbuckets %llu)\n",
 			get_capacity(sb->bdev->bd_disk),
 			ca->mi.bucket_size * ca->mi.nbuckets,
 			ca->mi.nbuckets);
@@ -1802,7 +1803,8 @@ static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb)
 	return 0;
 }
 
-static int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb)
+static int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb,
+				struct printbuf *err)
 {
 	struct bch_dev *ca;
 	int ret;
@@ -1817,7 +1819,7 @@ static int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb)
 
 	ca = bch2_dev_locked(c, sb->sb->dev_idx);
 
-	ret = __bch2_dev_attach_bdev(ca, sb);
+	ret = __bch2_dev_attach_bdev(ca, sb, err);
 	if (ret)
 		return ret;
 
@@ -1953,7 +1955,8 @@ int bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 
 /* Device add/removal: */
 
-int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
+int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
+		    struct printbuf *err)
 {
 	unsigned dev_idx = ca->dev_idx, data;
 	bool fast_device_removal = !bch2_request_incompat_feature(c,
@@ -1969,7 +1972,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	bch2_dev_put(ca);
 
 	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_failed, flags, NULL)) {
-		bch_err(ca, "Cannot remove without losing data");
+		prt_printf(err, "Cannot remove without losing data\n");
 		ret = bch_err_throw(c, device_state_not_allowed);
 		goto err;
 	}
@@ -1989,16 +1992,17 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 		if (!data_type_is_empty(i) &&
 		    !data_type_is_hidden(i) &&
 		    usage.buckets[i]) {
-			bch_err(ca, "Remove failed: still has data (%s, %llu buckets)",
-				__bch2_data_types[i], usage.buckets[i]);
+			prt_printf(err, "Remove failed: still has data (%s, %llu buckets)\n",
+				   __bch2_data_types[i], usage.buckets[i]);
 			ret = -EBUSY;
 			goto err;
 		}
 
 	ret = bch2_dev_remove_alloc(c, ca);
-	bch_err_msg(ca, ret, "bch2_dev_remove_alloc()");
-	if (ret)
+	if (ret) {
+		prt_printf(err, "bch2_dev_remove_alloc() error: %s\n", bch2_err_str(ret));
 		goto err;
+	}
 
 	/*
 	 * We need to flush the entire journal to get rid of keys that reference
@@ -2011,25 +2015,28 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags)
 	 * calls, and could be cleaned up:
 	 */
 	ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
-	bch_err_msg(ca, ret, "bch2_journal_flush_device_pins()");
-	if (ret)
+	if (ret) {
+		prt_printf(err, "bch2_journal_flush_device_pins() error: %s\n", bch2_err_str(ret));
 		goto err;
+	}
 
 	ret = bch2_journal_flush(&c->journal);
-	bch_err_msg(ca, ret, "bch2_journal_flush()");
-	if (ret)
+	if (ret) {
+		prt_printf(err, "bch2_journal_flush() error: %s\n", bch2_err_str(ret));
 		goto err;
+	}
 
 	ret = bch2_replicas_gc2(c);
-	bch_err_msg(ca, ret, "bch2_replicas_gc2()");
-	if (ret)
+	if (ret) {
+		prt_printf(err, "bch2_replicas_gc2() error: %s\n", bch2_err_str(ret));
 		goto err;
+	}
 
 	data = bch2_dev_has_data(c, ca);
 	if (data) {
-		CLASS(printbuf, data_has)();
-		prt_bitflags(&data_has, __bch2_data_types, data);
-		bch_err(ca, "Remove failed, still has data (%s)", data_has.buf);
+		prt_str(err, "Remove failed, still has data (");
+		prt_bitflags(err, __bch2_data_types, data);
+		prt_str(err, ")\n");
 		ret = -EBUSY;
 		goto err;
 	}
@@ -2074,7 +2081,7 @@ err:
 }
 
 /* Add new device to running filesystem: */
-int bch2_dev_add(struct bch_fs *c, const char *path)
+int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 {
 	struct bch_opts opts = bch2_opts_empty();
 	struct bch_sb_handle sb = {};
@@ -2083,9 +2090,10 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 	int ret = 0;
 
 	ret = bch2_read_super(path, &opts, &sb);
-	bch_err_msg(c, ret, "reading super");
-	if (ret)
+	if (ret) {
+		prt_printf(err, "error reading superblock: %s\n", bch2_err_str(ret));
 		goto err;
+	}
 
 	struct bch_member dev_mi = bch2_sb_member_get(sb.sb, sb.sb->dev_idx);
 
@@ -2106,7 +2114,7 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 		}
 
 		if (ret) {
-			bch_err(c, "filesystem UUID already open");
+			prt_printf(err, "cannot go multidevice: filesystem UUID already open\n");
 			goto err;
 		}
 	}
@@ -2121,7 +2129,7 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 		goto err;
 	}
 
-	ret = __bch2_dev_attach_bdev(ca, &sb);
+	ret = __bch2_dev_attach_bdev(ca, &sb, err);
 	if (ret)
 		goto err;
 
@@ -2130,16 +2138,17 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 			SET_BCH_SB_MULTI_DEVICE(c->disk_sb.sb, true);
 
 			ret = bch2_sb_from_fs(c, ca);
-			bch_err_msg(c, ret, "setting up new superblock");
-			if (ret)
+			if (ret) {
+				prt_printf(err, "error setting up new superblock: %s\n", bch2_err_str(ret));
 				goto err;
+			}
 
 			if (dynamic_fault("bcachefs:add:no_slot"))
 				goto err;
 
 			ret = bch2_sb_member_alloc(c);
 			if (ret < 0) {
-				bch_err_msg(c, ret, "setting up new superblock");
+				prt_printf(err, "error allocating superblock member slot: %s\n", bch2_err_str(ret));
 				goto err;
 			}
 			unsigned dev_idx = ret;
@@ -2157,7 +2166,7 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 
 			if (BCH_MEMBER_GROUP(&dev_mi)) {
 				ret = __bch2_dev_group_set(c, ca, label.buf);
-				bch_err_msg(c, ret, "creating new label");
+				prt_printf(err, "error creating new label: %s\n", bch2_err_str(ret));
 				if (ret)
 					goto err_late;
 			}
@@ -2171,22 +2180,25 @@ int bch2_dev_add(struct bch_fs *c, const char *path)
 
 		if (test_bit(BCH_FS_started, &c->flags)) {
 			ret = bch2_trans_mark_dev_sb(c, ca, BTREE_TRIGGER_transactional);
-			bch_err_msg(ca, ret, "marking new superblock");
-			if (ret)
+			if (ret) {
+				prt_printf(err, "error marking new superblock: %s\n", bch2_err_str(ret));
 				goto err_late;
+			}
 
 			ret = bch2_fs_freespace_init(c);
-			bch_err_msg(ca, ret, "initializing free space");
-			if (ret)
+			if (ret) {
+				prt_printf(err, "error initializing free space: %s\n", bch2_err_str(ret));
 				goto err_late;
+			}
 
 			if (ca->mi.state == BCH_MEMBER_STATE_rw)
 				__bch2_dev_read_write(c, ca);
 
 			ret = bch2_dev_journal_alloc(ca, false);
-			bch_err_msg(c, ret, "allocating journal");
-			if (ret)
+			if (ret) {
+				prt_printf(err, "error allocating journal: %s\n", bch2_err_str(ret));
 				goto err_late;
+			}
 		}
 
 		/*
@@ -2219,7 +2231,7 @@ err_late:
 }
 
 /* Hot add existing device to running filesystem: */
-int bch2_dev_online(struct bch_fs *c, const char *path)
+int bch2_dev_online(struct bch_fs *c, const char *path, struct printbuf *err)
 {
 	struct bch_opts opts = bch2_opts_empty();
 	struct bch_sb_handle sb = { NULL };
@@ -2230,42 +2242,48 @@ int bch2_dev_online(struct bch_fs *c, const char *path)
 	guard(rwsem_write)(&c->state_lock);
 
 	ret = bch2_read_super(path, &opts, &sb);
-	if (ret)
+	if (ret) {
+		prt_printf(err, "error reading superblock: %s\n", bch2_err_str(ret));
 		return ret;
+	}
 
 	dev_idx = sb.sb->dev_idx;
 
 	ret = bch2_dev_in_fs(&c->disk_sb, &sb, &c->opts);
-	bch_err_msg(c, ret, "bringing %s online", path);
-	if (ret)
+	if (ret) {
+		prt_printf(err, "device not a member of fs: %s\n", bch2_err_str(ret));
 		goto err;
+	}
 
-	ret = bch2_dev_attach_bdev(c, &sb);
+	ret = bch2_dev_attach_bdev(c, &sb, err);
 	if (ret)
 		goto err;
 
 	ca = bch2_dev_locked(c, dev_idx);
 
 	ret = bch2_trans_mark_dev_sb(c, ca, BTREE_TRIGGER_transactional);
-	bch_err_msg(c, ret, "bringing %s online: error from bch2_trans_mark_dev_sb", path);
-	if (ret)
+	if (ret) {
+		prt_printf(err, "bch2_trans_mark_dev_sb() error: %s\n", bch2_err_str(ret));
 		goto err;
+	}
 
 	if (ca->mi.state == BCH_MEMBER_STATE_rw)
 		__bch2_dev_read_write(c, ca);
 
 	if (!ca->mi.freespace_initialized) {
 		ret = bch2_dev_freespace_init(c, ca, 0, ca->mi.nbuckets);
-		bch_err_msg(ca, ret, "initializing free space");
-		if (ret)
+		if (ret) {
+			prt_printf(err, "bch2_dev_freespace_init() error: %s\n", bch2_err_str(ret));
 			goto err;
+		}
 	}
 
 	if (!ca->journal.nr) {
 		ret = bch2_dev_journal_alloc(ca, false);
-		bch_err_msg(ca, ret, "allocating journal");
-		if (ret)
+		if (ret) {
+			prt_printf(err, "bch2_dev_journal_alloc() error: %s\n", bch2_err_str(ret));
 			goto err;
+		}
 	}
 
 	scoped_guard(mutex, &c->sb_lock) {
@@ -2280,17 +2298,17 @@ err:
 	return ret;
 }
 
-int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags)
+int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags, struct printbuf *err)
 {
 	guard(rwsem_write)(&c->state_lock);
 
 	if (!bch2_dev_is_online(ca)) {
-		bch_err(ca, "Already offline");
+		prt_printf(err, "Already offline\n");
 		return 0;
 	}
 
 	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_failed, flags, NULL)) {
-		bch_err(ca, "Cannot offline required disk");
+		prt_printf(err, "Cannot offline required disk\n");
 		return bch_err_throw(c, device_state_not_allowed);
 	}
 
@@ -2310,7 +2328,7 @@ static int __bch2_dev_resize_alloc(struct bch_dev *ca, u64 old_nbuckets, u64 new
 		bch2_dev_freespace_init(c, ca, old_nbuckets, new_nbuckets);
 }
 
-int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
+int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct printbuf *err)
 {
 	u64 old_nbuckets;
 	int ret = 0;
@@ -2319,31 +2337,36 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 	old_nbuckets = ca->mi.nbuckets;
 
 	if (nbuckets < ca->mi.nbuckets) {
-		bch_err(ca, "Cannot shrink yet");
+		prt_printf(err, "Cannot shrink yet\n");
 		return -EINVAL;
 	}
 
 	if (nbuckets > BCH_MEMBER_NBUCKETS_MAX) {
-		bch_err(ca, "New device size too big (%llu greater than max %u)",
-			nbuckets, BCH_MEMBER_NBUCKETS_MAX);
+		prt_printf(err, "New device size too big (%llu greater than max %u)\n",
+			   nbuckets, BCH_MEMBER_NBUCKETS_MAX);
 		return bch_err_throw(c, device_size_too_big);
 	}
 
 	if (bch2_dev_is_online(ca) &&
 	    get_capacity(ca->disk_sb.bdev->bd_disk) <
 	    ca->mi.bucket_size * nbuckets) {
-		bch_err(ca, "New size larger than device");
+		prt_printf(err, "New size %llu larger than device size %llu\n",
+			   ca->mi.bucket_size * nbuckets,
+			   get_capacity(ca->disk_sb.bdev->bd_disk));
 		return bch_err_throw(c, device_size_too_small);
 	}
 
 	ret = bch2_dev_buckets_resize(c, ca, nbuckets);
-	bch_err_msg(ca, ret, "resizing buckets");
-	if (ret)
+	if (ret) {
+		prt_printf(err, "bch2_dev_buckets_resize() error: %s\n", bch2_err_str(ret));
 		return ret;
+	}
 
 	ret = bch2_trans_mark_dev_sb(c, ca, BTREE_TRIGGER_transactional);
-	if (ret)
+	if (ret) {
+		prt_printf(err, "bch2_trans_mark_dev_sb() error: %s\n", bch2_err_str(ret));
 		return ret;
+	}
 
 	scoped_guard(mutex, &c->sb_lock) {
 		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
@@ -2354,8 +2377,10 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 
 	if (ca->mi.freespace_initialized) {
 		ret = __bch2_dev_resize_alloc(ca, old_nbuckets, nbuckets);
-		if (ret)
+		if (ret) {
+			prt_printf(err, "__bch2_dev_resize_alloc() error: %s\n", bch2_err_str(ret));
 			return ret;
+		}
 	}
 
 	bch2_recalc_capacity(c);
@@ -2585,9 +2610,12 @@ struct bch_fs *bch2_fs_open(darray_const_str *devices,
 
 	scoped_guard(rwsem_write, &c->state_lock)
 		darray_for_each(sbs, sb) {
-			ret = bch2_dev_attach_bdev(c, sb);
-			if (ret)
+			CLASS(printbuf, err)();
+			ret = bch2_dev_attach_bdev(c, sb, &err);
+			if (ret) {
+				bch_err(bch2_dev_locked(c, sb->sb->dev_idx), "%s", err.buf);
 				goto err;
+			}
 		}
 
 	if (!c->opts.nostart) {

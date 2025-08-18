@@ -111,13 +111,6 @@ struct bch_ioctl_query_uuid {
 	__uuid_t		uuid;
 };
 
-#if 0
-struct bch_ioctl_start {
-	__u32			flags;
-	__u32			pad;
-};
-#endif
-
 /*
  * BCH_IOCTL_DISK_ADD: add a new device to an existing filesystem
  *

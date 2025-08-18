@@ -26,12 +26,11 @@ int bch2_dev_set_state(struct bch_fs *, struct bch_dev *,
 		       enum bch_member_state, int,
 		       struct printbuf *);
 
-int bch2_dev_fail(struct bch_dev *, int);
-int bch2_dev_remove(struct bch_fs *, struct bch_dev *, int);
-int bch2_dev_add(struct bch_fs *, const char *);
-int bch2_dev_online(struct bch_fs *, const char *);
-int bch2_dev_offline(struct bch_fs *, struct bch_dev *, int);
-int bch2_dev_resize(struct bch_fs *, struct bch_dev *, u64);
+int bch2_dev_remove(struct bch_fs *, struct bch_dev *, int, struct printbuf *);
+int bch2_dev_add(struct bch_fs *, const char *, struct printbuf *);
+int bch2_dev_online(struct bch_fs *, const char *, struct printbuf *);
+int bch2_dev_offline(struct bch_fs *, struct bch_dev *, int, struct printbuf *);
+int bch2_dev_resize(struct bch_fs *, struct bch_dev *, u64, struct printbuf *);
 struct bch_dev *bch2_dev_lookup(struct bch_fs *, const char *);
 
 bool bch2_fs_emergency_read_only(struct bch_fs *);
