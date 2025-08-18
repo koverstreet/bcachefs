@@ -10,6 +10,7 @@
 #include "alloc_background.h"
 #include "alloc_foreground.h"
 #include "async_objs.h"
+#include "btree_cache.h"
 #include "btree_update.h"
 #include "buckets.h"
 #include "checksum.h"
@@ -1292,6 +1293,17 @@ retry_pick:
 		trace_and_count(c, io_read_split, &orig->bio);
 	}
 
+	if (trace_io_read_enabled()) {
+		CLASS(printbuf, buf)();
+		prt_str(&buf, "data_btree=");
+		prt_str(&buf, bch2_btree_id_str(data_btree));
+		prt_str(&buf, " read_pos=");
+		bch2_bpos_to_text(&buf, read_pos);
+		prt_printf(&buf, " offset_into_extent=%u\n", offset_into_extent);
+		bch2_bkey_val_to_text(&buf, c, k);
+		trace_io_read(c, buf.buf);
+	}
+
 	/*
 	 * Unlock the iterator while the btree node's lock is still in
 	 * cache, before doing the IO:
@@ -1429,6 +1441,17 @@ int __bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
 		s64 offset_into_extent = iter.pos.offset -
 			bkey_start_offset(k.k);
 		unsigned sectors = k.k->size - offset_into_extent;
+
+		if (trace_io_read_lookup_enabled()) {
+			CLASS(printbuf, buf)();
+			prt_str(&buf, "data_btree=");
+			prt_str(&buf, bch2_btree_id_str(data_btree));
+			prt_str(&buf, " read_pos=");
+			bch2_bpos_to_text(&buf, iter.pos);
+			prt_printf(&buf, " offset_into_extent=%llu\n", offset_into_extent);
+			bch2_bkey_val_to_text(&buf, c, k);
+			trace_io_read_lookup(c, buf.buf);
+		}
 
 		bch2_bkey_buf_reassemble(&sk, c, k);
 
