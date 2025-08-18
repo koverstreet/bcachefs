@@ -322,6 +322,16 @@ DEFINE_EVENT(bio, io_read_fail_and_poison,
 	TP_ARGS(bio)
 );
 
+DEFINE_EVENT(fs_str, io_read_lookup,
+	TP_PROTO(struct bch_fs *c, const char *str),
+	TP_ARGS(c, str)
+);
+
+DEFINE_EVENT(fs_str, io_read,
+	TP_PROTO(struct bch_fs *c, const char *str),
+	TP_ARGS(c, str)
+);
+
 /* ec.c */
 
 TRACE_EVENT(stripe_create,
