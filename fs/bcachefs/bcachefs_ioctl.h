@@ -71,6 +71,7 @@ struct bch_ioctl_incremental {
 #define BCH_IOCTL_DISK_ONLINE	_IOW(0xbc,	6,  struct bch_ioctl_disk)
 #define BCH_IOCTL_DISK_OFFLINE	_IOW(0xbc,	7,  struct bch_ioctl_disk)
 #define BCH_IOCTL_DISK_SET_STATE _IOW(0xbc,	8,  struct bch_ioctl_disk_set_state)
+#define BCH_IOCTL_DISK_SET_STATE_v2 _IOW(0xbc,	22,  struct bch_ioctl_disk_set_state_v2)
 #define BCH_IOCTL_DATA		_IOW(0xbc,	10, struct bch_ioctl_data)
 #define BCH_IOCTL_FS_USAGE	_IOWR(0xbc,	11, struct bch_ioctl_fs_usage)
 #define BCH_IOCTL_DEV_USAGE	_IOWR(0xbc,	11, struct bch_ioctl_dev_usage)
@@ -92,6 +93,12 @@ struct bch_ioctl_incremental {
 /* ioctl below act on a particular file, not the filesystem as a whole: */
 
 #define BCHFS_IOC_REINHERIT_ATTRS	_IOR(0xbc, 64, const char __user *)
+
+struct bch_ioctl_err_msg {
+	__u64			msg_ptr;
+	__u32			msg_len;
+	__u32			pad;
+};
 
 /*
  * BCH_IOCTL_QUERY_UUID: get filesystem UUID
@@ -179,6 +186,14 @@ struct bch_ioctl_disk_set_state {
 	__u8			new_state;
 	__u8			pad[3];
 	__u64			dev;
+};
+
+struct bch_ioctl_disk_set_state_v2 {
+	__u32				flags;
+	__u8				new_state;
+	__u8				pad[3];
+	__u64				dev;
+	struct bch_ioctl_err_msg	err;
 };
 
 #define BCH_DATA_OPS()			\
