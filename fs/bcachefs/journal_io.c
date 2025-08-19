@@ -193,6 +193,14 @@ static int journal_entry_add(struct bch_fs *c, struct bch_dev *ca,
 
 	jlist->last_seq = max(jlist->last_seq, last_seq);
 
+	if (seq <  c->journal_entries_base_seq ||
+	    seq >= c->journal_entries_base_seq + U32_MAX) {
+		bch_err(c, "journal entry sequence numbers span too large a range: cannot replay, contact developers\n"
+			"base %llu last_seq currently %llu, but have seq %llu",
+			c->journal_entries_base_seq, jlist->last_seq, seq);
+		return bch_err_throw(c, ENOMEM_journal_entry_add);
+	}
+
 	_i = genradix_ptr_alloc(&c->journal_entries, journal_entry_radix_idx(c, seq), GFP_KERNEL);
 	if (!_i)
 		return bch_err_throw(c, ENOMEM_journal_entry_add);
