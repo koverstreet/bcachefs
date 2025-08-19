@@ -451,95 +451,6 @@ err:
 	return ret;
 }
 
-struct bch_inode_opts *bch2_move_get_io_opts(struct btree_trans *trans,
-			  struct per_snapshot_io_opts *io_opts,
-			  struct bpos extent_pos, /* extent_iter, extent_k may be in reflink btree */
-			  struct btree_iter *extent_iter,
-			  struct bkey_s_c extent_k)
-{
-	struct bch_fs *c = trans->c;
-	u32 restart_count = trans->restart_count;
-	struct bch_inode_opts *opts_ret = &io_opts->fs_io_opts;
-	int ret = 0;
-
-	if (btree_iter_path(trans, extent_iter)->level)
-		return opts_ret;
-
-	if (extent_k.k->type == KEY_TYPE_reflink_v)
-		goto out;
-
-	if (io_opts->cur_inum != extent_pos.inode) {
-		io_opts->d.nr = 0;
-
-		ret = for_each_btree_key(trans, iter, BTREE_ID_inodes, POS(0, extent_pos.inode),
-					 BTREE_ITER_all_snapshots, k, ({
-			if (k.k->p.offset != extent_pos.inode)
-				break;
-
-			if (!bkey_is_inode(k.k))
-				continue;
-
-			struct bch_inode_unpacked inode;
-			_ret3 = bch2_inode_unpack(k, &inode);
-			if (_ret3)
-				break;
-
-			struct snapshot_io_opts_entry e = { .snapshot = k.k->p.snapshot };
-			bch2_inode_opts_get_inode(trans->c, &inode, &e.io_opts);
-
-			darray_push(&io_opts->d, e);
-		}));
-		io_opts->cur_inum = extent_pos.inode;
-	}
-
-	ret = ret ?: trans_was_restarted(trans, restart_count);
-	if (ret)
-		return ERR_PTR(ret);
-
-	if (extent_k.k->p.snapshot)
-		darray_for_each(io_opts->d, i)
-			if (bch2_snapshot_is_ancestor(c, extent_k.k->p.snapshot, i->snapshot)) {
-				opts_ret = &i->io_opts;
-				break;
-			}
-out:
-	ret = bch2_get_update_rebalance_opts(trans, opts_ret, extent_iter, extent_k,
-					     SET_NEEDS_REBALANCE_other);
-	if (ret)
-		return ERR_PTR(ret);
-	return opts_ret;
-}
-
-int bch2_move_get_io_opts_one(struct btree_trans *trans,
-			      struct bch_inode_opts *io_opts,
-			      struct btree_iter *extent_iter,
-			      struct bkey_s_c extent_k)
-{
-	struct bch_fs *c = trans->c;
-
-	bch2_inode_opts_get(c, io_opts);
-
-	/* reflink btree? */
-	if (extent_k.k->p.inode) {
-		CLASS(btree_iter, inode_iter)(trans, BTREE_ID_inodes,
-				       SPOS(0, extent_k.k->p.inode, extent_k.k->p.snapshot),
-				       BTREE_ITER_cached);
-		struct bkey_s_c inode_k = bch2_btree_iter_peek_slot(&inode_iter);
-		int ret = bkey_err(inode_k);
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			return ret;
-
-		if (!ret && bkey_is_inode(inode_k.k)) {
-			struct bch_inode_unpacked inode;
-			bch2_inode_unpack(inode_k, &inode);
-			bch2_inode_opts_get_inode(c, &inode, io_opts);
-		}
-	}
-
-	return bch2_get_update_rebalance_opts(trans, io_opts, extent_iter, extent_k,
-					     SET_NEEDS_REBALANCE_other);
-}
-
 int bch2_move_ratelimit(struct moving_context *ctxt)
 {
 	struct bch_fs *c = ctxt->trans->c;
@@ -683,8 +594,9 @@ root_err:
 		if (!bkey_extent_is_direct_data(k.k))
 			goto next_nondata;
 
-		io_opts = bch2_move_get_io_opts(trans, &snapshot_io_opts,
-						iter.pos, &iter, k);
+		io_opts = bch2_extent_get_apply_io_opts(trans, &snapshot_io_opts,
+						iter.pos, &iter, k,
+						SET_NEEDS_REBALANCE_other);
 		ret = PTR_ERR_OR_ZERO(io_opts);
 		if (ret)
 			continue;
@@ -883,7 +795,8 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 			goto next;
 
 		if (!bp.v->level) {
-			ret = bch2_move_get_io_opts_one(trans, &io_opts, &iter, k);
+			ret = bch2_extent_get_apply_io_opts_one(trans, &io_opts, &iter, k,
+								SET_NEEDS_REBALANCE_other);
 			if (ret) {
 				bch2_trans_iter_exit(&iter);
 				continue;
