@@ -246,13 +246,23 @@ static int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 	BUG_ON(iter->flags & BTREE_ITER_is_extents);
 	BUG_ON(iter->flags & BTREE_ITER_filter_snapshots);
 
+	bool may_update_indirect = ctx == SET_NEEDS_REBALANCE_opt_change_indirect;
+
+	/*
+	 * If it's an indirect extent, and we walked to it directly, we won't
+	 * have the options from the inode that were directly applied: options
+	 * from the extent take precedence - unless the io_opts option came from
+	 * the inode and may_update_indirect is true (walked from a
+	 * REFLINK_P_MAY_UPDATE_OPTIONS pointer).
+	 */
 	const struct bch_extent_rebalance *r = k.k->type == KEY_TYPE_reflink_v
 		? bch2_bkey_rebalance_opts(k) : NULL;
 	if (r) {
-#define x(_name)							\
-		if (r->_name##_from_inode) {				\
-			io_opts->_name = r->_name;			\
-			io_opts->_name##_from_inode = true;		\
+#define x(_name)								\
+		if (r->_name##_from_inode &&					\
+		    !(may_update_indirect && io_opts->_name##_from_inode)) {	\
+			io_opts->_name = r->_name;				\
+			io_opts->_name##_from_inode = true;			\
 		}
 		BCH_REBALANCE_OPTS()
 #undef x
