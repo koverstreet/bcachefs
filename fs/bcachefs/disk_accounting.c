@@ -11,6 +11,7 @@
 #include "disk_accounting.h"
 #include "error.h"
 #include "journal_io.h"
+#include "recovery_passes.h"
 #include "replicas.h"
 
 /*
@@ -911,6 +912,40 @@ int bch2_accounting_read(struct bch_fs *c)
 
 			u64 v[BCH_ACCOUNTING_MAX_COUNTERS];
 			bch2_accounting_mem_read_counters(acc, i, v, ARRAY_SIZE(v), false);
+
+			/*
+			 * Check for underflow, schedule check_allocations
+			 * necessary:
+			 *
+			 * XXX - see if we can factor this out to run on a bkey
+			 * so we can check everything lazily, right now we don't
+			 * check the non in-mem counters at all
+			 */
+			bool underflow = false;
+			for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
+				underflow |= (s64) v[j] < 0;
+
+			if (underflow) {
+				CLASS(printbuf, buf)();
+				bch2_log_msg_start(c, &buf);
+
+				prt_printf(&buf, "Accounting underflow for\n");
+				bch2_accounting_key_to_text(&buf, &k);
+
+				for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
+					prt_printf(&buf, " %lli", v[j]);
+
+				bool print = bch2_count_fsck_err(c, accounting_key_underflow, &buf);
+				unsigned pos = buf.pos;
+				ret = bch2_run_explicit_recovery_pass(c, &buf,
+						BCH_RECOVERY_PASS_check_allocations, 0);
+				print |= buf.pos != pos;
+
+				if (print)
+					bch2_print_str(c, KERN_ERR, buf.buf);
+				if (ret)
+					return ret;
+			}
 
 			switch (k.type) {
 			case BCH_DISK_ACCOUNTING_persistent_reserved:
