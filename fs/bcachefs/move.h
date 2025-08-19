@@ -87,32 +87,6 @@ void bch2_moving_ctxt_flush_all(struct moving_context *);
 void bch2_move_ctxt_wait_for_io(struct moving_context *);
 int bch2_move_ratelimit(struct moving_context *);
 
-/* Inodes in different snapshots may have different IO options: */
-struct snapshot_io_opts_entry {
-	u32			snapshot;
-	struct bch_inode_opts	io_opts;
-};
-
-struct per_snapshot_io_opts {
-	u64			cur_inum;
-	struct bch_inode_opts	fs_io_opts;
-	DARRAY(struct snapshot_io_opts_entry) d;
-};
-
-static inline void per_snapshot_io_opts_init(struct per_snapshot_io_opts *io_opts, struct bch_fs *c)
-{
-	memset(io_opts, 0, sizeof(*io_opts));
-	bch2_inode_opts_get(c, &io_opts->fs_io_opts);
-}
-
-static inline void per_snapshot_io_opts_exit(struct per_snapshot_io_opts *io_opts)
-{
-	darray_exit(&io_opts->d);
-}
-
-int bch2_move_get_io_opts_one(struct btree_trans *, struct bch_inode_opts *,
-			      struct btree_iter *, struct bkey_s_c);
-
 int bch2_scan_old_btree_nodes(struct bch_fs *, struct bch_move_stats *);
 
 int bch2_move_extent(struct moving_context *,
@@ -121,10 +95,6 @@ int bch2_move_extent(struct moving_context *,
 		     struct bkey_s_c,
 		     struct bch_inode_opts,
 		     struct data_update_opts);
-
-struct bch_inode_opts *bch2_move_get_io_opts(struct btree_trans *,
-			  struct per_snapshot_io_opts *, struct bpos,
-			  struct btree_iter *, struct bkey_s_c);
 
 int bch2_move_data_btree(struct moving_context *, struct bpos, struct bpos,
 			 move_pred_fn, void *, enum btree_id, unsigned);
