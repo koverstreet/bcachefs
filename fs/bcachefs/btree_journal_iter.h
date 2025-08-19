@@ -31,7 +31,7 @@ struct btree_and_journal_iter {
 
 static inline u32 journal_entry_radix_idx(struct bch_fs *c, u64 seq)
 {
-	return (seq - c->journal_entries_base_seq) & (~0U >> 1);
+	return seq - c->journal_entries_base_seq;
 }
 
 static inline struct bkey_i *journal_key_k(struct bch_fs *c,
