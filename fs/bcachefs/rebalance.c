@@ -194,20 +194,11 @@ incompressible:
 	return sectors;
 }
 
-static bool bch2_bkey_rebalance_needs_update(struct bch_fs *c, struct bch_inode_opts *opts,
-					     struct bkey_s_c k)
+static inline bool bkey_should_have_rb_opts(struct bch_fs *c,
+					    struct bch_inode_opts *opts,
+					    struct bkey_s_c k)
 {
-	if (!bkey_extent_is_direct_data(k.k))
-		return 0;
-
-	const struct bch_extent_rebalance *old = bch2_bkey_rebalance_opts(k);
-
-	if (k.k->type == KEY_TYPE_reflink_v || bch2_bkey_ptrs_need_rebalance(c, opts, k)) {
-		struct bch_extent_rebalance new = io_opts_to_rebalance_opts(c, opts);
-		return old == NULL || memcmp(old, &new, sizeof(new));
-	} else {
-		return old != NULL;
-	}
+	return k.k->type == KEY_TYPE_reflink_v || bch2_bkey_ptrs_need_rebalance(c, opts, k);
 }
 
 int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_inode_opts *opts,
@@ -222,7 +213,7 @@ int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_inode_opts *opts,
 	struct bch_extent_rebalance *old =
 		(struct bch_extent_rebalance *) bch2_bkey_rebalance_opts(k.s_c);
 
-	if (k.k->type == KEY_TYPE_reflink_v || bch2_bkey_ptrs_need_rebalance(c, opts, k.s_c)) {
+	if (bkey_should_have_rb_opts(c, opts, k.s_c)) {
 		if (!old) {
 			old = bkey_val_end(k);
 			k.k->u64s += sizeof(*old) / sizeof(u64);
@@ -243,8 +234,13 @@ static int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 					  struct bkey_s_c k,
 					  enum set_needs_rebalance_ctx ctx)
 {
+	struct bch_fs *c = trans->c;
+
 	BUG_ON(iter->flags & BTREE_ITER_is_extents);
 	BUG_ON(iter->flags & BTREE_ITER_filter_snapshots);
+
+	if (!bkey_extent_is_direct_data(k.k))
+		return 0;
 
 	bool may_update_indirect = ctx == SET_NEEDS_REBALANCE_opt_change_indirect;
 
@@ -255,20 +251,23 @@ static int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 	 * the inode and may_update_indirect is true (walked from a
 	 * REFLINK_P_MAY_UPDATE_OPTIONS pointer).
 	 */
-	const struct bch_extent_rebalance *r = k.k->type == KEY_TYPE_reflink_v
-		? bch2_bkey_rebalance_opts(k) : NULL;
-	if (r) {
+	const struct bch_extent_rebalance *old = bch2_bkey_rebalance_opts(k);
+	if (old && k.k->type == KEY_TYPE_reflink_v) {
 #define x(_name)								\
-		if (r->_name##_from_inode &&					\
+		if (old->_name##_from_inode &&					\
 		    !(may_update_indirect && io_opts->_name##_from_inode)) {	\
-			io_opts->_name = r->_name;				\
+			io_opts->_name = old->_name;				\
 			io_opts->_name##_from_inode = true;			\
 		}
 		BCH_REBALANCE_OPTS()
 #undef x
 	}
 
-	if (!bch2_bkey_rebalance_needs_update(trans->c, io_opts, k))
+	struct bch_extent_rebalance new = io_opts_to_rebalance_opts(c, io_opts);
+
+	if (bkey_should_have_rb_opts(c, io_opts, k)
+	    ? old && !memcmp(old, &new, sizeof(new))
+	    : !old)
 		return 0;
 
 	struct bkey_i *n = bch2_trans_kmalloc(trans, bkey_bytes(k.k) + 8);
@@ -280,10 +279,10 @@ static int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 
 	/* On successfull transaction commit, @k was invalidated: */
 
-	return bch2_bkey_set_needs_rebalance(trans->c, io_opts, n, ctx, 0) ?:
+	return bch2_bkey_set_needs_rebalance(c, io_opts, n, ctx, 0) ?:
 		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node) ?:
 		bch2_trans_commit(trans, NULL, NULL, 0) ?:
-		bch_err_throw(trans->c, transaction_restart_commit);
+		bch_err_throw(c, transaction_restart_commit);
 }
 
 static struct bch_inode_opts *bch2_extent_get_io_opts(struct btree_trans *trans,
