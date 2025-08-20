@@ -113,7 +113,8 @@
 	  BCH_FSCK_ERR_accounting_mismatch)			\
 	x(rebalance_v2,						\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_rebalance_work),	\
-	  BCH_FSCK_ERR_accounting_mismatch)
+	  BCH_FSCK_ERR_accounting_mismatch,			\
+	  BCH_FSCK_ERR_extent_io_opts_not_set)
 
 #define DOWNGRADE_TABLE()					\
 	x(bucket_stripe_sectors,				\
