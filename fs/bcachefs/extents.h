@@ -5,6 +5,7 @@
 #include "bcachefs.h"
 #include "bkey.h"
 #include "extents_types.h"
+#include "sb-members.h"
 
 struct bch_fs;
 struct btree_trans;
@@ -614,8 +615,23 @@ static inline unsigned __extent_ptr_durability(struct bch_dev *ca, struct extent
 		: ca->mi.durability;
 }
 
-unsigned bch2_extent_ptr_desired_durability(struct bch_fs *, struct extent_ptr_decoded *);
-unsigned bch2_extent_ptr_durability(struct bch_fs *, struct extent_ptr_decoded *);
+static inline unsigned bch2_extent_ptr_desired_durability(struct bch_fs *c, struct extent_ptr_decoded *p)
+{
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, p->ptr.dev);
+
+	return ca ? __extent_ptr_durability(ca, p) : 0;
+}
+
+static inline unsigned bch2_extent_ptr_durability(struct bch_fs *c, struct extent_ptr_decoded *p)
+{
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, p->ptr.dev);
+
+	if (!ca || ca->mi.state == BCH_MEMBER_STATE_failed)
+		return 0;
+
+	return __extent_ptr_durability(ca, p);
+}
+
 unsigned bch2_bkey_durability(struct bch_fs *, struct bkey_s_c);
 
 const struct bch_extent_ptr *bch2_bkey_has_device_c(struct bkey_s_c, unsigned);
