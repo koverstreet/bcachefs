@@ -517,9 +517,10 @@ static int bch2_bkey_clear_needs_rebalance(struct btree_trans *trans,
 }
 
 static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
+			struct per_snapshot_io_opts *snapshot_io_opts,
 			struct bpos work_pos,
 			struct btree_iter *extent_iter,
-			struct bch_inode_opts *io_opts,
+			struct bch_inode_opts **opts_ret,
 			struct data_update_opts *data_opts)
 {
 	struct bch_fs *c = trans->c;
@@ -533,14 +534,19 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 	if (bkey_err(k))
 		return k;
 
-	int ret = bch2_extent_get_io_opts_one(trans, io_opts, extent_iter, k,
+	struct bch_inode_opts *opts =
+		bch2_extent_get_apply_io_opts(trans, snapshot_io_opts,
+					      extent_iter->pos, extent_iter, k,
 					      SET_NEEDS_REBALANCE_other);
+	int ret = PTR_ERR_OR_ZERO(opts);
 	if (ret)
 		return bkey_s_c_err(ret);
 
+	*opts_ret = opts;
+
 	memset(data_opts, 0, sizeof(*data_opts));
-	data_opts->rewrite_ptrs		= bch2_bkey_ptrs_need_rebalance(c, io_opts, k);
-	data_opts->target		= io_opts->background_target;
+	data_opts->rewrite_ptrs		= bch2_bkey_ptrs_need_rebalance(c, opts, k);
+	data_opts->target		= opts->background_target;
 	data_opts->write_flags		|= BCH_WRITE_only_specified_devs;
 
 	if (!data_opts->rewrite_ptrs) {
@@ -565,19 +571,19 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 
 		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 
-		unsigned p = bch2_bkey_ptrs_need_compress(c, io_opts, k, ptrs);
+		unsigned p = bch2_bkey_ptrs_need_compress(c, opts, k, ptrs);
 		if (p) {
 			prt_str(&buf, "compression=");
-			bch2_compression_opt_to_text(&buf, io_opts->background_compression);
+			bch2_compression_opt_to_text(&buf, opts->background_compression);
 			prt_str(&buf, " ");
 			bch2_prt_u64_base2(&buf, p);
 			prt_newline(&buf);
 		}
 
-		p = bch2_bkey_ptrs_need_move(c, io_opts, ptrs);
+		p = bch2_bkey_ptrs_need_move(c, opts, ptrs);
 		if (p) {
 			prt_str(&buf, "move=");
-			bch2_target_to_text(&buf, c, io_opts->background_target);
+			bch2_target_to_text(&buf, c, opts->background_target);
 			prt_str(&buf, " ");
 			bch2_prt_u64_base2(&buf, p);
 			prt_newline(&buf);
@@ -592,6 +598,7 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 
 noinline_for_stack
 static int do_rebalance_extent(struct moving_context *ctxt,
+			       struct per_snapshot_io_opts *snapshot_io_opts,
 			       struct bpos work_pos,
 			       struct btree_iter *extent_iter)
 {
@@ -599,7 +606,7 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	struct bch_fs_rebalance *r = &trans->c->rebalance;
 	struct data_update_opts data_opts;
-	struct bch_inode_opts io_opts;
+	struct bch_inode_opts *io_opts;
 	struct bkey_s_c k;
 	struct bkey_buf sk;
 	int ret;
@@ -610,8 +617,8 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	bch2_bkey_buf_init(&sk);
 
 	ret = lockrestart_do(trans,
-		bkey_err(k = next_rebalance_extent(trans, work_pos,
-				extent_iter, &io_opts, &data_opts)));
+		bkey_err(k = next_rebalance_extent(trans, snapshot_io_opts,
+				work_pos, extent_iter, &io_opts, &data_opts)));
 	if (ret || !k.k)
 		goto out;
 
@@ -624,7 +631,7 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	bch2_bkey_buf_reassemble(&sk, c, k);
 	k = bkey_i_to_s_c(sk.k);
 
-	ret = bch2_move_extent(ctxt, NULL, extent_iter, k, io_opts, data_opts);
+	ret = bch2_move_extent(ctxt, NULL, extent_iter, k, *io_opts, data_opts);
 	if (ret) {
 		if (bch2_err_matches(ret, ENOMEM)) {
 			/* memory allocation failure, wait for some IO to finish */
@@ -667,6 +674,7 @@ static int do_rebalance_scan_indirect(struct btree_trans *trans,
 }
 
 static int do_rebalance_scan(struct moving_context *ctxt,
+			     struct per_snapshot_io_opts *snapshot_io_opts,
 			     u64 inum, u64 cookie, u64 *sectors_scanned)
 {
 	struct btree_trans *trans = ctxt->trans;
@@ -686,9 +694,6 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 
 	r->state = BCH_REBALANCE_scanning;
 
-	struct per_snapshot_io_opts snapshot_io_opts;
-	per_snapshot_io_opts_init(&snapshot_io_opts, c);
-
 	int ret = for_each_btree_key_max(trans, iter, BTREE_ID_extents,
 					 r->scan_start.pos, r->scan_end.pos,
 					 BTREE_ITER_all_snapshots|
@@ -696,7 +701,7 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
 
 		struct bch_inode_opts *opts = bch2_extent_get_apply_io_opts(trans,
-					&snapshot_io_opts, iter.pos, &iter, k,
+					snapshot_io_opts, iter.pos, &iter, k,
 					SET_NEEDS_REBALANCE_opt_change);
 		PTR_ERR_OR_ZERO(opts) ?:
 		(inum &&
@@ -708,16 +713,14 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 	commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 		  bch2_clear_rebalance_needs_scan(trans, inum, cookie));
 
-	per_snapshot_io_opts_exit(&snapshot_io_opts);
 	*sectors_scanned += atomic64_read(&r->scan_stats.sectors_seen);
-	bch2_move_stats_exit(&r->scan_stats, c);
-
 	/*
 	 * Ensure that the rebalance_work entries we created are seen by the
 	 * next iteration of do_rebalance(), so we don't end up stuck in
 	 * rebalance_wait():
 	 */
 	*sectors_scanned += 1;
+	bch2_move_stats_exit(&r->scan_stats, c);
 
 	bch2_btree_write_buffer_flush_sync(trans);
 
@@ -769,6 +772,9 @@ static int do_rebalance(struct moving_context *ctxt)
 
 	bch2_move_stats_init(&r->work_stats, "rebalance_work");
 
+	struct per_snapshot_io_opts snapshot_io_opts;
+	per_snapshot_io_opts_init(&snapshot_io_opts, c);
+
 	while (!bch2_move_ratelimit(ctxt)) {
 		if (!bch2_rebalance_enabled(c)) {
 			bch2_moving_ctxt_flush_all(ctxt);
@@ -783,15 +789,18 @@ static int do_rebalance(struct moving_context *ctxt)
 			break;
 
 		ret = k->k.type == KEY_TYPE_cookie
-			? do_rebalance_scan(ctxt, k->k.p.inode,
+			? do_rebalance_scan(ctxt, &snapshot_io_opts,
+					    k->k.p.inode,
 					    le64_to_cpu(bkey_i_to_cookie(k)->v.cookie),
 					    &sectors_scanned)
-			: do_rebalance_extent(ctxt, k->k.p, &extent_iter);
+			: do_rebalance_extent(ctxt, &snapshot_io_opts,
+					      k->k.p, &extent_iter);
 		if (ret)
 			break;
 	}
 
 	bch2_trans_iter_exit(&extent_iter);
+	per_snapshot_io_opts_exit(&snapshot_io_opts);
 	bch2_move_stats_exit(&r->work_stats, c);
 
 	if (!ret &&
