@@ -438,7 +438,7 @@ restart_drop_extra_replicas:
 			bch2_insert_snapshot_whiteouts(trans, m->btree_id,
 						k.k->p, insert->k.p) ?:
 			bch2_inum_snapshot_opts_get(trans, k.k->p.inode, k.k->p.snapshot, &opts) ?:
-			bch2_bkey_set_needs_rebalance(c, &opts, insert,
+			bch2_bkey_set_needs_rebalance(trans, NULL, &opts, insert,
 						      SET_NEEDS_REBALANCE_foreground,
 						      m->op.opts.change_cookie) ?:
 			bch2_trans_update(trans, &iter, insert,
