@@ -63,7 +63,7 @@ static struct bkey_i *drop_dev_ptrs(struct btree_trans *trans, struct bkey_s_c k
 	if (n->k.type != KEY_TYPE_error) {
 		struct bch_inode_opts opts;
 		int ret = bch2_bkey_get_io_opts(trans, NULL, k, &opts) ?:
-			  bch2_bkey_set_needs_rebalance(c, &opts, n,
+			  bch2_bkey_set_needs_rebalance(trans, NULL, &opts, n,
 							SET_NEEDS_REBALANCE_opt_change, 0);
 		if (ret)
 			return ERR_PTR(ret);

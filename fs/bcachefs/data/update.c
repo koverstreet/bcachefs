@@ -162,7 +162,8 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	k = bkey_i_to_s_c(errptr_try(bch2_bkey_make_mut_noupdate(trans, k)));
 
 	struct bkey_i_extent *new = bkey_i_to_extent(bch2_keylist_front(&u->op.insert_keys));
-	new = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(&new->k)));
+	new = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(&new->k) +
+				 sizeof(struct bch_extent_reconcile)));
 	bkey_copy(&new->k_i, bch2_keylist_front(&u->op.insert_keys));
 
 	struct bkey_i *insert = errptr_try(bch2_trans_kmalloc(trans,
@@ -274,7 +275,17 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	try(bch2_insert_snapshot_whiteouts(trans, u->btree_id, k.k->p, bkey_start_pos(&insert->k)));
 	try(bch2_insert_snapshot_whiteouts(trans, u->btree_id, k.k->p, insert->k.p));
 
-	try(bch2_bkey_set_needs_rebalance(c, &opts, insert,
+	/*
+	 * This set_needs_rebalance call is only for verifying that the data we
+	 * just wrote was written correctly, otherwise we could fail to flag
+	 * incorrectly written data due to needs_rb already being set on the
+	 * existing extent
+	 */
+	try(bch2_bkey_set_needs_rebalance(trans, NULL, &opts, &new->k_i,
+					  SET_NEEDS_REBALANCE_foreground,
+					  u->op.opts.change_cookie));
+	/* This is the real set_needs_rebalance() call */
+	try(bch2_bkey_set_needs_rebalance(trans, NULL, &opts, insert,
 					  SET_NEEDS_REBALANCE_foreground,
 					  u->op.opts.change_cookie));
 

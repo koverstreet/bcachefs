@@ -58,9 +58,6 @@ enum set_needs_rebalance_ctx {
 	SET_NEEDS_REBALANCE_other,
 };
 
-int bch2_bkey_set_needs_rebalance(struct bch_fs *, struct bch_inode_opts *,
-				  struct bkey_i *, enum set_needs_rebalance_ctx, u32);
-
 /* Inodes in different snapshots may have different IO options: */
 struct snapshot_io_opts_entry {
 	u32			snapshot;
@@ -70,6 +67,8 @@ struct snapshot_io_opts_entry {
 struct per_snapshot_io_opts {
 	u64			cur_inum;
 	bool			metadata;
+	bool			fs_scan_cookie;
+	bool			inum_scan_cookie;
 
 	struct bch_inode_opts	fs_io_opts;
 	DARRAY(struct snapshot_io_opts_entry) d;
@@ -93,15 +92,20 @@ DEFINE_CLASS(per_snapshot_io_opts, struct per_snapshot_io_opts,
 	     per_snapshot_io_opts_init(c),
 	     struct bch_fs *c);
 
+int bch2_bkey_get_io_opts(struct btree_trans *,
+			  struct per_snapshot_io_opts *, struct bkey_s_c,
+			  struct bch_inode_opts *opts);
+
 int bch2_update_rebalance_opts(struct btree_trans *,
+			       struct per_snapshot_io_opts *,
 			       struct bch_inode_opts *,
 			       struct btree_iter *,
 			       struct bkey_s_c,
 			       enum set_needs_rebalance_ctx);
 
-int bch2_bkey_get_io_opts(struct btree_trans *,
-			  struct per_snapshot_io_opts *, struct bkey_s_c,
-			  struct bch_inode_opts *opts);
+int bch2_bkey_set_needs_rebalance(struct btree_trans *,
+				  struct per_snapshot_io_opts *, struct bch_inode_opts *,
+				  struct bkey_i *, enum set_needs_rebalance_ctx, u32);
 
 struct rebalance_scan {
 	enum rebalance_scan_type {
