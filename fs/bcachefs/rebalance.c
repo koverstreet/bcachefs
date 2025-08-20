@@ -1003,6 +1003,7 @@ int bch2_fs_rebalance_init(struct bch_fs *c)
 static int check_rebalance_work_one(struct btree_trans *trans,
 				    struct btree_iter *extent_iter,
 				    struct btree_iter *rebalance_iter,
+				    struct per_snapshot_io_opts *snapshot_io_opts,
 				    struct bkey_buf *last_flushed)
 {
 	struct bch_fs *c = trans->c;
@@ -1073,6 +1074,13 @@ static int check_rebalance_work_one(struct btree_trans *trans,
 			return ret;
 	}
 
+	struct bch_inode_opts *opts = bch2_extent_get_apply_io_opts(trans,
+				snapshot_io_opts, extent_iter->pos, extent_iter, extent_k,
+				SET_NEEDS_REBALANCE_other);
+	ret = PTR_ERR_OR_ZERO(opts);
+	if (ret)
+		return ret;
+
 	if (cmp <= 0)
 		bch2_btree_iter_advance(extent_iter);
 	if (cmp >= 0)
@@ -1085,9 +1093,13 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
 	CLASS(btree_iter, extent_iter)(trans, BTREE_ID_reflink, POS_MIN,
+				       BTREE_ITER_not_extents|
 				       BTREE_ITER_prefetch);
 	CLASS(btree_iter, rebalance_iter)(trans, BTREE_ID_rebalance_work, POS_MIN,
 					  BTREE_ITER_prefetch);
+
+	struct per_snapshot_io_opts snapshot_io_opts;
+	per_snapshot_io_opts_init(&snapshot_io_opts, c);
 
 	struct bkey_buf last_flushed;
 	bch2_bkey_buf_init(&last_flushed);
@@ -1102,12 +1114,14 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 
 		bch2_trans_begin(trans);
 
-		ret = check_rebalance_work_one(trans, &extent_iter, &rebalance_iter, &last_flushed);
+		ret = check_rebalance_work_one(trans, &extent_iter, &rebalance_iter,
+					       &snapshot_io_opts, &last_flushed);
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			ret = 0;
 	}
 
+	per_snapshot_io_opts_exit(&snapshot_io_opts);
 	bch2_bkey_buf_exit(&last_flushed, c);
 	return ret < 0 ? ret : 0;
 }
