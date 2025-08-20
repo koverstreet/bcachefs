@@ -341,7 +341,9 @@ enum bch_fsck_flags {
 	x(rebalance_work_incorrectly_set,			309,	FSCK_AUTOFIX)	\
 	x(rebalance_work_incorrectly_unset,			310,	FSCK_AUTOFIX)	\
 	x(validate_error_in_commit,				329,	0)		\
-	x(MAX,							330,	0)
+	x(extent_io_opts_not_set,				330,	FSCK_AUTOFIX)	\
+	x(extent_io_opts_unneeded,				331,	FSCK_AUTOFIX)	\
+	x(MAX,							332,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
