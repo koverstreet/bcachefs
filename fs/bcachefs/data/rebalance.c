@@ -1406,6 +1406,11 @@ static int do_rebalance(struct moving_context *ctxt, u32 *pending_kick)
 	try(darray_make_room(&work, REBALANCE_WORK_BUF_NR));
 
 	bch2_move_stats_init(&r->work_stats, "rebalance_work");
+	/*
+	 * if we see a bunch of extents and don't do any work, ratelimit
+	 *
+	 * XXX: do we get proper return codes from move_extent for this?
+	 */
 
 	struct per_snapshot_io_opts snapshot_io_opts;
 	per_snapshot_io_opts_init(&snapshot_io_opts, c);
