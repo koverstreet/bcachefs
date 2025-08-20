@@ -10,7 +10,7 @@
 static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_fs *c,
 								    struct bch_inode_opts *opts)
 {
-	struct bch_extent_rebalance r = {
+	return (struct bch_extent_rebalance) {
 		.type = BIT(BCH_EXTENT_ENTRY_rebalance),
 #define x(_name)							\
 		._name = opts->_name,					\
@@ -18,18 +18,18 @@ static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_f
 		BCH_REBALANCE_OPTS()
 #undef x
 	};
-
-	if (r.background_target &&
-	    !bch2_target_accepts_data(c, BCH_DATA_user, r.background_target))
-		r.background_target = 0;
-
-	return r;
 };
 
 void bch2_extent_rebalance_to_text(struct printbuf *, struct bch_fs *,
 				   const struct bch_extent_rebalance *);
 
-u64 bch2_bkey_sectors_need_rebalance(struct bch_fs *, struct bkey_s_c);
+const struct bch_extent_rebalance *bch2_bkey_rebalance_opts(struct bkey_s_c);
+
+static inline int bch2_bkey_needs_rb(struct bkey_s_c k)
+{
+	const struct bch_extent_rebalance *r = bch2_bkey_rebalance_opts(k);
+	return r ? r->need_rb : 0;
+}
 
 enum set_needs_rebalance_ctx {
 	SET_NEEDS_REBALANCE_opt_change,
