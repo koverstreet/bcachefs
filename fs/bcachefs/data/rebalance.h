@@ -55,9 +55,6 @@ enum set_needs_rebalance_ctx {
 	SET_NEEDS_REBALANCE_other,
 };
 
-int bch2_bkey_set_needs_rebalance(struct bch_fs *, struct bch_inode_opts *,
-				  struct bkey_i *, enum set_needs_rebalance_ctx, u32);
-
 /* Inodes in different snapshots may have different IO options: */
 struct snapshot_io_opts_entry {
 	u32			snapshot;
@@ -66,6 +63,9 @@ struct snapshot_io_opts_entry {
 
 struct per_snapshot_io_opts {
 	u64			cur_inum;
+	bool			fs_scan_cookie;
+	bool			inum_scan_cookie;
+
 	struct bch_inode_opts	fs_io_opts;
 	DARRAY(struct snapshot_io_opts_entry) d;
 };
@@ -84,6 +84,7 @@ static inline void per_snapshot_io_opts_exit(struct per_snapshot_io_opts *io_opt
 }
 
 int bch2_update_rebalance_opts(struct btree_trans *,
+			       struct per_snapshot_io_opts *,
 			       struct bch_inode_opts *,
 			       struct btree_iter *,
 			       struct bkey_s_c,
@@ -92,6 +93,10 @@ int bch2_update_rebalance_opts(struct btree_trans *,
 struct bch_inode_opts *bch2_extent_get_io_opts(struct btree_trans *,
 				  struct per_snapshot_io_opts *, struct bkey_s_c);
 int bch2_extent_get_io_opts_one(struct btree_trans *, struct bch_inode_opts *, struct bkey_s_c);
+
+int bch2_bkey_set_needs_rebalance(struct btree_trans *,
+				  struct per_snapshot_io_opts *, struct bch_inode_opts *,
+				  struct bkey_i *, enum set_needs_rebalance_ctx, u32);
 
 int bch2_set_rebalance_needs_scan_trans(struct btree_trans *, u64);
 int bch2_set_rebalance_needs_scan(struct bch_fs *, u64 inum);
