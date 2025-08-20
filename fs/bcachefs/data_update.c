@@ -449,8 +449,8 @@ restart_drop_extra_replicas:
 		if (trace_data_update_enabled())
 			trace_data_update2(m, old, k, insert);
 
-		if (bch2_bkey_sectors_need_rebalance(c, bkey_i_to_s_c(insert)) * k.k->size >
-		    bch2_bkey_sectors_need_rebalance(c, k) * insert->k.size)
+		if (bch2_bkey_needs_rb(bkey_i_to_s_c(insert)) &&
+		    !bch2_bkey_needs_rb(k))
 			trace_io_move_created_rebalance2(m, old, k, insert);
 
 		ret =   bch2_trans_commit(trans, &op->res,
