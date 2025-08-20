@@ -871,7 +871,6 @@ int bch2_trigger_extent(struct btree_trans *trans,
 			struct bkey_s_c old, struct bkey_s new,
 			enum btree_iter_update_trigger_flags flags)
 {
-	struct bch_fs *c = trans->c;
 	struct bkey_ptrs_c new_ptrs = bch2_bkey_ptrs_c(new.s_c);
 	struct bkey_ptrs_c old_ptrs = bch2_bkey_ptrs_c(old);
 	unsigned new_ptrs_bytes = (void *) new_ptrs.end - (void *) new_ptrs.start;
@@ -902,29 +901,34 @@ int bch2_trigger_extent(struct btree_trans *trans,
 				return ret;
 		}
 
-		int need_rebalance_delta = 0;
-		s64 need_rebalance_sectors_delta[1] = { 0 };
+		unsigned old_r = bch2_bkey_needs_rb(old);
+		unsigned new_r = bch2_bkey_needs_rb(new.s_c);
+		if (old_r != new_r) {
+			/* XXX: slowpath, put in a a separate function */
+			int delta = (int) !!new_r - (int) !!old_r;
+			if ((flags & BTREE_TRIGGER_transactional) && delta) {
+				int ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work,
+								  new.k->p, delta > 0);
+				if (ret)
+					return ret;
+			}
 
-		s64 s = bch2_bkey_sectors_need_rebalance(c, old);
-		need_rebalance_delta -= s != 0;
-		need_rebalance_sectors_delta[0] -= s;
-
-		s = bch2_bkey_sectors_need_rebalance(c, new.s_c);
-		need_rebalance_delta += s != 0;
-		need_rebalance_sectors_delta[0] += s;
-
-		if ((flags & BTREE_TRIGGER_transactional) && need_rebalance_delta) {
-			int ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work,
-							  new.k->p, need_rebalance_delta > 0);
-			if (ret)
-				return ret;
-		}
-
-		if (need_rebalance_sectors_delta[0]) {
-			int ret = bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc,
-							    need_rebalance_sectors_delta, rebalance_work);
-			if (ret)
-				return ret;
+			s64 v[1] = { 0 };
+#define x(n)										\
+			if ((old_r ^ new_r) & BIT(BCH_REBALANCE_##n)) {			\
+				v[0] = old_r & BIT(BCH_REBALANCE_##n)			\
+					? -(s64) old.k->size				\
+					:        new.k->size;				\
+											\
+				int ret = bch2_disk_accounting_mod2(trans,		\
+							flags & BTREE_TRIGGER_gc,	\
+							v, rebalance_work,		\
+							BCH_REBALANCE_##n);		\
+				if (ret)						\
+					return ret;					\
+			}
+			BCH_REBALANCE_OPTS()
+#undef x
 		}
 	}
 

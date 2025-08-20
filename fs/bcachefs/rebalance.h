@@ -10,7 +10,7 @@
 static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_fs *c,
 								    struct bch_inode_opts *opts)
 {
-	struct bch_extent_rebalance r = {
+	return (struct bch_extent_rebalance) {
 		.type = BIT(BCH_EXTENT_ENTRY_rebalance),
 #define x(_name)							\
 		._name = opts->_name,					\
@@ -18,15 +18,15 @@ static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_f
 		BCH_REBALANCE_OPTS()
 #undef x
 	};
-
-	if (r.background_target &&
-	    !bch2_target_accepts_data(c, BCH_DATA_user, r.background_target))
-		r.background_target = 0;
-
-	return r;
 };
 
-u64 bch2_bkey_sectors_need_rebalance(struct bch_fs *, struct bkey_s_c);
+const struct bch_extent_rebalance *bch2_bkey_rebalance_opts(struct bkey_s_c);
+
+static inline int bch2_bkey_needs_rb(struct bkey_s_c k)
+{
+	const struct bch_extent_rebalance *r = bch2_bkey_rebalance_opts(k);
+	return r ? r->need_rb : 0;
+}
 
 /* Inodes in different snapshots may have different IO options: */
 struct snapshot_io_opts_entry {
@@ -36,6 +36,9 @@ struct snapshot_io_opts_entry {
 
 struct per_snapshot_io_opts {
 	u64			cur_inum;
+	bool			fs_scan_cookie;
+	bool			inum_scan_cookie;
+
 	struct bch_inode_opts	fs_io_opts;
 	DARRAY(struct snapshot_io_opts_entry) d;
 };
@@ -60,7 +63,7 @@ enum set_needs_rebalance_ctx {
 
 int bch2_bkey_set_needs_rebalance(struct btree_trans *,
 				  struct per_snapshot_io_opts *, struct bch_inode_opts *,
-				  struct bkey_i *, enum set_needs_rebalance_ctx, u32);
+				  struct bkey_i *, enum set_needs_rebalance_ctx, unsigned);
 
 struct bch_inode_opts *bch2_extent_get_apply_io_opts(struct btree_trans *,
 			  struct per_snapshot_io_opts *, struct bpos,
