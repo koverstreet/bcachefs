@@ -110,6 +110,9 @@
 	  BCH_FSCK_ERR_inode_parent_has_case_insensitive_not_set)\
 	x(btree_node_accounting,				\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_allocations),		\
+	  BCH_FSCK_ERR_accounting_mismatch)			\
+	x(rebalance_v2,						\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_rebalance_work),	\
 	  BCH_FSCK_ERR_accounting_mismatch)
 
 #define DOWNGRADE_TABLE()					\
