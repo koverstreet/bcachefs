@@ -92,106 +92,95 @@ void bch2_extent_rebalance_to_text(struct printbuf *out, struct bch_fs *c,
 	}
 }
 
-static inline unsigned bch2_bkey_ptrs_need_compress(struct bch_fs *c,
-					   struct bch_inode_opts *opts,
-					   struct bkey_s_c k,
-					   struct bkey_ptrs_c ptrs)
+static void bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
+				      struct bch_inode_opts *io_opts,
+				      unsigned *move_ptrs,
+				      unsigned *compress_ptrs,
+				      u64 *sectors)
 {
-	if (!opts->background_compression)
-		return 0;
+	*move_ptrs	= 0;
+	*compress_ptrs	= 0;
+	*sectors	= 0;
 
-	unsigned compression_type = bch2_compression_opt_to_type(opts->background_compression);
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+
+	const struct bch_extent_rebalance *rb_opts = bch2_bkey_ptrs_rebalance_opts(ptrs);
+	if (!io_opts && !rb_opts)
+		return;
+
+	if (bch2_bkey_extent_ptrs_flags(ptrs) & BIT_ULL(BCH_EXTENT_FLAG_poisoned))
+		return;
+
+	unsigned compression_type =
+		bch2_compression_opt_to_type(io_opts
+					     ? io_opts->background_compression
+					     : rb_opts->background_compression);
+	unsigned target = io_opts
+		? io_opts->background_target
+		: rb_opts->background_target;
+	if (target && !bch2_target_accepts_data(c, BCH_DATA_user, target))
+		target = 0;
+
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
-	unsigned ptr_bit = 1;
-	unsigned rewrite_ptrs = 0;
+	bool incompressible = false, unwritten = false;
 
-	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-		if (p.crc.compression_type == BCH_COMPRESSION_TYPE_incompressible ||
-		    p.ptr.unwritten)
-			return 0;
-
-		if (!p.ptr.cached && p.crc.compression_type != compression_type)
-			rewrite_ptrs |= ptr_bit;
-		ptr_bit <<= 1;
-	}
-
-	return rewrite_ptrs;
-}
-
-static inline unsigned bch2_bkey_ptrs_need_move(struct bch_fs *c,
-				       struct bch_inode_opts *opts,
-				       struct bkey_ptrs_c ptrs)
-{
-	if (!opts->background_target ||
-	    !bch2_target_accepts_data(c, BCH_DATA_user, opts->background_target))
-		return 0;
-
-	unsigned ptr_bit = 1;
-	unsigned rewrite_ptrs = 0;
+	unsigned ptr_idx = 1;
 
 	guard(rcu)();
-	bkey_for_each_ptr(ptrs, ptr) {
-		if (!ptr->cached && !bch2_dev_in_target(c, ptr->dev, opts->background_target))
-			rewrite_ptrs |= ptr_bit;
-		ptr_bit <<= 1;
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		incompressible	|= p.crc.compression_type == BCH_COMPRESSION_TYPE_incompressible;
+		unwritten	|= p.ptr.unwritten;
+
+		if (!p.ptr.cached) {
+			if (p.crc.compression_type != compression_type)
+				*compress_ptrs |= ptr_idx;
+
+			if (target && !bch2_dev_in_target(c, p.ptr.dev, target))
+				*move_ptrs |= ptr_idx;
+		}
+
+		ptr_idx <<= 1;
 	}
 
-	return rewrite_ptrs;
+	if (unwritten)
+		*compress_ptrs = 0;
+	if (incompressible)
+		*compress_ptrs = 0;
+
+	unsigned rb_ptrs = *move_ptrs | *compress_ptrs;
+
+	if (!rb_ptrs)
+		return;
+
+	ptr_idx = 1;
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if (rb_ptrs & ptr_idx)
+			*sectors += p.crc.compressed_size;
+		ptr_idx <<= 1;
+	}
+}
+
+u64 bch2_bkey_sectors_need_rebalance(struct bch_fs *c, struct bkey_s_c k)
+{
+	unsigned move_ptrs	= 0;
+	unsigned compress_ptrs	= 0;
+	u64 sectors		= 0;
+
+	bch2_bkey_needs_rebalance(c, k, NULL, &move_ptrs, &compress_ptrs, &sectors);
+	return sectors;
 }
 
 static unsigned bch2_bkey_ptrs_need_rebalance(struct bch_fs *c,
 					      struct bch_inode_opts *opts,
 					      struct bkey_s_c k)
 {
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	unsigned move_ptrs	= 0;
+	unsigned compress_ptrs	= 0;
+	u64 sectors		= 0;
 
-	if (bch2_bkey_extent_ptrs_flags(ptrs) & BIT_ULL(BCH_EXTENT_FLAG_poisoned))
-		return 0;
-
-	return bch2_bkey_ptrs_need_compress(c, opts, k, ptrs) |
-		bch2_bkey_ptrs_need_move(c, opts, ptrs);
-}
-
-u64 bch2_bkey_sectors_need_rebalance(struct bch_fs *c, struct bkey_s_c k)
-{
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-
-	const struct bch_extent_rebalance *opts = bch2_bkey_ptrs_rebalance_opts(ptrs);
-	if (!opts)
-		return 0;
-
-	if (bch2_bkey_extent_ptrs_flags(ptrs) & BIT_ULL(BCH_EXTENT_FLAG_poisoned))
-		return 0;
-
-	const union bch_extent_entry *entry;
-	struct extent_ptr_decoded p;
-	u64 sectors = 0;
-
-	if (opts->background_compression) {
-		unsigned compression_type = bch2_compression_opt_to_type(opts->background_compression);
-
-		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-			if (p.crc.compression_type == BCH_COMPRESSION_TYPE_incompressible ||
-			    p.ptr.unwritten) {
-				sectors = 0;
-				goto incompressible;
-			}
-
-			if (!p.ptr.cached && p.crc.compression_type != compression_type)
-				sectors += p.crc.compressed_size;
-		}
-	}
-incompressible:
-	if (opts->background_target) {
-		guard(rcu)();
-		bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
-			if (!p.ptr.cached &&
-			    !bch2_dev_in_target(c, p.ptr.dev, opts->background_target))
-				sectors += p.crc.compressed_size;
-	}
-
-	return sectors;
+	bch2_bkey_needs_rebalance(c, k, opts, &move_ptrs, &compress_ptrs, &sectors);
+	return move_ptrs|compress_ptrs;
 }
 
 static inline bool bkey_should_have_rb_opts(struct bch_fs *c,
@@ -578,23 +567,25 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 		bch2_bkey_val_to_text(&buf, c, k);
 		prt_newline(&buf);
 
-		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+		unsigned move_ptrs	= 0;
+		unsigned compress_ptrs	= 0;
+		u64 sectors		= 0;
 
-		unsigned p = bch2_bkey_ptrs_need_compress(c, opts, k, ptrs);
-		if (p) {
-			prt_str(&buf, "compression=");
-			bch2_compression_opt_to_text(&buf, opts->background_compression);
-			prt_str(&buf, " ");
-			bch2_prt_u64_base2(&buf, p);
-			prt_newline(&buf);
-		}
+		bch2_bkey_needs_rebalance(c, k, opts, &move_ptrs, &compress_ptrs, &sectors);
 
-		p = bch2_bkey_ptrs_need_move(c, opts, ptrs);
-		if (p) {
+		if (move_ptrs) {
 			prt_str(&buf, "move=");
 			bch2_target_to_text(&buf, c, opts->background_target);
 			prt_str(&buf, " ");
-			bch2_prt_u64_base2(&buf, p);
+			bch2_prt_u64_base2(&buf, move_ptrs);
+			prt_newline(&buf);
+		}
+
+		if (compress_ptrs) {
+			prt_str(&buf, "compression=");
+			bch2_compression_opt_to_text(&buf, opts->background_compression);
+			prt_str(&buf, " ");
+			bch2_prt_u64_base2(&buf, compress_ptrs);
 			prt_newline(&buf);
 		}
 
