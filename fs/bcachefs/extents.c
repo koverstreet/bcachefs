@@ -157,7 +157,7 @@ static inline bool ptr_better(struct bch_fs *c,
 			      const struct extent_ptr_decoded p2,
 			      u64 p2_latency)
 {
-	struct bch_dev *ca2 = bch2_dev_rcu(c, p2.ptr.dev);
+	struct bch_dev *ca2 = bch2_dev_rcu_noerror(c, p2.ptr.dev);
 
 	int failed_delta = dev_failed(ca1) - dev_failed(ca2);
 	if (unlikely(failed_delta))
@@ -419,7 +419,7 @@ bool bch2_extent_merge(struct bch_fs *c, struct bkey_s l, struct bkey_s_c r)
 			return false;
 
 		/* Extents may not straddle buckets: */
-		struct bch_dev *ca = bch2_dev_rcu(c, lp.ptr.dev);
+		struct bch_dev *ca = bch2_dev_rcu_noerror(c, lp.ptr.dev);
 		bool same_bucket = ca && PTR_BUCKET_NR(ca, &lp.ptr) == PTR_BUCKET_NR(ca, &rp.ptr);
 
 		if (!same_bucket)
@@ -815,14 +815,14 @@ static inline unsigned __extent_ptr_durability(struct bch_dev *ca, struct extent
 
 unsigned bch2_extent_ptr_desired_durability(struct bch_fs *c, struct extent_ptr_decoded *p)
 {
-	struct bch_dev *ca = bch2_dev_rcu(c, p->ptr.dev);
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, p->ptr.dev);
 
 	return ca ? __extent_ptr_durability(ca, p) : 0;
 }
 
 unsigned bch2_extent_ptr_durability(struct bch_fs *c, struct extent_ptr_decoded *p)
 {
-	struct bch_dev *ca = bch2_dev_rcu(c, p->ptr.dev);
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, p->ptr.dev);
 
 	if (!ca || ca->mi.state == BCH_MEMBER_STATE_failed)
 		return 0;
@@ -1044,7 +1044,7 @@ bool bch2_bkey_has_target(struct bch_fs *c, struct bkey_s_c k, unsigned target)
 	guard(rcu)();
 	bkey_for_each_ptr(ptrs, ptr)
 		if (bch2_dev_in_target(c, ptr->dev, target) &&
-		    (ca = bch2_dev_rcu(c, ptr->dev)) &&
+		    (ca = bch2_dev_rcu_noerror(c, ptr->dev)) &&
 		    (!ptr->cached ||
 		     !dev_ptr_stale_rcu(ca, ptr)))
 			return true;
@@ -1228,7 +1228,7 @@ bool bch2_extent_normalize(struct bch_fs *c, struct bkey_s k)
 	guard(rcu)();
 	bch2_bkey_drop_ptrs(k, ptr,
 		ptr->cached &&
-		(!(ca = bch2_dev_rcu(c, ptr->dev)) ||
+		(!(ca = bch2_dev_rcu_noerror(c, ptr->dev)) ||
 		 dev_ptr_stale_rcu(ca, ptr) > 0));
 
 	return bkey_deleted(k.k);
