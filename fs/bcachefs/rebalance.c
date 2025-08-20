@@ -25,6 +25,8 @@
 #include <linux/kthread.h>
 #include <linux/sched/cputime.h>
 
+#define REBALANCE_WORK_SCAN_OFFSET	(U64_MAX - 1)
+
 /* bch_extent_rebalance: */
 
 static const struct bch_extent_rebalance *bch2_bkey_ptrs_rebalance_opts(struct bkey_ptrs_c ptrs)
@@ -178,6 +180,35 @@ int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_inode_opts *opts,
 	return 0;
 }
 
+static int have_rebalance_scan_cookie(struct btree_trans *trans, u64 inum)
+{
+	/*
+	 * If opts need to be propagated to the extent, a scan cookie should be
+	 * present:
+	 */
+	CLASS(btree_iter, iter)(trans, BTREE_ID_rebalance_work,
+				SPOS(inum, REBALANCE_WORK_SCAN_OFFSET, U32_MAX),
+				BTREE_ITER_intent);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
+	int ret = bkey_err(k);
+	if (ret)
+		return ret;
+
+	if (k.k->type == KEY_TYPE_cookie)
+		return 1;
+
+	if (!inum)
+		return 0;
+
+	bch2_btree_iter_set_pos(&iter, SPOS(0, REBALANCE_WORK_SCAN_OFFSET, U32_MAX));
+	k = bch2_btree_iter_peek_slot(&iter);
+	ret = bkey_err(k);
+	if (ret)
+		return ret;
+
+	return k.k->type == KEY_TYPE_cookie;
+}
+
 static int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 					  struct bch_inode_opts *io_opts,
 					  struct btree_iter *iter,
@@ -185,6 +216,7 @@ static int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 					  enum set_needs_rebalance_ctx ctx)
 {
 	struct bch_fs *c = trans->c;
+	int ret = 0;
 
 	BUG_ON(iter->flags & BTREE_ITER_is_extents);
 	BUG_ON(iter->flags & BTREE_ITER_filter_snapshots);
@@ -220,8 +252,33 @@ static int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 	    : !old)
 		return 0;
 
+	if (k.k->type != KEY_TYPE_reflink_v) {
+		ret = have_rebalance_scan_cookie(trans, k.k->p.inode);
+		if (ret < 0)
+			return ret;
+
+		if (!ret) {
+			CLASS(printbuf, buf)();
+
+			prt_printf(&buf, "extent with incorrect/missing rebalance opts:\n");
+			bch2_bkey_val_to_text(&buf, c, k);
+
+			const struct bch_extent_rebalance _old = {};
+			if (!old)
+				old = &_old;
+#define x(_name)								\
+			if (old->_name != new._name)				\
+				prt_printf(&buf, "\n" #_name " %u != %u",	\
+					   old->_name, new._name);		\
+			BCH_REBALANCE_OPTS()
+#undef x
+
+			fsck_err(trans, extent_io_opts_not_set, "%s", buf.buf);
+		}
+	}
+
 	struct bkey_i *n = bch2_trans_kmalloc(trans, bkey_bytes(k.k) + 8);
-	int ret = PTR_ERR_OR_ZERO(n);
+	ret = PTR_ERR_OR_ZERO(n);
 	if (ret)
 		return ret;
 
@@ -229,10 +286,12 @@ static int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 
 	/* On successfull transaction commit, @k was invalidated: */
 
-	return bch2_bkey_set_needs_rebalance(c, io_opts, n, ctx, 0) ?:
+	ret = bch2_bkey_set_needs_rebalance(c, io_opts, n, ctx, 0) ?:
 		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node) ?:
 		bch2_trans_commit(trans, NULL, NULL, 0) ?:
 		bch_err_throw(c, transaction_restart_commit);
+fsck_err:
+	return ret;
 }
 
 static struct bch_inode_opts *bch2_extent_get_io_opts(struct btree_trans *trans,
@@ -334,8 +393,6 @@ int bch2_extent_get_io_opts_one(struct btree_trans *trans,
 	return bch2_get_update_rebalance_opts(trans, io_opts, extent_iter, extent_k,
 					      ctx);
 }
-
-#define REBALANCE_WORK_SCAN_OFFSET	(U64_MAX - 1)
 
 static const char * const bch2_rebalance_state_strs[] = {
 #define x(t) #t,
