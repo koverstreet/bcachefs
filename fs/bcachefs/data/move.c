@@ -319,7 +319,8 @@ int bch2_move_extent(struct moving_context *ctxt,
 
 	struct bch_inode_opts opts;
 	try(bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts));
-	try(bch2_update_rebalance_opts(trans, &opts, iter, k, SET_NEEDS_REBALANCE_other));
+	try(bch2_update_rebalance_opts(trans, snapshot_io_opts, &opts, iter, k,
+				       SET_NEEDS_REBALANCE_other));
 	try(bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
 
 	struct data_update_opts data_opts = {};

@@ -355,7 +355,7 @@ int bch2_extent_update(struct btree_trans *trans,
 
 	bch2_inode_opts_get_inode(c, &inode, &opts);
 
-	try(bch2_bkey_set_needs_rebalance(c, &opts, k,
+	try(bch2_bkey_set_needs_rebalance(trans, NULL, &opts, k,
 					  SET_NEEDS_REBALANCE_foreground,
 					  change_cookie));
 	try(bch2_trans_update(trans, iter, k, 0));
@@ -1256,7 +1256,7 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 	return  bch2_extent_update_i_size_sectors(trans, iter,
 					min(new->k.p.offset << 9, new_i_size), 0, &inode) ?:
 		(bch2_inode_opts_get_inode(c, &inode, &opts),
-		 bch2_bkey_set_needs_rebalance(c, &opts, new,
+		 bch2_bkey_set_needs_rebalance(trans, NULL, &opts, new,
 					       SET_NEEDS_REBALANCE_foreground,
 					       op->opts.change_cookie)) ?:
 		bch2_trans_update(trans, iter, new,

@@ -29,6 +29,8 @@
 #include <linux/kthread.h>
 #include <linux/sched/cputime.h>
 
+#define REBALANCE_WORK_SCAN_OFFSET	(U64_MAX - 1)
+
 /* bch_extent_rebalance_v2: */
 
 static const struct bch_extent_rebalance_v2 *bch2_bkey_ptrs_rebalance_opts(const struct bch_fs *c,
@@ -289,7 +291,111 @@ static bool bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 		!bch2_request_incompat_feature(c, bcachefs_metadata_version_sb_field_extent_type_u64s);
 }
 
-int bch2_bkey_set_needs_rebalance(struct bch_fs *c,
+static int check_rebalance_scan_cookie(struct btree_trans *trans, u64 inum, bool *v)
+{
+	if (v && *v)
+		return 1;
+
+	/*
+	 * If opts need to be propagated to the extent, a scan cookie should be
+	 * present:
+	 */
+	CLASS(btree_iter, iter)(trans, BTREE_ID_rebalance_work,
+				SPOS(inum, REBALANCE_WORK_SCAN_OFFSET, U32_MAX),
+				0);
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
+
+	int ret = k.k->type == KEY_TYPE_cookie;
+	if (v)
+		*v = ret;
+	return ret;
+}
+
+static int new_needs_rb_allowed(struct btree_trans *trans,
+				struct per_snapshot_io_opts *s,
+				struct bkey_s_c k,
+				enum set_needs_rebalance_ctx ctx,
+				unsigned opt_change_cookie,
+				const struct bch_extent_rebalance_v2 *old,
+				const struct bch_extent_rebalance_v2 *new,
+				unsigned new_need_rb)
+{
+	struct bch_fs *c = trans->c;
+	/*
+	 * New need_rb - pointers that don't match the current io path options -
+	 * are only allowed in certain situations:
+	 *
+	 * Propagating new options: from bch2_set_rebalance_needs_scan
+	 *
+	 * Foreground writes: background_compression and background_target are
+	 * allowed
+	 *
+	 * Foreground writes: we may have raced with an option change:
+	 * opt_change_cookie checks for this
+	 *
+	 * XXX: foreground writes should still match compression,
+	 * foreground_target - figure out how to check for this
+	 */
+	if (ctx == SET_NEEDS_REBALANCE_opt_change ||
+	    ctx == SET_NEEDS_REBALANCE_opt_change_indirect)
+		return 0;
+
+	if (ctx == SET_NEEDS_REBALANCE_foreground) {
+		new_need_rb &= ~(BIT(BCH_REBALANCE_background_compression)|
+				 BIT(BCH_REBALANCE_background_target));
+		if (!new_need_rb)
+			return 0;
+
+		if (opt_change_cookie != atomic_read(&c->opt_change_cookie))
+			return 0;
+	}
+
+	/*
+	 * Either the extent data or the extent io options (from
+	 * bch_extent_rebalance_v2) should match the io_opts from the
+	 * inode/filesystem, unless
+	 *
+	 * - There's a scan pending to propagate new options
+	 * - It's an indirect extent: it may be referenced by inodes
+	 *   with inconsistent options
+	 *
+	 * For efficiency (so that we can cache checking for scan
+	 * cookies), only check option consistency when we're called
+	 * with snapshot_io_opts - don't bother when we're called from
+	 * move_data_phys() -> get_io_opts_one()
+	 *
+	 * Note that we can cache the existence of a cookie, but not the
+	 * non-existence, to avoid spurious false positives.
+	 */
+	int ret = check_rebalance_scan_cookie(trans, 0,			s ? &s->fs_scan_cookie : NULL) ?:
+		  check_rebalance_scan_cookie(trans, k.k->p.inode,	s ? &s->inum_scan_cookie : NULL);
+	if (ret)
+		return min(ret, 0);
+
+	CLASS(printbuf, buf)();
+
+	prt_printf(&buf, "extent with incorrect/missing rebalance opts:\n");
+	bch2_bkey_val_to_text(&buf, c, k);
+	prt_printf(&buf, "\nnew rebalance: ");
+	bch2_extent_rebalance_v2_to_text(&buf, c, new);
+
+	const struct bch_extent_rebalance_v2 _old = {};
+	if (!old)
+		old = &_old;
+
+#define x(_name)								\
+	if (new_need_rb & BIT(BCH_REBALANCE_##_name))				\
+		prt_printf(&buf, "\n" #_name " %u != %u", old->_name, new->_name);
+	BCH_REBALANCE_OPTS()
+#undef x
+
+	fsck_err(trans, extent_io_opts_not_set, "%s", buf.buf);
+fsck_err:
+	return ret;
+}
+
+int bch2_bkey_set_needs_rebalance(struct btree_trans *trans,
+				  struct per_snapshot_io_opts *snapshot_io_opts,
 				  struct bch_inode_opts *opts,
 				  struct bkey_i *_k,
 				  enum set_needs_rebalance_ctx ctx,
@@ -298,6 +404,7 @@ int bch2_bkey_set_needs_rebalance(struct bch_fs *c,
 	if (!bkey_extent_is_direct_data(&_k->k))
 		return 0;
 
+	struct bch_fs *c = trans->c;
 	struct bkey_s k = bkey_i_to_s(_k);
 	struct bch_extent_rebalance_v2 new;
 
@@ -306,6 +413,11 @@ int bch2_bkey_set_needs_rebalance(struct bch_fs *c,
 
 	struct bch_extent_rebalance_v2 *old =
 		(struct bch_extent_rebalance_v2 *) bch2_bkey_rebalance_opts(c, k.s_c);
+	unsigned new_need_rb = new.need_rb & ~(old ? old->need_rb : 0);
+
+	if (unlikely(new_need_rb))
+		try(new_needs_rb_allowed(trans, snapshot_io_opts, k.s_c, ctx, opt_change_cookie,
+					 old, &new, new_need_rb));
 
 	if (bkey_should_have_rb_opts(k.s_c, new)) {
 		if (!old) {
@@ -321,6 +433,7 @@ int bch2_bkey_set_needs_rebalance(struct bch_fs *c,
 }
 
 int bch2_update_rebalance_opts(struct btree_trans *trans,
+			       struct per_snapshot_io_opts *snapshot_io_opts,
 			       struct bch_inode_opts *io_opts,
 			       struct btree_iter *iter,
 			       struct bkey_s_c k,
@@ -345,7 +458,7 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 							 sizeof(struct bch_extent_rebalance_v2)));
 	bkey_reassemble(n, k);
 
-	return  bch2_bkey_set_needs_rebalance(c, io_opts, n, ctx, 0) ?:
+	return  bch2_bkey_set_needs_rebalance(trans, snapshot_io_opts, io_opts, n, ctx, 0) ?:
 		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node);
 }
 
@@ -401,7 +514,8 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 					darray_push(&snapshot_opts->d, e);
 				}));
 
-				snapshot_opts->cur_inum = k.k->p.inode;
+				snapshot_opts->cur_inum	= k.k->p.inode;
+				snapshot_opts->inum_scan_cookie	= false;
 
 				return ret ?: bch_err_throw(c, transaction_restart_nested);
 			}
@@ -431,8 +545,6 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 
 	return 0;
 }
-
-#define REBALANCE_WORK_SCAN_OFFSET	(U64_MAX - 1)
 
 static const char * const bch2_rebalance_state_strs[] = {
 #define x(t) #t,
@@ -662,6 +774,7 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 
 static int do_rebalance_scan_indirect(struct btree_trans *trans,
 				      struct bkey_s_c_reflink_p p,
+				      struct per_snapshot_io_opts *snapshot_io_opts,
 				      struct bch_inode_opts *opts)
 {
 	u64 idx = REFLINK_P_IDX(p.v) - le32_to_cpu(p.v->front_pad);
@@ -675,7 +788,7 @@ static int do_rebalance_scan_indirect(struct btree_trans *trans,
 				      NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 		if (bpos_ge(bkey_start_pos(k.k), POS(0, end)))
 			break;
-		bch2_update_rebalance_opts(trans, opts, &iter, k,
+		bch2_update_rebalance_opts(trans, snapshot_io_opts, opts, &iter, k,
 					   SET_NEEDS_REBALANCE_opt_change_indirect);
 	})));
 
@@ -719,7 +832,8 @@ static int do_rebalance_scan_btree(struct moving_context *ctxt,
 
 		struct bch_inode_opts opts;
 		ret =   bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts) ?:
-			bch2_update_rebalance_opts(trans, &opts, &iter, k, SET_NEEDS_REBALANCE_opt_change);
+			bch2_update_rebalance_opts(trans, snapshot_io_opts, &opts, &iter, k,
+						   SET_NEEDS_REBALANCE_opt_change);
 root_err:
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
@@ -745,11 +859,13 @@ root_err:
 		struct bch_inode_opts opts;
 
 		bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts) ?:
-		bch2_update_rebalance_opts(trans, &opts, &iter, k, SET_NEEDS_REBALANCE_opt_change) ?:
+		bch2_update_rebalance_opts(trans, snapshot_io_opts, &opts, &iter, k,
+					   SET_NEEDS_REBALANCE_opt_change) ?:
 		(start.inode &&
 		 k.k->type == KEY_TYPE_reflink_p &&
 		 REFLINK_P_MAY_UPDATE_OPTIONS(bkey_s_c_to_reflink_p(k).v)
-		 ? do_rebalance_scan_indirect(trans, bkey_s_c_to_reflink_p(k), &opts)
+		 ? do_rebalance_scan_indirect(trans, bkey_s_c_to_reflink_p(k),
+					      snapshot_io_opts, &opts)
 		 : 0) ?:
 		bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 	}));
@@ -1055,6 +1171,7 @@ int bch2_fs_rebalance_init(struct bch_fs *c)
 static int check_rebalance_work_one(struct btree_trans *trans,
 				    struct btree_iter *extent_iter,
 				    struct btree_iter *rebalance_iter,
+				    struct per_snapshot_io_opts *snapshot_io_opts,
 				    struct wb_maybe_flush *last_flushed)
 {
 	struct bch_fs *c = trans->c;
@@ -1111,6 +1228,11 @@ static int check_rebalance_work_one(struct btree_trans *trans,
 			"rebalance work incorrectly unset\n%s", buf.buf))
 		try(bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work, extent_k.k->p, true));
 
+	struct bch_inode_opts opts;
+
+	try(bch2_bkey_get_io_opts(trans, snapshot_io_opts, extent_k, &opts));
+	try(bch2_update_rebalance_opts(trans, snapshot_io_opts, &opts, extent_iter, extent_k,
+				       SET_NEEDS_REBALANCE_other));
 	try(bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
 
 	if (cmp <= 0)
@@ -1125,9 +1247,12 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
 	CLASS(btree_iter, extent_iter)(trans, BTREE_ID_reflink, POS_MIN,
+				       BTREE_ITER_not_extents|
 				       BTREE_ITER_prefetch);
 	CLASS(btree_iter, rebalance_iter)(trans, BTREE_ID_rebalance_work, POS_MIN,
 					  BTREE_ITER_prefetch);
+
+	CLASS(per_snapshot_io_opts, snapshot_io_opts)(c);
 
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
@@ -1141,7 +1266,8 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 	while (!(ret = lockrestart_do(trans,
 			progress_update_iter(trans, &progress, &extent_iter) ?:
 			wb_maybe_flush_inc(&last_flushed) ?:
-			check_rebalance_work_one(trans, &extent_iter, &rebalance_iter, &last_flushed))))
+			check_rebalance_work_one(trans, &extent_iter, &rebalance_iter,
+						&snapshot_io_opts,  &last_flushed))))
 	       ;
 
 	return min(ret, 0);

@@ -204,7 +204,7 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 
 		bkey_reassemble(insert, k);
 
-		new = bch2_trans_kmalloc(trans, bkey_bytes(&new->k));
+		new = bch2_trans_kmalloc(trans, bkey_bytes(&new->k) + sizeof(struct bch_extent_rebalance_v2));
 		ret = PTR_ERR_OR_ZERO(new);
 		if (ret)
 			goto err;
@@ -327,7 +327,18 @@ restart_drop_extra_replicas:
 			bch2_insert_snapshot_whiteouts(trans, m->btree_id,
 						k.k->p, insert->k.p) ?:
 			bch2_bkey_get_io_opts(trans, NULL, k, &opts) ?:
-			bch2_bkey_set_needs_rebalance(c, &opts, insert,
+			/*
+			 * this set_needs_rebalance call is only for verifying
+			 * that the data we just wrote was written correctly,
+			 * otherwise we could fail to flag incorrectly written
+			 * data due to needs_rb already being set on the
+			 * existing extent
+			 */
+			bch2_bkey_set_needs_rebalance(trans, NULL, &opts, &new->k_i,
+						      SET_NEEDS_REBALANCE_foreground,
+						      m->op.opts.change_cookie) ?:
+			/* this is the real set_needs_rebalance() call */
+			bch2_bkey_set_needs_rebalance(trans, NULL, &opts, insert,
 						      SET_NEEDS_REBALANCE_foreground,
 						      m->op.opts.change_cookie) ?:
 			bch2_trans_update(trans, &iter, insert,
