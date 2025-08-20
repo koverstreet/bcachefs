@@ -216,7 +216,9 @@ nocompact:
 
 	if (seq <  c->journal_entries_base_seq ||
 	    seq >= c->journal_entries_base_seq + U32_MAX) {
-		bch_err(c, "journal entry sequence numbers span too large a range: cannot reply, contact developers");
+		bch_err(c, "journal entry sequence numbers span too large a range: cannot replay, contact developers\n"
+			"base %llu last_seq currently %llu, but have seq %llu",
+			c->journal_entries_base_seq, jlist->last_seq, seq);
 		return bch_err_throw(c, ENOMEM_journal_entry_add);
 	}
 
