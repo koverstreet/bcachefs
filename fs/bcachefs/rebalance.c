@@ -479,11 +479,12 @@ out:
 	return ret;
 }
 
-static int do_rebalance_scan(struct moving_context *ctxt, u64 inum, u64 cookie)
+static int do_rebalance_scan(struct moving_context *ctxt,
+			     u64 inum, u64 cookie, u64 *sectors_scanned)
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
-	struct bch_fs_rebalance *r = &trans->c->rebalance;
+	struct bch_fs_rebalance *r = &c->rebalance;
 
 	bch2_move_stats_init(&r->scan_stats, "rebalance_scan");
 	ctxt->stats = &r->scan_stats;
@@ -515,14 +516,16 @@ static int do_rebalance_scan(struct moving_context *ctxt, u64 inum, u64 cookie)
 		  bch2_clear_rebalance_needs_scan(trans, inum, cookie));
 
 	per_snapshot_io_opts_exit(&snapshot_io_opts);
-	bch2_move_stats_exit(&r->scan_stats, trans->c);
+	*sectors_scanned += atomic64_read(&r->scan_stats.sectors_seen);
+	bch2_move_stats_exit(&r->scan_stats, c);
 
 	/*
 	 * Ensure that the rebalance_work entries we created are seen by the
 	 * next iteration of do_rebalance(), so we don't end up stuck in
 	 * rebalance_wait():
 	 */
-	atomic64_inc(&r->scan_stats.sectors_seen);
+	*sectors_scanned += 1;
+
 	bch2_btree_write_buffer_flush_sync(trans);
 
 	return ret;
@@ -562,6 +565,7 @@ static int do_rebalance(struct moving_context *ctxt)
 	struct bch_fs *c = trans->c;
 	struct bch_fs_rebalance *r = &c->rebalance;
 	struct btree_iter extent_iter = {};
+	u64 sectors_scanned = 0;
 	u32 kick = r->kick;
 
 	struct bpos work_pos = POS_MIN;
@@ -571,7 +575,6 @@ static int do_rebalance(struct moving_context *ctxt)
 		return ret;
 
 	bch2_move_stats_init(&r->work_stats, "rebalance_work");
-	bch2_move_stats_init(&r->scan_stats, "rebalance_scan");
 
 	while (!bch2_move_ratelimit(ctxt)) {
 		if (!bch2_rebalance_enabled(c)) {
@@ -588,19 +591,20 @@ static int do_rebalance(struct moving_context *ctxt)
 
 		ret = k->k.type == KEY_TYPE_cookie
 			? do_rebalance_scan(ctxt, k->k.p.inode,
-					    le64_to_cpu(bkey_i_to_cookie(k)->v.cookie))
+					    le64_to_cpu(bkey_i_to_cookie(k)->v.cookie),
+					    &sectors_scanned)
 			: do_rebalance_extent(ctxt, k->k.p, &extent_iter);
 		if (ret)
 			break;
 	}
 
 	bch2_trans_iter_exit(&extent_iter);
-	bch2_move_stats_exit(&r->scan_stats, c);
+	bch2_move_stats_exit(&r->work_stats, c);
 
 	if (!ret &&
 	    !kthread_should_stop() &&
 	    !atomic64_read(&r->work_stats.sectors_seen) &&
-	    !atomic64_read(&r->scan_stats.sectors_seen) &&
+	    !sectors_scanned &&
 	    kick == r->kick) {
 		bch2_moving_ctxt_flush_all(ctxt);
 		bch2_trans_unlock_long(trans);
