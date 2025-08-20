@@ -318,7 +318,7 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 	if (do_update) {
 		struct bkey_i *new =
 			errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
-						      sizeof(struct bch_extent_rebalance)));
+						      sizeof(struct bch_extent_rebalance_v2)));
 		bkey_reassemble(new, k);
 
 		scoped_guard(rcu)

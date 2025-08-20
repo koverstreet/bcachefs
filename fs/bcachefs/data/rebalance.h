@@ -6,33 +6,50 @@
 #include "alloc/disk_groups.h"
 #include "rebalance_types.h"
 
-static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_fs *c,
+static inline struct bch_extent_rebalance_v2 io_opts_to_rebalance_opts(struct bch_fs *c,
 								    struct bch_inode_opts *opts)
 {
-	struct bch_extent_rebalance r = {
-		.type = BIT(BCH_EXTENT_ENTRY_rebalance),
+	return (struct bch_extent_rebalance_v2) {
+		.type = BIT(BCH_EXTENT_ENTRY_rebalance_v2),
 #define x(_name)							\
 		._name = opts->_name,					\
 		._name##_from_inode = opts->_name##_from_inode,
 		BCH_REBALANCE_OPTS()
 #undef x
 	};
-
-	if (r.background_target &&
-	    !bch2_target_accepts_data(c, BCH_DATA_user, r.background_target))
-		r.background_target = 0;
-
-	return r;
 };
 
-void bch2_extent_rebalance_to_text(struct printbuf *, struct bch_fs *,
-				   const struct bch_extent_rebalance *);
+void bch2_extent_rebalance_v1_to_text(struct printbuf *, struct bch_fs *,
+				      const struct bch_extent_rebalance_v1 *);
+void bch2_extent_rebalance_v2_to_text(struct printbuf *, struct bch_fs *,
+				      const struct bch_extent_rebalance_v2 *);
 
-int bch2_trigger_extent_rebalance(struct btree_trans *,
-				  struct bkey_s_c, struct bkey_s_c,
-				  enum btree_iter_update_trigger_flags);
+const struct bch_extent_rebalance_v2 *bch2_bkey_rebalance_opts(const struct bch_fs *, struct bkey_s_c);
 
-u64 bch2_bkey_sectors_need_rebalance(struct bch_fs *, struct bkey_s_c);
+static inline int bch2_bkey_needs_rb(const struct bch_fs *c, struct bkey_s_c k)
+{
+	const struct bch_extent_rebalance_v2 *r = bch2_bkey_rebalance_opts(c, k);
+	return r ? r->need_rb : 0;
+}
+
+int __bch2_trigger_extent_rebalance(struct btree_trans *,
+				    struct bkey_s_c, struct bkey_s_c,
+				    unsigned, unsigned,
+				    enum btree_iter_update_trigger_flags);
+
+static inline int bch2_trigger_extent_rebalance(struct btree_trans *trans,
+				  struct bkey_s_c old, struct bkey_s_c new,
+				  enum btree_iter_update_trigger_flags flags)
+{
+	struct bch_fs *c = trans->c;
+	unsigned old_r = bch2_bkey_needs_rb(c, old);
+	unsigned new_r = bch2_bkey_needs_rb(c, new);
+
+	return old_r != new_r ||
+		(old.k->size != new.k->size && (old_r|new_r))
+		? __bch2_trigger_extent_rebalance(trans, old, new, old_r, new_r, flags)
+		: 0;
+}
 
 enum set_needs_rebalance_ctx {
 	SET_NEEDS_REBALANCE_opt_change,

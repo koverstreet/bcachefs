@@ -796,7 +796,7 @@ void bch2_bkey_propagate_incompressible(const struct bch_fs *c, struct bkey_i *d
 
 	/*
 	 * XXX: if some data actually is compressed, we want
-	 * bch_extent_rebalance.wont_recompress_smaller
+	 * bch_extent_rebalance_v2.wont_recompress_smaller
 	 */
 
 	bkey_extent_entry_for_each(ptrs, entry) {
@@ -1390,8 +1390,12 @@ void bch2_bkey_ptrs_to_text(struct printbuf *out, struct bch_fs *c,
 			prt_printf(out, "idx %llu block %u", (u64) ec->idx, ec->block);
 			break;
 		}
-		case BCH_EXTENT_ENTRY_rebalance:
-			bch2_extent_rebalance_to_text(out, c, &entry->rebalance);
+		case BCH_EXTENT_ENTRY_rebalance_v1:
+			bch2_extent_rebalance_v1_to_text(out, c, &entry->rebalance_v1);
+			break;
+
+		case BCH_EXTENT_ENTRY_rebalance_v2:
+			bch2_extent_rebalance_v2_to_text(out, c, &entry->rebalance_v2);
 			break;
 
 		case BCH_EXTENT_ENTRY_flags:
@@ -1540,14 +1544,14 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 					 "redundant stripe entry");
 			have_ec = true;
 			break;
-		case BCH_EXTENT_ENTRY_rebalance: {
+		case BCH_EXTENT_ENTRY_rebalance_v2: {
 			/*
 			 * this shouldn't be a fsck error, for forward
 			 * compatibility; the rebalance code should just refetch
 			 * the compression opt if it's unknown
 			 */
 #if 0
-			const struct bch_extent_rebalance *r = &entry->rebalance;
+			const struct bch_extent_rebalance_v2 *r = &entry->rebalance;
 
 			if (!bch2_compression_opt_valid(r->compression)) {
 				union bch_compression_opt opt = { .value = r->compression };
@@ -1620,7 +1624,8 @@ void bch2_ptr_swab(const struct bch_fs *c, struct bkey_s k)
 			break;
 		case BCH_EXTENT_ENTRY_stripe_ptr:
 			break;
-		case BCH_EXTENT_ENTRY_rebalance:
+		case BCH_EXTENT_ENTRY_rebalance_v1:
+		case BCH_EXTENT_ENTRY_rebalance_v2:
 			break;
 		default:
 			/* Bad entry type: will be caught by validate() */
@@ -1694,7 +1699,8 @@ int bch2_cut_front_s(const struct bch_fs *c, struct bpos where, struct bkey_s k)
 				entry->crc128.offset += sub;
 				break;
 			case BCH_EXTENT_ENTRY_stripe_ptr:
-			case BCH_EXTENT_ENTRY_rebalance:
+			case BCH_EXTENT_ENTRY_rebalance_v1:
+			case BCH_EXTENT_ENTRY_rebalance_v2:
 			case BCH_EXTENT_ENTRY_flags:
 				break;
 			}

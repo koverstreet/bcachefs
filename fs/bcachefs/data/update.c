@@ -197,7 +197,7 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 		insert = bch2_trans_kmalloc(trans,
 					    bkey_bytes(k.k) +
 					    bkey_val_bytes(&new->k) +
-					    sizeof(struct bch_extent_rebalance));
+					    sizeof(struct bch_extent_rebalance_v2));
 		ret = PTR_ERR_OR_ZERO(insert);
 		if (ret)
 			goto err;
