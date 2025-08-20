@@ -38,15 +38,30 @@ static const struct bch_extent_rebalance *bch2_bkey_ptrs_rebalance_opts(struct b
 	return NULL;
 }
 
-static const struct bch_extent_rebalance *bch2_bkey_rebalance_opts(struct bkey_s_c k)
+const struct bch_extent_rebalance *bch2_bkey_rebalance_opts(struct bkey_s_c k)
 {
 	return bch2_bkey_ptrs_rebalance_opts(bch2_bkey_ptrs_c(k));
 }
 
+static const char * const rebalance_opts[] = {
+#define x(n) #n,
+	BCH_REBALANCE_OPTS()
+#undef x
+	NULL
+};
+
 void bch2_extent_rebalance_to_text(struct printbuf *out, struct bch_fs *c,
 				   const struct bch_extent_rebalance *r)
 {
-	prt_printf(out, "replicas=%u", r->data_replicas);
+	prt_str(out, "need_rb=");
+	prt_bitflags(out, rebalance_opts, r->need_rb);
+
+	if (r->hipri)
+		prt_str(out, " hipri");
+	if (r->pending)
+		prt_str(out, " pending");
+
+	prt_printf(out, " replicas=%u", r->data_replicas);
 	if (r->data_replicas_from_inode)
 		prt_str(out, " (inode)");
 
@@ -92,32 +107,54 @@ void bch2_extent_rebalance_to_text(struct printbuf *out, struct bch_fs *c,
 	}
 }
 
-int bch2_trigger_extent_rebalance(struct btree_trans *trans,
-				  struct bkey_s_c old, struct bkey_s_c new,
-				  enum btree_iter_update_trigger_flags flags)
+/*
+ * XXX: check in bkey_validate that if r->hipri or r->pending are set,
+ * r->data_replicas are also set
+ */
+
+static inline unsigned rb_accounting_counters(const struct bch_extent_rebalance *r)
 {
-	struct bch_fs *c = trans->c;
-	int need_rebalance_delta = 0;
-	s64 need_rebalance_sectors_delta[1] = { 0 };
+	if (!r)
+		return 0;
+	unsigned ret = r->need_rb;
 
-	s64 s = bch2_bkey_sectors_need_rebalance(c, old);
-	need_rebalance_delta -= s != 0;
-	need_rebalance_sectors_delta[0] -= s;
+	if (r->hipri)
+		ret |= BIT(BCH_REBALANCE_ACCOUNTING_high_priority);
+	if (r->pending) {
+		ret |= BIT(BCH_REBALANCE_ACCOUNTING_pending);
+		ret &= ~BIT(BCH_REBALANCE_ACCOUNTING_background_target);
+	}
+	return ret;
+}
 
-	s = bch2_bkey_sectors_need_rebalance(c, new);
-	need_rebalance_delta += s != 0;
-	need_rebalance_sectors_delta[0] += s;
-
-	if ((flags & BTREE_TRIGGER_transactional) && need_rebalance_delta) {
+int __bch2_trigger_extent_rebalance(struct btree_trans *trans,
+				    struct bkey_s_c old, struct bkey_s_c new,
+				    unsigned old_r, unsigned new_r,
+				    enum btree_iter_update_trigger_flags flags)
+{
+	int delta = (int) !!new_r - (int) !!old_r;
+	if ((flags & BTREE_TRIGGER_transactional) && delta) {
 		int ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work,
-						      new.k->p, need_rebalance_delta > 0);
+						      new.k->p, delta > 0);
 		if (ret)
 			return ret;
 	}
 
-	if (need_rebalance_sectors_delta[0]) {
+	delta = old.k->size == new.k->size
+		? old_r ^ new_r
+		: old_r | new_r;
+	while (delta) {
+		unsigned c = __ffs(delta);
+		delta ^= BIT(c);
+
+		s64 v[1] = { 0 };
+		if (old_r & BIT(c))
+			v[0] -= (s64) old.k->size;
+		if (new_r & BIT(c))
+			v[0] += (s64) new.k->size;
+
 		int ret = bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc,
-						    need_rebalance_sectors_delta, rebalance_work);
+						    v, rebalance_work_v2, c);
 		if (ret)
 			return ret;
 	}
@@ -125,39 +162,45 @@ int bch2_trigger_extent_rebalance(struct btree_trans *trans,
 	return 0;
 }
 
-static void bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
-				      struct bch_inode_opts *io_opts,
-				      unsigned *move_ptrs,
-				      unsigned *compress_ptrs,
-				      u64 *sectors)
+static struct bch_extent_rebalance
+bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
+			  struct bch_inode_opts *opts,
+			  unsigned *move_ptrs,
+			  unsigned *compress_ptrs,
+			  bool may_update_indirect)
 {
 	*move_ptrs	= 0;
 	*compress_ptrs	= 0;
-	*sectors	= 0;
 
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-
-	const struct bch_extent_rebalance *rb_opts = bch2_bkey_ptrs_rebalance_opts(ptrs);
-	if (!io_opts && !rb_opts)
-		return;
+	struct bch_extent_rebalance r = { .type = BIT(BCH_EXTENT_ENTRY_rebalance) };
 
 	if (bch2_bkey_extent_ptrs_flags(ptrs) & BIT_ULL(BCH_EXTENT_FLAG_poisoned))
-		return;
+		return r;
 
-	unsigned compression_type =
-		bch2_compression_opt_to_type(io_opts
-					     ? io_opts->background_compression
-					     : rb_opts->background_compression);
-	unsigned target = io_opts
-		? io_opts->background_target
-		: rb_opts->background_target;
-	if (target && !bch2_target_accepts_data(c, BCH_DATA_user, target))
-		target = 0;
+	const struct bch_extent_rebalance *old_r = bch2_bkey_ptrs_rebalance_opts(ptrs);
+	if (old_r) {
+		r = *old_r;
+		r.need_rb = 0;
+	}
+
+#define x(_name)							\
+	if (k.k->type != KEY_TYPE_reflink_v ||				\
+	    may_update_indirect ||					\
+	    (!opts->_name##_from_inode && !r._name##_from_inode)) {	\
+		r._name			= opts->_name;			\
+		r._name##_from_inode	= opts->_name##_from_inode;	\
+	}
+	BCH_REBALANCE_OPTS()
+#undef x
+
+	unsigned compression_type = bch2_compression_opt_to_type(r.background_compression);
+
+	bool incompressible = false, unwritten = false, ec = false;
+	unsigned durability = 0, min_durability = INT_MAX;
 
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
-	bool incompressible = false, unwritten = false;
-
 	unsigned ptr_idx = 1;
 
 	guard(rcu)();
@@ -166,72 +209,50 @@ static void bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 		unwritten	|= p.ptr.unwritten;
 
 		if (!p.ptr.cached) {
-			if (p.crc.compression_type != compression_type)
+			if (p.crc.compression_type != compression_type) {
 				*compress_ptrs |= ptr_idx;
+				r.need_rb |= BIT(BCH_REBALANCE_background_compression);
+			}
 
-			if (target && !bch2_dev_in_target(c, p.ptr.dev, target))
+			if (r.background_target &&
+			    !bch2_dev_in_target(c, p.ptr.dev, r.background_target)) {
 				*move_ptrs |= ptr_idx;
+				r.need_rb |= BIT(BCH_REBALANCE_background_target);
+			}
+
+			unsigned d = bch2_extent_ptr_durability(c, &p);
+			durability += d;
+			min_durability = min(min_durability, d);
+
+			ec |= p.has_ec;
 		}
 
 		ptr_idx <<= 1;
 	}
 
-	if (unwritten)
+	if (unwritten || incompressible) {
 		*compress_ptrs = 0;
-	if (incompressible)
-		*compress_ptrs = 0;
-
-	unsigned rb_ptrs = *move_ptrs | *compress_ptrs;
-
-	if (!rb_ptrs)
-		return;
-
-	ptr_idx = 1;
-	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-		if (rb_ptrs & ptr_idx)
-			*sectors += p.crc.compressed_size;
-		ptr_idx <<= 1;
+		r.need_rb &= ~BIT(BCH_REBALANCE_background_compression);
 	}
+	return r;
 }
 
-u64 bch2_bkey_sectors_need_rebalance(struct bch_fs *c, struct bkey_s_c k)
-{
-	unsigned move_ptrs	= 0;
-	unsigned compress_ptrs	= 0;
-	u64 sectors		= 0;
-
-	bch2_bkey_needs_rebalance(c, k, NULL, &move_ptrs, &compress_ptrs, &sectors);
-	return sectors;
-}
-
-static unsigned bch2_bkey_ptrs_need_rebalance(struct bch_fs *c,
-					      struct bch_inode_opts *opts,
-					      struct bkey_s_c k)
-{
-	unsigned move_ptrs	= 0;
-	unsigned compress_ptrs	= 0;
-	u64 sectors		= 0;
-
-	bch2_bkey_needs_rebalance(c, k, opts, &move_ptrs, &compress_ptrs, &sectors);
-	return move_ptrs|compress_ptrs;
-}
-
-static inline bool bkey_should_have_rb_opts(struct bch_fs *c,
-					    struct bch_inode_opts *opts,
-					    struct bkey_s_c k)
+static inline bool bkey_should_have_rb_opts(struct bkey_s_c k,
+					    struct bch_extent_rebalance new)
 {
 	if (k.k->type == KEY_TYPE_reflink_v) {
-#define x(n)	if (opts->n##_from_inode) return true;
+#define x(n)	if (new.n##_from_inode) return true;
 		BCH_REBALANCE_OPTS()
 #undef x
 	}
-	return bch2_bkey_ptrs_need_rebalance(c, opts, k);
+	return new.need_rb;
 }
 
-int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_inode_opts *opts,
+int bch2_bkey_set_needs_rebalance(struct bch_fs *c,
+				  struct bch_inode_opts *opts,
 				  struct bkey_i *_k,
 				  enum set_needs_rebalance_ctx ctx,
-				  u32 change_cookie)
+				  u32 opt_change_cookie)
 {
 	if (!bkey_extent_is_direct_data(&_k->k))
 		return 0;
@@ -240,17 +261,27 @@ int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_inode_opts *opts,
 	struct bch_extent_rebalance *old =
 		(struct bch_extent_rebalance *) bch2_bkey_rebalance_opts(k.s_c);
 
-	if (bkey_should_have_rb_opts(c, opts, k.s_c)) {
+	unsigned move_ptrs	= 0;
+	unsigned compress_ptrs	= 0;
+	struct bch_extent_rebalance new =
+		bch2_bkey_needs_rebalance(c, k.s_c, opts, &move_ptrs, &compress_ptrs,
+					  ctx == SET_NEEDS_REBALANCE_opt_change_indirect);
+
+	bool should_have_rb = bkey_should_have_rb_opts(k.s_c, new);
+
+	if (should_have_rb == !!old &&
+	    (should_have_rb ? !memcmp(old, &new, sizeof(new)) : !old))
+		return 0;
+
+	if (should_have_rb) {
 		if (!old) {
 			old = bkey_val_end(k);
 			k.k->u64s += sizeof(*old) / sizeof(u64);
 		}
 
-		*old = io_opts_to_rebalance_opts(c, opts);
-	} else {
-		if (old)
-			extent_entry_drop(k, (union bch_extent_entry *) old);
-	}
+		*old = new;
+	} else if (old)
+		extent_entry_drop(k, (union bch_extent_entry *) old);
 
 	return 0;
 }
@@ -269,32 +300,19 @@ static int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 	if (!bkey_extent_is_direct_data(k.k))
 		return 0;
 
-	bool may_update_indirect = ctx == SET_NEEDS_REBALANCE_opt_change_indirect;
+	struct bch_extent_rebalance *old =
+		(struct bch_extent_rebalance *) bch2_bkey_rebalance_opts(k);
 
-	/*
-	 * If it's an indirect extent, and we walked to it directly, we won't
-	 * have the options from the inode that were directly applied: options
-	 * from the extent take precedence - unless the io_opts option came from
-	 * the inode and may_update_indirect is true (walked from a
-	 * REFLINK_P_MAY_UPDATE_OPTIONS pointer).
-	 */
-	const struct bch_extent_rebalance *old = bch2_bkey_rebalance_opts(k);
-	if (old && k.k->type == KEY_TYPE_reflink_v) {
-#define x(_name)								\
-		if (old->_name##_from_inode &&					\
-		    !(may_update_indirect && io_opts->_name##_from_inode)) {	\
-			io_opts->_name = old->_name;				\
-			io_opts->_name##_from_inode = true;			\
-		}
-		BCH_REBALANCE_OPTS()
-#undef x
-	}
+	unsigned move_ptrs	= 0;
+	unsigned compress_ptrs	= 0;
+	struct bch_extent_rebalance new =
+		bch2_bkey_needs_rebalance(c, k, io_opts, &move_ptrs, &compress_ptrs,
+					  ctx == SET_NEEDS_REBALANCE_opt_change_indirect);
 
-	struct bch_extent_rebalance new = io_opts_to_rebalance_opts(c, io_opts);
+	bool should_have_rb = bkey_should_have_rb_opts(k, new);
 
-	if (bkey_should_have_rb_opts(c, io_opts, k)
-	    ? old && !memcmp(old, &new, sizeof(new))
-	    : !old)
+	if (should_have_rb == !!old &&
+	    (should_have_rb ? !memcmp(old, &new, sizeof(new)) : !old))
 		return 0;
 
 	struct bkey_i *n = bch2_trans_kmalloc(trans, bkey_bytes(k.k) + 8);
@@ -306,7 +324,7 @@ static int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 
 	/* On successfull transaction commit, @k was invalidated: */
 
-	return bch2_bkey_set_needs_rebalance(c, io_opts, n, ctx, 0) ?:
+	return  bch2_bkey_set_needs_rebalance(c, io_opts, n, ctx, 0) ?:
 		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node) ?:
 		bch2_trans_commit(trans, NULL, NULL, 0) ?:
 		bch_err_throw(c, transaction_restart_commit);
@@ -372,7 +390,8 @@ struct bch_inode_opts *bch2_extent_get_apply_io_opts(struct btree_trans *trans,
 			  enum set_needs_rebalance_ctx ctx)
 {
 	struct bch_inode_opts *opts =
-		bch2_extent_get_io_opts(trans, snapshot_io_opts, extent_pos, extent_iter, extent_k);
+		bch2_extent_get_io_opts(trans, snapshot_io_opts,
+					extent_pos, extent_iter, extent_k);
 	if (IS_ERR(opts) || btree_iter_path(trans, extent_iter)->level)
 		return opts;
 
@@ -535,23 +554,6 @@ static struct bkey_i *next_rebalance_entry(struct btree_trans *trans,
 	return &(&darray_pop(buf))->k_i;
 }
 
-static int bch2_bkey_clear_needs_rebalance(struct btree_trans *trans,
-					   struct btree_iter *iter,
-					   struct bkey_s_c k)
-{
-	if (k.k->type == KEY_TYPE_reflink_v || !bch2_bkey_rebalance_opts(k))
-		return 0;
-
-	struct bkey_i *n = bch2_bkey_make_mut(trans, iter, &k, 0);
-	int ret = PTR_ERR_OR_ZERO(n);
-	if (ret)
-		return ret;
-
-	extent_entry_drop(bkey_i_to_s(n),
-			  (void *) bch2_bkey_rebalance_opts(bkey_i_to_s_c(n)));
-	return bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
-}
-
 static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 			struct per_snapshot_io_opts *snapshot_io_opts,
 			struct bpos work_pos,
@@ -570,6 +572,10 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 	if (bkey_err(k))
 		return k;
 
+	const struct bch_extent_rebalance *r = bch2_bkey_rebalance_opts(k);
+	if (!r || !r->need_rb) /* Write buffer race? */
+		return bkey_s_c_null;
+
 	struct bch_inode_opts *opts =
 		bch2_extent_get_apply_io_opts(trans, snapshot_io_opts,
 					      extent_iter->pos, extent_iter, k,
@@ -580,22 +586,23 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 
 	*opts_ret = opts;
 
+	unsigned move_ptrs	= 0;
+	unsigned compress_ptrs	= 0;
+	bch2_bkey_needs_rebalance(c, k, opts, &move_ptrs, &compress_ptrs, false);
+
 	memset(data_opts, 0, sizeof(*data_opts));
-	data_opts->rewrite_ptrs		= bch2_bkey_ptrs_need_rebalance(c, opts, k);
+	data_opts->rewrite_ptrs		= move_ptrs|compress_ptrs;
 	data_opts->target		= opts->background_target;
 	data_opts->write_flags		|= BCH_WRITE_only_specified_devs;
 
-	if (!data_opts->rewrite_ptrs) {
-		/*
-		 * device we would want to write to offline? devices in target
-		 * changed?
-		 *
-		 * We'll now need a full scan before this extent is picked up
-		 * again:
-		 */
-		int ret = bch2_bkey_clear_needs_rebalance(trans, extent_iter, k);
-		if (ret)
-			return bkey_s_c_err(ret);
+	if (!data_opts->rewrite_ptrs &&
+	    !data_opts->kill_ptrs &&
+	    !data_opts->kill_ec_ptrs &&
+	    !data_opts->extra_replicas) {
+		CLASS(printbuf, buf)();
+		prt_printf(&buf, "got extent to rebalance but nothing to do, confused\n  ");
+		bch2_bkey_val_to_text(&buf, c, k);
+		bch_err(c, "%s", buf.buf);
 		return bkey_s_c_null;
 	}
 
@@ -604,12 +611,6 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 
 		bch2_bkey_val_to_text(&buf, c, k);
 		prt_newline(&buf);
-
-		unsigned move_ptrs	= 0;
-		unsigned compress_ptrs	= 0;
-		u64 sectors		= 0;
-
-		bch2_bkey_needs_rebalance(c, k, opts, &move_ptrs, &compress_ptrs, &sectors);
 
 		if (move_ptrs) {
 			prt_str(&buf, "move=");
@@ -1089,8 +1090,7 @@ static int check_rebalance_work_one(struct btree_trans *trans,
 		extent_k.k = &deleted;
 	}
 
-	bool should_have_rebalance =
-		bch2_bkey_sectors_need_rebalance(c, extent_k) != 0;
+	bool should_have_rebalance = bch2_bkey_needs_rb(extent_k);
 	bool have_rebalance = rebalance_k.k->type == KEY_TYPE_set;
 
 	if (should_have_rebalance != have_rebalance) {

@@ -103,6 +103,13 @@ static const char * const __bch2_fs_usage_types[] = {
 
 #undef x
 
+static const char * const __bch2_rebalance_accounting_types[] = {
+#define x(n)	#n,
+	BCH_REBALANCE_ACCOUNTING()
+#undef x
+	NULL
+};
+
 static void prt_str_opt_boundscheck(struct printbuf *out, const char * const opts[],
 				    unsigned nr, const char *type, unsigned idx)
 {
@@ -125,6 +132,7 @@ PRT_STR_OPT_BOUNDSCHECKED(csum_opt,		enum bch_csum_opt);
 PRT_STR_OPT_BOUNDSCHECKED(csum_type,		enum bch_csum_type);
 PRT_STR_OPT_BOUNDSCHECKED(compression_type,	enum bch_compression_type);
 PRT_STR_OPT_BOUNDSCHECKED(str_hash_type,	enum bch_str_hash_type);
+PRT_STR_OPT_BOUNDSCHECKED(rebalance_accounting_type,	enum bch_rebalance_accounting_type);
 
 static int bch2_opt_fix_errors_parse(struct bch_fs *c, const char *val, u64 *res,
 				     struct printbuf *err)
