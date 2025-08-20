@@ -283,6 +283,9 @@ void bch2_accounting_key_to_text(struct printbuf *out, struct disk_accounting_po
 		prt_str(out, "btree=");
 		bch2_btree_id_to_text(out, k->btree.id);
 		break;
+	case BCH_DISK_ACCOUNTING_rebalance_work_v2:
+		bch2_prt_rebalance_accounting_type(out, k->rebalance_work_v2.type);
+		break;
 	}
 }
 
