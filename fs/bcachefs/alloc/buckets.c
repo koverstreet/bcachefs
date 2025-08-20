@@ -20,7 +20,7 @@
 
 #include "data/copygc.h"
 #include "data/ec.h"
-#include "data/rebalance.h"
+#include "data/reconcile.h"
 #include "data/reflink.h"
 
 #include "fs/inode.h"
@@ -313,7 +313,7 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 	if (do_update) {
 		struct bkey_i *new =
 			errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
-						      sizeof(struct bch_extent_rebalance)));
+						      sizeof(struct bch_extent_reconcile)));
 		bkey_reassemble(new, k);
 
 		scoped_guard(rcu)

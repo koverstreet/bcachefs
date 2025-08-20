@@ -32,7 +32,7 @@
 #include "data/ec.h"
 #include "data/move.h"
 #include "data/nocow_locking.h"
-#include "data/rebalance.h"
+#include "data/reconcile.h"
 
 #include "debug/sysfs.h"
 #include "debug/tests.h"

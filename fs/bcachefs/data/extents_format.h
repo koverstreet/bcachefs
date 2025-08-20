@@ -79,9 +79,10 @@
 	x(crc64,		2)		\
 	x(crc128,		3)		\
 	x(stripe_ptr,		4)		\
-	x(rebalance,		5)		\
-	x(flags,		6)
-#define BCH_EXTENT_ENTRY_MAX	7
+	x(rebalance_v1,		5)		\
+	x(flags,		6)		\
+	x(reconcile,		7)
+#define BCH_EXTENT_ENTRY_MAX	8
 
 enum bch_extent_entry_type {
 #define x(f, n) BCH_EXTENT_ENTRY_##f = n,
@@ -221,8 +222,8 @@ struct bch_extent_flags {
 #endif
 };
 
-/* bch_extent_rebalance: */
-#include "rebalance_format.h"
+/* bch_extent_reconcile: */
+#include "reconcile_format.h"
 
 union bch_extent_entry {
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ ||  __BITS_PER_LONG == 64

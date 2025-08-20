@@ -9,7 +9,7 @@
 
 #include "data/ec.h"
 #include "data/migrate.h"
-#include "data/rebalance.h"
+#include "data/reconcile.h"
 
 #include "debug/sysfs.h"
 

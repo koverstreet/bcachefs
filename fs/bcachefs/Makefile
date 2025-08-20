@@ -47,7 +47,7 @@ bcachefs-y		:=			\
 	data/move.o				\
 	data/nocow_locking.o			\
 	data/read.o				\
-	data/rebalance.o			\
+	data/reconcile.o			\
 	data/reflink.o				\
 	data/update.o				\
 	data/write.o				\

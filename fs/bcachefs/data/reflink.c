@@ -8,7 +8,7 @@
 
 #include "data/extents.h"
 #include "data/io_misc.h"
-#include "data/rebalance.h"
+#include "data/reconcile.h"
 #include "data/reflink.h"
 #include "data/write.h"
 

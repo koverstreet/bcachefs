@@ -20,7 +20,7 @@
 #include "data/keylist.h"
 #include "data/move.h"
 #include "data/nocow_locking.h"
-#include "data/rebalance.h"
+#include "data/reconcile.h"
 #include "data/write.h"
 
 #include "debug/async_objs.h"
@@ -1221,7 +1221,7 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 	}
 
 	struct bkey_i *new = errptr_try(bch2_trans_kmalloc_nomemzero(trans,
-				bkey_bytes(k.k) + sizeof(struct bch_extent_rebalance)));
+				bkey_bytes(k.k) + sizeof(struct bch_extent_reconcile)));
 
 	bkey_reassemble(new, k);
 	bch2_cut_front(c, bkey_start_pos(&orig->k), new);

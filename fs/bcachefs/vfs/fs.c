@@ -8,7 +8,7 @@
 
 #include "btree/update.h"
 
-#include "data/rebalance.h"
+#include "data/reconcile.h"
 
 #include "fs/acl.h"
 #include "fs/check.h"
@@ -115,12 +115,12 @@ static int bch2_write_inode_trans(struct btree_trans *trans,
 	struct bch_inode_unpacked inode_u;
 	try(bch2_inode_peek(trans, &iter, &inode_u, inode_inum(inode), BTREE_ITER_intent));
 
-	struct bch_extent_rebalance old_r = bch2_inode_rebalance_opts_get(c, &inode_u);
+	struct bch_extent_reconcile old_r = bch2_inode_rebalance_opts_get(c, &inode_u);
 
 	if (set)
 	       try(set(trans, inode, &inode_u, p));
 
-	struct bch_extent_rebalance new_r = bch2_inode_rebalance_opts_get(c, &inode_u);
+	struct bch_extent_reconcile new_r = bch2_inode_rebalance_opts_get(c, &inode_u);
 	*rebalance_changed = memcmp(&old_r, &new_r, sizeof(new_r));
 	if (*rebalance_changed)
 		try(bch2_set_rebalance_needs_scan_trans(trans,

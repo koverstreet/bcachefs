@@ -338,8 +338,8 @@ enum bch_fsck_flags {
 	x(directory_size_mismatch,				303,	FSCK_AUTOFIX)	\
 	x(dirent_cf_name_too_big,				304,	0)		\
 	x(dirent_stray_data_after_cf_name,			305,	0)		\
-	x(rebalance_work_incorrectly_set,			309,	FSCK_AUTOFIX)	\
-	x(rebalance_work_incorrectly_unset,			310,	FSCK_AUTOFIX)	\
+	x(reconcile_work_incorrectly_set,			309,	FSCK_AUTOFIX)	\
+	x(reconcile_work_incorrectly_unset,			310,	FSCK_AUTOFIX)	\
 	x(validate_error_in_commit,				329,	0)		\
 	x(MAX,							330,	0)
 

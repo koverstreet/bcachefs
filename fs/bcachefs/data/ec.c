@@ -24,7 +24,7 @@
 #include "data/read.h"
 #include "data/write.h"
 #include "data/keylist.h"
-#include "data/rebalance.h"
+#include "data/reconcile.h"
 
 #include "sb/io.h"
 

@@ -15,7 +15,7 @@
 #include "data/keylist.h"
 #include "data/move.h"
 #include "data/nocow_locking.h"
-#include "data/rebalance.h"
+#include "data/reconcile.h"
 #include "data/update.h"
 #include "data/write.h"
 
@@ -168,7 +168,7 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	struct bkey_i *insert = errptr_try(bch2_trans_kmalloc(trans,
 				    bkey_bytes(k.k) +
 				    bkey_val_bytes(&new->k) +
-				    sizeof(struct bch_extent_rebalance)));
+				    sizeof(struct bch_extent_reconcile)));
 	bkey_reassemble(insert, k);
 
 	if (!bch2_extents_match(c, k, old)) {

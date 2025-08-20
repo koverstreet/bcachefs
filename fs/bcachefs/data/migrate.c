@@ -20,7 +20,7 @@
 #include "data/keylist.h"
 #include "data/migrate.h"
 #include "data/move.h"
-#include "data/rebalance.h"
+#include "data/reconcile.h"
 
 #include "journal/journal.h"
 
@@ -41,7 +41,7 @@ static struct bkey_i *drop_dev_ptrs(struct btree_trans *trans, struct bkey_s_c k
 		return NULL;
 
 	struct bkey_i *n = bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
-					      sizeof(struct bch_extent_rebalance));
+					      sizeof(struct bch_extent_reconcile));
 	if (IS_ERR(n))
 		return n;
 	bkey_reassemble(n, k);

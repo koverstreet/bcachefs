@@ -16,7 +16,7 @@
 
 #include "data/move.h"
 #include "data/copygc.h"
-#include "data/rebalance.h"
+#include "data/reconcile.h"
 
 #include "fs/dirent.h"
 #include "fs/logged_ops.h"

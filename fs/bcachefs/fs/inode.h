@@ -292,9 +292,9 @@ void bch2_inode_opts_get_inode(struct bch_fs *, struct bch_inode_unpacked *, str
 int bch2_inode_set_casefold(struct btree_trans *, subvol_inum,
 			    struct bch_inode_unpacked *, unsigned);
 
-#include "data/rebalance.h"
+#include "data/reconcile.h"
 
-static inline struct bch_extent_rebalance
+static inline struct bch_extent_reconcile
 bch2_inode_rebalance_opts_get(struct bch_fs *c, struct bch_inode_unpacked *inode)
 {
 	struct bch_inode_opts io_opts;

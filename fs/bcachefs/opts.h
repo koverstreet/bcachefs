@@ -25,6 +25,7 @@ extern const char * const __bch2_str_hash_types[];
 extern const char * const bch2_str_hash_opts[];
 extern const char * const __bch2_data_types[];
 extern const char * const bch2_member_states[];
+extern const char * const __bch2_rebalance_accounting_types[];
 extern const char * const bch2_d_types[];
 
 void bch2_prt_jset_entry_type(struct printbuf *,	enum bch_jset_entry_type);
@@ -34,6 +35,7 @@ void bch2_prt_csum_opt(struct printbuf *,		enum bch_csum_opt);
 void bch2_prt_csum_type(struct printbuf *,		enum bch_csum_type);
 void bch2_prt_compression_type(struct printbuf *,	enum bch_compression_type);
 void bch2_prt_str_hash_type(struct printbuf *,		enum bch_str_hash_type);
+void bch2_prt_rebalance_accounting_type(struct printbuf *, enum bch_rebalance_accounting_type);
 
 static inline const char *bch2_d_type_str(unsigned d_type)
 {

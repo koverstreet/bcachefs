@@ -6,7 +6,7 @@
 #include "btree/update.h"
 
 #include "data/extents.h"
-#include "data/rebalance.h"
+#include "data/reconcile.h"
 
 #include "fs/acl.h"
 #include "fs/dirent.h"
