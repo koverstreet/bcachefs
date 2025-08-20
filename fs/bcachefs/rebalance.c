@@ -838,6 +838,8 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 		}
 	}
 
+	/* XXX: can we handle metadata? */
+
 	if (!data_opts->rewrite_ptrs &&
 	    !data_opts->kill_ptrs &&
 	    !data_opts->kill_ec_ptrs &&
@@ -1175,6 +1177,11 @@ static int do_rebalance(struct moving_context *ctxt, u32 *pending_kick)
 		return ret;
 
 	bch2_move_stats_init(&r->work_stats, "rebalance_work");
+	/*
+	 * if we see a bunch of extents and don't do any work, ratelimit
+	 *
+	 * XXX: do we get proper return codes from move_extent for this?
+	 */
 
 	struct per_snapshot_io_opts snapshot_io_opts;
 	per_snapshot_io_opts_init(&snapshot_io_opts, c);
