@@ -47,10 +47,12 @@ static void bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 				      struct bch_inode_opts *io_opts,
 				      unsigned *move_ptrs,
 				      unsigned *compress_ptrs,
+				      unsigned *csum_ptrs,
 				      u64 *sectors)
 {
 	*move_ptrs	= 0;
 	*compress_ptrs	= 0;
+	*csum_ptrs	= 0;
 	*sectors	= 0;
 
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
@@ -66,6 +68,9 @@ static void bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 		bch2_compression_opt_to_type(io_opts
 					     ? io_opts->background_compression
 					     : rb_opts->background_compression);
+	unsigned csum_type = bch2_csum_opt_to_type(io_opts
+						   ? io_opts->data_checksum
+						   : rb_opts->data_checksum, true);
 	unsigned target = io_opts
 		? io_opts->background_target
 		: rb_opts->background_target;
@@ -87,6 +92,9 @@ static void bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 			if (p.crc.compression_type != compression_type)
 				*compress_ptrs |= ptr_idx;
 
+			if (p.crc.csum_type != csum_type)
+				*csum_ptrs |= ptr_idx;
+
 			if (target && !bch2_dev_in_target(c, p.ptr.dev, target))
 				*move_ptrs |= ptr_idx;
 		}
@@ -95,11 +103,11 @@ static void bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 	}
 
 	if (unwritten)
-		*compress_ptrs = 0;
+		*compress_ptrs = *csum_ptrs = 0;
 	if (incompressible)
 		*compress_ptrs = 0;
 
-	unsigned rb_ptrs = *move_ptrs | *compress_ptrs;
+	unsigned rb_ptrs = *move_ptrs | *compress_ptrs | *csum_ptrs;
 
 	if (!rb_ptrs)
 		return;
@@ -116,9 +124,10 @@ u64 bch2_bkey_sectors_need_rebalance(struct bch_fs *c, struct bkey_s_c k)
 {
 	unsigned move_ptrs	= 0;
 	unsigned compress_ptrs	= 0;
+	unsigned csum_ptrs	= 0;
 	u64 sectors		= 0;
 
-	bch2_bkey_needs_rebalance(c, k, NULL, &move_ptrs, &compress_ptrs, &sectors);
+	bch2_bkey_needs_rebalance(c, k, NULL, &move_ptrs, &compress_ptrs, &csum_ptrs, &sectors);
 	return sectors;
 }
 
@@ -128,10 +137,11 @@ static unsigned bch2_bkey_ptrs_need_rebalance(struct bch_fs *c,
 {
 	unsigned move_ptrs	= 0;
 	unsigned compress_ptrs	= 0;
+	unsigned csum_ptrs	= 0;
 	u64 sectors		= 0;
 
-	bch2_bkey_needs_rebalance(c, k, opts, &move_ptrs, &compress_ptrs, &sectors);
-	return move_ptrs|compress_ptrs;
+	bch2_bkey_needs_rebalance(c, k, opts, &move_ptrs, &compress_ptrs, &csum_ptrs, &sectors);
+	return move_ptrs|compress_ptrs|csum_ptrs;
 }
 
 static inline bool bkey_should_have_rb_opts(struct bch_fs *c,
@@ -509,9 +519,10 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 
 		unsigned move_ptrs	= 0;
 		unsigned compress_ptrs	= 0;
+		unsigned csum_ptrs	= 0;
 		u64 sectors		= 0;
 
-		bch2_bkey_needs_rebalance(c, k, opts, &move_ptrs, &compress_ptrs, &sectors);
+		bch2_bkey_needs_rebalance(c, k, opts, &move_ptrs, &compress_ptrs, &csum_ptrs, &sectors);
 
 		if (move_ptrs) {
 			prt_str(&buf, "move=");
@@ -526,6 +537,14 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 			bch2_compression_opt_to_text(&buf, opts->background_compression);
 			prt_str(&buf, " ");
 			bch2_prt_u64_base2(&buf, compress_ptrs);
+			prt_newline(&buf);
+		}
+
+		if (csum_ptrs) {
+			prt_str(&buf, "csum=");
+			bch2_prt_csum_opt(&buf, opts->data_checksum);
+			prt_str(&buf, " ");
+			bch2_prt_u64_base2(&buf, csum_ptrs);
 			prt_newline(&buf);
 		}
 
