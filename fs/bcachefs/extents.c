@@ -837,23 +837,6 @@ unsigned bch2_bkey_replicas(struct bch_fs *c, struct bkey_s_c k)
 	return replicas;
 }
 
-unsigned bch2_extent_ptr_desired_durability(struct bch_fs *c, struct extent_ptr_decoded *p)
-{
-	struct bch_dev *ca = bch2_dev_rcu_noerror(c, p->ptr.dev);
-
-	return ca ? __extent_ptr_durability(ca, p) : 0;
-}
-
-unsigned bch2_extent_ptr_durability(struct bch_fs *c, struct extent_ptr_decoded *p)
-{
-	struct bch_dev *ca = bch2_dev_rcu_noerror(c, p->ptr.dev);
-
-	if (!ca || ca->mi.state == BCH_MEMBER_STATE_failed)
-		return 0;
-
-	return __extent_ptr_durability(ca, p);
-}
-
 unsigned bch2_bkey_durability(struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
