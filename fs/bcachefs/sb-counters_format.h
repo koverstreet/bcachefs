@@ -128,7 +128,7 @@ struct bch_sb_field_counters {
 static inline void __maybe_unused check_bch_counter_ids_unique(void) {
 	switch(0){
 #define x(t, n, ...) case (n):
-        BCH_PERSISTENT_COUNTERS()
+        BCH_PERSISTENT_COUNTERS();
 #undef x
 		;
 	}
