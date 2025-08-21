@@ -1,4 +1,5 @@
-Idle/background work classes design doc:
+Idle/background work classes design doc
+=======================================
 
 Right now, our behaviour at idle isn't ideal, it was designed for servers that
 would be under sustained load, to keep pending work at a "medium" level, to
