@@ -3697,6 +3697,9 @@ void bch2_btree_trans_to_text(struct printbuf *out, struct btree_trans *trans)
 
 	prt_printf(out, "%i %s\n", task ? task->pid : 0, trans->fn);
 
+	if (trans->journal_replay_not_finished)
+		prt_printf(out, "has journal_keys ref\n");
+
 	/* trans->paths is rcu protected vs. freeing */
 	guard(rcu)();
 	guard(printbuf_atomic)(out);
