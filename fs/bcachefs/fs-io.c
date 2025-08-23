@@ -630,7 +630,7 @@ static noinline int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 	struct bch_inode_opts opts;
 	int ret = 0;
 
-	bch2_inode_opts_get(&opts, c, &inode->ei_inode);
+	bch2_inode_opts_get_inode(c, &inode->ei_inode, &opts);
 
 	CLASS(btree_trans, trans)(c);
 	CLASS(btree_iter, iter)(trans, BTREE_ID_extents,

@@ -284,12 +284,12 @@ void bch2_readahead(struct readahead_control *ractl)
 {
 	struct bch_inode_info *inode = to_bch_ei(ractl->mapping->host);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	struct bch_inode_opts opts;
 	struct folio *folio;
 	struct readpages_iter readpages_iter;
 	struct blk_plug plug;
 
-	bch2_inode_opts_get(&opts, c, &inode->ei_inode);
+	struct bch_inode_opts opts;
+	bch2_inode_opts_get_inode(c, &inode->ei_inode, &opts);
 
 	int ret = readpages_iter_init(&readpages_iter, ractl);
 	if (ret)
@@ -361,7 +361,7 @@ int bch2_read_single_folio(struct folio *folio, struct address_space *mapping)
 	if (!bch2_folio_create(folio, GFP_KERNEL))
 		return -ENOMEM;
 
-	bch2_inode_opts_get(&opts, c, &inode->ei_inode);
+	bch2_inode_opts_get_inode(c, &inode->ei_inode, &opts);
 
 	rbio = rbio_init(bio_alloc_bioset(NULL, 1, REQ_OP_READ, GFP_KERNEL, &c->bio_read),
 			 c,
@@ -683,7 +683,7 @@ int bch2_writepages(struct address_space *mapping, struct writeback_control *wbc
 	struct bch_fs *c = mapping->host->i_sb->s_fs_info;
 	struct bch_writepage_state *w = kzalloc(sizeof(*w), GFP_NOFS|__GFP_NOFAIL);
 
-	bch2_inode_opts_get(&w->opts, c, &to_bch_ei(mapping->host)->ei_inode);
+	bch2_inode_opts_get_inode(c, &to_bch_ei(mapping->host)->ei_inode, &w->opts);
 
 	blk_start_plug(&w->plug);
 	int ret = bch2_write_cache_pages(mapping, wbc, w);
