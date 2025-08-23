@@ -373,7 +373,6 @@ static int __bch2_resume_logged_op_finsert(struct btree_trans *trans,
 	struct btree_iter iter;
 	struct bkey_i_logged_op_finsert *op = bkey_i_to_logged_op_finsert(op_k);
 	subvol_inum inum = { le32_to_cpu(op->v.subvol), le64_to_cpu(op->v.inum) };
-	struct bch_inode_opts opts;
 	u64 dst_offset = le64_to_cpu(op->v.dst_offset);
 	u64 src_offset = le64_to_cpu(op->v.src_offset);
 	s64 shift = dst_offset - src_offset;
@@ -383,10 +382,6 @@ static int __bch2_resume_logged_op_finsert(struct btree_trans *trans,
 	u32 snapshot;
 	bool warn_errors = i_sectors_delta != NULL;
 	int ret = 0;
-
-	ret = bch2_inum_opts_get(trans, inum, &opts);
-	if (ret)
-		return ret;
 
 	/*
 	 * check for missing subvolume before fpunch, as in resume we don't want
@@ -476,8 +471,7 @@ case LOGGED_OP_FINSERT_shift_extents:
 
 		op->v.pos = cpu_to_le64(insert ? bkey_start_offset(&delete.k) : delete.k.p.offset);
 
-		ret =   bch2_bkey_set_needs_rebalance(c, &opts, copy) ?:
-			bch2_btree_insert_trans(trans, BTREE_ID_extents, &delete, 0) ?:
+		ret =   bch2_btree_insert_trans(trans, BTREE_ID_extents, &delete, 0) ?:
 			bch2_btree_insert_trans(trans, BTREE_ID_extents, copy, 0) ?:
 			bch2_logged_op_update(trans, &op->k_i) ?:
 			bch2_trans_commit(trans, &disk_res, NULL, BCH_TRANS_COMMIT_no_enospc);
