@@ -1224,21 +1224,22 @@ struct bch_opts bch2_inode_opts_to_opts(struct bch_inode_unpacked *inode)
 	return ret;
 }
 
-void bch2_inode_opts_get(struct bch_inode_opts *opts, struct bch_fs *c,
-			 struct bch_inode_unpacked *inode)
+void bch2_inode_opts_get_inode(struct bch_fs *c,
+			       struct bch_inode_unpacked *inode,
+			       struct bch_inode_opts *ret)
 {
 #define x(_name, _bits)							\
 	if ((inode)->bi_##_name) {					\
-		opts->_name = inode->bi_##_name - 1;			\
-		opts->_name##_from_inode = true;			\
+		ret->_name = inode->bi_##_name - 1;			\
+		ret->_name##_from_inode = true;				\
 	} else {							\
-		opts->_name = c->opts._name;				\
-		opts->_name##_from_inode = false;			\
+		ret->_name = c->opts._name;				\
+		ret->_name##_from_inode = false;			\
 	}
 	BCH_INODE_OPTS()
 #undef x
 
-	bch2_io_opts_fixups(opts);
+	bch2_io_opts_fixups(ret);
 }
 
 int bch2_inum_opts_get(struct btree_trans *trans, subvol_inum inum, struct bch_inode_opts *opts)
@@ -1249,7 +1250,7 @@ int bch2_inum_opts_get(struct btree_trans *trans, subvol_inum inum, struct bch_i
 	if (ret)
 		return ret;
 
-	bch2_inode_opts_get(opts, trans->c, &inode);
+	bch2_inode_opts_get_inode(trans->c, &inode, opts);
 	return 0;
 }
 
