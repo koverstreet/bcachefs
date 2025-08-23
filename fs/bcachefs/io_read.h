@@ -74,7 +74,7 @@ struct bch_read_bio {
 	struct bpos		data_pos;
 	struct bversion		version;
 
-	struct bch_io_opts	opts;
+	struct bch_inode_opts	opts;
 
 	struct work_struct	work;
 
@@ -192,7 +192,7 @@ static inline struct bch_read_bio *rbio_init_fragment(struct bio *bio,
 
 static inline struct bch_read_bio *rbio_init(struct bio *bio,
 					     struct bch_fs *c,
-					     struct bch_io_opts opts,
+					     struct bch_inode_opts opts,
 					     bio_end_io_t end_io)
 {
 	struct bch_read_bio *rbio = to_rbio(bio);

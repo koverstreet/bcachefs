@@ -90,7 +90,7 @@ struct bch_write_op {
 	struct bch_devs_list	devs_have;
 	u16			target;
 	u16			nonce;
-	struct bch_io_opts	opts;
+	struct bch_inode_opts	opts;
 
 	u32			subvol;
 	struct bpos		pos;

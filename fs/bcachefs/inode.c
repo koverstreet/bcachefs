@@ -1223,7 +1223,7 @@ struct bch_opts bch2_inode_opts_to_opts(struct bch_inode_unpacked *inode)
 	return ret;
 }
 
-void bch2_inode_opts_get(struct bch_io_opts *opts, struct bch_fs *c,
+void bch2_inode_opts_get(struct bch_inode_opts *opts, struct bch_fs *c,
 			 struct bch_inode_unpacked *inode)
 {
 #define x(_name, _bits)							\
@@ -1240,7 +1240,7 @@ void bch2_inode_opts_get(struct bch_io_opts *opts, struct bch_fs *c,
 	bch2_io_opts_fixups(opts);
 }
 
-int bch2_inum_opts_get(struct btree_trans *trans, subvol_inum inum, struct bch_io_opts *opts)
+int bch2_inum_opts_get(struct btree_trans *trans, subvol_inum inum, struct bch_inode_opts *opts)
 {
 	struct bch_inode_unpacked inode;
 	int ret = lockrestart_do(trans, bch2_inode_find_by_inum_trans(trans, inum, &inode));

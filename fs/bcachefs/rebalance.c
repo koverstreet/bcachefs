@@ -93,7 +93,7 @@ void bch2_extent_rebalance_to_text(struct printbuf *out, struct bch_fs *c,
 }
 
 static inline unsigned bch2_bkey_ptrs_need_compress(struct bch_fs *c,
-					   struct bch_io_opts *opts,
+					   struct bch_inode_opts *opts,
 					   struct bkey_s_c k,
 					   struct bkey_ptrs_c ptrs)
 {
@@ -120,7 +120,7 @@ static inline unsigned bch2_bkey_ptrs_need_compress(struct bch_fs *c,
 }
 
 static inline unsigned bch2_bkey_ptrs_need_move(struct bch_fs *c,
-				       struct bch_io_opts *opts,
+				       struct bch_inode_opts *opts,
 				       struct bkey_ptrs_c ptrs)
 {
 	if (!opts->background_target ||
@@ -141,7 +141,7 @@ static inline unsigned bch2_bkey_ptrs_need_move(struct bch_fs *c,
 }
 
 static unsigned bch2_bkey_ptrs_need_rebalance(struct bch_fs *c,
-					      struct bch_io_opts *opts,
+					      struct bch_inode_opts *opts,
 					      struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
@@ -194,7 +194,7 @@ incompressible:
 	return sectors;
 }
 
-static bool bch2_bkey_rebalance_needs_update(struct bch_fs *c, struct bch_io_opts *opts,
+static bool bch2_bkey_rebalance_needs_update(struct bch_fs *c, struct bch_inode_opts *opts,
 					     struct bkey_s_c k)
 {
 	if (!bkey_extent_is_direct_data(k.k))
@@ -210,7 +210,7 @@ static bool bch2_bkey_rebalance_needs_update(struct bch_fs *c, struct bch_io_opt
 	}
 }
 
-int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_io_opts *opts,
+int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_inode_opts *opts,
 				  struct bkey_i *_k)
 {
 	if (!bkey_extent_is_direct_data(&_k->k))
@@ -236,7 +236,7 @@ int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_io_opts *opts,
 }
 
 int bch2_get_update_rebalance_opts(struct btree_trans *trans,
-				   struct bch_io_opts *io_opts,
+				   struct bch_inode_opts *io_opts,
 				   struct btree_iter *iter,
 				   struct bkey_s_c k)
 {
@@ -405,7 +405,7 @@ static int bch2_bkey_clear_needs_rebalance(struct btree_trans *trans,
 static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 			struct bpos work_pos,
 			struct btree_iter *extent_iter,
-			struct bch_io_opts *io_opts,
+			struct bch_inode_opts *io_opts,
 			struct data_update_opts *data_opts)
 {
 	struct bch_fs *c = trans->c;
@@ -484,7 +484,7 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	struct bch_fs_rebalance *r = &trans->c->rebalance;
 	struct data_update_opts data_opts;
-	struct bch_io_opts io_opts;
+	struct bch_inode_opts io_opts;
 	struct bkey_s_c k;
 	struct bkey_buf sk;
 	int ret;
@@ -557,7 +557,7 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 					 BTREE_ITER_prefetch, k, ({
 		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
 
-		struct bch_io_opts *io_opts = bch2_move_get_io_opts(trans,
+		struct bch_inode_opts *io_opts = bch2_move_get_io_opts(trans,
 					&snapshot_io_opts, iter.pos, &iter, k);
 		PTR_ERR_OR_ZERO(io_opts);
 	})) ?:

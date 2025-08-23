@@ -130,7 +130,7 @@ static inline enum bch_csum_type bch2_csum_opt_to_type(enum bch_csum_opt type,
 }
 
 static inline enum bch_csum_type bch2_data_checksum_type(struct bch_fs *c,
-							 struct bch_io_opts opts)
+							 struct bch_inode_opts opts)
 {
 	if (opts.nocow)
 		return 0;
