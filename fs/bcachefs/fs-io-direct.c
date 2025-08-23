@@ -68,7 +68,6 @@ static int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter)
 	struct file *file = req->ki_filp;
 	struct bch_inode_info *inode = file_bch_inode(file);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	struct bch_inode_opts opts;
 	struct dio_read *dio;
 	struct bio *bio;
 	struct blk_plug plug;
@@ -78,7 +77,8 @@ static int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter)
 	size_t shorten;
 	ssize_t ret;
 
-	bch2_inode_opts_get(&opts, c, &inode->ei_inode);
+	struct bch_inode_opts opts;
+	bch2_inode_opts_get_inode(c, &inode->ei_inode, &opts);
 
 	/* bios must be 512 byte aligned: */
 	if ((offset|iter->count) & (SECTOR_SIZE - 1))
@@ -451,7 +451,7 @@ static __always_inline long bch2_dio_write_loop(struct dio_write *dio)
 	bool sync = dio->sync, dropped_locks;
 	long ret;
 
-	bch2_inode_opts_get(&opts, c, &inode->ei_inode);
+	bch2_inode_opts_get_inode(c, &inode->ei_inode, &opts);
 
 	while (1) {
 		iter_count = dio->iter.count;
