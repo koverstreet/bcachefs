@@ -164,7 +164,7 @@ static bool ptr_being_rewritten(struct bch_read_bio *orig, unsigned dev)
 
 static inline int should_promote(struct bch_fs *c, struct bkey_s_c k,
 				  struct bpos pos,
-				  struct bch_io_opts opts,
+				  struct bch_inode_opts opts,
 				  unsigned flags,
 				  struct bch_io_failures *failed)
 {

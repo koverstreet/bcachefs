@@ -24,7 +24,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 			  subvol_inum inum,
 			  struct btree_iter *iter,
 			  u64 sectors,
-			  struct bch_io_opts opts,
+			  struct bch_inode_opts opts,
 			  s64 *i_sectors_delta,
 			  struct write_point_specifier write_point)
 {
@@ -373,7 +373,7 @@ static int __bch2_resume_logged_op_finsert(struct btree_trans *trans,
 	struct btree_iter iter;
 	struct bkey_i_logged_op_finsert *op = bkey_i_to_logged_op_finsert(op_k);
 	subvol_inum inum = { le32_to_cpu(op->v.subvol), le64_to_cpu(op->v.inum) };
-	struct bch_io_opts opts;
+	struct bch_inode_opts opts;
 	u64 dst_offset = le64_to_cpu(op->v.dst_offset);
 	u64 src_offset = le64_to_cpu(op->v.src_offset);
 	s64 shift = dst_offset - src_offset;
