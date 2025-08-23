@@ -1238,6 +1238,8 @@ void bch2_inode_opts_get_inode(struct bch_fs *c,
 	BCH_INODE_OPTS()
 #undef x
 
+	ret->opt_change_cookie = atomic_read(&c->opt_change_cookie);
+
 	bch2_io_opts_fixups(ret);
 }
 
