@@ -531,6 +531,29 @@ out:
 	return ret;
 }
 
+static int do_rebalance_scan_indirect(struct btree_trans *trans,
+				      struct bkey_s_c_reflink_p p,
+				      struct bch_inode_opts *opts)
+{
+	u64 idx = REFLINK_P_IDX(p.v) - le32_to_cpu(p.v->front_pad);
+	u64 end = REFLINK_P_IDX(p.v) + p.k->size + le32_to_cpu(p.v->back_pad);
+	u32 restart_count = trans->restart_count;
+
+	int ret = for_each_btree_key(trans, iter, BTREE_ID_reflink,
+				     POS(0, idx), BTREE_ITER_not_extents, k, ({
+		if (bpos_ge(bkey_start_pos(k.k), POS(0, end)))
+			break;
+		bch2_get_update_rebalance_opts(trans, opts, &iter, k,
+					       SET_NEEDS_REBALANCE_opt_change_indirect);
+	}));
+	if (ret)
+		return ret;
+
+	/* suppress trans_was_restarted() check */
+	trans->restart_count = restart_count;
+	return 0;
+}
+
 static int do_rebalance_scan(struct moving_context *ctxt,
 			     u64 inum, u64 cookie, u64 *sectors_scanned)
 {
@@ -560,9 +583,14 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 					 BTREE_ITER_prefetch, k, ({
 		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
 
-		struct bch_inode_opts *io_opts = bch2_move_get_io_opts(trans,
+		struct bch_inode_opts *opts = bch2_move_get_io_opts(trans,
 					&snapshot_io_opts, iter.pos, &iter, k);
-		PTR_ERR_OR_ZERO(io_opts);
+		PTR_ERR_OR_ZERO(opts) ?:
+		(inum &&
+		 k.k->type == KEY_TYPE_reflink_p &&
+		 REFLINK_P_MAY_UPDATE_OPTIONS(bkey_s_c_to_reflink_p(k).v)
+		 ? do_rebalance_scan_indirect(trans, bkey_s_c_to_reflink_p(k), opts)
+		 : 0);
 	})) ?:
 	commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 		  bch2_clear_rebalance_needs_scan(trans, inum, cookie));
