@@ -584,37 +584,6 @@ int bch2_move_ratelimit(struct moving_context *ctxt)
 	return 0;
 }
 
-/*
- * Move requires non extents iterators, and there's also no need for it to
- * signal indirect_extent_missing_error:
- */
-static struct bkey_s_c bch2_lookup_indirect_extent_for_move(struct btree_trans *trans,
-					    struct btree_iter *iter,
-					    struct bkey_s_c_reflink_p p)
-{
-	if (unlikely(REFLINK_P_ERROR(p.v)))
-		return bkey_s_c_null;
-
-	struct bpos reflink_pos = POS(0, REFLINK_P_IDX(p.v));
-
-	bch2_trans_iter_init(trans, iter,
-			     BTREE_ID_reflink, reflink_pos,
-			     BTREE_ITER_not_extents);
-
-	struct bkey_s_c k = bch2_btree_iter_peek(iter);
-	if (!k.k || bkey_err(k)) {
-		bch2_trans_iter_exit(iter);
-		return k;
-	}
-
-	if (bkey_lt(reflink_pos, bkey_start_pos(k.k))) {
-		bch2_trans_iter_exit(iter);
-		return bkey_s_c_null;
-	}
-
-	return k;
-}
-
 int bch2_move_data_btree(struct moving_context *ctxt,
 			 struct bpos start,
 			 struct bpos end,
@@ -629,12 +598,6 @@ int bch2_move_data_btree(struct moving_context *ctxt,
 	struct btree_iter iter, reflink_iter = {};
 	struct bkey_s_c k;
 	struct data_update_opts data_opts;
-	/*
-	 * If we're moving a single file, also process reflinked data it points
-	 * to (this includes propagating changed io_opts from the inode to the
-	 * extent):
-	 */
-	bool walk_indirect = start.inode == end.inode;
 	int ret = 0, ret2;
 
 	per_snapshot_io_opts_init(&snapshot_io_opts, c);
@@ -699,8 +662,6 @@ root_err:
 		bch2_ratelimit_reset(ctxt->rate);
 
 	while (!bch2_move_ratelimit(ctxt)) {
-		struct btree_iter *extent_iter = &iter;
-
 		bch2_trans_begin(trans);
 
 		k = bch2_btree_iter_peek(&iter);
@@ -719,41 +680,17 @@ root_err:
 		if (ctxt->stats)
 			ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
 
-		if (walk_indirect &&
-		    k.k->type == KEY_TYPE_reflink_p &&
-		    REFLINK_P_MAY_UPDATE_OPTIONS(bkey_s_c_to_reflink_p(k).v)) {
-			struct bkey_s_c_reflink_p p = bkey_s_c_to_reflink_p(k);
-
-			bch2_trans_iter_exit(&reflink_iter);
-			k = bch2_lookup_indirect_extent_for_move(trans, &reflink_iter, p);
-			ret = bkey_err(k);
-			if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-				continue;
-			if (ret)
-				break;
-
-			if (!k.k)
-				goto next_nondata;
-
-			/*
-			 * XXX: reflink pointers may point to multiple indirect
-			 * extents, so don't advance past the entire reflink
-			 * pointer - need to fixup iter->k
-			 */
-			extent_iter = &reflink_iter;
-		}
-
 		if (!bkey_extent_is_direct_data(k.k))
 			goto next_nondata;
 
 		io_opts = bch2_move_get_io_opts(trans, &snapshot_io_opts,
-						iter.pos, extent_iter, k);
+						iter.pos, &iter, k);
 		ret = PTR_ERR_OR_ZERO(io_opts);
 		if (ret)
 			continue;
 
 		memset(&data_opts, 0, sizeof(data_opts));
-		if (!pred(c, arg, extent_iter->btree_id, k, io_opts, &data_opts))
+		if (!pred(c, arg, iter.btree_id, k, io_opts, &data_opts))
 			goto next;
 
 		/*
@@ -764,7 +701,7 @@ root_err:
 		k = bkey_i_to_s_c(sk.k);
 
 		if (!level)
-			ret2 = bch2_move_extent(ctxt, NULL, extent_iter, k, *io_opts, data_opts);
+			ret2 = bch2_move_extent(ctxt, NULL, &iter, k, *io_opts, data_opts);
 		else if (!data_opts.scrub)
 			ret2 = bch2_btree_node_rewrite_pos(trans, btree_id, level,
 							  k.k->p, data_opts.target, 0);
