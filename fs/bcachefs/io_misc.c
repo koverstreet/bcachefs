@@ -109,7 +109,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 	}
 
 	ret = bch2_extent_update(trans, inum, iter, new.k, &disk_res,
-				 0, i_sectors_delta, true);
+				 0, i_sectors_delta, true, 0);
 err:
 	if (!ret && sectors_allocated)
 		bch2_increment_clock(c, sectors_allocated, WRITE);
@@ -211,7 +211,7 @@ int bch2_fpunch_at(struct btree_trans *trans, struct btree_iter *iter,
 		bch2_cut_back(end_pos, &delete);
 
 		ret = bch2_extent_update(trans, inum, iter, &delete,
-				&disk_res, 0, i_sectors_delta, false);
+				&disk_res, 0, i_sectors_delta, false, 0);
 		bch2_disk_reservation_put(c, &disk_res);
 	}
 

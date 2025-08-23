@@ -707,7 +707,7 @@ s64 bch2_remap_range(struct bch_fs *c,
 		ret = bch2_extent_update(trans, dst_inum, &dst_iter,
 					 new_dst.k, &disk_res,
 					 new_i_size, i_sectors_delta,
-					 true);
+					 true, 0);
 		bch2_disk_reservation_put(c, &disk_res);
 	}
 	bch2_trans_iter_exit(&dst_iter);
