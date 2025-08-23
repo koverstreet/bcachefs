@@ -27,7 +27,7 @@ static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_f
 };
 
 u64 bch2_bkey_sectors_need_rebalance(struct bch_fs *, struct bkey_s_c);
-int bch2_bkey_set_needs_rebalance(struct bch_fs *, struct bch_inode_opts *, struct bkey_i *);
+int bch2_bkey_set_needs_rebalance(struct bch_fs *, struct bch_inode_opts *, struct bkey_i *, u32);
 int bch2_get_update_rebalance_opts(struct btree_trans *,
 				   struct bch_inode_opts *,
 				   struct btree_iter *,
