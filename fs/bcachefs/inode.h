@@ -289,9 +289,9 @@ int bch2_inode_nlink_inc(struct bch_inode_unpacked *);
 void bch2_inode_nlink_dec(struct btree_trans *, struct bch_inode_unpacked *);
 
 struct bch_opts bch2_inode_opts_to_opts(struct bch_inode_unpacked *);
-void bch2_inode_opts_get(struct bch_io_opts *, struct bch_fs *,
+void bch2_inode_opts_get(struct bch_inode_opts *, struct bch_fs *,
 			 struct bch_inode_unpacked *);
-int bch2_inum_opts_get(struct btree_trans *, subvol_inum, struct bch_io_opts *);
+int bch2_inum_opts_get(struct btree_trans *, subvol_inum, struct bch_inode_opts *);
 int bch2_inode_set_casefold(struct btree_trans *, subvol_inum,
 			    struct bch_inode_unpacked *, unsigned);
 
@@ -300,7 +300,7 @@ int bch2_inode_set_casefold(struct btree_trans *, subvol_inum,
 static inline struct bch_extent_rebalance
 bch2_inode_rebalance_opts_get(struct bch_fs *c, struct bch_inode_unpacked *inode)
 {
-	struct bch_io_opts io_opts;
+	struct bch_inode_opts io_opts;
 	bch2_inode_opts_get(&io_opts, c, inode);
 	return io_opts_to_rebalance_opts(c, &io_opts);
 }
