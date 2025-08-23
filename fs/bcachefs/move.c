@@ -485,7 +485,7 @@ struct bch_inode_opts *bch2_move_get_io_opts(struct btree_trans *trans,
 				break;
 
 			struct snapshot_io_opts_entry e = { .snapshot = k.k->p.snapshot };
-			bch2_inode_opts_get(&e.io_opts, trans->c, &inode);
+			bch2_inode_opts_get_inode(trans->c, &inode, &e.io_opts);
 
 			darray_push(&io_opts->d, e);
 		}));
@@ -516,7 +516,7 @@ int bch2_move_get_io_opts_one(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
-	*io_opts = bch2_opts_to_inode_opts(c->opts);
+	bch2_inode_opts_get(c, io_opts);
 
 	/* reflink btree? */
 	if (extent_k.k->p.inode) {
@@ -531,7 +531,7 @@ int bch2_move_get_io_opts_one(struct btree_trans *trans,
 		if (!ret && bkey_is_inode(inode_k.k)) {
 			struct bch_inode_unpacked inode;
 			bch2_inode_unpack(inode_k, &inode);
-			bch2_inode_opts_get(io_opts, c, &inode);
+			bch2_inode_opts_get_inode(c, &inode, io_opts);
 		}
 	}
 
@@ -859,13 +859,15 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	bool is_kthread = current->flags & PF_KTHREAD;
-	struct bch_inode_opts io_opts = bch2_opts_to_inode_opts(c->opts);
 	struct btree_iter iter = {};
 	struct bkey_buf sk;
 	struct bkey_s_c k;
 	struct bkey_buf last_flushed;
 	u64 check_mismatch_done = bucket_start;
 	int ret = 0;
+
+	struct bch_inode_opts io_opts;
+	bch2_inode_opts_get(c, &io_opts);
 
 	/* Userspace might have supplied @dev: */
 	CLASS(bch2_dev_tryget_noerror, ca)(c, dev);
@@ -1090,7 +1092,6 @@ static int bch2_move_btree(struct bch_fs *c,
 			   struct bch_move_stats *stats)
 {
 	bool kthread = (current->flags & PF_KTHREAD) != 0;
-	struct bch_inode_opts io_opts = bch2_opts_to_inode_opts(c->opts);
 	struct moving_context ctxt;
 	struct btree_trans *trans;
 	struct btree_iter iter;
@@ -1098,6 +1099,9 @@ static int bch2_move_btree(struct bch_fs *c,
 	enum btree_id btree;
 	struct data_update_opts data_opts;
 	int ret = 0;
+
+	struct bch_inode_opts io_opts;
+	bch2_inode_opts_get(c, &io_opts);
 
 	bch2_moving_ctxt_init(&ctxt, c, NULL, stats,
 			      writepoint_ptr(&c->btree_write_point),
