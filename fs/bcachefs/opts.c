@@ -606,6 +606,8 @@ void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 	default:
 		break;
 	}
+
+	atomic_inc(&c->opt_change_cookie);
 }
 
 int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
@@ -809,6 +811,8 @@ void bch2_inode_opts_get(struct bch_fs *c, struct bch_inode_opts *ret)
 #define x(_name, _bits)	ret->_name = c->opts._name,
 	BCH_INODE_OPTS()
 #undef x
+
+	ret->opt_change_cookie = atomic_read(&c->opt_change_cookie);
 
 	bch2_io_opts_fixups(ret);
 }

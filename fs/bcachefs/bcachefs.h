@@ -807,6 +807,8 @@ struct bch_fs {
 	struct bch_disk_groups_cpu __rcu *disk_groups;
 
 	struct bch_opts		opts;
+	atomic_t		opt_change_cookie;
+
 	unsigned		loglevel;
 	unsigned		prev_loglevel;
 

@@ -590,6 +590,9 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 		}
 
 		ret = bch2_write_inode(c, inode, inode_opt_set_fn, &s, 0);
+
+		if (!ret)
+			atomic_inc(&c->opt_change_cookie);
 	}
 err:
 	return bch2_err_class(ret);
