@@ -678,7 +678,7 @@ struct bch_inode_opts {
 	BCH_INODE_OPTS()
 #undef x
 
-	u32 opt_change_cookie;
+	u32 change_cookie;
 };
 
 static inline void bch2_io_opts_fixups(struct bch_inode_opts *opts)
