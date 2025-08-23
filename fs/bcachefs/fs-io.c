@@ -627,7 +627,7 @@ static noinline int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bpos end_pos = POS(inode->v.i_ino, end_sector);
-	struct bch_io_opts opts;
+	struct bch_inode_opts opts;
 	int ret = 0;
 
 	bch2_inode_opts_get(&opts, c, &inode->ei_inode);

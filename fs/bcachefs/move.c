@@ -46,12 +46,12 @@ struct evacuate_bucket_arg {
 
 static bool evacuate_bucket_pred(struct bch_fs *, void *,
 				 enum btree_id, struct bkey_s_c,
-				 struct bch_io_opts *,
+				 struct bch_inode_opts *,
 				 struct data_update_opts *);
 
 static noinline void
 trace_io_move2(struct bch_fs *c, struct bkey_s_c k,
-	       struct bch_io_opts *io_opts,
+	       struct bch_inode_opts *io_opts,
 	       struct data_update_opts *data_opts)
 {
 	CLASS(printbuf, buf)();
@@ -72,7 +72,7 @@ static noinline void trace_io_move_read2(struct bch_fs *c, struct bkey_s_c k)
 
 static noinline void
 trace_io_move_pred2(struct bch_fs *c, struct bkey_s_c k,
-		    struct bch_io_opts *io_opts,
+		    struct bch_inode_opts *io_opts,
 		    struct data_update_opts *data_opts,
 		    move_pred_fn pred, void *_arg, bool p)
 {
@@ -325,7 +325,7 @@ int bch2_move_extent(struct moving_context *ctxt,
 		     struct move_bucket *bucket_in_flight,
 		     struct btree_iter *iter,
 		     struct bkey_s_c k,
-		     struct bch_io_opts io_opts,
+		     struct bch_inode_opts io_opts,
 		     struct data_update_opts data_opts)
 {
 	struct btree_trans *trans = ctxt->trans;
@@ -447,7 +447,7 @@ err:
 	return ret;
 }
 
-struct bch_io_opts *bch2_move_get_io_opts(struct btree_trans *trans,
+struct bch_inode_opts *bch2_move_get_io_opts(struct btree_trans *trans,
 			  struct per_snapshot_io_opts *io_opts,
 			  struct bpos extent_pos, /* extent_iter, extent_k may be in reflink btree */
 			  struct btree_iter *extent_iter,
@@ -455,7 +455,7 @@ struct bch_io_opts *bch2_move_get_io_opts(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	u32 restart_count = trans->restart_count;
-	struct bch_io_opts *opts_ret = &io_opts->fs_io_opts;
+	struct bch_inode_opts *opts_ret = &io_opts->fs_io_opts;
 	int ret = 0;
 
 	if (btree_iter_path(trans, extent_iter)->level)
@@ -506,7 +506,7 @@ out:
 }
 
 int bch2_move_get_io_opts_one(struct btree_trans *trans,
-			      struct bch_io_opts *io_opts,
+			      struct bch_inode_opts *io_opts,
 			      struct btree_iter *extent_iter,
 			      struct bkey_s_c extent_k)
 {
@@ -618,7 +618,7 @@ int bch2_move_data_btree(struct moving_context *ctxt,
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	struct per_snapshot_io_opts snapshot_io_opts;
-	struct bch_io_opts *io_opts;
+	struct bch_inode_opts *io_opts;
 	struct bkey_buf sk;
 	struct btree_iter iter, reflink_iter = {};
 	struct bkey_s_c k;
@@ -855,7 +855,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	bool is_kthread = current->flags & PF_KTHREAD;
-	struct bch_io_opts io_opts = bch2_opts_to_inode_opts(c->opts);
+	struct bch_inode_opts io_opts = bch2_opts_to_inode_opts(c->opts);
 	struct btree_iter iter = {};
 	struct bkey_buf sk;
 	struct bkey_s_c k;
@@ -1034,7 +1034,7 @@ int bch2_move_data_phys(struct bch_fs *c,
 
 static bool evacuate_bucket_pred(struct bch_fs *c, void *_arg,
 				 enum btree_id btree, struct bkey_s_c k,
-				 struct bch_io_opts *io_opts,
+				 struct bch_inode_opts *io_opts,
 				 struct data_update_opts *data_opts)
 {
 	struct evacuate_bucket_arg *arg = _arg;
@@ -1075,7 +1075,7 @@ int bch2_evacuate_bucket(struct moving_context *ctxt,
 }
 
 typedef bool (*move_btree_pred)(struct bch_fs *, void *,
-				struct btree *, struct bch_io_opts *,
+				struct btree *, struct bch_inode_opts *,
 				struct data_update_opts *);
 
 static int bch2_move_btree(struct bch_fs *c,
@@ -1085,7 +1085,7 @@ static int bch2_move_btree(struct bch_fs *c,
 			   struct bch_move_stats *stats)
 {
 	bool kthread = (current->flags & PF_KTHREAD) != 0;
-	struct bch_io_opts io_opts = bch2_opts_to_inode_opts(c->opts);
+	struct bch_inode_opts io_opts = bch2_opts_to_inode_opts(c->opts);
 	struct moving_context ctxt;
 	struct btree_trans *trans;
 	struct btree_iter iter;
@@ -1154,7 +1154,7 @@ next:
 
 static bool rereplicate_pred(struct bch_fs *c, void *arg,
 			     enum btree_id btree, struct bkey_s_c k,
-			     struct bch_io_opts *io_opts,
+			     struct bch_inode_opts *io_opts,
 			     struct data_update_opts *data_opts)
 {
 	unsigned nr_good = bch2_bkey_durability(c, k);
@@ -1185,7 +1185,7 @@ static bool rereplicate_pred(struct bch_fs *c, void *arg,
 
 static bool migrate_pred(struct bch_fs *c, void *arg,
 			 enum btree_id btree, struct bkey_s_c k,
-			 struct bch_io_opts *io_opts,
+			 struct bch_inode_opts *io_opts,
 			 struct data_update_opts *data_opts)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
@@ -1222,7 +1222,7 @@ static bool bformat_needs_redo(struct bkey_format *f)
 
 static bool rewrite_old_nodes_pred(struct bch_fs *c, void *arg,
 				   struct btree *b,
-				   struct bch_io_opts *io_opts,
+				   struct bch_inode_opts *io_opts,
 				   struct data_update_opts *data_opts)
 {
 	if (b->version_ondisk != c->sb.version ||
@@ -1259,7 +1259,7 @@ int bch2_scan_old_btree_nodes(struct bch_fs *c, struct bch_move_stats *stats)
 
 static bool drop_extra_replicas_pred(struct bch_fs *c, void *arg,
 			     enum btree_id btree, struct bkey_s_c k,
-			     struct bch_io_opts *io_opts,
+			     struct bch_inode_opts *io_opts,
 			     struct data_update_opts *data_opts)
 {
 	unsigned durability = bch2_bkey_durability(c, k);
@@ -1297,7 +1297,7 @@ static bool drop_extra_replicas_pred(struct bch_fs *c, void *arg,
 
 static bool scrub_pred(struct bch_fs *c, void *_arg,
 		       enum btree_id btree, struct bkey_s_c k,
-		       struct bch_io_opts *io_opts,
+		       struct bch_inode_opts *io_opts,
 		       struct data_update_opts *data_opts)
 {
 	struct bch_ioctl_data *arg = _arg;

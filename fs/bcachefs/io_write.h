@@ -31,7 +31,7 @@ int bch2_extent_update(struct btree_trans *, subvol_inum,
 		       struct disk_reservation *, u64, s64 *, bool);
 
 static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
-				      struct bch_io_opts opts)
+				      struct bch_inode_opts opts)
 {
 	op->c			= c;
 	op->end_io		= NULL;

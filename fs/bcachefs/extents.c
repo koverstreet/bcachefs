@@ -1151,7 +1151,7 @@ bch2_extent_has_ptr(struct bkey_s_c k1, struct extent_ptr_decoded p1, struct bke
 	return NULL;
 }
 
-static bool want_cached_ptr(struct bch_fs *c, struct bch_io_opts *opts,
+static bool want_cached_ptr(struct bch_fs *c, struct bch_inode_opts *opts,
 			    struct bch_extent_ptr *ptr)
 {
 	unsigned target = opts->promote_target ?: opts->foreground_target;
@@ -1165,7 +1165,7 @@ static bool want_cached_ptr(struct bch_fs *c, struct bch_io_opts *opts,
 }
 
 void bch2_extent_ptr_set_cached(struct bch_fs *c,
-				struct bch_io_opts *opts,
+				struct bch_inode_opts *opts,
 				struct bkey_s k,
 				struct bch_extent_ptr *ptr)
 {
@@ -1241,7 +1241,7 @@ bool bch2_extent_normalize(struct bch_fs *c, struct bkey_s k)
  * the promote target.
  */
 bool bch2_extent_normalize_by_opts(struct bch_fs *c,
-				   struct bch_io_opts *opts,
+				   struct bch_inode_opts *opts,
 				   struct bkey_s k)
 {
 	struct bkey_ptrs ptrs;
