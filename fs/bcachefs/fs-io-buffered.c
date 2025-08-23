@@ -284,7 +284,7 @@ void bch2_readahead(struct readahead_control *ractl)
 {
 	struct bch_inode_info *inode = to_bch_ei(ractl->mapping->host);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	struct bch_io_opts opts;
+	struct bch_inode_opts opts;
 	struct folio *folio;
 	struct readpages_iter readpages_iter;
 	struct blk_plug plug;
@@ -350,7 +350,7 @@ int bch2_read_single_folio(struct folio *folio, struct address_space *mapping)
 	struct bch_inode_info *inode = to_bch_ei(mapping->host);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_read_bio *rbio;
-	struct bch_io_opts opts;
+	struct bch_inode_opts opts;
 	struct blk_plug plug;
 	int ret;
 	DECLARE_COMPLETION_ONSTACK(done);
@@ -407,7 +407,7 @@ struct bch_writepage_io {
 
 struct bch_writepage_state {
 	struct bch_writepage_io	*io;
-	struct bch_io_opts	opts;
+	struct bch_inode_opts	opts;
 	struct bch_folio_sector	*tmp;
 	unsigned		tmp_sectors;
 	struct blk_plug		plug;

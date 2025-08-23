@@ -670,7 +670,7 @@ int bch2_parse_mount_opts(struct bch_fs *, struct bch_opts *, struct printbuf *,
 
 /* inode opts: */
 
-struct bch_io_opts {
+struct bch_inode_opts {
 #define x(_name, _bits)	u##_bits _name;
 	BCH_INODE_OPTS()
 #undef x
@@ -679,7 +679,7 @@ struct bch_io_opts {
 #undef x
 };
 
-static inline void bch2_io_opts_fixups(struct bch_io_opts *opts)
+static inline void bch2_io_opts_fixups(struct bch_inode_opts *opts)
 {
 	if (!opts->background_target)
 		opts->background_target = opts->foreground_target;
@@ -692,7 +692,7 @@ static inline void bch2_io_opts_fixups(struct bch_io_opts *opts)
 	}
 }
 
-struct bch_io_opts bch2_opts_to_inode_opts(struct bch_opts);
+struct bch_inode_opts bch2_opts_to_inode_opts(struct bch_opts);
 bool bch2_opt_is_inode_opt(enum bch_opt_id);
 
 #endif /* _BCACHEFS_OPTS_H */

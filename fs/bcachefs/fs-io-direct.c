@@ -68,7 +68,7 @@ static int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter)
 	struct file *file = req->ki_filp;
 	struct bch_inode_info *inode = file_bch_inode(file);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	struct bch_io_opts opts;
+	struct bch_inode_opts opts;
 	struct dio_read *dio;
 	struct bio *bio;
 	struct blk_plug plug;
@@ -444,7 +444,7 @@ static __always_inline long bch2_dio_write_loop(struct dio_write *dio)
 	struct kiocb *req = dio->req;
 	struct address_space *mapping = dio->mapping;
 	struct bch_inode_info *inode = dio->inode;
-	struct bch_io_opts opts;
+	struct bch_inode_opts opts;
 	struct bio *bio = &dio->op.wbio.bio;
 	unsigned unaligned, iter_count;
 	bool sync = dio->sync, dropped_locks;
