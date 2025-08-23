@@ -205,7 +205,8 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 						    struct btree_iter *extent_iter,
 						    u64 new_i_size,
-						    s64 i_sectors_delta)
+						    s64 i_sectors_delta,
+						    struct bch_inode_unpacked *inode_u)
 {
 	/*
 	 * Crazy performance optimization:
@@ -227,7 +228,13 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 				BTREE_ITER_intent|
 				BTREE_ITER_cached);
 	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(k);
+
+	/*
+	 * XXX: we currently need to unpack the inode on every write because we
+	 * need the current io_opts, for transactional consistency - inode_v4?
+	 */
+	int ret = bkey_err(k) ?:
+		  bch2_inode_unpack(k, inode_u);
 	if (unlikely(ret))
 		return ret;
 
@@ -305,6 +312,7 @@ int bch2_extent_update(struct btree_trans *trans,
 		       s64 *i_sectors_delta_total,
 		       bool check_enospc)
 {
+	struct bch_fs *c = trans->c;
 	struct bpos next_pos;
 	bool usage_increasing;
 	s64 i_sectors_delta = 0, disk_sectors_delta = 0;
@@ -335,7 +343,7 @@ int bch2_extent_update(struct btree_trans *trans,
 
 	if (disk_res &&
 	    disk_sectors_delta > (s64) disk_res->sectors) {
-		ret = bch2_disk_reservation_add(trans->c, disk_res,
+		ret = bch2_disk_reservation_add(c, disk_res,
 					disk_sectors_delta - disk_res->sectors,
 					!check_enospc || !usage_increasing
 					? BCH_DISK_RESERVATION_NOFAIL : 0);
@@ -349,9 +357,14 @@ int bch2_extent_update(struct btree_trans *trans,
 	 * aren't changing - for fsync to work properly; fsync relies on
 	 * inode->bi_journal_seq which is updated by the trigger code:
 	 */
+	struct bch_inode_unpacked inode;
+	struct bch_inode_opts opts;
+
 	ret =   bch2_extent_update_i_size_sectors(trans, iter,
 						  min(k->k.p.offset << 9, new_i_size),
-						  i_sectors_delta) ?:
+						  i_sectors_delta, &inode) ?:
+		(bch2_inode_opts_get_inode(c, &inode, &opts),
+		 bch2_bkey_set_needs_rebalance(c, &opts, k)) ?:
 		bch2_trans_update(trans, iter, k, 0) ?:
 		bch2_trans_commit(trans, disk_res, NULL,
 				BCH_TRANS_COMMIT_no_check_rw|
@@ -792,10 +805,6 @@ static void init_append_extent(struct bch_write_op *op,
 
 	bch2_alloc_sectors_append_ptrs_inlined(op->c, wp, &e->k_i, crc.compressed_size,
 				       op->flags & BCH_WRITE_cached);
-
-	if (!(op->flags & BCH_WRITE_move))
-		bch2_bkey_set_needs_rebalance(op->c, &op->opts, &e->k_i);
-
 	bch2_keylist_push(&op->insert_keys);
 }
 
@@ -1225,6 +1234,7 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 		return 0;
 	}
 
+	struct bch_fs *c = trans->c;
 	struct bkey_i *new = bch2_trans_kmalloc_nomemzero(trans,
 				bkey_bytes(k.k) + sizeof(struct bch_extent_rebalance));
 	int ret = PTR_ERR_OR_ZERO(new);
@@ -1239,8 +1249,6 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 	bkey_for_each_ptr(ptrs, ptr)
 		ptr->unwritten = 0;
 
-	bch2_bkey_set_needs_rebalance(op->c, &op->opts, new);
-
 	/*
 	 * Note that we're not calling bch2_subvol_get_snapshot() in this path -
 	 * that was done when we kicked off the write, and here it's important
@@ -1248,8 +1256,18 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 	 * since been created. The write is still outstanding, so we're ok
 	 * w.r.t. snapshot atomicity:
 	 */
+
+	/*
+	 * For transactional consistency, set_needs_rebalance() has to be called
+	 * with the io_opts from the btree in the same transaction:
+	 */
+	struct bch_inode_unpacked inode;
+	struct bch_inode_opts opts;
+
 	return  bch2_extent_update_i_size_sectors(trans, iter,
-					min(new->k.p.offset << 9, new_i_size), 0) ?:
+					min(new->k.p.offset << 9, new_i_size), 0, &inode) ?:
+		(bch2_inode_opts_get_inode(c, &inode, &opts),
+		 bch2_bkey_set_needs_rebalance(c, &opts, new)) ?:
 		bch2_trans_update(trans, iter, new,
 				  BTREE_UPDATE_internal_snapshot_node);
 }

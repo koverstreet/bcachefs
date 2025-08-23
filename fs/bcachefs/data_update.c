@@ -11,6 +11,7 @@
 #include "ec.h"
 #include "error.h"
 #include "extents.h"
+#include "inode.h"
 #include "io_write.h"
 #include "keylist.h"
 #include "move.h"
@@ -428,13 +429,16 @@ restart_drop_extra_replicas:
 			goto out;
 		}
 
+		struct bch_inode_opts opts;
+
 		ret =   bch2_trans_log_str(trans, bch2_data_update_type_strs[m->type]) ?:
 			bch2_trans_log_bkey(trans, m->btree_id, 0, m->k.k) ?:
 			bch2_insert_snapshot_whiteouts(trans, m->btree_id,
 						k.k->p, bkey_start_pos(&insert->k)) ?:
 			bch2_insert_snapshot_whiteouts(trans, m->btree_id,
 						k.k->p, insert->k.p) ?:
-			bch2_bkey_set_needs_rebalance(c, &op->opts, insert) ?:
+			bch2_inum_snapshot_opts_get(trans, k.k->p.inode, k.k->p.snapshot, &opts) ?:
+			bch2_bkey_set_needs_rebalance(c, &opts, insert) ?:
 			bch2_trans_update(trans, &iter, insert,
 				BTREE_UPDATE_internal_snapshot_node);
 		if (ret)

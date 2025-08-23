@@ -589,7 +589,6 @@ s64 bch2_remap_range(struct bch_fs *c,
 	struct bpos dst_start = POS(dst_inum.inum, dst_offset);
 	struct bpos src_start = POS(src_inum.inum, src_offset);
 	struct bpos dst_end = dst_start, src_end = src_start;
-	struct bch_inode_opts opts;
 	struct bpos src_want;
 	u64 dst_done = 0;
 	u32 dst_snapshot, src_snapshot;
@@ -608,10 +607,6 @@ s64 bch2_remap_range(struct bch_fs *c,
 	bch2_bkey_buf_init(&new_dst);
 	bch2_bkey_buf_init(&new_src);
 	CLASS(btree_trans, trans)(c);
-
-	ret = bch2_inum_opts_get(trans, src_inum, &opts);
-	if (ret)
-		goto err;
 
 	bch2_trans_iter_init(trans, &src_iter, BTREE_ID_extents, src_start,
 			     BTREE_ITER_intent);
@@ -709,11 +704,10 @@ s64 bch2_remap_range(struct bch_fs *c,
 				min(src_k.k->p.offset - src_want.offset,
 				    dst_end.offset - dst_iter.pos.offset));
 
-		ret =   bch2_bkey_set_needs_rebalance(c, &opts, new_dst.k) ?:
-			bch2_extent_update(trans, dst_inum, &dst_iter,
-					new_dst.k, &disk_res,
-					new_i_size, i_sectors_delta,
-					true);
+		ret = bch2_extent_update(trans, dst_inum, &dst_iter,
+					 new_dst.k, &disk_res,
+					 new_i_size, i_sectors_delta,
+					 true);
 		bch2_disk_reservation_put(c, &disk_res);
 	}
 	bch2_trans_iter_exit(&dst_iter);
@@ -744,7 +738,7 @@ s64 bch2_remap_range(struct bch_fs *c,
 
 		bch2_trans_iter_exit(&inode_iter);
 	} while (bch2_err_matches(ret2, BCH_ERR_transaction_restart));
-err:
+
 	bch2_bkey_buf_exit(&new_src, c);
 	bch2_bkey_buf_exit(&new_dst, c);
 
