@@ -102,7 +102,7 @@ struct per_snapshot_io_opts {
 static inline void per_snapshot_io_opts_init(struct per_snapshot_io_opts *io_opts, struct bch_fs *c)
 {
 	memset(io_opts, 0, sizeof(*io_opts));
-	io_opts->fs_io_opts = bch2_opts_to_inode_opts(c->opts);
+	bch2_inode_opts_get(c, &io_opts->fs_io_opts);
 }
 
 static inline void per_snapshot_io_opts_exit(struct per_snapshot_io_opts *io_opts)

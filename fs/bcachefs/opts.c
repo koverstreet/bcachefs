@@ -802,16 +802,15 @@ bool bch2_opt_set_sb(struct bch_fs *c, struct bch_dev *ca,
 
 /* io opts: */
 
-struct bch_inode_opts bch2_opts_to_inode_opts(struct bch_opts src)
+void bch2_inode_opts_get(struct bch_fs *c, struct bch_inode_opts *ret)
 {
-	struct bch_inode_opts opts = {
-#define x(_name, _bits)	._name = src._name,
+	memset(ret, 0, sizeof(*ret));
+
+#define x(_name, _bits)	ret->_name = c->opts._name,
 	BCH_INODE_OPTS()
 #undef x
-	};
 
-	bch2_io_opts_fixups(&opts);
-	return opts;
+	bch2_io_opts_fixups(ret);
 }
 
 bool bch2_opt_is_inode_opt(enum bch_opt_id id)
