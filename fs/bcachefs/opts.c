@@ -803,7 +803,7 @@ void bch2_inode_opts_get(struct bch_fs *c, struct bch_inode_opts *ret)
 	BCH_INODE_OPTS()
 #undef x
 
-	ret->opt_change_cookie = atomic_read(&c->opt_change_cookie);
+	ret->change_cookie = atomic_read(&c->opt_change_cookie);
 
 	bch2_io_opts_fixups(ret);
 }
