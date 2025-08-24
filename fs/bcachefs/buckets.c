@@ -63,8 +63,6 @@ __bch2_fs_usage_read_short(struct bch_fs *c)
 	ret.used	= min(ret.capacity, data + reserve_factor(reserved));
 	ret.free	= ret.capacity - ret.used;
 
-	ret.nr_inodes	= percpu_u64_get(&c->usage->nr_inodes);
-
 	return ret;
 }
 
