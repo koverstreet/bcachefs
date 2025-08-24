@@ -30,11 +30,20 @@ void bch2_extent_rebalance_to_text(struct printbuf *, struct bch_fs *,
 				   const struct bch_extent_rebalance *);
 
 u64 bch2_bkey_sectors_need_rebalance(struct bch_fs *, struct bkey_s_c);
-int bch2_bkey_set_needs_rebalance(struct bch_fs *, struct bch_inode_opts *, struct bkey_i *, u32);
-int bch2_get_update_rebalance_opts(struct btree_trans *,
-				   struct bch_inode_opts *,
-				   struct btree_iter *,
-				   struct bkey_s_c);
+
+enum set_needs_rebalance_ctx {
+	SET_NEEDS_REBALANCE_opt_change,
+	SET_NEEDS_REBALANCE_opt_change_indirect,
+	SET_NEEDS_REBALANCE_foreground,
+	SET_NEEDS_REBALANCE_other,
+};
+
+int bch2_bkey_set_needs_rebalance(struct bch_fs *, struct bch_inode_opts *,
+				  struct bkey_i *, enum set_needs_rebalance_ctx, u32);
+
+int bch2_get_update_rebalance_opts(struct btree_trans *, struct bch_inode_opts *,
+				   struct btree_iter *, struct bkey_s_c,
+				   enum set_needs_rebalance_ctx);
 
 int bch2_set_rebalance_needs_scan_trans(struct btree_trans *, u64);
 int bch2_set_rebalance_needs_scan(struct bch_fs *, u64 inum);
