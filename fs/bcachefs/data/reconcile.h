@@ -6,6 +6,10 @@
 #include "alloc/disk_groups.h"
 #include "reconcile_types.h"
 
+int bch2_extent_reconcile_validate(struct bch_fs *, struct bkey_s_c,
+				   struct bkey_validate_context,
+				   const struct bch_extent_reconcile *);
+
 static inline struct bch_extent_reconcile io_opts_to_rebalance_opts(struct bch_fs *c,
 								    struct bch_inode_opts *opts)
 {
