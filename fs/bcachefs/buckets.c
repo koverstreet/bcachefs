@@ -901,35 +901,9 @@ int bch2_trigger_extent(struct btree_trans *trans,
 				return ret;
 		}
 
-		unsigned old_r = bch2_bkey_needs_rb(old);
-		unsigned new_r = bch2_bkey_needs_rb(new.s_c);
-		if (old_r != new_r) {
-			/* XXX: slowpath, put in a a separate function */
-			int delta = (int) !!new_r - (int) !!old_r;
-			if ((flags & BTREE_TRIGGER_transactional) && delta) {
-				int ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work,
-								  new.k->p, delta > 0);
-				if (ret)
-					return ret;
-			}
-
-			s64 v[1] = { 0 };
-#define x(n)										\
-			if ((old_r ^ new_r) & BIT(BCH_REBALANCE_##n)) {			\
-				v[0] = old_r & BIT(BCH_REBALANCE_##n)			\
-					? -(s64) old.k->size				\
-					:        new.k->size;				\
-											\
-				int ret = bch2_disk_accounting_mod2(trans,		\
-							flags & BTREE_TRIGGER_gc,	\
-							v, rebalance_work,		\
-							BCH_REBALANCE_##n);		\
-				if (ret)						\
-					return ret;					\
-			}
-			BCH_REBALANCE_OPTS()
-#undef x
-		}
+		int ret = bch2_trigger_extent_rebalance(trans, old, new.s_c, flags);
+		if (ret)
+			return ret;
 	}
 
 	return 0;

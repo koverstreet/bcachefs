@@ -200,7 +200,7 @@ struct bch_acct_inum {
  * move, extents counted here are also in the rebalance_work btree.
  */
 struct bch_acct_rebalance_work {
-	__u8			opt;
+	__u8			type;
 };
 
 struct disk_accounting_pos {

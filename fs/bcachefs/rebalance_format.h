@@ -11,6 +11,21 @@
 	x(background_target)			\
 	x(promote_target)
 
+#define BCH_REBALANCE_ACCOUNTING()		\
+	x(data_replicas)			\
+	x(data_checksum)			\
+	x(erasure_code)				\
+	x(background_compression)		\
+	x(background_target)			\
+	x(high_priority)			\
+	x(pending)				\
+
+enum bch_rebalance_accounting_type {
+#define x(n) BCH_REBALANCE_ACCOUNTING_##n,
+	BCH_REBALANCE_ACCOUNTING()
+#undef x
+};
+
 enum bch_rebalance_opts {
 #define x(n)	BCH_REBALANCE_##n,
 	BCH_REBALANCE_OPTS()
