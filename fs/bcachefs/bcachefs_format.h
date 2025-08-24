@@ -1421,7 +1421,7 @@ enum btree_id_flags {
 	  BIT_ULL(KEY_TYPE_logged_op_truncate)|					\
 	  BIT_ULL(KEY_TYPE_logged_op_finsert)|					\
 	  BIT_ULL(KEY_TYPE_inode_alloc_cursor))					\
-	x(rebalance_work,	18,						\
+	x(reconcile_work,	18,						\
 	  BTREE_IS_snapshot_field|						\
 	  BTREE_IS_write_buffer,						\
 	  BIT_ULL(KEY_TYPE_set)|BIT_ULL(KEY_TYPE_cookie))			\
@@ -1431,6 +1431,16 @@ enum btree_id_flags {
 	  BTREE_IS_snapshot_field|						\
 	  BTREE_IS_write_buffer,						\
 	  BIT_ULL(KEY_TYPE_accounting))						\
+	x(reconcile_hipri,	21,						\
+	  BTREE_IS_snapshot_field|						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(reconcile_pending,	22,						\
+	  BTREE_IS_snapshot_field|						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(reconcile_scan,	23,	0,					\
+	  BIT_ULL(KEY_TYPE_cookie))
 
 enum btree_id {
 #define x(name, nr, ...) BTREE_ID_##name = nr,
@@ -1471,7 +1481,10 @@ static inline bool btree_id_can_reconstruct(enum btree_id btree)
 	switch (btree) {
 	case BTREE_ID_snapshot_trees:
 	case BTREE_ID_deleted_inodes:
-	case BTREE_ID_rebalance_work:
+	case BTREE_ID_reconcile_work:
+	case BTREE_ID_reconcile_hipri:
+	case BTREE_ID_reconcile_pending:
+	case BTREE_ID_reconcile_scan:
 	case BTREE_ID_subvolume_children:
 		return true;
 	default:
