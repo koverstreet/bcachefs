@@ -159,6 +159,8 @@ enum bch_fsck_flags {
 	x(extent_ptrs_redundant_stripe,				139,	0)		\
 	x(extent_ptrs_unwritten,				140,	0)		\
 	x(extent_ptrs_written_and_unwritten,			141,	0)		\
+	x(extent_rebalance_bad_pending,				327,	0)		\
+	x(extent_rebalance_bad_hipri,				328,	0)		\
 	x(ptr_to_invalid_device,				142,	0)		\
 	x(ptr_to_removed_device,				322,	0)		\
 	x(ptr_to_duplicate_device,				143,	0)		\
@@ -338,7 +340,7 @@ enum bch_fsck_flags {
 	x(rebalance_work_incorrectly_set,			309,	FSCK_AUTOFIX)	\
 	x(rebalance_work_incorrectly_unset,			310,	FSCK_AUTOFIX)	\
 	x(extent_io_opts_not_set,				326,	FSCK_AUTOFIX)	\
-	x(MAX,							327,	0)
+	x(MAX,							329,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
