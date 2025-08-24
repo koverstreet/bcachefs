@@ -211,7 +211,9 @@ static bool bch2_bkey_rebalance_needs_update(struct bch_fs *c, struct bch_inode_
 }
 
 int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_inode_opts *opts,
-				  struct bkey_i *_k, u32 change_cookie)
+				  struct bkey_i *_k,
+				  enum set_needs_rebalance_ctx ctx,
+				  u32 change_cookie)
 {
 	if (!bkey_extent_is_direct_data(&_k->k))
 		return 0;
@@ -238,7 +240,8 @@ int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_inode_opts *opts,
 int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 				   struct bch_inode_opts *io_opts,
 				   struct btree_iter *iter,
-				   struct bkey_s_c k)
+				   struct bkey_s_c k,
+				   enum set_needs_rebalance_ctx ctx)
 {
 	BUG_ON(iter->flags & BTREE_ITER_is_extents);
 	BUG_ON(iter->flags & BTREE_ITER_filter_snapshots);
@@ -267,7 +270,7 @@ int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 
 	/* On successfull transaction commit, @k was invalidated: */
 
-	return bch2_bkey_set_needs_rebalance(trans->c, io_opts, n, 0) ?:
+	return bch2_bkey_set_needs_rebalance(trans->c, io_opts, n, ctx, 0) ?:
 		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node) ?:
 		bch2_trans_commit(trans, NULL, NULL, 0) ?:
 		bch_err_throw(trans->c, transaction_restart_nested);
