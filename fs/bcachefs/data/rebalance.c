@@ -3,6 +3,7 @@
 #include "bcachefs.h"
 
 #include "alloc/background.h"
+#include "alloc/backpointers.h"
 #include "alloc/buckets.h"
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
@@ -267,6 +268,29 @@ static int check_rebalance_scan_cookie(struct btree_trans *trans, u64 inum, bool
 	return ret;
 }
 
+static int check_dev_rebalance_scan_cookie(struct btree_trans *trans, struct bkey_s_c k,
+					   struct bch_devs_mask *v)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+
+	bkey_for_each_ptr(ptrs, ptr)
+		if (v && test_bit(ptr->dev, v->d))
+			return 1;
+
+	bkey_for_each_ptr(ptrs, ptr) {
+		int ret = check_rebalance_scan_cookie(trans, ptr->dev + 1, NULL);
+		if (ret < 0)
+			return ret;
+		if (ret) {
+			if (v)
+				__set_bit(ptr->dev, v->d);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
 static int new_needs_rb_allowed(struct btree_trans *trans,
 				struct per_snapshot_io_opts *s,
 				struct bkey_s_c k,
@@ -327,6 +351,12 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 		  check_rebalance_scan_cookie(trans, k.k->p.inode,	s ? &s->inum_scan_cookie : NULL);
 	if (ret)
 		return min(ret, 0);
+
+	if (new_need_rb == BIT(BCH_REBALANCE_data_replicas)) {
+		ret = check_dev_rebalance_scan_cookie(trans, k, s ? &s->dev_cookie : NULL);
+		if (ret)
+			return min(ret, 0);
+	}
 
 	CLASS(printbuf, buf)();
 
@@ -553,6 +583,11 @@ int bch2_set_rebalance_needs_scan(struct bch_fs *c, u64 inum)
 			    bch2_set_rebalance_needs_scan_trans(trans, inum));
 }
 
+int bch2_set_rebalance_needs_scan_device(struct bch_fs *c, unsigned dev)
+{
+	return bch2_set_rebalance_needs_scan(c, dev + 1);
+}
+
 int bch2_set_fs_needs_rebalance(struct bch_fs *c)
 {
 	return bch2_set_rebalance_needs_scan(c, 0);
@@ -711,6 +746,32 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	return 0;
 }
 
+static int do_rebalance_scan_bp(struct btree_trans *trans,
+				struct bkey_s_c_backpointer bp,
+				struct wb_maybe_flush *last_flushed)
+{
+	struct bch_fs *c = trans->c;
+	struct bch_fs_rebalance *r = &c->rebalance;
+
+	if (bp.v->level) /* metadata not supported yet */
+		return 0;
+
+	CLASS(btree_iter_uninit, iter)(trans);
+	struct bkey_s_c k = bkey_try(bch2_backpointer_get_key(trans, bp, &iter, BTREE_ITER_intent,
+							      last_flushed));
+	if (!k.k)
+		return 0;
+
+	atomic64_add(!bp.v->level ? k.k->size : c->opts.btree_node_size >> 9,
+		     &r->scan_stats.sectors_seen);
+
+	struct bch_inode_opts opts;
+	try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
+
+	return bch2_update_rebalance_opts(trans, NULL, &opts, &iter, k,
+					  SET_NEEDS_REBALANCE_opt_change);
+}
+
 static int do_rebalance_scan_indirect(struct btree_trans *trans,
 				      struct bkey_s_c_reflink_p p,
 				      struct per_snapshot_io_opts *snapshot_io_opts,
@@ -788,6 +849,7 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 	r->state = BCH_REBALANCE_scanning;
 
 	if (!inum) {
+		/* Filesystem: */
 		r->scan_start	= BBPOS_MIN;
 		r->scan_end	= BBPOS_MAX;
 
@@ -799,7 +861,30 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 			try(do_rebalance_scan_btree(ctxt, snapshot_io_opts, btree, 0,
 						    POS_MIN, SPOS_MAX));
 		}
+	} else if (inum < BCACHEFS_ROOT_INO) {
+		/* Device: */
+		unsigned dev = inum - 1;
+		r->scan_start	= BBPOS(BTREE_ID_backpointers, POS(dev, 0));
+		r->scan_end	= BBPOS(BTREE_ID_backpointers, POS(dev, U64_MAX));
+
+		struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+		wb_maybe_flush_init(&last_flushed);
+
+		bch2_btree_write_buffer_flush_sync(trans);
+
+		try(for_each_btree_key_max_commit(trans, iter, BTREE_ID_backpointers,
+						  POS(dev, 0), POS(dev, U64_MAX),
+						  BTREE_ITER_prefetch, k,
+						  NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+			ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
+
+			if (k.k->type != KEY_TYPE_backpointer)
+				continue;
+
+			do_rebalance_scan_bp(trans, bkey_s_c_to_backpointer(k), &last_flushed);
+		})));
 	} else {
+		/* Inode: */
 		r->scan_start	= BBPOS(BTREE_ID_extents, POS(inum, 0));
 		r->scan_end	= BBPOS(BTREE_ID_extents, POS(inum, U64_MAX));
 
