@@ -73,6 +73,7 @@ struct per_snapshot_io_opts {
 	bool			metadata;
 	bool			fs_scan_cookie;
 	bool			inum_scan_cookie;
+	struct bch_devs_mask	dev_cookie;
 
 	struct bch_inode_opts	fs_io_opts;
 	DARRAY(struct snapshot_io_opts_entry) d;

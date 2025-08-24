@@ -555,6 +555,12 @@ static int opt_hook_io(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_
 			bch2_rebalance_wakeup(c);
 		break;
 	}
+	case Opt_durability:
+		try(bch2_set_rebalance_needs_scan(c,
+			(struct rebalance_scan) { .type = REBALANCE_SCAN_device, .dev = inum }));
+		if (post)
+			bch2_rebalance_wakeup(c);
+		break;
 	default:
 		break;
 	}
