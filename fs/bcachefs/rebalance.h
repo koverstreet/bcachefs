@@ -7,6 +7,10 @@
 #include "opts.h"
 #include "rebalance_types.h"
 
+int bch2_extent_rebalance_validate(struct bch_fs *, struct bkey_s_c,
+				   struct bkey_validate_context,
+				   const struct bch_extent_rebalance *);
+
 static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_fs *c,
 								    struct bch_inode_opts *opts)
 {
