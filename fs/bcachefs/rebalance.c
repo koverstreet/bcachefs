@@ -612,6 +612,48 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 	data_opts->target		= opts->background_target;
 	data_opts->write_flags		|= BCH_WRITE_only_specified_devs;
 
+	if (r.need_rb & BIT(BCH_REBALANCE_data_replicas)) {
+		unsigned durability = bch2_bkey_durability(c, k);
+		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+		unsigned ptr_bit = 1;
+
+		guard(rcu)();
+		if (durability <= opts->data_replicas) {
+			bkey_for_each_ptr(ptrs, ptr) {
+				struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
+				if (ca && !ptr->cached && !ca->mi.durability)
+					data_opts->kill_ptrs |= ptr_bit;
+				ptr_bit <<= 1;
+			}
+
+			data_opts->extra_replicas = opts->data_replicas - durability;
+		} else {
+			const union bch_extent_entry *entry;
+			struct extent_ptr_decoded p;
+
+			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+				unsigned d = bch2_extent_ptr_durability(c, &p);
+
+				if (d && durability - d >= opts->data_replicas) {
+					data_opts->kill_ptrs |= ptr_bit;
+					durability -= d;
+				}
+
+				ptr_bit <<= 1;
+			}
+
+			ptr_bit = 1;
+			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+				if (p.has_ec && durability - p.ec.redundancy >= opts->data_replicas) {
+					data_opts->kill_ec_ptrs |= ptr_bit;
+					durability -= p.ec.redundancy;
+				}
+
+				ptr_bit <<= 1;
+			}
+		}
+	}
+
 	if (!data_opts->rewrite_ptrs &&
 	    !data_opts->kill_ptrs &&
 	    !data_opts->kill_ec_ptrs &&
