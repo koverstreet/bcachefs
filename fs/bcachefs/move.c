@@ -503,7 +503,8 @@ struct bch_inode_opts *bch2_move_get_io_opts(struct btree_trans *trans,
 				break;
 			}
 out:
-	ret = bch2_get_update_rebalance_opts(trans, opts_ret, extent_iter, extent_k);
+	ret = bch2_get_update_rebalance_opts(trans, opts_ret, extent_iter, extent_k,
+					     SET_NEEDS_REBALANCE_other);
 	if (ret)
 		return ERR_PTR(ret);
 	return opts_ret;
@@ -535,7 +536,8 @@ int bch2_move_get_io_opts_one(struct btree_trans *trans,
 		}
 	}
 
-	return bch2_get_update_rebalance_opts(trans, io_opts, extent_iter, extent_k);
+	return bch2_get_update_rebalance_opts(trans, io_opts, extent_iter, extent_k,
+					     SET_NEEDS_REBALANCE_other);
 }
 
 int bch2_move_ratelimit(struct moving_context *ctxt)
