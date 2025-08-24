@@ -1952,6 +1952,10 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 	if (new_state == BCH_MEMBER_STATE_rw)
 		__bch2_dev_read_write(c, ca);
 
+	/* XXX: add a superblock bit to make this transactional */
+	if (new_state == BCH_MEMBER_STATE_failed)
+		bch2_set_rebalance_needs_scan_device(c, ca->dev_idx);
+
 	bch2_rebalance_wakeup(c);
 
 	return ret;
