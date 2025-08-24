@@ -2,6 +2,53 @@
 #ifndef _BCACHEFS_REBALANCE_FORMAT_H
 #define _BCACHEFS_REBALANCE_FORMAT_H
 
+/*
+ * rebalance on disk data structures:
+ *
+ * extents will contain a bch_extent_rebalance if they have background
+ * processing pending; additionally, indirect extents will always have a
+ * bch_extent_rebalance if they had any io path options set on the inode, since
+ * we don't (yet) have backpointers that would let us look up the "owning" inode
+ * of an indirect extent to recover the io path options.
+ *
+ * We also have 4 btrees for keeping track of pending rebalance work:
+ *
+ * BTREE_ID_rebalance_scan:
+ *   Inum 0:
+ *     Holds "scan cookies", which are created on option change to indicate that
+ *     new options need to be propagated to each extent; this happens before the
+ *     actual data processing.
+ *
+ *     A scan cookie may be for the entire filesystem, a specific device, or a
+ *     specific inode.
+ *
+ *   Inum 1:
+ *     Btree nodes that need background processing cannot be tracked by the
+ *     other rebalance btrees; instead they have backpointers
+ *     (KEY_TYPE_backpointer) created here.
+ *
+ *     This has the added benefit that btree nodes will be processed before
+ *     regular data, which is beneficial if e.g. we're recovering from data
+ *     being degraded.
+ *
+ *  BTREE_ID_rebalance_work:
+ *    The main "pending rebalance work" btree: it's a simple bitset btree where
+ *    a set bit indicates that an an extent in BTREE_ID_extents or
+ *    BTREE_ID_reflink needs to be processed.
+ *
+ *  BTREE_ID_rebalance_hipri:
+ *    If bch_extent_rebalance.hipri is set, the extent will be tracked here
+ *    instead of BTREE_ID_rebalance_work and processed ahead of extents in
+ *    BTREE_ID_rebalance_work; this is so that we can evacuate failed devices
+ *    before other work.
+ *
+ *  BTREE_ID_rebalance_pending:
+ *    If we'd like to move an extent to a specific target, but can't because the
+ *    target is full, we set bch_extent_rebalance.pending and switch to tracking
+ *    it here; pending rebalance work is re-attempted on device resize, add, or
+ *    label change.
+ */
+
 struct bch_extent_rebalance {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	__u64	type:6,
