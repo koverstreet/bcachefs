@@ -439,6 +439,7 @@ restart_drop_extra_replicas:
 						k.k->p, insert->k.p) ?:
 			bch2_inum_snapshot_opts_get(trans, k.k->p.inode, k.k->p.snapshot, &opts) ?:
 			bch2_bkey_set_needs_rebalance(c, &opts, insert,
+						      SET_NEEDS_REBALANCE_foreground,
 						      m->op.opts.change_cookie) ?:
 			bch2_trans_update(trans, &iter, insert,
 				BTREE_UPDATE_internal_snapshot_node);
