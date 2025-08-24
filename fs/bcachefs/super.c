@@ -1974,6 +1974,9 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 
 	bch_notice(ca, "%s", bch2_member_states[new_state]);
 
+	if (new_state == BCH_MEMBER_STATE_failed)
+		bch2_set_rebalance_needs_scan_device(c, ca->dev_idx);
+
 	scoped_guard(mutex, &c->sb_lock) {
 		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
 		SET_BCH_MEMBER_STATE(m, new_state);
@@ -1982,6 +1985,9 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 
 	if (new_state == BCH_MEMBER_STATE_rw)
 		__bch2_dev_read_write(c, ca);
+
+	if (new_state == BCH_MEMBER_STATE_failed)
+		bch2_set_rebalance_needs_scan_device(c, ca->dev_idx);
 
 	bch2_rebalance_wakeup(c);
 

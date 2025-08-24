@@ -70,6 +70,7 @@ struct per_snapshot_io_opts {
 	u64			cur_inum;
 	bool			fs_scan_cookie;
 	bool			inum_scan_cookie;
+	struct bch_devs_mask	dev_cookie;
 
 	struct bch_inode_opts	fs_io_opts;
 	DARRAY(struct snapshot_io_opts_entry) d;
@@ -104,6 +105,7 @@ int bch2_extent_get_apply_io_opts_one(struct btree_trans *, struct bch_inode_opt
 
 int bch2_set_rebalance_needs_scan_trans(struct btree_trans *, u64);
 int bch2_set_rebalance_needs_scan(struct bch_fs *, u64 inum);
+int bch2_set_rebalance_needs_scan_device(struct bch_fs *, unsigned);
 int bch2_set_fs_needs_rebalance(struct bch_fs *);
 
 static inline void bch2_rebalance_wakeup(struct bch_fs *c)

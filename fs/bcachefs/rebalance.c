@@ -3,6 +3,7 @@
 #include "bcachefs.h"
 #include "alloc_background.h"
 #include "alloc_foreground.h"
+#include "backpointers.h"
 #include "btree_iter.h"
 #include "btree_update.h"
 #include "btree_write_buffer.h"
@@ -295,6 +296,29 @@ static int check_rebalance_scan_cookie(struct btree_trans *trans, u64 inum, bool
 	return ret;
 }
 
+static int check_dev_rebalance_scan_cookie(struct btree_trans *trans, struct bkey_s_c k,
+					   struct bch_devs_mask *v)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+
+	bkey_for_each_ptr(ptrs, ptr)
+		if (v && test_bit(ptr->dev, v->d))
+			return 1;
+
+	bkey_for_each_ptr(ptrs, ptr) {
+		int ret = check_rebalance_scan_cookie(trans, ptr->dev + 1, NULL);
+		if (ret < 0)
+			return ret;
+		if (ret) {
+			if (v)
+				__set_bit(ptr->dev, v->d);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
 static int new_needs_rb_allowed(struct btree_trans *trans,
 				struct per_snapshot_io_opts *s,
 				struct bkey_s_c k,
@@ -357,6 +381,14 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 		return ret;
 	if (ret)
 		return 0;
+
+	if (new_need_rb == BIT(BCH_REBALANCE_data_replicas)) {
+		ret = check_dev_rebalance_scan_cookie(trans, k, s ? &s->dev_cookie : NULL);
+		if (ret < 0)
+			return ret;
+		if (ret)
+			return 0;
+	}
 
 	CLASS(printbuf, buf)();
 
@@ -643,6 +675,11 @@ int bch2_set_rebalance_needs_scan(struct bch_fs *c, u64 inum)
 	return ret;
 }
 
+int bch2_set_rebalance_needs_scan_device(struct bch_fs *c, unsigned dev)
+{
+	return bch2_set_rebalance_needs_scan(c, dev + 1);
+}
+
 int bch2_set_fs_needs_rebalance(struct bch_fs *c)
 {
 	return bch2_set_rebalance_needs_scan(c, 0);
@@ -855,6 +892,72 @@ out:
 	return ret;
 }
 
+static int do_rebalance_scan_bp(struct btree_trans *trans,
+				struct bkey_s_c_backpointer bp,
+				struct bkey_buf *last_flushed)
+{
+	if (bp.v->level) /* metadata not supported yet */
+		return 0;
+
+	struct btree_iter iter;
+	struct bkey_s_c k = bch2_backpointer_get_key(trans, bp, &iter, BTREE_ITER_intent,
+						     last_flushed);
+	int ret = bkey_err(k);
+	if (ret)
+		return ret;
+
+	if (!k.k)
+		return 0;
+
+	struct bch_inode_opts io_opts;
+	ret = bch2_extent_get_io_opts_one(trans, &io_opts, &iter, k,
+					  SET_NEEDS_REBALANCE_opt_change);
+	bch2_trans_iter_exit(&iter);
+	return ret;
+}
+
+static int do_rebalance_scan_device(struct moving_context *ctxt,
+				    unsigned dev, u64 cookie,
+				    u64 *sectors_scanned)
+{
+	struct btree_trans *trans = ctxt->trans;
+	struct bch_fs *c = trans->c;
+	struct bch_fs_rebalance *r = &c->rebalance;
+
+	struct bkey_buf last_flushed;
+	bch2_bkey_buf_init(&last_flushed);
+	bkey_init(&last_flushed.k->k);
+
+	bch2_btree_write_buffer_flush_sync(trans);
+
+	int ret = for_each_btree_key_max(trans, iter, BTREE_ID_backpointers,
+					 POS(dev, 0), POS(dev, U64_MAX),
+					 BTREE_ITER_prefetch, k, ({
+		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
+
+		if (k.k->type != KEY_TYPE_backpointer)
+			continue;
+
+		do_rebalance_scan_bp(trans, bkey_s_c_to_backpointer(k), &last_flushed);
+	})) ?:
+	commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+		  bch2_clear_rebalance_needs_scan(trans, dev + 1, cookie));
+
+	*sectors_scanned += atomic64_read(&r->scan_stats.sectors_seen);
+	/*
+	 * Ensure that the rebalance_work entries we created are seen by the
+	 * next iteration of do_rebalance(), so we don't end up stuck in
+	 * rebalance_wait():
+	 */
+	*sectors_scanned += 1;
+	bch2_move_stats_exit(&r->scan_stats, c);
+
+	bch2_btree_write_buffer_flush_sync(trans);
+
+	bch2_bkey_buf_exit(&last_flushed, c);
+	return ret;
+}
+
 static int do_rebalance_scan_indirect(struct btree_trans *trans,
 				      struct bkey_s_c_reflink_p p,
 				      struct per_snapshot_io_opts *snapshot_io_opts,
@@ -892,15 +995,21 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 	bch2_move_stats_init(&r->scan_stats, "rebalance_scan");
 	ctxt->stats = &r->scan_stats;
 
+	r->state = BCH_REBALANCE_scanning;
+
 	if (!inum) {
 		r->scan_start	= BBPOS_MIN;
 		r->scan_end	= BBPOS_MAX;
-	} else {
+	} else if (inum >= BCACHEFS_ROOT_INO) {
 		r->scan_start	= BBPOS(BTREE_ID_extents, POS(inum, 0));
 		r->scan_end	= BBPOS(BTREE_ID_extents, POS(inum, U64_MAX));
-	}
+	} else {
+		unsigned dev = inum - 1;
+		r->scan_start	= BBPOS(BTREE_ID_backpointers, POS(dev, 0));
+		r->scan_end	= BBPOS(BTREE_ID_backpointers, POS(dev, U64_MAX));
 
-	r->state = BCH_REBALANCE_scanning;
+		return do_rebalance_scan_device(ctxt, inum - 1, cookie, sectors_scanned);
+	}
 
 	int ret = for_each_btree_key_max(trans, iter, BTREE_ID_extents,
 					 r->scan_start.pos, r->scan_end.pos,

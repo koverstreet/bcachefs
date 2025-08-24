@@ -793,6 +793,9 @@ static ssize_t sysfs_opt_store(struct bch_fs *c,
 	bool is_sb = opt->get_sb || opt->get_member;
 	bool changed = false;
 
+	if (id == Opt_durability)
+		bch2_set_rebalance_needs_scan_device(c, ca->dev_idx);
+
 	if (is_sb) {
 		changed = bch2_opt_set_sb(c, ca, opt, v);
 	} else if (!ca) {
@@ -805,6 +808,9 @@ static ssize_t sysfs_opt_store(struct bch_fs *c,
 
 	if (!ca)
 		bch2_opt_set_by_id(&c->opts, id, v);
+
+	if (id == Opt_durability)
+		bch2_set_rebalance_needs_scan_device(c, ca->dev_idx);
 
 	if (changed)
 		bch2_opt_hook_post_set(c, ca, 0, id, v);
