@@ -8,6 +8,7 @@
 #include "buckets.h"
 #include "chardev.h"
 #include "dirent.h"
+#include "disk_accounting.h"
 #include "errcode.h"
 #include "extents.h"
 #include "fs.h"
@@ -2266,7 +2267,12 @@ static int bch2_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_bfree	= usage.free >> shift;
 	buf->f_bavail	= avail_factor(usage.free) >> shift;
 
-	buf->f_files	= usage.nr_inodes + avail_inodes;
+	u64 nr_inodes = 0;
+	struct disk_accounting_pos k;
+	disk_accounting_key_init(k, nr_inodes);
+	bch2_accounting_mem_read(c, disk_accounting_pos_to_bpos(&k), &nr_inodes, 1);
+
+	buf->f_files	= nr_inodes + avail_inodes;
 	buf->f_ffree	= avail_inodes;
 
 	buf->f_fsid	= uuid_to_fsid(c->sb.user_uuid.b);

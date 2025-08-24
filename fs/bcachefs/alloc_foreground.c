@@ -1537,7 +1537,6 @@ void bch2_fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
 	prt_printf(out, "cached\t%llu\n",		percpu_u64_get(&c->usage->cached));
 	prt_printf(out, "reserved\t%llu\n",		percpu_u64_get(&c->usage->reserved));
 	prt_printf(out, "online_reserved\t%llu\n",	percpu_u64_get(c->online_reserved));
-	prt_printf(out, "nr_inodes\t%llu\n",		percpu_u64_get(&c->usage->nr_inodes));
 
 	prt_newline(out);
 	prt_printf(out, "freelist_wait\t%s\n",			c->freelist_wait.list.first ? "waiting" : "empty");

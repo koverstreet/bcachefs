@@ -1100,7 +1100,6 @@ void bch2_verify_accounting_clean(struct bch_fs *c)
 	check(data);
 	check(cached);
 	check(reserved);
-	check(nr_inodes);
 
 	WARN_ON(mismatch);
 }

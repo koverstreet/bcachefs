@@ -302,7 +302,6 @@ static void bch2_fs_usage_base_to_text(struct printbuf *out, struct bch_fs *c)
 	prt_printf(out, "data:\t\t%llu\n",	b.data);
 	prt_printf(out, "cached:\t%llu\n",	b.cached);
 	prt_printf(out, "reserved:\t\t%llu\n",	b.reserved);
-	prt_printf(out, "nr_inodes:\t%llu\n",	b.nr_inodes);
 }
 
 SHOW(bch2_fs)
