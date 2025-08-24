@@ -11,6 +11,7 @@
 #include "clock.h"
 #include "compress.h"
 #include "disk_groups.h"
+#include "ec.h"
 #include "errcode.h"
 #include "error.h"
 #include "inode.h"
@@ -272,6 +273,8 @@ bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 
 	if (durability < r.data_replicas || durability >= r.data_replicas + min_durability)
 		r.need_rb |= BIT(BCH_REBALANCE_data_replicas);
+	if (!unwritten && r.erasure_code != ec)
+		r.need_rb |= BIT(BCH_REBALANCE_erasure_code);
 	return r;
 }
 
@@ -321,6 +324,17 @@ static int check_dev_rebalance_scan_cookie(struct btree_trans *trans, struct bke
 	return 0;
 }
 
+static bool bkey_has_ec(struct bkey_s_c k)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+
+	bkey_extent_entry_for_each(ptrs, entry)
+		if (extent_entry_type(entry) == BCH_EXTENT_ENTRY_stripe_ptr)
+			return true;
+	return false;
+}
+
 static int new_needs_rb_allowed(struct btree_trans *trans,
 				struct per_snapshot_io_opts *s,
 				struct bkey_s_c k,
@@ -349,6 +363,14 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 	if (ctx == SET_NEEDS_REBALANCE_opt_change ||
 	    ctx == SET_NEEDS_REBALANCE_opt_change_indirect)
 		return 0;
+
+	if ((new_need_rb & BIT(BCH_REBALANCE_erasure_code)) &&
+	    !bkey_has_ec(k)) {
+		/* Foreground writes are not initially erasure coded - and we
+		 * may crash before a stripe is created
+		 */
+		new_need_rb &= ~BIT(BCH_REBALANCE_erasure_code);
+	}
 
 	if (ctx == SET_NEEDS_REBALANCE_foreground) {
 		new_need_rb &= ~(BIT(BCH_REBALANCE_background_compression)|
@@ -759,6 +781,23 @@ static struct bkey_i *next_rebalance_entry(struct btree_trans *trans,
 	return &(&darray_pop(buf))->k_i;
 }
 
+static int extent_ec_pending(struct btree_trans *trans, struct bkey_ptrs_c ptrs)
+{
+	struct bch_fs *c = trans->c;
+
+	guard(rcu)();
+	bkey_for_each_ptr(ptrs, ptr) {
+		struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
+		if (!ca)
+			continue;
+
+		struct bpos bucket = PTR_BUCKET_POS(ca, ptr);
+		if (bch2_bucket_has_new_stripe(c, bucket_to_u64(bucket)))
+			return true;
+	}
+	return false;
+}
+
 static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 			struct per_snapshot_io_opts *snapshot_io_opts,
 			struct bpos work_pos,
@@ -801,9 +840,12 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 	data_opts->target		= opts->background_target;
 	data_opts->write_flags		|= BCH_WRITE_only_specified_devs;
 
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+
 	if (r->need_rb & BIT(BCH_REBALANCE_data_replicas)) {
 		unsigned durability = bch2_bkey_durability(c, k);
-		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 		unsigned ptr_bit = 1;
 
 		guard(rcu)();
@@ -817,9 +859,6 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 
 			data_opts->extra_replicas = opts->data_replicas - durability;
 		} else {
-			const union bch_extent_entry *entry;
-			struct extent_ptr_decoded p;
-
 			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 				unsigned d = bch2_extent_ptr_durability(c, &p);
 
@@ -836,6 +875,26 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 				if (p.has_ec && durability - p.ec.redundancy >= opts->data_replicas) {
 					data_opts->kill_ec_ptrs |= ptr_bit;
 					durability -= p.ec.redundancy;
+				}
+
+				ptr_bit <<= 1;
+			}
+		}
+	}
+
+	if (r->need_rb & BIT(BCH_REBALANCE_erasure_code)) {
+		if (opts->erasure_code) {
+			/* XXX: we'll need ratelimiting */
+			if (extent_ec_pending(trans, ptrs))
+				return bkey_s_c_null;
+
+			data_opts->extra_replicas = opts->data_replicas;
+		} else {
+			unsigned ptr_bit = 1;
+			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+				if (p.has_ec) {
+					data_opts->kill_ec_ptrs |= ptr_bit;
+					data_opts->extra_replicas += p.ec.redundancy;
 				}
 
 				ptr_bit <<= 1;
