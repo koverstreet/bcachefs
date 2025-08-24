@@ -33,6 +33,25 @@
 
 /* bch_extent_rebalance_v2: */
 
+int bch2_extent_rebalance_validate(struct bch_fs *c,
+				   struct bkey_s_c k,
+				   struct bkey_validate_context from,
+				   const struct bch_extent_rebalance_v2 *r)
+{
+	int ret = 0;
+
+	bkey_fsck_err_on(r->pending && !(r->need_rb & BIT(BCH_REBALANCE_background_target)),
+			 c, extent_rebalance_bad_pending,
+			 "pending incorrectly set");
+
+	bkey_fsck_err_on(r->hipri && !(r->need_rb & BIT(BCH_REBALANCE_data_replicas)),
+			 c, extent_rebalance_bad_pending,
+			 "hipri incorrectly set");
+
+fsck_err:
+	return ret;
+}
+
 static const struct bch_extent_rebalance_v2 *bch2_bkey_ptrs_rebalance_opts(const struct bch_fs *c,
 									struct bkey_ptrs_c ptrs)
 {

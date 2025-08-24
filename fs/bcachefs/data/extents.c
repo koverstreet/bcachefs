@@ -1544,24 +1544,9 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 					 "redundant stripe entry");
 			have_ec = true;
 			break;
-		case BCH_EXTENT_ENTRY_rebalance_v2: {
-			/*
-			 * this shouldn't be a fsck error, for forward
-			 * compatibility; the rebalance code should just refetch
-			 * the compression opt if it's unknown
-			 */
-#if 0
-			const struct bch_extent_rebalance_v2 *r = &entry->rebalance;
-
-			if (!bch2_compression_opt_valid(r->compression)) {
-				union bch_compression_opt opt = { .value = r->compression };
-				prt_printf(err, "invalid compression opt %u:%u",
-					   opt.type, opt.level);
-				return bch_err_throw(c, invalid_bkey);
-			}
-#endif
+		case BCH_EXTENT_ENTRY_rebalance_v2:
+			try(bch2_extent_rebalance_validate(c, k, from, &entry->rebalance_v2));
 			break;
-		}
 		case BCH_EXTENT_ENTRY_flags:
 			bkey_fsck_err_on(entry != ptrs.start,
 					 c, extent_flags_not_at_start,
