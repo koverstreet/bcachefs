@@ -29,26 +29,38 @@ void bch2_extent_rebalance_to_text(struct printbuf *, struct bch_fs *,
 
 const struct bch_extent_rebalance *bch2_bkey_rebalance_opts(struct bkey_s_c);
 
-static inline int bch2_bkey_needs_rb(struct bkey_s_c k)
+static inline unsigned rb_accounting_counters(const struct bch_extent_rebalance *r)
 {
-	const struct bch_extent_rebalance *r = bch2_bkey_rebalance_opts(k);
-	return r ? r->need_rb : 0;
+	if (!r)
+		return 0;
+	unsigned ret = r->need_rb;
+
+	if (r->hipri)
+		ret |= BIT(BCH_REBALANCE_ACCOUNTING_high_priority);
+	if (r->pending) {
+		ret |= BIT(BCH_REBALANCE_ACCOUNTING_pending);
+		ret &= ~BIT(BCH_REBALANCE_ACCOUNTING_background_target);
+	}
+	return ret;
 }
 
 int __bch2_trigger_extent_rebalance(struct btree_trans *,
 				    struct bkey_s_c, struct bkey_s_c,
-				    unsigned, unsigned,
+				    const struct bch_extent_rebalance *,
+				    const struct bch_extent_rebalance *,
 				    enum btree_iter_update_trigger_flags);
 
 static inline int bch2_trigger_extent_rebalance(struct btree_trans *trans,
 				  struct bkey_s_c old, struct bkey_s_c new,
 				  enum btree_iter_update_trigger_flags flags)
 {
-	unsigned old_r = bch2_bkey_needs_rb(old);
-	unsigned new_r = bch2_bkey_needs_rb(new);
+	const struct bch_extent_rebalance *old_r = bch2_bkey_rebalance_opts(old);
+	const struct bch_extent_rebalance *new_r = bch2_bkey_rebalance_opts(new);
+	unsigned old_a = rb_accounting_counters(old_r);
+	unsigned new_a = rb_accounting_counters(new_r);
 
-	return old_r != new_r ||
-		(old.k->size != new.k->size && (old_r|new_r))
+	return old_a != new_a ||
+		(old.k->size != new.k->size && (old_a|new_a))
 		? __bch2_trigger_extent_rebalance(trans, old, new, old_r, new_r, flags)
 		: 0;
 }
@@ -111,6 +123,16 @@ int bch2_set_fs_needs_rebalance(struct bch_fs *);
 static inline void bch2_rebalance_wakeup(struct bch_fs *c)
 {
 	c->rebalance.kick++;
+	guard(rcu)();
+	struct task_struct *p = rcu_dereference(c->rebalance.thread);
+	if (p)
+		wake_up_process(p);
+}
+
+static inline void bch2_rebalance_wakeup_pending(struct bch_fs *c)
+{
+	c->rebalance.kick++;
+	c->rebalance.pending_kick++;
 	guard(rcu)();
 	struct task_struct *p = rcu_dereference(c->rebalance.thread);
 	if (p)
