@@ -29,10 +29,32 @@ void bch2_extent_rebalance_to_text(struct printbuf *, struct bch_fs *,
 
 const struct bch_extent_rebalance *bch2_bkey_rebalance_opts(struct bkey_s_c);
 
-static inline int bch2_bkey_needs_rb(struct bkey_s_c k)
+static inline unsigned bch2_bkey_rebalance_acct_flags(struct bkey_s_c k)
 {
 	const struct bch_extent_rebalance *r = bch2_bkey_rebalance_opts(k);
-	return r ? r->need_rb : 0;
+
+	if (!r)
+		return 0;
+
+	return r->need_rb|
+		(r->hipri	<< BCH_REBALANCE_ACCOUNTING_high_priority)|
+		(r->pending	<< BCH_REBALANCE_ACCOUNTING_pending);
+}
+
+int __bch2_trigger_extent_rebalance(struct btree_trans *,
+				    struct bkey_s_c, struct bkey_s_c,
+				    enum btree_iter_update_trigger_flags);
+
+static inline int bch2_trigger_extent_rebalance(struct btree_trans *trans,
+				  struct bkey_s_c old, struct bkey_s_c new,
+				  enum btree_iter_update_trigger_flags flags)
+{
+	unsigned old_r = bch2_bkey_rebalance_acct_flags(old);
+	unsigned new_r = bch2_bkey_rebalance_acct_flags(new);
+
+	return old_r != new_r
+		? __bch2_trigger_extent_rebalance(trans, old, new, flags)
+		: 0;
 }
 
 /* Inodes in different snapshots may have different IO options: */
@@ -92,6 +114,16 @@ int bch2_set_fs_needs_rebalance(struct bch_fs *);
 static inline void bch2_rebalance_wakeup(struct bch_fs *c)
 {
 	c->rebalance.kick++;
+	guard(rcu)();
+	struct task_struct *p = rcu_dereference(c->rebalance.thread);
+	if (p)
+		wake_up_process(p);
+}
+
+static inline void bch2_rebalance_wakeup_pending(struct bch_fs *c)
+{
+	c->rebalance.kick++;
+	c->rebalance.pending_kick++;
 	guard(rcu)();
 	struct task_struct *p = rcu_dereference(c->rebalance.thread);
 	if (p)
