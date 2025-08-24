@@ -308,6 +308,9 @@ static bool bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 	if (unwritten)
 		r.need_rb &= ~BIT(BCH_REBALANCE_data_checksum);
 
+	if (durability < r.data_replicas || durability >= r.data_replicas + min_durability)
+		r.need_rb |= BIT(BCH_REBALANCE_data_replicas);
+
 	const struct bch_extent_reconcile *old = bch2_bkey_ptrs_rebalance_opts(c, ptrs);
 
 	bool should_have_rb = bkey_should_have_rb_opts(k, r);
@@ -395,6 +398,15 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 	if (ctx == SET_NEEDS_REBALANCE_foreground) {
 		new_need_rb &= ~(BIT(BCH_REBALANCE_background_compression)|
 				 BIT(BCH_REBALANCE_background_target));
+
+		/*
+		 * Foreground writes might end up degraded when a device is
+		 * getting yanked:
+		 *
+		 * XXX: this is something we need to fix, but adding retries to
+		 * the write path is something we have to do carefully.
+		 */
+		new_need_rb &= ~BIT(BCH_REBALANCE_data_replicas);
 		if (!new_need_rb)
 			return 0;
 
@@ -790,6 +802,44 @@ static int rebalance_set_data_opts(struct btree_trans *trans,
 
 	unsigned csum_type = bch2_data_checksum_type_rb(c, *r);
 	unsigned compression_type = bch2_compression_opt_to_type(r->background_compression);
+
+	if (r->need_rb & BIT(BCH_REBALANCE_data_replicas)) {
+		unsigned durability = bch2_bkey_durability(c, k);
+		unsigned ptr_bit = 1;
+
+		guard(rcu)();
+		if (durability <= r->data_replicas) {
+			bkey_for_each_ptr(ptrs, ptr) {
+				struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
+				if (ca && !ptr->cached && !ca->mi.durability)
+					data_opts->ptrs_kill |= ptr_bit;
+				ptr_bit <<= 1;
+			}
+
+			data_opts->extra_replicas = r->data_replicas - durability;
+		} else {
+			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+				unsigned d = bch2_extent_ptr_durability(c, &p);
+
+				if (d && durability - d >= r->data_replicas) {
+					data_opts->ptrs_kill |= ptr_bit;
+					durability -= d;
+				}
+
+				ptr_bit <<= 1;
+			}
+
+			ptr_bit = 1;
+			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+				if (p.has_ec && durability - p.ec.redundancy >= r->data_replicas) {
+					data_opts->ptrs_kill_ec |= ptr_bit;
+					durability -= p.ec.redundancy;
+				}
+
+				ptr_bit <<= 1;
+			}
+		}
+	}
 
 	scoped_guard(rcu) {
 		unsigned ptr_bit = 1;
