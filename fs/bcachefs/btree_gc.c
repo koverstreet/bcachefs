@@ -1238,7 +1238,7 @@ int bch2_gc_gens(struct bch_fs *c)
 	}
 
 	for (unsigned i = 0; i < BTREE_ID_NR; i++)
-		if (btree_type_has_ptrs(i)) {
+		if (btree_type_has_data_ptrs(i)) {
 			c->gc_gens_btree = i;
 			c->gc_gens_pos = POS_MIN;
 
