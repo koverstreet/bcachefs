@@ -186,11 +186,15 @@ static inline int bch2_accounting_mem_mod_locked(struct btree_trans *trans,
 			break;
 		case BCH_DISK_ACCOUNTING_dev_data_type: {
 			guard(rcu)();
+			const enum bch_data_type data_type = acc_k.dev_data_type.data_type;
 			struct bch_dev *ca = bch2_dev_rcu_noerror(c, acc_k.dev_data_type.dev);
 			if (ca) {
-				this_cpu_add(ca->usage->d[acc_k.dev_data_type.data_type].buckets, a.v->d[0]);
-				this_cpu_add(ca->usage->d[acc_k.dev_data_type.data_type].sectors, a.v->d[1]);
-				this_cpu_add(ca->usage->d[acc_k.dev_data_type.data_type].fragmented, a.v->d[2]);
+				this_cpu_add(ca->usage->d[data_type].buckets, a.v->d[0]);
+				this_cpu_add(ca->usage->d[data_type].sectors, a.v->d[1]);
+				this_cpu_add(ca->usage->d[data_type].fragmented, a.v->d[2]);
+
+				if (data_type == BCH_DATA_sb || data_type == BCH_DATA_journal)
+					trans->fs_usage_delta.hidden += a.v->d[0] * ca->mi.bucket_size;
 			}
 			break;
 		}
