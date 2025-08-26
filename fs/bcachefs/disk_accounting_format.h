@@ -108,7 +108,7 @@ static inline bool data_type_is_hidden(enum bch_data_type type)
 	x(dev_data_type,	3,	3)	\
 	x(compression,		4,	3)	\
 	x(snapshot,		5,	1)	\
-	x(btree,		6,	1)	\
+	x(btree,		6,	3)	\
 	x(rebalance_work,	7,	1)	\
 	x(inum,			8,	3)
 
@@ -174,6 +174,14 @@ struct bch_acct_snapshot {
 	__u32			id;
 } __packed;
 
+/*
+ * Metadata accounting per btree id:
+ * [
+ *   total btree disk usage in sectors
+ *   total number of btree nodes
+ *   number of non-leaf btree nodes
+ * ]
+ */
 struct bch_acct_btree {
 	__u32			id;
 } __packed;

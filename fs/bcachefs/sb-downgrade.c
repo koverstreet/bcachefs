@@ -104,7 +104,10 @@
 	x(inode_has_case_insensitive,				\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_inodes),		\
 	  BCH_FSCK_ERR_inode_has_case_insensitive_not_set,	\
-	  BCH_FSCK_ERR_inode_parent_has_case_insensitive_not_set)
+	  BCH_FSCK_ERR_inode_parent_has_case_insensitive_not_set)\
+	x(btree_node_accounting,				\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_allocations),		\
+	  BCH_FSCK_ERR_accounting_mismatch)
 
 #define DOWNGRADE_TABLE()					\
 	x(bucket_stripe_sectors,				\
@@ -152,7 +155,11 @@
 	  BIT_ULL(BCH_RECOVERY_PASS_check_allocations),		\
 	  BCH_FSCK_ERR_accounting_mismatch,			\
 	  BCH_FSCK_ERR_accounting_key_replicas_nr_devs_0,	\
-	  BCH_FSCK_ERR_accounting_key_junk_at_end)
+	  BCH_FSCK_ERR_accounting_key_junk_at_end)		\
+	x(btree_node_accounting,				\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_allocations),		\
+	  BCH_FSCK_ERR_accounting_mismatch,			\
+	  BCH_FSCK_ERR_accounting_key_nr_counters_wrong)
 
 struct upgrade_downgrade_entry {
 	u64		recovery_passes;
