@@ -840,6 +840,10 @@ static inline bool btree_node_type_has_triggers(enum btree_node_type type)
 	return BIT_ULL(type) & BTREE_NODE_TYPE_HAS_TRIGGERS;
 }
 
+/* A mask of btree id bits that have triggers for their leaves */
+__maybe_unused
+static const u64 btree_leaf_has_triggers_mask = BTREE_NODE_TYPE_HAS_TRIGGERS >> 1;
+
 static const u64 btree_is_extents_mask = 0
 #define x(name, nr, flags, ...)	|((!!((flags) & BTREE_IS_extents)) << nr)
 BCH_BTREE_IDS()

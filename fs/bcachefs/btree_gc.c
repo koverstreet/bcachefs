@@ -720,7 +720,7 @@ static int bch2_gc_btree(struct btree_trans *trans,
 			 enum btree_id btree, bool initial)
 {
 	struct bch_fs *c = trans->c;
-	unsigned target_depth = btree_node_type_has_triggers(__btree_node_type(0, btree)) ? 0 : 1;
+	unsigned target_depth = BIT_ULL(btree) & btree_leaf_has_triggers_mask ? 0 : 1;
 	int ret = 0;
 
 	/* We need to make sure every leaf node is readable before going RW */
