@@ -126,6 +126,7 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c,
 {
 	CLASS(btree_trans, trans)(c);
 
+	/* FIXME: this does not handle unknown btrees with data pointers */
 	for (unsigned id = 0; id < BTREE_ID_NR; id++) {
 		if (!btree_type_has_data_ptrs(id))
 			continue;
@@ -167,7 +168,7 @@ static int bch2_dev_metadata_drop(struct bch_fs *c,
 	bch2_bkey_buf_init(&k);
 	closure_init_stack(&cl);
 
-	for (id = 0; id < BTREE_ID_NR; id++) {
+	for (id = 0; id < btree_id_nr_alive(c); id++) {
 		bch2_trans_node_iter_init(trans, &iter, id, POS_MIN, 0, 0,
 					  BTREE_ITER_prefetch);
 retry:
