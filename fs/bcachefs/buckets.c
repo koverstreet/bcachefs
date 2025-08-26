@@ -760,6 +760,7 @@ static int __trigger_extent(struct btree_trans *trans,
 			    enum btree_iter_update_trigger_flags flags)
 {
 	bool gc = flags & BTREE_TRIGGER_gc;
+	bool insert = !(flags & BTREE_TRIGGER_overwrite);
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
@@ -813,7 +814,7 @@ static int __trigger_extent(struct btree_trans *trans,
 
 		if (cur_compression_type &&
 		    cur_compression_type != p.crc.compression_type) {
-			if (flags & BTREE_TRIGGER_overwrite)
+			if (!insert)
 				bch2_u64s_neg(compression_acct, ARRAY_SIZE(compression_acct));
 
 			ret = bch2_disk_accounting_mod2(trans, gc, compression_acct,
@@ -846,7 +847,7 @@ static int __trigger_extent(struct btree_trans *trans,
 	}
 
 	if (cur_compression_type) {
-		if (flags & BTREE_TRIGGER_overwrite)
+		if (!insert)
 			bch2_u64s_neg(compression_acct, ARRAY_SIZE(compression_acct));
 
 		ret = bch2_disk_accounting_mod2(trans, gc, compression_acct,
@@ -856,12 +857,17 @@ static int __trigger_extent(struct btree_trans *trans,
 	}
 
 	if (level) {
-		ret = bch2_disk_accounting_mod2_nr(trans, gc, &replicas_sectors, 1, btree, btree_id);
+		const bool leaf_node = level == 1;
+		s64 v[3] = {
+			replicas_sectors,
+			insert ? 1 : -1,
+			!leaf_node ? (insert ? 1 : -1) : 0,
+		};
+
+		ret = bch2_disk_accounting_mod2(trans, gc, v, btree, btree_id);
 		if (ret)
 			return ret;
 	} else {
-		bool insert = !(flags & BTREE_TRIGGER_overwrite);
-
 		s64 v[3] = {
 			insert ? 1 : -1,
 			insert ? k.k->size : -((s64) k.k->size),
