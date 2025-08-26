@@ -216,9 +216,9 @@ static inline int bch2_accounting_mem_mod_locked(struct btree_trans *trans,
 
 	struct accounting_mem_entry *e = &acc->k.data[idx];
 
-	EBUG_ON(bch2_accounting_counters(a.k) != e->nr_counters);
+	const unsigned nr = min_t(unsigned, bch2_accounting_counters(a.k), e->nr_counters);
 
-	for (unsigned i = 0; i < bch2_accounting_counters(a.k); i++)
+	for (unsigned i = 0; i < nr; i++)
 		this_cpu_add(e->v[gc][i], a.v->d[i]);
 	return 0;
 }
