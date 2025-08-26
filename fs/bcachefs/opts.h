@@ -539,7 +539,7 @@ enum fsck_err_opts {
 	  "n",		"Data written to this device will be considered\n"\
 			"to have already been replicated n times")	\
 	x(data_allowed,			u8,				\
-	  OPT_DEVICE,							\
+	  OPT_DEVICE|OPT_FORMAT,					\
 	  OPT_BITFIELD(__bch2_data_types),				\
 	  BCH_MEMBER_DATA_ALLOWED,	BIT(BCH_DATA_journal)|BIT(BCH_DATA_btree)|BIT(BCH_DATA_user),\
 	  "types",	"Allowed data types for this device: journal, btree, and/or user")\
