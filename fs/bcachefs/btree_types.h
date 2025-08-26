@@ -887,15 +887,15 @@ static inline bool btree_type_has_snapshot_field(enum btree_id btree)
 	return BIT_ULL(btree) & mask;
 }
 
-static inline bool btree_type_has_ptrs(enum btree_id btree)
-{
-	const u64 mask = 0
+static const u64 btree_has_data_ptrs_mask = 0
 #define x(name, nr, flags, ...)	|((!!((flags) & BTREE_IS_data)) << nr)
 	BCH_BTREE_IDS()
 #undef x
 	;
 
-	return BIT_ULL(btree) & mask;
+static inline bool btree_type_has_data_ptrs(enum btree_id btree)
+{
+	return BIT_ULL(btree) & btree_has_data_ptrs_mask;
 }
 
 static inline bool btree_type_uses_write_buffer(enum btree_id btree)

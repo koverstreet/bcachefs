@@ -127,7 +127,7 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c,
 	CLASS(btree_trans, trans)(c);
 
 	for (unsigned id = 0; id < BTREE_ID_NR; id++) {
-		if (!btree_type_has_ptrs(id))
+		if (!btree_type_has_data_ptrs(id))
 			continue;
 
 		/* Stripe keys have pointers, but are handled separately */
