@@ -706,7 +706,8 @@ struct bch_sb_field_ext {
 	x(fast_device_removal,		BCH_VERSION(1, 27))		\
 	x(inode_has_case_insensitive,	BCH_VERSION(1, 28))		\
 	x(extent_snapshot_whiteouts,	BCH_VERSION(1, 29))		\
-	x(31bit_dirent_offset,		BCH_VERSION(1, 30))
+	x(31bit_dirent_offset,		BCH_VERSION(1, 30))		\
+	x(btree_node_accounting,	BCH_VERSION(1, 31))
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,
@@ -717,7 +718,7 @@ enum bcachefs_metadata_version {
 };
 
 static const __maybe_unused
-unsigned bcachefs_metadata_required_upgrade_below = bcachefs_metadata_version_rebalance_work;
+unsigned bcachefs_metadata_required_upgrade_below = bcachefs_metadata_version_btree_node_accounting;
 
 #define bcachefs_metadata_version_current	(bcachefs_metadata_version_max - 1)
 
