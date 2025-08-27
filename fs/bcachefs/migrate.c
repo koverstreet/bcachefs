@@ -266,10 +266,15 @@ int bch2_dev_data_drop(struct bch_fs *c, unsigned dev_idx,
 		       unsigned flags, struct printbuf *err)
 {
 	struct progress_indicator_state progress;
-	bch2_progress_init(&progress, c,
-			   BIT_ULL(BTREE_ID_extents)|
-			   BIT_ULL(BTREE_ID_reflink));
+	int ret;
 
-	return bch2_dev_usrdata_drop(c, &progress, dev_idx, flags, err) ?:
-		bch2_dev_metadata_drop(c, &progress, dev_idx, flags, err);
+	bch2_progress_init(&progress, c,
+			   btree_has_data_ptrs_mask & ~BIT_ULL(BTREE_ID_stripes));
+
+	if ((ret = bch2_dev_usrdata_drop(c, &progress, dev_idx, flags, err)))
+		return ret;
+
+	bch2_progress_init_inner(&progress, c, 0, ~0ULL);
+
+	return bch2_dev_metadata_drop(c, &progress, dev_idx, flags, err);
 }
