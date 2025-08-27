@@ -26,6 +26,9 @@ static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_f
 	return r;
 };
 
+void bch2_extent_rebalance_to_text(struct printbuf *, struct bch_fs *,
+				   const struct bch_extent_rebalance *);
+
 u64 bch2_bkey_sectors_need_rebalance(struct bch_fs *, struct bkey_s_c);
 
 enum set_needs_rebalance_ctx {
