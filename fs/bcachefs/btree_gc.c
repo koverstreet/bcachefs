@@ -717,15 +717,11 @@ fsck_err:
 
 static int bch2_gc_btree(struct btree_trans *trans,
 			 struct progress_indicator_state *progress,
-			 enum btree_id btree, bool initial)
+			 enum btree_id btree, unsigned target_depth,
+			 bool initial)
 {
 	struct bch_fs *c = trans->c;
-	unsigned target_depth = BIT_ULL(btree) & btree_leaf_has_triggers_mask ? 0 : 1;
 	int ret = 0;
-
-	/* We need to make sure every leaf node is readable before going RW */
-	if (initial)
-		target_depth = 0;
 
 	for (unsigned level = target_depth; level < BTREE_MAX_DEPTH; level++) {
 		struct btree *prev = NULL;
@@ -797,7 +793,8 @@ static int bch2_gc_btrees(struct bch_fs *c)
 		if (IS_ERR_OR_NULL(bch2_btree_id_root(c, btree)->b))
 			continue;
 
-		ret = bch2_gc_btree(trans, &progress, btree, true);
+		/* We need to make sure every leaf node is readable before going RW */
+		ret = bch2_gc_btree(trans, &progress, btree, 0, true);
 	}
 
 	bch_err_fn(c, ret);
