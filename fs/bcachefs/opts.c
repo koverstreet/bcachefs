@@ -518,7 +518,8 @@ void bch2_opts_to_text(struct printbuf *out,
 	}
 }
 
-int bch2_opt_hook_pre_set(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_opt_id id, u64 v)
+int bch2_opt_hook_pre_set(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_opt_id id, u64 v,
+			  bool change)
 {
 	int ret = 0;
 
@@ -542,13 +543,26 @@ int bch2_opt_hook_pre_set(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum b
 		break;
 	}
 
+	if (change &&
+	    (id == Opt_foreground_target ||
+	     id == Opt_background_target ||
+	     id == Opt_promote_target ||
+	     id == Opt_compression ||
+	     id == Opt_background_compression ||
+	     id == Opt_data_checksum ||
+	     id == Opt_data_replicas)) {
+		ret = bch2_set_rebalance_needs_scan(c, inum);
+		if (ret)
+			return ret;
+	}
+
 	return ret;
 }
 
 int bch2_opts_hooks_pre_set(struct bch_fs *c)
 {
 	for (unsigned i = 0; i < bch2_opts_nr; i++) {
-		int ret = bch2_opt_hook_pre_set(c, NULL, 0, i, bch2_opt_get_by_id(&c->opts, i));
+		int ret = bch2_opt_hook_pre_set(c, NULL, 0, i, bch2_opt_get_by_id(&c->opts, i), false);
 		if (ret)
 			return ret;
 	}
@@ -559,14 +573,18 @@ int bch2_opts_hooks_pre_set(struct bch_fs *c)
 void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 			    enum bch_opt_id id, u64 v)
 {
-	switch (id) {
-	case Opt_foreground_target:
-	case Opt_compression:
-	case Opt_background_target:
-	case Opt_background_compression:
+	if (id == Opt_foreground_target ||
+	    id == Opt_background_target ||
+	    id == Opt_promote_target ||
+	    id == Opt_compression ||
+	    id == Opt_background_compression ||
+	    id == Opt_data_checksum ||
+	    id == Opt_data_replicas) {
 		bch2_set_rebalance_needs_scan(c, inum);
 		bch2_rebalance_wakeup(c);
-		break;
+	}
+
+	switch (id) {
 	case Opt_rebalance_enabled:
 		bch2_rebalance_wakeup(c);
 		break;
