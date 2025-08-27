@@ -700,6 +700,8 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 					 BTREE_ITER_prefetch, k, ({
 		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
 
+		atomic64_add(k.k->size, &r->scan_stats.sectors_seen);
+
 		struct bch_inode_opts *opts = bch2_extent_get_apply_io_opts(trans,
 					snapshot_io_opts, iter.pos, &iter, k,
 					SET_NEEDS_REBALANCE_opt_change);
