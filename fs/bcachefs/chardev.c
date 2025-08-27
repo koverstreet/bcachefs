@@ -187,7 +187,7 @@ static long bch2_ioctl_stop(struct bch_fs *c)
 }
 #endif
 
-static int copy_ioctl_err_msg(struct bch_ioctl_err_msg *dst, struct printbuf *src, int ret)
+int bch2_copy_ioctl_err_msg(struct bch_ioctl_err_msg *dst, struct printbuf *src, int ret)
 {
 	if (ret) {
 		prt_printf(src, "error=%s", bch2_err_str(ret));
@@ -243,7 +243,7 @@ static long bch2_ioctl_disk_add_v2(struct bch_fs *c, struct bch_ioctl_disk_v2 ar
 	CLASS(printbuf, err)();
 	ret = bch2_dev_add(c, path, &err);
 	kfree(path);
-	return copy_ioctl_err_msg(&arg.err, &err, ret);
+	return bch2_copy_ioctl_err_msg(&arg.err, &err, ret);
 }
 
 static long bch2_ioctl_disk_remove(struct bch_fs *c, struct bch_ioctl_disk arg)
@@ -287,7 +287,7 @@ static long bch2_ioctl_disk_remove_v2(struct bch_fs *c, struct bch_ioctl_disk_v2
 
 	CLASS(printbuf, err)();
 	int ret = bch2_dev_remove(c, ca, arg.flags, &err);
-	return copy_ioctl_err_msg(&arg.err, &err, ret);
+	return bch2_copy_ioctl_err_msg(&arg.err, &err, ret);
 }
 
 static long bch2_ioctl_disk_online(struct bch_fs *c, struct bch_ioctl_disk arg)
@@ -333,7 +333,7 @@ static long bch2_ioctl_disk_online_v2(struct bch_fs *c, struct bch_ioctl_disk_v2
 	CLASS(printbuf, err)();
 	ret = bch2_dev_online(c, path, &err);
 	kfree(path);
-	return copy_ioctl_err_msg(&arg.err, &err, ret);
+	return bch2_copy_ioctl_err_msg(&arg.err, &err, ret);
 }
 
 static long bch2_ioctl_disk_offline(struct bch_fs *c, struct bch_ioctl_disk arg)
@@ -377,7 +377,7 @@ static long bch2_ioctl_disk_offline_v2(struct bch_fs *c, struct bch_ioctl_disk_v
 
 	CLASS(printbuf, err)();
 	int ret = bch2_dev_offline(c, ca, arg.flags, &err);
-	return copy_ioctl_err_msg(&arg.err, &err, ret);
+	return bch2_copy_ioctl_err_msg(&arg.err, &err, ret);
 }
 
 static long bch2_ioctl_disk_set_state(struct bch_fs *c,
@@ -429,7 +429,7 @@ static long bch2_ioctl_disk_set_state_v2(struct bch_fs *c,
 
 	ret = bch2_dev_set_state(c, ca, arg.new_state, arg.flags, &err);
 err:
-	return copy_ioctl_err_msg(&arg.err, &err, ret);
+	return bch2_copy_ioctl_err_msg(&arg.err, &err, ret);
 }
 
 struct bch_data_ctx {
@@ -783,7 +783,7 @@ static long bch2_ioctl_disk_resize_v2(struct bch_fs *c,
 
 	CLASS(printbuf, err)();
 	int ret = bch2_dev_resize(c, ca, arg.nbuckets, &err);
-	return copy_ioctl_err_msg(&arg.err, &err, ret);
+	return bch2_copy_ioctl_err_msg(&arg.err, &err, ret);
 }
 
 static long bch2_ioctl_disk_resize_journal(struct bch_fs *c,
@@ -825,7 +825,7 @@ static long bch2_ioctl_disk_resize_journal_v2(struct bch_fs *c,
 
 	CLASS(printbuf, err)();
 	int ret = bch2_set_nr_journal_buckets(c, ca, arg.nbuckets);
-	return copy_ioctl_err_msg(&arg.err, &err, ret);
+	return bch2_copy_ioctl_err_msg(&arg.err, &err, ret);
 }
 
 #define BCH_IOCTL(_name, _argtype)					\
