@@ -535,10 +535,9 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 		return -EINVAL;
 
 	s.id = inode_opt_id;
+	u64 v = 0;
 
 	if (value) {
-		u64 v = 0;
-
 		buf = kmalloc(size + 1, GFP_KERNEL);
 		if (!buf)
 			return -ENOMEM;
@@ -551,7 +550,7 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 		if (ret < 0)
 			goto err;
 
-		ret = bch2_opt_hook_pre_set(c, NULL, opt_id, v);
+		ret = bch2_opt_hook_pre_set(c, NULL, inode->ei_inode.bi_inum, opt_id, v);
 		if (ret < 0)
 			goto err;
 
@@ -590,10 +589,9 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 		}
 
 		ret = bch2_write_inode(c, inode, inode_opt_set_fn, &s, 0);
-
-		if (!ret)
-			atomic_inc(&c->opt_change_cookie);
 	}
+
+	bch2_opt_hook_post_set(c, NULL, inode->ei_inode.bi_inum, opt_id, v);
 err:
 	return bch2_err_class(ret);
 }
