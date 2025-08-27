@@ -87,7 +87,9 @@ struct bch_ioctl_incremental {
 #define BCH_IOCTL_DISK_RESIZE_JOURNAL_v2 _IOW(0xbc,	28, struct bch_ioctl_disk_resize_journal_v2)
 
 #define BCH_IOCTL_SUBVOLUME_CREATE	_IOW(0xbc,	16, struct bch_ioctl_subvolume)
+#define BCH_IOCTL_SUBVOLUME_CREATE_v2	_IOW(0xbc,	29, struct bch_ioctl_subvolume_v2)
 #define BCH_IOCTL_SUBVOLUME_DESTROY	_IOW(0xbc,	17, struct bch_ioctl_subvolume)
+#define BCH_IOCTL_SUBVOLUME_DESTROY_v2	_IOW(0xbc,	30, struct bch_ioctl_subvolume_v2)
 
 #define BCH_IOCTL_DEV_USAGE_V2		_IOWR(0xbc,	18, struct bch_ioctl_dev_usage_v2)
 
@@ -449,6 +451,16 @@ struct bch_ioctl_subvolume {
 	__u16			pad[3];
 	__u64			dst_ptr;
 	__u64			src_ptr;
+};
+
+struct bch_ioctl_subvolume_v2 {
+	__u32			flags;
+	__u32			dirfd;
+	__u16			mode;
+	__u16			pad[3];
+	__u64			dst_ptr;
+	__u64			src_ptr;
+	struct bch_ioctl_err_msg	err;
 };
 
 #define BCH_SUBVOL_SNAPSHOT_CREATE	(1U << 0)
