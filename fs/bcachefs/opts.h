@@ -658,7 +658,7 @@ void bch2_opts_to_text(struct printbuf *,
 		       struct bch_fs *, struct bch_sb *,
 		       unsigned, unsigned, unsigned);
 
-int bch2_opt_hook_pre_set(struct bch_fs *, struct bch_dev *, u64, enum bch_opt_id, u64);
+int bch2_opt_hook_pre_set(struct bch_fs *, struct bch_dev *, u64, enum bch_opt_id, u64, bool);
 int bch2_opts_hooks_pre_set(struct bch_fs *);
 void bch2_opt_hook_post_set(struct bch_fs *, struct bch_dev *, u64, enum bch_opt_id, u64);
 
