@@ -654,7 +654,6 @@ struct bch_sb_field_ext {
 /*
  * field 1:		version name
  * field 2:		BCH_VERSION(major, minor)
- * field 3:		recovery passess required on upgrade
  */
 #define BCH_METADATA_VERSIONS()						\
 	x(bkey_renumber,		BCH_VERSION(0, 10))		\
