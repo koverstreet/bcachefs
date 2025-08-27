@@ -550,7 +550,7 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 		if (ret < 0)
 			goto err;
 
-		ret = bch2_opt_hook_pre_set(c, NULL, inode->ei_inode.bi_inum, opt_id, v);
+		ret = bch2_opt_hook_pre_set(c, NULL, inode->ei_inode.bi_inum, opt_id, v, true);
 		if (ret < 0)
 			goto err;
 
