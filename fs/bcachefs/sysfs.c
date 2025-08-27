@@ -672,7 +672,7 @@ static ssize_t sysfs_opt_store(struct bch_fs *c,
 
 	u64 v;
 	ret =   bch2_opt_parse(c, opt, strim(tmp), &v, NULL) ?:
-		bch2_opt_hook_pre_set(c, ca, 0, id, v);
+		bch2_opt_hook_pre_set(c, ca, 0, id, v, true);
 	kfree(tmp);
 
 	if (ret < 0)
