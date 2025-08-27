@@ -43,6 +43,57 @@ static const struct bch_extent_rebalance *bch2_bkey_rebalance_opts(struct bkey_s
 	return bch2_bkey_ptrs_rebalance_opts(bch2_bkey_ptrs_c(k));
 }
 
+void bch2_extent_rebalance_to_text(struct printbuf *out, struct bch_fs *c,
+				   const struct bch_extent_rebalance *r)
+{
+	prt_str(out, "rebalance:");
+
+	prt_printf(out, " replicas=%u", r->data_replicas);
+	if (r->data_replicas_from_inode)
+		prt_str(out, " (inode)");
+
+	prt_str(out, " checksum=");
+	bch2_prt_csum_opt(out, r->data_checksum);
+	if (r->data_checksum_from_inode)
+		prt_str(out, " (inode)");
+
+	if (r->background_compression || r->background_compression_from_inode) {
+		prt_str(out, " background_compression=");
+		bch2_compression_opt_to_text(out, r->background_compression);
+
+		if (r->background_compression_from_inode)
+			prt_str(out, " (inode)");
+	}
+
+	if (r->background_target || r->background_target_from_inode) {
+		prt_str(out, " background_target=");
+		if (c)
+			bch2_target_to_text(out, c, r->background_target);
+		else
+			prt_printf(out, "%u", r->background_target);
+
+		if (r->background_target_from_inode)
+			prt_str(out, " (inode)");
+	}
+
+	if (r->promote_target || r->promote_target_from_inode) {
+		prt_str(out, " promote_target=");
+		if (c)
+			bch2_target_to_text(out, c, r->promote_target);
+		else
+			prt_printf(out, "%u", r->promote_target);
+
+		if (r->promote_target_from_inode)
+			prt_str(out, " (inode)");
+	}
+
+	if (r->erasure_code || r->erasure_code_from_inode) {
+		prt_printf(out, " ec=%u", r->erasure_code);
+		if (r->erasure_code_from_inode)
+			prt_str(out, " (inode)");
+	}
+}
+
 static inline unsigned bch2_bkey_ptrs_need_compress(struct bch_fs *c,
 					   struct bch_io_opts *opts,
 					   struct bkey_s_c k,
