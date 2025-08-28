@@ -297,7 +297,7 @@ int bch2_gc_accounting_done(struct bch_fs *);
 
 int bch2_accounting_read(struct bch_fs *);
 
-int bch2_dev_usage_remove(struct bch_fs *, unsigned);
+int bch2_dev_usage_remove(struct bch_fs *, struct bch_dev *);
 int bch2_dev_usage_init(struct bch_dev *, bool);
 
 void bch2_verify_accounting_clean(struct bch_fs *c);
