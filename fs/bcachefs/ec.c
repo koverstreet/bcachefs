@@ -22,6 +22,7 @@
 #include "io_write.h"
 #include "keylist.h"
 #include "lru.h"
+#include "rebalance.h"
 #include "recovery.h"
 #include "replicas.h"
 #include "super-io.h"
@@ -1129,7 +1130,13 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 			(union bch_extent_entry *) ec_ptr,
 			(union bch_extent_entry *) &stripe_ptr);
 
-	ret = bch2_trans_update(trans, &iter, n, 0);
+	struct bch_inode_opts opts;
+
+	ret =   bch2_extent_get_io_opts_one(trans, &opts, &iter, bkey_i_to_s_c(n),
+					    SET_NEEDS_REBALANCE_other) ?:
+		bch2_bkey_set_needs_rebalance(trans->c, &opts, n,
+					      SET_NEEDS_REBALANCE_other, 0) ?:
+		bch2_trans_update(trans, &iter, n, 0);
 out:
 	bch2_trans_iter_exit(&iter);
 	return ret;
