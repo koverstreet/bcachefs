@@ -991,21 +991,44 @@ int bch2_accounting_read(struct bch_fs *c)
 	return ret;
 }
 
-int bch2_dev_usage_remove(struct bch_fs *c, unsigned dev)
+int bch2_dev_usage_remove(struct bch_fs *c, struct bch_dev *ca)
 {
 	CLASS(btree_trans, trans)(c);
-	return bch2_btree_write_buffer_flush_sync(trans) ?:
-		for_each_btree_key_commit(trans, iter, BTREE_ID_accounting, POS_MIN,
-				BTREE_ITER_all_snapshots, k, NULL, NULL, 0, ({
-			struct disk_accounting_pos acc;
-			bpos_to_disk_accounting_pos(&acc, k.k->p);
 
-			acc.type == BCH_DISK_ACCOUNTING_dev_data_type &&
-			acc.dev_data_type.dev == dev
-				? bch2_btree_bit_mod_buffered(trans, BTREE_ID_accounting, k.k->p, 0)
-				: 0;
-		})) ?:
-		bch2_btree_write_buffer_flush_sync(trans);
+	struct disk_accounting_pos start;
+	disk_accounting_key_init(start, dev_data_type, .dev = ca->dev_idx);
+
+	struct disk_accounting_pos end;
+	disk_accounting_key_init(end, dev_data_type, .dev = ca->dev_idx, .data_type = U8_MAX);
+
+	return bch2_btree_write_buffer_flush_sync(trans) ?:
+		commit_do(trans, NULL, NULL, 0, ({
+			struct bkey_s_c k;
+			int ret = 0;
+
+			for_each_btree_key_max_norestart(trans, iter, BTREE_ID_accounting,
+							 disk_accounting_pos_to_bpos(&start),
+							 disk_accounting_pos_to_bpos(&end),
+							 BTREE_ITER_all_snapshots, k, ret) {
+				if (k.k->type != KEY_TYPE_accounting)
+					continue;
+
+				struct disk_accounting_pos acc;
+				bpos_to_disk_accounting_pos(&acc, k.k->p);
+
+				const unsigned nr = bch2_accounting_counters(k.k);
+				u64 v[BCH_ACCOUNTING_MAX_COUNTERS];
+				memcpy_u64s_small(v, bkey_s_c_to_accounting(k).v->d, nr);
+
+				bch2_u64s_neg(v, nr);
+
+				ret = bch2_disk_accounting_mod(trans, &acc, v, nr, false);
+				if (ret)
+					break;
+			}
+
+			ret;
+	})) ?: bch2_btree_write_buffer_flush_sync(trans);
 }
 
 int bch2_dev_usage_init(struct bch_dev *ca, bool gc)
