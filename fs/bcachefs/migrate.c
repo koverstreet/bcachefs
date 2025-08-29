@@ -22,8 +22,8 @@
 #include "replicas.h"
 #include "super-io.h"
 
-static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s k,
-			 unsigned dev_idx, unsigned flags, bool metadata)
+static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s k, unsigned dev_idx,
+			 unsigned flags, struct printbuf *err, bool metadata)
 {
 	unsigned replicas = metadata ? c->opts.metadata_replicas : c->opts.data_replicas;
 	unsigned lost = metadata ? BCH_FORCE_IF_METADATA_LOST : BCH_FORCE_IF_DATA_LOST;
@@ -34,14 +34,19 @@ static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s k,
 
 	nr_good = bch2_bkey_durability(c, k.s_c);
 	if ((!nr_good && !(flags & lost)) ||
-	    (nr_good < replicas && !(flags & degraded)))
+	    (nr_good < replicas && !(flags & degraded))) {
+		prt_str(err, "cannot drop device without degrading/losing data\n  ");
+		bch2_bkey_val_to_text(err, c, k.s_c);
+		prt_newline(err);
 		return bch_err_throw(c, remove_would_lose_data);
+	}
 
 	return 0;
 }
 
 static int drop_btree_ptrs(struct btree_trans *trans, struct btree_iter *iter,
-			   struct btree *b, unsigned dev_idx, unsigned flags)
+			   struct btree *b, unsigned dev_idx,
+			   unsigned flags, struct printbuf *err)
 {
 	struct bch_fs *c = trans->c;
 	struct bkey_buf k;
@@ -49,10 +54,9 @@ static int drop_btree_ptrs(struct btree_trans *trans, struct btree_iter *iter,
 	bch2_bkey_buf_init(&k);
 	bch2_bkey_buf_copy(&k, c, &b->key);
 
-	int ret = drop_dev_ptrs(c, bkey_i_to_s(k.k), dev_idx, flags, true) ?:
+	int ret = drop_dev_ptrs(c, bkey_i_to_s(k.k), dev_idx, flags, err, true) ?:
 		bch2_btree_node_update_key(trans, iter, b, k.k, 0, false);
 
-	bch_err_fn(c, ret);
 	bch2_bkey_buf_exit(&k, c);
 	return ret;
 }
@@ -61,7 +65,7 @@ static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
 				     struct btree_iter *iter,
 				     struct bkey_s_c k,
 				     unsigned dev_idx,
-				     unsigned flags)
+				     unsigned flags, struct printbuf *err)
 {
 	struct bch_fs *c = trans->c;
 	struct bkey_i *n;
@@ -75,7 +79,7 @@ static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
 	if (ret)
 		return ret;
 
-	ret = drop_dev_ptrs(c, bkey_i_to_s(n), dev_idx, flags, false);
+	ret = drop_dev_ptrs(c, bkey_i_to_s(n), dev_idx, flags, err, false);
 	if (ret)
 		return ret;
 
@@ -101,7 +105,7 @@ static int bch2_dev_btree_drop_key(struct btree_trans *trans,
 				   struct bkey_s_c_backpointer bp,
 				   unsigned dev_idx,
 				   struct bkey_buf *last_flushed,
-				   unsigned flags)
+				   unsigned flags, struct printbuf *err)
 {
 	struct btree_iter iter;
 	struct btree *b = bch2_backpointer_get_node(trans, bp, &iter, last_flushed);
@@ -109,7 +113,7 @@ static int bch2_dev_btree_drop_key(struct btree_trans *trans,
 	if (ret)
 		return ret == -BCH_ERR_backpointer_to_overwritten_btree_node ? 0 : ret;
 
-	ret = drop_btree_ptrs(trans, &iter, b, dev_idx, flags);
+	ret = drop_btree_ptrs(trans, &iter, b, dev_idx, flags, err);
 
 	bch2_trans_iter_exit(&iter);
 	return ret;
@@ -117,7 +121,8 @@ static int bch2_dev_btree_drop_key(struct btree_trans *trans,
 
 static int bch2_dev_usrdata_drop(struct bch_fs *c,
 				 struct progress_indicator_state *progress,
-				 unsigned dev_idx, unsigned flags)
+				 unsigned dev_idx,
+				 unsigned flags, struct printbuf *err)
 {
 	CLASS(btree_trans, trans)(c);
 
@@ -133,7 +138,7 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 			bch2_progress_update_iter(trans, progress, &iter, "dropping user data");
-			bch2_dev_usrdata_drop_key(trans, &iter, k, dev_idx, flags);
+			bch2_dev_usrdata_drop_key(trans, &iter, k, dev_idx, flags, err);
 		}));
 		if (ret)
 			return ret;
@@ -144,7 +149,8 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c,
 
 static int bch2_dev_metadata_drop(struct bch_fs *c,
 				  struct progress_indicator_state *progress,
-				  unsigned dev_idx, unsigned flags)
+				  unsigned dev_idx,
+				  unsigned flags, struct printbuf *err)
 {
 	struct btree_iter iter;
 	struct closure cl;
@@ -174,7 +180,7 @@ retry:
 			if (!bch2_bkey_has_device_c(bkey_i_to_s_c(&b->key), dev_idx))
 				goto next;
 
-			ret = drop_btree_ptrs(trans, &iter, b, dev_idx, flags);
+			ret = drop_btree_ptrs(trans, &iter, b, dev_idx, flags, err);
 			if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
 				ret = 0;
 				continue;
@@ -206,7 +212,7 @@ err:
 
 static int data_drop_bp(struct btree_trans *trans, unsigned dev_idx,
 			struct bkey_s_c_backpointer bp, struct bkey_buf *last_flushed,
-			unsigned flags)
+			unsigned flags, struct printbuf *err)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k = bch2_backpointer_get_key(trans, bp, &iter, BTREE_ITER_intent,
@@ -226,17 +232,18 @@ static int data_drop_bp(struct btree_trans *trans, unsigned dev_idx,
 	 */
 
 	if (bkey_is_btree_ptr(k.k))
-		ret = bch2_dev_btree_drop_key(trans, bp, dev_idx, last_flushed, flags);
+		ret = bch2_dev_btree_drop_key(trans, bp, dev_idx, last_flushed, flags, err);
 	else if (k.k->type == KEY_TYPE_stripe)
-		ret = bch2_invalidate_stripe_to_dev(trans, &iter, k, dev_idx, flags);
+		ret = bch2_invalidate_stripe_to_dev(trans, &iter, k, dev_idx, flags, err);
 	else
-		ret = bch2_dev_usrdata_drop_key(trans, &iter, k, dev_idx, flags);
+		ret = bch2_dev_usrdata_drop_key(trans, &iter, k, dev_idx, flags, err);
 out:
 	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
-int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, unsigned dev_idx, unsigned flags)
+int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, unsigned dev_idx, unsigned flags,
+				       struct printbuf *err)
 {
 	CLASS(btree_trans, trans)(c);
 
@@ -253,22 +260,22 @@ int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, unsigned dev_idx, unsig
 				continue;
 
 			data_drop_bp(trans, dev_idx, bkey_s_c_to_backpointer(k),
-				     &last_flushed, flags);
+				     &last_flushed, flags, err);
 
 	}));
 
 	bch2_bkey_buf_exit(&last_flushed, trans->c);
-	bch_err_fn(c, ret);
 	return ret;
 }
 
-int bch2_dev_data_drop(struct bch_fs *c, unsigned dev_idx, unsigned flags)
+int bch2_dev_data_drop(struct bch_fs *c, unsigned dev_idx,
+		       unsigned flags, struct printbuf *err)
 {
 	struct progress_indicator_state progress;
 	bch2_progress_init(&progress, c,
 			   BIT_ULL(BTREE_ID_extents)|
 			   BIT_ULL(BTREE_ID_reflink));
 
-	return bch2_dev_usrdata_drop(c, &progress, dev_idx, flags) ?:
-		bch2_dev_metadata_drop(c, &progress, dev_idx, flags);
+	return bch2_dev_usrdata_drop(c, &progress, dev_idx, flags, err) ?:
+		bch2_dev_metadata_drop(c, &progress, dev_idx, flags, err);
 }

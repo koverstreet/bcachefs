@@ -2040,7 +2040,7 @@ int bch2_invalidate_stripe_to_dev(struct btree_trans *trans,
 				  struct btree_iter *iter,
 				  struct bkey_s_c k,
 				  unsigned dev_idx,
-				  unsigned flags)
+				  unsigned flags, struct printbuf *err)
 {
 	if (k.k->type != KEY_TYPE_stripe)
 		return 0;
@@ -2081,13 +2081,21 @@ int bch2_invalidate_stripe_to_dev(struct btree_trans *trans,
 			nr_good += ca && ca->mi.state != BCH_MEMBER_STATE_failed;
 		}
 
-	if (nr_good < s->v.nr_blocks && !(flags & BCH_FORCE_IF_DATA_DEGRADED))
+	if (nr_good < s->v.nr_blocks && !(flags & BCH_FORCE_IF_DATA_DEGRADED)) {
+		prt_str(err, "cannot drop device without degrading\n  ");
+		bch2_bkey_val_to_text(err, c, k);
+		prt_newline(err);
 		return bch_err_throw(c, remove_would_lose_data);
+	}
 
 	unsigned nr_data = s->v.nr_blocks - s->v.nr_redundant;
 
-	if (nr_good < nr_data && !(flags & BCH_FORCE_IF_DATA_LOST))
+	if (nr_good < nr_data && !(flags & BCH_FORCE_IF_DATA_LOST)) {
+		prt_str(err, "cannot drop device without losing data\n  ");
+		bch2_bkey_val_to_text(err, c, k);
+		prt_newline(err);
 		return bch_err_throw(c, remove_would_lose_data);
+	}
 
 	sectors = -sectors;
 
@@ -2099,7 +2107,7 @@ int bch2_invalidate_stripe_to_dev(struct btree_trans *trans,
 }
 
 static int bch2_invalidate_stripe_to_dev_from_alloc(struct btree_trans *trans, struct bkey_s_c k_a,
-						    unsigned flags)
+						    unsigned flags, struct printbuf *err)
 {
 	struct bch_alloc_v4 a_convert;
 	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k_a, &a_convert);
@@ -2119,17 +2127,18 @@ static int bch2_invalidate_stripe_to_dev_from_alloc(struct btree_trans *trans, s
 	if (ret)
 		return ret;
 
-	return bch2_invalidate_stripe_to_dev(trans, &iter, s.s_c, k_a.k->p.inode, flags);
+	return bch2_invalidate_stripe_to_dev(trans, &iter, s.s_c, k_a.k->p.inode, flags, err);
 }
 
-int bch2_dev_remove_stripes(struct bch_fs *c, unsigned dev_idx, unsigned flags)
+int bch2_dev_remove_stripes(struct bch_fs *c, unsigned dev_idx,
+			    unsigned flags, struct printbuf *err)
 {
 	CLASS(btree_trans, trans)(c);
 	int ret = for_each_btree_key_max_commit(trans, iter,
 				  BTREE_ID_alloc, POS(dev_idx, 0), POS(dev_idx, U64_MAX),
 				  BTREE_ITER_intent, k,
 				  NULL, NULL, 0, ({
-			bch2_invalidate_stripe_to_dev_from_alloc(trans, k, flags);
+		bch2_invalidate_stripe_to_dev_from_alloc(trans, k, flags, err);
 	}));
 	bch_err_fn(c, ret);
 	return ret;
