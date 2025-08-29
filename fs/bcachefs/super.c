@@ -1992,9 +1992,9 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	__bch2_dev_read_only(c, ca);
 
 	ret = fast_device_removal
-		? bch2_dev_data_drop_by_backpointers(c, ca->dev_idx, flags)
-		: (bch2_dev_data_drop(c, ca->dev_idx, flags) ?:
-		   bch2_dev_remove_stripes(c, ca->dev_idx, flags));
+		? bch2_dev_data_drop_by_backpointers(c, ca->dev_idx, flags, err)
+		: (bch2_dev_data_drop(c, ca->dev_idx, flags, err) ?:
+		   bch2_dev_remove_stripes(c, ca->dev_idx, flags, err));
 	if (ret)
 		goto err;
 
