@@ -429,22 +429,21 @@ int bch2_move_extent(struct moving_context *ctxt,
 			   data_opts.scrub ?  data_opts.read_dev : -1);
 	return 0;
 err:
+	if (!bch2_err_matches(ret, EROFS) &&
+	    !bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
+		count_event(c, io_move_start_fail);
+
+		if (trace_io_move_start_fail_enabled()) {
+			CLASS(printbuf, buf)();
+			bch2_data_update_to_text(&buf, &io->write);
+			prt_str(&buf, ": ");
+			prt_str(&buf, bch2_err_str(ret));
+			trace_io_move_start_fail(c, buf.buf);
+		}
+	}
+
 	bch2_bkey_buf_exit(&io->write.k, c);
 	kfree(io);
-
-	if (bch2_err_matches(ret, EROFS) ||
-	    bch2_err_matches(ret, BCH_ERR_transaction_restart))
-		return ret;
-
-	count_event(c, io_move_start_fail);
-
-	if (trace_io_move_start_fail_enabled()) {
-		CLASS(printbuf, buf)();
-		bch2_bkey_val_to_text(&buf, c, k);
-		prt_str(&buf, ": ");
-		prt_str(&buf, bch2_err_str(ret));
-		trace_io_move_start_fail(c, buf.buf);
-	}
 
 	if (bch2_err_matches(ret, BCH_ERR_data_update_done))
 		return 0;

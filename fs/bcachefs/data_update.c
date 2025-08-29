@@ -937,7 +937,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 			ret = bch2_extent_drop_ptrs(trans, iter, k, io_opts, &m->data_opts);
 		if (!ret)
 			ret = bch_err_throw(c, data_update_done_no_writes_needed);
-		goto out_bkey_buf_exit;
+		return ret;
 	}
 
 	/*
@@ -955,7 +955,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 	 */
 	ret = can_write_extent(c, m);
 	if (ret)
-		goto out_bkey_buf_exit;
+		return ret;
 
 	if (reserve_sectors) {
 		ret = bch2_disk_reservation_add(c, &m->op.res, reserve_sectors,
@@ -963,7 +963,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 				? 0
 				: BCH_DISK_RESERVATION_NOFAIL);
 		if (ret)
-			goto out_bkey_buf_exit;
+			return ret;
 	}
 
 	if (!bkey_get_dev_refs(c, k)) {
@@ -997,8 +997,6 @@ out_put_dev_refs:
 	bkey_put_dev_refs(c, k);
 out_put_disk_res:
 	bch2_disk_reservation_put(c, &m->op.res);
-out_bkey_buf_exit:
-	bch2_bkey_buf_exit(&m->k, c);
 	return ret;
 }
 

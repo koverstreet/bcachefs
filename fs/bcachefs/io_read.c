@@ -322,6 +322,7 @@ err_remove_hash:
 				      bch_promote_params));
 err:
 	bio_free_pages(&op->write.op.wbio.bio);
+	bch2_bkey_buf_exit(&op->write.k, c);
 	/* We may have added to the rhashtable and thus need rcu freeing: */
 	kfree_rcu(op, rcu);
 err_put:
