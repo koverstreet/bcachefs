@@ -1769,7 +1769,7 @@ static int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb,
 				  struct printbuf *err)
 {
-	unsigned ret;
+	int ret;
 
 	if (bch2_dev_is_online(ca)) {
 		prt_printf(err, "already have device online in slot %u\n",
