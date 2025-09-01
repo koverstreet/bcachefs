@@ -277,6 +277,17 @@ struct bch_fs *bch2_uuid_to_fs(__uuid_t uuid)
 	return c;
 }
 
+void bch2_devs_list_to_text(struct printbuf *out, struct bch_devs_list *d)
+{
+	prt_char(out, '[');
+	darray_for_each(*d, i) {
+		if (i != d->data)
+			prt_char(out, ' ');
+		prt_printf(out, "%u", *i);
+	}
+	prt_char(out, ']');
+}
+
 /* Filesystem RO/RW: */
 
 /*
