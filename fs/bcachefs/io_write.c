@@ -1754,6 +1754,9 @@ void bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
 
 	prt_printf(out, "nr_replicas:\t%u\n", op->nr_replicas);
 	prt_printf(out, "nr_replicas_required:\t%u\n", op->nr_replicas_required);
+	prt_printf(out, "devs_have:\t");
+	bch2_devs_list_to_text(out, &op->devs_have);
+	prt_newline(out);
 
 	prt_printf(out, "ref:\t%u\n", closure_nr_remaining(&op->cl));
 	prt_printf(out, "ret\t%s\n", bch2_err_str(op->error));
