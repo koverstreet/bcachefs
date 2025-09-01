@@ -16,6 +16,8 @@ extern const char * const bch2_dev_write_refs[];
 struct bch_fs *bch2_dev_to_fs(dev_t);
 struct bch_fs *bch2_uuid_to_fs(__uuid_t);
 
+void bch2_devs_list_to_text(struct printbuf *, struct bch_devs_list *);
+
 bool bch2_dev_state_allowed(struct bch_fs *, struct bch_dev *,
 			    enum bch_member_state, int,
 			    struct printbuf *);
