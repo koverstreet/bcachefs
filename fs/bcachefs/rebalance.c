@@ -187,7 +187,12 @@ static inline bool bkey_should_have_rb_opts(struct bch_fs *c,
 					    struct bch_inode_opts *opts,
 					    struct bkey_s_c k)
 {
-	return k.k->type == KEY_TYPE_reflink_v || bch2_bkey_ptrs_need_rebalance(c, opts, k);
+	if (k.k->type == KEY_TYPE_reflink_v) {
+#define x(n)	if (opts->n##_from_inode) return true;
+		BCH_REBALANCE_OPTS()
+#undef x
+	}
+	return bch2_bkey_ptrs_need_rebalance(c, opts, k);
 }
 
 int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_inode_opts *opts,
