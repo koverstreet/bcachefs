@@ -657,6 +657,8 @@ void bch2_data_update_to_text(struct printbuf *out, struct data_update *m)
 
 	prt_str_indented(out, "old key:\t");
 	bch2_bkey_val_to_text(out, m->op.c, bkey_i_to_s_c(m->k.k));
+
+	bch2_write_op_to_text(out, &m->op);
 }
 
 void bch2_data_update_inflight_to_text(struct printbuf *out, struct data_update *m)
