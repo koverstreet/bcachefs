@@ -735,10 +735,12 @@ invalid_device:
 	goto fsck_err;
 }
 
-static struct journal_key *accumulate_newer_accounting_keys(struct bch_fs *c, struct journal_key *i)
+static struct journal_key *accumulate_newer_accounting_keys(struct btree_trans *trans, struct journal_key *i)
 {
+	struct bch_fs *c = trans->c;
 	struct journal_keys *keys = &c->journal_keys;
 	struct bkey_i *k = journal_key_k(c, i);
+	int ret = 0;
 
 	darray_for_each_from(*keys, j, i + 1) {
 		if (journal_key_cmp(c, i, j))
@@ -746,7 +748,18 @@ static struct journal_key *accumulate_newer_accounting_keys(struct bch_fs *c, st
 
 		struct bkey_i *n = journal_key_k(c, j);
 		if (n->k.type == KEY_TYPE_accounting) {
-			WARN_ON(bversion_cmp(k->k.bversion, n->k.bversion) >= 0);
+			if (bversion_cmp(k->k.bversion, n->k.bversion) >= 0) {
+				CLASS(printbuf, buf)();
+				prt_printf(&buf, "accounting keys with out of order versions:");
+
+				prt_newline(&buf);
+				prt_printf(&buf, "%u.%u ", i->journal_seq_offset, i->journal_offset);
+				bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(k));
+				prt_newline(&buf);
+				prt_printf(&buf, "%u.%u ", j->journal_seq_offset, j->journal_offset);
+				bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(n));
+				fsck_err(trans, accounting_key_version_out_of_order, "%s", buf.buf);
+			}
 
 			bch2_accounting_accumulate(bkey_i_to_accounting(k),
 						   bkey_i_to_s_c_accounting(n));
@@ -755,14 +768,16 @@ static struct journal_key *accumulate_newer_accounting_keys(struct bch_fs *c, st
 	}
 
 	return &darray_top(*keys);
+fsck_err:
+	return ERR_PTR(ret);
 }
 
 static struct journal_key *accumulate_and_read_journal_accounting(struct btree_trans *trans, struct journal_key *i)
 {
-	struct bch_fs *c = trans->c;
-	struct journal_key *next = accumulate_newer_accounting_keys(c, i);
+	struct journal_key *next = accumulate_newer_accounting_keys(trans, i);
 
-	int ret = accounting_read_key(trans, bkey_i_to_s_c(journal_key_k(c, i)));
+	int ret = PTR_ERR_OR_ZERO(next) ?:
+		accounting_read_key(trans, bkey_i_to_s_c(journal_key_k(trans->c, i)));
 	return ret ? ERR_PTR(ret) : next;
 }
 
