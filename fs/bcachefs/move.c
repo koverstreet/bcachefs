@@ -121,6 +121,7 @@ struct moving_io {
 static void move_free(struct moving_io *io)
 {
 	struct moving_context *ctxt = io->write.ctxt;
+	struct bch_fs *c = io->write.op.c;
 
 	if (io->b)
 		atomic_dec(&io->b->count);
@@ -132,8 +133,9 @@ static void move_free(struct moving_io *io)
 	if (!io->write.data_opts.scrub) {
 		bch2_data_update_exit(&io->write);
 	} else {
-		bch2_bio_free_pages_pool(io->write.op.c, &io->write.op.wbio.bio);
+		bch2_bio_free_pages_pool(c, &io->write.op.wbio.bio);
 		kfree(io->write.bvecs);
+		bch2_bkey_buf_exit(&io->write.k, c);
 	}
 	kfree(io);
 }
@@ -427,7 +429,9 @@ int bch2_move_extent(struct moving_context *ctxt,
 			   data_opts.scrub ?  data_opts.read_dev : -1);
 	return 0;
 err:
+	bch2_bkey_buf_exit(&io->write.k, c);
 	kfree(io);
+
 	if (bch2_err_matches(ret, EROFS) ||
 	    bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		return ret;
