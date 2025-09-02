@@ -230,3 +230,40 @@ int bch2_journal_buckets_to_sb(struct bch_fs *c, struct bch_dev *ca,
 	BUG_ON(dst + 1 != nr_compacted);
 	return 0;
 }
+
+static inline bool journal_v2_unsorted(struct bch_sb_field_journal_v2 *j)
+{
+	unsigned nr = bch2_sb_field_journal_v2_nr_entries(j);
+	for (unsigned i = 0; i + 1 < nr; i++)
+		if (le64_to_cpu(j->d[i].start) > le64_to_cpu(j->d[i + 1].start))
+			return true;
+	return false;
+}
+
+int bch2_sb_journal_sort(struct bch_fs *c)
+{
+	BUG_ON(!c->sb.clean);
+	BUG_ON(test_bit(BCH_FS_rw, &c->flags));
+
+	guard(mutex)(&c->sb_lock);
+	bool write_sb = false;
+
+	for_each_online_member(c, ca, BCH_DEV_READ_REF_sb_journal_sort) {
+		struct bch_sb_field_journal_v2 *j = bch2_sb_field_get(ca->disk_sb.sb, journal_v2);
+		if (!j)
+			continue;
+
+		if ((j && journal_v2_unsorted(j)) ||
+		    bch2_sb_field_get(ca->disk_sb.sb, journal)) {
+			struct journal_device *ja = &ca->journal;
+
+			sort(ja->buckets, ja->nr, sizeof(ja->buckets[0]), u64_cmp, NULL);
+			bch2_journal_buckets_to_sb(c, ca, ja->buckets, ja->nr);
+			write_sb = true;
+		}
+	}
+
+	return write_sb
+		? bch2_write_super(c)
+		: 0;
+}
