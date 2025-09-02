@@ -205,9 +205,8 @@ static noinline __noreturn void break_cycle_fail(struct lock_graph *g)
 		bch2_btree_trans_to_text(&buf, trans);
 
 		prt_printf(&buf, "backtrace:\n");
-		printbuf_indent_add(&buf, 2);
-		bch2_prt_task_backtrace(&buf, trans->locking_wait.task, 2, GFP_NOWAIT);
-		printbuf_indent_sub(&buf, 2);
+		scoped_guard(printbuf_indent, &buf)
+			bch2_prt_task_backtrace(&buf, trans->locking_wait.task, 2, GFP_NOWAIT);
 		prt_newline(&buf);
 	}
 

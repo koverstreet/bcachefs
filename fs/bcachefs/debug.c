@@ -282,16 +282,13 @@ void bch2_btree_node_ondisk_to_text(struct printbuf *out, struct bch_fs *c,
 			   le64_to_cpu(i->journal_seq));
 		offset += sectors;
 
-		printbuf_indent_add(out, 4);
+		scoped_guard(printbuf_indent, out)
+			for (k = i->start; k != vstruct_last(i); k = bkey_p_next(k)) {
+				struct bkey u;
 
-		for (k = i->start; k != vstruct_last(i); k = bkey_p_next(k)) {
-			struct bkey u;
-
-			bch2_bkey_val_to_text(out, c, bkey_disassemble(b, k, &u));
-			prt_newline(out);
-		}
-
-		printbuf_indent_sub(out, 4);
+				bch2_bkey_val_to_text(out, c, bkey_disassemble(b, k, &u));
+				prt_newline(out);
+			}
 	}
 out:
 	if (bio)
@@ -468,7 +465,7 @@ static void bch2_cached_btree_node_to_text(struct printbuf *out, struct bch_fs *
 	bch2_btree_id_level_to_text(out, b->c.btree_id, b->c.level);
 	prt_printf(out, "\n");
 
-	printbuf_indent_add(out, 2);
+	guard(printbuf_indent)(out);
 
 	bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(&b->key));
 	prt_newline(out);
@@ -488,8 +485,6 @@ static void bch2_cached_btree_node_to_text(struct printbuf *out, struct bch_fs *
 		   &b->writes[1].journal, b->writes[1].journal.seq);
 
 	prt_printf(out, "ob:\t%u\n", b->ob.nr);
-
-	printbuf_indent_sub(out, 2);
 }
 
 static ssize_t bch2_cached_btree_nodes_read(struct file *file, char __user *buf,
@@ -605,9 +600,8 @@ restart:
 		bch2_btree_trans_to_text(&i->buf, trans);
 
 		prt_printf(&i->buf, "backtrace:\n");
-		printbuf_indent_add(&i->buf, 2);
-		bch2_prt_task_backtrace(&i->buf, trans->locking_wait.task, 0, GFP_KERNEL);
-		printbuf_indent_sub(&i->buf, 2);
+		scoped_guard(printbuf_indent, &i->buf)
+			bch2_prt_task_backtrace(&i->buf, trans->locking_wait.task, 0, GFP_KERNEL);
 		prt_newline(&i->buf);
 
 		closure_put(&trans->ref);
@@ -765,40 +759,35 @@ static ssize_t btree_transaction_stats_read(struct file *file, char __user *buf,
 			break;
 
 		prt_printf(&i->buf, "%s:\n", bch2_btree_transaction_fns[i->iter]);
-		printbuf_indent_add(&i->buf, 2);
+		guard(printbuf_indent)(&i->buf);
 
 		guard(mutex)(&s->lock);
 
 		prt_printf(&i->buf, "Max mem used: %u\n", s->max_mem);
 #ifdef CONFIG_BCACHEFS_TRANS_KMALLOC_TRACE
-		printbuf_indent_add(&i->buf, 2);
-		bch2_trans_kmalloc_trace_to_text(&i->buf, &s->trans_kmalloc_trace);
-		printbuf_indent_sub(&i->buf, 2);
+		scoped_guard(printbuf_indent, &i->buf)
+			bch2_trans_kmalloc_trace_to_text(&i->buf, &s->trans_kmalloc_trace);
 #endif
 
 		prt_printf(&i->buf, "Transaction duration:\n");
 
-		printbuf_indent_add(&i->buf, 2);
-		bch2_time_stats_to_text(&i->buf, &s->duration);
-		printbuf_indent_sub(&i->buf, 2);
+		scoped_guard(printbuf_indent, &i->buf)
+			bch2_time_stats_to_text(&i->buf, &s->duration);
 
 		if (IS_ENABLED(CONFIG_BCACHEFS_LOCK_TIME_STATS)) {
 			prt_printf(&i->buf, "Lock hold times:\n");
 
-			printbuf_indent_add(&i->buf, 2);
-			bch2_time_stats_to_text(&i->buf, &s->lock_hold_times);
-			printbuf_indent_sub(&i->buf, 2);
+			scoped_guard(printbuf_indent, &i->buf)
+				bch2_time_stats_to_text(&i->buf, &s->lock_hold_times);
 		}
 
 		if (s->max_paths_text) {
 			prt_printf(&i->buf, "Maximum allocated btree paths (%u):\n", s->nr_max_paths);
 
-			printbuf_indent_add(&i->buf, 2);
-			prt_str_indented(&i->buf, s->max_paths_text);
-			printbuf_indent_sub(&i->buf, 2);
+			scoped_guard(printbuf_indent, &i->buf)
+				prt_str_indented(&i->buf, s->max_paths_text);
 		}
 
-		printbuf_indent_sub(&i->buf, 2);
 		prt_newline(&i->buf);
 		i->iter++;
 	}

@@ -42,12 +42,11 @@ static void found_btree_node_to_text(struct printbuf *out, struct bch_fs *c, con
 
 static void found_btree_nodes_to_text(struct printbuf *out, struct bch_fs *c, found_btree_nodes nodes)
 {
-	printbuf_indent_add(out, 2);
+	guard(printbuf_indent)(out);
 	darray_for_each(nodes, i) {
 		found_btree_node_to_text(out, c, i);
 		prt_newline(out);
 	}
-	printbuf_indent_sub(out, 2);
 }
 
 static void found_btree_node_to_key(struct bkey_i *k, const struct found_btree_node *f)

@@ -48,7 +48,7 @@ static void bch2_journal_buf_to_text(struct printbuf *out, struct journal *j, u6
 	struct journal_buf *buf = j->buf + i;
 
 	prt_printf(out, "seq:\t%llu\n", seq);
-	printbuf_indent_add(out, 2);
+	guard(printbuf_indent)(out);
 
 	if (!buf->write_started)
 		prt_printf(out, "refcount:\t%u\n", journal_state_count(s, i & JOURNAL_STATE_BUF_MASK));
@@ -81,8 +81,6 @@ static void bch2_journal_buf_to_text(struct printbuf *out, struct journal *j, u6
 	if (buf->write_done)
 		prt_str(out, "write_done");
 	prt_newline(out);
-
-	printbuf_indent_sub(out, 2);
 }
 
 static void bch2_journal_bufs_to_text(struct printbuf *out, struct journal *j)
@@ -1767,20 +1765,20 @@ void __bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 	bch2_journal_bufs_to_text(out, j);
 
 	prt_printf(out, "space:\n");
-	printbuf_indent_add(out, 2);
-	prt_printf(out, "discarded\t%u:%u\n",
-	       j->space[journal_space_discarded].next_entry,
-	       j->space[journal_space_discarded].total);
-	prt_printf(out, "clean ondisk\t%u:%u\n",
-	       j->space[journal_space_clean_ondisk].next_entry,
-	       j->space[journal_space_clean_ondisk].total);
-	prt_printf(out, "clean\t%u:%u\n",
-	       j->space[journal_space_clean].next_entry,
-	       j->space[journal_space_clean].total);
-	prt_printf(out, "total\t%u:%u\n",
-	       j->space[journal_space_total].next_entry,
-	       j->space[journal_space_total].total);
-	printbuf_indent_sub(out, 2);
+	scoped_guard(printbuf_indent, out) {
+		prt_printf(out, "discarded\t%u:%u\n",
+		       j->space[journal_space_discarded].next_entry,
+		       j->space[journal_space_discarded].total);
+		prt_printf(out, "clean ondisk\t%u:%u\n",
+		       j->space[journal_space_clean_ondisk].next_entry,
+		       j->space[journal_space_clean_ondisk].total);
+		prt_printf(out, "clean\t%u:%u\n",
+		       j->space[journal_space_clean].next_entry,
+		       j->space[journal_space_clean].total);
+		prt_printf(out, "total\t%u:%u\n",
+		       j->space[journal_space_total].next_entry,
+		       j->space[journal_space_total].total);
+	}
 
 	for_each_member_device_rcu(c, ca, &c->rw_devs[BCH_DATA_journal]) {
 		if (!ca->mi.durability)
@@ -1796,7 +1794,7 @@ void __bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 
 		prt_printf(out, "dev %u:\n",			ca->dev_idx);
 		prt_printf(out, "durability %u:\n",		ca->mi.durability);
-		printbuf_indent_add(out, 2);
+		guard(printbuf_indent)(out);
 		prt_printf(out, "nr\t%u\n",			ja->nr);
 		prt_printf(out, "bucket size\t%u\n",		ca->mi.bucket_size);
 		prt_printf(out, "available\t%u:%u\n",		bch2_journal_dev_buckets_available(j, ja, journal_space_discarded), ja->sectors_free);
@@ -1804,7 +1802,6 @@ void __bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 		prt_printf(out, "dirty_ondisk\t%u (seq %llu)\n",ja->dirty_idx_ondisk,	ja->bucket_seq[ja->dirty_idx_ondisk]);
 		prt_printf(out, "dirty_idx\t%u (seq %llu)\n",	ja->dirty_idx,		ja->bucket_seq[ja->dirty_idx]);
 		prt_printf(out, "cur_idx\t%u (seq %llu)\n",	ja->cur_idx,		ja->bucket_seq[ja->cur_idx]);
-		printbuf_indent_sub(out, 2);
 	}
 
 	prt_printf(out, "replicas want %u need %u\n", c->opts.metadata_replicas, c->opts.metadata_replicas_required);

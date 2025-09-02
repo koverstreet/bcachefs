@@ -2523,7 +2523,7 @@ do_write:
 
 	if (trace_btree_node_write_enabled()) {
 		CLASS(printbuf, buf)();
-		printbuf_indent_add(&buf, 2);
+		guard(printbuf_indent)(&buf);
 		prt_printf(&buf, "offset %u sectors %u bytes %u\n",
 			   b->written,
 			   sectors_to_write,
