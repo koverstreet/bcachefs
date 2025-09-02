@@ -1270,14 +1270,14 @@ void bch2_extent_ptr_to_text(struct printbuf *out, struct bch_fs *c, const struc
 	guard(rcu)();
 	struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
 	if (!ca) {
-		prt_printf(out, "ptr: %u:%llu gen %u%s", ptr->dev,
+		prt_printf(out, "%u:%llu gen %u%s", ptr->dev,
 			   (u64) ptr->offset, ptr->gen,
 			   ptr->cached ? " cached" : "");
 	} else {
 		u32 offset;
 		u64 b = sector_to_bucket_and_offset(ca, ptr->offset, &offset);
 
-		prt_printf(out, "ptr: %u:%llu:%u gen %u",
+		prt_printf(out, "%u:%llu:%u gen %u",
 			   ptr->dev, b, offset, ptr->gen);
 		if (ca->mi.durability != 1)
 			prt_printf(out, " d=%u", ca->mi.durability);
@@ -1295,7 +1295,7 @@ void bch2_extent_ptr_to_text(struct printbuf *out, struct bch_fs *c, const struc
 
 void bch2_extent_crc_unpacked_to_text(struct printbuf *out, struct bch_extent_crc_unpacked *crc)
 {
-	prt_printf(out, "crc: c_size %u size %u offset %u nonce %u csum ",
+	prt_printf(out, "c_size %u size %u offset %u nonce %u csum ",
 		   crc->compressed_size,
 		   crc->uncompressed_size,
 		   crc->offset, crc->nonce);
@@ -1305,21 +1305,34 @@ void bch2_extent_crc_unpacked_to_text(struct printbuf *out, struct bch_extent_cr
 	bch2_prt_compression_type(out, crc->compression_type);
 }
 
+static const char * const extent_entry_types[] = {
+#define x(t, n, ...) [n] = #t,
+	BCH_EXTENT_ENTRY_TYPES()
+#undef x
+	NULL
+};
+
 void bch2_bkey_ptrs_to_text(struct printbuf *out, struct bch_fs *c,
 			    struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
-	bool first = true;
 
 	if (c)
 		prt_printf(out, "durability: %u ", bch2_bkey_durability_safe(c, k));
 
-	bkey_extent_entry_for_each(ptrs, entry) {
-		if (!first)
-			prt_printf(out, " ");
+	guard(printbuf_indent)(out);
 
-		switch (__extent_entry_type(entry)) {
+	bkey_extent_entry_for_each(ptrs, entry) {
+		prt_newline(out);
+
+		unsigned type = __extent_entry_type(entry);
+		if (type < BCH_EXTENT_ENTRY_MAX) {
+			prt_str(out, extent_entry_types[__extent_entry_type(entry)]);
+			prt_str(out, ": ");
+		}
+
+		switch (type) {
 		case BCH_EXTENT_ENTRY_ptr:
 			bch2_extent_ptr_to_text(out, c, entry_to_ptr(entry));
 			break;
@@ -1336,8 +1349,7 @@ void bch2_bkey_ptrs_to_text(struct printbuf *out, struct bch_fs *c,
 		case BCH_EXTENT_ENTRY_stripe_ptr: {
 			const struct bch_extent_stripe_ptr *ec = &entry->stripe_ptr;
 
-			prt_printf(out, "ec: idx %llu block %u",
-			       (u64) ec->idx, ec->block);
+			prt_printf(out, "idx %llu block %u", (u64) ec->idx, ec->block);
 			break;
 		}
 		case BCH_EXTENT_ENTRY_rebalance:
@@ -1352,8 +1364,6 @@ void bch2_bkey_ptrs_to_text(struct printbuf *out, struct bch_fs *c,
 			prt_printf(out, "(invalid extent entry %.16llx)", *((u64 *) entry));
 			return;
 		}
-
-		first = false;
 	}
 }
 

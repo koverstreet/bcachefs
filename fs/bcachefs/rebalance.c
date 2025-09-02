@@ -46,9 +46,7 @@ static const struct bch_extent_rebalance *bch2_bkey_rebalance_opts(struct bkey_s
 void bch2_extent_rebalance_to_text(struct printbuf *out, struct bch_fs *c,
 				   const struct bch_extent_rebalance *r)
 {
-	prt_str(out, "rebalance:");
-
-	prt_printf(out, " replicas=%u", r->data_replicas);
+	prt_printf(out, "replicas=%u", r->data_replicas);
 	if (r->data_replicas_from_inode)
 		prt_str(out, " (inode)");
 
