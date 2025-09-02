@@ -598,7 +598,7 @@ static void __bch2_inode_unpacked_to_text(struct printbuf *out,
 					  struct bch_inode_unpacked *inode)
 {
 	prt_printf(out, "\n");
-	printbuf_indent_add(out, 2);
+	guard(printbuf_indent)(out);
 	prt_printf(out, "mode=%o\n", inode->bi_mode);
 
 	prt_str(out, "flags=");
@@ -620,7 +620,6 @@ static void __bch2_inode_unpacked_to_text(struct printbuf *out,
 #undef  x
 
 	bch2_printbuf_strip_trailing_newline(out);
-	printbuf_indent_sub(out, 2);
 }
 
 void bch2_inode_unpacked_to_text(struct printbuf *out, struct bch_inode_unpacked *inode)

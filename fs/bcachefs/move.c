@@ -1405,7 +1405,7 @@ void bch2_move_stats_to_text(struct printbuf *out, struct bch_move_stats *stats)
 	prt_str(out, " pos=");
 	bch2_bbpos_to_text(out, stats->pos);
 	prt_newline(out);
-	printbuf_indent_add(out, 2);
+	guard(printbuf_indent)(out);
 
 	prt_printf(out, "keys moved:\t%llu\n",	atomic64_read(&stats->keys_moved));
 	prt_printf(out, "keys raced:\t%llu\n",	atomic64_read(&stats->keys_raced));
@@ -1420,8 +1420,6 @@ void bch2_move_stats_to_text(struct printbuf *out, struct bch_move_stats *stats)
 	prt_printf(out, "bytes raced:\t");
 	prt_human_readable_u64(out, atomic64_read(&stats->sectors_raced) << 9);
 	prt_newline(out);
-
-	printbuf_indent_sub(out, 2);
 }
 
 static void bch2_moving_ctxt_to_text(struct printbuf *out, struct bch_fs *c, struct moving_context *ctxt)
@@ -1430,7 +1428,7 @@ static void bch2_moving_ctxt_to_text(struct printbuf *out, struct bch_fs *c, str
 		printbuf_tabstop_push(out, 32);
 
 	bch2_move_stats_to_text(out, ctxt->stats);
-	printbuf_indent_add(out, 2);
+	guard(printbuf_indent)(out);
 
 	prt_printf(out, "reads: ios %u/%u sectors %u/%u\n",
 		   atomic_read(&ctxt->read_ios),
@@ -1444,15 +1442,13 @@ static void bch2_moving_ctxt_to_text(struct printbuf *out, struct bch_fs *c, str
 		   atomic_read(&ctxt->write_sectors),
 		   c->opts.move_bytes_in_flight >> 9);
 
-	printbuf_indent_add(out, 2);
+	guard(printbuf_indent)(out);
 
 	scoped_guard(mutex, &ctxt->lock) {
 		struct moving_io *io;
 		list_for_each_entry(io, &ctxt->ios, io_list)
 			bch2_data_update_inflight_to_text(out, &io->write);
 	}
-
-	printbuf_indent_sub(out, 4);
 }
 
 void bch2_fs_moving_ctxts_to_text(struct printbuf *out, struct bch_fs *c)

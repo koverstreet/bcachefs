@@ -1516,8 +1516,7 @@ void bch2_sb_to_text(struct printbuf *out, struct bch_sb *sb,
 	prt_newline(out);
 	prt_printf(out, "Options:");
 	prt_newline(out);
-	printbuf_indent_add(out, 2);
-	{
+	scoped_guard(printbuf_indent, out) {
 		enum bch_opt_id id;
 
 		for (id = 0; id < bch2_opts_nr; id++) {
@@ -1534,15 +1533,12 @@ void bch2_sb_to_text(struct printbuf *out, struct bch_sb *sb,
 		}
 	}
 
-	printbuf_indent_sub(out, 2);
-
 	if (print_layout) {
 		prt_newline(out);
 		prt_printf(out, "layout:");
 		prt_newline(out);
-		printbuf_indent_add(out, 2);
-		bch2_sb_layout_to_text(out, &sb->layout);
-		printbuf_indent_sub(out, 2);
+		scoped_guard(printbuf_indent, out)
+			bch2_sb_layout_to_text(out, &sb->layout);
 	}
 
 	vstruct_for_each(sb, f)

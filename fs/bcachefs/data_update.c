@@ -665,19 +665,18 @@ void bch2_data_update_inflight_to_text(struct printbuf *out, struct data_update 
 {
 	bch2_bkey_val_to_text(out, m->op.c, bkey_i_to_s_c(m->k.k));
 	prt_newline(out);
-	printbuf_indent_add(out, 2);
+	guard(printbuf_indent)(out);
 	bch2_data_update_opts_to_text(out, m->op.c, &m->op.opts, &m->data_opts);
 
 	if (!m->read_done) {
 		prt_printf(out, "read:\n");
-		printbuf_indent_add(out, 2);
+		guard(printbuf_indent)(out);
 		bch2_read_bio_to_text(out, m->op.c, &m->rbio);
 	} else {
 		prt_printf(out, "write:\n");
-		printbuf_indent_add(out, 2);
+		guard(printbuf_indent)(out);
 		bch2_write_op_to_text(out, &m->op);
 	}
-	printbuf_indent_sub(out, 4);
 }
 
 int bch2_extent_drop_ptrs(struct btree_trans *trans,

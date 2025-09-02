@@ -415,45 +415,41 @@ void bch2_time_stats_to_text(struct printbuf *out, struct bch2_time_stats *stats
 	printbuf_tabstop_push(out, TABSTOP_SIZE);
 
 	prt_printf(out, "duration of events\n");
-	printbuf_indent_add(out, 2);
+	scoped_guard(printbuf_indent, out) {
+		pr_name_and_units(out, "min:", stats->min_duration);
+		pr_name_and_units(out, "max:", stats->max_duration);
+		pr_name_and_units(out, "total:", stats->total_duration);
 
-	pr_name_and_units(out, "min:", stats->min_duration);
-	pr_name_and_units(out, "max:", stats->max_duration);
-	pr_name_and_units(out, "total:", stats->total_duration);
+		prt_printf(out, "mean:\t");
+		bch2_pr_time_units_aligned(out, d_mean);
+		prt_tab(out);
+		bch2_pr_time_units_aligned(out, mean_and_variance_weighted_get_mean(stats->duration_stats_weighted, TIME_STATS_MV_WEIGHT));
+		prt_newline(out);
 
-	prt_printf(out, "mean:\t");
-	bch2_pr_time_units_aligned(out, d_mean);
-	prt_tab(out);
-	bch2_pr_time_units_aligned(out, mean_and_variance_weighted_get_mean(stats->duration_stats_weighted, TIME_STATS_MV_WEIGHT));
-	prt_newline(out);
-
-	prt_printf(out, "stddev:\t");
-	bch2_pr_time_units_aligned(out, d_stddev);
-	prt_tab(out);
-	bch2_pr_time_units_aligned(out, mean_and_variance_weighted_get_stddev(stats->duration_stats_weighted, TIME_STATS_MV_WEIGHT));
-
-	printbuf_indent_sub(out, 2);
-	prt_newline(out);
+		prt_printf(out, "stddev:\t");
+		bch2_pr_time_units_aligned(out, d_stddev);
+		prt_tab(out);
+		bch2_pr_time_units_aligned(out, mean_and_variance_weighted_get_stddev(stats->duration_stats_weighted, TIME_STATS_MV_WEIGHT));
+		prt_newline(out);
+	}
 
 	prt_printf(out, "time between events\n");
-	printbuf_indent_add(out, 2);
+	scoped_guard(printbuf_indent, out) {
+		pr_name_and_units(out, "min:", stats->min_freq);
+		pr_name_and_units(out, "max:", stats->max_freq);
 
-	pr_name_and_units(out, "min:", stats->min_freq);
-	pr_name_and_units(out, "max:", stats->max_freq);
+		prt_printf(out, "mean:\t");
+		bch2_pr_time_units_aligned(out, f_mean);
+		prt_tab(out);
+		bch2_pr_time_units_aligned(out, mean_and_variance_weighted_get_mean(stats->freq_stats_weighted, TIME_STATS_MV_WEIGHT));
+		prt_newline(out);
 
-	prt_printf(out, "mean:\t");
-	bch2_pr_time_units_aligned(out, f_mean);
-	prt_tab(out);
-	bch2_pr_time_units_aligned(out, mean_and_variance_weighted_get_mean(stats->freq_stats_weighted, TIME_STATS_MV_WEIGHT));
-	prt_newline(out);
-
-	prt_printf(out, "stddev:\t");
-	bch2_pr_time_units_aligned(out, f_stddev);
-	prt_tab(out);
-	bch2_pr_time_units_aligned(out, mean_and_variance_weighted_get_stddev(stats->freq_stats_weighted, TIME_STATS_MV_WEIGHT));
-
-	printbuf_indent_sub(out, 2);
-	prt_newline(out);
+		prt_printf(out, "stddev:\t");
+		bch2_pr_time_units_aligned(out, f_stddev);
+		prt_tab(out);
+		bch2_pr_time_units_aligned(out, mean_and_variance_weighted_get_stddev(stats->freq_stats_weighted, TIME_STATS_MV_WEIGHT));
+		prt_newline(out);
+	}
 
 	printbuf_tabstops_reset(out);
 

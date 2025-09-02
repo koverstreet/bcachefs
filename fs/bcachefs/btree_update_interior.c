@@ -2810,7 +2810,7 @@ static void bch2_btree_alloc_to_text(struct printbuf *out,
 				     struct bch_fs *c,
 				     struct btree_alloc *a)
 {
-	printbuf_indent_add(out, 2);
+	guard(printbuf_indent)(out);
 	bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(&a->k));
 	prt_newline(out);
 
@@ -2818,8 +2818,6 @@ static void bch2_btree_alloc_to_text(struct printbuf *out,
 	unsigned i;
 	open_bucket_for_each(c, &a->ob, ob, i)
 		bch2_open_bucket_to_text(out, c, ob);
-
-	printbuf_indent_sub(out, 2);
 }
 
 void bch2_btree_reserve_cache_to_text(struct printbuf *out, struct bch_fs *c)

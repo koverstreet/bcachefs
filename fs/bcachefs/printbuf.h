@@ -299,4 +299,18 @@ DEFINE_GUARD(printbuf_atomic, struct printbuf *,
 	     printbuf_atomic_inc(_T),
 	     printbuf_atomic_dec(_T));
 
+static inline void printbuf_indent_add_2(struct printbuf *out)
+{
+	bch2_printbuf_indent_add(out, 2);
+}
+
+static inline void printbuf_indent_sub_2(struct printbuf *out)
+{
+	bch2_printbuf_indent_sub(out, 2);
+}
+
+DEFINE_GUARD(printbuf_indent, struct printbuf *,
+	     printbuf_indent_add_2(_T),
+	     printbuf_indent_sub_2(_T));
+
 #endif /* _BCACHEFS_PRINTBUF_H */

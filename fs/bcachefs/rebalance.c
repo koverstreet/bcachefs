@@ -661,7 +661,7 @@ void bch2_rebalance_status_to_text(struct printbuf *out, struct bch_fs *c)
 
 	prt_str(out, bch2_rebalance_state_strs[r->state]);
 	prt_newline(out);
-	printbuf_indent_add(out, 2);
+	guard(printbuf_indent)(out);
 
 	switch (r->state) {
 	case BCH_REBALANCE_waiting: {
@@ -700,8 +700,6 @@ void bch2_rebalance_status_to_text(struct printbuf *out, struct bch_fs *c)
 		bch2_prt_task_backtrace(out, t, 0, GFP_KERNEL);
 		put_task_struct(t);
 	}
-
-	printbuf_indent_sub(out, 2);
 }
 
 void bch2_rebalance_stop(struct bch_fs *c)

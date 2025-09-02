@@ -1742,7 +1742,7 @@ void bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
 	prt_printf(out, "pos:\t");
 	bch2_bpos_to_text(out, op->pos);
 	prt_newline(out);
-	printbuf_indent_add(out, 2);
+	guard(printbuf_indent)(out);
 
 	prt_printf(out, "started:\t");
 	bch2_pr_time_units(out, local_clock() - op->start_time);
@@ -1760,8 +1760,6 @@ void bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
 
 	prt_printf(out, "ref:\t%u\n", closure_nr_remaining(&op->cl));
 	prt_printf(out, "ret\t%s\n", bch2_err_str(op->error));
-
-	printbuf_indent_sub(out, 2);
 }
 
 void bch2_fs_io_write_exit(struct bch_fs *c)
