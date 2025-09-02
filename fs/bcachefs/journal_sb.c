@@ -30,7 +30,7 @@ static int bch2_sb_journal_validate(struct bch_sb *sb, struct bch_sb_field *f,
 	if (!nr)
 		return 0;
 
-	b = kmalloc_array(nr, sizeof(u64), GFP_KERNEL);
+	b = kvmalloc_array(nr, sizeof(u64), GFP_KERNEL);
 	if (!b)
 		return -BCH_ERR_ENOMEM_sb_journal_validate;
 
@@ -64,7 +64,7 @@ static int bch2_sb_journal_validate(struct bch_sb *sb, struct bch_sb_field *f,
 
 	ret = 0;
 err:
-	kfree(b);
+	kvfree(b);
 	return ret;
 }
 
@@ -113,7 +113,7 @@ static int bch2_sb_journal_v2_validate(struct bch_sb *sb, struct bch_sb_field *f
 	if (!nr)
 		return 0;
 
-	b = kmalloc_array(nr, sizeof(*b), GFP_KERNEL);
+	b = kvmalloc_array(nr, sizeof(*b), GFP_KERNEL);
 	if (!b)
 		return -BCH_ERR_ENOMEM_sb_journal_v2_validate;
 
@@ -165,7 +165,7 @@ static int bch2_sb_journal_v2_validate(struct bch_sb *sb, struct bch_sb_field *f
 
 	ret = 0;
 err:
-	kfree(b);
+	kvfree(b);
 	return ret;
 }
 
