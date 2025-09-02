@@ -1085,8 +1085,10 @@ int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
 	}
 
 	if ((bch2_bkey_extent_flags(k) & BIT_ULL(BCH_EXTENT_FLAG_poisoned)) &&
-	    !orig->data_update)
-		return bch_err_throw(c, extent_poisoned);
+	    !orig->data_update) {
+		ret = bch_err_throw(c, extent_poisoned);
+		goto err;
+	}
 retry_pick:
 	ret = bch2_bkey_pick_read_device(c, k, failed, &pick, dev);
 
