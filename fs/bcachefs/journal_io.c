@@ -760,8 +760,8 @@ static void journal_entry_dev_usage_to_text(struct printbuf *out, struct bch_fs 
 		return;
 
 	prt_printf(out, "dev=%u", le32_to_cpu(u->dev));
+	guard(printbuf_indent)(out);
 
-	printbuf_indent_add(out, 2);
 	for (i = 0; i < nr_types; i++) {
 		prt_newline(out);
 		bch2_prt_data_type(out, i);
@@ -770,7 +770,6 @@ static void journal_entry_dev_usage_to_text(struct printbuf *out, struct bch_fs 
 		       le64_to_cpu(u->d[i].sectors),
 		       le64_to_cpu(u->d[i].fragmented));
 	}
-	printbuf_indent_sub(out, 2);
 }
 
 static int journal_entry_log_validate(struct bch_fs *c,

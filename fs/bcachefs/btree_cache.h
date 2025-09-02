@@ -166,7 +166,7 @@ void bch2_btree_cache_to_text(struct printbuf *, const struct btree_cache *);
 do {								\
 	if (trace_##event##_enabled()) {			\
 		CLASS(printbuf, buf)();				\
-		printbuf_indent_add(&buf, 2);			\
+		guard(printbuf_indent)(&buf);			\
 		bch2_btree_pos_to_text(&buf, c, b);		\
 		trace_##event(c, buf.buf);			\
 	}							\

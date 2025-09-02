@@ -414,9 +414,8 @@ void bch2_promote_op_to_text(struct printbuf *out,
 {
 	if (!op->write.read_done) {
 		prt_printf(out, "parent read: %px\n", op->write.rbio.parent);
-		printbuf_indent_add(out, 2);
+		guard(printbuf_indent)(out);
 		bch2_read_bio_to_text(out, c, op->write.rbio.parent);
-		printbuf_indent_sub(out, 2);
 	}
 
 	bch2_data_update_to_text(out, &op->write);
@@ -1524,7 +1523,7 @@ void bch2_read_bio_to_text(struct printbuf *out,
 
 	/* Are we in a retry? */
 
-	printbuf_indent_add(out, 2);
+	guard(printbuf_indent)(out);
 
 	u64 now = local_clock();
 	prt_printf(out, "start_time:\t");
@@ -1558,7 +1557,6 @@ void bch2_read_bio_to_text(struct printbuf *out,
 	prt_newline(out);
 
 	bch2_bio_to_text(out, &rbio->bio);
-	printbuf_indent_sub(out, 2);
 }
 
 void bch2_fs_io_read_exit(struct bch_fs *c)

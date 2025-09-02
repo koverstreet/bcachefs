@@ -1507,7 +1507,7 @@ void bch2_trans_updates_to_text(struct printbuf *buf, struct btree_trans *trans)
 {
 	prt_printf(buf, "%u transaction updates for %s journal seq %llu\n",
 		   trans->nr_updates, trans->fn, trans->journal_res.seq);
-	printbuf_indent_add(buf, 2);
+	guard(printbuf_indent)(buf);
 
 	trans_for_each_update(trans, i) {
 		struct bkey_s_c old = { &i->old_k, i->old_v };
@@ -1533,8 +1533,6 @@ void bch2_trans_updates_to_text(struct printbuf *buf, struct btree_trans *trans)
 		bch2_journal_entry_to_text(buf, trans->c, e);
 		prt_newline(buf);
 	}
-
-	printbuf_indent_sub(buf, 2);
 }
 
 static void bch2_btree_path_to_text_short(struct printbuf *out, struct btree_trans *trans, btree_path_idx_t path_idx)
@@ -1587,8 +1585,8 @@ void bch2_btree_path_to_text(struct printbuf *out, struct btree_trans *trans, bt
 
 	prt_printf(out, " uptodate %u locks_want %u", path->uptodate, path->locks_want);
 	prt_newline(out);
+	guard(printbuf_indent)(out);
 
-	printbuf_indent_add(out, 2);
 	for (unsigned l = 0; l < BTREE_MAX_DEPTH; l++) {
 		prt_printf(out, "l=%u locks %s seq %u node ", l,
 			   btree_node_locked_str(btree_node_locked_type(path, l)),
@@ -1601,7 +1599,6 @@ void bch2_btree_path_to_text(struct printbuf *out, struct btree_trans *trans, bt
 			prt_printf(out, "%px", path->l[l].b);
 		prt_newline(out);
 	}
-	printbuf_indent_sub(out, 2);
 }
 
 static noinline __cold

@@ -1491,10 +1491,9 @@ static void bch2_write_point_to_text(struct printbuf *out, struct bch_fs *c,
 
 	prt_newline(out);
 
-	printbuf_indent_add(out, 2);
-	open_bucket_for_each(c, &wp->ptrs, ob, i)
-		bch2_open_bucket_to_text(out, c, ob);
-	printbuf_indent_sub(out, 2);
+	scoped_guard(printbuf_indent, out)
+		open_bucket_for_each(c, &wp->ptrs, ob, i)
+			bch2_open_bucket_to_text(out, c, ob);
 }
 
 void bch2_write_points_to_text(struct printbuf *out, struct bch_fs *c)
@@ -1586,9 +1585,8 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c)
 		   c->opts.allocator_stuck_timeout);
 
 	prt_printf(&buf, "Allocator debug:\n");
-	printbuf_indent_add(&buf, 2);
-	bch2_fs_alloc_debug_to_text(&buf, c);
-	printbuf_indent_sub(&buf, 2);
+	scoped_guard(printbuf_indent, &buf)
+		bch2_fs_alloc_debug_to_text(&buf, c);
 	prt_newline(&buf);
 
 	bch2_printbuf_make_room(&buf, 4096);
@@ -1597,23 +1595,20 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c)
 		guard(printbuf_atomic)(&buf);
 		for_each_online_member_rcu(c, ca) {
 			prt_printf(&buf, "Dev %u:\n", ca->dev_idx);
-			printbuf_indent_add(&buf, 2);
-			bch2_dev_alloc_debug_to_text(&buf, ca);
-			printbuf_indent_sub(&buf, 2);
+			scoped_guard(printbuf_indent, &buf)
+				bch2_dev_alloc_debug_to_text(&buf, ca);
 			prt_newline(&buf);
 		}
 	}
 
 	prt_printf(&buf, "Copygc debug:\n");
-	printbuf_indent_add(&buf, 2);
-	bch2_copygc_wait_to_text(&buf, c);
-	printbuf_indent_sub(&buf, 2);
+	scoped_guard(printbuf_indent, &buf)
+		bch2_copygc_wait_to_text(&buf, c);
 	prt_newline(&buf);
 
 	prt_printf(&buf, "Journal debug:\n");
-	printbuf_indent_add(&buf, 2);
-	bch2_journal_debug_to_text(&buf, &c->journal);
-	printbuf_indent_sub(&buf, 2);
+	scoped_guard(printbuf_indent, &buf)
+		bch2_journal_debug_to_text(&buf, &c->journal);
 
 	bch2_print_str(c, KERN_ERR, buf.buf);
 }

@@ -285,10 +285,9 @@ static void member_to_text(struct printbuf *out,
 		return;
 
 	prt_printf(out, "Device:\t%u\n", idx);
+	guard(printbuf_indent)(out);
 
-	printbuf_indent_add(out, 2);
 	bch2_member_to_text(out, &m, gi, sb, idx);
-	printbuf_indent_sub(out, 2);
 }
 
 static int bch2_sb_members_v1_validate(struct bch_sb *sb, struct bch_sb_field *f,
@@ -435,21 +434,19 @@ void bch2_dev_io_errors_to_text(struct printbuf *out, struct bch_dev *ca)
 	prt_str(out, "IO errors since filesystem creation");
 	prt_newline(out);
 
-	printbuf_indent_add(out, 2);
-	for (unsigned i = 0; i < BCH_MEMBER_ERROR_NR; i++)
-		prt_printf(out, "%s:\t%llu\n", bch2_member_error_strs[i], atomic64_read(&ca->errors[i]));
-	printbuf_indent_sub(out, 2);
+	scoped_guard(printbuf_indent, out)
+		for (unsigned i = 0; i < BCH_MEMBER_ERROR_NR; i++)
+			prt_printf(out, "%s:\t%llu\n", bch2_member_error_strs[i], atomic64_read(&ca->errors[i]));
 
 	prt_str(out, "IO errors since ");
 	bch2_pr_time_units(out, (ktime_get_real_seconds() - le64_to_cpu(m.errors_reset_time)) * NSEC_PER_SEC);
 	prt_str(out, " ago");
 	prt_newline(out);
 
-	printbuf_indent_add(out, 2);
-	for (unsigned i = 0; i < BCH_MEMBER_ERROR_NR; i++)
-		prt_printf(out, "%s:\t%llu\n", bch2_member_error_strs[i],
-			   atomic64_read(&ca->errors[i]) - le64_to_cpu(m.errors_at_reset[i]));
-	printbuf_indent_sub(out, 2);
+	scoped_guard(printbuf_indent, out)
+		for (unsigned i = 0; i < BCH_MEMBER_ERROR_NR; i++)
+			prt_printf(out, "%s:\t%llu\n", bch2_member_error_strs[i],
+				   atomic64_read(&ca->errors[i]) - le64_to_cpu(m.errors_at_reset[i]));
 }
 
 void bch2_dev_errors_reset(struct bch_dev *ca)

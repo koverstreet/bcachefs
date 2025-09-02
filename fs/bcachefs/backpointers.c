@@ -117,7 +117,7 @@ static noinline int backpointer_mod_err(struct btree_trans *trans,
 		prt_printf(&buf, "existing backpointer found when inserting ");
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&new_bp->k_i));
 		prt_newline(&buf);
-		printbuf_indent_add(&buf, 2);
+		guard(printbuf_indent)(&buf);
 
 		prt_printf(&buf, "found ");
 		bch2_bkey_val_to_text(&buf, c, found_bp);
@@ -127,7 +127,7 @@ static noinline int backpointer_mod_err(struct btree_trans *trans,
 		bch2_bkey_val_to_text(&buf, c, orig_k);
 	} else if (!will_check) {
 		prt_printf(&buf, "backpointer not found when deleting\n");
-		printbuf_indent_add(&buf, 2);
+		guard(printbuf_indent)(&buf);
 
 		prt_printf(&buf, "searching for ");
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&new_bp->k_i));

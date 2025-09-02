@@ -1019,7 +1019,7 @@ bool bch2_journal_seq_pins_to_text(struct printbuf *out, struct journal *j, u64 
 	pin_list = journal_seq_pin(j, *seq);
 
 	prt_printf(out, "%llu: count %u\n", *seq, atomic_read(&pin_list->count));
-	printbuf_indent_add(out, 2);
+	guard(printbuf_indent)(out);
 
 	prt_printf(out, "unflushed:\n");
 	for (unsigned i = 0; i < ARRAY_SIZE(pin_list->unflushed); i++)
@@ -1030,8 +1030,6 @@ bool bch2_journal_seq_pins_to_text(struct printbuf *out, struct journal *j, u64 
 	for (unsigned i = 0; i < ARRAY_SIZE(pin_list->flushed); i++)
 		list_for_each_entry(pin, &pin_list->flushed[i], list)
 			prt_printf(out, "\t%px %ps\n", pin, pin->flush);
-
-	printbuf_indent_sub(out, 2);
 
 	return false;
 }
