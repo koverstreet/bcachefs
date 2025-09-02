@@ -291,6 +291,7 @@ void bch2_delete_dead_snapshots_work(struct work_struct *);
 void bch2_delete_dead_snapshots_async(struct bch_fs *);
 void bch2_snapshot_delete_status_to_text(struct printbuf *, struct bch_fs *);
 
+int bch2_delete_dead_interior_snapshots(struct bch_fs *);
 int bch2_snapshots_read(struct bch_fs *);
 void bch2_fs_snapshots_exit(struct bch_fs *);
 void bch2_fs_snapshots_init_early(struct bch_fs *);

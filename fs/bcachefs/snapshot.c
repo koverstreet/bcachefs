@@ -309,7 +309,7 @@ static int __bch2_mark_snapshot(struct btree_trans *trans,
 	if (new.k->type == KEY_TYPE_snapshot) {
 		struct bkey_s_c_snapshot s = bkey_s_c_to_snapshot(new);
 
-		t->state	= !BCH_SNAPSHOT_DELETED(s.v)
+		t->state	= !BCH_SNAPSHOT_DELETED(s.v) && !BCH_SNAPSHOT_NO_KEYS(s.v)
 			? SNAPSHOT_ID_live
 			: SNAPSHOT_ID_deleted;
 		t->parent	= le32_to_cpu(s.v->parent);
@@ -1101,6 +1101,20 @@ int bch2_snapshot_node_set_deleted(struct btree_trans *trans, u32 id)
 	return 0;
 }
 
+static int bch2_snapshot_node_set_no_keys(struct btree_trans *trans, u32 id)
+{
+	struct bkey_i_snapshot *s =
+		bch2_bkey_get_mut_typed(trans, BTREE_ID_snapshots, POS(0, id), 0, snapshot);
+	int ret = PTR_ERR_OR_ZERO(s);
+	bch2_fs_inconsistent_on(bch2_err_matches(ret, ENOENT), trans->c, "missing snapshot %u", id);
+	if (unlikely(ret))
+		return ret;
+
+	SET_BCH_SNAPSHOT_NO_KEYS(&s->v, true);
+	s->v.subvol = 0;
+	return 0;
+}
+
 static inline void normalize_snapshot_child_pointers(struct bch_snapshot *s)
 {
 	if (le32_to_cpu(s->children[0]) < le32_to_cpu(s->children[1]))
@@ -1783,22 +1797,9 @@ int __bch2_delete_dead_snapshots(struct bch_fs *c)
 		if (ret)
 			goto err;
 	}
-
-	/*
-	 * Fixing children of deleted snapshots can't be done completely
-	 * atomically, if we crash between here and when we delete the interior
-	 * nodes some depth fields will be off:
-	 */
-	ret = for_each_btree_key_commit(trans, iter, BTREE_ID_snapshots, POS_MIN,
-				  BTREE_ITER_intent, k,
-				  NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-		bch2_fix_child_of_deleted_snapshot(trans, &iter, k, &d->delete_interior));
-	if (ret)
-		goto err;
-
 	darray_for_each(d->delete_interior, i) {
 		ret = commit_do(trans, NULL, NULL, 0,
-			bch2_snapshot_node_delete(trans, i->id));
+			bch2_snapshot_node_set_no_keys(trans, i->id));
 		if (!bch2_err_matches(ret, EROFS))
 			bch_err_msg(c, ret, "deleting snapshot %u", i->id);
 		if (ret)
@@ -1887,6 +1888,66 @@ int __bch2_key_has_snapshot_overwrites(struct btree_trans *trans,
 	return ret;
 }
 
+static int bch2_get_dead_interior_snapshots(struct btree_trans *trans, struct bkey_s_c k)
+{
+	struct bch_fs *c = trans->c;
+
+	if (k.k->type == KEY_TYPE_snapshot &&
+	    BCH_SNAPSHOT_NO_KEYS(bkey_s_c_to_snapshot(k).v)) {
+		struct snapshot_interior_delete n = {
+			.id		= k.k->p.offset,
+			.live_child	= live_child(c, k.k->p.offset),
+		};
+
+		if (!n.live_child) {
+			bch_err(c, "error finding live child of snapshot %u", n.id);
+			return -EINVAL;
+		}
+
+		return darray_push(&c->snapshot_delete.delete_interior, n);
+	}
+
+	return 0;
+}
+
+int bch2_delete_dead_interior_snapshots(struct bch_fs *c)
+{
+	CLASS(btree_trans, trans)(c);
+	int ret = for_each_btree_key(trans, iter, BTREE_ID_snapshots, POS_MAX, 0, k,
+			bch2_get_dead_interior_snapshots(trans, k));
+	if (ret)
+		goto err;
+
+	struct snapshot_delete *d = &c->snapshot_delete;
+	if (d->delete_interior.nr) {
+		/*
+		 * Fixing children of deleted snapshots can't be done completely
+		 * atomically, if we crash between here and when we delete the interior
+		 * nodes some depth fields will be off:
+		 */
+		ret = for_each_btree_key_commit(trans, iter, BTREE_ID_snapshots, POS_MIN,
+					  BTREE_ITER_intent, k,
+					  NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+			bch2_fix_child_of_deleted_snapshot(trans, &iter, k, &d->delete_interior));
+		if (ret)
+			goto err;
+
+		darray_for_each(d->delete_interior, i) {
+			ret = commit_do(trans, NULL, NULL, 0,
+				bch2_snapshot_node_delete(trans, i->id));
+			if (!bch2_err_matches(ret, EROFS))
+				bch_err_msg(c, ret, "deleting snapshot %u", i->id);
+			if (ret)
+				goto err;
+		}
+
+		darray_exit(&d->delete_interior);
+	}
+err:
+	bch_err_fn(c, ret);
+	return ret;
+}
+
 static bool interior_snapshot_needs_delete(struct bkey_s_c_snapshot snap)
 {
 	/* If there's one child, it's redundant and keys will be moved to the child */
@@ -1895,19 +1956,33 @@ static bool interior_snapshot_needs_delete(struct bkey_s_c_snapshot snap)
 
 static int bch2_check_snapshot_needs_deletion(struct btree_trans *trans, struct bkey_s_c k)
 {
+	struct bch_fs *c = trans->c;
+
 	if (k.k->type != KEY_TYPE_snapshot)
 		return 0;
 
-	struct bkey_s_c_snapshot snap = bkey_s_c_to_snapshot(k);
-	if (BCH_SNAPSHOT_WILL_DELETE(snap.v) ||
-	    interior_snapshot_needs_delete(snap))
-		set_bit(BCH_FS_need_delete_dead_snapshots, &trans->c->flags);
+	struct bkey_s_c_snapshot s= bkey_s_c_to_snapshot(k);
+
+	if (BCH_SNAPSHOT_NO_KEYS(s.v))
+		c->recovery.passes_to_run |= BIT_ULL(BCH_RECOVERY_PASS_delete_dead_interior_snapshots);
+	if (BCH_SNAPSHOT_WILL_DELETE(s.v) ||
+	    interior_snapshot_needs_delete(s))
+		set_bit(BCH_FS_need_delete_dead_snapshots, &c->flags);
 
 	return 0;
 }
 
 int bch2_snapshots_read(struct bch_fs *c)
 {
+	/*
+	 * It's important that we check if we need to reconstruct snapshots
+	 * before going RW, so we mark that pass as required in the superblock -
+	 * otherwise, we could end up deleting keys with missing snapshot nodes
+	 * instead
+	 */
+	BUG_ON(!test_bit(BCH_FS_new_fs, &c->flags) &&
+	       test_bit(BCH_FS_may_go_rw, &c->flags));
+
 	/*
 	 * Initializing the is_ancestor bitmaps requires ancestors to already be
 	 * initialized - so mark in reverse:
@@ -1918,15 +1993,6 @@ int bch2_snapshots_read(struct bch_fs *c)
 			__bch2_mark_snapshot(trans, BTREE_ID_snapshots, 0, bkey_s_c_null, k, 0) ?:
 			bch2_check_snapshot_needs_deletion(trans, k));
 	bch_err_fn(c, ret);
-
-	/*
-	 * It's important that we check if we need to reconstruct snapshots
-	 * before going RW, so we mark that pass as required in the superblock -
-	 * otherwise, we could end up deleting keys with missing snapshot nodes
-	 * instead
-	 */
-	BUG_ON(!test_bit(BCH_FS_new_fs, &c->flags) &&
-	       test_bit(BCH_FS_may_go_rw, &c->flags));
 
 	return ret;
 }

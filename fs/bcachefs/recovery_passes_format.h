@@ -29,6 +29,7 @@
 	x(stripes_read,				 1, 0)					\
 	x(initialize_subvolumes,		 2, 0)					\
 	x(snapshots_read,			 3, PASS_ALWAYS)			\
+	x(delete_dead_interior_snapshots,	44, 0)					\
 	x(check_allocations,			 5, PASS_FSCK_ALLOC)			\
 	x(trans_mark_dev_sbs,			 6, PASS_ALWAYS|PASS_SILENT|PASS_ALLOC)	\
 	x(fs_journal_alloc,			 7, PASS_ALWAYS|PASS_SILENT|PASS_ALLOC)	\
