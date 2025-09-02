@@ -197,6 +197,7 @@ bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 
 	bool poisoned = bch2_bkey_extent_ptrs_flags(ptrs) & BIT_ULL(BCH_EXTENT_FLAG_poisoned);
 	unsigned compression_type = bch2_compression_opt_to_type(r.background_compression);
+	unsigned csum_type	= bch2_data_checksum_type_rb(c, r);
 
 	bool incompressible = false, unwritten = false, ec = false;
 	unsigned durability = 0, min_durability = INT_MAX;
@@ -212,6 +213,10 @@ bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 
 		struct bch_dev *ca = bch2_dev_rcu_noerror(c, p.ptr.dev);
 		if (ca && !p.ptr.cached) {
+			if (!poisoned &&
+			    p.crc.csum_type != csum_type)
+				r.need_rb |= BIT(BCH_REBALANCE_data_checksum);
+
 			if (!poisoned &&
 			    p.crc.compression_type != compression_type)
 				r.need_rb |= BIT(BCH_REBALANCE_background_compression);
@@ -235,6 +240,9 @@ bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 
 	if (unwritten || incompressible)
 		r.need_rb &= ~BIT(BCH_REBALANCE_background_compression);
+
+	if (unwritten)
+		r.need_rb &= ~BIT(BCH_REBALANCE_data_checksum);
 
 	return r;
 }
@@ -631,10 +639,15 @@ static int rebalance_set_data_opts(struct btree_trans *trans,
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
 
+	unsigned csum_type = bch2_data_checksum_type_rb(c, *r);
 	unsigned compression_type = bch2_compression_opt_to_type(r->background_compression);
 
 	unsigned ptr_bit = 1;
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if ((r->need_rb & BIT(BCH_REBALANCE_data_checksum)) &&
+		    p.crc.csum_type != csum_type)
+			data_opts->ptrs_rewrite |= ptr_bit;
+
 		if ((r->need_rb & BIT(BCH_REBALANCE_background_compression)) &&
 		    p.crc.compression_type != compression_type)
 			data_opts->ptrs_rewrite |= ptr_bit;
