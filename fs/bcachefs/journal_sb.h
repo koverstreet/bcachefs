@@ -22,3 +22,4 @@ extern const struct bch_sb_field_ops bch_sb_field_ops_journal;
 extern const struct bch_sb_field_ops bch_sb_field_ops_journal_v2;
 
 int bch2_journal_buckets_to_sb(struct bch_fs *, struct bch_dev *, u64 *, unsigned);
+int bch2_sb_journal_sort(struct bch_fs *);

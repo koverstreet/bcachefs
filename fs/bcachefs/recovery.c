@@ -15,6 +15,7 @@
 #include "error.h"
 #include "journal_io.h"
 #include "journal_reclaim.h"
+#include "journal_sb.h"
 #include "journal_seq_blacklist.h"
 #include "logged_ops.h"
 #include "move.h"
@@ -647,6 +648,10 @@ int bch2_fs_recovery(struct bch_fs *c)
 
 		bch_info(c, "recovering from clean shutdown, journal seq %llu",
 			 le64_to_cpu(clean->journal_seq));
+
+		ret = bch2_sb_journal_sort(c);
+		if (ret)
+			goto err;
 	} else {
 		bch_info(c, "recovering from unclean shutdown");
 	}
