@@ -54,23 +54,43 @@ static int bch2_sb_errors_validate(struct bch_sb *sb, struct bch_sb_field *f,
 	return 0;
 }
 
+static int error_entry_cmp(const void *_l, const void *_r)
+{
+	const struct bch_sb_field_error_entry *l = _l;
+	const struct bch_sb_field_error_entry *r = _r;
+
+	return -cmp_int(l->last_error_time, r->last_error_time);
+}
+
 static void bch2_sb_errors_to_text(struct printbuf *out, struct bch_sb *sb,
 				   struct bch_sb_field *f)
 {
 	struct bch_sb_field_errors *e = field_to_type(f, errors);
-	unsigned i, nr = bch2_sb_field_errors_nr_entries(e);
+	unsigned nr = bch2_sb_field_errors_nr_entries(e);
+
+	struct bch_sb_field_error_entry *sorted = kvmalloc_array(nr, sizeof(*sorted), GFP_KERNEL);
+
+	if (sorted) {
+		memcpy(sorted, e->entries, nr * sizeof(e->entries[0]));
+		sort(sorted, nr, sizeof(*sorted), error_entry_cmp, NULL);
+	} else {
+		sorted = e->entries;
+	}
 
 	if (out->nr_tabstops <= 1)
 		printbuf_tabstop_push(out, 16);
 
-	for (i = 0; i < nr; i++) {
-		bch2_sb_error_id_to_text(out, BCH_SB_ERROR_ENTRY_ID(&e->entries[i]));
+	for (struct bch_sb_field_error_entry *i = sorted; i < sorted + nr; i++) {
+		bch2_sb_error_id_to_text(out, BCH_SB_ERROR_ENTRY_ID(i));
 		prt_tab(out);
-		prt_u64(out, BCH_SB_ERROR_ENTRY_NR(&e->entries[i]));
+		prt_u64(out, BCH_SB_ERROR_ENTRY_NR(i));
 		prt_tab(out);
-		bch2_prt_datetime(out, le64_to_cpu(e->entries[i].last_error_time));
+		bch2_prt_datetime(out, le64_to_cpu(i->last_error_time));
 		prt_newline(out);
 	}
+
+	if (sorted != e->entries)
+		kvfree(sorted);
 }
 
 const struct bch_sb_field_ops bch_sb_field_ops_errors = {
