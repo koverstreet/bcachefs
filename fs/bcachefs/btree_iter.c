@@ -893,28 +893,53 @@ static noinline void btree_node_mem_ptr_set(struct btree_trans *trans,
 		btree_node_unlock(trans, path, plevel);
 }
 
+static noinline_for_stack int btree_node_missing_err(struct btree_trans *trans,
+						     struct btree_path *path)
+{
+	struct bch_fs *c = trans->c;
+	CLASS(printbuf, buf)();
+
+	prt_str(&buf, "node not found at pos: ");
+	bch2_bpos_to_text(&buf, path->pos);
+	prt_str(&buf, "\n  within parent node ");
+	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&path_l(path)->b->key));
+	prt_newline(&buf);
+
+	return __bch2_topology_error(c, &buf);
+}
+
+static noinline_for_stack int btree_node_gap_err(struct btree_trans *trans,
+						 struct btree_path *path,
+						 struct bkey_i *k)
+{
+	struct bch_fs *c = trans->c;
+	CLASS(printbuf, buf)();
+
+	prt_str(&buf, "node doesn't cover expected range at pos: ");
+	bch2_bpos_to_text(&buf, path->pos);
+	prt_str(&buf, "\n  within parent node ");
+	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&path_l(path)->b->key));
+	prt_str(&buf, "\n  but got node: ");
+	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(k));
+	prt_newline(&buf);
+
+	return __bch2_topology_error(c, &buf);
+}
+
 static noinline int btree_node_iter_and_journal_peek(struct btree_trans *trans,
 						     struct btree_path *path,
 						     enum btree_iter_update_trigger_flags flags)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_path_level *l = path_l(path);
-	struct btree_and_journal_iter jiter;
-	struct bkey_s_c k;
 	int ret = 0;
 
+	struct btree_and_journal_iter jiter;
 	__bch2_btree_and_journal_iter_init_node_iter(trans, &jiter, l->b, l->iter, path->pos);
 
-	k = bch2_btree_and_journal_iter_peek(c, &jiter);
+	struct bkey_s_c k = bch2_btree_and_journal_iter_peek(c, &jiter);
 	if (!k.k) {
-		CLASS(printbuf, buf)();
-
-		prt_str(&buf, "node not found at pos ");
-		bch2_bpos_to_text(&buf, path->pos);
-		prt_str(&buf, " at btree ");
-		bch2_btree_pos_to_text(&buf, c, l->b);
-
-		ret = bch2_fs_topology_error(c, "%s", buf.buf);
+		ret = btree_node_missing_err(trans, path);
 		goto err;
 	}
 
@@ -929,20 +954,16 @@ err:
 	return ret;
 }
 
-static noinline_for_stack int btree_node_missing_err(struct btree_trans *trans,
-						     struct btree_path *path)
+static inline bool bpos_in_btree_node_key(struct bpos pos, const struct bkey_i *k)
 {
-	struct bch_fs *c = trans->c;
-	CLASS(printbuf, buf)();
+	if (bpos_gt(pos, k->k.p))
+		return false;
 
-	prt_str(&buf, "node not found at pos ");
-	bch2_bpos_to_text(&buf, path->pos);
-	prt_str(&buf, " within parent node ");
-	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&path_l(path)->b->key));
+	if (k->k.type == KEY_TYPE_btree_ptr_v2 &&
+	    bpos_lt(pos, bkey_i_to_btree_ptr_v2_c(k)->v.min_key))
+		return false;
 
-	bch2_fs_fatal_error(c, "%s", buf.buf);
-	printbuf_exit(&buf);
-	return bch_err_throw(c, btree_need_topology_repair);
+	return true;
 }
 
 static __always_inline int btree_path_down(struct btree_trans *trans,
@@ -977,6 +998,9 @@ static __always_inline int btree_path_down(struct btree_trans *trans,
 				return ret;
 		}
 	}
+
+	if (unlikely(!bpos_in_btree_node_key(path->pos, &trans->btree_path_down)))
+		return btree_node_gap_err(trans, path, &trans->btree_path_down);
 
 	b = bch2_btree_node_get(trans, path, &trans->btree_path_down,
 				level, lock_type, trace_ip);
