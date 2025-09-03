@@ -867,7 +867,8 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	u64 check_mismatch_done = bucket_start;
 	int ret = 0;
 
-	CLASS(bch2_dev_tryget, ca)(c, dev);
+	/* Userspace might have supplied @dev: */
+	CLASS(bch2_dev_tryget_noerror, ca)(c, dev);
 	if (!ca)
 		return 0;
 
