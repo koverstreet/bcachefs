@@ -174,14 +174,26 @@ static void __bch2_btree_path_verify_level(struct btree_trans *trans,
 		: bch2_btree_node_iter_prev_all(&tmp, l->b);
 	k = bch2_btree_node_iter_peek_all(&l->iter, l->b);
 
-	if (p && bkey_iter_pos_cmp(l->b, p, &path->pos) >= 0) {
-		msg = "before";
-		goto err;
-	}
+	if (!(level > path->level && trans->journal_replay_not_finished)) {
+		/*
+		 * We can't run these checks for interior nodes when we're still
+		 * using the journal overlay because there might be a key in
+		 * the interior node that points midway through the current leaf
+		 * node - which is deleted in the journal overlay, but set_pos()
+		 * will skip past it and cause the interior node iterators to be
+		 * inconsistent in a way that doesn't matter and it can't check
+		 * for.
+		 */
 
-	if (k && bkey_iter_pos_cmp(l->b, k, &path->pos) < 0) {
-		msg = "after";
-		goto err;
+		if (p && bkey_iter_pos_cmp(l->b, p, &path->pos) >= 0) {
+			msg = "before";
+			goto err;
+		}
+
+		if (k && bkey_iter_pos_cmp(l->b, k, &path->pos) < 0) {
+			msg = "after";
+			goto err;
+		}
 	}
 
 	if (!locked)
