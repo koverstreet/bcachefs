@@ -137,18 +137,8 @@ static void __bch2_btree_path_verify_cached(struct btree_trans *trans,
 static void __bch2_btree_path_verify_level(struct btree_trans *trans,
 				struct btree_path *path, unsigned level)
 {
-	struct btree_path_level *l;
-	struct btree_node_iter tmp;
-	bool locked;
-	struct bkey_packed *p, *k;
-	struct printbuf buf1 = PRINTBUF;
-	struct printbuf buf2 = PRINTBUF;
-	struct printbuf buf3 = PRINTBUF;
-	const char *msg;
-
-	l	= &path->l[level];
-	tmp	= l->iter;
-	locked	= btree_node_locked(path, level);
+	struct btree_path_level *l = &path->l[level];
+	bool locked = btree_node_locked(path, level);
 
 	if (path->cached) {
 		if (!level)
@@ -166,14 +156,17 @@ static void __bch2_btree_path_verify_level(struct btree_trans *trans,
 
 	bch2_btree_node_iter_verify(&l->iter, l->b);
 
-	/*
-	 * For interior nodes, the iterator will have skipped past deleted keys:
-	 */
-	p = level
+	/* For interior nodes, the iterator may have skipped past deleted keys: */
+	struct btree_node_iter tmp = l->iter;
+	const struct bkey_packed *p = level
 		? bch2_btree_node_iter_prev(&tmp, l->b)
 		: bch2_btree_node_iter_prev_all(&tmp, l->b);
-	k = bch2_btree_node_iter_peek_all(&l->iter, l->b);
+	tmp = l->iter;
+	const struct bkey_packed *k = level
+		? bch2_btree_node_iter_peek(&tmp, l->b)
+		: bch2_btree_node_iter_peek_all(&tmp, l->b);
 
+	const char *msg;
 	if (!(level > path->level && trans->journal_replay_not_finished)) {
 		/*
 		 * We can't run these checks for interior nodes when we're still
@@ -200,29 +193,31 @@ static void __bch2_btree_path_verify_level(struct btree_trans *trans,
 		btree_node_unlock(trans, path, level);
 	return;
 err:
-	bch2_bpos_to_text(&buf1, path->pos);
+	{
+		CLASS(printbuf, buf)();
+		prt_printf(&buf, "path should be %s key at level %u", msg, level);
 
-	if (p) {
-		struct bkey uk = bkey_unpack_key(l->b, p);
+		prt_str(&buf, "\npath pos ");
+		bch2_bpos_to_text(&buf, path->pos);
 
-		bch2_bkey_to_text(&buf2, &uk);
-	} else {
-		prt_printf(&buf2, "(none)");
+		prt_str(&buf, "\nprev key ");
+		if (p) {
+			struct bkey uk = bkey_unpack_key(l->b, p);
+			bch2_bkey_to_text(&buf, &uk);
+		} else {
+			prt_printf(&buf, "(none)");
+		}
+
+		prt_str(&buf, "\ncur  key ");
+		if (k) {
+			struct bkey uk = bkey_unpack_key(l->b, k);
+			bch2_bkey_to_text(&buf, &uk);
+		} else {
+			prt_printf(&buf, "(none)");
+		}
+
+		panic("%s\n", buf.buf);
 	}
-
-	if (k) {
-		struct bkey uk = bkey_unpack_key(l->b, k);
-
-		bch2_bkey_to_text(&buf3, &uk);
-	} else {
-		prt_printf(&buf3, "(none)");
-	}
-
-	panic("path should be %s key at level %u:\n"
-	      "path pos %s\n"
-	      "prev key %s\n"
-	      "cur  key %s\n",
-	      msg, level, buf1.buf, buf2.buf, buf3.buf);
 }
 
 static void __bch2_btree_path_verify(struct btree_trans *trans,
