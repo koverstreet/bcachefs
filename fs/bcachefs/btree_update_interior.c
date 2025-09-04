@@ -324,9 +324,6 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 	struct btree *b;
 	struct bch_devs_list devs_have = (struct bch_devs_list) { 0 };
 	enum bch_watermark watermark = flags & BCH_WATERMARK_MASK;
-	unsigned nr_reserve = watermark < BCH_WATERMARK_reclaim
-		? BTREE_NODE_RESERVE
-		: 0;
 	int ret;
 
 	b = bch2_btree_node_mem_alloc(trans, interior_node);
@@ -334,41 +331,6 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 		return b;
 
 	BUG_ON(b->ob.nr);
-
-	mutex_lock(&c->btree_reserve_cache_lock);
-	if (unlikely(c->open_buckets_nr_free <= bch2_open_buckets_reserved(watermark))) {
-		guard(spinlock)(&c->freelist_lock);
-		if (c->open_buckets_nr_free <= bch2_open_buckets_reserved(watermark)) {
-			if (cl)
-				closure_wait(&c->open_buckets_wait, cl);
-
-			ret = cl
-				? bch_err_throw(c, bucket_alloc_blocked)
-				: bch_err_throw(c, open_buckets_empty);
-			mutex_unlock(&c->btree_reserve_cache_lock);
-			goto err;
-		}
-	}
-
-	if (c->btree_reserve_cache_nr > nr_reserve) {
-		for (struct btree_alloc *a = c->btree_reserve_cache;
-		     a < c->btree_reserve_cache + c->btree_reserve_cache_nr;) {
-			/* check if it has sufficient durability */
-
-			if (!can_use_btree_node(c, res, target, bkey_i_to_s_c(&a->k))) {
-				bch2_open_buckets_put(c, &a->ob);
-				*a = c->btree_reserve_cache[--c->btree_reserve_cache_nr];
-				continue;
-			}
-
-			bkey_copy(&b->key, &a->k);
-			b->ob = a->ob;
-			*a = c->btree_reserve_cache[--c->btree_reserve_cache_nr];
-			mutex_unlock(&c->btree_reserve_cache_lock);
-			goto out;
-		}
-	}
-	mutex_unlock(&c->btree_reserve_cache_lock);
 retry:
 	ret = bch2_alloc_sectors_start_trans(trans,
 				      target ?:
@@ -398,12 +360,29 @@ retry:
 		goto retry;
 	}
 
+	mutex_lock(&c->btree_reserve_cache_lock);
+	while (c->btree_reserve_cache_nr) {
+		struct btree_alloc *a = c->btree_reserve_cache + --c->btree_reserve_cache_nr;
+
+		/* check if it has sufficient durability */
+
+		if (can_use_btree_node(c, res, target, bkey_i_to_s_c(&a->k))) {
+			bkey_copy(&b->key, &a->k);
+			b->ob = a->ob;
+			mutex_unlock(&c->btree_reserve_cache_lock);
+			goto out;
+		}
+
+		bch2_open_buckets_put(c, &a->ob);
+	}
+	mutex_unlock(&c->btree_reserve_cache_lock);
+
 	bkey_btree_ptr_v2_init(&b->key);
 	bch2_alloc_sectors_append_ptrs(c, wp, &b->key, btree_sectors(c), false);
 
 	bch2_open_bucket_get(c, wp, &b->ob);
-	bch2_alloc_sectors_done(c, wp);
 out:
+	bch2_alloc_sectors_done(c, wp);
 	six_unlock_write(&b->c.lock);
 	six_unlock_intent(&b->c.lock);
 
