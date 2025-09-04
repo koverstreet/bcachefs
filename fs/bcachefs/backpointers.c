@@ -278,8 +278,19 @@ static struct btree *__bch2_backpointer_get_node(struct btree_trans *trans,
 				  bp.v->level - 1,
 				  0);
 	struct btree *b = bch2_btree_iter_peek_node(iter);
-	if (IS_ERR_OR_NULL(b))
+	if (IS_ERR(b))
 		goto err;
+
+	if (!b) {
+		/* Backpointer for nonexistent tree depth: */
+		bkey_init(&iter->k);
+		iter->k.p = bp.v->pos;
+		struct bkey_s_c k = { &iter->k };
+
+		int ret = backpointer_target_not_found(trans, bp, k, last_flushed, commit);
+		b = ret ? ERR_PTR(ret) : NULL;
+		goto err;
+	}
 
 	BUG_ON(b->c.level != bp.v->level - 1);
 
