@@ -673,7 +673,7 @@ static inline void bkey_inode_flags_set(struct bkey_s k, u64 f)
 
 static inline bool bkey_is_unlinked_inode(struct bkey_s_c k)
 {
-	unsigned f = bkey_inode_flags(k) & BCH_INODE_unlinked;
+	unsigned f = bkey_inode_flags(k);
 
 	return (f & BCH_INODE_unlinked) && !(f & BCH_INODE_has_child_snapshot);
 }
