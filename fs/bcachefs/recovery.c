@@ -67,9 +67,12 @@ int bch2_btree_lost_data(struct bch_fs *c,
 #endif
 
 	write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_lru_entry_bad, ext->errors_silent);
+	write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_alloc_key_to_missing_lru_entry, ext->errors_silent);
 	write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_backpointer_to_missing_ptr, ext->errors_silent);
 	write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_alloc_key_data_type_wrong, ext->errors_silent);
 	write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_alloc_key_dirty_sectors_wrong, ext->errors_silent);
+	write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_need_discard_key_wrong, ext->errors_silent);
+	write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_freespace_key_wrong, ext->errors_silent);
 
 	switch (btree) {
 	case BTREE_ID_alloc:
