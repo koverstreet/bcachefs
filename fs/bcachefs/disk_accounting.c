@@ -916,73 +916,72 @@ int bch2_accounting_read(struct bch_fs *c)
 	eytzinger0_sort(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
 			accounting_pos_cmp, NULL);
 
-	scoped_guard(preempt) {
+	for (unsigned i = 0; i < acc->k.nr; i++) {
+		struct disk_accounting_pos k;
+		bpos_to_disk_accounting_pos(&k, acc->k.data[i].pos);
+
+		u64 v[BCH_ACCOUNTING_MAX_COUNTERS];
+		bch2_accounting_mem_read_counters(acc, i, v, ARRAY_SIZE(v), false);
+
+		/*
+		 * Check for underflow, schedule check_allocations
+		 * necessary:
+		 *
+		 * XXX - see if we can factor this out to run on a bkey
+		 * so we can check everything lazily, right now we don't
+		 * check the non in-mem counters at all
+		 */
+		bool underflow = false;
+		for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
+			underflow |= (s64) v[j] < 0;
+
+		if (underflow) {
+			CLASS(printbuf, buf)();
+			bch2_log_msg_start(c, &buf);
+
+			prt_printf(&buf, "Accounting underflow for\n");
+			bch2_accounting_key_to_text(&buf, &k);
+
+			for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
+				prt_printf(&buf, " %lli", v[j]);
+
+			bool print = bch2_count_fsck_err(c, accounting_key_underflow, &buf);
+			unsigned pos = buf.pos;
+			ret = bch2_run_explicit_recovery_pass(c, &buf,
+					BCH_RECOVERY_PASS_check_allocations, 0);
+			print |= buf.pos != pos;
+
+			if (print)
+				bch2_print_str(c, KERN_ERR, buf.buf);
+			if (ret)
+				return ret;
+		}
+
+		guard(preempt)();
 		struct bch_fs_usage_base *usage = this_cpu_ptr(c->usage);
 
-		for (unsigned i = 0; i < acc->k.nr; i++) {
-			struct disk_accounting_pos k;
-			bpos_to_disk_accounting_pos(&k, acc->k.data[i].pos);
+		switch (k.type) {
+		case BCH_DISK_ACCOUNTING_persistent_reserved:
+			usage->reserved += v[0] * k.persistent_reserved.nr_replicas;
+			break;
+		case BCH_DISK_ACCOUNTING_replicas:
+			fs_usage_data_type_to_base(usage, k.replicas.data_type, v[0]);
+			break;
+		case BCH_DISK_ACCOUNTING_dev_data_type: {
+			guard(rcu)();
+			struct bch_dev *ca = bch2_dev_rcu_noerror(c, k.dev_data_type.dev);
+			if (ca) {
+				struct bch_dev_usage_type __percpu *d = &ca->usage->d[k.dev_data_type.data_type];
+				percpu_u64_set(&d->buckets,	v[0]);
+				percpu_u64_set(&d->sectors,	v[1]);
+				percpu_u64_set(&d->fragmented,	v[2]);
 
-			u64 v[BCH_ACCOUNTING_MAX_COUNTERS];
-			bch2_accounting_mem_read_counters(acc, i, v, ARRAY_SIZE(v), false);
-
-			/*
-			 * Check for underflow, schedule check_allocations
-			 * necessary:
-			 *
-			 * XXX - see if we can factor this out to run on a bkey
-			 * so we can check everything lazily, right now we don't
-			 * check the non in-mem counters at all
-			 */
-			bool underflow = false;
-			for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
-				underflow |= (s64) v[j] < 0;
-
-			if (underflow) {
-				CLASS(printbuf, buf)();
-				bch2_log_msg_start(c, &buf);
-
-				prt_printf(&buf, "Accounting underflow for\n");
-				bch2_accounting_key_to_text(&buf, &k);
-
-				for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
-					prt_printf(&buf, " %lli", v[j]);
-
-				bool print = bch2_count_fsck_err(c, accounting_key_underflow, &buf);
-				unsigned pos = buf.pos;
-				ret = bch2_run_explicit_recovery_pass(c, &buf,
-						BCH_RECOVERY_PASS_check_allocations, 0);
-				print |= buf.pos != pos;
-
-				if (print)
-					bch2_print_str(c, KERN_ERR, buf.buf);
-				if (ret)
-					return ret;
+				if (k.dev_data_type.data_type == BCH_DATA_sb ||
+				    k.dev_data_type.data_type == BCH_DATA_journal)
+					usage->hidden += v[0] * ca->mi.bucket_size;
 			}
-
-			switch (k.type) {
-			case BCH_DISK_ACCOUNTING_persistent_reserved:
-				usage->reserved += v[0] * k.persistent_reserved.nr_replicas;
-				break;
-			case BCH_DISK_ACCOUNTING_replicas:
-				fs_usage_data_type_to_base(usage, k.replicas.data_type, v[0]);
-				break;
-			case BCH_DISK_ACCOUNTING_dev_data_type: {
-				guard(rcu)();
-				struct bch_dev *ca = bch2_dev_rcu_noerror(c, k.dev_data_type.dev);
-				if (ca) {
-					struct bch_dev_usage_type __percpu *d = &ca->usage->d[k.dev_data_type.data_type];
-					percpu_u64_set(&d->buckets,	v[0]);
-					percpu_u64_set(&d->sectors,	v[1]);
-					percpu_u64_set(&d->fragmented,	v[2]);
-
-					if (k.dev_data_type.data_type == BCH_DATA_sb ||
-					    k.dev_data_type.data_type == BCH_DATA_journal)
-						usage->hidden += v[0] * ca->mi.bucket_size;
-				}
-				break;
-			}
-			}
+			break;
+		}
 		}
 	}
 
