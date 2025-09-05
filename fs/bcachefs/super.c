@@ -833,6 +833,8 @@ int bch2_fs_init_rw(struct bch_fs *c)
 	if (test_bit(BCH_FS_rw_init_done, &c->flags))
 		return 0;
 
+	bch_verbose(c, "doing rw allocations");
+
 	if (!(c->btree_update_wq = alloc_workqueue("bcachefs",
 				WQ_HIGHPRI|WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_UNBOUND, 512)) ||
 	    !(c->btree_write_complete_wq = alloc_workqueue("bcachefs_btree_write_complete",
