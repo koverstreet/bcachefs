@@ -59,8 +59,6 @@ void bch2_lru_pos_to_text(struct printbuf *, struct bpos);
 	.min_val_size	= 8,			\
 })
 
-int bch2_lru_del(struct btree_trans *, u16, u64, u64);
-int bch2_lru_set(struct btree_trans *, u16, u64, u64);
 int __bch2_lru_change(struct btree_trans *, u16, u64, u64, u64);
 
 static inline int bch2_lru_change(struct btree_trans *trans,
