@@ -837,33 +837,39 @@ use_clean:
 	bch2_async_btree_node_rewrites_flush(c);
 
 	/* fsync if we fixed errors */
-	if (test_bit(BCH_FS_errors_fixed, &c->flags)) {
+	bool errors_fixed = test_bit(BCH_FS_errors_fixed, &c->flags) ||
+		test_bit(BCH_FS_errors_fixed_silent, &c->flags);
+
+	if (errors_fixed) {
 		bch2_journal_flush_all_pins(&c->journal);
 		bch2_journal_meta(&c->journal);
 	}
 
 	/* If we fixed errors, verify that fs is actually clean now: */
 	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) &&
-	    test_bit(BCH_FS_errors_fixed, &c->flags) &&
+	    errors_fixed &&
 	    !test_bit(BCH_FS_errors_not_fixed, &c->flags) &&
 	    !test_bit(BCH_FS_error, &c->flags)) {
 		bch2_flush_fsck_errs(c);
 
 		bch_info(c, "Fixed errors, running fsck a second time to verify fs is clean");
+		errors_fixed = test_bit(BCH_FS_errors_fixed, &c->flags);
 		clear_bit(BCH_FS_errors_fixed, &c->flags);
+		clear_bit(BCH_FS_errors_fixed_silent, &c->flags);
 
 		ret = bch2_run_recovery_passes(c,
 			BCH_RECOVERY_PASS_check_alloc_info);
 		if (ret)
 			goto err;
 
-		if (test_bit(BCH_FS_errors_fixed, &c->flags) ||
+		if (errors_fixed ||
 		    test_bit(BCH_FS_errors_not_fixed, &c->flags)) {
 			bch_err(c, "Second fsck run was not clean");
 			set_bit(BCH_FS_errors_not_fixed, &c->flags);
 		}
 
-		set_bit(BCH_FS_errors_fixed, &c->flags);
+		if (errors_fixed)
+			set_bit(BCH_FS_errors_fixed, &c->flags);
 	}
 
 	if (enabled_qtypes(c)) {
