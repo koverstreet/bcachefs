@@ -1286,7 +1286,12 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 	if (ret)
 		goto err;
 
-	if (go_rw_in_recovery(c)) {
+	/*
+	 * just make sure this is always allocated if we might need it - mount
+	 * failing due to kthread_create() failing is _very_ annoying
+	 */
+	if (!(c->sb.features & BIT_ULL(BCH_FEATURE_no_alloc_info)) ||
+	    go_rw_in_recovery(c)) {
 		/*
 		 * start workqueues/kworkers early - kthread creation checks for
 		 * pending signals, which is _very_ annoying
