@@ -121,6 +121,23 @@ static struct bbpos lru_pos_to_bp(struct bkey_s_c lru_k)
 	}
 }
 
+int bch2_dev_remove_lrus(struct bch_fs *c, struct bch_dev *ca)
+{
+	CLASS(btree_trans, trans)(c);
+	int ret = bch2_btree_write_buffer_flush_sync(trans) ?:
+		for_each_btree_key(trans, iter,
+				 BTREE_ID_lru, POS_MIN, BTREE_ITER_prefetch, k, ({
+		struct bbpos bp = lru_pos_to_bp(k);
+
+		bp.btree == BTREE_ID_alloc && bp.pos.inode == ca->dev_idx
+		? (bch2_btree_delete_at(trans, &iter, 0) ?:
+		   bch2_trans_commit(trans, NULL, NULL, 0))
+		: 0;
+	}));
+	bch_err_fn(c, ret);
+	return ret;
+}
+
 static u64 bkey_lru_type_idx(struct bch_fs *c,
 			     enum bch_lru_type type,
 			     struct bkey_s_c k)
