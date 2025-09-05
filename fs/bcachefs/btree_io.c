@@ -27,9 +27,14 @@
 #include <linux/moduleparam.h>
 #include <linux/sched/mm.h>
 
+static __maybe_unused unsigned bch2_btree_read_corrupt_ratio;
+static __maybe_unused int bch2_btree_read_corrupt_device;
+
 #ifdef CONFIG_BCACHEFS_DEBUG
-static unsigned bch2_btree_read_corrupt_ratio;
 module_param_named(btree_read_corrupt_ratio, bch2_btree_read_corrupt_ratio, uint, 0644);
+MODULE_PARM_DESC(btree_read_corrupt_ratio, "");
+
+module_param_named(btree_read_corrupt_device, bch2_btree_read_corrupt_device, int, 0644);
 MODULE_PARM_DESC(btree_read_corrupt_ratio, "");
 #endif
 
@@ -1438,7 +1443,9 @@ start:
 		memset(&bio->bi_iter, 0, sizeof(bio->bi_iter));
 		bio->bi_iter.bi_size	= btree_buf_bytes(b);
 
-		bch2_maybe_corrupt_bio(bio, bch2_btree_read_corrupt_ratio);
+		if (bch2_btree_read_corrupt_device == rb->pick.ptr.dev ||
+		    bch2_btree_read_corrupt_device < 0)
+			bch2_maybe_corrupt_bio(bio, bch2_btree_read_corrupt_ratio);
 
 		ret = bch2_btree_node_read_done(c, ca, b, &failed, &buf);
 		if (ret != -BCH_ERR_btree_node_read_err_want_retry &&
