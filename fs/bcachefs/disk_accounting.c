@@ -880,46 +880,44 @@ int bch2_accounting_read(struct bch_fs *c)
 			*dst++ = *i;
 	keys->gap = keys->nr = dst - keys->data;
 
-	guard(percpu_write)(&c->mark_lock);
+	CLASS(printbuf, underflow_err)();
 
-	darray_for_each_reverse(acc->k, i) {
-		struct disk_accounting_pos acc_k;
-		bpos_to_disk_accounting_pos(&acc_k, i->pos);
+	scoped_guard(percpu_write, &c->mark_lock) {
+		darray_for_each_reverse(acc->k, i) {
+			struct disk_accounting_pos acc_k;
+			bpos_to_disk_accounting_pos(&acc_k, i->pos);
 
-		u64 v[BCH_ACCOUNTING_MAX_COUNTERS];
-		memset(v, 0, sizeof(v));
+			u64 v[BCH_ACCOUNTING_MAX_COUNTERS];
+			memset(v, 0, sizeof(v));
 
-		for (unsigned j = 0; j < i->nr_counters; j++)
-			v[j] = percpu_u64_get(i->v[0] + j);
+			for (unsigned j = 0; j < i->nr_counters; j++)
+				v[j] = percpu_u64_get(i->v[0] + j);
 
-		/*
-		 * If the entry counters are zeroed, it should be treated as
-		 * nonexistent - it might point to an invalid device.
-		 *
-		 * Remove it, so that if it's re-added it gets re-marked in the
-		 * superblock:
-		 */
-		ret = bch2_is_zero(v, sizeof(v[0]) * i->nr_counters)
-			? -BCH_ERR_remove_disk_accounting_entry
-			: bch2_disk_accounting_validate_late(trans, &acc_k, v, i->nr_counters);
+			/*
+			 * If the entry counters are zeroed, it should be treated as
+			 * nonexistent - it might point to an invalid device.
+			 *
+			 * Remove it, so that if it's re-added it gets re-marked in the
+			 * superblock:
+			 */
+			ret = bch2_is_zero(v, sizeof(v[0]) * i->nr_counters)
+				? -BCH_ERR_remove_disk_accounting_entry
+				: bch2_disk_accounting_validate_late(trans, &acc_k, v, i->nr_counters);
 
-		if (ret == -BCH_ERR_remove_disk_accounting_entry) {
-			free_percpu(i->v[0]);
-			free_percpu(i->v[1]);
-			darray_remove_item(&acc->k, i);
-			ret = 0;
-			continue;
+			if (ret == -BCH_ERR_remove_disk_accounting_entry) {
+				free_percpu(i->v[0]);
+				free_percpu(i->v[1]);
+				darray_remove_item(&acc->k, i);
+				ret = 0;
+				continue;
+			}
+
+			if (ret)
+				return ret;
 		}
 
-		if (ret)
-			return ret;
-	}
-
-	eytzinger0_sort(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
-			accounting_pos_cmp, NULL);
-
-	scoped_guard(preempt) {
-		struct bch_fs_usage_base *usage = this_cpu_ptr(c->usage);
+		eytzinger0_sort(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
+				accounting_pos_cmp, NULL);
 
 		for (unsigned i = 0; i < acc->k.nr; i++) {
 			struct disk_accounting_pos k;
@@ -941,26 +939,19 @@ int bch2_accounting_read(struct bch_fs *c)
 				underflow |= (s64) v[j] < 0;
 
 			if (underflow) {
-				CLASS(printbuf, buf)();
-				bch2_log_msg_start(c, &buf);
-
-				prt_printf(&buf, "Accounting underflow for\n");
-				bch2_accounting_key_to_text(&buf, &k);
+				if (!underflow_err.pos) {
+					bch2_log_msg_start(c, &underflow_err);
+					prt_printf(&underflow_err, "Accounting underflow for\n");
+				}
+				bch2_accounting_key_to_text(&underflow_err, &k);
 
 				for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
-					prt_printf(&buf, " %lli", v[j]);
-
-				bool print = bch2_count_fsck_err(c, accounting_key_underflow, &buf);
-				unsigned pos = buf.pos;
-				ret = bch2_run_explicit_recovery_pass(c, &buf,
-						BCH_RECOVERY_PASS_check_allocations, 0);
-				print |= buf.pos != pos;
-
-				if (print)
-					bch2_print_str(c, KERN_ERR, buf.buf);
-				if (ret)
-					return ret;
+					prt_printf(&underflow_err, " %lli", v[j]);
+				prt_newline(&underflow_err);
 			}
+
+			guard(preempt)();
+			struct bch_fs_usage_base *usage = this_cpu_ptr(c->usage);
 
 			switch (k.type) {
 			case BCH_DISK_ACCOUNTING_persistent_reserved:
@@ -986,6 +977,19 @@ int bch2_accounting_read(struct bch_fs *c)
 			}
 			}
 		}
+	}
+
+	if (underflow_err.pos) {
+		bool print = bch2_count_fsck_err(c, accounting_key_underflow, &underflow_err);
+		unsigned pos = underflow_err.pos;
+		ret = bch2_run_explicit_recovery_pass(c, &underflow_err,
+						      BCH_RECOVERY_PASS_check_allocations, 0);
+		print |= underflow_err.pos != pos;
+
+		if (print)
+			bch2_print_str(c, KERN_ERR, underflow_err.buf);
+		if (ret)
+			return ret;
 	}
 
 	return ret;
