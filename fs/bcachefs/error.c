@@ -468,10 +468,10 @@ int __bch2_fsck_err(struct bch_fs *c,
 
 	if ((flags & FSCK_ERR_SILENT) ||
 	    test_bit(err, c->sb.errors_silent)) {
-		ret = flags & FSCK_CAN_FIX
+		set_bit(BCH_FS_errors_fixed_silent, &c->flags);
+		return flags & FSCK_CAN_FIX
 			? bch_err_throw(c, fsck_fix)
 			: bch_err_throw(c, fsck_ignore);
-		goto err;
 	}
 
 	printbuf_indent_add_nextline(out, 2);
