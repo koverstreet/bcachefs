@@ -2379,6 +2379,8 @@ static void __bch2_write(struct bch_write_op *op)
 		(!(op->flags & BCH_WRITE_submitted) &&
 		 !(op->flags & BCH_WRITE_in_worker));
 
+	CLASS(closure_stack, alloc_cl)();
+
 	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 
 	if (unlikely(op->opts.nocow &&
@@ -2417,17 +2419,16 @@ again:
 						  op->opts.data_replicas,
 						  op->watermark,
 						  op->flags,
-						  !io_in_flight ? &op->cl : NULL);
+						  !io_in_flight ? &alloc_cl : NULL);
 			if (!IS_ERR(req))
 				req->ec_max_data_blocks = op->opts.ec_max_data_blocks;
 			int ret2 = PTR_ERR_OR_ZERO(req) ?:
 			bch2_alloc_sectors_req(trans, req, op->write_point, &wp);
 
 			if (bch2_err_matches(ret2, BCH_ERR_operation_blocked)) {
-				if (!wait_on_allocator_sync)
-					break;
+				BUG_ON(!wait_on_allocator_sync);
 
-				bch2_wait_on_allocator(trans, c, req, ret2, &op->cl);
+				bch2_wait_on_allocator(trans, c, req, ret2, &alloc_cl);
 				__bch2_write_index(op);
 				op->wbio.failed.nr = 0;
 				ret2 = bch_err_throw(c, transaction_restart_nested);
@@ -2491,6 +2492,7 @@ err:
 		bch2_write_queue(op, wp);
 		continue_at(&op->cl, bch2_write_index, NULL);
 	}
+	closure_sync(&alloc_cl);
 }
 
 static void bch2_write_data_inline(struct bch_write_op *op, unsigned data_len)
