@@ -468,6 +468,7 @@ BCH_DEBUG_PARAMS_ALL()
 	x(btree_node_compact)			\
 	x(btree_node_merge)			\
 	x(btree_node_sort)			\
+	x(btree_node_get)			\
 	x(btree_node_read)			\
 	x(btree_node_read_done)			\
 	x(btree_node_write)			\
@@ -476,6 +477,11 @@ BCH_DEBUG_PARAMS_ALL()
 	x(btree_write_buffer_flush)		\
 	x(btree_gc)				\
 	x(data_write)				\
+	x(data_write_to_submit)			\
+	x(data_write_to_queue)			\
+	x(data_write_to_btree_update)		\
+	x(data_write_btree_update)		\
+	x(data_write_btree_update_runtime)	\
 	x(data_read)				\
 	x(data_promote)				\
 	x(journal_flush_write)			\

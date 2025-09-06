@@ -594,6 +594,12 @@ static void __bch2_write_index(struct bch_write_op *op)
 			goto err;
 	}
 
+	u64 now = local_clock();
+	u64 runtime = current->se.sum_exec_runtime;
+
+	if (op->flags & BCH_WRITE_submitted)
+		__time_stats_update(&c->times[BCH_TIME_data_write_to_btree_update], op->start_time, now);
+
 	if (!bch2_keylist_empty(keys)) {
 		u64 sectors_start = keylist_sectors(keys);
 
@@ -616,6 +622,12 @@ static void __bch2_write_index(struct bch_write_op *op)
 		if (ret)
 			goto err;
 	}
+
+	runtime = current->se.sum_exec_runtime - runtime;
+
+	time_stats_update(&c->times[BCH_TIME_data_write_btree_update], now);
+
+	__time_stats_update(&c->times[BCH_TIME_data_write_btree_update_runtime], now - runtime, now);
 out:
 	/* If some a bucket wasn't written, we can't erasure code it: */
 	for_each_set_bit(dev, op->failed.d, BCH_SB_MEMBERS_MAX)
@@ -668,6 +680,9 @@ static CLOSURE_CALLBACK(bch2_write_index)
 	struct write_point *wp = op->wp;
 	struct workqueue_struct *wq = index_update_wq(op);
 	unsigned long flags;
+
+	if (op->flags & BCH_WRITE_submitted)
+		time_stats_update(&op->c->times[BCH_TIME_data_write_to_queue], op->start_time);
 
 	if ((op->flags & BCH_WRITE_submitted) &&
 	    (op->flags & BCH_WRITE_move))
@@ -1429,6 +1444,7 @@ retry:
 			bio->bi_opf = op->wbio.bio.bi_opf;
 		} else {
 			op->flags |= BCH_WRITE_submitted;
+			time_stats_update(&c->times[BCH_TIME_data_write_to_submit], op->start_time);
 		}
 
 		op->pos.offset += bio_sectors(bio);
@@ -1566,6 +1582,7 @@ again:
 err:
 		if (ret <= 0) {
 			op->flags |= BCH_WRITE_submitted;
+			time_stats_update(&c->times[BCH_TIME_data_write_to_submit], op->start_time);
 
 			if (unlikely(ret < 0)) {
 				if (!(op->flags & BCH_WRITE_alloc_nowait))
