@@ -483,6 +483,7 @@ BCH_DEBUG_PARAMS_ALL()
 	x(blocked_allocate)			\
 	x(blocked_allocate_open_bucket)		\
 	x(blocked_write_buffer_full)		\
+	x(blocked_writeback_throttle)		\
 	x(nocow_lock_contended)
 
 enum bch_time_stats {
