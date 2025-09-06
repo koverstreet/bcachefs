@@ -337,6 +337,11 @@ BCH_DEBUG_PARAMS_ALL()
 	  "Core write path: allocate space, compress, "			\
 	  "encrypt, checksum, issue writes, "				\
 	  "update extents btree")					\
+	x(data_write_to_submit, "")					\
+	x(data_write_to_queue, "")					\
+	x(data_write_to_btree_update, "")				\
+	x(data_write_btree_update, "")					\
+	x(data_write_btree_update_runtime, "")				\
 	x(data_read,							\
 	  "Core read path: look up extents btree, "			\
 	  "issue reads, checksum, decrypt, decompress")			\
