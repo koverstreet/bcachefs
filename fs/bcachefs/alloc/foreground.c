@@ -548,13 +548,16 @@ err:
 	if (!ob)
 		ob = ERR_PTR(bch_err_throw(c, no_buckets_found));
 
-	if (!IS_ERR(ob))
-		ob->data_type = req->data_type;
+	int ret = PTR_ERR_OR_ZERO(ob);
 
-	if (!IS_ERR(ob))
+	if (!ret) {
+		ob->data_type = req->data_type;
 		event_inc_trace(c, bucket_alloc, buf,
 			bucket_alloc_to_text(&buf, c, req, cl, ob));
-	else if (!bch2_err_matches(PTR_ERR(ob), BCH_ERR_transaction_restart))
+	} else if (ret == -BCH_ERR_open_buckets_empty) {
+		event_inc_trace(c, open_bucket_alloc_fail, buf,
+			bch2_fs_open_buckets_to_text(&buf, c));
+	} else if (!bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		event_inc_trace(c, bucket_alloc_fail, buf,
 			bucket_alloc_to_text(&buf, c, req, cl, ob));
 
@@ -1510,19 +1513,31 @@ void bch2_write_points_to_text(struct printbuf *out, struct bch_fs *c)
 	bch2_write_point_to_text(out, c, &a->btree_write_point);
 }
 
-void bch2_fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
+void bch2_fs_open_buckets_to_text(struct printbuf *out, struct bch_fs *c)
 {
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 24);
+
 	struct bch_fs_allocator *a = &c->allocator;
 	unsigned nr[BCH_DATA_NR];
-
 	memset(nr, 0, sizeof(nr));
 
 	for (unsigned i = 0; i < ARRAY_SIZE(a->open_buckets); i++)
 		nr[a->open_buckets[i].data_type]++;
 
-	printbuf_tabstops_reset(out);
-	printbuf_tabstop_push(out, 24);
+	prt_printf(out, "open buckets allocated\t%i\n",		OPEN_BUCKETS_COUNT - c->allocator.open_buckets_nr_free);
+	prt_printf(out, "open buckets total\t%u\n",		OPEN_BUCKETS_COUNT);
+	prt_printf(out, "open_buckets_btree\t%u\n",		nr[BCH_DATA_btree]);
+	prt_printf(out, "open_buckets_user\t%u\n",		nr[BCH_DATA_user]);
+	prt_printf(out, "open_buckets_wait\t%s\n",		c->allocator.open_buckets_wait.list.first ? "waiting" : "empty");
+}
 
+void bch2_fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
+{
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 24);
+
+	struct bch_fs_allocator *a = &c->allocator;
 	prt_printf(out, "capacity\t%llu\n",		c->capacity.capacity);
 	prt_printf(out, "used\t%llu\n",			bch2_fs_usage_read_short(c).used);
 	prt_printf(out, "reserved\t%llu\n",		c->capacity.reserved);
@@ -1535,12 +1550,10 @@ void bch2_fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
 
 	prt_newline(out);
 	prt_printf(out, "freelist_wait\t%s\n",			a->freelist_wait.list.first ? "waiting" : "empty");
-	prt_printf(out, "open buckets allocated\t%i\n",		OPEN_BUCKETS_COUNT - a->open_buckets_nr_free);
-	prt_printf(out, "open buckets total\t%u\n",		OPEN_BUCKETS_COUNT);
-	prt_printf(out, "open_buckets_wait\t%s\n",		a->open_buckets_wait.list.first ? "waiting" : "empty");
-	prt_printf(out, "open_buckets_btree\t%u\n",		nr[BCH_DATA_btree]);
-	prt_printf(out, "open_buckets_user\t%u\n",		nr[BCH_DATA_user]);
 	prt_printf(out, "btree reserve cache\t%u\n",		c->btree.reserve_cache.nr);
+	prt_newline(out);
+
+	bch2_fs_open_buckets_to_text(out, c);
 }
 
 void bch2_dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
