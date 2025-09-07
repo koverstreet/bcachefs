@@ -720,47 +720,55 @@ DEFINE_EVENT(fs_str, bucket_alloc_fail,
 );
 
 DECLARE_EVENT_CLASS(discard_buckets_class,
-	TP_PROTO(struct bch_fs *c, u64 seen, u64 open,
-		 u64 need_journal_commit, u64 discarded, const char *err),
-	TP_ARGS(c, seen, open, need_journal_commit, discarded, err),
+	TP_PROTO(struct bch_fs *c, struct discard_buckets_state *s, const char *err),
+	TP_ARGS(c, s, err),
 
 	TP_STRUCT__entry(
 		__field(dev_t,		dev			)
 		__field(u64,		seen			)
 		__field(u64,		open			)
 		__field(u64,		need_journal_commit	)
+		__field(u64,		commit_in_flight	)
+		__field(u64,		bad_data_type		)
+		__field(u64,		already_discarding	)
 		__field(u64,		discarded		)
 		__array(char,		err,	16		)
 	),
 
 	TP_fast_assign(
 		__entry->dev			= c->dev;
-		__entry->seen			= seen;
-		__entry->open			= open;
-		__entry->need_journal_commit	= need_journal_commit;
-		__entry->discarded		= discarded;
+		__entry->seen			= s->seen;
+		__entry->open			= s->open;
+		__entry->need_journal_commit	= s->need_journal_commit;
+		__entry->commit_in_flight	= s->commit_in_flight;
+		__entry->bad_data_type		= s->bad_data_type;
+		__entry->already_discarding	= s->already_discarding;
+		__entry->discarded		= s->discarded;
 		strscpy(__entry->err, err, sizeof(__entry->err));
 	),
 
-	TP_printk("%d%d seen %llu open %llu need_journal_commit %llu discarded %llu err %s",
+	TP_printk("%d%d seen %llu open %llu\n"
+		  "need_commit %llu committing %llu bad_data_type %llu\n"
+		  "already_discarding %llu discarded %llu err %s",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->seen,
 		  __entry->open,
 		  __entry->need_journal_commit,
+		  __entry->commit_in_flight,
+		  __entry->bad_data_type,
+		  __entry->already_discarding,
 		  __entry->discarded,
 		  __entry->err)
 );
 
 DEFINE_EVENT(discard_buckets_class, discard_buckets,
-	TP_PROTO(struct bch_fs *c, u64 seen, u64 open,
-		 u64 need_journal_commit, u64 discarded, const char *err),
-	TP_ARGS(c, seen, open, need_journal_commit, discarded, err)
+	TP_PROTO(struct bch_fs *c, struct discard_buckets_state *s, const char *err),
+	TP_ARGS(c, s, err)
 );
 
 DEFINE_EVENT(discard_buckets_class, discard_buckets_fast,
-	TP_PROTO(struct bch_fs *c, u64 seen, u64 open,
-		 u64 need_journal_commit, u64 discarded, const char *err),
-	TP_ARGS(c, seen, open, need_journal_commit, discarded, err)
+	TP_PROTO(struct bch_fs *c, struct discard_buckets_state *s, const char *err),
+	TP_ARGS(c, s, err)
 );
 
 TRACE_EVENT(bucket_invalidate,
