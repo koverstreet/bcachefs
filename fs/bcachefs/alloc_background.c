@@ -1861,6 +1861,7 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 commit:
 	ret = bch2_trans_commit(trans, NULL, NULL,
 				BCH_WATERMARK_btree|
+				BCH_TRANS_COMMIT_no_check_rw|
 				BCH_TRANS_COMMIT_no_enospc);
 	if (ret)
 		goto out;
@@ -1878,9 +1879,8 @@ fsck_err:
 	return ret;
 }
 
-static void bch2_do_discards_work(struct work_struct *work)
+static void __bch2_dev_do_discards(struct bch_dev *ca)
 {
-	struct bch_dev *ca = container_of(work, struct bch_dev, discard_work);
 	struct bch_fs *c = ca->fs;
 	struct discard_buckets_state s = {};
 	struct bpos discard_pos_done = POS_MAX;
@@ -1905,6 +1905,22 @@ static void bch2_do_discards_work(struct work_struct *work)
 			      bch2_err_str(ret));
 
 	enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_dev_do_discards);
+}
+
+void bch2_do_discards_going_ro(struct bch_fs *c)
+{
+	for_each_member_device(c, ca)
+		if (bch2_dev_get_ioref(c, ca->dev_idx, WRITE, BCH_DEV_WRITE_REF_dev_do_discards))
+			__bch2_dev_do_discards(ca);
+}
+
+static void bch2_do_discards_work(struct work_struct *work)
+{
+	struct bch_dev *ca = container_of(work, struct bch_dev, discard_work);
+	struct bch_fs *c = ca->fs;
+
+	__bch2_dev_do_discards(ca);
+
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_discard);
 }
 

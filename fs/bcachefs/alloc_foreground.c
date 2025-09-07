@@ -1529,6 +1529,7 @@ void bch2_fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
 	printbuf_tabstop_push(out, 24);
 
 	prt_printf(out, "capacity\t%llu\n",		c->capacity);
+	prt_printf(out, "used\t%llu\n",			bch2_fs_usage_read_short(c).used);
 	prt_printf(out, "reserved\t%llu\n",		c->reserved);
 	prt_printf(out, "hidden\t%llu\n",		percpu_u64_get(&c->usage->hidden));
 	prt_printf(out, "btree\t%llu\n",		percpu_u64_get(&c->usage->btree));
