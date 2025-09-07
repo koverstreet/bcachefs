@@ -221,6 +221,32 @@ enum bch_write_flags;
 int bch2_bucket_alloc_set_trans(struct btree_trans *, struct alloc_request *,
 				struct dev_stripe_state *, struct closure *);
 
+static inline struct hlist_head *writepoint_hash(struct bch_fs *c,
+						 unsigned long write_point)
+{
+	unsigned hash =
+		hash_long(write_point, ilog2(ARRAY_SIZE(c->write_points_hash)));
+
+	return &c->write_points_hash[hash];
+}
+
+static inline struct write_point *__writepoint_find(struct hlist_head *head,
+					     unsigned long write_point)
+{
+	struct write_point *wp;
+
+	hlist_for_each_entry(wp, head, node)
+		if (wp->write_point == write_point)
+			return wp;
+	return NULL;
+}
+
+static inline struct write_point *writepoint_find(struct bch_fs *c,
+					   unsigned long write_point)
+{
+	return __writepoint_find(writepoint_hash(c, write_point), write_point);
+}
+
 int bch2_alloc_sectors_start_trans(struct btree_trans *,
 				   unsigned, unsigned,
 				   struct write_point_specifier,

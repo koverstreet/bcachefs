@@ -692,7 +692,9 @@ static CLOSURE_CALLBACK(bch2_write_index)
 	if (wp->state == WRITE_POINT_waiting_io)
 		__wp_update_state(wp, WRITE_POINT_waiting_work);
 	list_add_tail(&op->wp_list, &wp->writes);
-	spin_unlock_irqrestore (&wp->writes_lock, flags);
+
+	wp->nr_pending_updates++;
+	spin_unlock_irqrestore(&wp->writes_lock, flags);
 
 	queue_work(wq, &wp->index_update_work);
 }
@@ -718,6 +720,9 @@ void bch2_write_point_do_index_updates(struct work_struct *work)
 		spin_lock_irq(&wp->writes_lock);
 		op = list_pop_entry(&wp->writes, struct bch_write_op, wp_list);
 		wp_update_state(wp, op != NULL);
+
+		if (--wp->nr_pending_updates < 4)
+			closure_wake_up(&wp->pending_updates_wait);
 		spin_unlock_irq(&wp->writes_lock);
 
 		if (!op)
