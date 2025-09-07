@@ -369,6 +369,32 @@ static inline int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
 	return ret;
 }
 
+static inline struct hlist_head *writepoint_hash(struct bch_fs_allocator *a,
+						 unsigned long write_point)
+{
+	unsigned hash =
+		hash_long(write_point, ilog2(ARRAY_SIZE(a->write_points_hash)));
+
+	return &a->write_points_hash[hash];
+}
+
+static inline struct write_point *__writepoint_find(struct hlist_head *head,
+					     unsigned long write_point)
+{
+	struct write_point *wp;
+
+	hlist_for_each_entry(wp, head, node)
+		if (wp->write_point == write_point)
+			return wp;
+	return NULL;
+}
+
+static inline struct write_point *writepoint_find(struct bch_fs_allocator *a,
+					   unsigned long write_point)
+{
+	return __writepoint_find(writepoint_hash(a, write_point), write_point);
+}
+
 static inline struct bch_extent_ptr bch2_ob_ptr(struct bch_fs *c, struct open_bucket *ob)
 {
 	struct bch_dev *ca = ob_dev(c, ob);

@@ -1196,27 +1196,6 @@ void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *ca,
 	bch2_ec_stop_dev(c, ca);
 }
 
-static inline struct hlist_head *writepoint_hash(struct bch_fs_allocator *a,
-						 unsigned long write_point)
-{
-	unsigned hash =
-		hash_long(write_point, ilog2(ARRAY_SIZE(a->write_points_hash)));
-
-	return &a->write_points_hash[hash];
-}
-
-static struct write_point *__writepoint_find(struct hlist_head *head,
-					     unsigned long write_point)
-{
-	struct write_point *wp;
-
-	guard(rcu)();
-	hlist_for_each_entry_rcu(wp, head, node)
-		if (wp->write_point == write_point)
-			return wp;
-	return NULL;
-}
-
 static inline bool too_many_writepoints(struct bch_fs *c, unsigned factor)
 {
 	u64 stranded	= c->allocator.write_points_nr * c->capacity.bucket_size_max;
@@ -1267,7 +1246,7 @@ static noinline bool try_decrease_writepoints(struct btree_trans *trans, unsigne
 	return true;
 }
 
-static struct write_point *writepoint_find(struct btree_trans *trans,
+static struct write_point *writepoint_find_or_allocate(struct btree_trans *trans,
 					   unsigned long write_point)
 {
 	struct bch_fs *c = trans->c;
@@ -1376,7 +1355,7 @@ retry:
 	req->trace.nr			= 0;
 	write_points_nr			= a->write_points_nr;
 
-	*wp_ret = req->wp = writepoint_find(trans, write_point.v);
+	*wp_ret = req->wp = writepoint_find_or_allocate(trans, write_point.v);
 
 	req->data_type		= req->wp->data_type;
 
