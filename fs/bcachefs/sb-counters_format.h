@@ -23,6 +23,8 @@ enum counters_flags {
 	x(io_read_reuse_race,				34,	TYPE_COUNTER)	\
 	x(io_read_retry,				32,	TYPE_COUNTER)	\
 	x(io_read_fail_and_poison,			95,	TYPE_COUNTER)	\
+	x(io_read_narrow_crcs,				97,	TYPE_COUNTER)	\
+	x(io_read_narrow_crcs_fail,			98,	TYPE_COUNTER)	\
 	x(io_write,					1,	TYPE_SECTORS)	\
 	x(io_move,					2,	TYPE_SECTORS)	\
 	x(io_move_read,					35,	TYPE_SECTORS)	\
