@@ -734,6 +734,11 @@ DEFINE_EVENT(fs_str, bucket_alloc_fail,
 	TP_ARGS(c, str)
 );
 
+DEFINE_EVENT(fs_str, open_bucket_alloc_fail,
+	TP_PROTO(struct bch_fs *c, const char *str),
+	TP_ARGS(c, str)
+);
+
 DECLARE_EVENT_CLASS(discard_buckets_class,
 	TP_PROTO(struct bch_fs *c, struct discard_buckets_state *s, const char *err),
 	TP_ARGS(c, s, err),

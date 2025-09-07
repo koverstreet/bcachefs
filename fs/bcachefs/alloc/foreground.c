@@ -141,11 +141,9 @@ void bch2_open_bucket_write_error(struct bch_fs *c,
 
 static struct open_bucket *bch2_open_bucket_alloc(struct bch_fs *c)
 {
-	struct open_bucket *ob;
-
 	BUG_ON(!c->open_buckets_freelist || !c->open_buckets_nr_free);
 
-	ob = c->open_buckets + c->open_buckets_freelist;
+	struct open_bucket *ob = c->open_buckets + c->open_buckets_freelist;
 	c->open_buckets_freelist = ob->freelist;
 	atomic_set(&ob->pin, 1);
 	ob->data_type = 0;
@@ -224,18 +222,25 @@ static struct open_bucket *__try_alloc_bucket(struct bch_fs *c,
 
 	guard(spinlock)(&c->freelist_lock);
 
+	/* Recheck under lock: */
+	if (bch2_bucket_is_open(c, ca->dev_idx, bucket)) {
+		req->counters.skipped_open++;
+		return NULL;
+	}
+
 	if (unlikely(c->open_buckets_nr_free <= bch2_open_buckets_reserved(req->watermark))) {
+		if (trace_open_bucket_alloc_fail_enabled()) {
+			CLASS(printbuf, buf)();
+			guard(printbuf_atomic)(&buf);
+			bch2_fs_open_buckets_to_text(&buf, c);
+			trace_open_bucket_alloc_fail(c, buf.buf);
+		}
+
 		if (cl)
 			closure_wait(&c->open_buckets_wait, cl);
 
 		track_event_change(&c->times[BCH_TIME_blocked_allocate_open_bucket], true);
 		return ERR_PTR(bch_err_throw(c, open_buckets_empty));
-	}
-
-	/* Recheck under lock: */
-	if (bch2_bucket_is_open(c, ca->dev_idx, bucket)) {
-		req->counters.skipped_open++;
-		return NULL;
 	}
 
 	struct open_bucket *ob = bch2_open_bucket_alloc(c);
@@ -1469,17 +1474,28 @@ void bch2_write_points_to_text(struct printbuf *out, struct bch_fs *c)
 	bch2_write_point_to_text(out, c, &c->btree_write_point);
 }
 
-void bch2_fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
+void bch2_fs_open_buckets_to_text(struct printbuf *out, struct bch_fs *c)
 {
-	unsigned nr[BCH_DATA_NR];
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 24);
 
+	unsigned nr[BCH_DATA_NR];
 	memset(nr, 0, sizeof(nr));
 
 	for (unsigned i = 0; i < ARRAY_SIZE(c->open_buckets); i++)
 		nr[c->open_buckets[i].data_type]++;
 
-	printbuf_tabstops_reset(out);
-	printbuf_tabstop_push(out, 24);
+	prt_printf(out, "open buckets allocated\t%i\n",		OPEN_BUCKETS_COUNT - c->open_buckets_nr_free);
+	prt_printf(out, "open buckets total\t%u\n",		OPEN_BUCKETS_COUNT);
+	prt_printf(out, "open_buckets_btree\t%u\n",		nr[BCH_DATA_btree]);
+	prt_printf(out, "open_buckets_user\t%u\n",		nr[BCH_DATA_user]);
+	prt_printf(out, "open_buckets_wait\t%s\n",		c->open_buckets_wait.list.first ? "waiting" : "empty");
+}
+
+void bch2_fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
+{
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 24);
 
 	prt_printf(out, "capacity\t%llu\n",		c->capacity);
 	prt_printf(out, "used\t%llu\n",			bch2_fs_usage_read_short(c).used);
@@ -1493,12 +1509,10 @@ void bch2_fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
 
 	prt_newline(out);
 	prt_printf(out, "freelist_wait\t%s\n",			c->freelist_wait.list.first ? "waiting" : "empty");
-	prt_printf(out, "open buckets allocated\t%i\n",		OPEN_BUCKETS_COUNT - c->open_buckets_nr_free);
-	prt_printf(out, "open buckets total\t%u\n",		OPEN_BUCKETS_COUNT);
-	prt_printf(out, "open_buckets_wait\t%s\n",		c->open_buckets_wait.list.first ? "waiting" : "empty");
-	prt_printf(out, "open_buckets_btree\t%u\n",		nr[BCH_DATA_btree]);
-	prt_printf(out, "open_buckets_user\t%u\n",		nr[BCH_DATA_user]);
 	prt_printf(out, "btree reserve cache\t%u\n",		c->btree_reserve_cache_nr);
+	prt_newline(out);
+
+	bch2_fs_open_buckets_to_text(out, c);
 }
 
 void bch2_dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
