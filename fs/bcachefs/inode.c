@@ -1359,7 +1359,7 @@ err:
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto retry;
 
-	return ret ?: bch_err_throw(c, transaction_restart_nested);
+	return ret;
 }
 
 /*
@@ -1398,7 +1398,8 @@ next_parent:
 int bch2_inode_rm_snapshot(struct btree_trans *trans, u64 inum, u32 snapshot)
 {
 	return __bch2_inode_rm_snapshot(trans, inum, snapshot) ?:
-		delete_ancestor_snapshot_inodes(trans, SPOS(0, inum, snapshot));
+		delete_ancestor_snapshot_inodes(trans, SPOS(0, inum, snapshot)) ?:
+		bch_err_throw(trans->c, transaction_restart_nested);
 }
 
 static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
