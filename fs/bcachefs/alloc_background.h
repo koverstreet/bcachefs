@@ -320,6 +320,7 @@ static inline int bch2_check_discard_freespace_key_async(struct btree_trans *tra
 int bch2_check_alloc_info(struct bch_fs *);
 int bch2_check_alloc_to_lru_refs(struct bch_fs *);
 void bch2_dev_do_discards(struct bch_dev *);
+void bch2_do_discards_going_ro(struct bch_fs *);
 void bch2_do_discards(struct bch_fs *);
 
 static inline u64 should_invalidate_buckets(struct bch_dev *ca,
