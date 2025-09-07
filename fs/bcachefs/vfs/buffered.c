@@ -412,6 +412,7 @@ struct bch_writepage_state {
 	struct bch_inode_opts	opts;
 	struct bch_folio_sector	*tmp;
 	unsigned		tmp_sectors;
+	struct write_point_specifier wp;
 	struct blk_plug		plug;
 };
 
@@ -525,7 +526,7 @@ static void bch2_writepage_io_alloc(struct bch_fs *c,
 	op->target		= w->opts.foreground_target;
 	op->nr_replicas		= nr_replicas;
 	op->res.nr_replicas	= nr_replicas;
-	op->write_point		= writepoint_hashed(inode->ei_last_dirtied);
+	op->write_point		= w->wp;
 	op->subvol		= inode->ei_inum.subvol;
 	op->pos			= POS(inode->v.i_ino, sector);
 	op->end_io		= bch2_writepage_io_done;
@@ -534,7 +535,7 @@ static void bch2_writepage_io_alloc(struct bch_fs *c,
 	op->wbio.bio.bi_opf	= wbc_to_write_flags(wbc);
 }
 
-static bool can_write_now(struct bch_fs *c, unsigned replicas_want, struct closure *cl)
+static bool can_write_now(struct bch_fs *c, struct bch_writepage_state *w, struct closure *cl)
 {
 	unsigned reserved = OPEN_BUCKETS_COUNT -
 		(OPEN_BUCKETS_COUNT - bch2_open_buckets_reserved(BCH_WATERMARK_normal)) / 2;
@@ -549,13 +550,19 @@ static bool can_write_now(struct bch_fs *c, unsigned replicas_want, struct closu
 		return false;
 	}
 
+	struct write_point *wp = writepoint_find(c, w->wp.v);
+	if (wp && wp->nr_pending_updates > 4) {
+		closure_wait(&wp->pending_updates_wait, cl);
+		return false;
+	}
+
 	return true;
 }
 
-static void throttle_writes(struct bch_fs *c, unsigned replicas_want, struct closure *cl)
+static void throttle_writes(struct bch_fs *c, struct bch_writepage_state *w, struct closure *cl)
 {
 	u64 start = 0;
-	while (!can_write_now(c, replicas_want, cl)) {
+	while (!can_write_now(c, w, cl)) {
 		if (!start)
 			start = local_clock();
 		closure_sync(cl);
@@ -705,10 +712,12 @@ do_io:
 int bch2_writepages(struct address_space *mapping, struct writeback_control *wbc)
 {
 	struct bch_fs *c = mapping->host->i_sb->s_fs_info;
+	struct bch_inode_info *inode = to_bch_ei(mapping->host);
 	struct bch_writepage_state *w = kzalloc(sizeof(*w), GFP_NOFS|__GFP_NOFAIL);
 
-	bch2_inode_opts_get_inode(c, &to_bch_ei(mapping->host)->ei_inode, &w->opts);
+	bch2_inode_opts_get_inode(c, &inode->ei_inode, &w->opts);
 
+	w->wp = writepoint_hashed(inode->ei_last_dirtied);
 	blk_start_plug(&w->plug);
 
 	CLASS(closure_stack, cl)();
@@ -716,7 +725,7 @@ int bch2_writepages(struct address_space *mapping, struct writeback_control *wbc
 	struct folio *folio = NULL;
 	int ret = 0;
 
-	while (throttle_writes(c, w->opts.data_replicas, &cl),
+	while (throttle_writes(c, w, &cl),
 	       (folio = writeback_iter(mapping, wbc, folio, &ret)))
 		ret = __bch2_writepage(folio, wbc, w);
 

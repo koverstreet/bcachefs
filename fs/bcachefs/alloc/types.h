@@ -104,6 +104,8 @@ struct write_point {
 
 		struct list_head	writes;
 		spinlock_t		writes_lock;
+		unsigned		nr_pending_updates;
+		struct closure_waitlist	pending_updates_wait;
 
 		enum write_point_state	state;
 		u64			last_state_change;
