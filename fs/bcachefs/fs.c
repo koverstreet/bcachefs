@@ -2255,11 +2255,16 @@ static int bch2_statfs(struct dentry *dentry, struct kstatfs *buf)
 	struct bch_fs *c = sb->s_fs_info;
 	struct bch_fs_usage_short usage = bch2_fs_usage_read_short(c);
 	unsigned shift = sb->s_blocksize_bits - 9;
+
 	/*
-	 * this assumes inodes take up 64 bytes, which is a decent average
+	 * This assumes inodes take up 64 bytes, which is a decent average
 	 * number:
+	 *
+	 * Not anymore - bi_dir, bi_dir_offset came later and shouldn't have
+	 * been varint fields: seeing 144-160 byte inodes, so let's call it 256
+	 * bytes:
 	 */
-	u64 avail_inodes = ((usage.capacity - usage.used) << 3);
+	u64 avail_inodes = ((usage.capacity - usage.used) << 1);
 
 	buf->f_type	= BCACHEFS_STATFS_MAGIC;
 	buf->f_bsize	= sb->s_blocksize;
