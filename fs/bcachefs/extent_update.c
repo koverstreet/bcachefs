@@ -146,6 +146,7 @@ int bch2_extent_trim_atomic(struct btree_trans *trans,
 			if (bpos_ge(bkey_start_pos(k.k), end))
 				break;
 
+			nr_iters += 1;
 			ret = count_iters_for_insert(trans, k, offset, &end, &nr_iters);
 			if (ret)
 				break;
