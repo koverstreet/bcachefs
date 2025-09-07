@@ -118,4 +118,14 @@ struct write_point_specifier {
 	unsigned long		v;
 };
 
+struct discard_buckets_state {
+	u64		seen;
+	u64		open;
+	u64		need_journal_commit;
+	u64		commit_in_flight;
+	u64		bad_data_type;
+	u64		already_discarding;
+	u64		discarded;
+};
+
 #endif /* _BCACHEFS_ALLOC_TYPES_H */
