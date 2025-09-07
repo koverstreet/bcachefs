@@ -702,8 +702,10 @@ static void btree_update_nodes_written(struct btree_update *as)
 	if (ret)
 		goto err;
 
-	if (!btree_update_new_nodes_marked_sb(as))
+	if (!btree_update_new_nodes_marked_sb(as)) {
+		bch2_trans_unlock_long(trans);
 		btree_update_new_nodes_mark_sb(as);
+	}
 
 	/*
 	 * Wait for any in flight writes to finish before we free the old nodes
