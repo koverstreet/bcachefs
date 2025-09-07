@@ -749,14 +749,12 @@ static void bch2_rbio_error(struct bch_read_bio *rbio,
 }
 
 static int __bch2_rbio_narrow_crcs(struct btree_trans *trans,
-				   struct bch_read_bio *rbio)
+				   struct bch_read_bio *rbio,
+				   struct bch_extent_crc_unpacked *new_crc)
 {
 	struct bch_fs *c = rbio->c;
 	u64 data_offset = rbio->data_pos.offset - rbio->pick.crc.offset;
 	int ret = 0;
-
-	if (crc_is_compressed(rbio->pick.crc))
-		return 0;
 
 	CLASS(btree_iter, iter)(trans, rbio->data_btree, rbio->data_pos, BTREE_ITER_intent);
 	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
@@ -765,21 +763,12 @@ static int __bch2_rbio_narrow_crcs(struct btree_trans *trans,
 
 	if (bversion_cmp(k.k->bversion, rbio->version) ||
 	    !bch2_bkey_matches_ptr(c, k, rbio->pick.ptr, data_offset))
-		return 0;
+		return bch_err_throw(c, rbio_narrow_crcs_fail);
 
-	/* Extent was merged? */
-	if (bkey_start_offset(k.k) < data_offset ||
-	    k.k->p.offset > data_offset + rbio->pick.crc.uncompressed_size)
-		return 0;
-
-	struct bch_extent_crc_unpacked new_crc;
-	if (bch2_rechecksum_bio(c, &rbio->bio, rbio->version,
-			rbio->pick.crc, NULL, &new_crc,
-			bkey_start_offset(k.k) - data_offset, k.k->size,
-			rbio->pick.crc.csum_type)) {
-		bch_err(c, "error verifying existing checksum while narrowing checksum (memory corruption?)");
-		return 0;
-	}
+	/* Extent was trimmed/merged? */
+	if (!bpos_eq(bkey_start_pos(k.k), rbio->data_pos) ||
+	    k.k->p.offset != rbio->data_pos.offset + rbio->pick.crc.live_size)
+		return bch_err_throw(c, rbio_narrow_crcs_fail);
 
 	/*
 	 * going to be temporarily appending another checksum entry:
@@ -791,17 +780,37 @@ static int __bch2_rbio_narrow_crcs(struct btree_trans *trans,
 
 	bkey_reassemble(new, k);
 
-	if (!bch2_bkey_narrow_crcs(new, new_crc))
-		return 0;
+	if (!bch2_bkey_narrow_crcs(new, *new_crc))
+		return bch_err_throw(c, rbio_narrow_crcs_fail);
 
 	return bch2_trans_update(trans, &iter, new, BTREE_UPDATE_internal_snapshot_node);
 }
 
 static noinline void bch2_rbio_narrow_crcs(struct bch_read_bio *rbio)
 {
-	CLASS(btree_trans, trans)(rbio->c);
-	commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-		  __bch2_rbio_narrow_crcs(trans, rbio));
+	struct bch_fs *c = rbio->c;
+
+	if (crc_is_compressed(rbio->pick.crc))
+		return;
+
+	u64 data_offset = rbio->data_pos.offset - rbio->pick.crc.offset;
+
+	struct bch_extent_crc_unpacked new_crc;
+	if (bch2_rechecksum_bio(c, &rbio->bio, rbio->version,
+			rbio->pick.crc, NULL, &new_crc,
+			rbio->data_pos.offset - data_offset, rbio->pick.crc.live_size,
+			rbio->pick.crc.csum_type)) {
+		bch_err(c, "error verifying existing checksum while narrowing checksum (memory corruption?)");
+		return;
+	}
+
+	CLASS(btree_trans, trans)(c);
+	int ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+			    __bch2_rbio_narrow_crcs(trans, rbio, &new_crc));
+	if (!ret)
+		count_event(c, io_read_narrow_crcs);
+	else if (ret == -BCH_ERR_rbio_narrow_crcs_fail)
+		count_event(c, io_read_narrow_crcs_fail);
 }
 
 static void bch2_read_decompress_err(struct work_struct *work)
