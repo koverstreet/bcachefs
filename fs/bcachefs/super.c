@@ -1211,12 +1211,14 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 
 	bch2_opts_apply(&c->opts, *opts);
 
+#ifdef __KERNEL__
 	if (!IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE) &&
 	    c->opts.block_size > PAGE_SIZE) {
 		bch_err(c, "cannot mount bs > ps filesystem without CONFIG_TRANSPARENT_HUGEPAGE");
 		ret = -EINVAL;
 		goto err;
 	}
+#endif
 
 	c->btree_key_cache_btrees |= 1U << BTREE_ID_alloc;
 	if (c->opts.inodes_use_key_cache)
