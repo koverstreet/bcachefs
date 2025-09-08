@@ -238,6 +238,7 @@ static int bch2_dev_sysfs_online(struct bch_fs *, struct bch_dev *);
 static void bch2_dev_io_ref_stop(struct bch_dev *, int);
 static void __bch2_dev_read_only(struct bch_fs *, struct bch_dev *);
 static int bch2_dev_attach_bdev(struct bch_fs *, struct bch_sb_handle *, struct printbuf *);
+static bool bch2_fs_will_resize_on_mount(struct bch_fs *);
 
 struct bch_fs *bch2_dev_to_fs(dev_t dev)
 {
@@ -964,6 +965,9 @@ static int bch2_fs_opt_version_init(struct bch_fs *c)
 	if (c->opts.journal_rewind)
 		c->opts.fsck = true;
 
+	bool may_upgrade_downgrade = !(c->sb.features & BIT_ULL(BCH_FEATURE_small_image)) ||
+		bch2_fs_will_resize_on_mount(c);
+
 	CLASS(printbuf, p)();
 	bch2_log_msg_start(c, &p);
 
@@ -1040,22 +1044,24 @@ static int bch2_fs_opt_version_init(struct bch_fs *c)
 			prt_bitflags(&p, __bch2_btree_ids, btrees_lost_data);
 		}
 
-		if (bch2_check_version_downgrade(c)) {
-			prt_str(&p, "\nVersion downgrade required:");
+		if (may_upgrade_downgrade) {
+			if (bch2_check_version_downgrade(c)) {
+				prt_str(&p, "\nVersion downgrade required:");
 
-			__le64 passes = ext->recovery_passes_required[0];
-			bch2_sb_set_downgrade(c,
-					      BCH_VERSION_MINOR(bcachefs_metadata_version_current),
-					      BCH_VERSION_MINOR(c->sb.version));
-			passes = ext->recovery_passes_required[0] & ~passes;
-			if (passes) {
-				prt_str(&p, "\nrunning recovery passes: ");
-				prt_bitflags(&p, bch2_recovery_passes,
-					     bch2_recovery_passes_from_stable(le64_to_cpu(passes)));
+				__le64 passes = ext->recovery_passes_required[0];
+				bch2_sb_set_downgrade(c,
+						      BCH_VERSION_MINOR(bcachefs_metadata_version_current),
+						      BCH_VERSION_MINOR(c->sb.version));
+				passes = ext->recovery_passes_required[0] & ~passes;
+				if (passes) {
+					prt_str(&p, "\nrunning recovery passes: ");
+					prt_bitflags(&p, bch2_recovery_passes,
+						     bch2_recovery_passes_from_stable(le64_to_cpu(passes)));
+				}
 			}
-		}
 
-		check_version_upgrade(c);
+			check_version_upgrade(c);
+		}
 
 		c->opts.recovery_passes |= bch2_recovery_passes_from_stable(le64_to_cpu(ext->recovery_passes_required[0]));
 
@@ -2422,15 +2428,29 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct p
 	return 0;
 }
 
+static bool bch2_dev_will_resize_on_mount(struct bch_dev *ca)
+{
+	return ca->mi.resize_on_mount &&
+		ca->mi.nbuckets < div64_u64(get_capacity(ca->disk_sb.bdev->bd_disk),
+					    ca->mi.bucket_size);
+}
+
+static bool bch2_fs_will_resize_on_mount(struct bch_fs *c)
+{
+	bool ret = false;
+	for_each_online_member(c, ca, BCH_DEV_READ_REF_fs_resize_on_mount)
+		ret |= bch2_dev_will_resize_on_mount(ca);
+	return ret;
+}
+
 int bch2_fs_resize_on_mount(struct bch_fs *c)
 {
 	for_each_online_member(c, ca, BCH_DEV_READ_REF_fs_resize_on_mount) {
-		u64 old_nbuckets = ca->mi.nbuckets;
-		u64 new_nbuckets = div64_u64(get_capacity(ca->disk_sb.bdev->bd_disk),
-					 ca->mi.bucket_size);
+		if (bch2_dev_will_resize_on_mount(ca)) {
+			u64 old_nbuckets = ca->mi.nbuckets;
+			u64 new_nbuckets = div64_u64(get_capacity(ca->disk_sb.bdev->bd_disk),
+						     ca->mi.bucket_size);
 
-		if (ca->mi.resize_on_mount &&
-		    new_nbuckets > ca->mi.nbuckets) {
 			bch_info(ca, "resizing to size %llu", new_nbuckets * ca->mi.bucket_size);
 			int ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
 			bch_err_fn(ca, ret);
