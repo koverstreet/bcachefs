@@ -1249,6 +1249,12 @@ int bch2_gc_gens(struct bch_fs *c)
 
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_gc], start_time);
 	trace_and_count(c, gc_gens_end, c);
+
+	if (!(c->sb.compat & BIT_ULL(BCH_COMPAT_no_stale_ptrs))) {
+		guard(mutex)(&c->sb_lock);
+		c->disk_sb.sb->compat[0] |= cpu_to_le64(BIT_ULL(BCH_COMPAT_no_stale_ptrs));
+		bch2_write_super(c);
+	}
 err:
 	for_each_member_device(c, ca) {
 		kvfree(ca->oldest_gen);
