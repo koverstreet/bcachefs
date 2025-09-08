@@ -299,8 +299,10 @@ int bch2_save_backtrace(bch_stacktrace *stack, struct task_struct *task, unsigne
 	if (ret)
 		return ret;
 
+	skipnr += task == current;
+
 	do {
-		nr_entries = stack_trace_save_tsk(task, stack->data, stack->size, skipnr + 1);
+		nr_entries = stack_trace_save_tsk(task, stack->data, stack->size, skipnr);
 	} while (nr_entries == stack->size &&
 		 !(ret = darray_make_room_gfp(stack, stack->size * 2, gfp)));
 
@@ -321,8 +323,10 @@ void bch2_prt_backtrace(struct printbuf *out, bch_stacktrace *stack)
 
 int bch2_prt_task_backtrace(struct printbuf *out, struct task_struct *task, unsigned skipnr, gfp_t gfp)
 {
+	skipnr += task == current;
+
 	CLASS(bch_stacktrace, stack)();
-	int ret = bch2_save_backtrace(&stack, task, skipnr + 1, gfp);
+	int ret = bch2_save_backtrace(&stack, task, skipnr, gfp);
 
 	bch2_prt_backtrace(out, &stack);
 	return ret;
