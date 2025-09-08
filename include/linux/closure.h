@@ -169,10 +169,17 @@ struct closure {
 };
 
 void closure_sub(struct closure *cl, int v);
-void closure_put(struct closure *cl);
 void __closure_wake_up(struct closure_waitlist *list);
 bool closure_wait(struct closure_waitlist *list, struct closure *cl);
 void __closure_sync(struct closure *cl);
+
+/*
+ * closure_put - decrement a closure's refcount
+ */
+static inline void closure_put(struct closure *cl)
+{
+	closure_sub(cl, 1);
+}
 
 static inline unsigned closure_nr_remaining(struct closure *cl)
 {
