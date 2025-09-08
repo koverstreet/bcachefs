@@ -920,6 +920,13 @@ use_clean:
 	if (bch2_blacklist_entries_gc(c))
 		write_sb = true;
 
+	if (!(c->sb.compat & BIT_ULL(BCH_COMPAT_no_stale_ptrs)) &&
+	    (c->recovery.passes_complete & BIT_ULL(BCH_RECOVERY_PASS_check_extents)) &&
+	    (c->recovery.passes_complete & BIT_ULL(BCH_RECOVERY_PASS_check_indirect_extents))) {
+		c->disk_sb.sb->compat[0] |= cpu_to_le64(BIT_ULL(BCH_COMPAT_no_stale_ptrs));
+		write_sb = true;
+	}
+
 	if (write_sb)
 		bch2_write_super(c);
 	mutex_unlock(&c->sb_lock);
@@ -982,8 +989,9 @@ int bch2_fs_initialize(struct bch_fs *c)
 	set_bit(BCH_FS_new_fs, &c->flags);
 
 	scoped_guard(mutex, &c->sb_lock) {
-		c->disk_sb.sb->compat[0] |= cpu_to_le64(1ULL << BCH_COMPAT_extents_above_btree_updates_done);
-		c->disk_sb.sb->compat[0] |= cpu_to_le64(1ULL << BCH_COMPAT_bformat_overflow_done);
+		c->disk_sb.sb->compat[0] |= cpu_to_le64(BIT_ULL(BCH_COMPAT_extents_above_btree_updates_done));
+		c->disk_sb.sb->compat[0] |= cpu_to_le64(BIT_ULL(BCH_COMPAT_bformat_overflow_done));
+		c->disk_sb.sb->compat[0] |= cpu_to_le64(BIT_ULL(BCH_COMPAT_no_stale_ptrs));
 
 		bch2_check_version_downgrade(c);
 

@@ -1993,7 +1993,8 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		    struct printbuf *err)
 {
 	unsigned dev_idx = ca->dev_idx, data;
-	bool fast_device_removal = !bch2_request_incompat_feature(c,
+	bool fast_device_removal = (c->sb.compat & BIT_ULL(BCH_COMPAT_no_stale_ptrs)) &&
+		!bch2_request_incompat_feature(c,
 					bcachefs_metadata_version_fast_device_removal);
 	int ret;
 
