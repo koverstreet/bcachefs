@@ -13,25 +13,25 @@
 #include <linux/seq_file.h>
 #include <linux/sched/debug.h>
 
-static inline void closure_put_after_sub_checks(struct closure *cl, int flags)
+static void closure_val_checks(struct closure *cl, unsigned new)
 {
-	int r = flags & CLOSURE_REMAINING_MASK;
+	unsigned count = new & CLOSURE_REMAINING_MASK;
 
-	if (WARN(flags & CLOSURE_GUARD_MASK,
+	if (WARN(new & CLOSURE_GUARD_MASK,
 		 "closure %ps has guard bits set: %x (%u)",
 		 cl->fn,
-		 flags & CLOSURE_GUARD_MASK, (unsigned) __fls(r)))
-		r &= ~CLOSURE_GUARD_MASK;
+		 new, (unsigned) __fls(new & CLOSURE_GUARD_MASK)))
+		new &= ~CLOSURE_GUARD_MASK;
 
-	WARN(!r && (flags & ~CLOSURE_DESTRUCTOR),
+	WARN(!count && (new & ~CLOSURE_DESTRUCTOR),
 	     "closure %ps ref hit 0 with incorrect flags set: %x (%u)",
 	     cl->fn,
-	     flags & ~CLOSURE_DESTRUCTOR, (unsigned) __fls(flags));
+	     new, (unsigned) __fls(new));
 }
 
 static inline void closure_put_after_sub(struct closure *cl, int flags)
 {
-	closure_put_after_sub_checks(cl, flags);
+	closure_val_checks(cl, flags);
 
 	if (!(flags & CLOSURE_REMAINING_MASK)) {
 		smp_acquire__after_ctrl_dep();
@@ -169,7 +169,7 @@ void __sched closure_return_sync(struct closure *cl)
 	unsigned flags = atomic_sub_return_release(1 + CLOSURE_RUNNING - CLOSURE_DESTRUCTOR,
 						   &cl->remaining);
 
-	closure_put_after_sub_checks(cl, flags);
+	closure_val_checks(cl, flags);
 
 	if (unlikely(flags & CLOSURE_REMAINING_MASK)) {
 		while (1) {
