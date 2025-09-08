@@ -344,15 +344,6 @@ void bch2_bkey_swab_val(struct bkey_s k)
 		ops->swab(k);
 }
 
-bool bch2_bkey_normalize(struct bch_fs *c, struct bkey_s k)
-{
-	const struct bkey_ops *ops = bch2_bkey_type_ops(k.k->type);
-
-	return ops->key_normalize
-		? ops->key_normalize(c, k)
-		: false;
-}
-
 bool bch2_bkey_merge(struct bch_fs *c, struct bkey_s l, struct bkey_s_c r)
 {
 	const struct bkey_ops *ops = bch2_bkey_type_ops(l.k->type);
