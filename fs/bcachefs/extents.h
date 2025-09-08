@@ -440,7 +440,6 @@ bool bch2_extent_merge(struct bch_fs *, struct bkey_s, struct bkey_s_c);
 	.key_validate	= bch2_bkey_ptrs_validate,		\
 	.val_to_text	= bch2_bkey_ptrs_to_text,		\
 	.swab		= bch2_ptr_swab,			\
-	.key_normalize	= bch2_extent_normalize,		\
 	.key_merge	= bch2_extent_merge,			\
 	.trigger	= bch2_trigger_extent,			\
 })
