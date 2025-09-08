@@ -128,14 +128,15 @@ enum closure_state {
 	 * annotate where references are being transferred.
 	 */
 
-	CLOSURE_BITS_START	= (1U << 26),
-	CLOSURE_DESTRUCTOR	= (1U << 26),
+	CLOSURE_BITS_START	= (1U << 24),
+	CLOSURE_DESTRUCTOR	= (1U << 24),
+	CLOSURE_SLEEPING	= (1U << 26),
 	CLOSURE_WAITING		= (1U << 28),
 	CLOSURE_RUNNING		= (1U << 30),
 };
 
 #define CLOSURE_GUARD_MASK					\
-	(((CLOSURE_DESTRUCTOR|CLOSURE_WAITING|CLOSURE_RUNNING) << 1)|(CLOSURE_BITS_START >> 1))
+	(((CLOSURE_DESTRUCTOR|CLOSURE_SLEEPING|CLOSURE_WAITING|CLOSURE_RUNNING) << 1)|(CLOSURE_BITS_START >> 1))
 
 #define CLOSURE_REMAINING_MASK		(CLOSURE_BITS_START - 1)
 #define CLOSURE_REMAINING_INITIALIZER	(1|CLOSURE_RUNNING)
@@ -144,7 +145,7 @@ struct closure {
 	union {
 		struct {
 			struct workqueue_struct *wq;
-			struct closure_syncer	*s;
+			struct task_struct	*sleeper;
 			struct llist_node	list;
 			closure_fn		*fn;
 		};
