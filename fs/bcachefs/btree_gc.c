@@ -1140,43 +1140,11 @@ static int gc_btree_gens_key(struct btree_trans *trans,
 			     struct bkey_s_c k)
 {
 	struct bch_fs *c = trans->c;
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 
 	if (unlikely(test_bit(BCH_FS_going_ro, &c->flags)))
 		return -EROFS;
 
-	bool too_stale = false;
-	scoped_guard(rcu) {
-		bkey_for_each_ptr(ptrs, ptr) {
-			struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
-			if (!ca)
-				continue;
-
-			too_stale |= dev_ptr_stale(ca, ptr) > 16;
-		}
-
-		if (!too_stale)
-			bkey_for_each_ptr(ptrs, ptr) {
-				struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
-				if (!ca)
-					continue;
-
-				u8 *gen = &ca->oldest_gen[PTR_BUCKET_NR(ca, ptr)];
-				if (gen_after(*gen, ptr->gen))
-					*gen = ptr->gen;
-			}
-	}
-
-	if (too_stale) {
-		struct bkey_i *u = bch2_bkey_make_mut(trans, iter, &k, 0);
-		int ret = PTR_ERR_OR_ZERO(u);
-		if (ret)
-			return ret;
-
-		bch2_extent_normalize(c, bkey_i_to_s(u));
-	}
-
-	return 0;
+	return bch2_bkey_drop_stale_ptrs(trans, iter, k);
 }
 
 static int bch2_alloc_write_oldest_gen(struct btree_trans *trans, struct bch_dev *ca,
