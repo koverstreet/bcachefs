@@ -432,6 +432,10 @@ fsck_err:
 /* verify that every backpointer has a corresponding alloc key */
 int bch2_check_btree_backpointers(struct bch_fs *c)
 {
+	struct progress_indicator_state progress;
+
+	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_backpointers));
+
 	struct bkey_buf last_flushed;
 	bch2_bkey_buf_init(&last_flushed);
 	bkey_init(&last_flushed.k->k);
@@ -439,8 +443,10 @@ int bch2_check_btree_backpointers(struct bch_fs *c)
 	CLASS(btree_trans, trans)(c);
 	int ret = for_each_btree_key_commit(trans, iter,
 			BTREE_ID_backpointers, POS_MIN, 0, k,
-			NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-		  bch2_check_backpointer_has_valid_bucket(trans, k, &last_flushed));
+			NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+		progress_update_iter(trans, &progress, &iter);
+		bch2_check_backpointer_has_valid_bucket(trans, k, &last_flushed);
+	}));
 
 	bch2_bkey_buf_exit(&last_flushed, c);
 	return ret;
