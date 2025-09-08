@@ -13,14 +13,14 @@
 #include <linux/seq_file.h>
 #include <linux/sched/debug.h>
 
-static void closure_val_checks(struct closure *cl, unsigned new)
+static void closure_val_checks(struct closure *cl, unsigned new, int d)
 {
 	unsigned count = new & CLOSURE_REMAINING_MASK;
 
 	if (WARN(new & CLOSURE_GUARD_MASK,
-		 "closure %ps has guard bits set: %x (%u)",
+		 "closure %ps has guard bits set: %x (%u), delta %i",
 		 cl->fn,
-		 new, (unsigned) __fls(new & CLOSURE_GUARD_MASK)))
+		 new, (unsigned) __fls(new & CLOSURE_GUARD_MASK), d))
 		new &= ~CLOSURE_GUARD_MASK;
 
 	WARN(!count && (new & ~CLOSURE_DESTRUCTOR),
@@ -29,49 +29,54 @@ static void closure_val_checks(struct closure *cl, unsigned new)
 	     new, (unsigned) __fls(new));
 }
 
-static inline void closure_put_after_sub(struct closure *cl, int flags)
-{
-	closure_val_checks(cl, flags);
-
-	if (!(flags & CLOSURE_REMAINING_MASK)) {
-		smp_acquire__after_ctrl_dep();
-
-		cl->closure_get_happened = false;
-
-		if (cl->fn && !(flags & CLOSURE_DESTRUCTOR)) {
-			atomic_set(&cl->remaining,
-				   CLOSURE_REMAINING_INITIALIZER);
-			closure_queue(cl);
-		} else {
-			struct closure *parent = cl->parent;
-			closure_fn *destructor = cl->fn;
-
-			closure_debug_destroy(cl);
-
-			if (destructor)
-				destructor(&cl->work);
-
-			if (parent)
-				closure_put(parent);
-		}
-	}
-}
+enum new_closure_state {
+	CLOSURE_normal_put,
+	CLOSURE_requeue,
+	CLOSURE_done,
+};
 
 /* For clearing flags with the same atomic op as a put */
 void closure_sub(struct closure *cl, int v)
 {
-	closure_put_after_sub(cl, atomic_sub_return_release(v, &cl->remaining));
+	enum new_closure_state s;
+
+	int old = atomic_read(&cl->remaining), new;
+	do {
+		new = old - v;
+
+		if (new & CLOSURE_REMAINING_MASK) {
+			s = CLOSURE_normal_put;
+		} else {
+			if (cl->fn && !(new & CLOSURE_DESTRUCTOR)) {
+				s = CLOSURE_requeue;
+				new += CLOSURE_REMAINING_INITIALIZER;
+			} else
+				s = CLOSURE_done;
+		}
+
+		closure_val_checks(cl, new, -v);
+	} while (!atomic_try_cmpxchg_release(&cl->remaining, &old, new));
+
+	if (s == CLOSURE_normal_put)
+		return;
+
+	if (s == CLOSURE_requeue) {
+		cl->closure_get_happened = false;
+		closure_queue(cl);
+	} else {
+		struct closure *parent = cl->parent;
+		closure_fn *destructor = cl->fn;
+
+		closure_debug_destroy(cl);
+
+		if (destructor)
+			destructor(&cl->work);
+
+		if (parent)
+			closure_put(parent);
+	}
 }
 EXPORT_SYMBOL(closure_sub);
-
-/*
- * closure_put - decrement a closure's refcount
- */
-void closure_put(struct closure *cl)
-{
-	closure_put_after_sub(cl, atomic_dec_return_release(&cl->remaining));
-}
-EXPORT_SYMBOL(closure_put);
 
 /*
  * closure_wake_up - wake up all closures on a wait list, without memory barrier
@@ -169,7 +174,7 @@ void __sched closure_return_sync(struct closure *cl)
 	unsigned flags = atomic_sub_return_release(1 + CLOSURE_RUNNING - CLOSURE_DESTRUCTOR,
 						   &cl->remaining);
 
-	closure_val_checks(cl, flags);
+	closure_val_checks(cl, flags, 1 + CLOSURE_RUNNING - CLOSURE_DESTRUCTOR);
 
 	if (unlikely(flags & CLOSURE_REMAINING_MASK)) {
 		while (1) {
