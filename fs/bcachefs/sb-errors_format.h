@@ -170,9 +170,10 @@ enum bch_fsck_flags {
 	x(ptr_to_missing_replicas_entry,			149,	FSCK_AUTOFIX)	\
 	x(ptr_to_missing_stripe,				150,	0)		\
 	x(ptr_to_incorrect_stripe,				151,	0)		\
-	x(ptr_gen_newer_than_bucket_gen,			152,	FSCK_AUTOFIX)		\
+	x(ptr_gen_newer_than_bucket_gen,			152,	FSCK_AUTOFIX)	\
 	x(ptr_too_stale,					153,	0)		\
 	x(stale_dirty_ptr,					154,	FSCK_AUTOFIX)	\
+	x(stale_ptr_with_no_stale_ptrs_feature,			327,	FSCK_AUTOFIX)	\
 	x(ptr_bucket_data_type_mismatch,			155,	0)		\
 	x(ptr_cached_and_erasure_coded,				156,	0)		\
 	x(ptr_crc_uncompressed_size_too_small,			157,	0)		\
@@ -338,7 +339,7 @@ enum bch_fsck_flags {
 	x(dirent_stray_data_after_cf_name,			305,	0)		\
 	x(rebalance_work_incorrectly_set,			309,	FSCK_AUTOFIX)	\
 	x(rebalance_work_incorrectly_unset,			310,	FSCK_AUTOFIX)	\
-	x(MAX,							327,	0)
+	x(MAX,							328,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,

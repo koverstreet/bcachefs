@@ -965,7 +965,8 @@ enum bch_sb_feature {
 	x(alloc_info,				0)	\
 	x(alloc_metadata,			1)	\
 	x(extents_above_btree_updates_done,	2)	\
-	x(bformat_overflow_done,		3)
+	x(bformat_overflow_done,		3)	\
+	x(no_stale_ptrs,			4)
 
 enum bch_sb_compat {
 #define x(f, n) BCH_COMPAT_##f,

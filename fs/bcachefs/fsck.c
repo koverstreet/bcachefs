@@ -1963,7 +1963,8 @@ static int check_extent(struct btree_trans *trans, struct btree_iter *iter,
 		}
 	}
 
-	ret = check_extent_overbig(trans, iter, k);
+	ret = check_extent_overbig(trans, iter, k) ?:
+		bch2_bkey_drop_stale_ptrs(trans, iter, k);
 	if (ret)
 		goto err;
 
@@ -2040,7 +2041,8 @@ int bch2_check_indirect_extents(struct bch_fs *c)
 				BCH_TRANS_COMMIT_no_enospc, ({
 			progress_update_iter(trans, &progress, &iter);
 			bch2_disk_reservation_put(c, &res);
-			check_extent_overbig(trans, &iter, k);
+			check_extent_overbig(trans, &iter, k) ?:
+			bch2_bkey_drop_stale_ptrs(trans, &iter, k);
 		}));
 
 	bch2_disk_reservation_put(c, &res);
