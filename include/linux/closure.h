@@ -155,7 +155,6 @@ struct closure {
 	struct closure		*parent;
 
 	atomic_t		remaining;
-	bool			closure_get_happened;
 
 #ifdef CONFIG_DEBUG_CLOSURES
 #define CLOSURE_MAGIC_DEAD	0xc054dead
@@ -195,11 +194,7 @@ static inline unsigned closure_nr_remaining(struct closure *cl)
  */
 static inline void closure_sync(struct closure *cl)
 {
-#ifdef CONFIG_DEBUG_CLOSURES
-	BUG_ON(closure_nr_remaining(cl) != 1 && !cl->closure_get_happened);
-#endif
-
-	if (cl->closure_get_happened)
+	if (closure_nr_remaining(cl) > 1)
 		__closure_sync(cl);
 }
 
@@ -207,10 +202,7 @@ int __closure_sync_timeout(struct closure *cl, unsigned long timeout);
 
 static inline int closure_sync_timeout(struct closure *cl, unsigned long timeout)
 {
-#ifdef CONFIG_DEBUG_CLOSURES
-	BUG_ON(closure_nr_remaining(cl) != 1 && !cl->closure_get_happened);
-#endif
-	return cl->closure_get_happened
+	return closure_nr_remaining(cl) > 1
 		? __closure_sync_timeout(cl, timeout)
 		: 0;
 }
@@ -283,8 +275,6 @@ static inline void closure_queue(struct closure *cl)
  */
 static inline void closure_get(struct closure *cl)
 {
-	cl->closure_get_happened = true;
-
 #ifdef CONFIG_DEBUG_CLOSURES
 	BUG_ON((atomic_inc_return(&cl->remaining) &
 		CLOSURE_REMAINING_MASK) <= 1);
@@ -322,7 +312,6 @@ static inline void closure_init(struct closure *cl, struct closure *parent)
 		closure_get(parent);
 
 	atomic_set(&cl->remaining, CLOSURE_REMAINING_INITIALIZER);
-	cl->closure_get_happened = false;
 
 	closure_debug_create(cl);
 	closure_set_ip(cl);
