@@ -26,7 +26,6 @@ struct bkey_ops {
 	void		(*val_to_text)(struct printbuf *, struct bch_fs *,
 				       struct bkey_s_c);
 	void		(*swab)(struct bkey_s);
-	bool		(*key_normalize)(struct bch_fs *, struct bkey_s);
 	bool		(*key_merge)(struct bch_fs *, struct bkey_s, struct bkey_s_c);
 	int		(*trigger)(struct btree_trans *, enum btree_id, unsigned,
 				   struct bkey_s_c, struct bkey_s,
@@ -65,8 +64,6 @@ void bch2_bkey_val_to_text(struct printbuf *, struct bch_fs *,
 			   struct bkey_s_c);
 
 void bch2_bkey_swab_val(struct bkey_s);
-
-bool bch2_bkey_normalize(struct bch_fs *, struct bkey_s);
 
 static inline bool bch2_bkey_maybe_mergable(const struct bkey *l, const struct bkey *r)
 {
