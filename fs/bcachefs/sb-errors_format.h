@@ -160,7 +160,7 @@ enum bch_fsck_flags {
 	x(extent_ptrs_unwritten,				140,	0)		\
 	x(extent_ptrs_written_and_unwritten,			141,	0)		\
 	x(ptr_to_invalid_device,				142,	0)		\
-	x(ptr_to_removed_device,				322,	0)		\
+	x(ptr_to_removed_device,				322,	FSCK_AUTOFIX)	\
 	x(ptr_to_duplicate_device,				143,	0)		\
 	x(ptr_after_last_bucket,				144,	0)		\
 	x(ptr_before_first_bucket,				145,	0)		\
