@@ -462,6 +462,7 @@ int bch2_bucket_ref_update(struct btree_trans *trans, struct bch_dev *ca,
 	size_t bucket_nr = PTR_BUCKET_NR(ca, ptr);
 	CLASS(printbuf, buf)();
 	bool inserting = sectors > 0;
+	int ret = 0;
 
 	BUG_ON(!sectors);
 
@@ -489,8 +490,17 @@ int bch2_bucket_ref_update(struct btree_trans *trans, struct bch_dev *ca,
 					     BCH_FSCK_ERR_ptr_too_stale);
 	}
 
-	if (b_gen != ptr->gen && ptr->cached)
+	if (b_gen != ptr->gen && ptr->cached) {
+		if (fsck_err_on(c->sb.compat & BIT_ULL(BCH_COMPAT_no_stale_ptrs),
+				trans, stale_ptr_with_no_stale_ptrs_feature,
+				"stale cached ptr, but have no_stale_ptrs feature\n%s",
+				(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
+			guard(mutex)(&c->sb_lock);
+			c->disk_sb.sb->compat[0] &= ~cpu_to_le64(BIT_ULL(BCH_COMPAT_no_stale_ptrs));
+			bch2_write_super(c);
+		}
 		return 1;
+	}
 
 	if (unlikely(b_gen != ptr->gen)) {
 		bch2_log_msg_start(c, &buf);
@@ -530,7 +540,8 @@ int bch2_bucket_ref_update(struct btree_trans *trans, struct bch_dev *ca,
 	}
 
 	*bucket_sectors += sectors;
-	return 0;
+fsck_err:
+	return ret;
 }
 
 void bch2_trans_account_disk_usage_change(struct btree_trans *trans)
