@@ -12,6 +12,7 @@
 #include "btree_gc.h"
 #include "btree_io.h"
 #include "btree_iter.h"
+#include "btree_update.h"
 #include "buckets.h"
 #include "checksum.h"
 #include "compress.h"
@@ -1213,6 +1214,21 @@ drop:
 	bch2_bkey_drop_ptr_noerror(k, ptr);
 }
 
+static bool bch2_bkey_has_stale_ptrs(struct bch_fs *c, struct bkey_s_c k)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	struct bch_dev *ca;
+
+	guard(rcu)();
+	bkey_for_each_ptr(ptrs, ptr)
+		if (ptr->cached &&
+		    (ca = bch2_dev_rcu_noerror(c, ptr->dev)) &&
+		    dev_ptr_stale_rcu(ca, ptr) > 0)
+			return true;
+
+	return false;
+}
+
 /*
  * bch2_extent_normalize - clean up an extent, dropping stale pointers etc.
  *
@@ -1221,7 +1237,7 @@ drop:
  * For existing keys, only called when btree nodes are being rewritten, not when
  * they're merely being compacted/resorted in memory.
  */
-bool bch2_extent_normalize(struct bch_fs *c, struct bkey_s k)
+static void __bch2_bkey_drop_stale_ptrs(struct bch_fs *c, struct bkey_s k)
 {
 	struct bch_dev *ca;
 
@@ -1230,19 +1246,26 @@ bool bch2_extent_normalize(struct bch_fs *c, struct bkey_s k)
 		ptr->cached &&
 		(!(ca = bch2_dev_rcu_noerror(c, ptr->dev)) ||
 		 dev_ptr_stale_rcu(ca, ptr) > 0));
-
-	return bkey_deleted(k.k);
 }
 
-/*
- * bch2_extent_normalize_by_opts - clean up an extent, dropping stale pointers etc.
- *
- * Like bch2_extent_normalize(), but also only keeps a single cached pointer on
- * the promote target.
- */
-bool bch2_extent_normalize_by_opts(struct bch_fs *c,
-				   struct bch_inode_opts *opts,
-				   struct bkey_s k)
+int bch2_bkey_drop_stale_ptrs(struct btree_trans *trans, struct btree_iter *iter, struct bkey_s_c k)
+{
+	if (bch2_bkey_has_stale_ptrs(trans->c, k)) {
+		struct bkey_i *u = bch2_bkey_make_mut(trans, iter, &k,
+						      BTREE_UPDATE_internal_snapshot_node);
+		int ret = PTR_ERR_OR_ZERO(u);
+		if (ret)
+			return ret;
+
+		__bch2_bkey_drop_stale_ptrs(trans->c, bkey_i_to_s(u));
+	}
+
+	return 0;
+}
+
+void bch2_bkey_drop_extra_cached_ptrs(struct bch_fs *c,
+				      struct bch_inode_opts *opts,
+				      struct bkey_s k)
 {
 	struct bkey_ptrs ptrs;
 	bool have_cached_ptr;
@@ -1260,8 +1283,6 @@ restart_drop_ptrs:
 			}
 			have_cached_ptr = true;
 		}
-
-	return bkey_deleted(k.k);
 }
 
 void bch2_extent_ptr_to_text(struct printbuf *out, struct bch_fs *c, const struct bch_extent_ptr *ptr)

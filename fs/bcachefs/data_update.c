@@ -393,7 +393,7 @@ restart_drop_extra_replicas:
 			bch2_extent_ptr_decoded_append(insert, &p);
 
 		bch2_bkey_narrow_crcs(insert, (struct bch_extent_crc_unpacked) { 0 });
-		bch2_extent_normalize_by_opts(c, &m->op.opts, bkey_i_to_s(insert));
+		bch2_bkey_drop_extra_cached_ptrs(c, &m->op.opts, bkey_i_to_s(insert));
 
 		ret = bch2_sum_sector_overwrites(trans, &iter, insert,
 						 &should_check_enospc,
@@ -721,7 +721,7 @@ int bch2_extent_drop_ptrs(struct btree_trans *trans,
 	 * will do the appropriate thing with it (turning it into a
 	 * KEY_TYPE_error key, or just a discard if it was a cached extent)
 	 */
-	bch2_extent_normalize_by_opts(c, io_opts, bkey_i_to_s(n));
+	bch2_bkey_drop_extra_cached_ptrs(c, io_opts, bkey_i_to_s(n));
 
 	/*
 	 * Since we're not inserting through an extent iterator
