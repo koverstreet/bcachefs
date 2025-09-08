@@ -75,7 +75,6 @@ void closure_sub(struct closure *cl, int v)
 	}
 
 	if (s == CLOSURE_requeue) {
-		cl->closure_get_happened = false;
 		closure_queue(cl);
 	} else {
 		struct closure *parent = cl->parent;
@@ -126,7 +125,6 @@ bool closure_wait(struct closure_waitlist *waitlist, struct closure *cl)
 	if (atomic_read(&cl->remaining) & CLOSURE_WAITING)
 		return false;
 
-	cl->closure_get_happened = true;
 	closure_set_waiting(cl, _RET_IP_);
 	unsigned r = atomic_add_return(CLOSURE_WAITING + 1, &cl->remaining);
 	closure_val_checks(cl, r, CLOSURE_WAITING + 1);

@@ -306,7 +306,7 @@ void bch2_dev_alloc_debug_to_text(struct printbuf *, struct bch_dev *);
 void __bch2_wait_on_allocator(struct bch_fs *, struct closure *);
 static inline void bch2_wait_on_allocator(struct bch_fs *c, struct closure *cl)
 {
-	if (cl->closure_get_happened)
+	if (closure_nr_remaining(cl) > 1)
 		__bch2_wait_on_allocator(c, cl);
 }
 
