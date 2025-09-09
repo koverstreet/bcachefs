@@ -886,7 +886,6 @@ int bch2_trigger_extent(struct btree_trans *trans,
 			struct bkey_s_c old, struct bkey_s new,
 			enum btree_iter_update_trigger_flags flags)
 {
-	struct bch_fs *c = trans->c;
 	struct bkey_ptrs_c new_ptrs = bch2_bkey_ptrs_c(new.s_c);
 	struct bkey_ptrs_c old_ptrs = bch2_bkey_ptrs_c(old);
 	unsigned new_ptrs_bytes = (void *) new_ptrs.end - (void *) new_ptrs.start;
@@ -917,30 +916,9 @@ int bch2_trigger_extent(struct btree_trans *trans,
 				return ret;
 		}
 
-		int need_rebalance_delta = 0;
-		s64 need_rebalance_sectors_delta[1] = { 0 };
-
-		s64 s = bch2_bkey_sectors_need_rebalance(c, old);
-		need_rebalance_delta -= s != 0;
-		need_rebalance_sectors_delta[0] -= s;
-
-		s = bch2_bkey_sectors_need_rebalance(c, new.s_c);
-		need_rebalance_delta += s != 0;
-		need_rebalance_sectors_delta[0] += s;
-
-		if ((flags & BTREE_TRIGGER_transactional) && need_rebalance_delta) {
-			int ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work,
-							  new.k->p, need_rebalance_delta > 0);
-			if (ret)
-				return ret;
-		}
-
-		if (need_rebalance_sectors_delta[0]) {
-			int ret = bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc,
-							    need_rebalance_sectors_delta, rebalance_work);
-			if (ret)
-				return ret;
-		}
+		int ret = bch2_trigger_extent_rebalance(trans, old, new.s_c, flags);
+		if (ret)
+			return ret;
 	}
 
 	return 0;
