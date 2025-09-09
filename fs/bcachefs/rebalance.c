@@ -92,6 +92,39 @@ void bch2_extent_rebalance_to_text(struct printbuf *out, struct bch_fs *c,
 	}
 }
 
+int bch2_trigger_extent_rebalance(struct btree_trans *trans,
+				  struct bkey_s_c old, struct bkey_s_c new,
+				  enum btree_iter_update_trigger_flags flags)
+{
+	struct bch_fs *c = trans->c;
+	int need_rebalance_delta = 0;
+	s64 need_rebalance_sectors_delta[1] = { 0 };
+
+	s64 s = bch2_bkey_sectors_need_rebalance(c, old);
+	need_rebalance_delta -= s != 0;
+	need_rebalance_sectors_delta[0] -= s;
+
+	s = bch2_bkey_sectors_need_rebalance(c, new);
+	need_rebalance_delta += s != 0;
+	need_rebalance_sectors_delta[0] += s;
+
+	if ((flags & BTREE_TRIGGER_transactional) && need_rebalance_delta) {
+		int ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work,
+						      new.k->p, need_rebalance_delta > 0);
+		if (ret)
+			return ret;
+	}
+
+	if (need_rebalance_sectors_delta[0]) {
+		int ret = bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc,
+						    need_rebalance_sectors_delta, rebalance_work);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 static void bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 				      struct bch_inode_opts *io_opts,
 				      unsigned *move_ptrs,
