@@ -697,7 +697,9 @@ static int do_rebalance_scan_indirect(struct btree_trans *trans,
 	u32 restart_count = trans->restart_count;
 
 	int ret = for_each_btree_key(trans, iter, BTREE_ID_reflink,
-				     POS(0, idx), BTREE_ITER_not_extents, k, ({
+				     POS(0, idx),
+				     BTREE_ITER_intent|
+				     BTREE_ITER_not_extents, k, ({
 		if (bpos_ge(bkey_start_pos(k.k), POS(0, end)))
 			break;
 		bch2_get_update_rebalance_opts(trans, opts, &iter, k,
@@ -734,6 +736,7 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 
 	int ret = for_each_btree_key_max(trans, iter, BTREE_ID_extents,
 					 r->scan_start.pos, r->scan_end.pos,
+					 BTREE_ITER_intent|
 					 BTREE_ITER_all_snapshots|
 					 BTREE_ITER_prefetch, k, ({
 		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
