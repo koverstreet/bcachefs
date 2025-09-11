@@ -149,12 +149,12 @@ enum fsck_err_opts {
 	  BCH_SB_WRITE_ERROR_TIMEOUT,	30,				\
 	  NULL,		"Number of consecutive write errors allowed before kicking out a device")\
 	x(metadata_replicas,		u8,				\
-	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
+	  OPT_FS|OPT_FORMAT|OPT_RUNTIME,				\
 	  OPT_UINT(1, BCH_REPLICAS_MAX + 1),				\
 	  BCH_SB_META_REPLICAS_WANT,	1,				\
 	  "#",		"Number of metadata replicas")			\
 	x(data_replicas,		u8,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_RUNTIME,			\
 	  OPT_UINT(1, BCH_REPLICAS_MAX + 1),				\
 	  BCH_SB_DATA_REPLICAS_WANT,	1,				\
 	  "#",		"Number of data replicas")			\
@@ -175,12 +175,12 @@ enum fsck_err_opts {
 	  BCH_SB_ENCODED_EXTENT_MAX_BITS, 64 << 10,			\
 	  "size",	"Maximum size of checksummed/compressed extents")\
 	x(metadata_checksum,		u8,				\
-	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
+	  OPT_FS|OPT_FORMAT|OPT_RUNTIME,				\
 	  OPT_STR(__bch2_csum_opts),					\
 	  BCH_SB_META_CSUM_TYPE,	BCH_CSUM_OPT_crc32c,		\
 	  NULL,		NULL)						\
 	x(data_checksum,		u8,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_RUNTIME,			\
 	  OPT_STR(__bch2_csum_opts),					\
 	  BCH_SB_DATA_CSUM_TYPE,	BCH_CSUM_OPT_crc32c,		\
 	  NULL,		NULL)						\
@@ -190,12 +190,12 @@ enum fsck_err_opts {
 	  BCH_SB_CSUM_ERR_RETRY_NR,	3,				\
 	  NULL,		NULL)						\
 	x(compression,			u8,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_RUNTIME,			\
 	  OPT_FN(bch2_opt_compression),					\
 	  BCH_SB_COMPRESSION_TYPE,	BCH_COMPRESSION_OPT_none,	\
 	  NULL,		NULL)						\
 	x(background_compression,	u8,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_RUNTIME,			\
 	  OPT_FN(bch2_opt_compression),					\
 	  BCH_SB_BACKGROUND_COMPRESSION_TYPE,BCH_COMPRESSION_OPT_none,	\
 	  NULL,		NULL)						\
@@ -205,27 +205,27 @@ enum fsck_err_opts {
 	  BCH_SB_STR_HASH_TYPE,		BCH_STR_HASH_OPT_siphash,	\
 	  NULL,		"Hash function for directory entries and xattrs")\
 	x(metadata_target,		u16,				\
-	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
+	  OPT_FS|OPT_FORMAT|OPT_RUNTIME,				\
 	  OPT_FN(bch2_opt_target),					\
 	  BCH_SB_METADATA_TARGET,	0,				\
 	  "(target)",	"Device or label for metadata writes")		\
 	x(foreground_target,		u16,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_RUNTIME,			\
 	  OPT_FN(bch2_opt_target),					\
 	  BCH_SB_FOREGROUND_TARGET,	0,				\
 	  "(target)",	"Device or label for foreground writes")	\
 	x(background_target,		u16,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_RUNTIME,			\
 	  OPT_FN(bch2_opt_target),					\
 	  BCH_SB_BACKGROUND_TARGET,	0,				\
 	  "(target)",	"Device or label to move data to in the background")\
 	x(promote_target,		u16,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_RUNTIME,			\
 	  OPT_FN(bch2_opt_target),					\
 	  BCH_SB_PROMOTE_TARGET,	0,				\
 	  "(target)",	"Device or label to promote data to on read")	\
 	x(erasure_code,			u16,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_RUNTIME,			\
 	  OPT_BOOL(),							\
 	  BCH_SB_ERASURE_CODE,		false,				\
 	  NULL,		"Enable erasure coding (DO NOT USE YET)")	\
