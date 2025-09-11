@@ -1075,6 +1075,7 @@ struct bch_fs {
 	GENRADIX(struct gc_stripe) gc_stripes;
 
 	struct hlist_head	ec_stripes_new[32];
+	struct hlist_head	ec_stripes_new_buckets[64];
 	spinlock_t		ec_stripes_new_lock;
 
 	/* ERASURE CODING */
