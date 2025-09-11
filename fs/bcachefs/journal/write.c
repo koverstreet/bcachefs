@@ -112,8 +112,6 @@ static int journal_write_alloc(struct journal *j, struct journal_buf *w,
 	unsigned target = c->opts.metadata_target ?:
 		c->opts.foreground_target;
 	unsigned replicas_want = READ_ONCE(c->opts.metadata_replicas);
-	unsigned replicas_need = min_t(unsigned, replicas_want,
-				       READ_ONCE(c->opts.metadata_replicas_required));
 	bool advance_done = false;
 
 retry_target:
@@ -150,7 +148,7 @@ done:
 	}
 #endif
 
-	return *replicas >= replicas_need ? 0 : -BCH_ERR_insufficient_journal_devices;
+	return *replicas ? 0 : -BCH_ERR_insufficient_journal_devices;
 }
 
 static void journal_buf_realloc(struct journal *j, struct journal_buf *buf)
