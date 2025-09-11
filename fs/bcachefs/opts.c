@@ -646,7 +646,8 @@ int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
 
 	val = bch2_opt_val_synonym_lookup(name, val);
 
-	if (!(bch2_opt_table[id].flags & OPT_MOUNT))
+	if (!(bch2_opt_table[id].flags & OPT_MOUNT) &&
+	    !(bch2_opt_table[id].flags & OPT_MOUNT_OLD))
 		return -BCH_ERR_option_name;
 
 	if (id == Opt_acl &&
@@ -672,6 +673,12 @@ int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
 
 	if (ret < 0)
 		return -BCH_ERR_option_value;
+
+	if (bch2_opt_table[id].flags & OPT_MOUNT_OLD) {
+		pr_err("option %s may no longer be specified at mount time; set via sysfs opts dir",
+		       bch2_opt_table[id].attr.name);
+		return 0;
+	}
 
 	if (opts)
 		bch2_opt_set_by_id(opts, id, v);
