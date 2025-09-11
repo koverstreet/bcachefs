@@ -340,8 +340,6 @@ retry:
 				      writepoint_ptr(&c->btree_write_point),
 				      &devs_have,
 				      res->nr_replicas,
-				      min(res->nr_replicas,
-					  c->opts.metadata_replicas_required),
 				      watermark,
 				      target ? BCH_WRITE_only_specified_devs : 0,
 				      cl, &wp);

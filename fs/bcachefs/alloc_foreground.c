@@ -1208,7 +1208,6 @@ int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
 			     struct write_point_specifier write_point,
 			     struct bch_devs_list *devs_have,
 			     unsigned nr_replicas,
-			     unsigned nr_replicas_required,
 			     enum bch_watermark watermark,
 			     enum bch_write_flags flags,
 			     struct closure *cl,
@@ -1234,7 +1233,7 @@ int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
 	req->flags		= flags;
 	req->devs_have		= devs_have;
 
-	BUG_ON(!nr_replicas || !nr_replicas_required);
+	BUG_ON(!nr_replicas);
 retry:
 	req->ptrs.nr		= 0;
 	req->nr_effective	= 0;
@@ -1288,7 +1287,7 @@ alloc_done:
 		pr_debug("failed to get ec bucket: ret %u", ret);
 
 	if (ret == -BCH_ERR_insufficient_devices &&
-	    req->nr_effective >= nr_replicas_required)
+	    req->nr_effective >= nr_replicas)
 		ret = 0;
 
 	if (ret)
