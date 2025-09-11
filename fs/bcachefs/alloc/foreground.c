@@ -1199,7 +1199,6 @@ deallocate_extra_replicas(struct bch_fs *c,
 int bch2_alloc_sectors_req(struct btree_trans *trans,
 			   struct alloc_request *req,
 			   struct write_point_specifier write_point,
-			   unsigned nr_replicas_required,
 			   struct closure *cl,
 			   struct write_point **wp_ret)
 {
@@ -1208,7 +1207,7 @@ int bch2_alloc_sectors_req(struct btree_trans *trans,
 	unsigned write_points_nr;
 	int i;
 
-	BUG_ON(!req->nr_replicas || !nr_replicas_required);
+	BUG_ON(!req->nr_replicas);
 retry:
 	req->ptrs.nr		= 0;
 	req->nr_effective	= 0;
@@ -1259,7 +1258,7 @@ alloc_done:
 	BUG_ON(!ret && req->nr_effective < req->nr_replicas);
 
 	if (ret == -BCH_ERR_insufficient_devices &&
-	    req->nr_effective >= nr_replicas_required)
+	    req->nr_effective >= nr_replicas)
 		ret = 0;
 
 	if (ret)

@@ -161,16 +161,6 @@ enum fsck_err_opts {
 	  OPT_UINT(1, BCH_REPLICAS_MAX + 1),				\
 	  BCH_SB_DATA_REPLICAS_WANT,	1,				\
 	  "#",		"Number of data replicas")			\
-	x(metadata_replicas_required, u8,				\
-	  OPT_FS|OPT_FORMAT|OPT_MOUNT,					\
-	  OPT_UINT(1, BCH_REPLICAS_MAX),				\
-	  BCH_SB_META_REPLICAS_REQ,	1,				\
-	  "#",		NULL)						\
-	x(data_replicas_required,	u8,				\
-	  OPT_FS|OPT_FORMAT|OPT_MOUNT,					\
-	  OPT_UINT(1, BCH_REPLICAS_MAX + 1),				\
-	  BCH_SB_DATA_REPLICAS_REQ,	1,				\
-	  "#",		NULL)						\
 	x(encoded_extent_max,		u32,				\
 	  OPT_FS|OPT_FORMAT|						\
 	  OPT_HUMAN_READABLE|OPT_MUST_BE_POW_2|OPT_SB_FIELD_SECTORS|OPT_SB_FIELD_ILOG2,\

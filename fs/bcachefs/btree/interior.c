@@ -337,10 +337,8 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 	BUG_ON(b->ob.nr);
 retry:
 	ret = bch2_alloc_sectors_req(trans, req,
-				      writepoint_ptr(&c->btree_write_point),
-				      min(res->nr_replicas,
-					  c->opts.metadata_replicas_required),
-				      cl, &wp);
+				     writepoint_ptr(&c->btree_write_point),
+				     cl, &wp);
 	if (unlikely(ret))
 		goto err;
 

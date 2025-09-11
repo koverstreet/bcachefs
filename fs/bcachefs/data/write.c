@@ -1547,7 +1547,6 @@ again:
 				op->write_point,
 				&op->devs_have,
 				op->nr_replicas,
-				op->nr_replicas_required,
 				op->watermark,
 				op->flags,
 				&op->cl, &wp));
@@ -1700,7 +1699,6 @@ CLOSURE_CALLBACK(bch2_write)
 	if (op->flags & BCH_WRITE_only_specified_devs)
 		op->flags |= BCH_WRITE_alloc_nowait;
 
-	op->nr_replicas_required = min_t(unsigned, op->nr_replicas_required, op->nr_replicas);
 	op->start_time = local_clock();
 	bch2_keylist_init(&op->insert_keys, op->inline_keys);
 	wbio_init(bio)->put_bio = false;
@@ -1773,7 +1771,6 @@ void __bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
 	prt_newline(out);
 
 	prt_printf(out, "nr_replicas:\t%u\n", op->nr_replicas);
-	prt_printf(out, "nr_replicas_required:\t%u\n", op->nr_replicas_required);
 	prt_printf(out, "devs_have:\t");
 	bch2_devs_list_to_text(out, &op->devs_have);
 	prt_newline(out);

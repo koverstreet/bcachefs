@@ -498,7 +498,6 @@ int bch2_update_unwritten_extent(struct btree_trans *trans,
 				update->op.write_point,
 				&update->op.devs_have,
 				update->op.nr_replicas,
-				update->op.nr_replicas,
 				update->op.watermark,
 				0, &cl, &wp);
 		if (bch2_err_matches(ret, BCH_ERR_operation_blocked)) {
@@ -956,8 +955,6 @@ int bch2_data_update_init(struct btree_trans *trans,
 		 */
 		if (!(durability_have + durability_removing))
 			m->op.nr_replicas = max((unsigned) m->op.nr_replicas, 1);
-
-		m->op.nr_replicas_required = m->op.nr_replicas;
 
 		/*
 		 * It might turn out that we don't need any new replicas, if the

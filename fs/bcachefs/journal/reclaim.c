@@ -225,12 +225,11 @@ void bch2_journal_space_available(struct journal *j)
 
 	j->can_discard = can_discard;
 
-	if (nr_online < metadata_replicas_required(c)) {
+	if (!nr_online) {
 		if (!(c->sb.features & BIT_ULL(BCH_FEATURE_small_image))) {
 			CLASS(printbuf, buf)();
 			guard(printbuf_atomic)(&buf);
-			prt_printf(&buf, "insufficient writeable journal devices available: have %u, need %u\n"
-				   "rw journal devs:", nr_online, metadata_replicas_required(c));
+			prt_printf(&buf, "no writeable journal devices available\n");
 
 			for_each_member_device_rcu(c, ca, &c->rw_devs[BCH_DATA_journal])
 				prt_printf(&buf, " %s", ca->name);

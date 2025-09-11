@@ -223,7 +223,7 @@ int bch2_bucket_alloc_set_trans(struct btree_trans *, struct alloc_request *,
 				struct dev_stripe_state *, struct closure *);
 
 int bch2_alloc_sectors_req(struct btree_trans *, struct alloc_request *,
-			   struct write_point_specifier, unsigned,
+			   struct write_point_specifier,
 			   struct closure *, struct write_point **);
 
 static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
@@ -256,7 +256,6 @@ static inline int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
 			     struct write_point_specifier write_point,
 			     struct bch_devs_list *devs_have,
 			     unsigned nr_replicas,
-			     unsigned nr_replicas_required,
 			     enum bch_watermark watermark,
 			     enum bch_write_flags flags,
 			     struct closure *cl,
@@ -265,7 +264,7 @@ static inline int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
 	struct alloc_request *req = errptr_try(alloc_request_get(trans, target, erasure_code,
 								 devs_have, nr_replicas,
 								 watermark, flags));
-	return bch2_alloc_sectors_req(trans, req, write_point, nr_replicas_required, cl, wp_ret);
+	return bch2_alloc_sectors_req(trans, req, write_point, cl, wp_ret);
 }
 
 static inline struct bch_extent_ptr bch2_ob_ptr(struct bch_fs *c, struct open_bucket *ob)
