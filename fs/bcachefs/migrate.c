@@ -19,6 +19,7 @@
 #include "migrate.h"
 #include "move.h"
 #include "progress.h"
+#include "rebalance.h"
 #include "replicas.h"
 #include "super-io.h"
 
@@ -79,7 +80,12 @@ static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
 	if (ret)
 		return ret;
 
-	ret = drop_dev_ptrs(c, bkey_i_to_s(n), dev_idx, flags, err, false);
+	enum set_needs_rebalance_ctx ctx = SET_NEEDS_REBALANCE_opt_change;
+	struct bch_inode_opts opts;
+
+	ret =   bch2_extent_get_apply_io_opts_one(trans, &opts, iter, k, ctx) ?:
+		bch2_bkey_set_needs_rebalance(c, &opts, n, ctx, 0) ?:
+		drop_dev_ptrs(c, bkey_i_to_s(n), dev_idx, flags, err, false);
 	if (ret)
 		return ret;
 

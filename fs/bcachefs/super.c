@@ -2012,13 +2012,9 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	 */
 	bch2_dev_put(ca);
 
-	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_failed, flags, NULL)) {
-		prt_printf(err, "Cannot remove without losing data\n");
-		ret = bch_err_throw(c, device_state_not_allowed);
+	ret = __bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_failed, flags, err);
+	if (ret)
 		goto err;
-	}
-
-	__bch2_dev_read_only(c, ca);
 
 	ret = fast_device_removal
 		? bch2_dev_data_drop_by_backpointers(c, ca->dev_idx, flags, err)
