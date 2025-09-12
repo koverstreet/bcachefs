@@ -1151,8 +1151,8 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 	int ret = 0;
 
 	CLASS(bch2_dev_tryget, ca)(c, ptr.dev);
-	if (!ca)
-		return bch_err_throw(c, ENOENT_dev_not_found);
+	if (!ca) /* BCH_SB_MEMBER_INVALID */
+		return 0;
 
 	struct bpos bucket_pos = PTR_BUCKET_POS(ca, &ptr);
 
