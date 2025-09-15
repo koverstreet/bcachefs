@@ -1126,6 +1126,12 @@ static int bch2_set_nr_journal_buckets_iter(struct bch_dev *ca, unsigned nr,
 		ob[nr_got] = bch2_bucket_alloc(c, ca, watermark,
 					       BCH_DATA_journal, cl);
 		ret = PTR_ERR_OR_ZERO(ob[nr_got]);
+
+		if (ret == -BCH_ERR_bucket_alloc_blocked)
+			ret = bch_err_throw(c, freelist_empty);
+		if (ret == -BCH_ERR_freelist_empty) /* don't if we're actually out of buckets */
+			closure_wake_up(&c->freelist_wait);
+
 		if (ret)
 			break;
 
@@ -1258,9 +1264,7 @@ static int bch2_set_nr_journal_buckets_loop(struct bch_fs *c, struct bch_dev *ca
 		}
 
 		ret = bch2_set_nr_journal_buckets_iter(ca, nr, new_fs, &cl);
-
-		if (ret == -BCH_ERR_bucket_alloc_blocked ||
-		    ret == -BCH_ERR_open_buckets_empty)
+		if (ret == -BCH_ERR_open_buckets_empty)
 			ret = 0; /* wait and retry */
 
 		bch2_disk_reservation_put(c, &disk_res);
