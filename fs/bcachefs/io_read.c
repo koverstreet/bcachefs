@@ -327,6 +327,7 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 
 	return &op->write.rbio;
 err_remove_list:
+	bch2_bkey_buf_exit(&op->write.k, c);
 	async_object_list_del(c, promote, op->list_idx);
 err_remove_hash:
 	BUG_ON(rhashtable_remove_fast(&c->promote_table, &op->hash,

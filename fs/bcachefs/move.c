@@ -105,34 +105,11 @@ trace_io_move_evacuate_bucket2(struct bch_fs *c, struct bpos bucket, int gen)
 	printbuf_exit(&buf);
 }
 
-struct moving_io {
-	struct list_head		read_list;
-	struct list_head		io_list;
-	struct move_bucket		*b;
-
-	struct data_update		write;
-};
-
-static void move_free(struct moving_io *io)
-{
-	struct moving_context *ctxt = io->write.ctxt;
-
-	if (io->b)
-		atomic_dec(&io->b->count);
-
-	scoped_guard(mutex, &ctxt->lock)
-		list_del(&io->io_list);
-	wake_up(&ctxt->wait);
-
-	bch2_data_update_exit(&io->write);
-	kfree(io);
-}
-
 static void move_write_done(struct bch_write_op *op)
 {
-	struct moving_io *io = container_of(op, struct moving_io, write.op);
+	struct data_update *u = container_of(op, struct data_update, op);
 	struct bch_fs *c = op->c;
-	struct moving_context *ctxt = io->write.ctxt;
+	struct moving_context *ctxt = u->ctxt;
 
 	if (op->error) {
 		if (trace_io_move_write_fail_enabled()) {
@@ -145,24 +122,25 @@ static void move_write_done(struct bch_write_op *op)
 		ctxt->write_error = true;
 	}
 
-	atomic_sub(io->write.k.k->k.size, &ctxt->write_sectors);
+	atomic_sub(u->k.k->k.size, &ctxt->write_sectors);
 	atomic_dec(&ctxt->write_ios);
-	move_free(io);
+	bch2_data_update_exit(u);
+	kfree(u);
 	closure_put(&ctxt->cl);
 }
 
-static void move_write(struct moving_io *io)
+static void move_write(struct data_update *u)
 {
-	struct bch_fs *c = io->write.op.c;
-	struct moving_context *ctxt = io->write.ctxt;
-	struct bch_read_bio *rbio = &io->write.rbio;
+	struct bch_fs *c = u->op.c;
+	struct moving_context *ctxt = u->ctxt;
+	struct bch_read_bio *rbio = &u->rbio;
 
 	if (ctxt->stats) {
 		if (rbio->bio.bi_status)
-			atomic64_add(io->write.rbio.bvec_iter.bi_size >> 9,
+			atomic64_add(u->rbio.bvec_iter.bi_size >> 9,
 				     &ctxt->stats->sectors_error_uncorrected);
 		else if (rbio->saw_error)
-			atomic64_add(io->write.rbio.bvec_iter.bi_size >> 9,
+			atomic64_add(u->rbio.bvec_iter.bi_size >> 9,
 				     &ctxt->stats->sectors_error_corrected);
 	}
 
@@ -172,7 +150,7 @@ static void move_write(struct moving_io *io)
 	 * that userspace still gets the appropriate error.
 	 */
 	if (unlikely(rbio->ret == -BCH_ERR_data_read_csum_err &&
-		     (bch2_bkey_extent_flags(bkey_i_to_s_c(io->write.k.k)) & BIT_ULL(BCH_EXTENT_FLAG_poisoned)))) {
+		     (bch2_bkey_extent_flags(bkey_i_to_s_c(u->k.k)) & BIT_ULL(BCH_EXTENT_FLAG_poisoned)))) {
 		struct bch_extent_crc_unpacked crc = rbio->pick.crc;
 		struct nonce nonce = extent_nonce(rbio->version, crc);
 
@@ -181,40 +159,41 @@ static void move_write(struct moving_io *io)
 		rbio->ret		= 0;
 	}
 
-	if (unlikely(rbio->ret || io->write.data_opts.scrub)) {
-		move_free(io);
+	if (unlikely(rbio->ret || u->data_opts.scrub)) {
+		bch2_data_update_exit(u);
+		kfree(u);
 		return;
 	}
 
 	if (trace_io_move_write_enabled()) {
 		CLASS(printbuf, buf)();
-		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(io->write.k.k));
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(u->k.k));
 		trace_io_move_write(c, buf.buf);
 	}
 
-	closure_get(&io->write.ctxt->cl);
-	atomic_add(io->write.k.k->k.size, &io->write.ctxt->write_sectors);
-	atomic_inc(&io->write.ctxt->write_ios);
+	closure_get(&ctxt->cl);
+	atomic_add(u->k.k->k.size, &ctxt->write_sectors);
+	atomic_inc(&ctxt->write_ios);
 
-	bch2_data_update_read_done(&io->write);
+	bch2_data_update_read_done(u);
 }
 
-struct moving_io *bch2_moving_ctxt_next_pending_write(struct moving_context *ctxt)
+struct data_update *bch2_moving_ctxt_next_pending_write(struct moving_context *ctxt)
 {
-	struct moving_io *io =
-		list_first_entry_or_null(&ctxt->reads, struct moving_io, read_list);
+	struct data_update *u =
+		list_first_entry_or_null(&ctxt->reads, struct data_update, read_list);
 
-	return io && io->write.read_done ? io : NULL;
+	return u && u->read_done ? u : NULL;
 }
 
 static void move_read_endio(struct bio *bio)
 {
-	struct moving_io *io = container_of(bio, struct moving_io, write.rbio.bio);
-	struct moving_context *ctxt = io->write.ctxt;
+	struct data_update *u = container_of(bio, struct data_update, rbio.bio);
+	struct moving_context *ctxt = u->ctxt;
 
-	atomic_sub(io->write.k.k->k.size, &ctxt->read_sectors);
+	atomic_sub(u->k.k->k.size, &ctxt->read_sectors);
 	atomic_dec(&ctxt->read_ios);
-	io->write.read_done = true;
+	u->read_done = true;
 
 	wake_up(&ctxt->wait);
 	closure_put(&ctxt->cl);
@@ -222,12 +201,12 @@ static void move_read_endio(struct bio *bio)
 
 void bch2_moving_ctxt_do_pending_writes(struct moving_context *ctxt)
 {
-	struct moving_io *io;
+	struct data_update *u;
 
-	while ((io = bch2_moving_ctxt_next_pending_write(ctxt))) {
+	while ((u = bch2_moving_ctxt_next_pending_write(ctxt))) {
 		bch2_trans_unlock_long(ctxt->trans);
-		list_del(&io->read_list);
-		move_write(io);
+		list_del(&u->read_list);
+		move_write(u);
 	}
 }
 
@@ -343,47 +322,44 @@ int bch2_move_extent(struct moving_context *ctxt,
 		}
 	}
 
-	struct moving_io *io = allocate_dropping_locks(trans, ret,
-				kzalloc(sizeof(struct moving_io), _gfp));
-	if (!io && !ret)
+	struct data_update *u = allocate_dropping_locks(trans, ret,
+				kzalloc(sizeof(struct data_update), _gfp));
+	if (!u && !ret)
 		ret = bch_err_throw(c, ENOMEM_move_extent);
 	if (ret)
 		goto err;
 
-	INIT_LIST_HEAD(&io->io_list);
-	io->write.ctxt		= ctxt;
-
-	ret = bch2_data_update_init(trans, iter, ctxt, &io->write, ctxt->wp,
+	ret = bch2_data_update_init(trans, iter, ctxt, u, ctxt->wp,
 				    &io_opts, data_opts, iter->btree_id, k);
 	if (ret)
 		goto err;
 
-	io->write.op.end_io		= move_write_done;
-	io->write.rbio.bio.bi_end_io	= move_read_endio;
-	io->write.rbio.bio.bi_ioprio	= IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0);
+	u->op.end_io		= move_write_done;
+	u->rbio.bio.bi_end_io	= move_read_endio;
+	u->rbio.bio.bi_ioprio	= IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0);
 
 	if (ctxt->rate)
 		bch2_ratelimit_increment(ctxt->rate, k.k->size);
 
 	if (ctxt->stats) {
 		atomic64_inc(&ctxt->stats->keys_moved);
-		atomic64_add(k.k->size, &ctxt->stats->sectors_moved);
+		atomic64_add(u->k.k->k.size, &ctxt->stats->sectors_moved);
 	}
 
 	if (bucket_in_flight) {
-		io->b = bucket_in_flight;
-		atomic_inc(&io->b->count);
+		u->b = bucket_in_flight;
+		atomic_inc(&u->b->count);
 	}
 
 	if (trace_io_move_read_enabled())
 		trace_io_move_read2(c, k);
 
 	scoped_guard(mutex, &ctxt->lock) {
-		atomic_add(io->write.k.k->k.size, &ctxt->read_sectors);
+		atomic_add(u->k.k->k.size, &ctxt->read_sectors);
 		atomic_inc(&ctxt->read_ios);
 
-		list_add_tail(&io->read_list, &ctxt->reads);
-		list_add_tail(&io->io_list, &ctxt->ios);
+		list_add_tail(&u->read_list, &ctxt->reads);
+		list_add_tail(&u->io_list, &ctxt->ios);
 	}
 
 	/*
@@ -391,8 +367,8 @@ int bch2_move_extent(struct moving_context *ctxt,
 	 * ctxt when doing wakeup
 	 */
 	closure_get(&ctxt->cl);
-	__bch2_read_extent(trans, &io->write.rbio,
-			   io->write.rbio.bio.bi_iter,
+	__bch2_read_extent(trans, &u->rbio,
+			   u->rbio.bio.bi_iter,
 			   bkey_start_pos(k.k),
 			   iter->btree_id, k, 0,
 			   NULL,
@@ -400,22 +376,21 @@ int bch2_move_extent(struct moving_context *ctxt,
 			   data_opts.scrub ?  data_opts.read_dev : -1);
 	return 0;
 err:
-	bch2_bkey_buf_exit(&io->write.k, c);
-	kfree(io);
+	if (!bch2_err_matches(ret, EROFS) &&
+	    !bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
+		count_event(c, io_move_start_fail);
 
-	if (bch2_err_matches(ret, EROFS) ||
-	    bch2_err_matches(ret, BCH_ERR_transaction_restart))
-		return ret;
-
-	count_event(c, io_move_start_fail);
-
-	if (trace_io_move_start_fail_enabled()) {
-		CLASS(printbuf, buf)();
-		bch2_bkey_val_to_text(&buf, c, k);
-		prt_str(&buf, ": ");
-		prt_str(&buf, bch2_err_str(ret));
-		trace_io_move_start_fail(c, buf.buf);
+		if (trace_io_move_start_fail_enabled()) {
+			CLASS(printbuf, buf)();
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(u->k.k));
+			prt_str(&buf, ": ");
+			prt_str(&buf, bch2_err_str(ret));
+			trace_io_move_start_fail(c, buf.buf);
+		}
 	}
+
+	bch2_bkey_buf_exit(&u->k, c);
+	kfree(u);
 
 	if (bch2_err_matches(ret, BCH_ERR_data_update_done))
 		return 0;
@@ -1272,9 +1247,9 @@ static void bch2_moving_ctxt_to_text(struct printbuf *out, struct bch_fs *c, str
 	guard(printbuf_indent)(out);
 
 	scoped_guard(mutex, &ctxt->lock) {
-		struct moving_io *io;
-		list_for_each_entry(io, &ctxt->ios, io_list)
-			bch2_data_update_inflight_to_text(out, &io->write);
+		struct data_update *u;
+		list_for_each_entry(u, &ctxt->ios, io_list)
+			bch2_data_update_inflight_to_text(out, u);
 	}
 }
 

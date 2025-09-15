@@ -522,6 +522,15 @@ void bch2_data_update_exit(struct data_update *update)
 	struct bch_fs *c = update->op.c;
 	struct bkey_s_c k = bkey_i_to_s_c(update->k.k);
 
+	if (update->b)
+		atomic_dec(&update->b->count);
+
+	if (update->ctxt) {
+		scoped_guard(mutex, &update->ctxt->lock)
+			list_del(&update->io_list);
+		wake_up(&update->ctxt->wait);
+	}
+
 	bch2_bio_free_pages_pool(c, &update->op.wbio.bio);
 	kfree(update->bvecs);
 	update->bvecs = NULL;
@@ -866,8 +875,11 @@ int bch2_data_update_init(struct btree_trans *trans,
 		: BCH_DATA_UPDATE_rebalance;
 	m->btree_id	= btree_id;
 	m->data_opts	= data_opts;
+
 	m->ctxt		= ctxt;
 	m->stats	= ctxt ? ctxt->stats : NULL;
+	INIT_LIST_HEAD(&m->read_list);
+	INIT_LIST_HEAD(&m->io_list);
 
 	bch2_write_op_init(&m->op, c, *io_opts);
 	m->op.pos	= bkey_start_pos(k.k);
@@ -1030,7 +1042,6 @@ out_put_dev_refs:
 	bkey_put_dev_refs(c, k);
 out:
 	bch2_disk_reservation_put(c, &m->op.res);
-	bch2_bkey_buf_exit(&m->k, c);
 	return ret;
 }
 
