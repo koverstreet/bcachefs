@@ -109,7 +109,6 @@ struct moving_io {
 	struct list_head		read_list;
 	struct list_head		io_list;
 	struct move_bucket		*b;
-	bool				read_completed;
 
 	struct data_update		write;
 };
@@ -205,7 +204,7 @@ struct moving_io *bch2_moving_ctxt_next_pending_write(struct moving_context *ctx
 	struct moving_io *io =
 		list_first_entry_or_null(&ctxt->reads, struct moving_io, read_list);
 
-	return io && io->read_completed ? io : NULL;
+	return io && io->write.read_done ? io : NULL;
 }
 
 static void move_read_endio(struct bio *bio)
@@ -215,7 +214,7 @@ static void move_read_endio(struct bio *bio)
 
 	atomic_sub(io->write.k.k->k.size, &ctxt->read_sectors);
 	atomic_dec(&ctxt->read_ios);
-	io->read_completed = true;
+	io->write.read_done = true;
 
 	wake_up(&ctxt->wait);
 	closure_put(&ctxt->cl);
