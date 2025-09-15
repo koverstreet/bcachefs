@@ -117,7 +117,6 @@ struct moving_io {
 static void move_free(struct moving_io *io)
 {
 	struct moving_context *ctxt = io->write.ctxt;
-	struct bch_fs *c = io->write.op.c;
 
 	if (io->b)
 		atomic_dec(&io->b->count);
@@ -126,13 +125,7 @@ static void move_free(struct moving_io *io)
 		list_del(&io->io_list);
 	wake_up(&ctxt->wait);
 
-	if (!io->write.data_opts.scrub) {
-		bch2_data_update_exit(&io->write);
-	} else {
-		bch2_bio_free_pages_pool(c, &io->write.op.wbio.bio);
-		kfree(io->write.bvecs);
-		bch2_bkey_buf_exit(&io->write.k, c);
-	}
+	bch2_data_update_exit(&io->write);
 	kfree(io);
 }
 
@@ -361,29 +354,14 @@ int bch2_move_extent(struct moving_context *ctxt,
 	INIT_LIST_HEAD(&io->io_list);
 	io->write.ctxt		= ctxt;
 
-	if (!data_opts.scrub) {
-		ret = bch2_data_update_init(trans, iter, ctxt, &io->write, ctxt->wp,
-					    &io_opts, data_opts, iter->btree_id, k);
-		if (ret)
-			goto err;
+	ret = bch2_data_update_init(trans, iter, ctxt, &io->write, ctxt->wp,
+				    &io_opts, data_opts, iter->btree_id, k);
+	if (ret)
+		goto err;
 
-		io->write.op.end_io	= move_write_done;
-	} else {
-		bch2_bkey_buf_init(&io->write.k);
-		bch2_bkey_buf_reassemble(&io->write.k, c, k);
-
-		io->write.op.c		= c;
-		io->write.data_opts	= data_opts;
-
-		bch2_trans_unlock(trans);
-
-		ret = bch2_data_update_bios_init(&io->write, c, &io_opts);
-		if (ret)
-			goto err;
-	}
-
-	io->write.rbio.bio.bi_end_io = move_read_endio;
-	io->write.rbio.bio.bi_ioprio = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0);
+	io->write.op.end_io		= move_write_done;
+	io->write.rbio.bio.bi_end_io	= move_read_endio;
+	io->write.rbio.bio.bi_ioprio	= IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0);
 
 	if (ctxt->rate)
 		bch2_ratelimit_increment(ctxt->rate, k.k->size);
