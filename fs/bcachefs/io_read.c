@@ -282,7 +282,7 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 		}
 
 		if (!update_opts.rewrite_ptrs)
-			return NULL;
+			return ERR_PTR(bch_err_throw(c, nopromote_no_rewrites));
 	}
 
 	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_promote))

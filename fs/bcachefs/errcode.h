@@ -353,6 +353,7 @@
 	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_incompatible)	\
 	x(0,				nopromote)				\
 	x(BCH_ERR_nopromote,		nopromote_may_not)			\
+	x(BCH_ERR_nopromote,		nopromote_no_rewrites)			\
 	x(BCH_ERR_nopromote,		nopromote_already_promoted)		\
 	x(BCH_ERR_nopromote,		nopromote_unwritten)			\
 	x(BCH_ERR_nopromote,		nopromote_congested)			\
