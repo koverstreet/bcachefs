@@ -31,10 +31,15 @@
 #include <linux/random.h>
 #include <linux/sched/mm.h>
 
+static unsigned __maybe_unused bch2_read_corrupt_ratio;
+static int __maybe_unused bch2_read_corrupt_device;
+
 #ifdef CONFIG_BCACHEFS_DEBUG
-static unsigned bch2_read_corrupt_ratio;
 module_param_named(read_corrupt_ratio, bch2_read_corrupt_ratio, uint, 0644);
 MODULE_PARM_DESC(read_corrupt_ratio, "");
+
+module_param_named(read_corrupt_device, bch2_read_corrupt_device, int, 0644);
+MODULE_PARM_DESC(read_corrupt_device, "");
 #endif
 
 static bool bch2_poison_extents_on_checksum_error;
@@ -879,7 +884,9 @@ static void __bch2_read_endio(struct work_struct *work)
 		src->bi_iter			= rbio->bvec_iter;
 	}
 
-	bch2_maybe_corrupt_bio(src, bch2_read_corrupt_ratio);
+	if (bch2_read_corrupt_device == rbio->pick.ptr.dev ||
+	    bch2_read_corrupt_device < 0)
+		bch2_maybe_corrupt_bio(src, bch2_read_corrupt_ratio);
 
 	csum = bch2_checksum_bio(c, crc.csum_type, nonce, src);
 	bool csum_good = !bch2_crc_cmp(csum, rbio->pick.crc.csum) || c->opts.no_data_io;
