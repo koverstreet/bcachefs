@@ -111,9 +111,6 @@ struct moving_io {
 	struct move_bucket		*b;
 	bool				read_completed;
 
-	unsigned			read_sectors;
-	unsigned			write_sectors;
-
 	struct data_update		write;
 };
 
@@ -156,7 +153,7 @@ static void move_write_done(struct bch_write_op *op)
 		ctxt->write_error = true;
 	}
 
-	atomic_sub(io->write_sectors, &ctxt->write_sectors);
+	atomic_sub(io->write.k.k->k.size, &ctxt->write_sectors);
 	atomic_dec(&ctxt->write_ios);
 	move_free(io);
 	closure_put(&ctxt->cl);
@@ -204,7 +201,7 @@ static void move_write(struct moving_io *io)
 	}
 
 	closure_get(&io->write.ctxt->cl);
-	atomic_add(io->write_sectors, &io->write.ctxt->write_sectors);
+	atomic_add(io->write.k.k->k.size, &io->write.ctxt->write_sectors);
 	atomic_inc(&io->write.ctxt->write_ios);
 
 	bch2_data_update_read_done(&io->write);
@@ -223,7 +220,7 @@ static void move_read_endio(struct bio *bio)
 	struct moving_io *io = container_of(bio, struct moving_io, write.rbio.bio);
 	struct moving_context *ctxt = io->write.ctxt;
 
-	atomic_sub(io->read_sectors, &ctxt->read_sectors);
+	atomic_sub(io->write.k.k->k.size, &ctxt->read_sectors);
 	atomic_dec(&ctxt->read_ios);
 	io->read_completed = true;
 
@@ -363,8 +360,6 @@ int bch2_move_extent(struct moving_context *ctxt,
 
 	INIT_LIST_HEAD(&io->io_list);
 	io->write.ctxt		= ctxt;
-	io->read_sectors	= k.k->size;
-	io->write_sectors	= k.k->size;
 
 	if (!data_opts.scrub) {
 		ret = bch2_data_update_init(trans, iter, ctxt, &io->write, ctxt->wp,
@@ -407,7 +402,7 @@ int bch2_move_extent(struct moving_context *ctxt,
 		trace_io_move_read2(c, k);
 
 	scoped_guard(mutex, &ctxt->lock) {
-		atomic_add(io->read_sectors, &ctxt->read_sectors);
+		atomic_add(io->write.k.k->k.size, &ctxt->read_sectors);
 		atomic_inc(&ctxt->read_ios);
 
 		list_add_tail(&io->read_list, &ctxt->reads);
