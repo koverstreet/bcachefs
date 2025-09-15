@@ -81,7 +81,7 @@ void bch2_moving_ctxt_exit(struct moving_context *);
 void bch2_moving_ctxt_init(struct moving_context *, struct bch_fs *,
 			   struct bch_ratelimit *, struct bch_move_stats *,
 			   struct write_point_specifier, bool);
-struct moving_io *bch2_moving_ctxt_next_pending_write(struct moving_context *);
+struct data_update *bch2_moving_ctxt_next_pending_write(struct moving_context *);
 void bch2_moving_ctxt_do_pending_writes(struct moving_context *);
 void bch2_moving_ctxt_flush_all(struct moving_context *);
 void bch2_move_ctxt_wait_for_io(struct moving_context *);
