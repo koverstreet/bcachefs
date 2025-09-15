@@ -927,74 +927,81 @@ int bch2_data_update_init(struct btree_trans *trans,
 		ptr_bit <<= 1;
 	}
 
-	unsigned durability_required = max(0, (int) (io_opts->data_replicas - durability_have));
+	if (!data_opts.scrub) {
+		unsigned durability_required = max(0, (int) (io_opts->data_replicas - durability_have));
 
-	/*
-	 * If current extent durability is less than io_opts.data_replicas,
-	 * we're not trying to rereplicate the extent up to data_replicas here -
-	 * unless extra_replicas was specified
-	 *
-	 * Increasing replication is an explicit operation triggered by
-	 * rereplicate, currently, so that users don't get an unexpected -ENOSPC
-	 */
-	m->op.nr_replicas = min(durability_removing, durability_required) +
-		m->data_opts.extra_replicas;
+		/*
+		 * If current extent durability is less than io_opts.data_replicas,
+		 * we're not trying to rereplicate the extent up to data_replicas here -
+		 * unless extra_replicas was specified
+		 *
+		 * Increasing replication is an explicit operation triggered by
+		 * rereplicate, currently, so that users don't get an unexpected -ENOSPC
+		 */
+		m->op.nr_replicas = min(durability_removing, durability_required) +
+			m->data_opts.extra_replicas;
 
-	/*
-	 * If device(s) were set to durability=0 after data was written to them
-	 * we can end up with a duribilty=0 extent, and the normal algorithm
-	 * that tries not to increase durability doesn't work:
-	 */
-	if (!(durability_have + durability_removing))
-		m->op.nr_replicas = max((unsigned) m->op.nr_replicas, 1);
+		/*
+		 * If device(s) were set to durability=0 after data was written to them
+		 * we can end up with a duribilty=0 extent, and the normal algorithm
+		 * that tries not to increase durability doesn't work:
+		 */
+		if (!(durability_have + durability_removing))
+			m->op.nr_replicas = max((unsigned) m->op.nr_replicas, 1);
 
-	m->op.nr_replicas_required = m->op.nr_replicas;
+		m->op.nr_replicas_required = m->op.nr_replicas;
 
-	/*
-	 * It might turn out that we don't need any new replicas, if the
-	 * replicas or durability settings have been changed since the extent
-	 * was written:
-	 */
-	if (!m->op.nr_replicas) {
-		m->data_opts.kill_ptrs |= m->data_opts.rewrite_ptrs;
-		m->data_opts.rewrite_ptrs = 0;
-		/* if iter == NULL, it's just a promote */
-		if (iter)
-			ret = bch2_extent_drop_ptrs(trans, iter, k, io_opts, &m->data_opts);
-		if (!ret)
-			ret = bch_err_throw(c, data_update_done_no_writes_needed);
-		goto out_bkey_buf_exit;
-	}
+		/*
+		 * It might turn out that we don't need any new replicas, if the
+		 * replicas or durability settings have been changed since the extent
+		 * was written:
+		 */
+		if (!m->op.nr_replicas) {
+			m->data_opts.kill_ptrs |= m->data_opts.rewrite_ptrs;
+			m->data_opts.rewrite_ptrs = 0;
+			/* if iter == NULL, it's just a promote */
+			if (iter)
+				ret = bch2_extent_drop_ptrs(trans, iter, k, io_opts, &m->data_opts);
+			if (!ret)
+				ret = bch_err_throw(c, data_update_done_no_writes_needed);
+			goto out;
+		}
 
-	/*
-	 * Check if the allocation will succeed, to avoid getting an error later
-	 * in bch2_write() -> bch2_alloc_sectors_start() and doing a useless
-	 * read:
-	 *
-	 * This guards against
-	 * - BCH_WRITE_alloc_nowait allocations failing (promotes)
-	 * - Destination target full
-	 * - Device(s) in destination target offline
-	 * - Insufficient durability available in destination target
-	 *   (i.e. trying to move a durability=2 replica to a target with a
-	 *   single durability=2 device)
-	 */
-	ret = can_write_extent(c, m);
-	if (ret)
-		goto out_bkey_buf_exit;
-
-	if (reserve_sectors) {
-		ret = bch2_disk_reservation_add(c, &m->op.res, reserve_sectors,
-				m->data_opts.extra_replicas
-				? 0
-				: BCH_DISK_RESERVATION_NOFAIL);
+		/*
+		 * Check if the allocation will succeed, to avoid getting an error later
+		 * in bch2_write() -> bch2_alloc_sectors_start() and doing a useless
+		 * read:
+		 *
+		 * This guards against
+		 * - BCH_WRITE_alloc_nowait allocations failing (promotes)
+		 * - Destination target full
+		 * - Device(s) in destination target offline
+		 * - Insufficient durability available in destination target
+		 *   (i.e. trying to move a durability=2 replica to a target with a
+		 *   single durability=2 device)
+		 */
+		ret = can_write_extent(c, m);
 		if (ret)
-			goto out_bkey_buf_exit;
+			goto out;
+
+		if (reserve_sectors) {
+			ret = bch2_disk_reservation_add(c, &m->op.res, reserve_sectors,
+					m->data_opts.extra_replicas
+					? 0
+					: BCH_DISK_RESERVATION_NOFAIL);
+			if (ret)
+				goto out;
+		}
+	} else {
+		if (unwritten) {
+			ret = bch_err_throw(c, data_update_done_unwritten);
+			goto out;
+		}
 	}
 
 	if (!bkey_get_dev_refs(c, k)) {
 		ret = bch_err_throw(c, data_update_done_no_dev_refs);
-		goto out_put_disk_res;
+		goto out;
 	}
 
 	if (c->opts.nocow_enabled &&
@@ -1021,9 +1028,8 @@ out_nocow_unlock:
 		bkey_nocow_unlock(c, k);
 out_put_dev_refs:
 	bkey_put_dev_refs(c, k);
-out_put_disk_res:
+out:
 	bch2_disk_reservation_put(c, &m->op.res);
-out_bkey_buf_exit:
 	bch2_bkey_buf_exit(&m->k, c);
 	return ret;
 }
