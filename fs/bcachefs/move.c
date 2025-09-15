@@ -109,7 +109,6 @@ struct moving_io {
 	struct list_head		read_list;
 	struct list_head		io_list;
 	struct move_bucket		*b;
-	struct closure			cl;
 	bool				read_completed;
 
 	unsigned			read_sectors;
