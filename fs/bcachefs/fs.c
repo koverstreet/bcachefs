@@ -43,6 +43,7 @@
 #include <linux/siphash.h>
 #include <linux/statfs.h>
 #include <linux/string.h>
+#include <linux/version.h>
 #include <linux/xattr.h>
 
 static struct kmem_cache *bch2_inode_cache;
@@ -1551,6 +1552,7 @@ static const struct vm_operations_struct bch_vm_ops = {
 	.page_mkwrite   = bch2_page_mkwrite,
 };
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,17,0)
 static int bch2_mmap_prepare(struct vm_area_desc *desc)
 {
 	file_accessed(desc->file);
@@ -1558,6 +1560,15 @@ static int bch2_mmap_prepare(struct vm_area_desc *desc)
 	desc->vm_ops = &bch_vm_ops;
 	return 0;
 }
+#else
+static int bch2_mmap(struct file *file, struct vm_area_struct *vma)
+{
+	file_accessed(file);
+
+	vma->vm_ops = &bch_vm_ops;
+	return 0;
+}
+#endif
 
 /* Directories: */
 
@@ -1615,6 +1626,10 @@ static const __maybe_unused unsigned bch_flags_to_xflags[] = {
 	[__BCH_INODE_nodump]	= FS_XFLAG_NODUMP,
 	[__BCH_INODE_noatime]	= FS_XFLAG_NOATIME,
 };
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,17,0)
+#define file_kattr fileattr
+#endif
 
 static int bch2_fileattr_get(struct dentry *dentry,
 			     struct file_kattr *fa)
@@ -1739,7 +1754,11 @@ static const struct file_operations bch_file_operations = {
 	.llseek		= bch2_llseek,
 	.read_iter	= bch2_read_iter,
 	.write_iter	= bch2_write_iter,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,17,0)
 	.mmap_prepare	= bch2_mmap_prepare,
+#else
+	.mmap		= bch2_mmap,
+#endif
 	.get_unmapped_area = thp_get_unmapped_area,
 	.fsync		= bch2_fsync,
 	.splice_read	= filemap_splice_read,
