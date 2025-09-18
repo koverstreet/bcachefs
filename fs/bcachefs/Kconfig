@@ -3,7 +3,6 @@ config BCACHEFS_FS
 	tristate "bcachefs filesystem support (EXPERIMENTAL)"
 	depends on BLOCK
 	select EXPORTFS
-	select CLOSURES
 	select CRC32
 	select CRC64
 	select FS_POSIX_ACL
