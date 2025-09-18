@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
 
 /*
  * Fast, unordered lists
@@ -154,3 +155,5 @@ int fast_list_init(struct fast_list *l)
 		return -ENOMEM;
 	return 0;
 }
+
+#endif /* CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS */

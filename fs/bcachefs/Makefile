@@ -5,6 +5,7 @@ bcachefs-y		:=	\
 	acl.o			\
 	alloc_background.o	\
 	alloc_foreground.o	\
+	async_objs.o		\
 	backpointers.o		\
 	bkey.o			\
 	bkey_methods.o		\
@@ -98,8 +99,6 @@ bcachefs-y		:=	\
 	util.o			\
 	varint.o		\
 	xattr.o
-
-bcachefs-$(CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS)   += async_objs.o
 
 obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += mean_and_variance_test.o
 
