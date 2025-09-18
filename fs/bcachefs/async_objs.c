@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+
 /*
  * Async obj debugging: keep asynchronous objects on (very fast) lists, make
  * them visibile in debugfs:
@@ -130,3 +132,5 @@ int bch2_fs_async_obj_init(struct bch_fs *c)
 
 	return 0;
 }
+
+#endif /* CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS */
