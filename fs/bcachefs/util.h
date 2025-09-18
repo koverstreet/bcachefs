@@ -4,7 +4,6 @@
 
 #include <linux/bio.h>
 #include <linux/blkdev.h>
-#include <linux/closure.h>
 #include <linux/errno.h>
 #include <linux/freezer.h>
 #include <linux/kernel.h>
@@ -21,6 +20,7 @@
 #include <linux/vmalloc.h>
 #include <linux/workqueue.h>
 
+#include "closure.h"
 #include "mean_and_variance.h"
 
 #include "darray.h"
