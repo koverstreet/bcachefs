@@ -196,7 +196,6 @@
 #include <linux/backing-dev-defs.h>
 #include <linux/bug.h>
 #include <linux/bio.h>
-#include <linux/closure.h>
 #include <linux/kobject.h>
 #include <linux/list.h>
 #include <linux/math64.h>
@@ -217,6 +216,7 @@
 
 #include "bcachefs_format.h"
 #include "btree_journal_iter_types.h"
+#include "closure.h"
 #include "disk_accounting_types.h"
 #include "errcode.h"
 #include "fast_list.h"
