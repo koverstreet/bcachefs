@@ -9,7 +9,9 @@ config BINARY_PRINTF
 menu "Library routines"
 
 config RAID6_PQ
-	tristate
+	tristate "Reed-solomon RAID5/6 algorithms"
+	help
+	  Provides routines for block level reed-solomon, for RAID5/6
 
 config RAID6_PQ_BENCHMARK
 	bool "Automatically choose fastest RAID6 PQ functions"
@@ -197,7 +199,7 @@ config LZ4_COMPRESS
 	tristate
 
 config LZ4HC_COMPRESS
-	tristate
+	tristate "LZ4HC compression"
 
 config LZ4_DECOMPRESS
 	tristate
@@ -646,4 +648,4 @@ config UNION_FIND
 	bool
 
 config MIN_HEAP
-	bool
+	bool "Generic minheap algorithm"
