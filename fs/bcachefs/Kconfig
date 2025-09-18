@@ -10,7 +10,6 @@ config BCACHEFS_FS
 	select LZ4_COMPRESS
 	select LZ4_DECOMPRESS
 	select LZ4HC_COMPRESS
-	select LZ4HC_DECOMPRESS
 	select ZLIB_DEFLATE
 	select ZLIB_INFLATE
 	select ZSTD_COMPRESS
@@ -22,10 +21,8 @@ config BCACHEFS_FS
 	select RAID6_PQ
 	select XOR_BLOCKS
 	select XXHASH
-	select SRCU
 	select SYMBOLIC_ERRNAME
 	select MIN_HEAP
-	select XARRAY_MULTI
 	help
 	The bcachefs filesystem - a modern, copy on write filesystem, with
 	support for multiple devices, compression, checksumming, etc.
