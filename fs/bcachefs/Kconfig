@@ -68,10 +68,10 @@ config BCACHEFS_TESTS
 	Include some unit and performance tests for the core btree code
 
 config BCACHEFS_LOCK_TIME_STATS
-       bool "bcachefs lock time statistics"
-       depends on BCACHEFS_FS
-       help
-       Expose statistics for how long we held a lock in debugfs
+	bool "bcachefs lock time statistics"
+	depends on BCACHEFS_FS
+	help
+	Expose statistics for how long we held a lock in debugfs
 
 config BCACHEFS_NO_LATENCY_ACCT
 	bool "disable latency accounting and time stats"
@@ -103,3 +103,4 @@ config BCACHEFS_TRANS_KMALLOC_TRACE
 config BCACHEFS_ASYNC_OBJECT_LISTS
 	bool "Keep async objects on fast_lists for debugfs visibility"
 	depends on BCACHEFS_FS && DEBUG_FS
+	default y
