@@ -91,8 +91,10 @@ bool __bkey_nocow_lock(struct bch_fs *c, struct moving_context *ctxt, struct bke
 		move_ctxt_wait_event(ctxt,
 				     (locked = bch2_bucket_nocow_trylock(&c->nocow_locks, bucket, 0)) ||
 				     list_empty(&ctxt->ios));
-		if (!locked)
+		if (!locked) {
+			bch2_trans_unlock(ctxt->trans);
 			bch2_bucket_nocow_lock(&c->nocow_locks, bucket, 0);
+		}
 	}
 	return true;
 }
