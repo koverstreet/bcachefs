@@ -188,6 +188,11 @@
 	x(BCH_ERR_recovery_will_run,	recovery_pass_will_run)			\
 	x(0,				data_update_done)			\
 	x(0,				bkey_was_deleted)			\
+	x(0,				bucket_not_moveable)			\
+	x(BCH_ERR_bucket_not_moveable,	bucket_not_moveable_dev_not_rw)		\
+	x(BCH_ERR_bucket_not_moveable,	bucket_not_moveable_bucket_open)	\
+	x(BCH_ERR_bucket_not_moveable,	bucket_not_moveable_bp_mismatch)	\
+	x(BCH_ERR_bucket_not_moveable,	bucket_not_moveable_lru_race)		\
 	x(BCH_ERR_data_update_done,	data_update_done_would_block)		\
 	x(BCH_ERR_data_update_done,	data_update_done_unwritten)		\
 	x(BCH_ERR_data_update_done,	data_update_done_no_writes_needed)	\

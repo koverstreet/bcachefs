@@ -62,8 +62,32 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
-	if (bch2_bucket_is_open(c, b->k.bucket.inode, b->k.bucket.offset))
+	/*
+	 * Valid bucket?
+	 *
+	 * XXX: we should kill the LRU entry here if it's not
+	 */
+	CLASS(bch2_dev_bucket_tryget, ca)(c, b->k.bucket);
+	if (!ca)
 		return 0;
+
+	if (ca->mi.state != BCH_MEMBER_STATE_rw ||
+	    !bch2_dev_is_online(ca)) {
+		bch_err_throw(c, bucket_not_moveable_dev_not_rw);
+		return 0;
+	}
+
+	/* Bucket still being written? */
+	if (bch2_bucket_is_open(c, b->k.bucket.inode, b->k.bucket.offset)) {
+		bch_err_throw(c, bucket_not_moveable_bucket_open);
+		return 0;
+	}
+
+	/* We won't be able to evacuate it if there's missing backpointers */
+	if (bch2_bucket_bitmap_test(&ca->bucket_backpointer_mismatch, b->k.bucket.offset)) {
+		bch_err_throw(c, bucket_not_moveable_bp_mismatch);
+		return 0;
+	}
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_alloc, b->k.bucket, BTREE_ITER_cached);
 	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
@@ -71,24 +95,18 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 	if (ret)
 		return ret;
 
-	CLASS(bch2_dev_bucket_tryget, ca)(c, k.k->p);
-	if (!ca)
-		return 0;
-
-	if (bch2_bucket_bitmap_test(&ca->bucket_backpointer_mismatch, b->k.bucket.offset))
-		return 0;
-
-	if (ca->mi.state != BCH_MEMBER_STATE_rw ||
-	    !bch2_dev_is_online(ca))
-		return 0;
-
 	struct bch_alloc_v4 _a;
 	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &_a);
 	b->k.gen	= a->gen;
 	b->sectors	= bch2_bucket_sectors_dirty(*a);
 	u64 lru_idx	= alloc_lru_idx_fragmentation(*a, ca);
 
-	return lru_idx && lru_idx <= time;
+	if (!lru_idx || lru_idx > time) {
+		bch_err_throw(c, bucket_not_moveable_lru_race);
+		return 0;
+	}
+
+	return true;
 }
 
 static void move_bucket_free(struct buckets_in_flight *list,
