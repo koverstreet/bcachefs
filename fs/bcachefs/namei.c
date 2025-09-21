@@ -980,7 +980,7 @@ int bch2_check_inode_has_case_insensitive(struct btree_trans *trans,
 		ret = bch2_inum_snapshot_to_path(trans, inode->bi_inum, inode->bi_snapshot,
 						 snapshot_overwrites, &buf);
 		if (ret)
-			return ret;
+			goto out;
 
 		if (fsck_err(trans, inode_has_case_insensitive_not_set, "%s", buf.buf)) {
 			inode->bi_flags |= BCH_INODE_has_case_insensitive;
@@ -999,14 +999,14 @@ int bch2_check_inode_has_case_insensitive(struct btree_trans *trans,
 		if (dir.bi_parent_subvol) {
 			ret = bch2_subvolume_get_snapshot(trans, dir.bi_parent_subvol, &snapshot);
 			if (ret)
-				return ret;
+				goto out;
 
 			snapshot_overwrites = NULL;
 		}
 
 		ret = bch2_inode_find_by_inum_snapshot(trans, dir.bi_dir, snapshot, &dir, 0);
 		if (ret)
-			return ret;
+			goto out;
 
 		if (!(dir.bi_flags & BCH_INODE_has_case_insensitive)) {
 			prt_printf(&buf, "parent of casefolded dir with has_case_insensitive not set\n");
@@ -1014,13 +1014,13 @@ int bch2_check_inode_has_case_insensitive(struct btree_trans *trans,
 			ret = bch2_inum_snapshot_to_path(trans, dir.bi_inum, dir.bi_snapshot,
 							 snapshot_overwrites, &buf);
 			if (ret)
-				return ret;
+				goto out;
 
 			if (fsck_err(trans, inode_parent_has_case_insensitive_not_set, "%s", buf.buf)) {
 				dir.bi_flags |= BCH_INODE_has_case_insensitive;
 				ret = __bch2_fsck_write_inode(trans, &dir);
 				if (ret)
-					return ret;
+					goto out;
 			}
 		}
 
@@ -1033,13 +1033,13 @@ int bch2_check_inode_has_case_insensitive(struct btree_trans *trans,
 	}
 out:
 fsck_err:
+	bch_err_fn(trans->c, ret);
 	if (ret)
 		return ret;
 
-	if (repairing_parents) {
+	if (repairing_parents)
 		return bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
 			bch_err_throw(trans->c, transaction_restart_nested);
-	}
 
 	return 0;
 }
