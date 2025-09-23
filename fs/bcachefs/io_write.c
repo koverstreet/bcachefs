@@ -1323,6 +1323,26 @@ static CLOSURE_CALLBACK(bch2_nocow_write_done)
 	bch2_write_done(cl);
 }
 
+static bool bkey_get_dev_iorefs(struct bch_fs *c, struct bkey_ptrs_c ptrs)
+{
+	bkey_for_each_ptr(ptrs, ptr) {
+		struct bch_dev *ca = bch2_dev_get_ioref(c, ptr->dev, WRITE,
+							BCH_DEV_WRITE_REF_io_write);
+		if (unlikely(!ca)) {
+			bkey_for_each_ptr(ptrs, ptr2) {
+				if (ptr2 == ptr)
+					break;
+				enumerated_ref_put(&bch2_dev_have_ref(c, ptr2->dev)->io_ref[WRITE],
+						   BCH_DEV_WRITE_REF_io_write);
+			}
+
+			return false;
+		}
+	}
+
+	return true;
+}
+
 struct bucket_to_lock {
 	struct bpos		b;
 	unsigned		gen;
@@ -1335,6 +1355,7 @@ static void bch2_nocow_write(struct bch_write_op *op)
 	struct btree_trans *trans;
 	struct btree_iter iter;
 	struct bkey_s_c k;
+	struct bkey_ptrs_c ptrs;
 	DARRAY_PREALLOCATED(struct bucket_to_lock, 3) buckets;
 	u32 snapshot;
 	struct bucket_to_lock *stale_at;
@@ -1381,13 +1402,12 @@ retry:
 			break;
 
 		/* Get iorefs before dropping btree locks: */
-		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-		bkey_for_each_ptr(ptrs, ptr) {
-			struct bch_dev *ca = bch2_dev_get_ioref(c, ptr->dev, WRITE,
-							BCH_DEV_WRITE_REF_io_write);
-			if (unlikely(!ca))
-				goto err_get_ioref;
+		ptrs = bch2_bkey_ptrs_c(k);
+		if (!bkey_get_dev_iorefs(c, ptrs))
+			goto out;
 
+		bkey_for_each_ptr(ptrs, ptr) {
+			struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
 			struct bpos b = PTR_BUCKET_POS(ca, ptr);
 			struct nocow_lock_bucket *l =
 				bucket_nocow_lock(&c->nocow_locks, bucket_to_u64(b));
@@ -1404,6 +1424,9 @@ retry:
 
 		/* Unlock before taking nocow locks, doing IO: */
 		bkey_reassemble(op->insert_keys.top, k);
+		k = bkey_i_to_s_c(op->insert_keys.top);
+		ptrs = bch2_bkey_ptrs_c(k);
+
 		bch2_trans_unlock(trans);
 
 		bch2_cut_front(op->pos, op->insert_keys.top);
@@ -1484,13 +1507,6 @@ err:
 		continue_at(&op->cl, bch2_nocow_write_done, index_update_wq(op));
 	}
 	return;
-err_get_ioref:
-	darray_for_each(buckets, i)
-		enumerated_ref_put(&bch2_dev_have_ref(c, i->b.inode)->io_ref[WRITE],
-				   BCH_DEV_WRITE_REF_io_write);
-
-	/* Fall back to COW path: */
-	goto out;
 err_bucket_stale:
 	darray_for_each(buckets, i) {
 		bch2_bucket_nocow_unlock(&c->nocow_locks, i->b, BUCKET_NOCOW_LOCK_UPDATE);
@@ -1509,7 +1525,12 @@ err_bucket_stale:
 		ret = bch_err_throw(c, transaction_restart);
 	}
 
-	goto err_get_ioref;
+	bkey_for_each_ptr(ptrs, ptr)
+		enumerated_ref_put(&bch2_dev_have_ref(c, ptr->dev)->io_ref[WRITE],
+				   BCH_DEV_WRITE_REF_io_write);
+
+	/* Fall back to COW path: */
+	goto out;
 }
 
 static void __bch2_write(struct bch_write_op *op)
