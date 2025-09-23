@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_CLOCK_TYPES_H
 #define _BCACHEFS_CLOCK_TYPES_H
 
-#include "util.h"
+#include "vendor/min_heap.h"
 
 #define NR_IO_TIMERS		(BCH_SB_MEMBERS_MAX * 3)
 

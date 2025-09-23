@@ -21,7 +21,6 @@ config BCACHEFS_FS
 	select XOR_BLOCKS
 	select XXHASH
 	select SYMBOLIC_ERRNAME
-	select MIN_HEAP
 	help
 	The bcachefs filesystem - a modern, copy on write filesystem, with
 	support for multiple devices, compression, checksumming, etc.
