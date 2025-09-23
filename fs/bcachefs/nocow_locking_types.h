@@ -5,11 +5,13 @@
 #define BUCKET_NOCOW_LOCKS_BITS		10
 #define BUCKET_NOCOW_LOCKS		(1U << BUCKET_NOCOW_LOCKS_BITS)
 
+#define NOCOW_LOCK_BUCKET_SIZE	6
+
 struct nocow_lock_bucket {
 	struct closure_waitlist		wait;
 	spinlock_t			lock;
-	u64				b[6];
-	atomic_t			l[6];
+	u64				b[NOCOW_LOCK_BUCKET_SIZE];
+	atomic_t			l[NOCOW_LOCK_BUCKET_SIZE];
 } __aligned(SMP_CACHE_BYTES);
 
 struct bucket_nocow_lock_table {

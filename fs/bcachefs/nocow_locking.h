@@ -19,8 +19,16 @@ static inline struct nocow_lock_bucket *bucket_nocow_lock(struct bucket_nocow_lo
 #define BUCKET_NOCOW_LOCK_UPDATE	(1 << 0)
 
 bool bch2_bucket_nocow_is_locked(struct bucket_nocow_lock_table *, struct bpos);
-void bch2_bucket_nocow_unlock(struct bucket_nocow_lock_table *, struct bpos, int);
-int __bch2_bucket_nocow_trylock(struct bch_fs *, struct nocow_lock_bucket *, u64, int);
+
+void __bch2_bucket_nocow_unlock(struct bucket_nocow_lock_table *, u64, int);
+
+static inline void bch2_bucket_nocow_unlock(struct bucket_nocow_lock_table *t, struct bpos bucket,
+					    int flags)
+{
+	__bch2_bucket_nocow_unlock(t, bucket_to_u64(bucket), flags);
+}
+
+int __bch2_bucket_nocow_trylock(struct bch_fs *c, struct nocow_lock_bucket *, u64, int);
 void __bch2_bucket_nocow_lock(struct bch_fs *, struct nocow_lock_bucket *, u64, int);
 
 static inline void bch2_bucket_nocow_lock(struct bch_fs *c,
