@@ -99,7 +99,8 @@ bcachefs-y		:=	\
 	util.o			\
 	varint.o		\
 	xattr.o			\
-	vendor/closure.o
+	vendor/closure.o	\
+	vendor/min_heap.o
 
 obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += mean_and_variance_test.o
 
