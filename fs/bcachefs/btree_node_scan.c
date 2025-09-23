@@ -12,7 +12,6 @@
 #include "recovery_passes.h"
 
 #include <linux/kthread.h>
-#include <linux/min_heap.h>
 #include <linux/sched/sysctl.h>
 #include <linux/sort.h>
 
