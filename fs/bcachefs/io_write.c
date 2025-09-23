@@ -33,7 +33,6 @@
 
 #include <linux/blkdev.h>
 #include <linux/moduleparam.h>
-#include <linux/prefetch.h>
 #include <linux/random.h>
 #include <linux/sched/mm.h>
 
@@ -1343,12 +1342,6 @@ static bool bkey_get_dev_iorefs(struct bch_fs *c, struct bkey_ptrs_c ptrs)
 	return true;
 }
 
-struct bucket_to_lock {
-	struct bpos		b;
-	unsigned		gen;
-	struct nocow_lock_bucket *l;
-};
-
 static void bch2_nocow_write(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
@@ -1356,15 +1349,13 @@ static void bch2_nocow_write(struct bch_write_op *op)
 	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct bkey_ptrs_c ptrs;
-	DARRAY_PREALLOCATED(struct bucket_to_lock, 3) buckets;
 	u32 snapshot;
-	struct bucket_to_lock *stale_at;
+	const struct bch_extent_ptr *stale_at;
 	int stale, ret;
 
 	if (op->flags & BCH_WRITE_move)
 		return;
 
-	darray_init(&buckets);
 	trans = bch2_trans_get(c);
 retry:
 	bch2_trans_begin(trans);
@@ -1378,8 +1369,6 @@ retry:
 			     BTREE_ITER_slots);
 	while (1) {
 		struct bio *bio = &op->wbio.bio;
-
-		buckets.nr = 0;
 
 		ret = bch2_trans_relock(trans);
 		if (ret)
@@ -1406,22 +1395,6 @@ retry:
 		if (!bkey_get_dev_iorefs(c, ptrs))
 			goto out;
 
-		bkey_for_each_ptr(ptrs, ptr) {
-			struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
-			struct bpos b = PTR_BUCKET_POS(ca, ptr);
-			struct nocow_lock_bucket *l =
-				bucket_nocow_lock(&c->nocow_locks, bucket_to_u64(b));
-			prefetch(l);
-
-			/* XXX allocating memory with btree locks held - rare */
-			darray_push_gfp(&buckets, ((struct bucket_to_lock) {
-						   .b = b, .gen = ptr->gen, .l = l,
-						   }), GFP_KERNEL|__GFP_NOFAIL);
-
-			if (ptr->unwritten)
-				op->flags |= BCH_WRITE_convert_unwritten;
-		}
-
 		/* Unlock before taking nocow locks, doing IO: */
 		bkey_reassemble(op->insert_keys.top, k);
 		k = bkey_i_to_s_c(op->insert_keys.top);
@@ -1429,24 +1402,30 @@ retry:
 
 		bch2_trans_unlock(trans);
 
+		bch2_bkey_nocow_lock(c, ptrs, BUCKET_NOCOW_LOCK_UPDATE);
+
+		/*
+		 * This could be handled better: If we're able to trylock the
+		 * nocow locks with btree locks held we know dirty pointers
+		 * can't be stale
+		 */
+		bkey_for_each_ptr(ptrs, ptr) {
+			struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
+
+			int gen = bucket_gen_get(ca, PTR_BUCKET_NR(ca, ptr));
+			stale = gen < 0 ? gen : gen_after(gen, ptr->gen);
+			if (unlikely(stale)) {
+				stale_at = ptr;
+				goto err_bucket_stale;
+			}
+
+			if (ptr->unwritten)
+				op->flags |= BCH_WRITE_convert_unwritten;
+		}
+
 		bch2_cut_front(op->pos, op->insert_keys.top);
 		if (op->flags & BCH_WRITE_convert_unwritten)
 			bch2_cut_back(POS(op->pos.inode, op->pos.offset + bio_sectors(bio)), op->insert_keys.top);
-
-		darray_for_each(buckets, i) {
-			struct bch_dev *ca = bch2_dev_have_ref(c, i->b.inode);
-
-			__bch2_bucket_nocow_lock(&c->nocow_locks, i->l,
-						 bucket_to_u64(i->b),
-						 BUCKET_NOCOW_LOCK_UPDATE);
-
-			int gen = bucket_gen_get(ca, i->b.offset);
-			stale = gen < 0 ? gen : gen_after(gen, i->gen);
-			if (unlikely(stale)) {
-				stale_at = i;
-				goto err_bucket_stale;
-			}
-		}
 
 		bio = &op->wbio.bio;
 		if (k.k->p.offset < op->pos.offset + bio_sectors(bio)) {
@@ -1481,8 +1460,6 @@ err:
 		goto retry;
 
 	bch2_trans_put(trans);
-	darray_exit(&buckets);
-
 	if (ret) {
 		bch2_write_op_error(op, op->pos.offset,
 				    "%s(): btree lookup error: %s", __func__, bch2_err_str(ret));
@@ -1508,16 +1485,10 @@ err:
 	}
 	return;
 err_bucket_stale:
-	darray_for_each(buckets, i) {
-		bch2_bucket_nocow_unlock(&c->nocow_locks, i->b, BUCKET_NOCOW_LOCK_UPDATE);
-		if (i == stale_at)
-			break;
-	}
-
 	CLASS(printbuf, buf)();
 	if (bch2_fs_inconsistent_on(stale < 0, c,
-				    "pointer to invalid bucket in nocow path on device %llu\n  %s",
-				    stale_at->b.inode,
+				    "pointer to invalid bucket in nocow path on device %u\n  %s",
+				    stale_at->dev,
 				    (bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
 		ret = bch_err_throw(c, data_write_invalid_ptr);
 	} else {
@@ -1525,6 +1496,7 @@ err_bucket_stale:
 		ret = bch_err_throw(c, transaction_restart);
 	}
 
+	bch2_bkey_nocow_unlock(c, k, BUCKET_NOCOW_LOCK_UPDATE);
 	bkey_for_each_ptr(ptrs, ptr)
 		enumerated_ref_put(&bch2_dev_have_ref(c, ptr->dev)->io_ref[WRITE],
 				   BCH_DEV_WRITE_REF_io_write);
