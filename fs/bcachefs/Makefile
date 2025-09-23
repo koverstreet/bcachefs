@@ -1,4 +1,9 @@
 
+ifdef BCACHEFS_DKMS
+	CONFIG_BCACHEFS_FS := m
+	# Enable other features here?
+endif
+
 obj-$(CONFIG_BCACHEFS_FS)	+= bcachefs.o
 
 bcachefs-y		:=	\
@@ -100,7 +105,13 @@ bcachefs-y		:=	\
 	varint.o		\
 	xattr.o
 
-obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += mean_and_variance_test.o
+ifndef BCACHEFS_DKMS
+	obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += mean_and_variance_test.o
+endif
 
 # Silence "note: xyz changed in GCC X.X" messages
 subdir-ccflags-y += $(call cc-disable-warning, psabi)
+
+ifdef BCACHEFS_DKMS
+	subdir-ccflags-y += -I$(src)
+endif
