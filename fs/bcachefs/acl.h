@@ -26,7 +26,7 @@ typedef struct {
 
 void bch2_acl_to_text(struct printbuf *, const void *, size_t);
 
-#ifdef CONFIG_BCACHEFS_POSIX_ACL
+#ifndef NO_BCACHEFS_FS
 
 struct posix_acl *bch2_get_acl(struct inode *, int, bool);
 
@@ -55,6 +55,6 @@ static inline int bch2_acl_chmod(struct btree_trans *trans, subvol_inum inum,
 	return 0;
 }
 
-#endif /* CONFIG_BCACHEFS_POSIX_ACL */
+#endif /* NO_BCACHEFS_FS */
 
 #endif /* _BCACHEFS_ACL_H */
