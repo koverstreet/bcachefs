@@ -28,28 +28,6 @@ static inline void bch2_bucket_nocow_unlock(struct bucket_nocow_lock_table *t, s
 	__bch2_bucket_nocow_unlock(t, bucket_to_u64(bucket), flags);
 }
 
-int __bch2_bucket_nocow_trylock(struct bch_fs *c, struct nocow_lock_bucket *, u64, int);
-void __bch2_bucket_nocow_lock(struct bch_fs *, struct nocow_lock_bucket *, u64, int);
-
-static inline void bch2_bucket_nocow_lock(struct bch_fs *c,
-					  struct bpos bucket, int flags)
-{
-	struct bucket_nocow_lock_table *t = &c->nocow_locks;
-	u64 dev_bucket = bucket_to_u64(bucket);
-	struct nocow_lock_bucket *l = bucket_nocow_lock(t, dev_bucket);
-
-	__bch2_bucket_nocow_lock(c, l, dev_bucket, flags);
-}
-
-static inline bool bch2_bucket_nocow_trylock(struct bch_fs *c, struct bpos bucket, int flags)
-{
-	struct bucket_nocow_lock_table *t = &c->nocow_locks;
-	u64 dev_bucket = bucket_to_u64(bucket);
-	struct nocow_lock_bucket *l = bucket_nocow_lock(t, dev_bucket);
-
-	return !__bch2_bucket_nocow_trylock(c, l, dev_bucket, flags);
-}
-
 void bch2_bkey_nocow_unlock(struct bch_fs *, struct bkey_s_c, int);
 bool bch2_bkey_nocow_trylock(struct bch_fs *, struct bkey_ptrs_c, int);
 void bch2_bkey_nocow_lock(struct bch_fs *, struct bkey_ptrs_c, int);

@@ -48,7 +48,7 @@ void __bch2_bucket_nocow_unlock(struct bucket_nocow_lock_table *t, u64 dev_bucke
 	BUG();
 }
 
-int __bch2_bucket_nocow_trylock(struct bch_fs *c, struct nocow_lock_bucket *l,
+static int __bch2_bucket_nocow_trylock(struct bch_fs *c, struct nocow_lock_bucket *l,
 				u64 dev_bucket, int flags)
 {
 	int v, lock_val = flags ? 1 : -1;
@@ -81,15 +81,13 @@ take_lock:
 	return 0;
 }
 
-void __bch2_bucket_nocow_lock(struct bch_fs *c, struct nocow_lock_bucket *l,
-			      u64 dev_bucket, int flags)
+static inline bool bch2_bucket_nocow_trylock(struct bch_fs *c, struct bpos bucket, int flags)
 {
-	if (__bch2_bucket_nocow_trylock(c, l, dev_bucket, flags)) {
-		u64 start_time = local_clock();
+	struct bucket_nocow_lock_table *t = &c->nocow_locks;
+	u64 dev_bucket = bucket_to_u64(bucket);
+	struct nocow_lock_bucket *l = bucket_nocow_lock(t, dev_bucket);
 
-		__closure_wait_event(&l->wait, !__bch2_bucket_nocow_trylock(c, l, dev_bucket, flags));
-		bch2_time_stats_update(&c->times[BCH_TIME_nocow_lock_contended], start_time);
-	}
+	return !__bch2_bucket_nocow_trylock(c, l, dev_bucket, flags);
 }
 
 void bch2_bkey_nocow_unlock(struct bch_fs *c, struct bkey_s_c k, int flags)
