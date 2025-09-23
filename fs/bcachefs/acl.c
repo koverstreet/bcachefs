@@ -57,7 +57,7 @@ void bch2_acl_to_text(struct printbuf *out, const void *value, size_t size)
 	}
 }
 
-#ifdef CONFIG_BCACHEFS_POSIX_ACL
+#ifndef NO_BCACHEFS_FS
 
 #include "fs.h"
 
@@ -437,4 +437,4 @@ err:
 	return ret;
 }
 
-#endif /* CONFIG_BCACHEFS_POSIX_ACL */
+#endif /* NO_BCACHEFS_FS */
