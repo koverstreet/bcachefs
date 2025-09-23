@@ -838,8 +838,10 @@ void bch2_shoot_down_journal_keys(struct bch_fs *c, enum btree_id btree,
 		      bpos_ge(k->k.p, start) &&
 		      bpos_le(k->k.p, end)))
 			keys->data[dst++] = *i;
-		else if (i->allocated)
+		else if (i->allocated) {
 			kfree(i->allocated_k);
+			i->allocated_k = NULL;
+		}
 	}
 	keys->nr = keys->gap = dst;
 }
