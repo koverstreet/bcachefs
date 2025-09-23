@@ -650,10 +650,6 @@ int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
 	    !(bch2_opt_table[id].flags & OPT_MOUNT_OLD))
 		return -BCH_ERR_option_name;
 
-	if (id == Opt_acl &&
-	    !IS_ENABLED(CONFIG_BCACHEFS_POSIX_ACL))
-		return -BCH_ERR_option_name;
-
 	if ((id == Opt_usrquota ||
 	     id == Opt_grpquota) &&
 	    !IS_ENABLED(CONFIG_BCACHEFS_QUOTA))

@@ -541,11 +541,9 @@ __bch2_create(struct mnt_idmap *idmap,
 	 * preallocate acls + vfs inode before btree transaction, so that
 	 * nothing can fail after the transaction succeeds:
 	 */
-#ifdef CONFIG_BCACHEFS_POSIX_ACL
 	ret = posix_acl_create(&dir->v, &mode, &default_acl, &acl);
 	if (ret)
 		return ERR_PTR(ret);
-#endif
 
 	inode = __bch2_new_inode(c, GFP_NOFS);
 	if (unlikely(!inode)) {
@@ -1751,10 +1749,8 @@ static const struct inode_operations bch_file_inode_operations = {
 	.setattr	= bch2_setattr,
 	.fiemap		= bch2_fiemap,
 	.listxattr	= bch2_xattr_list,
-#ifdef CONFIG_BCACHEFS_POSIX_ACL
 	.get_inode_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
-#endif
 	.fileattr_get	= bch2_fileattr_get,
 	.fileattr_set	= bch2_fileattr_set,
 };
@@ -1773,10 +1769,8 @@ static const struct inode_operations bch_dir_inode_operations = {
 	.setattr	= bch2_setattr,
 	.tmpfile	= bch2_tmpfile,
 	.listxattr	= bch2_xattr_list,
-#ifdef CONFIG_BCACHEFS_POSIX_ACL
 	.get_inode_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
-#endif
 	.fileattr_get	= bch2_fileattr_get,
 	.fileattr_set	= bch2_fileattr_set,
 };
@@ -1797,10 +1791,8 @@ static const struct inode_operations bch_symlink_inode_operations = {
 	.getattr	= bch2_getattr,
 	.setattr	= bch2_setattr,
 	.listxattr	= bch2_xattr_list,
-#ifdef CONFIG_BCACHEFS_POSIX_ACL
 	.get_inode_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
-#endif
 	.fileattr_get	= bch2_fileattr_get,
 	.fileattr_set	= bch2_fileattr_set,
 };
@@ -1809,10 +1801,8 @@ static const struct inode_operations bch_special_inode_operations = {
 	.getattr	= bch2_getattr,
 	.setattr	= bch2_setattr,
 	.listxattr	= bch2_xattr_list,
-#ifdef CONFIG_BCACHEFS_POSIX_ACL
 	.get_inode_acl	= bch2_get_acl,
 	.set_acl	= bch2_set_acl,
-#endif
 	.fileattr_get	= bch2_fileattr_get,
 	.fileattr_set	= bch2_fileattr_set,
 };
@@ -2546,10 +2536,8 @@ got_sb:
 
 	c->dev = sb->s_dev;
 
-#ifdef CONFIG_BCACHEFS_POSIX_ACL
 	if (c->opts.acl)
 		sb->s_flags	|= SB_POSIXACL;
-#endif
 
 	sb->s_shrink->seeks = 0;
 
