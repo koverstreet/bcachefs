@@ -8,8 +8,8 @@
 struct nocow_lock_bucket {
 	struct closure_waitlist		wait;
 	spinlock_t			lock;
-	u64				b[4];
-	atomic_t			l[4];
+	u64				b[6];
+	atomic_t			l[6];
 } __aligned(SMP_CACHE_BYTES);
 
 struct bucket_nocow_lock_table {
