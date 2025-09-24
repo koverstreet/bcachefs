@@ -86,6 +86,48 @@ void __bch2_bucket_nocow_lock(struct bucket_nocow_lock_table *t,
 	}
 }
 
+void bch2_bkey_nocow_unlock(struct bch_fs *c, struct bkey_s_c k, int flags)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+
+	bkey_for_each_ptr(ptrs, ptr) {
+		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
+		struct bpos bucket = PTR_BUCKET_POS(ca, ptr);
+
+		bch2_bucket_nocow_unlock(&c->nocow_locks, bucket, flags);
+	}
+}
+
+bool bch2_bkey_nocow_trylock(struct bch_fs *c, struct bkey_ptrs_c ptrs, int flags)
+{
+	bkey_for_each_ptr(ptrs, ptr) {
+		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
+		struct bpos bucket = PTR_BUCKET_POS(ca, ptr);
+
+		if (unlikely(!bch2_bucket_nocow_trylock(&c->nocow_locks, bucket, flags))) {
+			bkey_for_each_ptr(ptrs, ptr2) {
+				if (ptr2 == ptr)
+					break;
+
+				struct bch_dev *ca = bch2_dev_have_ref(c, ptr2->dev);
+				struct bpos bucket = PTR_BUCKET_POS(ca, ptr2);
+				bch2_bucket_nocow_unlock(&c->nocow_locks, bucket, flags);
+			}
+			return false;
+		}
+	}
+
+	return true;
+}
+
+void bch2_bkey_nocow_lock(struct bch_fs *c, struct bkey_ptrs_c ptrs, int flags)
+{
+	bkey_for_each_ptr(ptrs, ptr) {
+		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
+		bch2_bucket_nocow_lock(&c->nocow_locks, PTR_BUCKET_POS(ca, ptr), flags);
+	}
+}
+
 void bch2_nocow_locks_to_text(struct printbuf *out, struct bucket_nocow_lock_table *t)
 
 {

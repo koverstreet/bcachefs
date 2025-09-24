@@ -55,63 +55,6 @@ static bool bkey_get_dev_refs(struct bch_fs *c, struct bkey_s_c k)
 	return true;
 }
 
-static void bkey_nocow_unlock(struct bch_fs *c, struct bkey_s_c k)
-{
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-
-	bkey_for_each_ptr(ptrs, ptr) {
-		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
-		struct bpos bucket = PTR_BUCKET_POS(ca, ptr);
-
-		bch2_bucket_nocow_unlock(&c->nocow_locks, bucket, 0);
-	}
-}
-
-static noinline_for_stack
-bool __bkey_nocow_lock(struct bch_fs *c, struct moving_context *ctxt, struct bkey_ptrs_c ptrs,
-		       const struct bch_extent_ptr *start)
-{
-	if (!ctxt) {
-		bkey_for_each_ptr(ptrs, ptr) {
-			if (ptr == start)
-				break;
-
-			struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
-			struct bpos bucket = PTR_BUCKET_POS(ca, ptr);
-			bch2_bucket_nocow_unlock(&c->nocow_locks, bucket, 0);
-		}
-		return false;
-	}
-
-	__bkey_for_each_ptr(start, ptrs.end, ptr) {
-		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
-		struct bpos bucket = PTR_BUCKET_POS(ca, ptr);
-
-		bool locked;
-		move_ctxt_wait_event(ctxt,
-				     (locked = bch2_bucket_nocow_trylock(&c->nocow_locks, bucket, 0)) ||
-				     list_empty(&ctxt->ios));
-		if (!locked) {
-			bch2_trans_unlock(ctxt->trans);
-			bch2_bucket_nocow_lock(&c->nocow_locks, bucket, 0);
-		}
-	}
-	return true;
-}
-
-static bool bkey_nocow_lock(struct bch_fs *c, struct moving_context *ctxt, struct bkey_ptrs_c ptrs)
-{
-	bkey_for_each_ptr(ptrs, ptr) {
-		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
-		struct bpos bucket = PTR_BUCKET_POS(ca, ptr);
-
-		if (!bch2_bucket_nocow_trylock(&c->nocow_locks, bucket, 0))
-			return __bkey_nocow_lock(c, ctxt, ptrs, ptr);
-	}
-
-	return true;
-}
-
 noinline_for_stack
 static void trace_io_move_finish2(struct data_update *u,
 				  struct bkey_i *new,
@@ -538,7 +481,7 @@ void bch2_data_update_exit(struct data_update *update)
 	update->bvecs = NULL;
 
 	if (c->opts.nocow_enabled)
-		bkey_nocow_unlock(c, k);
+		bch2_bkey_nocow_unlock(c, k, 0);
 	bkey_put_dev_refs(c, k);
 	bch2_disk_reservation_put(c, &update->op.res);
 	bch2_bkey_buf_exit(&update->k, c);
@@ -1018,10 +961,19 @@ int bch2_data_update_init(struct btree_trans *trans,
 		goto out;
 	}
 
-	if (c->opts.nocow_enabled &&
-	    !bkey_nocow_lock(c, ctxt, ptrs)) {
-		ret = bch_err_throw(c, nocow_lock_blocked);
-		goto out_put_dev_refs;
+	if (c->opts.nocow_enabled) {
+		if (!bch2_bkey_nocow_trylock(c, ptrs, 0)) {
+			bool locked = false;
+			if (ctxt)
+				move_ctxt_wait_event(ctxt,
+					(locked = bch2_bkey_nocow_trylock(c, ptrs, 0)) ||
+					list_empty(&ctxt->ios));
+			if (!locked) {
+				if (ctxt)
+					bch2_trans_unlock(ctxt->trans);
+				bch2_bkey_nocow_lock(c, ptrs, 0);
+			}
+		}
 	}
 
 	if (unwritten) {
@@ -1039,8 +991,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 	return 0;
 out_nocow_unlock:
 	if (c->opts.nocow_enabled)
-		bkey_nocow_unlock(c, k);
-out_put_dev_refs:
+		bch2_bkey_nocow_unlock(c, k, 0);
 	bkey_put_dev_refs(c, k);
 out:
 	bch2_disk_reservation_put(c, &m->op.res);
