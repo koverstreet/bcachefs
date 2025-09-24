@@ -40,8 +40,8 @@ void bch2_bucket_nocow_unlock(struct bucket_nocow_lock_table *t, struct bpos buc
 	BUG();
 }
 
-bool __bch2_bucket_nocow_trylock(struct nocow_lock_bucket *l,
-				 u64 dev_bucket, int flags)
+int __bch2_bucket_nocow_trylock(struct bch_fs *c, struct nocow_lock_bucket *l,
+				u64 dev_bucket, int flags)
 {
 	int v, lock_val = flags ? 1 : -1;
 	unsigned i;
@@ -58,30 +58,28 @@ bool __bch2_bucket_nocow_trylock(struct nocow_lock_bucket *l,
 			goto take_lock;
 		}
 
-	return false;
+	return bch_err_throw(c, nocow_trylock_bucket_full);
 got_entry:
 	v = atomic_read(&l->l[i]);
 	if (lock_val > 0 ? v < 0 : v > 0)
-		return false;
+		return bch_err_throw(c, nocow_trylock_contended);
 take_lock:
 	v = atomic_read(&l->l[i]);
 	/* Overflow? */
 	if (v && sign(v + lock_val) != sign(v))
-		return false;
+		return bch_err_throw(c, nocow_trylock_contended);
 
 	atomic_add(lock_val, &l->l[i]);
-	return true;
+	return 0;
 }
 
-void __bch2_bucket_nocow_lock(struct bucket_nocow_lock_table *t,
-			      struct nocow_lock_bucket *l,
+void __bch2_bucket_nocow_lock(struct bch_fs *c, struct nocow_lock_bucket *l,
 			      u64 dev_bucket, int flags)
 {
-	if (!__bch2_bucket_nocow_trylock(l, dev_bucket, flags)) {
-		struct bch_fs *c = container_of(t, struct bch_fs, nocow_locks);
+	if (__bch2_bucket_nocow_trylock(c, l, dev_bucket, flags)) {
 		u64 start_time = local_clock();
 
-		__closure_wait_event(&l->wait, __bch2_bucket_nocow_trylock(l, dev_bucket, flags));
+		__closure_wait_event(&l->wait, !__bch2_bucket_nocow_trylock(c, l, dev_bucket, flags));
 		bch2_time_stats_update(&c->times[BCH_TIME_nocow_lock_contended], start_time);
 	}
 }
@@ -104,7 +102,7 @@ bool bch2_bkey_nocow_trylock(struct bch_fs *c, struct bkey_ptrs_c ptrs, int flag
 		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
 		struct bpos bucket = PTR_BUCKET_POS(ca, ptr);
 
-		if (unlikely(!bch2_bucket_nocow_trylock(&c->nocow_locks, bucket, flags))) {
+		if (unlikely(!bch2_bucket_nocow_trylock(c, bucket, flags))) {
 			bkey_for_each_ptr(ptrs, ptr2) {
 				if (ptr2 == ptr)
 					break;
@@ -124,7 +122,7 @@ void bch2_bkey_nocow_lock(struct bch_fs *c, struct bkey_ptrs_c ptrs, int flags)
 {
 	bkey_for_each_ptr(ptrs, ptr) {
 		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
-		bch2_bucket_nocow_lock(&c->nocow_locks, PTR_BUCKET_POS(ca, ptr), flags);
+		bch2_bucket_nocow_lock(c, PTR_BUCKET_POS(ca, ptr), flags);
 	}
 }
 
