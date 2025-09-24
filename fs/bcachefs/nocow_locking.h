@@ -42,6 +42,10 @@ static inline bool bch2_bucket_nocow_trylock(struct bucket_nocow_lock_table *t,
 	return __bch2_bucket_nocow_trylock(l, dev_bucket, flags);
 }
 
+void bch2_bkey_nocow_unlock(struct bch_fs *, struct bkey_s_c, int);
+bool bch2_bkey_nocow_trylock(struct bch_fs *, struct bkey_ptrs_c, int);
+void bch2_bkey_nocow_lock(struct bch_fs *, struct bkey_ptrs_c, int);
+
 void bch2_nocow_locks_to_text(struct printbuf *, struct bucket_nocow_lock_table *);
 
 void bch2_fs_nocow_locking_exit(struct bch_fs *);
