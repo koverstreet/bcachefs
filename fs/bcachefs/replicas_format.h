@@ -17,7 +17,8 @@ struct bch_replicas_entry_v1 {
 	__u8			data_type;
 	__u8			nr_devs;
 	__u8			nr_required;
-	__u8			devs[] __counted_by(nr_devs);
+	/* No counted_by: bch_replicas_cpu entries are all the size of the biggest entry */
+	__u8			devs[];
 } __packed;
 
 struct bch_sb_field_replicas {
