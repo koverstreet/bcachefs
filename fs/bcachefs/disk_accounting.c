@@ -831,9 +831,6 @@ int bch2_accounting_read(struct bch_fs *c)
 	iter.flags &= ~BTREE_ITER_with_journal;
 	int ret = for_each_btree_key_continue(trans, iter,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k, ({
-		struct bkey u;
-		struct bkey_s_c k = bch2_btree_path_peek_slot_exact(btree_iter_path(trans, &iter), &u);
-
 		if (k.k->type != KEY_TYPE_accounting)
 			continue;
 
