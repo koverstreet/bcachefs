@@ -924,6 +924,8 @@ static int accounting_read_mem_fixups(struct btree_trans *trans)
  */
 int bch2_accounting_read(struct bch_fs *c)
 {
+	bch2_verify_journal_keys_sorted(c);
+
 	struct bch_accounting_mem *acc = &c->accounting;
 	CLASS(btree_trans, trans)(c);
 	CLASS(printbuf, buf)();
