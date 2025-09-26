@@ -863,7 +863,8 @@ int bch2_accounting_read(struct bch_fs *c)
 			if (jk < end)
 				next = bpos_min(next, journal_key_k(c, jk)->k.p);
 
-			bch2_btree_iter_set_pos(&iter, next);
+			/* for_each_btree_key() will still advance iterator: */
+			bch2_btree_iter_set_pos(&iter, bpos_predecessor(next));
 			continue;
 		}
 
