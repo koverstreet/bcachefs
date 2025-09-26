@@ -686,6 +686,7 @@ struct btree_debug {
 	unsigned		id;
 };
 
+#define BCH_LINK_MAX	U32_MAX
 #define BCH_TRANSACTIONS_NR 128
 
 struct btree_transaction_stats {
