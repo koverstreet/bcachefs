@@ -1318,6 +1318,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 			set_btree_bset_end(b, b->set);
 			set_btree_node_need_rewrite(b);
 			set_btree_node_need_rewrite_error(b);
+			ret = 0;
 			continue;
 		}
 		if (ret)
