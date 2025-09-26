@@ -766,6 +766,9 @@ static int bch2_journal_reclaim_thread(void *arg)
 
 	set_freezable();
 
+	kthread_wait_freezable(test_bit(BCH_FS_rw, &c->flags) ||
+			       kthread_should_stop());
+
 	j->last_flushed = jiffies;
 
 	while (!ret && !kthread_should_stop()) {
@@ -826,8 +829,10 @@ int bch2_journal_reclaim_start(struct journal *j)
 	struct task_struct *p;
 	int ret;
 
-	if (j->reclaim_thread)
+	if (j->reclaim_thread) {
+		wake_up_process(j->reclaim_thread);
 		return 0;
+	}
 
 	p = kthread_create(bch2_journal_reclaim_thread, j,
 			   "bch-reclaim/%s", c->name);

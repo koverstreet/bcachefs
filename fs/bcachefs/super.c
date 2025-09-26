@@ -564,14 +564,16 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 	 * successfully marked the filesystem dirty
 	 */
 
-	ret = bch2_journal_reclaim_start(&c->journal);
-	if (ret)
-		goto err;
-
 	set_bit(BCH_FS_rw, &c->flags);
 	set_bit(BCH_FS_was_rw, &c->flags);
 
 	enumerated_ref_start(&c->writes);
+
+	ret = bch2_journal_reclaim_start(&c->journal);
+	if (ret) {
+		bch_err_msg(c, ret, "error starting journal reclaim thread");
+		goto err;
+	}
 
 	ret = bch2_copygc_start(c);
 	if (ret) {
@@ -852,7 +854,8 @@ int bch2_fs_init_rw(struct bch_fs *c)
 		bch2_fs_btree_write_buffer_init(c) ?:
 		bch2_fs_fs_io_buffered_init(c) ?:
 		bch2_fs_io_write_init(c) ?:
-		bch2_fs_journal_init(&c->journal);
+		bch2_fs_journal_init(&c->journal) ?:
+		bch2_journal_reclaim_start(&c->journal);
 	if (ret)
 		return ret;
 
