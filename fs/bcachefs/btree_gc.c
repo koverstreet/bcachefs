@@ -204,7 +204,7 @@ static int btree_check_node_boundaries(struct btree_trans *trans, struct btree *
 	if (bpos_eq(expected_start, cur->data->min_key))
 		return 0;
 
-	prt_printf(&buf, "  at ");
+	prt_printf(&buf, " at ");
 	bch2_btree_id_level_to_text(&buf, b->c.btree_id, b->c.level);
 	prt_printf(&buf, ":\nparent: ");
 	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&b->key));
