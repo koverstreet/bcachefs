@@ -70,6 +70,8 @@ static inline int journal_key_cmp(struct bch_fs *c,
 				 journal_key_k(c, l)->k.p, r);
 }
 
+void bch2_verify_journal_keys_sorted(struct bch_fs *);
+
 const struct bkey_i *bch2_journal_keys_peek_max(struct bch_fs *, enum btree_id,
 				unsigned, struct bpos, struct bpos, size_t *);
 const struct bkey_i *bch2_journal_keys_peek_prev_min(struct bch_fs *, enum btree_id,
