@@ -1185,7 +1185,7 @@ int bch2_inode_nlink_inc(struct bch_inode_unpacked *bi)
 		bi->bi_flags &= ~BCH_INODE_unlinked;
 	else {
 		if (bi->bi_nlink == U32_MAX)
-			return -EINVAL;
+			return -BCH_ERR_too_many_links;
 
 		bi->bi_nlink++;
 	}
