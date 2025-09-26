@@ -229,8 +229,8 @@ static int btree_check_node_boundaries(struct btree_trans *trans, struct btree *
 			*pulled_from_scan = cur->data->min_key;
 			ret = bch_err_throw(c, topology_repair_did_fill_from_scan);
 		} else {
-			if (mustfix_fsck_err(trans, btree_node_topology_bad_min_key,
-					     "btree node with incorrect min_key%s", buf.buf))
+			if (mustfix_fsck_err(trans, btree_node_topology_gap_between_nodes,
+					     "gap between btree nodes%s", buf.buf))
 				ret = set_node_min(c, cur, expected_start);
 		}
 	} else {									/* overlap */
