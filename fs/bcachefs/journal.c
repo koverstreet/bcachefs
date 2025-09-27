@@ -698,7 +698,7 @@ static unsigned max_dev_latency(struct bch_fs *c)
 	u64 nsecs = 0;
 
 	guard(rcu)();
-	for_each_rw_member_rcu(c, ca)
+	for_each_member_device_rcu(c, ca, &c->rw_devs[BCH_DATA_journal])
 		nsecs = max(nsecs, ca->io_latency[WRITE].stats.max_duration);
 
 	return nsecs_to_jiffies(nsecs);
