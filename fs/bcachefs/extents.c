@@ -783,6 +783,39 @@ bool bch2_bkey_is_incompressible(struct bkey_s_c k)
 	return false;
 }
 
+void bch2_bkey_propagate_incompressible(struct bkey_i *dst, struct bkey_s_c src)
+{
+	if (!bch2_bkey_is_incompressible(src))
+		return;
+
+	struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(dst));
+	union bch_extent_entry *entry;
+
+	/*
+	 * XXX: if some data actually is compressed, we want
+	 * bch_extent_rebalance.wont_recompress_smaller
+	 */
+
+	bkey_extent_entry_for_each(ptrs, entry) {
+		switch (extent_entry_type(entry)) {
+		case BCH_EXTENT_ENTRY_crc32:
+			if (entry->crc32.compression_type == BCH_COMPRESSION_TYPE_none)
+				entry->crc32.compression_type = BCH_COMPRESSION_TYPE_incompressible;
+			break;
+		case BCH_EXTENT_ENTRY_crc64:
+			if (entry->crc64.compression_type == BCH_COMPRESSION_TYPE_none)
+				entry->crc64.compression_type = BCH_COMPRESSION_TYPE_incompressible;
+			break;
+		case BCH_EXTENT_ENTRY_crc128:
+			if (entry->crc128.compression_type == BCH_COMPRESSION_TYPE_none)
+				entry->crc128.compression_type = BCH_COMPRESSION_TYPE_incompressible;
+			break;
+		default:
+			break;
+		}
+	}
+}
+
 unsigned bch2_bkey_replicas(struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);

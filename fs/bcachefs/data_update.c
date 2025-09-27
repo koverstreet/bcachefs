@@ -268,6 +268,8 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 		bch2_cut_back(new->k.p,		insert);
 		bch2_cut_back(insert->k.p,	&new->k_i);
 
+		bch2_bkey_propagate_incompressible(insert, bkey_i_to_s_c(&new->k_i));
+
 		/*
 		 * @old: extent that we read from
 		 * @insert: key that we're going to update, initialized from
