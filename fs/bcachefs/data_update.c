@@ -745,7 +745,8 @@ static int can_write_extent(struct bch_fs *c, struct data_update *m)
 	struct bch_devs_mask devs = target_rw_devs(c, BCH_DATA_user, target);
 
 	darray_for_each(m->op.devs_have, i)
-		__clear_bit(*i, devs.d);
+		if (*i != BCH_SB_MEMBER_INVALID)
+			__clear_bit(*i, devs.d);
 
 	CLASS(printbuf, buf)();
 
