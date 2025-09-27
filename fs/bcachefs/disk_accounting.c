@@ -978,11 +978,12 @@ int bch2_accounting_read(struct bch_fs *c)
 			struct disk_accounting_pos next_acc;
 			memset(&next_acc, 0, sizeof(next_acc));
 			next_acc.type = acc_k.type + 1;
-			struct bpos next = bpos_predecessor(disk_accounting_pos_to_bpos(&next_acc));
+			struct bpos next = disk_accounting_pos_to_bpos(&next_acc);
 			if (jk < end)
 				next = bpos_min(next, journal_key_k(c, jk)->k.p);
 
-			bch2_btree_iter_set_pos(&iter, next);
+			/* for_each_btree_key() will still advance iterator: */
+			bch2_btree_iter_set_pos(&iter, bpos_predecessor(next));
 			continue;
 		}
 
