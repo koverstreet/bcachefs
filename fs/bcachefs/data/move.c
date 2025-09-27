@@ -499,46 +499,6 @@ next_nondata:
 	return ret;
 }
 
-static int bch2_move_data(struct bch_fs *c,
-			  struct bbpos start,
-			  struct bbpos end,
-			  unsigned min_depth,
-			  struct bch_ratelimit *rate,
-			  struct bch_move_stats *stats,
-			  struct write_point_specifier wp,
-			  bool wait_on_copygc,
-			  move_pred_fn pred, void *arg)
-{
-	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
-	bch2_moving_ctxt_init(&ctxt, c, rate, stats, wp, wait_on_copygc);
-
-	for (enum btree_id id = start.btree;
-	     id <= min_t(unsigned, end.btree, btree_id_nr_alive(c) - 1);
-	     id++) {
-		ctxt.stats->pos = BBPOS(id, POS_MIN);
-
-		if (!bch2_btree_id_root(c, id)->b)
-			continue;
-
-		unsigned min_depth_this_btree = min_depth;
-
-		/* Stripe keys have pointers, but are handled separately */
-		if (!btree_type_has_data_ptrs(id) ||
-		    id == BTREE_ID_stripes)
-			min_depth_this_btree = max(min_depth_this_btree, 1);
-
-		for (unsigned level = min_depth_this_btree;
-		     level < BTREE_MAX_DEPTH;
-		     level++)
-			try(bch2_move_data_btree(&ctxt,
-						 id == start.btree ? start.pos : POS_MIN,
-						 id == end.btree   ? end.pos   : POS_MAX,
-						 pred, arg, id, level));
-	}
-
-	return 0;
-}
-
 static int __bch2_move_data_phys(struct moving_context *ctxt,
 			struct move_bucket *bucket_in_flight,
 			unsigned dev,
@@ -720,94 +680,6 @@ int bch2_evacuate_bucket(struct moving_context *ctxt,
 				   evacuate_bucket_pred, &arg);
 }
 
-static int rereplicate_pred(struct btree_trans *trans, void *arg,
-			    enum btree_id btree, struct bkey_s_c k,
-			    struct bch_inode_opts *io_opts,
-			    struct data_update_opts *data_opts)
-{
-	struct bch_fs *c = trans->c;
-	unsigned nr_good = bch2_bkey_durability(c, k);
-	unsigned replicas = bkey_is_btree_ptr(k.k)
-		? c->opts.metadata_replicas
-		: io_opts->data_replicas;
-
-	guard(rcu)();
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	unsigned i = 0;
-	bkey_for_each_ptr(ptrs, ptr) {
-		struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
-		if (!ptr->cached &&
-		    (!ca || !ca->mi.durability))
-			data_opts->ptrs_kill |= BIT(i);
-		i++;
-	}
-
-	if (!data_opts->ptrs_kill &&
-	    (!nr_good || nr_good >= replicas))
-		return false;
-
-	data_opts->extra_replicas = replicas - nr_good;
-	return true;
-}
-
-static int migrate_pred(struct btree_trans *trans, void *arg,
-			enum btree_id btree, struct bkey_s_c k,
-			struct bch_inode_opts *io_opts,
-			struct data_update_opts *data_opts)
-{
-	struct bch_fs *c = trans->c;
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	struct bch_ioctl_data *op = arg;
-	unsigned ptr_bit = 1;
-
-	bkey_for_each_ptr(ptrs, ptr) {
-		if (ptr->dev == op->migrate.dev)
-			data_opts->ptrs_rewrite |= ptr_bit;
-		ptr_bit <<= 1;
-	}
-
-	return data_opts->ptrs_rewrite != 0;
-}
-
-static int drop_extra_replicas_pred(struct btree_trans *trans, void *arg,
-				    enum btree_id btree, struct bkey_s_c k,
-				    struct bch_inode_opts *io_opts,
-				    struct data_update_opts *data_opts)
-{
-	struct bch_fs *c = trans->c;
-	unsigned durability = bch2_bkey_durability(c, k);
-	unsigned replicas = bkey_is_btree_ptr(k.k)
-		? c->opts.metadata_replicas
-		: io_opts->data_replicas;
-	const union bch_extent_entry *entry;
-	struct extent_ptr_decoded p;
-	unsigned i = 0;
-
-	guard(rcu)();
-	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs_c(k), p, entry) {
-		unsigned d = bch2_extent_ptr_durability(c, &p);
-
-		if (d && durability - d >= replicas) {
-			data_opts->ptrs_kill |= BIT(i);
-			durability -= d;
-		}
-
-		i++;
-	}
-
-	i = 0;
-	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs_c(k), p, entry) {
-		if (p.has_ec && durability - p.ec.redundancy >= replicas) {
-			data_opts->ptrs_kill_ec |= BIT(i);
-			durability -= p.ec.redundancy;
-		}
-
-		i++;
-	}
-
-	return (data_opts->ptrs_kill|data_opts->ptrs_kill_ec) != 0;
-}
-
 static int scrub_pred(struct btree_trans *trans, void *_arg,
 		      enum btree_id btree, struct bkey_s_c k,
 		      struct bch_inode_opts *io_opts,
@@ -837,8 +709,6 @@ int bch2_data_job(struct bch_fs *c,
 		  struct bch_move_stats *stats,
 		  struct bch_ioctl_data *op)
 {
-	struct bbpos start	= BBPOS(op->start_btree, op->start_pos);
-	struct bbpos end	= BBPOS(op->end_btree, op->end_pos);
 	int ret = 0;
 
 	if (op->op >= BCH_DATA_OP_NR)
@@ -863,36 +733,6 @@ int bch2_data_job(struct bch_fs *c,
 					  scrub_pred, op) ?: ret;
 		break;
 
-	case BCH_DATA_OP_rereplicate:
-		stats->data_type = BCH_DATA_journal;
-		ret = bch2_journal_flush_device_pins(&c->journal, -1);
-		ret = bch2_move_data(c, start, end, 0, NULL, stats,
-				     writepoint_hashed((unsigned long) current),
-				     true,
-				     rereplicate_pred, c) ?: ret;
-		bch2_btree_interior_updates_flush(c);
-		break;
-	case BCH_DATA_OP_migrate:
-		if (op->migrate.dev >= c->sb.nr_devices)
-			return -EINVAL;
-
-		stats->data_type = BCH_DATA_journal;
-		ret = bch2_journal_flush_device_pins(&c->journal, op->migrate.dev);
-		ret = bch2_move_data_phys(c, op->migrate.dev, 0, U64_MAX,
-					  ~0,
-					  NULL,
-					  stats,
-					  writepoint_hashed((unsigned long) current),
-					  true,
-					  migrate_pred, op) ?: ret;
-		bch2_btree_interior_updates_flush(c);
-		break;
-	case BCH_DATA_OP_drop_extra_replicas:
-		ret = bch2_move_data(c, start, end, 0, NULL, stats,
-				     writepoint_hashed((unsigned long) current),
-				     true,
-				     drop_extra_replicas_pred, c) ?: ret;
-		break;
 	default:
 		ret = -EINVAL;
 	}
