@@ -960,37 +960,6 @@ next:
 	return ret;
 }
 
-static bool rereplicate_pred(struct bch_fs *c, void *arg,
-			     enum btree_id btree, struct bkey_s_c k,
-			     struct bch_inode_opts *io_opts,
-			     struct data_update_opts *data_opts)
-{
-	unsigned nr_good = bch2_bkey_durability(c, k);
-	unsigned replicas = bkey_is_btree_ptr(k.k)
-		? c->opts.metadata_replicas
-		: io_opts->data_replicas;
-
-	guard(rcu)();
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	unsigned i = 0;
-	bkey_for_each_ptr(ptrs, ptr) {
-		struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
-		if (!ptr->cached &&
-		    (!ca || !ca->mi.durability))
-			data_opts->kill_ptrs |= BIT(i);
-		i++;
-	}
-
-	if (!data_opts->kill_ptrs &&
-	    (!nr_good || nr_good >= replicas))
-		return false;
-
-	data_opts->target		= 0;
-	data_opts->extra_replicas	= replicas - nr_good;
-	data_opts->btree_insert_flags	= 0;
-	return true;
-}
-
 static bool migrate_pred(struct bch_fs *c, void *arg,
 			 enum btree_id btree, struct bkey_s_c k,
 			 struct bch_inode_opts *io_opts,
@@ -1065,44 +1034,6 @@ int bch2_scan_old_btree_nodes(struct bch_fs *c, struct bch_move_stats *stats)
 	return ret;
 }
 
-static bool drop_extra_replicas_pred(struct bch_fs *c, void *arg,
-			     enum btree_id btree, struct bkey_s_c k,
-			     struct bch_inode_opts *io_opts,
-			     struct data_update_opts *data_opts)
-{
-	unsigned durability = bch2_bkey_durability(c, k);
-	unsigned replicas = bkey_is_btree_ptr(k.k)
-		? c->opts.metadata_replicas
-		: io_opts->data_replicas;
-	const union bch_extent_entry *entry;
-	struct extent_ptr_decoded p;
-	unsigned i = 0;
-
-	guard(rcu)();
-	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs_c(k), p, entry) {
-		unsigned d = bch2_extent_ptr_durability(c, &p);
-
-		if (d && durability - d >= replicas) {
-			data_opts->kill_ptrs |= BIT(i);
-			durability -= d;
-		}
-
-		i++;
-	}
-
-	i = 0;
-	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs_c(k), p, entry) {
-		if (p.has_ec && durability - p.ec.redundancy >= replicas) {
-			data_opts->kill_ec_ptrs |= BIT(i);
-			durability -= p.ec.redundancy;
-		}
-
-		i++;
-	}
-
-	return (data_opts->kill_ptrs|data_opts->kill_ec_ptrs) != 0;
-}
-
 static bool scrub_pred(struct bch_fs *c, void *_arg,
 		       enum btree_id btree, struct bkey_s_c k,
 		       struct bch_inode_opts *io_opts,
@@ -1131,8 +1062,6 @@ int bch2_data_job(struct bch_fs *c,
 		  struct bch_move_stats *stats,
 		  struct bch_ioctl_data *op)
 {
-	struct bbpos start	= BBPOS(op->start_btree, op->start_pos);
-	struct bbpos end	= BBPOS(op->end_btree, op->end_pos);
 	int ret = 0;
 
 	if (op->op >= BCH_DATA_OP_NR)
@@ -1160,11 +1089,8 @@ int bch2_data_job(struct bch_fs *c,
 	case BCH_DATA_OP_rereplicate:
 		stats->data_type = BCH_DATA_journal;
 		ret = bch2_journal_flush_device_pins(&c->journal, -1);
-		ret = bch2_move_data(c, start, end, 0, NULL, stats,
-				     writepoint_hashed((unsigned long) current),
-				     true,
-				     rereplicate_pred, c) ?: ret;
 		bch2_btree_interior_updates_flush(c);
+		/* XXX: how do we make this happen automatically? */
 		ret = bch2_replicas_gc2(c) ?: ret;
 		break;
 	case BCH_DATA_OP_migrate:
@@ -1187,10 +1113,7 @@ int bch2_data_job(struct bch_fs *c,
 		ret = bch2_scan_old_btree_nodes(c, stats);
 		break;
 	case BCH_DATA_OP_drop_extra_replicas:
-		ret = bch2_move_data(c, start, end, 0, NULL, stats,
-				     writepoint_hashed((unsigned long) current),
-				     true,
-				     drop_extra_replicas_pred, c) ?: ret;
+		/* XXX: how do we make this happen automatically? */
 		ret = bch2_replicas_gc2(c) ?: ret;
 		break;
 	default:
