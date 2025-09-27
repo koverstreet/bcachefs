@@ -688,13 +688,19 @@ static noinline int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 						 &hole_start,
 						 &hole_end,
 						 opts.data_replicas, true)) {
+				/* Release pagecache_block to prevent deadlock with readahead */
+				bch2_pagecache_block_put(inode);
 				ret = drop_locks_do(trans,
 					(bch2_clamp_data_hole(&inode->v,
 							      &hole_start,
 							      &hole_end,
 							      opts.data_replicas, false), 0));
+				bch2_pagecache_block_get(inode);
 				if (ret)
 					goto bkey_err;
+				/* Force transaction restart to revalidate state */
+				ret = -BCH_ERR_transaction_restart;
+				goto bkey_err;
 			}
 			bch2_btree_iter_set_pos(&iter, POS(iter.pos.inode, hole_start));
 
@@ -724,11 +730,17 @@ static noinline int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 
 		if (bch2_mark_pagecache_reserved(inode, &hole_start,
 						 iter.pos.offset, true)) {
+			/* Release pagecache_block to prevent deadlock */
+			bch2_pagecache_block_put(inode);
+
 			ret = drop_locks_do(trans,
 				bch2_mark_pagecache_reserved(inode, &hole_start,
 							     iter.pos.offset, false));
+			bch2_pagecache_block_get(inode);
 			if (ret)
 				goto bkey_err;
+			ret = -BCH_ERR_transaction_restart;
+			goto bkey_err;
 		}
 bkey_err:
 		bch2_quota_reservation_put(c, inode, &quota_res);
