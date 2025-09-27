@@ -935,6 +935,8 @@ int bch2_accounting_read(struct bch_fs *c)
 
 	move_gap(keys, keys->nr);
 
+	/* Find the range of accounting keys from the journal: */
+
 	while (jk < &darray_top(*keys) &&
 	       __journal_key_cmp(c, BTREE_ID_accounting, 0, POS_MIN, jk) > 0)
 		jk++;
@@ -943,6 +945,15 @@ int bch2_accounting_read(struct bch_fs *c)
 	while (end < &darray_top(*keys) &&
 	       __journal_key_cmp(c, BTREE_ID_accounting, 0, SPOS_MAX, end) > 0)
 		end++;
+
+	/*
+	 * Iterate over btree and journal accounting simultaneously:
+	 *
+	 * We want to drop unneeded unneeded accounting deltas early - deltas
+	 * that are older than the btree accounting key version, and once we've
+	 * dropped old accounting deltas we can accumulate and compact deltas
+	 * for the same key:
+	 */
 
 	struct btree_iter iter;
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_accounting, POS_MIN,
