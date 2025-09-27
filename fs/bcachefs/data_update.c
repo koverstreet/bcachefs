@@ -88,15 +88,18 @@ static void trace_io_move_fail2(struct data_update *m,
 			 struct bkey_i *insert,
 			 const char *msg)
 {
-	struct bch_fs *c = m->op.c;
-	struct bkey_s_c old = bkey_i_to_s_c(m->k.k);
-	CLASS(printbuf, buf)();
-	unsigned rewrites_found = 0;
-
 	if (!trace_io_move_fail_enabled())
 		return;
 
+	struct bch_fs *c = m->op.c;
+	struct bkey_s_c old = bkey_i_to_s_c(m->k.k);
+	unsigned rewrites_found = 0;
+
+	CLASS(printbuf, buf)();
+	printbuf_indent_add_nextline(&buf, 2);
+
 	prt_str(&buf, msg);
+	prt_newline(&buf);
 
 	if (insert) {
 		const union bch_extent_entry *entry;
@@ -119,17 +122,17 @@ static void trace_io_move_fail2(struct data_update *m,
 
 	bch2_data_update_opts_to_text(&buf, c, &m->op.opts, &m->data_opts);
 
-	prt_str(&buf, "\nold:    ");
+	prt_str_indented(&buf, "\nold:    ");
 	bch2_bkey_val_to_text(&buf, c, old);
 
-	prt_str(&buf, "\nnew:    ");
+	prt_str_indented(&buf, "\nnew:    ");
 	bch2_bkey_val_to_text(&buf, c, new);
 
-	prt_str(&buf, "\nwrote:  ");
+	prt_str_indented(&buf, "\nwrote:  ");
 	bch2_bkey_val_to_text(&buf, c, wrote);
 
 	if (insert) {
-		prt_str(&buf, "\ninsert: ");
+		prt_str_indented(&buf, "\ninsert: ");
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(insert));
 	}
 
@@ -306,7 +309,9 @@ restart_drop_conflicting_replicas:
 			}
 
 		if (!bkey_val_u64s(&new->k)) {
-			trace_io_move_fail2(m, k, bkey_i_to_s_c(&new->k_i), insert, "new replicas conflicted:");
+			trace_io_move_fail2(m, k,
+					    bkey_i_to_s_c(bch2_keylist_front(&op->insert_keys)),
+					    insert, "new replicas conflicted:");
 			goto nowork;
 		}
 
