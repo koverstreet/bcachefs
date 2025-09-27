@@ -35,7 +35,8 @@ static void bkey_put_dev_refs(struct bch_fs *c, struct bkey_s_c k)
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 
 	bkey_for_each_ptr(ptrs, ptr)
-		bch2_dev_put(bch2_dev_have_ref(c, ptr->dev));
+		if (ptr->dev != BCH_SB_MEMBER_INVALID)
+			bch2_dev_put(bch2_dev_have_ref(c, ptr->dev));
 }
 
 static bool bkey_get_dev_refs(struct bch_fs *c, struct bkey_s_c k)
@@ -43,7 +44,8 @@ static bool bkey_get_dev_refs(struct bch_fs *c, struct bkey_s_c k)
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 
 	bkey_for_each_ptr(ptrs, ptr) {
-		if (unlikely(!bch2_dev_tryget(c, ptr->dev))) {
+		if (ptr->dev != BCH_SB_MEMBER_INVALID &&
+		    unlikely(!bch2_dev_tryget(c, ptr->dev))) {
 			bkey_for_each_ptr(ptrs, ptr2) {
 				if (ptr2 == ptr)
 					break;
