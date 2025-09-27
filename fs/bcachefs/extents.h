@@ -599,6 +599,7 @@ unsigned bch2_bkey_nr_ptrs(struct bkey_s_c);
 unsigned bch2_bkey_nr_ptrs_allocated(struct bkey_s_c);
 unsigned bch2_bkey_nr_ptrs_fully_allocated(struct bkey_s_c);
 bool bch2_bkey_is_incompressible(struct bkey_s_c);
+void bch2_bkey_propagate_incompressible(struct bkey_i *, struct bkey_s_c);
 unsigned bch2_bkey_sectors_compressed(struct bkey_s_c);
 
 unsigned bch2_bkey_replicas(struct bch_fs *, struct bkey_s_c);
