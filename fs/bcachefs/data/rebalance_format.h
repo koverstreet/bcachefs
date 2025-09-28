@@ -133,6 +133,16 @@ struct bch_extent_rebalance_v2 {
 #endif
 };
 
+struct bch_extent_rebalance_bp {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u64			type:9,
+				idx:55;
+#elif defined (__BIG_ENDIAN_BITFIELD)
+	__u64			idx:55,
+				type:9;
+#endif
+};
+
 /* subset of BCH_INODE_OPTS */
 #define BCH_REBALANCE_OPTS()			\
 	x(data_replicas)			\
