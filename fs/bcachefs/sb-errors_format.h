@@ -344,7 +344,9 @@ enum bch_fsck_flags {
 	x(rebalance_work_incorrectly_unset,			310,	FSCK_AUTOFIX)	\
 	x(extent_io_opts_not_set,				329,	FSCK_AUTOFIX)	\
 	x(extent_io_opts_unneeded,				330,	FSCK_AUTOFIX)	\
-	x(MAX,							333,	0)
+	x(btree_ptr_with_no_rebalance_bp,			333,	FSCK_AUTOFIX)	\
+	x(btree_ptr_with_bad_rebalance_bp,			334,	FSCK_AUTOFIX)	\
+	x(MAX,							335,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
