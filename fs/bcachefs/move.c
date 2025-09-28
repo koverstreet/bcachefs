@@ -392,8 +392,6 @@ err:
 	bch2_bkey_buf_exit(&u->k, c);
 	kfree(u);
 
-	if (bch2_err_matches(ret, BCH_ERR_data_update_done))
-		return 0;
 	return ret;
 }
 
@@ -566,16 +564,17 @@ root_err:
 		else
 			ret2 = bch2_btree_node_scrub(trans, btree_id, level, k, data_opts.read_dev);
 
+		if (bch2_err_matches(ret2, BCH_ERR_transaction_restart))
+			continue;
+		if (bch2_err_matches(ret2, BCH_ERR_data_update_done))
+			ret2 = 0;
+		if (bch2_err_matches(ret2, ENOMEM)) {
+			/* memory allocation failure, wait for some IO to finish */
+			bch2_move_ctxt_wait_for_io(ctxt);
+			continue;
+		}
+
 		if (ret2) {
-			if (bch2_err_matches(ret2, BCH_ERR_transaction_restart))
-				continue;
-
-			if (bch2_err_matches(ret2, ENOMEM)) {
-				/* memory allocation failure, wait for some IO to finish */
-				bch2_move_ctxt_wait_for_io(ctxt);
-				continue;
-			}
-
 			/* XXX signal failure */
 			goto next;
 		}
@@ -786,6 +785,8 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
+		if (bch2_err_matches(ret, BCH_ERR_data_update_done))
+			ret = 0;
 		if (ret == -ENOMEM) {
 			/* memory allocation failure, wait for some IO to finish */
 			bch2_move_ctxt_wait_for_io(ctxt);
