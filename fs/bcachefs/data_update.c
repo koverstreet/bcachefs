@@ -973,6 +973,16 @@ int bch2_data_update_init(struct btree_trans *trans,
 
 	if (c->opts.nocow_enabled) {
 		if (!bch2_bkey_nocow_trylock(c, ptrs, 0)) {
+			if (!ctxt) {
+				/* We're being called from the promote path:
+				 * there is a btree_trans on the stack that's
+				 * holding locks, but we don't have a pointer to
+				 * it. Ouch - this needs to be fixed.
+				 */
+				ret = bch_err_throw(c, nocow_lock_blocked);
+				goto out_put_dev_refs;
+			}
+
 			bool locked = false;
 			if (ctxt)
 				move_ctxt_wait_event(ctxt,
@@ -1002,6 +1012,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 out_nocow_unlock:
 	if (c->opts.nocow_enabled)
 		bch2_bkey_nocow_unlock(c, k, 0);
+out_put_dev_refs:
 	bkey_put_dev_refs(c, k);
 out:
 	bch2_disk_reservation_put(c, &m->op.res);
