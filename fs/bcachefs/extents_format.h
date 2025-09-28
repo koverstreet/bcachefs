@@ -80,8 +80,9 @@
 	x(crc128,		3)		\
 	x(stripe_ptr,		4)		\
 	x(rebalance,		5)		\
-	x(flags,		6)
-#define BCH_EXTENT_ENTRY_MAX	7
+	x(flags,		6)		\
+	x(rebalance_bp,		7)
+#define BCH_EXTENT_ENTRY_MAX	8
 
 enum bch_extent_entry_type {
 #define x(f, n) BCH_EXTENT_ENTRY_##f = n,

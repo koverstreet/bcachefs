@@ -161,8 +161,68 @@ static inline unsigned rb_accounting_counters(const struct bch_extent_rebalance 
 	return ret;
 }
 
+static u64 bch2_bkey_get_rebalance_bp(struct bkey_s_c k)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	bkey_extent_entry_for_each(ptrs, entry)
+		if (extent_entry_type(entry) == BCH_EXTENT_ENTRY_rebalance_bp)
+			return entry->rebalance_bp.idx;
+	return 0;
+}
+
+static void bch2_bkey_set_rebalance_bp(struct bkey_s k, u64 idx)
+{
+	struct bkey_ptrs ptrs = bch2_bkey_ptrs(k);
+	union bch_extent_entry *entry;
+	bkey_extent_entry_for_each(ptrs, entry)
+		if (extent_entry_type(entry) == BCH_EXTENT_ENTRY_rebalance_bp) {
+			if (idx)
+				entry->rebalance_bp.idx = idx;
+			else
+				bch2_bkey_extent_entry_drop_s(k, entry);
+			return;
+		}
+
+	if (!idx)
+		return;
+
+	struct bch_extent_rebalance_bp r = {
+		.type	= BIT(BCH_EXTENT_ENTRY_rebalance_bp),
+		.idx	= idx,
+	};
+	union bch_extent_entry *end = bkey_val_end(k);
+	memcpy_u64s(end, &r, sizeof(r) / sizeof(u64));
+	k.k->u64s += sizeof(r) / sizeof(u64);
+}
+
+static int unset_rebalance_bp(struct btree_trans *trans, enum btree_id btree, struct bkey_s_c k)
+{
+	u64 idx = bch2_bkey_get_rebalance_bp(k);
+
+	return idx
+		? bch2_btree_delete(trans, BTREE_ID_rebalance_work_scan, POS(1, idx), 0)
+		: 0;
+}
+
+static int set_rebalance_bp(struct btree_trans *trans, enum btree_id btree, struct bkey_s k)
+{
+	struct btree_iter iter;
+	int ret = bch2_bkey_get_empty_slot(trans, &iter, BTREE_ID_rebalance_work_scan, POS(1, U64_MAX));
+	if (ret)
+		return ret;
+
+	bch2_bkey_set_rebalance_bp(k, iter.pos.offset);
+
+	struct bkey_i_backpointer *bp = bch2_bkey_alloc(trans, &iter, 0, backpointer);
+	ret = PTR_ERR_OR_ZERO(bp);
+	bch2_trans_iter_exit(&iter);
+	return ret;
+}
+
 int __bch2_trigger_extent_rebalance(struct btree_trans *trans,
-				    struct bkey_s_c old, struct bkey_s_c new,
+				    enum btree_id btree, unsigned level,
+				    struct bkey_s_c old, struct bkey_s new,
 				    const struct bch_extent_rebalance *old_r,
 				    const struct bch_extent_rebalance *new_r,
 				    enum btree_iter_update_trigger_flags flags)
@@ -172,13 +232,17 @@ int __bch2_trigger_extent_rebalance(struct btree_trans *trans,
 
 	if (old_btree != new_btree) {
 		if (old_btree) {
-			int ret = bch2_btree_bit_mod_buffered(trans, old_btree, old.k->p, false);
+			int ret = !level
+				? bch2_btree_bit_mod_buffered(trans, old_btree, old.k->p, false)
+				: unset_rebalance_bp(trans, old_btree, old);
 			if (ret)
 				return ret;
 		}
 
 		if (new_btree) {
-			int ret = bch2_btree_bit_mod_buffered(trans, new_btree, new.k->p, true);
+			int ret = !level
+				? bch2_btree_bit_mod_buffered(trans, new_btree, new.k->p, true)
+				: set_rebalance_bp(trans, new_btree, new);
 			if (ret)
 				return ret;
 		}

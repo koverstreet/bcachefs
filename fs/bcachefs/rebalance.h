@@ -30,7 +30,8 @@ void bch2_extent_rebalance_to_text(struct printbuf *, struct bch_fs *,
 const struct bch_extent_rebalance *bch2_bkey_rebalance_opts(struct bkey_s_c);
 
 int __bch2_trigger_extent_rebalance(struct btree_trans *,
-				    struct bkey_s_c, struct bkey_s_c,
+				    enum btree_id, unsigned,
+				    struct bkey_s_c, struct bkey_s,
 				    const struct bch_extent_rebalance *,
 				    const struct bch_extent_rebalance *,
 				    enum btree_iter_update_trigger_flags);
@@ -43,17 +44,18 @@ static inline unsigned rb_trigger_bits(const struct bch_extent_rebalance *r)
 }
 
 static inline int bch2_trigger_extent_rebalance(struct btree_trans *trans,
-				  struct bkey_s_c old, struct bkey_s_c new,
-				  enum btree_iter_update_trigger_flags flags)
+				enum btree_id btree, unsigned level,
+				struct bkey_s_c old, struct bkey_s new,
+				enum btree_iter_update_trigger_flags flags)
 {
 	const struct bch_extent_rebalance *old_r = bch2_bkey_rebalance_opts(old);
-	const struct bch_extent_rebalance *new_r = bch2_bkey_rebalance_opts(new);
+	const struct bch_extent_rebalance *new_r = bch2_bkey_rebalance_opts(new.s_c);
 	unsigned old_a = rb_trigger_bits(old_r);
 	unsigned new_a = rb_trigger_bits(new_r);
 
 	return old_a != new_a ||
 		(old.k->size != new.k->size && (old_a|new_a))
-		? __bch2_trigger_extent_rebalance(trans, old, new, old_r, new_r, flags)
+		? __bch2_trigger_extent_rebalance(trans, btree, level, old, new, old_r, new_r, flags)
 		: 0;
 }
 

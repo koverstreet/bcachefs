@@ -916,7 +916,7 @@ int bch2_trigger_extent(struct btree_trans *trans,
 				return ret;
 		}
 
-		int ret = bch2_trigger_extent_rebalance(trans, old, new.s_c, flags);
+		int ret = bch2_trigger_extent_rebalance(trans, btree, level, old, new, flags);
 		if (ret)
 			return ret;
 	}
