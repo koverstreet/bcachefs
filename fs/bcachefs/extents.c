@@ -837,16 +837,6 @@ unsigned bch2_bkey_replicas(struct bch_fs *c, struct bkey_s_c k)
 	return replicas;
 }
 
-static inline unsigned __extent_ptr_durability(struct bch_dev *ca, struct extent_ptr_decoded *p)
-{
-	if (p->ptr.cached)
-		return 0;
-
-	return p->has_ec
-		? p->ec.redundancy + 1
-		: ca->mi.durability;
-}
-
 unsigned bch2_extent_ptr_desired_durability(struct bch_fs *c, struct extent_ptr_decoded *p)
 {
 	struct bch_dev *ca = bch2_dev_rcu_noerror(c, p->ptr.dev);
