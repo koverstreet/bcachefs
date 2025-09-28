@@ -737,6 +737,9 @@ static int can_write_extent(struct bch_fs *c, struct data_update *m)
 
 	unsigned nr_replicas = 0, i;
 	for_each_set_bit(i, devs.d, BCH_SB_MEMBERS_MAX) {
+		/* XXX: the tracepoint is not very informative if devices we want are RO */
+		prt_printf(&buf, "dev=%u ", i);
+
 		struct bch_dev *ca = bch2_dev_rcu_noerror(c, i);
 		if (!ca)
 			continue;
@@ -757,6 +760,8 @@ static int can_write_extent(struct bch_fs *c, struct data_update *m)
 	}
 
 	if (nr_replicas < m->op.nr_replicas) {
+		prt_printf(&buf, "\ndevs_have: ");
+		bch2_devs_list_to_text(&buf, &m->op.devs_have);
 		prt_printf(&buf, "\nnr_replicas %u < %u", nr_replicas, m->op.nr_replicas);
 		trace_data_update_done_no_rw_devs(c, buf.buf);
 	}
