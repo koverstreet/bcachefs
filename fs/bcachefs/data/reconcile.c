@@ -837,6 +837,13 @@ int bch2_bkey_set_needs_reconcile(struct btree_trans *trans,
 				  enum set_needs_reconcile_ctx ctx,
 				  u32 opt_change_cookie)
 {
+	/*
+	 * XXX: if it's a persistent reservation, check if it matches the
+	 * replicas option and adjust
+	 *
+	 * however, this needs access to the disk reservation we're going to do
+	 * the transaction commit with, erghh
+	 */
 	if (!bkey_extent_is_direct_data(&_k->k))
 		return 0;
 
