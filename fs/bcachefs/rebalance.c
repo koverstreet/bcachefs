@@ -461,10 +461,8 @@ int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, u64 inum)
 int bch2_set_rebalance_needs_scan(struct bch_fs *c, u64 inum)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+	return commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			    bch2_set_rebalance_needs_scan_trans(trans, inum));
-	bch2_rebalance_wakeup(c);
-	return ret;
 }
 
 int bch2_set_fs_needs_rebalance(struct bch_fs *c)
