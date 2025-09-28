@@ -32,7 +32,7 @@ const struct bch_extent_reconcile *bch2_bkey_rebalance_opts(const struct bch_fs 
 
 int __bch2_trigger_extent_rebalance(struct btree_trans *,
 				    enum btree_id, unsigned,
-				    struct bkey_s_c, struct bkey_s_c,
+				    struct bkey_s_c, struct bkey_s,
 				    const struct bch_extent_reconcile *,
 				    const struct bch_extent_reconcile *,
 				    enum btree_iter_update_trigger_flags);
@@ -43,13 +43,13 @@ static inline unsigned rb_needs_trigger(const struct bch_extent_reconcile *r)
 }
 
 static inline int bch2_trigger_extent_rebalance(struct btree_trans *trans,
-				  enum btree_id btree, unsigned level,
-				  struct bkey_s_c old, struct bkey_s_c new,
-				  enum btree_iter_update_trigger_flags flags)
+				enum btree_id btree, unsigned level,
+				struct bkey_s_c old, struct bkey_s new,
+				enum btree_iter_update_trigger_flags flags)
 {
 	struct bch_fs *c = trans->c;
 	const struct bch_extent_reconcile *old_r = bch2_bkey_rebalance_opts(c, old);
-	const struct bch_extent_reconcile *new_r = bch2_bkey_rebalance_opts(c, new);
+	const struct bch_extent_reconcile *new_r = bch2_bkey_rebalance_opts(c, new.s_c);
 
 	return rb_needs_trigger(old_r) || rb_needs_trigger(new_r)
 		? __bch2_trigger_extent_rebalance(trans, btree, level, old, new, old_r, new_r, flags)

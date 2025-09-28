@@ -603,6 +603,7 @@ bool bch2_bkey_devs_rw(struct bch_fs *, struct bkey_s_c);
 bool bch2_bkey_has_target(struct bch_fs *, struct bkey_s_c, unsigned);
 bool bch2_bkey_in_target(struct bch_fs *, struct bkey_s_c, unsigned);
 
+void bch2_bkey_extent_entry_drop_s(const struct bch_fs *, struct bkey_s, union bch_extent_entry *);
 void bch2_bkey_extent_entry_drop(const struct bch_fs *, struct bkey_i *, union bch_extent_entry *);
 
 static inline void bch2_bkey_append_ptr(const struct bch_fs *c, struct bkey_i *k, struct bch_extent_ptr ptr)

@@ -884,6 +884,15 @@ static unsigned bch2_bkey_durability_safe(struct bch_fs *c, struct bkey_s_c k)
 	return durability;
 }
 
+void bch2_bkey_extent_entry_drop_s(const struct bch_fs *c, struct bkey_s k, union bch_extent_entry *entry)
+{
+	union bch_extent_entry *end = bkey_val_end(k);
+	union bch_extent_entry *next = extent_entry_next(c, entry);
+
+	memmove_u64s(entry, next, (u64 *) end - (u64 *) next);
+	k.k->u64s -= extent_entry_u64s(c, entry);
+}
+
 void bch2_bkey_extent_entry_drop(const struct bch_fs *c, struct bkey_i *k, union bch_extent_entry *entry)
 {
 	union bch_extent_entry *end = bkey_val_end(bkey_i_to_s(k));
@@ -1433,6 +1442,10 @@ void bch2_bkey_ptrs_to_text(struct printbuf *out, struct bch_fs *c,
 			prt_bitflags(out, bch2_extent_flags_strs, entry->flags.flags);
 			break;
 
+		case BCH_EXTENT_ENTRY_reconcile_bp:
+			prt_printf(out, "idx %llu", (u64) entry->reconcile_bp.idx);
+			break;
+
 		default:
 			prt_printf(out, "(unknown extent entry %.16llx)", *((u64 *) entry));
 			return;
@@ -1486,6 +1499,18 @@ fsck_err:
 	return ret;
 }
 
+static inline bool btree_ptr_entry_type_allowed(enum bch_extent_entry_type type)
+{
+	switch (type) {
+	case BCH_EXTENT_ENTRY_ptr:
+	case BCH_EXTENT_ENTRY_reconcile:
+	case BCH_EXTENT_ENTRY_reconcile_bp:
+		return true;
+	default:
+		return false;
+	};
+}
+
 int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 			    struct bkey_validate_context from)
 {
@@ -1502,17 +1527,20 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 		size_ondisk = btree_sectors(c);
 
 	bkey_extent_entry_for_each(ptrs, entry) {
-		bkey_fsck_err_on(extent_entry_type(entry) >= c->extent_types_known,
+		unsigned type = extent_entry_type(entry);
+
+		bkey_fsck_err_on(type >= c->extent_types_known,
 				 c, extent_ptrs_invalid_entry,
 				 "invalid extent entry type (got %u, max %u)",
-				 extent_entry_type(entry), c->extent_types_known);
+				 type, c->extent_types_known);
 
 		bkey_fsck_err_on(bkey_is_btree_ptr(k.k) &&
-				 !extent_entry_is_ptr(entry),
+				 type < BCH_EXTENT_ENTRY_MAX &&
+				 !btree_ptr_entry_type_allowed(type),
 				 c, btree_ptr_has_non_ptr,
-				 "has non ptr field");
+				 "has non allowed field");
 
-		switch (extent_entry_type(entry)) {
+		switch (type) {
 		case BCH_EXTENT_ENTRY_ptr:
 			try(extent_ptr_validate(c, k, from, &entry->ptr, size_ondisk, false));
 
@@ -1582,6 +1610,8 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 			bkey_fsck_err_on(entry != ptrs.start,
 					 c, extent_flags_not_at_start,
 					 "extent flags entry not at start");
+			break;
+		case BCH_EXTENT_ENTRY_reconcile_bp:
 			break;
 		}
 	}
@@ -1718,6 +1748,7 @@ int bch2_cut_front_s(const struct bch_fs *c, struct bpos where, struct bkey_s k)
 			case BCH_EXTENT_ENTRY_rebalance_v1:
 			case BCH_EXTENT_ENTRY_reconcile:
 			case BCH_EXTENT_ENTRY_flags:
+			case BCH_EXTENT_ENTRY_reconcile_bp:
 				break;
 			}
 

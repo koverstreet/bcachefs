@@ -881,7 +881,7 @@ int bch2_trigger_extent(struct btree_trans *trans,
 			try(__trigger_extent(trans, btree, level, new.s_c,
 					     flags & ~BTREE_TRIGGER_overwrite));
 
-		try(bch2_trigger_extent_rebalance(trans, btree, level, old, new.s_c, flags));
+		try(bch2_trigger_extent_rebalance(trans, btree, level, old, new, flags));
 	}
 
 	return 0;

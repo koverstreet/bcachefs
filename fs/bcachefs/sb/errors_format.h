@@ -341,11 +341,15 @@ enum bch_fsck_flags {
 	x(dirent_cf_name_too_big,				304,	0)		\
 	x(dirent_stray_data_after_cf_name,			305,	0)		\
 	x(reconcile_work_incorrectly_set,			309,	FSCK_AUTOFIX)	\
-	x(reconcile_work_incorrectly_unset,			310,	FSCK_AUTOFIX)	\
 	x(validate_error_in_commit,				329,	0)		\
 	x(extent_io_opts_not_set,				330,	FSCK_AUTOFIX)	\
 	x(extent_io_opts_unneeded,				331,	FSCK_AUTOFIX)	\
-	x(MAX,							334,	0)
+	x(reconcile_bp_to_missing_btree_ptr,			310,	FSCK_AUTOFIX)	\
+	x(reconcile_bp_to_leaf_node_key,			334,	FSCK_AUTOFIX)	\
+	x(btree_ptr_with_no_reconcile_bp,			335,	FSCK_AUTOFIX)	\
+	x(btree_ptr_with_bad_reconcile_bp,			336,	FSCK_AUTOFIX)	\
+	x(btree_ptr_to_bad_reconcile_bp,			337,	FSCK_AUTOFIX)	\
+	x(MAX,							338,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,

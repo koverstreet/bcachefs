@@ -1440,7 +1440,8 @@ enum btree_id_flags {
 	  BTREE_IS_write_buffer,						\
 	  BIT_ULL(KEY_TYPE_set))						\
 	x(reconcile_scan,	23,	0,					\
-	  BIT_ULL(KEY_TYPE_cookie))
+	  BIT_ULL(KEY_TYPE_cookie)|						\
+	  BIT_ULL(KEY_TYPE_backpointer))
 
 enum btree_id {
 #define x(name, nr, ...) BTREE_ID_##name = nr,

@@ -81,8 +81,9 @@
 	x(stripe_ptr,		4)		\
 	x(rebalance_v1,		5)		\
 	x(flags,		6)		\
-	x(reconcile,		7)
-#define BCH_EXTENT_ENTRY_MAX	8
+	x(reconcile,		7)		\
+	x(reconcile_bp,		8)
+#define BCH_EXTENT_ENTRY_MAX	9
 
 enum bch_extent_entry_type {
 #define x(f, n) BCH_EXTENT_ENTRY_##f = n,
@@ -271,13 +272,13 @@ struct bch_extent {
 } __packed __aligned(8);
 
 /* Maximum size (in u64s) a single pointer could be: */
-#define BKEY_EXTENT_PTR_U64s_MAX\
+#define BKEY_EXTENT_PTR_U64s_MAX				\
 	((sizeof(struct bch_extent_crc128) +			\
 	  sizeof(struct bch_extent_ptr)) / sizeof(__u64))
 
 /* Maximum possible size of an entire extent value: */
 #define BKEY_EXTENT_VAL_U64s_MAX				\
-	(1 + BKEY_EXTENT_PTR_U64s_MAX * (BCH_REPLICAS_MAX + 1))
+	(5 + BKEY_EXTENT_PTR_U64s_MAX * (BCH_REPLICAS_MAX + 1))
 
 /* * Maximum possible size of an entire extent, key + value: */
 #define BKEY_EXTENT_U64s_MAX		(BKEY_U64s + BKEY_EXTENT_VAL_U64s_MAX)
@@ -285,7 +286,9 @@ struct bch_extent {
 /* Btree pointers don't carry around checksums: */
 #define BKEY_BTREE_PTR_VAL_U64s_MAX				\
 	((sizeof(struct bch_btree_ptr_v2) +			\
-	  sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX) / sizeof(__u64))
+	  sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX +	\
+	  sizeof(struct bch_extent_reconcile) +		\
+	  sizeof(struct bch_extent_reconcile_bp)) / sizeof(__u64))
 #define BKEY_BTREE_PTR_U64s_MAX					\
 	(BKEY_U64s + BKEY_BTREE_PTR_VAL_U64s_MAX)
 
