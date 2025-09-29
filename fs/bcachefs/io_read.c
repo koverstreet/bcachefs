@@ -650,82 +650,82 @@ static void bch2_rbio_retry(struct work_struct *work)
 		.subvol = rbio->subvol,
 		.inum	= rbio->read_pos.inode,
 	};
+	u64 read_offset = rbio->read_pos.offset;
 	struct bch_io_failures failed = { .nr = 0 };
-
-	CLASS(btree_trans, trans)(c);
-
-	struct bkey_buf sk;
-	bch2_bkey_buf_init(&sk);
-	bkey_init(&sk.k->k);
 
 	trace_io_read_retry(&rbio->bio);
 	this_cpu_add(c->counters[BCH_COUNTER_io_read_retry],
 		     bvec_iter_sectors(rbio->bvec_iter));
 
-	get_rbio_extent(trans, rbio, &sk);
+	{
+		CLASS(btree_trans, trans)(c);
 
-	if (!bkey_deleted(&sk.k->k) &&
-	    bch2_err_matches(rbio->ret, BCH_ERR_data_read_retry_avoid))
-		bch2_mark_io_failure(&failed, &rbio->pick,
-				     rbio->ret == -BCH_ERR_data_read_retry_csum_err);
+		struct bkey_buf sk;
+		bch2_bkey_buf_init(&sk);
+		bkey_init(&sk.k->k);
+		get_rbio_extent(trans, rbio, &sk);
 
-	if (!rbio->split) {
-		rbio->bio.bi_status	= 0;
-		rbio->ret		= 0;
-	}
+		if (!bkey_deleted(&sk.k->k) &&
+		    bch2_err_matches(rbio->ret, BCH_ERR_data_read_retry_avoid))
+			bch2_mark_io_failure(&failed, &rbio->pick,
+					     rbio->ret == -BCH_ERR_data_read_retry_csum_err);
 
-	unsigned subvol		= rbio->subvol;
-	struct bpos read_pos	= rbio->read_pos;
-
-	rbio = bch2_rbio_free(rbio);
-
-	flags |= BCH_READ_in_retry;
-	flags &= ~BCH_READ_may_promote;
-	flags &= ~BCH_READ_last_fragment;
-	flags |= BCH_READ_must_clone;
-
-	int ret = rbio->data_update
-		? bch2_read_retry_nodecode(trans, rbio, iter, &failed, flags)
-		: __bch2_read(trans, rbio, iter, inum, &failed, &sk, flags);
-
-	if (ret) {
-		rbio->ret = ret;
-		rbio->bio.bi_status = BLK_STS_IOERR;
-	}
-
-	if (failed.nr || ret) {
-		CLASS(printbuf, buf)();
-		bch2_log_msg_start(c, &buf);
-
-		lockrestart_do(trans,
-			bch2_inum_offset_err_msg_trans(trans, &buf,
-					(subvol_inum) { subvol, read_pos.inode },
-					read_pos.offset << 9));
-		if (rbio->data_update)
-			prt_str(&buf, "(internal move) ");
-
-		prt_str(&buf, "data read error, ");
-		if (!ret) {
-			prt_str(&buf, "successful retry");
-			if (rbio->self_healing)
-				prt_str(&buf, ", self healing");
-		} else
-			prt_str(&buf, bch2_err_str(ret));
-		prt_newline(&buf);
-
-
-		if (!bkey_deleted(&sk.k->k)) {
-			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(sk.k));
-			prt_newline(&buf);
+		if (!rbio->split) {
+			rbio->bio.bi_status	= 0;
+			rbio->ret		= 0;
 		}
 
-		bch2_io_failures_to_text(&buf, c, &failed);
+		rbio = bch2_rbio_free(rbio);
 
-		bch2_print_str_ratelimited(c, KERN_ERR, buf.buf);
+		flags |= BCH_READ_in_retry;
+		flags &= ~BCH_READ_may_promote;
+		flags &= ~BCH_READ_last_fragment;
+		flags |= BCH_READ_must_clone;
+
+		int ret = rbio->data_update
+			? bch2_read_retry_nodecode(trans, rbio, iter, &failed, flags)
+			: __bch2_read(trans, rbio, iter, inum, &failed, &sk, flags);
+
+		if (ret) {
+			rbio->ret = ret;
+			rbio->bio.bi_status = BLK_STS_IOERR;
+		}
+
+		if (failed.nr || ret) {
+			CLASS(printbuf, buf)();
+			bch2_log_msg_start(c, &buf);
+
+			lockrestart_do(trans,
+				bch2_inum_offset_err_msg_trans(trans, &buf, inum, read_offset << 9));
+			if (rbio->data_update)
+				prt_str(&buf, "(internal move) ");
+
+			prt_str(&buf, "data read error, ");
+			if (!ret) {
+				prt_str(&buf, "successful retry");
+				if (rbio->self_healing)
+					prt_str(&buf, ", self healing");
+			} else
+				prt_str(&buf, bch2_err_str(ret));
+			prt_newline(&buf);
+
+
+			if (!bkey_deleted(&sk.k->k)) {
+				bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(sk.k));
+				prt_newline(&buf);
+			}
+
+			bch2_io_failures_to_text(&buf, c, &failed);
+
+			bch2_print_str_ratelimited(c, KERN_ERR, buf.buf);
+		}
+
+		bch2_bkey_buf_exit(&sk, c);
+
+		/* drop trans before calling rbio_done() */
 	}
 
 	bch2_rbio_done(rbio);
-	bch2_bkey_buf_exit(&sk, c);
 }
 
 static void bch2_rbio_error(struct bch_read_bio *rbio,
