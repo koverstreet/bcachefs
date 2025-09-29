@@ -716,7 +716,7 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 			       msecs_to_jiffies(c->opts.journal_reclaim_delay)))
 			min_nr = 1;
 
-		if (j->watermark != BCH_WATERMARK_stripe)
+		if (test_bit(JOURNAL_space_low, &j->flags))
 			min_nr = 1;
 
 		size_t btree_cache_live = bc->live[0].nr + bc->live[1].nr;
