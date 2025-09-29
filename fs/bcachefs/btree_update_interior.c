@@ -1191,12 +1191,12 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 	flags |= watermark;
 
 	if (watermark < BCH_WATERMARK_reclaim &&
-	    test_bit(JOURNAL_space_low, &c->journal.flags)) {
+	    journal_low_on_space(&c->journal)) {
 		if (flags & BCH_TRANS_COMMIT_journal_reclaim)
 			return ERR_PTR(-BCH_ERR_journal_reclaim_would_deadlock);
 
 		ret = drop_locks_do(trans,
-			({ wait_event(c->journal.wait, !test_bit(JOURNAL_space_low, &c->journal.flags)); 0; }));
+			({ wait_event(c->journal.wait, !journal_low_on_space(&c->journal)); 0; }));
 		if (ret)
 			return ERR_PTR(ret);
 	}

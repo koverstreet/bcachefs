@@ -461,7 +461,7 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 		commit_flags |= BCH_WATERMARK_reclaim;
 
 	if (ck->journal.seq != journal_last_seq(j) ||
-	    !test_bit(JOURNAL_space_low, &c->journal.flags))
+	    !journal_low_on_space(&c->journal))
 		commit_flags |= BCH_TRANS_COMMIT_no_journal_res;
 
 	struct bkey_s_c btree_k = bch2_btree_iter_peek_slot(&b_iter);
