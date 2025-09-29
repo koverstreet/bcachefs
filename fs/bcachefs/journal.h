@@ -121,6 +121,12 @@ static inline void journal_wake(struct journal *j)
 	closure_wake_up(&j->async_wait);
 }
 
+static inline bool journal_low_on_space(struct journal *j)
+{
+	return test_bit(JOURNAL_low_on_space, &j->flags) ||
+		test_bit(JOURNAL_low_on_pin, &j->flags);
+}
+
 /* Sequence number of oldest dirty journal entry */
 
 static inline u64 journal_last_seq(struct journal *j)
