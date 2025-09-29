@@ -144,7 +144,9 @@ enum journal_space_from {
 	x(running)			\
 	x(may_skip_flush)		\
 	x(need_flush_write)		\
-	x(space_low)
+	x(low_on_space)			\
+	x(low_on_pin)			\
+	x(low_on_wb)
 
 enum journal_flags {
 #define x(n)	JOURNAL_##n,

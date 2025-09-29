@@ -72,7 +72,9 @@ void bch2_journal_set_watermark(struct journal *j)
 	    track_event_change(&c->times[BCH_TIME_blocked_write_buffer_full], low_on_wb))
 		trace_and_count(c, journal_full, c);
 
-	mod_bit(JOURNAL_space_low, &j->flags, low_on_space || low_on_pin);
+	mod_bit(JOURNAL_low_on_space,	&j->flags, low_on_space);
+	mod_bit(JOURNAL_low_on_pin,	&j->flags, low_on_pin);
+	mod_bit(JOURNAL_low_on_wb,	&j->flags, low_on_wb);
 
 	swap(watermark, j->watermark);
 	if (watermark > j->watermark)
@@ -716,7 +718,7 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 			       msecs_to_jiffies(c->opts.journal_reclaim_delay)))
 			min_nr = 1;
 
-		if (test_bit(JOURNAL_space_low, &j->flags))
+		if (journal_low_on_space(j))
 			min_nr = 1;
 
 		size_t btree_cache_live = bc->live[0].nr + bc->live[1].nr;

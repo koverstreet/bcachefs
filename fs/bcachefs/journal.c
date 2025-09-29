@@ -684,7 +684,7 @@ out:
 			goto retry;
 		}
 
-		if (test_bit(JOURNAL_space_low, &j->flags) &&
+		if (journal_low_on_space(j) &&
 		    mutex_trylock(&j->reclaim_lock)) {
 			bch2_journal_reclaim(j);
 			mutex_unlock(&j->reclaim_lock);
