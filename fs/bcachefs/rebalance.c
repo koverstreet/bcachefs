@@ -146,6 +146,21 @@ static enum btree_id rb_work_btree(const struct bch_extent_rebalance *r)
 	return BTREE_ID_rebalance_work;
 }
 
+static inline unsigned rb_accounting_counters(const struct bch_extent_rebalance *r)
+{
+	if (!r)
+		return 0;
+
+	unsigned ret = r->need_rb;
+	if (r->hipri)
+		ret |= BIT(BCH_REBALANCE_ACCOUNTING_high_priority);
+	if (r->pending) {
+		ret |= BIT(BCH_REBALANCE_ACCOUNTING_pending);
+		ret &= ~BIT(BCH_REBALANCE_ACCOUNTING_background_target);
+	}
+	return ret;
+}
+
 int __bch2_trigger_extent_rebalance(struct btree_trans *trans,
 				    struct bkey_s_c old, struct bkey_s_c new,
 				    const struct bch_extent_rebalance *old_r,
@@ -1027,8 +1042,10 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 
 		if (bch2_err_matches(ret, BCH_ERR_data_update_done_no_rw_devs) ||
 		    bch2_err_matches(ret, BCH_ERR_insufficient_devices)) {
-			ret =   bch2_trans_relock(trans) ?:
-				bch2_extent_set_rb_pending(trans, extent_iter, k);
+			if (rb_work_btree(bch2_bkey_rebalance_opts(k)) !=
+			    BTREE_ID_rebalance_work_pending)
+				ret =   bch2_trans_relock(trans) ?:
+					bch2_extent_set_rb_pending(trans, extent_iter, k);
 			goto out;
 		}
 

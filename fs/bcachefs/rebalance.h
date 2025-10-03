@@ -29,26 +29,18 @@ void bch2_extent_rebalance_to_text(struct printbuf *, struct bch_fs *,
 
 const struct bch_extent_rebalance *bch2_bkey_rebalance_opts(struct bkey_s_c);
 
-static inline unsigned rb_accounting_counters(const struct bch_extent_rebalance *r)
-{
-	if (!r)
-		return 0;
-	unsigned ret = r->need_rb;
-
-	if (r->hipri)
-		ret |= BIT(BCH_REBALANCE_ACCOUNTING_high_priority);
-	if (r->pending) {
-		ret |= BIT(BCH_REBALANCE_ACCOUNTING_pending);
-		ret &= ~BIT(BCH_REBALANCE_ACCOUNTING_background_target);
-	}
-	return ret;
-}
-
 int __bch2_trigger_extent_rebalance(struct btree_trans *,
 				    struct bkey_s_c, struct bkey_s_c,
 				    const struct bch_extent_rebalance *,
 				    const struct bch_extent_rebalance *,
 				    enum btree_iter_update_trigger_flags);
+
+static inline unsigned rb_trigger_bits(const struct bch_extent_rebalance *r)
+{
+	return r
+		? r->need_rb | (r->pending << 5) | (r->hipri << 6)
+		: 0;
+}
 
 static inline int bch2_trigger_extent_rebalance(struct btree_trans *trans,
 				  struct bkey_s_c old, struct bkey_s_c new,
@@ -56,8 +48,8 @@ static inline int bch2_trigger_extent_rebalance(struct btree_trans *trans,
 {
 	const struct bch_extent_rebalance *old_r = bch2_bkey_rebalance_opts(old);
 	const struct bch_extent_rebalance *new_r = bch2_bkey_rebalance_opts(new);
-	unsigned old_a = rb_accounting_counters(old_r);
-	unsigned new_a = rb_accounting_counters(new_r);
+	unsigned old_a = rb_trigger_bits(old_r);
+	unsigned new_a = rb_trigger_bits(new_r);
 
 	return old_a != new_a ||
 		(old.k->size != new.k->size && (old_a|new_a))
