@@ -632,6 +632,8 @@ static void __bch2_fs_free(struct bch_fs *c)
 	utf8_unload(c->cf_encoding);
 #endif
 
+	bch2_rebalance_stop(c);
+	bch2_copygc_stop(c);
 	bch2_find_btree_nodes_exit(&c->found_btree_nodes);
 	bch2_free_pending_node_rewrites(c);
 	bch2_free_fsck_errs(c);
@@ -855,7 +857,9 @@ int bch2_fs_init_rw(struct bch_fs *c)
 		bch2_fs_fs_io_buffered_init(c) ?:
 		bch2_fs_io_write_init(c) ?:
 		bch2_fs_journal_init(&c->journal) ?:
-		bch2_journal_reclaim_start(&c->journal);
+		bch2_journal_reclaim_start(&c->journal) ?:
+		bch2_copygc_start(c) ?:
+		bch2_rebalance_start(c);
 	if (ret)
 		return ret;
 
