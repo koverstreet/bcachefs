@@ -1,24 +1,30 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
 #include "alloc/accounting.h"
 #include "alloc/buckets.h"
+
 #include "btree/key_cache.h"
 #include "btree/write_buffer.h"
 #include "btree/bkey_methods.h"
 #include "btree/update.h"
+
 #include "data/compress.h"
-#include "dirent.h"
-#include "error.h"
 #include "data/extents.h"
 #include "data/extent_update.h"
-#include "inode.h"
-#include "namei.h"
-#include "opts.h"
-#include "str_hash.h"
+
+#include "fs/dirent.h"
+#include "fs/inode.h"
+#include "fs/namei.h"
+#include "fs/str_hash.h"
 #include "fs/snapshot.h"
-#include "subvolume.h"
+#include "fs/subvolume.h"
+
 #include "vfs/fs.h"
+
+#include "error.h"
+#include "opts.h"
 
 #include "util/varint.h"
 

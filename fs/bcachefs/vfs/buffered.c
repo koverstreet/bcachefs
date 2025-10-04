@@ -3,15 +3,17 @@
 
 #include "bcachefs.h"
 
-#include "io.h"
-#include "buffered.h"
-#include "direct.h"
-#include "pagecache.h"
-
 #include "alloc/foreground.h"
+
 #include "btree/bkey_buf.h"
+
 #include "data/read.h"
 #include "data/write.h"
+
+#include "vfs/io.h"
+#include "vfs/buffered.h"
+#include "vfs/direct.h"
+#include "vfs/pagecache.h"
 
 #include <linux/backing-dev.h>
 #include <linux/pagemap.h>

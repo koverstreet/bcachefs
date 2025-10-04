@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
+
 #include "btree/bkey_buf.h"
-#include "bkey_cmp.h"
-#include "bkey_sort.h"
+#include "btree/bkey_cmp.h"
+#include "btree/bkey_sort.h"
 #include "btree/bset.h"
+
 #include "data/extents.h"
 
 typedef int (*sort_cmp_fn)(const struct btree *,

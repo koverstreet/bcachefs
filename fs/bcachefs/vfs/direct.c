@@ -3,14 +3,15 @@
 
 #include "bcachefs.h"
 
-#include "fs.h"
-#include "io.h"
-#include "direct.h"
-#include "pagecache.h"
-
 #include "alloc/foreground.h"
+
 #include "data/read.h"
 #include "data/write.h"
+
+#include "vfs/fs.h"
+#include "vfs/io.h"
+#include "vfs/direct.h"
+#include "vfs/pagecache.h"
 
 #include "util/enumerated_ref.h"
 

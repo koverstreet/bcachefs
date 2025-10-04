@@ -2,9 +2,13 @@
 #ifdef CONFIG_BCACHEFS_TESTS
 
 #include "bcachefs.h"
+
 #include "btree/update.h"
+
 #include "journal/reclaim.h"
+
 #include "fs/snapshot.h"
+
 #include "tests.h"
 
 #include "linux/kthread.h"

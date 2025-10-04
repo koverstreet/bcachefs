@@ -12,23 +12,28 @@
  */
 
 #include "bcachefs.h"
+
 #include "alloc/background.h"
+#include "alloc/backpointers.h"
+#include "alloc/buckets_waiting_for_journal.h"
 #include "alloc/buckets.h"
 #include "alloc/check.h"
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
-#include "alloc/backpointers.h"
-#include "alloc/buckets_waiting_for_journal.h"
+
 #include "btree/iter.h"
 #include "btree/update.h"
 #include "btree/check.h"
-#include "debug.h"
+
 #include "data/copygc.h"
 #include "data/ec.h"
 #include "data/nocow_locking.h"
 #include "data/write.h"
-#include "error.h"
+
 #include "journal/journal.h"
+
+#include "debug.h"
+#include "error.h"
 #include "trace.h"
 #include "util/clock.h"
 

@@ -4,24 +4,30 @@
  */
 
 #include "bcachefs.h"
+
 #include "alloc/backpointers.h"
+#include "alloc/buckets.h"
+#include "alloc/replicas.h"
+
 #include "btree/bkey_buf.h"
 #include "btree/update.h"
 #include "btree/interior.h"
 #include "btree/write_buffer.h"
-#include "alloc/buckets.h"
+
 #include "data/ec.h"
-#include "errcode.h"
 #include "data/extents.h"
 #include "data/write.h"
-#include "journal/journal.h"
-#include "keylist.h"
+#include "data/keylist.h"
 #include "data/migrate.h"
 #include "data/move.h"
-#include "progress.h"
 #include "data/rebalance.h"
-#include "alloc/replicas.h"
+
+#include "journal/journal.h"
+
 #include "sb/io.h"
+
+#include "errcode.h"
+#include "progress.h"
 
 static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s k, unsigned dev_idx,
 			 unsigned flags, struct printbuf *err, bool metadata)

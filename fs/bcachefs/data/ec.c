@@ -3,28 +3,34 @@
 /* erasure coding */
 
 #include "bcachefs.h"
+
+#include "alloc/accounting.h"
 #include "alloc/background.h"
-#include "alloc/foreground.h"
 #include "alloc/backpointers.h"
+#include "alloc/buckets.h"
+#include "alloc/disk_groups.h"
+#include "alloc/foreground.h"
+#include "alloc/lru.h"
+#include "alloc/replicas.h"
+
 #include "btree/bkey_buf.h"
 #include "btree/bset.h"
 #include "btree/check.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
-#include "alloc/buckets.h"
+
 #include "data/checksum.h"
-#include "alloc/accounting.h"
-#include "alloc/disk_groups.h"
 #include "data/ec.h"
-#include "error.h"
 #include "data/read.h"
 #include "data/write.h"
-#include "keylist.h"
-#include "alloc/lru.h"
+#include "data/keylist.h"
 #include "data/rebalance.h"
-#include "recovery.h"
-#include "alloc/replicas.h"
+
 #include "sb/io.h"
+
+#include "error.h"
+#include "recovery.h"
+
 #include "util/enumerated_ref.h"
 #include "util/util.h"
 

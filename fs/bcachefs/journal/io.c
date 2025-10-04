@@ -1,21 +1,27 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
+
 #include "alloc/background.h"
+#include "alloc/buckets.h"
+#include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
+#include "alloc/replicas.h"
+
 #include "btree/io.h"
 #include "btree/interior.h"
 #include "btree/journal_overlay.h"
 #include "btree/write_buffer.h"
-#include "alloc/buckets.h"
+
 #include "data/checksum.h"
-#include "alloc/disk_groups.h"
-#include "error.h"
+
 #include "journal/journal.h"
 #include "journal/io.h"
 #include "journal/reclaim.h"
 #include "journal/seq_blacklist.h"
-#include "alloc/replicas.h"
+
 #include "sb/clean.h"
+
+#include "error.h"
 #include "trace.h"
 
 #include <linux/ioprio.h>
