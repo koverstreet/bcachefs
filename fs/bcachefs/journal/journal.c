@@ -16,7 +16,7 @@
 #include "journal/reclaim.h"
 #include "journal/seq_blacklist.h"
 
-#include "error.h"
+#include "init/error.h"
 #include "trace.h"
 
 #include "util/enumerated_ref.h"

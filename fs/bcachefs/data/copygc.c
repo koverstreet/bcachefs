@@ -21,8 +21,8 @@
 #include "data/move.h"
 #include "data/copygc.h"
 
-#include "errcode.h"
-#include "error.h"
+#include "init/errcode.h"
+#include "init/error.h"
 #include "trace.h"
 
 #include "util/clock.h"

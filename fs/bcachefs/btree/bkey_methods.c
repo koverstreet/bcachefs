@@ -22,7 +22,7 @@
 #include "fs/subvolume.h"
 #include "fs/xattr.h"
 
-#include "error.h"
+#include "init/error.h"
 
 const char * const bch2_bkey_types[] = {
 #define x(name, nr, ...) #name,

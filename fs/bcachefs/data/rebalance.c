@@ -21,9 +21,9 @@
 
 #include "sb/io.h"
 
-#include "errcode.h"
-#include "error.h"
-#include "progress.h"
+#include "init/errcode.h"
+#include "init/error.h"
+#include "init/progress.h"
 #include "trace.h"
 
 #include "util/clock.h"

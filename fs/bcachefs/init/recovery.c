@@ -34,10 +34,10 @@
 #include "sb/downgrade.h"
 #include "sb/io.h"
 
-#include "errcode.h"
-#include "error.h"
-#include "recovery.h"
-#include "recovery_passes.h"
+#include "init/errcode.h"
+#include "init/error.h"
+#include "init/recovery.h"
+#include "init/passes.h"
 
 #include <linux/sort.h>
 #include <linux/stat.h>

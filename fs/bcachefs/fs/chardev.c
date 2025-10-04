@@ -19,7 +19,7 @@
 #include "sb/counters.h"
 #include "sb/io.h"
 
-#include "recovery_passes.h"
+#include "init/passes.h"
 
 #include "util/thread_with_file.h"
 

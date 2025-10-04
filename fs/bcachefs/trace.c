@@ -13,7 +13,7 @@
 #include "data/keylist.h"
 #include "data/move_types.h"
 
-#include "opts.h"
+#include "init/opts.h"
 
 #include "util/six.h"
 

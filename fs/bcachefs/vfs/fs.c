@@ -32,8 +32,8 @@
 #include "vfs/direct.h"
 #include "vfs/pagecache.h"
 
-#include "errcode.h"
-#include "super.h"
+#include "init/errcode.h"
+#include "init/super.h"
 #include "trace.h"
 
 #include <linux/aio.h>

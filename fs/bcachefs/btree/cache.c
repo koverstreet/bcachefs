@@ -12,8 +12,8 @@
 #include "journal/journal.h"
 
 #include "debug.h"
-#include "errcode.h"
-#include "error.h"
+#include "init/errcode.h"
+#include "init/error.h"
 #include "trace.h"
 
 #include <linux/prefetch.h>

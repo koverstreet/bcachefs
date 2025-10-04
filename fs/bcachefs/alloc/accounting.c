@@ -14,10 +14,10 @@
 
 #include "data/compress.h"
 
-#include "journal/io.h"
+#include "init/error.h"
+#include "init/passes.h"
 
-#include "error.h"
-#include "recovery_passes.h"
+#include "journal/io.h"
 
 /*
  * Notes on disk accounting:

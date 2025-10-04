@@ -12,9 +12,9 @@
 
 #include "data/ec.h"
 
-#include "error.h"
-#include "progress.h"
-#include "recovery.h"
+#include "init/error.h"
+#include "init/progress.h"
+#include "init/recovery.h"
 
 /* KEY_TYPE_lru is obsolete: */
 int bch2_lru_validate(struct bch_fs *c, struct bkey_s_c k,

@@ -41,10 +41,10 @@
 #include "sb/errors.h"
 #include "sb/io.h"
 
-#include "error.h"
+#include "init/error.h"
 #include "sysfs.h"
-#include "opts.h"
-#include "recovery_passes.h"
+#include "init/opts.h"
+#include "init/passes.h"
 #include "tests.h"
 
 #include "util/clock.h"

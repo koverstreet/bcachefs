@@ -5,10 +5,10 @@
 #include "btree/iter.h"
 #include "btree/update.h"
 #include "data/checksum.h"
-#include "error.h"
+#include "init/error.h"
 #include "inode.h"
 #include "subvolume.h"
-#include "super.h"
+#include "init/super.h"
 #include "util/siphash.h"
 
 #include <linux/crc32c.h>

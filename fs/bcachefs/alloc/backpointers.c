@@ -14,9 +14,9 @@
 
 #include "data/checksum.h"
 
-#include "error.h"
-#include "progress.h"
-#include "recovery_passes.h"
+#include "init/error.h"
+#include "init/progress.h"
+#include "init/passes.h"
 
 #include <linux/mm.h>
 

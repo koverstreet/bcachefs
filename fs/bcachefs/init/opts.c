@@ -13,9 +13,9 @@
 
 #include "sb/io.h"
 
-#include "error.h"
-#include "opts.h"
-#include "recovery_passes.h"
+#include "init/error.h"
+#include "init/opts.h"
+#include "init/passes.h"
 
 #include "util/util.h"
 

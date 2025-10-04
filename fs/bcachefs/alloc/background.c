@@ -21,10 +21,11 @@
 
 #include "data/ec.h"
 
+#include "init/error.h"
+#include "init/progress.h"
+#include "init/recovery.h"
+
 #include "debug.h"
-#include "error.h"
-#include "progress.h"
-#include "recovery.h"
 
 #include "util/clock.h"
 #include "util/enumerated_ref.h"
