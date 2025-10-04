@@ -10,7 +10,7 @@
 #include "debug.h"
 #include "errcode.h"
 #include "error.h"
-#include "journal.h"
+#include "journal/journal.h"
 #include "trace.h"
 
 #include <linux/prefetch.h>

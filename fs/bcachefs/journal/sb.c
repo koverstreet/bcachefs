@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "journal_sb.h"
+#include "journal/sb.h"
 #include "util/darray.h"
 
 #include <linux/sort.h>

@@ -111,7 +111,7 @@
 
 #include <linux/hash.h>
 
-#include "journal_types.h"
+#include "journal/types.h"
 
 struct bch_fs;
 

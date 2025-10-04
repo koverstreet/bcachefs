@@ -8,7 +8,7 @@
 #include "btree/node_scan.h"
 #include "alloc/buckets.h"
 #include "error.h"
-#include "journal_io.h"
+#include "journal/io.h"
 #include "recovery_passes.h"
 
 #include <linux/kthread.h>

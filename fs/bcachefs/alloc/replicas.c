@@ -3,7 +3,7 @@
 #include "bcachefs.h"
 #include "alloc/buckets.h"
 #include "alloc/accounting.h"
-#include "journal.h"
+#include "journal/journal.h"
 #include "alloc/replicas.h"
 #include "sb/io.h"
 
