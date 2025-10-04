@@ -8,8 +8,8 @@
 #include "fs-io-buffered.h"
 #include "fs-io-direct.h"
 #include "fs-io-pagecache.h"
-#include "io_read.h"
-#include "io_write.h"
+#include "data/read.h"
+#include "data/write.h"
 
 #include <linux/backing-dev.h>
 #include <linux/pagemap.h>

@@ -4,7 +4,7 @@
 
 #include "btree/iter.h"
 #include "btree/update.h"
-#include "checksum.h"
+#include "data/checksum.h"
 #include "error.h"
 #include "inode.h"
 #include "subvolume.h"

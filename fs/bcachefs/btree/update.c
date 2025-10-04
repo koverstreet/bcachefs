@@ -9,8 +9,8 @@
 #include "debug.h"
 #include "errcode.h"
 #include "error.h"
-#include "extents.h"
-#include "keylist.h"
+#include "data/extents.h"
+#include "data/keylist.h"
 #include "snapshot.h"
 #include "trace.h"
 

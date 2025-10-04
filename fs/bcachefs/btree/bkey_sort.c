@@ -4,7 +4,7 @@
 #include "bkey_cmp.h"
 #include "bkey_sort.h"
 #include "btree/bset.h"
-#include "extents.h"
+#include "data/extents.h"
 
 typedef int (*sort_cmp_fn)(const struct btree *,
 			   const struct bkey_packed *,

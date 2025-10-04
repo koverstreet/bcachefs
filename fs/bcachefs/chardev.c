@@ -8,7 +8,7 @@
 #include "alloc/accounting.h"
 #include "fsck.h"
 #include "journal/journal.h"
-#include "move.h"
+#include "data/move.h"
 #include "recovery_passes.h"
 #include "alloc/replicas.h"
 #include "sb/counters.h"

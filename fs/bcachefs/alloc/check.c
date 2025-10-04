@@ -5,7 +5,7 @@
 #include "alloc/check.h"
 #include "btree/cache.h"
 #include "btree/update.h"
-#include "ec.h"
+#include "data/ec.h"
 #include "error.h"
 #include "alloc/lru.h"
 #include "progress.h"

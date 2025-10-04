@@ -5,9 +5,9 @@
 #include "btree/bkey_methods.h"
 #include "btree/update.h"
 #include "dirent.h"
-#include "extents.h"
+#include "data/extents.h"
 #include "fs.h"
-#include "rebalance.h"
+#include "data/rebalance.h"
 #include "str_hash.h"
 #include "xattr.h"
 

@@ -7,7 +7,7 @@
 #include "btree/journal_overlay.h"
 #include "btree/write_buffer.h"
 #include "alloc/buckets.h"
-#include "checksum.h"
+#include "data/checksum.h"
 #include "alloc/disk_groups.h"
 #include "error.h"
 #include "journal/journal.h"

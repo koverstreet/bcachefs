@@ -9,7 +9,7 @@
 #define _BUCKETS_H
 
 #include "alloc/buckets_types.h"
-#include "extents.h"
+#include "data/extents.h"
 #include "sb/members.h"
 
 static inline u64 sector_to_bucket(const struct bch_dev *ca, sector_t s)

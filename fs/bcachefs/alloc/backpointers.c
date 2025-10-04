@@ -8,7 +8,7 @@
 #include "btree/update.h"
 #include "btree/interior.h"
 #include "btree/write_buffer.h"
-#include "checksum.h"
+#include "data/checksum.h"
 #include "alloc/accounting.h"
 #include "error.h"
 #include "progress.h"
