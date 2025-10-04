@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_DISK_ACCOUNTING_H
 #define _BCACHEFS_DISK_ACCOUNTING_H
 
-#include "btree_update.h"
+#include "btree/update.h"
 #include "eytzinger.h"
 #include "sb-members.h"
 

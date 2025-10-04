@@ -4,7 +4,7 @@
 #include "bcachefs.h"
 #include "alloc_foreground.h"
 #include "bkey_buf.h"
-#include "btree_update.h"
+#include "btree/update.h"
 #include "buckets.h"
 #include "clock.h"
 #include "enumerated_ref.h"

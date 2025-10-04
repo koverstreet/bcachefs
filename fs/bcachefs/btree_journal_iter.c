@@ -3,7 +3,7 @@
 #include "bcachefs.h"
 #include "bkey_buf.h"
 #include "bset.h"
-#include "btree_cache.h"
+#include "btree/cache.h"
 #include "btree_journal_iter.h"
 #include "disk_accounting.h"
 #include "journal_io.h"

@@ -16,18 +16,18 @@ bcachefs-y		:=	\
 	bkey_methods.o		\
 	bkey_sort.o		\
 	bset.o			\
-	btree_cache.o		\
-	btree_gc.o		\
-	btree_io.o		\
-	btree_iter.o		\
+	btree/cache.o		\
+	btree/check.o		\
+	btree/io.o		\
+	btree/iter.o		\
+	btree/key_cache.o	\
+	btree/locking.o		\
+	btree/node_scan.o	\
+	btree/commit.o		\
+	btree/update.o		\
+	btree/interior.o	\
+	btree/write_buffer.o	\
 	btree_journal_iter.o	\
-	btree_key_cache.o	\
-	btree_locking.o		\
-	btree_node_scan.o	\
-	btree_trans_commit.o	\
-	btree_update.o		\
-	btree_update_interior.o	\
-	btree_write_buffer.o	\
 	buckets.o		\
 	buckets_waiting_for_journal.o	\
 	chardev.o		\

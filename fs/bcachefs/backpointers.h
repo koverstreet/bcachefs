@@ -2,9 +2,9 @@
 #ifndef _BCACHEFS_BACKPOINTERS_H
 #define _BCACHEFS_BACKPOINTERS_H
 
-#include "btree_cache.h"
-#include "btree_iter.h"
-#include "btree_update.h"
+#include "btree/cache.h"
+#include "btree/iter.h"
+#include "btree/update.h"
 #include "buckets.h"
 #include "error.h"
 #include "super.h"

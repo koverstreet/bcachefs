@@ -2,7 +2,7 @@
 #ifdef CONFIG_BCACHEFS_TESTS
 
 #include "bcachefs.h"
-#include "btree_update.h"
+#include "btree/update.h"
 #include "journal_reclaim.h"
 #include "snapshot.h"
 #include "tests.h"

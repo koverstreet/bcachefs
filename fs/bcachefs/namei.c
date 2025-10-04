@@ -2,7 +2,7 @@
 
 #include "bcachefs.h"
 #include "acl.h"
-#include "btree_update.h"
+#include "btree/update.h"
 #include "dirent.h"
 #include "inode.h"
 #include "namei.h"

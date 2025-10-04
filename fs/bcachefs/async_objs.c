@@ -8,7 +8,7 @@
 
 #include "bcachefs.h"
 #include "async_objs.h"
-#include "btree_io.h"
+#include "btree/io.h"
 #include "debug.h"
 #include "io_read.h"
 #include "io_write.h"
