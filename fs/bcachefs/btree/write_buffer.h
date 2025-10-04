@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_BTREE_WRITE_BUFFER_H
 #define _BCACHEFS_BTREE_WRITE_BUFFER_H
 
-#include "bkey.h"
+#include "btree/bkey.h"
 #include "alloc/accounting.h"
 
 static inline bool bch2_btree_write_buffer_should_flush(struct bch_fs *c)

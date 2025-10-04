@@ -7,7 +7,7 @@
 #include "alloc/check.h"
 #include "alloc/foreground.h"
 #include "alloc/backpointers.h"
-#include "bkey_buf.h"
+#include "btree/bkey_buf.h"
 #include "btree/cache.h"
 #include "btree/io.h"
 #include "btree/key_cache.h"

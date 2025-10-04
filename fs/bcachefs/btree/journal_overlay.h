@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_BTREE_JOURNAL_ITER_H
 #define _BCACHEFS_BTREE_JOURNAL_ITER_H
 
-#include "bkey.h"
+#include "btree/bkey.h"
 
 struct journal_iter {
 	struct list_head	list;

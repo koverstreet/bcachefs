@@ -2,8 +2,8 @@
 
 #include "bcachefs.h"
 #include "async_objs.h"
-#include "bkey_buf.h"
-#include "bkey_methods.h"
+#include "btree/bkey_buf.h"
+#include "btree/bkey_methods.h"
 #include "bkey_sort.h"
 #include "btree/cache.h"
 #include "btree/io.h"
@@ -1238,7 +1238,7 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 			     -BCH_ERR_btree_node_read_err_fixable,
 			     c, ca, b, i, NULL,
 			     bset_blacklisted_journal_seq,
-			     "first btree node bset has blacklisted journal seq (%llu)",
+			     "first btree node btree/bset.has blacklisted journal seq (%llu)",
 			     le64_to_cpu(i->journal_seq));
 
 		btree_err_on(blacklisted && ptr_written,

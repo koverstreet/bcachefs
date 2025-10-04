@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_BTREE_ITER_H
 #define _BCACHEFS_BTREE_ITER_H
 
-#include "bset.h"
+#include "btree/bset.h"
 #include "btree/types.h"
 #include "trace.h"
 

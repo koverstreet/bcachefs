@@ -4,7 +4,7 @@
 #include "alloc/background.h"
 #include "alloc/foreground.h"
 #include "alloc/backpointers.h"
-#include "bkey_buf.h"
+#include "btree/bkey_buf.h"
 #include "btree/check.h"
 #include "btree/interior.h"
 #include "btree/io.h"

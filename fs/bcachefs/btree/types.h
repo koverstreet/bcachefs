@@ -7,7 +7,7 @@
 
 #include "alloc/buckets_types.h"
 #include "alloc/replicas_types.h"
-#include "bbpos_types.h"
+#include "btree/bbpos_types.h"
 #include "btree/key_cache_types.h"
 #include "errcode.h"
 #include "journal_types.h"

@@ -2,8 +2,8 @@
 #ifndef _BCACHEFS_INODE_H
 #define _BCACHEFS_INODE_H
 
-#include "bkey.h"
-#include "bkey_methods.h"
+#include "btree/bkey.h"
+#include "btree/bkey_methods.h"
 #include "opts.h"
 #include "snapshot.h"
 

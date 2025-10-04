@@ -3,7 +3,7 @@
 #define _BCACHEFS_EXTENTS_H
 
 #include "bcachefs.h"
-#include "bkey.h"
+#include "btree/bkey.h"
 #include "extents_types.h"
 
 struct bch_fs;

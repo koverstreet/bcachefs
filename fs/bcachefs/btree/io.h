@@ -2,8 +2,8 @@
 #ifndef _BCACHEFS_BTREE_IO_H
 #define _BCACHEFS_BTREE_IO_H
 
-#include "bkey_methods.h"
-#include "bset.h"
+#include "btree/bkey_methods.h"
+#include "btree/bset.h"
 #include "btree/locking.h"
 #include "checksum.h"
 #include "extents.h"

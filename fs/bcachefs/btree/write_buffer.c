@@ -2,7 +2,7 @@
 
 #include "bcachefs.h"
 #include "alloc/accounting.h"
-#include "bkey_buf.h"
+#include "btree/bkey_buf.h"
 #include "btree/locking.h"
 #include "btree/update.h"
 #include "btree/interior.h"

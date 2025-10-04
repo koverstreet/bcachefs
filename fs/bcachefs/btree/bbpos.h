@@ -2,8 +2,8 @@
 #ifndef _BCACHEFS_BBPOS_H
 #define _BCACHEFS_BBPOS_H
 
-#include "bbpos_types.h"
-#include "bkey_methods.h"
+#include "btree/bbpos_types.h"
+#include "btree/bkey_methods.h"
 #include "btree/cache.h"
 
 static inline int bbpos_cmp(struct bbpos l, struct bbpos r)

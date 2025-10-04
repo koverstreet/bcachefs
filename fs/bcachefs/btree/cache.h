@@ -4,7 +4,7 @@
 
 #include "bcachefs.h"
 #include "btree/types.h"
-#include "bkey_methods.h"
+#include "btree/bkey_methods.h"
 
 extern const char * const bch2_btree_node_flags[];
 

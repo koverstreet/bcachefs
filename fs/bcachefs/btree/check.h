@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_BTREE_GC_H
 #define _BCACHEFS_BTREE_GC_H
 
-#include "bkey.h"
+#include "btree/bkey.h"
 #include "btree/check_types.h"
 #include "btree/types.h"
 

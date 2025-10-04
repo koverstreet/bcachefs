@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_SB_MEMBERS_H
 #define _BCACHEFS_SB_MEMBERS_H
 
-#include "bkey_types.h"
+#include "btree/bkey_types.h"
 #include "util/enumerated_ref.h"
 #include "util/darray.h"
 

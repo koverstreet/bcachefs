@@ -7,7 +7,7 @@
  */
 
 #include "bcachefs.h"
-#include "bkey_methods.h"
+#include "btree/bkey_methods.h"
 #include "btree/cache.h"
 #include "btree/check.h"
 #include "btree/io.h"
