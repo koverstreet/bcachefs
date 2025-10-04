@@ -219,7 +219,6 @@
 #include "errcode.h"
 #include "nocow_locking_types.h"
 #include "opts.h"
-#include "sb-errors_types.h"
 #include "snapshot_types.h"
 
 #include "util/clock_types.h"
@@ -249,7 +248,8 @@
 #include "rebalance_types.h"
 #include "recovery_passes_types.h"
 #include "alloc/replicas_types.h"
-#include "sb-members_types.h"
+#include "sb/errors_types.h"
+#include "sb/members_types.h"
 #include "subvolume_types.h"
 #include "super_types.h"
 

@@ -76,16 +76,16 @@ bcachefs-y		:=			\
 	recovery.o				\
 	recovery_passes.o			\
 	reflink.o				\
-	sb-clean.o				\
-	sb-counters.o				\
-	sb-downgrade.o				\
-	sb-errors.o				\
-	sb-members.o				\
+	sb/clean.o				\
+	sb/counters.o				\
+	sb/downgrade.o				\
+	sb/errors.o				\
+	sb/io.o					\
+	sb/members.o				\
 	snapshot.o				\
 	str_hash.o				\
 	subvolume.o				\
 	super.o					\
-	super-io.o				\
 	sysfs.o					\
 	tests.o					\
 	trace.o					\

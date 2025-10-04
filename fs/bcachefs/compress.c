@@ -6,7 +6,7 @@
 #include "extents.h"
 #include "io_write.h"
 #include "opts.h"
-#include "super-io.h"
+#include "sb/io.h"
 
 #include <linux/lz4.h>
 #include <linux/zlib.h>

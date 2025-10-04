@@ -11,7 +11,7 @@
 #include "opts.h"
 #include "rebalance.h"
 #include "recovery_passes.h"
-#include "super-io.h"
+#include "sb/io.h"
 
 #include "util/util.h"
 

@@ -11,7 +11,7 @@
 #include "rebalance.h"
 #include "reflink.h"
 #include "subvolume.h"
-#include "super-io.h"
+#include "sb/io.h"
 
 #include "util/enumerated_ref.h"
 

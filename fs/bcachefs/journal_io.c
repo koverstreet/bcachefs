@@ -15,7 +15,7 @@
 #include "journal_reclaim.h"
 #include "journal_seq_blacklist.h"
 #include "alloc/replicas.h"
-#include "sb-clean.h"
+#include "sb/clean.h"
 #include "trace.h"
 
 #include <linux/ioprio.h>

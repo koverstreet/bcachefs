@@ -6,8 +6,8 @@
 #include "error.h"
 #include "journal_io.h"
 #include "alloc/replicas.h"
-#include "sb-clean.h"
-#include "super-io.h"
+#include "sb/clean.h"
+#include "sb/io.h"
 
 /*
  * BCH_SB_FIELD_clean:

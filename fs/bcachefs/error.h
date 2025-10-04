@@ -5,7 +5,7 @@
 #include <linux/list.h>
 #include <linux/printk.h>
 #include "bkey_types.h"
-#include "sb-errors.h"
+#include "sb/errors.h"
 
 struct bch_dev;
 struct bch_fs;

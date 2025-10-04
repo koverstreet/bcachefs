@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 
-#include "super-io.h"
+#include "sb/io.h"
 #include "util/vstructs.h"
 
 static inline unsigned bch2_nr_journal_buckets(struct bch_sb_field_journal *j)

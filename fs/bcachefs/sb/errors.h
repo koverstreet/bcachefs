@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_SB_ERRORS_H
 #define _BCACHEFS_SB_ERRORS_H
 
-#include "sb-errors_types.h"
+#include "sb/errors_types.h"
 
 extern const char * const bch2_sb_error_strs[];
 

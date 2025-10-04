@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
 #include "alloc/disk_groups.h"
-#include "sb-members.h"
-#include "super-io.h"
+#include "sb/members.h"
+#include "sb/io.h"
 
 #include <linux/sort.h>
 

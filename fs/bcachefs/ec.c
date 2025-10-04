@@ -24,7 +24,7 @@
 #include "rebalance.h"
 #include "recovery.h"
 #include "alloc/replicas.h"
-#include "super-io.h"
+#include "sb/io.h"
 #include "util/enumerated_ref.h"
 #include "util/util.h"
 

@@ -3,7 +3,7 @@
 #include "bcachefs.h"
 #include "journal.h"
 #include "journal_seq_blacklist.h"
-#include "super-io.h"
+#include "sb/io.h"
 
 #include "util/eytzinger.h"
 

@@ -11,8 +11,8 @@
 #include "move.h"
 #include "recovery_passes.h"
 #include "alloc/replicas.h"
-#include "sb-counters.h"
-#include "super-io.h"
+#include "sb/counters.h"
+#include "sb/io.h"
 #include "util/thread_with_file.h"
 
 #include <linux/cdev.h>
