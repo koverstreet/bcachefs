@@ -24,7 +24,6 @@
 #include "fs/subvolume.h"
 
 #include "init/error.h"
-#include "trace.h"
 
 #include <linux/ioprio.h>
 

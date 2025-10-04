@@ -34,7 +34,6 @@
 
 #include "init/errcode.h"
 #include "init/super.h"
-#include "trace.h"
 
 #include <linux/aio.h>
 #include <linux/backing-dev.h>

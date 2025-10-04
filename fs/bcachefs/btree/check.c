@@ -29,18 +29,15 @@
 #include "data/move.h"
 #include "data/reflink.h"
 
-#include "journal/journal.h"
-
-#include "sb/io.h"
-
-#include "debug.h"
 #include "init/error.h"
 #include "init/progress.h"
 #include "init/passes.h"
 #include "init/recovery.h"
-#include "trace.h"
 
-#include "util/clock.h"
+#include "journal/journal.h"
+
+#include "sb/io.h"
+
 #include "util/enumerated_ref.h"
 
 #include <linux/slab.h>

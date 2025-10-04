@@ -25,7 +25,6 @@
 #include "vfs/pagecache.h"
 
 #include "init/error.h"
-#include "trace.h"
 
 #include "util/clock.h"
 #include "util/enumerated_ref.h"

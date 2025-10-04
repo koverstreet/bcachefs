@@ -15,15 +15,15 @@
 
 #include "data/extents.h"
 
+#include "debug/debug.h"
+
 #include "fs/snapshot.h"
+
+#include "init/error.h"
+#include "init/super.h"
 
 #include "journal/journal.h"
 #include "journal/io.h"
-
-#include "debug.h"
-#include "init/error.h"
-#include "init/super.h"
-#include "trace.h"
 
 #include <linux/random.h>
 #include <linux/prefetch.h>

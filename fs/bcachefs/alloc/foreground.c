@@ -30,11 +30,8 @@
 #include "data/nocow_locking.h"
 #include "data/write.h"
 
-#include "journal/journal.h"
-
-#include "debug.h"
 #include "init/error.h"
-#include "trace.h"
+#include "journal/journal.h"
 #include "util/clock.h"
 
 #include <linux/math64.h>

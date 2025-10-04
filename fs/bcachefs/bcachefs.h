@@ -244,6 +244,9 @@
 #include "data/nocow_locking_types.h"
 #include "data/rebalance_types.h"
 
+#include "debug/async_objs_types.h"
+#include "debug/trace.h"
+
 #include "fs/quota_types.h"
 #include "fs/snapshot_types.h"
 #include "fs/subvolume_types.h"
@@ -257,9 +260,6 @@
 
 #include "sb/errors_types.h"
 #include "sb/members_types.h"
-
-#include "async_objs_types.h"
-#include "trace.h"
 
 #define count_event(_c, _name)	this_cpu_inc((_c)->counters[BCH_COUNTER_##_name])
 

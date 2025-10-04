@@ -9,15 +9,14 @@
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 
+#include "init/errcode.h"
+#include "init/error.h"
+
 #include "journal/journal.h"
 #include "journal/io.h"
 #include "journal/reclaim.h"
 
 #include "sb/members.h"
-
-#include "init/errcode.h"
-#include "init/error.h"
-#include "trace.h"
 
 #include <linux/kthread.h>
 #include <linux/sched/mm.h>

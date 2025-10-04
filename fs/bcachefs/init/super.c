@@ -38,6 +38,16 @@
 #include "data/rebalance.h"
 #include "data/write.h"
 
+#include "debug/async_objs.h"
+#include "debug/debug.h"
+#include "debug/sysfs.h"
+
+#include "init/errcode.h"
+#include "init/error.h"
+#include "init/recovery.h"
+#include "init/passes.h"
+#include "init/super.h"
+
 #include "fs/chardev.h"
 #include "fs/check.h"
 #include "fs/inode.h"
@@ -56,17 +66,6 @@
 #include "sb/errors.h"
 #include "sb/io.h"
 #include "sb/members.h"
-
-#include "async_objs.h"
-#include "debug.h"
-#include "init/errcode.h"
-#include "init/error.h"
-#include "init/recovery.h"
-#include "init/passes.h"
-
-#include "init/super.h"
-#include "sysfs.h"
-#include "trace.h"
 
 #include "vfs/fs.h"
 #include "vfs/io.h"
