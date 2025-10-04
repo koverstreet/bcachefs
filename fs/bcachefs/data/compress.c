@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
+
 #include "data/checksum.h"
 #include "data/compress.h"
-#include "error.h"
 #include "data/extents.h"
 #include "data/write.h"
-#include "opts.h"
+
 #include "sb/io.h"
+
+#include "error.h"
+#include "opts.h"
 
 #include <linux/lz4.h>
 #include <linux/zlib.h>

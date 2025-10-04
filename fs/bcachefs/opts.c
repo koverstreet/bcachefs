@@ -4,14 +4,18 @@
 #include <linux/fs_parser.h>
 
 #include "bcachefs.h"
+
 #include "alloc/disk_groups.h"
+
 #include "data/compress.h"
-#include "error.h"
 #include "data/copygc.h"
-#include "opts.h"
 #include "data/rebalance.h"
-#include "recovery_passes.h"
+
 #include "sb/io.h"
+
+#include "error.h"
+#include "opts.h"
+#include "recovery_passes.h"
 
 #include "util/util.h"
 

@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "acl.h"
+
 #include "btree/bkey_methods.h"
 #include "btree/update.h"
-#include "dirent.h"
+
 #include "data/extents.h"
 #include "data/rebalance.h"
-#include "str_hash.h"
+
+#include "fs/acl.h"
+#include "fs/dirent.h"
+#include "fs/str_hash.h"
+#include "fs/xattr.h"
+
 #include "vfs/fs.h"
-#include "xattr.h"
 
 #include <linux/dcache.h>
 #include <linux/posix_acl_xattr.h>

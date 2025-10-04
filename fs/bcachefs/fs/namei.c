@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "acl.h"
+
 #include "btree/update.h"
-#include "dirent.h"
-#include "inode.h"
-#include "namei.h"
-#include "subvolume.h"
-#include "xattr.h"
+
+#include "fs/acl.h"
+#include "fs/dirent.h"
+#include "fs/inode.h"
+#include "fs/namei.h"
+#include "fs/subvolume.h"
+#include "fs/xattr.h"
 
 #include <linux/posix_acl.h>
 

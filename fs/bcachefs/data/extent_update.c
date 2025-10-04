@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
+
+#include "alloc/buckets.h"
+
 #include "btree/update.h"
 #include "btree/interior.h"
-#include "alloc/buckets.h"
-#include "debug.h"
+
 #include "data/extents.h"
-#include "extent_update.h"
+#include "data/extent_update.h"
+
+#include "debug.h"
 
 /*
  * This counts the number of iterators to the alloc & ec btrees we'll need

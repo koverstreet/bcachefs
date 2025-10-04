@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
 #include "btree/bkey_buf.h"
 #include "btree/update.h"
-#include "error.h"
+
 #include "data/io_misc.h"
-#include "logged_ops.h"
+
+#include "fs/logged_ops.h"
+
+#include "error.h"
 #include "super.h"
 
 struct bch_logged_op_fn {

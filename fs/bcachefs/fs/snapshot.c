@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
 #include "alloc/buckets.h"
+
 #include "btree/bbpos.h"
 #include "btree/bkey_buf.h"
 #include "btree/cache.h"
 #include "btree/key_cache.h"
 #include "btree/update.h"
+
+#include "fs/snapshot.h"
+
+#include "vfs/fs.h"
+
 #include "errcode.h"
 #include "error.h"
 #include "progress.h"
 #include "recovery_passes.h"
-#include "fs/snapshot.h"
-#include "vfs/fs.h"
 
 #include "util/enumerated_ref.h"
 

@@ -2,17 +2,22 @@
 
 #include "bcachefs.h"
 #include "bcachefs_ioctl.h"
+
+#include "alloc/accounting.h"
+#include "alloc/buckets.h"
+#include "alloc/replicas.h"
+
 #include "btree/cache.h"
 #include "btree/journal_overlay.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
-#include "alloc/buckets.h"
+
 #include "data/compress.h"
-#include "alloc/accounting.h"
-#include "error.h"
+
 #include "journal/io.h"
+
+#include "error.h"
 #include "recovery_passes.h"
-#include "alloc/replicas.h"
 
 /*
  * Notes on disk accounting:

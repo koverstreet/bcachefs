@@ -6,10 +6,12 @@
  */
 
 #include "bcachefs.h"
-#include "recovery_passes.h"
+
 #include "sb/downgrade.h"
 #include "sb/errors.h"
 #include "sb/io.h"
+
+#include "recovery_passes.h"
 
 #include "util/darray.h"
 

@@ -3,13 +3,6 @@
 
 #include "bcachefs.h"
 
-#include "fs.h"
-#include "io.h"
-#include "ioctl.h"
-#include "buffered.h"
-#include "direct.h"
-#include "pagecache.h"
-
 #include "alloc/accounting.h"
 #include "alloc/buckets.h"
 
@@ -31,6 +24,13 @@
 #include "fs/xattr.h"
 
 #include "journal/journal.h"
+
+#include "vfs/fs.h"
+#include "vfs/io.h"
+#include "vfs/ioctl.h"
+#include "vfs/buffered.h"
+#include "vfs/direct.h"
+#include "vfs/pagecache.h"
 
 #include "errcode.h"
 #include "super.h"
