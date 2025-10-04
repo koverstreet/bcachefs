@@ -2,12 +2,10 @@
 #ifndef NO_BCACHEFS_FS
 
 #include "bcachefs.h"
+#include "alloc/buckets.h"
 #include "alloc/foreground.h"
 #include "bkey_buf.h"
 #include "btree/update.h"
-#include "alloc/buckets.h"
-#include "clock.h"
-#include "enumerated_ref.h"
 #include "error.h"
 #include "extents.h"
 #include "extent_update.h"
@@ -23,6 +21,9 @@
 #include "quota.h"
 #include "reflink.h"
 #include "trace.h"
+
+#include "util/clock.h"
+#include "util/enumerated_ref.h"
 
 #include <linux/aio.h>
 #include <linux/backing-dev.h>

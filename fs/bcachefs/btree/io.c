@@ -14,7 +14,6 @@
 #include "alloc/buckets.h"
 #include "checksum.h"
 #include "debug.h"
-#include "enumerated_ref.h"
 #include "error.h"
 #include "extents.h"
 #include "io_write.h"
@@ -23,6 +22,8 @@
 #include "recovery.h"
 #include "super-io.h"
 #include "trace.h"
+
+#include "util/enumerated_ref.h"
 
 #include <linux/moduleparam.h>
 #include <linux/sched/mm.h>

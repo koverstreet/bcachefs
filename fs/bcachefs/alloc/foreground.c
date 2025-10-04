@@ -21,7 +21,6 @@
 #include "btree/check.h"
 #include "alloc/buckets.h"
 #include "buckets_waiting_for_journal.h"
-#include "clock.h"
 #include "debug.h"
 #include "alloc/disk_groups.h"
 #include "ec.h"
@@ -31,6 +30,7 @@
 #include "movinggc.h"
 #include "nocow_locking.h"
 #include "trace.h"
+#include "util/clock.h"
 
 #include <linux/math64.h>
 #include <linux/rculist.h>

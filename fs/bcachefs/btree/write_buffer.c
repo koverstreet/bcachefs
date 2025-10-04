@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "alloc/accounting.h"
 #include "bkey_buf.h"
 #include "btree/locking.h"
 #include "btree/update.h"
 #include "btree/interior.h"
 #include "btree/write_buffer.h"
-#include "alloc/accounting.h"
-#include "enumerated_ref.h"
 #include "error.h"
 #include "extents.h"
 #include "journal.h"
 #include "journal_io.h"
 #include "journal_reclaim.h"
+
+#include "util/enumerated_ref.h"
 
 #include <linux/prefetch.h>
 #include <linux/sort.h>

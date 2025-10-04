@@ -9,8 +9,12 @@
 #ifndef NO_BCACHEFS_SYSFS
 
 #include "bcachefs.h"
+#include "alloc/accounting.h"
 #include "alloc/background.h"
+#include "alloc/buckets.h"
+#include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
+#include "alloc/replicas.h"
 #include "sysfs.h"
 #include "btree/cache.h"
 #include "btree/io.h"
@@ -20,13 +24,8 @@
 #include "btree/interior.h"
 #include "btree/write_buffer.h"
 #include "btree/check.h"
-#include "alloc/buckets.h"
-#include "clock.h"
 #include "compress.h"
-#include "alloc/accounting.h"
-#include "alloc/disk_groups.h"
 #include "ec.h"
-#include "enumerated_ref.h"
 #include "error.h"
 #include "inode.h"
 #include "journal.h"
@@ -38,16 +37,18 @@
 #include "opts.h"
 #include "rebalance.h"
 #include "recovery_passes.h"
-#include "alloc/replicas.h"
 #include "sb-errors.h"
 #include "super-io.h"
 #include "tests.h"
+
+#include "util/clock.h"
+#include "util/enumerated_ref.h"
+#include "util/util.h"
 
 #include <linux/blkdev.h>
 #include <linux/sort.h>
 #include <linux/sched/clock.h>
 
-#include "util.h"
 
 #define SYSFS_OPS(type)							\
 const struct sysfs_ops type ## _sysfs_ops = {				\

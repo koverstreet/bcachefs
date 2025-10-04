@@ -3,13 +3,14 @@
 
 #include "bcachefs.h"
 #include "alloc/foreground.h"
-#include "enumerated_ref.h"
 #include "fs.h"
 #include "fs-io.h"
 #include "fs-io-direct.h"
 #include "fs-io-pagecache.h"
 #include "io_read.h"
 #include "io_write.h"
+
+#include "util/enumerated_ref.h"
 
 #include <linux/kthread.h>
 #include <linux/pagemap.h>

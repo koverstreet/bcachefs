@@ -16,7 +16,6 @@
 #include "alloc/accounting.h"
 #include "alloc/disk_groups.h"
 #include "ec.h"
-#include "enumerated_ref.h"
 #include "error.h"
 #include "io_read.h"
 #include "io_write.h"
@@ -26,7 +25,8 @@
 #include "recovery.h"
 #include "alloc/replicas.h"
 #include "super-io.h"
-#include "util.h"
+#include "util/enumerated_ref.h"
+#include "util/util.h"
 
 #include <linux/sort.h>
 #include <linux/string_choices.h>

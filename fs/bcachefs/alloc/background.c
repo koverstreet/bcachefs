@@ -15,15 +15,16 @@
 #include "btree/interior.h"
 #include "btree/check.h"
 #include "btree/write_buffer.h"
-#include "clock.h"
 #include "debug.h"
 #include "ec.h"
-#include "enumerated_ref.h"
 #include "error.h"
 #include "alloc/lru.h"
 #include "progress.h"
 #include "recovery.h"
-#include "varint.h"
+
+#include "util/clock.h"
+#include "util/enumerated_ref.h"
+#include "util/varint.h"
 
 #include <linux/kthread.h>
 #include <linux/math64.h>

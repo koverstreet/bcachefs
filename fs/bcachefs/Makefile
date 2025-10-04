@@ -37,20 +37,15 @@ bcachefs-y		:=			\
 	btree/write_buffer.o			\
 	chardev.o				\
 	checksum.o				\
-	clock.o					\
 	compress.o				\
-	darray.o				\
 	data_update.o				\
 	debug.o					\
 	dirent.o				\
 	ec.o					\
-	enumerated_ref.o			\
 	errcode.o				\
 	error.o					\
 	extents.o				\
 	extent_update.o				\
-	eytzinger.o				\
-	fast_list.o				\
 	fs.o					\
 	fs-ioctl.o				\
 	fs-io.o					\
@@ -69,18 +64,15 @@ bcachefs-y		:=			\
 	journal_seq_blacklist.o			\
 	keylist.o				\
 	logged_ops.o				\
-	mean_and_variance.o			\
 	migrate.o				\
 	move.o					\
 	movinggc.o				\
 	namei.o					\
 	nocow_locking.o				\
 	opts.o					\
-	printbuf.o				\
 	progress.o				\
 	quota.o					\
 	rebalance.o				\
-	rcu_pending.o				\
 	recovery.o				\
 	recovery_passes.o			\
 	reflink.o				\
@@ -89,8 +81,6 @@ bcachefs-y		:=			\
 	sb-downgrade.o				\
 	sb-errors.o				\
 	sb-members.o				\
-	siphash.o				\
-	six.o					\
 	snapshot.o				\
 	str_hash.o				\
 	subvolume.o				\
@@ -98,18 +88,28 @@ bcachefs-y		:=			\
 	super-io.o				\
 	sysfs.o					\
 	tests.o					\
-	time_stats.o				\
-	thread_with_file.o			\
 	trace.o					\
-	two_state_shared_lock.o			\
-	util.o					\
-	varint.o				\
 	xattr.o					\
+	util/clock.o				\
+	util/darray.o				\
+	util/enumerated_ref.o			\
+	util/eytzinger.o			\
+	util/fast_list.o			\
+	util/mean_and_variance.o		\
+	util/printbuf.o				\
+	util/rcu_pending.o			\
+	util/siphash.o				\
+	util/six.o				\
+	util/time_stats.o			\
+	util/thread_with_file.o			\
+	util/two_state_shared_lock.o		\
+	util/util.o				\
+	util/varint.o				\
 	vendor/closure.o			\
 	vendor/min_heap.o
 
 ifndef BCACHEFS_DKMS
-	obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += mean_and_variance_test.o
+	obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += util/mean_and_variance_test.o
 endif
 
 # Silence "note: xyz changed in GCC X.X" messages

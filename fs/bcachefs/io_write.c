@@ -12,11 +12,9 @@
 #include "btree/update.h"
 #include "alloc/buckets.h"
 #include "checksum.h"
-#include "clock.h"
 #include "compress.h"
 #include "debug.h"
 #include "ec.h"
-#include "enumerated_ref.h"
 #include "error.h"
 #include "extent_update.h"
 #include "inode.h"
@@ -30,6 +28,9 @@
 #include "super.h"
 #include "super-io.h"
 #include "trace.h"
+
+#include "util/clock.h"
+#include "util/enumerated_ref.h"
 
 #include <linux/blkdev.h>
 #include <linux/moduleparam.h>

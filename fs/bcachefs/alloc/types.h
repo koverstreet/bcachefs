@@ -5,8 +5,8 @@
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 
-#include "clock_types.h"
-#include "fifo.h"
+#include "util/clock_types.h"
+#include "util/fifo.h"
 
 #define BCH_WATERMARKS()		\
 	x(stripe)			\

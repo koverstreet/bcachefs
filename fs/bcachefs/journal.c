@@ -6,13 +6,12 @@
  */
 
 #include "bcachefs.h"
+#include "alloc/buckets.h"
 #include "alloc/foreground.h"
 #include "bkey_methods.h"
 #include "btree/check.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
-#include "alloc/buckets.h"
-#include "enumerated_ref.h"
 #include "error.h"
 #include "journal.h"
 #include "journal_io.h"
@@ -20,6 +19,8 @@
 #include "journal_sb.h"
 #include "journal_seq_blacklist.h"
 #include "trace.h"
+
+#include "util/enumerated_ref.h"
 
 static inline bool journal_seq_unwritten(struct journal *j, u64 seq)
 {
