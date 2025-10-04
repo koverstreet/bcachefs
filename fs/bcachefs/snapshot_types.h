@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_SNAPSHOT_TYPES_H
 #define _BCACHEFS_SNAPSHOT_TYPES_H
 
-#include "bbpos_types.h"
+#include "btree/bbpos_types.h"
 #include "subvolume_types.h"
 #include "util/darray.h"
 

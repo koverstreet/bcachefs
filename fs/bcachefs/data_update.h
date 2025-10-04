@@ -3,7 +3,7 @@
 #ifndef _BCACHEFS_DATA_UPDATE_H
 #define _BCACHEFS_DATA_UPDATE_H
 
-#include "bkey_buf.h"
+#include "btree/bkey_buf.h"
 #include "io_read.h"
 #include "io_write_types.h"
 

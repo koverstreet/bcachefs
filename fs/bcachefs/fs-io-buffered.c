@@ -3,7 +3,7 @@
 
 #include "bcachefs.h"
 #include "alloc/foreground.h"
-#include "bkey_buf.h"
+#include "btree/bkey_buf.h"
 #include "fs-io.h"
 #include "fs-io-buffered.h"
 #include "fs-io-direct.h"

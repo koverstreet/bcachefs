@@ -5,7 +5,7 @@
 #include <linux/mempool.h>
 
 #include "bcachefs.h"
-#include "bkey.h"
+#include "btree/bkey.h"
 
 struct bkey_buf {
 	struct bkey_i	*k;

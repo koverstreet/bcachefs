@@ -2,7 +2,7 @@
 
 #include "bcachefs.h"
 #include "alloc/background.h"
-#include "bkey_buf.h"
+#include "btree/bkey_buf.h"
 #include "btree/iter.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"

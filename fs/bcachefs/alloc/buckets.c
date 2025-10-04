@@ -8,7 +8,7 @@
 #include "bcachefs.h"
 #include "alloc/background.h"
 #include "alloc/backpointers.h"
-#include "bset.h"
+#include "btree/bset.h"
 #include "btree/check.h"
 #include "btree/update.h"
 #include "alloc/buckets.h"

@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_MOVE_TYPES_H
 #define _BCACHEFS_MOVE_TYPES_H
 
-#include "bbpos_types.h"
+#include "btree/bbpos_types.h"
 #include "bcachefs_ioctl.h"
 
 struct bch_move_stats {

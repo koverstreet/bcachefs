@@ -5,7 +5,7 @@
 
 #include "bcachefs.h"
 #include "alloc/backpointers.h"
-#include "bkey_buf.h"
+#include "btree/bkey_buf.h"
 #include "btree/update.h"
 #include "btree/interior.h"
 #include "btree/write_buffer.h"

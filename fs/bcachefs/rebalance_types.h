@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_REBALANCE_TYPES_H
 #define _BCACHEFS_REBALANCE_TYPES_H
 
-#include "bbpos_types.h"
+#include "btree/bbpos_types.h"
 #include "move_types.h"
 
 #define BCH_REBALANCE_STATES()		\

@@ -5,7 +5,7 @@
 #include "alloc/buckets.h"
 #include "alloc/check.h"
 #include "alloc/replicas.h"
-#include "bkey_buf.h"
+#include "btree/bkey_buf.h"
 #include "btree/journal_overlay.h"
 #include "btree/node_scan.h"
 #include "btree/update.h"

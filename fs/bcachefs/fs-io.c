@@ -4,7 +4,7 @@
 #include "bcachefs.h"
 #include "alloc/buckets.h"
 #include "alloc/foreground.h"
-#include "bkey_buf.h"
+#include "btree/bkey_buf.h"
 #include "btree/update.h"
 #include "error.h"
 #include "extents.h"

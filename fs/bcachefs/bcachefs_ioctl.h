@@ -5,7 +5,7 @@
 #include <linux/uuid.h>
 #include <asm/ioctl.h>
 #include "bcachefs_format.h"
-#include "bkey_types.h"
+#include "btree/bkey_types.h"
 
 /*
  * Flags common to multiple ioctls:

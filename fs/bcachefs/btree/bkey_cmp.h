@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_BKEY_CMP_H
 #define _BCACHEFS_BKEY_CMP_H
 
-#include "bkey.h"
+#include "btree/bkey.h"
 
 #ifdef CONFIG_X86_64
 static inline int __bkey_cmp_bits(const u64 *l, const u64 *r,

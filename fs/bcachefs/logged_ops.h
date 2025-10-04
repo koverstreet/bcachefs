@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_LOGGED_OPS_H
 #define _BCACHEFS_LOGGED_OPS_H
 
-#include "bkey.h"
+#include "btree/bkey.h"
 
 #define BCH_LOGGED_OPS()			\
 	x(truncate)				\
