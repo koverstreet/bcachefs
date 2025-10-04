@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "alloc_background.h"
+#include "alloc/background.h"
 #include "bkey_buf.h"
 #include "btree/iter.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 #include "ec.h"
 #include "error.h"
-#include "lru.h"
+#include "alloc/lru.h"
 #include "progress.h"
 #include "recovery.h"
 

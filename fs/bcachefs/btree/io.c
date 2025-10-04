@@ -11,7 +11,7 @@
 #include "btree/locking.h"
 #include "btree/update.h"
 #include "btree/interior.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "checksum.h"
 #include "debug.h"
 #include "enumerated_ref.h"

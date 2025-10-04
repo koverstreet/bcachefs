@@ -4,10 +4,10 @@
  */
 
 #include "bcachefs.h"
-#include "alloc_foreground.h"
+#include "alloc/foreground.h"
 #include "bkey_buf.h"
 #include "btree/update.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "clock.h"
 #include "error.h"
 #include "extents.h"

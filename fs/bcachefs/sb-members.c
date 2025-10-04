@@ -2,11 +2,11 @@
 
 #include "bcachefs.h"
 #include "btree/cache.h"
-#include "disk_groups.h"
+#include "alloc/disk_groups.h"
 #include "error.h"
 #include "opts.h"
 #include "recovery_passes.h"
-#include "replicas.h"
+#include "alloc/replicas.h"
 #include "sb-members.h"
 #include "super-io.h"
 

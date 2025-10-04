@@ -2,6 +2,8 @@
 #ifndef _BCACHEFS_DISK_GROUPS_TYPES_H
 #define _BCACHEFS_DISK_GROUPS_TYPES_H
 
+#include "super_types.h"
+
 struct bch_disk_group_cpu {
 	bool				deleted;
 	u16				parent;

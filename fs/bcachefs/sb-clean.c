@@ -2,10 +2,10 @@
 
 #include "bcachefs.h"
 #include "btree/interior.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "error.h"
 #include "journal_io.h"
-#include "replicas.h"
+#include "alloc/replicas.h"
 #include "sb-clean.h"
 #include "super-io.h"
 

@@ -5,7 +5,7 @@
 #include "bbpos.h"
 #include "bcachefs_ioctl.h"
 #include "btree/iter.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "data_update.h"
 #include "move_types.h"
 

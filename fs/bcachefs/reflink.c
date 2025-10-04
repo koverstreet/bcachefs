@@ -2,7 +2,7 @@
 #include "bcachefs.h"
 #include "bkey_buf.h"
 #include "btree/update.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "enumerated_ref.h"
 #include "error.h"
 #include "extents.h"

@@ -6,7 +6,7 @@
 #include "btree/update.h"
 #include "btree/interior.h"
 #include "btree/write_buffer.h"
-#include "disk_accounting.h"
+#include "alloc/accounting.h"
 #include "enumerated_ref.h"
 #include "error.h"
 #include "extents.h"

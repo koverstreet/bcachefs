@@ -7,7 +7,7 @@
  */
 
 #include "bcachefs.h"
-#include "alloc_foreground.h"
+#include "alloc/foreground.h"
 #include "async_objs.h"
 #include "bkey_methods.h"
 #include "btree/cache.h"
@@ -16,7 +16,7 @@
 #include "btree/locking.h"
 #include "btree/update.h"
 #include "btree/interior.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "data_update.h"
 #include "debug.h"
 #include "error.h"
