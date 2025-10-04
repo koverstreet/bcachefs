@@ -45,6 +45,7 @@
 #include "fs-io-direct.h"
 #include "fsck.h"
 #include "inode.h"
+#include "journal/init.h"
 #include "journal/journal.h"
 #include "journal/reclaim.h"
 #include "journal/seq_blacklist.h"

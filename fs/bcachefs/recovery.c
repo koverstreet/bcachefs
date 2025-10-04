@@ -14,6 +14,7 @@
 #include "dirent.h"
 #include "errcode.h"
 #include "error.h"
+#include "journal/init.h"
 #include "journal/io.h"
 #include "journal/reclaim.h"
 #include "journal/sb.h"

@@ -64,8 +64,9 @@ bcachefs-y		:=			\
 	data/reflink.o				\
 	data/update.o				\
 	data/write.o				\
-	journal/journal.o			\
+	journal/init.o				\
 	journal/io.o				\
+	journal/journal.o			\
 	journal/reclaim.o			\
 	journal/sb.o				\
 	journal/seq_blacklist.o			\
