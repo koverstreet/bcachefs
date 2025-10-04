@@ -7,7 +7,7 @@
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 #include "alloc/buckets.h"
-#include "compress.h"
+#include "data/compress.h"
 #include "alloc/accounting.h"
 #include "error.h"
 #include "journal/io.h"

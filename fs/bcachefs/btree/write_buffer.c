@@ -8,7 +8,7 @@
 #include "btree/interior.h"
 #include "btree/write_buffer.h"
 #include "error.h"
-#include "extents.h"
+#include "data/extents.h"
 #include "journal/journal.h"
 #include "journal/io.h"
 #include "journal/reclaim.h"

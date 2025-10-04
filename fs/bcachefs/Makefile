@@ -36,16 +36,10 @@ bcachefs-y		:=			\
 	btree/interior.o			\
 	btree/write_buffer.o			\
 	chardev.o				\
-	checksum.o				\
-	compress.o				\
-	data_update.o				\
 	debug.o					\
 	dirent.o				\
-	ec.o					\
 	errcode.o				\
 	error.o					\
-	extents.o				\
-	extent_update.o				\
 	fs.o					\
 	fs-ioctl.o				\
 	fs-io.o					\
@@ -54,28 +48,34 @@ bcachefs-y		:=			\
 	fs-io-pagecache.o			\
 	fsck.o					\
 	inode.o					\
-	io_read.o				\
-	io_misc.o				\
-	io_write.o				\
+	data/checksum.o				\
+	data/compress.o				\
+	data/copygc.o				\
+	data/ec.o				\
+	data/extents.o				\
+	data/extent_update.o			\
+	data/io_misc.o				\
+	data/keylist.o				\
+	data/migrate.o				\
+	data/move.o				\
+	data/nocow_locking.o			\
+	data/read.o				\
+	data/rebalance.o			\
+	data/reflink.o				\
+	data/update.o				\
+	data/write.o				\
 	journal/journal.o			\
 	journal/io.o				\
 	journal/reclaim.o			\
 	journal/sb.o				\
 	journal/seq_blacklist.o			\
-	keylist.o				\
 	logged_ops.o				\
-	migrate.o				\
-	move.o					\
-	movinggc.o				\
 	namei.o					\
-	nocow_locking.o				\
 	opts.o					\
 	progress.o				\
 	quota.o					\
-	rebalance.o				\
 	recovery.o				\
 	recovery_passes.o			\
-	reflink.o				\
 	sb/clean.o				\
 	sb/counters.o				\
 	sb/downgrade.o				\

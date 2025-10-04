@@ -6,7 +6,7 @@
 
 #include "alloc/buckets.h"
 #include "fs.h"
-#include "io_write_types.h"
+#include "data/write_types.h"
 #include "quota.h"
 
 #include <linux/uio.h>

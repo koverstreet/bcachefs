@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_SUPER_IO_H
 #define _BCACHEFS_SUPER_IO_H
 
-#include "extents.h"
+#include "data/extents.h"
 #include "super_types.h"
 #include "super.h"
 #include "sb/members.h"

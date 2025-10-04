@@ -5,8 +5,8 @@
 #include "bcachefs.h"
 #include "alloc/buckets.h"
 #include "alloc/types.h"
-#include "extents.h"
-#include "io_write_types.h"
+#include "data/extents.h"
+#include "data/write_types.h"
 #include "sb/members.h"
 
 #include <linux/hash.h>

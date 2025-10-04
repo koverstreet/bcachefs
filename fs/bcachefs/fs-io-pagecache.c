@@ -3,7 +3,7 @@
 
 #include "bcachefs.h"
 #include "btree/iter.h"
-#include "extents.h"
+#include "data/extents.h"
 #include "fs-io.h"
 #include "fs-io-pagecache.h"
 #include "subvolume.h"

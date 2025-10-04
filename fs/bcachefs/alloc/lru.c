@@ -6,7 +6,7 @@
 #include "btree/iter.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
-#include "ec.h"
+#include "data/ec.h"
 #include "error.h"
 #include "alloc/lru.h"
 #include "progress.h"

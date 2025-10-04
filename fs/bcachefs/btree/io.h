@@ -5,9 +5,9 @@
 #include "btree/bkey_methods.h"
 #include "btree/bset.h"
 #include "btree/locking.h"
-#include "checksum.h"
-#include "extents.h"
-#include "io_write_types.h"
+#include "data/checksum.h"
+#include "data/extents.h"
+#include "data/write_types.h"
 
 struct bch_fs;
 struct btree_write;

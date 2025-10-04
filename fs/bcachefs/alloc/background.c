@@ -16,7 +16,7 @@
 #include "btree/check.h"
 #include "btree/write_buffer.h"
 #include "debug.h"
-#include "ec.h"
+#include "data/ec.h"
 #include "error.h"
 #include "alloc/lru.h"
 #include "progress.h"

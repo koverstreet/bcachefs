@@ -10,8 +10,8 @@
 #include "async_objs.h"
 #include "btree/io.h"
 #include "debug.h"
-#include "io_read.h"
-#include "io_write.h"
+#include "data/read.h"
+#include "data/write.h"
 
 #include <linux/debugfs.h>
 

@@ -5,11 +5,11 @@
 
 #include "bcachefs.h"
 #include "alloc/disk_groups.h"
-#include "compress.h"
+#include "data/compress.h"
 #include "error.h"
-#include "movinggc.h"
+#include "data/copygc.h"
 #include "opts.h"
-#include "rebalance.h"
+#include "data/rebalance.h"
 #include "recovery_passes.h"
 #include "sb/io.h"
 

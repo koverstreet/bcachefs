@@ -7,8 +7,8 @@
 #include "btree/key_cache.h"
 #include "btree/locking.h"
 #include "btree/interior.h"
-#include "keylist.h"
-#include "move_types.h"
+#include "data/keylist.h"
+#include "data/move_types.h"
 #include "opts.h"
 
 #include "util/six.h"

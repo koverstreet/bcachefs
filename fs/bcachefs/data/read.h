@@ -5,7 +5,7 @@
 #include "btree/bkey_buf.h"
 #include "btree/iter.h"
 #include "extents_types.h"
-#include "reflink.h"
+#include "data/reflink.h"
 
 #ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
 void bch2_dev_congested_to_text(struct printbuf *, struct bch_dev *);
