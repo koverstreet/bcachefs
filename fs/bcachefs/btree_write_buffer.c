@@ -296,6 +296,11 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 	scoped_guard(mutex, &wb->inc.lock)
 		move_keys_from_inc_to_flushing(wb);
 
+	if (!wb->flushing.keys.nr)
+		return 0;
+
+	u64 start_time = local_clock();
+
 	for (size_t i = 0; i < wb->flushing.keys.nr; i++) {
 		wb->sorted.data[i].idx = i;
 		wb->sorted.data[i].btree = wb->flushing.keys.data[i].btree;
@@ -488,6 +493,7 @@ err:
 		wb->flushing.keys.nr = 0;
 	}
 
+	bch2_time_stats_update(&c->times[BCH_TIME_btree_write_buffer_flush], start_time);
 	bch2_fs_fatal_err_on(ret, c, "%s", bch2_err_str(ret));
 	trace_write_buffer_flush(trans, wb->flushing.keys.nr, overwritten, fast, 0);
 	return ret;
