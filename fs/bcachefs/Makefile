@@ -35,8 +35,6 @@ bcachefs-y		:=			\
 	btree/interior.o			\
 	btree/write_buffer.o			\
 	debug.o					\
-	errcode.o				\
-	error.o					\
 	data/checksum.o				\
 	data/compress.o				\
 	data/copygc.o				\
@@ -65,23 +63,25 @@ bcachefs-y		:=			\
 	fs/str_hash.o				\
 	fs/subvolume.o				\
 	fs/xattr.o				\
+	init/errcode.o				\
+	init/error.o				\
+	init/opts.o				\
+	init/progress.o				\
+	init/recovery.o				\
+	init/passes.o				\
+	init/super.o				\
 	journal/init.o				\
 	journal/io.o				\
 	journal/journal.o			\
 	journal/reclaim.o			\
 	journal/sb.o				\
 	journal/seq_blacklist.o			\
-	opts.o					\
-	progress.o				\
-	recovery.o				\
-	recovery_passes.o			\
 	sb/clean.o				\
 	sb/counters.o				\
 	sb/downgrade.o				\
 	sb/errors.o				\
 	sb/io.o					\
 	sb/members.o				\
-	super.o					\
 	sysfs.o					\
 	tests.o					\
 	trace.o					\

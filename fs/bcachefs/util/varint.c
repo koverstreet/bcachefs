@@ -9,7 +9,7 @@
 #include <valgrind/memcheck.h>
 #endif
 
-#include "errcode.h"
+#include "init/errcode.h"
 #include "varint.h"
 
 /**

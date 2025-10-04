@@ -14,10 +14,10 @@
 
 #include "vfs/fs.h"
 
-#include "errcode.h"
-#include "error.h"
-#include "progress.h"
-#include "recovery_passes.h"
+#include "init/errcode.h"
+#include "init/error.h"
+#include "init/progress.h"
+#include "init/passes.h"
 
 #include "util/enumerated_ref.h"
 

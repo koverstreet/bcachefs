@@ -9,8 +9,8 @@
 
 #include "fs/logged_ops.h"
 
-#include "error.h"
-#include "super.h"
+#include "init/error.h"
+#include "init/super.h"
 
 struct bch_logged_op_fn {
 	u8		type;

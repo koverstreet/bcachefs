@@ -23,7 +23,7 @@
 
 #include "fs/inode.h"
 
-#include "error.h"
+#include "init/error.h"
 
 #include "util/util.h"
 

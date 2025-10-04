@@ -6,8 +6,8 @@
 #include "btree/iter.h"
 #include "btree/update.h"
 #include "alloc/buckets.h"
-#include "error.h"
-#include "super.h"
+#include "init/error.h"
+#include "init/super.h"
 
 static inline u64 swab40(u64 x)
 {

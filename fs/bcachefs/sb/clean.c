@@ -12,7 +12,7 @@
 #include "sb/clean.h"
 #include "sb/io.h"
 
-#include "error.h"
+#include "init/error.h"
 
 /*
  * BCH_SB_FIELD_clean:

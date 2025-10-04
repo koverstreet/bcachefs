@@ -216,8 +216,6 @@
 
 #include "bcachefs_format.h"
 #include "closure.h"
-#include "errcode.h"
-#include "opts.h"
 
 #include "util/clock_types.h"
 #include "util/enumerated_ref_types.h"
@@ -232,27 +230,35 @@
 #include "alloc/buckets_types.h"
 #include "alloc/buckets_waiting_for_journal_types.h"
 #include "alloc/disk_groups_types.h"
+#include "alloc/replicas_types.h"
 #include "alloc/types.h"
-#include "async_objs_types.h"
+
 #include "btree/check_types.h"
 #include "btree/journal_overlay_types.h"
 #include "btree/types.h"
 #include "btree/node_scan_types.h"
 #include "btree/write_buffer_types.h"
+
 #include "data/ec_types.h"
 #include "data/keylist_types.h"
 #include "data/nocow_locking_types.h"
 #include "data/rebalance_types.h"
+
 #include "fs/quota_types.h"
 #include "fs/snapshot_types.h"
 #include "fs/subvolume_types.h"
+
+#include "init/errcode.h"
+#include "init/opts.h"
+#include "init/passes_types.h"
+#include "init/super_types.h"
+
 #include "journal/types.h"
-#include "recovery_passes_types.h"
-#include "alloc/replicas_types.h"
+
 #include "sb/errors_types.h"
 #include "sb/members_types.h"
-#include "super_types.h"
 
+#include "async_objs_types.h"
 #include "trace.h"
 
 #define count_event(_c, _name)	this_cpu_inc((_c)->counters[BCH_COUNTER_##_name])

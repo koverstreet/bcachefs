@@ -23,8 +23,8 @@
 
 #include "vfs/fs.h"
 
-#include "error.h"
-#include "opts.h"
+#include "init/error.h"
+#include "init/opts.h"
 
 #include "util/varint.h"
 

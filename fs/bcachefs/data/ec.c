@@ -28,8 +28,8 @@
 
 #include "sb/io.h"
 
-#include "error.h"
-#include "recovery.h"
+#include "init/error.h"
+#include "init/recovery.h"
 
 #include "util/enumerated_ref.h"
 #include "util/util.h"

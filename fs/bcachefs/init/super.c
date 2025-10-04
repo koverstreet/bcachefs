@@ -59,12 +59,12 @@
 
 #include "async_objs.h"
 #include "debug.h"
-#include "errcode.h"
-#include "error.h"
-#include "recovery.h"
-#include "recovery_passes.h"
+#include "init/errcode.h"
+#include "init/error.h"
+#include "init/recovery.h"
+#include "init/passes.h"
 
-#include "super.h"
+#include "init/super.h"
 #include "sysfs.h"
 #include "trace.h"
 

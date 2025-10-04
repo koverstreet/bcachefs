@@ -21,7 +21,7 @@
 #include "fs/logged_ops.h"
 #include "fs/subvolume.h"
 
-#include "error.h"
+#include "init/error.h"
 
 #include "util/clock.h"
 

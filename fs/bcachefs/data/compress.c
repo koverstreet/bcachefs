@@ -8,8 +8,8 @@
 
 #include "sb/io.h"
 
-#include "error.h"
-#include "opts.h"
+#include "init/error.h"
+#include "init/opts.h"
 
 #include <linux/lz4.h>
 #include <linux/zlib.h>

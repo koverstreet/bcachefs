@@ -11,7 +11,7 @@
 #include "sb/errors.h"
 #include "sb/io.h"
 
-#include "recovery_passes.h"
+#include "init/passes.h"
 
 #include "util/darray.h"
 

@@ -5,7 +5,7 @@
 
 #include "btree/bbpos.h"
 
-#include "progress.h"
+#include "init/progress.h"
 
 void bch2_progress_init_inner(struct progress_indicator_state *s,
 			      struct bch_fs *c,

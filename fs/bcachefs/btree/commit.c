@@ -21,8 +21,8 @@
 #include "journal/io.h"
 #include "journal/reclaim.h"
 
-#include "errcode.h"
-#include "error.h"
+#include "init/errcode.h"
+#include "init/error.h"
 
 #include "util/enumerated_ref.h"
 

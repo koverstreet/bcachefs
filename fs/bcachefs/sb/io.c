@@ -21,9 +21,9 @@
 #include "sb/members.h"
 #include "sb/io.h"
 
-#include "error.h"
-#include "recovery_passes.h"
-#include "super.h"
+#include "init/error.h"
+#include "init/passes.h"
+#include "init/super.h"
 #include "trace.h"
 
 #include "util/vstructs.h"

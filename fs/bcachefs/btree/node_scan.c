@@ -12,8 +12,8 @@
 
 #include "journal/io.h"
 
-#include "error.h"
-#include "recovery_passes.h"
+#include "init/error.h"
+#include "init/passes.h"
 
 #include <linux/kthread.h>
 #include <linux/sched/sysctl.h>

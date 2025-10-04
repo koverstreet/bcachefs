@@ -11,8 +11,8 @@
 
 #include "data/ec.h"
 
-#include "error.h"
-#include "progress.h"
+#include "init/error.h"
+#include "init/progress.h"
 
 /*
  * This synthesizes deleted extents for holes, similar to BTREE_ITER_slots for

@@ -3,8 +3,8 @@
 #define _BCACHEFS_SUPER_IO_H
 
 #include "data/extents.h"
-#include "super_types.h"
-#include "super.h"
+#include "init/super_types.h"
+#include "init/super.h"
 #include "sb/members.h"
 #include "util/eytzinger.h"
 
