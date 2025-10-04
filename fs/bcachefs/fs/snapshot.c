@@ -11,7 +11,7 @@
 #include "error.h"
 #include "progress.h"
 #include "recovery_passes.h"
-#include "snapshot.h"
+#include "fs/snapshot.h"
 #include "vfs/fs.h"
 
 #include "util/enumerated_ref.h"

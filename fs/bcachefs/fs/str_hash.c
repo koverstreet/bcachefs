@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
 #include "btree/cache.h"
 #include "btree/update.h"
-#include "dirent.h"
-#include "fsck.h"
-#include "str_hash.h"
-#include "subvolume.h"
+
+#include "fs/dirent.h"
+#include "fs/check.h"
+#include "fs/str_hash.h"
+#include "fs/subvolume.h"
 
 static int bch2_dirent_has_target(struct btree_trans *trans, struct bkey_s_c_dirent d)
 {

@@ -1,17 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
+
 #include "alloc/buckets.h"
+
 #include "btree/bkey_buf.h"
 #include "btree/update.h"
-#include "error.h"
+
 #include "data/extents.h"
-#include "inode.h"
 #include "data/io_misc.h"
-#include "data/write.h"
 #include "data/rebalance.h"
 #include "data/reflink.h"
-#include "subvolume.h"
+#include "data/write.h"
+
+#include "fs/inode.h"
+#include "fs/subvolume.h"
+
 #include "sb/io.h"
+
+#include "error.h"
 
 #include "util/enumerated_ref.h"
 

@@ -1,27 +1,34 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
 #include "alloc/accounting.h"
 #include "alloc/background.h"
 #include "alloc/backpointers.h"
 #include "alloc/check.h"
+#include "alloc/lru.h"
+
 #include "btree/check.h"
 #include "btree/node_scan.h"
+
+#include "data/copygc.h"
 #include "data/ec.h"
-#include "fsck.h"
-#include "inode.h"
+#include "data/rebalance.h"
+
+#include "fs/check.h"
+#include "fs/inode.h"
+#include "fs/logged_ops.h"
+#include "fs/snapshot.h"
+#include "fs/subvolume.h"
+
 #include "journal/init.h"
 #include "journal/journal.h"
-#include "alloc/lru.h"
-#include "logged_ops.h"
-#include "data/copygc.h"
-#include "data/rebalance.h"
+
+#include "sb/io.h"
+
 #include "recovery.h"
 #include "recovery_passes.h"
-#include "snapshot.h"
-#include "subvolume.h"
 #include "super.h"
-#include "sb/io.h"
 
 const char * const bch2_recovery_passes[] = {
 #define x(_fn, ...)	#_fn,

@@ -17,7 +17,7 @@
 #include "journal/io.h"
 #include "journal/reclaim.h"
 #include "alloc/replicas.h"
-#include "snapshot.h"
+#include "fs/snapshot.h"
 
 #include "util/enumerated_ref.h"
 

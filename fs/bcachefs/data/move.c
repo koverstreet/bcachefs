@@ -1,31 +1,38 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
 #include "alloc/background.h"
+#include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
 #include "alloc/backpointers.h"
+#include "alloc/replicas.h"
+
 #include "btree/bkey_buf.h"
 #include "btree/check.h"
 #include "btree/interior.h"
 #include "btree/io.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
+
 #include "data/compress.h"
-#include "alloc/disk_groups.h"
 #include "data/ec.h"
-#include "errcode.h"
-#include "error.h"
-#include "inode.h"
-#include "data/read.h"
-#include "data/write.h"
-#include "journal/reclaim.h"
-#include "keylist.h"
+#include "data/keylist.h"
 #include "data/move.h"
+#include "data/read.h"
 #include "data/rebalance.h"
 #include "data/reflink.h"
-#include "alloc/replicas.h"
-#include "snapshot.h"
+#include "data/write.h"
+
+#include "fs/inode.h"
+#include "fs/snapshot.h"
+
+#include "journal/reclaim.h"
+
 #include "sb/io.h"
+
+#include "errcode.h"
+#include "error.h"
 #include "trace.h"
 
 #include <linux/ioprio.h>

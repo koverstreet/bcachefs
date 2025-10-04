@@ -6,7 +6,7 @@
 #include "errcode.h"
 #include "error.h"
 #include "recovery_passes.h"
-#include "snapshot.h"
+#include "fs/snapshot.h"
 #include "subvolume.h"
 #include "vfs/fs.h"
 

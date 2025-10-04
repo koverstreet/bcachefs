@@ -4,12 +4,13 @@
 #include "bcachefs.h"
 
 #include "fs.h"
-#include "ioctl.h"
 
-#include "chardev.h"
-#include "dirent.h"
-#include "namei.h"
-#include "quota.h"
+#include "fs/chardev.h"
+#include "fs/dirent.h"
+#include "fs/namei.h"
+#include "fs/quota.h"
+
+#include "vfs/ioctl.h"
 
 #include <linux/compat.h>
 #include <linux/fsnotify.h>

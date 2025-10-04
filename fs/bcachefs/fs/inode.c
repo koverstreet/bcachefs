@@ -16,7 +16,7 @@
 #include "namei.h"
 #include "opts.h"
 #include "str_hash.h"
-#include "snapshot.h"
+#include "fs/snapshot.h"
 #include "subvolume.h"
 #include "vfs/fs.h"
 

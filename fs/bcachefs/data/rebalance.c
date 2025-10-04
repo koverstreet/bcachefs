@@ -1,23 +1,29 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
 #include "alloc/background.h"
 #include "alloc/buckets.h"
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
+
 #include "btree/iter.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
+
 #include "data/compress.h"
+#include "data/move.h"
+#include "data/rebalance.h"
+#include "data/write.h"
+
+#include "fs/inode.h"
+#include "fs/subvolume.h"
+
+#include "sb/io.h"
+
 #include "errcode.h"
 #include "error.h"
-#include "inode.h"
-#include "data/write.h"
-#include "data/move.h"
 #include "progress.h"
-#include "data/rebalance.h"
-#include "subvolume.h"
-#include "sb/io.h"
 #include "trace.h"
 
 #include "util/clock.h"

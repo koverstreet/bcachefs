@@ -1,24 +1,29 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
+#include "alloc/buckets.h"
+#include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
+
 #include "btree/bkey_buf.h"
 #include "btree/update.h"
-#include "alloc/buckets.h"
+
 #include "data/compress.h"
-#include "data/update.h"
-#include "alloc/disk_groups.h"
 #include "data/ec.h"
-#include "error.h"
 #include "data/extents.h"
-#include "inode.h"
-#include "data/write.h"
-#include "keylist.h"
+#include "data/keylist.h"
 #include "data/move.h"
-#include "nocow_locking.h"
+#include "data/nocow_locking.h"
 #include "data/rebalance.h"
-#include "snapshot.h"
-#include "subvolume.h"
+#include "data/update.h"
+#include "data/write.h"
+
+#include "fs/inode.h"
+#include "fs/snapshot.h"
+#include "fs/subvolume.h"
+
+#include "error.h"
 #include "trace.h"
 
 #include <linux/ioprio.h>
