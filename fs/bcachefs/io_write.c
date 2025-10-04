@@ -1485,21 +1485,23 @@ err:
 	}
 	return;
 err_bucket_stale:
-	CLASS(printbuf, buf)();
-	if (bch2_fs_inconsistent_on(stale < 0, c,
-				    "pointer to invalid bucket in nocow path on device %u\n  %s",
-				    stale_at->dev,
-				    (bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
-		ret = bch_err_throw(c, data_write_invalid_ptr);
-	} else {
-		/* We can retry this: */
-		ret = bch_err_throw(c, transaction_restart);
-	}
+	{
+		CLASS(printbuf, buf)();
+		if (bch2_fs_inconsistent_on(stale < 0, c,
+					    "pointer to invalid bucket in nocow path on device %u\n  %s",
+					    stale_at->dev,
+					    (bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
+			ret = bch_err_throw(c, data_write_invalid_ptr);
+		} else {
+			/* We can retry this: */
+			ret = bch_err_throw(c, transaction_restart);
+		}
 
-	bch2_bkey_nocow_unlock(c, k, BUCKET_NOCOW_LOCK_UPDATE);
-	bkey_for_each_ptr(ptrs, ptr)
-		enumerated_ref_put(&bch2_dev_have_ref(c, ptr->dev)->io_ref[WRITE],
-				   BCH_DEV_WRITE_REF_io_write);
+		bch2_bkey_nocow_unlock(c, k, BUCKET_NOCOW_LOCK_UPDATE);
+		bkey_for_each_ptr(ptrs, ptr)
+			enumerated_ref_put(&bch2_dev_have_ref(c, ptr->dev)->io_ref[WRITE],
+					   BCH_DEV_WRITE_REF_io_write);
+	}
 
 	/* Fall back to COW path: */
 	goto out;
