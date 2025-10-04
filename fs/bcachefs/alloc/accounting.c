@@ -3,7 +3,7 @@
 #include "bcachefs.h"
 #include "bcachefs_ioctl.h"
 #include "btree/cache.h"
-#include "btree_journal_iter.h"
+#include "btree/journal_overlay.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 #include "alloc/buckets.h"

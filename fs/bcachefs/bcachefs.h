@@ -215,7 +215,6 @@
 #include <linux/unicode.h>
 
 #include "bcachefs_format.h"
-#include "btree_journal_iter_types.h"
 #include "closure.h"
 #include "errcode.h"
 #include "fast_list.h"
@@ -235,6 +234,7 @@
 #include "alloc/types.h"
 #include "async_objs_types.h"
 #include "btree/check_types.h"
+#include "btree/journal_overlay_types.h"
 #include "btree/types.h"
 #include "btree/node_scan_types.h"
 #include "btree/write_buffer_types.h"
