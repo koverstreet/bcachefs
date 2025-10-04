@@ -14,7 +14,7 @@
 #include "errcode.h"
 #include "extents.h"
 #include "io_write.h"
-#include "journal.h"
+#include "journal/journal.h"
 #include "keylist.h"
 #include "migrate.h"
 #include "move.h"

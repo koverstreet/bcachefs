@@ -18,7 +18,7 @@
 #include "inode.h"
 #include "io_read.h"
 #include "io_write.h"
-#include "journal_reclaim.h"
+#include "journal/reclaim.h"
 #include "keylist.h"
 #include "move.h"
 #include "rebalance.h"

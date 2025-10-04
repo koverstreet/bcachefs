@@ -15,7 +15,7 @@
 #include "fs-io-pagecache.h"
 #include "fsck.h"
 #include "inode.h"
-#include "journal.h"
+#include "journal/journal.h"
 #include "io_misc.h"
 #include "keylist.h"
 #include "quota.h"

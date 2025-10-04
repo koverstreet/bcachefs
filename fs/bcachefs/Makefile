@@ -57,11 +57,11 @@ bcachefs-y		:=			\
 	io_read.o				\
 	io_misc.o				\
 	io_write.o				\
-	journal.o				\
-	journal_io.o				\
-	journal_reclaim.o			\
-	journal_sb.o				\
-	journal_seq_blacklist.o			\
+	journal/journal.o			\
+	journal/io.o				\
+	journal/reclaim.o			\
+	journal/sb.o				\
+	journal/seq_blacklist.o			\
 	keylist.o				\
 	logged_ops.o				\
 	migrate.o				\

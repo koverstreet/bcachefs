@@ -4,7 +4,7 @@
 #include "btree/interior.h"
 #include "alloc/buckets.h"
 #include "error.h"
-#include "journal_io.h"
+#include "journal/io.h"
 #include "alloc/replicas.h"
 #include "sb/clean.h"
 #include "sb/io.h"

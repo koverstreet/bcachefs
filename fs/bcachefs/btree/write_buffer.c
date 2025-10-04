@@ -9,9 +9,9 @@
 #include "btree/write_buffer.h"
 #include "error.h"
 #include "extents.h"
-#include "journal.h"
-#include "journal_io.h"
-#include "journal_reclaim.h"
+#include "journal/journal.h"
+#include "journal/io.h"
+#include "journal/reclaim.h"
 
 #include "util/enumerated_ref.h"
 

@@ -20,7 +20,7 @@
 #include "fsck.h"
 #include "inode.h"
 #include "io_read.h"
-#include "journal.h"
+#include "journal/journal.h"
 #include "keylist.h"
 #include "namei.h"
 #include "quota.h"

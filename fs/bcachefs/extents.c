@@ -21,7 +21,7 @@
 #include "error.h"
 #include "extents.h"
 #include "inode.h"
-#include "journal.h"
+#include "journal/journal.h"
 #include "rebalance.h"
 #include "alloc/replicas.h"
 #include "super.h"

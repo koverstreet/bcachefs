@@ -3,7 +3,7 @@
 #include "btree/cache.h"
 #include "btree/iter.h"
 #include "error.h"
-#include "journal.h"
+#include "journal/journal.h"
 #include "namei.h"
 #include "recovery_passes.h"
 #include "super.h"

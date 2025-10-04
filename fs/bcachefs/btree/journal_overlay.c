@@ -6,7 +6,7 @@
 #include "btree/cache.h"
 #include "btree/journal_overlay.h"
 #include "alloc/accounting.h"
-#include "journal_io.h"
+#include "journal/io.h"
 
 #include <linux/sort.h>
 

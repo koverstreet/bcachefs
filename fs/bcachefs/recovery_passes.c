@@ -10,7 +10,7 @@
 #include "ec.h"
 #include "fsck.h"
 #include "inode.h"
-#include "journal.h"
+#include "journal/journal.h"
 #include "alloc/lru.h"
 #include "logged_ops.h"
 #include "movinggc.h"

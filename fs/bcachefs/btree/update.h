@@ -3,7 +3,7 @@
 #define _BCACHEFS_BTREE_UPDATE_H
 
 #include "btree/iter.h"
-#include "journal.h"
+#include "journal/journal.h"
 #include "snapshot.h"
 #include "sb/io.h"
 

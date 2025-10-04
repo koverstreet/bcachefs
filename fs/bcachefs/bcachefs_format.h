@@ -515,7 +515,7 @@ struct bch_sb_field {
 #include "extents_format.h"
 #include "ec_format.h"
 #include "inode_format.h"
-#include "journal_seq_blacklist_format.h"
+#include "journal/seq_blacklist_format.h"
 #include "logged_ops_format.h"
 #include "quota_format.h"
 #include "recovery_passes_format.h"
