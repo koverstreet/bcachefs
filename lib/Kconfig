@@ -9,7 +9,9 @@ config BINARY_PRINTF
 menu "Library routines"
 
 config RAID6_PQ
-	tristate
+	tristate "Reed-solomon RAID5/6 algorithms"
+	help
+	  Provides routines for block level reed-solomon, for RAID5/6
 
 config RAID6_PQ_BENCHMARK
 	bool "Automatically choose fastest RAID6 PQ functions"
