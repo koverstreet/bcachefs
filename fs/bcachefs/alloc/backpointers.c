@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
-#include "bbpos.h"
 #include "alloc/background.h"
 #include "alloc/backpointers.h"
-#include "bkey_buf.h"
+#include "btree/bbpos.h"
+#include "btree/bkey_buf.h"
 #include "btree/cache.h"
 #include "btree/update.h"
 #include "btree/interior.h"

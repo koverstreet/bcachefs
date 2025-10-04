@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_BKEY_METHODS_H
 #define _BCACHEFS_BKEY_METHODS_H
 
-#include "bkey.h"
+#include "btree/bkey.h"
 
 struct bch_fs;
 struct btree;

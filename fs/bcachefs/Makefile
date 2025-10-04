@@ -19,10 +19,10 @@ bcachefs-y		:=			\
 	alloc/lru.o				\
 	alloc/replicas.o			\
 	async_objs.o				\
-	bkey.o					\
-	bkey_methods.o				\
-	bkey_sort.o				\
-	bset.o					\
+	btree/bkey.o				\
+	btree/bkey_methods.o			\
+	btree/bkey_sort.o			\
+	btree/bset.o				\
 	btree/cache.o				\
 	btree/check.o				\
 	btree/io.o				\

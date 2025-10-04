@@ -5,7 +5,7 @@
 #include "alloc/buckets.h"
 #include "btree/key_cache.h"
 #include "btree/write_buffer.h"
-#include "bkey_methods.h"
+#include "btree/bkey_methods.h"
 #include "btree/update.h"
 #include "compress.h"
 #include "dirent.h"

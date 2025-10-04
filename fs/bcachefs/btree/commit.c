@@ -100,7 +100,7 @@ inline void bch2_btree_node_prep_for_write(struct btree_trans *trans,
 		bch2_trans_node_reinit_iter(trans, b);
 
 	/*
-	 * If the last bset has been written, or if it's gotten too big - start
+	 * If the last btree/bset.has been written, or if it's gotten too big - start
 	 * a new bset to insert into:
 	 */
 	if (want_new_bset(c, b))

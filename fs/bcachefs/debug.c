@@ -9,7 +9,7 @@
 #include "bcachefs.h"
 #include "alloc/foreground.h"
 #include "async_objs.h"
-#include "bkey_methods.h"
+#include "btree/bkey_methods.h"
 #include "btree/cache.h"
 #include "btree/io.h"
 #include "btree/iter.h"

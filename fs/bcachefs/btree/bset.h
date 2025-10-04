@@ -6,8 +6,8 @@
 #include <linux/types.h>
 
 #include "bcachefs.h"
-#include "bkey.h"
-#include "bkey_methods.h"
+#include "btree/bkey.h"
+#include "btree/bkey_methods.h"
 #include "btree/types.h"
 #include "util/util.h" /* for time_stats */
 #include "util/vstructs.h"

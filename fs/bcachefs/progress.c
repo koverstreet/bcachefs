@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
-#include "bbpos.h"
+#include "btree/bbpos.h"
 #include "alloc/accounting.h"
 #include "progress.h"
 

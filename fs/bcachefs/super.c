@@ -16,7 +16,7 @@
 #include "alloc/foreground.h"
 #include "alloc/replicas.h"
 #include "async_objs.h"
-#include "bkey_sort.h"
+#include "btree/bkey_sort.h"
 #include "btree/cache.h"
 #include "btree/check.h"
 #include "btree/journal_overlay.h"

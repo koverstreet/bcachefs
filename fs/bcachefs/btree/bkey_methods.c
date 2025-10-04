@@ -2,7 +2,7 @@
 
 #include "bcachefs.h"
 #include "alloc/backpointers.h"
-#include "bkey_methods.h"
+#include "btree/bkey_methods.h"
 #include "btree/cache.h"
 #include "alloc/background.h"
 #include "dirent.h"

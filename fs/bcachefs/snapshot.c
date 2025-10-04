@@ -2,8 +2,8 @@
 
 #include "bcachefs.h"
 #include "alloc/buckets.h"
-#include "bbpos.h"
-#include "bkey_buf.h"
+#include "btree/bbpos.h"
+#include "btree/bkey_buf.h"
 #include "btree/cache.h"
 #include "btree/key_cache.h"
 #include "btree/update.h"
