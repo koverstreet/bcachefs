@@ -21,7 +21,7 @@
 #include "progress.h"
 #include "rebalance.h"
 #include "alloc/replicas.h"
-#include "super-io.h"
+#include "sb/io.h"
 
 static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s k, unsigned dev_idx,
 			 unsigned flags, struct printbuf *err, bool metadata)

@@ -522,10 +522,10 @@ struct bch_sb_field {
 #include "reflink_format.h"
 #include "snapshot_format.h"
 #include "subvolume_format.h"
-#include "sb-counters_format.h"
-#include "sb-downgrade_format.h"
-#include "sb-errors_format.h"
-#include "sb-members_format.h"
+#include "sb/counters_format.h"
+#include "sb/downgrade_format.h"
+#include "sb/errors_format.h"
+#include "sb/members_format.h"
 #include "xattr_format.h"
 
 enum bch_sb_field_type {

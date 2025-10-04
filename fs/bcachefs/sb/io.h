@@ -5,7 +5,7 @@
 #include "extents.h"
 #include "super_types.h"
 #include "super.h"
-#include "sb-members.h"
+#include "sb/members.h"
 #include "util/eytzinger.h"
 
 #include <asm/byteorder.h>

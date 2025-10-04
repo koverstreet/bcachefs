@@ -7,7 +7,7 @@
 #include "alloc/types.h"
 #include "extents.h"
 #include "io_write_types.h"
-#include "sb-members.h"
+#include "sb/members.h"
 
 #include <linux/hash.h>
 

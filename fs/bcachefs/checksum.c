@@ -4,7 +4,7 @@
 #include "errcode.h"
 #include "error.h"
 #include "super.h"
-#include "super-io.h"
+#include "sb/io.h"
 
 #include <linux/crc32c.h>
 #include <linux/xxhash.h>

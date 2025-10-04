@@ -20,7 +20,7 @@
 #include "snapshot.h"
 #include "subvolume.h"
 #include "super.h"
-#include "super-io.h"
+#include "sb/io.h"
 
 const char * const bch2_recovery_passes[] = {
 #define x(_fn, ...)	#_fn,

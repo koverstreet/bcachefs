@@ -17,7 +17,7 @@
 #include "progress.h"
 #include "rebalance.h"
 #include "subvolume.h"
-#include "super-io.h"
+#include "sb/io.h"
 #include "trace.h"
 
 #include "util/clock.h"

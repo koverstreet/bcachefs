@@ -3,7 +3,7 @@
 #define _BCACHEFS_SB_COUNTERS_H
 
 #include "bcachefs.h"
-#include "super-io.h"
+#include "sb/io.h"
 
 int bch2_sb_counters_to_cpu(struct bch_fs *);
 int bch2_sb_counters_from_cpu(struct bch_fs *);

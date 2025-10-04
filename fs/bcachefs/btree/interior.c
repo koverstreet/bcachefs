@@ -22,8 +22,8 @@
 #include "journal_reclaim.h"
 #include "keylist.h"
 #include "recovery_passes.h"
-#include "sb-members.h"
-#include "super-io.h"
+#include "sb/members.h"
+#include "sb/io.h"
 #include "trace.h"
 
 #include "util/clock.h"

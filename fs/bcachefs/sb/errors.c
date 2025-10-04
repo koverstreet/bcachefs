@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "sb-errors.h"
-#include "super-io.h"
+#include "sb/errors.h"
+#include "sb/io.h"
 
 const char * const bch2_sb_error_strs[] = {
 #define x(t, n, ...) [n] = #t,

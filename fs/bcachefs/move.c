@@ -25,7 +25,7 @@
 #include "reflink.h"
 #include "alloc/replicas.h"
 #include "snapshot.h"
-#include "super-io.h"
+#include "sb/io.h"
 #include "trace.h"
 
 #include <linux/ioprio.h>
