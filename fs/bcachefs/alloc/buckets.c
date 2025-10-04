@@ -28,9 +28,10 @@
 
 #include "journal/init.h"
 
-#include "error.h"
-#include "recovery.h"
-#include "recovery_passes.h"
+#include "init/error.h"
+#include "init/recovery.h"
+#include "init/passes.h"
+
 #include "trace.h"
 
 #include <linux/preempt.h>

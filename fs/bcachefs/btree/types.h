@@ -9,7 +9,7 @@
 #include "alloc/replicas_types.h"
 #include "btree/bbpos_types.h"
 #include "btree/key_cache_types.h"
-#include "errcode.h"
+#include "init/errcode.h"
 #include "journal/types.h"
 
 #include "util/darray.h"

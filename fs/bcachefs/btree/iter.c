@@ -21,8 +21,8 @@
 #include "journal/io.h"
 
 #include "debug.h"
-#include "error.h"
-#include "super.h"
+#include "init/error.h"
+#include "init/super.h"
 #include "trace.h"
 
 #include <linux/random.h>

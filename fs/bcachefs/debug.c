@@ -29,8 +29,8 @@
 
 #include "async_objs.h"
 #include "debug.h"
-#include "error.h"
-#include "super.h"
+#include "init/error.h"
+#include "init/super.h"
 
 #include <linux/console.h>
 #include <linux/debugfs.h>

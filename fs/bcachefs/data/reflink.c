@@ -17,7 +17,7 @@
 
 #include "sb/io.h"
 
-#include "error.h"
+#include "init/error.h"
 
 #include "util/enumerated_ref.h"
 

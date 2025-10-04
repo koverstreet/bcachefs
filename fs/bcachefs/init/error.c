@@ -8,9 +8,9 @@
 
 #include "journal/journal.h"
 
-#include "error.h"
-#include "recovery_passes.h"
-#include "super.h"
+#include "init/error.h"
+#include "init/passes.h"
+#include "init/super.h"
 
 #include "util/thread_with_file.h"
 

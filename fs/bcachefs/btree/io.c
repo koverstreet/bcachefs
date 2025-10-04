@@ -25,8 +25,8 @@
 
 #include "async_objs.h"
 #include "debug.h"
-#include "error.h"
-#include "recovery.h"
+#include "init/error.h"
+#include "init/recovery.h"
 #include "trace.h"
 
 #include "util/enumerated_ref.h"

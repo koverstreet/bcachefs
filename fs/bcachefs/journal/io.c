@@ -21,7 +21,7 @@
 
 #include "sb/clean.h"
 
-#include "error.h"
+#include "init/error.h"
 #include "trace.h"
 
 #include <linux/ioprio.h>

@@ -24,7 +24,7 @@
 #include "vfs/buffered.h"
 #include "vfs/pagecache.h"
 
-#include "error.h"
+#include "init/error.h"
 #include "trace.h"
 
 #include "util/clock.h"

@@ -28,8 +28,8 @@
 #include "sb/members.h"
 #include "sb/io.h"
 
-#include "error.h"
-#include "recovery_passes.h"
+#include "init/error.h"
+#include "init/passes.h"
 #include "trace.h"
 
 #include "util/clock.h"

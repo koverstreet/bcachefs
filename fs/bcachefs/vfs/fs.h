@@ -6,7 +6,7 @@
 #include "fs/str_hash.h"
 #include "fs/quota_types.h"
 
-#include "opts.h"
+#include "init/opts.h"
 
 #include "util/two_state_shared_lock.h"
 

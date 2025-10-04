@@ -9,8 +9,8 @@
 
 #include "sb/io.h"
 
-#include "errcode.h"
-#include "error.h"
+#include "init/errcode.h"
+#include "init/error.h"
 
 static const char * const bch2_quota_types[] = {
 	"user",

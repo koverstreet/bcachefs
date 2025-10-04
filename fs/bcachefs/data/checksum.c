@@ -5,9 +5,9 @@
 
 #include "sb/io.h"
 
-#include "errcode.h"
-#include "error.h"
-#include "super.h"
+#include "init/errcode.h"
+#include "init/error.h"
+#include "init/super.h"
 
 #include <linux/crc32c.h>
 #include <linux/xxhash.h>
