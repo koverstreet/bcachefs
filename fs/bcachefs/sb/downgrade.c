@@ -7,9 +7,9 @@
 
 #include "bcachefs.h"
 #include "recovery_passes.h"
-#include "sb-downgrade.h"
-#include "sb-errors.h"
-#include "super-io.h"
+#include "sb/downgrade.h"
+#include "sb/errors.h"
+#include "sb/io.h"
 
 #include "util/darray.h"
 

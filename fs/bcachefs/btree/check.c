@@ -31,7 +31,7 @@
 #include "recovery_passes.h"
 #include "reflink.h"
 #include "recovery.h"
-#include "super-io.h"
+#include "sb/io.h"
 #include "trace.h"
 
 #include "util/clock.h"

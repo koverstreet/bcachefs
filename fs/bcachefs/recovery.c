@@ -26,10 +26,10 @@
 #include "rebalance.h"
 #include "recovery.h"
 #include "recovery_passes.h"
-#include "sb-clean.h"
-#include "sb-downgrade.h"
+#include "sb/clean.h"
+#include "sb/downgrade.h"
 #include "snapshot.h"
-#include "super-io.h"
+#include "sb/io.h"
 
 #include <linux/sort.h>
 #include <linux/stat.h>

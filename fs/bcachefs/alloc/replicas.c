@@ -5,7 +5,7 @@
 #include "alloc/accounting.h"
 #include "journal.h"
 #include "alloc/replicas.h"
-#include "super-io.h"
+#include "sb/io.h"
 
 #include <linux/sort.h>
 

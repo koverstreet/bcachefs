@@ -25,7 +25,7 @@
 #include "rebalance.h"
 #include "alloc/replicas.h"
 #include "super.h"
-#include "super-io.h"
+#include "sb/io.h"
 #include "trace.h"
 
 #include "util/util.h"

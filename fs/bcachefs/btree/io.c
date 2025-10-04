@@ -20,7 +20,7 @@
 #include "journal_reclaim.h"
 #include "journal_seq_blacklist.h"
 #include "recovery.h"
-#include "super-io.h"
+#include "sb/io.h"
 #include "trace.h"
 
 #include "util/enumerated_ref.h"

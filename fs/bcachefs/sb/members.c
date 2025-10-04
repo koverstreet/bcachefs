@@ -7,8 +7,8 @@
 #include "opts.h"
 #include "recovery_passes.h"
 #include "alloc/replicas.h"
-#include "sb-members.h"
-#include "super-io.h"
+#include "sb/members.h"
+#include "sb/io.h"
 
 int bch2_dev_missing_bkey(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
 {

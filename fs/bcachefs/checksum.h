@@ -4,7 +4,7 @@
 
 #include "bcachefs.h"
 #include "extents_types.h"
-#include "super-io.h"
+#include "sb/io.h"
 
 #include <linux/crc64.h>
 #include <crypto/chacha.h>

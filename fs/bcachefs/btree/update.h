@@ -5,7 +5,7 @@
 #include "btree/iter.h"
 #include "journal.h"
 #include "snapshot.h"
-#include "super-io.h"
+#include "sb/io.h"
 
 struct bch_fs;
 struct btree;

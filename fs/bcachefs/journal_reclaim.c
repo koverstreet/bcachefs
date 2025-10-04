@@ -11,7 +11,7 @@
 #include "journal_io.h"
 #include "journal_reclaim.h"
 #include "alloc/replicas.h"
-#include "sb-members.h"
+#include "sb/members.h"
 #include "trace.h"
 
 #include <linux/kthread.h>
