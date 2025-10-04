@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
-#include "checksum.h"
+#include "data/checksum.h"
 #include "errcode.h"
 #include "error.h"
 #include "super.h"

@@ -11,7 +11,7 @@
 #include "btree/update.h"
 #include "debug.h"
 #include "error.h"
-#include "extents.h"
+#include "data/extents.h"
 #include "journal/journal.h"
 #include "journal/io.h"
 #include "alloc/replicas.h"

@@ -294,7 +294,7 @@ int bch2_inum_snapshot_opts_get(struct btree_trans *, u64, u32, struct bch_inode
 int bch2_inode_set_casefold(struct btree_trans *, subvol_inum,
 			    struct bch_inode_unpacked *, unsigned);
 
-#include "rebalance.h"
+#include "data/rebalance.h"
 
 static inline struct bch_extent_rebalance
 bch2_inode_rebalance_opts_get(struct bch_fs *c, struct bch_inode_unpacked *inode)

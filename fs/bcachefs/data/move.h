@@ -6,7 +6,7 @@
 #include "alloc/buckets.h"
 #include "btree/bbpos.h"
 #include "btree/iter.h"
-#include "data_update.h"
+#include "data/update.h"
 #include "move_types.h"
 
 struct bch_read_bio;

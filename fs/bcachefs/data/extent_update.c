@@ -4,7 +4,7 @@
 #include "btree/interior.h"
 #include "alloc/buckets.h"
 #include "debug.h"
-#include "extents.h"
+#include "data/extents.h"
 #include "extent_update.h"
 
 /*

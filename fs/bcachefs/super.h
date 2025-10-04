@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_SUPER_H
 #define _BCACHEFS_SUPER_H
 
-#include "extents.h"
+#include "data/extents.h"
 
 #include "bcachefs_ioctl.h"
 

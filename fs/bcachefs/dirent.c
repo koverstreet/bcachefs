@@ -4,10 +4,9 @@
 #include "btree/bkey_buf.h"
 #include "btree/bkey_methods.h"
 #include "btree/update.h"
-#include "extents.h"
+#include "data/extents.h"
 #include "dirent.h"
 #include "fs.h"
-#include "keylist.h"
 #include "str_hash.h"
 #include "subvolume.h"
 
