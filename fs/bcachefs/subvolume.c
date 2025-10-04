@@ -5,10 +5,10 @@
 #include "btree/update.h"
 #include "errcode.h"
 #include "error.h"
-#include "fs.h"
 #include "recovery_passes.h"
 #include "snapshot.h"
 #include "subvolume.h"
+#include "vfs/fs.h"
 
 #include "util/enumerated_ref.h"
 

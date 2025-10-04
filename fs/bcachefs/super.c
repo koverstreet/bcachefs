@@ -39,10 +39,6 @@
 #include "debug.h"
 #include "errcode.h"
 #include "error.h"
-#include "fs.h"
-#include "fs-io.h"
-#include "fs-io-buffered.h"
-#include "fs-io-direct.h"
 #include "fsck.h"
 #include "inode.h"
 #include "journal/init.h"
@@ -63,6 +59,11 @@
 #include "sb/io.h"
 #include "sysfs.h"
 #include "trace.h"
+
+#include "vfs/fs.h"
+#include "vfs/io.h"
+#include "vfs/buffered.h"
+#include "vfs/direct.h"
 
 #include "util/clock.h"
 #include "util/enumerated_ref.h"

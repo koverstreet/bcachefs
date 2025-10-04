@@ -2,10 +2,12 @@
 #ifndef NO_BCACHEFS_FS
 
 #include "bcachefs.h"
+
+#include "io.h"
+#include "pagecache.h"
+
 #include "btree/iter.h"
 #include "data/extents.h"
-#include "fs-io.h"
-#include "fs-io-pagecache.h"
 #include "subvolume.h"
 
 #include <linux/pagevec.h>

@@ -2,10 +2,12 @@
 #ifndef NO_BCACHEFS_FS
 
 #include "bcachefs.h"
+
+#include "fs.h"
+#include "ioctl.h"
+
 #include "chardev.h"
 #include "dirent.h"
-#include "fs.h"
-#include "fs-ioctl.h"
 #include "namei.h"
 #include "quota.h"
 

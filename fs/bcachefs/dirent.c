@@ -6,7 +6,6 @@
 #include "btree/update.h"
 #include "data/extents.h"
 #include "dirent.h"
-#include "fs.h"
 #include "str_hash.h"
 #include "subvolume.h"
 

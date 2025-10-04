@@ -40,12 +40,6 @@ bcachefs-y		:=			\
 	dirent.o				\
 	errcode.o				\
 	error.o					\
-	fs.o					\
-	fs-ioctl.o				\
-	fs-io.o					\
-	fs-io-buffered.o			\
-	fs-io-direct.o				\
-	fs-io-pagecache.o			\
 	fsck.o					\
 	inode.o					\
 	data/checksum.o				\
@@ -107,7 +101,13 @@ bcachefs-y		:=			\
 	util/util.o				\
 	util/varint.o				\
 	vendor/closure.o			\
-	vendor/min_heap.o
+	vendor/min_heap.o			\
+	vfs/fs.o				\
+	vfs/ioctl.o				\
+	vfs/io.o				\
+	vfs/buffered.o				\
+	vfs/direct.o				\
+	vfs/pagecache.o	
 
 ifndef BCACHEFS_DKMS
 	obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += util/mean_and_variance_test.o

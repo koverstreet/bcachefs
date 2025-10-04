@@ -12,13 +12,13 @@
 #include "error.h"
 #include "data/extents.h"
 #include "data/extent_update.h"
-#include "fs.h"
 #include "inode.h"
 #include "namei.h"
 #include "opts.h"
 #include "str_hash.h"
 #include "snapshot.h"
 #include "subvolume.h"
+#include "vfs/fs.h"
 
 #include "util/varint.h"
 
