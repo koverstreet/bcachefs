@@ -27,6 +27,7 @@ bcachefs-y		:=			\
 	btree/check.o				\
 	btree/io.o				\
 	btree/iter.o				\
+	btree/journal_overlay.o			\
 	btree/key_cache.o			\
 	btree/locking.o				\
 	btree/node_scan.o			\
@@ -34,7 +35,6 @@ bcachefs-y		:=			\
 	btree/update.o				\
 	btree/interior.o			\
 	btree/write_buffer.o			\
-	btree_journal_iter.o			\
 	chardev.o				\
 	checksum.o				\
 	clock.o					\

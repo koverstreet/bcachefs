@@ -4,7 +4,7 @@
 #include "bkey_buf.h"
 #include "bset.h"
 #include "btree/cache.h"
-#include "btree_journal_iter.h"
+#include "btree/journal_overlay.h"
 #include "alloc/accounting.h"
 #include "journal_io.h"
 

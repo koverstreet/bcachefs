@@ -5,7 +5,7 @@
 #include "bkey_buf.h"
 #include "btree/cache.h"
 #include "btree/iter.h"
-#include "btree_journal_iter.h"
+#include "btree/journal_overlay.h"
 #include "btree/key_cache.h"
 #include "btree/locking.h"
 #include "btree/update.h"

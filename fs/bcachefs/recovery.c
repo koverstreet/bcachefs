@@ -6,7 +6,7 @@
 #include "alloc/check.h"
 #include "alloc/replicas.h"
 #include "bkey_buf.h"
-#include "btree_journal_iter.h"
+#include "btree/journal_overlay.h"
 #include "btree/node_scan.h"
 #include "btree/update.h"
 #include "btree/interior.h"
