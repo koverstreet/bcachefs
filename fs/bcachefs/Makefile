@@ -7,7 +7,6 @@ endif
 obj-$(CONFIG_BCACHEFS_FS)	+= bcachefs.o
 
 bcachefs-y		:=			\
-	acl.o					\
 	alloc/accounting.o			\
 	alloc/background.o			\
 	alloc/backpointers.o			\
@@ -35,13 +34,9 @@ bcachefs-y		:=			\
 	btree/update.o				\
 	btree/interior.o			\
 	btree/write_buffer.o			\
-	chardev.o				\
 	debug.o					\
-	dirent.o				\
 	errcode.o				\
 	error.o					\
-	fsck.o					\
-	inode.o					\
 	data/checksum.o				\
 	data/compress.o				\
 	data/copygc.o				\
@@ -58,17 +53,26 @@ bcachefs-y		:=			\
 	data/reflink.o				\
 	data/update.o				\
 	data/write.o				\
+	fs/acl.o				\
+	fs/chardev.o				\
+	fs/check.o				\
+	fs/dirent.o				\
+	fs/inode.o				\
+	fs/logged_ops.o				\
+	fs/namei.o				\
+	fs/quota.o				\
+	fs/snapshot.o				\
+	fs/str_hash.o				\
+	fs/subvolume.o				\
+	fs/xattr.o				\
 	journal/init.o				\
 	journal/io.o				\
 	journal/journal.o			\
 	journal/reclaim.o			\
 	journal/sb.o				\
 	journal/seq_blacklist.o			\
-	logged_ops.o				\
-	namei.o					\
 	opts.o					\
 	progress.o				\
-	quota.o					\
 	recovery.o				\
 	recovery_passes.o			\
 	sb/clean.o				\
@@ -77,14 +81,10 @@ bcachefs-y		:=			\
 	sb/errors.o				\
 	sb/io.o					\
 	sb/members.o				\
-	snapshot.o				\
-	str_hash.o				\
-	subvolume.o				\
 	super.o					\
 	sysfs.o					\
 	tests.o					\
 	trace.o					\
-	xattr.o					\
 	util/clock.o				\
 	util/darray.o				\
 	util/enumerated_ref.o			\

@@ -4,19 +4,24 @@
  */
 
 #include "bcachefs.h"
+
 #include "alloc/buckets.h"
 #include "alloc/foreground.h"
+
 #include "btree/bkey_buf.h"
 #include "btree/update.h"
-#include "error.h"
+
 #include "data/extents.h"
-#include "extent_update.h"
-#include "inode.h"
+#include "data/extent_update.h"
 #include "data/io_misc.h"
-#include "data/write.h"
-#include "logged_ops.h"
 #include "data/rebalance.h"
-#include "subvolume.h"
+#include "data/write.h"
+
+#include "fs/inode.h"
+#include "fs/logged_ops.h"
+#include "fs/subvolume.h"
+
+#include "error.h"
 
 #include "util/clock.h"
 

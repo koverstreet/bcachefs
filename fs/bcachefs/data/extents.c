@@ -7,26 +7,23 @@
  */
 
 #include "bcachefs.h"
+
+#include "alloc/buckets.h"
+
 #include "btree/bkey_methods.h"
 #include "btree/cache.h"
-#include "btree/check.h"
 #include "btree/io.h"
 #include "btree/iter.h"
 #include "btree/update.h"
-#include "alloc/buckets.h"
+
 #include "data/checksum.h"
 #include "data/compress.h"
-#include "debug.h"
-#include "alloc/disk_groups.h"
-#include "error.h"
 #include "data/extents.h"
-#include "inode.h"
-#include "journal/journal.h"
 #include "data/rebalance.h"
-#include "alloc/replicas.h"
-#include "super.h"
-#include "sb/io.h"
-#include "trace.h"
+
+#include "fs/inode.h"
+
+#include "error.h"
 
 #include "util/util.h"
 

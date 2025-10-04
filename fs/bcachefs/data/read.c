@@ -7,22 +7,27 @@
  */
 
 #include "bcachefs.h"
+
 #include "alloc/background.h"
 #include "alloc/buckets.h"
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
-#include "async_objs.h"
+
 #include "btree/update.h"
+
 #include "data/checksum.h"
 #include "data/compress.h"
-#include "data/update.h"
 #include "data/ec.h"
-#include "error.h"
-#include "data/read.h"
 #include "data/io_misc.h"
-#include "data/write.h"
+#include "data/read.h"
 #include "data/reflink.h"
-#include "subvolume.h"
+#include "data/update.h"
+#include "data/write.h"
+
+#include "fs/subvolume.h"
+
+#include "async_objs.h"
+#include "error.h"
 #include "trace.h"
 
 #include "util/clock.h"

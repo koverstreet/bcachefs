@@ -5,9 +5,9 @@
 #ifndef NO_BCACHEFS_FS
 
 #include "alloc/buckets.h"
-#include "fs.h"
 #include "data/write_types.h"
-#include "quota.h"
+#include "fs/quota.h"
+#include "vfs/fs.h"
 
 #include <linux/uio.h>
 

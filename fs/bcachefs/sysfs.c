@@ -9,13 +9,14 @@
 #ifndef NO_BCACHEFS_SYSFS
 
 #include "bcachefs.h"
+
 #include "alloc/accounting.h"
 #include "alloc/background.h"
 #include "alloc/buckets.h"
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
 #include "alloc/replicas.h"
-#include "sysfs.h"
+
 #include "btree/cache.h"
 #include "btree/io.h"
 #include "btree/iter.h"
@@ -24,20 +25,26 @@
 #include "btree/interior.h"
 #include "btree/write_buffer.h"
 #include "btree/check.h"
+
 #include "data/compress.h"
 #include "data/copygc.h"
 #include "data/ec.h"
 #include "data/move.h"
 #include "data/nocow_locking.h"
 #include "data/rebalance.h"
-#include "error.h"
-#include "inode.h"
+
+#include "fs/inode.h"
+
 #include "journal/journal.h"
 #include "journal/reclaim.h"
-#include "opts.h"
-#include "recovery_passes.h"
+
 #include "sb/errors.h"
 #include "sb/io.h"
+
+#include "error.h"
+#include "sysfs.h"
+#include "opts.h"
+#include "recovery_passes.h"
 #include "tests.h"
 
 #include "util/clock.h"

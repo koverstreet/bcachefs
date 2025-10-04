@@ -3,23 +3,28 @@
 
 #include "bcachefs.h"
 
-#include "fs.h"
-#include "io.h"
-#include "buffered.h"
-#include "pagecache.h"
-
 #include "alloc/buckets.h"
 #include "alloc/foreground.h"
+
 #include "btree/bkey_buf.h"
 #include "btree/update.h"
+
 #include "data/extents.h"
 #include "data/io_misc.h"
 #include "data/reflink.h"
-#include "error.h"
-#include "fsck.h"
-#include "inode.h"
+
+#include "fs/check.h"
+#include "fs/inode.h"
+#include "fs/quota.h"
+
 #include "journal/journal.h"
-#include "quota.h"
+
+#include "vfs/fs.h"
+#include "vfs/io.h"
+#include "vfs/buffered.h"
+#include "vfs/pagecache.h"
+
+#include "error.h"
 #include "trace.h"
 
 #include "util/clock.h"
