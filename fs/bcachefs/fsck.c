@@ -8,7 +8,6 @@
 #include "btree/update.h"
 #include "dirent.h"
 #include "error.h"
-#include "fs.h"
 #include "fsck.h"
 #include "inode.h"
 #include "data/io_misc.h"
@@ -17,6 +16,7 @@
 #include "recovery_passes.h"
 #include "snapshot.h"
 #include "super.h"
+#include "vfs/fs.h"
 #include "xattr.h"
 
 #include "util/darray.h"

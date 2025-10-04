@@ -2,22 +2,24 @@
 #ifndef NO_BCACHEFS_FS
 
 #include "bcachefs.h"
+
+#include "fs.h"
+#include "io.h"
+#include "buffered.h"
+#include "pagecache.h"
+
 #include "alloc/buckets.h"
 #include "alloc/foreground.h"
 #include "btree/bkey_buf.h"
 #include "btree/update.h"
-#include "error.h"
 #include "data/extents.h"
-#include "fs.h"
-#include "fs-io.h"
-#include "fs-io-buffered.h"
-#include "fs-io-pagecache.h"
+#include "data/io_misc.h"
+#include "data/reflink.h"
+#include "error.h"
 #include "fsck.h"
 #include "inode.h"
 #include "journal/journal.h"
-#include "data/io_misc.h"
 #include "quota.h"
-#include "data/reflink.h"
 #include "trace.h"
 
 #include "util/clock.h"

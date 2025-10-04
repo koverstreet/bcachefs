@@ -2,12 +2,14 @@
 #ifndef NO_BCACHEFS_FS
 
 #include "bcachefs.h"
+
+#include "io.h"
+#include "buffered.h"
+#include "direct.h"
+#include "pagecache.h"
+
 #include "alloc/foreground.h"
 #include "btree/bkey_buf.h"
-#include "fs-io.h"
-#include "fs-io-buffered.h"
-#include "fs-io-direct.h"
-#include "fs-io-pagecache.h"
 #include "data/read.h"
 #include "data/write.h"
 

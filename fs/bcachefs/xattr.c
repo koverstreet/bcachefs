@@ -6,9 +6,9 @@
 #include "btree/update.h"
 #include "dirent.h"
 #include "data/extents.h"
-#include "fs.h"
 #include "data/rebalance.h"
 #include "str_hash.h"
+#include "vfs/fs.h"
 #include "xattr.h"
 
 #include <linux/dcache.h>
