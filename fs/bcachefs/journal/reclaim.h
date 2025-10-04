@@ -19,6 +19,17 @@ unsigned bch2_journal_dev_buckets_available(struct journal *,
 void bch2_journal_set_watermark(struct journal *);
 void bch2_journal_space_available(struct journal *);
 
+static inline void journal_pin_list_init(struct journal_entry_pin_list *p, int count)
+{
+	for (unsigned i = 0; i < ARRAY_SIZE(p->unflushed); i++)
+		INIT_LIST_HEAD(&p->unflushed[i]);
+	for (unsigned i = 0; i < ARRAY_SIZE(p->flushed); i++)
+		INIT_LIST_HEAD(&p->flushed[i]);
+	atomic_set(&p->count, count);
+	p->devs.nr = 0;
+	p->bytes = 0;
+}
+
 static inline bool journal_pin_active(struct journal_entry_pin *pin)
 {
 	return pin->seq != 0;
