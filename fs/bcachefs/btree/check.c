@@ -24,7 +24,7 @@
 #include "ec.h"
 #include "error.h"
 #include "extents.h"
-#include "journal.h"
+#include "journal/journal.h"
 #include "keylist.h"
 #include "move.h"
 #include "progress.h"

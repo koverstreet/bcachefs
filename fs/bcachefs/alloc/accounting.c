@@ -10,7 +10,7 @@
 #include "compress.h"
 #include "alloc/accounting.h"
 #include "error.h"
-#include "journal_io.h"
+#include "journal/io.h"
 #include "recovery_passes.h"
 #include "alloc/replicas.h"
 

@@ -242,7 +242,7 @@
 #include "btree/node_scan_types.h"
 #include "btree/write_buffer_types.h"
 #include "ec_types.h"
-#include "journal_types.h"
+#include "journal/types.h"
 #include "keylist_types.h"
 #include "quota_types.h"
 #include "rebalance_types.h"

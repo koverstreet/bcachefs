@@ -10,7 +10,7 @@
 #include "btree/bbpos_types.h"
 #include "btree/key_cache_types.h"
 #include "errcode.h"
-#include "journal_types.h"
+#include "journal/types.h"
 
 #include "util/darray.h"
 #include "util/six.h"

@@ -13,9 +13,9 @@
 #include "alloc/accounting.h"
 #include "errcode.h"
 #include "error.h"
-#include "journal.h"
-#include "journal_io.h"
-#include "journal_reclaim.h"
+#include "journal/journal.h"
+#include "journal/io.h"
+#include "journal/reclaim.h"
 #include "alloc/replicas.h"
 #include "snapshot.h"
 

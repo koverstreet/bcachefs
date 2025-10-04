@@ -19,7 +19,7 @@
 #include "extent_update.h"
 #include "inode.h"
 #include "io_write.h"
-#include "journal.h"
+#include "journal/journal.h"
 #include "keylist.h"
 #include "move.h"
 #include "nocow_locking.h"

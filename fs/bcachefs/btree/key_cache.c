@@ -8,8 +8,8 @@
 #include "btree/update.h"
 #include "errcode.h"
 #include "error.h"
-#include "journal.h"
-#include "journal_reclaim.h"
+#include "journal/journal.h"
+#include "journal/reclaim.h"
 #include "trace.h"
 
 #include <linux/sched/mm.h>

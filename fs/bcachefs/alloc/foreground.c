@@ -26,7 +26,7 @@
 #include "ec.h"
 #include "error.h"
 #include "io_write.h"
-#include "journal.h"
+#include "journal/journal.h"
 #include "movinggc.h"
 #include "nocow_locking.h"
 #include "trace.h"
