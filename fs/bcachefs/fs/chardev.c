@@ -3,17 +3,24 @@
 
 #include "bcachefs.h"
 #include "bcachefs_ioctl.h"
-#include "alloc/buckets.h"
-#include "chardev.h"
+
 #include "alloc/accounting.h"
-#include "fsck.h"
+#include "alloc/buckets.h"
+#include "alloc/replicas.h"
+
+#include "data/move.h"
+
+#include "fs/chardev.h"
+#include "fs/check.h"
+
 #include "journal/init.h"
 #include "journal/journal.h"
-#include "data/move.h"
-#include "recovery_passes.h"
-#include "alloc/replicas.h"
+
 #include "sb/counters.h"
 #include "sb/io.h"
+
+#include "recovery_passes.h"
+
 #include "util/thread_with_file.h"
 
 #include <linux/cdev.h>

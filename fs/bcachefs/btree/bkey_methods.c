@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "alloc/accounting.h"
+#include "alloc/background.h"
 #include "alloc/backpointers.h"
+#include "alloc/lru.h"
 #include "btree/bkey_methods.h"
 #include "btree/cache.h"
-#include "alloc/background.h"
-#include "dirent.h"
-#include "alloc/accounting.h"
+#include "fs/dirent.h"
+#include "fs/inode.h"
+#include "fs/quota.h"
+#include "fs/snapshot.h"
+#include "fs/subvolume.h"
+#include "fs/xattr.h"
 #include "data/ec.h"
-#include "error.h"
 #include "data/extents.h"
-#include "inode.h"
 #include "data/io_misc.h"
-#include "alloc/lru.h"
-#include "quota.h"
 #include "data/reflink.h"
-#include "snapshot.h"
-#include "subvolume.h"
-#include "xattr.h"
+#include "error.h"
 
 const char * const bch2_bkey_types[] = {
 #define x(name, nr, ...) #name,

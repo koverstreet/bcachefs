@@ -11,7 +11,7 @@
 #include "error.h"
 #include "data/extents.h"
 #include "data/keylist.h"
-#include "snapshot.h"
+#include "fs/snapshot.h"
 #include "trace.h"
 
 #include <linux/string_helpers.h>

@@ -12,23 +12,28 @@
 
 #include "alloc/accounting.h"
 #include "alloc/buckets.h"
-#include "acl.h"
+
 #include "btree/bkey_buf.h"
 #include "btree/update.h"
-#include "chardev.h"
-#include "dirent.h"
-#include "errcode.h"
+
 #include "data/extents.h"
 #include "data/read.h"
 #include "data/rebalance.h"
-#include "fsck.h"
-#include "inode.h"
+
+#include "fs/acl.h"
+#include "fs/chardev.h"
+#include "fs/check.h"
+#include "fs/dirent.h"
+#include "fs/inode.h"
+#include "fs/namei.h"
+#include "fs/quota.h"
+#include "fs/snapshot.h"
+#include "fs/xattr.h"
+
 #include "journal/journal.h"
-#include "namei.h"
-#include "quota.h"
-#include "snapshot.h"
+
+#include "errcode.h"
 #include "super.h"
-#include "xattr.h"
 #include "trace.h"
 
 #include <linux/aio.h>

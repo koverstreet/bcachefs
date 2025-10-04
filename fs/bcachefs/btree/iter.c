@@ -15,7 +15,7 @@
 #include "journal/journal.h"
 #include "journal/io.h"
 #include "alloc/replicas.h"
-#include "snapshot.h"
+#include "fs/snapshot.h"
 #include "super.h"
 #include "trace.h"
 

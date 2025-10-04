@@ -2,10 +2,11 @@
 #ifndef _BCACHEFS_FS_H
 #define _BCACHEFS_FS_H
 
-#include "inode.h"
+#include "fs/inode.h"
+#include "fs/str_hash.h"
+#include "fs/quota_types.h"
+
 #include "opts.h"
-#include "str_hash.h"
-#include "quota_types.h"
 
 #include "util/two_state_shared_lock.h"
 

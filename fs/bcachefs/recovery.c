@@ -1,36 +1,43 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
 #include "alloc/accounting.h"
 #include "alloc/buckets.h"
 #include "alloc/check.h"
 #include "alloc/replicas.h"
+
 #include "btree/bkey_buf.h"
+#include "btree/interior.h"
+#include "btree/io.h"
 #include "btree/journal_overlay.h"
 #include "btree/node_scan.h"
 #include "btree/update.h"
-#include "btree/interior.h"
-#include "btree/io.h"
-#include "dirent.h"
-#include "errcode.h"
-#include "error.h"
+
+#include "data/move.h"
+#include "data/copygc.h"
+#include "data/rebalance.h"
+
+#include "fs/dirent.h"
+#include "fs/logged_ops.h"
+#include "fs/namei.h"
+#include "fs/quota.h"
+#include "fs/snapshot.h"
+
 #include "journal/init.h"
 #include "journal/io.h"
 #include "journal/reclaim.h"
 #include "journal/sb.h"
 #include "journal/seq_blacklist.h"
-#include "logged_ops.h"
-#include "data/move.h"
-#include "data/copygc.h"
-#include "namei.h"
-#include "quota.h"
-#include "data/rebalance.h"
-#include "recovery.h"
-#include "recovery_passes.h"
+
 #include "sb/clean.h"
 #include "sb/downgrade.h"
-#include "snapshot.h"
 #include "sb/io.h"
+
+#include "errcode.h"
+#include "error.h"
+#include "recovery.h"
+#include "recovery_passes.h"
 
 #include <linux/sort.h>
 #include <linux/stat.h>

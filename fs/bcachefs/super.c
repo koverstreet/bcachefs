@@ -8,6 +8,7 @@
  */
 
 #include "bcachefs.h"
+
 #include "alloc/accounting.h"
 #include "alloc/check.h"
 #include "alloc/backpointers.h"
@@ -15,7 +16,7 @@
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
 #include "alloc/replicas.h"
-#include "async_objs.h"
+
 #include "btree/bkey_sort.h"
 #include "btree/cache.h"
 #include "btree/check.h"
@@ -25,7 +26,7 @@
 #include "btree/interior.h"
 #include "btree/io.h"
 #include "btree/write_buffer.h"
-#include "chardev.h"
+
 #include "data/checksum.h"
 #include "data/compress.h"
 #include "data/copygc.h"
@@ -36,27 +37,34 @@
 #include "data/read.h"
 #include "data/rebalance.h"
 #include "data/write.h"
-#include "debug.h"
-#include "errcode.h"
-#include "error.h"
-#include "fsck.h"
-#include "inode.h"
+
+#include "fs/chardev.h"
+#include "fs/check.h"
+#include "fs/inode.h"
+#include "fs/quota.h"
+#include "fs/snapshot.h"
+#include "fs/subvolume.h"
+
 #include "journal/init.h"
 #include "journal/journal.h"
 #include "journal/reclaim.h"
 #include "journal/seq_blacklist.h"
-#include "quota.h"
-#include "recovery.h"
-#include "recovery_passes.h"
+
 #include "sb/clean.h"
 #include "sb/counters.h"
 #include "sb/downgrade.h"
 #include "sb/errors.h"
-#include "sb/members.h"
-#include "snapshot.h"
-#include "subvolume.h"
-#include "super.h"
 #include "sb/io.h"
+#include "sb/members.h"
+
+#include "async_objs.h"
+#include "debug.h"
+#include "errcode.h"
+#include "error.h"
+#include "recovery.h"
+#include "recovery_passes.h"
+
+#include "super.h"
 #include "sysfs.h"
 #include "trace.h"
 

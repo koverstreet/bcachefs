@@ -3,12 +3,14 @@
 
 #include "bcachefs.h"
 
-#include "io.h"
-#include "pagecache.h"
-
 #include "btree/iter.h"
+
 #include "data/extents.h"
-#include "subvolume.h"
+
+#include "fs/subvolume.h"
+
+#include "vfs/io.h"
+#include "vfs/pagecache.h"
 
 #include <linux/pagevec.h>
 #include <linux/writeback.h>

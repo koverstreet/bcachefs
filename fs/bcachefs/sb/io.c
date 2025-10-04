@@ -1,22 +1,28 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
 #include "alloc/disk_groups.h"
 #include "alloc/replicas.h"
+
 #include "data/checksum.h"
 #include "data/ec.h"
-#include "error.h"
+
 #include "journal/journal.h"
 #include "journal/sb.h"
 #include "journal/seq_blacklist.h"
-#include "recovery_passes.h"
-#include "quota.h"
+
+#include "fs/quota.h"
+
 #include "sb/clean.h"
 #include "sb/counters.h"
 #include "sb/downgrade.h"
 #include "sb/errors.h"
 #include "sb/members.h"
 #include "sb/io.h"
+
+#include "error.h"
+#include "recovery_passes.h"
 #include "super.h"
 #include "trace.h"
 

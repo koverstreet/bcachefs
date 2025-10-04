@@ -6,25 +6,31 @@
  */
 
 #include "bcachefs.h"
+
+#include "alloc/accounting.h"
 #include "alloc/background.h"
 #include "alloc/backpointers.h"
+#include "alloc/buckets.h"
+#include "alloc/buckets_waiting_for_journal.h"
+#include "alloc/replicas.h"
+
 #include "btree/bset.h"
 #include "btree/check.h"
 #include "btree/update.h"
-#include "alloc/buckets.h"
-#include "buckets_waiting_for_journal.h"
-#include "alloc/accounting.h"
-#include "data/ec.h"
-#include "error.h"
-#include "inode.h"
+
 #include "data/copygc.h"
+#include "data/ec.h"
 #include "data/rebalance.h"
+#include "data/reflink.h"
+
+#include "fs/inode.h"
+#include "fs/subvolume.h"
+
 #include "journal/init.h"
+
+#include "error.h"
 #include "recovery.h"
 #include "recovery_passes.h"
-#include "data/reflink.h"
-#include "alloc/replicas.h"
-#include "subvolume.h"
 #include "trace.h"
 
 #include <linux/preempt.h>

@@ -7,23 +7,29 @@
  */
 
 #include "bcachefs.h"
+
+#include "alloc/buckets.h"
 #include "alloc/foreground.h"
-#include "async_objs.h"
+
 #include "btree/bkey_methods.h"
 #include "btree/cache.h"
+#include "btree/interior.h"
 #include "btree/io.h"
 #include "btree/iter.h"
 #include "btree/locking.h"
 #include "btree/update.h"
-#include "btree/interior.h"
-#include "alloc/buckets.h"
+
+#include "data/extents.h"
 #include "data/update.h"
+
+#include "fs/check.h"
+#include "fs/inode.h"
+
+#include "journal/reclaim.h"
+
+#include "async_objs.h"
 #include "debug.h"
 #include "error.h"
-#include "data/extents.h"
-#include "fsck.h"
-#include "inode.h"
-#include "journal/reclaim.h"
 #include "super.h"
 
 #include <linux/console.h>
