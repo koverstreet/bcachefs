@@ -59,7 +59,7 @@ void bch2_acl_to_text(struct printbuf *out, const void *value, size_t size)
 
 #ifndef NO_BCACHEFS_FS
 
-#include "fs.h"
+#include "vfs/fs.h"
 
 #include <linux/fs.h>
 #include <linux/posix_acl_xattr.h>
