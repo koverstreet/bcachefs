@@ -4,7 +4,6 @@
 
 #include "btree/bset.h"
 #include "btree/types.h"
-#include "trace.h"
 
 void bch2_trans_updates_to_text(struct printbuf *, struct btree_trans *);
 void bch2_btree_path_to_text(struct printbuf *, struct btree_trans *, btree_path_idx_t);

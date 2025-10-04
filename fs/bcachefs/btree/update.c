@@ -12,12 +12,12 @@
 #include "data/extents.h"
 #include "data/keylist.h"
 
+#include "debug/debug.h"
+
 #include "fs/snapshot.h"
 
-#include "debug.h"
 #include "init/errcode.h"
 #include "init/error.h"
-#include "trace.h"
 
 #include <linux/string_helpers.h>
 

@@ -22,15 +22,14 @@
 #include "data/keylist.h"
 #include "data/write.h"
 
+#include "init/error.h"
+#include "init/passes.h"
+
 #include "journal/journal.h"
 #include "journal/reclaim.h"
 
 #include "sb/members.h"
 #include "sb/io.h"
-
-#include "init/error.h"
-#include "init/passes.h"
-#include "trace.h"
 
 #include "util/clock.h"
 #include "util/enumerated_ref.h"

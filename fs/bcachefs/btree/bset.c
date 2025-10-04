@@ -9,7 +9,6 @@
 #include "bcachefs.h"
 #include "btree/cache.h"
 #include "btree/bset.h"
-#include "trace.h"
 
 #include "util/eytzinger.h"
 #include "util/util.h"

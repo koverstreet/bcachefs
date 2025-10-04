@@ -27,13 +27,12 @@
 #include "fs/inode.h"
 #include "fs/snapshot.h"
 
+#include "init/errcode.h"
+#include "init/error.h"
+
 #include "journal/reclaim.h"
 
 #include "sb/io.h"
-
-#include "init/errcode.h"
-#include "init/error.h"
-#include "trace.h"
 
 #include <linux/ioprio.h>
 #include <linux/kthread.h>

@@ -20,4 +20,4 @@
 #include <linux/blktrace_api.h>
 
 #define CREATE_TRACE_POINTS
-#include "trace.h"
+#include "debug/trace.h"

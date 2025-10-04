@@ -2,7 +2,6 @@
 
 #include "bcachefs.h"
 #include "init/errcode.h"
-#include "trace.h"
 
 #include <linux/errname.h>
 

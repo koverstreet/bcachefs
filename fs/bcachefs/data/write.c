@@ -23,18 +23,17 @@
 #include "data/rebalance.h"
 #include "data/write.h"
 
+#include "debug/async_objs.h"
+
 #include "fs/inode.h"
 #include "fs/subvolume.h"
+
+#include "init/error.h"
+#include "init/super.h"
 
 #include "journal/journal.h"
 
 #include "sb/io.h"
-
-#include "async_objs.h"
-#include "debug.h"
-#include "init/error.h"
-#include "init/super.h"
-#include "trace.h"
 
 #include "util/clock.h"
 #include "util/enumerated_ref.h"

@@ -23,7 +23,6 @@
 
 #include "init/errcode.h"
 #include "init/error.h"
-#include "trace.h"
 
 #include "util/clock.h"
 

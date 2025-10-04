@@ -9,7 +9,7 @@
 #include "data/extents.h"
 #include "data/extent_update.h"
 
-#include "debug.h"
+#include "debug/debug.h"
 
 /*
  * This counts the number of iterators to the alloc & ec btrees we'll need

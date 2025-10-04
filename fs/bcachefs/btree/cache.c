@@ -9,12 +9,12 @@
 #include "btree/iter.h"
 #include "btree/locking.h"
 
-#include "journal/journal.h"
+#include "debug/debug.h"
 
-#include "debug.h"
 #include "init/errcode.h"
 #include "init/error.h"
-#include "trace.h"
+
+#include "journal/journal.h"
 
 #include <linux/prefetch.h>
 #include <linux/sched/mm.h>

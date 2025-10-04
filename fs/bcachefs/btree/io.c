@@ -18,16 +18,16 @@
 #include "data/extents.h"
 #include "data/write.h"
 
+#include "debug/async_objs.h"
+#include "debug/debug.h"
+
+#include "init/error.h"
+#include "init/recovery.h"
+
 #include "journal/reclaim.h"
 #include "journal/seq_blacklist.h"
 
 #include "sb/io.h"
-
-#include "async_objs.h"
-#include "debug.h"
-#include "init/error.h"
-#include "init/recovery.h"
-#include "trace.h"
 
 #include "util/enumerated_ref.h"
 

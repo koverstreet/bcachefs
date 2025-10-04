@@ -14,17 +14,16 @@
 
 #include "fs/quota.h"
 
+#include "init/error.h"
+#include "init/passes.h"
+#include "init/super.h"
+
 #include "sb/clean.h"
 #include "sb/counters.h"
 #include "sb/downgrade.h"
 #include "sb/errors.h"
 #include "sb/members.h"
 #include "sb/io.h"
-
-#include "init/error.h"
-#include "init/passes.h"
-#include "init/super.h"
-#include "trace.h"
 
 #include "util/vstructs.h"
 
