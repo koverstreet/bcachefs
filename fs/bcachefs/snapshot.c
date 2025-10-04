@@ -6,7 +6,7 @@
 #include "btree/cache.h"
 #include "btree/key_cache.h"
 #include "btree/update.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "enumerated_ref.h"
 #include "errcode.h"
 #include "error.h"

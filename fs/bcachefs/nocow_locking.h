@@ -3,7 +3,7 @@
 #define _BCACHEFS_NOCOW_LOCKING_H
 
 #include "bcachefs.h"
-#include "alloc_background.h"
+#include "alloc/background.h"
 #include "nocow_locking_types.h"
 
 #include <linux/hash.h>

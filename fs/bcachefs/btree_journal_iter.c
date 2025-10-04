@@ -5,7 +5,7 @@
 #include "bset.h"
 #include "btree/cache.h"
 #include "btree_journal_iter.h"
-#include "disk_accounting.h"
+#include "alloc/accounting.h"
 #include "journal_io.h"
 
 #include <linux/sort.h>

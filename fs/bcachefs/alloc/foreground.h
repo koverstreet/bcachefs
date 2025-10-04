@@ -3,8 +3,8 @@
 #define _BCACHEFS_ALLOC_FOREGROUND_H
 
 #include "bcachefs.h"
-#include "buckets.h"
-#include "alloc_types.h"
+#include "alloc/buckets.h"
+#include "alloc/types.h"
 #include "extents.h"
 #include "io_write_types.h"
 #include "sb-members.h"

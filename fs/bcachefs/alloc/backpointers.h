@@ -5,7 +5,7 @@
 #include "btree/cache.h"
 #include "btree/iter.h"
 #include "btree/update.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "error.h"
 #include "super.h"
 

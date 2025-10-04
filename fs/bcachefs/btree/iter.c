@@ -14,7 +14,7 @@
 #include "extents.h"
 #include "journal.h"
 #include "journal_io.h"
-#include "replicas.h"
+#include "alloc/replicas.h"
 #include "snapshot.h"
 #include "super.h"
 #include "trace.h"

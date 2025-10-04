@@ -4,12 +4,12 @@
  */
 
 #include "bcachefs.h"
-#include "backpointers.h"
+#include "alloc/backpointers.h"
 #include "bkey_buf.h"
 #include "btree/update.h"
 #include "btree/interior.h"
 #include "btree/write_buffer.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "ec.h"
 #include "errcode.h"
 #include "extents.h"
@@ -20,7 +20,7 @@
 #include "move.h"
 #include "progress.h"
 #include "rebalance.h"
-#include "replicas.h"
+#include "alloc/replicas.h"
 #include "super-io.h"
 
 static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s k, unsigned dev_idx,

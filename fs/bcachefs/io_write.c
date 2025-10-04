@@ -5,12 +5,12 @@
  */
 
 #include "bcachefs.h"
-#include "alloc_foreground.h"
+#include "alloc/foreground.h"
 #include "async_objs.h"
 #include "bkey_buf.h"
 #include "bset.h"
 #include "btree/update.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "checksum.h"
 #include "clock.h"
 #include "compress.h"

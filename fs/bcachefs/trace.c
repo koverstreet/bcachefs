@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
-#include "alloc_types.h"
-#include "buckets.h"
+#include "alloc/types.h"
+#include "alloc/buckets.h"
 #include "btree/cache.h"
 #include "btree/iter.h"
 #include "btree/key_cache.h"

@@ -2,7 +2,7 @@
 #ifndef NO_BCACHEFS_FS
 
 #include "bcachefs.h"
-#include "alloc_foreground.h"
+#include "alloc/foreground.h"
 #include "enumerated_ref.h"
 #include "fs.h"
 #include "fs-io.h"

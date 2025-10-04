@@ -4,7 +4,7 @@
 
 #ifndef NO_BCACHEFS_FS
 
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "fs.h"
 #include "io_write_types.h"
 #include "quota.h"

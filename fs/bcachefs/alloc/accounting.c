@@ -6,13 +6,13 @@
 #include "btree_journal_iter.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "compress.h"
-#include "disk_accounting.h"
+#include "alloc/accounting.h"
 #include "error.h"
 #include "journal_io.h"
 #include "recovery_passes.h"
-#include "replicas.h"
+#include "alloc/replicas.h"
 
 /*
  * Notes on disk accounting:

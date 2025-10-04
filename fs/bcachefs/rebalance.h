@@ -3,7 +3,7 @@
 #define _BCACHEFS_REBALANCE_H
 
 #include "compress.h"
-#include "disk_groups.h"
+#include "alloc/disk_groups.h"
 #include "opts.h"
 #include "rebalance_types.h"
 

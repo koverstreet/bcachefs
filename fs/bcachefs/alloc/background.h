@@ -3,8 +3,8 @@
 #define _BCACHEFS_ALLOC_BACKGROUND_H
 
 #include "bcachefs.h"
-#include "alloc_types.h"
-#include "buckets.h"
+#include "alloc/types.h"
+#include "alloc/buckets.h"
 #include "debug.h"
 #include "super.h"
 
@@ -212,6 +212,28 @@ static inline void set_alloc_v4_u64s(struct bkey_i_alloc_v4 *a)
 	set_bkey_val_u64s(&a->k, alloc_v4_u64s(&a->v));
 }
 
+static inline struct bpos alloc_gens_pos(struct bpos pos, unsigned *offset)
+{
+	*offset = pos.offset & KEY_TYPE_BUCKET_GENS_MASK;
+
+	pos.offset >>= KEY_TYPE_BUCKET_GENS_BITS;
+	return pos;
+}
+
+static inline struct bpos bucket_gens_pos_to_alloc(struct bpos pos, unsigned offset)
+{
+	pos.offset <<= KEY_TYPE_BUCKET_GENS_BITS;
+	pos.offset += offset;
+	return pos;
+}
+
+static inline unsigned alloc_gen(struct bkey_s_c k, unsigned offset)
+{
+	return k.k->type == KEY_TYPE_bucket_gens
+		? bkey_s_c_to_bucket_gens(k).v->gens[offset]
+		: 0;
+}
+
 struct bkey_i_alloc_v4 *
 bch2_trans_start_alloc_update_noupdate(struct btree_trans *, struct btree_iter *, struct bpos);
 struct bkey_i_alloc_v4 *
@@ -302,6 +324,9 @@ static inline bool bkey_is_alloc(const struct bkey *k)
 
 int bch2_alloc_read(struct bch_fs *);
 
+int bch2_bucket_do_index(struct btree_trans *, struct bch_dev *,
+			 struct bkey_s_c, const struct bch_alloc_v4 *, bool);
+
 int bch2_alloc_key_to_dev_counters(struct btree_trans *, struct bch_dev *,
 				   const struct bch_alloc_v4 *,
 				   const struct bch_alloc_v4 *, unsigned);
@@ -309,16 +334,6 @@ int bch2_trigger_alloc(struct btree_trans *, enum btree_id, unsigned,
 		       struct bkey_s_c, struct bkey_s,
 		       enum btree_iter_update_trigger_flags);
 
-int __bch2_check_discard_freespace_key(struct btree_trans *, struct btree_iter *, u8 *,
-				       enum bch_fsck_flags);
-
-static inline int bch2_check_discard_freespace_key_async(struct btree_trans *trans, struct btree_iter *iter, u8 *gen)
-{
-	return __bch2_check_discard_freespace_key(trans, iter, gen, FSCK_ERR_NO_LOG);
-}
-
-int bch2_check_alloc_info(struct bch_fs *);
-int bch2_check_alloc_to_lru_refs(struct bch_fs *);
 void bch2_dev_do_discards(struct bch_dev *);
 void bch2_do_discards_going_ro(struct bch_fs *);
 void bch2_do_discards(struct bch_fs *);
@@ -350,8 +365,6 @@ static inline const struct bch_backpointer *alloc_v4_backpointers_c(const struct
 	return (void *) ((u64 *) &a->v + BCH_ALLOC_V4_BACKPOINTERS_START(a));
 }
 
-int bch2_dev_freespace_init(struct bch_fs *, struct bch_dev *, u64, u64);
-int bch2_fs_freespace_init(struct bch_fs *);
 int bch2_dev_remove_alloc(struct bch_fs *, struct bch_dev *);
 
 void bch2_recalc_capacity(struct bch_fs *);
