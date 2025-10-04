@@ -19,6 +19,7 @@
 #include "inode.h"
 #include "data/copygc.h"
 #include "data/rebalance.h"
+#include "journal/init.h"
 #include "recovery.h"
 #include "recovery_passes.h"
 #include "data/reflink.h"

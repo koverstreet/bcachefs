@@ -144,6 +144,11 @@ static inline u64 journal_last_unwritten_seq(struct journal *j)
 	return j->seq_ondisk + 1;
 }
 
+static inline bool journal_seq_unwritten(struct journal *j, u64 seq)
+{
+	return seq > j->seq_ondisk;
+}
+
 static inline struct journal_buf *journal_cur_buf(struct journal *j)
 {
 	unsigned idx = (journal_cur_seq(j) &
@@ -151,6 +156,18 @@ static inline struct journal_buf *journal_cur_buf(struct journal *j)
 			~JOURNAL_STATE_BUF_MASK) + j->reservations.idx;
 
 	return j->buf + idx;
+}
+
+static inline struct journal_buf *
+journal_seq_to_buf(struct journal *j, u64 seq)
+{
+	struct journal_buf *buf = NULL;
+
+	EBUG_ON(seq > journal_cur_seq(j));
+
+	if (journal_seq_unwritten(j, seq))
+		buf = j->buf + (seq & JOURNAL_BUF_MASK);
+	return buf;
 }
 
 static inline int journal_state_count(union journal_res_state s, int idx)
@@ -417,6 +434,9 @@ out:
 	return 0;
 }
 
+void bch2_journal_quiesce(struct journal *);
+void bch2_journal_write_work(struct work_struct *);
+
 /* journal_entry_res: */
 
 void bch2_journal_entry_res_resize(struct journal *,
@@ -429,6 +449,8 @@ void bch2_journal_flush_async(struct journal *, struct closure *);
 int bch2_journal_flush_seq(struct journal *, u64, unsigned);
 int bch2_journal_flush(struct journal *);
 bool bch2_journal_noflush_seq(struct journal *, u64, u64);
+
+int __bch2_journal_meta(struct journal *);
 int bch2_journal_meta(struct journal *);
 
 void bch2_journal_halt_locked(struct journal *);
@@ -448,23 +470,5 @@ struct journal_buf *bch2_next_write_buffer_flush_journal_buf(struct journal *, u
 
 void __bch2_journal_debug_to_text(struct printbuf *, struct journal *);
 void bch2_journal_debug_to_text(struct printbuf *, struct journal *);
-
-int bch2_set_nr_journal_buckets(struct bch_fs *, struct bch_dev *, unsigned);
-int bch2_dev_journal_bucket_delete(struct bch_dev *, u64);
-
-int bch2_dev_journal_alloc(struct bch_dev *, bool);
-int bch2_fs_journal_alloc(struct bch_fs *);
-
-void bch2_dev_journal_stop(struct journal *, struct bch_dev *);
-
-void bch2_fs_journal_stop(struct journal *);
-int bch2_fs_journal_start(struct journal *, u64, u64);
-void bch2_journal_set_replay_done(struct journal *);
-
-void bch2_dev_journal_exit(struct bch_dev *);
-int bch2_dev_journal_init(struct bch_dev *, struct bch_sb *);
-void bch2_fs_journal_exit(struct journal *);
-void bch2_fs_journal_init_early(struct journal *);
-int bch2_fs_journal_init(struct journal *);
 
 #endif /* _BCACHEFS_JOURNAL_H */
