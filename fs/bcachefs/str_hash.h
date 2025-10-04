@@ -2,8 +2,8 @@
 #ifndef _BCACHEFS_STR_HASH_H
 #define _BCACHEFS_STR_HASH_H
 
-#include "btree_iter.h"
-#include "btree_update.h"
+#include "btree/iter.h"
+#include "btree/update.h"
 #include "checksum.h"
 #include "error.h"
 #include "inode.h"

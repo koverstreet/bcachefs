@@ -3,7 +3,7 @@
 #define _BCACHEFS_BTREE_ITER_H
 
 #include "bset.h"
-#include "btree_types.h"
+#include "btree/types.h"
 #include "trace.h"
 
 void bch2_trans_updates_to_text(struct printbuf *, struct btree_trans *);

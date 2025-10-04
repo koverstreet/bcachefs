@@ -3,7 +3,7 @@
 #define _BCACHEFS_IO_WRITE_TYPES_H
 
 #include "alloc_types.h"
-#include "btree_types.h"
+#include "btree/types.h"
 #include "buckets_types.h"
 #include "extents_types.h"
 #include "keylist_types.h"

@@ -4,7 +4,7 @@
 #include "bcachefs.h"
 #include "acl.h"
 #include "bkey_buf.h"
-#include "btree_update.h"
+#include "btree/update.h"
 #include "buckets.h"
 #include "chardev.h"
 #include "dirent.h"

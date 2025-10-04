@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_BTREE_UPDATE_H
 #define _BCACHEFS_BTREE_UPDATE_H
 
-#include "btree_iter.h"
+#include "btree/iter.h"
 #include "journal.h"
 #include "snapshot.h"
 #include "super-io.h"

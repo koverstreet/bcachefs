@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "btree_cache.h"
-#include "btree_locking.h"
-#include "btree_types.h"
+#include "btree/cache.h"
+#include "btree/locking.h"
 
 static struct lock_class_key bch2_btree_node_lock_key;
 

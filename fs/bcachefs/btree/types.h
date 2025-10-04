@@ -6,7 +6,7 @@
 #include <linux/rhashtable.h>
 
 #include "bbpos_types.h"
-#include "btree_key_cache_types.h"
+#include "btree/key_cache_types.h"
 #include "buckets_types.h"
 #include "darray.h"
 #include "errcode.h"

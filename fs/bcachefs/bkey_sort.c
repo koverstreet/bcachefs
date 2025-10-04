@@ -163,7 +163,7 @@ static inline int keep_unwritten_whiteouts_cmp(const struct btree *b,
 		(long) l - (long) r;
 }
 
-#include "btree_update_interior.h"
+#include "btree/interior.h"
 
 /*
  * For sorting in the btree node write path: whiteouts not in the unwritten

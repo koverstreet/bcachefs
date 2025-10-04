@@ -4,7 +4,7 @@
 
 #include "bbpos_types.h"
 #include "bkey_methods.h"
-#include "btree_cache.h"
+#include "btree/cache.h"
 
 static inline int bbpos_cmp(struct bbpos l, struct bbpos r)
 {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
-#include "btree_update.h"
-#include "btree_update_interior.h"
+#include "btree/update.h"
+#include "btree/interior.h"
 #include "buckets.h"
 #include "debug.h"
 #include "extents.h"

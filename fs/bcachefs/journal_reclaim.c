@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "btree_key_cache.h"
-#include "btree_update.h"
-#include "btree_write_buffer.h"
+#include "btree/key_cache.h"
+#include "btree/update.h"
+#include "btree/write_buffer.h"
 #include "buckets.h"
 #include "errcode.h"
 #include "error.h"

@@ -4,7 +4,7 @@
 
 #include "bkey_methods.h"
 #include "bset.h"
-#include "btree_locking.h"
+#include "btree/locking.h"
 #include "checksum.h"
 #include "extents.h"
 #include "io_write_types.h"
