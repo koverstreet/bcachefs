@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
 #include "btree/bkey_buf.h"
 #include "btree/bkey_methods.h"
 #include "btree/update.h"
+
 #include "data/extents.h"
-#include "dirent.h"
-#include "str_hash.h"
-#include "subvolume.h"
+
+#include "fs/dirent.h"
+#include "fs/str_hash.h"
+#include "fs/subvolume.h"
 
 #include <linux/dcache.h>
 

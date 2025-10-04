@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "alloc/buckets.h"
+
 #include "alloc/accounting.h"
-#include "journal/journal.h"
+#include "alloc/buckets.h"
 #include "alloc/replicas.h"
+
+#include "journal/journal.h"
+
 #include "sb/io.h"
 
 #include <linux/sort.h>

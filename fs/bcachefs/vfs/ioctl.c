@@ -3,13 +3,12 @@
 
 #include "bcachefs.h"
 
-#include "fs.h"
-
 #include "fs/chardev.h"
 #include "fs/dirent.h"
 #include "fs/namei.h"
 #include "fs/quota.h"
 
+#include "vfs/fs.h"
 #include "vfs/ioctl.h"
 
 #include <linux/compat.h>

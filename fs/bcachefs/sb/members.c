@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "btree/cache.h"
+
 #include "alloc/disk_groups.h"
+#include "alloc/replicas.h"
+
+#include "btree/cache.h"
+
+#include "sb/members.h"
+#include "sb/io.h"
+
 #include "error.h"
 #include "opts.h"
 #include "recovery_passes.h"
-#include "alloc/replicas.h"
-#include "sb/members.h"
-#include "sb/io.h"
 
 int bch2_dev_missing_bkey(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
 {

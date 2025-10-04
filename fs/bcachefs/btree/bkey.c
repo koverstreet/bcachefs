@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
 #include "btree/bkey.h"
-#include "bkey_cmp.h"
+#include "btree/bkey_cmp.h"
 #include "btree/bkey_methods.h"
 #include "btree/bset.h"
 

@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
+#include "alloc/buckets.h"
+
 #include "btree/cache.h"
 #include "btree/io.h"
 #include "btree/interior.h"
 #include "btree/journal_overlay.h"
 #include "btree/node_scan.h"
-#include "alloc/buckets.h"
-#include "error.h"
+
 #include "journal/io.h"
+
+#include "error.h"
 #include "recovery_passes.h"
 
 #include <linux/kthread.h>

@@ -5,12 +5,14 @@
  */
 
 #include "bcachefs.h"
+
 #include "alloc/accounting.h"
 #include "alloc/background.h"
 #include "alloc/backpointers.h"
 #include "alloc/buckets.h"
 #include "alloc/foreground.h"
 #include "alloc/replicas.h"
+
 #include "btree/bkey_methods.h"
 #include "btree/bkey_buf.h"
 #include "btree/check.h"
@@ -20,18 +22,22 @@
 #include "btree/interior.h"
 #include "btree/io.h"
 #include "btree/journal_overlay.h"
-#include "debug.h"
+
 #include "data/ec.h"
 #include "data/extents.h"
 #include "data/keylist.h"
 #include "data/move.h"
 #include "data/reflink.h"
-#include "error.h"
+
 #include "journal/journal.h"
+
+#include "sb/io.h"
+
+#include "debug.h"
+#include "error.h"
 #include "progress.h"
 #include "recovery_passes.h"
 #include "recovery.h"
-#include "sb/io.h"
 #include "trace.h"
 
 #include "util/clock.h"

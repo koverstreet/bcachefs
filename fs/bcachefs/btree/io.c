@@ -1,26 +1,32 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "async_objs.h"
+
+#include "alloc/buckets.h"
+
 #include "btree/bkey_buf.h"
 #include "btree/bkey_methods.h"
-#include "bkey_sort.h"
+#include "btree/bkey_sort.h"
 #include "btree/cache.h"
 #include "btree/io.h"
 #include "btree/iter.h"
 #include "btree/locking.h"
 #include "btree/update.h"
 #include "btree/interior.h"
-#include "alloc/buckets.h"
+
 #include "data/checksum.h"
-#include "debug.h"
-#include "error.h"
 #include "data/extents.h"
 #include "data/write.h"
+
 #include "journal/reclaim.h"
 #include "journal/seq_blacklist.h"
-#include "recovery.h"
+
 #include "sb/io.h"
+
+#include "async_objs.h"
+#include "debug.h"
+#include "error.h"
+#include "recovery.h"
 #include "trace.h"
 
 #include "util/enumerated_ref.h"

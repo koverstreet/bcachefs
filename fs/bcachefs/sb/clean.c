@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "btree/interior.h"
+
 #include "alloc/buckets.h"
-#include "error.h"
-#include "journal/io.h"
 #include "alloc/replicas.h"
+
+#include "btree/interior.h"
+
+#include "journal/io.h"
+
 #include "sb/clean.h"
 #include "sb/io.h"
+
+#include "error.h"
 
 /*
  * BCH_SB_FIELD_clean:

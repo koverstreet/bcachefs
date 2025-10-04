@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+
+#include "alloc/replicas.h"
+
 #include "btree/bkey_methods.h"
 #include "btree/bkey_buf.h"
 #include "btree/cache.h"
@@ -9,13 +12,16 @@
 #include "btree/key_cache.h"
 #include "btree/locking.h"
 #include "btree/update.h"
-#include "debug.h"
-#include "error.h"
+
 #include "data/extents.h"
+
+#include "fs/snapshot.h"
+
 #include "journal/journal.h"
 #include "journal/io.h"
-#include "alloc/replicas.h"
-#include "fs/snapshot.h"
+
+#include "debug.h"
+#include "error.h"
 #include "super.h"
 #include "trace.h"
 

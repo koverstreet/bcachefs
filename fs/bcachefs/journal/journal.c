@@ -6,13 +6,17 @@
  */
 
 #include "bcachefs.h"
+
 #include "alloc/foreground.h"
+
 #include "btree/write_buffer.h"
-#include "error.h"
+
 #include "journal/journal.h"
 #include "journal/io.h"
 #include "journal/reclaim.h"
 #include "journal/seq_blacklist.h"
+
+#include "error.h"
 #include "trace.h"
 
 #include "util/enumerated_ref.h"

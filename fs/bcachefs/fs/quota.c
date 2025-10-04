@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
+
 #include "btree/update.h"
+
+#include "fs/inode.h"
+#include "fs/quota.h"
+#include "fs/snapshot.h"
+
+#include "sb/io.h"
+
 #include "errcode.h"
 #include "error.h"
-#include "inode.h"
-#include "quota.h"
-#include "fs/snapshot.h"
-#include "sb/io.h"
 
 static const char * const bch2_quota_types[] = {
 	"user",
