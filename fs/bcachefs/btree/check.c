@@ -5,9 +5,12 @@
  */
 
 #include "bcachefs.h"
+#include "alloc/accounting.h"
 #include "alloc/background.h"
-#include "alloc/foreground.h"
 #include "alloc/backpointers.h"
+#include "alloc/buckets.h"
+#include "alloc/foreground.h"
+#include "alloc/replicas.h"
 #include "bkey_methods.h"
 #include "bkey_buf.h"
 #include "btree/check.h"
@@ -17,12 +20,8 @@
 #include "btree/interior.h"
 #include "btree/io.h"
 #include "btree/journal_overlay.h"
-#include "alloc/buckets.h"
-#include "clock.h"
 #include "debug.h"
-#include "alloc/accounting.h"
 #include "ec.h"
-#include "enumerated_ref.h"
 #include "error.h"
 #include "extents.h"
 #include "journal.h"
@@ -32,9 +31,11 @@
 #include "recovery_passes.h"
 #include "reflink.h"
 #include "recovery.h"
-#include "alloc/replicas.h"
 #include "super-io.h"
 #include "trace.h"
+
+#include "util/clock.h"
+#include "util/enumerated_ref.h"
 
 #include <linux/slab.h>
 #include <linux/bitops.h>

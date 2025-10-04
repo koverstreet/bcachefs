@@ -4,15 +4,16 @@
 #include <linux/fs_parser.h>
 
 #include "bcachefs.h"
-#include "compress.h"
 #include "alloc/disk_groups.h"
+#include "compress.h"
 #include "error.h"
 #include "movinggc.h"
 #include "opts.h"
 #include "rebalance.h"
 #include "recovery_passes.h"
 #include "super-io.h"
-#include "util.h"
+
+#include "util/util.h"
 
 #define x(t, n, ...) [n] = #t,
 

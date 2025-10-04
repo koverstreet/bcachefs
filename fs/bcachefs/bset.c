@@ -9,9 +9,10 @@
 #include "bcachefs.h"
 #include "btree/cache.h"
 #include "bset.h"
-#include "eytzinger.h"
 #include "trace.h"
-#include "util.h"
+
+#include "util/eytzinger.h"
+#include "util/util.h"
 
 #include <linux/unaligned.h>
 #include <linux/console.h>

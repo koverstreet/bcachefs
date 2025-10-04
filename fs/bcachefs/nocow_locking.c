@@ -4,7 +4,8 @@
 #include "bkey_methods.h"
 #include "closure.h"
 #include "nocow_locking.h"
-#include "util.h"
+
+#include "util/util.h"
 
 #include <linux/prefetch.h>
 

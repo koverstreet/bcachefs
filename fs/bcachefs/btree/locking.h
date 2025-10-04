@@ -11,7 +11,7 @@
  */
 
 #include "btree/iter.h"
-#include "six.h"
+#include "util/six.h"
 
 void bch2_btree_lock_init(struct btree_bkey_cached_common *, enum six_lock_init_flags, gfp_t gfp);
 

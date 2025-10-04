@@ -5,14 +5,15 @@
 #include <linux/list.h>
 #include <linux/rhashtable.h>
 
+#include "alloc/buckets_types.h"
+#include "alloc/replicas_types.h"
 #include "bbpos_types.h"
 #include "btree/key_cache_types.h"
-#include "alloc/buckets_types.h"
-#include "darray.h"
 #include "errcode.h"
 #include "journal_types.h"
-#include "alloc/replicas_types.h"
-#include "six.h"
+
+#include "util/darray.h"
+#include "util/six.h"
 
 struct open_bucket;
 struct btree_update;

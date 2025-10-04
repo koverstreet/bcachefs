@@ -13,7 +13,7 @@
 #include "alloc/replicas.h"
 #include "sb-counters.h"
 #include "super-io.h"
-#include "thread_with_file.h"
+#include "util/thread_with_file.h"
 
 #include <linux/cdev.h>
 #include <linux/device.h>

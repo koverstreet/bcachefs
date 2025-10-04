@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "alloc/accounting.h"
+#include "alloc/buckets.h"
 #include "btree/key_cache.h"
 #include "btree/write_buffer.h"
 #include "bkey_methods.h"
 #include "btree/update.h"
-#include "alloc/buckets.h"
 #include "compress.h"
 #include "dirent.h"
-#include "alloc/accounting.h"
 #include "error.h"
 #include "extents.h"
 #include "extent_update.h"
@@ -19,10 +19,10 @@
 #include "str_hash.h"
 #include "snapshot.h"
 #include "subvolume.h"
-#include "varint.h"
+
+#include "util/varint.h"
 
 #include <linux/random.h>
-
 #include <linux/unaligned.h>
 
 #define x(name, ...)	#name,

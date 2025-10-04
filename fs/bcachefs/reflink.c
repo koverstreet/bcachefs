@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
+#include "alloc/buckets.h"
 #include "bkey_buf.h"
 #include "btree/update.h"
-#include "alloc/buckets.h"
-#include "enumerated_ref.h"
 #include "error.h"
 #include "extents.h"
 #include "inode.h"
@@ -13,6 +12,8 @@
 #include "reflink.h"
 #include "subvolume.h"
 #include "super-io.h"
+
+#include "util/enumerated_ref.h"
 
 #include <linux/sched/signal.h>
 

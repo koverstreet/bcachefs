@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "checksum.h"
 #include "alloc/disk_groups.h"
+#include "alloc/replicas.h"
+#include "checksum.h"
 #include "ec.h"
 #include "error.h"
 #include "journal.h"
 #include "journal_sb.h"
 #include "journal_seq_blacklist.h"
 #include "recovery_passes.h"
-#include "alloc/replicas.h"
 #include "quota.h"
 #include "sb-clean.h"
 #include "sb-counters.h"
@@ -19,7 +19,8 @@
 #include "super-io.h"
 #include "super.h"
 #include "trace.h"
-#include "vstructs.h"
+
+#include "util/vstructs.h"
 
 #include <linux/backing-dev.h>
 #include <linux/sort.h>

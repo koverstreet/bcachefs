@@ -7,9 +7,9 @@
 #include "checksum.h"
 #include "error.h"
 #include "inode.h"
-#include "siphash.h"
 #include "subvolume.h"
 #include "super.h"
+#include "util/siphash.h"
 
 #include <linux/crc32c.h>
 #include <crypto/sha2.h>

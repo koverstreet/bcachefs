@@ -27,7 +27,8 @@
 #include "super.h"
 #include "super-io.h"
 #include "trace.h"
-#include "util.h"
+
+#include "util/util.h"
 
 static const char * const bch2_extent_flags_strs[] = {
 #define x(n, v)	[BCH_EXTENT_FLAG_##n] = #n,

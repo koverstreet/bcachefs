@@ -3,8 +3,8 @@
 #define _BCACHEFS_SNAPSHOT_TYPES_H
 
 #include "bbpos_types.h"
-#include "darray.h"
 #include "subvolume_types.h"
+#include "util/darray.h"
 
 DEFINE_DARRAY_NAMED(snapshot_id_list, u32);
 

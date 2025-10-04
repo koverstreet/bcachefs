@@ -2,7 +2,7 @@
 
 #include "bcachefs.h"
 #include "journal_sb.h"
-#include "darray.h"
+#include "util/darray.h"
 
 #include <linux/sort.h>
 

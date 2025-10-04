@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_DISK_ACCOUNTING_TYPES_H
 #define _BCACHEFS_DISK_ACCOUNTING_TYPES_H
 
-#include "darray.h"
+#include "util/darray.h"
 
 struct accounting_mem_entry {
 	struct bpos				pos;

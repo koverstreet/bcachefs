@@ -77,7 +77,8 @@
 #include <linux/kernel.h>
 #include <linux/uuid.h>
 #include <uapi/linux/magic.h>
-#include "vstructs.h"
+
+#include "util/vstructs.h"
 
 #ifdef __KERNEL__
 typedef uuid_t __uuid_t;

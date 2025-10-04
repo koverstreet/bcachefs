@@ -7,7 +7,7 @@
 #include "namei.h"
 #include "recovery_passes.h"
 #include "super.h"
-#include "thread_with_file.h"
+#include "util/thread_with_file.h"
 
 #define FSCK_ERR_RATELIMIT_NR	10
 

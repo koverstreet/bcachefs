@@ -7,13 +7,12 @@
 
 #include "bcachefs.h"
 #include "alloc/background.h"
-#include "alloc/foreground.h"
 #include "alloc/backpointers.h"
+#include "alloc/buckets.h"
+#include "alloc/foreground.h"
 #include "btree/iter.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
-#include "alloc/buckets.h"
-#include "clock.h"
 #include "ec.h"
 #include "errcode.h"
 #include "error.h"
@@ -21,6 +20,8 @@
 #include "move.h"
 #include "movinggc.h"
 #include "trace.h"
+
+#include "util/clock.h"
 
 #include <linux/freezer.h>
 #include <linux/kthread.h>

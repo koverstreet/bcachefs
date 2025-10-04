@@ -2,9 +2,9 @@
 #ifndef _BCACHEFS_SB_MEMBERS_H
 #define _BCACHEFS_SB_MEMBERS_H
 
-#include "darray.h"
 #include "bkey_types.h"
-#include "enumerated_ref.h"
+#include "util/enumerated_ref.h"
+#include "util/darray.h"
 
 extern char * const bch2_member_error_strs[];
 

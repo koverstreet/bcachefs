@@ -9,8 +9,8 @@
 #include "bkey.h"
 #include "bkey_methods.h"
 #include "btree/types.h"
-#include "util.h" /* for time_stats */
-#include "vstructs.h"
+#include "util/util.h" /* for time_stats */
+#include "util/vstructs.h"
 
 /*
  * BKEYS:

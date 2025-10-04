@@ -4,11 +4,10 @@
  */
 
 #include "bcachefs.h"
+#include "alloc/buckets.h"
 #include "alloc/foreground.h"
 #include "bkey_buf.h"
 #include "btree/update.h"
-#include "alloc/buckets.h"
-#include "clock.h"
 #include "error.h"
 #include "extents.h"
 #include "extent_update.h"
@@ -18,6 +17,8 @@
 #include "logged_ops.h"
 #include "rebalance.h"
 #include "subvolume.h"
+
+#include "util/clock.h"
 
 /* Overwrites whatever was present with zeroes: */
 int bch2_extent_fallocate(struct btree_trans *trans,
