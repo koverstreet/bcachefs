@@ -2,14 +2,13 @@
 
 #include "bcachefs.h"
 #include "alloc/background.h"
+#include "alloc/buckets.h"
+#include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
 #include "btree/iter.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
-#include "alloc/buckets.h"
-#include "clock.h"
 #include "compress.h"
-#include "alloc/disk_groups.h"
 #include "errcode.h"
 #include "error.h"
 #include "inode.h"
@@ -20,6 +19,8 @@
 #include "subvolume.h"
 #include "super-io.h"
 #include "trace.h"
+
+#include "util/clock.h"
 
 #include <linux/freezer.h>
 #include <linux/kthread.h>

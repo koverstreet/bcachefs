@@ -6,7 +6,8 @@
 #include "opts.h"
 #include "str_hash.h"
 #include "quota_types.h"
-#include "two_state_shared_lock.h"
+
+#include "util/two_state_shared_lock.h"
 
 #include <linux/seqlock.h>
 #include <linux/stat.h>

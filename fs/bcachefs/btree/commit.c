@@ -11,7 +11,6 @@
 #include "btree/write_buffer.h"
 #include "alloc/buckets.h"
 #include "alloc/accounting.h"
-#include "enumerated_ref.h"
 #include "errcode.h"
 #include "error.h"
 #include "journal.h"
@@ -19,6 +18,8 @@
 #include "journal_reclaim.h"
 #include "alloc/replicas.h"
 #include "snapshot.h"
+
+#include "util/enumerated_ref.h"
 
 #include <linux/prefetch.h>
 #include <linux/string_helpers.h>

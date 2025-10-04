@@ -3,7 +3,7 @@
 #define _BUCKETS_TYPES_H
 
 #include "bcachefs_format.h"
-#include "util.h"
+#include "util/util.h"
 
 #define BUCKET_JOURNAL_SEQ_BITS		16
 

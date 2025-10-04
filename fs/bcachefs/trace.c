@@ -10,7 +10,8 @@
 #include "keylist.h"
 #include "move_types.h"
 #include "opts.h"
-#include "six.h"
+
+#include "util/six.h"
 
 #include <linux/blktrace_api.h>
 

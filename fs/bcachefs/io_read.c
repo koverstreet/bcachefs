@@ -8,17 +8,15 @@
 
 #include "bcachefs.h"
 #include "alloc/background.h"
+#include "alloc/buckets.h"
+#include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
 #include "async_objs.h"
 #include "btree/update.h"
-#include "alloc/buckets.h"
 #include "checksum.h"
-#include "clock.h"
 #include "compress.h"
 #include "data_update.h"
-#include "alloc/disk_groups.h"
 #include "ec.h"
-#include "enumerated_ref.h"
 #include "error.h"
 #include "io_read.h"
 #include "io_misc.h"
@@ -26,6 +24,9 @@
 #include "reflink.h"
 #include "subvolume.h"
 #include "trace.h"
+
+#include "util/clock.h"
+#include "util/enumerated_ref.h"
 
 #include <linux/moduleparam.h>
 #include <linux/random.h>

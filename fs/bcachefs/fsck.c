@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
+#include "alloc/buckets.h"
 #include "bcachefs_ioctl.h"
 #include "bkey_buf.h"
 #include "btree/cache.h"
 #include "btree/update.h"
-#include "alloc/buckets.h"
-#include "darray.h"
 #include "dirent.h"
 #include "error.h"
 #include "fs.h"
@@ -19,8 +18,10 @@
 #include "recovery_passes.h"
 #include "snapshot.h"
 #include "super.h"
-#include "thread_with_file.h"
 #include "xattr.h"
+
+#include "util/darray.h"
+#include "util/thread_with_file.h"
 
 #include <linux/bsearch.h>
 #include <linux/dcache.h> /* struct qstr */

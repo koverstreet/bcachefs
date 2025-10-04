@@ -3,13 +3,14 @@
 #include "bcachefs.h"
 #include "btree/key_cache.h"
 #include "btree/update.h"
-#include "enumerated_ref.h"
 #include "errcode.h"
 #include "error.h"
 #include "fs.h"
 #include "recovery_passes.h"
 #include "snapshot.h"
 #include "subvolume.h"
+
+#include "util/enumerated_ref.h"
 
 #include <linux/random.h>
 

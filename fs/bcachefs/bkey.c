@@ -5,7 +5,8 @@
 #include "bkey_cmp.h"
 #include "bkey_methods.h"
 #include "bset.h"
-#include "util.h"
+
+#include "util/util.h"
 
 const struct bkey_format bch2_bkey_format_current = BKEY_FORMAT_CURRENT;
 

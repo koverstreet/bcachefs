@@ -27,11 +27,9 @@
 #include "btree/write_buffer.h"
 #include "chardev.h"
 #include "checksum.h"
-#include "clock.h"
 #include "compress.h"
 #include "debug.h"
 #include "ec.h"
-#include "enumerated_ref.h"
 #include "errcode.h"
 #include "error.h"
 #include "fs.h"
@@ -63,8 +61,11 @@
 #include "super.h"
 #include "super-io.h"
 #include "sysfs.h"
-#include "thread_with_file.h"
 #include "trace.h"
+
+#include "util/clock.h"
+#include "util/enumerated_ref.h"
+#include "util/thread_with_file.h"
 
 #include <linux/backing-dev.h>
 #include <linux/blkdev.h>

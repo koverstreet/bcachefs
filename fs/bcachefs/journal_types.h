@@ -7,7 +7,7 @@
 
 #include "alloc/types.h"
 #include "super_types.h"
-#include "fifo.h"
+#include "util/fifo.h"
 
 /* btree write buffer steals 8 bits for its own purposes: */
 #define JOURNAL_SEQ_MAX		((1ULL << 56) - 1)
