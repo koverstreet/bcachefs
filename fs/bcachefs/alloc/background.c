@@ -25,8 +25,6 @@
 #include "init/progress.h"
 #include "init/recovery.h"
 
-#include "debug.h"
-
 #include "util/clock.h"
 #include "util/enumerated_ref.h"
 #include "util/varint.h"

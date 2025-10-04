@@ -8,12 +8,11 @@
 #include "btree/locking.h"
 #include "btree/update.h"
 
-#include "journal/journal.h"
-#include "journal/reclaim.h"
-
 #include "init/errcode.h"
 #include "init/error.h"
-#include "trace.h"
+
+#include "journal/journal.h"
+#include "journal/reclaim.h"
 
 #include <linux/sched/mm.h>
 

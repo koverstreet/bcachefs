@@ -14,15 +14,14 @@
 
 #include "data/checksum.h"
 
+#include "init/error.h"
+
 #include "journal/journal.h"
 #include "journal/io.h"
 #include "journal/reclaim.h"
 #include "journal/seq_blacklist.h"
 
 #include "sb/clean.h"
-
-#include "init/error.h"
-#include "trace.h"
 
 #include <linux/ioprio.h>
 #include <linux/string_choices.h>

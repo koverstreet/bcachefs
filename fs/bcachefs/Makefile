@@ -17,7 +17,6 @@ bcachefs-y		:=			\
 	alloc/foreground.o			\
 	alloc/lru.o				\
 	alloc/replicas.o			\
-	async_objs.o				\
 	btree/bkey.o				\
 	btree/bkey_methods.o			\
 	btree/bkey_sort.o			\
@@ -34,7 +33,6 @@ bcachefs-y		:=			\
 	btree/update.o				\
 	btree/interior.o			\
 	btree/write_buffer.o			\
-	debug.o					\
 	data/checksum.o				\
 	data/compress.o				\
 	data/copygc.o				\
@@ -51,6 +49,11 @@ bcachefs-y		:=			\
 	data/reflink.o				\
 	data/update.o				\
 	data/write.o				\
+	debug/async_objs.o			\
+	debug/debug.o				\
+	debug/sysfs.o				\
+	debug/tests.o				\
+	debug/trace.o				\
 	fs/acl.o				\
 	fs/chardev.o				\
 	fs/check.o				\
@@ -82,9 +85,6 @@ bcachefs-y		:=			\
 	sb/errors.o				\
 	sb/io.o					\
 	sb/members.o				\
-	sysfs.o					\
-	tests.o					\
-	trace.o					\
 	util/clock.o				\
 	util/darray.o				\
 	util/enumerated_ref.o			\
