@@ -19,7 +19,7 @@
 #include "bkey_sort.h"
 #include "btree/cache.h"
 #include "btree/check.h"
-#include "btree_journal_iter.h"
+#include "btree/journal_overlay.h"
 #include "btree/key_cache.h"
 #include "btree/node_scan.h"
 #include "btree/interior.h"
