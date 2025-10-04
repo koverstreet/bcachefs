@@ -2,7 +2,7 @@
 #include "bcachefs.h"
 #include "btree/update.h"
 #include "btree/interior.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "debug.h"
 #include "extents.h"
 #include "extent_update.h"

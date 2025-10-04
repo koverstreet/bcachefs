@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
 #include "bbpos.h"
-#include "disk_accounting.h"
+#include "alloc/accounting.h"
 #include "progress.h"
 
 void bch2_progress_init_inner(struct progress_indicator_state *s,

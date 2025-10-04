@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "alloc_foreground.h"
+#include "alloc/foreground.h"
 #include "btree/check.h"
 #include "btree/io.h"
 #include "btree/iter.h"
@@ -9,15 +9,15 @@
 #include "btree/key_cache.h"
 #include "btree/write_buffer.h"
 #include "btree_journal_iter.h"
-#include "buckets.h"
-#include "disk_accounting.h"
+#include "alloc/buckets.h"
+#include "alloc/accounting.h"
 #include "enumerated_ref.h"
 #include "errcode.h"
 #include "error.h"
 #include "journal.h"
 #include "journal_io.h"
 #include "journal_reclaim.h"
-#include "replicas.h"
+#include "alloc/replicas.h"
 #include "snapshot.h"
 
 #include <linux/prefetch.h>

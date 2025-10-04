@@ -5,7 +5,7 @@
 #include "btree/iter.h"
 #include "btree_journal_iter.h"
 #include "btree/locking.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "debug.h"
 #include "errcode.h"
 #include "error.h"

@@ -6,7 +6,7 @@
 #include "btree/interior.h"
 #include "btree/node_scan.h"
 #include "btree_journal_iter.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "error.h"
 #include "journal_io.h"
 #include "recovery_passes.h"

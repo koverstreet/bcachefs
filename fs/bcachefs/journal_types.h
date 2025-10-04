@@ -5,7 +5,7 @@
 #include <linux/cache.h>
 #include <linux/workqueue.h>
 
-#include "alloc_types.h"
+#include "alloc/types.h"
 #include "super_types.h"
 #include "fifo.h"
 

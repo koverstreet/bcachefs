@@ -8,7 +8,7 @@
 #ifndef _BUCKETS_H
 #define _BUCKETS_H
 
-#include "buckets_types.h"
+#include "alloc/buckets_types.h"
 #include "extents.h"
 #include "sb-members.h"
 

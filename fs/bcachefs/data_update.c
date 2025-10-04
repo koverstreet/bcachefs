@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "alloc_foreground.h"
+#include "alloc/foreground.h"
 #include "bkey_buf.h"
 #include "btree/update.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "compress.h"
 #include "data_update.h"
-#include "disk_groups.h"
+#include "alloc/disk_groups.h"
 #include "ec.h"
 #include "error.h"
 #include "extents.h"
@@ -899,7 +899,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 
 		/*
 		 * If current extent durability is less than io_opts.data_replicas,
-		 * we're not trying to rereplicate the extent up to data_replicas here -
+		 * we're not trying to rereplicate the extent up to data_alloc/replicas.here -
 		 * unless extra_replicas was specified
 		 *
 		 * Increasing replication is an explicit operation triggered by

@@ -5,7 +5,7 @@
 
 #include "bcachefs.h"
 #include "compress.h"
-#include "disk_groups.h"
+#include "alloc/disk_groups.h"
 #include "error.h"
 #include "movinggc.h"
 #include "opts.h"

@@ -3,7 +3,7 @@
 #define _BCACHEFS_EC_H
 
 #include "ec_types.h"
-#include "buckets_types.h"
+#include "alloc/buckets_types.h"
 #include "extents_types.h"
 
 int bch2_stripe_validate(struct bch_fs *, struct bkey_s_c,

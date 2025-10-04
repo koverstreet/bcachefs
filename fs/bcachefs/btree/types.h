@@ -7,11 +7,11 @@
 
 #include "bbpos_types.h"
 #include "btree/key_cache_types.h"
-#include "buckets_types.h"
+#include "alloc/buckets_types.h"
 #include "darray.h"
 #include "errcode.h"
 #include "journal_types.h"
-#include "replicas_types.h"
+#include "alloc/replicas_types.h"
 #include "six.h"
 
 struct open_bucket;

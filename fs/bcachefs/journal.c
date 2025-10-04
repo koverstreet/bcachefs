@@ -6,12 +6,12 @@
  */
 
 #include "bcachefs.h"
-#include "alloc_foreground.h"
+#include "alloc/foreground.h"
 #include "bkey_methods.h"
 #include "btree/check.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "enumerated_ref.h"
 #include "error.h"
 #include "journal.h"

@@ -2,10 +2,10 @@
 #ifndef NO_BCACHEFS_FS
 
 #include "bcachefs.h"
-#include "alloc_foreground.h"
+#include "alloc/foreground.h"
 #include "bkey_buf.h"
 #include "btree/update.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "clock.h"
 #include "enumerated_ref.h"
 #include "error.h"

@@ -6,14 +6,14 @@
  */
 
 #include "bcachefs.h"
-#include "alloc_background.h"
-#include "backpointers.h"
+#include "alloc/background.h"
+#include "alloc/backpointers.h"
 #include "bset.h"
 #include "btree/check.h"
 #include "btree/update.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "buckets_waiting_for_journal.h"
-#include "disk_accounting.h"
+#include "alloc/accounting.h"
 #include "ec.h"
 #include "error.h"
 #include "inode.h"
@@ -22,7 +22,7 @@
 #include "recovery.h"
 #include "recovery_passes.h"
 #include "reflink.h"
-#include "replicas.h"
+#include "alloc/replicas.h"
 #include "subvolume.h"
 #include "trace.h"
 

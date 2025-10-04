@@ -5,7 +5,7 @@
 #include "bkey_buf.h"
 #include "btree/cache.h"
 #include "btree/update.h"
-#include "buckets.h"
+#include "alloc/buckets.h"
 #include "darray.h"
 #include "dirent.h"
 #include "error.h"
@@ -2738,7 +2738,7 @@ static int check_path_loop(struct btree_trans *trans, struct bkey_s_c inode_k)
 
 	/*
 	 * If we're running full fsck, check_dirents() will have already ran,
-	 * and we shouldn't see any missing backpointers here - otherwise that's
+	 * and we shouldn't see any missing alloc/backpointers.here - otherwise that's
 	 * handled separately, by check_unreachable_inodes
 	 */
 	while (!inode.bi_subvol &&
