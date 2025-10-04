@@ -7,7 +7,7 @@
  */
 
 #include "bcachefs.h"
-#include "btree_cache.h"
+#include "btree/cache.h"
 #include "bset.h"
 #include "eytzinger.h"
 #include "trace.h"

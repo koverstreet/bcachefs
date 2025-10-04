@@ -2,9 +2,9 @@
 #ifndef _BCACHEFS_BTREE_UPDATE_INTERIOR_H
 #define _BCACHEFS_BTREE_UPDATE_INTERIOR_H
 
-#include "btree_cache.h"
-#include "btree_locking.h"
-#include "btree_update.h"
+#include "btree/cache.h"
+#include "btree/locking.h"
+#include "btree/update.h"
 
 #define BTREE_UPDATE_NODES_MAX		((BTREE_MAX_DEPTH - 2) * 2 + GC_MERGE_NODES)
 

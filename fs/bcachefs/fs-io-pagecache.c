@@ -2,7 +2,7 @@
 #ifndef NO_BCACHEFS_FS
 
 #include "bcachefs.h"
-#include "btree_iter.h"
+#include "btree/iter.h"
 #include "extents.h"
 #include "fs-io.h"
 #include "fs-io-pagecache.h"

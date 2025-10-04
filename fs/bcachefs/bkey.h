@@ -5,7 +5,7 @@
 #include <linux/bug.h>
 #include "bcachefs_format.h"
 #include "bkey_types.h"
-#include "btree_types.h"
+#include "btree/types.h"
 #include "util.h"
 #include "vstructs.h"
 

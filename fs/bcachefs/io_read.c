@@ -10,7 +10,7 @@
 #include "alloc_background.h"
 #include "alloc_foreground.h"
 #include "async_objs.h"
-#include "btree_update.h"
+#include "btree/update.h"
 #include "buckets.h"
 #include "checksum.h"
 #include "clock.h"

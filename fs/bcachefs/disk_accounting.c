@@ -2,10 +2,10 @@
 
 #include "bcachefs.h"
 #include "bcachefs_ioctl.h"
-#include "btree_cache.h"
+#include "btree/cache.h"
 #include "btree_journal_iter.h"
-#include "btree_update.h"
-#include "btree_write_buffer.h"
+#include "btree/update.h"
+#include "btree/write_buffer.h"
 #include "buckets.h"
 #include "compress.h"
 #include "disk_accounting.h"

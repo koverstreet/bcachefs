@@ -8,7 +8,7 @@
 #include "bcachefs.h"
 #include "bkey.h"
 #include "bkey_methods.h"
-#include "btree_types.h"
+#include "btree/types.h"
 #include "util.h" /* for time_stats */
 #include "vstructs.h"
 

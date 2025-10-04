@@ -3,7 +3,7 @@
 #include "bcachefs.h"
 #include "alloc_foreground.h"
 #include "bkey_buf.h"
-#include "btree_update.h"
+#include "btree/update.h"
 #include "buckets.h"
 #include "compress.h"
 #include "data_update.h"

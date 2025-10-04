@@ -3,7 +3,7 @@
 #include "bcachefs.h"
 #include "acl.h"
 #include "bkey_methods.h"
-#include "btree_update.h"
+#include "btree/update.h"
 #include "dirent.h"
 #include "extents.h"
 #include "fs.h"

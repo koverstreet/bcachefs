@@ -9,7 +9,7 @@
 #include "async_objs.h"
 #include "bkey_buf.h"
 #include "bset.h"
-#include "btree_update.h"
+#include "btree/update.h"
 #include "buckets.h"
 #include "checksum.h"
 #include "clock.h"
