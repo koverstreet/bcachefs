@@ -367,7 +367,7 @@ config ASSOCIATIVE_ARRAY
 	  for more information.
 
 config CLOSURES
-	bool
+	bool "bcache/bcachefs async widgets"
 
 config HAS_IOMEM
 	bool
@@ -646,4 +646,4 @@ config UNION_FIND
 	bool
 
 config MIN_HEAP
-	bool
+	bool "Generic minheap algorithm"
