@@ -44,6 +44,8 @@ static inline const struct snapshot_t *snapshot_t(struct bch_fs *c, u32 id)
 	return __snapshot_t(rcu_dereference(c->snapshots), id);
 }
 
+struct snapshot_t *bch2_snapshot_t_mut(struct bch_fs *, u32);
+
 static inline u32 bch2_snapshot_tree(struct bch_fs *c, u32 id)
 {
 	guard(rcu)();
@@ -177,6 +179,8 @@ static inline bool bch2_snapshot_is_ancestor(struct bch_fs *c, u32 id, u32 ances
 		: __bch2_snapshot_is_ancestor(c, id, ancestor);
 }
 
+bool bch2_snapshot_is_ancestor_early(struct bch_fs *, u32, u32);
+
 static inline bool bch2_snapshot_has_children(struct bch_fs *c, u32 id)
 {
 	guard(rcu)();
@@ -226,6 +230,8 @@ static inline int snapshot_list_merge(struct bch_fs *c, snapshot_id_list *dst, s
 
 	return 0;
 }
+
+u32 bch2_snapshot_tree_next(struct snapshot_table *, u32);
 
 int bch2_snapshot_lookup(struct btree_trans *trans, u32 id,
 			 struct bch_snapshot *s);
