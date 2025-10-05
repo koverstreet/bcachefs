@@ -8,8 +8,6 @@
 #include "btree/cache.h"
 #include "btree/update.h"
 
-#include "data/io_misc.h"
-
 #include "fs/dirent.h"
 #include "fs/check.h"
 #include "fs/inode.h"
@@ -38,27 +36,6 @@ void bch2_dirent_inode_mismatch_msg(struct printbuf *out, struct bch_fs *c,
 	bch2_bkey_val_to_text(out, c, dirent.s_c);
 	prt_newline(out);
 	bch2_inode_unpacked_to_text(out, inode);
-}
-
-/*
- * XXX: this is handling transaction restarts without returning
- * -BCH_ERR_transaction_restart_nested, this is not how we do things anymore:
- */
-static s64 bch2_count_inode_sectors(struct btree_trans *trans, u64 inum,
-				    u32 snapshot)
-{
-	u64 sectors = 0;
-
-	int ret = for_each_btree_key_max(trans, iter, BTREE_ID_extents,
-				SPOS(inum, 0, snapshot),
-				POS(inum, U64_MAX),
-				0, k, ({
-		if (bkey_extent_is_allocation(k.k))
-			sectors += k.k->size;
-		0;
-	}));
-
-	return ret ?: sectors;
 }
 
 static s64 bch2_count_subdirs(struct btree_trans *trans, u64 inum,
@@ -582,23 +559,6 @@ static int reconstruct_inode(struct btree_trans *trans, enum btree_id btree, u32
 	return __bch2_fsck_write_inode(trans, &new_inode);
 }
 
-static int snapshots_seen_add_inorder(struct bch_fs *c, struct snapshots_seen *s, u32 id)
-{
-	u32 *i;
-	__darray_for_each(s->ids, i) {
-		if (*i == id)
-			return 0;
-		if (*i > id)
-			break;
-	}
-
-	int ret = darray_insert_item(&s->ids, i - s->ids.data, id);
-	if (ret)
-		bch_err(c, "error reallocating snapshots_seen table (size %zu)",
-			s->ids.size);
-	return ret;
-}
-
 int bch2_snapshots_seen_update(struct bch_fs *c, struct snapshots_seen *s,
 			       enum btree_id btree_id, struct bpos pos)
 {
@@ -610,7 +570,7 @@ int bch2_snapshots_seen_update(struct bch_fs *c, struct snapshots_seen *s,
 }
 
 /**
- * key_visible_in_snapshot - returns true if @id is a descendent of @ancestor,
+ * bch2_key_visible_in_snapshot - returns true if @id is a descendent of @ancestor,
  * and @ancestor hasn't been overwritten in @seen
  *
  * @c:		filesystem handle
@@ -620,8 +580,8 @@ int bch2_snapshots_seen_update(struct bch_fs *c, struct snapshots_seen *s,
  *
  * Returns:	whether key in @ancestor snapshot is visible in @id snapshot
  */
-static bool key_visible_in_snapshot(struct bch_fs *c, struct snapshots_seen *seen,
-				    u32 id, u32 ancestor)
+bool bch2_key_visible_in_snapshot(struct bch_fs *c, struct snapshots_seen *seen,
+				  u32 id, u32 ancestor)
 {
 	EBUG_ON(id > ancestor);
 
@@ -663,57 +623,25 @@ static bool key_visible_in_snapshot(struct bch_fs *c, struct snapshots_seen *see
 bool bch2_ref_visible(struct bch_fs *c, struct snapshots_seen *s, u32 src, u32 dst)
 {
 	return dst <= src
-		? key_visible_in_snapshot(c, s, dst, src)
+		? bch2_key_visible_in_snapshot(c, s, dst, src)
 		: bch2_snapshot_is_ancestor(c, src, dst);
 }
 
-static int ref_visible2(struct bch_fs *c,
-			u32 src, struct snapshots_seen *src_seen,
-			u32 dst, struct snapshots_seen *dst_seen)
+int bch2_ref_visible2(struct bch_fs *c,
+		      u32 src, struct snapshots_seen *src_seen,
+		      u32 dst, struct snapshots_seen *dst_seen)
 {
 	if (dst > src) {
 		swap(dst, src);
 		swap(dst_seen, src_seen);
 	}
-	return key_visible_in_snapshot(c, src_seen, dst, src);
+	return bch2_key_visible_in_snapshot(c, src_seen, dst, src);
 }
 
 #define for_each_visible_inode(_c, _s, _w, _snapshot, _i)				\
 	for (_i = (_w)->inodes.data; _i < (_w)->inodes.data + (_w)->inodes.nr &&	\
 	     (_i)->inode.bi_snapshot <= (_snapshot); _i++)				\
-		if (key_visible_in_snapshot(_c, _s, _i->inode.bi_snapshot, _snapshot))
-
-struct inode_walker_entry {
-	struct bch_inode_unpacked inode;
-	bool			whiteout;
-	u64			count;
-	u64			i_size;
-};
-
-struct inode_walker {
-	bool				first_this_inode;
-	bool				have_inodes;
-	bool				recalculate_sums;
-	struct bpos			last_pos;
-
-	DARRAY(struct inode_walker_entry) inodes;
-	snapshot_id_list		deletes;
-};
-
-static void inode_walker_exit(struct inode_walker *w)
-{
-	darray_exit(&w->inodes);
-	darray_exit(&w->deletes);
-}
-
-static struct inode_walker inode_walker_init(void)
-{
-	return (struct inode_walker) {};
-}
-
-DEFINE_CLASS(inode_walker, struct inode_walker,
-	     inode_walker_exit(&_T),
-	     inode_walker_init(), void)
+		if (bch2_key_visible_in_snapshot(_c, _s, _i->inode.bi_snapshot, _snapshot))
 
 static int add_inode(struct bch_fs *c, struct inode_walker *w,
 		     struct bkey_s_c inode)
@@ -866,9 +794,9 @@ fsck_err:
 	return ERR_PTR(ret);
 }
 
-static struct inode_walker_entry *walk_inode(struct btree_trans *trans,
-					     struct inode_walker *w,
-					     struct bkey_s_c k)
+struct inode_walker_entry *bch2_walk_inode(struct btree_trans *trans,
+					   struct inode_walker *w,
+					   struct bkey_s_c k)
 {
 	if (w->last_pos.inode != k.k->p.inode) {
 		int ret = get_inodes_all_snapshots(trans, w, k.k->p.inode);
@@ -1339,11 +1267,11 @@ static inline bool btree_matches_i_mode(enum btree_id btree, unsigned mode)
 	}
 }
 
-static int check_key_has_inode(struct btree_trans *trans,
-			       struct btree_iter *iter,
-			       struct inode_walker *inode,
-			       struct inode_walker_entry *i,
-			       struct bkey_s_c k)
+int bch2_check_key_has_inode(struct btree_trans *trans,
+			     struct btree_iter *iter,
+			     struct inode_walker *inode,
+			     struct inode_walker_entry *i,
+			     struct bkey_s_c k)
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
@@ -1495,464 +1423,6 @@ static int maybe_reconstruct_inum(struct btree_trans *trans,
 {
 	return  maybe_reconstruct_inum_btree(trans, inum, snapshot, BTREE_ID_extents) ?:
 		maybe_reconstruct_inum_btree(trans, inum, snapshot, BTREE_ID_dirents);
-}
-
-static int check_i_sectors_notnested(struct btree_trans *trans, struct inode_walker *w)
-{
-	struct bch_fs *c = trans->c;
-	int ret = 0;
-	s64 count2;
-
-	darray_for_each(w->inodes, i) {
-		if (i->inode.bi_sectors == i->count)
-			continue;
-
-		CLASS(printbuf, buf)();
-		lockrestart_do(trans,
-			bch2_inum_snapshot_to_path(trans,
-						   i->inode.bi_inum,
-						   i->inode.bi_snapshot, NULL, &buf));
-
-		count2 = bch2_count_inode_sectors(trans, w->last_pos.inode, i->inode.bi_snapshot);
-
-		if (w->recalculate_sums)
-			i->count = count2;
-
-		if (i->count != count2) {
-			bch_err_ratelimited(c, "fsck counted i_sectors wrong: got %llu should be %llu\n%s",
-					    i->count, count2, buf.buf);
-			i->count = count2;
-		}
-
-		if (fsck_err_on(!(i->inode.bi_flags & BCH_INODE_i_sectors_dirty) &&
-				i->inode.bi_sectors != i->count,
-				trans, inode_i_sectors_wrong,
-				"incorrect i_sectors: got %llu, should be %llu\n%s",
-				i->inode.bi_sectors, i->count, buf.buf)) {
-			i->inode.bi_sectors = i->count;
-			ret = bch2_fsck_write_inode(trans, &i->inode);
-			if (ret)
-				break;
-		}
-	}
-fsck_err:
-	bch_err_fn(c, ret);
-	return ret;
-}
-
-static int check_i_sectors(struct btree_trans *trans, struct inode_walker *w)
-{
-	u32 restart_count = trans->restart_count;
-	return check_i_sectors_notnested(trans, w) ?:
-		trans_was_restarted(trans, restart_count);
-}
-
-struct extent_end {
-	u32			snapshot;
-	u64			offset;
-	struct snapshots_seen	seen;
-};
-
-struct extent_ends {
-	struct bpos			last_pos;
-	DARRAY(struct extent_end)	e;
-};
-
-static void extent_ends_reset(struct extent_ends *extent_ends)
-{
-	darray_for_each(extent_ends->e, i)
-		snapshots_seen_exit(&i->seen);
-	extent_ends->e.nr = 0;
-}
-
-static void extent_ends_exit(struct extent_ends *extent_ends)
-{
-	extent_ends_reset(extent_ends);
-	darray_exit(&extent_ends->e);
-}
-
-static struct extent_ends extent_ends_init(void)
-{
-	return (struct extent_ends) {};
-}
-
-DEFINE_CLASS(extent_ends, struct extent_ends,
-	     extent_ends_exit(&_T),
-	     extent_ends_init(), void)
-
-static int extent_ends_at(struct bch_fs *c,
-			  struct extent_ends *extent_ends,
-			  struct snapshots_seen *seen,
-			  struct bkey_s_c k)
-{
-	struct extent_end *i, n = (struct extent_end) {
-		.offset		= k.k->p.offset,
-		.snapshot	= k.k->p.snapshot,
-		.seen		= *seen,
-	};
-
-	n.seen.ids.data = kmemdup(seen->ids.data,
-			      sizeof(seen->ids.data[0]) * seen->ids.size,
-			      GFP_KERNEL);
-	if (!n.seen.ids.data)
-		return bch_err_throw(c, ENOMEM_fsck_extent_ends_at);
-
-	__darray_for_each(extent_ends->e, i) {
-		if (i->snapshot == k.k->p.snapshot) {
-			snapshots_seen_exit(&i->seen);
-			*i = n;
-			return 0;
-		}
-
-		if (i->snapshot >= k.k->p.snapshot)
-			break;
-	}
-
-	return darray_insert_item(&extent_ends->e, i - extent_ends->e.data, n);
-}
-
-static int overlapping_extents_found(struct btree_trans *trans,
-				     enum btree_id btree,
-				     struct bpos pos1, struct snapshots_seen *pos1_seen,
-				     struct bkey pos2,
-				     bool *fixed,
-				     struct extent_end *extent_end)
-{
-	struct bch_fs *c = trans->c;
-	CLASS(printbuf, buf)();
-	struct btree_iter iter2 = {};
-	struct bkey_s_c k1, k2;
-	int ret;
-
-	BUG_ON(bkey_le(pos1, bkey_start_pos(&pos2)));
-
-	CLASS(btree_iter, iter1)(trans, btree, pos1,
-				 BTREE_ITER_all_snapshots|
-				 BTREE_ITER_not_extents);
-	k1 = bch2_btree_iter_peek_max(&iter1, POS(pos1.inode, U64_MAX));
-	ret = bkey_err(k1);
-	if (ret)
-		goto err;
-
-	prt_newline(&buf);
-	bch2_bkey_val_to_text(&buf, c, k1);
-
-	if (!bpos_eq(pos1, k1.k->p)) {
-		prt_str(&buf, "\nwanted\n  ");
-		bch2_bpos_to_text(&buf, pos1);
-		prt_str(&buf, "\n");
-		bch2_bkey_to_text(&buf, &pos2);
-
-		bch_err(c, "%s: error finding first overlapping extent when repairing, got%s",
-			__func__, buf.buf);
-		ret = bch_err_throw(c, internal_fsck_err);
-		goto err;
-	}
-
-	bch2_trans_copy_iter(&iter2, &iter1);
-
-	while (1) {
-		bch2_btree_iter_advance(&iter2);
-
-		k2 = bch2_btree_iter_peek_max(&iter2, POS(pos1.inode, U64_MAX));
-		ret = bkey_err(k2);
-		if (ret)
-			goto err;
-
-		if (bpos_ge(k2.k->p, pos2.p))
-			break;
-	}
-
-	prt_newline(&buf);
-	bch2_bkey_val_to_text(&buf, c, k2);
-
-	if (bpos_gt(k2.k->p, pos2.p) ||
-	    pos2.size != k2.k->size) {
-		bch_err(c, "%s: error finding seconding overlapping extent when repairing%s",
-			__func__, buf.buf);
-		ret = bch_err_throw(c, internal_fsck_err);
-		goto err;
-	}
-
-	prt_printf(&buf, "\noverwriting %s extent",
-		   pos1.snapshot >= pos2.p.snapshot ? "first" : "second");
-
-	if (fsck_err(trans, extent_overlapping,
-		     "overlapping extents%s", buf.buf)) {
-		struct btree_iter *old_iter = &iter1;
-		struct disk_reservation res = { 0 };
-
-		if (pos1.snapshot < pos2.p.snapshot) {
-			old_iter = &iter2;
-			swap(k1, k2);
-		}
-
-		trans->extra_disk_res += bch2_bkey_sectors_compressed(k2);
-
-		ret =   bch2_trans_update_extent_overwrite(trans, old_iter,
-				BTREE_UPDATE_internal_snapshot_node,
-				k1, k2) ?:
-			bch2_trans_commit(trans, &res, NULL, BCH_TRANS_COMMIT_no_enospc);
-		bch2_disk_reservation_put(c, &res);
-
-		bch_info(c, "repair ret %s", bch2_err_str(ret));
-
-		if (ret)
-			goto err;
-
-		*fixed = true;
-
-		if (pos1.snapshot == pos2.p.snapshot) {
-			/*
-			 * We overwrote the first extent, and did the overwrite
-			 * in the same snapshot:
-			 */
-			extent_end->offset = bkey_start_offset(&pos2);
-		} else if (pos1.snapshot > pos2.p.snapshot) {
-			/*
-			 * We overwrote the first extent in pos2's snapshot:
-			 */
-			ret = snapshots_seen_add_inorder(c, pos1_seen, pos2.p.snapshot);
-		} else {
-			/*
-			 * We overwrote the second extent - restart
-			 * check_extent() from the top:
-			 */
-			ret = bch_err_throw(c, transaction_restart_nested);
-		}
-	}
-fsck_err:
-err:
-	bch2_trans_iter_exit(&iter2);
-	return ret;
-}
-
-static int check_overlapping_extents(struct btree_trans *trans,
-			      struct snapshots_seen *seen,
-			      struct extent_ends *extent_ends,
-			      struct bkey_s_c k,
-			      struct btree_iter *iter,
-			      bool *fixed)
-{
-	struct bch_fs *c = trans->c;
-	int ret = 0;
-
-	/* transaction restart, running again */
-	if (bpos_eq(extent_ends->last_pos, k.k->p))
-		return 0;
-
-	if (extent_ends->last_pos.inode != k.k->p.inode)
-		extent_ends_reset(extent_ends);
-
-	darray_for_each(extent_ends->e, i) {
-		if (i->offset <= bkey_start_offset(k.k))
-			continue;
-
-		if (!ref_visible2(c,
-				  k.k->p.snapshot, seen,
-				  i->snapshot, &i->seen))
-			continue;
-
-		ret = overlapping_extents_found(trans, iter->btree_id,
-						SPOS(iter->pos.inode,
-						     i->offset,
-						     i->snapshot),
-						&i->seen,
-						*k.k, fixed, i);
-		if (ret)
-			goto err;
-	}
-
-	extent_ends->last_pos = k.k->p;
-err:
-	return ret;
-}
-
-static int check_extent_overbig(struct btree_trans *trans, struct btree_iter *iter,
-				struct bkey_s_c k)
-{
-	struct bch_fs *c = trans->c;
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	struct bch_extent_crc_unpacked crc;
-	const union bch_extent_entry *i;
-	unsigned encoded_extent_max_sectors = c->opts.encoded_extent_max >> 9;
-
-	bkey_for_each_crc(k.k, ptrs, crc, i)
-		if (crc_is_encoded(crc) &&
-		    crc.uncompressed_size > encoded_extent_max_sectors) {
-			CLASS(printbuf, buf)();
-
-			bch2_bkey_val_to_text(&buf, c, k);
-			bch_err(c, "overbig encoded extent, please report this:\n  %s", buf.buf);
-		}
-
-	return 0;
-}
-
-noinline_for_stack
-static int check_extent(struct btree_trans *trans, struct btree_iter *iter,
-			struct bkey_s_c k,
-			struct inode_walker *inode,
-			struct snapshots_seen *s,
-			struct extent_ends *extent_ends,
-			struct disk_reservation *res)
-{
-	struct bch_fs *c = trans->c;
-	CLASS(printbuf, buf)();
-	int ret = 0;
-
-	ret = bch2_check_key_has_snapshot(trans, iter, k);
-	if (ret) {
-		ret = ret < 0 ? ret : 0;
-		goto out;
-	}
-
-	if (inode->last_pos.inode != k.k->p.inode && inode->have_inodes) {
-		ret = check_i_sectors(trans, inode);
-		if (ret)
-			goto err;
-	}
-
-	ret = bch2_snapshots_seen_update(c, s, iter->btree_id, k.k->p);
-	if (ret)
-		goto err;
-
-	struct inode_walker_entry *extent_i = walk_inode(trans, inode, k);
-	ret = PTR_ERR_OR_ZERO(extent_i);
-	if (ret)
-		goto err;
-
-	ret = check_key_has_inode(trans, iter, inode, extent_i, k);
-	if (ret)
-		goto err;
-
-	if (k.k->type != KEY_TYPE_whiteout) {
-		ret = check_overlapping_extents(trans, s, extent_ends, k, iter,
-						&inode->recalculate_sums);
-		if (ret)
-			goto err;
-	}
-
-	if (!bkey_extent_whiteout(k.k)) {
-		/*
-		 * Check inodes in reverse order, from oldest snapshots to
-		 * newest, starting from the inode that matches this extent's
-		 * snapshot. If we didn't have one, iterate over all inodes:
-		 */
-		for (struct inode_walker_entry *i = extent_i ?: &darray_last(inode->inodes);
-		     inode->inodes.data && i >= inode->inodes.data;
-		     --i) {
-			if (i->inode.bi_snapshot > k.k->p.snapshot ||
-			    !key_visible_in_snapshot(c, s, i->inode.bi_snapshot, k.k->p.snapshot))
-				continue;
-
-			u64 last_block = round_up(i->inode.bi_size, block_bytes(c)) >> 9;
-
-			if (fsck_err_on(k.k->p.offset > last_block &&
-					!bkey_extent_is_reservation(k),
-					trans, extent_past_end_of_inode,
-					"extent type past end of inode %llu:%u, i_size %llu\n%s",
-					i->inode.bi_inum, i->inode.bi_snapshot, i->inode.bi_size,
-					(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
-				ret =   snapshots_seen_add_inorder(c, s, i->inode.bi_snapshot) ?:
-					bch2_fpunch_snapshot(trans,
-							     SPOS(i->inode.bi_inum,
-								  last_block,
-								  i->inode.bi_snapshot),
-							     POS(i->inode.bi_inum, U64_MAX));
-				if (ret)
-					goto err;
-
-				iter->k.type = KEY_TYPE_whiteout;
-				break;
-			}
-		}
-	}
-
-	ret = check_extent_overbig(trans, iter, k) ?:
-		bch2_bkey_drop_stale_ptrs(trans, iter, k);
-	if (ret)
-		goto err;
-
-	ret = bch2_trans_commit(trans, res, NULL, BCH_TRANS_COMMIT_no_enospc);
-	if (ret)
-		goto err;
-
-	if (bkey_extent_is_allocation(k.k)) {
-		for (struct inode_walker_entry *i = extent_i ?: &darray_last(inode->inodes);
-		     inode->inodes.data && i >= inode->inodes.data;
-		     --i) {
-			if (i->whiteout ||
-			    i->inode.bi_snapshot > k.k->p.snapshot ||
-			    !key_visible_in_snapshot(c, s, i->inode.bi_snapshot, k.k->p.snapshot))
-				continue;
-
-			i->count += k.k->size;
-		}
-	}
-
-	if (k.k->type != KEY_TYPE_whiteout) {
-		ret = extent_ends_at(c, extent_ends, s, k);
-		if (ret)
-			goto err;
-	}
-out:
-err:
-fsck_err:
-	bch_err_fn(c, ret);
-	return ret;
-}
-
-/*
- * Walk extents: verify that extents have a corresponding S_ISREG inode, and
- * that i_size an i_sectors are consistent
- */
-int bch2_check_extents(struct bch_fs *c)
-{
-	struct disk_reservation res = { 0 };
-
-	CLASS(btree_trans, trans)(c);
-	CLASS(snapshots_seen, s)();
-	CLASS(inode_walker, w)();
-	CLASS(extent_ends, extent_ends)();
-
-	struct progress_indicator_state progress;
-	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_extents));
-
-	int ret = for_each_btree_key(trans, iter, BTREE_ID_extents,
-				POS(BCACHEFS_ROOT_INO, 0),
-				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k, ({
-			progress_update_iter(trans, &progress, &iter);
-			bch2_disk_reservation_put(c, &res);
-			check_extent(trans, &iter, k, &w, &s, &extent_ends, &res);
-		})) ?:
-		check_i_sectors_notnested(trans, &w);
-
-	bch2_disk_reservation_put(c, &res);
-	return ret;
-}
-
-int bch2_check_indirect_extents(struct bch_fs *c)
-{
-	CLASS(btree_trans, trans)(c);
-	struct disk_reservation res = { 0 };
-
-	struct progress_indicator_state progress;
-	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_reflink));
-
-	int ret = for_each_btree_key_commit(trans, iter, BTREE_ID_reflink,
-				POS_MIN,
-				BTREE_ITER_prefetch, k,
-				&res, NULL,
-				BCH_TRANS_COMMIT_no_enospc, ({
-			progress_update_iter(trans, &progress, &iter);
-			bch2_disk_reservation_put(c, &res);
-			check_extent_overbig(trans, &iter, k) ?:
-			bch2_bkey_drop_stale_ptrs(trans, &iter, k);
-		}));
-
-	bch2_disk_reservation_put(c, &res);
-	return ret;
 }
 
 static int check_subdir_count_notnested(struct btree_trans *trans, struct inode_walker *w)
@@ -2195,12 +1665,12 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 			return ret;
 	}
 
-	i = walk_inode(trans, dir, k);
+	i = bch2_walk_inode(trans, dir, k);
 	ret = PTR_ERR_OR_ZERO(i);
 	if (ret)
 		return ret;
 
-	ret = check_key_has_inode(trans, iter, dir, i, k);
+	ret = bch2_check_key_has_inode(trans, iter, dir, i, k);
 	if (ret)
 		return ret;
 
@@ -2390,12 +1860,12 @@ static int check_xattr(struct btree_trans *trans, struct btree_iter *iter,
 	if (ret)
 		return 0;
 
-	struct inode_walker_entry *i = walk_inode(trans, inode, k);
+	struct inode_walker_entry *i = bch2_walk_inode(trans, inode, k);
 	ret = PTR_ERR_OR_ZERO(i);
 	if (ret)
 		return ret;
 
-	ret = check_key_has_inode(trans, iter, inode, i, k);
+	ret = bch2_check_key_has_inode(trans, iter, inode, i, k);
 	if (ret)
 		return ret;
 
