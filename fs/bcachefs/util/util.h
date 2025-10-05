@@ -793,4 +793,12 @@ do {									\
 		return _ret;						\
 } while (0)
 
+#define errptr_try(_do)							\
+({									\
+	typeof(_do) _ret = (_do);					\
+	if (IS_ERR(_ret))						\
+		return PTR_ERR(_ret);					\
+	_ret;								\
+})
+
 #endif /* _BCACHEFS_UTIL_H */

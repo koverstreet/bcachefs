@@ -160,10 +160,8 @@ void bch2_indirect_inline_data_to_text(struct printbuf *out,
 static int bch2_indirect_extent_not_missing(struct btree_trans *trans, struct bkey_s_c_reflink_p p,
 					    bool should_commit)
 {
-	struct bkey_i_reflink_p *new = bch2_bkey_make_mut_noupdate_typed(trans, p.s_c, reflink_p);
-	int ret = PTR_ERR_OR_ZERO(new);
-	if (ret)
-		return ret;
+	struct bkey_i_reflink_p *new =
+		errptr_try(bch2_bkey_make_mut_noupdate_typed(trans, p.s_c, reflink_p));
 
 	SET_REFLINK_P_ERROR(&new->v, false);
 	try(bch2_btree_insert_trans(trans, BTREE_ID_extents, &new->k_i, BTREE_TRIGGER_norun));
@@ -207,10 +205,8 @@ static int bch2_indirect_extent_missing_error(struct btree_trans *trans,
 		   missing_start, missing_end);
 
 	if (fsck_err(trans, reflink_p_to_missing_reflink_v, "%s", buf.buf)) {
-		struct bkey_i_reflink_p *new = bch2_bkey_make_mut_noupdate_typed(trans, p.s_c, reflink_p);
-		ret = PTR_ERR_OR_ZERO(new);
-		if (ret)
-			return ret;
+		struct bkey_i_reflink_p *new =
+			errptr_try(bch2_bkey_make_mut_noupdate_typed(trans, p.s_c, reflink_p));
 
 		/*
 		 * Is the missing range not actually needed?
@@ -505,10 +501,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	if (bkey_ge(reflink_iter.pos, POS(0, REFLINK_P_IDX_MAX - orig->k.size)))
 		return -ENOSPC;
 
-	struct bkey_i *r_v = bch2_trans_kmalloc(trans, sizeof(__le64) + bkey_bytes(&orig->k));
-	int ret = PTR_ERR_OR_ZERO(r_v);
-	if (ret)
-		return ret;
+	struct bkey_i *r_v = errptr_try(bch2_trans_kmalloc(trans, sizeof(__le64) + bkey_bytes(&orig->k)));
 
 	bkey_init(&r_v->k);
 	r_v->k.type	= bkey_type_to_indirect(&orig->k);
@@ -772,10 +765,7 @@ static int bch2_gc_write_reflink_key(struct btree_trans *trans,
 			"should be %u",
 			(bch2_bkey_val_to_text(&buf, c, k), buf.buf),
 			r->refcount)) {
-		struct bkey_i *new = bch2_bkey_make_mut_noupdate(trans, k);
-		ret = PTR_ERR_OR_ZERO(new);
-		if (ret)
-			return ret;
+		struct bkey_i *new = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
 
 		if (!r->refcount)
 			new->k.type = KEY_TYPE_deleted;

@@ -1216,10 +1216,7 @@ int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
 	unsigned write_points_nr;
 	int i;
 
-	struct alloc_request *req = bch2_trans_kmalloc_nomemzero(trans, sizeof(*req));
-	int ret = PTR_ERR_OR_ZERO(req);
-	if (unlikely(ret))
-		return ret;
+	struct alloc_request *req = errptr_try(bch2_trans_kmalloc_nomemzero(trans, sizeof(*req)));
 
 	if (!IS_ENABLED(CONFIG_BCACHEFS_ERASURE_CODING))
 		erasure_code = false;
@@ -1242,7 +1239,7 @@ retry:
 
 	req->data_type		= req->wp->data_type;
 
-	ret = bch2_trans_relock(trans);
+	int ret = bch2_trans_relock(trans);
 	if (ret)
 		goto err;
 

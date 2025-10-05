@@ -708,10 +708,7 @@ fsck_err:
 static noinline int bch2_bucket_gen_update(struct btree_trans *trans,
 					   struct bpos bucket, u8 gen)
 {
-	struct bkey_i_bucket_gens *g = bch2_trans_kmalloc(trans, sizeof(*g));
-	int ret = PTR_ERR_OR_ZERO(g);
-	if (ret)
-		return ret;
+	struct bkey_i_bucket_gens *g = errptr_try(bch2_trans_kmalloc(trans, sizeof(*g)));
 
 	unsigned offset;
 	struct bpos pos = alloc_gens_pos(bucket, &offset);
@@ -729,9 +726,7 @@ static noinline int bch2_bucket_gen_update(struct btree_trans *trans,
 
 	g->v.gens[offset] = gen;
 
-	ret = bch2_trans_update(trans, &iter, &g->k_i, 0);
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return bch2_trans_update(trans, &iter, &g->k_i, 0);
 }
 
 static inline int bch2_dev_data_type_accounting_mod(struct btree_trans *trans, struct bch_dev *ca,
@@ -803,10 +798,8 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 	} else {
 		BUG_ON(!(flags & (BTREE_TRIGGER_gc|BTREE_TRIGGER_check_repair)));
 
-		struct bkey_i_alloc_v4 *new_ka = bch2_alloc_to_v4_mut_inlined(trans, new.s_c);
-		ret = PTR_ERR_OR_ZERO(new_ka);
-		if (unlikely(ret))
-			return ret;
+		struct bkey_i_alloc_v4 *new_ka =
+			errptr_try(bch2_alloc_to_v4_mut_inlined(trans, new.s_c));
 		new_a = &new_ka->v;
 	}
 
@@ -1018,10 +1011,7 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 	CLASS(btree_iter, iter)(trans, BTREE_ID_alloc, need_discard_iter->pos, BTREE_ITER_cached);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
-	struct bkey_i_alloc_v4 *a = bch2_alloc_to_v4_mut(trans, k);
-	ret = PTR_ERR_OR_ZERO(a);
-	if (ret)
-		return ret;
+	struct bkey_i_alloc_v4 *a = errptr_try(bch2_alloc_to_v4_mut(trans, k));
 
 	if (a->v.data_type != BCH_DATA_need_discard) {
 		s->bad_data_type++;
@@ -1485,13 +1475,11 @@ static int __bch2_bucket_io_time_reset(struct btree_trans *trans, unsigned dev,
 				size_t bucket_nr, int rw)
 {
 	struct bch_fs *c = trans->c;
+	int ret = 0;
 
 	struct btree_iter iter;
 	struct bkey_i_alloc_v4 *a =
-		bch2_trans_start_alloc_update_noupdate(trans, &iter, POS(dev, bucket_nr));
-	int ret = PTR_ERR_OR_ZERO(a);
-	if (ret)
-		return ret;
+		errptr_try(bch2_trans_start_alloc_update_noupdate(trans, &iter, POS(dev, bucket_nr)));
 
 	u64 now = bch2_current_io_time(c, rw);
 	if (a->v.io_time[rw] == now)
@@ -1499,7 +1487,7 @@ static int __bch2_bucket_io_time_reset(struct btree_trans *trans, unsigned dev,
 
 	a->v.io_time[rw] = now;
 
-	ret   = bch2_trans_update(trans, &iter, &a->k_i, 0) ?:
+	ret =   bch2_trans_update(trans, &iter, &a->k_i, 0) ?:
 		bch2_trans_commit(trans, NULL, NULL, 0);
 out:
 	bch2_trans_iter_exit(&iter);
