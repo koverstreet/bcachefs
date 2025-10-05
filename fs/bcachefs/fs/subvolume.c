@@ -93,10 +93,7 @@ static int check_subvol(struct btree_trans *trans,
 	if (subvol.fs_path_parent) {
 		CLASS(btree_iter, subvol_children_iter)(trans,
 					BTREE_ID_subvolume_children, subvolume_children_pos(k), 0);
-		struct bkey_s_c subvol_children_k = bch2_btree_iter_peek_slot(&subvol_children_iter);
-		ret = bkey_err(subvol_children_k);
-		if (ret)
-			return ret;
+		struct bkey_s_c subvol_children_k = bkey_try(bch2_btree_iter_peek_slot(&subvol_children_iter));
 
 		if (fsck_err_on(subvol_children_k.k->type != KEY_TYPE_set,
 				trans, subvol_children_not_set,
@@ -104,9 +101,7 @@ static int check_subvol(struct btree_trans *trans,
 				subvol_children_iter.pos.inode, subvol_children_iter.pos.offset,
 				(printbuf_reset(&buf),
 				 bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
-			ret = bch2_btree_bit_mod(trans, BTREE_ID_subvolume_children, subvol_children_iter.pos, true);
-			if (ret)
-				return ret;
+			try(bch2_btree_bit_mod(trans, BTREE_ID_subvolume_children, subvol_children_iter.pos, true));
 		}
 	}
 
@@ -122,9 +117,7 @@ static int check_subvol(struct btree_trans *trans,
 				inode.bi_subvol, k.k->p.offset)) {
 			inode.bi_subvol = k.k->p.offset;
 			inode.bi_snapshot = le32_to_cpu(subvol.snapshot);
-			ret = __bch2_fsck_write_inode(trans, &inode);
-			if (ret)
-				return ret;
+			try(__bch2_fsck_write_inode(trans, &inode));
 		}
 	} else if (bch2_err_matches(ret, ENOENT)) {
 		if (fsck_err(trans, subvol_to_missing_root,
@@ -142,9 +135,7 @@ static int check_subvol(struct btree_trans *trans,
 			inode.bi_snapshot		= le32_to_cpu(subvol.snapshot);
 			inode.bi_subvol			= k.k->p.offset;
 			inode.bi_parent_subvol		= le32_to_cpu(subvol.fs_path_parent);
-			ret = __bch2_fsck_write_inode(trans, &inode);
-			if (ret)
-				return ret;
+			try(__bch2_fsck_write_inode(trans, &inode));
 		}
 	} else {
 		return ret;
@@ -285,10 +276,8 @@ int bch2_subvolume_trigger(struct btree_trans *trans,
 		struct bpos children_pos_new = subvolume_children_pos(new.s_c);
 
 		if (!bpos_eq(children_pos_old, children_pos_new)) {
-			int ret = subvolume_children_mod(trans, children_pos_old, false) ?:
-				  subvolume_children_mod(trans, children_pos_new, true);
-			if (ret)
-				return ret;
+			try(subvolume_children_mod(trans, children_pos_old, false));
+			try(subvolume_children_mod(trans, children_pos_new, true));
 		}
 	}
 

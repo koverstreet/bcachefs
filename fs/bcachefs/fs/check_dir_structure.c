@@ -104,10 +104,7 @@ static int check_subvol_path(struct btree_trans *trans, struct btree_iter *iter,
 		}
 
 		bch2_btree_iter_set_pos(&parent_iter, POS(0, parent));
-		k = bch2_btree_iter_peek_slot(&parent_iter);
-		ret = bkey_err(k);
-		if (ret)
-			return ret;
+		k = bkey_try(bch2_btree_iter_peek_slot(&parent_iter));
 
 		if (fsck_err_on(k.k->type != KEY_TYPE_subvolume,
 				trans, subvol_unreachable,
@@ -142,14 +139,12 @@ static int bch2_bi_depth_renumber_one(struct btree_trans *trans,
 				      u32 new_depth)
 {
 	CLASS(btree_iter, iter)(trans, BTREE_ID_inodes, SPOS(0, inum, snapshot), 0);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
+
+	try(!bkey_is_inode(k.k) ? -BCH_ERR_ENOENT_inode : 0);
 
 	struct bch_inode_unpacked inode;
-	int ret = bkey_err(k) ?:
-		!bkey_is_inode(k.k) ? -BCH_ERR_ENOENT_inode
-		: bch2_inode_unpack(k, &inode);
-	if (ret)
-		return ret;
+	try(bch2_inode_unpack(k, &inode));
 
 	if (inode.bi_depth != new_depth) {
 		inode.bi_depth = new_depth;

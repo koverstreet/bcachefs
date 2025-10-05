@@ -83,16 +83,13 @@ int bch2_lru_check_set(struct btree_trans *trans,
 		       struct bkey_buf *last_flushed)
 {
 	struct bch_fs *c = trans->c;
+	int ret = 0;
+
 	CLASS(btree_iter, lru_iter)(trans, BTREE_ID_lru, lru_pos(lru_id, dev_bucket, time), 0);
-	struct bkey_s_c lru_k = bch2_btree_iter_peek_slot(&lru_iter);
-	int ret = bkey_err(lru_k);
-	if (ret)
-		return ret;
+	struct bkey_s_c lru_k = bkey_try(bch2_btree_iter_peek_slot(&lru_iter));
 
 	if (lru_k.k->type != KEY_TYPE_set) {
-		ret = bch2_btree_write_buffer_maybe_flush(trans, referring_k, last_flushed);
-		if (ret)
-			return ret;
+		try(bch2_btree_write_buffer_maybe_flush(trans, referring_k, last_flushed));
 
 		CLASS(printbuf, buf)();
 		prt_printf(&buf, "missing %s lru entry at pos ", bch2_lru_types[lru_type(lru_k)]);
@@ -176,14 +173,12 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf1)();
 	CLASS(printbuf, buf2)();
+	int ret = 0;
 
 	struct bbpos bp = lru_pos_to_bp(lru_k);
 
 	CLASS(btree_iter, iter)(trans, bp.btree, bp.pos, 0);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	enum bch_lru_type type = lru_type(lru_k);
 	u64 idx = bkey_lru_type_idx(c, type, k);

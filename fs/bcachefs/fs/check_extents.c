@@ -180,10 +180,7 @@ static int overlapping_extents_found(struct btree_trans *trans,
 	CLASS(btree_iter, iter1)(trans, btree, pos1,
 				 BTREE_ITER_all_snapshots|
 				 BTREE_ITER_not_extents);
-	k1 = bch2_btree_iter_peek_max(&iter1, POS(pos1.inode, U64_MAX));
-	ret = bkey_err(k1);
-	if (ret)
-		goto err;
+	k1 = bkey_try(bch2_btree_iter_peek_max(&iter1, POS(pos1.inode, U64_MAX)));
 
 	prt_newline(&buf);
 	bch2_bkey_val_to_text(&buf, c, k1);
