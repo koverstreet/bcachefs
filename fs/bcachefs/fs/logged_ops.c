@@ -10,7 +10,7 @@
 #include "fs/logged_ops.h"
 
 #include "init/error.h"
-#include "init/super.h"
+#include "init/fs.h"
 
 struct bch_logged_op_fn {
 	u8		type;

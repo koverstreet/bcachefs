@@ -8,6 +8,8 @@
 #include "fs/namei.h"
 #include "fs/quota.h"
 
+#include "init/fs.h"
+
 #include "vfs/fs.h"
 #include "vfs/ioctl.h"
 

@@ -8,9 +8,10 @@
 
 #include "journal/journal.h"
 
+#include "init/dev.h"
 #include "init/error.h"
 #include "init/passes.h"
-#include "init/super.h"
+#include "init/fs.h"
 
 #include "util/thread_with_file.h"
 

@@ -22,6 +22,7 @@
 #include "debug/debug.h"
 
 #include "init/error.h"
+#include "init/fs.h"
 #include "init/recovery.h"
 
 #include "journal/reclaim.h"

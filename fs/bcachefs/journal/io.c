@@ -15,6 +15,7 @@
 #include "data/checksum.h"
 
 #include "init/error.h"
+#include "init/fs.h"
 
 #include "journal/journal.h"
 #include "journal/io.h"

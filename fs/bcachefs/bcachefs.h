@@ -254,7 +254,7 @@
 #include "init/errcode.h"
 #include "init/opts.h"
 #include "init/passes_types.h"
-#include "init/super_types.h"
+#include "init/dev_types.h"
 
 #include "journal/types.h"
 
@@ -1162,8 +1162,6 @@ static inline int __bch2_err_trace(struct bch_fs *c, int err)
 }
 
 #define bch_err_throw(_c, _err) __bch2_err_trace(_c, -BCH_ERR_##_err)
-
-extern struct wait_queue_head bch2_read_only_wait;
 
 static inline bool bch2_ro_ref_tryget(struct bch_fs *c)
 {

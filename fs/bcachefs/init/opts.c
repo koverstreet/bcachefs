@@ -11,6 +11,8 @@
 #include "data/copygc.h"
 #include "data/rebalance.h"
 
+#include "init/dev.h"
+
 #include "sb/io.h"
 
 #include "init/error.h"

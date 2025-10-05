@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef _BCACHEFS_SUPER_TYPES_H
-#define _BCACHEFS_SUPER_TYPES_H
+#ifndef _BCACHEFS_INIT_DEV_TYPES_H
+#define _BCACHEFS_INIT_DEV_TYPES_H
 
 struct bch_fs;
 
@@ -32,4 +32,4 @@ struct bch_devs_list {
 	u8			data[BCH_BKEY_PTRS_MAX];
 };
 
-#endif /* _BCACHEFS_SUPER_TYPES_H */
+#endif /* _BCACHEFS_INIT_DEV_TYPES_H */
