@@ -1270,11 +1270,8 @@ static void __bch2_bkey_drop_stale_ptrs(struct bch_fs *c, struct bkey_s k)
 int bch2_bkey_drop_stale_ptrs(struct btree_trans *trans, struct btree_iter *iter, struct bkey_s_c k)
 {
 	if (bch2_bkey_has_stale_ptrs(trans->c, k)) {
-		struct bkey_i *u = bch2_bkey_make_mut(trans, iter, &k,
-						      BTREE_UPDATE_internal_snapshot_node);
-		int ret = PTR_ERR_OR_ZERO(u);
-		if (ret)
-			return ret;
+		struct bkey_i *u = errptr_try(bch2_bkey_make_mut(trans, iter, &k,
+						      BTREE_UPDATE_internal_snapshot_node));
 
 		__bch2_bkey_drop_stale_ptrs(trans->c, bkey_i_to_s(u));
 	}

@@ -387,12 +387,9 @@ bool bch2_reinherit_attrs(struct bch_inode_unpacked *dst_u,
 static int subvol_update_parent(struct btree_trans *trans, u32 subvol, u32 new_parent)
 {
 	struct bkey_i_subvolume *s =
-		bch2_bkey_get_mut_typed(trans,
+		errptr_try(bch2_bkey_get_mut_typed(trans,
 			BTREE_ID_subvolumes, POS(0, subvol),
-			BTREE_ITER_cached, subvolume);
-	int ret = PTR_ERR_OR_ZERO(s);
-	if (ret)
-		return ret;
+			BTREE_ITER_cached, subvolume));
 
 	s->v.fs_path_parent = cpu_to_le32(new_parent);
 	return 0;

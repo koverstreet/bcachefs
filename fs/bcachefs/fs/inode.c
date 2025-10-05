@@ -988,10 +988,7 @@ int bch2_inode_create(struct btree_trans *trans,
 {
 	u64 min, max;
 	struct bkey_i_inode_alloc_cursor *cursor =
-		bch2_inode_alloc_cursor_get(trans, cpu, &min, &max, is_32bit);
-	int ret = PTR_ERR_OR_ZERO(cursor);
-	if (ret)
-		return ret;
+		errptr_try(bch2_inode_alloc_cursor_get(trans, cpu, &min, &max, is_32bit));
 
 	u64 start = le64_to_cpu(cursor->v.idx);
 	u64 pos = start;
@@ -1001,6 +998,7 @@ int bch2_inode_create(struct btree_trans *trans,
 			     BTREE_ITER_all_snapshots|
 			     BTREE_ITER_intent);
 	struct bkey_s_c k;
+	int ret = 0;
 again:
 	while ((k = bch2_btree_iter_peek(iter)).k &&
 	       !(ret = bkey_err(k)) &&

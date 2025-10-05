@@ -140,12 +140,9 @@ static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 		return ret;
 
 	if (!subvol.inode) {
-		struct bkey_i_subvolume *subvol = bch2_bkey_get_mut_typed(trans,
+		struct bkey_i_subvolume *subvol = errptr_try(bch2_bkey_get_mut_typed(trans,
 				BTREE_ID_subvolumes, POS(0, subvolid),
-				0, subvolume);
-		ret = PTR_ERR_OR_ZERO(subvol);
-		if (ret)
-			return ret;
+				0, subvolume));
 
 		subvol->v.inode = cpu_to_le64(reattaching_inum);
 	}
@@ -290,10 +287,7 @@ static int maybe_delete_dirent(struct btree_trans *trans, struct bpos d_pos, u32
 		 * delet_at() doesn't work because the update path doesn't
 		 * internally use BTREE_ITER_with_updates yet
 		 */
-		struct bkey_i *k = bch2_trans_kmalloc(trans, sizeof(*k));
-		int ret = PTR_ERR_OR_ZERO(k);
-		if (ret)
-			return ret;
+		struct bkey_i *k = errptr_try(bch2_trans_kmalloc(trans, sizeof(*k)));
 
 		bkey_init(&k->k);
 		k->k.type = KEY_TYPE_whiteout;
@@ -316,12 +310,9 @@ int bch2_reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *in
 		inode->bi_parent_subvol = BCACHEFS_ROOT_SUBVOL;
 
 		struct bkey_i_subvolume *subvol =
-			bch2_bkey_get_mut_typed(trans,
+			errptr_try(bch2_bkey_get_mut_typed(trans,
 						BTREE_ID_subvolumes, POS(0, inode->bi_subvol),
-						0, subvolume);
-		ret = PTR_ERR_OR_ZERO(subvol);
-		if (ret)
-			return ret;
+						0, subvolume));
 
 		subvol->v.fs_path_parent = BCACHEFS_ROOT_SUBVOL;
 
@@ -458,10 +449,7 @@ static int reconstruct_subvol(struct btree_trans *trans, u32 snapshotid, u32 sub
 
 	bch_info(c, "reconstructing subvol %u with root inode %llu", subvolid, inum);
 
-	struct bkey_i_subvolume *new_subvol = bch2_trans_kmalloc(trans, sizeof(*new_subvol));
-	int ret = PTR_ERR_OR_ZERO(new_subvol);
-	if (ret)
-		return ret;
+	struct bkey_i_subvolume *new_subvol = errptr_try(bch2_trans_kmalloc(trans, sizeof(*new_subvol)));
 
 	bkey_subvolume_init(&new_subvol->k_i);
 	new_subvol->k.p.offset	= subvolid;
@@ -472,7 +460,7 @@ static int reconstruct_subvol(struct btree_trans *trans, u32 snapshotid, u32 sub
 	struct bkey_i_snapshot *s = bch2_bkey_get_mut_typed(trans,
 			BTREE_ID_snapshots, POS(0, snapshotid),
 			0, snapshot);
-	ret = PTR_ERR_OR_ZERO(s);
+	int ret = PTR_ERR_OR_ZERO(s);
 	bch_err_msg(c, ret, "getting snapshot %u", snapshotid);
 	if (ret)
 		return ret;
@@ -1506,10 +1494,7 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 			return bch_err_throw(c, fsck_repair_unimplemented);
 		}
 
-		struct bkey_i_dirent *new_dirent = bch2_bkey_make_mut_typed(trans, iter, &d.s_c, 0, dirent);
-		ret = PTR_ERR_OR_ZERO(new_dirent);
-		if (ret)
-			return ret;
+		struct bkey_i_dirent *new_dirent = errptr_try(bch2_bkey_make_mut_typed(trans, iter, &d.s_c, 0, dirent));
 
 		new_dirent->v.d_parent_subvol = cpu_to_le32(new_parent_subvol);
 	}
@@ -1544,10 +1529,7 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 
 		if (fsck_err(trans, subvol_fs_path_parent_wrong, "%s", buf.buf)) {
 			struct bkey_i_subvolume *n =
-				bch2_bkey_make_mut_typed(trans, &subvol_iter, &s.s_c, 0, subvolume);
-			ret = PTR_ERR_OR_ZERO(n);
-			if (ret)
-				goto err;
+				errptr_try(bch2_bkey_make_mut_typed(trans, &subvol_iter, &s.s_c, 0, subvolume));
 
 			n->v.fs_path_parent = cpu_to_le32(parent_subvol);
 		}
@@ -1598,7 +1580,6 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 			bool *need_second_pass)
 {
 	struct bch_fs *c = trans->c;
-	struct inode_walker_entry *i;
 	CLASS(printbuf, buf)();
 	int ret = 0;
 
@@ -1616,10 +1597,7 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 	if (dir->last_pos.inode != k.k->p.inode && dir->have_inodes)
 		try(check_subdir_dirents_count(trans, dir));
 
-	i = bch2_walk_inode(trans, dir, k);
-	ret = PTR_ERR_OR_ZERO(i);
-	if (ret)
-		return ret;
+	struct inode_walker_entry *i = errptr_try(bch2_walk_inode(trans, dir, k));
 
 	try(bch2_check_key_has_inode(trans, iter, dir, i, k));
 
@@ -1660,11 +1638,8 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 		struct qstr name = bch2_dirent_get_name(d);
 
 		struct bkey_i_dirent *new_d =
-			bch2_dirent_create_key(trans, hash_info, dir_inum,
-					       d.v->d_type, &name, NULL, target);
-		ret = PTR_ERR_OR_ZERO(new_d);
-		if (ret)
-			return ret;
+			errptr_try(bch2_dirent_create_key(trans, hash_info, dir_inum,
+					       d.v->d_type, &name, NULL, target));
 
 		new_d->k.p.inode	= d.k->p.inode;
 		new_d->k.p.snapshot	= d.k->p.snapshot;
@@ -1790,10 +1765,7 @@ static int check_xattr(struct btree_trans *trans, struct btree_iter *iter,
 	if (ret)
 		return 0;
 
-	struct inode_walker_entry *i = bch2_walk_inode(trans, inode, k);
-	ret = PTR_ERR_OR_ZERO(i);
-	if (ret)
-		return ret;
+	struct inode_walker_entry *i = errptr_try(bch2_walk_inode(trans, inode, k));
 
 	try(bch2_check_key_has_inode(trans, iter, inode, i, k));
 
@@ -1903,7 +1875,6 @@ static int fix_reflink_p_key(struct btree_trans *trans, struct btree_iter *iter,
 			     struct bkey_s_c k)
 {
 	struct bkey_s_c_reflink_p p;
-	struct bkey_i_reflink_p *u;
 
 	if (k.k->type != KEY_TYPE_reflink_p)
 		return 0;
@@ -1913,10 +1884,7 @@ static int fix_reflink_p_key(struct btree_trans *trans, struct btree_iter *iter,
 	if (!p.v->front_pad && !p.v->back_pad)
 		return 0;
 
-	u = bch2_trans_kmalloc(trans, sizeof(*u));
-	int ret = PTR_ERR_OR_ZERO(u);
-	if (ret)
-		return ret;
+	struct bkey_i_reflink_p *u = errptr_try(bch2_trans_kmalloc(trans, sizeof(*u)));
 
 	bkey_reassemble(&u->k_i, k);
 	u->v.front_pad	= 0;

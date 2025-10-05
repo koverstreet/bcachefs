@@ -94,10 +94,7 @@ static int bch2_bucket_is_movable(struct btree_trans *trans,
 	}
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_alloc, b->k.bucket, BTREE_ITER_cached);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	struct bch_alloc_v4 _a;
 	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &_a);
