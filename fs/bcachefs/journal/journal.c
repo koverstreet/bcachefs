@@ -366,9 +366,7 @@ static int journal_entry_open(struct journal *j)
 	if (j->cur_entry_error)
 		return j->cur_entry_error;
 
-	int ret = bch2_journal_error(j);
-	if (unlikely(ret))
-		return ret;
+	try(bch2_journal_error(j));
 
 	if (!fifo_free(&j->pin))
 		return bch_err_throw(c, journal_pin_full);
@@ -815,9 +813,7 @@ recheck_need_open:
 		 * livelock:
 		 */
 		sched_annotate_sleep();
-		ret = bch2_journal_res_get(j, &res, jset_u64s(0), 0, NULL);
-		if (ret)
-			return ret;
+		try(bch2_journal_res_get(j, &res, jset_u64s(0), 0, NULL));
 
 		seq = res.seq;
 		buf = journal_seq_to_buf(j, seq);
@@ -934,9 +930,7 @@ bool bch2_journal_noflush_seq(struct journal *j, u64 start, u64 end)
 int __bch2_journal_meta(struct journal *j)
 {
 	struct journal_res res = {};
-	int ret = bch2_journal_res_get(j, &res, jset_u64s(0), 0, NULL);
-	if (ret)
-		return ret;
+	try(bch2_journal_res_get(j, &res, jset_u64s(0), 0, NULL));
 
 	struct journal_buf *buf = j->buf + (res.seq & JOURNAL_BUF_MASK);
 	buf->must_flush = true;

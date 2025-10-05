@@ -76,7 +76,6 @@ static int parse_unit_suffix(const char *cp, u64 *res)
 	const char *start = cp;
 	u64 base = 1024;
 	unsigned u;
-	int ret;
 
 	if (*cp == ' ')
 		cp++;
@@ -103,9 +102,7 @@ static int parse_unit_suffix(const char *cp, u64 *res)
 	*res = 1;
 	return 0;
 got_unit:
-	ret = bch2_pow(base, u, res);
-	if (ret)
-		return ret;
+	try(bch2_pow(base, u, res));
 
 	return cp - start;
 }
@@ -133,9 +130,7 @@ static int __bch2_strtou64_h(const char *cp, u64 *res)
 			return ret;
 		cp += ret;
 
-		ret = bch2_pow(10, ret, &f_d);
-		if (ret)
-			return ret;
+		try(bch2_pow(10, ret, &f_d));
 	}
 
 	parse_or_ret(cp, parse_unit_suffix(cp, &b));
@@ -293,11 +288,10 @@ int bch2_save_backtrace(bch_stacktrace *stack, struct task_struct *task, unsigne
 {
 #ifdef CONFIG_STACKTRACE
 	unsigned nr_entries = 0;
+	int ret = 0;
 
 	stack->nr = 0;
-	int ret = darray_make_room_gfp(stack, 32, gfp);
-	if (ret)
-		return ret;
+	try(darray_make_room_gfp(stack, 32, gfp));
 
 	skipnr += task == current;
 

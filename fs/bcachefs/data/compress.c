@@ -577,8 +577,6 @@ static const unsigned bch2_compression_opt_to_feature[] = {
 
 static int __bch2_check_set_has_compressed_data(struct bch_fs *c, u64 f)
 {
-	int ret = 0;
-
 	if ((c->sb.features & f) == f)
 		return 0;
 
@@ -587,9 +585,7 @@ static int __bch2_check_set_has_compressed_data(struct bch_fs *c, u64 f)
 	if ((c->sb.features & f) == f)
 		return 0;
 
-	ret = __bch2_fs_compress_init(c, c->sb.features|f);
-	if (ret)
-		return ret;
+	try(__bch2_fs_compress_init(c, c->sb.features|f));
 
 	c->disk_sb.sb->features[0] |= cpu_to_le64(f);
 	bch2_write_super(c);

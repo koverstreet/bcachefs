@@ -786,4 +786,11 @@ do {									\
 	map_flags_rev(_map, _in);					\
 })
 
+#define try(_do)							\
+do {									\
+	typeof(_do) _ret = (_do);					\
+	if (unlikely(_ret))						\
+		return _ret;						\
+} while (0)
+
 #endif /* _BCACHEFS_UTIL_H */

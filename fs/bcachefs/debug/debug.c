@@ -397,9 +397,7 @@ static ssize_t bch2_read_btree_formats(struct file *file, char __user *buf,
 	i->size	= size;
 	i->ret	= 0;
 
-	ssize_t ret = bch2_debugfs_flush_buf(i);
-	if (ret)
-		return ret;
+	try(bch2_debugfs_flush_buf(i));
 
 	if (bpos_eq(SPOS_MAX, i->from))
 		return i->ret;
@@ -506,9 +504,7 @@ static ssize_t bch2_cached_btree_nodes_read(struct file *file, char __user *buf,
 	i->ret	= 0;
 
 	do {
-		ret = bch2_debugfs_flush_buf(i);
-		if (ret)
-			return ret;
+		try(bch2_debugfs_flush_buf(i));
 
 		scoped_guard(rcu) {
 			guard(printbuf_atomic)(&i->buf);

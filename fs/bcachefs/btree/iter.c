@@ -987,9 +987,7 @@ static __always_inline int btree_path_down(struct btree_trans *trans,
 	EBUG_ON(!btree_node_locked(path, path->level));
 
 	if (unlikely(trans->journal_replay_not_finished)) {
-		ret = btree_node_iter_and_journal_peek(trans, path, flags);
-		if (ret)
-			return ret;
+		try(btree_node_iter_and_journal_peek(trans, path, flags));
 	} else {
 		struct bkey_packed *k = bch2_btree_node_iter_peek(&l->iter, l->b);
 		if (unlikely(!k))
@@ -999,9 +997,7 @@ static __always_inline int btree_path_down(struct btree_trans *trans,
 
 		if (unlikely((flags & BTREE_ITER_prefetch)) &&
 		    c->opts.btree_node_prefetch) {
-			ret = btree_path_prefetch(trans, path);
-			if (ret)
-				return ret;
+			try(btree_path_prefetch(trans, path));
 		}
 	}
 
@@ -1919,7 +1915,6 @@ int __must_check
 bch2_btree_iter_traverse(struct btree_iter *iter)
 {
 	struct btree_trans *trans = iter->trans;
-	int ret;
 
 	bch2_trans_verify_not_unlocked_or_in_restart(trans);
 
@@ -1928,9 +1923,7 @@ bch2_btree_iter_traverse(struct btree_iter *iter)
 					iter->flags & BTREE_ITER_intent,
 					btree_iter_ip_allocated(iter));
 
-	ret = bch2_btree_path_traverse(iter->trans, iter->path, iter->flags);
-	if (ret)
-		return ret;
+	try(bch2_btree_path_traverse(iter->trans, iter->path, iter->flags));
 
 	struct btree_path *path = btree_iter_path(trans, iter);
 	if (btree_path_node(path, path->level))
@@ -3838,19 +3831,13 @@ void bch2_fs_btree_iter_init_early(struct bch_fs *c)
 
 int bch2_fs_btree_iter_init(struct bch_fs *c)
 {
-	int ret;
-
 	c->btree_trans_bufs = alloc_percpu(struct btree_trans_buf);
 	if (!c->btree_trans_bufs)
 		return -ENOMEM;
 
-	ret   = mempool_init_kmalloc_pool(&c->btree_trans_pool, 1,
-					  sizeof(struct btree_trans)) ?:
-		mempool_init_kmalloc_pool(&c->btree_trans_mem_pool, 1,
-					  BTREE_TRANS_MEM_MAX) ?:
-		init_srcu_struct(&c->btree_trans_barrier);
-	if (ret)
-		return ret;
+	try(mempool_init_kmalloc_pool(&c->btree_trans_pool, 1, sizeof(struct btree_trans)));
+	try(mempool_init_kmalloc_pool(&c->btree_trans_mem_pool, 1, BTREE_TRANS_MEM_MAX));
+	try(init_srcu_struct(&c->btree_trans_barrier));
 
 	/*
 	 * static annotation (hackily done) for lock ordering of reclaim vs.

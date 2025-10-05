@@ -173,9 +173,7 @@ static int check_nlinks_update_inode(struct btree_trans *trans, struct btree_ite
 	if (!bkey_is_inode(k.k))
 		return 0;
 
-	ret = bch2_inode_unpack(k, &u);
-	if (ret)
-		return ret;
+	try(bch2_inode_unpack(k, &u));
 
 	if (S_ISDIR(u.bi_mode))
 		return 0;

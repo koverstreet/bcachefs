@@ -610,7 +610,6 @@ static int bch2_quota_disable(struct super_block *sb, unsigned uflags)
 static int bch2_quota_remove(struct super_block *sb, unsigned uflags)
 {
 	struct bch_fs *c = sb->s_fs_info;
-	int ret;
 
 	if (sb->s_flags & SB_RDONLY)
 		return -EROFS;
@@ -619,36 +618,30 @@ static int bch2_quota_remove(struct super_block *sb, unsigned uflags)
 		if (c->opts.usrquota)
 			return -EINVAL;
 
-		ret = bch2_btree_delete_range(c, BTREE_ID_quotas,
-					      POS(QTYP_USR, 0),
-					      POS(QTYP_USR, U64_MAX),
-					      0, NULL);
-		if (ret)
-			return ret;
+		try(bch2_btree_delete_range(c, BTREE_ID_quotas,
+					    POS(QTYP_USR, 0),
+					    POS(QTYP_USR, U64_MAX),
+					    0, NULL));
 	}
 
 	if (uflags & FS_GROUP_QUOTA) {
 		if (c->opts.grpquota)
 			return -EINVAL;
 
-		ret = bch2_btree_delete_range(c, BTREE_ID_quotas,
-					      POS(QTYP_GRP, 0),
-					      POS(QTYP_GRP, U64_MAX),
-					      0, NULL);
-		if (ret)
-			return ret;
+		try(bch2_btree_delete_range(c, BTREE_ID_quotas,
+					    POS(QTYP_GRP, 0),
+					    POS(QTYP_GRP, U64_MAX),
+					    0, NULL));
 	}
 
 	if (uflags & FS_PROJ_QUOTA) {
 		if (c->opts.prjquota)
 			return -EINVAL;
 
-		ret = bch2_btree_delete_range(c, BTREE_ID_quotas,
-					      POS(QTYP_PRJ, 0),
-					      POS(QTYP_PRJ, U64_MAX),
-					      0, NULL);
-		if (ret)
-			return ret;
+		try(bch2_btree_delete_range(c, BTREE_ID_quotas,
+					    POS(QTYP_PRJ, 0),
+					    POS(QTYP_PRJ, U64_MAX),
+					    0, NULL));
 	}
 
 	return 0;

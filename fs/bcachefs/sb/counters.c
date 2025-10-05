@@ -116,18 +116,14 @@ long bch2_ioctl_query_counters(struct bch_fs *c,
 			struct bch_ioctl_query_counters __user *user_arg)
 {
 	struct bch_ioctl_query_counters arg;
-	int ret = copy_from_user_errcode(&arg, user_arg, sizeof(arg));
-	if (ret)
-		return ret;
+	try(copy_from_user_errcode(&arg, user_arg, sizeof(arg)));
 
 	if ((arg.flags & ~BCH_IOCTL_QUERY_COUNTERS_MOUNT) ||
 	    arg.pad)
 		return -EINVAL;
 
 	arg.nr = min(arg.nr, BCH_COUNTER_NR);
-	ret = put_user(arg.nr, &user_arg->nr);
-	if (ret)
-		return ret;
+	try(put_user(arg.nr, &user_arg->nr));
 
 	for (unsigned i = 0; i < BCH_COUNTER_NR; i++) {
 		unsigned stable = counters_to_stable_map[i];
@@ -137,9 +133,7 @@ long bch2_ioctl_query_counters(struct bch_fs *c,
 				? percpu_u64_get(&c->counters[i])
 				: c->counters_on_mount[i];
 
-			ret = put_user(v, &user_arg->d[stable]);
-			if (ret)
-				return ret;
+			try(put_user(v, &user_arg->d[stable]));
 		}
 	}
 

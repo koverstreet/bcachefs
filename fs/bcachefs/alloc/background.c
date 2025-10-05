@@ -761,32 +761,26 @@ int bch2_alloc_key_to_dev_counters(struct btree_trans *trans, struct bch_dev *ca
 	s64 old_sectors = bch2_bucket_sectors(*old);
 	s64 new_sectors = bch2_bucket_sectors(*new);
 	if (old->data_type != new->data_type) {
-		int ret = bch2_dev_data_type_accounting_mod(trans, ca, new->data_type,
-				 1,  new_sectors,  bch2_bucket_sectors_fragmented(ca, *new), flags) ?:
-			  bch2_dev_data_type_accounting_mod(trans, ca, old->data_type,
-				-1, -old_sectors, -bch2_bucket_sectors_fragmented(ca, *old), flags);
-		if (ret)
-			return ret;
+		try(bch2_dev_data_type_accounting_mod(trans, ca, new->data_type,
+				 1,  new_sectors,  bch2_bucket_sectors_fragmented(ca, *new), flags));
+		try(bch2_dev_data_type_accounting_mod(trans, ca, old->data_type,
+				-1, -old_sectors, -bch2_bucket_sectors_fragmented(ca, *old), flags));
 	} else if (old_sectors != new_sectors) {
-		int ret = bch2_dev_data_type_accounting_mod(trans, ca, new->data_type,
+		try(bch2_dev_data_type_accounting_mod(trans, ca, new->data_type,
 					 0,
 					 new_sectors - old_sectors,
 					 bch2_bucket_sectors_fragmented(ca, *new) -
-					 bch2_bucket_sectors_fragmented(ca, *old), flags);
-		if (ret)
-			return ret;
+					 bch2_bucket_sectors_fragmented(ca, *old), flags));
 	}
 
 	s64 old_unstriped = bch2_bucket_sectors_unstriped(*old);
 	s64 new_unstriped = bch2_bucket_sectors_unstriped(*new);
 	if (old_unstriped != new_unstriped) {
-		int ret = bch2_dev_data_type_accounting_mod(trans, ca, BCH_DATA_unstriped,
+		try(bch2_dev_data_type_accounting_mod(trans, ca, BCH_DATA_unstriped,
 					 !!new_unstriped - !!old_unstriped,
 					 new_unstriped - old_unstriped,
 					 0,
-					 flags);
-		if (ret)
-			return ret;
+					 flags));
 	}
 
 	return 0;
@@ -848,40 +842,29 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 		if (old_a->data_type != new_a->data_type ||
 		    (new_a->data_type == BCH_DATA_free &&
 		     alloc_freespace_genbits(*old_a) != alloc_freespace_genbits(*new_a))) {
-			ret =   bch2_bucket_do_index(trans, ca, old, old_a, false) ?:
-				bch2_bucket_do_index(trans, ca, new.s_c, new_a, true);
-			if (ret)
-				return ret;
+			try(bch2_bucket_do_index(trans, ca, old, old_a, false));
+			try(bch2_bucket_do_index(trans, ca, new.s_c, new_a, true));
 		}
 
 		if (new_a->data_type == BCH_DATA_cached &&
 		    !new_a->io_time[READ])
 			new_a->io_time[READ] = bch2_current_io_time(c, READ);
 
-		ret = bch2_lru_change(trans, new.k->p.inode,
-				      bucket_to_u64(new.k->p),
-				      alloc_lru_idx_read(*old_a),
-				      alloc_lru_idx_read(*new_a));
-		if (ret)
-			return ret;
+		try(bch2_lru_change(trans, new.k->p.inode,
+				    bucket_to_u64(new.k->p),
+				    alloc_lru_idx_read(*old_a),
+				    alloc_lru_idx_read(*new_a)));
 
-		ret = bch2_lru_change(trans,
-				      BCH_LRU_BUCKET_FRAGMENTATION,
-				      bucket_to_u64(new.k->p),
-				      alloc_lru_idx_fragmentation(*old_a, ca),
-				      alloc_lru_idx_fragmentation(*new_a, ca));
-		if (ret)
-			return ret;
+		try(bch2_lru_change(trans,
+				    BCH_LRU_BUCKET_FRAGMENTATION,
+				    bucket_to_u64(new.k->p),
+				    alloc_lru_idx_fragmentation(*old_a, ca),
+				    alloc_lru_idx_fragmentation(*new_a, ca)));
 
-		if (old_a->gen != new_a->gen) {
-			ret = bch2_bucket_gen_update(trans, new.k->p, new_a->gen);
-			if (ret)
-				return ret;
-		}
+		if (old_a->gen != new_a->gen)
+			try(bch2_bucket_gen_update(trans, new.k->p, new_a->gen));
 
-		ret = bch2_alloc_key_to_dev_counters(trans, ca, old_a, new_a, flags);
-		if (ret)
-			return ret;
+		try(bch2_alloc_key_to_dev_counters(trans, ca, old_a, new_a, flags));
 	}
 
 	if ((flags & BTREE_TRIGGER_atomic) && (flags & BTREE_TRIGGER_insert)) {
@@ -1052,9 +1035,7 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 		s->bad_data_type++;
 
 		if (need_discard_or_freespace_err(trans, k, true, true, true)) {
-			ret = bch2_btree_bit_mod_iter(trans, need_discard_iter, false);
-			if (ret)
-				return ret;
+			try(bch2_btree_bit_mod_iter(trans, need_discard_iter, false));
 			goto commit;
 		}
 
@@ -1387,9 +1368,7 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 		unsigned cached_sectors = a->cached_sectors;
 		u8 gen = a->gen;
 
-		ret = invalidate_one_bucket_by_bps(trans, ca, bucket, gen, last_flushed);
-		if (ret)
-			return ret;
+		try(invalidate_one_bucket_by_bps(trans, ca, bucket, gen, last_flushed));
 
 		trace_and_count(c, bucket_invalidate, c, bucket.inode, bucket.offset, cached_sectors);
 		--*nr_to_invalidate;
