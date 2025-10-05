@@ -148,7 +148,6 @@ static int set_node_min(struct bch_fs *c, struct btree *b, struct bpos new_min)
 static int set_node_max(struct bch_fs *c, struct btree *b, struct bpos new_max)
 {
 	struct bkey_i_btree_ptr_v2 *new;
-	int ret;
 
 	if (c->opts.verbose) {
 		CLASS(printbuf, buf)();
@@ -160,9 +159,7 @@ static int set_node_max(struct bch_fs *c, struct btree *b, struct bpos new_max)
 		bch_info(c, "%s(): %s", __func__, buf.buf);
 	}
 
-	ret = bch2_journal_key_delete(c, b->c.btree_id, b->c.level + 1, b->key.k.p);
-	if (ret)
-		return ret;
+	try(bch2_journal_key_delete(c, b->c.btree_id, b->c.level + 1, b->key.k.p));
 
 	new = kmalloc_array(BKEY_BTREE_PTR_U64s_MAX, sizeof(u64), GFP_KERNEL);
 	if (!new)
@@ -173,7 +170,7 @@ static int set_node_max(struct bch_fs *c, struct btree *b, struct bpos new_max)
 	new->k.p		= new_max;
 	SET_BTREE_PTR_RANGE_UPDATED(&new->v, true);
 
-	ret = bch2_journal_key_insert_take(c, b->c.btree_id, b->c.level + 1, &new->k_i);
+	int ret = bch2_journal_key_insert_take(c, b->c.btree_id, b->c.level + 1, &new->k_i);
 	if (ret) {
 		kfree(new);
 		return ret;
@@ -224,11 +221,9 @@ static int btree_check_node_boundaries(struct btree_trans *trans, struct btree *
 	if (bpos_lt(expected_start, cur->data->min_key)) {				/* gap */
 		if (b->c.level == 1 &&
 		    bpos_lt(*pulled_from_scan, cur->data->min_key)) {
-			ret = bch2_get_scanned_nodes(c, b->c.btree_id, 0,
-						     expected_start,
-						     bpos_predecessor(cur->data->min_key));
-			if (ret)
-				return ret;
+			try(bch2_get_scanned_nodes(c, b->c.btree_id, 0,
+						   expected_start,
+						   bpos_predecessor(cur->data->min_key)));
 
 			*pulled_from_scan = cur->data->min_key;
 			ret = bch_err_throw(c, topology_repair_did_fill_from_scan);
@@ -322,10 +317,8 @@ static int btree_repair_node_end(struct btree_trans *trans, struct btree *b,
 			     "btree node with incorrect max_key%s", buf.buf)) {
 		if (b->c.level == 1 &&
 		    bpos_lt(*pulled_from_scan, b->key.k.p)) {
-			ret = bch2_get_scanned_nodes(c, b->c.btree_id, 0,
-						bpos_successor(child->key.k.p), b->key.k.p);
-			if (ret)
-				return ret;
+			try(bch2_get_scanned_nodes(c, b->c.btree_id, 0,
+						   bpos_successor(child->key.k.p), b->key.k.p));
 
 			*pulled_from_scan = b->key.k.p;
 			ret = bch_err_throw(c, topology_repair_did_fill_from_scan);
@@ -583,9 +576,7 @@ static int bch2_topology_check_root(struct btree_trans *trans, enum btree_id btr
 		bch2_btree_root_alloc_fake_trans(trans, btree, 1);
 
 		bch2_shoot_down_journal_keys(c, btree, 1, BTREE_MAX_DEPTH, POS_MIN, SPOS_MAX);
-		ret = bch2_get_scanned_nodes(c, btree, 0, POS_MIN, SPOS_MAX);
-		if (ret)
-			return ret;
+		try(bch2_get_scanned_nodes(c, btree, 0, POS_MIN, SPOS_MAX));
 	}
 out:
 	*reconstructed_root = true;
@@ -654,11 +645,8 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 		struct btree_path *path = btree_iter_path(trans, iter);
 		struct btree *b = path_l(path)->b;
 
-		if (*prev != b) {
-			int ret = bch2_btree_node_check_topology(trans, b);
-			if (ret)
-				return ret;
-		}
+		if (*prev != b)
+			try(bch2_btree_node_check_topology(trans, b));
 		*prev = b;
 	}
 
@@ -898,9 +886,7 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	alloc_data_type_set(&gc, gc.data_type);
 	if (gc.data_type != old_gc.data_type ||
 	    gc.dirty_sectors != old_gc.dirty_sectors) {
-		ret = bch2_alloc_key_to_dev_counters(trans, ca, &old_gc, &gc, BTREE_TRIGGER_gc);
-		if (ret)
-			return ret;
+		try(bch2_alloc_key_to_dev_counters(trans, ca, &old_gc, &gc, BTREE_TRIGGER_gc));
 
 		/*
 		 * Ugly: alloc_key_to_dev_counters(..., BTREE_TRIGGER_gc) is not

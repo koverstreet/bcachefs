@@ -324,7 +324,6 @@ int bch2_extent_update(struct btree_trans *trans,
 	struct bpos next_pos;
 	bool usage_increasing;
 	s64 i_sectors_delta = 0, disk_sectors_delta = 0;
-	int ret;
 
 	/*
 	 * This traverses us the iterator without changing iter->path->pos to
@@ -332,32 +331,23 @@ int bch2_extent_update(struct btree_trans *trans,
 	 * path already traversed at iter->pos because
 	 * bch2_trans_extent_update() will use it to attempt extent merging
 	 */
-	ret = __bch2_btree_iter_traverse(iter);
-	if (ret)
-		return ret;
+	try(__bch2_btree_iter_traverse(iter));
 
-	ret = bch2_extent_trim_atomic(trans, iter, k);
-	if (ret)
-		return ret;
+	try(bch2_extent_trim_atomic(trans, iter, k));
 
 	next_pos = k->k.p;
 
-	ret = bch2_sum_sector_overwrites(trans, iter, k,
-			&usage_increasing,
-			&i_sectors_delta,
-			&disk_sectors_delta);
-	if (ret)
-		return ret;
+	try(bch2_sum_sector_overwrites(trans, iter, k,
+				       &usage_increasing,
+				       &i_sectors_delta,
+				       &disk_sectors_delta));
 
 	if (disk_res &&
-	    disk_sectors_delta > (s64) disk_res->sectors) {
-		ret = bch2_disk_reservation_add(c, disk_res,
+	    disk_sectors_delta > (s64) disk_res->sectors)
+		try(bch2_disk_reservation_add(c, disk_res,
 					disk_sectors_delta - disk_res->sectors,
 					!check_enospc || !usage_increasing
-					? BCH_DISK_RESERVATION_NOFAIL : 0);
-		if (ret)
-			return ret;
-	}
+					? BCH_DISK_RESERVATION_NOFAIL : 0));
 
 	/*
 	 * Note:
@@ -368,19 +358,19 @@ int bch2_extent_update(struct btree_trans *trans,
 	struct bch_inode_unpacked inode;
 	struct bch_inode_opts opts;
 
-	ret =   bch2_extent_update_i_size_sectors(trans, iter,
-						  min(k->k.p.offset << 9, new_i_size),
-						  i_sectors_delta, &inode) ?:
-		(bch2_inode_opts_get_inode(c, &inode, &opts),
-		 bch2_bkey_set_needs_rebalance(c, &opts, k,
-					       SET_NEEDS_REBALANCE_foreground,
-					       change_cookie)) ?:
-		bch2_trans_update(trans, iter, k, 0) ?:
-		bch2_trans_commit(trans, disk_res, NULL,
-				BCH_TRANS_COMMIT_no_check_rw|
-				BCH_TRANS_COMMIT_no_enospc);
-	if (unlikely(ret))
-		return ret;
+	try(bch2_extent_update_i_size_sectors(trans, iter,
+					      min(k->k.p.offset << 9, new_i_size),
+					      i_sectors_delta, &inode));
+
+	bch2_inode_opts_get_inode(c, &inode, &opts);
+
+	try(bch2_bkey_set_needs_rebalance(c, &opts, k,
+					  SET_NEEDS_REBALANCE_foreground,
+					  change_cookie));
+	try(bch2_trans_update(trans, iter, k, 0));
+	try(bch2_trans_commit(trans, disk_res, NULL,
+			      BCH_TRANS_COMMIT_no_check_rw|
+			      BCH_TRANS_COMMIT_no_enospc));
 
 	if (i_sectors_delta_total)
 		*i_sectors_delta_total += i_sectors_delta;
@@ -881,12 +871,10 @@ static int bch2_write_rechecksum(struct bch_fs *c,
 	    bch2_csum_type_is_encryption(new_csum_type))
 		new_csum_type = op->crc.csum_type;
 
-	int ret = bch2_rechecksum_bio(c, bio, op->version, op->crc,
-				      NULL, &new_crc,
-				      op->crc.offset, op->crc.live_size,
-				      new_csum_type);
-	if (ret)
-		return ret;
+	try(bch2_rechecksum_bio(c, bio, op->version, op->crc,
+				NULL, &new_crc,
+				op->crc.offset, op->crc.live_size,
+				new_csum_type));
 
 	bio_advance(bio, op->crc.offset << 9);
 	bio->bi_iter.bi_size = op->crc.live_size << 9;
@@ -899,7 +887,6 @@ static noinline int bch2_write_prep_encoded_data(struct bch_write_op *op, struct
 	struct bch_fs *c = op->c;
 	struct bio *bio = &op->wbio.bio;
 	struct bch_csum csum;
-	int ret = 0;
 
 	BUG_ON(bio_sectors(bio) != op->crc.compressed_size);
 
@@ -910,11 +897,8 @@ static noinline int bch2_write_prep_encoded_data(struct bch_write_op *op, struct
 	    (op->crc.compression_type == bch2_compression_opt_to_type(op->compression_opt) ||
 	     op->incompressible)) {
 		if (!crc_is_compressed(op->crc) &&
-		    op->csum_type != op->crc.csum_type) {
-			ret = bch2_write_rechecksum(c, op, op->csum_type);
-			if (ret)
-				return ret;
-		}
+		    op->csum_type != op->crc.csum_type)
+			try(bch2_write_rechecksum(c, op, op->csum_type));
 
 		return 1;
 	}
@@ -931,17 +915,13 @@ static noinline int bch2_write_prep_encoded_data(struct bch_write_op *op, struct
 			goto csum_err;
 
 		if (bch2_csum_type_is_encryption(op->crc.csum_type)) {
-			ret = bch2_encrypt_bio(c, op->crc.csum_type, nonce, bio);
-			if (ret)
-				return ret;
+			try(bch2_encrypt_bio(c, op->crc.csum_type, nonce, bio));
 
 			op->crc.csum_type = 0;
 			op->crc.csum = (struct bch_csum) { 0, 0 };
 		}
 
-		ret = bch2_bio_uncompress_inplace(op, bio);
-		if (ret)
-			return ret;
+		try(bch2_bio_uncompress_inplace(op, bio));
 	}
 
 	/*
@@ -954,11 +934,8 @@ static noinline int bch2_write_prep_encoded_data(struct bch_write_op *op, struct
 	 * rechecksum and adjust bio to point to currently live data:
 	 */
 	if (op->crc.live_size != op->crc.uncompressed_size ||
-	    op->crc.csum_type != op->csum_type) {
-		ret = bch2_write_rechecksum(c, op, op->csum_type);
-		if (ret)
-			return ret;
-	}
+	    op->crc.csum_type != op->csum_type)
+		try(bch2_write_rechecksum(c, op, op->csum_type));
 
 	/*
 	 * If we want to compress the data, it has to be decrypted:
@@ -970,9 +947,7 @@ static noinline int bch2_write_prep_encoded_data(struct bch_write_op *op, struct
 		if (bch2_crc_cmp(op->crc.csum, csum) && !c->opts.no_data_io)
 			goto csum_err;
 
-		ret = bch2_encrypt_bio(c, op->crc.csum_type, nonce, bio);
-		if (ret)
-			return ret;
+		try(bch2_encrypt_bio(c, op->crc.csum_type, nonce, bio));
 
 		op->crc.csum_type = 0;
 		op->crc.csum = (struct bch_csum) { 0, 0 };

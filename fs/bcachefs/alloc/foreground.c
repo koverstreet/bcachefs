@@ -866,9 +866,7 @@ static int bucket_alloc_set_partial(struct bch_fs *c,
 			scoped_guard(rcu)
 				bch2_dev_rcu(c, ob->dev)->nr_partial_buckets--;
 
-			int ret = add_new_bucket(c, req, ob);
-			if (ret)
-				return ret;
+			try(add_new_bucket(c, req, ob));
 		}
 	}
 
@@ -894,13 +892,9 @@ static int __open_bucket_add_buckets(struct btree_trans *trans,
 	open_bucket_for_each(c, &req->ptrs, ob, i)
 		__clear_bit(ob->dev, req->devs_may_alloc.d);
 
-	ret = bucket_alloc_set_writepoint(c, req);
-	if (ret)
-		return ret;
+	try(bucket_alloc_set_writepoint(c, req));
 
-	ret = bucket_alloc_set_partial(c, req);
-	if (ret)
-		return ret;
+	try(bucket_alloc_set_partial(c, req));
 
 	if (req->ec) {
 		ret = bucket_alloc_from_stripe(trans, req, _cl);

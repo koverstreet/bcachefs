@@ -265,7 +265,6 @@ static int downgrade_table_extra(struct bch_fs *c, darray_char *table)
 	unsigned dst_offset = table->nr;
 	struct bch_sb_field_downgrade_entry *dst = (void *) &darray_top(*table);
 	unsigned bytes = sizeof(*dst) + sizeof(dst->errors[0]) * le16_to_cpu(dst->nr_errors);
-	int ret = 0;
 
 	unsigned nr_errors = le16_to_cpu(dst->nr_errors);
 
@@ -274,9 +273,7 @@ static int downgrade_table_extra(struct bch_fs *c, darray_char *table)
 		if (have_stripes(c)) {
 			bytes += sizeof(dst->errors[0]) * 2;
 
-			ret = darray_make_room(table, bytes);
-			if (ret)
-				return ret;
+			try(darray_make_room(table, bytes));
 
 			dst = (void *) &table->data[dst_offset];
 			dst->nr_errors = cpu_to_le16(nr_errors + 1);
@@ -291,7 +288,7 @@ static int downgrade_table_extra(struct bch_fs *c, darray_char *table)
 		break;
 	}
 
-	return ret;
+	return 0;
 }
 
 static inline const struct bch_sb_field_downgrade_entry *
@@ -382,7 +379,6 @@ int bch2_sb_downgrade_update(struct bch_fs *c)
 		return 0;
 
 	CLASS(darray_char, table)();
-	int ret = 0;
 
 	for (const struct upgrade_downgrade_entry *src = downgrade_table;
 	     src < downgrade_table + ARRAY_SIZE(downgrade_table);
@@ -396,9 +392,7 @@ int bch2_sb_downgrade_update(struct bch_fs *c)
 		struct bch_sb_field_downgrade_entry *dst;
 		unsigned bytes = sizeof(*dst) + sizeof(dst->errors[0]) * src->nr_errors;
 
-		ret = darray_make_room(&table, bytes);
-		if (ret)
-			return ret;
+		try(darray_make_room(&table, bytes));
 
 		dst = (void *) &darray_top(table);
 		dst->version = cpu_to_le16(src->version);
@@ -408,9 +402,7 @@ int bch2_sb_downgrade_update(struct bch_fs *c)
 		for (unsigned i = 0; i < src->nr_errors; i++)
 			dst->errors[i] = cpu_to_le16(src->errors[i]);
 
-		ret = downgrade_table_extra(c, &table);
-		if (ret)
-			return ret;
+		try(downgrade_table_extra(c, &table));
 
 		if (!dst->recovery_passes[0] &&
 		    !dst->recovery_passes[1] &&
@@ -433,7 +425,7 @@ int bch2_sb_downgrade_update(struct bch_fs *c)
 
 	memcpy(d->entries, table.data, table.nr);
 	memset_u64s_tail(d->entries, 0, table.nr);
-	return ret;
+	return 0;
 }
 
 void bch2_sb_set_downgrade(struct bch_fs *c, unsigned new_minor, unsigned old_minor)

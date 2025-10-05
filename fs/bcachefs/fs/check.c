@@ -126,10 +126,7 @@ static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 	int ret;
 
 	struct bch_snapshot_tree st;
-	ret = bch2_snapshot_tree_lookup(trans,
-			bch2_snapshot_tree(c, snapshot), &st);
-	if (ret)
-		return ret;
+	try(bch2_snapshot_tree_lookup(trans, bch2_snapshot_tree(c, snapshot), &st));
 
 	u32 subvolid;
 	ret = find_snapshot_tree_subvol(trans,
@@ -335,19 +332,14 @@ int bch2_reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *in
 		subvol->v.fs_path_parent = BCACHEFS_ROOT_SUBVOL;
 
 		u64 root_inum;
-		ret = subvol_lookup(trans, inode->bi_parent_subvol,
-				    &dirent_snapshot, &root_inum);
-		if (ret)
-			return ret;
+		try(subvol_lookup(trans, inode->bi_parent_subvol, &dirent_snapshot, &root_inum));
 
 		snprintf(name_buf, sizeof(name_buf), "subvol-%u", inode->bi_subvol);
 	} else {
 		snprintf(name_buf, sizeof(name_buf), "%llu", inode->bi_inum);
 	}
 
-	ret = lookup_lostfound(trans, dirent_snapshot, &lostfound, inode->bi_inum);
-	if (ret)
-		return ret;
+	try(lookup_lostfound(trans, dirent_snapshot, &lostfound, inode->bi_inum));
 
 	bch_verbose(c, "got lostfound inum %llu", lostfound.bi_inum);
 
@@ -359,9 +351,7 @@ int bch2_reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *in
 		lostfound.bi_snapshot = inode->bi_snapshot;
 	}
 
-	ret = __bch2_fsck_write_inode(trans, &lostfound);
-	if (ret)
-		return ret;
+	try(__bch2_fsck_write_inode(trans, &lostfound));
 
 	struct bch_hash_info dir_hash = bch2_hash_info_init(c, &lostfound);
 	struct qstr name = QSTR(name_buf);
@@ -383,16 +373,12 @@ int bch2_reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *in
 		return ret;
 	}
 
-	ret = __bch2_fsck_write_inode(trans, inode);
-	if (ret)
-		return ret;
+	try(__bch2_fsck_write_inode(trans, inode));
 
 	{
 		CLASS(printbuf, buf)();
-		ret = bch2_inum_snapshot_to_path(trans, inode->bi_inum,
-						 inode->bi_snapshot, NULL, &buf);
-		if (ret)
-			return ret;
+		try(bch2_inum_snapshot_to_path(trans, inode->bi_inum,
+					       inode->bi_snapshot, NULL, &buf));
 
 		bch_info(c, "reattached at %s", buf.buf);
 	}
@@ -420,27 +406,21 @@ int bch2_reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *in
 				continue;
 
 			struct bch_inode_unpacked child_inode;
-			ret = bch2_inode_unpack(k, &child_inode);
-			if (ret)
-				return ret;
+			try(bch2_inode_unpack(k, &child_inode));
 
 			if (!inode_should_reattach(&child_inode)) {
-				ret =   maybe_delete_dirent(trans,
-							    SPOS(lostfound.bi_inum, inode->bi_dir_offset,
-								 dirent_snapshot),
-							    k.k->p.snapshot) ?:
-					snapshot_list_add(c, &whiteouts_done, k.k->p.snapshot);
-				if (ret)
-					return ret;
+				try(maybe_delete_dirent(trans,
+							SPOS(lostfound.bi_inum, inode->bi_dir_offset,
+							     dirent_snapshot),
+							k.k->p.snapshot));
+				try(snapshot_list_add(c, &whiteouts_done, k.k->p.snapshot));
 			} else {
 				iter.snapshot = k.k->p.snapshot;
 				child_inode.bi_dir = inode->bi_dir;
 				child_inode.bi_dir_offset = inode->bi_dir_offset;
 
-				ret = bch2_inode_write_flags(trans, &iter, &child_inode,
-							     BTREE_UPDATE_internal_snapshot_node);
-				if (ret)
-					return ret;
+				try(bch2_inode_write_flags(trans, &iter, &child_inode,
+							   BTREE_UPDATE_internal_snapshot_node));
 			}
 		}
 	}
@@ -493,9 +473,7 @@ static int reconstruct_subvol(struct btree_trans *trans, u32 snapshotid, u32 sub
 	new_subvol->k.p.offset	= subvolid;
 	new_subvol->v.snapshot	= cpu_to_le32(snapshotid);
 	new_subvol->v.inode	= cpu_to_le64(inum);
-	ret = bch2_btree_insert_trans(trans, BTREE_ID_subvolumes, &new_subvol->k_i, 0);
-	if (ret)
-		return ret;
+	try(bch2_btree_insert_trans(trans, BTREE_ID_subvolumes, &new_subvol->k_i, 0));
 
 	struct bkey_i_snapshot *s = bch2_bkey_get_mut_typed(trans,
 			BTREE_ID_snapshots, POS(0, snapshotid),
@@ -646,11 +624,9 @@ int bch2_ref_visible2(struct bch_fs *c,
 static int add_inode(struct bch_fs *c, struct inode_walker *w,
 		     struct bkey_s_c inode)
 {
-	int ret = darray_push(&w->inodes, ((struct inode_walker_entry) {
+	try(darray_push(&w->inodes, ((struct inode_walker_entry) {
 		.whiteout	= !bkey_is_inode(inode.k),
-	}));
-	if (ret)
-		return ret;
+	})));
 
 	struct inode_walker_entry *n = &darray_last(w->inodes);
 	if (!n->whiteout) {
@@ -680,11 +656,8 @@ static int get_inodes_all_snapshots(struct btree_trans *trans,
 
 	for_each_btree_key_max_norestart(trans, iter,
 			BTREE_ID_inodes, POS(0, inum), SPOS(0, inum, U32_MAX),
-			BTREE_ITER_all_snapshots, k, ret) {
-		ret = add_inode(c, w, k);
-		if (ret)
-			break;
-	}
+			BTREE_ITER_all_snapshots, k, ret)
+		try(add_inode(c, w, k));
 
 	if (ret)
 		return ret;
@@ -830,15 +803,11 @@ int bch2_fsck_update_backpointers(struct btree_trans *trans,
 		bch_err(trans->c, "%s does not support DT_SUBVOL", __func__);
 		return bch_err_throw(trans->c, fsck_repair_unimplemented);
 	} else {
-		int ret = get_visible_inodes(trans, &target, s, le64_to_cpu(d->v.d_inum));
-		if (ret)
-			return ret;
+		try(get_visible_inodes(trans, &target, s, le64_to_cpu(d->v.d_inum)));
 
 		darray_for_each(target.inodes, i) {
 			i->inode.bi_dir_offset = d->k.p.offset;
-			ret = __bch2_fsck_write_inode(trans, &i->inode);
-			if (ret)
-				return ret;
+			try(__bch2_fsck_write_inode(trans, &i->inode));
 		}
 
 		return 0;
@@ -1208,16 +1177,12 @@ static int check_unreachable_inode(struct btree_trans *trans,
 		return 0;
 
 	struct bch_inode_unpacked inode;
-	ret = bch2_inode_unpack(k, &inode);
-	if (ret)
-		return ret;
+	try(bch2_inode_unpack(k, &inode));
 
 	if (!inode_should_reattach(&inode))
 		return 0;
 
-	ret = find_oldest_inode_needs_reattach(trans, &inode);
-	if (ret)
-		return ret;
+	try(find_oldest_inode_needs_reattach(trans, &inode));
 
 	if (fsck_err(trans, inode_unreachable,
 		     "unreachable inode:\n%s",
@@ -1531,9 +1496,7 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 		 * Couldn't find a subvol for dirent's snapshot - but we lost
 		 * subvols, so we need to reconstruct:
 		 */
-		ret = reconstruct_subvol(trans, d.k->p.snapshot, parent_subvol, 0);
-		if (ret)
-			return ret;
+		try(reconstruct_subvol(trans, d.k->p.snapshot, parent_subvol, 0));
 
 		parent_snapshot = d.k->p.snapshot;
 	}
@@ -1659,20 +1622,15 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 	if (k.k->type == KEY_TYPE_whiteout)
 		return 0;
 
-	if (dir->last_pos.inode != k.k->p.inode && dir->have_inodes) {
-		ret = check_subdir_dirents_count(trans, dir);
-		if (ret)
-			return ret;
-	}
+	if (dir->last_pos.inode != k.k->p.inode && dir->have_inodes)
+		try(check_subdir_dirents_count(trans, dir));
 
 	i = bch2_walk_inode(trans, dir, k);
 	ret = PTR_ERR_OR_ZERO(i);
 	if (ret)
 		return ret;
 
-	ret = bch2_check_key_has_inode(trans, iter, dir, i, k);
-	if (ret)
-		return ret;
+	try(bch2_check_key_has_inode(trans, iter, dir, i, k));
 
 	if (!i || i->whiteout)
 		return 0;
@@ -1732,37 +1690,23 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 	}
 
 	if (d.v->d_type == DT_SUBVOL) {
-		ret = check_dirent_to_subvol(trans, iter, d);
-		if (ret)
-			return ret;
+		try(check_dirent_to_subvol(trans, iter, d));
 	} else {
-		ret = get_visible_inodes(trans, target, s, le64_to_cpu(d.v->d_inum));
-		if (ret)
-			return ret;
+		try(get_visible_inodes(trans, target, s, le64_to_cpu(d.v->d_inum)));
 
-		if (!target->inodes.nr) {
-			ret = maybe_reconstruct_inum(trans, le64_to_cpu(d.v->d_inum),
-						     d.k->p.snapshot);
-			if (ret)
-				return ret;
-		}
+		if (!target->inodes.nr)
+			try(maybe_reconstruct_inum(trans, le64_to_cpu(d.v->d_inum), d.k->p.snapshot));
 
 		if (fsck_err_on(!target->inodes.nr,
 				trans, dirent_to_missing_inode,
 				"dirent points to missing inode:\n%s",
 				(printbuf_reset(&buf),
 				 bch2_bkey_val_to_text(&buf, c, k),
-				 buf.buf))) {
-			ret = bch2_fsck_remove_dirent(trans, d.k->p);
-			if (ret)
-				return ret;
-		}
+				 buf.buf)))
+			try(bch2_fsck_remove_dirent(trans, d.k->p));
 
-		darray_for_each(target->inodes, i) {
-			ret = bch2_check_dirent_target(trans, iter, d, &i->inode, true);
-			if (ret)
-				return ret;
-		}
+		darray_for_each(target->inodes, i)
+			try(bch2_check_dirent_target(trans, iter, d, &i->inode, true));
 
 		darray_for_each(target->deletes, i)
 			if (fsck_err_on(!snapshot_list_has_id(&s->ids, *i),
@@ -1776,14 +1720,11 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 						     BTREE_ID_dirents,
 						     SPOS(k.k->p.inode, k.k->p.offset, *i),
 						     BTREE_ITER_intent);
-				ret =   bch2_btree_iter_traverse(&delete_iter) ?:
-					bch2_hash_delete_at(trans, bch2_dirent_hash_desc,
-							  hash_info,
-							  &delete_iter,
-							  BTREE_UPDATE_internal_snapshot_node);
-				if (ret)
-					return ret;
-
+				try(bch2_btree_iter_traverse(&delete_iter));
+				try(bch2_hash_delete_at(trans, bch2_dirent_hash_desc,
+							hash_info,
+							&delete_iter,
+							BTREE_UPDATE_internal_snapshot_node));
 			}
 	}
 
@@ -1793,9 +1734,7 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 	 */
 	bool have_dir = d.v->d_type == DT_DIR;
 
-	ret = bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
-	if (ret)
-		return ret;
+	try(bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
 
 	for_each_visible_inode(c, s, dir, d.k->p.snapshot, i) {
 		if (have_dir)
@@ -1865,9 +1804,7 @@ static int check_xattr(struct btree_trans *trans, struct btree_iter *iter,
 	if (ret)
 		return ret;
 
-	ret = bch2_check_key_has_inode(trans, iter, inode, i, k);
-	if (ret)
-		return ret;
+	try(bch2_check_key_has_inode(trans, iter, inode, i, k));
 
 	if (!i || i->whiteout)
 		return 0;

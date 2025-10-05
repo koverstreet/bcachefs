@@ -674,16 +674,12 @@ void bch2_fs_encryption_exit(struct bch_fs *c)
 
 int bch2_fs_encryption_init(struct bch_fs *c)
 {
-	struct bch_sb_field_crypt *crypt;
-	int ret;
-
-	crypt = bch2_sb_field_get(c->disk_sb.sb, crypt);
+	struct bch_sb_field_crypt *crypt = bch2_sb_field_get(c->disk_sb.sb, crypt);
 	if (!crypt)
 		return 0;
 
-	ret = bch2_decrypt_sb_key(c, crypt, &c->chacha20_key);
-	if (ret)
-		return ret;
+	try(bch2_decrypt_sb_key(c, crypt, &c->chacha20_key));
+
 	c->chacha20_key_set = true;
 	return 0;
 }

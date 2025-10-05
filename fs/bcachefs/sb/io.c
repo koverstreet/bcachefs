@@ -389,11 +389,8 @@ int bch2_sb_validate(struct bch_sb *sb, struct bch_opts *opts, u64 read_offset,
 		     enum bch_validate_flags flags, struct printbuf *out)
 {
 	enum bch_opt_id opt_id;
-	int ret;
 
-	ret = bch2_sb_compatible(sb, out);
-	if (ret)
-		return ret;
+	try(bch2_sb_compatible(sb, out));
 
 	if (!opts->no_version_check) {
 		u64 incompat = le64_to_cpu(sb->features[0]) & (~0ULL << BCH_FEATURE_NR);
@@ -517,18 +514,14 @@ int bch2_sb_validate(struct bch_sb *sb, struct bch_opts *opts, u64 read_offset,
 			u64 v = bch2_opt_from_sb(sb, opt_id, -1);
 
 			prt_printf(out, "Invalid option ");
-			ret = bch2_opt_validate(opt, v, out);
-			if (ret)
-				return ret;
+			try(bch2_opt_validate(opt, v, out));
 
 			printbuf_reset(out);
 		}
 	}
 
 	/* validate layout */
-	ret = validate_sb_layout(&sb->layout, out);
-	if (ret)
-		return ret;
+	try(validate_sb_layout(&sb->layout, out));
 
 	vstruct_for_each(sb, f) {
 		if (!f->u64s) {
@@ -554,17 +547,13 @@ int bch2_sb_validate(struct bch_sb *sb, struct bch_opts *opts, u64 read_offset,
 		return -BCH_ERR_invalid_sb_members_missing;
 	}
 
-	ret = bch2_sb_field_validate(sb, mi, flags, out);
-	if (ret)
-		return ret;
+	try(bch2_sb_field_validate(sb, mi, flags, out));
 
 	vstruct_for_each(sb, f) {
 		if (le32_to_cpu(f->type) == BCH_SB_FIELD_members_v1)
 			continue;
 
-		ret = bch2_sb_field_validate(sb, f, flags, out);
-		if (ret)
-			return ret;
+		try(bch2_sb_field_validate(sb, f, flags, out));
 	}
 
 	if ((flags & BCH_VALIDATE_write) &&
@@ -677,11 +666,7 @@ static int __copy_super(struct bch_sb_handle *dst_handle, struct bch_sb *src)
 		d = (src_f ? le32_to_cpu(src_f->u64s) : 0) -
 		    (dst_f ? le32_to_cpu(dst_f->u64s) : 0);
 		if (d > 0) {
-			int ret = bch2_sb_realloc(dst_handle,
-					le32_to_cpu(dst_handle->sb->u64s) + d);
-
-			if (ret)
-				return ret;
+			try(bch2_sb_realloc(dst_handle, le32_to_cpu(dst_handle->sb->u64s) + d));
 
 			dst = dst_handle->sb;
 			dst_f = bch2_sb_field_get_id(dst, i);
@@ -699,16 +684,12 @@ static int __copy_super(struct bch_sb_handle *dst_handle, struct bch_sb *src)
 
 int bch2_sb_to_fs(struct bch_fs *c, struct bch_sb *src)
 {
-	int ret;
-
 	lockdep_assert_held(&c->sb_lock);
 
-	ret =   bch2_sb_realloc(&c->disk_sb, 0) ?:
-		__copy_super(&c->disk_sb, src) ?:
-		bch2_sb_replicas_to_cpu_replicas(c) ?:
-		bch2_sb_disk_groups_to_cpu(c);
-	if (ret)
-		return ret;
+	try(bch2_sb_realloc(&c->disk_sb, 0));
+	try(__copy_super(&c->disk_sb, src));
+	try(bch2_sb_replicas_to_cpu_replicas(c));
+	try(bch2_sb_disk_groups_to_cpu(c));
 
 	bch2_sb_update(c);
 	return 0;
@@ -724,13 +705,12 @@ int bch2_sb_from_fs(struct bch_fs *c, struct bch_dev *ca)
 static int read_one_super(struct bch_sb_handle *sb, u64 offset, struct printbuf *err)
 {
 	size_t bytes;
-	int ret;
 reread:
 	bio_reset(sb->bio, sb->bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
 	sb->bio->bi_iter.bi_sector = offset;
 	bch2_bio_map(sb->bio, sb->sb, sb->buffer_size);
 
-	ret = submit_bio_wait(sb->bio);
+	int ret = submit_bio_wait(sb->bio);
 	if (ret) {
 		prt_printf(err, "IO error: %i", ret);
 		return ret;
@@ -744,9 +724,7 @@ reread:
 		return -BCH_ERR_invalid_sb_magic;
 	}
 
-	ret = bch2_sb_compatible(sb->sb, err);
-	if (ret)
-		return ret;
+	try(bch2_sb_compatible(sb->sb, err));
 
 	bytes = vstruct_bytes(sb->sb);
 
@@ -758,9 +736,7 @@ reread:
 	}
 
 	if (bytes > sb->buffer_size) {
-		ret = bch2_sb_realloc(sb, le32_to_cpu(sb->sb->u64s));
-		if (ret)
-			return ret;
+		try(bch2_sb_realloc(sb, le32_to_cpu(sb->sb->u64s)));
 		goto reread;
 	}
 

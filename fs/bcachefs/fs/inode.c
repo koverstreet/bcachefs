@@ -347,14 +347,12 @@ int __bch2_inode_peek(struct btree_trans *trans,
 		      bool warn)
 {
 	u32 snapshot;
-	int ret = __bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot, warn);
-	if (ret)
-		return ret;
+	try(__bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot, warn));
 
 	bch2_trans_iter_init(trans, iter, BTREE_ID_inodes, SPOS(0, inum.inum, snapshot),
 			     flags|BTREE_ITER_cached);
 	struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
-	ret = bkey_err(k);
+	int ret = bkey_err(k);
 	if (ret)
 		goto err;
 
@@ -807,19 +805,15 @@ int bch2_trigger_inode(struct btree_trans *trans,
 
 	s64 nr[1] = { bkey_is_inode(new.k) - bkey_is_inode(old.k) };
 	if ((flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) && nr[0]) {
-		int ret = bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc, nr, nr_inodes);
-		if (ret)
-			return ret;
+		try(bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc, nr, nr_inodes));
 	}
 
 	if (flags & BTREE_TRIGGER_transactional) {
 		int unlinked_delta =	(int) bkey_is_unlinked_inode(new.s_c) -
 					(int) bkey_is_unlinked_inode(old);
 		if (unlinked_delta) {
-			int ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_deleted_inodes,
-							      new.k->p, unlinked_delta > 0);
-			if (ret)
-				return ret;
+			try(bch2_btree_bit_mod_buffered(trans, BTREE_ID_deleted_inodes,
+							new.k->p, unlinked_delta > 0));
 		}
 
 		/*
@@ -831,22 +825,15 @@ int bch2_trigger_inode(struct btree_trans *trans,
 		int deleted_delta = (int) bkey_is_inode(new.k) -
 				    (int) bkey_is_inode(old.k);
 		if (deleted_delta &&
-		    bch2_snapshot_parent(c, new.k->p.snapshot)) {
-			int ret = update_parent_inode_has_children(trans, new.k->p,
-								   deleted_delta > 0);
-			if (ret)
-				return ret;
-		}
+		    bch2_snapshot_parent(c, new.k->p.snapshot))
+			try(update_parent_inode_has_children(trans, new.k->p, deleted_delta > 0));
 
 		/*
 		 * When an inode is first updated in a new snapshot, we may need
 		 * to clear has_child_snapshot
 		 */
-		if (deleted_delta > 0) {
-			int ret = update_inode_has_children(trans, new, false);
-			if (ret)
-				return ret;
-		}
+		if (deleted_delta > 0)
+			try(update_inode_has_children(trans, new, false));
 	}
 
 	return 0;
@@ -1131,9 +1118,7 @@ int bch2_inode_rm(struct bch_fs *c, subvol_inum inum)
 	u32 snapshot;
 	int ret;
 
-	ret = lockrestart_do(trans, may_delete_deleted_inum(trans, inum, &inode));
-	if (ret)
-		return ret;
+	try(lockrestart_do(trans, may_delete_deleted_inum(trans, inum, &inode)));
 
 	/*
 	 * If this was a directory, there shouldn't be any real dirents left -
@@ -1143,12 +1128,11 @@ int bch2_inode_rm(struct bch_fs *c, subvol_inum inum)
 	 * XXX: the dirent code ideally would delete whiteouts when they're no
 	 * longer needed
 	 */
-	ret   = (!S_ISDIR(inode.bi_mode)
-		 ? bch2_inode_delete_keys(trans, inum, BTREE_ID_extents)
-		 : bch2_inode_delete_keys(trans, inum, BTREE_ID_dirents)) ?:
-		bch2_inode_delete_keys(trans, inum, BTREE_ID_xattrs);
-	if (ret)
-		return ret;
+	try((!S_ISDIR(inode.bi_mode)
+	     ? bch2_inode_delete_keys(trans, inum, BTREE_ID_extents)
+	     : bch2_inode_delete_keys(trans, inum, BTREE_ID_dirents)));
+
+	try(bch2_inode_delete_keys(trans, inum, BTREE_ID_xattrs));
 retry:
 	bch2_trans_begin(trans);
 
@@ -1255,9 +1239,7 @@ int bch2_inum_snapshot_opts_get(struct btree_trans *trans,
 {
 	if (inum) {
 		struct bch_inode_unpacked inode;
-		int ret = bch2_inode_find_by_inum_snapshot(trans, inum, snapshot, &inode, 0);
-		if (ret)
-			return ret;
+		try(bch2_inode_find_by_inum_snapshot(trans, inum, snapshot, &inode, 0));
 
 		bch2_inode_opts_get_inode(trans->c, &inode, opts);
 	} else {
@@ -1294,9 +1276,7 @@ int bch2_inode_set_casefold(struct btree_trans *trans, subvol_inum inum,
 	if (ret < 0)
 		return ret;
 
-	ret = bch2_request_incompat_feature(c, bcachefs_metadata_version_casefolding);
-	if (ret)
-		return ret;
+	try(bch2_request_incompat_feature(c, bcachefs_metadata_version_casefolding));
 
 	bch2_check_set_feature(c, BCH_FEATURE_casefolding);
 
@@ -1395,9 +1375,7 @@ next_parent:
 	if (ret)
 		return ret < 0 ? ret : 0;
 
-	ret = __bch2_inode_rm_snapshot(trans, pos.offset, pos.snapshot);
-	if (ret)
-		return ret;
+	try(__bch2_inode_rm_snapshot(trans, pos.offset, pos.snapshot));
 	goto next_parent;
 }
 
@@ -1431,9 +1409,7 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 	if (ret)
 		return ret;
 
-	ret = bch2_inode_unpack(k, inode);
-	if (ret)
-		return ret;
+	try(bch2_inode_unpack(k, inode));
 
 	if (S_ISDIR(inode->bi_mode)) {
 		ret = bch2_empty_dir_snapshot(trans, pos.offset, 0, pos.snapshot);
@@ -1478,9 +1454,7 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 			      bch2_inode_unpacked_to_text(&buf, inode),
 			      buf.buf))) {
 			inode->bi_flags |= BCH_INODE_has_child_snapshot;
-			ret = __bch2_fsck_write_inode(trans, inode);
-			if (ret)
-				return ret;
+			try(__bch2_fsck_write_inode(trans, inode));
 		}
 
 		if (!from_deleted_inodes) {

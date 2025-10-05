@@ -292,28 +292,19 @@ static void bch2_dev_ref_complete(struct percpu_ref *ref)
 
 int bch2_dev_sysfs_online(struct bch_fs *c, struct bch_dev *ca)
 {
-	int ret;
-
 	if (!c->kobj.state_in_sysfs)
 		return 0;
 
 	if (!ca->kobj.state_in_sysfs) {
-		ret =   kobject_add(&ca->kobj, &c->kobj, "dev-%u", ca->dev_idx) ?:
-			bch2_opts_create_sysfs_files(&ca->kobj, OPT_DEVICE);
-		if (ret)
-			return ret;
+		try(kobject_add(&ca->kobj, &c->kobj, "dev-%u", ca->dev_idx));
+		try(bch2_opts_create_sysfs_files(&ca->kobj, OPT_DEVICE));
 	}
 
 	if (ca->disk_sb.bdev) {
 		struct kobject *block = bdev_kobj(ca->disk_sb.bdev);
 
-		ret = sysfs_create_link(block, &ca->kobj, "bcachefs");
-		if (ret)
-			return ret;
-
-		ret = sysfs_create_link(&ca->kobj, block, "block");
-		if (ret)
-			return ret;
+		try(sysfs_create_link(block, &ca->kobj, "bcachefs"));
+		try(sysfs_create_link(&ca->kobj, block, "block"));
 	}
 
 	return 0;
@@ -409,8 +400,6 @@ int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb,
 				  struct printbuf *err)
 {
-	int ret;
-
 	if (bch2_dev_is_online(ca)) {
 		prt_printf(err, "already have device online in slot %u\n",
 			   sb->sb->dev_idx);
@@ -429,9 +418,7 @@ static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb,
 	BUG_ON(!enumerated_ref_is_zero(&ca->io_ref[READ]));
 	BUG_ON(!enumerated_ref_is_zero(&ca->io_ref[WRITE]));
 
-	ret = bch2_dev_journal_init(ca, sb->sb);
-	if (ret)
-		return ret;
+	try(bch2_dev_journal_init(ca, sb->sb));
 
 	CLASS(printbuf, name)();
 	prt_bdevname(&name, sb->bdev);
@@ -457,9 +444,6 @@ static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb,
 
 int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb, struct printbuf *err)
 {
-	struct bch_dev *ca;
-	int ret;
-
 	lockdep_assert_held(&c->state_lock);
 
 	if (le64_to_cpu(sb->sb->seq) >
@@ -468,11 +452,9 @@ int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb, struct prin
 
 	BUG_ON(!bch2_dev_exists(c, sb->sb->dev_idx));
 
-	ca = bch2_dev_locked(c, sb->sb->dev_idx);
+	struct bch_dev *ca = bch2_dev_locked(c, sb->sb->dev_idx);
 
-	ret = __bch2_dev_attach_bdev(ca, sb, err);
-	if (ret)
-		return ret;
+	try(__bch2_dev_attach_bdev(ca, sb, err));
 
 	set_bit(ca->dev_idx, c->online_devs.d);
 
@@ -596,9 +578,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	 */
 	bch2_dev_put(ca);
 
-	ret = __bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_failed, flags, err);
-	if (ret)
-		goto err;
+	try(__bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_failed, flags, err));
 
 	ret = fast_device_removal
 		? bch2_dev_data_drop_by_backpointers(c, ca->dev_idx, flags, err)
