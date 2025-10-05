@@ -70,13 +70,14 @@ bcachefs-y		:=			\
 	fs/str_hash.o				\
 	fs/subvolume.o				\
 	fs/xattr.o				\
+	init/dev.o				\
 	init/errcode.o				\
 	init/error.o				\
+	init/fs.o				\
 	init/opts.o				\
 	init/progress.o				\
 	init/recovery.o				\
 	init/passes.o				\
-	init/super.o				\
 	journal/init.o				\
 	journal/io.o				\
 	journal/journal.o			\

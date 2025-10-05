@@ -7,7 +7,7 @@
 
 #include "init/errcode.h"
 #include "init/error.h"
-#include "init/super.h"
+#include "init/fs.h"
 
 #include <linux/crc32c.h>
 #include <linux/xxhash.h>

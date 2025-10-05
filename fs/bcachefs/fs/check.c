@@ -20,7 +20,7 @@
 #include "init/error.h"
 #include "init/progress.h"
 #include "init/passes.h"
-#include "init/super.h"
+#include "init/fs.h"
 
 #include "util/darray.h"
 #include "util/thread_with_file.h"

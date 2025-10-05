@@ -32,8 +32,9 @@
 #include "vfs/direct.h"
 #include "vfs/pagecache.h"
 
+#include "init/dev.h"
 #include "init/errcode.h"
-#include "init/super.h"
+#include "init/fs.h"
 
 #include <linux/aio.h>
 #include <linux/backing-dev.h>

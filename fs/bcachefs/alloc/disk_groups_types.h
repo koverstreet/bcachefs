@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_DISK_GROUPS_TYPES_H
 #define _BCACHEFS_DISK_GROUPS_TYPES_H
 
-#include "init/super_types.h"
+#include "init/dev_types.h"
 
 struct bch_disk_group_cpu {
 	bool				deleted;

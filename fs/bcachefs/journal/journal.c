@@ -12,6 +12,7 @@
 #include "btree/write_buffer.h"
 
 #include "init/error.h"
+#include "init/fs.h"
 
 #include "journal/journal.h"
 #include "journal/io.h"

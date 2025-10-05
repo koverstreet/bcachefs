@@ -20,7 +20,7 @@
 #include "fs/snapshot.h"
 
 #include "init/error.h"
-#include "init/super.h"
+#include "init/fs.h"
 
 #include "journal/journal.h"
 #include "journal/io.h"

@@ -23,6 +23,7 @@
 #include "data/write.h"
 
 #include "init/error.h"
+#include "init/fs.h"
 #include "init/passes.h"
 
 #include "journal/journal.h"

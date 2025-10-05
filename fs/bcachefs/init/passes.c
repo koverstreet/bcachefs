@@ -28,7 +28,7 @@
 
 #include "init/recovery.h"
 #include "init/passes.h"
-#include "init/super.h"
+#include "init/fs.h"
 
 const char * const bch2_recovery_passes[] = {
 #define x(_fn, ...)	#_fn,

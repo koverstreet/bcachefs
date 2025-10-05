@@ -8,7 +8,7 @@
 #include "extents_types.h"
 #include "keylist_types.h"
 #include "init/opts.h"
-#include "init/super_types.h"
+#include "init/dev_types.h"
 
 #include <linux/llist.h>
 #include <linux/workqueue.h>

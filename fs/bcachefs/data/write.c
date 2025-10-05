@@ -28,8 +28,9 @@
 #include "fs/inode.h"
 #include "fs/subvolume.h"
 
+#include "init/dev.h"
 #include "init/error.h"
-#include "init/super.h"
+#include "init/fs.h"
 
 #include "journal/journal.h"
 

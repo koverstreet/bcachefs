@@ -6,7 +6,7 @@
 #include <linux/workqueue.h>
 
 #include "alloc/types.h"
-#include "init/super_types.h"
+#include "init/dev_types.h"
 #include "util/fifo.h"
 
 /* btree write buffer steals 8 bits for its own purposes: */

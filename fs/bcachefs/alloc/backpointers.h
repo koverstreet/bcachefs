@@ -2,12 +2,11 @@
 #ifndef _BCACHEFS_BACKPOINTERS_H
 #define _BCACHEFS_BACKPOINTERS_H
 
+#include "alloc/buckets.h"
 #include "btree/cache.h"
 #include "btree/iter.h"
 #include "btree/update.h"
-#include "alloc/buckets.h"
 #include "init/error.h"
-#include "init/super.h"
 
 static inline u64 swab40(u64 x)
 {
