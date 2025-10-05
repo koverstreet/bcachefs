@@ -58,6 +58,7 @@ bcachefs-y		:=			\
 	fs/chardev.o				\
 	fs/check.o				\
 	fs/check_dir_structure.o		\
+	fs/check_extents.o			\
 	fs/check_nlinks.o			\
 	fs/dirent.o				\
 	fs/inode.o				\
