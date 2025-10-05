@@ -14,9 +14,9 @@
 
 #include "fs/quota.h"
 
+#include "init/dev.h"
 #include "init/error.h"
 #include "init/passes.h"
-#include "init/super.h"
 
 #include "sb/clean.h"
 #include "sb/counters.h"

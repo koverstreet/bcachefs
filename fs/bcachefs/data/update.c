@@ -23,6 +23,8 @@
 #include "fs/snapshot.h"
 #include "fs/subvolume.h"
 
+#include "init/fs.h"
+
 #include "init/error.h"
 
 #include <linux/ioprio.h>

@@ -24,6 +24,8 @@
 #include "fs/quota.h"
 #include "fs/snapshot.h"
 
+#include "init/fs.h"
+
 #include "journal/init.h"
 #include "journal/io.h"
 #include "journal/reclaim.h"

@@ -5,7 +5,6 @@
 #include "bcachefs.h"
 #include "alloc/types.h"
 #include "alloc/buckets.h"
-#include "init/super.h"
 
 /* How out of date a pointer gen is allowed to be: */
 #define BUCKET_GC_GEN_MAX	96U

@@ -19,6 +19,7 @@
 #include "sb/counters.h"
 #include "sb/io.h"
 
+#include "init/dev.h"
 #include "init/passes.h"
 
 #include "util/thread_with_file.h"

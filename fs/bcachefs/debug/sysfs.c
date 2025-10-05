@@ -35,6 +35,8 @@
 
 #include "fs/inode.h"
 
+#include "init/fs.h"
+
 #include "journal/journal.h"
 #include "journal/reclaim.h"
 
