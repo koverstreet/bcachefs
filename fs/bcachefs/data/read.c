@@ -532,17 +532,14 @@ static void bch2_rbio_done(struct bch_read_bio *rbio)
 	bio_endio(&rbio->bio);
 }
 
-static void get_rbio_extent(struct btree_trans *trans,
-			    struct bch_read_bio *rbio,
-			    struct bkey_buf *sk)
+static int get_rbio_extent(struct btree_trans *trans, struct bch_read_bio *rbio, struct bkey_buf *sk)
 {
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	int ret = lockrestart_do(trans,
-			bkey_err(k = bch2_bkey_get_iter(trans, &iter,
-						rbio->data_btree, rbio->data_pos, 0)));
-	if (ret)
-		return;
+
+	try(lockrestart_do(trans,
+		bkey_err(k = bch2_bkey_get_iter(trans, &iter,
+						rbio->data_btree, rbio->data_pos, 0))));
 
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	bkey_for_each_ptr(ptrs, ptr)
@@ -552,6 +549,7 @@ static void get_rbio_extent(struct btree_trans *trans,
 		}
 
 	bch2_trans_iter_exit(&iter);
+	return 0;
 }
 
 static noinline int maybe_poison_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
@@ -571,23 +569,21 @@ static noinline int maybe_poison_extent(struct btree_trans *trans, struct bch_re
 		return 0;
 
 	CLASS(btree_iter, iter)(trans, btree, bkey_start_pos(read_k.k), BTREE_ITER_intent);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	if (!bkey_and_val_eq(k, read_k))
 		return 0;
 
 	struct bkey_i *new = bch2_trans_kmalloc(trans,
 					bkey_bytes(k.k) + sizeof(struct bch_extent_flags));
-	ret =   PTR_ERR_OR_ZERO(new) ?:
-		(bkey_reassemble(new, k), 0) ?:
-		bch2_bkey_extent_flags_set(c, new, flags|BIT_ULL(BCH_EXTENT_FLAG_poisoned)) ?:
-		bch2_trans_update(trans, &iter, new, BTREE_UPDATE_internal_snapshot_node) ?:
-		bch2_trans_commit(trans, NULL, NULL, 0);
+	int ret = PTR_ERR_OR_ZERO(new);
 	if (ret)
 		return ret;
+
+	bkey_reassemble(new, k);
+	try(bch2_bkey_extent_flags_set(c, new, flags|BIT_ULL(BCH_EXTENT_FLAG_poisoned)));
+	try(bch2_trans_update(trans, &iter, new, BTREE_UPDATE_internal_snapshot_node));
+	try(bch2_trans_commit(trans, NULL, NULL, 0));
 
 	/*
 	 * Propagate key change back to data update path, in particular so it
@@ -611,12 +607,10 @@ retry:
 
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	int ret = lockrestart_do(trans,
+	try(lockrestart_do(trans,
 		bkey_err(k = bch2_bkey_get_iter(trans, &iter,
 				u->btree_id, bkey_start_pos(&u->k.k->k),
-				0)));
-	if (ret)
-		goto err;
+				0))));
 
 	if (!bkey_and_val_eq(k, bkey_i_to_s_c(u->k.k))) {
 		/* extent we wanted to read no longer exists: */
@@ -624,11 +618,11 @@ retry:
 		goto err;
 	}
 
-	ret = __bch2_read_extent(trans, rbio, bvec_iter,
-				 bkey_start_pos(&u->k.k->k),
-				 u->btree_id,
-				 bkey_i_to_s_c(u->k.k),
-				 0, failed, flags, -1);
+	int ret = __bch2_read_extent(trans, rbio, bvec_iter,
+				     bkey_start_pos(&u->k.k->k),
+				     u->btree_id,
+				     bkey_i_to_s_c(u->k.k),
+				     0, failed, flags, -1);
 err:
 	bch2_trans_iter_exit(&iter);
 
@@ -769,9 +763,7 @@ static int __bch2_rbio_narrow_crcs(struct btree_trans *trans,
 	int ret = 0;
 
 	CLASS(btree_iter, iter)(trans, rbio->data_btree, rbio->data_pos, BTREE_ITER_intent);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	if ((ret = bkey_err(k)))
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	if (bversion_cmp(k.k->bversion, rbio->version) ||
 	    !bch2_bkey_matches_ptr(c, k, rbio->pick.ptr, data_offset))

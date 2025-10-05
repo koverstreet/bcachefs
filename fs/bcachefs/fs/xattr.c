@@ -148,14 +148,11 @@ static int bch2_xattr_get_trans(struct btree_trans *trans, struct bch_inode_info
 	struct bch_hash_info hash = bch2_hash_info_init(trans->c, &inode->ei_inode);
 	struct xattr_search_key search = X_SEARCH(type, name, strlen(name));
 	struct btree_iter iter;
-	struct bkey_s_c k = bch2_hash_lookup(trans, &iter, bch2_xattr_hash_desc, &hash,
-					     inode_inum(inode), &search, 0);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_hash_lookup(trans, &iter, bch2_xattr_hash_desc, &hash,
+						      inode_inum(inode), &search, 0));
 
 	struct bkey_s_c_xattr xattr = bkey_s_c_to_xattr(k);
-	ret = le16_to_cpu(xattr.v->x_val_len);
+	int ret = le16_to_cpu(xattr.v->x_val_len);
 	if (buffer) {
 		if (ret > size)
 			ret = -ERANGE;

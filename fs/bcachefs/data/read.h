@@ -99,13 +99,10 @@ static inline int bch2_read_indirect_extent(struct btree_trans *trans,
 
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
-	struct bkey_s_c k = bch2_lookup_indirect_extent(trans, &iter,
+	struct bkey_s_c k = bkey_try(bch2_lookup_indirect_extent(trans, &iter,
 						offset_into_extent,
 						bkey_i_to_s_c_reflink_p(extent->k),
-						true, 0);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+						true, 0));
 
 	if (bkey_deleted(k.k)) {
 		bch2_trans_iter_exit(&iter);

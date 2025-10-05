@@ -38,7 +38,6 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 	struct disk_reservation disk_res = { 0 };
 	struct closure cl;
 	struct open_buckets open_buckets = { 0 };
-	struct bkey_s_c k;
 	struct bkey_buf old, new;
 	unsigned sectors_allocated = 0, new_replicas;
 	bool unwritten = opts.nocow &&
@@ -49,10 +48,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 	bch2_bkey_buf_init(&new);
 	closure_init_stack(&cl);
 
-	k = bch2_btree_iter_peek_slot(iter);
-	ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(iter));
 
 	sectors = min_t(u64, sectors, k.k->p.offset - iter->pos.offset);
 	new_replicas = max(0, (int) opts.data_replicas -
