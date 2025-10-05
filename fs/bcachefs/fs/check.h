@@ -29,6 +29,12 @@ int bch2_snapshots_seen_update(struct bch_fs *, struct snapshots_seen *,
 
 bool bch2_ref_visible(struct bch_fs *, struct snapshots_seen *, u32, u32);
 
+void bch2_dirent_inode_mismatch_msg(struct printbuf *, struct bch_fs *,
+				    struct bkey_s_c_dirent,
+				    struct bch_inode_unpacked *);
+
+int bch2_reattach_inode(struct btree_trans *, struct bch_inode_unpacked *);
+
 int bch2_fsck_update_backpointers(struct btree_trans *,
 				  struct snapshots_seen *,
 				  const struct bch_hash_desc,
