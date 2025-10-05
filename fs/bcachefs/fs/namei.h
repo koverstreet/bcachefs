@@ -51,6 +51,17 @@ int __bch2_check_dirent_target(struct btree_trans *,
 			       struct bkey_s_c_dirent,
 			       struct bch_inode_unpacked *, bool);
 
+static inline int dirent_points_to_inode_nowarn(struct bch_fs *c,
+						struct bkey_s_c_dirent d,
+						struct bch_inode_unpacked *inode)
+{
+	if (d.v->d_type == DT_SUBVOL
+	    ? le32_to_cpu(d.v->d_child_subvol)	== inode->bi_subvol
+	    : le64_to_cpu(d.v->d_inum)		== inode->bi_inum)
+		return 0;
+	return bch_err_throw(c, ENOENT_dirent_doesnt_match_inode);
+}
+
 static inline bool inode_points_to_dirent(struct bch_inode_unpacked *inode,
 					  struct bkey_s_c_dirent d)
 {

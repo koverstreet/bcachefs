@@ -57,6 +57,17 @@ static inline unsigned dirent_val_u64s(unsigned len, unsigned cf_len)
 	return DIV_ROUND_UP(bytes, sizeof(u64));
 }
 
+static inline struct bkey_s_c_dirent dirent_get_by_pos(struct btree_trans *trans,
+						struct btree_iter *iter,
+						struct bpos pos)
+{
+	bch2_trans_iter_init(trans, iter, BTREE_ID_dirents, pos, 0);
+	struct bkey_s_c_dirent d = bch2_bkey_get_typed(iter, dirent);
+	if (bkey_err(d.s_c))
+		bch2_trans_iter_exit(iter);
+	return d;
+}
+
 int bch2_dirent_read_target(struct btree_trans *, subvol_inum,
 			    struct bkey_s_c_dirent, subvol_inum *);
 
