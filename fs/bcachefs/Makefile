@@ -60,6 +60,7 @@ bcachefs-y		:=			\
 	fs/check_dir_structure.o		\
 	fs/check_extents.o			\
 	fs/check_nlinks.o			\
+	fs/check_snapshots.o			\
 	fs/dirent.o				\
 	fs/inode.o				\
 	fs/logged_ops.o				\
