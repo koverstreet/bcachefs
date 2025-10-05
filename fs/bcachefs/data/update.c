@@ -661,13 +661,8 @@ int bch2_extent_drop_ptrs(struct btree_trans *trans,
 			  struct data_update_opts *data_opts)
 {
 	struct bch_fs *c = trans->c;
-	struct bkey_i *n;
-	int ret;
 
-	n = bch2_bkey_make_mut_noupdate(trans, k);
-	ret = PTR_ERR_OR_ZERO(n);
-	if (ret)
-		return ret;
+	struct bkey_i *n = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
 
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p = {};

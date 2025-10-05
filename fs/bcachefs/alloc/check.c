@@ -196,11 +196,7 @@ int bch2_check_alloc_key(struct btree_trans *trans,
 			(printbuf_reset(&buf),
 			 bch2_bkey_val_to_text(&buf, c, alloc_k), buf.buf))) {
 		struct bkey_i_bucket_gens *g =
-			bch2_trans_kmalloc(trans, sizeof(*g));
-
-		ret = PTR_ERR_OR_ZERO(g);
-		if (ret)
-			return ret;
+			errptr_try(bch2_trans_kmalloc(trans, sizeof(*g)));
 
 		if (k.k->type == KEY_TYPE_bucket_gens) {
 			bkey_reassemble(&g->k_i, k);
@@ -244,10 +240,7 @@ int bch2_check_alloc_hole_freespace(struct btree_trans *trans,
 			freespace_iter->pos.offset,
 			end->offset)) {
 		struct bkey_i *update =
-			bch2_trans_kmalloc(trans, sizeof(*update));
-		ret = PTR_ERR_OR_ZERO(update);
-		if (ret)
-			return ret;
+			errptr_try(bch2_trans_kmalloc(trans, sizeof(*update)));
 
 		bkey_init(&update->k);
 		update->k.type	= KEY_TYPE_set;
@@ -299,10 +292,7 @@ int bch2_check_alloc_hole_bucket_gens(struct btree_trans *trans,
 		}
 
 		if (need_update) {
-			struct bkey_i *u = bch2_trans_kmalloc(trans, sizeof(g));
-			ret = PTR_ERR_OR_ZERO(u);
-			if (ret)
-				return ret;
+			struct bkey_i *u = errptr_try(bch2_trans_kmalloc(trans, sizeof(g)));
 
 			memcpy(u, &g, sizeof(g));
 
@@ -495,10 +485,7 @@ int bch2_check_bucket_gens_key(struct btree_trans *trans,
 		}
 
 	if (need_update) {
-		struct bkey_i *u = bch2_trans_kmalloc(trans, sizeof(g));
-		ret = PTR_ERR_OR_ZERO(u);
-		if (ret)
-			return ret;
+		struct bkey_i *u = errptr_try(bch2_trans_kmalloc(trans, sizeof(g)));
 
 		memcpy(u, &g, sizeof(g));
 		return bch2_trans_update(trans, iter, u, 0);
@@ -666,10 +653,7 @@ static int bch2_check_alloc_to_lru_ref(struct btree_trans *trans,
 			(printbuf_reset(&buf),
 			 bch2_bkey_val_to_text(&buf, c, alloc_k), buf.buf))) {
 			struct bkey_i_alloc_v4 *a_mut =
-				bch2_alloc_to_v4_mut(trans, alloc_k);
-			ret = PTR_ERR_OR_ZERO(a_mut);
-			if (ret)
-				return ret;
+				errptr_try(bch2_alloc_to_v4_mut(trans, alloc_k));
 
 			a_mut->v.io_time[READ] = bch2_current_io_time(c, READ);
 			try(bch2_trans_update(trans, alloc_iter,

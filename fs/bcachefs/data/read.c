@@ -574,11 +574,8 @@ static noinline int maybe_poison_extent(struct btree_trans *trans, struct bch_re
 	if (!bkey_and_val_eq(k, read_k))
 		return 0;
 
-	struct bkey_i *new = bch2_trans_kmalloc(trans,
-					bkey_bytes(k.k) + sizeof(struct bch_extent_flags));
-	int ret = PTR_ERR_OR_ZERO(new);
-	if (ret)
-		return ret;
+	struct bkey_i *new = errptr_try(bch2_trans_kmalloc(trans,
+						bkey_bytes(k.k) + sizeof(struct bch_extent_flags)));
 
 	bkey_reassemble(new, k);
 	try(bch2_bkey_extent_flags_set(c, new, flags|BIT_ULL(BCH_EXTENT_FLAG_poisoned)));
@@ -760,7 +757,6 @@ static int __bch2_rbio_narrow_crcs(struct btree_trans *trans,
 {
 	struct bch_fs *c = rbio->c;
 	u64 data_offset = rbio->data_pos.offset - rbio->pick.crc.offset;
-	int ret = 0;
 
 	CLASS(btree_iter, iter)(trans, rbio->data_btree, rbio->data_pos, BTREE_ITER_intent);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
@@ -777,10 +773,8 @@ static int __bch2_rbio_narrow_crcs(struct btree_trans *trans,
 	/*
 	 * going to be temporarily appending another checksum entry:
 	 */
-	struct bkey_i *new = bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
-						sizeof(struct bch_extent_crc128));
-	if ((ret = PTR_ERR_OR_ZERO(new)))
-		return ret;
+	struct bkey_i *new =
+		errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) + sizeof(struct bch_extent_crc128)));
 
 	bkey_reassemble(new, k);
 

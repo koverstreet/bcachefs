@@ -22,12 +22,9 @@ int bch2_casefold(struct btree_trans *trans, const struct bch_hash_info *info,
 
 	try(bch2_fs_casefold_enabled(trans->c));
 
-	unsigned char *buf = bch2_trans_kmalloc(trans, BCH_NAME_MAX + 1);
-	int ret = PTR_ERR_OR_ZERO(buf);
-	if (ret)
-		return ret;
+	unsigned char *buf = errptr_try(bch2_trans_kmalloc(trans, BCH_NAME_MAX + 1));
 
-	ret = utf8_casefold(info->cf_encoding, str, buf, BCH_NAME_MAX + 1);
+	int ret = utf8_casefold(info->cf_encoding, str, buf, BCH_NAME_MAX + 1);
 	if (ret <= 0)
 		return ret;
 
@@ -332,21 +329,16 @@ int bch2_dirent_create_snapshot(struct btree_trans *trans,
 			enum btree_iter_update_trigger_flags flags)
 {
 	subvol_inum dir_inum = { .subvol = dir_subvol, .inum = dir };
-	struct bkey_i_dirent *dirent;
-	int ret;
 
-	dirent = bch2_dirent_create_key(trans, hash_info, dir_inum, type, name, NULL, dst_inum);
-	ret = PTR_ERR_OR_ZERO(dirent);
-	if (ret)
-		return ret;
+	struct bkey_i_dirent *dirent =
+		errptr_try(bch2_dirent_create_key(trans, hash_info, dir_inum, type, name, NULL, dst_inum));
 
 	dirent->k.p.inode	= dir;
 	dirent->k.p.snapshot	= snapshot;
 
-	ret = bch2_hash_set_in_snapshot(trans, bch2_dirent_hash_desc, hash_info,
-					dir_inum, snapshot, &dirent->k_i, flags);
+	int ret = bch2_hash_set_in_snapshot(trans, bch2_dirent_hash_desc, hash_info,
+					    dir_inum, snapshot, &dirent->k_i, flags);
 	*dir_offset = dirent->k.p.offset;
-
 	return ret;
 }
 
@@ -356,18 +348,11 @@ int bch2_dirent_create(struct btree_trans *trans, subvol_inum dir,
 		       u64 *dir_offset,
 		       enum btree_iter_update_trigger_flags flags)
 {
-	struct bkey_i_dirent *dirent;
-	int ret;
+	struct bkey_i_dirent *dirent =
+		errptr_try(bch2_dirent_create_key(trans, hash_info, dir, type, name, NULL, dst_inum));
 
-	dirent = bch2_dirent_create_key(trans, hash_info, dir, type, name, NULL, dst_inum);
-	ret = PTR_ERR_OR_ZERO(dirent);
-	if (ret)
-		return ret;
-
-	ret = bch2_hash_set(trans, bch2_dirent_hash_desc, hash_info,
-			    dir, &dirent->k_i, flags);
+	int ret = bch2_hash_set(trans, bch2_dirent_hash_desc, hash_info, dir, &dirent->k_i, flags);
 	*dir_offset = dirent->k.p.offset;
-
 	return ret;
 }
 

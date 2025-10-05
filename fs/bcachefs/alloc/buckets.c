@@ -289,7 +289,6 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 	struct extent_ptr_decoded p = { 0 };
 	bool do_update = false;
 	CLASS(printbuf, buf)();
-	int ret = 0;
 
 	/* We don't yet do btree key updates correctly for when we're RW */
 	BUG_ON(test_bit(BCH_FS_rw, &c->flags));
@@ -298,10 +297,7 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 		try(bch2_check_fix_ptr(trans, k, p, entry_c, &do_update));
 
 	if (do_update) {
-		struct bkey_i *new = bch2_bkey_make_mut_noupdate(trans, k);
-		ret = PTR_ERR_OR_ZERO(new);
-		if (ret)
-			return ret;
+		struct bkey_i *new = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
 
 		scoped_guard(rcu)
 			bch2_bkey_drop_ptrs(bkey_i_to_s(new), ptr, !bch2_dev_exists(c, ptr->dev));
@@ -396,11 +392,8 @@ found:
 			if (level)
 				bch2_btree_node_update_key_early(trans, btree, level - 1, k, new);
 		} else {
-			struct jset_entry *e = bch2_trans_jset_entry_alloc(trans,
-					       jset_u64s(new->k.u64s));
-			ret = PTR_ERR_OR_ZERO(e);
-			if (ret)
-				return ret;
+			struct jset_entry *e = errptr_try(bch2_trans_jset_entry_alloc(trans,
+							       jset_u64s(new->k.u64s)));
 
 			journal_entry_set(e,
 					  BCH_JSET_ENTRY_btree_root,

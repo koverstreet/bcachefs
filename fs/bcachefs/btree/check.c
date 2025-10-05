@@ -931,10 +931,7 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	if (!bch2_alloc_v4_cmp(*old, new))
 		return 0;
 
-	a = bch2_alloc_to_v4_mut(trans, k);
-	ret = PTR_ERR_OR_ZERO(a);
-	if (ret)
-		return ret;
+	a = errptr_try(bch2_alloc_to_v4_mut(trans, k));
 
 	a->v = new;
 
@@ -1024,12 +1021,8 @@ static int bch2_gc_write_stripes_key(struct btree_trans *trans,
 	if (fsck_err_on(bad,
 			trans, stripe_sector_count_wrong,
 			"%s", buf.buf)) {
-		struct bkey_i_stripe *new;
-
-		new = bch2_trans_kmalloc(trans, bkey_bytes(k.k));
-		ret = PTR_ERR_OR_ZERO(new);
-		if (ret)
-			return ret;
+		struct bkey_i_stripe *new =
+			errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k)));
 
 		bkey_reassemble(&new->k_i, k);
 
@@ -1143,16 +1136,11 @@ static int bch2_alloc_write_oldest_gen(struct btree_trans *trans, struct bch_dev
 {
 	struct bch_alloc_v4 a_convert;
 	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &a_convert);
-	struct bkey_i_alloc_v4 *a_mut;
-	int ret;
 
 	if (a->oldest_gen == ca->oldest_gen[iter->pos.offset])
 		return 0;
 
-	a_mut = bch2_alloc_to_v4_mut(trans, k);
-	ret = PTR_ERR_OR_ZERO(a_mut);
-	if (ret)
-		return ret;
+	struct bkey_i_alloc_v4 *a_mut = errptr_try(bch2_alloc_to_v4_mut(trans, k));
 
 	a_mut->v.oldest_gen = ca->oldest_gen[iter->pos.offset];
 

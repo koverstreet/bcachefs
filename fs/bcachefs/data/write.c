@@ -249,19 +249,12 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 	 * varint_decode_fast(), in the inode .invalid method, reads up to 7
 	 * bytes past the end of the buffer:
 	 */
-	struct bkey_i *k_mut = bch2_trans_kmalloc_nomemzero(trans, bkey_bytes(k.k) + 8);
-	ret = PTR_ERR_OR_ZERO(k_mut);
-	if (unlikely(ret))
-		return ret;
+	struct bkey_i *k_mut = errptr_try(bch2_trans_kmalloc_nomemzero(trans, bkey_bytes(k.k) + 8));
 
 	bkey_reassemble(k_mut, k);
 
-	if (unlikely(k_mut->k.type != KEY_TYPE_inode_v3)) {
-		k_mut = bch2_inode_to_v3(trans, k_mut);
-		ret = PTR_ERR_OR_ZERO(k_mut);
-		if (unlikely(ret))
-			return ret;
-	}
+	if (unlikely(k_mut->k.type != KEY_TYPE_inode_v3))
+		k_mut = errptr_try(bch2_inode_to_v3(trans, k_mut));
 
 	struct bkey_i_inode_v3 *inode = bkey_i_to_inode_v3(k_mut);
 
@@ -1221,11 +1214,8 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 	}
 
 	struct bch_fs *c = trans->c;
-	struct bkey_i *new = bch2_trans_kmalloc_nomemzero(trans,
-				bkey_bytes(k.k) + sizeof(struct bch_extent_rebalance));
-	int ret = PTR_ERR_OR_ZERO(new);
-	if (ret)
-		return ret;
+	struct bkey_i *new = errptr_try(bch2_trans_kmalloc_nomemzero(trans,
+				bkey_bytes(k.k) + sizeof(struct bch_extent_rebalance)));
 
 	bkey_reassemble(new, k);
 	bch2_cut_front(bkey_start_pos(&orig->k), new);

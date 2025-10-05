@@ -131,10 +131,7 @@ int bch2_disk_accounting_mod(struct btree_trans *trans,
 			}
 #endif
 		unsigned u64s = sizeof(*a) / sizeof(u64) + nr;
-		a = bch2_trans_subbuf_alloc(trans, &trans->accounting, u64s);
-		int ret = PTR_ERR_OR_ZERO(a);
-		if (ret)
-			return ret;
+		a = errptr_try(bch2_trans_subbuf_alloc(trans, &trans->accounting, u64s));
 
 		__accounting_key_init(&a->k_i, pos, d, nr);
 		return 0;
