@@ -1319,11 +1319,8 @@ int bch2_btree_node_prefetch(struct btree_trans *trans,
 	if (b)
 		return 0;
 
-	b = bch2_btree_node_fill(trans, path, k, btree_id,
-				 level, SIX_LOCK_read, false);
-	int ret = PTR_ERR_OR_ZERO(b);
-	if (ret)
-		return ret;
+	b = errptr_try(bch2_btree_node_fill(trans, path, k, btree_id,
+					    level, SIX_LOCK_read, false));
 	if (b)
 		six_unlock_read(&b->c.lock);
 	return 0;

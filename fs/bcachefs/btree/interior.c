@@ -650,10 +650,7 @@ static void btree_update_new_nodes_mark_sb(struct btree_update *as)
 static int btree_update_nodes_written_trans(struct btree_trans *trans,
 					    struct btree_update *as)
 {
-	struct jset_entry *e = bch2_trans_jset_entry_alloc(trans, as->journal_u64s);
-	int ret = PTR_ERR_OR_ZERO(e);
-	if (ret)
-		return ret;
+	struct jset_entry *e = errptr_try(bch2_trans_jset_entry_alloc(trans, as->journal_u64s));
 
 	memcpy(e, as->journal_entries, as->journal_u64s * sizeof(u64));
 
@@ -2519,11 +2516,8 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 	} else {
 		BUG_ON(!btree_node_is_root(c, b));
 
-		struct jset_entry *e = bch2_trans_jset_entry_alloc(trans,
-				       jset_u64s(new_key->k.u64s));
-		ret = PTR_ERR_OR_ZERO(e);
-		if (ret)
-			return ret;
+		struct jset_entry *e = errptr_try(bch2_trans_jset_entry_alloc(trans,
+								jset_u64s(new_key->k.u64s)));
 
 		journal_entry_set(e,
 				  BCH_JSET_ENTRY_btree_root,

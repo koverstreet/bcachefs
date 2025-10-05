@@ -82,10 +82,7 @@ static int check_subvol(struct btree_trans *trans,
 			"root subvolume has nonzero fs_path_parent\n%s",
 			(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
 		struct bkey_i_subvolume *n =
-			bch2_bkey_make_mut_typed(trans, iter, &k, 0, subvolume);
-		ret = PTR_ERR_OR_ZERO(n);
-		if (ret)
-			return ret;
+			errptr_try(bch2_bkey_make_mut_typed(trans, iter, &k, 0, subvolume));
 
 		n->v.fs_path_parent = 0;
 	}
@@ -159,10 +156,7 @@ static int check_subvol(struct btree_trans *trans,
 				"subvolume %llu is not set as snapshot but is not master subvolume",
 				k.k->p.offset)) {
 			struct bkey_i_subvolume *s =
-				bch2_bkey_make_mut_typed(trans, iter, &k, 0, subvolume);
-			ret = PTR_ERR_OR_ZERO(s);
-			if (ret)
-				return ret;
+				errptr_try(bch2_bkey_make_mut_typed(trans, iter, &k, 0, subvolume));
 
 			SET_BCH_SUBVOLUME_SNAP(&s->v, true);
 		}
@@ -366,9 +360,6 @@ static int bch2_subvolume_reparent(struct btree_trans *trans,
 				   struct bkey_s_c k,
 				   u32 old_parent, u32 new_parent)
 {
-	struct bkey_i_subvolume *s;
-	int ret;
-
 	if (k.k->type != KEY_TYPE_subvolume)
 		return 0;
 
@@ -376,10 +367,8 @@ static int bch2_subvolume_reparent(struct btree_trans *trans,
 	    le32_to_cpu(bkey_s_c_to_subvolume(k).v->creation_parent) != old_parent)
 		return 0;
 
-	s = bch2_bkey_make_mut_typed(trans, iter, &k, 0, subvolume);
-	ret = PTR_ERR_OR_ZERO(s);
-	if (ret)
-		return ret;
+	struct bkey_i_subvolume *s =
+		errptr_try(bch2_bkey_make_mut_typed(trans, iter, &k, 0, subvolume));
 
 	s->v.creation_parent = cpu_to_le32(new_parent);
 	return 0;
@@ -444,12 +433,9 @@ static int __bch2_subvolume_delete(struct btree_trans *trans, u32 subvolid)
 
 	if (le32_to_cpu(snapshot_tree.v->master_subvol) == subvolid) {
 		struct bkey_i_snapshot_tree *snapshot_tree_mut =
-			bch2_bkey_make_mut_typed(trans, &snapshot_tree_iter,
+			errptr_try(bch2_bkey_make_mut_typed(trans, &snapshot_tree_iter,
 						 &snapshot_tree.s_c,
-						 0, snapshot_tree);
-		ret = PTR_ERR_OR_ZERO(snapshot_tree_mut);
-		if (ret)
-			return ret;
+						 0, snapshot_tree));
 
 		snapshot_tree_mut->v.master_subvol = 0;
 	}
@@ -527,10 +513,7 @@ static int bch2_subvolume_wait_for_pagecache_and_delete_hook(struct btree_trans 
 
 int bch2_subvolume_unlink(struct btree_trans *trans, u32 subvolid)
 {
-	struct subvolume_unlink_hook *h = bch2_trans_kmalloc(trans, sizeof(*h));
-	int ret = PTR_ERR_OR_ZERO(h);
-	if (ret)
-		return ret;
+	struct subvolume_unlink_hook *h = errptr_try(bch2_trans_kmalloc(trans, sizeof(*h)));
 
 	h->h.fn		= bch2_subvolume_wait_for_pagecache_and_delete_hook;
 	h->subvol	= subvolid;
@@ -539,7 +522,7 @@ int bch2_subvolume_unlink(struct btree_trans *trans, u32 subvolid)
 	struct bkey_i_subvolume *n =
 		bch2_bkey_get_mut_typed(trans, BTREE_ID_subvolumes, POS(0, subvolid),
 					BTREE_ITER_cached, subvolume);
-	ret = PTR_ERR_OR_ZERO(n);
+	int ret = PTR_ERR_OR_ZERO(n);
 	if (bch2_err_matches(ret, ENOENT))
 		ret = bch2_subvolume_missing(trans->c, subvolid) ?: ret;
 	if (unlikely(ret))

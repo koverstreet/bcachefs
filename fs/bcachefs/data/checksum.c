@@ -594,9 +594,7 @@ int bch2_disable_encryption(struct bch_fs *c)
 		return 0;
 
 	struct bch_key key;
-	int ret = bch2_decrypt_sb_key(c, crypt, &key);
-	if (ret)
-		return ret;
+	try(bch2_decrypt_sb_key(c, crypt, &key));
 
 	crypt->key.magic	= cpu_to_le64(BCH_KEY_MAGIC);
 	crypt->key.key		= key;

@@ -75,25 +75,19 @@ static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
 				     unsigned flags, struct printbuf *err)
 {
 	struct bch_fs *c = trans->c;
-	struct bkey_i *n;
-	int ret;
 
 	if (!bch2_bkey_has_device_c(k, dev_idx))
 		return 0;
 
-	n = bch2_bkey_make_mut(trans, iter, &k, BTREE_UPDATE_internal_snapshot_node);
-	ret = PTR_ERR_OR_ZERO(n);
-	if (ret)
-		return ret;
+	struct bkey_i *n =
+		errptr_try(bch2_bkey_make_mut(trans, iter, &k, BTREE_UPDATE_internal_snapshot_node));
 
 	enum set_needs_rebalance_ctx ctx = SET_NEEDS_REBALANCE_opt_change;
 	struct bch_inode_opts opts;
 
-	ret =   bch2_extent_get_apply_io_opts_one(trans, &opts, iter, k, ctx) ?:
-		bch2_bkey_set_needs_rebalance(c, &opts, n, ctx, 0) ?:
-		drop_dev_ptrs(c, bkey_i_to_s(n), dev_idx, flags, err, false);
-	if (ret)
-		return ret;
+	try(bch2_extent_get_apply_io_opts_one(trans, &opts, iter, k, ctx));
+	try(bch2_bkey_set_needs_rebalance(c, &opts, n, ctx, 0));
+	try(drop_dev_ptrs(c, bkey_i_to_s(n), dev_idx, flags, err, false));
 
 	/*
 	 * Since we're not inserting through an extent iterator
