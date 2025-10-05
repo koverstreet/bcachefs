@@ -773,10 +773,7 @@ static int get_stripe_key_trans(struct btree_trans *trans, u64 idx,
 				struct ec_stripe_buf *stripe)
 {
 	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, idx), BTREE_ITER_slots);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 	if (k.k->type != KEY_TYPE_stripe)
 		return -ENOENT;
 	bkey_reassemble(&stripe->key, k);
@@ -930,10 +927,7 @@ static void bch2_stripe_close(struct bch_fs *c, struct ec_stripe_new *s)
 static int ec_stripe_delete(struct btree_trans *trans, u64 idx)
 {
 	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, idx), BTREE_ITER_intent);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	/*
 	 * We expect write buffer races here
@@ -986,10 +980,7 @@ static int ec_stripe_key_update(struct btree_trans *trans,
 	bool create = !old;
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, new->k.p, BTREE_ITER_intent);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	if (bch2_fs_inconsistent_on(k.k->type != (create ? KEY_TYPE_deleted : KEY_TYPE_stripe),
 				    c, "error %s stripe: got existing key type %s",
@@ -1046,7 +1037,6 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 	struct bch_stripe *v = &bkey_i_to_stripe(&s->key)->v;
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
-	struct bkey_s_c k;
 	const struct bch_extent_ptr *ptr_c;
 	struct bch_extent_ptr *ec_ptr = NULL;
 	struct bch_extent_stripe_ptr stripe_ptr;
@@ -1069,10 +1059,8 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 		return bch_err_throw(c, erasure_coding_found_btree_node);
 	}
 
-	k = bch2_backpointer_get_key(trans, bp, &iter, BTREE_ITER_intent, last_flushed);
-	ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k =
+		bkey_try(bch2_backpointer_get_key(trans, bp, &iter, BTREE_ITER_intent, last_flushed));
 	if (!k.k) {
 		/*
 		 * extent no longer exists - we could flush the btree
@@ -1754,10 +1742,7 @@ static int __get_existing_stripe(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, idx), BTREE_ITER_nopreserve);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	/* We expect write buffer races here */
 	if (k.k->type != KEY_TYPE_stripe)
@@ -2103,10 +2088,7 @@ static int bch2_invalidate_stripe_to_dev_from_alloc(struct btree_trans *trans, s
 	}
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, a->stripe), 0);
-	struct bkey_s_c_stripe s = bch2_bkey_get_typed(&iter, stripe);
-	int ret = bkey_err(s);
-	if (ret)
-		return ret;
+	struct bkey_s_c_stripe s = bkey_try(bch2_bkey_get_typed(&iter, stripe));
 
 	return bch2_invalidate_stripe_to_dev(trans, &iter, s.s_c, k_a.k->p.inode, flags, err);
 }

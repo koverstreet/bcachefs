@@ -17,6 +17,13 @@ static inline int __bkey_err(const struct bkey *k)
 
 #define bkey_err(_k)	__bkey_err((_k).k)
 
+#define bkey_try(_do)					\
+({							\
+	typeof(_do) _k = _do;				\
+	try(bkey_err(_k));				\
+	_k;						\
+})
+
 static inline void __btree_path_get(struct btree_trans *trans, struct btree_path *path, bool intent)
 {
 	unsigned idx = path - trans->paths;

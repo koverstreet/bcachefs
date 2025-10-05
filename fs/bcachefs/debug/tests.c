@@ -611,10 +611,7 @@ static int __do_delete(struct btree_trans *trans, struct bpos pos)
 {
 	CLASS(btree_iter, iter)(trans, BTREE_ID_xattrs, pos,
 				BTREE_ITER_intent);
-	struct bkey_s_c k = bch2_btree_iter_peek_max(&iter, POS(0, U64_MAX));
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_max(&iter, POS(0, U64_MAX)));
 
 	if (!k.k)
 		return 0;

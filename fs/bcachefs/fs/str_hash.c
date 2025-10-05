@@ -22,10 +22,7 @@ static int bch2_dirent_has_target(struct btree_trans *trans, struct bkey_s_c_dir
 	} else {
 		CLASS(btree_iter, iter)(trans, BTREE_ID_inodes,
 				SPOS(0, le64_to_cpu(d.v->d_inum), d.k->p.snapshot), 0);
-		struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-		int ret = bkey_err(k);
-		if (ret)
-			return ret;
+		struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 		return bkey_is_inode(k.k);
 	}

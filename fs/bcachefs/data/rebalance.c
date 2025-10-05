@@ -435,17 +435,14 @@ int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, u64 inum)
 	CLASS(btree_iter, iter)(trans, BTREE_ID_rebalance_work,
 				SPOS(inum, REBALANCE_WORK_SCAN_OFFSET, U32_MAX),
 				BTREE_ITER_intent);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	u64 v = k.k->type == KEY_TYPE_cookie
 		? le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie)
 		: 0;
 
 	struct bkey_i_cookie *cookie = bch2_trans_kmalloc(trans, sizeof(*cookie));
-	ret = PTR_ERR_OR_ZERO(cookie);
+	int ret = PTR_ERR_OR_ZERO(cookie);
 	if (ret)
 		return ret;
 
@@ -473,10 +470,7 @@ static int bch2_clear_rebalance_needs_scan(struct btree_trans *trans, u64 inum, 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_rebalance_work,
 				SPOS(inum, REBALANCE_WORK_SCAN_OFFSET, U32_MAX),
 				BTREE_ITER_intent);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	u64 v = k.k->type == KEY_TYPE_cookie
 		? le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie)
@@ -1045,13 +1039,11 @@ static int check_rebalance_work_one(struct btree_trans *trans,
 				    struct bkey_buf *last_flushed)
 {
 	struct bch_fs *c = trans->c;
-	struct bkey_s_c extent_k, rebalance_k;
 	CLASS(printbuf, buf)();
+	int ret = 0;
 
-	int ret = bkey_err(extent_k	= bch2_btree_iter_peek(extent_iter)) ?:
-		  bkey_err(rebalance_k	= bch2_btree_iter_peek(rebalance_iter));
-	if (ret)
-		return ret;
+	struct bkey_s_c extent_k	= bkey_try(bch2_btree_iter_peek(extent_iter));
+	struct bkey_s_c rebalance_k	= bkey_try(bch2_btree_iter_peek(rebalance_iter));
 
 	if (!extent_k.k &&
 	    extent_iter->btree_id == BTREE_ID_reflink &&

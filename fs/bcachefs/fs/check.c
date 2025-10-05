@@ -73,11 +73,8 @@ static int lookup_dirent_in_snapshot(struct btree_trans *trans,
 			   u64 *target, unsigned *type, u32 snapshot)
 {
 	struct btree_iter iter;
-	struct bkey_s_c k = bch2_hash_lookup_in_snapshot(trans, &iter, bch2_dirent_hash_desc,
-							 &hash_info, dir, name, 0, snapshot);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_hash_lookup_in_snapshot(trans, &iter, bch2_dirent_hash_desc,
+							 &hash_info, dir, name, 0, snapshot));
 
 	struct bkey_s_c_dirent d = bkey_s_c_to_dirent(k);
 	*target = le64_to_cpu(d.v->d_inum);
@@ -286,10 +283,7 @@ static int maybe_delete_dirent(struct btree_trans *trans, struct bpos d_pos, u32
 				SPOS(d_pos.inode, d_pos.offset, snapshot),
 				BTREE_ITER_intent|
 				BTREE_ITER_with_updates);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	if (bpos_eq(k.k->p, d_pos)) {
 		/*
@@ -297,7 +291,7 @@ static int maybe_delete_dirent(struct btree_trans *trans, struct bpos d_pos, u32
 		 * internally use BTREE_ITER_with_updates yet
 		 */
 		struct bkey_i *k = bch2_trans_kmalloc(trans, sizeof(*k));
-		ret = PTR_ERR_OR_ZERO(k);
+		int ret = PTR_ERR_OR_ZERO(k);
 		if (ret)
 			return ret;
 
@@ -510,10 +504,7 @@ static int reconstruct_inode(struct btree_trans *trans, enum btree_id btree, u32
 	switch (btree) {
 	case BTREE_ID_extents: {
 		CLASS(btree_iter, iter)(trans, BTREE_ID_extents, SPOS(inum, U64_MAX, snapshot), 0);
-		struct bkey_s_c k = bch2_btree_iter_peek_prev_min(&iter, POS(inum, 0));
-		int ret = bkey_err(k);
-		if (ret)
-			return ret;
+		struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_prev_min(&iter, POS(inum, 0)));
 
 		i_size = k.k->p.offset << 9;
 		break;

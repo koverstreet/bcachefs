@@ -566,23 +566,17 @@ static int create_snapids(struct btree_trans *trans, u32 parent, u32 tree,
 	u32 depth = bch2_snapshot_depth(c, parent);
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_snapshots, POS_MIN, BTREE_ITER_intent);
-	struct bkey_s_c k = bch2_btree_iter_peek(&iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek(&iter));
 
 	for (unsigned i = 0; i < nr_snapids; i++) {
-		k = bch2_btree_iter_prev_slot(&iter);
-		ret = bkey_err(k);
-		if (ret)
-			return ret;
+		k = bkey_try(bch2_btree_iter_prev_slot(&iter));
 
 		if (!k.k || !k.k->p.offset) {
 			return bch_err_throw(c, ENOSPC_snapshot_create);
 		}
 
 		n = bch2_bkey_alloc(trans, &iter, 0, snapshot);
-		ret = PTR_ERR_OR_ZERO(n);
+		int ret = PTR_ERR_OR_ZERO(n);
 		if (ret)
 			return ret;
 
@@ -600,10 +594,8 @@ static int create_snapids(struct btree_trans *trans, u32 parent, u32 tree,
 		bubble_sort(n->v.skip, ARRAY_SIZE(n->v.skip), cmp_le32);
 		SET_BCH_SNAPSHOT_SUBVOL(&n->v, true);
 
-		ret = __bch2_mark_snapshot(trans, BTREE_ID_snapshots, 0,
-					 bkey_s_c_null, bkey_i_to_s_c(&n->k_i), 0);
-		if (ret)
-			return ret;
+		try(__bch2_mark_snapshot(trans, BTREE_ID_snapshots, 0,
+					 bkey_s_c_null, bkey_i_to_s_c(&n->k_i), 0));
 
 		new_snapids[i]	= iter.pos.offset;
 	}
@@ -753,10 +745,7 @@ static int delete_dead_snapshots_process_key(struct btree_trans *trans,
 
 		CLASS(btree_iter, dst_iter)(trans, iter->btree_id, new->k.p,
 					    BTREE_ITER_all_snapshots|BTREE_ITER_intent);
-		struct bkey_s_c dst_k = bch2_btree_iter_peek_slot(&dst_iter);
-		ret = bkey_err(dst_k);
-		if (ret)
-			return ret;
+		struct bkey_s_c dst_k = bkey_try(bch2_btree_iter_peek_slot(&dst_iter));
 
 		return (bkey_deleted(dst_k.k)
 			 ? bch2_trans_update(trans, &dst_iter, new,
