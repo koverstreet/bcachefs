@@ -61,9 +61,7 @@ static int bch2_fsck_rename_dirent(struct btree_trans *trans,
 					sprintf(renamed_buf, "%.*s.fsck_renamed-%u",
 						old_name.len, old_name.name, i));
 
-		ret = bch2_dirent_init_name(c, new, hash_info, &renamed_name, NULL);
-		if (ret)
-			return ret;
+		try(bch2_dirent_init_name(c, new, hash_info, &renamed_name, NULL));
 
 		ret = bch2_hash_set_in_snapshot(trans, bch2_dirent_hash_desc, hash_info,
 						(subvol_inum) { 0, old.k->p.inode },
@@ -214,18 +212,16 @@ static noinline int check_inode_hash_info_matches_root(struct btree_trans *trans
 						       struct bch_hash_info *hash_info)
 {
 	struct bch_inode_unpacked snapshot_root;
-	int ret = bch2_inode_find_snapshot_root(trans, inum, &snapshot_root);
-	if (ret)
-		return ret;
+	try(bch2_inode_find_snapshot_root(trans, inum, &snapshot_root));
 
 	struct bch_hash_info hash_root = bch2_hash_info_init(trans->c, &snapshot_root);
 	if (hash_info->type != hash_root.type ||
 	    memcmp(&hash_info->siphash_key,
 		   &hash_root.siphash_key,
 		   sizeof(hash_root.siphash_key)))
-		ret = bch2_repair_inode_hash_info(trans, &snapshot_root);
+		try(bch2_repair_inode_hash_info(trans, &snapshot_root));
 
-	return ret;
+	return 0;
 }
 
 /* Put a str_hash key in its proper location, checking for duplicates */
@@ -379,9 +375,7 @@ bad_hash:
 	/*
 	 * Before doing any repair, check hash_info itself:
 	 */
-	ret = check_inode_hash_info_matches_root(trans, hash_k.k->p.inode, hash_info);
-	if (ret)
-		return ret;
+	try(check_inode_hash_info_matches_root(trans, hash_k.k->p.inode, hash_info));
 
 	if (fsck_err(trans, hash_table_key_wrong_offset,
 		     "hash table key at wrong offset: should be at %llu\n%s",

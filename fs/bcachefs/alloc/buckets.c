@@ -294,11 +294,8 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 	/* We don't yet do btree key updates correctly for when we're RW */
 	BUG_ON(test_bit(BCH_FS_rw, &c->flags));
 
-	bkey_for_each_ptr_decode(k.k, ptrs_c, p, entry_c) {
-		ret = bch2_check_fix_ptr(trans, k, p, entry_c, &do_update);
-		if (ret)
-			return ret;
-	}
+	bkey_for_each_ptr_decode(k.k, ptrs_c, p, entry_c)
+		try(bch2_check_fix_ptr(trans, k, p, entry_c, &do_update));
 
 	if (do_update) {
 		struct bkey_i *new = bch2_bkey_make_mut_noupdate(trans, k);
@@ -608,11 +605,9 @@ static int __mark_pointer(struct btree_trans *trans, struct bch_dev *ca,
 	u32 *dst_sectors = p->has_ec	? &a->stripe_sectors :
 		!p->ptr.cached		? &a->dirty_sectors :
 					  &a->cached_sectors;
-	int ret = bch2_bucket_ref_update(trans, ca, k, &p->ptr, sectors, ptr_data_type,
-					 a->gen, a->data_type, dst_sectors);
+	try(bch2_bucket_ref_update(trans, ca, k, &p->ptr, sectors, ptr_data_type,
+				   a->gen, a->data_type, dst_sectors));
 
-	if (ret)
-		return ret;
 	if (insert)
 		alloc_data_type_set(a, ptr_data_type);
 	return 0;
@@ -752,9 +747,7 @@ static int bch2_trigger_stripe_ptr(struct btree_trans *trans,
 		gc_stripe_unlock(m);
 
 		acc.replicas.data_type = data_type;
-		int ret = bch2_disk_accounting_mod(trans, &acc, &sectors, 1, true);
-		if (ret)
-			return ret;
+		try(bch2_disk_accounting_mod(trans, &acc, &sectors, 1, true));
 	}
 
 	return 0;
@@ -773,7 +766,6 @@ static int __trigger_extent(struct btree_trans *trans,
 	enum bch_data_type data_type = bkey_is_btree_ptr(k.k)
 		? BCH_DATA_btree
 		: BCH_DATA_user;
-	int ret = 0;
 
 	s64 replicas_sectors = 0;
 
@@ -789,7 +781,7 @@ static int __trigger_extent(struct btree_trans *trans,
 
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 		s64 disk_sectors = 0;
-		ret = bch2_trigger_pointer(trans, btree_id, level, k, p, entry, &disk_sectors, flags);
+		int ret = bch2_trigger_pointer(trans, btree_id, level, k, p, entry, &disk_sectors, flags);
 		if (ret < 0)
 			return ret;
 
@@ -799,16 +791,12 @@ static int __trigger_extent(struct btree_trans *trans,
 			continue;
 
 		if (p.ptr.cached) {
-			ret = bch2_mod_dev_cached_sectors(trans, p.ptr.dev, disk_sectors, gc);
-			if (ret)
-				return ret;
+			try(bch2_mod_dev_cached_sectors(trans, p.ptr.dev, disk_sectors, gc));
 		} else if (!p.has_ec) {
 			replicas_sectors       += disk_sectors;
 			replicas_entry_add_dev(&acc_replicas_key.replicas, p.ptr.dev);
 		} else {
-			ret = bch2_trigger_stripe_ptr(trans, k, p, data_type, disk_sectors, flags);
-			if (ret)
-				return ret;
+			try(bch2_trigger_stripe_ptr(trans, k, p, data_type, disk_sectors, flags));
 
 			/*
 			 * There may be other dirty pointers in this extent, but
@@ -823,10 +811,8 @@ static int __trigger_extent(struct btree_trans *trans,
 			if (!insert)
 				bch2_u64s_neg(compression_acct, ARRAY_SIZE(compression_acct));
 
-			ret = bch2_disk_accounting_mod2(trans, gc, compression_acct,
-							compression, cur_compression_type);
-			if (ret)
-				return ret;
+			try(bch2_disk_accounting_mod2(trans, gc, compression_acct,
+						      compression, cur_compression_type));
 
 			compression_acct[0] = 1;
 			compression_acct[1] = 0;
@@ -840,26 +826,18 @@ static int __trigger_extent(struct btree_trans *trans,
 		}
 	}
 
-	if (acc_replicas_key.replicas.nr_devs) {
-		ret = bch2_disk_accounting_mod(trans, &acc_replicas_key, &replicas_sectors, 1, gc);
-		if (ret)
-			return ret;
-	}
+	if (acc_replicas_key.replicas.nr_devs)
+		try(bch2_disk_accounting_mod(trans, &acc_replicas_key, &replicas_sectors, 1, gc));
 
-	if (acc_replicas_key.replicas.nr_devs && !level && k.k->p.snapshot) {
-		ret = bch2_disk_accounting_mod2_nr(trans, gc, &replicas_sectors, 1, snapshot, k.k->p.snapshot);
-		if (ret)
-			return ret;
-	}
+	if (acc_replicas_key.replicas.nr_devs && !level && k.k->p.snapshot)
+		try(bch2_disk_accounting_mod2_nr(trans, gc, &replicas_sectors, 1, snapshot, k.k->p.snapshot));
 
 	if (cur_compression_type) {
 		if (!insert)
 			bch2_u64s_neg(compression_acct, ARRAY_SIZE(compression_acct));
 
-		ret = bch2_disk_accounting_mod2(trans, gc, compression_acct,
-						compression, cur_compression_type);
-		if (ret)
-			return ret;
+		try(bch2_disk_accounting_mod2(trans, gc, compression_acct,
+					      compression, cur_compression_type));
 	}
 
 	if (level) {
@@ -870,18 +848,14 @@ static int __trigger_extent(struct btree_trans *trans,
 			!leaf_node ? (insert ? 1 : -1) : 0,
 		};
 
-		ret = bch2_disk_accounting_mod2(trans, gc, v, btree, btree_id);
-		if (ret)
-			return ret;
+		try(bch2_disk_accounting_mod2(trans, gc, v, btree, btree_id));
 	} else {
 		s64 v[3] = {
 			insert ? 1 : -1,
 			insert ? k.k->size : -((s64) k.k->size),
 			replicas_sectors,
 		};
-		ret = bch2_disk_accounting_mod2(trans, gc, v, inum, k.k->p.inode);
-		if (ret)
-			return ret;
+		try(bch2_disk_accounting_mod2(trans, gc, v, inum, k.k->p.inode));
 	}
 
 	return 0;
@@ -908,23 +882,15 @@ int bch2_trigger_extent(struct btree_trans *trans,
 		return 0;
 
 	if (flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) {
-		if (old.k->type) {
-			int ret = __trigger_extent(trans, btree, level, old,
-						   flags & ~BTREE_TRIGGER_insert);
-			if (ret)
-				return ret;
-		}
+		if (old.k->type)
+			try(__trigger_extent(trans, btree, level, old,
+					     flags & ~BTREE_TRIGGER_insert));
 
-		if (new.k->type) {
-			int ret = __trigger_extent(trans, btree, level, new.s_c,
-						   flags & ~BTREE_TRIGGER_overwrite);
-			if (ret)
-				return ret;
-		}
+		if (new.k->type)
+			try(__trigger_extent(trans, btree, level, new.s_c,
+					     flags & ~BTREE_TRIGGER_overwrite));
 
-		int ret = bch2_trigger_extent_rebalance(trans, old, new.s_c, flags);
-		if (ret)
-			return ret;
+		try(bch2_trigger_extent_rebalance(trans, old, new.s_c, flags));
 	}
 
 	return 0;
@@ -1080,10 +1046,8 @@ static int bch2_trans_mark_metadata_sectors(struct btree_trans *trans,
 			min_t(u64, bucket_to_sector(ca, b + 1), end) - start;
 
 		if (b != *bucket && *bucket_sectors) {
-			int ret = bch2_trans_mark_metadata_bucket(trans, ca, *bucket,
-							type, *bucket_sectors, flags);
-			if (ret)
-				return ret;
+			try(bch2_trans_mark_metadata_bucket(trans, ca, *bucket,
+							    type, *bucket_sectors, flags));
 
 			*bucket_sectors = 0;
 		}
@@ -1107,40 +1071,28 @@ static int __bch2_trans_mark_dev_sb(struct btree_trans *trans, struct bch_dev *c
 
 	u64 bucket = 0;
 	unsigned i, bucket_sectors = 0;
-	int ret;
 
 	for (i = 0; i < layout.nr_superblocks; i++) {
 		u64 offset = le64_to_cpu(layout.sb_offset[i]);
 
-		if (offset == BCH_SB_SECTOR) {
-			ret = bch2_trans_mark_metadata_sectors(trans, ca,
+		if (offset == BCH_SB_SECTOR)
+			try(bch2_trans_mark_metadata_sectors(trans, ca,
 						0, BCH_SB_SECTOR,
-						BCH_DATA_sb, &bucket, &bucket_sectors, flags);
-			if (ret)
-				return ret;
-		}
+						BCH_DATA_sb, &bucket, &bucket_sectors, flags));
 
-		ret = bch2_trans_mark_metadata_sectors(trans, ca, offset,
+		try(bch2_trans_mark_metadata_sectors(trans, ca, offset,
 				      offset + (1 << layout.sb_max_size_bits),
-				      BCH_DATA_sb, &bucket, &bucket_sectors, flags);
-		if (ret)
-			return ret;
+				      BCH_DATA_sb, &bucket, &bucket_sectors, flags));
 	}
 
-	if (bucket_sectors) {
-		ret = bch2_trans_mark_metadata_bucket(trans, ca,
-				bucket, BCH_DATA_sb, bucket_sectors, flags);
-		if (ret)
-			return ret;
-	}
+	if (bucket_sectors)
+		try(bch2_trans_mark_metadata_bucket(trans, ca,
+						    bucket, BCH_DATA_sb, bucket_sectors, flags));
 
-	for (i = 0; i < ca->journal.nr; i++) {
-		ret = bch2_trans_mark_metadata_bucket(trans, ca,
+	for (i = 0; i < ca->journal.nr; i++)
+		try(bch2_trans_mark_metadata_bucket(trans, ca,
 				ca->journal.buckets[i],
-				BCH_DATA_journal, ca->mi.bucket_size, flags);
-		if (ret)
-			return ret;
-	}
+				BCH_DATA_journal, ca->mi.bucket_size, flags));
 
 	return 0;
 }

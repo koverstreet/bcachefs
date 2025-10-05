@@ -745,9 +745,7 @@ int bch2_opts_create_sysfs_files(struct kobject *kobj, unsigned type)
 		if (!(i->flags & type))
 			continue;
 
-		int ret = sysfs_create_file(kobj, &i->attr);
-		if (ret)
-			return ret;
+		try(sysfs_create_file(kobj, &i->attr));
 	}
 
 	return 0;

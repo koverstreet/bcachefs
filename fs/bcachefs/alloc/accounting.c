@@ -348,11 +348,8 @@ int bch2_accounting_update_sb(struct btree_trans *trans)
 {
 	for (struct bkey_i *i = btree_trans_subbuf_base(trans, &trans->accounting);
 	     i != btree_trans_subbuf_top(trans, &trans->accounting);
-	     i = bkey_next(i)) {
-		int ret = bch2_accounting_update_sb_one(trans->c, i->k.p);
-		if (ret)
-			return ret;
-	}
+	     i = bkey_next(i))
+		try(bch2_accounting_update_sb_one(trans->c, i->k.p));
 
 	return 0;
 }

@@ -272,10 +272,7 @@ int __bch2_btree_node_hash_insert(struct btree_cache *bc, struct btree *b)
 	BUG_ON(b->hash_val);
 
 	b->hash_val = btree_ptr_hash_val(&b->key);
-	int ret = rhashtable_lookup_insert_fast(&bc->table, &b->hash,
-						bch_btree_cache_params);
-	if (ret)
-		return ret;
+	try(rhashtable_lookup_insert_fast(&bc->table, &b->hash, bch_btree_cache_params));
 
 	if (b->c.btree_id < BTREE_ID_NR)
 		bc->nr_by_btree[b->c.btree_id]++;
@@ -409,9 +406,7 @@ static int __btree_node_reclaim(struct bch_fs *c, struct btree *b, bool flush)
 
 	lockdep_assert_held(&bc->lock);
 retry_unlocked:
-	ret = __btree_node_reclaim_checks(c, b, flush, false);
-	if (ret)
-		return ret;
+	try(__btree_node_reclaim_checks(c, b, flush, false));
 
 	if (!six_trylock_intent(&b->c.lock)) {
 		bc->not_freed[BCH_BTREE_CACHE_NOT_FREED_lock_intent]++;

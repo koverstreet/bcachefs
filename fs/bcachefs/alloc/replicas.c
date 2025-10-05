@@ -568,14 +568,11 @@ int bch2_sb_replicas_to_cpu_replicas(struct bch_fs *c)
 	struct bch_sb_field_replicas *sb_v1;
 	struct bch_sb_field_replicas_v0 *sb_v0;
 	struct bch_replicas_cpu new_r = { 0, 0, NULL };
-	int ret = 0;
 
 	if ((sb_v1 = bch2_sb_field_get(c->disk_sb.sb, replicas)))
-		ret = __bch2_sb_replicas_to_cpu_replicas(sb_v1, &new_r);
+		try(__bch2_sb_replicas_to_cpu_replicas(sb_v1, &new_r));
 	else if ((sb_v0 = bch2_sb_field_get(c->disk_sb.sb, replicas_v0)))
-		ret = __bch2_sb_replicas_v0_to_cpu_replicas(sb_v0, &new_r);
-	if (ret)
-		return ret;
+		try(__bch2_sb_replicas_v0_to_cpu_replicas(sb_v0, &new_r));
 
 	bch2_cpu_replicas_sort(&new_r);
 
@@ -685,9 +682,7 @@ static int bch2_cpu_replicas_validate(struct bch_replicas_cpu *cpu_r,
 		struct bch_replicas_entry_v1 *e =
 			cpu_replicas_entry(cpu_r, i);
 
-		int ret = bch2_replicas_entry_sb_validate(e, sb, err);
-		if (ret)
-			return ret;
+		try(bch2_replicas_entry_sb_validate(e, sb, err));
 
 		if (i + 1 < cpu_r->nr) {
 			struct bch_replicas_entry_v1 *n =
@@ -710,14 +705,11 @@ static int bch2_sb_replicas_validate(struct bch_sb *sb, struct bch_sb_field *f,
 				     enum bch_validate_flags flags, struct printbuf *err)
 {
 	struct bch_sb_field_replicas *sb_r = field_to_type(f, replicas);
+
 	struct bch_replicas_cpu cpu_r;
-	int ret;
+	try(__bch2_sb_replicas_to_cpu_replicas(sb_r, &cpu_r));
 
-	ret = __bch2_sb_replicas_to_cpu_replicas(sb_r, &cpu_r);
-	if (ret)
-		return ret;
-
-	ret = bch2_cpu_replicas_validate(&cpu_r, sb, err);
+	int ret = bch2_cpu_replicas_validate(&cpu_r, sb, err);
 	kfree(cpu_r.entries);
 	return ret;
 }
@@ -749,14 +741,11 @@ static int bch2_sb_replicas_v0_validate(struct bch_sb *sb, struct bch_sb_field *
 					enum bch_validate_flags flags, struct printbuf *err)
 {
 	struct bch_sb_field_replicas_v0 *sb_r = field_to_type(f, replicas_v0);
+
 	struct bch_replicas_cpu cpu_r;
-	int ret;
+	try(__bch2_sb_replicas_v0_to_cpu_replicas(sb_r, &cpu_r));
 
-	ret = __bch2_sb_replicas_v0_to_cpu_replicas(sb_r, &cpu_r);
-	if (ret)
-		return ret;
-
-	ret = bch2_cpu_replicas_validate(&cpu_r, sb, err);
+	int ret = bch2_cpu_replicas_validate(&cpu_r, sb, err);
 	kfree(cpu_r.entries);
 	return ret;
 }

@@ -20,12 +20,10 @@ int bch2_casefold(struct btree_trans *trans, const struct bch_hash_info *info,
 {
 	*out_cf = (struct qstr) QSTR_INIT(NULL, 0);
 
-	int ret = bch2_fs_casefold_enabled(trans->c);
-	if (ret)
-		return ret;
+	try(bch2_fs_casefold_enabled(trans->c));
 
 	unsigned char *buf = bch2_trans_kmalloc(trans, BCH_NAME_MAX + 1);
-	ret = PTR_ERR_OR_ZERO(buf);
+	int ret = PTR_ERR_OR_ZERO(buf);
 	if (ret)
 		return ret;
 
@@ -257,9 +255,7 @@ int bch2_dirent_init_name(struct bch_fs *c,
 		       offsetof(struct bch_dirent, d_name) -
 		       name->len);
 	} else {
-		int ret = bch2_fs_casefold_enabled(c);
-		if (ret)
-			return ret;
+		try(bch2_fs_casefold_enabled(c));
 
 #if IS_ENABLED(CONFIG_UNICODE)
 		memcpy(&dirent->v.d_cf_name_block.d_names[0], name->name, name->len);
@@ -378,9 +374,6 @@ int bch2_dirent_create(struct btree_trans *trans, subvol_inum dir,
 int bch2_dirent_read_target(struct btree_trans *trans, subvol_inum dir,
 			    struct bkey_s_c_dirent d, subvol_inum *target)
 {
-	struct bch_subvolume s;
-	int ret = 0;
-
 	if (d.v->d_type == DT_SUBVOL &&
 	    le32_to_cpu(d.v->d_parent_subvol) != dir.subvol)
 		return 1;
@@ -391,12 +384,13 @@ int bch2_dirent_read_target(struct btree_trans *trans, subvol_inum dir,
 	} else {
 		target->subvol	= le32_to_cpu(d.v->d_child_subvol);
 
-		ret = bch2_subvolume_get(trans, target->subvol, true, &s);
+		struct bch_subvolume s;
+		try(bch2_subvolume_get(trans, target->subvol, true, &s));
 
 		target->inum	= le64_to_cpu(s.inode);
 	}
 
-	return ret;
+	return 0;
 }
 
 int bch2_dirent_rename(struct btree_trans *trans,
@@ -600,13 +594,11 @@ int bch2_dirent_lookup_trans(struct btree_trans *trans,
 			     unsigned flags)
 {
 	struct qstr lookup_name;
-	int ret = bch2_maybe_casefold(trans, hash_info, name, &lookup_name);
-	if (ret)
-		return ret;
+	try(bch2_maybe_casefold(trans, hash_info, name, &lookup_name));
 
 	struct bkey_s_c k = bch2_hash_lookup(trans, iter, bch2_dirent_hash_desc,
 					     hash_info, dir, &lookup_name, flags);
-	ret = bkey_err(k);
+	int ret = bkey_err(k);
 	if (ret)
 		goto err;
 
