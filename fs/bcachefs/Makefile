@@ -57,6 +57,7 @@ bcachefs-y		:=			\
 	fs/acl.o				\
 	fs/chardev.o				\
 	fs/check.o				\
+	fs/check_nlinks.o			\
 	fs/dirent.o				\
 	fs/inode.o				\
 	fs/logged_ops.o				\

@@ -10,6 +10,25 @@ struct snapshots_seen {
 	snapshot_id_list		ids;
 };
 
+static inline void snapshots_seen_exit(struct snapshots_seen *s)
+{
+	darray_exit(&s->ids);
+}
+
+static inline struct snapshots_seen snapshots_seen_init(void)
+{
+	return (struct snapshots_seen) {};
+}
+
+DEFINE_CLASS(snapshots_seen, struct snapshots_seen,
+	     snapshots_seen_exit(&_T),
+	     snapshots_seen_init(), void)
+
+int bch2_snapshots_seen_update(struct bch_fs *, struct snapshots_seen *,
+			       enum btree_id, struct bpos);
+
+bool bch2_ref_visible(struct bch_fs *, struct snapshots_seen *, u32, u32);
+
 int bch2_fsck_update_backpointers(struct btree_trans *,
 				  struct snapshots_seen *,
 				  const struct bch_hash_desc,
