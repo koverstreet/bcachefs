@@ -145,15 +145,12 @@ static inline int wb_flush_one(struct btree_trans *trans, struct btree_iter *ite
 			       size_t *fast)
 {
 	struct btree_path *path;
-	int ret;
 
 	EBUG_ON(!wb->journal_seq);
 	EBUG_ON(!trans->c->btree_write_buffer.flushing.pin.seq);
 	EBUG_ON(trans->c->btree_write_buffer.flushing.pin.seq > wb->journal_seq);
 
-	ret = bch2_btree_iter_traverse(iter);
-	if (ret)
-		return ret;
+	try(bch2_btree_iter_traverse(iter));
 
 	if (!*accounting_accumulated && wb->k.k.type == KEY_TYPE_accounting) {
 		struct bkey u;
@@ -175,9 +172,7 @@ static inline int wb_flush_one(struct btree_trans *trans, struct btree_iter *ite
 	path = btree_iter_path(trans, iter);
 
 	if (!*write_locked) {
-		ret = bch2_btree_node_lock_write(trans, path, &path->l[0].b->c);
-		if (ret)
-			return ret;
+		try(bch2_btree_node_lock_write(trans, path, &path->l[0].b->c));
 
 		bch2_btree_node_prep_for_write(trans, path, path->l[0].b);
 		*write_locked = true;
@@ -292,9 +287,7 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 	bool accounting_replay_done = test_bit(BCH_FS_accounting_replay_done, &c->flags);
 	int ret = 0;
 
-	ret = bch2_journal_error(&c->journal);
-	if (ret)
-		return ret;
+	try(bch2_journal_error(&c->journal));
 
 	bch2_trans_unlock(trans);
 	bch2_trans_begin(trans);
@@ -726,9 +719,7 @@ int bch2_accounting_key_to_wb_slowpath(struct bch_fs *c, enum btree_id btree,
 	struct btree_write_buffered_key new = { .btree = btree };
 	bkey_copy(&new.k, &k->k_i);
 
-	int ret = darray_push(&wb->accounting, new);
-	if (ret)
-		return ret;
+	try(darray_push(&wb->accounting, new));
 
 	wb_accounting_sort(wb);
 	return 0;

@@ -32,10 +32,8 @@ int bch2_sb_clean_validate_late(struct bch_fs *c, struct bch_sb_field_clean *cle
 		.flags		= write,
 		.from		= BKEY_VALIDATE_superblock,
 	};
-	struct jset_entry *entry;
-	int ret;
 
-	for (entry = clean->start;
+	for (struct jset_entry *entry = clean->start;
 	     entry < (struct jset_entry *) vstruct_end(&clean->field);
 	     entry = vstruct_next(entry)) {
 		if (vstruct_end(entry) > vstruct_end(&clean->field)) {
@@ -46,12 +44,10 @@ int bch2_sb_clean_validate_late(struct bch_fs *c, struct bch_sb_field_clean *cle
 			return -BCH_ERR_fsck_repair_unimplemented;
 		}
 
-		ret = bch2_journal_entry_validate(c, NULL, entry,
-						  le16_to_cpu(c->disk_sb.sb->version),
-						  BCH_SB_BIG_ENDIAN(c->disk_sb.sb),
-						  from);
-		if (ret)
-			return ret;
+		try(bch2_journal_entry_validate(c, NULL, entry,
+						le16_to_cpu(c->disk_sb.sb->version),
+						BCH_SB_BIG_ENDIAN(c->disk_sb.sb),
+						from));
 	}
 
 	return 0;

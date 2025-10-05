@@ -328,9 +328,7 @@ int bch2_subvolume_get(struct btree_trans *trans, unsigned subvol,
 int bch2_subvol_is_ro_trans(struct btree_trans *trans, u32 subvol)
 {
 	struct bch_subvolume s;
-	int ret = bch2_subvolume_get_inlined(trans, subvol, true, &s);
-	if (ret)
-		return ret;
+	try(bch2_subvolume_get_inlined(trans, subvol, true, &s));
 
 	if (BCH_SUBVOLUME_RO(&s))
 		return -EROFS;
@@ -525,14 +523,10 @@ static int bch2_subvolume_wait_for_pagecache_and_delete_hook(struct btree_trans 
 {
 	struct subvolume_unlink_hook *h = container_of(_h, struct subvolume_unlink_hook, h);
 	struct bch_fs *c = trans->c;
-	int ret = 0;
 
 	scoped_guard(mutex, &c->snapshots_unlinked_lock)
 		if (!snapshot_list_has_id(&c->snapshots_unlinked, h->subvol))
-			ret = snapshot_list_add(c, &c->snapshots_unlinked, h->subvol);
-
-	if (ret)
-		return ret;
+			try(snapshot_list_add(c, &c->snapshots_unlinked, h->subvol));
 
 	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_snapshot_delete_pagecache))
 		return -EROFS;

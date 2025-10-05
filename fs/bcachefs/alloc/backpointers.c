@@ -169,11 +169,8 @@ int bch2_bucket_backpointer_mod_nowritebuffer(struct btree_trans *trans,
 	if (insert
 	    ? k.k->type
 	    : (k.k->type != KEY_TYPE_backpointer ||
-	       memcmp(bkey_s_c_to_backpointer(k).v, &bp->v, sizeof(bp->v)))) {
-		ret = backpointer_mod_err(trans, orig_k, bp, k, insert);
-		if (ret)
-			return ret;
-	}
+	       memcmp(bkey_s_c_to_backpointer(k).v, &bp->v, sizeof(bp->v))))
+		try(backpointer_mod_err(trans, orig_k, bp, k, insert));
 
 	if (!insert) {
 		bp->k.type = KEY_TYPE_deleted;
@@ -215,11 +212,9 @@ static int backpointer_target_not_found(struct btree_trans *trans,
 	 * looking at may have already been deleted - failure to find what it
 	 * pointed to is not an error:
 	 */
-	ret = last_flushed
-		? bch2_backpointers_maybe_flush(trans, bp.s_c, last_flushed)
-		: 0;
-	if (ret)
-		return ret;
+	try(last_flushed
+	    ? bch2_backpointers_maybe_flush(trans, bp.s_c, last_flushed)
+	    : 0);
 
 	prt_printf(&buf, "backpointer doesn't match %s it points to:\n",
 		   bp.v->level ? "btree node" : "extent");
@@ -241,9 +236,7 @@ static int backpointer_target_not_found(struct btree_trans *trans,
 
 	if (fsck_err(trans, backpointer_to_missing_ptr,
 		     "%s", buf.buf)) {
-		ret = bch2_backpointer_del(trans, bp.k->p);
-		if (ret || !commit)
-			return ret;
+		try(bch2_backpointer_del(trans, bp.k->p));
 
 		/*
 		 * Normally, on transaction commit from inside a transaction,
@@ -259,7 +252,9 @@ static int backpointer_target_not_found(struct btree_trans *trans,
 		 * next backpointer and starting a new transaction immediately
 		 * after backpointer_get_key() returns NULL:
 		 */
-		ret = bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
+		try(commit
+		    ? bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc)
+		    : 0);
 	}
 fsck_err:
 	return ret;
@@ -399,9 +394,7 @@ static int bch2_check_backpointer_has_valid_bucket(struct btree_trans *trans, st
 
 	struct bpos bucket;
 	if (!bp_pos_to_bucket_nodev_noerror(c, k.k->p, &bucket)) {
-		ret = bch2_backpointers_maybe_flush(trans, k, last_flushed);
-		if (ret)
-			return ret;
+		try(bch2_backpointers_maybe_flush(trans, k, last_flushed));
 
 		if (fsck_err(trans, backpointer_to_missing_device,
 			     "backpointer for missing device:\n%s",
@@ -418,9 +411,7 @@ static int bch2_check_backpointer_has_valid_bucket(struct btree_trans *trans, st
 			return ret;
 
 		if (alloc_k.k->type != KEY_TYPE_alloc_v4) {
-			ret = bch2_backpointers_maybe_flush(trans, k, last_flushed);
-			if (ret)
-				return ret;
+			try(bch2_backpointers_maybe_flush(trans, k, last_flushed));
 
 			if (fsck_err(trans, backpointer_to_missing_alloc,
 				     "backpointer for nonexistent alloc key: %llu:%llu:0\n%s",
@@ -561,10 +552,7 @@ static int check_bp_exists(struct btree_trans *trans,
 
 	if (bp_k.k->type != KEY_TYPE_backpointer ||
 	    memcmp(bkey_s_c_to_backpointer(bp_k).v, &bp->v, sizeof(bp->v))) {
-		ret = bch2_btree_write_buffer_maybe_flush(trans, orig_k, &s->last_flushed);
-		if (ret)
-			return ret;
-
+		try(bch2_btree_write_buffer_maybe_flush(trans, orig_k, &s->last_flushed));
 		goto check_existing_bp;
 	}
 out:
@@ -711,11 +699,9 @@ static int check_extent_to_backpointers(struct btree_trans *trans,
 		    bpos_gt(bp.k.p, s->bp_end))
 			continue;
 
-		int ret = !empty
-			? check_bp_exists(trans, s, &bp, k)
-			: bch2_bucket_backpointer_mod(trans, k, &bp, true);
-		if (ret)
-			return ret;
+		try(!empty
+		    ? check_bp_exists(trans, s, &bp, k)
+		    : bch2_bucket_backpointer_mod(trans, k, &bp, true));
 	}
 
 	return 0;
@@ -834,11 +820,9 @@ static int bch2_check_extents_to_backpointers_pass(struct btree_trans *trans,
 	     btree_id++) {
 		int level, depth = btree_type_has_data_ptrs(btree_id) ? 0 : 1;
 
-		ret = commit_do(trans, NULL, NULL,
-				BCH_TRANS_COMMIT_no_enospc,
-				check_btree_root_to_backpointers(trans, s, btree_id, &level));
-		if (ret)
-			return ret;
+		try(commit_do(trans, NULL, NULL,
+			      BCH_TRANS_COMMIT_no_enospc,
+			      check_btree_root_to_backpointers(trans, s, btree_id, &level)));
 
 		while (level >= depth) {
 			struct btree_iter iter;
@@ -931,9 +915,7 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 		if (c->sb.version_upgrade_complete < bcachefs_metadata_version_backpointer_bucket_gen &&
 		    (bp.v->bucket_gen != a->gen ||
 		     bp.v->pad)) {
-			ret = bch2_backpointer_del(trans, bp_k.k->p);
-			if (ret)
-				return ret;
+			try(bch2_backpointer_del(trans, bp_k.k->p));
 
 			need_commit = true;
 			continue;
@@ -951,11 +933,8 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 	if (ret)
 		return ret;
 
-	if (need_commit) {
-		ret = bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
-		if (ret)
-			return ret;
-	}
+	if (need_commit)
+		try(bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
 
 	if (sectors[ALLOC_dirty]  > a->dirty_sectors ||
 	    sectors[ALLOC_cached] > a->cached_sectors ||
@@ -1008,11 +987,8 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 		 * Pre upgrade, we expect all the buckets to be wrong, a write
 		 * buffer flush is pointless:
 		 */
-		if (c->sb.version_upgrade_complete >= bcachefs_metadata_version_backpointer_bucket_gen) {
-			ret = bch2_backpointers_maybe_flush(trans, alloc_k, last_flushed);
-			if (ret)
-				return ret;
-		}
+		if (c->sb.version_upgrade_complete >= bcachefs_metadata_version_backpointer_bucket_gen)
+			try(bch2_backpointers_maybe_flush(trans, alloc_k, last_flushed));
 
 		bool empty = (sectors[ALLOC_dirty] +
 			      sectors[ALLOC_stripe] +

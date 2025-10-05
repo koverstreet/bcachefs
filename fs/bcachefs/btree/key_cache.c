@@ -342,9 +342,7 @@ static noinline int btree_key_cache_fill(struct btree_trans *trans,
 	if (unlikely(ret))
 		goto out;
 
-	ret = btree_key_cache_create(trans, btree_iter_path(trans, &iter), ck_path, k);
-	if (ret)
-		return ret;
+	try(btree_key_cache_create(trans, btree_iter_path(trans, &iter), ck_path, k));
 
 	if (trace_key_cache_fill_enabled())
 		do_trace_key_cache_fill(trans, ck_path, k);
@@ -367,9 +365,7 @@ retry:
 
 	enum six_lock_type lock_want = __btree_lock_want(path, 0);
 
-	int ret = btree_node_lock(trans, path, (void *) ck, 0, lock_want, _THIS_IP_);
-	if (ret)
-		return ret;
+	try(btree_node_lock(trans, path, (void *) ck, 0, lock_want, _THIS_IP_));
 
 	if (ck->key.btree_id != path->btree_id ||
 	    !bpos_eq(ck->key.pos, path->pos)) {
@@ -434,9 +430,7 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 				  BTREE_ITER_intent);
 	b_iter.flags &= ~BTREE_ITER_with_key_cache;
 
-	ret = bch2_btree_iter_traverse(&c_iter);
-	if (ret)
-		return ret;
+	try(bch2_btree_iter_traverse(&c_iter));
 
 	ck = (void *) btree_iter_path(trans, &c_iter)->l[0].b;
 	if (!ck)

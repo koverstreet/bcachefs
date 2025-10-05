@@ -100,11 +100,8 @@ int bch2_lru_check_set(struct btree_trans *trans,
 		prt_newline(&buf);
 		bch2_bkey_val_to_text(&buf, c, referring_k);
 
-		if (fsck_err(trans, alloc_key_to_missing_lru_entry, "%s", buf.buf)) {
-			ret = bch2_lru_set(trans, lru_id, dev_bucket, time);
-			if (ret)
-				return ret;
-		}
+		if (fsck_err(trans, alloc_key_to_missing_lru_entry, "%s", buf.buf))
+			try(bch2_lru_set(trans, lru_id, dev_bucket, time));
 	}
 fsck_err:
 	return ret;
@@ -192,9 +189,7 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 	u64 idx = bkey_lru_type_idx(c, type, k);
 
 	if (lru_pos_time(lru_k.k->p) != idx) {
-		ret = bch2_btree_write_buffer_maybe_flush(trans, lru_k, last_flushed);
-		if (ret)
-			return ret;
+		try(bch2_btree_write_buffer_maybe_flush(trans, lru_k, last_flushed));
 
 		if (fsck_err(trans, lru_entry_bad,
 			     "incorrect lru entry: lru %s time %llu\n"

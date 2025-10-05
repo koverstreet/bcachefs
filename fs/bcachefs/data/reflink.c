@@ -166,9 +166,7 @@ static int bch2_indirect_extent_not_missing(struct btree_trans *trans, struct bk
 		return ret;
 
 	SET_REFLINK_P_ERROR(&new->v, false);
-	ret = bch2_btree_insert_trans(trans, BTREE_ID_extents, &new->k_i, BTREE_TRIGGER_norun);
-	if (ret)
-		return ret;
+	try(bch2_btree_insert_trans(trans, BTREE_ID_extents, &new->k_i, BTREE_TRIGGER_norun));
 
 	if (!should_commit)
 		return 0;
@@ -200,9 +198,7 @@ static int bch2_indirect_extent_missing_error(struct btree_trans *trans,
 	missing_pos.offset += missing_start - live_start;
 
 	prt_printf(&buf, "pointer to missing indirect extent in ");
-	ret = bch2_inum_snap_offset_err_msg_trans(trans, &buf, missing_pos);
-	if (ret)
-		return ret;
+	try(bch2_inum_snap_offset_err_msg_trans(trans, &buf, missing_pos));
 
 	prt_printf(&buf, "-%llu\n", (missing_pos.offset + (missing_end - missing_start)) << 9);
 	bch2_bkey_val_to_text(&buf, c, p.s_c);
@@ -243,9 +239,7 @@ static int bch2_indirect_extent_missing_error(struct btree_trans *trans,
 			SET_REFLINK_P_ERROR(&new->v, true);
 		}
 
-		ret = bch2_btree_insert_trans(trans, BTREE_ID_extents, &new->k_i, BTREE_TRIGGER_norun);
-		if (ret)
-			return ret;
+		try(bch2_btree_insert_trans(trans, BTREE_ID_extents, &new->k_i, BTREE_TRIGGER_norun));
 
 		if (should_commit)
 			ret =   bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
@@ -395,11 +389,8 @@ static s64 gc_trigger_reflink_p_segment(struct btree_trans *trans,
 	*idx = r->offset;
 	return 0;
 not_found:
-	if (flags & BTREE_TRIGGER_check_repair) {
-		ret = bch2_indirect_extent_missing_error(trans, p, *idx, next_idx, false);
-		if (ret)
-			return ret;
-	}
+	if (flags & BTREE_TRIGGER_check_repair)
+		try(bch2_indirect_extent_missing_error(trans, p, *idx, next_idx, false));
 
 	*idx = next_idx;
 	return ret;
@@ -536,9 +527,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 	*refcount	= 0;
 	memcpy(refcount + 1, &orig->v, bkey_val_bytes(&orig->k));
 
-	ret = bch2_trans_update(trans, &reflink_iter, r_v, 0);
-	if (ret)
-		return ret;
+	try(bch2_trans_update(trans, &reflink_iter, r_v, 0));
 
 	/*
 	 * orig is in a bkey_buf which statically allocates 5 64s for the val,

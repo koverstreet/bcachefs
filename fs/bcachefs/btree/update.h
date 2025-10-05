@@ -102,9 +102,7 @@ static inline int bch2_insert_snapshot_whiteouts(struct btree_trans *trans,
 		return 0;
 
 	snapshot_id_list s;
-	int ret = bch2_get_snapshot_overwrites(trans, btree, old_pos, &s);
-	if (ret)
-		return ret;
+	try(bch2_get_snapshot_overwrites(trans, btree, old_pos, &s));
 
 	return s.nr
 		? __bch2_insert_snapshot_whiteouts(trans, btree, new_pos, &s)

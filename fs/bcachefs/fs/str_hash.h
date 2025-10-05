@@ -217,18 +217,15 @@ bch2_hash_hole(struct btree_trans *trans,
 	       const struct bch_hash_info *info,
 	       subvol_inum inum, const void *key)
 {
-	struct bkey_s_c k;
 	u32 snapshot;
-	int ret;
-
-	ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot);
-	if (ret)
-		return ret;
+	try(bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot));
 
 	bch2_trans_iter_init(trans, iter,  desc.btree_id,
 			     SPOS(inum.inum, desc.hash_key(info, key), snapshot),
 			     BTREE_ITER_slots|BTREE_ITER_intent);
 
+	struct bkey_s_c k;
+	int ret;
 	for_each_btree_key_max_continue_norestart(*iter,
 			   POS(inum.inum, U64_MAX),
 			   BTREE_ITER_slots|BTREE_ITER_intent, k, ret)

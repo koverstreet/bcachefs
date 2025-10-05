@@ -298,20 +298,14 @@ static int bch2_sb_members_v1_validate(struct bch_sb *sb, struct bch_sb_field *f
 				enum bch_validate_flags flags, struct printbuf *err)
 {
 	struct bch_sb_field_members_v1 *mi = field_to_type(f, members_v1);
-	unsigned i;
 
 	if ((void *) members_v1_get_mut(mi, sb->nr_devices) > vstruct_end(&mi->field)) {
 		prt_printf(err, "too many devices for section size");
 		return -BCH_ERR_invalid_sb_members;
 	}
 
-	for (i = 0; i < sb->nr_devices; i++) {
-		struct bch_member m = bch2_members_v1_get(mi, i);
-
-		int ret = validate_member(err, m, sb, i);
-		if (ret)
-			return ret;
-	}
+	for (unsigned i = 0; i < sb->nr_devices; i++)
+		try(validate_member(err, bch2_members_v1_get(mi, i), sb, i));
 
 	return 0;
 }
@@ -382,11 +376,8 @@ static int bch2_sb_members_v2_validate(struct bch_sb *sb, struct bch_sb_field *f
 		return -BCH_ERR_invalid_sb_members;
 	}
 
-	for (unsigned i = 0; i < sb->nr_devices; i++) {
-		int ret = validate_member(err, bch2_members_v2_get(mi, i), sb, i);
-		if (ret)
-			return ret;
-	}
+	for (unsigned i = 0; i < sb->nr_devices; i++)
+		try(validate_member(err, bch2_members_v2_get(mi, i), sb, i));
 
 	return 0;
 }

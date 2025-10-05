@@ -556,10 +556,9 @@ static int bch2_btree_reserve_get(struct btree_trans *trans,
 	 * Protects reaping from the btree node cache and using the btree node
 	 * open bucket reserve:
 	 */
-	int ret = bch2_btree_cache_cannibalize_lock(trans, cl);
-	if (ret)
-		return ret;
+	try(bch2_btree_cache_cannibalize_lock(trans, cl));
 
+	int ret = 0;
 	for (unsigned interior = 0; interior < 2; interior++) {
 		struct prealloc_nodes *p = as->prealloc_nodes + interior;
 
@@ -663,19 +662,15 @@ static int btree_update_nodes_written_trans(struct btree_trans *trans,
 	for_each_keylist_key(&as->old_keys, k) {
 		unsigned level = bkey_i_to_btree_ptr_v2(k)->v.mem_ptr;
 
-		ret = bch2_key_trigger_old(trans, as->btree_id, level, bkey_i_to_s_c(k),
-					   BTREE_TRIGGER_transactional);
-		if (ret)
-			return ret;
+		try(bch2_key_trigger_old(trans, as->btree_id, level, bkey_i_to_s_c(k),
+					 BTREE_TRIGGER_transactional));
 	}
 
 	for_each_keylist_key(&as->new_keys, k) {
 		unsigned level = bkey_i_to_btree_ptr_v2(k)->v.mem_ptr;
 
-		ret = bch2_key_trigger_new(trans, as->btree_id, level, bkey_i_to_s(k),
-					   BTREE_TRIGGER_transactional);
-		if (ret)
-			return ret;
+		try(bch2_key_trigger_new(trans, as->btree_id, level, bkey_i_to_s(k),
+					 BTREE_TRIGGER_transactional));
 	}
 
 	return 0;
@@ -1371,13 +1366,10 @@ static int bch2_btree_set_root(struct btree_update *as,
 	 * Ensure no one is using the old root while we switch to the
 	 * new root:
 	 */
-	if (nofail) {
+	if (nofail)
 		bch2_btree_node_lock_write_nofail(trans, path, &old->c);
-	} else {
-		int ret = bch2_btree_node_lock_write(trans, path, &old->c);
-		if (ret)
-			return ret;
-	}
+	else
+		try(bch2_btree_node_lock_write(trans, path, &old->c));
 
 	bch2_btree_set_root_inmem(c, b);
 
@@ -1641,9 +1633,7 @@ static int btree_split_insert_keys(struct btree_update *as,
 
 		bch2_btree_node_iter_init(&node_iter, b, &bch2_keylist_front(keys)->k.p);
 
-		int ret = bch2_btree_insert_keys_interior(as, trans, path, b, node_iter, keys);
-		if (ret)
-			return ret;
+		try(bch2_btree_insert_keys_interior(as, trans, path, b, node_iter, keys));
 	}
 
 	return 0;
@@ -1664,9 +1654,7 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 	BUG_ON(!parent && !btree_node_is_root(c, b));
 	BUG_ON(parent && !btree_node_intent_locked(trans->paths + path, b->c.level + 1));
 
-	ret = bch2_btree_node_check_topology(trans, b);
-	if (ret)
-		return ret;
+	try(bch2_btree_node_check_topology(trans, b));
 
 	if (b->nr.live_u64s > BTREE_SPLIT_THRESHOLD(c)) {
 		struct btree *n[2];
@@ -1875,9 +1863,7 @@ static int bch2_btree_insert_node(struct btree_update *as, struct btree_trans *t
 		return -EIO;
 	}
 
-	ret = bch2_btree_node_lock_write(trans, path, &b->c);
-	if (ret)
-		return ret;
+	try(bch2_btree_node_lock_write(trans, path, &b->c));
 
 	bch2_btree_node_prep_for_write(trans, path, b);
 
@@ -2495,14 +2481,12 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 	int ret;
 
 	if (!skip_triggers) {
-		ret   = bch2_key_trigger_old(trans, b->c.btree_id, b->c.level + 1,
-					     bkey_i_to_s_c(&b->key),
-					     BTREE_TRIGGER_transactional) ?:
-			bch2_key_trigger_new(trans, b->c.btree_id, b->c.level + 1,
-					     bkey_i_to_s(new_key),
-					     BTREE_TRIGGER_transactional);
-		if (ret)
-			return ret;
+		try(bch2_key_trigger_old(trans, b->c.btree_id, b->c.level + 1,
+					 bkey_i_to_s_c(&b->key),
+					 BTREE_TRIGGER_transactional));
+		try(bch2_key_trigger_new(trans, b->c.btree_id, b->c.level + 1,
+					 bkey_i_to_s(new_key),
+					 BTREE_TRIGGER_transactional));
 	}
 
 	if (new_hash) {
@@ -2588,9 +2572,7 @@ int bch2_btree_node_update_key(struct btree_trans *trans, struct btree_iter *ite
 	struct closure cl;
 	int ret = 0;
 
-	ret = bch2_btree_path_upgrade(trans, path, b->c.level + 1);
-	if (ret)
-		return ret;
+	try(bch2_btree_path_upgrade(trans, path, b->c.level + 1));
 
 	closure_init_stack(&cl);
 
@@ -2600,11 +2582,8 @@ int bch2_btree_node_update_key(struct btree_trans *trans, struct btree_iter *ite
 	 */
 	if (btree_ptr_hash_val(new_key) != b->hash_val) {
 		ret = bch2_btree_cache_cannibalize_lock(trans, &cl);
-		if (ret) {
-			ret = drop_locks_do(trans, (closure_sync(&cl), 0));
-			if (ret)
-				return ret;
-		}
+		if (ret)
+			try(drop_locks_do(trans, (closure_sync(&cl), 0)));
 
 		new_hash = bch2_btree_node_mem_alloc(trans, false);
 		ret = PTR_ERR_OR_ZERO(new_hash);

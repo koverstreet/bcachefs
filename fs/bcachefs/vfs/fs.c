@@ -243,7 +243,6 @@ int bch2_inode_or_descendents_is_open(struct btree_trans *trans, struct bpos p)
 	struct rhltable *ht = &c->vfs_inodes_by_inum_table;
 	u64 inum = p.offset;
 	CLASS(darray_u32, subvols)();
-	int ret = 0;
 
 	if (!test_bit(BCH_FS_started, &c->flags))
 		return false;
@@ -275,13 +274,10 @@ restart:
 
 		rht_for_each_entry_rcu_from(inode, he, rht_ptr_rcu(bkt), tbl, hash, hash) {
 			if (inode->ei_inum.inum == inum) {
-				ret = darray_push_gfp(&subvols, inode->ei_inum.subvol,
-						      GFP_NOWAIT);
+				int ret = darray_push_gfp(&subvols, inode->ei_inum.subvol, GFP_NOWAIT);
 				if (ret) {
 					rcu_read_unlock();
-					ret = darray_make_room(&subvols, 1);
-					if (ret)
-						return ret;
+					try(darray_make_room(&subvols, 1));
 					subvols.nr = 0;
 					goto restart_from_top;
 				}
@@ -302,16 +298,11 @@ restart:
 
 	darray_for_each(subvols, i) {
 		u32 snap;
-		ret = bch2_subvolume_get_snapshot(trans, *i, &snap);
-		if (ret)
-			return ret;
-
-		ret = bch2_snapshot_is_ancestor(c, snap, p.snapshot);
-		if (ret)
-			break;
+		try(bch2_subvolume_get_snapshot(trans, *i, &snap));
+		try(bch2_snapshot_is_ancestor(c, snap, p.snapshot));
 	}
 
-	return ret;
+	return 0;
 }
 
 static struct bch_inode_info *__bch2_inode_hash_find(struct bch_fs *c, subvol_inum inum)
@@ -911,12 +902,8 @@ static int bch2_rename2(struct mnt_idmap *idmap,
 	if (flags & ~(RENAME_NOREPLACE|RENAME_EXCHANGE|RENAME_WHITEOUT))
 		return -EINVAL;
 
-	if (mode == BCH_RENAME_OVERWRITE) {
-		ret = filemap_write_and_wait_range(src_inode->v.i_mapping,
-						   0, LLONG_MAX);
-		if (ret)
-			return ret;
-	}
+	if (mode == BCH_RENAME_OVERWRITE)
+		try(filemap_write_and_wait_range(src_inode->v.i_mapping, 0, LLONG_MAX));
 
 	bch2_lock_inodes(INODE_UPDATE_LOCK,
 			 src_dir,
@@ -1098,10 +1085,7 @@ int bch2_setattr_nonsize(struct mnt_idmap *idmap,
 		qid.q[QTYP_GRP] = from_kgid(i_user_ns(&inode->v), kgid);
 	}
 
-	ret = bch2_fs_quota_transfer(c, inode, qid, ~0,
-				     KEY_TYPE_QUOTA_PREALLOC);
-	if (ret)
-		return ret;
+	try(bch2_fs_quota_transfer(c, inode, qid, ~0, KEY_TYPE_QUOTA_PREALLOC));
 
 	CLASS(btree_trans, trans)(c);
 retry:
@@ -1248,7 +1232,6 @@ static int bch2_fill_extent(struct bch_fs *c,
 		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 		const union bch_extent_entry *entry;
 		struct extent_ptr_decoded p;
-		int ret;
 
 		if (k.k->type == KEY_TYPE_reflink_v)
 			flags |= FIEMAP_EXTENT_SHARED;
@@ -1269,12 +1252,10 @@ static int bch2_fill_extent(struct bch_fs *c,
 			    (k.k->size & (block_sectors(c) - 1)))
 				flags2 |= FIEMAP_EXTENT_NOT_ALIGNED;
 
-			ret = fiemap_fill_next_extent(info,
+			try(fiemap_fill_next_extent(info,
 						bkey_start_offset(k.k) << 9,
 						offset << 9,
-						k.k->size << 9, flags|flags2);
-			if (ret)
-				return ret;
+						k.k->size << 9, flags|flags2));
 		}
 
 		return 0;
@@ -1389,24 +1370,20 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 				   struct bch_fiemap_extent *cur)
 {
 	u32 snapshot;
-	int ret = bch2_subvolume_get_snapshot(trans, inode->ei_inum.subvol, &snapshot);
-	if (ret)
-		return ret;
+	try(bch2_subvolume_get_snapshot(trans, inode->ei_inum.subvol, &snapshot));
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_extents,
 				SPOS(inode->ei_inum.inum, start, snapshot), 0);
 
 	struct bkey_s_c k =
 		bch2_btree_iter_peek_max(&iter, POS(inode->ei_inum.inum, end));
-	ret = bkey_err(k);
+	int ret = bkey_err(k);
 	if (ret)
 		return ret;
 
 	u64 pagecache_end = k.k ? max(start, bkey_start_offset(k.k)) : end;
 
-	ret = bch2_next_fiemap_pagecache_extent(trans, inode, start, pagecache_end, cur);
-	if (ret)
-		return ret;
+	try(bch2_next_fiemap_pagecache_extent(trans, inode, start, pagecache_end, cur));
 
 	struct bpos pagecache_start = bkey_start_pos(&cur->kbuf.k->k);
 
@@ -1439,10 +1416,7 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 		unsigned sectors = cur->kbuf.k->k.size;
 		s64 offset_into_extent = 0;
 		enum btree_id data_btree = BTREE_ID_extents;
-		ret = bch2_read_indirect_extent(trans, &data_btree, &offset_into_extent,
-						&cur->kbuf);
-		if (ret)
-			return ret;
+		try(bch2_read_indirect_extent(trans, &data_btree, &offset_into_extent, &cur->kbuf));
 
 		struct bkey_i *k = cur->kbuf.k;
 		sectors = min_t(unsigned, sectors, k->k.size - offset_into_extent);
@@ -1466,9 +1440,7 @@ static int bch2_fiemap(struct inode *vinode, struct fiemap_extent_info *info,
 	struct bch_fiemap_extent cur, prev;
 	int ret = 0;
 
-	ret = fiemap_prep(&ei->v, info, start, &len, 0);
-	if (ret)
-		return ret;
+	try(fiemap_prep(&ei->v, info, start, &len, 0));
 
 	if (start + len < start)
 		return -EINVAL;
@@ -1572,9 +1544,7 @@ static int bch2_open(struct inode *vinode, struct file *file)
 		struct bch_inode_info *inode = to_bch_ei(vinode);
 		struct bch_fs *c = inode->v.i_sb->s_fs_info;
 
-		int ret = bch2_subvol_is_ro(c, inode->ei_inum.subvol);
-		if (ret)
-			return ret;
+		try(bch2_subvol_is_ro(c, inode->ei_inum.subvol));
 	}
 
 	file->f_mode |= FMODE_CAN_ODIRECT;
@@ -1648,11 +1618,8 @@ static int fssetxattr_inode_update_fn(struct btree_trans *trans,
 	    (s->flags & (BCH_INODE_nodump|BCH_INODE_noatime)) != s->flags)
 		return -EINVAL;
 
-	if (s->casefold != bch2_inode_casefold(c, bi)) {
-		int ret = bch2_inode_set_casefold(trans, inode_inum(inode), bi, s->casefold);
-		if (ret)
-			return ret;
-	}
+	if (s->casefold != bch2_inode_casefold(c, bi))
+		try(bch2_inode_set_casefold(trans, inode_inum(inode), bi, s->casefold));
 
 	if (s->set_project) {
 		bi->bi_project = s->projid;
@@ -2441,9 +2408,7 @@ static int bch2_fs_get_tree(struct fs_context *fc)
 	if (!fc->source || strlen(fc->source) == 0)
 		return -EINVAL;
 
-	ret = bch2_split_devs(fc->source, &devs);
-	if (ret)
-		return ret;
+	try(bch2_split_devs(fc->source, &devs));
 
 	darray_for_each(devs, i) {
 		ret = darray_push(&devs_to_fs, bch2_path_to_fs(*i));

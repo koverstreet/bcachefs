@@ -483,11 +483,8 @@ static int check_snapshot_exists(struct btree_trans *trans, u32 id)
 	if (ret)
 		return ret;
 
-	if (!tree_id) {
-		ret = bch2_snapshot_tree_create(trans, id, 0, &tree_id);
-		if (ret)
-			return ret;
-	}
+	if (!tree_id)
+		try(bch2_snapshot_tree_create(trans, id, 0, &tree_id));
 
 	struct bkey_i_snapshot *snapshot = bch2_trans_kmalloc(trans, sizeof(*snapshot));
 	ret = PTR_ERR_OR_ZERO(snapshot);
@@ -557,9 +554,7 @@ static int snapshot_tree_reconstruct_next(struct bch_fs *c, struct snapshot_tree
 	if (r->cur_ids.nr) {
 		darray_for_each(r->trees, i)
 			if (snapshot_id_lists_have_common(i, &r->cur_ids)) {
-				int ret = snapshot_list_merge(c, i, &r->cur_ids);
-				if (ret)
-					return ret;
+				try(snapshot_list_merge(c, i, &r->cur_ids));
 				goto out;
 			}
 		darray_push(&r->trees, r->cur_ids);
