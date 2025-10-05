@@ -260,10 +260,7 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 				BTREE_ITER_with_updates|
 				BTREE_ITER_not_extents|
 				BTREE_ITER_nofilter_whiteouts);
-	struct bkey_s_c k = bch2_btree_iter_peek_max(&iter, POS(insert->k.p.inode, U64_MAX));
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_max(&iter, POS(insert->k.p.inode, U64_MAX)));
 	if (!k.k)
 		goto out;
 
@@ -292,7 +289,7 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 			if (bkey_le(k.k->p, insert->k.p) &&
 			    k.k->type != whiteout_type) {
 				struct bkey_i *update = bch2_bkey_make_mut_noupdate(trans, k);
-				ret = PTR_ERR_OR_ZERO(update);
+				int ret = PTR_ERR_OR_ZERO(update);
 				if (ret)
 					return ret;
 
@@ -309,9 +306,7 @@ static int bch2_trans_update_extent(struct btree_trans *trans,
 			goto out;
 next:
 		bch2_btree_iter_advance(&iter);
-		k = bch2_btree_iter_peek_max(&iter, POS(insert->k.p.inode, U64_MAX));
-		if ((ret = bkey_err(k)))
-			return ret;
+		k = bkey_try(bch2_btree_iter_peek_max(&iter, POS(insert->k.p.inode, U64_MAX)));
 		if (!k.k)
 			goto out;
 	}

@@ -1374,12 +1374,7 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_extents,
 				SPOS(inode->ei_inum.inum, start, snapshot), 0);
-
-	struct bkey_s_c k =
-		bch2_btree_iter_peek_max(&iter, POS(inode->ei_inum.inum, end));
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_max(&iter, POS(inode->ei_inum.inum, end)));
 
 	u64 pagecache_end = k.k ? max(start, bkey_start_offset(k.k)) : end;
 

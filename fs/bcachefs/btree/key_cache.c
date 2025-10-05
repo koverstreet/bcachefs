@@ -331,14 +331,11 @@ static noinline int btree_key_cache_fill(struct btree_trans *trans,
 				BTREE_ITER_key_cache_fill|
 				BTREE_ITER_cached_nofill);
 	iter.flags &= ~BTREE_ITER_with_journal;
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	/* Recheck after btree lookup, before allocating: */
 	ck_path = trans->paths + ck_path_idx;
-	ret = bch2_btree_key_cache_find(c, ck_path->btree_id, ck_path->pos) ? -EEXIST : 0;
+	int ret = bch2_btree_key_cache_find(c, ck_path->btree_id, ck_path->pos) ? -EEXIST : 0;
 	if (unlikely(ret))
 		goto out;
 
