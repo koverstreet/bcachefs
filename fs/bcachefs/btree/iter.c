@@ -302,13 +302,9 @@ static int __bch2_btree_iter_verify_ret(struct btree_iter *iter, struct bkey_s_c
 	CLASS(btree_iter, copy)(trans, iter->btree_id, iter->pos,
 				BTREE_ITER_nopreserve|
 				BTREE_ITER_all_snapshots);
-	struct bkey_s_c prev = bch2_btree_iter_prev(&copy);
+	struct bkey_s_c prev = bkey_try(bch2_btree_iter_prev(&copy));
 	if (!prev.k)
 		return 0;
-
-	int ret = bkey_err(prev);
-	if (ret)
-		return ret;
 
 	if (bkey_eq(prev.k->p, k.k->p) &&
 	    bch2_snapshot_is_ancestor(trans->c, iter->snapshot,

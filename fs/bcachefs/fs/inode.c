@@ -378,10 +378,7 @@ int bch2_inode_find_by_inum_snapshot(struct btree_trans *trans,
 				     unsigned flags)
 {
 	CLASS(btree_iter, iter)(trans, BTREE_ID_inodes, SPOS(0, inode_nr, snapshot), flags);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	return bkey_is_inode(k.k)
 		? bch2_inode_unpack(k, inode)
@@ -758,12 +755,10 @@ static int update_inode_has_children(struct btree_trans *trans,
 static int update_parent_inode_has_children(struct btree_trans *trans, struct bpos pos,
 					    bool have_child)
 {
+	int ret = 0;
 	struct btree_iter iter;
-	struct bkey_s_c k = bch2_inode_get_iter_snapshot_parent(trans,
-						&iter, pos, BTREE_ITER_with_updates);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_inode_get_iter_snapshot_parent(trans,
+						&iter, pos, BTREE_ITER_with_updates));
 	if (!k.k)
 		return 0;
 

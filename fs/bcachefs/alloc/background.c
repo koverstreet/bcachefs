@@ -673,6 +673,7 @@ int bch2_bucket_do_index(struct btree_trans *trans,
 {
 	enum btree_id btree;
 	struct bpos pos;
+	int ret = 0;
 
 	if (a->data_type != BCH_DATA_free &&
 	    a->data_type != BCH_DATA_need_discard)
@@ -692,10 +693,7 @@ int bch2_bucket_do_index(struct btree_trans *trans,
 	}
 
 	CLASS(btree_iter, iter)(trans, btree, pos, BTREE_ITER_intent);
-	struct bkey_s_c old = bch2_btree_iter_peek_slot(&iter);
-	int ret = bkey_err(old);
-	if (ret)
-		return ret;
+	struct bkey_s_c old = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	need_discard_or_freespace_err_on(ca->mi.freespace_initialized &&
 					 !old.k->type != set,
@@ -720,10 +718,7 @@ static noinline int bch2_bucket_gen_update(struct btree_trans *trans,
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_bucket_gens, pos,
 				BTREE_ITER_intent|BTREE_ITER_with_updates);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	if (k.k->type != KEY_TYPE_bucket_gens) {
 		bkey_bucket_gens_init(&g->k_i);
@@ -1021,10 +1016,7 @@ static int bch2_discard_one_bucket(struct btree_trans *trans,
 	}
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_alloc, need_discard_iter->pos, BTREE_ITER_cached);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
-	ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	struct bkey_i_alloc_v4 *a = bch2_alloc_to_v4_mut(trans, k);
 	ret = PTR_ERR_OR_ZERO(a);
@@ -1171,11 +1163,9 @@ static int bch2_do_discards_fast_one(struct btree_trans *trans,
 				     struct discard_buckets_state *s)
 {
 	CLASS(btree_iter, need_discard_iter)(trans, BTREE_ID_need_discard, POS(ca->dev_idx, bucket), 0);
-	struct bkey_s_c discard_k = bch2_btree_iter_peek_slot(&need_discard_iter);
-	int ret = bkey_err(discard_k);
-	if (ret)
-		return ret;
+	struct bkey_s_c discard_k = bkey_try(bch2_btree_iter_peek_slot(&need_discard_iter));
 
+	int ret = 0;
 	if (log_fsck_err_on(discard_k.k->type != KEY_TYPE_set,
 			    trans, discarding_bucket_not_in_need_discard_btree,
 			    "attempting to discard bucket %u:%llu not in need_discard btree",
@@ -1258,11 +1248,8 @@ static int invalidate_one_bp(struct btree_trans *trans,
 			     struct bkey_buf *last_flushed)
 {
 	struct btree_iter extent_iter;
-	struct bkey_s_c extent_k =
-		bch2_backpointer_get_key(trans, bp, &extent_iter, 0, last_flushed);
-	int ret = bkey_err(extent_k);
-	if (ret)
-		return ret;
+	struct bkey_s_c extent_k = bkey_try(
+		bch2_backpointer_get_key(trans, bp, &extent_iter, 0, last_flushed));
 
 	if (!extent_k.k)
 		return 0;
@@ -1270,7 +1257,7 @@ static int invalidate_one_bp(struct btree_trans *trans,
 	struct bkey_i *n =
 		bch2_bkey_make_mut(trans, &extent_iter, &extent_k,
 				   BTREE_UPDATE_internal_snapshot_node);
-	ret = PTR_ERR_OR_ZERO(n);
+	int ret = PTR_ERR_OR_ZERO(n);
 	if (ret)
 		goto err;
 
@@ -1337,10 +1324,7 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 
 	{
 		CLASS(btree_iter, alloc_iter)(trans, BTREE_ID_alloc, bucket, BTREE_ITER_cached);
-		struct bkey_s_c alloc_k = bch2_btree_iter_peek_slot(&alloc_iter);
-		ret = bkey_err(alloc_k);
-		if (ret)
-			return ret;
+		struct bkey_s_c alloc_k = bkey_try(bch2_btree_iter_peek_slot(&alloc_iter));
 
 		struct bch_alloc_v4 a_convert;
 		const struct bch_alloc_v4 *a = bch2_alloc_to_v4(alloc_k, &a_convert);

@@ -301,15 +301,13 @@ static int trans_trigger_reflink_p_segment(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
+	int ret = 0;
 
 	s64 offset_into_extent = *idx - REFLINK_P_IDX(p.v);
 	struct btree_iter iter;
-	struct bkey_s_c k = bch2_lookup_indirect_extent(trans, &iter, &offset_into_extent, p, false,
-							BTREE_ITER_intent|
-							BTREE_ITER_with_updates);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_lookup_indirect_extent(trans, &iter, &offset_into_extent, p, false,
+								 BTREE_ITER_intent|
+								 BTREE_ITER_with_updates));
 
 	if (!bkey_refcount_c(k)) {
 		if (!(flags & BTREE_TRIGGER_overwrite))
@@ -497,10 +495,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 
 	CLASS(btree_iter, reflink_iter)(trans, BTREE_ID_reflink, POS_MAX,
 					BTREE_ITER_intent);
-	struct bkey_s_c k = bch2_btree_iter_peek_prev(&reflink_iter);
-	int ret = bkey_err(k);
-	if (ret)
-		return ret;
+	bkey_try(bch2_btree_iter_peek_prev(&reflink_iter));
 
 	/*
 	 * XXX: we're assuming that 56 bits will be enough for the life of the
@@ -511,7 +506,7 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 		return -ENOSPC;
 
 	struct bkey_i *r_v = bch2_trans_kmalloc(trans, sizeof(__le64) + bkey_bytes(&orig->k));
-	ret = PTR_ERR_OR_ZERO(r_v);
+	int ret = PTR_ERR_OR_ZERO(r_v);
 	if (ret)
 		return ret;
 
