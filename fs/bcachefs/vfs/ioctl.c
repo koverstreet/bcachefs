@@ -135,12 +135,10 @@ static int bch2_ioc_setlabel(struct bch_fs *c,
 			     struct bch_inode_info *inode,
 			     const char __user *user_label)
 {
-	int ret;
-	char label[BCH_SB_LABEL_SIZE];
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
+	char label[BCH_SB_LABEL_SIZE];
 	if (copy_from_user(label, user_label, sizeof(label)))
 		return -EFAULT;
 
@@ -151,10 +149,9 @@ static int bch2_ioc_setlabel(struct bch_fs *c,
 		return -EINVAL;
 	}
 
-	ret = mnt_want_write_file(file);
-	if (ret)
-		return ret;
+	try(mnt_want_write_file(file));
 
+	int ret;
 	scoped_guard(mutex, &c->sb_lock) {
 		strscpy(c->disk_sb.sb->label, label, BCH_SB_LABEL_SIZE);
 		ret = bch2_write_super(c);

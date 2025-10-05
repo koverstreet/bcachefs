@@ -249,9 +249,7 @@ nocompact:
 			if (ptr->dev == ca->dev_idx)
 				same_device = true;
 
-		ret = darray_push(&dup->ptrs, entry_ptr);
-		if (ret)
-			return ret;
+		try(darray_push(&dup->ptrs, entry_ptr));
 
 		bch2_journal_replay_to_text(&buf, c, dup);
 
@@ -1137,12 +1135,8 @@ reread:
 			sectors = vstruct_sectors(j, c->block_bits);
 			break;
 		case JOURNAL_ENTRY_REREAD:
-			if (vstruct_bytes(j) > buf->size) {
-				ret = journal_read_buf_realloc(c, buf,
-							vstruct_bytes(j));
-				if (ret)
-					return ret;
-			}
+			if (vstruct_bytes(j) > buf->size)
+				try(journal_read_buf_realloc(c, buf, vstruct_bytes(j)));
 			goto reread;
 		case JOURNAL_ENTRY_NONE:
 			if (!saw_bad)
@@ -1507,9 +1501,7 @@ int bch2_journal_read(struct bch_fs *c,
 		}
 	}
 
-	ret = bch2_journal_check_for_missing(c, drop_before, *blacklist_seq - 1);
-	if (ret)
-		return ret;
+	try(bch2_journal_check_for_missing(c, drop_before, *blacklist_seq - 1));
 
 	genradix_for_each(&c->journal_entries, radix_iter, _i) {
 		union bch_replicas_padded replicas = {
@@ -1532,13 +1524,11 @@ int bch2_journal_read(struct bch_fs *c,
 				break;
 			}
 
-		ret = jset_validate(c,
-				    bch2_dev_have_ref(c, i->ptrs.data[0].dev),
-				    &i->j,
-				    i->ptrs.data[0].sector,
-				    READ);
-		if (ret)
-			return ret;
+		try(jset_validate(c,
+				  bch2_dev_have_ref(c, i->ptrs.data[0].dev),
+				  &i->j,
+				  i->ptrs.data[0].sector,
+				  READ));
 
 		darray_for_each(i->ptrs, ptr)
 			replicas_entry_add_dev(&replicas.e, ptr->dev);
@@ -1553,11 +1543,8 @@ int bch2_journal_read(struct bch_fs *c,
 		    (le64_to_cpu(i->j.seq) == *last_seq ||
 		     fsck_err(c, journal_entry_replicas_not_marked,
 			      "superblock not marked as containing replicas for journal entry %llu\n%s",
-			      le64_to_cpu(i->j.seq), buf.buf))) {
-			ret = bch2_mark_replicas(c, &replicas.e);
-			if (ret)
-				return ret;
-		}
+			      le64_to_cpu(i->j.seq), buf.buf)))
+			try(bch2_mark_replicas(c, &replicas.e));
 	}
 fsck_err:
 	return ret;

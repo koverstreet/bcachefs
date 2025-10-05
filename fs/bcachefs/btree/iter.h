@@ -647,10 +647,8 @@ static inline struct bkey_s_c __bch2_bkey_get_iter(struct btree_trans *trans,
 				enum btree_iter_update_trigger_flags flags,
 				enum bch_bkey_type type)
 {
-	struct bkey_s_c k;
-
 	bch2_trans_iter_init(trans, iter, btree, pos, flags);
-	k = bch2_btree_iter_peek_slot(iter);
+	struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
 
 	if (!bkey_err(k) && type && k.k->type != type)
 		k = bkey_s_c_err(bch_err_throw(trans->c, ENOENT_bkey_type_mismatch));

@@ -316,10 +316,8 @@ int bch2_truncate(struct bch_fs *c, subvol_inum inum, u64 new_i_size, u64 *i_sec
 	 */
 	guard(rwsem_read)(&c->snapshot_create_lock);
 	CLASS(btree_trans, trans)(c);
-	int ret = bch2_logged_op_start(trans, &op.k_i);
-	if (ret)
-		return ret;
-	ret = __bch2_resume_logged_op_truncate(trans, &op.k_i, i_sectors_delta);
+	try(bch2_logged_op_start(trans, &op.k_i));
+	int ret = __bch2_resume_logged_op_truncate(trans, &op.k_i, i_sectors_delta);
 	ret = bch2_logged_op_finish(trans, &op.k_i) ?: ret;
 	return ret;
 }
@@ -346,9 +344,7 @@ static int adjust_i_size(struct btree_trans *trans, subvol_inum inum,
 	offset	<<= 9;
 	len	<<= 9;
 
-	ret = __bch2_inode_peek(trans, &iter, &inode_u, inum, BTREE_ITER_intent, warn);
-	if (ret)
-		return ret;
+	try(__bch2_inode_peek(trans, &iter, &inode_u, inum, BTREE_ITER_intent, warn));
 
 	if (len > 0) {
 		if (MAX_LFS_FILESIZE - inode_u.bi_size < len) {
@@ -393,9 +389,7 @@ static int __bch2_resume_logged_op_finsert(struct btree_trans *trans,
 	 * check for missing subvolume before fpunch, as in resume we don't want
 	 * it to be a fatal error
 	 */
-	ret = lockrestart_do(trans, __bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot, warn_errors));
-	if (ret)
-		return ret;
+	try(lockrestart_do(trans, __bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot, warn_errors)));
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_extents,
 			     POS(inum.inum, 0),
@@ -542,10 +536,8 @@ int bch2_fcollapse_finsert(struct bch_fs *c, subvol_inum inum,
 	 */
 	guard(rwsem_read)(&c->snapshot_create_lock);
 	CLASS(btree_trans, trans)(c);
-	int ret = bch2_logged_op_start(trans, &op.k_i);
-	if (ret)
-		return ret;
-	ret = __bch2_resume_logged_op_finsert(trans, &op.k_i, i_sectors_delta);
+	try(bch2_logged_op_start(trans, &op.k_i));
+	int ret = __bch2_resume_logged_op_finsert(trans, &op.k_i, i_sectors_delta);
 	ret = bch2_logged_op_finish(trans, &op.k_i) ?: ret;
 	return ret;
 }

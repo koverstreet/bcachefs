@@ -219,9 +219,7 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 
 		if (unlikely(!ca && p.ptr.dev != BCH_SB_MEMBER_INVALID)) {
 			rcu_read_unlock();
-			int ret = bch2_dev_missing_bkey(c, k, p.ptr.dev);
-			if (ret)
-				return ret;
+			try(bch2_dev_missing_bkey(c, k, p.ptr.dev));
 			rcu_read_lock();
 		}
 
@@ -1480,9 +1478,7 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 
 		switch (extent_entry_type(entry)) {
 		case BCH_EXTENT_ENTRY_ptr:
-			ret = extent_ptr_validate(c, k, from, &entry->ptr, size_ondisk, false);
-			if (ret)
-				return ret;
+			try(extent_ptr_validate(c, k, from, &entry->ptr, size_ondisk, false));
 
 			bkey_fsck_err_on(entry->ptr.cached && have_ec,
 					 c, ptr_cached_and_erasure_coded,
@@ -1634,9 +1630,7 @@ void bch2_ptr_swab(struct bkey_s k)
 
 int bch2_bkey_extent_flags_set(struct bch_fs *c, struct bkey_i *k, u64 flags)
 {
-	int ret = bch2_request_incompat_feature(c, bcachefs_metadata_version_extent_flags);
-	if (ret)
-		return ret;
+	try(bch2_request_incompat_feature(c, bcachefs_metadata_version_extent_flags));
 
 	struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(k));
 

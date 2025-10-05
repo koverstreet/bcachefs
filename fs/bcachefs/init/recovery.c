@@ -368,12 +368,9 @@ int bch2_journal_replay(struct bch_fs *c)
 	bool immediate_flush = false;
 	int ret = 0;
 
-	if (keys->nr) {
-		ret = bch2_journal_log_msg(c, "Starting journal replay (%zu keys in entries %llu-%llu)",
-					   keys->nr, start_seq, end_seq);
-		if (ret)
-			return ret;
-	}
+	if (keys->nr)
+		try(bch2_journal_log_msg(c, "Starting journal replay (%zu keys in entries %llu-%llu)",
+					 keys->nr, start_seq, end_seq));
 
 	BUG_ON(!atomic_read(&keys->ref));
 
@@ -430,11 +427,8 @@ int bch2_journal_replay(struct bch_fs *c)
 				  BCH_TRANS_COMMIT_skip_accounting_apply|
 				  (!k->allocated ? BCH_TRANS_COMMIT_no_journal_res : 0),
 			     bch2_journal_replay_key(trans, k));
-		if (ret) {
-			ret = darray_push(&keys_sorted, k);
-			if (ret)
-				return ret;
-		}
+		if (ret)
+			try(darray_push(&keys_sorted, k));
 	}
 
 	bch2_trans_unlock_long(trans);
@@ -514,11 +508,8 @@ static int journal_replay_entry_early(struct bch_fs *c,
 				entry->btree_id, BTREE_ID_NR_MAX))
 			return 0;
 
-		while (entry->btree_id >= c->btree_roots_extra.nr + BTREE_ID_NR) {
-			ret = darray_push(&c->btree_roots_extra, (struct btree_root) { NULL });
-			if (ret)
-				return ret;
-		}
+		while (entry->btree_id >= c->btree_roots_extra.nr + BTREE_ID_NR)
+			try(darray_push(&c->btree_roots_extra, (struct btree_root) { NULL }));
 
 		struct btree_root *r = bch2_btree_id_root(c, entry->btree_id);
 
@@ -574,11 +565,8 @@ static int journal_replay_early(struct bch_fs *c,
 	if (clean) {
 		for (struct jset_entry *entry = clean->start;
 		     entry != vstruct_end(&clean->field);
-		     entry = vstruct_next(entry)) {
-			int ret = journal_replay_entry_early(c, entry);
-			if (ret)
-				return ret;
-		}
+		     entry = vstruct_next(entry))
+			try(journal_replay_entry_early(c, entry));
 	} else {
 		struct genradix_iter iter;
 		struct journal_replay *i, **_i;
@@ -589,11 +577,8 @@ static int journal_replay_early(struct bch_fs *c,
 			if (journal_replay_ignore(i))
 				continue;
 
-			vstruct_for_each(&i->j, entry) {
-				int ret = journal_replay_entry_early(c, entry);
-				if (ret)
-					return ret;
-			}
+			vstruct_for_each(&i->j, entry)
+				try(journal_replay_entry_early(c, entry));
 		}
 	}
 

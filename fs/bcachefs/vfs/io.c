@@ -193,14 +193,14 @@ static int bch2_get_inode_journal_seq_trans(struct btree_trans *trans, subvol_in
 {
 	struct bch_inode_unpacked u;
 	struct btree_iter iter;
-	int ret = bch2_inode_peek(trans, &iter, &u, inum, 0);
-	if (ret)
-		return ret;
+	try(bch2_inode_peek(trans, &iter, &u, inum, 0));
 
 	u64 cur_seq = journal_cur_seq(&trans->c->journal);
 	*seq = min(cur_seq, u.bi_journal_seq);
 
 	CLASS(printbuf, buf)();
+	int ret = 0;
+
 	if (fsck_err_on(u.bi_journal_seq > cur_seq,
 			trans, inode_journal_seq_in_future,
 			"inode journal seq in future (currently at %llu)\n%s",
@@ -417,16 +417,13 @@ static int bch2_extend(struct mnt_idmap *idmap,
 		       struct iattr *iattr)
 {
 	struct address_space *mapping = inode->v.i_mapping;
-	int ret;
 
 	/*
 	 * sync appends:
 	 *
 	 * this has to be done _before_ extending i_size:
 	 */
-	ret = filemap_write_and_wait_range(mapping, inode_u->bi_size, S64_MAX);
-	if (ret)
-		return ret;
+	try(filemap_write_and_wait_range(mapping, inode_u->bi_size, S64_MAX));
 
 	truncate_setsize(&inode->v, iattr->ia_size);
 
@@ -597,8 +594,6 @@ static noinline long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct address_space *mapping = inode->v.i_mapping;
-	s64 i_sectors_delta = 0;
-	int ret = 0;
 
 	if ((offset | len) & (block_bytes(c) - 1))
 		return -EINVAL;
@@ -611,14 +606,13 @@ static noinline long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
 			return -EINVAL;
 	}
 
-	ret = bch2_write_invalidate_inode_pages_range(mapping, offset, LLONG_MAX);
-	if (ret)
-		return ret;
+	try(bch2_write_invalidate_inode_pages_range(mapping, offset, LLONG_MAX));
 
 	if (insert)
 		i_size_write(&inode->v, inode->v.i_size + len);
 
-	ret = bch2_fcollapse_finsert(c, inode_inum(inode), offset >> 9, len >> 9,
+	s64 i_sectors_delta = 0;
+	int ret = bch2_fcollapse_finsert(c, inode_inum(inode), offset >> 9, len >> 9,
 				     insert, &i_sectors_delta);
 	if (!ret && !insert)
 		i_size_write(&inode->v, inode->v.i_size - len);
@@ -764,11 +758,8 @@ static noinline long bchfs_fallocate(struct bch_inode_info *inode, int mode,
 	bool truncated_last_page = false;
 	int ret, ret2 = 0;
 
-	if (!(mode & FALLOC_FL_KEEP_SIZE) && end > inode->v.i_size) {
-		ret = inode_newsize_ok(&inode->v, end);
-		if (ret)
-			return ret;
-	}
+	if (!(mode & FALLOC_FL_KEEP_SIZE) && end > inode->v.i_size)
+		try(inode_newsize_ok(&inode->v, end));
 
 	if (mode & FALLOC_FL_ZERO_RANGE) {
 		ret = bch2_truncate_folios(inode, offset, end);
@@ -978,7 +969,7 @@ static loff_t bch2_seek_data(struct file *file, u64 offset)
 	if (offset >= isize)
 		return -ENXIO;
 
-	int ret = bch2_trans_run(c,
+	try(bch2_trans_run(c,
 		for_each_btree_key_in_subvolume_max(trans, iter, BTREE_ID_extents,
 				   POS(inode->v.i_ino, offset >> 9),
 				   POS(inode->v.i_ino, U64_MAX),
@@ -989,9 +980,7 @@ static loff_t bch2_seek_data(struct file *file, u64 offset)
 			} else if (k.k->p.offset >> 9 > isize)
 				break;
 			0;
-		})));
-	if (ret)
-		return ret;
+		}))));
 
 	if (next_data > offset)
 		next_data = bch2_seek_pagecache_data(&inode->v,
@@ -1015,7 +1004,7 @@ static loff_t bch2_seek_hole(struct file *file, u64 offset)
 		return -ENXIO;
 
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key_in_subvolume_max(trans, iter, BTREE_ID_extents,
+	try(for_each_btree_key_in_subvolume_max(trans, iter, BTREE_ID_extents,
 				   POS(inode->v.i_ino, offset >> 9),
 				   POS(inode->v.i_ino, U64_MAX),
 				   inum.subvol, BTREE_ITER_slots, k, ({
@@ -1045,9 +1034,7 @@ static loff_t bch2_seek_hole(struct file *file, u64 offset)
 			offset = max(offset, bkey_start_offset(k.k) << 9);
 		}
 		0;
-	}));
-	if (ret)
-		return ret;
+	})));
 
 	if (next_hole > isize)
 		next_hole = isize;

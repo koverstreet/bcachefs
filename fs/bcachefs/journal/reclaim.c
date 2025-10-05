@@ -884,11 +884,7 @@ static bool journal_flush_pins_or_still_flushing(struct journal *j, u64 seq_to_f
 static int journal_flush_done(struct journal *j, u64 seq_to_flush,
 			      bool *did_work)
 {
-	int ret = 0;
-
-	ret = bch2_journal_error(j);
-	if (ret)
-		return ret;
+	try(bch2_journal_error(j));
 
 	guard(mutex)(&j->reclaim_lock);
 
@@ -935,10 +931,9 @@ static int journal_flush_done(struct journal *j, u64 seq_to_flush,
 	 * hold refs on their corresponding sequence numbers
 	 */
 	guard(spinlock)(&j->lock);
-	ret = !test_bit(JOURNAL_replay_done, &j->flags) ||
+	return !test_bit(JOURNAL_replay_done, &j->flags) ||
 		journal_last_seq(j) > seq_to_flush ||
 		!fifo_used(&j->pin);
-	return ret;
 }
 
 bool bch2_journal_flush_pins(struct journal *j, u64 seq_to_flush)
@@ -960,7 +955,6 @@ int bch2_journal_flush_device_pins(struct journal *j, int dev_idx)
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_entry_pin_list *p;
 	u64 iter, seq = 0;
-	int ret = 0;
 
 	scoped_guard(spinlock, &j->lock)
 		fifo_for_each_entry_ptr(p, &j->pin, iter)
@@ -971,9 +965,7 @@ int bch2_journal_flush_device_pins(struct journal *j, int dev_idx)
 
 	bch2_journal_flush_pins(j, seq);
 
-	ret = bch2_journal_error(j);
-	if (ret)
-		return ret;
+	try(bch2_journal_error(j));
 
 	guard(mutex)(&c->replicas_gc_lock);
 	bch2_replicas_gc_start(c, 1 << BCH_DATA_journal);
@@ -985,7 +977,7 @@ int bch2_journal_flush_device_pins(struct journal *j, int dev_idx)
 	 * temporarily put the fs into an unrecoverable state. Journal recovery
 	 * expects to find devices marked for journal data on unclean mount.
 	 */
-	ret = bch2_journal_meta(&c->journal);
+	int ret = bch2_journal_meta(&c->journal);
 	if (ret)
 		goto err;
 

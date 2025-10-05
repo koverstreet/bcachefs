@@ -112,19 +112,13 @@ int bch2_trigger_extent_rebalance(struct btree_trans *trans,
 	need_rebalance_delta += s != 0;
 	need_rebalance_sectors_delta[0] += s;
 
-	if ((flags & BTREE_TRIGGER_transactional) && need_rebalance_delta) {
-		int ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work,
-						      new.k->p, need_rebalance_delta > 0);
-		if (ret)
-			return ret;
-	}
+	if ((flags & BTREE_TRIGGER_transactional) && need_rebalance_delta)
+		try(bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work,
+						new.k->p, need_rebalance_delta > 0));
 
-	if (need_rebalance_sectors_delta[0]) {
-		int ret = bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc,
-						    need_rebalance_sectors_delta, rebalance_work);
-		if (ret)
-			return ret;
-	}
+	if (need_rebalance_sectors_delta[0])
+		try(bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc,
+					      need_rebalance_sectors_delta, rebalance_work));
 
 	return 0;
 }
@@ -698,17 +692,15 @@ static int do_rebalance_scan_indirect(struct btree_trans *trans,
 	u64 end = REFLINK_P_IDX(p.v) + p.k->size + le32_to_cpu(p.v->back_pad);
 	u32 restart_count = trans->restart_count;
 
-	int ret = for_each_btree_key(trans, iter, BTREE_ID_reflink,
-				     POS(0, idx),
-				     BTREE_ITER_intent|
-				     BTREE_ITER_not_extents, k, ({
+	try(for_each_btree_key(trans, iter, BTREE_ID_reflink,
+			       POS(0, idx),
+			       BTREE_ITER_intent|
+			       BTREE_ITER_not_extents, k, ({
 		if (bpos_ge(bkey_start_pos(k.k), POS(0, end)))
 			break;
 		bch2_get_update_rebalance_opts(trans, opts, &iter, k,
 					       SET_NEEDS_REBALANCE_opt_change_indirect);
-	}));
-	if (ret)
-		return ret;
+	})));
 
 	/* suppress trans_was_restarted() check */
 	trans->restart_count = restart_count;
@@ -829,12 +821,11 @@ static int do_rebalance(struct moving_context *ctxt)
 	struct btree_iter extent_iter = {};
 	u64 sectors_scanned = 0;
 	u32 kick = r->kick;
+	int ret = 0;
 
 	struct bpos work_pos = POS_MIN;
 	CLASS(darray_rebalance_work, work)();
-	int ret = darray_make_room(&work, REBALANCE_WORK_BUF_NR);
-	if (ret)
-		return ret;
+	try(darray_make_room(&work, REBALANCE_WORK_BUF_NR));
 
 	bch2_move_stats_init(&r->work_stats, "rebalance_work");
 
@@ -1039,9 +1030,7 @@ int bch2_fs_rebalance_init(struct bch_fs *c)
 
 #ifdef CONFIG_POWER_SUPPLY
 	r->power_notifier.notifier_call = bch2_rebalance_power_notifier;
-	int ret = power_supply_reg_notifier(&r->power_notifier);
-	if (ret)
-		return ret;
+	try(power_supply_reg_notifier(&r->power_notifier));
 
 	r->on_battery = !power_supply_is_system_supplied();
 #endif
@@ -1096,30 +1085,20 @@ static int check_rebalance_work_one(struct btree_trans *trans,
 	bool have_rebalance = rebalance_k.k->type == KEY_TYPE_set;
 
 	if (should_have_rebalance != have_rebalance) {
-		ret = bch2_btree_write_buffer_maybe_flush(trans, extent_k, last_flushed);
-		if (ret)
-			return ret;
+		try(bch2_btree_write_buffer_maybe_flush(trans, extent_k, last_flushed));
 
 		bch2_bkey_val_to_text(&buf, c, extent_k);
 	}
 
 	if (fsck_err_on(!should_have_rebalance && have_rebalance,
 			trans, rebalance_work_incorrectly_set,
-			"rebalance work incorrectly set\n%s", buf.buf)) {
-		ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work,
-						  extent_k.k->p, false);
-		if (ret)
-			return ret;
-	}
+			"rebalance work incorrectly set\n%s", buf.buf))
+		try(bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work, extent_k.k->p, false));
 
 	if (fsck_err_on(should_have_rebalance && !have_rebalance,
 			trans, rebalance_work_incorrectly_unset,
-			"rebalance work incorrectly unset\n%s", buf.buf)) {
-		ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work,
-						  extent_k.k->p, true);
-		if (ret)
-			return ret;
-	}
+			"rebalance work incorrectly unset\n%s", buf.buf))
+		try(bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work, extent_k.k->p, true));
 
 	if (cmp <= 0)
 		bch2_btree_iter_advance(extent_iter);

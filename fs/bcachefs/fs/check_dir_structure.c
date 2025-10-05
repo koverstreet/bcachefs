@@ -27,11 +27,8 @@ static int remove_backpointer(struct btree_trans *trans,
 
 	u32 snapshot = inode->bi_snapshot;
 
-	if (inode->bi_parent_subvol) {
-		int ret = bch2_subvolume_get_snapshot(trans, inode->bi_parent_subvol, &snapshot);
-		if (ret)
-			return ret;
-	}
+	if (inode->bi_parent_subvol)
+		try(bch2_subvolume_get_snapshot(trans, inode->bi_parent_subvol, &snapshot));
 
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
@@ -49,13 +46,11 @@ static int reattach_subvol(struct btree_trans *trans, struct bkey_s_c_subvolume 
 	struct bch_fs *c = trans->c;
 
 	struct bch_inode_unpacked inode;
-	int ret = bch2_inode_find_by_inum_trans(trans,
+	try(bch2_inode_find_by_inum_trans(trans,
 				(subvol_inum) { s.k->p.offset, le64_to_cpu(s.v->inode) },
-				&inode);
-	if (ret)
-		return ret;
+				&inode));
 
-	ret = remove_backpointer(trans, &inode);
+	int ret = remove_backpointer(trans, &inode);
 	if (!bch2_err_matches(ret, ENOENT))
 		bch_err_msg(c, ret, "removing dirent");
 	if (ret)
@@ -84,9 +79,7 @@ static int check_subvol_path(struct btree_trans *trans, struct btree_iter *iter,
 	};
 
 	while (k.k->p.offset != BCACHEFS_ROOT_SUBVOL) {
-		ret = darray_push(&subvol_path, k.k->p.offset);
-		if (ret)
-			return ret;
+		try(darray_push(&subvol_path, k.k->p.offset));
 
 		struct bkey_s_c_subvolume s = bkey_s_c_to_subvolume(k);
 
@@ -103,9 +96,7 @@ static int check_subvol_path(struct btree_trans *trans, struct btree_iter *iter,
 			printbuf_reset(&buf);
 			prt_printf(&buf, "subvolume loop: ");
 
-			ret = bch2_inum_to_path(trans, start, &buf);
-			if (ret)
-				return ret;
+			try(bch2_inum_to_path(trans, start, &buf));
 
 			if (fsck_err(trans, subvol_loop, "%s", buf.buf))
 				ret = reattach_subvol(trans, s);
@@ -201,9 +192,7 @@ static int check_path_loop(struct btree_trans *trans, struct bkey_s_c inode_k)
 	struct bpos start = inode_k.k->p;
 
 	struct bch_inode_unpacked inode;
-	ret = bch2_inode_unpack(inode_k, &inode);
-	if (ret)
-		return ret;
+	try(bch2_inode_unpack(inode_k, &inode));
 
 	CLASS(btree_iter, inode_iter)(trans, BTREE_ID_inodes, POS_MIN, 0);
 
@@ -236,9 +225,7 @@ static int check_path_loop(struct btree_trans *trans, struct bkey_s_c inode_k)
 
 		bch2_trans_iter_exit(&dirent_iter);
 
-		ret = darray_push(&path, inode.bi_inum);
-		if (ret)
-			return ret;
+		try(darray_push(&path, inode.bi_inum));
 
 		bch2_btree_iter_set_pos(&inode_iter, SPOS(0, inode.bi_dir, snapshot));
 		inode_k = bch2_btree_iter_peek_slot(&inode_iter);

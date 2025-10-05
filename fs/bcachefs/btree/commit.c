@@ -585,11 +585,8 @@ static noinline int bch2_trans_commit_run_gc_triggers(struct btree_trans *trans)
 {
 	trans_for_each_update(trans, i)
 		if (btree_node_type_has_triggers(i->bkey_type) &&
-		    gc_visited(trans->c, gc_pos_btree(i->btree_id, i->level, i->k->k.p))) {
-			int ret = run_one_mem_trigger(trans, i, i->flags|BTREE_TRIGGER_gc);
-			if (ret)
-				return ret;
-		}
+		    gc_visited(trans->c, gc_pos_btree(i->btree_id, i->level, i->k->k.p)))
+			try(run_one_mem_trigger(trans, i, i->flags|BTREE_TRIGGER_gc));
 
 	return 0;
 }
@@ -643,11 +640,9 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 	 * succeed:
 	 */
 	if (likely(!(flags & BCH_TRANS_COMMIT_no_journal_res))) {
-		ret = bch2_trans_journal_res_get(trans,
+		try(bch2_trans_journal_res_get(trans,
 				(flags & BCH_WATERMARK_MASK)|
-				JOURNAL_RES_GET_NONBLOCK);
-		if (ret)
-			return ret;
+				JOURNAL_RES_GET_NONBLOCK));
 
 		if (unlikely(trans->journal_transaction_names))
 			journal_transaction_name(trans);
@@ -670,9 +665,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 
 	h = trans->hooks;
 	while (h) {
-		ret = h->fn(trans, h);
-		if (ret)
-			return ret;
+		try(h->fn(trans, h));
 		h = h->next;
 	}
 
@@ -835,7 +828,7 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 				       unsigned long trace_ip)
 {
 	struct bch_fs *c = trans->c;
-	int ret = 0, u64s_delta = 0;
+	int  u64s_delta = 0;
 
 	for (unsigned idx = 0; idx < trans->nr_updates; idx++) {
 		struct btree_insert_entry *i = trans->updates + idx;
@@ -846,22 +839,16 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 		u64s_delta -= i->old_btree_u64s;
 
 		if (!same_leaf_as_next(trans, i)) {
-			if (u64s_delta <= 0) {
-				ret = bch2_foreground_maybe_merge(trans, i->path,
-							i->level, flags);
-				if (unlikely(ret))
-					return ret;
-			}
+			if (u64s_delta <= 0)
+				try(bch2_foreground_maybe_merge(trans, i->path, i->level, flags));
 
 			u64s_delta = 0;
 		}
 	}
 
-	ret = bch2_trans_lock_write(trans);
-	if (unlikely(ret))
-		return ret;
+	try(bch2_trans_lock_write(trans));
 
-	ret = bch2_trans_commit_write_locked(trans, flags, stopped_at, trace_ip);
+	int ret = bch2_trans_commit_write_locked(trans, flags, stopped_at, trace_ip);
 
 	if (!ret && unlikely(trans->journal_replay_not_finished))
 		bch2_drop_overwrites_from_journal(trans);
@@ -885,12 +872,11 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 
 static int journal_reclaim_wait_done(struct bch_fs *c)
 {
-	int ret = bch2_journal_error(&c->journal) ?:
-		bch2_btree_key_cache_wait_done(c);
+	try(bch2_journal_error(&c->journal));
+	try(bch2_btree_key_cache_wait_done(c));
 
-	if (!ret)
-		journal_reclaim_kick(&c->journal);
-	return ret;
+	journal_reclaim_kick(&c->journal);
+	return 0;
 }
 
 static noinline
