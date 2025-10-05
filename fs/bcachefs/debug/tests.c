@@ -487,8 +487,7 @@ static int test_snapshots(struct bch_fs *c, u64 nr)
 	u32 snapids[2];
 	u32 snapid_subvols[2] = { 1, 1 };
 
-	CLASS(btree_trans, trans)(c);
-	ret = commit_do(trans, NULL, NULL, 0,
+	ret = bch2_trans_commit_do(c, NULL, NULL, 0,
 			bch2_snapshot_node_create(trans, U32_MAX,
 						  snapids,
 						  snapid_subvols,
