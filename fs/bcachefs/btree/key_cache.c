@@ -215,6 +215,7 @@ static int btree_key_cache_create(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct btree_key_cache *bc = &c->btree_key_cache;
+	int ret = 0;
 
 	/*
 	 * bch2_varint_decode can read past the end of the buffer by at
@@ -230,10 +231,7 @@ static int btree_key_cache_create(struct btree_trans *trans,
 	key_u64s = min(256U, (key_u64s * 3) / 2);
 	key_u64s = roundup_pow_of_two(key_u64s);
 
-	struct bkey_cached *ck = bkey_cached_alloc(trans, ck_path, key_u64s);
-	int ret = PTR_ERR_OR_ZERO(ck);
-	if (ret)
-		return ret;
+	struct bkey_cached *ck = errptr_try(bkey_cached_alloc(trans, ck_path, key_u64s));
 
 	if (unlikely(!ck)) {
 		ck = bkey_cached_reuse(bc);

@@ -295,10 +295,7 @@ static int bch2_get_update_rebalance_opts(struct btree_trans *trans,
 	    : !old)
 		return 0;
 
-	struct bkey_i *n = bch2_trans_kmalloc(trans, bkey_bytes(k.k) + 8);
-	int ret = PTR_ERR_OR_ZERO(n);
-	if (ret)
-		return ret;
+	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) + 8));
 
 	bkey_reassemble(n, k);
 
@@ -441,10 +438,7 @@ int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, u64 inum)
 		? le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie)
 		: 0;
 
-	struct bkey_i_cookie *cookie = bch2_trans_kmalloc(trans, sizeof(*cookie));
-	int ret = PTR_ERR_OR_ZERO(cookie);
-	if (ret)
-		return ret;
+	struct bkey_i_cookie *cookie = errptr_try(bch2_trans_kmalloc(trans, sizeof(*cookie)));
 
 	bkey_cookie_init(&cookie->k_i);
 	cookie->k.p = iter.pos;
@@ -532,10 +526,7 @@ static int bch2_bkey_clear_needs_rebalance(struct btree_trans *trans,
 	if (k.k->type == KEY_TYPE_reflink_v || !bch2_bkey_rebalance_opts(k))
 		return 0;
 
-	struct bkey_i *n = bch2_bkey_make_mut(trans, iter, &k, 0);
-	int ret = PTR_ERR_OR_ZERO(n);
-	if (ret)
-		return ret;
+	struct bkey_i *n = errptr_try(bch2_bkey_make_mut(trans, iter, &k, 0));
 
 	extent_entry_drop(bkey_i_to_s(n),
 			  (void *) bch2_bkey_rebalance_opts(bkey_i_to_s_c(n)));

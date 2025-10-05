@@ -125,10 +125,7 @@ static long bch2_ioctl_incremental(struct bch_ioctl_incremental __user *user_arg
 	if (arg.flags || arg.pad)
 		return -EINVAL;
 
-	path = strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX);
-	ret = PTR_ERR_OR_ZERO(path);
-	if (ret)
-		return ret;
+	path = errptr_try(strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX));
 
 	err = bch2_fs_open_incremental(path);
 	kfree(path);
@@ -210,22 +207,16 @@ int bch2_copy_ioctl_err_msg(struct bch_ioctl_err_msg *dst, struct printbuf *src,
 
 static long bch2_ioctl_disk_add(struct bch_fs *c, struct bch_ioctl_disk arg)
 {
-	char *path;
-	int ret;
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	if (arg.flags || arg.pad)
 		return -EINVAL;
 
-	path = strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX);
-	ret = PTR_ERR_OR_ZERO(path);
-	if (ret)
-		return ret;
+	char *path = errptr_try(strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX));
 
 	CLASS(printbuf, err)();
-	ret = bch2_dev_add(c, path, &err);
+	int ret = bch2_dev_add(c, path, &err);
 	if (ret)
 		bch_err(c, "%s", err.buf);
 
@@ -235,22 +226,16 @@ static long bch2_ioctl_disk_add(struct bch_fs *c, struct bch_ioctl_disk arg)
 
 static long bch2_ioctl_disk_add_v2(struct bch_fs *c, struct bch_ioctl_disk_v2 arg)
 {
-	char *path = NULL;
-	int ret;
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	if (arg.flags || arg.pad)
 		return -EINVAL;
 
-	path = strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX);
-	ret = PTR_ERR_OR_ZERO(path);
-	if (ret)
-		return ret;
+	char *path = errptr_try(strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX));
 
 	CLASS(printbuf, err)();
-	ret = bch2_dev_add(c, path, &err);
+	int ret = bch2_dev_add(c, path, &err);
 	kfree(path);
 	return bch2_copy_ioctl_err_msg(&arg.err, &err, ret);
 }
@@ -301,22 +286,16 @@ static long bch2_ioctl_disk_remove_v2(struct bch_fs *c, struct bch_ioctl_disk_v2
 
 static long bch2_ioctl_disk_online(struct bch_fs *c, struct bch_ioctl_disk arg)
 {
-	char *path;
-	int ret;
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	if (arg.flags || arg.pad)
 		return -EINVAL;
 
-	path = strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX);
-	ret = PTR_ERR_OR_ZERO(path);
-	if (ret)
-		return ret;
+	char *path = errptr_try(strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX));
 
 	CLASS(printbuf, err)();
-	ret = bch2_dev_online(c, path, &err);
+	int ret = bch2_dev_online(c, path, &err);
 	if (ret)
 		bch_err(c, "%s", err.buf);
 	kfree(path);
@@ -325,22 +304,16 @@ static long bch2_ioctl_disk_online(struct bch_fs *c, struct bch_ioctl_disk arg)
 
 static long bch2_ioctl_disk_online_v2(struct bch_fs *c, struct bch_ioctl_disk_v2 arg)
 {
-	char *path;
-	int ret;
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
 	if (arg.flags || arg.pad)
 		return -EINVAL;
 
-	path = strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX);
-	ret = PTR_ERR_OR_ZERO(path);
-	if (ret)
-		return ret;
+	char *path = errptr_try(strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX));
 
 	CLASS(printbuf, err)();
-	ret = bch2_dev_online(c, path, &err);
+	int ret = bch2_dev_online(c, path, &err);
 	kfree(path);
 	return bch2_copy_ioctl_err_msg(&arg.err, &err, ret);
 }
@@ -714,11 +687,7 @@ static long bch2_ioctl_read_super(struct bch_fs *c,
 	guard(mutex)(&c->sb_lock);
 
 	if (arg.flags & BCH_READ_DEV) {
-		ca = bch2_device_lookup(c, arg.dev, arg.flags);
-		ret = PTR_ERR_OR_ZERO(ca);
-		if (ret)
-			return ret;
-
+		ca = errptr_try(bch2_device_lookup(c, arg.dev, arg.flags));
 		sb = ca->disk_sb.sb;
 	} else {
 		sb = c->disk_sb.sb;

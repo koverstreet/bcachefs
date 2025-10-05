@@ -302,13 +302,10 @@ static int mark_stripe_bucket(struct btree_trans *trans,
 				      (const union bch_extent_entry *) ptr, &bp);
 
 		struct bkey_i_alloc_v4 *a =
-			bch2_trans_start_alloc_update(trans, bucket, 0);
-		int ret = PTR_ERR_OR_ZERO(a) ?:
-			__mark_stripe_bucket(trans, ca, s, ptr_idx, deleting, bucket, &a->v, flags) ?:
-			bch2_bucket_backpointer_mod(trans, s.s_c, &bp,
-						    !(flags & BTREE_TRIGGER_overwrite));
-		if (ret)
-			return ret;
+			errptr_try(bch2_trans_start_alloc_update(trans, bucket, 0));
+
+		try(__mark_stripe_bucket(trans, ca, s, ptr_idx, deleting, bucket, &a->v, flags));
+		try(bch2_bucket_backpointer_mod(trans, s.s_c, &bp, !(flags & BTREE_TRIGGER_overwrite)));
 	}
 
 	if (flags & BTREE_TRIGGER_gc) {
@@ -2015,10 +2012,7 @@ int bch2_invalidate_stripe_to_dev(struct btree_trans *trans,
 
 	struct bch_fs *c = trans->c;
 	struct bkey_i_stripe *s =
-		bch2_bkey_make_mut_typed(trans, iter, &k, 0, stripe);
-	int ret = PTR_ERR_OR_ZERO(s);
-	if (ret)
-		return ret;
+		errptr_try(bch2_bkey_make_mut_typed(trans, iter, &k, 0, stripe));
 
 	struct disk_accounting_pos acc;
 
