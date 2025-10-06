@@ -377,16 +377,13 @@ found:
 		}
 
 		if (!(flags & BTREE_TRIGGER_is_root)) {
-			struct btree_iter iter;
-			bch2_trans_node_iter_init(trans, &iter, btree, new->k.p, 0, level,
-						  BTREE_ITER_intent|BTREE_ITER_all_snapshots);
-			int ret = bch2_btree_iter_traverse(&iter) ?:
-				  bch2_trans_update(trans, &iter, new,
-						  BTREE_UPDATE_internal_snapshot_node|
-						  BTREE_TRIGGER_norun);
-			bch2_trans_iter_exit(&iter);
-			if (ret)
-				return ret;
+			CLASS(btree_node_iter, iter)(trans, btree, new->k.p, 0, level,
+						     BTREE_ITER_intent|BTREE_ITER_all_snapshots);
+
+			try(bch2_btree_iter_traverse(&iter));
+			try(bch2_trans_update(trans, &iter, new,
+					      BTREE_UPDATE_internal_snapshot_node|
+					      BTREE_TRIGGER_norun));
 
 			if (level)
 				bch2_btree_node_update_key_early(trans, btree, level - 1, k, new);

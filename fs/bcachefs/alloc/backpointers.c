@@ -702,30 +702,18 @@ static int check_btree_root_to_backpointers(struct btree_trans *trans,
 					    int *level)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
-	struct btree *b;
-	struct bkey_s_c k;
-	int ret;
-retry:
-	bch2_trans_node_iter_init(trans, &iter, btree_id, POS_MIN,
-				  0, bch2_btree_id_root(c, btree_id)->b->c.level, 0);
-	b = bch2_btree_iter_peek_node(&iter);
-	ret = PTR_ERR_OR_ZERO(b);
-	if (ret)
-		goto err;
 
-	if (b != btree_node_root(c, b)) {
-		bch2_trans_iter_exit(&iter);
-		goto retry;
-	}
+	CLASS(btree_node_iter, iter)(trans, btree_id, POS_MIN, 0,
+				     bch2_btree_id_root(c, btree_id)->b->c.level, 0);
+	struct btree *b = errptr_try(bch2_btree_iter_peek_node(&iter));
+
+	if (b != btree_node_root(c, b))
+		return btree_trans_restart(trans, BCH_ERR_transaction_restart_lock_root_race);
 
 	*level = b->c.level;
 
-	k = bkey_i_to_s_c(&b->key);
-	ret = check_extent_to_backpointers(trans, s, btree_id, b->c.level + 1, k);
-err:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	struct bkey_s_c k = bkey_i_to_s_c(&b->key);
+	return check_extent_to_backpointers(trans, s, btree_id, b->c.level + 1, k);
 }
 
 static u64 mem_may_pin_bytes(struct bch_fs *c)
@@ -797,9 +785,8 @@ static int bch2_check_extents_to_backpointers_pass(struct btree_trans *trans,
 						   struct extents_to_bp_state *s)
 {
 	struct bch_fs *c = trans->c;
-	struct progress_indicator_state progress;
-	int ret = 0;
 
+	struct progress_indicator_state progress;
 	bch2_progress_init_inner(&progress, trans->c,
 		btree_has_data_ptrs_mask,
 		~0ULL);
@@ -814,19 +801,14 @@ static int bch2_check_extents_to_backpointers_pass(struct btree_trans *trans,
 			      check_btree_root_to_backpointers(trans, s, btree_id, &level)));
 
 		while (level >= depth) {
-			struct btree_iter iter;
-			bch2_trans_node_iter_init(trans, &iter, btree_id, POS_MIN, 0, level,
-						  BTREE_ITER_prefetch);
+			CLASS(btree_node_iter, iter)(trans, btree_id, POS_MIN, 0, level, BTREE_ITER_prefetch);
 
-			ret = for_each_btree_key_continue(trans, iter, 0, k, ({
+			try(for_each_btree_key_continue(trans, iter, 0, k, ({
 				bch2_progress_update_iter(trans, &progress, &iter, "extents_to_backpointers");
 				bch2_fs_going_ro(c) ?:
 				check_extent_to_backpointers(trans, s, btree_id, level, k) ?:
 				bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
-			}));
-			bch2_trans_iter_exit(&iter);
-			if (ret)
-				return ret;
+			})));
 
 			--level;
 		}
@@ -1053,25 +1035,18 @@ next:
 static int btree_node_get_and_pin(struct btree_trans *trans, struct bkey_i *k,
 				  enum btree_id btree, unsigned level)
 {
-	struct btree_iter iter;
-	bch2_trans_node_iter_init(trans, &iter, btree, k->k.p, 0, level, 0);
-	struct btree *b = bch2_btree_iter_peek_node(&iter);
-	int ret = PTR_ERR_OR_ZERO(b);
-	if (ret)
-		goto err;
+	CLASS(btree_node_iter, iter)(trans, btree, k->k.p, 0, level, 0);
+	struct btree *b = errptr_try(bch2_btree_iter_peek_node(&iter));
 
 	if (b)
 		bch2_node_pin(trans->c, b);
-err:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return 0;
 }
 
 static int bch2_pin_backpointer_nodes_with_missing(struct btree_trans *trans,
 						   struct bpos start, struct bpos *end)
 {
 	struct bch_fs *c = trans->c;
-	int ret = 0;
 
 	struct bkey_buf tmp;
 	bch2_bkey_buf_init(&tmp);
@@ -1080,60 +1055,56 @@ static int bch2_pin_backpointer_nodes_with_missing(struct btree_trans *trans,
 
 	*end = SPOS_MAX;
 
-	s64 mem_may_pin = mem_may_pin_bytes(c);
-	struct btree_iter iter;
-	bch2_trans_node_iter_init(trans, &iter, BTREE_ID_backpointers, start,
-				  0, 1, BTREE_ITER_prefetch);
-	ret = for_each_btree_key_continue(trans, iter, 0, k, ({
-		if (!backpointer_node_has_missing(c, k))
-			continue;
+	{
+		s64 mem_may_pin = mem_may_pin_bytes(c);
 
-		mem_may_pin -= c->opts.btree_node_size;
-		if (mem_may_pin <= 0)
-			break;
+		CLASS(btree_node_iter, iter)(trans, BTREE_ID_backpointers, start, 0, 1, BTREE_ITER_prefetch);
+		try(for_each_btree_key_continue(trans, iter, 0, k, ({
+			if (!backpointer_node_has_missing(c, k))
+				continue;
 
-		bch2_bkey_buf_reassemble(&tmp, c, k);
-		struct btree_path *path = btree_iter_path(trans, &iter);
+			mem_may_pin -= c->opts.btree_node_size;
+			if (mem_may_pin <= 0)
+				break;
 
-		BUG_ON(path->level != 1);
+			bch2_bkey_buf_reassemble(&tmp, c, k);
+			struct btree_path *path = btree_iter_path(trans, &iter);
 
-		bch2_btree_node_prefetch(trans, path, tmp.k, path->btree_id, path->level - 1);
-	}));
-	bch2_trans_iter_exit(&iter);
-	if (ret)
-		return ret;
+			BUG_ON(path->level != 1);
 
-	struct bpos pinned = SPOS_MAX;
-	mem_may_pin = mem_may_pin_bytes(c);
-	bch2_trans_node_iter_init(trans, &iter, BTREE_ID_backpointers, start,
-				  0, 1, BTREE_ITER_prefetch);
-	ret = for_each_btree_key_continue(trans, iter, 0, k, ({
-		if (!backpointer_node_has_missing(c, k))
-			continue;
+			bch2_btree_node_prefetch(trans, path, tmp.k, path->btree_id, path->level - 1);
+		})));
+	}
 
-		mem_may_pin -= c->opts.btree_node_size;
-		if (mem_may_pin <= 0) {
-			*end = pinned;
-			break;
-		}
+	{
+		struct bpos pinned = SPOS_MAX;
+		s64 mem_may_pin = mem_may_pin_bytes(c);
 
-		bch2_bkey_buf_reassemble(&tmp, c, k);
-		struct btree_path *path = btree_iter_path(trans, &iter);
+		CLASS(btree_node_iter, iter)(trans, BTREE_ID_backpointers, start, 0, 1, BTREE_ITER_prefetch);
+		try(for_each_btree_key_continue(trans, iter, 0, k, ({
+			if (!backpointer_node_has_missing(c, k))
+				continue;
 
-		BUG_ON(path->level != 1);
+			mem_may_pin -= c->opts.btree_node_size;
+			if (mem_may_pin <= 0) {
+				*end = pinned;
+				break;
+			}
 
-		int ret2 = btree_node_get_and_pin(trans, tmp.k, path->btree_id, path->level - 1);
+			bch2_bkey_buf_reassemble(&tmp, c, k);
+			struct btree_path *path = btree_iter_path(trans, &iter);
 
-		if (!ret2)
-			pinned = tmp.k->k.p;
+			BUG_ON(path->level != 1);
 
-		ret;
-	}));
-	bch2_trans_iter_exit(&iter);
-	if (ret)
-		return ret;
+			int ret = btree_node_get_and_pin(trans, tmp.k, path->btree_id, path->level - 1);
+			if (!ret)
+				pinned = tmp.k->k.p;
 
-	return ret;
+			ret;
+		})));
+	}
+
+	return 0;
 }
 
 int bch2_check_extents_to_backpointers(struct bch_fs *c)

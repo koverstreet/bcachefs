@@ -708,57 +708,38 @@ fsck_err:
 	return ret;
 }
 
+static int bch2_gc_btree_root(struct btree_trans *trans, enum btree_id btree, bool initial)
+{
+	struct bch_fs *c = trans->c;
+	CLASS(btree_node_iter, iter)(trans, btree, POS_MIN, 0,
+				     bch2_btree_id_root(c, btree)->b->c.level, 0);
+	struct btree *b = errptr_try(bch2_btree_iter_peek_node(&iter));
+
+	if (b != btree_node_root(c, b))
+		return btree_trans_restart(trans, BCH_ERR_transaction_restart_lock_root_race);
+
+	gc_pos_set(c, gc_pos_btree(btree, b->c.level + 1, SPOS_MAX));
+	struct bkey_s_c k = bkey_i_to_s_c(&b->key);
+	return bch2_gc_mark_key(trans, btree, b->c.level + 1, NULL, NULL, k, initial);
+}
+
 static int bch2_gc_btree(struct btree_trans *trans,
 			 struct progress_indicator_state *progress,
 			 enum btree_id btree, unsigned target_depth,
 			 bool initial)
 {
-	struct bch_fs *c = trans->c;
-	int ret = 0;
-
 	for (unsigned level = target_depth; level < BTREE_MAX_DEPTH; level++) {
 		struct btree *prev = NULL;
-		struct btree_iter iter;
-		bch2_trans_node_iter_init(trans, &iter, btree, POS_MIN, 0, level,
-					  BTREE_ITER_prefetch);
+		CLASS(btree_node_iter, iter)(trans, btree, POS_MIN, 0, level, BTREE_ITER_prefetch);
 
-		ret = for_each_btree_key_continue(trans, iter, 0, k, ({
+		try(for_each_btree_key_continue(trans, iter, 0, k, ({
 			bch2_progress_update_iter(trans, progress, &iter, "check_allocations");
-			gc_pos_set(c, gc_pos_btree(btree, level, k.k->p));
+			gc_pos_set(trans->c, gc_pos_btree(btree, level, k.k->p));
 			bch2_gc_mark_key(trans, btree, level, &prev, &iter, k, initial);
-		}));
-		bch2_trans_iter_exit(&iter);
-		if (ret)
-			goto err;
+		})));
 	}
 
-	/* root */
-	do {
-retry_root:
-		bch2_trans_begin(trans);
-
-		struct btree_iter iter;
-		bch2_trans_node_iter_init(trans, &iter, btree, POS_MIN,
-					  0, bch2_btree_id_root(c, btree)->b->c.level, 0);
-		struct btree *b = bch2_btree_iter_peek_node(&iter);
-		ret = PTR_ERR_OR_ZERO(b);
-		if (ret)
-			goto err_root;
-
-		if (b != btree_node_root(c, b)) {
-			bch2_trans_iter_exit(&iter);
-			goto retry_root;
-		}
-
-		gc_pos_set(c, gc_pos_btree(btree, b->c.level + 1, SPOS_MAX));
-		struct bkey_s_c k = bkey_i_to_s_c(&b->key);
-		ret = bch2_gc_mark_key(trans, btree, b->c.level + 1, NULL, NULL, k, initial);
-err_root:
-		bch2_trans_iter_exit(&iter);
-	} while (bch2_err_matches(ret, BCH_ERR_transaction_restart));
-err:
-	bch_err_fn(c, ret);
-	return ret;
+	return lockrestart_do(trans, bch2_gc_btree_root(trans, btree, initial));
 }
 
 static inline int btree_id_gc_phase_cmp(enum btree_id l, enum btree_id r)
