@@ -8,7 +8,8 @@
 #include "fs/dirent.h"
 #include "fs/check.h"
 #include "fs/str_hash.h"
-#include "fs/subvolume.h"
+
+#include "snapshots/subvolume.h"
 
 static int bch2_dirent_has_target(struct btree_trans *trans, struct bkey_s_c_dirent d)
 {

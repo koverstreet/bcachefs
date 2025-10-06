@@ -8,8 +8,9 @@
 #include "fs/dirent.h"
 #include "fs/inode.h"
 #include "fs/namei.h"
-#include "fs/subvolume.h"
 #include "fs/xattr.h"
+
+#include "snapshots/subvolume.h"
 
 #include <linux/posix_acl.h>
 

@@ -10,7 +10,6 @@
 
 #include "data/move.h"
 
-#include "fs/chardev.h"
 #include "fs/check.h"
 
 #include "journal/init.h"
@@ -19,6 +18,7 @@
 #include "sb/counters.h"
 #include "sb/io.h"
 
+#include "init/chardev.h"
 #include "init/dev.h"
 #include "init/passes.h"
 

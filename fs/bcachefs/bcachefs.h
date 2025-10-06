@@ -215,6 +215,9 @@
 #include <linux/unicode.h>
 
 #include "bcachefs_format.h"
+#include "errcode.h"
+#include "opts.h"
+
 #include "closure.h"
 
 #include "util/clock_types.h"
@@ -248,11 +251,7 @@
 #include "debug/trace.h"
 
 #include "fs/quota_types.h"
-#include "fs/snapshot_types.h"
-#include "fs/subvolume_types.h"
 
-#include "init/errcode.h"
-#include "init/opts.h"
 #include "init/passes_types.h"
 #include "init/dev_types.h"
 
@@ -260,6 +259,9 @@
 
 #include "sb/errors_types.h"
 #include "sb/members_types.h"
+
+#include "snapshots/snapshot_types.h"
+#include "snapshots/subvolume_types.h"
 
 #define count_event(_c, _name)	this_cpu_inc((_c)->counters[BCH_COUNTER_##_name])
 

@@ -20,12 +20,12 @@
 #include "data/write.h"
 
 #include "fs/inode.h"
-#include "fs/snapshot.h"
-#include "fs/subvolume.h"
-
-#include "init/fs.h"
 
 #include "init/error.h"
+#include "init/fs.h"
+
+#include "snapshots/snapshot.h"
+#include "snapshots/subvolume.h"
 
 #include <linux/ioprio.h>
 

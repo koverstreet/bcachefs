@@ -3,11 +3,11 @@
 
 #include "bcachefs.h"
 
-#include "fs/chardev.h"
 #include "fs/dirent.h"
 #include "fs/namei.h"
 #include "fs/quota.h"
 
+#include "init/chardev.h"
 #include "init/fs.h"
 
 #include "vfs/fs.h"

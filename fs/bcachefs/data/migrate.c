@@ -26,7 +26,6 @@
 
 #include "sb/io.h"
 
-#include "init/errcode.h"
 #include "init/progress.h"
 
 static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s k, unsigned dev_idx,

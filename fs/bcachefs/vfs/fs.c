@@ -14,16 +14,20 @@
 #include "data/rebalance.h"
 
 #include "fs/acl.h"
-#include "fs/chardev.h"
 #include "fs/check.h"
 #include "fs/dirent.h"
 #include "fs/inode.h"
 #include "fs/namei.h"
 #include "fs/quota.h"
-#include "fs/snapshot.h"
 #include "fs/xattr.h"
 
+#include "init/chardev.h"
+#include "init/dev.h"
+#include "init/fs.h"
+
 #include "journal/journal.h"
+
+#include "snapshots/snapshot.h"
 
 #include "vfs/fs.h"
 #include "vfs/io.h"
@@ -31,10 +35,6 @@
 #include "vfs/buffered.h"
 #include "vfs/direct.h"
 #include "vfs/pagecache.h"
-
-#include "init/dev.h"
-#include "init/errcode.h"
-#include "init/fs.h"
 
 #include <linux/aio.h>
 #include <linux/backing-dev.h>

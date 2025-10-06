@@ -21,7 +21,6 @@
 #include "data/move.h"
 #include "data/copygc.h"
 
-#include "init/errcode.h"
 #include "init/error.h"
 
 #include "util/clock.h"

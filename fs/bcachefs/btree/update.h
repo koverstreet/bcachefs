@@ -4,8 +4,8 @@
 
 #include "btree/iter.h"
 #include "journal/journal.h"
-#include "fs/snapshot.h"
 #include "sb/io.h"
+#include "snapshots/snapshot.h"
 
 struct bch_fs;
 struct btree;

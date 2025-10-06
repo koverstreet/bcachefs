@@ -18,11 +18,12 @@
 #include "fs/dirent.h"
 #include "fs/inode.h"
 #include "fs/quota.h"
-#include "fs/snapshot.h"
-#include "fs/subvolume.h"
 #include "fs/xattr.h"
 
 #include "init/error.h"
+
+#include "snapshots/snapshot.h"
+#include "snapshots/subvolume.h"
 
 const char * const bch2_bkey_types[] = {
 #define x(name, nr, ...) #name,

@@ -14,10 +14,9 @@
 
 #include "debug/debug.h"
 
-#include "fs/snapshot.h"
-
-#include "init/errcode.h"
 #include "init/error.h"
+
+#include "snapshots/snapshot.h"
 
 #include <linux/string_helpers.h>
 
