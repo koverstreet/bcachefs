@@ -27,12 +27,9 @@ static int bch2_sb_disk_groups_validate(struct bch_sb *sb, struct bch_sb_field *
 {
 	struct bch_sb_field_disk_groups *groups =
 		field_to_type(f, disk_groups);
-	struct bch_disk_group *g, *sorted = NULL;
 	unsigned nr_groups = disk_groups_nr(groups);
-	unsigned i, len;
-	int ret = 0;
 
-	for (i = 0; i < sb->nr_devices; i++) {
+	for (unsigned i = 0; i < sb->nr_devices; i++) {
 		struct bch_member m = bch2_sb_member_get(sb, i);
 		unsigned group_id;
 
@@ -56,38 +53,36 @@ static int bch2_sb_disk_groups_validate(struct bch_sb *sb, struct bch_sb_field *
 	if (!nr_groups)
 		return 0;
 
-	for (i = 0; i < nr_groups; i++) {
-		g = groups->entries + i;
+	for (unsigned i = 0; i < nr_groups; i++) {
+		struct bch_disk_group *g = groups->entries + i;
 
 		if (BCH_GROUP_DELETED(g))
 			continue;
 
-		len = strnlen(g->label, sizeof(g->label));
-		if (!len) {
+		if (!strnlen(g->label, sizeof(g->label))) {
 			prt_printf(err, "label %u empty", i);
 			return -BCH_ERR_invalid_sb_disk_groups;
 		}
 	}
 
-	sorted = kmalloc_array(nr_groups, sizeof(*sorted), GFP_KERNEL);
+	struct bch_disk_group *sorted __free(kfree) =
+		kmalloc_array(nr_groups, sizeof(*sorted), GFP_KERNEL);
 	if (!sorted)
 		return -BCH_ERR_ENOMEM_disk_groups_validate;
 
 	memcpy(sorted, groups->entries, nr_groups * sizeof(*sorted));
 	sort(sorted, nr_groups, sizeof(*sorted), group_cmp, NULL);
 
-	for (g = sorted; g + 1 < sorted + nr_groups; g++)
+	for (struct bch_disk_group *g = sorted; g + 1 < sorted + nr_groups; g++)
 		if (!BCH_GROUP_DELETED(g) &&
 		    !group_cmp(&g[0], &g[1])) {
 			prt_printf(err, "duplicate label %llu.%.*s",
 			       BCH_GROUP_PARENT(g),
 			       (int) sizeof(g->label), g->label);
-			ret = -BCH_ERR_invalid_sb_disk_groups;
-			goto err;
+			return -BCH_ERR_invalid_sb_disk_groups;
 		}
-err:
-	kfree(sorted);
-	return ret;
+
+	return 0;
 }
 
 static void bch2_sb_disk_groups_to_text(struct printbuf *out,
