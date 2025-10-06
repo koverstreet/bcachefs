@@ -148,24 +148,20 @@ static int bch2_dev_metadata_drop(struct bch_fs *c,
 				  unsigned dev_idx,
 				  unsigned flags, struct printbuf *err)
 {
-	struct btree_iter iter;
-	struct closure cl;
 	struct btree *b;
-	struct bkey_buf k;
-	unsigned id;
-	int ret;
+	int ret = 0;
 
 	/* don't handle this yet: */
 	if (flags & BCH_FORCE_IF_METADATA_LOST)
 		return bch_err_throw(c, remove_with_metadata_missing_unimplemented);
 
-	CLASS(btree_trans, trans)(c);
+	struct bkey_buf k;
 	bch2_bkey_buf_init(&k);
-	closure_init_stack(&cl);
 
-	for (id = 0; id < btree_id_nr_alive(c); id++) {
-		bch2_trans_node_iter_init(trans, &iter, id, POS_MIN, 0, 0,
-					  BTREE_ITER_prefetch);
+	CLASS(btree_trans, trans)(c);
+
+	for (unsigned id = 0; id < btree_id_nr_alive(c) && !ret; id++) {
+		CLASS(btree_node_iter, iter)(trans, id, POS_MIN, 0, 0, BTREE_ITER_prefetch);
 retry:
 		ret = 0;
 		while (bch2_trans_begin(trans),
@@ -177,11 +173,6 @@ retry:
 				goto next;
 
 			ret = drop_btree_ptrs(trans, &iter, b, dev_idx, flags, err);
-			if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
-				ret = 0;
-				continue;
-			}
-
 			if (ret)
 				break;
 next:
@@ -189,16 +180,9 @@ next:
 		}
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			goto retry;
-
-		bch2_trans_iter_exit(&iter);
-
-		if (ret)
-			goto err;
 	}
 
 	bch2_btree_interior_updates_flush(c);
-	ret = 0;
-err:
 	bch2_bkey_buf_exit(&k, c);
 
 	BUG_ON(bch2_err_matches(ret, BCH_ERR_transaction_restart));
