@@ -110,24 +110,20 @@ int bch2_extent_trim_atomic(struct btree_trans *trans,
 		extent_whiteout_type(trans->c, iter->btree_id, &insert->k);
 	struct bpos end = insert->k.p;
 
-	struct btree_iter copy;
-	bch2_trans_copy_iter(&copy, iter);
-
-	int ret = bch2_btree_iter_traverse(&copy);
-	if (ret)
-		goto err;
-
+	CLASS(btree_iter_copy, copy)(iter);
 	copy.flags |= BTREE_ITER_nofilter_whiteouts;
+
+	try(bch2_btree_iter_traverse(&copy));
 
 	/*
 	 * We're doing our own whiteout filtering, but we still need to pass a
 	 * max key to avoid popping an assert in bch2_snapshot_is_ancestor():
 	 */
 	struct bkey_s_c k;
+	int ret = 0;
 	unsigned nr_iters = 0;
 	for_each_btree_key_max_continue_norestart(copy,
-						  POS(insert->k.p.inode, U64_MAX),
-						  0, k, ret) {
+			POS(insert->k.p.inode, U64_MAX), 0, k, ret) {
 		unsigned offset = 0;
 
 		if (bkey_gt(iter->pos, bkey_start_pos(k.k)))
@@ -156,8 +152,6 @@ int bch2_extent_trim_atomic(struct btree_trans *trans,
 				break;
 		}
 	}
-err:
-	bch2_trans_iter_exit(&copy);
 	if (ret < 0)
 		return ret;
 
