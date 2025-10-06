@@ -309,6 +309,7 @@ static struct bkey_s_c __bch2_backpointer_get_key(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
+	/* XXX: this should be a not-found error */
 	if (unlikely(bp.v->btree_id >= btree_id_nr_alive(c)))
 		return bkey_s_c_null;
 
