@@ -5,12 +5,12 @@
 
 #include "fs/inode.h"
 #include "fs/quota.h"
-#include "fs/snapshot.h"
+
+#include "init/error.h"
 
 #include "sb/io.h"
 
-#include "init/errcode.h"
-#include "init/error.h"
+#include "snapshots/snapshot.h"
 
 static const char * const bch2_quota_types[] = {
 	"user",

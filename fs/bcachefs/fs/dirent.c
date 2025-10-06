@@ -10,7 +10,8 @@
 
 #include "fs/dirent.h"
 #include "fs/str_hash.h"
-#include "fs/subvolume.h"
+
+#include "snapshots/subvolume.h"
 
 #include <linux/dcache.h>
 

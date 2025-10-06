@@ -16,12 +16,12 @@
 #include "data/rebalance.h"
 #include "data/write.h"
 
-#include "init/errcode.h"
 #include "init/error.h"
 #include "init/progress.h"
 
 #include "fs/inode.h"
-#include "fs/subvolume.h"
+
+#include "snapshots/subvolume.h"
 
 #include "util/clock.h"
 

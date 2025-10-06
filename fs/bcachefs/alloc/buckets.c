@@ -24,7 +24,6 @@
 #include "data/reflink.h"
 
 #include "fs/inode.h"
-#include "fs/subvolume.h"
 
 #include "journal/init.h"
 

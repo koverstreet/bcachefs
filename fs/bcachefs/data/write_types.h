@@ -7,8 +7,8 @@
 #include "alloc/buckets_types.h"
 #include "extents_types.h"
 #include "keylist_types.h"
-#include "init/opts.h"
 #include "init/dev_types.h"
+#include "opts.h"
 
 #include <linux/llist.h>
 #include <linux/workqueue.h>

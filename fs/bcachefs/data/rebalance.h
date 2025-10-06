@@ -4,7 +4,6 @@
 
 #include "data/compress.h"
 #include "alloc/disk_groups.h"
-#include "init/opts.h"
 #include "rebalance_types.h"
 
 static inline struct bch_extent_rebalance io_opts_to_rebalance_opts(struct bch_fs *c,

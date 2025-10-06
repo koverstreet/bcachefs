@@ -4,8 +4,7 @@
 
 #include "btree/bkey.h"
 #include "btree/bkey_methods.h"
-#include "init/opts.h"
-#include "fs/snapshot.h"
+#include "snapshots/snapshot.h"
 
 extern const char * const bch2_inode_opts[];
 
