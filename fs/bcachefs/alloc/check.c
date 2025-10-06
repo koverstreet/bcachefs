@@ -28,10 +28,7 @@ static struct bkey_s_c bch2_get_key_or_hole(struct btree_iter *iter, struct bpos
 	if (k.k->type) {
 		return k;
 	} else {
-		struct btree_iter iter2;
-		struct bpos next;
-
-		bch2_trans_copy_iter(&iter2, iter);
+		CLASS(btree_iter_copy, iter2)(iter);
 
 		struct btree_path *path = btree_iter_path(iter->trans, iter);
 		if (!bpos_eq(path->l[0].b->key.k.p, SPOS_MAX))
@@ -44,13 +41,11 @@ static struct bkey_s_c bch2_get_key_or_hole(struct btree_iter *iter, struct bpos
 		 * open interval:
 		 */
 		k = bch2_btree_iter_peek_max(&iter2, end);
-		next = iter2.pos;
-		bch2_trans_iter_exit(&iter2);
-
-		BUG_ON(next.offset >= iter->pos.offset + U32_MAX);
-
 		if (bkey_err(k))
 			return k;
+
+		struct bpos next = iter2.pos;
+		BUG_ON(next.offset >= iter->pos.offset + U32_MAX);
 
 		bkey_init(hole);
 		hole->p = iter->pos;
