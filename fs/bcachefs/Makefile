@@ -121,6 +121,6 @@ endif
 # Silence "note: xyz changed in GCC X.X" messages
 subdir-ccflags-y += $(call cc-disable-warning, psabi)
 
-ifdef BCACHEFS_DKMS
-	subdir-ccflags-y += -I$(src)
-endif
+# kbuild weirdness - sometimes this gets passed automatically, other times we
+# need to specify it. no idea why:
+subdir-ccflags-y += -I$(src)
