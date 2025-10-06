@@ -1325,12 +1325,7 @@ retry:
 	if (inode_u.bi_subvol)
 		bch_warn(c, "deleting inode %llu marked as unlinked, but also a subvolume root!?", inode_u.bi_inum);
 
-	struct bkey_i_inode_generation delete;
-	bkey_inode_generation_init(&delete.k_i);
-	delete.k.p = iter.pos;
-	delete.v.bi_generation = cpu_to_le32(inode_u.bi_generation + 1);
-
-	ret   = bch2_trans_update(trans, &iter, &delete.k_i, 0) ?:
+	ret   = bch2_btree_delete_at(trans, &iter, 0) ?:
 		bch2_trans_commit(trans, NULL, NULL,
 				BCH_TRANS_COMMIT_no_enospc);
 err:
