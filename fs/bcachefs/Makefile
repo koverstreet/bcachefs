@@ -54,27 +54,23 @@ bcachefs-y		:=			\
 	debug/sysfs.o				\
 	debug/tests.o				\
 	debug/trace.o				\
+	errcode.o				\
 	fs/acl.o				\
-	fs/chardev.o				\
 	fs/check.o				\
 	fs/check_dir_structure.o		\
 	fs/check_extents.o			\
 	fs/check_nlinks.o			\
-	fs/check_snapshots.o			\
 	fs/dirent.o				\
 	fs/inode.o				\
 	fs/logged_ops.o				\
 	fs/namei.o				\
 	fs/quota.o				\
-	fs/snapshot.o				\
 	fs/str_hash.o				\
-	fs/subvolume.o				\
 	fs/xattr.o				\
+	init/chardev.o				\
 	init/dev.o				\
-	init/errcode.o				\
 	init/error.o				\
 	init/fs.o				\
-	init/opts.o				\
 	init/progress.o				\
 	init/recovery.o				\
 	init/passes.o				\
@@ -84,12 +80,16 @@ bcachefs-y		:=			\
 	journal/reclaim.o			\
 	journal/sb.o				\
 	journal/seq_blacklist.o			\
+	opts.o					\
 	sb/clean.o				\
 	sb/counters.o				\
 	sb/downgrade.o				\
 	sb/errors.o				\
 	sb/io.o					\
 	sb/members.o				\
+	snapshots/check_snapshots.o		\
+	snapshots/snapshot.o			\
+	snapshots/subvolume.o			\
 	util/clock.o				\
 	util/darray.o				\
 	util/enumerated_ref.o			\

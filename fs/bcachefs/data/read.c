@@ -26,9 +26,9 @@
 
 #include "debug/async_objs.h"
 
-#include "fs/subvolume.h"
-
 #include "init/error.h"
+
+#include "snapshots/subvolume.h"
 
 #include "util/clock.h"
 #include "util/enumerated_ref.h"

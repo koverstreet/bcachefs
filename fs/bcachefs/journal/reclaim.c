@@ -9,7 +9,6 @@
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 
-#include "init/errcode.h"
 #include "init/error.h"
 
 #include "journal/journal.h"

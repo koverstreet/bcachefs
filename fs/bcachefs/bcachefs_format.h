@@ -518,8 +518,6 @@ struct bch_sb_field {
 #include "fs/inode_format.h"
 #include "fs/logged_ops_format.h"
 #include "fs/quota_format.h"
-#include "fs/snapshot_format.h"
-#include "fs/subvolume_format.h"
 #include "fs/xattr_format.h"
 #include "init/passes_format.h"
 #include "journal/seq_blacklist_format.h"
@@ -527,6 +525,8 @@ struct bch_sb_field {
 #include "sb/downgrade_format.h"
 #include "sb/errors_format.h"
 #include "sb/members_format.h"
+#include "snapshots/snapshot_format.h"
+#include "snapshots/subvolume_format.h"
 
 enum bch_sb_field_type {
 #define x(f, nr)	BCH_SB_FIELD_##f = nr,

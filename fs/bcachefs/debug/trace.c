@@ -13,8 +13,6 @@
 #include "data/keylist.h"
 #include "data/move_types.h"
 
-#include "init/opts.h"
-
 #include "util/six.h"
 
 #include <linux/blktrace_api.h>

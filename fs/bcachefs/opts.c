@@ -4,6 +4,7 @@
 #include <linux/fs_parser.h>
 
 #include "bcachefs.h"
+#include "opts.h"
 
 #include "alloc/disk_groups.h"
 
@@ -12,12 +13,10 @@
 #include "data/rebalance.h"
 
 #include "init/dev.h"
+#include "init/error.h"
+#include "init/passes.h"
 
 #include "sb/io.h"
-
-#include "init/error.h"
-#include "init/opts.h"
-#include "init/passes.h"
 
 #include "util/util.h"
 

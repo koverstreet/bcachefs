@@ -9,14 +9,13 @@
 #include "btree/key_cache.h"
 #include "btree/update.h"
 
-#include "fs/snapshot.h"
-
-#include "vfs/fs.h"
-
-#include "init/errcode.h"
 #include "init/error.h"
 #include "init/progress.h"
 #include "init/passes.h"
+
+#include "snapshots/snapshot.h"
+
+#include "vfs/fs.h"
 
 #include "util/enumerated_ref.h"
 

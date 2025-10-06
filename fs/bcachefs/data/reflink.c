@@ -13,11 +13,12 @@
 #include "data/write.h"
 
 #include "fs/inode.h"
-#include "fs/subvolume.h"
+
+#include "init/error.h"
 
 #include "sb/io.h"
 
-#include "init/error.h"
+#include "snapshots/subvolume.h"
 
 #include "util/enumerated_ref.h"
 

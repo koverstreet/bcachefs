@@ -18,13 +18,13 @@
 #include "fs/inode.h"
 #include "fs/namei.h"
 #include "fs/str_hash.h"
-#include "fs/snapshot.h"
-#include "fs/subvolume.h"
 
 #include "vfs/fs.h"
 
 #include "init/error.h"
-#include "init/opts.h"
+
+#include "snapshots/snapshot.h"
+#include "snapshots/subvolume.h"
 
 #include "util/varint.h"
 
