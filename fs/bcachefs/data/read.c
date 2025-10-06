@@ -604,6 +604,8 @@ retry:
 
 	struct btree_iter iter;
 	struct bkey_s_c k;
+	int ret = 0;
+
 	try(lockrestart_do(trans,
 		bkey_err(k = bch2_bkey_get_iter(trans, &iter,
 				u->btree_id, bkey_start_pos(&u->k.k->k),
@@ -611,15 +613,15 @@ retry:
 
 	if (!bkey_and_val_eq(k, bkey_i_to_s_c(u->k.k))) {
 		/* extent we wanted to read no longer exists: */
-		rbio->ret = bch_err_throw(trans->c, data_read_key_overwritten);
+		ret = bch_err_throw(trans->c, data_read_key_overwritten);
 		goto err;
 	}
 
-	int ret = __bch2_read_extent(trans, rbio, bvec_iter,
-				     bkey_start_pos(&u->k.k->k),
-				     u->btree_id,
-				     bkey_i_to_s_c(u->k.k),
-				     0, failed, flags, -1);
+	ret = __bch2_read_extent(trans, rbio, bvec_iter,
+				 bkey_start_pos(&u->k.k->k),
+				 u->btree_id,
+				 bkey_i_to_s_c(u->k.k),
+				 0, failed, flags, -1);
 err:
 	bch2_trans_iter_exit(&iter);
 
@@ -1316,9 +1318,8 @@ retry_pick:
 
 	if (likely(!rbio->pick.do_ec_reconstruct)) {
 		if (unlikely(!rbio->have_ioref)) {
-			bch2_rbio_error(rbio,
-					-BCH_ERR_data_read_retry_device_offline,
-					BLK_STS_IOERR);
+			ret = bch_err_throw(c, data_read_retry_device_offline);
+			bch2_rbio_error(rbio, ret, BLK_STS_IOERR);
 			goto out;
 		}
 
@@ -1344,8 +1345,8 @@ retry_pick:
 	} else {
 		/* Attempting reconstruct read: */
 		if (bch2_ec_read_extent(trans, rbio, k)) {
-			bch2_rbio_error(rbio, -BCH_ERR_data_read_retry_ec_reconstruct_err,
-					BLK_STS_IOERR);
+			ret = bch_err_throw(c, data_read_retry_ec_reconstruct_err);
+			bch2_rbio_error(rbio, ret, BLK_STS_IOERR);
 			goto out;
 		}
 
