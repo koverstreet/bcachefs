@@ -821,7 +821,7 @@ int __bch2_unlink(struct inode *vdir, struct dentry *dentry,
 	bch2_inode_update_after_write(trans, dir, &dir_u,
 				      ATTR_MTIME|ATTR_CTIME|ATTR_SIZE);
 	bch2_inode_update_after_write(trans, inode, &inode_u,
-				      ATTR_MTIME);
+				      ATTR_CTIME);
 
 	if (IS_CASEFOLDED(vdir))
 		d_invalidate(dentry);
