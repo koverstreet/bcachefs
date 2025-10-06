@@ -954,11 +954,10 @@ int bch2_accounting_read(struct bch_fs *c)
 	 * for the same key:
 	 */
 
-	struct btree_iter iter;
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_accounting, POS_MIN,
-			     BTREE_ITER_prefetch|BTREE_ITER_all_snapshots);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_accounting, POS_MIN,
+				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots);
 	iter.flags &= ~BTREE_ITER_with_journal;
-	int ret = for_each_btree_key_continue(trans, iter,
+	try(for_each_btree_key_continue(trans, iter,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k, ({
 		if (k.k->type != KEY_TYPE_accounting)
 			continue;
@@ -998,10 +997,7 @@ int bch2_accounting_read(struct bch_fs *c)
 		}
 
 		accounting_read_key(trans, k);
-	}));
-	bch2_trans_iter_exit(&iter);
-	if (ret)
-		return ret;
+	})));
 
 	while (jk < end)
 		jk = accumulate_and_read_journal_accounting(trans, jk);
