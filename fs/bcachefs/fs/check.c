@@ -898,10 +898,8 @@ static int check_inode(struct btree_trans *trans,
 	bool do_update = false;
 
 	int ret = bch2_check_key_has_snapshot(trans, iter, k);
-	if (ret < 0)
-		return ret;
 	if (ret)
-		return 0;
+		return ret < 0 ? ret : 0;
 
 	try(bch2_snapshots_seen_update(c, s, iter->btree_id, k.k->p));
 
@@ -1043,7 +1041,8 @@ static int check_inode(struct btree_trans *trans,
 			return ret;
 
 		if (ret && (c->sb.btrees_lost_data & BIT_ULL(BTREE_ID_subvolumes))) {
-			ret = reconstruct_subvol(trans, k.k->p.snapshot, u.bi_subvol, u.bi_inum);
+			ret = 0;
+			try(reconstruct_subvol(trans, k.k->p.snapshot, u.bi_subvol, u.bi_inum));
 			goto do_update;
 		}
 
@@ -1084,7 +1083,6 @@ do_update:
 			return ret;
 	}
 fsck_err:
-	bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -1490,6 +1488,7 @@ static int check_dirent_to_subvol(struct btree_trans *trans, struct btree_iter *
 	if (ret &&
 	    !new_parent_subvol &&
 	    (c->sb.btrees_lost_data & BIT_ULL(BTREE_ID_subvolumes))) {
+		ret = 0;
 		/*
 		 * Couldn't find a subvol for dirent's snapshot - but we lost
 		 * subvols, so we need to reconstruct:
