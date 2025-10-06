@@ -2920,9 +2920,7 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 
 		EBUG_ON(btree_iter_path(trans, iter)->level);
 
-		struct btree_iter iter2;
-
-		bch2_trans_copy_iter(&iter2, iter);
+		CLASS(btree_iter_copy, iter2)(iter);
 		iter2.flags |= BTREE_ITER_nofilter_whiteouts;
 
 		while (1) {
@@ -2943,7 +2941,6 @@ struct bkey_s_c bch2_btree_iter_peek_slot(struct btree_iter *iter)
 			iter->k = iter2.k;
 			k.k = &iter->k;
 		}
-		bch2_trans_iter_exit(&iter2);
 
 		if (unlikely(bkey_err(k)))
 			goto out;

@@ -243,14 +243,11 @@ int bch2_hash_needs_whiteout(struct btree_trans *trans,
 			     const struct bch_hash_info *info,
 			     struct btree_iter *start)
 {
-	struct btree_iter iter;
-	struct bkey_s_c k;
-	int ret;
-
-	bch2_trans_copy_iter(&iter, start);
-
+	CLASS(btree_iter_copy, iter)(start);
 	bch2_btree_iter_advance(&iter);
 
+	struct bkey_s_c k;
+	int ret;
 	for_each_btree_key_continue_norestart(iter, BTREE_ITER_slots, k, ret) {
 		if (k.k->type != desc.key_type &&
 		    k.k->type != KEY_TYPE_hash_whiteout)
@@ -263,7 +260,6 @@ int bch2_hash_needs_whiteout(struct btree_trans *trans,
 		}
 	}
 
-	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 
