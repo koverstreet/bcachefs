@@ -39,15 +39,12 @@
 #include "debug/debug.h"
 #include "debug/sysfs.h"
 
-#include "fs/chardev.h"
 #include "fs/check.h"
 #include "fs/inode.h"
 #include "fs/quota.h"
-#include "fs/snapshot.h"
-#include "fs/subvolume.h"
 
+#include "init/chardev.h"
 #include "init/dev.h"
-#include "init/errcode.h"
 #include "init/error.h"
 #include "init/recovery.h"
 #include "init/passes.h"
@@ -64,6 +61,9 @@
 #include "sb/errors.h"
 #include "sb/io.h"
 #include "sb/members.h"
+
+#include "snapshots/snapshot.h"
+#include "snapshots/subvolume.h"
 
 #include "vfs/fs.h"
 #include "vfs/io.h"

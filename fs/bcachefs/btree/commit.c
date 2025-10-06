@@ -15,14 +15,13 @@
 #include "btree/key_cache.h"
 #include "btree/write_buffer.h"
 
-#include "fs/snapshot.h"
-
 #include "journal/journal.h"
 #include "journal/io.h"
 #include "journal/reclaim.h"
 
-#include "init/errcode.h"
 #include "init/error.h"
+
+#include "snapshots/snapshot.h"
 
 #include "util/enumerated_ref.h"
 

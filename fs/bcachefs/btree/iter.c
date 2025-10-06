@@ -17,13 +17,13 @@
 
 #include "debug/debug.h"
 
-#include "fs/snapshot.h"
-
 #include "init/error.h"
 #include "init/fs.h"
 
 #include "journal/journal.h"
 #include "journal/io.h"
+
+#include "snapshots/snapshot.h"
 
 #include <linux/random.h>
 #include <linux/prefetch.h>

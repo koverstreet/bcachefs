@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 #include "bcachefs.h"
-#include "init/errcode.h"
+#include "errcode.h"
 
 #include <linux/errname.h>
 

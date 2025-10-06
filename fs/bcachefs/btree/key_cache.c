@@ -8,7 +8,6 @@
 #include "btree/locking.h"
 #include "btree/update.h"
 
-#include "init/errcode.h"
 #include "init/error.h"
 
 #include "journal/journal.h"

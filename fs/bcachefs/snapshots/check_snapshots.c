@@ -4,8 +4,8 @@
 #include "btree/cache.h"
 #include "btree/update.h"
 
-#include "fs/snapshot.h"
-#include "fs/subvolume.h"
+#include "snapshots/snapshot.h"
+#include "snapshots/subvolume.h"
 
 #include "init/error.h"
 #include "init/passes.h"
