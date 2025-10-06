@@ -2300,22 +2300,13 @@ int bch2_btree_node_rewrite_key(struct btree_trans *trans,
 				struct bkey_i *k,
 				enum bch_trans_commit_flags flags)
 {
-	struct btree_iter iter;
-	bch2_trans_node_iter_init(trans, &iter,
-				  btree, k->k.p,
-				  BTREE_MAX_DEPTH, level, 0);
-	struct btree *b = bch2_btree_iter_peek_node(&iter);
-	int ret = PTR_ERR_OR_ZERO(b);
-	if (ret)
-		goto out;
+	CLASS(btree_node_iter, iter)(trans, btree, k->k.p, BTREE_MAX_DEPTH, level, 0);
+	struct btree *b = errptr_try(bch2_btree_iter_peek_node(&iter));
 
 	bool found = b && btree_ptr_hash_val(&b->key) == btree_ptr_hash_val(k);
-	ret = found
+	return found
 		? bch2_btree_node_rewrite(trans, &iter, b, 0, flags)
 		: -ENOENT;
-out:
-	bch2_trans_iter_exit(&iter);
-	return ret;
 }
 
 int bch2_btree_node_rewrite_pos(struct btree_trans *trans,
@@ -2327,17 +2318,10 @@ int bch2_btree_node_rewrite_pos(struct btree_trans *trans,
 	BUG_ON(!level);
 
 	/* Traverse one depth lower to get a pointer to the node itself: */
-	struct btree_iter iter;
-	bch2_trans_node_iter_init(trans, &iter, btree, pos, 0, level - 1, 0);
-	struct btree *b = bch2_btree_iter_peek_node(&iter);
-	int ret = PTR_ERR_OR_ZERO(b);
-	if (ret)
-		goto err;
+	CLASS(btree_node_iter, iter)(trans, btree, pos, 0, level - 1, 0);
+	struct btree *b = errptr_try(bch2_btree_iter_peek_node(&iter));
 
-	ret = bch2_btree_node_rewrite(trans, &iter, b, target, flags);
-err:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return bch2_btree_node_rewrite(trans, &iter, b, target, flags);
 }
 
 int bch2_btree_node_rewrite_key_get_iter(struct btree_trans *trans,
