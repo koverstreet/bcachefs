@@ -169,18 +169,16 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 			       s64 *disk_sectors_delta)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
-	struct bkey_s_c old;
 	unsigned new_replicas = bch2_bkey_replicas(c, bkey_i_to_s_c(new));
 	bool new_compressed = bch2_bkey_sectors_compressed(bkey_i_to_s_c(new));
-	int ret = 0;
 
 	*usage_increasing	= false;
 	*i_sectors_delta	= 0;
 	*disk_sectors_delta	= 0;
 
-	bch2_trans_copy_iter(&iter, extent_iter);
-
+	CLASS(btree_iter_copy, iter)(extent_iter);
+	struct bkey_s_c old;
+	int ret = 0;
 	for_each_btree_key_max_continue_norestart(iter,
 				new->k.p, BTREE_ITER_slots, old, ret) {
 		s64 sectors = min(new->k.p.offset, old.k->p.offset) -
@@ -206,7 +204,6 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 			break;
 	}
 
-	bch2_trans_iter_exit(&iter);
 	return ret;
 }
 

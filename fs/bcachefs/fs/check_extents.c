@@ -171,16 +171,14 @@ static int overlapping_extents_found(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
-	struct btree_iter iter2 = {};
-	struct bkey_s_c k1, k2;
-	int ret;
+	int ret = 0;
 
 	BUG_ON(bkey_le(pos1, bkey_start_pos(&pos2)));
 
 	CLASS(btree_iter, iter1)(trans, btree, pos1,
 				 BTREE_ITER_all_snapshots|
 				 BTREE_ITER_not_extents);
-	k1 = bkey_try(bch2_btree_iter_peek_max(&iter1, POS(pos1.inode, U64_MAX)));
+	struct bkey_s_c k1 = bkey_try(bch2_btree_iter_peek_max(&iter1, POS(pos1.inode, U64_MAX)));
 
 	prt_newline(&buf);
 	bch2_bkey_val_to_text(&buf, c, k1);
@@ -193,23 +191,16 @@ static int overlapping_extents_found(struct btree_trans *trans,
 
 		bch_err(c, "%s: error finding first overlapping extent when repairing, got%s",
 			__func__, buf.buf);
-		ret = bch_err_throw(c, internal_fsck_err);
-		goto err;
+		return bch_err_throw(c, internal_fsck_err);
 	}
 
-	bch2_trans_copy_iter(&iter2, &iter1);
+	CLASS(btree_iter_copy, iter2)(&iter1);
 
-	while (1) {
+	struct bkey_s_c k2;
+	do {
 		bch2_btree_iter_advance(&iter2);
-
-		k2 = bch2_btree_iter_peek_max(&iter2, POS(pos1.inode, U64_MAX));
-		ret = bkey_err(k2);
-		if (ret)
-			goto err;
-
-		if (bpos_ge(k2.k->p, pos2.p))
-			break;
-	}
+		k2 = bkey_try(bch2_btree_iter_peek_max(&iter2, POS(pos1.inode, U64_MAX)));
+	} while (bpos_lt(k2.k->p, pos2.p));
 
 	prt_newline(&buf);
 	bch2_bkey_val_to_text(&buf, c, k2);
@@ -218,8 +209,7 @@ static int overlapping_extents_found(struct btree_trans *trans,
 	    pos2.size != k2.k->size) {
 		bch_err(c, "%s: error finding seconding overlapping extent when repairing%s",
 			__func__, buf.buf);
-		ret = bch_err_throw(c, internal_fsck_err);
-		goto err;
+		return bch_err_throw(c, internal_fsck_err);
 	}
 
 	prt_printf(&buf, "\noverwriting %s extent",
@@ -246,7 +236,7 @@ static int overlapping_extents_found(struct btree_trans *trans,
 		bch_info(c, "repair ret %s", bch2_err_str(ret));
 
 		if (ret)
-			goto err;
+			return ret;
 
 		*fixed = true;
 
@@ -270,8 +260,6 @@ static int overlapping_extents_found(struct btree_trans *trans,
 		}
 	}
 fsck_err:
-err:
-	bch2_trans_iter_exit(&iter2);
 	return ret;
 }
 
