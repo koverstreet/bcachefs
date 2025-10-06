@@ -12,15 +12,16 @@
 #include "fs/check.h"
 #include "fs/inode.h"
 #include "fs/namei.h"
-#include "fs/snapshot.h"
 #include "fs/xattr.h"
-
-#include "vfs/fs.h"
 
 #include "init/error.h"
 #include "init/progress.h"
 #include "init/passes.h"
 #include "init/fs.h"
+
+#include "snapshots/snapshot.h"
+
+#include "vfs/fs.h"
 
 #include "util/darray.h"
 #include "util/thread_with_file.h"

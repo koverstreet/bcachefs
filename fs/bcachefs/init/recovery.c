@@ -22,9 +22,11 @@
 #include "fs/logged_ops.h"
 #include "fs/namei.h"
 #include "fs/quota.h"
-#include "fs/snapshot.h"
 
+#include "init/error.h"
 #include "init/fs.h"
+#include "init/passes.h"
+#include "init/recovery.h"
 
 #include "journal/init.h"
 #include "journal/io.h"
@@ -36,10 +38,7 @@
 #include "sb/downgrade.h"
 #include "sb/io.h"
 
-#include "init/errcode.h"
-#include "init/error.h"
-#include "init/recovery.h"
-#include "init/passes.h"
+#include "snapshots/snapshot.h"
 
 #include <linux/sort.h>
 #include <linux/stat.h>

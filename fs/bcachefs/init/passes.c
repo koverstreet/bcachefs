@@ -18,13 +18,14 @@
 #include "fs/check.h"
 #include "fs/inode.h"
 #include "fs/logged_ops.h"
-#include "fs/snapshot.h"
-#include "fs/subvolume.h"
 
 #include "journal/init.h"
 #include "journal/journal.h"
 
 #include "sb/io.h"
+
+#include "snapshots/snapshot.h"
+#include "snapshots/subvolume.h"
 
 #include "init/recovery.h"
 #include "init/passes.h"

@@ -7,7 +7,7 @@
 
 #include "journal/reclaim.h"
 
-#include "fs/snapshot.h"
+#include "snapshots/snapshot.h"
 
 #include "tests.h"
 

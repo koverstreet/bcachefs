@@ -7,7 +7,7 @@
 
 #include "data/extents.h"
 
-#include "fs/subvolume.h"
+#include "snapshots/subvolume.h"
 
 #include "vfs/io.h"
 #include "vfs/pagecache.h"

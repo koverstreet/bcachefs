@@ -5,7 +5,6 @@
 
 #include "sb/io.h"
 
-#include "init/errcode.h"
 #include "init/error.h"
 #include "init/fs.h"
 

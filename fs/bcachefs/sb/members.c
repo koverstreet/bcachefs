@@ -11,7 +11,6 @@
 #include "sb/io.h"
 
 #include "init/error.h"
-#include "init/opts.h"
 #include "init/passes.h"
 
 int bch2_dev_missing_bkey(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
