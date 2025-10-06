@@ -219,30 +219,22 @@ static int bch2_journal_replay_accounting_key(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct bkey_i *bk = journal_key_k(c, k);
-	struct btree_iter iter;
-	bch2_trans_node_iter_init(trans, &iter, k->btree_id, bk->k.p,
-				  BTREE_MAX_DEPTH, k->level,
-				  BTREE_ITER_intent);
-	int ret = bch2_btree_iter_traverse(&iter);
-	if (ret)
-		goto out;
+
+	CLASS(btree_node_iter, iter)(trans, k->btree_id, bk->k.p,
+				     BTREE_MAX_DEPTH, k->level,
+				     BTREE_ITER_intent);
+	try(bch2_btree_iter_traverse(&iter));
 
 	struct bkey u;
 	struct bkey_s_c old = bch2_btree_path_peek_slot(btree_iter_path(trans, &iter), &u);
 
 	/* Has this delta already been applied to the btree? */
-	if (bversion_cmp(old.k->bversion, bk->k.bversion) >= 0) {
-		ret = 0;
-		goto out;
-	}
+	if (bversion_cmp(old.k->bversion, bk->k.bversion) >= 0)
+		return 0;
 
 	struct bkey_i *new = bk;
 	if (old.k->type == KEY_TYPE_accounting) {
-		new = bch2_bkey_make_mut_noupdate(trans, bkey_i_to_s_c(bk));
-		ret = PTR_ERR_OR_ZERO(new);
-		if (ret)
-			goto out;
-
+		new = errptr_try(bch2_bkey_make_mut_noupdate(trans, bkey_i_to_s_c(bk)));
 		bch2_accounting_accumulate(bkey_i_to_accounting(new),
 					   bkey_s_c_to_accounting(old));
 	}
@@ -250,22 +242,17 @@ static int bch2_journal_replay_accounting_key(struct btree_trans *trans,
 	if (!k->allocated)
 		trans->journal_res.seq = c->journal_entries_base_seq + k->journal_seq_offset;
 
-	ret = bch2_trans_update(trans, &iter, new, BTREE_TRIGGER_norun);
-out:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return bch2_trans_update(trans, &iter, new, BTREE_TRIGGER_norun);
 }
 
 static int bch2_journal_replay_key(struct btree_trans *trans,
 				   struct journal_key *k)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
 	unsigned iter_flags =
 		BTREE_ITER_intent|
 		BTREE_ITER_not_extents;
 	unsigned update_flags = BTREE_TRIGGER_norun;
-	int ret;
 
 	if (k->overwritten)
 		return 0;
@@ -287,12 +274,10 @@ static int bch2_journal_replay_key(struct btree_trans *trans,
 		update_flags |= BTREE_UPDATE_key_cache_reclaim;
 
 	struct bkey_i *bk = journal_key_k(c, k);
-	bch2_trans_node_iter_init(trans, &iter, k->btree_id, bk->k.p,
-				  BTREE_MAX_DEPTH, k->level,
-				  iter_flags);
-	ret = bch2_btree_iter_traverse(&iter);
-	if (ret)
-		goto out;
+	CLASS(btree_node_iter, iter)(trans, k->btree_id, bk->k.p,
+				     BTREE_MAX_DEPTH, k->level,
+				     iter_flags);
+	try(bch2_btree_iter_traverse(&iter));
 
 	struct btree_path *path = btree_iter_path(trans, &iter);
 	if (unlikely(!btree_path_node(path, k->level))) {
@@ -306,43 +291,36 @@ static int bch2_journal_replay_key(struct btree_trans *trans,
 						     BIT_ULL(BCH_RECOVERY_PASS_check_topology)))) {
 			bch_err(c, "have key in journal replay for btree depth that does not exist, confused\n%s",
 				buf.buf);
-			ret = -EINVAL;
+			return -EINVAL;
 		}
 
 		if (!k->allocated) {
 			bch_notice(c, "dropping key in journal replay for depth that does not exist because we're recovering from scan\n%s",
 				   buf.buf);
 			k->overwritten = true;
-			goto out;
+			return 0;
 		}
 
 		bch2_trans_iter_exit(&iter);
 		bch2_trans_node_iter_init(trans, &iter, k->btree_id, bk->k.p,
 					  BTREE_MAX_DEPTH, 0, iter_flags);
-		ret =   bch2_btree_iter_traverse(&iter) ?:
-			bch2_btree_increase_depth(trans, iter.path, 0) ?:
-			-BCH_ERR_transaction_restart_nested;
-		goto out;
+
+		try(bch2_btree_iter_traverse(&iter));
+		try(bch2_btree_increase_depth(trans, iter.path, 0));
+		return btree_trans_restart(trans, BCH_ERR_transaction_restart_nested);
 	}
 
 	/* Must be checked with btree locked: */
 	if (k->overwritten)
-		goto out;
+		return 0;
 
 	if (bk->k.type == KEY_TYPE_accounting) {
-		struct bkey_i *n = bch2_trans_subbuf_alloc(trans, &trans->accounting, bk->k.u64s);
-		ret = PTR_ERR_OR_ZERO(n);
-		if (ret)
-			goto out;
-
+		struct bkey_i *n = errptr_try(bch2_trans_subbuf_alloc(trans, &trans->accounting, bk->k.u64s));
 		bkey_copy(n, bk);
-		goto out;
+		return 0;
 	}
 
-	ret = bch2_trans_update(trans, &iter, bk, update_flags);
-out:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return bch2_trans_update(trans, &iter, bk, update_flags);
 }
 
 static int journal_sort_seq_cmp(const void *_l, const void *_r)

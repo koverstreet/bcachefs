@@ -588,6 +588,22 @@ void bch2_trans_node_iter_init(struct btree_trans *, struct btree_iter *,
 			       unsigned, unsigned,
 			       enum btree_iter_update_trigger_flags);
 
+#define bch2_trans_node_iter_class_init(_trans, _btree, _pos, _locks_want, _depth, _flags)\
+({										\
+	struct btree_iter iter;							\
+	bch2_trans_node_iter_init(_trans, &iter, (_btree), (_pos),		\
+				  (_locks_want), (_depth), (_flags));		\
+	iter;									\
+})
+
+DEFINE_CLASS(btree_node_iter, struct btree_iter,
+	     bch2_trans_iter_exit(&_T),
+	     bch2_trans_node_iter_class_init(trans, btree, pos, locks_want, depth, flags),
+	     struct btree_trans *trans,
+	     enum btree_id btree, struct bpos pos,
+	     unsigned locks_want, unsigned depth,
+	     enum btree_iter_update_trigger_flags flags);
+
 void bch2_trans_copy_iter(struct btree_iter *, struct btree_iter *);
 
 void bch2_set_btree_iter_dontneed(struct btree_iter *);
