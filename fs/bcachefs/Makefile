@@ -109,6 +109,7 @@ bcachefs-y		:=			\
 	util/varint.o				\
 	vendor/closure.o			\
 	vendor/min_heap.o			\
+	vfs/fiemap.o				\
 	vfs/fs.o				\
 	vfs/ioctl.o				\
 	vfs/io.o				\
