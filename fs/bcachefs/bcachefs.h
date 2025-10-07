@@ -412,9 +412,6 @@ do {									\
 		"Reread btree nodes at various points to verify the "	\
 		"mergesort in the read path against modifications "	\
 		"done in memory")					\
-	BCH_DEBUG_PARAM(verify_all_btree_replicas,			\
-		"When reading btree nodes, read all replicas and "	\
-		"compare them")						\
 	BCH_DEBUG_PARAM(backpointers_no_use_write_buffer,		\
 		"Don't use the write buffer for backpointers, enabling "\
 		"extra runtime checks")					\
