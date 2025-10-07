@@ -317,6 +317,13 @@ static struct bch_inode_opts *bch2_extent_get_io_opts(struct btree_trans *trans,
 	u32 restart_count = trans->restart_count;
 	int ret = 0;
 
+	if (io_opts->fs_io_opts.change_cookie != atomic_read(&c->opt_change_cookie)) {
+		bch2_inode_opts_get(c, &io_opts->fs_io_opts);
+
+		io_opts->cur_inum = 0;
+		io_opts->d.nr = 0;
+	}
+
 	if (btree_iter_path(trans, extent_iter)->level)
 		return &io_opts->fs_io_opts;
 
