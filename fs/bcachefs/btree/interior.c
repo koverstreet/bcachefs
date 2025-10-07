@@ -17,6 +17,8 @@
 #include "btree/iter.h"
 #include "btree/journal_overlay.h"
 #include "btree/locking.h"
+#include "btree/sort.h"
+#include "btree/write.h"
 
 #include "data/extents.h"
 #include "data/keylist.h"
