@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef _BCACHEFS_JOURNAL_IO_H
-#define _BCACHEFS_JOURNAL_IO_H
+#ifndef _BCACHEFS_JOURNAL_READ_H
+#define _BCACHEFS_JOURNAL_READ_H
+
+#include "data/checksum.h"
 
 #include "util/darray.h"
 
@@ -39,6 +41,16 @@ static inline struct jset_entry *__jset_entry_type_next(struct jset *jset,
 	for_each_jset_entry_type(entry, jset, BCH_JSET_ENTRY_btree_keys)\
 		jset_entry_for_each_key(entry, k)
 
+static inline struct nonce journal_nonce(const struct jset *jset)
+{
+	return (struct nonce) {{
+		[0] = 0,
+		[1] = ((__le32 *) &jset->seq)[0],
+		[2] = ((__le32 *) &jset->seq)[1],
+		[3] = BCH_NONCE_JOURNAL,
+	}};
+}
+
 int bch2_journal_entry_validate(struct bch_fs *, struct jset *,
 				struct jset_entry *, unsigned, int,
 				struct bkey_validate_context);
@@ -47,6 +59,9 @@ void bch2_journal_entry_to_text(struct printbuf *, struct bch_fs *,
 
 void bch2_journal_ptrs_to_text(struct printbuf *, struct bch_fs *,
 			       struct journal_replay *);
+
+int bch2_jset_validate(struct bch_fs *, struct bch_dev *, struct jset *,
+		       u64, enum bch_validate_flags);
 
 struct u64_range {
 	u64	start;
@@ -57,22 +72,4 @@ struct u64_range bch2_journal_entry_missing_range(struct bch_fs *, u64, u64);
 
 int bch2_journal_read(struct bch_fs *, u64 *, u64 *, u64 *);
 
-CLOSURE_CALLBACK(bch2_journal_write);
-
-static inline struct jset_entry *jset_entry_init(struct jset_entry **end, size_t size)
-{
-	struct jset_entry *entry = *end;
-	unsigned u64s = DIV_ROUND_UP(size, sizeof(u64));
-
-	memset(entry, 0, u64s * sizeof(u64));
-	/*
-	 * The u64s field counts from the start of data, ignoring the shared
-	 * fields.
-	 */
-	entry->u64s = cpu_to_le16(u64s - 1);
-
-	*end = vstruct_next(*end);
-	return entry;
-}
-
-#endif /* _BCACHEFS_JOURNAL_IO_H */
+#endif /* _BCACHEFS_JOURNAL_READ_H */

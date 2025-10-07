@@ -17,8 +17,6 @@
 #include "init/error.h"
 #include "init/passes.h"
 
-#include "journal/io.h"
-
 /*
  * Notes on disk accounting:
  *

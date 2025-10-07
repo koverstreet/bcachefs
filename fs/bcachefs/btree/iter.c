@@ -21,7 +21,7 @@
 #include "init/fs.h"
 
 #include "journal/journal.h"
-#include "journal/io.h"
+#include "journal/read.h"
 
 #include "snapshots/snapshot.h"
 
