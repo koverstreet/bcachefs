@@ -10,7 +10,6 @@
 
 struct bch_fs;
 struct btree;
-struct btree_node_read_all;
 
 static inline unsigned btree_ptr_sectors_written(struct bkey_s_c k)
 {
@@ -22,7 +21,6 @@ static inline unsigned btree_ptr_sectors_written(struct bkey_s_c k)
 struct btree_read_bio {
 	struct bch_fs		*c;
 	struct btree		*b;
-	struct btree_node_read_all *ra;
 	u64			start_time;
 	unsigned		have_ioref:1;
 	unsigned		idx:7;
