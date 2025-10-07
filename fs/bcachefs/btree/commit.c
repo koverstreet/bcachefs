@@ -8,11 +8,12 @@
 #include "alloc/replicas.h"
 
 #include "btree/check.h"
-#include "btree/io.h"
 #include "btree/iter.h"
 #include "btree/journal_overlay.h"
 #include "btree/interior.h"
 #include "btree/key_cache.h"
+#include "btree/sort.h"
+#include "btree/write.h"
 #include "btree/write_buffer.h"
 
 #include "journal/journal.h"

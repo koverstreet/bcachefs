@@ -15,14 +15,15 @@
 #include "alloc/foreground.h"
 #include "alloc/replicas.h"
 
-#include "btree/bkey_sort.h"
 #include "btree/cache.h"
 #include "btree/check.h"
 #include "btree/journal_overlay.h"
-#include "btree/key_cache.h"
-#include "btree/node_scan.h"
 #include "btree/interior.h"
 #include "btree/io.h"
+#include "btree/key_cache.h"
+#include "btree/node_scan.h"
+#include "btree/sort.h"
+#include "btree/write.h"
 #include "btree/write_buffer.h"
 
 #include "data/checksum.h"
