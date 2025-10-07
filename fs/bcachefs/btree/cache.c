@@ -8,6 +8,7 @@
 #include "btree/io.h"
 #include "btree/iter.h"
 #include "btree/locking.h"
+#include "btree/write.h"
 
 #include "debug/debug.h"
 
