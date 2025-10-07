@@ -2,6 +2,8 @@
 #ifndef _BCACHEFS_FS_IO_PAGECACHE_H
 #define _BCACHEFS_FS_IO_PAGECACHE_H
 
+#include "vfs/io.h"
+
 #include <linux/pagemap.h>
 
 typedef DARRAY(struct folio *) folios;
