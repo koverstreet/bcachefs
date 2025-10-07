@@ -13,10 +13,10 @@
 #include "btree/check.h"
 #include "btree/update.h"
 #include "btree/interior.h"
-#include "btree/io.h"
 #include "btree/iter.h"
 #include "btree/journal_overlay.h"
 #include "btree/locking.h"
+#include "btree/read.h"
 #include "btree/sort.h"
 #include "btree/write.h"
 

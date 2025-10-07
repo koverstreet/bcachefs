@@ -9,9 +9,9 @@
 
 #include "btree/bkey_buf.h"
 #include "btree/interior.h"
-#include "btree/io.h"
 #include "btree/journal_overlay.h"
 #include "btree/node_scan.h"
+#include "btree/read.h"
 #include "btree/update.h"
 
 #include "data/move.h"

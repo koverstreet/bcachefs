@@ -11,7 +11,7 @@
 #include "btree/bkey_buf.h"
 #include "btree/check.h"
 #include "btree/interior.h"
-#include "btree/io.h"
+#include "btree/read.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 

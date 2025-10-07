@@ -12,8 +12,8 @@
 
 #include "btree/bkey_methods.h"
 #include "btree/cache.h"
-#include "btree/io.h"
 #include "btree/iter.h"
+#include "btree/read.h"
 #include "btree/update.h"
 
 #include "data/checksum.h"

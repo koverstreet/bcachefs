@@ -14,9 +14,9 @@
 #include "btree/bkey_methods.h"
 #include "btree/cache.h"
 #include "btree/interior.h"
-#include "btree/io.h"
 #include "btree/iter.h"
 #include "btree/locking.h"
+#include "btree/read.h"
 #include "btree/update.h"
 
 #include "data/extents.h"
