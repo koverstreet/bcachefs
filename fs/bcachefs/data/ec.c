@@ -315,14 +315,16 @@ static int mark_stripe_bucket(struct btree_trans *trans,
 					    (bch2_bkey_val_to_text(&buf, c, s.s_c), buf.buf)))
 			return bch_err_throw(c, mark_stripe);
 
-		bucket_lock(g);
-		struct bch_alloc_v4 old = bucket_m_to_alloc(*g), new = old;
-		int ret = __mark_stripe_bucket(trans, ca, s, ptr_idx, deleting, bucket, &new, flags);
-		alloc_to_bucket(g, new);
-		bucket_unlock(g);
+		struct bch_alloc_v4 old, new;
 
-		if (!ret)
-			ret = bch2_alloc_key_to_dev_counters(trans, ca, &old, &new, flags);
+		scoped_guard(bucket_lock, g) {
+			old = new = bucket_m_to_alloc(*g);
+
+			try(__mark_stripe_bucket(trans, ca, s, ptr_idx, deleting, bucket, &new, flags));
+			alloc_to_bucket(g, new);
+		}
+
+		try(bch2_alloc_key_to_dev_counters(trans, ca, &old, &new, flags));
 	}
 
 	return 0;
