@@ -54,6 +54,10 @@ static inline void bucket_lock(struct bucket *b)
 			 TASK_UNINTERRUPTIBLE);
 }
 
+DEFINE_GUARD(bucket_lock, struct bucket *,
+	     bucket_lock(_T),
+	     bucket_unlock(_T));
+
 static inline struct bucket *gc_bucket(struct bch_dev *ca, size_t b)
 {
 	return bucket_valid(ca, b)
