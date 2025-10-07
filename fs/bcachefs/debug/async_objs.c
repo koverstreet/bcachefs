@@ -8,7 +8,7 @@
 
 #include "bcachefs.h"
 
-#include "btree/io.h"
+#include "btree/read.h"
 #include "btree/write.h"
 
 #include "data/read.h"

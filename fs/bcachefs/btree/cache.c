@@ -5,9 +5,9 @@
 #include "btree/bbpos.h"
 #include "btree/bkey_buf.h"
 #include "btree/cache.h"
-#include "btree/io.h"
 #include "btree/iter.h"
 #include "btree/locking.h"
+#include "btree/read.h"
 #include "btree/write.h"
 
 #include "debug/debug.h"

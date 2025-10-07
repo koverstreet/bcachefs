@@ -12,7 +12,6 @@
 
 #include "btree/bkey_buf.h"
 #include "btree/cache.h"
-#include "btree/io.h"
 #include "btree/key_cache.h"
 #include "btree/update.h"
 #include "btree/interior.h"

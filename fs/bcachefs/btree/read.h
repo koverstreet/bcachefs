@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef _BCACHEFS_BTREE_IO_H
-#define _BCACHEFS_BTREE_IO_H
+#ifndef _BCACHEFS_BTREE_READ_H
+#define _BCACHEFS_BTREE_READ_H
 
 #include "btree/bkey_methods.h"
 #include "btree/bset.h"
@@ -162,4 +162,4 @@ static inline void compat_btree_node(unsigned level, enum btree_id btree_id,
 		bn->min_key = bpos_nosnap_successor(bn->min_key);
 }
 
-#endif /* _BCACHEFS_BTREE_IO_H */
+#endif /* _BCACHEFS_BTREE_READ_H */
