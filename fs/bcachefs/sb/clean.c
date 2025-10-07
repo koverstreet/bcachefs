@@ -7,7 +7,8 @@
 
 #include "btree/interior.h"
 
-#include "journal/io.h"
+#include "journal/read.h"
+#include "journal/write.h"
 
 #include "sb/clean.h"
 #include "sb/io.h"

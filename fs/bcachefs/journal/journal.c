@@ -15,9 +15,9 @@
 #include "init/fs.h"
 
 #include "journal/journal.h"
-#include "journal/io.h"
 #include "journal/reclaim.h"
 #include "journal/seq_blacklist.h"
+#include "journal/write.h"
 
 #include "util/enumerated_ref.h"
 
