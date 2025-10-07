@@ -1009,55 +1009,20 @@ int bch2_inode_create(struct btree_trans *trans,
 	}
 }
 
-static int bch2_inode_delete_keys(struct btree_trans *trans,
-				  subvol_inum inum, enum btree_id id)
+static int bch2_inode_delete_keys(struct btree_trans *trans, subvol_inum inum, enum btree_id btree)
 {
-	struct bkey_s_c k;
-	struct bkey_i delete;
-	struct bpos end = POS(inum.inum, U64_MAX);
-	u32 snapshot;
-	int ret = 0;
-
-	/*
-	 * We're never going to be deleting partial extents, no need to use an
-	 * extent iterator:
-	 */
-	CLASS(btree_iter, iter)(trans, id, POS(inum.inum, 0), BTREE_ITER_intent);
-
-	while (1) {
-		bch2_trans_begin(trans);
-
-		ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot);
-		if (ret)
-			goto err;
-
-		bch2_btree_iter_set_snapshot(&iter, snapshot);
-
-		k = bch2_btree_iter_peek_max(&iter, end);
-		ret = bkey_err(k);
-		if (ret)
-			goto err;
-
-		if (!k.k)
-			break;
-
+	return for_each_btree_key_in_subvolume_max(trans, iter, btree,
+					    POS(inum.inum, 0),
+					    POS(inum.inum, U64_MAX),
+					    inum.subvol,
+					    BTREE_ITER_intent, k, ({
+		struct bkey_i delete;
 		bkey_init(&delete.k);
 		delete.k.p = iter.pos;
 
-		if (iter.flags & BTREE_ITER_is_extents)
-			bch2_key_resize(&delete.k,
-					bpos_min(end, k.k->p).offset -
-					iter.pos.offset);
-
-		ret = bch2_trans_update(trans, &iter, &delete, 0) ?:
-		      bch2_trans_commit(trans, NULL, NULL,
-					BCH_TRANS_COMMIT_no_enospc);
-err:
-		if (ret && !bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			break;
-	}
-
-	return ret;
+		bch2_trans_update(trans, &iter, &delete, 0) ?:
+		bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
+	}));
 }
 
 static int bch2_inode_rm_trans(struct btree_trans *trans, subvol_inum inum, u32 *snapshot)
