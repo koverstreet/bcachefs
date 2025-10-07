@@ -2,7 +2,7 @@
 #include "bcachefs.h"
 
 #include "btree/interior.h"
-#include "btree/io.h"
+#include "btree/read.h"
 #include "btree/sort.h"
 #include "btree/write.h"
 

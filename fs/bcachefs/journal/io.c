@@ -7,9 +7,9 @@
 #include "alloc/foreground.h"
 #include "alloc/replicas.h"
 
-#include "btree/io.h"
 #include "btree/interior.h"
 #include "btree/journal_overlay.h"
+#include "btree/read.h"
 #include "btree/write_buffer.h"
 
 #include "data/checksum.h"
