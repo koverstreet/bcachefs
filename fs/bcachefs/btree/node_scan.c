@@ -10,8 +10,6 @@
 #include "btree/node_scan.h"
 #include "btree/read.h"
 
-#include "journal/io.h"
-
 #include "init/error.h"
 #include "init/passes.h"
 

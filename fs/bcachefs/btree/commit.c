@@ -17,7 +17,7 @@
 #include "btree/write_buffer.h"
 
 #include "journal/journal.h"
-#include "journal/io.h"
+#include "journal/read.h"
 #include "journal/reclaim.h"
 
 #include "init/error.h"

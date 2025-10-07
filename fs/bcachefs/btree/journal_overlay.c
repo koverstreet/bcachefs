@@ -9,7 +9,7 @@
 #include "btree/cache.h"
 #include "btree/journal_overlay.h"
 
-#include "journal/io.h"
+#include "journal/read.h"
 
 #include <linux/sort.h>
 
