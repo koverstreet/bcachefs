@@ -76,11 +76,12 @@ bcachefs-y		:=			\
 	init/recovery.o				\
 	init/passes.o				\
 	journal/init.o				\
-	journal/io.o				\
 	journal/journal.o			\
+	journal/read.o				\
 	journal/reclaim.o			\
 	journal/sb.o				\
 	journal/seq_blacklist.o			\
+	journal/write.o				\
 	opts.o					\
 	sb/clean.o				\
 	sb/counters.o				\

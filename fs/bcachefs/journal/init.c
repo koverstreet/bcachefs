@@ -2,8 +2,8 @@
 #include "bcachefs.h"
 
 #include "journal/init.h"
-#include "journal/io.h"
 #include "journal/journal.h"
+#include "journal/read.h"
 #include "journal/reclaim.h"
 #include "journal/sb.h"
 #include "journal/seq_blacklist.h"
