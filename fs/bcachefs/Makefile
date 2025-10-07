@@ -19,19 +19,20 @@ bcachefs-y		:=			\
 	alloc/replicas.o			\
 	btree/bkey.o				\
 	btree/bkey_methods.o			\
-	btree/bkey_sort.o			\
 	btree/bset.o				\
 	btree/cache.o				\
 	btree/check.o				\
+	btree/commit.o				\
+	btree/interior.o			\
 	btree/io.o				\
 	btree/iter.o				\
 	btree/journal_overlay.o			\
 	btree/key_cache.o			\
 	btree/locking.o				\
 	btree/node_scan.o			\
-	btree/commit.o				\
+	btree/sort.o				\
 	btree/update.o				\
-	btree/interior.o			\
+	btree/write.o				\
 	btree/write_buffer.o			\
 	data/checksum.o				\
 	data/compress.o				\

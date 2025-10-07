@@ -7,11 +7,15 @@
  */
 
 #include "bcachefs.h"
-#include "async_objs.h"
+
 #include "btree/io.h"
-#include "debug.h"
+#include "btree/write.h"
+
 #include "data/read.h"
 #include "data/write.h"
+
+#include "debug/async_objs.h"
+#include "debug/debug.h"
 
 #include <linux/debugfs.h>
 

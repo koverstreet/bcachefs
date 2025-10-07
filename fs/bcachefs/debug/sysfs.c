@@ -18,13 +18,14 @@
 #include "alloc/replicas.h"
 
 #include "btree/cache.h"
+#include "btree/check.h"
+#include "btree/interior.h"
 #include "btree/io.h"
 #include "btree/iter.h"
 #include "btree/key_cache.h"
 #include "btree/update.h"
-#include "btree/interior.h"
+#include "btree/write.h"
 #include "btree/write_buffer.h"
-#include "btree/check.h"
 
 #include "data/compress.h"
 #include "data/copygc.h"
