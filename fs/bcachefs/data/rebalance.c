@@ -715,11 +715,11 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 
 	r->state = BCH_REBALANCE_scanning;
 
-	int ret = for_each_btree_key_max(trans, iter, BTREE_ID_extents,
-					 r->scan_start.pos, r->scan_end.pos,
-					 BTREE_ITER_intent|
-					 BTREE_ITER_all_snapshots|
-					 BTREE_ITER_prefetch, k, ({
+	try(for_each_btree_key_max(trans, iter, BTREE_ID_extents,
+				   r->scan_start.pos, r->scan_end.pos,
+				   BTREE_ITER_intent|
+				   BTREE_ITER_all_snapshots|
+				   BTREE_ITER_prefetch, k, ({
 		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
 
 		atomic64_add(k.k->size, &r->scan_stats.sectors_seen);
@@ -733,15 +733,13 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 		 REFLINK_P_MAY_UPDATE_OPTIONS(bkey_s_c_to_reflink_p(k).v)
 		 ? do_rebalance_scan_indirect(trans, bkey_s_c_to_reflink_p(k), opts)
 		 : 0);
-	}));
-	if (ret)
-		goto out;
+	})));
 
-	if (!inum) {
-		ret = for_each_btree_key_max(trans, iter, BTREE_ID_reflink,
-					     POS_MIN, POS_MAX,
-					     BTREE_ITER_all_snapshots|
-					     BTREE_ITER_prefetch, k, ({
+	if (!inum)
+		try(for_each_btree_key_max(trans, iter, BTREE_ID_reflink,
+					   POS_MIN, POS_MAX,
+					   BTREE_ITER_all_snapshots|
+					   BTREE_ITER_prefetch, k, ({
 			ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
 
 			atomic64_add(k.k->size, &r->scan_stats.sectors_seen);
@@ -750,14 +748,11 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 						snapshot_io_opts, iter.pos, &iter, k,
 						SET_NEEDS_REBALANCE_opt_change);
 			PTR_ERR_OR_ZERO(opts);
-		}));
-		if (ret)
-			goto out;
-	}
+		})));
 
-	ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			bch2_clear_rebalance_needs_scan(trans, inum, cookie));
-out:
+	try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+			bch2_clear_rebalance_needs_scan(trans, inum, cookie)));
+
 	*sectors_scanned += atomic64_read(&r->scan_stats.sectors_seen);
 	/*
 	 * Ensure that the rebalance_work entries we created are seen by the
@@ -768,8 +763,7 @@ out:
 	bch2_move_stats_exit(&r->scan_stats, c);
 
 	bch2_btree_write_buffer_flush_sync(trans);
-
-	return ret;
+	return 0;
 }
 
 static void rebalance_wait(struct bch_fs *c)
