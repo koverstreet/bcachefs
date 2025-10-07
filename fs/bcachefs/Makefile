@@ -24,12 +24,12 @@ bcachefs-y		:=			\
 	btree/check.o				\
 	btree/commit.o				\
 	btree/interior.o			\
-	btree/io.o				\
 	btree/iter.o				\
 	btree/journal_overlay.o			\
 	btree/key_cache.o			\
 	btree/locking.o				\
 	btree/node_scan.o			\
+	btree/read.o				\
 	btree/sort.o				\
 	btree/update.o				\
 	btree/write.o				\

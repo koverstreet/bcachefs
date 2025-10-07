@@ -20,8 +20,8 @@
 #include "btree/locking.h"
 #include "btree/node_scan.h"
 #include "btree/interior.h"
-#include "btree/io.h"
 #include "btree/journal_overlay.h"
+#include "btree/read.h"
 
 #include "data/ec.h"
 #include "data/extents.h"
