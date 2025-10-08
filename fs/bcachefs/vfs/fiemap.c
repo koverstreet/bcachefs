@@ -243,7 +243,6 @@ int bch2_fiemap(struct inode *vinode, struct fiemap_extent_info *info,
 
 	bch2_bkey_buf_init(&cur.kbuf);
 	bch2_bkey_buf_init(&prev.kbuf);
-	bkey_init(&prev.kbuf.k->k);
 
 	CLASS(btree_trans, trans)(c);
 

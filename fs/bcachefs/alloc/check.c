@@ -670,7 +670,6 @@ int bch2_check_alloc_to_lru_refs(struct bch_fs *c)
 {
 	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
-	bkey_init(&last_flushed.k->k);
 
 	struct progress_indicator_state progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_alloc));

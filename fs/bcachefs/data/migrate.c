@@ -219,7 +219,6 @@ int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, unsigned dev_idx, unsig
 
 	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
-	bkey_init(&last_flushed.k->k);
 
 	return bch2_btree_write_buffer_flush_sync(trans) ?:
 		for_each_btree_key_max_commit(trans, iter, BTREE_ID_backpointers,
