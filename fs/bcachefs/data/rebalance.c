@@ -923,9 +923,9 @@ static int bch2_extent_set_rb_pending(struct btree_trans *trans,
 }
 
 noinline_for_stack
-static int do_rebalance_extent(struct moving_context *ctxt,
-			       struct per_snapshot_io_opts *snapshot_io_opts,
-			       struct bpos work_pos)
+static int __do_rebalance_extent(struct moving_context *ctxt,
+				 struct per_snapshot_io_opts *snapshot_io_opts,
+				 struct btree_iter *iter, struct bkey_s_c k)
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
@@ -934,15 +934,11 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	ctxt->stats = &c->rebalance.work_stats;
 	c->rebalance.state = BCH_REBALANCE_working;
 
-	CLASS(btree_iter, iter)(trans, work_pos.inode ? BTREE_ID_extents : BTREE_ID_reflink,
-				work_pos, BTREE_ITER_all_snapshots);
-	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
-
 	struct bch_inode_opts *opts =
 		errptr_try(bch2_extent_get_io_opts(trans, snapshot_io_opts, k));
 
 	try(bch2_update_rebalance_opts(trans, snapshot_io_opts, opts,
-				       &iter, k, SET_NEEDS_REBALANCE_other));
+				       iter, k, SET_NEEDS_REBALANCE_other));
 	try(bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
 
 	const struct bch_extent_rebalance *r = bch2_bkey_rebalance_opts(k);
@@ -964,7 +960,7 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	bch2_bkey_buf_reassemble(&sk, k);
 	k = bkey_i_to_s_c(sk.k);
 
-	ret = bch2_move_extent(ctxt, NULL, &iter, k, *opts, data_opts);
+	ret = bch2_move_extent(ctxt, NULL, iter, k, *opts, data_opts);
 	if (ret) {
 		if (bch2_err_matches(ret, ENOMEM)) {
 			/* memory allocation failure, wait for some IO to finish */
@@ -977,7 +973,7 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 			if (rb_work_btree(bch2_bkey_rebalance_opts(k)) !=
 			    BTREE_ID_rebalance_work_pending)
 				try(bch2_trans_relock(trans) ?:
-				    bch2_extent_set_rb_pending(trans, &iter, k));
+				    bch2_extent_set_rb_pending(trans, iter, k));
 
 			return 0;
 		}
@@ -996,6 +992,21 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	 */
 	trans->restart_count = restart_count;
 	return 0;
+}
+
+static int do_rebalance_extent(struct moving_context *ctxt,
+			       struct per_snapshot_io_opts *snapshot_io_opts,
+			       struct bpos work_pos)
+{
+	struct btree_trans *trans = ctxt->trans;
+
+	CLASS(btree_iter, iter)(trans,
+				work_pos.inode ? BTREE_ID_extents : BTREE_ID_reflink,
+				work_pos,
+				BTREE_ITER_all_snapshots);
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
+
+	return __do_rebalance_extent(ctxt, snapshot_io_opts, &iter, k);
 }
 
 static int do_rebalance_scan_bp(struct btree_trans *trans,
