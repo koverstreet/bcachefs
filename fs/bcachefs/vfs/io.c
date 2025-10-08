@@ -471,7 +471,7 @@ int bchfs_truncate(struct mnt_idmap *idmap,
 	}
 
 	inode_dio_wait(&inode->v);
-	bch2_pagecache_block_get(inode);
+	guard(bch2_pagecache_block)(inode);
 
 	ret = bch2_inode_find_by_inum(c, inode_inum(inode), &inode_u);
 	if (ret)
@@ -553,7 +553,6 @@ int bchfs_truncate(struct mnt_idmap *idmap,
 
 	ret = bch2_setattr_nonsize(idmap, inode, iattr);
 err:
-	bch2_pagecache_block_put(inode);
 	return bch2_err_class(ret);
 }
 
@@ -832,7 +831,7 @@ long bch2_fallocate_dispatch(struct file *file, int mode,
 
 	inode_lock(&inode->v);
 	inode_dio_wait(&inode->v);
-	bch2_pagecache_block_get(inode);
+	guard(bch2_pagecache_block)(inode);
 
 	ret = file_modified(file);
 	if (ret)
@@ -849,7 +848,6 @@ long bch2_fallocate_dispatch(struct file *file, int mode,
 	else
 		ret = bch_err_throw(c, unsupported_fallocate_mode);
 err:
-	bch2_pagecache_block_put(inode);
 	inode_unlock(&inode->v);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_fallocate);
 
