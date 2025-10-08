@@ -1037,9 +1037,9 @@ static int bch2_extent_set_rb_pending(struct btree_trans *trans,
 	return bch2_trans_commit(trans, NULL, NULL, 0);
 }
 
-static int do_rebalance_extent(struct moving_context *ctxt,
-			       struct per_snapshot_io_opts *snapshot_io_opts,
-			       struct bbpos pos)
+static int __do_rebalance_extent(struct moving_context *ctxt,
+				 struct per_snapshot_io_opts *snapshot_io_opts,
+				 struct btree_iter *iter, struct bkey_s_c k)
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
@@ -1048,12 +1048,9 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	ctxt->stats = &c->rebalance.work_stats;
 	c->rebalance.state = BCH_REBALANCE_working;
 
-	CLASS(btree_iter, iter)(trans, pos.btree, pos.pos, BTREE_ITER_all_snapshots);
-	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
-
 	int ret = bch2_move_extent(ctxt, NULL, snapshot_io_opts,
 				   rebalance_set_data_opts, NULL,
-				   &iter, 0, k);
+				   iter, 0, k);
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		return ret;
 	if (bch2_err_matches(ret, EROFS))
@@ -1063,7 +1060,7 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 		if (rb_work_btree(bch2_bkey_rebalance_opts(c, k)) !=
 		    BTREE_ID_reconcile_pending)
 			try(bch2_trans_relock(trans) ?:
-			    bch2_extent_set_rb_pending(trans, &iter, k));
+			    bch2_extent_set_rb_pending(trans, iter, k));
 
 		return 0;
 	}
@@ -1080,6 +1077,18 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	 */
 	trans->restart_count = restart_count;
 	return 0;
+}
+
+static int do_rebalance_extent(struct moving_context *ctxt,
+			       struct per_snapshot_io_opts *snapshot_io_opts,
+			       struct bbpos pos)
+{
+	struct btree_trans *trans = ctxt->trans;
+
+	CLASS(btree_iter, iter)(trans, pos.btree, pos.pos, BTREE_ITER_all_snapshots);
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
+
+	return __do_rebalance_extent(ctxt, snapshot_io_opts, &iter, k);
 }
 
 static int do_rebalance_scan_bp(struct btree_trans *trans,
