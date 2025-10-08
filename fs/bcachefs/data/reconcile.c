@@ -217,6 +217,35 @@ static inline unsigned rb_accounting_counters(const struct bch_extent_reconcile 
 	return ret;
 }
 
+static int trigger_dev_counters(struct btree_trans *trans,
+				struct bkey_s_c k,
+				const struct bch_extent_reconcile *r,
+				enum btree_iter_update_trigger_flags flags)
+{
+	if (!r || !r->ptrs_moving || r->pending)
+		return 0;
+
+	struct bch_fs *c = trans->c;
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+	unsigned ptr_bit = 1;
+
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if (r->ptrs_moving & ptr_bit) {
+			u64 v[1] = { p.crc.compressed_size };
+			if (flags & BTREE_TRIGGER_overwrite)
+				v[0] = -v[0];
+
+			try(bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc, v, dev_leaving, p.ptr.dev));
+		}
+
+		ptr_bit <<= 1;
+	}
+
+	return 0;
+}
+
 static inline struct bpos data_to_rb_work_pos(enum btree_id btree, struct bpos pos)
 {
 	if (btree == BTREE_ID_reflink ||
@@ -283,6 +312,9 @@ int __bch2_trigger_extent_rebalance(struct btree_trans *trans,
 		try(bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc, v, reconcile_work, c));
 	}
 
+	try(trigger_dev_counters(trans, old, old_r, flags & ~BTREE_TRIGGER_insert));
+	try(trigger_dev_counters(trans, new, new_r, flags & ~BTREE_TRIGGER_overwrite));
+
 	return 0;
 }
 
@@ -340,8 +372,16 @@ static bool bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 
 				if (!poisoned &&
 				    r.background_target &&
-				    !bch2_dev_in_target(c, p.ptr.dev, r.background_target))
+				    !bch2_dev_in_target(c, p.ptr.dev, r.background_target)) {
 					r.need_rb |= BIT(BCH_REBALANCE_background_target);
+					r.ptrs_moving |= ptr_bit;
+				}
+
+				if (ca->mi.state == BCH_MEMBER_STATE_failed) {
+					r.need_rb |= BIT(BCH_REBALANCE_data_replicas);
+					r.hipri = 1;
+					r.ptrs_moving |= ptr_bit;
+				}
 
 				unsigned d = ca->mi.state != BCH_MEMBER_STATE_failed
 					? __extent_ptr_durability(ca, &p)

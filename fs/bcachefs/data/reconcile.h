@@ -37,11 +37,9 @@ int __bch2_trigger_extent_rebalance(struct btree_trans *,
 				    const struct bch_extent_reconcile *,
 				    enum btree_iter_update_trigger_flags);
 
-static inline unsigned rb_trigger_bits(const struct bch_extent_reconcile *r)
+static inline unsigned rb_needs_trigger(const struct bch_extent_reconcile *r)
 {
-	return r
-		? r->need_rb | (r->pending << 5) | (r->hipri << 6)
-		: 0;
+	return r ? r->need_rb|r->ptrs_moving : 0;
 }
 
 static inline int bch2_trigger_extent_rebalance(struct btree_trans *trans,
@@ -52,11 +50,8 @@ static inline int bch2_trigger_extent_rebalance(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	const struct bch_extent_reconcile *old_r = bch2_bkey_rebalance_opts(c, old);
 	const struct bch_extent_reconcile *new_r = bch2_bkey_rebalance_opts(c, new);
-	unsigned old_a = rb_trigger_bits(old_r);
-	unsigned new_a = rb_trigger_bits(new_r);
 
-	return old_a != new_a ||
-		(old.k->size != new.k->size && (old_a|new_a))
+	return rb_needs_trigger(old_r) || rb_needs_trigger(new_r)
 		? __bch2_trigger_extent_rebalance(trans, btree, level, old, new, old_r, new_r, flags)
 		: 0;
 }
