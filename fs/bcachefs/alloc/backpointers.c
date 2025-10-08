@@ -427,7 +427,6 @@ int bch2_check_btree_backpointers(struct bch_fs *c)
 
 	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
-	bkey_init(&last_flushed.k->k);
 
 	CLASS(btree_trans, trans)(c);
 	return for_each_btree_key_commit(trans, iter,
@@ -1114,7 +1113,6 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 	unsigned nr_iters = 0;
 
 	bch2_bkey_buf_init(&s.last_flushed);
-	bkey_init(&s.last_flushed.k->k);
 
 	ret = for_each_btree_key(trans, iter, BTREE_ID_alloc,
 				 POS_MIN, BTREE_ITER_prefetch, k, ({
@@ -1273,7 +1271,6 @@ static int bch2_check_backpointers_to_extents_pass(struct btree_trans *trans,
 {
 	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
-	bkey_init(&last_flushed.k->k);
 
 	struct progress_indicator_state progress;
 	bch2_progress_init(&progress, trans->c, BIT_ULL(BTREE_ID_backpointers));
