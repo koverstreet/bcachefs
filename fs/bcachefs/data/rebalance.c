@@ -806,7 +806,7 @@ static int do_rebalance(struct moving_context *ctxt)
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	struct bch_fs_rebalance *r = &c->rebalance;
-	struct btree_iter extent_iter = {};
+	CLASS(btree_iter_uninit, extent_iter)(trans);
 	u64 sectors_scanned = 0;
 	u32 kick = r->kick;
 	int ret = 0;
@@ -844,7 +844,6 @@ static int do_rebalance(struct moving_context *ctxt)
 			break;
 	}
 
-	bch2_trans_iter_exit(&extent_iter);
 	per_snapshot_io_opts_exit(&snapshot_io_opts);
 	bch2_move_stats_exit(&r->work_stats, c);
 
