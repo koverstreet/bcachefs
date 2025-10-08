@@ -112,6 +112,7 @@ static inline bool data_type_is_hidden(enum bch_data_type type)
 	x(rebalance_work,	7,	1)	\
 	x(inum,			8,	3)	\
 	x(rebalance_work_v2,	9,	1)	\
+	x(dev_leaving,		10,	1)
 
 enum disk_accounting_type {
 #define x(f, nr, ...)	BCH_DISK_ACCOUNTING_##f	= nr,
@@ -215,6 +216,15 @@ struct bch_acct_rebalance_work_v2 {
 	__u8			type;
 };
 
+struct bch_acct_dev_leaving {
+	__u32			dev;
+};
+
+/*
+ * XXX: need per-device counters for "how much data are we going to move off of
+ * this device
+ */
+
 struct disk_accounting_pos {
 	union {
 	struct {
@@ -230,6 +240,7 @@ struct disk_accounting_pos {
 		struct bch_acct_rebalance_work	rebalance_work;
 		struct bch_acct_inum		inum;
 		struct bch_acct_rebalance_work_v2 rebalance_work_v2;
+		struct bch_acct_dev_leaving	dev_leaving;
 		} __packed;
 	} __packed;
 		struct bpos			_pad;

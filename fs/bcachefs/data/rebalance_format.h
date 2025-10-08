@@ -52,7 +52,7 @@
 struct bch_extent_rebalance {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	__u64	type:6,
-		unused:5,
+		ptrs_moving:5,
 		hipri:1,
 		pending:1,
 		need_rb:5,
@@ -88,7 +88,7 @@ struct bch_extent_rebalance {
 		need_rb:5,
 		pending:1,
 		hipri:1,
-		unused:5,
+		ptrs_moving:5,
 		type:6;
 #endif
 };
