@@ -900,10 +900,11 @@ static int bch2_rename2(struct mnt_idmap *idmap,
 
 	CLASS(btree_trans, trans)(c);
 
-	ret   = bch2_subvol_is_ro_trans(trans, src_dir->ei_inum.subvol) ?:
-		bch2_subvol_is_ro_trans(trans, dst_dir->ei_inum.subvol);
+	ret = lockrestart_do(trans,
+		bch2_subvol_is_ro_trans(trans, src_dir->ei_inum.subvol) ?:
+		bch2_subvol_is_ro_trans(trans, dst_dir->ei_inum.subvol));
 	if (ret)
-		goto err_tx_restart;
+		goto err;
 
 	if (inode_attr_changing(dst_dir, src_inode, Inode_opt_project)) {
 		ret = bch2_fs_quota_transfer(c, src_inode,
