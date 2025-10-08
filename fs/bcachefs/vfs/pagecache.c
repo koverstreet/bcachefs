@@ -619,7 +619,7 @@ vm_fault_t bch2_page_mkwrite(struct vm_fault *vmf)
 	 * a bch2_write_invalidate_inode_pages_range() that works without dropping
 	 * page lock before invalidating page
 	 */
-	bch2_pagecache_add_get(inode);
+	guard(bch2_pagecache_add)(inode);
 
 	folio_lock(folio);
 	u64 isize = i_size_read(&inode->v);
@@ -647,7 +647,6 @@ vm_fault_t bch2_page_mkwrite(struct vm_fault *vmf)
 	folio_wait_stable(folio);
 	ret = VM_FAULT_LOCKED;
 out:
-	bch2_pagecache_add_put(inode);
 	sb_end_pagefault(inode->v.i_sb);
 
 	return ret;

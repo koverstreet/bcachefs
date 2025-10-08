@@ -43,12 +43,20 @@ struct bch_inode_info {
 	struct bch_inode_unpacked ei_inode;
 };
 
-#define bch2_pagecache_add_put(i)	bch2_two_state_unlock(&i->ei_pagecache_lock, 0)
-#define bch2_pagecache_add_tryget(i)	bch2_two_state_trylock(&i->ei_pagecache_lock, 0)
-#define bch2_pagecache_add_get(i)	bch2_two_state_lock(&i->ei_pagecache_lock, 0)
+#define bch2_pagecache_add_put(i)	bch2_two_state_unlock(&(i)->ei_pagecache_lock, 0)
+#define bch2_pagecache_add_tryget(i)	bch2_two_state_trylock(&(i)->ei_pagecache_lock, 0)
+#define bch2_pagecache_add_get(i)	bch2_two_state_lock(&(i)->ei_pagecache_lock, 0)
 
-#define bch2_pagecache_block_put(i)	bch2_two_state_unlock(&i->ei_pagecache_lock, 1)
-#define bch2_pagecache_block_get(i)	bch2_two_state_lock(&i->ei_pagecache_lock, 1)
+#define bch2_pagecache_block_put(i)	bch2_two_state_unlock(&(i)->ei_pagecache_lock, 1)
+#define bch2_pagecache_block_get(i)	bch2_two_state_lock(&(i)->ei_pagecache_lock, 1)
+
+DEFINE_GUARD(bch2_pagecache_add, struct bch_inode_info *,
+	     bch2_pagecache_add_get(_T),
+	     bch2_pagecache_add_put(_T));
+
+DEFINE_GUARD(bch2_pagecache_block, struct bch_inode_info *,
+	     bch2_pagecache_block_get(_T),
+	     bch2_pagecache_block_put(_T));
 
 static inline subvol_inum inode_inum(struct bch_inode_info *inode)
 {
