@@ -48,7 +48,7 @@ static int resume_logged_op(struct btree_trans *trans, struct btree_iter *iter,
 		    (bch2_bkey_val_to_text(&buf, c, k),
 		     buf.buf));
 
-	struct bkey_buf sk;
+	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&sk);
 	bch2_bkey_buf_reassemble(&sk, k);
 
@@ -57,8 +57,6 @@ static int resume_logged_op(struct btree_trans *trans, struct btree_iter *iter,
 		fn->resume(trans, sk.k);
 
 	ret = bch2_logged_op_finish(trans, sk.k);
-
-	bch2_bkey_buf_exit(&sk);
 fsck_err:
 	return ret ?: trans_was_restarted(trans, restart_count);
 }

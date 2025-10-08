@@ -453,15 +453,16 @@ int bch2_move_data_btree(struct moving_context *ctxt,
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
-	struct per_snapshot_io_opts snapshot_io_opts;
 	struct bch_inode_opts *io_opts;
-	struct bkey_buf sk;
 	struct btree_iter iter, reflink_iter = {};
 	struct bkey_s_c k;
 	struct data_update_opts data_opts;
 	int ret = 0, ret2;
 
+	struct per_snapshot_io_opts snapshot_io_opts;
 	per_snapshot_io_opts_init(&snapshot_io_opts, c);
+
+	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&sk);
 
 	if (ctxt->stats) {
@@ -594,7 +595,6 @@ next_nondata:
 out:
 	bch2_trans_iter_exit(&reflink_iter);
 	bch2_trans_iter_exit(&iter);
-	bch2_bkey_buf_exit(&sk);
 	per_snapshot_io_opts_exit(&snapshot_io_opts);
 
 	return ret;
@@ -662,9 +662,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	bool is_kthread = current->flags & PF_KTHREAD;
 	struct btree_iter iter = {};
-	struct bkey_buf sk;
 	struct bkey_s_c k;
-	struct bkey_buf last_flushed;
 	u64 check_mismatch_done = bucket_start;
 	int ret = 0;
 
@@ -681,8 +679,11 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	struct bpos bp_start	= bucket_pos_to_bp_start(ca, POS(dev, bucket_start));
 	struct bpos bp_end	= bucket_pos_to_bp_end(ca, POS(dev, bucket_end));
 
+	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
 	bkey_init(&last_flushed.k->k);
+
+	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&sk);
 
 	/*
@@ -696,7 +697,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	if (!bch2_err_matches(ret, EROFS))
 		bch_err_msg(c, ret, "flushing btree write buffer");
 	if (ret)
-		goto err;
+		return ret;
 
 	while (!(ret = bch2_move_ratelimit(ctxt))) {
 		if (is_kthread && kthread_should_stop())
@@ -709,7 +710,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
 		if (ret)
-			goto err;
+			return ret;
 
 		if (!k.k || bkey_gt(k.k->p, bp_end))
 			break;
@@ -741,7 +742,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
 		if (ret)
-			goto err;
+			return ret;
 		if (!k.k)
 			goto next;
 
@@ -769,8 +770,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		if (data_opts.scrub &&
 		    !bch2_dev_idx_is_online(c, data_opts.read_dev)) {
 			bch2_trans_iter_exit(&iter);
-			ret = bch_err_throw(c, device_offline);
-			break;
+			return bch_err_throw(c, device_offline);
 		}
 
 		bch2_bkey_buf_reassemble(&sk, k);
@@ -799,7 +799,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 			continue;
 		}
 		if (ret)
-			goto err;
+			return ret;
 
 		if (ctxt->stats)
 			atomic64_add(sectors, &ctxt->stats->sectors_seen);
@@ -810,9 +810,7 @@ next:
 	while (check_mismatch_done < bucket_end)
 		bch2_check_bucket_backpointer_mismatch(trans, ca, check_mismatch_done++,
 						       copygc, &last_flushed);
-err:
-	bch2_bkey_buf_exit(&sk);
-	bch2_bkey_buf_exit(&last_flushed);
+
 	return ret;
 }
 

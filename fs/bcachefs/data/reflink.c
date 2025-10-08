@@ -562,7 +562,6 @@ s64 bch2_remap_range(struct bch_fs *c,
 		     bool may_change_src_io_path_opts)
 {
 	struct bkey_s_c src_k;
-	struct bkey_buf new_dst, new_src;
 	struct bpos dst_start = POS(dst_inum.inum, dst_offset);
 	struct bpos src_start = POS(src_inum.inum, src_offset);
 	struct bpos dst_end = dst_start, src_end = src_start;
@@ -581,8 +580,11 @@ s64 bch2_remap_range(struct bch_fs *c,
 	dst_end.offset += remap_sectors;
 	src_end.offset += remap_sectors;
 
+	struct bkey_buf new_dst __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&new_dst);
+	struct bkey_buf new_src __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&new_src);
+
 	CLASS(btree_trans, trans)(c);
 
 	CLASS(btree_iter, src_iter)(trans, BTREE_ID_extents, src_start, BTREE_ITER_intent);
@@ -709,9 +711,6 @@ s64 bch2_remap_range(struct bch_fs *c,
 						  BCH_TRANS_COMMIT_no_enospc);
 		}
 	} while (bch2_err_matches(ret2, BCH_ERR_transaction_restart));
-
-	bch2_bkey_buf_exit(&new_src);
-	bch2_bkey_buf_exit(&new_dst);
 
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_reflink);
 

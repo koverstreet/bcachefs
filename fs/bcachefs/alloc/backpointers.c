@@ -425,20 +425,17 @@ int bch2_check_btree_backpointers(struct bch_fs *c)
 
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_backpointers));
 
-	struct bkey_buf last_flushed;
+	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
 	bkey_init(&last_flushed.k->k);
 
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key_commit(trans, iter,
+	return for_each_btree_key_commit(trans, iter,
 			BTREE_ID_backpointers, POS_MIN, 0, k,
 			NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 		progress_update_iter(trans, &progress, &iter);
 		bch2_check_backpointer_has_valid_bucket(trans, k, &last_flushed);
 	}));
-
-	bch2_bkey_buf_exit(&last_flushed);
-	return ret;
 }
 
 struct extents_to_bp_state {
@@ -1274,21 +1271,18 @@ static int bch2_check_backpointers_to_extents_pass(struct btree_trans *trans,
 						   struct bbpos start,
 						   struct bbpos end)
 {
-	struct bkey_buf last_flushed;
-	struct progress_indicator_state progress;
-
+	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
 	bkey_init(&last_flushed.k->k);
+
+	struct progress_indicator_state progress;
 	bch2_progress_init(&progress, trans->c, BIT_ULL(BTREE_ID_backpointers));
 
-	int ret = for_each_btree_key(trans, iter, BTREE_ID_backpointers,
+	return for_each_btree_key(trans, iter, BTREE_ID_backpointers,
 				     POS_MIN, BTREE_ITER_prefetch, k, ({
 			bch2_progress_update_iter(trans, &progress, &iter, "backpointers_to_extents");
 			check_one_backpointer(trans, start, end, k, &last_flushed);
 	}));
-
-	bch2_bkey_buf_exit(&last_flushed);
-	return ret;
 }
 
 int bch2_check_backpointers_to_extents(struct bch_fs *c)
