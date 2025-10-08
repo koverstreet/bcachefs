@@ -305,7 +305,7 @@ void bch2_btree_node_update_key_early(struct btree_trans *trans,
 	int ret;
 
 	bch2_bkey_buf_init(&tmp);
-	bch2_bkey_buf_reassemble(&tmp, c, old);
+	bch2_bkey_buf_reassemble(&tmp, old);
 
 	b = bch2_btree_node_get_noiter(trans, tmp.k, btree, level, true);
 	if (!IS_ERR_OR_NULL(b)) {
@@ -320,7 +320,7 @@ void bch2_btree_node_update_key_early(struct btree_trans *trans,
 		six_unlock_read(&b->c.lock);
 	}
 
-	bch2_bkey_buf_exit(&tmp, c);
+	bch2_bkey_buf_exit(&tmp);
 }
 
 __flatten

@@ -107,7 +107,7 @@ static inline int bch2_read_indirect_extent(struct btree_trans *trans,
 	if (bkey_deleted(k.k))
 		return bch_err_throw(c, missing_indirect_extent);
 
-	bch2_bkey_buf_reassemble(extent, c, k);
+	bch2_bkey_buf_reassemble(extent, k);
 	return 0;
 }
 

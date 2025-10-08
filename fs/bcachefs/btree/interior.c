@@ -126,7 +126,7 @@ int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
 			goto err;
 		}
 
-		bch2_bkey_buf_reassemble(&prev, c, k);
+		bch2_bkey_buf_reassemble(&prev, k);
 		bch2_btree_and_journal_iter_advance(&iter);
 	}
 
@@ -146,7 +146,7 @@ int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
 	}
 out:
 	bch2_btree_and_journal_iter_exit(&iter);
-	bch2_bkey_buf_exit(&prev, c);
+	bch2_bkey_buf_exit(&prev);
 	return ret;
 err:
 	bch2_btree_id_level_to_text(&buf, b->c.btree_id, b->c.level);
@@ -2364,7 +2364,7 @@ static void async_btree_node_rewrite_work(struct work_struct *work)
 
 	closure_wake_up(&c->btree_node_rewrites_wait);
 
-	bch2_bkey_buf_exit(&a->key, c);
+	bch2_bkey_buf_exit(&a->key);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_node_rewrite);
 	kfree(a);
 }
@@ -2381,7 +2381,7 @@ void bch2_btree_node_rewrite_async(struct bch_fs *c, struct btree *b)
 	INIT_WORK(&a->work, async_btree_node_rewrite_work);
 
 	bch2_bkey_buf_init(&a->key);
-	bch2_bkey_buf_copy(&a->key, c, &b->key);
+	bch2_bkey_buf_copy(&a->key, &b->key);
 
 	bool now = false, pending = false;
 
@@ -2401,7 +2401,7 @@ void bch2_btree_node_rewrite_async(struct bch_fs *c, struct btree *b)
 	} else if (pending) {
 		/* bch2_do_pending_node_rewrites will execute */
 	} else {
-		bch2_bkey_buf_exit(&a->key, c);
+		bch2_bkey_buf_exit(&a->key);
 		kfree(a);
 	}
 }
@@ -2444,7 +2444,7 @@ void bch2_free_pending_node_rewrites(struct bch_fs *c)
 		if (!a)
 			break;
 
-		bch2_bkey_buf_exit(&a->key, c);
+		bch2_bkey_buf_exit(&a->key);
 		kfree(a);
 	}
 }

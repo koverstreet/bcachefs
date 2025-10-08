@@ -584,11 +584,11 @@ static void btree_and_journal_iter_prefetch(struct btree_and_journal_iter *_iter
 		if (!k.k)
 			break;
 
-		bch2_bkey_buf_reassemble(&tmp, c, k);
+		bch2_bkey_buf_reassemble(&tmp, k);
 		bch2_btree_node_prefetch(iter.trans, NULL, tmp.k, iter.journal.btree_id, level - 1);
 	}
 
-	bch2_bkey_buf_exit(&tmp, c);
+	bch2_bkey_buf_exit(&tmp);
 }
 
 struct bkey_s_c bch2_btree_and_journal_iter_peek(struct bch_fs *c, struct btree_and_journal_iter *iter)
