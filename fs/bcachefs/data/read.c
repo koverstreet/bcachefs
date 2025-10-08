@@ -659,7 +659,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 	{
 		CLASS(btree_trans, trans)(c);
 
-		struct bkey_buf sk;
+		struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
 		bch2_bkey_buf_init(&sk);
 		bkey_init(&sk.k->k);
 		get_rbio_extent(trans, rbio, &sk);
@@ -718,8 +718,6 @@ static void bch2_rbio_retry(struct work_struct *work)
 
 			bch2_print_str_ratelimited(c, KERN_ERR, buf.buf);
 		}
-
-		bch2_bkey_buf_exit(&sk);
 
 		/* drop trans before calling rbio_done() */
 	}
@@ -1408,14 +1406,15 @@ int __bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
 		unsigned flags)
 {
 	struct bch_fs *c = trans->c;
-	struct bkey_buf sk;
 	struct bkey_s_c k;
 	enum btree_id data_btree;
 	int ret;
 
 	EBUG_ON(rbio->data_update);
 
+	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&sk);
+
 	CLASS(btree_iter, iter)(trans, BTREE_ID_extents,
 				POS(inum.inum, bvec_iter.bi_sector),
 				BTREE_ITER_slots);
@@ -1510,7 +1509,6 @@ err:
 			bch2_rbio_done(rbio);
 	}
 
-	bch2_bkey_buf_exit(&sk);
 	return ret;
 }
 

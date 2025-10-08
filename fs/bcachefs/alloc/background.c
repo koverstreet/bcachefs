@@ -1372,7 +1372,7 @@ static void bch2_do_invalidates_work(struct work_struct *work)
 	CLASS(btree_trans, trans)(c);
 	int ret = 0;
 
-	struct bkey_buf last_flushed;
+	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
 	bkey_init(&last_flushed.k->k);
 
@@ -1411,7 +1411,6 @@ restart_err:
 	}
 	bch2_trans_iter_exit(&iter);
 err:
-	bch2_bkey_buf_exit(&last_flushed);
 	enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_do_invalidates);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_invalidate);
 }

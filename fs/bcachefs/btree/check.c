@@ -327,7 +327,6 @@ static int bch2_btree_repair_topology_recurse(struct btree_trans *trans, struct 
 	struct bch_fs *c = trans->c;
 	struct btree_and_journal_iter iter;
 	struct bkey_s_c k;
-	struct bkey_buf prev_k, cur_k;
 	struct btree *prev = NULL, *cur = NULL;
 	bool have_child, new_pass = false;
 	CLASS(printbuf, buf)();
@@ -336,6 +335,8 @@ static int bch2_btree_repair_topology_recurse(struct btree_trans *trans, struct 
 	if (!b->c.level)
 		return 0;
 
+	struct bkey_buf prev_k __cleanup(bch2_bkey_buf_exit);
+	struct bkey_buf cur_k __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&prev_k);
 	bch2_bkey_buf_init(&cur_k);
 again:
@@ -517,8 +518,6 @@ fsck_err:
 
 	BUG_ON(!ret && bch2_btree_node_check_topology(trans, b));
 
-	bch2_bkey_buf_exit(&prev_k);
-	bch2_bkey_buf_exit(&cur_k);
 	if (!bch2_err_matches(ret, BCH_ERR_topology_repair))
 		bch_err_fn(c, ret);
 	return ret;

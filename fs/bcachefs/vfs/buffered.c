@@ -176,14 +176,15 @@ static void bchfs_read(struct btree_trans *trans,
 		       struct readpages_iter *readpages_iter)
 {
 	struct bch_fs *c = trans->c;
-	struct bkey_buf sk;
 	int flags = BCH_READ_retry_if_stale|
 		BCH_READ_may_promote;
 	int ret = 0;
 
 	rbio->subvol = inum.subvol;
 
+	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&sk);
+
 	bch2_trans_begin(trans);
 	CLASS(btree_iter, iter)(trans, BTREE_ID_extents,
 			     POS(inum.inum, rbio->bio.bi_iter.bi_sector),
@@ -280,8 +281,6 @@ err:
 		rbio->bio.bi_status = BLK_STS_IOERR;
 		bio_endio(&rbio->bio);
 	}
-
-	bch2_bkey_buf_exit(&sk);
 }
 
 void bch2_readahead(struct readahead_control *ractl)
