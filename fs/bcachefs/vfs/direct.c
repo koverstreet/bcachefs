@@ -221,9 +221,8 @@ ssize_t bch2_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 		if (ret >= 0)
 			iocb->ki_pos += ret;
 	} else {
-		bch2_pagecache_add_get(inode);
+		guard(bch2_pagecache_add)(inode);
 		ret = filemap_read(iocb, iter, ret);
-		bch2_pagecache_add_put(inode);
 	}
 out:
 	return bch2_err_class(ret);
