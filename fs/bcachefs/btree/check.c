@@ -349,7 +349,7 @@ again:
 		BUG_ON(bpos_gt(k.k->p, b->data->max_key));
 
 		bch2_btree_and_journal_iter_advance(&iter);
-		bch2_bkey_buf_reassemble(&cur_k, c, k);
+		bch2_bkey_buf_reassemble(&cur_k, k);
 
 		cur = bch2_btree_node_get_noiter(trans, cur_k.k,
 					b->c.btree_id, b->c.level - 1,
@@ -427,7 +427,7 @@ again:
 
 		prev = cur;
 		cur = NULL;
-		bch2_bkey_buf_copy(&prev_k, c, cur_k.k);
+		bch2_bkey_buf_copy(&prev_k, cur_k.k);
 	}
 
 	if (!ret && !IS_ERR_OR_NULL(prev)) {
@@ -459,7 +459,7 @@ again:
 	iter.prefetch = true;
 
 	while ((k = bch2_btree_and_journal_iter_peek(c, &iter)).k) {
-		bch2_bkey_buf_reassemble(&cur_k, c, k);
+		bch2_bkey_buf_reassemble(&cur_k, k);
 		bch2_btree_and_journal_iter_advance(&iter);
 
 		cur = bch2_btree_node_get_noiter(trans, cur_k.k,
@@ -517,8 +517,8 @@ fsck_err:
 
 	BUG_ON(!ret && bch2_btree_node_check_topology(trans, b));
 
-	bch2_bkey_buf_exit(&prev_k, c);
-	bch2_bkey_buf_exit(&cur_k, c);
+	bch2_bkey_buf_exit(&prev_k);
+	bch2_bkey_buf_exit(&cur_k);
 	if (!bch2_err_matches(ret, BCH_ERR_topology_repair))
 		bch_err_fn(c, ret);
 	return ret;

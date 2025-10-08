@@ -437,7 +437,7 @@ int bch2_check_btree_backpointers(struct bch_fs *c)
 		bch2_check_backpointer_has_valid_bucket(trans, k, &last_flushed);
 	}));
 
-	bch2_bkey_buf_exit(&last_flushed, c);
+	bch2_bkey_buf_exit(&last_flushed);
 	return ret;
 }
 
@@ -1067,7 +1067,7 @@ static int bch2_pin_backpointer_nodes_with_missing(struct btree_trans *trans,
 			if (mem_may_pin <= 0)
 				break;
 
-			bch2_bkey_buf_reassemble(&tmp, c, k);
+			bch2_bkey_buf_reassemble(&tmp, k);
 			struct btree_path *path = btree_iter_path(trans, &iter);
 
 			BUG_ON(path->level != 1);
@@ -1091,7 +1091,7 @@ static int bch2_pin_backpointer_nodes_with_missing(struct btree_trans *trans,
 				break;
 			}
 
-			bch2_bkey_buf_reassemble(&tmp, c, k);
+			bch2_bkey_buf_reassemble(&tmp, k);
 			struct btree_path *path = btree_iter_path(trans, &iter);
 
 			BUG_ON(path->level != 1);
@@ -1176,7 +1176,7 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 		bch2_bucket_bitmap_free(&ca->bucket_backpointer_empty);
 	}
 err:
-	bch2_bkey_buf_exit(&s.last_flushed, c);
+	bch2_bkey_buf_exit(&s.last_flushed);
 	bch2_btree_cache_unpin(c);
 	return ret;
 }
@@ -1274,7 +1274,6 @@ static int bch2_check_backpointers_to_extents_pass(struct btree_trans *trans,
 						   struct bbpos start,
 						   struct bbpos end)
 {
-	struct bch_fs *c = trans->c;
 	struct bkey_buf last_flushed;
 	struct progress_indicator_state progress;
 
@@ -1288,7 +1287,7 @@ static int bch2_check_backpointers_to_extents_pass(struct btree_trans *trans,
 			check_one_backpointer(trans, start, end, k, &last_flushed);
 	}));
 
-	bch2_bkey_buf_exit(&last_flushed, c);
+	bch2_bkey_buf_exit(&last_flushed);
 	return ret;
 }
 

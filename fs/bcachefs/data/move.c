@@ -395,7 +395,7 @@ err:
 		}
 	}
 
-	bch2_bkey_buf_exit(&u->k, c);
+	bch2_bkey_buf_exit(&u->k);
 	kfree(u);
 
 	return ret;
@@ -559,7 +559,7 @@ root_err:
 		 * The iterator gets unlocked by __bch2_read_extent - need to
 		 * save a copy of @k elsewhere:
 		 */
-		bch2_bkey_buf_reassemble(&sk, c, k);
+		bch2_bkey_buf_reassemble(&sk, k);
 		k = bkey_i_to_s_c(sk.k);
 
 		if (!level)
@@ -594,7 +594,7 @@ next_nondata:
 out:
 	bch2_trans_iter_exit(&reflink_iter);
 	bch2_trans_iter_exit(&iter);
-	bch2_bkey_buf_exit(&sk, c);
+	bch2_bkey_buf_exit(&sk);
 	per_snapshot_io_opts_exit(&snapshot_io_opts);
 
 	return ret;
@@ -773,7 +773,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 			break;
 		}
 
-		bch2_bkey_buf_reassemble(&sk, c, k);
+		bch2_bkey_buf_reassemble(&sk, k);
 		k = bkey_i_to_s_c(sk.k);
 
 		/* move_extent will drop locks */
@@ -811,8 +811,8 @@ next:
 		bch2_check_bucket_backpointer_mismatch(trans, ca, check_mismatch_done++,
 						       copygc, &last_flushed);
 err:
-	bch2_bkey_buf_exit(&sk, c);
-	bch2_bkey_buf_exit(&last_flushed, c);
+	bch2_bkey_buf_exit(&sk);
+	bch2_bkey_buf_exit(&last_flushed);
 	return ret;
 }
 
