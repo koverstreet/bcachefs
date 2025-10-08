@@ -540,33 +540,13 @@ static int bch2_bkey_clear_needs_rebalance(struct btree_trans *trans,
 	return bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 }
 
-static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
-			struct per_snapshot_io_opts *snapshot_io_opts,
-			struct bpos work_pos,
-			struct btree_iter *extent_iter,
-			struct bch_inode_opts **opts_ret,
-			struct data_update_opts *data_opts)
+static int rebalance_set_data_opts(struct btree_trans *trans,
+				   struct btree_iter *extent_iter,
+				   struct bkey_s_c k,
+				   struct bch_inode_opts *opts,
+				   struct data_update_opts *data_opts)
 {
 	struct bch_fs *c = trans->c;
-
-	bch2_trans_iter_exit(extent_iter);
-	bch2_trans_iter_init(trans, extent_iter,
-			     work_pos.inode ? BTREE_ID_extents : BTREE_ID_reflink,
-			     work_pos,
-			     BTREE_ITER_all_snapshots);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(extent_iter);
-	if (bkey_err(k))
-		return k;
-
-	struct bch_inode_opts *opts =
-		bch2_extent_get_apply_io_opts(trans, snapshot_io_opts,
-					      extent_iter->pos, extent_iter, k,
-					      SET_NEEDS_REBALANCE_other);
-	int ret = PTR_ERR_OR_ZERO(opts);
-	if (ret)
-		return bkey_s_c_err(ret);
-
-	*opts_ret = opts;
 
 	memset(data_opts, 0, sizeof(*data_opts));
 	data_opts->rewrite_ptrs		= bch2_bkey_ptrs_need_rebalance(c, opts, k);
@@ -581,10 +561,8 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 		 * We'll now need a full scan before this extent is picked up
 		 * again:
 		 */
-		int ret = bch2_bkey_clear_needs_rebalance(trans, extent_iter, k);
-		if (ret)
-			return bkey_s_c_err(ret);
-		return bkey_s_c_null;
+		try(bch2_bkey_clear_needs_rebalance(trans, extent_iter, k));
+		return 1;
 	}
 
 	if (trace_rebalance_extent_enabled()) {
@@ -618,8 +596,7 @@ static struct bkey_s_c next_rebalance_extent(struct btree_trans *trans,
 		trace_rebalance_extent(c, buf.buf);
 	}
 	count_event(c, rebalance_extent);
-
-	return k;
+	return 0;
 }
 
 noinline_for_stack
@@ -630,31 +607,38 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
-	struct bch_fs_rebalance *r = &trans->c->rebalance;
+
+	ctxt->stats = &c->rebalance.work_stats;
+	c->rebalance.state = BCH_REBALANCE_working;
+
+	bch2_trans_iter_exit(extent_iter);
+	bch2_trans_iter_init(trans, extent_iter,
+			     work_pos.inode ? BTREE_ID_extents : BTREE_ID_reflink,
+			     work_pos,
+			     BTREE_ITER_all_snapshots);
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(extent_iter));
+
+	struct bch_inode_opts *io_opts =
+		errptr_try(bch2_extent_get_apply_io_opts(trans, snapshot_io_opts,
+					      extent_iter->pos, extent_iter, k,
+					      SET_NEEDS_REBALANCE_other));
+
 	struct data_update_opts data_opts;
-	struct bch_inode_opts *io_opts;
-
-	ctxt->stats = &r->work_stats;
-	r->state = BCH_REBALANCE_working;
-
-	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&sk);
-
-	struct bkey_s_c k = bkey_try(next_rebalance_extent(trans, snapshot_io_opts, work_pos,
-							   extent_iter, &io_opts, &data_opts));
-	if (!k.k)
-		return 0;
-
-	atomic64_add(k.k->size, &ctxt->stats->sectors_seen);
+	int ret = rebalance_set_data_opts(trans, extent_iter, k, io_opts, &data_opts);
+	if (ret)
+		return ret < 0 ? ret : 0;
 
 	/*
 	 * The iterator gets unlocked by __bch2_read_extent - need to
 	 * save a copy of @k elsewhere:
 	 */
+
+	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
+	bch2_bkey_buf_init(&sk);
 	bch2_bkey_buf_reassemble(&sk, k);
 	k = bkey_i_to_s_c(sk.k);
 
-	int ret = bch2_move_extent(ctxt, NULL, extent_iter, k, *io_opts, data_opts);
+	ret = bch2_move_extent(ctxt, NULL, extent_iter, k, *io_opts, data_opts);
 	if (ret) {
 		if (bch2_err_matches(ret, ENOMEM)) {
 			/* memory allocation failure, wait for some IO to finish */
@@ -668,6 +652,7 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 		/* skip it and continue, XXX signal failure */
 	}
 
+	atomic64_add(k.k->size, &ctxt->stats->sectors_seen);
 	return 0;
 }
 
