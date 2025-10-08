@@ -1062,7 +1062,7 @@ static ssize_t bch2_buffered_write(struct kiocb *iocb, struct iov_iter *iter)
 	ssize_t written = 0;
 	int ret = 0;
 
-	bch2_pagecache_add_get(inode);
+	guard(bch2_pagecache_add)(inode);
 
 	if (pos > inode->v.i_size)
 		bch2_zero_pagecache_posteof(inode);
@@ -1121,8 +1121,6 @@ again:
 
 		balance_dirty_pages_ratelimited(mapping);
 	} while (iov_iter_count(iter));
-
-	bch2_pagecache_add_put(inode);
 
 	return written ? written : ret;
 }
