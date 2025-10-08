@@ -758,6 +758,9 @@ int bch2_write_begin(
 
 	bch2_pagecache_add_get(inode);
 
+	if (pos > inode->v.i_size)
+		bch2_zero_pagecache_posteof(inode);
+
 	folio = __filemap_get_folio(mapping, pos >> PAGE_SHIFT,
 				    FGP_WRITEBEGIN | fgf_set_order(len),
 				    mapping_gfp_mask(mapping));
@@ -1060,6 +1063,9 @@ static ssize_t bch2_buffered_write(struct kiocb *iocb, struct iov_iter *iter)
 	int ret = 0;
 
 	bch2_pagecache_add_get(inode);
+
+	if (pos > inode->v.i_size)
+		bch2_zero_pagecache_posteof(inode);
 
 	do {
 		unsigned offset = pos & (PAGE_SIZE - 1);
