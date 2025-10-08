@@ -1304,7 +1304,7 @@ static void btree_node_scrub_work(struct work_struct *work)
 			bch_err_fn_ratelimited(c, ret);
 	}
 
-	bch2_bkey_buf_exit(&scrub->key, c);
+	bch2_bkey_buf_exit(&scrub->key);
 	bch2_btree_bounce_free(c, c->opts.btree_node_size, scrub->used_mempool, scrub->buf);
 	enumerated_ref_put(&scrub->ca->io_ref[READ], BCH_DEV_READ_REF_btree_node_scrub);
 	kfree(scrub);
@@ -1363,7 +1363,7 @@ int bch2_btree_node_scrub(struct btree_trans *trans,
 	scrub->btree		= btree;
 	scrub->level		= level;
 	bch2_bkey_buf_init(&scrub->key);
-	bch2_bkey_buf_reassemble(&scrub->key, c, k);
+	bch2_bkey_buf_reassemble(&scrub->key, k);
 	scrub->seq		= bkey_s_c_to_btree_ptr_v2(k).v->seq;
 
 	INIT_WORK(&scrub->work, btree_node_scrub_work);

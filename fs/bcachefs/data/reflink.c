@@ -642,7 +642,7 @@ s64 bch2_remap_range(struct bch_fs *c,
 		if (src_k.k->type != KEY_TYPE_reflink_p) {
 			bch2_btree_iter_set_pos_to_extent_start(&src_iter);
 
-			bch2_bkey_buf_reassemble(&new_src, c, src_k);
+			bch2_bkey_buf_reassemble(&new_src, src_k);
 			src_k = bkey_i_to_s_c(new_src.k);
 
 			ret = bch2_make_extent_indirect(trans, &src_iter,
@@ -710,8 +710,8 @@ s64 bch2_remap_range(struct bch_fs *c,
 		}
 	} while (bch2_err_matches(ret2, BCH_ERR_transaction_restart));
 
-	bch2_bkey_buf_exit(&new_src, c);
-	bch2_bkey_buf_exit(&new_dst, c);
+	bch2_bkey_buf_exit(&new_src);
+	bch2_bkey_buf_exit(&new_dst);
 
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_reflink);
 

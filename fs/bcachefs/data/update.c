@@ -499,7 +499,7 @@ void bch2_data_update_exit(struct data_update *update)
 		bch2_bkey_nocow_unlock(c, k, 0);
 	bkey_put_dev_refs(c, k);
 	bch2_disk_reservation_put(c, &update->op.res);
-	bch2_bkey_buf_exit(&update->k, c);
+	bch2_bkey_buf_exit(&update->k);
 }
 
 static noinline_for_stack
@@ -825,7 +825,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 	}
 
 	bch2_bkey_buf_init(&m->k);
-	bch2_bkey_buf_reassemble(&m->k, c, k);
+	bch2_bkey_buf_reassemble(&m->k, k);
 	m->type		= data_opts.btree_insert_flags & BCH_WATERMARK_copygc
 		? BCH_DATA_UPDATE_copygc
 		: BCH_DATA_UPDATE_rebalance;

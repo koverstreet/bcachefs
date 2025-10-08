@@ -1048,8 +1048,6 @@ struct bch_fs {
 
 	atomic64_t		key_version;
 
-	mempool_t		large_bkey_pool;
-
 	/* MOVE.C */
 	struct list_head	moving_context_list;
 	struct mutex		moving_context_lock;

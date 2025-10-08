@@ -124,7 +124,6 @@ static int
 bch2_next_fiemap_pagecache_extent(struct btree_trans *trans, struct bch_inode_info *inode,
 				  u64 start, u64 end, struct bch_fiemap_extent *cur)
 {
-	struct bch_fs		*c = trans->c;
 	struct bkey_i_extent	*delextent;
 	struct bch_extent_ptr	ptr = {};
 	loff_t			dstart = start << 9, dend = end << 9;
@@ -152,7 +151,7 @@ bch2_next_fiemap_pagecache_extent(struct btree_trans *trans, struct bch_inode_in
 	 * pointer for the fill code to add an extent entry. It's explicitly
 	 * zeroed to reflect delayed allocation (i.e. phys offset 0).
 	 */
-	bch2_bkey_buf_realloc(&cur->kbuf, c, sizeof(*delextent) / sizeof(u64));
+	bch2_bkey_buf_realloc(&cur->kbuf, sizeof(*delextent) / sizeof(u64));
 	delextent = bkey_extent_init(cur->kbuf.k);
 	delextent->k.p = POS(inode->ei_inum.inum, dend >> 9);
 	delextent->k.size = (dend - dstart) >> 9;
@@ -198,7 +197,7 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 	if (k.k &&
 	    bkey_le(bpos_max(iter.pos, bkey_start_pos(k.k)),
 		    pagecache_start)) {
-		bch2_bkey_buf_reassemble(&cur->kbuf, trans->c, k);
+		bch2_bkey_buf_reassemble(&cur->kbuf, k);
 		bch2_cut_front(iter.pos, cur->kbuf.k);
 		bch2_cut_back(POS(inode->ei_inum.inum, end), cur->kbuf.k);
 		cur->flags = 0;
@@ -269,7 +268,7 @@ int bch2_fiemap(struct inode *vinode, struct fiemap_extent_info *info,
 				goto err;
 		}
 
-		bch2_bkey_buf_copy(&prev.kbuf, c, cur.kbuf.k);
+		bch2_bkey_buf_copy(&prev.kbuf, cur.kbuf.k);
 		prev.flags = cur.flags;
 	}
 
@@ -279,8 +278,8 @@ int bch2_fiemap(struct inode *vinode, struct fiemap_extent_info *info,
 		ret = bch2_fill_extent(c, info, &prev);
 	}
 err:
-	bch2_bkey_buf_exit(&cur.kbuf, c);
-	bch2_bkey_buf_exit(&prev.kbuf, c);
+	bch2_bkey_buf_exit(&cur.kbuf);
+	bch2_bkey_buf_exit(&prev.kbuf);
 
 	return bch2_err_class(ret < 0 ? ret : 0);
 }

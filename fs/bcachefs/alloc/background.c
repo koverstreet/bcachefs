@@ -1411,7 +1411,7 @@ restart_err:
 	}
 	bch2_trans_iter_exit(&iter);
 err:
-	bch2_bkey_buf_exit(&last_flushed, c);
+	bch2_bkey_buf_exit(&last_flushed);
 	enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_do_invalidates);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_invalidate);
 }

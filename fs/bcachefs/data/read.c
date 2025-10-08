@@ -333,7 +333,7 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 
 	return &op->write.rbio;
 err_remove_list:
-	bch2_bkey_buf_exit(&op->write.k, c);
+	bch2_bkey_buf_exit(&op->write.k);
 	async_object_list_del(c, promote, op->list_idx);
 err_remove_hash:
 	BUG_ON(rhashtable_remove_fast(&c->promote_table, &op->hash,
@@ -544,7 +544,7 @@ static int get_rbio_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	bkey_for_each_ptr(ptrs, ptr)
 		if (bch2_extent_ptr_eq(*ptr, rbio->pick.ptr)) {
-			bch2_bkey_buf_reassemble(sk, trans->c, k);
+			bch2_bkey_buf_reassemble(sk, k);
 			break;
 		}
 
@@ -588,7 +588,7 @@ static noinline int maybe_poison_extent(struct btree_trans *trans, struct bch_re
 	 * checksum
 	 */
 	if (u)
-		bch2_bkey_buf_copy(&u->k, c, new);
+		bch2_bkey_buf_copy(&u->k, new);
 	return 0;
 }
 
@@ -719,7 +719,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 			bch2_print_str_ratelimited(c, KERN_ERR, buf.buf);
 		}
 
-		bch2_bkey_buf_exit(&sk, c);
+		bch2_bkey_buf_exit(&sk);
 
 		/* drop trans before calling rbio_done() */
 	}
@@ -1444,7 +1444,7 @@ int __bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
 			bkey_start_offset(k.k);
 		unsigned sectors = k.k->size - offset_into_extent;
 
-		bch2_bkey_buf_reassemble(&sk, c, k);
+		bch2_bkey_buf_reassemble(&sk, k);
 
 		ret = bch2_read_indirect_extent(trans, &data_btree,
 					&offset_into_extent, &sk);
@@ -1456,7 +1456,7 @@ int __bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
 		if (unlikely(flags & BCH_READ_in_retry)) {
 			if (!bkey_and_val_eq(k, bkey_i_to_s_c(prev_read->k)))
 				failed->nr = 0;
-			bch2_bkey_buf_copy(prev_read, c, sk.k);
+			bch2_bkey_buf_copy(prev_read, sk.k);
 		}
 
 		/*
@@ -1510,7 +1510,7 @@ err:
 			bch2_rbio_done(rbio);
 	}
 
-	bch2_bkey_buf_exit(&sk, c);
+	bch2_bkey_buf_exit(&sk);
 	return ret;
 }
 
