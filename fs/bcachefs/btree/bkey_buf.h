@@ -53,6 +53,7 @@ static inline int bch2_bkey_buf_unpack_noprof(struct bkey_buf *s,
 static inline void bch2_bkey_buf_init(struct bkey_buf *s)
 {
 	s->k = (void *) s->onstack;
+	bkey_init(&s->k->k);
 }
 
 static inline void bch2_bkey_buf_exit(struct bkey_buf *s)

@@ -661,7 +661,6 @@ static void bch2_rbio_retry(struct work_struct *work)
 
 		struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
 		bch2_bkey_buf_init(&sk);
-		bkey_init(&sk.k->k);
 		get_rbio_extent(trans, rbio, &sk);
 
 		if (!bkey_deleted(&sk.k->k) &&

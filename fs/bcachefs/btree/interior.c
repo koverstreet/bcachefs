@@ -61,8 +61,6 @@ int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
 	struct bpos node_min = b->key.k.type == KEY_TYPE_btree_ptr_v2
 		? bkey_i_to_btree_ptr_v2(&b->key)->v.min_key
 		: b->data->min_key;
-	struct btree_and_journal_iter iter;
-	struct bkey_s_c k;
 	CLASS(printbuf, buf)();
 	int ret = 0;
 
@@ -72,7 +70,8 @@ int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
 
 	struct bkey_buf prev __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&prev);
-	bkey_init(&prev.k->k);
+
+	struct btree_and_journal_iter iter;
 	bch2_btree_and_journal_iter_init_node_iter(trans, &iter, b);
 
 	/*
@@ -104,6 +103,7 @@ int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
 	if (!b->c.level)
 		goto out;
 
+	struct bkey_s_c k;
 	while ((k = bch2_btree_and_journal_iter_peek(c, &iter)).k) {
 		if (k.k->type != KEY_TYPE_btree_ptr_v2)
 			goto out;
