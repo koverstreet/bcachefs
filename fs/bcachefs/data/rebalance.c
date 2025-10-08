@@ -633,8 +633,6 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	struct bch_fs_rebalance *r = &trans->c->rebalance;
 	struct data_update_opts data_opts;
 	struct bch_inode_opts *io_opts;
-	struct bkey_s_c k;
-	int ret;
 
 	ctxt->stats = &r->work_stats;
 	r->state = BCH_REBALANCE_working;
@@ -642,11 +640,10 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&sk);
 
-	ret = lockrestart_do(trans,
-		bkey_err(k = next_rebalance_extent(trans, snapshot_io_opts,
-				work_pos, extent_iter, &io_opts, &data_opts)));
-	if (ret || !k.k)
-		return ret;
+	struct bkey_s_c k = bkey_try(next_rebalance_extent(trans, snapshot_io_opts, work_pos,
+							   extent_iter, &io_opts, &data_opts));
+	if (!k.k)
+		return 0;
 
 	atomic64_add(k.k->size, &ctxt->stats->sectors_seen);
 
@@ -657,12 +654,12 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	bch2_bkey_buf_reassemble(&sk, k);
 	k = bkey_i_to_s_c(sk.k);
 
-	ret = bch2_move_extent(ctxt, NULL, extent_iter, k, *io_opts, data_opts);
+	int ret = bch2_move_extent(ctxt, NULL, extent_iter, k, *io_opts, data_opts);
 	if (ret) {
 		if (bch2_err_matches(ret, ENOMEM)) {
 			/* memory allocation failure, wait for some IO to finish */
 			bch2_move_ctxt_wait_for_io(ctxt);
-			ret = bch_err_throw(c, transaction_restart_nested);
+			return bch_err_throw(c, transaction_restart_nested);
 		}
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
@@ -834,8 +831,9 @@ static int do_rebalance(struct moving_context *ctxt)
 					    k->k.p.inode,
 					    le64_to_cpu(bkey_i_to_cookie(k)->v.cookie),
 					    &sectors_scanned)
-			: do_rebalance_extent(ctxt, &snapshot_io_opts,
-					      k->k.p, &extent_iter);
+			: lockrestart_do(trans,
+				do_rebalance_extent(ctxt, &snapshot_io_opts,
+						    k->k.p, &extent_iter));
 		if (ret)
 			break;
 	}
