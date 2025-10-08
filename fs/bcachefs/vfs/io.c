@@ -265,6 +265,23 @@ out:
 
 /* truncate: */
 
+void bch2_zero_pagecache_posteof(struct bch_inode_info *inode)
+{
+	truncate_pagecache(&inode->v, inode->v.i_size);
+
+	if (!(inode->v.i_size & (PAGE_SIZE - 1)))
+		return;
+
+	struct folio *f = filemap_lock_folio(inode->v.i_mapping, inode->v.i_size >> PAGE_SHIFT);
+	if (IS_ERR_OR_NULL(f))
+		return;
+
+	folio_zero_segment(f, inode->v.i_size - folio_pos(f), folio_size(f));
+
+	folio_unlock(f);
+	folio_put(f);
+}
+
 static inline int range_has_data(struct bch_fs *c, u32 subvol,
 				 struct bpos start,
 				 struct bpos end)
@@ -416,6 +433,8 @@ static int bch2_extend(struct mnt_idmap *idmap,
 		       struct iattr *iattr)
 {
 	struct address_space *mapping = inode->v.i_mapping;
+
+	bch2_zero_pagecache_posteof(inode);
 
 	/*
 	 * sync appends:
@@ -757,8 +776,10 @@ static noinline long bchfs_fallocate(struct bch_inode_info *inode, int mode,
 	bool truncated_last_page = false;
 	int ret, ret2 = 0;
 
-	if (!(mode & FALLOC_FL_KEEP_SIZE) && end > inode->v.i_size)
+	if (!(mode & FALLOC_FL_KEEP_SIZE) && end > inode->v.i_size) {
 		try(inode_newsize_ok(&inode->v, end));
+		bch2_zero_pagecache_posteof(inode);
+	}
 
 	if (mode & FALLOC_FL_ZERO_RANGE) {
 		ret = bch2_truncate_folios(inode, offset, end);
@@ -901,6 +922,8 @@ loff_t bch2_remap_file_range(struct file *file_src, loff_t pos_src,
 		goto err;
 
 	aligned_len = round_up((u64) len, block_bytes(c));
+
+	bch2_zero_pagecache_posteof(dst);
 
 	ret = bch2_write_invalidate_inode_pages_range(dst->v.i_mapping,
 				pos_dst, pos_dst + len - 1);
