@@ -831,13 +831,26 @@ static int bch2_clear_rebalance_needs_scan(struct btree_trans *trans, struct bpo
 }
 
 #define REBALANCE_WORK_BUF_NR		1024
-DEFINE_DARRAY_NAMED(darray_rebalance_work, struct bkey_i_cookie);
+DEFINE_DARRAY_NAMED(darray_rebalance_work, struct bkey_i);
 
-static struct bkey_i *next_rebalance_entry(struct btree_trans *trans,
-					   darray_rebalance_work *buf,
-					   enum btree_id btree,
-					   struct bpos *work_pos)
+static struct bkey_s_c next_rebalance_entry(struct btree_trans *trans,
+					    darray_rebalance_work *buf,
+					    enum btree_id btree,
+					    struct bpos *work_pos)
 {
+	if (btree == BTREE_ID_reconcile_scan) {
+		buf->nr = 0;
+
+		int ret = for_each_btree_key(trans, iter, btree, *work_pos,
+				   BTREE_ITER_all_snapshots|BTREE_ITER_prefetch, k, ({
+			bkey_reassemble(&darray_top(*buf), k);
+			return bkey_i_to_s_c(&darray_top(*buf));
+			0;
+		}));
+
+		return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
+	}
+
 	if (unlikely(!buf->nr)) {
 		/*
 		 * Avoid contention with write buffer flush: buffer up rebalance
@@ -846,14 +859,12 @@ static struct bkey_i *next_rebalance_entry(struct btree_trans *trans,
 
 		BUG_ON(!buf->size);;
 
-		bch2_trans_begin(trans);
-
-		for_each_btree_key(trans, iter, btree, *work_pos,
+		int ret = for_each_btree_key(trans, iter, btree, *work_pos,
 				   BTREE_ITER_all_snapshots|BTREE_ITER_prefetch, k, ({
-			/* we previously used darray_make_room */
 			BUG_ON(bkey_bytes(k.k) > sizeof(buf->data[0]));
 
-			bkey_reassemble(&darray_top(*buf).k_i, k);
+			/* we previously used darray_make_room */
+			bkey_reassemble(&darray_top(*buf), k);
 			buf->nr++;
 
 			*work_pos = bpos_successor(iter.pos);
@@ -861,9 +872,11 @@ static struct bkey_i *next_rebalance_entry(struct btree_trans *trans,
 				break;
 			0;
 		}));
+		if (ret)
+			return bkey_s_c_err(ret);
 
 		if (!buf->nr)
-			return NULL;
+			return bkey_s_c_null;
 
 		unsigned l = 0, r = buf->nr - 1;
 		while (l < r) {
@@ -873,7 +886,7 @@ static struct bkey_i *next_rebalance_entry(struct btree_trans *trans,
 		}
 	}
 
-	return &(&darray_pop(buf))->k_i;
+	return bkey_i_to_s_c(&darray_pop(buf));
 }
 
 static int extent_ec_pending(struct btree_trans *trans, struct bkey_ptrs_c ptrs)
@@ -1336,8 +1349,12 @@ static int do_rebalance(struct moving_context *ctxt)
 			work.nr		= 0;
 		}
 
-		struct bkey_i *k = next_rebalance_entry(trans, &work, scan_btrees[i], &work_pos);
-		if (!k) {
+		struct bkey_s_c k = next_rebalance_entry(trans, &work, scan_btrees[i], &work_pos);
+		ret = bkey_err(k);
+		if (ret)
+			break;
+
+		if (!k.k) {
 			if (++i == ARRAY_SIZE(scan_btrees))
 				break;
 
@@ -1349,20 +1366,23 @@ static int do_rebalance(struct moving_context *ctxt)
 			continue;
 		}
 
-		if (k->k.type == KEY_TYPE_cookie &&
-		    rebalance_scan_decode(c, k->k.p.offset).type == REBALANCE_SCAN_pending)
-			bkey_copy(&pending_cookie.k_i, k);
+		if (k.k->type == KEY_TYPE_cookie &&
+		    rebalance_scan_decode(c, k.k->p.offset).type == REBALANCE_SCAN_pending)
+			bkey_reassemble(&pending_cookie.k_i, k);
 
-		ret = k->k.type == KEY_TYPE_cookie
+		ret = k.k->type == KEY_TYPE_cookie
 			? do_rebalance_scan(ctxt, &snapshot_io_opts,
-					    k->k.p,
-					    le64_to_cpu(bkey_i_to_cookie(k)->v.cookie),
+					    k.k->p,
+					    le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie),
 					    &sectors_scanned)
 			: lockrestart_do(trans,
 				do_rebalance_extent(ctxt, &snapshot_io_opts,
-						    rb_work_to_data_pos(k->k.p)));
+						    rb_work_to_data_pos(k.k->p)));
 		if (ret)
 			break;
+
+		if (scan_btrees[i] == BTREE_ID_reconcile_scan)
+			work_pos = bpos_successor(work_pos);
 	}
 
 	if (!ret && !bkey_deleted(&pending_cookie.k))
