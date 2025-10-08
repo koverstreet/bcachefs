@@ -162,8 +162,8 @@ int __must_check bch2_write_inode_size(struct bch_fs *,
 
 int bch2_fsync(struct file *, loff_t, loff_t, int);
 
-int bchfs_truncate(struct mnt_idmap *,
-		  struct bch_inode_info *, struct iattr *);
+void bch2_zero_pagecache_posteof(struct bch_inode_info *);
+int bchfs_truncate(struct mnt_idmap *, struct bch_inode_info *, struct iattr *);
 long bch2_fallocate_dispatch(struct file *, int, loff_t, loff_t);
 
 loff_t bch2_remap_file_range(struct file *, loff_t, struct file *,
