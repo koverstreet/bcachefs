@@ -37,16 +37,18 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct disk_reservation disk_res = { 0 };
-	struct closure cl;
 	struct open_buckets open_buckets = { 0 };
-	struct bkey_buf old, new;
 	unsigned sectors_allocated = 0, new_replicas;
 	bool unwritten = opts.nocow &&
 	    c->sb.version >= bcachefs_metadata_version_unwritten_extents;
 	int ret;
 
+	struct bkey_buf old __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&old);
+	struct bkey_buf new __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&new);
+
+	struct closure cl;
 	closure_init_stack(&cl);
 
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(iter));
@@ -126,8 +128,6 @@ err:
 err_noprint:
 	bch2_open_buckets_put(c, &open_buckets);
 	bch2_disk_reservation_put(c, &disk_res);
-	bch2_bkey_buf_exit(&new);
-	bch2_bkey_buf_exit(&old);
 
 	if (closure_nr_remaining(&cl) != 1) {
 		bch2_trans_unlock_long(trans);

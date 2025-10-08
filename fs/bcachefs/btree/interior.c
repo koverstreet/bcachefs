@@ -64,13 +64,13 @@ int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
 	struct btree_and_journal_iter iter;
 	struct bkey_s_c k;
 	CLASS(printbuf, buf)();
-	struct bkey_buf prev;
 	int ret = 0;
 
 	BUG_ON(b->key.k.type == KEY_TYPE_btree_ptr_v2 &&
 	       !bpos_eq(bkey_i_to_btree_ptr_v2(&b->key)->v.min_key,
 			b->data->min_key));
 
+	struct bkey_buf prev __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&prev);
 	bkey_init(&prev.k->k);
 	bch2_btree_and_journal_iter_init_node_iter(trans, &iter, b);
@@ -146,7 +146,6 @@ int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
 	}
 out:
 	bch2_btree_and_journal_iter_exit(&iter);
-	bch2_bkey_buf_exit(&prev);
 	return ret;
 err:
 	bch2_btree_id_level_to_text(&buf, b->c.btree_id, b->c.level);
