@@ -1121,7 +1121,6 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 
 	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
-	bkey_init(&last_flushed.k->k);
 
 	return for_each_btree_key_max_commit(trans, bp_iter, BTREE_ID_backpointers,
 			bucket_pos_to_bp_start(ca, bucket_pos),
@@ -2257,7 +2256,6 @@ int bch2_check_stripe_to_lru_refs(struct btree_trans *trans)
 {
 	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
-	bkey_init(&last_flushed.k->k);
 
 	return for_each_btree_key_commit(trans, iter, BTREE_ID_stripes,
 				POS_MIN, BTREE_ITER_prefetch, k,
