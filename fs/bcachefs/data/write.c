@@ -372,18 +372,18 @@ int bch2_extent_update(struct btree_trans *trans,
 static int bch2_write_index_default(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
-	struct bkey_buf sk;
 	struct keylist *keys = &op->insert_keys;
 	struct bkey_i *k = bch2_keylist_front(keys);
 	subvol_inum inum = {
 		.subvol = op->subvol,
 		.inum	= k->k.p.inode,
 	};
-	int ret;
 
 	BUG_ON(!inum.subvol);
 
 	CLASS(btree_trans, trans)(c);
+
+	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&sk);
 
 	do {
@@ -392,12 +392,11 @@ static int bch2_write_index_default(struct bch_write_op *op)
 		k = bch2_keylist_front(keys);
 		bch2_bkey_buf_copy(&sk, k);
 
-		ret = bch2_subvolume_get_snapshot(trans, inum.subvol,
-						  &sk.k->k.p.snapshot);
+		int ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &sk.k->k.p.snapshot);
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
 		if (ret)
-			break;
+			return ret;
 
 		CLASS(btree_iter, iter)(trans, BTREE_ID_extents,
 					bkey_start_pos(&sk.k->k),
@@ -412,7 +411,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
 		if (ret)
-			break;
+			return ret;
 
 		if (bkey_ge(iter.pos, k->k.p))
 			bch2_keylist_pop_front(&op->insert_keys);
@@ -420,9 +419,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 			bch2_cut_front(iter.pos, k);
 	} while (!bch2_keylist_empty(keys));
 
-	bch2_bkey_buf_exit(&sk);
-
-	return ret;
+	return 0;
 }
 
 /* Writes */

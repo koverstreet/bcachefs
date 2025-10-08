@@ -202,8 +202,7 @@ fsck_err:
 
 int bch2_check_lrus(struct bch_fs *c)
 {
-	struct bkey_buf last_flushed;
-
+	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
 	bkey_init(&last_flushed.k->k);
 
@@ -211,14 +210,10 @@ int bch2_check_lrus(struct bch_fs *c)
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_lru));
 
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key_commit(trans, iter,
+	return for_each_btree_key_commit(trans, iter,
 				BTREE_ID_lru, POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 		progress_update_iter(trans, &progress, &iter);
 		bch2_check_lru_key(trans, &iter, k, &last_flushed);
 	}));
-
-	bch2_bkey_buf_exit(&last_flushed);
-	return ret;
-
 }

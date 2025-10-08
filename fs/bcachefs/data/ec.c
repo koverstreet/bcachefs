@@ -1112,7 +1112,6 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 	struct bch_fs *c = trans->c;
 	struct bch_stripe *v = &bkey_i_to_stripe(&s->key)->v;
 	struct bch_extent_ptr ptr = v->ptrs[block];
-	int ret = 0;
 
 	CLASS(bch2_dev_tryget, ca)(c, ptr.dev);
 	if (!ca) /* BCH_SB_MEMBER_INVALID */
@@ -1120,11 +1119,11 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 
 	struct bpos bucket_pos = PTR_BUCKET_POS(ca, &ptr);
 
-	struct bkey_buf last_flushed;
+	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
 	bkey_init(&last_flushed.k->k);
 
-	ret = for_each_btree_key_max_commit(trans, bp_iter, BTREE_ID_backpointers,
+	return for_each_btree_key_max_commit(trans, bp_iter, BTREE_ID_backpointers,
 			bucket_pos_to_bp_start(ca, bucket_pos),
 			bucket_pos_to_bp_end(ca, bucket_pos), 0, bp_k,
 			NULL, NULL,
@@ -1142,9 +1141,6 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 
 		ec_stripe_update_extent(trans, ca, bucket_pos, ptr.gen, s, bp, &last_flushed);
 	}));
-
-	bch2_bkey_buf_exit(&last_flushed);
-	return ret;
 }
 
 static int ec_stripe_update_extents(struct bch_fs *c, struct ec_stripe_buf *s)
@@ -2259,16 +2255,12 @@ static int bch2_check_stripe_to_lru_ref(struct btree_trans *trans,
 
 int bch2_check_stripe_to_lru_refs(struct btree_trans *trans)
 {
-	struct bkey_buf last_flushed;
+	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
 	bkey_init(&last_flushed.k->k);
 
-	int ret = for_each_btree_key_commit(trans, iter, BTREE_ID_stripes,
+	return for_each_btree_key_commit(trans, iter, BTREE_ID_stripes,
 				POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			bch2_check_stripe_to_lru_ref(trans, k, &last_flushed));
-
-	bch2_bkey_buf_exit(&last_flushed);
-	bch_err_fn(trans->c, ret);
-	return ret;
 }

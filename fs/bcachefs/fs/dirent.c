@@ -622,7 +622,7 @@ int bch2_readdir(struct bch_fs *c, subvol_inum inum,
 		 struct bch_hash_info *hash_info,
 		 struct dir_context *ctx)
 {
-	struct bkey_buf sk;
+	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&sk);
 
 	CLASS(btree_trans, trans)(c);
@@ -648,8 +648,6 @@ int bch2_readdir(struct bch_fs *c, subvol_inum inum,
 
 			ret2 ?: (bch2_trans_unlock(trans), bch2_dir_emit(ctx, dirent, target));
 		}));
-
-	bch2_bkey_buf_exit(&sk);
 
 	return ret < 0 ? ret : 0;
 }

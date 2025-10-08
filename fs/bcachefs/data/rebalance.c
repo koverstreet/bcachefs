@@ -634,19 +634,19 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	struct data_update_opts data_opts;
 	struct bch_inode_opts *io_opts;
 	struct bkey_s_c k;
-	struct bkey_buf sk;
 	int ret;
 
 	ctxt->stats = &r->work_stats;
 	r->state = BCH_REBALANCE_working;
 
+	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&sk);
 
 	ret = lockrestart_do(trans,
 		bkey_err(k = next_rebalance_extent(trans, snapshot_io_opts,
 				work_pos, extent_iter, &io_opts, &data_opts)));
 	if (ret || !k.k)
-		goto out;
+		return ret;
 
 	atomic64_add(k.k->size, &ctxt->stats->sectors_seen);
 
@@ -666,14 +666,12 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 		}
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			goto out;
+			return ret;
 
 		/* skip it and continue, XXX signal failure */
-		ret = 0;
 	}
-out:
-	bch2_bkey_buf_exit(&sk);
-	return ret;
+
+	return 0;
 }
 
 static int do_rebalance_scan_indirect(struct btree_trans *trans,
@@ -1099,7 +1097,7 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 	CLASS(btree_iter, rebalance_iter)(trans, BTREE_ID_rebalance_work, POS_MIN,
 					  BTREE_ITER_prefetch);
 
-	struct bkey_buf last_flushed;
+	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&last_flushed);
 	bkey_init(&last_flushed.k->k);
 
@@ -1118,6 +1116,5 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 			ret = 0;
 	}
 
-	bch2_bkey_buf_exit(&last_flushed);
 	return ret < 0 ? ret : 0;
 }
