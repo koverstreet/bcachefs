@@ -215,7 +215,7 @@ static void bchfs_read(struct btree_trans *trans,
 			bkey_start_offset(k.k);
 		sectors = k.k->size - offset_into_extent;
 
-		bch2_bkey_buf_reassemble(&sk, c, k);
+		bch2_bkey_buf_reassemble(&sk, k);
 
 		ret = bch2_read_indirect_extent(trans, &data_btree,
 					&offset_into_extent, &sk);
@@ -281,7 +281,7 @@ err:
 		bio_endio(&rbio->bio);
 	}
 
-	bch2_bkey_buf_exit(&sk, c);
+	bch2_bkey_buf_exit(&sk);
 }
 
 void bch2_readahead(struct readahead_control *ractl)

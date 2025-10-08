@@ -654,7 +654,7 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	 * The iterator gets unlocked by __bch2_read_extent - need to
 	 * save a copy of @k elsewhere:
 	 */
-	bch2_bkey_buf_reassemble(&sk, c, k);
+	bch2_bkey_buf_reassemble(&sk, k);
 	k = bkey_i_to_s_c(sk.k);
 
 	ret = bch2_move_extent(ctxt, NULL, extent_iter, k, *io_opts, data_opts);
@@ -672,7 +672,7 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 		ret = 0;
 	}
 out:
-	bch2_bkey_buf_exit(&sk, c);
+	bch2_bkey_buf_exit(&sk);
 	return ret;
 }
 
@@ -1120,6 +1120,6 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 			ret = 0;
 	}
 
-	bch2_bkey_buf_exit(&last_flushed, c);
+	bch2_bkey_buf_exit(&last_flushed);
 	return ret < 0 ? ret : 0;
 }

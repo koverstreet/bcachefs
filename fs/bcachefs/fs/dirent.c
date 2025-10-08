@@ -634,7 +634,7 @@ int bch2_readdir(struct bch_fs *c, subvol_inum inum,
 				continue;
 
 			/* dir_emit() can fault and block: */
-			bch2_bkey_buf_reassemble(&sk, c, k);
+			bch2_bkey_buf_reassemble(&sk, k);
 			struct bkey_s_c_dirent dirent = bkey_i_to_s_c_dirent(sk.k);
 
 			subvol_inum target;
@@ -649,7 +649,7 @@ int bch2_readdir(struct bch_fs *c, subvol_inum inum,
 			ret2 ?: (bch2_trans_unlock(trans), bch2_dir_emit(ctx, dirent, target));
 		}));
 
-	bch2_bkey_buf_exit(&sk, c);
+	bch2_bkey_buf_exit(&sk);
 
 	return ret < 0 ? ret : 0;
 }

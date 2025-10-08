@@ -824,7 +824,7 @@ static int btree_path_prefetch(struct btree_trans *trans, struct btree_path *pat
 		if (!k)
 			break;
 
-		bch2_bkey_buf_unpack(&tmp, c, l->b, k);
+		bch2_bkey_buf_unpack(&tmp, l->b, k);
 		ret = bch2_btree_node_prefetch(trans, path, tmp.k, path->btree_id,
 					       path->level - 1);
 	}
@@ -832,7 +832,7 @@ static int btree_path_prefetch(struct btree_trans *trans, struct btree_path *pat
 	if (!was_locked)
 		btree_node_unlock(trans, path, path->level);
 
-	bch2_bkey_buf_exit(&tmp, c);
+	bch2_bkey_buf_exit(&tmp);
 	return ret;
 }
 
@@ -861,7 +861,7 @@ static int btree_path_prefetch_j(struct btree_trans *trans, struct btree_path *p
 		if (!k.k)
 			break;
 
-		bch2_bkey_buf_reassemble(&tmp, c, k);
+		bch2_bkey_buf_reassemble(&tmp, k);
 		ret = bch2_btree_node_prefetch(trans, path, tmp.k, path->btree_id,
 					       path->level - 1);
 	}
@@ -869,7 +869,7 @@ static int btree_path_prefetch_j(struct btree_trans *trans, struct btree_path *p
 	if (!was_locked)
 		btree_node_unlock(trans, path, path->level);
 
-	bch2_bkey_buf_exit(&tmp, c);
+	bch2_bkey_buf_exit(&tmp);
 	return ret;
 }
 

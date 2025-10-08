@@ -63,12 +63,12 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 	if (unlikely(ret))
 		goto err_noprint;
 
-	bch2_bkey_buf_reassemble(&old, c, k);
+	bch2_bkey_buf_reassemble(&old, k);
 
 	if (!unwritten) {
 		struct bkey_i_reservation *reservation;
 
-		bch2_bkey_buf_realloc(&new, c, sizeof(*reservation) / sizeof(u64));
+		bch2_bkey_buf_realloc(&new, sizeof(*reservation) / sizeof(u64));
 		reservation = bkey_reservation_init(new.k);
 		reservation->k.p = iter->pos;
 		bch2_key_resize(&reservation->k, sectors);
@@ -80,7 +80,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 
 		devs_have.nr = 0;
 
-		bch2_bkey_buf_realloc(&new, c, BKEY_EXTENT_U64s_MAX);
+		bch2_bkey_buf_realloc(&new, BKEY_EXTENT_U64s_MAX);
 
 		e = bkey_extent_init(new.k);
 		e->k.p = iter->pos;
@@ -126,8 +126,8 @@ err:
 err_noprint:
 	bch2_open_buckets_put(c, &open_buckets);
 	bch2_disk_reservation_put(c, &disk_res);
-	bch2_bkey_buf_exit(&new, c);
-	bch2_bkey_buf_exit(&old, c);
+	bch2_bkey_buf_exit(&new);
+	bch2_bkey_buf_exit(&old);
 
 	if (closure_nr_remaining(&cl) != 1) {
 		bch2_trans_unlock_long(trans);

@@ -1143,7 +1143,7 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 		ec_stripe_update_extent(trans, ca, bucket_pos, ptr.gen, s, bp, &last_flushed);
 	}));
 
-	bch2_bkey_buf_exit(&last_flushed, c);
+	bch2_bkey_buf_exit(&last_flushed);
 	return ret;
 }
 
@@ -2268,7 +2268,7 @@ int bch2_check_stripe_to_lru_refs(struct btree_trans *trans)
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			bch2_check_stripe_to_lru_ref(trans, k, &last_flushed));
 
-	bch2_bkey_buf_exit(&last_flushed, trans->c);
+	bch2_bkey_buf_exit(&last_flushed);
 	bch_err_fn(trans->c, ret);
 	return ret;
 }

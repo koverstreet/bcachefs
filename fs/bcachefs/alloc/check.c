@@ -683,7 +683,7 @@ int bch2_check_alloc_to_lru_refs(struct bch_fs *c)
 			bch2_check_alloc_to_lru_ref(trans, &iter, &last_flushed);
 	}))?: bch2_check_stripe_to_lru_refs(trans);
 
-	bch2_bkey_buf_exit(&last_flushed, c);
+	bch2_bkey_buf_exit(&last_flushed);
 	return ret;
 }
 

@@ -390,7 +390,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 		bch2_trans_begin(trans);
 
 		k = bch2_keylist_front(keys);
-		bch2_bkey_buf_copy(&sk, c, k);
+		bch2_bkey_buf_copy(&sk, k);
 
 		ret = bch2_subvolume_get_snapshot(trans, inum.subvol,
 						  &sk.k->k.p.snapshot);
@@ -420,7 +420,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 			bch2_cut_front(iter.pos, k);
 	} while (!bch2_keylist_empty(keys));
 
-	bch2_bkey_buf_exit(&sk, c);
+	bch2_bkey_buf_exit(&sk);
 
 	return ret;
 }
