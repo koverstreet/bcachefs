@@ -250,7 +250,9 @@ fsck_err:
 	return ret;
 }
 
-void bch2_accounting_key_to_text(struct printbuf *out, struct disk_accounting_pos *k)
+void bch2_accounting_key_to_text(struct printbuf *out,
+				 struct bch_fs *c,
+				 struct disk_accounting_pos *k)
 {
 	if (k->type >= BCH_DISK_ACCOUNTING_TYPE_NR) {
 		prt_printf(out, "unknown type %u", k->type);
@@ -286,6 +288,14 @@ void bch2_accounting_key_to_text(struct printbuf *out, struct disk_accounting_po
 	case BCH_DISK_ACCOUNTING_rebalance_work_v2:
 		bch2_prt_rebalance_accounting_type(out, k->rebalance_work_v2.type);
 		break;
+	case BCH_DISK_ACCOUNTING_dev_leaving: {
+		struct bch_dev *ca = c ? bch2_dev_rcu_noerror(c, k->dev_leaving.dev) : NULL;
+		if (ca)
+			prt_printf(out, "%s ", ca->name);
+		else
+			prt_printf(out, "%u ", k->dev_leaving.dev);
+		break;
+	}
 	}
 }
 
@@ -295,7 +305,7 @@ void bch2_accounting_to_text(struct printbuf *out, struct bch_fs *c, struct bkey
 	struct disk_accounting_pos acc_k;
 	bpos_to_disk_accounting_pos(&acc_k, k.k->p);
 
-	bch2_accounting_key_to_text(out, &acc_k);
+	bch2_accounting_key_to_text(out, c, &acc_k);
 
 	for (unsigned i = 0; i < bch2_accounting_counters(k.k); i++)
 		prt_printf(out, " %lli", acc.v->d[i]);
@@ -610,7 +620,7 @@ int bch2_gc_accounting_done(struct bch_fs *c)
 		if (memcmp(dst_v, src_v, nr * sizeof(u64))) {
 			printbuf_reset(&buf);
 			prt_str(&buf, "accounting mismatch for ");
-			bch2_accounting_key_to_text(&buf, &acc_k);
+			bch2_accounting_key_to_text(&buf, c, &acc_k);
 
 			prt_str(&buf, ":\n      got");
 			for (unsigned j = 0; j < nr; j++)
@@ -675,7 +685,7 @@ static int disk_accounting_invalid_dev(struct btree_trans *trans,
 				       unsigned dev)
 {
 	CLASS(printbuf, buf)();
-	bch2_accounting_key_to_text(&buf, acc);
+	bch2_accounting_key_to_text(&buf, trans->c, acc);
 	int ret = 0;
 
 	if (fsck_err(trans, accounting_to_invalid_device,
@@ -722,7 +732,7 @@ static int bch2_disk_accounting_validate_late(struct btree_trans *trans,
 				trans, accounting_replicas_not_marked,
 				"accounting not marked in superblock replicas\n%s",
 				(printbuf_reset(&buf),
-				 bch2_accounting_key_to_text(&buf, acc),
+				 bch2_accounting_key_to_text(&buf, c, acc),
 				 buf.buf)))
 			try(bch2_mark_replicas(c, &r.e));
 		break;
@@ -852,7 +862,7 @@ static int accounting_read_mem_fixups(struct btree_trans *trans)
 				bch2_log_msg_start(c, &underflow_err);
 				prt_printf(&underflow_err, "Accounting underflow for\n");
 			}
-			bch2_accounting_key_to_text(&underflow_err, &k);
+			bch2_accounting_key_to_text(&underflow_err, c, &k);
 
 			for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
 				prt_printf(&underflow_err, " %lli", v[j]);
