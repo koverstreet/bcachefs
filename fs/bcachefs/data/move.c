@@ -550,8 +550,9 @@ root_err:
 		if (ret)
 			continue;
 
-		ret = bch2_update_rebalance_opts(trans, io_opts, &iter, k,
-						 SET_NEEDS_REBALANCE_other);
+		ret =   bch2_update_rebalance_opts(trans, io_opts, &iter, k,
+						   SET_NEEDS_REBALANCE_other) ?:
+			bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 		if (ret)
 			continue;
 
@@ -748,7 +749,8 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		struct bch_inode_opts opts;
 		ret =   bch2_extent_get_io_opts_one(trans, &opts, k) ?:
 			bch2_update_rebalance_opts(trans, &opts, &iter, k,
-						   SET_NEEDS_REBALANCE_other);
+						   SET_NEEDS_REBALANCE_other) ?:
+			bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 
 		if (ret) {
 			bch2_trans_iter_exit(&iter);

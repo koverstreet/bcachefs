@@ -302,12 +302,8 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 							 sizeof(struct bch_extent_rebalance)));
 	bkey_reassemble(n, k);
 
-	/* On successfull transaction commit, @k was invalidated: */
-
-	return bch2_bkey_set_needs_rebalance(c, io_opts, n, ctx, 0) ?:
-		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node) ?:
-		bch2_trans_commit(trans, NULL, NULL, 0) ?:
-		bch_err_throw(c, transaction_restart_commit);
+	return  bch2_bkey_set_needs_rebalance(c, io_opts, n, ctx, 0) ?:
+		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node);
 }
 
 struct bch_inode_opts *bch2_extent_get_io_opts(struct btree_trans *trans,
@@ -583,6 +579,7 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 		errptr_try(bch2_extent_get_io_opts(trans, snapshot_io_opts, k));
 
 	try(bch2_update_rebalance_opts(trans, opts, &iter, k, SET_NEEDS_REBALANCE_other));
+	try(bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
 
 	struct data_update_opts data_opts;
 	int ret = rebalance_set_data_opts(trans, &iter, k, opts, &data_opts);
@@ -625,10 +622,11 @@ static int do_rebalance_scan_indirect(struct btree_trans *trans,
 	u64 end = REFLINK_P_IDX(p.v) + p.k->size + le32_to_cpu(p.v->back_pad);
 	u32 restart_count = trans->restart_count;
 
-	try(for_each_btree_key(trans, iter, BTREE_ID_reflink,
-			       POS(0, idx),
-			       BTREE_ITER_intent|
-			       BTREE_ITER_not_extents, k, ({
+	try(for_each_btree_key_commit(trans, iter, BTREE_ID_reflink,
+				      POS(0, idx),
+				      BTREE_ITER_intent|
+				      BTREE_ITER_not_extents, k,
+				      NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 		if (bpos_ge(bkey_start_pos(k.k), POS(0, end)))
 			break;
 		bch2_update_rebalance_opts(trans, opts, &iter, k,
@@ -668,7 +666,8 @@ static int do_rebalance_scan_btree(struct moving_context *ctxt,
 		 k.k->type == KEY_TYPE_reflink_p &&
 		 REFLINK_P_MAY_UPDATE_OPTIONS(bkey_s_c_to_reflink_p(k).v)
 		 ? do_rebalance_scan_indirect(trans, bkey_s_c_to_reflink_p(k), opts)
-		 : 0);
+		 : 0) ?:
+		bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 	}));
 }
 
