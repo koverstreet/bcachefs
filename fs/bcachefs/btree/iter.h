@@ -283,9 +283,6 @@ static inline struct bkey_s_c bch2_btree_path_peek_slot_exact(struct btree_path 
 	return (struct bkey_s_c) { u, NULL };
 }
 
-struct bkey_i *bch2_btree_journal_peek_slot(struct btree_trans *,
-					struct btree_iter *, struct bpos);
-
 void bch2_btree_path_level_init(struct btree_trans *, struct btree_path *, struct btree *);
 
 int __bch2_trans_mutex_lock(struct btree_trans *, struct mutex *);
