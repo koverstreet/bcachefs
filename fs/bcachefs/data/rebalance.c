@@ -208,19 +208,9 @@ int __bch2_trigger_extent_rebalance(struct btree_trans *trans,
 static struct bch_extent_rebalance
 bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 			  struct bch_inode_opts *opts,
-			  unsigned *move_ptrs,
-			  unsigned *compress_ptrs,
-			  unsigned *csum_ptrs,
 			  bool may_update_indirect)
 {
-	*move_ptrs	= 0;
-	*compress_ptrs	= 0;
-	*csum_ptrs	= 0;
-
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	struct bch_extent_rebalance r = { .type = BIT(BCH_EXTENT_ENTRY_rebalance) };
-
-	bool poisoned = bch2_bkey_extent_ptrs_flags(ptrs) & BIT_ULL(BCH_EXTENT_FLAG_poisoned);
 
 #define x(_name)							\
 	if (k.k->type != KEY_TYPE_reflink_v ||				\
@@ -232,6 +222,10 @@ bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 	BCH_REBALANCE_OPTS()
 #undef x
 
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+
+	bool poisoned = bch2_bkey_extent_ptrs_flags(ptrs) & BIT_ULL(BCH_EXTENT_FLAG_poisoned);
+	bool btree = bkey_is_btree_ptr(k.k);
 	unsigned compression_type = bch2_compression_opt_to_type(r.background_compression);
 	unsigned csum_type	= bch2_data_checksum_type_rb(c, r);
 
@@ -249,23 +243,20 @@ bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 
 		struct bch_dev *ca = bch2_dev_rcu_noerror(c, p.ptr.dev);
 		if (ca && !p.ptr.cached) {
-			if (!poisoned) {
-				if (p.crc.compression_type != compression_type) {
-					*compress_ptrs |= ptr_idx;
-					r.need_rb |= BIT(BCH_REBALANCE_background_compression);
-				}
+			if (!poisoned &&
+			    !btree &&
+			    p.crc.compression_type != compression_type)
+				r.need_rb |= BIT(BCH_REBALANCE_background_compression);
 
-				if (p.crc.csum_type != csum_type) {
-					*csum_ptrs |= ptr_idx;
-					r.need_rb |= BIT(BCH_REBALANCE_data_checksum);
-				}
+			if (!poisoned &&
+			    !btree &&
+			    p.crc.csum_type != csum_type)
+				r.need_rb |= BIT(BCH_REBALANCE_data_checksum);
 
-				if (r.background_target &&
-				    !bch2_dev_in_target(c, p.ptr.dev, r.background_target)) {
-					*move_ptrs |= ptr_idx;
-					r.need_rb |= BIT(BCH_REBALANCE_background_target);
-				}
-			}
+			if (!poisoned &&
+			    r.background_target &&
+			    !bch2_dev_in_target(c, p.ptr.dev, r.background_target))
+				r.need_rb |= BIT(BCH_REBALANCE_background_target);
 
 			if (ca->mi.state == BCH_MEMBER_STATE_failed)
 				r.hipri = 1;
@@ -282,15 +273,11 @@ bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 		ptr_idx <<= 1;
 	}
 
-	if (unwritten || incompressible) {
-		*compress_ptrs = 0;
+	if (unwritten || incompressible)
 		r.need_rb &= ~BIT(BCH_REBALANCE_background_compression);
-	}
 
-	if (unwritten) {
-		*csum_ptrs = 0;
-		r.need_rb &= !BIT(BCH_REBALANCE_data_checksum);
-	}
+	if (unwritten)
+		r.need_rb &= ~BIT(BCH_REBALANCE_data_checksum);
 
 	if (durability < r.data_replicas || durability >= r.data_replicas + min_durability)
 		r.need_rb |= BIT(BCH_REBALANCE_data_replicas);
@@ -490,12 +477,8 @@ int bch2_bkey_set_needs_rebalance(struct btree_trans *trans,
 	struct bch_extent_rebalance *old =
 		(struct bch_extent_rebalance *) bch2_bkey_rebalance_opts(k.s_c);
 
-	unsigned move_ptrs	= 0;
-	unsigned compress_ptrs	= 0;
-	unsigned csum_ptrs	= 0;
 	struct bch_extent_rebalance new =
-		bch2_bkey_needs_rebalance(c, k.s_c, opts, &move_ptrs, &compress_ptrs, &csum_ptrs,
-					  ctx == SET_NEEDS_REBALANCE_opt_change_indirect);
+		bch2_bkey_needs_rebalance(c, k.s_c, opts, ctx == SET_NEEDS_REBALANCE_opt_change_indirect);
 
 	bool should_have_rb = bkey_should_have_rb_opts(k.s_c, new);
 
@@ -543,12 +526,8 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 	struct bch_extent_rebalance *old =
 		(struct bch_extent_rebalance *) bch2_bkey_rebalance_opts(k);
 
-	unsigned move_ptrs	= 0;
-	unsigned compress_ptrs	= 0;
-	unsigned csum_ptrs	= 0;
 	struct bch_extent_rebalance new =
-		bch2_bkey_needs_rebalance(c, k, io_opts, &move_ptrs, &compress_ptrs, &csum_ptrs,
-					  ctx == SET_NEEDS_REBALANCE_opt_change_indirect);
+		bch2_bkey_needs_rebalance(c, k, io_opts, ctx == SET_NEEDS_REBALANCE_opt_change_indirect);
 
 	bool should_have_rb = bkey_should_have_rb_opts(k, new);
 
@@ -782,17 +761,11 @@ static int extent_ec_pending(struct btree_trans *trans, struct bkey_ptrs_c ptrs)
 static int rebalance_set_data_opts(struct btree_trans *trans,
 				   struct bkey_s_c k,
 				   const struct bch_extent_rebalance *r,
-				   struct bch_inode_opts *opts,
 				   struct data_update_opts *data_opts)
 {
 	struct bch_fs *c = trans->c;
-	unsigned move_ptrs	= 0;
-	unsigned compress_ptrs	= 0;
-	unsigned csum_ptrs	= 0;
-	bch2_bkey_needs_rebalance(c, k, opts, &move_ptrs, &compress_ptrs, &csum_ptrs, false);
 
 	memset(data_opts, 0, sizeof(*data_opts));
-	data_opts->rewrite_ptrs		= move_ptrs|compress_ptrs|csum_ptrs;
 
 	if (!r->hipri)
 		data_opts->write_flags |= BCH_WRITE_only_specified_devs;
@@ -807,7 +780,7 @@ static int rebalance_set_data_opts(struct btree_trans *trans,
 		unsigned ptr_bit = 1;
 
 		guard(rcu)();
-		if (durability <= opts->data_replicas) {
+		if (durability <= r->data_replicas) {
 			bkey_for_each_ptr(ptrs, ptr) {
 				struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
 				if (ca && !ptr->cached && !ca->mi.durability)
@@ -815,12 +788,12 @@ static int rebalance_set_data_opts(struct btree_trans *trans,
 				ptr_bit <<= 1;
 			}
 
-			data_opts->extra_replicas = opts->data_replicas - durability;
+			data_opts->extra_replicas = r->data_replicas - durability;
 		} else {
 			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 				unsigned d = bch2_extent_ptr_durability(c, &p);
 
-				if (d && durability - d >= opts->data_replicas) {
+				if (d && durability - d >= r->data_replicas) {
 					data_opts->kill_ptrs |= ptr_bit;
 					durability -= d;
 				}
@@ -830,7 +803,7 @@ static int rebalance_set_data_opts(struct btree_trans *trans,
 
 			ptr_bit = 1;
 			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-				if (p.has_ec && durability - p.ec.redundancy >= opts->data_replicas) {
+				if (p.has_ec && durability - p.ec.redundancy >= r->data_replicas) {
 					data_opts->kill_ec_ptrs |= ptr_bit;
 					durability -= p.ec.redundancy;
 				}
@@ -841,12 +814,12 @@ static int rebalance_set_data_opts(struct btree_trans *trans,
 	}
 
 	if (r->need_rb & BIT(BCH_REBALANCE_erasure_code)) {
-		if (opts->erasure_code) {
+		if (r->erasure_code) {
 			/* XXX: we'll need ratelimiting */
 			if (extent_ec_pending(trans, ptrs))
 				return 1;
 
-			data_opts->extra_replicas = opts->data_replicas;
+			data_opts->extra_replicas = r->data_replicas;
 		} else {
 			unsigned ptr_bit = 1;
 			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
@@ -858,6 +831,26 @@ static int rebalance_set_data_opts(struct btree_trans *trans,
 				ptr_bit <<= 1;
 			}
 		}
+	}
+
+	unsigned csum_type = bch2_data_checksum_type_rb(c, *r);
+	unsigned compression_type = bch2_compression_opt_to_type(r->background_compression);
+	unsigned ptr_bit	= 1;
+
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if ((r->need_rb & BIT(BCH_REBALANCE_data_checksum)) &&
+		    p.crc.csum_type != csum_type)
+			data_opts->rewrite_ptrs |= ptr_bit;
+
+		if ((r->need_rb & BIT(BCH_REBALANCE_background_compression)) &&
+		    p.crc.compression_type != compression_type)
+			data_opts->rewrite_ptrs |= ptr_bit;
+
+		if ((r->need_rb & BIT(BCH_REBALANCE_background_target)) &&
+		    !bch2_dev_in_target(c, p.ptr.dev, r->background_target))
+			data_opts->rewrite_ptrs |= ptr_bit;
+
+		ptr_bit <<= 1;
 	}
 
 	if (!data_opts->rewrite_ptrs &&
@@ -873,34 +866,7 @@ static int rebalance_set_data_opts(struct btree_trans *trans,
 
 	if (trace_rebalance_extent_enabled()) {
 		CLASS(printbuf, buf)();
-
 		bch2_bkey_val_to_text(&buf, c, k);
-		prt_newline(&buf);
-
-		if (move_ptrs) {
-			prt_str(&buf, "move=");
-			bch2_target_to_text(&buf, c, opts->background_target);
-			prt_str(&buf, " ");
-			bch2_prt_u64_base2(&buf, move_ptrs);
-			prt_newline(&buf);
-		}
-
-		if (compress_ptrs) {
-			prt_str(&buf, "compression=");
-			bch2_compression_opt_to_text(&buf, opts->background_compression);
-			prt_str(&buf, " ");
-			bch2_prt_u64_base2(&buf, compress_ptrs);
-			prt_newline(&buf);
-		}
-
-		if (csum_ptrs) {
-			prt_str(&buf, "csum=");
-			bch2_prt_csum_opt(&buf, opts->data_checksum);
-			prt_str(&buf, " ");
-			bch2_prt_u64_base2(&buf, csum_ptrs);
-			prt_newline(&buf);
-		}
-
 		trace_rebalance_extent(c, buf.buf);
 	}
 	count_event(c, rebalance_extent);
@@ -946,9 +912,9 @@ static int __do_rebalance_extent(struct moving_context *ctxt,
 		return 0;
 
 	struct data_update_opts data_opts;
-	int ret = rebalance_set_data_opts(trans, k, r, opts, &data_opts);
+	int ret = rebalance_set_data_opts(trans, k, r, &data_opts);
 	if (ret)
-		return ret < 0 ? ret : 0;
+		return min(ret, 0);
 
 	/*
 	 * The iterator gets unlocked by __bch2_read_extent - need to
