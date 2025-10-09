@@ -1213,7 +1213,7 @@ int bch2_inum_snapshot_opts_get(struct btree_trans *trans,
 		 * updates, inum will be 0
 		 */
 
-		bch2_inode_opts_get(trans->c, opts);
+		bch2_inode_opts_get(trans->c, opts, false);
 	}
 	return 0;
 }

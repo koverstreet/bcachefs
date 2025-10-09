@@ -311,23 +311,23 @@ static struct bch_inode_opts *bch2_extent_get_io_opts(struct btree_trans *trans,
 			  struct per_snapshot_io_opts *io_opts,
 			  struct bpos extent_pos, /* extent_iter, extent_k may be in reflink btree */
 			  struct btree_iter *extent_iter,
-			  struct bkey_s_c extent_k)
+			  struct bkey_s_c k)
 {
 	struct bch_fs *c = trans->c;
 	u32 restart_count = trans->restart_count;
 	int ret = 0;
 
 	if (io_opts->fs_io_opts.change_cookie != atomic_read(&c->opt_change_cookie)) {
-		bch2_inode_opts_get(c, &io_opts->fs_io_opts);
+		bch2_inode_opts_get(c, &io_opts->fs_io_opts, bkey_is_btree_ptr(k.k));
 
 		io_opts->cur_inum = 0;
 		io_opts->d.nr = 0;
 	}
 
-	if (btree_iter_path(trans, extent_iter)->level)
+	if (bkey_is_btree_ptr(k.k))
 		return &io_opts->fs_io_opts;
 
-	if (extent_k.k->type == KEY_TYPE_reflink_v)
+	if (k.k->type == KEY_TYPE_reflink_v)
 		return &io_opts->fs_io_opts;
 
 	if (io_opts->cur_inum != extent_pos.inode) {
@@ -358,9 +358,9 @@ static struct bch_inode_opts *bch2_extent_get_io_opts(struct btree_trans *trans,
 	if (ret)
 		return ERR_PTR(ret);
 
-	if (extent_k.k->p.snapshot)
+	if (k.k->p.snapshot)
 		darray_for_each(io_opts->d, i)
-			if (bch2_snapshot_is_ancestor(c, extent_k.k->p.snapshot, i->snapshot))
+			if (bch2_snapshot_is_ancestor(c, k.k->p.snapshot, i->snapshot))
 				return &i->io_opts;
 
 	return &io_opts->fs_io_opts;
@@ -383,19 +383,18 @@ struct bch_inode_opts *bch2_extent_get_apply_io_opts(struct btree_trans *trans,
 }
 
 int bch2_extent_get_io_opts_one(struct btree_trans *trans,
-				struct bch_inode_opts *io_opts,
-				struct btree_iter *extent_iter,
-				struct bkey_s_c extent_k,
+				struct bch_inode_opts *opts,
+				struct btree_iter *iter,
+				struct bkey_s_c k,
 				enum set_needs_rebalance_ctx ctx)
 {
 	struct bch_fs *c = trans->c;
 
-	bch2_inode_opts_get(c, io_opts);
+	bch2_inode_opts_get(c, opts, bkey_is_btree_ptr(k.k));
 
-	/* reflink btree? */
-	if (extent_k.k->p.inode) {
+	if (!bkey_is_btree_ptr(k.k) && k.k->type != KEY_TYPE_reflink_v) {
 		CLASS(btree_iter, inode_iter)(trans, BTREE_ID_inodes,
-				       SPOS(0, extent_k.k->p.inode, extent_k.k->p.snapshot),
+				       SPOS(0, k.k->p.inode, k.k->p.snapshot),
 				       BTREE_ITER_cached);
 		struct bkey_s_c inode_k = bch2_btree_iter_peek_slot(&inode_iter);
 		int ret = bkey_err(inode_k);
@@ -405,7 +404,7 @@ int bch2_extent_get_io_opts_one(struct btree_trans *trans,
 		if (!ret && bkey_is_inode(inode_k.k)) {
 			struct bch_inode_unpacked inode;
 			bch2_inode_unpack(inode_k, &inode);
-			bch2_inode_opts_get_inode(c, &inode, io_opts);
+			bch2_inode_opts_get_inode(c, &inode, opts);
 		}
 	}
 
