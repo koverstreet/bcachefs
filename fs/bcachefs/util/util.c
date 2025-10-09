@@ -202,25 +202,19 @@ STRTO_H(strtou64, u64)
 u64 bch2_read_flag_list(const char *opt, const char * const list[])
 {
 	u64 ret = 0;
-	char *p, *s, *d = kstrdup(opt, GFP_KERNEL);
 
+	char *d __free(kfree) = kstrdup(opt, GFP_KERNEL);
 	if (!d)
 		return -ENOMEM;
 
-	s = strim(d);
-
+	char *p, *s = strim(d);
 	while ((p = strsep(&s, ",;"))) {
 		int flag = match_string(list, -1, p);
-
-		if (flag < 0) {
-			ret = -1;
-			break;
-		}
+		if (flag < 0)
+			return -1;
 
 		ret |= BIT_ULL(flag);
 	}
-
-	kfree(d);
 
 	return ret;
 }
@@ -935,7 +929,7 @@ static void eytzinger0_find_test_val(u16 *test_array, unsigned nr, u16 search)
 void eytzinger0_find_test(void)
 {
 	unsigned i, nr, allocated = 1 << 12;
-	u16 *test_array = kmalloc_array(allocated, sizeof(test_array[0]), GFP_KERNEL);
+	u16 *test_array __free(kfree) = kmalloc_array(allocated, sizeof(test_array[0]), GFP_KERNEL);
 
 	for (nr = 1; nr < allocated; nr++) {
 		u16 prev = 0;
@@ -960,8 +954,6 @@ void eytzinger0_find_test(void)
 			eytzinger0_find_test_val(test_array, nr, test_array[i] + 1);
 		}
 	}
-
-	kfree(test_array);
 }
 #endif
 
@@ -1001,11 +993,11 @@ int bch2_split_devs(const char *_dev_name, darray_const_str *ret)
 {
 	darray_init(ret);
 
-	char *dev_name, *s, *orig;
-
-	dev_name = orig = kstrdup(_dev_name, GFP_KERNEL);
-	if (!dev_name)
+	char *orig __free(kfree) = kstrdup(_dev_name, GFP_KERNEL);
+	if (!orig)
 		return -ENOMEM;
+
+	char *dev_name = orig, *s;
 
 	while ((s = strsep(&dev_name, ":"))) {
 		char *p = kstrdup(s, GFP_KERNEL);
@@ -1018,10 +1010,8 @@ int bch2_split_devs(const char *_dev_name, darray_const_str *ret)
 		}
 	}
 
-	kfree(orig);
 	return 0;
 err:
 	bch2_darray_str_exit(ret);
-	kfree(orig);
 	return -ENOMEM;
 }

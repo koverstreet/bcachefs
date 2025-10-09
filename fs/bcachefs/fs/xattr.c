@@ -514,7 +514,6 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	const struct bch_option *opt;
-	char *buf;
 	struct inode_opt_set s;
 	int opt_id, inode_opt_id, ret;
 
@@ -532,15 +531,13 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 	u64 v = 0;
 
 	if (value) {
-		buf = kmalloc(size + 1, GFP_KERNEL);
+		char *buf __free(kfree) = kmalloc(size + 1, GFP_KERNEL);
 		if (!buf)
 			return -ENOMEM;
 		memcpy(buf, value, size);
 		buf[size] = '\0';
 
 		ret = bch2_opt_parse(c, opt, buf, &v, NULL);
-		kfree(buf);
-
 		if (ret < 0)
 			goto err;
 
