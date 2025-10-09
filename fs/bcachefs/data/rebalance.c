@@ -679,6 +679,39 @@ static int do_rebalance_scan_indirect(struct btree_trans *trans,
 	return 0;
 }
 
+static int do_rebalance_scan_btree(struct moving_context *ctxt,
+				   struct per_snapshot_io_opts *snapshot_io_opts,
+				   enum btree_id btree, unsigned level,
+				   struct bpos start, struct bpos end)
+{
+	struct btree_trans *trans = ctxt->trans;
+	struct bch_fs *c = trans->c;
+	struct bch_fs_rebalance *r = &c->rebalance;
+
+	CLASS(btree_node_iter, iter)(trans, btree, start, 0, level,
+				     BTREE_ITER_prefetch|
+				     BTREE_ITER_not_extents|
+				     BTREE_ITER_all_snapshots);
+
+	return for_each_btree_key_max_continue(trans, iter, end, 0, k, ({
+		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
+
+		atomic64_add(!level ? k.k->size : c->opts.btree_node_size >> 9,
+			     &r->scan_stats.sectors_seen);
+
+		struct bch_inode_opts *opts = bch2_extent_get_apply_io_opts(trans,
+					snapshot_io_opts, iter.pos, &iter, k,
+					SET_NEEDS_REBALANCE_opt_change);
+		PTR_ERR_OR_ZERO(opts) ?:
+		(start.inode &&
+		 k.k->type == KEY_TYPE_reflink_p &&
+		 REFLINK_P_MAY_UPDATE_OPTIONS(bkey_s_c_to_reflink_p(k).v)
+		 ? do_rebalance_scan_indirect(trans, bkey_s_c_to_reflink_p(k), opts)
+		 : 0);
+	}));
+}
+
+noinline_for_stack
 static int do_rebalance_scan(struct moving_context *ctxt,
 			     struct per_snapshot_io_opts *snapshot_io_opts,
 			     u64 inum, u64 cookie, u64 *sectors_scanned)
@@ -690,50 +723,27 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 	bch2_move_stats_init(&r->scan_stats, "rebalance_scan");
 	ctxt->stats = &r->scan_stats;
 
+	r->state = BCH_REBALANCE_scanning;
+
 	if (!inum) {
 		r->scan_start	= BBPOS_MIN;
 		r->scan_end	= BBPOS_MAX;
+
+		for (enum btree_id btree = 0; btree < btree_id_nr_alive(c); btree++) {
+			if (btree != BTREE_ID_extents &&
+			    btree != BTREE_ID_reflink)
+				continue;
+
+			try(do_rebalance_scan_btree(ctxt, snapshot_io_opts, btree, 0,
+						    POS_MIN, SPOS_MAX));
+		}
 	} else {
 		r->scan_start	= BBPOS(BTREE_ID_extents, POS(inum, 0));
 		r->scan_end	= BBPOS(BTREE_ID_extents, POS(inum, U64_MAX));
+
+		try(do_rebalance_scan_btree(ctxt, snapshot_io_opts, BTREE_ID_extents, 0,
+					    r->scan_start.pos, r->scan_end.pos));
 	}
-
-	r->state = BCH_REBALANCE_scanning;
-
-	try(for_each_btree_key_max(trans, iter, BTREE_ID_extents,
-				   r->scan_start.pos, r->scan_end.pos,
-				   BTREE_ITER_intent|
-				   BTREE_ITER_all_snapshots|
-				   BTREE_ITER_prefetch, k, ({
-		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
-
-		atomic64_add(k.k->size, &r->scan_stats.sectors_seen);
-
-		struct bch_inode_opts *opts = bch2_extent_get_apply_io_opts(trans,
-					snapshot_io_opts, iter.pos, &iter, k,
-					SET_NEEDS_REBALANCE_opt_change);
-		PTR_ERR_OR_ZERO(opts) ?:
-		(inum &&
-		 k.k->type == KEY_TYPE_reflink_p &&
-		 REFLINK_P_MAY_UPDATE_OPTIONS(bkey_s_c_to_reflink_p(k).v)
-		 ? do_rebalance_scan_indirect(trans, bkey_s_c_to_reflink_p(k), opts)
-		 : 0);
-	})));
-
-	if (!inum)
-		try(for_each_btree_key_max(trans, iter, BTREE_ID_reflink,
-					   POS_MIN, POS_MAX,
-					   BTREE_ITER_all_snapshots|
-					   BTREE_ITER_prefetch, k, ({
-			ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
-
-			atomic64_add(k.k->size, &r->scan_stats.sectors_seen);
-
-			struct bch_inode_opts *opts = bch2_extent_get_apply_io_opts(trans,
-						snapshot_io_opts, iter.pos, &iter, k,
-						SET_NEEDS_REBALANCE_opt_change);
-			PTR_ERR_OR_ZERO(opts);
-		})));
 
 	try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			bch2_clear_rebalance_needs_scan(trans, inum, cookie)));
