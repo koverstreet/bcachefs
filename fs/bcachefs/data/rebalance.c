@@ -676,6 +676,9 @@ int bch2_bkey_set_needs_rebalance(struct btree_trans *trans,
 	    (should_have_rb ? !memcmp(old, &new, sizeof(new)) : !old))
 		return 0;
 
+	if (bkey_is_btree_ptr(k.k))
+		try(bch2_request_incompat_feature(c, bcachefs_metadata_version_rebalance_v2));
+
 	unsigned new_need_rb = new.need_rb & ~(old ? old->need_rb : 0);
 
 	if (unlikely(new_need_rb))
@@ -706,9 +709,6 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 	BUG_ON(iter->flags & BTREE_ITER_filter_snapshots);
 
 	if (!bkey_extent_is_direct_data(k.k))
-		return 0;
-
-	if (bkey_is_btree_ptr(k.k))
 		return 0;
 
 	struct bch_fs *c = trans->c;
@@ -1204,9 +1204,6 @@ static int do_rebalance_scan_bp(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct bch_fs_rebalance *r = &c->rebalance;
-
-	if (bp.v->level) /* metadata not supported yet */
-		return 0;
 
 	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bkey_try(bch2_backpointer_get_key(trans, bp, &iter, BTREE_ITER_intent,

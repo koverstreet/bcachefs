@@ -22,6 +22,7 @@
 
 #include "data/extents.h"
 #include "data/keylist.h"
+#include "data/rebalance.h"
 #include "data/write.h"
 
 #include "init/error.h"
@@ -644,6 +645,26 @@ static void btree_update_new_nodes_mark_sb(struct btree_update *as)
 	bch2_write_super(c);
 }
 
+static int btree_key_trigger_new(struct btree_trans *trans,
+			enum btree_id btree, unsigned level,
+			struct bkey_s_c k,
+			enum btree_iter_update_trigger_flags flags)
+{
+	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
+						sizeof(struct bch_extent_rebalance) +
+						sizeof(struct bch_extent_rebalance_bp)));
+	bkey_reassemble(n, k);
+
+	struct bch_inode_opts opts;
+	try(bch2_extent_get_io_opts_one(trans, &opts, k));
+
+	/* XXX plumb opt change cookie */
+	try(bch2_bkey_set_needs_rebalance(trans, NULL, &opts, n, SET_NEEDS_REBALANCE_foreground, 0));
+	try(bch2_key_trigger_new(trans, btree, level, bkey_i_to_s(n), flags));
+
+	return 0;
+}
+
 /*
  * The transactional part of an interior btree node update, where we journal the
  * update we did to the interior node and update alloc info:
@@ -667,8 +688,8 @@ static int btree_update_nodes_written_trans(struct btree_trans *trans,
 	for_each_keylist_key(&as->new_keys, k) {
 		unsigned level = bkey_i_to_btree_ptr_v2(k)->v.mem_ptr;
 
-		try(bch2_key_trigger_new(trans, as->btree_id, level, bkey_i_to_s(k),
-					 BTREE_TRIGGER_transactional));
+		try(btree_key_trigger_new(trans, as->btree_id, level, bkey_i_to_s_c(k),
+					  BTREE_TRIGGER_transactional));
 	}
 
 	return 0;
@@ -2461,8 +2482,8 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 		try(bch2_key_trigger_old(trans, b->c.btree_id, b->c.level + 1,
 					 bkey_i_to_s_c(&b->key),
 					 BTREE_TRIGGER_transactional));
-		try(bch2_key_trigger_new(trans, b->c.btree_id, b->c.level + 1,
-					 bkey_i_to_s(new_key),
+		try(btree_key_trigger_new(trans, b->c.btree_id, b->c.level + 1,
+					 bkey_i_to_s_c(new_key),
 					 BTREE_TRIGGER_transactional));
 	}
 
