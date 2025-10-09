@@ -2548,6 +2548,14 @@ int bch2_btree_node_update_key(struct btree_trans *trans, struct btree_iter *ite
 	struct btree_path *path = btree_iter_path(trans, iter);
 	int ret = 0;
 
+	/*
+	 * XXX
+	 *
+	 * migrate path calls us incorrectly, we need to handle unwritten
+	 * nodes...
+	 */
+	BUG_ON(!b->written);
+
 	try(bch2_btree_path_upgrade(trans, path, b->c.level + 1));
 
 	struct closure cl;
