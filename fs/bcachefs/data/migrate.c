@@ -78,12 +78,11 @@ static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
 	struct bkey_i *n =
 		errptr_try(bch2_bkey_make_mut(trans, iter, &k, BTREE_UPDATE_internal_snapshot_node));
 
-	enum set_needs_rebalance_ctx ctx = SET_NEEDS_REBALANCE_opt_change;
-	struct bch_inode_opts opts;
-
 	try(drop_dev_ptrs(c, bkey_i_to_s(n), dev_idx, flags, err, false));
-	try(bch2_extent_get_apply_io_opts_one(trans, &opts, iter, k, ctx));
-	try(bch2_bkey_set_needs_rebalance(c, &opts, n, ctx, 0));
+
+	struct bch_inode_opts opts;
+	try(bch2_extent_get_io_opts_one(trans, &opts, k));
+	try(bch2_bkey_set_needs_rebalance(c, &opts, n, SET_NEEDS_REBALANCE_opt_change, 0));
 
 	/*
 	 * Since we're not inserting through an extent iterator

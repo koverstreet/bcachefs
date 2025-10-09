@@ -545,10 +545,13 @@ root_err:
 		if (!bkey_extent_is_direct_data(k.k))
 			goto next_nondata;
 
-		io_opts = bch2_extent_get_apply_io_opts(trans, &snapshot_io_opts,
-						iter.pos, &iter, k,
-						SET_NEEDS_REBALANCE_other);
+		io_opts = bch2_extent_get_io_opts(trans, &snapshot_io_opts, k);
 		ret = PTR_ERR_OR_ZERO(io_opts);
+		if (ret)
+			continue;
+
+		ret = bch2_update_rebalance_opts(trans, io_opts, &iter, k,
+						 SET_NEEDS_REBALANCE_other);
 		if (ret)
 			continue;
 
@@ -742,19 +745,21 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		if (!k.k)
 			goto next;
 
-		struct bch_inode_opts io_opts;
-		ret = bch2_extent_get_apply_io_opts_one(trans, &io_opts, &iter, k,
-							SET_NEEDS_REBALANCE_other);
+		struct bch_inode_opts opts;
+		ret =   bch2_extent_get_io_opts_one(trans, &opts, k) ?:
+			bch2_update_rebalance_opts(trans, &opts, &iter, k,
+						   SET_NEEDS_REBALANCE_other);
+
 		if (ret) {
 			bch2_trans_iter_exit(&iter);
 			continue;
 		}
 
 		struct data_update_opts data_opts = {};
-		bool p = pred(c, arg, bp.v->btree_id, k, &io_opts, &data_opts);
+		bool p = pred(c, arg, bp.v->btree_id, k, &opts, &data_opts);
 
 		if (trace_io_move_pred_enabled())
-			trace_io_move_pred2(c, k, &io_opts, &data_opts,
+			trace_io_move_pred2(c, k, &opts, &data_opts,
 					    pred, arg, p);
 
 		if (!p) {
@@ -775,7 +780,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		unsigned sectors = bp.v->bucket_len;
 
 		if (!bp.v->level)
-			ret = bch2_move_extent(ctxt, bucket_in_flight, &iter, k, io_opts, data_opts);
+			ret = bch2_move_extent(ctxt, bucket_in_flight, &iter, k, opts, data_opts);
 		else if (!data_opts.scrub)
 			ret = bch2_btree_node_rewrite_pos(trans, bp.v->btree_id, bp.v->level,
 							  k.k->p, data_opts.target, 0);
