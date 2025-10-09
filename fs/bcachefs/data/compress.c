@@ -694,10 +694,9 @@ int bch2_fs_compress_init(struct bch_fs *c)
 int bch2_opt_compression_parse(struct bch_fs *c, const char *_val, u64 *res,
 			       struct printbuf *err)
 {
-	char *val = kstrdup(_val, GFP_KERNEL);
+	char *val __free(kfree) = kstrdup(_val, GFP_KERNEL);
 	char *p = val, *type_str, *level_str;
 	union bch_compression_opt opt = { 0 };
-	int ret;
 
 	if (!val)
 		return -ENOMEM;
@@ -705,11 +704,11 @@ int bch2_opt_compression_parse(struct bch_fs *c, const char *_val, u64 *res,
 	type_str = strsep(&p, ":");
 	level_str = p;
 
-	ret = match_string(bch2_compression_opts, -1, type_str);
+	int ret = match_string(bch2_compression_opts, -1, type_str);
 	if (ret < 0 && err)
 		prt_printf(err, "invalid compression type\n");
 	if (ret < 0)
-		goto err;
+		return ret;
 
 	opt.type = ret;
 
@@ -724,15 +723,13 @@ int bch2_opt_compression_parse(struct bch_fs *c, const char *_val, u64 *res,
 		if (ret < 0 && err)
 			prt_printf(err, "invalid compression level\n");
 		if (ret < 0)
-			goto err;
+			return ret;
 
 		opt.level = level;
 	}
 
 	*res = opt.value;
-err:
-	kfree(val);
-	return ret;
+	return 0;
 }
 
 void bch2_compression_opt_to_text(struct printbuf *out, u64 v)
