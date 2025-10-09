@@ -812,7 +812,7 @@ bool bch2_opt_set_sb(struct bch_fs *c, struct bch_dev *ca,
 
 /* io opts: */
 
-void bch2_inode_opts_get(struct bch_fs *c, struct bch_inode_opts *ret)
+void bch2_inode_opts_get(struct bch_fs *c, struct bch_inode_opts *ret, bool metadata)
 {
 	memset(ret, 0, sizeof(*ret));
 
@@ -822,7 +822,13 @@ void bch2_inode_opts_get(struct bch_fs *c, struct bch_inode_opts *ret)
 
 	ret->change_cookie = atomic_read(&c->opt_change_cookie);
 
-	bch2_io_opts_fixups(ret);
+	if (metadata) {
+		ret->background_target	= c->opts.metadata_target ?: c->opts.foreground_target;
+		ret->data_replicas	= c->opts.metadata_replicas;
+		ret->data_checksum	= c->opts.metadata_checksum;
+	} else {
+		bch2_io_opts_fixups(ret);
+	}
 }
 
 bool bch2_opt_is_inode_opt(enum bch_opt_id id)
