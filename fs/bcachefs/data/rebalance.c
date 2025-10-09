@@ -1033,6 +1033,8 @@ static int check_rebalance_work_one(struct btree_trans *trans,
 			"rebalance work incorrectly unset\n%s", buf.buf))
 		try(bch2_btree_bit_mod_buffered(trans, BTREE_ID_rebalance_work, extent_k.k->p, true));
 
+	try(bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
+
 	if (cmp <= 0)
 		bch2_btree_iter_advance(extent_iter);
 	if (cmp >= 0)
@@ -1059,12 +1061,8 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 	while (!ret) {
 		progress_update_iter(trans, &progress, &rebalance_iter);
 
-		bch2_trans_begin(trans);
-
-		ret = check_rebalance_work_one(trans, &extent_iter, &rebalance_iter, &last_flushed);
-
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			ret = 0;
+		ret = lockrestart_do(trans,
+			check_rebalance_work_one(trans, &extent_iter, &rebalance_iter, &last_flushed));
 	}
 
 	return ret < 0 ? ret : 0;
