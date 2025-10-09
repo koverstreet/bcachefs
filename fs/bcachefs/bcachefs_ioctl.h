@@ -35,36 +35,9 @@
  */
 #define BCH_READ_DEV			(1 << 5)
 
-/* global control dev: */
-
-/* These are currently broken, and probably unnecessary: */
-#if 0
-#define BCH_IOCTL_ASSEMBLE	_IOW(0xbc, 1, struct bch_ioctl_assemble)
-#define BCH_IOCTL_INCREMENTAL	_IOW(0xbc, 2, struct bch_ioctl_incremental)
-
-struct bch_ioctl_assemble {
-	__u32			flags;
-	__u32			nr_devs;
-	__u64			pad;
-	__u64			devs[];
-};
-
-struct bch_ioctl_incremental {
-	__u32			flags;
-	__u64			pad;
-	__u64			dev;
-};
-#endif
-
 /* filesystem ioctls: */
 
 #define BCH_IOCTL_QUERY_UUID	_IOR(0xbc,	1,  struct bch_ioctl_query_uuid)
-
-/* These only make sense when we also have incremental assembly */
-#if 0
-#define BCH_IOCTL_START		_IOW(0xbc,	2,  struct bch_ioctl_start)
-#define BCH_IOCTL_STOP		_IO(0xbc,	3)
-#endif
 
 #define BCH_IOCTL_DISK_ADD		_IOW(0xbc,	4,  struct bch_ioctl_disk)
 #define BCH_IOCTL_DISK_ADD_v2		_IOW(0xbc,	23, struct bch_ioctl_disk_v2)

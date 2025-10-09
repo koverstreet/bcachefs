@@ -57,90 +57,11 @@ DEFINE_CLASS(bch2_device_lookup, struct bch_dev *,
       bch2_device_lookup(c, dev, flags),
       struct bch_fs *c, u64 dev, unsigned flags);
 
-#if 0
-static long bch2_ioctl_assemble(struct bch_ioctl_assemble __user *user_arg)
-{
-	struct bch_ioctl_assemble arg;
-	struct bch_fs *c;
-	u64 *user_devs = NULL;
-	char **devs = NULL;
-	unsigned i;
-	int ret = -EFAULT;
-
-	if (copy_from_user(&arg, user_arg, sizeof(arg)))
-		return -EFAULT;
-
-	if (arg.flags || arg.pad)
-		return -EINVAL;
-
-	user_devs = kmalloc_array(arg.nr_devs, sizeof(u64), GFP_KERNEL);
-	if (!user_devs)
-		return -ENOMEM;
-
-	devs = kcalloc(arg.nr_devs, sizeof(char *), GFP_KERNEL);
-
-	if (copy_from_user(user_devs, user_arg->devs,
-			   sizeof(u64) * arg.nr_devs))
-		goto err;
-
-	for (i = 0; i < arg.nr_devs; i++) {
-		devs[i] = strndup_user((const char __user *)(unsigned long)
-				       user_devs[i],
-				       PATH_MAX);
-		ret= PTR_ERR_OR_ZERO(devs[i]);
-		if (ret)
-			goto err;
-	}
-
-	c = bch2_fs_open(devs, arg.nr_devs, bch2_opts_empty());
-	ret = PTR_ERR_OR_ZERO(c);
-	if (!ret)
-		closure_put(&c->cl);
-err:
-	if (devs)
-		for (i = 0; i < arg.nr_devs; i++)
-			kfree(devs[i]);
-	kfree(devs);
-	return ret;
-}
-
-static long bch2_ioctl_incremental(struct bch_ioctl_incremental __user *user_arg)
-{
-	struct bch_ioctl_incremental arg;
-	const char *err;
-	char *path;
-
-	if (copy_from_user(&arg, user_arg, sizeof(arg)))
-		return -EFAULT;
-
-	if (arg.flags || arg.pad)
-		return -EINVAL;
-
-	path = errptr_try(strndup_user((const char __user *)(unsigned long) arg.dev, PATH_MAX));
-
-	err = bch2_fs_open_incremental(path);
-	kfree(path);
-
-	if (err) {
-		pr_err("Could not register bcachefs devices: %s", err);
-		return -EINVAL;
-	}
-
-	return 0;
-}
-#endif
-
 static long bch2_global_ioctl(unsigned cmd, void __user *arg)
 {
 	long ret;
 
 	switch (cmd) {
-#if 0
-	case BCH_IOCTL_ASSEMBLE:
-		return bch2_ioctl_assemble(arg);
-	case BCH_IOCTL_INCREMENTAL:
-		return bch2_ioctl_incremental(arg);
-#endif
 	case BCH_IOCTL_FSCK_OFFLINE: {
 		ret = bch2_ioctl_fsck_offline(arg);
 		break;
@@ -161,28 +82,6 @@ static long bch2_ioctl_query_uuid(struct bch_fs *c,
 	return copy_to_user_errcode(&user_arg->uuid, &c->sb.user_uuid,
 				    sizeof(c->sb.user_uuid));
 }
-
-#if 0
-static long bch2_ioctl_start(struct bch_fs *c, struct bch_ioctl_start arg)
-{
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	if (arg.flags || arg.pad)
-		return -EINVAL;
-
-	return bch2_fs_start(c);
-}
-
-static long bch2_ioctl_stop(struct bch_fs *c)
-{
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	bch2_fs_stop(c);
-	return 0;
-}
-#endif
 
 int bch2_copy_ioctl_err_msg(struct bch_ioctl_err_msg *dst, struct printbuf *src, int ret)
 {
@@ -793,12 +692,6 @@ long bch2_fs_ioctl(struct bch_fs *c, unsigned cmd, void __user *arg)
 		return bch2_ioctl_dev_usage(c, arg);
 	case BCH_IOCTL_DEV_USAGE_V2:
 		return bch2_ioctl_dev_usage_v2(c, arg);
-#if 0
-	case BCH_IOCTL_START:
-		BCH_IOCTL(start, struct bch_ioctl_start);
-	case BCH_IOCTL_STOP:
-		return bch2_ioctl_stop(c);
-#endif
 	case BCH_IOCTL_READ_SUPER:
 		BCH_IOCTL(read_super, struct bch_ioctl_read_super);
 	case BCH_IOCTL_DISK_GET_IDX:
