@@ -161,6 +161,7 @@ static inline void bch2_dev_put(struct bch_dev *ca)
 	if (!IS_ERR_OR_NULL(ca))
 		__bch2_dev_put(ca);
 }
+DEFINE_FREE(bch2_dev_put, struct bch_dev *, bch2_dev_put(_T))
 
 static inline struct bch_dev *bch2_get_next_dev(struct bch_fs *c, struct bch_dev *ca)
 {
