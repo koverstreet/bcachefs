@@ -257,38 +257,6 @@ int bch2_trans_log_bkey(struct btree_trans *, enum btree_id, unsigned, struct bk
 __printf(2, 3) int bch2_fs_log_msg(struct bch_fs *, const char *, ...);
 __printf(2, 3) int bch2_journal_log_msg(struct bch_fs *, const char *, ...);
 
-/**
- * bch2_trans_commit - insert keys at given iterator positions
- *
- * This is main entry point for btree updates.
- *
- * Return values:
- * -EROFS: filesystem read only
- * -EIO: journal or btree node IO error
- */
-static inline int bch2_trans_commit(struct btree_trans *trans,
-				    struct disk_reservation *disk_res,
-				    u64 *journal_seq,
-				    unsigned flags)
-{
-	trans->disk_res		= disk_res;
-	trans->journal_seq	= journal_seq;
-
-	return __bch2_trans_commit(trans, flags);
-}
-
-#define commit_do(_trans, _disk_res, _journal_seq, _flags, _do)	\
-	lockrestart_do(_trans, _do ?: bch2_trans_commit(_trans, (_disk_res),\
-					(_journal_seq), (_flags)))
-
-#define nested_commit_do(_trans, _disk_res, _journal_seq, _flags, _do)	\
-	nested_lockrestart_do(_trans, _do ?: bch2_trans_commit(_trans, (_disk_res),\
-					(_journal_seq), (_flags)))
-
-/* deprecated, prefer CLASS(btree_trans) */
-#define bch2_trans_commit_do(_c, _disk_res, _journal_seq, _flags, _do)		\
-	bch2_trans_run(_c, commit_do(trans, _disk_res, _journal_seq, _flags, _do))
-
 #define trans_for_each_update(_trans, _i)				\
 	for (struct btree_insert_entry *_i = (_trans)->updates;		\
 	     (_i) < (_trans)->updates + (_trans)->nr_updates;		\
@@ -314,6 +282,49 @@ static inline void bch2_trans_reset_updates(struct btree_trans *trans)
 	trans->hooks			= NULL;
 	trans->extra_disk_res		= 0;
 }
+
+/**
+ * bch2_trans_commit - insert keys at given iterator positions
+ *
+ * This is main entry point for btree updates.
+ *
+ * Return values:
+ * -EROFS: filesystem read only
+ * -EIO: journal or btree node IO error
+ */
+static inline int bch2_trans_commit(struct btree_trans *trans,
+				    struct disk_reservation *disk_res,
+				    u64 *journal_seq,
+				    unsigned flags)
+{
+	trans->disk_res		= disk_res;
+	trans->journal_seq	= journal_seq;
+
+	return __bch2_trans_commit(trans, flags);
+}
+
+static inline int bch2_trans_commit_lazy(struct btree_trans *trans,
+					 struct disk_reservation *disk_res,
+					 u64 *journal_seq,
+					 unsigned flags)
+{
+	return bch2_trans_has_updates(trans)
+		? (bch2_trans_commit(trans, disk_res, journal_seq, flags) ?:
+		   bch_err_throw(trans->c, transaction_restart_commit))
+		: 0;
+}
+
+#define commit_do(_trans, _disk_res, _journal_seq, _flags, _do)	\
+	lockrestart_do(_trans, _do ?: bch2_trans_commit(_trans, (_disk_res),\
+					(_journal_seq), (_flags)))
+
+#define nested_commit_do(_trans, _disk_res, _journal_seq, _flags, _do)	\
+	nested_lockrestart_do(_trans, _do ?: bch2_trans_commit(_trans, (_disk_res),\
+					(_journal_seq), (_flags)))
+
+/* deprecated, prefer CLASS(btree_trans) */
+#define bch2_trans_commit_do(_c, _disk_res, _journal_seq, _flags, _do)		\
+	bch2_trans_run(_c, commit_do(trans, _disk_res, _journal_seq, _flags, _do))
 
 static __always_inline struct bkey_i *__bch2_bkey_make_mut_noupdate(struct btree_trans *trans, struct bkey_s_c k,
 						  unsigned type, unsigned min_bytes)
