@@ -59,7 +59,9 @@ struct per_snapshot_io_opts {
 static inline void per_snapshot_io_opts_init(struct per_snapshot_io_opts *io_opts, struct bch_fs *c)
 {
 	memset(io_opts, 0, sizeof(*io_opts));
-	bch2_inode_opts_get(c, &io_opts->fs_io_opts);
+
+	/* io_opts->fs_io_opts will be initialized when we know the key type */
+	io_opts->fs_io_opts.change_cookie = atomic_read(&c->opt_change_cookie) - 1;
 }
 
 static inline void per_snapshot_io_opts_exit(struct per_snapshot_io_opts *io_opts)

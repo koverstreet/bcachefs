@@ -666,9 +666,6 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	u64 check_mismatch_done = bucket_start;
 	int ret = 0;
 
-	struct bch_inode_opts io_opts;
-	bch2_inode_opts_get(c, &io_opts);
-
 	/* Userspace might have supplied @dev: */
 	CLASS(bch2_dev_tryget_noerror, ca)(c, dev);
 	if (!ca)
@@ -745,13 +742,12 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		if (!k.k)
 			goto next;
 
-		if (!bp.v->level) {
-			ret = bch2_extent_get_apply_io_opts_one(trans, &io_opts, &iter, k,
-								SET_NEEDS_REBALANCE_other);
-			if (ret) {
-				bch2_trans_iter_exit(&iter);
-				continue;
-			}
+		struct bch_inode_opts io_opts;
+		ret = bch2_extent_get_apply_io_opts_one(trans, &io_opts, &iter, k,
+							SET_NEEDS_REBALANCE_other);
+		if (ret) {
+			bch2_trans_iter_exit(&iter);
+			continue;
 		}
 
 		struct data_update_opts data_opts = {};
@@ -903,7 +899,7 @@ static int bch2_move_btree(struct bch_fs *c,
 	int ret = 0;
 
 	struct bch_inode_opts io_opts;
-	bch2_inode_opts_get(c, &io_opts);
+	bch2_inode_opts_get(c, &io_opts, true);
 
 	bch2_moving_ctxt_init(&ctxt, c, NULL, stats,
 			      writepoint_ptr(&c->btree_write_point),
