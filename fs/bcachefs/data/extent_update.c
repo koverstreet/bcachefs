@@ -106,8 +106,7 @@ int bch2_extent_trim_atomic(struct btree_trans *trans,
 			    struct btree_iter *iter,
 			    struct bkey_i *insert)
 {
-	enum bch_bkey_type whiteout_type =
-		extent_whiteout_type(trans->c, iter->btree_id, &insert->k);
+	enum bch_bkey_type whiteout_type = 0;
 	struct bpos end = insert->k.p;
 
 	CLASS(btree_iter_copy, copy)(iter);
@@ -130,6 +129,9 @@ int bch2_extent_trim_atomic(struct btree_trans *trans,
 			offset = iter->pos.offset - bkey_start_offset(k.k);
 
 		if (bkey_extent_whiteout(k.k)) {
+			if (!whiteout_type)
+				whiteout_type = extent_whiteout_type(trans->c, iter->btree_id, &insert->k);
+
 			if (bpos_gt(k.k->p, insert->k.p)) {
 				if (k.k->type == KEY_TYPE_extent_whiteout)
 					break;
