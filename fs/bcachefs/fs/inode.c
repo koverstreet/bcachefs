@@ -432,11 +432,7 @@ int bch2_inode_write_flags(struct btree_trans *trans,
 		     struct bch_inode_unpacked *inode,
 		     enum btree_iter_update_trigger_flags flags)
 {
-	struct bkey_inode_buf *inode_p;
-
-	inode_p = bch2_trans_kmalloc(trans, sizeof(*inode_p));
-	if (IS_ERR(inode_p))
-		return PTR_ERR(inode_p);
+	struct bkey_inode_buf *inode_p = errptr_try(bch2_trans_kmalloc(trans, sizeof(*inode_p)));
 
 	bch2_inode_pack_inlined(inode_p, inode);
 	inode_p->inode.k.p.snapshot = iter->snapshot;
@@ -445,11 +441,7 @@ int bch2_inode_write_flags(struct btree_trans *trans,
 
 int __bch2_fsck_write_inode(struct btree_trans *trans, struct bch_inode_unpacked *inode)
 {
-	struct bkey_inode_buf *inode_p =
-		bch2_trans_kmalloc(trans, sizeof(*inode_p));
-
-	if (IS_ERR(inode_p))
-		return PTR_ERR(inode_p);
+	struct bkey_inode_buf *inode_p = errptr_try(bch2_trans_kmalloc(trans, sizeof(*inode_p)));
 
 	bch2_inode_pack(inode_p, inode);
 	inode_p->inode.k.p.snapshot = inode->bi_snapshot;
@@ -470,18 +462,15 @@ int bch2_fsck_write_inode(struct btree_trans *trans, struct bch_inode_unpacked *
 
 struct bkey_i *bch2_inode_to_v3(struct btree_trans *trans, struct bkey_i *k)
 {
-	struct bch_inode_unpacked u;
-	struct bkey_inode_buf *inode_p;
-	int ret;
-
 	if (!bkey_is_inode(&k->k))
 		return ERR_PTR(-ENOENT);
 
-	inode_p = bch2_trans_kmalloc(trans, sizeof(*inode_p));
+	struct bkey_inode_buf *inode_p = bch2_trans_kmalloc(trans, sizeof(*inode_p));
 	if (IS_ERR(inode_p))
 		return ERR_CAST(inode_p);
 
-	ret = bch2_inode_unpack(bkey_i_to_s_c(k), &u);
+	struct bch_inode_unpacked u;
+	int ret = bch2_inode_unpack(bkey_i_to_s_c(k), &u);
 	if (ret)
 		return ERR_PTR(ret);
 
