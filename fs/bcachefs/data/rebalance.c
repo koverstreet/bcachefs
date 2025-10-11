@@ -8,7 +8,7 @@
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
 
-#include "btree/iter.h"
+#include "btree/interior.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 
@@ -961,27 +961,30 @@ static int __do_rebalance_extent(struct moving_context *ctxt,
 	bch2_bkey_buf_reassemble(&sk, k);
 	k = bkey_i_to_s_c(sk.k);
 
-	ret = bch2_move_extent(ctxt, NULL, iter, k, *opts, data_opts);
+	ret = !bkey_is_btree_ptr(k.k)
+		? bch2_move_extent(ctxt, NULL, iter, k, *opts, data_opts)
+		: bch2_btree_node_rewrite_pos(trans, iter->btree_id, iter->min_depth,
+					      k.k->p, data_opts.target, 0);
+	if (bch2_err_matches(ret, ENOMEM)) {
+		/* memory allocation failure, wait for some IO to finish */
+		bch2_move_ctxt_wait_for_io(ctxt);
+		return bch_err_throw(c, transaction_restart_nested);
+	}
+
+	if (bch2_err_matches(ret, BCH_ERR_data_update_done_no_rw_devs) ||
+	    bch2_err_matches(ret, BCH_ERR_insufficient_devices)) {
+		if (rb_work_btree(bch2_bkey_rebalance_opts(k)) !=
+		    BTREE_ID_rebalance_work_pending)
+			try(bch2_trans_relock(trans) ?:
+			    bch2_extent_set_rb_pending(trans, iter, k));
+
+		return 0;
+	}
+
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+		return ret;
+
 	if (ret) {
-		if (bch2_err_matches(ret, ENOMEM)) {
-			/* memory allocation failure, wait for some IO to finish */
-			bch2_move_ctxt_wait_for_io(ctxt);
-			return bch_err_throw(c, transaction_restart_nested);
-		}
-
-		if (bch2_err_matches(ret, BCH_ERR_data_update_done_no_rw_devs) ||
-		    bch2_err_matches(ret, BCH_ERR_insufficient_devices)) {
-			if (rb_work_btree(bch2_bkey_rebalance_opts(k)) !=
-			    BTREE_ID_rebalance_work_pending)
-				try(bch2_trans_relock(trans) ?:
-				    bch2_extent_set_rb_pending(trans, iter, k));
-
-			return 0;
-		}
-
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			return ret;
-
 		/* skip it and continue, XXX signal failure */
 	}
 
