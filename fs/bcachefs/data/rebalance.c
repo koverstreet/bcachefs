@@ -567,6 +567,7 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
+	u32 restart_count = trans->restart_count;
 
 	ctxt->stats = &c->rebalance.work_stats;
 	c->rebalance.state = BCH_REBALANCE_working;
@@ -611,6 +612,12 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	}
 
 	atomic64_add(k.k->size, &ctxt->stats->sectors_seen);
+
+	/*
+	 * Suppress trans_was_restarted() check: read_extent -> ec retry will
+	 * handle transaction restarts, and we don't care:
+	 */
+	trans->restart_count = restart_count;
 	return 0;
 }
 
