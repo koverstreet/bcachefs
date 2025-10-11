@@ -319,7 +319,7 @@ int bch2_move_extent(struct moving_context *ctxt,
 
 	struct bch_inode_opts opts;
 	try(bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts));
-	try(bch2_update_rebalance_opts(trans, snapshot_io_opts, &opts, iter, k,
+	try(bch2_update_rebalance_opts(trans, snapshot_io_opts, &opts, iter, level, k,
 				       SET_NEEDS_REBALANCE_other));
 
 	CLASS(disk_reservation, res)(c);

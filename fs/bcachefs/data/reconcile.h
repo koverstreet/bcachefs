@@ -106,6 +106,7 @@ int bch2_update_rebalance_opts(struct btree_trans *,
 			       struct per_snapshot_io_opts *,
 			       struct bch_inode_opts *,
 			       struct btree_iter *,
+			       unsigned level,
 			       struct bkey_s_c,
 			       enum set_needs_rebalance_ctx);
 

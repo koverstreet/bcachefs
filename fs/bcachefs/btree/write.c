@@ -6,6 +6,7 @@
 #include "btree/sort.h"
 #include "btree/write.h"
 
+#include "data/reconcile.h"
 #include "data/write.h"
 
 #include "debug/async_objs.h"
@@ -100,7 +101,9 @@ static int btree_node_write_update_key(struct btree_trans *trans,
 	if (ret)
 		return ret == -BCH_ERR_btree_node_dying ? 0 : ret;
 
-	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(&b->key.k)));
+	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(&b->key.k) +
+					      sizeof(struct bch_extent_reconcile) +
+					      sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
 	bkey_copy(n, &b->key);
 
 	bkey_i_to_btree_ptr_v2(n)->v.sectors_written =
@@ -111,6 +114,13 @@ static int btree_node_write_update_key(struct btree_trans *trans,
 
 	if (!bch2_bkey_nr_dirty_ptrs(c, bkey_i_to_s_c(n)))
 		return bch_err_throw(c, btree_node_write_all_failed);
+
+	if (wbio->wbio.failed.nr) {
+		struct bch_inode_opts opts;
+		try(bch2_bkey_get_io_opts(trans, NULL, bkey_i_to_s_c(n), &opts));
+		try(bch2_bkey_set_needs_rebalance(trans, NULL, &opts, n,
+						  SET_NEEDS_REBALANCE_opt_change, 0));
+	}
 
 	return bch2_btree_node_update_key(trans, &iter, b, n,
 					  BCH_WATERMARK_interior_updates|
