@@ -22,6 +22,7 @@
 
 #include "data/extents.h"
 #include "data/keylist.h"
+#include "data/rebalance.h"
 #include "data/write.h"
 
 #include "init/error.h"
@@ -654,6 +655,35 @@ static void btree_update_new_nodes_mark_sb(struct btree_update *as)
 	bch2_write_super(c);
 }
 
+static void bkey_strip_rebalance(const struct bch_fs *c, struct bkey_s k)
+{
+	bool dropped;
+
+	do {
+		dropped = false;
+
+		struct bkey_ptrs ptrs = bch2_bkey_ptrs(k);
+		union bch_extent_entry *entry;
+		bkey_extent_entry_for_each(ptrs, entry)
+			if (extent_entry_type(entry) == BCH_EXTENT_ENTRY_rebalance_v2 ||
+			    extent_entry_type(entry) == BCH_EXTENT_ENTRY_rebalance_bp) {
+				extent_entry_drop(c, k, entry);
+				dropped = true;
+				break;
+			}
+	} while (dropped);
+}
+
+static bool bkey_has_rebalance(const struct bch_fs *c, struct bkey_s_c k)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	bkey_extent_entry_for_each(ptrs, entry)
+		if (extent_entry_type(entry) == BCH_EXTENT_ENTRY_rebalance_v2)
+			return true;
+	return false;
+}
+
 /*
  * The transactional part of an interior btree node update, where we journal the
  * update we did to the interior node and update alloc info:
@@ -661,24 +691,68 @@ static void btree_update_new_nodes_mark_sb(struct btree_update *as)
 static int btree_update_nodes_written_trans(struct btree_trans *trans,
 					    struct btree_update *as)
 {
+	struct bch_fs *c = trans->c;
+	struct bch_inode_opts opts;
+	bch2_inode_opts_get(as->c, &opts, true);
+
 	trans->journal_pin = &as->journal;
 
-	darray_for_each(as->old_nodes, i)
+	darray_for_each(as->old_nodes, i) {
 		try(bch2_key_trigger_old(trans, as->btree_id, i->level + 1, bkey_i_to_s_c(&i->key),
-					 BTREE_TRIGGER_transactional));
-
-	darray_for_each(as->new_nodes, i) {
-		try(bch2_key_trigger_new(trans, as->btree_id, i->level + 1, bkey_i_to_s(&i->key),
 					 BTREE_TRIGGER_transactional));
 
 		journal_entry_set(errptr_try(bch2_trans_jset_entry_alloc(trans,
 									 jset_u64s(i->key.k.u64s))),
-				  i->root
-				  ? BCH_JSET_ENTRY_btree_root
-				  : BCH_JSET_ENTRY_btree_keys,
+				  BCH_JSET_ENTRY_overwrite,
 				  as->btree_id,
-				  i->root ? i->level : i->level + 1,
+				  i->level + 1,
 				  &i->key, i->key.k.u64s);
+	}
+
+	darray_for_each(as->new_nodes, i) {
+		i->update_node_key = false;
+		bkey_strip_rebalance(c, bkey_i_to_s(&i->key));
+
+		try(bch2_bkey_set_needs_rebalance(trans, NULL, &opts, &i->key,
+						  SET_NEEDS_REBALANCE_foreground, 0));
+
+		if (bkey_has_rebalance(c, bkey_i_to_s_c(&i->key))) {
+			CLASS(btree_iter_uninit, iter)(trans);
+			int ret = bch2_btree_node_get_iter(trans, &iter, i->b);
+			if (ret && ret != -BCH_ERR_btree_node_dying)
+				return ret;
+			if (!ret)
+				i->update_node_key = true;
+			else
+				bkey_strip_rebalance(c, bkey_i_to_s(&i->key));
+		}
+
+		try(bch2_key_trigger_new(trans, as->btree_id, i->level + 1, bkey_i_to_s(&i->key),
+					 BTREE_TRIGGER_transactional));
+
+		if (!i->update_node_key || i->root) {
+			journal_entry_set(errptr_try(bch2_trans_jset_entry_alloc(trans,
+									jset_u64s(i->key.k.u64s))),
+					  i->root
+					  ? BCH_JSET_ENTRY_btree_root
+					  : BCH_JSET_ENTRY_btree_keys,
+					  as->btree_id,
+					  i->root ? i->level : i->level + 1,
+					  &i->key, i->key.k.u64s);
+		} else {
+			CLASS(btree_node_iter, parent_iter)(trans,
+							    as->btree_id,
+							    i->key.k.p,
+							    0,
+							    i->level + 1,
+							    BTREE_ITER_intent);
+			try(bch2_btree_iter_traverse(&parent_iter));
+			/*
+			 * XXX: we shouldn't be logging overwrites here, need a
+			 * flag for that
+			 */
+			try(bch2_trans_update(trans, &parent_iter, &i->key, BTREE_TRIGGER_norun));
+		}
 	}
 
 	return 0;
@@ -760,19 +834,23 @@ static void btree_update_nodes_written(struct btree_update *as)
 				BCH_TRANS_COMMIT_no_check_rw|
 				BCH_TRANS_COMMIT_journal_reclaim,
 				btree_update_nodes_written_trans(trans, as));
-		bch2_fs_fatal_err_on(ret && !bch2_journal_error(&c->journal), c,
-				     "%s", bch2_err_str(ret));
+		bch2_fs_fatal_err_on(ret && !bch2_journal_error(&c->journal),
+				     c, "%s", bch2_err_str(ret));
 		/*
 		 * Clear will_make_reachable while we still hold intent locks on
 		 * all our new nodes, to avoid racing with
 		 * btree_node_update_key():
 		 */
-		darray_for_each(as->new_nodes, i)
+		darray_for_each(as->new_nodes, i) {
+			if (i->update_node_key)
+				bkey_copy(&i->b->key, &i->key);
+
 			if (i->b) {
 				BUG_ON(i->b->will_make_reachable != (unsigned long) as);
 				i->b->will_make_reachable = 0;
 				clear_btree_node_will_make_reachable(i->b);
 			}
+		}
 	}
 
 	/*
@@ -2422,7 +2500,8 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 			 */
 		}
 
-		try(bch2_trans_commit(trans, NULL, NULL, commit_flags));
+		CLASS(disk_reservation, res)(c);
+		try(bch2_trans_commit(trans, &res.r, NULL, commit_flags));
 
 		bch2_btree_node_lock_write_nofail(trans, btree_iter_path(trans, iter), &b->c);
 		bkey_copy(&b->key, new_key);
