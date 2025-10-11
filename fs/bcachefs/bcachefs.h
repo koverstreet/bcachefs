@@ -899,6 +899,7 @@ struct bch_fs {
 	struct list_head	btree_interior_update_list;
 	struct list_head	btree_interior_updates_unwritten;
 	struct mutex		btree_interior_update_lock;
+	struct mutex		btree_interior_update_commit_lock;
 	struct closure_waitlist	btree_interior_update_wait;
 
 	struct workqueue_struct	*btree_interior_update_worker;
