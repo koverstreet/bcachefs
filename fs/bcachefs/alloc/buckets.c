@@ -1171,24 +1171,22 @@ int __bch2_disk_reservation_add(struct bch_fs *c, struct disk_reservation *res,
 	preempt_disable();
 	pcpu = this_cpu_ptr(c->pcpu);
 
-	if (sectors <= pcpu->sectors_available)
-		goto out;
+	if (unlikely(sectors > pcpu->sectors_available)) {
+		old = atomic64_read(&c->sectors_available);
+		do {
+			get = min((u64) sectors + SECTORS_CACHE, old);
 
-	old = atomic64_read(&c->sectors_available);
-	do {
-		get = min((u64) sectors + SECTORS_CACHE, old);
+			if (unlikely(get < sectors)) {
+				preempt_enable();
+				return disk_reservation_recalc_sectors_available(c,
+								res, sectors, flags);
+			}
+		} while (!atomic64_try_cmpxchg(&c->sectors_available,
+					       &old, old - get));
 
-		if (unlikely(get < sectors)) {
-			preempt_enable();
-			return disk_reservation_recalc_sectors_available(c,
-							res, sectors, flags);
-		}
-	} while (!atomic64_try_cmpxchg(&c->sectors_available,
-				       &old, old - get));
+		pcpu->sectors_available		+= get;
+	}
 
-	pcpu->sectors_available		+= get;
-
-out:
 	pcpu->sectors_available		-= sectors;
 	this_cpu_add(*c->online_reserved, sectors);
 	res->sectors			+= sectors;
