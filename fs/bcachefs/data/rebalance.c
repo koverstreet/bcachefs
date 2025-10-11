@@ -547,8 +547,6 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 			       struct bkey_s_c k,
 			       enum set_needs_rebalance_ctx ctx)
 {
-	struct bch_fs *c = trans->c;
-
 	BUG_ON(iter->flags & BTREE_ITER_is_extents);
 	BUG_ON(iter->flags & BTREE_ITER_filter_snapshots);
 
@@ -558,6 +556,7 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 	if (bkey_is_btree_ptr(k.k))
 		return 0;
 
+	struct bch_fs *c = trans->c;
 	struct bch_extent_rebalance *old =
 		(struct bch_extent_rebalance *) bch2_bkey_rebalance_opts(k);
 
@@ -570,12 +569,26 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 	    (should_have_rb ? !memcmp(old, &new, sizeof(new)) : !old))
 		return 0;
 
-	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
-							 sizeof(struct bch_extent_rebalance)));
-	bkey_reassemble(n, k);
+	if (!bkey_is_btree_ptr(k.k)) {
+		struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
+								 sizeof(struct bch_extent_rebalance)));
+		bkey_reassemble(n, k);
 
-	return  bch2_bkey_set_needs_rebalance(trans, snapshot_io_opts, io_opts, n, ctx, 0) ?:
-		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node);
+		return  bch2_bkey_set_needs_rebalance(trans, snapshot_io_opts, io_opts, n, ctx, 0) ?:
+			bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node);
+	} else {
+		CLASS(btree_node_iter, iter2)(trans, iter->btree_id, iter->pos, 0,
+					      iter->min_depth - 1, 0);
+		struct btree *b = errptr_try(bch2_btree_iter_peek_node(iter));
+
+		struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(&b->key.k) +
+							sizeof(struct bch_extent_rebalance)));
+		bkey_copy(n, &b->key);
+
+		return  bch2_bkey_set_needs_rebalance(trans, snapshot_io_opts, io_opts, n, ctx, 0) ?:
+			bch2_btree_node_update_key(trans, &iter2, b, n, BCH_TRANS_COMMIT_no_enospc, false) ?:
+			bch_err_throw(c, transaction_restart_commit);
+	}
 }
 
 struct bch_inode_opts *bch2_extent_get_io_opts(struct btree_trans *trans,
