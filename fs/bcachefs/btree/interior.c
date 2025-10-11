@@ -2204,8 +2204,7 @@ err_free_update:
 	goto out;
 }
 
-static int get_iter_to_node(struct btree_trans *trans, struct btree_iter *iter,
-			    struct btree *b)
+int bch2_btree_node_get_iter(struct btree_trans *trans, struct btree_iter *iter, struct btree *b)
 {
 	bch2_trans_node_iter_init(trans, iter, b->c.btree_id, b->key.k.p,
 				  BTREE_MAX_DEPTH, b->c.level,
@@ -2330,7 +2329,7 @@ int bch2_btree_node_rewrite_key_get_iter(struct btree_trans *trans,
 					 enum bch_trans_commit_flags flags)
 {
 	CLASS(btree_iter_uninit, iter)(trans);
-	int ret = get_iter_to_node(trans, &iter, b);
+	int ret = bch2_btree_node_get_iter(trans, &iter, b);
 	if (ret)
 		return ret == -BCH_ERR_btree_node_dying ? 0 : ret;
 
@@ -2574,7 +2573,7 @@ int bch2_btree_node_update_key_get_iter(struct btree_trans *trans,
 					unsigned commit_flags, bool skip_triggers)
 {
 	CLASS(btree_iter_uninit, iter)(trans);
-	int ret = get_iter_to_node(trans, &iter, b);
+	int ret = bch2_btree_node_get_iter(trans, &iter, b);
 	if (ret)
 		return ret == -BCH_ERR_btree_node_dying ? 0 : ret;
 

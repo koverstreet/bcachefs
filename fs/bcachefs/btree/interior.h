@@ -174,6 +174,8 @@ static inline int bch2_foreground_maybe_merge(struct btree_trans *trans,
 						    btree_next_sib);
 }
 
+int bch2_btree_node_get_iter(struct btree_trans *, struct btree_iter *, struct btree *);
+
 int bch2_btree_node_rewrite(struct btree_trans *, struct btree_iter *,
 			    struct btree *, unsigned,
 			    enum bch_trans_commit_flags);
