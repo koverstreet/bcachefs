@@ -1243,10 +1243,8 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 
 	bucket_gens = bch2_kvmalloc(struct_size(bucket_gens, b, nbuckets),
 				    GFP_KERNEL|__GFP_ZERO);
-	if (!bucket_gens) {
-		ret = bch_err_throw(c, ENOMEM_bucket_gens);
-		goto err;
-	}
+	if (!bucket_gens)
+		return bch_err_throw(c, ENOMEM_bucket_gens);
 
 	bucket_gens->first_bucket = ca->mi.first_bucket;
 	bucket_gens->nbuckets	= nbuckets;
@@ -1267,11 +1265,12 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 					  ca->mi.nbuckets, nbuckets) ?:
 		bch2_bucket_bitmap_resize(ca, &ca->bucket_backpointer_empty,
 					  ca->mi.nbuckets, nbuckets);
+	if (ret)
+		goto err;
 
 	rcu_assign_pointer(ca->bucket_gens, bucket_gens);
 	bucket_gens	= old_bucket_gens;
-
-	nbuckets = ca->mi.nbuckets;
+	nbuckets	= ca->mi.nbuckets;
 
 	ret = 0;
 err:
