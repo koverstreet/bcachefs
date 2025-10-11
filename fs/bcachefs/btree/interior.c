@@ -679,18 +679,7 @@ static void btree_update_nodes_written(struct btree_update *as)
 	struct bch_fs *c = as->c;
 	CLASS(btree_trans, trans)(c);
 	u64 journal_seq = 0;
-	int ret;
-
-	/*
-	 * If we're already in an error state, it might be because a btree node
-	 * was never written, and we might be trying to free that same btree
-	 * node here, but it won't have been marked as allocated and we'll see
-	 * spurious disk usage inconsistencies in the transactional part below
-	 * if we don't skip it:
-	 */
-	ret = bch2_journal_error(&c->journal);
-	if (ret)
-		goto err;
+	int ret = 0;
 
 	if (!btree_update_new_nodes_marked_sb(as)) {
 		bch2_trans_unlock_long(trans);
@@ -739,17 +728,34 @@ static void btree_update_nodes_written(struct btree_update *as)
 	 * journal reclaim does btree updates when flushing bkey_cached entries,
 	 * which may require allocations as well.
 	 */
-	ret = commit_do(trans, &as->disk_res, &journal_seq,
-			BCH_WATERMARK_interior_updates|
-			BCH_TRANS_COMMIT_no_enospc|
-			BCH_TRANS_COMMIT_no_check_rw|
-			BCH_TRANS_COMMIT_journal_reclaim,
-			btree_update_nodes_written_trans(trans, as));
-	bch2_trans_unlock(trans);
 
-	bch2_fs_fatal_err_on(ret && !bch2_journal_error(&c->journal), c,
-			     "%s", bch2_err_str(ret));
-err:
+	bch2_trans_unlock(trans);
+	/*
+	 * btree_interior_update_commit_lock is needed for synchronization with
+	 * btree_node_update_key(): having the lock be at the filesystem level
+	 * sucks, we'll need to watch for contention
+	 */
+	scoped_guard(mutex, &c->btree_interior_update_commit_lock) {
+		ret = commit_do(trans, &as->disk_res, &journal_seq,
+				BCH_WATERMARK_interior_updates|
+				BCH_TRANS_COMMIT_no_enospc|
+				BCH_TRANS_COMMIT_no_check_rw|
+				BCH_TRANS_COMMIT_journal_reclaim,
+				btree_update_nodes_written_trans(trans, as));
+		bch2_fs_fatal_err_on(ret && !bch2_journal_error(&c->journal), c,
+				     "%s", bch2_err_str(ret));
+		/*
+		 * Clear will_make_reachable while we still hold intent locks on
+		 * all our new nodes, to avoid racing with
+		 * btree_node_update_key():
+		 */
+		darray_for_each(as->new_nodes, i) {
+			BUG_ON(i->b->will_make_reachable != (unsigned long) as);
+			i->b->will_make_reachable = 0;
+			clear_btree_node_will_make_reachable(i->b);
+		}
+	}
+
 	/*
 	 * Ensure transaction is unlocked before using btree_node_lock_nopath()
 	 * (the use of which is always suspect, we need to work on removing this
@@ -834,13 +840,6 @@ err:
 	}
 
 	bch2_journal_pin_drop(&c->journal, &as->journal);
-
-	scoped_guard(mutex, &c->btree_interior_update_lock)
-		darray_for_each(as->new_nodes, i) {
-			BUG_ON(i->b->will_make_reachable != (unsigned long) as);
-			i->b->will_make_reachable = 0;
-			clear_btree_node_will_make_reachable(i->b);
-		}
 
 	darray_for_each(as->new_nodes, i) {
 		btree_node_lock_nopath_nofail(trans, &i->b->c, SIX_LOCK_read);
@@ -2381,51 +2380,70 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
-	if (!skip_triggers) {
-		try(bch2_key_trigger_old(trans, b->c.btree_id, b->c.level + 1,
-					 bkey_i_to_s_c(&b->key),
-					 BTREE_TRIGGER_transactional));
-		try(bch2_key_trigger_new(trans, b->c.btree_id, b->c.level + 1,
-					 bkey_i_to_s(new_key),
-					 BTREE_TRIGGER_transactional));
-	}
+	if (!btree_node_will_make_reachable(b)) {
+		if (!skip_triggers) {
+			try(bch2_key_trigger_old(trans, b->c.btree_id, b->c.level + 1,
+						 bkey_i_to_s_c(&b->key),
+						 BTREE_TRIGGER_transactional));
+			try(bch2_key_trigger_new(trans, b->c.btree_id, b->c.level + 1,
+						 bkey_i_to_s(new_key),
+						 BTREE_TRIGGER_transactional));
+		}
 
-	CLASS(btree_iter_uninit, iter2)(trans);
-	struct btree *parent = btree_node_parent(btree_iter_path(trans, iter), b);
-	if (parent) {
-		bch2_trans_copy_iter(&iter2, iter);
+		CLASS(btree_iter_uninit, iter2)(trans);
+		struct btree *parent = btree_node_parent(btree_iter_path(trans, iter), b);
+		if (parent) {
+			bch2_trans_copy_iter(&iter2, iter);
 
-		iter2.path = bch2_btree_path_make_mut(trans, iter2.path,
-				iter2.flags & BTREE_ITER_intent,
-				_THIS_IP_);
+			iter2.path = bch2_btree_path_make_mut(trans, iter2.path,
+					iter2.flags & BTREE_ITER_intent,
+					_THIS_IP_);
 
-		struct btree_path *path2 = btree_iter_path(trans, &iter2);
-		BUG_ON(path2->level != b->c.level);
-		BUG_ON(!bpos_eq(path2->pos, new_key->k.p));
+			struct btree_path *path2 = btree_iter_path(trans, &iter2);
+			BUG_ON(path2->level != b->c.level);
+			BUG_ON(!bpos_eq(path2->pos, new_key->k.p));
 
-		btree_path_set_level_up(trans, path2);
+			btree_path_set_level_up(trans, path2);
 
-		trans->paths_sorted = false;
+			trans->paths_sorted = false;
 
-		try(bch2_btree_iter_traverse(&iter2));
-		try(bch2_trans_update(trans, &iter2, new_key, BTREE_TRIGGER_norun));
+			try(bch2_btree_iter_traverse(&iter2));
+			try(bch2_trans_update(trans, &iter2, new_key, BTREE_TRIGGER_norun));
+		} else {
+			BUG_ON(!btree_node_is_root(c, b));
+
+			struct jset_entry *e = errptr_try(bch2_trans_jset_entry_alloc(trans,
+									jset_u64s(new_key->k.u64s)));
+
+			journal_entry_set(e,
+					  BCH_JSET_ENTRY_btree_root,
+					  b->c.btree_id, b->c.level,
+					  new_key, new_key->k.u64s);
+		}
+
+		try(bch2_trans_commit(trans, NULL, NULL, commit_flags));
+
+		bch2_btree_node_lock_write_nofail(trans, btree_iter_path(trans, iter), &b->c);
+		bkey_copy(&b->key, new_key);
+		bch2_btree_node_unlock_write(trans, btree_iter_path(trans, iter), b);
 	} else {
-		BUG_ON(!btree_node_is_root(c, b));
+		try(bch2_trans_mutex_lock(trans, &c->btree_interior_update_commit_lock));
 
-		struct jset_entry *e = errptr_try(bch2_trans_jset_entry_alloc(trans,
-								jset_u64s(new_key->k.u64s)));
+		if (!btree_node_will_make_reachable(b)) {
+			mutex_unlock(&c->btree_interior_update_commit_lock);
+			return bch_err_throw(c, transaction_restart_nested);
+		}
 
-		journal_entry_set(e,
-				  BCH_JSET_ENTRY_btree_root,
-				  b->c.btree_id, b->c.level,
-				  new_key, new_key->k.u64s);
+		struct btree_update *as = (void *) (READ_ONCE(b->will_make_reachable) & ~1UL);
+		struct btree_update_node *n = darray_find_p(as->new_nodes, i, i->b == b);
+
+		bch2_btree_node_lock_write_nofail(trans, btree_iter_path(trans, iter), &b->c);
+		bkey_copy(&b->key, new_key);
+		bch2_btree_node_unlock_write(trans, btree_iter_path(trans, iter), b);
+
+		bkey_copy(&n->key, new_key);
+		mutex_unlock(&c->btree_interior_update_commit_lock);
 	}
-
-	try(bch2_trans_commit(trans, NULL, NULL, commit_flags));
-
-	bch2_btree_node_lock_write_nofail(trans, btree_iter_path(trans, iter), &b->c);
-	bkey_copy(&b->key, new_key);
-	bch2_btree_node_unlock_write(trans, btree_iter_path(trans, iter), b);
 	return 0;
 }
 
@@ -2649,6 +2667,7 @@ void bch2_fs_btree_interior_update_init_early(struct bch_fs *c)
 	INIT_LIST_HEAD(&c->btree_interior_update_list);
 	INIT_LIST_HEAD(&c->btree_interior_updates_unwritten);
 	mutex_init(&c->btree_interior_update_lock);
+	mutex_init(&c->btree_interior_update_commit_lock);
 	INIT_WORK(&c->btree_interior_update_work, btree_interior_update_work);
 
 	INIT_LIST_HEAD(&c->btree_node_rewrites);
