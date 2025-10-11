@@ -2442,6 +2442,11 @@ int bch2_btree_node_update_key(struct btree_trans *trans, struct btree_iter *ite
 {
 	struct btree_path *path = btree_iter_path(trans, iter);
 
+	/*
+	 * Awkward - we can't rely on caller specifying BTREE_ITER_intent, and
+	 * the commit will downgrade locks
+	 */
+
 	try(bch2_btree_path_upgrade(trans, path, b->c.level + 1));
 
 	path->intent_ref++;
@@ -2449,22 +2454,6 @@ int bch2_btree_node_update_key(struct btree_trans *trans, struct btree_iter *ite
 					       commit_flags, skip_triggers);
 	--path->intent_ref;
 	return ret;
-}
-
-int bch2_btree_node_update_key_get_iter(struct btree_trans *trans,
-					struct btree *b, struct bkey_i *new_key,
-					unsigned commit_flags, bool skip_triggers)
-{
-	CLASS(btree_iter_uninit, iter)(trans);
-	int ret = bch2_btree_node_get_iter(trans, &iter, b);
-	if (ret)
-		return ret == -BCH_ERR_btree_node_dying ? 0 : ret;
-
-	bch2_bkey_drop_ptrs(bkey_i_to_s(new_key), p, entry,
-			    !bch2_bkey_has_device(bkey_i_to_s(&b->key), p.ptr.dev));
-
-	return bch2_btree_node_update_key(trans, &iter, b, new_key,
-					  commit_flags, skip_triggers);
 }
 
 /* Init code: */
