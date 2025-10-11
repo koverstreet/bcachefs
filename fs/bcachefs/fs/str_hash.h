@@ -369,15 +369,9 @@ int bch2_hash_delete_at(struct btree_trans *trans,
 			struct btree_iter *iter,
 			enum btree_iter_update_trigger_flags flags)
 {
-	struct bkey_i *delete;
-	int ret;
+	struct bkey_i *delete = errptr_try(bch2_trans_kmalloc(trans, sizeof(*delete)));
 
-	delete = bch2_trans_kmalloc(trans, sizeof(*delete));
-	ret = PTR_ERR_OR_ZERO(delete);
-	if (ret)
-		return ret;
-
-	ret = bch2_hash_needs_whiteout(trans, desc, info, iter);
+	int ret = bch2_hash_needs_whiteout(trans, desc, info, iter);
 	if (ret < 0)
 		return ret;
 

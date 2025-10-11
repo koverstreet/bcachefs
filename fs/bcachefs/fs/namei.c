@@ -660,7 +660,7 @@ static int bch2_check_dirent_inode_dirent(struct btree_trans *trans,
 	struct bkey_s_c_dirent bp_dirent = bch2_bkey_get_typed(&bp_iter, dirent);
 	ret = bkey_err(bp_dirent);
 	if (ret && !bch2_err_matches(ret, ENOENT))
-		goto err;
+		return ret;
 
 	bool backpointer_exists = !ret;
 	ret = 0;
@@ -677,7 +677,7 @@ static int bch2_check_dirent_inode_dirent(struct btree_trans *trans,
 			     d.k->p.offset)) {
 			target->bi_dir		= d.k->p.inode;
 			target->bi_dir_offset	= d.k->p.offset;
-			ret = __bch2_fsck_write_inode(trans, target);
+			try(__bch2_fsck_write_inode(trans, target));
 		}
 	} else {
 		printbuf_reset(&buf);
@@ -718,15 +718,11 @@ static int bch2_check_dirent_inode_dirent(struct btree_trans *trans,
 					target->bi_inum, target->bi_snapshot, bch2_d_types[d.v->d_type], buf.buf)) {
 				target->bi_nlink++;
 				target->bi_flags &= ~BCH_INODE_unlinked;
-				ret = __bch2_fsck_write_inode(trans, target);
-				if (ret)
-					goto err;
+				try(__bch2_fsck_write_inode(trans, target));
 			}
 		}
 	}
-err:
 fsck_err:
-	bch_err_fn(c, ret);
 	return ret;
 }
 
@@ -740,9 +736,7 @@ int __bch2_check_dirent_target(struct btree_trans *trans,
 	CLASS(printbuf, buf)();
 	int ret = 0;
 
-	ret = bch2_check_dirent_inode_dirent(trans, d, target, in_fsck);
-	if (ret)
-		goto err;
+	try(bch2_check_dirent_inode_dirent(trans, d, target, in_fsck));
 
 	if (fsck_err_on(d.v->d_type != inode_d_type(target),
 			trans, dirent_d_type_wrong,
@@ -751,10 +745,7 @@ int __bch2_check_dirent_target(struct btree_trans *trans,
 			bch2_d_type_str(inode_d_type(target)),
 			(printbuf_reset(&buf),
 			 bch2_bkey_val_to_text(&buf, c, d.s_c), buf.buf))) {
-		struct bkey_i_dirent *n = bch2_trans_kmalloc(trans, bkey_bytes(d.k));
-		ret = PTR_ERR_OR_ZERO(n);
-		if (ret)
-			goto err;
+		struct bkey_i_dirent *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(d.k)));
 
 		bkey_reassemble(&n->k_i, d.s_c);
 		n->v.d_type = inode_d_type(target);
@@ -765,14 +756,10 @@ int __bch2_check_dirent_target(struct btree_trans *trans,
 			n->v.d_inum = cpu_to_le64(target->bi_inum);
 		}
 
-		ret = bch2_trans_update(trans, dirent_iter, &n->k_i,
-					BTREE_UPDATE_internal_snapshot_node);
-		if (ret)
-			goto err;
+		try(bch2_trans_update(trans, dirent_iter, &n->k_i,
+				      BTREE_UPDATE_internal_snapshot_node));
 	}
-err:
 fsck_err:
-	bch_err_fn(c, ret);
 	return ret;
 }
 

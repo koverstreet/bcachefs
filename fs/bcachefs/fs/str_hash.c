@@ -37,20 +37,16 @@ static int bch2_fsck_rename_dirent(struct btree_trans *trans,
 				   bool *updated_before_k_pos)
 {
 	struct bch_fs *c = trans->c;
-	struct qstr old_name = bch2_dirent_get_name(old);
-	struct bkey_i_dirent *new = bch2_trans_kmalloc(trans, BKEY_U64s_MAX * sizeof(u64));
-	int ret = PTR_ERR_OR_ZERO(new);
-	if (ret)
-		return ret;
+	int ret = 0;
 
+	struct qstr old_name = bch2_dirent_get_name(old);
+
+	struct bkey_i_dirent *new = errptr_try(bch2_trans_kmalloc(trans, BKEY_U64s_MAX * sizeof(u64)));
 	bkey_dirent_init(&new->k_i);
 	dirent_copy_target(new, old);
 	new->k.p = old.k->p;
 
-	char *renamed_buf = bch2_trans_kmalloc(trans, old_name.len + 20);
-	ret = PTR_ERR_OR_ZERO(renamed_buf);
-	if (ret)
-		return ret;
+	char *renamed_buf = errptr_try(bch2_trans_kmalloc(trans, old_name.len + 20));
 
 	for (unsigned i = 0; i < 1000; i++) {
 		new->k.u64s = BKEY_U64s_MAX;

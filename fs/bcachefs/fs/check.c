@@ -1791,22 +1791,17 @@ int bch2_check_xattrs(struct bch_fs *c)
 static int check_root_trans(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_inode_unpacked root_inode;
+
 	u32 snapshot;
 	u64 inum;
-	int ret;
-
-	ret = subvol_lookup(trans, BCACHEFS_ROOT_SUBVOL, &snapshot, &inum);
+	int ret = subvol_lookup(trans, BCACHEFS_ROOT_SUBVOL, &snapshot, &inum);
 	if (ret && !bch2_err_matches(ret, ENOENT))
 		return ret;
 
 	if (mustfix_fsck_err_on(ret, trans, root_subvol_missing,
 				"root subvol missing")) {
 		struct bkey_i_subvolume *root_subvol =
-			bch2_trans_kmalloc(trans, sizeof(*root_subvol));
-		ret = PTR_ERR_OR_ZERO(root_subvol);
-		if (ret)
-			goto err;
+			errptr_try(bch2_trans_kmalloc(trans, sizeof(*root_subvol)));
 
 		snapshot	= U32_MAX;
 		inum		= BCACHEFS_ROOT_INO;
@@ -1816,12 +1811,10 @@ static int check_root_trans(struct btree_trans *trans)
 		root_subvol->v.flags	= 0;
 		root_subvol->v.snapshot	= cpu_to_le32(snapshot);
 		root_subvol->v.inode	= cpu_to_le64(inum);
-		ret = bch2_btree_insert_trans(trans, BTREE_ID_subvolumes, &root_subvol->k_i, 0);
-		bch_err_msg(c, ret, "writing root subvol");
-		if (ret)
-			goto err;
+		try(bch2_btree_insert_trans(trans, BTREE_ID_subvolumes, &root_subvol->k_i, 0));
 	}
 
+	struct bch_inode_unpacked root_inode;
 	ret = bch2_inode_find_by_inum_snapshot(trans, BCACHEFS_ROOT_INO, snapshot,
 					       &root_inode, 0);
 	if (ret && !bch2_err_matches(ret, ENOENT))
@@ -1841,7 +1834,6 @@ static int check_root_trans(struct btree_trans *trans)
 		ret = __bch2_fsck_write_inode(trans, &root_inode);
 		bch_err_msg(c, ret, "writing root inode");
 	}
-err:
 fsck_err:
 	return ret;
 }
