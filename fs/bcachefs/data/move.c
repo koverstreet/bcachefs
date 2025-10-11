@@ -457,7 +457,7 @@ int bch2_move_data_btree(struct moving_context *ctxt,
 	struct btree_iter iter, reflink_iter = {};
 	struct bkey_s_c k;
 	struct data_update_opts data_opts;
-	int ret = 0, ret2;
+	int ret = 0;
 
 	struct per_snapshot_io_opts snapshot_io_opts;
 	per_snapshot_io_opts_init(&snapshot_io_opts, c);
@@ -523,7 +523,7 @@ root_err:
 	if (ctxt->rate)
 		bch2_ratelimit_reset(ctxt->rate);
 
-	while (!bch2_move_ratelimit(ctxt)) {
+	while (!(ret = bch2_move_ratelimit(ctxt))) {
 		bch2_trans_begin(trans);
 
 		k = bch2_btree_iter_peek(&iter);
@@ -554,7 +554,7 @@ root_err:
 						   &iter, k, SET_NEEDS_REBALANCE_other) ?:
 			bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 		if (ret)
-			continue;
+			goto next_check_error;
 
 		memset(&data_opts, 0, sizeof(data_opts));
 		if (!pred(c, arg, iter.btree_id, k, io_opts, &data_opts))
@@ -568,27 +568,24 @@ root_err:
 		k = bkey_i_to_s_c(sk.k);
 
 		if (!level)
-			ret2 = bch2_move_extent(ctxt, NULL, &iter, k, *io_opts, data_opts);
+			ret = bch2_move_extent(ctxt, NULL, &iter, k, *io_opts, data_opts);
 		else if (!data_opts.scrub)
-			ret2 = bch2_btree_node_rewrite_pos(trans, btree_id, level,
+			ret = bch2_btree_node_rewrite_pos(trans, btree_id, level,
 							  k.k->p, data_opts.target, 0);
 		else
-			ret2 = bch2_btree_node_scrub(trans, btree_id, level, k, data_opts.read_dev);
-
-		if (bch2_err_matches(ret2, BCH_ERR_transaction_restart))
+			ret = bch2_btree_node_scrub(trans, btree_id, level, k, data_opts.read_dev);
+next_check_error:
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
-		if (bch2_err_matches(ret2, BCH_ERR_data_update_done))
-			ret2 = 0;
-		if (bch2_err_matches(ret2, ENOMEM)) {
+		if (bch2_err_matches(ret, ENOMEM)) {
 			/* memory allocation failure, wait for some IO to finish */
 			bch2_move_ctxt_wait_for_io(ctxt);
 			continue;
 		}
-
-		if (ret2) {
-			/* XXX signal failure */
-			goto next;
-		}
+		if (bch2_err_matches(ret, BCH_ERR_data_update_done))
+			ret = 0;
+		if (ret)
+			break;
 next:
 		if (ctxt->stats)
 			atomic64_add(k.k->size, &ctxt->stats->sectors_seen);
@@ -751,11 +748,8 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 			bch2_update_rebalance_opts(trans, NULL, &opts, &iter, k,
 						   SET_NEEDS_REBALANCE_other) ?:
 			bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
-
-		if (ret) {
-			bch2_trans_iter_exit(&iter);
-			continue;
-		}
+		if (ret)
+			goto next_check_error;
 
 		struct data_update_opts data_opts = {};
 		bool p = pred(c, arg, bp.v->btree_id, k, &opts, &data_opts);
@@ -788,14 +782,12 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 							  k.k->p, data_opts.target, 0);
 		else
 			ret = bch2_btree_node_scrub(trans, bp.v->btree_id, bp.v->level, k, data_opts.read_dev);
-
+next_check_error:
 		bch2_trans_iter_exit(&iter);
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
-		if (bch2_err_matches(ret, BCH_ERR_data_update_done))
-			ret = 0;
-		if (ret == -ENOMEM) {
+		if (bch2_err_matches(ret, ENOMEM)) {
 			/* memory allocation failure, wait for some IO to finish */
 			bch2_move_ctxt_wait_for_io(ctxt);
 			continue;
