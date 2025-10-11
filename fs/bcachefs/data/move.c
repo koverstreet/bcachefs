@@ -515,7 +515,7 @@ int bch2_move_data_btree(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	struct btree_iter iter;
 	struct bkey_s_c k;
-	int ret = 0, ret2;
+	int ret = 0;
 
 	CLASS(per_snapshot_io_opts, snapshot_io_opts)(c);
 
@@ -549,7 +549,11 @@ root_err:
 			bch2_trans_iter_exit(&iter);
 			goto retry_root;
 		}
-
+		if (bch2_err_matches(ret, BCH_ERR_data_update_fail))
+			ret = 0; /* failure for this extent, keep going */
+		if (bch2_err_matches(ret, EROFS))
+			goto out;
+		WARN_ONCE(ret, "unhandled error from move_extent: %s", bch2_err_str(ret));
 		goto out;
 	}
 
@@ -561,7 +565,7 @@ root_err:
 	if (ctxt->rate)
 		bch2_ratelimit_reset(ctxt->rate);
 
-	while (!bch2_move_ratelimit(ctxt)) {
+	while (!(ret = bch2_move_ratelimit(ctxt))) {
 		bch2_trans_begin(trans);
 
 		k = bch2_btree_iter_peek(&iter);
@@ -583,14 +587,14 @@ root_err:
 		if (!bkey_extent_is_direct_data(k.k))
 			goto next_nondata;
 
-		ret2 = bch2_move_extent(ctxt, NULL, &snapshot_io_opts, pred, arg, &iter, level, k);
-		if (bch2_err_matches(ret2, BCH_ERR_transaction_restart))
+		ret = bch2_move_extent(ctxt, NULL, &snapshot_io_opts, pred, arg, &iter, level, k);
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
-		if (bch2_err_matches(ret2, BCH_ERR_data_update_fail))
-			ret2 = 0; /* failure for this extent, keep going */
-		if (ret2) {
-			/* XXX signal failure */
-		}
+		if (bch2_err_matches(ret, BCH_ERR_data_update_fail))
+			ret = 0; /* failure for this extent, keep going */
+		if (bch2_err_matches(ret, EROFS))
+			break;
+		WARN_ONCE(ret, "unhandled error from move_extent: %s", bch2_err_str(ret));
 next_nondata:
 		if (!bch2_btree_iter_advance(&iter))
 			break;
@@ -739,8 +743,10 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 			continue;
 		if (bch2_err_matches(ret, BCH_ERR_data_update_fail))
 			ret = 0; /* failure for this extent, keep going */
-		if (ret)
+		if (bch2_err_matches(ret, EROFS) ||
+		    bch2_err_matches(ret, BCH_ERR_device_offline))
 			return ret;
+		WARN_ONCE(ret, "unhandled error from move_extent: %s", bch2_err_str(ret));
 next:
 		bch2_btree_iter_advance(&bp_iter);
 	}
