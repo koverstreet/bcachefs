@@ -237,7 +237,6 @@ static void __btree_node_free(struct btree_trans *trans, struct btree *b)
 	BUG_ON(b == btree_node_root(c, b));
 	BUG_ON(b->ob.nr);
 	BUG_ON(!list_empty(&b->write_blocked));
-	BUG_ON(b->will_make_reachable);
 
 	clear_btree_node_noevict(b);
 }
@@ -1008,41 +1007,6 @@ static void bch2_btree_update_add_new_node(struct btree_update *as, struct btree
 	}
 }
 
-/*
- * returns true if @b was a new node
- */
-static void btree_update_drop_new_node(struct bch_fs *c, struct btree *b)
-{
-	struct btree_update *as;
-	unsigned long v;
-
-	scoped_guard(mutex, &c->btree_interior_update_lock) {
-		/*
-		 * When b->will_make_reachable != 0, it owns a ref on as->cl that's
-		 * dropped when it gets written by bch2_btree_complete_write - the
-		 * xchg() is for synchronization with bch2_btree_complete_write:
-		 */
-		v = xchg(&b->will_make_reachable, 0);
-		clear_btree_node_will_make_reachable(b);
-		as = (struct btree_update *) (v & ~1UL);
-
-		if (!as)
-			return;
-
-		unsigned i;
-		for (i = 0; i < as->nr_new_nodes; i++)
-			if (as->new_nodes[i] == b)
-				goto found;
-
-		BUG();
-	found:
-		array_remove_item(as->new_nodes, as->nr_new_nodes, i);
-	}
-
-	if (v & 1)
-		closure_put(&as->cl);
-}
-
 static void bch2_btree_update_get_open_buckets(struct btree_update *as, struct btree *b)
 {
 	while (b->ob.nr)
@@ -1117,17 +1081,6 @@ static void bch2_btree_interior_update_will_free_node(struct btree_update *as,
 	bch2_journal_pin_drop(&c->journal, &w->journal);
 
 	mutex_unlock(&c->btree_interior_update_lock);
-
-	/*
-	 * Is this a node that isn't reachable on disk yet?
-	 *
-	 * Nodes that aren't reachable yet have writes blocked until they're
-	 * reachable - now that we've cancelled any pending writes and moved
-	 * things waiting on that write to wait on this update, we can drop this
-	 * node from the list of nodes that the other update is making
-	 * reachable, prior to freeing it:
-	 */
-	btree_update_drop_new_node(c, b);
 
 	btree_update_add_key(as, &as->old_keys, b);
 
