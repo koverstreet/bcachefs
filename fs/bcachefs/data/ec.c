@@ -1087,7 +1087,8 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 
 	bkey_reassemble(n, k);
 
-	bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(n), ptr, ptr->dev != dev);
+	bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(n), p, entry, p.ptr.dev != dev);
+
 	struct bch_extent_ptr *ec_ptr = bch2_bkey_has_device(bkey_i_to_s(n), dev);
 	BUG_ON(!ec_ptr);
 
