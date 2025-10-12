@@ -596,8 +596,7 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 		return ret;
 	if (ret) {
 		WARN_ONCE(ret != -BCH_ERR_data_update_fail_no_snapshot &&
-			  ret != -BCH_ERR_data_update_fail_no_rw_devs &&
-			  ret != -BCH_ERR_data_update_fail_insufficient_devs,
+			  ret != -BCH_ERR_data_update_fail_no_rw_devs,
 			  "unhandled error from move_extent: %s", bch2_err_str(ret));
 		/* skip it and continue */
 	}

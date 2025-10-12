@@ -783,16 +783,12 @@ static int can_write_extent(struct bch_fs *c, struct data_update *m)
 			break;
 	}
 
-	if (nr_replicas < m->op.nr_replicas) {
+	if (!nr_replicas) {
 		prt_printf(&buf, "\nnr_replicas %u < %u", nr_replicas, m->op.nr_replicas);
 		trace_data_update_done_no_rw_devs(c, buf.buf);
+		return bch_err_throw(c, data_update_fail_no_rw_devs);
 	}
 
-	if (!nr_replicas)
-		return bch_err_throw(c, data_update_fail_no_rw_devs);
-
-	if (nr_replicas < m->op.nr_replicas)
-		return bch_err_throw(c, data_update_fail_insufficient_devs);
 	return 0;
 }
 
