@@ -1256,7 +1256,7 @@ static void __bch2_bkey_drop_stale_ptrs(struct bch_fs *c, struct bkey_s k)
 	struct bch_dev *ca;
 
 	guard(rcu)();
-	bch2_bkey_drop_ptrs(k, p, entry,
+	bch2_bkey_drop_ptrs_noerror(k, p, entry,
 		p.ptr.cached &&
 		(!(ca = bch2_dev_rcu_noerror(c, p.ptr.dev)) ||
 		 dev_ptr_stale_rcu(ca, &p.ptr) > 0));
@@ -1289,7 +1289,7 @@ restart_drop_ptrs:
 	bkey_for_each_ptr(ptrs, ptr)
 		if (ptr->cached) {
 			if (have_cached_ptr || !want_cached_ptr(c, opts, ptr)) {
-				bch2_bkey_drop_ptr(k, ptr);
+				bch2_bkey_drop_ptr_noerror(k, ptr);
 				goto restart_drop_ptrs;
 			}
 			have_cached_ptr = true;
