@@ -454,7 +454,7 @@ int bch2_move_data_btree(struct moving_context *ctxt,
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	struct bch_inode_opts io_opts;
-	struct btree_iter iter, reflink_iter = {};
+	struct btree_iter iter;
 	struct bkey_s_c k;
 	struct data_update_opts data_opts;
 	int ret = 0, ret2;
@@ -590,7 +590,6 @@ next_nondata:
 			break;
 	}
 out:
-	bch2_trans_iter_exit(&reflink_iter);
 	bch2_trans_iter_exit(&iter);
 	per_snapshot_io_opts_exit(&snapshot_io_opts);
 
