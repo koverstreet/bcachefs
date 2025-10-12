@@ -382,7 +382,11 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 			   data_opts.scrub ?  data_opts.read_dev : -1);
 	return 0;
 err:
-	if (!bch2_err_matches(ret, EROFS) &&
+	if (bch2_err_matches(ret, BCH_ERR_data_update_done))
+		ret = 0;
+
+	if (ret &&
+	    !bch2_err_matches(ret, EROFS) &&
 	    !bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
 		count_event(c, io_move_start_fail);
 
@@ -582,8 +586,8 @@ root_err:
 		ret2 = bch2_move_extent(ctxt, NULL, &snapshot_io_opts, pred, arg, &iter, level, k);
 		if (bch2_err_matches(ret2, BCH_ERR_transaction_restart))
 			continue;
-		if (bch2_err_matches(ret2, BCH_ERR_data_update_done))
-			ret2 = 0;
+		if (bch2_err_matches(ret2, BCH_ERR_data_update_fail))
+			ret2 = 0; /* failure for this extent, keep going */
 		if (ret2) {
 			/* XXX signal failure */
 		}
@@ -733,8 +737,8 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
-		if (bch2_err_matches(ret, BCH_ERR_data_update_done))
-			ret = 0;
+		if (bch2_err_matches(ret, BCH_ERR_data_update_fail))
+			ret = 0; /* failure for this extent, keep going */
 		if (ret)
 			return ret;
 next:
