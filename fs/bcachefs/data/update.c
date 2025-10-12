@@ -36,31 +36,30 @@ static const char * const bch2_data_update_type_strs[] = {
 	NULL
 };
 
-static void bkey_put_dev_refs(struct bch_fs *c, struct bkey_s_c k)
+static void bkey_put_dev_refs(struct bch_fs *c, struct bkey_s_c k, unsigned ptrs_held)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-
-	bkey_for_each_ptr(ptrs, ptr)
-		if (ptr->dev != BCH_SB_MEMBER_INVALID)
-			bch2_dev_put(bch2_dev_have_ref(c, ptr->dev));
-}
-
-static bool bkey_get_dev_refs(struct bch_fs *c, struct bkey_s_c k)
-{
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	unsigned ptr_bit = 1;
 
 	bkey_for_each_ptr(ptrs, ptr) {
-		if (ptr->dev != BCH_SB_MEMBER_INVALID &&
-		    unlikely(!bch2_dev_tryget(c, ptr->dev))) {
-			bkey_for_each_ptr(ptrs, ptr2) {
-				if (ptr2 == ptr)
-					break;
-				bch2_dev_put(bch2_dev_have_ref(c, ptr2->dev));
-			}
-			return false;
-		}
+		if (ptrs_held & ptr_bit)
+			bch2_dev_put(bch2_dev_have_ref(c, ptr->dev));
+		ptr_bit <<= 1;
 	}
-	return true;
+}
+
+static unsigned bkey_get_dev_refs(struct bch_fs *c, struct bkey_s_c k)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	unsigned ptrs_held = 0, ptr_bit = 1;
+
+	bkey_for_each_ptr(ptrs, ptr) {
+		if (likely(bch2_dev_tryget(c, ptr->dev)))
+			ptrs_held |= ptr_bit;
+		ptr_bit <<= 1;
+	}
+
+	return ptrs_held;
 }
 
 noinline_for_stack
@@ -497,7 +496,7 @@ void bch2_data_update_exit(struct data_update *update)
 
 	if (c->opts.nocow_enabled)
 		bch2_bkey_nocow_unlock(c, k, 0);
-	bkey_put_dev_refs(c, k);
+	bkey_put_dev_refs(c, k, update->ptrs_held);
 	bch2_disk_reservation_put(c, &update->op.res);
 	bch2_bkey_buf_exit(&update->k);
 }
@@ -967,10 +966,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 		}
 	}
 
-	if (!bkey_get_dev_refs(c, k)) {
-		ret = bch_err_throw(c, data_update_done_no_dev_refs);
-		goto out;
-	}
+	m->ptrs_held = bkey_get_dev_refs(c, k);
 
 	if (c->opts.nocow_enabled) {
 		if (!bch2_bkey_nocow_trylock(c, ptrs, 0)) {
@@ -981,7 +977,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 				 * it. Ouch - this needs to be fixed.
 				 */
 				ret = bch_err_throw(c, nocow_lock_blocked);
-				goto out_put_dev_refs;
+				goto out;
 			}
 
 			bool locked = false;
@@ -1013,9 +1009,9 @@ int bch2_data_update_init(struct btree_trans *trans,
 out_nocow_unlock:
 	if (c->opts.nocow_enabled)
 		bch2_bkey_nocow_unlock(c, k, 0);
-out_put_dev_refs:
-	bkey_put_dev_refs(c, k);
 out:
+	bkey_put_dev_refs(c, k, m->ptrs_held);
+	m->ptrs_held = 0;
 	bch2_disk_reservation_put(c, &m->op.res);
 	return ret;
 }
