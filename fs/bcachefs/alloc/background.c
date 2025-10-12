@@ -1236,24 +1236,16 @@ static int invalidate_one_bp(struct btree_trans *trans,
 			     struct bkey_s_c_backpointer bp,
 			     struct bkey_buf *last_flushed)
 {
-	struct btree_iter extent_iter;
-	struct bkey_s_c extent_k = bkey_try(
-		bch2_backpointer_get_key(trans, bp, &extent_iter, 0, last_flushed));
-
-	if (!extent_k.k)
+	CLASS(btree_iter_uninit, iter)(trans);
+	struct bkey_s_c k = bkey_try(bch2_backpointer_get_key(trans, bp, &iter, 0, last_flushed));
+	if (!k.k)
 		return 0;
 
-	struct bkey_i *n =
-		bch2_bkey_make_mut(trans, &extent_iter, &extent_k,
-				   BTREE_UPDATE_internal_snapshot_node);
-	int ret = PTR_ERR_OR_ZERO(n);
-	if (ret)
-		goto err;
+	struct bkey_i *n = errptr_try(bch2_bkey_make_mut(trans, &iter, &k,
+						BTREE_UPDATE_internal_snapshot_node));
 
 	bch2_bkey_drop_device(bkey_i_to_s(n), ca->dev_idx);
-err:
-	bch2_trans_iter_exit(&extent_iter);
-	return ret;
+	return 0;
 }
 
 static int invalidate_one_bucket_by_bps(struct btree_trans *trans,
