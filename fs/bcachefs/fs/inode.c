@@ -1114,8 +1114,6 @@ int bch2_inode_rm(struct bch_fs *c, subvol_inum inum)
 
 	try(bch2_inode_delete_keys(trans, inum, BTREE_ID_xattrs));
 
-	bch2_trans_begin(trans);
-
 	u32 snapshot;
 	try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 		      bch2_inode_rm_trans(trans, inum, &snapshot)));
