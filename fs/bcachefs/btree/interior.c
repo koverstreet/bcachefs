@@ -2449,7 +2449,7 @@ void bch2_free_pending_node_rewrites(struct bch_fs *c)
 
 static int __bch2_btree_node_update_key(struct btree_trans *trans,
 					struct btree_iter *iter,
-					struct btree *b, struct btree *new_hash,
+					struct btree *b,
 					struct bkey_i *new_key,
 					unsigned commit_flags,
 					bool skip_triggers)
@@ -2499,20 +2499,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 	try(bch2_trans_commit(trans, NULL, NULL, commit_flags));
 
 	bch2_btree_node_lock_write_nofail(trans, btree_iter_path(trans, iter), &b->c);
-
-	if (new_hash) {
-		guard(mutex)(&c->btree_cache.lock);
-		bch2_btree_node_hash_remove(&c->btree_cache, new_hash);
-
-		__bch2_btree_node_hash_remove(&c->btree_cache, b);
-
-		bkey_copy(&b->key, new_key);
-		int ret = __bch2_btree_node_hash_insert(&c->btree_cache, b);
-		BUG_ON(ret);
-	} else {
-		bkey_copy(&b->key, new_key);
-	}
-
+	bkey_copy(&b->key, new_key);
 	bch2_btree_node_unlock_write(trans, btree_iter_path(trans, iter), b);
 	return 0;
 }
@@ -2521,50 +2508,14 @@ int bch2_btree_node_update_key(struct btree_trans *trans, struct btree_iter *ite
 			       struct btree *b, struct bkey_i *new_key,
 			       unsigned commit_flags, bool skip_triggers)
 {
-	struct bch_fs *c = trans->c;
-	struct btree *new_hash = NULL;
 	struct btree_path *path = btree_iter_path(trans, iter);
-	int ret = 0;
 
 	try(bch2_btree_path_upgrade(trans, path, b->c.level + 1));
 
-	struct closure cl;
-	closure_init_stack(&cl);
-
-	/*
-	 * check btree_ptr_hash_val() after @b is locked by
-	 * btree_iter_traverse():
-	 */
-	if (btree_ptr_hash_val(new_key) != b->hash_val) {
-		ret = bch2_btree_cache_cannibalize_lock(trans, &cl);
-		if (ret)
-			try(drop_locks_do(trans, (closure_sync(&cl), 0)));
-
-		new_hash = bch2_btree_node_mem_alloc(trans, false);
-		bch2_btree_cache_cannibalize_unlock(trans);
-
-		ret = PTR_ERR_OR_ZERO(new_hash);
-		if (ret)
-			goto err;
-
-		bkey_copy(&new_hash->key, new_key);
-		ret = bch2_btree_node_hash_insert(&c->btree_cache,
-				new_hash, b->c.level, b->c.btree_id);
-		BUG_ON(ret);
-	}
-
 	path->intent_ref++;
-	ret = __bch2_btree_node_update_key(trans, iter, b, new_hash, new_key,
-					   commit_flags, skip_triggers);
+	int ret = __bch2_btree_node_update_key(trans, iter, b, new_key,
+					       commit_flags, skip_triggers);
 	--path->intent_ref;
-
-	if (new_hash) {
-		scoped_guard(mutex, &c->btree_cache.lock)
-			bch2_btree_node_hash_remove(&c->btree_cache, b);
-		bch2_btree_node_to_freelist(c, new_hash);
-	}
-err:
-	closure_sync(&cl);
 	return ret;
 }
 
