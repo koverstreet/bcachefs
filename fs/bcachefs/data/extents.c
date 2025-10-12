@@ -1007,12 +1007,12 @@ void bch2_bkey_drop_ptr(struct bkey_s k, struct bch_extent_ptr *ptr)
 
 void bch2_bkey_drop_device(struct bkey_s k, unsigned dev)
 {
-	bch2_bkey_drop_ptrs(k, ptr, ptr->dev == dev);
+	bch2_bkey_drop_ptrs(k, p, entry, p.ptr.dev == dev);
 }
 
 void bch2_bkey_drop_device_noerror(struct bkey_s k, unsigned dev)
 {
-	bch2_bkey_drop_ptrs_noerror(k, ptr, ptr->dev == dev);
+	bch2_bkey_drop_ptrs_noerror(k, p, entry, p.ptr.dev == dev);
 }
 
 void bch2_bkey_drop_ec(struct bkey_i *k, unsigned dev)
@@ -1261,10 +1261,10 @@ static void __bch2_bkey_drop_stale_ptrs(struct bch_fs *c, struct bkey_s k)
 	struct bch_dev *ca;
 
 	guard(rcu)();
-	bch2_bkey_drop_ptrs(k, ptr,
-		ptr->cached &&
-		(!(ca = bch2_dev_rcu_noerror(c, ptr->dev)) ||
-		 dev_ptr_stale_rcu(ca, ptr) > 0));
+	bch2_bkey_drop_ptrs(k, p, entry,
+		p.ptr.cached &&
+		(!(ca = bch2_dev_rcu_noerror(c, p.ptr.dev)) ||
+		 dev_ptr_stale_rcu(ca, &p.ptr) > 0));
 }
 
 int bch2_bkey_drop_stale_ptrs(struct btree_trans *trans, struct btree_iter *iter, struct bkey_s_c k)

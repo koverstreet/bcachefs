@@ -2459,8 +2459,8 @@ int bch2_btree_node_update_key_get_iter(struct btree_trans *trans,
 	if (ret)
 		return ret == -BCH_ERR_btree_node_dying ? 0 : ret;
 
-	bch2_bkey_drop_ptrs(bkey_i_to_s(new_key), ptr,
-			    !bch2_bkey_has_device(bkey_i_to_s(&b->key), ptr->dev));
+	bch2_bkey_drop_ptrs(bkey_i_to_s(new_key), p, entry,
+			    !bch2_bkey_has_device(bkey_i_to_s(&b->key), p.ptr.dev));
 
 	return bch2_btree_node_update_key(trans, &iter, b, new_key,
 					  commit_flags, skip_triggers);

@@ -278,6 +278,26 @@ fsck_err:
 	return ret;
 }
 
+static bool should_drop_ptr(struct bch_fs *c, struct bkey_s_c k,
+			    struct extent_ptr_decoded p,
+			    const union bch_extent_entry *entry)
+{
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, p.ptr.dev);
+	if (!ca)
+		return true;
+
+	struct bucket *g = PTR_GC_BUCKET(ca, &p.ptr);
+	enum bch_data_type data_type = bch2_bkey_ptr_data_type(k, p, entry);
+
+	if (p.ptr.cached) {
+		return !g->gen_valid || gen_cmp(p.ptr.gen, g->gen);
+	} else {
+		return gen_cmp(p.ptr.gen, g->gen) < 0 ||
+			gen_cmp(g->gen, p.ptr.gen) > BUCKET_GC_GEN_MAX ||
+			(g->data_type && g->data_type != data_type);
+	}
+}
+
 int bch2_check_fix_ptrs(struct btree_trans *trans,
 			enum btree_id btree, unsigned level, struct bkey_s_c k,
 			enum btree_iter_update_trigger_flags flags)
@@ -299,7 +319,8 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 		struct bkey_i *new = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
 
 		scoped_guard(rcu)
-			bch2_bkey_drop_ptrs(bkey_i_to_s(new), ptr, !bch2_dev_exists(c, ptr->dev));
+			bch2_bkey_drop_ptrs(bkey_i_to_s(new), p, entry,
+					    !bch2_dev_exists(c, p.ptr.dev));
 
 		if (level) {
 			/*
@@ -310,33 +331,17 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 			struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(new));
 			scoped_guard(rcu)
 				bkey_for_each_ptr(ptrs, ptr) {
-					struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
-					ptr->gen = PTR_GC_BUCKET(ca, ptr)->gen;
+					struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
+					if (ca)
+						ptr->gen = PTR_GC_BUCKET(ca, ptr)->gen;
 				}
 		} else {
+			scoped_guard(rcu)
+				bch2_bkey_drop_ptrs(bkey_i_to_s(new), p, entry,
+					should_drop_ptr(c, bkey_i_to_s_c(new), p, entry));
+
 			struct bkey_ptrs ptrs;
 			union bch_extent_entry *entry;
-
-			rcu_read_lock();
-restart_drop_ptrs:
-			ptrs = bch2_bkey_ptrs(bkey_i_to_s(new));
-			bkey_for_each_ptr_decode(bkey_i_to_s(new).k, ptrs, p, entry) {
-				struct bch_dev *ca = bch2_dev_rcu(c, p.ptr.dev);
-				struct bucket *g = PTR_GC_BUCKET(ca, &p.ptr);
-				enum bch_data_type data_type = bch2_bkey_ptr_data_type(bkey_i_to_s_c(new), p, entry);
-
-				if ((p.ptr.cached &&
-				     (!g->gen_valid || gen_cmp(p.ptr.gen, g->gen) > 0)) ||
-				    (!p.ptr.cached &&
-				     gen_cmp(p.ptr.gen, g->gen) < 0) ||
-				    gen_cmp(g->gen, p.ptr.gen) > BUCKET_GC_GEN_MAX ||
-				    (g->data_type &&
-				     g->data_type != data_type)) {
-					bch2_bkey_drop_ptr(bkey_i_to_s(new), &entry->ptr);
-					goto restart_drop_ptrs;
-				}
-			}
-			rcu_read_unlock();
 again:
 			ptrs = bch2_bkey_ptrs(bkey_i_to_s(new));
 			bkey_extent_entry_for_each(ptrs, entry) {
