@@ -512,11 +512,13 @@ static int bch2_bkey_clear_needs_rebalance(struct btree_trans *trans,
 }
 
 static int rebalance_set_data_opts(struct btree_trans *trans,
-				   struct btree_iter *extent_iter,
+				   void *arg,
+				   enum btree_id btree,
 				   struct bkey_s_c k,
 				   struct bch_inode_opts *opts,
 				   struct data_update_opts *data_opts)
 {
+	struct btree_iter *extent_iter = arg;
 	struct bch_fs *c = trans->c;
 
 	memset(data_opts, 0, sizeof(*data_opts));
@@ -533,7 +535,7 @@ static int rebalance_set_data_opts(struct btree_trans *trans,
 		 * again:
 		 */
 		try(bch2_bkey_clear_needs_rebalance(trans, extent_iter, k));
-		return 1;
+		return 0;
 	}
 
 	if (trace_rebalance_extent_enabled()) {
@@ -567,10 +569,9 @@ static int rebalance_set_data_opts(struct btree_trans *trans,
 		trace_rebalance_extent(c, buf.buf);
 	}
 	count_event(c, rebalance_extent);
-	return 0;
+	return 1;
 }
 
-noinline_for_stack
 static int do_rebalance_extent(struct moving_context *ctxt,
 			       struct per_snapshot_io_opts *snapshot_io_opts,
 			       struct bpos work_pos)
@@ -586,42 +587,14 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 				work_pos, BTREE_ITER_all_snapshots);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
-	struct bch_inode_opts opts;
-	try(bch2_extent_get_io_opts(trans, snapshot_io_opts, k, &opts));
-
-	try(bch2_update_rebalance_opts(trans, &opts, &iter, k, SET_NEEDS_REBALANCE_other));
-	try(bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
-
-	struct data_update_opts data_opts;
-	int ret = rebalance_set_data_opts(trans, &iter, k, &opts, &data_opts);
-	if (ret)
-		return ret < 0 ? ret : 0;
-
-	/*
-	 * The iterator gets unlocked by __bch2_read_extent - need to
-	 * save a copy of @k elsewhere:
-	 */
-
-	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&sk);
-	bch2_bkey_buf_reassemble(&sk, k);
-	k = bkey_i_to_s_c(sk.k);
-
-	ret = bch2_move_extent(ctxt, NULL, &iter, k, opts, data_opts);
+	int ret = bch2_move_extent(ctxt, NULL, snapshot_io_opts,
+				   rebalance_set_data_opts, NULL,
+				   &iter, 0, k);
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+		return ret;
 	if (ret) {
-		if (bch2_err_matches(ret, ENOMEM)) {
-			/* memory allocation failure, wait for some IO to finish */
-			bch2_move_ctxt_wait_for_io(ctxt);
-			return bch_err_throw(c, transaction_restart_nested);
-		}
-
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			return ret;
-
 		/* skip it and continue, XXX signal failure */
 	}
-
-	atomic64_add(k.k->size, &ctxt->stats->sectors_seen);
 
 	/*
 	 * Suppress trans_was_restarted() check: read_extent -> ec retry will
