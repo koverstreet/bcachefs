@@ -75,9 +75,9 @@ int bch2_update_rebalance_opts(struct btree_trans *,
 			       struct bkey_s_c,
 			       enum set_needs_rebalance_ctx);
 
-struct bch_inode_opts *bch2_extent_get_io_opts(struct btree_trans *,
-				  struct per_snapshot_io_opts *, struct bkey_s_c);
-int bch2_extent_get_io_opts_one(struct btree_trans *, struct bch_inode_opts *, struct bkey_s_c);
+int bch2_extent_get_io_opts(struct btree_trans *,
+			    struct per_snapshot_io_opts *, struct bkey_s_c,
+			    struct bch_inode_opts *opts);
 
 int bch2_set_rebalance_needs_scan_trans(struct btree_trans *, u64);
 int bch2_set_rebalance_needs_scan(struct bch_fs *, u64 inum);
