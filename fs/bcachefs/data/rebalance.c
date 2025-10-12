@@ -830,7 +830,6 @@ static int bch2_rebalance_thread(void *arg)
 {
 	struct bch_fs *c = arg;
 	struct bch_fs_rebalance *r = &c->rebalance;
-	struct moving_context ctxt;
 
 	set_freezable();
 
@@ -841,14 +840,13 @@ static int bch2_rebalance_thread(void *arg)
 	kthread_wait_freezable(c->recovery.pass_done > BCH_RECOVERY_PASS_check_snapshots ||
 			       kthread_should_stop());
 
+	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
 	bch2_moving_ctxt_init(&ctxt, c, NULL, &r->work_stats,
 			      writepoint_ptr(&c->rebalance_write_point),
 			      true);
 
 	while (!kthread_should_stop() && !do_rebalance(&ctxt))
 		;
-
-	bch2_moving_ctxt_exit(&ctxt);
 
 	return 0;
 }
