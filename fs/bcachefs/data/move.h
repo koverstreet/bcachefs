@@ -72,8 +72,8 @@ do {									\
 		break;							\
 } while (1)
 
-typedef bool (*move_pred_fn)(struct bch_fs *, void *, enum btree_id, struct bkey_s_c,
-			     struct bch_inode_opts *, struct data_update_opts *);
+typedef int (*move_pred_fn)(struct btree_trans *, void *, enum btree_id, struct bkey_s_c,
+			    struct bch_inode_opts *, struct data_update_opts *);
 
 extern const char * const bch2_data_ops_strs[];
 
@@ -89,12 +89,10 @@ int bch2_move_ratelimit(struct moving_context *);
 
 int bch2_scan_old_btree_nodes(struct bch_fs *, struct bch_move_stats *);
 
-int bch2_move_extent(struct moving_context *,
-		     struct move_bucket *,
-		     struct btree_iter *,
-		     struct bkey_s_c,
-		     struct bch_inode_opts,
-		     struct data_update_opts);
+struct per_snapshot_io_opts;
+int bch2_move_extent(struct moving_context *, struct move_bucket *,
+		     struct per_snapshot_io_opts *, move_pred_fn, void *,
+		     struct btree_iter *, unsigned, struct bkey_s_c);
 
 int bch2_move_data_btree(struct moving_context *, struct bpos, struct bpos,
 			 move_pred_fn, void *, enum btree_id, unsigned);
