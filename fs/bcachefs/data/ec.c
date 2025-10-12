@@ -1097,7 +1097,7 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 
 	struct bch_inode_opts opts;
 
-	try(bch2_extent_get_io_opts_one(trans, &opts, bkey_i_to_s_c(n)));
+	try(bch2_extent_get_io_opts(trans, NULL, bkey_i_to_s_c(n), &opts));
 	try(bch2_bkey_set_needs_rebalance(trans->c, &opts, n,
 					  SET_NEEDS_REBALANCE_other, 0));
 	try(bch2_trans_update(trans, &iter, n, 0));

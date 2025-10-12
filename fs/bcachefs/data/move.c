@@ -453,7 +453,7 @@ int bch2_move_data_btree(struct moving_context *ctxt,
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
-	struct bch_inode_opts *io_opts;
+	struct bch_inode_opts io_opts;
 	struct btree_iter iter, reflink_iter = {};
 	struct bkey_s_c k;
 	struct data_update_opts data_opts;
@@ -490,13 +490,10 @@ retry_root:
 
 		k = bkey_i_to_s_c(&b->key);
 
-		io_opts = &snapshot_io_opts.fs_io_opts;
-		ret = PTR_ERR_OR_ZERO(io_opts);
-		if (ret)
-			goto root_err;
+		io_opts = snapshot_io_opts.fs_io_opts;
 
 		memset(&data_opts, 0, sizeof(data_opts));
-		if (!pred(c, arg, iter.btree_id, k, io_opts, &data_opts))
+		if (!pred(c, arg, iter.btree_id, k, &io_opts, &data_opts))
 			goto out;
 
 
@@ -545,19 +542,15 @@ root_err:
 		if (!bkey_extent_is_direct_data(k.k))
 			goto next_nondata;
 
-		io_opts = bch2_extent_get_io_opts(trans, &snapshot_io_opts, k);
-		ret = PTR_ERR_OR_ZERO(io_opts);
-		if (ret)
-			continue;
-
-		ret =   bch2_update_rebalance_opts(trans, io_opts, &iter, k,
+		ret =   bch2_extent_get_io_opts(trans, &snapshot_io_opts, k, &io_opts) ?:
+			bch2_update_rebalance_opts(trans, &io_opts, &iter, k,
 						   SET_NEEDS_REBALANCE_other) ?:
 			bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 		if (ret)
 			continue;
 
 		memset(&data_opts, 0, sizeof(data_opts));
-		if (!pred(c, arg, iter.btree_id, k, io_opts, &data_opts))
+		if (!pred(c, arg, iter.btree_id, k, &io_opts, &data_opts))
 			goto next;
 
 		/*
@@ -568,7 +561,7 @@ root_err:
 		k = bkey_i_to_s_c(sk.k);
 
 		if (!level)
-			ret2 = bch2_move_extent(ctxt, NULL, &iter, k, *io_opts, data_opts);
+			ret2 = bch2_move_extent(ctxt, NULL, &iter, k, io_opts, data_opts);
 		else if (!data_opts.scrub)
 			ret2 = bch2_btree_node_rewrite_pos(trans, btree_id, level,
 							  k.k->p, data_opts.target, 0);
@@ -747,7 +740,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 			goto next;
 
 		struct bch_inode_opts opts;
-		ret =   bch2_extent_get_io_opts_one(trans, &opts, k) ?:
+		ret =   bch2_extent_get_io_opts(trans, NULL, k, &opts) ?:
 			bch2_update_rebalance_opts(trans, &opts, &iter, k,
 						   SET_NEEDS_REBALANCE_other) ?:
 			bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
