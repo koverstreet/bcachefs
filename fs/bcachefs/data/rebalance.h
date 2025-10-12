@@ -56,18 +56,23 @@ struct per_snapshot_io_opts {
 	DARRAY(struct snapshot_io_opts_entry) d;
 };
 
-static inline void per_snapshot_io_opts_init(struct per_snapshot_io_opts *io_opts, struct bch_fs *c)
+static inline struct per_snapshot_io_opts per_snapshot_io_opts_init(struct bch_fs *c)
 {
-	memset(io_opts, 0, sizeof(*io_opts));
-
-	/* io_opts->fs_io_opts will be initialized when we know the key type */
-	io_opts->fs_io_opts.change_cookie = atomic_read(&c->opt_change_cookie) - 1;
+	return (struct per_snapshot_io_opts) {
+		/* io_opts->fs_io_opts will be initialized when we know the key type */
+		.fs_io_opts.change_cookie = atomic_read(&c->opt_change_cookie) - 1,
+	};
 }
 
 static inline void per_snapshot_io_opts_exit(struct per_snapshot_io_opts *io_opts)
 {
 	darray_exit(&io_opts->d);
 }
+
+DEFINE_CLASS(per_snapshot_io_opts, struct per_snapshot_io_opts,
+	     per_snapshot_io_opts_exit(&_T),
+	     per_snapshot_io_opts_init(c),
+	     struct bch_fs *c);
 
 int bch2_update_rebalance_opts(struct btree_trans *,
 			       struct bch_inode_opts *,

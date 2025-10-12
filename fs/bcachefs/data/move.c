@@ -459,8 +459,7 @@ int bch2_move_data_btree(struct moving_context *ctxt,
 	struct data_update_opts data_opts;
 	int ret = 0, ret2;
 
-	struct per_snapshot_io_opts snapshot_io_opts;
-	per_snapshot_io_opts_init(&snapshot_io_opts, c);
+	CLASS(per_snapshot_io_opts, snapshot_io_opts)(c);
 
 	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&sk);
@@ -591,7 +590,6 @@ next_nondata:
 	}
 out:
 	bch2_trans_iter_exit(&iter);
-	per_snapshot_io_opts_exit(&snapshot_io_opts);
 
 	return ret;
 }
