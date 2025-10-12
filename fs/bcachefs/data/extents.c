@@ -1010,11 +1010,6 @@ void bch2_bkey_drop_device(struct bkey_s k, unsigned dev)
 	bch2_bkey_drop_ptrs(k, p, entry, p.ptr.dev == dev);
 }
 
-void bch2_bkey_drop_device_noerror(struct bkey_s k, unsigned dev)
-{
-	bch2_bkey_drop_ptrs_noerror(k, p, entry, p.ptr.dev == dev);
-}
-
 void bch2_bkey_drop_ec(struct bkey_i *k, unsigned dev)
 {
 	struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(k));
