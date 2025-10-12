@@ -1046,71 +1046,59 @@ static void bch2_setattr_copy(struct mnt_idmap *idmap,
 	}
 }
 
+static int bch2_setattr_nonsize_trans(struct btree_trans *trans,
+				      struct mnt_idmap *idmap,
+				      struct bch_inode_info *inode,
+				      struct iattr *attr)
+{
+	struct posix_acl *acl __free(kfree) = NULL;
+
+	CLASS(btree_iter_uninit, inode_iter)(trans);
+	struct bch_inode_unpacked inode_u;
+	try(bch2_inode_peek(trans, &inode_iter, &inode_u, inode_inum(inode), BTREE_ITER_intent));
+
+	bch2_setattr_copy(idmap, inode, &inode_u, attr);
+
+	if (attr->ia_valid & ATTR_MODE)
+		try(bch2_acl_chmod(trans, inode_inum(inode), &inode_u, inode_u.bi_mode, &acl));
+
+	try(bch2_inode_write(trans, &inode_iter, &inode_u));
+	try(bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
+
+	bch2_inode_update_after_write(trans, inode, &inode_u, attr->ia_valid);
+
+	if (acl) {
+		set_cached_acl(&inode->v, ACL_TYPE_ACCESS, acl);
+		acl = NULL;
+	}
+
+	return 0;
+}
+
 int bch2_setattr_nonsize(struct mnt_idmap *idmap,
 			 struct bch_inode_info *inode,
 			 struct iattr *attr)
 {
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	struct bch_qid qid;
-	struct btree_iter inode_iter = {};
-	struct bch_inode_unpacked inode_u;
-	struct posix_acl *acl = NULL;
-	kuid_t kuid;
-	kgid_t kgid;
-	int ret;
 
 	guard(mutex)(&inode->ei_update_lock);
 
-	qid = inode->ei_qid;
+	struct bch_qid qid = inode->ei_qid;
 
 	if (attr->ia_valid & ATTR_UID) {
-		kuid = from_vfsuid(idmap, i_user_ns(&inode->v), attr->ia_vfsuid);
+		kuid_t kuid = from_vfsuid(idmap, i_user_ns(&inode->v), attr->ia_vfsuid);
 		qid.q[QTYP_USR] = from_kuid(i_user_ns(&inode->v), kuid);
 	}
 
 	if (attr->ia_valid & ATTR_GID) {
-		kgid = from_vfsgid(idmap, i_user_ns(&inode->v), attr->ia_vfsgid);
+		kgid_t kgid = from_vfsgid(idmap, i_user_ns(&inode->v), attr->ia_vfsgid);
 		qid.q[QTYP_GRP] = from_kgid(i_user_ns(&inode->v), kgid);
 	}
 
 	try(bch2_fs_quota_transfer(c, inode, qid, ~0, KEY_TYPE_QUOTA_PREALLOC));
 
 	CLASS(btree_trans, trans)(c);
-retry:
-	bch2_trans_begin(trans);
-	kfree(acl);
-	acl = NULL;
-
-	ret = bch2_inode_peek(trans, &inode_iter, &inode_u, inode_inum(inode),
-			      BTREE_ITER_intent);
-	if (ret)
-		goto btree_err;
-
-	bch2_setattr_copy(idmap, inode, &inode_u, attr);
-
-	if (attr->ia_valid & ATTR_MODE) {
-		ret = bch2_acl_chmod(trans, inode_inum(inode), &inode_u,
-				     inode_u.bi_mode, &acl);
-		if (ret)
-			goto btree_err;
-	}
-
-	ret =   bch2_inode_write(trans, &inode_iter, &inode_u) ?:
-		bch2_trans_commit(trans, NULL, NULL,
-				  BCH_TRANS_COMMIT_no_enospc);
-btree_err:
-	bch2_trans_iter_exit(&inode_iter);
-
-	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-		goto retry;
-	if (unlikely(ret))
-		return ret;
-
-	bch2_inode_update_after_write(trans, inode, &inode_u, attr->ia_valid);
-
-	if (acl)
-		set_cached_acl(&inode->v, ACL_TYPE_ACCESS, acl);
-	return 0;
+	return lockrestart_do(trans, bch2_setattr_nonsize_trans(trans, idmap, inode, attr));
 }
 
 static int bch2_getattr(struct mnt_idmap *idmap,
