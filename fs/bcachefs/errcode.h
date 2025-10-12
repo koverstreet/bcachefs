@@ -187,18 +187,20 @@
 	x(BCH_ERR_recovery_will_run,	restart_recovery)			\
 	x(BCH_ERR_recovery_will_run,	cannot_rewind_recovery)			\
 	x(BCH_ERR_recovery_will_run,	recovery_pass_will_run)			\
-	x(0,				data_update_done)			\
 	x(0,				bkey_was_deleted)			\
 	x(0,				bucket_not_moveable)			\
 	x(BCH_ERR_bucket_not_moveable,	bucket_not_moveable_dev_not_rw)		\
 	x(BCH_ERR_bucket_not_moveable,	bucket_not_moveable_bucket_open)	\
 	x(BCH_ERR_bucket_not_moveable,	bucket_not_moveable_bp_mismatch)	\
 	x(BCH_ERR_bucket_not_moveable,	bucket_not_moveable_lru_race)		\
-	x(BCH_ERR_data_update_done,	data_update_done_would_block)		\
+	x(0,				data_update_done)			\
 	x(BCH_ERR_data_update_done,	data_update_done_unwritten)		\
 	x(BCH_ERR_data_update_done,	data_update_done_no_writes_needed)	\
-	x(BCH_ERR_data_update_done,	data_update_done_no_snapshot)		\
-	x(BCH_ERR_data_update_done,	data_update_done_no_rw_devs)		\
+	x(0,				data_update_fail)			\
+	x(BCH_ERR_data_update_fail,	data_update_fail_would_block)		\
+	x(BCH_ERR_data_update_fail,	data_update_fail_no_snapshot)		\
+	x(BCH_ERR_data_update_fail,	data_update_fail_no_rw_devs)		\
+	x(BCH_ERR_data_update_fail,	data_update_fail_insufficient_devs)	\
 	x(EINVAL,			device_state_not_allowed)		\
 	x(EINVAL,			member_info_missing)			\
 	x(EINVAL,			mismatched_block_size)			\
