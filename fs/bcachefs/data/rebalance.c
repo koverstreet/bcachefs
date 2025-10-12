@@ -781,8 +781,7 @@ static int do_rebalance(struct moving_context *ctxt)
 
 	bch2_move_stats_init(&r->work_stats, "rebalance_work");
 
-	struct per_snapshot_io_opts snapshot_io_opts;
-	per_snapshot_io_opts_init(&snapshot_io_opts, c);
+	CLASS(per_snapshot_io_opts, snapshot_io_opts)(c);
 
 	while (!bch2_move_ratelimit(ctxt)) {
 		if (!bch2_rebalance_enabled(c)) {
@@ -808,7 +807,6 @@ static int do_rebalance(struct moving_context *ctxt)
 			break;
 	}
 
-	per_snapshot_io_opts_exit(&snapshot_io_opts);
 	bch2_move_stats_exit(&r->work_stats, c);
 
 	if (!ret &&
