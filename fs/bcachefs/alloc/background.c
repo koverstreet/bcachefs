@@ -1463,24 +1463,19 @@ int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
 static int __bch2_bucket_io_time_reset(struct btree_trans *trans, unsigned dev,
 				size_t bucket_nr, int rw)
 {
-	struct bch_fs *c = trans->c;
-	int ret = 0;
-
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_i_alloc_v4 *a =
 		errptr_try(bch2_trans_start_alloc_update_noupdate(trans, &iter, POS(dev, bucket_nr)));
 
-	u64 now = bch2_current_io_time(c, rw);
+	u64 now = bch2_current_io_time(trans->c, rw);
 	if (a->v.io_time[rw] == now)
-		goto out;
+		return 0;
 
 	a->v.io_time[rw] = now;
 
-	ret =   bch2_trans_update(trans, &iter, &a->k_i, 0) ?:
-		bch2_trans_commit(trans, NULL, NULL, 0);
-out:
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	try(bch2_trans_update(trans, &iter, &a->k_i, 0));
+	try(bch2_trans_commit(trans, NULL, NULL, 0));
+	return 0;
 }
 
 int bch2_bucket_io_time_reset(struct btree_trans *trans, unsigned dev,
