@@ -607,9 +607,7 @@ static int bch2_move_data(struct bch_fs *c,
 			  bool wait_on_copygc,
 			  move_pred_fn pred, void *arg)
 {
-	int ret = 0;
-
-	struct moving_context ctxt;
+	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
 	bch2_moving_ctxt_init(&ctxt, c, rate, stats, wp, wait_on_copygc);
 
 	for (enum btree_id id = start.btree;
@@ -630,20 +628,14 @@ static int bch2_move_data(struct bch_fs *c,
 		for (unsigned level = min_depth_this_btree;
 		     level < BTREE_MAX_DEPTH;
 		     level++) {
-			ret = bch2_move_data_btree(&ctxt,
-						   id == start.btree ? start.pos : POS_MIN,
-						   id == end.btree   ? end.pos   : POS_MAX,
-						   pred, arg, id, level);
-			if (ret)
-				break;
+			try(bch2_move_data_btree(&ctxt,
+						 id == start.btree ? start.pos : POS_MIN,
+						 id == end.btree   ? end.pos   : POS_MAX,
+						 pred, arg, id, level));
 		}
-
-		if (ret)
-			break;
 	}
 
-	bch2_moving_ctxt_exit(&ctxt);
-	return ret;
+	return 0;
 }
 
 static int __bch2_move_data_phys(struct moving_context *ctxt,
@@ -820,21 +812,17 @@ int bch2_move_data_phys(struct bch_fs *c,
 			bool wait_on_copygc,
 			move_pred_fn pred, void *arg)
 {
-	struct moving_context ctxt;
-
+	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
 	bch2_moving_ctxt_init(&ctxt, c, rate, stats, wp, wait_on_copygc);
-	bch2_btree_write_buffer_flush_sync(ctxt.trans);
 
 	if (ctxt.stats) {
 		ctxt.stats->phys = true;
 		ctxt.stats->data_type = (int) DATA_PROGRESS_DATA_TYPE_phys;
 	}
 
-	int ret = __bch2_move_data_phys(&ctxt, NULL, dev, start, end,
-					data_types, false, pred, arg);
-	bch2_moving_ctxt_exit(&ctxt);
+	bch2_btree_write_buffer_flush_sync(ctxt.trans);
 
-	return ret;
+	return __bch2_move_data_phys(&ctxt, NULL, dev, start, end, data_types, false, pred, arg);
 }
 
 static bool evacuate_bucket_pred(struct bch_fs *c, void *_arg,
@@ -890,21 +878,17 @@ static int bch2_move_btree(struct bch_fs *c,
 			   struct bch_move_stats *stats)
 {
 	bool kthread = (current->flags & PF_KTHREAD) != 0;
-	struct moving_context ctxt;
-	struct btree_trans *trans;
 	struct btree_iter iter;
 	struct btree *b;
 	enum btree_id btree;
-	struct data_update_opts data_opts;
 	int ret = 0;
 
 	struct bch_inode_opts io_opts;
 	bch2_inode_opts_get(c, &io_opts, true);
 
-	bch2_moving_ctxt_init(&ctxt, c, NULL, stats,
-			      writepoint_ptr(&c->btree_write_point),
-			      true);
-	trans = ctxt.trans;
+	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
+	bch2_moving_ctxt_init(&ctxt, c, NULL, stats, writepoint_ptr(&c->btree_write_point), true);
+	struct btree_trans *trans = ctxt.trans;
 
 	stats->data_type = BCH_DATA_btree;
 
@@ -932,6 +916,7 @@ retry:
 
 			stats->pos = BBPOS(iter.btree_id, iter.pos);
 
+			struct data_update_opts data_opts = {};
 			if (!pred(c, arg, b, &io_opts, &data_opts))
 				goto next;
 
@@ -952,9 +937,8 @@ next:
 			break;
 	}
 
-	bch_err_fn(c, ret);
-	bch2_moving_ctxt_exit(&ctxt);
 	bch2_btree_interior_updates_flush(c);
+	bch_err_fn(c, ret);
 
 	return ret;
 }
