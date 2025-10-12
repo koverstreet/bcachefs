@@ -665,30 +665,34 @@ void bch2_bkey_drop_ec(struct bkey_i *k, unsigned);
 
 #define bch2_bkey_drop_ptrs_noerror(_k, _ptr, _cond)			\
 do {									\
-	__label__ _again;						\
-	struct bkey_ptrs _ptrs;						\
-_again:									\
-	_ptrs = bch2_bkey_ptrs(_k);					\
+	bool dropped;							\
+	do {								\
+		struct bkey_ptrs _ptrs = bch2_bkey_ptrs(_k);		\
+		dropped = false;					\
 									\
-	bkey_for_each_ptr(_ptrs, _ptr)					\
-		if (_cond) {						\
-			bch2_bkey_drop_ptr_noerror(_k, _ptr);		\
-			goto _again;					\
-		}							\
+		bkey_for_each_ptr(_ptrs, _ptr)				\
+			if (_cond) {					\
+				bch2_bkey_drop_ptr_noerror(_k, _ptr);	\
+				dropped = true;				\
+				break;					\
+			}						\
+	} while (dropped);						\
 } while (0)
 
 #define bch2_bkey_drop_ptrs(_k, _ptr, _cond)				\
 do {									\
-	__label__ _again;						\
-	struct bkey_ptrs _ptrs;						\
-_again:									\
-	_ptrs = bch2_bkey_ptrs(_k);					\
+	bool dropped;							\
+	do {								\
+		struct bkey_ptrs _ptrs = bch2_bkey_ptrs(_k);		\
+		dropped = false;					\
 									\
-	bkey_for_each_ptr(_ptrs, _ptr)					\
-		if (_cond) {						\
-			bch2_bkey_drop_ptr(_k, _ptr);			\
-			goto _again;					\
-		}							\
+		bkey_for_each_ptr(_ptrs, _ptr)				\
+			if (_cond) {					\
+				bch2_bkey_drop_ptr(_k, _ptr);		\
+				dropped = true;				\
+				break;					\
+			}						\
+	} while (dropped);						\
 } while (0)
 
 bool bch2_bkey_matches_ptr(struct bch_fs *, struct bkey_s_c,
