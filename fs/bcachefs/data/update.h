@@ -38,8 +38,9 @@ enum bch_data_update_types {
 
 struct data_update {
 	enum bch_data_update_types type;
-	/* extent being updated: */
 	bool			read_done;
+	u8			ptrs_held;
+	/* extent being updated: */
 	enum btree_id		btree_id;
 	struct bkey_buf		k;
 	struct data_update_opts	data_opts;
