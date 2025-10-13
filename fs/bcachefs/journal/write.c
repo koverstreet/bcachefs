@@ -21,6 +21,8 @@
 
 #include "sb/clean.h"
 
+#include <linux/ioprio.h>
+
 static void journal_advance_devs_to_next_bucket(struct journal *j,
 						struct dev_alloc_list *devs,
 						unsigned sectors, __le64 seq)

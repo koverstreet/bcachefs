@@ -9,6 +9,8 @@
 
 #include "data/extents.h"
 
+#include <linux/sched/mm.h>
+
 typedef int (*sort_cmp_fn)(const struct btree *,
 			   const struct bkey_packed *,
 			   const struct bkey_packed *);
