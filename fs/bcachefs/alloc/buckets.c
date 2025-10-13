@@ -385,7 +385,7 @@ found:
 		}
 
 		struct bch_inode_opts opts;
-		try(bch2_extent_get_io_opts(trans, NULL, k, &opts));
+		try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
 		try(bch2_bkey_set_needs_rebalance(c, &opts, new, SET_NEEDS_REBALANCE_opt_change, 0));
 
 		if (!(flags & BTREE_TRIGGER_is_root)) {

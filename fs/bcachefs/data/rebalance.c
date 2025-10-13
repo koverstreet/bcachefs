@@ -332,9 +332,9 @@ static int bch2_extent_get_io_opts_one(struct btree_trans *trans, struct bkey_s_
 	return 0;
 }
 
-int bch2_extent_get_io_opts(struct btree_trans *trans,
-			    struct per_snapshot_io_opts *snapshot_opts, struct bkey_s_c k,
-			    struct bch_inode_opts *opts)
+int bch2_bkey_get_io_opts(struct btree_trans *trans,
+			  struct per_snapshot_io_opts *snapshot_opts, struct bkey_s_c k,
+			  struct bch_inode_opts *opts)
 {
 	struct bch_fs *c = trans->c;
 
@@ -655,7 +655,7 @@ static int do_rebalance_scan_btree(struct moving_context *ctxt,
 
 		struct bch_inode_opts opts;
 
-		bch2_extent_get_io_opts(trans, snapshot_io_opts, k, &opts) ?:
+		bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts) ?:
 		bch2_update_rebalance_opts(trans, &opts, &iter, k, SET_NEEDS_REBALANCE_opt_change) ?:
 		(start.inode &&
 		 k.k->type == KEY_TYPE_reflink_p &&
