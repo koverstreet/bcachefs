@@ -39,7 +39,7 @@ struct snapshot_interior_delete {
 	u32	id;
 	u32	live_child;
 };
-typedef DARRAY(struct snapshot_interior_delete) interior_delete_list;
+DEFINE_DARRAY_NAMED(interior_delete_list, struct snapshot_interior_delete);
 
 struct snapshot_delete {
 	struct mutex		lock;

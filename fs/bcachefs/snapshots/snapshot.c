@@ -1180,7 +1180,8 @@ int __bch2_key_has_snapshot_overwrites(struct btree_trans *trans,
 	return ret;
 }
 
-static int bch2_get_dead_interior_snapshots(struct btree_trans *trans, struct bkey_s_c k)
+static int bch2_get_dead_interior_snapshots(struct btree_trans *trans, struct bkey_s_c k,
+					    interior_delete_list *delete)
 {
 	struct bch_fs *c = trans->c;
 
@@ -1196,7 +1197,7 @@ static int bch2_get_dead_interior_snapshots(struct btree_trans *trans, struct bk
 			return -EINVAL;
 		}
 
-		return darray_push(&c->snapshot_delete.delete_interior, n);
+		return darray_push(delete, n);
 	}
 
 	return 0;
@@ -1205,39 +1206,33 @@ static int bch2_get_dead_interior_snapshots(struct btree_trans *trans, struct bk
 int bch2_delete_dead_interior_snapshots(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key(trans, iter, BTREE_ID_snapshots, POS_MAX, 0, k,
-			bch2_get_dead_interior_snapshots(trans, k));
-	if (ret)
-		goto err;
+	CLASS(interior_delete_list, delete)();
 
-	struct snapshot_delete *d = &c->snapshot_delete;
-	if (d->delete_interior.nr) {
+	try(for_each_btree_key(trans, iter, BTREE_ID_snapshots, POS_MAX, 0, k,
+			       bch2_get_dead_interior_snapshots(trans, k, &delete)));
+
+	if (delete.nr) {
 		/*
 		 * Fixing children of deleted snapshots can't be done completely
 		 * atomically, if we crash between here and when we delete the interior
 		 * nodes some depth fields will be off:
 		 */
-		ret = for_each_btree_key_commit(trans, iter, BTREE_ID_snapshots, POS_MIN,
-					  BTREE_ITER_intent, k,
-					  NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			bch2_fix_child_of_deleted_snapshot(trans, &iter, k, &d->delete_interior));
-		if (ret)
-			goto err;
+		try(for_each_btree_key_commit(trans, iter, BTREE_ID_snapshots, POS_MIN,
+					      BTREE_ITER_intent, k,
+					      NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+			bch2_fix_child_of_deleted_snapshot(trans, &iter, k, &delete)));
 
-		darray_for_each(d->delete_interior, i) {
-			ret = commit_do(trans, NULL, NULL, 0,
+		darray_for_each(delete, i) {
+			int ret = commit_do(trans, NULL, NULL, 0,
 				bch2_snapshot_node_delete(trans, i->id));
 			if (!bch2_err_matches(ret, EROFS))
 				bch_err_msg(c, ret, "deleting snapshot %u", i->id);
 			if (ret)
-				goto err;
+				return ret;
 		}
-
-		darray_exit(&d->delete_interior);
 	}
-err:
-	bch_err_fn(c, ret);
-	return ret;
+
+	return 0;
 }
 
 static bool interior_snapshot_needs_delete(struct bkey_s_c_snapshot snap)
