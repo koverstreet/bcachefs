@@ -81,7 +81,7 @@ static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
 	try(drop_dev_ptrs(c, bkey_i_to_s(n), dev_idx, flags, err, false));
 
 	struct bch_inode_opts opts;
-	try(bch2_extent_get_io_opts(trans, NULL, k, &opts));
+	try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
 	try(bch2_bkey_set_needs_rebalance(c, &opts, n, SET_NEEDS_REBALANCE_opt_change, 0));
 
 	/*
