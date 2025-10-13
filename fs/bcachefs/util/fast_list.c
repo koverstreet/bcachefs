@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0
-#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
 
 /*
  * Fast, unordered lists
@@ -13,7 +12,10 @@
  * except when refilling/emptying the percpu slot buffers.
  */
 
+#include "bcachefs.h"
 #include "fast_list.h"
+
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
 
 struct fast_list_pcpu {
 	u32			nr;

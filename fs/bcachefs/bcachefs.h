@@ -187,6 +187,10 @@
 #define ENUMERATED_REF_DEBUG
 #endif
 
+#ifdef __KERNEL__
+#define CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+#endif
+
 #ifndef dynamic_fault
 #define dynamic_fault(...)		0
 #endif
