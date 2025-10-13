@@ -547,7 +547,7 @@ int bch2_reconstruct_snapshots(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
 	CLASS(printbuf, buf)();
-	struct snapshot_tree_reconstruct r = {};
+	struct snapshot_tree_reconstruct r __cleanup(snapshot_tree_reconstruct_exit) = {};
 	int ret = 0;
 
 	struct progress_indicator_state progress;
@@ -557,13 +557,11 @@ int bch2_reconstruct_snapshots(struct bch_fs *c)
 		if (btree_type_has_snapshots(btree)) {
 			r.btree = btree;
 
-			ret = for_each_btree_key(trans, iter, btree, POS_MIN,
+			try(for_each_btree_key(trans, iter, btree, POS_MIN,
 					BTREE_ITER_all_snapshots|BTREE_ITER_prefetch, k, ({
 				progress_update_iter(trans, &progress, &iter);
 				get_snapshot_trees(c, &r, k.k->p);
-			}));
-			if (ret)
-				goto err;
+			})));
 
 			snapshot_tree_reconstruct_next(c, &r);
 		}
@@ -579,20 +577,15 @@ int bch2_reconstruct_snapshots(struct bch_fs *c)
 					"snapshot node %u from tree %s missing, recreate?", *id, buf.buf)) {
 				if (t->nr > 1) {
 					bch_err(c, "cannot reconstruct snapshot trees with multiple nodes");
-					ret = bch_err_throw(c, fsck_repair_unimplemented);
-					goto err;
+					return bch_err_throw(c, fsck_repair_unimplemented);
 				}
 
-				ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-						check_snapshot_exists(trans, *id));
-				if (ret)
-					goto err;
+				try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+					      check_snapshot_exists(trans, *id)));
 			}
 		}
 	}
 fsck_err:
-err:
-	snapshot_tree_reconstruct_exit(&r);
 	return ret;
 }
 
