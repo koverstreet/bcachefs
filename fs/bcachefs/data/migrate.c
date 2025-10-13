@@ -41,7 +41,8 @@ static struct bkey_i *drop_dev_ptrs(struct btree_trans *trans, struct bkey_s_c k
 		return NULL;
 
 	struct bkey_i *n = bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
-					      sizeof(struct bch_extent_reconcile));
+					      sizeof(struct bch_extent_reconcile) +
+					      sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX);
 	if (IS_ERR(n))
 		return n;
 	bkey_reassemble(n, k);

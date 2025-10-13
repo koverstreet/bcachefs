@@ -1157,7 +1157,7 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 		.idx		= s->key.k.p.offset,
 	};
 
-	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) + sizeof(stripe_ptr)));
+	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, BKEY_EXTENT_U64s_MAX * sizeof(u64)));
 
 	bkey_reassemble(n, k);
 

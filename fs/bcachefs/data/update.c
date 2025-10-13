@@ -161,15 +161,23 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	/* make a local copy, so that we can trace it after the transaction commit:  */
 	k = bkey_i_to_s_c(errptr_try(bch2_bkey_make_mut_noupdate(trans, k)));
 
+	/*
+	 * We're calling set_needs_rebalance() on both @insert and @new,
+	 * and it can add a bch_extent_reconcile and additional
+	 * pointers to BCH_SB_MEMBER_INVALID if the extent is now
+	 * degraded due to option changes:
+	 */
 	struct bkey_i_extent *new = bkey_i_to_extent(bch2_keylist_front(&u->op.insert_keys));
 	new = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(&new->k) +
-				 sizeof(struct bch_extent_reconcile)));
+				 sizeof(struct bch_extent_reconcile) +
+				 sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
 	bkey_copy(&new->k_i, bch2_keylist_front(&u->op.insert_keys));
 
 	struct bkey_i *insert = errptr_try(bch2_trans_kmalloc(trans,
 				    bkey_bytes(k.k) +
 				    bkey_val_bytes(&new->k) +
-				    sizeof(struct bch_extent_reconcile)));
+				    sizeof(struct bch_extent_reconcile) +
+				    sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
 	bkey_reassemble(insert, k);
 
 	if (!bch2_extents_match(c, k, old)) {
