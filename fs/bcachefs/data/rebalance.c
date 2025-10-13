@@ -270,27 +270,7 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 	if (bkey_is_btree_ptr(k.k))
 		return 0;
 
-	bool may_update_indirect = ctx == SET_NEEDS_REBALANCE_opt_change_indirect;
-
-	/*
-	 * If it's an indirect extent, and we walked to it directly, we won't
-	 * have the options from the inode that were directly applied: options
-	 * from the extent take precedence - unless the io_opts option came from
-	 * the inode and may_update_indirect is true (walked from a
-	 * REFLINK_P_MAY_UPDATE_OPTIONS pointer).
-	 */
 	const struct bch_extent_rebalance *old = bch2_bkey_rebalance_opts(k);
-	if (old && k.k->type == KEY_TYPE_reflink_v) {
-#define x(_name)								\
-		if (old->_name##_from_inode &&					\
-		    !(may_update_indirect && io_opts->_name##_from_inode)) {	\
-			io_opts->_name = old->_name;				\
-			io_opts->_name##_from_inode = true;			\
-		}
-		BCH_REBALANCE_OPTS()
-#undef x
-	}
-
 	struct bch_extent_rebalance new = io_opts_to_rebalance_opts(c, io_opts);
 
 	if (bkey_should_have_rb_opts(c, io_opts, k)
@@ -306,40 +286,30 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node);
 }
 
-static int bch2_extent_get_io_opts_one(struct btree_trans *trans, struct bkey_s_c k,
-				       struct bch_inode_opts *opts)
-{
-	struct bch_fs *c = trans->c;
-
-	bch2_inode_opts_get(c, opts, bkey_is_btree_ptr(k.k));
-
-	if (!bkey_is_btree_ptr(k.k) && k.k->type != KEY_TYPE_reflink_v) {
-		CLASS(btree_iter, inode_iter)(trans, BTREE_ID_inodes,
-				       SPOS(0, k.k->p.inode, k.k->p.snapshot),
-				       BTREE_ITER_cached);
-		struct bkey_s_c inode_k = bch2_btree_iter_peek_slot(&inode_iter);
-		int ret = bkey_err(inode_k);
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			return ret;
-
-		if (!ret && bkey_is_inode(inode_k.k)) {
-			struct bch_inode_unpacked inode;
-			bch2_inode_unpack(inode_k, &inode);
-			bch2_inode_opts_get_inode(c, &inode, opts);
-		}
-	}
-
-	return 0;
-}
-
 int bch2_bkey_get_io_opts(struct btree_trans *trans,
 			  struct per_snapshot_io_opts *snapshot_opts, struct bkey_s_c k,
 			  struct bch_inode_opts *opts)
 {
 	struct bch_fs *c = trans->c;
 
-	if (!snapshot_opts)
-		return bch2_extent_get_io_opts_one(trans, k, opts);
+	if (!snapshot_opts) {
+		bch2_inode_opts_get(c, opts, bkey_is_btree_ptr(k.k));
+
+		if (k.k->type == KEY_TYPE_reflink_v)
+			goto indirect_extent_fixups;
+
+		if (!bkey_is_btree_ptr(k.k) && k.k->type != KEY_TYPE_reflink_v) {
+			struct bch_inode_unpacked inode;
+			int ret = bch2_inode_find_by_inum_snapshot(trans, k.k->p.inode, k.k->p.snapshot,
+								   &inode, BTREE_ITER_cached);
+			if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+				return ret;
+			if (!ret)
+				bch2_inode_opts_get_inode(c, &inode, opts);
+		}
+
+		return 0;
+	}
 
 	if (snapshot_opts->fs_io_opts.change_cookie != atomic_read(&c->opt_change_cookie)) {
 		bch2_inode_opts_get(c, &snapshot_opts->fs_io_opts, bkey_is_btree_ptr(k.k));
@@ -355,7 +325,7 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 
 	if (k.k->type == KEY_TYPE_reflink_v) {
 		*opts = snapshot_opts->fs_io_opts;
-		return 0;
+		goto indirect_extent_fixups;
 	}
 
 	if (snapshot_opts->cur_inum != k.k->p.inode) {
@@ -393,6 +363,21 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 			}
 
 	*opts = snapshot_opts->fs_io_opts;
+	return 0;
+indirect_extent_fixups:
+	{
+		const struct bch_extent_rebalance *old = bch2_bkey_rebalance_opts(k);
+		if (old) {
+#define x(_name)									\
+		if (old->_name##_from_inode) {						\
+			opts->_name			= old->_name;			\
+			opts->_name##_from_inode	= old->_name##_from_inode;	\
+		}
+		BCH_REBALANCE_OPTS()
+#undef x
+		}
+	}
+
 	return 0;
 }
 
