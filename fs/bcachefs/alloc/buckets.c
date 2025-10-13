@@ -316,7 +316,10 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 		try(bch2_check_fix_ptr(trans, k, p, entry_c, &do_update));
 
 	if (do_update) {
-		struct bkey_i *new = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
+		struct bkey_i *new =
+			errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
+						      sizeof(struct bch_extent_rebalance)));
+		bkey_reassemble(new, k);
 
 		scoped_guard(rcu)
 			bch2_bkey_drop_ptrs(bkey_i_to_s(new), p, entry,
@@ -380,6 +383,10 @@ found:
 			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(new));
 			bch_info(c, "new key %s", buf.buf);
 		}
+
+		struct bch_inode_opts opts;
+		try(bch2_extent_get_io_opts(trans, NULL, k, &opts));
+		try(bch2_bkey_set_needs_rebalance(c, &opts, new, SET_NEEDS_REBALANCE_opt_change, 0));
 
 		if (!(flags & BTREE_TRIGGER_is_root)) {
 			CLASS(btree_node_iter, iter)(trans, btree, new->k.p, 0, level,
