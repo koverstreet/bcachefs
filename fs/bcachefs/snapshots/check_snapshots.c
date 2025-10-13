@@ -525,13 +525,13 @@ static int snapshot_tree_reconstruct_next(struct bch_fs *c, struct snapshot_tree
 		darray_for_each(r->trees, i)
 			if (snapshot_id_lists_have_common(i, &r->cur_ids)) {
 				try(snapshot_list_merge(c, i, &r->cur_ids));
-				goto out;
+				r->cur_ids.nr = 0;
+				return 0;
 			}
 		darray_push(&r->trees, r->cur_ids);
 		darray_init(&r->cur_ids);
 	}
-out:
-	r->cur_ids.nr = 0;
+
 	return 0;
 }
 
