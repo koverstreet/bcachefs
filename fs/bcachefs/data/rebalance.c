@@ -291,14 +291,12 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 			  struct bch_inode_opts *opts)
 {
 	struct bch_fs *c = trans->c;
+	bool metadata = bkey_is_btree_ptr(k.k);
 
 	if (!snapshot_opts) {
-		bch2_inode_opts_get(c, opts, bkey_is_btree_ptr(k.k));
+		bch2_inode_opts_get(c, opts, metadata);
 
-		if (k.k->type == KEY_TYPE_reflink_v)
-			goto indirect_extent_fixups;
-
-		if (!bkey_is_btree_ptr(k.k) && k.k->type != KEY_TYPE_reflink_v) {
+		if (k.k->p.snapshot) {
 			struct bch_inode_unpacked inode;
 			int ret = bch2_inode_find_by_inum_snapshot(trans, k.k->p.inode, k.k->p.snapshot,
 								   &inode, BTREE_ITER_cached);
@@ -307,75 +305,61 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 			if (!ret)
 				bch2_inode_opts_get_inode(c, &inode, opts);
 		}
+	} else {
+		if (snapshot_opts->fs_io_opts.change_cookie != atomic_read(&c->opt_change_cookie)) {
+			bch2_inode_opts_get(c, &snapshot_opts->fs_io_opts, metadata);
 
-		return 0;
-	}
+			snapshot_opts->cur_inum = 0;
+			snapshot_opts->d.nr = 0;
+		}
 
-	if (snapshot_opts->fs_io_opts.change_cookie != atomic_read(&c->opt_change_cookie)) {
-		bch2_inode_opts_get(c, &snapshot_opts->fs_io_opts, bkey_is_btree_ptr(k.k));
+		if (k.k->p.snapshot) {
+			if (snapshot_opts->cur_inum != k.k->p.inode) {
+				snapshot_opts->d.nr = 0;
 
-		snapshot_opts->cur_inum = 0;
-		snapshot_opts->d.nr = 0;
-	}
+				int ret = for_each_btree_key(trans, iter, BTREE_ID_inodes, POS(0, k.k->p.inode),
+							     BTREE_ITER_all_snapshots, k, ({
+					if (k.k->p.offset != k.k->p.inode)
+						break;
 
-	if (bkey_is_btree_ptr(k.k)) {
-		*opts = snapshot_opts->fs_io_opts;
-		return 0;
-	}
+					if (!bkey_is_inode(k.k))
+						continue;
 
-	if (k.k->type == KEY_TYPE_reflink_v) {
-		*opts = snapshot_opts->fs_io_opts;
-		goto indirect_extent_fixups;
-	}
+					struct bch_inode_unpacked inode;
+					_ret3 = bch2_inode_unpack(k, &inode);
+					if (_ret3)
+						break;
 
-	if (snapshot_opts->cur_inum != k.k->p.inode) {
-		snapshot_opts->d.nr = 0;
+					struct snapshot_io_opts_entry e = { .snapshot = k.k->p.snapshot };
+					bch2_inode_opts_get_inode(c, &inode, &e.io_opts);
 
-		int ret = for_each_btree_key(trans, iter, BTREE_ID_inodes, POS(0, k.k->p.inode),
-					     BTREE_ITER_all_snapshots, k, ({
-			if (k.k->p.offset != k.k->p.inode)
-				break;
+					darray_push(&snapshot_opts->d, e);
+				}));
 
-			if (!bkey_is_inode(k.k))
-				continue;
+				snapshot_opts->cur_inum = k.k->p.inode;
 
-			struct bch_inode_unpacked inode;
-			_ret3 = bch2_inode_unpack(k, &inode);
-			if (_ret3)
-				break;
-
-			struct snapshot_io_opts_entry e = { .snapshot = k.k->p.snapshot };
-			bch2_inode_opts_get_inode(c, &inode, &e.io_opts);
-
-			darray_push(&snapshot_opts->d, e);
-		}));
-
-		snapshot_opts->cur_inum = k.k->p.inode;
-
-		return ret ?: bch_err_throw(c, transaction_restart_nested);
-	}
-
-	if (k.k->p.snapshot)
-		darray_for_each(snapshot_opts->d, i)
-			if (bch2_snapshot_is_ancestor(c, k.k->p.snapshot, i->snapshot)) {
-				*opts = i->io_opts;
-				return 0;
+				return ret ?: bch_err_throw(c, transaction_restart_nested);
 			}
 
-	*opts = snapshot_opts->fs_io_opts;
-	return 0;
-indirect_extent_fixups:
-	{
-		const struct bch_extent_rebalance *old = bch2_bkey_rebalance_opts(k);
-		if (old) {
-#define x(_name)									\
-		if (old->_name##_from_inode) {						\
-			opts->_name			= old->_name;			\
-			opts->_name##_from_inode	= old->_name##_from_inode;	\
+			darray_for_each(snapshot_opts->d, i)
+				if (bch2_snapshot_is_ancestor(c, k.k->p.snapshot, i->snapshot)) {
+					*opts = i->io_opts;
+					return 0;
+				}
 		}
+
+		*opts = snapshot_opts->fs_io_opts;
+	}
+
+	const struct bch_extent_rebalance *old;
+	if (k.k->type == KEY_TYPE_reflink_v &&
+	    (old = bch2_bkey_rebalance_opts(k))) {
+#define x(_name)								\
+		if (old->_name##_from_inode)					\
+			opts->_name		= old->_name;			\
+		opts->_name##_from_inode	= old->_name##_from_inode;
 		BCH_REBALANCE_OPTS()
 #undef x
-		}
 	}
 
 	return 0;
