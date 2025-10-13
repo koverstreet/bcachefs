@@ -1185,26 +1185,6 @@ void bch2_inode_opts_get_inode(struct bch_fs *c,
 	bch2_io_opts_fixups(ret);
 }
 
-int bch2_inum_snapshot_opts_get(struct btree_trans *trans,
-				u64 inum, u32 snapshot,
-				struct bch_inode_opts *opts)
-{
-	if (inum) {
-		struct bch_inode_unpacked inode;
-		try(bch2_inode_find_by_inum_snapshot(trans, inum, snapshot, &inode, 0));
-
-		bch2_inode_opts_get_inode(trans->c, &inode, opts);
-	} else {
-		/*
-		 * data_update_index_update may call us for reflink btree extent
-		 * updates, inum will be 0
-		 */
-
-		bch2_inode_opts_get(trans->c, opts, false);
-	}
-	return 0;
-}
-
 int bch2_inode_set_casefold(struct btree_trans *trans, subvol_inum inum,
 			    struct bch_inode_unpacked *bi, unsigned v)
 {
