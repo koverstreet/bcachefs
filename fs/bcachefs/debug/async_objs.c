@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0
-#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
-
 /*
  * Async obj debugging: keep asynchronous objects on (very fast) lists, make
  * them visibile in debugfs:
  */
 
 #include "bcachefs.h"
+
+#ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
 
 #include "btree/read.h"
 #include "btree/write.h"
