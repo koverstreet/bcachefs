@@ -197,7 +197,7 @@ static int bch2_indirect_extent_missing_error(struct btree_trans *trans,
 	missing_pos.offset += missing_start - live_start;
 
 	prt_printf(&buf, "pointer to missing indirect extent in ");
-	try(bch2_inum_snap_offset_err_msg_trans(trans, &buf, missing_pos));
+	try(bch2_inum_offset_err_msg_trans_norestart(trans, &buf, 0, missing_pos));
 
 	prt_printf(&buf, "-%llu\n", (missing_pos.offset + (missing_end - missing_start)) << 9);
 	bch2_bkey_val_to_text(&buf, c, p.s_c);

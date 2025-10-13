@@ -438,11 +438,7 @@ void bch2_promote_op_to_text(struct printbuf *out,
 void bch2_read_err_msg_trans(struct btree_trans *trans, struct printbuf *out,
 			     struct bch_read_bio *rbio, struct bpos read_pos)
 {
-	lockrestart_do(trans,
-		bch2_inum_offset_err_msg_trans(trans, out,
-				(subvol_inum) { rbio->subvol, read_pos.inode },
-				read_pos.snapshot,
-				read_pos.offset << 9));
+	bch2_inum_offset_err_msg_trans(trans, out, rbio->subvol, read_pos);
 
 	if (rbio->data_update)
 		prt_str(out, "(internal move) ");
