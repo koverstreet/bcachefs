@@ -17,7 +17,6 @@
 #include "journal/read.h"
 #include "journal/seq_blacklist.h"
 
-#include <linux/ioprio.h>
 #include <linux/string_choices.h>
 #include <linux/sched/sysctl.h>
 
