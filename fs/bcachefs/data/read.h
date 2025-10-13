@@ -132,6 +132,9 @@ enum bch_read_flags {
 #undef x
 };
 
+void bch2_read_err_msg_trans(struct btree_trans *, struct printbuf *,
+			     struct bch_read_bio *, struct bpos);
+
 int __bch2_read_extent(struct btree_trans *, struct bch_read_bio *,
 		       struct bvec_iter, struct bpos, enum btree_id,
 		       struct bkey_s_c, unsigned,

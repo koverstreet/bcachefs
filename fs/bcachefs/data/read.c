@@ -435,20 +435,17 @@ void bch2_promote_op_to_text(struct printbuf *out,
 
 /* Read */
 
-static int bch2_read_err_msg_trans(struct btree_trans *trans, struct printbuf *out,
-				   struct bch_read_bio *rbio, struct bpos read_pos)
+void bch2_read_err_msg_trans(struct btree_trans *trans, struct printbuf *out,
+			     struct bch_read_bio *rbio, struct bpos read_pos)
 {
-	int ret = lockrestart_do(trans,
+	lockrestart_do(trans,
 		bch2_inum_offset_err_msg_trans(trans, out,
 				(subvol_inum) { rbio->subvol, read_pos.inode },
+				read_pos.snapshot,
 				read_pos.offset << 9));
-	if (ret)
-		return ret;
 
 	if (rbio->data_update)
 		prt_str(out, "(internal move) ");
-
-	return 0;
 }
 
 static void bch2_read_err_msg(struct bch_fs *c, struct printbuf *out,
@@ -649,7 +646,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 		.subvol = rbio->subvol,
 		.inum	= rbio->read_pos.inode,
 	};
-	u64 read_offset = rbio->read_pos.offset;
+	struct bpos read_pos = rbio->read_pos;
 	struct bch_io_failures failed = { .nr = 0 };
 
 	trace_io_read_retry(&rbio->bio);
@@ -693,10 +690,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 			CLASS(printbuf, buf)();
 			bch2_log_msg_start(c, &buf);
 
-			lockrestart_do(trans,
-				bch2_inum_offset_err_msg_trans(trans, &buf, inum, read_offset << 9));
-			if (rbio->data_update)
-				prt_str(&buf, "(internal move) ");
+			bch2_read_err_msg_trans(trans, &buf, rbio, read_pos);
 
 			prt_str(&buf, "data read error, ");
 			if (!ret) {
@@ -1494,9 +1488,7 @@ err:
 	if (unlikely(ret)) {
 		if (ret != -BCH_ERR_extent_poisoned) {
 			CLASS(printbuf, buf)();
-			lockrestart_do(trans,
-				       bch2_inum_offset_err_msg_trans(trans, &buf, inum,
-								      bvec_iter.bi_sector << 9));
+			bch2_read_err_msg_trans(trans, &buf, rbio, POS(inum.inum, bvec_iter.bi_sector));
 			prt_printf(&buf, "data read error: %s", bch2_err_str(ret));
 			bch_err_ratelimited(c, "%s", buf.buf);
 		}
