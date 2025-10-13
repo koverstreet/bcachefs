@@ -121,7 +121,7 @@ err:
 	if (should_print_err(ret)) {
 		CLASS(printbuf, buf)();
 		lockrestart_do(trans,
-			bch2_inum_offset_err_msg_trans(trans, &buf, inum, iter->pos.offset << 9));
+			bch2_inum_offset_err_msg_trans(trans, &buf, inum, 0, iter->pos.offset << 9));
 		prt_printf(&buf, "fallocate error: %s", bch2_err_str(ret));
 		bch_err_ratelimited(c, "%s", buf.buf);
 	}

@@ -273,9 +273,8 @@ err:
 
 	if (ret) {
 		CLASS(printbuf, buf)();
-		lockrestart_do(trans,
-			bch2_inum_offset_err_msg_trans(trans, &buf, inum, iter.pos.offset << 9));
-		prt_printf(&buf, "read error %s from btree lookup", bch2_err_str(ret));
+		bch2_read_err_msg_trans(trans, &buf, rbio, iter.pos);
+		prt_printf(&buf, "data read error: %s", bch2_err_str(ret));
 		bch_err_ratelimited(c, "%s", buf.buf);
 
 		rbio->bio.bi_status = BLK_STS_IOERR;

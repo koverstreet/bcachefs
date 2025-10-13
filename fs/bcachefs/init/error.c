@@ -729,28 +729,28 @@ void bch2_free_fsck_errs(struct bch_fs *c)
 }
 
 int bch2_inum_offset_err_msg_trans(struct btree_trans *trans, struct printbuf *out,
-				    subvol_inum inum, u64 offset)
+				   subvol_inum inum, u32 snapshot, u64 offset)
 {
-	u32 restart_count = trans->restart_count;
 	int ret = 0;
-
-	if (inum.subvol) {
+	if (inum.subvol)
 		ret = bch2_inum_to_path(trans, inum, out);
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			return ret;
-	}
+	else if (snapshot)
+		ret = bch2_inum_snapshot_to_path(trans, inum.inum, snapshot, NULL, out);
+
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+		return ret;
+
 	if (!inum.subvol || ret)
 		prt_printf(out, "inum %llu:%llu", inum.subvol, inum.inum);
 	prt_printf(out, " offset %llu: ", offset);
-
-	return trans_was_restarted(trans, restart_count);
+	return 0;
 }
 
 void bch2_inum_offset_err_msg(struct bch_fs *c, struct printbuf *out,
 			      subvol_inum inum, u64 offset)
 {
 	CLASS(btree_trans, trans)(c);
-	lockrestart_do(trans, bch2_inum_offset_err_msg_trans(trans, out, inum, offset));
+	lockrestart_do(trans, bch2_inum_offset_err_msg_trans(trans, out, inum, 0, offset));
 }
 
 int bch2_inum_snap_offset_err_msg_trans(struct btree_trans *trans, struct printbuf *out,
