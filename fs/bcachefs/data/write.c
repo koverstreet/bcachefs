@@ -427,16 +427,12 @@ static int bch2_write_index_default(struct bch_write_op *op)
 void bch2_write_op_error(struct bch_write_op *op, u64 offset, const char *fmt, ...)
 {
 	CLASS(printbuf, buf)();
+	CLASS(btree_trans, trans)(op->c);
 
-	if (op->subvol) {
-		bch2_inum_offset_err_msg(op->c, &buf,
-					 (subvol_inum) { op->subvol, op->pos.inode, },
-					 offset << 9);
-	} else {
-		struct bpos pos = op->pos;
-		pos.offset = offset;
-		bch2_inum_snap_offset_err_msg(op->c, &buf, pos);
-	}
+	struct bpos pos = op->pos;
+	pos.offset = offset;
+
+	bch2_inum_offset_err_msg_trans(trans, &buf, op->subvol, pos);
 
 	prt_str(&buf, "write error: ");
 
