@@ -1408,6 +1408,9 @@ static int extent_ptr_validate(struct bch_fs *c,
 {
 	int ret = 0;
 
+	if (ptr->dev == BCH_SB_MEMBER_INVALID)
+		return 0;
+
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	bkey_for_each_ptr(ptrs, ptr2)
 		bkey_fsck_err_on(ptr != ptr2 && ptr->dev == ptr2->dev,
