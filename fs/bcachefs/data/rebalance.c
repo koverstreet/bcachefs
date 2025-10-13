@@ -303,6 +303,7 @@ static inline bool bkey_should_have_rb_opts(struct bkey_s_c k,
 
 static bool bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 				      struct bch_inode_opts *opts,
+				      int *need_update_invalid_devs,
 				      struct bch_extent_rebalance_v2 *ret)
 {
 	struct bch_extent_rebalance_v2 r = {
@@ -321,7 +322,7 @@ static bool bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 	unsigned csum_type	= bch2_data_checksum_type_rb(c, r);
 
 	bool incompressible = false, unwritten = false, ec = false;
-	unsigned durability = 0, min_durability = INT_MAX;
+	unsigned durability = 0, durability_acct = 0, invalid = 0, min_durability = INT_MAX;
 
 	scoped_guard(rcu) {
 		const union bch_extent_entry *entry;
@@ -355,14 +356,20 @@ static bool bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 					r.ptrs_moving |= ptr_bit;
 				}
 
-				unsigned d = ca->mi.state != BCH_MEMBER_STATE_failed
-					? __extent_ptr_durability(ca, &p)
-					: 0;
+				unsigned d = __extent_ptr_durability(ca, &p);
+
+				durability_acct += d;
+
+				if (ca->mi.state == BCH_MEMBER_STATE_failed)
+					d = 0;
+
 				durability += d;
 				min_durability = min(min_durability, d);
 
 				ec |= p.has_ec;
 			}
+
+			invalid += p.ptr.dev == BCH_SB_MEMBER_INVALID;
 
 			ptr_bit <<= 1;
 		}
@@ -385,6 +392,14 @@ static bool bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 	if (!unwritten && r.erasure_code != ec)
 		r.need_rb |= BIT(BCH_REBALANCE_erasure_code);
 
+	*need_update_invalid_devs =
+		min_t(int, durability_acct + invalid - r.data_replicas, invalid);
+
+	/* Multiple pointers to BCH_SB_MEMBER_INVALID is an incompat feature: */
+	if (*need_update_invalid_devs < 0 &&
+	    bch2_request_incompat_feature(c, bcachefs_metadata_version_rebalance_v2))
+		*need_update_invalid_devs = 0;
+
 	const struct bch_extent_rebalance_v2 *old = bch2_bkey_ptrs_rebalance_opts(c, ptrs);
 	if (old && !(old->need_rb & ~r.need_rb)) {
 		r.pending = old->pending;
@@ -396,7 +411,8 @@ static bool bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 
 	*ret = r;
 
-	return (should_have_rb != !!old ||
+	return (*need_update_invalid_devs ||
+		should_have_rb != !!old ||
 		(should_have_rb ? memcmp(old, &r, sizeof(r)) : old != NULL)) &&
 		!bch2_request_incompat_feature(c, bcachefs_metadata_version_sb_field_extent_type_u64s);
 }
@@ -572,9 +588,11 @@ int bch2_bkey_set_needs_rebalance(struct btree_trans *trans,
 
 	struct bch_fs *c = trans->c;
 	struct bkey_s k = bkey_i_to_s(_k);
+
+	int need_update_invalid_devs;
 	struct bch_extent_rebalance_v2 new;
 
-	if (!bch2_bkey_needs_rebalance(c, k.s_c, opts, &new))
+	if (!bch2_bkey_needs_rebalance(c, k.s_c, opts, &need_update_invalid_devs, &new))
 		return 0;
 
 	struct bch_extent_rebalance_v2 *old =
@@ -595,12 +613,36 @@ int bch2_bkey_set_needs_rebalance(struct btree_trans *trans,
 	} else if (old)
 		extent_entry_drop(c, k, (union bch_extent_entry *) old);
 
+	if (unlikely(need_update_invalid_devs)) {
+		if (need_update_invalid_devs > 0) {
+			bch2_bkey_drop_ptrs(k, p, entry,
+				(p.ptr.dev == BCH_SB_MEMBER_INVALID &&
+				 need_update_invalid_devs &&
+				 need_update_invalid_devs--));
+		} else {
+			need_update_invalid_devs = -need_update_invalid_devs;
+
+			trans->extra_disk_res += (u64) need_update_invalid_devs * k.k->size;
+
+			while (need_update_invalid_devs--) {
+				union bch_extent_entry *end = bkey_val_end(k);
+
+				end->ptr = (struct bch_extent_ptr) {
+					.type	= BIT(BCH_EXTENT_ENTRY_ptr),
+					.dev	= BCH_SB_MEMBER_INVALID,
+				};
+
+				_k->k.u64s++;
+			}
+		}
+	}
+
 	return 0;
 }
 
 int bch2_update_rebalance_opts(struct btree_trans *trans,
 			       struct per_snapshot_io_opts *snapshot_io_opts,
-			       struct bch_inode_opts *io_opts,
+			       struct bch_inode_opts *opts,
 			       struct btree_iter *iter,
 			       struct bkey_s_c k,
 			       enum set_needs_rebalance_ctx ctx)
@@ -615,16 +657,18 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 		return 0;
 
 	struct bch_fs *c = trans->c;
+	int need_update_invalid_devs;
 	struct bch_extent_rebalance_v2 new;
 
-	if (!bch2_bkey_needs_rebalance(c, k, io_opts, &new))
+	if (!bch2_bkey_needs_rebalance(c, k, opts, &need_update_invalid_devs, &new))
 		return 0;
 
 	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
-							 sizeof(struct bch_extent_rebalance_v2)));
+							 sizeof(struct bch_extent_rebalance_v2) +
+							 sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
 	bkey_reassemble(n, k);
 
-	return  bch2_bkey_set_needs_rebalance(trans, snapshot_io_opts, io_opts, n, ctx, 0) ?:
+	return  bch2_bkey_set_needs_rebalance(trans, snapshot_io_opts, opts, n, ctx, 0) ?:
 		bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node);
 }
 

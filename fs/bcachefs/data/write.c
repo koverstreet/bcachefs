@@ -390,6 +390,13 @@ static int bch2_write_index_default(struct bch_write_op *op)
 		bch2_trans_begin(trans);
 
 		k = bch2_keylist_front(keys);
+
+		/*
+		 * If we did a degraded write, bch2_bkey_set_needs_rebalance() will add
+		 * pointers to BCH_SB_MEMBER_INVALID so the extent is accounted as
+		 * degraded
+		 */
+		bch2_bkey_buf_realloc(&sk, k->k.u64s + 1 + BCH_REPLICAS_MAX);
 		bch2_bkey_buf_copy(&sk, k);
 
 		int ret = bch2_subvolume_get_snapshot(trans, inum.subvol, &sk.k->k.p.snapshot);
@@ -1227,8 +1234,15 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 		return 0;
 	}
 
+	/*
+	 * If we did a degraded write, bch2_bkey_set_needs_rebalance() will add
+	 * pointers to BCH_SB_MEMBER_INVALID so the extent is accounted as
+	 * degraded
+	 */
 	struct bkey_i *new = errptr_try(bch2_trans_kmalloc_nomemzero(trans,
-				bkey_bytes(k.k) + sizeof(struct bch_extent_rebalance_v2)));
+				bkey_bytes(k.k) +
+				sizeof(struct bch_extent_rebalance_v2) +
+				sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
 
 	bkey_reassemble(new, k);
 	bch2_cut_front(c, bkey_start_pos(&orig->k), new);

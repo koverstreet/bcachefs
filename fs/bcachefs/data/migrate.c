@@ -75,8 +75,9 @@ static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
 	if (!bch2_bkey_has_device_c(c, k, dev_idx))
 		return 0;
 
-	struct bkey_i *n =
-		errptr_try(bch2_bkey_make_mut(trans, iter, &k, BTREE_UPDATE_internal_snapshot_node));
+	/* blah */
+	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, BKEY_EXTENT_U64s_MAX * sizeof(u64)));
+	bkey_reassemble(n, k);
 
 	try(drop_dev_ptrs(c, bkey_i_to_s(n), dev_idx, flags, err, false));
 
@@ -92,7 +93,7 @@ static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
 	 */
 	if (bkey_deleted(&n->k))
 		n->k.size = 0;
-	return 0;
+	return bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node);
 }
 
 static int bch2_dev_btree_drop_key(struct btree_trans *trans,
