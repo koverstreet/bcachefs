@@ -611,6 +611,8 @@ static int do_rebalance_scan_btree(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	struct bch_fs_rebalance *r = &c->rebalance;
 
+	bch2_trans_begin(trans);
+
 	CLASS(btree_node_iter, iter)(trans, btree, start, 0, level,
 				     BTREE_ITER_prefetch|
 				     BTREE_ITER_not_extents|
