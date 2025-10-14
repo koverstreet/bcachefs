@@ -99,6 +99,7 @@ static void __bkey_cached_free(struct rcu_pending *pending, struct rcu_head *rcu
 	struct bkey_cached *ck = container_of(rcu, struct bkey_cached, rcu);
 
 	this_cpu_dec(*c->btree_key_cache.nr_pending);
+	six_lock_exit(&ck->c.lock);
 	kmem_cache_free(bch2_key_cache, ck);
 }
 
@@ -769,6 +770,7 @@ void bch2_fs_btree_key_cache_exit(struct btree_key_cache *bc)
 					ck = container_of(pos, struct bkey_cached, hash);
 					BUG_ON(!bkey_cached_evict(bc, ck));
 					kfree(ck->k);
+					six_lock_exit(&ck->c.lock);
 					kmem_cache_free(bch2_key_cache, ck);
 				}
 		}
