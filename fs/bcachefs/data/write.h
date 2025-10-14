@@ -36,6 +36,7 @@ static inline void bch2_write_op_init(struct bch_write_op *op, struct bch_fs *c,
 	op->c			= c;
 	op->end_io		= NULL;
 	op->flags		= 0;
+	op->io_error		= false;
 	op->written		= 0;
 	op->error		= 0;
 	op->csum_type		= bch2_data_checksum_type(c, opts);
