@@ -1298,31 +1298,27 @@ restart_drop_ptrs:
 
 void bch2_extent_ptr_to_text(struct printbuf *out, struct bch_fs *c, const struct bch_extent_ptr *ptr)
 {
-	guard(printbuf_atomic)(out);
-	guard(rcu)();
-	struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
+	struct bch_dev *ca = c ? bch2_dev_rcu_noerror(c, ptr->dev) : NULL;
 	if (!ca) {
-		prt_printf(out, "%u:%llu gen %u%s", ptr->dev,
-			   (u64) ptr->offset, ptr->gen,
-			   ptr->cached ? " cached" : "");
+		prt_printf(out, "%u:%llu gen %u", ptr->dev,
+			   (u64) ptr->offset, ptr->gen);
 	} else {
 		u32 offset;
 		u64 b = sector_to_bucket_and_offset(ca, ptr->offset, &offset);
 
-		prt_printf(out, "%u:%llu:%u gen %u",
-			   ptr->dev, b, offset, ptr->gen);
+		prt_printf(out, "%6s %u:%llu:%u gen %u",
+			   ca->name, ptr->dev, b, offset, ptr->gen);
 		if (ca->mi.durability != 1)
 			prt_printf(out, " d=%u", ca->mi.durability);
-		if (ptr->cached)
-			prt_str(out, " cached");
-		if (ptr->unwritten)
-			prt_str(out, " unwritten");
 		int stale = dev_ptr_stale_rcu(ca, ptr);
-		if (stale > 0)
-			prt_printf(out, " stale");
-		else if (stale)
-			prt_printf(out, " invalid");
+		if (stale)
+			prt_printf(out, " stale=%i", stale);
 	}
+
+	if (ptr->cached)
+		prt_str(out, " cached");
+	if (ptr->unwritten)
+		prt_str(out, " unwritten");
 }
 
 void bch2_extent_crc_unpacked_to_text(struct printbuf *out, struct bch_extent_crc_unpacked *crc)
@@ -1354,6 +1350,8 @@ void bch2_bkey_ptrs_to_text(struct printbuf *out, struct bch_fs *c,
 		prt_printf(out, "durability: %u ", bch2_bkey_durability_safe(c, k));
 
 	guard(printbuf_indent)(out);
+	guard(printbuf_atomic)(out);
+	guard(rcu)();
 
 	bkey_extent_entry_for_each(ptrs, entry) {
 		prt_newline(out);
@@ -1763,4 +1761,3 @@ int bch2_cut_back_s(struct bpos where, struct bkey_s k)
 	memset(bkey_val_end(k), 0, val_u64s_delta * sizeof(u64));
 	return -val_u64s_delta;
 }
-
