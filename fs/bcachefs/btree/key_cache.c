@@ -159,7 +159,7 @@ bkey_cached_alloc(struct btree_trans *trans, struct btree_path *path, unsigned k
 				rcu_pending_dequeue(&bc->pending[pcpu_readers]),
 				struct bkey_cached, rcu);
 	if (ck)
-		goto lock;
+		return ck;
 
 	ck = allocate_dropping_locks(trans, ret,
 				     __bkey_cached_alloc(key_u64s, _gfp));
@@ -173,17 +173,11 @@ bkey_cached_alloc(struct btree_trans *trans, struct btree_path *path, unsigned k
 	if (ck) {
 		bch2_btree_lock_init(&ck->c, pcpu_readers ? SIX_LOCK_INIT_PCPU : 0, GFP_KERNEL);
 		ck->c.cached = true;
-		goto lock;
+		return ck;
 	}
 
-	ck = container_of_or_null(rcu_pending_dequeue_from_all(&bc->pending[pcpu_readers]),
-				  struct bkey_cached, rcu);
-	if (ck)
-		goto lock;
-lock:
-	six_lock_intent(&ck->c.lock, NULL, NULL);
-	six_lock_write(&ck->c.lock, NULL, NULL);
-	return ck;
+	return container_of_or_null(rcu_pending_dequeue_from_all(&bc->pending[pcpu_readers]),
+				    struct bkey_cached, rcu);
 }
 
 static struct bkey_cached *
@@ -232,8 +226,10 @@ static int btree_key_cache_create(struct btree_trans *trans,
 	key_u64s = roundup_pow_of_two(key_u64s);
 
 	struct bkey_cached *ck = errptr_try(bkey_cached_alloc(trans, ck_path, key_u64s));
-
-	if (unlikely(!ck)) {
+	if (likely(ck)) {
+		six_lock_intent(&ck->c.lock, NULL, NULL);
+		six_lock_write(&ck->c.lock, NULL, NULL);
+	} else {
 		ck = bkey_cached_reuse(bc);
 		if (unlikely(!ck)) {
 			bch_err(c, "error allocating memory for key cache item, btree %s",
