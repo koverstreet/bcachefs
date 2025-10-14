@@ -173,13 +173,17 @@ void bch2_stripe_to_text(struct printbuf *out, struct bch_fs *c,
 		bch2_disk_path_to_text(out, c, s.disk_label - 1);
 	}
 
+	guard(printbuf_indent)(out);
+	guard(printbuf_atomic)(out);
+	guard(rcu)();
+
 	for (unsigned i = 0; i < s.nr_blocks; i++) {
 		const struct bch_extent_ptr *ptr = sp->ptrs + i;
 
 		if ((void *) ptr >= bkey_val_end(k))
 			break;
 
-		prt_char(out, ' ');
+		prt_newline(out);
 		bch2_extent_ptr_to_text(out, c, ptr);
 
 		if (s.csum_type < BCH_CSUM_NR &&
