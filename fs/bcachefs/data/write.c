@@ -584,7 +584,7 @@ static void __bch2_write_index(struct bch_write_op *op)
 	unsigned dev;
 	int ret = 0;
 
-	if (unlikely(op->flags & BCH_WRITE_io_error)) {
+	if (unlikely(op->io_error)) {
 		ret = bch2_write_drop_io_error_ptrs(op);
 		if (ret)
 			goto err;
@@ -743,7 +743,7 @@ static void bch2_write_endio(struct bio *bio)
 					    "data write error: %s",
 					    bch2_blk_status_to_str(bio->bi_status));
 		set_bit(wbio->dev, op->failed.d);
-		op->flags |= BCH_WRITE_io_error;
+		op->io_error = true;
 	}
 
 	if (wbio->nocow) {
@@ -1272,7 +1272,7 @@ static void bch2_nocow_write_convert_unwritten(struct bch_write_op *op)
 
 static void __bch2_nocow_write_done(struct bch_write_op *op)
 {
-	if (unlikely(op->flags & BCH_WRITE_io_error)) {
+	if (unlikely(op->io_error)) {
 		op->error = bch_err_throw(op->c, data_write_io);
 	} else if (unlikely(op->flags & BCH_WRITE_convert_unwritten))
 		bch2_nocow_write_convert_unwritten(op);

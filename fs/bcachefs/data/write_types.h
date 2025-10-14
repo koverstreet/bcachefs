@@ -26,7 +26,6 @@
 	x(move)				\
 	x(in_worker)			\
 	x(submitted)			\
-	x(io_error)			\
 	x(convert_unwritten)
 
 enum __bch_write_flags {
@@ -78,6 +77,7 @@ struct bch_write_op {
 	unsigned		written; /* sectors */
 	u16			flags;
 	s16			error; /* dio write path expects it to hold -ERESTARTSYS... */
+	u8			io_error;
 
 	unsigned		compression_opt:8;
 	unsigned		csum_type:4;
