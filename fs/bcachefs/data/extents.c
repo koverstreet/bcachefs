@@ -27,6 +27,13 @@
 
 #include "util/util.h"
 
+#ifdef CONFIG_BCACHEFS_DEBUG
+static int bch2_force_read_device = -1;
+
+module_param_named(force_read_device, bch2_force_read_device, int, 0644);
+MODULE_PARM_DESC(force_read_device, "");
+#endif
+
 static const char * const bch2_extent_flags_strs[] = {
 #define x(n, v)	[BCH_EXTENT_FLAG_##n] = #n,
 	BCH_EXTENT_FLAGS()
@@ -171,6 +178,15 @@ static inline bool ptr_better(struct bch_fs *c,
 	int crc_retry_delta = (int) p1.crc_retry_nr - (int) p2.crc_retry_nr;
 	if (unlikely(crc_retry_delta))
 		return crc_retry_delta < 0;
+
+#ifdef CONFIG_BCACHEFS_DEBUG
+	if (bch2_force_read_device >= 0) {
+		int cmp = (p1.ptr.dev == bch2_force_read_device) -
+			(p2.ptr.dev == bch2_force_read_device);
+		if (cmp)
+			return cmp > 0;
+	}
+#endif
 
 	/* Pick at random, biased in favor of the faster device: */
 
