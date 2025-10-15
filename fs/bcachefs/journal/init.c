@@ -533,14 +533,14 @@ int bch2_dev_journal_init(struct bch_dev *ca, struct bch_sb *sb)
 		 * performance can be sensitive to anything that affects journal
 		 * pipelining.
 		 */
-		ja->bio[i] = kvzalloc(struct_size(ja->bio[i], bio.bi_inline_vecs,
-				     nr_bvecs), GFP_KERNEL);
+		ja->bio[i] = kvzalloc(sizeof(struct bio) + sizeof(struct bio_vec) * nr_bvecs,
+				      GFP_KERNEL);
 		if (!ja->bio[i])
 			return bch_err_throw(c, ENOMEM_dev_journal_init);
 
 		ja->bio[i]->ca = ca;
 		ja->bio[i]->buf_idx = i;
-		bio_init(&ja->bio[i]->bio, NULL, ja->bio[i]->bio.bi_inline_vecs, nr_bvecs, 0);
+		bio_init(&ja->bio[i]->bio, NULL, bio_inline_vecs(&ja->bio[i]->bio), nr_bvecs, 0);
 	}
 
 	ja->buckets = kcalloc(ja->nr, sizeof(u64), GFP_KERNEL);
