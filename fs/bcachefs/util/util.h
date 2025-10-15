@@ -16,6 +16,7 @@
 #include <linux/ratelimit.h>
 #include <linux/slab.h>
 #include <linux/sort.h>
+#include <linux/version.h>
 #include <linux/vmalloc.h>
 #include <linux/workqueue.h>
 
@@ -48,6 +49,13 @@ struct closure;
 	(__builtin_types_compatible_p(typeof(_val), _type) ||		\
 	 __builtin_types_compatible_p(typeof(_val), const _type))
 
+#if defined(__KERNEL__) && LINUX_VERSION_CODE < KERNEL_VERSION(6,18,0)
+static inline struct bio_vec *bio_inline_vecs(struct bio *bio)
+{
+	return (struct bio_vec *)(bio + 1);
+}
+#endif
+
 /* Userspace doesn't align allocations as nicely as the kernel allocators: */
 static inline size_t buf_pages(void *p, size_t len)
 {
@@ -58,9 +66,15 @@ static inline size_t buf_pages(void *p, size_t len)
 
 static inline void *bch2_kvmalloc_noprof(size_t n, gfp_t flags)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,18,0)
 	void *p = unlikely(n >= INT_MAX)
 		? vmalloc_noprof(n)
 		: kvmalloc_noprof(n, flags & ~__GFP_ZERO);
+#else
+	void *p = unlikely(n >= INT_MAX)
+		? vmalloc_noprof(n)
+		: kvmalloc_node_align_noprof(n, 1, flags & ~__GFP_ZERO, NUMA_NO_NODE);
+#endif
 	if (p && (flags & __GFP_ZERO))
 		memset(p, 0, n);
 	return p;

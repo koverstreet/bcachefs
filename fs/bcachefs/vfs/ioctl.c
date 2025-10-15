@@ -17,6 +17,7 @@
 #include <linux/fsnotify.h>
 #include <linux/mount.h>
 #include <linux/namei.h>
+#include <linux/version.h>
 #include <linux/security.h>
 #include <linux/writeback.h>
 
@@ -24,6 +25,12 @@
 #define FSOP_GOING_FLAGS_DEFAULT	0x0	/* going down */
 #define FSOP_GOING_FLAGS_LOGFLUSH	0x1	/* flush log but not data */
 #define FSOP_GOING_FLAGS_NOLOGFLUSH	0x2	/* don't flush log nor data */
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,18,0)
+#define start_creating_user_path	user_path_create
+#define end_creating_path		done_path_create
+#define start_removing_user_path_at	user_path_locked_at
+#endif
 
 static int bch2_reinherit_attrs_fn(struct btree_trans *trans,
 				   struct bch_inode_info *inode,
@@ -257,7 +264,7 @@ static long __bch2_ioctl_subvolume_create(struct bch_fs *c, struct file *filp,
 		snapshot_src = inode_inum(to_bch_ei(src_path.dentry->d_inode));
 	}
 
-	dst_dentry = user_path_create(arg.dirfd,
+	dst_dentry = start_creating_user_path(arg.dirfd,
 			(const char __user *)(unsigned long)arg.dst_ptr,
 			&dst_path, lookup_flags);
 	error = PTR_ERR_OR_ZERO(dst_dentry);
@@ -316,7 +323,7 @@ static long __bch2_ioctl_subvolume_create(struct bch_fs *c, struct file *filp,
 	d_instantiate(dst_dentry, &inode->v);
 	fsnotify_mkdir(dir, dst_dentry);
 err3:
-	done_path_create(&dst_path, dst_dentry);
+	end_creating_path(&dst_path, dst_dentry);
 err2:
 	if (arg.src_ptr)
 		path_put(&src_path);
@@ -363,7 +370,7 @@ static long __bch2_ioctl_subvolume_destroy(struct bch_fs *c, struct file *filp,
 	if (arg.flags)
 		return -EINVAL;
 
-	victim = user_path_locked_at(arg.dirfd, name, &path);
+	victim = start_removing_user_path_at(arg.dirfd, name, &path);
 	if (IS_ERR(victim))
 		return PTR_ERR(victim);
 

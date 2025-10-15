@@ -1227,6 +1227,7 @@ struct btree_node_scrub {
 
 	struct work_struct	work;
 	struct bio		bio;
+	struct bio_vec		inline_vecs[];
 };
 
 static bool btree_node_scrub_check(struct bch_fs *c, struct btree_node *data, unsigned ptr_written,
@@ -1368,7 +1369,7 @@ int bch2_btree_node_scrub(struct btree_trans *trans,
 
 	INIT_WORK(&scrub->work, btree_node_scrub_work);
 
-	bio_init(&scrub->bio, ca->disk_sb.bdev, scrub->bio.bi_inline_vecs, vecs, REQ_OP_READ);
+	bio_init(&scrub->bio, ca->disk_sb.bdev, scrub->inline_vecs, vecs, REQ_OP_READ);
 	bch2_bio_map(&scrub->bio, scrub->buf, c->opts.btree_node_size);
 	scrub->bio.bi_iter.bi_sector	= pick.ptr.offset;
 	scrub->bio.bi_end_io		= btree_node_scrub_endio;

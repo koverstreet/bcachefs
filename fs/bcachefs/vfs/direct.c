@@ -148,7 +148,11 @@ start:
 		bio->bi_iter.bi_sector	= offset >> 9;
 		bio->bi_private		= dio;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,18,0)
 		ret = bio_iov_iter_get_pages(bio, iter);
+#else
+		ret = bio_iov_iter_get_pages(bio, iter, 0);
+#endif
 		if (ret < 0) {
 			/* XXX: fault inject this path */
 			bio->bi_status = BLK_STS_RESOURCE;
@@ -461,7 +465,11 @@ static __always_inline long bch2_dio_write_loop(struct dio_write *dio)
 		EBUG_ON(current->faults_disabled_mapping);
 		current->faults_disabled_mapping = mapping;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,18,0)
 		ret = bio_iov_iter_get_pages(bio, &dio->iter);
+#else
+		ret = bio_iov_iter_get_pages(bio, &dio->iter, 0);
+#endif
 
 		dropped_locks = fdm_dropped_locks();
 
