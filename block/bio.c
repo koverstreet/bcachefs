@@ -1360,6 +1360,7 @@ int bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter,
 		return bio_iov_iter_align_down(bio, iter, len_align_mask);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(bio_iov_iter_get_pages);
 
 static void submit_bio_wait_endio(struct bio *bio)
 {
