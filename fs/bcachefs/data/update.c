@@ -658,9 +658,9 @@ int bch2_extent_drop_ptrs(struct btree_trans *trans,
 		bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 }
 
-static int __bch2_data_update_bios_init(struct data_update *m, struct bch_fs *c,
-					struct bch_inode_opts *io_opts,
-					unsigned buf_bytes)
+static int bch2_data_update_bios_init(struct data_update *m, struct bch_fs *c,
+				      struct bch_inode_opts *io_opts,
+				      unsigned buf_bytes)
 {
 	unsigned nr_vecs = DIV_ROUND_UP(buf_bytes, PAGE_SIZE);
 
@@ -683,21 +683,6 @@ static int __bch2_data_update_bios_init(struct data_update *m, struct bch_fs *c,
 	m->rbio.bio.bi_iter.bi_sector	= bkey_start_offset(&m->k.k->k);
 	m->op.wbio.bio.bi_ioprio	= IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0);
 	return 0;
-}
-
-int bch2_data_update_bios_init(struct data_update *m, struct bch_fs *c,
-			       struct bch_inode_opts *io_opts)
-{
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(m->k.k));
-	const union bch_extent_entry *entry;
-	struct extent_ptr_decoded p;
-
-	/* write path might have to decompress data: */
-	unsigned buf_bytes = 0;
-	bkey_for_each_ptr_decode(&m->k.k->k, ptrs, p, entry)
-		buf_bytes = max_t(unsigned, buf_bytes, p.crc.uncompressed_size << 9);
-
-	return __bch2_data_update_bios_init(m, c, io_opts, buf_bytes);
 }
 
 static int can_write_extent(struct bch_fs *c, struct data_update *m)
@@ -955,7 +940,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 
 	bch2_trans_unlock(trans);
 
-	ret = __bch2_data_update_bios_init(m, c, io_opts, buf_bytes);
+	ret = bch2_data_update_bios_init(m, c, io_opts, buf_bytes);
 	if (ret)
 		goto out_nocow_unlock;
 
