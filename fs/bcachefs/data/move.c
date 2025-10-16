@@ -314,20 +314,6 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 	if (ctxt->stats)
 		ctxt->stats->pos = BBPOS(iter->btree_id, iter->pos);
 
-	bch2_data_update_opts_normalize(k, &data_opts);
-
-	if (!data_opts.rewrite_ptrs &&
-	    !data_opts.extra_replicas &&
-	    !data_opts.scrub) {
-		if (data_opts.kill_ptrs|data_opts.kill_ec_ptrs) {
-			this_cpu_add(c->counters[BCH_COUNTER_io_move_drop_only], k.k->size);
-			return bch2_extent_drop_ptrs(trans, iter, k, &io_opts, &data_opts);
-		} else {
-			this_cpu_add(c->counters[BCH_COUNTER_io_move_noop], k.k->size);
-			return 0;
-		}
-	}
-
 	struct data_update *u = allocate_dropping_locks(trans, ret,
 				kzalloc(sizeof(struct data_update), _gfp));
 	if (!u && !ret)
