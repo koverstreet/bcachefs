@@ -56,27 +56,6 @@ static int evacuate_bucket_pred(struct btree_trans *, void *,
 				struct data_update_opts *);
 
 static noinline void
-trace_io_move2(struct bch_fs *c, struct bkey_s_c k,
-	       struct bch_inode_opts *io_opts,
-	       struct data_update_opts *data_opts)
-{
-	CLASS(printbuf, buf)();
-
-	bch2_bkey_val_to_text(&buf, c, k);
-	prt_newline(&buf);
-	bch2_data_update_opts_to_text(&buf, c, io_opts, data_opts);
-	trace_io_move(c, buf.buf);
-}
-
-static noinline void trace_io_move_read2(struct bch_fs *c, struct bkey_s_c k)
-{
-	CLASS(printbuf, buf)();
-
-	bch2_bkey_val_to_text(&buf, c, k);
-	trace_io_move_read(c, buf.buf);
-}
-
-static noinline void
 trace_io_move_pred2(struct bch_fs *c, struct bkey_s_c k,
 		    struct bch_inode_opts *io_opts,
 		    struct data_update_opts *data_opts,
@@ -114,23 +93,12 @@ trace_io_move_evacuate_bucket2(struct bch_fs *c, struct bpos bucket, int gen)
 static void move_write_done(struct bch_write_op *op)
 {
 	struct data_update *u = container_of(op, struct data_update, op);
-	struct bch_fs *c = op->c;
 	struct moving_context *ctxt = u->ctxt;
-
-	if (op->error) {
-		if (trace_io_move_write_fail_enabled()) {
-			CLASS(printbuf, buf)();
-			bch2_write_op_to_text(&buf, op);
-			trace_io_move_write_fail(c, buf.buf);
-		}
-		count_event(c, io_move_write_fail);
-
-		ctxt->write_error = true;
-	}
 
 	atomic_sub(u->k.k->k.size, &ctxt->write_sectors);
 	atomic_dec(&ctxt->write_ios);
-	bch2_data_update_exit(u);
+
+	bch2_data_update_exit(u, op->error);
 	kfree(u);
 	closure_put(&ctxt->cl);
 }
@@ -166,15 +134,9 @@ static void move_write(struct data_update *u)
 	}
 
 	if (unlikely(rbio->ret || u->data_opts.scrub)) {
-		bch2_data_update_exit(u);
+		bch2_data_update_exit(u, rbio->ret);
 		kfree(u);
 		return;
-	}
-
-	if (trace_io_move_write_enabled()) {
-		CLASS(printbuf, buf)();
-		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(u->k.k));
-		trace_io_move_write(c, buf.buf);
 	}
 
 	closure_get(&ctxt->cl);
@@ -307,10 +269,6 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	int ret = 0;
 
-	if (trace_io_move_enabled())
-		trace_io_move2(c, k, &io_opts, &data_opts);
-	this_cpu_add(c->counters[BCH_COUNTER_io_move], k.k->size);
-
 	if (ctxt->stats)
 		ctxt->stats->pos = BBPOS(iter->btree_id, iter->pos);
 
@@ -345,9 +303,6 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 		atomic_inc(&u->b->count);
 	}
 
-	if (trace_io_move_read_enabled())
-		trace_io_move_read2(c, k);
-
 	scoped_guard(mutex, &ctxt->lock) {
 		atomic_add(u->k.k->k.size, &ctxt->read_sectors);
 		atomic_inc(&ctxt->read_ios);
@@ -370,27 +325,11 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 			   data_opts.scrub ?  data_opts.read_dev : -1);
 	return 0;
 err:
-	if (bch2_err_matches(ret, BCH_ERR_data_update_done))
-		ret = 0;
-
-	if (ret &&
-	    !bch2_err_matches(ret, EROFS) &&
-	    !bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
-		count_event(c, io_move_start_fail);
-
-		if (trace_io_move_start_fail_enabled()) {
-			CLASS(printbuf, buf)();
-			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(u->k.k));
-			prt_str(&buf, ": ");
-			prt_str(&buf, bch2_err_str(ret));
-			trace_io_move_start_fail(c, buf.buf);
-		}
-	}
-
-	bch2_bkey_buf_exit(&u->k);
 	kfree(u);
 
-	return ret;
+	return bch2_err_matches(ret, BCH_ERR_data_update_done)
+		? 0
+		: ret;
 }
 
 int bch2_move_extent(struct moving_context *ctxt,

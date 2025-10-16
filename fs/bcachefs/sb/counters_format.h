@@ -26,14 +26,14 @@ enum counters_flags {
 	x(io_read_narrow_crcs,				97,	TYPE_COUNTER)	\
 	x(io_read_narrow_crcs_fail,			98,	TYPE_COUNTER)	\
 	x(io_write,					1,	TYPE_SECTORS)	\
-	x(io_move,					2,	TYPE_SECTORS)	\
+	x(data_update,					2,	TYPE_SECTORS)	\
+	x(data_update_no_io,				91,	TYPE_COUNTER)	\
+	x(data_update_fail,				82,	TYPE_COUNTER)	\
+	x(data_update_key,				37,	TYPE_SECTORS)	\
+	x(data_update_key_fail,				38,	TYPE_COUNTER)	\
 	x(io_move_read,					35,	TYPE_SECTORS)	\
 	x(io_move_write,				36,	TYPE_SECTORS)	\
-	x(io_move_finish,				37,	TYPE_SECTORS)	\
-	x(io_move_fail,					38,	TYPE_COUNTER)	\
-	x(io_move_write_fail,				82,	TYPE_COUNTER)	\
 	x(io_move_start_fail,				39,	TYPE_COUNTER)	\
-	x(io_move_drop_only,				91,	TYPE_COUNTER)	\
 	x(io_move_noop,					92,	TYPE_COUNTER)	\
 	x(io_move_created_rebalance,			83,	TYPE_COUNTER)	\
 	x(io_move_evacuate_bucket,			84,	TYPE_COUNTER)	\
