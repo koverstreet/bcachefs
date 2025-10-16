@@ -340,6 +340,8 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 	if (ret)
 		goto err;
 
+	k = bkey_i_to_s_c(u->k.k);
+
 	u->op.end_io		= move_write_done;
 	u->rbio.bio.bi_end_io	= move_read_endio;
 	u->rbio.bio.bi_ioprio	= IOPRIO_PRIO_VALUE(IOPRIO_CLASS_IDLE, 0);
@@ -434,11 +436,6 @@ int bch2_move_extent(struct moving_context *ctxt,
 	if (data_opts.scrub &&
 	    !bch2_dev_idx_is_online(c, data_opts.read_dev))
 		return bch_err_throw(c, device_offline);
-
-	struct bkey_buf sk __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&sk);
-	bch2_bkey_buf_reassemble(&sk, k);
-	k = bkey_i_to_s_c(sk.k);
 
 	if (!bkey_is_btree_ptr(k.k))
 		ret = __bch2_move_extent(ctxt, bucket_in_flight, iter, k, opts, data_opts);

@@ -738,6 +738,8 @@ int bch2_data_update_init(struct btree_trans *trans,
 
 	bch2_bkey_buf_init(&m->k);
 	bch2_bkey_buf_reassemble(&m->k, k);
+	k = bkey_i_to_s_c(m->k.k);
+
 	m->type		= data_opts.btree_insert_flags & BCH_WATERMARK_copygc
 		? BCH_DATA_UPDATE_copygc
 		: BCH_DATA_UPDATE_rebalance;
