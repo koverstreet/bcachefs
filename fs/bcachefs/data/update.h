@@ -85,9 +85,6 @@ int bch2_extent_drop_ptrs(struct btree_trans *,
 			  struct bch_inode_opts *,
 			  struct data_update_opts *);
 
-int bch2_data_update_bios_init(struct data_update *, struct bch_fs *,
-			       struct bch_inode_opts *);
-
 void bch2_data_update_exit(struct data_update *);
 int bch2_data_update_init(struct btree_trans *, struct btree_iter *,
 			  struct moving_context *,
