@@ -63,37 +63,22 @@ static unsigned bkey_get_dev_refs(struct bch_fs *c, struct bkey_s_c k)
 }
 
 noinline_for_stack
-static void trace_io_move_finish2(struct data_update *u,
-				  struct bkey_i *new,
-				  struct bkey_i *insert)
+static void trace_data_update_key_fail2(struct data_update *m,
+					struct btree_iter *iter,
+					struct bkey_s_c new,
+					struct bkey_s_c wrote,
+					struct bkey_i *insert,
+					const char *msg)
 {
-	struct bch_fs *c = u->op.c;
-	CLASS(printbuf, buf)();
+	if (m->stats) {
+		atomic64_inc(&m->stats->keys_raced);
+		atomic64_add(new.k->p.offset - iter->pos.offset,
+			     &m->stats->sectors_raced);
+	}
 
-	prt_newline(&buf);
+	count_event(m->op.c, data_update_key_fail);
 
-	bch2_data_update_to_text(&buf, u);
-	prt_newline(&buf);
-
-	prt_str_indented(&buf, "new replicas:\t");
-	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(new));
-	prt_newline(&buf);
-
-	prt_str_indented(&buf, "insert:\t");
-	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(insert));
-	prt_newline(&buf);
-
-	trace_io_move_finish(c, buf.buf);
-}
-
-noinline_for_stack
-static void trace_io_move_fail2(struct data_update *m,
-			 struct bkey_s_c new,
-			 struct bkey_s_c wrote,
-			 struct bkey_i *insert,
-			 const char *msg)
-{
-	if (!trace_io_move_fail_enabled())
+	if (!trace_data_update_key_fail_enabled())
 		return;
 
 	struct bch_fs *c = m->op.c;
@@ -141,11 +126,11 @@ static void trace_io_move_fail2(struct data_update *m,
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(insert));
 	}
 
-	trace_io_move_fail(c, buf.buf);
+	trace_data_update_key_fail(c, buf.buf);
 }
 
 noinline_for_stack
-static void trace_data_update2(struct data_update *m,
+static void trace_data_update_key2(struct data_update *m,
 			       struct bkey_s_c old, struct bkey_s_c k,
 			       struct bkey_i *insert)
 {
@@ -159,7 +144,7 @@ static void trace_data_update2(struct data_update *m,
 	prt_str(&buf, "\nnew: ");
 	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(insert));
 
-	trace_data_update(c, buf.buf);
+	trace_data_update_key(c, buf.buf);
 }
 
 static int __bch2_data_update_index_update(struct btree_trans *trans,
@@ -195,11 +180,17 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 		if (ret)
 			goto err;
 
+		struct bkey_i *tmp_k = bch2_bkey_make_mut_noupdate(trans, k);
+		ret = PTR_ERR_OR_ZERO(tmp_k);
+		if (ret)
+			goto err;
+
+		k = bkey_i_to_s_c(tmp_k);
+
 		new = bkey_i_to_extent(bch2_keylist_front(&op->insert_keys));
 
 		if (!bch2_extents_match(k, old)) {
-			trace_io_move_fail2(m, k, bkey_i_to_s_c(&new->k_i),
-					    NULL, "no match:");
+			trace_data_update_key_fail2(m, &iter, k, bkey_i_to_s_c(&new->k_i), NULL, "no match:");
 			goto nowork;
 		}
 
@@ -251,7 +242,8 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 		if (m->data_opts.rewrite_ptrs &&
 		    !rewrites_found &&
 		    bch2_bkey_durability(c, k) >= m->op.opts.data_replicas) {
-			trace_io_move_fail2(m, k, bkey_i_to_s_c(&new->k_i), insert, "no rewrites found:");
+			trace_data_update_key_fail2(m, &iter, k, bkey_i_to_s_c(&new->k_i), insert,
+						    "no rewrites found:");
 			goto nowork;
 		}
 
@@ -268,7 +260,7 @@ restart_drop_conflicting_replicas:
 			}
 
 		if (!bkey_val_u64s(&new->k)) {
-			trace_io_move_fail2(m, k,
+			trace_data_update_key_fail2(m, &iter, k,
 					    bkey_i_to_s_c(bch2_keylist_front(&op->insert_keys)),
 					    insert, "new replicas conflicted:");
 			goto nowork;
@@ -337,14 +329,8 @@ restart_drop_extra_replicas:
 						      SET_NEEDS_REBALANCE_foreground,
 						      m->op.opts.change_cookie) ?:
 			bch2_trans_update(trans, &iter, insert,
-				BTREE_UPDATE_internal_snapshot_node);
-		if (ret)
-			goto err;
-
-		if (trace_data_update_enabled())
-			trace_data_update2(m, old, k, insert);
-
-		ret =   bch2_trans_commit(trans, &op->res,
+				BTREE_UPDATE_internal_snapshot_node) ?:
+			bch2_trans_commit(trans, &op->res,
 				NULL,
 				BCH_TRANS_COMMIT_no_check_rw|
 				BCH_TRANS_COMMIT_no_enospc|
@@ -354,9 +340,9 @@ restart_drop_extra_replicas:
 
 		bch2_btree_iter_set_pos(&iter, next_pos);
 
-		this_cpu_add(c->counters[BCH_COUNTER_io_move_finish], new->k.size);
-		if (trace_io_move_finish_enabled())
-			trace_io_move_finish2(m, &new->k_i, insert);
+		if (trace_data_update_key_enabled())
+			trace_data_update_key2(m, old, k, insert);
+		this_cpu_add(c->counters[BCH_COUNTER_data_update_key], new->k.size);
 err:
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			ret = 0;
@@ -370,15 +356,6 @@ next:
 		}
 		continue;
 nowork:
-		if (m->stats) {
-			BUG_ON(k.k->p.offset <= iter.pos.offset);
-			atomic64_inc(&m->stats->keys_raced);
-			atomic64_add(k.k->p.offset - iter.pos.offset,
-				     &m->stats->sectors_raced);
-		}
-
-		count_event(c, io_move_fail);
-
 		bch2_btree_iter_advance(&iter);
 		goto next;
 	}
@@ -403,13 +380,44 @@ void bch2_data_update_read_done(struct data_update *m)
 	m->op.crc = m->rbio.pick.crc;
 	m->op.wbio.bio.bi_iter.bi_size = m->op.crc.compressed_size << 9;
 
-	this_cpu_add(m->op.c->counters[BCH_COUNTER_io_move_write], m->k.k->k.size);
-
 	closure_call(&m->op.cl, bch2_write, NULL, NULL);
 }
 
-void bch2_data_update_exit(struct data_update *update)
+static void data_update_trace(struct data_update *u, int ret)
 {
+	struct bch_fs *c = u->op.c;
+
+	if (!ret) {
+		if (trace_data_update_enabled()) {
+			CLASS(printbuf, buf)();
+			bch2_data_update_to_text(&buf, u);
+			trace_data_update(c, buf.buf);
+		}
+		count_event(c, data_update);
+	} else if (bch2_err_matches(ret, BCH_ERR_data_update_done)) {
+		if (trace_data_update_no_io_enabled()) {
+			CLASS(printbuf, buf)();
+			bch2_data_update_to_text(&buf, u);
+			prt_printf(&buf, "\nret:\t%s\n", bch2_err_str(ret));
+			trace_data_update_no_io(c, buf.buf);
+		}
+		count_event(c, data_update_no_io);
+	} else if (ret != -BCH_ERR_data_update_fail_no_rw_devs) {
+		if (trace_data_update_fail_enabled()) {
+			CLASS(printbuf, buf)();
+			bch2_data_update_to_text(&buf, u);
+			prt_printf(&buf, "\nret:\t%s\n", bch2_err_str(ret));
+			trace_data_update_fail(c, buf.buf);
+		}
+
+		count_event(c, data_update_fail);
+	}
+}
+
+void bch2_data_update_exit(struct data_update *update, int ret)
+{
+	data_update_trace(update, ret);
+
 	struct bch_fs *c = update->op.c;
 	struct bkey_s_c k = bkey_i_to_s_c(update->k.k);
 
@@ -533,6 +541,10 @@ void bch2_data_update_opts_to_text(struct printbuf *out, struct bch_fs *c,
 	bch2_prt_u64_base2(out, data_opts->kill_ptrs);
 	prt_newline(out);
 
+	prt_str_indented(out, "kill ec ptrs:\t");
+	bch2_prt_u64_base2(out, data_opts->kill_ec_ptrs);
+	prt_newline(out);
+
 	prt_str_indented(out, "target:\t");
 	bch2_target_to_text(out, c, data_opts->target);
 	prt_newline(out);
@@ -585,11 +597,11 @@ void bch2_data_update_inflight_to_text(struct printbuf *out, struct data_update 
 	}
 }
 
-int bch2_extent_drop_ptrs(struct btree_trans *trans,
-			  struct btree_iter *iter,
-			  struct bkey_s_c k,
-			  struct bch_inode_opts *io_opts,
-			  struct data_update_opts *data_opts)
+static int bch2_extent_drop_ptrs(struct btree_trans *trans,
+				 struct btree_iter *iter,
+				 struct bkey_s_c k,
+				 struct bch_inode_opts *io_opts,
+				 struct data_update_opts *data_opts)
 {
 	struct bch_fs *c = trans->c;
 
@@ -674,6 +686,7 @@ static int can_write_extent(struct bch_fs *c, struct data_update *m)
 		if (*i != BCH_SB_MEMBER_INVALID)
 			__clear_bit(*i, devs.d);
 
+	bool trace = trace_data_update_fail_enabled();
 	CLASS(printbuf, buf)();
 
 	guard(printbuf_atomic)(&buf);
@@ -690,7 +703,8 @@ static int can_write_extent(struct bch_fs *c, struct data_update *m)
 
 		u64 nr_free = dev_buckets_free(ca, usage, m->op.watermark);
 
-		prt_printf(&buf, "%s=%llu ", ca->name, nr_free);
+		if (trace)
+			prt_printf(&buf, "%s=%llu ", ca->name, nr_free);
 
 		if (!nr_free)
 			continue;
@@ -701,8 +715,12 @@ static int can_write_extent(struct bch_fs *c, struct data_update *m)
 	}
 
 	if (!nr_replicas) {
-		prt_printf(&buf, "\nnr_replicas %u < %u", nr_replicas, m->op.nr_replicas);
-		trace_data_update_done_no_rw_devs(c, buf.buf);
+		if (trace) {
+			prt_printf(&buf, "\nnr_replicas %u < %u", nr_replicas, m->op.nr_replicas);
+			trace_data_update_fail(c, buf.buf);
+		}
+		count_event(c, data_update_fail);
+
 		return bch_err_throw(c, data_update_fail_no_rw_devs);
 	}
 
@@ -923,14 +941,19 @@ int bch2_data_update_init(struct btree_trans *trans,
 	ret = bch2_data_update_bios_init(m, c, io_opts, buf_bytes);
 	if (ret)
 		goto out_nocow_unlock;
-
 	return 0;
 out_nocow_unlock:
 	if (c->opts.nocow_enabled)
 		bch2_bkey_nocow_unlock(c, k, 0);
 out:
+	BUG_ON(!ret);
+
+	data_update_trace(m, ret);
+
 	bkey_put_dev_refs(c, k, m->ptrs_held);
 	m->ptrs_held = 0;
 	bch2_disk_reservation_put(c, &m->op.res);
+	bch2_bkey_buf_exit(&m->k);
+
 	return ret;
 }

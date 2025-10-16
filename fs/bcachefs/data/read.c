@@ -174,10 +174,10 @@ static bool ptr_being_rewritten(struct bch_read_bio *orig, unsigned dev)
 }
 
 static inline int should_promote(struct bch_fs *c, struct bkey_s_c k,
-				  struct bpos pos,
-				  struct bch_inode_opts opts,
-				  unsigned flags,
-				  struct bch_io_failures *failed)
+				 struct bpos pos,
+				 struct bch_inode_opts opts,
+				 unsigned flags,
+				 struct bch_io_failures *failed)
 {
 	if (!have_io_error(failed)) {
 		BUG_ON(!opts.promote_target);
@@ -212,19 +212,19 @@ static inline int should_promote(struct bch_fs *c, struct bkey_s_c k,
 	return 0;
 }
 
-static noinline void promote_free(struct bch_read_bio *rbio)
+static noinline void promote_free(struct bch_read_bio *rbio, int ret)
 {
 	struct promote_op *op = container_of(rbio, struct promote_op, write.rbio);
 	struct bch_fs *c = rbio->c;
 
-	int ret = rhashtable_remove_fast(&c->promote_table, &op->hash,
-					 bch_promote_params);
-	BUG_ON(ret);
+	int ret2 = rhashtable_remove_fast(&c->promote_table, &op->hash,
+					  bch_promote_params);
+	BUG_ON(ret2);
 
 	async_object_list_del(c, promote, op->list_idx);
 	async_object_list_del(c, rbio, rbio->list_idx);
 
-	bch2_data_update_exit(&op->write);
+	bch2_data_update_exit(&op->write, ret);
 
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_promote);
 	kfree_rcu(op, rcu);
@@ -236,7 +236,7 @@ static void promote_done(struct bch_write_op *wop)
 	struct bch_fs *c = op->write.rbio.c;
 
 	bch2_time_stats_update(&c->times[BCH_TIME_data_promote], op->start_time);
-	promote_free(&op->write.rbio);
+	promote_free(&op->write.rbio, 0);
 }
 
 static void promote_start_work(struct work_struct *work)
@@ -318,7 +318,9 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 			&orig->opts,
 			update_opts,
 			btree_id, k);
-	op->write.type = BCH_DATA_UPDATE_promote;
+	op->write.type = !have_io_error(failed)
+		? BCH_DATA_UPDATE_promote
+		: BCH_DATA_UPDATE_self_heal;
 	/*
 	 * possible errors: -BCH_ERR_nocow_lock_blocked,
 	 * -BCH_ERR_ENOSPC_disk_reservation:
@@ -333,7 +335,6 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 
 	return &op->write.rbio;
 err_remove_list:
-	bch2_bkey_buf_exit(&op->write.k);
 	async_object_list_del(c, promote, op->list_idx);
 err_remove_hash:
 	BUG_ON(rhashtable_remove_fast(&c->promote_table, &op->hash,
@@ -493,7 +494,7 @@ static inline struct bch_read_bio *bch2_rbio_free(struct bch_read_bio *rbio)
 			if (!rbio->bio.bi_status)
 				promote_start(rbio);
 			else
-				promote_free(rbio);
+				promote_free(rbio, -EIO);
 		} else {
 			async_object_list_del(rbio->c, rbio, rbio->list_idx);
 

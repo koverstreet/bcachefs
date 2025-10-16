@@ -797,37 +797,37 @@ TRACE_EVENT(bucket_invalidate,
 
 /* Moving IO */
 
-DEFINE_EVENT(fs_str, io_move,
+DEFINE_EVENT(fs_str, data_update,
 	TP_PROTO(struct bch_fs *c, const char *str),
 	TP_ARGS(c, str)
 );
 
-DEFINE_EVENT(fs_str, io_move_read,
+DEFINE_EVENT(fs_str, data_update_no_io,
 	TP_PROTO(struct bch_fs *c, const char *str),
 	TP_ARGS(c, str)
 );
 
-DEFINE_EVENT(fs_str, io_move_write,
+DEFINE_EVENT(fs_str, data_update_fail,
 	TP_PROTO(struct bch_fs *c, const char *str),
 	TP_ARGS(c, str)
 );
 
-DEFINE_EVENT(fs_str, io_move_finish,
+DEFINE_EVENT(fs_str, data_update_key,
 	TP_PROTO(struct bch_fs *c, const char *str),
 	TP_ARGS(c, str)
 );
 
-DEFINE_EVENT(fs_str, io_move_fail,
+DEFINE_EVENT(fs_str, data_update_key_fail,
 	TP_PROTO(struct bch_fs *c, const char *str),
 	TP_ARGS(c, str)
 );
 
-DEFINE_EVENT(fs_str, io_move_write_fail,
+DEFINE_EVENT(fs_str, io_move_pred,
 	TP_PROTO(struct bch_fs *c, const char *str),
 	TP_ARGS(c, str)
 );
 
-DEFINE_EVENT(fs_str, io_move_start_fail,
+DEFINE_EVENT(fs_str, io_move_evacuate_bucket,
 	TP_PROTO(struct bch_fs *c, const char *str),
 	TP_ARGS(c, str)
 );
@@ -1317,35 +1317,7 @@ TRACE_EVENT(write_buffer_maybe_flush,
 	TP_printk("%s %pS %s", __entry->trans_fn, (void *) __entry->caller_ip, __get_str(key))
 );
 
-DEFINE_EVENT(fs_str, rebalance_extent,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
-
-DEFINE_EVENT(fs_str, data_update,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
-
-DEFINE_EVENT(fs_str, data_update_done_no_rw_devs,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
-
-DEFINE_EVENT(fs_str, io_move_pred,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
-
-DEFINE_EVENT(fs_str, io_move_evacuate_bucket,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
-
-DEFINE_EVENT(fs_str, extent_trim_atomic,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
+/* BTREE ITER TRACEPOINTS */
 
 DEFINE_EVENT(fs_str, btree_iter_peek_slot,
 	TP_PROTO(struct bch_fs *c, const char *str),
@@ -1363,6 +1335,11 @@ DEFINE_EVENT(fs_str, btree_iter_peek_max,
 );
 
 DEFINE_EVENT(fs_str, btree_iter_peek_prev_min,
+	TP_PROTO(struct bch_fs *c, const char *str),
+	TP_ARGS(c, str)
+);
+
+DEFINE_EVENT(fs_str, extent_trim_atomic,
 	TP_PROTO(struct bch_fs *c, const char *str),
 	TP_ARGS(c, str)
 );
