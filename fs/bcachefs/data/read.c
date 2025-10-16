@@ -283,8 +283,10 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 		unsigned ptr_bit = 1;
 		bkey_for_each_ptr(ptrs, ptr) {
 			if (bch2_dev_io_failures(failed, ptr->dev) &&
-			    !ptr_being_rewritten(orig, ptr->dev))
-				update_opts.ptrs_rewrite |= ptr_bit;
+			    !ptr_being_rewritten(orig, ptr->dev)) {
+				update_opts.ptrs_io_error|= ptr_bit;
+				update_opts.ptrs_rewrite|= ptr_bit;
+			}
 			ptr_bit <<= 1;
 		}
 
@@ -624,6 +626,22 @@ static noinline int bch2_read_retry_nodecode(struct btree_trans *trans,
 	return ret;
 }
 
+static void propagate_io_error_to_data_update(struct bch_read_bio *rbio,
+					      struct extent_ptr_decoded *pick)
+{
+	struct data_update *u = rbio_data_update(bch2_rbio_parent(rbio));
+
+	if (u && !pick->do_ec_reconstruct) {
+		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(u->k.k));
+		unsigned ptr_bit = 1;
+		bkey_for_each_ptr(ptrs, ptr) {
+			if (pick->ptr.dev == ptr->dev)
+				u->opts.ptrs_io_error |= ptr_bit;
+			ptr_bit <<= 1;
+		}
+	}
+}
+
 static void bch2_rbio_retry(struct work_struct *work)
 {
 	struct bch_read_bio *rbio =
@@ -650,9 +668,12 @@ static void bch2_rbio_retry(struct work_struct *work)
 		get_rbio_extent(trans, rbio, &sk);
 
 		if (!bkey_deleted(&sk.k->k) &&
-		    bch2_err_matches(rbio->ret, BCH_ERR_data_read_retry_avoid))
+		    bch2_err_matches(rbio->ret, BCH_ERR_data_read_retry_avoid)) {
 			bch2_mark_io_failure(&failed, &rbio->pick,
 					     rbio->ret == -BCH_ERR_data_read_retry_csum_err);
+			propagate_io_error_to_data_update(rbio, &rbio->pick);
+
+		}
 
 		if (!rbio->split) {
 			rbio->bio.bi_status	= 0;
@@ -1132,6 +1153,7 @@ retry_pick:
 	    unlikely(dev_ptr_stale(ca, &pick.ptr))) {
 		read_from_stale_dirty_pointer(trans, ca, k, pick.ptr);
 		bch2_mark_io_failure(failed, &pick, false);
+		propagate_io_error_to_data_update(rbio, &pick);
 		enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_io_read);
 		goto retry_pick;
 	}
@@ -1347,9 +1369,11 @@ out:
 		ret = rbio->ret;
 		rbio = bch2_rbio_free(rbio);
 
-		if (bch2_err_matches(ret, BCH_ERR_data_read_retry_avoid))
+		if (bch2_err_matches(ret, BCH_ERR_data_read_retry_avoid)) {
 			bch2_mark_io_failure(failed, &pick,
 					ret == -BCH_ERR_data_read_retry_csum_err);
+			propagate_io_error_to_data_update(rbio, &pick);
+		}
 
 		return ret;
 	}
