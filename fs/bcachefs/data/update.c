@@ -184,32 +184,6 @@ static void trace_io_move_created_rebalance2(struct data_update *m,
 	count_event(c, io_move_created_rebalance);
 }
 
-noinline_for_stack
-static int data_update_invalid_bkey(struct data_update *m,
-				    struct bkey_s_c old, struct bkey_s_c k,
-				    struct bkey_i *insert)
-{
-	struct bch_fs *c = m->op.c;
-	CLASS(printbuf, buf)();
-	bch2_log_msg_start(c, &buf);
-
-	prt_str(&buf, "about to insert invalid key in data update path");
-	prt_printf(&buf, "\nop.nonce: %u", m->op.nonce);
-	prt_str(&buf, "\nold: ");
-	bch2_bkey_val_to_text(&buf, c, old);
-	prt_str(&buf, "\nk:   ");
-	bch2_bkey_val_to_text(&buf, c, k);
-	prt_str(&buf, "\nnew: ");
-	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(insert));
-	prt_newline(&buf);
-
-	bch2_fs_emergency_read_only2(c, &buf);
-
-	bch2_print_str(c, KERN_ERR, buf.buf);
-
-	return bch_err_throw(c, invalid_bkey);
-}
-
 static int __bch2_data_update_index_update(struct btree_trans *trans,
 					   struct bch_write_op *op)
 {
@@ -371,22 +345,6 @@ restart_drop_extra_replicas:
 		}
 
 		next_pos = insert->k.p;
-
-		/*
-		 * Check for nonce offset inconsistency:
-		 * This is debug code - we've been seeing this bug rarely, and
-		 * it's been hard to reproduce, so this should give us some more
-		 * information when it does occur:
-		 */
-		int invalid = bch2_bkey_validate(c, bkey_i_to_s_c(insert),
-						 (struct bkey_validate_context) {
-							.btree	= m->btree_id,
-							.flags	= BCH_VALIDATE_commit,
-						 });
-		if (unlikely(invalid)) {
-			ret = data_update_invalid_bkey(m, old, k, insert);
-			goto out;
-		}
 
 		struct bch_inode_opts opts;
 
