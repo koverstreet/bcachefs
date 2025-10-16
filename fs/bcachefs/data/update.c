@@ -230,10 +230,13 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 		ptr_bit = 1;
 		bkey_for_each_ptr_decode(old.k, bch2_bkey_ptrs_c(old), p, entry_c) {
 			if ((ptr_bit & m->opts.ptrs_rewrite) &&
-			    (ptr = bch2_extent_has_ptr(old, p, bkey_i_to_s(insert))) &&
-			    !ptr->cached) {
-				bch2_extent_ptr_set_cached(c, &m->op.opts,
-							   bkey_i_to_s(insert), ptr);
+			    (ptr = bch2_extent_has_ptr(old, p, bkey_i_to_s(insert)))) {
+				if (ptr_bit & m->opts.ptrs_io_error)
+					bch2_bkey_drop_ptr_noerror(bkey_i_to_s(insert), ptr);
+				else if (!ptr->cached)
+					bch2_extent_ptr_set_cached(c, &m->op.opts,
+								   bkey_i_to_s(insert), ptr);
+
 				rewrites_found |= ptr_bit;
 			}
 			ptr_bit <<= 1;
@@ -568,6 +571,7 @@ void bch2_data_update_opts_to_text(struct printbuf *out, struct bch_fs *c,
 	prt_newline(out);
 
 	ptr_bits_to_text(out, data_opts->ptrs_rewrite,	"rewrite");
+	ptr_bits_to_text(out, data_opts->ptrs_io_error,	"io error");
 	ptr_bits_to_text(out, data_opts->ptrs_kill,	"kill");
 	ptr_bits_to_text(out, data_opts->ptrs_kill_ec,	"kill ec");
 
