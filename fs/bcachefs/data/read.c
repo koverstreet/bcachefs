@@ -527,7 +527,7 @@ static void bch2_rbio_done(struct bch_read_bio *rbio)
 
 static int get_rbio_extent(struct btree_trans *trans, struct bch_read_bio *rbio, struct bkey_buf *sk)
 {
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k;
 
 	try(lockrestart_do(trans,
@@ -541,7 +541,6 @@ static int get_rbio_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 			break;
 		}
 
-	bch2_trans_iter_exit(&iter);
 	return 0;
 }
 
