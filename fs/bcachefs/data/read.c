@@ -1126,22 +1126,26 @@ retry_pick:
 			trace_and_count(c, io_read_fail_and_poison, &orig->bio);
 		}
 
-		CLASS(printbuf, buf)();
-		bch2_read_err_msg_trans(trans, &buf, orig, read_pos);
-		prt_printf(&buf, "%s\n  ", bch2_err_str(ret));
-		bch2_bkey_val_to_text(&buf, c, k);
-		bch_err_ratelimited(c, "%s", buf.buf);
+		if (!(flags & BCH_READ_in_retry)) {
+			CLASS(printbuf, buf)();
+			bch2_read_err_msg_trans(trans, &buf, orig, read_pos);
+			prt_printf(&buf, "%s\n  ", bch2_err_str(ret));
+			bch2_bkey_val_to_text(&buf, c, k);
+			bch_err_ratelimited(c, "%s", buf.buf);
+		}
 		goto err;
 	}
 
 	if (unlikely(bch2_csum_type_is_encryption(pick.crc.csum_type)) &&
 	    !c->chacha20_key_set) {
-		CLASS(printbuf, buf)();
-		bch2_read_err_msg_trans(trans, &buf, orig, read_pos);
-		prt_printf(&buf, "attempting to read encrypted data without encryption key\n  ");
-		bch2_bkey_val_to_text(&buf, c, k);
+		if (!(flags & BCH_READ_in_retry)) {
+			CLASS(printbuf, buf)();
+			bch2_read_err_msg_trans(trans, &buf, orig, read_pos);
+			prt_printf(&buf, "attempting to read encrypted data without encryption key\n  ");
+			bch2_bkey_val_to_text(&buf, c, k);
 
-		bch_err_ratelimited(c, "%s", buf.buf);
+			bch_err_ratelimited(c, "%s", buf.buf);
+		}
 		ret = bch_err_throw(c, data_read_no_encryption_key);
 		goto err;
 	}
@@ -1507,7 +1511,8 @@ err:
 	}
 
 	if (unlikely(ret)) {
-		if (ret != -BCH_ERR_extent_poisoned) {
+		if (!(flags & BCH_READ_in_retry) &&
+		    ret != -BCH_ERR_extent_poisoned) {
 			CLASS(printbuf, buf)();
 			bch2_read_err_msg_trans(trans, &buf, rbio, POS(inum.inum, bvec_iter.bi_sector));
 			prt_printf(&buf, "data read error: %s", bch2_err_str(ret));
