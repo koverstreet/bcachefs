@@ -592,35 +592,32 @@ static noinline int bch2_read_retry_nodecode(struct btree_trans *trans,
 					unsigned flags)
 {
 	struct data_update *u = container_of(rbio, struct data_update, rbio);
-retry:
-	bch2_trans_begin(trans);
-
-	struct btree_iter iter;
-	struct bkey_s_c k;
 	int ret = 0;
 
-	try(lockrestart_do(trans,
-		bkey_err(k = bch2_bkey_get_iter(trans, &iter,
-				u->btree_id, bkey_start_pos(&u->k.k->k),
-				0))));
+	do {
+		bch2_trans_begin(trans);
 
-	if (!bkey_and_val_eq(k, bkey_i_to_s_c(u->k.k))) {
-		/* extent we wanted to read no longer exists: */
-		ret = bch_err_throw(trans->c, data_read_key_overwritten);
-		goto err;
-	}
+		CLASS(btree_iter_uninit, iter)(trans);
+		struct bkey_s_c k;
 
-	ret = __bch2_read_extent(trans, rbio, bvec_iter,
-				 bkey_start_pos(&u->k.k->k),
-				 u->btree_id,
-				 bkey_i_to_s_c(u->k.k),
-				 0, failed, flags, -1);
-err:
-	bch2_trans_iter_exit(&iter);
+		try(lockrestart_do(trans,
+			bkey_err(k = bch2_bkey_get_iter(trans, &iter,
+					u->btree_id, bkey_start_pos(&u->k.k->k),
+					0))));
 
-	if (bch2_err_matches(ret, BCH_ERR_transaction_restart) ||
-	    bch2_err_matches(ret, BCH_ERR_data_read_retry))
-		goto retry;
+		if (!bkey_and_val_eq(k, bkey_i_to_s_c(u->k.k))) {
+			/* extent we wanted to read no longer exists: */
+			ret = bch_err_throw(trans->c, data_read_key_overwritten);
+			break;
+		}
+
+		ret = __bch2_read_extent(trans, rbio, bvec_iter,
+					 bkey_start_pos(&u->k.k->k),
+					 u->btree_id,
+					 bkey_i_to_s_c(u->k.k),
+					 0, failed, flags, -1);
+	} while (bch2_err_matches(ret, BCH_ERR_transaction_restart) ||
+		 bch2_err_matches(ret, BCH_ERR_data_read_retry));
 
 	if (ret) {
 		rbio->bio.bi_status	= BLK_STS_IOERR;
