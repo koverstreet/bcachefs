@@ -722,20 +722,6 @@ int bch2_data_update_init(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	int ret = 0;
 
-	if (k.k->p.snapshot) {
-		ret = bch2_check_key_has_snapshot(trans, iter, k);
-		if (bch2_err_matches(ret, BCH_ERR_recovery_will_run)) {
-			/* Can't repair yet, waiting on other recovery passes */
-			return bch_err_throw(c, data_update_fail_no_snapshot);
-		}
-		if (ret < 0)
-			return ret;
-		if (ret) /* key was deleted */
-			return bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
-				bch_err_throw(c, data_update_fail_no_snapshot);
-		ret = 0;
-	}
-
 	bch2_bkey_buf_init(&m->k);
 	bch2_bkey_buf_reassemble(&m->k, k);
 	k = bkey_i_to_s_c(m->k.k);
@@ -765,6 +751,18 @@ int bch2_data_update_init(struct btree_trans *trans,
 	m->op.compression_opt	= io_opts->background_compression;
 	m->op.watermark		= m->data_opts.btree_insert_flags & BCH_WATERMARK_MASK;
 
+	if (k.k->p.snapshot &&
+	    unlikely(ret = bch2_check_key_has_snapshot(trans, iter, k))) {
+		if (ret > 0) /* key was deleted */
+			ret = bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
+				bch_err_throw(c, data_update_fail_no_snapshot);
+		if (bch2_err_matches(ret, BCH_ERR_recovery_will_run)) {
+			/* Can't repair yet, waiting on other recovery passes */
+			ret = bch_err_throw(c, data_update_fail_no_snapshot);
+		}
+		goto out;
+	}
+
 	unsigned durability_have = 0, durability_removing = 0;
 
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(m->k.k));
@@ -774,39 +772,45 @@ int bch2_data_update_init(struct btree_trans *trans,
 	unsigned buf_bytes = 0;
 	bool unwritten = false;
 
-	unsigned ptr_bit = 1;
-	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-		if (!p.ptr.cached) {
-			guard(rcu)();
-			if (ptr_bit & m->data_opts.rewrite_ptrs) {
-				if (crc_is_compressed(p.crc))
-					reserve_sectors += k.k->size;
+	scoped_guard(rcu) {
+		unsigned ptr_bit = 1;
+		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+			if (!p.ptr.cached) {
+				if (ptr_bit & m->data_opts.rewrite_ptrs) {
+					if (crc_is_compressed(p.crc))
+						reserve_sectors += k.k->size;
 
-				m->op.nr_replicas += bch2_extent_ptr_desired_durability(c, &p);
-				durability_removing += bch2_extent_ptr_desired_durability(c, &p);
-			} else if (!(ptr_bit & m->data_opts.kill_ptrs)) {
-				bch2_dev_list_add_dev(&m->op.devs_have, p.ptr.dev);
-				durability_have += bch2_extent_ptr_durability(c, &p);
+					m->op.nr_replicas += bch2_extent_ptr_desired_durability(c, &p);
+					durability_removing += bch2_extent_ptr_desired_durability(c, &p);
+				} else if (!(ptr_bit & m->data_opts.kill_ptrs)) {
+					bch2_dev_list_add_dev(&m->op.devs_have, p.ptr.dev);
+					durability_have += bch2_extent_ptr_durability(c, &p);
+				}
+			} else {
+				if (m->data_opts.rewrite_ptrs & ptr_bit) {
+					m->data_opts.kill_ptrs |= ptr_bit;
+					m->data_opts.rewrite_ptrs ^= ptr_bit;
+				}
 			}
+
+			/*
+			 * op->csum_type is normally initialized from the fs/file's
+			 * current options - but if an extent is encrypted, we require
+			 * that it stays encrypted:
+			 */
+			if (bch2_csum_type_is_encryption(p.crc.csum_type)) {
+				m->op.nonce	= p.crc.nonce + p.crc.offset;
+				m->op.csum_type = p.crc.csum_type;
+			}
+
+			if (p.crc.compression_type == BCH_COMPRESSION_TYPE_incompressible)
+				m->op.incompressible = true;
+
+			buf_bytes = max_t(unsigned, buf_bytes, p.crc.uncompressed_size << 9);
+			unwritten |= p.ptr.unwritten;
+
+			ptr_bit <<= 1;
 		}
-
-		/*
-		 * op->csum_type is normally initialized from the fs/file's
-		 * current options - but if an extent is encrypted, we require
-		 * that it stays encrypted:
-		 */
-		if (bch2_csum_type_is_encryption(p.crc.csum_type)) {
-			m->op.nonce	= p.crc.nonce + p.crc.offset;
-			m->op.csum_type = p.crc.csum_type;
-		}
-
-		if (p.crc.compression_type == BCH_COMPRESSION_TYPE_incompressible)
-			m->op.incompressible = true;
-
-		buf_bytes = max_t(unsigned, buf_bytes, p.crc.uncompressed_size << 9);
-		unwritten |= p.ptr.unwritten;
-
-		ptr_bit <<= 1;
 	}
 
 	if (!data_opts.scrub) {
@@ -929,19 +933,4 @@ out:
 	m->ptrs_held = 0;
 	bch2_disk_reservation_put(c, &m->op.res);
 	return ret;
-}
-
-void bch2_data_update_opts_normalize(struct bkey_s_c k, struct data_update_opts *opts)
-{
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	unsigned ptr_bit = 1;
-
-	bkey_for_each_ptr(ptrs, ptr) {
-		if ((opts->rewrite_ptrs & ptr_bit) && ptr->cached) {
-			opts->kill_ptrs |= ptr_bit;
-			opts->rewrite_ptrs ^= ptr_bit;
-		}
-
-		ptr_bit <<= 1;
-	}
 }
