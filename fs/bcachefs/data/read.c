@@ -177,9 +177,9 @@ static inline int should_promote(struct bch_fs *c, struct bkey_s_c k,
 				 struct bpos pos,
 				 struct bch_inode_opts opts,
 				 unsigned flags,
-				 struct bch_io_failures *failed)
+				 bool self_healing)
 {
-	if (!have_io_error(failed)) {
+	if (!self_healing) {
 		BUG_ON(!opts.promote_target);
 
 		if (!(flags & BCH_READ_may_promote)) {
@@ -359,19 +359,22 @@ static struct bch_read_bio *promote_alloc(struct btree_trans *trans,
 					bool *read_full,
 					struct bch_io_failures *failed)
 {
+	struct bch_fs *c = trans->c;
+
+	bool self_healing = failed != NULL;
+
 	/*
 	 * We're in the retry path, but we don't know what to repair yet, and we
 	 * don't want to do a promote here:
 	 */
-	if (failed && !failed->nr)
+	if (self_healing && !failed->nr)
 		return NULL;
 
-	struct bch_fs *c = trans->c;
 	/*
 	 * if failed != NULL we're not actually doing a promote, we're
 	 * recovering from an io/checksum error
 	 */
-	bool promote_full = (have_io_error(failed) ||
+	bool promote_full = (self_healing ||
 			     *read_full ||
 			     READ_ONCE(c->opts.promote_whole_extents));
 	/* data might have to be decompressed in the write path: */
@@ -381,9 +384,8 @@ static struct bch_read_bio *promote_alloc(struct btree_trans *trans,
 	struct bpos pos = promote_full
 		? bkey_start_pos(k.k)
 		: POS(k.k->p.inode, iter.bi_sector);
-	int ret;
 
-	ret = should_promote(c, k, pos, orig->opts, flags, failed);
+	int ret = should_promote(c, k, pos, orig->opts, flags, self_healing);
 	if (ret)
 		goto nopromote;
 
@@ -393,9 +395,6 @@ static struct bch_read_bio *promote_alloc(struct btree_trans *trans,
 				? BTREE_ID_reflink
 				: BTREE_ID_extents,
 				k, pos, pick, sectors, orig, failed);
-	if (!promote)
-		return NULL;
-
 	ret = PTR_ERR_OR_ZERO(promote);
 	if (ret)
 		goto nopromote;
@@ -403,8 +402,7 @@ static struct bch_read_bio *promote_alloc(struct btree_trans *trans,
 	*bounce		= true;
 	*read_full	= promote_full;
 
-	if (have_io_error(failed))
-		orig->self_healing = true;
+	orig->self_healing |= self_healing;
 
 	return promote;
 nopromote:
