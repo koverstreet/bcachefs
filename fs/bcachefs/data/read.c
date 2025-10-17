@@ -162,12 +162,11 @@ static bool ptr_being_rewritten(struct bch_read_bio *orig, unsigned dev)
 		return false;
 
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(u->k.k));
-	unsigned i = 0;
+	unsigned ptr_bit = 1;
 	bkey_for_each_ptr(ptrs, ptr) {
-		if (ptr->dev == dev &&
-		    u->data_opts.rewrite_ptrs & BIT(i))
+		if (ptr->dev == dev && (u->opts.ptrs_rewrite & ptr_bit))
 			return true;
-		i++;
+		ptr_bit <<= 1;
 	}
 
 	return false;
@@ -271,11 +270,13 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 	struct data_update_opts update_opts = { .write_flags = BCH_WRITE_alloc_nowait };
 
 	if (!have_io_error(failed)) {
+		update_opts.type = BCH_DATA_UPDATE_promote;
 		update_opts.target = orig->opts.promote_target;
 		update_opts.extra_replicas = 1;
 		update_opts.write_flags |= BCH_WRITE_cached;
 		update_opts.write_flags |= BCH_WRITE_only_specified_devs;
 	} else {
+		update_opts.type = BCH_DATA_UPDATE_self_heal;
 		update_opts.target = orig->opts.foreground_target;
 
 		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
@@ -283,11 +284,11 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 		bkey_for_each_ptr(ptrs, ptr) {
 			if (bch2_dev_io_failures(failed, ptr->dev) &&
 			    !ptr_being_rewritten(orig, ptr->dev))
-				update_opts.rewrite_ptrs |= ptr_bit;
+				update_opts.ptrs_rewrite |= ptr_bit;
 			ptr_bit <<= 1;
 		}
 
-		if (!update_opts.rewrite_ptrs)
+		if (!update_opts.ptrs_rewrite)
 			return ERR_PTR(bch_err_throw(c, nopromote_no_rewrites));
 	}
 
@@ -318,9 +319,6 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 			&orig->opts,
 			update_opts,
 			btree_id, k);
-	op->write.type = !have_io_error(failed)
-		? BCH_DATA_UPDATE_promote
-		: BCH_DATA_UPDATE_self_heal;
 	/*
 	 * possible errors: -BCH_ERR_nocow_lock_blocked,
 	 * -BCH_ERR_ENOSPC_disk_reservation:

@@ -307,7 +307,8 @@ static int bch2_copygc(struct moving_context *ctxt,
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	struct data_update_opts data_opts = {
-		.btree_insert_flags = BCH_WATERMARK_copygc,
+		.type		= BCH_DATA_UPDATE_copygc,
+		.commit_flags	= (unsigned) BCH_WATERMARK_copygc,
 	};
 	u64 sectors_seen	= atomic64_read(&ctxt->stats->sectors_seen);
 	u64 sectors_moved	= atomic64_read(&ctxt->stats->sectors_moved);
