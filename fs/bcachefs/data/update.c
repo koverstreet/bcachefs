@@ -370,17 +370,39 @@ int bch2_data_update_index_update(struct bch_write_op *op)
 	return __bch2_data_update_index_update(trans, op);
 }
 
-void bch2_data_update_read_done(struct data_update *m)
+void bch2_data_update_read_done(struct data_update *u)
 {
-	m->read_done = true;
+	struct bch_fs *c = u->op.c;
+	struct bch_read_bio *rbio = &u->rbio;
+	struct bch_extent_crc_unpacked crc = rbio->pick.crc;
+
+	u->read_done = true;
+
+	/*
+	 * If the extent has been bitrotted, we're going to have to give it a
+	 * new checksum in order to move it - but the poison bit will ensure
+	 * that userspace still gets the appropriate error.
+	 */
+	if (unlikely(rbio->ret == -BCH_ERR_data_read_csum_err &&
+		     (bch2_bkey_extent_flags(bkey_i_to_s_c(u->k.k)) & BIT_ULL(BCH_EXTENT_FLAG_poisoned)))) {
+		struct nonce nonce = extent_nonce(rbio->version, crc);
+
+		crc.csum	= bch2_checksum_bio(c, crc.csum_type, nonce, &rbio->bio);
+		rbio->ret	= 0;
+	}
+
+	if (unlikely(rbio->ret || u->data_opts.scrub)) {
+		u->op.end_io(&u->op);
+		return;
+	}
 
 	/* write bio must own pages: */
-	BUG_ON(!m->op.wbio.bio.bi_vcnt);
+	BUG_ON(!u->op.wbio.bio.bi_vcnt);
 
-	m->op.crc = m->rbio.pick.crc;
-	m->op.wbio.bio.bi_iter.bi_size = m->op.crc.compressed_size << 9;
+	u->op.crc = crc;
+	u->op.wbio.bio.bi_iter.bi_size = crc.compressed_size << 9;
 
-	closure_call(&m->op.cl, bch2_write, NULL, NULL);
+	closure_call(&u->op.cl, bch2_write, NULL, NULL);
 }
 
 static void data_update_trace(struct data_update *u, int ret)
