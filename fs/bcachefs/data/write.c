@@ -426,8 +426,10 @@ static int bch2_write_index_default(struct bch_write_op *op)
 
 void bch2_write_op_error(struct bch_write_op *op, u64 offset, const char *fmt, ...)
 {
-	CLASS(printbuf, buf)();
 	CLASS(btree_trans, trans)(op->c);
+
+	CLASS(printbuf, buf)();
+	bch2_log_msg_start(op->c, &buf);
 
 	struct bpos pos = op->pos;
 	pos.offset = offset;
@@ -440,15 +442,17 @@ void bch2_write_op_error(struct bch_write_op *op, u64 offset, const char *fmt, .
 	va_start(args, fmt);
 	prt_vprintf(&buf, fmt, args);
 	va_end(args);
+	prt_newline(&buf);
 
 	if (op->flags & BCH_WRITE_move) {
 		struct data_update *u = container_of(op, struct data_update, op);
 
-		prt_printf(&buf, "\n  from internal move ");
+		prt_printf(&buf, "from internal move ");
 		bch2_bkey_val_to_text(&buf, op->c, bkey_i_to_s_c(u->k.k));
+		prt_newline(&buf);
 	}
 
-	bch_err_ratelimited(op->c, "%s", buf.buf);
+	bch2_print_str_ratelimited(op->c, KERN_ERR, buf.buf);
 }
 
 void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
