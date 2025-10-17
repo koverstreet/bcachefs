@@ -491,11 +491,12 @@ static int rebalance_set_data_opts(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 
 	memset(data_opts, 0, sizeof(*data_opts));
-	data_opts->rewrite_ptrs		= bch2_bkey_ptrs_need_rebalance(c, opts, k);
+	data_opts->type			= BCH_DATA_UPDATE_rebalance;
+	data_opts->ptrs_rewrite		= bch2_bkey_ptrs_need_rebalance(c, opts, k);
 	data_opts->target		= opts->background_target;
 	data_opts->write_flags		|= BCH_WRITE_only_specified_devs;
 
-	if (!data_opts->rewrite_ptrs) {
+	if (!data_opts->ptrs_rewrite) {
 		/*
 		 * device we would want to write to offline? devices in target
 		 * changed?

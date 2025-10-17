@@ -4,47 +4,47 @@
 #define _BCACHEFS_DATA_UPDATE_H
 
 #include "btree/bkey_buf.h"
+#include "btree/update.h"
 #include "data/read.h"
 #include "data/write_types.h"
 
 struct moving_context;
 
-struct data_update_opts {
-	unsigned	rewrite_ptrs;
-	unsigned	kill_ptrs;
-	unsigned	kill_ec_ptrs;
-	u16		target;
-	u8		extra_replicas;
-	unsigned	btree_insert_flags;
-	unsigned	write_flags;
-
-	int		read_dev;
-	bool		scrub;
-};
-
-void bch2_data_update_opts_to_text(struct printbuf *, struct bch_fs *,
-				   struct bch_inode_opts *, struct data_update_opts *);
-
-#define BCH_DATA_UPDATE_TYPES()		\
-	x(copygc,	0)		\
-	x(rebalance,	1)		\
-	x(promote,	2)		\
-	x(self_heal,	3)
+#define BCH_DATA_UPDATE_TYPES()	\
+	x(other)		\
+	x(copygc)		\
+	x(rebalance)		\
+	x(promote)		\
+	x(self_heal)		\
+	x(scrub)
 
 enum bch_data_update_types {
-#define x(n, id)	BCH_DATA_UPDATE_##n = id,
+#define x(n)	BCH_DATA_UPDATE_##n,
 	BCH_DATA_UPDATE_TYPES()
 #undef x
 };
 
+struct data_update_opts {
+	enum bch_data_update_types	type;
+	u8				ptrs_rewrite;
+	u8				ptrs_kill;
+	u8				ptrs_kill_ec;
+	u8				extra_replicas;
+	u16				target;
+	int				read_dev;
+
+	enum bch_write_flags		write_flags;
+	enum bch_trans_commit_flags	commit_flags;
+};
+
 struct data_update {
-	enum bch_data_update_types type;
-	bool			read_done;
-	u8			ptrs_held;
 	/* extent being updated: */
 	enum btree_id		btree_id;
 	struct bkey_buf		k;
-	struct data_update_opts	data_opts;
+	struct data_update_opts	opts;
+
+	bool			read_done;
+	u8			ptrs_held;
 
 	/* associated with @ctxt */
 	struct list_head	read_list;
@@ -73,6 +73,8 @@ struct promote_op {
 	struct bio_vec		bi_inline_vecs[]; /* must be last */
 };
 
+void bch2_data_update_opts_to_text(struct printbuf *, struct bch_fs *,
+				   struct bch_inode_opts *, struct data_update_opts *);
 void bch2_data_update_to_text(struct printbuf *, struct data_update *);
 void bch2_data_update_inflight_to_text(struct printbuf *, struct data_update *);
 

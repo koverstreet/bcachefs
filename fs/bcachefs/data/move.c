@@ -105,7 +105,6 @@ static void move_write_done(struct bch_write_op *op)
 
 static void move_write(struct data_update *u)
 {
-	struct bch_fs *c = u->op.c;
 	struct moving_context *ctxt = u->ctxt;
 	struct bch_read_bio *rbio = &u->rbio;
 
@@ -301,7 +300,7 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 			   iter->btree_id, k, 0,
 			   NULL,
 			   BCH_READ_last_fragment,
-			   data_opts.scrub ?  data_opts.read_dev : -1);
+			   data_opts.type == BCH_DATA_UPDATE_scrub ? data_opts.read_dev : -1);
 	return 0;
 err:
 	kfree(u);
@@ -337,13 +336,13 @@ int bch2_move_extent(struct moving_context *ctxt,
 	if (ret <= 0)
 		return ret;
 
-	if (data_opts.scrub &&
+	if (data_opts.type == BCH_DATA_UPDATE_scrub &&
 	    !bch2_dev_idx_is_online(c, data_opts.read_dev))
 		return bch_err_throw(c, device_offline);
 
 	if (!bkey_is_btree_ptr(k.k))
 		ret = __bch2_move_extent(ctxt, bucket_in_flight, iter, k, opts, data_opts);
-	else if (!data_opts.scrub)
+	else if (data_opts.type != BCH_DATA_UPDATE_scrub)
 		ret = bch2_btree_node_rewrite_pos(trans, iter->btree_id, level, k.k->p, data_opts.target, 0);
 	else
 		ret = bch2_btree_node_scrub(trans, iter->btree_id, level, k, data_opts.read_dev);
@@ -697,11 +696,11 @@ static int evacuate_bucket_pred(struct btree_trans *trans, void *_arg,
 		if (ptr->dev == arg->bucket.inode &&
 		    (arg->gen < 0 || arg->gen == ptr->gen) &&
 		    !ptr->cached)
-			data_opts->rewrite_ptrs |= BIT(i);
+			data_opts->ptrs_rewrite |= BIT(i);
 		i++;
 	}
 
-	return data_opts->rewrite_ptrs != 0;
+	return data_opts->ptrs_rewrite != 0;
 }
 
 int bch2_evacuate_bucket(struct moving_context *ctxt,
@@ -819,17 +818,15 @@ static int rereplicate_pred(struct btree_trans *trans, void *arg,
 		struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
 		if (!ptr->cached &&
 		    (!ca || !ca->mi.durability))
-			data_opts->kill_ptrs |= BIT(i);
+			data_opts->ptrs_kill |= BIT(i);
 		i++;
 	}
 
-	if (!data_opts->kill_ptrs &&
+	if (!data_opts->ptrs_kill &&
 	    (!nr_good || nr_good >= replicas))
 		return false;
 
-	data_opts->target		= 0;
-	data_opts->extra_replicas	= replicas - nr_good;
-	data_opts->btree_insert_flags	= 0;
+	data_opts->extra_replicas = replicas - nr_good;
 	return true;
 }
 
@@ -840,20 +837,15 @@ static int migrate_pred(struct btree_trans *trans, void *arg,
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	struct bch_ioctl_data *op = arg;
-	unsigned i = 0;
-
-	data_opts->rewrite_ptrs		= 0;
-	data_opts->target		= 0;
-	data_opts->extra_replicas	= 0;
-	data_opts->btree_insert_flags	= 0;
+	unsigned ptr_bit = 1;
 
 	bkey_for_each_ptr(ptrs, ptr) {
 		if (ptr->dev == op->migrate.dev)
-			data_opts->rewrite_ptrs |= 1U << i;
-		i++;
+			data_opts->ptrs_rewrite |= ptr_bit;
+		ptr_bit <<= 1;
 	}
 
-	return data_opts->rewrite_ptrs != 0;
+	return data_opts->ptrs_rewrite != 0;
 }
 
 /*
@@ -877,12 +869,8 @@ static bool rewrite_old_nodes_pred(struct bch_fs *c, void *arg,
 {
 	if (b->version_ondisk != c->sb.version ||
 	    btree_node_need_rewrite(b) ||
-	    bformat_needs_redo(&b->format)) {
-		data_opts->target		= 0;
-		data_opts->extra_replicas	= 0;
-		data_opts->btree_insert_flags	= 0;
+	    bformat_needs_redo(&b->format))
 		return true;
-	}
 
 	return false;
 }
@@ -926,7 +914,7 @@ static int drop_extra_replicas_pred(struct btree_trans *trans, void *arg,
 		unsigned d = bch2_extent_ptr_durability(c, &p);
 
 		if (d && durability - d >= replicas) {
-			data_opts->kill_ptrs |= BIT(i);
+			data_opts->ptrs_kill |= BIT(i);
 			durability -= d;
 		}
 
@@ -936,14 +924,14 @@ static int drop_extra_replicas_pred(struct btree_trans *trans, void *arg,
 	i = 0;
 	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs_c(k), p, entry) {
 		if (p.has_ec && durability - p.ec.redundancy >= replicas) {
-			data_opts->kill_ec_ptrs |= BIT(i);
+			data_opts->ptrs_kill_ec |= BIT(i);
 			durability -= p.ec.redundancy;
 		}
 
 		i++;
 	}
 
-	return (data_opts->kill_ptrs|data_opts->kill_ec_ptrs) != 0;
+	return (data_opts->ptrs_kill|data_opts->ptrs_kill_ec) != 0;
 }
 
 static int scrub_pred(struct btree_trans *trans, void *_arg,
@@ -965,7 +953,7 @@ static int scrub_pred(struct btree_trans *trans, void *_arg,
 			}
 	}
 
-	data_opts->scrub	= true;
+	data_opts->type		= BCH_DATA_UPDATE_scrub;
 	data_opts->read_dev	= arg->migrate.dev;
 	return true;
 }
