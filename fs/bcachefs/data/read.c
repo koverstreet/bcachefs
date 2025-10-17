@@ -371,6 +371,14 @@ static struct bch_read_bio *promote_alloc(struct btree_trans *trans,
 		return NULL;
 
 	/*
+	 * We're already doing a data update, we don't need to kick off another
+	 * write here - we'll just propagate IO errors back to the parent
+	 * data_update:
+	 */
+	if (self_healing && orig->data_update)
+		return NULL;
+
+	/*
 	 * if failed != NULL we're not actually doing a promote, we're
 	 * recovering from an io/checksum error
 	 */
