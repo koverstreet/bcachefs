@@ -394,9 +394,34 @@ void bch2_data_update_read_done(struct data_update *u)
 		rbio->ret	= 0;
 	}
 
-	if (unlikely(rbio->ret || u->opts.type == BCH_DATA_UPDATE_scrub)) {
+	if (unlikely(rbio->ret)) {
 		u->op.end_io(&u->op);
 		return;
+	}
+
+	if (u->opts.type == BCH_DATA_UPDATE_scrub && !u->opts.ptrs_io_error) {
+		u->op.end_io(&u->op);
+		return;
+	}
+
+	if (u->opts.ptrs_io_error) {
+		struct bkey_s_c k = bkey_i_to_s_c(u->k.k);
+		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+		const union bch_extent_entry *entry;
+		struct extent_ptr_decoded p;
+		unsigned ptr_bit = 1;
+
+		guard(rcu)();
+		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+			if ((u->opts.ptrs_io_error & ptr_bit) &&
+			    !(u->opts.ptrs_rewrite & ptr_bit)) {
+				u->op.nr_replicas += bch2_extent_ptr_durability(c, &p);
+				u->opts.ptrs_rewrite |= ptr_bit;
+				bch2_dev_list_drop_dev(&u->op.devs_have, p.ptr.dev);
+			}
+
+			ptr_bit <<= 1;
+		}
 	}
 
 	/* write bio must own pages: */
