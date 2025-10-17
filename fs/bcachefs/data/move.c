@@ -118,27 +118,6 @@ static void move_write(struct data_update *u)
 				     &ctxt->stats->sectors_error_corrected);
 	}
 
-	/*
-	 * If the extent has been bitrotted, we're going to have to give it a
-	 * new checksum in order to move it - but the poison bit will ensure
-	 * that userspace still gets the appropriate error.
-	 */
-	if (unlikely(rbio->ret == -BCH_ERR_data_read_csum_err &&
-		     (bch2_bkey_extent_flags(bkey_i_to_s_c(u->k.k)) & BIT_ULL(BCH_EXTENT_FLAG_poisoned)))) {
-		struct bch_extent_crc_unpacked crc = rbio->pick.crc;
-		struct nonce nonce = extent_nonce(rbio->version, crc);
-
-		rbio->pick.crc.csum	= bch2_checksum_bio(c, rbio->pick.crc.csum_type,
-							    nonce, &rbio->bio);
-		rbio->ret		= 0;
-	}
-
-	if (unlikely(rbio->ret || u->data_opts.scrub)) {
-		bch2_data_update_exit(u, rbio->ret);
-		kfree(u);
-		return;
-	}
-
 	closure_get(&ctxt->cl);
 	atomic_add(u->k.k->k.size, &ctxt->write_sectors);
 	atomic_inc(&ctxt->write_ios);
