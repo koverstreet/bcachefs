@@ -187,12 +187,8 @@ static int check_subvol_child(struct btree_trans *trans,
 			le32_to_cpu(s.fs_path_parent) != child_k.k->p.inode,
 			trans, subvol_children_bad,
 			"incorrect entry in subvolume_children btree %llu:%llu",
-			child_k.k->p.inode, child_k.k->p.offset)) {
-		ret = bch2_btree_delete_at(trans, child_iter, 0);
-		if (ret)
-			goto err;
-	}
-err:
+			child_k.k->p.inode, child_k.k->p.offset))
+		try(bch2_btree_delete_at(trans, child_iter, 0));
 fsck_err:
 	return ret;
 }
