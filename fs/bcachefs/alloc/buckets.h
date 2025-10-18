@@ -356,6 +356,16 @@ static inline int bch2_disk_reservation_get(struct bch_fs *c,
 	return bch2_disk_reservation_add(c, res, sectors * nr_replicas, flags);
 }
 
+struct disk_reservation_destructable {
+	struct bch_fs			*c;
+	struct disk_reservation		r;
+};
+
+DEFINE_CLASS(disk_reservation, struct disk_reservation_destructable,
+	     bch2_disk_reservation_put(_T.c, &_T.r),
+	     (struct disk_reservation_destructable) { .c = c },
+	     struct bch_fs *c);
+
 #define RESERVE_FACTOR	6
 
 static inline u64 avail_factor(u64 r)

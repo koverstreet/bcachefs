@@ -163,6 +163,7 @@ static int extent_ends_at(struct bch_fs *c,
 }
 
 static int overlapping_extents_found(struct btree_trans *trans,
+				     struct disk_reservation *res,
 				     enum btree_id btree,
 				     struct bpos pos1, struct snapshots_seen *pos1_seen,
 				     struct bkey pos2,
@@ -218,7 +219,6 @@ static int overlapping_extents_found(struct btree_trans *trans,
 	if (fsck_err(trans, extent_overlapping,
 		     "overlapping extents%s", buf.buf)) {
 		struct btree_iter *old_iter = &iter1;
-		struct disk_reservation res = { 0 };
 
 		if (pos1.snapshot < pos2.p.snapshot) {
 			old_iter = &iter2;
@@ -227,16 +227,10 @@ static int overlapping_extents_found(struct btree_trans *trans,
 
 		trans->extra_disk_res += bch2_bkey_sectors_compressed(k2);
 
-		ret =   bch2_trans_update_extent_overwrite(trans, old_iter,
-				BTREE_UPDATE_internal_snapshot_node,
-				k1, k2) ?:
-			bch2_trans_commit(trans, &res, NULL, BCH_TRANS_COMMIT_no_enospc);
-		bch2_disk_reservation_put(c, &res);
-
-		bch_info(c, "repair ret %s", bch2_err_str(ret));
-
-		if (ret)
-			return ret;
+		try(bch2_trans_update_extent_overwrite(trans, old_iter,
+					BTREE_UPDATE_internal_snapshot_node,
+					k1, k2));
+		try(bch2_trans_commit(trans, res, NULL, BCH_TRANS_COMMIT_no_enospc));
 
 		*fixed = true;
 
@@ -264,11 +258,12 @@ fsck_err:
 }
 
 static int check_overlapping_extents(struct btree_trans *trans,
-			      struct snapshots_seen *seen,
-			      struct extent_ends *extent_ends,
-			      struct bkey_s_c k,
-			      struct btree_iter *iter,
-			      bool *fixed)
+				     struct disk_reservation *res,
+				     struct snapshots_seen *seen,
+				     struct extent_ends *extent_ends,
+				     struct bkey_s_c k,
+				     struct btree_iter *iter,
+				     bool *fixed)
 {
 	struct bch_fs *c = trans->c;
 
@@ -288,7 +283,7 @@ static int check_overlapping_extents(struct btree_trans *trans,
 				  i->snapshot, &i->seen))
 			continue;
 
-		try(overlapping_extents_found(trans, iter->btree_id,
+		try(overlapping_extents_found(trans, res, iter->btree_id,
 					      SPOS(iter->pos.inode,
 						   i->offset,
 						   i->snapshot),
@@ -347,7 +342,7 @@ static int check_extent(struct btree_trans *trans, struct btree_iter *iter,
 	try(bch2_check_key_has_inode(trans, iter, inode, extent_i, k));
 
 	if (k.k->type != KEY_TYPE_whiteout)
-		try(check_overlapping_extents(trans, s, extent_ends, k, iter,
+		try(check_overlapping_extents(trans, res, s, extent_ends, k, iter,
 					      &inode->recalculate_sums));
 
 	if (!bkey_extent_whiteout(k.k)) {
@@ -414,8 +409,7 @@ fsck_err:
  */
 int bch2_check_extents(struct bch_fs *c)
 {
-	struct disk_reservation res = { 0 };
-
+	CLASS(disk_reservation, res)(c);
 	CLASS(btree_trans, trans)(c);
 	CLASS(snapshots_seen, s)();
 	CLASS(inode_walker, w)();
@@ -424,38 +418,32 @@ int bch2_check_extents(struct bch_fs *c)
 	struct progress_indicator_state progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_extents));
 
-	int ret = for_each_btree_key(trans, iter, BTREE_ID_extents,
+	return for_each_btree_key(trans, iter, BTREE_ID_extents,
 				POS(BCACHEFS_ROOT_INO, 0),
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k, ({
-		bch2_disk_reservation_put(c, &res);
+		bch2_disk_reservation_put(c, &res.r);
 		progress_update_iter(trans, &progress, &iter) ?:
-		check_extent(trans, &iter, k, &w, &s, &extent_ends, &res);
+		check_extent(trans, &iter, k, &w, &s, &extent_ends, &res.r);
 	})) ?:
 	check_i_sectors_notnested(trans, &w);
-
-	bch2_disk_reservation_put(c, &res);
-	return ret;
 }
 
 int bch2_check_indirect_extents(struct bch_fs *c)
 {
+	CLASS(disk_reservation, res)(c);
 	CLASS(btree_trans, trans)(c);
-	struct disk_reservation res = { 0 };
 
 	struct progress_indicator_state progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_reflink));
 
-	int ret = for_each_btree_key_commit(trans, iter, BTREE_ID_reflink,
+	return for_each_btree_key_commit(trans, iter, BTREE_ID_reflink,
 				POS_MIN,
 				BTREE_ITER_prefetch, k,
-				&res, NULL,
+				&res.r, NULL,
 				BCH_TRANS_COMMIT_no_enospc, ({
-		bch2_disk_reservation_put(c, &res);
+		bch2_disk_reservation_put(c, &res.r);
 		progress_update_iter(trans, &progress, &iter) ?:
 		check_extent_overbig(trans, &iter, k) ?:
 		bch2_bkey_drop_stale_ptrs(trans, &iter, k);
 	}));
-
-	bch2_disk_reservation_put(c, &res);
-	return ret;
 }

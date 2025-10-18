@@ -161,8 +161,6 @@ static int bch2_set_nr_journal_buckets_loop(struct bch_fs *c, struct bch_dev *ca
 		return 0;
 
 	while (!ret && ja->nr < nr) {
-		struct disk_reservation disk_res = { 0, 0, 0 };
-
 		/*
 		 * note: journal buckets aren't really counted as _sectors_ used yet, so
 		 * we don't need the disk reservation to avoid the BUG_ON() in buckets.c
@@ -173,18 +171,15 @@ static int bch2_set_nr_journal_buckets_loop(struct bch_fs *c, struct bch_dev *ca
 		 * filesystem-wide allocation will succeed, this is a device
 		 * specific allocation - we can hang here:
 		 */
-		if (!new_fs) {
-			ret = bch2_disk_reservation_get(c, &disk_res,
-							bucket_to_sector(ca, nr - ja->nr), 1, 0);
-			if (ret)
-				break;
-		}
+		CLASS(disk_reservation, res)(c);
+		if (!new_fs)
+			try(bch2_disk_reservation_get(c, &res.r,
+						bucket_to_sector(ca, nr - ja->nr), 1, 0));
 
 		ret = bch2_set_nr_journal_buckets_iter(ca, nr, new_fs, &cl);
 		if (ret == -BCH_ERR_open_buckets_empty)
 			ret = 0; /* wait and retry */
 
-		bch2_disk_reservation_put(c, &disk_res);
 		bch2_wait_on_allocator(c, &cl);
 	}
 

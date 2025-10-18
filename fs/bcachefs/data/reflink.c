@@ -589,8 +589,6 @@ s64 bch2_remap_range(struct bch_fs *c,
 	while ((ret == 0 ||
 		bch2_err_matches(ret, BCH_ERR_transaction_restart)) &&
 	       bkey_lt(dst_iter.pos, dst_end)) {
-		struct disk_reservation disk_res = { 0 };
-
 		bch2_trans_begin(trans);
 
 		if (fatal_signal_pending(current)) {
@@ -677,11 +675,11 @@ s64 bch2_remap_range(struct bch_fs *c,
 				min(src_k.k->p.offset - src_want.offset,
 				    dst_end.offset - dst_iter.pos.offset));
 
+		CLASS(disk_reservation, res)(c);
 		ret = bch2_extent_update(trans, dst_inum, &dst_iter,
-					 new_dst.k, &disk_res,
+					 new_dst.k, &res.r,
 					 new_i_size, i_sectors_delta,
 					 true, 0);
-		bch2_disk_reservation_put(c, &disk_res);
 	}
 
 	BUG_ON(!ret && !bkey_eq(dst_iter.pos, dst_end));

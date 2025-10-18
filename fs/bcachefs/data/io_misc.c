@@ -36,7 +36,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 			  struct write_point_specifier write_point)
 {
 	struct bch_fs *c = trans->c;
-	struct disk_reservation disk_res = { 0 };
+	CLASS(disk_reservation, res)(c);
 	struct open_buckets open_buckets = { 0 };
 	unsigned sectors_allocated = 0, new_replicas;
 	bool unwritten = opts.nocow &&
@@ -61,7 +61,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 	 * Get a disk reservation before (in the nocow case) calling
 	 * into the allocator:
 	 */
-	ret = bch2_disk_reservation_get(c, &disk_res, sectors, new_replicas, 0);
+	ret = bch2_disk_reservation_get(c, &res.r, sectors, new_replicas, 0);
 	if (unlikely(ret))
 		goto err_noprint;
 
@@ -113,7 +113,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 			ptr->unwritten = true;
 	}
 
-	ret = bch2_extent_update(trans, inum, iter, new.k, &disk_res,
+	ret = bch2_extent_update(trans, inum, iter, new.k, &res.r,
 				 0, i_sectors_delta, true, 0);
 err:
 	if (!ret && sectors_allocated)
@@ -126,7 +126,6 @@ err:
 	}
 err_noprint:
 	bch2_open_buckets_put(c, &open_buckets);
-	bch2_disk_reservation_put(c, &disk_res);
 
 	if (closure_nr_remaining(&cl) != 1) {
 		bch2_trans_unlock_long(trans);
@@ -141,13 +140,13 @@ int bch2_fpunch_snapshot(struct btree_trans *trans, struct bpos start, struct bp
 {
 	u32 restart_count = trans->restart_count;
 	struct bch_fs *c = trans->c;
-	struct disk_reservation disk_res = bch2_disk_reservation_init(c, 0);
+	CLASS(disk_reservation, res)(c);
 	unsigned max_sectors	= KEY_SIZE_MAX & (~0 << c->block_bits);
-	struct bkey_i delete;
 
-	int ret = for_each_btree_key_max_commit(trans, iter, BTREE_ID_extents,
+	return for_each_btree_key_max_commit(trans, iter, BTREE_ID_extents,
 			start, end, 0, k,
-			&disk_res, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+			&res.r, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+		struct bkey_i delete;
 		bkey_init(&delete.k);
 		delete.k.p = iter.pos;
 
@@ -157,10 +156,7 @@ int bch2_fpunch_snapshot(struct btree_trans *trans, struct bpos start, struct bp
 
 		bch2_extent_trim_atomic(trans, &iter, &delete) ?:
 		bch2_trans_update(trans, &iter, &delete, 0);
-	}));
-
-	bch2_disk_reservation_put(c, &disk_res);
-	return ret ?: trans_was_restarted(trans, restart_count);
+	})) ?: trans_was_restarted(trans, restart_count);
 }
 
 /*
