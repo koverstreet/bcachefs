@@ -139,12 +139,28 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c,
 	return 0;
 }
 
+static int dev_metadata_drop_one(struct btree_trans *trans,
+				 struct btree_iter *iter,
+				 struct progress_indicator_state *progress,
+				 unsigned dev_idx,
+				 unsigned flags, struct printbuf *err)
+{
+	struct btree *b = errptr_try(bch2_btree_iter_peek_node(iter));
+	if (!b)
+		return 1;
+
+	bch2_progress_update_iter(trans, progress, iter, "dropping metadata");
+
+	if (bch2_bkey_has_device_c(bkey_i_to_s_c(&b->key), dev_idx))
+		try(drop_btree_ptrs(trans, iter, b, dev_idx, flags, err));
+	return 0;
+}
+
 static int bch2_dev_metadata_drop(struct bch_fs *c,
 				  struct progress_indicator_state *progress,
 				  unsigned dev_idx,
 				  unsigned flags, struct printbuf *err)
 {
-	struct btree *b;
 	int ret = 0;
 
 	/* don't handle this yet: */
@@ -155,31 +171,17 @@ static int bch2_dev_metadata_drop(struct bch_fs *c,
 
 	for (unsigned id = 0; id < btree_id_nr_alive(c) && !ret; id++) {
 		CLASS(btree_node_iter, iter)(trans, id, POS_MIN, 0, 0, BTREE_ITER_prefetch);
-retry:
-		ret = 0;
-		while (bch2_trans_begin(trans),
-		       (b = bch2_btree_iter_peek_node(&iter)) &&
-		       !(ret = PTR_ERR_OR_ZERO(b))) {
-			bch2_progress_update_iter(trans, progress, &iter, "dropping metadata");
 
-			if (!bch2_bkey_has_device_c(bkey_i_to_s_c(&b->key), dev_idx))
-				goto next;
-
-			ret = drop_btree_ptrs(trans, &iter, b, dev_idx, flags, err);
-			if (ret)
-				break;
-next:
+		while (!(ret = lockrestart_do(trans,
+					dev_metadata_drop_one(trans, &iter, progress, dev_idx, flags, err))))
 			bch2_btree_iter_next_node(&iter);
-		}
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			goto retry;
 	}
 
 	bch2_btree_interior_updates_flush(c);
 
 	BUG_ON(bch2_err_matches(ret, BCH_ERR_transaction_restart));
 
-	return ret;
+	return min(ret, 0);
 }
 
 static int data_drop_bp(struct btree_trans *trans, unsigned dev_idx,
