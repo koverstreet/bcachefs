@@ -195,8 +195,10 @@ const struct bch_devs_mask *bch2_target_to_mask(struct bch_fs *c, unsigned targe
 
 bool bch2_dev_in_target(struct bch_fs *c, unsigned dev, unsigned target)
 {
-	struct target t = target_decode(target);
+	if (dev == BCH_SB_MEMBER_INVALID)
+		return false;
 
+	struct target t = target_decode(target);
 	switch (t.type) {
 	case TARGET_NULL:
 		return false;
