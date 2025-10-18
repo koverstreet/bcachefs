@@ -566,7 +566,8 @@ static inline struct bch_devs_list bch2_bkey_devs(struct bkey_s_c k)
 	struct bkey_ptrs_c p = bch2_bkey_ptrs_c(k);
 
 	bkey_for_each_ptr(p, ptr)
-		ret.data[ret.nr++] = ptr->dev;
+		if (ptr->dev != BCH_SB_MEMBER_INVALID)
+			ret.data[ret.nr++] = ptr->dev;
 
 	return ret;
 }

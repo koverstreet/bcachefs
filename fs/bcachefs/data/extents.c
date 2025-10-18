@@ -751,7 +751,7 @@ unsigned bch2_bkey_nr_dirty_ptrs(struct bkey_s_c k)
 	unsigned ret = 0;
 
 	bkey_for_each_ptr(ptrs, ptr)
-		ret += !ptr->cached;
+		ret += !ptr->cached && ptr->dev != BCH_SB_MEMBER_INVALID;
 	return ret;
 }
 

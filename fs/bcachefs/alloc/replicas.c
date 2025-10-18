@@ -32,7 +32,8 @@ static void verify_replicas_entry(struct bch_replicas_entry_v1 *e)
 	       e->nr_required >= e->nr_devs);
 
 	for (unsigned i = 0; i + 1 < e->nr_devs; i++)
-		BUG_ON(e->devs[i] >= e->devs[i + 1]);
+		BUG_ON(e->devs[i] != BCH_SB_MEMBER_INVALID &&
+		       e->devs[i] >= e->devs[i + 1]);
 #endif
 }
 
