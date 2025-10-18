@@ -1222,16 +1222,13 @@ static noinline int __bch2_inode_rm_snapshot(struct btree_trans *trans, u64 inum
 {
 	bch2_btree_delete_range_trans(trans, BTREE_ID_extents,
 				      SPOS(inum, 0, snapshot),
-				      SPOS(inum, U64_MAX, snapshot),
-				      0, NULL);
+				      SPOS(inum, U64_MAX, snapshot), 0);
 	bch2_btree_delete_range_trans(trans, BTREE_ID_dirents,
 				      SPOS(inum, 0, snapshot),
-				      SPOS(inum, U64_MAX, snapshot),
-				      0, NULL);
+				      SPOS(inum, U64_MAX, snapshot), 0);
 	bch2_btree_delete_range_trans(trans, BTREE_ID_xattrs,
 				      SPOS(inum, 0, snapshot),
-				      SPOS(inum, U64_MAX, snapshot),
-				      0, NULL);
+				      SPOS(inum, U64_MAX, snapshot), 0);
 	try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 		      bch2_btree_delete(trans, BTREE_ID_inodes, SPOS(0, inum, snapshot), 0)));
 	return 0;
