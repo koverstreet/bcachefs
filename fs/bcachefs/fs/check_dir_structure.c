@@ -128,7 +128,7 @@ int bch2_check_subvolume_structure(struct bch_fs *c)
 	return for_each_btree_key_commit(trans, iter,
 				BTREE_ID_subvolumes, POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-			progress_update_iter(trans, &progress, &iter);
+			progress_update_iter(trans, &progress, &iter) ?:
 			check_subvol_path(trans, &iter, k);
 	}));
 }

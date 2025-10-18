@@ -212,7 +212,7 @@ int bch2_check_lrus(struct bch_fs *c)
 	return for_each_btree_key_commit(trans, iter,
 				BTREE_ID_lru, POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-		progress_update_iter(trans, &progress, &iter);
+		progress_update_iter(trans, &progress, &iter) ?:
 		bch2_check_lru_key(trans, &iter, k, &last_flushed);
 	}));
 }

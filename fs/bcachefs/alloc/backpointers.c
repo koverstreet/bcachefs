@@ -432,7 +432,7 @@ int bch2_check_btree_backpointers(struct bch_fs *c)
 	return for_each_btree_key_commit(trans, iter,
 			BTREE_ID_backpointers, POS_MIN, 0, k,
 			NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-		progress_update_iter(trans, &progress, &iter);
+		progress_update_iter(trans, &progress, &iter) ?:
 		bch2_check_backpointer_has_valid_bucket(trans, k, &last_flushed);
 	}));
 }
@@ -800,8 +800,7 @@ static int bch2_check_extents_to_backpointers_pass(struct btree_trans *trans,
 			CLASS(btree_node_iter, iter)(trans, btree_id, POS_MIN, 0, level, BTREE_ITER_prefetch);
 
 			try(for_each_btree_key_continue(trans, iter, 0, k, ({
-				bch2_progress_update_iter(trans, &progress, &iter, "extents_to_backpointers");
-				bch2_fs_going_ro(c) ?:
+				bch2_progress_update_iter(trans, &progress, &iter, "extents_to_backpointers") ?:
 				check_extent_to_backpointers(trans, s, btree_id, level, k) ?:
 				bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 			})));
@@ -1277,7 +1276,7 @@ static int bch2_check_backpointers_to_extents_pass(struct btree_trans *trans,
 
 	return for_each_btree_key(trans, iter, BTREE_ID_backpointers,
 				     POS_MIN, BTREE_ITER_prefetch, k, ({
-			bch2_progress_update_iter(trans, &progress, &iter, "backpointers_to_extents");
+			bch2_progress_update_iter(trans, &progress, &iter, "backpointers_to_extents") ?:
 			check_one_backpointer(trans, start, end, k, &last_flushed);
 	}));
 }

@@ -559,7 +559,7 @@ int bch2_reconstruct_snapshots(struct bch_fs *c)
 
 			try(for_each_btree_key(trans, iter, btree, POS_MIN,
 					BTREE_ITER_all_snapshots|BTREE_ITER_prefetch, k, ({
-				progress_update_iter(trans, &progress, &iter);
+				progress_update_iter(trans, &progress, &iter) ?:
 				get_snapshot_trees(c, &r, k.k->p);
 			})));
 

@@ -990,12 +990,10 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_rebalance_work));
 
 	int ret = 0;
-	while (!ret) {
-		progress_update_iter(trans, &progress, &rebalance_iter);
+	while (!(ret = lockrestart_do(trans,
+			progress_update_iter(trans, &progress, &rebalance_iter) ?:
+			check_rebalance_work_one(trans, &extent_iter, &rebalance_iter, &last_flushed))))
+	       ;
 
-		ret = lockrestart_do(trans,
-			check_rebalance_work_one(trans, &extent_iter, &rebalance_iter, &last_flushed));
-	}
-
-	return ret < 0 ? ret : 0;
+	return min(ret, 0);
 }

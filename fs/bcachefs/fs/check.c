@@ -1096,7 +1096,7 @@ int bch2_check_inodes(struct bch_fs *c)
 				POS_MIN,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-		progress_update_iter(trans, &progress, &iter);
+		progress_update_iter(trans, &progress, &iter) ?:
 		check_inode(trans, &iter, k, &snapshot_root, &s);
 	}));
 }
@@ -1187,7 +1187,7 @@ int bch2_check_unreachable_inodes(struct bch_fs *c)
 				POS_MIN,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-		progress_update_iter(trans, &progress, &iter);
+		progress_update_iter(trans, &progress, &iter) ?:
 		check_unreachable_inode(trans, &iter, k);
 	}));
 }
@@ -1715,7 +1715,7 @@ again:
 				POS(BCACHEFS_ROOT_INO, 0),
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-			progress_update_iter(trans, &progress, &iter);
+			progress_update_iter(trans, &progress, &iter) ?:
 			check_dirent(trans, &iter, k, &hash_info, &dir, &target, &s,
 				     &need_second_pass);
 		})) ?:
@@ -1782,7 +1782,7 @@ int bch2_check_xattrs(struct bch_fs *c)
 			k,
 			NULL, NULL,
 			BCH_TRANS_COMMIT_no_enospc, ({
-		progress_update_iter(trans, &progress, &iter);
+		progress_update_iter(trans, &progress, &iter) ?:
 		check_xattr(trans, &iter, k, &hash_info, &inode);
 	}));
 	return ret;
