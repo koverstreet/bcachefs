@@ -65,10 +65,10 @@ int bch2_btree_insert(struct bch_fs *, enum btree_id, struct bkey_i *,
 
 int bch2_btree_delete_range_trans(struct btree_trans *, enum btree_id,
 				  struct bpos, struct bpos,
-				  enum btree_iter_update_trigger_flags, u64 *);
+				  enum btree_iter_update_trigger_flags);
 int bch2_btree_delete_range(struct bch_fs *, enum btree_id,
 			    struct bpos, struct bpos,
-			    enum btree_iter_update_trigger_flags, u64 *);
+			    enum btree_iter_update_trigger_flags);
 
 int bch2_btree_bit_mod_iter(struct btree_trans *, struct btree_iter *, bool);
 int bch2_btree_bit_mod(struct btree_trans *, enum btree_id, struct bpos, bool);

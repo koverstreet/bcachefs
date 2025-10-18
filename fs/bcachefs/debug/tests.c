@@ -20,14 +20,12 @@ static void delete_test_keys(struct bch_fs *c)
 
 	ret = bch2_btree_delete_range(c, BTREE_ID_extents,
 				      SPOS(0, 0, U32_MAX),
-				      POS(0, U64_MAX),
-				      0, NULL);
+				      POS(0, U64_MAX), 0);
 	BUG_ON(ret);
 
 	ret = bch2_btree_delete_range(c, BTREE_ID_xattrs,
 				      SPOS(0, 0, U32_MAX),
-				      POS(0, U64_MAX),
-				      0, NULL);
+				      POS(0, U64_MAX), 0);
 	BUG_ON(ret);
 }
 
@@ -676,8 +674,7 @@ static int seq_delete(struct bch_fs *c, u64 nr)
 {
 	return bch2_btree_delete_range(c, BTREE_ID_xattrs,
 				      SPOS(0, 0, U32_MAX),
-				      POS(0, U64_MAX),
-				      0, NULL);
+				      POS(0, U64_MAX), 0);
 }
 
 typedef int (*perf_test_fn)(struct bch_fs *, u64);

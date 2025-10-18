@@ -655,8 +655,7 @@ int bch2_btree_delete(struct btree_trans *trans,
 
 int bch2_btree_delete_range_trans(struct btree_trans *trans, enum btree_id btree,
 				  struct bpos start, struct bpos end,
-				  enum btree_iter_update_trigger_flags flags,
-				  u64 *journal_seq)
+				  enum btree_iter_update_trigger_flags flags)
 {
 	u32 restart_count = trans->restart_count;
 	struct bkey_s_c k;
@@ -697,7 +696,7 @@ int bch2_btree_delete_range_trans(struct btree_trans *trans, enum btree_id btree
 					iter.pos.offset);
 
 		ret   = bch2_trans_update(trans, &iter, &delete, flags) ?:
-			bch2_trans_commit(trans, &disk_res, journal_seq,
+			bch2_trans_commit(trans, &disk_res, NULL,
 					  BCH_TRANS_COMMIT_no_enospc);
 		bch2_disk_reservation_put(trans->c, &disk_res);
 err:
@@ -725,11 +724,10 @@ err:
  */
 int bch2_btree_delete_range(struct bch_fs *c, enum btree_id id,
 			    struct bpos start, struct bpos end,
-			    enum btree_iter_update_trigger_flags flags,
-			    u64 *journal_seq)
+			    enum btree_iter_update_trigger_flags flags)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = bch2_btree_delete_range_trans(trans, id, start, end, flags, journal_seq);
+	int ret = bch2_btree_delete_range_trans(trans, id, start, end, flags);
 	if (ret == -BCH_ERR_transaction_restart_nested)
 		ret = 0;
 	return ret;
