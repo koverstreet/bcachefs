@@ -247,6 +247,7 @@
 	x(EROFS,			erofs_no_alloc_info)			\
 	x(EROFS,			erofs_filesystem_full)			\
 	x(EROFS,			insufficient_devices)			\
+	x(EROFS,			erofs_recovery_cancelled)		\
 	x(0,				operation_blocked)			\
 	x(BCH_ERR_operation_blocked,	btree_cache_cannibalize_lock_blocked)	\
 	x(BCH_ERR_operation_blocked,	journal_res_blocked)			\
@@ -373,6 +374,7 @@
 	x(0,				nocow_trylock_fail)			\
 	x(BCH_ERR_nocow_trylock_fail,	nocow_trylock_contended)		\
 	x(BCH_ERR_nocow_trylock_fail,	nocow_trylock_bucket_full)		\
+	x(EINTR,			recovery_cancelled)
 
 enum bch_errcode {
 	BCH_ERR_START		= 2048,
