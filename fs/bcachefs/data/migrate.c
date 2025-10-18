@@ -129,7 +129,7 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c,
 		int ret = for_each_btree_key_commit(trans, iter, id, POS_MIN,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-			bch2_progress_update_iter(trans, progress, &iter, "dropping user data");
+			bch2_progress_update_iter(trans, progress, &iter, "dropping user data") ?:
 			bch2_dev_usrdata_drop_key(trans, &iter, k, dev_idx, flags, err);
 		}));
 		if (ret)
@@ -149,7 +149,7 @@ static int dev_metadata_drop_one(struct btree_trans *trans,
 	if (!b)
 		return 1;
 
-	bch2_progress_update_iter(trans, progress, iter, "dropping metadata");
+	try(bch2_progress_update_iter(trans, progress, iter, "dropping metadata"));
 
 	if (bch2_bkey_has_device_c(bkey_i_to_s_c(&b->key), dev_idx))
 		try(drop_btree_ptrs(trans, iter, b, dev_idx, flags, err));

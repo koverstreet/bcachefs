@@ -31,10 +31,10 @@ static inline void bch2_progress_init(struct progress_indicator_state *s,
 	bch2_progress_init_inner(s, c, btree_id_mask, 0);
 }
 
-void bch2_progress_update_iter(struct btree_trans *,
-			       struct progress_indicator_state *,
-			       struct btree_iter *,
-			       const char *);
+int bch2_progress_update_iter(struct btree_trans *,
+			      struct progress_indicator_state *,
+			      struct btree_iter *,
+			      const char *);
 
 #define progress_update_iter(trans, p, iter)			\
 	bch2_progress_update_iter(trans, p, iter, __func__)

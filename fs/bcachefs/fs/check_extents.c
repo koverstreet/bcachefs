@@ -427,8 +427,8 @@ int bch2_check_extents(struct bch_fs *c)
 	int ret = for_each_btree_key(trans, iter, BTREE_ID_extents,
 				POS(BCACHEFS_ROOT_INO, 0),
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k, ({
-		progress_update_iter(trans, &progress, &iter);
 		bch2_disk_reservation_put(c, &res);
+		progress_update_iter(trans, &progress, &iter) ?:
 		check_extent(trans, &iter, k, &w, &s, &extent_ends, &res);
 	})) ?:
 	check_i_sectors_notnested(trans, &w);
@@ -450,8 +450,8 @@ int bch2_check_indirect_extents(struct bch_fs *c)
 				BTREE_ITER_prefetch, k,
 				&res, NULL,
 				BCH_TRANS_COMMIT_no_enospc, ({
-		progress_update_iter(trans, &progress, &iter);
 		bch2_disk_reservation_put(c, &res);
+		progress_update_iter(trans, &progress, &iter) ?:
 		check_extent_overbig(trans, &iter, k) ?:
 		bch2_bkey_drop_stale_ptrs(trans, &iter, k);
 	}));

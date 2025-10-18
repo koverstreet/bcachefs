@@ -717,8 +717,8 @@ static int bch2_gc_btree(struct btree_trans *trans,
 		CLASS(btree_node_iter, iter)(trans, btree, POS_MIN, 0, level, BTREE_ITER_prefetch);
 
 		try(for_each_btree_key_continue(trans, iter, 0, k, ({
-			bch2_progress_update_iter(trans, progress, &iter, "check_allocations");
 			gc_pos_set(trans->c, gc_pos_btree(btree, level, k.k->p));
+			bch2_progress_update_iter(trans, progress, &iter, "check_allocations") ?:
 			bch2_gc_mark_key(trans, btree, level, &prev, &iter, k, initial);
 		})));
 	}

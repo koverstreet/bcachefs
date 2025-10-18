@@ -523,7 +523,9 @@ int bch2_check_alloc_info(struct bch_fs *c)
 		if (!k.k)
 			break;
 
-		progress_update_iter(trans, &progress, &iter);
+		ret = progress_update_iter(trans, &progress, &iter);
+		if (ret)
+			break;
 
 		if (k.k->type) {
 			next = bpos_nosnap_successor(k.k->p);
@@ -678,7 +680,7 @@ int bch2_check_alloc_to_lru_refs(struct bch_fs *c)
 	return for_each_btree_key_commit(trans, iter, BTREE_ID_alloc,
 				POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-			progress_update_iter(trans, &progress, &iter);
+			progress_update_iter(trans, &progress, &iter) ?:
 			bch2_check_alloc_to_lru_ref(trans, &iter, &last_flushed);
 	}))?: bch2_check_stripe_to_lru_refs(trans);
 }
