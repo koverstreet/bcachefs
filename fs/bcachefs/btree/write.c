@@ -161,10 +161,12 @@ static void btree_node_write_endio(struct bio *bio)
 	if (ca && bio->bi_status) {
 		CLASS(printbuf, buf)();
 		guard(printbuf_atomic)(&buf);
-		prt_printf(&buf, "btree write error: %s\n  ",
+		__bch2_log_msg_start(ca->name, &buf);
+
+		prt_printf(&buf, "btree write error: %s\n",
 			   bch2_blk_status_to_str(bio->bi_status));
 		bch2_btree_pos_to_text(&buf, c, b);
-		bch_err_dev_ratelimited(ca, "%s", buf.buf);
+		bch2_print_str_ratelimited(c, KERN_ERR, buf.buf);
 	}
 
 	if (bio->bi_status) {
