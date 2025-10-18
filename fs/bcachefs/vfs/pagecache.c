@@ -406,7 +406,6 @@ static int __bch2_folio_reservation_get(struct bch_fs *c,
 {
 	struct bch_folio *s = bch2_folio_create(folio, 0);
 	unsigned i, disk_sectors = 0, quota_sectors = 0;
-	struct disk_reservation disk_res = {};
 	size_t reserved = len;
 	int ret;
 
@@ -422,20 +421,21 @@ static int __bch2_folio_reservation_get(struct bch_fs *c,
 		quota_sectors += s->s[i].state == SECTOR_unallocated;
 	}
 
+	CLASS(disk_reservation, disk_res)(c);
 	if (disk_sectors) {
-		ret = bch2_disk_reservation_add(c, &disk_res, disk_sectors,
+		ret = bch2_disk_reservation_add(c, &disk_res.r, disk_sectors,
 				partial ? BCH_DISK_RESERVATION_PARTIAL : 0);
 		if (unlikely(ret))
 			return ret;
 
-		if (unlikely(disk_res.sectors != disk_sectors)) {
+		if (unlikely(disk_res.r.sectors != disk_sectors)) {
 			disk_sectors = quota_sectors = 0;
 
 			for (i = round_down(offset, block_bytes(c)) >> 9;
 			     i < round_up(offset + len, block_bytes(c)) >> 9;
 			     i++) {
 				disk_sectors += sectors_to_reserve(&s->s[i], res->disk.nr_replicas);
-				if (disk_sectors > disk_res.sectors) {
+				if (disk_sectors > disk_res.r.sectors) {
 					/*
 					 * Make sure to get a reservation that's
 					 * aligned to the filesystem blocksize:
@@ -443,10 +443,8 @@ static int __bch2_folio_reservation_get(struct bch_fs *c,
 					unsigned reserved_offset = round_down(i << 9, block_bytes(c));
 					reserved = clamp(reserved_offset, offset, offset + len) - offset;
 
-					if (!reserved) {
-						bch2_disk_reservation_put(c, &disk_res);
+					if (!reserved)
 						return bch_err_throw(c, ENOSPC_disk_reservation);
-					}
 					break;
 				}
 				quota_sectors += s->s[i].state == SECTOR_unallocated;
@@ -454,15 +452,11 @@ static int __bch2_folio_reservation_get(struct bch_fs *c,
 		}
 	}
 
-	if (quota_sectors) {
-		ret = bch2_quota_reservation_add(c, inode, &res->quota, quota_sectors, true);
-		if (unlikely(ret)) {
-			bch2_disk_reservation_put(c, &disk_res);
-			return ret;
-		}
-	}
+	if (quota_sectors)
+		try(bch2_quota_reservation_add(c, inode, &res->quota, quota_sectors, true));
 
-	res->disk.sectors += disk_res.sectors;
+	res->disk.sectors += disk_res.r.sectors;
+	disk_res.r.sectors = 0;
 	return partial ? reserved : 0;
 }
 
@@ -489,8 +483,6 @@ static void bch2_clear_folio_bits(struct folio *folio)
 	struct bch_inode_info *inode = to_bch_ei(folio->mapping->host);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_folio *s = bch2_folio(folio);
-	struct disk_reservation disk_res = { 0 };
-	int i, sectors = folio_sectors(folio), dirty_sectors = 0;
 
 	if (!s)
 		return;
@@ -498,15 +490,16 @@ static void bch2_clear_folio_bits(struct folio *folio)
 	EBUG_ON(!folio_test_locked(folio));
 	EBUG_ON(folio_test_writeback(folio));
 
-	for (i = 0; i < sectors; i++) {
-		disk_res.sectors += s->s[i].replicas_reserved;
+	CLASS(disk_reservation, disk_res)(c);
+	int sectors = folio_sectors(folio), dirty_sectors = 0;
+
+	for (unsigned i = 0; i < sectors; i++) {
+		disk_res.r.sectors += s->s[i].replicas_reserved;
 		s->s[i].replicas_reserved = 0;
 
 		dirty_sectors -= s->s[i].state == SECTOR_dirty;
 		bch2_folio_sector_set(folio, s, i, folio_sector_undirty(s->s[i].state));
 	}
-
-	bch2_disk_reservation_put(c, &disk_res);
 
 	bch2_i_sectors_acct(c, inode, NULL, dirty_sectors);
 

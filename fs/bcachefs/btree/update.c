@@ -653,53 +653,53 @@ int bch2_btree_delete(struct btree_trans *trans,
 		bch2_btree_delete_at(trans, &iter, flags);
 }
 
+static int delete_range_one(struct btree_trans *trans, struct btree_iter *iter,
+			    struct bpos end, enum btree_iter_update_trigger_flags flags)
+{
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_max(iter, end));
+
+	if (!k.k)
+		return 1;
+
+	CLASS(disk_reservation, res)(trans->c);
+
+	/*
+	 * This could probably be more efficient for extents:
+	 *
+	 * For extents, iter.pos won't necessarily be the same as
+	 * bkey_start_pos(k.k) (for non extents they always will be the
+	 * same). It's important that we delete starting from iter.pos
+	 * because the range we want to delete could start in the middle
+	 * of k.
+	 *
+	 * (bch2_btree_iter_peek() does guarantee that iter.pos >=
+	 * bkey_start_pos(k.k)).
+	 */
+	struct bkey_i delete;
+	bkey_init(&delete.k);
+	delete.k.p = iter->pos;
+
+	if (iter->flags & BTREE_ITER_is_extents)
+		bch2_key_resize(&delete.k,
+				bpos_min(end, k.k->p).offset -
+				iter->pos.offset);
+
+	try(bch2_trans_update(trans, iter, &delete, flags));
+	try(bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc));
+	return 0;
+}
+
 int bch2_btree_delete_range_trans(struct btree_trans *trans, enum btree_id btree,
 				  struct bpos start, struct bpos end,
 				  enum btree_iter_update_trigger_flags flags)
 {
 	u32 restart_count = trans->restart_count;
-	struct bkey_s_c k;
 	int ret = 0;
 
 	CLASS(btree_iter, iter)(trans, btree, start, BTREE_ITER_intent|flags);
 
-	while ((k = bch2_btree_iter_peek_max(&iter, end)).k) {
-		struct disk_reservation disk_res =
-			bch2_disk_reservation_init(trans->c, 0);
-		struct bkey_i delete;
-
-		ret = bkey_err(k);
-		if (ret)
-			goto err;
-
-		bkey_init(&delete.k);
-
-		/*
-		 * This could probably be more efficient for extents:
-		 */
-
-		/*
-		 * For extents, iter.pos won't necessarily be the same as
-		 * bkey_start_pos(k.k) (for non extents they always will be the
-		 * same). It's important that we delete starting from iter.pos
-		 * because the range we want to delete could start in the middle
-		 * of k.
-		 *
-		 * (bch2_btree_iter_peek() does guarantee that iter.pos >=
-		 * bkey_start_pos(k.k)).
-		 */
-		delete.k.p = iter.pos;
-
-		if (iter.flags & BTREE_ITER_is_extents)
-			bch2_key_resize(&delete.k,
-					bpos_min(end, k.k->p).offset -
-					iter.pos.offset);
-
-		ret   = bch2_trans_update(trans, &iter, &delete, flags) ?:
-			bch2_trans_commit(trans, &disk_res, NULL,
-					  BCH_TRANS_COMMIT_no_enospc);
-		bch2_disk_reservation_put(trans->c, &disk_res);
-err:
+	while (true) {
+		ret = delete_range_one(trans, &iter, end, flags);
 		/*
 		 * the bch2_trans_begin() call is in a weird place because we
 		 * need to call it after every transaction commit, to avoid path
@@ -714,7 +714,7 @@ err:
 			break;
 	}
 
-	return ret ?: trans_was_restarted(trans, restart_count);
+	return ret < 0 ? ret : trans_was_restarted(trans, restart_count);
 }
 
 /*
