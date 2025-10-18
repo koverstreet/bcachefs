@@ -522,127 +522,130 @@ err:
 	return ret;
 }
 
-static int check_bp_exists(struct btree_trans *trans,
-			   struct extents_to_bp_state *s,
-			   struct bkey_i_backpointer *bp,
-			   struct bkey_s_c orig_k)
+static int bp_missing(struct btree_trans *trans,
+		      struct bkey_s_c extent,
+		      struct bkey_i_backpointer *bp,
+		      struct bkey_s_c bp_found)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter other_extent_iter = {};
-	CLASS(printbuf, buf)();
 	int ret = 0;
 
-	CLASS(btree_iter, bp_iter)(trans, BTREE_ID_backpointers, bp->k.p, 0);
-	struct bkey_s_c bp_k = bkey_try(bch2_btree_iter_peek_slot(&bp_iter));
+	CLASS(printbuf, buf)();
+	prt_str(&buf, "missing backpointer\nfor:  ");
+	bch2_bkey_val_to_text(&buf, c, extent);
+	prt_printf(&buf, "\nwant: ");
+	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&bp->k_i));
 
-	if (bp_k.k->type != KEY_TYPE_backpointer ||
-	    memcmp(bkey_s_c_to_backpointer(bp_k).v, &bp->v, sizeof(bp->v))) {
-		try(bch2_btree_write_buffer_maybe_flush(trans, orig_k, &s->last_flushed));
-		goto check_existing_bp;
+	if (!bkey_deleted(bp_found.k)) {
+		prt_printf(&buf, "\ngot:  ");
+		bch2_bkey_val_to_text(&buf, c, bp_found);
 	}
-out:
-err:
+
+	if (fsck_err(trans, ptr_to_missing_backpointer, "%s", buf.buf))
+		try(bch2_bucket_backpointer_mod(trans, extent, bp, true));
 fsck_err:
-	bch2_trans_iter_exit(&other_extent_iter);
 	return ret;
-check_existing_bp:
-	/* Do we have a backpointer for a different extent? */
-	if (bp_k.k->type != KEY_TYPE_backpointer)
-		goto missing;
+}
 
-	struct bkey_s_c_backpointer other_bp = bkey_s_c_to_backpointer(bp_k);
+static bool bkey_dev_ptr_stale(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
+{
+	guard(rcu)();
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
+	if (!ca)
+		return false;
 
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	bkey_for_each_ptr(ptrs, ptr)
+		if (ptr->dev == dev &&
+		    dev_ptr_stale_rcu(ca, ptr))
+			return true;
+	return false;
+}
+
+static int check_bp_dup(struct btree_trans *trans,
+			struct extents_to_bp_state *s,
+			struct bkey_s_c extent,
+			struct bkey_i_backpointer *bp,
+			struct bkey_s_c_backpointer other_bp)
+{
+	struct bch_fs *c = trans->c;
+
+	CLASS(btree_iter_uninit, other_extent_iter)(trans);
 	struct bkey_s_c other_extent =
 		__bch2_backpointer_get_key(trans, other_bp, &other_extent_iter, 0, NULL, false);
-	ret = bkey_err(other_extent);
+	int ret = bkey_err(other_extent);
+
 	if (ret == -BCH_ERR_backpointer_to_overwritten_btree_node)
-		ret = 0;
+		return bp_missing(trans, extent, bp, other_bp.s_c);
 	if (ret)
-		goto err;
-
+		return ret;
 	if (!other_extent.k)
-		goto missing;
+		return bp_missing(trans, extent, bp, other_bp.s_c);
 
-	rcu_read_lock();
-	struct bch_dev *ca = bch2_dev_rcu_noerror(c, bp->k.p.inode);
-	if (ca) {
-		struct bkey_ptrs_c other_extent_ptrs = bch2_bkey_ptrs_c(other_extent);
-		bkey_for_each_ptr(other_extent_ptrs, ptr)
-			if (ptr->dev == bp->k.p.inode &&
-			    dev_ptr_stale_rcu(ca, ptr)) {
-				rcu_read_unlock();
-				ret = drop_dev_and_update(trans, other_bp.v->btree_id,
-							  other_extent, bp->k.p.inode);
-				if (ret)
-					goto err;
-				goto out;
-			}
+	if (bkey_dev_ptr_stale(c, other_extent, bp->k.p.inode)) {
+		try(drop_dev_and_update(trans, other_bp.v->btree_id, other_extent, bp->k.p.inode));
+		return 0;
 	}
-	rcu_read_unlock();
 
-	if (bch2_extents_match(orig_k, other_extent)) {
-		printbuf_reset(&buf);
+	if (bch2_extents_match(extent, other_extent)) {
+		CLASS(printbuf, buf)();
 		prt_printf(&buf, "duplicate versions of same extent, deleting smaller\n");
-		bch2_bkey_val_to_text(&buf, c, orig_k);
+		bch2_bkey_val_to_text(&buf, c, extent);
 		prt_newline(&buf);
 		bch2_bkey_val_to_text(&buf, c, other_extent);
 		bch_err(c, "%s", buf.buf);
 
-		if (other_extent.k->size <= orig_k.k->size) {
-			ret = drop_dev_and_update(trans, other_bp.v->btree_id,
-						  other_extent, bp->k.p.inode);
-			if (ret)
-				goto err;
-			goto out;
+		if (other_extent.k->size <= extent.k->size) {
+			try(drop_dev_and_update(trans, other_bp.v->btree_id, other_extent, bp->k.p.inode));
+			return 0;
 		} else {
-			ret = drop_dev_and_update(trans, bp->v.btree_id, orig_k, bp->k.p.inode);
-			if (ret)
-				goto err;
-			goto missing;
+			try(drop_dev_and_update(trans, bp->v.btree_id, extent, bp->k.p.inode));
+			return bp_missing(trans, extent, bp, other_bp.s_c);
 		}
+	} else {
+		ret = check_extent_checksum(trans,
+					    other_bp.v->btree_id, other_extent,
+					    bp->v.btree_id, extent,
+					    bp->k.p.inode);
+		if (ret < 0)
+			return ret;
+		if (ret)
+			return bp_missing(trans, extent, bp, other_bp.s_c);
+
+		ret = check_extent_checksum(trans, bp->v.btree_id, extent,
+					    other_bp.v->btree_id, other_extent, bp->k.p.inode);
+		if (ret < 0)
+			return ret;
+		if (ret)
+			return 0;
+
+		CLASS(printbuf, buf)();
+		prt_printf(&buf, "duplicate extents pointing to same space on dev %llu\n", bp->k.p.inode);
+		bch2_bkey_val_to_text(&buf, c, extent);
+		prt_newline(&buf);
+		bch2_bkey_val_to_text(&buf, c, other_extent);
+		bch_err(c, "%s", buf.buf);
+		return bch_err_throw(c, fsck_repair_unimplemented);
+	}
+}
+
+static int check_bp_exists(struct btree_trans *trans,
+			   struct extents_to_bp_state *s,
+			   struct bkey_s_c extent,
+			   struct bkey_i_backpointer *bp)
+{
+	CLASS(btree_iter, bp_iter)(trans, BTREE_ID_backpointers, bp->k.p, 0);
+	struct bkey_s_c bp_found = bkey_try(bch2_btree_iter_peek_slot(&bp_iter));
+
+	if (bp_found.k->type != KEY_TYPE_backpointer) {
+		try(bch2_btree_write_buffer_maybe_flush(trans, extent, &s->last_flushed));
+		try(bp_missing(trans, extent, bp, bp_found));
+	} else if (memcmp(bkey_s_c_to_backpointer(bp_found).v, &bp->v, sizeof(bp->v))) {
+		try(bch2_btree_write_buffer_maybe_flush(trans, extent, &s->last_flushed));
+		try(check_bp_dup(trans, s, extent, bp, bkey_s_c_to_backpointer(bp_found)));
 	}
 
-	ret = check_extent_checksum(trans,
-				    other_bp.v->btree_id, other_extent,
-				    bp->v.btree_id, orig_k,
-				    bp->k.p.inode);
-	if (ret < 0)
-		goto err;
-	if (ret) {
-		ret = 0;
-		goto missing;
-	}
-
-	ret = check_extent_checksum(trans, bp->v.btree_id, orig_k,
-				    other_bp.v->btree_id, other_extent, bp->k.p.inode);
-	if (ret < 0)
-		goto err;
-	if (ret) {
-		ret = 0;
-		goto out;
-	}
-
-	printbuf_reset(&buf);
-	prt_printf(&buf, "duplicate extents pointing to same space on dev %llu\n", bp->k.p.inode);
-	bch2_bkey_val_to_text(&buf, c, orig_k);
-	prt_newline(&buf);
-	bch2_bkey_val_to_text(&buf, c, other_extent);
-	bch_err(c, "%s", buf.buf);
-	ret = bch_err_throw(c, fsck_repair_unimplemented);
-	goto err;
-missing:
-	printbuf_reset(&buf);
-	prt_str(&buf, "missing backpointer\nfor:  ");
-	bch2_bkey_val_to_text(&buf, c, orig_k);
-	prt_printf(&buf, "\nwant: ");
-	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&bp->k_i));
-	prt_printf(&buf, "\ngot:  ");
-	bch2_bkey_val_to_text(&buf, c, bp_k);
-
-	if (fsck_err(trans, ptr_to_missing_backpointer, "%s", buf.buf))
-		ret = bch2_bucket_backpointer_mod(trans, orig_k, bp, true);
-
-	goto out;
+	return 0;
 }
 
 static int check_extent_to_backpointers(struct btree_trans *trans,
@@ -685,7 +688,7 @@ static int check_extent_to_backpointers(struct btree_trans *trans,
 			continue;
 
 		try(!empty
-		    ? check_bp_exists(trans, s, &bp, k)
+		    ? check_bp_exists(trans, s, k, &bp)
 		    : bch2_bucket_backpointer_mod(trans, k, &bp, true));
 	}
 
