@@ -275,7 +275,7 @@ static struct btree *__bch2_backpointer_get_node(struct btree_trans *trans,
 				  0);
 	struct btree *b = bch2_btree_iter_peek_node(iter);
 	if (IS_ERR(b))
-		goto err;
+		return b;
 
 	if (!b) {
 		/* Backpointer for nonexistent tree depth: */
@@ -284,8 +284,7 @@ static struct btree *__bch2_backpointer_get_node(struct btree_trans *trans,
 		struct bkey_s_c k = { &iter->k };
 
 		int ret = backpointer_target_not_found(trans, bp, k, last_flushed, commit);
-		b = ret ? ERR_PTR(ret) : NULL;
-		goto err;
+		return ret ? ERR_PTR(ret) : NULL;
 	}
 
 	BUG_ON(b->c.level != bp.v->level - 1);
@@ -295,15 +294,12 @@ static struct btree *__bch2_backpointer_get_node(struct btree_trans *trans,
 		return b;
 
 	if (btree_node_will_make_reachable(b)) {
-		b = ERR_PTR(bch_err_throw(c, backpointer_to_overwritten_btree_node));
+		return ERR_PTR(bch_err_throw(c, backpointer_to_overwritten_btree_node));
 	} else {
 		int ret = backpointer_target_not_found(trans, bp, bkey_i_to_s_c(&b->key),
 						       last_flushed, commit);
-		b = ret ? ERR_PTR(ret) : NULL;
+		return ret ? ERR_PTR(ret) : NULL;
 	}
-err:
-	bch2_trans_iter_exit(iter);
-	return b;
 }
 
 static struct bkey_s_c __bch2_backpointer_get_key(struct btree_trans *trans,
@@ -325,10 +321,8 @@ static struct bkey_s_c __bch2_backpointer_get_key(struct btree_trans *trans,
 				  bp.v->level,
 				  iter_flags);
 	struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
-	if (bkey_err(k)) {
-		bch2_trans_iter_exit(iter);
+	if (bkey_err(k))
 		return k;
-	}
 
 	/*
 	 * peek_slot() doesn't normally return NULL - except when we ask for a
@@ -346,12 +340,11 @@ static struct bkey_s_c __bch2_backpointer_get_key(struct btree_trans *trans,
 	    extent_matches_bp(c, bp.v->btree_id, bp.v->level, k, bp))
 		return k;
 
-	bch2_trans_iter_exit(iter);
-
 	if (!bp.v->level) {
 		int ret = backpointer_target_not_found(trans, bp, k, last_flushed, commit);
 		return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
 	} else {
+		bch2_trans_iter_exit(iter);
 		struct btree *b = __bch2_backpointer_get_node(trans, bp, iter, last_flushed, commit);
 		if (b == ERR_PTR(-BCH_ERR_backpointer_to_overwritten_btree_node))
 			return bkey_s_c_null;

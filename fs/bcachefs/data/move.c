@@ -558,7 +558,6 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	bool is_kthread = current->flags & PF_KTHREAD;
-	struct btree_iter iter = {};
 	struct bkey_s_c k;
 	u64 check_mismatch_done = bucket_start;
 	int ret = 0;
@@ -606,38 +605,41 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 			break;
 
 		if (check_mismatch_done < bp_pos_to_bucket(ca, k.k->p).offset) {
-			while (check_mismatch_done < bp_pos_to_bucket(ca, k.k->p).offset) {
+			while (check_mismatch_done < bp_pos_to_bucket(ca, k.k->p).offset)
 				bch2_check_bucket_backpointer_mismatch(trans, ca, check_mismatch_done++,
 								       copygc, &last_flushed);
-			}
 			continue;
 		}
 
-		if (k.k->type != KEY_TYPE_backpointer)
-			goto next;
+		if (k.k->type != KEY_TYPE_backpointer) {
+			bch2_btree_iter_advance(&bp_iter);
+			continue;
+		}
 
 		struct bkey_s_c_backpointer bp = bkey_s_c_to_backpointer(k);
 
 		if (ctxt->stats)
 			ctxt->stats->offset = bp.k->p.offset >> MAX_EXTENT_COMPRESS_RATIO_SHIFT;
 
-		if (!(data_types & BIT(bp.v->data_type)))
-			goto next;
+		if (!(data_types & BIT(bp.v->data_type)) ||
+		    (!bp.v->level && bp.v->btree_id == BTREE_ID_stripes)) {
+			bch2_btree_iter_advance(&bp_iter);
+			continue;
+		}
 
-		if (!bp.v->level && bp.v->btree_id == BTREE_ID_stripes)
-			goto next;
-
+		CLASS(btree_iter_uninit, iter)(trans);
 		k = bch2_backpointer_get_key(trans, bp, &iter, 0, &last_flushed);
 		ret = bkey_err(k);
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
 		if (ret)
 			return ret;
-		if (!k.k)
-			goto next;
+		if (!k.k) {
+			bch2_btree_iter_advance(&bp_iter);
+			continue;
+		}
 
 		ret = bch2_move_extent(ctxt, bucket_in_flight, NULL, pred, arg, &iter, bp.v->level, k);
-		bch2_trans_iter_exit(&iter);
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
@@ -647,7 +649,6 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		    bch2_err_matches(ret, BCH_ERR_device_offline))
 			return ret;
 		WARN_ONCE(ret, "unhandled error from move_extent: %s", bch2_err_str(ret));
-next:
 		bch2_btree_iter_advance(&bp_iter);
 	}
 
