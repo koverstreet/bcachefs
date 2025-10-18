@@ -175,18 +175,24 @@ static inline bool ptr_better(struct bch_fs *c,
 	if (unlikely(p1.do_ec_reconstruct || p2.do_ec_reconstruct))
 		return p1.do_ec_reconstruct < p2.do_ec_reconstruct;
 
-	int crc_retry_delta = (int) p1.crc_retry_nr - (int) p2.crc_retry_nr;
-	if (unlikely(crc_retry_delta))
-		return crc_retry_delta < 0;
+	int delta = (int) p2.crc_retry_nr - (int) p1.crc_retry_nr;
+	if (unlikely(delta))
+		return delta > 0;
 
 #ifdef CONFIG_BCACHEFS_DEBUG
 	if (bch2_force_read_device >= 0) {
-		int cmp = (p1.ptr.dev == bch2_force_read_device) -
+		delta = (p1.ptr.dev == bch2_force_read_device) -
 			(p2.ptr.dev == bch2_force_read_device);
-		if (cmp)
-			return cmp > 0;
+		if (delta)
+			return delta > 0;
 	}
 #endif
+
+	/* Prefer extents with checksums */
+	delta = (int) !!(p1.crc.csum_type) -
+		(int) !!(p2.crc.csum_type);
+	if (unlikely(delta))
+		return delta > 0;
 
 	/* Pick at random, biased in favor of the faster device: */
 
