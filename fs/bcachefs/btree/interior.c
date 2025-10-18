@@ -2140,23 +2140,17 @@ int bch2_btree_node_get_iter(struct btree_trans *trans, struct btree_iter *iter,
 	bch2_trans_node_iter_init(trans, iter, b->c.btree_id, b->key.k.p,
 				  BTREE_MAX_DEPTH, b->c.level,
 				  BTREE_ITER_intent);
-	int ret = bch2_btree_iter_traverse(iter);
-	if (ret)
-		goto err;
+	try(bch2_btree_iter_traverse(iter));
 
 	/* has node been freed? */
 	if (btree_iter_path(trans, iter)->l[b->c.level].b != b) {
 		/* node has been freed: */
 		BUG_ON(!btree_node_dying(b));
-		ret = bch_err_throw(trans->c, btree_node_dying);
-		goto err;
+		return bch_err_throw(trans->c, btree_node_dying);
 	}
 
 	BUG_ON(!btree_node_hashed(b));
 	return 0;
-err:
-	bch2_trans_iter_exit(iter);
-	return ret;
 }
 
 int bch2_btree_node_rewrite(struct btree_trans *trans,
