@@ -1,6 +1,8 @@
 #ifndef _BCACHEFS_RECOVERY_PASSES_H
 #define _BCACHEFS_RECOVERY_PASSES_H
 
+#include <linux/kthread.h>
+
 extern const char * const bch2_recovery_passes[];
 
 extern const struct bch_sb_field_ops bch_sb_field_ops_recovery_passes;
@@ -30,6 +32,17 @@ static inline bool recovery_pass_will_run(struct bch_fs *c, enum bch_recovery_pa
 {
 	return unlikely(test_bit(BCH_FS_in_recovery, &c->flags) &&
 			c->recovery.passes_to_run & BIT_ULL(pass));
+}
+
+static inline int bch2_recovery_cancelled(struct bch_fs *c)
+{
+	if (test_bit(BCH_FS_going_ro, &c->flags))
+		return bch_err_throw(c, erofs_recovery_cancelled);
+
+	if ((current->flags & PF_KTHREAD) && kthread_should_stop())
+		return bch_err_throw(c, recovery_cancelled);
+
+	return 0;
 }
 
 int bch2_run_print_explicit_recovery_pass(struct bch_fs *, enum bch_recovery_pass);

@@ -770,13 +770,6 @@ static int bch2_get_btree_in_memory_pos(struct btree_trans *trans,
 	return ret;
 }
 
-static inline int bch2_fs_going_ro(struct bch_fs *c)
-{
-	return test_bit(BCH_FS_going_ro, &c->flags)
-		? -EROFS
-		: 0;
-}
-
 static int bch2_check_extents_to_backpointers_pass(struct btree_trans *trans,
 						   struct extents_to_bp_state *s)
 {
@@ -1116,7 +1109,7 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 	ret = for_each_btree_key(trans, iter, BTREE_ID_alloc,
 				 POS_MIN, BTREE_ITER_prefetch, k, ({
 		bool had_mismatch;
-		bch2_fs_going_ro(c) ?:
+		bch2_recovery_cancelled(c) ?:
 		check_bucket_backpointer_mismatch(trans, k, &had_mismatch, &s.last_flushed,
 						  &last_pos, &nr_iters);
 	}));
