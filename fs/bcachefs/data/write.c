@@ -564,7 +564,7 @@ static noinline int bch2_write_drop_io_error_ptrs(struct bch_write_op *op)
 			bch2_bkey_drop_ptrs(bkey_i_to_s(src), p, entry,
 					    test_bit(p.ptr.dev, op->failed.d));
 
-			if (!bch2_bkey_nr_ptrs(bkey_i_to_s_c(src)))
+			if (!bch2_bkey_nr_dirty_ptrs(bkey_i_to_s_c(src)))
 				return bch_err_throw(c, data_write_io);
 		}
 

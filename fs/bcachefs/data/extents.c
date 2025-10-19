@@ -745,34 +745,44 @@ void bch2_extent_crc_append(struct bkey_i *k,
 
 /* Generic code for keys with pointers: */
 
-unsigned bch2_bkey_nr_ptrs(struct bkey_s_c k)
+unsigned bch2_bkey_nr_dirty_ptrs(struct bkey_s_c k)
 {
-	return bch2_bkey_devs(k).nr;
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	unsigned ret = 0;
+
+	bkey_for_each_ptr(ptrs, ptr)
+		ret += !ptr->cached;
+	return ret;
 }
 
 unsigned bch2_bkey_nr_ptrs_allocated(struct bkey_s_c k)
 {
-	return k.k->type == KEY_TYPE_reservation
-		? bkey_s_c_to_reservation(k).v->nr_replicas
-		: bch2_bkey_dirty_devs(k).nr;
+	if (k.k->type == KEY_TYPE_reservation) {
+		return bkey_s_c_to_reservation(k).v->nr_replicas;
+	} else {
+		unsigned ret = 0;
+		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+
+		bkey_for_each_ptr(ptrs, ptr)
+			ret += !ptr->cached;
+		return ret;
+	}
 }
 
 unsigned bch2_bkey_nr_ptrs_fully_allocated(struct bkey_s_c k)
 {
-	unsigned ret = 0;
-
 	if (k.k->type == KEY_TYPE_reservation) {
-		ret = bkey_s_c_to_reservation(k).v->nr_replicas;
+		return bkey_s_c_to_reservation(k).v->nr_replicas;
 	} else {
 		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 		const union bch_extent_entry *entry;
 		struct extent_ptr_decoded p;
+		unsigned ret = 0;
 
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
 			ret += !p.ptr.cached && !crc_is_compressed(p.crc);
+		return ret;
 	}
-
-	return ret;
 }
 
 unsigned bch2_bkey_sectors_compressed(struct bkey_s_c k)
@@ -1007,22 +1017,10 @@ void bch2_bkey_drop_ptr(struct bkey_s k, struct bch_extent_ptr *ptr)
 			}
 	}
 
-	bool have_dirty = bch2_bkey_dirty_devs(k.s_c).nr;
-
 	bch2_bkey_drop_ptr_noerror(k, ptr);
 
-	/*
-	 * If we deleted all the dirty pointers and there's still cached
-	 * pointers, we could set the cached pointers to dirty if they're not
-	 * stale - but to do that correctly we'd need to grab an open_bucket
-	 * reference so that we don't race with bucket reuse:
-	 */
-	if (have_dirty &&
-	    !bch2_bkey_dirty_devs(k.s_c).nr) {
+	if (!bch2_bkey_nr_dirty_ptrs(k.s_c)) {
 		k.k->type = KEY_TYPE_error;
-		set_bkey_val_u64s(k.k, 0);
-	} else if (!bch2_bkey_nr_ptrs(k.s_c)) {
-		k.k->type = KEY_TYPE_deleted;
 		set_bkey_val_u64s(k.k, 0);
 	}
 }

@@ -571,31 +571,7 @@ static inline struct bch_devs_list bch2_bkey_devs(struct bkey_s_c k)
 	return ret;
 }
 
-static inline struct bch_devs_list bch2_bkey_dirty_devs(struct bkey_s_c k)
-{
-	struct bch_devs_list ret = (struct bch_devs_list) { 0 };
-	struct bkey_ptrs_c p = bch2_bkey_ptrs_c(k);
-
-	bkey_for_each_ptr(p, ptr)
-		if (!ptr->cached)
-			ret.data[ret.nr++] = ptr->dev;
-
-	return ret;
-}
-
-static inline struct bch_devs_list bch2_bkey_cached_devs(struct bkey_s_c k)
-{
-	struct bch_devs_list ret = (struct bch_devs_list) { 0 };
-	struct bkey_ptrs_c p = bch2_bkey_ptrs_c(k);
-
-	bkey_for_each_ptr(p, ptr)
-		if (ptr->cached)
-			ret.data[ret.nr++] = ptr->dev;
-
-	return ret;
-}
-
-unsigned bch2_bkey_nr_ptrs(struct bkey_s_c);
+unsigned bch2_bkey_nr_dirty_ptrs(struct bkey_s_c);
 unsigned bch2_bkey_nr_ptrs_allocated(struct bkey_s_c);
 unsigned bch2_bkey_nr_ptrs_fully_allocated(struct bkey_s_c);
 bool bch2_bkey_is_incompressible(struct bkey_s_c);
