@@ -1544,12 +1544,14 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 	wb_maybe_flush_init(&last_flushed);
 
 	struct progress_indicator_state progress;
-	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_rebalance_work));
+	bch2_progress_init(&progress, c,
+			   BIT_ULL(BTREE_ID_extents)|
+			   BIT_ULL(BTREE_ID_reflink));
 
 	struct bpos cur_pos = POS_MIN;
 
 	while (true) {
-		try(progress_update_iter(trans, &progress, &rb_w) ?:
+		try(progress_update_iter(trans, &progress, &extent_iter) ?:
 		    wb_maybe_flush_inc(&last_flushed) ?:
 		    commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 				 check_rebalance_work_one(trans, &extent_iter, &rb_w, &rb_h, &rb_p,
