@@ -1554,12 +1554,13 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
-	struct bch_extent_crc_unpacked crc;
+	struct bch_extent_crc_unpacked crc = bch2_extent_crc_unpack(k.k, NULL);
 	unsigned size_ondisk = k.k->size;
 	unsigned nonce = UINT_MAX;
 	unsigned nr_ptrs = 0;
 	bool have_written = false, have_unwritten = false, have_ec = false, crc_since_last_ptr = false;
 	bool have_inval_dev_ptrs = false, have_non_inval_dev_ptrs = false;
+	bool have_encrypted = false, have_unencrypted = false;
 	int ret = 0;
 
 	if (bkey_is_btree_ptr(k.k))
@@ -1599,6 +1600,11 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 				have_inval_dev_ptrs = true;
 			else
 				have_non_inval_dev_ptrs = true;
+
+			if (bch2_csum_type_is_encryption(crc.csum_type))
+				have_encrypted = true;
+			else
+				have_unencrypted = true;
 
 			nr_ptrs++;
 			break;
@@ -1689,6 +1695,10 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 			 have_inval_dev_ptrs && !have_non_inval_dev_ptrs,
 			 c, extent_ptrs_all_invalid,
 			 "extent ptrs all to BCH_SB_MEMBER_INVALID");
+	bkey_fsck_err_on(have_encrypted && have_unencrypted &&
+			 (from.flags & BCH_VALIDATE_commit),
+			 c, extent_ptrs_encrypted_and_unencrypted,
+			 "encrypted and unencrypted pointers");
 fsck_err:
 	return ret;
 }

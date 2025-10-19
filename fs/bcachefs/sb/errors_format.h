@@ -162,6 +162,7 @@ enum bch_fsck_flags {
 	x(extent_ptrs_unwritten,				140,	0)		\
 	x(extent_ptrs_written_and_unwritten,			141,	0)		\
 	x(extent_ptrs_all_invalid,				338,	0)		\
+	x(extent_ptrs_encrypted_and_unencrypted,		339,	0)		\
 	x(extent_reconcile_bad_pending,				332,	0)		\
 	x(extent_reconcile_bad_hipri,				333,	0)		\
 	x(extent_reconcile_bad_replicas,			339,	0)		\
