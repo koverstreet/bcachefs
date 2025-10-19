@@ -1506,7 +1506,7 @@ static int do_reconcile_scan_indirect(struct btree_trans *trans,
 				      POS(0, idx),
 				      BTREE_ITER_intent|
 				      BTREE_ITER_not_extents, k,
-				      res, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+				      res, NULL, 0, ({
 		if (bpos_ge(bkey_start_pos(k.k), POS(0, end)))
 			break;
 
@@ -1592,7 +1592,7 @@ root_err:
 		 ? do_reconcile_scan_indirect(trans, &res.r, bkey_s_c_to_reflink_p(k),
 					      snapshot_io_opts, &opts)
 		 : 0) ?:
-		bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
+		bch2_trans_commit(trans, &res.r, NULL, 0);
 	}));
 }
 
@@ -1653,7 +1653,7 @@ static int do_reconcile_scan(struct moving_context *ctxt,
 		try(for_each_btree_key_max_commit(trans, iter, BTREE_ID_backpointers,
 						  POS(s.dev, 0), POS(s.dev, U64_MAX),
 						  BTREE_ITER_prefetch, k,
-						  &res.r, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+						  &res.r, NULL, 0, ({
 			ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
 
 			if (k.k->type != KEY_TYPE_backpointer)
