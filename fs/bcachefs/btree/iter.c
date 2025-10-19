@@ -1514,11 +1514,13 @@ void bch2_trans_updates_to_text(struct printbuf *buf, struct btree_trans *trans)
 			   i->cached,
 			   (void *) i->ip_allocated);
 
-		prt_printf(buf, "  old ");
+		guard(printbuf_indent)(buf);
+
+		prt_printf(buf, "old ");
 		bch2_bkey_val_to_text(buf, trans->c, old);
 		prt_newline(buf);
 
-		prt_printf(buf, "  new ");
+		prt_printf(buf, "new ");
 		bch2_bkey_val_to_text(buf, trans->c, bkey_i_to_s_c(i->k));
 		prt_newline(buf);
 	}
