@@ -457,6 +457,7 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 		try(bch2_trans_commit(trans, NULL, NULL,
 				      BCH_TRANS_COMMIT_no_check_rw|
 				      BCH_TRANS_COMMIT_no_enospc|
+				      BCH_TRANS_COMMIT_no_skip_noops|
 				      commit_flags));
 
 		bch2_journal_pin_drop(j, &ck->journal);

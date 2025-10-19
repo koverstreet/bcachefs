@@ -28,6 +28,7 @@ void bch2_btree_insert_key_leaf(struct btree_trans *, struct btree_path *,
 	x(no_check_rw,	"don't attempt to take a ref on c->writes")			\
 	x(no_journal_res, "don't take a journal reservation, instead "			\
 			"pin journal entry referred to by trans->journal_res.seq")	\
+	x(no_skip_noops, "don't drop noop updates")					\
 	x(journal_reclaim, "operation required for journal reclaim; may return error"	\
 			"instead of deadlocking if BCH_WATERMARK_reclaim not specified")\
 	x(skip_accounting_apply, "we're in journal replay - accounting updates have already been applied")
