@@ -682,9 +682,11 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 	try(bch2_key_trigger(trans, btree_id, level, old, unsafe_bkey_s_c_to_s(k),
 			     BTREE_TRIGGER_check_repair|flags));
 
-	if (bch2_trans_has_updates(trans))
-		return bch2_trans_commit(trans, NULL, NULL, 0) ?:
+	if (bch2_trans_has_updates(trans)) {
+		CLASS(disk_reservation, res)(c);
+		return bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
 			-BCH_ERR_transaction_restart_nested;
+	}
 
 	try(bch2_key_trigger(trans, btree_id, level, old, unsafe_bkey_s_c_to_s(k),
 			     BTREE_TRIGGER_gc|BTREE_TRIGGER_insert|flags));

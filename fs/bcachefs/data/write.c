@@ -1273,7 +1273,8 @@ static void bch2_nocow_write_convert_unwritten(struct bch_write_op *op)
 		ret = for_each_btree_key_max_commit(trans, iter, BTREE_ID_extents,
 				     bkey_start_pos(&orig->k), orig->k.p,
 				     BTREE_ITER_intent, k,
-				     NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+				     &op->res, NULL,
+				     BCH_TRANS_COMMIT_no_enospc, ({
 			bch2_nocow_write_convert_one_unwritten(trans, &iter, op, orig, k, op->new_i_size);
 		}));
 		if (ret)

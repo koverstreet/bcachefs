@@ -1091,6 +1091,7 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 				   struct ec_stripe_buf *s,
 				   struct bkey_s_c_backpointer bp,
 				   struct stripe_update_bucket_stats *stats,
+				   struct disk_reservation *res,
 				   struct wb_maybe_flush *last_flushed)
 {
 	struct bch_stripe *v = &bkey_i_to_stripe(&s->key)->v;
@@ -1174,7 +1175,7 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 	try(bch2_bkey_get_io_opts(trans, NULL, bkey_i_to_s_c(n), &opts));
 	try(bch2_bkey_set_needs_rebalance(trans, NULL, &opts, n, SET_NEEDS_REBALANCE_other, 0));
 	try(bch2_trans_update(trans, &iter, n, 0));
-	try(bch2_trans_commit(trans, NULL, NULL,
+	try(bch2_trans_commit(trans, res, NULL,
 			BCH_TRANS_COMMIT_no_check_rw|
 			BCH_TRANS_COMMIT_no_enospc));
 
@@ -1204,6 +1205,8 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 
 	struct stripe_update_bucket_stats stats = {};
 
+	CLASS(disk_reservation, res)(c);
+
 	try(for_each_btree_key_max(trans, bp_iter, BTREE_ID_backpointers,
 			bucket_pos_to_bp_start(ca, bucket_pos),
 			bucket_pos_to_bp_end(ca, bucket_pos), 0, bp_k, ({
@@ -1219,7 +1222,7 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 
 		wb_maybe_flush_inc(&last_flushed);
 		ec_stripe_update_extent(trans, ca, bucket_pos, ptr.gen, s, bp,
-					&stats, &last_flushed);
+					&stats, &res.r, &last_flushed);
 	})));
 
 	if (trace_stripe_update_bucket_enabled()) {
