@@ -410,7 +410,6 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct journal *j = &c->journal;
 	struct bkey_cached *ck = NULL;
-	int ret;
 
 	CLASS(btree_iter, b_iter)(trans, key.btree_id, key.pos,
 				  BTREE_ITER_slots|
@@ -427,59 +426,44 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 	if (!ck)
 		return 0;
 
-	if (!test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
-		if (evict)
-			goto evict;
-		return 0;
+	if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
+		if (journal_seq && ck->journal.seq != journal_seq)
+			return 0;
+
+		trans->journal_res.seq = ck->journal.seq;
+
+		/*
+		 * If we're at the end of the journal, we really want to free up space
+		 * in the journal right away - we don't want to pin that old journal
+		 * sequence number with a new btree node write, we want to re-journal
+		 * the update
+		 */
+		if (ck->journal.seq == journal_last_seq(j))
+			commit_flags |= BCH_WATERMARK_reclaim;
+
+		if (ck->journal.seq != journal_last_seq(j) ||
+		    !journal_low_on_space(&c->journal))
+			commit_flags |= BCH_TRANS_COMMIT_no_journal_res;
+
+		struct bkey_s_c btree_k = bkey_try(bch2_btree_iter_peek_slot(&b_iter));
+
+		/* * Check that we're not violating cache coherency rules: */
+		BUG_ON(bkey_deleted(btree_k.k));
+
+		try(bch2_trans_update(trans, &b_iter, ck->k,
+				      BTREE_UPDATE_internal_snapshot_node|
+				      BTREE_UPDATE_key_cache_reclaim|
+				      BTREE_TRIGGER_norun));
+		try(bch2_trans_commit(trans, NULL, NULL,
+				      BCH_TRANS_COMMIT_no_check_rw|
+				      BCH_TRANS_COMMIT_no_enospc|
+				      commit_flags));
+
+		bch2_journal_pin_drop(j, &ck->journal);
+
+		struct btree_path *path = btree_iter_path(trans, &c_iter);
+		BUG_ON(!btree_node_locked(path, 0));
 	}
-
-	if (journal_seq && ck->journal.seq != journal_seq)
-		return 0;
-
-	trans->journal_res.seq = ck->journal.seq;
-
-	/*
-	 * If we're at the end of the journal, we really want to free up space
-	 * in the journal right away - we don't want to pin that old journal
-	 * sequence number with a new btree node write, we want to re-journal
-	 * the update
-	 */
-	if (ck->journal.seq == journal_last_seq(j))
-		commit_flags |= BCH_WATERMARK_reclaim;
-
-	if (ck->journal.seq != journal_last_seq(j) ||
-	    !journal_low_on_space(&c->journal))
-		commit_flags |= BCH_TRANS_COMMIT_no_journal_res;
-
-	struct bkey_s_c btree_k = bch2_btree_iter_peek_slot(&b_iter);
-	ret = bkey_err(btree_k);
-	if (ret)
-		goto err;
-
-	/* * Check that we're not violating cache coherency rules: */
-	BUG_ON(bkey_deleted(btree_k.k));
-
-	ret   = bch2_trans_update(trans, &b_iter, ck->k,
-				  BTREE_UPDATE_key_cache_reclaim|
-				  BTREE_UPDATE_internal_snapshot_node|
-				  BTREE_TRIGGER_norun) ?:
-		bch2_trans_commit(trans, NULL, NULL,
-				  BCH_TRANS_COMMIT_no_check_rw|
-				  BCH_TRANS_COMMIT_no_enospc|
-				  commit_flags);
-err:
-	bch2_fs_fatal_err_on(ret &&
-			     !bch2_err_matches(ret, BCH_ERR_transaction_restart) &&
-			     !bch2_err_matches(ret, BCH_ERR_journal_reclaim_would_deadlock) &&
-			     !bch2_journal_error(j), c,
-			     "flushing key cache: %s", bch2_err_str(ret));
-	if (ret)
-		goto out;
-
-	bch2_journal_pin_drop(j, &ck->journal);
-
-	struct btree_path *path = btree_iter_path(trans, &c_iter);
-	BUG_ON(!btree_node_locked(path, 0));
 
 	if (!evict) {
 		if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
@@ -487,9 +471,10 @@ err:
 			atomic_long_dec(&c->btree_key_cache.nr_dirty);
 		}
 	} else {
+		struct btree_path *path = btree_iter_path(trans, &c_iter);
 		struct btree_path *path2;
 		unsigned i;
-evict:
+
 		trans_for_each_path(trans, path2, i)
 			if (path2 != path)
 				__bch2_btree_path_unlock(trans, path2);
@@ -509,8 +494,8 @@ evict:
 			six_unlock_intent(&ck->c.lock);
 		}
 	}
-out:
-	return ret;
+
+	return 0;
 }
 
 int bch2_btree_key_cache_journal_flush(struct journal *j,
@@ -544,6 +529,10 @@ int bch2_btree_key_cache_journal_flush(struct journal *j,
 	ret = lockrestart_do(trans,
 		btree_key_cache_flush_pos(trans, key, seq,
 				BCH_TRANS_COMMIT_journal_reclaim, false));
+	bch2_fs_fatal_err_on(ret &&
+			     !bch2_err_matches(ret, BCH_ERR_journal_reclaim_would_deadlock) &&
+			     !bch2_journal_error(j), c,
+			     "flushing key cache: %s", bch2_err_str(ret));
 unlock:
 	srcu_read_unlock(&c->btree_trans_barrier, srcu_idx);
 	return ret;
