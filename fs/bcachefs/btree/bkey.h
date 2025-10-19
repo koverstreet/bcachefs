@@ -188,14 +188,6 @@ static inline struct bpos bkey_max(struct bpos l, struct bpos r)
 	return bkey_gt(l, r) ? l : r;
 }
 
-static inline bool bkey_and_val_eq(struct bkey_s_c l, struct bkey_s_c r)
-{
-	return bpos_eq(l.k->p, r.k->p) &&
-		l.k->size == r.k->size &&
-		bkey_bytes(l.k) == bkey_bytes(r.k) &&
-		!memcmp(l.v, r.v, bkey_val_bytes(l.k));
-}
-
 void bch2_bpos_swab(struct bpos *);
 void bch2_bkey_swab_key(const struct bkey_format *, struct bkey_packed *);
 
@@ -203,6 +195,22 @@ static __always_inline int bversion_cmp(struct bversion l, struct bversion r)
 {
 	return  cmp_int(l.hi, r.hi) ?:
 		cmp_int(l.lo, r.lo);
+}
+
+static __always_inline bool bversion_eq(struct bversion l, struct bversion r)
+{
+	return  l.hi == r.hi &&
+		l.lo == r.lo;
+}
+
+static inline bool bkey_and_val_eq(struct bkey_s_c l, struct bkey_s_c r)
+{
+	return  l.k->u64s == r.k->u64s &&
+		l.k->type == r.k->type &&
+		bpos_eq(l.k->p, r.k->p) &&
+		bversion_eq(l.k->bversion, r.k->bversion) &&
+		l.k->size == r.k->size &&
+		!memcmp(l.v, r.v, bkey_val_bytes(l.k));
 }
 
 #define ZERO_VERSION	((struct bversion) { .hi = 0, .lo = 0 })
