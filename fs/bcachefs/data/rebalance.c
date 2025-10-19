@@ -1004,6 +1004,7 @@ static int do_rebalance_scan_bp(struct btree_trans *trans,
 }
 
 static int do_rebalance_scan_indirect(struct btree_trans *trans,
+				      struct disk_reservation *res,
 				      struct bkey_s_c_reflink_p p,
 				      struct per_snapshot_io_opts *snapshot_io_opts,
 				      struct bch_inode_opts *opts)
@@ -1016,9 +1017,11 @@ static int do_rebalance_scan_indirect(struct btree_trans *trans,
 				      POS(0, idx),
 				      BTREE_ITER_intent|
 				      BTREE_ITER_not_extents, k,
-				      NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+				      res, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 		if (bpos_ge(bkey_start_pos(k.k), POS(0, end)))
 			break;
+
+		bch2_disk_reservation_put(trans->c, res);
 		bch2_update_rebalance_opts(trans, snapshot_io_opts, opts, &iter, k,
 					   SET_NEEDS_REBALANCE_opt_change_indirect);
 	})));
@@ -1044,6 +1047,8 @@ static int do_rebalance_scan_btree(struct moving_context *ctxt,
 				     BTREE_ITER_not_extents|
 				     BTREE_ITER_all_snapshots);
 
+	CLASS(disk_reservation, res)(c);
+
 	return for_each_btree_key_max_continue(trans, iter, end, 0, k, ({
 		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
 
@@ -1052,16 +1057,18 @@ static int do_rebalance_scan_btree(struct moving_context *ctxt,
 
 		struct bch_inode_opts opts;
 
+		bch2_disk_reservation_put(c, &res.r);
+
 		bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts) ?:
 		bch2_update_rebalance_opts(trans, snapshot_io_opts, &opts, &iter, k,
 					   SET_NEEDS_REBALANCE_opt_change) ?:
 		(start.inode &&
 		 k.k->type == KEY_TYPE_reflink_p &&
 		 REFLINK_P_MAY_UPDATE_OPTIONS(bkey_s_c_to_reflink_p(k).v)
-		 ? do_rebalance_scan_indirect(trans, bkey_s_c_to_reflink_p(k),
+		 ? do_rebalance_scan_indirect(trans, &res.r, bkey_s_c_to_reflink_p(k),
 					      snapshot_io_opts, &opts)
 		 : 0) ?:
-		bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
+		bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
 	}));
 }
 
@@ -1104,15 +1111,18 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 
 		bch2_btree_write_buffer_flush_sync(trans);
 
+		CLASS(disk_reservation, res)(c);
+
 		try(for_each_btree_key_max_commit(trans, iter, BTREE_ID_backpointers,
 						  POS(dev, 0), POS(dev, U64_MAX),
 						  BTREE_ITER_prefetch, k,
-						  NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+						  &res.r, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 			ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
 
 			if (k.k->type != KEY_TYPE_backpointer)
 				continue;
 
+			bch2_disk_reservation_put(c, &res.r);
 			do_rebalance_scan_bp(trans, bkey_s_c_to_backpointer(k), &last_flushed);
 		})));
 	} else {
@@ -1548,12 +1558,16 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 			   BIT_ULL(BTREE_ID_extents)|
 			   BIT_ULL(BTREE_ID_reflink));
 
+	CLASS(disk_reservation, res)(c);
+
 	struct bpos cur_pos = POS_MIN;
 
 	while (true) {
+		bch2_disk_reservation_put(c, &res.r);
+
 		try(progress_update_iter(trans, &progress, &extent_iter) ?:
 		    wb_maybe_flush_inc(&last_flushed) ?:
-		    commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+		    commit_do(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc,
 				 check_rebalance_work_one(trans, &extent_iter, &rb_w, &rb_h, &rb_p,
 							  &snapshot_io_opts, &last_flushed, &cur_pos)));
 		if (bpos_eq(cur_pos, SPOS_MAX))
