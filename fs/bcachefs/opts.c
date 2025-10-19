@@ -546,6 +546,7 @@ int bch2_opt_hook_pre_set(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum b
 	}
 
 	if (change &&
+	    test_bit(BCH_FS_started, &c->flags) &&
 	    (id == Opt_foreground_target ||
 	     id == Opt_background_target ||
 	     id == Opt_promote_target ||
@@ -569,13 +570,14 @@ int bch2_opts_hooks_pre_set(struct bch_fs *c)
 void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 			    enum bch_opt_id id, u64 v)
 {
-	if (id == Opt_foreground_target ||
-	    id == Opt_background_target ||
-	    id == Opt_promote_target ||
-	    id == Opt_compression ||
-	    id == Opt_background_compression ||
-	    id == Opt_data_checksum ||
-	    id == Opt_data_replicas) {
+	if (test_bit(BCH_FS_started, &c->flags) &&
+	    (id == Opt_foreground_target ||
+	     id == Opt_background_target ||
+	     id == Opt_promote_target ||
+	     id == Opt_compression ||
+	     id == Opt_background_compression ||
+	     id == Opt_data_checksum ||
+	     id == Opt_data_replicas)) {
 		bch2_set_rebalance_needs_scan(c, inum);
 		bch2_rebalance_wakeup(c);
 	}
