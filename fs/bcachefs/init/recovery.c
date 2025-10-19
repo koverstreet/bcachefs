@@ -368,6 +368,7 @@ int bch2_journal_replay(struct bch_fs *c)
 
 		ret = commit_do(trans, NULL, NULL,
 				BCH_TRANS_COMMIT_no_enospc|
+				BCH_TRANS_COMMIT_no_skip_noops|
 				BCH_TRANS_COMMIT_journal_reclaim|
 				BCH_TRANS_COMMIT_skip_accounting_apply|
 				BCH_TRANS_COMMIT_no_journal_res|
@@ -400,6 +401,7 @@ int bch2_journal_replay(struct bch_fs *c)
 		ret = c->journal.watermark ? -1 :
 			commit_do(trans, NULL, NULL,
 				  BCH_TRANS_COMMIT_no_enospc|
+				  BCH_TRANS_COMMIT_no_skip_noops|
 				  BCH_TRANS_COMMIT_journal_reclaim|
 				  BCH_TRANS_COMMIT_skip_accounting_apply|
 				  (!k->allocated ? BCH_TRANS_COMMIT_no_journal_res : 0),
@@ -429,6 +431,7 @@ int bch2_journal_replay(struct bch_fs *c)
 
 		ret = commit_do(trans, NULL, NULL,
 				BCH_TRANS_COMMIT_no_enospc|
+				BCH_TRANS_COMMIT_no_skip_noops|
 				BCH_TRANS_COMMIT_skip_accounting_apply|
 				(!k->allocated
 				 ? BCH_TRANS_COMMIT_no_journal_res|BCH_WATERMARK_reclaim
