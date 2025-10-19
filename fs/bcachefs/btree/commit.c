@@ -67,11 +67,8 @@ static void verify_update_old_key(struct btree_trans *trans, struct btree_insert
 			k = bkey_i_to_s_c(j_k);
 	}
 
-	u = *k.k;
-	u.needs_whiteout = i->old_k.needs_whiteout;
-
-	BUG_ON(memcmp(&i->old_k, &u, sizeof(struct bkey)));
-	BUG_ON(i->old_v != k.v);
+	struct bkey_s_c old = { &i->old_k, i->old_v };
+	BUG_ON(!bkey_and_val_eq(k, old));
 #endif
 }
 
