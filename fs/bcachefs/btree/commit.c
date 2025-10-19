@@ -1053,6 +1053,29 @@ int __bch2_trans_commit(struct btree_trans *trans, enum bch_trans_commit_flags f
 	if (ret)
 		goto out_reset;
 
+	if (likely(!(flags & BCH_TRANS_COMMIT_no_skip_noops))) {
+		struct btree_insert_entry *dst = trans->updates;
+		trans_for_each_update(trans, i) {
+			struct bkey_s_c old = { &i->old_k, i->old_v };
+
+			/*
+			 * We can't drop noop inode updates because fsync relies
+			 * on grabbing the journal_seq of the latest update from
+			 * the inode - and the journal_seq isn't updated until
+			 * the atomic trigger:
+			 */
+			if (likely(i->bkey_type == BKEY_TYPE_inodes ||
+				   !bkey_and_val_eq(old, bkey_i_to_s_c(i->k))))
+				*dst++ = *i;
+			else
+				bch2_path_put(trans, i->path, true);
+		}
+		trans->nr_updates = dst - trans->updates;
+
+		if (!bch2_trans_has_updates(trans))
+			goto out_reset;
+	}
+
 	if (!(flags & BCH_TRANS_COMMIT_no_check_rw) &&
 	    unlikely(!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_trans))) {
 		if (unlikely(!test_bit(BCH_FS_may_go_rw, &c->flags)))

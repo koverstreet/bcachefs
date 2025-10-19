@@ -135,6 +135,7 @@ static noinline int wb_flush_one_slowpath(struct btree_trans *trans,
 				  BCH_TRANS_COMMIT_no_enospc|
 				  BCH_TRANS_COMMIT_no_check_rw|
 				  BCH_TRANS_COMMIT_no_journal_res|
+				  BCH_TRANS_COMMIT_no_skip_noops|
 				  BCH_TRANS_COMMIT_journal_reclaim);
 }
 
