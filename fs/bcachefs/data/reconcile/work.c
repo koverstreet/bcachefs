@@ -917,7 +917,7 @@ static int do_reconcile_scan_bps(struct moving_context *ctxt,
 		CLASS(disk_reservation, res)(c);
 		(kthread_should_stop() || !bch2_reconcile_enabled(c)) ? 1 :
 		do_reconcile_scan_bp(trans, s, bp, last_flushed) ?:
-		bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
+		bch2_trans_commit(trans, &res.r, NULL, 0);
 	}));
 }
 
@@ -938,7 +938,7 @@ static int do_reconcile_scan_indirect(struct moving_context *ctxt,
 				      POS(0, idx),
 				      BTREE_ITER_intent|
 				      BTREE_ITER_not_extents, k,
-				      res, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+				      res, NULL, 0, ({
 		if (bpos_ge(bkey_start_pos(k.k), POS(0, end)))
 			break;
 
@@ -993,7 +993,7 @@ static int do_reconcile_scan_btree(struct moving_context *ctxt,
 		 ? do_reconcile_scan_indirect(ctxt, s, &res.r, bkey_s_c_to_reflink_p(k),
 					      snapshot_io_opts, &opts)
 		 : 0) ?:
-		bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
+		bch2_trans_commit(trans, &res.r, NULL, 0);
 	}));
 }
 
