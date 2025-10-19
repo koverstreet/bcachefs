@@ -764,11 +764,20 @@ static int can_write_extent(struct bch_fs *c, struct data_update *m)
 	}
 
 	if (!nr_replicas) {
-		if (trace) {
-			prt_printf(&buf, "\nnr_replicas %u < %u", nr_replicas, m->op.nr_replicas);
-			trace_data_update_fail(c, buf.buf);
+		/*
+		 * If it's a promote that's failing because the promote target
+		 * is full - we expect that in normal operation; it'll still
+		 * show up in io_read_nopromote and error_throw:
+		 */
+		if (m->opts.type != BCH_DATA_UPDATE_promote) {
+			if (trace) {
+				prt_printf(&buf, " - got replicas %u\n", nr_replicas);
+				bch2_data_update_to_text(&buf, m);
+				prt_printf(&buf, "\nret:\t%s\n", bch2_err_str(-BCH_ERR_data_update_fail_no_rw_devs));
+				trace_data_update_fail(c, buf.buf);
+			}
+			count_event(c, data_update_fail);
 		}
-		count_event(c, data_update_fail);
 
 		return bch_err_throw(c, data_update_fail_no_rw_devs);
 	}
