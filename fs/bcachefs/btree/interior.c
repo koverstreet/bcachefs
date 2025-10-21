@@ -2390,28 +2390,17 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 						 BTREE_TRIGGER_transactional));
 		}
 
-		CLASS(btree_iter_uninit, iter2)(trans);
-		struct btree *parent = btree_node_parent(btree_iter_path(trans, iter), b);
-		if (parent) {
-			bch2_trans_copy_iter(&iter2, iter);
+		if (!btree_node_is_root(c, b)) {
+			CLASS(btree_node_iter, parent_iter)(trans,
+							    b->c.btree_id,
+							    b->key.k.p,
+							    0,
+							    b->c.level + 1,
+							    BTREE_ITER_intent);
 
-			iter2.path = bch2_btree_path_make_mut(trans, iter2.path,
-					iter2.flags & BTREE_ITER_intent,
-					_THIS_IP_);
-
-			struct btree_path *path2 = btree_iter_path(trans, &iter2);
-			BUG_ON(path2->level != b->c.level);
-			BUG_ON(!bpos_eq(path2->pos, new_key->k.p));
-
-			btree_path_set_level_up(trans, path2);
-
-			trans->paths_sorted = false;
-
-			try(bch2_btree_iter_traverse(&iter2));
-			try(bch2_trans_update(trans, &iter2, new_key, BTREE_TRIGGER_norun));
+			try(bch2_btree_iter_traverse(&parent_iter));
+			try(bch2_trans_update(trans, &parent_iter, new_key, BTREE_TRIGGER_norun));
 		} else {
-			BUG_ON(!btree_node_is_root(c, b));
-
 			struct jset_entry *e = errptr_try(bch2_trans_jset_entry_alloc(trans,
 									jset_u64s(new_key->k.u64s)));
 
