@@ -689,14 +689,14 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 	trans_for_each_update(trans, i)
 		if (btree_node_type_has_atomic_triggers(i->bkey_type)) {
 			ret = run_one_mem_trigger(trans, i, BTREE_TRIGGER_atomic|i->flags);
-			if (ret)
-				goto fatal_err;
+			if (bch2_fs_fatal_err_on(ret, c, "fatal error in transaction commit: %s", bch2_err_str(ret)))
+				return ret;
 		}
 
 	if (unlikely(c->gc_pos.phase)) {
 		ret = bch2_trans_commit_run_gc_triggers(trans);
-		if  (ret)
-			goto fatal_err;
+		if (bch2_fs_fatal_err_on(ret, c, "fatal error in transaction commit: %s", bch2_err_str(ret)))
+			return ret;
 	}
 
 	struct bkey_validate_context validate_context = { .from	= BKEY_VALIDATE_commit };
@@ -713,7 +713,9 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 		if (unlikely(ret)) {
 			bch2_trans_inconsistent(trans, "invalid journal entry on insert from %s\n",
 						trans->fn);
-			goto fatal_err;
+			bch2_sb_error_count(c, BCH_FSCK_ERR_validate_error_in_commit);
+			__WARN();
+			return ret;
 		}
 	}
 
@@ -725,7 +727,9 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 		if (unlikely(ret)){
 			bch2_trans_inconsistent(trans, "invalid bkey on insert from %s -> %ps\n",
 						trans->fn, (void *) i->ip_allocated);
-			goto fatal_err;
+			bch2_sb_error_count(c, BCH_FSCK_ERR_validate_error_in_commit);
+			__WARN();
+			return ret;
 		}
 		btree_insert_entry_checks(trans, i);
 	}
@@ -792,9 +796,6 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 	}
 
 	return 0;
-fatal_err:
-	bch2_fs_fatal_error(c, "fatal error in transaction commit: %s", bch2_err_str(ret));
-	return ret;
 }
 
 static noinline void bch2_drop_overwrites_from_journal(struct btree_trans *trans)
