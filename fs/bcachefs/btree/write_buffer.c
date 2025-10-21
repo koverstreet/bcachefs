@@ -143,7 +143,7 @@ static inline int wb_flush_one(struct btree_trans *trans, struct btree_iter *ite
 			       struct btree_write_buffered_key *wb,
 			       bool *write_locked,
 			       bool *accounting_accumulated,
-			       size_t *fast)
+			       size_t *fast, size_t *noop)
 {
 	struct btree_path *path;
 
@@ -171,6 +171,21 @@ static inline int wb_flush_one(struct btree_trans *trans, struct btree_iter *ite
 		iter->path = __bch2_btree_path_make_mut(trans, iter->path, true, _THIS_IP_);
 
 	path = btree_iter_path(trans, iter);
+
+	struct btree_path_level *l = path_l(path);
+	struct bkey_packed *old_p = bch2_btree_node_iter_peek_all(&l->iter, l->b);
+	if (old_p && bkey_cmp_left_packed(l->b, old_p, &wb->k.k.p))
+		old_p = NULL;
+
+	struct bkey old_u;
+	struct bkey_s_c old = old_p
+		? bkey_disassemble(l->b, old_p, &old_u)
+		: bkey_s_c_null;
+
+	if (old.k && bkey_and_val_eq(old, bkey_i_to_s_c(&wb->k))) {
+		(*noop)++;
+		return 0;
+	}
 
 	if (!*write_locked) {
 		try(bch2_btree_node_lock_write(trans, path, &path->l[0].b->c));
@@ -283,7 +298,7 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 	struct journal *j = &c->journal;
 	struct btree_write_buffer *wb = &c->btree_write_buffer;
 	struct btree_iter iter = { NULL };
-	size_t overwritten = 0, fast = 0, slowpath = 0, could_not_insert = 0;
+	size_t overwritten = 0, fast = 0, noop = 0, slowpath = 0, could_not_insert = 0;
 	bool write_locked = false;
 	bool accounting_replay_done = test_bit(BCH_FS_accounting_replay_done, &c->flags);
 	int ret = 0;
@@ -395,7 +410,7 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 			}
 
 			ret = wb_flush_one(trans, &iter, k, &write_locked,
-					   &accounting_accumulated, &fast);
+					   &accounting_accumulated, &fast, &noop);
 			if (!write_locked)
 				bch2_trans_begin(trans);
 		} while (bch2_err_matches(ret, BCH_ERR_transaction_restart));
@@ -496,7 +511,7 @@ err:
 
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_write_buffer_flush], start_time);
 	bch2_fs_fatal_err_on(ret, c, "%s", bch2_err_str(ret));
-	trace_write_buffer_flush(trans, nr_flushing, overwritten, fast);
+	trace_write_buffer_flush(trans, nr_flushing, overwritten, fast, noop);
 	return ret;
 }
 
