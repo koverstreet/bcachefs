@@ -658,11 +658,11 @@ int bch2_btree_write_buffer_tryflush(struct btree_trans *trans)
  */
 int bch2_btree_write_buffer_maybe_flush(struct btree_trans *trans,
 					struct bkey_s_c referring_k,
-					struct bkey_buf *last_flushed)
+					struct wb_maybe_flush *f)
 {
 	struct bch_fs *c = trans->c;
 
-	if (!bkey_and_val_eq(referring_k, bkey_i_to_s_c(last_flushed->k))) {
+	if (!bkey_and_val_eq(referring_k, bkey_i_to_s_c(f->last_flushed.k))) {
 		if (trace_write_buffer_maybe_flush_enabled()) {
 			CLASS(printbuf, buf)();
 
@@ -681,7 +681,8 @@ int bch2_btree_write_buffer_maybe_flush(struct btree_trans *trans,
 
 		try(bch2_btree_write_buffer_flush_sync(trans));
 
-		bch2_bkey_buf_copy(last_flushed, tmp.k);
+		bch2_bkey_buf_copy(&f->last_flushed, tmp.k);
+		f->nr_flushes++;
 
 		/* can we avoid the unconditional restart? */
 		trace_and_count(c, trans_restart_write_buffer_flush, trans, _RET_IP_);
