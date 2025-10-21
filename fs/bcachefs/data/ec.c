@@ -1035,7 +1035,7 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 				   struct bpos bucket, u8 gen,
 				   struct ec_stripe_buf *s,
 				   struct bkey_s_c_backpointer bp,
-				   struct bkey_buf *last_flushed)
+				   struct wb_maybe_flush *last_flushed)
 {
 	struct bch_stripe *v = &bkey_i_to_stripe(&s->key)->v;
 	struct bch_fs *c = trans->c;
@@ -1123,8 +1123,8 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 
 	struct bpos bucket_pos = PTR_BUCKET_POS(ca, &ptr);
 
-	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&last_flushed);
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
 
 	return for_each_btree_key_max_commit(trans, bp_iter, BTREE_ID_backpointers,
 			bucket_pos_to_bp_start(ca, bucket_pos),
@@ -1142,6 +1142,7 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 		if (bp.v->btree_id == BTREE_ID_stripes)
 			continue;
 
+		wb_maybe_flush_inc(&last_flushed);
 		ec_stripe_update_extent(trans, ca, bucket_pos, ptr.gen, s, bp, &last_flushed);
 	}));
 }
@@ -2243,7 +2244,7 @@ int bch2_fs_ec_init(struct bch_fs *c)
 
 static int bch2_check_stripe_to_lru_ref(struct btree_trans *trans,
 					struct bkey_s_c k,
-					struct bkey_buf *last_flushed)
+					struct wb_maybe_flush *last_flushed)
 {
 	if (k.k->type != KEY_TYPE_stripe)
 		return 0;
@@ -2258,8 +2259,8 @@ static int bch2_check_stripe_to_lru_ref(struct btree_trans *trans,
 
 int bch2_check_stripe_to_lru_refs(struct btree_trans *trans)
 {
-	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&last_flushed);
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
 
 	return for_each_btree_key_commit(trans, iter, BTREE_ID_stripes,
 				POS_MIN, BTREE_ITER_prefetch, k,

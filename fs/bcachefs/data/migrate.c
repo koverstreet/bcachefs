@@ -98,7 +98,7 @@ static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
 static int bch2_dev_btree_drop_key(struct btree_trans *trans,
 				   struct bkey_s_c_backpointer bp,
 				   unsigned dev_idx,
-				   struct bkey_buf *last_flushed,
+				   struct wb_maybe_flush *last_flushed,
 				   unsigned flags, struct printbuf *err)
 {
 	CLASS(btree_iter_uninit, iter)(trans);
@@ -185,7 +185,7 @@ static int bch2_dev_metadata_drop(struct bch_fs *c,
 }
 
 static int data_drop_bp(struct btree_trans *trans, unsigned dev_idx,
-			struct bkey_s_c_backpointer bp, struct bkey_buf *last_flushed,
+			struct bkey_s_c_backpointer bp, struct wb_maybe_flush *last_flushed,
 			unsigned flags, struct printbuf *err)
 {
 	CLASS(btree_iter_uninit, iter)(trans);
@@ -218,8 +218,8 @@ int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, unsigned dev_idx, unsig
 {
 	CLASS(btree_trans, trans)(c);
 
-	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&last_flushed);
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
 
 	return bch2_btree_write_buffer_flush_sync(trans) ?:
 		for_each_btree_key_max_commit(trans, iter, BTREE_ID_backpointers,
@@ -229,6 +229,7 @@ int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, unsigned dev_idx, unsig
 			if (k.k->type != KEY_TYPE_backpointer)
 				continue;
 
+			wb_maybe_flush_inc(&last_flushed);
 			data_drop_bp(trans, dev_idx, bkey_s_c_to_backpointer(k),
 				     &last_flushed, flags, err);
 
