@@ -907,7 +907,7 @@ int bch2_fs_rebalance_init(struct bch_fs *c)
 static int check_rebalance_work_one(struct btree_trans *trans,
 				    struct btree_iter *extent_iter,
 				    struct btree_iter *rebalance_iter,
-				    struct bkey_buf *last_flushed)
+				    struct wb_maybe_flush *last_flushed)
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
@@ -983,8 +983,8 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 	CLASS(btree_iter, rebalance_iter)(trans, BTREE_ID_rebalance_work, POS_MIN,
 					  BTREE_ITER_prefetch);
 
-	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&last_flushed);
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
 
 	struct progress_indicator_state progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_rebalance_work));
@@ -992,6 +992,7 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 	int ret = 0;
 	while (!(ret = lockrestart_do(trans,
 			progress_update_iter(trans, &progress, &rebalance_iter) ?:
+			wb_maybe_flush_inc(&last_flushed) ?:
 			check_rebalance_work_one(trans, &extent_iter, &rebalance_iter, &last_flushed))))
 	       ;
 

@@ -1234,7 +1234,7 @@ put_ref:
 static int invalidate_one_bp(struct btree_trans *trans,
 			     struct bch_dev *ca,
 			     struct bkey_s_c_backpointer bp,
-			     struct bkey_buf *last_flushed)
+			     struct wb_maybe_flush *last_flushed)
 {
 	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bkey_try(bch2_backpointer_get_key(trans, bp, &iter, 0, last_flushed));
@@ -1252,7 +1252,7 @@ static int invalidate_one_bucket_by_bps(struct btree_trans *trans,
 					struct bch_dev *ca,
 					struct bpos bucket,
 					u8 gen,
-					struct bkey_buf *last_flushed)
+					struct wb_maybe_flush *last_flushed)
 {
 	struct bpos bp_start	= bucket_pos_to_bp_start(ca,	bucket);
 	struct bpos bp_end	= bucket_pos_to_bp_end(ca,	bucket);
@@ -1281,7 +1281,7 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 				 struct bch_dev *ca,
 				 struct btree_iter *lru_iter,
 				 struct bkey_s_c lru_k,
-				 struct bkey_buf *last_flushed,
+				 struct wb_maybe_flush *last_flushed,
 				 s64 *nr_to_invalidate)
 {
 	struct bch_fs *c = trans->c;
@@ -1364,8 +1364,8 @@ static void bch2_do_invalidates_work(struct work_struct *work)
 	CLASS(btree_trans, trans)(c);
 	int ret = 0;
 
-	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&last_flushed);
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
 
 	ret = bch2_btree_write_buffer_tryflush(trans);
 	if (ret)
@@ -1398,6 +1398,7 @@ restart_err:
 		if (ret)
 			break;
 
+		wb_maybe_flush_inc(&last_flushed);
 		bch2_btree_iter_advance(&iter);
 	}
 	bch2_trans_iter_exit(&iter);

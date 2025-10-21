@@ -80,7 +80,7 @@ int bch2_lru_check_set(struct btree_trans *trans,
 		       u64 dev_bucket,
 		       u64 time,
 		       struct bkey_s_c referring_k,
-		       struct bkey_buf *last_flushed)
+		       struct wb_maybe_flush *last_flushed)
 {
 	struct bch_fs *c = trans->c;
 	int ret = 0;
@@ -168,7 +168,7 @@ static u64 bkey_lru_type_idx(struct bch_fs *c,
 static int bch2_check_lru_key(struct btree_trans *trans,
 			      struct btree_iter *lru_iter,
 			      struct bkey_s_c lru_k,
-			      struct bkey_buf *last_flushed)
+			      struct wb_maybe_flush *last_flushed)
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf1)();
@@ -202,8 +202,8 @@ fsck_err:
 
 int bch2_check_lrus(struct bch_fs *c)
 {
-	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&last_flushed);
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
 
 	struct progress_indicator_state progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_lru));
@@ -213,6 +213,7 @@ int bch2_check_lrus(struct bch_fs *c)
 				BTREE_ID_lru, POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 		progress_update_iter(trans, &progress, &iter) ?:
+		wb_maybe_flush_inc(&last_flushed) ?:
 		bch2_check_lru_key(trans, &iter, k, &last_flushed);
 	}));
 }

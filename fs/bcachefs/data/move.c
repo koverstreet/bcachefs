@@ -572,8 +572,8 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 	struct bpos bp_start	= bucket_pos_to_bp_start(ca, POS(dev, bucket_start));
 	struct bpos bp_end	= bucket_pos_to_bp_end(ca, POS(dev, bucket_end));
 
-	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&last_flushed);
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
 
 	/*
 	 * We're not run in a context that handles transaction restarts:

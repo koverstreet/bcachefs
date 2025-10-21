@@ -3,6 +3,7 @@
 #define _BCACHEFS_BTREE_WRITE_BUFFER_H
 
 #include "btree/bkey.h"
+#include "btree/bkey_buf.h"
 #include "alloc/accounting.h"
 
 static inline bool bch2_btree_write_buffer_should_flush(struct bch_fs *c)
@@ -25,8 +26,30 @@ bool bch2_btree_write_buffer_flush_going_ro(struct bch_fs *);
 int bch2_btree_write_buffer_flush_nocheck_rw(struct btree_trans *);
 int bch2_btree_write_buffer_tryflush(struct btree_trans *);
 
-struct bkey_buf;
-int bch2_btree_write_buffer_maybe_flush(struct btree_trans *, struct bkey_s_c, struct bkey_buf *);
+struct wb_maybe_flush {
+	struct bkey_buf	last_flushed;
+	u64		nr_flushes;
+	u64		nr_done;
+};
+
+static inline void wb_maybe_flush_exit(struct wb_maybe_flush *f)
+{
+	bch2_bkey_buf_exit(&f->last_flushed);
+}
+
+static inline void wb_maybe_flush_init(struct wb_maybe_flush *f)
+{
+	memset(f, 0, sizeof(*f));
+	bch2_bkey_buf_init(&f->last_flushed);
+}
+
+static inline int wb_maybe_flush_inc(struct wb_maybe_flush *f)
+{
+	f->nr_done++;
+	return 0;
+}
+
+int bch2_btree_write_buffer_maybe_flush(struct btree_trans *, struct bkey_s_c, struct wb_maybe_flush *);
 
 struct journal_keys_to_wb {
 	struct btree_write_buffer_keys	*wb;

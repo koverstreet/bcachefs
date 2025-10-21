@@ -6,7 +6,6 @@
 #include "alloc/backpointers.h"
 
 #include "btree/bbpos.h"
-#include "btree/bkey_buf.h"
 #include "btree/cache.h"
 #include "btree/update.h"
 #include "btree/interior.h"
@@ -187,7 +186,7 @@ static int bch2_backpointer_del(struct btree_trans *trans, struct bpos pos)
 
 static inline int bch2_backpointers_maybe_flush(struct btree_trans *trans,
 					 struct bkey_s_c visiting_k,
-					 struct bkey_buf *last_flushed)
+					 struct wb_maybe_flush *last_flushed)
 {
 	return !static_branch_unlikely(&bch2_backpointers_no_use_write_buffer)
 		? bch2_btree_write_buffer_maybe_flush(trans, visiting_k, last_flushed)
@@ -197,7 +196,7 @@ static inline int bch2_backpointers_maybe_flush(struct btree_trans *trans,
 static int backpointer_target_not_found(struct btree_trans *trans,
 				  struct bkey_s_c_backpointer bp,
 				  struct bkey_s_c target_k,
-				  struct bkey_buf *last_flushed,
+				  struct wb_maybe_flush *last_flushed,
 				  bool commit)
 {
 	struct bch_fs *c = trans->c;
@@ -260,7 +259,7 @@ fsck_err:
 static struct btree *__bch2_backpointer_get_node(struct btree_trans *trans,
 						 struct bkey_s_c_backpointer bp,
 						 struct btree_iter *iter,
-						 struct bkey_buf *last_flushed,
+						 struct wb_maybe_flush *last_flushed,
 						 bool commit)
 {
 	struct bch_fs *c = trans->c;
@@ -306,7 +305,7 @@ static struct bkey_s_c __bch2_backpointer_get_key(struct btree_trans *trans,
 						  struct bkey_s_c_backpointer bp,
 						  struct btree_iter *iter,
 						  unsigned iter_flags,
-						  struct bkey_buf *last_flushed,
+						  struct wb_maybe_flush *last_flushed,
 						  bool commit)
 {
 	struct bch_fs *c = trans->c;
@@ -358,7 +357,7 @@ static struct bkey_s_c __bch2_backpointer_get_key(struct btree_trans *trans,
 struct btree *bch2_backpointer_get_node(struct btree_trans *trans,
 					struct bkey_s_c_backpointer bp,
 					struct btree_iter *iter,
-					struct bkey_buf *last_flushed)
+					struct wb_maybe_flush *last_flushed)
 {
 	return __bch2_backpointer_get_node(trans, bp, iter, last_flushed, true);
 }
@@ -367,13 +366,13 @@ struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *trans,
 					 struct bkey_s_c_backpointer bp,
 					 struct btree_iter *iter,
 					 unsigned iter_flags,
-					 struct bkey_buf *last_flushed)
+					 struct wb_maybe_flush *last_flushed)
 {
 	return __bch2_backpointer_get_key(trans, bp, iter, iter_flags, last_flushed, true);
 }
 
 static int bch2_check_backpointer_has_valid_bucket(struct btree_trans *trans, struct bkey_s_c k,
-						   struct bkey_buf *last_flushed)
+						   struct wb_maybe_flush *last_flushed)
 {
 	if (k.k->type != KEY_TYPE_backpointer)
 		return 0;
@@ -415,11 +414,10 @@ fsck_err:
 int bch2_check_btree_backpointers(struct bch_fs *c)
 {
 	struct progress_indicator_state progress;
-
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_backpointers));
 
-	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&last_flushed);
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
 
 	CLASS(btree_trans, trans)(c);
 	return for_each_btree_key_commit(trans, iter,
@@ -431,9 +429,9 @@ int bch2_check_btree_backpointers(struct bch_fs *c)
 }
 
 struct extents_to_bp_state {
-	struct bpos	bp_start;
-	struct bpos	bp_end;
-	struct bkey_buf last_flushed;
+	struct bpos		bp_start;
+	struct bpos		bp_end;
+	struct wb_maybe_flush	last_flushed;
 };
 
 static int drop_dev_and_update(struct btree_trans *trans, enum btree_id btree,
@@ -790,6 +788,7 @@ static int bch2_check_extents_to_backpointers_pass(struct btree_trans *trans,
 
 			try(for_each_btree_key_continue(trans, iter, 0, k, ({
 				bch2_progress_update_iter(trans, &progress, &iter, "extents_to_backpointers") ?:
+				wb_maybe_flush_inc(&s->last_flushed) ?:
 				check_extent_to_backpointers(trans, s, btree_id, level, k) ?:
 				bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 			})));
@@ -825,11 +824,11 @@ static int data_type_to_alloc_counter(enum bch_data_type t)
 }
 
 static int check_bucket_backpointers_to_extents(struct btree_trans *, struct bch_dev *, struct bpos,
-						struct bkey_buf *last_flushed);
+						struct wb_maybe_flush *last_flushed);
 
 static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct bkey_s_c alloc_k,
 					     bool *had_mismatch,
-					     struct bkey_buf *last_flushed,
+					     struct wb_maybe_flush *last_flushed,
 					     struct bpos *last_pos,
 					     unsigned *nr_iters)
 {
@@ -1100,7 +1099,7 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 	struct bpos last_pos = POS_MIN;
 	unsigned nr_iters = 0;
 
-	bch2_bkey_buf_init(&s.last_flushed);
+	wb_maybe_flush_init(&s.last_flushed);
 
 	ret = for_each_btree_key(trans, iter, BTREE_ID_alloc,
 				 POS_MIN, BTREE_ITER_prefetch, k, ({
@@ -1159,7 +1158,7 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 		bch2_bucket_bitmap_free(&ca->bucket_backpointer_empty);
 	}
 err:
-	bch2_bkey_buf_exit(&s.last_flushed);
+	wb_maybe_flush_exit(&s.last_flushed);
 	bch2_btree_cache_unpin(c);
 	return ret;
 }
@@ -1167,7 +1166,7 @@ err:
 static int check_bucket_backpointer_pos_mismatch(struct btree_trans *trans,
 						 struct bpos bucket,
 						 bool *had_mismatch,
-						 struct bkey_buf *last_flushed)
+						 struct wb_maybe_flush *last_flushed)
 {
 	CLASS(btree_iter, alloc_iter)(trans, BTREE_ID_alloc, bucket, BTREE_ITER_cached);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&alloc_iter));
@@ -1182,7 +1181,7 @@ static int check_bucket_backpointer_pos_mismatch(struct btree_trans *trans,
 int bch2_check_bucket_backpointer_mismatch(struct btree_trans *trans,
 					   struct bch_dev *ca, u64 bucket,
 					   bool copygc,
-					   struct bkey_buf *last_flushed)
+					   struct wb_maybe_flush *last_flushed)
 {
 	struct bch_fs *c = trans->c;
 	bool had_mismatch;
@@ -1215,7 +1214,7 @@ static int check_one_backpointer(struct btree_trans *trans,
 				 struct bbpos start,
 				 struct bbpos end,
 				 struct bkey_s_c bp_k,
-				 struct bkey_buf *last_flushed)
+				 struct wb_maybe_flush *last_flushed)
 {
 	if (bp_k.k->type != KEY_TYPE_backpointer)
 		return 0;
@@ -1237,7 +1236,7 @@ static int check_one_backpointer(struct btree_trans *trans,
 
 static int check_bucket_backpointers_to_extents(struct btree_trans *trans,
 						struct bch_dev *ca, struct bpos bucket,
-						struct bkey_buf *last_flushed)
+						struct wb_maybe_flush *last_flushed)
 {
 	u32 restart_count = trans->restart_count;
 
@@ -1257,8 +1256,8 @@ static int bch2_check_backpointers_to_extents_pass(struct btree_trans *trans,
 						   struct bbpos start,
 						   struct bbpos end)
 {
-	struct bkey_buf last_flushed __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&last_flushed);
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
 
 	struct progress_indicator_state progress;
 	bch2_progress_init(&progress, trans->c, BIT_ULL(BTREE_ID_backpointers));

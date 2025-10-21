@@ -174,14 +174,14 @@ static inline void bch2_extent_ptr_to_bp(struct bch_fs *c,
 	};
 }
 
-struct bkey_buf;
+struct wb_maybe_flush;
 struct bkey_s_c bch2_backpointer_get_key(struct btree_trans *, struct bkey_s_c_backpointer,
-					 struct btree_iter *, unsigned, struct bkey_buf *);
+					 struct btree_iter *, unsigned, struct wb_maybe_flush *);
 struct btree *bch2_backpointer_get_node(struct btree_trans *, struct bkey_s_c_backpointer,
-					struct btree_iter *, struct bkey_buf *);
+					struct btree_iter *, struct wb_maybe_flush *);
 
 int bch2_check_bucket_backpointer_mismatch(struct btree_trans *, struct bch_dev *, u64,
-					   bool, struct bkey_buf *);
+					   bool, struct wb_maybe_flush *);
 
 int bch2_check_btree_backpointers(struct bch_fs *);
 int bch2_check_extents_to_backpointers(struct bch_fs *);
