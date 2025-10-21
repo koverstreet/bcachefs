@@ -1246,23 +1246,25 @@ TRACE_EVENT(key_cache_fill,
 );
 
 TRACE_EVENT(write_buffer_flush,
-	TP_PROTO(struct btree_trans *trans, size_t nr, size_t skipped, size_t fast),
-	TP_ARGS(trans, nr, skipped, fast),
+	TP_PROTO(struct btree_trans *trans, size_t nr, size_t skipped, size_t fast, size_t noop),
+	TP_ARGS(trans, nr, skipped, fast, noop),
 
 	TP_STRUCT__entry(
 		__field(size_t,		nr		)
 		__field(size_t,		skipped		)
 		__field(size_t,		fast		)
+		__field(size_t,		noop		)
 	),
 
 	TP_fast_assign(
 		__entry->nr	= nr;
 		__entry->skipped = skipped;
 		__entry->fast	= fast;
+		__entry->noop	= noop;
 	),
 
-	TP_printk("flushed %zu skipped %zu fast %zu",
-		  __entry->nr, __entry->skipped, __entry->fast)
+	TP_printk("flushed %zu skipped %zu fast %zu noop %zu",
+		  __entry->nr, __entry->skipped, __entry->fast, __entry->noop)
 );
 
 TRACE_EVENT(write_buffer_flush_sync,
