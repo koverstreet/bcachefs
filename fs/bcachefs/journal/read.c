@@ -390,15 +390,15 @@ static int journal_validate_key(struct bch_fs *c,
 		bch2_bkey_compat(from.level, from.btree, version, big_endian,
 				 write, NULL, bkey_to_packed(k));
 
-	ret = bch2_bkey_validate(c, bkey_i_to_s_c(k), from);
-	if (ret == -BCH_ERR_fsck_delete_bkey) {
+	if (journal_entry_err_on(ret = bch2_bkey_validate(c, bkey_i_to_s_c(k), from),
+				 c, version, jset, entry,
+				 journal_entry_bkey_bad_format,
+				 "bkey validate error %s", bch2_err_str(ret))) {
 		le16_add_cpu(&entry->u64s, -((u16) k->k.u64s));
 		memmove(k, bkey_next(k), next - (void *) bkey_next(k));
 		journal_entry_null_range(vstruct_next(entry), next);
 		return FSCK_DELETED_KEY;
 	}
-	if (ret)
-		goto fsck_err;
 
 	if (write)
 		bch2_bkey_compat(from.level, from.btree, version, big_endian,
