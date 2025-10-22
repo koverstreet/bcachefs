@@ -1132,8 +1132,8 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 
 		if ( bpos_eq(s.bp_start, POS_MIN) &&
 		    !bpos_eq(s.bp_end, SPOS_MAX))
-			bch_verbose(c, "%s(): alloc info does not fit in ram, running in multiple passes with %zu nodes per pass",
-				    __func__, btree_nodes_fit_in_ram(c));
+			bch_info(c, "%s(): alloc info does not fit in ram, running in multiple passes with %zu nodes per pass",
+				 __func__, btree_nodes_fit_in_ram(c));
 
 		if (!bpos_eq(s.bp_start, POS_MIN) ||
 		    !bpos_eq(s.bp_end, SPOS_MAX)) {
