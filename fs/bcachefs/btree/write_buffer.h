@@ -30,6 +30,7 @@ struct wb_maybe_flush {
 	struct bkey_buf	last_flushed;
 	u64		nr_flushes;
 	u64		nr_done;
+	bool		seen_error;
 };
 
 static inline void wb_maybe_flush_exit(struct wb_maybe_flush *f)
