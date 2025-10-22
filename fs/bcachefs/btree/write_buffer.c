@@ -662,6 +662,11 @@ int bch2_btree_write_buffer_maybe_flush(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
+	if (f->seen_error &&
+	    f->nr_flushes > 32 &&
+	    f->nr_flushes * 8 > f->nr_done)
+		return 0;
+
 	if (!bkey_and_val_eq(referring_k, bkey_i_to_s_c(f->last_flushed.k))) {
 		if (trace_write_buffer_maybe_flush_enabled()) {
 			CLASS(printbuf, buf)();
@@ -689,6 +694,7 @@ int bch2_btree_write_buffer_maybe_flush(struct btree_trans *trans,
 		return bch_err_throw(c, transaction_restart_write_buffer_flush);
 	}
 
+	f->seen_error = true;
 	return 0;
 }
 
