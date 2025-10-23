@@ -156,8 +156,7 @@ static struct journal_space __journal_space_available(struct journal *j, unsigne
 			(totalram_pages() * PAGE_SIZE) / 4 - j->dirty_entry_bytes);
 
 	for_each_member_device_rcu(c, ca, &c->rw_devs[BCH_DATA_journal]) {
-		if (!ca->journal.nr ||
-		    !ca->mi.durability)
+		if (!ca->journal.nr)
 			continue;
 
 		min_bucket_size = min(min_bucket_size, ca->mi.bucket_size);

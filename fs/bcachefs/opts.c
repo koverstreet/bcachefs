@@ -6,6 +6,7 @@
 #include "bcachefs.h"
 #include "opts.h"
 
+#include "alloc/background.h"
 #include "alloc/disk_groups.h"
 
 #include "data/compress.h"
@@ -599,6 +600,15 @@ void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 			}
 
 			bch2_write_super(c);
+		}
+		break;
+	case Opt_durability:
+		if (test_bit(BCH_FS_rw, &c->flags) &&
+		    ca &&
+		    bch2_dev_is_online(ca) &&
+		    ca->mi.state == BCH_MEMBER_STATE_rw) {
+			guard(rcu)();
+			bch2_dev_allocator_set_rw(c, ca, true);
 		}
 		break;
 	case Opt_version_upgrade:

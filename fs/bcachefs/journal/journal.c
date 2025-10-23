@@ -1147,14 +1147,7 @@ void __bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 	}
 
 	for_each_member_device_rcu(c, ca, &c->rw_devs[BCH_DATA_journal]) {
-		if (!ca->mi.durability)
-			continue;
-
 		struct journal_device *ja = &ca->journal;
-
-		if (!test_bit(ca->dev_idx, c->rw_devs[BCH_DATA_journal].d))
-			continue;
-
 		if (!ja->nr)
 			continue;
 
