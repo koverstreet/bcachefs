@@ -1344,7 +1344,7 @@ static bool bch2_fs_may_start(struct bch_fs *c)
 	}
 
 	CLASS(printbuf, err)();
-	bool ret = bch2_have_enough_devs(c, c->online_devs, flags, &err);
+	bool ret = bch2_have_enough_devs(c, c->online_devs, flags, &err, !c->opts.read_only);
 	if (!ret)
 		bch2_print_str(c, KERN_ERR, err.buf);
 	return ret;
