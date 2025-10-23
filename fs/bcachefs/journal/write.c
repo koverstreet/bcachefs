@@ -74,9 +74,7 @@ static void __journal_write_alloc(struct journal *j,
 		 * Check that we can use this device, and aren't already using
 		 * it:
 		 */
-		if (!ca->mi.durability ||
-		    ca->mi.state != BCH_MEMBER_STATE_rw ||
-		    !ja->nr ||
+		if (!ja->nr ||
 		    bch2_bkey_has_device_c(bkey_i_to_s_c(&w->key), ca->dev_idx) ||
 		    sectors > ja->sectors_free) {
 			enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_journal_write);

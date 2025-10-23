@@ -1594,13 +1594,22 @@ void bch2_dev_allocator_set_rw(struct bch_fs *c, struct bch_dev *ca, bool rw)
 {
 	/* BCH_DATA_free == all rw devs */
 
-	for (unsigned i = 0; i < ARRAY_SIZE(c->rw_devs); i++)
-		if (rw &&
-		    (i == BCH_DATA_free ||
-		     (ca->mi.data_allowed & BIT(i))))
-			set_bit(ca->dev_idx, c->rw_devs[i].d);
-		else
-			clear_bit(ca->dev_idx, c->rw_devs[i].d);
+	for (unsigned i = 0; i < ARRAY_SIZE(c->rw_devs); i++) {
+		bool data_type_rw = rw;
+
+		if (i != BCH_DATA_free &&
+		    !(ca->mi.data_allowed & BIT(i)))
+			data_type_rw = false;
+
+		if ((i == BCH_DATA_journal ||
+		     i == BCH_DATA_btree) &&
+		    !ca->mi.durability)
+			data_type_rw = false;
+
+		mod_bit(ca->dev_idx, c->rw_devs[i].d, data_type_rw);
+	}
+
+	c->rw_devs_change_count++;
 }
 
 /* device goes ro: */
@@ -1610,8 +1619,6 @@ void bch2_dev_allocator_remove(struct bch_fs *c, struct bch_dev *ca)
 
 	/* First, remove device from allocation groups: */
 	bch2_dev_allocator_set_rw(c, ca, false);
-
-	c->rw_devs_change_count++;
 
 	/*
 	 * Capacity is calculated based off of devices in allocation groups:
