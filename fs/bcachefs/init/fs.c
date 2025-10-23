@@ -879,8 +879,6 @@ static bool check_version_upgrade(struct bch_fs *c)
 noinline_for_stack
 static int bch2_fs_opt_version_init(struct bch_fs *c)
 {
-	int ret = 0;
-
 	if (c->opts.norecovery) {
 		c->opts.recovery_pass_last = c->opts.recovery_pass_last
 			? min(c->opts.recovery_pass_last, BCH_RECOVERY_PASS_snapshots_read)
@@ -948,9 +946,7 @@ static int bch2_fs_opt_version_init(struct bch_fs *c)
 		if (!ext)
 			return bch_err_throw(c, ENOSPC_sb);
 
-		ret = bch2_sb_members_v2_init(c);
-		if (ret)
-			return ret;
+		try(bch2_sb_members_v2_init(c));
 
 		__le64 now = cpu_to_le64(ktime_get_real_seconds());
 		scoped_guard(rcu)
