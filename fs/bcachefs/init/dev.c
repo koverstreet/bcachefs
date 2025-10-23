@@ -514,7 +514,8 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 		new_online_devs = c->online_devs;
 		__clear_bit(ca->dev_idx, new_online_devs.d);
 
-		return bch2_have_enough_devs(c, new_online_devs, flags, err);
+		return bch2_have_enough_devs(c, new_online_devs, flags, err,
+					     test_bit(BCH_FS_rw, &c->flags));
 	default:
 		BUG();
 	}

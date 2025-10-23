@@ -1171,13 +1171,13 @@ int bch2_write_super(struct bch_fs *c)
 	nr_wrote = dev_mask_nr(&sb_written);
 
 	can_mount_with_written =
-		bch2_have_enough_devs(c, sb_written, degraded_flags, NULL);
+		bch2_can_read_fs_with_devs(c, sb_written, degraded_flags, NULL);
 
 	for (unsigned i = 0; i < ARRAY_SIZE(sb_written.d); i++)
 		sb_written.d[i] = ~sb_written.d[i];
 
 	can_mount_without_written =
-		bch2_have_enough_devs(c, sb_written, degraded_flags, NULL);
+		bch2_can_read_fs_with_devs(c, sb_written, degraded_flags, NULL);
 
 	/*
 	 * If we would be able to mount _without_ the devices we successfully
