@@ -1085,6 +1085,11 @@ int bch2_fs_initialize(struct bch_fs *c)
 	scoped_guard(mutex, &c->sb_lock) {
 		SET_BCH_SB_INITIALIZED(c->disk_sb.sb, true);
 		SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
+
+		struct bch_sb_field_ext *ext = bch2_sb_field_get(c->disk_sb.sb, ext);
+		memset(ext->errors_silent, 0, sizeof(ext->errors_silent));
+		memset(ext->recovery_passes_required, 0, sizeof(ext->recovery_passes_required));
+
 		bch2_write_super(c);
 	}
 
