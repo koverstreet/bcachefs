@@ -541,7 +541,7 @@ void bch2_trans_iter_init_outlined(struct btree_trans *, struct btree_iter *,
 			  enum btree_iter_update_trigger_flags,
 			  unsigned long ip);
 
-static inline void bch2_trans_iter_init(struct btree_trans *trans,
+static inline void __bch2_trans_iter_init(struct btree_trans *trans,
 			  struct btree_iter *iter,
 			  enum btree_id btree, struct bpos pos,
 			  enum btree_iter_update_trigger_flags flags)
@@ -555,10 +555,19 @@ static inline void bch2_trans_iter_init(struct btree_trans *trans,
 		bch2_trans_iter_init_outlined(trans, iter, btree, pos, flags, _RET_IP_);
 }
 
+static inline void bch2_trans_iter_init(struct btree_trans *trans,
+			  struct btree_iter *iter,
+			  enum btree_id btree, struct bpos pos,
+			  enum btree_iter_update_trigger_flags flags)
+{
+	bch2_trans_iter_exit(iter);
+	__bch2_trans_iter_init(trans, iter, btree, pos, flags);
+}
+
 #define bch2_trans_iter_class_init(_trans, _btree, _pos, _flags)		\
 ({										\
 	struct btree_iter iter;							\
-	bch2_trans_iter_init(_trans, &iter, (_btree), (_pos), (_flags));	\
+	__bch2_trans_iter_init(_trans, &iter, (_btree), (_pos), (_flags));	\
 	iter;									\
 })
 
@@ -594,16 +603,28 @@ DEFINE_CLASS(btree_iter_copy, struct btree_iter,
 	     bch2_trans_iter_copy_class_init(src),
 	     struct btree_iter *src)
 
-void bch2_trans_node_iter_init(struct btree_trans *, struct btree_iter *,
-			       enum btree_id, struct bpos,
-			       unsigned, unsigned,
-			       enum btree_iter_update_trigger_flags);
+void __bch2_trans_node_iter_init(struct btree_trans *, struct btree_iter *,
+				 enum btree_id, struct bpos,
+				 unsigned, unsigned,
+				 enum btree_iter_update_trigger_flags);
+
+static inline void bch2_trans_node_iter_init(struct btree_trans *trans,
+			       struct btree_iter *iter,
+			       enum btree_id btree,
+			       struct bpos pos,
+			       unsigned locks_want,
+			       unsigned depth,
+			       enum btree_iter_update_trigger_flags flags)
+{
+	bch2_trans_iter_exit(iter);
+	__bch2_trans_node_iter_init(trans, iter, btree, pos, locks_want, depth, flags);
+}
 
 #define bch2_trans_node_iter_class_init(_trans, _btree, _pos, _locks_want, _depth, _flags)\
 ({										\
 	struct btree_iter iter;							\
-	bch2_trans_node_iter_init(_trans, &iter, (_btree), (_pos),		\
-				  (_locks_want), (_depth), (_flags));		\
+	__bch2_trans_node_iter_init(_trans, &iter, (_btree), (_pos),		\
+				    (_locks_want), (_depth), (_flags));		\
 	iter;									\
 })
 

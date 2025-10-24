@@ -301,7 +301,6 @@ static int bch2_journal_replay_key(struct btree_trans *trans,
 			return 0;
 		}
 
-		bch2_trans_iter_exit(&iter);
 		bch2_trans_node_iter_init(trans, &iter, k->btree_id, bk->k.p,
 					  BTREE_MAX_DEPTH, 0, iter_flags);
 

@@ -3179,13 +3179,13 @@ void bch2_trans_iter_init_outlined(struct btree_trans *trans,
 			       ip);
 }
 
-void bch2_trans_node_iter_init(struct btree_trans *trans,
-			       struct btree_iter *iter,
-			       enum btree_id btree_id,
-			       struct bpos pos,
-			       unsigned locks_want,
-			       unsigned depth,
-			       enum btree_iter_update_trigger_flags flags)
+void __bch2_trans_node_iter_init(struct btree_trans *trans,
+				 struct btree_iter *iter,
+				 enum btree_id btree_id,
+				 struct bpos pos,
+				 unsigned locks_want,
+				 unsigned depth,
+				 enum btree_iter_update_trigger_flags flags)
 {
 	flags |= BTREE_ITER_not_extents;
 	flags |= BTREE_ITER_snapshot_field;

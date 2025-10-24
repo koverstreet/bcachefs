@@ -343,7 +343,6 @@ static struct bkey_s_c __bch2_backpointer_get_key(struct btree_trans *trans,
 		int ret = backpointer_target_not_found(trans, bp, k, last_flushed, commit);
 		return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
 	} else {
-		bch2_trans_iter_exit(iter);
 		struct btree *b = __bch2_backpointer_get_node(trans, bp, iter, last_flushed, commit);
 		if (b == ERR_PTR(-BCH_ERR_backpointer_to_overwritten_btree_node))
 			return bkey_s_c_null;
