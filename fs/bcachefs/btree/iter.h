@@ -684,30 +684,6 @@ static __always_inline void *bch2_trans_kmalloc_nomemzero(struct btree_trans *tr
 	return bch2_trans_kmalloc_nomemzero_ip(trans, size, _THIS_IP_);
 }
 
-static inline struct bkey_s_c __bch2_bkey_get_iter(struct btree_trans *trans,
-				struct btree_iter *iter,
-				enum btree_id btree, struct bpos pos,
-				enum btree_iter_update_trigger_flags flags,
-				enum bch_bkey_type type)
-{
-	bch2_trans_iter_init(trans, iter, btree, pos, flags);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
-
-	if (!bkey_err(k) && type && k.k->type != type)
-		k = bkey_s_c_err(bch_err_throw(trans->c, ENOENT_bkey_type_mismatch));
-	if (unlikely(bkey_err(k)))
-		bch2_trans_iter_exit(iter);
-	return k;
-}
-
-static inline struct bkey_s_c bch2_bkey_get_iter(struct btree_trans *trans,
-				struct btree_iter *iter,
-				enum btree_id btree, struct bpos pos,
-				enum btree_iter_update_trigger_flags flags)
-{
-	return __bch2_bkey_get_iter(trans, iter, btree, pos, flags, 0);
-}
-
 static inline struct bkey_s_c __bch2_bkey_get_typed(struct btree_iter *iter,
 						    enum bch_bkey_type type)
 {
