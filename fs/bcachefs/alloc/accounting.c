@@ -701,9 +701,9 @@ static int bch2_disk_accounting_validate_late(struct btree_trans *trans,
 			 */
 			percpu_up_write(&c->mark_lock);
 			ret = bch2_mark_replicas(c, &r.e);
-			if (ret)
-				goto fsck_err;
 			percpu_down_write(&c->mark_lock);
+			if (ret)
+				return ret;
 		}
 		break;
 	}
@@ -725,16 +725,18 @@ invalid_device:
 		     (printbuf_reset(&buf),
 		      bch2_accounting_key_to_text(&buf, acc),
 		      buf.buf))) {
-		for (unsigned i = 0; i < nr; i++)
-			v[i] = -v[i];
+		bch2_u64s_neg(v, nr);
 
-		ret = commit_do(trans, NULL, NULL, 0,
-				bch2_disk_accounting_mod(trans, acc, v, nr, false)) ?:
+		percpu_up_write(&c->mark_lock);
+		int ret = bch2_disk_accounting_mod(trans, acc, v, nr, false) ?:
+			bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
 			-BCH_ERR_remove_disk_accounting_entry;
+		percpu_down_write(&c->mark_lock);
+
+		return ret;
 	} else {
-		ret = bch_err_throw(c, remove_disk_accounting_entry);
+		return bch_err_throw(c, remove_disk_accounting_entry);
 	}
-	goto fsck_err;
 }
 
 static struct journal_key *accumulate_newer_accounting_keys(struct btree_trans *trans, struct journal_key *i)
@@ -809,7 +811,8 @@ static int accounting_read_mem_fixups(struct btree_trans *trans)
 			 */
 			int ret = bch2_is_zero(v, sizeof(v[0]) * i->nr_counters)
 				? -BCH_ERR_remove_disk_accounting_entry
-				: bch2_disk_accounting_validate_late(trans, &acc_k, v, i->nr_counters);
+				: lockrestart_do(trans,
+					bch2_disk_accounting_validate_late(trans, &acc_k, v, i->nr_counters));
 
 			if (ret == -BCH_ERR_remove_disk_accounting_entry) {
 				free_percpu(i->v[0]);
