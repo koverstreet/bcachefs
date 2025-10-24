@@ -1241,28 +1241,23 @@ static noinline int __bch2_inode_rm_snapshot(struct btree_trans *trans, u64 inum
  */
 static int delete_ancestor_snapshot_inodes(struct btree_trans *trans, struct bpos pos)
 {
-	struct btree_iter iter;
-	struct bkey_s_c k;
-	int ret;
-next_parent:
-	ret = lockrestart_do(trans,
-		bkey_err(k = bch2_inode_get_iter_snapshot_parent(trans, &iter, pos, 0)));
-	if (ret || !k.k)
-		return ret;
+	while (1) {
+		CLASS(btree_iter_uninit, iter)(trans);
+		struct bkey_s_c k;
 
-	bool unlinked = bkey_is_unlinked_inode(k);
-	pos = k.k->p;
-	bch2_trans_iter_exit(&iter);
+		try(lockrestart_do(trans,
+			bkey_err(k = bch2_inode_get_iter_snapshot_parent(trans, &iter, pos, 0))));
 
-	if (!unlinked)
-		return 0;
+		if (!k.k || !bkey_is_unlinked_inode(k))
+			return 0;
 
-	ret = lockrestart_do(trans, bch2_inode_or_descendents_is_open(trans, pos));
-	if (ret)
-		return ret < 0 ? ret : 0;
+		pos = k.k->p;
+		int ret = lockrestart_do(trans, bch2_inode_or_descendents_is_open(trans, pos));
+		if (ret)
+			return ret < 0 ? ret : 0;
 
-	try(__bch2_inode_rm_snapshot(trans, pos.offset, pos.snapshot));
-	goto next_parent;
+		try(__bch2_inode_rm_snapshot(trans, pos.offset, pos.snapshot));
+	}
 }
 
 int bch2_inode_rm_snapshot(struct btree_trans *trans, u64 inum, u32 snapshot)
