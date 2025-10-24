@@ -494,33 +494,24 @@ fsck_err:
 	return ret;
 }
 
-int bch2_check_alloc_info(struct bch_fs *c)
+static int check_btree_alloc(struct btree_trans *trans)
 {
-	struct btree_iter iter, discard_iter, freespace_iter, bucket_gens_iter;
-	struct bch_dev *ca = NULL;
-	struct bkey hole;
-	struct bkey_s_c k;
+	struct progress_indicator_state progress;
+	bch2_progress_init(&progress, trans->c, BIT_ULL(BTREE_ID_alloc));
+
+	CLASS(btree_iter, iter)(trans, BTREE_ID_alloc, POS_MIN, BTREE_ITER_prefetch);
+	CLASS(btree_iter, discard_iter)(trans, BTREE_ID_need_discard, POS_MIN, BTREE_ITER_prefetch);
+	CLASS(btree_iter, freespace_iter)(trans, BTREE_ID_freespace, POS_MIN, BTREE_ITER_prefetch);
+	CLASS(btree_iter, bucket_gens_iter)(trans, BTREE_ID_bucket_gens, POS_MIN, BTREE_ITER_prefetch);
+
+	struct bch_dev *ca __free(bch2_dev_put) = NULL;
 	int ret = 0;
 
-	struct progress_indicator_state progress;
-	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_alloc));
-
-	CLASS(btree_trans, trans)(c);
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_alloc, POS_MIN,
-			     BTREE_ITER_prefetch);
-	bch2_trans_iter_init(trans, &discard_iter, BTREE_ID_need_discard, POS_MIN,
-			     BTREE_ITER_prefetch);
-	bch2_trans_iter_init(trans, &freespace_iter, BTREE_ID_freespace, POS_MIN,
-			     BTREE_ITER_prefetch);
-	bch2_trans_iter_init(trans, &bucket_gens_iter, BTREE_ID_bucket_gens, POS_MIN,
-			     BTREE_ITER_prefetch);
-
 	while (1) {
-		struct bpos next;
-
 		bch2_trans_begin(trans);
 
-		k = bch2_get_key_or_real_bucket_hole(&iter, &ca, &hole);
+		struct bkey hole;
+		struct bkey_s_c k = bch2_get_key_or_real_bucket_hole(&iter, &ca, &hole);
 		ret = bkey_err(k);
 		if (ret)
 			goto bkey_err;
@@ -532,6 +523,7 @@ int bch2_check_alloc_info(struct bch_fs *c)
 		if (ret)
 			break;
 
+		struct bpos next;
 		if (k.k->type) {
 			next = bpos_nosnap_successor(k.k->p);
 
@@ -571,55 +563,58 @@ bkey_err:
 		if (ret)
 			break;
 	}
-	bch2_trans_iter_exit(&bucket_gens_iter);
-	bch2_trans_iter_exit(&freespace_iter);
-	bch2_trans_iter_exit(&discard_iter);
-	bch2_trans_iter_exit(&iter);
-	bch2_dev_put(ca);
-	ca = NULL;
 
-	if (ret < 0)
-		return ret;
+	return min(0, ret);
+}
+
+int bch2_check_alloc_info(struct bch_fs *c)
+{
+	CLASS(btree_trans, trans)(c);
+
+	try(check_btree_alloc(trans));
 
 	try(for_each_btree_key(trans, iter,
 			BTREE_ID_need_discard, POS_MIN,
 			BTREE_ITER_prefetch, k,
 		bch2_check_discard_freespace_key(trans, &iter)));
 
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_freespace, POS_MIN,
-			     BTREE_ITER_prefetch);
-	while (1) {
-		bch2_trans_begin(trans);
-		k = bch2_btree_iter_peek(&iter);
-		if (!k.k)
-			break;
+	{
+		/*
+		 * Check freespace btree: we're iterating over every individual
+		 * pos of the freespace keys
+		 */
+		CLASS(btree_iter, iter)(trans, BTREE_ID_freespace, POS_MIN,
+				     BTREE_ITER_prefetch);
+		while (1) {
+			bch2_trans_begin(trans);
+			struct bkey_s_c k = bch2_btree_iter_peek(&iter);
+			if (!k.k)
+				break;
 
-		ret = bkey_err(k) ?:
-			bch2_check_discard_freespace_key(trans, &iter);
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
-			ret = 0;
-			continue;
-		}
-		if (ret) {
-			CLASS(printbuf, buf)();
-			bch2_bkey_val_to_text(&buf, c, k);
-			bch_err(c, "while checking %s", buf.buf);
-			break;
-		}
+			int ret = bkey_err(k) ?:
+				bch2_check_discard_freespace_key(trans, &iter);
+			if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
+				ret = 0;
+				continue;
+			}
+			if (ret) {
+				CLASS(printbuf, buf)();
+				bch2_bkey_val_to_text(&buf, c, k);
+				bch_err(c, "while checking %s", buf.buf);
+				return ret;
+			}
 
-		bch2_btree_iter_set_pos(&iter, bpos_nosnap_successor(iter.pos));
+			bch2_btree_iter_set_pos(&iter, bpos_nosnap_successor(iter.pos));
+		}
 	}
-	bch2_trans_iter_exit(&iter);
-	if (ret)
-		return ret;
 
-	ret = for_each_btree_key_commit(trans, iter,
+	try(for_each_btree_key_commit(trans, iter,
 			BTREE_ID_bucket_gens, POS_MIN,
 			BTREE_ITER_prefetch, k,
 			NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-		bch2_check_bucket_gens_key(trans, &iter, k));
+		bch2_check_bucket_gens_key(trans, &iter, k)));
 
-	return ret;
+	return 0;
 }
 
 static int bch2_check_alloc_to_lru_ref(struct btree_trans *trans,
