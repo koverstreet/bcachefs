@@ -68,7 +68,7 @@ __bch2_snapshot_tree_create(struct btree_trans *trans)
 {
 	CLASS(btree_iter_uninit, iter)(trans);
 	int ret = bch2_bkey_get_empty_slot(trans, &iter,
-			BTREE_ID_snapshot_trees, POS(0, U32_MAX));
+			BTREE_ID_snapshot_trees, POS_MIN, POS(0, U32_MAX));
 	if (ret == -BCH_ERR_ENOSPC_btree_slot)
 		ret = bch_err_throw(trans->c, ENOSPC_snapshot_tree);
 	if (ret)

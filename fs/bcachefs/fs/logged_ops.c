@@ -75,7 +75,7 @@ static int __bch2_logged_op_start(struct btree_trans *trans, struct bkey_i *k)
 {
 	CLASS(btree_iter_uninit, iter)(trans);
 	try(bch2_bkey_get_empty_slot(trans, &iter, BTREE_ID_logged_ops,
-				     POS(LOGGED_OPS_INUM_logged_ops, U64_MAX)));
+				     POS_MIN, POS(LOGGED_OPS_INUM_logged_ops, U64_MAX)));
 
 	k->k.p = iter.pos;
 

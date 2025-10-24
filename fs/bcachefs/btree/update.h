@@ -131,7 +131,7 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *, struct btree_iter *
 				       struct bkey_s_c, struct bkey_s_c);
 
 int bch2_bkey_get_empty_slot(struct btree_trans *, struct btree_iter *,
-			     enum btree_id, struct bpos);
+			     enum btree_id, struct bpos, struct bpos);
 
 int __must_check bch2_trans_update_ip(struct btree_trans *, struct btree_iter *,
 				      struct bkey_i *, enum btree_iter_update_trigger_flags,
