@@ -1800,7 +1800,6 @@ static int bch2_btree_insert_node(struct btree_update *as, struct btree_trans *t
 		goto split;
 	}
 
-
 	ret =   bch2_btree_node_check_topology(trans, b) ?:
 		bch2_btree_insert_keys_interior(as, trans, path, b,
 					path->l[b->c.level].iter, keys);
