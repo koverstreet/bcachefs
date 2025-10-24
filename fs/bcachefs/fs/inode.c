@@ -667,6 +667,7 @@ bch2_bkey_get_iter_snapshot_parent(struct btree_trans *trans, struct btree_iter 
 	struct bkey_s_c k;
 	int ret = 0;
 
+	bch2_trans_iter_exit(iter);
 	bch2_trans_iter_init(trans, iter, btree, bpos_successor(pos),
 			     flags|BTREE_ITER_all_snapshots);
 
@@ -675,7 +676,6 @@ bch2_bkey_get_iter_snapshot_parent(struct btree_trans *trans, struct btree_iter 
 		if (bch2_snapshot_is_ancestor(c, pos.snapshot, k.k->p.snapshot))
 			return k;
 
-	bch2_trans_iter_exit(iter);
 	return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
 }
 
@@ -683,17 +683,16 @@ static struct bkey_s_c
 bch2_inode_get_iter_snapshot_parent(struct btree_trans *trans, struct btree_iter *iter,
 				    struct bpos pos, unsigned flags)
 {
-	struct bkey_s_c k;
-again:
-	k = bch2_bkey_get_iter_snapshot_parent(trans, iter, BTREE_ID_inodes, pos, flags);
-	if (!k.k ||
-	    bkey_err(k) ||
-	    bkey_is_inode(k.k))
-		return k;
+	while (1) {
+		struct bkey_s_c k =
+			bch2_bkey_get_iter_snapshot_parent(trans, iter, BTREE_ID_inodes, pos, flags);
+		if (!k.k ||
+		    bkey_err(k) ||
+		    bkey_is_inode(k.k))
+			return k;
 
-	bch2_trans_iter_exit(iter);
-	pos = k.k->p;
-	goto again;
+		pos = k.k->p;
+	}
 }
 
 int __bch2_inode_has_child_snapshots(struct btree_trans *trans, struct bpos pos)
