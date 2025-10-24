@@ -1028,19 +1028,11 @@ static int bch2_fs_opt_version_init(struct bch_fs *c)
 	return 0;
 }
 
-static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
-				    bch_sb_handles *sbs)
+static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
+			struct bch_opts *opts, bch_sb_handles *sbs)
 {
-	struct bch_fs *c;
 	unsigned i, iter_size;
 	CLASS(printbuf, name)();
-	int ret = 0;
-
-	c = kvmalloc(sizeof(struct bch_fs), GFP_KERNEL|__GFP_ZERO);
-	if (!c) {
-		c = ERR_PTR(-BCH_ERR_ENOMEM_fs_alloc);
-		goto out;
-	}
 
 	c->stdio = (void *)(unsigned long) opts->stdio;
 
@@ -1116,15 +1108,10 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 
 	mutex_init(&c->sectors_available_lock);
 
-	ret = percpu_init_rwsem(&c->mark_lock);
-	if (ret)
-		goto err;
+	try(percpu_init_rwsem(&c->mark_lock));
 
 	scoped_guard(mutex, &c->sb_lock)
-		ret = bch2_sb_to_fs(c, sb);
-
-	if (ret)
-		goto err;
+		try(bch2_sb_to_fs(c, sb));
 
 	/* Compat: */
 	if (le16_to_cpu(sb->version) <= bcachefs_metadata_version_inode_v2 &&
@@ -1136,9 +1123,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 		SET_BCH_SB_JOURNAL_RECLAIM_DELAY(sb, 100);
 
 	c->opts = bch2_opts_default;
-	ret = bch2_opts_from_sb(&c->opts, sb);
-	if (ret)
-		goto err;
+	try(bch2_opts_from_sb(&c->opts, sb));
 
 	bch2_opts_apply(&c->opts, *opts);
 
@@ -1146,8 +1131,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 	if (!IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE) &&
 	    c->opts.block_size > PAGE_SIZE) {
 		bch_err(c, "cannot mount bs > ps filesystem without CONFIG_TRANSPARENT_HUGEPAGE");
-		ret = -EINVAL;
-		goto err;
+		return -EINVAL;
 	}
 #endif
 
@@ -1161,8 +1145,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 
 	if (bch2_fs_init_fault("fs_alloc")) {
 		bch_err(c, "fs_alloc fault injected");
-		ret = -EFAULT;
-		goto err;
+		return -EFAULT;
 	}
 
 	if (c->sb.multi_device)
@@ -1170,9 +1153,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 	else
 		prt_bdevname(&name, sbs->data[0].bdev);
 
-	ret = name.allocation_failure ? -BCH_ERR_ENOMEM_fs_name_alloc : 0;
-	if (ret)
-		goto err;
+	try(name.allocation_failure ? -BCH_ERR_ENOMEM_fs_name_alloc : 0);
 
 	strscpy(c->name, name.buf, sizeof(c->name));
 
@@ -1193,47 +1174,28 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 	    !(c->usage = alloc_percpu(struct bch_fs_usage_base)) ||
 	    !(c->online_reserved = alloc_percpu(u64)) ||
 	    mempool_init_kvmalloc_pool(&c->btree_bounce_pool, 1,
-				       c->opts.btree_node_size)) {
-		ret = bch_err_throw(c, ENOMEM_fs_other_alloc);
-		goto err;
-	}
+				       c->opts.btree_node_size))
+		return bch_err_throw(c, ENOMEM_fs_other_alloc);
 
-	ret =
-	    bch2_fs_async_obj_init(c) ?:
-	    bch2_blacklist_table_initialize(c) ?:
-	    bch2_fs_btree_cache_init(c) ?:
-	    bch2_fs_btree_iter_init(c) ?:
-	    bch2_fs_btree_key_cache_init(&c->btree_key_cache) ?:
-	    bch2_fs_buckets_waiting_for_journal_init(c) ?:
-	    bch2_io_clock_init(&c->io_clock[READ]) ?:
-	    bch2_io_clock_init(&c->io_clock[WRITE]) ?:
-	    bch2_fs_compress_init(c) ?:
-	    bch2_fs_counters_init(c) ?:
-	    bch2_fs_ec_init(c) ?:
-	    bch2_fs_encryption_init(c) ?:
-	    bch2_fs_fsio_init(c) ?:
-	    bch2_fs_fs_io_direct_init(c) ?:
-	    bch2_fs_io_read_init(c) ?:
-	    bch2_fs_rebalance_init(c) ?:
-	    bch2_fs_sb_errors_init(c) ?:
-	    bch2_fs_vfs_init(c);
-	if (ret)
-		goto err;
+	try(bch2_fs_async_obj_init(c));
+	try(bch2_blacklist_table_initialize(c));
+	try(bch2_fs_btree_cache_init(c));
+	try(bch2_fs_btree_iter_init(c));
+	try(bch2_fs_btree_key_cache_init(&c->btree_key_cache));
+	try(bch2_fs_buckets_waiting_for_journal_init(c));
+	try(bch2_io_clock_init(&c->io_clock[READ]));
+	try(bch2_io_clock_init(&c->io_clock[WRITE]));
+	try(bch2_fs_compress_init(c));
+	try(bch2_fs_counters_init(c));
+	try(bch2_fs_ec_init(c));
+	try(bch2_fs_encryption_init(c));
+	try(bch2_fs_fsio_init(c));
+	try(bch2_fs_fs_io_direct_init(c));
+	try(bch2_fs_io_read_init(c));
+	try(bch2_fs_rebalance_init(c));
+	try(bch2_fs_sb_errors_init(c));
+	try(bch2_fs_vfs_init(c));
 
-	/*
-	 * just make sure this is always allocated if we might need it - mount
-	 * failing due to kthread_create() failing is _very_ annoying
-	 */
-	if (!(c->sb.features & BIT_ULL(BCH_FEATURE_no_alloc_info)) ||
-	    go_rw_in_recovery(c)) {
-		/*
-		 * start workqueues/kworkers early - kthread creation checks for
-		 * pending signals, which is _very_ annoying
-		 */
-		ret = bch2_fs_init_rw(c);
-		if (ret)
-			goto err;
-	}
 
 #if IS_ENABLED(CONFIG_UNICODE)
 	if (!bch2_fs_casefold_enabled(c)) {
@@ -1244,24 +1206,20 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 			       unicode_major(BCH_FS_DEFAULT_UTF8_ENCODING),
 			       unicode_minor(BCH_FS_DEFAULT_UTF8_ENCODING),
 			       unicode_rev(BCH_FS_DEFAULT_UTF8_ENCODING));
-			ret = -EINVAL;
-			goto err;
+			return -EINVAL;
 		}
 	}
 #else
 	if (c->sb.features & BIT_ULL(BCH_FEATURE_casefolding)) {
 		printk(KERN_ERR "Cannot mount a filesystem with casefolding on a kernel without CONFIG_UNICODE\n");
-		ret = -EINVAL;
-		goto err;
+		return -EINVAL;
 	}
 #endif
 
 	for (unsigned i = 0; i < c->sb.nr_devices; i++) {
 		if (!bch2_member_exists(c->disk_sb.sb, i))
 			continue;
-		ret = bch2_dev_alloc(c, i);
-		if (ret)
-			goto err;
+		try(bch2_dev_alloc(c, i));
 	}
 
 	bch2_journal_entry_res_resize(&c->journal,
@@ -1274,40 +1232,43 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 	scoped_guard(rwsem_write, &c->state_lock)
 		darray_for_each(*sbs, sb) {
 			CLASS(printbuf, err)();
-			ret = bch2_dev_attach_bdev(c, sb, &err);
+			int ret = bch2_dev_attach_bdev(c, sb, &err);
 			if (ret) {
 				bch_err(bch2_dev_locked(c, sb->sb->dev_idx), "%s", err.buf);
-				goto err;
+				return ret;
 			}
 		}
 
-	ret = bch2_fs_opt_version_init(c);
-	if (ret)
-		goto err;
+	try(bch2_fs_opt_version_init(c));
 
 	/*
-	 * start workqueues/kworkers early - kthread creation checks for pending
-	 * signals, which is _very_ annoying
+	 * just make sure this is always allocated if we might need it - mount
+	 * failing due to kthread_create() failing is _very_ annoying
 	 */
-	if (go_rw_in_recovery(c)) {
-		ret = bch2_fs_init_rw(c);
-		if (ret)
-			goto err;
-	}
+	if (go_rw_in_recovery(c))
+		try(bch2_fs_init_rw(c));
 
 	scoped_guard(mutex, &bch2_fs_list_lock)
-		ret = bch2_fs_online(c);
-
-	if (ret)
-		goto err;
+		try(bch2_fs_online(c));
 
 	c->recovery_task = current;
-out:
+	return 0;
+}
+
+static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
+				    bch_sb_handles *sbs)
+{
+	struct bch_fs *c = kvmalloc(sizeof(struct bch_fs), GFP_KERNEL|__GFP_ZERO);
+	if (!c)
+		return ERR_PTR(-BCH_ERR_ENOMEM_fs_alloc);
+
+	int ret = bch2_fs_init(c, sb, opts, sbs);
+	if (ret) {
+		bch2_fs_free(c);
+		return ERR_PTR(ret);
+	}
+
 	return c;
-err:
-	bch2_fs_free(c);
-	c = ERR_PTR(ret);
-	goto out;
 }
 
 static bool bch2_fs_may_start(struct bch_fs *c)
