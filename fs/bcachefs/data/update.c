@@ -499,7 +499,6 @@ int bch2_update_unwritten_extent(struct btree_trans *trans,
 	struct bkey_i_extent *e;
 	struct write_point *wp;
 	struct closure cl;
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret = 0;
 
@@ -512,16 +511,13 @@ int bch2_update_unwritten_extent(struct btree_trans *trans,
 
 		bch2_trans_begin(trans);
 
-		bch2_trans_iter_init(trans, &iter, update->btree_id, update->op.pos,
-				     BTREE_ITER_slots);
-		ret = lockrestart_do(trans, ({
-			k = bch2_btree_iter_peek_slot(&iter);
-			bkey_err(k);
-		}));
-		bch2_trans_iter_exit(&iter);
-
-		if (ret || !bch2_extents_match(k, bkey_i_to_s_c(update->k.k)))
-			break;
+		{
+			CLASS(btree_iter, iter)(trans, update->btree_id, update->op.pos,
+						BTREE_ITER_slots);
+			ret = lockrestart_do(trans, bkey_err(k = bch2_btree_iter_peek_slot(&iter)));
+			if (ret || !bch2_extents_match(k, bkey_i_to_s_c(update->k.k)))
+				break;
+		}
 
 		e = bkey_extent_init(update->op.insert_keys.top);
 		e->k.p = update->op.pos;
