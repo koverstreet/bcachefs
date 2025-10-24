@@ -399,9 +399,9 @@ int bch2_acl_chmod(struct btree_trans *trans, subvol_inum inum,
 {
 	struct bch_hash_info hash_info = bch2_hash_info_init(trans->c, inode);
 	struct xattr_search_key search = X_SEARCH(KEY_TYPE_XATTR_INDEX_POSIX_ACL_ACCESS, "", 0);
-	struct btree_iter iter;
 	struct posix_acl *acl = NULL;
 
+	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bch2_hash_lookup(trans, &iter, bch2_xattr_hash_desc,
 			       &hash_info, inum, &search, BTREE_ITER_intent);
 	int ret = bkey_err(k);
@@ -430,7 +430,6 @@ int bch2_acl_chmod(struct btree_trans *trans, subvol_inum inum,
 	*new_acl = acl;
 	acl = NULL;
 err:
-	bch2_trans_iter_exit(&iter);
 	if (!IS_ERR_OR_NULL(acl))
 		kfree(acl);
 	return ret;
