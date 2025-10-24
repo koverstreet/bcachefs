@@ -1020,6 +1020,8 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 		struct bversion version = op->version;
 		size_t dst_len = 0, src_len = 0;
 
+		BUG_ON(src->bi_iter.bi_size & (block_bytes(c) - 1));
+
 		if (page_alloc_failed &&
 		    dst->bi_iter.bi_size  < (wp->sectors_free << 9) &&
 		    dst->bi_iter.bi_size < c->opts.encoded_extent_max)
