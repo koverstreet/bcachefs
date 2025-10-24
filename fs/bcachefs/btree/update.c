@@ -558,28 +558,17 @@ int bch2_bkey_get_empty_slot(struct btree_trans *trans, struct btree_iter *iter,
 			     enum btree_id btree, struct bpos end)
 {
 	bch2_trans_iter_init(trans, iter, btree, end, BTREE_ITER_intent);
-	struct bkey_s_c k = bch2_btree_iter_peek_prev(iter);
-	int ret = bkey_err(k);
-	if (ret)
-		goto err;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_prev(iter));
 
 	bch2_btree_iter_advance(iter);
-	k = bch2_btree_iter_peek_slot(iter);
-	ret = bkey_err(k);
-	if (ret)
-		goto err;
+	k = bkey_try(bch2_btree_iter_peek_slot(iter));
 
 	BUG_ON(k.k->type != KEY_TYPE_deleted);
 
-	if (bkey_gt(k.k->p, end)) {
-		ret = bch_err_throw(trans->c, ENOSPC_btree_slot);
-		goto err;
-	}
+	if (bkey_gt(k.k->p, end))
+		return bch_err_throw(trans->c, ENOSPC_btree_slot);
 
 	return 0;
-err:
-	bch2_trans_iter_exit(iter);
-	return ret;
 }
 
 void bch2_trans_commit_hook(struct btree_trans *trans,
