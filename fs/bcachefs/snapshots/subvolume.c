@@ -542,7 +542,7 @@ int bch2_subvolume_create(struct btree_trans *trans, u64 inode,
 
 	CLASS(btree_iter_uninit, dst_iter)(trans);
 	int ret = bch2_bkey_get_empty_slot(trans, &dst_iter,
-				BTREE_ID_subvolumes, POS(0, U32_MAX));
+				BTREE_ID_subvolumes, POS_MIN, POS(0, U32_MAX));
 	if (ret == -BCH_ERR_ENOSPC_btree_slot)
 		ret = bch_err_throw(c, ENOSPC_subvolume_create);
 	if (ret)
