@@ -368,7 +368,6 @@ int __bch2_inode_peek(struct btree_trans *trans,
 err:
 	if (warn)
 		bch_err_msg(trans->c, ret, "looking up inum %llu:%llu:", inum.subvol, inum.inum);
-	bch2_trans_iter_exit(iter);
 	return ret;
 }
 
