@@ -738,9 +738,8 @@ u32 bch2_trans_begin(struct btree_trans *);
 ({										\
 	bch2_trans_begin((_trans));						\
 										\
-	struct btree_iter _iter;						\
-	bch2_trans_node_iter_init((_trans), &_iter, (_btree_id),		\
-				  _start, _locks_want, _depth, _flags);		\
+	CLASS(btree_node_iter, _iter)((_trans), (_btree_id), _start,		\
+				      _locks_want, _depth, _flags);		\
 	int _ret3 = 0;								\
 	do {									\
 		_ret3 = lockrestart_do((_trans), ({				\
@@ -754,7 +753,6 @@ u32 bch2_trans_begin(struct btree_trans *);
 			PTR_ERR_OR_ZERO(bch2_btree_iter_next_node(&_iter)));	\
 	} while (!_ret3);							\
 										\
-	bch2_trans_iter_exit(&(_iter));						\
 	_ret3;									\
 })
 
