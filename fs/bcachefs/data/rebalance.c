@@ -920,7 +920,6 @@ static int check_rebalance_work_one(struct btree_trans *trans,
 	    extent_iter->btree_id == BTREE_ID_reflink &&
 	    (!rebalance_k.k ||
 	     rebalance_k.k->p.inode >= BCACHEFS_ROOT_INO)) {
-		bch2_trans_iter_exit(extent_iter);
 		bch2_trans_iter_init(trans, extent_iter,
 				     BTREE_ID_extents, POS_MIN,
 				     BTREE_ITER_prefetch|

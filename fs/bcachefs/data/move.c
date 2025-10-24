@@ -428,7 +428,6 @@ retry_root:
 	bch2_trans_begin(trans);
 
 	if (level == bch2_btree_id_root(c, btree_id)->level + 1) {
-		bch2_trans_iter_exit(&iter);
 		bch2_trans_node_iter_init(trans, &iter, btree_id, start, 0, level - 1,
 					  BTREE_ITER_prefetch|
 					  BTREE_ITER_not_extents|
@@ -453,7 +452,6 @@ root_err:
 		return ret;
 	}
 
-	bch2_trans_iter_exit(&iter);
 	bch2_trans_node_iter_init(trans, &iter, btree_id, start, 0, level,
 				  BTREE_ITER_prefetch|
 				  BTREE_ITER_not_extents|
@@ -754,7 +752,6 @@ static int bch2_move_btree(struct bch_fs *c,
 		if (!bch2_btree_id_root(c, btree)->b)
 			continue;
 
-		bch2_trans_iter_exit(&iter);
 		bch2_trans_node_iter_init(trans, &iter, btree, POS_MIN, 0, 0,
 					  BTREE_ITER_prefetch);
 retry:

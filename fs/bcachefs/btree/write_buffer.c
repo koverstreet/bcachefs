@@ -393,11 +393,9 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 			}
 		}
 
-		if (!iter.path || iter.btree_id != k->btree) {
-			bch2_trans_iter_exit(&iter);
+		if (!iter.path || iter.btree_id != k->btree)
 			bch2_trans_iter_init(trans, &iter, k->btree, k->k.k.p,
 					     BTREE_ITER_intent|BTREE_ITER_all_snapshots);
-		}
 
 		bch2_btree_iter_set_pos(&iter, k->k.k.p);
 		btree_iter_path(trans, &iter)->preserve = false;

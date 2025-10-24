@@ -666,7 +666,6 @@ bch2_bkey_get_iter_snapshot_parent(struct btree_trans *trans, struct btree_iter 
 	struct bkey_s_c k;
 	int ret = 0;
 
-	bch2_trans_iter_exit(iter);
 	bch2_trans_iter_init(trans, iter, btree, bpos_successor(pos),
 			     flags|BTREE_ITER_all_snapshots);
 
