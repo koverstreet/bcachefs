@@ -483,16 +483,9 @@ bch2_trans_start_alloc_update_noupdate(struct btree_trans *trans, struct btree_i
 	struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
 	int ret = bkey_err(k);
 	if (unlikely(ret))
-		goto err;
+		return ERR_PTR(ret);
 
-	struct bkey_i_alloc_v4 *a = bch2_alloc_to_v4_mut_inlined(trans, k);
-	ret = PTR_ERR_OR_ZERO(a);
-	if (unlikely(ret))
-		goto err;
-	return a;
-err:
-	bch2_trans_iter_exit(iter);
-	return ERR_PTR(ret);
+	return bch2_alloc_to_v4_mut_inlined(trans, k);
 }
 
 __flatten
