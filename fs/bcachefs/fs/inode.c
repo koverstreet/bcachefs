@@ -1191,10 +1191,7 @@ int bch2_inode_set_casefold(struct btree_trans *trans, subvol_inum inum,
 	 * Make sure the dir is empty, as otherwise we'd need to
 	 * rehash everything and update the dirent keys.
 	 */
-	ret = bch2_empty_dir_trans(trans, inum);
-	if (ret < 0)
-		return ret;
-
+	try(bch2_empty_dir_trans(trans, inum));
 	try(bch2_request_incompat_feature(c, bcachefs_metadata_version_casefolding));
 
 	bch2_check_set_feature(c, BCH_FEATURE_casefolding);
