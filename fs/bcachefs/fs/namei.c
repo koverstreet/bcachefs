@@ -771,33 +771,25 @@ fsck_err:
 
 static int bch2_propagate_has_case_insensitive(struct btree_trans *trans, subvol_inum inum)
 {
-	struct btree_iter iter = {};
-	int ret = 0;
-
 	while (true) {
+		CLASS(btree_iter_uninit, iter)(trans);
 		struct bch_inode_unpacked inode;
-		ret = bch2_inode_peek(trans, &iter, &inode, inum,
-				      BTREE_ITER_intent|BTREE_ITER_with_updates);
-		if (ret)
-			break;
+		try(bch2_inode_peek(trans, &iter, &inode, inum,
+				      BTREE_ITER_intent|BTREE_ITER_with_updates));
 
 		if (inode.bi_flags & BCH_INODE_has_case_insensitive)
 			break;
 
 		inode.bi_flags |= BCH_INODE_has_case_insensitive;
-		ret = bch2_inode_write(trans, &iter, &inode);
-		if (ret)
-			break;
+		try(bch2_inode_write(trans, &iter, &inode));
 
-		bch2_trans_iter_exit(&iter);
 		if (subvol_inum_eq(inum, BCACHEFS_ROOT_SUBVOL_INUM))
 			break;
 
 		inum = parent_inum(inum, &inode);
 	}
 
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return 0;
 }
 
 int bch2_maybe_propagate_has_case_insensitive(struct btree_trans *trans, subvol_inum inum,
