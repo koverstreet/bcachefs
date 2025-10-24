@@ -545,19 +545,11 @@ int bch2_dirent_lookup_trans(struct btree_trans *trans,
 	struct qstr lookup_name;
 	try(bch2_maybe_casefold(trans, hash_info, name, &lookup_name));
 
-	struct bkey_s_c k = bch2_hash_lookup(trans, iter, bch2_dirent_hash_desc,
-					     hash_info, dir, &lookup_name, flags);
-	int ret = bkey_err(k);
-	if (ret)
-		goto err;
+	struct bkey_s_c k = bkey_try(bch2_hash_lookup(trans, iter, bch2_dirent_hash_desc,
+					     hash_info, dir, &lookup_name, flags));
 
-	ret = bch2_dirent_read_target(trans, dir, bkey_s_c_to_dirent(k), inum);
-	if (ret > 0)
-		ret = -ENOENT;
-err:
-	if (ret)
-		bch2_trans_iter_exit(iter);
-	return ret;
+	int ret = bch2_dirent_read_target(trans, dir, bkey_s_c_to_dirent(k), inum);
+	return ret > 0 ? -ENOENT : 0;
 }
 
 u64 bch2_dirent_lookup(struct bch_fs *c, subvol_inum dir,
