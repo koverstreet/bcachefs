@@ -967,58 +967,47 @@ int bch2_inode_create(struct btree_trans *trans,
 	bch2_trans_iter_init(trans, iter, BTREE_ID_inodes, POS(0, pos),
 			     BTREE_ITER_all_snapshots|
 			     BTREE_ITER_intent);
-	struct bkey_s_c k;
-	int ret = 0;
-again:
-	while ((k = bch2_btree_iter_peek(iter)).k &&
-	       !(ret = bkey_err(k)) &&
-	       bkey_lt(k.k->p, POS(0, max))) {
-		if (pos < iter->pos.offset)
-			goto found_slot;
+	while (1) {
+		struct bkey_s_c k;
+		while ((k = bkey_try(bch2_btree_iter_peek(iter))).k &&
+		       bkey_lt(k.k->p, POS(0, max))) {
 
-		if (bch2_snapshot_is_ancestor(trans->c, snapshot, k.k->p.snapshot) &&
-		    k.k->type == KEY_TYPE_inode_generation) {
-			gen = le32_to_cpu(bkey_s_c_to_inode_generation(k).v->bi_generation);
-			goto found_slot;
+			if (pos < iter->pos.offset)
+				break;
+
+			if (bch2_snapshot_is_ancestor(trans->c, snapshot, k.k->p.snapshot) &&
+			    k.k->type == KEY_TYPE_inode_generation) {
+				pos = k.k->p.offset;
+				gen = le32_to_cpu(bkey_s_c_to_inode_generation(k).v->bi_generation);
+				break;
+			}
+
+			/*
+			 * We don't need to iterate over keys in every snapshot once
+			 * we've found just one:
+			 */
+			pos = iter->pos.offset + 1;
+			bch2_btree_iter_set_pos(iter, POS(0, pos));
 		}
 
-		/*
-		 * We don't need to iterate over keys in every snapshot once
-		 * we've found just one:
-		 */
-		pos = iter->pos.offset + 1;
+		if (likely(pos < max)) {
+			bch2_btree_iter_set_pos(iter, SPOS(0, pos, snapshot));
+			k = bkey_try(bch2_btree_iter_peek_slot(iter));
+
+			inode_u->bi_inum	= k.k->p.offset;
+			inode_u->bi_generation	= max(gen, le64_to_cpu(cursor->v.gen));
+			cursor->v.idx		= cpu_to_le64(k.k->p.offset + 1);
+			return 0;
+		}
+
+		if (start == min)
+			return bch_err_throw(trans->c, ENOSPC_inode_create);
+
+		/* Retry from start */
+		pos = start = min;
 		bch2_btree_iter_set_pos(iter, POS(0, pos));
+		le32_add_cpu(&cursor->v.gen, 1);
 	}
-
-	if (!ret && pos < max)
-		goto found_slot;
-
-	if (!ret && start == min)
-		ret = bch_err_throw(trans->c, ENOSPC_inode_create);
-
-	if (ret) {
-		bch2_trans_iter_exit(iter);
-		return ret;
-	}
-
-	/* Retry from start */
-	pos = start = min;
-	bch2_btree_iter_set_pos(iter, POS(0, pos));
-	le32_add_cpu(&cursor->v.gen, 1);
-	goto again;
-found_slot:
-	bch2_btree_iter_set_pos(iter, SPOS(0, pos, snapshot));
-	k = bch2_btree_iter_peek_slot(iter);
-	ret = bkey_err(k);
-	if (ret) {
-		bch2_trans_iter_exit(iter);
-		return ret;
-	}
-
-	inode_u->bi_inum	= k.k->p.offset;
-	inode_u->bi_generation	= max(gen, le64_to_cpu(cursor->v.gen));
-	cursor->v.idx		= cpu_to_le64(k.k->p.offset + 1);
-	return 0;
 }
 
 static int bch2_inode_delete_keys(struct btree_trans *trans,
