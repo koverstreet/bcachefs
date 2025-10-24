@@ -1257,15 +1257,11 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
-	int ret;
 
 	CLASS(btree_iter, inode_iter)(trans, BTREE_ID_inodes, pos, BTREE_ITER_cached);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(&inode_iter);
-	ret = bkey_err(k);
-	if (ret)
-		return ret;
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&inode_iter));
 
-	ret = bkey_is_inode(k.k) ? 0 : bch_err_throw(c, ENOENT_inode);
+	int ret = bkey_is_inode(k.k) ? 0 : bch_err_throw(c, ENOENT_inode);
 	if (fsck_err_on(from_deleted_inodes && ret,
 			trans, deleted_inode_missing,
 			"nonexistent inode %llu:%u in deleted_inodes btree",
@@ -1322,10 +1318,9 @@ static int may_delete_deleted_inode(struct btree_trans *trans, struct bpos pos,
 			try(__bch2_fsck_write_inode(trans, inode));
 		}
 
-		if (!from_deleted_inodes) {
+		if (!from_deleted_inodes)
 			return  bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
 				bch_err_throw(c, inode_has_child_snapshot);
-		}
 
 		goto delete;
 
