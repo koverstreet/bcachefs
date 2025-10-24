@@ -790,6 +790,7 @@ next:
 			break;
 	}
 
+	bch2_trans_unlock(trans);
 	bch2_btree_interior_updates_flush(c);
 	bch_err_fn(c, ret);
 

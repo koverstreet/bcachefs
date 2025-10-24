@@ -177,6 +177,7 @@ static int bch2_dev_metadata_drop(struct bch_fs *c,
 			bch2_btree_iter_next_node(&iter);
 	}
 
+	bch2_trans_unlock(trans);
 	bch2_btree_interior_updates_flush(c);
 
 	BUG_ON(bch2_err_matches(ret, BCH_ERR_transaction_restart));
