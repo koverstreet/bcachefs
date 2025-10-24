@@ -534,12 +534,10 @@ static void bch2_rbio_done(struct bch_read_bio *rbio)
 
 static int get_rbio_extent(struct btree_trans *trans, struct bch_read_bio *rbio, struct bkey_buf *sk)
 {
-	CLASS(btree_iter_uninit, iter)(trans);
+	CLASS(btree_iter, iter)(trans, rbio->data_btree, rbio->data_pos, 0);
 	struct bkey_s_c k;
 
-	try(lockrestart_do(trans,
-		bkey_err(k = bch2_bkey_get_iter(trans, &iter,
-						rbio->data_btree, rbio->data_pos, 0))));
+	try(lockrestart_do(trans, bkey_err(k = bch2_btree_iter_peek_slot(&iter))));
 
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	bkey_for_each_ptr(ptrs, ptr)
@@ -603,13 +601,10 @@ static noinline int bch2_read_retry_nodecode(struct btree_trans *trans,
 	do {
 		bch2_trans_begin(trans);
 
-		CLASS(btree_iter_uninit, iter)(trans);
+		CLASS(btree_iter, iter)(trans, u->btree_id, bkey_start_pos(&u->k.k->k), 0);
 		struct bkey_s_c k;
 
-		try(lockrestart_do(trans,
-			bkey_err(k = bch2_bkey_get_iter(trans, &iter,
-					u->btree_id, bkey_start_pos(&u->k.k->k),
-					0))));
+		try(lockrestart_do(trans, bkey_err(k = bch2_btree_iter_peek_slot(&iter))));
 
 		if (!bkey_and_val_eq(k, bkey_i_to_s_c(u->k.k))) {
 			/* extent we wanted to read no longer exists: */

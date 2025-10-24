@@ -1065,10 +1065,9 @@ static int bch2_inode_rm_trans(struct btree_trans *trans, subvol_inum inum, u32 
 {
 	try(bch2_subvolume_get_snapshot(trans, inum.subvol, snapshot));
 
-	CLASS(btree_iter_uninit, iter)(trans);
-	struct bkey_s_c k = bkey_try(bch2_bkey_get_iter(trans, &iter, BTREE_ID_inodes,
-				       SPOS(0, inum.inum, *snapshot),
-				       BTREE_ITER_intent|BTREE_ITER_cached));
+	CLASS(btree_iter, iter)(trans, BTREE_ID_inodes, SPOS(0, inum.inum, *snapshot),
+				BTREE_ITER_intent|BTREE_ITER_cached);
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	if (!bkey_is_inode(k.k)) {
 		bch2_fs_inconsistent(trans->c,
