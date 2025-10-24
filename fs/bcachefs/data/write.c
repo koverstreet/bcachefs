@@ -1316,7 +1316,7 @@ static void bch2_nocow_write(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
 	struct btree_trans *trans;
-	struct btree_iter iter;
+	struct btree_iter iter = {};
 	struct bkey_s_c k;
 	struct bkey_ptrs_c ptrs;
 	u32 snapshot;
