@@ -731,7 +731,6 @@ static int bch2_move_btree(struct bch_fs *c,
 			   struct bch_move_stats *stats)
 {
 	bool kthread = (current->flags & PF_KTHREAD) != 0;
-	struct btree_iter iter;
 	struct btree *b;
 	enum btree_id btree;
 	int ret = 0;
@@ -743,6 +742,8 @@ static int bch2_move_btree(struct bch_fs *c,
 	bch2_moving_ctxt_init(&ctxt, c, NULL, stats, writepoint_ptr(&c->btree_write_point), true);
 	struct btree_trans *trans = ctxt.trans;
 
+	CLASS(btree_iter_uninit, iter)(trans);
+
 	stats->data_type = BCH_DATA_btree;
 
 	for (btree = start.btree;
@@ -753,6 +754,7 @@ static int bch2_move_btree(struct bch_fs *c,
 		if (!bch2_btree_id_root(c, btree)->b)
 			continue;
 
+		bch2_trans_iter_exit(&iter);
 		bch2_trans_node_iter_init(trans, &iter, btree, POS_MIN, 0, 0,
 					  BTREE_ITER_prefetch);
 retry:
@@ -774,8 +776,6 @@ retry:
 				goto next;
 
 			ret = bch2_btree_node_rewrite(trans, &iter, b, 0, 0) ?: ret;
-			if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-				continue;
 			if (ret)
 				break;
 next:
@@ -783,8 +783,6 @@ next:
 		}
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			goto retry;
-
-		bch2_trans_iter_exit(&iter);
 
 		if (kthread && kthread_should_stop())
 			break;
