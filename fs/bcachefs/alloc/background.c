@@ -1350,35 +1350,30 @@ again:
 	return k;
 }
 
-static void bch2_do_invalidates_work(struct work_struct *work)
+static void __bch2_do_invalidates(struct bch_dev *ca)
 {
-	struct bch_dev *ca = container_of(work, struct bch_dev, invalidate_work);
 	struct bch_fs *c = ca->fs;
 	CLASS(btree_trans, trans)(c);
-	int ret = 0;
 
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
 
-	ret = bch2_btree_write_buffer_tryflush(trans);
-	if (ret)
-		goto err;
+	bch2_btree_write_buffer_tryflush(trans);
 
 	s64 nr_to_invalidate =
 		should_invalidate_buckets(ca, bch2_dev_usage_read(ca));
-	struct btree_iter iter;
 	bool wrapped = false;
 
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_lru,
-			     lru_pos(ca->dev_idx, 0,
-				     ((bch2_current_io_time(c, READ) + U32_MAX) &
-				      LRU_TIME_MAX)), 0);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_lru,
+				lru_pos(ca->dev_idx, 0,
+					((bch2_current_io_time(c, READ) + U32_MAX) &
+					 LRU_TIME_MAX)), 0);
 
 	while (true) {
 		bch2_trans_begin(trans);
 
 		struct bkey_s_c k = next_lru_key(trans, &iter, ca, &wrapped);
-		ret = bkey_err(k);
+		int ret = bkey_err(k);
 		if (ret)
 			goto restart_err;
 		if (!k.k)
@@ -1394,8 +1389,15 @@ restart_err:
 		wb_maybe_flush_inc(&last_flushed);
 		bch2_btree_iter_advance(&iter);
 	}
-	bch2_trans_iter_exit(&iter);
-err:
+}
+
+static void bch2_do_invalidates_work(struct work_struct *work)
+{
+	struct bch_dev *ca = container_of(work, struct bch_dev, invalidate_work);
+	struct bch_fs *c = ca->fs;
+
+	__bch2_do_invalidates(ca);
+
 	enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_do_invalidates);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_invalidate);
 }
