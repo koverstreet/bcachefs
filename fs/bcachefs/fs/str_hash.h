@@ -388,12 +388,10 @@ int bch2_hash_delete(struct btree_trans *trans,
 		     const struct bch_hash_info *info,
 		     subvol_inum inum, const void *key)
 {
-	struct btree_iter iter;
+	CLASS(btree_iter_uninit, iter)(trans);
 	bkey_try(bch2_hash_lookup(trans, &iter, desc, info, inum, key, BTREE_ITER_intent));
 
-	int ret = bch2_hash_delete_at(trans, desc, info, &iter, 0);
-	bch2_trans_iter_exit(&iter);
-	return ret;
+	return bch2_hash_delete_at(trans, desc, info, &iter, 0);
 }
 
 int bch2_repair_inode_hash_info(struct btree_trans *, struct bch_inode_unpacked *);
