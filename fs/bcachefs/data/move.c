@@ -413,11 +413,11 @@ int bch2_move_data_btree(struct moving_context *ctxt,
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
 	struct bkey_s_c k;
 	int ret = 0;
 
 	CLASS(per_snapshot_io_opts, snapshot_io_opts)(c);
+	CLASS(btree_iter_uninit, iter)(trans);
 
 	if (ctxt->stats) {
 		ctxt->stats->data_type	= BCH_DATA_user;
@@ -428,6 +428,7 @@ retry_root:
 	bch2_trans_begin(trans);
 
 	if (level == bch2_btree_id_root(c, btree_id)->level + 1) {
+		bch2_trans_iter_exit(&iter);
 		bch2_trans_node_iter_init(trans, &iter, btree_id, start, 0, level - 1,
 					  BTREE_ITER_prefetch|
 					  BTREE_ITER_not_extents|
@@ -437,26 +438,22 @@ retry_root:
 		if (ret)
 			goto root_err;
 
-		if (b != btree_node_root(c, b)) {
-			bch2_trans_iter_exit(&iter);
+		if (b != btree_node_root(c, b))
 			goto retry_root;
-		}
 
 		k = bkey_i_to_s_c(&b->key);
 		ret = bch2_move_extent(ctxt, NULL, &snapshot_io_opts, pred, arg, &iter, level, k);
 root_err:
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
-			bch2_trans_iter_exit(&iter);
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			goto retry_root;
-		}
 		if (bch2_err_matches(ret, BCH_ERR_data_update_fail))
 			ret = 0; /* failure for this extent, keep going */
-		if (bch2_err_matches(ret, EROFS))
-			goto out;
-		WARN_ONCE(ret, "unhandled error from move_extent: %s", bch2_err_str(ret));
-		goto out;
+		WARN_ONCE(ret && !bch2_err_matches(ret, EROFS),
+			  "unhandled error from move_extent: %s", bch2_err_str(ret));
+		return ret;
 	}
 
+	bch2_trans_iter_exit(&iter);
 	bch2_trans_node_iter_init(trans, &iter, btree_id, start, 0, level,
 				  BTREE_ITER_prefetch|
 				  BTREE_ITER_not_extents|
@@ -499,8 +496,6 @@ next_nondata:
 		if (!bch2_btree_iter_advance(&iter))
 			break;
 	}
-out:
-	bch2_trans_iter_exit(&iter);
 
 	return ret;
 }
