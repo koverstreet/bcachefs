@@ -352,7 +352,6 @@ static int __bch2_resume_logged_op_finsert(struct btree_trans *trans,
 					   u64 *i_sectors_delta)
 {
 	struct bch_fs *c = trans->c;
-	struct btree_iter iter;
 	struct bkey_i_logged_op_finsert *op = bkey_i_to_logged_op_finsert(op_k);
 	subvol_inum inum = { le32_to_cpu(op->v.subvol), le64_to_cpu(op->v.inum) };
 	u64 dst_offset = le64_to_cpu(op->v.dst_offset);
@@ -371,9 +370,7 @@ static int __bch2_resume_logged_op_finsert(struct btree_trans *trans,
 	 */
 	try(lockrestart_do(trans, __bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot, warn_errors)));
 
-	bch2_trans_iter_init(trans, &iter, BTREE_ID_extents,
-			     POS(inum.inum, 0),
-			     BTREE_ITER_intent);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_extents, POS(inum.inum, 0), BTREE_ITER_intent);
 
 	switch (op->v.state) {
 case LOGGED_OP_FINSERT_start:
@@ -484,7 +481,6 @@ case LOGGED_OP_FINSERT_finish:
 	break;
 	}
 err:
-	bch2_trans_iter_exit(&iter);
 	if (warn_errors)
 		bch_err_fn(c, ret);
 	return ret;
