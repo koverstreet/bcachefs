@@ -1678,6 +1678,7 @@ CLOSURE_CALLBACK(bch2_write)
 	if (unlikely(bio->bi_iter.bi_size & (c->opts.block_size - 1))) {
 		bch2_write_op_error(op, op->pos.offset, "misaligned write");
 		op->error = bch_err_throw(c, data_write_misaligned);
+		__WARN();
 		goto err;
 	}
 
