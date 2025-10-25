@@ -695,17 +695,8 @@ static int bch2_disk_accounting_validate_late(struct btree_trans *trans,
 				"accounting not marked in superblock replicas\n%s",
 				(printbuf_reset(&buf),
 				 bch2_accounting_key_to_text(&buf, acc),
-				 buf.buf))) {
-			/*
-			 * We're not RW yet and still single threaded, dropping
-			 * and retaking lock is ok:
-			 */
-			percpu_up_write(&c->mark_lock);
-			ret = bch2_mark_replicas(c, &r.e);
-			percpu_down_write(&c->mark_lock);
-			if (ret)
-				return ret;
-		}
+				 buf.buf)))
+			try(bch2_mark_replicas(c, &r.e));
 		break;
 	}
 
@@ -728,13 +719,9 @@ invalid_device:
 		      buf.buf))) {
 		bch2_u64s_neg(v, nr);
 
-		percpu_up_write(&c->mark_lock);
-		int ret = bch2_disk_accounting_mod(trans, acc, v, nr, false) ?:
+		return  bch2_disk_accounting_mod(trans, acc, v, nr, false) ?:
 			bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
 			-BCH_ERR_remove_disk_accounting_entry;
-		percpu_down_write(&c->mark_lock);
-
-		return ret;
 	} else {
 		return bch_err_throw(c, remove_disk_accounting_entry);
 	}
@@ -792,101 +779,99 @@ static int accounting_read_mem_fixups(struct btree_trans *trans)
 	struct bch_accounting_mem *acc = &c->accounting;
 	CLASS(printbuf, underflow_err)();
 
-	scoped_guard(percpu_write, &c->mark_lock) {
-		darray_for_each_reverse(acc->k, i) {
-			struct disk_accounting_pos acc_k;
-			bpos_to_disk_accounting_pos(&acc_k, i->pos);
+	darray_for_each_reverse(acc->k, i) {
+		struct disk_accounting_pos acc_k;
+		bpos_to_disk_accounting_pos(&acc_k, i->pos);
 
-			u64 v[BCH_ACCOUNTING_MAX_COUNTERS];
-			memset(v, 0, sizeof(v));
+		u64 v[BCH_ACCOUNTING_MAX_COUNTERS];
+		memset(v, 0, sizeof(v));
 
-			for (unsigned j = 0; j < i->nr_counters; j++)
-				v[j] = percpu_u64_get(i->v[0] + j);
+		for (unsigned j = 0; j < i->nr_counters; j++)
+			v[j] = percpu_u64_get(i->v[0] + j);
 
-			/*
-			 * If the entry counters are zeroed, it should be treated as
-			 * nonexistent - it might point to an invalid device.
-			 *
-			 * Remove it, so that if it's re-added it gets re-marked in the
-			 * superblock:
-			 */
-			int ret = bch2_is_zero(v, sizeof(v[0]) * i->nr_counters)
-				? -BCH_ERR_remove_disk_accounting_entry
-				: lockrestart_do(trans,
-					bch2_disk_accounting_validate_late(trans, &acc_k, v, i->nr_counters));
+		/*
+		 * If the entry counters are zeroed, it should be treated as
+		 * nonexistent - it might point to an invalid device.
+		 *
+		 * Remove it, so that if it's re-added it gets re-marked in the
+		 * superblock:
+		 */
+		int ret = bch2_is_zero(v, sizeof(v[0]) * i->nr_counters)
+			? -BCH_ERR_remove_disk_accounting_entry
+			: lockrestart_do(trans,
+				bch2_disk_accounting_validate_late(trans, &acc_k, v, i->nr_counters));
 
-			if (ret == -BCH_ERR_remove_disk_accounting_entry) {
-				free_percpu(i->v[0]);
-				free_percpu(i->v[1]);
-				darray_remove_item(&acc->k, i);
-				ret = 0;
-				continue;
-			}
-
-			if (ret)
-				return ret;
+		if (ret == -BCH_ERR_remove_disk_accounting_entry) {
+			free_percpu(i->v[0]);
+			free_percpu(i->v[1]);
+			darray_remove_item(&acc->k, i);
+			ret = 0;
+			continue;
 		}
 
-		eytzinger0_sort(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
-				accounting_pos_cmp, NULL);
+		if (ret)
+			return ret;
+	}
 
-		for (unsigned i = 0; i < acc->k.nr; i++) {
-			struct disk_accounting_pos k;
-			bpos_to_disk_accounting_pos(&k, acc->k.data[i].pos);
+	eytzinger0_sort(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
+			accounting_pos_cmp, NULL);
 
-			u64 v[BCH_ACCOUNTING_MAX_COUNTERS];
-			bch2_accounting_mem_read_counters(acc, i, v, ARRAY_SIZE(v), false);
+	for (unsigned i = 0; i < acc->k.nr; i++) {
+		struct disk_accounting_pos k;
+		bpos_to_disk_accounting_pos(&k, acc->k.data[i].pos);
 
-			/*
-			 * Check for underflow, schedule check_allocations
-			 * necessary:
-			 *
-			 * XXX - see if we can factor this out to run on a bkey
-			 * so we can check everything lazily, right now we don't
-			 * check the non in-mem counters at all
-			 */
-			bool underflow = false;
+		u64 v[BCH_ACCOUNTING_MAX_COUNTERS];
+		bch2_accounting_mem_read_counters(acc, i, v, ARRAY_SIZE(v), false);
+
+		/*
+		 * Check for underflow, schedule check_allocations
+		 * necessary:
+		 *
+		 * XXX - see if we can factor this out to run on a bkey
+		 * so we can check everything lazily, right now we don't
+		 * check the non in-mem counters at all
+		 */
+		bool underflow = false;
+		for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
+			underflow |= (s64) v[j] < 0;
+
+		if (underflow) {
+			if (!underflow_err.pos) {
+				bch2_log_msg_start(c, &underflow_err);
+				prt_printf(&underflow_err, "Accounting underflow for\n");
+			}
+			bch2_accounting_key_to_text(&underflow_err, &k);
+
 			for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
-				underflow |= (s64) v[j] < 0;
+				prt_printf(&underflow_err, " %lli", v[j]);
+			prt_newline(&underflow_err);
+		}
 
-			if (underflow) {
-				if (!underflow_err.pos) {
-					bch2_log_msg_start(c, &underflow_err);
-					prt_printf(&underflow_err, "Accounting underflow for\n");
-				}
-				bch2_accounting_key_to_text(&underflow_err, &k);
+		guard(preempt)();
+		struct bch_fs_usage_base *usage = this_cpu_ptr(c->usage);
 
-				for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
-					prt_printf(&underflow_err, " %lli", v[j]);
-				prt_newline(&underflow_err);
+		switch (k.type) {
+		case BCH_DISK_ACCOUNTING_persistent_reserved:
+			usage->reserved += v[0] * k.persistent_reserved.nr_replicas;
+			break;
+		case BCH_DISK_ACCOUNTING_replicas:
+			fs_usage_data_type_to_base(usage, k.replicas.data_type, v[0]);
+			break;
+		case BCH_DISK_ACCOUNTING_dev_data_type: {
+			guard(rcu)();
+			struct bch_dev *ca = bch2_dev_rcu_noerror(c, k.dev_data_type.dev);
+			if (ca) {
+				struct bch_dev_usage_type __percpu *d = &ca->usage->d[k.dev_data_type.data_type];
+				percpu_u64_set(&d->buckets,	v[0]);
+				percpu_u64_set(&d->sectors,	v[1]);
+				percpu_u64_set(&d->fragmented,	v[2]);
+
+				if (k.dev_data_type.data_type == BCH_DATA_sb ||
+				    k.dev_data_type.data_type == BCH_DATA_journal)
+					usage->hidden += v[0] * ca->mi.bucket_size;
 			}
-
-			guard(preempt)();
-			struct bch_fs_usage_base *usage = this_cpu_ptr(c->usage);
-
-			switch (k.type) {
-			case BCH_DISK_ACCOUNTING_persistent_reserved:
-				usage->reserved += v[0] * k.persistent_reserved.nr_replicas;
-				break;
-			case BCH_DISK_ACCOUNTING_replicas:
-				fs_usage_data_type_to_base(usage, k.replicas.data_type, v[0]);
-				break;
-			case BCH_DISK_ACCOUNTING_dev_data_type: {
-				guard(rcu)();
-				struct bch_dev *ca = bch2_dev_rcu_noerror(c, k.dev_data_type.dev);
-				if (ca) {
-					struct bch_dev_usage_type __percpu *d = &ca->usage->d[k.dev_data_type.data_type];
-					percpu_u64_set(&d->buckets,	v[0]);
-					percpu_u64_set(&d->sectors,	v[1]);
-					percpu_u64_set(&d->fragmented,	v[2]);
-
-					if (k.dev_data_type.data_type == BCH_DATA_sb ||
-					    k.dev_data_type.data_type == BCH_DATA_journal)
-						usage->hidden += v[0] * ca->mi.bucket_size;
-				}
-				break;
-			}
-			}
+			break;
+		}
 		}
 	}
 
