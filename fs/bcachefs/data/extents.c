@@ -1490,6 +1490,7 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 	unsigned nonce = UINT_MAX;
 	unsigned nr_ptrs = 0;
 	bool have_written = false, have_unwritten = false, have_ec = false, crc_since_last_ptr = false;
+	bool have_inval_dev_ptrs = false, have_non_inval_dev_ptrs = false;
 	int ret = 0;
 
 	if (bkey_is_btree_ptr(k.k))
@@ -1524,6 +1525,12 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 
 			have_ec = false;
 			crc_since_last_ptr = false;
+
+			if (entry->ptr.dev == BCH_SB_MEMBER_INVALID)
+				have_inval_dev_ptrs = true;
+			else
+				have_non_inval_dev_ptrs = true;
+
 			nr_ptrs++;
 			break;
 		case BCH_EXTENT_ENTRY_crc32:
@@ -1571,6 +1578,7 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 					 c, ptr_stripe_redundant,
 					 "redundant stripe entry");
 			have_ec = true;
+			have_non_inval_dev_ptrs = true;
 			break;
 		case BCH_EXTENT_ENTRY_rebalance_v2:
 			try(bch2_extent_rebalance_validate(c, k, from, &entry->rebalance_v2));
@@ -1603,6 +1611,9 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 	bkey_fsck_err_on(have_ec,
 			 c, extent_ptrs_redundant_stripe,
 			 "redundant stripe entry");
+	bkey_fsck_err_on(have_inval_dev_ptrs && !have_non_inval_dev_ptrs,
+			 c, extent_ptrs_all_invalid,
+			 "extent ptrs all to BCH_SB_MEMBER_INVALID");
 fsck_err:
 	return ret;
 }
