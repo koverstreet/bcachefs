@@ -2157,6 +2157,8 @@ int bch2_btree_node_rewrite(struct btree_trans *trans,
 			    unsigned target,
 			    enum bch_trans_commit_flags flags)
 {
+	BUG_ON(btree_node_fake(b));
+
 	struct bch_fs *c = trans->c;
 	struct btree *n, *parent;
 	struct btree_update *as;
@@ -2439,6 +2441,8 @@ int bch2_btree_node_update_key(struct btree_trans *trans, struct btree_iter *ite
 			       struct btree *b, struct bkey_i *new_key,
 			       unsigned commit_flags, bool skip_triggers)
 {
+	BUG_ON(btree_node_fake(b));
+
 	struct btree_path *path = btree_iter_path(trans, iter);
 
 	/*
