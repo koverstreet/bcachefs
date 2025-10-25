@@ -440,6 +440,9 @@ retry_root:
 		if (b != btree_node_root(c, b))
 			goto retry_root;
 
+		if (btree_node_fake(b))
+			return 0;
+
 		k = bkey_i_to_s_c(&b->key);
 		ret = bch2_move_extent(ctxt, NULL, &snapshot_io_opts, pred, arg, &iter, level, k);
 root_err:
@@ -767,6 +770,9 @@ retry:
 				break;
 
 			stats->pos = BBPOS(iter.btree_id, iter.pos);
+
+			if (btree_node_fake(b))
+				goto next;
 
 			struct data_update_opts data_opts = {};
 			if (!pred(c, arg, b, &io_opts, &data_opts))
