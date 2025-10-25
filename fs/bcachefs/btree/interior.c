@@ -649,19 +649,25 @@ static void btree_update_new_nodes_mark_sb(struct btree_update *as)
 static int btree_update_nodes_written_trans(struct btree_trans *trans,
 					    struct btree_update *as)
 {
-	struct jset_entry *e = errptr_try(bch2_trans_jset_entry_alloc(trans, as->journal_u64s));
-
-	memcpy(e, as->journal_entries, as->journal_u64s * sizeof(u64));
-
 	trans->journal_pin = &as->journal;
 
 	darray_for_each(as->old_nodes, i)
 		try(bch2_key_trigger_old(trans, as->btree_id, i->level + 1, bkey_i_to_s_c(&i->key),
 					 BTREE_TRIGGER_transactional));
 
-	darray_for_each(as->new_nodes, i)
+	darray_for_each(as->new_nodes, i) {
 		try(bch2_key_trigger_new(trans, as->btree_id, i->level + 1, bkey_i_to_s(&i->key),
 					 BTREE_TRIGGER_transactional));
+
+		journal_entry_set(errptr_try(bch2_trans_jset_entry_alloc(trans,
+									 jset_u64s(i->key.k.u64s))),
+				  i->root
+				  ? BCH_JSET_ENTRY_btree_root
+				  : BCH_JSET_ENTRY_btree_keys,
+				  as->btree_id,
+				  i->root ? i->level : i->level + 1,
+				  &i->key, i->key.k.u64s);
+	}
 
 	return 0;
 }
@@ -931,25 +937,13 @@ static void btree_update_reparent(struct btree_update *as,
 
 static void btree_update_updated_root(struct btree_update *as, struct btree *b)
 {
-	struct bkey_i *insert = &b->key;
 	struct bch_fs *c = as->c;
 
 	BUG_ON(as->mode != BTREE_UPDATE_none);
+	as->mode = BTREE_UPDATE_root;
 
-	BUG_ON(as->journal_u64s + jset_u64s(insert->k.u64s) >
-	       ARRAY_SIZE(as->journal_entries));
-
-	as->journal_u64s +=
-		journal_entry_set((void *) &as->journal_entries[as->journal_u64s],
-				  BCH_JSET_ENTRY_btree_root,
-				  b->c.btree_id, b->c.level,
-				  insert, insert->k.u64s);
-
-	scoped_guard(mutex, &c->btree_interior_update_lock) {
+	scoped_guard(mutex, &c->btree_interior_update_lock)
 		list_add_tail(&as->unwritten_list, &c->btree_interior_updates_unwritten);
-
-		as->mode	= BTREE_UPDATE_root;
-	}
 }
 
 /*
@@ -1344,15 +1338,6 @@ static void bch2_insert_fixup_btree_ptr(struct btree_update *as,
 		dump_stack();
 	}
 
-	BUG_ON(as->journal_u64s + jset_u64s(insert->k.u64s) >
-	       ARRAY_SIZE(as->journal_entries));
-
-	as->journal_u64s +=
-		journal_entry_set((void *) &as->journal_entries[as->journal_u64s],
-				  BCH_JSET_ENTRY_btree_keys,
-				  b->c.btree_id, b->c.level,
-				  insert, insert->k.u64s);
-
 	while ((k = bch2_btree_node_iter_peek_all(node_iter, b)) &&
 	       bkey_iter_pos_cmp(b, k, &insert->k.p) < 0)
 		bch2_btree_node_iter_advance(node_iter, b);
@@ -1700,7 +1685,7 @@ static int btree_split(struct btree_update *as, struct btree_trans *trans,
 	}
 	bch2_btree_update_get_open_buckets(as, n1);
 	bch2_btree_node_write_trans(trans, n1, SIX_LOCK_intent, 0);
-	bch2_btree_update_add_node(&as->new_nodes, n1, false);
+	bch2_btree_update_add_node(&as->new_nodes, n1, !parent);
 
 	/*
 	 * The old node must be freed (in memory) _before_ unlocking the new
@@ -2205,7 +2190,7 @@ int bch2_btree_node_rewrite(struct btree_trans *trans,
 
 	bch2_btree_update_get_open_buckets(as, n);
 	bch2_btree_node_write_trans(trans, n, SIX_LOCK_intent, 0);
-	bch2_btree_update_add_node(&as->new_nodes, n, false);
+	bch2_btree_update_add_node(&as->new_nodes, n, !parent);
 
 	bch2_btree_node_free_inmem(trans, btree_iter_path(trans, iter), b);
 

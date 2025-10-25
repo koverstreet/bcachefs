@@ -8,8 +8,6 @@
 
 #define BTREE_UPDATE_NODES_MAX		((BTREE_MAX_DEPTH - 2) * 2 + GC_MERGE_NODES)
 
-#define BTREE_UPDATE_JOURNAL_RES	(BTREE_UPDATE_NODES_MAX * (BKEY_BTREE_PTR_U64s_MAX + 1))
-
 int bch2_btree_node_check_topology(struct btree_trans *, struct btree *);
 
 #define BTREE_UPDATE_MODES()	\
@@ -110,9 +108,6 @@ struct btree_update {
 	open_bucket_idx_t		open_buckets[BTREE_UPDATE_NODES_MAX *
 						     BCH_REPLICAS_MAX];
 	open_bucket_idx_t		nr_open_buckets;
-
-	unsigned			journal_u64s;
-	u64				journal_entries[BTREE_UPDATE_JOURNAL_RES];
 
 	/* Only here to reduce stack usage on recursive splits: */
 	struct keylist			parent_keys;
