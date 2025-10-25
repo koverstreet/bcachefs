@@ -736,6 +736,19 @@ void bch2_trans_node_reinit_iter(struct btree_trans *trans, struct btree *b)
 
 /* Btree path: traverse, set_pos: */
 
+static noinline_for_stack int btree_node_root_err(struct btree_trans *trans, struct btree *b)
+{
+	struct bch_fs *c = trans->c;
+	CLASS(printbuf, buf)();
+	bch2_log_msg_start(c, &buf);
+
+	prt_str(&buf, "btree root doesn't cover expected range:\n");
+	bch2_btree_pos_to_text(&buf, c, b);
+	prt_newline(&buf);
+
+	return __bch2_topology_error(c, &buf);
+}
+
 static inline int btree_path_lock_root(struct btree_trans *trans,
 				       struct btree_path *path,
 				       unsigned depth_want,
@@ -783,6 +796,13 @@ static inline int btree_path_lock_root(struct btree_trans *trans,
 		if (likely(b == READ_ONCE(r->b) &&
 			   b->c.level == path->level &&
 			   !race_fault())) {
+			if (unlikely(!bpos_eq(b->data->min_key, POS_MIN) ||
+				     !bpos_eq(b->key.k.p, SPOS_MAX))) {
+				ret = btree_node_root_err(trans, b);
+				six_unlock_type(&b->c.lock, lock_type);
+				return ret;
+			}
+
 			for (i = 0; i < path->level; i++)
 				path->l[i].b = ERR_PTR(-BCH_ERR_no_btree_node_lock_root);
 			path->l[path->level].b = b;
