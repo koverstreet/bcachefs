@@ -664,13 +664,38 @@ static int accounting_read_key(struct btree_trans *trans, struct bkey_s_c k)
 					      BCH_ACCOUNTING_read, false);
 }
 
+static int disk_accounting_invalid_dev(struct btree_trans *trans,
+				       struct disk_accounting_pos *acc,
+				       u64 *v, unsigned nr,
+				       unsigned dev)
+{
+	CLASS(printbuf, buf)();
+	bch2_accounting_key_to_text(&buf, acc);
+	int ret = 0;
+
+	if (fsck_err(trans, accounting_to_invalid_device,
+		     "accounting entry points to invalid device %u\n%s",
+		     dev, buf.buf)) {
+		bch2_u64s_neg(v, nr);
+
+		return  bch2_disk_accounting_mod(trans, acc, v, nr, false) ?:
+			bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
+			-BCH_ERR_remove_disk_accounting_entry;
+	} else {
+		return bch_err_throw(trans->c, remove_disk_accounting_entry);
+	}
+fsck_err:
+	return ret;
+}
+
+
 static int bch2_disk_accounting_validate_late(struct btree_trans *trans,
 					      struct disk_accounting_pos *acc,
 					      u64 *v, unsigned nr)
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
-	int ret = 0, invalid_dev = -1;
+	int ret = 0;
 
 	switch (acc->type) {
 	case BCH_DISK_ACCOUNTING_replicas: {
@@ -679,10 +704,8 @@ static int bch2_disk_accounting_validate_late(struct btree_trans *trans,
 
 		for (unsigned i = 0; i < r.e.nr_devs; i++)
 			if (r.e.devs[i] != BCH_SB_MEMBER_INVALID &&
-			    !bch2_dev_exists(c, r.e.devs[i])) {
-				invalid_dev = r.e.devs[i];
-				goto invalid_device;
-			}
+			    !bch2_dev_exists(c, r.e.devs[i]))
+				return disk_accounting_invalid_dev(trans, acc, v, nr, r.e.devs[i]);
 
 		/*
 		 * All replicas entry checks except for invalid device are done
@@ -701,30 +724,14 @@ static int bch2_disk_accounting_validate_late(struct btree_trans *trans,
 	}
 
 	case BCH_DISK_ACCOUNTING_dev_data_type:
-		if (!bch2_dev_exists(c, acc->dev_data_type.dev)) {
-			invalid_dev = acc->dev_data_type.dev;
-			goto invalid_device;
-		}
+		if (!bch2_dev_exists(c, acc->dev_data_type.dev))
+			return disk_accounting_invalid_dev(trans, acc, v, nr,
+							   acc->dev_data_type.dev);
 		break;
 	}
 
 fsck_err:
 	return ret;
-invalid_device:
-	if (fsck_err(trans, accounting_to_invalid_device,
-		     "accounting entry points to invalid device %i\n%s",
-		     invalid_dev,
-		     (printbuf_reset(&buf),
-		      bch2_accounting_key_to_text(&buf, acc),
-		      buf.buf))) {
-		bch2_u64s_neg(v, nr);
-
-		return  bch2_disk_accounting_mod(trans, acc, v, nr, false) ?:
-			bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
-			-BCH_ERR_remove_disk_accounting_entry;
-	} else {
-		return bch_err_throw(c, remove_disk_accounting_entry);
-	}
 }
 
 static struct journal_key *accumulate_newer_accounting_keys(struct btree_trans *trans, struct journal_key *i)
