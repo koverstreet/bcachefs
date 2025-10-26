@@ -838,6 +838,7 @@ void bch2_inode_opts_get(struct bch_fs *c, struct bch_inode_opts *ret, bool meta
 		ret->background_target	= c->opts.metadata_target ?: c->opts.foreground_target;
 		ret->data_replicas	= c->opts.metadata_replicas;
 		ret->data_checksum	= c->opts.metadata_checksum;
+		ret->erasure_code	= false;
 	} else {
 		bch2_io_opts_fixups(ret);
 	}
