@@ -178,8 +178,7 @@ int bch2_btree_node_rewrite_pos(struct btree_trans *,
 void bch2_btree_node_rewrite_async(struct bch_fs *, struct btree *);
 
 int bch2_btree_node_update_key(struct btree_trans *, struct btree_iter *,
-			       struct btree *, struct bkey_i *,
-			       unsigned, bool);
+			       struct btree *, struct bkey_i *, unsigned);
 
 void bch2_btree_set_root_for_read(struct bch_fs *, struct btree *);
 

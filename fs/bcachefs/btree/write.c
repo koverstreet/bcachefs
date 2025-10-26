@@ -126,8 +126,7 @@ static int btree_node_write_update_key(struct btree_trans *trans,
 					  BCH_WATERMARK_interior_updates|
 					  BCH_TRANS_COMMIT_journal_reclaim|
 					  BCH_TRANS_COMMIT_no_enospc|
-					  BCH_TRANS_COMMIT_no_check_rw,
-					  !wbio->wbio.failed.nr);
+					  BCH_TRANS_COMMIT_no_check_rw);
 }
 
 static void btree_node_write_work(struct work_struct *work)

@@ -81,7 +81,7 @@ static int drop_btree_ptrs(struct btree_trans *trans, struct btree_iter *iter,
 	if (!n)
 		return 0;
 
-	return bch2_btree_node_update_key(trans, iter, b, n, 0, false);
+	return bch2_btree_node_update_key(trans, iter, b, n, 0);
 }
 
 static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,

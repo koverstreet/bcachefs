@@ -2479,8 +2479,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 					struct btree_iter *iter,
 					struct btree *b,
 					struct bkey_i *new_key,
-					unsigned commit_flags,
-					bool skip_triggers)
+					unsigned commit_flags)
 {
 	struct bch_fs *c = trans->c;
 	unsigned level = b->c.level;
@@ -2499,15 +2498,14 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 							    BTREE_ITER_intent);
 
 			try(bch2_btree_iter_traverse(&parent_iter));
-			try(bch2_trans_update(trans, &parent_iter, new_key, skip_triggers ? BTREE_TRIGGER_norun : 0));
+			try(bch2_trans_update(trans, &parent_iter, new_key, 0));
 		} else {
-			if (!skip_triggers)
-				try(bch2_key_trigger(trans, b->c.btree_id, b->c.level + 1,
-						     bkey_i_to_s_c(&b->key),
-						     bkey_i_to_s(new_key),
-						     BTREE_TRIGGER_insert|
-						     BTREE_TRIGGER_overwrite|
-						     BTREE_TRIGGER_transactional));
+			try(bch2_key_trigger(trans, b->c.btree_id, b->c.level + 1,
+					     bkey_i_to_s_c(&b->key),
+					     bkey_i_to_s(new_key),
+					     BTREE_TRIGGER_insert|
+					     BTREE_TRIGGER_overwrite|
+					     BTREE_TRIGGER_transactional));
 
 			journal_entry_set(errptr_try(bch2_trans_jset_entry_alloc(trans,
 										 jset_u64s(b->key.k.u64s))),
@@ -2567,7 +2565,7 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 
 int bch2_btree_node_update_key(struct btree_trans *trans, struct btree_iter *iter,
 			       struct btree *b, struct bkey_i *new_key,
-			       unsigned commit_flags, bool skip_triggers)
+			       unsigned commit_flags)
 {
 	BUG_ON(btree_node_fake(b));
 
@@ -2581,8 +2579,7 @@ int bch2_btree_node_update_key(struct btree_trans *trans, struct btree_iter *ite
 	try(bch2_btree_path_upgrade(trans, path, b->c.level + 1));
 
 	path->intent_ref++;
-	int ret = __bch2_btree_node_update_key(trans, iter, b, new_key,
-					       commit_flags, skip_triggers);
+	int ret = __bch2_btree_node_update_key(trans, iter, b, new_key, commit_flags);
 	--path->intent_ref;
 	return ret;
 }
