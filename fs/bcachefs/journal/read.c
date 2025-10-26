@@ -323,18 +323,15 @@ static void journal_entry_err_msg(struct printbuf *out,
 	journal_entry_err_msg(&_buf, version, jset, entry);		\
 	prt_printf(&_buf, msg, ##__VA_ARGS__);				\
 									\
-	switch (from.flags & BCH_VALIDATE_write) {			\
-	case READ:							\
+	if (!(from.flags & (BCH_VALIDATE_write|BCH_VALIDATE_commit))) {	\
 		mustfix_fsck_err(c, _err, "%s", _buf.buf);		\
-		break;							\
-	case WRITE:							\
+	} else {							\
 		bch2_sb_error_count(c, BCH_FSCK_ERR_##_err);		\
 		if (bch2_fs_inconsistent(c,				\
 				"corrupt metadata before write: %s\n", _buf.buf)) {\
 			ret = bch_err_throw(c, fsck_errors_not_fixed);		\
 			goto fsck_err;					\
 		}							\
-		break;							\
 	}								\
 									\
 	true;								\
