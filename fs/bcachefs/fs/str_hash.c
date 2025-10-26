@@ -320,52 +320,16 @@ fsck_err:
 	return ret;
 }
 
-int __bch2_str_hash_check_key(struct btree_trans *trans,
-			      struct snapshots_seen *s,
-			      const struct bch_hash_desc *desc,
-			      struct bch_hash_info *hash_info,
-			      struct btree_iter *k_iter, struct bkey_s_c hash_k,
-			      bool *updated_before_k_pos)
+static int str_hash_bad_hash(struct btree_trans *trans,
+			     struct snapshots_seen *s,
+			     const struct bch_hash_desc *desc,
+			     struct bch_hash_info *hash_info,
+			     struct btree_iter *k_iter, struct bkey_s_c hash_k,
+			     bool *updated_before_k_pos,
+			     struct btree_iter *iter, u64 hash)
 {
-	struct bch_fs *c = trans->c;
-	struct btree_iter iter = {};
 	CLASS(printbuf, buf)();
-	struct bkey_s_c k;
 	int ret = 0;
-
-	u64 hash = desc->hash_bkey(hash_info, hash_k);
-	if (hash_k.k->p.offset < hash)
-		goto bad_hash;
-
-	bch2_trans_iter_init(trans, &iter, desc->btree_id,
-			     SPOS(hash_k.k->p.inode, hash, hash_k.k->p.snapshot),
-			     BTREE_ITER_slots|
-			     BTREE_ITER_with_updates);
-
-	for_each_btree_key_continue_norestart(iter,
-			BTREE_ITER_slots|
-			BTREE_ITER_with_updates, k, ret) {
-		if (bkey_eq(k.k->p, hash_k.k->p))
-			break;
-
-		if (k.k->type == desc->key_type &&
-		    !desc->cmp_bkey(k, hash_k)) {
-			ret =	check_inode_hash_info_matches_root(trans, hash_k.k->p.inode,
-								   hash_info) ?:
-				bch2_str_hash_repair_key(trans, s, desc, hash_info,
-							 k_iter, hash_k,
-							 &iter, k, updated_before_k_pos);
-			break;
-		}
-
-		if (bkey_deleted(k.k))
-			goto bad_hash;
-	}
-	bch2_trans_iter_exit(&iter);
-fsck_err:
-	return ret;
-bad_hash:
-	bch2_trans_iter_exit(&iter);
 	/*
 	 * Before doing any repair, check hash_info itself:
 	 */
@@ -374,10 +338,54 @@ bad_hash:
 	if (fsck_err(trans, hash_table_key_wrong_offset,
 		     "hash table key at wrong offset: should be at %llu\n%s",
 		     hash,
-		     (bch2_bkey_val_to_text(&buf, c, hash_k), buf.buf)))
+		     (bch2_bkey_val_to_text(&buf, trans->c, hash_k), buf.buf)))
 		ret = bch2_str_hash_repair_key(trans, s, desc, hash_info,
 					       k_iter, hash_k,
-					       &iter, bkey_s_c_null,
+					       iter, bkey_s_c_null,
 					       updated_before_k_pos);
+fsck_err:
+	return ret;
+}
+
+int __bch2_str_hash_check_key(struct btree_trans *trans,
+			      struct snapshots_seen *s,
+			      const struct bch_hash_desc *desc,
+			      struct bch_hash_info *hash_info,
+			      struct btree_iter *k_iter, struct bkey_s_c hash_k,
+			      bool *updated_before_k_pos)
+{
+	u64 hash = desc->hash_bkey(hash_info, hash_k);
+
+	CLASS(btree_iter, iter)(trans, desc->btree_id,
+				SPOS(hash_k.k->p.inode, hash, hash_k.k->p.snapshot),
+				BTREE_ITER_slots|
+				BTREE_ITER_with_updates);
+
+	if (hash_k.k->p.offset < hash)
+		return str_hash_bad_hash(trans, s, desc, hash_info, k_iter, hash_k,
+					 updated_before_k_pos, &iter, hash);
+
+	struct bkey_s_c k;
+	int ret = 0;
+	for_each_btree_key_continue_norestart(iter,
+			BTREE_ITER_slots|
+			BTREE_ITER_with_updates, k, ret) {
+		if (bkey_eq(k.k->p, hash_k.k->p))
+			break;
+
+		if (k.k->type == desc->key_type &&
+		    !desc->cmp_bkey(k, hash_k)) {
+			/* dup */
+			try(check_inode_hash_info_matches_root(trans, hash_k.k->p.inode, hash_info));
+			try(bch2_str_hash_repair_key(trans, s, desc, hash_info, k_iter, hash_k,
+						     &iter, k, updated_before_k_pos));
+			break;
+		}
+
+		if (bkey_deleted(k.k))
+			return str_hash_bad_hash(trans, s, desc, hash_info, k_iter, hash_k,
+						 updated_before_k_pos, &iter, hash);
+	}
+
 	return ret;
 }
