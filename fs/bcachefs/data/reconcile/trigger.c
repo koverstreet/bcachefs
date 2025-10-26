@@ -958,7 +958,7 @@ int bch2_update_reconcile_opts(struct btree_trans *trans,
 
 		return  bch2_bkey_set_needs_reconcile(trans, snapshot_io_opts, opts,
 						      bkey_i_to_s(n), BKEY_BTREE_PTR_U64s_MAX, ctx, 0) ?:
-			bch2_btree_node_update_key(trans, &iter2, b, n, BCH_TRANS_COMMIT_no_enospc, false) ?:
+			bch2_btree_node_update_key(trans, &iter2, b, n, BCH_TRANS_COMMIT_no_enospc) ?:
 			bch_err_throw(c, transaction_restart_commit);
 	}
 }

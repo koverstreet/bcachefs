@@ -207,8 +207,7 @@ enum async_btree_op {
 void bch2_async_btree_op(struct bch_fs *, struct btree *, enum async_btree_op);
 
 int bch2_btree_node_update_key(struct btree_trans *, struct btree_iter *,
-			       struct btree *, struct bkey_i *,
-			       unsigned, bool);
+			       struct btree *, struct bkey_i *, unsigned);
 
 void bch2_btree_set_root_for_read(struct bch_fs *, struct btree *);
 

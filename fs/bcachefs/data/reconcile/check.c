@@ -272,7 +272,7 @@ static int btree_node_update_key_get_node(struct btree_trans *trans, struct btre
 	CLASS(btree_node_iter, iter2)(trans, iter->btree_id, iter->pos, 0, level - 1, 0);
 	struct btree *b = errptr_try(bch2_btree_iter_peek_node(&iter2));
 
-	return bch2_btree_node_update_key(trans, &iter2, b, new_key, BCH_TRANS_COMMIT_no_enospc, false);
+	return bch2_btree_node_update_key(trans, &iter2, b, new_key, BCH_TRANS_COMMIT_no_enospc);
 }
 
 static int check_reconcile_work_btree_key(struct btree_trans *trans,

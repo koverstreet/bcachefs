@@ -504,7 +504,7 @@ int bch2_extent_reconcile_pending_mod(struct btree_trans *trans, struct btree_it
 
 		bkey_reconcile_pending_mod(c, n, set);
 
-		return bch2_btree_node_update_key(trans, &iter2, b, n, BCH_TRANS_COMMIT_no_enospc, false);
+		return bch2_btree_node_update_key(trans, &iter2, b, n, BCH_TRANS_COMMIT_no_enospc);
 	}
 }
 
