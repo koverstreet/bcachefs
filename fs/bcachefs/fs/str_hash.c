@@ -218,6 +218,50 @@ static noinline int check_inode_hash_info_matches_root(struct btree_trans *trans
 	return 0;
 }
 
+static int str_hash_dup_entries(struct btree_trans *trans,
+				struct snapshots_seen *s,
+				const struct bch_hash_desc *desc,
+				struct bch_hash_info *hash_info,
+				struct btree_iter *k_iter, struct bkey_s_c k,
+				struct btree_iter *dup_iter, struct bkey_s_c dup_k,
+				bool *updated_before_k_pos)
+{
+	struct bch_fs *c = trans->c;
+	CLASS(printbuf, buf)();
+	int ret = hash_pick_winner(trans, *desc, hash_info, k, dup_k);
+	if (ret < 0)
+		return ret;
+
+	if (!fsck_err(trans, hash_table_key_duplicate,
+		      "duplicate hash table keys%s:\n%s",
+		      ret != 2 ? "" : ", both point to valid inodes",
+		      (printbuf_reset(&buf),
+		       bch2_bkey_val_to_text(&buf, c, k),
+		       prt_newline(&buf),
+		       bch2_bkey_val_to_text(&buf, c, dup_k),
+		       buf.buf)))
+		return 0;
+
+	switch (ret) {
+		case 0:
+			try(bch2_hash_delete_at(trans, *desc, hash_info, k_iter, 0));
+			break;
+		case 1:
+			try(bch2_hash_delete_at(trans, *desc, hash_info, dup_iter, 0));
+			break;
+		case 2:
+			try(bch2_fsck_rename_dirent(trans, s, *desc, hash_info,
+						    bkey_s_c_to_dirent(k),
+						    updated_before_k_pos));
+			try(bch2_hash_delete_at(trans, *desc, hash_info, k_iter, 0));
+			break;
+	}
+
+	return bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
+fsck_err:
+	return ret;
+}
+
 /* Put a str_hash key in its proper location, checking for duplicates */
 int bch2_str_hash_repair_key(struct btree_trans *trans,
 			     struct snapshots_seen *s,
@@ -227,8 +271,6 @@ int bch2_str_hash_repair_key(struct btree_trans *trans,
 			     struct btree_iter *dup_iter, struct bkey_s_c dup_k,
 			     bool *updated_before_k_pos)
 {
-	struct bch_fs *c = trans->c;
-	CLASS(printbuf, buf)();
 	bool free_snapshots_seen = false;
 	int ret = 0;
 
@@ -258,63 +300,26 @@ int bch2_str_hash_repair_key(struct btree_trans *trans,
 				       (subvol_inum) { 0, new->k.p.inode },
 				       new->k.p.snapshot, new,
 				       STR_HASH_must_create|
-				       BTREE_ITER_with_updates|
 				       BTREE_UPDATE_internal_snapshot_node);
 		ret = bkey_err(dup_k);
 		if (ret)
 			goto out;
-		if (dup_k.k)
-			goto duplicate_entries;
 
-		if (bpos_lt(new->k.p, k.k->p))
-			*updated_before_k_pos = true;
-
-		ret =   bch2_insert_snapshot_whiteouts(trans, desc->btree_id,
-						       k_iter->pos, new->k.p) ?:
-			bch2_hash_delete_at(trans, *desc, hash_info, k_iter,
-					    BTREE_ITER_with_updates|
-					    BTREE_UPDATE_internal_snapshot_node) ?:
-			bch2_fsck_update_backpointers(trans, s, *desc, hash_info, new) ?:
-			bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
-			bch_err_throw(c, transaction_restart_commit);
-	} else {
-duplicate_entries:
-		ret = hash_pick_winner(trans, *desc, hash_info, k, dup_k);
-		if (ret < 0)
-			goto out;
-
-		if (!fsck_err(trans, hash_table_key_duplicate,
-			      "duplicate hash table keys%s:\n%s",
-			      ret != 2 ? "" : ", both point to valid inodes",
-			      (printbuf_reset(&buf),
-			       bch2_bkey_val_to_text(&buf, c, k),
-			       prt_newline(&buf),
-			       bch2_bkey_val_to_text(&buf, c, dup_k),
-			       buf.buf)))
-			goto out;
-
-		switch (ret) {
-		case 0:
-			ret = bch2_hash_delete_at(trans, *desc, hash_info, k_iter, 0);
-			break;
-		case 1:
-			ret = bch2_hash_delete_at(trans, *desc, hash_info, dup_iter, 0);
-			break;
-		case 2:
-			ret = bch2_fsck_rename_dirent(trans, s, *desc, hash_info,
-						      bkey_s_c_to_dirent(k),
-						      updated_before_k_pos) ?:
+		if (!dup_k.k) {
+			ret =   bch2_insert_snapshot_whiteouts(trans, desc->btree_id,
+							       k_iter->pos, new->k.p) ?:
 				bch2_hash_delete_at(trans, *desc, hash_info, k_iter,
-						    BTREE_ITER_with_updates);
-			goto out;
+						    BTREE_UPDATE_internal_snapshot_node) ?:
+				bch2_fsck_update_backpointers(trans, s, *desc, hash_info, new) ?:
+				bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 		}
-
-		ret = bch2_trans_commit(trans, NULL, NULL, 0) ?:
-			bch_err_throw(c, transaction_restart_commit);
 	}
+
+	if (dup_k.k)
+		ret = str_hash_dup_entries(trans, s, desc, hash_info,
+					   k_iter, k, dup_iter, dup_k,
+					   updated_before_k_pos);
 out:
-fsck_err:
-	bch2_trans_iter_exit(dup_iter);
 	if (free_snapshots_seen)
 		darray_exit(&s->ids);
 	return ret;
@@ -358,8 +363,7 @@ int __bch2_str_hash_check_key(struct btree_trans *trans,
 
 	CLASS(btree_iter, iter)(trans, desc->btree_id,
 				SPOS(hash_k.k->p.inode, hash, hash_k.k->p.snapshot),
-				BTREE_ITER_slots|
-				BTREE_ITER_with_updates);
+				BTREE_ITER_slots);
 
 	if (hash_k.k->p.offset < hash)
 		return str_hash_bad_hash(trans, s, desc, hash_info, k_iter, hash_k,
@@ -368,8 +372,7 @@ int __bch2_str_hash_check_key(struct btree_trans *trans,
 	struct bkey_s_c k;
 	int ret = 0;
 	for_each_btree_key_continue_norestart(iter,
-			BTREE_ITER_slots|
-			BTREE_ITER_with_updates, k, ret) {
+			BTREE_ITER_slots, k, ret) {
 		if (bkey_eq(k.k->p, hash_k.k->p))
 			break;
 
