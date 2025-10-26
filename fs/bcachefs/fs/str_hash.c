@@ -271,58 +271,39 @@ int bch2_str_hash_repair_key(struct btree_trans *trans,
 			     struct btree_iter *dup_iter, struct bkey_s_c dup_k,
 			     bool *updated_before_k_pos)
 {
-	bool free_snapshots_seen = false;
-	int ret = 0;
+	CLASS(snapshots_seen, s_onstack)();
 
 	if (!s) {
-		s = bch2_trans_kmalloc(trans, sizeof(*s));
-		ret = PTR_ERR_OR_ZERO(s);
-		if (ret)
-			goto out;
-
+		s = &s_onstack;
 		s->pos = k_iter->pos;
-		darray_init(&s->ids);
 
-		ret = bch2_get_snapshot_overwrites(trans, desc->btree_id, k_iter->pos, &s->ids);
-		if (ret)
-			goto out;
-
-		free_snapshots_seen = true;
+		try(bch2_get_snapshot_overwrites(trans, desc->btree_id, k_iter->pos, &s->ids));
 	}
 
 	if (!dup_k.k) {
-		struct bkey_i *new = bch2_bkey_make_mut_noupdate(trans, k);
-		ret = PTR_ERR_OR_ZERO(new);
-		if (ret)
-			goto out;
+		struct bkey_i *new = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
 
-		dup_k = bch2_hash_set_or_get_in_snapshot(trans, dup_iter, *desc, hash_info,
+		dup_k = bkey_try(bch2_hash_set_or_get_in_snapshot(trans, dup_iter, *desc, hash_info,
 				       (subvol_inum) { 0, new->k.p.inode },
 				       new->k.p.snapshot, new,
 				       STR_HASH_must_create|
-				       BTREE_UPDATE_internal_snapshot_node);
-		ret = bkey_err(dup_k);
-		if (ret)
-			goto out;
+				       BTREE_UPDATE_internal_snapshot_node));
 
 		if (!dup_k.k) {
-			ret =   bch2_insert_snapshot_whiteouts(trans, desc->btree_id,
-							       k_iter->pos, new->k.p) ?:
-				bch2_hash_delete_at(trans, *desc, hash_info, k_iter,
-						    BTREE_UPDATE_internal_snapshot_node) ?:
-				bch2_fsck_update_backpointers(trans, s, *desc, hash_info, new) ?:
-				bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
+			try(bch2_insert_snapshot_whiteouts(trans, desc->btree_id,
+							   k_iter->pos, new->k.p));
+			try(bch2_hash_delete_at(trans, *desc, hash_info, k_iter,
+					    BTREE_UPDATE_internal_snapshot_node));
+			try(bch2_fsck_update_backpointers(trans, s, *desc, hash_info, new));
+			try(bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
 		}
 	}
 
 	if (dup_k.k)
-		ret = str_hash_dup_entries(trans, s, desc, hash_info,
-					   k_iter, k, dup_iter, dup_k,
-					   updated_before_k_pos);
-out:
-	if (free_snapshots_seen)
-		darray_exit(&s->ids);
-	return ret;
+		try(str_hash_dup_entries(trans, s, desc, hash_info,
+					 k_iter, k, dup_iter, dup_k,
+					 updated_before_k_pos));
+	return 0;
 }
 
 static int str_hash_bad_hash(struct btree_trans *trans,
