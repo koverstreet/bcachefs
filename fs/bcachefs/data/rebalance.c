@@ -296,7 +296,7 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 	if (!snapshot_opts) {
 		bch2_inode_opts_get(c, opts, metadata);
 
-		if (k.k->p.snapshot) {
+		if (!metadata && k.k->p.snapshot) {
 			struct bch_inode_unpacked inode;
 			int ret = bch2_inode_find_by_inum_snapshot(trans, k.k->p.inode, k.k->p.snapshot,
 								   &inode, BTREE_ITER_cached);
@@ -313,7 +313,7 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 			snapshot_opts->d.nr = 0;
 		}
 
-		if (k.k->p.snapshot) {
+		if (!metadata && k.k->p.snapshot) {
 			if (snapshot_opts->cur_inum != k.k->p.inode) {
 				snapshot_opts->d.nr = 0;
 
@@ -361,6 +361,8 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 		BCH_REBALANCE_OPTS()
 #undef x
 	}
+
+	BUG_ON(metadata && opts->erasure_code);
 
 	return 0;
 }
