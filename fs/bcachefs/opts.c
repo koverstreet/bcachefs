@@ -531,7 +531,8 @@ void bch2_opts_to_text(struct printbuf *out,
 	}
 }
 
-static int opt_hook_io(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_opt_id id, bool post)
+static int opt_hook_io(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_opt_id id,
+		       u64 v, bool post)
 {
 	if (!test_bit(BCH_FS_started, &c->flags))
 		return 0;
@@ -554,6 +555,10 @@ static int opt_hook_io(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_
 		break;
 	}
 	case Opt_durability:
+		if (!post && v > ca->mi.durability)
+			try(bch2_set_rebalance_needs_scan(c,
+				(struct rebalance_scan) { .type = REBALANCE_SCAN_pending}, post));
+
 		try(bch2_set_rebalance_needs_scan(c,
 			(struct rebalance_scan) { .type = REBALANCE_SCAN_device, .dev = inum }, post));
 		break;
@@ -592,7 +597,7 @@ int bch2_opt_hook_pre_set(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum b
 	}
 
 	if (change)
-		try(opt_hook_io(c, ca, inum, id, false));
+		try(opt_hook_io(c, ca, inum, id, v, false));
 
 	return 0;
 }
@@ -608,7 +613,7 @@ int bch2_opts_hooks_pre_set(struct bch_fs *c)
 void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 			    enum bch_opt_id id, u64 v)
 {
-	opt_hook_io(c, ca, inum, id, true);
+	opt_hook_io(c, ca, inum, id, v, true);
 
 	switch (id) {
 	case Opt_rebalance_enabled:

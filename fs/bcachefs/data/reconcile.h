@@ -122,6 +122,7 @@ struct rebalance_scan {
 	enum rebalance_scan_type {
 		REBALANCE_SCAN_fs,
 		REBALANCE_SCAN_metadata,
+		REBALANCE_SCAN_pending,
 		REBALANCE_SCAN_device,
 		REBALANCE_SCAN_inum,
 	}			type;
