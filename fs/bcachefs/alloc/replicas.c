@@ -259,17 +259,13 @@ cpu_replicas_add_entry(struct bch_fs *c,
 static inline int __replicas_entry_idx(struct bch_replicas_cpu *r,
 				       struct bch_replicas_entry_v1 *search)
 {
-	int idx, entry_size = replicas_entry_bytes(search);
+	size_t entry_size = replicas_entry_bytes(search);
 
 	if (unlikely(entry_size > r->entry_size))
 		return -1;
 
-#define entry_cmp(_l, _r)	memcmp(_l, _r, entry_size)
-	idx = eytzinger0_find(r->entries, r->nr, r->entry_size,
-			      entry_cmp, search);
-#undef entry_cmp
-
-	return idx < r->nr ? idx : -1;
+	return eytzinger0_find_r(r->entries, r->nr, r->entry_size,
+				 bch2_memcmp, (void *) entry_size, search);
 }
 
 static bool __replicas_has_entry(struct bch_replicas_cpu *r,

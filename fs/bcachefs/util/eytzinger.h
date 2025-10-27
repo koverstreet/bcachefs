@@ -278,20 +278,51 @@ static inline int eytzinger0_find_ge(void *base, size_t nr, size_t size,
 	return n - 1;
 }
 
-#define eytzinger0_find(base, nr, size, _cmp, search)			\
-({									\
-	size_t _size		= (size);				\
-	void *_base1		= (void *)(base) - _size;		\
-	const void *_search	= (search);				\
-	size_t _nr		= (nr);					\
-	size_t _i		= 1;					\
-	int _res;							\
-									\
-	while (_i <= _nr &&						\
-	       (_res = _cmp(_search, _base1 + _i * _size)))		\
-		_i = eytzinger1_child(_i, _res > 0);			\
-	_i - 1;								\
-})
+/* 0 == not found */
+static inline int eytzinger1_find_r(void *base, unsigned nr, unsigned size,
+				    cmp_r_func_t cmp_fn, const void *priv,
+				    const void *search)
+{
+	unsigned i = 1;
+	while (i <= nr) {
+		int cmp = cmp_fn(search, base + i * size, priv);
+		if (!cmp)
+			return i;
+		i = eytzinger1_child(i, cmp > 0);
+	}
+
+	return 0;
+}
+
+/* 0 == not found */
+static inline int eytzinger1_find(void *base, unsigned nr, unsigned size,
+				  cmp_func_t cmp_fn, const void *search)
+{
+	unsigned i = 1;
+	while (i <= nr) {
+		int cmp = cmp_fn(search, base + i * size);
+		if (!cmp)
+			return i;
+		i = eytzinger1_child(i, cmp > 0);
+	}
+
+	return 0;
+}
+
+/* -1 == not found */
+static inline int eytzinger0_find_r(void *base, unsigned nr, unsigned size,
+				    cmp_r_func_t cmp_fn, const void *priv,
+				    const void *search)
+{
+	return eytzinger1_find_r(base - size, nr, size, cmp_fn, priv, search) - 1;
+}
+
+/* -1 == not found */
+static inline int eytzinger0_find(void *base, unsigned nr, unsigned size,
+				  cmp_func_t cmp_fn, const void *search)
+{
+	return eytzinger1_find(base - size, nr, size, cmp_fn, search) - 1;
+}
 
 void eytzinger0_sort_r(void *, size_t, size_t,
 		       cmp_r_func_t, swap_r_func_t, const void *);
