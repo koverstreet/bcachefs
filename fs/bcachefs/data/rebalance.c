@@ -679,15 +679,22 @@ static const char * const bch2_rebalance_state_strs[] = {
 #undef x
 };
 
+#define REBALANCE_SCAN_COOKIE_device	32
+#define REBALANCE_SCAN_COOKIE_pending	2
+#define REBALANCE_SCAN_COOKIE_metadata	1
+#define REBALANCE_SCAN_COOKIE_fs	0
+
 static u64 rebalance_scan_encode(struct rebalance_scan s)
 {
 	switch (s.type) {
 	case REBALANCE_SCAN_fs:
-		return 0;
+		return REBALANCE_SCAN_COOKIE_fs;
 	case REBALANCE_SCAN_metadata:
-		return 1;
+		return REBALANCE_SCAN_COOKIE_metadata;
+	case REBALANCE_SCAN_pending:
+		return REBALANCE_SCAN_COOKIE_pending;
 	case REBALANCE_SCAN_device:
-		return s.dev + 32;
+		return REBALANCE_SCAN_COOKIE_device + s.dev;
 	case REBALANCE_SCAN_inum:
 		return s.inum;
 	default:
@@ -695,22 +702,24 @@ static u64 rebalance_scan_encode(struct rebalance_scan s)
 	}
 }
 
-static struct rebalance_scan rebalance_scan_decode(u64 v)
+static struct rebalance_scan rebalance_scan_decode(struct bch_fs *c, u64 v)
 {
-	if (v == 0)
-		return (struct rebalance_scan) { .type = REBALANCE_SCAN_fs };
-	if (v == 1)
-		return (struct rebalance_scan) { .type = REBALANCE_SCAN_metadata };
-	if (v < BCACHEFS_ROOT_INO)
+	if (v >= BCACHEFS_ROOT_INO)
+		return (struct rebalance_scan) { .type = REBALANCE_SCAN_inum, .inum = v, };
+	if (v >= REBALANCE_SCAN_COOKIE_device)
 		return (struct rebalance_scan) {
 			.type = REBALANCE_SCAN_device,
-			.dev =  v - 32,
-	};
+			.dev =  v - REBALANCE_SCAN_COOKIE_device,
+		};
+	if (v == REBALANCE_SCAN_COOKIE_pending)
+		return (struct rebalance_scan) { .type = REBALANCE_SCAN_pending };
+	if (v == REBALANCE_SCAN_COOKIE_metadata)
+		return (struct rebalance_scan) { .type = REBALANCE_SCAN_metadata };
+	if (v == REBALANCE_SCAN_COOKIE_fs)
+		return (struct rebalance_scan) { .type = REBALANCE_SCAN_fs};
 
-	return (struct rebalance_scan) {
-		.type = REBALANCE_SCAN_inum,
-		.inum = v,
-	};
+	bch_err(c, "unknown realance scan cookie %llu", v);
+	return (struct rebalance_scan) { .type = REBALANCE_SCAN_fs};
 }
 
 int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, struct rebalance_scan s)
@@ -752,16 +761,17 @@ int bch2_set_fs_needs_rebalance(struct bch_fs *c)
 
 static int bch2_clear_rebalance_needs_scan(struct btree_trans *trans, struct bpos pos, u64 cookie)
 {
-	CLASS(btree_iter, iter)(trans, BTREE_ID_rebalance_scan, pos, BTREE_ITER_intent);
-	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
+	return commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+		CLASS(btree_iter, iter)(trans, BTREE_ID_rebalance_scan, pos, BTREE_ITER_intent);
+		struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
-	u64 v = k.k->type == KEY_TYPE_cookie
-		? le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie)
-		: 0;
-
-	return v == cookie
-		? bch2_btree_delete_at(trans, &iter, 0)
-		: 0;
+		u64 v = k.k->type == KEY_TYPE_cookie
+			? le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie)
+			: 0;
+		v == cookie
+			? bch2_btree_delete_at(trans, &iter, 0)
+			: 0;
+	}));
 }
 
 #define REBALANCE_WORK_BUF_NR		1024
@@ -1144,7 +1154,7 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 
 	r->state = BCH_REBALANCE_scanning;
 
-	struct rebalance_scan s = rebalance_scan_decode(cookie_pos.offset);
+	struct rebalance_scan s = rebalance_scan_decode(c, cookie_pos.offset);
 	if (s.type == REBALANCE_SCAN_fs) {
 		r->scan_start	= BBPOS_MIN;
 		r->scan_end	= BBPOS_MAX;
@@ -1185,8 +1195,7 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 					    r->scan_start.pos, r->scan_end.pos));
 	}
 
-	try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			bch2_clear_rebalance_needs_scan(trans, cookie_pos, cookie)));
+	try(bch2_clear_rebalance_needs_scan(trans, cookie_pos, cookie));
 
 	*sectors_scanned += atomic64_read(&r->scan_stats.sectors_seen);
 	/*
@@ -1254,6 +1263,9 @@ static int do_rebalance(struct moving_context *ctxt)
 	unsigned i = 0;
 	struct bpos work_pos = POS_MIN;
 
+	struct bkey_i_cookie pending_cookie;
+	bkey_init(&pending_cookie.k);
+
 	while (!bch2_move_ratelimit(ctxt)) {
 		if (!bch2_rebalance_enabled(c)) {
 			bch2_moving_ctxt_flush_all(ctxt);
@@ -1277,10 +1289,15 @@ static int do_rebalance(struct moving_context *ctxt)
 
 			work_pos = POS_MIN;
 
-			if (scan_btrees[i] == BTREE_ID_rebalance_pending)
+			if (scan_btrees[i] == BTREE_ID_rebalance_pending &&
+			    bkey_deleted(&pending_cookie.k))
 				break;
 			continue;
 		}
+
+		if (k->k.type == KEY_TYPE_cookie &&
+		    rebalance_scan_decode(c, k->k.p.offset).type == REBALANCE_SCAN_pending)
+			bkey_copy(&pending_cookie.k_i, k);
 
 		ret = k->k.type == KEY_TYPE_cookie
 			? do_rebalance_scan(ctxt, &snapshot_io_opts,
@@ -1292,6 +1309,10 @@ static int do_rebalance(struct moving_context *ctxt)
 		if (ret)
 			break;
 	}
+
+	if (!ret && !bkey_deleted(&pending_cookie.k))
+		try(bch2_clear_rebalance_needs_scan(trans,
+				pending_cookie.k.p, pending_cookie.v.cookie));
 
 	bch2_move_stats_exit(&r->work_stats, c);
 
