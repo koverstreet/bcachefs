@@ -612,24 +612,51 @@ void bch2_bio_map(struct bio *bio, void *base, size_t size)
 		bio_add_virt_nofail(bio, base, size);
 }
 
-int bch2_bio_alloc_pages(struct bio *bio, size_t size, gfp_t gfp_mask)
+int bch2_bio_alloc_pages(struct bio *bio, unsigned bs, size_t size, gfp_t gfp_mask)
 {
+	BUG_ON(size & (bs - 1));
+	unsigned bs_pages = DIV_ROUND_UP(bs, PAGE_SIZE);
+
+	/*
+	 * XXX: we could do this by allocating higher order pages, but
+	 *
+	 * - the page allocator gets slower at a certain order (5?) - we'd have
+	 *   to check for this
+	 *
+	 * - bch2_bio_free_pages_pool() probably does not handle compound pages
+	 *   yet
+	 */
+	DARRAY_PREALLOCATED(struct page *, 16) pages;
+	darray_init(&pages);
+	darray_make_room_gfp(&pages, bs_pages, gfp_mask|__GFP_NOFAIL);
+
+	int ret = 0;
 	while (size) {
-		struct page *page = alloc_pages(gfp_mask, 0);
-		unsigned len = min_t(size_t, PAGE_SIZE, size);
+		while (pages.nr < bs_pages) {
+			struct page *page = alloc_pages(gfp_mask, 0);
+			if (!page) {
+				ret = -ENOMEM;
+				goto out;
+			}
 
-		if (!page)
-			return -ENOMEM;
-
-		if (unlikely(!bio_add_page(bio, page, len, 0))) {
-			__free_page(page);
-			break;
+			BUG_ON(darray_push(&pages, page));
 		}
 
-		size -= len;
-	}
+		while (pages.nr) {
+			BUG_ON(!size);
 
-	return 0;
+			unsigned len = min(PAGE_SIZE, size);
+			size -= len;
+
+			struct page *page = darray_pop(&pages);
+			BUG_ON(!bio_add_page(bio, page, len, 0));
+		}
+	}
+out:
+	darray_for_each(pages, i)
+		__free_page(*i);
+	darray_exit(&pages);
+	return ret;
 }
 
 u64 bch2_get_random_u64_below(u64 ceil)

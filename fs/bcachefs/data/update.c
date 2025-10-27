@@ -693,6 +693,9 @@ static int bch2_data_update_bios_init(struct data_update *m, struct bch_fs *c,
 				      struct bch_inode_opts *io_opts,
 				      unsigned buf_bytes)
 {
+	/* be paranoid */
+	buf_bytes = round_up(buf_bytes, c->opts.block_size);
+
 	unsigned nr_vecs = DIV_ROUND_UP(buf_bytes, PAGE_SIZE);
 
 	m->bvecs = kmalloc_array(nr_vecs, sizeof*(m->bvecs), GFP_KERNEL);
@@ -702,7 +705,7 @@ static int bch2_data_update_bios_init(struct data_update *m, struct bch_fs *c,
 	bio_init(&m->rbio.bio,		NULL, m->bvecs, nr_vecs, REQ_OP_READ);
 	bio_init(&m->op.wbio.bio,	NULL, m->bvecs, nr_vecs, 0);
 
-	if (bch2_bio_alloc_pages(&m->op.wbio.bio, buf_bytes, GFP_KERNEL)) {
+	if (bch2_bio_alloc_pages(&m->op.wbio.bio, c->opts.block_size, buf_bytes, GFP_KERNEL)) {
 		kfree(m->bvecs);
 		m->bvecs = NULL;
 		return -ENOMEM;

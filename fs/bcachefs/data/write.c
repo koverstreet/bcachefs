@@ -807,6 +807,19 @@ static struct bio *bch2_write_bio_alloc(struct bch_fs *c,
 	struct bio *bio;
 	unsigned output_available =
 		min(wp->sectors_free << 9, src->bi_iter.bi_size);
+
+	/*
+	 * XXX: we'll want to delete this later, there's no reason we can't
+	 * issue > 2MB bios if we're allocating high order pages
+	 *
+	 * But bch2_bio_alloc_pages() BUGS() if we ask it to allocate more pages
+	 * than fit in the bio, and we're using bio_alloc_bioset() which is
+	 * limited to BIO_MAX_VECS
+	 */
+	output_available = min(output_available, BIO_MAX_VECS * PAGE_SIZE);
+
+	BUG_ON(output_available & (c->opts.block_size - 1));
+
 	unsigned pages = DIV_ROUND_UP(output_available +
 				      (buf
 				       ? ((unsigned long) buf & (PAGE_SIZE - 1))
@@ -814,8 +827,7 @@ static struct bio *bch2_write_bio_alloc(struct bch_fs *c,
 
 	pages = min(pages, BIO_MAX_VECS);
 
-	bio = bio_alloc_bioset(NULL, pages, 0,
-			       GFP_NOFS, &c->bio_write);
+	bio = bio_alloc_bioset(NULL, pages, 0, GFP_NOFS, &c->bio_write);
 	wbio			= wbio_init(bio);
 	wbio->put_bio		= true;
 	/* copy WRITE_SYNC flag */
@@ -839,6 +851,7 @@ static struct bio *bch2_write_bio_alloc(struct bch_fs *c,
 	if (bio->bi_iter.bi_size < output_available)
 		*page_alloc_failed =
 			bch2_bio_alloc_pages(bio,
+					     c->opts.block_size,
 					     output_available -
 					     bio->bi_iter.bi_size,
 					     GFP_NOFS) != 0;
