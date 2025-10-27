@@ -554,6 +554,12 @@ static int opt_hook_io(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_
 		try(bch2_set_rebalance_needs_scan(c, s, post));
 		break;
 	}
+	case Opt_metadata_target:
+	case Opt_metadata_checksum:
+	case Opt_metadata_replicas:
+		try(bch2_set_rebalance_needs_scan(c,
+			(struct rebalance_scan) { .type = REBALANCE_SCAN_metadata, .dev = inum }, post));
+		break;
 	case Opt_durability:
 		if (!post && v > ca->mi.durability)
 			try(bch2_set_rebalance_needs_scan(c,
