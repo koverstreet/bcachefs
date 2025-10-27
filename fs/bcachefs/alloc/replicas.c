@@ -488,6 +488,27 @@ retry:
 	return ret;
 }
 
+void bch2_replicas_entry_kill(struct bch_fs *c, struct bch_replicas_entry_v1 *kill)
+{
+	lockdep_assert_held(&c->mark_lock);
+	lockdep_assert_held(&c->sb_lock);
+
+	struct bch_replicas_cpu *r = &c->replicas;
+
+	int idx = __replicas_entry_idx(r, kill);
+	if (WARN(idx < 0, "replicas entry not found in sb"))
+		return;
+
+	struct bch_replicas_entry_v1 *dst = cpu_replicas_entry(r, idx);
+	struct bch_replicas_entry_v1 *src = cpu_replicas_entry(r, --r->nr);
+	memcpy(dst, src, r->entry_size);
+
+	bch2_cpu_replicas_sort(r);
+
+	int ret = bch2_cpu_replicas_to_sb_replicas(c, r);
+	WARN(ret, "bch2_cpu_replicas_to_sb_replicas() error: %s", bch2_err_str(ret));
+}
+
 /* Replicas tracking - superblock: */
 
 static int

@@ -43,6 +43,21 @@ static inline void bch2_accounting_accumulate(struct bkey_i_accounting *dst,
 		dst->k.bversion = src.k->bversion;
 }
 
+void __bch2_accounting_maybe_kill(struct bch_fs *, struct bpos pos);
+
+static inline void bch2_accounting_accumulate_maybe_kill(struct bch_fs *c,
+							 struct bkey_i_accounting *dst,
+							 struct bkey_s_c_accounting src)
+{
+	bch2_accounting_accumulate(dst, src);
+
+	for (unsigned i = 0; i < bch2_accounting_counters(&dst->k); i++)
+		if (dst->v.d[i])
+			return;
+
+	__bch2_accounting_maybe_kill(c, dst->k.p);
+}
+
 static inline void fs_usage_data_type_to_base(struct bch_fs_usage_base *fs_usage,
 					      enum bch_data_type data_type,
 					      s64 sectors)

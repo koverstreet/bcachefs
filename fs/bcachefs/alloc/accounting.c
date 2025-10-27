@@ -440,6 +440,41 @@ static bool accounting_mem_entry_is_zero(struct accounting_mem_entry *e)
 	return true;
 }
 
+void __bch2_accounting_maybe_kill(struct bch_fs *c, struct bpos pos)
+{
+	struct disk_accounting_pos acc_k;
+	bpos_to_disk_accounting_pos(&acc_k, pos);
+
+	if (acc_k.type != BCH_DISK_ACCOUNTING_replicas)
+		return;
+
+	guard(mutex)(&c->sb_lock);
+	scoped_guard(percpu_write, &c->mark_lock) {
+		struct bch_accounting_mem *acc = &c->accounting;
+
+		unsigned idx = eytzinger0_find(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
+					       accounting_pos_cmp, &pos);
+
+		if (idx < acc->k.nr) {
+			struct accounting_mem_entry *e = acc->k.data + idx;
+			if (!accounting_mem_entry_is_zero(e))
+				return;
+
+			free_percpu(e->v[0]);
+			free_percpu(e->v[1]);
+
+			swap(*e, darray_last(acc->k));
+			--acc->k.nr;
+			eytzinger0_sort(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
+					accounting_pos_cmp, NULL);
+		}
+
+		bch2_replicas_entry_kill(c, &acc_k.replicas);
+	}
+
+	bch2_write_super(c);
+}
+
 void bch2_accounting_mem_gc(struct bch_fs *c)
 {
 	struct bch_accounting_mem *acc = &c->accounting;

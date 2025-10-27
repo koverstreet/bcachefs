@@ -158,8 +158,9 @@ static inline int wb_flush_one(struct btree_trans *trans, struct btree_iter *ite
 		struct bkey_s_c k = bch2_btree_path_peek_slot_exact(btree_iter_path(trans, iter), &u);
 
 		if (k.k->type == KEY_TYPE_accounting)
-			bch2_accounting_accumulate(bkey_i_to_accounting(&wb->k),
-						   bkey_s_c_to_accounting(k));
+			bch2_accounting_accumulate_maybe_kill(trans->c,
+					bkey_i_to_accounting(&wb->k),
+					bkey_s_c_to_accounting(k));
 	}
 	*accounting_accumulated = true;
 
