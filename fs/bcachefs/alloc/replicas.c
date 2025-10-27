@@ -280,10 +280,7 @@ replicas_entry_search(struct bch_replicas_cpu *r,
 bool bch2_replicas_marked_locked(struct bch_fs *c,
 			  struct bch_replicas_entry_v1 *search)
 {
-	return !search->nr_devs ||
-		(replicas_entry_search(&c->replicas, search) &&
-		 (likely((!c->replicas_gc.entries)) ||
-		  replicas_entry_search(&c->replicas_gc, search)));
+	return !search->nr_devs || replicas_entry_search(&c->replicas, search);
 }
 
 bool bch2_replicas_marked(struct bch_fs *c,
@@ -335,17 +332,9 @@ static int bch2_mark_replicas_slowpath(struct bch_fs *c,
 	bool write_sb = false;
 
 	scoped_guard(percpu_write, &c->mark_lock) {
-		CLASS(bch_replicas_cpu, new_r)();
-		CLASS(bch_replicas_cpu, new_gc)();
-
-		if (c->replicas_gc.entries &&
-		    !replicas_entry_search(&c->replicas_gc, new_entry)) {
-			new_gc = cpu_replicas_add_entry(c, &c->replicas_gc, new_entry);
-			if (!new_gc.entries)
-				return bch_err_throw(c, ENOMEM_cpu_replicas);
-		}
-
 		if (!replicas_entry_search(&c->replicas, new_entry)) {
+			CLASS(bch_replicas_cpu, new_r)();
+
 			new_r = cpu_replicas_add_entry(c, &c->replicas, new_entry);
 			if (!new_r.entries)
 				return bch_err_throw(c, ENOMEM_cpu_replicas);
@@ -355,9 +344,6 @@ static int bch2_mark_replicas_slowpath(struct bch_fs *c,
 			swap(c->replicas, new_r);
 			write_sb = true;
 		}
-
-		if (new_gc.entries)
-			swap(new_gc, c->replicas_gc);
 
 		atomic_add(ref, &replicas_entry_search(&c->replicas, new_entry)->ref);
 	}
@@ -373,72 +359,6 @@ int bch2_mark_replicas(struct bch_fs *c, struct bch_replicas_entry_v1 *r)
 {
 	return likely(bch2_replicas_marked(c, r))
 		? 0 : bch2_mark_replicas_slowpath(c, r, 0);
-}
-
-/*
- * Old replicas_gc mechanism: only used for journal replicas entries now, should
- * die at some point:
- */
-
-int bch2_replicas_gc_end(struct bch_fs *c, int ret)
-{
-	lockdep_assert_held(&c->replicas_gc_lock);
-
-	guard(mutex)(&c->sb_lock);
-	scoped_guard(percpu_write, &c->mark_lock) {
-		ret =   ret ?:
-			bch2_cpu_replicas_to_sb_replicas(c, &c->replicas_gc);
-		if (!ret)
-			swap(c->replicas, c->replicas_gc);
-
-		kfree(c->replicas_gc.entries);
-		c->replicas_gc.entries = NULL;
-	}
-
-	if (!ret)
-		bch2_write_super(c);
-
-	return ret;
-}
-
-int bch2_replicas_gc_start(struct bch_fs *c, unsigned typemask)
-{
-	lockdep_assert_held(&c->replicas_gc_lock);
-
-	guard(mutex)(&c->sb_lock);
-	BUG_ON(c->replicas_gc.entries);
-
-	c->replicas_gc.nr		= 0;
-	c->replicas_gc.entry_size	= 0;
-
-	for_each_cpu_replicas_entry(&c->replicas, e) {
-		/* Preserve unknown data types */
-		if (e->e.data_type >= BCH_DATA_NR ||
-		    !(BIT(e->e.data_type) & typemask)) {
-			c->replicas_gc.nr++;
-			c->replicas_gc.entry_size =
-				max_t(unsigned, c->replicas_gc.entry_size,
-				      cpu_replicas_entry_bytes(e));
-		}
-	}
-
-	c->replicas_gc.entries = kcalloc(c->replicas_gc.nr,
-					 c->replicas_gc.entry_size,
-					 GFP_KERNEL);
-	if (!c->replicas_gc.entries) {
-		bch_err(c, "error allocating c->replicas_gc");
-		return bch_err_throw(c, ENOMEM_replicas_gc);
-	}
-
-	unsigned i = 0;
-	for_each_cpu_replicas_entry(&c->replicas, e)
-		if (e->e.data_type >= BCH_DATA_NR ||
-		    !(BIT(e->e.data_type) & typemask))
-			memcpy(cpu_replicas_entry(&c->replicas_gc, i++),
-			       e, c->replicas_gc.entry_size);
-
-	bch2_cpu_replicas_sort(&c->replicas_gc);
-	return 0;
 }
 
 static void __replicas_entry_kill(struct bch_fs *c, struct bch_replicas_entry_cpu *e)
@@ -1046,5 +966,4 @@ void bch2_verify_replicas_refs_clean(struct bch_fs *c)
 void bch2_fs_replicas_exit(struct bch_fs *c)
 {
 	kfree(c->replicas.entries);
-	kfree(c->replicas_gc.entries);
 }
