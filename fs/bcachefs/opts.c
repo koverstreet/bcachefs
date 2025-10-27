@@ -538,11 +538,17 @@ static int opt_hook_io(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_
 	case Opt_background_compression:
 	case Opt_data_checksum:
 	case Opt_data_replicas:
-	case Opt_erasure_code:
-		try(bch2_set_rebalance_needs_scan(c, inum));
+	case Opt_erasure_code: {
+		struct rebalance_scan s = {
+			.type = !inum ? REBALANCE_SCAN_fs : REBALANCE_SCAN_inum,
+			.inum = inum,
+		};
+
+		try(bch2_set_rebalance_needs_scan(c, s));
 		if (post)
 			bch2_rebalance_wakeup(c);
 		break;
+	}
 	default:
 		break;
 	}

@@ -376,10 +376,46 @@ static const char * const bch2_rebalance_state_strs[] = {
 #undef x
 };
 
-int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, u64 inum)
+static u64 rebalance_scan_encode(struct rebalance_scan s)
+{
+	switch (s.type) {
+	case REBALANCE_SCAN_fs:
+		return 0;
+	case REBALANCE_SCAN_metadata:
+		return 1;
+	case REBALANCE_SCAN_device:
+		return s.dev + 32;
+	case REBALANCE_SCAN_inum:
+		return s.inum;
+	default:
+		BUG();
+	}
+}
+
+static struct rebalance_scan rebalance_scan_decode(u64 v)
+{
+	if (v == 0)
+		return (struct rebalance_scan) { .type = REBALANCE_SCAN_fs };
+	if (v == 1)
+		return (struct rebalance_scan) { .type = REBALANCE_SCAN_metadata };
+	if (v < BCACHEFS_ROOT_INO)
+		return (struct rebalance_scan) {
+			.type = REBALANCE_SCAN_device,
+			.dev =  v - 32,
+	};
+
+	return (struct rebalance_scan) {
+		.type = REBALANCE_SCAN_inum,
+		.inum = v,
+	};
+}
+
+int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, struct rebalance_scan s)
 {
 	CLASS(btree_iter, iter)(trans, BTREE_ID_rebalance_work,
-				SPOS(inum, REBALANCE_WORK_SCAN_OFFSET, U32_MAX),
+				SPOS(rebalance_scan_encode(s),
+				     REBALANCE_WORK_SCAN_OFFSET,
+				     U32_MAX),
 				BTREE_ITER_intent);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
@@ -396,16 +432,17 @@ int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, u64 inum)
 	return bch2_trans_update(trans, &iter, &cookie->k_i, 0);
 }
 
-int bch2_set_rebalance_needs_scan(struct bch_fs *c, u64 inum)
+int bch2_set_rebalance_needs_scan(struct bch_fs *c, struct rebalance_scan s)
 {
 	CLASS(btree_trans, trans)(c);
 	return commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			    bch2_set_rebalance_needs_scan_trans(trans, inum));
+			    bch2_set_rebalance_needs_scan_trans(trans, s));
 }
 
 int bch2_set_fs_needs_rebalance(struct bch_fs *c)
 {
-	return bch2_set_rebalance_needs_scan(c, 0);
+	return bch2_set_rebalance_needs_scan(c,
+				(struct rebalance_scan) { .type = REBALANCE_SCAN_fs });
 }
 
 static int bch2_clear_rebalance_needs_scan(struct btree_trans *trans, u64 inum, u64 cookie)
@@ -649,7 +686,7 @@ root_err:
 noinline_for_stack
 static int do_rebalance_scan(struct moving_context *ctxt,
 			     struct per_snapshot_io_opts *snapshot_io_opts,
-			     u64 inum, u64 cookie, u64 *sectors_scanned)
+			     u64 scan_v, u64 cookie, u64 *sectors_scanned)
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
@@ -660,7 +697,8 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 
 	r->state = BCH_REBALANCE_scanning;
 
-	if (!inum) {
+	struct rebalance_scan s = rebalance_scan_decode(scan_v);
+	if (s.type == REBALANCE_SCAN_fs) {
 		r->scan_start	= BBPOS_MIN;
 		r->scan_end	= BBPOS_MAX;
 
@@ -672,16 +710,16 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 			try(do_rebalance_scan_btree(ctxt, snapshot_io_opts, btree, 0,
 						    POS_MIN, SPOS_MAX));
 		}
-	} else {
-		r->scan_start	= BBPOS(BTREE_ID_extents, POS(inum, 0));
-		r->scan_end	= BBPOS(BTREE_ID_extents, POS(inum, U64_MAX));
+	} else if (s.type == REBALANCE_SCAN_inum) {
+		r->scan_start	= BBPOS(BTREE_ID_extents, POS(s.inum, 0));
+		r->scan_end	= BBPOS(BTREE_ID_extents, POS(s.inum, U64_MAX));
 
 		try(do_rebalance_scan_btree(ctxt, snapshot_io_opts, BTREE_ID_extents, 0,
 					    r->scan_start.pos, r->scan_end.pos));
 	}
 
 	try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			bch2_clear_rebalance_needs_scan(trans, inum, cookie)));
+			bch2_clear_rebalance_needs_scan(trans, scan_v, cookie)));
 
 	*sectors_scanned += atomic64_read(&r->scan_stats.sectors_seen);
 	/*

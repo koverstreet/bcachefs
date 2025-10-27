@@ -84,8 +84,22 @@ int bch2_bkey_get_io_opts(struct btree_trans *,
 			  struct per_snapshot_io_opts *, struct bkey_s_c,
 			  struct bch_inode_opts *opts);
 
-int bch2_set_rebalance_needs_scan_trans(struct btree_trans *, u64);
-int bch2_set_rebalance_needs_scan(struct bch_fs *, u64 inum);
+struct rebalance_scan {
+	enum rebalance_scan_type {
+		REBALANCE_SCAN_fs,
+		REBALANCE_SCAN_metadata,
+		REBALANCE_SCAN_device,
+		REBALANCE_SCAN_inum,
+	}			type;
+
+	union {
+		unsigned	dev;
+		u64		inum;
+	};
+};
+
+int bch2_set_rebalance_needs_scan_trans(struct btree_trans *, struct rebalance_scan);
+int bch2_set_rebalance_needs_scan(struct bch_fs *, struct rebalance_scan);
 int bch2_set_fs_needs_rebalance(struct bch_fs *);
 
 static inline void bch2_rebalance_wakeup(struct bch_fs *c)

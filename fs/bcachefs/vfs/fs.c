@@ -123,7 +123,10 @@ static int bch2_write_inode_trans(struct btree_trans *trans,
 	struct bch_extent_rebalance new_r = bch2_inode_rebalance_opts_get(c, &inode_u);
 	*rebalance_changed = memcmp(&old_r, &new_r, sizeof(new_r));
 	if (*rebalance_changed)
-		try(bch2_set_rebalance_needs_scan_trans(trans, inode_u.bi_inum));
+		try(bch2_set_rebalance_needs_scan_trans(trans,
+				(struct rebalance_scan) {
+					.type = REBALANCE_SCAN_inum,
+					.inum = inode_u.bi_inum }));
 
 	try(bch2_inode_write(trans, &iter, &inode_u));
 	try(bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
