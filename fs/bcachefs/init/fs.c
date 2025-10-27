@@ -1048,7 +1048,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 
 	init_rwsem(&c->state_lock);
 	mutex_init(&c->sb_lock);
-	mutex_init(&c->replicas_gc_lock);
 	mutex_init(&c->btree_root_lock);
 	INIT_WORK(&c->read_only_work, bch2_fs_read_only_work);
 
