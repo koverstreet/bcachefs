@@ -956,8 +956,8 @@ int bch2_journal_flush_device_pins(struct journal *j, int dev_idx)
 	scoped_guard(spinlock, &j->lock)
 		fifo_for_each_entry_ptr(p, &j->pin, iter)
 			if (dev_idx >= 0
-			    ? bch2_dev_list_has_dev(p->devs, dev_idx)
-			    : p->devs.nr < c->opts.metadata_replicas)
+			    ? bch2_replicas_entry_has_dev(&p->devs.e, dev_idx)
+			    : p->devs.e.nr_devs < c->opts.metadata_replicas)
 				seq = iter;
 
 	bch2_journal_flush_pins(j, seq);
@@ -981,13 +981,12 @@ int bch2_journal_flush_device_pins(struct journal *j, int dev_idx)
 	seq = 0;
 	scoped_guard(spinlock, &j->lock)
 		while (!ret) {
-			union bch_replicas_padded replicas;
-
 			seq = max(seq, journal_last_seq(j));
-			if (seq >= j->pin.back)
+			if (seq > j->seq_ondisk)
 				break;
-			bch2_devlist_to_replicas(&replicas.e, BCH_DATA_journal,
-						 journal_seq_pin(j, seq)->devs);
+
+			union bch_replicas_padded replicas;
+			memcpy(&replicas, &journal_seq_pin(j, seq)->devs, sizeof(replicas));
 			seq++;
 
 			if (replicas.e.nr_devs) {

@@ -223,7 +223,7 @@ static CLOSURE_CALLBACK(journal_write_done)
 
 	spin_lock(&j->lock);
 	if (seq >= j->pin.front)
-		journal_seq_pin(j, seq)->devs = w->devs_written;
+		journal_seq_pin(j, seq)->devs = replicas;
 	if (err && (!j->err_seq || seq < j->err_seq))
 		j->err_seq	= seq;
 	w->write_done = true;

@@ -9,6 +9,7 @@
 #include "journal/seq_blacklist.h"
 
 #include "alloc/foreground.h"
+#include "alloc/replicas.h"
 #include "btree/update.h"
 
 /* allocate journal on a device: */
@@ -440,11 +441,12 @@ int bch2_fs_journal_start(struct journal *j, u64 last_seq, u64 cur_seq)
 		if (journal_entry_empty(&i->j))
 			j->last_empty_seq = le64_to_cpu(i->j.seq);
 
-		p = journal_seq_pin(j, seq);
-
-		p->devs.nr = 0;
+		struct bch_devs_list seq_devs = {};
 		darray_for_each(i->ptrs, ptr)
-			bch2_dev_list_add_dev(&p->devs, ptr->dev);
+			seq_devs.data[seq_devs.nr++] = ptr->dev;
+
+		p = journal_seq_pin(j, seq);
+		bch2_devlist_to_replicas(&p->devs.e, BCH_DATA_journal, seq_devs);
 
 		had_entries = true;
 	}

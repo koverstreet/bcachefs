@@ -57,6 +57,14 @@ int bch2_replicas_gc2(struct bch_fs *);
 	     (void *) (_i) < (void *) (_r)->entries + (_r)->nr * (_r)->entry_size;\
 	     _i = (void *) (_i) + (_r)->entry_size)
 
+static inline bool bch2_replicas_entry_has_dev(struct bch_replicas_entry_v1 *r, unsigned dev)
+{
+	for (unsigned i = 0; i < r->nr_devs; i++)
+		if (r->devs[i] == dev)
+			return true;
+	return false;
+}
+
 /* iterate over superblock replicas - used by userspace tools: */
 
 #define replicas_entry_next(_i)						\

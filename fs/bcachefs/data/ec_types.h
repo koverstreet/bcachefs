@@ -4,12 +4,6 @@
 
 #include "bcachefs_format.h"
 
-union bch_replicas_padded {
-	u8				bytes[struct_size_t(struct bch_replicas_entry_v1,
-							    devs, BCH_BKEY_PTRS_MAX)];
-	struct bch_replicas_entry_v1	e;
-};
-
 struct stripe {
 	size_t			heap_idx;
 	u16			sectors;

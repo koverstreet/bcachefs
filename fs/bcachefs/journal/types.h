@@ -5,6 +5,7 @@
 #include <linux/cache.h>
 #include <linux/workqueue.h>
 
+#include "alloc/replicas_types.h"
 #include "alloc/types.h"
 #include "init/dev_types.h"
 #include "util/fifo.h"
@@ -70,7 +71,7 @@ struct journal_entry_pin_list {
 	struct list_head		unflushed[JOURNAL_PIN_TYPE_NR];
 	struct list_head		flushed[JOURNAL_PIN_TYPE_NR];
 	atomic_t			count;
-	struct bch_devs_list		devs;
+	union bch_replicas_padded	devs;
 	size_t				bytes;
 };
 
