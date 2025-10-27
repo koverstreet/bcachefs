@@ -3,6 +3,8 @@
 
 #include "alloc/disk_groups.h"
 
+#include "data/rebalance.h"
+
 #include "init/dev.h"
 
 #include "sb/members.h"
@@ -469,9 +471,18 @@ int __bch2_dev_group_set(struct bch_fs *c, struct bch_dev *ca, const char *name)
 
 int bch2_dev_group_set(struct bch_fs *c, struct bch_dev *ca, const char *name)
 {
-	guard(mutex)(&c->sb_lock);
-	return __bch2_dev_group_set(c, ca, name) ?:
-		bch2_write_super(c);
+	struct rebalance_scan s = { .type = REBALANCE_SCAN_pending };
+
+	try(bch2_set_rebalance_needs_scan(c, s, false));
+
+	/* bch2_rebalance_wakeup_pending goes here */
+	scoped_guard(mutex,&c->sb_lock) {
+		try(__bch2_dev_group_set(c, ca, name));
+		try(bch2_write_super(c));
+	}
+
+	try(bch2_set_rebalance_needs_scan(c, s, true));
+	return 0;
 }
 
 int bch2_opt_target_parse(struct bch_fs *c, const char *val, u64 *res,
