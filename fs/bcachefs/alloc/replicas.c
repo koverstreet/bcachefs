@@ -256,33 +256,27 @@ cpu_replicas_add_entry(struct bch_fs *c,
 	return new;
 }
 
-static inline int __replicas_entry_idx(struct bch_replicas_cpu *r,
-				       struct bch_replicas_entry_v1 *search)
+static inline struct bch_replicas_entry_v1 *
+replicas_entry_search(struct bch_replicas_cpu *r,
+		      struct bch_replicas_entry_v1 *search)
 {
+	verify_replicas_entry(search);
+
 	size_t entry_size = replicas_entry_bytes(search);
-
-	if (unlikely(entry_size > r->entry_size))
-		return -1;
-
-	return eytzinger0_find_r(r->entries, r->nr, r->entry_size,
-				 bch2_memcmp, (void *) entry_size, search);
-}
-
-static bool __replicas_has_entry(struct bch_replicas_cpu *r,
-				 struct bch_replicas_entry_v1 *search)
-{
-	return __replicas_entry_idx(r, search) >= 0;
+	int idx = likely(entry_size <= r->entry_size)
+		? eytzinger0_find_r(r->entries, r->nr, r->entry_size,
+				    bch2_memcmp, (void *) entry_size, search)
+		: -1;
+	return idx >= 0 ? cpu_replicas_entry(r, idx) : NULL;
 }
 
 bool bch2_replicas_marked_locked(struct bch_fs *c,
 			  struct bch_replicas_entry_v1 *search)
 {
-	verify_replicas_entry(search);
-
 	return !search->nr_devs ||
-		(__replicas_has_entry(&c->replicas, search) &&
+		(replicas_entry_search(&c->replicas, search) &&
 		 (likely((!c->replicas_gc.entries)) ||
-		  __replicas_has_entry(&c->replicas_gc, search)));
+		  replicas_entry_search(&c->replicas_gc, search)));
 }
 
 bool bch2_replicas_marked(struct bch_fs *c,
@@ -307,7 +301,7 @@ static int bch2_mark_replicas_slowpath(struct bch_fs *c,
 	guard(mutex)(&c->sb_lock);
 
 	if (c->replicas_gc.entries &&
-	    !__replicas_has_entry(&c->replicas_gc, new_entry)) {
+	    !replicas_entry_search(&c->replicas_gc, new_entry)) {
 		new_gc = cpu_replicas_add_entry(c, &c->replicas_gc, new_entry);
 		if (!new_gc.entries) {
 			ret = bch_err_throw(c, ENOMEM_cpu_replicas);
@@ -315,7 +309,7 @@ static int bch2_mark_replicas_slowpath(struct bch_fs *c,
 		}
 	}
 
-	if (!__replicas_has_entry(&c->replicas, new_entry)) {
+	if (!replicas_entry_search(&c->replicas, new_entry)) {
 		new_r = cpu_replicas_add_entry(c, &c->replicas, new_entry);
 		if (!new_r.entries) {
 			ret = bch_err_throw(c, ENOMEM_cpu_replicas);
@@ -430,13 +424,11 @@ void bch2_replicas_entry_kill(struct bch_fs *c, struct bch_replicas_entry_v1 *ki
 
 	struct bch_replicas_cpu *r = &c->replicas;
 
-	int idx = __replicas_entry_idx(r, kill);
-	if (WARN(idx < 0, "replicas entry not found in sb"))
+	struct bch_replicas_entry_v1 *e = replicas_entry_search(&c->replicas, kill);
+	if (WARN(!e, "replicas entry not found in sb"))
 		return;
 
-	struct bch_replicas_entry_v1 *dst = cpu_replicas_entry(r, idx);
-	struct bch_replicas_entry_v1 *src = cpu_replicas_entry(r, --r->nr);
-	memcpy(dst, src, r->entry_size);
+	memcpy(e, cpu_replicas_entry(r, --r->nr), r->entry_size);
 
 	bch2_cpu_replicas_sort(r);
 
