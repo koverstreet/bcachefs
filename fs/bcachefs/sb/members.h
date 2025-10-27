@@ -72,10 +72,7 @@ static inline unsigned dev_mask_nr(const struct bch_devs_mask *devs)
 static inline bool bch2_dev_list_has_dev(struct bch_devs_list devs,
 					 unsigned dev)
 {
-	darray_for_each(devs, i)
-		if (*i == dev)
-			return true;
-	return false;
+	return darray_find(devs, dev) != NULL;
 }
 
 static inline void bch2_dev_list_drop_dev(struct bch_devs_list *devs,

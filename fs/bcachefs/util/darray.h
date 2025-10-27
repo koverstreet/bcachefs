@@ -96,7 +96,7 @@ int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t, bool);
 
 #define darray_find_p(_d, _i, cond)					\
 ({									\
-	typeof((_d).data) _ret = NULL;					\
+	typeof(&(_d).data[0]) _ret = NULL;				\
 									\
 	darray_for_each(_d, _i)						\
 		if (cond) {						\
