@@ -811,8 +811,6 @@ struct bch_fs {
 	struct bch_accounting_mem accounting;
 
 	struct bch_replicas_cpu replicas;
-	struct bch_replicas_cpu replicas_gc;
-	struct mutex		replicas_gc_lock;
 
 	struct journal_entry_res btree_root_journal_res;
 	struct journal_entry_res clock_journal_res;

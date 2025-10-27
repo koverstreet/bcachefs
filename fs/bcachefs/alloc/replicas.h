@@ -51,8 +51,6 @@ static inline void bch2_replicas_entry_put(struct bch_fs *c, struct bch_replicas
 
 int bch2_replicas_entry_get(struct bch_fs *, struct bch_replicas_entry_v1 *);
 
-int bch2_replicas_gc_end(struct bch_fs *, int);
-int bch2_replicas_gc_start(struct bch_fs *, unsigned);
 void bch2_replicas_entry_kill(struct bch_fs *, struct bch_replicas_entry_v1 *);
 
 int bch2_replicas_gc_reffed(struct bch_fs *);
