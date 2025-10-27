@@ -13,12 +13,6 @@ int bch2_replicas_entry_validate(struct bch_replicas_entry_v1 *,
 				 struct bch_fs *, struct printbuf *);
 void bch2_cpu_replicas_to_text(struct printbuf *, struct bch_replicas_cpu *);
 
-static inline struct bch_replicas_entry_v1 *
-cpu_replicas_entry(struct bch_replicas_cpu *r, unsigned i)
-{
-	return (void *) r->entries + r->entry_size * i;
-}
-
 void bch2_devlist_to_replicas(struct bch_replicas_entry_v1 *,
 			      enum bch_data_type,
 			      struct bch_devs_list);
@@ -52,11 +46,6 @@ int bch2_replicas_gc_end(struct bch_fs *, int);
 int bch2_replicas_gc_start(struct bch_fs *, unsigned);
 void bch2_replicas_entry_kill(struct bch_fs *, struct bch_replicas_entry_v1 *);
 
-#define for_each_cpu_replicas_entry(_r, _i)				\
-	for (_i = (_r)->entries;					\
-	     (void *) (_i) < (void *) (_r)->entries + (_r)->nr * (_r)->entry_size;\
-	     _i = (void *) (_i) + (_r)->entry_size)
-
 static inline bool bch2_replicas_entry_has_dev(struct bch_replicas_entry_v1 *r, unsigned dev)
 {
 	for (unsigned i = 0; i < r->nr_devs; i++)
@@ -71,12 +60,7 @@ static inline bool bch2_replicas_entry_has_dev(struct bch_replicas_entry_v1 *r, 
 	((typeof(_i)) ((void *) (_i) + replicas_entry_bytes(_i)))
 
 #define for_each_replicas_entry(_r, _i)					\
-	for (_i = (_r)->entries;					\
-	     (void *) (_i) < vstruct_end(&(_r)->field) && (_i)->data_type;\
-	     (_i) = replicas_entry_next(_i))
-
-#define for_each_replicas_entry_v0(_r, _i)				\
-	for (_i = (_r)->entries;					\
+	for (typeof(&(_r)->entries[0]) _i = (_r)->entries;		\
 	     (void *) (_i) < vstruct_end(&(_r)->field) && (_i)->data_type;\
 	     (_i) = replicas_entry_next(_i))
 
