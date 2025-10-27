@@ -149,6 +149,7 @@ enum journal_space_from {
 };
 
 #define JOURNAL_FLAGS()			\
+	x(degraded)			\
 	x(replay_done)			\
 	x(running)			\
 	x(may_skip_flush)		\

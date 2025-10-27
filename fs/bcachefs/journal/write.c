@@ -198,8 +198,12 @@ static CLOSURE_CALLBACK(journal_write_done)
 
 	if (w->had_error) {
 		struct bch_replicas_entry_v1 *r = &journal_seq_pin(j, seq)->devs.e;
+		bch2_replicas_entry_put(c, r);
 
 		bch2_devlist_to_replicas(r, BCH_DATA_journal, w->devs_written);
+		err = bch2_replicas_entry_get(c, r);
+		if (err)
+			r->nr_devs = 0;
 	}
 
 	if (!w->devs_written.nr)
@@ -651,7 +655,6 @@ CLOSURE_CALLBACK(bch2_journal_write)
 	unsigned nr_rw_members = dev_mask_nr(&c->rw_devs[BCH_DATA_free]);
 	int ret;
 
-	BUG_ON(BCH_SB_CLEAN(c->disk_sb.sb));
 	BUG_ON(!w->write_started);
 	BUG_ON(w->write_allocated);
 	BUG_ON(w->write_done);
@@ -718,9 +721,11 @@ CLOSURE_CALLBACK(bch2_journal_write)
 	 */
 	struct bch_replicas_entry_v1 *r = &journal_seq_pin(j, le64_to_cpu(w->data->seq))->devs.e;
 	bch2_devlist_to_replicas(r, BCH_DATA_journal, w->devs_written);
-	ret = bch2_mark_replicas(c, r);
-	if (ret)
+	ret = bch2_replicas_entry_get(c, r);
+	if (ret) {
+		r->nr_devs = 0;
 		goto err;
+	}
 
 	if (c->opts.nochanges)
 		goto no_io;
