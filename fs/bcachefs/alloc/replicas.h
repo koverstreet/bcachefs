@@ -42,9 +42,19 @@ bool bch2_have_enough_devs(struct bch_fs *, struct bch_devs_mask,
 unsigned bch2_sb_dev_has_data(struct bch_sb *, unsigned);
 unsigned bch2_dev_has_data(struct bch_fs *, struct bch_dev *);
 
+void bch2_replicas_entry_put_many(struct bch_fs *, struct bch_replicas_entry_v1 *, unsigned);
+static inline void bch2_replicas_entry_put(struct bch_fs *c, struct bch_replicas_entry_v1 *r)
+{
+	bch2_replicas_entry_put_many(c, r, 1);
+}
+
+int bch2_replicas_entry_get(struct bch_fs *, struct bch_replicas_entry_v1 *);
+
 int bch2_replicas_gc_end(struct bch_fs *, int);
 int bch2_replicas_gc_start(struct bch_fs *, unsigned);
 void bch2_replicas_entry_kill(struct bch_fs *, struct bch_replicas_entry_v1 *);
+
+int bch2_replicas_gc_reffed(struct bch_fs *);
 
 static inline bool bch2_replicas_entry_has_dev(struct bch_replicas_entry_v1 *r, unsigned dev)
 {
@@ -52,6 +62,12 @@ static inline bool bch2_replicas_entry_has_dev(struct bch_replicas_entry_v1 *r, 
 		if (r->devs[i] == dev)
 			return true;
 	return false;
+}
+
+static inline bool bch2_replicas_entry_eq(struct bch_replicas_entry_v1 *l,
+					  struct bch_replicas_entry_v1 *r)
+{
+	return l->nr_devs == r->nr_devs && !memcmp(l, r, replicas_entry_bytes(l));
 }
 
 /* iterate over superblock replicas - used by userspace tools: */
