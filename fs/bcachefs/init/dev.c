@@ -633,11 +633,11 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		goto err;
 	}
 
-	ret = bch2_replicas_gc2(c);
-	if (ret) {
-		prt_printf(err, "bch2_replicas_gc2() error: %s\n", bch2_err_str(ret));
-		goto err;
-	}
+	/*
+	 * flushing the journal should be sufficient, but it's the write buffer
+	 * flush that kills superblock replicas entries after they've gone to 0
+	 * so bch2_dev_has_data() returns the correct value:
+	 */
 
 	data = bch2_dev_has_data(c, ca);
 	if (data) {

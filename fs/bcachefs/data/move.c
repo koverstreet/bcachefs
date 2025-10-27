@@ -994,7 +994,6 @@ int bch2_data_job(struct bch_fs *c,
 				     true,
 				     rereplicate_pred, c) ?: ret;
 		bch2_btree_interior_updates_flush(c);
-		ret = bch2_replicas_gc2(c) ?: ret;
 		break;
 	case BCH_DATA_OP_migrate:
 		if (op->migrate.dev >= c->sb.nr_devices)
@@ -1010,7 +1009,6 @@ int bch2_data_job(struct bch_fs *c,
 					  true,
 					  migrate_pred, op) ?: ret;
 		bch2_btree_interior_updates_flush(c);
-		ret = bch2_replicas_gc2(c) ?: ret;
 		break;
 	case BCH_DATA_OP_rewrite_old_nodes:
 		ret = bch2_scan_old_btree_nodes(c, stats);
@@ -1020,7 +1018,6 @@ int bch2_data_job(struct bch_fs *c,
 				     writepoint_hashed((unsigned long) current),
 				     true,
 				     drop_extra_replicas_pred, c) ?: ret;
-		ret = bch2_replicas_gc2(c) ?: ret;
 		break;
 	default:
 		ret = -EINVAL;

@@ -50,7 +50,6 @@ unsigned bch2_dev_has_data(struct bch_fs *, struct bch_dev *);
 
 int bch2_replicas_gc_end(struct bch_fs *, int);
 int bch2_replicas_gc_start(struct bch_fs *, unsigned);
-int bch2_replicas_gc2(struct bch_fs *);
 void bch2_replicas_entry_kill(struct bch_fs *, struct bch_replicas_entry_v1 *);
 
 #define for_each_cpu_replicas_entry(_r, _i)				\
