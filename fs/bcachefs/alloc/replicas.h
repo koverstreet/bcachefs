@@ -19,9 +19,6 @@ cpu_replicas_entry(struct bch_replicas_cpu *r, unsigned i)
 	return (void *) r->entries + r->entry_size * i;
 }
 
-int bch2_replicas_entry_idx(struct bch_fs *,
-			    struct bch_replicas_entry_v1 *);
-
 void bch2_devlist_to_replicas(struct bch_replicas_entry_v1 *,
 			      enum bch_data_type,
 			      struct bch_devs_list);

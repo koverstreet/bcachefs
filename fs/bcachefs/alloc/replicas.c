@@ -262,14 +262,6 @@ static inline int __replicas_entry_idx(struct bch_replicas_cpu *r,
 	return idx < r->nr ? idx : -1;
 }
 
-int bch2_replicas_entry_idx(struct bch_fs *c,
-			    struct bch_replicas_entry_v1 *search)
-{
-	bch2_replicas_entry_sort(search);
-
-	return __replicas_entry_idx(&c->replicas, search);
-}
-
 static bool __replicas_has_entry(struct bch_replicas_cpu *r,
 				 struct bch_replicas_entry_v1 *search)
 {
