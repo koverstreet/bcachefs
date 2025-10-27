@@ -196,10 +196,17 @@ static CLOSURE_CALLBACK(journal_write_done)
 			       ? j->flush_write_time
 			       : j->noflush_write_time, j->write_start_time);
 
+	struct bch_replicas_entry_v1 *r = &journal_seq_pin(j, seq)->devs.e;
 	if (w->had_error) {
-		struct bch_replicas_entry_v1 *r = &journal_seq_pin(j, seq)->devs.e;
+		bch2_replicas_entry_put(c, r);
+		r->nr_devs = 0;
+	}
 
+	if (!r->nr_devs && !w->empty) {
 		bch2_devlist_to_replicas(r, BCH_DATA_journal, w->devs_written);
+		err = bch2_replicas_entry_get(c, r);
+		if (err)
+			r->nr_devs = 0;
 	}
 
 	if (!w->devs_written.nr)
@@ -261,7 +268,7 @@ again:
 				 * properly - when the flush completes replcias
 				 * refs need to have been dropped
 				 * */
-				bch2_journal_update_last_seq_ondisk(j, w->last_seq);
+				bch2_journal_update_last_seq_ondisk(j, w->last_seq, w->empty);
 				last_seq_ondisk_updated = true;
 				spin_lock(&j->lock);
 				goto again;
@@ -657,7 +664,6 @@ CLOSURE_CALLBACK(bch2_journal_write)
 	unsigned nr_rw_members = dev_mask_nr(&c->rw_devs[BCH_DATA_free]);
 	int ret;
 
-	BUG_ON(BCH_SB_CLEAN(c->disk_sb.sb));
 	BUG_ON(!w->write_started);
 	BUG_ON(w->write_allocated);
 	BUG_ON(w->write_done);
@@ -718,15 +724,24 @@ CLOSURE_CALLBACK(bch2_journal_write)
 
 	w->devs_written = bch2_bkey_devs(c, bkey_i_to_s_c(&w->key));
 
-	/*
-	 * Mark journal replicas before we submit the write to guarantee
-	 * recovery will find the journal entries after a crash.
-	 */
-	struct bch_replicas_entry_v1 *r = &journal_seq_pin(j, le64_to_cpu(w->data->seq))->devs.e;
-	bch2_devlist_to_replicas(r, BCH_DATA_journal, w->devs_written);
-	ret = bch2_mark_replicas(c, r);
-	if (ret)
-		goto err;
+	if (!c->sb.clean) {
+		/*
+		 * Mark journal replicas before we submit the write to guarantee
+		 * recovery will find the journal entries after a crash.
+		 *
+		 * If the filesystem is clean, we have to defer this until after
+		 * the write completes, so the filesystem isn't marked dirty
+		 * before anything is in the journal:
+		 */
+		struct bch_replicas_entry_v1 *r = &journal_seq_pin(j, le64_to_cpu(w->data->seq))->devs.e;
+		bch2_devlist_to_replicas(r, BCH_DATA_journal, w->devs_written);
+
+		ret = bch2_replicas_entry_get(c, r);
+		if (ret) {
+			r->nr_devs = 0;
+			goto err;
+		}
+	}
 
 	if (c->opts.nochanges)
 		goto no_io;

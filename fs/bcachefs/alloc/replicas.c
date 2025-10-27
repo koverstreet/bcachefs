@@ -974,6 +974,25 @@ bool bch2_have_enough_devs(struct bch_fs *c, struct bch_devs_mask devs,
 	return bch2_can_read_fs_with_devs(c, devs, flags, err);
 }
 
+bool bch2_sb_has_journal(struct bch_sb *sb)
+{
+	struct bch_sb_field_replicas *replicas = bch2_sb_field_get(sb, replicas);
+	struct bch_sb_field_replicas_v0 *replicas_v0 = bch2_sb_field_get(sb, replicas_v0);
+
+	if (replicas) {
+		for_each_replicas_entry(replicas, r)
+			if (r->data_type == BCH_DATA_journal)
+				return true;
+	} else if (replicas_v0) {
+		for_each_replicas_entry(replicas_v0, r)
+			if (r->data_type == BCH_DATA_journal)
+				return true;
+	}
+
+
+	return false;
+}
+
 unsigned bch2_sb_dev_has_data(struct bch_sb *sb, unsigned dev)
 {
 	struct bch_sb_field_replicas *replicas;

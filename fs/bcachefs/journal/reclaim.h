@@ -44,7 +44,7 @@ journal_seq_pin(struct journal *j, u64 seq)
 }
 
 void bch2_journal_update_last_seq(struct journal *);
-void bch2_journal_update_last_seq_ondisk(struct journal *, u64);
+void bch2_journal_update_last_seq_ondisk(struct journal *, u64, bool);
 
 bool __bch2_journal_pin_put(struct journal *, u64);
 void bch2_journal_pin_put(struct journal *, u64);

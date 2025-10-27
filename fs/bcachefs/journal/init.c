@@ -377,6 +377,7 @@ int bch2_fs_journal_start(struct journal *j, struct journal_start_info info)
 	struct journal_replay *i, **_i;
 	struct genradix_iter iter;
 	bool had_entries = false;
+	int ret = 0;
 
 	/*
 	 *
@@ -445,12 +446,26 @@ int bch2_fs_journal_start(struct journal *j, struct journal_start_info info)
 		if (journal_entry_empty(&i->j))
 			j->last_empty_seq = le64_to_cpu(i->j.seq);
 
-		struct bch_devs_list seq_devs = {};
-		darray_for_each(i->ptrs, ptr)
-			seq_devs.data[seq_devs.nr++] = ptr->dev;
+		if (!info.clean) {
+			struct bch_devs_list seq_devs = {};
+			darray_for_each(i->ptrs, ptr)
+				seq_devs.data[seq_devs.nr++] = ptr->dev;
 
-		p = journal_seq_pin(j, seq);
-		bch2_devlist_to_replicas(&p->devs.e, BCH_DATA_journal, seq_devs);
+			p = journal_seq_pin(j, seq);
+			bch2_devlist_to_replicas(&p->devs.e, BCH_DATA_journal, seq_devs);
+
+			CLASS(printbuf, buf)();
+			bch2_replicas_entry_to_text(&buf, &p->devs.e);
+
+			fsck_err_on(!test_bit(JOURNAL_degraded, &j->flags) &&
+				    !bch2_replicas_marked(c, &p->devs.e),
+				    c, journal_entry_replicas_not_marked,
+				    "superblock not marked as containing replicas for journal entry %llu\n%s",
+				    le64_to_cpu(i->j.seq), buf.buf);
+
+			if (bch2_replicas_entry_get(c, &p->devs.e))
+				p->devs.e.nr_devs = 0;
+		}
 
 		had_entries = true;
 	}
@@ -464,7 +479,9 @@ int bch2_fs_journal_start(struct journal *j, struct journal_start_info info)
 		c->last_bucket_seq_cleanup = journal_cur_seq(j);
 	}
 
-	return 0;
+	try(bch2_replicas_gc_reffed(c));
+fsck_err:
+	return ret;
 }
 
 void bch2_journal_set_replay_done(struct journal *j)

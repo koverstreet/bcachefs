@@ -374,15 +374,13 @@ void bch2_fs_read_only(struct bch_fs *c)
 	    test_bit(BCH_FS_clean_shutdown, &c->flags) &&
 	    c->recovery.pass_done >= BCH_RECOVERY_PASS_journal_replay) {
 		BUG_ON(c->journal.last_empty_seq != journal_cur_seq(&c->journal));
+		BUG_ON(!c->sb.clean);
 		BUG_ON(atomic_long_read(&c->btree_cache.nr_dirty));
 		BUG_ON(atomic_long_read(&c->btree_key_cache.nr_dirty));
 		BUG_ON(c->btree_write_buffer.inc.keys.nr);
 		BUG_ON(c->btree_write_buffer.flushing.keys.nr);
 		bch2_verify_replicas_refs_clean(c);
 		bch2_verify_accounting_clean(c);
-
-		bch_verbose(c, "marking filesystem clean");
-		bch2_fs_mark_clean(c);
 	} else {
 		/* Make sure error counts/counters are persisted */
 		guard(mutex)(&c->sb_lock);
@@ -480,7 +478,6 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 
 	try(bch2_fs_init_rw(c));
 	try(bch2_sb_members_v2_init(c));
-	try(bch2_fs_mark_dirty(c));
 
 	clear_bit(BCH_FS_clean_shutdown, &c->flags);
 
