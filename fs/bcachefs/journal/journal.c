@@ -358,7 +358,6 @@ static int journal_entry_open(struct journal *j)
 
 	lockdep_assert_held(&j->lock);
 	BUG_ON(journal_entry_is_open(j));
-	BUG_ON(c->sb.clean);
 
 	if (j->blocked)
 		return bch_err_throw(c, journal_blocked);

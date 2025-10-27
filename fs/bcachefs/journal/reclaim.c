@@ -348,11 +348,26 @@ void bch2_journal_update_last_seq(struct journal *j)
 
 void bch2_journal_update_last_seq_ondisk(struct journal *j, u64 last_seq_ondisk)
 {
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+	union bch_replicas_padded replicas;
+	unsigned nr_refs = 0;
 	size_t dirty_entry_bytes = 0;
 
 	scoped_guard(mutex, &j->last_seq_ondisk_lock)
 		while (j->last_seq_ondisk < last_seq_ondisk) {
 			struct journal_entry_pin_list *pin_list = journal_seq_pin(j, j->last_seq_ondisk);
+
+			if (pin_list->devs.e.nr_devs) {
+				if (nr_refs &&
+				    !bch2_replicas_entry_eq(&replicas.e, &pin_list->devs.e)) {
+					bch2_replicas_entry_put_many(c, &replicas.e, nr_refs);
+					nr_refs = 0;
+				}
+
+				memcpy(&replicas, &pin_list->devs, replicas_entry_bytes(&pin_list->devs.e));
+				pin_list->devs.e.nr_devs = 0;
+				nr_refs++;
+			}
 
 			dirty_entry_bytes += pin_list->bytes;
 			pin_list->bytes = 0;
@@ -365,6 +380,9 @@ void bch2_journal_update_last_seq_ondisk(struct journal *j, u64 last_seq_ondisk)
 			dirty_entry_bytes = j->dirty_entry_bytes;
 		j->dirty_entry_bytes -= dirty_entry_bytes;
 	}
+
+	if (nr_refs)
+		bch2_replicas_entry_put_many(c, &replicas.e, nr_refs);
 }
 
 bool __bch2_journal_pin_put(struct journal *j, u64 seq)
@@ -975,39 +993,7 @@ int bch2_journal_flush_device_pins(struct journal *j, int dev_idx)
 
 	try(bch2_journal_error(j));
 
-	guard(mutex)(&c->replicas_gc_lock);
-	bch2_replicas_gc_start(c, 1 << BCH_DATA_journal);
-
-	/*
-	 * Now that we've populated replicas_gc, write to the journal to mark
-	 * active journal devices. This handles the case where the journal might
-	 * be empty. Otherwise we could clear all journal replicas and
-	 * temporarily put the fs into an unrecoverable state. Journal recovery
-	 * expects to find devices marked for journal data on unclean mount.
-	 */
-	int ret = bch2_journal_meta(&c->journal);
-	if (ret)
-		goto err;
-
-	seq = 0;
-	scoped_guard(spinlock, &j->lock)
-		while (!ret) {
-			seq = max(seq, j->last_seq);
-			if (seq > j->seq_ondisk)
-				break;
-
-			union bch_replicas_padded replicas;
-			memcpy(&replicas, &journal_seq_pin(j, seq)->devs, sizeof(replicas));
-			seq++;
-
-			if (replicas.e.nr_devs) {
-				spin_unlock(&j->lock);
-				ret = bch2_mark_replicas(c, &replicas.e);
-				spin_lock(&j->lock);
-			}
-		}
-err:
-	return bch2_replicas_gc_end(c, ret);
+	return 0;
 }
 
 bool bch2_journal_seq_pins_to_text(struct printbuf *out, struct journal *j, u64 *seq)
