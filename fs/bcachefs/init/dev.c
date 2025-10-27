@@ -447,8 +447,13 @@ int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb, struct prin
 	lockdep_assert_held(&c->state_lock);
 
 	if (le64_to_cpu(sb->sb->seq) >
-	    le64_to_cpu(c->disk_sb.sb->seq))
-		bch2_sb_to_fs(c, sb->sb);
+	    le64_to_cpu(c->disk_sb.sb->seq)) {
+		/*
+		 * rewind, we'll lose some updates but it's not safe to call
+		 * bch2_sb_to_fs() after fs is started
+		 */
+		sb->sb->seq = c->disk_sb.sb->seq;
+	}
 
 	BUG_ON(!bch2_dev_exists(c, sb->sb->dev_idx));
 
