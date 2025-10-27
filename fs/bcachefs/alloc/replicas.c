@@ -441,24 +441,112 @@ int bch2_replicas_gc_start(struct bch_fs *c, unsigned typemask)
 	return 0;
 }
 
+static void __replicas_entry_kill(struct bch_fs *c, struct bch_replicas_entry_cpu *e)
+{
+	struct bch_replicas_cpu *r = &c->replicas;
+
+	memcpy(e, cpu_replicas_entry(r, --r->nr), r->entry_size);
+	bch2_cpu_replicas_sort(r);
+
+	int ret = bch2_cpu_replicas_to_sb_replicas(c, r);
+	if (WARN(ret, "bch2_cpu_replicas_to_sb_replicas() error: %s", bch2_err_str(ret)))
+		return;
+}
+
 void bch2_replicas_entry_kill(struct bch_fs *c, struct bch_replicas_entry_v1 *kill)
 {
 	lockdep_assert_held(&c->mark_lock);
 	lockdep_assert_held(&c->sb_lock);
 
-	struct bch_replicas_cpu *r = &c->replicas;
-
 	struct bch_replicas_entry_cpu *e = replicas_entry_search(&c->replicas, kill);
+
 	if (WARN(!e, "replicas entry not found in sb"))
 		return;
 
-	memcpy(e, cpu_replicas_entry(r, --r->nr), r->entry_size);
+	__replicas_entry_kill(c, e);
 
-	bch2_cpu_replicas_sort(r);
-
-	int ret = bch2_cpu_replicas_to_sb_replicas(c, r);
-	WARN(ret, "bch2_cpu_replicas_to_sb_replicas() error: %s", bch2_err_str(ret));
 	/* caller does write_super() after dropping mark_lock */
+}
+
+void bch2_replicas_entry_put_many(struct bch_fs *c, struct bch_replicas_entry_v1 *r, unsigned nr)
+{
+	if (!r->nr_devs)
+		return;
+
+	BUG_ON(r->data_type != BCH_DATA_journal);
+	verify_replicas_entry(r);
+
+	scoped_guard(percpu_read, &c->mark_lock) {
+		struct bch_replicas_entry_cpu *e = replicas_entry_search(&c->replicas, r);
+
+		int v = atomic_sub_return(nr, &e->ref);
+		BUG_ON(v < 0);
+		if (v)
+			return;
+	}
+
+	guard(mutex)(&c->sb_lock);
+	scoped_guard(percpu_write, &c->mark_lock) {
+		struct bch_replicas_entry_cpu *e = replicas_entry_search(&c->replicas, r);
+		if (e && !atomic_read(&e->ref))
+			__replicas_entry_kill(c, e);
+	}
+
+	bch2_write_super(c);
+}
+
+static inline bool bch2_replicas_entry_get_inmem(struct bch_fs *c, struct bch_replicas_entry_v1 *r)
+{
+	guard(percpu_read)(&c->mark_lock);
+	struct bch_replicas_entry_cpu *e = replicas_entry_search(&c->replicas, r);
+	if (e)
+		atomic_inc(&e->ref);
+	return e != NULL;
+}
+
+int bch2_replicas_entry_get(struct bch_fs *c, struct bch_replicas_entry_v1 *r)
+{
+	if (!r->nr_devs)
+		return 0;
+
+	BUG_ON(r->data_type != BCH_DATA_journal);
+	verify_replicas_entry(r);
+
+	return bch2_replicas_entry_get_inmem(c, r)
+		? 0
+		: bch2_mark_replicas_slowpath(c, r, 1);
+}
+
+int bch2_replicas_gc_reffed(struct bch_fs *c)
+{
+	bool write_sb = false;
+
+	guard(mutex)(&c->sb_lock);
+
+	scoped_guard(percpu_write, &c->mark_lock) {
+		unsigned dst = 0;
+		for (unsigned i = 0; i < c->replicas.nr; i++) {
+			struct bch_replicas_entry_cpu *e =
+				cpu_replicas_entry(&c->replicas, i);
+
+			if (e->e.data_type != BCH_DATA_journal ||
+			    atomic_read(&e->ref))
+				memcpy(cpu_replicas_entry(&c->replicas, dst++),
+				       e,
+				       c->replicas.entry_size);
+		}
+
+		if (c->replicas.nr != dst) {
+			c->replicas.nr = dst;
+			bch2_cpu_replicas_sort(&c->replicas);
+
+			try(bch2_cpu_replicas_to_sb_replicas(c, &c->replicas));
+		}
+	}
+
+	if (write_sb)
+		bch2_write_super(c);
+	return 0;
 }
 
 /* Replicas tracking - superblock: */
