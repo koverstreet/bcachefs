@@ -1507,6 +1507,32 @@ root_err:
 	}));
 }
 
+static int do_rebalance_scan_fs(struct moving_context *ctxt,
+				struct per_snapshot_io_opts *snapshot_io_opts,
+				bool metadata)
+{
+	struct bch_fs *c = ctxt->trans->c;
+	struct bch_fs_rebalance *r = &c->rebalance;
+
+	r->scan_start	= BBPOS_MIN;
+	r->scan_end	= BBPOS_MAX;
+
+	for (enum btree_id btree = 0; btree < btree_id_nr_alive(c); btree++) {
+		if (!bch2_btree_id_root(c, btree)->b)
+			continue;
+
+		bool scan_leaves = !metadata &&
+			(btree == BTREE_ID_extents ||
+			 btree == BTREE_ID_reflink);
+
+		for (unsigned level = !scan_leaves; level < BTREE_MAX_DEPTH; level++)
+			try(do_rebalance_scan_btree(ctxt, snapshot_io_opts, btree, level,
+						    POS_MIN, SPOS_MAX));
+	}
+
+	return 0;
+}
+
 noinline_for_stack
 static int do_rebalance_scan(struct moving_context *ctxt,
 			     struct per_snapshot_io_opts *snapshot_io_opts,
@@ -1523,23 +1549,9 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 
 	struct rebalance_scan s = rebalance_scan_decode(c, cookie_pos.offset);
 	if (s.type == REBALANCE_SCAN_fs) {
-		r->scan_start	= BBPOS_MIN;
-		r->scan_end	= BBPOS_MAX;
-
-		for (enum btree_id btree = 0; btree < btree_id_nr_alive(c); btree++) {
-			if (!bch2_btree_id_root(c, btree)->b)
-				continue;
-
-			for (unsigned level = 0; level < BTREE_MAX_DEPTH; level++) {
-				if (!level &&
-				    (btree != BTREE_ID_extents &&
-				     btree != BTREE_ID_reflink))
-					continue;
-
-				try(do_rebalance_scan_btree(ctxt, snapshot_io_opts, btree, level,
-							    POS_MIN, SPOS_MAX));
-			}
-		}
+		try(do_rebalance_scan_fs(ctxt, snapshot_io_opts, false));
+	} else if (s.type == REBALANCE_SCAN_metadata) {
+		try(do_rebalance_scan_fs(ctxt, snapshot_io_opts, true));
 	} else if (s.type == REBALANCE_SCAN_device) {
 		r->scan_start	= BBPOS(BTREE_ID_backpointers, POS(s.dev, 0));
 		r->scan_end	= BBPOS(BTREE_ID_backpointers, POS(s.dev, U64_MAX));
