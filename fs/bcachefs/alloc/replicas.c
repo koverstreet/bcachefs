@@ -12,6 +12,10 @@
 
 #include <linux/sort.h>
 
+DEFINE_CLASS(bch_replicas_cpu, struct bch_replicas_cpu,
+	     kfree(_T.entries),
+	     (struct bch_replicas_cpu) {}, void)
+
 static inline struct bch_replicas_entry_v1 *
 cpu_replicas_entry(struct bch_replicas_cpu *r, unsigned i)
 {
@@ -290,40 +294,31 @@ noinline
 static int bch2_mark_replicas_slowpath(struct bch_fs *c,
 				struct bch_replicas_entry_v1 *new_entry)
 {
-	struct bch_replicas_cpu new_r, new_gc;
-	int ret = 0;
-
 	verify_replicas_entry(new_entry);
 
-	memset(&new_r, 0, sizeof(new_r));
-	memset(&new_gc, 0, sizeof(new_gc));
+	CLASS(bch_replicas_cpu, new_r)();
+	CLASS(bch_replicas_cpu, new_gc)();
 
 	guard(mutex)(&c->sb_lock);
 
 	if (c->replicas_gc.entries &&
 	    !replicas_entry_search(&c->replicas_gc, new_entry)) {
 		new_gc = cpu_replicas_add_entry(c, &c->replicas_gc, new_entry);
-		if (!new_gc.entries) {
-			ret = bch_err_throw(c, ENOMEM_cpu_replicas);
-			goto out;
-		}
+		if (!new_gc.entries)
+			return bch_err_throw(c, ENOMEM_cpu_replicas);
 	}
 
 	if (!replicas_entry_search(&c->replicas, new_entry)) {
 		new_r = cpu_replicas_add_entry(c, &c->replicas, new_entry);
-		if (!new_r.entries) {
-			ret = bch_err_throw(c, ENOMEM_cpu_replicas);
-			goto out;
-		}
+		if (!new_r.entries)
+			return bch_err_throw(c, ENOMEM_cpu_replicas);
 
-		ret = bch2_cpu_replicas_to_sb_replicas(c, &new_r);
-		if (ret)
-			goto out;
+		try(bch2_cpu_replicas_to_sb_replicas(c, &new_r));
 	}
 
 	if (!new_r.entries &&
 	    !new_gc.entries)
-		goto out;
+		return 0;
 
 	/* allocations done, now commit: */
 
@@ -337,12 +332,8 @@ static int bch2_mark_replicas_slowpath(struct bch_fs *c,
 		if (new_gc.entries)
 			swap(new_gc, c->replicas_gc);
 	}
-out:
-	kfree(new_r.entries);
-	kfree(new_gc.entries);
 
-	bch_err_msg(c, ret, "adding replicas entry");
-	return ret;
+	return 0;
 }
 
 int bch2_mark_replicas(struct bch_fs *c, struct bch_replicas_entry_v1 *r)
@@ -506,7 +497,7 @@ int bch2_sb_replicas_to_cpu_replicas(struct bch_fs *c)
 {
 	struct bch_sb_field_replicas *sb_v1;
 	struct bch_sb_field_replicas_v0 *sb_v0;
-	struct bch_replicas_cpu new_r = { 0, 0, NULL };
+	CLASS(bch_replicas_cpu, new_r)();
 
 	if ((sb_v1 = bch2_sb_field_get(c->disk_sb.sb, replicas)))
 		try(__bch2_sb_replicas_to_cpu_replicas(sb_v1, &new_r));
@@ -517,8 +508,6 @@ int bch2_sb_replicas_to_cpu_replicas(struct bch_fs *c)
 
 	guard(percpu_write)(&c->mark_lock);
 	swap(c->replicas, new_r);
-
-	kfree(new_r.entries);
 
 	return 0;
 }
@@ -644,12 +633,11 @@ static int bch2_sb_replicas_validate(struct bch_sb *sb, struct bch_sb_field *f,
 {
 	struct bch_sb_field_replicas *sb_r = field_to_type(f, replicas);
 
-	struct bch_replicas_cpu cpu_r;
+	CLASS(bch_replicas_cpu, cpu_r)();
 	try(__bch2_sb_replicas_to_cpu_replicas(sb_r, &cpu_r));
+	try(bch2_cpu_replicas_validate(&cpu_r, sb, err));
 
-	int ret = bch2_cpu_replicas_validate(&cpu_r, sb, err);
-	kfree(cpu_r.entries);
-	return ret;
+	return 0;
 }
 
 static void bch2_sb_replicas_to_text(struct printbuf *out,
@@ -679,12 +667,11 @@ static int bch2_sb_replicas_v0_validate(struct bch_sb *sb, struct bch_sb_field *
 {
 	struct bch_sb_field_replicas_v0 *sb_r = field_to_type(f, replicas_v0);
 
-	struct bch_replicas_cpu cpu_r;
+	CLASS(bch_replicas_cpu, cpu_r)();
 	try(__bch2_sb_replicas_v0_to_cpu_replicas(sb_r, &cpu_r));
+	try(bch2_cpu_replicas_validate(&cpu_r, sb, err));
 
-	int ret = bch2_cpu_replicas_validate(&cpu_r, sb, err);
-	kfree(cpu_r.entries);
-	return ret;
+	return 0;
 }
 
 static void bch2_sb_replicas_v0_to_text(struct printbuf *out,
