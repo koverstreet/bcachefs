@@ -549,7 +549,7 @@ int bch2_dirent_lookup_trans(struct btree_trans *trans,
 					     hash_info, dir, &lookup_name, flags));
 
 	int ret = bch2_dirent_read_target(trans, dir, bkey_s_c_to_dirent(k), inum);
-	return ret > 0 ? -ENOENT : 0;
+	return ret > 0 ? -ENOENT : ret;
 }
 
 u64 bch2_dirent_lookup(struct bch_fs *c, subvol_inum dir,
