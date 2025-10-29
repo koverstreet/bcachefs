@@ -131,7 +131,7 @@ struct rebalance_scan {
 };
 
 int bch2_set_rebalance_needs_scan_trans(struct btree_trans *, struct rebalance_scan);
-int bch2_set_rebalance_needs_scan(struct bch_fs *, struct rebalance_scan);
+int bch2_set_rebalance_needs_scan(struct bch_fs *, struct rebalance_scan, bool);
 int bch2_set_fs_needs_rebalance(struct bch_fs *);
 
 static inline void bch2_rebalance_wakeup(struct bch_fs *c)

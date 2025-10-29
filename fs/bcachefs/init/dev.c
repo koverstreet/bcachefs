@@ -545,7 +545,8 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 
 	if (new_state == BCH_MEMBER_STATE_failed)
 		try(bch2_set_rebalance_needs_scan(c,
-			(struct rebalance_scan) { .type = REBALANCE_SCAN_device, .dev = ca->dev_idx }));
+			(struct rebalance_scan) { .type = REBALANCE_SCAN_device, .dev = ca->dev_idx },
+			false));
 
 	scoped_guard(mutex, &c->sb_lock) {
 		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
@@ -558,9 +559,8 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 
 	if (new_state == BCH_MEMBER_STATE_failed)
 		bch2_set_rebalance_needs_scan(c,
-			(struct rebalance_scan) { .type = REBALANCE_SCAN_device, .dev = ca->dev_idx });
-
-	bch2_rebalance_wakeup(c);
+			(struct rebalance_scan) { .type = REBALANCE_SCAN_device, .dev = ca->dev_idx },
+			true);
 
 	return ret;
 }
