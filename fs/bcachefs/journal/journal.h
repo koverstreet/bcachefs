@@ -410,20 +410,14 @@ static inline int bch2_journal_res_get(struct journal *j, struct journal_res *re
 				       unsigned u64s, unsigned flags,
 				       struct btree_trans *trans)
 {
-	int ret;
-
 	EBUG_ON(res->ref);
 	EBUG_ON(!test_bit(JOURNAL_running, &j->flags));
 
 	res->u64s = u64s;
 
-	if (journal_res_get_fast(j, res, flags))
-		goto out;
+	if (!journal_res_get_fast(j, res, flags))
+		try(bch2_journal_res_get_slowpath(j, res, flags, trans));
 
-	ret = bch2_journal_res_get_slowpath(j, res, flags, trans);
-	if (ret)
-		return ret;
-out:
 	if (!(flags & JOURNAL_RES_GET_CHECK)) {
 		lock_acquire_shared(&j->res_map, 0,
 				    (flags & JOURNAL_RES_GET_NONBLOCK) != 0,
