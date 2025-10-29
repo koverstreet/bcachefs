@@ -438,10 +438,10 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 		 * sequence number with a new btree node write, we want to re-journal
 		 * the update
 		 */
-		if (ck->journal.seq == journal_last_seq(j))
+		if (ck->journal.seq == j->last_seq)
 			commit_flags |= BCH_WATERMARK_reclaim;
 
-		if (ck->journal.seq != journal_last_seq(j) ||
+		if (ck->journal.seq != j->last_seq ||
 		    !journal_low_on_space(&c->journal))
 			commit_flags |= BCH_TRANS_COMMIT_no_journal_res;
 
