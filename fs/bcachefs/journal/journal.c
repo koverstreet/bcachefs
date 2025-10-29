@@ -442,6 +442,7 @@ static int journal_entry_open(struct journal *j)
 	buf->write_started	= false;
 	buf->write_allocated	= false;
 	buf->write_done		= false;
+	buf->had_error		= false;
 
 	memset(buf->data, 0, sizeof(*buf->data));
 	buf->data->seq	= cpu_to_le64(journal_cur_seq(j));
