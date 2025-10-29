@@ -220,13 +220,10 @@ static inline int bch2_accounting_mem_mod_locked(struct btree_trans *trans,
 
 	while ((idx = eytzinger0_find(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
 				      accounting_pos_cmp, &a.k->p)) >= acc->k.nr) {
-		int ret = 0;
 		if (unlikely(write_locked))
-			ret = bch2_accounting_mem_insert_locked(c, a, mode);
+			try(bch2_accounting_mem_insert_locked(c, a, mode));
 		else
-			ret = bch2_accounting_mem_insert(c, a, mode);
-		if (ret)
-			return ret;
+			try(bch2_accounting_mem_insert(c, a, mode));
 	}
 
 	struct accounting_mem_entry *e = &acc->k.data[idx];
