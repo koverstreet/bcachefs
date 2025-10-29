@@ -116,6 +116,11 @@
 	  BCH_FSCK_ERR_accounting_mismatch,			\
 	  BCH_FSCK_ERR_extent_io_opts_not_set)
 
+#define UPGRADE_TABLE_INCOMPAT()				\
+	x(rebalance_v2,						\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_rebalance_work),	\
+	  BCH_FSCK_ERR_extent_io_opts_not_set)
+
 #define DOWNGRADE_TABLE()					\
 	x(bucket_stripe_sectors,				\
 	  0)							\
@@ -179,14 +184,29 @@ struct upgrade_downgrade_entry {
 UPGRADE_TABLE()
 #undef x
 
+#define x(ver, passes, ...) static const u16 upgrade_incompat_##ver##_errors[] = { __VA_ARGS__ };
+UPGRADE_TABLE_INCOMPAT()
+#undef x
+
 static const struct upgrade_downgrade_entry upgrade_table[] = {
-#define x(ver, passes, ...) {					\
-	.recovery_passes	= passes,			\
-	.version		= bcachefs_metadata_version_##ver,\
-	.nr_errors		= ARRAY_SIZE(upgrade_##ver##_errors),	\
-	.errors			= upgrade_##ver##_errors,	\
+#define x(ver, passes, ...) {							\
+	.recovery_passes	= passes,					\
+	.version		= bcachefs_metadata_version_##ver,		\
+	.nr_errors		= ARRAY_SIZE(upgrade_##ver##_errors),		\
+	.errors			= upgrade_##ver##_errors,			\
 },
 UPGRADE_TABLE()
+#undef x
+};
+
+static const struct upgrade_downgrade_entry upgrade_table_incompat[] = {
+#define x(ver, passes, ...) {							\
+	.recovery_passes	= passes,					\
+	.version		= bcachefs_metadata_version_##ver,		\
+	.nr_errors		= ARRAY_SIZE(upgrade_incompat_##ver##_errors),	\
+	.errors			= upgrade_incompat_##ver##_errors,		\
+},
+UPGRADE_TABLE_INCOMPAT()
 #undef x
 };
 
@@ -223,17 +243,17 @@ int bch2_sb_set_upgrade_extra(struct bch_fs *c)
 	return ret < 0 ? ret : 0;
 }
 
-void bch2_sb_set_upgrade(struct bch_fs *c,
-			 unsigned old_version,
-			 unsigned new_version)
+static void __bch2_sb_set_upgrade(struct bch_fs *c,
+				  unsigned old_version,
+				  unsigned new_version,
+				  const struct upgrade_downgrade_entry *table,
+				  size_t nr_entries)
 {
 	lockdep_assert_held(&c->sb_lock);
 
 	struct bch_sb_field_ext *ext = bch2_sb_field_get(c->disk_sb.sb, ext);
 
-	for (const struct upgrade_downgrade_entry *i = upgrade_table;
-	     i < upgrade_table + ARRAY_SIZE(upgrade_table);
-	     i++)
+	for (const struct upgrade_downgrade_entry *i = table; i < table + nr_entries; i++)
 		if (i->version > old_version && i->version <= new_version) {
 			u64 passes = i->recovery_passes;
 
@@ -247,6 +267,24 @@ void bch2_sb_set_upgrade(struct bch_fs *c,
 			for (const u16 *e = i->errors; e < i->errors + i->nr_errors; e++)
 				__set_bit_le64(*e, ext->errors_silent);
 		}
+}
+
+void bch2_sb_set_upgrade(struct bch_fs *c,
+			 unsigned old_version,
+			 unsigned new_version)
+{
+	return __bch2_sb_set_upgrade(c, old_version, new_version,
+				     upgrade_table,
+				     ARRAY_SIZE(upgrade_table));
+}
+
+void bch2_sb_set_upgrade_incompat(struct bch_fs *c,
+				  unsigned old_version,
+				  unsigned new_version)
+{
+	return __bch2_sb_set_upgrade(c, old_version, new_version,
+				     upgrade_table_incompat,
+				     ARRAY_SIZE(upgrade_table_incompat));
 }
 
 #define x(ver, passes, ...) static const u16 downgrade_##ver##_errors[] = { __VA_ARGS__ };
