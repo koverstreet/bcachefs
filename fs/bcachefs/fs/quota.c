@@ -118,7 +118,7 @@ static void qc_dqblk_to_text(struct printbuf *out, struct qc_dqblk *q)
 	prt_printf(out, "d_fieldmask\t%x\n",		q->d_fieldmask);
 	prt_printf(out, "d_spc_hardlimit\t%llu\n",	q->d_spc_hardlimit);
 	prt_printf(out, "d_spc_softlimit\t%llu\n",	q->d_spc_softlimit);
-	prt_printf(out, "d_ino_hardlimit\%llu\n",	q->d_ino_hardlimit);
+	prt_printf(out, "d_ino_hardlimit\t%llu\n",	q->d_ino_hardlimit);
 	prt_printf(out, "d_ino_softlimit\t%llu\n",	q->d_ino_softlimit);
 	prt_printf(out, "d_space\t%llu\n",		q->d_space);
 	prt_printf(out, "d_ino_count\t%llu\n",		q->d_ino_count);
