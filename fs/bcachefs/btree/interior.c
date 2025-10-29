@@ -2385,15 +2385,6 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 
 	if (!btree_node_will_make_reachable(b)) {
-		if (!skip_triggers) {
-			try(bch2_key_trigger_old(trans, b->c.btree_id, b->c.level + 1,
-						 bkey_i_to_s_c(&b->key),
-						 BTREE_TRIGGER_transactional));
-			try(bch2_key_trigger_new(trans, b->c.btree_id, b->c.level + 1,
-						 bkey_i_to_s(new_key),
-						 BTREE_TRIGGER_transactional));
-		}
-
 		if (!btree_node_is_root(c, b)) {
 			CLASS(btree_node_iter, parent_iter)(trans,
 							    b->c.btree_id,
@@ -2403,15 +2394,32 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 							    BTREE_ITER_intent);
 
 			try(bch2_btree_iter_traverse(&parent_iter));
-			try(bch2_trans_update(trans, &parent_iter, new_key, BTREE_TRIGGER_norun));
+			try(bch2_trans_update(trans, &parent_iter, new_key, skip_triggers ? BTREE_TRIGGER_norun : 0));
 		} else {
-			struct jset_entry *e = errptr_try(bch2_trans_jset_entry_alloc(trans,
-									jset_u64s(new_key->k.u64s)));
+			if (!skip_triggers)
+				try(bch2_key_trigger(trans, b->c.btree_id, b->c.level + 1,
+						     bkey_i_to_s_c(&b->key),
+						     bkey_i_to_s(new_key),
+						     BTREE_TRIGGER_insert|
+						     BTREE_TRIGGER_overwrite|
+						     BTREE_TRIGGER_transactional));
 
-			journal_entry_set(e,
+			journal_entry_set(errptr_try(bch2_trans_jset_entry_alloc(trans,
+										 jset_u64s(b->key.k.u64s))),
+					  BCH_JSET_ENTRY_overwrite,
+					  b->c.btree_id, b->c.level + 1,
+					  &b->key, b->key.k.u64s);
+
+			journal_entry_set(errptr_try(bch2_trans_jset_entry_alloc(trans,
+										 jset_u64s(new_key->k.u64s))),
 					  BCH_JSET_ENTRY_btree_root,
 					  b->c.btree_id, b->c.level,
 					  new_key, new_key->k.u64s);
+
+			/*
+			 * propagated back to c->btree_roots[].key by
+			 * bch2_journal_entry_to_btree_root() incorrect for
+			 */
 		}
 
 		try(bch2_trans_commit(trans, NULL, NULL, commit_flags));
