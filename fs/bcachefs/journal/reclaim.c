@@ -211,7 +211,7 @@ void bch2_journal_space_available(struct journal *j)
 			continue;
 
 		while (ja->dirty_idx != ja->cur_idx &&
-		       ja->bucket_seq[ja->dirty_idx] < journal_last_seq(j))
+		       ja->bucket_seq[ja->dirty_idx] < j->last_seq)
 			ja->dirty_idx = (ja->dirty_idx + 1) % ja->nr;
 
 		while (ja->dirty_idx_ondisk != ja->dirty_idx &&
@@ -464,7 +464,7 @@ void bch2_journal_pin_copy(struct journal *j,
 
 	u64 seq = READ_ONCE(src->seq);
 
-	if (seq < journal_last_seq(j)) {
+	if (seq < j->last_seq) {
 		/*
 		 * bch2_journal_pin_copy() raced with bch2_journal_pin_drop() on
 		 * the src pin - with the pin dropped, the entry to pin might no
@@ -485,7 +485,7 @@ void bch2_journal_pin_copy(struct journal *j,
 	 * If the journal is currently full,  we might want to call flush_fn
 	 * immediately:
 	 */
-	if (seq == journal_last_seq(j))
+	if (seq == j->last_seq)
 		journal_wake(j);
 }
 
@@ -496,7 +496,7 @@ void bch2_journal_pin_set(struct journal *j, u64 seq,
 	bool wake;
 
 	scoped_guard(spinlock, &j->lock) {
-		BUG_ON(seq < journal_last_seq(j));
+		BUG_ON(seq < j->last_seq);
 
 		bool reclaim = __journal_pin_drop(j, pin);
 
@@ -508,7 +508,7 @@ void bch2_journal_pin_set(struct journal *j, u64 seq,
 		 * If the journal is currently full,  we might want to call flush_fn
 		 * immediately:
 		 */
-		wake = seq == journal_last_seq(j);
+		wake = seq == j->last_seq;
 	}
 
 	if (wake)
@@ -940,8 +940,8 @@ static int journal_flush_done(struct journal *j, u64 seq_to_flush,
 	 */
 	guard(spinlock)(&j->lock);
 	return !test_bit(JOURNAL_replay_done, &j->flags) ||
-		journal_last_seq(j) > seq_to_flush ||
-		journal_last_seq(j) == j->pin.back;
+		j->last_seq > seq_to_flush ||
+		j->last_seq == j->pin.back;
 }
 
 bool bch2_journal_flush_pins(struct journal *j, u64 seq_to_flush)
@@ -992,7 +992,7 @@ int bch2_journal_flush_device_pins(struct journal *j, int dev_idx)
 	seq = 0;
 	scoped_guard(spinlock, &j->lock)
 		while (!ret) {
-			seq = max(seq, journal_last_seq(j));
+			seq = max(seq, j->last_seq);
 			if (seq > j->seq_ondisk)
 				break;
 

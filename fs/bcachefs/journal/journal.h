@@ -129,11 +129,6 @@ static inline bool journal_low_on_space(struct journal *j)
 
 /* Sequence number of oldest dirty journal entry */
 
-static inline u64 journal_last_seq(struct journal *j)
-{
-	return j->last_seq;
-}
-
 static inline u64 journal_cur_seq(struct journal *j)
 {
 	return atomic64_read(&j->seq);
