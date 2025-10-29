@@ -789,17 +789,21 @@ int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, struct rebala
 	return bch2_trans_update(trans, &iter, &cookie->k_i, 0);
 }
 
-int bch2_set_rebalance_needs_scan(struct bch_fs *c, struct rebalance_scan s)
+int bch2_set_rebalance_needs_scan(struct bch_fs *c, struct rebalance_scan s, bool wakeup)
 {
 	CLASS(btree_trans, trans)(c);
-	return commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			    bch2_set_rebalance_needs_scan_trans(trans, s));
+	try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+		      bch2_set_rebalance_needs_scan_trans(trans, s)));
+	if (wakeup)
+		bch2_rebalance_wakeup(c);
+	return 0;
 }
 
 int bch2_set_fs_needs_rebalance(struct bch_fs *c)
 {
 	return bch2_set_rebalance_needs_scan(c,
-				(struct rebalance_scan) { .type = REBALANCE_SCAN_fs });
+				(struct rebalance_scan) { .type = REBALANCE_SCAN_fs },
+				true);
 }
 
 static int bch2_clear_rebalance_needs_scan(struct btree_trans *trans, struct bpos pos, u64 cookie)
