@@ -893,28 +893,35 @@ void bch2_bkey_extent_entry_drop(const struct bch_fs *c, struct bkey_i *k, union
 	k->k.u64s -= extent_entry_u64s(c, entry);
 }
 
+static union bch_extent_entry *bkey_find_crc(const struct bch_fs *c, struct bkey_s k,
+					     struct bch_extent_crc_unpacked crc)
+{
+	struct bkey_ptrs ptrs = bch2_bkey_ptrs(k);
+	struct bch_extent_crc_unpacked i;
+	union bch_extent_entry *entry;
+
+	bkey_for_each_crc(k.k, ptrs, i, entry)
+		if (!bch2_crc_unpacked_cmp(i, crc))
+			return entry;
+
+	return NULL;
+}
+
 void bch2_extent_ptr_decoded_append(const struct bch_fs *c, struct bkey_i *k,
 				    struct extent_ptr_decoded *p)
 {
-	struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(k));
-	struct bch_extent_crc_unpacked crc =
-		bch2_extent_crc_unpack(&k->k, NULL);
+	struct bch_extent_crc_unpacked crc = bch2_extent_crc_unpack(&k->k, NULL);
 	union bch_extent_entry *pos;
 
 	if (!bch2_crc_unpacked_cmp(crc, p->crc)) {
-		pos = ptrs.start;
-		goto found;
+		pos = bch2_bkey_ptrs(bkey_i_to_s(k)).start;
+	} else if ((pos = bkey_find_crc(c, bkey_i_to_s(k), p->crc))) {
+		pos = extent_entry_next(c, pos);
+	} else {
+		bch2_extent_crc_append(c, k, p->crc);
+		pos = bkey_val_end(bkey_i_to_s(k));
 	}
 
-	bkey_for_each_crc(&k->k, ptrs, crc, pos)
-		if (!bch2_crc_unpacked_cmp(crc, p->crc)) {
-			pos = extent_entry_next(c, pos);
-			goto found;
-		}
-
-	bch2_extent_crc_append(c, k, p->crc);
-	pos = bkey_val_end(bkey_i_to_s(k));
-found:
 	p->ptr.type = 1 << BCH_EXTENT_ENTRY_ptr;
 	__extent_entry_insert(c, k, pos, to_entry(&p->ptr));
 
@@ -1180,48 +1187,50 @@ void bch2_extent_ptr_set_cached(struct bch_fs *c,
 				struct bkey_s k,
 				struct bch_extent_ptr *ptr)
 {
-	struct bkey_ptrs ptrs;
-	union bch_extent_entry *entry;
-	struct extent_ptr_decoded p;
-	bool have_cached_ptr;
 	unsigned drop_dev = ptr->dev;
 
 	guard(rcu)();
-restart_drop_ptrs:
-	ptrs = bch2_bkey_ptrs(k);
-	have_cached_ptr = false;
+	bool have_cached_ptr, dropped;
+	do {
+		struct bkey_ptrs ptrs = bch2_bkey_ptrs(k);
+		union bch_extent_entry *entry;
+		struct extent_ptr_decoded p;
+		have_cached_ptr = dropped = false;
 
-	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-		/*
-		 * Check if it's erasure coded - stripes can't contain cached
-		 * data. Possibly something we can fix in the future?
-		 */
-		if (&entry->ptr == ptr && p.has_ec)
-			goto drop;
-
-		if (p.ptr.cached) {
-			if (have_cached_ptr || !want_cached_ptr(c, opts, &p.ptr)) {
-				bch2_bkey_drop_ptr_noerror(c, k, &entry->ptr);
-				ptr = NULL;
-				goto restart_drop_ptrs;
+		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+			/*
+			 * Check if it's erasure coded - stripes can't contain cached
+			 * data. Possibly something we can fix in the future?
+			 */
+			if (&entry->ptr == ptr && p.has_ec) {
+				bch2_bkey_drop_ptr_noerror(c, k, ptr);
+				return;
 			}
 
-			have_cached_ptr = true;
-		}
-	}
+			if (p.ptr.cached) {
+				if (have_cached_ptr || !want_cached_ptr(c, opts, &p.ptr)) {
+					bch2_bkey_drop_ptr_noerror(c, k, &entry->ptr);
+					ptr = NULL;
+					dropped = true;
+					break;
+				}
 
-	if (!ptr)
+				have_cached_ptr = true;
+			}
+		}
+	} while (dropped);
+
+	if (!ptr) {
+		struct bkey_ptrs ptrs = bch2_bkey_ptrs(k);
 		bkey_for_each_ptr(ptrs, ptr2)
 			if (ptr2->dev == drop_dev)
 				ptr = ptr2;
+	}
 
 	if (have_cached_ptr || !want_cached_ptr(c, opts, ptr))
-		goto drop;
-
-	ptr->cached = true;
-	return;
-drop:
-	bch2_bkey_drop_ptr_noerror(c, k, ptr);
+		bch2_bkey_drop_ptr_noerror(c, k, ptr);
+	else
+		ptr->cached = true;
 }
 
 static bool bch2_bkey_has_stale_ptrs(struct bch_fs *c, struct bkey_s_c k)
@@ -1274,22 +1283,25 @@ void bch2_bkey_drop_extra_cached_ptrs(struct bch_fs *c,
 				      struct bch_inode_opts *opts,
 				      struct bkey_s k)
 {
-	struct bkey_ptrs ptrs;
-	bool have_cached_ptr;
 
 	guard(rcu)();
-restart_drop_ptrs:
-	ptrs = bch2_bkey_ptrs(k);
-	have_cached_ptr = false;
+	bool dropped;
 
-	bkey_for_each_ptr(ptrs, ptr)
-		if (ptr->cached) {
-			if (have_cached_ptr || !want_cached_ptr(c, opts, ptr)) {
-				bch2_bkey_drop_ptr_noerror(c, k, ptr);
-				goto restart_drop_ptrs;
+	do {
+		struct bkey_ptrs ptrs = bch2_bkey_ptrs(k);
+		bool have_cached_ptr = false;
+		dropped = false;
+
+		bkey_for_each_ptr(ptrs, ptr)
+			if (ptr->cached) {
+				if (have_cached_ptr || !want_cached_ptr(c, opts, ptr)) {
+					bch2_bkey_drop_ptr_noerror(c, k, ptr);
+					dropped = true;
+					break;
+				}
+				have_cached_ptr = true;
 			}
-			have_cached_ptr = true;
-		}
+	} while (dropped);
 }
 
 void bch2_extent_ptr_to_text(struct printbuf *out, struct bch_fs *c, const struct bch_extent_ptr *ptr)
