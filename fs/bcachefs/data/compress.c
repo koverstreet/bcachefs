@@ -79,10 +79,18 @@ static bool bio_phys_contig(struct bio *bio, struct bvec_iter start)
 	return true;
 }
 
+static struct bbuf bio_bounce(struct bch_fs *c, struct bio *bio, struct bvec_iter start, int rw)
+{
+	struct bbuf ret = __bounce_alloc(c, start.bi_size, rw);
+
+	if (rw == READ)
+		memcpy_from_bio(ret.b, bio, start);
+	return ret;
+}
+
 static struct bbuf __bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 				       struct bvec_iter start, int rw)
 {
-	struct bbuf ret;
 	struct bio_vec bv;
 	struct bvec_iter iter;
 	unsigned nr_pages = 0;
@@ -104,11 +112,11 @@ static struct bbuf __bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 	__bio_for_each_segment(bv, bio, iter, start) {
 		if (iter.bi_size != start.bi_size &&
 		    bv.bv_offset)
-			goto bounce;
+			return bio_bounce(c, bio, start, rw);
 
 		if (bv.bv_len < iter.bi_size &&
 		    bv.bv_offset + bv.bv_len < PAGE_SIZE)
-			goto bounce;
+			return bio_bounce(c, bio, start, rw);
 
 		nr_pages++;
 	}
@@ -119,7 +127,7 @@ static struct bbuf __bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 		? kmalloc_array(nr_pages, sizeof(struct page *), GFP_NOFS)
 		: stack_pages;
 	if (!pages)
-		goto bounce;
+		return bio_bounce(c, bio, start, rw);
 
 	nr_pages = 0;
 	__bio_for_each_segment(bv, bio, iter, start)
@@ -129,18 +137,14 @@ static struct bbuf __bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 	if (pages != stack_pages)
 		kfree(pages);
 
-	if (data)
-		return (struct bbuf) {
-			.b = data + bio_iter_offset(bio, start),
-			.type = BB_VMAP, .rw = rw
-		};
-bounce:
-	ret = __bounce_alloc(c, start.bi_size, rw);
+	if (!data)
+		return bio_bounce(c, bio, start, rw);
 
-	if (rw == READ)
-		memcpy_from_bio(ret.b, bio, start);
-
-	return ret;
+	return (struct bbuf) {
+		.b	= data + bio_iter_offset(bio, start),
+		.type	= BB_VMAP,
+		.rw	= rw
+	};
 }
 
 static struct bbuf bio_map_or_bounce(struct bch_fs *c, struct bio *bio, int rw)
