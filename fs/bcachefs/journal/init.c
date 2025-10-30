@@ -11,6 +11,7 @@
 #include "alloc/foreground.h"
 #include "alloc/replicas.h"
 #include "btree/update.h"
+#include "init/error.h"
 
 /* allocate journal on a device: */
 
@@ -419,6 +420,7 @@ int bch2_fs_journal_start(struct journal *j, u64 last_seq, u64 cur_seq)
 	j->seq_write_started	= cur_seq - 1;
 	j->seq_ondisk		= cur_seq - 1;
 	j->pin.front		= last_seq;
+	j->last_seq		= last_seq;
 	j->pin.back		= cur_seq;
 	atomic64_set(&j->seq, cur_seq - 1);
 
@@ -585,6 +587,7 @@ void bch2_fs_journal_init_early(struct journal *j)
 	init_waitqueue_head(&j->reclaim_wait);
 	init_waitqueue_head(&j->pin_flush_wait);
 	mutex_init(&j->reclaim_lock);
+	mutex_init(&j->last_seq_ondisk_lock);
 	mutex_init(&j->discard_lock);
 
 	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);

@@ -131,7 +131,7 @@ static inline bool journal_low_on_space(struct journal *j)
 
 static inline u64 journal_last_seq(struct journal *j)
 {
-	return j->pin.front;
+	return j->last_seq;
 }
 
 static inline u64 journal_cur_seq(struct journal *j)
