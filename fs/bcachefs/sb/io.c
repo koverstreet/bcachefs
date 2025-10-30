@@ -1024,6 +1024,11 @@ int bch2_write_super(struct bch_fs *c)
 	closure_init_stack(cl);
 	memset(&sb_written, 0, sizeof(sb_written));
 
+	if (bch2_sb_has_journal(c->disk_sb.sb))
+		bch2_fs_mark_dirty(c);
+	else
+		bch2_fs_mark_clean(c);
+
 	/*
 	 * Note: we do writes to RO devices here, and we might want to change
 	 * that in the future.

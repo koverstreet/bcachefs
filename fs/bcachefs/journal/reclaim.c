@@ -346,16 +346,19 @@ void bch2_journal_update_last_seq(struct journal *j)
 	}
 }
 
-void bch2_journal_update_last_seq_ondisk(struct journal *j, u64 last_seq_ondisk)
+void bch2_journal_update_last_seq_ondisk(struct journal *j, u64 last_seq_ondisk,
+					 bool clean)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	union bch_replicas_padded replicas;
 	unsigned nr_refs = 0;
 	size_t dirty_entry_bytes = 0;
 
-	scoped_guard(mutex, &j->last_seq_ondisk_lock)
-		while (j->last_seq_ondisk < last_seq_ondisk) {
-			struct journal_entry_pin_list *pin_list = journal_seq_pin(j, j->last_seq_ondisk);
+	scoped_guard(mutex, &j->last_seq_ondisk_lock) {
+		for (u64 seq = j->last_seq_ondisk;
+		     seq < (clean ? j->pin.back : last_seq_ondisk);
+		     seq++) {
+			struct journal_entry_pin_list *pin_list = journal_seq_pin(j, seq);
 
 			if (pin_list->devs.e.nr_devs) {
 				if (nr_refs &&
@@ -371,9 +374,10 @@ void bch2_journal_update_last_seq_ondisk(struct journal *j, u64 last_seq_ondisk)
 
 			dirty_entry_bytes += pin_list->bytes;
 			pin_list->bytes = 0;
-
-			j->last_seq_ondisk++;
 		}
+
+		j->last_seq_ondisk = last_seq_ondisk;
+	}
 
 	scoped_guard(spinlock, &j->lock) {
 		if (WARN_ON(j->dirty_entry_bytes < dirty_entry_bytes))
