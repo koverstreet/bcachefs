@@ -792,13 +792,8 @@ static void bch2_gc_free(struct bch_fs *c)
 
 static int bch2_gc_start(struct bch_fs *c)
 {
-	for_each_member_device(c, ca) {
-		int ret = bch2_dev_usage_init(ca, true);
-		if (ret) {
-			bch2_dev_put(ca);
-			return ret;
-		}
-	}
+	for_each_member_device(c, ca)
+		try(bch2_dev_usage_init(ca, true));
 
 	return 0;
 }
@@ -913,40 +908,27 @@ fsck_err:
 static int bch2_gc_alloc_done(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = 0;
 
-	for_each_member_device(c, ca) {
-		ret = for_each_btree_key_max_commit(trans, iter, BTREE_ID_alloc,
+	for_each_member_device(c, ca)
+		try(for_each_btree_key_max_commit(trans, iter, BTREE_ID_alloc,
 					POS(ca->dev_idx, ca->mi.first_bucket),
 					POS(ca->dev_idx, ca->mi.nbuckets - 1),
 					BTREE_ITER_slots|BTREE_ITER_prefetch, k,
 					NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-				bch2_alloc_write_key(trans, &iter, ca, k));
-		if (ret) {
-			bch2_dev_put(ca);
-			break;
-		}
-	}
+				bch2_alloc_write_key(trans, &iter, ca, k)));
 
-	bch_err_fn(c, ret);
-	return ret;
+	return 0;
 }
 
 static int bch2_gc_alloc_start(struct bch_fs *c)
 {
-	int ret = 0;
-
 	for_each_member_device(c, ca) {
-		ret = genradix_prealloc(&ca->buckets_gc, ca->mi.nbuckets, GFP_KERNEL);
-		if (ret) {
-			bch2_dev_put(ca);
-			ret = bch_err_throw(c, ENOMEM_gc_alloc_start);
-			break;
-		}
+		int ret = genradix_prealloc(&ca->buckets_gc, ca->mi.nbuckets, GFP_KERNEL);
+		if (ret)
+			return bch_err_throw(c, ENOMEM_gc_alloc_start);
 	}
 
-	bch_err_fn(c, ret);
-	return ret;
+	return 0;
 }
 
 static int bch2_gc_write_stripes_key(struct btree_trans *trans,
@@ -1137,7 +1119,6 @@ int bch2_gc_gens(struct bch_fs *c)
 
 		ca->oldest_gen = kvmalloc(gens->nbuckets, GFP_KERNEL);
 		if (!ca->oldest_gen) {
-			bch2_dev_put(ca);
 			ret = bch_err_throw(c, ENOMEM_gc_gens);
 			goto err;
 		}

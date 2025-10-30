@@ -1225,10 +1225,8 @@ int bch2_buckets_nouse_alloc(struct bch_fs *c)
 		ca->buckets_nouse = bch2_kvmalloc(BITS_TO_LONGS(ca->mi.nbuckets) *
 					    sizeof(unsigned long),
 					    GFP_KERNEL|__GFP_ZERO);
-		if (!ca->buckets_nouse) {
-			bch2_dev_put(ca);
+		if (!ca->buckets_nouse)
 			return bch_err_throw(c, ENOMEM_buckets_nouse);
-		}
 	}
 
 	return 0;

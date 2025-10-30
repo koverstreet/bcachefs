@@ -747,7 +747,6 @@ static int bch2_fs_online(struct bch_fs *c)
 		ret = bch2_dev_sysfs_online(c, ca);
 		if (ret) {
 			bch_err(c, "error creating sysfs objects");
-			bch2_dev_put(ca);
 			return ret;
 		}
 	}

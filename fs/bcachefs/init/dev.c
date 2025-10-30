@@ -1003,8 +1003,10 @@ struct bch_dev *bch2_dev_lookup(struct bch_fs *c, const char *name)
 		name += strlen("/dev/");
 
 	for_each_member_device(c, ca)
-		if (!strcmp(name, ca->name))
+		if (!strcmp(name, ca->name)) {
+			bch2_dev_get(ca);
 			return ca;
+		}
 	return ERR_PTR(-BCH_ERR_ENOENT_dev_not_found);
 }
 
@@ -1034,8 +1036,10 @@ DEFINE_CLASS(bdev_get_fs, struct bch_fs *,
 static struct bch_dev *bdev_to_bch_dev(struct bch_fs *c, struct block_device *bdev)
 {
 	for_each_member_device(c, ca)
-		if (ca->disk_sb.bdev == bdev)
+		if (ca->disk_sb.bdev == bdev) {
+			bch2_dev_get(ca);
 			return ca;
+		}
 	return NULL;
 }
 

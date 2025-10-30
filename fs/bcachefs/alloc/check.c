@@ -801,12 +801,7 @@ int bch2_fs_freespace_init(struct bch_fs *c)
 			doing_init = true;
 		}
 
-		int ret = bch2_dev_freespace_init(c, ca, 0, ca->mi.nbuckets);
-		if (ret) {
-			bch2_dev_put(ca);
-			bch_err_fn(c, ret);
-			return ret;
-		}
+		try(bch2_dev_freespace_init(c, ca, 0, ca->mi.nbuckets));
 	}
 
 	if (doing_init) {

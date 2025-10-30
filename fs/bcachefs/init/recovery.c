@@ -950,13 +950,8 @@ int bch2_fs_initialize(struct bch_fs *c)
 	for (unsigned i = 0; i < BTREE_ID_NR; i++)
 		bch2_btree_root_alloc_fake(c, i, 0);
 
-	for_each_member_device(c, ca) {
-		ret = bch2_dev_usage_init(ca, false);
-		if (ret) {
-			bch2_dev_put(ca);
-			return ret;
-		}
-	}
+	for_each_member_device(c, ca)
+		try(bch2_dev_usage_init(ca, false));
 
 	/*
 	 * Write out the superblock and journal buckets, now that we can do
