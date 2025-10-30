@@ -368,7 +368,7 @@ void bch2_fs_journal_stop(struct journal *j)
 		clear_bit(JOURNAL_running, &j->flags);
 }
 
-int bch2_fs_journal_start(struct journal *j, u64 last_seq, u64 cur_seq)
+int bch2_fs_journal_start(struct journal *j, struct journal_start_info info)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_entry_pin_list *p;
@@ -381,16 +381,16 @@ int bch2_fs_journal_start(struct journal *j, u64 last_seq, u64 cur_seq)
 	 * XXX pick most recent non blacklisted sequence number
 	 */
 
-	cur_seq = max(cur_seq, bch2_journal_last_blacklisted_seq(c));
+	info.start_seq = max(info.start_seq, bch2_journal_last_blacklisted_seq(c));
 
-	if (cur_seq >= JOURNAL_SEQ_MAX) {
+	if (info.start_seq >= JOURNAL_SEQ_MAX) {
 		bch_err(c, "cannot start: journal seq overflow");
 		return -EINVAL;
 	}
 
 	/* Clean filesystem? */
-	if (!last_seq)
-		last_seq = cur_seq;
+	u64 cur_seq	= info.start_seq;
+	u64 last_seq	= info.seq_read_start ?: info.start_seq;
 
 	u64 nr = cur_seq - last_seq;
 	if (nr * sizeof(struct journal_entry_pin_list) > 1U << 30) {

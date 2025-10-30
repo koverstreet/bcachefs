@@ -70,6 +70,6 @@ struct u64_range {
 
 struct u64_range bch2_journal_entry_missing_range(struct bch_fs *, u64, u64);
 
-int bch2_journal_read(struct bch_fs *, u64 *, u64 *, u64 *);
+int bch2_journal_read(struct bch_fs *, struct journal_start_info *);
 
 #endif /* _BCACHEFS_JOURNAL_READ_H */

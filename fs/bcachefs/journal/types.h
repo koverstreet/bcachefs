@@ -355,4 +355,11 @@ struct journal_entry_res {
 	unsigned		u64s;
 };
 
+struct journal_start_info {
+	u64	seq_read_start;
+	u64	seq_read_end;
+	u64	start_seq;
+	bool	clean;
+};
+
 #endif /* _BCACHEFS_JOURNAL_TYPES_H */

@@ -1346,10 +1346,7 @@ fsck_err:
 	return ret;
 }
 
-int bch2_journal_read(struct bch_fs *c,
-		      u64 *last_seq,
-		      u64 *blacklist_seq,
-		      u64 *start_seq)
+int bch2_journal_read(struct bch_fs *c, struct journal_start_info *info)
 {
 	struct journal_list jlist;
 	struct journal_replay *i, **_i;
@@ -1357,6 +1354,8 @@ int bch2_journal_read(struct bch_fs *c,
 	bool degraded = false, last_write_torn = false;
 	u64 seq;
 	int ret = 0;
+
+	memset(info, 0, sizeof(*info));
 
 	closure_init_stack(&jlist.cl);
 	mutex_init(&jlist.lock);
@@ -1386,10 +1385,6 @@ int bch2_journal_read(struct bch_fs *c,
 	if (jlist.ret)
 		return jlist.ret;
 
-	*last_seq	= 0;
-	*start_seq	= 0;
-	*blacklist_seq	= 0;
-
 	/*
 	 * Find most recent flush entry, and ignore newer non flush entries -
 	 * those entries will be blacklisted:
@@ -1400,8 +1395,8 @@ int bch2_journal_read(struct bch_fs *c,
 		if (journal_replay_ignore(i))
 			continue;
 
-		if (!*start_seq)
-			*blacklist_seq = *start_seq = le64_to_cpu(i->j.seq) + 1;
+		if (!info->start_seq)
+			info->start_seq = le64_to_cpu(i->j.seq) + 1;
 
 		if (JSET_NO_FLUSH(&i->j)) {
 			i->ignore_blacklisted = true;
@@ -1426,27 +1421,28 @@ int bch2_journal_read(struct bch_fs *c,
 					 le64_to_cpu(i->j.seq)))
 			i->j.last_seq = i->j.seq;
 
-		*last_seq	= le64_to_cpu(i->j.last_seq);
-		*blacklist_seq	= le64_to_cpu(i->j.seq) + 1;
+		info->seq_read_start	= le64_to_cpu(i->j.last_seq);
+		info->seq_read_end	= le64_to_cpu(i->j.seq);
+		info->clean		= journal_entry_empty(&i->j);
 		break;
 	}
 
-	if (!*start_seq) {
+	if (!info->start_seq) {
 		bch_info(c, "journal read done, but no entries found");
 		return 0;
 	}
 
-	if (!*last_seq) {
+	if (!info->seq_read_end) {
 		fsck_err(c, dirty_but_no_journal_entries_post_drop_nonflushes,
 			 "journal read done, but no entries found after dropping non-flushes");
 		return 0;
 	}
 
-	u64 drop_before = *last_seq;
+	u64 drop_before = info->seq_read_start;
 	{
 		CLASS(printbuf, buf)();
 		prt_printf(&buf, "journal read done, replaying entries %llu-%llu",
-			   *last_seq, *blacklist_seq - 1);
+			   info->seq_read_start, info->seq_read_end);
 
 		/*
 		 * Drop blacklisted entries and entries older than last_seq (or start of
@@ -1457,9 +1453,11 @@ int bch2_journal_read(struct bch_fs *c,
 			prt_printf(&buf, " (rewinding from %llu)", c->opts.journal_rewind);
 		}
 
-		*last_seq = drop_before;
-		if (*start_seq != *blacklist_seq)
-			prt_printf(&buf, " (unflushed %llu-%llu)", *blacklist_seq, *start_seq - 1);
+		info->seq_read_start = drop_before;
+		if (info->seq_read_end + 1 != info->start_seq)
+			prt_printf(&buf, " (unflushed %llu-%llu)",
+				   info->seq_read_end + 1,
+				   info->start_seq - 1);
 		bch_info(c, "%s", buf.buf);
 	}
 
@@ -1483,7 +1481,7 @@ int bch2_journal_read(struct bch_fs *c,
 		}
 	}
 
-	try(bch2_journal_check_for_missing(c, drop_before, *blacklist_seq - 1));
+	try(bch2_journal_check_for_missing(c, drop_before, info->seq_read_end));
 
 	genradix_for_each(&c->journal_entries, radix_iter, _i) {
 		union bch_replicas_padded replicas = {
@@ -1522,7 +1520,7 @@ int bch2_journal_read(struct bch_fs *c,
 
 		if (!degraded &&
 		    !bch2_replicas_marked(c, &replicas.e) &&
-		    (le64_to_cpu(i->j.seq) == *last_seq ||
+		    (le64_to_cpu(i->j.seq) == info->seq_read_start ||
 		     fsck_err(c, journal_entry_replicas_not_marked,
 			      "superblock not marked as containing replicas for journal entry %llu\n%s",
 			      le64_to_cpu(i->j.seq), buf.buf)))

@@ -610,8 +610,7 @@ fsck_err:
 int bch2_fs_recovery(struct bch_fs *c)
 {
 	struct bch_sb_field_clean *clean = NULL;
-	struct jset *last_journal_entry = NULL;
-	u64 last_seq = 0, blacklist_seq, journal_seq;
+	struct journal_start_info journal_start = {};
 	int ret = 0;
 
 	if (c->sb.clean) {
@@ -637,7 +636,7 @@ int bch2_fs_recovery(struct bch_fs *c)
 		struct journal_replay **i;
 
 		bch_verbose(c, "starting journal read");
-		ret = bch2_journal_read(c, &last_seq, &blacklist_seq, &journal_seq);
+		ret = bch2_journal_read(c, &journal_start);
 		if (ret)
 			goto err;
 
@@ -648,21 +647,20 @@ int bch2_fs_recovery(struct bch_fs *c)
 		if (c->opts.read_journal_only)
 			goto out;
 
+		if (mustfix_fsck_err_on(c->sb.clean && !journal_start.clean,
+					c, clean_but_journal_not_empty,
+					"filesystem marked clean but journal not empty")) {
+			c->sb.compat &= ~(1ULL << BCH_COMPAT_alloc_info);
+			SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
+			c->sb.clean = false;
+		}
+
+		struct jset *last_journal_entry = NULL;
 		genradix_for_each_reverse(&c->journal_entries, iter, i)
 			if (!journal_replay_ignore(*i)) {
 				last_journal_entry = &(*i)->j;
 				break;
 			}
-
-		if (mustfix_fsck_err_on(c->sb.clean &&
-					last_journal_entry &&
-					!journal_entry_empty(last_journal_entry), c,
-				clean_but_journal_not_empty,
-				"filesystem marked clean but journal not empty")) {
-			c->sb.compat &= ~(1ULL << BCH_COMPAT_alloc_info);
-			SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
-			c->sb.clean = false;
-		}
 
 		if (!last_journal_entry) {
 			fsck_err_on(!c->sb.clean, c,
@@ -705,11 +703,12 @@ use_clean:
 			goto err;
 
 		}
-		blacklist_seq = journal_seq = le64_to_cpu(clean->journal_seq) + 1;
+
+		journal_start.start_seq = le64_to_cpu(clean->journal_seq) + 1;
 	}
 
-	c->journal_replay_seq_start	= last_seq;
-	c->journal_replay_seq_end	= blacklist_seq - 1;
+	c->journal_replay_seq_start	= journal_start.seq_read_start;
+	c->journal_replay_seq_end	= journal_start.seq_read_end;
 
 	zero_out_btree_mem_ptr(&c->journal_keys);
 
@@ -756,13 +755,15 @@ use_clean:
 	 * journal sequence numbers:
 	 */
 	if (!c->sb.clean)
-		journal_seq += JOURNAL_BUF_NR * 4;
+		journal_start.start_seq += JOURNAL_BUF_NR * 4;
 
-	if (blacklist_seq != journal_seq) {
+	if (journal_start.seq_read_end &&
+	    journal_start.seq_read_end + 1 != journal_start.start_seq) {
+		u64 blacklist_seq = journal_start.seq_read_end + 1;
 		ret =   bch2_journal_log_msg(c, "blacklisting entries %llu-%llu",
-					     blacklist_seq, journal_seq) ?:
+					     blacklist_seq, journal_start.start_seq) ?:
 			bch2_journal_seq_blacklist_add(c,
-					blacklist_seq, journal_seq);
+					blacklist_seq, journal_start.start_seq);
 		if (ret) {
 			bch_err_msg(c, ret, "error creating new journal seq blacklist entry");
 			goto err;
@@ -770,8 +771,10 @@ use_clean:
 	}
 
 	ret =   bch2_journal_log_msg(c, "starting journal at entry %llu, replaying %llu-%llu",
-				     journal_seq, last_seq, blacklist_seq - 1) ?:
-		bch2_fs_journal_start(&c->journal, last_seq, journal_seq);
+				     journal_start.start_seq,
+				     journal_start.seq_read_start,
+				     journal_start.seq_read_end) ?:
+		bch2_fs_journal_start(&c->journal, journal_start);
 	if (ret)
 		goto err;
 
@@ -1014,7 +1017,8 @@ int bch2_fs_initialize(struct bch_fs *c)
 	 * journal_res_get() will crash if called before this has
 	 * set up the journal.pin FIFO and journal.cur pointer:
 	 */
-	ret = bch2_fs_journal_start(&c->journal, 1, 1);
+	struct journal_start_info journal_start = { .start_seq = 1 };
+	ret = bch2_fs_journal_start(&c->journal, journal_start);
 	if (ret)
 		goto err;
 

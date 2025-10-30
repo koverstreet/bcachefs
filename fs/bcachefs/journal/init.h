@@ -11,7 +11,7 @@ int bch2_fs_journal_alloc(struct bch_fs *);
 void bch2_dev_journal_stop(struct journal *, struct bch_dev *);
 
 void bch2_fs_journal_stop(struct journal *);
-int bch2_fs_journal_start(struct journal *, u64, u64);
+int bch2_fs_journal_start(struct journal *, struct journal_start_info);
 void bch2_journal_set_replay_done(struct journal *);
 
 void bch2_dev_journal_exit(struct bch_dev *);
