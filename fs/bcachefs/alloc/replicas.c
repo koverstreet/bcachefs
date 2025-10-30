@@ -85,60 +85,57 @@ void bch2_replicas_entry_to_text(struct printbuf *out,
 	prt_printf(out, "]");
 }
 
+__printf(3, 4)
+static int replicas_entry_invalid(struct bch_replicas_entry_v1 *r,
+				  struct printbuf *err,
+				  const char *fmt, ...)
+{
+	va_list args;
+	va_start(args, fmt);
+	prt_vprintf(err, fmt, args);
+	va_end(args);
+
+	prt_str(err, " in entry ");
+	bch2_replicas_entry_to_text(err, r);
+	return -BCH_ERR_invalid_replicas_entry;
+}
+
 static int bch2_replicas_entry_sb_validate(struct bch_replicas_entry_v1 *r,
 					   struct bch_sb *sb,
 					   struct printbuf *err)
 {
-	if (!r->nr_devs) {
-		prt_printf(err, "no devices in entry ");
-		goto bad;
-	}
+	if (!r->nr_devs)
+		return replicas_entry_invalid(r, err, "no devices");
 
 	if (r->nr_required > 1 &&
-	    r->nr_required >= r->nr_devs) {
-		prt_printf(err, "bad nr_required in entry ");
-		goto bad;
-	}
+	    r->nr_required >= r->nr_devs)
+		return replicas_entry_invalid(r, err, "bad nr_required");
 
 	for (unsigned i = 0; i < r->nr_devs; i++)
 		if (r->devs[i] != BCH_SB_MEMBER_INVALID &&
-		    !bch2_member_exists(sb, r->devs[i])) {
-			prt_printf(err, "invalid device %u in entry ", r->devs[i]);
-			goto bad;
-		}
+		    !bch2_member_exists(sb, r->devs[i]))
+			return replicas_entry_invalid(r, err, "invalid device %u", r->devs[i]);
 
 	return 0;
-bad:
-	bch2_replicas_entry_to_text(err, r);
-	return -BCH_ERR_invalid_replicas_entry;
 }
 
 int bch2_replicas_entry_validate(struct bch_replicas_entry_v1 *r,
 				 struct bch_fs *c,
 				 struct printbuf *err)
 {
-	if (!r->nr_devs) {
-		prt_printf(err, "no devices in entry ");
-		goto bad;
-	}
+	if (!r->nr_devs)
+		return replicas_entry_invalid(r, err, "no devices");
 
 	if (r->nr_required > 1 &&
-	    r->nr_required >= r->nr_devs) {
-		prt_printf(err, "bad nr_required in entry ");
-		goto bad;
-	}
+	    r->nr_required >= r->nr_devs)
+		return replicas_entry_invalid(r, err, "bad nr_required");
 
 	for (unsigned i = 0; i < r->nr_devs; i++)
 		if (r->devs[i] != BCH_SB_MEMBER_INVALID &&
-		    !bch2_dev_exists(c, r->devs[i])) {
-			prt_printf(err, "invalid device %u in entry ", r->devs[i]);
-			goto bad;
-		}
+		    !bch2_dev_exists(c, r->devs[i]))
+			return replicas_entry_invalid(r, err, "invalid device %u", r->devs[i]);
 
 	return 0;
-bad:
-	bch2_replicas_entry_to_text(err, r);
-	return bch_err_throw(c, invalid_replicas_entry);
 }
 
 void bch2_cpu_replicas_to_text(struct printbuf *out,
