@@ -375,9 +375,6 @@ void bch2_fs_read_only(struct bch_fs *c)
 		BUG_ON(c->btree_write_buffer.inc.keys.nr);
 		BUG_ON(c->btree_write_buffer.flushing.keys.nr);
 		bch2_verify_accounting_clean(c);
-
-		bch_verbose(c, "marking filesystem clean");
-		bch2_fs_mark_clean(c);
 	} else {
 		/* Make sure error counts/counters are persisted */
 		guard(mutex)(&c->sb_lock);
@@ -473,7 +470,6 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 
 	try(bch2_fs_init_rw(c));
 	try(bch2_sb_members_v2_init(c));
-	try(bch2_fs_mark_dirty(c));
 
 	clear_bit(BCH_FS_clean_shutdown, &c->flags);
 

@@ -256,18 +256,10 @@ const struct bch_sb_field_ops bch_sb_field_ops_clean = {
 	.to_text	= bch2_sb_clean_to_text,
 };
 
-int bch2_fs_mark_dirty(struct bch_fs *c)
+void bch2_fs_mark_dirty(struct bch_fs *c)
 {
-	/*
-	 * Unconditionally write superblock, to verify it hasn't changed before
-	 * we go rw:
-	 */
-
-	guard(mutex)(&c->sb_lock);
 	SET_BCH_SB_CLEAN(c->disk_sb.sb, false);
 	c->disk_sb.sb->features[0] |= cpu_to_le64(BCH_SB_FEATURES_ALWAYS);
-
-	return bch2_write_super(c);
 }
 
 void bch2_fs_mark_clean(struct bch_fs *c)
@@ -277,7 +269,6 @@ void bch2_fs_mark_clean(struct bch_fs *c)
 	unsigned u64s;
 	int ret;
 
-	guard(mutex)(&c->sb_lock);
 	if (BCH_SB_CLEAN(c->disk_sb.sb))
 		return;
 
@@ -321,6 +312,4 @@ void bch2_fs_mark_clean(struct bch_fs *c)
 	}
 
 	bch2_journal_pos_from_member_info_set(c);
-
-	bch2_write_super(c);
 }
