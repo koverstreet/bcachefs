@@ -954,7 +954,7 @@ int bch2_fs_initialize(struct bch_fs *c)
 		ret = bch2_dev_usage_init(ca, false);
 		if (ret) {
 			bch2_dev_put(ca);
-			goto err;
+			return ret;
 		}
 	}
 
@@ -966,43 +966,23 @@ int bch2_fs_initialize(struct bch_fs *c)
 	ret = bch2_trans_mark_dev_sbs(c);
 	bch_err_msg(c, ret, "marking superblocks");
 	if (ret)
-		goto err;
+		return ret;
 
-	ret = bch2_fs_journal_alloc(c);
-	if (ret)
-		goto err;
+	try(bch2_fs_journal_alloc(c));
 
 	/*
 	 * journal_res_get() will crash if called before this has
 	 * set up the journal.pin FIFO and journal.cur pointer:
 	 */
 	struct journal_start_info journal_start = { .start_seq = 1 };
-	ret = bch2_fs_journal_start(&c->journal, journal_start);
-	if (ret)
-		goto err;
+	try(bch2_fs_journal_start(&c->journal, journal_start));
 
 	set_bit(BCH_FS_may_go_rw, &c->flags);
-	ret = bch2_fs_read_write_early(c);
-	if (ret)
-		goto err;
-
-	ret = bch2_journal_replay(c);
-	if (ret)
-		goto err;
-
-	ret = bch2_fs_freespace_init(c);
-	if (ret)
-		goto err;
-
-	ret = bch2_initialize_subvolumes(c);
-	if (ret)
-		goto err;
-
-	bch_verbose(c, "reading snapshots table");
-	ret = bch2_snapshots_read(c);
-	if (ret)
-		goto err;
-	bch_verbose(c, "reading snapshots done");
+	try(bch2_fs_read_write_early(c));
+	try(bch2_journal_replay(c));
+	try(bch2_fs_freespace_init(c));
+	try(bch2_initialize_subvolumes(c));
+	try(bch2_snapshots_read(c));
 
 	bch2_inode_init(c, &root_inode, 0, 0, S_IFDIR|0755, 0, NULL);
 	root_inode.bi_inum	= BCACHEFS_ROOT_INO;
@@ -1013,7 +993,7 @@ int bch2_fs_initialize(struct bch_fs *c)
 	ret = bch2_btree_insert(c, BTREE_ID_inodes, &packed_inode.inode.k_i, NULL, 0, 0);
 	bch_err_msg(c, ret, "creating root directory");
 	if (ret)
-		goto err;
+		return ret;
 
 	bch2_inode_init_early(c, &lostfound_inode);
 
@@ -1026,23 +1006,20 @@ int bch2_fs_initialize(struct bch_fs *c)
 				  NULL, NULL, (subvol_inum) { 0 }, 0));
 	bch_err_msg(c, ret, "creating lost+found");
 	if (ret)
-		goto err;
+		return ret;
 
 	c->recovery.pass_done = BCH_RECOVERY_PASS_NR - 1;
 
 	bch2_copygc_wakeup(c);
 	bch2_rebalance_wakeup(c);
 
-	if (enabled_qtypes(c)) {
-		ret = bch2_fs_quota_read(c);
-		if (ret)
-			goto err;
-	}
+	if (enabled_qtypes(c))
+		try(bch2_fs_quota_read(c));
 
 	ret = bch2_journal_flush(&c->journal);
 	bch_err_msg(c, ret, "writing first journal entry");
 	if (ret)
-		goto err;
+		return ret;
 
 	scoped_guard(mutex, &c->sb_lock) {
 		SET_BCH_SB_INITIALIZED(c->disk_sb.sb, true);
@@ -1057,7 +1034,4 @@ int bch2_fs_initialize(struct bch_fs *c)
 
 	c->recovery.curr_pass = BCH_RECOVERY_PASS_NR;
 	return 0;
-err:
-	bch_err_fn(c, ret);
-	return ret;
 }
