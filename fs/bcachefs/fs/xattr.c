@@ -505,29 +505,26 @@ static int inode_opt_set_fn(struct btree_trans *trans,
 	return 0;
 }
 
-static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
-				   struct mnt_idmap *idmap,
-				   struct dentry *dentry, struct inode *vinode,
-				   const char *name, const void *value,
-				   size_t size, int flags)
+static int __bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
+				     struct mnt_idmap *idmap,
+				     struct dentry *dentry, struct inode *vinode,
+				     const char *name, const void *value,
+				     size_t size, int flags)
 {
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	const struct bch_option *opt;
-	struct inode_opt_set s;
-	int opt_id, inode_opt_id, ret;
 
-	opt_id = bch2_opt_lookup(name);
+	int opt_id = bch2_opt_lookup(name);
 	if (opt_id < 0)
 		return -EINVAL;
 
-	opt = bch2_opt_table + opt_id;
+	const struct bch_option *opt = bch2_opt_table + opt_id;
 
-	inode_opt_id = opt_to_inode_opt(opt_id);
+	int inode_opt_id = opt_to_inode_opt(opt_id);
 	if (inode_opt_id < 0)
 		return -EINVAL;
 
-	s.id = inode_opt_id;
+	struct inode_opt_set s = { .id = inode_opt_id, .defined = value != NULL };
 	u64 v = 0;
 
 	if (value) {
@@ -537,16 +534,11 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 		memcpy(buf, value, size);
 		buf[size] = '\0';
 
-		ret = bch2_opt_parse(c, opt, buf, &v, NULL);
-		if (ret < 0)
-			goto err;
+		try(bch2_opt_parse(c, opt, buf, &v, NULL));
+		try(bch2_opt_hook_pre_set(c, NULL, inode->ei_inode.bi_inum, opt_id, v, true));
 
-		ret = bch2_opt_hook_pre_set(c, NULL, inode->ei_inode.bi_inum, opt_id, v, true);
-		if (ret < 0)
-			goto err;
-
+		/* +1 bias for inode options: */
 		s.v = v + 1;
-		s.defined = true;
 	} else {
 		/*
 		 * Check if this option was set on the parent - if so, switched
@@ -561,30 +553,32 @@ static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
 				to_bch_ei(d_inode(dentry->d_parent));
 
 			s.v = bch2_inode_opt_get(&dir->ei_inode, inode_opt_id);
-		} else {
-			s.v = 0;
 		}
-
-		s.defined = false;
 	}
 
 	scoped_guard(mutex, &inode->ei_update_lock) {
-		if (inode_opt_id == Inode_opt_project) {
-			/*
-			 * inode fields accessible via the xattr interface are stored
-			 * with a +1 bias, so that 0 means unset:
-			 */
-			ret = bch2_set_projid(c, inode, s.v ? s.v - 1 : 0);
-			if (ret)
-				goto err;
-		}
+		/*
+		 * inode fields accessible via the xattr interface are stored
+		 * with a +1 bias, so that 0 means unset:
+		 */
+		if (inode_opt_id == Inode_opt_project)
+			try(bch2_set_projid(c, inode, s.v ? s.v - 1 : 0));
 
-		ret = bch2_write_inode(c, inode, inode_opt_set_fn, &s, 0);
+		try(bch2_write_inode(c, inode, inode_opt_set_fn, &s, 0));
 	}
 
 	bch2_opt_hook_post_set(c, NULL, inode->ei_inode.bi_inum, opt_id, v);
-err:
-	return bch2_err_class(ret);
+	return 0;
+}
+
+static int bch2_xattr_bcachefs_set(const struct xattr_handler *handler,
+				   struct mnt_idmap *idmap,
+				   struct dentry *dentry, struct inode *vinode,
+				   const char *name, const void *value,
+				   size_t size, int flags)
+{
+	return bch2_err_class(__bch2_xattr_bcachefs_set(handler, idmap, dentry, vinode,
+							name, value, size, flags));
 }
 
 static const struct xattr_handler bch_xattr_bcachefs_handler = {
