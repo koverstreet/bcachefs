@@ -189,6 +189,7 @@ static CLOSURE_CALLBACK(journal_write_done)
 	struct journal *j = container_of(w, struct journal, buf[w->idx]);
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	u64 seq = le64_to_cpu(w->data->seq);
+	u64 seq_wrote = seq;
 	int err = 0;
 
 	bch2_time_stats_update(!JSET_NO_FLUSH(w->data)
@@ -225,7 +226,6 @@ static CLOSURE_CALLBACK(journal_write_done)
 	BUG_ON(seq < j->pin.front);
 	if (err && (!j->err_seq || seq < j->err_seq))
 		j->err_seq	= seq;
-	w->write_done = true;
 
 	if (!j->free_buf || j->free_buf_size < w->buf_size) {
 		swap(j->free_buf,	w->data);
@@ -243,22 +243,31 @@ static CLOSURE_CALLBACK(journal_write_done)
 	}
 
 	bool completed = false;
-	bool do_discards = false;
-
+	bool last_seq_ondisk_updated = false;
+again:
 	for (seq = journal_last_unwritten_seq(j);
 	     seq <= journal_cur_seq(j);
 	     seq++) {
 		w = j->buf + (seq & JOURNAL_BUF_MASK);
-		if (!w->write_done)
+		if (!w->write_done && seq != seq_wrote)
 			break;
 
 		if (!j->err_seq && !w->noflush) {
-			j->flushed_seq_ondisk = seq;
-			j->last_seq_ondisk = w->last_seq;
+			if (j->last_seq_ondisk < w->last_seq) {
+				spin_unlock(&j->lock);
+				/*
+				 * this needs to happen _before_ updating
+				 * j->flushed_seq_ondisk, for flushing to work
+				 * properly - when the flush completes replcias
+				 * refs need to have been dropped
+				 * */
+				bch2_journal_update_last_seq_ondisk(j, w->last_seq);
+				last_seq_ondisk_updated = true;
+				spin_lock(&j->lock);
+				goto again;
+			}
 
-			closure_wake_up(&c->freelist_wait);
-			bch2_reset_alloc_cursors(c);
-			do_discards = true;
+			j->flushed_seq_ondisk = seq;
 		}
 
 		j->seq_ondisk = seq;
@@ -277,14 +286,18 @@ static CLOSURE_CALLBACK(journal_write_done)
 		completed = true;
 	}
 
+	j->buf[seq_wrote & JOURNAL_BUF_MASK].write_done = true;
+
 	if (completed) {
-		bch2_journal_reclaim_fast(j);
+		bch2_journal_update_last_seq(j);
 		bch2_journal_space_available(j);
 
 		track_event_change(&c->times[BCH_TIME_blocked_journal_max_in_flight], false);
 
 		journal_wake(j);
 	}
+
+	j->pin.front = min(j->pin.back, j->last_seq_ondisk);
 
 	if (journal_last_unwritten_seq(j) == journal_cur_seq(j) &&
 	    j->reservations.cur_entry_offset < JOURNAL_ENTRY_CLOSED_VAL) {
@@ -308,8 +321,11 @@ static CLOSURE_CALLBACK(journal_write_done)
 	bch2_journal_do_writes(j);
 	spin_unlock(&j->lock);
 
-	if (do_discards)
+	if (last_seq_ondisk_updated) {
+		bch2_reset_alloc_cursors(c);
+		closure_wake_up(&c->freelist_wait);
 		bch2_do_discards(c);
+	}
 
 	closure_put(&c->cl);
 }
