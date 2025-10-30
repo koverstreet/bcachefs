@@ -50,7 +50,6 @@ int bch2_journal_seq_blacklist_add(struct bch_fs *c, u64 start, u64 end)
 {
 	struct bch_sb_field_journal_seq_blacklist *bl;
 	unsigned i = 0, nr;
-	int ret = 0;
 
 	guard(mutex)(&c->sb_lock);
 	bl = bch2_sb_field_get(c->disk_sb.sb, journal_seq_blacklist);
@@ -89,9 +88,10 @@ int bch2_journal_seq_blacklist_add(struct bch_fs *c, u64 start, u64 end)
 	}));
 	c->disk_sb.sb->features[0] |= cpu_to_le64(1ULL << BCH_FEATURE_journal_seq_blacklist_v3);
 
-	ret = bch2_write_super(c);
+	try(bch2_write_super(c));
+	try(bch2_blacklist_table_initialize(c));
 
-	return ret ?: bch2_blacklist_table_initialize(c);
+	return 0;
 }
 
 static int journal_seq_blacklist_table_cmp(const void *_l, const void *_r)
