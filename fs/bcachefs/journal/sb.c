@@ -23,51 +23,44 @@ static int bch2_sb_journal_validate(struct bch_sb *sb, struct bch_sb_field *f,
 {
 	struct bch_sb_field_journal *journal = field_to_type(f, journal);
 	struct bch_member m = bch2_sb_member_get(sb, sb->dev_idx);
-	int ret = -BCH_ERR_invalid_sb_journal;
-	unsigned nr;
-	unsigned i;
-	u64 *b;
 
-	nr = bch2_nr_journal_buckets(journal);
+	unsigned nr = bch2_nr_journal_buckets(journal);
 	if (!nr)
 		return 0;
 
-	b = kvmalloc_array(nr, sizeof(u64), GFP_KERNEL);
+	u64 *b __free(kfree)  = kvmalloc_array(nr, sizeof(u64), GFP_KERNEL);
 	if (!b)
 		return -BCH_ERR_ENOMEM_sb_journal_validate;
 
-	for (i = 0; i < nr; i++)
+	for (unsigned i = 0; i < nr; i++)
 		b[i] = le64_to_cpu(journal->buckets[i]);
 
 	sort(b, nr, sizeof(u64), u64_cmp, NULL);
 
 	if (!b[0]) {
 		prt_printf(err, "journal bucket at sector 0");
-		goto err;
+		return -BCH_ERR_invalid_sb_journal;
 	}
 
 	if (b[0] < le16_to_cpu(m.first_bucket)) {
 		prt_printf(err, "journal bucket %llu before first bucket %u",
 		       b[0], le16_to_cpu(m.first_bucket));
-		goto err;
+		return -BCH_ERR_invalid_sb_journal;
 	}
 
 	if (b[nr - 1] >= le64_to_cpu(m.nbuckets)) {
 		prt_printf(err, "journal bucket %llu past end of device (nbuckets %llu)",
 		       b[nr - 1], le64_to_cpu(m.nbuckets));
-		goto err;
+		return -BCH_ERR_invalid_sb_journal;
 	}
 
-	for (i = 0; i + 1 < nr; i++)
+	for (unsigned i = 0; i + 1 < nr; i++)
 		if (b[i] == b[i + 1]) {
 			prt_printf(err, "duplicate journal buckets %llu", b[i]);
-			goto err;
+			return -BCH_ERR_invalid_sb_journal;
 		}
 
-	ret = 0;
-err:
-	kvfree(b);
-	return ret;
+	return 0;
 }
 
 static void bch2_sb_journal_to_text(struct printbuf *out, struct bch_sb *sb,
@@ -105,21 +98,17 @@ static int bch2_sb_journal_v2_validate(struct bch_sb *sb, struct bch_sb_field *f
 {
 	struct bch_sb_field_journal_v2 *journal = field_to_type(f, journal_v2);
 	struct bch_member m = bch2_sb_member_get(sb, sb->dev_idx);
-	int ret = -BCH_ERR_invalid_sb_journal;
 	u64 sum = 0;
-	unsigned nr;
-	unsigned i;
-	struct u64_range *b;
 
-	nr = bch2_sb_field_journal_v2_nr_entries(journal);
+	unsigned nr = bch2_sb_field_journal_v2_nr_entries(journal);
 	if (!nr)
 		return 0;
 
-	b = kvmalloc_array(nr, sizeof(*b), GFP_KERNEL);
+	struct u64_range *b __free(kfree) = kvmalloc_array(nr, sizeof(*b), GFP_KERNEL);
 	if (!b)
 		return -BCH_ERR_ENOMEM_sb_journal_v2_validate;
 
-	for (i = 0; i < nr; i++) {
+	for (unsigned i = 0; i < nr; i++) {
 		b[i].start = le64_to_cpu(journal->d[i].start);
 		b[i].end = b[i].start + le64_to_cpu(journal->d[i].nr);
 
@@ -127,7 +116,7 @@ static int bch2_sb_journal_v2_validate(struct bch_sb *sb, struct bch_sb_field *f
 			prt_printf(err, "journal buckets entry with bad nr: %llu+%llu",
 				   le64_to_cpu(journal->d[i].start),
 				   le64_to_cpu(journal->d[i].nr));
-			goto err;
+			return -BCH_ERR_invalid_sb_journal;
 		}
 
 		sum += le64_to_cpu(journal->d[i].nr);
@@ -137,38 +126,35 @@ static int bch2_sb_journal_v2_validate(struct bch_sb *sb, struct bch_sb_field *f
 
 	if (!b[0].start) {
 		prt_printf(err, "journal bucket at sector 0");
-		goto err;
+		return -BCH_ERR_invalid_sb_journal;
 	}
 
 	if (b[0].start < le16_to_cpu(m.first_bucket)) {
 		prt_printf(err, "journal bucket %llu before first bucket %u",
 		       b[0].start, le16_to_cpu(m.first_bucket));
-		goto err;
+		return -BCH_ERR_invalid_sb_journal;
 	}
 
 	if (b[nr - 1].end > le64_to_cpu(m.nbuckets)) {
 		prt_printf(err, "journal bucket %llu past end of device (nbuckets %llu)",
 		       b[nr - 1].end - 1, le64_to_cpu(m.nbuckets));
-		goto err;
+		return -BCH_ERR_invalid_sb_journal;
 	}
 
-	for (i = 0; i + 1 < nr; i++) {
+	for (unsigned i = 0; i + 1 < nr; i++) {
 		if (b[i].end > b[i + 1].start) {
 			prt_printf(err, "duplicate journal buckets in ranges %llu-%llu, %llu-%llu",
 			       b[i].start, b[i].end, b[i + 1].start, b[i + 1].end);
-			goto err;
+			return -BCH_ERR_invalid_sb_journal;
 		}
 	}
 
 	if (sum > UINT_MAX) {
 		prt_printf(err, "too many journal buckets: %llu > %u", sum, UINT_MAX);
-		goto err;
+		return -BCH_ERR_invalid_sb_journal;
 	}
 
-	ret = 0;
-err:
-	kvfree(b);
-	return ret;
+	return 0;
 }
 
 static void bch2_sb_journal_v2_to_text(struct printbuf *out, struct bch_sb *sb,
