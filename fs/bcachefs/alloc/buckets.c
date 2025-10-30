@@ -1241,12 +1241,12 @@ static void bucket_gens_free_rcu(struct rcu_head *rcu)
 
 	kvfree(buckets);
 }
+DEFINE_FREE(bucket_gens_free, struct bucket_gens *, if (_T) call_rcu(&_T->rcu, bucket_gens_free_rcu));
 
 int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 {
-	struct bucket_gens *bucket_gens = NULL, *old_bucket_gens = NULL;
+	struct bucket_gens *bucket_gens __free(bucket_gens_free) = NULL, *old_bucket_gens = NULL;
 	bool resize = ca->bucket_gens != NULL;
-	int ret;
 
 	if (resize)
 		lockdep_assert_held(&c->state_lock);
@@ -1274,23 +1274,14 @@ int bch2_dev_buckets_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets)
 		       sizeof(bucket_gens->b[0]) * copy);
 	}
 
-	ret =   bch2_bucket_bitmap_resize(ca, &ca->bucket_backpointer_mismatch,
-					  ca->mi.nbuckets, nbuckets) ?:
-		bch2_bucket_bitmap_resize(ca, &ca->bucket_backpointer_empty,
-					  ca->mi.nbuckets, nbuckets);
-	if (ret)
-		goto err;
+	try(bch2_bucket_bitmap_resize(ca, &ca->bucket_backpointer_mismatch, ca->mi.nbuckets, nbuckets));
+	try(bch2_bucket_bitmap_resize(ca, &ca->bucket_backpointer_empty, ca->mi.nbuckets, nbuckets));
 
 	rcu_assign_pointer(ca->bucket_gens, bucket_gens);
 	bucket_gens	= old_bucket_gens;
 	nbuckets	= ca->mi.nbuckets;
 
-	ret = 0;
-err:
-	if (bucket_gens)
-		call_rcu(&bucket_gens->rcu, bucket_gens_free_rcu);
-
-	return ret;
+	return 0;
 }
 
 void bch2_dev_buckets_free(struct bch_dev *ca)
