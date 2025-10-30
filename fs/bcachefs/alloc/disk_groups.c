@@ -334,6 +334,11 @@ int bch2_disk_path_find_or_create(struct bch_sb_handle *sb, const char *name)
 	return v;
 }
 
+static void disk_path_invalid(struct printbuf *out, unsigned v)
+{
+	prt_printf(out, "invalid label %u", v);
+}
+
 static void __bch2_disk_path_to_text(struct printbuf *out, struct bch_disk_groups_cpu *g,
 				     unsigned v)
 {
@@ -342,15 +347,15 @@ static void __bch2_disk_path_to_text(struct printbuf *out, struct bch_disk_group
 
 	while (1) {
 		if (nr == ARRAY_SIZE(path))
-			goto invalid;
+			return disk_path_invalid(out, v);
 
 		if (v >= (g ? g->nr : 0))
-			goto invalid;
+			return disk_path_invalid(out, v);
 
 		struct bch_disk_group_cpu *e = g->entries + v;
 
 		if (e->deleted)
-			goto invalid;
+			return disk_path_invalid(out, v);
 
 		path[nr++] = v;
 
@@ -367,9 +372,6 @@ static void __bch2_disk_path_to_text(struct printbuf *out, struct bch_disk_group
 		if (nr)
 			prt_printf(out, ".");
 	}
-	return;
-invalid:
-	prt_printf(out, "invalid label %u", v);
 }
 
 void bch2_disk_groups_to_text(struct printbuf *out, struct bch_fs *c)
@@ -383,18 +385,17 @@ void bch2_disk_groups_to_text(struct printbuf *out, struct bch_fs *c)
 	for (unsigned i = 0; i < (g ? g->nr : 0); i++) {
 		prt_printf(out, "%2u: ", i);
 
-		if (g->entries[i].deleted) {
+		if (!g->entries[i].deleted) {
+			__bch2_disk_path_to_text(out, g, i);
+
+			prt_printf(out, " devs");
+
+			for_each_member_device_rcu(c, ca, &g->entries[i].devs)
+				prt_printf(out, " %s", ca->name);
+		} else {
 			prt_printf(out, "[deleted]");
-			goto next;
 		}
 
-		__bch2_disk_path_to_text(out, g, i);
-
-		prt_printf(out, " devs");
-
-		for_each_member_device_rcu(c, ca, &g->entries[i].devs)
-			prt_printf(out, " %s", ca->name);
-next:
 		prt_newline(out);
 	}
 }
@@ -416,15 +417,15 @@ void bch2_disk_path_to_text_sb(struct printbuf *out, struct bch_sb *sb, unsigned
 
 	while (1) {
 		if (nr == ARRAY_SIZE(path))
-			goto inval;
+			return disk_path_invalid(out, v);
 
 		if (v >= disk_groups_nr(groups))
-			goto inval;
+			return disk_path_invalid(out, v);
 
 		g = groups->entries + v;
 
 		if (BCH_GROUP_DELETED(g))
-			goto inval;
+			return disk_path_invalid(out, v);
 
 		path[nr++] = v;
 
@@ -442,9 +443,6 @@ void bch2_disk_path_to_text_sb(struct printbuf *out, struct bch_sb *sb, unsigned
 		if (nr)
 			prt_printf(out, ".");
 	}
-	return;
-inval:
-	prt_printf(out, "invalid label %u", v);
 }
 
 int __bch2_dev_group_set(struct bch_fs *c, struct bch_dev *ca, const char *name)
