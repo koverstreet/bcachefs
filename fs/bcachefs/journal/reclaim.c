@@ -1020,6 +1020,9 @@ bool bch2_journal_seq_pins_to_text(struct printbuf *out, struct journal *j, u64 
 	prt_printf(out, "%llu: count %u\n", *seq, atomic_read(&pin_list->count));
 	guard(printbuf_indent)(out);
 
+	bch2_replicas_entry_to_text(out, &pin_list->devs.e);
+	prt_newline(out);
+
 	prt_printf(out, "unflushed:\n");
 	for (unsigned i = 0; i < ARRAY_SIZE(pin_list->unflushed); i++)
 		list_for_each_entry(pin, &pin_list->unflushed[i], list)
