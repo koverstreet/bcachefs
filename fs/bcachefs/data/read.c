@@ -784,7 +784,7 @@ static int __bch2_rbio_narrow_crcs(struct btree_trans *trans,
 
 	bkey_reassemble(new, k);
 
-	if (!bch2_bkey_narrow_crcs(new, *new_crc))
+	if (!bch2_bkey_narrow_crc(new, rbio->pick.crc, *new_crc))
 		return bch_err_throw(c, rbio_narrow_crcs_fail);
 
 	return bch2_trans_update(trans, &iter, new, BTREE_UPDATE_internal_snapshot_node);
@@ -794,7 +794,8 @@ static noinline void bch2_rbio_narrow_crcs(struct bch_read_bio *rbio)
 {
 	struct bch_fs *c = rbio->c;
 
-	if (crc_is_compressed(rbio->pick.crc))
+	if (!rbio->pick.crc.csum_type ||
+	    crc_is_compressed(rbio->pick.crc))
 		return;
 
 	u64 data_offset = rbio->data_pos.offset - rbio->pick.crc.offset;
@@ -1070,6 +1071,13 @@ static noinline void read_from_stale_dirty_pointer(struct btree_trans *trans,
 	bch2_fs_inconsistent(c, "%s", buf.buf);
 }
 
+static inline bool can_narrow_crc(struct bch_extent_crc_unpacked n)
+{
+	return n.csum_type &&
+		n.uncompressed_size < n.live_size &&
+		!crc_is_compressed(n);
+}
+
 int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
 		       struct bvec_iter iter, struct bpos read_pos,
 		       enum btree_id data_btree, struct bkey_s_c k,
@@ -1170,8 +1178,7 @@ retry_pick:
 		    bio_flagged(&orig->bio, BIO_CHAIN))
 			flags |= BCH_READ_must_clone;
 
-		narrow_crcs = !(flags & BCH_READ_in_retry) &&
-			bch2_can_narrow_extent_crcs(k, pick.crc);
+		narrow_crcs = !(flags & BCH_READ_in_retry) && can_narrow_crc(pick.crc);
 
 		if (narrow_crcs && (flags & BCH_READ_user_mapped))
 			flags |= BCH_READ_must_bounce;

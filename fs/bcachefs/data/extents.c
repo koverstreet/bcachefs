@@ -598,31 +598,16 @@ static inline bool bch2_crc_unpacked_cmp(struct bch_extent_crc_unpacked l,
 		bch2_crc_cmp(l.csum, r.csum));
 }
 
-static inline bool can_narrow_crc(struct bch_extent_crc_unpacked u,
-				  struct bch_extent_crc_unpacked n)
+static union bch_extent_entry *bkey_crc_find(struct bkey_i *k, struct bch_extent_crc_unpacked crc)
 {
-	return !crc_is_compressed(u) &&
-		u.csum_type &&
-		u.uncompressed_size > u.live_size &&
-		bch2_csum_type_is_encryption(u.csum_type) ==
-		bch2_csum_type_is_encryption(n.csum_type);
-}
+	struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(k));
+	struct bch_extent_crc_unpacked i;
+	union bch_extent_entry *entry;
 
-bool bch2_can_narrow_extent_crcs(struct bkey_s_c k,
-				 struct bch_extent_crc_unpacked n)
-{
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	struct bch_extent_crc_unpacked crc;
-	const union bch_extent_entry *i;
-
-	if (!n.csum_type)
-		return false;
-
-	bkey_for_each_crc(k.k, ptrs, crc, i)
-		if (can_narrow_crc(crc, n))
-			return true;
-
-	return false;
+	bkey_for_each_crc(&k->k, ptrs, i, entry)
+		if (!bch2_crc_unpacked_cmp(i, crc))
+			return entry;
+	return NULL;
 }
 
 /*
@@ -634,44 +619,31 @@ bool bch2_can_narrow_extent_crcs(struct bkey_s_c k,
  * currently live (so that readers won't have to bounce) while we've got the
  * checksum we need:
  */
-bool bch2_bkey_narrow_crcs(struct bkey_i *k, struct bch_extent_crc_unpacked n)
+bool bch2_bkey_narrow_crc(struct bkey_i *k,
+			  struct bch_extent_crc_unpacked old,
+			  struct bch_extent_crc_unpacked new)
 {
-	struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(k));
-	struct bch_extent_crc_unpacked u;
-	struct extent_ptr_decoded p;
-	union bch_extent_entry *i;
-	bool ret = false;
+	BUG_ON(crc_is_compressed(new));
+	BUG_ON(new.offset);
+	BUG_ON(new.live_size != k->k.size);
 
-	/* Find a checksum entry that covers only live data: */
-	if (!n.csum_type) {
-		bkey_for_each_crc(&k->k, ptrs, u, i)
-			if (!crc_is_compressed(u) &&
-			    u.csum_type &&
-			    u.live_size == u.uncompressed_size) {
-				n = u;
-				goto found;
-			}
+
+	union bch_extent_entry *old_e = bkey_crc_find(k, old);
+	if (!old_e)
 		return false;
+
+	struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(k));
+	union bch_extent_entry *i;
+
+	bkey_extent_entry_for_each_from(ptrs, i, extent_entry_next(old_e)) {
+		if (extent_entry_is_crc(i))
+			break;
+		if (extent_entry_is_ptr(i))
+			i->ptr.offset += old.offset;
 	}
-found:
-	BUG_ON(crc_is_compressed(n));
-	BUG_ON(n.offset);
-	BUG_ON(n.live_size != k->k.size);
 
-restart_narrow_pointers:
-	ptrs = bch2_bkey_ptrs(bkey_i_to_s(k));
-
-	bkey_for_each_ptr_decode(&k->k, ptrs, p, i)
-		if (can_narrow_crc(p.crc, n)) {
-			bch2_bkey_drop_ptr_noerror(bkey_i_to_s(k), &i->ptr);
-			p.ptr.offset += p.crc.offset;
-			p.crc = n;
-			bch2_extent_ptr_decoded_append(k, &p);
-			ret = true;
-			goto restart_narrow_pointers;
-		}
-
-	return ret;
+	bch2_extent_crc_pack(entry_to_crc(old_e), new, extent_entry_type(old_e));
+	return true;
 }
 
 static void bch2_extent_crc_pack(union bch_extent_crc *dst,
