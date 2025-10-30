@@ -92,37 +92,37 @@ int bch2_btree_lost_data(struct bch_fs *c,
 		write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_alloc_key_cached_sectors_wrong, ext->errors_silent);
 		write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_alloc_key_stripe_wrong, ext->errors_silent);
 		write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_alloc_key_stripe_redundancy_wrong, ext->errors_silent);
-		goto out;
+		break;
 	case BTREE_ID_backpointers:
 		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_btree_backpointers, 0, &write_sb) ?: ret;
 		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_extents_to_backpointers, 0, &write_sb) ?: ret;
-		goto out;
+		break;
 	case BTREE_ID_need_discard:
 		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0, &write_sb) ?: ret;
-		goto out;
+		break;
 	case BTREE_ID_freespace:
 		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0, &write_sb) ?: ret;
-		goto out;
+		break;
 	case BTREE_ID_bucket_gens:
 		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0, &write_sb) ?: ret;
-		goto out;
+		break;
 	case BTREE_ID_lru:
 		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_alloc_info, 0, &write_sb) ?: ret;
-		goto out;
+		break;
 	case BTREE_ID_accounting:
 		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_allocations, 0, &write_sb) ?: ret;
-		goto out;
+		break;
 	case BTREE_ID_snapshots:
 		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_reconstruct_snapshots, 0, &write_sb) ?: ret;
 		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_topology, 0, &write_sb) ?: ret;
 		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_scan_for_btree_nodes, 0, &write_sb) ?: ret;
-		goto out;
+		break;
 	default:
 		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_check_topology, 0, &write_sb) ?: ret;
 		ret = __bch2_run_explicit_recovery_pass(c, msg, BCH_RECOVERY_PASS_scan_for_btree_nodes, 0, &write_sb) ?: ret;
-		goto out;
+		break;
 	}
-out:
+
 	if (write_sb)
 		bch2_write_super(c);
 	return ret;
