@@ -475,27 +475,6 @@ void __bch2_accounting_maybe_kill(struct bch_fs *c, struct bpos pos)
 	bch2_write_super(c);
 }
 
-void bch2_accounting_mem_gc(struct bch_fs *c)
-{
-	struct bch_accounting_mem *acc = &c->accounting;
-
-	guard(percpu_write)(&c->mark_lock);
-	struct accounting_mem_entry *dst = acc->k.data;
-
-	darray_for_each(acc->k, src) {
-		if (accounting_mem_entry_is_zero(src)) {
-			free_percpu(src->v[0]);
-			free_percpu(src->v[1]);
-		} else {
-			*dst++ = *src;
-		}
-	}
-
-	acc->k.nr = dst - acc->k.data;
-	eytzinger0_sort(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
-			accounting_pos_cmp, NULL);
-}
-
 /*
  * Read out accounting keys for replicas entries, as an array of
  * bch_replicas_usage entries.
