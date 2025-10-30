@@ -196,6 +196,7 @@ read_attribute(btree_reserve_cache);
 read_attribute(open_buckets);
 read_attribute(open_buckets_partial);
 read_attribute(nocow_lock_table);
+read_attribute(replicas);
 
 read_attribute(read_refs);
 read_attribute(write_refs);
@@ -388,6 +389,9 @@ SHOW(bch2_fs)
 
 	if (attr == &sysfs_nocow_lock_table)
 		bch2_nocow_locks_to_text(out, &c->nocow_locks);
+
+	if (attr == &sysfs_replicas)
+		bch2_cpu_replicas_to_text(out, &c->replicas);
 
 	if (attr == &sysfs_disk_groups)
 		bch2_disk_groups_to_text(out, c);
@@ -600,6 +604,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_open_buckets_partial,
 	&sysfs_write_refs,
 	&sysfs_nocow_lock_table,
+	&sysfs_replicas,
 	&sysfs_io_timers_read,
 	&sysfs_io_timers_write,
 
