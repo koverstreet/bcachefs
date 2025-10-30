@@ -250,17 +250,17 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 	if (ctxt->stats)
 		ctxt->stats->pos = BBPOS(iter->btree_id, iter->pos);
 
-	struct data_update *u = allocate_dropping_locks(trans, ret,
-				kzalloc(sizeof(struct data_update), _gfp));
+	struct data_update *u __free(kfree) =
+		allocate_dropping_locks(trans, ret, kzalloc(sizeof(struct data_update), _gfp));
 	if (!u && !ret)
 		ret = bch_err_throw(c, ENOMEM_move_extent);
 	if (ret)
-		goto err;
+		return ret;
 
 	ret = bch2_data_update_init(trans, iter, ctxt, u, ctxt->wp,
 				    &io_opts, data_opts, iter->btree_id, k);
 	if (ret)
-		goto err;
+		return bch2_err_matches(ret, BCH_ERR_data_update_done) ? 0 : ret;
 
 	k = bkey_i_to_s_c(u->k.k);
 
@@ -301,13 +301,8 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 			   NULL,
 			   BCH_READ_last_fragment,
 			   data_opts.type == BCH_DATA_UPDATE_scrub ? data_opts.read_dev : -1);
+	u = NULL;
 	return 0;
-err:
-	kfree(u);
-
-	return bch2_err_matches(ret, BCH_ERR_data_update_done)
-		? 0
-		: ret;
 }
 
 int bch2_move_extent(struct moving_context *ctxt,
