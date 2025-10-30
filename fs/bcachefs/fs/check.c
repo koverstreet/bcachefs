@@ -913,6 +913,9 @@ static int check_inode(struct btree_trans *trans,
 	}
 
 	ret = bch2_check_inode_has_case_insensitive(trans, &u, &s->ids, &do_update);
+	if (bch2_err_matches(ret, ENOENT)) /* disconnected inode; will be fixed by a later pass */
+		ret = 0;
+	bch_err_msg(c, ret, "bch2_check_inode_has_case_insensitive()");
 	if (ret)
 		goto err;
 
