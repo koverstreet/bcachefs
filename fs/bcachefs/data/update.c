@@ -298,7 +298,6 @@ restart_drop_extra_replicas:
 		extent_for_each_ptr_decode(extent_i_to_s(new), p, entry)
 			bch2_extent_ptr_decoded_append(insert, &p);
 
-		bch2_bkey_narrow_crcs(insert, (struct bch_extent_crc_unpacked) { 0 });
 		bch2_bkey_drop_extra_cached_ptrs(c, &m->op.opts, bkey_i_to_s(insert));
 
 		ret = bch2_sum_sector_overwrites(trans, &iter, insert,
