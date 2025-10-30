@@ -34,6 +34,7 @@ static inline enum bch_compression_opts bch2_compression_type_to_opt(enum bch_co
 
 /* Bounce buffer: */
 struct bbuf {
+	struct bch_fs	*c;
 	void		*b;
 	enum {
 		BB_NONE,
@@ -52,11 +53,11 @@ static struct bbuf __bounce_alloc(struct bch_fs *c, unsigned size, int rw)
 
 	b = kmalloc(size, GFP_NOFS|__GFP_NOWARN);
 	if (b)
-		return (struct bbuf) { .b = b, .type = BB_KMALLOC, .rw = rw };
+		return (struct bbuf) { .c = c, .b = b, .type = BB_KMALLOC, .rw = rw };
 
 	b = mempool_alloc(&c->compression_bounce[rw], GFP_NOFS);
 	if (b)
-		return (struct bbuf) { .b = b, .type = BB_MEMPOOL, .rw = rw };
+		return (struct bbuf) { .c = c, .b = b, .type = BB_MEMPOOL, .rw = rw };
 
 	BUG();
 }
@@ -141,6 +142,7 @@ static struct bbuf __bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 		return bio_bounce(c, bio, start, rw);
 
 	return (struct bbuf) {
+		.c = c,
 		.b	= data + bio_iter_offset(bio, start),
 		.type	= BB_VMAP,
 		.rw	= rw
@@ -152,7 +154,7 @@ static struct bbuf bio_map_or_bounce(struct bch_fs *c, struct bio *bio, int rw)
 	return __bio_map_or_bounce(c, bio, bio->bi_iter, rw);
 }
 
-static void bio_unmap_or_unbounce(struct bch_fs *c, struct bbuf buf)
+static void bio_unmap_or_unbounce(struct bbuf buf)
 {
 	switch (buf.type) {
 	case BB_NONE:
@@ -164,7 +166,7 @@ static void bio_unmap_or_unbounce(struct bch_fs *c, struct bbuf buf)
 		kfree(buf.b);
 		break;
 	case BB_MEMPOOL:
-		mempool_free(buf.b, &c->compression_bounce[buf.rw]);
+		mempool_free(buf.b, &buf.c->compression_bounce[buf.rw]);
 		break;
 	}
 }
@@ -255,7 +257,7 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 	}
 err:
 fsck_err:
-	bio_unmap_or_unbounce(c, src_data);
+	bio_unmap_or_unbounce(src_data);
 	return ret;
 }
 
@@ -306,7 +308,7 @@ int bch2_bio_uncompress_inplace(struct bch_write_op *op,
 	crc->offset		= 0;
 	crc->csum		= (struct bch_csum) { 0, 0 };
 err:
-	bio_unmap_or_unbounce(c, data);
+	bio_unmap_or_unbounce(data);
 	return ret;
 }
 
@@ -334,7 +336,7 @@ int bch2_bio_uncompress(struct bch_fs *c, struct bio *src,
 	    dst_data.type != BB_VMAP)
 		memcpy_to_bio(dst, dst_iter, dst_data.b + (crc.offset << 9));
 err:
-	bio_unmap_or_unbounce(c, dst_data);
+	bio_unmap_or_unbounce(dst_data);
 	return ret;
 }
 
@@ -531,8 +533,8 @@ static unsigned __bio_compress(struct bch_fs *c,
 	BUG_ON(*src_len & (block_bytes(c) - 1));
 	ret = compression_type;
 out:
-	bio_unmap_or_unbounce(c, src_data);
-	bio_unmap_or_unbounce(c, dst_data);
+	bio_unmap_or_unbounce(src_data);
+	bio_unmap_or_unbounce(dst_data);
 	return ret;
 err:
 	ret = BCH_COMPRESSION_TYPE_incompressible;
