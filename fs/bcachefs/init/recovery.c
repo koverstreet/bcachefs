@@ -656,6 +656,9 @@ static int __bch2_fs_recovery(struct bch_fs *c)
 			}
 
 		if (!last_journal_entry) {
+			/* fall back to reading from all devices, regardless of
+			 * have_data
+			 */
 			fsck_err_on(!c->sb.clean, c,
 				    dirty_but_no_journal_entries,
 				    "no journal entries found");
