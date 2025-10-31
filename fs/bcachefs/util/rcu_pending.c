@@ -372,26 +372,27 @@ rcu_pending_enqueue_list(struct rcu_pending_pcpu *p, rcu_gp_poll_state_t seq,
 
 		head->func = ptr;
 	}
-again:
-	for (struct rcu_pending_list *i = p->lists;
-	     i < p->lists + NUM_ACTIVE_RCU_POLL_OLDSTATE; i++) {
-		if (rcu_gp_poll_cookie_eq(i->seq, seq)) {
-			rcu_pending_list_add(i, head);
-			return false;
-		}
-	}
 
-	for (struct rcu_pending_list *i = p->lists;
-	     i < p->lists + NUM_ACTIVE_RCU_POLL_OLDSTATE; i++) {
-		if (!i->head) {
-			i->seq = seq;
-			rcu_pending_list_add(i, head);
-			return true;
+	while (true) {
+		for (struct rcu_pending_list *i = p->lists;
+		     i < p->lists + NUM_ACTIVE_RCU_POLL_OLDSTATE; i++) {
+			if (rcu_gp_poll_cookie_eq(i->seq, seq)) {
+				rcu_pending_list_add(i, head);
+				return false;
+			}
 		}
-	}
 
-	merge_expired_lists(p);
-	goto again;
+		for (struct rcu_pending_list *i = p->lists;
+		     i < p->lists + NUM_ACTIVE_RCU_POLL_OLDSTATE; i++) {
+			if (!i->head) {
+				i->seq = seq;
+				rcu_pending_list_add(i, head);
+				return true;
+			}
+		}
+
+		merge_expired_lists(p);
+	}
 }
 
 /*
@@ -434,96 +435,97 @@ __rcu_pending_enqueue(struct rcu_pending *pending, struct rcu_head *head,
 	p = raw_cpu_ptr(pending->p);
 	spin_lock_irqsave(&p->lock, flags);
 	rcu_gp_poll_state_t seq = __get_state_synchronize_rcu(pending->srcu);
-restart:
-	if (may_sleep &&
-	    unlikely(process_finished_items(pending, p, flags)))
-		goto check_expired;
 
-	/*
-	 * In kvfree_rcu() mode, the radix tree is only for slab pointers so
-	 * that we can do kfree_bulk() - vmalloc pointers always use the linked
-	 * list:
-	 */
-	if (ptr && unlikely(is_vmalloc_addr(ptr)))
-		goto list_add;
+	while (true) {
+		if (may_sleep &&
+		    unlikely(process_finished_items(pending, p, flags)))
+			goto check_expired;
 
-	objs = get_object_radix(p, seq);
-	if (unlikely(!objs))
-		goto list_add;
-
-	if (unlikely(!objs->cursor)) {
 		/*
-		 * New radix tree nodes must be added under @p->lock because the
-		 * tree root is in a darray that can be resized (typically,
-		 * genradix supports concurrent unlocked allocation of new
-		 * nodes) - hence preallocation and the retry loop:
+		 * In kvfree_rcu() mode, the radix tree is only for slab pointers so
+		 * that we can do kfree_bulk() - vmalloc pointers always use the linked
+		 * list:
 		 */
-		objs->cursor = genradix_ptr_alloc_preallocated_inlined(&objs->objs,
-						objs->nr, &new_node, GFP_ATOMIC|__GFP_NOWARN);
+		if (ptr && unlikely(is_vmalloc_addr(ptr)))
+			goto list_add;
+
+		objs = get_object_radix(p, seq);
+		if (unlikely(!objs))
+			goto list_add;
+
 		if (unlikely(!objs->cursor)) {
-			if (may_sleep) {
-				spin_unlock_irqrestore(&p->lock, flags);
+			/*
+			 * New radix tree nodes must be added under @p->lock because the
+			 * tree root is in a darray that can be resized (typically,
+			 * genradix supports concurrent unlocked allocation of new
+			 * nodes) - hence preallocation and the retry loop:
+			 */
+			objs->cursor = genradix_ptr_alloc_preallocated_inlined(&objs->objs,
+							objs->nr, &new_node, GFP_ATOMIC|__GFP_NOWARN);
+			if (unlikely(!objs->cursor)) {
+				if (may_sleep) {
+					spin_unlock_irqrestore(&p->lock, flags);
 
-				gfp_t gfp = GFP_KERNEL;
-				if (!head)
-					gfp |= __GFP_NOFAIL;
+					gfp_t gfp = GFP_KERNEL;
+					if (!head)
+						gfp |= __GFP_NOFAIL;
 
-				new_node = genradix_alloc_node(gfp);
-				if (!new_node)
-					may_sleep = false;
-				goto check_expired;
-			}
+					new_node = genradix_alloc_node(gfp);
+					if (!new_node)
+						may_sleep = false;
+					goto check_expired;
+				}
 list_add:
-			start_gp = rcu_pending_enqueue_list(p, seq, head, ptr, &flags);
-			goto start_gp;
+				start_gp = rcu_pending_enqueue_list(p, seq, head, ptr, &flags);
+				goto start_gp;
+			}
 		}
-	}
 
-	*objs->cursor++ = ptr ?: head;
-	/* zero cursor if we hit the end of a radix tree node: */
-	if (!(((ulong) objs->cursor) & (GENRADIX_NODE_SIZE - 1)))
-		objs->cursor = NULL;
-	start_gp = !objs->nr;
-	objs->nr++;
+		*objs->cursor++ = ptr ?: head;
+		/* zero cursor if we hit the end of a radix tree node: */
+		if (!(((ulong) objs->cursor) & (GENRADIX_NODE_SIZE - 1)))
+			objs->cursor = NULL;
+		start_gp = !objs->nr;
+		objs->nr++;
 start_gp:
-	if (unlikely(start_gp)) {
-		/*
-		 * We only have one callback (ideally, we would have one for
-		 * every outstanding graceperiod) - so if our callback is
-		 * already in flight, we may still have to start a grace period
-		 * (since we used get_state() above, not start_poll())
-		 */
-		if (!p->cb_armed) {
-			p->cb_armed = true;
-			__call_rcu(pending->srcu, &p->cb, rcu_pending_rcu_cb);
-		} else {
-			__start_poll_synchronize_rcu(pending->srcu);
+		if (unlikely(start_gp)) {
+			/*
+			 * We only have one callback (ideally, we would have one for
+			 * every outstanding graceperiod) - so if our callback is
+			 * already in flight, we may still have to start a grace period
+			 * (since we used get_state() above, not start_poll())
+			 */
+			if (!p->cb_armed) {
+				p->cb_armed = true;
+				__call_rcu(pending->srcu, &p->cb, rcu_pending_rcu_cb);
+			} else {
+				__start_poll_synchronize_rcu(pending->srcu);
+			}
 		}
-	}
-	spin_unlock_irqrestore(&p->lock, flags);
+		spin_unlock_irqrestore(&p->lock, flags);
 free_node:
-	if (new_node)
-		genradix_free_node(new_node);
-	return;
+		if (new_node)
+			genradix_free_node(new_node);
+		return;
 check_expired:
-	if (unlikely(__poll_state_synchronize_rcu(pending->srcu, seq))) {
-		switch ((ulong) pending->process) {
-		case RCU_PENDING_KVFREE:
-			kvfree(ptr);
-			break;
-		case RCU_PENDING_CALL_RCU:
-			head->func(head);
-			break;
-		default:
-			pending->process(pending, head);
-			break;
+		if (unlikely(__poll_state_synchronize_rcu(pending->srcu, seq))) {
+			switch ((ulong) pending->process) {
+			case RCU_PENDING_KVFREE:
+				kvfree(ptr);
+				break;
+			case RCU_PENDING_CALL_RCU:
+				head->func(head);
+				break;
+			default:
+				pending->process(pending, head);
+				break;
+			}
+			goto free_node;
 		}
-		goto free_node;
-	}
 
-	p = raw_cpu_ptr(pending->p);
-	spin_lock_irqsave(&p->lock, flags);
-	goto restart;
+		p = raw_cpu_ptr(pending->p);
+		spin_lock_irqsave(&p->lock, flags);
+	}
 }
 
 void rcu_pending_enqueue(struct rcu_pending *pending, struct rcu_head *obj)
