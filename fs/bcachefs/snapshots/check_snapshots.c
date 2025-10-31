@@ -39,27 +39,27 @@ u32 bch2_snapshot_oldest_subvol(struct bch_fs *c, u32 snapshot_root,
 {
 	guard(rcu)();
 	struct snapshot_table *t = rcu_dereference(c->snapshots);
-	u32 id, subvol = 0, s;
-retry:
-	id = snapshot_root;
-	while (id && __bch2_snapshot_exists(t, id)) {
-		if (!(skip && snapshot_list_has_id(skip, id))) {
-			s = __snapshot_t(t, id)->subvol;
 
-			if (s && (!subvol || s < subvol))
-				subvol = s;
+	while (true) {
+		u32 id = snapshot_root, subvol = 0;
+
+		while (id && __bch2_snapshot_exists(t, id)) {
+			if (!(skip && snapshot_list_has_id(skip, id))) {
+				u32 s = __snapshot_t(t, id)->subvol;
+
+				if (s && (!subvol || s < subvol))
+					subvol = s;
+			}
+			id = bch2_snapshot_tree_next(t, id);
+			if (id == snapshot_root)
+				break;
 		}
-		id = bch2_snapshot_tree_next(t, id);
-		if (id == snapshot_root)
-			break;
-	}
 
-	if (!subvol && skip) {
+		if (subvol || !skip)
+			return subvol;
+
 		skip = NULL;
-		goto retry;
 	}
-
-	return subvol;
 }
 
 static int bch2_snapshot_tree_master_subvol(struct btree_trans *trans,
