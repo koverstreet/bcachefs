@@ -59,7 +59,6 @@ static struct bkey_i *btree_root_find(struct bch_fs *c,
 				      struct jset *j,
 				      enum btree_id id, unsigned *level)
 {
-	struct bkey_i *k;
 	struct jset_entry *entry, *start, *end;
 
 	if (clean) {
@@ -73,16 +72,16 @@ static struct bkey_i *btree_root_find(struct bch_fs *c,
 	for (entry = start; entry < end; entry = vstruct_next(entry))
 		if (entry->type == BCH_JSET_ENTRY_btree_root &&
 		    entry->btree_id == id)
-			goto found;
+			break;
 
-	return NULL;
-found:
+	if (entry >= end)
+		return NULL;
+
 	if (!entry->u64s)
 		return ERR_PTR(-EINVAL);
 
-	k = entry->start;
 	*level = entry->level;
-	return k;
+	return entry->start;
 }
 
 int bch2_verify_superblock_clean(struct bch_fs *c,
