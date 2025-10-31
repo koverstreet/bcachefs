@@ -1136,8 +1136,10 @@ void bch2_snapshot_delete_status_to_text(struct printbuf *out, struct bch_fs *c)
 	}
 
 	scoped_guard(mutex, &d->progress_lock) {
-		bch2_snapshot_delete_nodes_to_text(out, d);
+		prt_str(out, "Current position: ");
 		bch2_bbpos_to_text(out, d->pos);
+		prt_newline(out);
+		bch2_snapshot_delete_nodes_to_text(out, d);
 	}
 }
 
