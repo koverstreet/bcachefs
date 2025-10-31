@@ -233,22 +233,21 @@ static noinline int break_cycle(struct lock_graph *g, struct printbuf *cycle,
 	if (cycle) {
 		print_cycle(cycle, g);
 		ret = -1;
-		goto out;
-	}
-
-	for (i = from; i < g->g + g->nr; i++) {
-		pref = btree_trans_abort_preference(i->trans);
-		if (pref > best) {
-			abort = i;
-			best = pref;
+	} else {
+		for (i = from; i < g->g + g->nr; i++) {
+			pref = btree_trans_abort_preference(i->trans);
+			if (pref > best) {
+				abort = i;
+				best = pref;
+			}
 		}
+
+		if (unlikely(!best))
+			break_cycle_fail(g);
+
+		ret = abort_lock(g, abort);
 	}
 
-	if (unlikely(!best))
-		break_cycle_fail(g);
-
-	ret = abort_lock(g, abort);
-out:
 	if (ret)
 		lock_graph_pop_all(g);
 	else
