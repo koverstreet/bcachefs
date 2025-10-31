@@ -673,21 +673,15 @@ int bch2_fsck_remove_dirent(struct btree_trans *trans, struct bpos pos)
 	struct bch_fs *c = trans->c;
 
 	struct bch_inode_unpacked dir_inode;
-	int ret = lookup_first_inode(trans, pos.inode, &dir_inode);
-	if (ret)
-		goto err;
+	try(lookup_first_inode(trans, pos.inode, &dir_inode));
 
-	{
-		struct bch_hash_info dir_hash_info = bch2_hash_info_init(c, &dir_inode);
+	struct bch_hash_info dir_hash_info = bch2_hash_info_init(c, &dir_inode);
 
-		CLASS(btree_iter, iter)(trans, BTREE_ID_dirents, pos, BTREE_ITER_intent);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_dirents, pos, BTREE_ITER_intent);
 
-		ret =   bch2_btree_iter_traverse(&iter) ?:
-			bch2_hash_delete_at(trans, bch2_dirent_hash_desc,
-					    &dir_hash_info, &iter,
-					    BTREE_UPDATE_internal_snapshot_node);
-	}
-err:
-	bch_err_fn(c, ret);
-	return ret;
+	try(bch2_btree_iter_traverse(&iter));
+	try(bch2_hash_delete_at(trans, bch2_dirent_hash_desc,
+				&dir_hash_info, &iter,
+				BTREE_UPDATE_internal_snapshot_node));
+	return 0;
 }
