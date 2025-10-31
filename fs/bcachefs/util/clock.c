@@ -29,12 +29,9 @@ void bch2_io_timer_add(struct io_clock *clock, struct io_timer *timer)
 		return;
 	}
 
-	for (size_t i = 0; i < clock->timers.nr; i++)
-		if (clock->timers.data[i] == timer)
-			goto out;
+	if (!darray_find(clock->timers, timer))
+		BUG_ON(!min_heap_push(&clock->timers, &timer, &callbacks, NULL));
 
-	BUG_ON(!min_heap_push(&clock->timers, &timer, &callbacks, NULL));
-out:
 	spin_unlock(&clock->timer_lock);
 }
 
