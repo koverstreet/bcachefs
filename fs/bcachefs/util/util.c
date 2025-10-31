@@ -73,39 +73,31 @@ static int bch2_pow(u64 n, u64 p, u64 *res)
 
 static int parse_unit_suffix(const char *cp, u64 *res)
 {
-	const char *start = cp;
-	u64 base = 1024;
-	unsigned u;
+	unsigned adv = *cp == ' ';
+	cp += adv;
 
-	if (*cp == ' ')
-		cp++;
-
-	for (u = 1; u < strlen(si_units); u++)
+	for (unsigned u = 1; u < strlen(si_units); u++)
 		if (*cp == si_units[u]) {
-			cp++;
-			goto got_unit;
+			try(bch2_pow(1024, u, res));
+			return adv + 1;
 		}
 
-	for (u = 0; u < ARRAY_SIZE(units_2); u++)
+	for (unsigned u = 0; u < ARRAY_SIZE(units_2); u++)
 		if (!strncmp(cp, units_2[u], strlen(units_2[u]))) {
-			cp += strlen(units_2[u]);
-			goto got_unit;
+			try(bch2_pow(1024, u, res));
+			return adv + strlen(units_2[u]);
 		}
 
-	for (u = 0; u < ARRAY_SIZE(units_10); u++)
+	for (unsigned u = 0; u < ARRAY_SIZE(units_10); u++)
 		if (!strncmp(cp, units_10[u], strlen(units_10[u]))) {
-			cp += strlen(units_10[u]);
-			base = 1000;
-			goto got_unit;
+			try(bch2_pow(1000, u, res));
+			return adv + strlen(units_10[u]);
 		}
 
 	*res = 1;
 	return 0;
-got_unit:
-	try(bch2_pow(base, u, res));
-
-	return cp - start;
 }
+
 
 #define parse_or_ret(cp, _f)			\
 do {						\
