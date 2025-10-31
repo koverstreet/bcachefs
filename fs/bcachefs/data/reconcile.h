@@ -142,7 +142,8 @@ static inline void bch2_rebalance_wakeup(struct bch_fs *c)
 		wake_up_process(p);
 }
 
-void bch2_rebalance_status_to_text(struct printbuf *, struct bch_fs *);
+void bch2_reconcile_status_to_text(struct printbuf *, struct bch_fs *);
+void bch2_reconcile_scan_pending_to_text(struct printbuf *, struct bch_fs *);
 
 void bch2_rebalance_stop(struct bch_fs *);
 int bch2_rebalance_start(struct bch_fs *);

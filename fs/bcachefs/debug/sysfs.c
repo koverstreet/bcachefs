@@ -216,8 +216,8 @@ rw_attribute(label);
 
 read_attribute(copy_gc_wait);
 
-sysfs_pd_controller_attribute(rebalance);
-read_attribute(rebalance_status);
+read_attribute(reconcile_status);
+read_attribute(reconcile_scan_pending);
 read_attribute(snapshot_delete_status);
 read_attribute(recovery_status);
 
@@ -332,13 +332,14 @@ SHOW(bch2_fs)
 	if (attr == &sysfs_gc_gens_pos)
 		bch2_gc_gens_pos_to_text(out, c);
 
-	sysfs_pd_controller_show(rebalance,	&c->rebalance.pd); /* XXX */
-
 	if (attr == &sysfs_copy_gc_wait)
 		bch2_copygc_wait_to_text(out, c);
 
-	if (attr == &sysfs_rebalance_status)
-		bch2_rebalance_status_to_text(out, c);
+	if (attr == &sysfs_reconcile_status)
+		bch2_reconcile_status_to_text(out, c);
+
+	if (attr == &sysfs_reconcile_scan_pending)
+		bch2_reconcile_scan_pending_to_text(out, c);
 
 	if (attr == &sysfs_snapshot_delete_status)
 		bch2_snapshot_delete_status_to_text(out, c);
@@ -408,8 +409,6 @@ SHOW(bch2_fs)
 STORE(bch2_fs)
 {
 	struct bch_fs *c = container_of(kobj, struct bch_fs, kobj);
-
-	sysfs_pd_controller_store(rebalance,	&c->rebalance.pd);
 
 	/* Debugging: */
 
@@ -516,7 +515,8 @@ struct attribute *bch2_fs_files[] = {
 	&sysfs_btree_cache_size,
 	&sysfs_btree_write_stats,
 
-	&sysfs_rebalance_status,
+	&sysfs_reconcile_status,
+	&sysfs_reconcile_scan_pending,
 	&sysfs_snapshot_delete_status,
 	&sysfs_recovery_status,
 
@@ -626,8 +626,6 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_gc_gens_pos,
 
 	&sysfs_copy_gc_wait,
-
-	sysfs_pd_controller_files(rebalance),
 
 	&sysfs_moving_ctxts,
 

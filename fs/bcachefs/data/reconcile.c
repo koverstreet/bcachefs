@@ -1762,7 +1762,7 @@ static int bch2_rebalance_thread(void *arg)
 	return 0;
 }
 
-void bch2_rebalance_status_to_text(struct printbuf *out, struct bch_fs *c)
+void bch2_reconcile_status_to_text(struct printbuf *out, struct bch_fs *c)
 {
 	printbuf_tabstop_push(out, 32);
 
@@ -1821,12 +1821,20 @@ void bch2_rebalance_status_to_text(struct printbuf *out, struct bch_fs *c)
 	}
 }
 
+void bch2_reconcile_scan_pending_to_text(struct printbuf *out, struct bch_fs *c)
+{
+	CLASS(btree_trans, trans)(c);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan, POS_MIN, 0);
+
+	struct bkey_s_c k;
+	lockrestart_do(trans, bkey_err(k = bch2_btree_iter_peek(&iter)));
+
+	prt_printf(out, "%u\n", iter.pos.inode == 0);
+}
+
 void bch2_rebalance_stop(struct bch_fs *c)
 {
 	struct task_struct *p;
-
-	c->rebalance.pd.rate.rate = UINT_MAX;
-	bch2_ratelimit_reset(&c->rebalance.pd.rate);
 
 	p = rcu_dereference_protected(c->rebalance.thread, 1);
 	c->rebalance.thread = NULL;
@@ -1884,11 +1892,9 @@ void bch2_fs_rebalance_exit(struct bch_fs *c)
 
 int bch2_fs_rebalance_init(struct bch_fs *c)
 {
+#ifdef CONFIG_POWER_SUPPLY
 	struct bch_fs_rebalance *r = &c->rebalance;
 
-	bch2_pd_controller_init(&r->pd);
-
-#ifdef CONFIG_POWER_SUPPLY
 	r->power_notifier.notifier_call = bch2_rebalance_power_notifier;
 	try(power_supply_reg_notifier(&r->power_notifier));
 
