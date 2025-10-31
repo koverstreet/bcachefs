@@ -918,7 +918,7 @@ static int bch2_fs_opt_version_init(struct bch_fs *c)
 	}
 
 	if (c->sb.version_incompat_allowed != c->sb.version) {
-		prt_printf(&p, "\nallowing incompatible features above ");
+		prt_printf(&p, "\nallowing incompatible features up to ");
 		bch2_version_to_text(&p, c->sb.version_incompat_allowed);
 	}
 
