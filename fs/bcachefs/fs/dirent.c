@@ -649,6 +649,7 @@ static int lookup_first_inode(struct btree_trans *trans, u64 inode_nr,
 			      struct bch_inode_unpacked *inode)
 {
 	struct bkey_s_c k;
+	bool found = false;
 	int ret;
 
 	for_each_btree_key_norestart(trans, iter, BTREE_ID_inodes, POS(0, inode_nr),
@@ -658,10 +659,11 @@ static int lookup_first_inode(struct btree_trans *trans, u64 inode_nr,
 		if (!bkey_is_inode(k.k))
 			continue;
 		ret = bch2_inode_unpack(k, inode);
-		goto found;
+		found = true;
+		break;
 	}
-	ret = bch_err_throw(trans->c, ENOENT_inode);
-found:
+	if (!ret && !found)
+		ret = bch_err_throw(trans->c, ENOENT_inode);
 	bch_err_msg(trans->c, ret, "fetching inode %llu", inode_nr);
 	return ret;
 }
