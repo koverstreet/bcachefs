@@ -162,9 +162,6 @@ bool bch2_btree_bset_insert_key(struct btree_trans *trans,
 				struct btree_node_iter *node_iter,
 				struct bkey_i *insert)
 {
-	struct bkey_packed *k;
-	unsigned clobber_u64s = 0, new_u64s = 0;
-
 	EBUG_ON(btree_node_just_written(b));
 	EBUG_ON(bset_written(b, btree_bset_last(b)));
 	EBUG_ON(bkey_deleted(&insert->k) && bkey_val_u64s(&insert->k));
@@ -174,19 +171,20 @@ bool bch2_btree_bset_insert_key(struct btree_trans *trans,
 	EBUG_ON(!b->c.level && !bpos_eq(insert->k.p, path->pos));
 	kmsan_check_memory(insert, bkey_bytes(&insert->k));
 
-	k = bch2_btree_node_iter_peek_all(node_iter, b);
+	struct bkey_packed *k = bch2_btree_node_iter_peek_all(node_iter, b);
 	if (k && bkey_cmp_left_packed(b, k, &insert->k.p))
 		k = NULL;
 
 	/* @k is the key being overwritten/deleted, if any: */
 	EBUG_ON(k && bkey_deleted(k));
 
-	/* Deleting, but not found? nothing to do: */
-	if (bkey_deleted(&insert->k) && !k)
-		return false;
+	unsigned clobber_u64s = 0;
 
 	if (bkey_deleted(&insert->k)) {
-		/* Deleting: */
+		/* Not found? nothing to do: */
+		if (!k)
+			return false;
+
 		btree_account_key_drop(b, k);
 		k->type = KEY_TYPE_deleted;
 
@@ -197,7 +195,7 @@ bool bch2_btree_bset_insert_key(struct btree_trans *trans,
 		if (k >= btree_bset_last(b)->start) {
 			clobber_u64s = k->u64s;
 			bch2_bset_delete(b, k, clobber_u64s);
-			goto fix_iter;
+			bch2_btree_node_iter_fix(trans, path, b, node_iter, k, clobber_u64s, 0);
 		} else {
 			bch2_btree_path_fix_key_modified(trans, b, k);
 		}
@@ -213,22 +211,18 @@ bool bch2_btree_bset_insert_key(struct btree_trans *trans,
 		insert->k.needs_whiteout = k->needs_whiteout;
 		k->needs_whiteout = false;
 
-		if (k >= btree_bset_last(b)->start) {
+		if (k >= btree_bset_last(b)->start)
 			clobber_u64s = k->u64s;
-			goto overwrite;
-		} else {
+		else
 			bch2_btree_path_fix_key_modified(trans, b, k);
-		}
 	}
 
-	k = bch2_btree_node_iter_bset_pos(node_iter, b, bset_tree_last(b));
-overwrite:
+	if (k < btree_bset_last(b)->start)
+		k = bch2_btree_node_iter_bset_pos(node_iter, b, bset_tree_last(b));
+
 	bch2_bset_insert(b, k, insert, clobber_u64s);
-	new_u64s = k->u64s;
-fix_iter:
-	if (clobber_u64s != new_u64s)
-		bch2_btree_node_iter_fix(trans, path, b, node_iter, k,
-					 clobber_u64s, new_u64s);
+	if (clobber_u64s != k->u64s)
+		bch2_btree_node_iter_fix(trans, path, b, node_iter, k, clobber_u64s, k->u64s);
 	return true;
 }
 
