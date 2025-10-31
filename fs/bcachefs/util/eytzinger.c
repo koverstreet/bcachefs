@@ -279,10 +279,9 @@ static int test(void)
 	size_t N, i;
 	ktime_t start, end;
 	s64 delta;
-	u32 *arr;
 
 	for (N = 10000; N <= 100000; N += 10000) {
-		arr = kmalloc_array(N, sizeof(u32), GFP_KERNEL);
+		u32 *arr __free(kfree) = kmalloc_array(N, sizeof(u32), GFP_KERNEL);
 		cmp_count = 0;
 
 		for (i = 0; i < N; i++)
@@ -300,16 +299,12 @@ static int test(void)
 
 		eytzinger0_for_each(i, N) {
 			if (prev > arr[i])
-				goto err;
+				return -1;
 			prev = arr[i];
 		}
 
 		kfree(arr);
 	}
 	return 0;
-
-err:
-	kfree(arr);
-	return -1;
 }
 #endif
