@@ -86,7 +86,7 @@ static int bch2_direct_IO_read(struct kiocb *req, struct iov_iter *iter)
 
 	/* bios must be 512 byte aligned: */
 	if ((offset|iter->count) & (SECTOR_SIZE - 1))
-		return -EINVAL;
+		return bch_err_throw(c, unaligned_io);
 
 	ret = min_t(loff_t, iter->count,
 		    max_t(loff_t, 0, i_size_read(&inode->v) - offset));
@@ -627,7 +627,7 @@ ssize_t bch2_direct_write(struct kiocb *req, struct iov_iter *iter)
 		goto err_put_write_ref;
 
 	if (unlikely((req->ki_pos|iter->count) & (block_bytes(c) - 1))) {
-		ret = -EINVAL;
+		ret = bch_err_throw(c, unaligned_io);
 		goto err_put_write_ref;
 	}
 

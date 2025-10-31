@@ -226,6 +226,7 @@
 	x(EINVAL,			erasure_coding_found_btree_node)	\
 	x(EINVAL,			option_negative)			\
 	x(EINVAL,			topology_repair)			\
+	x(EINVAL,			unaligned_io)				\
 	x(BCH_ERR_topology_repair,	topology_repair_drop_this_node)		\
 	x(BCH_ERR_topology_repair,	topology_repair_drop_prev_node)		\
 	x(BCH_ERR_topology_repair,	topology_repair_did_fill_from_scan)	\
