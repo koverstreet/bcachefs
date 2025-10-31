@@ -343,10 +343,19 @@ void bch2_btree_node_iter_set_drop(struct btree_node_iter *,
 void bch2_btree_node_iter_advance(struct btree_node_iter *, struct btree *);
 
 #define btree_node_iter_for_each(_iter, _set)				\
-	for (_set = (_iter)->data;					\
+	for (struct btree_node_iter_set *_set = (_iter)->data;		\
 	     _set < (_iter)->data + ARRAY_SIZE((_iter)->data) &&	\
 	     (_set)->k != (_set)->end;					\
 	     _set++)
+
+static inline struct btree_node_iter_set *
+btree_node_iter_set_find(struct btree_node_iter *iter, unsigned end_offset)
+{
+	btree_node_iter_for_each(iter, set)
+		if (set->end == end_offset)
+			return set;
+	return NULL;
+}
 
 static inline bool __btree_node_iter_set_end(struct btree_node_iter *iter,
 					     unsigned i)
