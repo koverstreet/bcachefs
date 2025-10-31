@@ -50,39 +50,42 @@ int fast_list_get_idx(struct fast_list *l)
 {
 	unsigned long flags;
 	int idx;
-retry:
-	local_irq_save(flags);
-	struct fast_list_pcpu *lp = this_cpu_ptr(l->buffer);
 
-	if (unlikely(!lp->nr)) {
-		u32 entries[16], nr = 0;
-
-		local_irq_restore(flags);
-		while (nr < ARRAY_SIZE(entries) &&
-		       (idx = fast_list_alloc_idx(l, GFP_KERNEL)))
-			entries[nr++] = idx;
+	while (true) {
 		local_irq_save(flags);
-
-		lp = this_cpu_ptr(l->buffer);
-
-		while (nr && lp->nr < ARRAY_SIZE(lp->entries))
-			lp->entries[lp->nr++] = entries[--nr];
-
-		if (unlikely(nr)) {
-			local_irq_restore(flags);
-			while (nr)
-				ida_free(&l->slots_allocated, entries[--nr]);
-			goto retry;
-		}
+		struct fast_list_pcpu *lp = this_cpu_ptr(l->buffer);
 
 		if (unlikely(!lp->nr)) {
-			local_irq_restore(flags);
-			return -ENOMEM;
-		}
-	}
+			u32 entries[16], nr = 0;
 
-	idx = lp->entries[--lp->nr];
-	local_irq_restore(flags);
+			local_irq_restore(flags);
+			while (nr < ARRAY_SIZE(entries) &&
+			       (idx = fast_list_alloc_idx(l, GFP_KERNEL)))
+				entries[nr++] = idx;
+			local_irq_save(flags);
+
+			lp = this_cpu_ptr(l->buffer);
+
+			while (nr && lp->nr < ARRAY_SIZE(lp->entries))
+				lp->entries[lp->nr++] = entries[--nr];
+
+			if (unlikely(nr)) {
+				local_irq_restore(flags);
+				while (nr)
+					ida_free(&l->slots_allocated, entries[--nr]);
+				continue;
+			}
+
+			if (unlikely(!lp->nr)) {
+				local_irq_restore(flags);
+				return -ENOMEM;
+			}
+		}
+
+		idx = lp->entries[--lp->nr];
+		local_irq_restore(flags);
+		break;
+	}
 
 	return idx;
 }
