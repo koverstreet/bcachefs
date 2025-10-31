@@ -260,12 +260,16 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 					    struct bkey_s_c k,
 					    struct bpos pos,
 					    struct extent_ptr_decoded *pick,
+					    unsigned flags,
 					    unsigned sectors,
 					    struct bch_read_bio *orig,
 					    struct bch_io_failures *failed)
 {
 	struct bch_fs *c = trans->c;
-	int ret;
+
+	int ret = should_promote(c, k, pos, orig->opts, flags, failed != NULL);
+	if (ret)
+		return ERR_PTR(ret);
 
 	struct data_update_opts update_opts = { .write_flags = BCH_WRITE_alloc_nowait };
 
@@ -393,38 +397,31 @@ static struct bch_read_bio *promote_alloc(struct btree_trans *trans,
 		? bkey_start_pos(k.k)
 		: POS(k.k->p.inode, iter.bi_sector);
 
-	int ret = should_promote(c, k, pos, orig->opts, flags, self_healing);
-	if (ret)
-		goto nopromote;
-
 	struct bch_read_bio *promote =
 		__promote_alloc(trans,
 				k.k->type == KEY_TYPE_reflink_v
 				? BTREE_ID_reflink
 				: BTREE_ID_extents,
-				k, pos, pick, sectors, orig, failed);
-	ret = PTR_ERR_OR_ZERO(promote);
-	if (ret)
-		goto nopromote;
+				k, pos, pick, flags, sectors, orig, failed);
+	int ret = PTR_ERR_OR_ZERO(promote);
+	if (unlikely(ret)) {
+		if (trace_io_read_nopromote_enabled()) {
+			CLASS(printbuf, buf)();
+			printbuf_indent_add_nextline(&buf, 2);
+			prt_printf(&buf, "%s\n", bch2_err_str(ret));
+			bch2_bkey_val_to_text(&buf, c, k);
+
+			trace_io_read_nopromote(c, buf.buf);
+		}
+		count_event(c, io_read_nopromote);
+		return NULL;
+	}
 
 	*bounce		= true;
 	*read_full	= promote_full;
 
 	orig->self_healing |= self_healing;
-
 	return promote;
-nopromote:
-	if (trace_io_read_nopromote_enabled()) {
-		CLASS(printbuf, buf)();
-		printbuf_indent_add_nextline(&buf, 2);
-		prt_printf(&buf, "%s\n", bch2_err_str(ret));
-		bch2_bkey_val_to_text(&buf, c, k);
-
-		trace_io_read_nopromote(c, buf.buf);
-	}
-	count_event(c, io_read_nopromote);
-
-	return NULL;
 }
 
 void bch2_promote_op_to_text(struct printbuf *out,
