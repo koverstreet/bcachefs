@@ -1025,10 +1025,43 @@ static void bch2_snapshot_delete_nodes_to_text(struct printbuf *out, struct snap
 	prt_newline(out);
 }
 
+static int delete_dead_snapshots_locked(struct bch_fs *c)
+{
+	CLASS(btree_trans, trans)(c);
+
+	/*
+	 * For every snapshot node: If we have no live children and it's not
+	 * pointed to by a subvolume, delete it:
+	 */
+	try(for_each_btree_key(trans, iter, BTREE_ID_snapshots, POS_MIN, 0, k,
+		check_should_delete_snapshot(trans, k)));
+
+	struct snapshot_delete *d = &c->snapshot_delete;
+	if (!d->delete_leaves.nr && !d->delete_interior.nr)
+		return 0;
+
+	CLASS(printbuf, buf)();
+	bch2_snapshot_delete_nodes_to_text(&buf, d);
+	try(commit_do(trans, NULL, NULL, 0, bch2_trans_log_msg(trans, &buf)));
+
+	try(!bch2_request_incompat_feature(c, bcachefs_metadata_version_snapshot_deletion_v2)
+	    ? delete_dead_snapshot_keys_v2(trans)
+	    : delete_dead_snapshot_keys_v1(trans));
+
+	darray_for_each(d->delete_leaves, i)
+		try(commit_do(trans, NULL, NULL, 0,
+			bch2_snapshot_node_delete(trans, *i)));
+
+	darray_for_each(d->delete_interior, i)
+		try(commit_do(trans, NULL, NULL, 0,
+			bch2_snapshot_node_set_no_keys(trans, i->id)));
+
+	return 0;
+}
+
 int __bch2_delete_dead_snapshots(struct bch_fs *c)
 {
 	struct snapshot_delete *d = &c->snapshot_delete;
-	int ret = 0;
 
 	if (!mutex_trylock(&d->lock))
 		return 0;
@@ -1038,59 +1071,11 @@ int __bch2_delete_dead_snapshots(struct bch_fs *c)
 		return 0;
 	}
 
-	CLASS(btree_trans, trans)(c);
-
-	/*
-	 * For every snapshot node: If we have no live children and it's not
-	 * pointed to by a subvolume, delete it:
-	 */
 	d->running = true;
 	d->pos = BBPOS_MIN;
 
-	ret = for_each_btree_key(trans, iter, BTREE_ID_snapshots, POS_MIN, 0, k,
-		check_should_delete_snapshot(trans, k));
-	if (!bch2_err_matches(ret, EROFS))
-		bch_err_msg(c, ret, "walking snapshots");
-	if (ret)
-		goto err;
+	int ret = delete_dead_snapshots_locked(c);
 
-	if (!d->delete_leaves.nr && !d->delete_interior.nr)
-		goto err;
-
-	{
-		CLASS(printbuf, buf)();
-		bch2_snapshot_delete_nodes_to_text(&buf, d);
-
-		ret = commit_do(trans, NULL, NULL, 0, bch2_trans_log_msg(trans, &buf));
-		if (ret)
-			goto err;
-	}
-
-	ret = !bch2_request_incompat_feature(c, bcachefs_metadata_version_snapshot_deletion_v2)
-		? delete_dead_snapshot_keys_v2(trans)
-		: delete_dead_snapshot_keys_v1(trans);
-	if (!bch2_err_matches(ret, EROFS))
-		bch_err_msg(c, ret, "deleting keys from dying snapshots");
-	if (ret)
-		goto err;
-
-	darray_for_each(d->delete_leaves, i) {
-		ret = commit_do(trans, NULL, NULL, 0,
-			bch2_snapshot_node_delete(trans, *i));
-		if (!bch2_err_matches(ret, EROFS))
-			bch_err_msg(c, ret, "deleting snapshot %u", *i);
-		if (ret)
-			goto err;
-	}
-	darray_for_each(d->delete_interior, i) {
-		ret = commit_do(trans, NULL, NULL, 0,
-			bch2_snapshot_node_set_no_keys(trans, i->id));
-		if (!bch2_err_matches(ret, EROFS))
-			bch_err_msg(c, ret, "deleting snapshot %u", i->id);
-		if (ret)
-			goto err;
-	}
-err:
 	scoped_guard(mutex, &d->progress_lock) {
 		darray_exit(&d->deleting_from_trees);
 		darray_exit(&d->delete_interior);
