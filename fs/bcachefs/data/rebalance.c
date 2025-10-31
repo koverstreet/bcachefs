@@ -1768,6 +1768,21 @@ void bch2_rebalance_status_to_text(struct printbuf *out, struct bch_fs *c)
 	}
 }
 
+void bch2_rebalance_scan_pending_to_text(struct printbuf *out, struct bch_fs *c)
+{
+	/* not the nicest place for this check */
+	if (!test_bit(BCH_FS_btree_running, &c->flags))
+		return;
+
+	CLASS(btree_trans, trans)(c);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_rebalance_scan, POS_MIN, 0);
+
+	struct bkey_s_c k;
+	lockrestart_do(trans, bkey_err(k = bch2_btree_iter_peek(&iter)));
+
+	prt_printf(out, "%u\n", iter.pos.inode == 0);
+}
+
 void bch2_rebalance_stop(struct bch_fs *c)
 {
 	struct task_struct *p;
