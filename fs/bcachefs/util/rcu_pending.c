@@ -533,21 +533,19 @@ void rcu_pending_enqueue(struct rcu_pending *pending, struct rcu_head *obj)
 
 static struct rcu_head *rcu_pending_pcpu_dequeue(struct rcu_pending_pcpu *p)
 {
-	struct rcu_head *ret = NULL;
-
-	spin_lock_irq(&p->lock);
+	guard(spinlock_irq)(&p->lock);
 	darray_for_each(p->objs, objs)
 		if (objs->nr) {
-			ret = *genradix_ptr(&objs->objs, --objs->nr);
+			struct rcu_head *ret = *genradix_ptr(&objs->objs, --objs->nr);
 			objs->cursor = NULL;
 			if (!objs->nr)
 				genradix_free(&objs->objs);
-			goto out;
+			return ret;
 		}
 
 	static_array_for_each(p->lists, i)
 		if (i->head) {
-			ret = i->head;
+			struct rcu_head *ret = i->head;
 #ifdef __KERNEL__
 			i->head = ret->next;
 #else
@@ -555,12 +553,10 @@ static struct rcu_head *rcu_pending_pcpu_dequeue(struct rcu_pending_pcpu *p)
 #endif
 			if (!i->head)
 				i->tail = NULL;
-			goto out;
+			return ret;
 		}
-out:
-	spin_unlock_irq(&p->lock);
 
-	return ret;
+	return NULL;
 }
 
 struct rcu_head *rcu_pending_dequeue(struct rcu_pending *pending)
