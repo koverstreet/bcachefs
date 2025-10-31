@@ -528,20 +528,16 @@ unsigned bch2_sb_nr_devices(const struct bch_sb *sb)
 	return nr;
 }
 
-int bch2_sb_member_alloc(struct bch_fs *c)
+static int bch2_sb_member_find_slot(struct bch_fs *c)
 {
-	unsigned dev_idx = c->sb.nr_devices;
-	struct bch_sb_field_members_v2 *mi;
-	unsigned nr_devices;
-	unsigned u64s;
 	int best = -1;
 	u64 best_last_mount = 0;
 	unsigned nr_deleted = 0;
 
-	if (dev_idx < BCH_SB_MEMBERS_MAX)
-		goto have_slot;
+	if (c->sb.nr_devices < BCH_SB_MEMBERS_MAX)
+		return c->sb.nr_devices;
 
-	for (dev_idx = 0; dev_idx < BCH_SB_MEMBERS_MAX; dev_idx++) {
+	for (unsigned dev_idx = 0; dev_idx < BCH_SB_MEMBERS_MAX; dev_idx++) {
 		/* eventually BCH_SB_MEMBERS_MAX will be raised */
 		if (dev_idx == BCH_SB_MEMBER_INVALID)
 			continue;
@@ -559,21 +555,26 @@ int bch2_sb_member_alloc(struct bch_fs *c)
 			best_last_mount = last_mount;
 		}
 	}
-	if (best >= 0) {
-		dev_idx = best;
-		goto have_slot;
-	}
+	if (best >= 0)
+		return best;
 
 	if (nr_deleted)
 		bch_err(c, "unable to allocate new member, but have %u deleted: run fsck",
 			nr_deleted);
 
 	return -BCH_ERR_ENOSPC_sb_members;
-have_slot:
-	nr_devices = max_t(unsigned, dev_idx + 1, c->sb.nr_devices);
+}
 
-	mi = bch2_sb_field_get(c->disk_sb.sb, members_v2);
-	u64s = DIV_ROUND_UP(sizeof(struct bch_sb_field_members_v2) +
+int bch2_sb_member_alloc(struct bch_fs *c)
+{
+	int dev_idx = bch2_sb_member_find_slot(c);
+	if (dev_idx < 0)
+		return dev_idx;
+
+	struct bch_sb_field_members_v2 *mi = bch2_sb_field_get(c->disk_sb.sb, members_v2);
+
+	unsigned nr_devices = max_t(unsigned, dev_idx + 1, c->sb.nr_devices);
+	unsigned u64s = DIV_ROUND_UP(sizeof(struct bch_sb_field_members_v2) +
 			    le16_to_cpu(mi->member_bytes) * nr_devices, sizeof(u64));
 
 	mi = bch2_sb_field_resize(&c->disk_sb, members_v2, u64s);
