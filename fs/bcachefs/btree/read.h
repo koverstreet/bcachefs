@@ -39,6 +39,10 @@ void __bch2_btree_node_wait_on_write(struct btree *);
 void bch2_btree_node_wait_on_read(struct btree *);
 void bch2_btree_node_wait_on_write(struct btree *);
 
+DEFINE_GUARD(btree_node_io_lock, struct btree *,
+	     bch2_btree_node_io_lock(_T),
+	     bch2_btree_node_io_unlock(_T));
+
 static inline struct nonce btree_nonce(struct bset *i, unsigned offset)
 {
 	return (struct nonce) {{

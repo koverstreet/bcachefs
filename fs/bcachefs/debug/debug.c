@@ -146,19 +146,19 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 	if (c->opts.nochanges)
 		return;
 
-	bch2_btree_node_io_lock(b);
+	guard(btree_node_io_lock)(b);
 	guard(mutex)(&c->verify_lock);
 
 	if (!c->verify_ondisk) {
 		c->verify_ondisk = kvmalloc(btree_buf_bytes(b), GFP_KERNEL);
 		if (!c->verify_ondisk)
-			goto out;
+			return;
 	}
 
 	if (!c->verify_data) {
 		c->verify_data = __bch2_btree_node_mem_alloc(c);
 		if (!c->verify_data)
-			goto out;
+			return;
 	}
 
 	BUG_ON(b->nsets != 1);
@@ -182,8 +182,6 @@ void __bch2_btree_verify(struct bch_fs *c, struct btree *b)
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&b->key));
 		bch2_fs_fatal_error(c, ": btree node verify failed for: %s\n", buf.buf);
 	}
-out:
-	bch2_btree_node_io_unlock(b);
 }
 
 void bch2_btree_node_ondisk_to_text(struct printbuf *out, struct bch_fs *c,
