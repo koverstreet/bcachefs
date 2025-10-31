@@ -945,23 +945,20 @@ static void rw_aux_tree_insert_entry(struct btree *b,
 	}
 }
 
-static void bch2_bset_fix_lookup_table(struct btree *b,
-				       struct bset_tree *t,
-				       struct bkey_packed *_where,
-				       unsigned clobber_u64s,
-				       unsigned new_u64s)
+static void __bch2_bset_fix_lookup_table(struct btree *b,
+					 struct bset_tree *t,
+					 struct bkey_packed *_where,
+					 unsigned clobber_u64s,
+					 unsigned new_u64s)
 {
 	int shift = new_u64s - clobber_u64s;
 	unsigned idx, j, where = __btree_node_key_to_offset(b, _where);
 
 	EBUG_ON(bset_has_ro_aux_tree(t));
 
-	if (!bset_has_rw_aux_tree(t))
-		return;
-
 	if (where > rw_aux_tree(b, t)[t->size - 1].offset) {
 		rw_aux_tree_insert_entry(b, t, t->size);
-		goto verify;
+		return;
 	}
 
 	/* returns first entry >= where */
@@ -975,7 +972,7 @@ static void bch2_bset_fix_lookup_table(struct btree *b,
 		} else {
 			EBUG_ON(where != t->end_offset);
 			rw_aux_tree_insert_entry(b, t, --t->size);
-			goto verify;
+			return;
 		}
 	}
 
@@ -998,10 +995,19 @@ static void bch2_bset_fix_lookup_table(struct btree *b,
 		rw_aux_tree(b, t)[idx - 1].offset);
 
 	rw_aux_tree_insert_entry(b, t, idx);
+}
 
-verify:
-	bch2_bset_verify_rw_aux_tree(b, t);
-	bset_aux_tree_verify(b);
+static void bch2_bset_fix_lookup_table(struct btree *b,
+				       struct bset_tree *t,
+				       struct bkey_packed *_where,
+				       unsigned clobber_u64s,
+				       unsigned new_u64s)
+{
+	if (bset_has_rw_aux_tree(t)) {
+		__bch2_bset_fix_lookup_table(b, t, _where, clobber_u64s, new_u64s);
+		bch2_bset_verify_rw_aux_tree(b, t);
+		bset_aux_tree_verify(b);
+	}
 }
 
 void bch2_bset_insert(struct btree *b,
