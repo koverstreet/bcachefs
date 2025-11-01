@@ -1030,11 +1030,24 @@ static int ec_stripe_key_update(struct btree_trans *trans,
 	return bch2_trans_update(trans, &iter, &new->k_i, 0);
 }
 
+struct stripe_update_bucket_stats {
+	u32			nr_bp_to_deleted;
+	u32			nr_no_match;
+	u32			nr_cached;
+	u32			nr_done;
+
+	u32			sectors_bp_to_deleted;
+	u32			sectors_no_match;
+	u32			sectors_cached;
+	u32			sectors_done;
+};
+
 static int ec_stripe_update_extent(struct btree_trans *trans,
 				   struct bch_dev *ca,
 				   struct bpos bucket, u8 gen,
 				   struct ec_stripe_buf *s,
 				   struct bkey_s_c_backpointer bp,
+				   struct stripe_update_bucket_stats *stats,
 				   struct wb_maybe_flush *last_flushed)
 {
 	struct bch_stripe *v = &bkey_i_to_stripe(&s->key)->v;
@@ -1063,6 +1076,9 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 		 * extent no longer exists - we could flush the btree
 		 * write buffer and retry to verify, but no need:
 		 */
+		stats->nr_bp_to_deleted++;
+		stats->sectors_bp_to_deleted += bp.v->bucket_len;
+		count_event(c, ec_stripe_update_extent_fail);
 		return 0;
 	}
 
@@ -1075,8 +1091,18 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 	 * It doesn't generally make sense to erasure code cached ptrs:
 	 * XXX: should we be incrementing a counter?
 	 */
-	if (!ptr_c || ptr_c->cached)
+	if (!ptr_c) {
+		stats->nr_no_match++;
+		stats->sectors_no_match += bp.v->bucket_len;
+		count_event(c, ec_stripe_update_extent_fail);
 		return 0;
+	}
+	if (ptr_c->cached) {
+		stats->nr_cached++;
+		stats->sectors_cached += bp.v->bucket_len;
+		count_event(c, ec_stripe_update_extent_fail);
+		return 0;
+	}
 
 	unsigned dev = v->ptrs[block].dev;
 
@@ -1106,6 +1132,14 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 	try(bch2_bkey_set_needs_rebalance(trans->c, &opts, n,
 					  SET_NEEDS_REBALANCE_other, 0));
 	try(bch2_trans_update(trans, &iter, n, 0));
+	try(bch2_trans_commit(trans, NULL, NULL,
+			BCH_TRANS_COMMIT_no_check_rw|
+			BCH_TRANS_COMMIT_no_enospc));
+
+	stats->nr_done++;
+	stats->sectors_done += bp.v->bucket_len;
+
+	count_event(c, ec_stripe_update_extent);
 
 	return 0;
 }
@@ -1126,12 +1160,11 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
 
-	return for_each_btree_key_max_commit(trans, bp_iter, BTREE_ID_backpointers,
+	struct stripe_update_bucket_stats stats = {};
+
+	try(for_each_btree_key_max(trans, bp_iter, BTREE_ID_backpointers,
 			bucket_pos_to_bp_start(ca, bucket_pos),
-			bucket_pos_to_bp_end(ca, bucket_pos), 0, bp_k,
-			NULL, NULL,
-			BCH_TRANS_COMMIT_no_check_rw|
-			BCH_TRANS_COMMIT_no_enospc, ({
+			bucket_pos_to_bp_end(ca, bucket_pos), 0, bp_k, ({
 		if (bkey_ge(bp_k.k->p, bucket_pos_to_bp(ca, bpos_nosnap_successor(bucket_pos), 0)))
 			break;
 
@@ -1143,8 +1176,26 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 			continue;
 
 		wb_maybe_flush_inc(&last_flushed);
-		ec_stripe_update_extent(trans, ca, bucket_pos, ptr.gen, s, bp, &last_flushed);
-	}));
+		ec_stripe_update_extent(trans, ca, bucket_pos, ptr.gen, s, bp,
+					&stats, &last_flushed);
+	})));
+
+	if (trace_stripe_update_bucket_enabled()) {
+		CLASS(printbuf, buf)();
+
+		prt_printf(&buf, "bp_to_deleted:\t%u %u\n",
+			   stats.nr_bp_to_deleted, stats.sectors_bp_to_deleted);
+		prt_printf(&buf, "no_match:\t%u %u\n",
+			   stats.nr_no_match, stats.sectors_no_match);
+		prt_printf(&buf, "cached:\t%u %u\n",
+			   stats.nr_cached, stats.sectors_cached);
+		prt_printf(&buf, "done:\t%u %u\n",
+			   stats.nr_done, stats.sectors_done);
+
+		trace_stripe_update_bucket(c, buf.buf);
+	}
+
+	return 0;
 }
 
 static int ec_stripe_update_extents(struct bch_fs *c, struct ec_stripe_buf *s)

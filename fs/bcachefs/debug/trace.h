@@ -346,6 +346,11 @@ TRACE_EVENT(stripe_create,
 		  __entry->ret)
 );
 
+DEFINE_EVENT(fs_str, stripe_update_bucket,
+	TP_PROTO(struct bch_fs *c, const char *str),
+	TP_ARGS(c, str)
+);
+
 /* Journal */
 
 DEFINE_EVENT(bch_fs, journal_full,

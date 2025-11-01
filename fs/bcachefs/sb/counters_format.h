@@ -31,6 +31,8 @@ enum counters_flags {
 	x(data_update_fail,				82,	TYPE_COUNTER)	\
 	x(data_update_key,				37,	TYPE_SECTORS)	\
 	x(data_update_key_fail,				38,	TYPE_COUNTER)	\
+	x(ec_stripe_update_extent,			99,	TYPE_COUNTER)	\
+	x(ec_stripe_update_extent_fail,			100,	TYPE_COUNTER)	\
 	x(io_move_read,					35,	TYPE_SECTORS)	\
 	x(io_move_write,				36,	TYPE_SECTORS)	\
 	x(io_move_start_fail,				39,	TYPE_COUNTER)	\
