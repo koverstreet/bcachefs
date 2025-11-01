@@ -306,9 +306,11 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 				bch2_inode_opts_get_inode(c, &inode, opts);
 		}
 	} else {
-		if (snapshot_opts->fs_io_opts.change_cookie != atomic_read(&c->opt_change_cookie)) {
+		if (snapshot_opts->fs_io_opts.change_cookie	!= atomic_read(&c->opt_change_cookie) ||
+		    snapshot_opts->metadata			!= metadata) {
 			bch2_inode_opts_get(c, &snapshot_opts->fs_io_opts, metadata);
 
+			snapshot_opts->metadata = metadata;
 			snapshot_opts->cur_inum = 0;
 			snapshot_opts->d.nr = 0;
 		}

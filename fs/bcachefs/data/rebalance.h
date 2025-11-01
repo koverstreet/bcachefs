@@ -52,6 +52,8 @@ struct snapshot_io_opts_entry {
 
 struct per_snapshot_io_opts {
 	u64			cur_inum;
+	bool			metadata;
+
 	struct bch_inode_opts	fs_io_opts;
 	DARRAY(struct snapshot_io_opts_entry) d;
 };
