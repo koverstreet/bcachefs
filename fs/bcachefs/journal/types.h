@@ -50,6 +50,7 @@ struct journal_buf {
 	bool			write_allocated:1;
 	bool			write_done:1;
 	bool			had_error:1;
+	bool			empty:1;
 	u8			idx;
 };
 

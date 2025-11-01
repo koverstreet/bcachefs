@@ -272,6 +272,9 @@ again:
 
 		j->seq_ondisk = seq;
 
+		if (w->empty)
+			j->last_empty_seq = seq;
+
 		/*
 		 * Updating last_seq_ondisk may let bch2_journal_reclaim_work() discard
 		 * more buckets:
@@ -461,6 +464,8 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 	u64 seq = le64_to_cpu(jset->seq);
 	int ret;
 
+	bool empty = jset->seq == jset->last_seq;
+
 	/*
 	 * Simple compaction, dropping empty jset_entries (from journal
 	 * reservations that weren't fully used) and merging jset_entries that
@@ -475,6 +480,9 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 		/* Empty entry: */
 		if (!u64s)
 			continue;
+
+		if (i->type == BCH_JSET_ENTRY_btree_keys)
+			empty = false;
 
 		/*
 		 * New btree roots are set by journalling them; when the journal
@@ -520,8 +528,10 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 		}
 	}
 
-	scoped_guard(spinlock, &c->journal.lock)
+	scoped_guard(spinlock, &c->journal.lock) {
 		w->need_flush_to_write_buffer = false;
+		w->empty = empty;
+	}
 
 	start = end = vstruct_last(jset);
 
@@ -555,7 +565,6 @@ static int bch2_journal_write_checksum(struct journal *j, struct journal_buf *w)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct jset *jset = w->data;
-	u64 seq = le64_to_cpu(jset->seq);
 	bool validate_before_checksum = false;
 	int ret = 0;
 
@@ -564,9 +573,6 @@ static int bch2_journal_write_checksum(struct journal *j, struct journal_buf *w)
 
 	SET_JSET_BIG_ENDIAN(jset, CPU_BIG_ENDIAN);
 	SET_JSET_CSUM_TYPE(jset, bch2_meta_checksum_type(c));
-
-	if (!JSET_NO_FLUSH(jset) && journal_entry_empty(jset))
-		j->last_empty_seq = seq;
 
 	if (bch2_csum_type_is_encryption(JSET_CSUM_TYPE(jset)))
 		validate_before_checksum = true;
