@@ -489,6 +489,7 @@ static int journal_entry_open(struct journal *j)
 
 static bool journal_quiesced(struct journal *j)
 {
+	guard(spinlock)(&j->lock);
 	bool ret = atomic64_read(&j->seq) == j->seq_ondisk;
 
 	if (!ret)
