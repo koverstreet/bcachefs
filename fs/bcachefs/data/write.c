@@ -1675,6 +1675,12 @@ CLOSURE_CALLBACK(bch2_write)
 	struct bch_fs *c = op->c;
 	unsigned data_len;
 
+	if (trace_io_write_enabled()) {
+		CLASS(printbuf, buf)();
+		bch2_write_op_to_text(&buf, op);
+		trace_io_write(c, buf.buf);
+	}
+
 	EBUG_ON(op->cl.parent);
 	BUG_ON(!op->nr_replicas);
 	BUG_ON(!op->write_point.v);
