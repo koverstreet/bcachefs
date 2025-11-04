@@ -1309,6 +1309,13 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 			if (extent_ec_pending(trans, ptrs))
 				return false;
 
+			unsigned ptr_bit = 1;
+			bkey_for_each_ptr(ptrs, ptr) {
+				if (!ptr->cached)
+					data_opts->ptrs_kill |= ptr_bit;
+				ptr_bit <<= 1;
+			}
+
 			data_opts->extra_replicas = r->data_replicas;
 		} else {
 			unsigned ptr_bit = 1;

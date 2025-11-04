@@ -627,6 +627,10 @@ static int bch2_extent_drop_ptrs(struct btree_trans *trans,
 
 	struct bkey_i *n = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
 
+	/*
+	 * we may also need to kill ec ptrs in __bch2_data_update_index_update
+	 */
+
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p = {};
 	unsigned i = 0;
