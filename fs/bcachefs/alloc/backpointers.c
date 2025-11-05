@@ -75,7 +75,7 @@ void bch2_backpointer_to_text(struct printbuf *out, struct bch_fs *c, struct bke
 	bch2_bpos_to_text(out, bp.v->pos);
 }
 
-void bch2_backpointer_swab(struct bkey_s k)
+void bch2_backpointer_swab(const struct bch_fs *c, struct bkey_s k)
 {
 	struct bkey_s_backpointer bp = bkey_s_to_backpointer(k);
 
@@ -438,7 +438,7 @@ static int drop_dev_and_update(struct btree_trans *trans, enum btree_id btree,
 {
 	struct bkey_i *n = errptr_try(bch2_bkey_make_mut_noupdate(trans, extent));
 
-	bch2_bkey_drop_device(bkey_i_to_s(n), dev);
+	bch2_bkey_drop_device(trans->c, bkey_i_to_s(n), dev);
 	return bch2_btree_insert_trans(trans, btree, n, 0);
 }
 
@@ -577,7 +577,7 @@ static int check_bp_dup(struct btree_trans *trans,
 		return 0;
 	}
 
-	if (bch2_extents_match(extent, other_extent)) {
+	if (bch2_extents_match(c, extent, other_extent)) {
 		CLASS(printbuf, buf)();
 		prt_printf(&buf, "duplicate versions of same extent, deleting smaller\n");
 		bch2_bkey_val_to_text(&buf, c, extent);

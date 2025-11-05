@@ -23,7 +23,7 @@ bool bch2_replicas_marked(struct bch_fs *, struct bch_replicas_entry_v1 *);
 int bch2_mark_replicas(struct bch_fs *,
 		       struct bch_replicas_entry_v1 *);
 
-void bch2_bkey_to_replicas(struct bch_replicas_entry_v1 *, struct bkey_s_c);
+void bch2_bkey_to_replicas(const struct bch_fs *, struct bch_replicas_entry_v1 *, struct bkey_s_c);
 
 static inline void bch2_replicas_entry_cached(struct bch_replicas_entry_v1 *e,
 					      unsigned dev)

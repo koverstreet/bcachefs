@@ -75,7 +75,7 @@ static void __journal_write_alloc(struct journal *j,
 		 * it:
 		 */
 		if (!ja->nr ||
-		    bch2_bkey_has_device_c(bkey_i_to_s_c(&w->key), ca->dev_idx) ||
+		    bch2_bkey_has_device_c(c, bkey_i_to_s_c(&w->key), ca->dev_idx) ||
 		    sectors > ja->sectors_free) {
 			enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_journal_write);
 			continue;
@@ -83,7 +83,7 @@ static void __journal_write_alloc(struct journal *j,
 
 		bch2_dev_stripe_increment(ca, &j->wp.stripe);
 
-		bch2_bkey_append_ptr(&w->key,
+		bch2_bkey_append_ptr(c, &w->key,
 			(struct bch_extent_ptr) {
 				  .offset = bucket_to_sector(ca,
 					ja->buckets[ja->cur_idx]) +
@@ -716,7 +716,7 @@ CLOSURE_CALLBACK(bch2_journal_write)
 		bch2_journal_do_writes(j);
 	}
 
-	w->devs_written = bch2_bkey_devs(bkey_i_to_s_c(&w->key));
+	w->devs_written = bch2_bkey_devs(c, bkey_i_to_s_c(&w->key));
 
 	/*
 	 * Mark journal replicas before we submit the write to guarantee

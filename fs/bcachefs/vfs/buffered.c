@@ -95,7 +95,7 @@ static inline void readpage_iter_advance(struct readpages_iter *iter)
 	iter->idx++;
 }
 
-static bool extent_partial_reads_expensive(struct bkey_s_c k)
+static bool extent_partial_reads_expensive(const struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	struct bch_extent_crc_unpacked crc;
@@ -229,7 +229,7 @@ static void bchfs_read(struct btree_trans *trans,
 
 		if (readpages_iter) {
 			ret = readpage_bio_extend(trans, readpages_iter, &rbio->bio, sectors,
-						  extent_partial_reads_expensive(k));
+						  extent_partial_reads_expensive(c, k));
 			if (ret)
 				goto err;
 		}
@@ -240,7 +240,7 @@ static void bchfs_read(struct btree_trans *trans,
 		if (rbio->bio.bi_iter.bi_size == bytes)
 			flags |= BCH_READ_last_fragment;
 
-		bch2_bio_page_state_set(&rbio->bio, k);
+		bch2_bio_page_state_set(c, &rbio->bio, k);
 
 		bch2_read_extent(trans, rbio, iter.pos,
 				 data_btree, k, offset_into_extent, flags);

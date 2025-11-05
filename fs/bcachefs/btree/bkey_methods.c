@@ -341,12 +341,12 @@ void bch2_bkey_val_to_text(struct printbuf *out, struct bch_fs *c,
 	}
 }
 
-void bch2_bkey_swab_val(struct bkey_s k)
+void bch2_bkey_swab_val(const struct bch_fs *c, struct bkey_s k)
 {
 	const struct bkey_ops *ops = bch2_bkey_type_ops(k.k->type);
 
 	if (ops->swab)
-		ops->swab(k);
+		ops->swab(c, k);
 }
 
 bool bch2_bkey_merge(struct bch_fs *c, struct bkey_s l, struct bkey_s_c r)
@@ -395,7 +395,8 @@ void bch2_bkey_renumber(enum btree_node_type btree_node_type,
 		}
 }
 
-void __bch2_bkey_compat(unsigned level, enum btree_id btree_id,
+void __bch2_bkey_compat(const struct bch_fs *c,
+			unsigned level, enum btree_id btree_id,
 			unsigned version, unsigned big_endian,
 			int write,
 			struct bkey_format *f,
@@ -483,7 +484,7 @@ void __bch2_bkey_compat(unsigned level, enum btree_id btree_id,
 		}
 
 		if (big_endian != CPU_BIG_ENDIAN)
-			bch2_bkey_swab_val(u);
+			bch2_bkey_swab_val(c, u);
 
 		ops = bch2_bkey_type_ops(k->type);
 

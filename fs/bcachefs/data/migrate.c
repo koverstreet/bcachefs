@@ -36,7 +36,7 @@ static int drop_dev_ptrs(struct bch_fs *c, struct bkey_s k, unsigned dev_idx,
 	unsigned degraded = metadata ? BCH_FORCE_IF_METADATA_DEGRADED : BCH_FORCE_IF_DATA_DEGRADED;
 	unsigned nr_good;
 
-	bch2_bkey_drop_device(k, dev_idx);
+	bch2_bkey_drop_device(c, k, dev_idx);
 
 	nr_good = bch2_bkey_durability(c, k.s_c);
 	if ((!nr_good && !(flags & lost)) ||
@@ -72,7 +72,7 @@ static int bch2_dev_usrdata_drop_key(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
-	if (!bch2_bkey_has_device_c(k, dev_idx))
+	if (!bch2_bkey_has_device_c(c, k, dev_idx))
 		return 0;
 
 	struct bkey_i *n =
@@ -151,7 +151,7 @@ static int dev_metadata_drop_one(struct btree_trans *trans,
 
 	try(bch2_progress_update_iter(trans, progress, iter, "dropping metadata"));
 
-	if (bch2_bkey_has_device_c(bkey_i_to_s_c(&b->key), dev_idx))
+	if (bch2_bkey_has_device_c(trans->c, bkey_i_to_s_c(&b->key), dev_idx))
 		try(drop_btree_ptrs(trans, iter, b, dev_idx, flags, err));
 	return 0;
 }
@@ -198,7 +198,7 @@ static int data_drop_bp(struct btree_trans *trans, unsigned dev_idx,
 	if (ret)
 		return ret;
 
-	if (!k.k || !bch2_bkey_has_device_c(k, dev_idx))
+	if (!k.k || !bch2_bkey_has_device_c(trans->c, k, dev_idx))
 		return 0;
 
 	/*

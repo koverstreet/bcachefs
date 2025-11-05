@@ -684,6 +684,7 @@ static int evacuate_bucket_pred(struct btree_trans *trans, void *_arg,
 				struct bch_inode_opts *io_opts,
 				struct data_update_opts *data_opts)
 {
+	struct bch_fs *c = trans->c;
 	struct evacuate_bucket_arg *arg = _arg;
 
 	*data_opts = arg->data_opts;
@@ -833,6 +834,7 @@ static int migrate_pred(struct btree_trans *trans, void *arg,
 			struct bch_inode_opts *io_opts,
 			struct data_update_opts *data_opts)
 {
+	struct bch_fs *c = trans->c;
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	struct bch_ioctl_data *op = arg;
 	unsigned ptr_bit = 1;
@@ -940,6 +942,7 @@ static int scrub_pred(struct btree_trans *trans, void *_arg,
 	struct bch_ioctl_data *arg = _arg;
 
 	if (k.k->type != KEY_TYPE_btree_ptr_v2) {
+		struct bch_fs *c = trans->c;
 		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 		const union bch_extent_entry *entry;
 		struct extent_ptr_decoded p;

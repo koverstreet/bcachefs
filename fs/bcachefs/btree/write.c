@@ -109,7 +109,7 @@ static int btree_node_write_update_key(struct btree_trans *trans,
 	bch2_bkey_drop_ptrs(bkey_i_to_s(n), p, entry,
 		bch2_dev_list_has_dev(wbio->wbio.failed, p.ptr.dev));
 
-	if (!bch2_bkey_nr_dirty_ptrs(bkey_i_to_s_c(n)))
+	if (!bch2_bkey_nr_dirty_ptrs(c, bkey_i_to_s_c(n)))
 		return bch_err_throw(c, btree_node_write_all_failed);
 
 	return bch2_btree_node_update_key(trans, &iter, b, n,
@@ -232,6 +232,7 @@ static int validate_bset_for_write(struct bch_fs *c, struct btree *b,
 static void btree_write_submit(struct work_struct *work)
 {
 	struct btree_write_bio *wbio = container_of(work, struct btree_write_bio, work);
+	struct bch_fs *c	= wbio->wbio.c;
 	BKEY_PADDED_ONSTACK(k, BKEY_BTREE_PTR_VAL_U64s_MAX) tmp;
 
 	bkey_copy(&tmp.k, &wbio->key);

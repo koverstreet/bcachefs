@@ -155,7 +155,7 @@ bch2_next_fiemap_pagecache_extent(struct btree_trans *trans, struct bch_inode_in
 	delextent = bkey_extent_init(cur->kbuf.k);
 	delextent->k.p = POS(inode->ei_inum.inum, dend >> 9);
 	delextent->k.size = (dend - dstart) >> 9;
-	bch2_bkey_append_ptr(&delextent->k_i, ptr);
+	bch2_bkey_append_ptr(trans->c, &delextent->k_i, ptr);
 
 	cur->flags = FIEMAP_EXTENT_DELALLOC;
 
@@ -198,7 +198,7 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 	    bkey_le(bpos_max(iter.pos, bkey_start_pos(k.k)),
 		    pagecache_start)) {
 		bch2_bkey_buf_reassemble(&cur->kbuf, k);
-		bch2_cut_front(iter.pos, cur->kbuf.k);
+		bch2_cut_front(trans->c, iter.pos, cur->kbuf.k);
 		bch2_cut_back(POS(inode->ei_inum.inum, end), cur->kbuf.k);
 		cur->flags = 0;
 	} else if (k.k) {
@@ -214,7 +214,8 @@ static int bch2_next_fiemap_extent(struct btree_trans *trans,
 		struct bkey_i *k = cur->kbuf.k;
 		sectors = min_t(unsigned, sectors, k->k.size - offset_into_extent);
 
-		bch2_cut_front(POS(k->k.p.inode,
+		bch2_cut_front(trans->c,
+			       POS(k->k.p.inode,
 				   bkey_start_offset(&k->k) + offset_into_extent),
 			       k);
 		bch2_key_resize(&k->k, sectors);

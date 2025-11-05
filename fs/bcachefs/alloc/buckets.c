@@ -367,7 +367,7 @@ found:
 					    !__bch2_ptr_matches_stripe(&m->ptrs[entry->stripe_ptr.block],
 								       &next_ptr->ptr,
 								       m->sectors)) {
-						bch2_bkey_extent_entry_drop(new, entry);
+						bch2_bkey_extent_entry_drop(c, new, entry);
 						goto again;
 					}
 				}
@@ -709,7 +709,7 @@ static int bch2_trigger_stripe_ptr(struct btree_trans *trans,
 		struct disk_accounting_pos acc;
 		memset(&acc, 0, sizeof(acc));
 		acc.type = BCH_DISK_ACCOUNTING_replicas;
-		bch2_bkey_to_replicas(&acc.replicas, bkey_i_to_s_c(&s->k_i));
+		bch2_bkey_to_replicas(c, &acc.replicas, bkey_i_to_s_c(&s->k_i));
 		acc.replicas.data_type = data_type;
 		return bch2_disk_accounting_mod(trans, &acc, &sectors, 1, false);
 	}
@@ -758,6 +758,7 @@ static int __trigger_extent(struct btree_trans *trans,
 {
 	bool gc = flags & BTREE_TRIGGER_gc;
 	bool insert = !(flags & BTREE_TRIGGER_overwrite);
+	struct bch_fs *c = trans->c;
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;

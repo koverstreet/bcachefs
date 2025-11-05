@@ -549,7 +549,7 @@ int bch2_validate_bset_keys(struct bch_fs *c, struct btree *b,
 			goto drop_this_key;
 
 		if (!write)
-			bch2_bkey_compat(b->c.level, b->c.btree_id, version,
+			bch2_bkey_compat(c, b->c.level, b->c.btree_id, version,
 				    BSET_BIG_ENDIAN(i), write,
 				    &b->format, k);
 
@@ -562,7 +562,7 @@ int bch2_validate_bset_keys(struct bch_fs *c, struct btree *b,
 			goto fsck_err;
 
 		if (write)
-			bch2_bkey_compat(b->c.level, b->c.btree_id, version,
+			bch2_bkey_compat(c, b->c.level, b->c.btree_id, version,
 				    BSET_BIG_ENDIAN(i), write,
 				    &b->format, k);
 

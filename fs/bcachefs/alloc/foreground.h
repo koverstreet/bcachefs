@@ -269,7 +269,7 @@ bch2_alloc_sectors_append_ptrs_inlined(struct bch_fs *c, struct write_point *wp,
 			(!ca->mi.durability &&
 			 wp->data_type == BCH_DATA_user);
 
-		bch2_bkey_append_ptr(k, ptr);
+		bch2_bkey_append_ptr(c, k, ptr);
 
 		BUG_ON(sectors > ob->sectors_free);
 		ob->sectors_free -= sectors;

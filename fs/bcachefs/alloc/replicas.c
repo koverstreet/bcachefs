@@ -155,7 +155,7 @@ void bch2_cpu_replicas_to_text(struct printbuf *out,
 	}
 }
 
-static void extent_to_replicas(struct bkey_s_c k,
+static void extent_to_replicas(const struct bch_fs *c, struct bkey_s_c k,
 			       struct bch_replicas_entry_v1 *r)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
@@ -189,7 +189,7 @@ static void stripe_to_replicas(struct bkey_s_c k,
 		replicas_entry_add_dev(r, ptr->dev);
 }
 
-void bch2_bkey_to_replicas(struct bch_replicas_entry_v1 *e,
+void bch2_bkey_to_replicas(const struct bch_fs *c, struct bch_replicas_entry_v1 *e,
 			   struct bkey_s_c k)
 {
 	e->nr_devs = 0;
@@ -198,12 +198,12 @@ void bch2_bkey_to_replicas(struct bch_replicas_entry_v1 *e,
 	case KEY_TYPE_btree_ptr:
 	case KEY_TYPE_btree_ptr_v2:
 		e->data_type = BCH_DATA_btree;
-		extent_to_replicas(k, e);
+		extent_to_replicas(c, k, e);
 		break;
 	case KEY_TYPE_extent:
 	case KEY_TYPE_reflink_v:
 		e->data_type = BCH_DATA_user;
-		extent_to_replicas(k, e);
+		extent_to_replicas(c, k, e);
 		break;
 	case KEY_TYPE_stripe:
 		e->data_type = BCH_DATA_parity;

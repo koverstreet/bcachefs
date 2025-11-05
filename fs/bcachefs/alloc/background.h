@@ -269,7 +269,7 @@ int bch2_alloc_v3_validate(struct bch_fs *, struct bkey_s_c,
 			   struct bkey_validate_context);
 int bch2_alloc_v4_validate(struct bch_fs *, struct bkey_s_c,
 			   struct bkey_validate_context);
-void bch2_alloc_v4_swab(struct bkey_s);
+void bch2_alloc_v4_swab(const struct bch_fs *, struct bkey_s);
 void bch2_alloc_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 void bch2_alloc_v4_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 

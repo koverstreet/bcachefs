@@ -278,7 +278,7 @@ retry:
 
 		if (k.k->p.snapshot != snapshot ||
 		    nr_replicas > bch2_bkey_replicas(c, k) ||
-		    (!compressed && bch2_bkey_sectors_compressed(k)))
+		    (!compressed && bch2_bkey_sectors_compressed(c, k)))
 			return false;
 	}
 err:

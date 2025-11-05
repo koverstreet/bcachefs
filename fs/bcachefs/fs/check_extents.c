@@ -225,7 +225,7 @@ static int overlapping_extents_found(struct btree_trans *trans,
 			swap(k1, k2);
 		}
 
-		trans->extra_disk_res += bch2_bkey_sectors_compressed(k2);
+		trans->extra_disk_res += bch2_bkey_sectors_compressed(c, k2);
 
 		try(bch2_trans_update_extent_overwrite(trans, old_iter,
 					BTREE_UPDATE_internal_snapshot_node,
@@ -361,7 +361,7 @@ static int check_extent(struct btree_trans *trans, struct btree_iter *iter,
 			u64 last_block = round_up(i->inode.bi_size, block_bytes(c)) >> 9;
 
 			if (fsck_err_on(k.k->p.offset > last_block &&
-					!bkey_extent_is_reservation(k),
+					!bkey_extent_is_reservation(c, k),
 					trans, extent_past_end_of_inode,
 					"extent type past end of inode %llu:%u, i_size %llu\n%s",
 					i->inode.bi_inum, i->inode.bi_snapshot, i->inode.bi_size,

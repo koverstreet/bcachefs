@@ -31,20 +31,22 @@
 
 /* bch_extent_rebalance: */
 
-static const struct bch_extent_rebalance *bch2_bkey_ptrs_rebalance_opts(struct bkey_ptrs_c ptrs)
+static const struct bch_extent_rebalance *bch2_bkey_ptrs_rebalance_opts(const struct bch_fs *c,
+									struct bkey_ptrs_c ptrs)
 {
 	const union bch_extent_entry *entry;
 
 	bkey_extent_entry_for_each(ptrs, entry)
-		if (__extent_entry_type(entry) == BCH_EXTENT_ENTRY_rebalance)
+		if (extent_entry_type(entry) == BCH_EXTENT_ENTRY_rebalance)
 			return &entry->rebalance;
 
 	return NULL;
 }
 
-static const struct bch_extent_rebalance *bch2_bkey_rebalance_opts(struct bkey_s_c k)
+static const struct bch_extent_rebalance *bch2_bkey_rebalance_opts(const struct bch_fs *c,
+								   struct bkey_s_c k)
 {
-	return bch2_bkey_ptrs_rebalance_opts(bch2_bkey_ptrs_c(k));
+	return bch2_bkey_ptrs_rebalance_opts(c, bch2_bkey_ptrs_c(k));
 }
 
 void bch2_extent_rebalance_to_text(struct printbuf *out, struct bch_fs *c,
@@ -135,7 +137,7 @@ static void bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 
-	const struct bch_extent_rebalance *rb_opts = bch2_bkey_ptrs_rebalance_opts(ptrs);
+	const struct bch_extent_rebalance *rb_opts = bch2_bkey_ptrs_rebalance_opts(c, ptrs);
 	if (!io_opts && !rb_opts)
 		return;
 
@@ -236,7 +238,7 @@ int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_inode_opts *opts,
 
 	struct bkey_s k = bkey_i_to_s(_k);
 	struct bch_extent_rebalance *old =
-		(struct bch_extent_rebalance *) bch2_bkey_rebalance_opts(k.s_c);
+		(struct bch_extent_rebalance *) bch2_bkey_rebalance_opts(c, k.s_c);
 
 	if (bkey_should_have_rb_opts(c, opts, k.s_c)) {
 		if (!old) {
@@ -247,7 +249,7 @@ int bch2_bkey_set_needs_rebalance(struct bch_fs *c, struct bch_inode_opts *opts,
 		*old = io_opts_to_rebalance_opts(c, opts);
 	} else {
 		if (old)
-			extent_entry_drop(k, (union bch_extent_entry *) old);
+			extent_entry_drop(c, k, (union bch_extent_entry *) old);
 	}
 
 	return 0;
@@ -270,7 +272,7 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 	if (bkey_is_btree_ptr(k.k))
 		return 0;
 
-	const struct bch_extent_rebalance *old = bch2_bkey_rebalance_opts(k);
+	const struct bch_extent_rebalance *old = bch2_bkey_rebalance_opts(c, k);
 	struct bch_extent_rebalance new = io_opts_to_rebalance_opts(c, io_opts);
 
 	if (bkey_should_have_rb_opts(c, io_opts, k)
@@ -355,7 +357,7 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 
 	const struct bch_extent_rebalance *old;
 	if (k.k->type == KEY_TYPE_reflink_v &&
-	    (old = bch2_bkey_rebalance_opts(k))) {
+	    (old = bch2_bkey_rebalance_opts(c, k))) {
 #define x(_name)								\
 		if (old->_name##_from_inode)					\
 			opts->_name		= old->_name;			\
@@ -511,13 +513,15 @@ static int bch2_bkey_clear_needs_rebalance(struct btree_trans *trans,
 					   struct btree_iter *iter,
 					   struct bkey_s_c k)
 {
-	if (k.k->type == KEY_TYPE_reflink_v || !bch2_bkey_rebalance_opts(k))
+	struct bch_fs *c = trans->c;
+
+	if (k.k->type == KEY_TYPE_reflink_v || !bch2_bkey_rebalance_opts(c, k))
 		return 0;
 
 	struct bkey_i *n = errptr_try(bch2_bkey_make_mut(trans, iter, &k, 0));
 
-	extent_entry_drop(bkey_i_to_s(n),
-			  (void *) bch2_bkey_rebalance_opts(bkey_i_to_s_c(n)));
+	extent_entry_drop(c, bkey_i_to_s(n),
+			  (void *) bch2_bkey_rebalance_opts(c, bkey_i_to_s_c(n)));
 	return bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 }
 

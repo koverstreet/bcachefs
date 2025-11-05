@@ -298,7 +298,7 @@ void bch2_accounting_to_text(struct printbuf *out, struct bch_fs *c, struct bkey
 		prt_printf(out, " %lli", acc.v->d[i]);
 }
 
-void bch2_accounting_swab(struct bkey_s k)
+void bch2_accounting_swab(const struct bch_fs *c, struct bkey_s k)
 {
 	for (u64 *p = (u64 *) k.v;
 	     p < (u64 *) bkey_val_end(k);

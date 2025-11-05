@@ -20,7 +20,7 @@ static inline u64 swab40(u64 x)
 int bch2_backpointer_validate(struct bch_fs *, struct bkey_s_c k,
 			      struct bkey_validate_context);
 void bch2_backpointer_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
-void bch2_backpointer_swab(struct bkey_s);
+void bch2_backpointer_swab(const struct bch_fs *, struct bkey_s);
 
 #define bch2_bkey_ops_backpointer ((struct bkey_ops) {	\
 	.key_validate	= bch2_backpointer_validate,	\

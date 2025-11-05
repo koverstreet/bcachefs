@@ -15,14 +15,14 @@
  * This counts the number of iterators to the alloc & ec btrees we'll need
  * inserting/removing this extent:
  */
-static unsigned bch2_bkey_nr_alloc_ptrs(struct bkey_s_c k)
+static unsigned bch2_bkey_nr_alloc_ptrs(const struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
 	unsigned ret = 0, lru = 0;
 
 	bkey_extent_entry_for_each(ptrs, entry) {
-		switch (__extent_entry_type(entry)) {
+		switch (extent_entry_type(entry)) {
 		case BCH_EXTENT_ENTRY_ptr:
 			/* Might also be updating LRU btree */
 			if (entry->ptr.cached)
@@ -49,6 +49,7 @@ static int count_iters_for_insert(struct btree_trans *trans,
 				  struct bpos *end,
 				  unsigned *nr_iters)
 {
+	struct bch_fs *c = trans->c;
 	int ret = 0, ret2 = 0;
 
 	if (*nr_iters >= EXTENT_ITERS_MAX) {
@@ -59,7 +60,7 @@ static int count_iters_for_insert(struct btree_trans *trans,
 	switch (k.k->type) {
 	case KEY_TYPE_extent:
 	case KEY_TYPE_reflink_v:
-		*nr_iters += bch2_bkey_nr_alloc_ptrs(k);
+		*nr_iters += bch2_bkey_nr_alloc_ptrs(c, k);
 
 		if (*nr_iters >= EXTENT_ITERS_MAX) {
 			*end = bpos_min(*end, k.k->p);
@@ -83,7 +84,7 @@ static int count_iters_for_insert(struct btree_trans *trans,
 			/* extent_update_to_keys(), for the reflink_v update */
 			*nr_iters += 1;
 
-			*nr_iters += 1 + bch2_bkey_nr_alloc_ptrs(r_k);
+			*nr_iters += 1 + bch2_bkey_nr_alloc_ptrs(c, r_k);
 
 			if (*nr_iters >= EXTENT_ITERS_MAX) {
 				struct bpos pos = bkey_start_pos(k.k);

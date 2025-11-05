@@ -325,7 +325,7 @@ fsck_err:
 	return ret;
 }
 
-void bch2_alloc_v4_swab(struct bkey_s k)
+void bch2_alloc_v4_swab(const struct bch_fs *c, struct bkey_s k)
 {
 	struct bch_alloc_v4 *a = bkey_s_to_alloc_v4(k).v;
 
@@ -1237,7 +1237,7 @@ static int invalidate_one_bp(struct btree_trans *trans,
 	struct bkey_i *n = errptr_try(bch2_bkey_make_mut(trans, &iter, &k,
 						BTREE_UPDATE_internal_snapshot_node));
 
-	bch2_bkey_drop_device(bkey_i_to_s(n), ca->dev_idx);
+	bch2_bkey_drop_device(trans->c, bkey_i_to_s(n), ca->dev_idx);
 	return 0;
 }
 

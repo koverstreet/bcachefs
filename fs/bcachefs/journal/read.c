@@ -387,7 +387,7 @@ static int journal_validate_key(struct bch_fs *c,
 	}
 
 	if (!write)
-		bch2_bkey_compat(from.level, from.btree, version, big_endian,
+		bch2_bkey_compat(c, from.level, from.btree, version, big_endian,
 				 write, NULL, bkey_to_packed(k));
 
 	if (journal_entry_err_on(ret = bch2_bkey_validate(c, bkey_i_to_s_c(k), from),
@@ -401,7 +401,7 @@ static int journal_validate_key(struct bch_fs *c,
 	}
 
 	if (write)
-		bch2_bkey_compat(from.level, from.btree, version, big_endian,
+		bch2_bkey_compat(c, from.level, from.btree, version, big_endian,
 				 write, NULL, bkey_to_packed(k));
 fsck_err:
 	return ret;

@@ -99,7 +99,7 @@ static void trace_data_update_key_fail2(struct data_update *m,
 		unsigned ptr_bit = 1;
 		bkey_for_each_ptr_decode(old.k, bch2_bkey_ptrs_c(old), p, entry) {
 			if ((ptr_bit & m->opts.ptrs_rewrite) &&
-			    (ptr = bch2_extent_has_ptr(old, p, bkey_i_to_s(insert))) &&
+			    (ptr = bch2_extent_has_ptr(c, old, p, bkey_i_to_s(insert))) &&
 			    !ptr->cached)
 				rewrites_found |= ptr_bit;
 			ptr_bit <<= 1;
@@ -189,7 +189,7 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 
 		new = bkey_i_to_extent(bch2_keylist_front(&op->insert_keys));
 
-		if (!bch2_extents_match(k, old)) {
+		if (!bch2_extents_match(c, k, old)) {
 			trace_data_update_key_fail2(m, &iter, k, bkey_i_to_s_c(&new->k_i), NULL, "no match:");
 			goto nowork;
 		}
@@ -210,13 +210,13 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 			goto err;
 
 		bkey_copy(&new->k_i, bch2_keylist_front(&op->insert_keys));
-		bch2_cut_front(iter.pos, &new->k_i);
+		bch2_cut_front(c, iter.pos, &new->k_i);
 
-		bch2_cut_front(iter.pos,	insert);
+		bch2_cut_front(c, iter.pos,	insert);
 		bch2_cut_back(new->k.p,		insert);
 		bch2_cut_back(insert->k.p,	&new->k_i);
 
-		bch2_bkey_propagate_incompressible(insert, bkey_i_to_s_c(&new->k_i));
+		bch2_bkey_propagate_incompressible(c, insert, bkey_i_to_s_c(&new->k_i));
 
 		/*
 		 * @old: extent that we read from
@@ -230,9 +230,9 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 		ptr_bit = 1;
 		bkey_for_each_ptr_decode(old.k, bch2_bkey_ptrs_c(old), p, entry_c) {
 			if ((ptr_bit & m->opts.ptrs_rewrite) &&
-			    (ptr = bch2_extent_has_ptr(old, p, bkey_i_to_s(insert)))) {
+			    (ptr = bch2_extent_has_ptr(c, old, p, bkey_i_to_s(insert)))) {
 				if (ptr_bit & m->opts.ptrs_io_error)
-					bch2_bkey_drop_ptr_noerror(bkey_i_to_s(insert), ptr);
+					bch2_bkey_drop_ptr_noerror(c, bkey_i_to_s(insert), ptr);
 				else if (!ptr->cached)
 					bch2_extent_ptr_set_cached(c, &m->op.opts,
 								   bkey_i_to_s(insert), ptr);
@@ -256,9 +256,9 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 		 */
 restart_drop_conflicting_replicas:
 		extent_for_each_ptr(extent_i_to_s(new), ptr)
-			if ((ptr_c = bch2_bkey_has_device_c(bkey_i_to_s_c(insert), ptr->dev)) &&
+			if ((ptr_c = bch2_bkey_has_device_c(c, bkey_i_to_s_c(insert), ptr->dev)) &&
 			    !ptr_c->cached) {
-				bch2_bkey_drop_ptr_noerror(bkey_i_to_s(&new->k_i), ptr);
+				bch2_bkey_drop_ptr_noerror(c, bkey_i_to_s(&new->k_i), ptr);
 				goto restart_drop_conflicting_replicas;
 			}
 
@@ -271,8 +271,8 @@ restart_drop_conflicting_replicas:
 
 		/* Now, drop pointers that conflict with what we just wrote: */
 		extent_for_each_ptr_decode(extent_i_to_s(new), p, entry)
-			if ((ptr = bch2_bkey_has_device(bkey_i_to_s(insert), p.ptr.dev)))
-				bch2_bkey_drop_ptr_noerror(bkey_i_to_s(insert), ptr);
+			if ((ptr = bch2_bkey_has_device(c, bkey_i_to_s(insert), p.ptr.dev)))
+				bch2_bkey_drop_ptr_noerror(c, bkey_i_to_s(insert), ptr);
 
 		durability = bch2_bkey_durability(c, bkey_i_to_s_c(insert)) +
 			bch2_bkey_durability(c, bkey_i_to_s_c(&new->k_i));
@@ -296,7 +296,7 @@ restart_drop_extra_replicas:
 
 		/* Finally, add the pointers we just wrote: */
 		extent_for_each_ptr_decode(extent_i_to_s(new), p, entry)
-			bch2_extent_ptr_decoded_append(insert, &p);
+			bch2_extent_ptr_decoded_append(c, insert, &p);
 
 		bch2_bkey_drop_extra_cached_ptrs(c, &m->op.opts, bkey_i_to_s(insert));
 
@@ -514,7 +514,7 @@ int bch2_update_unwritten_extent(struct btree_trans *trans,
 			CLASS(btree_iter, iter)(trans, update->btree_id, update->op.pos,
 						BTREE_ITER_slots);
 			ret = lockrestart_do(trans, bkey_err(k = bch2_btree_iter_peek_slot(&iter)));
-			if (ret || !bch2_extents_match(k, bkey_i_to_s_c(update->k.k)))
+			if (ret || !bch2_extents_match(c, k, bkey_i_to_s_c(update->k.k)))
 				break;
 		}
 
@@ -656,7 +656,7 @@ static int bch2_extent_drop_ptrs(struct btree_trans *trans,
 	unsigned i = 0;
 	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs_c(k), p, entry) {
 		if (data_opts->ptrs_kill_ec & BIT(i))
-			bch2_bkey_drop_ec(n, p.ptr.dev);
+			bch2_bkey_drop_ec(c, n, p.ptr.dev);
 		i++;
 	}
 
@@ -799,6 +799,7 @@ static void checksummed_and_non_checksummed_handling(struct data_update *u, stru
 {
 	bool have_checksummed = false, have_non_checksummed = false;
 
+	struct bch_fs *c = u->op.c;
 	struct bkey_s_c k = bkey_i_to_s_c(u->k.k);
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;

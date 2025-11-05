@@ -170,7 +170,7 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	unsigned new_replicas = bch2_bkey_replicas(c, bkey_i_to_s_c(new));
-	bool new_compressed = bch2_bkey_sectors_compressed(bkey_i_to_s_c(new));
+	bool new_compressed = bch2_bkey_sectors_compressed(c, bkey_i_to_s_c(new));
 
 	*usage_increasing	= false;
 	*i_sectors_delta	= 0;
@@ -189,15 +189,15 @@ int bch2_sum_sector_overwrites(struct btree_trans *trans,
 			(bkey_extent_is_allocation(&new->k) -
 			 bkey_extent_is_allocation(old.k));
 
-		*disk_sectors_delta += sectors * bch2_bkey_nr_ptrs_allocated(bkey_i_to_s_c(new));
+		*disk_sectors_delta += sectors * bch2_bkey_nr_ptrs_allocated(c, bkey_i_to_s_c(new));
 		*disk_sectors_delta -= new->k.p.snapshot == old.k->p.snapshot
-			? sectors * bch2_bkey_nr_ptrs_fully_allocated(old)
+			? sectors * bch2_bkey_nr_ptrs_fully_allocated(c, old)
 			: 0;
 
 		if (!*usage_increasing &&
 		    (new->k.p.snapshot != old.k->p.snapshot ||
 		     new_replicas > bch2_bkey_replicas(c, old) ||
-		     (!new_compressed && bch2_bkey_sectors_compressed(old))))
+		     (!new_compressed && bch2_bkey_sectors_compressed(c, old))))
 			*usage_increasing = true;
 
 		if (bkey_ge(old.k->p, new->k.p))
@@ -416,7 +416,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 		if (bkey_ge(iter.pos, k->k.p))
 			bch2_keylist_pop_front(&op->insert_keys);
 		else
-			bch2_cut_front(iter.pos, k);
+			bch2_cut_front(c, iter.pos, k);
 	} while (!bch2_keylist_empty(keys));
 
 	return 0;
@@ -564,7 +564,7 @@ static noinline int bch2_write_drop_io_error_ptrs(struct bch_write_op *op)
 			bch2_bkey_drop_ptrs(bkey_i_to_s(src), p, entry,
 					    test_bit(p.ptr.dev, op->failed.d));
 
-			if (!bch2_bkey_nr_dirty_ptrs(bkey_i_to_s_c(src)))
+			if (!bch2_bkey_nr_dirty_ptrs(c, bkey_i_to_s_c(src)))
 				return bch_err_throw(c, data_write_io);
 		}
 
@@ -778,11 +778,11 @@ static void init_append_extent(struct bch_write_op *op,
 			       struct bversion version,
 			       struct bch_extent_crc_unpacked crc)
 {
-	struct bkey_i_extent *e;
+	struct bch_fs *c = op->c;
 
 	op->pos.offset += crc.uncompressed_size;
 
-	e = bkey_extent_init(op->insert_keys.top);
+	struct bkey_i_extent *e = bkey_extent_init(op->insert_keys.top);
 	e->k.p		= op->pos;
 	e->k.size	= crc.uncompressed_size;
 	e->k.bversion	= version;
@@ -790,7 +790,7 @@ static void init_append_extent(struct bch_write_op *op,
 	if (crc.csum_type ||
 	    crc.compression_type ||
 	    crc.nonce)
-		bch2_extent_crc_append(&e->k_i, crc);
+		bch2_extent_crc_append(c, &e->k_i, crc);
 
 	bch2_alloc_sectors_append_ptrs_inlined(op->c, wp, &e->k_i, crc.compressed_size,
 				       op->flags & BCH_WRITE_cached);
@@ -1220,17 +1220,18 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 						  struct bkey_s_c k,
 						  u64 new_i_size)
 {
-	if (!bch2_extents_match(bkey_i_to_s_c(orig), k)) {
+	struct bch_fs *c = trans->c;
+
+	if (!bch2_extents_match(c, bkey_i_to_s_c(orig), k)) {
 		/* trace this */
 		return 0;
 	}
 
-	struct bch_fs *c = trans->c;
 	struct bkey_i *new = errptr_try(bch2_trans_kmalloc_nomemzero(trans,
 				bkey_bytes(k.k) + sizeof(struct bch_extent_rebalance)));
 
 	bkey_reassemble(new, k);
-	bch2_cut_front(bkey_start_pos(&orig->k), new);
+	bch2_cut_front(c, bkey_start_pos(&orig->k), new);
 	bch2_cut_back(orig->k.p, new);
 
 	struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(new));
@@ -1408,7 +1409,7 @@ retry:
 				op->flags |= BCH_WRITE_convert_unwritten;
 		}
 
-		bch2_cut_front(op->pos, op->insert_keys.top);
+		bch2_cut_front(c, op->pos, op->insert_keys.top);
 		if (op->flags & BCH_WRITE_convert_unwritten)
 			bch2_cut_back(POS(op->pos.inode, op->pos.offset + bio_sectors(bio)), op->insert_keys.top);
 

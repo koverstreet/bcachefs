@@ -230,7 +230,7 @@ static int bch2_indirect_extent_missing_error(struct btree_trans *trans,
 			if (missing_end < live_end)
 				new_end.offset -= live_end - missing_end;
 
-			bch2_cut_front(new_start, &new->k_i);
+			bch2_cut_front(c, new_start, &new->k_i);
 			bch2_cut_back(new_end, &new->k_i);
 
 			SET_REFLINK_P_ERROR(&new->v, true);
@@ -534,11 +534,12 @@ static int bch2_make_extent_indirect(struct btree_trans *trans,
 
 static struct bkey_s_c get_next_src(struct btree_iter *iter, struct bpos end)
 {
+	struct bch_fs *c = iter->trans->c;
 	struct bkey_s_c k;
 	int ret;
 
 	for_each_btree_key_max_continue_norestart(*iter, end, 0, k, ret) {
-		if (bkey_extent_is_unwritten(k))
+		if (bkey_extent_is_unwritten(c, k))
 			continue;
 
 		if (bkey_extent_is_data(k.k))

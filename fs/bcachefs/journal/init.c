@@ -320,6 +320,8 @@ int bch2_fs_journal_alloc(struct bch_fs *c)
 
 static bool bch2_journal_writing_to_device(struct journal *j, unsigned dev_idx)
 {
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+
 	guard(spinlock)(&j->lock);
 
 	for (u64 seq = journal_last_unwritten_seq(j);
@@ -327,7 +329,7 @@ static bool bch2_journal_writing_to_device(struct journal *j, unsigned dev_idx)
 	     seq++) {
 		struct journal_buf *buf = journal_seq_to_buf(j, seq);
 
-		if (bch2_bkey_has_device_c(bkey_i_to_s_c(&buf->key), dev_idx))
+		if (bch2_bkey_has_device_c(c, bkey_i_to_s_c(&buf->key), dev_idx))
 			return true;
 	}
 

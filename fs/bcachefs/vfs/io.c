@@ -289,7 +289,7 @@ static inline int range_has_data(struct bch_fs *c, u32 subvol,
 	CLASS(btree_trans, trans)(c);
 	return for_each_btree_key_in_subvolume_max(trans, iter, BTREE_ID_extents, start, end,
 						    subvol, 0, k, ({
-		bkey_extent_is_data(k.k) && !bkey_extent_is_unwritten(k);
+		bkey_extent_is_data(k.k) && !bkey_extent_is_unwritten(c, k);
 	}));
 }
 
@@ -683,8 +683,8 @@ static noinline int __bchfs_fallocate(struct bch_inode_info *inode, int mode,
 		is_allocation	= bkey_extent_is_allocation(k.k);
 
 		/* already reserved */
-		if (bkey_extent_is_reservation(k) &&
-		    bch2_bkey_nr_ptrs_fully_allocated(k) >= opts.data_replicas) {
+		if (bkey_extent_is_reservation(c, k) &&
+		    bch2_bkey_nr_ptrs_fully_allocated(c, k) >= opts.data_replicas) {
 			bch2_btree_iter_advance(&iter);
 			continue;
 		}

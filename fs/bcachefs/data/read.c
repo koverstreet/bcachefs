@@ -155,7 +155,7 @@ static inline struct data_update *rbio_data_update(struct bch_read_bio *rbio)
 		: NULL;
 }
 
-static bool ptr_being_rewritten(struct bch_read_bio *orig, unsigned dev)
+static bool ptr_being_rewritten(struct bch_fs *c, struct bch_read_bio *orig, unsigned dev)
 {
 	struct data_update *u = rbio_data_update(orig);
 	if (!u)
@@ -191,7 +191,7 @@ static inline int should_promote(struct bch_fs *c, struct bkey_s_c k,
 			return bch_err_throw(c, nopromote_already_promoted);
 		}
 
-		if (bkey_extent_is_unwritten(k)) {
+		if (bkey_extent_is_unwritten(c, k)) {
 			count_event(c, io_read_nopromote_unwritten);
 			return bch_err_throw(c, nopromote_unwritten);
 		}
@@ -283,7 +283,7 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 		unsigned ptr_bit = 1;
 		bkey_for_each_ptr(ptrs, ptr) {
 			if (bch2_dev_io_failures(failed, ptr->dev) &&
-			    !ptr_being_rewritten(orig, ptr->dev)) {
+			    !ptr_being_rewritten(c, orig, ptr->dev)) {
 				update_opts.ptrs_io_error|= ptr_bit;
 				update_opts.ptrs_rewrite|= ptr_bit;
 			}
@@ -539,6 +539,7 @@ static int get_rbio_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 
 	try(lockrestart_do(trans, bkey_err(k = bch2_btree_iter_peek_slot(&iter))));
 
+	struct bch_fs *c = trans->c;
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	bkey_for_each_ptr(ptrs, ptr)
 		if (bch2_extent_ptr_eq(*ptr, rbio->pick.ptr)) {
@@ -629,7 +630,8 @@ static noinline int bch2_read_retry_nodecode(struct btree_trans *trans,
 	return ret;
 }
 
-static void propagate_io_error_to_data_update(struct bch_read_bio *rbio,
+static void propagate_io_error_to_data_update(struct bch_fs *c,
+					      struct bch_read_bio *rbio,
 					      struct extent_ptr_decoded *pick)
 {
 	struct data_update *u = rbio_data_update(bch2_rbio_parent(rbio));
@@ -674,7 +676,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 		    bch2_err_matches(rbio->ret, BCH_ERR_data_read_retry_avoid)) {
 			bch2_mark_io_failure(&failed, &rbio->pick,
 					     rbio->ret == -BCH_ERR_data_read_retry_csum_err);
-			propagate_io_error_to_data_update(rbio, &rbio->pick);
+			propagate_io_error_to_data_update(c, rbio, &rbio->pick);
 
 		}
 
@@ -784,7 +786,7 @@ static int __bch2_rbio_narrow_crcs(struct btree_trans *trans,
 
 	bkey_reassemble(new, k);
 
-	if (!bch2_bkey_narrow_crc(new, rbio->pick.crc, *new_crc))
+	if (!bch2_bkey_narrow_crc(c, new, rbio->pick.crc, *new_crc))
 		return bch_err_throw(c, rbio_narrow_crcs_fail);
 
 	return bch2_trans_update(trans, &iter, new, BTREE_UPDATE_internal_snapshot_node);
@@ -1168,7 +1170,7 @@ retry_pick:
 	    unlikely(dev_ptr_stale(ca, &pick.ptr))) {
 		read_from_stale_dirty_pointer(trans, ca, k, pick.ptr);
 		bch2_mark_io_failure(failed, &pick, false);
-		propagate_io_error_to_data_update(rbio, &pick);
+		propagate_io_error_to_data_update(c, rbio, &pick);
 		enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_io_read);
 		goto retry_pick;
 	}
@@ -1386,7 +1388,7 @@ out:
 		if (bch2_err_matches(ret, BCH_ERR_data_read_retry_avoid)) {
 			bch2_mark_io_failure(failed, &pick,
 					ret == -BCH_ERR_data_read_retry_csum_err);
-			propagate_io_error_to_data_update(rbio, &pick);
+			propagate_io_error_to_data_update(c, rbio, &pick);
 		}
 
 		return ret;

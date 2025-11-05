@@ -55,7 +55,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 
 	sectors = min_t(u64, sectors, k.k->p.offset - iter->pos.offset);
 	new_replicas = max(0, (int) opts.data_replicas -
-			   (int) bch2_bkey_nr_ptrs_fully_allocated(k));
+			   (int) bch2_bkey_nr_ptrs_fully_allocated(c, k));
 
 	/*
 	 * Get a disk reservation before (in the nocow case) calling
@@ -429,12 +429,12 @@ case LOGGED_OP_FINSERT_shift_extents:
 
 		if (insert &&
 		    bkey_lt(bkey_start_pos(k.k), src_pos)) {
-			bch2_cut_front(src_pos, copy);
+			bch2_cut_front(c, src_pos, copy);
 
 			/* Splitting compressed extent? */
 			bch2_disk_reservation_add(c, &disk_res,
 					copy->k.size *
-					bch2_bkey_nr_ptrs_allocated(bkey_i_to_s_c(copy)),
+					bch2_bkey_nr_ptrs_allocated(c, bkey_i_to_s_c(copy)),
 					BCH_DISK_RESERVATION_NOFAIL);
 		}
 

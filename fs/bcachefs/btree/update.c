@@ -158,6 +158,7 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 				       struct bkey_s_c old,
 				       struct bkey_s_c new)
 {
+	struct bch_fs *c = trans->c;
 	enum btree_id btree_id = iter->btree_id;
 	struct bkey_i *update;
 	struct bpos new_start = bkey_start_pos(new.k);
@@ -174,7 +175,7 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 	 * reservation:
 	 */
 	if (nr_splits > 1 &&
-	    (compressed_sectors = bch2_bkey_sectors_compressed(old)))
+	    (compressed_sectors = bch2_bkey_sectors_compressed(c, old)))
 		trans->extra_disk_res += compressed_sectors * (nr_splits - 1);
 
 	if (front_split) {
@@ -191,7 +192,7 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 	if (middle_split) {
 		update = errptr_try(bch2_bkey_make_mut_noupdate(trans, old));
 
-		bch2_cut_front(new_start, update);
+		bch2_cut_front(c, new_start, update);
 		bch2_cut_back(new.k->p, update);
 
 		try(bch2_insert_snapshot_whiteouts(trans, btree_id, old.k->p, update->k.p));
@@ -221,7 +222,7 @@ int bch2_trans_update_extent_overwrite(struct btree_trans *trans,
 	} else {
 		update = errptr_try(bch2_bkey_make_mut_noupdate(trans, old));
 
-		bch2_cut_front(new.k->p, update);
+		bch2_cut_front(c, new.k->p, update);
 
 		try(bch2_trans_update_by_path(trans, iter->path, update,
 					  BTREE_UPDATE_internal_snapshot_node|
