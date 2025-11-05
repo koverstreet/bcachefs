@@ -52,6 +52,10 @@ int bch2_extent_rebalance_validate(struct bch_fs *c,
 			 c, extent_rebalance_bad_hipri,
 			 "hipri incorrectly set");
 
+	bkey_fsck_err_on(!r->data_replicas,
+			 c, extent_rebalance_bad_replicas,
+			 "bad replicas");
+
 fsck_err:
 	return ret;
 }

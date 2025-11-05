@@ -163,6 +163,7 @@ enum bch_fsck_flags {
 	x(extent_ptrs_all_invalid,				338,	0)		\
 	x(extent_rebalance_bad_pending,				332,	0)		\
 	x(extent_rebalance_bad_hipri,				333,	0)		\
+	x(extent_rebalance_bad_replicas,			339,	0)		\
 	x(ptr_to_invalid_device,				142,	0)		\
 	x(ptr_to_removed_device,				322,	FSCK_AUTOFIX)	\
 	x(ptr_to_duplicate_device,				143,	0)		\
@@ -350,7 +351,7 @@ enum bch_fsck_flags {
 	x(btree_ptr_with_no_rebalance_bp,			335,	FSCK_AUTOFIX)	\
 	x(btree_ptr_with_bad_rebalance_bp,			336,	FSCK_AUTOFIX)	\
 	x(btree_ptr_to_bad_rebalance_bp,			337,	FSCK_AUTOFIX)	\
-	x(MAX,							339,	0)
+	x(MAX,							340,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
