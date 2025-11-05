@@ -805,6 +805,9 @@ struct bch_fs {
 	struct bch_dev __rcu	*devs[BCH_SB_MEMBERS_MAX];
 	struct bch_devs_mask	devs_removed;
 
+	u8			extent_type_u64s[31];
+	u8			extent_types_known;
+
 	struct bch_accounting_mem accounting;
 
 	struct bch_replicas_cpu replicas;

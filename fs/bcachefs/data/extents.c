@@ -1325,7 +1325,7 @@ void bch2_extent_crc_unpacked_to_text(struct printbuf *out, struct bch_extent_cr
 	bch2_prt_compression_type(out, crc->compression_type);
 }
 
-static const char * const extent_entry_types[] = {
+const char * const bch2_extent_entry_types[] = {
 #define x(t, n, ...) [n] = #t,
 	BCH_EXTENT_ENTRY_TYPES()
 #undef x
@@ -1350,7 +1350,7 @@ void bch2_bkey_ptrs_to_text(struct printbuf *out, struct bch_fs *c,
 
 		unsigned type = __extent_entry_type(entry);
 		if (type < BCH_EXTENT_ENTRY_MAX) {
-			prt_str(out, extent_entry_types[__extent_entry_type(entry)]);
+			prt_str(out, bch2_extent_entry_types[__extent_entry_type(entry)]);
 			prt_str(out, ": ");
 		}
 

@@ -7,6 +7,7 @@
 
 #include "data/checksum.h"
 #include "data/ec.h"
+#include "data/extents_sb.h"
 
 #include "journal/journal.h"
 #include "journal/sb.h"
@@ -691,6 +692,8 @@ int bch2_sb_to_fs(struct bch_fs *c, struct bch_sb *src)
 	try(bch2_sb_replicas_to_cpu_replicas(c));
 	try(bch2_sb_disk_groups_to_cpu(c));
 
+	bch2_sb_extent_type_u64s_to_cpu(c);
+
 	bch2_sb_update(c);
 	return 0;
 }
@@ -1060,6 +1063,7 @@ int bch2_write_super(struct bch_fs *c)
 	bch2_sb_members_cpy_v2_v1(&c->disk_sb);
 	bch2_sb_errors_from_cpu(c);
 	bch2_sb_downgrade_update(c);
+	try(bch2_sb_extent_type_u64s_from_cpu(c));
 
 	darray_for_each(online_devices, ca)
 		bch2_sb_from_fs(c, (*ca));

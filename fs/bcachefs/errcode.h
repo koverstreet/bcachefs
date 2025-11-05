@@ -107,6 +107,7 @@
 	x(ENOSPC,			ENOSPC_sb_replicas)			\
 	x(ENOSPC,			ENOSPC_sb_members)			\
 	x(ENOSPC,			ENOSPC_sb_members_v2)			\
+	x(ENOSPC,			ENOSPC_sb_extent_type_u64s)		\
 	x(ENOSPC,			ENOSPC_sb_crypt)			\
 	x(ENOSPC,			ENOSPC_sb_downgrade)			\
 	x(ENOSPC,			ENOSPC_btree_slot)			\
@@ -295,6 +296,7 @@
 	x(BCH_ERR_invalid_sb,		invalid_sb_opt_compression)		\
 	x(BCH_ERR_invalid_sb,		invalid_sb_ext)				\
 	x(BCH_ERR_invalid_sb,		invalid_sb_downgrade)			\
+	x(BCH_ERR_invalid_sb,		invalid_sb_extent_type_u64s)		\
 	x(BCH_ERR_invalid,		invalid_bkey)				\
 	x(BCH_ERR_operation_blocked,    nocow_lock_blocked)			\
 	x(EROFS,			journal_shutdown)			\

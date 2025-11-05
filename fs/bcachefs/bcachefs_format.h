@@ -504,7 +504,8 @@ struct bch_sb_field {
 	x(errors,			12)	\
 	x(ext,				13)	\
 	x(downgrade,			14)	\
-	x(recovery_passes,		15)
+	x(recovery_passes,		15)	\
+	x(extent_type_u64s,		16)
 
 #include "alloc/accounting_format.h"
 #include "alloc/disk_groups_format.h"
@@ -513,6 +514,7 @@ struct bch_sb_field {
 #include "alloc/format.h"
 #include "data/ec_format.h"
 #include "data/extents_format.h"
+#include "data/extents_sb_format.h"
 #include "data/reflink_format.h"
 #include "fs/dirent_format.h"
 #include "fs/inode_format.h"
@@ -708,7 +710,8 @@ struct bch_sb_field_ext {
 	x(inode_has_case_insensitive,	BCH_VERSION(1, 28))		\
 	x(extent_snapshot_whiteouts,	BCH_VERSION(1, 29))		\
 	x(31bit_dirent_offset,		BCH_VERSION(1, 30))		\
-	x(btree_node_accounting,	BCH_VERSION(1, 31))
+	x(btree_node_accounting,	BCH_VERSION(1, 31))		\
+	x(sb_field_extent_type_u64s,	BCH_VERSION(1, 32))
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,

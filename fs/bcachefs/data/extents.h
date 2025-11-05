@@ -47,6 +47,8 @@ struct btree_trans;
 	 ? extent_entry_next(_entry)					\
 	 : _end)
 
+extern const char * const bch2_extent_entry_types[];
+
 static inline unsigned
 __extent_entry_type(const union bch_extent_entry *e)
 {
