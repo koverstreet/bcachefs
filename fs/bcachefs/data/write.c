@@ -895,6 +895,8 @@ static noinline int bch2_write_prep_encoded_data(struct bch_write_op *op, struct
 	if (op->crc.uncompressed_size == op->crc.live_size &&
 	    op->crc.uncompressed_size <= c->opts.encoded_extent_max >> 9 &&
 	    op->crc.compressed_size <= wp->sectors_free &&
+	    (bch2_csum_type_is_encryption(op->crc.csum_type) ==
+	     bch2_csum_type_is_encryption(op->csum_type)) &&
 	    (op->crc.compression_type == bch2_compression_opt_to_type(op->compression_opt) ||
 	     op->incompressible)) {
 		if (!crc_is_compressed(op->crc) &&
