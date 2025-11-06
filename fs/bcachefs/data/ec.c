@@ -1941,25 +1941,18 @@ static int __bch2_ec_stripe_reuse(struct btree_trans *trans, struct ec_stripe_he
 	return init_new_stripe_from_existing(c, s);
 }
 
-static int __bch2_ec_stripe_head_reserve(struct btree_trans *trans, struct ec_stripe_head *h,
-					 struct ec_stripe_new *s)
+static int stripe_idx_alloc(struct btree_trans *trans, struct ec_stripe_new *s)
 {
+	/*
+	 * Allocate stripe slot
+	 * XXX: we're going to need a bitrange btree of free stripes
+	 */
 	struct bch_fs *c = trans->c;
 	struct bkey_s_c k;
 	struct bpos min_pos = POS(0, 1);
 	struct bpos start_pos = bpos_max(min_pos, POS(0, c->ec_stripe_hint));
 	int ret;
 
-	if (!s->res.sectors)
-		try(bch2_disk_reservation_get(c, &s->res,
-					h->blocksize,
-					s->nr_parity,
-					BCH_DISK_RESERVATION_NOFAIL));
-
-	/*
-	 * Allocate stripe slot
-	 * XXX: we're going to need a bitrange btree of free stripes
-	 */
 	for_each_btree_key_norestart(trans, iter, BTREE_ID_stripes, start_pos,
 			   BTREE_ITER_slots|BTREE_ITER_intent, k, ret) {
 		c->ec_stripe_hint = iter.pos.offset;
@@ -1985,8 +1978,6 @@ static int __bch2_ec_stripe_head_reserve(struct btree_trans *trans, struct ec_st
 		}
 	}
 
-	if (ret)
-		bch2_disk_reservation_put(c, &s->res);
 	return ret;
 }
 
@@ -2004,7 +1995,7 @@ static int stripe_alloc_or_reuse(struct btree_trans *trans,
 		enum bch_watermark saved_watermark = BCH_WATERMARK_stripe;
 		swap(req->watermark, saved_watermark);
 		int ret = new_stripe_alloc_buckets(trans, req, h, s, NULL) ?:
-			__bch2_ec_stripe_head_reserve(trans, h, s);
+			stripe_idx_alloc(trans, s);
 		swap(req->watermark, saved_watermark);
 
 		if (ret) {
@@ -2025,7 +2016,7 @@ static int stripe_alloc_or_reuse(struct btree_trans *trans,
 
 				if (req->watermark == BCH_WATERMARK_copygc) {
 					try(new_stripe_alloc_buckets(trans, req, h, s, NULL));
-					try(__bch2_ec_stripe_head_reserve(trans, h, s));
+					try(stripe_idx_alloc(trans, s));
 					break;
 				}
 
@@ -2042,6 +2033,12 @@ static int stripe_alloc_or_reuse(struct btree_trans *trans,
 	 */
 	try(new_stripe_alloc_buckets(trans, req, h, s, cl));
 	try(ec_stripe_buf_init(c, &s->new_stripe, 0, h->blocksize));
+
+	if (!s->have_existing_stripe && !s->res.sectors)
+		bch2_disk_reservation_get(c, &s->res,
+					  h->blocksize,
+					  s->nr_parity,
+					  BCH_DISK_RESERVATION_NOFAIL);
 
 	stripe_new_buckets_add(c, s);
 	s->allocated = true;
