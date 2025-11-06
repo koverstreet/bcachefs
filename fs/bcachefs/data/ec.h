@@ -231,6 +231,9 @@ struct ec_stripe_new {
 
 	struct ec_stripe_handle	new_stripe_handle;
 	struct ec_stripe_handle	old_stripe_handle;
+
+	u8			old_block_map[BCH_BKEY_PTRS_MAX];
+	u8			old_blocks_nr;
 };
 
 struct ec_stripe_head {
