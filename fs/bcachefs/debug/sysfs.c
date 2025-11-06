@@ -168,6 +168,7 @@ write_attribute(trigger_reconcile_wakeup);
 write_attribute(trigger_reconcile_pending_wakeup);
 write_attribute(trigger_delete_dead_snapshots);
 write_attribute(trigger_emergency_read_only);
+write_attribute(trigger_check_inconsistent_replicas);
 read_attribute(gc_gens_pos);
 
 read_attribute(uuid);
@@ -313,6 +314,59 @@ static void bch2_fs_usage_base_to_text(struct printbuf *out, struct bch_fs *c)
 	prt_printf(out, "data:\t\t%llu\n",	b.data);
 	prt_printf(out, "cached:\t%llu\n",	b.cached);
 	prt_printf(out, "reserved:\t\t%llu\n",	b.reserved);
+}
+
+static bool bkey_has_inconsistent_checksums(struct bch_fs *c, struct bkey_s_c k)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p, prev;
+	bool have_prev = false;
+
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if (p.crc.uncompressed_size != p.crc.live_size ||
+		    crc_is_compressed(p.crc))
+			continue;
+
+		if (!have_prev) {
+			prev = p;
+			have_prev = true;
+			continue;
+		}
+
+		if (prev.crc.csum_type == p.crc.csum_type &&
+		    bch2_crc_cmp(prev.crc.csum, p.crc.csum))
+			return true;
+	}
+
+	return false;
+}
+
+static int bkey_print_if_inconsistent_checksums(struct bch_fs *c, struct bkey_s_c k)
+{
+	if (bkey_has_inconsistent_checksums(c, k)) {
+		CLASS(printbuf, buf)();
+		bch2_bkey_val_to_text(&buf, c, k);
+		pr_info("%s", buf.buf);
+	}
+
+	return 0;
+}
+
+static void bch2_check_inconsistent_replicas(struct bch_fs *c)
+{
+	CLASS(btree_trans, trans)(c);
+	for_each_btree_key(trans, iter,
+			   BTREE_ID_extents, POS_MIN,
+			   BTREE_ITER_all_snapshots, k, ({
+		bkey_print_if_inconsistent_checksums(c, k);
+	}));
+
+	for_each_btree_key(trans, iter,
+			   BTREE_ID_reflink, POS_MIN,
+			   BTREE_ITER_all_snapshots, k, ({
+		bkey_print_if_inconsistent_checksums(c, k);
+	}));
 }
 
 SHOW(bch2_fs)
@@ -504,6 +558,9 @@ STORE(bch2_fs)
 		bch2_fs_emergency_read_only(c, &msg.m);
 	}
 
+	if (attr == &sysfs_trigger_check_inconsistent_replicas)
+		bch2_check_inconsistent_replicas(c);
+
 #ifdef CONFIG_BCACHEFS_TESTS
 	if (attr == &sysfs_perf_test) {
 		char *tmp __free(kfree) = kstrdup(buf, GFP_KERNEL), *p = tmp;
@@ -645,6 +702,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_trigger_reconcile_pending_wakeup,
 	&sysfs_trigger_delete_dead_snapshots,
 	&sysfs_trigger_emergency_read_only,
+	&sysfs_trigger_check_inconsistent_replicas,
 
 	&sysfs_gc_gens_pos,
 
