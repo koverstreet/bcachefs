@@ -454,20 +454,20 @@ void __bch2_accounting_maybe_kill(struct bch_fs *c, struct bpos pos)
 
 		unsigned idx = eytzinger0_find(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
 					       accounting_pos_cmp, &pos);
+		if (idx >= acc->k.nr)
+			return;
 
-		if (idx < acc->k.nr) {
-			struct accounting_mem_entry *e = acc->k.data + idx;
-			if (!accounting_mem_entry_is_zero(e))
-				return;
+		struct accounting_mem_entry *e = acc->k.data + idx;
+		if (!accounting_mem_entry_is_zero(e))
+			return;
 
-			free_percpu(e->v[0]);
-			free_percpu(e->v[1]);
+		free_percpu(e->v[0]);
+		free_percpu(e->v[1]);
 
-			swap(*e, darray_last(acc->k));
-			--acc->k.nr;
-			eytzinger0_sort(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
-					accounting_pos_cmp, NULL);
-		}
+		swap(*e, darray_last(acc->k));
+		--acc->k.nr;
+		eytzinger0_sort(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
+				accounting_pos_cmp, NULL);
 
 		bch2_replicas_entry_kill(c, &acc_k.replicas);
 	}
