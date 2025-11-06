@@ -285,13 +285,13 @@ int bch2_alloc_v4_validate(struct bch_fs *c, struct bkey_s_c k,
 		bkey_fsck_err_on(stripe_sectors ||
 				 a.dirty_sectors ||
 				 a.cached_sectors ||
-				 a.stripe,
+				 a.stripe_refcount,
 				 c, alloc_key_empty_but_have_data,
 				 "empty data type free but have data %u.%u.%u %u",
 				 stripe_sectors,
 				 a.dirty_sectors,
 				 a.cached_sectors,
-				 a.stripe);
+				 a.stripe_refcount);
 		break;
 	case BCH_DATA_sb:
 	case BCH_DATA_journal:
@@ -308,7 +308,7 @@ int bch2_alloc_v4_validate(struct bch_fs *c, struct bkey_s_c k,
 		bkey_fsck_err_on(!a.cached_sectors ||
 				 a.dirty_sectors ||
 				 stripe_sectors ||
-				 a.stripe,
+				 a.stripe_refcount,
 				 c, alloc_key_cached_inconsistency,
 				 "data type inconsistency");
 
@@ -336,7 +336,7 @@ void bch2_alloc_v4_swab(const struct bch_fs *c, struct bkey_s k)
 	a->cached_sectors	= swab32(a->cached_sectors);
 	a->io_time[0]		= swab64(a->io_time[0]);
 	a->io_time[1]		= swab64(a->io_time[1]);
-	a->stripe		= swab32(a->stripe);
+	a->stripe_refcount	= swab32(a->stripe_refcount);
 	a->nr_external_backpointers = swab32(a->nr_external_backpointers);
 	a->stripe_sectors	= swab32(a->stripe_sectors);
 }
@@ -362,7 +362,7 @@ static inline void __bch2_alloc_v4_to_text(struct printbuf *out, struct bch_fs *
 	if (bkey_val_bytes(k.k) > offsetof(struct bch_alloc_v4, stripe_sectors))
 		prt_printf(out, "stripe_sectors       %u\n",	a->stripe_sectors);
 	prt_printf(out, "cached_sectors       %u\n",	a->cached_sectors);
-	prt_printf(out, "stripe               %u\n",	a->stripe);
+	prt_printf(out, "stripe_refcount      %u\n",	a->stripe_refcount);
 	prt_printf(out, "io_time[READ]        %llu\n",	a->io_time[READ]);
 	prt_printf(out, "io_time[WRITE]       %llu\n",	a->io_time[WRITE]);
 
@@ -414,7 +414,7 @@ void __bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *out)
 			.cached_sectors		= u.cached_sectors,
 			.io_time[READ]		= u.read_time,
 			.io_time[WRITE]		= u.write_time,
-			.stripe			= u.stripe,
+			.stripe_refcount	= u.stripe != 0,
 		};
 
 		SET_BCH_ALLOC_V4_BACKPOINTERS_START(out, BCH_ALLOC_V4_U64s);

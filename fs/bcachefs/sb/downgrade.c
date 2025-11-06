@@ -114,7 +114,13 @@
 	x(reconcile,						\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_reconcile_work),	\
 	  BCH_FSCK_ERR_accounting_mismatch,			\
-	  BCH_FSCK_ERR_extent_io_opts_not_set)
+	  BCH_FSCK_ERR_extent_io_opts_not_set)			\
+	x(bucket_stripe_index,					\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_alloc_info)|		\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_alloc_to_lru_refs),	\
+	  BCH_FSCK_ERR_alloc_key_stripe_refcount_wrong,		\
+	  BCH_FSCK_ERR_stripe_to_missing_bucket_ref)
+
 
 #define UPGRADE_TABLE_INCOMPAT()				\
 	x(reconcile,						\

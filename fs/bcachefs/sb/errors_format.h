@@ -127,6 +127,7 @@ enum bch_fsck_flags {
 	x(alloc_key_stripe_wrong,				110,	FSCK_AUTOFIX)	\
 	x(alloc_key_stripe_redundancy_wrong,			111,	FSCK_AUTOFIX)	\
 	x(alloc_key_journal_seq_in_future,			298,	FSCK_AUTOFIX)	\
+	x(alloc_key_stripe_refcount_wrong,			344,	FSCK_AUTOFIX)	\
 	x(bucket_sector_count_overflow,				112,	0)		\
 	x(bucket_metadata_type_mismatch,			113,	0)		\
 	x(need_discard_key_wrong,				114,	FSCK_AUTOFIX)	\
@@ -200,6 +201,9 @@ enum bch_fsck_flags {
 	x(stripe_csum_granularity_bad,				290,	0)		\
 	x(stripe_sectors_zero,					340,	0)		\
 	x(stripe_sector_count_wrong,				169,	0)		\
+	x(stripe_to_missing_bucket_ref,				341,	FSCK_AUTOFIX)	\
+	x(bucket_stripe_ref_to_missing_stripe,			342,	FSCK_AUTOFIX)	\
+	x(bucket_stripe_ref_to_incorrect_stripe,		343,	FSCK_AUTOFIX)	\
 	x(snapshot_tree_pos_bad,				170,	0)		\
 	x(snapshot_tree_to_missing_snapshot,			171,	0)		\
 	x(snapshot_tree_to_missing_subvol,			172,	0)		\
@@ -352,7 +356,7 @@ enum bch_fsck_flags {
 	x(btree_ptr_with_no_reconcile_bp,			335,	FSCK_AUTOFIX)	\
 	x(btree_ptr_with_bad_reconcile_bp,			336,	FSCK_AUTOFIX)	\
 	x(btree_ptr_to_bad_reconcile_bp,			337,	FSCK_AUTOFIX)	\
-	x(MAX,							341,	0)
+	x(MAX,							345,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
