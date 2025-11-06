@@ -454,6 +454,11 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 		try(mark_stripe_buckets(trans, old, new, flags));
 	}
 
+	if ((flags & (BTREE_TRIGGER_atomic|BTREE_TRIGGER_gc)) == BTREE_TRIGGER_atomic) {
+		if (new_s && stripe_lru_pos(new_s) == 1)
+			bch2_do_stripe_deletes(c);
+	}
+
 	return 0;
 }
 
