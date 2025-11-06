@@ -135,6 +135,22 @@ int bch2_need_discard_or_freespace_err(struct btree_trans *trans,
 	return ret;
 }
 
+static int bucket_nr_stripes(struct btree_trans *trans, struct bpos bucket)
+{
+	struct bkey_s_c k;
+	unsigned nr = 0;
+	int ret = 0;
+
+	for_each_btree_key_max_norestart(trans, iter,
+				  BTREE_ID_bucket_to_stripe,
+				  POS(bucket_to_u64(bucket), 0),
+				  POS(bucket_to_u64(bucket), U64_MAX),
+				  0, k, ret)
+		nr++;
+
+	return ret ?: nr;
+}
+
 static noinline_for_stack
 int bch2_check_alloc_key(struct btree_trans *trans,
 			 struct bkey_s_c alloc_k,
@@ -144,8 +160,6 @@ int bch2_check_alloc_key(struct btree_trans *trans,
 			 struct btree_iter *bucket_gens_iter)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_alloc_v4 a_convert;
-	const struct bch_alloc_v4 *a;
 	unsigned gens_offset;
 	struct bkey_s_c k;
 	CLASS(printbuf, buf)();
@@ -163,20 +177,20 @@ int bch2_check_alloc_key(struct btree_trans *trans,
 	if (!ca->mi.freespace_initialized)
 		return 0;
 
-	a = bch2_alloc_to_v4(alloc_k, &a_convert);
+	struct bkey_i_alloc_v4 *a = errptr_try(bch2_alloc_to_v4_mut(trans, alloc_k));
 
 	bch2_btree_iter_set_pos(discard_iter, alloc_k.k->p);
 	k = bkey_try(bch2_btree_iter_peek_slot(discard_iter));
 
-	bool is_discarded = a->data_type == BCH_DATA_need_discard;
+	bool is_discarded = a->v.data_type == BCH_DATA_need_discard;
 	if (need_discard_or_freespace_err_on(!!k.k->type != is_discarded,
 					     trans, alloc_k, !is_discarded, true, true))
 		try(bch2_btree_bit_mod_iter(trans, discard_iter, is_discarded));
 
-	bch2_btree_iter_set_pos(freespace_iter, alloc_freespace_pos(alloc_k.k->p, *a));
+	bch2_btree_iter_set_pos(freespace_iter, alloc_freespace_pos(alloc_k.k->p, a->v));
 	k = bkey_try(bch2_btree_iter_peek_slot(freespace_iter));
 
-	bool is_free = a->data_type == BCH_DATA_free;
+	bool is_free = a->v.data_type == BCH_DATA_free;
 	if (need_discard_or_freespace_err_on(!!k.k->type != is_free,
 					     trans, alloc_k, !is_free, false, true))
 		try(bch2_btree_bit_mod_iter(trans, freespace_iter, is_free));
@@ -184,10 +198,10 @@ int bch2_check_alloc_key(struct btree_trans *trans,
 	bch2_btree_iter_set_pos(bucket_gens_iter, alloc_gens_pos(alloc_k.k->p, &gens_offset));
 	k = bkey_try(bch2_btree_iter_peek_slot(bucket_gens_iter));
 
-	if (ret_fsck_err_on(a->gen != alloc_gen(k, gens_offset),
+	if (ret_fsck_err_on(a->v.gen != alloc_gen(k, gens_offset),
 			trans, bucket_gens_key_wrong,
 			"incorrect gen in bucket_gens btree (got %u should be %u)\n%s",
-			alloc_gen(k, gens_offset), a->gen,
+			alloc_gen(k, gens_offset), a->v.gen,
 			(printbuf_reset(&buf),
 			 bch2_bkey_val_to_text(&buf, c, alloc_k), buf.buf))) {
 		struct bkey_i_bucket_gens *g =
@@ -200,9 +214,25 @@ int bch2_check_alloc_key(struct btree_trans *trans,
 			g->k.p = alloc_gens_pos(alloc_k.k->p, &gens_offset);
 		}
 
-		g->v.gens[gens_offset] = a->gen;
+		g->v.gens[gens_offset] = a->v.gen;
 
 		try(bch2_trans_update(trans, bucket_gens_iter, &g->k_i, 0));
+	}
+
+	ret = bucket_nr_stripes(trans, alloc_k.k->p);
+	if (ret < 0)
+		return ret;
+	unsigned nr_stripes = ret;
+	ret = 0;
+
+	if (fsck_err_on(a->v.stripe_refcount != nr_stripes,
+			trans, alloc_key_stripe_refcount_wrong,
+			"alloc key with incorrect stripe_refcount, should be %u\n%s",
+			nr_stripes,
+			(printbuf_reset(&buf),
+			 bch2_bkey_val_to_text(&buf, c, alloc_k), buf.buf))) {
+		a->v.stripe_refcount = nr_stripes;
+		try(bch2_trans_update(trans, alloc_iter, &a->k_i, 0));
 	}
 fsck_err:
 	return ret;
@@ -672,7 +702,7 @@ int bch2_check_alloc_to_lru_refs(struct bch_fs *c)
 			bch2_progress_update_iter(trans, &progress, &iter) ?:
 			wb_maybe_flush_inc(&last_flushed) ?:
 			bch2_check_alloc_to_lru_ref(trans, &iter, &last_flushed);
-	}))?: bch2_check_stripe_to_lru_refs(trans);
+	}))?: bch2_check_stripe_refs(trans);
 }
 
 static int dev_freespace_init_iter(struct btree_trans *trans, struct bch_dev *ca,

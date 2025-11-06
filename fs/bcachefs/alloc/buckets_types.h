@@ -39,7 +39,6 @@ struct bucket {
 	u8			gen_valid:1;
 	u8			data_type:7;
 	u8			gen;
-	u32			stripe;
 	u32			dirty_sectors;
 	u32			cached_sectors;
 	u32			stripe_sectors;

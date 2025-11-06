@@ -220,15 +220,6 @@ static int __mark_stripe_bucket(struct btree_trans *trans,
 		sectors = -sectors;
 
 	if (!deleting) {
-		if (bch2_trans_inconsistent_on(a->stripe, trans,
-				"bucket %llu:%llu gen %u data type %s dirty_sectors %u: multiple stripes using same bucket (%u, %llu)\n%s",
-				bucket.inode, bucket.offset, a->gen,
-				bch2_data_type_str(a->data_type),
-				a->dirty_sectors,
-				a->stripe, s.k->p.offset,
-				(bch2_bkey_val_to_text(&buf, c, s.s_c), buf.buf)))
-			return bch_err_throw(c, mark_stripe);
-
 		if (bch2_trans_inconsistent_on(parity && bch2_bucket_sectors_total(*a), trans,
 				"bucket %llu:%llu gen %u data type %s dirty_sectors %u cached_sectors %u: data already in parity bucket\n%s",
 				bucket.inode, bucket.offset, a->gen,
@@ -238,10 +229,9 @@ static int __mark_stripe_bucket(struct btree_trans *trans,
 				(bch2_bkey_val_to_text(&buf, c, s.s_c), buf.buf)))
 			return bch_err_throw(c, mark_stripe);
 	} else {
-		if (bch2_trans_inconsistent_on(a->stripe != s.k->p.offset, trans,
-				"bucket %llu:%llu gen %u: not marked as stripe when deleting stripe (got %u)\n%s",
+		if (bch2_trans_inconsistent_on(!a->stripe_refcount, trans,
+				"bucket %llu:%llu gen %u: not marked as stripe when deleting stripe\n%s",
 				bucket.inode, bucket.offset, a->gen,
-				a->stripe,
 				(bch2_bkey_val_to_text(&buf, c, s.s_c), buf.buf)))
 			return bch_err_throw(c, mark_stripe);
 
@@ -268,13 +258,16 @@ static int __mark_stripe_bucket(struct btree_trans *trans,
 		try(bch2_bucket_ref_update(trans, ca, s.s_c, ptr, sectors, data_type,
 					   a->gen, a->data_type, &a->dirty_sectors));
 
-	if (!deleting) {
-		a->stripe		= s.k->p.offset;
-		alloc_data_type_set(a, data_type);
-	} else {
-		a->stripe		= 0;
-		alloc_data_type_set(a, BCH_DATA_user);
-	}
+	if (flags & BTREE_TRIGGER_transactional)
+		try(bch2_btree_bit_mod(trans, BTREE_ID_bucket_to_stripe,
+				       POS(bucket_to_u64(bucket), s.k->p.offset), !deleting));
+
+	if (!deleting)
+		a->stripe_refcount++;
+	else
+		--a->stripe_refcount;
+
+	alloc_data_type_set(a, a->stripe_refcount ? data_type : BCH_DATA_user);
 
 	return 0;
 }
@@ -2171,25 +2164,14 @@ int bch2_invalidate_stripe_to_dev(struct btree_trans *trans,
 	return bch2_disk_accounting_mod(trans, &acc, &sectors, 1, false);
 }
 
-static int bch2_invalidate_stripe_to_dev_from_alloc(struct btree_trans *trans, struct bkey_s_c k_a,
+static int bch2_invalidate_stripe_to_dev_from_alloc(struct btree_trans *trans,
+						    unsigned dev_idx, u64 stripe_idx,
 						    unsigned flags, struct printbuf *err)
 {
-	struct bch_alloc_v4 a_convert;
-	const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k_a, &a_convert);
-
-	if (!a->stripe)
-		return 0;
-
-	if (a->stripe_sectors) {
-		struct bch_fs *c = trans->c;
-		bch_err(c, "trying to invalidate device in stripe when bucket has stripe data");
-		return bch_err_throw(c, invalidate_stripe_to_dev);
-	}
-
-	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, a->stripe), 0);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, stripe_idx), 0);
 	struct bkey_s_c_stripe s = bkey_try(bch2_bkey_get_typed(&iter, stripe));
 
-	return bch2_invalidate_stripe_to_dev(trans, &iter, s.s_c, k_a.k->p.inode, flags, err);
+	return bch2_invalidate_stripe_to_dev(trans, &iter, s.s_c, dev_idx, flags, err);
 }
 
 int bch2_dev_remove_stripes(struct bch_fs *c, unsigned dev_idx,
@@ -2197,10 +2179,12 @@ int bch2_dev_remove_stripes(struct bch_fs *c, unsigned dev_idx,
 {
 	CLASS(btree_trans, trans)(c);
 	int ret = for_each_btree_key_max_commit(trans, iter,
-				  BTREE_ID_alloc, POS(dev_idx, 0), POS(dev_idx, U64_MAX),
+				  BTREE_ID_bucket_to_stripe,
+				  POS(bucket_to_u64(POS(dev_idx, 0)), 0),
+				  POS(bucket_to_u64(POS(dev_idx, U64_MAX)), U64_MAX),
 				  BTREE_ITER_intent, k,
 				  NULL, NULL, 0, ({
-		bch2_invalidate_stripe_to_dev_from_alloc(trans, k, flags, err);
+		bch2_invalidate_stripe_to_dev_from_alloc(trans, dev_idx, k.k->p.offset, flags, err);
 	}));
 	bch_err_fn(c, ret);
 	return ret;
@@ -2356,28 +2340,106 @@ int bch2_fs_ec_init(struct bch_fs *c)
 			   BIOSET_NEED_BVECS);
 }
 
-static int bch2_check_stripe_to_lru_ref(struct btree_trans *trans,
-					struct bkey_s_c k,
-					struct wb_maybe_flush *last_flushed)
+static int bucket_stripe_ref_mod(struct btree_trans *trans,
+				 struct bpos bucket, u64 stripe, bool set)
 {
-	if (k.k->type != KEY_TYPE_stripe)
-		return 0;
+	struct bkey_i_alloc_v4 *a = errptr_try(bch2_trans_start_alloc_update(trans, bucket, 0));
+	a->v.stripe_refcount += set ? 1 : -1;
 
-	u64 lru_idx = stripe_lru_pos(bkey_s_c_to_stripe(k).v);
-	if (lru_idx)
-		try(bch2_lru_check_set(trans, BCH_LRU_STRIPE_FRAGMENTATION,
-				       k.k->p.offset, lru_idx, k, last_flushed));
+	try(bch2_btree_bit_mod(trans, BTREE_ID_bucket_to_stripe, POS(bucket_to_u64(bucket), stripe), set));
 
 	return 0;
 }
 
-int bch2_check_stripe_to_lru_refs(struct btree_trans *trans)
+static int check_stripe_refs_one(struct btree_trans *trans,
+				 struct bkey_s_c k,
+				 struct wb_maybe_flush *last_flushed)
+{
+	if (k.k->type != KEY_TYPE_stripe)
+		return 0;
+
+	struct bch_fs *c = trans->c;
+	const struct bch_stripe *s = bkey_s_c_to_stripe(k).v;
+	int ret = 0;
+
+	u64 lru_idx = stripe_lru_pos(s);
+	if (lru_idx)
+		try(bch2_lru_check_set(trans, BCH_LRU_STRIPE_FRAGMENTATION,
+				       k.k->p.offset, lru_idx, k, last_flushed));
+
+	for (unsigned i = 0; i < s->nr_blocks; i++) {
+		const struct bch_extent_ptr *ptr = s->ptrs + i;
+		CLASS(bch2_dev_tryget_noerror, ca)(c, ptr->dev);
+		if (!ca)
+			continue;
+
+		struct bpos bucket = PTR_BUCKET_POS(ca, ptr);
+
+		CLASS(btree_iter, iter)(trans, BTREE_ID_bucket_to_stripe,
+					POS(bucket_to_u64(bucket), k.k->p.offset), 0);
+		struct bkey_s_c ref = bkey_try(bch2_btree_iter_peek_slot(&iter));
+
+		CLASS(printbuf, buf)();
+
+		if (fsck_err_on(ref.k->type != KEY_TYPE_set,
+				trans, stripe_to_missing_bucket_ref,
+				"stripe block %u missing bucket ref\n%s",
+				i, (bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
+			try(bucket_stripe_ref_mod(trans, bucket, k.k->p.offset, true));
+	}
+fsck_err:
+	return ret;
+}
+
+static bool bucket_matches_stripe(struct bch_fs *c, struct bpos bucket, const struct bch_stripe *s)
+{
+	for (unsigned i = 0; i < s->nr_blocks; i++) {
+		const struct bch_extent_ptr *ptr = s->ptrs + i;
+		CLASS(bch2_dev_tryget_noerror, ca)(c, ptr->dev);
+
+		if (ca && bpos_eq(bucket, PTR_BUCKET_POS(ca, ptr)))
+			return true;
+	}
+
+	return false;
+}
+
+static int check_bucket_to_stripe_ref(struct btree_trans *trans, struct bpos ref)
+{
+	struct bpos bucket = u64_to_bucket(ref.inode);
+	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, ref.offset), 0);
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
+	int ret = 0;
+
+	if (fsck_err_on(k.k->type != KEY_TYPE_stripe,
+			trans, bucket_stripe_ref_to_missing_stripe,
+			"bucket %llu:%llu points to missing stripe %llu",
+			bucket.inode, bucket.offset, ref.offset))
+		return bucket_stripe_ref_mod(trans, bucket, ref.offset, false);
+
+	if (fsck_err_on(!bucket_matches_stripe(trans->c, bucket, bkey_s_c_to_stripe(k).v),
+			trans, bucket_stripe_ref_to_incorrect_stripe,
+			"bucket %llu:%llu doesn't match stripe %llu",
+			bucket.inode, bucket.offset, ref.offset))
+		return bucket_stripe_ref_mod(trans, bucket, ref.offset, false);
+fsck_err:
+	return ret;
+}
+
+int bch2_check_stripe_refs(struct btree_trans *trans)
 {
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
 
-	return for_each_btree_key_commit(trans, iter, BTREE_ID_stripes,
+	try(for_each_btree_key_commit(trans, iter, BTREE_ID_stripes,
 				POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			bch2_check_stripe_to_lru_ref(trans, k, &last_flushed));
+		check_stripe_refs_one(trans, k, &last_flushed)));
+
+	try(for_each_btree_key_commit(trans, iter, BTREE_ID_bucket_to_stripe,
+				POS_MIN, BTREE_ITER_prefetch, k,
+				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+		check_bucket_to_stripe_ref(trans, k.k->p)));
+
+	return 0;
 }

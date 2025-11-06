@@ -630,6 +630,8 @@ enum btree_id_flags {
 	  BIT_ULL(KEY_TYPE_set))						\
 	x(reconcile_hipri_phys,	25,						\
 	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(bucket_to_stripe,	26,	0,					\
 	  BIT_ULL(KEY_TYPE_set))
 
 enum btree_id {
@@ -844,7 +846,8 @@ struct bch_sb_field_ext {
 	x(btree_node_accounting,	BCH_VERSION(1, 31))		\
 	x(sb_field_extent_type_u64s,	BCH_VERSION(1, 32))		\
 	x(reconcile,			BCH_VERSION(1, 33))		\
-	x(extented_key_type_error,	BCH_VERSION(1, 34))
+	x(extented_key_type_error,	BCH_VERSION(1, 34))		\
+	x(bucket_stripe_index,		BCH_VERSION(1, 35))
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,

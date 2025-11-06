@@ -18,7 +18,7 @@ static inline bool bch2_dev_bucket_exists(struct bch_fs *c, struct bpos pos)
 
 static inline u64 bucket_to_u64(struct bpos bucket)
 {
-	return (bucket.inode << 48) | bucket.offset;
+	return (bucket.inode << 48) | (bucket.offset & ~(~0ULL << 48));
 }
 
 static inline struct bpos u64_to_bucket(u64 bucket)
@@ -38,7 +38,6 @@ static inline void alloc_to_bucket(struct bucket *dst, struct bch_alloc_v4 src)
 	dst->stripe_sectors	= src.stripe_sectors;
 	dst->dirty_sectors	= src.dirty_sectors;
 	dst->cached_sectors	= src.cached_sectors;
-	dst->stripe		= src.stripe;
 }
 
 static inline void __bucket_m_to_alloc(struct bch_alloc_v4 *dst, struct bucket src)
@@ -48,7 +47,6 @@ static inline void __bucket_m_to_alloc(struct bch_alloc_v4 *dst, struct bucket s
 	dst->stripe_sectors	= src.stripe_sectors;
 	dst->dirty_sectors	= src.dirty_sectors;
 	dst->cached_sectors	= src.cached_sectors;
-	dst->stripe		= src.stripe;
 }
 
 static inline struct bch_alloc_v4 bucket_m_to_alloc(struct bucket b)
@@ -124,7 +122,7 @@ static inline s64 bch2_bucket_sectors_unstriped(struct bch_alloc_v4 a)
 static inline enum bch_data_type alloc_data_type(struct bch_alloc_v4 a,
 						 enum bch_data_type data_type)
 {
-	if (a.stripe)
+	if (a.stripe_refcount)
 		return data_type == BCH_DATA_parity ? data_type : BCH_DATA_stripe;
 	if (bch2_bucket_sectors_dirty(a))
 		return bucket_data_type(data_type);
