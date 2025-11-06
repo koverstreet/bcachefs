@@ -1001,17 +1001,27 @@ static int bch2_fix_child_of_deleted_snapshot(struct btree_trans *trans,
 static void bch2_snapshot_delete_nodes_to_text(struct printbuf *out, struct snapshot_delete *d)
 {
 	prt_printf(out, "deleting from trees");
-	darray_for_each(d->deleting_from_trees, i)
+	darray_for_each_max(d->deleting_from_trees, i, 10)
 		prt_printf(out, " %u", *i);
 
+	if (d->deleting_from_trees.nr > 10)
+		prt_str(out, " (many)");
+	prt_newline(out);
+
 	prt_printf(out, "deleting leaves");
-	darray_for_each(d->delete_leaves, i)
+	darray_for_each_max(d->delete_leaves, i, 10)
 		prt_printf(out, " %u", *i);
+
+	if (d->delete_leaves.nr > 10)
+		prt_str(out, " (many)");
 	prt_newline(out);
 
 	prt_printf(out, "interior");
-	darray_for_each(d->delete_interior, i)
+	darray_for_each_max(d->delete_interior, i, 10)
 		prt_printf(out, " %u->%u", i->id, i->live_child);
+
+	if (d->delete_interior.nr > 10)
+		prt_str(out, " (many)");
 	prt_newline(out);
 }
 
