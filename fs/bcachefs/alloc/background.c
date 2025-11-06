@@ -249,7 +249,7 @@ int bch2_alloc_v4_validate(struct bch_fs *c, struct bkey_s_c k,
 	struct bch_alloc_v4 a;
 	int ret = 0;
 
-	bkey_val_copy(&a, bkey_s_c_to_alloc_v4(k));
+	bkey_val_copy_pad(&a, bkey_s_c_to_alloc_v4(k));
 
 	bkey_fsck_err_on(alloc_v4_u64s_noerror(&a) > bkey_val_u64s(k.k),
 			 c, alloc_v4_val_size_bad,
@@ -392,7 +392,7 @@ void __bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *out)
 	if (k.k->type == KEY_TYPE_alloc_v4) {
 		void *src, *dst;
 
-		bkey_val_copy(out, bkey_s_c_to_alloc_v4(k));
+		bkey_val_copy_pad(out, bkey_s_c_to_alloc_v4(k));
 
 		src = alloc_v4_backpointers(out);
 		SET_BCH_ALLOC_V4_BACKPOINTERS_START(out, BCH_ALLOC_V4_U64s);

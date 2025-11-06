@@ -116,7 +116,7 @@ static int check_snapshot_tree(struct btree_trans *trans,
 
 	struct bch_snapshot s;
 	if (!ret)
-		bkey_val_copy(&s, snapshot_k);
+		bkey_val_copy_pad(&s, snapshot_k);
 
 	if (fsck_err_on(ret ||
 			root_id != bch2_snapshot_root(c, root_id) ||

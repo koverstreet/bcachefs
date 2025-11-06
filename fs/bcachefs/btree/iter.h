@@ -718,7 +718,7 @@ static inline struct bkey_s_c __bch2_bkey_get_typed(struct btree_iter *iter,
 #define bch2_bkey_get_typed(_iter, _type)						\
 	bkey_s_c_to_##_type(__bch2_bkey_get_typed(_iter, KEY_TYPE_##_type))
 
-static inline void __bkey_val_copy(void *dst_v, unsigned dst_size, struct bkey_s_c src_k)
+static inline void __bkey_val_copy_pad(void *dst_v, unsigned dst_size, struct bkey_s_c src_k)
 {
 	unsigned b = min_t(unsigned, dst_size, bkey_val_bytes(src_k.k));
 	memcpy(dst_v, src_k.v, b);
@@ -726,10 +726,10 @@ static inline void __bkey_val_copy(void *dst_v, unsigned dst_size, struct bkey_s
 		memset(dst_v + b, 0, dst_size - b);
 }
 
-#define bkey_val_copy(_dst_v, _src_k)					\
+#define bkey_val_copy_pad(_dst_v, _src_k)				\
 do {									\
 	BUILD_BUG_ON(!__typecheck(*_dst_v, *_src_k.v));			\
-	__bkey_val_copy(_dst_v, sizeof(*_dst_v), _src_k.s_c);		\
+	__bkey_val_copy_pad(_dst_v, sizeof(*_dst_v), _src_k.s_c);	\
 } while (0)
 
 static inline int __bch2_bkey_get_val_typed(struct btree_trans *trans,
@@ -742,7 +742,7 @@ static inline int __bch2_bkey_get_val_typed(struct btree_trans *trans,
 	struct bkey_s_c k = __bch2_bkey_get_typed(&iter, type);
 	int ret = bkey_err(k);
 	if (!ret)
-		__bkey_val_copy(val, val_size, k);
+		__bkey_val_copy_pad(val, val_size, k);
 	return ret;
 }
 

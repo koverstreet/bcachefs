@@ -59,7 +59,7 @@ static int check_subvol(struct btree_trans *trans,
 	if (k.k->type != KEY_TYPE_subvolume)
 		return 0;
 
-	bkey_val_copy(&subvol, bkey_s_c_to_subvolume(k));
+	bkey_val_copy_pad(&subvol, bkey_s_c_to_subvolume(k));
 	snapid = le32_to_cpu(subvol.snapshot);
 	ret = bch2_snapshot_lookup(trans, snapid, &snapshot);
 
