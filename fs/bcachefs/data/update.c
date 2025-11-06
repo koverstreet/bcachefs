@@ -462,7 +462,8 @@ static void data_update_trace(struct data_update *u, int ret)
 			trace_data_update_no_io(c, buf.buf);
 		}
 		count_event(c, data_update_no_io);
-	} else if (ret != -BCH_ERR_data_update_fail_no_rw_devs) {
+	} else if (ret != -BCH_ERR_data_update_fail_no_rw_devs &&
+		   ret != -BCH_ERR_insufficient_devices) {
 		if (trace_data_update_fail_enabled()) {
 			CLASS(printbuf, buf)();
 			bch2_data_update_to_text(&buf, u);
@@ -785,7 +786,13 @@ static int can_write_extent(struct bch_fs *c, struct data_update *m)
 				prt_printf(&buf, "\nret:\t%s\n", bch2_err_str(-BCH_ERR_data_update_fail_no_rw_devs));
 				trace_data_update_fail(c, buf.buf);
 			}
-			count_event(c, data_update_fail);
+
+			/*
+			 * It's not counted as a failure because it'll end up on
+			 * the rebalance pending list
+			 *
+			 * count_event(c, data_update_fail);
+			 */
 		}
 
 		return bch_err_throw(c, data_update_fail_no_rw_devs);
