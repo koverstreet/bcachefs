@@ -813,7 +813,6 @@ static inline bool bch2_alloc_v4_cmp(struct bch_alloc_v4 l,
 		l.dirty_sectors	!= r.dirty_sectors	||
 		l.stripe_sectors != r.stripe_sectors	||
 		l.cached_sectors != r.cached_sectors	 ||
-		l.stripe_redundancy != r.stripe_redundancy ||
 		l.stripe != r.stripe;
 }
 
@@ -890,7 +889,6 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	copy_bucket_field(alloc_key_stripe_sectors_wrong,	stripe_sectors);
 	copy_bucket_field(alloc_key_cached_sectors_wrong,	cached_sectors);
 	copy_bucket_field(alloc_key_stripe_wrong,		stripe);
-	copy_bucket_field(alloc_key_stripe_redundancy_wrong,	stripe_redundancy);
 #undef copy_bucket_field
 
 	if (!bch2_alloc_v4_cmp(*old, new))

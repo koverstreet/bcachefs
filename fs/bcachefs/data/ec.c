@@ -215,8 +215,7 @@ static int __mark_stripe_bucket(struct btree_trans *trans,
 		sectors = -sectors;
 
 	if (!deleting) {
-		if (bch2_trans_inconsistent_on(a->stripe ||
-					       a->stripe_redundancy, trans,
+		if (bch2_trans_inconsistent_on(a->stripe, trans,
 				"bucket %llu:%llu gen %u data type %s dirty_sectors %u: multiple stripes using same bucket (%u, %llu)\n%s",
 				bucket.inode, bucket.offset, a->gen,
 				bch2_data_type_str(a->data_type),
@@ -234,8 +233,7 @@ static int __mark_stripe_bucket(struct btree_trans *trans,
 				(bch2_bkey_val_to_text(&buf, c, s.s_c), buf.buf)))
 			return bch_err_throw(c, mark_stripe);
 	} else {
-		if (bch2_trans_inconsistent_on(a->stripe != s.k->p.offset ||
-					       a->stripe_redundancy != s.v->nr_redundant, trans,
+		if (bch2_trans_inconsistent_on(a->stripe != s.k->p.offset, trans,
 				"bucket %llu:%llu gen %u: not marked as stripe when deleting stripe (got %u)\n%s",
 				bucket.inode, bucket.offset, a->gen,
 				a->stripe,
@@ -267,11 +265,9 @@ static int __mark_stripe_bucket(struct btree_trans *trans,
 
 	if (!deleting) {
 		a->stripe		= s.k->p.offset;
-		a->stripe_redundancy	= s.v->nr_redundant;
 		alloc_data_type_set(a, data_type);
 	} else {
 		a->stripe		= 0;
-		a->stripe_redundancy	= 0;
 		alloc_data_type_set(a, BCH_DATA_user);
 	}
 
