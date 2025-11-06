@@ -1315,10 +1315,9 @@ static int __ec_stripe_create(struct ec_stripe_new *s)
 			return bch_err_throw(c, ec_block_read);
 		}
 
-		for (unsigned i = 0; i < nr_data; i++)
-			if (stripe_blockcount_get(&bkey_i_to_stripe(&s->old_stripe.key)->v, i))
-				swap(s->new_stripe.data[i],
-				     s->old_stripe.data[i]);
+		for (unsigned i = 0; i < s->old_blocks_nr; i++)
+			swap(s->new_stripe.data[i],
+			     s->old_stripe.data[s->old_block_map[i]]);
 
 		ec_stripe_buf_exit(&s->old_stripe);
 	}
@@ -1856,8 +1855,6 @@ static int init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 	unsigned i;
 
 	BUG_ON(old_v->nr_redundant != s->nr_parity);
-	s->nr_data = old_v->nr_blocks -
-		old_v->nr_redundant;
 
 	int ret = ec_stripe_buf_init(c, &s->old_stripe, 0, le16_to_cpu(old_v->sectors));
 	if (ret) {
@@ -1880,8 +1877,12 @@ static int init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 
 	for (unsigned i = 0; i < old_v->nr_blocks; i++) {
 		if (stripe_blockcount_get(old_v, i)) {
-			__set_bit(i, s->blocks_gotten);
-			__set_bit(i, s->blocks_allocated);
+			__set_bit(s->old_blocks_nr, s->blocks_gotten);
+			__set_bit(s->old_blocks_nr, s->blocks_allocated);
+
+			new_v->ptrs[s->old_blocks_nr] = old_v->ptrs[i];
+
+			s->old_block_map[s->old_blocks_nr++] = i;
 		}
 
 		ec_block_io(c, &s->old_stripe, READ, i, &s->iodone);
