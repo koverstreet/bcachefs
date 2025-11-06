@@ -1083,7 +1083,21 @@ int bch2_inode_rm(struct bch_fs *c, subvol_inum inum)
 	CLASS(btree_trans, trans)(c);
 
 	struct bch_inode_unpacked inode;
-	try(lockrestart_do(trans, may_delete_deleted_inum(trans, inum, &inode)));
+	int ret = lockrestart_do(trans, may_delete_deleted_inum(trans, inum, &inode));
+	if (ret &&
+	    !bch2_err_matches(ret, EIO) &&
+	    !bch2_err_matches(ret, EROFS)) {
+		CLASS(printbuf, buf)();
+		prt_printf(&buf, "VFS incorrectly tried to delete inode\n");
+		guard(printbuf_indent)(&buf);
+		lockrestart_do(trans, bch2_inum_to_path(trans, inum, &buf));
+		prt_newline(&buf);
+		bch2_inode_unpacked_to_text(&buf, &inode);
+
+		bch_err_msg(c, ret, "%s", buf.buf);
+		bch2_sb_error_count(c, BCH_FSCK_ERR_vfs_bad_inode_rm);
+	}
+	try(ret);
 
 	/*
 	 * If this was a directory, there shouldn't be any real dirents left -
