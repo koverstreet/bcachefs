@@ -762,10 +762,7 @@ static int bucket_alloc_from_stripe(struct btree_trans *trans,
 	if (ec_open_bucket(c, &req->ptrs))
 		return 0;
 
-	struct ec_stripe_head *h =
-		bch2_ec_stripe_head_get(trans, req, 0, cl);
-	if (IS_ERR(h))
-		return PTR_ERR(h);
+	struct ec_stripe_head *h = errptr_try(bch2_ec_stripe_head_get(trans, req, 0, cl));
 	if (!h)
 		return 0;
 
