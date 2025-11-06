@@ -1770,8 +1770,23 @@ void bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
 	bch2_devs_list_to_text(out, &op->devs_have);
 	prt_newline(out);
 
+	prt_printf(out, "opts:\t");
+	bch2_inode_opts_to_text(out, op->c, op->opts);
+	prt_newline(out);
+
 	prt_printf(out, "ref:\t%u\n", closure_nr_remaining(&op->cl));
 	prt_printf(out, "ret\t%s\n", bch2_err_str(op->error));
+
+	if (op->flags & BCH_WRITE_move) {
+		prt_printf(out, "update:\n");
+		guard(printbuf_indent)(out);
+		struct data_update *u = container_of(op, struct data_update, op);
+		bch2_data_update_opts_to_text(out, u->op.c, &u->op.opts, &u->opts);
+		prt_newline(out);
+
+		prt_str_indented(out, "old key:\t");
+		bch2_bkey_val_to_text(out, u->op.c, bkey_i_to_s_c(u->k.k));
+	}
 }
 
 void bch2_fs_io_write_exit(struct bch_fs *c)

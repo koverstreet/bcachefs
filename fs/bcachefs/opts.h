@@ -697,5 +697,6 @@ static inline void bch2_io_opts_fixups(struct bch_inode_opts *opts)
 
 void bch2_inode_opts_get(struct bch_fs *, struct bch_inode_opts *, bool);
 bool bch2_opt_is_inode_opt(enum bch_opt_id);
+void bch2_inode_opts_to_text(struct printbuf *, struct bch_fs *, struct bch_inode_opts);
 
 #endif /* _BCACHEFS_OPTS_H */
