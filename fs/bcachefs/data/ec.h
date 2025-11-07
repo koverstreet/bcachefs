@@ -215,7 +215,7 @@ struct ec_stripe_new {
 	u8			nr_parity;
 	bool			allocated;
 	bool			pending;
-	bool			have_existing_stripe;
+	bool			have_old_stripe;
 
 	unsigned long		blocks_gotten[BITS_TO_LONGS(BCH_BKEY_PTRS_MAX)];
 	unsigned long		blocks_allocated[BITS_TO_LONGS(BCH_BKEY_PTRS_MAX)];
@@ -225,7 +225,7 @@ struct ec_stripe_new {
 	struct ec_stripe_new_bucket buckets[BCH_BKEY_PTRS_MAX];
 
 	struct ec_stripe_buf	new_stripe;
-	struct ec_stripe_buf	existing_stripe;
+	struct ec_stripe_buf	old_stripe;
 };
 
 struct ec_stripe_head {
