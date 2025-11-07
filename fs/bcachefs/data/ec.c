@@ -1711,6 +1711,7 @@ static int __new_stripe_alloc_buckets(struct btree_trans *trans,
 
 	BUG_ON(v->nr_blocks	!= s->nr_data + s->nr_parity);
 	BUG_ON(v->nr_redundant	!= s->nr_parity);
+	BUG_ON(v->nr_blocks > h->nr_active_devs);
 
 	/* * We bypass the sector allocator which normally does this: */
 	bitmap_and(req->devs_may_alloc.d, req->devs_may_alloc.d,
@@ -1919,7 +1920,15 @@ static int __bch2_ec_stripe_reuse(struct btree_trans *trans, struct ec_stripe_he
 	if (ret)
 		return ret;
 
-	return init_new_stripe_from_old(c, s);
+	struct bch_stripe *v = &bkey_i_to_stripe(&s->new_stripe.key)->v;
+	BUG_ON(v->nr_blocks	!= s->nr_data + s->nr_parity);
+	BUG_ON(v->nr_blocks > h->nr_active_devs);
+
+	try(init_new_stripe_from_old(c, s));
+
+	BUG_ON(v->nr_blocks	!= s->nr_data + s->nr_parity);
+	BUG_ON(v->nr_blocks > h->nr_active_devs);
+	return 0;
 }
 
 static int stripe_idx_alloc(struct btree_trans *trans, struct ec_stripe_new *s)
@@ -1970,6 +1979,8 @@ static int stripe_alloc_or_reuse(struct btree_trans *trans,
 				 bool *waiting)
 {
 	struct bch_fs *c = trans->c;
+
+	BUG_ON(bkey_i_to_stripe(&s->new_stripe.key)->v.nr_blocks > h->nr_active_devs);
 
 	if (!s->new_stripe.key.k.p.offset)
 		try(stripe_idx_alloc(trans, s));
@@ -2070,6 +2081,12 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 		if (waiting &&
 		    !bch2_err_matches(ret, BCH_ERR_operation_blocked))
 			closure_wake_up(&c->freelist_wait);
+
+		if (ret &&
+		    !bch2_err_matches(ret, BCH_ERR_open_buckets_empty) &&
+		    !bch2_err_matches(ret, BCH_ERR_transaction_restart) &&
+		    !bch2_err_matches(ret, BCH_ERR_operation_blocked))
+			panic("%s\n", bch2_err_str(ret));
 
 		if (ret)
 			goto err;

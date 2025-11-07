@@ -1258,15 +1258,16 @@ retry:
 alloc_done:
 	BUG_ON(!ret && req->nr_effective < req->nr_replicas);
 
-	if (req->ec && !ec_open_bucket(c, &req->ptrs))
-		pr_debug("failed to get ec bucket: ret %u", ret);
-
 	if (ret == -BCH_ERR_insufficient_devices &&
 	    req->nr_effective >= nr_replicas_required)
 		ret = 0;
 
 	if (ret)
 		goto err;
+
+	//BUG_ON(erasure_code && !ec_open_bucket(c, &req->ptrs));
+	if (req->ec && !ec_open_bucket(c, &req->ptrs))
+		pr_debug("failed to get ec bucket: ret %u", ret);
 
 	if (req->nr_effective > req->nr_replicas)
 		deallocate_extra_replicas(c, req);
