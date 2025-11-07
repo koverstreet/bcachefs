@@ -369,55 +369,57 @@ int bch2_stdio_redirect_readline_timeout(struct stdio_redirect *stdio,
 	unsigned long until = jiffies + timeout, t;
 	struct stdio_buf *buf = &stdio->input;
 	size_t seen = 0;
-again:
-	t = timeout != MAX_SCHEDULE_TIMEOUT
-		? max_t(long, until - jiffies, 0)
-		: timeout;
 
-	t = min(t, sysctl_hung_task_timeout_secs * HZ / 2);
+	while (true) {
+		t = timeout != MAX_SCHEDULE_TIMEOUT
+			? max_t(long, until - jiffies, 0)
+			: timeout;
 
-	wait_event_timeout(buf->wait, stdio_redirect_has_more_input(stdio, seen), t);
+		t = min(t, sysctl_hung_task_timeout_secs * HZ / 2);
 
-	if (stdio->done)
-		return -1;
+		wait_event_timeout(buf->wait, stdio_redirect_has_more_input(stdio, seen), t);
 
-	spin_lock(&buf->lock);
-	seen = buf->buf.nr;
-	char *n = memchr(buf->buf.data, '\n', seen);
+		if (stdio->done)
+			return -1;
 
-	if (!n && timeout != MAX_SCHEDULE_TIMEOUT && time_after_eq(jiffies, until)) {
+		spin_lock(&buf->lock);
+		seen = buf->buf.nr;
+		char *n = memchr(buf->buf.data, '\n', seen);
+
+		if (!n && timeout != MAX_SCHEDULE_TIMEOUT && time_after_eq(jiffies, until)) {
+			spin_unlock(&buf->lock);
+			return -ETIME;
+		}
+
+		if (!n) {
+			buf->waiting_for_line = true;
+			spin_unlock(&buf->lock);
+			continue;
+		}
+
+		size_t b = n + 1 - buf->buf.data;
+		if (b > line->size) {
+			spin_unlock(&buf->lock);
+			int ret = darray_resize(line, b);
+			if (ret)
+				return ret;
+			seen = 0;
+			continue;
+		}
+
+		buf->buf.nr -= b;
+		memcpy(line->data, buf->buf.data, b);
+		memmove(buf->buf.data,
+			buf->buf.data + b,
+			buf->buf.nr);
+		line->nr = b;
+
+		buf->waiting_for_line = false;
 		spin_unlock(&buf->lock);
-		return -ETIME;
+
+		wake_up(&buf->wait);
+		return 0;
 	}
-
-	if (!n) {
-		buf->waiting_for_line = true;
-		spin_unlock(&buf->lock);
-		goto again;
-	}
-
-	size_t b = n + 1 - buf->buf.data;
-	if (b > line->size) {
-		spin_unlock(&buf->lock);
-		int ret = darray_resize(line, b);
-		if (ret)
-			return ret;
-		seen = 0;
-		goto again;
-	}
-
-	buf->buf.nr -= b;
-	memcpy(line->data, buf->buf.data, b);
-	memmove(buf->buf.data,
-		buf->buf.data + b,
-		buf->buf.nr);
-	line->nr = b;
-
-	buf->waiting_for_line = false;
-	spin_unlock(&buf->lock);
-
-	wake_up(&buf->wait);
-	return 0;
 }
 
 int bch2_stdio_redirect_readline(struct stdio_redirect *stdio, darray_char *line)
@@ -455,27 +457,27 @@ ssize_t bch2_stdio_redirect_vprintf(struct stdio_redirect *stdio, bool nonblocki
 	struct stdio_buf *buf = &stdio->output;
 	unsigned long flags;
 	ssize_t ret;
-again:
-	if (stdio->done)
-		return -EPIPE;
 
-	spin_lock_irqsave(&buf->lock, flags);
-	ret = bch2_darray_vprintf(&buf->buf, GFP_NOWAIT, fmt, args);
-	spin_unlock_irqrestore(&buf->lock, flags);
+	while (true) {
+		if (stdio->done)
+			return -EPIPE;
 
-	if (ret < 0) {
-		if (nonblocking)
-			return -EAGAIN;
+		spin_lock_irqsave(&buf->lock, flags);
+		ret = bch2_darray_vprintf(&buf->buf, GFP_NOWAIT, fmt, args);
+		spin_unlock_irqrestore(&buf->lock, flags);
 
-		ret = wait_event_interruptible(buf->wait,
-				stdio_redirect_has_output_space(stdio));
-		if (ret)
-			return ret;
-		goto again;
+		if (ret < 0) {
+			if (nonblocking)
+				return -EAGAIN;
+
+			try(wait_event_interruptible(buf->wait,
+						     stdio_redirect_has_output_space(stdio)));
+			continue;
+		}
+
+		wake_up(&buf->wait);
+		return ret;
 	}
-
-	wake_up(&buf->wait);
-	return ret;
 }
 
 ssize_t bch2_stdio_redirect_printf(struct stdio_redirect *stdio, bool nonblocking,
