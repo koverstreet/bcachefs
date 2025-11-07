@@ -196,14 +196,16 @@ struct ec_stripe_new_bucket {
 	u64			dev_bucket;
 };
 
+struct ec_stripe_handle {
+	struct hlist_node	hash;
+	u64			idx;
+};
+
 struct ec_stripe_new {
 	struct bch_fs		*c;
 	struct ec_stripe_head	*h;
 	struct mutex		lock;
 	struct list_head	list;
-
-	struct hlist_node	hash;
-	u64			idx;
 
 	struct closure		iodone;
 
@@ -226,6 +228,9 @@ struct ec_stripe_new {
 
 	struct ec_stripe_buf	new_stripe;
 	struct ec_stripe_buf	old_stripe;
+
+	struct ec_stripe_handle	new_stripe_handle;
+	struct ec_stripe_handle	old_stripe_handle;
 };
 
 struct ec_stripe_head {

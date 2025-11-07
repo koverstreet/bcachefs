@@ -1424,7 +1424,7 @@ void bch2_open_bucket_to_text(struct printbuf *out, struct bch_fs *c, struct ope
 		   ob->dev, ob->bucket, ob->gen,
 		   ca->mi.bucket_size - ob->sectors_free, ca->mi.bucket_size);
 	if (ob->ec)
-		prt_printf(out, " ec idx %llu", ob->ec->idx);
+		prt_printf(out, " ec idx %llu", ob->ec->new_stripe.key.k.p.offset);
 	if (ob->on_partial_list)
 		prt_str(out, " partial");
 	prt_newline(out);
