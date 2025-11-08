@@ -1363,7 +1363,8 @@ int bch2_journal_read(struct bch_fs *c, struct journal_start_info *info)
 	jlist.ret = 0;
 
 	for_each_member_device(c, ca) {
-		if (!c->opts.fsck &&
+		if (!c->opts.read_entire_journal &&
+		    !c->opts.fsck &&
 		    !(bch2_dev_has_data(c, ca) & (1 << BCH_DATA_journal)))
 			continue;
 
