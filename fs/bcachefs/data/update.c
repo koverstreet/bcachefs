@@ -254,13 +254,9 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 		 * A replica that we just wrote might conflict with a replica
 		 * that we want to keep, due to racing with another move:
 		 */
-restart_drop_conflicting_replicas:
-		extent_for_each_ptr(extent_i_to_s(new), ptr)
-			if ((ptr_c = bch2_bkey_has_device_c(c, bkey_i_to_s_c(insert), ptr->dev)) &&
-			    !ptr_c->cached) {
-				bch2_bkey_drop_ptr_noerror(c, bkey_i_to_s(&new->k_i), ptr);
-				goto restart_drop_conflicting_replicas;
-			}
+		bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(&new->k_i), p, entry,
+			((ptr_c = bch2_bkey_has_device_c(c, bkey_i_to_s_c(insert), p.ptr.dev)) &&
+			 !ptr_c->cached));
 
 		if (!bkey_val_u64s(&new->k)) {
 			trace_data_update_key_fail2(m, &iter, k,
@@ -270,9 +266,8 @@ restart_drop_conflicting_replicas:
 		}
 
 		/* Now, drop pointers that conflict with what we just wrote: */
-		extent_for_each_ptr_decode(extent_i_to_s(new), p, entry)
-			if ((ptr = bch2_bkey_has_device(c, bkey_i_to_s(insert), p.ptr.dev)))
-				bch2_bkey_drop_ptr_noerror(c, bkey_i_to_s(insert), ptr);
+		bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(insert), p, entry,
+			bch2_bkey_has_device(c, bkey_i_to_s(&new->k_i), p.ptr.dev));
 
 		/* Add the pointers we just wrote: */
 		extent_for_each_ptr_decode(extent_i_to_s(new), p, entry)
