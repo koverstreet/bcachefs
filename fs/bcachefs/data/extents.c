@@ -1283,7 +1283,6 @@ void bch2_bkey_drop_extra_cached_ptrs(struct bch_fs *c,
 				      struct bch_inode_opts *opts,
 				      struct bkey_s k)
 {
-
 	guard(rcu)();
 	bool dropped;
 
@@ -1301,6 +1300,33 @@ void bch2_bkey_drop_extra_cached_ptrs(struct bch_fs *c,
 				}
 				have_cached_ptr = true;
 			}
+	} while (dropped);
+}
+
+void bch2_bkey_drop_extra_durability(struct bch_fs *c,
+				     struct bch_inode_opts *opts,
+				     struct bkey_s k)
+{
+	guard(rcu)();
+	unsigned durability = bch2_bkey_durability(c, k.s_c);
+	bool dropped;
+
+	do {
+		union bch_extent_entry *entry;
+		struct extent_ptr_decoded p;
+		dropped = false;
+
+		bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs(k), p, entry) {
+			unsigned ptr_durability = bch2_extent_ptr_durability(c, &p);
+
+			if (!p.ptr.cached &&
+			    durability - ptr_durability >= opts->data_replicas) {
+				bch2_extent_ptr_set_cached(c, opts, k, &entry->ptr);
+				durability -= ptr_durability;
+				dropped = true;
+				break;
+			}
+		}
 	} while (dropped);
 }
 

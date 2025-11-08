@@ -171,7 +171,7 @@ static int __bch2_data_update_index_update(struct btree_trans *trans,
 		struct bpos next_pos;
 		bool should_check_enospc;
 		s64 i_sectors_delta = 0, disk_sectors_delta = 0;
-		unsigned rewrites_found = 0, durability, ptr_bit;
+		unsigned rewrites_found = 0, ptr_bit;
 
 		bch2_trans_begin(trans);
 
@@ -274,30 +274,11 @@ restart_drop_conflicting_replicas:
 			if ((ptr = bch2_bkey_has_device(c, bkey_i_to_s(insert), p.ptr.dev)))
 				bch2_bkey_drop_ptr_noerror(c, bkey_i_to_s(insert), ptr);
 
-		durability = bch2_bkey_durability(c, bkey_i_to_s_c(insert)) +
-			bch2_bkey_durability(c, bkey_i_to_s_c(&new->k_i));
-
-		/* Now, drop excess replicas: */
-		scoped_guard(rcu) {
-restart_drop_extra_replicas:
-			bkey_for_each_ptr_decode(old.k, bch2_bkey_ptrs(bkey_i_to_s(insert)), p, entry) {
-				unsigned ptr_durability = bch2_extent_ptr_durability(c, &p);
-
-				if (!p.ptr.cached &&
-				    durability - ptr_durability >= m->op.opts.data_replicas) {
-					durability -= ptr_durability;
-
-					bch2_extent_ptr_set_cached(c, &m->op.opts,
-								   bkey_i_to_s(insert), &entry->ptr);
-					goto restart_drop_extra_replicas;
-				}
-			}
-		}
-
-		/* Finally, add the pointers we just wrote: */
+		/* Add the pointers we just wrote: */
 		extent_for_each_ptr_decode(extent_i_to_s(new), p, entry)
 			bch2_extent_ptr_decoded_append(c, insert, &p);
 
+		bch2_bkey_drop_extra_durability(c, &m->op.opts, bkey_i_to_s(insert));
 		bch2_bkey_drop_extra_cached_ptrs(c, &m->op.opts, bkey_i_to_s(insert));
 
 		ret = bch2_sum_sector_overwrites(trans, &iter, insert,
