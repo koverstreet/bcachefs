@@ -758,6 +758,8 @@ static inline int btree_path_lock_root(struct btree_trans *trans,
 	while (1) {
 		struct btree *b = READ_ONCE(r->b);
 		if (unlikely(!b)) {
+			if (!test_bit(BCH_FS_btree_running, &c->flags))
+				return bch_err_throw(c, btree_not_started);
 			BUG_ON(!r->error);
 			return r->error;
 		}

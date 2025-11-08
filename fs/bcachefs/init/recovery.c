@@ -945,10 +945,10 @@ int bch2_fs_initialize(struct bch_fs *c)
 		bch2_write_super(c);
 	}
 
-	set_bit(BCH_FS_btree_running, &c->flags);
-
 	for (unsigned i = 0; i < BTREE_ID_NR; i++)
 		bch2_btree_root_alloc_fake(c, i, 0);
+
+	set_bit(BCH_FS_btree_running, &c->flags);
 
 	for_each_member_device(c, ca)
 		try(bch2_dev_usage_init(ca, false));

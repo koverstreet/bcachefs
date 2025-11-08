@@ -250,6 +250,7 @@
 	x(EROFS,			erofs_filesystem_full)			\
 	x(EROFS,			insufficient_devices)			\
 	x(EROFS,			erofs_recovery_cancelled)		\
+	x(ESHUTDOWN,			btree_not_started)			\
 	x(0,				operation_blocked)			\
 	x(BCH_ERR_operation_blocked,	btree_cache_cannibalize_lock_blocked)	\
 	x(BCH_ERR_operation_blocked,	journal_res_blocked)			\
