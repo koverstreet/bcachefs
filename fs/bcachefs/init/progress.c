@@ -76,22 +76,31 @@ int bch2_progress_update_iter(struct btree_trans *trans,
 
 	struct btree *b = path_l(btree_iter_path(trans, iter))->b;
 
-	s->nodes_seen += b != s->last_node;
-	s->last_node = b;
+	if (IS_ERR_OR_NULL(b))
+		return 0;
 
-	if (progress_update_p(s)) {
+	struct bbpos pos = BBPOS(b->c.btree_id, b->key.k.p);
+
+	s->nodes_seen  += b != s->last_node && bbpos_cmp(pos, s->pos) > 0;
+	s->last_node	= b;
+	s->pos		= pos;
+
+	if (!s->silent && progress_update_p(s)) {
 		CLASS(printbuf, buf)();
-		unsigned percent = s->nodes_total
-			? div64_u64(s->nodes_seen * 100, s->nodes_total)
-			: 0;
-
-		prt_printf(&buf, "%s: %d%%, done %llu/%llu nodes, at ",
-			   strip_bch2(msg),
-			   percent, s->nodes_seen, s->nodes_total);
-		bch2_bbpos_to_text(&buf, BBPOS(iter->btree_id, iter->pos));
-
+		prt_printf(&buf, "%s ", strip_bch2(msg));
+		bch2_progress_to_text(&buf, s);
 		bch_info(c, "%s", buf.buf);
 	}
 
 	return 0;
+}
+
+void bch2_progress_to_text(struct printbuf *out, struct progress_indicator *s)
+{
+	unsigned percent = s->nodes_total
+		? div64_u64(s->nodes_seen * 100, s->nodes_total)
+		: 0;
+	prt_printf(out, "%d%%, done %llu/%llu nodes, at ",
+		   percent, s->nodes_seen, s->nodes_total);
+	bch2_bbpos_to_text(out, s->pos);
 }

@@ -2,6 +2,8 @@
 #ifndef _BCACHEFS_PROGRESS_H
 #define _BCACHEFS_PROGRESS_H
 
+#include "btree/bbpos_types.h"
+
 /*
  * Lame progress indicators
  *
@@ -14,10 +16,12 @@
  */
 
 struct progress_indicator {
+	struct bbpos		pos;
 	unsigned long		next_print;
 	u64			nodes_seen;
 	u64			nodes_total;
 	struct btree		*last_node;
+	bool			silent;
 };
 
 void bch2_progress_init_inner(struct progress_indicator *s,
@@ -38,5 +42,7 @@ int bch2_progress_update_iter(struct btree_trans *,
 
 #define progress_update_iter(trans, p, iter)			\
 	bch2_progress_update_iter(trans, p, iter, __func__)
+
+void bch2_progress_to_text(struct printbuf *, struct progress_indicator *);
 
 #endif /* _BCACHEFS_PROGRESS_H */
