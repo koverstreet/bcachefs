@@ -292,13 +292,20 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 			  struct per_snapshot_io_opts *snapshot_opts, struct bkey_s_c k,
 			  struct bch_inode_opts *opts)
 {
+	enum io_opts_mode {
+		IO_OPTS_metadata,
+		IO_OPTS_reflink,
+		IO_OPTS_user,
+	} mode = bkey_is_btree_ptr(k.k) ? IO_OPTS_metadata :
+		 !bkey_is_indirect(k.k)	? IO_OPTS_user :
+					  IO_OPTS_reflink;
+
 	struct bch_fs *c = trans->c;
-	bool metadata = bkey_is_btree_ptr(k.k);
 
 	if (!snapshot_opts) {
-		bch2_inode_opts_get(c, opts, metadata);
+		bch2_inode_opts_get(c, opts, mode == IO_OPTS_metadata);
 
-		if (!metadata && k.k->p.snapshot) {
+		if (mode == IO_OPTS_user) {
 			struct bch_inode_unpacked inode;
 			int ret = bch2_inode_find_by_inum_snapshot(trans, k.k->p.inode, k.k->p.snapshot,
 								   &inode, BTREE_ITER_cached);
@@ -315,16 +322,17 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 		 * different snapshot version of that inode
 		 */
 
+		bool metadata = mode == IO_OPTS_metadata;
 		if (snapshot_opts->fs_io_opts.change_cookie	!= atomic_read(&c->opt_change_cookie) ||
 		    snapshot_opts->metadata			!= metadata) {
 			bch2_inode_opts_get(c, &snapshot_opts->fs_io_opts, metadata);
 
 			snapshot_opts->metadata = metadata;
 			snapshot_opts->cur_inum = 0;
-			snapshot_opts->d.nr = 0;
+			snapshot_opts->d.nr	= 0;
 		}
 
-		if (!metadata && k.k->p.snapshot) {
+		if (mode == IO_OPTS_user) {
 			if (snapshot_opts->cur_inum != k.k->p.inode) {
 				snapshot_opts->d.nr = 0;
 
@@ -363,7 +371,7 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 	}
 
 	const struct bch_extent_rebalance *old;
-	if (k.k->type == KEY_TYPE_reflink_v &&
+	if (mode == IO_OPTS_reflink &&
 	    (old = bch2_bkey_rebalance_opts(c, k))) {
 #define x(_name)								\
 		if (old->_name##_from_inode)					\

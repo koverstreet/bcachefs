@@ -49,6 +49,12 @@ int bch2_trigger_indirect_inline_data(struct btree_trans *,
 	.min_val_size	= 8,					\
 })
 
+static inline bool bkey_is_indirect(const struct bkey *k)
+{
+	return  k->type == KEY_TYPE_reflink_v ||
+		k->type == KEY_TYPE_indirect_inline_data;
+}
+
 static inline const __le64 *bkey_refcount_c(struct bkey_s_c k)
 {
 	switch (k.k->type) {
