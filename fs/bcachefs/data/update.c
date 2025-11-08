@@ -563,6 +563,9 @@ void bch2_data_update_opts_to_text(struct printbuf *out, struct bch_fs *c,
 	prt_str_indented(out, "extra replicas:\t");
 	prt_u64(out, data_opts->extra_replicas);
 	prt_newline(out);
+
+	prt_printf(out, "read_dev:\t%i\n", data_opts->read_dev);
+	prt_printf(out, "checksum_paranoia:\t%i\n", data_opts->checksum_paranoia);
 }
 
 void bch2_data_update_to_text(struct printbuf *out, struct data_update *m)
@@ -737,8 +740,8 @@ static int can_write_extent(struct bch_fs *c, struct data_update *m)
 }
 
 /*
- * When an extent has both checksummed and non-checksummed pointers, special
- * handling:
+ * When an extent has non-checksummed pointers and is supposed to be
+ * checksummed, special handling applies:
  *
  * We don't want to blindly apply an existing checksum to non-checksummed data,
  * or lose our ability to detect that different replicas in the same extent have
@@ -750,33 +753,33 @@ static int can_write_extent(struct bch_fs *c, struct data_update *m)
  */
 static void checksummed_and_non_checksummed_handling(struct data_update *u, struct bkey_ptrs_c ptrs)
 {
-	bool have_non_checksummed = false;
+	if (unlikely(!u->op.opts.data_checksum))
+		return;
 
 	struct bch_fs *c = u->op.c;
 	struct bkey_s_c k = bkey_i_to_s_c(u->k.k);
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
-		have_non_checksummed |= p.crc.csum_type != 0;
+		u->opts.checksum_paranoia |= p.crc.csum_type == 0;
 
-	if (unlikely(u->op.opts.data_checksum && have_non_checksummed)) {
-		unsigned ptr_bit = 1;
-		int rewrite_checksummed = -1;
+	if (likely(!u->opts.checksum_paranoia))
+		return;
 
-		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-			if (ptr_bit & u->opts.ptrs_rewrite) {
-				if (rewrite_checksummed < 0) {
-					rewrite_checksummed = p.crc.csum_type != 0;
-					u->opts.read_dev = p.ptr.dev;
-				}
+	bool rewrite_found = false;
+	unsigned ptr_bit = 1;
 
-				if (rewrite_checksummed != (p.crc.csum_type != 0) ||
-				    (!rewrite_checksummed && p.ptr.dev != u->opts.read_dev))
-					u->opts.ptrs_rewrite &= ~ptr_bit;
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if (ptr_bit & u->opts.ptrs_rewrite) {
+			if (!rewrite_found) {
+				rewrite_found = true;
+				u->opts.read_dev = p.ptr.dev;
+			} else {
+				u->opts.ptrs_rewrite &= ~ptr_bit;
 			}
-
-			ptr_bit <<= 1;
 		}
+
+		ptr_bit <<= 1;
 	}
 }
 

@@ -300,7 +300,7 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 			   iter->btree_id, k, 0,
 			   NULL,
 			   BCH_READ_last_fragment,
-			   data_opts.type == BCH_DATA_UPDATE_scrub ? data_opts.read_dev : -1);
+			   data_opts.read_dev);
 	u = NULL;
 	return 0;
 }
@@ -322,7 +322,7 @@ int bch2_move_extent(struct moving_context *ctxt,
 	try(bch2_update_rebalance_opts(trans, &opts, iter, k, SET_NEEDS_REBALANCE_other));
 	try(bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
 
-	struct data_update_opts data_opts = {};
+	struct data_update_opts data_opts = { .read_dev = -1 };
 	int ret = pred(trans, arg, iter->btree_id, k, &opts, &data_opts);
 
 	if (trace_io_move_pred_enabled())
@@ -526,12 +526,11 @@ static int bch2_move_data(struct bch_fs *c,
 
 		for (unsigned level = min_depth_this_btree;
 		     level < BTREE_MAX_DEPTH;
-		     level++) {
+		     level++)
 			try(bch2_move_data_btree(&ctxt,
 						 id == start.btree ? start.pos : POS_MIN,
 						 id == end.btree   ? end.pos   : POS_MAX,
 						 pred, arg, id, level));
-		}
 	}
 
 	return 0;
@@ -683,6 +682,7 @@ static int evacuate_bucket_pred(struct btree_trans *trans, void *_arg,
 	struct evacuate_bucket_arg *arg = _arg;
 
 	*data_opts = arg->data_opts;
+	data_opts->read_dev = -1;
 
 	unsigned i = 0;
 	bkey_for_each_ptr(bch2_bkey_ptrs_c(k), ptr) {
