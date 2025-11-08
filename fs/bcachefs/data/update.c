@@ -797,20 +797,16 @@ static int can_write_extent(struct bch_fs *c, struct data_update *m)
  */
 static void checksummed_and_non_checksummed_handling(struct data_update *u, struct bkey_ptrs_c ptrs)
 {
-	bool have_checksummed = false, have_non_checksummed = false;
+	bool have_non_checksummed = false;
 
 	struct bch_fs *c = u->op.c;
 	struct bkey_s_c k = bkey_i_to_s_c(u->k.k);
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
-	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-		if (p.crc.csum_type)
-			have_checksummed = true;
-		else
-			have_non_checksummed = true;
-	}
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
+		have_non_checksummed |= p.crc.csum_type != 0;
 
-	if (unlikely(have_checksummed && have_non_checksummed)) {
+	if (unlikely(u->op.opts.data_checksum && have_non_checksummed)) {
 		unsigned ptr_bit = 1;
 		int rewrite_checksummed = -1;
 
