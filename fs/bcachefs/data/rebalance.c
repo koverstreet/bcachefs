@@ -336,35 +336,33 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 			if (snapshot_opts->cur_inum != k.k->p.inode) {
 				snapshot_opts->d.nr = 0;
 
-				int ret = for_each_btree_key(trans, iter, BTREE_ID_inodes, POS(0, k.k->p.inode),
-							     BTREE_ITER_all_snapshots, inode_k, ({
-					if (inode_k.k->p.offset != k.k->p.inode)
-						break;
-
-					if (!bkey_is_inode(inode_k.k))
-						continue;
-
+				try(for_each_btree_key_max(trans, iter, BTREE_ID_inodes,
+							   SPOS(0, k.k->p.inode, 0),
+							   SPOS(0, k.k->p.inode, U32_MAX),
+							   BTREE_ITER_all_snapshots, inode_k, ({
 					struct bch_inode_unpacked inode;
-					_ret3 = bch2_inode_unpack(inode_k, &inode);
-					if (_ret3)
-						break;
+					if (!bkey_is_inode(inode_k.k) ||
+					    bch2_inode_unpack(inode_k, &inode))
+						continue;
 
 					struct snapshot_io_opts_entry e = { .snapshot = inode_k.k->p.snapshot };
 					bch2_inode_opts_get_inode(c, &inode, &e.io_opts);
 
 					darray_push(&snapshot_opts->d, e);
-				}));
+				})));
 
 				snapshot_opts->cur_inum = k.k->p.inode;
 
-				return ret ?: bch_err_throw(c, transaction_restart_nested);
+				return bch_err_throw(c, transaction_restart_nested);
 			}
 
-			darray_for_each(snapshot_opts->d, i)
-				if (bch2_snapshot_is_ancestor(c, k.k->p.snapshot, i->snapshot)) {
-					*opts = i->io_opts;
-					return 0;
-				}
+			struct snapshot_io_opts_entry *i =
+				darray_find_p(snapshot_opts->d, i,
+					      bch2_snapshot_is_ancestor(c, k.k->p.snapshot, i->snapshot));
+			if (i) {
+				*opts = i->io_opts;
+				return 0;
+			}
 		}
 
 		*opts = snapshot_opts->fs_io_opts;
