@@ -496,7 +496,7 @@ fsck_err:
 
 static int check_btree_alloc(struct btree_trans *trans)
 {
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init(&progress, trans->c, BIT_ULL(BTREE_ID_alloc));
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_alloc, POS_MIN, BTREE_ITER_prefetch);
@@ -673,7 +673,7 @@ int bch2_check_alloc_to_lru_refs(struct bch_fs *c)
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
 
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_alloc));
 
 	CLASS(btree_trans, trans)(c);

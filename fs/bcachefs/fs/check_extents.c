@@ -415,7 +415,7 @@ int bch2_check_extents(struct bch_fs *c)
 	CLASS(inode_walker, w)();
 	CLASS(extent_ends, extent_ends)();
 
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_extents));
 
 	return for_each_btree_key(trans, iter, BTREE_ID_extents,
@@ -433,7 +433,7 @@ int bch2_check_indirect_extents(struct bch_fs *c)
 	CLASS(disk_reservation, res)(c);
 	CLASS(btree_trans, trans)(c);
 
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_reflink));
 
 	return for_each_btree_key_commit(trans, iter, BTREE_ID_reflink,

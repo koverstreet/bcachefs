@@ -550,7 +550,7 @@ int bch2_reconstruct_snapshots(struct bch_fs *c)
 	struct snapshot_tree_reconstruct r __cleanup(snapshot_tree_reconstruct_exit) = {};
 	int ret = 0;
 
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init(&progress, c, btree_has_snapshots_mask);
 
 	for (unsigned btree = 0; btree < BTREE_ID_NR; btree++) {

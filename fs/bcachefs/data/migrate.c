@@ -111,7 +111,7 @@ static int bch2_dev_btree_drop_key(struct btree_trans *trans,
 }
 
 static int bch2_dev_usrdata_drop(struct bch_fs *c,
-				 struct progress_indicator_state *progress,
+				 struct progress_indicator *progress,
 				 unsigned dev_idx,
 				 unsigned flags, struct printbuf *err)
 {
@@ -141,7 +141,7 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c,
 
 static int dev_metadata_drop_one(struct btree_trans *trans,
 				 struct btree_iter *iter,
-				 struct progress_indicator_state *progress,
+				 struct progress_indicator *progress,
 				 unsigned dev_idx,
 				 unsigned flags, struct printbuf *err)
 {
@@ -157,7 +157,7 @@ static int dev_metadata_drop_one(struct btree_trans *trans,
 }
 
 static int bch2_dev_metadata_drop(struct bch_fs *c,
-				  struct progress_indicator_state *progress,
+				  struct progress_indicator *progress,
 				  unsigned dev_idx,
 				  unsigned flags, struct printbuf *err)
 {
@@ -240,7 +240,7 @@ int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, unsigned dev_idx, unsig
 int bch2_dev_data_drop(struct bch_fs *c, unsigned dev_idx,
 		       unsigned flags, struct printbuf *err)
 {
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init(&progress, c, btree_has_data_ptrs_mask & ~BIT_ULL(BTREE_ID_stripes));
 
 	try(bch2_dev_usrdata_drop(c, &progress, dev_idx, flags, err));

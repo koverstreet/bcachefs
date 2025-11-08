@@ -1092,7 +1092,7 @@ int bch2_check_inodes(struct bch_fs *c)
 	CLASS(btree_trans, trans)(c);
 	CLASS(snapshots_seen, s)();
 
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_inodes));
 
 	return for_each_btree_key_commit(trans, iter, BTREE_ID_inodes,
@@ -1182,7 +1182,7 @@ fsck_err:
  */
 int bch2_check_unreachable_inodes(struct bch_fs *c)
 {
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_inodes));
 
 	CLASS(btree_trans, trans)(c);
@@ -1708,7 +1708,7 @@ int bch2_check_dirents(struct bch_fs *c)
 	CLASS(snapshots_seen, s)();
 	CLASS(inode_walker, dir)();
 	CLASS(inode_walker, target)();
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bool need_second_pass = false, did_second_pass = false;
 	int ret;
 again:
@@ -1776,7 +1776,7 @@ int bch2_check_xattrs(struct bch_fs *c)
 	CLASS(btree_trans, trans)(c);
 	CLASS(inode_walker, inode)();
 
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_xattrs));
 
 	int ret = for_each_btree_key_commit(trans, iter, BTREE_ID_xattrs,

@@ -708,7 +708,7 @@ static int bch2_gc_btree_root(struct btree_trans *trans, enum btree_id btree, bo
 }
 
 static int bch2_gc_btree(struct btree_trans *trans,
-			 struct progress_indicator_state *progress,
+			 struct progress_indicator *progress,
 			 enum btree_id btree, unsigned target_depth,
 			 bool initial)
 {
@@ -737,7 +737,7 @@ static int bch2_gc_btrees(struct bch_fs *c)
 	CLASS(printbuf, buf)();
 	int ret = 0;
 
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init_inner(&progress, c, ~0ULL, ~0ULL);
 
 	enum btree_id ids[BTREE_ID_NR];

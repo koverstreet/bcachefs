@@ -412,7 +412,7 @@ fsck_err:
 /* verify that every backpointer has a corresponding alloc key */
 int bch2_check_btree_backpointers(struct bch_fs *c)
 {
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_backpointers));
 
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
@@ -768,7 +768,7 @@ static int bch2_check_extents_to_backpointers_pass(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init_inner(&progress, trans->c,
 		btree_has_data_ptrs_mask,
 		~0ULL);
@@ -1258,7 +1258,7 @@ static int bch2_check_backpointers_to_extents_pass(struct btree_trans *trans,
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
 
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init(&progress, trans->c, BIT_ULL(BTREE_ID_backpointers));
 
 	return for_each_btree_key(trans, iter, BTREE_ID_backpointers,

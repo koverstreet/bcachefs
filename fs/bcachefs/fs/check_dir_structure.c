@@ -122,7 +122,7 @@ int bch2_check_subvolume_structure(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
 
-	struct progress_indicator_state progress;
+	struct progress_indicator progress;
 	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_subvolumes));
 
 	return for_each_btree_key_commit(trans, iter,

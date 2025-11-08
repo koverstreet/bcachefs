@@ -8,7 +8,7 @@
 #include "init/passes.h"
 #include "init/progress.h"
 
-void bch2_progress_init_inner(struct progress_indicator_state *s,
+void bch2_progress_init_inner(struct progress_indicator *s,
 			      struct bch_fs *c,
 			      u64 leaf_btree_id_mask,
 			      u64 inner_btree_id_mask)
@@ -56,7 +56,7 @@ void bch2_progress_init_inner(struct progress_indicator_state *s,
 	}
 }
 
-static inline bool progress_update_p(struct progress_indicator_state *s)
+static inline bool progress_update_p(struct progress_indicator *s)
 {
 	bool ret = time_after_eq(jiffies, s->next_print);
 
@@ -66,7 +66,7 @@ static inline bool progress_update_p(struct progress_indicator_state *s)
 }
 
 int bch2_progress_update_iter(struct btree_trans *trans,
-			      struct progress_indicator_state *s,
+			      struct progress_indicator *s,
 			      struct btree_iter *iter,
 			      const char *msg)
 {
