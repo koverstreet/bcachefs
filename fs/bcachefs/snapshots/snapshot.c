@@ -696,6 +696,7 @@ static unsigned live_child(struct bch_fs *c, u32 start)
 	     id && id != start;
 	     id = bch2_snapshot_tree_next(t, id))
 		if (bch2_snapshot_is_leaf(c, id) &&
+		    bch2_snapshot_exists(c, id) &&
 		    !snapshot_list_has_id(&d->delete_leaves, id) &&
 		    !interior_delete_has_id(&d->delete_interior, id))
 			return id;
@@ -896,10 +897,9 @@ static int check_should_delete_snapshot(struct btree_trans *trans, struct bkey_s
 	struct bkey_s_c_snapshot s = bkey_s_c_to_snapshot(k);
 	unsigned live_children = 0;
 
-	if (BCH_SNAPSHOT_SUBVOL(s.v))
-		return 0;
-
-	if (BCH_SNAPSHOT_DELETED(s.v))
+	if (BCH_SNAPSHOT_SUBVOL(s.v) ||
+	    BCH_SNAPSHOT_NO_KEYS(s.v) ||
+	    BCH_SNAPSHOT_DELETED(s.v))
 		return 0;
 
 	guard(mutex)(&d->progress_lock);
