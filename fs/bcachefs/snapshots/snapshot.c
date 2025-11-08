@@ -827,6 +827,14 @@ static int delete_dead_snapshot_keys_v2(struct btree_trans *trans)
 	CLASS(btree_iter, iter)(trans, BTREE_ID_inodes, POS_MIN,
 			     BTREE_ITER_prefetch|BTREE_ITER_all_snapshots);
 
+	/*
+	 * First, delete extents/dirents/xattrs
+	 *
+	 * If an extent/dirent/xattr is present in a given snapshot ID an inode
+	 * must also be present in that same snapshot ID, so we can use this to
+	 * greatly accelerate scanning:
+	 */
+
 	while (1) {
 		struct bkey_s_c k;
 		try(lockrestart_do(trans,
@@ -853,6 +861,8 @@ static int delete_dead_snapshot_keys_v2(struct btree_trans *trans)
 			bch2_btree_iter_advance(&iter);
 		}
 	}
+
+	/* Then the inodes */
 
 	prev_inum = 0;
 	try(for_each_btree_key_commit(trans, iter,
