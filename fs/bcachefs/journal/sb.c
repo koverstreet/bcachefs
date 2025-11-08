@@ -28,7 +28,7 @@ static int bch2_sb_journal_validate(struct bch_sb *sb, struct bch_sb_field *f,
 	if (!nr)
 		return 0;
 
-	u64 *b __free(kfree)  = kvmalloc_array(nr, sizeof(u64), GFP_KERNEL);
+	u64 *b __free(kvfree)  = kvmalloc_array(nr, sizeof(u64), GFP_KERNEL);
 	if (!b)
 		return -BCH_ERR_ENOMEM_sb_journal_validate;
 
@@ -104,7 +104,7 @@ static int bch2_sb_journal_v2_validate(struct bch_sb *sb, struct bch_sb_field *f
 	if (!nr)
 		return 0;
 
-	struct u64_range *b __free(kfree) = kvmalloc_array(nr, sizeof(*b), GFP_KERNEL);
+	struct u64_range *b __free(kvfree) = kvmalloc_array(nr, sizeof(*b), GFP_KERNEL);
 	if (!b)
 		return -BCH_ERR_ENOMEM_sb_journal_v2_validate;
 
