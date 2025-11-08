@@ -51,6 +51,7 @@ struct snapshot_delete {
 	interior_delete_list	delete_interior;
 
 	bool			running;
+	unsigned		version;
 	struct bbpos		pos;
 };
 

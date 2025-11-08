@@ -770,6 +770,8 @@ static int delete_dead_snapshot_keys_v1(struct btree_trans *trans)
 	struct bch_fs *c = trans->c;
 	struct snapshot_delete *d = &c->snapshot_delete;
 
+	d->version		= 1;
+
 	for (d->pos.btree = 0; d->pos.btree < BTREE_ID_NR; d->pos.btree++) {
 		CLASS(disk_reservation, res)(c);
 		u64 prev_inum = 0;
@@ -823,6 +825,8 @@ static int delete_dead_snapshot_keys_v2(struct btree_trans *trans)
 	struct snapshot_delete *d = &c->snapshot_delete;
 	CLASS(disk_reservation, res)(c);
 	u64 prev_inum = 0;
+
+	d->version		= 2;
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_inodes, POS_MIN,
 			     BTREE_ITER_prefetch|BTREE_ITER_all_snapshots);
@@ -1141,6 +1145,7 @@ void bch2_snapshot_delete_status_to_text(struct printbuf *out, struct bch_fs *c)
 	}
 
 	scoped_guard(mutex, &d->progress_lock) {
+		prt_printf(out, "Snapshot deletion v%u\n", d->version);
 		prt_str(out, "Current position: ");
 		bch2_bbpos_to_text(out, d->pos);
 		prt_newline(out);
