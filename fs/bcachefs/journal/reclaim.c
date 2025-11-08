@@ -199,7 +199,6 @@ void bch2_journal_space_available(struct journal *j)
 				       j->buf[1].buf_size >> 9);
 	unsigned nr_online = 0, nr_devs_want;
 	bool can_discard = false;
-	int ret = 0;
 
 	lockdep_assert_held(&j->lock);
 	guard(rcu)();
@@ -238,8 +237,10 @@ void bch2_journal_space_available(struct journal *j)
 
 			bch_err(c, "%s", buf.buf);
 		}
-		ret = bch_err_throw(c, insufficient_journal_devices);
-		goto out;
+
+		j->cur_entry_sectors	= 0;
+		j->cur_entry_error	= bch_err_throw(c, insufficient_journal_devices);
+		return;
 	}
 
 	nr_devs_want = min_t(unsigned, nr_online, c->opts.metadata_replicas);
@@ -251,9 +252,6 @@ void bch2_journal_space_available(struct journal *j)
 	clean		= j->space[journal_space_clean].total;
 	total		= j->space[journal_space_total].total;
 
-	if (!j->space[journal_space_discarded].next_entry)
-		ret = bch_err_throw(c, journal_full);
-
 	if ((j->space[journal_space_clean_ondisk].next_entry <
 	     j->space[journal_space_clean_ondisk].total) &&
 	    (clean - clean_ondisk <= total / 8) &&
@@ -263,13 +261,13 @@ void bch2_journal_space_available(struct journal *j)
 		clear_bit(JOURNAL_may_skip_flush, &j->flags);
 
 	bch2_journal_set_watermark(j);
-out:
-	j->cur_entry_sectors	= !ret
-		? j->space[journal_space_discarded].next_entry
-		: 0;
-	j->cur_entry_error	= ret;
 
-	if (!ret)
+	j->cur_entry_sectors	= j->space[journal_space_discarded].next_entry;
+	j->cur_entry_error	= j->cur_entry_sectors
+		? 0
+		: bch_err_throw(c, journal_full);
+
+	if (!j->cur_entry_error)
 		journal_wake(j);
 }
 
