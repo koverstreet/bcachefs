@@ -337,19 +337,19 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 				snapshot_opts->d.nr = 0;
 
 				int ret = for_each_btree_key(trans, iter, BTREE_ID_inodes, POS(0, k.k->p.inode),
-							     BTREE_ITER_all_snapshots, k, ({
-					if (k.k->p.offset != k.k->p.inode)
+							     BTREE_ITER_all_snapshots, inode_k, ({
+					if (inode_k.k->p.offset != k.k->p.inode)
 						break;
 
-					if (!bkey_is_inode(k.k))
+					if (!bkey_is_inode(inode_k.k))
 						continue;
 
 					struct bch_inode_unpacked inode;
-					_ret3 = bch2_inode_unpack(k, &inode);
+					_ret3 = bch2_inode_unpack(inode_k, &inode);
 					if (_ret3)
 						break;
 
-					struct snapshot_io_opts_entry e = { .snapshot = k.k->p.snapshot };
+					struct snapshot_io_opts_entry e = { .snapshot = inode_k.k->p.snapshot };
 					bch2_inode_opts_get_inode(c, &inode, &e.io_opts);
 
 					darray_push(&snapshot_opts->d, e);
