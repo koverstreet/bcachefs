@@ -177,6 +177,9 @@ static int data_update_index_update_key(struct btree_trans *trans,
 		return 0;
 	}
 
+	struct bch_inode_opts opts;
+	try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
+
 	bch2_cut_front(c, iter->pos, &new->k_i);
 
 	bch2_cut_front(c, iter->pos,	insert);
@@ -205,8 +208,7 @@ static int data_update_index_update_key(struct btree_trans *trans,
 			if (ptr_bit & u->opts.ptrs_io_error)
 				bch2_bkey_drop_ptr_noerror(c, bkey_i_to_s(insert), ptr);
 			else if (!ptr->cached)
-				bch2_extent_ptr_set_cached(c, &u->op.opts,
-							   bkey_i_to_s(insert), ptr);
+				bch2_extent_ptr_set_cached(c, &opts, bkey_i_to_s(insert), ptr);
 
 			rewrites_found |= ptr_bit;
 		}
@@ -215,7 +217,7 @@ static int data_update_index_update_key(struct btree_trans *trans,
 
 	if (u->opts.ptrs_rewrite &&
 	    !rewrites_found &&
-	    bch2_bkey_durability(c, k) >= u->op.opts.data_replicas) {
+	    bch2_bkey_durability(c, k) >= opts.data_replicas) {
 		trace_data_update_key_fail2(u, iter, k, bkey_i_to_s_c(&new->k_i), insert,
 					    "no rewrites found:");
 		bch2_btree_iter_advance(iter);
@@ -248,8 +250,8 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	extent_for_each_ptr_decode(extent_i_to_s(new), p, entry)
 		bch2_extent_ptr_decoded_append(c, insert, &p);
 
-	bch2_bkey_drop_extra_durability(c, &u->op.opts, bkey_i_to_s(insert));
-	bch2_bkey_drop_extra_cached_ptrs(c, &u->op.opts, bkey_i_to_s(insert));
+	bch2_bkey_drop_extra_durability(c, &opts, bkey_i_to_s(insert));
+	bch2_bkey_drop_extra_cached_ptrs(c, &opts, bkey_i_to_s(insert));
 
 	bool should_check_enospc = false;
 	s64 i_sectors_delta = 0, disk_sectors_delta = 0;
@@ -271,9 +273,6 @@ static int data_update_index_update_key(struct btree_trans *trans,
 
 	try(bch2_insert_snapshot_whiteouts(trans, u->btree_id, k.k->p, bkey_start_pos(&insert->k)));
 	try(bch2_insert_snapshot_whiteouts(trans, u->btree_id, k.k->p, insert->k.p));
-
-	struct bch_inode_opts opts;
-	try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
 
 	try(bch2_bkey_set_needs_rebalance(c, &opts, insert,
 					  SET_NEEDS_REBALANCE_foreground,
