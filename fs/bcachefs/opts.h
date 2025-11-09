@@ -351,6 +351,11 @@ enum fsck_err_opts {
 	  OPT_UINT(0, U32_MAX),						\
 	  BCH_SB_JOURNAL_RECLAIM_DELAY,	100,				\
 	  NULL,		"Delay in milliseconds before automatic journal reclaim")\
+	x(writeback_timeout,		u16,				\
+	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
+	  OPT_UINT(0, U16_MAX),						\
+	  BCH_SB_WRITEBACK_TIMEOUT,	0,				\
+	  NULL,		"Delay seconds before writing back dirty data, overriding vm sysctls")\
 	x(move_bytes_in_flight,		u32,				\
 	  OPT_HUMAN_READABLE|OPT_FS|OPT_MOUNT|OPT_RUNTIME,		\
 	  OPT_UINT(1024, U32_MAX),					\
