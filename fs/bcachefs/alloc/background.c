@@ -1336,16 +1336,14 @@ fsck_err:
 static struct bkey_s_c next_lru_key(struct btree_trans *trans, struct btree_iter *iter,
 				    struct bch_dev *ca, bool *wrapped)
 {
-	struct bkey_s_c k;
-again:
-	k = bch2_btree_iter_peek_max(iter, lru_pos(ca->dev_idx, U64_MAX, LRU_TIME_MAX));
-	if (!k.k && !*wrapped) {
+	while (true) {
+		struct bkey_s_c k = bch2_btree_iter_peek_max(iter, lru_pos(ca->dev_idx, U64_MAX, LRU_TIME_MAX));
+		if (k.k || *wrapped)
+			return k;
+
 		bch2_btree_iter_set_pos(iter, lru_pos(ca->dev_idx, 0, 0));
 		*wrapped = true;
-		goto again;
 	}
-
-	return k;
 }
 
 static void __bch2_do_invalidates(struct bch_dev *ca)
