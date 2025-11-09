@@ -383,14 +383,11 @@ static noinline int flush_new_cached_update(struct btree_trans *trans,
 					    enum btree_iter_update_trigger_flags flags,
 					    unsigned long ip)
 {
-	btree_path_idx_t path_idx =
-		bch2_path_get(trans, i->btree_id, i->old_k.p, 1, 0,
-			      BTREE_ITER_intent, _THIS_IP_);
-	int ret = bch2_btree_path_traverse(trans, path_idx, 0);
-	if (ret)
-		goto out;
+	CLASS(btree_iter, iter)(trans, i->btree_id, i->old_k.p, BTREE_ITER_intent);
 
-	struct btree_path *btree_path = trans->paths + path_idx;
+	try(bch2_btree_iter_traverse(&iter));
+
+	struct btree_path *btree_path = btree_iter_path(trans, &iter);
 
 	btree_path_set_should_be_locked(trans, btree_path);
 #if 0
@@ -403,7 +400,7 @@ static noinline int flush_new_cached_update(struct btree_trans *trans,
 	struct bkey k;
 	bch2_btree_path_peek_slot_exact(btree_path, &k);
 	if (!bkey_deleted(&k))
-		goto out;
+		return 0;
 #endif
 	i->key_cache_already_flushed = true;
 	i->flags |= BTREE_TRIGGER_norun;
@@ -411,14 +408,12 @@ static noinline int flush_new_cached_update(struct btree_trans *trans,
 	struct bkey old_k		= i->old_k;
 	const struct bch_val *old_v	= i->old_v;
 
-	i = __btree_trans_update_by_path(trans, path_idx, i->k, flags, _THIS_IP_);
+	i = __btree_trans_update_by_path(trans, iter.path, i->k, flags, ip);
 
 	i->old_k		= old_k;
 	i->old_v		= old_v;
 	i->key_cache_flushing	= true;
-out:
-	bch2_path_put(trans, path_idx, true);
-	return ret;
+	return 0;
 }
 
 static int __must_check
