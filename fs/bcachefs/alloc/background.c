@@ -766,13 +766,21 @@ int bch2_alloc_key_to_dev_counters(struct btree_trans *trans, struct bch_dev *ca
 	return 0;
 }
 
+static noinline int inval_bucket_key(struct btree_trans *trans, struct bkey_s_c k)
+{
+	struct bch_fs *c = trans->c;
+	CLASS(printbuf, buf)();
+	bch2_fs_inconsistent(c, "reference to invalid bucket\n%s",
+			     (bch2_bkey_val_to_text(&buf, c, k), buf.buf));
+	return bch_err_throw(c, trigger_alloc);
+}
+
 int bch2_trigger_alloc(struct btree_trans *trans,
 		       enum btree_id btree, unsigned level,
 		       struct bkey_s_c old, struct bkey_s new,
 		       enum btree_iter_update_trigger_flags flags)
 {
 	struct bch_fs *c = trans->c;
-	CLASS(printbuf, buf)();
 	int ret = 0;
 
 	CLASS(bch2_dev_bucket_tryget, ca)(c, new.k->p);
@@ -849,6 +857,7 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 		u64 transaction_seq = trans->journal_res.seq;
 		BUG_ON(!transaction_seq);
 
+		CLASS(printbuf, buf)();
 		if (log_fsck_err_on(transaction_seq && new_a->journal_seq_nonempty > transaction_seq,
 				    trans, alloc_key_journal_seq_in_future,
 				    "bucket journal seq in future (currently at %llu)\n%s",
@@ -901,7 +910,7 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 			guard(rcu)();
 			u8 *gen = bucket_gen(ca, new.k->p.offset);
 			if (unlikely(!gen))
-				goto invalid_bucket;
+				return inval_bucket_key(trans, new.s_c);
 			*gen = new_a->gen;
 		}
 
@@ -931,16 +940,12 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 		guard(rcu)();
 		struct bucket *g = gc_bucket(ca, new.k->p.offset);
 		if (unlikely(!g))
-			goto invalid_bucket;
+			return inval_bucket_key(trans, new.s_c);
 		g->gen_valid	= 1;
 		g->gen		= new_a->gen;
 	}
 fsck_err:
 	return ret;
-invalid_bucket:
-	bch2_fs_inconsistent(c, "reference to invalid bucket\n%s",
-			     (bch2_bkey_val_to_text(&buf, c, new.s_c), buf.buf));
-	return bch_err_throw(c, trigger_alloc);
 }
 
 static int discard_in_flight_add(struct bch_dev *ca, u64 bucket, bool in_progress)
