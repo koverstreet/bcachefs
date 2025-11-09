@@ -209,9 +209,7 @@ int bch2_vfs_init(void);
 
 static inline void bch2_dirty_inode(struct bch_fs *c, struct bch_inode_info *inode)
 {
-	if (c->opts.writeback_timeout)
-		queue_delayed_work(c->vfs_writeback_wq, &inode->ei_writeback_timer,
-				   c->opts.writeback_timeout * HZ);
+	queue_delayed_work(c->vfs_writeback_wq, &inode->ei_writeback_timer, HZ);
 }
 
 #else
