@@ -196,6 +196,8 @@ void bch2_snapshot_to_text(struct printbuf *out, struct bch_fs *c,
 		prt_str(out, "will_delete ");
 	if (BCH_SNAPSHOT_DELETED(s.v))
 		prt_str(out, "deleted ");
+	if (BCH_SNAPSHOT_NO_KEYS(s.v))
+		prt_str(out, "no_keys ");
 
 	prt_printf(out, "parent %10u children %10u %10u subvol %u tree %u",
 	       le32_to_cpu(s.v->parent),
