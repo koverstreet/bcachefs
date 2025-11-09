@@ -1263,13 +1263,9 @@ int bch2_snapshots_read(struct bch_fs *c)
 	 * initialized - so mark in reverse:
 	 */
 	CLASS(btree_trans, trans)(c);
-	int ret = for_each_btree_key_reverse(trans, iter, BTREE_ID_snapshots,
-				   POS_MAX, 0, k,
-			__bch2_mark_snapshot(trans, BTREE_ID_snapshots, 0, bkey_s_c_null, k, 0) ?:
-			bch2_check_snapshot_needs_deletion(trans, k));
-	bch_err_fn(c, ret);
-
-	return ret;
+	return for_each_btree_key_reverse(trans, iter, BTREE_ID_snapshots, POS_MAX, 0, k,
+		__bch2_mark_snapshot(trans, BTREE_ID_snapshots, 0, bkey_s_c_null, k, 0) ?:
+		bch2_check_snapshot_needs_deletion(trans, k));
 }
 
 void bch2_fs_snapshots_exit(struct bch_fs *c)
