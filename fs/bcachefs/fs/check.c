@@ -1130,9 +1130,7 @@ static int find_oldest_inode_needs_reattach(struct btree_trans *trans,
 			break;
 
 		struct bch_inode_unpacked parent_inode;
-		ret = bch2_inode_unpack(k, &parent_inode);
-		if (ret)
-			break;
+		try(bch2_inode_unpack(k, &parent_inode));
 
 		if (!inode_should_reattach(&parent_inode))
 			break;
@@ -1165,7 +1163,7 @@ static int check_unreachable_inode(struct btree_trans *trans,
 		     "unreachable inode:\n%s",
 		     (bch2_inode_unpacked_to_text(&buf, &inode),
 		      buf.buf)))
-		ret = bch2_reattach_inode(trans, &inode);
+		try(bch2_reattach_inode(trans, &inode));
 fsck_err:
 	return ret;
 }
