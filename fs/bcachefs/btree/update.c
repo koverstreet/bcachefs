@@ -586,7 +586,7 @@ int bch2_btree_insert_nonextent(struct btree_trans *trans,
 				BTREE_ITER_not_extents|
 				BTREE_ITER_intent);
 	return  bch2_btree_iter_traverse(&iter) ?:
-		bch2_trans_update(trans, &iter, k, flags);
+		bch2_trans_update_ip(trans, &iter, k, flags, _RET_IP_);
 }
 
 int bch2_btree_insert_trans(struct btree_trans *trans, enum btree_id btree,
@@ -595,7 +595,7 @@ int bch2_btree_insert_trans(struct btree_trans *trans, enum btree_id btree,
 	CLASS(btree_iter, iter)(trans, btree, bkey_start_pos(&k->k),
 				BTREE_ITER_intent|flags);
 	return  bch2_btree_iter_traverse(&iter) ?:
-		bch2_trans_update(trans, &iter, k, flags);
+		bch2_trans_update_ip(trans, &iter, k, flags, _RET_IP_);
 }
 
 /**
