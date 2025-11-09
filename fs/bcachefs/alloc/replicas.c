@@ -1014,6 +1014,16 @@ unsigned bch2_dev_has_data(struct bch_fs *c, struct bch_dev *ca)
 	return bch2_sb_dev_has_data(c->disk_sb.sb, ca->dev_idx);
 }
 
+void bch2_verify_replicas_refs_clean(struct bch_fs *c)
+{
+	for_each_cpu_replicas_entry(&c->replicas, i)
+		if (atomic_read(&i->ref)) {
+			CLASS(printbuf, buf)();
+			bch2_replicas_entry_cpu_to_text(&buf, i);
+			WARN(1, "replicas entry ref leaked:\n%s", buf.buf);
+		}
+}
+
 void bch2_fs_replicas_exit(struct bch_fs *c)
 {
 	kfree(c->replicas.entries);
