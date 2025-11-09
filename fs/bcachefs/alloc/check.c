@@ -686,14 +686,46 @@ int bch2_check_alloc_to_lru_refs(struct bch_fs *c)
 	}))?: bch2_check_stripe_to_lru_refs(trans);
 }
 
+static int dev_freespace_init_iter(struct btree_trans *trans, struct bch_dev *ca,
+				   struct btree_iter *iter, struct bpos end)
+{
+	struct bkey hole;
+	struct bkey_s_c k = bkey_try(bch2_get_key_or_hole(iter, end, &hole));
+
+	if (k.k->type) {
+		/*
+		 * We process live keys in the alloc btree one at a
+		 * time:
+		 */
+		struct bch_alloc_v4 a_convert;
+		const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &a_convert);
+
+		try(bch2_bucket_do_index(trans, ca, k, a, true));
+		try(bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
+
+		bch2_btree_iter_advance(iter);
+	} else {
+		struct bkey_i *freespace = errptr_try(bch2_trans_kmalloc(trans, sizeof(*freespace)));
+
+		bkey_init(&freespace->k);
+		freespace->k.type	= KEY_TYPE_set;
+		freespace->k.p		= k.k->p;
+		freespace->k.size	= k.k->size;
+
+		try(bch2_btree_insert_trans(trans, BTREE_ID_freespace, freespace, 0));
+		try(bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
+
+		bch2_btree_iter_set_pos(iter, k.k->p);
+	}
+
+	return 0;
+}
+
 int bch2_dev_freespace_init(struct bch_fs *c, struct bch_dev *ca,
 			    u64 bucket_start, u64 bucket_end)
 {
-	struct bkey_s_c k;
-	struct bkey hole;
 	struct bpos end = POS(ca->dev_idx, bucket_end);
 	unsigned long last_updated = jiffies;
-	int ret;
 
 	BUG_ON(bucket_start > bucket_end);
 	BUG_ON(bucket_end > ca->mi.nbuckets);
@@ -706,71 +738,14 @@ int bch2_dev_freespace_init(struct bch_fs *c, struct bch_dev *ca,
 	 * Scan the alloc btree for every bucket on @ca, and add buckets to the
 	 * freespace/need_discard/need_gc_gens btrees as needed:
 	 */
-	while (1) {
+	while (bkey_lt(iter.pos, end)) {
 		if (time_after(jiffies, last_updated + HZ * 10)) {
 			bch_info(ca, "%s: currently at %llu/%llu",
 				 __func__, iter.pos.offset, ca->mi.nbuckets);
 			last_updated = jiffies;
 		}
 
-		bch2_trans_begin(trans);
-
-		if (bkey_ge(iter.pos, end)) {
-			ret = 0;
-			break;
-		}
-
-		k = bch2_get_key_or_hole(&iter, end, &hole);
-		ret = bkey_err(k);
-		if (ret)
-			goto bkey_err;
-
-		if (k.k->type) {
-			/*
-			 * We process live keys in the alloc btree one at a
-			 * time:
-			 */
-			struct bch_alloc_v4 a_convert;
-			const struct bch_alloc_v4 *a = bch2_alloc_to_v4(k, &a_convert);
-
-			ret =   bch2_bucket_do_index(trans, ca, k, a, true) ?:
-				bch2_trans_commit(trans, NULL, NULL,
-						  BCH_TRANS_COMMIT_no_enospc);
-			if (ret)
-				goto bkey_err;
-
-			bch2_btree_iter_advance(&iter);
-		} else {
-			struct bkey_i *freespace;
-
-			freespace = bch2_trans_kmalloc(trans, sizeof(*freespace));
-			ret = PTR_ERR_OR_ZERO(freespace);
-			if (ret)
-				goto bkey_err;
-
-			bkey_init(&freespace->k);
-			freespace->k.type	= KEY_TYPE_set;
-			freespace->k.p		= k.k->p;
-			freespace->k.size	= k.k->size;
-
-			ret = bch2_btree_insert_trans(trans, BTREE_ID_freespace, freespace, 0) ?:
-				bch2_trans_commit(trans, NULL, NULL,
-						  BCH_TRANS_COMMIT_no_enospc);
-			if (ret)
-				goto bkey_err;
-
-			bch2_btree_iter_set_pos(&iter, k.k->p);
-		}
-bkey_err:
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			continue;
-		if (ret)
-			break;
-	}
-
-	if (ret < 0) {
-		bch_err_msg(ca, ret, "initializing free space");
-		return ret;
+		try(lockrestart_do(trans, dev_freespace_init_iter(trans, ca, &iter, end)));
 	}
 
 	scoped_guard(mutex, &c->sb_lock) {
