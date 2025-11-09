@@ -27,12 +27,18 @@
 
 #include "util/util.h"
 
+#include <linux/module.h>
+
 #ifdef CONFIG_BCACHEFS_DEBUG
 static int bch2_force_read_device = -1;
 
 module_param_named(force_read_device, bch2_force_read_device, int, 0644);
 MODULE_PARM_DESC(force_read_device, "");
 #endif
+
+static int bch2_force_read_idx = -1;
+module_param_named(force_read_idx, bch2_force_read_idx, int, 0644);
+MODULE_PARM_DESC(force_read_idx, "");
 
 static const char * const bch2_extent_flags_strs[] = {
 #define x(n, v)	[BCH_EXTENT_FLAG_##n] = #n,
@@ -199,6 +205,29 @@ static inline bool ptr_better(struct bch_fs *c,
 	return bch2_get_random_u64_below(p1_latency + p2_latency) > p1_latency;
 }
 
+static int pick_read_device_idx(struct bch_fs *c, struct bkey_s_c k,
+				struct extent_ptr_decoded *pick, unsigned idx_want)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if (p.ptr.unwritten)
+			break;
+
+		if (!idx_want--) {
+			*pick = p;
+
+			struct bch_dev *ca = bch2_dev_rcu_noerror(c, p.ptr.dev);
+			return ca &&
+				bch2_dev_is_online(ca) &&
+				!dev_ptr_stale_rcu(ca, &p.ptr);
+		}
+	}
+
+	return 0;
+}
+
 /*
  * This picks a non-stale pointer, preferably from a device other than @avoid.
  * Avoid can be NULL, meaning pick any. If there are no non-stale pointers to
@@ -215,12 +244,17 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 	if (k.k->type == KEY_TYPE_error)
 		return bch_err_throw(c, key_type_error);
 
-	rcu_read_lock();
+	guard(rcu)();
+
+	if (unlikely(bch2_force_read_idx >= 0) &&
+	    !failed &&
+	    pick_read_device_idx(c, k, pick, bch2_force_read_idx))
+		return 1;
+
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
 	u64 pick_latency;
-
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 		have_dirty_ptrs |= !p.ptr.cached;
 
@@ -228,10 +262,8 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 		 * Unwritten extent: no need to actually read, treat it as a
 		 * hole and return 0s:
 		 */
-		if (p.ptr.unwritten) {
-			rcu_read_unlock();
+		if (p.ptr.unwritten)
 			return 0;
-		}
 
 		/* Are we being asked to read from a specific device? */
 		if (dev >= 0 && p.ptr.dev != dev)
@@ -297,7 +329,6 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 			have_pick = true;
 		}
 	}
-	rcu_read_unlock();
 
 	if (have_pick)
 		return 1;
