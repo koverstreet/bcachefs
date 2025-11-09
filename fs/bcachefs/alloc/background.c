@@ -536,53 +536,55 @@ void bch2_bucket_gens_to_text(struct printbuf *out, struct bch_fs *c, struct bke
 	}
 }
 
+static int bucket_gens_init_iter(struct btree_trans *trans, struct bkey_s_c k,
+				 struct bkey_i_bucket_gens *g,
+				 bool *have_bucket_gens_key)
+{
+	/*
+	 * Not a fsck error because this is checked/repaired by
+	 * bch2_check_alloc_key() which runs later:
+	 */
+	if (!bch2_dev_bucket_exists(trans->c, k.k->p))
+		return 0;
+
+	unsigned offset;
+	struct bpos pos = alloc_gens_pos(k.k->p, &offset);
+
+	if (*have_bucket_gens_key && !bkey_eq(g->k.p, pos)) {
+		try(bch2_btree_insert_trans(trans, BTREE_ID_bucket_gens, &g->k_i, 0));
+		try(bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
+
+		*have_bucket_gens_key = false;
+	}
+
+	if (!*have_bucket_gens_key) {
+		bkey_bucket_gens_init(&g->k_i);
+		g->k.p = pos;
+		*have_bucket_gens_key = true;
+	}
+
+	struct bch_alloc_v4 a;
+	g->v.gens[offset] = bch2_alloc_to_v4(k, &a)->gen;
+	return 0;
+}
+
 int bch2_bucket_gens_init(struct bch_fs *c)
 {
 	struct bkey_i_bucket_gens g;
 	bool have_bucket_gens_key = false;
-	int ret;
 
 	CLASS(btree_trans, trans)(c);
-	ret = for_each_btree_key(trans, iter, BTREE_ID_alloc, POS_MIN,
+	try(for_each_btree_key(trans, iter, BTREE_ID_alloc, POS_MIN,
 				 BTREE_ITER_prefetch, k, ({
-		/*
-		 * Not a fsck error because this is checked/repaired by
-		 * bch2_check_alloc_key() which runs later:
-		 */
-		if (!bch2_dev_bucket_exists(c, k.k->p))
-			continue;
+		bucket_gens_init_iter(trans, k, &g, &have_bucket_gens_key);
+	})));
 
-		struct bch_alloc_v4 a;
-		u8 gen = bch2_alloc_to_v4(k, &a)->gen;
-		unsigned offset;
-		struct bpos pos = alloc_gens_pos(iter.pos, &offset);
-		int ret2 = 0;
-
-		if (have_bucket_gens_key && !bkey_eq(g.k.p, pos)) {
-			ret2 =  bch2_btree_insert_trans(trans, BTREE_ID_bucket_gens, &g.k_i, 0) ?:
-				bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
-			if (ret2)
-				goto iter_err;
-			have_bucket_gens_key = false;
-		}
-
-		if (!have_bucket_gens_key) {
-			bkey_bucket_gens_init(&g.k_i);
-			g.k.p = pos;
-			have_bucket_gens_key = true;
-		}
-
-		g.v.gens[offset] = gen;
-iter_err:
-		ret2;
-	}));
-
-	if (have_bucket_gens_key && !ret)
-		ret = commit_do(trans, NULL, NULL,
+	if (have_bucket_gens_key)
+		try(commit_do(trans, NULL, NULL,
 				BCH_TRANS_COMMIT_no_enospc,
-			bch2_btree_insert_trans(trans, BTREE_ID_bucket_gens, &g.k_i, 0));
+			bch2_btree_insert_trans(trans, BTREE_ID_bucket_gens, &g.k_i, 0)));
 
-	return ret;
+	return 0;
 }
 
 int bch2_alloc_read(struct bch_fs *c)
