@@ -83,31 +83,31 @@ static bool next_bucket(struct bch_fs *c, struct bch_dev **ca, struct bpos *buck
 static struct bkey_s_c bch2_get_key_or_real_bucket_hole(struct btree_iter *iter,
 					struct bch_dev **ca, struct bkey *hole)
 {
-	struct bch_fs *c = iter->trans->c;
-	struct bkey_s_c k;
-again:
-	k = bch2_get_key_or_hole(iter, POS_MAX, hole);
-	if (bkey_err(k))
-		return k;
+	while (true) {
+		struct bch_fs *c = iter->trans->c;
+		struct bkey_s_c k = bch2_get_key_or_hole(iter, POS_MAX, hole);
+		if (bkey_err(k))
+			return k;
 
-	*ca = bch2_dev_iterate_noerror(c, *ca, k.k->p.inode);
+		*ca = bch2_dev_iterate_noerror(c, *ca, k.k->p.inode);
 
-	if (!k.k->type) {
-		struct bpos hole_start = bkey_start_pos(k.k);
+		if (!k.k->type) {
+			struct bpos hole_start = bkey_start_pos(k.k);
 
-		if (!*ca || !bucket_valid(*ca, hole_start.offset)) {
-			if (!next_bucket(c, ca, &hole_start))
-				return bkey_s_c_null;
+			if (!*ca || !bucket_valid(*ca, hole_start.offset)) {
+				if (!next_bucket(c, ca, &hole_start))
+					return bkey_s_c_null;
 
-			bch2_btree_iter_set_pos(iter, hole_start);
-			goto again;
+				bch2_btree_iter_set_pos(iter, hole_start);
+				continue;
+			}
+
+			if (k.k->p.offset > (*ca)->mi.nbuckets)
+				bch2_key_resize(hole, (*ca)->mi.nbuckets - hole_start.offset);
 		}
 
-		if (k.k->p.offset > (*ca)->mi.nbuckets)
-			bch2_key_resize(hole, (*ca)->mi.nbuckets - hole_start.offset);
+		return k;
 	}
-
-	return k;
 }
 
 int bch2_need_discard_or_freespace_err(struct btree_trans *trans,
