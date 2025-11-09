@@ -427,10 +427,20 @@ static struct inode *bch2_alloc_inode(struct super_block *sb)
 	BUG();
 }
 
+static void bch2_vfs_writeback_fn(struct work_struct *work)
+{
+	struct bch_inode_info *inode = container_of(work, struct bch_inode_info, ei_writeback_timer.work);
+
+	if (!igrab(&inode->v))
+		return;
+
+	write_inode_now(&inode->v, false);
+	iput(&inode->v);
+}
+
 static struct bch_inode_info *__bch2_new_inode(struct bch_fs *c, gfp_t gfp)
 {
-	struct bch_inode_info *inode = alloc_inode_sb(c->vfs_sb,
-						bch2_inode_cache, gfp);
+	struct bch_inode_info *inode = alloc_inode_sb(c->vfs_sb, bch2_inode_cache, gfp);
 	if (!inode)
 		return NULL;
 
@@ -441,6 +451,7 @@ static struct bch_inode_info *__bch2_new_inode(struct bch_fs *c, gfp_t gfp)
 	inode->ei_flags = 0;
 	mutex_init(&inode->ei_quota_lock);
 	memset(&inode->ei_devs_need_flush, 0, sizeof(inode->ei_devs_need_flush));
+	INIT_DELAYED_WORK(&inode->ei_writeback_timer, bch2_vfs_writeback_fn);
 
 	if (unlikely(inode_init_always_gfp(c->vfs_sb, &inode->v, gfp))) {
 		kmem_cache_free(bch2_inode_cache, inode);
@@ -1820,6 +1831,8 @@ static void bch2_evict_inode(struct inode *vinode)
 
 	truncate_inode_pages_final(&inode->v.i_data);
 
+	cancel_delayed_work_sync(&inode->ei_writeback_timer);
+
 	clear_inode(&inode->v);
 
 	BUG_ON(!is_bad_inode(&inode->v) && inode->ei_quota_reserved);
@@ -2357,6 +2370,8 @@ static int bch2_init_fs_context(struct fs_context *fc)
 
 void bch2_fs_vfs_exit(struct bch_fs *c)
 {
+	if (c->vfs_writeback_wq)
+		destroy_workqueue(c->vfs_writeback_wq);
 	if (c->vfs_inodes_by_inum_table.ht.tbl)
 		rhltable_destroy(&c->vfs_inodes_by_inum_table);
 	if (c->vfs_inodes_table.tbl)
@@ -2365,8 +2380,15 @@ void bch2_fs_vfs_exit(struct bch_fs *c)
 
 int bch2_fs_vfs_init(struct bch_fs *c)
 {
-	return rhashtable_init(&c->vfs_inodes_table, &bch2_vfs_inodes_params) ?:
-		rhltable_init(&c->vfs_inodes_by_inum_table, &bch2_vfs_inodes_by_inum_params);
+	try(rhashtable_init(&c->vfs_inodes_table, &bch2_vfs_inodes_params));
+	try(rhltable_init(&c->vfs_inodes_by_inum_table, &bch2_vfs_inodes_by_inum_params));
+
+	c->vfs_writeback_wq = alloc_workqueue("bcachefs_vfs_writeback",
+					      WQ_PERCPU|WQ_MEM_RECLAIM|WQ_FREEZABLE, 1);
+	if (!c->vfs_writeback_wq)
+		return bch_err_throw(c, ENOMEM_fs_other_alloc);
+
+	return 0;
 }
 
 static struct file_system_type bcache_fs_type = {

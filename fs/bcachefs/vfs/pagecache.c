@@ -638,6 +638,9 @@ vm_fault_t bch2_page_mkwrite(struct vm_fault *vmf)
 	bch2_folio_reservation_put(c, inode, &res);
 
 	folio_wait_stable(folio);
+
+	bch2_dirty_inode(c, inode);
+
 	ret = VM_FAULT_LOCKED;
 out:
 	sb_end_pagefault(inode->v.i_sb);

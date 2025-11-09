@@ -1104,6 +1104,7 @@ struct bch_fs {
 	struct mutex		vfs_inodes_lock;
 	struct rhashtable	vfs_inodes_table;
 	struct rhltable		vfs_inodes_by_inum_table;
+	struct workqueue_struct	*vfs_writeback_wq;
 
 	/* VFS IO PATH - fs-io.c */
 	struct bio_set		writepage_bioset;

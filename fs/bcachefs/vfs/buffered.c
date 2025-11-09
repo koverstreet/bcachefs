@@ -883,12 +883,12 @@ static noinline void folios_trunc(folios *fs, struct folio **fi)
 	}
 }
 
-static int __bch2_buffered_write(struct bch_inode_info *inode,
+static int __bch2_buffered_write(struct bch_fs *c,
+				 struct bch_inode_info *inode,
 				 struct address_space *mapping,
 				 struct iov_iter *iter,
 				 loff_t pos, unsigned len)
 {
-	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch2_folio_reservation res;
 	folios fs;
 	struct folio *f;
@@ -1056,6 +1056,7 @@ static ssize_t bch2_buffered_write(struct kiocb *iocb, struct iov_iter *iter)
 	struct file *file = iocb->ki_filp;
 	struct address_space *mapping = file->f_mapping;
 	struct bch_inode_info *inode = file_bch_inode(file);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	loff_t pos = iocb->ki_pos;
 	ssize_t written = 0;
 	int ret = 0;
@@ -1094,7 +1095,7 @@ again:
 			break;
 		}
 
-		ret = __bch2_buffered_write(inode, mapping, iter, pos, bytes);
+		ret = __bch2_buffered_write(c, inode, mapping, iter, pos, bytes);
 		if (unlikely(ret < 0))
 			break;
 
@@ -1119,6 +1120,9 @@ again:
 
 		balance_dirty_pages_ratelimited(mapping);
 	} while (iov_iter_count(iter));
+
+	if (written)
+		bch2_dirty_inode(c, inode);
 
 	return written ? written : ret;
 }
