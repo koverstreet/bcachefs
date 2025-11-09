@@ -198,6 +198,7 @@ enum bch_fsck_flags {
 	x(stripe_pos_bad,					167,	0)		\
 	x(stripe_val_size_bad,					168,	0)		\
 	x(stripe_csum_granularity_bad,				290,	0)		\
+	x(stripe_sectors_zero,					340,	0)		\
 	x(stripe_sector_count_wrong,				169,	0)		\
 	x(snapshot_tree_pos_bad,				170,	0)		\
 	x(snapshot_tree_to_missing_snapshot,			171,	0)		\
@@ -351,7 +352,7 @@ enum bch_fsck_flags {
 	x(btree_ptr_with_no_reconcile_bp,			335,	FSCK_AUTOFIX)	\
 	x(btree_ptr_with_bad_reconcile_bp,			336,	FSCK_AUTOFIX)	\
 	x(btree_ptr_to_bad_reconcile_bp,			337,	FSCK_AUTOFIX)	\
-	x(MAX,							340,	0)
+	x(MAX,							341,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,

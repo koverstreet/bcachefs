@@ -141,6 +141,10 @@ int bch2_stripe_validate(struct bch_fs *c, struct bkey_s_c k,
 			 "invalid csum granularity (%u >= 64)",
 			 s->csum_granularity_bits);
 
+	bkey_fsck_err_on(!s->sectors,
+			 c, stripe_sectors_zero,
+			 "invalid sectors zero");
+
 	ret = bch2_bkey_ptrs_validate(c, k, from);
 fsck_err:
 	return ret;
