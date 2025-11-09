@@ -61,11 +61,9 @@ struct open_bucket {
 	struct ec_stripe_new	*ec;
 };
 
-#define OPEN_BUCKET_LIST_MAX	15
-
 struct open_buckets {
 	open_bucket_idx_t	nr;
-	open_bucket_idx_t	v[OPEN_BUCKET_LIST_MAX];
+	open_bucket_idx_t	v[BCH_BKEY_PTRS_MAX];
 };
 
 struct dev_stripe_state {
