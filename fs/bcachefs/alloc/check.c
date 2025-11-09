@@ -494,6 +494,49 @@ fsck_err:
 	return ret;
 }
 
+static int check_btree_alloc_iter(struct btree_trans *trans,
+				  struct bch_dev **ca,
+				  struct btree_iter *iter,
+				  struct btree_iter *discard_iter,
+				  struct btree_iter *freespace_iter,
+				  struct btree_iter *bucket_gens_iter,
+				  struct progress_indicator *progress)
+{
+	struct bkey hole;
+	struct bkey_s_c k = bkey_try(bch2_get_key_or_real_bucket_hole(iter, ca, &hole));
+
+	if (!k.k)
+		return 1;
+
+	try(progress_update_iter(trans, progress, iter));
+
+	struct bpos next;
+	if (k.k->type) {
+		next = bpos_nosnap_successor(k.k->p);
+
+		try(bch2_check_alloc_key(trans, k, iter,
+					 discard_iter,
+					 freespace_iter,
+					 bucket_gens_iter));
+	} else {
+		next = k.k->p;
+
+		try(bch2_check_alloc_hole_freespace(trans, *ca,
+						    bkey_start_pos(k.k),
+						    &next,
+						    freespace_iter));
+		try(bch2_check_alloc_hole_bucket_gens(trans,
+						      bkey_start_pos(k.k),
+						      &next,
+						      bucket_gens_iter));
+	}
+
+	try(bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
+
+	bch2_btree_iter_set_pos(iter, next);
+	return 0;
+}
+
 static int check_btree_alloc(struct btree_trans *trans)
 {
 	struct progress_indicator progress;
@@ -507,62 +550,13 @@ static int check_btree_alloc(struct btree_trans *trans)
 	struct bch_dev *ca __free(bch2_dev_put) = NULL;
 	int ret = 0;
 
-	while (1) {
-		bch2_trans_begin(trans);
-
-		struct bkey hole;
-		struct bkey_s_c k = bch2_get_key_or_real_bucket_hole(&iter, &ca, &hole);
-		ret = bkey_err(k);
-		if (ret)
-			goto bkey_err;
-
-		if (!k.k)
-			break;
-
-		ret = progress_update_iter(trans, &progress, &iter);
-		if (ret)
-			break;
-
-		struct bpos next;
-		if (k.k->type) {
-			next = bpos_nosnap_successor(k.k->p);
-
-			ret = bch2_check_alloc_key(trans,
-						   k, &iter,
-						   &discard_iter,
-						   &freespace_iter,
-						   &bucket_gens_iter);
-			BUG_ON(ret > 0);
-			if (ret)
-				goto bkey_err;
-		} else {
-			next = k.k->p;
-
-			ret = bch2_check_alloc_hole_freespace(trans, ca,
-						    bkey_start_pos(k.k),
-						    &next,
-						    &freespace_iter) ?:
-				bch2_check_alloc_hole_bucket_gens(trans,
-						    bkey_start_pos(k.k),
-						    &next,
-						    &bucket_gens_iter);
-			BUG_ON(ret > 0);
-			if (ret)
-				goto bkey_err;
-		}
-
-		ret = bch2_trans_commit(trans, NULL, NULL,
-					BCH_TRANS_COMMIT_no_enospc);
-		if (ret)
-			goto bkey_err;
-
-		bch2_btree_iter_set_pos(&iter, next);
-bkey_err:
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			continue;
-		if (ret)
-			break;
-	}
+	while (!(ret = lockrestart_do(trans,
+				check_btree_alloc_iter(trans, &ca, &iter,
+						       &discard_iter,
+						       &freespace_iter,
+						       &bucket_gens_iter,
+						       &progress))))
+		;
 
 	return min(0, ret);
 }
