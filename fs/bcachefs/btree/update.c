@@ -477,7 +477,6 @@ int __must_check bch2_trans_update_ip(struct btree_trans *trans, struct btree_it
 	kmsan_check_memory(k, bkey_bytes(&k->k));
 
 	btree_path_idx_t path_idx = iter->update_path ?: iter->path;
-	int ret;
 
 	if (iter->flags & BTREE_ITER_is_extents)
 		return bch2_trans_update_extent(trans, iter, k, flags);
@@ -485,7 +484,7 @@ int __must_check bch2_trans_update_ip(struct btree_trans *trans, struct btree_it
 	if (bkey_deleted(&k->k) &&
 	    !(flags & BTREE_UPDATE_key_cache_reclaim) &&
 	    (iter->flags & BTREE_ITER_filter_snapshots)) {
-		ret = need_whiteout_for_snapshot(trans, iter->btree_id, k->k.p);
+		int ret = need_whiteout_for_snapshot(trans, iter->btree_id, k->k.p);
 		if (unlikely(ret < 0))
 			return ret;
 
