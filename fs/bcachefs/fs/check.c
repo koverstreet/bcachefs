@@ -232,7 +232,8 @@ create_lostfound:
 				BTREE_UPDATE_internal_snapshot_node|
 				STR_HASH_must_create) ?:
 		bch2_inode_write_flags(trans, &lostfound_iter, lostfound,
-				       BTREE_UPDATE_internal_snapshot_node);
+				       BTREE_UPDATE_internal_snapshot_node) ?:
+		bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
 err:
 	bch_err_msg(c, ret, "creating lost+found");
 	return ret;
