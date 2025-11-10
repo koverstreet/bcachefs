@@ -1270,9 +1270,8 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 	return c;
 }
 
-static bool bch2_fs_may_start(struct bch_fs *c)
+static bool bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
 {
-	struct bch_dev *ca;
 	unsigned flags = 0;
 
 	switch (c->opts.degraded) {
@@ -1288,59 +1287,45 @@ static bool bch2_fs_may_start(struct bch_fs *c)
 			if (!bch2_member_exists(c->disk_sb.sb, i))
 				continue;
 
-			ca = bch2_dev_locked(c, i);
+			struct bch_dev *ca = bch2_dev_locked(c, i);
 
 			if (!bch2_dev_is_online(ca) &&
 			    (ca->mi.state == BCH_MEMBER_STATE_rw ||
 			     ca->mi.state == BCH_MEMBER_STATE_ro))
-				return false;
+				return bch_err_throw(c, insufficient_devices_to_start);
 		}
 		break;
 	}
 	}
 
-	CLASS(printbuf, err)();
-	bool ret = bch2_have_enough_devs(c, c->online_devs, flags, &err, !c->opts.read_only);
-	if (!ret)
-		bch2_print_str(c, KERN_ERR, err.buf);
-	return ret;
+	return bch2_have_enough_devs(c, c->online_devs, flags, err, !c->opts.read_only)
+		? 0
+		: bch_err_throw(c, insufficient_devices_to_start);
 }
 
-int bch2_fs_start(struct bch_fs *c)
+static int __bch2_fs_start(struct bch_fs *c, struct printbuf *err)
 {
-	int ret = 0;
-
 	BUG_ON(test_bit(BCH_FS_started, &c->flags));
 
-	if (!bch2_fs_may_start(c))
-		return bch_err_throw(c, insufficient_devices_to_start);
+	try(bch2_fs_may_start(c, err));
 
 	scoped_guard(rwsem_write, &c->state_lock) {
 		scoped_guard(rcu)
-			for_each_online_member_rcu(c, ca) {
+			for_each_online_member_rcu(c, ca)
 				if (ca->mi.state == BCH_MEMBER_STATE_rw)
 					bch2_dev_allocator_add(c, ca);
-			}
 
 		bch2_recalc_capacity(c);
 	}
 
-	ret = BCH_SB_INITIALIZED(c->disk_sb.sb)
-		? bch2_fs_recovery(c)
-		: bch2_fs_initialize(c);
-	c->recovery_task = NULL;
+	try(BCH_SB_INITIALIZED(c->disk_sb.sb)
+	    ? bch2_fs_recovery(c)
+	    : bch2_fs_initialize(c));
 
-	if (ret)
-		goto err;
+	try(bch2_opts_hooks_pre_set(c));
 
-	ret = bch2_opts_hooks_pre_set(c);
-	if (ret)
-		goto err;
-
-	if (bch2_fs_init_fault("fs_start")) {
-		ret = bch_err_throw(c, injected_fs_start);
-		goto err;
-	}
+	if (bch2_fs_init_fault("fs_start"))
+		return bch_err_throw(c, injected_fs_start);
 
 	set_bit(BCH_FS_started, &c->flags);
 	wake_up(&c->ro_ref_wait);
@@ -1349,13 +1334,27 @@ int bch2_fs_start(struct bch_fs *c)
 		if (c->opts.read_only)
 			bch2_fs_read_only(c);
 		else if (!test_bit(BCH_FS_rw, &c->flags))
-			ret = bch2_fs_read_write(c);
+			try(bch2_fs_read_write(c));
 	}
-err:
-	if (ret)
-		bch_err_msg(c, ret, "starting filesystem");
-	else
+
+	return 0;
+}
+
+int bch2_fs_start(struct bch_fs *c)
+{
+	CLASS(printbuf, err)();
+	bch2_log_msg_start(c, &err);
+
+	int ret = __bch2_fs_start(c, &err);
+	c->recovery_task = NULL;
+
+	if (ret) {
+		prt_printf(&err, "error starting filesystem: %s", bch2_err_str(ret));
+		bch2_print_str(c, KERN_ERR, err.buf);
+	} else {
 		bch_verbose(c, "done starting filesystem");
+	}
+
 	return ret;
 }
 
