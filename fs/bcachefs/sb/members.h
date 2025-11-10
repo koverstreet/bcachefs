@@ -44,6 +44,8 @@ void bch2_member_to_text(struct printbuf *, struct bch_member *,
 			 struct bch_sb_field_disk_groups *,
 			 struct bch_sb *, unsigned);
 
+void bch2_member_to_text_short(struct printbuf *, struct bch_fs *, struct bch_dev *);
+
 static inline bool bch2_dev_is_online(struct bch_dev *ca)
 {
 	return !enumerated_ref_is_zero(&ca->io_ref[READ]);

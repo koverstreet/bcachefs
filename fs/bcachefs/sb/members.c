@@ -281,6 +281,51 @@ void bch2_member_to_text(struct printbuf *out,
 	prt_printf(out, "Last device model:\t%.*s", (int) sizeof(m->device_model), m->device_model);
 }
 
+static void bch2_member_to_text_short_sb(struct printbuf *out,
+					 struct bch_member *m,
+					 struct bch_sb_field_disk_groups *gi,
+					 struct bch_sb *sb,
+					 unsigned idx)
+{
+	if (!out->nr_tabstops)
+		printbuf_tabstop_push(out, 16 + out->indent);
+
+	if (BCH_MEMBER_GROUP(m)) {
+		prt_printf(out, "Label:\t");
+		bch2_disk_path_to_text_sb(out, sb,
+				BCH_MEMBER_GROUP(m) - 1);
+		prt_newline(out);
+	}
+
+	prt_printf(out, "Device:\t%.*s", (int) sizeof(m->device_name), m->device_name);
+	prt_printf(out, "Model:\t%.*s", (int) sizeof(m->device_model), m->device_model);
+
+	prt_printf(out, "State:\t%s\n",
+		   BCH_MEMBER_STATE(m) < BCH_MEMBER_STATE_NR
+		   ? bch2_member_states[BCH_MEMBER_STATE(m)]
+		   : "unknown");
+
+	prt_printf(out, "Has data:\t");
+	unsigned data_have = bch2_sb_dev_has_data(sb, idx);
+	if (data_have)
+		prt_bitflags(out, __bch2_data_types, data_have);
+	else
+		prt_printf(out, "(none)");
+	prt_newline(out);
+}
+
+void bch2_member_to_text_short(struct printbuf *out,
+			       struct bch_fs *c,
+			       struct bch_dev *ca)
+{
+	guard(mutex)(&c->sb_lock);
+	struct bch_member m = bch2_sb_member_get(c->disk_sb.sb, ca->dev_idx);
+	bch2_member_to_text_short_sb(out, &m,
+				     bch2_sb_field_get(c->disk_sb.sb, disk_groups),
+				     c->disk_sb.sb,
+				     ca->dev_idx);
+}
+
 static void member_to_text(struct printbuf *out,
 			   struct bch_member m,
 			   struct bch_sb_field_disk_groups *gi,

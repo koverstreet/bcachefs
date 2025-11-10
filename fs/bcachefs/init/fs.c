@@ -1269,26 +1269,31 @@ static bool bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
 	case BCH_DEGRADED_yes:
 		flags |= BCH_FORCE_IF_DEGRADED;
 		break;
-	default: {
-		guard(mutex)(&c->sb_lock);
-		for (unsigned i = 0; i < c->disk_sb.sb->nr_devices; i++) {
-			if (!bch2_member_exists(c->disk_sb.sb, i))
-				continue;
-
-			struct bch_dev *ca = bch2_dev_locked(c, i);
-
+	default:
+		for_each_member_device(c, ca)
 			if (!bch2_dev_is_online(ca) &&
 			    (ca->mi.state != BCH_MEMBER_STATE_failed ||
-			     bch2_dev_has_data(c, ca)))
+			     bch2_dev_has_data(c, ca))) {
+				prt_printf(err, "Cannot mount without device %u\n", ca->dev_idx);
+				guard(printbuf_indent)(err);
+				bch2_member_to_text_short(err, c, ca);
 				return bch_err_throw(c, insufficient_devices_to_start);
-		}
-		break;
-	}
+			}
 	}
 
-	return bch2_have_enough_devs(c, c->online_devs, flags, err, !c->opts.read_only)
-		? 0
-		: bch_err_throw(c, insufficient_devices_to_start);
+	if (!bch2_have_enough_devs(c, c->online_devs, flags, err, !c->opts.read_only)) {
+		prt_printf(err, "Missing devices\n");
+		for_each_member_device(c, ca)
+			if (!bch2_dev_is_online(ca) && bch2_dev_has_data(c, ca)) {
+				prt_printf(err, "Device %u\n", ca->dev_idx);
+				guard(printbuf_indent)(err);
+				bch2_member_to_text_short(err, c, ca);
+			}
+
+		return bch_err_throw(c, insufficient_devices_to_start);
+	}
+
+	return 0;
 }
 
 static int __bch2_fs_start(struct bch_fs *c, struct printbuf *err)
