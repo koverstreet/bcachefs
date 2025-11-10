@@ -691,7 +691,7 @@ err:
 int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 {
 	struct bch_opts opts = bch2_opts_empty();
-	struct bch_sb_handle sb = {};
+	struct bch_sb_handle sb __cleanup(bch2_free_super) = {};
 	struct bch_dev *ca = NULL;
 	CLASS(printbuf, label)();
 	int ret = 0;
@@ -830,7 +830,6 @@ out:
 err:
 	if (ca)
 		bch2_dev_free(ca);
-	bch2_free_super(&sb);
 	goto out;
 err_late:
 	ca = NULL;
@@ -841,9 +840,7 @@ err_late:
 int bch2_dev_online(struct bch_fs *c, const char *path, struct printbuf *err)
 {
 	struct bch_opts opts = bch2_opts_empty();
-	struct bch_sb_handle sb = { NULL };
-	struct bch_dev *ca;
-	unsigned dev_idx;
+	struct bch_sb_handle sb __cleanup(bch2_free_super) = {};
 	int ret;
 
 	guard(rwsem_write)(&c->state_lock);
@@ -854,24 +851,22 @@ int bch2_dev_online(struct bch_fs *c, const char *path, struct printbuf *err)
 		return ret;
 	}
 
-	dev_idx = sb.sb->dev_idx;
+	unsigned dev_idx = sb.sb->dev_idx;
 
 	ret = bch2_dev_in_fs(&c->disk_sb, &sb, &c->opts);
 	if (ret) {
 		prt_printf(err, "device not a member of fs: %s\n", bch2_err_str(ret));
-		goto err;
+		return ret;
 	}
 
-	ret = bch2_dev_attach_bdev(c, &sb, err);
-	if (ret)
-		goto err;
+	try(bch2_dev_attach_bdev(c, &sb, err));
 
-	ca = bch2_dev_locked(c, dev_idx);
+	struct bch_dev *ca = bch2_dev_locked(c, dev_idx);
 
 	ret = bch2_trans_mark_dev_sb(c, ca, BTREE_TRIGGER_transactional);
 	if (ret) {
 		prt_printf(err, "bch2_trans_mark_dev_sb() error: %s\n", bch2_err_str(ret));
-		goto err;
+		return ret;
 	}
 
 	if (ca->mi.state == BCH_MEMBER_STATE_rw)
@@ -881,7 +876,7 @@ int bch2_dev_online(struct bch_fs *c, const char *path, struct printbuf *err)
 		ret = bch2_dev_freespace_init(c, ca, 0, ca->mi.nbuckets);
 		if (ret) {
 			prt_printf(err, "bch2_dev_freespace_init() error: %s\n", bch2_err_str(ret));
-			goto err;
+			return ret;
 		}
 	}
 
@@ -889,7 +884,7 @@ int bch2_dev_online(struct bch_fs *c, const char *path, struct printbuf *err)
 		ret = bch2_dev_journal_alloc(ca, false);
 		if (ret) {
 			prt_printf(err, "bch2_dev_journal_alloc() error: %s\n", bch2_err_str(ret));
-			goto err;
+			return ret;
 		}
 	}
 
@@ -900,9 +895,6 @@ int bch2_dev_online(struct bch_fs *c, const char *path, struct printbuf *err)
 	}
 
 	return 0;
-err:
-	bch2_free_super(&sb);
-	return ret;
 }
 
 int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags, struct printbuf *err)
