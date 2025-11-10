@@ -761,18 +761,48 @@ static int read_one_super(struct bch_sb_handle *sb, u64 offset, struct printbuf 
 	}
 }
 
-static int __bch2_read_super(const char *path, struct bch_opts *opts,
-		    struct bch_sb_handle *sb, bool ignore_notbchfs_msg)
+static int read_backup_supers(struct bch_sb_handle *sb,
+			      struct bch_opts *opts,
+			      struct printbuf *err)
 {
-	u64 offset = opt_get(*opts, sb);
+	/*
+	 * Error reading primary superblock - read location of backup
+	 * superblocks:
+	 */
+	bio_reset(sb->bio, sb->bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
+	sb->bio->bi_iter.bi_sector = BCH_SB_LAYOUT_SECTOR;
+	/*
+	 * use sb buffer to read layout, since sb buffer is page aligned but
+	 * layout won't be:
+	 */
+	bch2_bio_map(sb->bio, sb->sb, sizeof(struct bch_sb_layout));
+
+	try(submit_bio_wait(sb->bio));
+
 	struct bch_sb_layout layout;
-	CLASS(printbuf, err)();
-	CLASS(printbuf, err2)();
-	__le64 *i;
-	int ret;
-#ifndef __KERNEL__
-retry:
-#endif
+	memcpy(&layout, sb->sb, sizeof(layout));
+
+	try(validate_sb_layout(&layout, err));
+
+	int ret = -BCH_ERR_invalid;
+	for (__le64 *i = layout.sb_offset; i < layout.sb_offset + layout.nr_superblocks; i++) {
+		u64 offset = le64_to_cpu(*i);
+		if (offset == opt_get(*opts, sb))
+			continue;
+
+		ret = read_one_super(sb, offset, err);
+		if (!ret)
+			break;
+	}
+
+	return ret;
+}
+
+static int read_super_and_backups(struct bch_sb_handle *sb,
+			     const char *path,
+			     struct bch_opts *opts,
+			     struct printbuf *err)
+{
 	memset(sb, 0, sizeof(*sb));
 	sb->mode	= BLK_OPEN_READ;
 	sb->have_bio	= true;
@@ -781,11 +811,8 @@ retry:
 		return -ENOMEM;
 
 	sb->sb_name = kstrdup(path, GFP_KERNEL);
-	if (!sb->sb_name) {
-		ret = -ENOMEM;
-		prt_printf(&err, "error allocating memory for sb_name");
-		goto err;
-	}
+	if (!sb->sb_name)
+		return -ENOMEM;
 
 #ifndef __KERNEL__
 	if (opt_get(*opts, direct_io) == false)
@@ -809,118 +836,82 @@ retry:
 			opt_set(*opts, nochanges, true);
 	}
 
-	if (IS_ERR(sb->s_bdev_file)) {
-		ret = PTR_ERR(sb->s_bdev_file);
-		prt_printf(&err, "error opening %s: %s", path, bch2_err_str(ret));
-		goto err;
-	}
+	if (IS_ERR(sb->s_bdev_file))
+		return PTR_ERR(sb->s_bdev_file);
+
 	sb->bdev = file_bdev(sb->s_bdev_file);
 
-	ret = bch2_sb_realloc(sb, 0);
+	try(bch2_sb_realloc(sb, 0));
+
+	if (bch2_fs_init_fault("read_super"))
+		return -EFAULT;
+
+	u64 offset = opt_get(*opts, sb);
+	int ret = read_one_super(sb, offset, err);
 	if (ret) {
-		prt_printf(&err, "error allocating memory for superblock");
-		goto err;
+		if (opt_defined(*opts, sb))
+			return ret;
+
+		prt_printf(err, "attempting backup superblocks\n");
+		try(read_backup_supers(sb, opts, err));
 	}
 
-	if (bch2_fs_init_fault("read_super")) {
-		prt_printf(&err, "dynamic fault");
-		ret = -EFAULT;
-		goto err;
-	}
-
-	ret = read_one_super(sb, offset, &err);
-	if (!ret)
-		goto got_super;
-
-	if (opt_defined(*opts, sb))
-		goto err;
-
-	prt_printf(&err2, "bcachefs (%s): error reading default superblock: %s\n",
-	       path, err.buf);
-	if (ret == -BCH_ERR_invalid_sb_magic && ignore_notbchfs_msg)
-		bch2_print_opts(opts, KERN_INFO "%s", err2.buf);
-	else
-		bch2_print_opts(opts, KERN_ERR "%s", err2.buf);
-
-	printbuf_reset(&err);
-
-	/*
-	 * Error reading primary superblock - read location of backup
-	 * superblocks:
-	 */
-	bio_reset(sb->bio, sb->bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
-	sb->bio->bi_iter.bi_sector = BCH_SB_LAYOUT_SECTOR;
-	/*
-	 * use sb buffer to read layout, since sb buffer is page aligned but
-	 * layout won't be:
-	 */
-	bch2_bio_map(sb->bio, sb->sb, sizeof(struct bch_sb_layout));
-
-	ret = submit_bio_wait(sb->bio);
-	if (ret) {
-		prt_printf(&err, "IO error: %i", ret);
-		goto err;
-	}
-
-	memcpy(&layout, sb->sb, sizeof(layout));
-	ret = validate_sb_layout(&layout, &err);
-	if (ret)
-		goto err;
-
-	for (i = layout.sb_offset;
-	     i < layout.sb_offset + layout.nr_superblocks; i++) {
-		offset = le64_to_cpu(*i);
-
-		if (offset == opt_get(*opts, sb)) {
-			ret = -BCH_ERR_invalid;
-			continue;
-		}
-
-		ret = read_one_super(sb, offset, &err);
-		if (!ret)
-			goto got_super;
-	}
-
-	goto err;
-
-got_super:
 	if (le16_to_cpu(sb->sb->block_size) << 9 <
 	    bdev_logical_block_size(sb->bdev) &&
 	    opt_get(*opts, direct_io)) {
 #ifndef __KERNEL__
 		opt_set(*opts, direct_io, false);
-		bch2_free_super(sb);
-		goto retry;
+		return -EINTR;
 #endif
-		prt_printf(&err, "block size (%u) smaller than device block size (%u)",
-		       le16_to_cpu(sb->sb->block_size) << 9,
-		       bdev_logical_block_size(sb->bdev));
-		ret = -BCH_ERR_block_size_too_small;
-		goto err;
+		prt_printf(err, "block size (%u) smaller than device block size (%u)",
+			   le16_to_cpu(sb->sb->block_size) << 9,
+			   bdev_logical_block_size(sb->bdev));
+		return -BCH_ERR_block_size_too_small;
 	}
 
 	sb->have_layout = true;
-
-	ret = bch2_sb_validate(sb->sb, opts, offset, 0, &err);
-	if (ret) {
-		bch2_print_opts(opts, KERN_ERR "bcachefs (%s): error validating superblock: %s\n",
-				path, err.buf);
-		goto err_no_print;
-	}
+	try(bch2_sb_validate(sb->sb, opts, offset, 0, err));
 
 	return 0;
-err:
-	bch2_print_opts(opts, KERN_ERR "bcachefs (%s): error reading superblock: %s\n",
-			path, err.buf);
-err_no_print:
-	bch2_free_super(sb);
-	return ret;
+}
+
+static int __bch2_read_super(struct bch_sb_handle *sb,
+			     const char *path,
+			     struct bch_opts *opts,
+			     struct printbuf *err)
+{
+	while (true) {
+		int ret = read_super_and_backups(sb, path, opts, err);
+		if (ret)
+			bch2_free_super(sb);
+		if (ret != -EINTR)
+			return ret;
+
+		printbuf_reset(err);
+		/* fallback to buffered IO */
+	}
 }
 
 int bch2_read_super(const char *path, struct bch_opts *opts,
 		    struct bch_sb_handle *sb)
 {
-	return __bch2_read_super(path, opts, sb, false);
+	CLASS(printbuf, err)();
+	int ret = __bch2_read_super(sb, path, opts, &err);
+	if (ret)
+		bch2_free_super(sb);
+
+	if (ret && err.pos)
+		bch2_print_opts(opts, KERN_ERR "bcachefs (%s): error reading superblock: %s\n%s",
+				path, bch2_err_str(ret), err.buf);
+	else if (ret)
+		bch2_print_opts(opts, KERN_ERR "bcachefs (%s): error reading superblock: %s",
+				path, bch2_err_str(ret));
+	else if (err.pos) {
+		prt_printf(&err, "successful read from backup");
+		bch2_print_opts(opts, KERN_NOTICE "bcachefs (%s): %s", path, err.buf);
+	}
+
+	return ret;
 }
 
 /* provide a silenced version for mount.bcachefs */
@@ -928,7 +919,11 @@ int bch2_read_super(const char *path, struct bch_opts *opts,
 int bch2_read_super_silent(const char *path, struct bch_opts *opts,
 		    struct bch_sb_handle *sb)
 {
-	return __bch2_read_super(path, opts, sb, true);
+	CLASS(printbuf, err)();
+	int ret = __bch2_read_super(sb, path, opts, &err);
+	if (ret)
+		bch2_free_super(sb);
+	return ret;
 }
 
 /* write superblock: */
