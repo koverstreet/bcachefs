@@ -890,7 +890,7 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 		if (v == bch2_opt_get_by_id(&bch2_opts_default, i))
 			continue;
 
-		prt_str_indented(out, first ? "with options " : ",");
+		prt_str_indented(out, first ? "with options: " : ",");
 		first = false;
 		bch2_opt_to_text(out, c, c->disk_sb.sb, opt, v, OPT_SHOW_MOUNT_STYLE);
 	}
@@ -911,10 +911,13 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 	}
 
 	if (c->sb.multi_device) {
-		prt_printf(out, "with devices");
+		first = true;
+		prt_printf(out, "with devices: ");
 		for_each_online_member(c, ca, BCH_DEV_READ_REF_bch2_online_devs) {
-			prt_char(out, ' ');
-			prt_str_indented(out, ca->name);
+			if (!first)
+				prt_char(out, ',');
+			first = false;
+			prt_str(out, ca->name);
 		}
 		prt_newline(out);
 	}
@@ -925,12 +928,7 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 		prt_printf(out, "rewinding journal, fsck required\n");
 
 	scoped_guard(mutex, &c->sb_lock) {
-		struct bch_sb_field_ext *ext = bch2_sb_field_get_minsize(&c->disk_sb, ext,
-				sizeof(struct bch_sb_field_ext) / sizeof(u64));
-		if (!ext)
-			return bch_err_throw(c, ENOSPC_sb);
-
-		try(bch2_sb_members_v2_init(c));
+		struct bch_sb_field_ext *ext = bch2_sb_field_get(c->disk_sb.sb, ext);
 
 		__le64 now = cpu_to_le64(ktime_get_real_seconds());
 		scoped_guard(rcu)
@@ -1214,6 +1212,14 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	bch2_journal_entry_res_resize(&c->journal,
 			&c->clock_journal_res,
 			(sizeof(struct jset_entry_clock) / sizeof(u64)) * 2);
+
+	scoped_guard(mutex, &c->sb_lock) {
+		if (!bch2_sb_field_get_minsize(&c->disk_sb, ext,
+				sizeof(struct bch_sb_field_ext) / sizeof(u64)))
+			return bch_err_throw(c, ENOSPC_sb);
+
+		try(bch2_sb_members_v2_init(c));
+	}
 
 	scoped_guard(rwsem_write, &c->state_lock)
 		darray_for_each(*sbs, sb)

@@ -397,8 +397,27 @@ int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	return 0;
 }
 
-static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb,
-				  struct printbuf *err)
+static int kern_read_file_str(const char *path, darray_char *ret)
+{
+	struct file *file = errptr_try(filp_open(path, O_RDONLY, 0));
+
+	loff_t pos = 0;
+	ssize_t r = kernel_read(file, ret->data, ret->size, &pos);
+	if (r > 0) {
+		ret->nr = r;
+		if (ret->data[r - 1]) {
+			/* null terminate */
+			if (ret->nr >= ret->size)
+				ret->nr = ret->size -1;
+			ret->data[ret->nr] = '\0';
+		}
+	}
+	fput(file);
+	return r < 0 ? r : 0;
+}
+
+static int __bch2_dev_attach_bdev(struct bch_fs *c, struct bch_dev *ca,
+				  struct bch_sb_handle *sb, struct printbuf *err)
 {
 	if (bch2_dev_is_online(ca)) {
 		prt_printf(err, "Cannot attach %s: already have device %s online in slot %u\n",
@@ -424,6 +443,26 @@ static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb,
 	CLASS(printbuf, name)();
 	prt_bdevname(&name, sb->bdev);
 	strscpy(ca->name, name.buf, sizeof(ca->name));
+
+	CLASS(darray_char, model)();
+	darray_make_room(&model, 128);
+
+	CLASS(printbuf, model_path)();
+	prt_printf(&model_path, "/sys/block/%s/device/model", name.buf);
+
+	kern_read_file_str(model_path.buf, &model);
+
+	if (model.nr && model.data[model.nr - 1] == '\n')
+		model.data[--model.nr] = '\0';
+
+	scoped_guard(mutex, &c->sb_lock) {
+		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+
+		strtomem_pad(m->device_name, name.buf, '\0');
+
+		if (model.nr)
+			strtomem_pad(m->device_model, model.data, '\0');
+	}
 
 	/* Commit: */
 	ca->disk_sb = *sb;
@@ -460,7 +499,7 @@ int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb, struct prin
 
 	struct bch_dev *ca = bch2_dev_locked(c, sb->sb->dev_idx);
 
-	try(__bch2_dev_attach_bdev(ca, sb, err));
+	try(__bch2_dev_attach_bdev(c, ca, sb, err));
 
 	set_bit(ca->dev_idx, c->online_devs.d);
 
@@ -737,7 +776,7 @@ int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 		goto err;
 	}
 
-	ret = __bch2_dev_attach_bdev(ca, &sb, err);
+	ret = __bch2_dev_attach_bdev(c, ca, &sb, err);
 	if (ret)
 		goto err;
 

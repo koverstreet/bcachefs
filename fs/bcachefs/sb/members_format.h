@@ -44,6 +44,10 @@ enum bch_member_error_type {
 	BCH_MEMBER_ERROR_NR
 };
 
+#ifndef __nonstring
+#define __nonstring
+#endif
+
 struct bch_member {
 	__uuid_t		uuid;
 	__le64			nbuckets;	/* device size */
@@ -67,6 +71,9 @@ struct bch_member {
 	 */
 	__le32			last_journal_bucket;
 	__le32			last_journal_bucket_offset;
+
+	__u8			device_name[16] __nonstring;
+	__u8			device_model[64] __nonstring;
 };
 
 /*
