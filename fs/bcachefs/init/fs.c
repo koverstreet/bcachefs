@@ -1290,8 +1290,8 @@ static bool bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
 			struct bch_dev *ca = bch2_dev_locked(c, i);
 
 			if (!bch2_dev_is_online(ca) &&
-			    (ca->mi.state == BCH_MEMBER_STATE_rw ||
-			     ca->mi.state == BCH_MEMBER_STATE_ro))
+			    (ca->mi.state != BCH_MEMBER_STATE_failed ||
+			     bch2_dev_has_data(c, ca)))
 				return bch_err_throw(c, insufficient_devices_to_start);
 		}
 		break;
