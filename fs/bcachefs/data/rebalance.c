@@ -292,15 +292,32 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 			  struct per_snapshot_io_opts *snapshot_opts, struct bkey_s_c k,
 			  struct bch_inode_opts *opts)
 {
+	struct bch_fs *c = trans->c;
 	enum io_opts_mode {
 		IO_OPTS_metadata,
 		IO_OPTS_reflink,
 		IO_OPTS_user,
-	} mode = bkey_is_btree_ptr(k.k) ? IO_OPTS_metadata :
-		 !bkey_is_indirect(k.k)	? IO_OPTS_user :
-					  IO_OPTS_reflink;
+	} mode;
 
-	struct bch_fs *c = trans->c;
+	if (bkey_is_btree_ptr(k.k))
+		mode = IO_OPTS_metadata;
+	else if (bkey_is_indirect(k.k))
+		mode = IO_OPTS_reflink;
+	else if (bkey_is_user_data(k.k)) {
+		mode = IO_OPTS_user;
+
+		if (unlikely(!k.k->p.snapshot)) {
+			CLASS(printbuf, buf)();
+			bch2_bkey_val_to_text(&buf, trans->c, k);
+			WARN(1, "user data key with snapshot == 0\n%s", buf.buf);
+			bch2_inode_opts_get(c, opts, false);
+			return 0;
+		}
+	} else {
+		/* KEY_TYPE_error? */
+		bch2_inode_opts_get(c, opts, false);
+		return 0;
+	}
 
 	if (!snapshot_opts) {
 		bch2_inode_opts_get(c, opts, mode == IO_OPTS_metadata);

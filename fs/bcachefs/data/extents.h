@@ -481,6 +481,13 @@ static inline bool bkey_extent_is_direct_data(const struct bkey *k)
 	}
 }
 
+static inline bool bkey_is_user_data(const struct bkey *k)
+{
+	return  k->type == KEY_TYPE_extent ||
+		k->type == KEY_TYPE_inline_data ||
+		k->type == KEY_TYPE_reservation;
+}
+
 static inline bool bkey_extent_is_inline_data(const struct bkey *k)
 {
 	return  k->type == KEY_TYPE_inline_data ||
