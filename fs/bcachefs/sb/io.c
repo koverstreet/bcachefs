@@ -56,7 +56,7 @@ void bch2_version_to_text(struct printbuf *out, enum bcachefs_metadata_version v
 			break;
 		}
 
-	prt_printf(out, "%u.%u: %s", BCH_VERSION_MAJOR(v), BCH_VERSION_MINOR(v), str);
+	prt_printf(out, "%s (%u.%u)", str, BCH_VERSION_MAJOR(v), BCH_VERSION_MINOR(v));
 }
 
 enum bcachefs_metadata_version bch2_latest_compatible_version(enum bcachefs_metadata_version v)

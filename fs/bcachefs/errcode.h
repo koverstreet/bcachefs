@@ -214,6 +214,8 @@
 	x(EINVAL,			device_already_online)			\
 	x(EINVAL,			filesystem_uuid_already_open)		\
 	x(EINVAL,			insufficient_devices_to_start)		\
+	x(EINVAL,			chardev_init_error)			\
+	x(EINVAL,			sysfs_init_error)			\
 	x(EINVAL,			invalid)				\
 	x(EINVAL,			internal_fsck_err)			\
 	x(EINVAL,			opt_parse_error)			\

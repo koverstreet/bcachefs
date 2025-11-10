@@ -401,17 +401,18 @@ static int __bch2_dev_attach_bdev(struct bch_dev *ca, struct bch_sb_handle *sb,
 				  struct printbuf *err)
 {
 	if (bch2_dev_is_online(ca)) {
-		prt_printf(err, "already have device online in slot %u\n",
-			   sb->sb->dev_idx);
+		prt_printf(err, "Cannot attach %s: already have device %s online in slot %u\n",
+			   sb->sb_name, ca->name, sb->sb->dev_idx);
 		return bch_err_throw(ca->fs, device_already_online);
 	}
 
 	if (get_capacity(sb->bdev->bd_disk) <
 	    ca->mi.bucket_size * ca->mi.nbuckets) {
-		prt_printf(err, "cannot online: device too small (capacity %llu filesystem size %llu nbuckets %llu)\n",
-			get_capacity(sb->bdev->bd_disk),
-			ca->mi.bucket_size * ca->mi.nbuckets,
-			ca->mi.nbuckets);
+		prt_printf(err, "Cannot online %s: device too small (capacity %llu filesystem size %llu nbuckets %llu)\n",
+			   sb->sb_name,
+			   get_capacity(sb->bdev->bd_disk),
+			   ca->mi.bucket_size * ca->mi.nbuckets,
+			   ca->mi.nbuckets);
 		return bch_err_throw(ca->fs, device_size_too_small);
 	}
 

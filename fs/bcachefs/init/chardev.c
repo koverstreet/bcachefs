@@ -784,13 +784,13 @@ int bch2_fs_chardev_init(struct bch_fs *c)
 {
 	c->minor = idr_alloc(&bch_chardev_minor, c, 0, 0, GFP_KERNEL);
 	if (c->minor < 0)
-		return c->minor;
+		return bch_err_throw(c, chardev_init_error);
 
 	c->chardev = device_create(&bch_chardev_class, NULL,
 				   MKDEV(bch_chardev_major, c->minor), c,
 				   "bcachefs%u-ctl", c->minor);
 	if (IS_ERR(c->chardev))
-		return PTR_ERR(c->chardev);
+		return bch_err_throw(c, chardev_init_error);
 
 	return 0;
 }
