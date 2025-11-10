@@ -404,6 +404,27 @@ int __bch2_str_hash_check_key(struct btree_trans *,
 			      struct btree_iter *, struct bkey_s_c,
 			      bool *);
 
+static inline bool str_hash_key_needs_check(const struct bch_hash_desc *desc,
+					    struct bch_hash_info *info,
+					    struct bkey_s_c k)
+{
+	if (k.k->type != desc->key_type)
+		return false;
+
+	if (unlikely(desc->hash_bkey(info, k) != k.k->p.offset))
+		return true;
+
+	switch (k.k->type) {
+	case KEY_TYPE_dirent:
+		if (bkey_s_c_to_dirent(k).v->d_casefold != !!info->cf_encoding)
+			return true;
+		break;
+	}
+
+	return false;
+}
+
+
 static inline int bch2_str_hash_check_key(struct btree_trans *trans,
 			    struct snapshots_seen *s,
 			    const struct bch_hash_desc *desc,
@@ -411,14 +432,10 @@ static inline int bch2_str_hash_check_key(struct btree_trans *trans,
 			    struct btree_iter *k_iter, struct bkey_s_c hash_k,
 			    bool *updated_before_k_pos)
 {
-	if (hash_k.k->type != desc->key_type)
-		return 0;
-
-	if (likely(desc->hash_bkey(hash_info, hash_k) == hash_k.k->p.offset))
-		return 0;
-
-	return __bch2_str_hash_check_key(trans, s, desc, hash_info, k_iter, hash_k,
-					 updated_before_k_pos);
+	return str_hash_key_needs_check(desc, hash_info, hash_k)
+		? __bch2_str_hash_check_key(trans, s, desc, hash_info, k_iter, hash_k,
+					    updated_before_k_pos)
+		: 0;
 }
 
 #endif /* _BCACHEFS_STR_HASH_H */

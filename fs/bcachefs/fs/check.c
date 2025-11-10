@@ -1606,40 +1606,6 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 
 	struct bkey_s_c_dirent d = bkey_s_c_to_dirent(k);
 
-	/* check casefold */
-	if (fsck_err_on(d.v->d_casefold != !!hash_info->cf_encoding,
-			trans, dirent_casefold_mismatch,
-			"dirent casefold does not match dir casefold\n%s",
-			(printbuf_reset(&buf),
-			 bch2_bkey_val_to_text(&buf, c, k),
-			 buf.buf))) {
-		subvol_inum dir_inum = { .subvol = d.v->d_type == DT_SUBVOL
-				? le32_to_cpu(d.v->d_parent_subvol)
-				: 0,
-		};
-		u64 target = d.v->d_type == DT_SUBVOL
-			? le32_to_cpu(d.v->d_child_subvol)
-			: le64_to_cpu(d.v->d_inum);
-		struct qstr name = bch2_dirent_get_name(d);
-
-		struct bkey_i_dirent *new_d =
-			errptr_try(bch2_dirent_create_key(trans, hash_info, dir_inum,
-					       d.v->d_type, &name, NULL, target));
-
-		new_d->k.p.inode	= d.k->p.inode;
-		new_d->k.p.snapshot	= d.k->p.snapshot;
-
-		CLASS(btree_iter_uninit, dup_iter)(trans);
-		return  bch2_hash_delete_at(trans,
-					    bch2_dirent_hash_desc, hash_info, iter,
-					    BTREE_UPDATE_internal_snapshot_node) ?:
-			bch2_str_hash_repair_key(trans, s,
-						 &bch2_dirent_hash_desc, hash_info,
-						 iter, bkey_i_to_s_c(&new_d->k_i),
-						 &dup_iter, bkey_s_c_null,
-						 need_second_pass);
-	}
-
 	if (d.v->d_type == DT_SUBVOL) {
 		try(check_dirent_to_subvol(trans, iter, d));
 	} else {

@@ -333,6 +333,55 @@ fsck_err:
 	return ret;
 }
 
+/* XXX: should move to dirent.c */
+static int str_hash_check_dirent(struct btree_trans *trans,
+				 struct snapshots_seen *s,
+				 struct bch_hash_info *hash_info,
+				 struct btree_iter *iter, struct bkey_s_c k,
+				 bool *updated_before_k_pos)
+{
+	struct bch_fs *c = trans->c;
+	struct bkey_s_c_dirent d = bkey_s_c_to_dirent(k);
+
+	CLASS(printbuf, buf)();
+	if (ret_fsck_err_on(d.v->d_casefold != !!hash_info->cf_encoding,
+			trans, dirent_casefold_mismatch,
+			"dirent casefold does not match dir casefold\n%s",
+			(bch2_bkey_val_to_text(&buf, c, k),
+			 buf.buf))) {
+		subvol_inum dir_inum = { .subvol = d.v->d_type == DT_SUBVOL
+				? le32_to_cpu(d.v->d_parent_subvol)
+				: 0,
+		};
+		u64 target = d.v->d_type == DT_SUBVOL
+			? le32_to_cpu(d.v->d_child_subvol)
+			: le64_to_cpu(d.v->d_inum);
+		struct qstr name = bch2_dirent_get_name(d);
+
+		struct bkey_i_dirent *new_d =
+			errptr_try(bch2_dirent_create_key(trans, hash_info, dir_inum,
+					       d.v->d_type, &name, NULL, target));
+
+		new_d->k.p.inode	= d.k->p.inode;
+		new_d->k.p.snapshot	= d.k->p.snapshot;
+
+		CLASS(btree_iter_uninit, dup_iter)(trans);
+		try(bch2_hash_delete_at(trans,
+					bch2_dirent_hash_desc, hash_info, iter,
+					BTREE_UPDATE_internal_snapshot_node));
+		try(bch2_str_hash_repair_key(trans, s,
+					     &bch2_dirent_hash_desc, hash_info,
+					     iter, bkey_i_to_s_c(&new_d->k_i),
+					     &dup_iter, bkey_s_c_null,
+					     updated_before_k_pos));
+
+		/* skip this key, it moved */
+		return 1;
+	}
+
+	return 0;
+}
+
 int __bch2_str_hash_check_key(struct btree_trans *trans,
 			      struct snapshots_seen *s,
 			      const struct bch_hash_desc *desc,
@@ -370,6 +419,15 @@ int __bch2_str_hash_check_key(struct btree_trans *trans,
 			return str_hash_bad_hash(trans, s, desc, hash_info, k_iter, hash_k,
 						 updated_before_k_pos, &iter, hash);
 	}
+	if (ret)
+		return ret;
 
-	return ret;
+	switch (k.k->type) {
+	case KEY_TYPE_dirent:
+		try(str_hash_check_dirent(trans, s, hash_info, k_iter, hash_k,
+					  updated_before_k_pos));
+		break;
+	}
+
+	return 0;
 }
