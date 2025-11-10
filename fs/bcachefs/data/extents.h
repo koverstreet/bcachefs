@@ -632,6 +632,7 @@ void bch2_extent_ptr_decoded_append(const struct bch_fs *, struct bkey_i *,
 void bch2_bkey_drop_ptr_noerror(const struct bch_fs *, struct bkey_s, struct bch_extent_ptr *);
 void bch2_bkey_drop_ptr(const struct bch_fs *, struct bkey_s, struct bch_extent_ptr *);
 
+void bch2_bkey_drop_device_noerror(const struct bch_fs *, struct bkey_s, unsigned);
 void bch2_bkey_drop_device(const struct bch_fs *, struct bkey_s, unsigned);
 void bch2_bkey_drop_ec(const struct bch_fs *, struct bkey_i *k, unsigned);
 

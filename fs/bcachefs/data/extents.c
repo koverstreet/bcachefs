@@ -1007,6 +1007,11 @@ void bch2_bkey_drop_ptr(const struct bch_fs *c, struct bkey_s k, struct bch_exte
 	}
 }
 
+void bch2_bkey_drop_device_noerror(const struct bch_fs *c, struct bkey_s k, unsigned dev)
+{
+	bch2_bkey_drop_ptrs_noerror(k, p, entry, p.ptr.dev == dev);
+}
+
 void bch2_bkey_drop_device(const struct bch_fs *c, struct bkey_s k, unsigned dev)
 {
 	bch2_bkey_drop_ptrs(k, p, entry, p.ptr.dev == dev);
