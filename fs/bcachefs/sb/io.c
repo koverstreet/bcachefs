@@ -707,59 +707,58 @@ int bch2_sb_from_fs(struct bch_fs *c, struct bch_dev *ca)
 
 static int read_one_super(struct bch_sb_handle *sb, u64 offset, struct printbuf *err)
 {
-	size_t bytes;
-reread:
-	bio_reset(sb->bio, sb->bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
-	sb->bio->bi_iter.bi_sector = offset;
-	bch2_bio_map(sb->bio, sb->sb, sb->buffer_size);
+	while (true) {
+		bio_reset(sb->bio, sb->bdev, REQ_OP_READ|REQ_SYNC|REQ_META);
+		sb->bio->bi_iter.bi_sector = offset;
+		bch2_bio_map(sb->bio, sb->sb, sb->buffer_size);
 
-	int ret = submit_bio_wait(sb->bio);
-	if (ret) {
-		prt_printf(err, "IO error: %i", ret);
-		return ret;
+		int ret = submit_bio_wait(sb->bio);
+		if (ret) {
+			prt_printf(err, "IO error: %i", ret);
+			return ret;
+		}
+
+		if (!uuid_equal(&sb->sb->magic, &BCACHE_MAGIC) &&
+		    !uuid_equal(&sb->sb->magic, &BCHFS_MAGIC)) {
+			prt_str(err, "Not a bcachefs superblock (got magic ");
+			pr_uuid(err, sb->sb->magic.b);
+			prt_str(err, ")");
+			return -BCH_ERR_invalid_sb_magic;
+		}
+
+		try(bch2_sb_compatible(sb->sb, err));
+
+		size_t bytes = vstruct_bytes(sb->sb);
+
+		u64 sb_size = 512ULL << min(BCH_SB_LAYOUT_SIZE_BITS_MAX, sb->sb->layout.sb_max_size_bits);
+		if (bytes > sb_size) {
+			prt_printf(err, "Invalid superblock: too big (got %zu bytes, layout max %llu)",
+				   bytes, sb_size);
+			return -BCH_ERR_invalid_sb_too_big;
+		}
+
+		if (bytes > sb->buffer_size) {
+			try(bch2_sb_realloc(sb, le32_to_cpu(sb->sb->u64s)));
+			continue;
+		}
+
+		enum bch_csum_type csum_type = BCH_SB_CSUM_TYPE(sb->sb);
+		if (csum_type >= BCH_CSUM_NR ||
+		    bch2_csum_type_is_encryption(csum_type)) {
+			prt_printf(err, "unknown checksum type %llu", BCH_SB_CSUM_TYPE(sb->sb));
+			return -BCH_ERR_invalid_sb_csum_type;
+		}
+
+		/* XXX: verify MACs */
+		struct bch_csum csum = csum_vstruct(NULL, csum_type, null_nonce(), sb->sb);
+		if (bch2_crc_cmp(csum, sb->sb->csum)) {
+			bch2_csum_err_msg(err, csum_type, sb->sb->csum, csum);
+			return -BCH_ERR_invalid_sb_csum;
+		}
+
+		sb->seq = le64_to_cpu(sb->sb->seq);
+		return 0;
 	}
-
-	if (!uuid_equal(&sb->sb->magic, &BCACHE_MAGIC) &&
-	    !uuid_equal(&sb->sb->magic, &BCHFS_MAGIC)) {
-		prt_str(err, "Not a bcachefs superblock (got magic ");
-		pr_uuid(err, sb->sb->magic.b);
-		prt_str(err, ")");
-		return -BCH_ERR_invalid_sb_magic;
-	}
-
-	try(bch2_sb_compatible(sb->sb, err));
-
-	bytes = vstruct_bytes(sb->sb);
-
-	u64 sb_size = 512ULL << min(BCH_SB_LAYOUT_SIZE_BITS_MAX, sb->sb->layout.sb_max_size_bits);
-	if (bytes > sb_size) {
-		prt_printf(err, "Invalid superblock: too big (got %zu bytes, layout max %llu)",
-			   bytes, sb_size);
-		return -BCH_ERR_invalid_sb_too_big;
-	}
-
-	if (bytes > sb->buffer_size) {
-		try(bch2_sb_realloc(sb, le32_to_cpu(sb->sb->u64s)));
-		goto reread;
-	}
-
-	enum bch_csum_type csum_type = BCH_SB_CSUM_TYPE(sb->sb);
-	if (csum_type >= BCH_CSUM_NR ||
-	    bch2_csum_type_is_encryption(csum_type)) {
-		prt_printf(err, "unknown checksum type %llu", BCH_SB_CSUM_TYPE(sb->sb));
-		return -BCH_ERR_invalid_sb_csum_type;
-	}
-
-	/* XXX: verify MACs */
-	struct bch_csum csum = csum_vstruct(NULL, csum_type, null_nonce(), sb->sb);
-	if (bch2_crc_cmp(csum, sb->sb->csum)) {
-		bch2_csum_err_msg(err, csum_type, sb->sb->csum, csum);
-		return -BCH_ERR_invalid_sb_csum;
-	}
-
-	sb->seq = le64_to_cpu(sb->sb->seq);
-
-	return 0;
 }
 
 static int __bch2_read_super(const char *path, struct bch_opts *opts,
