@@ -83,7 +83,6 @@ int bch2_lru_check_set(struct btree_trans *trans,
 		       struct wb_maybe_flush *last_flushed)
 {
 	struct bch_fs *c = trans->c;
-	int ret = 0;
 
 	CLASS(btree_iter, lru_iter)(trans, BTREE_ID_lru, lru_pos(lru_id, dev_bucket, time), 0);
 	struct bkey_s_c lru_k = bkey_try(bch2_btree_iter_peek_slot(&lru_iter));
@@ -97,11 +96,11 @@ int bch2_lru_check_set(struct btree_trans *trans,
 		prt_newline(&buf);
 		bch2_bkey_val_to_text(&buf, c, referring_k);
 
-		if (fsck_err(trans, alloc_key_to_missing_lru_entry, "%s", buf.buf))
+		if (ret_fsck_err(trans, alloc_key_to_missing_lru_entry, "%s", buf.buf))
 			try(bch2_lru_set(trans, lru_id, dev_bucket, time));
 	}
-fsck_err:
-	return ret;
+
+	return 0;
 }
 
 static struct bbpos lru_pos_to_bp(struct bkey_s_c lru_k)
@@ -173,7 +172,6 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf1)();
 	CLASS(printbuf, buf2)();
-	int ret = 0;
 
 	struct bbpos bp = lru_pos_to_bp(lru_k);
 
@@ -186,7 +184,7 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 	if (lru_pos_time(lru_k.k->p) != idx) {
 		try(bch2_btree_write_buffer_maybe_flush(trans, lru_k, last_flushed));
 
-		if (fsck_err(trans, lru_entry_bad,
+		if (ret_fsck_err(trans, lru_entry_bad,
 			     "incorrect lru entry: lru %s time %llu\n"
 			     "%s\n"
 			     "for %s",
@@ -196,8 +194,8 @@ static int bch2_check_lru_key(struct btree_trans *trans,
 			     (bch2_bkey_val_to_text(&buf2, c, k), buf2.buf)))
 			return bch2_btree_bit_mod_buffered(trans, BTREE_ID_lru, lru_iter->pos, false);
 	}
-fsck_err:
-	return ret;
+
+	return 0;
 }
 
 int bch2_check_lrus(struct bch_fs *c)

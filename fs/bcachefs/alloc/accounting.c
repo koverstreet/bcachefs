@@ -673,9 +673,8 @@ static int disk_accounting_invalid_dev(struct btree_trans *trans,
 {
 	CLASS(printbuf, buf)();
 	bch2_accounting_key_to_text(&buf, acc);
-	int ret = 0;
 
-	if (fsck_err(trans, accounting_to_invalid_device,
+	if (ret_fsck_err(trans, accounting_to_invalid_device,
 		     "accounting entry points to invalid device %u\n%s",
 		     dev, buf.buf)) {
 		bch2_u64s_neg(v, nr);
@@ -686,8 +685,6 @@ static int disk_accounting_invalid_dev(struct btree_trans *trans,
 	} else {
 		return bch_err_throw(trans->c, remove_disk_accounting_entry);
 	}
-fsck_err:
-	return ret;
 }
 
 

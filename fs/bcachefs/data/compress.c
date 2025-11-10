@@ -186,12 +186,12 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 	size_t src_len = src->bi_iter.bi_size;
 	size_t dst_len = crc.uncompressed_size << 9;
 	void *workspace;
-	int ret = 0, ret2;
+	int ret2;
 
 	enum bch_compression_opts opt = bch2_compression_type_to_opt(crc.compression_type);
 	mempool_t *workspace_pool = &c->compress_workspace[opt];
 	if (unlikely(!mempool_initialized(workspace_pool))) {
-		if (fsck_err(c, compression_type_not_marked_in_sb,
+		if (ret_fsck_err(c, compression_type_not_marked_in_sb,
 			     "compression type %s set but not marked in superblock",
 			     __bch2_compression_types[crc.compression_type]))
 			try(bch2_check_set_has_compressed_data(c, opt));
@@ -252,8 +252,8 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 	default:
 		BUG();
 	}
-fsck_err:
-	return ret;
+
+	return 0;
 }
 
 int bch2_bio_uncompress_inplace(struct bch_write_op *op,
@@ -428,7 +428,7 @@ static unsigned __bio_compress(struct bch_fs *c,
 
 	mempool_t *workspace_pool = &c->compress_workspace[compression.type];
 	if (unlikely(!mempool_initialized(workspace_pool))) {
-		if (fsck_err(c, compression_opt_not_marked_in_sb,
+		if (ret_fsck_err(c, compression_opt_not_marked_in_sb,
 			     "compression opt %s set but not marked in superblock",
 			     bch2_compression_opts[compression.type])) {
 			ret = bch2_check_set_has_compressed_data(c, compression.type);
@@ -512,8 +512,6 @@ static unsigned __bio_compress(struct bch_fs *c,
 	BUG_ON(*dst_len & (block_bytes(c) - 1));
 	BUG_ON(*src_len & (block_bytes(c) - 1));
 	return compression_type;
-fsck_err:
-	return BCH_COMPRESSION_TYPE_none;
 }
 
 unsigned bch2_bio_compress(struct bch_fs *c,

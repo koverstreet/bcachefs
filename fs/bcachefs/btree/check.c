@@ -820,7 +820,6 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	struct bkey_i_alloc_v4 *a;
 	struct bch_alloc_v4 old_gc, gc, old_convert, new;
 	const struct bch_alloc_v4 *old;
-	int ret;
 
 	if (!bucket_valid(ca, k.k->p.offset))
 		return 0;
@@ -858,7 +857,7 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 		gc_m->dirty_sectors = gc.dirty_sectors;
 	}
 
-	if (fsck_err_on(new.data_type != gc.data_type,
+	if (ret_fsck_err_on(new.data_type != gc.data_type,
 			trans, alloc_key_data_type_wrong,
 			"bucket %llu:%llu gen %u has wrong data_type"
 			": got %s, should be %s",
@@ -869,7 +868,7 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 		new.data_type = gc.data_type;
 
 #define copy_bucket_field(_errtype, _f)					\
-	if (fsck_err_on(new._f != gc._f,				\
+	if (ret_fsck_err_on(new._f != gc._f,				\
 			trans, _errtype,				\
 			"bucket %llu:%llu gen %u data type %s has wrong " #_f	\
 			": got %llu, should be %llu",			\
@@ -900,9 +899,8 @@ static int bch2_alloc_write_key(struct btree_trans *trans,
 	if (a->v.data_type == BCH_DATA_cached && !a->v.io_time[READ])
 		a->v.io_time[READ] = max_t(u64, 1, atomic64_read(&c->io_clock[READ].now));
 
-	ret = bch2_trans_update(trans, iter, &a->k_i, BTREE_TRIGGER_norun);
-fsck_err:
-	return ret;
+	try(bch2_trans_update(trans, iter, &a->k_i, BTREE_TRIGGER_norun));
+	return 0;
 }
 
 static int bch2_gc_alloc_done(struct bch_fs *c)
@@ -935,21 +933,16 @@ static int bch2_gc_write_stripes_key(struct btree_trans *trans,
 				     struct btree_iter *iter,
 				     struct bkey_s_c k)
 {
-	struct bch_fs *c = trans->c;
-	CLASS(printbuf, buf)();
-	const struct bch_stripe *s;
-	struct gc_stripe *m;
-	bool bad = false;
-	unsigned i;
-	int ret = 0;
-
 	if (k.k->type != KEY_TYPE_stripe)
 		return 0;
 
-	s = bkey_s_c_to_stripe(k).v;
-	m = genradix_ptr(&c->gc_stripes, k.k->p.offset);
+	struct bch_fs *c = trans->c;
+	CLASS(printbuf, buf)();
+	const struct bch_stripe *s = bkey_s_c_to_stripe(k).v;
+	struct gc_stripe *m = genradix_ptr(&c->gc_stripes, k.k->p.offset);
 
-	for (i = 0; i < s->nr_blocks; i++) {
+	bool bad = false;
+	for (unsigned i = 0; i < s->nr_blocks; i++) {
 		u32 old = stripe_blockcount_get(s, i);
 		u32 new = (m ? m->block_sectors[i] : 0);
 
@@ -963,7 +956,7 @@ static int bch2_gc_write_stripes_key(struct btree_trans *trans,
 	if (bad)
 		bch2_bkey_val_to_text(&buf, c, k);
 
-	if (fsck_err_on(bad,
+	if (ret_fsck_err_on(bad,
 			trans, stripe_sector_count_wrong,
 			"%s", buf.buf)) {
 		struct bkey_i_stripe *new =
@@ -971,13 +964,13 @@ static int bch2_gc_write_stripes_key(struct btree_trans *trans,
 
 		bkey_reassemble(&new->k_i, k);
 
-		for (i = 0; i < new->v.nr_blocks; i++)
+		for (unsigned i = 0; i < new->v.nr_blocks; i++)
 			stripe_blockcount_set(&new->v, i, m ? m->block_sectors[i] : 0);
 
-		ret = bch2_trans_update(trans, iter, &new->k_i, 0);
+		try(bch2_trans_update(trans, iter, &new->k_i, 0));
 	}
-fsck_err:
-	return ret;
+
+	return 0;
 }
 
 static int bch2_gc_stripes_done(struct bch_fs *c)

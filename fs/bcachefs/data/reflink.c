@@ -188,7 +188,6 @@ static int bch2_indirect_extent_missing_error(struct btree_trans *trans,
 	u64 refd_start	= live_start	- le32_to_cpu(p.v->front_pad);
 	u64 refd_end	= live_end	+ le32_to_cpu(p.v->back_pad);
 	CLASS(printbuf, buf)();
-	int ret = 0;
 
 	BUG_ON(missing_start	< refd_start);
 	BUG_ON(missing_end	> refd_end);
@@ -205,7 +204,7 @@ static int bch2_indirect_extent_missing_error(struct btree_trans *trans,
 	prt_printf(&buf, "\nmissing reflink btree range %llu-%llu",
 		   missing_start, missing_end);
 
-	if (fsck_err(trans, reflink_p_to_missing_reflink_v, "%s", buf.buf)) {
+	if (ret_fsck_err(trans, reflink_p_to_missing_reflink_v, "%s", buf.buf)) {
 		struct bkey_i_reflink_p *new =
 			errptr_try(bch2_bkey_make_mut_noupdate_typed(trans, p.s_c, reflink_p));
 
@@ -239,11 +238,10 @@ static int bch2_indirect_extent_missing_error(struct btree_trans *trans,
 		try(bch2_btree_insert_trans(trans, BTREE_ID_extents, &new->k_i, BTREE_TRIGGER_norun));
 
 		if (should_commit)
-			ret =   bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
-				bch_err_throw(c, transaction_restart_nested);
+			try(bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
 	}
-fsck_err:
-	return ret;
+
+	return 0;
 }
 
 /*
@@ -723,7 +721,6 @@ static int bch2_gc_write_reflink_key(struct btree_trans *trans,
 	const __le64 *refcount = bkey_refcount_c(k);
 	CLASS(printbuf, buf)();
 	struct reflink_gc *r;
-	int ret = 0;
 
 	if (!refcount)
 		return 0;
@@ -739,7 +736,7 @@ static int bch2_gc_write_reflink_key(struct btree_trans *trans,
 		return -EINVAL;
 	}
 
-	if (fsck_err_on(r->refcount != le64_to_cpu(*refcount),
+	if (ret_fsck_err_on(r->refcount != le64_to_cpu(*refcount),
 			trans, reflink_v_refcount_wrong,
 			"reflink key has wrong refcount:\n"
 			"%s\n"
@@ -752,10 +749,10 @@ static int bch2_gc_write_reflink_key(struct btree_trans *trans,
 			new->k.type = KEY_TYPE_deleted;
 		else
 			*bkey_refcount(bkey_i_to_s(new)) = cpu_to_le64(r->refcount);
-		ret = bch2_trans_update(trans, iter, new, 0);
+		try(bch2_trans_update(trans, iter, new, 0));
 	}
-fsck_err:
-	return ret;
+
+	return 0;
 }
 
 int bch2_gc_reflink_done(struct bch_fs *c)

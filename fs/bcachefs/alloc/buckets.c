@@ -112,7 +112,6 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
-	int ret = 0;
 
 	CLASS(bch2_dev_tryget_noerror, ca)(c, p.ptr.dev);
 	if (!ca) {
@@ -120,7 +119,7 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 			return 0;
 
 		if (test_bit(p.ptr.dev, c->devs_removed.d)) {
-			if (fsck_err(trans, ptr_to_removed_device,
+			if (ret_fsck_err(trans, ptr_to_removed_device,
 				     "pointer to removed device %u\n"
 				     "while marking %s",
 				     p.ptr.dev,
@@ -128,7 +127,7 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 				      bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
 				*do_update = true;
 		} else {
-			if (fsck_err(trans, ptr_to_invalid_device,
+			if (ret_fsck_err(trans, ptr_to_invalid_device,
 				     "pointer to missing device %u\n"
 				     "while marking %s",
 				     p.ptr.dev,
@@ -141,7 +140,7 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 
 	struct bucket *g = PTR_GC_BUCKET(ca, &p.ptr);
 	if (!g) {
-		if (fsck_err(trans, ptr_to_invalid_device,
+		if (ret_fsck_err(trans, ptr_to_invalid_device,
 			     "pointer to invalid bucket on device %u\n"
 			     "while marking %s",
 			     p.ptr.dev,
@@ -153,7 +152,7 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 
 	enum bch_data_type data_type = bch2_bkey_ptr_data_type(k, p, entry);
 
-	if (fsck_err_on(!g->gen_valid,
+	if (ret_fsck_err_on(!g->gen_valid,
 			trans, ptr_to_missing_alloc_key,
 			"bucket %u:%zu data type %s ptr gen %u missing in alloc btree\n"
 			"while marking %s",
@@ -174,7 +173,7 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 
 	/* g->gen_valid == true */
 
-	if (fsck_err_on(gen_cmp(p.ptr.gen, g->gen) > 0,
+	if (ret_fsck_err_on(gen_cmp(p.ptr.gen, g->gen) > 0,
 			trans, ptr_gen_newer_than_bucket_gen,
 			"bucket %u:%zu data type %s ptr gen in the future: %u > %u\n"
 			"while marking %s",
@@ -195,7 +194,7 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 		*do_update = true;
 	}
 
-	if (fsck_err_on(gen_cmp(g->gen, p.ptr.gen) > BUCKET_GC_GEN_MAX,
+	if (ret_fsck_err_on(gen_cmp(g->gen, p.ptr.gen) > BUCKET_GC_GEN_MAX,
 			trans, ptr_gen_newer_than_bucket_gen,
 			"bucket %u:%zu gen %u data type %s: ptr gen %u too stale\n"
 			"while marking %s",
@@ -206,7 +205,7 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 			 bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
 		*do_update = true;
 
-	if (fsck_err_on(!p.ptr.cached && gen_cmp(p.ptr.gen, g->gen) < 0,
+	if (ret_fsck_err_on(!p.ptr.cached && gen_cmp(p.ptr.gen, g->gen) < 0,
 			trans, stale_dirty_ptr,
 			"bucket %u:%zu data type %s stale dirty ptr: %u < %u\n"
 			"while marking %s",
@@ -220,7 +219,7 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 	if (data_type != BCH_DATA_btree && p.ptr.gen != g->gen)
 		return 0;
 
-	if (fsck_err_on(bucket_data_type_mismatch(g->data_type, data_type),
+	if (ret_fsck_err_on(bucket_data_type_mismatch(g->data_type, data_type),
 			trans, ptr_bucket_data_type_mismatch,
 			"bucket %u:%zu gen %u different types of data in same bucket: %s, %s\n"
 			"while marking %s",
@@ -236,11 +235,7 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 				bch_err(c, "btree and superblock in the same bucket - cannot repair");
 				return bch_err_throw(c, fsck_repair_unimplemented);
 			case BCH_DATA_journal:
-				ret = bch2_dev_journal_bucket_delete(ca, PTR_BUCKET_NR(ca, &p.ptr));
-				bch_err_msg(c, ret, "error deleting journal bucket %zu",
-					    PTR_BUCKET_NR(ca, &p.ptr));
-				if (ret)
-					return ret;
+				try(bch2_dev_journal_bucket_delete(ca, PTR_BUCKET_NR(ca, &p.ptr)));
 				break;
 			}
 
@@ -256,7 +251,7 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 	if (p.has_ec) {
 		struct gc_stripe *m = genradix_ptr(&c->gc_stripes, p.ec.idx);
 
-		if (fsck_err_on(!m || !m->alive,
+		if (ret_fsck_err_on(!m || !m->alive,
 				trans, ptr_to_missing_stripe,
 				"pointer to nonexistent stripe %llu\n"
 				"while marking %s",
@@ -265,7 +260,7 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 				 bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
 			*do_update = true;
 
-		if (fsck_err_on(m && m->alive && !bch2_ptr_matches_stripe_m(m, p),
+		if (ret_fsck_err_on(m && m->alive && !bch2_ptr_matches_stripe_m(m, p),
 				trans, ptr_to_incorrect_stripe,
 				"pointer does not match stripe %llu\n"
 				"while marking %s",
@@ -274,8 +269,8 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 				 bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
 			*do_update = true;
 	}
-fsck_err:
-	return ret;
+
+	return 0;
 }
 
 static bool should_drop_ptr(struct bch_fs *c, struct bkey_s_c k,
@@ -466,7 +461,6 @@ int bch2_bucket_ref_update(struct btree_trans *trans, struct bch_dev *ca,
 	size_t bucket_nr = PTR_BUCKET_NR(ca, ptr);
 	CLASS(printbuf, buf)();
 	bool inserting = sectors > 0;
-	int ret = 0;
 
 	BUG_ON(!sectors);
 
@@ -495,7 +489,7 @@ int bch2_bucket_ref_update(struct btree_trans *trans, struct bch_dev *ca,
 	}
 
 	if (b_gen != ptr->gen && ptr->cached) {
-		if (fsck_err_on(c->sb.compat & BIT_ULL(BCH_COMPAT_no_stale_ptrs),
+		if (ret_fsck_err_on(c->sb.compat & BIT_ULL(BCH_COMPAT_no_stale_ptrs),
 				trans, stale_ptr_with_no_stale_ptrs_feature,
 				"stale cached ptr, but have no_stale_ptrs feature\n%s",
 				(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
@@ -544,8 +538,7 @@ int bch2_bucket_ref_update(struct btree_trans *trans, struct bch_dev *ca,
 	}
 
 	*bucket_sectors += sectors;
-fsck_err:
-	return ret;
+	return 0;
 }
 
 void bch2_trans_account_disk_usage_change(struct btree_trans *trans)

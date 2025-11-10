@@ -201,7 +201,6 @@ static int backpointer_target_not_found(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
-	int ret = 0;
 
 	/*
 	 * If we're using the btree write buffer, the backpointer we were
@@ -230,7 +229,7 @@ static int backpointer_target_not_found(struct btree_trans *trans,
 			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&bp2.k_i));
 		}
 
-	if (fsck_err(trans, backpointer_to_missing_ptr,
+	if (ret_fsck_err(trans, backpointer_to_missing_ptr,
 		     "%s", buf.buf)) {
 		try(bch2_backpointer_del(trans, bp.k->p));
 
@@ -252,8 +251,8 @@ static int backpointer_target_not_found(struct btree_trans *trans,
 		    ? bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc)
 		    : 0);
 	}
-fsck_err:
-	return ret;
+
+	return 0;
 }
 
 static struct btree *__bch2_backpointer_get_node(struct btree_trans *trans,
@@ -378,35 +377,33 @@ static int bch2_check_backpointer_has_valid_bucket(struct btree_trans *trans, st
 
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
-	int ret = 0;
 
 	struct bpos bucket;
 	if (!bp_pos_to_bucket_nodev_noerror(c, k.k->p, &bucket)) {
 		try(bch2_backpointers_maybe_flush(trans, k, last_flushed));
 
-		if (fsck_err(trans, backpointer_to_missing_device,
+		if (ret_fsck_err(trans, backpointer_to_missing_device,
 			     "backpointer for missing device:\n%s",
 			     (bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
-			ret = bch2_backpointer_del(trans, k.k->p);
-		return ret;
+			try(bch2_backpointer_del(trans, k.k->p));
+
+		return 0;
 	}
 
-	{
-		CLASS(btree_iter, alloc_iter)(trans, BTREE_ID_alloc, bucket, 0);
-		struct bkey_s_c alloc_k = bkey_try(bch2_btree_iter_peek_slot(&alloc_iter));
+	CLASS(btree_iter, alloc_iter)(trans, BTREE_ID_alloc, bucket, 0);
+	struct bkey_s_c alloc_k = bkey_try(bch2_btree_iter_peek_slot(&alloc_iter));
 
-		if (alloc_k.k->type != KEY_TYPE_alloc_v4) {
-			try(bch2_backpointers_maybe_flush(trans, k, last_flushed));
+	if (alloc_k.k->type != KEY_TYPE_alloc_v4) {
+		try(bch2_backpointers_maybe_flush(trans, k, last_flushed));
 
-			if (fsck_err(trans, backpointer_to_missing_alloc,
-				     "backpointer for nonexistent alloc key: %llu:%llu:0\n%s",
-				     alloc_iter.pos.inode, alloc_iter.pos.offset,
-				     (bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
-				ret = bch2_backpointer_del(trans, k.k->p);
-		}
+		if (ret_fsck_err(trans, backpointer_to_missing_alloc,
+			     "backpointer for nonexistent alloc key: %llu:%llu:0\n%s",
+			     alloc_iter.pos.inode, alloc_iter.pos.offset,
+			     (bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
+			try(bch2_backpointer_del(trans, k.k->p));
 	}
-fsck_err:
-	return ret;
+
+	return 0;
 }
 
 /* verify that every backpointer has a corresponding alloc key */
@@ -518,7 +515,6 @@ static int bp_missing(struct btree_trans *trans,
 		      struct bkey_s_c bp_found)
 {
 	struct bch_fs *c = trans->c;
-	int ret = 0;
 
 	CLASS(printbuf, buf)();
 	prt_str(&buf, "missing backpointer\nfor:  ");
@@ -531,10 +527,10 @@ static int bp_missing(struct btree_trans *trans,
 		bch2_bkey_val_to_text(&buf, c, bp_found);
 	}
 
-	if (fsck_err(trans, ptr_to_missing_backpointer, "%s", buf.buf))
+	if (ret_fsck_err(trans, ptr_to_missing_backpointer, "%s", buf.buf))
 		try(bch2_bucket_backpointer_mod(trans, extent, bp, true));
-fsck_err:
-	return ret;
+
+	return 0;
 }
 
 static bool bkey_dev_ptr_stale(struct bch_fs *c, struct bkey_s_c k, unsigned dev)

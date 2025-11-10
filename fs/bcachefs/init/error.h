@@ -153,6 +153,34 @@ void bch2_free_fsck_errs(struct bch_fs *);
 	_ret;								\
 })
 
+#define ret_fsck_err_wrap(_do)						\
+({									\
+	int _ret = _do;							\
+	if (!bch2_err_matches(_ret, BCH_ERR_fsck_fix) &&		\
+	    !bch2_err_matches(_ret, BCH_ERR_fsck_ignore))		\
+		return _ret;						\
+									\
+	bch2_err_matches(_ret, BCH_ERR_fsck_fix);			\
+})
+
+#define __ret_fsck_err(...)	ret_fsck_err_wrap(bch2_fsck_err(__VA_ARGS__))
+
+#define __ret_fsck_err_on(cond, c, _flags, _err_type, ...)		\
+({									\
+	might_sleep();							\
+									\
+	if (type_is(c, struct bch_fs *))				\
+		WARN_ON(bch2_current_has_btree_trans((struct bch_fs *) c));\
+									\
+	(unlikely(cond) ? __ret_fsck_err(c, _flags, _err_type, __VA_ARGS__) : false);\
+})
+
+#define ret_fsck_err(c, _err_type, ...)					\
+	__ret_fsck_err(c, FSCK_CAN_FIX|FSCK_CAN_IGNORE, _err_type, __VA_ARGS__)
+
+#define ret_fsck_err_on(cond, c, _err_type, ...)			\
+	__ret_fsck_err_on(cond, c, FSCK_CAN_FIX|FSCK_CAN_IGNORE, _err_type, __VA_ARGS__)
+
 enum bch_validate_flags;
 __printf(5, 6)
 int __bch2_bkey_fsck_err(struct bch_fs *,
