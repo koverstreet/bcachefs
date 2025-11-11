@@ -1320,7 +1320,8 @@ static int fssetxattr_inode_update_fn(struct btree_trans *trans,
 	    (s->flags & (BCH_INODE_nodump|BCH_INODE_noatime)) != s->flags)
 		return -EINVAL;
 
-	if (s->casefold != bch2_inode_casefold(c, bi))
+	if (s->set_casefold &&
+	    s->casefold != bch2_inode_casefold(c, bi))
 		try(bch2_inode_set_casefold(trans, inode_inum(inode), bi, s->casefold));
 
 	if (s->set_project) {
