@@ -403,6 +403,7 @@ struct bkey_cached {
 
 	unsigned long		flags;
 	u16			u64s;
+	bool			needs_immediate_flush:1;
 	struct bkey_cached_key	key;
 
 	struct rhash_head	hash;

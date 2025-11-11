@@ -416,6 +416,12 @@ static noinline int flush_new_cached_update(struct btree_trans *trans,
 	return 0;
 }
 
+static inline bool key_cache_needs_flush(struct btree_path *path)
+{
+	struct bkey_cached *ck = (void *) path->l[0].b;
+	return ck->needs_immediate_flush;
+}
+
 static int __must_check
 bch2_trans_update_by_path(struct btree_trans *trans, btree_path_idx_t path_idx,
 			  struct bkey_i *k, enum btree_iter_update_trigger_flags flags,
@@ -430,7 +436,9 @@ bch2_trans_update_by_path(struct btree_trans *trans, btree_path_idx_t path_idx,
 	 * the key cache - but the key has to exist in the btree for that to
 	 * work:
 	 */
-	return i->cached && (!i->old_btree_u64s || bkey_deleted(&k->k))
+	return i->cached && (!i->old_btree_u64s ||
+			     bkey_deleted(&k->k) ||
+			     key_cache_needs_flush(trans->paths + path_idx))
 		? flush_new_cached_update(trans, i, flags, ip)
 		: 0;
 }

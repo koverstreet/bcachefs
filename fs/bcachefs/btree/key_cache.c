@@ -4,6 +4,7 @@
 
 #include "btree/cache.h"
 #include "btree/iter.h"
+#include "btree/journal_overlay.h"
 #include "btree/key_cache.h"
 #include "btree/locking.h"
 #include "btree/update.h"
@@ -243,6 +244,7 @@ static int btree_key_cache_create(struct btree_trans *trans,
 	ck->key.btree_id	= ck_path->btree_id;
 	ck->key.pos		= ck_path->pos;
 	ck->flags		= 1U << BKEY_CACHED_ACCESSED;
+	ck->needs_immediate_flush = false;
 
 	if (unlikely(key_u64s > ck->u64s)) {
 		mark_btree_node_locked_noreset(ck_path, 0, BTREE_NODE_UNLOCKED);
@@ -318,6 +320,7 @@ static noinline int btree_key_cache_fill(struct btree_trans *trans,
 	}
 
 	struct bch_fs *c = trans->c;
+	bool needs_immediate_flush = false;
 
 	CLASS(btree_iter, iter)(trans, ck_path->btree_id, ck_path->pos,
 				BTREE_ITER_intent|
@@ -327,13 +330,30 @@ static noinline int btree_key_cache_fill(struct btree_trans *trans,
 	iter.flags &= ~BTREE_ITER_with_journal;
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
-	/* Recheck after btree lookup, before allocating: */
 	ck_path = trans->paths + ck_path_idx;
+
+	if (unlikely(trans->journal_replay_not_finished && bkey_deleted(k.k))) {
+		size_t idx = 0;
+		const struct bkey_i *jk =
+			bch2_journal_keys_peek_max(trans->c, ck_path->btree_id, 0,
+						   ck_path->pos, ck_path->pos, &idx);
+		if (jk) {
+			k = bkey_i_to_s_c(jk);
+			needs_immediate_flush = true;
+		}
+	}
+
+	/* Recheck after btree lookup, before allocating: */
 	int ret = bch2_btree_key_cache_find(c, ck_path->btree_id, ck_path->pos) ? -EEXIST : 0;
 	if (unlikely(ret))
 		goto out;
 
 	try(btree_key_cache_create(trans, btree_iter_path(trans, &iter), ck_path, k));
+
+	if (unlikely(needs_immediate_flush)) {
+		struct bkey_cached *ck = (void *) ck_path->l[0].b;
+		ck->needs_immediate_flush = true;
+	}
 
 	if (trace_key_cache_fill_enabled())
 		do_trace_key_cache_fill(trans, ck_path, k);
@@ -447,7 +467,7 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 
 		struct bkey_s_c btree_k = bkey_try(bch2_btree_iter_peek_slot(&b_iter));
 
-		/* * Check that we're not violating cache coherency rules: */
+		/* Check that we're not violating cache coherency rules: */
 		BUG_ON(bkey_deleted(btree_k.k));
 
 		try(bch2_trans_update(trans, &b_iter, ck->k,
