@@ -869,12 +869,13 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		    struct printbuf *err)
 {
 	unsigned dev_idx = ca->dev_idx, data;
-	bool fast_device_removal = (c->sb.compat & BIT_ULL(BCH_COMPAT_no_stale_ptrs)) &&
-		!bch2_request_incompat_feature(c,
-					bcachefs_metadata_version_fast_device_removal);
-	int ret;
 
 	guard(rwsem_write)(&c->state_lock);
+
+	if (ca->mi.state == BCH_MEMBER_STATE_rw) {
+		prt_printf(err, "Cannot remove rw devices");
+		return -EBUSY;
+	}
 
 	/*
 	 * We consume a reference to ca->ref, regardless of whether we succeed
@@ -884,17 +885,20 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 
 	try(__bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_evacuating, flags, err));
 
-	ret = fast_device_removal
-		? bch2_dev_data_drop_by_backpointers(c, ca, flags, err)
-		: (bch2_dev_data_drop(c, ca->dev_idx, flags, err) ?:
-		   bch2_dev_remove_stripes(c, ca->dev_idx, flags, err));
-	if (ret)
-		goto err;
+	bool fast_device_removal = (c->sb.compat & BIT_ULL(BCH_COMPAT_no_stale_ptrs)) &&
+		!bch2_request_incompat_feature(c,
+					bcachefs_metadata_version_fast_device_removal);
+
+	try(fast_device_removal
+	    ? bch2_dev_data_drop_by_backpointers(c, ca, flags, err)
+	    : (bch2_dev_data_drop(c, ca->dev_idx, flags, err) ?:
+	       bch2_dev_remove_stripes(c, ca->dev_idx, flags, err)));
 
 	bch2_btree_interior_updates_flush(c);
 
 	/* Check if device still has data before blowing away alloc info */
 	struct bch_dev_usage usage = bch2_dev_usage_read(ca);
+	int ret = 0;
 	for (unsigned i = 0; i < BCH_DATA_NR; i++)
 		if (!data_type_is_empty(i) &&
 		    !data_type_is_hidden(i) &&
@@ -906,7 +910,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 			prt_printf(err, "  %s: %llu buckets\n", bch2_data_type_str(i), usage.buckets[i]);
 		}
 	if (ret)
-		goto err;
+		return ret;
 
 	/*
 	 * Disallow reads before we remove alloc info, otherwise we'll get
@@ -917,7 +921,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	ret = bch2_dev_remove_alloc(c, ca);
 	if (ret) {
 		prt_printf(err, "bch2_dev_remove_alloc() error: %s\n", bch2_err_str(ret));
-		goto err;
+		return ret;
 	}
 
 	/*
@@ -933,19 +937,19 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
 	if (ret) {
 		prt_printf(err, "bch2_journal_flush_device_pins() error: %s\n", bch2_err_str(ret));
-		goto err;
+		return ret;
 	}
 
 	ret = bch2_journal_flush(&c->journal);
 	if (ret) {
 		prt_printf(err, "bch2_journal_flush() error: %s\n", bch2_err_str(ret));
-		goto err;
+		return ret;
 	}
 
 	ret = bch2_replicas_gc_accounted(c);
 	if (ret) {
 		prt_printf(err, "bch2_replicas_gc2() error: %s\n", bch2_err_str(ret));
-		goto err;
+		return ret;
 	}
 	/*
 	 * flushing the journal should be sufficient, but it's the write buffer
@@ -958,8 +962,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		prt_str(err, "Remove failed, still has data (");
 		prt_bitflags(err, __bch2_data_types, data);
 		prt_str(err, ")\n");
-		ret = -EBUSY;
-		goto err;
+		return -EBUSY;
 	}
 
 	scoped_guard(mutex, &c->sb_lock)
@@ -994,12 +997,6 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	}
 
 	return 0;
-err:
-	if (test_bit(BCH_FS_rw, &c->flags) &&
-	    ca->mi.state == BCH_MEMBER_STATE_rw &&
-	    !enumerated_ref_is_zero(&ca->io_ref[READ]))
-		__bch2_dev_read_write(c, ca);
-	return ret;
 }
 
 /* Add new device to running filesystem: */
