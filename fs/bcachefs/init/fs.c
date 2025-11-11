@@ -1349,13 +1349,15 @@ int bch2_fs_start(struct bch_fs *c)
 {
 	CLASS(printbuf, err)();
 	bch2_log_msg_start(c, &err);
+	unsigned pos = err.pos;
 
 	int ret = __bch2_fs_start(c, &err);
 	c->recovery_task = NULL;
 
 	if (ret)
 		prt_printf(&err, "error starting filesystem: %s", bch2_err_str(ret));
-	bch2_print_str(c, KERN_ERR, err.buf);
+	if (err.pos != pos)
+		bch2_print_str(c, KERN_ERR, err.buf);
 
 	return ret;
 }
