@@ -397,12 +397,28 @@ int bch2_dev_alloc(struct bch_fs *c, unsigned dev_idx)
 	return 0;
 }
 
-static int kern_read_file_str(const char *path, darray_char *ret)
+static int read_file_str(const char *path, darray_char *ret)
 {
+	/*
+	 * TODO: unify this with read_file_str() in bcachefs-tools tools-util.c
+	 *
+	 * Unfortunately, we don't have openat() in kernel
+	 */
+#ifdef __KERNEL__
 	struct file *file = errptr_try(filp_open(path, O_RDONLY, 0));
 
 	loff_t pos = 0;
 	ssize_t r = kernel_read(file, ret->data, ret->size, &pos);
+	fput(file);
+#else
+	int fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return fd;
+
+	ssize_t r = read(fd, ret->data, ret->size);
+	close(fd);
+#endif
+
 	if (r > 0) {
 		ret->nr = r;
 		if (ret->data[r - 1]) {
@@ -412,7 +428,6 @@ static int kern_read_file_str(const char *path, darray_char *ret)
 			ret->data[ret->nr] = '\0';
 		}
 	}
-	fput(file);
 	return r < 0 ? r : 0;
 }
 
@@ -450,7 +465,7 @@ static int __bch2_dev_attach_bdev(struct bch_fs *c, struct bch_dev *ca,
 	CLASS(printbuf, model_path)();
 	prt_printf(&model_path, "/sys/block/%s/device/model", name.buf);
 
-	kern_read_file_str(model_path.buf, &model);
+	read_file_str(model_path.buf, &model);
 
 	if (model.nr && model.data[model.nr - 1] == '\n')
 		model.data[--model.nr] = '\0';
