@@ -122,7 +122,10 @@ static bool should_print_loglevel(struct bch_fs *c, const char *fmt)
 
 void bch2_print_str(struct bch_fs *c, const char *prefix, const char *str)
 {
-	BUG_ON(!str);
+	/* Nothing to print? Nothing to do: */
+	if (!str)
+		return;
+
 	if (!should_print_loglevel(c, prefix))
 		return;
 
