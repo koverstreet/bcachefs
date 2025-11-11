@@ -1128,6 +1128,9 @@ int bch2_set_reconcile_needs_scan_trans(struct btree_trans *trans, struct reconc
 
 int bch2_set_reconcile_needs_scan(struct bch_fs *c, struct reconcile_scan s, bool wakeup)
 {
+	if (WARN_ON(!test_bit(BCH_FS_started, &c->flags)))
+		return 0;
+
 	CLASS(btree_trans, trans)(c);
 	try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 		      bch2_set_reconcile_needs_scan_trans(trans, s)));
