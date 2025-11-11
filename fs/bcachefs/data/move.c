@@ -717,83 +717,6 @@ int bch2_evacuate_bucket(struct moving_context *ctxt,
 				   evacuate_bucket_pred, &arg);
 }
 
-typedef bool (*move_btree_pred)(struct bch_fs *, void *,
-				struct btree *, struct bch_inode_opts *,
-				struct data_update_opts *);
-
-static int bch2_move_btree(struct bch_fs *c,
-			   struct bbpos start,
-			   struct bbpos end,
-			   move_btree_pred pred, void *arg,
-			   struct bch_move_stats *stats)
-{
-	bool kthread = (current->flags & PF_KTHREAD) != 0;
-	struct btree *b;
-	enum btree_id btree;
-	int ret = 0;
-
-	struct bch_inode_opts io_opts;
-	bch2_inode_opts_get(c, &io_opts, true);
-
-	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
-	bch2_moving_ctxt_init(&ctxt, c, NULL, stats, writepoint_ptr(&c->btree_write_point), true);
-	struct btree_trans *trans = ctxt.trans;
-
-	CLASS(btree_iter_uninit, iter)(trans);
-
-	stats->data_type = BCH_DATA_btree;
-
-	for (btree = start.btree;
-	     btree <= min_t(unsigned, end.btree, btree_id_nr_alive(c) - 1);
-	     btree ++) {
-		stats->pos = BBPOS(btree, POS_MIN);
-
-		if (!bch2_btree_id_root(c, btree)->b)
-			continue;
-
-		bch2_trans_node_iter_init(trans, &iter, btree, POS_MIN, 0, 0,
-					  BTREE_ITER_prefetch);
-retry:
-		ret = 0;
-		while (bch2_trans_begin(trans),
-		       (b = bch2_btree_iter_peek_node(&iter)) &&
-		       !(ret = PTR_ERR_OR_ZERO(b))) {
-			if (kthread && kthread_should_stop())
-				break;
-
-			if ((cmp_int(btree, end.btree) ?:
-			     bpos_cmp(b->key.k.p, end.pos)) > 0)
-				break;
-
-			stats->pos = BBPOS(iter.btree_id, iter.pos);
-
-			if (btree_node_fake(b))
-				goto next;
-
-			struct data_update_opts data_opts = {};
-			if (!pred(c, arg, b, &io_opts, &data_opts))
-				goto next;
-
-			ret = bch2_btree_node_rewrite(trans, &iter, b, 0, 0) ?: ret;
-			if (ret)
-				break;
-next:
-			bch2_btree_iter_next_node(&iter);
-		}
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			goto retry;
-
-		if (kthread && kthread_should_stop())
-			break;
-	}
-
-	bch2_trans_unlock(trans);
-	bch2_btree_interior_updates_flush(c);
-	bch_err_fn(c, ret);
-
-	return ret;
-}
-
 static int rereplicate_pred(struct btree_trans *trans, void *arg,
 			    enum btree_id btree, struct bkey_s_c k,
 			    struct bch_inode_opts *io_opts,
@@ -841,53 +764,6 @@ static int migrate_pred(struct btree_trans *trans, void *arg,
 	}
 
 	return data_opts->ptrs_rewrite != 0;
-}
-
-/*
- * Ancient versions of bcachefs produced packed formats which could represent
- * keys that the in memory format cannot represent; this checks for those
- * formats so we can get rid of them.
- */
-static bool bformat_needs_redo(struct bkey_format *f)
-{
-	for (unsigned i = 0; i < f->nr_fields; i++)
-		if (bch2_bkey_format_field_overflows(f, i))
-			return true;
-
-	return false;
-}
-
-static bool rewrite_old_nodes_pred(struct bch_fs *c, void *arg,
-				   struct btree *b,
-				   struct bch_inode_opts *io_opts,
-				   struct data_update_opts *data_opts)
-{
-	if (b->version_ondisk != c->sb.version ||
-	    btree_node_need_rewrite(b) ||
-	    bformat_needs_redo(&b->format))
-		return true;
-
-	return false;
-}
-
-int bch2_scan_old_btree_nodes(struct bch_fs *c, struct bch_move_stats *stats)
-{
-	int ret;
-
-	ret = bch2_move_btree(c,
-			      BBPOS_MIN,
-			      BBPOS_MAX,
-			      rewrite_old_nodes_pred, c, stats);
-	if (!ret) {
-		guard(mutex)(&c->sb_lock);
-		c->disk_sb.sb->compat[0] |= cpu_to_le64(1ULL << BCH_COMPAT_extents_above_btree_updates_done);
-		c->disk_sb.sb->compat[0] |= cpu_to_le64(1ULL << BCH_COMPAT_bformat_overflow_done);
-		c->disk_sb.sb->version_min = c->disk_sb.sb->version;
-		bch2_write_super(c);
-	}
-
-	bch_err_fn(c, ret);
-	return ret;
 }
 
 static int drop_extra_replicas_pred(struct btree_trans *trans, void *arg,
@@ -1007,9 +883,6 @@ int bch2_data_job(struct bch_fs *c,
 					  true,
 					  migrate_pred, op) ?: ret;
 		bch2_btree_interior_updates_flush(c);
-		break;
-	case BCH_DATA_OP_rewrite_old_nodes:
-		ret = bch2_scan_old_btree_nodes(c, stats);
 		break;
 	case BCH_DATA_OP_drop_extra_replicas:
 		ret = bch2_move_data(c, start, end, 0, NULL, stats,

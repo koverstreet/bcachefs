@@ -1000,16 +1000,17 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 			   unicode_rev(BCH_FS_DEFAULT_UTF8_ENCODING));
 
 	if (BCH_SB_INITIALIZED(c->disk_sb.sb)) {
-		if (!(c->sb.features & (1ULL << BCH_FEATURE_new_extent_overwrite))) {
+		if (!(c->sb.features & BIT_ULL(BCH_FEATURE_new_extent_overwrite))) {
 			prt_str_indented(out, "feature new_extent_overwrite not set, filesystem no longer supported\n");
 			return -EINVAL;
 		}
 
-		if (!c->sb.clean &&
-		    !(c->sb.features & (1ULL << BCH_FEATURE_extents_above_btree_updates))) {
-			prt_str_indented(out, "filesystem needs recovery from older version; run fsck from older bcachefs-tools to fix\n");
+		if (c->sb.version_min < bcachefs_metadata_version_btree_ptr_sectors_written) {
+			prt_str_indented(out, "version_min < version_btree_ptr_sectors_written\n");
+			prt_str_indented(out, "filesystem needs upgrade from older version; run fsck from older bcachefs-tools to fix\n");
 			return -EINVAL;
 		}
+
 	}
 
 	return 0;

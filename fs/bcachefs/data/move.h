@@ -86,8 +86,6 @@ void bch2_moving_ctxt_flush_all(struct moving_context *);
 void bch2_move_ctxt_wait_for_io(struct moving_context *);
 int bch2_move_ratelimit(struct moving_context *);
 
-int bch2_scan_old_btree_nodes(struct bch_fs *, struct bch_move_stats *);
-
 struct per_snapshot_io_opts;
 int bch2_move_extent(struct moving_context *, struct move_bucket *,
 		     struct per_snapshot_io_opts *, move_pred_fn, void *,
