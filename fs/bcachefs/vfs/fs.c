@@ -691,7 +691,12 @@ static struct dentry *bch2_lookup(struct inode *vdir, struct dentry *dentry,
 {
 	struct bch_fs *c = vdir->i_sb->s_fs_info;
 	struct bch_inode_info *dir = to_bch_ei(vdir);
-	struct bch_hash_info hash = bch2_hash_info_init(c, &dir->ei_inode);
+
+	struct bch_hash_info hash;
+	int ret = bch2_hash_info_init(c, &dir->ei_inode, &hash);
+	bch_err_fn(c, ret);
+	if (ret)
+		return d_splice_alias(NULL, dentry);
 
 	struct bch_inode_info *inode;
 	bch2_trans_do(c,
@@ -1229,7 +1234,9 @@ static int bch2_vfs_readdir(struct file *file, struct dir_context *ctx)
 {
 	struct bch_inode_info *inode = file_bch_inode(file);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	struct bch_hash_info hash = bch2_hash_info_init(c, &inode->ei_inode);
+
+	struct bch_hash_info hash;
+	try(bch2_hash_info_init(c, &inode->ei_inode, &hash));
 
 	if (!dir_emit_dots(file, ctx))
 		return 0;

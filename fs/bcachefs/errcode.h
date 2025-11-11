@@ -238,6 +238,7 @@
 	x(EOPNOTSUPP,			no_casefolding_without_utf8)		\
 	x(EOPNOTSUPP,			casefolding_disabled)			\
 	x(EOPNOTSUPP,			casefold_opt_is_dir_only)		\
+	x(EOPNOTSUPP,			casefold_dir_but_disabled)		\
 	x(EOPNOTSUPP,			unsupported_fsx_flag)			\
 	x(EOPNOTSUPP,			unsupported_fa_flag)			\
 	x(EOPNOTSUPP,			unsupported_fallocate_mode)		\

@@ -47,13 +47,15 @@ static int bch2_ioc_reinherit_attrs(struct bch_fs *c,
 				    struct bch_inode_info *src,
 				    const char __user *name)
 {
-	struct bch_hash_info hash = bch2_hash_info_init(c, &src->ei_inode);
 	struct bch_inode_info *dst;
 	struct inode *vinode = NULL;
 	char *kname = NULL;
 	struct qstr qstr;
 	int ret = 0;
 	subvol_inum inum;
+
+	struct bch_hash_info hash;
+	try(bch2_hash_info_init(c, &src->ei_inode, &hash));
 
 	kname = kmalloc(BCH_NAME_MAX, GFP_KERNEL);
 	if (!kname)

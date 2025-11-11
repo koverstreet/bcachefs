@@ -276,16 +276,18 @@ struct posix_acl *bch2_get_acl(struct inode *vinode, int type, bool rcu)
 {
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	struct bch_hash_info hash = bch2_hash_info_init(c, &inode->ei_inode);
-	struct xattr_search_key search = X_SEARCH(acl_to_xattr_type(type), "", 0);
 
 	if (rcu)
 		return ERR_PTR(-ECHILD);
 
+	struct bch_hash_info hash;
+	struct xattr_search_key search = X_SEARCH(acl_to_xattr_type(type), "", 0);
+
 	CLASS(btree_trans, trans)(c);
 	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k;
-	int ret = lockrestart_do(trans,
+	int ret = bch2_hash_info_init(c, &inode->ei_inode, &hash) ?:
+		lockrestart_do(trans,
 			bkey_err(k = bch2_hash_lookup(trans, &iter, bch2_xattr_hash_desc,
 					     &hash, inode_inum(inode), &search, 0)));
 	if (ret)
@@ -305,13 +307,14 @@ int bch2_set_acl_trans(struct btree_trans *trans, subvol_inum inum,
 		       struct bch_inode_unpacked *inode_u,
 		       struct posix_acl *acl, int type)
 {
-	struct bch_hash_info hash_info = bch2_hash_info_init(trans->c, inode_u);
-	int ret;
+	struct bch_hash_info hash_info;
+	try(bch2_hash_info_init(trans->c, inode_u, &hash_info));
 
 	if (type == ACL_TYPE_DEFAULT &&
 	    !S_ISDIR(inode_u->bi_mode))
 		return acl ? -EACCES : 0;
 
+	int ret;
 	if (acl) {
 		struct bkey_i_xattr *xattr =
 			bch2_acl_to_xattr(trans, acl, type);
@@ -377,7 +380,9 @@ int bch2_acl_chmod(struct btree_trans *trans, subvol_inum inum,
 		   umode_t mode,
 		   struct posix_acl **new_acl)
 {
-	struct bch_hash_info hash_info = bch2_hash_info_init(trans->c, inode);
+	struct bch_hash_info hash_info;
+	try(bch2_hash_info_init(trans->c, inode, &hash_info));
+
 	struct xattr_search_key search = X_SEARCH(KEY_TYPE_XATTR_INDEX_POSIX_ACL_ACCESS, "", 0);
 
 	CLASS(btree_iter_uninit, iter)(trans);

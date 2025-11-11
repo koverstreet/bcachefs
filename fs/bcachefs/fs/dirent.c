@@ -675,7 +675,8 @@ int bch2_fsck_remove_dirent(struct btree_trans *trans, struct bpos pos)
 	struct bch_inode_unpacked dir_inode;
 	try(lookup_first_inode(trans, pos.inode, &dir_inode));
 
-	struct bch_hash_info dir_hash_info = bch2_hash_info_init(c, &dir_inode);
+	struct bch_hash_info dir_hash_info;
+	(bch2_hash_info_init(c, &dir_inode, &dir_hash_info));
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_dirents, pos, BTREE_ITER_intent);
 

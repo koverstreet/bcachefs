@@ -153,14 +153,14 @@ static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 	};
 
 	struct bch_inode_unpacked root_inode;
-	struct bch_hash_info root_hash_info;
 	ret = bch2_inode_find_by_inum_snapshot(trans, root_inum.inum, snapshot, &root_inode, 0);
 	bch_err_msg(c, ret, "looking up root inode %llu for subvol %u",
 		    root_inum.inum, subvolid);
 	if (ret)
 		return ret;
 
-	root_hash_info = bch2_hash_info_init(c, &root_inode);
+	struct bch_hash_info root_hash_info;
+	try(bch2_hash_info_init(c, &root_inode, &root_hash_info));
 
 	ret = lookup_dirent_in_snapshot(trans, root_hash_info, root_inum,
 			      &lostfound_str, &inum, &d_type, snapshot);
@@ -338,7 +338,8 @@ int bch2_reattach_inode(struct btree_trans *trans, struct bch_inode_unpacked *in
 
 	try(__bch2_fsck_write_inode(trans, &lostfound));
 
-	struct bch_hash_info dir_hash = bch2_hash_info_init(c, &lostfound);
+	struct bch_hash_info dir_hash;
+	try(bch2_hash_info_init(c, &lostfound, &dir_hash));
 	struct qstr name = QSTR(name_buf);
 
 	inode->bi_dir = lostfound.bi_inum;
@@ -1590,7 +1591,7 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 		return 0;
 
 	if (dir->first_this_inode)
-		*hash_info = bch2_hash_info_init(c, &i->inode);
+		try(bch2_hash_info_init(c, &i->inode, hash_info));
 	dir->first_this_inode = false;
 
 	hash_info->cf_encoding = bch2_inode_casefold(c, &i->inode) ? c->cf_encoding : NULL;
@@ -1724,7 +1725,7 @@ static int check_xattr(struct btree_trans *trans, struct btree_iter *iter,
 		return 0;
 
 	if (inode->first_this_inode)
-		*hash_info = bch2_hash_info_init(c, &i->inode);
+		try(bch2_hash_info_init(c, &i->inode, hash_info));
 	inode->first_this_inode = false;
 
 	bool need_second_pass = false;

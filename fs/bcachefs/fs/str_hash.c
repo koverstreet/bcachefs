@@ -11,6 +11,38 @@
 
 #include "snapshots/subvolume.h"
 
+static inline struct bch_hash_info
+__bch2_hash_info_init(struct bch_fs *c, const struct bch_inode_unpacked *bi)
+{
+	struct bch_hash_info info = {
+		.inum_snapshot	= bi->bi_snapshot,
+		.type		= INODE_STR_HASH(bi),
+		.is_31bit	= bi->bi_flags & BCH_INODE_31bit_dirent_offset,
+		.cf_encoding	= bch2_inode_casefold(c, bi) ? c->cf_encoding : NULL,
+		.siphash_key	= { .k0 = bi->bi_hash_seed }
+	};
+
+	if (unlikely(info.type == BCH_STR_HASH_siphash_old)) {
+		u8 digest[SHA256_DIGEST_SIZE];
+
+		sha256((const u8 *)&bi->bi_hash_seed,
+		       sizeof(bi->bi_hash_seed), digest);
+		memcpy(&info.siphash_key, digest, sizeof(info.siphash_key));
+	}
+
+	return info;
+}
+
+int bch2_hash_info_init(struct bch_fs *c, const struct bch_inode_unpacked *bi,
+			struct bch_hash_info *ret)
+{
+	if (bch2_inode_casefold(c, bi) && !c->cf_encoding)
+		return bch_err_throw(c, casefold_dir_but_disabled);
+
+	*ret = __bch2_hash_info_init(c, bi);
+	return 0;
+}
+
 static int bch2_dirent_has_target(struct btree_trans *trans, struct bkey_s_c_dirent d)
 {
 	if (d.v->d_type == DT_SUBVOL) {
@@ -136,8 +168,8 @@ int bch2_repair_inode_hash_info(struct btree_trans *trans,
 		if (inode.bi_hash_seed		== snapshot_root->bi_hash_seed &&
 		    INODE_STR_HASH(&inode)	== INODE_STR_HASH(snapshot_root)) {
 #ifdef CONFIG_BCACHEFS_DEBUG
-			struct bch_hash_info hash1 = bch2_hash_info_init(c, snapshot_root);
-			struct bch_hash_info hash2 = bch2_hash_info_init(c, &inode);
+			struct bch_hash_info hash1 = __bch2_hash_info_init(c, snapshot_root);
+			struct bch_hash_info hash2 = __bch2_hash_info_init(c, &inode);
 
 			BUG_ON(hash1.type != hash2.type ||
 			       memcmp(&hash1.siphash_key,
@@ -208,7 +240,7 @@ static noinline int check_inode_hash_info_matches_root(struct btree_trans *trans
 	struct bch_inode_unpacked snapshot_root;
 	try(bch2_inode_find_snapshot_root(trans, inum, &snapshot_root));
 
-	struct bch_hash_info hash_root = bch2_hash_info_init(trans->c, &snapshot_root);
+	struct bch_hash_info hash_root = __bch2_hash_info_init(trans->c, &snapshot_root);
 	if (hash_info->type != hash_root.type ||
 	    memcmp(&hash_info->siphash_key,
 		   &hash_root.siphash_key,

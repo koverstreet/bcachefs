@@ -47,27 +47,7 @@ struct bch_hash_info {
 	SIPHASH_KEY	siphash_key;
 };
 
-static inline struct bch_hash_info
-bch2_hash_info_init(struct bch_fs *c, const struct bch_inode_unpacked *bi)
-{
-	struct bch_hash_info info = {
-		.inum_snapshot	= bi->bi_snapshot,
-		.type		= INODE_STR_HASH(bi),
-		.is_31bit	= bi->bi_flags & BCH_INODE_31bit_dirent_offset,
-		.cf_encoding	= bch2_inode_casefold(c, bi) ? c->cf_encoding : NULL,
-		.siphash_key	= { .k0 = bi->bi_hash_seed }
-	};
-
-	if (unlikely(info.type == BCH_STR_HASH_siphash_old)) {
-		u8 digest[SHA256_DIGEST_SIZE];
-
-		sha256((const u8 *)&bi->bi_hash_seed,
-		       sizeof(bi->bi_hash_seed), digest);
-		memcpy(&info.siphash_key, digest, sizeof(info.siphash_key));
-	}
-
-	return info;
-}
+int bch2_hash_info_init(struct bch_fs *, const struct bch_inode_unpacked *, struct bch_hash_info *);
 
 struct bch_str_hash_ctx {
 	union {

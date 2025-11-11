@@ -129,13 +129,13 @@ int bch2_create_trans(struct btree_trans *trans,
 	}
 
 	if (!(flags & BCH_CREATE_TMPFILE)) {
-		struct bch_hash_info dir_hash = bch2_hash_info_init(c, dir_u);
-		u64 dir_offset;
+		struct bch_hash_info dir_hash;
+		try(bch2_hash_info_init(c, dir_u, &dir_hash));
 
-		if (is_subdir_for_nlink(new_inode))
-			dir_u->bi_nlink++;
+		dir_u->bi_nlink += is_subdir_for_nlink(new_inode);
 		dir_u->bi_mtime = dir_u->bi_ctime = now;
 
+		u64 dir_offset;
 		try(bch2_dirent_create(trans, dir, &dir_hash,
 					   dir_type,
 					   name,
@@ -176,7 +176,6 @@ int bch2_link_trans(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	CLASS(btree_iter_uninit, dir_iter)(trans);
 	CLASS(btree_iter_uninit, inode_iter)(trans);
-	struct bch_hash_info dir_hash;
 	u64 now = bch2_current_time(c);
 	u64 dir_offset = 0;
 
@@ -195,7 +194,8 @@ int bch2_link_trans(struct btree_trans *trans,
 
 	dir_u->bi_mtime = dir_u->bi_ctime = now;
 
-	dir_hash = bch2_hash_info_init(c, dir_u);
+	struct bch_hash_info dir_hash;
+	try(bch2_hash_info_init(c, dir_u, &dir_hash));
 
 	try(bch2_dirent_create(trans, dir, &dir_hash,
 			       mode_to_type(inode_u->bi_mode),
@@ -227,7 +227,8 @@ int bch2_unlink_trans(struct btree_trans *trans,
 
 	try(bch2_inode_peek(trans, &dir_iter, dir_u, dir, BTREE_ITER_intent));
 
-	struct bch_hash_info dir_hash = bch2_hash_info_init(c, dir_u);
+	struct bch_hash_info dir_hash;
+	try(bch2_hash_info_init(c, dir_u, &dir_hash));
 
 	subvol_inum inum;
 	try(bch2_dirent_lookup_trans(trans, &dirent_iter, dir, &dir_hash,
@@ -331,19 +332,19 @@ int bch2_rename_trans(struct btree_trans *trans,
 	CLASS(btree_iter_uninit, dst_dir_iter)(trans);
 	CLASS(btree_iter_uninit, src_inode_iter)(trans);
 	CLASS(btree_iter_uninit, dst_inode_iter)(trans);
-	struct bch_hash_info src_hash, dst_hash;
 	subvol_inum src_inum, dst_inum;
 	u64 src_offset, dst_offset;
 	u64 now = bch2_current_time(c);
 
 	try(bch2_inode_peek(trans, &src_dir_iter, src_dir_u, src_dir, BTREE_ITER_intent));
 
-	src_hash = bch2_hash_info_init(c, src_dir_u);
+	struct bch_hash_info src_hash, dst_hash;
+	try(bch2_hash_info_init(c, src_dir_u, &src_hash));
 
 	if (!subvol_inum_eq(dst_dir, src_dir)) {
 		try(bch2_inode_peek(trans, &dst_dir_iter, dst_dir_u, dst_dir, BTREE_ITER_intent));
 
-		dst_hash = bch2_hash_info_init(c, dst_dir_u);
+		try(bch2_hash_info_init(c, dst_dir_u, &dst_hash));
 	} else {
 		dst_dir_u = src_dir_u;
 		dst_hash = src_hash;

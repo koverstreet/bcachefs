@@ -145,7 +145,9 @@ void bch2_xattr_to_text(struct printbuf *out, struct bch_fs *c,
 static int bch2_xattr_get_trans(struct btree_trans *trans, struct bch_inode_info *inode,
 				const char *name, void *buffer, size_t size, int type)
 {
-	struct bch_hash_info hash = bch2_hash_info_init(trans->c, &inode->ei_inode);
+	struct bch_hash_info hash;
+	try(bch2_hash_info_init(trans->c, &inode->ei_inode, &hash));
+
 	struct xattr_search_key search = X_SEARCH(type, name, strlen(name));
 	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bkey_try(bch2_hash_lookup(trans, &iter, bch2_xattr_hash_desc, &hash,
@@ -163,7 +165,6 @@ static int bch2_xattr_get_trans(struct btree_trans *trans, struct bch_inode_info
 
 int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 		   struct bch_inode_unpacked *inode_u,
-		   const struct bch_hash_info *hash_info,
 		   const char *name, const void *value, size_t size,
 		   int type, int flags)
 {
@@ -182,6 +183,9 @@ int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 	inode_u->bi_ctime = bch2_current_time(c);
 
 	try(bch2_inode_write(trans, &inode_iter, inode_u));
+
+	struct bch_hash_info hash_info;
+	try(bch2_hash_info_init(c, inode_u, &hash_info));
 
 	int ret;
 	if (value) {
@@ -205,7 +209,7 @@ int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 		memcpy(xattr->v.x_name_and_value, name, namelen);
 		memcpy(xattr_val(&xattr->v), value, size);
 
-		ret = bch2_hash_set(trans, bch2_xattr_hash_desc, hash_info,
+		ret = bch2_hash_set(trans, bch2_xattr_hash_desc, &hash_info,
 			      inum, &xattr->k_i,
 			      (flags & XATTR_CREATE ? STR_HASH_must_create : 0)|
 			      (flags & XATTR_REPLACE ? STR_HASH_must_replace : 0));
@@ -214,7 +218,7 @@ int bch2_xattr_set(struct btree_trans *trans, subvol_inum inum,
 			X_SEARCH(type, name, strlen(name));
 
 		ret = bch2_hash_delete(trans, bch2_xattr_hash_desc,
-				       hash_info, inum, &search);
+				       &hash_info, inum, &search);
 	}
 
 	if (bch2_err_matches(ret, ENOENT))
@@ -348,14 +352,12 @@ static int bch2_xattr_set_handler(const struct xattr_handler *handler,
 {
 	struct bch_inode_info *inode = to_bch_ei(vinode);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
-	struct bch_hash_info hash = bch2_hash_info_init(c, &inode->ei_inode);
 	struct bch_inode_unpacked inode_u;
-	int ret;
 
 	CLASS(btree_trans, trans)(c);
-	ret = commit_do(trans, NULL, NULL, 0,
+	int ret = commit_do(trans, NULL, NULL, 0,
 			bch2_xattr_set(trans, inode_inum(inode), &inode_u,
-				       &hash, name, value, size,
+				       name, value, size,
 				       handler->flags, flags)) ?:
 		(bch2_inode_update_after_write(trans, inode, &inode_u, ATTR_CTIME), 0);
 
