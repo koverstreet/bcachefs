@@ -1269,7 +1269,8 @@ static bool bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
 	case BCH_DEGRADED_yes:
 		flags |= BCH_FORCE_IF_DEGRADED;
 		break;
-	default:
+	default: {
+		bool missing = false;
 		for_each_member_device(c, ca)
 			if (!bch2_dev_is_online(ca) &&
 			    (ca->mi.state != BCH_MEMBER_STATE_failed ||
@@ -1277,8 +1278,10 @@ static bool bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
 				prt_printf(err, "Cannot mount without device %u\n", ca->dev_idx);
 				guard(printbuf_indent)(err);
 				bch2_member_to_text_short(err, c, ca);
-				return bch_err_throw(c, insufficient_devices_to_start);
+				missing = true;
 			}
+		return missing ? bch_err_throw(c, insufficient_devices_to_start) : 0;
+	}
 	}
 
 	if (!bch2_have_enough_devs(c, c->online_devs, flags, err, !c->opts.read_only)) {
