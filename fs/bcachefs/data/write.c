@@ -124,22 +124,15 @@ void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 
 static struct page *__bio_alloc_page_pool(struct bch_fs *c, bool *using_mempool)
 {
-	struct page *page;
-
 	if (likely(!*using_mempool)) {
-		page = alloc_page(GFP_NOFS);
-		if (unlikely(!page)) {
-			mutex_lock(&c->bio_bounce_pages_lock);
-			*using_mempool = true;
-			goto pool_alloc;
+		struct page *page = alloc_page(GFP_NOFS);
+		if (likely(page))
+			return page;
 
-		}
-	} else {
-pool_alloc:
-		page = mempool_alloc(&c->bio_bounce_pages, GFP_NOFS);
+		mutex_lock(&c->bio_bounce_pages_lock);
+		*using_mempool = true;
 	}
-
-	return page;
+	return mempool_alloc(&c->bio_bounce_pages, GFP_NOFS);
 }
 
 void bch2_bio_alloc_pages_pool(struct bch_fs *c, struct bio *bio,
