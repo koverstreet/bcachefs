@@ -764,6 +764,9 @@ use_clean:
 
 	set_bit(BCH_FS_btree_running, &c->flags);
 
+	/* some mount options can only be checked after the btree is running */
+	try(bch2_opts_hooks_pre_set(c));
+
 	try(bch2_sb_set_upgrade_extra(c));
 
 	try(bch2_run_recovery_passes(c, 0));

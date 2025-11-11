@@ -1317,6 +1317,12 @@ static int __bch2_fs_start(struct bch_fs *c, struct printbuf *err)
 		bch2_recalc_capacity(c);
 	}
 
+	/*
+	 * check mount options as early as possible; some can only be checked
+	 * after starting
+	 */
+	try(bch2_opts_hooks_pre_set(c));
+
 	try(BCH_SB_INITIALIZED(c->disk_sb.sb)
 	    ? bch2_fs_recovery(c)
 	    : bch2_fs_initialize(c));
