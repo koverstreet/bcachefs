@@ -640,12 +640,13 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		    struct printbuf *err)
 {
 	unsigned dev_idx = ca->dev_idx, data;
-	bool fast_device_removal = (c->sb.compat & BIT_ULL(BCH_COMPAT_no_stale_ptrs)) &&
-		!bch2_request_incompat_feature(c,
-					bcachefs_metadata_version_fast_device_removal);
-	int ret;
 
 	guard(rwsem_write)(&c->state_lock);
+
+	if (ca->mi.state == BCH_MEMBER_STATE_rw) {
+		prt_printf(err, "Cannot remove rw devices");
+		return -EBUSY;
+	}
 
 	/*
 	 * We consume a reference to ca->ref, regardless of whether we succeed
@@ -655,12 +656,14 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 
 	try(__bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_failed, flags, err));
 
-	ret = fast_device_removal
-		? bch2_dev_data_drop_by_backpointers(c, ca->dev_idx, flags, err)
-		: (bch2_dev_data_drop(c, ca->dev_idx, flags, err) ?:
-		   bch2_dev_remove_stripes(c, ca->dev_idx, flags, err));
-	if (ret)
-		goto err;
+	bool fast_device_removal = (c->sb.compat & BIT_ULL(BCH_COMPAT_no_stale_ptrs)) &&
+		!bch2_request_incompat_feature(c,
+					bcachefs_metadata_version_fast_device_removal);
+
+	try(fast_device_removal
+	    ? bch2_dev_data_drop_by_backpointers(c, ca->dev_idx, flags, err)
+	    : (bch2_dev_data_drop(c, ca->dev_idx, flags, err) ?:
+	       bch2_dev_remove_stripes(c, ca->dev_idx, flags, err)));
 
 	bch2_btree_interior_updates_flush(c);
 
@@ -672,14 +675,13 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		    usage.buckets[i]) {
 			prt_printf(err, "Remove failed: still has data (%s, %llu buckets)\n",
 				   __bch2_data_types[i], usage.buckets[i]);
-			ret = -EBUSY;
-			goto err;
+			return -EBUSY;
 		}
 
-	ret = bch2_dev_remove_alloc(c, ca);
+	int ret = bch2_dev_remove_alloc(c, ca);
 	if (ret) {
 		prt_printf(err, "bch2_dev_remove_alloc() error: %s\n", bch2_err_str(ret));
-		goto err;
+		return ret;
 	}
 
 	/*
@@ -695,13 +697,13 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	ret = bch2_journal_flush_device_pins(&c->journal, ca->dev_idx);
 	if (ret) {
 		prt_printf(err, "bch2_journal_flush_device_pins() error: %s\n", bch2_err_str(ret));
-		goto err;
+		return ret;
 	}
 
 	ret = bch2_journal_flush(&c->journal);
 	if (ret) {
 		prt_printf(err, "bch2_journal_flush() error: %s\n", bch2_err_str(ret));
-		goto err;
+		return ret;
 	}
 
 	/*
@@ -715,8 +717,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		prt_str(err, "Remove failed, still has data (");
 		prt_bitflags(err, __bch2_data_types, data);
 		prt_str(err, ")\n");
-		ret = -EBUSY;
-		goto err;
+		return -EBUSY;
 	}
 
 	__bch2_dev_offline(c, ca);
@@ -750,12 +751,6 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	}
 
 	return 0;
-err:
-	if (test_bit(BCH_FS_rw, &c->flags) &&
-	    ca->mi.state == BCH_MEMBER_STATE_rw &&
-	    !enumerated_ref_is_zero(&ca->io_ref[READ]))
-		__bch2_dev_read_write(c, ca);
-	return ret;
 }
 
 /* Add new device to running filesystem: */
