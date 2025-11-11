@@ -573,6 +573,12 @@ int bch2_opt_hook_pre_set(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum b
 		if (v)
 			bch2_check_set_feature(c, BCH_FEATURE_ec);
 		break;
+	case Opt_casefold_disabled:
+		if (v && (c->sb.features & BIT_ULL(BCH_FEATURE_casefolding))) {
+			bch_err(c, "cannot mount with casefolding disabled: casefolding already in use");
+			return bch_err_throw(c, casefolding_in_use);
+		}
+		break;
 	default:
 		break;
 	}
