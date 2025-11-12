@@ -791,6 +791,7 @@ struct bch_fs {
 
 	struct bch_opts		opts;
 	atomic_t		opt_change_cookie;
+	struct bch_opts_mask	mount_opts;
 
 	struct bch_sb_cpu	sb;
 	struct bch_sb_handle	disk_sb;

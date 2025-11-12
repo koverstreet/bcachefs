@@ -2056,6 +2056,7 @@ static int bch2_show_options(struct seq_file *seq, struct dentry *root)
 	CLASS(printbuf, buf)();
 
 	bch2_opts_to_text(&buf, c->opts, c, c->disk_sb.sb,
+			  &c->mount_opts,
 			  OPT_MOUNT, OPT_HIDDEN, OPT_SHOW_MOUNT_STYLE);
 	printbuf_nul_terminate(&buf);
 	seq_printf(seq, ",%s", buf.buf);
@@ -2139,6 +2140,13 @@ static int bch2_test_super(struct super_block *s, void *data)
 	return true;
 }
 
+static void set_mount_opts(struct bch_fs *c, struct bch_opts *opts)
+{
+	for (enum bch_opt_id id = 0; id < bch2_opts_nr; id++)
+		if (bch2_opt_defined_by_id(opts, id))
+			set_bit(id, c->mount_opts.d);
+}
+
 static int bch2_fs_get_tree(struct fs_context *fc)
 {
 	struct bch_fs *c;
@@ -2175,6 +2183,7 @@ static int bch2_fs_get_tree(struct fs_context *fc)
 
 	if (opt_defined(opts, discard))
 		set_bit(BCH_FS_discard_mount_opt_set, &c->flags);
+	set_mount_opts(c, &opts);
 
 	/* Some options can't be parsed until after the fs is started: */
 	opts = bch2_opts_empty();
@@ -2183,6 +2192,7 @@ static int bch2_fs_get_tree(struct fs_context *fc)
 		goto err_stop_fs;
 
 	bch2_opts_apply(&c->opts, opts);
+	set_mount_opts(c, &opts);
 
 	ret = bch2_fs_start(c);
 	if (ret)
