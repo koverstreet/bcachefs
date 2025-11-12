@@ -336,6 +336,7 @@ void bch2_bkey_val_to_text(struct printbuf *out, struct bch_fs *c,
 	bch2_bkey_to_text(out, k.k);
 
 	if (bkey_val_bytes(k.k)) {
+		guard(printbuf_atomic)(out);
 		prt_printf(out, ": ");
 		bch2_val_to_text(out, c, k);
 	}

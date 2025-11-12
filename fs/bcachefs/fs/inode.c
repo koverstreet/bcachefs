@@ -576,8 +576,7 @@ fsck_err:
 static void __bch2_inode_unpacked_to_text(struct printbuf *out,
 					  struct bch_inode_unpacked *inode)
 {
-	prt_printf(out, "\n");
-	guard(printbuf_indent)(out);
+	prt_newline(out);
 	prt_printf(out, "mode=%o\n", inode->bi_mode);
 
 	prt_str(out, "flags=");
@@ -604,6 +603,7 @@ static void __bch2_inode_unpacked_to_text(struct printbuf *out,
 void bch2_inode_unpacked_to_text(struct printbuf *out, struct bch_inode_unpacked *inode)
 {
 	prt_printf(out, "inum: %llu:%u ", inode->bi_inum, inode->bi_snapshot);
+	guard(printbuf_indent)(out);
 	__bch2_inode_unpacked_to_text(out, inode);
 }
 

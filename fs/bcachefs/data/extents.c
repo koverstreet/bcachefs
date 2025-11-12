@@ -1397,7 +1397,7 @@ void bch2_bkey_ptrs_to_text(struct printbuf *out, struct bch_fs *c,
 	if (c)
 		prt_printf(out, "durability: %u ", bch2_bkey_durability_safe(c, k));
 
-	guard(printbuf_indent)(out);
+	prt_newline(out);
 	guard(printbuf_atomic)(out);
 	guard(rcu)();
 
