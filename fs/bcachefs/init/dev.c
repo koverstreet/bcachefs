@@ -7,6 +7,8 @@
 #include "alloc/check.h"
 #include "alloc/replicas.h"
 
+#include "btree/interior.h"
+
 #include "data/ec.h"
 #include "data/migrate.h"
 #include "data/reconcile.h"
@@ -659,6 +661,8 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		   bch2_dev_remove_stripes(c, ca->dev_idx, flags, err));
 	if (ret)
 		goto err;
+
+	bch2_btree_interior_updates_flush(c);
 
 	/* Check if device still has data before blowing away alloc info */
 	struct bch_dev_usage usage = bch2_dev_usage_read(ca);
