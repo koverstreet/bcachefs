@@ -460,6 +460,8 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 	if (WARN_ON(c->sb.features & BIT_ULL(BCH_FEATURE_no_alloc_info)))
 		return bch_err_throw(c, erofs_no_alloc_info);
 
+	BUG_ON(!test_bit(BCH_FS_may_upgrade_downgrade, &c->flags));
+
 	if (test_bit(BCH_FS_initial_gc_unfixed, &c->flags)) {
 		bch_err(c, "cannot go rw, unfixed btree errors");
 		return bch_err_throw(c, erofs_unfixed_errors);
@@ -875,8 +877,9 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 	if (c->opts.journal_rewind)
 		c->opts.fsck = true;
 
-	bool may_upgrade_downgrade = !(c->sb.features & BIT_ULL(BCH_FEATURE_small_image)) ||
-		bch2_fs_will_resize_on_mount(c);
+	if (!(c->sb.features & BIT_ULL(BCH_FEATURE_small_image)) ||
+	    bch2_fs_will_resize_on_mount(c))
+		set_bit(BCH_FS_may_upgrade_downgrade, &c->flags);
 
 	prt_str_indented(out, "starting version ");
 	bch2_version_to_text(out, c->sb.version);
@@ -956,7 +959,7 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 			prt_newline(out);
 		}
 
-		if (may_upgrade_downgrade) {
+		if (test_bit(BCH_FS_may_upgrade_downgrade, &c->flags)) {
 			if (bch2_check_version_downgrade(c)) {
 				prt_str_indented(out, "Version downgrade required");
 

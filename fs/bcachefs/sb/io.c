@@ -1008,6 +1008,9 @@ int bch2_write_super(struct bch_fs *c)
 	DARRAY(struct bch_dev *) online_devices = {};
 	int ret = 0;
 
+	if (!test_bit(BCH_FS_may_upgrade_downgrade, &c->flags))
+		return 0;
+
 	trace_and_count(c, write_super, c, _RET_IP_);
 
 	if (c->opts.degraded == BCH_DEGRADED_very)

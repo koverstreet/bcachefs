@@ -21,7 +21,8 @@ enum bch_run_recovery_pass_flags {
 
 static inline bool go_rw_in_recovery(struct bch_fs *c)
 {
-	return (c->journal_keys.nr ||
+	return test_bit(BCH_FS_may_upgrade_downgrade, &c->flags) &&
+		(c->journal_keys.nr ||
 		!c->opts.read_only ||
 		!c->sb.clean ||
 		c->opts.recovery_passes ||
