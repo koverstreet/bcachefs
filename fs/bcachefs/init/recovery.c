@@ -994,7 +994,7 @@ int bch2_fs_initialize(struct bch_fs *c)
 	c->recovery.pass_done = BCH_RECOVERY_PASS_NR - 1;
 
 	bch2_copygc_wakeup(c);
-	bch2_rebalance_wakeup(c);
+	bch2_reconcile_wakeup(c);
 
 	if (enabled_qtypes(c))
 		try(bch2_fs_quota_read(c));

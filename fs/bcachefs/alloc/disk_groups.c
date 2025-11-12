@@ -469,17 +469,17 @@ int __bch2_dev_group_set(struct bch_fs *c, struct bch_dev *ca, const char *name)
 
 int bch2_dev_group_set(struct bch_fs *c, struct bch_dev *ca, const char *name)
 {
-	struct rebalance_scan s = { .type = REBALANCE_SCAN_pending };
+	struct reconcile_scan s = { .type = REBALANCE_SCAN_pending };
 
-	try(bch2_set_rebalance_needs_scan(c, s, false));
+	try(bch2_set_reconcile_needs_scan(c, s, false));
 
-	/* bch2_rebalance_wakeup_pending goes here */
+	/* bch2_reconcile_wakeup_pending goes here */
 	scoped_guard(mutex,&c->sb_lock) {
 		try(__bch2_dev_group_set(c, ca, name));
 		try(bch2_write_super(c));
 	}
 
-	try(bch2_set_rebalance_needs_scan(c, s, true));
+	try(bch2_set_reconcile_needs_scan(c, s, true));
 	return 0;
 }
 

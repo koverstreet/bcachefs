@@ -1005,7 +1005,7 @@ void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *ca,
 		bch2_writepoint_stop(c, ca, ec, &c->write_points[i]);
 
 	bch2_writepoint_stop(c, ca, ec, &c->copygc_write_point);
-	bch2_writepoint_stop(c, ca, ec, &c->rebalance_write_point);
+	bch2_writepoint_stop(c, ca, ec, &c->reconcile_write_point);
 	bch2_writepoint_stop(c, ca, ec, &c->btree_write_point);
 
 	scoped_guard(mutex, &c->btree_reserve_cache_lock)
@@ -1396,7 +1396,7 @@ void bch2_fs_allocator_foreground_init(struct bch_fs *c)
 	}
 
 	writepoint_init(&c->btree_write_point,		BCH_DATA_btree);
-	writepoint_init(&c->rebalance_write_point,	BCH_DATA_user);
+	writepoint_init(&c->reconcile_write_point,	BCH_DATA_user);
 	writepoint_init(&c->copygc_write_point,		BCH_DATA_user);
 
 	for (wp = c->write_points;
@@ -1501,7 +1501,7 @@ void bch2_write_points_to_text(struct printbuf *out, struct bch_fs *c)
 	bch2_write_point_to_text(out, c, &c->copygc_write_point);
 
 	prt_str(out, "Rebalance write point\n");
-	bch2_write_point_to_text(out, c, &c->rebalance_write_point);
+	bch2_write_point_to_text(out, c, &c->reconcile_write_point);
 
 	prt_str(out, "Btree write point\n");
 	bch2_write_point_to_text(out, c, &c->btree_write_point);

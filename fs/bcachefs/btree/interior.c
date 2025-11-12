@@ -655,7 +655,7 @@ static void btree_update_new_nodes_mark_sb(struct btree_update *as)
 	bch2_write_super(c);
 }
 
-static void bkey_strip_rebalance(const struct bch_fs *c, struct bkey_s k)
+static void bkey_strip_reconcile(const struct bch_fs *c, struct bkey_s k)
 {
 	bool dropped;
 
@@ -674,7 +674,7 @@ static void bkey_strip_rebalance(const struct bch_fs *c, struct bkey_s k)
 	} while (dropped);
 }
 
-static bool bkey_has_rebalance(const struct bch_fs *c, struct bkey_s_c k)
+static bool bkey_has_reconcile(const struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
@@ -711,12 +711,12 @@ static int btree_update_nodes_written_trans(struct btree_trans *trans,
 
 	darray_for_each(as->new_nodes, i) {
 		i->update_node_key = false;
-		bkey_strip_rebalance(c, bkey_i_to_s(&i->key));
+		bkey_strip_reconcile(c, bkey_i_to_s(&i->key));
 
-		try(bch2_bkey_set_needs_rebalance(trans, NULL, &opts, &i->key,
+		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &i->key,
 						  SET_NEEDS_REBALANCE_foreground, 0));
 
-		if (bkey_has_rebalance(c, bkey_i_to_s_c(&i->key))) {
+		if (bkey_has_reconcile(c, bkey_i_to_s_c(&i->key))) {
 			CLASS(btree_iter_uninit, iter)(trans);
 			int ret = bch2_btree_node_get_iter(trans, &iter, i->b);
 			if (ret && ret != -BCH_ERR_btree_node_dying)
@@ -724,7 +724,7 @@ static int btree_update_nodes_written_trans(struct btree_trans *trans,
 			if (!ret)
 				i->update_node_key = true;
 			else
-				bkey_strip_rebalance(c, bkey_i_to_s(&i->key));
+				bkey_strip_reconcile(c, bkey_i_to_s(&i->key));
 		}
 
 		try(bch2_key_trigger_new(trans, as->btree_id, i->level + 1, bkey_i_to_s(&i->key),

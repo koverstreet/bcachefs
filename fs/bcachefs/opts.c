@@ -108,7 +108,7 @@ static const char * const __bch2_fs_usage_types[] = {
 	NULL
 };
 
-const char * const __bch2_rebalance_accounting_types[] = {
+const char * const __bch2_reconcile_accounting_types[] = {
 	BCH_REBALANCE_ACCOUNTING()
 	NULL
 };
@@ -137,7 +137,7 @@ PRT_STR_OPT_BOUNDSCHECKED(csum_opt,		enum bch_csum_opt);
 PRT_STR_OPT_BOUNDSCHECKED(csum_type,		enum bch_csum_type);
 PRT_STR_OPT_BOUNDSCHECKED(compression_type,	enum bch_compression_type);
 PRT_STR_OPT_BOUNDSCHECKED(str_hash_type,	enum bch_str_hash_type);
-PRT_STR_OPT_BOUNDSCHECKED(rebalance_accounting_type,	enum bch_rebalance_accounting_type);
+PRT_STR_OPT_BOUNDSCHECKED(reconcile_accounting_type,	enum bch_reconcile_accounting_type);
 
 static int bch2_opt_fix_errors_parse(struct bch_fs *c, const char *val, u64 *res,
 				     struct printbuf *err)
@@ -546,27 +546,27 @@ static int opt_hook_io(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_
 	case Opt_data_checksum:
 	case Opt_data_replicas:
 	case Opt_erasure_code: {
-		struct rebalance_scan s = {
+		struct reconcile_scan s = {
 			.type = !inum ? REBALANCE_SCAN_fs : REBALANCE_SCAN_inum,
 			.inum = inum,
 		};
 
-		try(bch2_set_rebalance_needs_scan(c, s, post));
+		try(bch2_set_reconcile_needs_scan(c, s, post));
 		break;
 	}
 	case Opt_metadata_target:
 	case Opt_metadata_checksum:
 	case Opt_metadata_replicas:
-		try(bch2_set_rebalance_needs_scan(c,
-			(struct rebalance_scan) { .type = REBALANCE_SCAN_metadata, .dev = inum }, post));
+		try(bch2_set_reconcile_needs_scan(c,
+			(struct reconcile_scan) { .type = REBALANCE_SCAN_metadata, .dev = inum }, post));
 		break;
 	case Opt_durability:
 		if (!post && v > ca->mi.durability)
-			try(bch2_set_rebalance_needs_scan(c,
-				(struct rebalance_scan) { .type = REBALANCE_SCAN_pending}, post));
+			try(bch2_set_reconcile_needs_scan(c,
+				(struct reconcile_scan) { .type = REBALANCE_SCAN_pending}, post));
 
-		try(bch2_set_rebalance_needs_scan(c,
-			(struct rebalance_scan) { .type = REBALANCE_SCAN_device, .dev = inum }, post));
+		try(bch2_set_reconcile_needs_scan(c,
+			(struct reconcile_scan) { .type = REBALANCE_SCAN_device, .dev = inum }, post));
 		break;
 	default:
 		break;
@@ -622,8 +622,8 @@ void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 	opt_hook_io(c, ca, inum, id, v, true);
 
 	switch (id) {
-	case Opt_rebalance_enabled:
-		bch2_rebalance_wakeup(c);
+	case Opt_reconcile_enabled:
+		bch2_reconcile_wakeup(c);
 		break;
 	case Opt_copygc_enabled:
 		bch2_copygc_wakeup(c);

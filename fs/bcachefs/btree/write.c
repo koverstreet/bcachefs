@@ -118,7 +118,7 @@ static int btree_node_write_update_key(struct btree_trans *trans,
 	if (wbio->wbio.failed.nr) {
 		struct bch_inode_opts opts;
 		try(bch2_bkey_get_io_opts(trans, NULL, bkey_i_to_s_c(n), &opts));
-		try(bch2_bkey_set_needs_rebalance(trans, NULL, &opts, n,
+		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, n,
 						  SET_NEEDS_REBALANCE_opt_change, 0));
 	}
 

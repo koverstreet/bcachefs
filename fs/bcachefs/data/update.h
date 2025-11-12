@@ -13,7 +13,7 @@ struct moving_context;
 #define BCH_DATA_UPDATE_TYPES()	\
 	x(other)		\
 	x(copygc)		\
-	x(rebalance)		\
+	x(reconcile)		\
 	x(promote)		\
 	x(self_heal)		\
 	x(scrub)

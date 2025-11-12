@@ -162,7 +162,7 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	k = bkey_i_to_s_c(errptr_try(bch2_bkey_make_mut_noupdate(trans, k)));
 
 	/*
-	 * We're calling set_needs_rebalance() on both @insert and @new,
+	 * We're calling set_needs_reconcile() on both @insert and @new,
 	 * and it can add a bch_extent_reconcile and additional
 	 * pointers to BCH_SB_MEMBER_INVALID if the extent is now
 	 * degraded due to option changes:
@@ -284,16 +284,16 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	try(bch2_insert_snapshot_whiteouts(trans, u->btree_id, k.k->p, insert->k.p));
 
 	/*
-	 * This set_needs_rebalance call is only for verifying that the data we
+	 * This set_needs_reconcile call is only for verifying that the data we
 	 * just wrote was written correctly, otherwise we could fail to flag
 	 * incorrectly written data due to needs_rb already being set on the
 	 * existing extent
 	 */
-	try(bch2_bkey_set_needs_rebalance(trans, NULL, &opts, &new->k_i,
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &new->k_i,
 					  SET_NEEDS_REBALANCE_foreground,
 					  u->op.opts.change_cookie));
-	/* This is the real set_needs_rebalance() call */
-	try(bch2_bkey_set_needs_rebalance(trans, NULL, &opts, insert,
+	/* This is the real set_needs_reconcile() call */
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, insert,
 					  SET_NEEDS_REBALANCE_foreground,
 					  u->op.opts.change_cookie));
 

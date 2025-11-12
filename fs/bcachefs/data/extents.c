@@ -1435,7 +1435,7 @@ void bch2_bkey_ptrs_to_text(struct printbuf *out, struct bch_fs *c,
 			break;
 
 		case BCH_EXTENT_ENTRY_reconcile:
-			bch2_extent_rebalance_v2_to_text(out, c, &entry->reconcile);
+			bch2_extent_reconcile_to_text(out, c, &entry->reconcile);
 			break;
 
 		case BCH_EXTENT_ENTRY_flags:

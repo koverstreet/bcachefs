@@ -995,7 +995,7 @@ struct bch_fs {
 	open_bucket_idx_t	open_buckets_partial_nr;
 
 	struct write_point	btree_write_point;
-	struct write_point	rebalance_write_point;
+	struct write_point	reconcile_write_point;
 
 	struct write_point	write_points[WRITE_POINT_MAX];
 	struct hlist_head	write_points_hash[WRITE_POINT_HASH_NR];
@@ -1060,7 +1060,7 @@ struct bch_fs {
 	struct mutex		moving_context_lock;
 
 	/* REBALANCE */
-	struct bch_fs_rebalance	rebalance;
+	struct bch_fs_reconcile	reconcile;
 
 	/* COPYGC */
 	struct task_struct	*copygc_thread;

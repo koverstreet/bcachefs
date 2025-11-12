@@ -295,11 +295,11 @@ int bch2_inode_set_casefold(struct btree_trans *, subvol_inum,
 #include "data/reconcile.h"
 
 static inline struct bch_extent_reconcile
-bch2_inode_rebalance_opts_get(struct bch_fs *c, struct bch_inode_unpacked *inode)
+bch2_inode_reconcile_opts_get(struct bch_fs *c, struct bch_inode_unpacked *inode)
 {
 	struct bch_inode_opts io_opts;
 	bch2_inode_opts_get_inode(c, inode, &io_opts);
-	return io_opts_to_rebalance_opts(c, &io_opts);
+	return io_opts_to_reconcile_opts(c, &io_opts);
 }
 
 #define BCACHEFS_ROOT_SUBVOL_INUM					\

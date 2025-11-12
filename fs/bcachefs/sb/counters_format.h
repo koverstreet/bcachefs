@@ -37,7 +37,7 @@ enum counters_flags {
 	x(io_move_write,				36,	TYPE_SECTORS)	\
 	x(io_move_start_fail,				39,	TYPE_COUNTER)	\
 	x(io_move_noop,					92,	TYPE_COUNTER)	\
-	x(io_move_created_rebalance,			83,	TYPE_COUNTER)	\
+	x(io_move_created_reconcile,			83,	TYPE_COUNTER)	\
 	x(io_move_evacuate_bucket,			84,	TYPE_COUNTER)	\
 	x(rebalance_extent,				96,	TYPE_COUNTER)	\
 	x(bucket_invalidate,				3,	TYPE_COUNTER)	\

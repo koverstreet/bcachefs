@@ -10,17 +10,17 @@
 	x(working)			\
 	x(scanning)
 
-enum bch_rebalance_states {
+enum bch_reconcile_states {
 #define x(t)	BCH_REBALANCE_##t,
 	BCH_REBALANCE_STATES()
 #undef x
 };
 
-struct bch_fs_rebalance {
+struct bch_fs_reconcile {
 	struct task_struct __rcu	*thread;
 	u32				kick;
 
-	enum bch_rebalance_states	state;
+	enum bch_reconcile_states	state;
 	u64				wait_iotime_start;
 	u64				wait_iotime_end;
 	u64				wait_wallclock_start;

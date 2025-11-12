@@ -25,7 +25,7 @@ extern const char * const __bch2_str_hash_types[];
 extern const char * const bch2_str_hash_opts[];
 extern const char * const __bch2_data_types[];
 extern const char * const bch2_member_states[];
-extern const char * const __bch2_rebalance_accounting_types[];
+extern const char * const __bch2_reconcile_accounting_types[];
 extern const char * const bch2_d_types[];
 
 void bch2_prt_jset_entry_type(struct printbuf *,	enum bch_jset_entry_type);
@@ -35,7 +35,7 @@ void bch2_prt_csum_opt(struct printbuf *,		enum bch_csum_opt);
 void bch2_prt_csum_type(struct printbuf *,		enum bch_csum_type);
 void bch2_prt_compression_type(struct printbuf *,	enum bch_compression_type);
 void bch2_prt_str_hash_type(struct printbuf *,		enum bch_str_hash_type);
-void bch2_prt_rebalance_accounting_type(struct printbuf *, enum bch_rebalance_accounting_type);
+void bch2_prt_reconcile_accounting_type(struct printbuf *, enum bch_reconcile_accounting_type);
 
 static inline const char *bch2_d_type_str(unsigned d_type)
 {
@@ -502,17 +502,17 @@ enum fsck_err_opts {
 	  BCH2_NO_SB_OPT,			true,			\
 	  NULL,		"Enable copygc: disable for debugging, or to\n"\
 			"quiet the system when doing performance testing\n")\
-	x(rebalance_enabled,		u8,				\
+	x(reconcile_enabled,		u8,				\
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,			true,			\
-	  NULL,		"Enable rebalance: disable for debugging, or to\n"\
+	  NULL,		"Enable reconcile: disable for debugging, or to\n"\
 			"quiet the system when doing performance testing\n")\
-	x(rebalance_on_ac_only,		u8,				\
+	x(reconcile_on_ac_only,		u8,				\
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\
 	  BCH_SB_REBALANCE_AC_ONLY,		false,			\
-	  NULL,		"Enable rebalance while on mains power only\n")	\
+	  NULL,		"Enable reconcile while on mains power only\n")	\
 	x(auto_snapshot_deletion,	u8,				\
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\

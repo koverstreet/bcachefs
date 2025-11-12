@@ -52,7 +52,7 @@
 	  BIT_ULL(BCH_RECOVERY_PASS_check_inodes),		\
 	  BCH_FSCK_ERR_unlinked_inode_not_on_deleted_list)	\
 	x(rebalance_work,					\
-	  BIT_ULL(BCH_RECOVERY_PASS_set_fs_needs_rebalance))	\
+	  BIT_ULL(BCH_RECOVERY_PASS_set_fs_needs_reconcile))	\
 	x(subvolume_fs_parent,					\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_dirents),		\
 	  BCH_FSCK_ERR_subvol_fs_path_parent_wrong)		\
@@ -112,13 +112,13 @@
 	  BIT_ULL(BCH_RECOVERY_PASS_check_allocations),		\
 	  BCH_FSCK_ERR_accounting_mismatch)			\
 	x(reconcile,						\
-	  BIT_ULL(BCH_RECOVERY_PASS_check_rebalance_work),	\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_reconcile_work),	\
 	  BCH_FSCK_ERR_accounting_mismatch,			\
 	  BCH_FSCK_ERR_extent_io_opts_not_set)
 
 #define UPGRADE_TABLE_INCOMPAT()				\
 	x(reconcile,						\
-	  BIT_ULL(BCH_RECOVERY_PASS_check_rebalance_work),	\
+	  BIT_ULL(BCH_RECOVERY_PASS_check_reconcile_work),	\
 	  BCH_FSCK_ERR_extent_io_opts_not_set)
 
 #define DOWNGRADE_TABLE()					\

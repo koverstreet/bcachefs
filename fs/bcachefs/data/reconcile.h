@@ -10,7 +10,7 @@ int bch2_extent_reconcile_validate(struct bch_fs *, struct bkey_s_c,
 				   struct bkey_validate_context,
 				   const struct bch_extent_reconcile *);
 
-static inline struct bch_extent_reconcile io_opts_to_rebalance_opts(struct bch_fs *c,
+static inline struct bch_extent_reconcile io_opts_to_reconcile_opts(struct bch_fs *c,
 								    struct bch_inode_opts *opts)
 {
 	return (struct bch_extent_reconcile) {
@@ -25,12 +25,12 @@ static inline struct bch_extent_reconcile io_opts_to_rebalance_opts(struct bch_f
 
 void bch2_extent_rebalance_v1_to_text(struct printbuf *, struct bch_fs *,
 				      const struct bch_extent_rebalance_v1 *);
-void bch2_extent_rebalance_v2_to_text(struct printbuf *, struct bch_fs *,
+void bch2_extent_reconcile_to_text(struct printbuf *, struct bch_fs *,
 				      const struct bch_extent_reconcile *);
 
-const struct bch_extent_reconcile *bch2_bkey_rebalance_opts(const struct bch_fs *, struct bkey_s_c);
+const struct bch_extent_reconcile *bch2_bkey_reconcile_opts(const struct bch_fs *, struct bkey_s_c);
 
-int __bch2_trigger_extent_rebalance(struct btree_trans *,
+int __bch2_trigger_extent_reconcile(struct btree_trans *,
 				    enum btree_id, unsigned,
 				    struct bkey_s_c, struct bkey_s,
 				    const struct bch_extent_reconcile *,
@@ -42,21 +42,21 @@ static inline unsigned rb_needs_trigger(const struct bch_extent_reconcile *r)
 	return r ? r->need_rb|r->ptrs_moving : 0;
 }
 
-static inline int bch2_trigger_extent_rebalance(struct btree_trans *trans,
+static inline int bch2_trigger_extent_reconcile(struct btree_trans *trans,
 				enum btree_id btree, unsigned level,
 				struct bkey_s_c old, struct bkey_s new,
 				enum btree_iter_update_trigger_flags flags)
 {
 	struct bch_fs *c = trans->c;
-	const struct bch_extent_reconcile *old_r = bch2_bkey_rebalance_opts(c, old);
-	const struct bch_extent_reconcile *new_r = bch2_bkey_rebalance_opts(c, new.s_c);
+	const struct bch_extent_reconcile *old_r = bch2_bkey_reconcile_opts(c, old);
+	const struct bch_extent_reconcile *new_r = bch2_bkey_reconcile_opts(c, new.s_c);
 
 	return rb_needs_trigger(old_r) || rb_needs_trigger(new_r)
-		? __bch2_trigger_extent_rebalance(trans, btree, level, old, new, old_r, new_r, flags)
+		? __bch2_trigger_extent_reconcile(trans, btree, level, old, new, old_r, new_r, flags)
 		: 0;
 }
 
-enum set_needs_rebalance_ctx {
+enum set_needs_reconcile_ctx {
 	SET_NEEDS_REBALANCE_opt_change,
 	SET_NEEDS_REBALANCE_opt_change_indirect,
 	SET_NEEDS_REBALANCE_foreground,
@@ -102,20 +102,20 @@ int bch2_bkey_get_io_opts(struct btree_trans *,
 			  struct per_snapshot_io_opts *, struct bkey_s_c,
 			  struct bch_inode_opts *opts);
 
-int bch2_update_rebalance_opts(struct btree_trans *,
+int bch2_update_reconcile_opts(struct btree_trans *,
 			       struct per_snapshot_io_opts *,
 			       struct bch_inode_opts *,
 			       struct btree_iter *,
 			       unsigned level,
 			       struct bkey_s_c,
-			       enum set_needs_rebalance_ctx);
+			       enum set_needs_reconcile_ctx);
 
-int bch2_bkey_set_needs_rebalance(struct btree_trans *,
+int bch2_bkey_set_needs_reconcile(struct btree_trans *,
 				  struct per_snapshot_io_opts *, struct bch_inode_opts *,
-				  struct bkey_i *, enum set_needs_rebalance_ctx, u32);
+				  struct bkey_i *, enum set_needs_reconcile_ctx, u32);
 
-struct rebalance_scan {
-	enum rebalance_scan_type {
+struct reconcile_scan {
+	enum reconcile_scan_type {
 		REBALANCE_SCAN_fs,
 		REBALANCE_SCAN_metadata,
 		REBALANCE_SCAN_pending,
@@ -129,15 +129,15 @@ struct rebalance_scan {
 	};
 };
 
-int bch2_set_rebalance_needs_scan_trans(struct btree_trans *, struct rebalance_scan);
-int bch2_set_rebalance_needs_scan(struct bch_fs *, struct rebalance_scan, bool);
-int bch2_set_fs_needs_rebalance(struct bch_fs *);
+int bch2_set_reconcile_needs_scan_trans(struct btree_trans *, struct reconcile_scan);
+int bch2_set_reconcile_needs_scan(struct bch_fs *, struct reconcile_scan, bool);
+int bch2_set_fs_needs_reconcile(struct bch_fs *);
 
-static inline void bch2_rebalance_wakeup(struct bch_fs *c)
+static inline void bch2_reconcile_wakeup(struct bch_fs *c)
 {
-	c->rebalance.kick++;
+	c->reconcile.kick++;
 	guard(rcu)();
-	struct task_struct *p = rcu_dereference(c->rebalance.thread);
+	struct task_struct *p = rcu_dereference(c->reconcile.thread);
 	if (p)
 		wake_up_process(p);
 }
@@ -145,12 +145,12 @@ static inline void bch2_rebalance_wakeup(struct bch_fs *c)
 void bch2_reconcile_status_to_text(struct printbuf *, struct bch_fs *);
 void bch2_reconcile_scan_pending_to_text(struct printbuf *, struct bch_fs *);
 
-void bch2_rebalance_stop(struct bch_fs *);
-int bch2_rebalance_start(struct bch_fs *);
+void bch2_reconcile_stop(struct bch_fs *);
+int bch2_reconcile_start(struct bch_fs *);
 
-void bch2_fs_rebalance_exit(struct bch_fs *);
-int bch2_fs_rebalance_init(struct bch_fs *);
+void bch2_fs_reconcile_exit(struct bch_fs *);
+int bch2_fs_reconcile_init(struct bch_fs *);
 
-int bch2_check_rebalance_work(struct bch_fs *);
+int bch2_check_reconcile_work(struct bch_fs *);
 
 #endif /* _BCACHEFS_REBALANCE_H */

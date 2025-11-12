@@ -348,7 +348,7 @@ int bch2_extent_update(struct btree_trans *trans,
 
 	bch2_inode_opts_get_inode(c, &inode, &opts);
 
-	try(bch2_bkey_set_needs_rebalance(trans, NULL, &opts, k,
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, k,
 					  SET_NEEDS_REBALANCE_foreground,
 					  change_cookie));
 	try(bch2_trans_update(trans, iter, k, 0));
@@ -385,7 +385,7 @@ static int bch2_write_index_default(struct bch_write_op *op)
 		k = bch2_keylist_front(keys);
 
 		/*
-		 * If we did a degraded write, bch2_bkey_set_needs_rebalance() will add
+		 * If we did a degraded write, bch2_bkey_set_needs_reconcile() will add
 		 * pointers to BCH_SB_MEMBER_INVALID so the extent is accounted as
 		 * degraded
 		 */
@@ -1228,7 +1228,7 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 	}
 
 	/*
-	 * If we did a degraded write, bch2_bkey_set_needs_rebalance() will add
+	 * If we did a degraded write, bch2_bkey_set_needs_reconcile() will add
 	 * pointers to BCH_SB_MEMBER_INVALID so the extent is accounted as
 	 * degraded
 	 */
@@ -1254,7 +1254,7 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 	 */
 
 	/*
-	 * For transactional consistency, set_needs_rebalance() has to be called
+	 * For transactional consistency, set_needs_reconcile() has to be called
 	 * with the io_opts from the btree in the same transaction:
 	 */
 	struct bch_inode_unpacked inode;
@@ -1263,7 +1263,7 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 	return  bch2_extent_update_i_size_sectors(trans, iter,
 					min(new->k.p.offset << 9, new_i_size), 0, &inode) ?:
 		(bch2_inode_opts_get_inode(c, &inode, &opts),
-		 bch2_bkey_set_needs_rebalance(trans, NULL, &opts, new,
+		 bch2_bkey_set_needs_reconcile(trans, NULL, &opts, new,
 					       SET_NEEDS_REBALANCE_foreground,
 					       op->opts.change_cookie)) ?:
 		bch2_trans_update(trans, iter, new,

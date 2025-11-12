@@ -60,7 +60,7 @@ fsck_err:
 	return ret;
 }
 
-static const struct bch_extent_reconcile *bch2_bkey_ptrs_rebalance_opts(const struct bch_fs *c,
+static const struct bch_extent_reconcile *bch2_bkey_ptrs_reconcile_opts(const struct bch_fs *c,
 									struct bkey_ptrs_c ptrs)
 {
 	const union bch_extent_entry *entry;
@@ -72,13 +72,13 @@ static const struct bch_extent_reconcile *bch2_bkey_ptrs_rebalance_opts(const st
 	return NULL;
 }
 
-const struct bch_extent_reconcile *bch2_bkey_rebalance_opts(const struct bch_fs *c,
+const struct bch_extent_reconcile *bch2_bkey_reconcile_opts(const struct bch_fs *c,
 							    struct bkey_s_c k)
 {
-	return bch2_bkey_ptrs_rebalance_opts(c, bch2_bkey_ptrs_c(k));
+	return bch2_bkey_ptrs_reconcile_opts(c, bch2_bkey_ptrs_c(k));
 }
 
-static const char * const rebalance_opts[] = {
+static const char * const reconcile_opts[] = {
 #define x(n) #n,
 	BCH_REBALANCE_OPTS()
 #undef x
@@ -134,11 +134,11 @@ void bch2_extent_rebalance_v1_to_text(struct printbuf *out, struct bch_fs *c,
 	}
 }
 
-void bch2_extent_rebalance_v2_to_text(struct printbuf *out, struct bch_fs *c,
+void bch2_extent_reconcile_to_text(struct printbuf *out, struct bch_fs *c,
 				      const struct bch_extent_reconcile *r)
 {
 	prt_str(out, "need_rb=");
-	prt_bitflags(out, rebalance_opts, r->need_rb);
+	prt_bitflags(out, reconcile_opts, r->need_rb);
 
 	if (r->hipri)
 		prt_str(out, " hipri");
@@ -222,7 +222,7 @@ static inline unsigned rb_accounting_counters(const struct bch_extent_reconcile 
 	return ret;
 }
 
-static u64 bch2_bkey_get_rebalance_bp(const struct bch_fs *c, struct bkey_s_c k)
+static u64 bch2_bkey_get_reconcile_bp(const struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
@@ -232,7 +232,7 @@ static u64 bch2_bkey_get_rebalance_bp(const struct bch_fs *c, struct bkey_s_c k)
 	return 0;
 }
 
-static void bch2_bkey_set_rebalance_bp(const struct bch_fs *c, struct bkey_s k, u64 idx)
+static void bch2_bkey_set_reconcile_bp(const struct bch_fs *c, struct bkey_s k, u64 idx)
 {
 	struct bkey_ptrs ptrs = bch2_bkey_ptrs(k);
 	union bch_extent_entry *entry;
@@ -266,7 +266,7 @@ static inline struct bch_backpointer rb_bp(enum btree_id btree, unsigned level, 
 	};
 }
 
-static int rebalance_bp_del(struct btree_trans *trans, enum btree_id work_btree,
+static int reconcile_bp_del(struct btree_trans *trans, enum btree_id work_btree,
 			      enum btree_id btree, unsigned level, struct bkey_s_c k,
 			      u64 bp_idx)
 {
@@ -294,7 +294,7 @@ fsck_err:
 	return bch2_btree_delete_at(trans, &iter, 0);
 }
 
-static int rebalance_bp_add(struct btree_trans *trans, enum btree_id work_btree,
+static int reconcile_bp_add(struct btree_trans *trans, enum btree_id work_btree,
 			    enum btree_id btree, unsigned level, struct bkey_s k,
 			    u64 *bp_idx)
 {
@@ -309,7 +309,7 @@ static int rebalance_bp_add(struct btree_trans *trans, enum btree_id work_btree,
 	return 0;
 }
 
-static struct bkey_s_c rebalance_bp_get_key(struct btree_trans *trans,
+static struct bkey_s_c reconcile_bp_get_key(struct btree_trans *trans,
 					    struct btree_iter *iter,
 					    struct bkey_s_c_backpointer bp)
 {
@@ -338,7 +338,7 @@ static struct bkey_s_c rebalance_bp_get_key(struct btree_trans *trans,
 	 *
 	 * We may want to revisit this and change peek_slot():
 	 */
-	if (k.k && bch2_bkey_get_rebalance_bp(c, k) == bp.k->p.offset)
+	if (k.k && bch2_bkey_get_reconcile_bp(c, k) == bp.k->p.offset)
 		return k;
 
 	/* walk down a level, check for btree_node_will_make_reachable(b)) */
@@ -353,7 +353,7 @@ static struct bkey_s_c rebalance_bp_get_key(struct btree_trans *trans,
 			return bkey_s_c_null;
 
 		k = bkey_i_to_s_c(&b->key);
-		if (bch2_bkey_get_rebalance_bp(c, k) == bp.k->p.offset)
+		if (bch2_bkey_get_reconcile_bp(c, k) == bp.k->p.offset)
 			return k;
 	}
 
@@ -431,7 +431,7 @@ static inline struct bbpos rb_work_to_data_pos(struct bpos pos)
 	return BBPOS(BTREE_ID_extents, pos);
 }
 
-int __bch2_trigger_extent_rebalance(struct btree_trans *trans,
+int __bch2_trigger_extent_reconcile(struct btree_trans *trans,
 				    enum btree_id btree, unsigned level,
 				    struct bkey_s_c old, struct bkey_s new,
 				    const struct bch_extent_reconcile *old_r,
@@ -453,17 +453,17 @@ int __bch2_trigger_extent_rebalance(struct btree_trans *trans,
 				try(bch2_btree_bit_mod_buffered(trans, new_btree, pos, true));
 		} else {
 			struct bch_fs *c = trans->c;
-			u64 bp_idx = bch2_bkey_get_rebalance_bp(c, old);
+			u64 bp_idx = bch2_bkey_get_reconcile_bp(c, old);
 
 			if (bp_idx && !new_btree) {
-				try(rebalance_bp_del(trans, old_btree, btree, level, old, bp_idx));
+				try(reconcile_bp_del(trans, old_btree, btree, level, old, bp_idx));
 				bp_idx = 0;
 			}
 
 			if (!bp_idx && new_btree)
-				try(rebalance_bp_add(trans, old_btree, btree, level, new, &bp_idx));
+				try(reconcile_bp_add(trans, old_btree, btree, level, new, &bp_idx));
 
-			bch2_bkey_set_rebalance_bp(c, new, bp_idx);
+			bch2_bkey_set_reconcile_bp(c, new, bp_idx);
 		}
 	}
 
@@ -503,7 +503,7 @@ static inline bool bkey_should_have_rb_opts(struct bkey_s_c k,
 	return new.need_rb;
 }
 
-static bool bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
+static bool bch2_bkey_needs_reconcile(struct bch_fs *c, struct bkey_s_c k,
 				      struct bch_inode_opts *opts,
 				      int *need_update_invalid_devs,
 				      struct bch_extent_reconcile *ret)
@@ -609,7 +609,7 @@ static bool bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 	    bch2_request_incompat_feature(c, bcachefs_metadata_version_reconcile))
 		*need_update_invalid_devs = 0;
 
-	const struct bch_extent_reconcile *old = bch2_bkey_ptrs_rebalance_opts(c, ptrs);
+	const struct bch_extent_reconcile *old = bch2_bkey_ptrs_reconcile_opts(c, ptrs);
 	if (old && !(old->need_rb & ~r.need_rb)) {
 		r.pending = old->pending;
 		if (r.hipri && !old->hipri)
@@ -626,7 +626,7 @@ static bool bch2_bkey_needs_rebalance(struct bch_fs *c, struct bkey_s_c k,
 		!bch2_request_incompat_feature(c, bcachefs_metadata_version_sb_field_extent_type_u64s);
 }
 
-static int check_rebalance_scan_cookie(struct btree_trans *trans, u64 inum, bool *v)
+static int check_reconcile_scan_cookie(struct btree_trans *trans, u64 inum, bool *v)
 {
 	if (v && *v)
 		return 1;
@@ -644,7 +644,7 @@ static int check_rebalance_scan_cookie(struct btree_trans *trans, u64 inum, bool
 	return ret;
 }
 
-static int check_dev_rebalance_scan_cookie(struct btree_trans *trans, struct bkey_s_c k,
+static int check_dev_reconcile_scan_cookie(struct btree_trans *trans, struct bkey_s_c k,
 					   struct bch_devs_mask *v)
 {
 	struct bch_fs *c = trans->c;
@@ -655,7 +655,7 @@ static int check_dev_rebalance_scan_cookie(struct btree_trans *trans, struct bke
 			return 1;
 
 	bkey_for_each_ptr(ptrs, ptr) {
-		int ret = check_rebalance_scan_cookie(trans, ptr->dev + 1, NULL);
+		int ret = check_reconcile_scan_cookie(trans, ptr->dev + 1, NULL);
 		if (ret < 0)
 			return ret;
 		if (ret) {
@@ -682,7 +682,7 @@ static bool bkey_has_ec(const struct bch_fs *c, struct bkey_s_c k)
 static int new_needs_rb_allowed(struct btree_trans *trans,
 				struct per_snapshot_io_opts *s,
 				struct bkey_s_c k,
-				enum set_needs_rebalance_ctx ctx,
+				enum set_needs_reconcile_ctx ctx,
 				unsigned opt_change_cookie,
 				const struct bch_extent_reconcile *old,
 				const struct bch_extent_reconcile *new,
@@ -693,7 +693,7 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 	 * New need_rb - pointers that don't match the current io path options -
 	 * are only allowed in certain situations:
 	 *
-	 * Propagating new options: from bch2_set_rebalance_needs_scan
+	 * Propagating new options: from bch2_set_reconcile_needs_scan
 	 *
 	 * Foreground writes: background_compression and background_target are
 	 * allowed
@@ -752,23 +752,23 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 	 * Note that we can cache the existence of a cookie, but not the
 	 * non-existence, to avoid spurious false positives.
 	 */
-	int ret = check_rebalance_scan_cookie(trans, 0,			s ? &s->fs_scan_cookie : NULL) ?:
-		  check_rebalance_scan_cookie(trans, k.k->p.inode,	s ? &s->inum_scan_cookie : NULL);
+	int ret = check_reconcile_scan_cookie(trans, 0,			s ? &s->fs_scan_cookie : NULL) ?:
+		  check_reconcile_scan_cookie(trans, k.k->p.inode,	s ? &s->inum_scan_cookie : NULL);
 	if (ret)
 		return min(ret, 0);
 
 	if (new_need_rb == BIT(BCH_REBALANCE_data_replicas)) {
-		ret = check_dev_rebalance_scan_cookie(trans, k, s ? &s->dev_cookie : NULL);
+		ret = check_dev_reconcile_scan_cookie(trans, k, s ? &s->dev_cookie : NULL);
 		if (ret)
 			return min(ret, 0);
 	}
 
 	CLASS(printbuf, buf)();
 
-	prt_printf(&buf, "extent with incorrect/missing rebalance opts:\n");
+	prt_printf(&buf, "extent with incorrect/missing reconcile opts:\n");
 	bch2_bkey_val_to_text(&buf, c, k);
-	prt_printf(&buf, "\nnew rebalance: ");
-	bch2_extent_rebalance_v2_to_text(&buf, c, new);
+	prt_printf(&buf, "\nnew reconcile : ");
+	bch2_extent_reconcile_to_text(&buf, c, new);
 
 	const struct bch_extent_reconcile _old = {};
 	if (!old)
@@ -785,11 +785,11 @@ fsck_err:
 	return ret;
 }
 
-int bch2_bkey_set_needs_rebalance(struct btree_trans *trans,
+int bch2_bkey_set_needs_reconcile(struct btree_trans *trans,
 				  struct per_snapshot_io_opts *snapshot_io_opts,
 				  struct bch_inode_opts *opts,
 				  struct bkey_i *_k,
-				  enum set_needs_rebalance_ctx ctx,
+				  enum set_needs_reconcile_ctx ctx,
 				  u32 opt_change_cookie)
 {
 	if (!bkey_extent_is_direct_data(&_k->k))
@@ -801,11 +801,11 @@ int bch2_bkey_set_needs_rebalance(struct btree_trans *trans,
 	int need_update_invalid_devs;
 	struct bch_extent_reconcile new;
 
-	if (!bch2_bkey_needs_rebalance(c, k.s_c, opts, &need_update_invalid_devs, &new))
+	if (!bch2_bkey_needs_reconcile(c, k.s_c, opts, &need_update_invalid_devs, &new))
 		return 0;
 
 	struct bch_extent_reconcile *old =
-		(struct bch_extent_reconcile *) bch2_bkey_rebalance_opts(c, k.s_c);
+		(struct bch_extent_reconcile *) bch2_bkey_reconcile_opts(c, k.s_c);
 	unsigned new_need_rb = new.need_rb & ~(old ? old->need_rb : 0);
 
 	if (unlikely(new_need_rb))
@@ -850,13 +850,13 @@ int bch2_bkey_set_needs_rebalance(struct btree_trans *trans,
 	return 0;
 }
 
-int bch2_update_rebalance_opts(struct btree_trans *trans,
+int bch2_update_reconcile_opts(struct btree_trans *trans,
 			       struct per_snapshot_io_opts *snapshot_io_opts,
 			       struct bch_inode_opts *opts,
 			       struct btree_iter *iter,
 			       unsigned level,
 			       struct bkey_s_c k,
-			       enum set_needs_rebalance_ctx ctx)
+			       enum set_needs_reconcile_ctx ctx)
 {
 	BUG_ON(iter->flags & BTREE_ITER_is_extents);
 	BUG_ON(iter->flags & BTREE_ITER_filter_snapshots);
@@ -868,7 +868,7 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 	int need_update_invalid_devs;
 	struct bch_extent_reconcile new;
 
-	if (!bch2_bkey_needs_rebalance(c, k, opts, &need_update_invalid_devs, &new))
+	if (!bch2_bkey_needs_reconcile(c, k, opts, &need_update_invalid_devs, &new))
 		return 0;
 
 	if (!level) {
@@ -877,7 +877,7 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 							sizeof(struct bch_extent_ptr) * BCH_REPLICAS_MAX));
 		bkey_reassemble(n, k);
 
-		return  bch2_bkey_set_needs_rebalance(trans, snapshot_io_opts, opts, n, ctx, 0) ?:
+		return  bch2_bkey_set_needs_reconcile(trans, snapshot_io_opts, opts, n, ctx, 0) ?:
 			bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node);
 	} else {
 		CLASS(btree_node_iter, iter2)(trans, iter->btree_id, iter->pos, 0, level - 1, 0);
@@ -887,7 +887,7 @@ int bch2_update_rebalance_opts(struct btree_trans *trans,
 			errptr_try(bch2_trans_kmalloc(trans, BKEY_BTREE_PTR_U64s_MAX * sizeof(u64)));
 		bkey_copy(n, &b->key);
 
-		return  bch2_bkey_set_needs_rebalance(trans, snapshot_io_opts, opts, n, ctx, 0) ?:
+		return  bch2_bkey_set_needs_reconcile(trans, snapshot_io_opts, opts, n, ctx, 0) ?:
 			bch2_btree_node_update_key(trans, &iter2, b, n, BCH_TRANS_COMMIT_no_enospc, false) ?:
 			bch_err_throw(c, transaction_restart_commit);
 	}
@@ -993,7 +993,7 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 
 	const struct bch_extent_reconcile *old;
 	if (mode == IO_OPTS_reflink &&
-	    (old = bch2_bkey_rebalance_opts(c, k))) {
+	    (old = bch2_bkey_reconcile_opts(c, k))) {
 #define x(_name)								\
 		if (old->_name##_from_inode)					\
 			opts->_name		= old->_name;			\
@@ -1005,7 +1005,7 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 	return 0;
 }
 
-static const char * const bch2_rebalance_state_strs[] = {
+static const char * const bch2_reconcile_state_strs[] = {
 #define x(t) #t,
 	BCH_REBALANCE_STATES()
 	NULL
@@ -1017,7 +1017,7 @@ static const char * const bch2_rebalance_state_strs[] = {
 #define REBALANCE_SCAN_COOKIE_metadata	1
 #define REBALANCE_SCAN_COOKIE_fs	0
 
-static u64 rebalance_scan_encode(struct rebalance_scan s)
+static u64 reconcile_scan_encode(struct reconcile_scan s)
 {
 	switch (s.type) {
 	case REBALANCE_SCAN_fs:
@@ -1035,30 +1035,30 @@ static u64 rebalance_scan_encode(struct rebalance_scan s)
 	}
 }
 
-static struct rebalance_scan rebalance_scan_decode(struct bch_fs *c, u64 v)
+static struct reconcile_scan reconcile_scan_decode(struct bch_fs *c, u64 v)
 {
 	if (v >= BCACHEFS_ROOT_INO)
-		return (struct rebalance_scan) { .type = REBALANCE_SCAN_inum, .inum = v, };
+		return (struct reconcile_scan) { .type = REBALANCE_SCAN_inum, .inum = v, };
 	if (v >= REBALANCE_SCAN_COOKIE_device)
-		return (struct rebalance_scan) {
+		return (struct reconcile_scan) {
 			.type = REBALANCE_SCAN_device,
 			.dev =  v - REBALANCE_SCAN_COOKIE_device,
 		};
 	if (v == REBALANCE_SCAN_COOKIE_pending)
-		return (struct rebalance_scan) { .type = REBALANCE_SCAN_pending };
+		return (struct reconcile_scan) { .type = REBALANCE_SCAN_pending };
 	if (v == REBALANCE_SCAN_COOKIE_metadata)
-		return (struct rebalance_scan) { .type = REBALANCE_SCAN_metadata };
+		return (struct reconcile_scan) { .type = REBALANCE_SCAN_metadata };
 	if (v == REBALANCE_SCAN_COOKIE_fs)
-		return (struct rebalance_scan) { .type = REBALANCE_SCAN_fs};
+		return (struct reconcile_scan) { .type = REBALANCE_SCAN_fs};
 
 	bch_err(c, "unknown realance scan cookie %llu", v);
-	return (struct rebalance_scan) { .type = REBALANCE_SCAN_fs};
+	return (struct reconcile_scan) { .type = REBALANCE_SCAN_fs};
 }
 
-int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, struct rebalance_scan s)
+int bch2_set_reconcile_needs_scan_trans(struct btree_trans *trans, struct reconcile_scan s)
 {
 	CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan,
-				POS(0, rebalance_scan_encode(s)),
+				POS(0, reconcile_scan_encode(s)),
 				BTREE_ITER_intent);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
@@ -1075,24 +1075,24 @@ int bch2_set_rebalance_needs_scan_trans(struct btree_trans *trans, struct rebala
 	return bch2_trans_update(trans, &iter, &cookie->k_i, 0);
 }
 
-int bch2_set_rebalance_needs_scan(struct bch_fs *c, struct rebalance_scan s, bool wakeup)
+int bch2_set_reconcile_needs_scan(struct bch_fs *c, struct reconcile_scan s, bool wakeup)
 {
 	CLASS(btree_trans, trans)(c);
 	try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-		      bch2_set_rebalance_needs_scan_trans(trans, s)));
+		      bch2_set_reconcile_needs_scan_trans(trans, s)));
 	if (wakeup)
-		bch2_rebalance_wakeup(c);
+		bch2_reconcile_wakeup(c);
 	return 0;
 }
 
-int bch2_set_fs_needs_rebalance(struct bch_fs *c)
+int bch2_set_fs_needs_reconcile(struct bch_fs *c)
 {
-	return bch2_set_rebalance_needs_scan(c,
-				(struct rebalance_scan) { .type = REBALANCE_SCAN_fs },
+	return bch2_set_reconcile_needs_scan(c,
+				(struct reconcile_scan) { .type = REBALANCE_SCAN_fs },
 				true);
 }
 
-static int bch2_clear_rebalance_needs_scan(struct btree_trans *trans, struct bpos pos, u64 cookie)
+static int bch2_clear_reconcile_needs_scan(struct btree_trans *trans, struct bpos pos, u64 cookie)
 {
 	return commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 		CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan, pos, BTREE_ITER_intent);
@@ -1108,10 +1108,10 @@ static int bch2_clear_rebalance_needs_scan(struct btree_trans *trans, struct bpo
 }
 
 #define REBALANCE_WORK_BUF_NR		1024
-DEFINE_DARRAY_NAMED(darray_rebalance_work, struct bkey_i);
+DEFINE_DARRAY_NAMED(darray_reconcile_work, struct bkey_i);
 
-static struct bkey_s_c next_rebalance_entry(struct btree_trans *trans,
-					    darray_rebalance_work *buf,
+static struct bkey_s_c next_reconcile_entry(struct btree_trans *trans,
+					    darray_reconcile_work *buf,
 					    enum btree_id btree,
 					    struct bpos *work_pos)
 {
@@ -1129,10 +1129,7 @@ static struct bkey_s_c next_rebalance_entry(struct btree_trans *trans,
 	}
 
 	if (unlikely(!buf->nr)) {
-		/*
-		 * Avoid contention with write buffer flush: buffer up rebalance
-		 * work entries in a darray
-		 */
+		/* Avoid contention with write buffer flush: buffer up work entries in a darray */
 
 		BUG_ON(!buf->size);;
 
@@ -1183,7 +1180,7 @@ static int extent_ec_pending(struct btree_trans *trans, struct bkey_ptrs_c ptrs)
 	return false;
 }
 
-static int rebalance_set_data_opts(struct btree_trans *trans,
+static int reconcile_set_data_opts(struct btree_trans *trans,
 				   void *arg,
 				   enum btree_id btree,
 				   struct bkey_s_c k,
@@ -1191,11 +1188,11 @@ static int rebalance_set_data_opts(struct btree_trans *trans,
 				   struct data_update_opts *data_opts)
 {
 	struct bch_fs *c = trans->c;
-	const struct bch_extent_reconcile *r = bch2_bkey_rebalance_opts(c, k);
+	const struct bch_extent_reconcile *r = bch2_bkey_reconcile_opts(c, k);
 	if (!r || !r->need_rb) /* Write buffer race? */
 		return 0;
 
-	data_opts->type			= BCH_DATA_UPDATE_rebalance;
+	data_opts->type			= BCH_DATA_UPDATE_reconcile;
 	if (!r->hipri)
 		data_opts->write_flags |= BCH_WRITE_only_specified_devs;
 	data_opts->target = r->background_target;
@@ -1289,7 +1286,7 @@ static int rebalance_set_data_opts(struct btree_trans *trans,
 	    !data_opts->ptrs_kill_ec &&
 	    !data_opts->extra_replicas) {
 		CLASS(printbuf, buf)();
-		prt_printf(&buf, "got extent to rebalance but nothing to do, confused\n  ");
+		prt_printf(&buf, "got extent to reconcile but nothing to do, confused\n  ");
 		bch2_bkey_val_to_text(&buf, c, k);
 		bch_err(c, "%s", buf.buf);
 		return 0;
@@ -1306,7 +1303,7 @@ static int bch2_extent_set_rb_pending(struct btree_trans *trans,
 	struct bkey_i *n = errptr_try(bch2_bkey_make_mut(trans, iter, &k, 0));
 
 	struct bch_extent_reconcile *r = (struct bch_extent_reconcile *)
-		bch2_bkey_rebalance_opts(trans->c, bkey_i_to_s_c(n));
+		bch2_bkey_reconcile_opts(trans->c, bkey_i_to_s_c(n));
 	BUG_ON(!r);
 
 	r->pending = true;
@@ -1314,7 +1311,7 @@ static int bch2_extent_set_rb_pending(struct btree_trans *trans,
 	return bch2_trans_commit(trans, NULL, NULL, 0);
 }
 
-static int __do_rebalance_extent(struct moving_context *ctxt,
+static int __do_reconcile_extent(struct moving_context *ctxt,
 				 struct per_snapshot_io_opts *snapshot_io_opts,
 				 struct btree_iter *iter, struct bkey_s_c k)
 {
@@ -1322,11 +1319,11 @@ static int __do_rebalance_extent(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	u32 restart_count = trans->restart_count;
 
-	ctxt->stats = &c->rebalance.work_stats;
-	c->rebalance.state = BCH_REBALANCE_working;
+	ctxt->stats = &c->reconcile.work_stats;
+	c->reconcile.state = BCH_REBALANCE_working;
 
 	int ret = bch2_move_extent(ctxt, NULL, snapshot_io_opts,
-				   rebalance_set_data_opts, NULL,
+				   reconcile_set_data_opts, NULL,
 				   iter, iter->min_depth, k);
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		return ret;
@@ -1334,7 +1331,7 @@ static int __do_rebalance_extent(struct moving_context *ctxt,
 		return ret;
 	if (bch2_err_matches(ret, BCH_ERR_data_update_fail_no_rw_devs) ||
 	    bch2_err_matches(ret, BCH_ERR_insufficient_devices)) {
-		if (rb_work_btree(bch2_bkey_rebalance_opts(c, k)) !=
+		if (rb_work_btree(bch2_bkey_reconcile_opts(c, k)) !=
 		    BTREE_ID_reconcile_pending)
 			try(bch2_trans_relock(trans) ?:
 			    bch2_extent_set_rb_pending(trans, iter, k));
@@ -1356,7 +1353,7 @@ static int __do_rebalance_extent(struct moving_context *ctxt,
 	return 0;
 }
 
-static int do_rebalance_extent(struct moving_context *ctxt,
+static int do_reconcile_extent(struct moving_context *ctxt,
 			       struct per_snapshot_io_opts *snapshot_io_opts,
 			       struct bbpos pos)
 {
@@ -1365,31 +1362,31 @@ static int do_rebalance_extent(struct moving_context *ctxt,
 	CLASS(btree_iter, iter)(trans, pos.btree, pos.pos, BTREE_ITER_all_snapshots);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
-	return __do_rebalance_extent(ctxt, snapshot_io_opts, &iter, k);
+	return __do_reconcile_extent(ctxt, snapshot_io_opts, &iter, k);
 }
 
 noinline_for_stack
-static int do_rebalance_btree(struct moving_context *ctxt,
+static int do_reconcile_btree(struct moving_context *ctxt,
 			      struct per_snapshot_io_opts *snapshot_io_opts,
 			      struct bkey_s_c_backpointer bp)
 {
 	struct btree_trans *trans = ctxt->trans;
 
 	CLASS(btree_iter_uninit, iter)(trans);
-	struct bkey_s_c k = bkey_try(rebalance_bp_get_key(trans, &iter, bp));
+	struct bkey_s_c k = bkey_try(reconcile_bp_get_key(trans, &iter, bp));
 
 	if (!k.k)
 		return 0;
 
-	return __do_rebalance_extent(ctxt, snapshot_io_opts, &iter, k);
+	return __do_reconcile_extent(ctxt, snapshot_io_opts, &iter, k);
 }
 
-static int do_rebalance_scan_bp(struct btree_trans *trans,
+static int do_reconcile_scan_bp(struct btree_trans *trans,
 				struct bkey_s_c_backpointer bp,
 				struct wb_maybe_flush *last_flushed)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_fs_rebalance *r = &c->rebalance;
+	struct bch_fs_reconcile *r = &c->reconcile;
 
 	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bkey_try(bch2_backpointer_get_key(trans, bp, &iter, BTREE_ITER_intent,
@@ -1403,11 +1400,11 @@ static int do_rebalance_scan_bp(struct btree_trans *trans,
 	struct bch_inode_opts opts;
 	try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
 
-	return bch2_update_rebalance_opts(trans, NULL, &opts, &iter, bp.v->level, k,
+	return bch2_update_reconcile_opts(trans, NULL, &opts, &iter, bp.v->level, k,
 					  SET_NEEDS_REBALANCE_opt_change);
 }
 
-static int do_rebalance_scan_indirect(struct btree_trans *trans,
+static int do_reconcile_scan_indirect(struct btree_trans *trans,
 				      struct disk_reservation *res,
 				      struct bkey_s_c_reflink_p p,
 				      struct per_snapshot_io_opts *snapshot_io_opts,
@@ -1426,7 +1423,7 @@ static int do_rebalance_scan_indirect(struct btree_trans *trans,
 			break;
 
 		bch2_disk_reservation_put(trans->c, res);
-		bch2_update_rebalance_opts(trans, snapshot_io_opts, opts, &iter, 0, k,
+		bch2_update_reconcile_opts(trans, snapshot_io_opts, opts, &iter, 0, k,
 					   SET_NEEDS_REBALANCE_opt_change_indirect);
 	})));
 
@@ -1435,14 +1432,14 @@ static int do_rebalance_scan_indirect(struct btree_trans *trans,
 	return 0;
 }
 
-static int do_rebalance_scan_btree(struct moving_context *ctxt,
+static int do_reconcile_scan_btree(struct moving_context *ctxt,
 				   struct per_snapshot_io_opts *snapshot_io_opts,
 				   enum btree_id btree, unsigned level,
 				   struct bpos start, struct bpos end)
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
-	struct bch_fs_rebalance *r = &c->rebalance;
+	struct bch_fs_reconcile *r = &c->reconcile;
 
 	/*
 	 * peek(), peek_slot() don't know how to fetch btree root keys - we
@@ -1470,7 +1467,7 @@ static int do_rebalance_scan_btree(struct moving_context *ctxt,
 
 		struct bch_inode_opts opts;
 		ret =   bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts) ?:
-			bch2_update_rebalance_opts(trans, snapshot_io_opts, &opts, &iter, level, k,
+			bch2_update_reconcile_opts(trans, snapshot_io_opts, &opts, &iter, level, k,
 						   SET_NEEDS_REBALANCE_opt_change);
 root_err:
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
@@ -1499,24 +1496,24 @@ root_err:
 
 		struct bch_inode_opts opts;
 		bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts) ?:
-		bch2_update_rebalance_opts(trans, snapshot_io_opts, &opts, &iter, level, k,
+		bch2_update_reconcile_opts(trans, snapshot_io_opts, &opts, &iter, level, k,
 					   SET_NEEDS_REBALANCE_opt_change) ?:
 		(start.inode &&
 		 k.k->type == KEY_TYPE_reflink_p &&
 		 REFLINK_P_MAY_UPDATE_OPTIONS(bkey_s_c_to_reflink_p(k).v)
-		 ? do_rebalance_scan_indirect(trans, &res.r, bkey_s_c_to_reflink_p(k),
+		 ? do_reconcile_scan_indirect(trans, &res.r, bkey_s_c_to_reflink_p(k),
 					      snapshot_io_opts, &opts)
 		 : 0) ?:
 		bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
 	}));
 }
 
-static int do_rebalance_scan_fs(struct moving_context *ctxt,
+static int do_reconcile_scan_fs(struct moving_context *ctxt,
 				struct per_snapshot_io_opts *snapshot_io_opts,
 				bool metadata)
 {
 	struct bch_fs *c = ctxt->trans->c;
-	struct bch_fs_rebalance *r = &c->rebalance;
+	struct bch_fs_reconcile *r = &c->reconcile;
 
 	r->scan_start	= BBPOS_MIN;
 	r->scan_end	= BBPOS_MAX;
@@ -1530,7 +1527,7 @@ static int do_rebalance_scan_fs(struct moving_context *ctxt,
 			 btree == BTREE_ID_reflink);
 
 		for (unsigned level = !scan_leaves; level < BTREE_MAX_DEPTH; level++)
-			try(do_rebalance_scan_btree(ctxt, snapshot_io_opts, btree, level,
+			try(do_reconcile_scan_btree(ctxt, snapshot_io_opts, btree, level,
 						    POS_MIN, SPOS_MAX));
 	}
 
@@ -1538,24 +1535,24 @@ static int do_rebalance_scan_fs(struct moving_context *ctxt,
 }
 
 noinline_for_stack
-static int do_rebalance_scan(struct moving_context *ctxt,
+static int do_reconcile_scan(struct moving_context *ctxt,
 			     struct per_snapshot_io_opts *snapshot_io_opts,
 			     struct bpos cookie_pos, u64 cookie, u64 *sectors_scanned)
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
-	struct bch_fs_rebalance *r = &c->rebalance;
+	struct bch_fs_reconcile *r = &c->reconcile;
 
-	bch2_move_stats_init(&r->scan_stats, "rebalance_scan");
+	bch2_move_stats_init(&r->scan_stats, "reconcile_scan");
 	ctxt->stats = &r->scan_stats;
 
 	r->state = BCH_REBALANCE_scanning;
 
-	struct rebalance_scan s = rebalance_scan_decode(c, cookie_pos.offset);
+	struct reconcile_scan s = reconcile_scan_decode(c, cookie_pos.offset);
 	if (s.type == REBALANCE_SCAN_fs) {
-		try(do_rebalance_scan_fs(ctxt, snapshot_io_opts, false));
+		try(do_reconcile_scan_fs(ctxt, snapshot_io_opts, false));
 	} else if (s.type == REBALANCE_SCAN_metadata) {
-		try(do_rebalance_scan_fs(ctxt, snapshot_io_opts, true));
+		try(do_reconcile_scan_fs(ctxt, snapshot_io_opts, true));
 	} else if (s.type == REBALANCE_SCAN_device) {
 		r->scan_start	= BBPOS(BTREE_ID_backpointers, POS(s.dev, 0));
 		r->scan_end	= BBPOS(BTREE_ID_backpointers, POS(s.dev, U64_MAX));
@@ -1577,23 +1574,22 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 				continue;
 
 			bch2_disk_reservation_put(c, &res.r);
-			do_rebalance_scan_bp(trans, bkey_s_c_to_backpointer(k), &last_flushed);
+			do_reconcile_scan_bp(trans, bkey_s_c_to_backpointer(k), &last_flushed);
 		})));
 	} else if (s.type == REBALANCE_SCAN_inum) {
 		r->scan_start	= BBPOS(BTREE_ID_extents, POS(s.inum, 0));
 		r->scan_end	= BBPOS(BTREE_ID_extents, POS(s.inum, U64_MAX));
 
-		try(do_rebalance_scan_btree(ctxt, snapshot_io_opts, BTREE_ID_extents, 0,
+		try(do_reconcile_scan_btree(ctxt, snapshot_io_opts, BTREE_ID_extents, 0,
 					    r->scan_start.pos, r->scan_end.pos));
 	}
 
-	try(bch2_clear_rebalance_needs_scan(trans, cookie_pos, cookie));
+	try(bch2_clear_reconcile_needs_scan(trans, cookie_pos, cookie));
 
 	*sectors_scanned += atomic64_read(&r->scan_stats.sectors_seen);
 	/*
-	 * Ensure that the rebalance_work entries we created are seen by the
-	 * next iteration of do_rebalance(), so we don't end up stuck in
-	 * rebalance_wait():
+	 * Ensure that the entries we created are seen by the next iteration of
+	 * do_reconcile(), so we don't end up stuck in reconcile_wait():
 	 */
 	*sectors_scanned += 1;
 	bch2_move_stats_exit(&r->scan_stats, c);
@@ -1602,9 +1598,9 @@ static int do_rebalance_scan(struct moving_context *ctxt,
 	return 0;
 }
 
-static void rebalance_wait(struct bch_fs *c)
+static void reconcile_wait(struct bch_fs *c)
 {
-	struct bch_fs_rebalance *r = &c->rebalance;
+	struct bch_fs_reconcile *r = &c->reconcile;
 	struct io_clock *clock = &c->io_clock[WRITE];
 	u64 now = atomic64_read(&clock->now);
 	u64 min_member_capacity = bch2_min_rw_member_capacity(c);
@@ -1623,26 +1619,26 @@ static void rebalance_wait(struct bch_fs *c)
 	bch2_kthread_io_clock_wait_once(clock, r->wait_iotime_end, MAX_SCHEDULE_TIMEOUT);
 }
 
-static bool bch2_rebalance_enabled(struct bch_fs *c)
+static bool bch2_reconcile_enabled(struct bch_fs *c)
 {
-	return c->opts.rebalance_enabled &&
-		!(c->opts.rebalance_on_ac_only &&
-		  c->rebalance.on_battery);
+	return c->opts.reconcile_enabled &&
+		!(c->opts.reconcile_on_ac_only &&
+		  c->reconcile.on_battery);
 }
 
-static int do_rebalance(struct moving_context *ctxt)
+static int do_reconcile(struct moving_context *ctxt)
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
-	struct bch_fs_rebalance *r = &c->rebalance;
+	struct bch_fs_reconcile *r = &c->reconcile;
 	u64 sectors_scanned = 0;
 	u32 kick = r->kick;
 	int ret = 0;
 
-	CLASS(darray_rebalance_work, work)();
+	CLASS(darray_reconcile_work, work)();
 	try(darray_make_room(&work, REBALANCE_WORK_BUF_NR));
 
-	bch2_move_stats_init(&r->work_stats, "rebalance_work");
+	bch2_move_stats_init(&r->work_stats, "reconcile_work");
 
 	CLASS(per_snapshot_io_opts, snapshot_io_opts)(c);
 
@@ -1659,9 +1655,9 @@ static int do_rebalance(struct moving_context *ctxt)
 	bkey_init(&pending_cookie.k);
 
 	while (!bch2_move_ratelimit(ctxt)) {
-		if (!bch2_rebalance_enabled(c)) {
+		if (!bch2_reconcile_enabled(c)) {
 			bch2_moving_ctxt_flush_all(ctxt);
-			kthread_wait_freezable(bch2_rebalance_enabled(c) ||
+			kthread_wait_freezable(bch2_reconcile_enabled(c) ||
 					       kthread_should_stop());
 			if (kthread_should_stop())
 				break;
@@ -1674,7 +1670,7 @@ static int do_rebalance(struct moving_context *ctxt)
 			work.nr		= 0;
 		}
 
-		struct bkey_s_c k = next_rebalance_entry(trans, &work, scan_btrees[i], &work_pos);
+		struct bkey_s_c k = next_reconcile_entry(trans, &work, scan_btrees[i], &work_pos);
 		ret = bkey_err(k);
 		if (ret)
 			break;
@@ -1692,20 +1688,20 @@ static int do_rebalance(struct moving_context *ctxt)
 		}
 
 		if (k.k->type == KEY_TYPE_cookie &&
-		    rebalance_scan_decode(c, k.k->p.offset).type == REBALANCE_SCAN_pending)
+		    reconcile_scan_decode(c, k.k->p.offset).type == REBALANCE_SCAN_pending)
 			bkey_reassemble(&pending_cookie.k_i, k);
 
 		if (k.k->type == KEY_TYPE_cookie)
-			ret = do_rebalance_scan(ctxt, &snapshot_io_opts,
+			ret = do_reconcile_scan(ctxt, &snapshot_io_opts,
 						k.k->p,
 						le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie),
 						&sectors_scanned);
 		else if (k.k->type == KEY_TYPE_backpointer)
-			ret = do_rebalance_btree(ctxt, &snapshot_io_opts,
+			ret = do_reconcile_btree(ctxt, &snapshot_io_opts,
 						 bkey_s_c_to_backpointer(k));
 		else
 			ret = lockrestart_do(trans,
-				do_rebalance_extent(ctxt, &snapshot_io_opts,
+				do_reconcile_extent(ctxt, &snapshot_io_opts,
 						    rb_work_to_data_pos(k.k->p)));
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
@@ -1721,7 +1717,7 @@ static int do_rebalance(struct moving_context *ctxt)
 	}
 
 	if (!ret && !bkey_deleted(&pending_cookie.k))
-		try(bch2_clear_rebalance_needs_scan(trans,
+		try(bch2_clear_reconcile_needs_scan(trans,
 				pending_cookie.k.p, pending_cookie.v.cookie));
 
 	bch2_move_stats_exit(&r->work_stats, c);
@@ -1733,7 +1729,7 @@ static int do_rebalance(struct moving_context *ctxt)
 	    kick == r->kick) {
 		bch2_moving_ctxt_flush_all(ctxt);
 		bch2_trans_unlock_long(trans);
-		rebalance_wait(c);
+		reconcile_wait(c);
 	}
 
 	if (!bch2_err_matches(ret, EROFS))
@@ -1741,10 +1737,10 @@ static int do_rebalance(struct moving_context *ctxt)
 	return ret;
 }
 
-static int bch2_rebalance_thread(void *arg)
+static int bch2_reconcile_thread(void *arg)
 {
 	struct bch_fs *c = arg;
-	struct bch_fs_rebalance *r = &c->rebalance;
+	struct bch_fs_reconcile *r = &c->reconcile;
 
 	set_freezable();
 
@@ -1757,10 +1753,10 @@ static int bch2_rebalance_thread(void *arg)
 
 	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
 	bch2_moving_ctxt_init(&ctxt, c, NULL, &r->work_stats,
-			      writepoint_ptr(&c->rebalance_write_point),
+			      writepoint_ptr(&c->reconcile_write_point),
 			      true);
 
-	while (!kthread_should_stop() && !do_rebalance(&ctxt))
+	while (!kthread_should_stop() && !do_reconcile(&ctxt))
 		;
 
 	return 0;
@@ -1770,19 +1766,24 @@ void bch2_reconcile_status_to_text(struct printbuf *out, struct bch_fs *c)
 {
 	printbuf_tabstop_push(out, 32);
 
-	struct bch_fs_rebalance *r = &c->rebalance;
+	struct bch_fs_reconcile *r = &c->reconcile;
 
-	/* print pending work */
-	struct disk_accounting_pos acc;
-	disk_accounting_key_init(acc, rebalance_work);
-	u64 v;
-	bch2_accounting_mem_read(c, disk_accounting_pos_to_bpos(&acc), &v, 1);
+	prt_printf(out, "pending work:\n");
+	for (unsigned i = 0; i < BCH_REBALANCE_ACCOUNTING_NR; i++) {
+		struct disk_accounting_pos acc;
+		disk_accounting_key_init(acc, reconcile_work, i);
+		u64 v;
+		bch2_accounting_mem_read(c, disk_accounting_pos_to_bpos(&acc), &v, 1);
 
-	prt_printf(out, "pending work:\t");
-	prt_human_readable_u64(out, v << 9);
-	prt_printf(out, "\n\n");
+		bch2_prt_reconcile_accounting_type(out, i);
+		prt_printf(out, ":\t");
+		prt_human_readable_u64(out, v << 9);
+		prt_newline(out);
+	}
 
-	prt_str(out, bch2_rebalance_state_strs[r->state]);
+	prt_newline(out);
+
+	prt_str(out, bch2_reconcile_state_strs[r->state]);
 	prt_newline(out);
 	guard(printbuf_indent)(out);
 
@@ -1814,7 +1815,7 @@ void bch2_reconcile_status_to_text(struct printbuf *out, struct bch_fs *c)
 
 	struct task_struct *t;
 	scoped_guard(rcu) {
-		t = rcu_dereference(c->rebalance.thread);
+		t = rcu_dereference(c->reconcile.thread);
 		if (t)
 			get_task_struct(t);
 	}
@@ -1836,15 +1837,15 @@ void bch2_reconcile_scan_pending_to_text(struct printbuf *out, struct bch_fs *c)
 	prt_printf(out, "%u\n", iter.pos.inode == 0);
 }
 
-void bch2_rebalance_stop(struct bch_fs *c)
+void bch2_reconcile_stop(struct bch_fs *c)
 {
 	struct task_struct *p;
 
-	p = rcu_dereference_protected(c->rebalance.thread, 1);
-	c->rebalance.thread = NULL;
+	p = rcu_dereference_protected(c->reconcile.thread, 1);
+	c->reconcile.thread = NULL;
 
 	if (p) {
-		/* for sychronizing with bch2_rebalance_wakeup() */
+		/* for sychronizing with bch2_reconcile_wakeup() */
 		synchronize_rcu();
 
 		kthread_stop(p);
@@ -1852,23 +1853,23 @@ void bch2_rebalance_stop(struct bch_fs *c)
 	}
 }
 
-int bch2_rebalance_start(struct bch_fs *c)
+int bch2_reconcile_start(struct bch_fs *c)
 {
-	if (c->rebalance.thread)
+	if (c->reconcile.thread)
 		return 0;
 
 	if (c->opts.nochanges)
 		return 0;
 
 	struct task_struct *p =
-		kthread_create(bch2_rebalance_thread, c, "bch-reconcile/%s", c->name);
+		kthread_create(bch2_reconcile_thread, c, "bch-reconcile/%s", c->name);
 	int ret = PTR_ERR_OR_ZERO(p);
 	bch_err_msg(c, ret, "creating reconcile thread");
 	if (ret)
 		return ret;
 
 	get_task_struct(p);
-	rcu_assign_pointer(c->rebalance.thread, p);
+	rcu_assign_pointer(c->reconcile.thread, p);
 	wake_up_process(p);
 	return 0;
 }
@@ -1876,30 +1877,30 @@ int bch2_rebalance_start(struct bch_fs *c)
 #ifdef CONFIG_POWER_SUPPLY
 #include <linux/power_supply.h>
 
-static int bch2_rebalance_power_notifier(struct notifier_block *nb,
+static int bch2_reconcile_power_notifier(struct notifier_block *nb,
 					 unsigned long event, void *data)
 {
-	struct bch_fs *c = container_of(nb, struct bch_fs, rebalance.power_notifier);
+	struct bch_fs *c = container_of(nb, struct bch_fs, reconcile.power_notifier);
 
-	c->rebalance.on_battery = !power_supply_is_system_supplied();
-	bch2_rebalance_wakeup(c);
+	c->reconcile.on_battery = !power_supply_is_system_supplied();
+	bch2_reconcile_wakeup(c);
 	return NOTIFY_OK;
 }
 #endif
 
-void bch2_fs_rebalance_exit(struct bch_fs *c)
+void bch2_fs_reconcile_exit(struct bch_fs *c)
 {
 #ifdef CONFIG_POWER_SUPPLY
-	power_supply_unreg_notifier(&c->rebalance.power_notifier);
+	power_supply_unreg_notifier(&c->reconcile.power_notifier);
 #endif
 }
 
-int bch2_fs_rebalance_init(struct bch_fs *c)
+int bch2_fs_reconcile_init(struct bch_fs *c)
 {
 #ifdef CONFIG_POWER_SUPPLY
-	struct bch_fs_rebalance *r = &c->rebalance;
+	struct bch_fs_reconcile *r = &c->reconcile;
 
-	r->power_notifier.notifier_call = bch2_rebalance_power_notifier;
+	r->power_notifier.notifier_call = bch2_reconcile_power_notifier;
 	try(power_supply_reg_notifier(&r->power_notifier));
 
 	r->on_battery = !power_supply_is_system_supplied();
@@ -1909,20 +1910,20 @@ int bch2_fs_rebalance_init(struct bch_fs *c)
 
 /* need better helpers for iterating in parallel */
 
-static int fix_rebalance_work_btree(struct btree_trans *trans,
+static int fix_reconcile_work_btree(struct btree_trans *trans,
 				    enum btree_id want_set_in_btree,
 				    struct bpos pos,
 				    struct btree_iter *rb_iter)
 {
-	bool should_have_rebalance = rb_iter->btree_id == want_set_in_btree;
-	bool have_rebalance = rb_iter->k.type == KEY_TYPE_set;
+	bool should_have_reconcile = rb_iter->btree_id == want_set_in_btree;
+	bool have_reconcile = rb_iter->k.type == KEY_TYPE_set;
 
-	return should_have_rebalance != have_rebalance
-		? bch2_btree_bit_mod_buffered(trans, rb_iter->btree_id, pos, should_have_rebalance)
+	return should_have_reconcile != have_reconcile
+		? bch2_btree_bit_mod_buffered(trans, rb_iter->btree_id, pos, should_have_reconcile)
 		: 0;
 }
 
-static int check_rebalance_work_one(struct btree_trans *trans,
+static int check_reconcile_work_one(struct btree_trans *trans,
 				    struct btree_iter *data_iter,
 				    struct btree_iter *rb_w,
 				    struct btree_iter *rb_h,
@@ -1972,7 +1973,7 @@ static int check_rebalance_work_one(struct btree_trans *trans,
 	if (bpos_ge(*cur_pos, data_to_rb_work_pos(data_iter->btree_id, SPOS_MAX)))
 		return 0;
 
-	enum btree_id btree_want_set = rb_work_btree(bch2_bkey_rebalance_opts(c, data_k));
+	enum btree_id btree_want_set = rb_work_btree(bch2_bkey_reconcile_opts(c, data_k));
 
 	u64 btrees_set =
 		(rb_w->k.type	? BIT_ULL(rb_w->btree_id) : 0)|
@@ -1998,21 +1999,21 @@ static int check_rebalance_work_one(struct btree_trans *trans,
 		bch2_bkey_val_to_text(&buf, trans->c, data_k);
 
 		if (ret_fsck_err(trans, reconcile_work_incorrectly_set, "%s", buf.buf)) {
-			try(fix_rebalance_work_btree(trans, btree_want_set, *cur_pos, rb_w));
-			try(fix_rebalance_work_btree(trans, btree_want_set, *cur_pos, rb_h));
-			try(fix_rebalance_work_btree(trans, btree_want_set, *cur_pos, rb_p));
+			try(fix_reconcile_work_btree(trans, btree_want_set, *cur_pos, rb_w));
+			try(fix_reconcile_work_btree(trans, btree_want_set, *cur_pos, rb_h));
+			try(fix_reconcile_work_btree(trans, btree_want_set, *cur_pos, rb_p));
 		}
 	}
 
 	struct bch_inode_opts opts;
 
 	try(bch2_bkey_get_io_opts(trans, snapshot_io_opts, data_k, &opts));
-	try(bch2_update_rebalance_opts(trans, snapshot_io_opts, &opts, data_iter, 0, data_k,
+	try(bch2_update_reconcile_opts(trans, snapshot_io_opts, &opts, data_iter, 0, data_k,
 				       SET_NEEDS_REBALANCE_other));
 	return 0;
 }
 
-static int check_rebalance_work_data_btree(struct btree_trans *trans,
+static int check_reconcile_work_data_btree(struct btree_trans *trans,
 				      enum btree_id btree,
 				      struct btree_iter *rb_w,
 				      struct btree_iter *rb_h,
@@ -2032,7 +2033,7 @@ static int check_rebalance_work_data_btree(struct btree_trans *trans,
 
 		try(progress_update_iter(trans, progress, &data_iter));
 		try(commit_do(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc,
-			      check_rebalance_work_one(trans, &data_iter, rb_w, rb_h, rb_p,
+			      check_reconcile_work_one(trans, &data_iter, rb_w, rb_h, rb_p,
 						       snapshot_io_opts, last_flushed, &cur_pos)));
 		if (bpos_ge(cur_pos, data_to_rb_work_pos(btree, SPOS_MAX)))
 			return 0;
@@ -2044,7 +2045,7 @@ static int check_rebalance_work_data_btree(struct btree_trans *trans,
 	}
 }
 
-static int check_rebalance_work_btree_key(struct btree_trans *trans,
+static int check_reconcile_work_btree_key(struct btree_trans *trans,
 					  struct btree_iter *iter, struct bkey_s_c k)
 {
 	struct bch_fs *c = trans->c;
@@ -2052,11 +2053,11 @@ static int check_rebalance_work_btree_key(struct btree_trans *trans,
 
 	struct bch_inode_opts opts;
 	try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
-	try(bch2_update_rebalance_opts(trans, NULL, &opts, iter, iter->min_depth, k,
+	try(bch2_update_reconcile_opts(trans, NULL, &opts, iter, iter->min_depth, k,
 				       SET_NEEDS_REBALANCE_other));
 
-	enum btree_id rb_btree	= rb_work_btree(bch2_bkey_rebalance_opts(c, k));
-	u64 rb_idx		= bch2_bkey_get_rebalance_bp(c, k);
+	enum btree_id rb_btree	= rb_work_btree(bch2_bkey_reconcile_opts(c, k));
+	u64 rb_idx		= bch2_bkey_get_reconcile_bp(c, k);
 
 	CLASS(printbuf, buf)();
 
@@ -2068,8 +2069,8 @@ static int check_rebalance_work_btree_key(struct btree_trans *trans,
 
 		bkey_reassemble(n, k);
 
-		try(rebalance_bp_add(trans, rb_btree, iter->btree_id, iter->min_depth, bkey_i_to_s(n), &rb_idx));
-		bch2_bkey_set_rebalance_bp(c, bkey_i_to_s(n), rb_idx);
+		try(reconcile_bp_add(trans, rb_btree, iter->btree_id, iter->min_depth, bkey_i_to_s(n), &rb_idx));
+		bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), rb_idx);
 		return 0;
 	}
 
@@ -2080,7 +2081,7 @@ static int check_rebalance_work_btree_key(struct btree_trans *trans,
 		struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) + sizeof(struct bch_extent_reconcile_bp)));
 
 		bkey_reassemble(n, k);
-		bch2_bkey_set_rebalance_bp(c, bkey_i_to_s(n), 0);
+		bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), 0);
 
 		try(bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node));
 		try(bch2_btree_delete(trans, BTREE_ID_reconcile_scan, POS(1, rb_idx), 0));
@@ -2113,7 +2114,7 @@ static int check_rebalance_work_btree_key(struct btree_trans *trans,
 				new_bp->v = bp;
 
 				struct bkey_i *n = errptr_try(bch2_bkey_make_mut(trans, iter, &k, 0));
-				bch2_bkey_set_rebalance_bp(c, bkey_i_to_s(n), rb_iter.pos.offset);
+				bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), rb_iter.pos.offset);
 			}
 		}
 	}
@@ -2121,7 +2122,7 @@ fsck_err:
 	return ret;
 }
 
-static int check_rebalance_work_btrees(struct btree_trans *trans)
+static int check_reconcile_work_btrees(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;
 
@@ -2139,7 +2140,7 @@ static int check_rebalance_work_btrees(struct btree_trans *trans)
 
 			try(for_each_btree_key_continue(trans, iter, 0, k, ({
 				bch2_disk_reservation_put(c, &res.r);
-				check_rebalance_work_btree_key(trans, &iter, k) ?:
+				check_reconcile_work_btree_key(trans, &iter, k) ?:
 				bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
 			})));
 		}
@@ -2148,25 +2149,25 @@ static int check_rebalance_work_btrees(struct btree_trans *trans)
 	return 0;
 }
 
-static int check_rebalance_btree_bp(struct btree_trans *trans, struct bkey_s_c k)
+static int check_reconcile_btree_bp(struct btree_trans *trans, struct bkey_s_c k)
 {
 	if (k.k->type != KEY_TYPE_backpointer)
 		return 0;
 
 	CLASS(btree_iter_uninit, iter)(trans);
-	bkey_try(rebalance_bp_get_key(trans, &iter, bkey_s_c_to_backpointer(k)));
+	bkey_try(reconcile_bp_get_key(trans, &iter, bkey_s_c_to_backpointer(k)));
 	return 0;
 }
 
-static int check_rebalance_btree_bps(struct btree_trans *trans)
+static int check_reconcile_btree_bps(struct btree_trans *trans)
 {
 	return for_each_btree_key_max(trans, iter, BTREE_ID_reconcile_scan,
 				      POS(1, 0), POS(1, U64_MAX),
 				      BTREE_ITER_prefetch, k,
-		check_rebalance_btree_bp(trans, k));
+		check_reconcile_btree_bp(trans, k));
 }
 
-int bch2_check_rebalance_work(struct bch_fs *c)
+int bch2_check_reconcile_work(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
 	CLASS(btree_iter_uninit, extent_iter)(trans);
@@ -2187,19 +2188,19 @@ int bch2_check_rebalance_work(struct bch_fs *c)
 			   BIT_ULL(BTREE_ID_extents)|
 			   BIT_ULL(BTREE_ID_reflink));
 
-	static const enum btree_id rebalance_work_data_btrees[] = {
+	static const enum btree_id data_btrees[] = {
 		BTREE_ID_stripes,
 		BTREE_ID_reflink,
 		BTREE_ID_extents,
 	};
-	for (unsigned i = 0; i < ARRAY_SIZE(rebalance_work_data_btrees); i++)
-		try(check_rebalance_work_data_btree(trans, rebalance_work_data_btrees[i],
+	for (unsigned i = 0; i < ARRAY_SIZE(data_btrees); i++)
+		try(check_reconcile_work_data_btree(trans, data_btrees[i],
 						    &rb_w, &rb_h, &rb_p,
 						    &snapshot_io_opts, &progress, &last_flushed));
 
 	/* progress indicator for metadata? */
-	try(check_rebalance_work_btrees(trans));
-	try(check_rebalance_btree_bps(trans));
+	try(check_reconcile_work_btrees(trans));
+	try(check_reconcile_btree_bps(trans));
 
 	return 0;
 }

@@ -108,23 +108,23 @@ static int bch2_write_inode_trans(struct btree_trans *trans,
 				  struct bch_inode_info *inode,
 				  inode_set_fn set,
 				  void *p, unsigned fields,
-				  bool *rebalance_changed)
+				  bool *reconcile_changed)
 {
 	struct bch_fs *c = trans->c;
 	CLASS(btree_iter_uninit, iter)(trans);
 	struct bch_inode_unpacked inode_u;
 	try(bch2_inode_peek(trans, &iter, &inode_u, inode_inum(inode), BTREE_ITER_intent));
 
-	struct bch_extent_reconcile old_r = bch2_inode_rebalance_opts_get(c, &inode_u);
+	struct bch_extent_reconcile old_r = bch2_inode_reconcile_opts_get(c, &inode_u);
 
 	if (set)
 	       try(set(trans, inode, &inode_u, p));
 
-	struct bch_extent_reconcile new_r = bch2_inode_rebalance_opts_get(c, &inode_u);
-	*rebalance_changed = memcmp(&old_r, &new_r, sizeof(new_r));
-	if (*rebalance_changed)
-		try(bch2_set_rebalance_needs_scan_trans(trans,
-				(struct rebalance_scan) {
+	struct bch_extent_reconcile new_r = bch2_inode_reconcile_opts_get(c, &inode_u);
+	*reconcile_changed = memcmp(&old_r, &new_r, sizeof(new_r));
+	if (*reconcile_changed)
+		try(bch2_set_reconcile_needs_scan_trans(trans,
+				(struct reconcile_scan) {
 					.type = REBALANCE_SCAN_inum,
 					.inum = inode_u.bi_inum }));
 
@@ -145,12 +145,12 @@ int __must_check bch2_write_inode(struct bch_fs *c,
 				  void *p, unsigned fields)
 {
 	CLASS(btree_trans, trans)(c);
-	bool rebalance_changed = false;
+	bool reconcile_changed = false;
 	int ret = lockrestart_do(trans, bch2_write_inode_trans(trans, inode, set, p,
-							       fields, &rebalance_changed));
+							       fields, &reconcile_changed));
 
-	if (!ret && rebalance_changed)
-		bch2_rebalance_wakeup(c);
+	if (!ret && reconcile_changed)
+		bch2_reconcile_wakeup(c);
 
 	bch2_fs_fatal_err_on(bch2_err_matches(ret, ENOENT), c,
 			     "%s: inode %llu:%llu not found when updating",

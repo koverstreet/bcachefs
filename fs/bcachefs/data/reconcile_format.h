@@ -5,9 +5,9 @@
 /*
  * rebalance on disk data structures:
  *
- * extents will contain a bch_extent_rebalance if they have background
+ * extents will contain a bch_extent_reconcile if they have background
  * processing pending; additionally, indirect extents will always have a
- * bch_extent_rebalance if they had any io path options set on the inode, since
+ * bch_extent_reconcile if they had any io path options set on the inode, since
  * we don't (yet) have backpointers that would let us look up the "owning" inode
  * of an indirect extent to recover the io path options.
  *
@@ -44,7 +44,7 @@
  *
  *  BTREE_ID_reconcile_pending:
  *    If we'd like to move an extent to a specific target, but can't because the
- *    target is full, we set bch_extent_rebalance.pending and switch to tracking
+ *    target is full, we set bch_extent_reconcile.pending and switch to tracking
  *    it here; pending rebalance work is re-attempted on device resize, add, or
  *    label change.
  */
@@ -152,7 +152,7 @@ struct bch_extent_reconcile_bp {
 	x(background_target)			\
 	x(promote_target)
 
-enum bch_rebalance_opts {
+enum bch_reconcile_opts {
 #define x(n)	BCH_REBALANCE_##n,
 	BCH_REBALANCE_OPTS()
 #undef x
@@ -167,7 +167,7 @@ enum bch_rebalance_opts {
 	x(high_priority,	5)		\
 	x(pending,		6)		\
 
-enum bch_rebalance_accounting_type {
+enum bch_reconcile_accounting_type {
 #define x(t, n) BCH_REBALANCE_ACCOUNTING_##t = n,
 	BCH_REBALANCE_ACCOUNTING()
 #undef x

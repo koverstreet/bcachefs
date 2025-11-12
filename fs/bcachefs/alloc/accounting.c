@@ -289,7 +289,7 @@ void bch2_accounting_key_to_text(struct printbuf *out,
 		bch2_btree_id_to_text(out, k->btree.id);
 		break;
 	case BCH_DISK_ACCOUNTING_reconcile_work:
-		bch2_prt_rebalance_accounting_type(out, k->reconcile_work.type);
+		bch2_prt_reconcile_accounting_type(out, k->reconcile_work.type);
 		break;
 	case BCH_DISK_ACCOUNTING_dev_leaving: {
 		guard(rcu)();

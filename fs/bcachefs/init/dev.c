@@ -522,7 +522,7 @@ int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb, struct prin
 
 	bch2_dev_sysfs_online(c, ca);
 
-	bch2_rebalance_wakeup(c);
+	bch2_reconcile_wakeup(c);
 	return 0;
 }
 
@@ -600,16 +600,16 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 
 	bch_notice(ca, "%s", bch2_member_states[new_state]);
 
-	bool do_rebalance_scan =
+	bool do_reconcile_scan =
 		new_state == BCH_MEMBER_STATE_rw ||
 		new_state == BCH_MEMBER_STATE_failed;
 
-	struct rebalance_scan s = new_state == BCH_MEMBER_STATE_rw
-		? (struct rebalance_scan) { .type = REBALANCE_SCAN_pending }
-		: (struct rebalance_scan) { .type = REBALANCE_SCAN_device, .dev = ca->dev_idx };
+	struct reconcile_scan s = new_state == BCH_MEMBER_STATE_rw
+		? (struct reconcile_scan) { .type = REBALANCE_SCAN_pending }
+		: (struct reconcile_scan) { .type = REBALANCE_SCAN_device, .dev = ca->dev_idx };
 
-	if (do_rebalance_scan)
-		try(bch2_set_rebalance_needs_scan(c, s, false));
+	if (do_reconcile_scan)
+		try(bch2_set_reconcile_needs_scan(c, s, false));
 
 	scoped_guard(mutex, &c->sb_lock) {
 		struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
@@ -620,8 +620,8 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 	if (new_state == BCH_MEMBER_STATE_rw)
 		__bch2_dev_read_write(c, ca);
 
-	if (do_rebalance_scan)
-		try(bch2_set_rebalance_needs_scan(c, s, true));
+	if (do_reconcile_scan)
+		try(bch2_set_reconcile_needs_scan(c, s, true));
 
 	return ret;
 }
@@ -811,13 +811,13 @@ int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 	if (ret)
 		goto err;
 
-	struct rebalance_scan s = { .type = REBALANCE_SCAN_pending };
+	struct reconcile_scan s = { .type = REBALANCE_SCAN_pending };
 	if (test_bit(BCH_FS_started, &c->flags)) {
 		/*
 		 * Technically incorrect, but 'bcachefs image update' is the
 		 * only thing that adds a device to a not-started filesystem:
 		 */
-		try(bch2_set_rebalance_needs_scan(c, s, false));
+		try(bch2_set_reconcile_needs_scan(c, s, false));
 	}
 
 	scoped_guard(rwsem_write, &c->state_lock) {
@@ -906,7 +906,7 @@ int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 	}
 
 	if (test_bit(BCH_FS_started, &c->flags))
-		try(bch2_set_rebalance_needs_scan(c, s, true));
+		try(bch2_set_reconcile_needs_scan(c, s, true));
 out:
 	bch_err_fn(c, ret);
 	return ret;
@@ -1011,10 +1011,10 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct p
 		return -EINVAL;
 	}
 
-	bool wakeup_rebalance_pending = nbuckets > ca->mi.nbuckets;
-	struct rebalance_scan s = { .type = REBALANCE_SCAN_pending };
-	if (wakeup_rebalance_pending)
-		try(bch2_set_rebalance_needs_scan(c, s, false));
+	bool wakeup_reconcile_pending = nbuckets > ca->mi.nbuckets;
+	struct reconcile_scan s = { .type = REBALANCE_SCAN_pending };
+	if (wakeup_reconcile_pending)
+		try(bch2_set_reconcile_needs_scan(c, s, false));
 
 	if (nbuckets > BCH_MEMBER_NBUCKETS_MAX) {
 		prt_printf(err, "New device size too big (%llu greater than max %u)\n",
@@ -1060,8 +1060,8 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct p
 
 	bch2_recalc_capacity(c);
 
-	if (wakeup_rebalance_pending)
-		try(bch2_set_rebalance_needs_scan(c, s, true));
+	if (wakeup_reconcile_pending)
+		try(bch2_set_reconcile_needs_scan(c, s, true));
 	return 0;
 }
 
