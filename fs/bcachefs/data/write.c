@@ -1754,7 +1754,7 @@ static const char * const bch2_write_flags[] = {
 	NULL
 };
 
-void bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
+void __bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
 {
 	if (!out->nr_tabstops)
 		printbuf_tabstop_push(out, 32);
@@ -1784,6 +1784,11 @@ void bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
 
 	prt_printf(out, "ref:\t%u\n", closure_nr_remaining(&op->cl));
 	prt_printf(out, "ret\t%s\n", bch2_err_str(op->error));
+}
+
+void bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
+{
+	__bch2_write_op_to_text(out, op);
 
 	if (op->flags & BCH_WRITE_move) {
 		prt_printf(out, "update:\n");
