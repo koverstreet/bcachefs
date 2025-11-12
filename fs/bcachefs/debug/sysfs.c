@@ -751,11 +751,14 @@ static ssize_t sysfs_opt_store(struct bch_fs *c,
 		BUG();
 	}
 
-	if (!ca)
-		bch2_opt_set_by_id(&c->opts, id, v);
+	if (changed) {
+		if (!ca) {
+			bch2_opt_set_by_id(&c->opts, id, v);
+			clear_bit(id, c->mount_opts.d);
+		}
 
-	if (changed)
 		bch2_opt_hook_post_set(c, ca, 0, id, v);
+	}
 
 	ret = size;
 err:

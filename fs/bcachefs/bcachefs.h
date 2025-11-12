@@ -820,6 +820,7 @@ struct bch_fs {
 
 	struct bch_opts		opts;
 	atomic_t		opt_change_cookie;
+	struct bch_opts_mask	mount_opts;
 
 	unsigned		loglevel;
 	unsigned		prev_loglevel;

@@ -558,6 +558,17 @@ enum fsck_err_opts {
 	  NULL,		"BTREE_ITER_prefetch causes btree nodes to be\n"\
 	  " prefetched sequentially")
 
+enum bch_opt_id {
+#define x(_name, ...)	Opt_##_name,
+	BCH_OPTS()
+#undef x
+	bch2_opts_nr
+};
+
+struct bch_opts_mask {
+	unsigned long	d[BITS_TO_LONGS(bch2_opts_nr)];
+};
+
 struct bch_opts {
 #define x(_name, _bits, ...)	unsigned _name##_defined:1;
 	BCH_OPTS()
@@ -601,13 +612,6 @@ static inline struct bch_opts bch2_opts_empty(void)
 }
 
 void bch2_opts_apply(struct bch_opts *, struct bch_opts);
-
-enum bch_opt_id {
-#define x(_name, ...)	Opt_##_name,
-	BCH_OPTS()
-#undef x
-	bch2_opts_nr
-};
 
 struct bch_fs;
 struct printbuf;
@@ -659,6 +663,7 @@ void bch2_opt_to_text(struct printbuf *, struct bch_fs *, struct bch_sb *,
 void bch2_opts_to_text(struct printbuf *,
 		       struct bch_opts,
 		       struct bch_fs *, struct bch_sb *,
+		       struct bch_opts_mask *,
 		       unsigned, unsigned, unsigned);
 
 int bch2_opt_hook_pre_set(struct bch_fs *, struct bch_dev *, u64, enum bch_opt_id, u64, bool);
