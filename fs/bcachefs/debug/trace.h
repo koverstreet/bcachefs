@@ -287,6 +287,11 @@ TRACE_EVENT(write_super,
 
 /* io.c: */
 
+DEFINE_EVENT(fs_str, io_read,
+	TP_PROTO(struct bch_fs *c, const char *str),
+	TP_ARGS(c, str)
+);
+
 DEFINE_EVENT(bio, io_read_promote,
 	TP_PROTO(struct bio *bio),
 	TP_ARGS(bio)

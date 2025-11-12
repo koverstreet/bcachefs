@@ -1309,6 +1309,14 @@ retry_pick:
 		this_cpu_add(c->counters[BCH_COUNTER_io_move_read], bio_sectors(&rbio->bio));
 	bch2_increment_clock(c, bio_sectors(&rbio->bio), READ);
 
+	if (trace_io_read_enabled()) {
+		CLASS(printbuf, buf)();
+		bch2_bkey_val_to_text(&buf, c, k);
+		prt_printf(&buf, "\nreading from:\n");
+		bch2_extent_ptr_decoded_to_text(&buf, c, &rbio->pick);
+		trace_io_read(c, buf.buf);
+	}
+
 	/*
 	 * If it's being moved internally, we don't want to flag it as a cache
 	 * hit:

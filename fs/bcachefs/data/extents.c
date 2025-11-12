@@ -1412,6 +1412,14 @@ void bch2_extent_crc_unpacked_to_text(struct printbuf *out, struct bch_extent_cr
 	bch2_prt_compression_type(out, crc->compression_type);
 }
 
+void bch2_extent_ptr_decoded_to_text(struct printbuf *out, struct bch_fs *c,
+				     struct extent_ptr_decoded *p)
+{
+	bch2_extent_crc_unpacked_to_text(out, &p->crc);
+	prt_newline(out);
+	bch2_extent_ptr_to_text(out, c, &p->ptr);
+}
+
 const char * const bch2_extent_entry_types[] = {
 #define x(t, n, ...) [n] = #t,
 	BCH_EXTENT_ENTRY_TYPES()
