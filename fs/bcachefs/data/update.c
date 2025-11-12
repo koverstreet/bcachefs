@@ -423,8 +423,7 @@ static void data_update_trace(struct data_update *u, int ret)
 			trace_data_update_no_io(c, buf.buf);
 		}
 		count_event(c, data_update_no_io);
-	} else if (ret != -BCH_ERR_data_update_fail_no_rw_devs &&
-		   ret != -BCH_ERR_insufficient_devices) {
+	} else if (ret != -BCH_ERR_data_update_fail_no_rw_devs) {
 		if (trace_data_update_fail_enabled()) {
 			CLASS(printbuf, buf)();
 			bch2_data_update_to_text(&buf, u);
@@ -731,6 +730,10 @@ int bch2_can_do_write(struct bch_fs *c, struct data_update_opts *opts,
 		if (*i != BCH_SB_MEMBER_INVALID)
 			__clear_bit(*i, devs.d);
 
+	bool trace = trace_data_update_fail_enabled();
+	CLASS(printbuf, buf)();
+
+	guard(printbuf_atomic)(&buf);
 	guard(rcu)();
 
 	unsigned i;
@@ -742,11 +745,39 @@ int bch2_can_do_write(struct bch_fs *c, struct data_update_opts *opts,
 		struct bch_dev_usage usage;
 		bch2_dev_usage_read_fast(ca, &usage);
 
-		if (dev_buckets_free(ca, usage, watermark))
-			return 0;
+		u64 nr_free = dev_buckets_free(ca, usage, watermark);
+
+		if (trace)
+			prt_printf(&buf, "%s=%llu ", ca->name, nr_free);
+
+		if (!nr_free)
+			continue;
+
+		nr_replicas += ca->mi.durability;
+		if (nr_replicas >= m->op.nr_replicas)
+			break;
 	}
 
-	return bch_err_throw(c, data_update_fail_no_rw_devs);
+	if (!nr_replicas) {
+		/*
+		 * If it's a promote that's failing because the promote target
+		 * is full - we expect that in normal operation; it'll still
+		 * show up in io_read_nopromote and error_throw:
+		 */
+		if (opts->type != BCH_DATA_UPDATE_promote) {
+			if (trace) {
+				prt_printf(&buf, " - got replicas %u\n", nr_replicas);
+				bch2_data_update_to_text(&buf, m);
+				prt_printf(&buf, "\nret:\t%s\n", bch2_err_str(-BCH_ERR_data_update_fail_no_rw_devs));
+				trace_data_update_fail(c, buf.buf);
+			}
+			count_event(c, data_update_fail);
+		}
+
+		return bch_err_throw(c, data_update_fail_no_rw_devs);
+	}
+
+	return 0;
 }
 
 /*
