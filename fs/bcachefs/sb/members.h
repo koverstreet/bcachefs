@@ -410,4 +410,19 @@ void bch2_dev_btree_bitmap_mark(struct bch_fs *, struct bkey_s_c);
 int bch2_sb_member_alloc(struct bch_fs *);
 void bch2_sb_members_clean_deleted(struct bch_fs *);
 
+static inline void bch2_prt_member_name(struct printbuf *out, struct bch_fs *c, unsigned idx)
+{
+	if (idx == BCH_SB_MEMBER_INVALID) {
+		prt_str(out, "(none)");
+	} else {
+		guard(rcu)();
+		guard(printbuf_atomic)(out);
+		struct bch_dev *ca = c ? bch2_dev_rcu_noerror(c, idx) : NULL;
+		if (ca)
+			prt_str(out, ca->name);
+		else
+			prt_printf(out, "(invalid device %u)", idx);
+	}
+}
+
 #endif /* _BCACHEFS_SB_MEMBERS_H */
