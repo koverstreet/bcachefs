@@ -1306,7 +1306,8 @@ static int bch2_extent_set_rb_pending(struct btree_trans *trans,
 		bch2_bkey_reconcile_opts(trans->c, bkey_i_to_s_c(n));
 	BUG_ON(!r);
 
-	r->pending = true;
+	r->pending	= true;
+	r->hipri	= false;
 
 	return bch2_trans_commit(trans, NULL, NULL, 0);
 }
