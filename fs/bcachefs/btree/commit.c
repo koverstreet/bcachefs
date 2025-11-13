@@ -68,7 +68,15 @@ static void verify_update_old_key(struct btree_trans *trans, struct btree_insert
 	}
 
 	struct bkey_s_c old = { &i->old_k, i->old_v };
-	BUG_ON(!bkey_and_val_eq(k, old));
+	if (unlikely(!bkey_and_val_eq(k, old))) {
+		CLASS(printbuf, buf)();
+		prt_str(&buf, "updated cached old key doesn't match\n");
+		prt_str(&buf, "cached: ");
+		bch2_bkey_val_to_text(&buf, c, old);
+		prt_str(&buf, "real:   ");
+		bch2_bkey_val_to_text(&buf, c, k);
+		panic("%s\n", buf.buf);
+	}
 #endif
 }
 
