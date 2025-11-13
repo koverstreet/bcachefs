@@ -672,6 +672,8 @@ static void bkey_strip_reconcile(const struct bch_fs *c, struct bkey_s k)
 				break;
 			}
 	} while (dropped);
+
+	bch2_bkey_drop_ptrs(k, p, entry, p.ptr.dev == BCH_SB_MEMBER_INVALID);
 }
 
 static bool bkey_has_reconcile(const struct bch_fs *c, struct bkey_s_c k)
@@ -679,7 +681,9 @@ static bool bkey_has_reconcile(const struct bch_fs *c, struct bkey_s_c k)
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
 	bkey_extent_entry_for_each(ptrs, entry)
-		if (extent_entry_type(entry) == BCH_EXTENT_ENTRY_reconcile)
+		if (extent_entry_type(entry) == BCH_EXTENT_ENTRY_reconcile ||
+		    (extent_entry_type(entry) == BCH_EXTENT_ENTRY_ptr &&
+		     entry->ptr.dev == BCH_SB_MEMBER_INVALID))
 			return true;
 	return false;
 }
@@ -715,6 +719,17 @@ static int btree_update_nodes_written_trans(struct btree_trans *trans,
 
 		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &i->key,
 						  SET_NEEDS_REBALANCE_foreground, 0));
+
+		/*
+		 * This is not strictly the best way of doing this, what we
+		 * really want is a flag for 'did
+		 * bch2_bkey_set_needs_reconcile() change anything, and do we
+		 * need to update the node key'; there's no reason we couldn't
+		 * be calling bch2_bkey_set_needs_reconcile() at node allocation
+		 * time to better handle the case where we have to pad with
+		 * invalid pointers because we don't currently have devices
+		 * available to meet the desired replication level.
+		 */
 
 		if (bkey_has_reconcile(c, bkey_i_to_s_c(&i->key))) {
 			CLASS(btree_iter_uninit, iter)(trans);
