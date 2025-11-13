@@ -695,24 +695,45 @@ static int bch2_data_update_bios_init(struct data_update *m, struct bch_fs *c,
 	return 0;
 }
 
-static int can_write_extent(struct bch_fs *c, struct data_update *m)
+struct bch_devs_list bch2_data_update_devs_keeping(struct bch_fs *c,
+						   struct data_update_opts *opts,
+						   struct bkey_s_c k)
 {
-	if ((m->op.flags & BCH_WRITE_alloc_nowait) &&
-	    unlikely(c->open_buckets_nr_free <= bch2_open_buckets_reserved(m->op.watermark)))
+	struct bch_devs_list ret = (struct bch_devs_list) { 0 };
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	unsigned ptr_bit = 1;
+
+	bkey_for_each_ptr(ptrs, ptr) {
+		if (!(ptr_bit & (opts->ptrs_rewrite|
+				 opts->ptrs_kill)))
+			ret.data[ret.nr++] = ptr->dev;
+		ptr_bit <<= 1;
+	}
+
+	return ret;
+}
+
+int bch2_can_do_write(struct bch_fs *c, struct data_update_opts *opts,
+		      struct bch_devs_list *devs_have)
+{
+	enum bch_watermark watermark = opts->commit_flags & BCH_WATERMARK_MASK;
+
+	if ((opts->write_flags & BCH_WRITE_alloc_nowait) &&
+	    unlikely(c->open_buckets_nr_free <= bch2_open_buckets_reserved(watermark)))
 		return bch_err_throw(c, data_update_fail_would_block);
 
-	unsigned target = m->op.flags & BCH_WRITE_only_specified_devs
-		? m->op.target
+	unsigned target = opts->write_flags & BCH_WRITE_only_specified_devs
+		? opts->target
 		: 0;
 	struct bch_devs_mask devs = target_rw_devs(c, BCH_DATA_user, target);
 
-	darray_for_each(m->op.devs_have, i)
+	darray_for_each(*devs_have, i)
 		if (*i != BCH_SB_MEMBER_INVALID)
 			__clear_bit(*i, devs.d);
 
 	guard(rcu)();
 
-	unsigned nr_replicas = 0, i;
+	unsigned i;
 	for_each_set_bit(i, devs.d, BCH_SB_MEMBERS_MAX) {
 		struct bch_dev *ca = bch2_dev_rcu_noerror(c, i);
 		if (!ca)
@@ -721,19 +742,11 @@ static int can_write_extent(struct bch_fs *c, struct data_update *m)
 		struct bch_dev_usage usage;
 		bch2_dev_usage_read_fast(ca, &usage);
 
-		u64 nr_free = dev_buckets_free(ca, usage, m->op.watermark);
-		if (!nr_free)
-			continue;
-
-		nr_replicas += ca->mi.durability;
-		if (nr_replicas >= m->op.nr_replicas)
-			break;
+		if (dev_buckets_free(ca, usage, watermark))
+			return 0;
 	}
 
-	if (!nr_replicas)
-		return bch_err_throw(c, data_update_fail_no_rw_devs);
-
-	return 0;
+	return bch_err_throw(c, data_update_fail_no_rw_devs);
 }
 
 /*
@@ -847,15 +860,18 @@ int bch2_data_update_init(struct btree_trans *trans,
 		unsigned ptr_bit = 1;
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 			if (!p.ptr.cached) {
+				if (!(ptr_bit & (m->opts.ptrs_rewrite|
+						 m->opts.ptrs_kill))) {
+					bch2_dev_list_add_dev(&m->op.devs_have, p.ptr.dev);
+					durability_have += bch2_extent_ptr_durability(c, &p);
+				}
+
 				if (ptr_bit & m->opts.ptrs_rewrite) {
 					if (crc_is_compressed(p.crc))
 						reserve_sectors += k.k->size;
 
 					m->op.nr_replicas += bch2_extent_ptr_desired_durability(c, &p);
 					durability_removing += bch2_extent_ptr_desired_durability(c, &p);
-				} else if (!(ptr_bit & m->opts.ptrs_kill)) {
-					bch2_dev_list_add_dev(&m->op.devs_have, p.ptr.dev);
-					durability_have += bch2_extent_ptr_durability(c, &p);
 				}
 			} else {
 				if (m->opts.ptrs_rewrite & ptr_bit) {
@@ -937,7 +953,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 		 *   (i.e. trying to move a durability=2 replica to a target with a
 		 *   single durability=2 device)
 		 */
-		ret = can_write_extent(c, m);
+		ret = bch2_can_do_write(c, &m->opts, &m->op.devs_have);
 		if (ret)
 			goto out;
 
