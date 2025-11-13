@@ -251,11 +251,6 @@ static enum reconcile_work_id rb_work_id(const struct bch_extent_reconcile *r)
 	return RECONCILE_WORK_pending;
 }
 
-static enum btree_id rb_work_btree(const struct bch_extent_reconcile *r)
-{
-	return reconcile_work_btree[rb_work_id(r)];
-}
-
 static inline unsigned rb_accounting_counters(const struct bch_extent_reconcile *r)
 {
 	if (!r)
@@ -279,6 +274,12 @@ static u64 bch2_bkey_get_reconcile_bp(const struct bch_fs *c, struct bkey_s_c k)
 		if (extent_entry_type(entry) == BCH_EXTENT_ENTRY_reconcile_bp)
 			return entry->reconcile_bp.idx;
 	return 0;
+}
+
+static struct bpos bch2_bkey_get_reconcile_bp_pos(const struct bch_fs *c, struct bkey_s_c k)
+{
+	return POS(rb_work_id(bch2_bkey_reconcile_opts(c, k)),
+		   bch2_bkey_get_reconcile_bp(c, k));
 }
 
 static void bch2_bkey_set_reconcile_bp(const struct bch_fs *c, struct bkey_s k, u64 idx)
@@ -315,11 +316,11 @@ static inline struct bch_backpointer rb_bp(enum btree_id btree, unsigned level, 
 	};
 }
 
-static int reconcile_bp_del(struct btree_trans *trans, enum btree_id work_btree,
-			      enum btree_id btree, unsigned level, struct bkey_s_c k,
-			      u64 bp_idx)
+static int reconcile_bp_del(struct btree_trans *trans, enum reconcile_work_id work,
+			    enum btree_id btree, unsigned level, struct bkey_s_c k,
+			    u64 bp_idx)
 {
-	CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan, POS(1, bp_idx),
+	CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan, POS(work, bp_idx),
 				BTREE_ITER_intent|
 				BTREE_ITER_with_updates);
 	struct bkey_s_c bp_k = bkey_try(bch2_btree_iter_peek_slot(&iter));
@@ -340,13 +341,13 @@ static int reconcile_bp_del(struct btree_trans *trans, enum btree_id work_btree,
 	return bch2_btree_delete_at(trans, &iter, 0);
 }
 
-static int reconcile_bp_add(struct btree_trans *trans, enum btree_id work_btree,
+static int reconcile_bp_add(struct btree_trans *trans, enum reconcile_work_id work,
 			    enum btree_id btree, unsigned level, struct bkey_s k,
 			    u64 *bp_idx)
 {
 	CLASS(btree_iter_uninit, iter)(trans);
 	try(bch2_bkey_get_empty_slot(trans, &iter, BTREE_ID_reconcile_scan,
-				     POS(1, 1), POS(1, U64_MAX)));
+				     POS(work, 1), POS(work, U64_MAX)));
 
 	*bp_idx = iter.pos.offset;
 
@@ -390,7 +391,7 @@ static struct bkey_s_c reconcile_bp_get_key(struct btree_trans *trans,
 	 *
 	 * We may want to revisit this and change peek_slot():
 	 */
-	if (k.k && bch2_bkey_get_reconcile_bp(c, k) == bp.k->p.offset)
+	if (k.k && bpos_eq(bp.k->p, bch2_bkey_get_reconcile_bp_pos(c, k)))
 		return k;
 
 	/* walk down a level, check for btree_node_will_make_reachable(b)) */
@@ -405,7 +406,7 @@ static struct bkey_s_c reconcile_bp_get_key(struct btree_trans *trans,
 			return bkey_s_c_null;
 
 		k = bkey_i_to_s_c(&b->key);
-		if (bch2_bkey_get_reconcile_bp(c, k) == bp.k->p.offset)
+		if (bpos_eq(bp.k->p, bch2_bkey_get_reconcile_bp_pos(c, k)))
 			return k;
 	}
 
@@ -490,30 +491,30 @@ int __bch2_trigger_extent_reconcile(struct btree_trans *trans,
 				    const struct bch_extent_reconcile *new_r,
 				    enum btree_iter_update_trigger_flags flags)
 {
-	enum btree_id old_btree = rb_work_btree(old_r);
-	enum btree_id new_btree = rb_work_btree(new_r);
+	enum reconcile_work_id old_work = rb_work_id(old_r);
+	enum reconcile_work_id new_work = rb_work_id(new_r);
 
 	if (flags & BTREE_TRIGGER_transactional) {
 		if (!level) {
 			/* adjust reflink pos */
 			struct bpos pos = data_to_rb_work_pos(btree, new.k->p);
 
-			if (old_btree && old_btree != new_btree)
-				try(bch2_btree_bit_mod_buffered(trans, old_btree, pos, false));
+			if (old_work && old_work != new_work)
+				try(bch2_btree_bit_mod_buffered(trans, reconcile_work_btree[old_work], pos, false));
 
-			if (new_btree && old_btree != new_btree)
-				try(bch2_btree_bit_mod_buffered(trans, new_btree, pos, true));
+			if (new_work && old_work != new_work)
+				try(bch2_btree_bit_mod_buffered(trans, reconcile_work_btree[new_work], pos, true));
 		} else {
 			struct bch_fs *c = trans->c;
 			u64 bp_idx = bch2_bkey_get_reconcile_bp(c, old);
 
-			if (bp_idx && !new_btree) {
-				try(reconcile_bp_del(trans, old_btree, btree, level, old, bp_idx));
+			if (bp_idx && old_work != new_work) {
+				try(reconcile_bp_del(trans, old_work, btree, level, old, bp_idx));
 				bp_idx = 0;
 			}
 
-			if (!bp_idx && new_btree)
-				try(reconcile_bp_add(trans, old_btree, btree, level, new, &bp_idx));
+			if (!bp_idx && new_work)
+				try(reconcile_bp_add(trans, new_work, btree, level, new, &bp_idx));
 
 			bch2_bkey_set_reconcile_bp(c, new, bp_idx);
 		}
@@ -1417,8 +1418,7 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 	if (bch2_err_matches(ret, BCH_ERR_data_update_fail_no_rw_devs) ||
 	    bch2_err_matches(ret, BCH_ERR_insufficient_devices) ||
 	    bch2_err_matches(ret, ENOSPC)) {
-		if (rb_work_btree(bch2_bkey_reconcile_opts(c, k)) !=
-		    BTREE_ID_reconcile_pending)
+		if (rb_work_id(bch2_bkey_reconcile_opts(c, k)) != RECONCILE_WORK_pending)
 			try(bch2_trans_relock(trans) ?:
 			    bch2_extent_set_rb_pending(trans, iter, k));
 
@@ -1785,17 +1785,24 @@ static int do_reconcile(struct moving_context *ctxt)
 		    reconcile_scan_decode(c, k.k->p.offset).type == RECONCILE_SCAN_pending)
 			bkey_reassemble(&pending_cookie.k_i, k);
 
-		if (k.k->type == KEY_TYPE_cookie)
+		if (k.k->type == KEY_TYPE_cookie) {
 			ret = do_reconcile_scan(ctxt, &snapshot_io_opts,
 						k.k->p,
 						le64_to_cpu(bkey_s_c_to_cookie(k).v->cookie),
 						&sectors_scanned);
-		else if (k.k->type == KEY_TYPE_backpointer)
+		} else if (k.k->type == KEY_TYPE_backpointer) {
+			if (k.k->p.inode == RECONCILE_WORK_pending &&
+			    bkey_deleted(&pending_cookie.k)) {
+				r->work_pos = BBPOS(scan_btrees[++i], POS_MIN);
+				continue;
+			}
+
 			ret = do_reconcile_btree(ctxt, &snapshot_io_opts,
 						 bkey_s_c_to_backpointer(k));
-		else
+		} else {
 			ret = lockrestart_do(trans,
 				do_reconcile_extent(ctxt, &snapshot_io_opts, k.k->p));
+		}
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
 			ret = 0;
@@ -2075,7 +2082,7 @@ static int check_reconcile_work_one(struct btree_trans *trans,
 	if (bpos_ge(*cur_pos, data_to_rb_work_pos(data_iter->btree_id, SPOS_MAX)))
 		return 0;
 
-	enum btree_id btree_want_set = rb_work_btree(bch2_bkey_reconcile_opts(c, data_k));
+	enum btree_id btree_want_set = reconcile_work_btree[rb_work_id(bch2_bkey_reconcile_opts(c, data_k))];
 
 	u64 btrees_set =
 		(rb_w->k.type	? BIT_ULL(rb_w->btree_id) : 0)|
@@ -2157,12 +2164,11 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 	try(bch2_update_reconcile_opts(trans, NULL, &opts, iter, iter->min_depth, k,
 				       SET_NEEDS_REBALANCE_other));
 
-	enum btree_id rb_btree	= rb_work_btree(bch2_bkey_reconcile_opts(c, k));
-	u64 rb_idx		= bch2_bkey_get_reconcile_bp(c, k);
+	struct bpos bp_pos = bch2_bkey_get_reconcile_bp_pos(c, k);
 
 	CLASS(printbuf, buf)();
 
-	if (ret_fsck_err_on(rb_btree && !rb_idx,
+	if (ret_fsck_err_on(bp_pos.inode && !bp_pos.offset,
 			trans, btree_ptr_with_no_reconcile_bp,
 			"btree ptr with no reconcile \n%s",
 			(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
@@ -2170,12 +2176,13 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 
 		bkey_reassemble(n, k);
 
-		try(reconcile_bp_add(trans, rb_btree, iter->btree_id, iter->min_depth, bkey_i_to_s(n), &rb_idx));
-		bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), rb_idx);
+		try(reconcile_bp_add(trans, bp_pos.inode, iter->btree_id,
+				     iter->min_depth, bkey_i_to_s(n), &bp_pos.offset));
+		bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), bp_pos.offset);
 		return 0;
 	}
 
-	if (ret_fsck_err_on(!rb_btree && rb_idx,
+	if (ret_fsck_err_on(!bp_pos.inode && bp_pos.offset,
 			trans, btree_ptr_with_bad_reconcile_bp,
 			"btree ptr with bad reconcile \n%s",
 			(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
@@ -2185,12 +2192,11 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 		bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), 0);
 
 		try(bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node));
-		try(bch2_btree_delete(trans, BTREE_ID_reconcile_scan, POS(1, rb_idx), 0));
 		return 0;
 	}
 
-	if (rb_idx) {
-		CLASS(btree_iter, rb_iter)(trans, BTREE_ID_reconcile_scan, POS(1, rb_idx), BTREE_ITER_intent);
+	if (!bpos_eq(bp_pos, POS_MIN)) {
+		CLASS(btree_iter, rb_iter)(trans, BTREE_ID_reconcile_scan, bp_pos, BTREE_ITER_intent);
 		struct bkey_s_c bp_k = bkey_try(bch2_btree_iter_peek_slot(&rb_iter));
 
 		struct bch_backpointer bp = rb_bp(iter->btree_id, iter->min_depth, k);
