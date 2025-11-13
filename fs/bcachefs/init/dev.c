@@ -605,8 +605,8 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 		new_state == BCH_MEMBER_STATE_failed;
 
 	struct reconcile_scan s = new_state == BCH_MEMBER_STATE_rw
-		? (struct reconcile_scan) { .type = REBALANCE_SCAN_pending }
-		: (struct reconcile_scan) { .type = REBALANCE_SCAN_device, .dev = ca->dev_idx };
+		? (struct reconcile_scan) { .type = RECONCILE_SCAN_pending }
+		: (struct reconcile_scan) { .type = RECONCILE_SCAN_device, .dev = ca->dev_idx };
 
 	if (do_reconcile_scan)
 		try(bch2_set_reconcile_needs_scan(c, s, false));
@@ -811,7 +811,7 @@ int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 	if (ret)
 		goto err;
 
-	struct reconcile_scan s = { .type = REBALANCE_SCAN_pending };
+	struct reconcile_scan s = { .type = RECONCILE_SCAN_pending };
 	if (test_bit(BCH_FS_started, &c->flags)) {
 		/*
 		 * Technically incorrect, but 'bcachefs image update' is the
@@ -1012,7 +1012,7 @@ int bch2_dev_resize(struct bch_fs *c, struct bch_dev *ca, u64 nbuckets, struct p
 	}
 
 	bool wakeup_reconcile_pending = nbuckets > ca->mi.nbuckets;
-	struct reconcile_scan s = { .type = REBALANCE_SCAN_pending };
+	struct reconcile_scan s = { .type = RECONCILE_SCAN_pending };
 	if (wakeup_reconcile_pending)
 		try(bch2_set_reconcile_needs_scan(c, s, false));
 

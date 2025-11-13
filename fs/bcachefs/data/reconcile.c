@@ -1012,23 +1012,23 @@ static const char * const bch2_reconcile_state_strs[] = {
 #undef x
 };
 
-#define REBALANCE_SCAN_COOKIE_device	32
-#define REBALANCE_SCAN_COOKIE_pending	2
-#define REBALANCE_SCAN_COOKIE_metadata	1
-#define REBALANCE_SCAN_COOKIE_fs	0
+#define RECONCILE_SCAN_COOKIE_device	32
+#define RECONCILE_SCAN_COOKIE_pending	2
+#define RECONCILE_SCAN_COOKIE_metadata	1
+#define RECONCILE_SCAN_COOKIE_fs	0
 
 static u64 reconcile_scan_encode(struct reconcile_scan s)
 {
 	switch (s.type) {
-	case REBALANCE_SCAN_fs:
-		return REBALANCE_SCAN_COOKIE_fs;
-	case REBALANCE_SCAN_metadata:
-		return REBALANCE_SCAN_COOKIE_metadata;
-	case REBALANCE_SCAN_pending:
-		return REBALANCE_SCAN_COOKIE_pending;
-	case REBALANCE_SCAN_device:
-		return REBALANCE_SCAN_COOKIE_device + s.dev;
-	case REBALANCE_SCAN_inum:
+	case RECONCILE_SCAN_fs:
+		return RECONCILE_SCAN_COOKIE_fs;
+	case RECONCILE_SCAN_metadata:
+		return RECONCILE_SCAN_COOKIE_metadata;
+	case RECONCILE_SCAN_pending:
+		return RECONCILE_SCAN_COOKIE_pending;
+	case RECONCILE_SCAN_device:
+		return RECONCILE_SCAN_COOKIE_device + s.dev;
+	case RECONCILE_SCAN_inum:
 		return s.inum;
 	default:
 		BUG();
@@ -1038,21 +1038,21 @@ static u64 reconcile_scan_encode(struct reconcile_scan s)
 static struct reconcile_scan reconcile_scan_decode(struct bch_fs *c, u64 v)
 {
 	if (v >= BCACHEFS_ROOT_INO)
-		return (struct reconcile_scan) { .type = REBALANCE_SCAN_inum, .inum = v, };
-	if (v >= REBALANCE_SCAN_COOKIE_device)
+		return (struct reconcile_scan) { .type = RECONCILE_SCAN_inum, .inum = v, };
+	if (v >= RECONCILE_SCAN_COOKIE_device)
 		return (struct reconcile_scan) {
-			.type = REBALANCE_SCAN_device,
-			.dev =  v - REBALANCE_SCAN_COOKIE_device,
+			.type = RECONCILE_SCAN_device,
+			.dev =  v - RECONCILE_SCAN_COOKIE_device,
 		};
-	if (v == REBALANCE_SCAN_COOKIE_pending)
-		return (struct reconcile_scan) { .type = REBALANCE_SCAN_pending };
-	if (v == REBALANCE_SCAN_COOKIE_metadata)
-		return (struct reconcile_scan) { .type = REBALANCE_SCAN_metadata };
-	if (v == REBALANCE_SCAN_COOKIE_fs)
-		return (struct reconcile_scan) { .type = REBALANCE_SCAN_fs};
+	if (v == RECONCILE_SCAN_COOKIE_pending)
+		return (struct reconcile_scan) { .type = RECONCILE_SCAN_pending };
+	if (v == RECONCILE_SCAN_COOKIE_metadata)
+		return (struct reconcile_scan) { .type = RECONCILE_SCAN_metadata };
+	if (v == RECONCILE_SCAN_COOKIE_fs)
+		return (struct reconcile_scan) { .type = RECONCILE_SCAN_fs};
 
 	bch_err(c, "unknown realance scan cookie %llu", v);
-	return (struct reconcile_scan) { .type = REBALANCE_SCAN_fs};
+	return (struct reconcile_scan) { .type = RECONCILE_SCAN_fs};
 }
 
 int bch2_set_reconcile_needs_scan_trans(struct btree_trans *trans, struct reconcile_scan s)
@@ -1088,7 +1088,7 @@ int bch2_set_reconcile_needs_scan(struct bch_fs *c, struct reconcile_scan s, boo
 int bch2_set_fs_needs_reconcile(struct bch_fs *c)
 {
 	return bch2_set_reconcile_needs_scan(c,
-				(struct reconcile_scan) { .type = REBALANCE_SCAN_fs },
+				(struct reconcile_scan) { .type = RECONCILE_SCAN_fs },
 				true);
 }
 
@@ -1550,11 +1550,11 @@ static int do_reconcile_scan(struct moving_context *ctxt,
 	r->state = BCH_REBALANCE_scanning;
 
 	struct reconcile_scan s = reconcile_scan_decode(c, cookie_pos.offset);
-	if (s.type == REBALANCE_SCAN_fs) {
+	if (s.type == RECONCILE_SCAN_fs) {
 		try(do_reconcile_scan_fs(ctxt, snapshot_io_opts, false));
-	} else if (s.type == REBALANCE_SCAN_metadata) {
+	} else if (s.type == RECONCILE_SCAN_metadata) {
 		try(do_reconcile_scan_fs(ctxt, snapshot_io_opts, true));
-	} else if (s.type == REBALANCE_SCAN_device) {
+	} else if (s.type == RECONCILE_SCAN_device) {
 		r->scan_start	= BBPOS(BTREE_ID_backpointers, POS(s.dev, 0));
 		r->scan_end	= BBPOS(BTREE_ID_backpointers, POS(s.dev, U64_MAX));
 
@@ -1577,7 +1577,7 @@ static int do_reconcile_scan(struct moving_context *ctxt,
 			bch2_disk_reservation_put(c, &res.r);
 			do_reconcile_scan_bp(trans, bkey_s_c_to_backpointer(k), &last_flushed);
 		})));
-	} else if (s.type == REBALANCE_SCAN_inum) {
+	} else if (s.type == RECONCILE_SCAN_inum) {
 		r->scan_start	= BBPOS(BTREE_ID_extents, POS(s.inum, 0));
 		r->scan_end	= BBPOS(BTREE_ID_extents, POS(s.inum, U64_MAX));
 
@@ -1689,7 +1689,7 @@ static int do_reconcile(struct moving_context *ctxt)
 		}
 
 		if (k.k->type == KEY_TYPE_cookie &&
-		    reconcile_scan_decode(c, k.k->p.offset).type == REBALANCE_SCAN_pending)
+		    reconcile_scan_decode(c, k.k->p.offset).type == RECONCILE_SCAN_pending)
 			bkey_reassemble(&pending_cookie.k_i, k);
 
 		if (k.k->type == KEY_TYPE_cookie)

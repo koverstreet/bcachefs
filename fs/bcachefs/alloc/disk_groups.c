@@ -469,7 +469,7 @@ int __bch2_dev_group_set(struct bch_fs *c, struct bch_dev *ca, const char *name)
 
 int bch2_dev_group_set(struct bch_fs *c, struct bch_dev *ca, const char *name)
 {
-	struct reconcile_scan s = { .type = REBALANCE_SCAN_pending };
+	struct reconcile_scan s = { .type = RECONCILE_SCAN_pending };
 
 	try(bch2_set_reconcile_needs_scan(c, s, false));
 

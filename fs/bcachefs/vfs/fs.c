@@ -125,7 +125,7 @@ static int bch2_write_inode_trans(struct btree_trans *trans,
 	if (*reconcile_changed)
 		try(bch2_set_reconcile_needs_scan_trans(trans,
 				(struct reconcile_scan) {
-					.type = REBALANCE_SCAN_inum,
+					.type = RECONCILE_SCAN_inum,
 					.inum = inode_u.bi_inum }));
 
 	try(bch2_inode_write(trans, &iter, &inode_u));

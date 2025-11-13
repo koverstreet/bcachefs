@@ -116,11 +116,11 @@ int bch2_bkey_set_needs_reconcile(struct btree_trans *,
 
 struct reconcile_scan {
 	enum reconcile_scan_type {
-		REBALANCE_SCAN_fs,
-		REBALANCE_SCAN_metadata,
-		REBALANCE_SCAN_pending,
-		REBALANCE_SCAN_device,
-		REBALANCE_SCAN_inum,
+		RECONCILE_SCAN_fs,
+		RECONCILE_SCAN_metadata,
+		RECONCILE_SCAN_pending,
+		RECONCILE_SCAN_device,
+		RECONCILE_SCAN_inum,
 	}			type;
 
 	union {

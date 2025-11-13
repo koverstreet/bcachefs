@@ -547,7 +547,7 @@ static int opt_hook_io(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_
 	case Opt_data_replicas:
 	case Opt_erasure_code: {
 		struct reconcile_scan s = {
-			.type = !inum ? REBALANCE_SCAN_fs : REBALANCE_SCAN_inum,
+			.type = !inum ? RECONCILE_SCAN_fs : RECONCILE_SCAN_inum,
 			.inum = inum,
 		};
 
@@ -558,15 +558,15 @@ static int opt_hook_io(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_
 	case Opt_metadata_checksum:
 	case Opt_metadata_replicas:
 		try(bch2_set_reconcile_needs_scan(c,
-			(struct reconcile_scan) { .type = REBALANCE_SCAN_metadata, .dev = inum }, post));
+			(struct reconcile_scan) { .type = RECONCILE_SCAN_metadata, .dev = inum }, post));
 		break;
 	case Opt_durability:
 		if (!post && v > ca->mi.durability)
 			try(bch2_set_reconcile_needs_scan(c,
-				(struct reconcile_scan) { .type = REBALANCE_SCAN_pending}, post));
+				(struct reconcile_scan) { .type = RECONCILE_SCAN_pending}, post));
 
 		try(bch2_set_reconcile_needs_scan(c,
-			(struct reconcile_scan) { .type = REBALANCE_SCAN_device, .dev = inum }, post));
+			(struct reconcile_scan) { .type = RECONCILE_SCAN_device, .dev = inum }, post));
 		break;
 	default:
 		break;
