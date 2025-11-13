@@ -5,26 +5,16 @@
 #include "btree/bbpos_types.h"
 #include "move_types.h"
 
-#define BCH_REBALANCE_STATES()		\
-	x(waiting)			\
-	x(working)			\
-	x(scanning)
-
-enum bch_reconcile_states {
-#define x(t)	BCH_REBALANCE_##t,
-	BCH_REBALANCE_STATES()
-#undef x
-};
-
 struct bch_fs_reconcile {
 	struct task_struct __rcu	*thread;
 	u32				kick;
 
-	enum bch_reconcile_states	state;
+	bool				running;
 	u64				wait_iotime_start;
 	u64				wait_iotime_end;
 	u64				wait_wallclock_start;
 
+	struct bbpos			work_pos;
 	struct bch_move_stats		work_stats;
 
 	struct bbpos			scan_start;

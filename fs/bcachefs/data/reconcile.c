@@ -23,6 +23,7 @@
 #include "init/progress.h"
 
 #include "fs/inode.h"
+#include "fs/namei.h"
 
 #include "snapshots/subvolume.h"
 
@@ -51,9 +52,13 @@ static const char * const reconcile_opts[] = {
 	NULL
 };
 
-static const char * const bch2_reconcile_state_strs[] = {
-	BCH_REBALANCE_STATES()
+static const char * const reconcile_work_ids[] = {
+	RECONCILE_WORK_IDS()
 	NULL
+};
+
+static const char * const rebalance_scan_strs[] = {
+	RECONCILE_SCAN_TYPES()
 };
 
 #undef x
@@ -68,6 +73,20 @@ static const enum btree_id reconcile_work_btree[] = {
 	[RECONCILE_WORK_normal]		= BTREE_ID_reconcile_work,
 	[RECONCILE_WORK_pending]	= BTREE_ID_reconcile_pending,
 };
+
+static enum reconcile_work_id btree_to_reconcile_work_id(enum btree_id btree)
+{
+	switch (btree) {
+	case BTREE_ID_reconcile_hipri:
+		return RECONCILE_WORK_hipri;
+	case BTREE_ID_reconcile_work:
+		return RECONCILE_WORK_normal;
+	case BTREE_ID_reconcile_pending:
+		return RECONCILE_WORK_pending;
+	default:
+		BUG();
+	}
+}
 
 /* bch_extent_reconcile: */
 
@@ -1076,6 +1095,24 @@ static struct reconcile_scan reconcile_scan_decode(struct bch_fs *c, u64 v)
 	return (struct reconcile_scan) { .type = RECONCILE_SCAN_fs};
 }
 
+static void reconcile_scan_to_text(struct printbuf *out,
+				   struct bch_fs *c, struct reconcile_scan s)
+{
+	prt_str(out, rebalance_scan_strs[s.type]);
+	switch (s.type) {
+	case RECONCILE_SCAN_device:
+		prt_str(out, ": ");
+		bch2_prt_member_name(out, c, s.dev);
+		break;
+	case RECONCILE_SCAN_inum:
+		prt_str(out, ": ");
+		bch2_trans_do(c, bch2_inum_snapshot_to_path(trans, s.inum, 0, NULL, out));
+		break;
+	default:
+		break;
+	}
+}
+
 int bch2_set_reconcile_needs_scan_trans(struct btree_trans *trans, struct reconcile_scan s)
 {
 	CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan,
@@ -1342,7 +1379,6 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 	u32 restart_count = trans->restart_count;
 
 	ctxt->stats = &c->reconcile.work_stats;
-	c->reconcile.state = BCH_REBALANCE_working;
 
 	int ret = bch2_move_extent(ctxt, NULL, snapshot_io_opts,
 				   reconcile_set_data_opts, NULL,
@@ -1377,11 +1413,13 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 
 static int do_reconcile_extent(struct moving_context *ctxt,
 			       struct per_snapshot_io_opts *snapshot_io_opts,
-			       struct bbpos pos)
+			       struct bpos work_pos)
 {
+	struct bbpos data_pos = rb_work_to_data_pos(work_pos);
+
 	struct btree_trans *trans = ctxt->trans;
 
-	CLASS(btree_iter, iter)(trans, pos.btree, pos.pos, BTREE_ITER_all_snapshots);
+	CLASS(btree_iter, iter)(trans, data_pos.btree, data_pos.pos, BTREE_ITER_all_snapshots);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	return __do_reconcile_extent(ctxt, snapshot_io_opts, &iter, k);
@@ -1568,8 +1606,6 @@ static int do_reconcile_scan(struct moving_context *ctxt,
 	bch2_move_stats_init(&r->scan_stats, "reconcile_scan");
 	ctxt->stats = &r->scan_stats;
 
-	r->state = BCH_REBALANCE_scanning;
-
 	struct reconcile_scan s = reconcile_scan_decode(c, cookie_pos.offset);
 	if (s.type == RECONCILE_SCAN_fs) {
 		try(do_reconcile_scan_fs(ctxt, snapshot_io_opts, false));
@@ -1632,10 +1668,10 @@ static void reconcile_wait(struct bch_fs *c)
 
 	r->wait_iotime_end		= now + (min_member_capacity >> 6);
 
-	if (r->state != BCH_REBALANCE_waiting) {
+	if (r->running) {
 		r->wait_iotime_start	= now;
 		r->wait_wallclock_start	= ktime_get_real_ns();
-		r->state		= BCH_REBALANCE_waiting;
+		r->running		= false;
 	}
 
 	bch2_kthread_io_clock_wait_once(clock, r->wait_iotime_end, MAX_SCHEDULE_TIMEOUT);
@@ -1671,7 +1707,8 @@ static int do_reconcile(struct moving_context *ctxt)
 		BTREE_ID_reconcile_pending,
 	};
 	unsigned i = 0;
-	struct bpos work_pos = POS_MIN;
+
+	r->work_pos = BBPOS(scan_btrees[i], POS_MIN);
 
 	struct bkey_i_cookie pending_cookie;
 	bkey_init(&pending_cookie.k);
@@ -1688,13 +1725,13 @@ static int do_reconcile(struct moving_context *ctxt)
 		if (kick != r->kick) {
 			kick		= r->kick;
 			i		= 0;
-			work_pos	= POS_MIN;
+			r->work_pos	= BBPOS(scan_btrees[i], POS_MIN);
 			work.nr		= 0;
 		}
 
 		bch2_trans_begin(trans);
 
-		struct bkey_s_c k = next_reconcile_entry(trans, &work, scan_btrees[i], &work_pos);
+		struct bkey_s_c k = next_reconcile_entry(trans, &work, r->work_pos.btree, &r->work_pos.pos);
 		ret = bkey_err(k);
 		if (ret)
 			break;
@@ -1703,13 +1740,16 @@ static int do_reconcile(struct moving_context *ctxt)
 			if (++i == ARRAY_SIZE(scan_btrees))
 				break;
 
-			work_pos = POS_MIN;
+			r->work_pos = BBPOS(scan_btrees[i], POS_MIN);
 
-			if (scan_btrees[i] == BTREE_ID_reconcile_pending &&
+			if (r->work_pos.btree == BTREE_ID_reconcile_pending &&
 			    bkey_deleted(&pending_cookie.k))
 				break;
 			continue;
 		}
+
+		r->running = true;
+		r->work_pos.pos = k.k->p;
 
 		if (k.k->type == KEY_TYPE_cookie &&
 		    reconcile_scan_decode(c, k.k->p.offset).type == RECONCILE_SCAN_pending)
@@ -1725,8 +1765,7 @@ static int do_reconcile(struct moving_context *ctxt)
 						 bkey_s_c_to_backpointer(k));
 		else
 			ret = lockrestart_do(trans,
-				do_reconcile_extent(ctxt, &snapshot_io_opts,
-						    rb_work_to_data_pos(k.k->p)));
+				do_reconcile_extent(ctxt, &snapshot_io_opts, k.k->p));
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
 			ret = 0;
@@ -1736,8 +1775,8 @@ static int do_reconcile(struct moving_context *ctxt)
 		if (ret)
 			break;
 
-		if (scan_btrees[i] == BTREE_ID_reconcile_scan)
-			work_pos = bpos_successor(work_pos);
+		if (r->work_pos.btree == BTREE_ID_reconcile_scan)
+			r->work_pos.pos = bpos_successor(r->work_pos.pos);
 	}
 
 	if (!ret && !bkey_deleted(&pending_cookie.k))
@@ -1806,13 +1845,10 @@ void bch2_reconcile_status_to_text(struct printbuf *out, struct bch_fs *c)
 	}
 
 	prt_newline(out);
+	guard(printbuf_indent_nextline)(out);
 
-	prt_str(out, bch2_reconcile_state_strs[r->state]);
-	prt_newline(out);
-	guard(printbuf_indent)(out);
-
-	switch (r->state) {
-	case BCH_REBALANCE_waiting: {
+	if (!r->running) {
+		prt_printf(out, "waiting:\n");
 		u64 now = atomic64_read(&c->io_clock[WRITE].now);
 
 		prt_printf(out, "io wait duration:\t");
@@ -1826,16 +1862,28 @@ void bch2_reconcile_status_to_text(struct printbuf *out, struct bch_fs *c)
 		prt_printf(out, "duration waited:\t");
 		bch2_pr_time_units(out, ktime_get_real_ns() - r->wait_wallclock_start);
 		prt_newline(out);
-		break;
+	} else {
+		struct bbpos work_pos = r->work_pos;
+		barrier();
+
+		if (work_pos.btree	== BTREE_ID_reconcile_scan &&
+		    work_pos.pos.inode	== 0) {
+			prt_printf(out, "scanning:\n");
+			reconcile_scan_to_text(out, c,
+				reconcile_scan_decode(c, work_pos.pos.offset));
+		} else if (work_pos.btree == BTREE_ID_reconcile_scan) {
+			prt_printf(out, "processing metadata: %s %llu\n",
+				   reconcile_work_ids[work_pos.pos.inode - 1],
+				   work_pos.pos.offset);
+
+		} else {
+			prt_printf(out, "processing data: %s ",
+				   reconcile_work_ids[btree_to_reconcile_work_id(work_pos.btree)]);
+
+			bch2_bbpos_to_text(out, rb_work_to_data_pos(work_pos.pos));
+			prt_newline(out);
+		}
 	}
-	case BCH_REBALANCE_working:
-		bch2_move_stats_to_text(out, &r->work_stats);
-		break;
-	case BCH_REBALANCE_scanning:
-		bch2_move_stats_to_text(out, &r->scan_stats);
-		break;
-	}
-	prt_newline(out);
 
 	struct task_struct *t;
 	scoped_guard(rcu) {
