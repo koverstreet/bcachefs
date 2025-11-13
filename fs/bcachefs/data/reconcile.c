@@ -278,17 +278,14 @@ static int reconcile_bp_del(struct btree_trans *trans, enum btree_id work_btree,
 	struct bch_backpointer bp = rb_bp(btree, level, k);
 
 	if (bp_k.k->type != KEY_TYPE_backpointer || memcmp(bp_k.v, &bp, sizeof(bp))) {
-		int ret = 0;
-
 		CLASS(printbuf, buf)();
 		prt_printf(&buf, "btree ptr points to bad/missing reconcile bp\n");
 		bch2_bkey_val_to_text(&buf, trans->c, k);
 		prt_newline(&buf);
 		bch2_bkey_val_to_text(&buf, trans->c, bp_k);
 
-		fsck_err(trans, btree_ptr_to_bad_reconcile_bp, "%s", buf.buf);
-fsck_err:
-		return ret;
+		ret_fsck_err(trans, btree_ptr_to_bad_reconcile_bp, "%s", buf.buf);
+		return 0;
 	}
 
 	return bch2_btree_delete_at(trans, &iter, 0);
@@ -317,6 +314,12 @@ static struct bkey_s_c reconcile_bp_get_key(struct btree_trans *trans,
 	int ret = 0;
 	CLASS(printbuf, buf)();
 
+	/*
+	 * we're still using fsck_err() here, which does a goto, which has
+	 * problems with CLASS()
+	 */
+	CLASS(btree_iter_uninit, iter2)(trans);
+
 	/* don't allow bps to non btree nodes: */
 	if (fsck_err_on(!bp.v->level,
 			trans, reconcile_bp_to_leaf_node_key,
@@ -343,7 +346,7 @@ static struct bkey_s_c reconcile_bp_get_key(struct btree_trans *trans,
 
 	/* walk down a level, check for btree_node_will_make_reachable(b)) */
 
-	CLASS(btree_node_iter, iter2)(trans, bp.v->btree_id, bp.v->pos, 0, bp.v->level - 1, 0);
+	bch2_trans_node_iter_init(trans, &iter2, bp.v->btree_id, bp.v->pos, 0, bp.v->level - 1, 0);
 	struct btree *b = bch2_btree_iter_peek_node(&iter2);
 	if (IS_ERR(b))
 		return bkey_s_c_err(PTR_ERR(b));
@@ -2050,7 +2053,6 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 					  struct btree_iter *iter, struct bkey_s_c k)
 {
 	struct bch_fs *c = trans->c;
-	int ret = 0;
 
 	struct bch_inode_opts opts;
 	try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
@@ -2062,7 +2064,7 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 
 	CLASS(printbuf, buf)();
 
-	if (fsck_err_on(rb_btree && !rb_idx,
+	if (ret_fsck_err_on(rb_btree && !rb_idx,
 			trans, btree_ptr_with_no_reconcile_bp,
 			"btree ptr with no reconcile \n%s",
 			(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
@@ -2075,7 +2077,7 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 		return 0;
 	}
 
-	if (fsck_err_on(!rb_btree && rb_idx,
+	if (ret_fsck_err_on(!rb_btree && rb_idx,
 			trans, btree_ptr_with_bad_reconcile_bp,
 			"btree ptr with bad reconcile \n%s",
 			(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
@@ -2102,7 +2104,7 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 			prt_newline(&buf);
 			bch2_bkey_val_to_text(&buf, trans->c, bp_k);
 
-			fsck_err(trans, btree_ptr_to_bad_reconcile_bp, "%s", buf.buf);
+			ret_fsck_err(trans, btree_ptr_to_bad_reconcile_bp, "%s", buf.buf);
 
 			if (bp_k.k->type != KEY_TYPE_backpointer) {
 				struct bkey_i_backpointer *new_bp = errptr_try(bch2_bkey_alloc(trans, &rb_iter, 0, backpointer));
@@ -2119,8 +2121,8 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 			}
 		}
 	}
-fsck_err:
-	return ret;
+
+	return 0;
 }
 
 static int check_reconcile_work_btrees(struct btree_trans *trans)
