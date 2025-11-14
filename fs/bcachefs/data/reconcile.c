@@ -1674,6 +1674,8 @@ static int do_reconcile(struct moving_context *ctxt)
 			work.nr		= 0;
 		}
 
+		bch2_trans_begin(trans);
+
 		struct bkey_s_c k = next_reconcile_entry(trans, &work, scan_btrees[i], &work_pos);
 		ret = bkey_err(k);
 		if (ret)
