@@ -114,13 +114,18 @@ int bch2_bkey_set_needs_reconcile(struct btree_trans *,
 				  struct per_snapshot_io_opts *, struct bch_inode_opts *,
 				  struct bkey_i *, enum set_needs_reconcile_ctx, u32);
 
+#define RECONCILE_SCAN_TYPES()		\
+	x(fs)				\
+	x(metadata)			\
+	x(pending)			\
+	x(device)			\
+	x(inum)
+
 struct reconcile_scan {
 	enum reconcile_scan_type {
-		RECONCILE_SCAN_fs,
-		RECONCILE_SCAN_metadata,
-		RECONCILE_SCAN_pending,
-		RECONCILE_SCAN_device,
-		RECONCILE_SCAN_inum,
+#define x(t)	RECONCILE_SCAN_##t,
+		RECONCILE_SCAN_TYPES()
+#undef x
 	}			type;
 
 	union {

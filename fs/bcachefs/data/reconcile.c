@@ -32,6 +32,43 @@
 #include <linux/kthread.h>
 #include <linux/sched/cputime.h>
 
+#define RECONCILE_WORK_IDS()			\
+	x(none)					\
+	x(hipri)				\
+	x(normal)				\
+	x(pending)
+
+enum reconcile_work_id {
+#define x(t)	RECONCILE_WORK_##t,
+	RECONCILE_WORK_IDS()
+#undef x
+};
+
+#define x(n) #n,
+
+static const char * const reconcile_opts[] = {
+	BCH_REBALANCE_OPTS()
+	NULL
+};
+
+static const char * const bch2_reconcile_state_strs[] = {
+	BCH_REBALANCE_STATES()
+	NULL
+};
+
+#undef x
+
+#define RECONCILE_SCAN_COOKIE_device	32
+#define RECONCILE_SCAN_COOKIE_pending	2
+#define RECONCILE_SCAN_COOKIE_metadata	1
+#define RECONCILE_SCAN_COOKIE_fs	0
+
+static const enum btree_id reconcile_work_btree[] = {
+	[RECONCILE_WORK_hipri]		= BTREE_ID_reconcile_hipri,
+	[RECONCILE_WORK_normal]		= BTREE_ID_reconcile_work,
+	[RECONCILE_WORK_pending]	= BTREE_ID_reconcile_pending,
+};
+
 /* bch_extent_reconcile: */
 
 int bch2_extent_reconcile_validate(struct bch_fs *c,
@@ -77,13 +114,6 @@ const struct bch_extent_reconcile *bch2_bkey_reconcile_opts(const struct bch_fs 
 {
 	return bch2_bkey_ptrs_reconcile_opts(c, bch2_bkey_ptrs_c(k));
 }
-
-static const char * const reconcile_opts[] = {
-#define x(n) #n,
-	BCH_REBALANCE_OPTS()
-#undef x
-	NULL
-};
 
 void bch2_extent_rebalance_v1_to_text(struct printbuf *out, struct bch_fs *c,
 				      const struct bch_extent_rebalance_v1 *r)
@@ -191,20 +221,20 @@ void bch2_extent_reconcile_to_text(struct printbuf *out, struct bch_fs *c,
 	}
 }
 
-/*
- * XXX: check in bkey_validate that if r->hipri or r->pending are set,
- * r->data_replicas are also set
- */
+static enum reconcile_work_id rb_work_id(const struct bch_extent_reconcile *r)
+{
+	if (!r || !r->need_rb)
+		return RECONCILE_WORK_none;
+	if (r->hipri)
+		return RECONCILE_WORK_hipri;
+	if (!r->pending)
+		return RECONCILE_WORK_normal;
+	return RECONCILE_WORK_pending;
+}
 
 static enum btree_id rb_work_btree(const struct bch_extent_reconcile *r)
 {
-	if (!r || !r->need_rb)
-		return 0;
-	if (r->hipri)
-		return BTREE_ID_reconcile_hipri;
-	if (r->pending)
-		return BTREE_ID_reconcile_pending;
-	return BTREE_ID_reconcile_work;
+	return reconcile_work_btree[rb_work_id(r)];
 }
 
 static inline unsigned rb_accounting_counters(const struct bch_extent_reconcile *r)
@@ -1007,18 +1037,6 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 
 	return 0;
 }
-
-static const char * const bch2_reconcile_state_strs[] = {
-#define x(t) #t,
-	BCH_REBALANCE_STATES()
-	NULL
-#undef x
-};
-
-#define RECONCILE_SCAN_COOKIE_device	32
-#define RECONCILE_SCAN_COOKIE_pending	2
-#define RECONCILE_SCAN_COOKIE_metadata	1
-#define RECONCILE_SCAN_COOKIE_fs	0
 
 static u64 reconcile_scan_encode(struct reconcile_scan s)
 {
