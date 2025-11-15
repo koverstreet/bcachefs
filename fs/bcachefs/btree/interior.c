@@ -321,16 +321,13 @@ static bool can_use_btree_node(struct bch_fs *c,
 
 static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 					     struct disk_reservation *res,
-					     struct closure *cl,
 					     bool interior_node,
-					     unsigned target,
-					     enum bch_trans_commit_flags flags)
+					     struct alloc_request *req,
+					     struct closure *cl)
 {
 	struct bch_fs *c = trans->c;
 	struct write_point *wp;
 	struct btree *b;
-	struct bch_devs_list devs_have = (struct bch_devs_list) { 0 };
-	enum bch_watermark watermark = flags & BCH_WATERMARK_MASK;
 	int ret;
 
 	b = bch2_btree_node_mem_alloc(trans, interior_node);
@@ -339,18 +336,10 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 
 	BUG_ON(b->ob.nr);
 retry:
-	ret = bch2_alloc_sectors_start_trans(trans,
-				      target ?:
-				      c->opts.metadata_target ?:
-				      c->opts.foreground_target,
-				      0,
+	ret = bch2_alloc_sectors_req(trans, req,
 				      writepoint_ptr(&c->btree_write_point),
-				      &devs_have,
-				      res->nr_replicas,
 				      min(res->nr_replicas,
 					  c->opts.metadata_replicas_required),
-				      watermark,
-				      target ? BCH_WRITE_only_specified_devs : 0,
 				      cl, &wp);
 	if (unlikely(ret))
 		goto err;
@@ -373,7 +362,9 @@ retry:
 
 		/* check if it has sufficient durability */
 
-		if (can_use_btree_node(c, res, target, bkey_i_to_s_c(&a->k))) {
+		if (can_use_btree_node(c, res,
+				       req->flags & BCH_WRITE_only_specified_devs ? req->target : 0,
+				       bkey_i_to_s_c(&a->k))) {
 			bkey_copy(&b->key, &a->k);
 			b->ob = a->ob;
 			mutex_unlock(&c->btree_reserve_cache_lock);
@@ -546,8 +537,7 @@ static void bch2_btree_reserve_put(struct btree_update *as, struct btree_trans *
 static int bch2_btree_reserve_get(struct btree_trans *trans,
 				  struct btree_update *as,
 				  unsigned nr_nodes[2],
-				  unsigned target,
-				  unsigned flags,
+				  struct alloc_request *req,
 				  struct closure *cl)
 {
 	BUG_ON(nr_nodes[0] + nr_nodes[1] > BTREE_RESERVE_MAX);
@@ -564,7 +554,7 @@ static int bch2_btree_reserve_get(struct btree_trans *trans,
 
 		while (p->nr < nr_nodes[interior]) {
 			struct btree *b = __bch2_btree_node_alloc(trans, &as->disk_res,
-							cl, interior, target, flags);
+								  interior, req, cl);
 			ret = PTR_ERR_OR_ZERO(b);
 			if (ret)
 				goto err;
@@ -1314,7 +1304,23 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 	if (ret)
 		goto err;
 
-	ret = bch2_btree_reserve_get(trans, as, nr_nodes, target, flags, NULL);
+	/* XXX: pass in BCH_WRITE_only_specified_devs explicitly */
+
+	struct bch_devs_list devs_have = (struct bch_devs_list) { 0 };
+	struct alloc_request *req = alloc_request_get(trans,
+				      target ?:
+				      c->opts.metadata_target ?:
+				      c->opts.foreground_target,
+				      false,
+				      &devs_have,
+				      as->disk_res.nr_replicas,
+				      watermark,
+				      target ? BCH_WRITE_only_specified_devs : 0);
+	ret = PTR_ERR_OR_ZERO(req);
+	if (ret)
+		goto err;
+
+	ret = bch2_btree_reserve_get(trans, as, nr_nodes, req, NULL);
 	if (bch2_err_matches(ret, ENOSPC) ||
 	    bch2_err_matches(ret, ENOMEM)) {
 		/*
@@ -1331,7 +1337,7 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 		CLASS(closure_stack, cl)();
 
 		do {
-			ret = bch2_btree_reserve_get(trans, as, nr_nodes, target, flags, &cl);
+			ret = bch2_btree_reserve_get(trans, as, nr_nodes, req, &cl);
 			if (!bch2_err_matches(ret, BCH_ERR_operation_blocked))
 				break;
 			bch2_trans_unlock(trans);
