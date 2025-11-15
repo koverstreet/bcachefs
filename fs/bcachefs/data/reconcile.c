@@ -1713,6 +1713,8 @@ static int do_reconcile(struct moving_context *ctxt)
 	struct bkey_i_cookie pending_cookie;
 	bkey_init(&pending_cookie.k);
 
+	bch2_btree_write_buffer_flush_sync(trans);
+
 	while (!bch2_move_ratelimit(ctxt)) {
 		if (!bch2_reconcile_enabled(c)) {
 			bch2_moving_ctxt_flush_all(ctxt);
