@@ -704,7 +704,10 @@ static int btree_update_nodes_written_trans(struct btree_trans *trans,
 	}
 
 	darray_for_each(as->new_nodes, i) {
-		i->update_node_key = false;
+		if (i->update_node_key) {
+			bch2_path_put(trans, i->path, true);
+			i->update_node_key = false;
+		}
 		bkey_strip_reconcile(c, bkey_i_to_s(&i->key));
 
 		try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &i->key,
@@ -726,9 +729,11 @@ static int btree_update_nodes_written_trans(struct btree_trans *trans,
 			int ret = bch2_btree_node_get_iter(trans, &iter, i->b);
 			if (ret && ret != -BCH_ERR_btree_node_dying)
 				return ret;
-			if (!ret)
+			if (!ret) {
 				i->update_node_key = true;
-			else
+				i->path = iter.path;
+				__btree_path_get(trans, btree_iter_path(trans, &iter), true);
+			} else
 				bkey_strip_reconcile(c, bkey_i_to_s(&i->key));
 		}
 
@@ -847,8 +852,13 @@ static void btree_update_nodes_written(struct btree_update *as)
 		 * btree_node_update_key():
 		 */
 		darray_for_each(as->new_nodes, i) {
-			if (i->update_node_key)
+			if (i->update_node_key) {
+				struct btree_path *path = trans->paths + i->path;
+				bch2_btree_node_lock_write_nofail(trans, path, &i->b->c);
 				bkey_copy(&i->b->key, &i->key);
+				bch2_btree_node_unlock_write(trans, path, i->b);
+				bch2_path_put(trans, i->path, true);
+			}
 
 			if (i->b) {
 				BUG_ON(i->b->will_make_reachable != (unsigned long) as);

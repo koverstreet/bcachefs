@@ -25,9 +25,10 @@ enum btree_update_mode {
 
 struct btree_update_node {
 	struct btree			*b;
-	unsigned			level;
-	bool				root;
-	bool				update_node_key;
+	u8				level;
+	bool				root:1;
+	bool				update_node_key:1;
+	btree_path_idx_t		path;
 	__le64				seq;
 	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
 };
