@@ -1262,7 +1262,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 	return c;
 }
 
-static bool bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
+static int bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
 {
 	unsigned flags = 0;
 
