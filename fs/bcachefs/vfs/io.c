@@ -101,12 +101,8 @@ void bch2_inode_flush_nocow_writes_async(struct bch_fs *c,
 static int bch2_inode_flush_nocow_writes(struct bch_fs *c,
 					 struct bch_inode_info *inode)
 {
-	struct closure cl;
-
-	closure_init_stack(&cl);
+	CLASS(closure_stack, cl)();
 	bch2_inode_flush_nocow_writes_async(c, inode, &cl);
-	closure_sync(&cl);
-
 	return 0;
 }
 

@@ -270,10 +270,9 @@ err:
 static int read_btree_nodes(struct find_btree_nodes *f)
 {
 	struct bch_fs *c = container_of(f, struct bch_fs, found_btree_nodes);
-	struct closure cl;
 	int ret = 0;
 
-	closure_init_stack(&cl);
+	CLASS(closure_stack, cl)();
 	CLASS(printbuf, buf)();
 
 	prt_printf(&buf, "scanning for btree nodes on");

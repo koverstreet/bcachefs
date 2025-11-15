@@ -1057,9 +1057,7 @@ retry_all:
 	trans_set_locked(trans, false);
 
 	if (unlikely(trans->memory_allocation_failure)) {
-		struct closure cl;
-
-		closure_init_stack(&cl);
+		CLASS(closure_stack, cl)();
 
 		do {
 			ret = bch2_btree_cache_cannibalize_lock(trans, &cl);

@@ -1165,11 +1165,10 @@ static int __bch2_btree_root_read(struct btree_trans *trans, enum btree_id id,
 				  const struct bkey_i *k, unsigned level)
 {
 	struct bch_fs *c = trans->c;
-	struct closure cl;
 	struct btree *b;
 	int ret;
 
-	closure_init_stack(&cl);
+	CLASS(closure_stack, cl)();
 
 	do {
 		ret = bch2_btree_cache_cannibalize_lock(trans, &cl);

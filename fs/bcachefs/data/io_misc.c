@@ -48,8 +48,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 	struct bkey_buf new __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&new);
 
-	struct closure cl;
-	closure_init_stack(&cl);
+	CLASS(closure_stack, cl)();
 
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(iter));
 

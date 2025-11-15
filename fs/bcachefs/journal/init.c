@@ -155,8 +155,7 @@ static int bch2_set_nr_journal_buckets_loop(struct bch_fs *c, struct bch_dev *ca
 	struct journal_device *ja = &ca->journal;
 	int ret = 0;
 
-	struct closure cl;
-	closure_init_stack(&cl);
+	CLASS(closure_stack, cl)();
 
 	/* don't handle reducing nr of buckets yet: */
 	if (nr < ja->nr)

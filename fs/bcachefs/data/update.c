@@ -470,11 +470,10 @@ int bch2_update_unwritten_extent(struct btree_trans *trans,
 	struct bch_fs *c = update->op.c;
 	struct bkey_i_extent *e;
 	struct write_point *wp;
-	struct closure cl;
 	struct bkey_s_c k;
 	int ret = 0;
 
-	closure_init_stack(&cl);
+	CLASS(closure_stack, cl)();
 	bch2_keylist_init(&update->op.insert_keys, update->op.inline_keys);
 
 	while (bpos_lt(update->op.pos, update->k.k->k.p)) {

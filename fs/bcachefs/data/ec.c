@@ -826,8 +826,7 @@ int bch2_ec_read_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 	if (ret)
 		return stripe_reconstruct_err(c, orig_k, "-ENOMEM");
 
-	struct closure cl;
-	closure_init_stack(&cl);
+	CLASS(closure_stack, cl)();
 
 	for (unsigned i = 0; i < v->nr_blocks; i++)
 		ec_block_io(c, buf, REQ_OP_READ, i, &cl);

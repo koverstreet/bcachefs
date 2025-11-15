@@ -1317,8 +1317,6 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 	ret = bch2_btree_reserve_get(trans, as, nr_nodes, target, flags, NULL);
 	if (bch2_err_matches(ret, ENOSPC) ||
 	    bch2_err_matches(ret, ENOMEM)) {
-		struct closure cl;
-
 		/*
 		 * XXX: this should probably be a separate BTREE_INSERT_NONBLOCK
 		 * flag
@@ -1330,7 +1328,7 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 			goto err;
 		}
 
-		closure_init_stack(&cl);
+		CLASS(closure_stack, cl)();
 
 		do {
 			ret = bch2_btree_reserve_get(trans, as, nr_nodes, target, flags, &cl);
@@ -2580,11 +2578,10 @@ void bch2_btree_set_root_for_read(struct bch_fs *c, struct btree *b)
 int bch2_btree_root_alloc_fake_trans(struct btree_trans *trans, enum btree_id id, unsigned level)
 {
 	struct bch_fs *c = trans->c;
-	struct closure cl;
 	struct btree *b;
 	int ret;
 
-	closure_init_stack(&cl);
+	CLASS(closure_stack, cl)();
 
 	do {
 		ret = bch2_btree_cache_cannibalize_lock(trans, &cl);

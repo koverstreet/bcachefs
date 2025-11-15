@@ -711,8 +711,7 @@ int bch2_writepages(struct address_space *mapping, struct writeback_control *wbc
 
 	blk_start_plug(&w->plug);
 
-	struct closure cl;
-	closure_init_stack(&cl);
+	CLASS(closure_stack, cl)();
 
 	struct folio *folio = NULL;
 	int ret = 0;
