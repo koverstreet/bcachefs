@@ -67,6 +67,8 @@ static void verify_update_old_key(struct btree_trans *trans, struct btree_insert
 			k = bkey_i_to_s_c(j_k);
 	}
 
+	/* when updating btree ptrs, mem_ptr may change underneath us, unlocked */
+
 	struct bkey_s_c old = { &i->old_k, i->old_v };
 	if (unlikely(!bkey_and_val_eq(k, old))) {
 		CLASS(printbuf, buf)();

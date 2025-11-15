@@ -205,12 +205,21 @@ static __always_inline bool bversion_eq(struct bversion l, struct bversion r)
 
 static inline bool bkey_and_val_eq(struct bkey_s_c l, struct bkey_s_c r)
 {
-	return  l.k->u64s == r.k->u64s &&
-		l.k->type == r.k->type &&
-		bpos_eq(l.k->p, r.k->p) &&
-		bversion_eq(l.k->bversion, r.k->bversion) &&
-		l.k->size == r.k->size &&
-		!memcmp(l.v, r.v, bkey_val_bytes(l.k));
+	if (!(l.k->u64s == r.k->u64s &&
+	      l.k->type == r.k->type &&
+	      bpos_eq(l.k->p, r.k->p) &&
+	      bversion_eq(l.k->bversion, r.k->bversion) &&
+	      l.k->size == r.k->size))
+		return false;
+
+	if (l.k->type != KEY_TYPE_btree_ptr_v2) {
+		return !memcmp(l.v, r.v, bkey_val_bytes(l.k));
+	} else {
+		/* don't compare bch_btree_ptr_v2.mem_ptr */
+		return !memcmp((void *) l.v + 8,
+			       (void *) r.v + 8,
+			       bkey_val_bytes(l.k) - 8);
+	}
 }
 
 #define ZERO_VERSION	((struct bversion) { .hi = 0, .lo = 0 })
