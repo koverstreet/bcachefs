@@ -379,26 +379,17 @@ static struct bkey_s_c reconcile_bp_get_key(struct btree_trans *trans,
 	}
 
 	bch2_trans_node_iter_init(trans, iter, bp.v->btree_id, bp.v->pos, 0, bp.v->level, 0);
-	struct bkey_s_c k = bch2_btree_iter_peek_slot(iter);
-	if (bkey_err(k))
-		return k;
 
-	/*
-	 * peek_slot() doesn't normally return NULL - except when we ask for a
-	 * key at a btree level that doesn't exist.
-	 *
-	 * We may want to revisit this and change peek_slot():
-	 */
-	if (k.k && bpos_eq(bp.k->p, bch2_bkey_get_reconcile_bp_pos(c, k)))
-		return k;
-
-	/* walk down a level, check for btree_node_will_make_reachable(b)) */
+	/* walk down a level - we need to have the node pointed to locked, not
+	 * the parent node, for synchronization with btree_node_update_key when
+	 * the node isn't yet written */
 
 	bch2_trans_node_iter_init(trans, &iter2, bp.v->btree_id, bp.v->pos, 0, bp.v->level - 1, 0);
 	struct btree *b = bch2_btree_iter_peek_node(&iter2);
 	if (IS_ERR(b))
 		return bkey_s_c_err(PTR_ERR(b));
 
+	struct bkey_s_c k = bkey_s_c_null;
 	if (b) {
 		if (btree_node_will_make_reachable(b))
 			return bkey_s_c_null;
