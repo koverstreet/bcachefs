@@ -2469,6 +2469,11 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 					bool skip_triggers)
 {
 	struct bch_fs *c = trans->c;
+	unsigned level = b->c.level;
+
+	struct btree_path *path = btree_iter_path(trans, iter);
+	BUG_ON(path->l[b->c.level].b != b);
+	BUG_ON(!btree_node_intent_locked(path, b->c.level));
 
 	if (!btree_node_will_make_reachable(b)) {
 		if (!btree_node_is_root(c, b)) {
@@ -2510,6 +2515,17 @@ static int __bch2_btree_node_update_key(struct btree_trans *trans,
 
 		CLASS(disk_reservation, res)(c);
 		try(bch2_trans_commit(trans, &res.r, NULL, commit_flags));
+
+		struct btree *new_b = btree_iter_path(trans, iter)->l[level].b;
+		if (new_b != b) {
+			/*
+			 * We were asked to update the key for a node that was
+			 * also modified during the commit (due to triggers),
+			 * and that node was freed:
+			 */
+			BUG_ON(!btree_node_will_make_reachable(new_b));
+			return 0;
+		}
 
 		bch2_btree_node_lock_write_nofail(trans, btree_iter_path(trans, iter), &b->c);
 		bkey_copy(&b->key, new_key);
