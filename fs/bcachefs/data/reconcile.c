@@ -1388,7 +1388,8 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 	if (bch2_err_matches(ret, EROFS))
 		return ret;
 	if (bch2_err_matches(ret, BCH_ERR_data_update_fail_no_rw_devs) ||
-	    bch2_err_matches(ret, BCH_ERR_insufficient_devices)) {
+	    bch2_err_matches(ret, BCH_ERR_insufficient_devices) ||
+	    bch2_err_matches(ret, ENOSPC)) {
 		if (rb_work_btree(bch2_bkey_reconcile_opts(c, k)) !=
 		    BTREE_ID_reconcile_pending)
 			try(bch2_trans_relock(trans) ?:
@@ -1397,8 +1398,7 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 		return 0;
 	}
 	if (ret) {
-		WARN_ONCE(ret != -BCH_ERR_data_update_fail_no_snapshot &&
-			  ret != -BCH_ERR_data_update_fail_no_rw_devs,
+		WARN_ONCE(ret != -BCH_ERR_data_update_fail_no_snapshot,
 			  "unhandled error from move_extent: %s", bch2_err_str(ret));
 		/* skip it and continue */
 	}
