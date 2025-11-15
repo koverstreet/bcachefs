@@ -1355,20 +1355,46 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 	return 1;
 }
 
-static int bch2_extent_set_rb_pending(struct btree_trans *trans,
-				      struct btree_iter *iter,
-				      struct bkey_s_c k)
+static void bkey_set_rb_pending(struct bch_fs *c, struct bkey_i *k)
 {
-	struct bkey_i *n = errptr_try(bch2_bkey_make_mut(trans, iter, &k, 0));
-
 	struct bch_extent_reconcile *r = (struct bch_extent_reconcile *)
-		bch2_bkey_reconcile_opts(trans->c, bkey_i_to_s_c(n));
+		bch2_bkey_reconcile_opts(c, bkey_i_to_s_c(k));
 	BUG_ON(!r);
 
 	r->pending	= true;
 	r->hipri	= false;
+}
 
-	return bch2_trans_commit(trans, NULL, NULL, 0);
+static int bch2_extent_set_rb_pending(struct btree_trans *trans,
+				      struct btree_iter *iter,
+				      struct bkey_s_c k)
+{
+	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k)));
+	bkey_reassemble(n, k);
+
+	if (!iter->min_depth) {
+		bkey_set_rb_pending(trans->c, n);
+
+		return  bch2_trans_update(trans, iter, n, 0) ?:
+			bch2_trans_commit(trans, NULL, NULL,
+					  BCH_TRANS_COMMIT_no_enospc);
+	} else {
+		CLASS(btree_node_iter, iter2)(trans, iter->btree_id, k.k->p, 0, iter->min_depth - 1, 0);
+		struct btree *b = errptr_try(bch2_btree_iter_peek_node(&iter2));
+
+		if (!bkey_and_val_eq(bkey_i_to_s_c(&b->key), bkey_i_to_s_c(n))) {
+			CLASS(printbuf, buf)();
+			prt_newline(&buf);
+			bch2_bkey_val_to_text(&buf, trans->c, bkey_i_to_s_c(&b->key));
+			prt_newline(&buf);
+			bch2_bkey_val_to_text(&buf, trans->c, k);
+			panic("\n%s\n", buf.buf);
+		}
+
+		bkey_set_rb_pending(trans->c, n);
+
+		return bch2_btree_node_update_key(trans, &iter2, b, n, BCH_TRANS_COMMIT_no_enospc, false);
+	}
 }
 
 static int __do_reconcile_extent(struct moving_context *ctxt,
