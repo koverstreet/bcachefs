@@ -341,7 +341,8 @@ int bch2_move_extent(struct moving_context *ctxt,
 	if (!bkey_is_btree_ptr(k.k))
 		ret = __bch2_move_extent(ctxt, bucket_in_flight, iter, k, opts, data_opts);
 	else if (data_opts.type != BCH_DATA_UPDATE_scrub)
-		ret = bch2_btree_node_rewrite_pos(trans, iter->btree_id, level, k.k->p, data_opts.target, 0);
+		ret = bch2_btree_node_rewrite_pos(trans, iter->btree_id, level, k.k->p,
+						  data_opts.target, 0, data_opts.write_flags);
 	else
 		ret = bch2_btree_node_scrub(trans, iter->btree_id, level, k, data_opts.read_dev);
 

@@ -5,6 +5,7 @@
 #include "btree/cache.h"
 #include "btree/locking.h"
 #include "btree/update.h"
+#include "data/write_types.h"
 
 #define BTREE_UPDATE_NODES_MAX		((BTREE_MAX_DEPTH - 2) * 2 + GC_MERGE_NODES)
 
@@ -167,9 +168,6 @@ static inline int bch2_foreground_maybe_merge(struct btree_trans *trans,
 
 int bch2_btree_node_get_iter(struct btree_trans *, struct btree_iter *, struct btree *);
 
-int bch2_btree_node_rewrite(struct btree_trans *, struct btree_iter *,
-			    struct btree *, unsigned,
-			    enum bch_trans_commit_flags);
 int bch2_btree_node_rewrite_key(struct btree_trans *,
 				enum btree_id, unsigned,
 				struct bkey_i *,
@@ -177,10 +175,8 @@ int bch2_btree_node_rewrite_key(struct btree_trans *,
 int bch2_btree_node_rewrite_pos(struct btree_trans *,
 				enum btree_id, unsigned,
 				struct bpos, unsigned,
-				enum bch_trans_commit_flags);
-int bch2_btree_node_rewrite_key_get_iter(struct btree_trans *,
-					 struct btree *,
-					 enum bch_trans_commit_flags);
+				enum bch_trans_commit_flags,
+				enum bch_write_flags);
 
 void bch2_btree_node_rewrite_async(struct bch_fs *, struct btree *);
 
