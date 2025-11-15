@@ -524,16 +524,17 @@ int __bch2_trigger_extent_reconcile(struct btree_trans *trans,
 	unsigned delta = old.k->size == new.k->size
 		? old_a ^ new_a
 		: old_a | new_a;
+	bool metadata = level != 0;
 
 	while (delta) {
 		unsigned c = __ffs(delta);
 		delta ^= BIT(c);
 
-		s64 v[1] = { 0 };
+		s64 v[2] = { 0, 0 };
 		if (old_a & BIT(c))
-			v[0] -= (s64) old.k->size;
+			v[metadata] -= (s64) old.k->size;
 		if (new_a & BIT(c))
-			v[0] += (s64) new.k->size;
+			v[metadata] += (s64) new.k->size;
 
 		try(bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc, v, reconcile_work, c));
 	}
