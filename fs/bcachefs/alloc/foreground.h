@@ -5,6 +5,7 @@
 #include "bcachefs.h"
 #include "alloc/buckets.h"
 #include "alloc/types.h"
+#include "btree/iter.h"
 #include "data/extents.h"
 #include "data/write_types.h"
 #include "sb/members.h"
@@ -221,15 +222,51 @@ enum bch_write_flags;
 int bch2_bucket_alloc_set_trans(struct btree_trans *, struct alloc_request *,
 				struct dev_stripe_state *, struct closure *);
 
-int bch2_alloc_sectors_start_trans(struct btree_trans *,
-				   unsigned, unsigned,
-				   struct write_point_specifier,
-				   struct bch_devs_list *,
-				   unsigned, unsigned,
-				   enum bch_watermark,
-				   enum bch_write_flags,
-				   struct closure *,
-				   struct write_point **);
+int bch2_alloc_sectors_req(struct btree_trans *, struct alloc_request *,
+			   struct write_point_specifier, unsigned,
+			   struct closure *, struct write_point **);
+
+static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
+						      unsigned target,
+						      unsigned erasure_code,
+						      struct bch_devs_list *devs_have,
+						      unsigned nr_replicas,
+						      enum bch_watermark watermark,
+						      enum bch_write_flags flags)
+{
+	struct alloc_request *req = bch2_trans_kmalloc_nomemzero(trans, sizeof(*req));
+	if (IS_ERR(req))
+		return req;
+
+	if (!IS_ENABLED(CONFIG_BCACHEFS_ERASURE_CODING))
+		erasure_code = false;
+
+	req->nr_replicas	= nr_replicas;
+	req->target		= target;
+	req->ec			= erasure_code;
+	req->watermark		= watermark;
+	req->flags		= flags;
+	req->devs_have		= devs_have;
+	return req;
+}
+
+static inline int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
+			     unsigned target,
+			     unsigned erasure_code,
+			     struct write_point_specifier write_point,
+			     struct bch_devs_list *devs_have,
+			     unsigned nr_replicas,
+			     unsigned nr_replicas_required,
+			     enum bch_watermark watermark,
+			     enum bch_write_flags flags,
+			     struct closure *cl,
+			     struct write_point **wp_ret)
+{
+	struct alloc_request *req = errptr_try(alloc_request_get(trans, target, erasure_code,
+								 devs_have, nr_replicas,
+								 watermark, flags));
+	return bch2_alloc_sectors_req(trans, req, write_point, nr_replicas_required, cl, wp_ret);
+}
 
 static inline struct bch_extent_ptr bch2_ob_ptr(struct bch_fs *c, struct open_bucket *ob)
 {

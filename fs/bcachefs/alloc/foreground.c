@@ -1196,36 +1196,19 @@ deallocate_extra_replicas(struct bch_fs *c,
 /*
  * Get us an open_bucket we can allocate from, return with it locked:
  */
-int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
-			     unsigned target,
-			     unsigned erasure_code,
-			     struct write_point_specifier write_point,
-			     struct bch_devs_list *devs_have,
-			     unsigned nr_replicas,
-			     unsigned nr_replicas_required,
-			     enum bch_watermark watermark,
-			     enum bch_write_flags flags,
-			     struct closure *cl,
-			     struct write_point **wp_ret)
+int bch2_alloc_sectors_req(struct btree_trans *trans,
+			   struct alloc_request *req,
+			   struct write_point_specifier write_point,
+			   unsigned nr_replicas_required,
+			   struct closure *cl,
+			   struct write_point **wp_ret)
 {
 	struct bch_fs *c = trans->c;
 	struct open_bucket *ob;
 	unsigned write_points_nr;
 	int i;
 
-	struct alloc_request *req = errptr_try(bch2_trans_kmalloc_nomemzero(trans, sizeof(*req)));
-
-	if (!IS_ENABLED(CONFIG_BCACHEFS_ERASURE_CODING))
-		erasure_code = false;
-
-	req->nr_replicas	= nr_replicas;
-	req->target		= target;
-	req->ec			= erasure_code;
-	req->watermark		= watermark;
-	req->flags		= flags;
-	req->devs_have		= devs_have;
-
-	BUG_ON(!nr_replicas || !nr_replicas_required);
+	BUG_ON(!req->nr_replicas || !nr_replicas_required);
 retry:
 	req->ptrs.nr		= 0;
 	req->nr_effective	= 0;
@@ -1244,7 +1227,7 @@ retry:
 	if (req->data_type != BCH_DATA_user)
 		req->have_cache = true;
 
-	if (target && !(flags & BCH_WRITE_only_specified_devs)) {
+	if (req->target && !(req->flags & BCH_WRITE_only_specified_devs)) {
 		ret = open_bucket_add_buckets(trans, req, NULL);
 		if (!ret ||
 		    bch2_err_matches(ret, BCH_ERR_transaction_restart))
@@ -1275,7 +1258,7 @@ retry:
 alloc_done:
 	BUG_ON(!ret && req->nr_effective < req->nr_replicas);
 
-	if (erasure_code && !ec_open_bucket(c, &req->ptrs))
+	if (req->ec && !ec_open_bucket(c, &req->ptrs))
 		pr_debug("failed to get ec bucket: ret %u", ret);
 
 	if (ret == -BCH_ERR_insufficient_devices &&
@@ -1341,7 +1324,7 @@ err:
 	if (cl && bch2_err_matches(ret, BCH_ERR_open_buckets_empty))
 		ret = bch_err_throw(c, bucket_alloc_blocked);
 
-	if (cl && !(flags & BCH_WRITE_alloc_nowait) &&
+	if (cl && !(req->flags & BCH_WRITE_alloc_nowait) &&
 	    bch2_err_matches(ret, BCH_ERR_freelist_empty))
 		ret = bch_err_throw(c, bucket_alloc_blocked);
 
