@@ -72,6 +72,12 @@ static const char * const disk_accounting_type_strs[] = {
 	NULL
 };
 
+static const unsigned bch2_accounting_type_nr_counters[] = {
+#define x(f, id, nr)	[BCH_DISK_ACCOUNTING_##f]	= nr,
+	BCH_DISK_ACCOUNTING_TYPES()
+#undef x
+};
+
 static inline void __accounting_key_init(struct bkey_i *k, struct bpos pos,
 					 s64 *d, unsigned nr)
 {
@@ -96,6 +102,9 @@ int bch2_disk_accounting_mod(struct btree_trans *trans,
 			     s64 *d, unsigned nr, bool gc)
 {
 	BUG_ON(nr > BCH_ACCOUNTING_MAX_COUNTERS);
+
+	BUG_ON(k->type >= BCH_DISK_ACCOUNTING_TYPE_NR);
+	EBUG_ON(nr != bch2_accounting_type_nr_counters[k->type]);
 
 	/* Normalize: */
 	switch (k->type) {
@@ -170,12 +179,6 @@ static inline bool is_zero(char *start, char *end)
 }
 
 #define field_end(p, member)	(((void *) (&p.member)) + sizeof(p.member))
-
-static const unsigned bch2_accounting_type_nr_counters[] = {
-#define x(f, id, nr)	[BCH_DISK_ACCOUNTING_##f]	= nr,
-	BCH_DISK_ACCOUNTING_TYPES()
-#undef x
-};
 
 int bch2_accounting_validate(struct bch_fs *c, struct bkey_s_c k,
 			     struct bkey_validate_context from)
