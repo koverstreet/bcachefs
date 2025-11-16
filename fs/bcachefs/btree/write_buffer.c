@@ -188,14 +188,16 @@ static inline int wb_flush_one(struct btree_trans *trans, struct btree_iter *ite
 		return 0;
 	}
 
-	if (!*write_locked) {
-		try(bch2_btree_node_lock_write(trans, path, &path->l[0].b->c));
+	struct btree *b = path->l[0].b;
 
-		bch2_btree_node_prep_for_write(trans, path, path->l[0].b);
+	if (!*write_locked) {
+		try(bch2_btree_node_lock_write(trans, path, &b->c));
+
+		bch2_btree_node_prep_for_write(trans, path, b);
 		*write_locked = true;
 	}
 
-	if (unlikely(!bch2_btree_node_insert_fits(path->l[0].b, wb->k.k.u64s))) {
+	if (unlikely(!bch2_btree_node_insert_fits(b, wb->k.k.u64s))) {
 		*write_locked = false;
 		return wb_flush_one_slowpath(trans, iter, wb);
 	}
@@ -204,6 +206,21 @@ static inline int wb_flush_one(struct btree_trans *trans, struct btree_iter *ite
 
 	bch2_btree_insert_key_leaf(trans, path, &wb->k, wb->journal_seq);
 	(*fast)++;
+
+	if (unlikely(btree_node_needs_merge(trans, b, 0))) {
+		*write_locked = false;
+		bch2_btree_node_unlock_write(trans, path, b);
+
+		lockrestart_do(trans,
+			bch2_btree_iter_traverse(iter) ?:
+			bch2_foreground_maybe_merge(trans, iter->path, 0,
+						    BCH_WATERMARK_reclaim|
+						    BCH_TRANS_COMMIT_journal_reclaim|
+						    BCH_TRANS_COMMIT_no_check_rw|
+						    BCH_TRANS_COMMIT_no_enospc,
+						    0, NULL));
+	}
+
 	return 0;
 }
 
@@ -381,17 +398,6 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 			    bpos_gt(k->k.k.p, path->l[0].b->key.k.p)) {
 				bch2_btree_node_unlock_write(trans, path, path->l[0].b);
 				write_locked = false;
-
-				ret = lockrestart_do(trans,
-					bch2_btree_iter_traverse(&iter) ?:
-					bch2_foreground_maybe_merge(trans, iter.path, 0,
-							BCH_WATERMARK_reclaim|
-							BCH_TRANS_COMMIT_journal_reclaim|
-							BCH_TRANS_COMMIT_no_check_rw|
-							BCH_TRANS_COMMIT_no_enospc,
-							0, NULL));
-				if (ret)
-					goto err;
 			}
 		}
 
