@@ -1105,13 +1105,6 @@ DEFINE_EVENT(transaction_restart_iter,	trans_restart_relock_next_node,
 	TP_ARGS(trans, caller_ip, path)
 );
 
-DEFINE_EVENT(transaction_restart_iter,	trans_restart_relock_parent_for_fill,
-	TP_PROTO(struct btree_trans *trans,
-		 unsigned long caller_ip,
-		 struct btree_path *path),
-	TP_ARGS(trans, caller_ip, path)
-);
-
 DEFINE_EVENT(transaction_restart_iter,	trans_restart_relock_key_cache_fill,
 	TP_PROTO(struct btree_trans *trans,
 		 unsigned long caller_ip,

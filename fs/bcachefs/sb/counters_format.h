@@ -89,7 +89,7 @@ enum counters_flags {
 	x(trans_restart_relock_after_fill,		58,	TYPE_COUNTER)	\
 	x(trans_restart_relock_key_cache_fill,		59,	TYPE_COUNTER)	\
 	x(trans_restart_relock_next_node,		60,	TYPE_COUNTER)	\
-	x(trans_restart_relock_parent_for_fill,		61,	TYPE_COUNTER)	\
+	x(trans_restart_relock_parent_for_fill_obsolete,61,	TYPE_COUNTER)	\
 	x(trans_restart_relock_path,			62,	TYPE_COUNTER)	\
 	x(trans_restart_relock_path_intent,		63,	TYPE_COUNTER)	\
 	x(trans_restart_too_many_iters,			64,	TYPE_COUNTER)	\

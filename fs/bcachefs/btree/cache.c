@@ -899,6 +899,8 @@ static noinline struct btree *bch2_btree_node_fill(struct btree_trans *trans,
 	struct btree_cache *bc = &c->btree_cache;
 	struct btree *b;
 
+	EBUG_ON(path && level + 1 != path->level);
+
 	if (unlikely(level >= BTREE_MAX_DEPTH)) {
 		int ret = bch2_fs_topology_error(c, "attempting to get btree node at level %u, >= max depth %u",
 						 level, BTREE_MAX_DEPTH);
@@ -925,9 +927,10 @@ static noinline struct btree *bch2_btree_node_fill(struct btree_trans *trans,
 	 * Parent node must be locked, else we could read in a btree node that's
 	 * been freed:
 	 */
-	if (path && !bch2_btree_node_relock(trans, path, level + 1)) {
-		trace_and_count(c, trans_restart_relock_parent_for_fill, trans, _THIS_IP_, path);
-		return ERR_PTR(btree_trans_restart(trans, BCH_ERR_transaction_restart_fill_relock));
+	if (path) {
+		int ret = bch2_btree_path_relock(trans, path, _THIS_IP_);
+		if (ret)
+			return ERR_PTR(ret);
 	}
 
 	b = bch2_btree_node_mem_alloc(trans, level != 0);
@@ -972,7 +975,8 @@ static noinline struct btree *bch2_btree_node_fill(struct btree_trans *trans,
 
 		bch2_btree_node_read(trans, b, sync);
 
-		int ret = bch2_trans_relock(trans);
+		int ret = bch2_trans_relock(trans) ?:
+			  bch2_btree_path_relock(trans, path, _THIS_IP_);
 		if (ret)
 			return ERR_PTR(ret);
 
@@ -1032,7 +1036,6 @@ static struct btree *__bch2_btree_node_get(struct btree_trans *trans, struct btr
 	struct bch_fs *c = trans->c;
 	struct btree_cache *bc = &c->btree_cache;
 	struct btree *b;
-	bool need_relock = false;
 	int ret;
 
 	EBUG_ON(level >= BTREE_MAX_DEPTH);
@@ -1046,7 +1049,6 @@ retry:
 		 */
 		b = bch2_btree_node_fill(trans, path, k, path->btree_id,
 					 level, lock_type, true);
-		need_relock = true;
 
 		/* We raced and found the btree node in the cache */
 		if (!b)
@@ -1085,11 +1087,11 @@ retry:
 
 		six_unlock_type(&b->c.lock, lock_type);
 		bch2_trans_unlock(trans);
-		need_relock = true;
 
 		bch2_btree_node_wait_on_read(b);
 
-		ret = bch2_trans_relock(trans);
+		ret =   bch2_trans_relock(trans) ?:
+			bch2_btree_path_relock(trans, path, _THIS_IP_);
 		if (ret)
 			return ERR_PTR(ret);
 
@@ -1099,15 +1101,6 @@ retry:
 		 */
 		if (!six_relock_type(&b->c.lock, lock_type, seq))
 			goto retry;
-	}
-
-	if (unlikely(need_relock)) {
-		ret = bch2_trans_relock(trans) ?:
-			bch2_btree_path_relock_intent(trans, path);
-		if (ret) {
-			six_unlock_type(&b->c.lock, lock_type);
-			return ERR_PTR(ret);
-		}
 	}
 
 	prefetch(b->aux_data);
@@ -1158,6 +1151,7 @@ struct btree *bch2_btree_node_get(struct btree_trans *trans, struct btree_path *
 	int ret;
 
 	EBUG_ON(level >= BTREE_MAX_DEPTH);
+	EBUG_ON(level + 1 != path->level);
 
 	b = btree_node_mem_ptr(k);
 
