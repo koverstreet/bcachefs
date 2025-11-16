@@ -2106,7 +2106,7 @@ static int check_reconcile_work_data_btree(struct btree_trans *trans,
 	while (true) {
 		bch2_disk_reservation_put(c, &res.r);
 
-		try(progress_update_iter(trans, progress, &data_iter));
+		try(bch2_progress_update_iter(trans, progress, &data_iter, "check_reconcile_work"));
 		try(commit_do(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc,
 			      check_reconcile_work_one(trans, &data_iter, rb_w, rb_h, rb_p,
 						       snapshot_io_opts, last_flushed, &cur_pos)));
