@@ -266,7 +266,7 @@ static struct recovery_pass_fn recovery_pass_fns[] = {
 #undef x
 };
 
-static u64 bch2_recovery_passes_match(unsigned flags)
+u64 bch2_recovery_passes_match(unsigned flags)
 {
 	u64 ret = 0;
 
@@ -515,16 +515,12 @@ static int bch2_run_recovery_pass(struct bch_fs *c, enum bch_recovery_pass pass)
 	return 0;
 }
 
-static int __bch2_run_recovery_passes(struct bch_fs *c, u64 orig_passes_to_run,
-				      bool online)
+int bch2_run_recovery_passes(struct bch_fs *c, u64 orig_passes_to_run, bool failfast)
 {
 	struct bch_fs_recovery *r = &c->recovery;
 	int ret = 0;
 
 	spin_lock_irq(&r->lock);
-
-	if (online)
-		orig_passes_to_run &= bch2_recovery_passes_match(PASS_ONLINE);
 
 	if (c->sb.features & BIT_ULL(BCH_FEATURE_no_alloc_info))
 		orig_passes_to_run &= ~bch2_recovery_passes_match(PASS_ALLOC);
@@ -565,7 +561,7 @@ static int __bch2_run_recovery_passes(struct bch_fs *c, u64 orig_passes_to_run,
 			ret = ret2;
 		}
 
-		if (ret && !online)
+		if (ret && failfast)
 			break;
 
 		if (prev_done <= BCH_RECOVERY_PASS_check_snapshots &&
@@ -586,20 +582,17 @@ static void bch2_async_recovery_passes_work(struct work_struct *work)
 	struct bch_fs *c = container_of(work, struct bch_fs, recovery.work);
 	struct bch_fs_recovery *r = &c->recovery;
 
-	__bch2_run_recovery_passes(c,
-		c->sb.recovery_passes_required & ~r->passes_ratelimiting,
-		true);
+	bch2_run_recovery_passes(c,
+		c->sb.recovery_passes_required &
+		~r->passes_ratelimiting &
+		bch2_recovery_passes_match(PASS_ONLINE),
+		false);
 
 	up(&r->run_lock);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_async_recovery_passes);
 }
 
-int bch2_run_online_recovery_passes(struct bch_fs *c, u64 passes)
-{
-	return __bch2_run_recovery_passes(c, c->sb.recovery_passes_required|passes, true);
-}
-
-int bch2_run_recovery_passes(struct bch_fs *c, enum bch_recovery_pass from)
+int bch2_run_recovery_passes_startup(struct bch_fs *c, enum bch_recovery_pass from)
 {
 	u64 passes =
 		bch2_recovery_passes_match(PASS_ALWAYS) |
@@ -621,7 +614,7 @@ int bch2_run_recovery_passes(struct bch_fs *c, enum bch_recovery_pass from)
 	passes &= ~(BIT_ULL(from) - 1);
 
 	down(&c->recovery.run_lock);
-	int ret = __bch2_run_recovery_passes(c, passes, false);
+	int ret = bch2_run_recovery_passes(c, passes, true);
 	up(&c->recovery.run_lock);
 
 	return ret;

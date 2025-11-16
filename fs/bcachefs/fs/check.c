@@ -1999,7 +1999,10 @@ static int bch2_fsck_online_thread_fn(struct thread_with_stdio *stdio)
 	c->opts.fsck = true;
 	set_bit(BCH_FS_in_fsck, &c->flags);
 
-	int ret = bch2_run_online_recovery_passes(c, ~0ULL);
+	int ret = bch2_run_recovery_passes(c,
+		bch2_recovery_passes_match(PASS_FSCK) &
+		bch2_recovery_passes_match(PASS_ONLINE),
+		true);
 
 	clear_bit(BCH_FS_in_fsck, &c->flags);
 	bch_err_fn(c, ret);

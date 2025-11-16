@@ -59,8 +59,9 @@ int bch2_run_explicit_recovery_pass(struct bch_fs *, struct printbuf *,
 int bch2_require_recovery_pass(struct bch_fs *, struct printbuf *,
 			       enum bch_recovery_pass);
 
-int bch2_run_online_recovery_passes(struct bch_fs *, u64);
-int bch2_run_recovery_passes(struct bch_fs *, enum bch_recovery_pass);
+u64 bch2_recovery_passes_match(unsigned);
+int bch2_run_recovery_passes(struct bch_fs *, u64, bool);
+int bch2_run_recovery_passes_startup(struct bch_fs *, enum bch_recovery_pass);
 
 void bch2_recovery_pass_status_to_text(struct printbuf *, struct bch_fs *);
 

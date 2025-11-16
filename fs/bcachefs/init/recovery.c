@@ -769,7 +769,7 @@ use_clean:
 
 	try(bch2_sb_set_upgrade_extra(c));
 
-	try(bch2_run_recovery_passes(c, 0));
+	try(bch2_run_recovery_passes_startup(c, 0));
 
 	/*
 	 * Normally set by the appropriate recovery pass: when cleared, this
@@ -806,7 +806,7 @@ use_clean:
 		clear_bit(BCH_FS_errors_fixed, &c->flags);
 		clear_bit(BCH_FS_errors_fixed_silent, &c->flags);
 
-		try(bch2_run_recovery_passes(c, BCH_RECOVERY_PASS_check_alloc_info));
+		try(bch2_run_recovery_passes_startup(c, BCH_RECOVERY_PASS_check_alloc_info));
 
 		if (errors_fixed ||
 		    test_bit(BCH_FS_errors_not_fixed, &c->flags)) {
