@@ -111,7 +111,7 @@ static inline bool data_type_is_hidden(enum bch_data_type type)
 	x(btree,		6,	3)	\
 	x(rebalance_work,	7,	1)	\
 	x(inum,			8,	3)	\
-	x(reconcile_work,	9,	1)	\
+	x(reconcile_work,	9,	2)	\
 	x(dev_leaving,		10,	1)
 
 enum disk_accounting_type {
