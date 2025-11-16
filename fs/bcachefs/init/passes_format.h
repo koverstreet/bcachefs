@@ -35,6 +35,7 @@
 	x(fs_journal_alloc,			 7, PASS_ALWAYS|PASS_SILENT|PASS_ALLOC)	\
 	x(set_may_go_rw,			 8, PASS_ALWAYS|PASS_SILENT)		\
 	x(journal_replay,			 9, PASS_ALWAYS)			\
+	x(merge_btree_nodes,			45, PASS_ONLINE)			\
 	x(check_alloc_info,			10, PASS_ONLINE|PASS_FSCK_ALLOC)	\
 	x(check_lrus,				11, PASS_ONLINE|PASS_FSCK_ALLOC)	\
 	x(check_btree_backpointers,		12, PASS_ONLINE|PASS_FSCK_ALLOC)	\

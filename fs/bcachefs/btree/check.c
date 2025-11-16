@@ -1200,6 +1200,69 @@ void bch2_gc_gens_async(struct bch_fs *c)
 		enumerated_ref_put(&c->writes, BCH_WRITE_REF_gc_gens);
 }
 
+static int merge_btree_node_one(struct btree_trans *trans,
+				struct progress_indicator *progress,
+				struct btree_iter *iter,
+				u64 *merge_count)
+{
+	try(bch2_btree_iter_traverse(iter));
+
+	struct btree_path *path = btree_iter_path(trans, iter);
+	struct btree *b = path->l[path->level].b;
+
+	if (!b)
+		return 1;
+
+	try(bch2_progress_update_iter(trans, progress, iter, "merge_btree_nodes"));
+
+	if (!btree_node_needs_merge(trans, b, 0)) {
+		if (bpos_eq(b->key.k.p, SPOS_MAX))
+			return 1;
+
+		bch2_btree_iter_set_pos(iter, bpos_successor(b->key.k.p));
+		return 0;
+	}
+
+	try(bch2_btree_path_upgrade(trans, path, path->level + 1));
+	try(bch2_foreground_maybe_merge(trans, iter->path, path->level, 0, 0, merge_count));
+
+	return 0;
+}
+
+int bch2_merge_btree_nodes(struct bch_fs *c)
+{
+	struct progress_indicator progress;
+	bch2_progress_init_inner(&progress, c, ~0ULL, ~0ULL);
+
+	CLASS(btree_trans, trans)(c);
+
+	for (unsigned i = 0; i < btree_id_nr_alive(c); i++) {
+		u64 merge_count = 0;
+
+		for (unsigned level = 0; level < BTREE_MAX_DEPTH; level++) {
+			CLASS(btree_node_iter, iter)(trans, i, POS_MIN, 0, level, BTREE_ITER_prefetch);
+			while (true) {
+				int ret = lockrestart_do(trans, merge_btree_node_one(trans, &progress,
+										     &iter, &merge_count));
+				if (ret < 0)
+					return ret;
+				if (ret)
+					break;
+			}
+		}
+
+		if (merge_count) {
+			CLASS(printbuf, buf)();
+			prt_printf(&buf, "merge_btree_nodes: %llu merges in ", merge_count);
+			bch2_btree_id_to_text(&buf, i);
+			prt_str(&buf, " btree");
+			bch_info(c, "%s", buf.buf);
+		}
+	}
+
+	return 0;
+}
+
 void bch2_fs_btree_gc_init_early(struct bch_fs *c)
 {
 	seqcount_init(&c->gc_pos_lock);
