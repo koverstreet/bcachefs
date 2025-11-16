@@ -31,6 +31,7 @@
 static inline void btree_path_list_remove(struct btree_trans *, struct btree_path *);
 static inline void btree_path_list_add(struct btree_trans *,
 			btree_path_idx_t, btree_path_idx_t);
+static void bch2_btree_path_to_text_short(struct printbuf *, struct btree_trans *, btree_path_idx_t);
 
 static inline unsigned long btree_iter_ip_allocated(struct btree_iter *iter)
 {
@@ -1305,17 +1306,14 @@ btree_path_idx_t __bch2_btree_path_make_mut(struct btree_trans *trans,
 	return path;
 }
 
-btree_path_idx_t __must_check
-__bch2_btree_path_set_pos(struct btree_trans *trans,
-			  btree_path_idx_t path_idx, struct bpos new_pos,
-			  bool intent, unsigned long ip)
+static btree_path_idx_t path_set_pos_trace(struct btree_trans *trans,
+					   btree_path_idx_t path_idx, struct bpos new_pos,
+					   bool intent, unsigned long ip)
 {
 	int cmp = bpos_cmp(new_pos, trans->paths[path_idx].pos);
 
 	bch2_trans_verify_not_unlocked_or_in_restart(trans);
 	EBUG_ON(!trans->paths[path_idx].ref);
-
-	trace_btree_path_set_pos(trans, trans->paths + path_idx, &new_pos);
 
 	path_idx = bch2_btree_path_make_mut(trans, path_idx, intent, ip);
 
@@ -1360,6 +1358,33 @@ __bch2_btree_path_set_pos(struct btree_trans *trans,
 
 	bch2_btree_path_verify(trans, path);
 	return path_idx;
+}
+
+btree_path_idx_t __must_check
+__bch2_btree_path_set_pos(struct btree_trans *trans,
+			  btree_path_idx_t path_idx, struct bpos new_pos,
+			  bool intent, unsigned long ip)
+{
+
+	if (!trace_btree_path_set_pos_enabled()) {
+		return path_set_pos_trace(trans, path_idx, new_pos, intent, ip);
+	} else {
+		CLASS(printbuf, buf)();
+		guard(printbuf_indent_nextline)(&buf);
+
+		prt_newline(&buf);
+		bch2_btree_path_to_text(&buf, trans, path_idx);
+
+		path_idx = path_set_pos_trace(trans, path_idx, new_pos, intent, ip);
+
+		prt_newline(&buf);
+		bch2_btree_path_to_text(&buf, trans, path_idx);
+		prt_newline(&buf);
+
+		trace_btree_path_set_pos(trans, ip, buf.buf);
+
+		return path_idx;
+	}
 }
 
 /* Btree path: main interface: */
