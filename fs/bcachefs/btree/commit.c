@@ -821,7 +821,7 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 				       unsigned long trace_ip)
 {
 	struct bch_fs *c = trans->c;
-	int  u64s_delta = 0;
+	int u64s_delta = 0;
 
 	for (unsigned idx = 0; idx < trans->nr_updates; idx++) {
 		struct btree_insert_entry *i = trans->updates + idx;
@@ -832,8 +832,8 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 		u64s_delta -= i->old_btree_u64s;
 
 		if (!same_leaf_as_next(trans, i)) {
-			if (u64s_delta <= 0)
-				try(bch2_foreground_maybe_merge(trans, i->path, i->level, flags));
+			try(bch2_foreground_maybe_merge(trans, i->path, i->level,
+							flags, u64s_delta, NULL));
 
 			u64s_delta = 0;
 		}

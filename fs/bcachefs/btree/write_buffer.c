@@ -388,7 +388,8 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 							BCH_WATERMARK_reclaim|
 							BCH_TRANS_COMMIT_journal_reclaim|
 							BCH_TRANS_COMMIT_no_check_rw|
-							BCH_TRANS_COMMIT_no_enospc));
+							BCH_TRANS_COMMIT_no_enospc,
+							0, NULL));
 				if (ret)
 					goto err;
 			}

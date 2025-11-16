@@ -1963,7 +1963,7 @@ int bch2_btree_split_leaf(struct btree_trans *trans,
 	for (l = trans->paths[path].level + 1;
 	     btree_node_intent_locked(&trans->paths[path], l) && !ret;
 	     l++)
-		ret = bch2_foreground_maybe_merge(trans, path, l, flags);
+		ret = bch2_foreground_maybe_merge(trans, path, l, flags, 0, NULL);
 
 	return ret;
 }
@@ -2032,6 +2032,7 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 				  btree_path_idx_t path,
 				  unsigned level,
 				  unsigned flags,
+				  u64 *merge_count,
 				  enum btree_node_sibling sib)
 {
 	struct bch_fs *c = trans->c;
@@ -2214,6 +2215,9 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	bch2_btree_update_done(as, trans);
 
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_merge], start_time);
+
+	if (merge_count)
+		(*merge_count)++;
 out:
 err:
 	if (new_path)
