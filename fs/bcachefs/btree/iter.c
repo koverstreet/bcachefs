@@ -820,34 +820,27 @@ static int btree_path_prefetch(struct btree_trans *trans, struct btree_path *pat
 	struct bch_fs *c = trans->c;
 	struct btree_path_level *l = path_l(path);
 	struct btree_node_iter node_iter = l->iter;
-	struct bkey_packed *k;
 	unsigned nr = test_bit(BCH_FS_started, &c->flags)
 		? (path->level > 1 ? 0 :  2)
 		: (path->level > 1 ? 1 : 16);
-	bool was_locked = btree_node_locked(path, path->level);
-	int ret = 0;
 
 	struct bkey_buf tmp __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&tmp);
 
-	while (nr-- && !ret) {
-		if (!bch2_btree_node_relock(trans, path, path->level))
-			break;
+	while (nr--) {
+		BUG_ON(!btree_node_locked(path, path->level));
 
 		bch2_btree_node_iter_advance(&node_iter, l->b);
-		k = bch2_btree_node_iter_peek(&node_iter, l->b);
+		struct bkey_packed *k = bch2_btree_node_iter_peek(&node_iter, l->b);
 		if (!k)
 			break;
 
 		bch2_bkey_buf_unpack(&tmp, l->b, k);
-		ret = bch2_btree_node_prefetch(trans, path, tmp.k, path->btree_id,
-					       path->level - 1);
+		try(bch2_btree_node_prefetch(trans, path, tmp.k, path->btree_id,
+					     path->level - 1));
 	}
 
-	if (!was_locked)
-		btree_node_unlock(trans, path, path->level);
-
-	return ret;
+	return 0;
 }
 
 static int btree_path_prefetch_j(struct btree_trans *trans, struct btree_path *path,
