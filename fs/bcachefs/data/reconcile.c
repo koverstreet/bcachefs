@@ -244,11 +244,11 @@ static enum reconcile_work_id rb_work_id(const struct bch_extent_reconcile *r)
 {
 	if (!r || !r->need_rb)
 		return RECONCILE_WORK_none;
+	if (r->pending)
+		return RECONCILE_WORK_pending;
 	if (r->hipri)
 		return RECONCILE_WORK_hipri;
-	if (!r->pending)
-		return RECONCILE_WORK_normal;
-	return RECONCILE_WORK_pending;
+	return RECONCILE_WORK_normal;
 }
 
 static inline unsigned rb_accounting_counters(const struct bch_extent_reconcile *r)
@@ -257,11 +257,12 @@ static inline unsigned rb_accounting_counters(const struct bch_extent_reconcile 
 		return 0;
 
 	unsigned ret = r->need_rb;
-	if (r->hipri)
-		ret |= BIT(BCH_REBALANCE_ACCOUNTING_high_priority);
 	if (r->pending) {
-		ret |= BIT(BCH_REBALANCE_ACCOUNTING_pending);
+		ret |=  BIT(BCH_REBALANCE_ACCOUNTING_pending);
 		ret &= ~BIT(BCH_REBALANCE_ACCOUNTING_target);
+		ret &= ~BIT(BCH_REBALANCE_ACCOUNTING_replicas);
+	} else if (r->hipri) {
+		ret |=  BIT(BCH_REBALANCE_ACCOUNTING_high_priority);
 	}
 	return ret;
 }
@@ -513,12 +514,16 @@ int __bch2_trigger_extent_reconcile(struct btree_trans *trans,
 	}
 
 	if (flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) {
+		bool metadata = level != 0;
+		s64 old_size = !metadata ? old.k->size : btree_sectors(trans->c);
+		s64 new_size = !metadata ? new.k->size : btree_sectors(trans->c);
+
 		unsigned old_a = rb_accounting_counters(old_r);
 		unsigned new_a = rb_accounting_counters(new_r);
-		unsigned delta = old.k->size == new.k->size
+
+		unsigned delta = old_size == new_size
 			? old_a ^ new_a
 			: old_a | new_a;
-		bool metadata = level != 0;
 
 		while (delta) {
 			unsigned c = __ffs(delta);
@@ -526,9 +531,9 @@ int __bch2_trigger_extent_reconcile(struct btree_trans *trans,
 
 			s64 v[2] = { 0, 0 };
 			if (old_a & BIT(c))
-				v[metadata] -= (s64) (!metadata ? old.k->size : btree_sectors(trans->c));
+				v[metadata] -= old_size;
 			if (new_a & BIT(c))
-				v[metadata] += (s64) (!metadata ? new.k->size : btree_sectors(trans->c));
+				v[metadata] += new_size;
 
 			try(bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc, v, reconcile_work, c));
 		}
@@ -1356,8 +1361,7 @@ static void bkey_set_rb_pending(struct bch_fs *c, struct bkey_i *k)
 		bch2_bkey_reconcile_opts(c, bkey_i_to_s_c(k));
 	BUG_ON(!r);
 
-	r->pending	= true;
-	r->hipri	= false;
+	r->pending = true;
 }
 
 static int bch2_extent_set_rb_pending(struct btree_trans *trans,
