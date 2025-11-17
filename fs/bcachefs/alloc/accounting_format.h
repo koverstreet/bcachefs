@@ -220,11 +220,6 @@ struct bch_acct_dev_leaving {
 	__u32			dev;
 };
 
-/*
- * XXX: need per-device counters for "how much data are we going to move off of
- * this device
- */
-
 struct disk_accounting_pos {
 	union {
 	struct {
