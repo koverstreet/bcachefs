@@ -1879,7 +1879,7 @@ static int bch2_btree_insert_node(struct btree_update *as, struct btree_trans *t
 		prt_printf(&buf, "%s(): node not locked at level %u\n",
 			   __func__, b->c.level);
 		bch2_btree_update_to_text(&buf, as);
-		bch2_btree_path_to_text(&buf, trans, path_idx);
+		bch2_btree_path_to_text(&buf, trans, path_idx, path);
 		bch2_fs_emergency_read_only2(c, &buf);
 
 		bch2_print_str(c, KERN_ERR, buf.buf);

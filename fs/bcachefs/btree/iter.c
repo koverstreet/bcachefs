@@ -31,7 +31,8 @@
 static inline void btree_path_list_remove(struct btree_trans *, struct btree_path *);
 static inline void btree_path_list_add(struct btree_trans *,
 			btree_path_idx_t, btree_path_idx_t);
-static void bch2_btree_path_to_text_short(struct printbuf *, struct btree_trans *, btree_path_idx_t);
+static void bch2_btree_path_to_text_short(struct printbuf *, struct btree_trans *,
+					  btree_path_idx_t, struct btree_path *);
 
 static inline unsigned long btree_iter_ip_allocated(struct btree_iter *iter)
 {
@@ -1373,12 +1374,12 @@ __bch2_btree_path_set_pos(struct btree_trans *trans,
 		guard(printbuf_indent_nextline)(&buf);
 
 		prt_newline(&buf);
-		bch2_btree_path_to_text(&buf, trans, path_idx);
+		bch2_btree_path_to_text(&buf, trans, path_idx, trans->paths + path_idx);
 
 		path_idx = path_set_pos_trace(trans, path_idx, new_pos, intent, ip);
 
 		prt_newline(&buf);
-		bch2_btree_path_to_text(&buf, trans, path_idx);
+		bch2_btree_path_to_text(&buf, trans, path_idx, trans->paths + path_idx);
 		prt_newline(&buf);
 
 		trace_btree_path_set_pos(trans, ip, buf.buf);
@@ -1557,10 +1558,9 @@ void bch2_trans_updates_to_text(struct printbuf *buf, struct btree_trans *trans)
 	}
 }
 
-static void bch2_btree_path_to_text_short(struct printbuf *out, struct btree_trans *trans, btree_path_idx_t path_idx)
+static void bch2_btree_path_to_text_short(struct printbuf *out, struct btree_trans *trans,
+					  btree_path_idx_t path_idx, struct btree_path *path)
 {
-	struct btree_path *path = trans->paths + path_idx;
-
 	prt_printf(out, "path: idx %3u ref %u:%u %c %c %c ",
 		   path_idx, path->ref, path->intent_ref,
 		   path->preserve ? 'P' : ' ',
@@ -1599,14 +1599,14 @@ static const char *btree_node_locked_str(enum btree_node_locked_type t)
 	}
 }
 
-void bch2_btree_path_to_text(struct printbuf *out, struct btree_trans *trans, btree_path_idx_t path_idx)
+void bch2_btree_path_to_text(struct printbuf *out, struct btree_trans *trans,
+			     btree_path_idx_t path_idx, struct btree_path *path)
 {
-	bch2_btree_path_to_text_short(out, trans, path_idx);
-
-	struct btree_path *path = trans->paths + path_idx;
-
-	prt_printf(out, " uptodate %u locks_want %u", path->uptodate, path->locks_want);
+	bch2_btree_path_to_text_short(out, trans, path_idx, path);
 	prt_newline(out);
+
+	prt_newline(out);
+	prt_printf(out, " ptodate %u locks_want %u", path->uptodate, path->locks_want);
 	guard(printbuf_indent)(out);
 
 	for (unsigned l = 0; l < BTREE_MAX_DEPTH; l++) {
@@ -1633,7 +1633,7 @@ void __bch2_trans_paths_to_text(struct printbuf *out, struct btree_trans *trans,
 		btree_trans_sort_paths(trans);
 
 	trans_for_each_path_idx_inorder(trans, iter) {
-		bch2_btree_path_to_text_short(out, trans, iter.path_idx);
+		bch2_btree_path_to_text_short(out, trans, iter.path_idx, trans->paths + iter.path_idx);
 		prt_newline(out);
 	}
 }
