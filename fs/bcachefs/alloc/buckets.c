@@ -758,7 +758,7 @@ static int __trigger_extent(struct btree_trans *trans,
 		? BCH_DATA_btree
 		: BCH_DATA_user;
 
-	s64 replicas_sectors = 0;
+	s64 replicas_sectors[1] = { 0 };
 
 	struct disk_accounting_pos acc_replicas_key;
 	memset(&acc_replicas_key, 0, sizeof(acc_replicas_key));
@@ -784,7 +784,7 @@ static int __trigger_extent(struct btree_trans *trans,
 		if (p.ptr.cached) {
 			try(bch2_mod_dev_cached_sectors(trans, p.ptr.dev, disk_sectors, gc));
 		} else if (!p.has_ec) {
-			replicas_sectors       += disk_sectors;
+			replicas_sectors[0] += disk_sectors;
 			replicas_entry_add_dev(&acc_replicas_key.replicas, p.ptr.dev);
 		} else {
 			try(bch2_trigger_stripe_ptr(trans, k, p, data_type, disk_sectors, flags));
@@ -818,10 +818,10 @@ static int __trigger_extent(struct btree_trans *trans,
 	}
 
 	if (acc_replicas_key.replicas.nr_devs)
-		try(bch2_disk_accounting_mod(trans, &acc_replicas_key, &replicas_sectors, 1, gc));
+		try(bch2_disk_accounting_mod(trans, &acc_replicas_key, replicas_sectors, 1, gc));
 
 	if (acc_replicas_key.replicas.nr_devs && !level && k.k->p.snapshot)
-		try(bch2_disk_accounting_mod2_nr(trans, gc, &replicas_sectors, 1, snapshot, k.k->p.snapshot));
+		try(bch2_disk_accounting_mod2(trans, gc, replicas_sectors, snapshot, k.k->p.snapshot));
 
 	if (cur_compression_type) {
 		if (!insert)
@@ -834,7 +834,7 @@ static int __trigger_extent(struct btree_trans *trans,
 	if (level) {
 		const bool leaf_node = level == 1;
 		s64 v[3] = {
-			replicas_sectors,
+			replicas_sectors[0],
 			insert ? 1 : -1,
 			!leaf_node ? (insert ? 1 : -1) : 0,
 		};
@@ -844,7 +844,7 @@ static int __trigger_extent(struct btree_trans *trans,
 		s64 v[3] = {
 			insert ? 1 : -1,
 			insert ? k.k->size : -((s64) k.k->size),
-			replicas_sectors,
+			replicas_sectors[0],
 		};
 		try(bch2_disk_accounting_mod2(trans, gc, v, inum, k.k->p.inode));
 	}
