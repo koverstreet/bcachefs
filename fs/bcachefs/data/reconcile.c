@@ -420,6 +420,7 @@ fsck_err:
 }
 
 static int trigger_dev_counters(struct btree_trans *trans,
+				bool metadata,
 				struct bkey_s_c k,
 				const struct bch_extent_reconcile *r,
 				enum btree_iter_update_trigger_flags flags)
@@ -435,7 +436,7 @@ static int trigger_dev_counters(struct btree_trans *trans,
 
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 		if (r->ptrs_moving & ptr_bit) {
-			u64 v[1] = { p.crc.compressed_size };
+			u64 v[1] = { !metadata ? p.crc.compressed_size : btree_sectors(c) };
 			if (flags & BTREE_TRIGGER_overwrite)
 				v[0] = -v[0];
 
@@ -511,28 +512,30 @@ int __bch2_trigger_extent_reconcile(struct btree_trans *trans,
 		}
 	}
 
-	unsigned old_a = rb_accounting_counters(old_r);
-	unsigned new_a = rb_accounting_counters(new_r);
-	unsigned delta = old.k->size == new.k->size
-		? old_a ^ new_a
-		: old_a | new_a;
-	bool metadata = level != 0;
+	if (flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) {
+		unsigned old_a = rb_accounting_counters(old_r);
+		unsigned new_a = rb_accounting_counters(new_r);
+		unsigned delta = old.k->size == new.k->size
+			? old_a ^ new_a
+			: old_a | new_a;
+		bool metadata = level != 0;
 
-	while (delta) {
-		unsigned c = __ffs(delta);
-		delta ^= BIT(c);
+		while (delta) {
+			unsigned c = __ffs(delta);
+			delta ^= BIT(c);
 
-		s64 v[2] = { 0, 0 };
-		if (old_a & BIT(c))
-			v[metadata] -= (s64) old.k->size;
-		if (new_a & BIT(c))
-			v[metadata] += (s64) new.k->size;
+			s64 v[2] = { 0, 0 };
+			if (old_a & BIT(c))
+				v[metadata] -= (s64) (!metadata ? old.k->size : btree_sectors(trans->c));
+			if (new_a & BIT(c))
+				v[metadata] += (s64) (!metadata ? new.k->size : btree_sectors(trans->c));
 
-		try(bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc, v, reconcile_work, c));
+			try(bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc, v, reconcile_work, c));
+		}
+
+		try(trigger_dev_counters(trans, metadata, old,     old_r, flags & ~BTREE_TRIGGER_insert));
+		try(trigger_dev_counters(trans, metadata, new.s_c, new_r, flags & ~BTREE_TRIGGER_overwrite));
 	}
-
-	try(trigger_dev_counters(trans, old,     old_r, flags & ~BTREE_TRIGGER_insert));
-	try(trigger_dev_counters(trans, new.s_c, new_r, flags & ~BTREE_TRIGGER_overwrite));
 
 	return 0;
 }
