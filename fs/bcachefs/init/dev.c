@@ -566,7 +566,7 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 			       : data_replicas_required(c));
 
 		return nr_rw >= required;
-	case BCH_MEMBER_STATE_failed:
+	case BCH_MEMBER_STATE_evacuating:
 	case BCH_MEMBER_STATE_spare:
 		if (ca->mi.state != BCH_MEMBER_STATE_rw &&
 		    ca->mi.state != BCH_MEMBER_STATE_ro)
@@ -602,7 +602,7 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 
 	bool do_reconcile_scan =
 		new_state == BCH_MEMBER_STATE_rw ||
-		new_state == BCH_MEMBER_STATE_failed;
+		new_state == BCH_MEMBER_STATE_evacuating;
 
 	struct reconcile_scan s = new_state == BCH_MEMBER_STATE_rw
 		? (struct reconcile_scan) { .type = RECONCILE_SCAN_pending }
@@ -653,7 +653,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	 */
 	bch2_dev_put(ca);
 
-	try(__bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_failed, flags, err));
+	try(__bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_evacuating, flags, err));
 
 	ret = fast_device_removal
 		? bch2_dev_data_drop_by_backpointers(c, ca->dev_idx, flags, err)
@@ -989,7 +989,7 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags, struct pri
 		return 0;
 	}
 
-	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_failed, flags, NULL)) {
+	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_evacuating, flags, NULL)) {
 		prt_printf(err, "Cannot offline required disk\n");
 		return bch_err_throw(c, device_state_not_allowed);
 	}
@@ -1151,7 +1151,7 @@ static void bch2_fs_bdev_mark_dead(struct block_device *bdev, bool surprise)
 		prt_printf(&buf, "offline from block layer\n");
 
 		bool dev = bch2_dev_state_allowed(c, ca,
-						  BCH_MEMBER_STATE_failed,
+						  BCH_MEMBER_STATE_evacuating,
 						  BCH_FORCE_IF_DEGRADED,
 						  &buf);
 		if (!dev && sb) {

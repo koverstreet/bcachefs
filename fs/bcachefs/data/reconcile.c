@@ -612,7 +612,7 @@ static bool bch2_bkey_needs_reconcile(struct bch_fs *c, struct bkey_s_c k,
 					r.ptrs_moving |= ptr_bit;
 				}
 
-				if (ca->mi.state == BCH_MEMBER_STATE_failed) {
+				if (ca->mi.state == BCH_MEMBER_STATE_evacuating) {
 					r.need_rb |= BIT(BCH_REBALANCE_data_replicas);
 					r.hipri = 1;
 					r.ptrs_moving |= ptr_bit;
@@ -622,7 +622,7 @@ static bool bch2_bkey_needs_reconcile(struct bch_fs *c, struct bkey_s_c k,
 
 				durability_acct += d;
 
-				if (ca->mi.state == BCH_MEMBER_STATE_failed)
+				if (ca->mi.state == BCH_MEMBER_STATE_evacuating)
 					d = 0;
 
 				durability += d;

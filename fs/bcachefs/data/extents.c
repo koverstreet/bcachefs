@@ -150,7 +150,7 @@ static inline u64 dev_latency(struct bch_dev *ca)
 
 static inline int dev_failed(struct bch_dev *ca)
 {
-	return !ca || ca->mi.state == BCH_MEMBER_STATE_failed;
+	return !ca || ca->mi.state == BCH_MEMBER_STATE_evacuating;
 }
 
 /*
@@ -254,7 +254,7 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 			p.crc_retry_nr	   = f->failed_csum_nr;
 			p.has_ec	  &= ~f->failed_ec;
 
-			if (ca && ca->mi.state != BCH_MEMBER_STATE_failed) {
+			if (ca && ca->mi.state != BCH_MEMBER_STATE_evacuating) {
 				have_io_errors	|= f->failed_io;
 				have_io_errors	|= f->failed_btree_validate;
 				have_io_errors	|= f->failed_ec;
@@ -850,7 +850,7 @@ unsigned bch2_extent_ptr_durability(struct bch_fs *c, struct extent_ptr_decoded 
 {
 	struct bch_dev *ca = bch2_dev_rcu_noerror(c, p->ptr.dev);
 
-	if (!ca || ca->mi.state == BCH_MEMBER_STATE_failed)
+	if (!ca || ca->mi.state == BCH_MEMBER_STATE_evacuating)
 		return 0;
 
 	return __extent_ptr_durability(ca, p);

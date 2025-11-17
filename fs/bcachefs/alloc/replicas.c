@@ -793,7 +793,7 @@ bool bch2_can_read_fs_with_devs(struct bch_fs *c, struct bch_devs_mask devs,
 				nr_online += test_bit(e->devs[i], devs.d);
 
 				struct bch_dev *ca = bch2_dev_rcu_noerror(c, e->devs[i]);
-				nr_failed += !ca || ca->mi.state == BCH_MEMBER_STATE_failed;
+				nr_failed += !ca || ca->mi.state == BCH_MEMBER_STATE_evacuating;
 			}
 
 		if (nr_online + nr_failed == e->nr_devs)

@@ -2139,7 +2139,7 @@ int bch2_invalidate_stripe_to_dev(struct btree_trans *trans,
 				ptr->dev = BCH_SB_MEMBER_INVALID;
 
 			struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
-			nr_good += ca && ca->mi.state != BCH_MEMBER_STATE_failed;
+			nr_good += ca && ca->mi.state != BCH_MEMBER_STATE_evacuating;
 		}
 
 	if (nr_good < s->v.nr_blocks && !(flags & BCH_FORCE_IF_DATA_DEGRADED)) {

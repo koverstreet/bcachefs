@@ -1277,7 +1277,7 @@ static int bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
 		bool missing = false;
 		for_each_member_device(c, ca)
 			if (!bch2_dev_is_online(ca) &&
-			    (ca->mi.state != BCH_MEMBER_STATE_failed ||
+			    (ca->mi.state != BCH_MEMBER_STATE_evacuating ||
 			     bch2_dev_has_data(c, ca))) {
 				prt_printf(err, "Cannot mount without device %u\n", ca->dev_idx);
 				guard(printbuf_indent)(err);

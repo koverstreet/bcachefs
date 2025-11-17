@@ -110,7 +110,7 @@ LE64_BITMASK(BCH_MEMBER_NR_WRITE_ERRORS,struct bch_member, flags[1], 20, 40);
 #define BCH_MEMBER_STATES()			\
 	x(rw,		0)			\
 	x(ro,		1)			\
-	x(failed,	2)			\
+	x(evacuating,	2)			\
 	x(spare,	3)
 
 enum bch_member_state {
