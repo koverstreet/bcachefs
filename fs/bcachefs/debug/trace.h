@@ -66,7 +66,7 @@ DECLARE_EVENT_CLASS(trans_str,
 		__assign_str(str);
 	),
 
-	TP_printk("%d,%d %s %pS %s",
+	TP_printk("%d,%d %s %pS\n%s",
 		  MAJOR(__entry->dev), MINOR(__entry->dev),
 		  __entry->trans_fn, (void *) __entry->caller_ip, __get_str(str))
 );
