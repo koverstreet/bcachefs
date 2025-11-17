@@ -541,46 +541,17 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 			    enum bch_member_state new_state, int flags,
 			    struct printbuf *err)
 {
-	struct bch_devs_mask new_online_devs;
-	int nr_rw = 0, required;
-
 	lockdep_assert_held(&c->state_lock);
 
-	switch (new_state) {
-	case BCH_MEMBER_STATE_rw:
-		return true;
-	case BCH_MEMBER_STATE_ro:
-		if (ca->mi.state != BCH_MEMBER_STATE_rw)
-			return true;
+	if (ca->mi.state	== BCH_MEMBER_STATE_rw &&
+	    new_state		!= BCH_MEMBER_STATE_rw) {
+		struct bch_devs_mask new_rw_devs = c->rw_devs[0];
+		__clear_bit(ca->dev_idx, new_rw_devs.d);
 
-		/* do we have enough devices to write to?  */
-		for_each_member_device(c, ca2)
-			if (ca2 != ca)
-				nr_rw += ca2->mi.state == BCH_MEMBER_STATE_rw;
-
-		required = max(!(flags & BCH_FORCE_IF_METADATA_DEGRADED)
-			       ? c->opts.metadata_replicas
-			       : metadata_replicas_required(c),
-			       !(flags & BCH_FORCE_IF_DATA_DEGRADED)
-			       ? c->opts.data_replicas
-			       : data_replicas_required(c));
-
-		return nr_rw >= required;
-	case BCH_MEMBER_STATE_evacuating:
-	case BCH_MEMBER_STATE_spare:
-		if (ca->mi.state != BCH_MEMBER_STATE_rw &&
-		    ca->mi.state != BCH_MEMBER_STATE_ro)
-			return true;
-
-		/* do we have enough devices to read from?  */
-		new_online_devs = c->online_devs;
-		__clear_bit(ca->dev_idx, new_online_devs.d);
-
-		return bch2_have_enough_devs(c, new_online_devs, flags, err,
-					     test_bit(BCH_FS_rw, &c->flags));
-	default:
-		BUG();
+		return bch2_can_write_fs_with_devs(c, new_rw_devs, flags, err);
 	}
+
+	return true;
 }
 
 int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
@@ -980,6 +951,24 @@ int bch2_dev_online(struct bch_fs *c, const char *path, struct printbuf *err)
 	return 0;
 }
 
+static int bch2_dev_may_offline(struct bch_fs *c, struct bch_dev *ca, int flags, struct printbuf *err)
+{
+	struct bch_devs_mask new_devs = c->online_devs;
+	__clear_bit(ca->dev_idx, new_devs.d);
+
+	struct bch_devs_mask new_rw_devs = c->rw_devs[0];
+	__clear_bit(ca->dev_idx, new_devs.d);
+
+	if (!bch2_can_read_fs_with_devs(c, new_devs, flags, err) ||
+	    (!c->opts.read_only &&
+	     !bch2_can_write_fs_with_devs(c, new_rw_devs, flags, err))) {
+		prt_printf(err, "Cannot offline required disk\n");
+		return bch_err_throw(c, device_state_not_allowed);
+	}
+
+	return 0;
+}
+
 int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags, struct printbuf *err)
 {
 	guard(rwsem_write)(&c->state_lock);
@@ -989,10 +978,7 @@ int bch2_dev_offline(struct bch_fs *c, struct bch_dev *ca, int flags, struct pri
 		return 0;
 	}
 
-	if (!bch2_dev_state_allowed(c, ca, BCH_MEMBER_STATE_evacuating, flags, NULL)) {
-		prt_printf(err, "Cannot offline required disk\n");
-		return bch_err_throw(c, device_state_not_allowed);
-	}
+	try(bch2_dev_may_offline(c, ca, flags, err));
 
 	__bch2_dev_offline(c, ca);
 	return 0;
@@ -1150,10 +1136,7 @@ static void bch2_fs_bdev_mark_dead(struct block_device *bdev, bool surprise)
 		__bch2_log_msg_start(ca->name, &buf);
 		prt_printf(&buf, "offline from block layer\n");
 
-		bool dev = bch2_dev_state_allowed(c, ca,
-						  BCH_MEMBER_STATE_evacuating,
-						  BCH_FORCE_IF_DEGRADED,
-						  &buf);
+		bool dev = !bch2_dev_may_offline(c, ca, BCH_FORCE_IF_DEGRADED, &buf);
 		if (!dev && sb) {
 			if (!surprise)
 				sync_filesystem(sb);

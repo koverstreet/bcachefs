@@ -38,8 +38,6 @@ bool bch2_can_read_fs_with_devs(struct bch_fs *, struct bch_devs_mask,
 				unsigned, struct printbuf *);
 bool bch2_can_write_fs_with_devs(struct bch_fs *, struct bch_devs_mask,
 				 unsigned, struct printbuf *);
-bool bch2_have_enough_devs(struct bch_fs *, struct bch_devs_mask,
-			   unsigned, struct printbuf *, bool);
 
 bool bch2_sb_has_journal(struct bch_sb *);
 unsigned bch2_sb_dev_has_data(struct bch_sb *, unsigned);

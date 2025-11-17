@@ -889,14 +889,6 @@ bool bch2_can_write_fs_with_devs(struct bch_fs *c, struct bch_devs_mask devs,
 	return true;
 }
 
-bool bch2_have_enough_devs(struct bch_fs *c, struct bch_devs_mask devs,
-			   unsigned flags, struct printbuf *err,
-			   bool write)
-{
-	return bch2_can_read_fs_with_devs(c, devs, flags, err) &&
-		(!write || bch2_can_write_fs_with_devs(c, devs, flags, err));
-}
-
 bool bch2_sb_has_journal(struct bch_sb *sb)
 {
 	struct bch_sb_field_replicas *replicas = bch2_sb_field_get(sb, replicas);
