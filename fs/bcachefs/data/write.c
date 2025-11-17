@@ -117,8 +117,7 @@ void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 	struct bio_vec *bv;
 
 	bio_for_each_segment_all(bv, bio, iter)
-		if (bv->bv_page != ZERO_PAGE(0))
-			mempool_free(bv->bv_page, &c->bio_bounce_pages);
+		mempool_free(bv->bv_page, &c->bio_bounce_pages);
 	bio->bi_vcnt = 0;
 }
 
