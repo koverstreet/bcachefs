@@ -1861,20 +1861,25 @@ static int bch2_reconcile_thread(void *arg)
 
 void bch2_reconcile_status_to_text(struct printbuf *out, struct bch_fs *c)
 {
-	printbuf_tabstop_push(out, 32);
+	printbuf_tabstop_push(out, 24);
+	printbuf_tabstop_push(out, 12);
+	printbuf_tabstop_push(out, 12);
 
 	struct bch_fs_reconcile *r = &c->reconcile;
 
-	prt_printf(out, "pending work:\n");
+	prt_printf(out, "pending work:\tdata\rmetadata\r\n");
 	for (unsigned i = 0; i < BCH_REBALANCE_ACCOUNTING_NR; i++) {
 		struct disk_accounting_pos acc;
 		disk_accounting_key_init(acc, reconcile_work, i);
-		u64 v;
-		bch2_accounting_mem_read(c, disk_accounting_pos_to_bpos(&acc), &v, 1);
+		u64 v[2];
+		bch2_accounting_mem_read(c, disk_accounting_pos_to_bpos(&acc), v, ARRAY_SIZE(v));
 
 		bch2_prt_reconcile_accounting_type(out, i);
 		prt_printf(out, ":\t");
-		prt_human_readable_u64(out, v << 9);
+		prt_human_readable_u64(out, v[0] << 9);
+		prt_tab_rjust(out);
+		prt_human_readable_u64(out, v[1] << 9);
+		prt_tab_rjust(out);
 		prt_newline(out);
 	}
 
