@@ -211,6 +211,31 @@ static void count_data_update_key_fail(struct data_update *u,
 	}));
 }
 
+/*
+ * crc entry: verify crc of newly written data @new against existing crc
+ * in @insert
+ *
+ * come up with a fully narrowed checksum
+ */
+static int data_update_combine_crcs(struct data_update *u,
+				    struct bkey_i *insert,
+				    struct bkey_i *new)
+{
+	struct bch_fs *c = u->op.c;
+
+	if (bch2_bkey_sectors_compressed(c, bkey_i_to_s_c(insert)) ||
+	    bch2_bkey_sectors_compressed(c, bkey_i_to_s_c(new)))
+		return 0;
+
+
+	/*
+	 * if @new/@insert isn't fully narrowed, use @u->k, @u->bio to narrow it
+	 *
+	 * they will both be subsets of @u->k
+	 */
+
+}
+
 static int data_update_index_update_key(struct btree_trans *trans,
 					struct data_update *u,
 					struct btree_iter *iter)
