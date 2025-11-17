@@ -777,34 +777,27 @@ bool bch2_can_read_fs_with_devs(struct bch_fs *c, struct bch_devs_mask devs,
 	for_each_cpu_replicas_entry(&c->replicas, i) {
 		struct bch_replicas_entry_v1 *e = &i->e;
 
-		unsigned nr_online = 0, nr_failed = 0, dflags = 0;
+		unsigned nr_online = 0, nr_invalid = 0, dflags = 0;
 		bool metadata = e->data_type < BCH_DATA_user;
 
 		if (e->data_type == BCH_DATA_cached)
 			continue;
 
-		scoped_guard(rcu)
-			for (unsigned i = 0; i < e->nr_devs; i++) {
-				if (e->devs[i] == BCH_SB_MEMBER_INVALID) {
-					nr_failed++;
-					continue;
-				}
-
-				nr_online += test_bit(e->devs[i], devs.d);
-
-				struct bch_dev *ca = bch2_dev_rcu_noerror(c, e->devs[i]);
-				nr_failed += !ca || ca->mi.state == BCH_MEMBER_STATE_evacuating;
+		for (unsigned i = 0; i < e->nr_devs; i++) {
+			if (e->devs[i] == BCH_SB_MEMBER_INVALID) {
+				nr_invalid++;
+				continue;
 			}
 
-		if (nr_online + nr_failed == e->nr_devs)
-			continue;
+			nr_online += test_bit(e->devs[i], devs.d);
+		}
 
 		if (nr_online < e->nr_required)
 			dflags |= metadata
 				? BCH_FORCE_IF_METADATA_LOST
 				: BCH_FORCE_IF_DATA_LOST;
 
-		if (nr_online < e->nr_devs)
+		if (nr_online + nr_invalid < e->nr_devs)
 			dflags |= metadata
 				? BCH_FORCE_IF_METADATA_DEGRADED
 				: BCH_FORCE_IF_DATA_DEGRADED;
