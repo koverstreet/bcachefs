@@ -627,8 +627,7 @@ bool bch2_bkey_narrow_crc(const struct bch_fs *c,
 {
 	BUG_ON(crc_is_compressed(new));
 	BUG_ON(new.offset);
-	BUG_ON(new.live_size != k->k.size);
-
+	BUG_ON(new.uncompressed_size != new.live_size);
 
 	union bch_extent_entry *old_e = bkey_crc_find(c, k, old);
 	if (!old_e)
