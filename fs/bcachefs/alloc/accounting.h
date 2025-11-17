@@ -51,11 +51,8 @@ static inline void bch2_accounting_accumulate_maybe_kill(struct bch_fs *c,
 {
 	bch2_accounting_accumulate(dst, src);
 
-	for (unsigned i = 0; i < bch2_accounting_counters(&dst->k); i++)
-		if (dst->v.d[i])
-			return;
-
-	__bch2_accounting_maybe_kill(c, dst->k.p);
+	if (bch2_accounting_key_is_zero(accounting_i_to_s_c(dst)))
+		__bch2_accounting_maybe_kill(c, dst->k.p);
 }
 
 static inline void fs_usage_data_type_to_base(struct bch_fs_usage_base *fs_usage,
