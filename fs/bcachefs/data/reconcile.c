@@ -1806,8 +1806,7 @@ static int do_reconcile(struct moving_context *ctxt)
 		if (ret)
 			break;
 
-		if (r->work_pos.btree == BTREE_ID_reconcile_scan)
-			r->work_pos.pos = bpos_successor(r->work_pos.pos);
+		r->work_pos.pos = bpos_successor(r->work_pos.pos);
 	}
 
 	if (!ret && !bkey_deleted(&pending_cookie.k))
