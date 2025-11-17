@@ -207,19 +207,8 @@ static inline int wb_flush_one(struct btree_trans *trans, struct btree_iter *ite
 	bch2_btree_insert_key_leaf(trans, path, &wb->k, wb->journal_seq);
 	(*fast)++;
 
-	if (unlikely(btree_node_needs_merge(trans, b, 0))) {
-		*write_locked = false;
-		bch2_btree_node_unlock_write(trans, path, b);
-
-		lockrestart_do(trans,
-			bch2_btree_iter_traverse(iter) ?:
-			bch2_foreground_maybe_merge(trans, iter->path, 0,
-						    BCH_WATERMARK_reclaim|
-						    BCH_TRANS_COMMIT_journal_reclaim|
-						    BCH_TRANS_COMMIT_no_check_rw|
-						    BCH_TRANS_COMMIT_no_enospc,
-						    0, NULL));
-	}
+	if (unlikely(btree_node_needs_merge(trans, b, 0)))
+		bch2_btree_node_merge_async(trans->c, b);
 
 	return 0;
 }
