@@ -2116,6 +2116,7 @@ static int check_reconcile_work_one(struct btree_trans *trans,
 	return 0;
 }
 
+noinline_for_stack
 static int check_reconcile_work_data_btree(struct btree_trans *trans,
 				      enum btree_id btree,
 				      struct btree_iter *rb_w,
@@ -2223,6 +2224,7 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 	return 0;
 }
 
+noinline_for_stack
 static int check_reconcile_work_btrees(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;
@@ -2260,6 +2262,7 @@ static int check_reconcile_btree_bp(struct btree_trans *trans, struct bkey_s_c k
 	return 0;
 }
 
+noinline_for_stack
 static int check_reconcile_btree_bps(struct btree_trans *trans)
 {
 	return for_each_btree_key_max(trans, iter, BTREE_ID_reconcile_scan,
