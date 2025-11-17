@@ -911,7 +911,7 @@ bch2_inode_alloc_cursor_get(struct btree_trans *trans, u64 cpu, u64 *min, u64 *m
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_logged_ops,
 				POS(LOGGED_OPS_INUM_inode_cursors, cursor_idx),
-				BTREE_ITER_cached);
+				BTREE_ITER_intent|BTREE_ITER_cached);
 	struct bkey_s_c k = bch2_btree_iter_peek_slot(&iter);
 	int ret = bkey_err(k);
 	if (ret)
