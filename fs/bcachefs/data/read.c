@@ -344,7 +344,7 @@ err_remove_hash:
 	BUG_ON(rhashtable_remove_fast(&c->promote_table, &op->hash,
 				      bch_promote_params));
 err:
-	bio_free_pages(&op->write.op.wbio.bio);
+	bch2_bio_free_pages_pool(c, &op->write.op.wbio.bio);
 	/* We may have added to the rhashtable and thus need rcu freeing: */
 	kfree_rcu(op, rcu);
 err_put:
@@ -1253,7 +1253,7 @@ retry_pick:
 						  &c->bio_read_split),
 				 orig);
 
-		bch2_bio_alloc_pages_pool(c, &rbio->bio, sectors << 9);
+		bch2_bio_alloc_pages_pool(c, &rbio->bio, 512, sectors << 9);
 		rbio->bounce	= true;
 	} else if (flags & BCH_READ_must_clone) {
 		/*
@@ -1591,16 +1591,29 @@ void bch2_fs_io_read_exit(struct bch_fs *c)
 		rhashtable_destroy(&c->promote_table);
 	bioset_exit(&c->bio_read_split);
 	bioset_exit(&c->bio_read);
-	mempool_exit(&c->bio_bounce_pages);
+	mempool_exit(&c->bio_bounce_bufs);
+}
+
+static void *bio_bounce_buf_alloc_fn(gfp_t gfp, void *pool_data)
+{
+	return (void *) __get_free_pages(gfp, PAGE_ALLOC_COSTLY_ORDER);
+}
+
+static void bio_bounce_buf_free_fn(void *p, void *pool_data)
+{
+	free_pages((unsigned long) p, PAGE_ALLOC_COSTLY_ORDER);
 }
 
 int bch2_fs_io_read_init(struct bch_fs *c)
 {
-	if (mempool_init_page_pool(&c->bio_bounce_pages,
-				   max_t(unsigned,
-					 c->opts.btree_node_size,
-					 c->opts.encoded_extent_max) /
-				   PAGE_SIZE, 0))
+	if (mempool_init(&c->bio_bounce_bufs,
+			 max_t(unsigned,
+			       c->opts.btree_node_size,
+			       c->opts.encoded_extent_max) /
+			 BIO_BOUNCE_BUF_POOL_LEN,
+			 bio_bounce_buf_alloc_fn,
+			 bio_bounce_buf_free_fn,
+			 NULL))
 		return bch_err_throw(c, ENOMEM_bio_bounce_pages_init);
 
 	if (bioset_init(&c->bio_read, 1, offsetof(struct bch_read_bio, bio),

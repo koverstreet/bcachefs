@@ -606,49 +606,32 @@ void bch2_bio_map(struct bio *bio, void *base, size_t size)
 
 int bch2_bio_alloc_pages(struct bio *bio, unsigned bs, size_t size, gfp_t gfp_mask)
 {
+	BUG_ON(!is_power_of_2(bs));
 	BUG_ON(size & (bs - 1));
-	unsigned bs_pages = DIV_ROUND_UP(bs, PAGE_SIZE);
 
-	/*
-	 * XXX: we could do this by allocating higher order pages, but
-	 *
-	 * - the page allocator gets slower at a certain order (5?) - we'd have
-	 *   to check for this
-	 *
-	 * - bch2_bio_free_pages_pool() probably does not handle compound pages
-	 *   yet
-	 */
-	DARRAY_PREALLOCATED(struct page *, 16) pages;
-	darray_init(&pages);
-	darray_make_room_gfp(&pages, bs_pages, gfp_mask|__GFP_NOFAIL);
+	unsigned max_alloc = max(bs, PAGE_SIZE << PAGE_ALLOC_COSTLY_ORDER);
 
-	int ret = 0;
-	while (size) {
-		while (pages.nr < bs_pages) {
-			struct page *page = alloc_pages(gfp_mask, 0);
-			if (!page) {
-				ret = -ENOMEM;
-				goto out;
-			}
+	while (bio->bi_iter.bi_size < size) {
+		unsigned b = min(size - bio->bi_iter.bi_size, max_alloc);
 
-			BUG_ON(darray_push(&pages, page));
-		}
+		BUG_ON(b & (bs - 1));
 
-		while (pages.nr) {
-			BUG_ON(!size);
+#ifdef __KERNEL__
+		/*
+		 * we don't know the device dma alignment, so in kernel make
+		 * sure allocations are page aligned
+		 */
+		void *p = (void *) __get_free_pages(gfp_mask, get_order(b));
+#else
+		void *p = kmalloc(b, gfp_mask);
+#endif
+		if (!p)
+			return -ENOMEM;
 
-			unsigned len = min(PAGE_SIZE, size);
-			size -= len;
-
-			struct page *page = darray_pop(&pages);
-			BUG_ON(!bio_add_page(bio, page, len, 0));
-		}
+		bio_add_virt_nofail(bio, p, b);
 	}
-out:
-	darray_for_each(pages, i)
-		__free_page(*i);
-	darray_exit(&pages);
-	return ret;
+
+	return 0;
 }
 
 u64 bch2_get_random_u64_below(u64 ceil)

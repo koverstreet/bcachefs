@@ -1037,7 +1037,7 @@ struct bch_fs {
 	struct bio_set		bio_write;
 	struct bio_set		replica_set;
 	struct mutex		bio_bounce_pages_lock;
-	mempool_t		bio_bounce_pages;
+	mempool_t		bio_bounce_bufs;
 	struct bucket_nocow_lock_table
 				nocow_locks;
 	struct rhashtable	promote_table;

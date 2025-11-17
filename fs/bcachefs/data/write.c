@@ -113,42 +113,41 @@ void bch2_latency_acct(struct bch_dev *ca, u64 submit_time, int rw)
 
 void bch2_bio_free_pages_pool(struct bch_fs *c, struct bio *bio)
 {
-	struct bvec_iter_all iter;
-	struct bio_vec *bv;
+	for (struct bio_vec *bv = bio->bi_io_vec;
+	     bv < bio->bi_io_vec + bio->bi_vcnt;
+	     bv++) {
+		void *p = bvec_virt(bv);
 
-	bio_for_each_segment_all(bv, bio, iter)
-		mempool_free(bv->bv_page, &c->bio_bounce_pages);
+		if (bv->bv_len == BIO_BOUNCE_BUF_POOL_LEN)
+			mempool_free(p, &c->bio_bounce_bufs);
+		else
+			free_pages((unsigned long) p, get_order(bv->bv_len));
+	}
 	bio->bi_vcnt = 0;
 }
 
-static struct page *__bio_alloc_page_pool(struct bch_fs *c, bool *using_mempool)
+static void __bch2_bio_alloc_pages_pool(struct bch_fs *c, struct bio *bio,
+					unsigned bs, size_t size)
 {
-	if (likely(!*using_mempool)) {
-		struct page *page = alloc_page(GFP_NOFS);
-		if (likely(page))
-			return page;
+	mutex_lock(&c->bio_bounce_pages_lock);
 
-		mutex_lock(&c->bio_bounce_pages_lock);
-		*using_mempool = true;
-	}
-	return mempool_alloc(&c->bio_bounce_pages, GFP_NOFS);
+	while (bio->bi_iter.bi_size < size)
+		bio_add_virt_nofail(bio,
+				    mempool_alloc(&c->bio_bounce_bufs, GFP_NOFS),
+				    BIO_BOUNCE_BUF_POOL_LEN);
+
+	bio->bi_iter.bi_size = min(bio->bi_iter.bi_size, size);
+
+	mutex_unlock(&c->bio_bounce_pages_lock);
 }
 
 void bch2_bio_alloc_pages_pool(struct bch_fs *c, struct bio *bio,
-			       size_t size)
+			       unsigned bs, size_t size)
 {
-	bool using_mempool = false;
+	bch2_bio_alloc_pages(bio, c->opts.block_size, size, GFP_NOFS);
 
-	while (size) {
-		struct page *page = __bio_alloc_page_pool(c, &using_mempool);
-		unsigned len = min_t(size_t, PAGE_SIZE, size);
-
-		BUG_ON(!bio_add_page(bio, page, len, 0));
-		size -= len;
-	}
-
-	if (using_mempool)
-		mutex_unlock(&c->bio_bounce_pages_lock);
+	if (bio->bi_iter.bi_size < size)
+		__bch2_bio_alloc_pages_pool(c, bio, bs, size);
 }
 
 /* Extent update path: */
@@ -837,23 +836,22 @@ static struct bio *bch2_write_bio_alloc(struct bch_fs *c,
 		return bio;
 	}
 
-	wbio->bounce		= true;
+	wbio->bounce = true;
+
 
 	/*
 	 * We can't use mempool for more than c->sb.encoded_extent_max
 	 * worth of pages, but we'd like to allocate more if we can:
 	 */
-	bch2_bio_alloc_pages_pool(c, bio,
-				  min_t(unsigned, output_available,
-					c->opts.encoded_extent_max));
+	bch2_bio_alloc_pages(bio,
+			     c->opts.block_size,
+			     output_available,
+			     GFP_NOFS);
 
-	if (bio->bi_iter.bi_size < output_available)
-		*page_alloc_failed =
-			bch2_bio_alloc_pages(bio,
-					     c->opts.block_size,
-					     output_available -
-					     bio->bi_iter.bi_size,
-					     GFP_NOFS) != 0;
+	unsigned required = min(output_available, c->opts.encoded_extent_max);
+
+	if (unlikely(bio->bi_iter.bi_size < required))
+		__bch2_bio_alloc_pages_pool(c, bio, c->opts.block_size, required);
 
 	return bio;
 }

@@ -9,7 +9,7 @@
 	container_of((_bio), struct bch_write_bio, bio)
 
 void bch2_bio_free_pages_pool(struct bch_fs *, struct bio *);
-void bch2_bio_alloc_pages_pool(struct bch_fs *, struct bio *, size_t);
+void bch2_bio_alloc_pages_pool(struct bch_fs *, struct bio *, unsigned, size_t);
 
 void bch2_submit_wbio_replicas(struct bch_write_bio *, struct bch_fs *,
 			       enum bch_data_type, const struct bkey_i *, bool);
