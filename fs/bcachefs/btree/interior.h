@@ -203,8 +203,8 @@ static inline unsigned btree_update_reserve_required(struct bch_fs *c,
 
 static inline void btree_node_reset_sib_u64s(struct btree *b)
 {
-	b->sib_u64s[0] = b->nr.live_u64s;
-	b->sib_u64s[1] = b->nr.live_u64s;
+	b->sib_u64s[0] = !bpos_eq(b->data->min_key, POS_MIN)	? b->nr.live_u64s : U16_MAX;
+	b->sib_u64s[1] = !bpos_eq(b->key.k.p, SPOS_MAX)		? b->nr.live_u64s : U16_MAX;
 }
 
 static inline void *btree_data_end(struct btree *b)
