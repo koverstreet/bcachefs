@@ -1288,7 +1288,9 @@ static int bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
 	}
 	}
 
-	if (!bch2_have_enough_devs(c, c->online_devs, flags, err, !c->opts.read_only)) {
+	if (!bch2_can_read_fs_with_devs(c, c->online_devs, flags, err) ||
+	    (!c->opts.read_only &&
+	     !bch2_can_write_fs_with_devs(c, c->rw_devs[0], flags, err))) {
 		prt_printf(err, "Missing devices\n");
 		for_each_member_device(c, ca)
 			if (!bch2_dev_is_online(ca) && bch2_dev_has_data(c, ca)) {
@@ -1307,8 +1309,6 @@ static int __bch2_fs_start(struct bch_fs *c, struct printbuf *err)
 {
 	BUG_ON(test_bit(BCH_FS_started, &c->flags));
 
-	try(bch2_fs_may_start(c, err));
-
 	scoped_guard(rwsem_write, &c->state_lock) {
 		scoped_guard(rcu)
 			for_each_online_member_rcu(c, ca)
@@ -1317,6 +1317,8 @@ static int __bch2_fs_start(struct bch_fs *c, struct printbuf *err)
 
 		bch2_recalc_capacity(c);
 	}
+
+	try(bch2_fs_may_start(c, err));
 
 	/*
 	 * check mount options as early as possible; some can only be checked
