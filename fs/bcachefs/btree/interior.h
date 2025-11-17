@@ -175,6 +175,7 @@ int bch2_btree_node_rewrite_pos(struct btree_trans *,
 				enum bch_write_flags);
 
 void bch2_btree_node_rewrite_async(struct bch_fs *, struct btree *);
+void bch2_btree_node_merge_async(struct bch_fs *, struct btree *);
 
 int bch2_btree_node_update_key(struct btree_trans *, struct btree_iter *,
 			       struct btree *, struct bkey_i *,

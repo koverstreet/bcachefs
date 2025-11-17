@@ -7,6 +7,7 @@
 #include "btree/bkey_methods.h"
 #include "btree/bkey_buf.h"
 #include "btree/cache.h"
+#include "btree/interior.h"
 #include "btree/iter.h"
 #include "btree/journal_overlay.h"
 #include "btree/key_cache.h"
@@ -2366,6 +2367,9 @@ static struct bkey_s_c __bch2_btree_iter_peek(struct btree_iter *iter, struct bp
 		if (likely(k.k)) {
 			break;
 		} else if (likely(!bpos_eq(l->b->key.k.p, SPOS_MAX))) {
+			if (btree_node_needs_merge(trans, l->b, 0))
+				bch2_btree_node_merge_async(trans->c, l->b);
+
 			/* Advance to next leaf node: */
 			search_key = bpos_successor(l->b->key.k.p);
 		} else {
