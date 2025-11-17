@@ -95,12 +95,12 @@ static bool bio_phys_contig(struct bio *bio, struct bvec_iter start)
 	void *expected_start = NULL;
 
 	__bio_for_each_bvec(bv, bio, iter, start) {
-		if (expected_start &&
-		    expected_start != page_address(bv.bv_page) + bv.bv_offset)
+		void *bv_addr = bvec_virt(&bv);
+
+		if (expected_start && expected_start != bv_addr)
 			return false;
 
-		expected_start = page_address(bv.bv_page) +
-			bv.bv_offset + bv.bv_len;
+		expected_start = bv_addr + bv.bv_len;
 	}
 
 	return true;
@@ -109,27 +109,27 @@ static bool bio_phys_contig(struct bio *bio, struct bvec_iter start)
 static struct bbuf __bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 				       struct bvec_iter start, int rw)
 {
-	struct bio_vec bv;
-	struct bvec_iter iter;
-	unsigned nr_pages = 0;
-	struct page *stack_pages[16];
-	struct page **pages = NULL;
-	void *data;
-
 	BUG_ON(start.bi_size > c->opts.encoded_extent_max);
 
-	if (!PageHighMem(bio_iter_page(bio, start)) &&
-	    bio_phys_contig(bio, start))
+#ifndef CONFIG_HIGHMEM
+	if (bio_phys_contig(bio, start))
 		return (struct bbuf) {
 			.c	= c,
-			.b	= page_address(bio_iter_page(bio, start)) +
-				bio_iter_offset(bio, start),
+			.b	= bvec_virt(&bio_iter_iovec(bio, start)),
 			.type	= BB_none,
 			.rw	= rw
 		};
+#endif
 
+#ifdef __KERNEL__
 	/* check if we can map the pages contiguously: */
+	struct bio_vec bv;
+	struct bvec_iter iter;
+	unsigned nr_pages = 0;
+
 	__bio_for_each_segment(bv, bio, iter, start) {
+		BUG_ON(bv.bv_offset + bv.bv_len > PAGE_SIZE);
+
 		if (iter.bi_size != start.bi_size &&
 		    bv.bv_offset)
 			return bio_bounce(c, bio, start, rw);
@@ -143,7 +143,8 @@ static struct bbuf __bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 
 	BUG_ON(DIV_ROUND_UP(start.bi_size, PAGE_SIZE) > nr_pages);
 
-	pages = nr_pages > ARRAY_SIZE(stack_pages)
+	struct page *stack_pages[16];
+	struct page **pages = nr_pages > ARRAY_SIZE(stack_pages)
 		? kmalloc_array(nr_pages, sizeof(struct page *), GFP_NOFS)
 		: stack_pages;
 	if (!pages)
@@ -153,19 +154,20 @@ static struct bbuf __bio_map_or_bounce(struct bch_fs *c, struct bio *bio,
 	__bio_for_each_segment(bv, bio, iter, start)
 		pages[nr_pages++] = bv.bv_page;
 
-	data = vmap(pages, nr_pages, VM_MAP, PAGE_KERNEL);
+	void *data = vmap(pages, nr_pages, VM_MAP, PAGE_KERNEL);
 	if (pages != stack_pages)
 		kfree(pages);
 
-	if (!data)
-		return bio_bounce(c, bio, start, rw);
+	if (data)
+		return (struct bbuf) {
+			c,
+			data + bio_iter_offset(bio, start),
+			BB_vmap,
+			rw
+		};
+#endif /* __KERNEL__ */
 
-	return (struct bbuf) {
-		c,
-		data + bio_iter_offset(bio, start),
-		BB_vmap,
-		rw
-	};
+	return bio_bounce(c, bio, start, rw);
 }
 
 static struct bbuf bio_map_or_bounce(struct bch_fs *c, struct bio *bio, int rw)

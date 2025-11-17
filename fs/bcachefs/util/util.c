@@ -661,9 +661,8 @@ void memcpy_to_bio(struct bio *dst, struct bvec_iter dst_iter, const void *src)
 	struct bvec_iter iter;
 
 	__bio_for_each_segment(bv, dst, iter, dst_iter) {
-		void *dstp = kmap_local_page(bv.bv_page);
-
-		memcpy(dstp + bv.bv_offset, src, bv.bv_len);
+		void *dstp = bvec_kmap_local(&bv);
+		memcpy(dstp, src, bv.bv_len);
 		kunmap_local(dstp);
 
 		src += bv.bv_len;
@@ -676,9 +675,8 @@ void memcpy_from_bio(void *dst, struct bio *src, struct bvec_iter src_iter)
 	struct bvec_iter iter;
 
 	__bio_for_each_segment(bv, src, iter, src_iter) {
-		void *srcp = kmap_local_page(bv.bv_page);
-
-		memcpy(dst, srcp + bv.bv_offset, bv.bv_len);
+		void *srcp = bvec_kmap_local(&bv);
+		memcpy(dst, srcp, bv.bv_len);
 		kunmap_local(srcp);
 
 		dst += bv.bv_len;

@@ -202,15 +202,14 @@ static struct bch_csum __bch2_checksum_bio(struct bch_fs *c, unsigned type,
 
 #ifdef CONFIG_HIGHMEM
 		__bio_for_each_segment(bv, bio, *iter, *iter) {
-			void *p = kmap_local_page(bv.bv_page) + bv.bv_offset;
+			void *p = bvec_kmap_local(&bv);
 
 			bch2_checksum_update(&state, p, bv.bv_len);
 			kunmap_local(p);
 		}
 #else
 		__bio_for_each_bvec(bv, bio, *iter, *iter)
-			bch2_checksum_update(&state, page_address(bv.bv_page) + bv.bv_offset,
-				bv.bv_len);
+			bch2_checksum_update(&state, bvec_virt(&bv), bv.bv_len);
 #endif
 		return (struct bch_csum) { .lo = cpu_to_le64(bch2_checksum_final(&state)) };
 	}
@@ -225,16 +224,14 @@ static struct bch_csum __bch2_checksum_bio(struct bch_fs *c, unsigned type,
 
 #ifdef CONFIG_HIGHMEM
 		__bio_for_each_segment(bv, bio, *iter, *iter) {
-			void *p = kmap_local_page(bv.bv_page) + bv.bv_offset;
+			void *p = bvec_kmap_local(&bv);
 
 			poly1305_update(&dctx, p, bv.bv_len);
 			kunmap_local(p);
 		}
 #else
 		__bio_for_each_bvec(bv, bio, *iter, *iter)
-			poly1305_update(&dctx,
-				page_address(bv.bv_page) + bv.bv_offset,
-				bv.bv_len);
+			poly1305_update(&dctx, bvec_virt(&bv), bv.bv_len);
 #endif
 		poly1305_final(&dctx, digest);
 
