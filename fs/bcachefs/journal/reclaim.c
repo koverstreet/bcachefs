@@ -726,7 +726,7 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 	 * we're holding the reclaim lock:
 	 */
 	lockdep_assert_held(&j->reclaim_lock);
-	flags = memalloc_noreclaim_save();
+	flags = memalloc_nofs_save();
 
 	do {
 		if (kthread && kthread_should_stop())
@@ -780,7 +780,7 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 			wake_up(&j->reclaim_wait);
 	} while ((min_nr || min_key_cache) && nr_flushed && !direct);
 
-	memalloc_noreclaim_restore(flags);
+	memalloc_flags_restore(flags);
 
 	return ret;
 }
