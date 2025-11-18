@@ -66,6 +66,7 @@
 	x(delete_dead_inodes,			32, PASS_ALWAYS)			\
 	x(fix_reflink_p,			33, 0)					\
 	x(set_fs_needs_reconcile,		34, 0)					\
+	x(btree_bitmap_gc,			46, PASS_ONLINE)			\
 	x(lookup_root_inode,			42, PASS_ALWAYS|PASS_SILENT)
 
 /* We normally enumerate recovery passes in the order we run them: */

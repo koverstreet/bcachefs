@@ -6,12 +6,14 @@
 #include "alloc/replicas.h"
 
 #include "btree/cache.h"
+#include "btree/iter.h"
 
 #include "sb/members.h"
 #include "sb/io.h"
 
 #include "init/error.h"
 #include "init/passes.h"
+#include "init/progress.h"
 
 int bch2_dev_missing_bkey(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
 {
@@ -602,6 +604,77 @@ void bch2_dev_btree_bitmap_mark(struct bch_fs *c, struct bkey_s_c k)
 	bch2_dev_btree_bitmap_mark_locked(c, k, &write_sb);
 	if (write_sb)
 		bch2_write_super(c);
+}
+
+static int btree_bitmap_gc_btree_level(struct btree_trans *trans,
+				       struct progress_indicator *progress,
+				       enum btree_id btree, unsigned level)
+{
+	struct bch_fs *c = trans->c;
+	CLASS(btree_node_iter, iter)(trans, btree, POS_MIN, 0, level, BTREE_ITER_prefetch);
+
+	try(for_each_btree_key_continue(trans, iter, 0, k, ({
+		if (!bch2_dev_btree_bitmap_marked(c, k))
+			bch2_dev_btree_bitmap_mark(c, k);
+
+		bch2_progress_update_iter(trans, progress, &iter, "btree_bitmap_gc");
+	})));
+
+	return 0;
+}
+
+int bch2_btree_bitmap_gc(struct bch_fs *c)
+{
+	struct progress_indicator progress;
+	bch2_progress_init_inner(&progress, c, 0, ~0ULL);
+
+	scoped_guard(mutex, &c->sb_lock) {
+		guard(rcu)();
+		for_each_member_device_rcu(c, ca, NULL)
+			ca->btree_allocated_bitmap_gc = 0;
+	}
+
+	{
+		CLASS(btree_trans, trans)(c);
+
+		for (unsigned btree = 0; btree < btree_id_nr_alive(c); btree++) {
+			for (unsigned level = 1; level < BTREE_MAX_DEPTH; level++)
+				try(btree_bitmap_gc_btree_level(trans, &progress, btree, level));
+
+			CLASS(btree_node_iter, iter)(trans, btree, POS_MIN, 0,
+						     bch2_btree_id_root(c, btree)->b->c.level, 0);
+			struct btree *b;
+			try(lockrestart_do(trans, PTR_ERR_OR_ZERO(b = bch2_btree_iter_peek_node(&iter))));
+
+			if (!bch2_dev_btree_bitmap_marked(c, bkey_i_to_s_c(&b->key)))
+				bch2_dev_btree_bitmap_mark(c, bkey_i_to_s_c(&b->key));
+		}
+	}
+
+	u64 sectors_marked_old = 0, sectors_marked_new = 0;
+
+	scoped_guard(mutex, &c->sb_lock) {
+		struct bch_sb_field_members_v2 *mi = bch2_sb_field_get(c->disk_sb.sb, members_v2);
+
+		scoped_guard(rcu)
+			for_each_member_device_rcu(c, ca, NULL) {
+				sectors_marked_old += hweight64(ca->mi.btree_allocated_bitmap) << ca->mi.btree_bitmap_shift;
+				sectors_marked_new += hweight64(ca->btree_allocated_bitmap_gc) << ca->mi.btree_bitmap_shift;
+
+				struct bch_member *m = __bch2_members_v2_get_mut(mi, ca->dev_idx);
+				m->btree_allocated_bitmap = cpu_to_le64(ca->btree_allocated_bitmap_gc);
+			}
+		bch2_write_super(c);
+	}
+
+	CLASS(printbuf, buf)();
+	prt_str(&buf, "mi_btree_bitmap sectors ");
+	prt_human_readable_u64(&buf, sectors_marked_old << 9);
+	prt_str(&buf, " -> ");
+	prt_human_readable_u64(&buf, sectors_marked_new << 9);
+	bch_info(c, "%s", buf.buf);
+
+	return 0;
 }
 
 unsigned bch2_sb_nr_devices(const struct bch_sb *sb)
