@@ -28,6 +28,8 @@
 #include "util/util.h"
 
 #ifdef CONFIG_BCACHEFS_DEBUG
+#include <linux/module.h>
+
 static int bch2_force_read_device = -1;
 
 module_param_named(force_read_device, bch2_force_read_device, int, 0644);
