@@ -235,27 +235,30 @@ static int read_btree_nodes_worker(void *p)
 		goto err;
 	}
 
+	u64 buckets_to_scan = 0;
 	for (u64 bucket = ca->mi.first_bucket; bucket < ca->mi.nbuckets; bucket++)
+		buckets_to_scan += c->sb.version_upgrade_complete < bcachefs_metadata_version_mi_btree_bitmap ||
+			bch2_dev_btree_bitmap_marked_sectors_any(ca, bucket_to_sector(ca, bucket), ca->mi.bucket_size);
+
+	u64 buckets_scanned = 0;
+	for (u64 bucket = ca->mi.first_bucket; bucket < ca->mi.nbuckets; bucket++) {
+		if (c->sb.version_upgrade_complete >= bcachefs_metadata_version_mi_btree_bitmap &&
+		    !bch2_dev_btree_bitmap_marked_sectors_any(ca, bucket_to_sector(ca, bucket), ca->mi.bucket_size))
+			continue;
+
 		for (unsigned bucket_offset = 0;
 		     bucket_offset + btree_sectors(c) <= ca->mi.bucket_size;
-		     bucket_offset += btree_sectors(c)) {
-			if (time_after(jiffies, last_print + HZ * 30)) {
-				u64 cur_sector = bucket * ca->mi.bucket_size + bucket_offset;
-				u64 end_sector = ca->mi.nbuckets * ca->mi.bucket_size;
+		     bucket_offset += btree_sectors(c))
+			try_read_btree_node(w->f, ca, b, bio, bucket_to_sector(ca, bucket) + bucket_offset);
 
-				bch_info(ca, "%s: %2u%% done", __func__,
-					 (unsigned) div64_u64(cur_sector * 100, end_sector));
-				last_print = jiffies;
-			}
+		buckets_scanned++;
 
-			u64 sector = bucket * ca->mi.bucket_size + bucket_offset;
-
-			if (c->sb.version_upgrade_complete >= bcachefs_metadata_version_mi_btree_bitmap &&
-			    !bch2_dev_btree_bitmap_marked_sectors(ca, sector, btree_sectors(c)))
-				continue;
-
-			try_read_btree_node(w->f, ca, b, bio, sector);
+		if (time_after(jiffies, last_print + HZ * 30)) {
+			bch_info(ca, "%s: %2u%% done", __func__,
+				 (unsigned) div64_u64(buckets_scanned * 100, buckets_to_scan));
+			last_print = jiffies;
 		}
+	}
 err:
 	if (b)
 		__btree_node_data_free(b);
