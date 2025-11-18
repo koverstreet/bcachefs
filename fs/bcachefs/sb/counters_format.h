@@ -55,6 +55,7 @@ enum counters_flags {
 	x(btree_node_read,				14,	TYPE_COUNTER)	\
 	x(btree_node_compact,				15,	TYPE_COUNTER)	\
 	x(btree_node_merge,				16,	TYPE_COUNTER)	\
+	x(btree_node_merge_attempt,			101,	TYPE_COUNTER)	\
 	x(btree_node_split,				17,	TYPE_COUNTER)	\
 	x(btree_node_rewrite,				18,	TYPE_COUNTER)	\
 	x(btree_node_alloc,				19,	TYPE_COUNTER)	\

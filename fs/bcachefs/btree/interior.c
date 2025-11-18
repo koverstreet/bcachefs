@@ -2135,18 +2135,35 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	sib_u64s = btree_node_u64s_with_format(b->nr, &b->format, &new_f) +
 		btree_node_u64s_with_format(m->nr, &m->format, &new_f);
 
-	if (sib_u64s > BTREE_FOREGROUND_MERGE_HYSTERESIS(c)) {
-		sib_u64s -= BTREE_FOREGROUND_MERGE_HYSTERESIS(c);
-		sib_u64s /= 2;
-		sib_u64s += BTREE_FOREGROUND_MERGE_HYSTERESIS(c);
+	if (trace_btree_node_merge_attempt_enabled()) {
+		CLASS(printbuf, buf)();
+		guard(printbuf_indent)(&buf);
+
+		bch2_btree_pos_to_text(&buf, c, prev);
+		prt_printf(&buf, "live u64s %u (%zu%% full)\n",
+			   prev->nr.live_u64s,
+			   prev->nr.live_u64s * 100 / btree_max_u64s(c));
+
+		bch2_btree_pos_to_text(&buf, c, next);
+		prt_printf(&buf, "live u64s %u (%zu%% full)\n",
+			   next->nr.live_u64s,
+			   next->nr.live_u64s * 100 / btree_max_u64s(c));
+
+		prt_printf(&buf, "merged would have %zu threshold %u\n",
+			   sib_u64s, c->btree_foreground_merge_threshold);
+		trace_btree_node_merge_attempt(c, buf.buf);
 	}
+	count_event(c, btree_node_merge_attempt);
 
-	sib_u64s = min(sib_u64s, btree_max_u64s(c));
-	sib_u64s = min(sib_u64s, (size_t) U16_MAX - 1);
-	b->sib_u64s[sib] = sib_u64s;
+	if (sib_u64s > c->btree_foreground_merge_threshold) {
+		if (sib_u64s > BTREE_FOREGROUND_MERGE_HYSTERESIS(c))
+			sib_u64s -= (sib_u64s - BTREE_FOREGROUND_MERGE_HYSTERESIS(c)) / 2;
 
-	if (b->sib_u64s[sib] > c->btree_foreground_merge_threshold)
+		sib_u64s = min(sib_u64s, btree_max_u64s(c));
+		sib_u64s = min(sib_u64s, (size_t) U16_MAX - 1);
+		b->sib_u64s[sib] = sib_u64s;
 		goto out;
+	}
 
 	parent = btree_node_parent(trans->paths + path, b);
 	as = bch2_btree_update_start(trans, trans->paths + path, level, false,

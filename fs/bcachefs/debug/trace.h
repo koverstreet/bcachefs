@@ -556,6 +556,11 @@ DEFINE_EVENT(fs_str, btree_node_rewrite,
 	TP_ARGS(c, str)
 );
 
+DEFINE_EVENT(fs_str, btree_node_merge_attempt,
+	TP_PROTO(struct bch_fs *c, const char *str),
+	TP_ARGS(c, str)
+);
+
 DEFINE_EVENT(fs_str, btree_node_merge,
 	TP_PROTO(struct bch_fs *c, const char *str),
 	TP_ARGS(c, str)
