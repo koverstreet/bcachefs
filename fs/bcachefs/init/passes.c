@@ -176,31 +176,43 @@ void bch2_recovery_pass_set_no_ratelimit(struct bch_fs *c,
 	}
 }
 
-static bool bch2_recovery_pass_want_ratelimit(struct bch_fs *c, enum bch_recovery_pass pass)
+static bool bch2_recovery_pass_entry_get_locked(struct bch_fs *c, enum bch_recovery_pass pass,
+						struct recovery_pass_entry *e)
 {
-	enum bch_recovery_pass_stable stable = bch2_recovery_pass_to_stable(pass);
-	bool ret = false;
-
 	lockdep_assert_held(&c->sb_lock);
 
 	struct bch_sb_field_recovery_passes *r =
 		bch2_sb_field_get(c->disk_sb.sb, recovery_passes);
 
-	if (stable < recovery_passes_nr_entries(r)) {
-		struct recovery_pass_entry *i = r->start + stable;
+	enum bch_recovery_pass_stable stable = bch2_recovery_pass_to_stable(pass);
+	bool found = stable < recovery_passes_nr_entries(r);
+	if (found)
+		*e = r->start[stable];
 
-		/*
-		 * Ratelimit if the last runtime was more than 1% of the time
-		 * since we last ran
-		 */
-		ret = (u64) le32_to_cpu(i->last_runtime) * 100 >
-			ktime_get_real_seconds() - le64_to_cpu(i->last_run);
+	return found;
+}
 
-		if (BCH_RECOVERY_PASS_NO_RATELIMIT(i))
-			ret = false;
-	}
+static bool bch2_recovery_pass_want_ratelimit_locked(struct bch_fs *c, enum bch_recovery_pass pass,
+						     unsigned runtime_fraction)
+{
+	struct recovery_pass_entry e;
+	if (!bch2_recovery_pass_entry_get_locked(c, pass, &e))
+		return false;
 
-	return ret;
+	/*
+	 * Ratelimit if the last runtime was more than 1% of the time
+	 * since we last ran
+	 */
+	return !BCH_RECOVERY_PASS_NO_RATELIMIT(&e) &&
+		(u64) le32_to_cpu(e.last_runtime) * runtime_fraction >
+		ktime_get_real_seconds() - le64_to_cpu(e.last_run);
+}
+
+bool bch2_recovery_pass_want_ratelimit(struct bch_fs *c, enum bch_recovery_pass pass,
+				       unsigned runtime_fraction)
+{
+	guard(mutex)(&c->sb_lock);
+	return bch2_recovery_pass_want_ratelimit_locked(c, pass, runtime_fraction);
 }
 
 const struct bch_sb_field_ops bch_sb_field_ops_recovery_passes = {
@@ -311,7 +323,7 @@ static bool recovery_pass_needs_set(struct bch_fs *c,
 		*flags |= RUN_RECOVERY_PASS_nopersistent;
 
 	if ((*flags & RUN_RECOVERY_PASS_ratelimit) &&
-	    !bch2_recovery_pass_want_ratelimit(c, pass))
+	    !bch2_recovery_pass_want_ratelimit_locked(c, pass, 100))
 		*flags &= ~RUN_RECOVERY_PASS_ratelimit;
 
 	/*
@@ -451,7 +463,7 @@ int bch2_require_recovery_pass(struct bch_fs *c,
 
 	guard(mutex)(&c->sb_lock);
 
-	if (bch2_recovery_pass_want_ratelimit(c, pass))
+	if (bch2_recovery_pass_want_ratelimit_locked(c, pass, 100))
 		return 0;
 
 	enum bch_run_recovery_pass_flags flags = 0;
