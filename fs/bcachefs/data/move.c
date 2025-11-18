@@ -452,7 +452,9 @@ root_err:
 			goto retry_root;
 		if (bch2_err_matches(ret, BCH_ERR_data_update_fail))
 			ret = 0; /* failure for this extent, keep going */
-		WARN_ONCE(ret && !bch2_err_matches(ret, EROFS),
+		WARN_ONCE(ret &&
+			  !bch2_err_matches(ret, EROFS) &&
+			  !bch2_err_matches(ret, EIO),
 			  "unhandled error from move_extent: %s", bch2_err_str(ret));
 		return ret;
 	}
@@ -492,7 +494,8 @@ root_err:
 			continue;
 		if (bch2_err_matches(ret, BCH_ERR_data_update_fail))
 			ret = 0; /* failure for this extent, keep going */
-		if (bch2_err_matches(ret, EROFS))
+		if (bch2_err_matches(ret, EROFS) ||
+		    bch2_err_matches(ret, EIO)) /* topology error, btree node read error */
 			break;
 		WARN_ONCE(ret, "unhandled error from move_extent: %s", bch2_err_str(ret));
 next_nondata:
@@ -603,6 +606,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		if (bch2_err_matches(ret, BCH_ERR_data_update_fail))
 			ret = 0; /* failure for this extent, keep going */
 		if (bch2_err_matches(ret, EROFS) ||
+		    bch2_err_matches(ret, EIO) ||
 		    bch2_err_matches(ret, BCH_ERR_device_offline))
 			return ret;
 		WARN_ONCE(ret, "unhandled error from move_extent: %s", bch2_err_str(ret));
