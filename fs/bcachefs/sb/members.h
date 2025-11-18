@@ -389,7 +389,8 @@ void bch2_sb_members_to_cpu(struct bch_fs *);
 void bch2_dev_io_errors_to_text(struct printbuf *, struct bch_dev *);
 void bch2_dev_errors_reset(struct bch_dev *);
 
-static inline bool bch2_dev_btree_bitmap_marked_sectors(struct bch_dev *ca, u64 start, unsigned sectors)
+static inline bool __bch2_dev_btree_bitmap_marked_sectors(struct bch_dev *ca, u64 start,
+							  unsigned sectors, bool with_gc)
 {
 	u64 end = start + sectors;
 
@@ -399,9 +400,19 @@ static inline bool bch2_dev_btree_bitmap_marked_sectors(struct bch_dev *ca, u64 
 	for (unsigned bit = start >> ca->mi.btree_bitmap_shift;
 	     (u64) bit << ca->mi.btree_bitmap_shift < end;
 	     bit++)
-		if (!(ca->mi.btree_allocated_bitmap & BIT_ULL(bit)))
+		if (!(BIT_ULL(bit) &
+		      ca->mi.btree_allocated_bitmap &
+		      (with_gc
+		       ? ca->btree_allocated_bitmap_gc
+		       : ~0ULL)))
 			return false;
 	return true;
+}
+
+static inline bool bch2_dev_btree_bitmap_marked_sectors(struct bch_dev *ca, u64 start,
+							unsigned sectors)
+{
+	return __bch2_dev_btree_bitmap_marked_sectors(ca, start, sectors, false);
 }
 
 static inline bool bch2_dev_btree_bitmap_marked_sectors_any(struct bch_dev *ca, u64 start, unsigned sectors)
@@ -420,6 +431,7 @@ static inline bool bch2_dev_btree_bitmap_marked_sectors_any(struct bch_dev *ca, 
 }
 
 bool bch2_dev_btree_bitmap_marked(struct bch_fs *, struct bkey_s_c);
+bool bch2_dev_btree_bitmap_marked_nogc(struct bch_fs *, struct bkey_s_c);
 
 void bch2_dev_btree_bitmap_mark_locked(struct bch_fs *, struct bkey_s_c, bool *);
 void bch2_dev_btree_bitmap_mark(struct bch_fs *, struct bkey_s_c);

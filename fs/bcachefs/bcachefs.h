@@ -593,6 +593,7 @@ struct bch_dev {
 	 * Committed by bch2_write_super() -> bch_fs_mi_update()
 	 */
 	struct bch_member_cpu	mi;
+	u64			btree_allocated_bitmap_gc;
 	atomic64_t		errors[BCH_MEMBER_ERROR_NR];
 	unsigned long		write_errors_start;
 

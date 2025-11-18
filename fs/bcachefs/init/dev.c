@@ -331,6 +331,7 @@ static struct bch_dev *__bch2_dev_alloc(struct bch_fs *c,
 	bch2_time_stats_quantiles_init(&ca->io_latency[WRITE]);
 
 	ca->mi = bch2_mi_to_cpu(member);
+	ca->btree_allocated_bitmap_gc = le64_to_cpu(member->btree_allocated_bitmap);
 
 	for (i = 0; i < ARRAY_SIZE(member->errors); i++)
 		atomic64_set(&ca->errors[i], le64_to_cpu(member->errors[i]));

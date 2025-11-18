@@ -512,22 +512,33 @@ void bch2_dev_errors_reset(struct bch_dev *ca)
  * have to scan full devices:
  */
 
-bool bch2_dev_btree_bitmap_marked(struct bch_fs *c, struct bkey_s_c k)
+static bool __bch2_dev_btree_bitmap_marked(struct bch_fs *c, struct bkey_s_c k, bool with_gc)
 {
 	guard(rcu)();
 	bkey_for_each_ptr(bch2_bkey_ptrs_c(k), ptr) {
-		struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
+		struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
 		if (ca &&
-		    !bch2_dev_btree_bitmap_marked_sectors(ca, ptr->offset, btree_sectors(c)))
+		    !__bch2_dev_btree_bitmap_marked_sectors(ca, ptr->offset, btree_sectors(c), with_gc))
 			return false;
 	}
 	return true;
 }
 
-static void __bch2_dev_btree_bitmap_mark(struct bch_sb_field_members_v2 *mi, unsigned dev,
-				u64 start, unsigned sectors, bool *write_sb)
+bool bch2_dev_btree_bitmap_marked(struct bch_fs *c, struct bkey_s_c k)
 {
-	struct bch_member *m = __bch2_members_v2_get_mut(mi, dev);
+	return __bch2_dev_btree_bitmap_marked(c, k, true);
+}
+
+bool bch2_dev_btree_bitmap_marked_nogc(struct bch_fs *c, struct bkey_s_c k)
+{
+	return __bch2_dev_btree_bitmap_marked(c, k, false);
+}
+
+static void __bch2_dev_btree_bitmap_mark(struct bch_dev *ca,
+					 struct bch_sb_field_members_v2 *mi,
+					 u64 start, unsigned sectors, bool *write_sb)
+{
+	struct bch_member *m = __bch2_members_v2_get_mut(mi, ca->dev_idx);
 
 	u64 end = start + sectors;
 
@@ -535,13 +546,20 @@ static void __bch2_dev_btree_bitmap_mark(struct bch_sb_field_members_v2 *mi, uns
 	if (resize > 0) {
 		u64 old_bitmap = le64_to_cpu(m->btree_allocated_bitmap);
 		u64 new_bitmap = 0;
+		u64 new_gc_bitmap = 0;
 
-		for (unsigned i = 0; i < 64; i++)
+		for (unsigned i = 0; i < 64; i++) {
 			if (old_bitmap & BIT_ULL(i))
 				new_bitmap |= BIT_ULL(i >> resize);
+			if (ca->btree_allocated_bitmap_gc & BIT_ULL(i))
+				new_gc_bitmap |= BIT_ULL(i >> resize);
+		}
+
 		m->btree_allocated_bitmap = cpu_to_le64(new_bitmap);
 		m->btree_bitmap_shift += resize;
 		*write_sb = true;
+
+		ca->btree_allocated_bitmap_gc = new_gc_bitmap;
 	}
 
 	BUG_ON(m->btree_bitmap_shift >= BCH_MI_BTREE_BITMAP_SHIFT_MAX);
@@ -556,6 +574,8 @@ static void __bch2_dev_btree_bitmap_mark(struct bch_sb_field_members_v2 *mi, uns
 			m->btree_allocated_bitmap |= b;
 			*write_sb = true;
 		}
+
+		ca->btree_allocated_bitmap_gc |= BIT_ULL(bit);
 	}
 }
 
@@ -564,11 +584,14 @@ void bch2_dev_btree_bitmap_mark_locked(struct bch_fs *c, struct bkey_s_c k, bool
 	lockdep_assert_held(&c->sb_lock);
 
 	struct bch_sb_field_members_v2 *mi = bch2_sb_field_get(c->disk_sb.sb, members_v2);
+
+	guard(rcu)();
 	bkey_for_each_ptr(bch2_bkey_ptrs_c(k), ptr) {
-		if (!bch2_member_exists(c->disk_sb.sb, ptr->dev))
+		struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
+		if (!ca)
 			continue;
 
-		__bch2_dev_btree_bitmap_mark(mi, ptr->dev, ptr->offset, btree_sectors(c), write_sb);
+		__bch2_dev_btree_bitmap_mark(ca, mi, ptr->offset, btree_sectors(c), write_sb);
 	}
 }
 
