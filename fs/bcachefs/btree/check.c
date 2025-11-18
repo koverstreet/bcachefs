@@ -666,11 +666,8 @@ static int bch2_gc_mark_key(struct btree_trans *trans, enum btree_id btree_id,
 				"btree ptr not marked in member info btree allocated bitmap\n%s",
 				(printbuf_reset(&buf),
 				 bch2_bkey_val_to_text(&buf, c, k),
-				 buf.buf))) {
-		guard(mutex)(&c->sb_lock);
+				 buf.buf)))
 		bch2_dev_btree_bitmap_mark(c, k);
-		bch2_write_super(c);
-	}
 
 	/*
 	 * We require a commit before key_trigger() because

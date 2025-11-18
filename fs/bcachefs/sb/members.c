@@ -525,22 +525,23 @@ bool bch2_dev_btree_bitmap_marked(struct bch_fs *c, struct bkey_s_c k)
 }
 
 static void __bch2_dev_btree_bitmap_mark(struct bch_sb_field_members_v2 *mi, unsigned dev,
-				u64 start, unsigned sectors)
+				u64 start, unsigned sectors, bool *write_sb)
 {
 	struct bch_member *m = __bch2_members_v2_get_mut(mi, dev);
-	u64 bitmap = le64_to_cpu(m->btree_allocated_bitmap);
 
 	u64 end = start + sectors;
 
 	int resize = ilog2(roundup_pow_of_two(end)) - (m->btree_bitmap_shift + 6);
 	if (resize > 0) {
+		u64 old_bitmap = le64_to_cpu(m->btree_allocated_bitmap);
 		u64 new_bitmap = 0;
 
 		for (unsigned i = 0; i < 64; i++)
-			if (bitmap & BIT_ULL(i))
+			if (old_bitmap & BIT_ULL(i))
 				new_bitmap |= BIT_ULL(i >> resize);
-		bitmap = new_bitmap;
+		m->btree_allocated_bitmap = cpu_to_le64(new_bitmap);
 		m->btree_bitmap_shift += resize;
+		*write_sb = true;
 	}
 
 	BUG_ON(m->btree_bitmap_shift >= BCH_MI_BTREE_BITMAP_SHIFT_MAX);
@@ -548,13 +549,17 @@ static void __bch2_dev_btree_bitmap_mark(struct bch_sb_field_members_v2 *mi, uns
 
 	for (unsigned bit = start >> m->btree_bitmap_shift;
 	     (u64) bit << m->btree_bitmap_shift < end;
-	     bit++)
-		bitmap |= BIT_ULL(bit);
+	     bit++) {
+		__le64 b = cpu_to_le64(BIT_ULL(bit));
 
-	m->btree_allocated_bitmap = cpu_to_le64(bitmap);
+		if (!(m->btree_allocated_bitmap & b)) {
+			m->btree_allocated_bitmap |= b;
+			*write_sb = true;
+		}
+	}
 }
 
-void bch2_dev_btree_bitmap_mark(struct bch_fs *c, struct bkey_s_c k)
+void bch2_dev_btree_bitmap_mark_locked(struct bch_fs *c, struct bkey_s_c k, bool *write_sb)
 {
 	lockdep_assert_held(&c->sb_lock);
 
@@ -563,8 +568,17 @@ void bch2_dev_btree_bitmap_mark(struct bch_fs *c, struct bkey_s_c k)
 		if (!bch2_member_exists(c->disk_sb.sb, ptr->dev))
 			continue;
 
-		__bch2_dev_btree_bitmap_mark(mi, ptr->dev, ptr->offset, btree_sectors(c));
+		__bch2_dev_btree_bitmap_mark(mi, ptr->dev, ptr->offset, btree_sectors(c), write_sb);
 	}
+}
+
+void bch2_dev_btree_bitmap_mark(struct bch_fs *c, struct bkey_s_c k)
+{
+	guard(mutex)(&c->sb_lock);
+	bool write_sb = false;
+	bch2_dev_btree_bitmap_mark_locked(c, k, &write_sb);
+	if (write_sb)
+		bch2_write_super(c);
 }
 
 unsigned bch2_sb_nr_devices(const struct bch_sb *sb)
