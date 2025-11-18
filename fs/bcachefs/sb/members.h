@@ -437,6 +437,8 @@ void bch2_dev_btree_bitmap_mark_locked(struct bch_fs *, struct bkey_s_c, bool *)
 void bch2_dev_btree_bitmap_mark(struct bch_fs *, struct bkey_s_c);
 
 int bch2_btree_bitmap_gc(struct bch_fs *);
+void bch2_maybe_schedule_btree_bitmap_gc_stop(struct bch_fs *);
+void bch2_maybe_schedule_btree_bitmap_gc(struct bch_fs *);
 
 int bch2_sb_member_alloc(struct bch_fs *);
 void bch2_sb_members_clean_deleted(struct bch_fs *);

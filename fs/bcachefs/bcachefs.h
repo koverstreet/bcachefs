@@ -866,6 +866,8 @@ struct bch_fs {
 	struct closure		sb_write;
 	struct mutex		sb_lock;
 
+	struct delayed_work	maybe_schedule_btree_bitmap_gc;
+
 	/* snapshot.c: */
 	struct snapshot_table __rcu *snapshots;
 	struct mutex		snapshot_table_lock;

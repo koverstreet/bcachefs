@@ -264,11 +264,13 @@ static void __bch2_fs_read_only(struct bch_fs *c)
 	unsigned clean_passes = 0;
 	u64 seq = 0;
 
+	bch2_maybe_schedule_btree_bitmap_gc_stop(c);
 	bch2_fs_ec_stop(c);
 	bch2_open_buckets_stop(c, NULL, true);
 	bch2_reconcile_stop(c);
 	bch2_copygc_stop(c);
 	bch2_fs_ec_flush(c);
+	cancel_delayed_work_sync(&c->maybe_schedule_btree_bitmap_gc);
 
 	bch_verbose(c, "flushing journal and stopping allocators, journal seq %llu",
 		    journal_cur_seq(&c->journal));
@@ -524,6 +526,7 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 	bch2_do_invalidates(c);
 	bch2_do_stripe_deletes(c);
 	bch2_do_pending_node_rewrites(c);
+	bch2_maybe_schedule_btree_bitmap_gc(c);
 	return 0;
 }
 

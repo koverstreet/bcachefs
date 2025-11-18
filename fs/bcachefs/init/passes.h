@@ -46,6 +46,8 @@ static inline int bch2_recovery_cancelled(struct bch_fs *c)
 	return 0;
 }
 
+bool bch2_recovery_pass_want_ratelimit(struct bch_fs *, enum bch_recovery_pass, unsigned);
+
 int bch2_run_print_explicit_recovery_pass(struct bch_fs *, enum bch_recovery_pass);
 
 int __bch2_run_explicit_recovery_pass(struct bch_fs *, struct printbuf *,
