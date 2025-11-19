@@ -182,8 +182,7 @@ int bch2_journal_buckets_to_sb(struct bch_fs *c, struct bch_dev *ca,
 	struct bch_sb_field_journal_v2 *j;
 	unsigned i, dst = 0, nr_compacted = 1;
 
-	if (c)
-		lockdep_assert_held(&c->sb_lock);
+	lockdep_assert_held(&c->sb_lock);
 
 	if (!nr) {
 		bch2_sb_field_delete(&ca->disk_sb, BCH_SB_FIELD_journal);
