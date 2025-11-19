@@ -34,7 +34,7 @@ static int bch2_sb_journal_validate(struct bch_sb *sb, struct bch_sb_field *f,
 	for (unsigned i = 0; i < nr; i++)
 		try(darray_push(&b, le64_to_cpu(journal->buckets[i])));
 
-	sort(b.data, b.nr, sizeof(b.data[0]), u64_cmp, NULL);
+	darray_sort(b, u64_cmp);
 
 	if (!darray_first(b)) {
 		prt_printf(err, "journal bucket at sector 0");
@@ -118,7 +118,7 @@ static int bch2_sb_journal_v2_validate(struct bch_sb *sb, struct bch_sb_field *f
 		try(darray_push(&b, r));
 	}
 
-	sort(b.data, b.nr, sizeof(b.data[0]), u64_range_cmp, NULL);
+	darray_sort(b, u64_range_cmp);
 
 	if (!darray_first(b).start) {
 		prt_printf(err, "journal bucket at sector 0");

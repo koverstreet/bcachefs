@@ -125,6 +125,9 @@ int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t, bool);
 #define darray_for_each_reverse(_d, _i)					\
 	for (typeof(&(_d).data[0]) _i = (_d).data + (_d).nr - 1; _i >= (_d).data && (_d).nr; --_i)
 
+#define darray_sort(_d, _cmp)						\
+	sort((_d).data, (_d).nr, sizeof((_d).data[0]), _cmp, NULL)
+
 /* Init/exit */
 
 #define darray_init(_d)							\
