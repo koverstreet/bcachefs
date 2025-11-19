@@ -360,12 +360,14 @@ enum bch_sb_error_id {
 #undef x
 };
 
+typedef struct bch_sb_field_error_entry {
+	__le64		v;
+	__le64		last_error_time;
+} bch_sb_field_error_entry;
+
 struct bch_sb_field_errors {
 	struct bch_sb_field	field;
-	struct bch_sb_field_error_entry {
-		__le64		v;
-		__le64		last_error_time;
-	}			entries[];
+	bch_sb_field_error_entry entries[];
 };
 
 LE64_BITMASK(BCH_SB_ERROR_ENTRY_ID,	struct bch_sb_field_error_entry, v,  0, 16);

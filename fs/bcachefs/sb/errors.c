@@ -5,6 +5,8 @@
 #include "sb/errors.h"
 #include "sb/io.h"
 
+#include "util/darray.h"
+
 const char * const bch2_sb_error_strs[] = {
 #define x(t, n, ...) [n] = #t,
 	BCH_SB_ERRS()
@@ -63,25 +65,25 @@ static int error_entry_cmp(const void *_l, const void *_r)
 	return -cmp_int(l->last_error_time, r->last_error_time);
 }
 
+DEFINE_DARRAY(bch_sb_field_error_entry);
+
 static void bch2_sb_errors_to_text(struct printbuf *out, struct bch_sb *sb,
 				   struct bch_sb_field *f)
 {
 	struct bch_sb_field_errors *e = field_to_type(f, errors);
 	unsigned nr = bch2_sb_field_errors_nr_entries(e);
 
-	struct bch_sb_field_error_entry *sorted = kvmalloc_array(nr, sizeof(*sorted), GFP_KERNEL);
-
-	if (sorted) {
-		memcpy(sorted, e->entries, nr * sizeof(e->entries[0]));
-		sort(sorted, nr, sizeof(*sorted), error_entry_cmp, NULL);
-	} else {
-		sorted = e->entries;
-	}
-
 	if (out->nr_tabstops <= 1)
 		printbuf_tabstop_push(out, 16);
 
-	for (struct bch_sb_field_error_entry *i = sorted; i < sorted + nr; i++) {
+	CLASS(darray_bch_sb_field_error_entry, sorted)();
+
+	for (struct bch_sb_field_error_entry *i = e->entries; i < e->entries + nr; i++)
+		darray_push(&sorted, *i);
+
+	darray_sort(sorted, error_entry_cmp);
+
+	darray_for_each(sorted, i) {
 		bch2_sb_error_id_to_text(out, BCH_SB_ERROR_ENTRY_ID(i));
 		prt_tab(out);
 		prt_u64(out, BCH_SB_ERROR_ENTRY_NR(i));
@@ -89,9 +91,6 @@ static void bch2_sb_errors_to_text(struct printbuf *out, struct bch_sb *sb,
 		bch2_prt_datetime(out, le64_to_cpu(i->last_error_time));
 		prt_newline(out);
 	}
-
-	if (sorted != e->entries)
-		kvfree(sorted);
 }
 
 const struct bch_sb_field_ops bch_sb_field_ops_errors = {
