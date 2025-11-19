@@ -2,6 +2,7 @@
 
 #include "bcachefs.h"
 
+#include "journal/read.h"
 #include "journal/sb.h"
 
 #include "util/darray.h"
@@ -28,35 +29,33 @@ static int bch2_sb_journal_validate(struct bch_sb *sb, struct bch_sb_field *f,
 	if (!nr)
 		return 0;
 
-	u64 *b __free(kvfree)  = kvmalloc_array(nr, sizeof(u64), GFP_KERNEL);
-	if (!b)
-		return -BCH_ERR_ENOMEM_sb_journal_validate;
+	CLASS(darray_u64, b)();
 
 	for (unsigned i = 0; i < nr; i++)
-		b[i] = le64_to_cpu(journal->buckets[i]);
+		try(darray_push(&b, le64_to_cpu(journal->buckets[i])));
 
-	sort(b, nr, sizeof(u64), u64_cmp, NULL);
+	sort(b.data, b.nr, sizeof(b.data[0]), u64_cmp, NULL);
 
-	if (!b[0]) {
+	if (!darray_first(b)) {
 		prt_printf(err, "journal bucket at sector 0");
 		return -BCH_ERR_invalid_sb_journal;
 	}
 
-	if (b[0] < le16_to_cpu(m.first_bucket)) {
+	if (darray_first(b) < le16_to_cpu(m.first_bucket)) {
 		prt_printf(err, "journal bucket %llu before first bucket %u",
-		       b[0], le16_to_cpu(m.first_bucket));
+			   darray_first(b), le16_to_cpu(m.first_bucket));
 		return -BCH_ERR_invalid_sb_journal;
 	}
 
-	if (b[nr - 1] >= le64_to_cpu(m.nbuckets)) {
+	if (darray_last(b) >= le64_to_cpu(m.nbuckets)) {
 		prt_printf(err, "journal bucket %llu past end of device (nbuckets %llu)",
-		       b[nr - 1], le64_to_cpu(m.nbuckets));
+			   darray_last(b), le64_to_cpu(m.nbuckets));
 		return -BCH_ERR_invalid_sb_journal;
 	}
 
-	for (unsigned i = 0; i + 1 < nr; i++)
-		if (b[i] == b[i + 1]) {
-			prt_printf(err, "duplicate journal buckets %llu", b[i]);
+	darray_for_each(b, i)
+		if (i != &darray_last(b) && i[0] == i[1]) {
+			prt_printf(err, "duplicate journal buckets %llu", *i);
 			return -BCH_ERR_invalid_sb_journal;
 		}
 
@@ -80,11 +79,6 @@ const struct bch_sb_field_ops bch_sb_field_ops_journal = {
 	.to_text	= bch2_sb_journal_to_text,
 };
 
-struct u64_range {
-	u64	start;
-	u64	end;
-};
-
 static int u64_range_cmp(const void *_l, const void *_r)
 {
 	const struct u64_range *l = _l;
@@ -104,15 +98,16 @@ static int bch2_sb_journal_v2_validate(struct bch_sb *sb, struct bch_sb_field *f
 	if (!nr)
 		return 0;
 
-	struct u64_range *b __free(kvfree) = kvmalloc_array(nr, sizeof(*b), GFP_KERNEL);
-	if (!b)
-		return -BCH_ERR_ENOMEM_sb_journal_v2_validate;
+	CLASS(darray_u64_range, b)();
 
 	for (unsigned i = 0; i < nr; i++) {
-		b[i].start = le64_to_cpu(journal->d[i].start);
-		b[i].end = b[i].start + le64_to_cpu(journal->d[i].nr);
+		struct u64_range r = {
+			.start	= le64_to_cpu(journal->d[i].start),
+			.end	= le64_to_cpu(journal->d[i].start) +
+				le64_to_cpu(journal->d[i].nr),
+		};
 
-		if (b[i].end <= b[i].start) {
+		if (r.end <= r.start) {
 			prt_printf(err, "journal buckets entry with bad nr: %llu+%llu",
 				   le64_to_cpu(journal->d[i].start),
 				   le64_to_cpu(journal->d[i].nr));
@@ -120,34 +115,34 @@ static int bch2_sb_journal_v2_validate(struct bch_sb *sb, struct bch_sb_field *f
 		}
 
 		sum += le64_to_cpu(journal->d[i].nr);
+		try(darray_push(&b, r));
 	}
 
-	sort(b, nr, sizeof(*b), u64_range_cmp, NULL);
+	sort(b.data, b.nr, sizeof(b.data[0]), u64_range_cmp, NULL);
 
-	if (!b[0].start) {
+	if (!darray_first(b).start) {
 		prt_printf(err, "journal bucket at sector 0");
 		return -BCH_ERR_invalid_sb_journal;
 	}
 
-	if (b[0].start < le16_to_cpu(m.first_bucket)) {
+	if (darray_first(b).start < le16_to_cpu(m.first_bucket)) {
 		prt_printf(err, "journal bucket %llu before first bucket %u",
-		       b[0].start, le16_to_cpu(m.first_bucket));
+		       darray_first(b).start, le16_to_cpu(m.first_bucket));
 		return -BCH_ERR_invalid_sb_journal;
 	}
 
-	if (b[nr - 1].end > le64_to_cpu(m.nbuckets)) {
+	if (darray_last(b).end > le64_to_cpu(m.nbuckets)) {
 		prt_printf(err, "journal bucket %llu past end of device (nbuckets %llu)",
-		       b[nr - 1].end - 1, le64_to_cpu(m.nbuckets));
+			   darray_last(b).end - 1, le64_to_cpu(m.nbuckets));
 		return -BCH_ERR_invalid_sb_journal;
 	}
 
-	for (unsigned i = 0; i + 1 < nr; i++) {
-		if (b[i].end > b[i + 1].start) {
+	darray_for_each(b, i)
+		if (i != &darray_last(b) && i[0].end > i[1].start) {
 			prt_printf(err, "duplicate journal buckets in ranges %llu-%llu, %llu-%llu",
-			       b[i].start, b[i].end, b[i + 1].start, b[i + 1].end);
+				   i[0].start, i[0].end, i[1].start, i[1].end);
 			return -BCH_ERR_invalid_sb_journal;
 		}
-	}
 
 	if (sum > UINT_MAX) {
 		prt_printf(err, "too many journal buckets: %llu > %u", sum, UINT_MAX);
@@ -179,8 +174,7 @@ const struct bch_sb_field_ops bch_sb_field_ops_journal_v2 = {
 int bch2_journal_buckets_to_sb(struct bch_fs *c, struct bch_dev *ca,
 			       u64 *buckets, unsigned nr)
 {
-	struct bch_sb_field_journal_v2 *j;
-	unsigned i, dst = 0, nr_compacted = 1;
+	unsigned dst = 0, nr_compacted = 1;
 
 	lockdep_assert_held(&c->sb_lock);
 
@@ -190,11 +184,12 @@ int bch2_journal_buckets_to_sb(struct bch_fs *c, struct bch_dev *ca,
 		return 0;
 	}
 
-	for (i = 0; i + 1 < nr; i++)
+	for (unsigned i = 0; i + 1 < nr; i++)
 		if (buckets[i] + 1 != buckets[i + 1])
 			nr_compacted++;
 
-	j = bch2_sb_field_resize(&ca->disk_sb, journal_v2,
+	struct bch_sb_field_journal_v2 *j =
+		bch2_sb_field_resize(&ca->disk_sb, journal_v2,
 			 (sizeof(*j) + sizeof(j->d[0]) * nr_compacted) / sizeof(u64));
 	if (!j)
 		return bch_err_throw(c, ENOSPC_sb_journal);
@@ -204,7 +199,7 @@ int bch2_journal_buckets_to_sb(struct bch_fs *c, struct bch_dev *ca,
 	j->d[dst].start = cpu_to_le64(buckets[0]);
 	j->d[dst].nr	= cpu_to_le64(1);
 
-	for (i = 1; i < nr; i++) {
+	for (unsigned i = 1; i < nr; i++) {
 		if (buckets[i] == buckets[i - 1] + 1) {
 			le64_add_cpu(&j->d[dst].nr, 1);
 		} else {
