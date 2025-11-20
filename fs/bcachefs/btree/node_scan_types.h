@@ -4,7 +4,7 @@
 
 #include "util/darray.h"
 
-struct found_btree_node {
+typedef struct found_btree_node {
 	bool			range_updated:1;
 	u8			btree_id;
 	u8			level;
@@ -18,14 +18,14 @@ struct found_btree_node {
 
 	unsigned		nr_ptrs;
 	struct bch_extent_ptr	ptrs[BCH_REPLICAS_MAX];
-};
+} found_btree_node;
 
-typedef DARRAY(struct found_btree_node)	found_btree_nodes;
+DEFINE_DARRAY(found_btree_node);
 
 struct find_btree_nodes {
 	int			ret;
 	struct mutex		lock;
-	found_btree_nodes	nodes;
+	darray_found_btree_node	nodes;
 };
 
 #endif /* _BCACHEFS_BTREE_NODE_SCAN_TYPES_H */

@@ -595,7 +595,6 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_fs_accounting_exit(c);
 	bch2_fs_async_obj_exit(c);
 	bch2_journal_keys_put_initial(c);
-	bch2_find_btree_nodes_exit(&c->found_btree_nodes);
 
 	BUG_ON(atomic_read(&c->journal_keys.ref));
 	percpu_free_rwsem(&c->mark_lock);
@@ -1072,6 +1071,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	bch2_fs_sb_errors_init_early(c);
 	bch2_fs_snapshots_init_early(c);
 	bch2_fs_subvolumes_init_early(c);
+	bch2_find_btree_nodes_init(&c->found_btree_nodes);
 
 	INIT_LIST_HEAD(&c->list);
 

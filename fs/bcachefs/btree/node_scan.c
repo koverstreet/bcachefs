@@ -23,7 +23,7 @@ struct find_btree_nodes_worker {
 	struct bch_dev		*ca;
 };
 
-static void found_btree_node_to_text(struct printbuf *out, struct bch_fs *c, const struct found_btree_node *n)
+void bch2_found_btree_node_to_text(struct printbuf *out, struct bch_fs *c, const struct found_btree_node *n)
 {
 	bch2_btree_id_level_to_text(out, n->btree_id, n->level);
 	prt_printf(out, " seq=%u journal_seq=%llu cookie=%llx ",
@@ -45,11 +45,12 @@ static void found_btree_node_to_text(struct printbuf *out, struct bch_fs *c, con
 	}
 }
 
-static void found_btree_nodes_to_text(struct printbuf *out, struct bch_fs *c, found_btree_nodes nodes)
+static void found_btree_nodes_to_text(struct printbuf *out, struct bch_fs *c,
+				      darray_found_btree_node nodes)
 {
 	guard(printbuf_indent)(out);
 	darray_for_each(nodes, i) {
-		found_btree_node_to_text(out, c, i);
+		bch2_found_btree_node_to_text(out, c, i);
 		prt_newline(out);
 	}
 }
@@ -328,7 +329,7 @@ static bool nodes_overlap(const struct found_btree_node *l,
 
 static int handle_overwrites(struct bch_fs *c,
 			     struct found_btree_node *l,
-			     found_btree_nodes *nodes_heap)
+			     darray_found_btree_node *nodes_heap)
 {
 	struct found_btree_node *r;
 
@@ -373,21 +374,19 @@ int bch2_scan_for_btree_nodes(struct bch_fs *c)
 {
 	struct find_btree_nodes *f = &c->found_btree_nodes;
 	CLASS(printbuf, buf)();
-	found_btree_nodes nodes_heap = {};
+	CLASS(darray_found_btree_node, nodes_heap)();
 	size_t dst;
-	int ret = 0;
 
 	if (f->nodes.nr)
 		return 0;
 
-	mutex_init(&f->lock);
-
 	try(read_btree_nodes(f));
+
+	guard(mutex)(&f->lock);
 
 	if (!f->nodes.nr) {
 		bch_err(c, "%s: no btree nodes found", __func__);
-		ret = -EINVAL;
-		goto err;
+		return -EINVAL;
 	}
 
 	if (0 && c->opts.verbose) {
@@ -407,8 +406,7 @@ int bch2_scan_for_btree_nodes(struct bch_fs *c)
 		    prev->cookie == i->cookie) {
 			if (prev->nr_ptrs == ARRAY_SIZE(prev->ptrs)) {
 				bch_err(c, "%s: found too many replicas for btree node", __func__);
-				ret = -EINVAL;
-				goto err;
+				return -EINVAL;
 			}
 			prev->ptrs[prev->nr_ptrs++] = i->ptrs[0];
 		} else {
@@ -431,33 +429,27 @@ int bch2_scan_for_btree_nodes(struct bch_fs *c)
 	{
 		/* darray must have same layout as a heap */
 		min_heap_char real_heap;
-		BUILD_BUG_ON(sizeof(nodes_heap.nr)	!= sizeof(real_heap.nr));
-		BUILD_BUG_ON(sizeof(nodes_heap.size)	!= sizeof(real_heap.size));
-		BUILD_BUG_ON(offsetof(found_btree_nodes, nr)	!= offsetof(min_heap_char, nr));
-		BUILD_BUG_ON(offsetof(found_btree_nodes, size)	!= offsetof(min_heap_char, size));
+		BUILD_BUG_ON(sizeof(nodes_heap.nr)			!= sizeof(real_heap.nr));
+		BUILD_BUG_ON(sizeof(nodes_heap.size)			!= sizeof(real_heap.size));
+		BUILD_BUG_ON(offsetof(darray_found_btree_node, nr)	!= offsetof(min_heap_char, nr));
+		BUILD_BUG_ON(offsetof(darray_found_btree_node, size)	!= offsetof(min_heap_char, size));
 	}
 
 	min_heapify_all(&nodes_heap, &found_btree_node_heap_cbs, NULL);
 
 	if (nodes_heap.nr) {
-		ret = darray_push(&f->nodes, *min_heap_peek(&nodes_heap));
-		if (ret)
-			goto err;
+		try(darray_push(&f->nodes, *min_heap_peek(&nodes_heap)));
 
 		min_heap_pop(&nodes_heap, &found_btree_node_heap_cbs, NULL);
 	}
 
 	while (true) {
-		ret = handle_overwrites(c, &darray_last(f->nodes), &nodes_heap);
-		if (ret)
-			goto err;
+		try(handle_overwrites(c, &darray_last(f->nodes), &nodes_heap));
 
 		if (!nodes_heap.nr)
 			break;
 
-		ret = darray_push(&f->nodes, *min_heap_peek(&nodes_heap));
-		if (ret)
-			goto err;
+		try(darray_push(&f->nodes, *min_heap_peek(&nodes_heap)));
 
 		min_heap_pop(&nodes_heap, &found_btree_node_heap_cbs, NULL);
 	}
@@ -475,9 +467,7 @@ int bch2_scan_for_btree_nodes(struct bch_fs *c)
 	}
 
 	eytzinger0_sort(f->nodes.data, f->nodes.nr, sizeof(f->nodes.data[0]), found_btree_node_cmp_pos, NULL);
-err:
-	darray_exit(&nodes_heap);
-	return ret;
+	return 0;
 }
 
 static int found_btree_node_range_start_cmp(const void *_l, const void *_r)
@@ -610,4 +600,9 @@ int bch2_get_scanned_nodes(struct bch_fs *c, enum btree_id btree,
 void bch2_find_btree_nodes_exit(struct find_btree_nodes *f)
 {
 	darray_exit(&f->nodes);
+}
+
+void bch2_find_btree_nodes_init(struct find_btree_nodes *f)
+{
+	mutex_init(&f->lock);
 }
