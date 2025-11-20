@@ -517,9 +517,9 @@ bool bch2_btree_node_is_stale(struct bch_fs *c, struct btree *b)
 	return false;
 }
 
-int bch2_btree_has_scanned_nodes(struct bch_fs *c, enum btree_id btree)
+int bch2_btree_has_scanned_nodes(struct bch_fs *c, enum btree_id btree, struct printbuf *out)
 {
-	try(bch2_run_print_explicit_recovery_pass(c, BCH_RECOVERY_PASS_scan_for_btree_nodes));
+	try(bch2_run_explicit_recovery_pass(c, out, BCH_RECOVERY_PASS_scan_for_btree_nodes, 0));
 
 	struct found_btree_node search = {
 		.btree_id	= btree,
@@ -534,12 +534,13 @@ int bch2_btree_has_scanned_nodes(struct bch_fs *c, enum btree_id btree)
 }
 
 int bch2_get_scanned_nodes(struct bch_fs *c, enum btree_id btree,
-			   unsigned level, struct bpos node_min, struct bpos node_max)
+			   unsigned level, struct bpos node_min, struct bpos node_max,
+			   struct printbuf *out, size_t *nodes_found)
 {
 	if (!btree_id_recovers_from_scan(btree))
 		return 0;
 
-	try(bch2_run_print_explicit_recovery_pass(c, BCH_RECOVERY_PASS_scan_for_btree_nodes));
+	try(bch2_run_explicit_recovery_pass(c, out, BCH_RECOVERY_PASS_scan_for_btree_nodes, 0));
 
 	if (c->opts.verbose) {
 		CLASS(printbuf, buf)();
@@ -575,12 +576,6 @@ int bch2_get_scanned_nodes(struct bch_fs *c, enum btree_id btree,
 
 		found_btree_node_to_key(&tmp.k, &n);
 
-		if (c->opts.verbose) {
-			CLASS(printbuf, buf)();
-			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&tmp.k));
-			bch_verbose(c, "%s(): recovering %s", __func__, buf.buf);
-		}
-
 		BUG_ON(bch2_bkey_validate(c, bkey_i_to_s_c(&tmp.k),
 					  (struct bkey_validate_context) {
 						.from	= BKEY_VALIDATE_btree_node,
@@ -588,8 +583,26 @@ int bch2_get_scanned_nodes(struct bch_fs *c, enum btree_id btree,
 						.btree	= btree,
 					  }));
 
+		if (!*nodes_found) {
+			prt_printf(out, "recovering from btree node scan at ");
+			bch2_btree_id_level_to_text(out, btree, level);
+			prt_newline(out);
+			printbuf_indent_add(out, 2);
+		}
+
+		*nodes_found += 1;
+
+		if (*nodes_found < 10) {
+			bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(&tmp.k));
+			prt_newline(out);
+		} else if (*nodes_found == 10)
+			prt_printf(out, "<many>\n");
+
 		try(bch2_journal_key_insert(c, btree, level + 1, &tmp.k));
 	}
+
+	if (*nodes_found)
+		printbuf_indent_sub(out, 2);
 
 	return 0;
 }

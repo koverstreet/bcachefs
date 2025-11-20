@@ -188,8 +188,7 @@ static int set_node_max(struct bch_fs *c, struct btree *b, struct bpos new_max)
 }
 
 static int btree_check_node_boundaries(struct btree_trans *trans, struct btree *b,
-				       struct btree *prev, struct btree *cur,
-				       struct bpos *pulled_from_scan)
+				       struct btree *prev, struct btree *cur)
 {
 	struct bch_fs *c = trans->c;
 	struct bpos expected_start = !prev
@@ -219,40 +218,45 @@ static int btree_check_node_boundaries(struct btree_trans *trans, struct btree *
 	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&cur->key));
 
 	if (bpos_lt(expected_start, cur->data->min_key)) {				/* gap */
+		size_t nodes_found = 0;
+
 		if (b->c.level == 1 &&
-		    bpos_lt(*pulled_from_scan, cur->data->min_key)) {
+		    btree_id_recovers_from_scan(b->c.btree_id)) {
 			try(bch2_get_scanned_nodes(c, b->c.btree_id, 0,
 						   expected_start,
-						   bpos_predecessor(cur->data->min_key)));
+						   bpos_predecessor(cur->data->min_key),
+						   &buf, &nodes_found));
+			if (!nodes_found)
+				prt_printf(&buf, "btree node scan found no nodes this range\n");
+		}
 
-			*pulled_from_scan = cur->data->min_key;
-			ret = bch_err_throw(c, topology_repair_did_fill_from_scan);
-		} else {
-			if (mustfix_fsck_err(trans, btree_node_topology_gap_between_nodes,
-					     "gap between btree nodes%s", buf.buf))
-				ret = set_node_min(c, cur, expected_start);
+		if (mustfix_fsck_err(trans, btree_node_topology_gap_between_nodes,
+				     "gap between btree nodes%s", buf.buf)) {
+			if (nodes_found)
+				return bch_err_throw(c, topology_repair_did_fill_from_scan);
+			else
+				return set_node_min(c, cur, expected_start);
 		}
 	} else {									/* overlap */
 		if (prev && BTREE_NODE_SEQ(cur->data) > BTREE_NODE_SEQ(prev->data)) {	/* cur overwrites prev */
 			if (bpos_ge(prev->data->min_key, cur->data->min_key)) {		/* fully? */
 				if (mustfix_fsck_err(trans, btree_node_topology_overwritten_by_next_node,
 						     "btree node overwritten by next node%s", buf.buf))
-					ret = bch_err_throw(c, topology_repair_drop_prev_node);
+					return bch_err_throw(c, topology_repair_drop_prev_node);
 			} else {
 				if (mustfix_fsck_err(trans, btree_node_topology_bad_max_key,
 						     "btree node with incorrect max_key%s", buf.buf))
-					ret = set_node_max(c, prev,
-							   bpos_predecessor(cur->data->min_key));
+					return set_node_max(c, prev, bpos_predecessor(cur->data->min_key));
 			}
 		} else {
 			if (bpos_ge(expected_start, cur->data->max_key)) {		/* fully? */
 				if (mustfix_fsck_err(trans, btree_node_topology_overwritten_by_prev_node,
 						     "btree node overwritten by prev node%s", buf.buf))
-					ret = bch_err_throw(c, topology_repair_drop_this_node);
+					return bch_err_throw(c, topology_repair_drop_this_node);
 			} else {
 				if (mustfix_fsck_err(trans, btree_node_topology_bad_min_key,
 						     "btree node with incorrect min_key%s", buf.buf))
-					ret = set_node_min(c, cur, expected_start);
+					return set_node_min(c, cur, expected_start);
 			}
 		}
 	}
@@ -286,8 +290,7 @@ fsck_err:
 	return ret;
 }
 
-static int btree_repair_node_end(struct btree_trans *trans, struct btree *b,
-				 struct btree *child, struct bpos *pulled_from_scan)
+static int btree_repair_node_end(struct btree_trans *trans, struct btree *b, struct btree *child)
 {
 	struct bch_fs *c = trans->c;
 	int ret = 0;
@@ -304,25 +307,25 @@ static int btree_repair_node_end(struct btree_trans *trans, struct btree *b,
 	prt_str(&buf, "\nchild: ");
 	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&child->key));
 
+	size_t nodes_found = 0;
+	if (b->c.level == 1)
+		try(bch2_get_scanned_nodes(c, b->c.btree_id, 0,
+					   bpos_successor(child->key.k.p), b->key.k.p,
+					   &buf, &nodes_found));
+
 	if (mustfix_fsck_err(trans, btree_node_topology_bad_max_key,
 			     "btree node with incorrect max_key%s", buf.buf)) {
-		if (b->c.level == 1 &&
-		    bpos_lt(*pulled_from_scan, b->key.k.p)) {
-			try(bch2_get_scanned_nodes(c, b->c.btree_id, 0,
-						   bpos_successor(child->key.k.p), b->key.k.p));
 
-			*pulled_from_scan = b->key.k.p;
+		if (nodes_found)
 			return bch_err_throw(c, topology_repair_did_fill_from_scan);
-		} else {
-			try(set_node_max(c, child, b->key.k.p));
-		}
+		else
+			return set_node_max(c, child, b->key.k.p);
 	}
 fsck_err:
 	return ret;
 }
 
-static int bch2_btree_repair_topology_recurse(struct btree_trans *trans, struct btree *b,
-					      struct bpos *pulled_from_scan)
+static int bch2_btree_repair_topology_recurse(struct btree_trans *trans, struct btree *b)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_and_journal_iter iter;
@@ -389,7 +392,7 @@ again:
 		}
 
 		ret = lockrestart_do(trans,
-			btree_check_node_boundaries(trans, b, prev, cur, pulled_from_scan));
+			btree_check_node_boundaries(trans, b, prev, cur));
 		if (ret && !bch2_err_matches(ret, BCH_ERR_topology_repair))
 			goto err;
 
@@ -434,7 +437,7 @@ again:
 	if (!ret && !IS_ERR_OR_NULL(prev)) {
 		BUG_ON(cur);
 		ret = lockrestart_do(trans,
-			btree_repair_node_end(trans, b, prev, pulled_from_scan));
+			btree_repair_node_end(trans, b, prev));
 		if (bch2_err_matches(ret, BCH_ERR_topology_repair_did_fill_from_scan)) {
 			new_pass = true;
 			ret = 0;
@@ -472,7 +475,7 @@ again:
 		if (ret)
 			goto err;
 
-		ret = bch2_btree_repair_topology_recurse(trans, cur, pulled_from_scan);
+		ret = bch2_btree_repair_topology_recurse(trans, cur);
 		six_unlock_read(&cur->c.lock);
 		cur = NULL;
 
@@ -533,45 +536,56 @@ static int bch2_topology_check_root(struct btree_trans *trans, enum btree_id btr
 		return 0;
 
 	CLASS(printbuf, buf)();
+	bch2_log_msg_start(c, &buf);
+	prt_printf(&buf, "btree root ");
+	bch2_btree_id_to_text(&buf, btree);
+	prt_printf(&buf, " unreadable: %s\n", bch2_err_str(r->error));
+
 	int ret = 0;
+	bool print = true;
 
 	if (!btree_id_recovers_from_scan(btree)) {
 		r->alive = false;
 		r->error = 0;
 		bch2_btree_root_alloc_fake_trans(trans, btree, 0);
+		*reconstructed_root = true;
+
 		ret = bch2_btree_lost_data(c, &buf, btree);
-		bch2_print_str(c, KERN_NOTICE, buf.buf);
-		goto out;
-	}
-
-	bch2_btree_id_to_text(&buf, btree);
-	bch_info(c, "btree root %s unreadable, must recover from scan", buf.buf);
-
-	ret = bch2_btree_has_scanned_nodes(c, btree);
-	if (ret < 0)
-		goto err;
-
-	if (!ret) {
-		__fsck_err(trans,
-			   FSCK_CAN_FIX|(btree_id_can_reconstruct(btree) ? FSCK_AUTOFIX : 0),
-			   btree_root_unreadable_and_scan_found_nothing,
-			   "no nodes found for btree %s, continue?", buf.buf);
-
-		r->alive = false;
-		r->error = 0;
-		bch2_btree_root_alloc_fake_trans(trans, btree, 0);
 	} else {
-		r->alive = false;
-		r->error = 0;
-		bch2_btree_root_alloc_fake_trans(trans, btree, 1);
+		ret = bch2_btree_has_scanned_nodes(c, btree, &buf);
 
-		bch2_shoot_down_journal_keys(c, btree, 1, BTREE_MAX_DEPTH, POS_MIN, SPOS_MAX);
-		try(bch2_get_scanned_nodes(c, btree, 0, POS_MIN, SPOS_MAX));
+		if (ret < 0) {
+			/*
+			 * just log our message, we'll be rewinding to run
+			 * btree node scan
+			 */
+		} else if (!ret) {
+			print = false;
+
+			__fsck_err(trans,
+				   FSCK_CAN_FIX|(btree_id_can_reconstruct(btree) ? FSCK_AUTOFIX : 0),
+				   btree_root_unreadable_and_scan_found_nothing,
+				   "%sbtree node scan found no nodes, continue?", buf.buf);
+
+			r->alive = false;
+			r->error = 0;
+			bch2_btree_root_alloc_fake_trans(trans, btree, 0);
+			*reconstructed_root = true;
+		} else {
+			r->alive = false;
+			r->error = 0;
+			bch2_btree_root_alloc_fake_trans(trans, btree, 1);
+			*reconstructed_root = true;
+
+			bch2_shoot_down_journal_keys(c, btree, 1, BTREE_MAX_DEPTH, POS_MIN, SPOS_MAX);
+
+			size_t nodes_found = 0;
+			try(bch2_get_scanned_nodes(c, btree, 0, POS_MIN, SPOS_MAX, &buf, &nodes_found));
+		}
 	}
-out:
-	*reconstructed_root = true;
-	return 0;
-err:
+
+	if (print)
+		bch2_print_str(c, KERN_NOTICE, buf.buf);
 fsck_err:
 	bch_err_fn(c, ret);
 	return ret;
@@ -580,7 +594,6 @@ fsck_err:
 int bch2_check_topology(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	struct bpos pulled_from_scan = POS_MIN;
 	int ret = 0;
 
 	bch2_trans_srcu_unlock(trans);
@@ -597,7 +610,7 @@ recover:
 
 		btree_node_lock_nopath_nofail(trans, &b->c, SIX_LOCK_read);
 		ret =   btree_check_root_boundaries(trans, b) ?:
-			bch2_btree_repair_topology_recurse(trans, b, &pulled_from_scan);
+			bch2_btree_repair_topology_recurse(trans, b);
 		six_unlock_read(&b->c.lock);
 
 		if (bch2_err_matches(ret, BCH_ERR_topology_repair_drop_this_node)) {
