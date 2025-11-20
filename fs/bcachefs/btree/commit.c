@@ -68,15 +68,17 @@ static void verify_update_old_key(struct btree_trans *trans, struct btree_insert
 	}
 
 	/* when updating btree ptrs, mem_ptr may change underneath us, unlocked */
-
-	struct bkey_s_c old = { &i->old_k, i->old_v };
-	if (unlikely(!bkey_and_val_eq(k, old))) {
+	if (!bkey_fields_eq(*k.k, i->old_k) || k.v != i->old_v) {
 		CLASS(printbuf, buf)();
-		prt_str(&buf, "updated cached old key doesn't match");
-		prt_str(&buf, "\ncached: ");
-		bch2_bkey_val_to_text(&buf, c, old);
-		prt_str(&buf, "\nreal:   ");
-		bch2_bkey_val_to_text(&buf, c, k);
+		prt_str(&buf, "updated cached old key doesn't match\n");
+		prt_str(&buf, "cached: ");
+		bch2_bkey_to_text(&buf, &i->old_k);
+		prt_printf(&buf, " %px\n", i->old_v);
+
+		prt_str(&buf, "real:   ");
+		bch2_bkey_to_text(&buf, k.k);
+		prt_printf(&buf, " %px\n", k.v);
+
 		panic("%s\n", buf.buf);
 	}
 #endif
