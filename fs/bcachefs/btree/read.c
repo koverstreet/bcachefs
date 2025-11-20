@@ -660,33 +660,6 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 		     "bad magic: want %llx, got %llx",
 		     bset_magic(c), le64_to_cpu(b->data->magic));
 
-	if (b->key.k.type == KEY_TYPE_btree_ptr_v2) {
-		struct bch_btree_ptr_v2 *bp =
-			&bkey_i_to_btree_ptr_v2(&b->key)->v;
-
-		bch2_bpos_to_text(&buf, b->data->min_key);
-		prt_str(&buf, "-");
-		bch2_bpos_to_text(&buf, b->data->max_key);
-
-		btree_err_on(b->data->keys.seq != bp->seq,
-			     -BCH_ERR_btree_node_read_err_must_retry,
-			     c, ca, b, NULL, NULL,
-			     btree_node_bad_seq,
-			     "got wrong btree node: got\n%s",
-			     (printbuf_reset(&buf),
-			      bch2_btree_node_header_to_text(&buf, b->data),
-			      buf.buf));
-	} else {
-		btree_err_on(!b->data->keys.seq,
-			     -BCH_ERR_btree_node_read_err_must_retry,
-			     c, ca, b, NULL, NULL,
-			     btree_node_bad_seq,
-			     "bad btree header: seq 0\n%s",
-			     (printbuf_reset(&buf),
-			      bch2_btree_node_header_to_text(&buf, b->data),
-			      buf.buf));
-	}
-
 	while (b->written < (ptr_written ?: btree_sectors(c))) {
 		unsigned sectors;
 		bool first = !b->written;
@@ -741,6 +714,34 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 				if (bch2_fs_fatal_err_on(ret, c,
 							 "decrypting btree node: %s", bch2_err_str(ret)))
 					goto fsck_err;
+			}
+
+			if (b->key.k.type == KEY_TYPE_btree_ptr_v2) {
+				struct bch_btree_ptr_v2 *bp =
+					&bkey_i_to_btree_ptr_v2(&b->key)->v;
+
+				bch2_bpos_to_text(&buf, b->data->min_key);
+				prt_str(&buf, "-");
+				bch2_bpos_to_text(&buf, b->data->max_key);
+
+				btree_err_on(b->data->keys.seq != bp->seq,
+					     -BCH_ERR_btree_node_read_err_must_retry,
+					     c, ca, b, NULL, NULL,
+					     btree_node_bad_seq,
+					     "got wrong btree node: got\n%s",
+					     (printbuf_reset(&buf),
+					      printbuf_indent_add(&buf, 2),
+					      bch2_btree_node_header_to_text(&buf, b->data),
+					      buf.buf));
+			} else {
+				btree_err_on(!b->data->keys.seq,
+					     -BCH_ERR_btree_node_read_err_must_retry,
+					     c, ca, b, NULL, NULL,
+					     btree_node_bad_seq,
+					     "bad btree header: seq 0\n%s",
+					     (printbuf_reset(&buf),
+					      bch2_btree_node_header_to_text(&buf, b->data),
+					      buf.buf));
 			}
 
 			btree_err_on(btree_node_type_is_extents(btree_node_type(b)) &&
