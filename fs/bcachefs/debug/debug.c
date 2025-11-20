@@ -16,6 +16,7 @@
 #include "btree/interior.h"
 #include "btree/iter.h"
 #include "btree/locking.h"
+#include "btree/node_scan.h"
 #include "btree/read.h"
 #include "btree/update.h"
 
@@ -892,6 +893,45 @@ static const struct file_operations write_points_ops = {
 	.read		= bch2_write_points_read,
 };
 
+static bool print_next_node_scan_node(struct dump_iter *i)
+{
+	struct find_btree_nodes *f = &i->c->found_btree_nodes;
+	guard(mutex)(&f->lock);
+
+	if (i->iter >= f->nodes.nr)
+		return false;
+
+	size_t idx = inorder_to_eytzinger0(i->iter, f->nodes.nr);
+
+	bch2_found_btree_node_to_text(&i->buf, i->c, &f->nodes.data[idx]);
+	i->iter++;
+	return true;
+}
+
+static ssize_t bch2_btree_node_scan_read(struct file *file, char __user *buf,
+					 size_t size, loff_t *ppos)
+{
+	struct dump_iter *i = file->private_data;
+
+	i->ubuf = buf;
+	i->size	= size;
+	i->ret	= 0;
+
+	try(bch2_debugfs_flush_buf(i));
+
+	while (print_next_node_scan_node(i))
+		try(bch2_debugfs_flush_buf(i));
+
+	return i->ret;
+}
+
+static const struct file_operations btree_node_scan_ops = {
+	.owner		= THIS_MODULE,
+	.open		= bch2_dump_open,
+	.release	= bch2_dump_release,
+	.read		= bch2_btree_node_scan_read,
+};
+
 void bch2_fs_debug_exit(struct bch_fs *c)
 {
 	if (!IS_ERR_OR_NULL(c->fs_debug_dir))
@@ -900,15 +940,16 @@ void bch2_fs_debug_exit(struct bch_fs *c)
 
 static void bch2_fs_debug_btree_init(struct bch_fs *c, struct btree_debug *bd)
 {
-	struct dentry *d;
+	struct dentry *btree_dir =
+		debugfs_create_dir(bch2_btree_id_str(bd->id), c->btree_debug_dir);
+	if (IS_ERR_OR_NULL(btree_dir))
+		return;
 
-	d = debugfs_create_dir(bch2_btree_id_str(bd->id), c->btree_debug_dir);
+	debugfs_create_file("keys", 0400, btree_dir, bd, &btree_debug_ops);
 
-	debugfs_create_file("keys", 0400, d, bd, &btree_debug_ops);
+	debugfs_create_file("formats", 0400, btree_dir, bd, &btree_format_debug_ops);
 
-	debugfs_create_file("formats", 0400, d, bd, &btree_format_debug_ops);
-
-	debugfs_create_file("bfloat-failed", 0400, d, bd,
+	debugfs_create_file("bfloat-failed", 0400, btree_dir, bd,
 			    &bfloat_failed_debug_ops);
 }
 
@@ -946,6 +987,9 @@ void bch2_fs_debug_init(struct bch_fs *c)
 
 	debugfs_create_file("btree_deadlock", 0400, c->fs_debug_dir,
 			    c->btree_debug, &btree_deadlock_ops);
+
+	debugfs_create_file("btree_node_scan", 0400, c->fs_debug_dir,
+			    c->btree_debug, &btree_node_scan_ops);
 
 	debugfs_create_file("write_points", 0400, c->fs_debug_dir,
 			    c->btree_debug, &write_points_ops);

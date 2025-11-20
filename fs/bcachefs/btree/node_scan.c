@@ -34,14 +34,15 @@ void bch2_found_btree_node_to_text(struct printbuf *out, struct bch_fs *c, const
 
 	if (n->range_updated)
 		prt_str(out, " range updated");
+	prt_newline(out);
 
 	guard(printbuf_indent)(out);
 	guard(printbuf_atomic)(out);
 	guard(rcu)();
 
 	for (unsigned i = 0; i < n->nr_ptrs; i++) {
-		prt_newline(out);
 		bch2_extent_ptr_to_text(out, c, n->ptrs + i);
+		prt_newline(out);
 	}
 }
 
@@ -49,10 +50,8 @@ static void found_btree_nodes_to_text(struct printbuf *out, struct bch_fs *c,
 				      darray_found_btree_node nodes)
 {
 	guard(printbuf_indent)(out);
-	darray_for_each(nodes, i) {
+	darray_for_each(nodes, i)
 		bch2_found_btree_node_to_text(out, c, i);
-		prt_newline(out);
-	}
 }
 
 static void found_btree_node_to_key(struct bkey_i *k, const struct found_btree_node *f)
