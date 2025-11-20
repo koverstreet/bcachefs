@@ -476,26 +476,6 @@ int bch2_require_recovery_pass(struct bch_fs *c,
 	return ret;
 }
 
-int bch2_run_print_explicit_recovery_pass(struct bch_fs *c, enum bch_recovery_pass pass)
-{
-	enum bch_run_recovery_pass_flags flags = 0;
-
-	if (!recovery_pass_needs_set(c, pass, &flags))
-		return 0;
-
-	CLASS(printbuf, buf)();
-	bch2_log_msg_start(c, &buf);
-
-	guard(mutex)(&c->sb_lock);
-	bool write_sb = false;
-	int ret = __bch2_run_explicit_recovery_pass(c, &buf, pass,
-						RUN_RECOVERY_PASS_nopersistent,
-						&write_sb);
-
-	bch2_print_str(c, KERN_NOTICE, buf.buf);
-	return ret;
-}
-
 static int bch2_run_recovery_pass(struct bch_fs *c, enum bch_recovery_pass pass)
 {
 	struct bch_fs_recovery *r = &c->recovery;

@@ -63,9 +63,17 @@ static int check_subvol(struct btree_trans *trans,
 	snapid = le32_to_cpu(subvol.snapshot);
 	ret = bch2_snapshot_lookup(trans, snapid, &snapshot);
 
-	if (bch2_err_matches(ret, ENOENT))
-		return bch2_run_print_explicit_recovery_pass(c,
-					BCH_RECOVERY_PASS_reconstruct_snapshots) ?: ret;
+	if (bch2_err_matches(ret, ENOENT)) {
+		bch2_log_msg_start(c, &buf);
+		prt_printf(&buf, "subvolume points to missing snapshot\n");
+		bch2_bkey_val_to_text(&buf, c, k);
+		prt_newline(&buf);
+
+		ret = bch2_run_explicit_recovery_pass(c, &buf,
+					BCH_RECOVERY_PASS_reconstruct_snapshots, 0) ?: ret;
+		bch2_print_str(c, KERN_NOTICE, buf.buf);
+		return ret;
+	}
 	if (ret)
 		return ret;
 
