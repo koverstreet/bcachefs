@@ -818,11 +818,14 @@ recheck_need_open:
 
 		seq = res.seq;
 		buf = journal_seq_to_buf(j, seq);
-		buf->must_flush = true;
 
-		if (!buf->flush_time) {
-			buf->flush_time	= local_clock() ?: 1;
-			buf->expires = jiffies;
+		scoped_guard(spinlock, &j->lock) {
+			buf->must_flush = true;
+
+			if (!buf->flush_time) {
+				buf->flush_time	= local_clock() ?: 1;
+				buf->expires = jiffies;
+			}
 		}
 
 		if (parent && !closure_wait(&buf->wait, parent))
@@ -934,11 +937,14 @@ int __bch2_journal_meta(struct journal *j)
 	try(bch2_journal_res_get(j, &res, jset_u64s(0), 0, NULL));
 
 	struct journal_buf *buf = j->buf + (res.seq & JOURNAL_BUF_MASK);
-	buf->must_flush = true;
 
-	if (!buf->flush_time) {
-		buf->flush_time	= local_clock() ?: 1;
-		buf->expires = jiffies;
+	scoped_guard(spinlock, &j->lock) {
+		buf->must_flush = true;
+
+		if (!buf->flush_time) {
+			buf->flush_time	= local_clock() ?: 1;
+			buf->expires = jiffies;
+		}
 	}
 
 	bch2_journal_res_put(j, &res);
