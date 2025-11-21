@@ -328,7 +328,7 @@ again:
 	 * allocated, in bch2_journal_write() - but the journal write error path
 	 * is special:
 	 */
-	bch2_journal_do_writes(j);
+	bch2_journal_do_writes_locked(j);
 	spin_unlock(&j->lock);
 
 	if (last_seq_ondisk_updated) {
@@ -667,6 +667,7 @@ CLOSURE_CALLBACK(bch2_journal_write)
 	BUG_ON(!w->write_started);
 	BUG_ON(w->write_allocated);
 	BUG_ON(w->write_done);
+	BUG_ON(journal_last_unallocated_seq(j) != le64_to_cpu(w->data->seq));
 
 	j->write_start_time = local_clock();
 
@@ -719,7 +720,7 @@ CLOSURE_CALLBACK(bch2_journal_write)
 		 * available:
 		 */
 		bch2_journal_space_available(j);
-		bch2_journal_do_writes(j);
+		bch2_journal_do_writes_locked(j);
 	}
 
 	w->devs_written = bch2_bkey_devs(c, bkey_i_to_s_c(&w->key));

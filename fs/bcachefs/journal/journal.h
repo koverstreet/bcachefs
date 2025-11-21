@@ -139,6 +139,16 @@ static inline u64 journal_last_unwritten_seq(struct journal *j)
 	return j->seq_ondisk + 1;
 }
 
+static inline u64 journal_last_unallocated_seq(struct journal *j)
+{
+	for (u64 seq = journal_last_unwritten_seq(j);
+	     seq <= journal_cur_seq(j);
+	     seq++)
+		if (!j->buf[seq & JOURNAL_BUF_MASK].write_allocated)
+			return seq;
+	return 0;
+}
+
 static inline bool journal_seq_unwritten(struct journal *j, u64 seq)
 {
 	return seq > j->seq_ondisk;
@@ -295,6 +305,8 @@ static inline union journal_res_state journal_state_buf_put(struct journal *j, u
 }
 
 bool bch2_journal_entry_close(struct journal *);
+
+void bch2_journal_do_writes_locked(struct journal *);
 void bch2_journal_do_writes(struct journal *);
 void bch2_journal_buf_put_final(struct journal *, u64);
 
