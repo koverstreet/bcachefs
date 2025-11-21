@@ -163,6 +163,7 @@ write_attribute(trigger_btree_write_buffer_flush);
 write_attribute(trigger_btree_updates);
 write_attribute(trigger_freelist_wakeup);
 write_attribute(trigger_recalc_capacity);
+write_attribute(trigger_reconcile_wakeup);
 write_attribute(trigger_delete_dead_snapshots);
 write_attribute(trigger_emergency_read_only);
 read_attribute(gc_gens_pos);
@@ -473,6 +474,9 @@ STORE(bch2_fs)
 		bch2_recalc_capacity(c);
 	}
 
+	if (attr == &sysfs_trigger_reconcile_wakeup)
+		bch2_reconcile_wakeup(c);
+
 	if (attr == &sysfs_trigger_delete_dead_snapshots)
 		__bch2_delete_dead_snapshots(c);
 
@@ -620,6 +624,7 @@ struct attribute *bch2_fs_internal_files[] = {
 	&sysfs_trigger_btree_updates,
 	&sysfs_trigger_freelist_wakeup,
 	&sysfs_trigger_recalc_capacity,
+	&sysfs_trigger_reconcile_wakeup,
 	&sysfs_trigger_delete_dead_snapshots,
 	&sysfs_trigger_emergency_read_only,
 
