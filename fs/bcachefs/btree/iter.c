@@ -2147,6 +2147,7 @@ void bch2_btree_trans_peek_updates(struct btree_trans *trans, struct btree_iter 
 	trans_for_each_update(trans, i)
 		if (!i->key_cache_already_flushed &&
 		    i->btree_id == iter->btree_id &&
+		    i->level	== iter->min_depth &&
 		    bpos_ge(i->k->k.p, search_key) &&
 		    bpos_le(i->k->k.p, k->k ? k->k->p : end)) {
 			iter->k = i->k->k;
@@ -2161,6 +2162,7 @@ void bch2_btree_trans_peek_slot_updates(struct btree_trans *trans, struct btree_
 	trans_for_each_update(trans, i)
 		if (!i->key_cache_already_flushed &&
 		    i->btree_id == iter->btree_id &&
+		    i->level	== iter->min_depth &&
 		    bpos_eq(i->k->k.p, iter->pos)) {
 			iter->k = i->k->k;
 			*k = bkey_i_to_s_c(i->k);
