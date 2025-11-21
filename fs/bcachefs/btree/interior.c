@@ -1924,6 +1924,8 @@ static int bch2_btree_insert_node(struct btree_update *as, struct btree_trans *t
 
 	btree_update_updated_node(as, b);
 	bch2_btree_node_unlock_write(trans, path, b);
+
+	bch2_trans_revalidate_updates_in_node(trans, b);
 	return 0;
 split:
 	/*

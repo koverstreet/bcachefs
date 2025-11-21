@@ -641,7 +641,7 @@ void bch2_btree_path_level_init(struct btree_trans *trans,
 
 /* Btree path: fixups after btree node updates: */
 
-static void bch2_trans_revalidate_updates_in_node(struct btree_trans *trans, struct btree *b)
+void bch2_trans_revalidate_updates_in_node(struct btree_trans *trans, struct btree *b)
 {
 	struct bch_fs *c = trans->c;
 
