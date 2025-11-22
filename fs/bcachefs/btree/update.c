@@ -16,6 +16,8 @@
 
 #include "init/error.h"
 
+#include "sb/counters.h"
+
 #include "snapshots/snapshot.h"
 
 #include <linux/string_helpers.h>

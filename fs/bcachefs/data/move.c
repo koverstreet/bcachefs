@@ -30,6 +30,7 @@
 
 #include "journal/reclaim.h"
 
+#include "sb/counters.h"
 #include "sb/io.h"
 
 #include "snapshots/snapshot.h"

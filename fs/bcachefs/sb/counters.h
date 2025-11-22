@@ -17,4 +17,12 @@ extern const struct bch_sb_field_ops bch_sb_field_ops_counters;
 long bch2_ioctl_query_counters(struct bch_fs *,
 			struct bch_ioctl_query_counters __user *);
 
+#define count_event(_c, _name)	this_cpu_inc((_c)->counters[BCH_COUNTER_##_name])
+
+#define trace_and_count(_c, _name, ...)					\
+do {									\
+	count_event(_c, _name);						\
+	trace_##_name(__VA_ARGS__);					\
+} while (0)
+
 #endif // _BCACHEFS_SB_COUNTERS_H

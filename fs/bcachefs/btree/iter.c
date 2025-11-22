@@ -24,6 +24,8 @@
 #include "journal/journal.h"
 #include "journal/read.h"
 
+#include "sb/counters.h"
+
 #include "snapshots/snapshot.h"
 
 #include <linux/random.h>

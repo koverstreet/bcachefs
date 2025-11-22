@@ -20,6 +20,7 @@
 #include "journal/write.h"
 
 #include "sb/clean.h"
+#include "sb/counters.h"
 
 #include <linux/ioprio.h>
 

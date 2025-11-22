@@ -26,10 +26,11 @@
 #include "data/keylist.h"
 #include "data/reconcile.h"
 
-#include "sb/io.h"
-
 #include "init/error.h"
 #include "init/recovery.h"
+
+#include "sb/counters.h"
+#include "sb/io.h"
 
 #include "util/enumerated_ref.h"
 #include "util/util.h"

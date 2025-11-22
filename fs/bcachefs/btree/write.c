@@ -14,6 +14,8 @@
 
 #include "init/error.h"
 
+#include "sb/counters.h"
+
 #include "journal/reclaim.h"
 
 static void bch2_btree_complete_write(struct bch_fs *c, struct btree *b,

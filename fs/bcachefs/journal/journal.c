@@ -19,6 +19,8 @@
 #include "journal/seq_blacklist.h"
 #include "journal/write.h"
 
+#include "sb/counters.h"
+
 #include "util/enumerated_ref.h"
 
 static bool __journal_entry_is_open(union journal_res_state state)

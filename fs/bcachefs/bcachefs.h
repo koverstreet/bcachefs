@@ -267,14 +267,6 @@
 #include "snapshots/snapshot_types.h"
 #include "snapshots/subvolume_types.h"
 
-#define count_event(_c, _name)	this_cpu_inc((_c)->counters[BCH_COUNTER_##_name])
-
-#define trace_and_count(_c, _name, ...)					\
-do {									\
-	count_event(_c, _name);						\
-	trace_##_name(__VA_ARGS__);					\
-} while (0)
-
 #define bch2_fs_init_fault(name)					\
 	dynamic_fault("bcachefs:bch_fs_init:" name)
 #define bch2_meta_read_fault(name)					\
