@@ -853,6 +853,8 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 
 	struct bkey_s_c bp_k;
 	int ret = 0;
+	unsigned nr_deletes = 0;
+
 	for_each_btree_key_max_norestart(trans, iter, BTREE_ID_backpointers,
 				bucket_pos_to_bp_start(ca, alloc_k.k->p),
 				bucket_pos_to_bp_end(ca, alloc_k.k->p), 0, bp_k, ret) {
@@ -865,6 +867,11 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 		    (bp.v->bucket_gen != a->gen ||
 		     bp.v->pad)) {
 			try(bch2_backpointer_del(trans, bp_k.k->p));
+			nr_deletes++;
+
+			if (nr_deletes > 256)
+				return  bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
+					bch2_btree_write_buffer_flush_sync(trans);
 
 			need_commit = true;
 			continue;
