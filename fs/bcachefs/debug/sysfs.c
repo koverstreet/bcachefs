@@ -549,8 +549,8 @@ SHOW(bch2_fs_counters)
 
 	#define x(t, n, f, ...) \
 		if (attr == &sysfs_##t) {					\
-			counter             = percpu_u64_get(&c->counters[BCH_COUNTER_##t]);\
-			counter_since_mount = counter - c->counters_on_mount[BCH_COUNTER_##t];\
+			counter             = percpu_u64_get(&c->counters.now[BCH_COUNTER_##t]);\
+			counter_since_mount = counter - c->counters.mount[BCH_COUNTER_##t];\
 			if (f & TYPE_SECTORS) {					\
 				counter <<= 9;					\
 				counter_since_mount <<= 9;			\

@@ -261,6 +261,7 @@
 
 #include "journal/types.h"
 
+#include "sb/counters_types.h"
 #include "sb/errors_types.h"
 #include "sb/members_types.h"
 
@@ -1140,8 +1141,7 @@ struct bch_fs {
 
 	u64			last_bucket_seq_cleanup;
 
-	u64			counters_on_mount[BCH_COUNTER_NR];
-	u64 __percpu		*counters;
+	struct bch_fs_counters	counters;
 
 	struct bch2_time_stats	times[BCH_TIME_STAT_NR];
 
@@ -1158,7 +1158,7 @@ struct bch_fs {
 
 static inline int __bch2_err_trace(struct bch_fs *c, int err)
 {
-	this_cpu_inc(c->counters[BCH_COUNTER_error_throw]);
+	this_cpu_inc(c->counters.now[BCH_COUNTER_error_throw]);
 	trace_error_throw(c, err, _THIS_IP_);
 	return err;
 }

@@ -672,7 +672,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 	struct bch_io_failures failed = { .nr = 0 };
 
 	trace_io_read_retry(&rbio->bio);
-	this_cpu_add(c->counters[BCH_COUNTER_io_read_retry],
+	this_cpu_add(c->counters.now[BCH_COUNTER_io_read_retry],
 		     bvec_iter_sectors(rbio->bvec_iter));
 
 	{
@@ -1113,7 +1113,7 @@ int __bch2_read_extent(struct btree_trans *trans, struct bch_read_bio *orig,
 		swap(iter.bi_size, bytes);
 		bio_advance_iter(&orig->bio, &iter, bytes);
 		zero_fill_bio_iter(&orig->bio, iter);
-		this_cpu_add(c->counters[BCH_COUNTER_io_read_inline],
+		this_cpu_add(c->counters.now[BCH_COUNTER_io_read_inline],
 			     bvec_iter_sectors(iter));
 		goto out_read_done;
 	}
@@ -1317,9 +1317,9 @@ retry_pick:
 		trace_and_count(c, io_read_bounce, &rbio->bio);
 
 	if (!u)
-		this_cpu_add(c->counters[BCH_COUNTER_io_read], bio_sectors(&rbio->bio));
+		this_cpu_add(c->counters.now[BCH_COUNTER_io_read], bio_sectors(&rbio->bio));
 	else
-		this_cpu_add(c->counters[BCH_COUNTER_io_move_read], bio_sectors(&rbio->bio));
+		this_cpu_add(c->counters.now[BCH_COUNTER_io_move_read], bio_sectors(&rbio->bio));
 	bch2_increment_clock(c, bio_sectors(&rbio->bio), READ);
 
 	/*
@@ -1413,7 +1413,7 @@ err:
 	goto out_read_done;
 
 hole:
-	this_cpu_add(c->counters[BCH_COUNTER_io_read_hole],
+	this_cpu_add(c->counters.now[BCH_COUNTER_io_read_hole],
 		     bvec_iter_sectors(iter));
 	/*
 	 * won't normally happen in the data update (bch2_move_extent()) path,

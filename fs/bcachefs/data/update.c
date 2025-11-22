@@ -309,7 +309,7 @@ static int data_update_index_update_key(struct btree_trans *trans,
 
 	if (trace_data_update_key_enabled())
 		trace_data_update_key2(u, old, k, insert);
-	this_cpu_add(c->counters[BCH_COUNTER_data_update_key], new->k.size);
+	this_cpu_add(c->counters.now[BCH_COUNTER_data_update_key], new->k.size);
 	return 0;
 }
 
