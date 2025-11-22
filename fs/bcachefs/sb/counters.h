@@ -17,6 +17,8 @@ extern const struct bch_sb_field_ops bch_sb_field_ops_counters;
 long bch2_ioctl_query_counters(struct bch_fs *,
 			struct bch_ioctl_query_counters __user *);
 
+void bch2_sb_recent_counters_to_text(struct printbuf *out, struct bch_fs_counters *c);
+
 #define count_event(_c, _name)	this_cpu_inc((_c)->counters.now[BCH_COUNTER_##_name])
 
 #define trace_and_count(_c, _name, ...)					\
