@@ -1493,6 +1493,14 @@ static struct bch_fs *__bch2_fs_open(darray_const_str *devices,
 	if (ret)
 		goto err;
 
+	{
+		/* Log opt_version_init() message before doing actual filesystem startup */
+		CLASS(printbuf, msg_with_prefix)();
+		prt_str(&msg_with_prefix, out->buf);
+		bch2_print_str(c, KERN_INFO, msg_with_prefix.buf);
+		printbuf_reset(out);
+	}
+
 	if (!c->opts.nostart) {
 		ret = __bch2_fs_start(c, out);
 		c->recovery_task = NULL;
@@ -1524,7 +1532,7 @@ struct bch_fs *bch2_fs_open(darray_const_str *devices,
 	if (ret) {
 		prt_printf(&msg, "error starting filesystem: %s", bch2_err_str(ret));
 		bch2_print_string_as_lines(KERN_ERR, msg.buf);
-	} else {
+	} else if (msg.pos) {
 		CLASS(printbuf, msg_with_prefix)();
 		bch2_log_msg_start(c, &msg_with_prefix);
 		prt_str(&msg_with_prefix, msg.buf);
