@@ -2001,6 +2001,10 @@ long bch2_ioctl_fsck_offline(struct bch_ioctl_fsck_offline __user *user_arg)
 
 	bch2_thread_with_stdio_init(&thr->thr, &bch2_offline_fsck_ops);
 
+	/*
+	 * XXX: we need to setup and pass the redirect here, opt_version_init
+	 * isn't getting redirected
+	 */
 	thr->c = bch2_fs_open(&devs, &thr->opts);
 
 	if (!IS_ERR(thr->c) &&
