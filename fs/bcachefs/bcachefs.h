@@ -950,6 +950,7 @@ struct bch_fs {
 	struct workqueue_struct *write_ref_wq;
 
 	struct workqueue_struct *promote_wq;
+	struct semaphore __percpu *promote_limit;
 
 	/* ALLOCATION */
 	struct bch_devs_mask	online_devs;
@@ -1036,7 +1037,6 @@ struct bch_fs {
 	struct mutex		gc_gens_lock;
 
 	/* IO PATH */
-	struct semaphore	io_in_flight;
 	struct bio_set		bio_read;
 	struct bio_set		bio_read_split;
 	struct bio_set		bio_write;

@@ -48,6 +48,7 @@
 	x(ENOMEM,			ENOMEM_bio_read_init)			\
 	x(ENOMEM,			ENOMEM_bio_read_split_init)		\
 	x(ENOMEM,			ENOMEM_bio_write_init)			\
+	x(ENOMEM,			ENOMEM_promote_limit_init)		\
 	x(ENOMEM,			ENOMEM_bio_bounce_pages_init)		\
 	x(ENOMEM,			ENOMEM_writepage_bioset_init)		\
 	x(ENOMEM,			ENOMEM_dio_read_bioset_init)		\
@@ -373,6 +374,7 @@
 	x(BCH_ERR_nopromote,		nopromote_already_promoted)		\
 	x(BCH_ERR_nopromote,		nopromote_unwritten)			\
 	x(BCH_ERR_nopromote,		nopromote_congested)			\
+	x(BCH_ERR_nopromote,		nopromote_ratelimited)			\
 	x(BCH_ERR_nopromote,		nopromote_in_flight)			\
 	x(BCH_ERR_nopromote,		nopromote_no_writes)			\
 	x(BCH_ERR_nopromote,		nopromote_enomem)			\

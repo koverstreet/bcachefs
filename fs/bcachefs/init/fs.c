@@ -1092,8 +1092,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 
 	seqcount_init(&c->usage_lock);
 
-	sema_init(&c->io_in_flight, 128);
-
 	INIT_LIST_HEAD(&c->vfs_inodes_list);
 	mutex_init(&c->vfs_inodes_lock);
 

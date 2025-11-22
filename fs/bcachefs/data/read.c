@@ -223,6 +223,8 @@ static noinline void promote_free(struct bch_read_bio *rbio, int ret)
 	async_object_list_del(c, promote, op->list_idx);
 	async_object_list_del(c, rbio, rbio->list_idx);
 
+	up(per_cpu_ptr(c->promote_limit, op->cpu));
+
 	bch2_data_update_exit(&op->write, ret);
 
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_promote);
@@ -299,16 +301,23 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 	}
 
 	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_promote))
-		return ERR_PTR(-BCH_ERR_nopromote_no_writes);
+		return ERR_PTR(bch_err_throw(c, nopromote_no_writes));
+
+	int cpu = raw_smp_processor_id();
+	if (down_trylock(per_cpu_ptr(c->promote_limit, cpu))) {
+		ret = bch_err_throw(c, nopromote_ratelimited);
+		goto err_put;
+	}
 
 	struct promote_op *op = kzalloc(sizeof(*op), GFP_KERNEL);
 	if (!op) {
 		ret = bch_err_throw(c, nopromote_enomem);
-		goto err_put;
+		goto err_up_limit;
 	}
 
 	op->start_time = local_clock();
 	op->pos = pos;
+	op->cpu	= cpu;
 
 	if (rhashtable_lookup_insert_fast(&c->promote_table, &op->hash,
 					  bch_promote_params)) {
@@ -347,6 +356,8 @@ err:
 	bch2_bio_free_pages_pool(c, &op->write.op.wbio.bio);
 	/* We may have added to the rhashtable and thus need rcu freeing: */
 	kfree_rcu(op, rcu);
+err_up_limit:
+	up(per_cpu_ptr(c->promote_limit, cpu));
 err_put:
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_promote);
 	return ERR_PTR(ret);
@@ -1592,6 +1603,7 @@ void bch2_fs_io_read_exit(struct bch_fs *c)
 	bioset_exit(&c->bio_read_split);
 	bioset_exit(&c->bio_read);
 	mempool_exit(&c->bio_bounce_bufs);
+	free_percpu(c->promote_limit);
 }
 
 static void *bio_bounce_buf_alloc_fn(gfp_t gfp, void *pool_data)
@@ -1606,6 +1618,14 @@ static void bio_bounce_buf_free_fn(void *p, void *pool_data)
 
 int bch2_fs_io_read_init(struct bch_fs *c)
 {
+	c->promote_limit = alloc_percpu(struct semaphore);
+	if (!c->promote_limit)
+		return bch_err_throw(c, ENOMEM_promote_limit_init);
+
+	int cpu;
+	for_each_possible_cpu(cpu)
+		sema_init(per_cpu_ptr(c->promote_limit, cpu), 32);
+
 	if (mempool_init(&c->bio_bounce_bufs,
 			 max_t(unsigned,
 			       c->opts.btree_node_size,

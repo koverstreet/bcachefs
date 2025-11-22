@@ -66,6 +66,7 @@ struct promote_op {
 #ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
 	unsigned		list_idx;
 #endif
+	int			cpu; /* for promote_limit */
 
 	struct rhash_head	hash;
 	struct bpos		pos;
