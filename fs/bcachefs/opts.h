@@ -252,11 +252,6 @@ enum fsck_err_opts {
 	  OPT_UINT(0, 8),						\
 	  BCH_SB_SHARD_INUMS_NBITS,	0,				\
 	  NULL,		"Shard new inode numbers by CPU id")		\
-	x(inodes_use_key_cache,	u8,					\
-	  OPT_FS|OPT_FORMAT|OPT_MOUNT,					\
-	  OPT_BOOL(),							\
-	  BCH_SB_INODES_USE_KEY_CACHE,	true,				\
-	  NULL,		"Use the btree key cache for the inodes btree")	\
 	x(btree_node_mem_ptr_optimization, u8,				\
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\
