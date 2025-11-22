@@ -926,7 +926,6 @@ struct bch_fs {
 	bool			btree_trans_barrier_initialized;
 
 	struct btree_key_cache	btree_key_cache;
-	unsigned		btree_key_cache_btrees;
 
 	struct btree_write_buffer btree_write_buffer;
 
@@ -1201,11 +1200,6 @@ static inline unsigned block_bytes(const struct bch_fs *c)
 static inline unsigned block_sectors(const struct bch_fs *c)
 {
 	return c->opts.block_size >> 9;
-}
-
-static inline bool btree_id_cached(const struct bch_fs *c, enum btree_id btree)
-{
-	return c->btree_key_cache_btrees & (1U << btree);
 }
 
 static inline struct timespec64 bch2_time_to_timespec(const struct bch_fs *c, s64 time)

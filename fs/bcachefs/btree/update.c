@@ -509,7 +509,7 @@ int __must_check bch2_trans_update_ip(struct btree_trans *trans, struct btree_it
 	if (!(flags & BTREE_UPDATE_key_cache_reclaim) &&
 	    !path->cached &&
 	    !path->level &&
-	    btree_id_cached(trans->c, path->btree_id)) {
+	    btree_id_cached(path->btree_id)) {
 		try(bch2_trans_update_get_key_cache(trans, iter, path));
 
 		path_idx = iter->key_cache_path;

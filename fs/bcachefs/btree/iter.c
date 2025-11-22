@@ -3221,7 +3221,7 @@ void __bch2_trans_node_iter_init(struct btree_trans *trans,
 	flags |= BTREE_ITER_snapshot_field;
 	flags |= BTREE_ITER_all_snapshots;
 
-	if (!depth && btree_id_cached(trans->c, btree_id))
+	if (!depth && btree_id_cached(btree_id))
 		flags |= BTREE_ITER_with_key_cache;
 
 	bch2_trans_iter_init_common(trans, iter, btree_id, pos, locks_want, depth,
