@@ -1234,6 +1234,10 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 		darray_for_each(*sbs, sb)
 			try(bch2_dev_attach_bdev(c, sb, out));
 
+	/*
+	 * Do this early, so that we never expose a filesystem object that
+	 * hasn't been version downgraded
+	 */
 	try(bch2_fs_opt_version_init(c, out));
 
 	/*
