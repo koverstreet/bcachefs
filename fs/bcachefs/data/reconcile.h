@@ -147,6 +147,12 @@ static inline void bch2_reconcile_wakeup(struct bch_fs *c)
 		wake_up_process(p);
 }
 
+static inline int bch2_reconcile_pending_wakeup(struct bch_fs *c)
+{
+	return bch2_set_reconcile_needs_scan(c,
+		(struct reconcile_scan) { .type = RECONCILE_SCAN_pending}, true);
+}
+
 void bch2_reconcile_status_to_text(struct printbuf *, struct bch_fs *);
 void bch2_reconcile_scan_pending_to_text(struct printbuf *, struct bch_fs *);
 
