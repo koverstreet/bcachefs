@@ -28,6 +28,8 @@
 
 #include "init/error.h"
 
+#include "sb/counters.h"
+
 #include "snapshots/subvolume.h"
 
 #include "util/clock.h"

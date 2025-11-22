@@ -24,6 +24,8 @@
 #include "init/error.h"
 #include "init/fs.h"
 
+#include "sb/counters.h"
+
 #include "snapshots/snapshot.h"
 #include "snapshots/subvolume.h"
 

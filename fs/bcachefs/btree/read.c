@@ -24,6 +24,8 @@
 
 #include "journal/seq_blacklist.h"
 
+#include "sb/counters.h"
+
 #include "sb/io.h"
 
 #include "util/enumerated_ref.h"

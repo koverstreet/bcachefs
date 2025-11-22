@@ -16,6 +16,8 @@
 
 #include "journal/journal.h"
 
+#include "sb/counters.h"
+
 #include <linux/prefetch.h>
 #include <linux/sched/mm.h>
 #include <linux/swap.h>

@@ -24,6 +24,8 @@
 #include "init/progress.h"
 #include "init/recovery.h"
 
+#include "sb/counters.h"
+
 #include "util/clock.h"
 #include "util/enumerated_ref.h"
 #include "util/varint.h"

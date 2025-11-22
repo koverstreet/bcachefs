@@ -18,6 +18,8 @@
 
 #include "init/error.h"
 
+#include "sb/counters.h"
+
 #include "util/enumerated_ref.h"
 
 #include <linux/prefetch.h>

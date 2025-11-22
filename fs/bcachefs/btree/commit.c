@@ -22,6 +22,8 @@
 
 #include "init/error.h"
 
+#include "sb/counters.h"
+
 #include "snapshots/snapshot.h"
 
 #include "util/enumerated_ref.h"

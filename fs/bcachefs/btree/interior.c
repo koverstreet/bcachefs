@@ -32,6 +32,7 @@
 #include "journal/journal.h"
 #include "journal/reclaim.h"
 
+#include "sb/counters.h"
 #include "sb/members.h"
 #include "sb/io.h"
 

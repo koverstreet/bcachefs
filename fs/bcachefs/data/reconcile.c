@@ -25,6 +25,7 @@
 #include "fs/inode.h"
 #include "fs/namei.h"
 
+#include "sb/counters.h"
 #include "snapshots/subvolume.h"
 
 #include "util/clock.h"

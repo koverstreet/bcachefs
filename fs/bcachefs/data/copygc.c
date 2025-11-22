@@ -23,6 +23,8 @@
 
 #include "init/error.h"
 
+#include "sb/counters.h"
+
 #include "util/clock.h"
 
 #include <linux/freezer.h>

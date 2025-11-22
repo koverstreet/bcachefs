@@ -31,7 +31,11 @@
 #include "data/write.h"
 
 #include "init/error.h"
+
 #include "journal/journal.h"
+
+#include "sb/counters.h"
+
 #include "util/clock.h"
 
 #include <linux/math64.h>
