@@ -614,6 +614,8 @@ static void __bch2_fs_free(struct bch_fs *c)
 	kfree(rcu_dereference_protected(c->disk_groups, 1));
 	kfree(c->journal_seq_blacklist_table);
 
+	if (c->promote_wq)
+		destroy_workqueue(c->promote_wq);
 	if (c->write_ref_wq)
 		destroy_workqueue(c->write_ref_wq);
 	if (c->btree_write_submit_wq)
@@ -761,7 +763,9 @@ int bch2_fs_init_rw(struct bch_fs *c)
 	    !(c->btree_write_submit_wq = alloc_workqueue("bcachefs_btree_write_sumit",
 				WQ_HIGHPRI|WQ_FREEZABLE|WQ_MEM_RECLAIM, 1)) ||
 	    !(c->write_ref_wq = alloc_workqueue("bcachefs_write_ref",
-				WQ_FREEZABLE, 0)))
+				WQ_FREEZABLE, 0)) ||
+	    !(c->promote_wq = alloc_workqueue("bcachefs_promotes",
+				WQ_FREEZABLE, 2)))
 		return bch_err_throw(c, ENOMEM_fs_other_alloc);
 
 	int ret = bch2_fs_btree_interior_update_init(c) ?:

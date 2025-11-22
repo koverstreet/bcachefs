@@ -252,7 +252,7 @@ static noinline void promote_start(struct bch_read_bio *rbio)
 	trace_and_count(op->write.op.c, io_read_promote, &rbio->bio);
 
 	INIT_WORK(&op->work, promote_start_work);
-	queue_work(rbio->c->write_ref_wq, &op->work);
+	queue_work(rbio->c->promote_wq, &op->work);
 }
 
 static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
