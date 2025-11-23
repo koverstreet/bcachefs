@@ -809,6 +809,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 						(struct bkey_s_c) { &i->old_k, i->old_v });
 			}
 
+			i->ip_allocated = trans->journal_res.offset;
 			entry = bch2_journal_add_entry(j, &trans->journal_res,
 					       BCH_JSET_ENTRY_btree_keys,
 					       i->btree_id, i->level,

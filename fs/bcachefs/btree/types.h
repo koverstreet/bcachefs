@@ -518,7 +518,8 @@ struct bkey_cached {
 	struct rhash_head	hash;
 
 	struct journal_entry_pin journal;
-	u64			seq;
+	u64			journal_seq;
+	unsigned		journal_offset;
 
 	struct bkey_i		*k;
 	struct rcu_head		rcu;
