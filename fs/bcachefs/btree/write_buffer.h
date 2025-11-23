@@ -106,6 +106,7 @@ struct journal_keys_to_wb_btree {
 };
 
 struct journal_keys_to_wb {
+	struct jset			*src;
 	u64				seq;
 	struct journal_keys_to_wb_btree	per_btree[BCH_WB_BTREE_NR];
 };
@@ -182,12 +183,14 @@ static inline struct btree_write_buffered_key *wb_key_next(const struct btree_wr
 
 static inline void bch2_journal_key_to_wb_reserved(struct bch_fs *c,
 			     struct journal_keys_to_wb_btree *pb,
+			     struct jset *src,
 			     u64 seq,
 			     struct bkey_i *k)
 {
 	unsigned u64s = wb_key_u64s(k);
 	struct btree_write_buffered_key *wb_k = wb_keys_end(pb->wb);
 	wb_k->journal_seq	= seq;
+	wb_k->journal_offset	= (u64 *) k - src->_data;
 	bkey_copy(&wb_k->k, k);
 	pb->wb->keys.nr += u64s;
 	pb->room -= u64s;
@@ -203,7 +206,7 @@ static inline int __bch2_journal_key_to_wb(struct bch_fs *c,
 	if (unlikely(pb->room < wb_key_u64s(k)))
 		return bch2_journal_key_to_wb_slowpath(c, dst, idx, k);
 
-	bch2_journal_key_to_wb_reserved(c, pb, dst->seq, k);
+	bch2_journal_key_to_wb_reserved(c, pb, dst->src, dst->seq, k);
 	return 0;
 }
 
@@ -222,7 +225,7 @@ static inline int bch2_journal_key_to_wb(struct bch_fs *c,
 		: __bch2_journal_key_to_wb(c, dst, bch_wb_btree_idx(btree), k);
 }
 
-void bch2_journal_keys_to_write_buffer_start(struct bch_fs *, struct journal_keys_to_wb *, u64);
+void bch2_journal_keys_to_write_buffer_start(struct bch_fs *, struct journal_keys_to_wb *, struct jset *);
 int bch2_journal_keys_to_write_buffer_end(struct bch_fs *, struct journal_keys_to_wb *);
 
 int bch2_btree_write_buffer_resize(struct bch_fs *, size_t);

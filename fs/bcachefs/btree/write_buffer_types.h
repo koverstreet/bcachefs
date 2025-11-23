@@ -66,6 +66,7 @@ union {
 
 struct btree_write_buffered_key {
 	u64				journal_seq;
+	u32				journal_offset;
 
 	/* BTREE_WRITE_BUFERED_VAL_U64s_MAX only applies to accounting keys */
 	__BKEY_PADDED(k, BTREE_WRITE_BUFERED_VAL_U64s_MAX);

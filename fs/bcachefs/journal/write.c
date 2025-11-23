@@ -619,7 +619,7 @@ static int bch2_journal_write_prep(struct journal *j, struct journal_buf *w)
 			EBUG_ON(!w->need_flush_to_write_buffer);
 
 			if (!wb.seq)
-				bch2_journal_keys_to_write_buffer_start(c, &wb, seq);
+				bch2_journal_keys_to_write_buffer_start(c, &wb, jset);
 
 			jset_entry_for_each_key(i, k) {
 				ret = bch2_journal_key_to_wb(c, &wb, i->btree_id, k);

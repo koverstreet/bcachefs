@@ -779,7 +779,7 @@ static int bch2_journal_keys_to_write_buffer(struct bch_fs *c, struct journal_bu
 	struct journal_keys_to_wb dst;
 	int ret = 0;
 
-	bch2_journal_keys_to_write_buffer_start(c, &dst, le64_to_cpu(buf->data->seq));
+	bch2_journal_keys_to_write_buffer_start(c, &dst, buf->data);
 
 	for_each_jset_entry_type(entry, buf->data, BCH_JSET_ENTRY_write_buffer_keys) {
 		jset_entry_for_each_key(entry, k) {
@@ -1187,18 +1187,19 @@ retry:
 	BUG_ON(pb->room < u64s);
 	BUG_ON(!dst->seq);
 
-	bch2_journal_key_to_wb_reserved(c, pb, dst->seq, k);
+	bch2_journal_key_to_wb_reserved(c, pb, dst->src, dst->seq, k);
 	return 0;
 }
 
 void bch2_journal_keys_to_write_buffer_start(struct bch_fs *c,
 					     struct journal_keys_to_wb *dst,
-					     u64 seq)
+					     struct jset *src)
 {
-	BUG_ON(seq > journal_cur_seq(&c->journal));
-
 	memset(dst, 0, sizeof(*dst));
-	dst->seq = seq;
+	dst->src = src;
+	dst->seq = le64_to_cpu(src->seq);
+
+	BUG_ON(dst->seq > journal_cur_seq(&c->journal));
 
 	for (enum bch_wb_btree idx = 0; idx < BCH_WB_BTREE_NR; idx++) {
 		struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer[idx];
