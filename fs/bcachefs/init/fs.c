@@ -1392,9 +1392,9 @@ int bch2_fs_resize_on_mount(struct bch_fs *c)
 			u64 new_nbuckets = div64_u64(get_capacity(ca->disk_sb.bdev->bd_disk),
 						     ca->mi.bucket_size);
 
-			bch_info(ca, "resizing to size %llu", new_nbuckets * ca->mi.bucket_size);
+			bch_info_dev(ca, "resizing to size %llu", new_nbuckets * ca->mi.bucket_size);
 			int ret = bch2_dev_buckets_resize(c, ca, new_nbuckets);
-			bch_err_fn(ca, ret);
+			bch_err_fn_dev(ca, ret);
 			if (ret) {
 				enumerated_ref_put(&ca->io_ref[READ],
 						   BCH_DEV_READ_REF_fs_resize_on_mount);

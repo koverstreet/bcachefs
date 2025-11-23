@@ -145,7 +145,7 @@ static long bch2_ioctl_disk_remove(struct bch_fs *c, struct bch_ioctl_disk arg)
 	CLASS(printbuf, err)();
 	int ret = bch2_dev_remove(c, ca, arg.flags, &err);
 	if (ret)
-		bch_err(ca, "%s", err.buf);
+		bch_err_dev(ca, "%s", err.buf);
 	return ret;
 }
 
@@ -221,7 +221,7 @@ static long bch2_ioctl_disk_offline(struct bch_fs *c, struct bch_ioctl_disk arg)
 	CLASS(printbuf, err)();
 	int ret = bch2_dev_offline(c, ca, arg.flags, &err);
 	if (ret)
-		bch_err(ca, "%s", err.buf);
+		bch_err_dev(ca, "%s", err.buf);
 	return ret;
 }
 
@@ -265,7 +265,7 @@ static long bch2_ioctl_disk_set_state(struct bch_fs *c,
 
 	CLASS(printbuf, err)();
 	int ret = bch2_dev_set_state(c, ca, arg.new_state, arg.flags, &err);
-	bch_err_msg(ca, ret, "setting device state");
+	bch_err_msg_dev(ca, ret, "setting device state");
 	return ret;
 }
 
@@ -605,7 +605,7 @@ static long bch2_ioctl_disk_resize(struct bch_fs *c,
 	CLASS(printbuf, err)();
 	int ret = bch2_dev_resize(c, ca, arg.nbuckets, &err);
 	if (ret)
-		bch_err(ca, "%s", err.buf);
+		bch_err_dev(ca, "%s", err.buf);
 	return ret;
 }
 

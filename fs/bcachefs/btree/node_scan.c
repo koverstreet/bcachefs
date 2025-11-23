@@ -254,8 +254,8 @@ static int read_btree_nodes_worker(void *p)
 		buckets_scanned++;
 
 		if (time_after(jiffies, last_print + HZ * 30)) {
-			bch_info(ca, "%s: %2u%% done", __func__,
-				 (unsigned) div64_u64(buckets_scanned * 100, buckets_to_scan));
+			bch_info_dev(ca, "%s: %2u%% done", __func__,
+				     (unsigned) div64_u64(buckets_scanned * 100, buckets_to_scan));
 			last_print = jiffies;
 		}
 	}

@@ -213,7 +213,7 @@ int bch2_dev_journal_bucket_delete(struct bch_dev *ca, u64 b)
 			break;
 
 	if (pos == ja->nr) {
-		bch_err(ca, "journal bucket %llu not found when deleting", b);
+		bch_err_dev(ca, "journal bucket %llu not found when deleting", b);
 		return -EINVAL;
 	}
 
@@ -294,7 +294,7 @@ int bch2_dev_journal_alloc(struct bch_dev *ca, bool new_fs)
 
 	ret = bch2_set_nr_journal_buckets_loop(c, ca, nr, new_fs);
 err:
-	bch_err_fn(ca, ret);
+	bch_err_fn_dev(ca, ret);
 	return ret;
 }
 

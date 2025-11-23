@@ -619,7 +619,7 @@ static void ec_validate_checksums(struct bch_fs *c, struct ec_stripe_buf *buf)
 					bch2_csum_err_msg(&err, v->csum_type, want, got);
 					prt_printf(&err, "  for %ps at %u of\n  ", (void *) _RET_IP_, i);
 					bch2_bkey_val_to_text(&err, c, bkey_i_to_s_c(&buf->key));
-					bch_err_ratelimited(ca, "%s", err.buf);
+					bch_err_dev_ratelimited(ca, "%s", err.buf);
 
 					bch2_io_error(ca, BCH_MEMBER_ERROR_checksum);
 				}

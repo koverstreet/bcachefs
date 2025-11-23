@@ -1453,7 +1453,7 @@ int bch2_dev_remove_alloc(struct bch_fs *c, struct bch_dev *ca)
 		bch2_btree_delete_range(c, BTREE_ID_alloc, start, end,
 					BTREE_TRIGGER_norun) ?:
 		bch2_dev_usage_remove(c, ca);
-	bch_err_msg(ca, ret, "removing dev alloc info");
+	bch_err_msg_dev(ca, ret, "removing dev alloc info");
 	return ret;
 }
 

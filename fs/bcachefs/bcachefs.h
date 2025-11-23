@@ -281,8 +281,8 @@
 
 #ifdef BCACHEFS_LOG_PREFIX
 
-#define bch2_log_msg(_c, fmt)			"bcachefs (%s): " fmt, ((_c)->name)
-#define bch2_fmt_dev(_ca, fmt)			"bcachefs (%s): " fmt "\n", ((_ca)->name)
+#define bch2_log_msg(_c, fmt)			"bcachefs (%s): " fmt, bch2_fs_name(_c)
+#define bch2_fmt_dev(_ca, fmt)			"bcachefs (%s): " fmt "\n", bch2_dev_name(_ca)
 #define bch2_fmt_dev_offset(_ca, _offset, fmt)	"bcachefs (%s sector %llu): " fmt "\n", ((_ca)->name), (_offset)
 #define bch2_fmt_inum(_c, _inum, fmt)		"bcachefs (%s inum %llu): " fmt "\n", ((_c)->name), (_inum)
 #define bch2_fmt_inum_offset(_c, _inum, _offset, fmt)			\
@@ -350,6 +350,10 @@ do {									\
 #define bch_verbose(c, ...)		bch_log(c, KERN_DEBUG, __VA_ARGS__)
 #define bch_verbose_ratelimited(c, ...)	bch_log_ratelimited(c, KERN_DEBUG, __VA_ARGS__)
 
+#define bch_info_dev(ca, fmt, ...) \
+	bch2_print(c, KERN_INFO bch2_fmt_dev(ca, fmt), ##__VA_ARGS__)
+#define bch_notice_dev(ca, fmt, ...) \
+	bch2_print(c, KERN_NOTICE bch2_fmt_dev(ca, fmt), ##__VA_ARGS__)
 #define bch_err_dev(ca, fmt, ...) \
 	bch2_print(c, KERN_ERR bch2_fmt_dev(ca, fmt), ##__VA_ARGS__)
 #define bch_err_dev_offset(ca, _offset, fmt, ...) \
@@ -389,6 +393,19 @@ do {									\
 do {									\
 	if (should_print_err(_ret))					\
 		bch_err(_c, "%s(): error " _msg " %s", __func__,	\
+			##__VA_ARGS__, bch2_err_str(_ret));		\
+} while (0)
+
+#define bch_err_fn_dev(_ca, _ret)					\
+do {									\
+	if (should_print_err(_ret))					\
+		bch_err_dev(_ca, "%s(): error %s", __func__, bch2_err_str(_ret));\
+} while (0)
+
+#define bch_err_msg_dev(_ca, _ret, _msg, ...)				\
+do {									\
+	if (should_print_err(_ret))					\
+		bch_err_dev(_ca, "%s(): error " _msg " %s", __func__,	\
 			##__VA_ARGS__, bch2_err_str(_ret));		\
 } while (0)
 
@@ -1287,6 +1304,16 @@ static inline const char *strip_bch2(const char *msg)
 	if (!strncmp("bch2_", msg, 5))
 		return msg + 5;
 	return msg;
+}
+
+static inline const char *bch2_fs_name(const struct bch_fs *c)
+{
+	return c->name;
+}
+
+static inline const char *bch2_dev_name(const struct bch_dev *ca)
+{
+	return ca->name;
 }
 
 #endif /* _BCACHEFS_H */

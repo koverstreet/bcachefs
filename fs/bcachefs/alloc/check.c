@@ -729,8 +729,8 @@ int bch2_dev_freespace_init(struct bch_fs *c, struct bch_dev *ca,
 	 */
 	while (bkey_lt(iter.pos, end)) {
 		if (time_after(jiffies, last_updated + HZ * 10)) {
-			bch_info(ca, "%s: currently at %llu/%llu",
-				 __func__, iter.pos.offset, ca->mi.nbuckets);
+			bch_info_dev(ca, "%s: currently at %llu/%llu",
+				     __func__, iter.pos.offset, ca->mi.nbuckets);
 			last_updated = jiffies;
 		}
 

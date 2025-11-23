@@ -842,7 +842,7 @@ static void bch2_read_decompress_err(struct work_struct *work)
 
 	struct bch_dev *ca = rbio->have_ioref ? bch2_dev_have_ref(c, rbio->pick.ptr.dev) : NULL;
 	if (ca)
-		bch_err_ratelimited(ca, "%s", buf.buf);
+		bch_err_dev_ratelimited(ca, "%s", buf.buf);
 	else
 		bch_err_ratelimited(c, "%s", buf.buf);
 
@@ -861,7 +861,7 @@ static void bch2_read_decrypt_err(struct work_struct *work)
 
 	struct bch_dev *ca = rbio->have_ioref ? bch2_dev_have_ref(c, rbio->pick.ptr.dev) : NULL;
 	if (ca)
-		bch_err_ratelimited(ca, "%s", buf.buf);
+		bch_err_dev_ratelimited(ca, "%s", buf.buf);
 	else
 		bch_err_ratelimited(c, "%s", buf.buf);
 

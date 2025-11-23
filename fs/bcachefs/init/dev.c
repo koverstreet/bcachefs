@@ -570,7 +570,7 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 	if (new_state != BCH_MEMBER_STATE_rw)
 		__bch2_dev_read_only(c, ca);
 
-	bch_notice(ca, "%s", bch2_member_states[new_state]);
+	bch_notice_dev(ca, "%s", bch2_member_states[new_state]);
 
 	bool do_reconcile_scan =
 		new_state == BCH_MEMBER_STATE_rw ||
