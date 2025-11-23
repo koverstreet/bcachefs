@@ -2239,6 +2239,8 @@ static int check_reconcile_work_btrees(struct btree_trans *trans)
 	struct bch_fs *c = trans->c;
 
 	CLASS(disk_reservation, res)(c);
+	struct progress_indicator progress;
+	bch2_progress_init_inner(&progress, c, 0, ~0ULL);
 
 	for (enum btree_id btree = 0; btree < btree_id_nr_alive(c); btree++) {
 		if (!bch2_btree_id_root(c, btree)->b)
@@ -2252,6 +2254,7 @@ static int check_reconcile_work_btrees(struct btree_trans *trans)
 
 			try(for_each_btree_key_continue(trans, iter, 0, k, ({
 				bch2_disk_reservation_put(c, &res.r);
+				progress_update_iter(trans, &progress, &iter) ?:
 				check_reconcile_work_btree_key(trans, &iter, k) ?:
 				bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
 			})));
@@ -2274,10 +2277,15 @@ static int check_reconcile_btree_bp(struct btree_trans *trans, struct bkey_s_c k
 noinline_for_stack
 static int check_reconcile_btree_bps(struct btree_trans *trans)
 {
+	struct progress_indicator progress;
+	bch2_progress_init(&progress, trans->c, BIT_ULL(BTREE_ID_reconcile_scan));
+
 	return for_each_btree_key_max(trans, iter, BTREE_ID_reconcile_scan,
 				      POS(1, 0), POS(1, U64_MAX),
-				      BTREE_ITER_prefetch, k,
-		check_reconcile_btree_bp(trans, k));
+				      BTREE_ITER_prefetch, k, ({
+		progress_update_iter(trans, &progress, &iter) ?:
+		check_reconcile_btree_bp(trans, k);
+	}));
 }
 
 int bch2_check_reconcile_work(struct bch_fs *c)
