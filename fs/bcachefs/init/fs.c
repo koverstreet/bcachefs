@@ -460,7 +460,8 @@ void bch2_fs_read_only(struct bch_fs *c)
 		BUG_ON(c->journal.last_empty_seq != journal_cur_seq(&c->journal));
 		BUG_ON(!c->sb.clean);
 		BUG_ON(c->btree.cache.live[0].nr_dirty || c->btree.cache.live[1].nr_dirty);
-		BUG_ON(atomic_long_read(&c->btree.key_cache.nr_dirty));
+		WARN(atomic_long_read(&c->btree.key_cache.nr_dirty),
+		     "btree_key_cache.nr_dirty=%li", atomic_long_read(&c->btree.key_cache.nr_dirty));
 		for (unsigned i = 0; i < BCH_WB_BTREE_NR; i++) {
 			BUG_ON(c->btree.write_buffer[i].inc.keys.nr);
 			BUG_ON(c->btree.write_buffer[i].flushing.keys.nr);

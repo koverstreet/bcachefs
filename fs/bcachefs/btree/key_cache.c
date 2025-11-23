@@ -498,12 +498,13 @@ bool bch2_btree_insert_key_cached(struct btree_trans *trans,
 
 	BUG_ON(insert->k.u64s > ck->u64s);
 	BUG_ON(bkey_deleted(&insert->k));
+	BUG_ON(!trans->journal_res.seq);
 
 	bkey_copy(ck->k, insert);
 
 	if (!atomic64_xchg(&ck->journal_seq_offset,
 			   (trans->journal_res.seq << 32) |
-			   (insert_entry->ip_allocated & U32_MAX))) {
+			   ((insert_entry->ip_allocated + 1) & U32_MAX))) {
 		atomic_long_inc(&c->btree.key_cache.nr_dirty);
 		key_cache_pressure_update(c);
 	}
@@ -670,6 +671,7 @@ void bch2_fs_btree_key_cache_exit(struct bch_fs_btree_key_cache *bc)
 				for (i = 0; i < tbl->size; i++)
 					while (pos = rht_ptr_rcu(&tbl->buckets[i]), !rht_is_a_nulls(pos)) {
 						ck = container_of(pos, struct bkey_cached, hash);
+						BUG_ON(atomic64_read(&ck->journal_seq_offset));
 						BUG_ON(!bkey_cached_evict(bc, ck));
 						kfree(ck->k);
 						six_lock_exit(&ck->c.lock);
