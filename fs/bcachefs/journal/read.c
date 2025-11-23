@@ -1233,7 +1233,11 @@ static CLOSURE_CALLBACK(bch2_journal_read_device)
 	ja->discard_idx = ja->dirty_idx_ondisk =
 		ja->dirty_idx = (ja->cur_idx + 1) % ja->nr;
 out:
-	bch_verbose(c, "journal read done on device %s, ret %i", ca->name, ret);
+	if (!ret)
+		bch_verbose_dev(ca, "journal read done");
+	else
+		bch_err_dev(ca, "journal read error %s", bch2_err_str(ret));
+
 	kvfree(buf.data);
 	enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_journal_read);
 	closure_return(cl);

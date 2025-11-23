@@ -350,12 +350,14 @@ do {									\
 #define bch_verbose(c, ...)		bch_log(c, KERN_DEBUG, __VA_ARGS__)
 #define bch_verbose_ratelimited(c, ...)	bch_log_ratelimited(c, KERN_DEBUG, __VA_ARGS__)
 
-#define bch_info_dev(ca, fmt, ...) \
-	bch2_print(c, KERN_INFO bch2_fmt_dev(ca, fmt), ##__VA_ARGS__)
-#define bch_notice_dev(ca, fmt, ...) \
-	bch2_print(c, KERN_NOTICE bch2_fmt_dev(ca, fmt), ##__VA_ARGS__)
-#define bch_err_dev(ca, fmt, ...) \
-	bch2_print(c, KERN_ERR bch2_fmt_dev(ca, fmt), ##__VA_ARGS__)
+#define bch_dev_log(ca, loglevel, fmt, ...) \
+	bch2_print(ca->fs, loglevel bch2_fmt_dev(ca, fmt), ##__VA_ARGS__)
+
+#define bch_err_dev(ca, ...)		bch_dev_log(ca, KERN_ERR, __VA_ARGS__)
+#define bch_notice_dev(ca, ...)		bch_dev_log(ca, KERN_NOTICE, __VA_ARGS__)
+#define bch_info_dev(ca, ...)		bch_dev_log(ca, KERN_INFO, __VA_ARGS__)
+#define bch_verbose_dev(ca, ...)	bch_dev_log(ca, KERN_DEBUG, __VA_ARGS__)
+
 #define bch_err_dev_offset(ca, _offset, fmt, ...) \
 	bch2_print(c, KERN_ERR bch2_fmt_dev_offset(ca, _offset, fmt), ##__VA_ARGS__)
 #define bch_err_inum(c, _inum, fmt, ...) \
