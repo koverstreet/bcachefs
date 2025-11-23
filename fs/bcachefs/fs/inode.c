@@ -356,7 +356,7 @@ int __bch2_inode_peek(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
-	ret = bkey_is_inode(k.k) ? 0 : -BCH_ERR_ENOENT_inode;
+	ret = bkey_is_inode(k.k) ? 0 : bch_err_throw(trans->c, ENOENT_inode);
 	if (ret)
 		goto err;
 
@@ -384,20 +384,13 @@ int bch2_inode_find_by_inum_snapshot(struct btree_trans *trans,
 		: -BCH_ERR_ENOENT_inode;
 }
 
-int bch2_inode_find_by_inum_nowarn_trans(struct btree_trans *trans,
-				  subvol_inum inum,
-				  struct bch_inode_unpacked *inode)
+int __bch2_inode_find_by_inum_trans(struct btree_trans *trans,
+				    subvol_inum inum,
+				    struct bch_inode_unpacked *inode,
+				    bool warn)
 {
 	CLASS(btree_iter_uninit, iter)(trans);
-	return bch2_inode_peek_nowarn(trans, &iter, inode, inum, 0);
-}
-
-int bch2_inode_find_by_inum_trans(struct btree_trans *trans,
-				  subvol_inum inum,
-				  struct bch_inode_unpacked *inode)
-{
-	CLASS(btree_iter_uninit, iter)(trans);
-	return bch2_inode_peek(trans, &iter, inode, inum, 0);
+	return __bch2_inode_peek(trans, &iter, inode, inum, 0, warn);
 }
 
 int bch2_inode_find_by_inum(struct bch_fs *c, subvol_inum inum,

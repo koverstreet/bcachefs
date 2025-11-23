@@ -137,11 +137,24 @@ static inline int bch2_inode_peek(struct btree_trans *trans,
 
 int bch2_inode_find_by_inum_snapshot(struct btree_trans *, u64, u32,
 				     struct bch_inode_unpacked *, unsigned);
-int bch2_inode_find_by_inum_nowarn_trans(struct btree_trans *,
-				  subvol_inum,
-				  struct bch_inode_unpacked *);
-int bch2_inode_find_by_inum_trans(struct btree_trans *, subvol_inum,
-				  struct bch_inode_unpacked *);
+
+int __bch2_inode_find_by_inum_trans(struct btree_trans *, subvol_inum,
+				    struct bch_inode_unpacked *, bool);
+
+static inline int bch2_inode_find_by_inum_trans(struct btree_trans *trans,
+				  subvol_inum inum,
+				  struct bch_inode_unpacked *inode)
+{
+	return __bch2_inode_find_by_inum_trans(trans, inum, inode, true);
+}
+
+static inline int bch2_inode_find_by_inum_nowarn_trans(struct btree_trans *trans,
+				  subvol_inum inum,
+				  struct bch_inode_unpacked *inode)
+{
+	return __bch2_inode_find_by_inum_trans(trans, inum, inode, false);
+}
+
 int bch2_inode_find_by_inum(struct bch_fs *, subvol_inum,
 			    struct bch_inode_unpacked *);
 
