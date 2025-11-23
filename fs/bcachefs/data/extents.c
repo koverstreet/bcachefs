@@ -256,7 +256,7 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 			p.crc_retry_nr	   = f->failed_csum_nr;
 			p.has_ec	  &= ~f->failed_ec;
 
-			if (ca && ca->mi.state != BCH_MEMBER_STATE_evacuating) {
+			if (ca) {
 				have_io_errors	|= f->failed_io;
 				have_io_errors	|= f->failed_btree_validate;
 				have_io_errors	|= f->failed_ec;
