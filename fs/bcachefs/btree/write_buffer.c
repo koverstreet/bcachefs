@@ -176,7 +176,9 @@ static noinline int wb_flush_one_slowpath(struct btree_trans *trans,
 	trans->journal_res.seq = wb->journal_seq;
 
 	return bch2_trans_update(trans, iter, &wb->k,
-				 BTREE_UPDATE_internal_snapshot_node) ?:
+				 BTREE_UPDATE_internal_snapshot_node|
+				 BTREE_UPDATE_key_cache_reclaim|
+				 BTREE_TRIGGER_norun) ?:
 		bch2_trans_commit(trans, NULL, NULL,
 				  BCH_WATERMARK_reclaim|
 				  BCH_TRANS_COMMIT_no_enospc|
@@ -419,6 +421,7 @@ static int wb_flush_sorted_range(struct btree_trans *trans,
 
 	CLASS(btree_iter, iter)(trans, btree, POS_MIN,
 				BTREE_ITER_intent|BTREE_ITER_all_snapshots);
+	iter.flags &= ~BTREE_ITER_with_key_cache;
 
 	struct wb_key_ref *base = wb->sorted.data;
 	struct wb_key_ref *slice_end = base + end;
