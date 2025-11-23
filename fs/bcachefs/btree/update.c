@@ -474,7 +474,7 @@ static noinline int bch2_trans_update_get_key_cache(struct btree_trans *trans,
 
 		struct bkey_cached *ck = (void *) trans->paths[iter->key_cache_path].l[0].b;
 
-		if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
+		if (atomic64_read(&ck->journal_seq_offset)) {
 			event_inc_trace(trans->c, trans_restart_key_cache_raced, buf, prt_str(&buf, trans->fn));
 			return btree_trans_restart(trans, BCH_ERR_transaction_restart_key_cache_raced);
 		}

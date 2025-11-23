@@ -282,7 +282,7 @@ enum bch_counters_flags {
 	  "Accounting key to write buffer slow path")			\
 	x(error_throw,				93,  TYPE_COUNTER,	\
 	  "Errors thrown")						\
-	x(blocked_with_btree_locks_held,	131,	TYPE_NS,	\
+	x(blocked_with_btree_locks_held,	132,	TYPE_NS,	\
 	  "Time scheduled out with btree locks held")
 
 enum bch_persistent_counters {

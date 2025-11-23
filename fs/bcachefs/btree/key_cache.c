@@ -100,7 +100,7 @@ static bool bkey_cached_lock_for_evict(struct bkey_cached *ck)
 	if (!six_trylock_intent(&ck->c.lock))
 		return false;
 
-	if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
+	if (atomic64_read(&ck->journal_seq_offset)) {
 		six_unlock_intent(&ck->c.lock);
 		return false;
 	}
@@ -251,7 +251,7 @@ bkey_cached_reuse(struct bch_fs_btree_key_cache *c)
 
 	for (unsigned i = 0; i < tbl->size; i++)
 		rht_for_each_entry_rcu(ck, pos, tbl, i, hash) {
-			if (!test_bit(BKEY_CACHED_DIRTY, &ck->flags) &&
+			if (!atomic64_read(&ck->journal_seq_offset) &&
 			    bkey_cached_lock_for_evict(ck)) {
 				if (bkey_cached_evict(c, ck))
 					return ck;
@@ -488,268 +488,6 @@ int bch2_btree_path_traverse_cached(struct btree_trans *trans,
 	return ret;
 }
 
-static int btree_key_cache_flush_pos(struct btree_trans *trans,
-				     struct bkey_cached_key key,
-				     u64 journal_seq,
-				     unsigned commit_flags,
-				     bool evict)
-{
-	struct bch_fs *c = trans->c;
-	struct journal *j = &c->journal;
-	struct bkey_cached *ck = NULL;
-
-	CLASS(btree_iter, b_iter)(trans, key.btree_id, key.pos,
-				  BTREE_ITER_slots|
-				  BTREE_ITER_intent|
-				  BTREE_ITER_all_snapshots);
-	CLASS(btree_iter, c_iter)(trans, key.btree_id, key.pos,
-				  BTREE_ITER_cached|
-				  BTREE_ITER_intent);
-	b_iter.flags &= ~BTREE_ITER_with_key_cache;
-
-	try(bch2_btree_iter_traverse(&c_iter));
-
-	ck = (void *) btree_iter_path(trans, &c_iter)->l[0].b;
-	if (!ck)
-		return 0;
-
-	if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
-		if (journal_seq && ck->journal.seq != journal_seq)
-			return 0;
-
-		trans->journal_res.seq = ck->journal.seq;
-
-		/*
-		 * If we're at the end of the journal, we really want to free up space
-		 * in the journal right away - we don't want to pin that old journal
-		 * sequence number with a new btree node write, we want to re-journal
-		 * the update
-		 */
-		if (ck->journal.seq == j->last_seq)
-			commit_flags |= BCH_WATERMARK_reclaim;
-		else
-			commit_flags |= BCH_WATERMARK_btree;
-
-		if (ck->journal.seq != j->last_seq ||
-		    !journal_low_on_space(&c->journal))
-			commit_flags |= BCH_TRANS_COMMIT_no_journal_res;
-
-		struct bkey_s_c btree_k = bkey_try(bch2_btree_iter_peek_slot(&b_iter));
-
-		/* Check that we're not violating cache coherency rules: */
-		BUG_ON(bkey_deleted(btree_k.k));
-
-		try(bch2_trans_update(trans, &b_iter, ck->k,
-				      BTREE_UPDATE_internal_snapshot_node|
-				      BTREE_UPDATE_key_cache_reclaim|
-				      BTREE_TRIGGER_norun));
-		try(bch2_trans_commit(trans, NULL, NULL,
-				      BCH_TRANS_COMMIT_no_check_rw|
-				      BCH_TRANS_COMMIT_no_enospc|
-				      BCH_TRANS_COMMIT_no_skip_noops|
-				      commit_flags));
-
-		bch2_journal_pin_drop(j, &ck->journal);
-
-		struct btree_path *path = btree_iter_path(trans, &c_iter);
-		BUG_ON(!btree_node_locked(path, 0));
-	}
-
-	if (!evict) {
-		if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
-			clear_bit(BKEY_CACHED_DIRTY, &ck->flags);
-			atomic_long_dec(&c->btree.key_cache.nr_dirty);
-			key_cache_pressure_update(c);
-		}
-	} else {
-		struct btree_path *path = btree_iter_path(trans, &c_iter);
-		struct btree_path *path2;
-		unsigned i;
-
-		trans_for_each_path(trans, path2, i)
-			if (path2 != path)
-				__bch2_btree_path_unlock(trans, path2);
-
-		bch2_btree_node_lock_write_nofail(trans, path, &ck->c);
-
-		if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
-			clear_bit(BKEY_CACHED_DIRTY, &ck->flags);
-			atomic_long_dec(&c->btree.key_cache.nr_dirty);
-			key_cache_pressure_update(c);
-		}
-
-		mark_btree_node_locked_noreset(path, 0, BTREE_NODE_UNLOCKED);
-		if (bkey_cached_evict(&c->btree.key_cache, ck)) {
-			bkey_cached_free(trans, &c->btree.key_cache, ck);
-		} else {
-			six_unlock_write(&ck->c.lock);
-			six_unlock_intent(&ck->c.lock);
-		}
-	}
-
-	return 0;
-}
-
-int bch2_btree_key_cache_journal_flush(struct journal *j,
-				struct journal_entry_pin *pin, u64 seq)
-{
-	struct bch_fs *c = container_of(j, struct bch_fs, journal);
-	struct bkey_cached *ck =
-		container_of(pin, struct bkey_cached, journal);
-	struct bkey_cached_key key;
-	int ret = 0;
-
-	guard(srcu)(&c->btree.trans.barrier);
-
-	/*
-	 * Lockless bailout: if the pin has already been updated past @seq, or
-	 * the key isn't dirty, there's nothing to do. False negatives (we miss
-	 * work) are fine — reclaim retries. Avoids taking ck's intent lock on
-	 * the hot reclaim path when there's nothing to do.
-	 *
-	 * The intent lock taken below serializes against
-	 * btree_key_cache_flush_pos(), which reads ck->journal.seq while the
-	 * cached path's intent lock is held: a read lock here would let
-	 * pin_update advance the pin out from under that reader, leaving it
-	 * with a captured ck->journal.seq < j->last_seq and BUG'ing in
-	 * bch2_journal_pin_set() once the trans commit fed it back in.
-	 */
-	if (READ_ONCE(ck->journal.seq) == seq &&
-	    test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
-		CLASS(btree_trans, trans)(c);
-
-		ret = lockrestart_do(trans, ({
-			btree_path_idx_t path_idx;
-			int _ret = bch2_btree_node_lock_with_path(trans, &ck->c,
-								  SIX_LOCK_intent, &path_idx);
-			bool do_flush = false;
-
-			if (!_ret) {
-				key = ck->key;
-
-				if (ck->journal.seq != seq ||
-				    !test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
-					/* raced; nothing to do */
-				} else if (ck->seq != seq) {
-					bch2_journal_pin_update(&c->journal, ck->journal_seq, &ck->journal,
-								bch2_btree_key_cache_journal_flush);
-				} else {
-					do_flush = true;
-				}
-				bch2_btree_node_unlock_with_path(trans, path_idx, 0);
-
-				if (do_flush)
-					_ret = btree_key_cache_flush_pos(trans, key, seq,
-							BCH_TRANS_COMMIT_journal_reclaim, false);
-			}
-			_ret;
-		}));
-		bch2_fs_fatal_err_on(ret &&
-				     !bch2_err_matches(ret, BCH_ERR_journal_reclaim_would_deadlock) &&
-				     !bch2_journal_error(j), c,
-				     "flushing key cache: %s", bch2_err_str(ret));
-	}
-	return ret;
-}
-
-static int bkey_cached_key_cmp(const void *_l, const void *_r)
-{
-	const struct bkey_cached_key *l = _l;
-	const struct bkey_cached_key *r = _r;
-
-	return  cmp_int(l->btree_id, r->btree_id) ?:
-		bpos_cmp(l->pos, r->pos);
-}
-
-DEFINE_DARRAY_NAMED(bkey_cached_keys, struct bkey_cached_key);
-
-/*
- * Going RO: flush every dirty key cache entry to the btree, dropping its
- * journal pin. The journal-pin-driven flush path
- * (bch2_btree_key_cache_journal_flush) has a re-journal branch when we're at
- * j->last_seq and the journal is low on space - it acquires a fresh journal
- * reservation and pins a new sequence. That's what we want during normal
- * operation to free up space, but it defeats the clean_passes loop in
- * __bch2_fs_read_only: every flush spawns a fresh pin and the loop never
- * converges. Walk the cache directly and force no_journal_res so each flush
- * only drops pins, never adds them.
- */
-int bch2_btree_key_cache_flush_going_ro(struct bch_fs *c)
-{
-	struct bch_fs_btree_key_cache *bc = &c->btree.key_cache;
-
-	if (!atomic_long_read(&bc->nr_dirty) ||
-	    bch2_journal_error(&c->journal))
-		return 0;
-
-	guard(srcu)(&c->btree.trans.barrier);
-	CLASS(btree_trans, trans)(c);
-	CLASS(bkey_cached_keys, keys)();
-	bool any_done = false, full;
-
-	/*
-	 * Preallocate enough up front for the common case (no concurrent
-	 * dirties); on push failure under rcu we just flush what we have and
-	 * walk again to find the rest.
-	 */
-	try(darray_resize(&keys, atomic_long_read(&bc->nr_dirty) + 64));
-
-	do {
-		full = false;
-		keys.nr = 0;
-
-		scoped_guard(rcu) {
-			struct bucket_table *tbl =
-				rht_dereference_rcu(bc->table.tbl, &bc->table);
-
-			/*
-			 * If a rehash is in flight some entries live on the new
-			 * table; skip this pass and let the OR-chain re-call us.
-			 */
-			if (unlikely(tbl->nest))
-				return any_done;
-
-			for (unsigned i = 0; i < tbl->size; i++) {
-				struct rhash_head *pos;
-				struct bkey_cached *ck;
-
-				rht_for_each_entry_rcu(ck, pos, tbl, i, hash) {
-					if (!test_bit(BKEY_CACHED_DIRTY, &ck->flags))
-						continue;
-
-					if (darray_push_gfp(&keys, ck->key,
-							    GFP_NOWAIT|__GFP_NOWARN)) {
-						full = true;
-						goto rcu_done;
-					}
-				}
-			}
-rcu_done:;
-		}
-
-		if (!keys.nr)
-			break;
-
-		darray_sort(keys, bkey_cached_key_cmp);
-
-		darray_for_each(keys, k) {
-			int ret = lockrestart_do(trans,
-				btree_key_cache_flush_pos(trans, *k, 0,
-					BCH_TRANS_COMMIT_no_journal_res, false));
-			if (ret &&
-			    !bch2_err_matches(ret, BCH_ERR_journal_reclaim_would_deadlock) &&
-			    !bch2_journal_error(&c->journal)) {
-				bch_err_fn(c, ret);
-				return ret;
-			}
-			ret = 0;
-		}
-		any_done = true;
-	} while (full);
-
-	return any_done;
-}
-
 bool bch2_btree_insert_key_cached(struct btree_trans *trans,
 				  unsigned flags,
 				  struct btree_insert_entry *insert_entry)
@@ -763,32 +501,15 @@ bool bch2_btree_insert_key_cached(struct btree_trans *trans,
 
 	bkey_copy(ck->k, insert);
 
-	if (!test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
-		EBUG_ON(test_bit(BCH_FS_clean_shutdown, &c->flags));
-		set_bit(BKEY_CACHED_DIRTY, &ck->flags);
+	if (!atomic64_xchg(&ck->journal_seq_offset,
+			   (trans->journal_res.seq << 32) |
+			   (insert_entry->ip_allocated & U32_MAX))) {
 		atomic_long_inc(&c->btree.key_cache.nr_dirty);
 		key_cache_pressure_update(c);
 	}
 
-	/*
-	 * To minimize lock contention, we only add the journal pin here and
-	 * defer pin updates to the flush callback via ->seq. Be careful not to
-	 * update ->seq on nojournal commits because we don't want to update the
-	 * pin to a seq that doesn't include journal updates on disk. Otherwise
-	 * we risk losing the update after a crash.
-	 *
-	 * The only exception is if the pin is not active in the first place. We
-	 * have to add the pin because journal reclaim drives key cache
-	 * flushing. The flush callback will not proceed unless ->seq matches
-	 * the latest pin, so make sure it starts with a consistent value.
-	 */
-	if (!(insert_entry->flags & BTREE_UPDATE_nojournal) ||
-	    !journal_pin_active(&ck->journal)) {
-		ck->journal_seq		= trans->journal_res.seq;
-		ck->journal_offset	= insert_entry->ip_allocated;
-	}
-	bch2_journal_pin_add(&c->journal, trans->journal_res.seq,
-			     &ck->journal, bch2_btree_key_cache_journal_flush);
+	if (kick_reclaim)
+		journal_reclaim_kick(&c->journal);
 	return true;
 }
 
@@ -803,12 +524,7 @@ void bch2_btree_key_cache_drop(struct btree_trans *trans,
 	 * We just did an update to the btree, bypassing the key cache: the key
 	 * cache key is now stale and must be dropped, even if dirty:
 	 */
-	if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
-		clear_bit(BKEY_CACHED_DIRTY, &ck->flags);
-		atomic_long_dec(&c->btree.key_cache.nr_dirty);
-		key_cache_pressure_update(c);
-		bch2_journal_pin_drop(&c->journal, &ck->journal);
-	}
+	BUG_ON(atomic64_read(&ck->journal_seq_offset));
 
 	bkey_cached_evict(bc, ck);
 	bkey_cached_free(trans, bc, ck);
@@ -875,7 +591,7 @@ static unsigned long bch2_btree_key_cache_scan(struct shrinker *shrink,
 			next = rht_dereference_bucket_rcu(pos->next, tbl, iter);
 			ck = container_of(pos, struct bkey_cached, hash);
 
-			if (test_bit(BKEY_CACHED_DIRTY, &ck->flags)) {
+			if (atomic64_read(&ck->journal_seq_offset)) {
 				bc->skipped_dirty++;
 			} else if (test_bit(BKEY_CACHED_ACCESSED, &ck->flags)) {
 				clear_bit(BKEY_CACHED_ACCESSED, &ck->flags);

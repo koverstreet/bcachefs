@@ -206,7 +206,7 @@ static inline int __bch2_journal_key_to_wb(struct bch_fs *c,
 	if (unlikely(pb->room < wb_key_u64s(k)))
 		return bch2_journal_key_to_wb_slowpath(c, dst, idx, k);
 
-	bch2_journal_key_to_wb_reserved(c, pb, dst->src, dst->seq, k);
+	bch2_journal_key_to_wb_reserved(c, pb, dst->src, dst->seq, idx, k);
 	return 0;
 }
 

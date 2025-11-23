@@ -501,9 +501,7 @@ static enum journal_pin_type journal_pin_type(struct journal_entry_pin *pin,
 		struct btree *b = container_of(pin, struct btree, writes[idx].journal);
 
 		return JOURNAL_PIN_TYPE_btree0 - b->c.level;
-	} else if (fn == bch2_btree_key_cache_journal_flush)
-		return JOURNAL_PIN_TYPE_key_cache;
-	else
+	} else
 		return JOURNAL_PIN_TYPE_other;
 }
 
@@ -689,9 +687,6 @@ static size_t journal_flush_pins(struct journal *j,
 
 		if (!pin)
 			break;
-
-		if (min_key_cache && pin->flush == bch2_btree_key_cache_journal_flush)
-			min_key_cache--;
 
 		if (min_any)
 			min_any--;

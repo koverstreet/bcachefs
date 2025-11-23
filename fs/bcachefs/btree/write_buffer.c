@@ -14,6 +14,7 @@
 #include "alloc/accounting.h"
 
 #include "btree/bkey_buf.h"
+#include "btree/key_cache.h"
 #include "btree/locking.h"
 #include "btree/update.h"
 #include "btree/interior.h"
@@ -369,6 +370,22 @@ int bch2_btree_write_buffer_insert_err(struct bch_fs *c,
 	return -EROFS;
 }
 
+static void wb_key_flushed(struct btree_trans *trans, struct btree_write_buffered_key *k)
+{
+	if (btree_id_cached(k->btree)) {
+		struct bch_fs *c = trans->c;
+		struct bkey_cached *ck = bch2_btree_key_cache_find(c, k->btree, k->k.k.p);
+		BUG_ON(!ck);
+
+		u64 v = (k->journal_seq << 32) | k->journal_offset;
+		if (v == atomic64_read(&ck->journal_seq_offset) &&
+		    v == atomic64_cmpxchg(&ck->journal_seq_offset, v, 0))
+			atomic_long_dec(&c->btree.key_cache.nr_dirty);
+	}
+
+	k->journal_seq = 0;
+}
+
 struct wb_flush_counters {
 	size_t			fast;
 	size_t			noop;
@@ -457,7 +474,7 @@ static int wb_flush_sorted_range(struct btree_trans *trans,
 		} while (bch2_err_matches(ret, BCH_ERR_transaction_restart));
 
 		if (!ret) {
-			k->journal_seq = 0;
+			wb_key_flushed(trans, k);
 		} else if (ret == -BCH_ERR_journal_reclaim_would_deadlock) {
 			cnt->slowpath++;
 			ret = 0;
@@ -668,6 +685,7 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans,
 	}
 
 	ret = wb_flush_sorted_sharded(trans, wb, accounting_replay_done, &cnt);
+
 	if (ret)
 		goto err;
 
@@ -719,7 +737,7 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans,
 			if (ret)
 				goto err;
 
-			k->journal_seq = 0;
+			wb_key_flushed(trans, k);
 		}
 
 		/*

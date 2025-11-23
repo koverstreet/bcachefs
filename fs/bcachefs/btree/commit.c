@@ -474,7 +474,7 @@ static int btree_key_can_insert_cached(struct btree_trans *trans, unsigned flags
 	EBUG_ON(path->level);
 
 	if (watermark < BCH_WATERMARK_reclaim &&
-	    !test_bit(BKEY_CACHED_DIRTY, &ck->flags) &&
+	    !atomic64_read(&ck->journal_seq_offset) &&
 	    bch2_btree_key_cache_must_wait(c))
 		return bch_err_throw(c, btree_insert_need_journal_reclaim);
 
@@ -795,8 +795,8 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 			if (i->key_cache_already_flushed)
 				continue;
 
-			if (i->flags & BTREE_UPDATE_nojournal)
-				continue;
+			//if (i->flags & BTREE_UPDATE_nojournal)
+			//	continue;
 
 			verify_update_old_key(trans, i);
 
@@ -811,9 +811,11 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 
 			i->ip_allocated = trans->journal_res.offset;
 			entry = bch2_journal_add_entry(j, &trans->journal_res,
-					       BCH_JSET_ENTRY_btree_keys,
-					       i->btree_id, i->level,
-					       i->k->k.u64s);
+						i->cached
+						? BCH_JSET_ENTRY_write_buffer_keys
+						: BCH_JSET_ENTRY_btree_keys,
+						i->btree_id, i->level,
+						i->k->k.u64s);
 			bkey_copy((struct bkey_i *) entry->start, i->k);
 		}
 
@@ -1265,8 +1267,8 @@ int __bch2_trans_commit(struct btree_trans *trans, enum bch_trans_commit_flags f
 		if (i->key_cache_already_flushed)
 			continue;
 
-		if (i->flags & BTREE_UPDATE_nojournal)
-			continue;
+		//if (i->flags & BTREE_UPDATE_nojournal)
+		//	continue;
 
 		/* we're going to journal the key being updated: */
 		journal_u64s += jset_u64s(i->k->k.u64s);

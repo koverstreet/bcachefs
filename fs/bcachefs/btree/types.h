@@ -505,8 +505,7 @@ struct get_locks_fail {
 /* Key cache: */
 
 #define BKEY_CACHED_ACCESSED		0
-#define BKEY_CACHED_DIRTY		1
-#define BKEY_CACHED_IMMEDIATE_FLUSH	2
+#define BKEY_CACHED_IMMEDIATE_FLUSH	1
 
 struct bkey_cached {
 	struct btree_bkey_cached_common c;
@@ -517,9 +516,7 @@ struct bkey_cached {
 
 	struct rhash_head	hash;
 
-	struct journal_entry_pin journal;
-	u64			journal_seq;
-	unsigned		journal_offset;
+	atomic64_t		journal_seq_offset;
 
 	struct bkey_i		*k;
 	struct rcu_head		rcu;
