@@ -779,12 +779,7 @@ retry:
 	BUG_ON(dst->room < u64s);
 	BUG_ON(!dst->seq);
 
-	struct btree_write_buffered_key *wb_k = wb_keys_end(dst->wb);
-	wb_k->journal_seq	= dst->seq;
-	wb_k->btree		= btree;
-	bkey_copy(&wb_k->k, k);
-	dst->wb->keys.nr += u64s;
-	dst->room -= u64s;
+	bch2_journal_key_to_wb_reserved(c, dst, btree, k);
 	return 0;
 }
 

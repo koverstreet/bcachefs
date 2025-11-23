@@ -129,21 +129,27 @@ static inline struct btree_write_buffered_key *wb_key_next(const struct btree_wr
 	     _k != wb_keys_end(_keys) && (_next = wb_key_next(_k), true);		\
 	     _k = _next)
 
-static inline int __bch2_journal_key_to_wb(struct bch_fs *c,
+static inline void bch2_journal_key_to_wb_reserved(struct bch_fs *c,
 			     struct journal_keys_to_wb *dst,
 			     enum btree_id btree, struct bkey_i *k)
 {
 	unsigned u64s = wb_key_u64s(k);
-
-	if (unlikely(dst->room < u64s))
-		return bch2_journal_key_to_wb_slowpath(c, dst, btree, k);
-
 	struct btree_write_buffered_key *wb_k = wb_keys_end(dst->wb);
 	wb_k->journal_seq	= dst->seq;
 	wb_k->btree		= btree;
 	bkey_copy(&wb_k->k, k);
 	dst->wb->keys.nr += u64s;
 	dst->room -= u64s;
+}
+
+static inline int __bch2_journal_key_to_wb(struct bch_fs *c,
+			     struct journal_keys_to_wb *dst,
+			     enum btree_id btree, struct bkey_i *k)
+{
+	if (unlikely(dst->room < wb_key_u64s(k)))
+		return bch2_journal_key_to_wb_slowpath(c, dst, btree, k);
+
+	bch2_journal_key_to_wb_reserved(c, dst, btree, k);
 	return 0;
 }
 
