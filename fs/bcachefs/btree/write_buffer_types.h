@@ -6,7 +6,6 @@
 #include "journal/types.h"
 
 #define BTREE_WRITE_BUFERED_VAL_U64s_MAX	4
-#define BTREE_WRITE_BUFERED_U64s_MAX	(BKEY_U64s + BTREE_WRITE_BUFERED_VAL_U64s_MAX)
 
 struct wb_key_ref {
 union {
@@ -38,11 +37,13 @@ union {
 struct btree_write_buffered_key {
 	enum btree_id			btree:8;
 	u64				journal_seq:56;
+
+	/* BTREE_WRITE_BUFERED_VAL_U64s_MAX only applies to accounting keys */
 	__BKEY_PADDED(k, BTREE_WRITE_BUFERED_VAL_U64s_MAX);
 };
 
 struct btree_write_buffer_keys {
-	DARRAY(struct btree_write_buffered_key) keys;
+	darray_u64			keys;
 	struct journal_entry_pin	pin;
 	struct mutex			lock;
 };

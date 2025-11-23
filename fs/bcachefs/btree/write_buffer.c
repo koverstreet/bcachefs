@@ -57,12 +57,14 @@ static inline bool wb_key_ref_cmp(const struct wb_key_ref *l, const struct wb_ke
 #endif
 }
 
-static int wb_key_seq_cmp(const void *_l, const void *_r)
+static int wb_key_seq_cmp(const void *_l, const void *_r, const void *priv)
 {
-	const struct btree_write_buffered_key *l = _l;
-	const struct btree_write_buffered_key *r = _r;
+	const struct btree_write_buffer_keys *keys = priv;
+	const struct wb_key_ref *l = _l;
+	const struct wb_key_ref *r = _r;
 
-	return cmp_int(l->journal_seq, r->journal_seq);
+	return cmp_int(wb_keys_idx(keys, l->idx)->journal_seq,
+		       wb_keys_idx(keys, r->idx)->journal_seq);
 }
 
 /* Compare excluding idx, the low 24 bits: */
@@ -227,7 +229,7 @@ static inline int wb_flush_one(struct btree_trans *trans, struct btree_iter *ite
  */
 static int
 btree_write_buffered_insert(struct btree_trans *trans,
-			  struct btree_write_buffered_key *wb)
+			    struct btree_write_buffered_key *wb)
 {
 	CLASS(btree_iter, iter)(trans, wb->btree, bkey_start_pos(&wb->k.k),
 				BTREE_ITER_cached|BTREE_ITER_intent);
@@ -247,7 +249,7 @@ static void move_keys_from_inc_to_flushing(struct btree_write_buffer *wb)
 	if (!wb->inc.keys.nr)
 		return;
 
-	bch2_journal_pin_add(j, wb->inc.keys.data[0].journal_seq, &wb->flushing.pin,
+	bch2_journal_pin_add(j, wb_keys_start(&wb->inc)->journal_seq, &wb->flushing.pin,
 			     bch2_btree_write_buffer_journal_flush);
 
 	darray_resize(&wb->flushing.keys, min_t(size_t, 1U << 20, wb->flushing.keys.nr + wb->inc.keys.nr));
@@ -276,7 +278,7 @@ out:
 	if (!wb->inc.keys.nr)
 		bch2_journal_pin_drop(j, &wb->inc.pin);
 	else
-		bch2_journal_pin_update(j, wb->inc.keys.data[0].journal_seq, &wb->inc.pin,
+		bch2_journal_pin_update(j, wb_keys_start(&wb->inc)->journal_seq, &wb->inc.pin,
 					bch2_btree_write_buffer_journal_flush);
 
 	if (j->watermark) {
@@ -326,12 +328,15 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 	u64 start_time = local_clock();
 	u64 nr_flushing = wb->flushing.keys.nr;
 
-	for (size_t i = 0; i < wb->flushing.keys.nr; i++) {
-		wb->sorted.data[i].idx = i;
-		wb->sorted.data[i].btree = wb->flushing.keys.data[i].btree;
-		memcpy(&wb->sorted.data[i].pos, &wb->flushing.keys.data[i].k.k.p, sizeof(struct bpos));
+	wb->sorted.nr = 0;
+	wb_keys_for_each(&wb->flushing, k) {
+		struct wb_key_ref *dst = &darray_top(wb->sorted);
+		wb->sorted.nr++;
+
+		dst->idx	= (u64 *) k - wb->flushing.keys.data;
+		dst->btree	= k->btree;
+		memcpy(&dst->pos, &k->k.k.p, sizeof(struct bpos));
 	}
-	wb->sorted.nr = wb->flushing.keys.nr;
 
 	/*
 	 * We first sort so that we can detect and skip redundant updates, and
@@ -350,7 +355,7 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 	wb_sort(wb->sorted.data, wb->sorted.nr);
 
 	darray_for_each(wb->sorted, i) {
-		struct btree_write_buffered_key *k = &wb->flushing.keys.data[i->idx];
+		struct btree_write_buffered_key *k = wb_keys_idx(&wb->flushing, i->idx);
 
 		ret = bch2_btree_write_buffer_insert_checks(c, k->btree, &k->k);
 		if (unlikely(ret))
@@ -369,7 +374,7 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 
 		if (i + 1 < &darray_top(wb->sorted) &&
 		    wb_key_eq(i, i + 1)) {
-			struct btree_write_buffered_key *n = &wb->flushing.keys.data[i[1].idx];
+			struct btree_write_buffered_key *n = wb_keys_idx(&wb->flushing, i[1].idx);
 
 			if (k->k.k.type == KEY_TYPE_accounting &&
 			    n->k.k.type == KEY_TYPE_accounting)
@@ -439,23 +444,25 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 		 */
 		trace_and_count(c, write_buffer_flush_slowpath, trans, slowpath, wb->flushing.keys.nr);
 
-		sort_nonatomic(wb->flushing.keys.data,
-			       wb->flushing.keys.nr,
-			       sizeof(wb->flushing.keys.data[0]),
-			       wb_key_seq_cmp, NULL);
+		sort_r_nonatomic(wb->sorted.data,
+				 wb->sorted.nr,
+				 sizeof(wb->sorted.data[0]),
+				 wb_key_seq_cmp, NULL,
+				 &wb->flushing);
 
-		darray_for_each(wb->flushing.keys, i) {
-			if (!i->journal_seq)
+		darray_for_each(wb->sorted, i) {
+			struct btree_write_buffered_key *k = wb_keys_idx(&wb->flushing, i->idx);
+			if (!k->journal_seq)
 				continue;
 
 			if (!accounting_replay_done &&
-			    i->k.k.type == KEY_TYPE_accounting) {
+			    k->k.k.type == KEY_TYPE_accounting) {
 				could_not_insert++;
 				continue;
 			}
 
 			if (!could_not_insert)
-				bch2_journal_pin_update(j, i->journal_seq, &wb->flushing.pin,
+				bch2_journal_pin_update(j, k->journal_seq, &wb->flushing.pin,
 							bch2_btree_write_buffer_journal_flush);
 
 			bch2_trans_begin(trans);
@@ -466,11 +473,11 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 					BCH_TRANS_COMMIT_no_check_rw|
 					BCH_TRANS_COMMIT_no_enospc|
 					BCH_TRANS_COMMIT_no_journal_res ,
-					btree_write_buffered_insert(trans, i));
+					btree_write_buffered_insert(trans, k));
 			if (ret)
 				goto err;
 
-			i->journal_seq = 0;
+			k->journal_seq = 0;
 		}
 
 		/*
@@ -492,12 +499,14 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 		 * distinct counters touched somehow was very large.
 		 */
 		if (could_not_insert) {
-			struct btree_write_buffered_key *dst = wb->flushing.keys.data;
+			struct btree_write_buffered_key *dst = wb_keys_start(&wb->flushing);
 
-			darray_for_each(wb->flushing.keys, i)
-				if (i->journal_seq)
-					*dst++ = *i;
-			wb->flushing.keys.nr = dst - wb->flushing.keys.data;
+			wb_keys_for_each_safe(&wb->flushing, i)
+				if (i->journal_seq) {
+					memmove_u64s_down(dst, i, wb_key_u64s(&i->k));
+					dst = wb_key_next(dst);
+				}
+			wb->flushing.keys.nr = (u64 *) dst - wb->flushing.keys.data;
 		}
 	}
 err:
@@ -745,9 +754,10 @@ int bch2_journal_key_to_wb_slowpath(struct bch_fs *c,
 			     enum btree_id btree, struct bkey_i *k)
 {
 	struct btree_write_buffer *wb = &c->btree_write_buffer;
+	unsigned u64s = wb_key_u64s(k);
 	int ret;
 retry:
-	ret = darray_make_room_gfp(&dst->wb->keys, 1, GFP_KERNEL);
+	ret = darray_make_room_gfp(&dst->wb->keys, u64s, GFP_KERNEL);
 	if (!ret && dst->wb == &wb->flushing)
 		ret = darray_resize(&wb->sorted, wb->flushing.keys.size);
 
@@ -766,15 +776,15 @@ retry:
 	dst->room = darray_room(dst->wb->keys);
 	if (dst->wb == &wb->flushing)
 		dst->room = min(dst->room, wb->sorted.size - wb->flushing.keys.nr);
-	BUG_ON(!dst->room);
+	BUG_ON(dst->room < u64s);
 	BUG_ON(!dst->seq);
 
-	struct btree_write_buffered_key *wb_k = &darray_top(dst->wb->keys);
+	struct btree_write_buffered_key *wb_k = wb_keys_end(dst->wb);
 	wb_k->journal_seq	= dst->seq;
 	wb_k->btree		= btree;
 	bkey_copy(&wb_k->k, k);
-	dst->wb->keys.nr++;
-	dst->room--;
+	dst->wb->keys.nr += u64s;
+	dst->room -= u64s;
 	return 0;
 }
 

@@ -210,8 +210,7 @@ int bch2_btree_write_buffer_insert_err(struct bch_fs *, enum btree_id, struct bk
 static inline int bch2_btree_write_buffer_insert_checks(struct bch_fs *c, enum btree_id btree,
 							struct bkey_i *k)
 {
-	if (unlikely(!btree_type_uses_write_buffer(btree) ||
-		     k->k.u64s > BTREE_WRITE_BUFERED_U64s_MAX))
+	if (unlikely(!btree_type_uses_write_buffer(btree)))
 		try(bch2_btree_write_buffer_insert_err(c, btree, k));
 
 	return 0;
