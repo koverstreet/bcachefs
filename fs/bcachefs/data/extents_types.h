@@ -36,7 +36,7 @@ struct bch_io_failures {
 				failed_io:1,
 				failed_btree_validate:1,
 				failed_ec:1;
-	}			devs[BCH_REPLICAS_MAX + 1];
+	}			data[BCH_REPLICAS_MAX + 1];
 };
 
 #endif /* _BCACHEFS_EXTENTS_TYPES_H */

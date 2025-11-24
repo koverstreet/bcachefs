@@ -61,9 +61,7 @@ void bch2_io_failures_to_text(struct printbuf *out,
 		"btree validate", "io", "checksum", "ec reconstruct", NULL
 	};
 
-	for (struct bch_dev_io_failures *f = failed->devs;
-	     f < failed->devs + failed->nr;
-	     f++) {
+	darray_for_each(*failed, f) {
 		unsigned errflags =
 			((!!f->failed_btree_validate)	<< 0) |
 			((!!f->failed_io)		<< 1) |
@@ -98,13 +96,7 @@ void bch2_io_failures_to_text(struct printbuf *out,
 struct bch_dev_io_failures *bch2_dev_io_failures(struct bch_io_failures *f,
 						 unsigned dev)
 {
-	struct bch_dev_io_failures *i;
-
-	for (i = f->devs; i < f->devs + f->nr; i++)
-		if (i->dev == dev)
-			return i;
-
-	return NULL;
+	return darray_find_p(*f, i, i->dev == dev);
 }
 
 void bch2_mark_io_failure(struct bch_io_failures *failed,
@@ -114,9 +106,9 @@ void bch2_mark_io_failure(struct bch_io_failures *failed,
 	struct bch_dev_io_failures *f = bch2_dev_io_failures(failed, p->ptr.dev);
 
 	if (!f) {
-		BUG_ON(failed->nr >= ARRAY_SIZE(failed->devs));
+		BUG_ON(failed->nr >= ARRAY_SIZE(failed->data));
 
-		f = &failed->devs[failed->nr++];
+		f = &failed->data[failed->nr++];
 		memset(f, 0, sizeof(*f));
 		f->dev = p->ptr.dev;
 	}
@@ -135,9 +127,9 @@ void bch2_mark_btree_validate_failure(struct bch_io_failures *failed,
 	struct bch_dev_io_failures *f = bch2_dev_io_failures(failed, dev);
 
 	if (!f) {
-		BUG_ON(failed->nr >= ARRAY_SIZE(failed->devs));
+		BUG_ON(failed->nr >= ARRAY_SIZE(failed->data));
 
-		f = &failed->devs[failed->nr++];
+		f = &failed->data[failed->nr++];
 		memset(f, 0, sizeof(*f));
 		f->dev = dev;
 	}
