@@ -1175,14 +1175,14 @@ struct bch_fs {
 	struct mutex		fsck_error_counts_lock;
 };
 
-static inline int __bch2_err_trace(struct bch_fs *c, int err)
+static inline int __bch2_err_throw(struct bch_fs *c, int err)
 {
 	this_cpu_inc(c->counters.now[BCH_COUNTER_error_throw]);
 	trace_error_throw(c, err, _THIS_IP_);
 	return err;
 }
 
-#define bch_err_throw(_c, _err) __bch2_err_trace(_c, -BCH_ERR_##_err)
+#define bch_err_throw(_c, _err) __bch2_err_throw(_c, -BCH_ERR_##_err)
 
 static inline bool bch2_ro_ref_tryget(struct bch_fs *c)
 {
