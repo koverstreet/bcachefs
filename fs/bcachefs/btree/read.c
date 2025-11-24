@@ -986,7 +986,7 @@ start:
 
 		if (bio->bi_status) {
 			bch2_mark_io_failure(&failed, &rb->pick,
-					     bch_err_throw(c, data_read_retry_io_err));
+				__bch2_err_throw(c, -blk_status_to_bch_err(bio->bi_status)));
 			continue;
 		}
 
@@ -999,7 +999,8 @@ start:
 
 		ret = bch2_btree_node_read_done(c, ca, b, &failed, &buf);
 		if (ret != -BCH_ERR_btree_node_read_err_want_retry &&
-		    ret != -BCH_ERR_btree_node_read_err_must_retry)
+		    ret != -BCH_ERR_btree_node_read_err_must_retry &&
+		    !bch2_err_matches(ret, BCH_ERR_blockdev_io_error))
 			break;
 	}
 

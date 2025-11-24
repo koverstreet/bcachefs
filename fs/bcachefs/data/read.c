@@ -600,6 +600,13 @@ static noinline int maybe_poison_extent(struct btree_trans *trans, struct bch_re
 	return 0;
 }
 
+static inline bool data_read_err_should_retry(int err)
+{
+	return  bch2_err_matches(err, BCH_ERR_transaction_restart) ||
+		bch2_err_matches(err, BCH_ERR_data_read_retry) ||
+		bch2_err_matches(err, BCH_ERR_blockdev_io_error);
+}
+
 static noinline int bch2_read_retry_nodecode(struct btree_trans *trans,
 					struct bch_read_bio *rbio,
 					struct bvec_iter bvec_iter,
@@ -628,8 +635,7 @@ static noinline int bch2_read_retry_nodecode(struct btree_trans *trans,
 					 u->btree_id,
 					 bkey_i_to_s_c(u->k.k),
 					 0, failed, flags, -1);
-	} while (bch2_err_matches(ret, BCH_ERR_transaction_restart) ||
-		 bch2_err_matches(ret, BCH_ERR_data_read_retry));
+	} while (data_read_err_should_retry(ret));
 
 	if (ret)
 		rbio->ret = ret;
@@ -681,7 +687,8 @@ static void bch2_rbio_retry(struct work_struct *work)
 		get_rbio_extent(trans, rbio, &sk);
 
 		if (!bkey_deleted(&sk.k->k) &&
-		    bch2_err_matches(rbio->ret, BCH_ERR_data_read_retry_avoid)) {
+		    (bch2_err_matches(rbio->ret, BCH_ERR_data_read_retry_avoid) ||
+		     bch2_err_matches(rbio->ret, BCH_ERR_blockdev_io_error))) {
 			bch2_mark_io_failure(&failed, &rbio->pick, rbio->ret);
 			propagate_io_error_to_data_update(c, rbio, &rbio->pick);
 
@@ -748,9 +755,8 @@ static void bch2_rbio_error(struct bch_read_bio *rbio, int ret)
 	if (rbio->flags & BCH_READ_in_retry)
 		return;
 
-	if (bch2_err_matches(ret, BCH_ERR_data_read_retry)) {
-		bch2_rbio_punt(rbio, bch2_rbio_retry,
-			       RBIO_CONTEXT_UNBOUND, system_unbound_wq);
+	if (data_read_err_should_retry(ret)) {
+		bch2_rbio_punt(rbio, bch2_rbio_retry, RBIO_CONTEXT_UNBOUND, system_unbound_wq);
 	} else {
 		rbio = bch2_rbio_free(rbio);
 		rbio->ret = ret;
@@ -963,7 +969,7 @@ static void bch2_read_endio(struct bio *bio)
 		rbio->bio.bi_end_io = rbio->end_io;
 
 	if (unlikely(bio->bi_status)) {
-		bch2_rbio_error(rbio, bch_err_throw(c, data_read_retry_io_err));
+		bch2_rbio_error(rbio, __bch2_err_throw(c, -blk_status_to_bch_err(bio->bi_status)));
 		return;
 	}
 
@@ -1342,7 +1348,8 @@ out:
 		ret = rbio->ret;
 		rbio = bch2_rbio_free(rbio);
 
-		if (bch2_err_matches(ret, BCH_ERR_data_read_retry_avoid)) {
+		if (bch2_err_matches(ret, BCH_ERR_data_read_retry_avoid) ||
+		    bch2_err_matches(ret, BCH_ERR_blockdev_io_error)) {
 			bch2_mark_io_failure(failed, &pick, ret);
 			propagate_io_error_to_data_update(c, rbio, &pick);
 		}
@@ -1463,9 +1470,7 @@ err:
 		if (ret == -BCH_ERR_data_read_retry_csum_err_maybe_userspace)
 			flags |= BCH_READ_must_bounce;
 
-		if (ret &&
-		    !bch2_err_matches(ret, BCH_ERR_transaction_restart) &&
-		    !bch2_err_matches(ret, BCH_ERR_data_read_retry))
+		if (ret && !data_read_err_should_retry(ret))
 			break;
 	}
 
