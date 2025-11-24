@@ -52,10 +52,11 @@ static CLOSURE_CALLBACK(bch2_dio_read_complete)
 
 static void bch2_direct_IO_read_endio(struct bio *bio)
 {
+	struct bch_read_bio *rbio = to_rbio(bio);
 	struct dio_read *dio = bio->bi_private;
 
-	if (bio->bi_status)
-		dio->ret = blk_status_to_errno(bio->bi_status);
+	if (rbio->ret)
+		dio->ret = bch2_err_class(rbio->ret);
 
 	closure_put(&dio->cl);
 }
@@ -153,7 +154,7 @@ start:
 		ret = bch2_bio_iov_iter_get_pages(bio, iter, 0);
 		if (ret < 0) {
 			/* XXX: fault inject this path */
-			bio->bi_status = BLK_STS_RESOURCE;
+			to_rbio(bio)->ret = ret;
 			bio_endio(bio);
 			break;
 		}

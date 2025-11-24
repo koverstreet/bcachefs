@@ -32,10 +32,11 @@ static inline bool bio_full(struct bio *bio, unsigned len)
 
 static void bch2_readpages_end_io(struct bio *bio)
 {
+	struct bch_read_bio *rbio = to_rbio(bio);
 	struct folio_iter fi;
 
 	bio_for_each_folio_all(fi, bio)
-		folio_end_read(fi.folio, bio->bi_status == BLK_STS_OK);
+		folio_end_read(fi.folio, !rbio->ret);
 
 	bio_put(bio);
 }
@@ -277,7 +278,7 @@ err:
 		prt_printf(&buf, "data read error: %s", bch2_err_str(ret));
 		bch_err_ratelimited(c, "%s", buf.buf);
 
-		rbio->bio.bi_status = BLK_STS_IOERR;
+		rbio->ret = ret;
 		bio_endio(&rbio->bio);
 	}
 }
@@ -379,7 +380,7 @@ int bch2_read_single_folio(struct folio *folio, struct address_space *mapping)
 	blk_finish_plug(&plug);
 	wait_for_completion(&done);
 
-	ret = blk_status_to_errno(rbio->bio.bi_status);
+	ret = bch2_err_class(rbio->ret);
 	bio_put(&rbio->bio);
 
 	if (ret < 0)
