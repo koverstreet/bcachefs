@@ -829,44 +829,6 @@ static noinline void bch2_rbio_narrow_crcs(struct bch_read_bio *rbio)
 		count_event(c, io_read_narrow_crcs_fail);
 }
 
-static void bch2_read_decompress_err(struct work_struct *work)
-{
-	struct bch_read_bio *rbio =
-		container_of(work, struct bch_read_bio, work);
-	struct bch_fs *c	= rbio->c;
-	CLASS(printbuf, buf)();
-
-	bch2_read_err_msg(c, &buf, rbio, rbio->read_pos);
-	prt_str(&buf, "decompression error");
-
-	struct bch_dev *ca = rbio->have_ioref ? bch2_dev_have_ref(c, rbio->pick.ptr.dev) : NULL;
-	if (ca)
-		bch_err_dev_ratelimited(ca, "%s", buf.buf);
-	else
-		bch_err_ratelimited(c, "%s", buf.buf);
-
-	bch2_rbio_error(rbio, -BCH_ERR_data_read_decompress_err, BLK_STS_IOERR);
-}
-
-static void bch2_read_decrypt_err(struct work_struct *work)
-{
-	struct bch_read_bio *rbio =
-		container_of(work, struct bch_read_bio, work);
-	struct bch_fs *c	= rbio->c;
-	CLASS(printbuf, buf)();
-
-	bch2_read_err_msg(c, &buf, rbio, rbio->read_pos);
-	prt_str(&buf, "decrypt error");
-
-	struct bch_dev *ca = rbio->have_ioref ? bch2_dev_have_ref(c, rbio->pick.ptr.dev) : NULL;
-	if (ca)
-		bch_err_dev_ratelimited(ca, "%s", buf.buf);
-	else
-		bch_err_ratelimited(c, "%s", buf.buf);
-
-	bch2_rbio_error(rbio, -BCH_ERR_data_read_decrypt_err, BLK_STS_IOERR);
-}
-
 /* Inner part that may run in process context */
 static void __bch2_read_endio(struct work_struct *work)
 {
@@ -938,13 +900,13 @@ static void __bch2_read_endio(struct work_struct *work)
 		if (crc_is_compressed(crc)) {
 			ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
 			if (ret) {
-				bch2_rbio_punt(rbio, bch2_read_decrypt_err, RBIO_CONTEXT_UNBOUND, system_unbound_wq);
+				bch2_rbio_error(rbio, bch_err_throw(c, data_read_decrypt_err), BLK_STS_IOERR);
 				return;
 			}
 
 			if (bch2_bio_uncompress(c, src, dst, dst_iter, crc) &&
 			    !c->opts.no_data_io) {
-				bch2_rbio_punt(rbio, bch2_read_decompress_err, RBIO_CONTEXT_UNBOUND, system_unbound_wq);
+				bch2_rbio_error(rbio, bch_err_throw(c, data_read_decompress_err), BLK_STS_IOERR);
 				return;
 			}
 		} else {
@@ -957,7 +919,7 @@ static void __bch2_read_endio(struct work_struct *work)
 
 			ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
 			if (ret) {
-				bch2_rbio_punt(rbio, bch2_read_decrypt_err, RBIO_CONTEXT_UNBOUND, system_unbound_wq);
+				bch2_rbio_error(rbio, bch_err_throw(c, data_read_decrypt_err), BLK_STS_IOERR);
 				return;
 			}
 
@@ -985,7 +947,7 @@ static void __bch2_read_endio(struct work_struct *work)
 		 */
 		ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
 		if (ret) {
-			bch2_rbio_punt(rbio, bch2_read_decrypt_err, RBIO_CONTEXT_UNBOUND, system_unbound_wq);
+			bch2_rbio_error(rbio, bch_err_throw(c, data_read_decrypt_err), BLK_STS_IOERR);
 			return;
 		}
 	}
