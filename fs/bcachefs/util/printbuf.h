@@ -268,6 +268,9 @@ static inline void printbuf_reset_keep_tabstops(struct printbuf *buf)
 	buf->last_field		= 0;
 	buf->indent		= 0;
 	buf->cur_tabstop	= 0;
+
+	if (buf->size)
+		printbuf_nul_terminate_reserved(buf);
 }
 
 /**
