@@ -202,6 +202,30 @@ static void zero_out_btree_mem_ptr(struct journal_keys *keys)
 	}
 }
 
+int bch2_set_may_go_rw(struct bch_fs *c)
+{
+	struct journal_keys *keys = &c->journal_keys;
+
+	/*
+	 * After we go RW, the journal keys buffer can't be modified (except for
+	 * setting journal_key->overwritten: it will be accessed by multiple
+	 * threads
+	 */
+	move_gap(keys, keys->nr);
+
+	set_bit(BCH_FS_may_go_rw, &c->flags);
+
+	if (go_rw_in_recovery(c)) {
+		if (c->sb.features & BIT_ULL(BCH_FEATURE_no_alloc_info)) {
+			bch_info(c, "mounting a filesystem with no alloc info read-write; will recreate");
+			bch2_reconstruct_alloc(c);
+		}
+
+		return bch2_fs_read_write_early(c);
+	}
+	return 0;
+}
+
 /* journal replay: */
 
 static void replay_now_at(struct journal *j, u64 seq)
@@ -344,13 +368,13 @@ int bch2_journal_replay(struct bch_fs *c)
 	bool immediate_flush = false;
 	int ret = 0;
 
+	BUG_ON(!atomic_read(&keys->ref));
+	BUG_ON(keys->gap != keys->nr);
+
 	if (keys->nr)
 		try(bch2_journal_log_msg(c, "Starting journal replay (%zu keys in entries %llu-%llu)",
 					 keys->nr, start_seq, end_seq));
 
-	BUG_ON(!atomic_read(&keys->ref));
-
-	move_gap(keys, keys->nr);
 	CLASS(btree_trans, trans)(c);
 
 	/*
@@ -960,8 +984,7 @@ int bch2_fs_initialize(struct bch_fs *c)
 	struct journal_start_info journal_start = { .start_seq = 1 };
 	try(bch2_fs_journal_start(&c->journal, journal_start));
 
-	set_bit(BCH_FS_may_go_rw, &c->flags);
-	try(bch2_fs_read_write_early(c));
+	try(bch2_set_may_go_rw(c));
 	try(bch2_journal_replay(c));
 	try(bch2_fs_freespace_init(c));
 	try(bch2_initialize_subvolumes(c));

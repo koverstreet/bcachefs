@@ -226,30 +226,6 @@ static int bch2_recovery_pass_empty(struct bch_fs *c)
 	return 0;
 }
 
-static int bch2_set_may_go_rw(struct bch_fs *c)
-{
-	struct journal_keys *keys = &c->journal_keys;
-
-	/*
-	 * After we go RW, the journal keys buffer can't be modified (except for
-	 * setting journal_key->overwritten: it will be accessed by multiple
-	 * threads
-	 */
-	move_gap(keys, keys->nr);
-
-	set_bit(BCH_FS_may_go_rw, &c->flags);
-
-	if (go_rw_in_recovery(c)) {
-		if (c->sb.features & BIT_ULL(BCH_FEATURE_no_alloc_info)) {
-			bch_info(c, "mounting a filesystem with no alloc info read-write; will recreate");
-			bch2_reconstruct_alloc(c);
-		}
-
-		return bch2_fs_read_write_early(c);
-	}
-	return 0;
-}
-
 /*
  * Make sure root inode is readable while we're still in recovery and can rewind
  * for repair:
