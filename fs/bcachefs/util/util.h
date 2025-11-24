@@ -815,4 +815,14 @@ do {									\
 	_ret;								\
 })
 
+#include <linux/sched/mm.h>
+
+struct memalloc_flags { unsigned flags; };
+
+DEFINE_CLASS(memalloc_flags, struct memalloc_flags,
+	     memalloc_flags_restore(_T.flags),
+	     (struct memalloc_flags) { memalloc_flags_save(_flags) },
+	     unsigned _flags)
+
+
 #endif /* _BCACHEFS_UTIL_H */

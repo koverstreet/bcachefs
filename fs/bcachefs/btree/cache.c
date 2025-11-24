@@ -460,7 +460,7 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 	unsigned long can_free = 0;
 	unsigned long freed = 0;
 	unsigned long touched = 0;
-	unsigned i, flags;
+	unsigned i;
 	unsigned long ret = SHRINK_STOP;
 	bool trigger_writes = atomic_long_read(&bc->nr_dirty) + nr >= list->nr * 3 / 4;
 
@@ -468,7 +468,7 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 		return SHRINK_STOP;
 
 	mutex_lock(&bc->lock);
-	flags = memalloc_nofs_save();
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 
 	/*
 	 * It's _really_ critical that we don't free too many btree nodes - we
@@ -551,7 +551,6 @@ out:
 	mutex_unlock(&bc->lock);
 out_nounlock:
 	ret = freed;
-	memalloc_nofs_restore(flags);
 	trace_and_count(c, btree_cache_scan, sc->nr_to_scan, can_free, ret);
 	return ret;
 }
@@ -571,14 +570,13 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 {
 	struct btree_cache *bc = &c->btree_cache;
 	struct btree *b, *t;
-	unsigned long flags;
 
 	shrinker_free(bc->live[1].shrink);
 	shrinker_free(bc->live[0].shrink);
 
 	/* vfree() can allocate memory: */
-	flags = memalloc_nofs_save();
-	mutex_lock(&bc->lock);
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+	guard(mutex)(&bc->lock);
 
 	if (c->verify_data)
 		list_move(&c->verify_data->list, &bc->live[0].list);
@@ -615,9 +613,6 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 		six_lock_exit(&b->c.lock);
 		kfree(b);
 	}
-
-	mutex_unlock(&bc->lock);
-	memalloc_nofs_restore(flags);
 
 	for (unsigned i = 0; i < ARRAY_SIZE(bc->nr_by_btree); i++)
 		BUG_ON(bc->nr_by_btree[i]);

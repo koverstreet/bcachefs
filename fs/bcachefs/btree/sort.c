@@ -247,18 +247,16 @@ void bch2_btree_bounce_free(struct bch_fs *c, size_t size, bool used_mempool, vo
 
 void *bch2_btree_bounce_alloc(struct bch_fs *c, size_t size, bool *used_mempool)
 {
-	unsigned flags = memalloc_nofs_save();
-	void *p;
-
 	BUG_ON(size > c->opts.btree_node_size);
 
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+
 	*used_mempool = false;
-	p = kvmalloc(size, GFP_NOWAIT|__GFP_ACCOUNT|__GFP_RECLAIMABLE);
+	void *p = kvmalloc(size, GFP_NOWAIT|__GFP_ACCOUNT|__GFP_RECLAIMABLE);
 	if (!p) {
 		*used_mempool = true;
 		p = mempool_alloc(&c->btree_bounce_pool, GFP_NOFS|__GFP_ACCOUNT|__GFP_RECLAIMABLE);
 	}
-	memalloc_nofs_restore(flags);
 	return p;
 }
 

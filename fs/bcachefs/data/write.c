@@ -1503,15 +1503,14 @@ static void __bch2_write(struct bch_write_op *op)
 	struct bch_fs *c = op->c;
 	struct write_point *wp = NULL;
 	struct bio *bio = NULL;
-	unsigned nofs_flags;
 	int ret;
 
-	nofs_flags = memalloc_nofs_save();
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 
 	if (unlikely(op->opts.nocow && c->opts.nocow_enabled)) {
 		bch2_nocow_write(op);
 		if (op->flags & BCH_WRITE_submitted)
-			goto out_nofs_restore;
+			return;
 	}
 again:
 	memset(&op->failed, 0, sizeof(op->failed));
@@ -1608,8 +1607,6 @@ err:
 		bch2_write_queue(op, wp);
 		continue_at(&op->cl, bch2_write_index, NULL);
 	}
-out_nofs_restore:
-	memalloc_nofs_restore(nofs_flags);
 }
 
 static void bch2_write_data_inline(struct bch_write_op *op, unsigned data_len)

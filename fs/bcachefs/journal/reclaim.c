@@ -717,7 +717,6 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 	bool kthread = (current->flags & PF_KTHREAD) != 0;
 	u64 seq_to_flush;
 	size_t min_nr, min_key_cache, nr_flushed;
-	unsigned flags;
 	int ret = 0;
 
 	/*
@@ -727,7 +726,7 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 	 * we're holding the reclaim lock:
 	 */
 	lockdep_assert_held(&j->reclaim_lock);
-	flags = memalloc_nofs_save();
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 
 	do {
 		if (kthread && kthread_should_stop())
@@ -780,8 +779,6 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 		if (nr_flushed)
 			wake_up(&j->reclaim_wait);
 	} while ((min_nr || min_key_cache) && nr_flushed && !direct);
-
-	memalloc_flags_restore(flags);
 
 	return ret;
 }

@@ -881,11 +881,10 @@ static void __bch2_read_endio(struct work_struct *work)
 	struct bvec_iter dst_iter	= rbio->bvec_iter;
 	struct bch_extent_crc_unpacked crc = rbio->pick.crc;
 	struct nonce nonce = extent_nonce(rbio->version, crc);
-	unsigned nofs_flags;
 	struct bch_csum csum;
 	int ret;
 
-	nofs_flags = memalloc_nofs_save();
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 
 	/* Reset iterator for checksumming and copying bounced data: */
 	if (rbio->bounce) {
@@ -912,13 +911,15 @@ static void __bch2_read_endio(struct work_struct *work)
 		rbio->flags |= BCH_READ_must_bounce;
 		bch2_rbio_error(rbio, -BCH_ERR_data_read_retry_csum_err_maybe_userspace,
 				BLK_STS_IOERR);
-		goto out;
+		return;
 	}
 
 	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_checksum, 0, csum_good);
 
-	if (!csum_good)
-		goto csum_err;
+	if (!csum_good) {
+		bch2_rbio_error(rbio, bch_err_throw(c, data_read_retry_csum_err), BLK_STS_IOERR);
+		return;
+	}
 
 	/*
 	 * XXX
@@ -937,12 +938,16 @@ static void __bch2_read_endio(struct work_struct *work)
 
 		if (crc_is_compressed(crc)) {
 			ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
-			if (ret)
-				goto decrypt_err;
+			if (ret) {
+				bch2_rbio_punt(rbio, bch2_read_decrypt_err, RBIO_CONTEXT_UNBOUND, system_unbound_wq);
+				return;
+			}
 
 			if (bch2_bio_uncompress(c, src, dst, dst_iter, crc) &&
-			    !c->opts.no_data_io)
-				goto decompression_err;
+			    !c->opts.no_data_io) {
+				bch2_rbio_punt(rbio, bch2_read_decompress_err, RBIO_CONTEXT_UNBOUND, system_unbound_wq);
+				return;
+			}
 		} else {
 			/* don't need to decrypt the entire bio: */
 			nonce = nonce_add(nonce, crc.offset << 9);
@@ -952,8 +957,10 @@ static void __bch2_read_endio(struct work_struct *work)
 			src->bi_iter.bi_size = dst_iter.bi_size;
 
 			ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
-			if (ret)
-				goto decrypt_err;
+			if (ret) {
+				bch2_rbio_punt(rbio, bch2_read_decrypt_err, RBIO_CONTEXT_UNBOUND, system_unbound_wq);
+				return;
+			}
 
 			if (rbio->bounce) {
 				struct bvec_iter src_iter = src->bi_iter;
@@ -978,26 +985,16 @@ static void __bch2_read_endio(struct work_struct *work)
 		 * rbio->crc:
 		 */
 		ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
-		if (ret)
-			goto decrypt_err;
+		if (ret) {
+			bch2_rbio_punt(rbio, bch2_read_decrypt_err, RBIO_CONTEXT_UNBOUND, system_unbound_wq);
+			return;
+		}
 	}
 
 	if (likely(!(rbio->flags & BCH_READ_in_retry))) {
 		rbio = bch2_rbio_free(rbio);
 		bch2_rbio_done(rbio);
 	}
-out:
-	memalloc_nofs_restore(nofs_flags);
-	return;
-csum_err:
-	bch2_rbio_error(rbio, -BCH_ERR_data_read_retry_csum_err, BLK_STS_IOERR);
-	goto out;
-decompression_err:
-	bch2_rbio_punt(rbio, bch2_read_decompress_err, RBIO_CONTEXT_UNBOUND, system_unbound_wq);
-	goto out;
-decrypt_err:
-	bch2_rbio_punt(rbio, bch2_read_decrypt_err, RBIO_CONTEXT_UNBOUND, system_unbound_wq);
-	goto out;
 }
 
 static void bch2_read_endio(struct bio *bio)
