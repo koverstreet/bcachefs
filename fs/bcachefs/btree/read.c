@@ -146,7 +146,8 @@ static int __btree_err(int ret,
 	int ret2;
 
 	if (ca) {
-		bch2_mark_btree_validate_failure(failed, ca->dev_idx);
+		bch2_dev_io_failures_mut(failed, ca->dev_idx)->errcode =
+			bch_err_throw(c, btree_node_validate_err);
 
 		struct extent_ptr_decoded pick;
 		have_retry = bch2_bkey_pick_read_device(c,
@@ -984,7 +985,8 @@ start:
 		rb->have_ioref = false;
 
 		if (bio->bi_status) {
-			bch2_mark_io_failure(&failed, &rb->pick, false);
+			bch2_mark_io_failure(&failed, &rb->pick,
+					     bch_err_throw(c, data_read_retry_io_err));
 			continue;
 		}
 

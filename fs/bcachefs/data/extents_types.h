@@ -32,10 +32,9 @@ struct bch_io_failures {
 	u8			nr;
 	struct bch_dev_io_failures {
 		u8		dev;
-		unsigned	failed_csum_nr:6,
-				failed_io:1,
-				failed_btree_validate:1,
-				failed_ec:1;
+		unsigned	csum_nr:7;
+		bool		ec:1;
+		s16		errcode;
 	}			data[BCH_REPLICAS_MAX + 1];
 };
 

@@ -57,17 +57,7 @@ void bch2_io_failures_to_text(struct printbuf *out,
 			      struct bch_fs *c,
 			      struct bch_io_failures *failed)
 {
-	static const char * const error_types[] = {
-		"btree validate", "io", "checksum", "ec reconstruct", NULL
-	};
-
 	darray_for_each(*failed, f) {
-		unsigned errflags =
-			((!!f->failed_btree_validate)	<< 0) |
-			((!!f->failed_io)		<< 1) |
-			((!!f->failed_csum_nr)		<< 2) |
-			((!!f->failed_ec)		<< 3);
-
 		bch2_printbuf_make_room(out, 1024);
 		scoped_guard(rcu) {
 			guard(printbuf_atomic)(out);
@@ -78,17 +68,15 @@ void bch2_io_failures_to_text(struct printbuf *out,
 				prt_printf(out, "(invalid device %u)", f->dev);
 		}
 
-		prt_char(out, ' ');
+		if (!f->csum_nr && !f->ec && !f->errcode)
+			prt_str(out, " no error - confused");
 
-		if (!errflags) {
-			prt_str(out, "no error - confused");
-		} else if (is_power_of_2(errflags)) {
-			prt_bitflags(out, error_types, errflags);
-			prt_str(out, " error");
-		} else {
-			prt_str(out, "errors: ");
-			prt_bitflags(out, error_types, errflags);
-		}
+		if (f->csum_nr)
+			prt_printf(out, " checksum (%u)", f->csum_nr);
+		if (f->ec)
+			prt_str(out, " ec reconstruct");
+		if (f->errcode)
+			prt_printf(out, " %s", bch2_err_str(f->errcode));
 		prt_newline(out);
 	}
 }
@@ -99,33 +87,10 @@ struct bch_dev_io_failures *bch2_dev_io_failures(struct bch_io_failures *f,
 	return darray_find_p(*f, i, i->dev == dev);
 }
 
-void bch2_mark_io_failure(struct bch_io_failures *failed,
-			  struct extent_ptr_decoded *p,
-			  bool csum_error)
-{
-	struct bch_dev_io_failures *f = bch2_dev_io_failures(failed, p->ptr.dev);
-
-	if (!f) {
-		BUG_ON(failed->nr >= ARRAY_SIZE(failed->data));
-
-		f = &failed->data[failed->nr++];
-		memset(f, 0, sizeof(*f));
-		f->dev = p->ptr.dev;
-	}
-
-	if (p->do_ec_reconstruct)
-		f->failed_ec = true;
-	else if (!csum_error)
-		f->failed_io = true;
-	else
-		f->failed_csum_nr++;
-}
-
-void bch2_mark_btree_validate_failure(struct bch_io_failures *failed,
-				      unsigned dev)
+struct bch_dev_io_failures *bch2_dev_io_failures_mut(struct bch_io_failures *failed,
+						     unsigned dev)
 {
 	struct bch_dev_io_failures *f = bch2_dev_io_failures(failed, dev);
-
 	if (!f) {
 		BUG_ON(failed->nr >= ARRAY_SIZE(failed->data));
 
@@ -134,7 +99,20 @@ void bch2_mark_btree_validate_failure(struct bch_io_failures *failed,
 		f->dev = dev;
 	}
 
-	f->failed_btree_validate = true;
+	return f;
+}
+
+void bch2_mark_io_failure(struct bch_io_failures *failed,
+			  struct extent_ptr_decoded *p, int err)
+{
+	struct bch_dev_io_failures *f = bch2_dev_io_failures_mut(failed, p->ptr.dev);
+
+	if (p->do_ec_reconstruct)
+		f->ec = true;
+	else if (err == -BCH_ERR_data_read_retry_csum_err)
+		f->csum_nr++;
+	else
+		f->errcode = err;
 }
 
 static inline u64 dev_latency(struct bch_dev *ca)
@@ -245,21 +223,19 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 		struct bch_dev_io_failures *f =
 			unlikely(failed) ? bch2_dev_io_failures(failed, p.ptr.dev) : NULL;
 		if (unlikely(f)) {
-			p.crc_retry_nr	   = f->failed_csum_nr;
-			p.has_ec	  &= ~f->failed_ec;
+			p.crc_retry_nr	   = f->csum_nr;
+			p.has_ec	  &= !f->ec;
 
 			if (ca) {
-				have_io_errors	|= f->failed_io;
-				have_io_errors	|= f->failed_btree_validate;
-				have_io_errors	|= f->failed_ec;
+				have_io_errors	|= f->errcode != 0;
+				have_io_errors	|= f->ec;
 			}
-			have_csum_errors	|= !!f->failed_csum_nr;
+			have_csum_errors	|= f->csum_nr != 0;
 
-			if (p.has_ec && (f->failed_io || f->failed_csum_nr))
+			if (p.has_ec && (f->errcode || f->csum_nr))
 				p.do_ec_reconstruct = true;
-			else if (f->failed_io ||
-				 f->failed_btree_validate ||
-				 f->failed_csum_nr > c->opts.checksum_err_retry_nr)
+			else if (f->errcode ||
+				 f->csum_nr > c->opts.checksum_err_retry_nr)
 				continue;
 		}
 

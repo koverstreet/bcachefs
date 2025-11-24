@@ -684,8 +684,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 
 		if (!bkey_deleted(&sk.k->k) &&
 		    bch2_err_matches(rbio->ret, BCH_ERR_data_read_retry_avoid)) {
-			bch2_mark_io_failure(&failed, &rbio->pick,
-					     rbio->ret == -BCH_ERR_data_read_retry_csum_err);
+			bch2_mark_io_failure(&failed, &rbio->pick, rbio->ret);
 			propagate_io_error_to_data_update(c, rbio, &rbio->pick);
 
 		}
@@ -1013,7 +1012,7 @@ static void bch2_read_endio(struct bio *bio)
 		rbio->bio.bi_end_io = rbio->end_io;
 
 	if (unlikely(bio->bi_status)) {
-		bch2_rbio_error(rbio, -BCH_ERR_data_read_retry_io_err, bio->bi_status);
+		bch2_rbio_error(rbio, bch_err_throw(c, data_read_retry_io_err), bio->bi_status);
 		return;
 	}
 
@@ -1176,7 +1175,7 @@ retry_pick:
 	    ca &&
 	    unlikely(dev_ptr_stale(ca, &pick.ptr))) {
 		read_from_stale_dirty_pointer(trans, ca, k, pick.ptr);
-		bch2_mark_io_failure(failed, &pick, false);
+		bch2_mark_io_failure(failed, &pick, bch_err_throw(c, data_read_ptr_stale_dirty));
 		propagate_io_error_to_data_update(c, rbio, &pick);
 		enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_io_read);
 		goto retry_pick;
@@ -1393,8 +1392,7 @@ out:
 		rbio = bch2_rbio_free(rbio);
 
 		if (bch2_err_matches(ret, BCH_ERR_data_read_retry_avoid)) {
-			bch2_mark_io_failure(failed, &pick,
-					ret == -BCH_ERR_data_read_retry_csum_err);
+			bch2_mark_io_failure(failed, &pick, ret);
 			propagate_io_error_to_data_update(c, rbio, &pick);
 		}
 
