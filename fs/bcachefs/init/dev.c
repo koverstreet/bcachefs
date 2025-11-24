@@ -1133,6 +1133,7 @@ static void bch2_fs_bdev_mark_dead(struct block_device *bdev, bool surprise)
 
 	struct bch_dev *ca = bdev_to_bch_dev(c, bdev);
 	if (ca) {
+		bool print = true;
 		CLASS(printbuf, buf)();
 		__bch2_log_msg_start(ca->name, &buf);
 		prt_printf(&buf, "offline from block layer\n");
@@ -1149,10 +1150,11 @@ static void bch2_fs_bdev_mark_dead(struct block_device *bdev, bool surprise)
 			__bch2_dev_offline(c, ca);
 		} else {
 			bch2_journal_flush(&c->journal);
-			bch2_fs_emergency_read_only2(c, &buf);
+			print = bch2_fs_emergency_read_only2(c, &buf);
 		}
 
-		bch2_print_str(c, KERN_ERR, buf.buf);
+		if (print)
+			bch2_print_str(c, KERN_ERR, buf.buf);
 
 		bch2_dev_put(ca);
 	}

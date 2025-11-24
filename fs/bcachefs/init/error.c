@@ -147,6 +147,7 @@ void bch2_io_error_work(struct work_struct *work)
 		if (ca->mi.state >= BCH_MEMBER_STATE_ro)
 			return;
 
+		bool print = true;
 		CLASS(printbuf, buf)();
 		__bch2_log_msg_start(ca->name, &buf);
 
@@ -158,9 +159,10 @@ void bch2_io_error_work(struct work_struct *work)
 
 		prt_printf(&buf, "setting %s ro", dev ? "device" : "filesystem");
 		if (!dev)
-			bch2_fs_emergency_read_only2(c, &buf);
+			print = bch2_fs_emergency_read_only2(c, &buf);
 
-		bch2_print_str(c, KERN_ERR, buf.buf);
+		if (print)
+			bch2_print_str(c, KERN_ERR, buf.buf);
 	}
 }
 
