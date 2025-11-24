@@ -2,7 +2,37 @@
 #ifndef _BCACHEFS_ERRCODE_H
 #define _BCACHEFS_ERRCODE_H
 
+/* we're getting away from reusing bi_status, this should go away */
+#define BLK_STS_REMOVED		((__force blk_status_t)128)
+
+#define BLK_ERRS()				\
+	BLK_STS(NOTSUPP)			\
+	BLK_STS(TIMEOUT)			\
+	BLK_STS(NOSPC)				\
+	BLK_STS(TRANSPORT)			\
+	BLK_STS(TARGET)				\
+	BLK_STS(RESV_CONFLICT)			\
+	BLK_STS(MEDIUM)				\
+	BLK_STS(PROTECTION)			\
+	BLK_STS(RESOURCE)			\
+	BLK_STS(IOERR)				\
+	BLK_STS(DM_REQUEUE)			\
+	BLK_STS(AGAIN)				\
+	BLK_STS(DEV_RESOURCE)			\
+	BLK_STS(ZONE_OPEN_RESOURCE)		\
+	BLK_STS(ZONE_ACTIVE_RESOURCE)		\
+	BLK_STS(OFFLINE)			\
+	BLK_STS(DURATION_LIMIT)			\
+	BLK_STS(INVAL)				\
+	BLK_STS(REMOVED)			\
+
+#define BLK_STS(n)								\
+	x(BCH_ERR_blockdev_io_error,	BLK_STS_##n)
+
 #define BCH_ERRCODES()								\
+	x(EIO,				blockdev_io_error)			\
+	BLK_ERRS()								\
+	x(BCH_ERR_blockdev_io_error,	BLK_STS_UNKNOWN)			\
 	x(ERANGE,			ERANGE_option_too_small)		\
 	x(ERANGE,			ERANGE_option_too_big)			\
 	x(ERANGE,			projid_too_big)				\
@@ -419,9 +449,8 @@ static inline long bch2_err_class(long err)
 	return err < 0 ? __bch2_err_class(err) : err;
 }
 
-#define BLK_STS_REMOVED		((__force blk_status_t)128)
-
 #include <linux/blk_types.h>
 const char *bch2_blk_status_to_str(blk_status_t);
+enum bch_errcode blk_status_to_bch_err(blk_status_t);
 
 #endif /* _BCACHFES_ERRCODE_H */
