@@ -366,6 +366,13 @@ static ssize_t bch2_read_btree(struct file *file, char __user *buf,
 	i->size	= size;
 	i->ret	= 0;
 
+	/*
+	 * No multithreaded btree access until BCH_FS_may_go_rw and we're no
+	 * longer modifying the journal keys gap buffer:
+	 */
+	if (!test_bit(BCH_FS_may_go_rw, &i->c->flags))
+		return 0;
+
 	CLASS(btree_trans, trans)(i->c);
 	return bch2_debugfs_flush_buf(i) ?:
 		for_each_btree_key(trans, iter, i->id, i->from,
@@ -395,6 +402,9 @@ static ssize_t bch2_read_btree_formats(struct file *file, char __user *buf,
 	i->ubuf = buf;
 	i->size	= size;
 	i->ret	= 0;
+
+	if (!test_bit(BCH_FS_may_go_rw, &i->c->flags))
+		return 0;
 
 	try(bch2_debugfs_flush_buf(i));
 
@@ -427,6 +437,9 @@ static ssize_t bch2_read_bfloat_failed(struct file *file, char __user *buf,
 	i->ubuf = buf;
 	i->size	= size;
 	i->ret	= 0;
+
+	if (!test_bit(BCH_FS_may_go_rw, &i->c->flags))
+		return 0;
 
 	CLASS(btree_trans, trans)(i->c);
 	return bch2_debugfs_flush_buf(i) ?:

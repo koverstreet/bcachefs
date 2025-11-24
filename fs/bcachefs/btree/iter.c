@@ -3557,6 +3557,13 @@ static inline struct btree_trans *bch2_trans_alloc(struct bch_fs *c)
 struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 	__acquires(&c->btree_trans_barrier)
 {
+	/*
+	 * No multithreaded btree access until we've gone RW and are no longer
+	 * modifying the journal keys gap buffer
+	 */
+	EBUG_ON(!test_bit(BCH_FS_may_go_rw, &c->flags) &&
+		current != c->recovery_task);
+
 	struct btree_trans *trans = bch2_trans_alloc(c);
 
 	trans->c		= c;
@@ -3574,6 +3581,7 @@ struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 
 	*trans_paths_nr(trans->paths) = BTREE_ITER_INITIAL;
 
+	/* Reserve path 0 for our sentinal value */
 	trans->paths_allocated[0] = 1;
 
 	static struct lock_class_key lockdep_key;

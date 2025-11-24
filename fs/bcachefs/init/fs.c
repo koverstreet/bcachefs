@@ -1030,6 +1030,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	CLASS(printbuf, name)();
 
 	c->stdio = (void *)(unsigned long) opts->stdio;
+	c->recovery_task = current;
 
 	__module_get(THIS_MODULE);
 
@@ -1245,7 +1246,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	scoped_guard(mutex, &bch2_fs_list_lock)
 		try(bch2_fs_online(c));
 
-	c->recovery_task = current;
 	return 0;
 }
 

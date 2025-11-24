@@ -1848,6 +1848,8 @@ static int bch2_reconcile_thread(void *arg)
 	 */
 	kthread_wait_freezable(c->recovery.pass_done > BCH_RECOVERY_PASS_check_snapshots ||
 			       kthread_should_stop());
+	if (kthread_should_stop())
+		return 0;
 
 	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
 	bch2_moving_ctxt_init(&ctxt, c, NULL, &r->work_stats,
@@ -1940,6 +1942,13 @@ void bch2_reconcile_status_to_text(struct printbuf *out, struct bch_fs *c)
 
 void bch2_reconcile_scan_pending_to_text(struct printbuf *out, struct bch_fs *c)
 {
+	/*
+	 * No multithreaded btree access until BCH_FS_may_go_rw and we're no
+	 * longer modifying the journal keys gap buffer:
+	 */
+	if (!test_bit(BCH_FS_may_go_rw, &c->flags))
+		return;
+
 	CLASS(btree_trans, trans)(c);
 	CLASS(btree_iter, iter)(trans, BTREE_ID_reconcile_scan, POS_MIN, 0);
 

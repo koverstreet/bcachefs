@@ -475,6 +475,8 @@ static int bch2_copygc_thread(void *arg)
 	 */
 	kthread_wait_freezable(c->recovery.pass_done > BCH_RECOVERY_PASS_check_snapshots ||
 			       kthread_should_stop());
+	if (kthread_should_stop())
+		goto out;
 
 	bch2_move_stats_init(&move_stats, "copygc");
 	bch2_moving_ctxt_init(&ctxt, c, NULL, &move_stats,
@@ -533,9 +535,10 @@ static int bch2_copygc_thread(void *arg)
 	}
 
 	move_buckets_wait(&ctxt, &buckets, true);
-	rhashtable_destroy(buckets.table);
 	bch2_moving_ctxt_exit(&ctxt);
 	bch2_move_stats_exit(&move_stats, c);
+out:
+	rhashtable_destroy(buckets.table);
 err:
 	kfree(buckets.table);
 	return ret;

@@ -284,7 +284,9 @@ int bch2_journal_key_insert_take(struct bch_fs *c, enum btree_id id,
 	struct journal_keys *keys = &c->journal_keys;
 	size_t idx = bch2_journal_key_search(keys, id, level, k->k.p);
 
+	BUG_ON(test_bit(BCH_FS_may_go_rw, &c->flags));
 	BUG_ON(test_bit(BCH_FS_rw, &c->flags));
+	BUG_ON(current != c->recovery_task);
 
 	if (idx < keys->size &&
 	    journal_key_cmp(c, &n, &keys->data[idx]) == 0) {
@@ -659,8 +661,10 @@ void __bch2_btree_and_journal_iter_init_node_iter(struct btree_trans *trans,
 
 	if (trans->journal_replay_not_finished) {
 		bch2_journal_iter_init(trans->c, &iter->journal, b->c.btree_id, b->c.level, pos);
-		if (!test_bit(BCH_FS_may_go_rw, &trans->c->flags))
+		if (!test_bit(BCH_FS_may_go_rw, &trans->c->flags)) {
+			BUG_ON(current != trans->c->recovery_task);
 			list_add(&iter->journal.list, &trans->c->journal_iters);
+		}
 	}
 }
 
