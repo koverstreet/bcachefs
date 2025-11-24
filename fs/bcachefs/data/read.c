@@ -1055,11 +1055,29 @@ static inline struct bch_read_bio *read_extent_rbio_alloc(struct btree_trans *tr
 {
 	struct bch_fs *c = trans->c;
 	struct bpos data_pos = bkey_start_pos(k.k);
-	struct bch_read_bio *rbio = NULL;
 
-	if (orig->opts.promote_target || have_io_error(failed))
-		rbio = promote_alloc(trans, iter, k, &pick, flags, orig,
-				     &bounce, &read_full, failed);
+	struct bch_read_bio *rbio = orig->opts.promote_target || have_io_error(failed)
+		? promote_alloc(trans, iter, k, &pick, flags, orig,
+				&bounce, &read_full, failed)
+		: NULL;
+
+	/*
+	 * If it's being moved internally, we don't want to flag it as a cache
+	 * hit:
+	 */
+	if (ca && pick.ptr.cached && !orig->data_update)
+		bch2_bucket_io_time_reset(trans, pick.ptr.dev,
+			PTR_BUCKET_NR(ca, &pick.ptr), READ);
+
+	/*
+	 * Done with btree operations:
+	 * Unlock the iterator while the btree node's lock is still in cache,
+	 * before allocating the clone/fragment (if any) and doing the IO:
+	 */
+	if (!(flags & BCH_READ_in_retry))
+		bch2_trans_unlock(trans);
+	else
+		bch2_trans_unlock_long(trans);
 
 	if (!read_full) {
 		EBUG_ON(crc_is_compressed(pick.crc));
@@ -1163,6 +1181,113 @@ static inline struct bch_read_bio *read_extent_rbio_alloc(struct btree_trans *tr
 	return rbio;
 }
 
+static inline int read_extent_done(struct bch_read_bio *rbio, unsigned flags, int ret)
+{
+	if (flags & BCH_READ_in_retry)
+		return ret;
+
+	if (ret)
+		rbio->ret = ret;
+
+	if (flags & BCH_READ_last_fragment)
+		bch2_rbio_done(rbio);
+	return 0;
+}
+
+static noinline int read_extent_inline(struct bch_fs *c,
+				       struct bch_read_bio *rbio,
+				       struct bvec_iter iter,
+				       struct bkey_s_c k,
+				       unsigned offset_into_extent,
+				       unsigned flags)
+{
+	this_cpu_add(c->counters.now[BCH_COUNTER_io_read_inline], bvec_iter_sectors(iter));
+
+	unsigned bytes = min(iter.bi_size, offset_into_extent << 9);
+	swap(iter.bi_size, bytes);
+	zero_fill_bio_iter(&rbio->bio, iter);
+	swap(iter.bi_size, bytes);
+
+	bio_advance_iter(&rbio->bio, &iter, bytes);
+
+	bytes = min(iter.bi_size, bkey_inline_data_bytes(k.k));
+
+	swap(iter.bi_size, bytes);
+	memcpy_to_bio(&rbio->bio, iter, bkey_inline_data_p(k));
+	swap(iter.bi_size, bytes);
+
+	bio_advance_iter(&rbio->bio, &iter, bytes);
+
+	zero_fill_bio_iter(&rbio->bio, iter);
+
+	return read_extent_done(rbio, flags, 0);
+}
+
+static noinline int read_extent_hole(struct bch_fs *c,
+				     struct bch_read_bio *rbio,
+				     struct bvec_iter iter,
+				     unsigned flags)
+{
+	this_cpu_add(c->counters.now[BCH_COUNTER_io_read_hole],
+		     bvec_iter_sectors(iter));
+	/*
+	 * won't normally happen in the data update (bch2_move_extent()) path,
+	 * but if we retry and the extent we wanted to read no longer exists we
+	 * have to signal that:
+	 */
+	if (rbio->data_update)
+		rbio->ret = bch_err_throw(c, data_read_key_overwritten);
+
+	zero_fill_bio_iter(&rbio->bio, iter);
+
+	return read_extent_done(rbio, flags, 0);
+}
+
+static noinline int read_extent_pick_err(struct btree_trans *trans,
+					 struct bch_read_bio *rbio,
+					 struct bpos read_pos,
+					 enum btree_id data_btree, struct bkey_s_c k,
+					 unsigned flags, int ret)
+{
+	struct bch_fs *c = trans->c;
+
+	if (ret == -BCH_ERR_data_read_csum_err) {
+		/* We can only return errors directly in the retry path */
+		BUG_ON(!(flags & BCH_READ_in_retry));
+
+		try(maybe_poison_extent(trans, rbio, data_btree, k));
+		trace_and_count(c, io_read_fail_and_poison, &rbio->bio);
+	}
+
+	if (!(flags & BCH_READ_in_retry)) {
+		CLASS(printbuf, buf)();
+		bch2_read_err_msg_trans(trans, &buf, rbio, read_pos);
+		prt_printf(&buf, "%s\n  ", bch2_err_str(ret));
+		bch2_bkey_val_to_text(&buf, c, k);
+		bch_err_ratelimited(c, "%s", buf.buf);
+	}
+
+	return read_extent_done(rbio, flags, ret);
+}
+
+static noinline int read_extent_no_encryption_key(struct btree_trans *trans,
+					 struct bch_read_bio *rbio,
+					 struct bpos read_pos,
+					 struct bkey_s_c k,
+					 unsigned flags)
+{
+	struct bch_fs *c = trans->c;
+
+	CLASS(printbuf, buf)();
+	bch2_read_err_msg_trans(trans, &buf, rbio, read_pos);
+	prt_printf(&buf, "attempting to read encrypted data without encryption key\n  ");
+	bch2_bkey_val_to_text(&buf, c, k);
+
+	bch_err_ratelimited(c, "%s", buf.buf);
+
+	return read_extent_done(rbio, flags, bch_err_throw(c, data_read_no_encryption_key));
+}
+
 int __bch2_read_extent(struct btree_trans *trans,
 		       struct bch_read_bio *orig,
 		       struct bvec_iter iter, struct bpos read_pos,
@@ -1172,71 +1297,29 @@ int __bch2_read_extent(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct extent_ptr_decoded pick;
-	struct bch_read_bio *rbio = NULL;
 	bool bounce = false, read_full = false, narrow_crcs = false;
 	struct data_update *u = rbio_data_update(orig);
 	int ret = 0;
 
-	if (bkey_extent_is_inline_data(k.k)) {
-		unsigned bytes = min_t(unsigned, iter.bi_size,
-				       bkey_inline_data_bytes(k.k));
+	if (bkey_extent_is_inline_data(k.k))
+		return read_extent_inline(c, orig, iter, k, offset_into_extent, flags);
 
-		swap(iter.bi_size, bytes);
-		memcpy_to_bio(&orig->bio, iter, bkey_inline_data_p(k));
-		swap(iter.bi_size, bytes);
-		bio_advance_iter(&orig->bio, &iter, bytes);
-		zero_fill_bio_iter(&orig->bio, iter);
-		this_cpu_add(c->counters.now[BCH_COUNTER_io_read_inline],
-			     bvec_iter_sectors(iter));
-		goto out_read_done;
-	}
+	if (unlikely((bch2_bkey_extent_flags(k) & BIT_ULL(BCH_EXTENT_FLAG_poisoned))) &&
+	    !orig->data_update)
+		return read_extent_done(orig, flags, bch_err_throw(c, extent_poisoned));
 
-	if ((bch2_bkey_extent_flags(k) & BIT_ULL(BCH_EXTENT_FLAG_poisoned)) &&
-	    !orig->data_update) {
-		ret = bch_err_throw(c, extent_poisoned);
-		goto err;
-	}
-retry_pick:
 	ret = bch2_bkey_pick_read_device(c, k, failed, &pick, dev);
 
 	/* hole or reservation - just zero fill: */
-	if (!ret)
-		goto hole;
+	if (unlikely(!ret))
+		return read_extent_hole(c, orig, iter, flags);
 
-	if (unlikely(ret < 0)) {
-		if (ret == -BCH_ERR_data_read_csum_err) {
-			int ret2 = maybe_poison_extent(trans, orig, data_btree, k);
-			if (ret2) {
-				ret = ret2;
-				goto err;
-			}
-
-			trace_and_count(c, io_read_fail_and_poison, &orig->bio);
-		}
-
-		if (!(flags & BCH_READ_in_retry)) {
-			CLASS(printbuf, buf)();
-			bch2_read_err_msg_trans(trans, &buf, orig, read_pos);
-			prt_printf(&buf, "%s\n  ", bch2_err_str(ret));
-			bch2_bkey_val_to_text(&buf, c, k);
-			bch_err_ratelimited(c, "%s", buf.buf);
-		}
-		goto err;
-	}
+	if (unlikely(ret < 0))
+		return read_extent_pick_err(trans, orig, read_pos, data_btree, k, flags, ret);
 
 	if (bch2_csum_type_is_encryption(pick.crc.csum_type) &&
-	    unlikely(!c->chacha20_key_set)) {
-		if (!(flags & BCH_READ_in_retry)) {
-			CLASS(printbuf, buf)();
-			bch2_read_err_msg_trans(trans, &buf, orig, read_pos);
-			prt_printf(&buf, "attempting to read encrypted data without encryption key\n  ");
-			bch2_bkey_val_to_text(&buf, c, k);
-
-			bch_err_ratelimited(c, "%s", buf.buf);
-		}
-		ret = bch_err_throw(c, data_read_no_encryption_key);
-		goto err;
-	}
+	    unlikely(!c->chacha20_key_set))
+		return read_extent_no_encryption_key(trans, orig, read_pos, k, flags);
 
 	struct bch_dev *ca = bch2_dev_get_ioref(c, pick.ptr.dev, READ,
 					BCH_DEV_READ_REF_io_read);
@@ -1251,11 +1334,13 @@ retry_pick:
 	    !pick.ptr.cached &&
 	    ca &&
 	    unlikely(dev_ptr_stale(ca, &pick.ptr))) {
-		read_from_stale_dirty_pointer(trans, ca, k, pick.ptr);
-		bch2_mark_io_failure(failed, &pick, bch_err_throw(c, data_read_ptr_stale_dirty));
-		propagate_io_error_to_data_update(c, rbio, &pick);
 		enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_io_read);
-		goto retry_pick;
+		read_from_stale_dirty_pointer(trans, ca, k, pick.ptr);
+
+		bch2_mark_io_failure(failed, &pick, ret);
+		propagate_io_error_to_data_update(c, orig, &pick);
+
+		return read_extent_done(orig, flags, bch_err_throw(c, data_read_ptr_stale_dirty));
 	}
 
 	if (likely(!u)) {
@@ -1284,38 +1369,21 @@ retry_pick:
 		 * can happen if we retry, and the extent we were going to read
 		 * has been merged in the meantime:
 		 */
-		if (pick.crc.compressed_size > u->op.wbio.bio.bi_iter.bi_size) {
+		if (unlikely(pick.crc.compressed_size > u->op.wbio.bio.bi_iter.bi_size)) {
 			if (ca)
 				enumerated_ref_put(&ca->io_ref[READ],
 					BCH_DEV_READ_REF_io_read);
-			rbio->ret = bch_err_throw(c, data_read_buffer_too_small);
-			goto out_read_done;
+			return read_extent_done(orig, flags, bch_err_throw(c, data_read_buffer_too_small));
 		}
 
 		iter.bi_size	= pick.crc.compressed_size << 9;
 		read_full = true;
 	}
 
-	rbio = read_extent_rbio_alloc(trans, orig, iter, read_pos, data_btree, k,
-				      pick, ca, offset_into_extent, failed, flags,
-				      bounce, read_full, narrow_crcs);
-
-	/*
-	 * If it's being moved internally, we don't want to flag it as a cache
-	 * hit:
-	 */
-	if (ca && pick.ptr.cached && !u)
-		bch2_bucket_io_time_reset(trans, pick.ptr.dev,
-			PTR_BUCKET_NR(ca, &pick.ptr), READ);
-
-	/*
-	 * Unlock the iterator while the btree node's lock is still in
-	 * cache, before doing the IO:
-	 */
-	if (!(flags & BCH_READ_in_retry))
-		bch2_trans_unlock(trans);
-	else
-		bch2_trans_unlock_long(trans);
+	struct bch_read_bio *rbio =
+		read_extent_rbio_alloc(trans, orig, iter, read_pos, data_btree, k,
+				       pick, ca, offset_into_extent, failed, flags,
+				       bounce, read_full, narrow_crcs);
 
 	if (likely(!rbio->pick.do_ec_reconstruct)) {
 		if (unlikely(!rbio->have_ioref)) {
@@ -1360,8 +1428,6 @@ out:
 	} else {
 		bch2_trans_unlock(trans);
 
-		int ret;
-
 		rbio->context = RBIO_CONTEXT_UNBOUND;
 		bch2_read_endio(&rbio->bio);
 
@@ -1376,31 +1442,6 @@ out:
 
 		return ret;
 	}
-
-err:
-	if (flags & BCH_READ_in_retry)
-		return ret;
-
-	orig->ret = ret;
-	goto out_read_done;
-
-hole:
-	this_cpu_add(c->counters.now[BCH_COUNTER_io_read_hole],
-		     bvec_iter_sectors(iter));
-	/*
-	 * won't normally happen in the data update (bch2_move_extent()) path,
-	 * but if we retry and the extent we wanted to read no longer exists we
-	 * have to signal that:
-	 */
-	if (u)
-		orig->ret = bch_err_throw(c, data_read_key_overwritten);
-
-	zero_fill_bio_iter(&orig->bio, iter);
-out_read_done:
-	if ((flags & BCH_READ_last_fragment) &&
-	    !(flags & BCH_READ_in_retry))
-		bch2_rbio_done(orig);
-	return 0;
 }
 
 int __bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
