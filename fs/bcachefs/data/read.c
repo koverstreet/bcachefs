@@ -736,7 +736,14 @@ static void bch2_rbio_retry(struct work_struct *work)
 
 			bch2_io_failures_to_text(&buf, c, &failed);
 
-			bch2_print_str_ratelimited(c, KERN_ERR, buf.buf);
+			static struct ratelimit_state rs[2] = {
+				RATELIMIT_STATE_INIT("read_retry", DEFAULT_RATELIMIT_INTERVAL, DEFAULT_RATELIMIT_BURST),
+				RATELIMIT_STATE_INIT("read_error", DEFAULT_RATELIMIT_INTERVAL, DEFAULT_RATELIMIT_BURST),
+			};
+			struct ratelimit_state *r = &rs[ret != 0];
+
+			if (__ratelimit(r))
+				bch2_print_str(c, KERN_ERR, buf.buf);
 		}
 
 		/* drop trans before calling rbio_done() */
