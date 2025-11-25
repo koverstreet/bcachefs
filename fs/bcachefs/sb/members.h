@@ -332,8 +332,7 @@ static inline struct bch_dev *bch2_dev_get_ioref(struct bch_fs *c, unsigned dev,
 	if (!ca || !enumerated_ref_tryget(&ca->io_ref[rw], ref_idx))
 		return NULL;
 
-	if (ca->mi.state == BCH_MEMBER_STATE_rw ||
-	    (ca->mi.state == BCH_MEMBER_STATE_ro && rw == READ))
+	if (ca->mi.state == BCH_MEMBER_STATE_rw || rw == READ)
 		return ca;
 
 	enumerated_ref_put(&ca->io_ref[rw], ref_idx);
