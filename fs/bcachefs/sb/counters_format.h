@@ -54,6 +54,7 @@ enum bch_counters_flags {
 	x(bucket_discard_fast,				79,	TYPE_COUNTER)	\
 	x(bucket_alloc,					5,	TYPE_COUNTER)	\
 	x(bucket_alloc_fail,				6,	TYPE_COUNTER)	\
+	x(bkey_pack_pos_fail,				112,	TYPE_COUNTER)	\
 	x(btree_cache_scan,				7,	TYPE_COUNTER)	\
 	x(btree_cache_reap,				8,	TYPE_COUNTER)	\
 	x(btree_cache_cannibalize,			9,	TYPE_COUNTER)	\

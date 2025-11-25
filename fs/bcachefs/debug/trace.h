@@ -33,70 +33,24 @@ DECLARE_EVENT_CLASS(fs_str,
 	TP_printk("%s: %s", __entry->fs, __get_str(str))
 );
 
+#define BCH_NOCOUNTER_TRACEPOINTS()				\
+	x(accounting_mem_insert)				\
+	x(journal_entry_close)					\
+	x(extent_trim_atomic)					\
+	x(path_downgrade)					\
+	x(btree_iter_peek_slot)					\
+	x(__btree_iter_peek)					\
+	x(btree_iter_peek_max)					\
+	x(btree_iter_peek_prev_min)
+
 #define x(n, ...)						\
 	DEFINE_EVENT(fs_str, n,					\
 		TP_PROTO(struct bch_fs *c, const char *str),	\
 		TP_ARGS(c, str)					\
 	);
 	BCH_PERSISTENT_COUNTERS()
+	BCH_NOCOUNTER_TRACEPOINTS()
 #undef x
-
-DEFINE_EVENT(fs_str, accounting_mem_insert,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
-
-DEFINE_EVENT(fs_str, journal_entry_close,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
-
-DEFINE_EVENT(fs_str, extent_trim_atomic,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
-
-/* BTREE ITER TRACEPOINTS */
-
-TRACE_EVENT(bkey_pack_pos_fail,
-	TP_PROTO(const struct bpos *p),
-	TP_ARGS(p),
-
-	TP_STRUCT__entry(
-		TRACE_BPOS_entries(p)
-	),
-
-	TP_fast_assign(
-		TRACE_BPOS_assign(p, *p);
-	),
-
-	TP_printk("%llu:%llu:%u", __entry->p_inode, __entry->p_offset, __entry->p_snapshot)
-);
-
-DEFINE_EVENT(fs_str, path_downgrade,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
-
-DEFINE_EVENT(fs_str, btree_iter_peek_slot,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
-
-DEFINE_EVENT(fs_str, __btree_iter_peek,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
-
-DEFINE_EVENT(fs_str, btree_iter_peek_max,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
-
-DEFINE_EVENT(fs_str, btree_iter_peek_prev_min,
-	TP_PROTO(struct bch_fs *c, const char *str),
-	TP_ARGS(c, str)
-);
 
 #ifdef CONFIG_BCACHEFS_PATH_TRACEPOINTS
 

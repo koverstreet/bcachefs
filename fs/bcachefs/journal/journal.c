@@ -240,16 +240,15 @@ static void __journal_entry_close(struct journal *j, unsigned closed_val, bool t
 	journal_seq_pin(j, journal_cur_seq(j))->bytes = bytes;
 	j->dirty_entry_bytes += bytes;
 
-	if (trace_journal_entry_close_enabled() && trace) {
-		CLASS(printbuf, err)();
-		guard(printbuf_atomic)(&err);
+	if (trace)
+		event_trace(c, journal_entry_close, msg, ({
+			guard(printbuf_atomic)(&msg);
 
-		prt_str(&err, "entry size: ");
-		prt_human_readable_u64(&err, vstruct_bytes(buf->data));
-		prt_newline(&err);
-		bch2_prt_task_backtrace(&err, current, 1, GFP_NOWAIT);
-		trace_journal_entry_close(c, err.buf);
-	}
+			prt_str(&msg, "entry size: ");
+			prt_human_readable_u64(&msg, vstruct_bytes(buf->data));
+			prt_newline(&msg);
+			bch2_prt_task_backtrace(&msg, current, 1, GFP_NOWAIT);
+		}));
 
 	sectors = vstruct_blocks_plus(buf->data, c->block_bits,
 				      buf->u64s_reserved) << c->block_bits;

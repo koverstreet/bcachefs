@@ -1657,7 +1657,7 @@ static int btree_split_insert_keys(struct btree_update *as,
 	    bpos_le(bch2_keylist_front(keys)->k.p, b->data->max_key)) {
 		struct btree_node_iter node_iter;
 
-		bch2_btree_node_iter_init(&node_iter, b, &bch2_keylist_front(keys)->k.p);
+		bch2_btree_node_iter_init(trans->c, b, &node_iter, &bch2_keylist_front(keys)->k.p);
 
 		try(bch2_btree_insert_keys_interior(as, trans, path, b, node_iter, keys));
 	}

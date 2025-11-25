@@ -161,13 +161,11 @@ int bch2_extent_trim_atomic(struct btree_trans *trans,
 	/* tracepoint */
 
 	if (bpos_lt(end, insert->k.p)) {
-		if (trace_extent_trim_atomic_enabled()) {
-			CLASS(printbuf, buf)();
+		event_trace(trans->c, extent_trim_atomic, buf, ({
 			bch2_bpos_to_text(&buf, end);
 			prt_newline(&buf);
 			bch2_bkey_val_to_text(&buf, trans->c, bkey_i_to_s_c(insert));
-			trace_extent_trim_atomic(trans->c, buf.buf);
-		}
+		}));
 		bch2_cut_back(end, insert);
 	}
 	return 0;

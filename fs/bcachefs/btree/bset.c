@@ -10,6 +10,8 @@
 #include "btree/cache.h"
 #include "btree/bset.h"
 
+#include "sb/counters.h"
+
 #include "util/eytzinger.h"
 #include "util/util.h"
 
@@ -1270,12 +1272,17 @@ void bch2_btree_node_iter_push(struct btree_node_iter *iter,
 }
 
 noinline __flatten __cold
-static void btree_node_iter_init_pack_failed(struct btree_node_iter *iter,
-			      struct btree *b, struct bpos *search)
+static void btree_node_iter_init_pack_failed(struct bch_fs *c, struct btree *b,
+					     struct btree_node_iter *iter,
+					     struct bpos *search)
 {
 	struct bkey_packed *k;
 
-	trace_bkey_pack_pos_fail(search);
+	event_inc_trace(c, bkey_pack_pos_fail, buf, ({
+		bch2_btree_node_to_text(&buf, c, b);
+		prt_printf(&buf, "failed to pack ");
+		bch2_bpos_to_text(&buf, *search);
+	}));
 
 	bch2_btree_node_iter_init_from_start(iter, b);
 
@@ -1288,8 +1295,9 @@ static void btree_node_iter_init_pack_failed(struct btree_node_iter *iter,
  * bch2_btree_node_iter_init - initialize a btree node iterator, starting from a
  * given position
  *
- * @iter:	iterator to initialize
+ * @c:		filesystem object
  * @b:		btree node to search
+ * @iter:	iterator to initialize
  * @search:	search key
  *
  * Main entry point to the lookup code for individual btree nodes:
@@ -1329,8 +1337,9 @@ static void btree_node_iter_init_pack_failed(struct btree_node_iter *iter,
  *    past any extents that compare equal to the position we searched for.
  */
 __flatten
-void bch2_btree_node_iter_init(struct btree_node_iter *iter,
-			       struct btree *b, struct bpos *search)
+void bch2_btree_node_iter_init(struct bch_fs *c, struct btree *b,
+			       struct btree_node_iter *iter,
+			       struct bpos *search)
 {
 	struct bkey_packed p, *packed_search = NULL;
 	struct btree_node_iter_set *pos = iter->data;
@@ -1351,7 +1360,7 @@ void bch2_btree_node_iter_init(struct btree_node_iter *iter,
 		packed_search = NULL;
 		break;
 	case BKEY_PACK_POS_FAIL:
-		btree_node_iter_init_pack_failed(iter, b, search);
+		btree_node_iter_init_pack_failed(c, b, iter, search);
 		return;
 	}
 

@@ -329,8 +329,8 @@ bch2_bkey_prev(struct btree *b, struct bset_tree *t, struct bkey_packed *k)
 void bch2_btree_node_iter_push(struct btree_node_iter *, struct btree *,
 			      const struct bkey_packed *,
 			      const struct bkey_packed *);
-void bch2_btree_node_iter_init(struct btree_node_iter *, struct btree *,
-			       struct bpos *);
+void bch2_btree_node_iter_init(struct bch_fs *, struct btree *,
+			       struct btree_node_iter *, struct bpos *);
 void bch2_btree_node_iter_init_from_start(struct btree_node_iter *,
 					  struct btree *);
 struct bkey_packed *bch2_btree_node_iter_bset_pos(struct btree_node_iter *,

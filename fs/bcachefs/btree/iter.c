@@ -613,12 +613,13 @@ static inline bool btree_path_advance_to_pos(struct btree_path *path,
 	return true;
 }
 
-static inline void __btree_path_level_init(struct btree_path *path,
+static inline void __btree_path_level_init(struct btree_trans *trans,
+					   struct btree_path *path,
 					   unsigned level)
 {
 	struct btree_path_level *l = &path->l[level];
 
-	bch2_btree_node_iter_init(&l->iter, l->b, &path->pos);
+	bch2_btree_node_iter_init(trans->c, l->b, &l->iter, &path->pos);
 
 	/*
 	 * Iterators to interior nodes should always be pointed at the first non
@@ -638,7 +639,7 @@ void bch2_btree_path_level_init(struct btree_trans *trans,
 
 	path->l[b->c.level].lock_seq = six_lock_seq(&b->c.lock);
 	path->l[b->c.level].b = b;
-	__btree_path_level_init(path, b->c.level);
+	__btree_path_level_init(trans, path, b->c.level);
 }
 
 /* Btree path: fixups after btree node updates: */
@@ -727,7 +728,7 @@ void bch2_trans_node_reinit_iter(struct btree_trans *trans, struct btree *b)
 	unsigned i;
 
 	trans_for_each_path_with_node(trans, b, path, i)
-		__btree_path_level_init(path, b->c.level);
+		__btree_path_level_init(trans, path, b->c.level);
 
 	bch2_trans_revalidate_updates_in_node(trans, b);
 }
@@ -1348,7 +1349,7 @@ static btree_path_idx_t path_set_pos_trace(struct btree_trans *trans,
 			 */
 			if (cmp < 0 ||
 			    !btree_path_advance_to_pos(path, l, 8))
-				bch2_btree_node_iter_init(&l->iter, l->b, &path->pos);
+				bch2_btree_node_iter_init(trans->c, l->b, &l->iter, &path->pos);
 
 			/*
 			 * Iterators to interior nodes should always be pointed at the first non
@@ -2391,9 +2392,7 @@ static struct bkey_s_c __bch2_btree_iter_peek(struct btree_iter *iter, struct bp
 
 	bch2_btree_iter_verify(iter);
 
-	if (trace___btree_iter_peek_enabled()) {
-		CLASS(printbuf, buf)();
-
+	event_trace(trans->c, __btree_iter_peek, buf, ({
 		int ret = bkey_err(k);
 		if (ret)
 			prt_str(&buf, bch2_err_str(ret));
@@ -2401,8 +2400,7 @@ static struct bkey_s_c __bch2_btree_iter_peek(struct btree_iter *iter, struct bp
 			bch2_bkey_val_to_text(&buf, trans->c, k);
 		else
 			prt_str(&buf, "(null)");
-		trace___btree_iter_peek(trans->c, buf.buf);
-	}
+	}));
 
 	return k;
 }
@@ -2580,9 +2578,7 @@ out_no_locked:
 
 	bch2_btree_iter_verify_entry_exit(iter);
 
-	if (trace_btree_iter_peek_max_enabled()) {
-		CLASS(printbuf, buf)();
-
+	event_trace(trans->c, btree_iter_peek_max, buf, ({
 		int ret = bkey_err(k);
 		if (ret)
 			prt_str(&buf, bch2_err_str(ret));
@@ -2590,8 +2586,7 @@ out_no_locked:
 			bch2_bkey_val_to_text(&buf, trans->c, k);
 		else
 			prt_str(&buf, "(null)");
-		trace_btree_iter_peek_max(trans->c, buf.buf);
-	}
+	}));
 
 	return k;
 end:
@@ -2833,9 +2828,7 @@ out_no_locked:
 	bch2_btree_iter_verify_entry_exit(iter);
 	bch2_btree_iter_verify(iter);
 
-	if (trace_btree_iter_peek_prev_min_enabled()) {
-		CLASS(printbuf, buf)();
-
+	event_trace(trans->c, btree_iter_peek_prev_min, buf, ({
 		int ret = bkey_err(k);
 		if (ret)
 			prt_str(&buf, bch2_err_str(ret));
@@ -2843,8 +2836,8 @@ out_no_locked:
 			bch2_bkey_val_to_text(&buf, trans->c, k);
 		else
 			prt_str(&buf, "(null)");
-		trace_btree_iter_peek_prev_min(trans->c, buf.buf);
-	}
+	}));
+
 	return k;
 end:
 	bch2_btree_iter_set_pos(iter, end);
@@ -3013,9 +3006,7 @@ out:
 	if (unlikely(ret))
 		k = bkey_s_c_err(ret);
 out2:
-	if (trace_btree_iter_peek_slot_enabled()) {
-		CLASS(printbuf, buf)();
-
+	event_trace(trans->c, btree_iter_peek_slot, buf, ({
 		int ret = bkey_err(k);
 		if (ret)
 			prt_str(&buf, bch2_err_str(ret));
@@ -3023,8 +3014,7 @@ out2:
 			bch2_bkey_val_to_text(&buf, trans->c, k);
 		else
 			prt_str(&buf, "(null)");
-		trace_btree_iter_peek_slot(trans->c, buf.buf);
-	}
+	}));
 
 	return k;
 }
