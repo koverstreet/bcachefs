@@ -1678,11 +1678,12 @@ CLOSURE_CALLBACK(bch2_write)
 	struct bch_fs *c = op->c;
 	unsigned data_len;
 
-	if (trace_io_write_enabled()) {
-		CLASS(printbuf, buf)();
-		bch2_write_op_to_text(&buf, op);
-		trace_io_write(c, buf.buf);
-	}
+	if (!(op->flags & BCH_WRITE_move))
+		event_add_trace(c, data_write, bio_sectors(bio), buf,
+				bch2_write_op_to_text(&buf, op));
+	else
+		event_add_trace(c, data_update_write, bio_sectors(bio), buf,
+				bch2_write_op_to_text(&buf, op));
 
 	EBUG_ON(op->cl.parent);
 	BUG_ON(!op->nr_replicas);
@@ -1717,8 +1718,6 @@ CLOSURE_CALLBACK(bch2_write)
 		goto err;
 	}
 
-	if (!(op->flags & BCH_WRITE_move))
-		this_cpu_add(c->counters.now[BCH_COUNTER_io_write], bio_sectors(bio));
 	bch2_increment_clock(c, bio_sectors(bio), WRITE);
 
 	data_len = min_t(u64, bio->bi_iter.bi_size,

@@ -56,41 +56,6 @@ static int evacuate_bucket_pred(struct btree_trans *, void *,
 				struct bch_inode_opts *,
 				struct data_update_opts *);
 
-static noinline void
-trace_io_move_pred2(struct bch_fs *c, struct bkey_s_c k,
-		    struct bch_inode_opts *io_opts,
-		    struct data_update_opts *data_opts,
-		    move_pred_fn pred, void *_arg, int ret)
-{
-	CLASS(printbuf, buf)();
-
-	prt_printf(&buf, "%ps: %i", pred, ret);
-
-	if (pred == evacuate_bucket_pred) {
-		struct evacuate_bucket_arg *arg = _arg;
-		prt_printf(&buf, " gen=%u", arg->gen);
-	}
-
-	prt_newline(&buf);
-	bch2_bkey_val_to_text(&buf, c, k);
-	prt_newline(&buf);
-	bch2_data_update_opts_to_text(&buf, c, io_opts, data_opts);
-	trace_io_move_pred(c, buf.buf);
-}
-
-static noinline void
-trace_io_move_evacuate_bucket2(struct bch_fs *c, struct bpos bucket, int gen)
-{
-	struct printbuf buf = PRINTBUF;
-
-	prt_printf(&buf, "bucket: ");
-	bch2_bpos_to_text(&buf, bucket);
-	prt_printf(&buf, " gen: %i\n", gen);
-
-	trace_io_move_evacuate_bucket(c, buf.buf);
-	printbuf_exit(&buf);
-}
-
 static void move_write_done(struct bch_write_op *op)
 {
 	struct data_update *u = container_of(op, struct data_update, op);
@@ -227,7 +192,6 @@ void bch2_moving_ctxt_init(struct moving_context *ctxt,
 
 void bch2_move_stats_exit(struct bch_move_stats *stats, struct bch_fs *c)
 {
-	trace_move_data(c, stats);
 }
 
 void bch2_move_stats_init(struct bch_move_stats *stats, const char *name)
@@ -329,8 +293,19 @@ int bch2_move_extent(struct moving_context *ctxt,
 	struct data_update_opts data_opts = { .read_dev = -1 };
 	int ret = pred(trans, arg, iter->btree_id, k, &opts, &data_opts);
 
-	if (trace_io_move_pred_enabled())
-		trace_io_move_pred2(c, k, &opts, &data_opts, pred, arg, ret);
+	event_add_trace(c, data_update_pred, k.k->size, buf, ({
+		prt_printf(&buf, "%ps: %i", pred, ret);
+
+		if (pred == evacuate_bucket_pred) {
+			struct evacuate_bucket_arg *e = arg;
+			prt_printf(&buf, " gen=%u", e->gen);
+		}
+
+		prt_newline(&buf);
+		bch2_bkey_val_to_text(&buf, c, k);
+		prt_newline(&buf);
+		bch2_data_update_opts_to_text(&buf, c, &opts, &data_opts);
+	}));
 
 	if (ret <= 0)
 		return ret;
@@ -676,17 +651,21 @@ int bch2_evacuate_bucket(struct moving_context *ctxt,
 	struct bch_fs *c = ctxt->trans->c;
 	struct evacuate_bucket_arg arg = { bucket, gen, data_opts, };
 
-	count_event(c, io_move_evacuate_bucket);
-	if (trace_io_move_evacuate_bucket_enabled())
-		trace_io_move_evacuate_bucket2(c, bucket, gen);
+	int ret = __bch2_move_data_phys(ctxt, bucket_in_flight,
+					bucket.inode,
+					bucket.offset,
+					bucket.offset + 1,
+					~0,
+					true,
+					evacuate_bucket_pred, &arg);
 
-	return __bch2_move_data_phys(ctxt, bucket_in_flight,
-				   bucket.inode,
-				   bucket.offset,
-				   bucket.offset + 1,
-				   ~0,
-				   true,
-				   evacuate_bucket_pred, &arg);
+	event_inc_trace(c, evacuate_bucket, buf, ({
+		prt_printf(&buf, "bucket: ");
+		bch2_bpos_to_text(&buf, bucket);
+		prt_printf(&buf, " gen: %i ret %s\n", gen, bch2_err_str(ret));
+	}));
+
+	return ret;
 }
 
 static int scrub_pred(struct btree_trans *trans, void *_arg,

@@ -132,7 +132,10 @@ static noinline int trans_lock_write_fail(struct btree_trans *trans, struct btre
 		bch2_btree_node_unlock_write(trans, trans->paths + i->path, insert_l(trans, i)->b);
 	}
 
-	trace_and_count(trans->c, trans_restart_would_deadlock_write, trans);
+	event_inc_trace(trans->c, trans_restart_would_deadlock_write, buf, ({
+		prt_printf(&buf, "%s\n", trans->fn);
+		bch2_btree_path_to_text(&buf, trans, i->path, trans->paths + i->path);
+	}));
 	return btree_trans_restart(trans, BCH_ERR_transaction_restart_would_deadlock_write);
 }
 
@@ -602,7 +605,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 #if 0
 	/* todo: bring back dynamic fault injection */
 	if (race_fault()) {
-		trace_and_count(c, trans_restart_fault_inject, trans, trace_ip);
+		event_inc_trace(c, trans_restart_fault_inject, buf);
 		return btree_trans_restart(trans, BCH_ERR_transaction_restart_fault_inject);
 	}
 #endif
@@ -902,15 +905,23 @@ static int __bch2_trans_commit_error(struct btree_trans *trans, unsigned flags,
 	case -BCH_ERR_btree_insert_btree_node_full:
 		ret = bch2_btree_split_leaf(trans, i->path, flags);
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			trace_and_count(c, trans_restart_btree_node_split, trans,
-					trace_ip, trans->paths + i->path);
+			event_inc_trace(c, trans_restart_btree_node_split, buf, ({
+				prt_printf(&buf, "%s\n", trans->fn);
+				bch2_btree_path_to_text(&buf, trans, i->path, trans->paths + i->path);
+			}));
 		return ret;
 	case -BCH_ERR_btree_insert_need_mark_replicas:
 		return drop_locks_do(trans, bch2_accounting_update_sb(trans));
 	case -BCH_ERR_btree_insert_need_journal_reclaim:
 		bch2_trans_unlock(trans);
 
-		trace_and_count(c, trans_blocked_journal_reclaim, trans, trace_ip);
+		event_inc_trace(c, trans_blocked_journal_reclaim, buf, ({
+			prt_printf(&buf, "%s\n", trans->fn);
+			prt_printf(&buf, "key cache dirty %lu/%lu must_wait %zu\n",
+				   atomic_long_read(&c->btree_key_cache.nr_keys),
+				   atomic_long_read(&c->btree_key_cache.nr_dirty),
+				   __bch2_btree_key_cache_must_wait(c));
+		}));
 		track_event_change(&c->times[BCH_TIME_blocked_key_cache_flush], true);
 
 		if (!wait_event_freezable_timeout(c->journal.reclaim_wait,
@@ -1147,7 +1158,7 @@ retry:
 	if (ret)
 		goto err;
 
-	trace_and_count(c, transaction_commit, trans, _RET_IP_);
+	event_inc_trace(c, transaction_commit, buf, prt_str(&buf, trans->fn));
 out:
 	if (likely(!(flags & BCH_TRANS_COMMIT_no_check_rw)))
 		enumerated_ref_put(&c->writes, BCH_WRITE_REF_trans);

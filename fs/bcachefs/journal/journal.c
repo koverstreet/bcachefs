@@ -613,37 +613,19 @@ out:
 	if (journal_error_check_stuck(j, ret, flags))
 		ret = bch_err_throw(c, journal_stuck);
 
-	if (ret == -BCH_ERR_journal_max_in_flight &&
-	    track_event_change(&c->times[BCH_TIME_blocked_journal_max_in_flight], true) &&
-	    trace_journal_entry_full_enabled()) {
-		CLASS(printbuf, buf)();
+	if ((ret == -BCH_ERR_journal_max_in_flight &&
+	     track_event_change(&c->times[BCH_TIME_blocked_journal_max_in_flight], true)) ||
+	    (ret == -BCH_ERR_journal_max_open &&
+	     track_event_change(&c->times[BCH_TIME_blocked_journal_max_open], true)))
+		event_inc_trace(c, journal_entry_full, buf, ({
+			prt_printf(&buf, "%s\n", bch2_err_str(ret));
+			bch2_printbuf_make_room(&buf, 4096);
 
-		bch2_printbuf_make_room(&buf, 4096);
-
-		scoped_guard(spinlock, &j->lock) {
-			prt_printf(&buf, "seq %llu\n", journal_cur_seq(j));
-			bch2_journal_bufs_to_text(&buf, j);
-		}
-
-		trace_journal_entry_full(c, buf.buf);
-		count_event(c, journal_entry_full);
-	}
-
-	if (ret == -BCH_ERR_journal_max_open &&
-	    track_event_change(&c->times[BCH_TIME_blocked_journal_max_open], true) &&
-	    trace_journal_entry_full_enabled()) {
-		CLASS(printbuf, buf)();
-
-		bch2_printbuf_make_room(&buf, 4096);
-
-		scoped_guard(spinlock, &j->lock) {
-			prt_printf(&buf, "seq %llu\n", journal_cur_seq(j));
-			bch2_journal_bufs_to_text(&buf, j);
-		}
-
-		trace_journal_entry_full(c, buf.buf);
-		count_event(c, journal_entry_full);
-	}
+			scoped_guard(spinlock, &j->lock) {
+				prt_printf(&buf, "seq %llu\n", journal_cur_seq(j));
+				bch2_journal_bufs_to_text(&buf, j);
+			}
+		}));
 
 	/*
 	 * Journal is full - can't rely on reclaim from work item due to

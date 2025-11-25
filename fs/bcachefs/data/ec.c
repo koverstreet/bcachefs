@@ -1126,7 +1126,12 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 		 */
 		stats->nr_bp_to_deleted++;
 		stats->sectors_bp_to_deleted += bp.v->bucket_len;
-		count_event(c, ec_stripe_update_extent_fail);
+		event_inc_trace(c, stripe_update_extent, buf, ({
+			prt_str(&buf, "backpointer race\n");
+			bch2_bkey_val_to_text(&buf, c, bp.s_c);
+			prt_newline(&buf);
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->key));
+		}));
 		return 0;
 	}
 
@@ -1142,13 +1147,23 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 	if (!ptr_c) {
 		stats->nr_no_match++;
 		stats->sectors_no_match += bp.v->bucket_len;
-		count_event(c, ec_stripe_update_extent_fail);
+		event_inc_trace(c, stripe_update_extent, buf, ({
+			prt_str(&buf, "no matching pointer found\n");
+			bch2_bkey_val_to_text(&buf, c, k);
+			prt_newline(&buf);
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->key));
+		}));
 		return 0;
 	}
 	if (ptr_c->cached) {
 		stats->nr_cached++;
 		stats->sectors_cached += bp.v->bucket_len;
-		count_event(c, ec_stripe_update_extent_fail);
+		event_inc_trace(c, stripe_update_extent, buf, ({
+			prt_str(&buf, "cached pointer\n");
+			bch2_bkey_val_to_text(&buf, c, k);
+			prt_newline(&buf);
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->key));
+		}));
 		return 0;
 	}
 
@@ -1186,7 +1201,8 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 	stats->nr_done++;
 	stats->sectors_done += bp.v->bucket_len;
 
-	count_event(c, ec_stripe_update_extent);
+	event_inc_trace(c, stripe_update_extent, buf,
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(n)));
 
 	return 0;
 }
@@ -1229,9 +1245,7 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 					&stats, &res.r, &last_flushed);
 	})));
 
-	if (trace_stripe_update_bucket_enabled()) {
-		CLASS(printbuf, buf)();
-
+	event_inc_trace(c, stripe_update_bucket, buf, ({
 		prt_printf(&buf, "bp_to_deleted:\t%u %u\n",
 			   stats.nr_bp_to_deleted, stats.sectors_bp_to_deleted);
 		prt_printf(&buf, "no_match:\t%u %u\n",
@@ -1240,9 +1254,7 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_b
 			   stats.nr_cached, stats.sectors_cached);
 		prt_printf(&buf, "done:\t%u %u\n",
 			   stats.nr_done, stats.sectors_done);
-
-		trace_stripe_update_bucket(c, buf.buf);
-	}
+	}));
 
 	return 0;
 }
@@ -1378,7 +1390,14 @@ static void ec_stripe_create(struct ec_stripe_new *s)
 	if (ret && !s->err)
 		s->err = ret;
 
-	trace_stripe_create(c, s->new_stripe.key.k.p.offset, ret);
+	if (!ret)
+		event_inc_trace(c, stripe_create, buf,
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->new_stripe.key)));
+	else
+		event_inc_trace(c, stripe_create_fail, buf, ({
+			prt_printf(&buf, "error %s\n", bch2_err_str(ret));
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->new_stripe.key));
+		}));
 
 	bch2_disk_reservation_put(c, &s->res);
 

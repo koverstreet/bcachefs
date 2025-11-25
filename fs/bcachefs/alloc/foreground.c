@@ -443,38 +443,34 @@ fail:
 	return ob;
 }
 
-static noinline void trace_bucket_alloc2(struct bch_fs *c,
-					 struct alloc_request *req,
-					 struct closure *cl,
-					 struct open_bucket *ob)
+static noinline void bucket_alloc_to_text(struct printbuf *out,
+					  struct bch_fs *c,
+					  struct alloc_request *req,
+					  struct closure *cl,
+					  struct open_bucket *ob)
 {
-	CLASS(printbuf, buf)();
+	printbuf_tabstop_push(out, 24);
 
-	printbuf_tabstop_push(&buf, 24);
-
-	prt_printf(&buf, "dev\t%s (%u)\n",	req->ca->name, req->ca->dev_idx);
-	prt_printf(&buf, "watermark\t%s\n",	bch2_watermarks[req->watermark]);
-	prt_printf(&buf, "data type\t%s\n",	__bch2_data_types[req->data_type]);
-	prt_printf(&buf, "blocking\t%u\n",	cl != NULL);
-	prt_printf(&buf, "free\t%llu\n",	req->usage.buckets[BCH_DATA_free]);
-	prt_printf(&buf, "avail\t%llu\n",	dev_buckets_free(req->ca, req->usage, req->watermark));
-	prt_printf(&buf, "copygc_wait\t%llu/%lli\n",
+	prt_printf(out, "dev\t%s (%u)\n",	req->ca->name, req->ca->dev_idx);
+	prt_printf(out, "watermark\t%s\n",	bch2_watermarks[req->watermark]);
+	prt_printf(out, "data type\t%s\n",	__bch2_data_types[req->data_type]);
+	prt_printf(out, "blocking\t%u\n",	cl != NULL);
+	prt_printf(out, "free\t%llu\n",	req->usage.buckets[BCH_DATA_free]);
+	prt_printf(out, "avail\t%llu\n",	dev_buckets_free(req->ca, req->usage, req->watermark));
+	prt_printf(out, "copygc_wait\t%llu/%lli\n",
 		   bch2_copygc_wait_amount(c),
 		   c->copygc_wait - atomic64_read(&c->io_clock[WRITE].now));
-	prt_printf(&buf, "seen\t%llu\n",	req->counters.buckets_seen);
-	prt_printf(&buf, "open\t%llu\n",	req->counters.skipped_open);
-	prt_printf(&buf, "need journal commit\t%llu\n", req->counters.skipped_need_journal_commit);
-	prt_printf(&buf, "nocow\t%llu\n",	req->counters.skipped_nocow);
-	prt_printf(&buf, "nouse\t%llu\n",	req->counters.skipped_nouse);
-	prt_printf(&buf, "mi_btree_bitmap\t%llu\n", req->counters.skipped_mi_btree_bitmap);
+	prt_printf(out, "seen\t%llu\n",	req->counters.buckets_seen);
+	prt_printf(out, "open\t%llu\n",	req->counters.skipped_open);
+	prt_printf(out, "need journal commit\t%llu\n", req->counters.skipped_need_journal_commit);
+	prt_printf(out, "nocow\t%llu\n",	req->counters.skipped_nocow);
+	prt_printf(out, "nouse\t%llu\n",	req->counters.skipped_nouse);
+	prt_printf(out, "mi_btree_bitmap\t%llu\n", req->counters.skipped_mi_btree_bitmap);
 
-	if (!IS_ERR(ob)) {
-		prt_printf(&buf, "allocated\t%llu\n", ob->bucket);
-		trace_bucket_alloc(c, buf.buf);
-	} else {
-		prt_printf(&buf, "err\t%s\n", bch2_err_str(PTR_ERR(ob)));
-		trace_bucket_alloc_fail(c, buf.buf);
-	}
+	if (!IS_ERR(ob))
+		prt_printf(out, "allocated\t%llu\n", ob->bucket);
+	else
+		prt_printf(out, "err\t%s\n", bch2_err_str(PTR_ERR(ob)));
 }
 
 /**
@@ -558,14 +554,11 @@ err:
 		ob->data_type = req->data_type;
 
 	if (!IS_ERR(ob))
-		count_event(c, bucket_alloc);
+		event_inc_trace(c, bucket_alloc, buf,
+			bucket_alloc_to_text(&buf, c, req, cl, ob));
 	else if (!bch2_err_matches(PTR_ERR(ob), BCH_ERR_transaction_restart))
-		count_event(c, bucket_alloc_fail);
-
-	if (!IS_ERR(ob)
-	    ? trace_bucket_alloc_enabled()
-	    : trace_bucket_alloc_fail_enabled())
-		trace_bucket_alloc2(c, req, cl, ob);
+		event_inc_trace(c, bucket_alloc_fail, buf,
+			bucket_alloc_to_text(&buf, c, req, cl, ob));
 
 	return ob;
 }

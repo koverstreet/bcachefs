@@ -468,17 +468,13 @@ do_write:
 	    c->opts.nochanges)
 		goto err;
 
-	if (trace_btree_node_write_enabled()) {
-		CLASS(printbuf, buf)();
-		guard(printbuf_indent)(&buf);
+	event_inc_trace(c, btree_node_write, buf, ({
 		prt_printf(&buf, "offset %u sectors %u bytes %u\n",
 			   b->written,
 			   sectors_to_write,
 			   bytes_to_write);
 		bch2_btree_pos_to_text(&buf, c, b);
-		trace_btree_node_write(c, buf.buf);
-	}
-	count_event(c, btree_node_write);
+	}));
 
 	/*
 	 * blk-wbt.c throttles all writes except those that have both REQ_SYNC

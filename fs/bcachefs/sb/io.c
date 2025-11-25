@@ -1011,7 +1011,7 @@ int bch2_write_super(struct bch_fs *c)
 	if (!test_bit(BCH_FS_may_upgrade_downgrade, &c->flags))
 		return 0;
 
-	trace_and_count(c, write_super, c, _RET_IP_);
+	event_inc_trace(c, write_super, buf);
 
 	if (c->opts.degraded == BCH_DEGRADED_very)
 		degraded_flags |= BCH_FORCE_IF_LOST;

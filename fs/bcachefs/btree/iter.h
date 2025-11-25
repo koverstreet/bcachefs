@@ -386,7 +386,7 @@ static inline int trans_maybe_inject_restart(struct btree_trans *trans, unsigned
 {
 #ifdef CONFIG_BCACHEFS_INJECT_TRANSACTION_RESTARTS
 	if (!(ktime_get_ns() & ~(~0ULL << min(63, (10 + trans->restart_count_this_trans))))) {
-		trace_and_count(trans->c, trans_restart_injected, trans, ip);
+		event_inc_trace(trans->c, trans_restart_injected, buf, prt_str(&buf, trans->fn));
 		return btree_trans_restart_ip(trans,
 					BCH_ERR_transaction_restart_fault_inject, ip);
 	}

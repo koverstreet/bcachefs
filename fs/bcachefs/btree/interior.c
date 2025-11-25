@@ -1348,8 +1348,11 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 	}
 
 	if (ret) {
-		trace_and_count(c, btree_reserve_get_fail, trans->fn,
-				_RET_IP_, nr_nodes[0] + nr_nodes[1], ret);
+		event_inc_trace(c, btree_reserve_get_fail, buf, ({
+			prt_printf(&buf, "%s\n", trans->fn);
+			prt_printf(&buf, "need %u ret %s\n",
+				   nr_nodes[0] + nr_nodes[1], bch2_err_str(ret));
+		}));
 		goto err;
 	}
 
@@ -1934,7 +1937,15 @@ split:
 	 * bch2_btree_path_upgrade() and allocating more nodes:
 	 */
 	if (b->c.level >= as->update_level_end) {
-		trace_and_count(c, trans_restart_split_race, trans, _THIS_IP_, b);
+		event_inc_trace(c, trans_restart_split_race, buf, ({
+			prt_printf(&buf, "%s\n", trans->fn);
+			prt_printf(&buf, "l=%u written %u/%u u64s remaining %zu",
+				   b->c.level,
+				   b->written,
+				   btree_blocks(c),
+				   bch2_btree_keys_u64s_remaining(b));
+		}));
+
 		return btree_trans_restart(trans, BCH_ERR_transaction_restart_split_race);
 	}
 
@@ -2138,10 +2149,7 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	sib_u64s = btree_node_u64s_with_format(b->nr, &b->format, &new_f) +
 		btree_node_u64s_with_format(m->nr, &m->format, &new_f);
 
-	if (trace_btree_node_merge_attempt_enabled()) {
-		CLASS(printbuf, buf)();
-		guard(printbuf_indent)(&buf);
-
+	event_inc_trace(c, btree_node_merge_attempt, buf, ({
 		bch2_btree_pos_to_text(&buf, c, prev);
 		prt_printf(&buf, "live u64s %u (%zu%% full)\n",
 			   prev->nr.live_u64s,
@@ -2154,9 +2162,7 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 
 		prt_printf(&buf, "merged would have %zu threshold %u\n",
 			   sib_u64s, c->btree_foreground_merge_threshold);
-		trace_btree_node_merge_attempt(c, buf.buf);
-	}
-	count_event(c, btree_node_merge_attempt);
+	}));
 
 	if (sib_u64s > c->btree_foreground_merge_threshold) {
 		if (sib_u64s > BTREE_FOREGROUND_MERGE_HYSTERESIS(c))

@@ -1107,7 +1107,7 @@ int bch2_gc_gens(struct bch_fs *c)
 	if (!mutex_trylock(&c->gc_gens_lock))
 		return 0;
 
-	trace_and_count(c, gc_gens_start, c);
+	event_inc_trace(c, gc_gens_start, buf);
 
 	/*
 	 * We have to use trylock here. Otherwise, we would
@@ -1178,7 +1178,7 @@ int bch2_gc_gens(struct bch_fs *c)
 	c->gc_count++;
 
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_gc], start_time);
-	trace_and_count(c, gc_gens_end, c);
+	event_inc_trace(c, gc_gens_end, buf);
 
 	if (!(c->sb.compat & BIT_ULL(BCH_COMPAT_no_stale_ptrs))) {
 		guard(mutex)(&c->sb_lock);

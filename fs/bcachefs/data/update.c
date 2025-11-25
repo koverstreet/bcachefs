@@ -65,88 +65,63 @@ static unsigned bkey_get_dev_refs(struct bch_fs *c, struct bkey_s_c k)
 }
 
 noinline_for_stack
-static void trace_data_update_key_fail2(struct data_update *m,
-					struct btree_iter *iter,
-					struct bkey_s_c new,
-					struct bkey_s_c wrote,
-					struct bkey_i *insert,
-					const char *msg)
+static void count_data_update_key_fail(struct data_update *u,
+				       struct btree_iter *iter,
+				       struct bkey_s_c new,
+				       struct bkey_s_c wrote,
+				       struct bkey_i *insert,
+				       const char *msg)
 {
-	if (m->stats) {
-		atomic64_inc(&m->stats->keys_raced);
-		atomic64_add(new.k->p.offset - iter->pos.offset,
-			     &m->stats->sectors_raced);
+	struct bch_fs *c = u->op.c;
+	unsigned sectors = new.k->p.offset - iter->pos.offset;
+
+	if (u->stats) {
+		atomic64_inc(&u->stats->keys_raced);
+		atomic64_add(sectors, &u->stats->sectors_raced);
 	}
 
-	count_event(m->op.c, data_update_key_fail);
+	event_add_trace(c, data_update_key_fail, sectors, buf, ({
+		prt_str(&buf, msg);
+		prt_newline(&buf);
 
-	if (!trace_data_update_key_fail_enabled())
-		return;
+		struct bkey_s_c old = bkey_i_to_s_c(u->k.k);
+		unsigned rewrites_found = 0;
 
-	struct bch_fs *c = m->op.c;
-	struct bkey_s_c old = bkey_i_to_s_c(m->k.k);
-	unsigned rewrites_found = 0;
+		if (insert) {
+			const union bch_extent_entry *entry;
+			struct bch_extent_ptr *ptr;
+			struct extent_ptr_decoded p;
 
-	CLASS(printbuf, buf)();
-	printbuf_indent_add_nextline(&buf, 2);
-
-	prt_str(&buf, msg);
-	prt_newline(&buf);
-
-	if (insert) {
-		const union bch_extent_entry *entry;
-		struct bch_extent_ptr *ptr;
-		struct extent_ptr_decoded p;
-
-		unsigned ptr_bit = 1;
-		bkey_for_each_ptr_decode(old.k, bch2_bkey_ptrs_c(old), p, entry) {
-			if ((ptr_bit & m->opts.ptrs_rewrite) &&
-			    (ptr = bch2_extent_has_ptr(c, old, p, bkey_i_to_s(insert))) &&
-			    !ptr->cached)
-				rewrites_found |= ptr_bit;
-			ptr_bit <<= 1;
+			unsigned ptr_bit = 1;
+			bkey_for_each_ptr_decode(old.k, bch2_bkey_ptrs_c(old), p, entry) {
+				if ((ptr_bit & u->opts.ptrs_rewrite) &&
+				    (ptr = bch2_extent_has_ptr(c, old, p, bkey_i_to_s(insert))) &&
+				    !ptr->cached)
+					rewrites_found |= ptr_bit;
+				ptr_bit <<= 1;
+			}
 		}
-	}
 
-	prt_str(&buf, "rewrites found:\t");
-	bch2_prt_u64_base2(&buf, rewrites_found);
-	prt_newline(&buf);
+		prt_str(&buf, "rewrites found:\t");
+		bch2_prt_u64_base2(&buf, rewrites_found);
+		prt_newline(&buf);
 
-	bch2_data_update_opts_to_text(&buf, c, &m->op.opts, &m->opts);
+		bch2_data_update_opts_to_text(&buf, c, &u->op.opts, &u->opts);
 
-	prt_str_indented(&buf, "\nold:    ");
-	bch2_bkey_val_to_text(&buf, c, old);
+		prt_str_indented(&buf, "\nold:    ");
+		bch2_bkey_val_to_text(&buf, c, old);
 
-	prt_str_indented(&buf, "\nnew:    ");
-	bch2_bkey_val_to_text(&buf, c, new);
+		prt_str_indented(&buf, "\nnew:    ");
+		bch2_bkey_val_to_text(&buf, c, new);
 
-	prt_str_indented(&buf, "\nwrote:  ");
-	bch2_bkey_val_to_text(&buf, c, wrote);
+		prt_str_indented(&buf, "\nwrote:  ");
+		bch2_bkey_val_to_text(&buf, c, wrote);
 
-	if (insert) {
-		prt_str_indented(&buf, "\ninsert: ");
-		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(insert));
-	}
-
-	trace_data_update_key_fail(c, buf.buf);
-}
-
-noinline_for_stack
-static void trace_data_update_key2(struct data_update *m,
-			       struct bkey_s_c old, struct bkey_s_c k,
-			       struct bkey_i *insert)
-{
-	struct bch_fs *c = m->op.c;
-	CLASS(printbuf, buf)();
-
-	prt_str(&buf, "\nold: ");
-	bch2_bkey_val_to_text(&buf, c, old);
-	prt_str(&buf, "\nk:   ");
-	bch2_bkey_val_to_text(&buf, c, k);
-	prt_str(&buf, "\nnew: ");
-	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(insert));
-
-	trace_data_update_key(c, buf.buf);
+		if (insert) {
+			prt_str_indented(&buf, "\ninsert: ");
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(insert));
+		}
+	}));
 }
 
 static int data_update_index_update_key(struct btree_trans *trans,
@@ -183,7 +158,7 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	bkey_reassemble(insert, k);
 
 	if (!bch2_extents_match(c, k, old)) {
-		trace_data_update_key_fail2(u, iter, k, bkey_i_to_s_c(&new->k_i), NULL, "no match:");
+		count_data_update_key_fail(u, iter, k, bkey_i_to_s_c(&new->k_i), NULL, "no match:");
 		bch2_btree_iter_advance(iter);
 		return 0;
 	}
@@ -229,8 +204,8 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	if (u->opts.ptrs_rewrite &&
 	    !rewrites_found &&
 	    bch2_bkey_durability(c, k) >= opts.data_replicas) {
-		trace_data_update_key_fail2(u, iter, k, bkey_i_to_s_c(&new->k_i), insert,
-					    "no rewrites found:");
+		count_data_update_key_fail(u, iter, k, bkey_i_to_s_c(&new->k_i), insert,
+					   "no rewrites found:");
 		bch2_btree_iter_advance(iter);
 		return 0;
 	}
@@ -245,7 +220,7 @@ static int data_update_index_update_key(struct btree_trans *trans,
 		 !ptr_c->cached));
 
 	if (!bkey_val_u64s(&new->k)) {
-		trace_data_update_key_fail2(u, iter, k,
+		count_data_update_key_fail(u, iter, k,
 				    bkey_i_to_s_c(bch2_keylist_front(&u->op.insert_keys)),
 				    insert, "new replicas conflicted:");
 		bch2_btree_iter_advance(iter);
@@ -307,9 +282,15 @@ static int data_update_index_update_key(struct btree_trans *trans,
 
 	bch2_btree_iter_set_pos(iter, next_pos);
 
-	if (trace_data_update_key_enabled())
-		trace_data_update_key2(u, old, k, insert);
-	this_cpu_add(c->counters.now[BCH_COUNTER_data_update_key], new->k.size);
+	event_add_trace(c, data_update_key, new->k.size, buf, ({
+		prt_str(&buf, "\nold: ");
+		bch2_bkey_val_to_text(&buf, c, old);
+		prt_str(&buf, "\nk:   ");
+		bch2_bkey_val_to_text(&buf, c, k);
+		prt_str(&buf, "\nnew: ");
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(insert));
+	}));
+
 	return 0;
 }
 
@@ -421,31 +402,19 @@ static void data_update_trace(struct data_update *u, int ret)
 {
 	struct bch_fs *c = u->op.c;
 
-	if (!ret) {
-		if (trace_data_update_enabled()) {
-			CLASS(printbuf, buf)();
-			bch2_data_update_to_text(&buf, u);
-			trace_data_update(c, buf.buf);
-		}
-		count_event(c, data_update);
-	} else if (bch2_err_matches(ret, BCH_ERR_data_update_done)) {
-		if (trace_data_update_no_io_enabled()) {
-			CLASS(printbuf, buf)();
-			bch2_data_update_to_text(&buf, u);
-			prt_printf(&buf, "\nret:\t%s\n", bch2_err_str(ret));
-			trace_data_update_no_io(c, buf.buf);
-		}
-		count_event(c, data_update_no_io);
-	} else if (should_trace_update_err(u, ret)) {
-		if (trace_data_update_fail_enabled()) {
-			CLASS(printbuf, buf)();
-			bch2_data_update_to_text(&buf, u);
-			prt_printf(&buf, "\nret:\t%s\n", bch2_err_str(ret));
-			trace_data_update_fail(c, buf.buf);
-		}
-
-		count_event(c, data_update_fail);
-	}
+	if (!ret)
+		event_add_trace(c, data_update, u->k.k->k.size, buf,
+				bch2_data_update_to_text(&buf, u));
+	else if (bch2_err_matches(ret, BCH_ERR_data_update_done))
+		event_add_trace(c, data_update_no_io, u->k.k->k.size, buf, ({
+				bch2_data_update_to_text(&buf, u);
+				prt_printf(&buf, "\nret:\t%s\n", bch2_err_str(ret));
+		}));
+	else if (should_trace_update_err(u, ret))
+		event_add_trace(c, data_update_fail, u->k.k->k.size, buf, ({
+				bch2_data_update_to_text(&buf, u);
+				prt_printf(&buf, "\nret:\t%s\n", bch2_err_str(ret));
+		}));
 }
 
 void bch2_data_update_exit(struct data_update *update, int ret)

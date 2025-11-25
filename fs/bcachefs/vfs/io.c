@@ -236,9 +236,8 @@ int bch2_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 {
 	struct bch_inode_info *inode = file_bch_inode(file);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	u64 start_time = ktime_get_ns();
 	int ret, err;
-
-	trace_bch2_fsync(file, datasync);
 
 	ret = file_write_and_wait_range(file, start, end);
 	if (ret)
@@ -255,6 +254,14 @@ out:
 	err = file_check_and_advance_wb_err(file);
 	if (!ret)
 		ret = err;
+
+	event_inc_trace(c, fsync, buf, ({
+		prt_printf(&buf, "journal_flush_disabled: %u\n", c->opts.journal_flush_disabled);
+		prt_printf(&buf, "datasync: %u\n", datasync);
+		prt_printf(&buf, "duration: ");
+		bch2_pr_time_units(&buf, ktime_get_ns() - start_time);
+		prt_newline(&buf);
+	}));
 
 	return ret;
 }

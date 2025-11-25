@@ -551,7 +551,10 @@ out:
 	mutex_unlock(&bc->lock);
 out_nounlock:
 	ret = freed;
-	trace_and_count(c, btree_cache_scan, sc->nr_to_scan, can_free, ret);
+
+	event_inc_trace(c, btree_cache_scan, buf,
+		prt_printf(&buf, "scanned %li nodes, can free %li, ret %li",
+			   sc->nr_to_scan, can_free, ret));
 	return ret;
 }
 
@@ -690,11 +693,11 @@ void bch2_fs_btree_cache_init_early(struct btree_cache *bc)
  */
 void bch2_btree_cache_cannibalize_unlock(struct btree_trans *trans)
 {
-	struct bch_fs *c = trans->c;
-	struct btree_cache *bc = &c->btree_cache;
+	struct btree_cache *bc = &trans->c->btree_cache;
 
 	if (bc->alloc_lock == current) {
-		trace_and_count(c, btree_cache_cannibalize_unlock, trans);
+		event_inc_trace(trans->c, btree_cache_cannibalize_unlock, buf,
+			prt_str(&buf, trans->fn));
 		bc->alloc_lock = NULL;
 		closure_wake_up(&bc->alloc_wait);
 	}
@@ -730,11 +733,9 @@ int bch2_btree_cache_cannibalize_lock(struct btree_trans *trans, struct closure 
 	struct bch_fs *c = trans->c;
 	int ret = __btree_cache_cannibalize_lock(c, cl);
 	if (!ret)
-		trace_and_count(c, btree_cache_cannibalize_lock, trans);
-	else if (cl)
-		trace_and_count(c, btree_cache_cannibalize_lock_fail, trans);
+		event_inc_trace(c, btree_cache_cannibalize_lock, buf, prt_str(&buf, trans->fn));
 	else
-		trace_and_count(c, btree_cache_cannibalize_lock_fail, trans);
+		event_inc_trace(c, btree_cache_cannibalize_lock_fail, buf, prt_str(&buf, trans->fn));
 	return ret;
 }
 
@@ -875,7 +876,7 @@ err:
 		BUG_ON(!list_empty(&b->list));
 		mutex_unlock(&bc->lock);
 
-		trace_and_count(c, btree_cache_cannibalize, trans);
+		event_inc_trace(c, btree_cache_cannibalize, buf, prt_str(&buf, trans->fn));
 		goto out;
 	}
 
@@ -937,7 +938,11 @@ static noinline struct btree *bch2_btree_node_fill(struct btree_trans *trans,
 			return b;
 
 		trans->memory_allocation_failure = true;
-		trace_and_count(c, trans_restart_memory_allocation_failure, trans, _THIS_IP_, path);
+
+		event_inc_trace(c, trans_restart_memory_allocation_failure, buf, ({
+			prt_printf(&buf, "%s\n", trans->fn);
+			bch2_btree_path_to_text(&buf, trans, path - trans->paths, path);
+		}));
 		return ERR_PTR(btree_trans_restart(trans, BCH_ERR_transaction_restart_fill_mem_alloc_fail));
 	}
 
@@ -1070,7 +1075,10 @@ retry:
 			if (bch2_btree_node_relock(trans, path, level + 1))
 				goto retry;
 
-			trace_and_count(c, trans_restart_btree_node_reused, trans, trace_ip, path);
+			event_inc_trace(c, trans_restart_btree_node_reused, buf, ({
+				prt_printf(&buf, "%s\n", trans->fn);
+				bch2_btree_path_to_text(&buf, trans, path - trans->paths, path);
+			}));
 			return ERR_PTR(btree_trans_restart(trans, BCH_ERR_transaction_restart_lock_node_reused));
 		}
 
@@ -1178,7 +1186,10 @@ struct btree *bch2_btree_node_get(struct btree_trans *trans, struct btree_path *
 		if (bch2_btree_node_relock(trans, path, level + 1))
 			return __bch2_btree_node_get(trans, path, k, level, lock_type, trace_ip);
 
-		trace_and_count(c, trans_restart_btree_node_reused, trans, trace_ip, path);
+		event_inc_trace(c, trans_restart_btree_node_reused, buf, ({
+			prt_printf(&buf, "%s\n", trans->fn);
+			bch2_btree_path_to_text(&buf, trans, path - trans->paths, path);
+		}));
 		return ERR_PTR(btree_trans_restart(trans, BCH_ERR_transaction_restart_lock_node_reused));
 	}
 

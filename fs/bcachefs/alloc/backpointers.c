@@ -1033,7 +1033,7 @@ static int bch2_pin_backpointer_nodes_with_missing(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
-	struct bkey_buf tmp;
+	struct bkey_buf tmp __cleanup(bch2_bkey_buf_exit);
 	bch2_bkey_buf_init(&tmp);
 
 	bch2_btree_cache_unpin(c);

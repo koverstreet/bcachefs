@@ -1341,19 +1341,18 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 		}
 	}
 
-	if (!data_opts->ptrs_rewrite &&
-	    !data_opts->ptrs_kill &&
-	    !data_opts->ptrs_kill_ec &&
-	    !data_opts->extra_replicas) {
+	bool ret = (data_opts->ptrs_rewrite ||
+		    data_opts->ptrs_kill ||
+		    data_opts->ptrs_kill_ec ||
+		    data_opts->extra_replicas);
+	if (!ret) {
 		CLASS(printbuf, buf)();
 		prt_printf(&buf, "got extent to reconcile but nothing to do, confused\n  ");
 		bch2_bkey_val_to_text(&buf, c, k);
 		bch_err(c, "%s", buf.buf);
-		return 0;
 	}
 
-	count_event(c, rebalance_extent);
-	return 1;
+	return ret;
 }
 
 static void bkey_set_rb_pending(struct bch_fs *c, struct bkey_i *k)
@@ -1369,11 +1368,18 @@ static int bch2_extent_set_rb_pending(struct btree_trans *trans,
 				      struct btree_iter *iter,
 				      struct bkey_s_c k)
 {
+	struct bch_fs *c = trans->c;
+
+	if (rb_work_id(bch2_bkey_reconcile_opts(c, k)) == RECONCILE_WORK_pending)
+		return 0;
+
+	try(bch2_trans_relock(trans));
+
 	struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k)));
 	bkey_reassemble(n, k);
 
 	if (!iter->min_depth) {
-		bkey_set_rb_pending(trans->c, n);
+		bkey_set_rb_pending(c, n);
 
 		return  bch2_trans_update(trans, iter, n, 0) ?:
 			bch2_trans_commit(trans, NULL, NULL,
@@ -1385,13 +1391,13 @@ static int bch2_extent_set_rb_pending(struct btree_trans *trans,
 		if (!bkey_and_val_eq(bkey_i_to_s_c(&b->key), bkey_i_to_s_c(n))) {
 			CLASS(printbuf, buf)();
 			prt_newline(&buf);
-			bch2_bkey_val_to_text(&buf, trans->c, bkey_i_to_s_c(&b->key));
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&b->key));
 			prt_newline(&buf);
-			bch2_bkey_val_to_text(&buf, trans->c, k);
+			bch2_bkey_val_to_text(&buf, c, k);
 			panic("\n%s\n", buf.buf);
 		}
 
-		bkey_set_rb_pending(trans->c, n);
+		bkey_set_rb_pending(c, n);
 
 		return bch2_btree_node_update_key(trans, &iter2, b, n, BCH_TRANS_COMMIT_no_enospc, false);
 	}
@@ -1416,13 +1422,8 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 		return ret;
 	if (bch2_err_matches(ret, BCH_ERR_data_update_fail_no_rw_devs) ||
 	    bch2_err_matches(ret, BCH_ERR_insufficient_devices) ||
-	    bch2_err_matches(ret, ENOSPC)) {
-		if (rb_work_id(bch2_bkey_reconcile_opts(c, k)) != RECONCILE_WORK_pending)
-			try(bch2_trans_relock(trans) ?:
-			    bch2_extent_set_rb_pending(trans, iter, k));
-
-		return 0;
-	}
+	    bch2_err_matches(ret, ENOSPC))
+		return bch2_extent_set_rb_pending(trans, iter, k);
 	if (ret) {
 		WARN_ONCE(ret != -BCH_ERR_data_update_fail_no_snapshot,
 			  "unhandled error from move_extent: %s", bch2_err_str(ret));

@@ -163,14 +163,6 @@ void bch2_btree_node_to_text(struct printbuf *, struct bch_fs *, const struct bt
 void bch2_btree_cache_to_text(struct printbuf *, const struct btree_cache *);
 
 #define trace_btree_node(_c, _b, event)				\
-do {								\
-	if (trace_##event##_enabled()) {			\
-		CLASS(printbuf, buf)();				\
-		guard(printbuf_indent)(&buf);			\
-		bch2_btree_pos_to_text(&buf, c, b);		\
-		trace_##event(c, buf.buf);			\
-	}							\
-	count_event(c, event);					\
-} while (0);
+	event_inc_trace(c, event, buf, bch2_btree_pos_to_text(&buf, c, b))
 
 #endif /* _BCACHEFS_BTREE_CACHE_H */

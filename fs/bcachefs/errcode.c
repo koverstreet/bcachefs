@@ -60,8 +60,6 @@ int __bch2_err_class(int bch_err)
 	while (std_err >= BCH_ERR_START && bch2_errcode_parents[std_err - BCH_ERR_START])
 		std_err = bch2_errcode_parents[std_err - BCH_ERR_START];
 
-	trace_error_downcast(bch_err, std_err, _RET_IP_);
-
 	return -std_err;
 }
 

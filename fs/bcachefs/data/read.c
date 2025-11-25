@@ -56,6 +56,8 @@ module_param_named(poison_extents_on_checksum_error,
 MODULE_PARM_DESC(poison_extents_on_checksum_error,
 		 "Extents with checksum errors are marked as poisoned - unsafe without read fua support");
 
+static void bch2_read_bio_to_text_atomic(struct printbuf *, struct bch_read_bio *);
+
 #ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
 
 static inline u32 bch2_dev_congested_read(struct bch_dev *ca, u64 now)
@@ -184,29 +186,29 @@ static inline int should_promote(struct bch_fs *c, struct bkey_s_c k,
 		BUG_ON(!opts.promote_target);
 
 		if (!(flags & BCH_READ_may_promote)) {
-			count_event(c, io_read_nopromote_may_not);
+			event_inc(c, data_read_nopromote_may_not);
 			return bch_err_throw(c, nopromote_may_not);
 		}
 
 		if (bch2_bkey_has_target(c, k, opts.promote_target)) {
-			count_event(c, io_read_nopromote_already_promoted);
+			event_inc(c, data_read_nopromote_already_promoted);
 			return bch_err_throw(c, nopromote_already_promoted);
 		}
 
 		if (bkey_extent_is_unwritten(c, k)) {
-			count_event(c, io_read_nopromote_unwritten);
+			event_inc(c, data_read_nopromote_unwritten);
 			return bch_err_throw(c, nopromote_unwritten);
 		}
 
 		if (bch2_target_congested(c, opts.promote_target)) {
-			count_event(c, io_read_nopromote_congested);
+			event_inc(c, data_read_nopromote_congested);
 			return bch_err_throw(c, nopromote_congested);
 		}
 	}
 
 	if (rhashtable_lookup_fast(&c->promote_table, &pos,
 				   bch_promote_params)) {
-		count_event(c, io_read_nopromote_in_flight);
+		event_inc(c, data_read_nopromote_in_flight);
 		return bch_err_throw(c, nopromote_in_flight);
 	}
 
@@ -252,8 +254,11 @@ static void promote_start_work(struct work_struct *work)
 static noinline void promote_start(struct bch_read_bio *rbio)
 {
 	struct promote_op *op = container_of(rbio, struct promote_op, write.rbio);
+	struct bch_fs *c = op->write.op.c;
 
-	trace_and_count(op->write.op.c, io_read_promote, &rbio->bio);
+	event_add_trace(c, data_read_promote, op->write.k.k->k.size, buf, ({
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(op->write.k.k));
+	}));
 
 	INIT_WORK(&op->work, promote_start_work);
 	queue_work(rbio->c->promote_wq, &op->work);
@@ -418,15 +423,10 @@ static struct bch_read_bio *promote_alloc(struct btree_trans *trans,
 				k, pos, pick, flags, sectors, orig, failed);
 	int ret = PTR_ERR_OR_ZERO(promote);
 	if (unlikely(ret)) {
-		if (trace_io_read_nopromote_enabled()) {
-			CLASS(printbuf, buf)();
-			printbuf_indent_add_nextline(&buf, 2);
+		event_inc_trace(c, data_read_nopromote, buf, ({
 			prt_printf(&buf, "%s\n", bch2_err_str(ret));
 			bch2_bkey_val_to_text(&buf, c, k);
-
-			trace_io_read_nopromote(c, buf.buf);
-		}
-		count_event(c, io_read_nopromote);
+		}));
 		return NULL;
 	}
 
@@ -675,9 +675,8 @@ static void bch2_rbio_retry(struct work_struct *work)
 	struct bpos read_pos = rbio->read_pos;
 	struct bch_io_failures failed = { .nr = 0 };
 
-	trace_io_read_retry(&rbio->bio);
-	this_cpu_add(c->counters.now[BCH_COUNTER_io_read_retry],
-		     bvec_iter_sectors(rbio->bvec_iter));
+	event_inc_trace(c, data_read_retry, buf,
+			bch2_read_bio_to_text_atomic(&buf, rbio));
 
 	{
 		CLASS(btree_trans, trans)(c);
@@ -832,9 +831,13 @@ static noinline void bch2_rbio_narrow_crcs(struct bch_read_bio *rbio)
 	int ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			    __bch2_rbio_narrow_crcs(trans, rbio, &new_crc));
 	if (!ret)
-		count_event(c, io_read_narrow_crcs);
-	else if (ret == -BCH_ERR_rbio_narrow_crcs_fail)
-		count_event(c, io_read_narrow_crcs_fail);
+		event_inc_trace(c, data_read_narrow_crcs, buf,
+				bch2_read_bio_to_text_atomic(&buf, rbio));
+	else
+		event_inc_trace(c, data_read_narrow_crcs_fail, buf, ({
+			prt_printf(&buf, "%s\n", bch2_err_str(ret));
+			bch2_read_bio_to_text_atomic(&buf, rbio);
+		}));
 }
 
 /* Inner part that may run in process context */
@@ -987,7 +990,10 @@ static void bch2_read_endio(struct bio *bio)
 
 	if (((rbio->flags & BCH_READ_retry_if_stale) && race_fault()) ||
 	    (ca && dev_ptr_stale(ca, &rbio->pick.ptr))) {
-		trace_and_count(c, io_read_reuse_race, &rbio->bio);
+		event_inc_trace(c, data_read_reuse_race, buf, ({
+			guard(printbuf_atomic)(&buf);
+			bch2_read_bio_to_text_atomic(&buf, rbio);
+		}));
 
 		if (rbio->flags & BCH_READ_retry_if_stale)
 			bch2_rbio_error(rbio, bch_err_throw(c, data_read_ptr_stale_retry));
@@ -1177,18 +1183,29 @@ static inline struct bch_read_bio *read_extent_rbio_alloc(struct btree_trans *tr
 
 	if (!(flags & (BCH_READ_in_retry|BCH_READ_last_fragment))) {
 		bio_inc_remaining(&orig->bio);
-		trace_and_count(c, io_read_split, &orig->bio);
+		event_inc_trace(c, data_read_split, buf,
+				bch2_read_bio_to_text_atomic(&buf, rbio));
 	}
 
 	async_object_list_add(c, rbio, rbio, &rbio->list_idx);
 
 	if (rbio->bounce)
-		trace_and_count(c, io_read_bounce, &rbio->bio);
+		event_inc_trace(c, data_read_bounce, buf,
+				bch2_read_bio_to_text_atomic(&buf, rbio));
 
 	if (!orig->data_update)
-		this_cpu_add(c->counters.now[BCH_COUNTER_io_read], bio_sectors(&rbio->bio));
+		event_add_trace(c, data_read, bio_sectors(&rbio->bio), buf, ({
+			bch2_bkey_val_to_text(&buf, c, k);
+			prt_newline(&buf);
+			bch2_read_bio_to_text_atomic(&buf, rbio);
+		}));
 	else
-		this_cpu_add(c->counters.now[BCH_COUNTER_io_move_read], bio_sectors(&rbio->bio));
+		event_add_trace(c, data_update_read, bio_sectors(&rbio->bio), buf, ({
+			bch2_bkey_val_to_text(&buf, c, k);
+			prt_newline(&buf);
+			bch2_read_bio_to_text_atomic(&buf, rbio);
+		}));
+
 	bch2_increment_clock(c, bio_sectors(&rbio->bio), READ);
 	return rbio;
 }
@@ -1213,7 +1230,11 @@ static noinline int read_extent_inline(struct bch_fs *c,
 				       unsigned offset_into_extent,
 				       unsigned flags)
 {
-	this_cpu_add(c->counters.now[BCH_COUNTER_io_read_inline], bvec_iter_sectors(iter));
+	event_add_trace(c, data_read_inline, bvec_iter_sectors(iter), buf, ({
+		bch2_bkey_val_to_text(&buf, c, k);
+		prt_newline(&buf);
+		bch2_read_bio_to_text_atomic(&buf, rbio);
+	}));
 
 	unsigned bytes = min(iter.bi_size, offset_into_extent << 9);
 	swap(iter.bi_size, bytes);
@@ -1238,10 +1259,15 @@ static noinline int read_extent_inline(struct bch_fs *c,
 static noinline int read_extent_hole(struct bch_fs *c,
 				     struct bch_read_bio *rbio,
 				     struct bvec_iter iter,
+				     struct bkey_s_c k,
 				     unsigned flags)
 {
-	this_cpu_add(c->counters.now[BCH_COUNTER_io_read_hole],
-		     bvec_iter_sectors(iter));
+	event_add_trace(c, data_read_hole, bvec_iter_sectors(iter), buf, ({
+		bch2_bkey_val_to_text(&buf, c, k);
+		prt_newline(&buf);
+		bch2_read_bio_to_text_atomic(&buf, rbio);
+	}));
+
 	/*
 	 * won't normally happen in the data update (bch2_move_extent()) path,
 	 * but if we retry and the extent we wanted to read no longer exists we
@@ -1268,7 +1294,12 @@ static noinline int read_extent_pick_err(struct btree_trans *trans,
 		BUG_ON(!(flags & BCH_READ_in_retry));
 
 		try(maybe_poison_extent(trans, rbio, data_btree, k));
-		trace_and_count(c, io_read_fail_and_poison, &rbio->bio);
+
+		event_inc_trace(c, data_read_fail_and_poison, buf, ({
+			bch2_bkey_val_to_text(&buf, c, k);
+			prt_newline(&buf);
+			bch2_read_bio_to_text_atomic(&buf, rbio);
+		}));
 	}
 
 	if (!(flags & BCH_READ_in_retry)) {
@@ -1324,7 +1355,7 @@ int __bch2_read_extent(struct btree_trans *trans,
 
 	/* hole or reservation - just zero fill: */
 	if (unlikely(!ret))
-		return read_extent_hole(c, orig, iter, flags);
+		return read_extent_hole(c, orig, iter, k, flags);
 
 	if (unlikely(ret < 0))
 		return read_extent_pick_err(trans, orig, read_pos, data_btree, k, flags, ret);
@@ -1572,15 +1603,11 @@ static const char * const bch2_read_bio_flags[] = {
 	NULL
 };
 
-void bch2_read_bio_to_text(struct printbuf *out,
-			   struct bch_fs *c,
-			   struct bch_read_bio *rbio)
+static void __bch2_read_bio_to_text(struct printbuf *out,
+				    struct bch_read_bio *rbio)
 {
 	if (!out->nr_tabstops)
 		printbuf_tabstop_push(out, 20);
-
-	bch2_read_err_msg(c, out, rbio, rbio->read_pos);
-	prt_newline(out);
 
 	/* Are we in a retry? */
 
@@ -1618,6 +1645,22 @@ void bch2_read_bio_to_text(struct printbuf *out,
 	prt_newline(out);
 
 	bch2_bio_to_text(out, &rbio->bio);
+}
+
+static void bch2_read_bio_to_text_atomic(struct printbuf *out, struct bch_read_bio *rbio)
+{
+	bch2_bpos_to_text(out, rbio->read_pos);
+	prt_newline(out);
+	__bch2_read_bio_to_text(out, rbio);
+}
+
+void bch2_read_bio_to_text(struct printbuf *out,
+			   struct bch_fs *c,
+			   struct bch_read_bio *rbio)
+{
+	bch2_read_err_msg(c, out, rbio, rbio->read_pos);
+	prt_newline(out);
+	__bch2_read_bio_to_text(out, rbio);
 }
 
 void bch2_fs_io_read_exit(struct bch_fs *c)

@@ -407,7 +407,9 @@ static CLOSURE_CALLBACK(journal_write_submit)
 
 		bch2_bio_map(bio, w->data, sectors << 9);
 
-		trace_and_count(c, journal_write, bio);
+		event_inc_trace(c, journal_write, buf,
+			prt_printf(&buf, "seq %llu", le64_to_cpu(w->data->seq)));
+
 		closure_bio_submit(bio, cl);
 
 		ja->bucket_seq[ja->cur_idx] = le64_to_cpu(w->data->seq);

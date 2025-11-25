@@ -442,7 +442,8 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 		 * The fastpath zapped the seq of keys that were successfully flushed so
 		 * we can skip those here.
 		 */
-		trace_and_count(c, write_buffer_flush_slowpath, trans, slowpath, wb->flushing.keys.nr);
+		event_inc_trace(c, write_buffer_flush_slowpath, buf,
+				prt_printf(&buf, "%zu/%zu", slowpath, wb->flushing.keys.nr));
 
 		sort_r_nonatomic(wb->sorted.data,
 				 wb->sorted.nr,
@@ -515,9 +516,13 @@ err:
 		wb->flushing.keys.nr = 0;
 	}
 
-	bch2_time_stats_update(&c->times[BCH_TIME_btree_write_buffer_flush], start_time);
 	bch2_fs_fatal_err_on(ret, c, "%s", bch2_err_str(ret));
-	trace_write_buffer_flush(trans, nr_flushing, overwritten, fast, noop);
+
+	bch2_time_stats_update(&c->times[BCH_TIME_btree_write_buffer_flush], start_time);
+	event_inc_trace(c, write_buffer_flush, buf,
+		prt_printf(&buf, "flushed %llu skipped %zu fast %zu noop %zu",
+			   nr_flushing, overwritten, fast, noop));
+
 	return ret;
 }
 
@@ -611,7 +616,7 @@ int bch2_btree_write_buffer_flush_sync(struct btree_trans *trans)
 	struct bch_fs *c = trans->c;
 	bool did_work = false;
 
-	trace_and_count(c, write_buffer_flush_sync, trans, _RET_IP_);
+	event_inc_trace(c, write_buffer_flush_sync, buf, prt_str(&buf, trans->fn));
 
 	return btree_write_buffer_flush_seq(trans, journal_cur_seq(&c->journal), &did_work);
 }
@@ -674,12 +679,10 @@ int bch2_btree_write_buffer_maybe_flush(struct btree_trans *trans,
 		return 0;
 
 	if (!bkey_and_val_eq(referring_k, bkey_i_to_s_c(f->last_flushed.k))) {
-		if (trace_write_buffer_maybe_flush_enabled()) {
-			CLASS(printbuf, buf)();
-
+		event_inc_trace(c, write_buffer_maybe_flush, buf, ({
+			prt_printf(&buf, "%s\n", trans->fn);
 			bch2_bkey_val_to_text(&buf, c, referring_k);
-			trace_write_buffer_maybe_flush(trans, _RET_IP_, buf.buf);
-		}
+		}));
 
 		struct bkey_buf tmp __cleanup(bch2_bkey_buf_exit);
 		bch2_bkey_buf_init(&tmp);
@@ -690,13 +693,14 @@ int bch2_btree_write_buffer_maybe_flush(struct btree_trans *trans,
 			bch2_btree_interior_updates_flush(c);
 		}
 
-		try(bch2_btree_write_buffer_flush_sync(trans));
+		bool did_work = false;
+		try(btree_write_buffer_flush_seq(trans, journal_cur_seq(&c->journal), &did_work));
 
 		bch2_bkey_buf_copy(&f->last_flushed, tmp.k);
 		f->nr_flushes++;
 
 		/* can we avoid the unconditional restart? */
-		trace_and_count(c, trans_restart_write_buffer_flush, trans, _RET_IP_);
+		event_inc_trace(c, trans_restart_write_buffer_flush, buf, prt_str(&buf, trans->fn));
 		return bch_err_throw(c, transaction_restart_write_buffer_flush);
 	}
 
@@ -732,13 +736,10 @@ int bch2_accounting_key_to_wb_slowpath(struct bch_fs *c, enum btree_id btree,
 {
 	struct btree_write_buffer *wb = &c->btree_write_buffer;
 
-	if (trace_accounting_key_to_wb_slowpath_enabled()) {
-		CLASS(printbuf, buf)();
+	event_inc_trace(c, accounting_key_to_wb_slowpath, buf, ({
 		prt_printf(&buf, "have: %zu\n", wb->accounting.nr);
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&k->k_i));
-		trace_accounting_key_to_wb_slowpath(c, buf.buf);
-	}
-	count_event(c, accounting_key_to_wb_slowpath);
+	}));
 
 	struct btree_write_buffered_key new = { .btree = btree };
 	bkey_copy(&new.k, &k->k_i);

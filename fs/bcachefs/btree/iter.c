@@ -1033,7 +1033,6 @@ static int bch2_btree_path_traverse_all(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;
 	struct btree_path *path;
-	unsigned long trace_ip = _RET_IP_;
 	unsigned i;
 	int ret = 0;
 
@@ -1098,7 +1097,12 @@ err:
 
 	trans->in_traverse_all = false;
 
-	trace_and_count(c, trans_traverse_all, trans, trace_ip);
+	event_inc_trace(c, trans_traverse_all, buf, ({
+		prt_printf(&buf, "%s\n", trans->fn);
+		prt_printf(&buf, "nr_paths %u/%u\n",
+			   bitmap_weight(trans->paths_allocated, trans->nr_paths),
+			   trans->nr_paths);
+	}));
 	return ret;
 }
 
@@ -1376,6 +1380,7 @@ __bch2_btree_path_set_pos(struct btree_trans *trans,
 		CLASS(printbuf, buf)();
 		guard(printbuf_indent_nextline)(&buf);
 
+		prt_printf(&buf, "%s caller: %ps\n", trans->fn, (void *) ip);
 		prt_newline(&buf);
 		bch2_btree_path_to_text(&buf, trans, path_idx, trans->paths + path_idx);
 
@@ -1385,7 +1390,7 @@ __bch2_btree_path_set_pos(struct btree_trans *trans,
 		bch2_btree_path_to_text(&buf, trans, path_idx, trans->paths + path_idx);
 		prt_newline(&buf);
 
-		trace_btree_path_set_pos(trans, ip, buf.buf);
+		trace_btree_path_set_pos(trans->c, buf.buf);
 
 		return path_idx;
 	}
@@ -1688,14 +1693,10 @@ static void bch2_trans_update_max_paths(struct btree_trans *trans)
 noinline __cold
 int __bch2_btree_trans_too_many_iters(struct btree_trans *trans)
 {
-	if (trace_trans_restart_too_many_iters_enabled()) {
-		CLASS(printbuf, buf)();
-
+	event_inc_trace(trans->c, trans_restart_too_many_iters, buf, ({
+		prt_printf(&buf, "%s\n", trans->fn);
 		bch2_trans_paths_to_text(&buf, trans);
-		trace_trans_restart_too_many_iters(trans, _THIS_IP_, buf.buf);
-	}
-
-	count_event(trans->c, trans_restart_too_many_iters);
+	}));
 
 	return btree_trans_restart(trans, BCH_ERR_transaction_restart_too_many_iters);
 }
@@ -2039,8 +2040,12 @@ struct btree *bch2_btree_iter_next_node(struct btree_iter *iter)
 	bch2_btree_path_downgrade(trans, path);
 
 	if (!bch2_btree_node_relock(trans, path, path->level + 1)) {
-		trace_and_count(trans->c, trans_restart_relock_next_node, trans, _THIS_IP_, path);
+		event_inc_trace(trans->c, trans_restart_relock_next_node, buf, ({
+			prt_printf(&buf, "%s\n", trans->fn);
+			bch2_btree_path_to_text(&buf, trans, iter->path, path);
+		}));
 		ret = btree_trans_restart(trans, BCH_ERR_transaction_restart_relock);
+
 		__bch2_btree_path_unlock(trans, path);
 		path->l[path->level].b		= ERR_PTR(-BCH_ERR_no_btree_node_relock);
 		path->l[path->level + 1].b	= ERR_PTR(-BCH_ERR_no_btree_node_relock);
@@ -3312,7 +3317,8 @@ void *__bch2_trans_kmalloc(struct btree_trans *trans, size_t size, unsigned long
 
 	if (old_bytes) {
 		trans->realloc_bytes_required = new_bytes;
-		trace_and_count(c, trans_restart_mem_realloced, trans, _RET_IP_, new_bytes);
+		event_inc_trace(c, trans_restart_mem_realloced, buf,
+			prt_printf(&buf, "%s\nbytes %u\n", trans->fn, new_bytes));
 		return ERR_PTR(btree_trans_restart_ip(trans,
 					BCH_ERR_transaction_restart_mem_realloced, _RET_IP_));
 	}

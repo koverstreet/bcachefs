@@ -19,12 +19,41 @@ long bch2_ioctl_query_counters(struct bch_fs *,
 
 void bch2_sb_recent_counters_to_text(struct printbuf *out, struct bch_fs_counters *c);
 
-#define count_event(_c, _name)	this_cpu_inc((_c)->counters.now[BCH_COUNTER_##_name])
+#define counter_typecheck(_name, _type)					\
+	BUILD_BUG_ON(bch2_counter_flags[BCH_COUNTER_##_name] != _type)
 
-#define trace_and_count(_c, _name, ...)					\
+#define event_inc(_c, _name)						\
 do {									\
-	count_event(_c, _name);						\
-	trace_##_name(__VA_ARGS__);					\
+	counter_typecheck(_name, TYPE_COUNTER);				\
+	this_cpu_inc((_c)->counters.now[BCH_COUNTER_##_name]);		\
+} while (0)
+
+#define event_add(_c, _name, _nr)					\
+do {									\
+	counter_typecheck(_name, TYPE_SECTORS);				\
+	this_cpu_add((_c)->counters.now[BCH_COUNTER_##_name], _nr);	\
+} while (0)
+
+#define event_trace(_c, _name, _buf, ...)				\
+do {									\
+	if (trace_##_name##_enabled()) {				\
+		CLASS(printbuf, _buf)();				\
+		printbuf_indent_add_nextline(&_buf, 2);			\
+		__VA_ARGS__;						\
+		trace_##_name(_c, _buf.buf);				\
+	}								\
+} while (0)
+
+#define event_add_trace(_c, _name, _nr, ...)				\
+do {									\
+	event_trace(_c, _name, __VA_ARGS__);				\
+	event_add(_c, _name, _nr);					\
+} while (0)
+
+#define event_inc_trace(_c, _name, ...)					\
+do {									\
+	event_trace(_c, _name, __VA_ARGS__);				\
+	event_inc(_c, _name);						\
 } while (0)
 
 #endif // _BCACHEFS_SB_COUNTERS_H

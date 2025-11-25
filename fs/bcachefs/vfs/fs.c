@@ -1963,19 +1963,24 @@ static int bch2_statfs(struct dentry *dentry, struct kstatfs *buf)
 static int bch2_sync_fs(struct super_block *sb, int wait)
 {
 	struct bch_fs *c = sb->s_fs_info;
-	int ret;
-
-	trace_bch2_sync_fs(sb, wait);
+	u64 start = ktime_get_ns();
+	int ret = 0;
 
 	if (c->opts.journal_flush_disabled)
-		return 0;
-
-	if (!wait) {
+		;
+	else if (!wait)
 		bch2_journal_flush_async(&c->journal, NULL);
-		return 0;
-	}
+	else
+		ret = bch2_journal_flush(&c->journal);
 
-	ret = bch2_journal_flush(&c->journal);
+	event_inc_trace(c, sync_fs, buf, ({
+		prt_printf(&buf, "journal_flush_disabled: %u\n", c->opts.journal_flush_disabled);
+		prt_printf(&buf, "blocking: %u\n", wait);
+		prt_printf(&buf, "duration: ");
+		bch2_pr_time_units(&buf, ktime_get_ns() - start);
+		prt_newline(&buf);
+	}));
+
 	return bch2_err_class(ret);
 }
 

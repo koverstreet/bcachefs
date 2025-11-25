@@ -73,7 +73,12 @@ void bch2_journal_set_watermark(struct journal *j)
 	if (track_event_change(&c->times[BCH_TIME_blocked_journal_low_on_space], low_on_space) ||
 	    track_event_change(&c->times[BCH_TIME_blocked_journal_low_on_pin], low_on_pin) ||
 	    track_event_change(&c->times[BCH_TIME_blocked_write_buffer_full], low_on_wb))
-		trace_and_count(c, journal_full, c);
+		event_inc_trace(c, journal_full, buf, ({
+			guard(printbuf_atomic)(&buf);
+			prt_printf(&buf, "low_on_space %u\n",	low_on_space);
+			prt_printf(&buf, "low_on_pin%u\n",	low_on_pin);
+			prt_printf(&buf, "low_on_wb%u\n",	low_on_wb);
+		}));
 
 	mod_bit(JOURNAL_low_on_space,	&j->flags, low_on_space);
 	mod_bit(JOURNAL_low_on_pin,	&j->flags, low_on_pin);
@@ -759,12 +764,15 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 
 		min_key_cache = min(bch2_nr_btree_keys_need_flush(c), (size_t) 128);
 
-		trace_and_count(c, journal_reclaim_start, c,
-				direct, kicked,
-				min_nr, min_key_cache,
-				atomic_long_read(&bc->nr_dirty), btree_cache_live,
-				atomic_long_read(&c->btree_key_cache.nr_dirty),
-				atomic_long_read(&c->btree_key_cache.nr_keys));
+		event_inc_trace(c, journal_reclaim_start, buf, ({
+			prt_printf(&buf, "direct %u kicked %u\n", direct, kicked);
+			prt_printf(&buf, "btree cache %lu/%zu min %zu\n",
+				   atomic_long_read(&bc->nr_dirty), btree_cache_live, min_nr);
+			prt_printf(&buf, "key cache %lu/%lu min %zu\n",
+				   atomic_long_read(&c->btree_key_cache.nr_dirty),
+				   atomic_long_read(&c->btree_key_cache.nr_keys),
+				   min_key_cache);
+		}));
 
 		nr_flushed = journal_flush_pins(j, seq_to_flush,
 						~0, 0,
@@ -774,7 +782,9 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 			j->nr_direct_reclaim += nr_flushed;
 		else
 			j->nr_background_reclaim += nr_flushed;
-		trace_and_count(c, journal_reclaim_finish, c, nr_flushed);
+
+		event_inc_trace(c, journal_reclaim_finish, buf,
+			prt_printf(&buf, "flushed %zu\n", nr_flushed));
 
 		if (nr_flushed)
 			wake_up(&j->reclaim_wait);
