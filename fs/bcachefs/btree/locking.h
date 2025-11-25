@@ -10,6 +10,7 @@
  * updating the iterator state
  */
 
+#include "btree/cache.h"
 #include "btree/iter.h"
 #include "util/six.h"
 
@@ -239,8 +240,15 @@ static inline int __btree_node_lock_nopath(struct btree_trans *trans,
 	WRITE_ONCE(trans->locking, NULL);
 	WRITE_ONCE(trans->locking_wait.start_time, 0);
 
-	if (!ret)
-		trace_btree_path_lock(trans, _THIS_IP_, b);
+	event_trace(trans->c, btree_path_lock, buf,
+		prt_printf(&buf, "%s ret %s\n"
+			   "btree %s level %u lock seq %u node %px",
+			   trans->fn, bch2_err_str(ret),
+			   bch2_btree_id_str(b->btree_id),
+			   b->level,
+			   six_lock_seq(&b->lock),
+			   b));
+
 	return ret;
 }
 
@@ -419,7 +427,10 @@ static inline void btree_path_set_should_be_locked(struct btree_trans *trans, st
 
 	if (!path->should_be_locked) {
 		path->should_be_locked = true;
-		trace_btree_path_should_be_locked(trans, path);
+		event_trace(trans->c, btree_path_should_be_locked, buf, ({
+			prt_printf(&buf, "%s\n", trans->fn);
+			bch2_btree_path_to_text_short(&buf, trans, path - trans->paths, path);
+		}));
 	}
 }
 

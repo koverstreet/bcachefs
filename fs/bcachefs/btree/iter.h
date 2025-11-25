@@ -3,11 +3,14 @@
 #define _BCACHEFS_BTREE_ITER_H
 
 #include "btree/bset.h"
+#include "btree/cache.h"
 #include "btree/types.h"
 
 #include "sb/counters.h"
 
 void bch2_trans_updates_to_text(struct printbuf *, struct btree_trans *);
+void bch2_btree_path_to_text_short(struct printbuf *, struct btree_trans *,
+				   btree_path_idx_t, struct btree_path *);
 void bch2_btree_path_to_text(struct printbuf *, struct btree_trans *,
 			     btree_path_idx_t, struct btree_path *);
 void bch2_trans_paths_to_text(struct printbuf *, struct btree_trans *);
@@ -40,7 +43,14 @@ static inline void __btree_path_get(struct btree_trans *trans, struct btree_path
 
 	path->ref++;
 	path->intent_ref += intent;
-	trace_btree_path_get_ll(trans, path);
+
+	event_trace(trans->c, btree_path_get_ll, buf, ({
+		prt_printf(&buf, "%s: path %3u ref %u btree ", trans->fn,
+			   idx, path->ref);
+		bch2_btree_id_to_text(&buf, path->btree_id);
+		prt_str(&buf, " pos ");
+		bch2_bpos_to_text(&buf, path->pos);
+	}));
 }
 
 static inline bool __btree_path_put(struct btree_trans *trans, struct btree_path *path, bool intent)
@@ -50,7 +60,14 @@ static inline bool __btree_path_put(struct btree_trans *trans, struct btree_path
 	EBUG_ON(!path->ref);
 	EBUG_ON(!path->intent_ref && intent);
 
-	trace_btree_path_put_ll(trans, path);
+	event_trace(trans->c, btree_path_put_ll, buf, ({
+		prt_printf(&buf, "%s: path %3zu ref %u btree ", trans->fn,
+			   path - trans->paths, path->ref);
+		bch2_btree_id_to_text(&buf, path->btree_id);
+		prt_str(&buf, " pos ");
+		bch2_bpos_to_text(&buf, path->pos);
+	}));
+
 	path->intent_ref -= intent;
 	return --path->ref == 0;
 }

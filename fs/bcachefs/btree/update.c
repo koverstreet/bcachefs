@@ -376,7 +376,12 @@ __btree_trans_update_by_path(struct btree_trans *trans,
 
 	__btree_path_get(trans, trans->paths + i->path, true);
 
-	trace_update_by_path(trans, path, i, overwrite);
+	event_trace(c, update_by_path, buf, ({
+		prt_printf(&buf, "%s overwrite %u\n", trans->fn, overwrite);
+		bch2_btree_path_to_text_short(&buf, trans, path_idx, path);
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(k));
+	}));
+
 	return i;
 }
 
