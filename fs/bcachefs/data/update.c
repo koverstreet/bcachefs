@@ -406,6 +406,17 @@ void bch2_data_update_read_done(struct data_update *u)
 	closure_call(&u->op.cl, bch2_write, NULL, NULL);
 }
 
+static inline bool should_trace_update_err(struct data_update *u, int ret)
+{
+	if ((u->opts.type == BCH_DATA_UPDATE_reconcile ||
+	     u->opts.type == BCH_DATA_UPDATE_promote) &&
+	    (bch2_err_matches(ret, BCH_ERR_data_update_fail_no_rw_devs) ||
+	     bch2_err_matches(ret, BCH_ERR_insufficient_devices)))
+		return false;
+
+	return true;
+}
+
 static void data_update_trace(struct data_update *u, int ret)
 {
 	struct bch_fs *c = u->op.c;
@@ -425,8 +436,7 @@ static void data_update_trace(struct data_update *u, int ret)
 			trace_data_update_no_io(c, buf.buf);
 		}
 		count_event(c, data_update_no_io);
-	} else if (ret != -BCH_ERR_data_update_fail_no_rw_devs &&
-		   ret != -BCH_ERR_insufficient_devices) {
+	} else if (should_trace_update_err(u, ret)) {
 		if (trace_data_update_fail_enabled()) {
 			CLASS(printbuf, buf)();
 			bch2_data_update_to_text(&buf, u);
@@ -1024,7 +1034,8 @@ out_nocow_unlock:
 out:
 	BUG_ON(!ret);
 
-	data_update_trace(m, ret);
+	if (!bch2_err_matches(ret, BCH_ERR_transaction_restart))
+		data_update_trace(m, ret);
 
 	bkey_put_dev_refs(c, k, m->ptrs_held);
 	m->ptrs_held = 0;
