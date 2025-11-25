@@ -36,16 +36,16 @@ DECLARE_EVENT_CLASS(fs_str,
 	TP_ARGS(c, str),
 
 	TP_STRUCT__entry(
-		__field(dev_t,		dev			)
+		__array(char,		fs, 32			)
 		__string(str,		str			)
 	),
 
 	TP_fast_assign(
-		__entry->dev		= c->dev;
+		strscpy(__entry->fs, c->name, sizeof(__entry->fs));
 		__assign_str(str);
 	),
 
-	TP_printk("%d,%d\n%s", MAJOR(__entry->dev), MINOR(__entry->dev), __get_str(str))
+	TP_printk("%s: %s", __entry->fs, __get_str(str))
 );
 
 DECLARE_EVENT_CLASS(trans_str,
