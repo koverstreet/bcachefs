@@ -713,6 +713,11 @@ static void bch2_rbio_retry(struct work_struct *work)
 		if (ret)
 			rbio->ret = ret;
 
+		if (rbio->data_update &&
+		    (bch2_err_matches(ret, BCH_ERR_data_read_key_overwritten) ||
+		     bch2_err_matches(ret, BCH_ERR_data_read_ptr_stale_race)))
+			ret = 0;
+
 		if (failed.nr || ret) {
 			CLASS(printbuf, buf)();
 			bch2_log_msg_start(c, &buf);
