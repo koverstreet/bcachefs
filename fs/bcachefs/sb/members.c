@@ -300,8 +300,8 @@ static void bch2_member_to_text_short_sb(struct printbuf *out,
 		prt_newline(out);
 	}
 
-	prt_printf(out, "Device:\t%.*s", (int) sizeof(m->device_name), m->device_name);
-	prt_printf(out, "Model:\t%.*s", (int) sizeof(m->device_model), m->device_model);
+	prt_printf(out, "Device:\t%.*s\n", (int) sizeof(m->device_name), m->device_name);
+	prt_printf(out, "Model:\t%.*s\n", (int) sizeof(m->device_model), m->device_model);
 
 	prt_printf(out, "State:\t%s\n",
 		   BCH_MEMBER_STATE(m) < BCH_MEMBER_STATE_NR
