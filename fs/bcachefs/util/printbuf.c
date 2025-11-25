@@ -5,6 +5,7 @@
 #include <linux/err.h>
 #include <linux/export.h>
 #include <linux/kernel.h>
+#include <linux/math64.h>
 #include <linux/slab.h>
 #include <linux/string_helpers.h>
 
@@ -429,10 +430,38 @@ void bch2_prt_bytes_indented(struct printbuf *out, const char *str, unsigned cou
 void bch2_prt_human_readable_u64(struct printbuf *out, u64 v)
 {
 	bch2_printbuf_make_room(out, 10);
-	unsigned len = string_get_size(v, 1, !out->si_units,
-				       out->buf + out->pos,
-				       printbuf_remaining_size(out));
-	printbuf_advance_pos(out, len);
+
+	static const char units[] = { 0, 'k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y' };
+	unsigned u = 0, r, base = out->si_units ? 1000 : 1024;
+
+	while (u + 1 < ARRAY_SIZE(units) && v >= base) {
+		r = do_div(v, base);
+		u++;
+	}
+
+	unsigned prev_pos = out->pos;
+	bch2_prt_printf(out, "%llu", v);
+
+	if (u) {
+		int prec = 3 - (out->pos - prev_pos);
+		if (prec > 0) {
+			if (!out->si_units) {
+				/* express the remainder as a decimal.  It's currently the
+				 * numerator of a fraction whose denominator is
+				 * divisor[units_base], which is 1 << 10 for STRING_UNITS_2 */
+				r *= 1000;
+				r >>= 10;
+			}
+
+			prt_char(out, '.');
+			prev_pos = out->pos;
+			bch2_prt_printf(out, "%03u", r);
+			out->pos = prev_pos + prec;
+			out->buf[out->pos] = '\0';
+		}
+
+		prt_char(out, units[u]);
+	}
 }
 
 /**
