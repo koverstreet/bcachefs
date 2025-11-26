@@ -44,7 +44,16 @@ journal_seq_pin(struct journal *j, u64 seq)
 }
 
 void bch2_journal_update_last_seq(struct journal *);
-void bch2_journal_update_last_seq_ondisk(struct journal *, u64, bool);
+
+typedef struct {
+	unsigned			nr_refs;
+	union bch_replicas_padded	replicas;
+} replicas_entry_refs;
+
+DEFINE_DARRAY_PREALLOCATED(replicas_entry_refs, 16);
+
+int bch2_journal_update_last_seq_ondisk(struct journal *, u64,
+					darray_replicas_entry_refs *);
 
 bool __bch2_journal_pin_put(struct journal *, u64);
 void bch2_journal_pin_put(struct journal *, u64);

@@ -280,7 +280,6 @@ struct journal {
 	spinlock_t		err_lock;
 
 	struct mutex		reclaim_lock;
-	struct mutex		last_seq_ondisk_lock;
 	/*
 	 * Used for waiting until journal reclaim has freed up space in the
 	 * journal:

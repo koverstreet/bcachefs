@@ -152,6 +152,10 @@ DEFINE_CLASS(_type, _type, darray_exit(&(_T)), (_type) {}, void)
 typedef DARRAY(_type)	darray_##_type;					\
 DEFINE_DARRAY_CLASS(darray_##_type)
 
+#define DEFINE_DARRAY_PREALLOCATED(_type, _nr)				\
+typedef DARRAY_PREALLOCATED(_type, _nr)	darray_##_type;			\
+DEFINE_DARRAY_CLASS(darray_##_type)
+
 #define DEFINE_DARRAY_NAMED(_name, _type)				\
 typedef DARRAY(_type)	_name;						\
 DEFINE_DARRAY_CLASS(_name)

@@ -184,20 +184,38 @@ static void journal_buf_realloc(struct journal *j, struct journal_buf *buf)
 	kvfree(new_buf);
 }
 
+static void replicas_refs_put(struct bch_fs *c, darray_replicas_entry_refs *refs)
+{
+	darray_for_each(*refs, i)
+		bch2_replicas_entry_put_many(c, &i->replicas.e, i->nr_refs);
+	refs->nr = 0;
+}
+
+static inline u64 last_uncompleted_write_seq(struct journal *j, u64 seq_completing)
+{
+	u64 seq = journal_last_unwritten_seq(j);
+
+	if (seq <= journal_cur_seq(j) &&
+	    (j->buf[seq & JOURNAL_BUF_MASK].write_done ||
+	     seq == seq_completing))
+		return seq;
+
+	return 0;
+}
+
 static CLOSURE_CALLBACK(journal_write_done)
 {
 	closure_type(w, struct journal_buf, io);
 	struct journal *j = container_of(w, struct journal, buf[w->idx]);
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
-	u64 seq = le64_to_cpu(w->data->seq);
-	u64 seq_wrote = seq;
+	u64 seq_wrote = le64_to_cpu(w->data->seq);
 	int err = 0;
 
 	bch2_time_stats_update(!JSET_NO_FLUSH(w->data)
 			       ? j->flush_write_time
 			       : j->noflush_write_time, j->write_start_time);
 
-	struct bch_replicas_entry_v1 *r = &journal_seq_pin(j, seq)->devs.e;
+	struct bch_replicas_entry_v1 *r = &journal_seq_pin(j, seq_wrote)->devs.e;
 	if (w->had_error) {
 		bch2_replicas_entry_put(c, r);
 		r->nr_devs = 0;
@@ -230,59 +248,85 @@ static CLOSURE_CALLBACK(journal_write_done)
 
 	closure_debug_destroy(cl);
 
+	CLASS(darray_replicas_entry_refs, replicas_refs)();
+
 	spin_lock(&j->lock);
-	BUG_ON(seq < j->pin.front);
-	if (err && (!j->err_seq || seq < j->err_seq))
-		j->err_seq	= seq;
+	BUG_ON(seq_wrote < j->pin.front);
+	if (err && (!j->err_seq || seq_wrote < j->err_seq))
+		j->err_seq = seq_wrote;
 
 	if (!j->free_buf || j->free_buf_size < w->buf_size) {
 		swap(j->free_buf,	w->data);
 		swap(j->free_buf_size,	w->buf_size);
 	}
 
-	if (w->data) {
-		void *buf = w->data;
-		w->data = NULL;
-		w->buf_size = 0;
-
-		spin_unlock(&j->lock);
-		kvfree(buf);
-		spin_lock(&j->lock);
-	}
+	/* kvfree can allocate memory, and can't be called under j->lock */
+	void *buf_to_free __free(kvfree) = w->data;
+	w->data = NULL;
+	w->buf_size = 0;
 
 	bool completed = false;
 	bool last_seq_ondisk_updated = false;
-again:
-	for (seq = journal_last_unwritten_seq(j);
-	     seq <= journal_cur_seq(j);
-	     seq++) {
+
+	u64 seq;
+	while ((seq = last_uncompleted_write_seq(j, seq_wrote))) {
 		w = j->buf + (seq & JOURNAL_BUF_MASK);
-		if (!w->write_done && seq != seq_wrote)
-			break;
 
 		if (!j->err_seq && !w->noflush) {
+			BUG_ON(w->empty && w->last_seq != seq);
+
 			if (j->last_seq_ondisk < w->last_seq) {
-				spin_unlock(&j->lock);
+				bch2_journal_update_last_seq_ondisk(j,
+						w->last_seq + w->empty, &replicas_refs);
 				/*
-				 * this needs to happen _before_ updating
-				 * j->flushed_seq_ondisk, for flushing to work
-				 * properly - when the flush completes replcias
-				 * refs need to have been dropped
-				 * */
-				bch2_journal_update_last_seq_ondisk(j, w->last_seq, w->empty);
+				 * bch2_journal_update_last_seq_ondisk()
+				 * can return an error if appending to
+				 * replicas_refs failed, but we don't
+				 * care - it's a preallocated darray so
+				 * it'll allways be able to do some
+				 * work, and we have to retry anyways,
+				 * because we have to drop j->lock to
+				 * put the replicas refs before updating
+				 * j->flushed_seq_ondisk
+				 */
+
+				/*
+				 * Do this before updating j->last_seq_ondisk,
+				 * or journal flushing breaks:
+				 */
+				if (replicas_refs.nr) {
+					spin_unlock(&j->lock);
+					replicas_refs_put(c, &replicas_refs);
+					spin_lock(&j->lock);
+					continue;
+				}
+
+				BUG_ON(j->last_seq > j->last_seq);
+				j->last_seq_ondisk = w->last_seq;
 				last_seq_ondisk_updated = true;
-				spin_lock(&j->lock);
-				goto again;
 			}
 
+			/* replicas refs eed to be put first */
 			j->flushed_seq_ondisk = seq;
 		}
 
-		j->seq_ondisk = seq;
-
 		if (w->empty)
 			j->last_empty_seq = seq;
+		j->seq_ondisk = seq;
 
+		closure_wake_up(&w->wait);
+		completed = true;
+	}
+
+	/*
+	 * Writes might complete out of order, but we have to do the completions
+	 * in order: if we complete out of order we note it here so the next
+	 * write completion will pick it up:
+	 */
+	j->buf[seq_wrote & JOURNAL_BUF_MASK].write_done = true;
+	j->pin.front = min(j->pin.back, j->last_seq_ondisk);
+
+	if (completed) {
 		/*
 		 * Updating last_seq_ondisk may let bch2_journal_reclaim_work() discard
 		 * more buckets:
@@ -293,13 +337,6 @@ again:
 		if (j->watermark != BCH_WATERMARK_stripe)
 			journal_reclaim_kick(&c->journal);
 
-		closure_wake_up(&w->wait);
-		completed = true;
-	}
-
-	j->buf[seq_wrote & JOURNAL_BUF_MASK].write_done = true;
-
-	if (completed) {
 		bch2_journal_update_last_seq(j);
 		bch2_journal_space_available(j);
 
@@ -307,8 +344,6 @@ again:
 
 		journal_wake(j);
 	}
-
-	j->pin.front = min(j->pin.back, j->last_seq_ondisk);
 
 	if (journal_last_unwritten_seq(j) == journal_cur_seq(j) &&
 	    j->reservations.cur_entry_offset < JOURNAL_ENTRY_CLOSED_VAL) {

@@ -605,7 +605,6 @@ void bch2_fs_journal_init_early(struct journal *j)
 	init_waitqueue_head(&j->reclaim_wait);
 	init_waitqueue_head(&j->pin_flush_wait);
 	mutex_init(&j->reclaim_lock);
-	mutex_init(&j->last_seq_ondisk_lock);
 	mutex_init(&j->discard_lock);
 
 	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);
