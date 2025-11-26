@@ -3,9 +3,13 @@
 #define _BCACHEFS_BACKPOINTERS_H
 
 #include "alloc/buckets.h"
+
 #include "btree/cache.h"
 #include "btree/iter.h"
 #include "btree/update.h"
+
+#include "data/reconcile.h"
+
 #include "init/error.h"
 
 static inline u64 swab40(u64 x)
@@ -100,6 +104,11 @@ static inline int bch2_bucket_backpointer_mod(struct btree_trans *trans,
 				struct bkey_i_backpointer *bp,
 				bool insert)
 {
+	if (BACKPOINTER_RECONCILE_PHYS(&bp->v))
+		try(bch2_btree_bit_mod_buffered(trans,
+				reconcile_work_phys_btree[BACKPOINTER_RECONCILE_PHYS(&bp->v)],
+				bp->k.p, insert));
+
 	if (static_branch_unlikely(&bch2_backpointers_no_use_write_buffer))
 		return bch2_bucket_backpointer_mod_nowritebuffer(trans, orig_k, bp, insert);
 
@@ -143,6 +152,23 @@ static inline enum bch_data_type bch2_bkey_ptr_data_type(struct bkey_s_c k,
 	}
 }
 
+static inline struct bpos bch2_extent_ptr_to_bp_pos(struct bkey_s_c k, struct extent_ptr_decoded p)
+{
+	if (k.k->type != KEY_TYPE_stripe)
+		return POS(p.ptr.dev,
+			   ((u64) p.ptr.offset << MAX_EXTENT_COMPRESS_RATIO_SHIFT) + p.crc.offset);
+	else {
+		/*
+		 * Put stripe backpointers where they won't collide with the
+		 * extent backpointers within the stripe:
+		 */
+		struct bkey_s_c_stripe s = bkey_s_c_to_stripe(k);
+		return POS(p.ptr.dev,
+			   ((u64) (p.ptr.offset + le16_to_cpu(s.v->sectors)) <<
+			    MAX_EXTENT_COMPRESS_RATIO_SHIFT) - 1);
+	}
+}
+
 static inline void bch2_extent_ptr_to_bp(struct bch_fs *c,
 			   enum btree_id btree_id, unsigned level,
 			   struct bkey_s_c k, struct extent_ptr_decoded p,
@@ -150,20 +176,7 @@ static inline void bch2_extent_ptr_to_bp(struct bch_fs *c,
 			   struct bkey_i_backpointer *bp)
 {
 	bkey_backpointer_init(&bp->k_i);
-	bp->k.p.inode = p.ptr.dev;
-
-	if (k.k->type != KEY_TYPE_stripe)
-		bp->k.p.offset = ((u64) p.ptr.offset << MAX_EXTENT_COMPRESS_RATIO_SHIFT) + p.crc.offset;
-	else {
-		/*
-		 * Put stripe backpointers where they won't collide with the
-		 * extent backpointers within the stripe:
-		 */
-		struct bkey_s_c_stripe s = bkey_s_c_to_stripe(k);
-		bp->k.p.offset = ((u64) (p.ptr.offset + le16_to_cpu(s.v->sectors)) <<
-				  MAX_EXTENT_COMPRESS_RATIO_SHIFT) - 1;
-	}
-
+	bp->k.p = bch2_extent_ptr_to_bp_pos(k, p);
 	bp->v	= (struct bch_backpointer) {
 		.btree_id	= btree_id,
 		.level		= level,
@@ -172,6 +185,10 @@ static inline void bch2_extent_ptr_to_bp(struct bch_fs *c,
 		.bucket_len	= ptr_disk_sectors(level ? btree_sectors(c) : k.k->size, p),
 		.pos		= k.k->p,
 	};
+
+	if (!level && bch2_dev_rotational(c, p.ptr.dev))
+		SET_BACKPOINTER_RECONCILE_PHYS(&bp->v,
+				rb_work_id_phys(bch2_bkey_reconcile_opts(c, k)));
 }
 
 struct wb_maybe_flush;

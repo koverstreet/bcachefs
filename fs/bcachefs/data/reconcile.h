@@ -10,6 +10,23 @@ int bch2_extent_reconcile_validate(struct bch_fs *, struct bkey_s_c,
 				   struct bkey_validate_context,
 				   const struct bch_extent_reconcile *);
 
+static inline enum reconcile_work_id rb_work_id(const struct bch_extent_reconcile *r)
+{
+	if (!r || !r->need_rb)
+		return RECONCILE_WORK_none;
+	if (r->pending)
+		return RECONCILE_WORK_pending;
+	if (r->hipri)
+		return RECONCILE_WORK_hipri;
+	return RECONCILE_WORK_normal;
+}
+
+static inline enum reconcile_work_id rb_work_id_phys(const struct bch_extent_reconcile *r)
+{
+	enum reconcile_work_id w = rb_work_id(r);
+	return w == RECONCILE_WORK_pending ? RECONCILE_WORK_none : w;
+}
+
 static inline struct bch_extent_reconcile io_opts_to_reconcile_opts(struct bch_fs *c,
 								    struct bch_inode_opts *opts)
 {

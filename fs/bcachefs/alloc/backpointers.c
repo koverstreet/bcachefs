@@ -79,6 +79,7 @@ void bch2_backpointer_swab(const struct bch_fs *c, struct bkey_s k)
 {
 	struct bkey_s_backpointer bp = bkey_s_to_backpointer(k);
 
+	bp.v->flags		= swab32(bp.v->flags);
 	bp.v->bucket_len	= swab32(bp.v->bucket_len);
 	bch2_bpos_swab(&bp.v->pos);
 }
@@ -865,7 +866,7 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 
 		if (c->sb.version_upgrade_complete < bcachefs_metadata_version_backpointer_bucket_gen &&
 		    (bp.v->bucket_gen != a->gen ||
-		     bp.v->pad)) {
+		     bp.v->flags)) {
 			try(bch2_backpointer_del(trans, bp_k.k->p));
 			nr_deletes++;
 

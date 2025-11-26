@@ -475,10 +475,12 @@ struct bch_backpointer {
 	__u8			level;
 	__u8			data_type;
 	__u8			bucket_gen;
-	__u32			pad;
+	__u32			flags;
 	__u32			bucket_len;
 	struct bpos		pos;
 } __packed __aligned(8);
+
+BITMASK(BACKPOINTER_RECONCILE_PHYS,	struct bch_backpointer, flags, 0, 2);
 
 /* Optional/variable size superblock sections: */
 
@@ -506,6 +508,123 @@ struct bch_sb_field {
 	x(downgrade,			14)	\
 	x(recovery_passes,		15)	\
 	x(extent_type_u64s,		16)
+
+enum btree_id_flags {
+	BTREE_IS_extents	= BIT(0),
+	BTREE_IS_snapshots	= BIT(1),
+	BTREE_IS_snapshot_field	= BIT(2),
+	BTREE_IS_data		= BIT(3),
+	BTREE_IS_write_buffer	= BIT(4),
+};
+
+#define BCH_BTREE_IDS()								\
+	x(extents,		0,						\
+	  BTREE_IS_extents|							\
+	  BTREE_IS_snapshots|							\
+	  BTREE_IS_data,							\
+	  BIT_ULL(KEY_TYPE_whiteout)|						\
+	  BIT_ULL(KEY_TYPE_extent_whiteout)|					\
+	  BIT_ULL(KEY_TYPE_error)|						\
+	  BIT_ULL(KEY_TYPE_cookie)|						\
+	  BIT_ULL(KEY_TYPE_extent)|						\
+	  BIT_ULL(KEY_TYPE_reservation)|					\
+	  BIT_ULL(KEY_TYPE_reflink_p)|						\
+	  BIT_ULL(KEY_TYPE_inline_data))					\
+	x(inodes,		1,						\
+	  BTREE_IS_snapshots,							\
+	  BIT_ULL(KEY_TYPE_whiteout)|						\
+	  BIT_ULL(KEY_TYPE_inode)|						\
+	  BIT_ULL(KEY_TYPE_inode_v2)|						\
+	  BIT_ULL(KEY_TYPE_inode_v3)|						\
+	  BIT_ULL(KEY_TYPE_inode_generation))					\
+	x(dirents,		2,						\
+	  BTREE_IS_snapshots,							\
+	  BIT_ULL(KEY_TYPE_whiteout)|						\
+	  BIT_ULL(KEY_TYPE_hash_whiteout)|					\
+	  BIT_ULL(KEY_TYPE_dirent))						\
+	x(xattrs,		3,						\
+	  BTREE_IS_snapshots,							\
+	  BIT_ULL(KEY_TYPE_whiteout)|						\
+	  BIT_ULL(KEY_TYPE_cookie)|						\
+	  BIT_ULL(KEY_TYPE_hash_whiteout)|					\
+	  BIT_ULL(KEY_TYPE_xattr))						\
+	x(alloc,		4,	0,					\
+	  BIT_ULL(KEY_TYPE_alloc)|						\
+	  BIT_ULL(KEY_TYPE_alloc_v2)|						\
+	  BIT_ULL(KEY_TYPE_alloc_v3)|						\
+	  BIT_ULL(KEY_TYPE_alloc_v4))						\
+	x(quotas,		5,	0,					\
+	  BIT_ULL(KEY_TYPE_quota))						\
+	x(stripes,		6,						\
+	  BTREE_IS_data,							\
+	  BIT_ULL(KEY_TYPE_stripe))						\
+	x(reflink,		7,						\
+	  BTREE_IS_extents|							\
+	  BTREE_IS_data,							\
+	  BIT_ULL(KEY_TYPE_reflink_v)|						\
+	  BIT_ULL(KEY_TYPE_indirect_inline_data)|				\
+	  BIT_ULL(KEY_TYPE_error))						\
+	x(subvolumes,		8,	0,					\
+	  BIT_ULL(KEY_TYPE_subvolume))						\
+	x(snapshots,		9,	0,					\
+	  BIT_ULL(KEY_TYPE_snapshot))						\
+	x(lru,			10,						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(freespace,		11,						\
+	  BTREE_IS_extents,							\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(need_discard,		12,	0,					\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(backpointers,		13,						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_backpointer))					\
+	x(bucket_gens,		14,	0,					\
+	  BIT_ULL(KEY_TYPE_bucket_gens))					\
+	x(snapshot_trees,	15,	0,					\
+	  BIT_ULL(KEY_TYPE_snapshot_tree))					\
+	x(deleted_inodes,	16,						\
+	  BTREE_IS_snapshot_field|						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(logged_ops,		17,	0,					\
+	  BIT_ULL(KEY_TYPE_logged_op_truncate)|					\
+	  BIT_ULL(KEY_TYPE_logged_op_finsert)|					\
+	  BIT_ULL(KEY_TYPE_inode_alloc_cursor))					\
+	x(reconcile_work,	18,						\
+	  BTREE_IS_snapshot_field|						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set)|BIT_ULL(KEY_TYPE_cookie))			\
+	x(subvolume_children,	19,	0,					\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(accounting,		20,						\
+	  BTREE_IS_snapshot_field|						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_accounting))						\
+	x(reconcile_hipri,	21,						\
+	  BTREE_IS_snapshot_field|						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(reconcile_pending,	22,						\
+	  BTREE_IS_snapshot_field|						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(reconcile_scan,	23,	0,					\
+	  BIT_ULL(KEY_TYPE_cookie)|						\
+	  BIT_ULL(KEY_TYPE_backpointer))					\
+	x(reconcile_work_phys,	24,						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(reconcile_hipri_phys,	25,						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))
+
+enum btree_id {
+#define x(name, nr, ...) BTREE_ID_##name = nr,
+	BCH_BTREE_IDS()
+#undef x
+	BTREE_ID_NR
+};
 
 #include "alloc/accounting_format.h"
 #include "alloc/disk_groups_format.h"
@@ -1338,117 +1457,6 @@ LE32_BITMASK(JSET_NO_FLUSH,	struct jset, flags, 5, 6);
 #define BCH_JOURNAL_BUCKETS_MIN		8
 
 /* Btree: */
-
-enum btree_id_flags {
-	BTREE_IS_extents	= BIT(0),
-	BTREE_IS_snapshots	= BIT(1),
-	BTREE_IS_snapshot_field	= BIT(2),
-	BTREE_IS_data		= BIT(3),
-	BTREE_IS_write_buffer	= BIT(4),
-};
-
-#define BCH_BTREE_IDS()								\
-	x(extents,		0,						\
-	  BTREE_IS_extents|							\
-	  BTREE_IS_snapshots|							\
-	  BTREE_IS_data,							\
-	  BIT_ULL(KEY_TYPE_whiteout)|						\
-	  BIT_ULL(KEY_TYPE_extent_whiteout)|					\
-	  BIT_ULL(KEY_TYPE_error)|						\
-	  BIT_ULL(KEY_TYPE_cookie)|						\
-	  BIT_ULL(KEY_TYPE_extent)|						\
-	  BIT_ULL(KEY_TYPE_reservation)|					\
-	  BIT_ULL(KEY_TYPE_reflink_p)|						\
-	  BIT_ULL(KEY_TYPE_inline_data))					\
-	x(inodes,		1,						\
-	  BTREE_IS_snapshots,							\
-	  BIT_ULL(KEY_TYPE_whiteout)|						\
-	  BIT_ULL(KEY_TYPE_inode)|						\
-	  BIT_ULL(KEY_TYPE_inode_v2)|						\
-	  BIT_ULL(KEY_TYPE_inode_v3)|						\
-	  BIT_ULL(KEY_TYPE_inode_generation))					\
-	x(dirents,		2,						\
-	  BTREE_IS_snapshots,							\
-	  BIT_ULL(KEY_TYPE_whiteout)|						\
-	  BIT_ULL(KEY_TYPE_hash_whiteout)|					\
-	  BIT_ULL(KEY_TYPE_dirent))						\
-	x(xattrs,		3,						\
-	  BTREE_IS_snapshots,							\
-	  BIT_ULL(KEY_TYPE_whiteout)|						\
-	  BIT_ULL(KEY_TYPE_cookie)|						\
-	  BIT_ULL(KEY_TYPE_hash_whiteout)|					\
-	  BIT_ULL(KEY_TYPE_xattr))						\
-	x(alloc,		4,	0,					\
-	  BIT_ULL(KEY_TYPE_alloc)|						\
-	  BIT_ULL(KEY_TYPE_alloc_v2)|						\
-	  BIT_ULL(KEY_TYPE_alloc_v3)|						\
-	  BIT_ULL(KEY_TYPE_alloc_v4))						\
-	x(quotas,		5,	0,					\
-	  BIT_ULL(KEY_TYPE_quota))						\
-	x(stripes,		6,						\
-	  BTREE_IS_data,							\
-	  BIT_ULL(KEY_TYPE_stripe))						\
-	x(reflink,		7,						\
-	  BTREE_IS_extents|							\
-	  BTREE_IS_data,							\
-	  BIT_ULL(KEY_TYPE_reflink_v)|						\
-	  BIT_ULL(KEY_TYPE_indirect_inline_data)|				\
-	  BIT_ULL(KEY_TYPE_error))						\
-	x(subvolumes,		8,	0,					\
-	  BIT_ULL(KEY_TYPE_subvolume))						\
-	x(snapshots,		9,	0,					\
-	  BIT_ULL(KEY_TYPE_snapshot))						\
-	x(lru,			10,						\
-	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set))						\
-	x(freespace,		11,						\
-	  BTREE_IS_extents,							\
-	  BIT_ULL(KEY_TYPE_set))						\
-	x(need_discard,		12,	0,					\
-	  BIT_ULL(KEY_TYPE_set))						\
-	x(backpointers,		13,						\
-	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_backpointer))					\
-	x(bucket_gens,		14,	0,					\
-	  BIT_ULL(KEY_TYPE_bucket_gens))					\
-	x(snapshot_trees,	15,	0,					\
-	  BIT_ULL(KEY_TYPE_snapshot_tree))					\
-	x(deleted_inodes,	16,						\
-	  BTREE_IS_snapshot_field|						\
-	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set))						\
-	x(logged_ops,		17,	0,					\
-	  BIT_ULL(KEY_TYPE_logged_op_truncate)|					\
-	  BIT_ULL(KEY_TYPE_logged_op_finsert)|					\
-	  BIT_ULL(KEY_TYPE_inode_alloc_cursor))					\
-	x(reconcile_work,	18,						\
-	  BTREE_IS_snapshot_field|						\
-	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set)|BIT_ULL(KEY_TYPE_cookie))			\
-	x(subvolume_children,	19,	0,					\
-	  BIT_ULL(KEY_TYPE_set))						\
-	x(accounting,		20,						\
-	  BTREE_IS_snapshot_field|						\
-	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_accounting))						\
-	x(reconcile_hipri,	21,						\
-	  BTREE_IS_snapshot_field|						\
-	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set))						\
-	x(reconcile_pending,	22,						\
-	  BTREE_IS_snapshot_field|						\
-	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set))						\
-	x(reconcile_scan,	23,	0,					\
-	  BIT_ULL(KEY_TYPE_cookie)|						\
-	  BIT_ULL(KEY_TYPE_backpointer))
-
-enum btree_id {
-#define x(name, nr, ...) BTREE_ID_##name = nr,
-	BCH_BTREE_IDS()
-#undef x
-	BTREE_ID_NR
-};
 
 /*
  * Maximum number of btrees that we will _ever_ have under the current scheme,

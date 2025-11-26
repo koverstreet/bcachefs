@@ -174,5 +174,30 @@ enum bch_reconcile_accounting_type {
 	BCH_REBALANCE_ACCOUNTING_NR,
 };
 
+#define RECONCILE_WORK_IDS()			\
+	x(none)					\
+	x(hipri)				\
+	x(normal)				\
+	x(pending)
+
+enum reconcile_work_id {
+#define x(t)	RECONCILE_WORK_##t,
+	RECONCILE_WORK_IDS()
+#undef x
+};
+
+__maybe_unused
+static const enum btree_id reconcile_work_btree[] = {
+	[RECONCILE_WORK_hipri]		= BTREE_ID_reconcile_hipri,
+	[RECONCILE_WORK_normal]		= BTREE_ID_reconcile_work,
+	[RECONCILE_WORK_pending]	= BTREE_ID_reconcile_pending,
+};
+
+__maybe_unused
+static const enum btree_id reconcile_work_phys_btree[] = {
+	[RECONCILE_WORK_hipri]		= BTREE_ID_reconcile_hipri_phys,
+	[RECONCILE_WORK_normal]		= BTREE_ID_reconcile_work_phys,
+};
+
 #endif /* _BCACHEFS_REBALANCE_FORMAT_H */
 
