@@ -830,6 +830,10 @@ int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 					goto err_late;
 			}
 
+
+			bool write_sb = false;
+			__bch2_dev_mi_field_upgrades(c, ca, &write_sb);
+
 			bch2_write_super(c);
 		}
 
@@ -917,6 +921,8 @@ int bch2_dev_online(struct bch_fs *c, const char *path, struct printbuf *err)
 	try(bch2_dev_attach_bdev(c, &sb, err));
 
 	struct bch_dev *ca = bch2_dev_locked(c, dev_idx);
+
+	bch2_dev_mi_field_upgrades(ca);
 
 	ret = bch2_trans_mark_dev_sb(c, ca, BTREE_TRIGGER_transactional);
 	if (ret) {

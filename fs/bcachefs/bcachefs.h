@@ -818,6 +818,7 @@ struct bch_fs {
 
 	struct bch_dev __rcu	*devs[BCH_SB_MEMBERS_MAX];
 	struct bch_devs_mask	devs_removed;
+	struct bch_devs_mask	devs_rotational;
 
 	u8			extent_type_u64s[31];
 	u8			extent_types_known;
@@ -1316,6 +1317,11 @@ static inline const char *bch2_fs_name(const struct bch_fs *c)
 static inline const char *bch2_dev_name(const struct bch_dev *ca)
 {
 	return ca->name;
+}
+
+static inline bool bch2_dev_rotational(struct bch_fs *c, unsigned dev)
+{
+	return dev != BCH_SB_MEMBER_INVALID && test_bit(dev, c->devs_rotational.d);
 }
 
 #endif /* _BCACHEFS_H */

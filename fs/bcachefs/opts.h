@@ -551,6 +551,11 @@ enum fsck_err_opts {
 	  OPT_BOOL(),							\
 	  BCH_MEMBER_DISCARD,		true,				\
 	  NULL,		"Enable discard/TRIM support")			\
+	x(rotational,			u8,				\
+	  OPT_DEVICE|OPT_RUNTIME,					\
+	  OPT_BOOL(),							\
+	  BCH_MEMBER_ROTATIONAL,	false,				\
+	  NULL,		"Disk is rotational; different behaviour for reconcile")\
 	x(btree_node_prefetch,		u8,				\
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\

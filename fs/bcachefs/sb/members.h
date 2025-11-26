@@ -376,7 +376,8 @@ static inline struct bch_member_cpu bch2_mi_to_cpu(struct bch_member *mi)
 			: 1,
 		.freespace_initialized = BCH_MEMBER_FREESPACE_INITIALIZED(mi),
 		.resize_on_mount	= BCH_MEMBER_RESIZE_ON_MOUNT(mi),
-		.valid		= bch2_member_alive(mi),
+		.rotational		= BCH_MEMBER_ROTATIONAL(mi),
+		.valid			= bch2_member_alive(mi),
 		.btree_bitmap_shift	= mi->btree_bitmap_shift,
 		.btree_allocated_bitmap = le64_to_cpu(mi->btree_allocated_bitmap),
 	};
@@ -441,6 +442,10 @@ void bch2_maybe_schedule_btree_bitmap_gc(struct bch_fs *);
 
 int bch2_sb_member_alloc(struct bch_fs *);
 void bch2_sb_members_clean_deleted(struct bch_fs *);
+
+void __bch2_dev_mi_field_upgrades(struct bch_fs *, struct bch_dev *, bool *);
+void bch2_dev_mi_field_upgrades(struct bch_dev *);
+void bch2_fs_mi_field_upgrades(struct bch_fs *);
 
 static inline void bch2_prt_member_name(struct printbuf *out, struct bch_fs *c, unsigned idx)
 {

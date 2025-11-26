@@ -1016,8 +1016,9 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 			prt_str_indented(out, "filesystem needs upgrade from older version; run fsck from older bcachefs-tools to fix\n");
 			return -EINVAL;
 		}
-
 	}
+
+	bch2_fs_mi_field_upgrades(c);
 
 	return 0;
 }

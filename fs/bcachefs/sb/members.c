@@ -263,6 +263,8 @@ void bch2_member_to_text(struct printbuf *out,
 		prt_printf(out, "(none)");
 	prt_newline(out);
 
+	prt_printf(out, "Rotational:\t%llu\n", BCH_MEMBER_ROTATIONAL(m));
+
 	prt_printf(out, "Btree allocated bitmap blocksize:\t");
 	if (m->btree_bitmap_shift < 64)
 		prt_units_u64(out, 1ULL << m->btree_bitmap_shift);
@@ -455,6 +457,8 @@ void bch2_sb_members_to_cpu(struct bch_fs *c)
 	for_each_member_device(c, ca) {
 		struct bch_member m = bch2_sb_member_get(c->disk_sb.sb, ca->dev_idx);
 		ca->mi = bch2_mi_to_cpu(&m);
+
+		mod_bit(ca->dev_idx, c->devs_rotational.d, ca->mi.rotational);
 	}
 
 	struct bch_sb_field_members_v2 *mi2 = bch2_sb_field_get(c->disk_sb.sb, members_v2);
@@ -807,6 +811,45 @@ void bch2_sb_members_clean_deleted(struct bch_fs *c)
 			write_sb = true;
 		}
 	}
+
+	if (write_sb)
+		bch2_write_super(c);
+}
+
+void __bch2_dev_mi_field_upgrades(struct bch_fs *c, struct bch_dev *ca, bool *write_sb)
+{
+	struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
+
+	if (!BCH_MEMBER_ROTATIONAL_SET(m)) {
+		SET_BCH_MEMBER_ROTATIONAL(m, !bdev_nonrot(ca->disk_sb.bdev));
+		SET_BCH_MEMBER_ROTATIONAL_SET(m, true);
+		*write_sb = true;
+	}
+}
+
+void bch2_dev_mi_field_upgrades(struct bch_dev *ca)
+{
+	struct bch_fs *c = ca->fs;
+	guard(mutex)(&c->sb_lock);
+	bool write_sb = false;
+
+	__bch2_dev_mi_field_upgrades(c, ca, &write_sb);
+
+	if (write_sb)
+		bch2_write_super(c);
+}
+
+/*
+ * Set BCH_MEMBER_ROTATIONAL, if it hasn't been initialized
+ */
+void bch2_fs_mi_field_upgrades(struct bch_fs *c)
+{
+	guard(mutex)(&c->sb_lock);
+	bool write_sb = false;
+
+	scoped_guard(rcu)
+		for_each_online_member_rcu(c, ca)
+			__bch2_dev_mi_field_upgrades(c, ca, &write_sb);
 
 	if (write_sb)
 		bch2_write_super(c);
