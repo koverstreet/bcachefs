@@ -38,13 +38,20 @@ enum bch_counters_flags {
 	x(data_update_key_fail,				38,	TYPE_SECTORS)	\
 	x(data_update_start_fail_obsolete,		39,	TYPE_COUNTER)	\
 	x(data_update_noop_obsolete,			92,	TYPE_COUNTER)	\
+	x(reconcile_scan_fs,				113,	TYPE_SECTORS)	\
+	x(reconcile_scan_metadata,			114,	TYPE_SECTORS)	\
+	x(reconcile_scan_pending,			115,	TYPE_SECTORS)	\
+	x(reconcile_scan_device,			116,	TYPE_SECTORS)	\
+	x(reconcile_scan_inum,				117,	TYPE_SECTORS)	\
+	x(reconcile_btree,				118,	TYPE_SECTORS)	\
+	x(reconcile_data,				119,	TYPE_SECTORS)	\
+	x(reconcile_set_pending,			83,	TYPE_SECTORS)	\
 	x(evacuate_bucket,				84,	TYPE_COUNTER)	\
 	x(stripe_create,				102,	TYPE_COUNTER)	\
 	x(stripe_create_fail,				103,	TYPE_COUNTER)	\
 	x(stripe_update_bucket,				104,	TYPE_COUNTER)	\
 	x(stripe_update_extent,				99,	TYPE_COUNTER)	\
 	x(stripe_update_extent_fail,			100,	TYPE_COUNTER)	\
-	x(reconcile_set_pending,			83,	TYPE_COUNTER)	\
 	x(copygc,					40,	TYPE_COUNTER)	\
 	x(copygc_wait_obsolete,				41,	TYPE_COUNTER)	\
 	x(bucket_invalidate,				3,	TYPE_COUNTER)	\

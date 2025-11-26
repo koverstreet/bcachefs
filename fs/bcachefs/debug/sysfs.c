@@ -211,7 +211,8 @@ read_attribute(has_data);
 read_attribute(alloc_debug);
 read_attribute(usage_base);
 
-#define x(t, n, ...) read_attribute(t);
+#define x(t, n, ...)							\
+	static struct attribute sysfs_counter_##t = { .name = #t, .mode = 0644 };
 BCH_PERSISTENT_COUNTERS()
 #undef x
 
@@ -554,7 +555,7 @@ SHOW(bch2_fs_counters)
 	printbuf_tabstop_push(out, 32);
 
 	#define x(t, n, f, ...) \
-		if (attr == &sysfs_##t) {					\
+		if (attr == &sysfs_counter_##t) {					\
 			counter             = percpu_u64_get(&c->counters.now[BCH_COUNTER_##t]);\
 			counter_since_mount = counter - c->counters.mount[BCH_COUNTER_##t];\
 			if (f & TYPE_SECTORS) {					\
@@ -585,7 +586,7 @@ SYSFS_OPS(bch2_fs_counters);
 
 struct attribute *bch2_fs_counters_files[] = {
 #define x(t, ...) \
-	&sysfs_##t,
+	&sysfs_counter_##t,
 	BCH_PERSISTENT_COUNTERS()
 #undef x
 	NULL
