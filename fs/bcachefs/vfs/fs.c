@@ -2391,7 +2391,7 @@ int bch2_fs_vfs_init(struct bch_fs *c)
 	try(rhltable_init(&c->vfs_inodes_by_inum_table, &bch2_vfs_inodes_by_inum_params));
 
 	c->vfs_writeback_wq = alloc_workqueue("bcachefs_vfs_writeback",
-					      WQ_PERCPU|WQ_MEM_RECLAIM|WQ_FREEZABLE, 1);
+					      WQ_MEM_RECLAIM|WQ_FREEZABLE, 1);
 	if (!c->vfs_writeback_wq)
 		return bch_err_throw(c, ENOMEM_fs_other_alloc);
 
