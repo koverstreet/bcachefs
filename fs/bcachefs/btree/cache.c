@@ -253,6 +253,8 @@ void __bch2_btree_node_hash_remove(struct btree_cache *bc, struct btree *b)
 	int ret = rhashtable_remove_fast(&bc->table, &b->hash, bch_btree_cache_params);
 	BUG_ON(ret);
 
+	clear_btree_node_just_written(b);
+
 	/* Cause future lookups for this node to fail: */
 	b->hash_val = 0;
 
@@ -860,7 +862,6 @@ err:
 	/* Try to cannibalize another cached btree node: */
 	if (bc->alloc_lock == current) {
 		b2 = btree_node_cannibalize(c);
-		clear_btree_node_just_written(b2);
 		__bch2_btree_node_hash_remove(bc, b2);
 
 		if (b) {
