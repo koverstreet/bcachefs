@@ -358,8 +358,6 @@ int bch2_journal_update_last_seq_ondisk(struct journal *j, u64 last_seq_ondisk,
 	for (u64 seq = j->last_seq_ondisk; seq < last_seq_ondisk; seq++) {
 		struct journal_entry_pin_list *pin_list = journal_seq_pin(j, seq);
 
-		BUG_ON(atomic_read(&pin_list->count));
-
 		if (pin_list->devs.e.nr_devs) {
 			replicas_entry_refs *e = darray_find_p(*refs, i,
 			    bch2_replicas_entry_eq(&i->replicas.e, &pin_list->devs.e));
