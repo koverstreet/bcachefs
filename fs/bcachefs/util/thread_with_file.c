@@ -427,6 +427,38 @@ int bch2_stdio_redirect_readline(struct stdio_redirect *stdio, darray_char *line
 	return bch2_stdio_redirect_readline_timeout(stdio, line, MAX_SCHEDULE_TIMEOUT);
 }
 
+/* Always writes output atomically: return code is @len or an error */
+ssize_t bch2_stdio_redirect_write(struct stdio_redirect *stdio, bool nonblocking,
+				  const char *ubuf, size_t len)
+{
+	struct stdio_buf *buf = &stdio->output;
+
+	while (true) {
+		if (stdio->done)
+			return -EPIPE;
+
+		bool wrote;
+		scoped_guard(spinlock_irqsave, &buf->lock) {
+			wrote = !darray_make_room_gfp(&buf->buf, len, GFP_NOWAIT);
+			if (wrote) {
+				memcpy(&darray_top(buf->buf), ubuf, len);
+				buf->buf.nr += len;
+			}
+		}
+
+		if (wrote) {
+			wake_up(&buf->wait);
+			return len;
+		}
+
+		if (nonblocking)
+			return -EAGAIN;
+
+		try(wait_event_interruptible(buf->wait,
+					     stdio_redirect_has_output_space(stdio)));
+	}
+}
+
 __printf(3, 0)
 static ssize_t bch2_darray_vprintf(darray_char *out, gfp_t gfp, const char *fmt, va_list args)
 {

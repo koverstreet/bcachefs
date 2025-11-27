@@ -75,6 +75,7 @@ int bch2_stdio_redirect_read(struct stdio_redirect *, char *, size_t);
 int bch2_stdio_redirect_readline_timeout(struct stdio_redirect *, darray_char *, unsigned long);
 int bch2_stdio_redirect_readline(struct stdio_redirect *, darray_char *);
 
+ssize_t bch2_stdio_redirect_write(struct stdio_redirect *, bool, const char *, size_t);
 __printf(3, 0) ssize_t bch2_stdio_redirect_vprintf(struct stdio_redirect *, bool, const char *, va_list);
 __printf(3, 4) ssize_t bch2_stdio_redirect_printf(struct stdio_redirect *, bool, const char *, ...);
 

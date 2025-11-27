@@ -137,7 +137,7 @@ void bch2_print_str(struct bch_fs *c, const char *prefix, const char *str)
 	struct stdio_redirect *stdio = bch2_fs_stdio_redirect(c);
 
 	if (unlikely(stdio)) {
-		bch2_stdio_redirect_printf(stdio, true, "%s", str);
+		bch2_stdio_redirect_write(stdio, true, str, strlen(str));
 		return;
 	}
 #endif
