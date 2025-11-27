@@ -2112,7 +2112,7 @@ static int bch2_fs_get_tree(struct fs_context *fc)
 	struct inode *vinode;
 	struct bch2_opts_parse *opts_parse = fc->fs_private;
 	struct bch_opts opts = opts_parse->opts;
-	darray_const_str devs;
+	darray_const_str devs = {};
 	darray_fs devs_to_fs = {};
 	int ret;
 
@@ -2250,7 +2250,7 @@ out:
 	fc->root = dget(sb->s_root);
 err:
 	darray_exit(&devs_to_fs);
-	bch2_darray_str_exit(&devs);
+	darray_exit_free_item(&devs, kfree);
 	if (ret)
 		pr_err("error: %s", bch2_err_str(ret));
 	/*

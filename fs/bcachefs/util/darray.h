@@ -20,19 +20,81 @@ struct {								\
 
 #define DARRAY(_type) DARRAY_PREALLOCATED(_type, 0)
 
-typedef DARRAY(char)	darray_char;
-typedef DARRAY(char *)	darray_str;
-typedef DARRAY(const char *) darray_const_str;
+#define __darray_for_each(_d, _i)					\
+	for ((_i) = (_d).data; _i < (_d).data + (_d).nr; _i++)
 
-typedef DARRAY(u8)	darray_u8;
-typedef DARRAY(u16)	darray_u16;
-typedef DARRAY(u32)	darray_u32;
-typedef DARRAY(u64)	darray_u64;
+#define darray_for_each_from(_d, _i, _start)					\
+	for (typeof(&(_d).data[0]) _i = _start; _i < (_d).data + (_d).nr; _i++)
 
-typedef DARRAY(s8)	darray_s8;
-typedef DARRAY(s16)	darray_s16;
-typedef DARRAY(s32)	darray_s32;
-typedef DARRAY(s64)	darray_s64;
+#define darray_for_each(_d, _i)						\
+	darray_for_each_from(_d, _i, (_d).data)
+
+#define darray_for_each_max(_d, _i, _nr)					\
+	for (typeof(&(_d).data[0]) _i = (_d).data; _i < (_d).data + min(_nr, (_d).nr); _i++)
+
+#define darray_for_each_reverse(_d, _i)					\
+	for (typeof(&(_d).data[0]) _i = (_d).data + (_d).nr - 1; _i >= (_d).data && (_d).nr; --_i)
+
+#define darray_init(_d)							\
+do {									\
+	(_d)->nr = 0;							\
+	(_d)->size = ARRAY_SIZE((_d)->preallocated);			\
+	(_d)->data = (_d)->size ? (_d)->preallocated : NULL;		\
+} while (0)
+
+#define darray_exit(_d)							\
+do {									\
+	if (!ARRAY_SIZE((_d)->preallocated) ||				\
+	    (_d)->data != (_d)->preallocated)				\
+		kvfree((_d)->data);					\
+	darray_init(_d);						\
+} while (0)
+
+#define darray_exit_free_item(_d, _free)				\
+do {									\
+	darray_for_each(*(_d), i)					\
+		_free(*i);						\
+	if (!ARRAY_SIZE((_d)->preallocated) ||				\
+	    (_d)->data != (_d)->preallocated)				\
+		kvfree((_d)->data);					\
+	darray_init(_d);						\
+} while (0)
+
+#define DEFINE_DARRAY_CLASS(_type)					\
+DEFINE_CLASS(_type, _type, darray_exit(&(_T)), (_type) {}, void)
+
+#define DEFINE_DARRAY_CLASS_FREE_ITEM(_type, _free)		\
+DEFINE_CLASS(_type, _type, darray_exit_free_item(&(_T), _free), (_type) {}, void)
+
+#define DEFINE_DARRAY(_type)						\
+typedef DARRAY(_type)	darray_##_type;					\
+DEFINE_DARRAY_CLASS(darray_##_type)
+
+#define DEFINE_DARRAY_PREALLOCATED(_type, _nr)				\
+typedef DARRAY_PREALLOCATED(_type, _nr)	darray_##_type;			\
+DEFINE_DARRAY_CLASS(darray_##_type)
+
+#define DEFINE_DARRAY_NAMED(_name, _type)				\
+typedef DARRAY(_type)	_name;						\
+DEFINE_DARRAY_CLASS(_name)
+
+#define DEFINE_DARRAY_NAMED_FREE_ITEM(_name, _type, _free)		\
+typedef DARRAY(_type)	_name;						\
+DEFINE_DARRAY_CLASS_FREE_ITEM(_name, _free)
+
+DEFINE_DARRAY(char);
+DEFINE_DARRAY(u8)
+DEFINE_DARRAY(u16)
+DEFINE_DARRAY(u32)
+DEFINE_DARRAY(u64)
+
+DEFINE_DARRAY(s8)
+DEFINE_DARRAY(s16)
+DEFINE_DARRAY(s32)
+DEFINE_DARRAY(s64)
+
+DEFINE_DARRAY_NAMED_FREE_ITEM(darray_str, char *, kfree);
+DEFINE_DARRAY_NAMED_FREE_ITEM(darray_const_str, const char *, kfree);
 
 int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t, bool);
 
@@ -108,70 +170,7 @@ int __bch2_darray_resize_noprof(darray_char *, size_t, size_t, gfp_t, bool);
 
 #define darray_find(_d, _item)	darray_find_p(_d, _i, *_i == _item)
 
-/* Iteration: */
-
-#define __darray_for_each(_d, _i)					\
-	for ((_i) = (_d).data; _i < (_d).data + (_d).nr; _i++)
-
-#define darray_for_each_from(_d, _i, _start)					\
-	for (typeof(&(_d).data[0]) _i = _start; _i < (_d).data + (_d).nr; _i++)
-
-#define darray_for_each(_d, _i)						\
-	darray_for_each_from(_d, _i, (_d).data)
-
-#define darray_for_each_max(_d, _i, _nr)					\
-	for (typeof(&(_d).data[0]) _i = (_d).data; _i < (_d).data + min(_nr, (_d).nr); _i++)
-
-#define darray_for_each_reverse(_d, _i)					\
-	for (typeof(&(_d).data[0]) _i = (_d).data + (_d).nr - 1; _i >= (_d).data && (_d).nr; --_i)
-
 #define darray_sort(_d, _cmp)						\
 	sort((_d).data, (_d).nr, sizeof((_d).data[0]), _cmp, NULL)
-
-/* Init/exit */
-
-#define darray_init(_d)							\
-do {									\
-	(_d)->nr = 0;							\
-	(_d)->size = ARRAY_SIZE((_d)->preallocated);			\
-	(_d)->data = (_d)->size ? (_d)->preallocated : NULL;		\
-} while (0)
-
-#define darray_exit(_d)							\
-do {									\
-	if (!ARRAY_SIZE((_d)->preallocated) ||				\
-	    (_d)->data != (_d)->preallocated)				\
-		kvfree((_d)->data);					\
-	darray_init(_d);						\
-} while (0)
-
-#define DEFINE_DARRAY_CLASS(_type)					\
-DEFINE_CLASS(_type, _type, darray_exit(&(_T)), (_type) {}, void)
-
-#define DEFINE_DARRAY(_type)						\
-typedef DARRAY(_type)	darray_##_type;					\
-DEFINE_DARRAY_CLASS(darray_##_type)
-
-#define DEFINE_DARRAY_PREALLOCATED(_type, _nr)				\
-typedef DARRAY_PREALLOCATED(_type, _nr)	darray_##_type;			\
-DEFINE_DARRAY_CLASS(darray_##_type)
-
-#define DEFINE_DARRAY_NAMED(_name, _type)				\
-typedef DARRAY(_type)	_name;						\
-DEFINE_DARRAY_CLASS(_name)
-
-DEFINE_DARRAY_CLASS(darray_char);
-DEFINE_DARRAY_CLASS(darray_str)
-DEFINE_DARRAY_CLASS(darray_const_str)
-
-DEFINE_DARRAY_CLASS(darray_u8)
-DEFINE_DARRAY_CLASS(darray_u16)
-DEFINE_DARRAY_CLASS(darray_u32)
-DEFINE_DARRAY_CLASS(darray_u64)
-
-DEFINE_DARRAY_CLASS(darray_s8)
-DEFINE_DARRAY_CLASS(darray_s16)
-DEFINE_DARRAY_CLASS(darray_s32)
-DEFINE_DARRAY_CLASS(darray_s64)
 
 #endif /* _BCACHEFS_DARRAY_H */
