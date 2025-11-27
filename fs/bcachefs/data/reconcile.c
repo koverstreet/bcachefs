@@ -1664,19 +1664,13 @@ static int do_reconcile_scan_bps(struct moving_context *ctxt,
 
 	bch2_btree_write_buffer_flush_sync(trans);
 
-	CLASS(disk_reservation, res)(c);
+	return backpointer_scan_for_each(trans, iter, POS(s.dev, 0), POS(s.dev, U64_MAX),
+				  last_flushed, NULL, bp, ({
+		ctxt->stats->pos = BBPOS(BTREE_ID_backpointers, iter.pos);
 
-	return for_each_btree_key_max_commit(trans, iter, BTREE_ID_backpointers,
-					  POS(s.dev, 0), POS(s.dev, U64_MAX),
-					  BTREE_ITER_prefetch, k,
-					  &res.r, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-		ctxt->stats->pos = BBPOS(iter.btree_id, iter.pos);
-
-		if (k.k->type != KEY_TYPE_backpointer)
-			continue;
-
-		bch2_disk_reservation_put(c, &res.r);
-		do_reconcile_scan_bp(trans, s, bkey_s_c_to_backpointer(k), last_flushed);
+		CLASS(disk_reservation, res)(c);
+		do_reconcile_scan_bp(trans, s, bp, last_flushed) ?:
+		bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
 	}));
 }
 
