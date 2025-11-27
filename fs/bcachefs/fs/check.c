@@ -1851,6 +1851,27 @@ int bch2_fix_reflink_p(struct bch_fs *c)
 			fix_reflink_p_key(trans, &iter, k));
 }
 
+/* translate to return code of fsck commad - man(8) fsck */
+int bch2_fs_fsck_errcode(struct bch_fs *c, struct printbuf *msg)
+{
+	int ret = 0;
+
+	if (test_bit(BCH_FS_errors_fixed, &c->flags)) {
+		prt_printf(msg, "%s: errors fixed\n", c->name);
+		ret |= 1;
+	}
+	if (test_bit(BCH_FS_error, &c->flags)) {
+		prt_printf(msg, "%s: still has errors\n", c->name);
+		ret |= 4;
+	}
+	if (test_bit(BCH_FS_emergency_ro, &c->flags)) {
+		prt_printf(msg, "%s: fatal error (went emergency read-only)\n", c->name);
+		ret |= 4;
+	}
+
+	return ret;
+}
+
 #ifndef NO_BCACHEFS_CHARDEV
 
 struct fsck_thread {
@@ -1870,25 +1891,20 @@ static int bch2_fsck_offline_thread_fn(struct thread_with_stdio *stdio)
 	struct fsck_thread *thr = container_of(stdio, struct fsck_thread, thr);
 	struct bch_fs *c = thr->c;
 
-	int ret = PTR_ERR_OR_ZERO(c);
+	errptr_try(c);
+
+	c->recovery_task = current;
+
+	int ret = bch2_fs_start(c);
+
+	CLASS(printbuf, buf)();
 	if (ret)
-		return ret;
-
-	thr->c->recovery_task = current;
-
-	ret = bch2_fs_start(thr->c);
+		prt_printf(&buf, "%s: error starting filesystem: %s\n", c->name, bch2_err_str(ret));
+	else
+		ret = bch2_fs_fsck_errcode(c, &buf);
 	if (ret)
-		goto err;
+		bch2_stdio_redirect_write(&stdio->stdio, false, buf.buf, buf.pos);
 
-	if (test_bit(BCH_FS_errors_fixed, &c->flags)) {
-		bch2_stdio_redirect_printf(&stdio->stdio, false, "%s: errors fixed\n", c->name);
-		ret |= 1;
-	}
-	if (test_bit(BCH_FS_error, &c->flags)) {
-		bch2_stdio_redirect_printf(&stdio->stdio, false, "%s: still has errors\n", c->name);
-		ret |= 4;
-	}
-err:
 	bch2_fs_stop(c);
 	return ret;
 }
@@ -1993,7 +2009,14 @@ static int bch2_fsck_online_thread_fn(struct thread_with_stdio *stdio)
 		true);
 
 	clear_bit(BCH_FS_in_fsck, &c->flags);
-	bch_err_fn(c, ret);
+
+	CLASS(printbuf, buf)();
+	if (ret)
+		prt_printf(&buf, "%s: error running recovery passes: %s\n", c->name, bch2_err_str(ret));
+	else
+		ret = bch2_fs_fsck_errcode(c, &buf);
+	if (ret)
+		bch2_stdio_redirect_write(&stdio->stdio, false, buf.buf, buf.pos);
 
 	c->stdio = NULL;
 	c->stdio_filter = NULL;

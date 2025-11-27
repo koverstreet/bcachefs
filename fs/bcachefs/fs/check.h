@@ -100,6 +100,7 @@ int bch2_check_directory_structure(struct bch_fs *);
 int bch2_check_nlinks(struct bch_fs *);
 int bch2_fix_reflink_p(struct bch_fs *);
 
+int bch2_fs_fsck_errcode(struct bch_fs *, struct printbuf *);
 long bch2_ioctl_fsck_offline(struct bch_ioctl_fsck_offline __user *);
 long bch2_ioctl_fsck_online(struct bch_fs *, struct bch_ioctl_fsck_online);
 
