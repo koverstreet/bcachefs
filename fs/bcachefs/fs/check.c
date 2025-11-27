@@ -1905,7 +1905,7 @@ static int bch2_fsck_offline_thread_fn(struct thread_with_stdio *stdio)
 	if (ret)
 		bch2_stdio_redirect_write(&stdio->stdio, false, buf.buf, buf.pos);
 
-	bch2_fs_stop(c);
+	bch2_fs_exit(c);
 	return ret;
 }
 

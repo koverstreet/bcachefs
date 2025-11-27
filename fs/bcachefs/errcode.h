@@ -416,7 +416,11 @@
 	x(0,				nocow_trylock_fail)			\
 	x(BCH_ERR_nocow_trylock_fail,	nocow_trylock_contended)		\
 	x(BCH_ERR_nocow_trylock_fail,	nocow_trylock_bucket_full)		\
-	x(EINTR,			recovery_cancelled)
+	x(EINTR,			recovery_cancelled)			\
+	x(0,				shutdown_with_errors)			\
+	x(BCH_ERR_shutdown_with_errors,	shutdown_with_errors_fixed)		\
+	x(BCH_ERR_shutdown_with_errors,	shutdown_with_errors_unfixed)		\
+	x(BCH_ERR_shutdown_with_errors,	shutdown_with_emergency_ro)
 
 enum bch_errcode {
 	BCH_ERR_START		= 2048,

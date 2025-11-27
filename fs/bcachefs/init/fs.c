@@ -641,50 +641,59 @@ static void bch2_fs_release(struct kobject *kobj)
 	__bch2_fs_free(c);
 }
 
-void __bch2_fs_stop(struct bch_fs *c)
+int bch2_fs_stop(struct bch_fs *c)
 {
-	bch_verbose(c, "shutting down");
+	if (!test_and_set_bit(BCH_FS_stopping, &c->flags)) {
+		if (test_bit(BCH_FS_started, &c->flags))
+			bch_verbose(c, "shutting down");
 
-	set_bit(BCH_FS_stopping, &c->flags);
+		scoped_guard(rwsem_write, &c->state_lock)
+			bch2_fs_read_only(c);
 
-	scoped_guard(rwsem_write, &c->state_lock)
-		bch2_fs_read_only(c);
+		for (unsigned i = 0; i < c->sb.nr_devices; i++) {
+			struct bch_dev *ca = rcu_dereference_protected(c->devs[i], true);
+			if (ca)
+				bch2_dev_io_ref_stop(ca, READ);
+		}
 
-	for (unsigned i = 0; i < c->sb.nr_devices; i++) {
-		struct bch_dev *ca = rcu_dereference_protected(c->devs[i], true);
-		if (ca)
-			bch2_dev_io_ref_stop(ca, READ);
+		for_each_member_device(c, ca)
+			bch2_dev_unlink(ca);
+
+		if (c->kobj.state_in_sysfs)
+			kobject_del(&c->kobj);
+
+		bch2_fs_debug_exit(c);
+		bch2_fs_chardev_exit(c);
+
+		bch2_ro_ref_put(c);
+		wait_event(c->ro_ref_wait, !refcount_read(&c->ro_ref));
+
+		kobject_put(&c->counters_kobj);
+		kobject_put(&c->time_stats);
+		kobject_put(&c->opts_dir);
+		kobject_put(&c->internal);
+
+		/* btree prefetch might have kicked off reads in the background: */
+		bch2_btree_flush_all_reads(c);
+
+		for_each_member_device(c, ca)
+			cancel_work_sync(&ca->io_error_work);
+
+		cancel_work_sync(&c->read_only_work);
+
+		flush_work(&c->btree_interior_update_work);
 	}
 
-	for_each_member_device(c, ca)
-		bch2_dev_unlink(ca);
-
-	if (c->kobj.state_in_sysfs)
-		kobject_del(&c->kobj);
-
-	bch2_fs_debug_exit(c);
-	bch2_fs_chardev_exit(c);
-
-	bch2_ro_ref_put(c);
-	wait_event(c->ro_ref_wait, !refcount_read(&c->ro_ref));
-
-	kobject_put(&c->counters_kobj);
-	kobject_put(&c->time_stats);
-	kobject_put(&c->opts_dir);
-	kobject_put(&c->internal);
-
-	/* btree prefetch might have kicked off reads in the background: */
-	bch2_btree_flush_all_reads(c);
-
-	for_each_member_device(c, ca)
-		cancel_work_sync(&ca->io_error_work);
-
-	cancel_work_sync(&c->read_only_work);
-
-	flush_work(&c->btree_interior_update_work);
+	if (test_bit(BCH_FS_emergency_ro, &c->flags))
+		return bch_err_throw(c, shutdown_with_emergency_ro);
+	if (test_bit(BCH_FS_error, &c->flags))
+		return bch_err_throw(c, shutdown_with_errors_unfixed);
+	if (test_bit(BCH_FS_errors_fixed, &c->flags))
+		return bch_err_throw(c, shutdown_with_errors_fixed);
+	return 0;
 }
 
-void bch2_fs_free(struct bch_fs *c)
+static void bch2_fs_free(struct bch_fs *c)
 {
 	scoped_guard(mutex, &bch2_fs_list_lock)
 		list_del(&c->list);
@@ -708,10 +717,11 @@ void bch2_fs_free(struct bch_fs *c)
 	kobject_put(&c->kobj);
 }
 
-void bch2_fs_stop(struct bch_fs *c)
+int bch2_fs_exit(struct bch_fs *c)
 {
-	__bch2_fs_stop(c);
+	int ret = bch2_fs_stop(c);
 	bch2_fs_free(c);
+	return ret;
 }
 
 static int bch2_fs_online(struct bch_fs *c)
@@ -1260,7 +1270,7 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 
 	int ret = bch2_fs_init(c, sb, opts, sbs, out);
 	if (ret) {
-		bch2_fs_free(c);
+		bch2_fs_exit(c);
 		return ERR_PTR(ret);
 	}
 
@@ -1516,7 +1526,7 @@ out:
 	return c;
 err:
 	if (!IS_ERR_OR_NULL(c))
-		bch2_fs_stop(c);
+		bch2_fs_exit(c);
 	c = ERR_PTR(ret);
 	goto out;
 }
