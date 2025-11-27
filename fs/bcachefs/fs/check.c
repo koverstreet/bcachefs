@@ -1898,12 +1898,16 @@ static const struct thread_with_stdio_ops bch2_offline_fsck_ops = {
 	.fn		= bch2_fsck_offline_thread_fn,
 };
 
+static int parse_mount_opts_user(char __user *optstr_user, struct bch_opts *opts)
+{
+	char *optstr __free(kfree) = errptr_try(strndup_user(optstr_user, 1 << 16));
+
+	return bch2_parse_mount_opts(NULL, opts, NULL, optstr, false);
+}
+
 long bch2_ioctl_fsck_offline(struct bch_ioctl_fsck_offline __user *user_arg)
 {
 	struct bch_ioctl_fsck_offline arg;
-	struct fsck_thread *thr = NULL;
-	darray_const_str devs = {};
-	long ret = 0;
 
 	if (copy_from_user(&arg, user_arg, sizeof(arg)))
 		return -EFAULT;
@@ -1914,42 +1918,30 @@ long bch2_ioctl_fsck_offline(struct bch_ioctl_fsck_offline __user *user_arg)
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
+	struct bch_opts opts = bch2_opts_empty();
+	if (arg.opts)
+		try(parse_mount_opts_user((char __user *)(unsigned long) arg.opts, &opts));
+
+	CLASS(darray_const_str, devs)();
 	for (size_t i = 0; i < arg.nr_devs; i++) {
 		u64 dev_u64;
-		ret = copy_from_user_errcode(&dev_u64, &user_arg->devs[i], sizeof(u64));
-		if (ret)
-			goto err;
+		try(copy_from_user_errcode(&dev_u64, &user_arg->devs[i], sizeof(u64)));
 
-		char *dev_str = strndup_user((char __user *)(unsigned long) dev_u64, PATH_MAX);
-		ret = PTR_ERR_OR_ZERO(dev_str);
-		if (ret)
-			goto err;
+		char *dev_str =
+			errptr_try(strndup_user((char __user *)(unsigned long) dev_u64, PATH_MAX));
 
-		ret = darray_push(&devs, dev_str);
+		int ret = darray_push(&devs, dev_str);
 		if (ret) {
 			kfree(dev_str);
-			goto err;
+			return ret;
 		}
 	}
 
-	thr = kzalloc(sizeof(*thr), GFP_KERNEL);
-	if (!thr) {
-		ret = -ENOMEM;
-		goto err;
-	}
+	struct fsck_thread *thr = kzalloc(sizeof(*thr), GFP_KERNEL);
+	if (!thr)
+		return -ENOMEM;
 
-	thr->opts = bch2_opts_empty();
-
-	if (arg.opts) {
-		char *optstr = strndup_user((char __user *)(unsigned long) arg.opts, 1 << 16);
-		ret =   PTR_ERR_OR_ZERO(optstr) ?:
-			bch2_parse_mount_opts(NULL, &thr->opts, NULL, optstr, false);
-		if (!IS_ERR(optstr))
-			kfree(optstr);
-
-		if (ret)
-			goto err;
-	}
+	thr->opts = opts;
 
 	opt_set(thr->opts, stdio, (u64)(unsigned long)&thr->thr.stdio);
 	opt_set(thr->opts, read_only, 1);
@@ -1966,17 +1958,13 @@ long bch2_ioctl_fsck_offline(struct bch_ioctl_fsck_offline __user *user_arg)
 	    thr->c->opts.errors == BCH_ON_ERROR_panic)
 		thr->c->opts.errors = BCH_ON_ERROR_ro;
 
-	ret = __bch2_run_thread_with_stdio(&thr->thr);
-out:
-	darray_for_each(devs, i)
-		kfree(*i);
-	darray_exit(&devs);
+	int ret = __bch2_run_thread_with_stdio(&thr->thr);
+	if (ret < 0) {
+		if (thr)
+			bch2_fsck_thread_exit(&thr->thr);
+		pr_err("ret %s", bch2_err_str(ret));
+	}
 	return ret;
-err:
-	if (thr)
-		bch2_fsck_thread_exit(&thr->thr);
-	pr_err("ret %s", bch2_err_str(ret));
-	goto out;
 }
 
 static int bch2_fsck_online_thread_fn(struct thread_with_stdio *stdio)
@@ -2023,14 +2011,15 @@ static const struct thread_with_stdio_ops bch2_online_fsck_ops = {
 
 long bch2_ioctl_fsck_online(struct bch_fs *c, struct bch_ioctl_fsck_online arg)
 {
-	struct fsck_thread *thr = NULL;
-	long ret = 0;
-
 	if (arg.flags)
 		return -EINVAL;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
+
+	struct bch_opts opts = bch2_opts_empty();
+	if (arg.opts)
+		try(parse_mount_opts_user((char __user *)(unsigned long) arg.opts, &opts));
 
 	if (!bch2_ro_ref_tryget(c))
 		return -EROFS;
@@ -2040,33 +2029,20 @@ long bch2_ioctl_fsck_online(struct bch_fs *c, struct bch_ioctl_fsck_online arg)
 		return -EAGAIN;
 	}
 
-	thr = kzalloc(sizeof(*thr), GFP_KERNEL);
+	struct fsck_thread *thr = kzalloc(sizeof(*thr), GFP_KERNEL);
 	if (!thr) {
-		ret = -ENOMEM;
-		goto err;
+		up(&c->recovery.run_lock);
+		bch2_ro_ref_put(c);
+		return -ENOMEM;
 	}
 
 	thr->c = c;
-	thr->opts = bch2_opts_empty();
+	thr->opts = opts;
 
-	if (arg.opts) {
-		char *optstr = strndup_user((char __user *)(unsigned long) arg.opts, 1 << 16);
-
-		ret =   PTR_ERR_OR_ZERO(optstr) ?:
-			bch2_parse_mount_opts(c, &thr->opts, NULL, optstr, false);
-		if (!IS_ERR(optstr))
-			kfree(optstr);
-
-		if (ret)
-			goto err;
-	}
-
-	ret = bch2_run_thread_with_stdio(&thr->thr, &bch2_online_fsck_ops);
-err:
+	int ret = bch2_run_thread_with_stdio(&thr->thr, &bch2_online_fsck_ops);
 	if (ret < 0) {
 		bch_err_fn(c, ret);
-		if (thr)
-			bch2_fsck_thread_exit(&thr->thr);
+		bch2_fsck_thread_exit(&thr->thr);
 		up(&c->recovery.run_lock);
 		bch2_ro_ref_put(c);
 	}
