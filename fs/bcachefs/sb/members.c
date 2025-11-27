@@ -319,16 +319,31 @@ static void bch2_member_to_text_short_sb(struct printbuf *out,
 	prt_newline(out);
 }
 
-void bch2_member_to_text_short(struct printbuf *out,
+static void bch2_member_to_text_short_locked(struct printbuf *out,
 			       struct bch_fs *c,
 			       struct bch_dev *ca)
 {
-	guard(mutex)(&c->sb_lock);
 	struct bch_member m = bch2_sb_member_get(c->disk_sb.sb, ca->dev_idx);
 	bch2_member_to_text_short_sb(out, &m,
 				     bch2_sb_field_get(c->disk_sb.sb, disk_groups),
 				     c->disk_sb.sb,
 				     ca->dev_idx);
+}
+
+void bch2_member_to_text_short(struct printbuf *out,
+			       struct bch_fs *c,
+			       struct bch_dev *ca)
+{
+	guard(mutex)(&c->sb_lock);
+	bch2_member_to_text_short_locked(out, c, ca);
+}
+
+void bch2_devs_mask_to_text_locked(struct printbuf *out, struct bch_fs *c,
+				   struct bch_devs_mask *devs)
+{
+	for_each_member_device(c, ca)
+		if (test_bit(ca->dev_idx, devs->d))
+			bch2_member_to_text_short_locked(out, c, ca);
 }
 
 static void member_to_text(struct printbuf *out,

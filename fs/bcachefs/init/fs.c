@@ -438,6 +438,7 @@ static bool __bch2_fs_emergency_read_only2(struct bch_fs *c, struct printbuf *ou
 	return ret;
 }
 
+/* Returns true if going ERO, false if we already are */
 bool bch2_fs_emergency_read_only2(struct bch_fs *c, struct printbuf *out)
 {
 	return __bch2_fs_emergency_read_only2(c, out, false);

@@ -45,6 +45,7 @@ void bch2_member_to_text(struct printbuf *, struct bch_member *,
 			 struct bch_sb *, unsigned);
 
 void bch2_member_to_text_short(struct printbuf *, struct bch_fs *, struct bch_dev *);
+void bch2_devs_mask_to_text_locked(struct printbuf *, struct bch_fs *, struct bch_devs_mask *);
 
 static inline bool bch2_dev_is_online(struct bch_dev *ca)
 {

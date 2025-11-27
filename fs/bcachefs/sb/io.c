@@ -17,6 +17,7 @@
 
 #include "init/dev.h"
 #include "init/error.h"
+#include "init/fs.h"
 #include "init/passes.h"
 
 #include "sb/clean.h"
@@ -1001,9 +1002,9 @@ int bch2_write_super(struct bch_fs *c)
 {
 	struct closure *cl = &c->sb_write;
 	CLASS(printbuf, err)();
-	unsigned sb = 0, nr_wrote;
+	unsigned sb = 0;
 	struct bch_devs_mask sb_written;
-	bool wrote, can_mount_without_written, can_mount_with_written;
+	bool wrote;
 	unsigned degraded_flags = BCH_FORCE_IF_DEGRADED;
 	DARRAY(struct bch_dev *) online_devices = {};
 	int ret = 0;
@@ -1174,32 +1175,35 @@ int bch2_write_super(struct bch_fs *c)
 			ca->disk_sb.seq = le64_to_cpu(ca->disk_sb.sb->seq);
 	}
 
-	nr_wrote = dev_mask_nr(&sb_written);
-
-	can_mount_with_written =
-		bch2_can_read_fs_with_devs(c, sb_written, degraded_flags, NULL);
-
+	struct bch_devs_mask sb_unwritten;
 	for (unsigned i = 0; i < ARRAY_SIZE(sb_written.d); i++)
-		sb_written.d[i] = ~sb_written.d[i];
+		sb_unwritten.d[i] = ~sb_written.d[i];
 
-	can_mount_without_written =
-		bch2_can_read_fs_with_devs(c, sb_written, degraded_flags, NULL);
+	printbuf_reset(&err);
+	bch2_log_msg_start(c, &err);
 
-	/*
-	 * If we would be able to mount _without_ the devices we successfully
-	 * wrote superblocks to, we weren't able to write to enough devices:
-	 *
-	 * Exception: if we can mount without the successes because we haven't
-	 * written anything (new filesystem), we continue if we'd be able to
-	 * mount with the devices we did successfully write to:
-	 */
-	if (bch2_fs_fatal_err_on(!nr_wrote ||
-				 !can_mount_with_written ||
-				 (can_mount_without_written &&
-				  !can_mount_with_written), c,
-		": Unable to write superblock to sufficient devices (from %ps)",
-		(void *) _RET_IP_))
-		ret = bch_err_throw(c, erofs_sb_err);
+	unsigned nr_wrote =	dev_mask_nr(&sb_written);
+	unsigned nr_members =	bch2_sb_nr_devices(c->disk_sb.sb);
+
+	if (!nr_wrote ||
+	    !bch2_can_read_fs_with_devs(c, sb_written, degraded_flags, NULL)) {
+		prt_printf(&err, "Unable to write superblock to sufficient devices (from %ps)\n",
+			   (void *) _RET_IP_);
+		prt_printf(&err, "Would not be able to mount with written devices\n");
+
+		bch2_can_read_fs_with_devs(c, sb_written, degraded_flags, &err);
+
+		prt_printf(&err, "Wrote to %u/%u devices:\n", nr_wrote, nr_members);
+		scoped_guard(printbuf_indent, &err)
+			bch2_devs_mask_to_text_locked(&err, c, &sb_written);
+
+		prt_printf(&err, "Failed to write to devices:\n");
+		scoped_guard(printbuf_indent, &err)
+			bch2_devs_mask_to_text_locked(&err, c, &sb_unwritten);
+
+		if (bch2_fs_emergency_read_only2(c, &err))
+			bch2_print_str(c, KERN_ERR, err.buf);
+	}
 out:
 	/* Make new options visible after they're persistent: */
 	bch2_sb_update(c);
