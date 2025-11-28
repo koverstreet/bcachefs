@@ -1870,6 +1870,24 @@ static int do_reconcile(struct moving_context *ctxt)
 			continue;
 		}
 
+		if ((r->work_pos.btree == BTREE_ID_reconcile_hipri_phys ||
+		     r->work_pos.btree == BTREE_ID_reconcile_work_phys) &&
+		    k.k->p.inode != r->work_pos.pos.inode) {
+			/*
+			 * We don't yet do multiple devices in parallel - that
+			 * will require extra synchronization to avoid kicking
+			 * off the same reconciles simultaneously via multiple
+			 * backpointers.
+			 *
+			 * For now, flush when switching devices to avoid
+			 * conflicts:
+			 */
+			bch2_moving_ctxt_flush_all(ctxt);
+			bch2_btree_write_buffer_flush_sync(trans);
+			work.nr = 0;
+			continue;
+		}
+
 		r->running = true;
 		r->work_pos.pos = k.k->p;
 
