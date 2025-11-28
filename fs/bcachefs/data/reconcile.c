@@ -1907,7 +1907,9 @@ static int do_reconcile(struct moving_context *ctxt)
 		if (ret)
 			break;
 
-		r->work_pos.pos = bpos_successor(r->work_pos.pos);
+		r->work_pos.pos = btree_type_has_snapshots(r->work_pos.btree)
+			? bpos_successor(r->work_pos.pos)
+			: bpos_nosnap_successor(r->work_pos.pos);
 	}
 
 	if (!ret && !bkey_deleted(&pending_cookie.k))
