@@ -1245,9 +1245,14 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 		return 0;
 
 	data_opts->type			= BCH_DATA_UPDATE_reconcile;
-	if (!r->hipri)
+	data_opts->target		= r->background_target;
+
+	/*
+	 * we can't add/drop replicas from btree nodes incrementally, we always
+	 * need to be able to spill over to the whole fs
+	 */
+	if (!r->hipri && !bkey_is_btree_ptr(k.k))
 		data_opts->write_flags |= BCH_WRITE_only_specified_devs;
-	data_opts->target = r->background_target;
 
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
@@ -1460,7 +1465,7 @@ static int do_reconcile_extent(struct moving_context *ctxt,
 		reconcile_set_data_opts(trans, NULL, data_pos.btree, k, &opts, &data_opts);
 
 		struct bch_devs_list devs_have = bch2_data_update_devs_keeping(c, &data_opts, k);
-		int ret = bch2_can_do_write(c, &data_opts, &devs_have);
+		int ret = bch2_can_do_write(c, &data_opts, k, &devs_have);
 		if (ret) {
 			if (is_reconcile_pending_err(c, k, ret))
 				return 0;
