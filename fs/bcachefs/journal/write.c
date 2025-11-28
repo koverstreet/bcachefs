@@ -410,6 +410,11 @@ static CLOSURE_CALLBACK(journal_write_submit)
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	unsigned sectors = vstruct_sectors(w->data, c->block_bits);
 
+	event_inc_trace(c, journal_write, buf, ({
+		prt_printf(&buf, "seq %llu\n", le64_to_cpu(w->data->seq));
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&w->key));
+	}));
+
 	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
 		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);
 
@@ -441,9 +446,6 @@ static CLOSURE_CALLBACK(journal_write_submit)
 			bio->bi_opf    |= REQ_PREFLUSH;
 
 		bch2_bio_map(bio, w->data, sectors << 9);
-
-		event_inc_trace(c, journal_write, buf,
-			prt_printf(&buf, "seq %llu", le64_to_cpu(w->data->seq)));
 
 		closure_bio_submit(bio, cl);
 
