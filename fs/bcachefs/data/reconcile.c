@@ -1495,8 +1495,12 @@ static int do_reconcile_phys(struct moving_context *ctxt,
 	if (!k.k)
 		return 0;
 
-	event_add_trace(c, reconcile_phys, k.k->size, buf,
-			bch2_bkey_val_to_text(&buf, c, k));
+	event_add_trace(c, reconcile_phys, k.k->size, buf, ({
+		prt_newline(&buf);
+		bch2_bkey_val_to_text(&buf, c, bp_k);
+		prt_newline(&buf);
+		bch2_bkey_val_to_text(&buf, c, k);
+	}));
 
 	return __do_reconcile_extent(ctxt, snapshot_io_opts, &iter, k);
 }
