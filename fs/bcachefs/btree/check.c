@@ -76,14 +76,14 @@ static struct bkey_s unsafe_bkey_s_c_to_s(struct bkey_s_c k)
 static inline void __gc_pos_set(struct bch_fs *c, struct gc_pos new_pos)
 {
 	guard(preempt)();
-	write_seqcount_begin(&c->gc_pos_lock);
-	c->gc_pos = new_pos;
-	write_seqcount_end(&c->gc_pos_lock);
+	write_seqcount_begin(&c->gc.pos_lock);
+	c->gc.pos = new_pos;
+	write_seqcount_end(&c->gc.pos_lock);
 }
 
 static inline void gc_pos_set(struct bch_fs *c, struct gc_pos new_pos)
 {
-	BUG_ON(gc_pos_cmp(new_pos, c->gc_pos) < 0);
+	BUG_ON(gc_pos_cmp(new_pos, c->gc.pos) < 0);
 	__gc_pos_set(c, new_pos);
 }
 
@@ -1024,7 +1024,7 @@ int bch2_check_allocations(struct bch_fs *c)
 	int ret;
 
 	guard(rwsem_read)(&c->state_lock);
-	guard(rwsem_write)(&c->gc_lock);
+	guard(rwsem_write)(&c->gc.lock);
 
 	bch2_btree_interior_updates_flush(c);
 
@@ -1045,8 +1045,6 @@ int bch2_check_allocations(struct bch_fs *c)
 	ret = bch2_gc_btrees(c);
 	if (ret)
 		goto out;
-
-	c->gc_count++;
 
 	ret   = bch2_gc_alloc_done(c) ?:
 		bch2_gc_accounting_done(c) ?:
@@ -1104,7 +1102,7 @@ int bch2_gc_gens(struct bch_fs *c)
 	u64 b, start_time = local_clock();
 	int ret;
 
-	if (!mutex_trylock(&c->gc_gens_lock))
+	if (!mutex_trylock(&c->gc_gens.lock))
 		return 0;
 
 	event_inc_trace(c, gc_gens_start, buf);
@@ -1115,7 +1113,7 @@ int bch2_gc_gens(struct bch_fs *c)
 	 * state lock at the start of going RO.
 	 */
 	if (!down_read_trylock(&c->state_lock)) {
-		mutex_unlock(&c->gc_gens_lock);
+		mutex_unlock(&c->gc_gens.lock);
 		return 0;
 	}
 
@@ -1137,8 +1135,7 @@ int bch2_gc_gens(struct bch_fs *c)
 
 	for (unsigned i = 0; i < BTREE_ID_NR; i++)
 		if (btree_type_has_data_ptrs(i)) {
-			c->gc_gens_btree = i;
-			c->gc_gens_pos = POS_MIN;
+			c->gc_gens.pos = BBPOS(i, POS_MIN);
 
 			ret = bch2_trans_run(c,
 				for_each_btree_key_commit(trans, iter, i,
@@ -1172,10 +1169,7 @@ int bch2_gc_gens(struct bch_fs *c)
 	if (ret)
 		goto err;
 
-	c->gc_gens_btree	= 0;
-	c->gc_gens_pos		= POS_MIN;
-
-	c->gc_count++;
+	c->gc_gens.pos = BBPOS_MIN;
 
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_gc], start_time);
 	event_inc_trace(c, gc_gens_end, buf);
@@ -1192,7 +1186,7 @@ err:
 	}
 
 	up_read(&c->state_lock);
-	mutex_unlock(&c->gc_gens_lock);
+	mutex_unlock(&c->gc_gens.lock);
 	if (!bch2_err_matches(ret, EROFS))
 		bch_err_fn(c, ret);
 	return ret;
@@ -1200,7 +1194,7 @@ err:
 
 static void bch2_gc_gens_work(struct work_struct *work)
 {
-	struct bch_fs *c = container_of(work, struct bch_fs, gc_gens_work);
+	struct bch_fs *c = container_of(work, struct bch_fs, gc_gens.work);
 	bch2_gc_gens(c);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_gc_gens);
 }
@@ -1208,7 +1202,7 @@ static void bch2_gc_gens_work(struct work_struct *work)
 void bch2_gc_gens_async(struct bch_fs *c)
 {
 	if (enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_gc_gens) &&
-	    !queue_work(c->write_ref_wq, &c->gc_gens_work))
+	    !queue_work(c->write_ref_wq, &c->gc_gens.work))
 		enumerated_ref_put(&c->writes, BCH_WRITE_REF_gc_gens);
 }
 
@@ -1277,9 +1271,9 @@ int bch2_merge_btree_nodes(struct bch_fs *c)
 
 void bch2_fs_btree_gc_init_early(struct bch_fs *c)
 {
-	seqcount_init(&c->gc_pos_lock);
-	INIT_WORK(&c->gc_gens_work, bch2_gc_gens_work);
+	seqcount_init(&c->gc.pos_lock);
+	INIT_WORK(&c->gc_gens.work, bch2_gc_gens_work);
 
-	init_rwsem(&c->gc_lock);
-	mutex_init(&c->gc_gens_lock);
+	init_rwsem(&c->gc.lock);
+	mutex_init(&c->gc_gens.lock);
 }

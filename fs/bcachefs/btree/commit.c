@@ -695,7 +695,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 				return ret;
 		}
 
-	if (unlikely(c->gc_pos.phase)) {
+	if (unlikely(c->gc.pos.phase)) {
 		ret = bch2_trans_commit_run_gc_triggers(trans);
 		if (bch2_fs_fatal_err_on(ret, c, "fatal error in transaction commit: %s", bch2_err_str(ret)))
 			return ret;

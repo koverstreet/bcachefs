@@ -867,6 +867,9 @@ struct bch_fs {
 	struct bch_fs_btree_node_rewrites	btree_node_rewrites;
 	struct find_btree_nodes			found_btree_nodes;
 
+	struct bch_fs_gc			gc;
+	struct bch_fs_gc_gens			gc_gens;
+
 	struct bch_accounting_mem		accounting;
 	struct bch_replicas_cpu			replicas;
 	struct bch_disk_groups_cpu __rcu	*disk_groups;
@@ -892,32 +895,6 @@ struct bch_fs {
 
 	struct io_clock			io_clock[2];
 	struct journal_entry_res	clock_journal_res;
-
-	/* GARBAGE COLLECTION */
-	struct work_struct	gc_gens_work;
-	unsigned long		gc_count;
-
-	enum btree_id		gc_gens_btree;
-	struct bpos		gc_gens_pos;
-
-	/*
-	 * Tracks GC's progress - everything in the range [ZERO_KEY..gc_cur_pos]
-	 * has been marked by GC.
-	 *
-	 * gc_cur_phase is a superset of btree_ids (BTREE_ID_extents etc.)
-	 *
-	 * Protected by gc_pos_lock. Only written to by GC thread, so GC thread
-	 * can read without a lock.
-	 */
-	seqcount_t		gc_pos_lock;
-	struct gc_pos		gc_pos;
-
-	/*
-	 * The allocation code needs gc_mark in struct bucket to be correct, but
-	 * it's not while a gc is in progress.
-	 */
-	struct rw_semaphore	gc_lock;
-	struct mutex		gc_gens_lock;
 
 	/* IO PATH */
 	struct workqueue_struct	*btree_update_wq;

@@ -575,7 +575,7 @@ static void bch2_btree_update_free(struct btree_update *as, struct btree_trans *
 	struct bch_fs *c = as->c;
 
 	if (as->took_gc_lock)
-		up_read(&c->gc_lock);
+		up_read(&c->gc.lock);
 	as->took_gc_lock = false;
 
 	bch2_journal_pin_drop(&c->journal, &as->journal);
@@ -1166,7 +1166,7 @@ static void bch2_btree_update_done(struct btree_update *as, struct btree_trans *
 	BUG_ON(as->mode == BTREE_UPDATE_none);
 
 	if (as->took_gc_lock)
-		up_read(&as->c->gc_lock);
+		up_read(&as->c->gc.lock);
 	as->took_gc_lock = false;
 
 	bch2_btree_reserve_put(as, trans);
@@ -1250,10 +1250,10 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 		split = path->l[level_end].b->nr.live_u64s > BTREE_SPLIT_THRESHOLD(c);
 	}
 
-	if (!down_read_trylock(&c->gc_lock)) {
-		ret = drop_locks_do(trans, (down_read(&c->gc_lock), 0));
+	if (!down_read_trylock(&c->gc.lock)) {
+		ret = drop_locks_do(trans, (down_read(&c->gc.lock), 0));
 		if (ret) {
-			up_read(&c->gc_lock);
+			up_read(&c->gc.lock);
 			return ERR_PTR(ret);
 		}
 	}
@@ -1874,7 +1874,7 @@ static int bch2_btree_insert_node(struct btree_update *as, struct btree_trans *t
 	int live_u64s_added, u64s_added;
 	int ret;
 
-	lockdep_assert_held(&c->gc_lock);
+	lockdep_assert_held(&c->gc.lock);
 	BUG_ON(!b->c.level);
 	BUG_ON(!as || as->b);
 	bch2_verify_keylist_sorted(keys);

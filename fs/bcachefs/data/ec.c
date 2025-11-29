@@ -852,7 +852,7 @@ int bch2_ec_read_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 
 static int __ec_stripe_mem_alloc(struct bch_fs *c, size_t idx, gfp_t gfp)
 {
-	if (c->gc_pos.phase != GC_PHASE_not_running &&
+	if (c->gc.pos.phase != GC_PHASE_not_running &&
 	    !genradix_ptr_alloc(&c->ec.gc_stripes, idx, gfp))
 		return bch_err_throw(c, ENOMEM_ec_stripe_mem_alloc);
 

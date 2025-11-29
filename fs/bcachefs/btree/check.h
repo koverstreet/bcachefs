@@ -71,9 +71,9 @@ static inline bool gc_visited(struct bch_fs *c, struct gc_pos pos)
 	bool ret;
 
 	do {
-		seq = read_seqcount_begin(&c->gc_pos_lock);
-		ret = gc_pos_cmp(pos, c->gc_pos) <= 0;
-	} while (read_seqcount_retry(&c->gc_pos_lock, seq));
+		seq = read_seqcount_begin(&c->gc.pos_lock);
+		ret = gc_pos_cmp(pos, c->gc.pos) <= 0;
+	} while (read_seqcount_retry(&c->gc.pos_lock, seq));
 
 	return ret;
 }
