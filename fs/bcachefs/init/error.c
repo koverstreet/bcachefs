@@ -274,27 +274,27 @@ static struct fsck_err_state *fsck_err_get(struct bch_fs *c,
 {
 	struct fsck_err_state *s;
 
-	list_for_each_entry(s, &c->fsck_error_msgs, list)
+	list_for_each_entry(s, &c->errors.msgs, list)
 		if (s->id == id) {
 			/*
 			 * move it to the head of the list: repeated fsck errors
 			 * are common
 			 */
-			list_move(&s->list, &c->fsck_error_msgs);
+			list_move(&s->list, &c->errors.msgs);
 			return s;
 		}
 
 	s = kzalloc(sizeof(*s), GFP_NOFS);
 	if (!s) {
-		if (!c->fsck_alloc_msgs_err)
+		if (!c->errors.msgs_alloc_err)
 			bch_err(c, "kmalloc err, cannot ratelimit fsck errs");
-		c->fsck_alloc_msgs_err = true;
+		c->errors.msgs_alloc_err = true;
 		return NULL;
 	}
 
 	INIT_LIST_HEAD(&s->list);
 	s->id = id;
-	list_add(&s->list, &c->fsck_error_msgs);
+	list_add(&s->list, &c->errors.msgs);
 	return s;
 }
 
@@ -385,7 +385,7 @@ bool __bch2_count_fsck_err(struct bch_fs *c,
 
 	bool print = true, repeat = false, suppress = false;
 
-	scoped_guard(mutex, &c->fsck_error_msgs_lock)
+	scoped_guard(mutex, &c->errors.msgs_lock)
 		count_fsck_err_locked(c, id, msg->buf, &repeat, &print, &suppress);
 
 	if (suppress)
@@ -506,7 +506,7 @@ int __bch2_fsck_err(struct bch_fs *c,
 		}
 	}
 
-	mutex_lock(&c->fsck_error_msgs_lock);
+	mutex_lock(&c->errors.msgs_lock);
 	bool repeat = false, print = true, suppress = false;
 	bool inconsistent = false, exiting = false;
 	struct fsck_err_state *s =
@@ -626,7 +626,7 @@ print:
 	if (s)
 		s->ret = ret;
 err_unlock:
-	mutex_unlock(&c->fsck_error_msgs_lock);
+	mutex_unlock(&c->errors.msgs_lock);
 err:
 	if (trans &&
 	    !(flags & FSCK_ERR_NO_LOG) &&
@@ -708,9 +708,9 @@ static void __bch2_flush_fsck_errs(struct bch_fs *c, bool print)
 {
 	struct fsck_err_state *s, *n;
 
-	guard(mutex)(&c->fsck_error_msgs_lock);
+	guard(mutex)(&c->errors.msgs_lock);
 
-	list_for_each_entry_safe(s, n, &c->fsck_error_msgs, list) {
+	list_for_each_entry_safe(s, n, &c->errors.msgs, list) {
 		if (print && s->ratelimited && s->last_msg)
 			bch_err(c, "Saw %llu errors like:\n  %s", s->nr, s->last_msg);
 
@@ -754,4 +754,23 @@ void bch2_inum_offset_err_msg_trans(struct btree_trans *trans, struct printbuf *
 				    u32 subvol, struct bpos pos)
 {
 	lockrestart_do(trans, bch2_inum_offset_err_msg_trans_norestart(trans, out, subvol, pos));
+}
+
+void bch2_fs_errors_exit(struct bch_fs *c)
+{
+	darray_exit(&c->errors.counts);
+}
+
+void bch2_fs_errors_init_early(struct bch_fs *c)
+{
+	INIT_LIST_HEAD(&c->errors.msgs);
+	mutex_init(&c->errors.msgs_lock);
+
+	mutex_init(&c->errors.counts_lock);
+	darray_init(&c->errors.counts);
+}
+
+int bch2_fs_errors_init(struct bch_fs *c)
+{
+	return bch2_sb_errors_to_cpu(c);
 }

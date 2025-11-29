@@ -258,13 +258,13 @@
 
 #include "fs/quota_types.h"
 
+#include "init/error_types.h"
 #include "init/passes_types.h"
 #include "init/dev_types.h"
 
 #include "journal/types.h"
 
 #include "sb/counters_types.h"
-#include "sb/errors_types.h"
 #include "sb/io_types.h"
 #include "sb/members_types.h"
 
@@ -1067,13 +1067,7 @@ struct bch_fs {
 
 	struct btree_transaction_stats btree_transaction_stats[BCH_TRANSACTIONS_NR];
 
-	/* ERRORS */
-	struct list_head	fsck_error_msgs;
-	struct mutex		fsck_error_msgs_lock;
-	bool			fsck_alloc_msgs_err;
-
-	bch_sb_errors_cpu	fsck_error_counts;
-	struct mutex		fsck_error_counts_lock;
+	struct bch_fs_errors	errors;
 };
 
 static inline int __bch2_err_throw(struct bch_fs *c, int err)

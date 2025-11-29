@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef _BCACHEFS_ERROR_H
-#define _BCACHEFS_ERROR_H
+#ifndef _BCACHEFS_INIT_ERROR_H
+#define _BCACHEFS_INIT_ERROR_H
 
 #include <linux/list.h>
 #include <linux/printk.h>
@@ -280,4 +280,8 @@ static inline void bch2_account_io_completion(struct bch_dev *ca,
 int bch2_inum_offset_err_msg_trans_norestart(struct btree_trans *, struct printbuf *, u32, struct bpos);
 void bch2_inum_offset_err_msg_trans(struct btree_trans *, struct printbuf *, u32, struct bpos);
 
-#endif /* _BCACHEFS_ERROR_H */
+void bch2_fs_errors_exit(struct bch_fs *);
+void bch2_fs_errors_init_early(struct bch_fs *);
+int bch2_fs_errors_init(struct bch_fs *);
+
+#endif /* _BCACHEFS_INIT_ERROR_H */

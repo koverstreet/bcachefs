@@ -570,7 +570,6 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_free_fsck_errs(c);
 	bch2_fs_vfs_exit(c);
 	bch2_fs_snapshots_exit(c);
-	bch2_fs_sb_errors_exit(c);
 	bch2_fs_replicas_exit(c);
 	bch2_fs_reconcile_exit(c);
 	bch2_fs_quota_exit(c);
@@ -581,6 +580,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_fs_fsio_exit(c);
 	bch2_fs_io_write_exit(c);
 	bch2_fs_io_read_exit(c);
+	bch2_fs_errors_exit(c);
 	bch2_fs_encryption_exit(c);
 	bch2_fs_ec_exit(c);
 	bch2_fs_counters_exit(c);
@@ -1077,13 +1077,13 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	bch2_fs_btree_write_buffer_init_early(c);
 	bch2_fs_copygc_init(c);
 	bch2_fs_ec_init_early(c);
+	bch2_fs_errors_init_early(c);
 	bch2_fs_journal_init_early(&c->journal);
 	bch2_fs_journal_keys_init(c);
 	bch2_fs_move_init(c);
 	bch2_fs_nocow_locking_init_early(c);
 	bch2_fs_quota_init(c);
 	bch2_fs_recovery_passes_init(c);
-	bch2_fs_sb_errors_init_early(c);
 	bch2_fs_snapshots_init_early(c);
 	bch2_fs_subvolumes_init_early(c);
 	bch2_find_btree_nodes_init(&c->found_btree_nodes);
@@ -1097,9 +1097,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	spin_lock_init(&c->btree_write_error_lock);
 
 	INIT_LIST_HEAD(&c->journal_iters);
-
-	INIT_LIST_HEAD(&c->fsck_error_msgs);
-	mutex_init(&c->fsck_error_msgs_lock);
 
 	seqcount_init(&c->usage_lock);
 
@@ -1187,12 +1184,12 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	try(bch2_fs_compress_init(c));
 	try(bch2_fs_counters_init(c));
 	try(bch2_fs_ec_init(c));
+	try(bch2_fs_errors_init(c));
 	try(bch2_fs_encryption_init(c));
 	try(bch2_fs_fsio_init(c));
 	try(bch2_fs_fs_io_direct_init(c));
 	try(bch2_fs_io_read_init(c));
 	try(bch2_fs_reconcile_init(c));
-	try(bch2_fs_sb_errors_init(c));
 	try(bch2_fs_vfs_init(c));
 
 

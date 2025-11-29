@@ -107,9 +107,9 @@ void bch2_fs_errors_to_text(struct printbuf *out, struct bch_fs *c)
 	if (out->nr_tabstops < 3)
 		printbuf_tabstop_push(out, 16);
 
-	guard(mutex)(&c->fsck_error_counts_lock);
+	guard(mutex)(&c->errors.counts_lock);
 
-	bch_sb_errors_cpu *e = &c->fsck_error_counts;
+	bch_sb_errors_cpu *e = &c->errors.counts;
 	darray_for_each(*e, i) {
 		bch2_sb_error_id_to_text(out, i->id);
 		prt_tab(out);
@@ -122,7 +122,7 @@ void bch2_fs_errors_to_text(struct printbuf *out, struct bch_fs *c)
 
 void bch2_sb_error_count(struct bch_fs *c, enum bch_sb_error_id err)
 {
-	bch_sb_errors_cpu *e = &c->fsck_error_counts;
+	bch_sb_errors_cpu *e = &c->errors.counts;
 	struct bch_sb_error_entry_cpu n = {
 		.id = err,
 		.nr = 1,
@@ -130,7 +130,7 @@ void bch2_sb_error_count(struct bch_fs *c, enum bch_sb_error_id err)
 	};
 	unsigned i;
 
-	guard(mutex)(&c->fsck_error_counts_lock);
+	guard(mutex)(&c->errors.counts_lock);
 
 	for (i = 0; i < e->nr; i++) {
 		if (err == e->data[i].id) {
@@ -150,9 +150,9 @@ void bch2_sb_error_count(struct bch_fs *c, enum bch_sb_error_id err)
 
 void bch2_sb_errors_from_cpu(struct bch_fs *c)
 {
-	guard(mutex)(&c->fsck_error_counts_lock);
+	guard(mutex)(&c->errors.counts_lock);
 
-	bch_sb_errors_cpu *src = &c->fsck_error_counts;
+	bch_sb_errors_cpu *src = &c->errors.counts;
 	struct bch_sb_field_errors *dst =
 		bch2_sb_field_resize(&c->disk_sb, errors,
 				     bch2_sb_field_errors_u64s(src->nr));
@@ -166,12 +166,12 @@ void bch2_sb_errors_from_cpu(struct bch_fs *c)
 	}
 }
 
-static int bch2_sb_errors_to_cpu(struct bch_fs *c)
+int bch2_sb_errors_to_cpu(struct bch_fs *c)
 {
-	guard(mutex)(&c->fsck_error_counts_lock);
+	guard(mutex)(&c->errors.counts_lock);
 
 	struct bch_sb_field_errors *src = bch2_sb_field_get(c->disk_sb.sb, errors);
-	bch_sb_errors_cpu *dst = &c->fsck_error_counts;
+	bch_sb_errors_cpu *dst = &c->errors.counts;
 	unsigned nr = bch2_sb_field_errors_nr_entries(src);
 
 	if (!nr)
@@ -190,20 +190,4 @@ static int bch2_sb_errors_to_cpu(struct bch_fs *c)
 	}
 
 	return 0;
-}
-
-void bch2_fs_sb_errors_exit(struct bch_fs *c)
-{
-	darray_exit(&c->fsck_error_counts);
-}
-
-void bch2_fs_sb_errors_init_early(struct bch_fs *c)
-{
-	mutex_init(&c->fsck_error_counts_lock);
-	darray_init(&c->fsck_error_counts);
-}
-
-int bch2_fs_sb_errors_init(struct bch_fs *c)
-{
-	return bch2_sb_errors_to_cpu(c);
 }
