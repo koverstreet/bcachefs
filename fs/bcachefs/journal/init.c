@@ -475,7 +475,6 @@ int bch2_fs_journal_start(struct journal *j, struct journal_start_info info)
 	scoped_guard(spinlock, &j->lock) {
 		j->last_flush_write = jiffies;
 		j->reservations.idx = journal_cur_seq(j);
-		c->last_bucket_seq_cleanup = journal_cur_seq(j);
 	}
 
 	try(bch2_replicas_gc_reffed(c));

@@ -593,15 +593,31 @@ struct btree_trans_buf {
 	struct btree_trans	*trans;
 };
 
-struct bch_fs_btree_trans {
-	struct seqmutex		lock;
-	struct list_head	list;
-	mempool_t		pool;
-	mempool_t		malloc_pool;
-	struct btree_trans_buf  __percpu *bufs;
+struct btree_transaction_stats {
+	struct bch2_time_stats	duration;
+	struct bch2_time_stats	lock_hold_times;
+	struct mutex		lock;
+	unsigned		nr_max_paths;
+	unsigned		max_mem;
+#ifdef CONFIG_BCACHEFS_TRANS_KMALLOC_TRACE
+	darray_trans_kmalloc_trace trans_kmalloc_trace;
+#endif
+	char			*max_paths_text;
+};
 
-	struct srcu_struct	barrier;
-	bool			barrier_initialized;
+#define BCH_TRANSACTIONS_NR 128
+
+struct bch_fs_btree_trans {
+	struct seqmutex			lock;
+	struct list_head		list;
+	mempool_t			pool;
+	mempool_t			malloc_pool;
+	struct btree_trans_buf		__percpu *bufs;
+
+	struct srcu_struct		barrier;
+	bool				barrier_initialized;
+
+	struct btree_transaction_stats	stats[BCH_TRANSACTIONS_NR];
 };
 
 static inline struct btree_path *btree_iter_path(struct btree_trans *trans, struct btree_iter *iter)

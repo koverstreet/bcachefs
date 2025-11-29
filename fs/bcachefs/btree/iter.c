@@ -3608,7 +3608,7 @@ struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 	if (fn_idx < BCH_TRANSACTIONS_NR) {
 		trans->fn = bch2_btree_transaction_fns[fn_idx];
 
-		struct btree_transaction_stats *s = &c->btree_transaction_stats[fn_idx];
+		struct btree_transaction_stats *s = &c->btree_trans.stats[fn_idx];
 
 		if (s->max_mem) {
 			unsigned expected_mem_bytes = roundup_pow_of_two(s->max_mem);
@@ -3855,8 +3855,8 @@ void bch2_fs_btree_iter_exit(struct bch_fs *c)
 	if (trans)
 		panic("%s leaked btree_trans\n", trans->fn);
 
-	for (s = c->btree_transaction_stats;
-	     s < c->btree_transaction_stats + ARRAY_SIZE(c->btree_transaction_stats);
+	for (s = c->btree_trans.stats;
+	     s < c->btree_trans.stats + ARRAY_SIZE(c->btree_trans.stats);
 	     s++) {
 #ifdef CONFIG_BCACHEFS_TRANS_KMALLOC_TRACE
 		darray_exit(&s->trans_kmalloc_trace);
@@ -3877,8 +3877,8 @@ void bch2_fs_btree_iter_init_early(struct bch_fs *c)
 {
 	struct btree_transaction_stats *s;
 
-	for (s = c->btree_transaction_stats;
-	     s < c->btree_transaction_stats + ARRAY_SIZE(c->btree_transaction_stats);
+	for (s = c->btree_trans.stats;
+	     s < c->btree_trans.stats + ARRAY_SIZE(c->btree_trans.stats);
 	     s++) {
 		bch2_time_stats_init(&s->duration);
 		bch2_time_stats_init(&s->lock_hold_times);

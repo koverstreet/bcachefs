@@ -557,30 +557,38 @@ void bch2_copygc_stop(struct bch_fs *c)
 
 int bch2_copygc_start(struct bch_fs *c)
 {
-	struct task_struct *t;
-	int ret;
-
-	if (c->copygc.thread)
-		return 0;
-
 	if (c->opts.nochanges)
 		return 0;
 
 	if (bch2_fs_init_fault("copygc_start"))
 		return -ENOMEM;
 
-	t = kthread_create(bch2_copygc_thread, c, "bch-copygc/%s", c->name);
-	ret = PTR_ERR_OR_ZERO(t);
-	bch_err_msg(c, ret, "creating copygc thread");
-	if (ret)
-		return ret;
+	if (!c->copygc.wq &&
+	    !(c->copygc.wq = alloc_workqueue("bcachefs_copygc",
+				WQ_HIGHPRI|WQ_FREEZABLE|WQ_MEM_RECLAIM|WQ_CPU_INTENSIVE, 1)))
+		return bch_err_throw(c, ENOMEM_fs_other_alloc);
 
-	get_task_struct(t);
+	if (!c->copygc.thread) {
+		struct task_struct *t =
+			kthread_create(bch2_copygc_thread, c, "bch-copygc/%s", c->name);
+		int ret = PTR_ERR_OR_ZERO(t);
+		bch_err_msg(c, ret, "creating copygc thread");
+		if (ret)
+			return ret;
 
-	c->copygc.thread = t;
-	wake_up_process(c->copygc.thread);
+		get_task_struct(t);
+
+		c->copygc.thread = t;
+		wake_up_process(c->copygc.thread);
+	}
 
 	return 0;
+}
+
+void bch2_fs_copygc_exit(struct bch_fs *c)
+{
+	if (c->copygc.wq)
+		destroy_workqueue(c->copygc.wq);
 }
 
 void bch2_fs_copygc_init(struct bch_fs *c)

@@ -48,7 +48,7 @@ struct btree_write_buffer_keys {
 	struct mutex			lock;
 };
 
-struct btree_write_buffer {
+struct bch_fs_btree_write_buffer {
 	DARRAY(struct wb_key_ref)	sorted;
 	struct btree_write_buffer_keys	inc;
 	struct btree_write_buffer_keys	flushing;

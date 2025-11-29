@@ -15,6 +15,8 @@ static inline void bch2_copygc_wakeup(struct bch_fs *c)
 
 void bch2_copygc_stop(struct bch_fs *);
 int bch2_copygc_start(struct bch_fs *);
+
+void bch2_fs_copygc_exit(struct bch_fs *);
 void bch2_fs_copygc_init(struct bch_fs *);
 
 #endif /* _BCACHEFS_COPYGC_H */

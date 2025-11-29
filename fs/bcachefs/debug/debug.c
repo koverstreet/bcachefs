@@ -759,7 +759,7 @@ static ssize_t btree_transaction_stats_read(struct file *file, char __user *buf,
 	i->ret  = 0;
 
 	while (1) {
-		struct btree_transaction_stats *s = &c->btree_transaction_stats[i->iter];
+		struct btree_transaction_stats *s = &c->btree_trans.stats[i->iter];
 
 		err = bch2_debugfs_flush_buf(i);
 		if (err)

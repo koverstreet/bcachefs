@@ -20,7 +20,7 @@ void bch2_write_op_error(struct bch_write_op *op, u64, const char *, ...);
 static inline struct workqueue_struct *index_update_wq(struct bch_write_op *op)
 {
 	return op->watermark == BCH_WATERMARK_copygc
-		? op->c->copygc_wq
+		? op->c->copygc.wq
 		: op->c->btree_update_wq;
 }
 

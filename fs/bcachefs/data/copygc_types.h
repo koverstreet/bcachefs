@@ -9,6 +9,9 @@ struct bch_fs_copygc {
 	s64			wait;
 	bool			running;
 	wait_queue_head_t	running_wq;
+
+	/* Dedicated workqueue for btree updates: */
+	struct workqueue_struct	*wq;
 };
 
 #endif /* _BCACHEFS_COPYGC_TYPES_H */

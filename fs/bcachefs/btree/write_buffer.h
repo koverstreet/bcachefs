@@ -8,14 +8,14 @@
 
 static inline bool bch2_btree_write_buffer_should_flush(struct bch_fs *c)
 {
-	struct btree_write_buffer *wb = &c->btree_write_buffer;
+	struct bch_fs_btree_write_buffer *wb = &c->btree_write_buffer;
 
 	return wb->inc.keys.nr + wb->flushing.keys.nr > wb->inc.keys.size / 4;
 }
 
 static inline bool bch2_btree_write_buffer_must_wait(struct bch_fs *c)
 {
-	struct btree_write_buffer *wb = &c->btree_write_buffer;
+	struct bch_fs_btree_write_buffer *wb = &c->btree_write_buffer;
 
 	return wb->inc.keys.nr > wb->inc.keys.size * 3 / 4;
 }
@@ -72,7 +72,7 @@ int bch2_accounting_key_to_wb_slowpath(struct bch_fs *,
 static inline int bch2_accounting_key_to_wb(struct bch_fs *c,
 			     enum btree_id btree, struct bkey_i_accounting *k)
 {
-	struct btree_write_buffer *wb = &c->btree_write_buffer;
+	struct bch_fs_btree_write_buffer *wb = &c->btree_write_buffer;
 	struct btree_write_buffered_key search;
 	search.btree = btree;
 	search.k.k.p = k->k.p;
