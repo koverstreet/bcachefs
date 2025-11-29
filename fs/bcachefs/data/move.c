@@ -319,9 +319,11 @@ int bch2_move_extent(struct moving_context *ctxt,
 	else if (data_opts.type != BCH_DATA_UPDATE_scrub) {
 		struct bch_devs_list devs_have = bch2_data_update_devs_keeping(c, &data_opts, k);
 
-		ret =   bch2_can_do_write(c, &data_opts, &devs_have) ?:
-			bch2_btree_node_rewrite_pos(trans, iter->btree_id, level, k.k->p,
-						    data_opts.target, 0, data_opts.write_flags);
+		if (data_opts.type != BCH_DATA_UPDATE_copygc)
+			try(bch2_can_do_write(c, &data_opts, &devs_have));
+
+		ret = bch2_btree_node_rewrite_pos(trans, iter->btree_id, level, k.k->p,
+						  data_opts.target, 0, data_opts.write_flags);
 	} else
 		ret = bch2_btree_node_scrub(trans, iter->btree_id, level, k, data_opts.read_dev);
 

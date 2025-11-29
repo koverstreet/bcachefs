@@ -934,9 +934,11 @@ int bch2_data_update_init(struct btree_trans *trans,
 		 *   (i.e. trying to move a durability=2 replica to a target with a
 		 *   single durability=2 device)
 		 */
-		ret = bch2_can_do_write(c, &m->opts, &m->op.devs_have);
-		if (ret)
-			goto out;
+		if (data_opts.type != BCH_DATA_UPDATE_copygc) {
+			ret = bch2_can_do_write(c, &m->opts, &m->op.devs_have);
+			if (ret)
+				goto out;
+		}
 
 		if (reserve_sectors) {
 			ret = bch2_disk_reservation_add(c, &m->op.res, reserve_sectors,
