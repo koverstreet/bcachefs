@@ -427,7 +427,7 @@ STORE(bch2_fs)
 	/* Debugging: */
 
 	if (attr == &sysfs_trigger_btree_updates)
-		queue_work(c->btree_interior_update_worker, &c->btree_interior_update_work);
+		queue_work(c->btree_interior_updates.worker, &c->btree_interior_updates.work);
 
 	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_sysfs))
 		return -EROFS;

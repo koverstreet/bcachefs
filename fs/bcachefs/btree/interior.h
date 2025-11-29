@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef _BCACHEFS_BTREE_UPDATE_INTERIOR_H
-#define _BCACHEFS_BTREE_UPDATE_INTERIOR_H
+#ifndef _BCACHEFS_BTREE_INTERIOR_H
+#define _BCACHEFS_BTREE_INTERIOR_H
 
 #include "btree/cache.h"
 #include "btree/locking.h"
@@ -349,4 +349,4 @@ void bch2_fs_btree_interior_update_exit(struct bch_fs *);
 void bch2_fs_btree_interior_update_init_early(struct bch_fs *);
 int bch2_fs_btree_interior_update_init(struct bch_fs *);
 
-#endif /* _BCACHEFS_BTREE_UPDATE_INTERIOR_H */
+#endif /* _BCACHEFS_BTREE_INTERIOR_H */

@@ -682,7 +682,7 @@ int bch2_fs_stop(struct bch_fs *c)
 
 		cancel_work_sync(&c->read_only_work);
 
-		flush_work(&c->btree_interior_update_work);
+		flush_work(&c->btree_interior_updates.work);
 	}
 
 	if (test_bit(BCH_FS_emergency_ro, &c->flags))

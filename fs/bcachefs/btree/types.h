@@ -59,11 +59,6 @@ struct btree_write {
 	struct journal_entry_pin	journal;
 };
 
-struct btree_alloc {
-	struct open_buckets	ob;
-	__BKEY_PADDED(k, BKEY_BTREE_PTR_VAL_U64s_MAX);
-};
-
 struct btree_bkey_cached_common {
 	struct six_lock		lock;
 	u8			level;

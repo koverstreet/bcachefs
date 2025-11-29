@@ -241,6 +241,7 @@
 #include "alloc/types.h"
 
 #include "btree/check_types.h"
+#include "btree/interior_types.h"
 #include "btree/journal_overlay_types.h"
 #include "btree/types.h"
 #include "btree/node_scan_types.h"
@@ -514,12 +515,6 @@ enum bch_time_stats {
 
 /* Number of nodes btree coalesce will try to coalesce at once */
 #define GC_MERGE_NODES		4U
-
-/* Maximum number of nodes we might need to allocate atomically: */
-#define BTREE_RESERVE_MAX	(BTREE_MAX_DEPTH + (BTREE_MAX_DEPTH - 1))
-
-/* Size of the freelist we allocate btree nodes from: */
-#define BTREE_NODE_RESERVE	(BTREE_RESERVE_MAX * 4)
 
 #define BTREE_NODE_OPEN_BUCKET_RESERVE	(BTREE_RESERVE_MAX * BCH_REPLICAS_MAX)
 
@@ -903,32 +898,9 @@ struct bch_fs {
 
 	struct btree_cache	btree_cache;
 
-	/*
-	 * Cache of allocated btree nodes - if we allocate a btree node and
-	 * don't use it, if we free it that space can't be reused until going
-	 * _all_ the way through the allocator (which exposes us to a livelock
-	 * when allocating btree reserves fail halfway through) - instead, we
-	 * can stick them here:
-	 */
-	struct btree_alloc	btree_reserve_cache[BTREE_NODE_RESERVE * 2];
-	unsigned		btree_reserve_cache_nr;
-	struct mutex		btree_reserve_cache_lock;
-
-	mempool_t		btree_interior_update_pool;
-	struct list_head	btree_interior_update_list;
-	struct list_head	btree_interior_updates_unwritten;
-	struct mutex		btree_interior_update_lock;
-	struct mutex		btree_interior_update_commit_lock;
-	struct closure_waitlist	btree_interior_update_wait;
-
-	struct workqueue_struct	*btree_interior_update_worker;
-	struct work_struct	btree_interior_update_work;
-
-	struct workqueue_struct	*btree_node_rewrite_worker;
-	struct list_head	btree_node_rewrites;
-	struct list_head	btree_node_rewrites_pending;
-	spinlock_t		btree_node_rewrites_lock;
-	struct closure_waitlist	btree_node_rewrites_wait;
+	struct bch_fs_btree_reserve_cache	btree_reserve_cache;
+	struct bch_fs_btree_interior_updates	btree_interior_updates;
+	struct bch_fs_btree_node_rewrites	btree_node_rewrites;
 
 	/* btree_io.c: */
 	spinlock_t		btree_write_error_lock;
