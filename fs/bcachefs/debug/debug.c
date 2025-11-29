@@ -590,12 +590,12 @@ static ssize_t bch2_btree_transactions_read(struct file *file, char __user *buf,
 	i->size	= size;
 	i->ret	= 0;
 
-	int srcu_idx = srcu_read_lock(&c->btree_trans_barrier);
+	int srcu_idx = srcu_read_lock(&c->btree_trans.barrier);
 restart:
-	seqmutex_lock(&c->btree_trans_lock);
-	list_sort(&c->btree_trans_list, list_ptr_order_cmp);
+	seqmutex_lock(&c->btree_trans.lock);
+	list_sort(&c->btree_trans.list, list_ptr_order_cmp);
 
-	list_for_each_entry(trans, &c->btree_trans_list, list) {
+	list_for_each_entry(trans, &c->btree_trans.list, list) {
 		if ((ulong) trans <= i->iter)
 			continue;
 
@@ -609,7 +609,7 @@ restart:
 			continue;
 		}
 
-		u32 seq = seqmutex_unlock(&c->btree_trans_lock);
+		u32 seq = seqmutex_unlock(&c->btree_trans.lock);
 
 		bch2_btree_trans_to_text(&i->buf, trans);
 
@@ -624,12 +624,12 @@ restart:
 		if (ret)
 			goto unlocked;
 
-		if (!seqmutex_relock(&c->btree_trans_lock, seq))
+		if (!seqmutex_relock(&c->btree_trans.lock, seq))
 			goto restart;
 	}
-	seqmutex_unlock(&c->btree_trans_lock);
+	seqmutex_unlock(&c->btree_trans.lock);
 unlocked:
-	srcu_read_unlock(&c->btree_trans_barrier, srcu_idx);
+	srcu_read_unlock(&c->btree_trans.barrier, srcu_idx);
 
 	if (i->buf.allocation_failure)
 		ret = -ENOMEM;
@@ -825,10 +825,10 @@ static void btree_deadlock_to_text(struct printbuf *out, struct bch_fs *c)
 	struct btree_trans *trans;
 	ulong iter = 0;
 restart:
-	seqmutex_lock(&c->btree_trans_lock);
-	list_sort(&c->btree_trans_list, list_ptr_order_cmp);
+	seqmutex_lock(&c->btree_trans.lock);
+	list_sort(&c->btree_trans.list, list_ptr_order_cmp);
 
-	list_for_each_entry(trans, &c->btree_trans_list, list) {
+	list_for_each_entry(trans, &c->btree_trans.list, list) {
 		if ((ulong) trans <= iter)
 			continue;
 
@@ -837,7 +837,7 @@ restart:
 		if (!closure_get_not_zero(&trans->ref))
 			continue;
 
-		u32 seq = seqmutex_unlock(&c->btree_trans_lock);
+		u32 seq = seqmutex_unlock(&c->btree_trans.lock);
 
 		bool found = bch2_check_for_deadlock(trans, out) != 0;
 
@@ -846,10 +846,10 @@ restart:
 		if (found)
 			return;
 
-		if (!seqmutex_relock(&c->btree_trans_lock, seq))
+		if (!seqmutex_relock(&c->btree_trans.lock, seq))
 			goto restart;
 	}
-	seqmutex_unlock(&c->btree_trans_lock);
+	seqmutex_unlock(&c->btree_trans.lock);
 }
 
 typedef void (*fs_to_text_fn)(struct printbuf *, struct bch_fs *);

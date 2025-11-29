@@ -96,7 +96,7 @@ static bool bkey_cached_evict(struct btree_key_cache *c,
 
 static void __bkey_cached_free(struct rcu_pending *pending, struct rcu_head *rcu)
 {
-	struct bch_fs *c = container_of(pending->srcu, struct bch_fs, btree_trans_barrier);
+	struct bch_fs *c = container_of(pending->srcu, struct bch_fs, btree_trans.barrier);
 	struct bkey_cached *ck = container_of(rcu, struct bkey_cached, rcu);
 
 	this_cpu_dec(*c->btree_key_cache.nr_pending);
@@ -516,7 +516,7 @@ int bch2_btree_key_cache_journal_flush(struct journal *j,
 	struct bkey_cached *ck =
 		container_of(pin, struct bkey_cached, journal);
 	struct bkey_cached_key key;
-	int srcu_idx = srcu_read_lock(&c->btree_trans_barrier);
+	int srcu_idx = srcu_read_lock(&c->btree_trans.barrier);
 	int ret = 0;
 
 	CLASS(btree_trans, trans)(c);
@@ -545,7 +545,7 @@ int bch2_btree_key_cache_journal_flush(struct journal *j,
 			     !bch2_journal_error(j), c,
 			     "flushing key cache: %s", bch2_err_str(ret));
 unlock:
-	srcu_read_unlock(&c->btree_trans_barrier, srcu_idx);
+	srcu_read_unlock(&c->btree_trans.barrier, srcu_idx);
 	return ret;
 }
 
@@ -649,7 +649,7 @@ static unsigned long bch2_btree_key_cache_scan(struct shrinker *shrink,
 	unsigned iter, start;
 	int srcu_idx;
 
-	srcu_idx = srcu_read_lock(&c->btree_trans_barrier);
+	srcu_idx = srcu_read_lock(&c->btree_trans.barrier);
 	rcu_read_lock();
 
 	tbl = rht_dereference_rcu(bc->table.tbl, &bc->table);
@@ -663,7 +663,7 @@ static unsigned long bch2_btree_key_cache_scan(struct shrinker *shrink,
 	 */
 	if (unlikely(tbl->nest)) {
 		rcu_read_unlock();
-		srcu_read_unlock(&c->btree_trans_barrier, srcu_idx);
+		srcu_read_unlock(&c->btree_trans.barrier, srcu_idx);
 		return SHRINK_STOP;
 	}
 
@@ -712,7 +712,7 @@ out:
 	bc->shrink_iter = iter;
 
 	rcu_read_unlock();
-	srcu_read_unlock(&c->btree_trans_barrier, srcu_idx);
+	srcu_read_unlock(&c->btree_trans.barrier, srcu_idx);
 
 	return freed;
 }
@@ -805,8 +805,8 @@ int bch2_fs_btree_key_cache_init(struct btree_key_cache *bc)
 	if (!bc->nr_pending)
 		return bch_err_throw(c, ENOMEM_fs_btree_cache_init);
 
-	if (rcu_pending_init(&bc->pending[0], &c->btree_trans_barrier, __bkey_cached_free) ||
-	    rcu_pending_init(&bc->pending[1], &c->btree_trans_barrier, __bkey_cached_free))
+	if (rcu_pending_init(&bc->pending[0], &c->btree_trans.barrier, __bkey_cached_free) ||
+	    rcu_pending_init(&bc->pending[1], &c->btree_trans.barrier, __bkey_cached_free))
 		return bch_err_throw(c, ENOMEM_fs_btree_cache_init);
 
 	if (rhashtable_init(&bc->table, &bch2_btree_key_cache_params))

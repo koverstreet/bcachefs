@@ -735,10 +735,6 @@ struct journal_seq_blacklist_table {
 	}			entries[];
 };
 
-struct btree_trans_buf {
-	struct btree_trans	*trans;
-};
-
 #define BCH_WRITE_REFS()						\
 	x(journal)							\
 	x(trans)							\
@@ -897,6 +893,8 @@ struct bch_fs {
 	struct mutex		btree_root_lock;
 
 	struct btree_cache	btree_cache;
+	struct btree_key_cache	btree_key_cache;
+	struct bch_fs_btree_trans		btree_trans;
 
 	struct bch_fs_btree_reserve_cache	btree_reserve_cache;
 	struct bch_fs_btree_interior_updates	btree_interior_updates;
@@ -908,18 +906,6 @@ struct bch_fs {
 		atomic64_t	nr;
 		atomic64_t	bytes;
 	}			btree_write_stats[BTREE_WRITE_TYPE_NR];
-
-	/* btree_iter.c: */
-	struct seqmutex		btree_trans_lock;
-	struct list_head	btree_trans_list;
-	mempool_t		btree_trans_pool;
-	mempool_t		btree_trans_mem_pool;
-	struct btree_trans_buf  __percpu	*btree_trans_bufs;
-
-	struct srcu_struct	btree_trans_barrier;
-	bool			btree_trans_barrier_initialized;
-
-	struct btree_key_cache	btree_key_cache;
 
 	struct btree_write_buffer btree_write_buffer;
 

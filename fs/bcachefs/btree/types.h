@@ -575,6 +575,21 @@ struct btree_trans {
 	struct btree_insert_entry _updates[BTREE_ITER_INITIAL];
 };
 
+struct btree_trans_buf {
+	struct btree_trans	*trans;
+};
+
+struct bch_fs_btree_trans {
+	struct seqmutex		lock;
+	struct list_head	list;
+	mempool_t		pool;
+	mempool_t		malloc_pool;
+	struct btree_trans_buf  __percpu *bufs;
+
+	struct srcu_struct	barrier;
+	bool			barrier_initialized;
+};
+
 static inline struct btree_path *btree_iter_path(struct btree_trans *trans, struct btree_iter *iter)
 {
 	return trans->paths + iter->path;
