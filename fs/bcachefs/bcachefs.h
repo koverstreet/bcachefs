@@ -246,6 +246,7 @@
 #include "btree/node_scan_types.h"
 #include "btree/write_buffer_types.h"
 
+#include "data/copygc_types.h"
 #include "data/ec_types.h"
 #include "data/keylist_types.h"
 #include "data/nocow_locking_types.h"
@@ -1076,38 +1077,9 @@ struct bch_fs {
 	struct list_head	moving_context_list;
 	struct mutex		moving_context_lock;
 
-	/* REBALANCE */
 	struct bch_fs_reconcile	reconcile;
-
-	/* COPYGC */
-	struct task_struct	*copygc_thread;
-	struct write_point	copygc_write_point;
-	s64			copygc_wait_at;
-	s64			copygc_wait;
-	bool			copygc_running;
-	wait_queue_head_t	copygc_running_wq;
-
-	/* STRIPES: */
-	GENRADIX(struct gc_stripe) gc_stripes;
-
-	struct hlist_head	ec_stripes_new[32];
-	struct hlist_head	ec_stripes_new_buckets[64];
-	spinlock_t		ec_stripes_new_lock;
-
-	/* ERASURE CODING */
-	struct list_head	ec_stripe_head_list;
-	struct mutex		ec_stripe_head_lock;
-
-	struct list_head	ec_stripe_new_list;
-	struct mutex		ec_stripe_new_lock;
-	wait_queue_head_t	ec_stripe_new_wait;
-
-	struct work_struct	ec_stripe_create_work;
-	u64			ec_stripe_hint;
-
-	struct work_struct	ec_stripe_delete_work;
-
-	struct bio_set		ec_bioset;
+	struct bch_fs_copygc	copygc;
+	struct bch_fs_ec	ec;
 
 	/* REFLINK */
 	reflink_gc_table	reflink_gc_table;

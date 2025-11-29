@@ -459,7 +459,7 @@ static noinline void bucket_alloc_to_text(struct printbuf *out,
 	prt_printf(out, "avail\t%llu\n",	dev_buckets_free(req->ca, req->usage, req->watermark));
 	prt_printf(out, "copygc_wait\t%llu/%lli\n",
 		   bch2_copygc_wait_amount(c),
-		   c->copygc_wait - atomic64_read(&c->io_clock[WRITE].now));
+		   c->copygc.wait - atomic64_read(&c->io_clock[WRITE].now));
 	prt_printf(out, "seen\t%llu\n",	req->counters.buckets_seen);
 	prt_printf(out, "open\t%llu\n",	req->counters.skipped_open);
 	prt_printf(out, "need journal commit\t%llu\n", req->counters.skipped_need_journal_commit);
@@ -1001,7 +1001,7 @@ void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *ca,
 	for (i = 0; i < ARRAY_SIZE(c->write_points); i++)
 		bch2_writepoint_stop(c, ca, ec, &c->write_points[i]);
 
-	bch2_writepoint_stop(c, ca, ec, &c->copygc_write_point);
+	bch2_writepoint_stop(c, ca, ec, &c->copygc.write_point);
 	bch2_writepoint_stop(c, ca, ec, &c->reconcile_write_point);
 	bch2_writepoint_stop(c, ca, ec, &c->btree_write_point);
 
@@ -1377,7 +1377,7 @@ void bch2_fs_allocator_foreground_init(struct bch_fs *c)
 
 	writepoint_init(&c->btree_write_point,		BCH_DATA_btree);
 	writepoint_init(&c->reconcile_write_point,	BCH_DATA_user);
-	writepoint_init(&c->copygc_write_point,		BCH_DATA_user);
+	writepoint_init(&c->copygc.write_point,		BCH_DATA_user);
 
 	for (wp = c->write_points;
 	     wp < c->write_points + c->write_points_nr; wp++) {
@@ -1478,7 +1478,7 @@ void bch2_write_points_to_text(struct printbuf *out, struct bch_fs *c)
 		bch2_write_point_to_text(out, c, wp);
 
 	prt_str(out, "Copygc write point\n");
-	bch2_write_point_to_text(out, c, &c->copygc_write_point);
+	bch2_write_point_to_text(out, c, &c->copygc.write_point);
 
 	prt_str(out, "Rebalance write point\n");
 	bch2_write_point_to_text(out, c, &c->reconcile_write_point);

@@ -798,7 +798,7 @@ static void bch2_gc_free(struct bch_fs *c)
 	bch2_accounting_gc_free(c);
 
 	genradix_free(&c->reflink_gc_table);
-	genradix_free(&c->gc_stripes);
+	genradix_free(&c->ec.gc_stripes);
 
 	for_each_member_device(c, ca)
 		genradix_free(&ca->buckets_gc);
@@ -953,7 +953,7 @@ static int bch2_gc_write_stripes_key(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
 	const struct bch_stripe *s = bkey_s_c_to_stripe(k).v;
-	struct gc_stripe *m = genradix_ptr(&c->gc_stripes, k.k->p.offset);
+	struct gc_stripe *m = genradix_ptr(&c->ec.gc_stripes, k.k->p.offset);
 
 	bool bad = false;
 	for (unsigned i = 0; i < s->nr_blocks; i++) {

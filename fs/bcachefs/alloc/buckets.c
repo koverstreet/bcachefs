@@ -249,7 +249,7 @@ static int bch2_check_fix_ptr(struct btree_trans *trans,
 	}
 
 	if (p.has_ec) {
-		struct gc_stripe *m = genradix_ptr(&c->gc_stripes, p.ec.idx);
+		struct gc_stripe *m = genradix_ptr(&c->ec.gc_stripes, p.ec.idx);
 
 		if (ret_fsck_err_on(!m || !m->alive,
 				trans, ptr_to_missing_stripe,
@@ -343,7 +343,7 @@ again:
 			ptrs = bch2_bkey_ptrs(bkey_i_to_s(new));
 			bkey_extent_entry_for_each(ptrs, entry) {
 				if (extent_entry_type(entry) == BCH_EXTENT_ENTRY_stripe_ptr) {
-					struct gc_stripe *m = genradix_ptr(&c->gc_stripes,
+					struct gc_stripe *m = genradix_ptr(&c->ec.gc_stripes,
 									entry->stripe_ptr.idx);
 					union bch_extent_entry *next_ptr;
 
@@ -707,7 +707,7 @@ static int bch2_trigger_stripe_ptr(struct btree_trans *trans,
 	}
 
 	if (flags & BTREE_TRIGGER_gc) {
-		struct gc_stripe *m = genradix_ptr_alloc(&c->gc_stripes, p.ec.idx, GFP_KERNEL);
+		struct gc_stripe *m = genradix_ptr_alloc(&c->ec.gc_stripes, p.ec.idx, GFP_KERNEL);
 		if (!m) {
 			bch_err(c, "error allocating memory for gc_stripes, idx %llu",
 				(u64) p.ec.idx);
