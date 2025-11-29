@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef _BCACHEFS_SUPER_IO_H
-#define _BCACHEFS_SUPER_IO_H
+#ifndef _BCACHEFS_SB_IO_H
+#define _BCACHEFS_SB_IO_H
 
 #include "data/extents.h"
 #include "init/dev_types.h"
@@ -116,4 +116,4 @@ void bch2_sb_field_to_text(struct printbuf *, struct bch_sb *,
 void bch2_sb_layout_to_text(struct printbuf *, struct bch_sb_layout *);
 void bch2_sb_to_text(struct printbuf *, struct bch_sb *, bool, unsigned);
 
-#endif /* _BCACHEFS_SUPER_IO_H */
+#endif /* _BCACHEFS_SB_IO_H */

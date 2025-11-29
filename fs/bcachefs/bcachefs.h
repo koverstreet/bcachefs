@@ -265,6 +265,7 @@
 
 #include "sb/counters_types.h"
 #include "sb/errors_types.h"
+#include "sb/io_types.h"
 #include "sb/members_types.h"
 
 #include "snapshots/snapshot_types.h"
@@ -830,33 +831,7 @@ struct bch_fs {
 	unsigned		loglevel;
 	unsigned		prev_loglevel;
 
-	/* Updated by bch2_sb_update():*/
-	struct {
-		__uuid_t	uuid;
-		__uuid_t	user_uuid;
-
-		u16		version;
-		u16		version_incompat;
-		u16		version_incompat_allowed;
-		u16		version_min;
-		u16		version_upgrade_complete;
-
-		u8		nr_devices;
-		u8		clean;
-		bool		multi_device; /* true if we've ever had more than one device */
-
-		u8		encryption_type;
-
-		u64		time_base_lo;
-		u32		time_base_hi;
-		unsigned	time_units_per_sec;
-		unsigned	nsec_per_time_unit;
-		u64		features;
-		u64		compat;
-		u64		recovery_passes_required;
-		unsigned long	errors_silent[BITS_TO_LONGS(BCH_FSCK_ERR_MAX)];
-		u64		btrees_lost_data;
-	}			sb;
+	struct bch_sb_cpu	sb;
 
 	unsigned long		incompat_versions_requested[BITS_TO_LONGS(BCH_VERSION_MINOR(bcachefs_metadata_version_current))];
 
