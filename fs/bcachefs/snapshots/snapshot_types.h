@@ -56,4 +56,14 @@ struct snapshot_delete {
 	struct progress_indicator	progress;
 };
 
+struct bch_fs_snapshots {
+	struct snapshot_table __rcu		*table;
+	struct mutex				table_lock;
+	struct rw_semaphore			create_lock;
+	struct snapshot_delete			delete;
+	struct work_struct			wait_for_pagecache_and_delete_work;
+	snapshot_id_list			unlinked;
+	struct mutex				unlinked_lock;
+};
+
 #endif /* _BCACHEFS_SNAPSHOT_TYPES_H */

@@ -836,15 +836,6 @@ struct bch_fs {
 
 	struct bch_fs_recovery			recovery;
 
-	/* snapshot.c: */
-	struct snapshot_table __rcu		*snapshots;
-	struct mutex				snapshot_table_lock;
-	struct rw_semaphore			snapshot_create_lock;
-	struct snapshot_delete			snapshot_delete;
-	struct work_struct			snapshot_wait_for_pagecache_and_delete_work;
-	snapshot_id_list			snapshots_unlinked;
-	struct mutex				snapshots_unlinked_lock;
-
 	/* BTREE CACHE */
 	/*
 	 * A btree node on disk could have too many bsets for an iterator to fit
@@ -876,6 +867,8 @@ struct bch_fs {
 	struct bch_fs_capacity			capacity;
 	struct bch_fs_allocator			allocator;
 	struct buckets_waiting_for_journal	buckets_waiting_for_journal;
+
+	struct bch_fs_snapshots			snapshots;
 
 	/* btree_io.c: */
 	spinlock_t		btree_write_error_lock;

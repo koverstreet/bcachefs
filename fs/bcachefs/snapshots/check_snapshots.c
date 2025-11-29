@@ -13,7 +13,7 @@
 
 static int bch2_snapshot_table_make_room(struct bch_fs *c, u32 id)
 {
-	guard(mutex)(&c->snapshot_table_lock);
+	guard(mutex)(&c->snapshots.table_lock);
 	return bch2_snapshot_t_mut(c, id)
 		? 0
 		: bch_err_throw(c, ENOMEM_mark_snapshot);
@@ -38,7 +38,7 @@ u32 bch2_snapshot_oldest_subvol(struct bch_fs *c, u32 snapshot_root,
 				snapshot_id_list *skip)
 {
 	guard(rcu)();
-	struct snapshot_table *t = rcu_dereference(c->snapshots);
+	struct snapshot_table *t = rcu_dereference(c->snapshots.table);
 
 	while (true) {
 		u32 id = snapshot_root, subvol = 0;

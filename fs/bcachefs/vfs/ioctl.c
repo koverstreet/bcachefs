@@ -314,7 +314,7 @@ static long __bch2_ioctl_subvolume_create(struct bch_fs *c, struct file *filp,
 	    !arg.src_ptr)
 		snapshot_src.subvol = inode_inum(to_bch_ei(dir)).subvol;
 
-	scoped_guard(rwsem_write, &c->snapshot_create_lock)
+	scoped_guard(rwsem_write, &c->snapshots.create_lock)
 		inode = __bch2_create(file_mnt_idmap(filp), to_bch_ei(dir),
 				      dst_dentry, arg.mode|S_IFDIR,
 				      0, snapshot_src, create_flags);

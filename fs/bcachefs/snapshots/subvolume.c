@@ -460,15 +460,15 @@ static int bch2_subvolume_delete(struct btree_trans *trans, u32 subvolid)
 static void bch2_subvolume_wait_for_pagecache_and_delete(struct work_struct *work)
 {
 	struct bch_fs *c = container_of(work, struct bch_fs,
-				snapshot_wait_for_pagecache_and_delete_work);
+				snapshots.wait_for_pagecache_and_delete_work);
 	int ret = 0;
 
 	while (!ret) {
 		snapshot_id_list s;
 
-		scoped_guard(mutex, &c->snapshots_unlinked_lock) {
-			s = c->snapshots_unlinked;
-			darray_init(&c->snapshots_unlinked);
+		scoped_guard(mutex, &c->snapshots.unlinked_lock) {
+			s = c->snapshots.unlinked;
+			darray_init(&c->snapshots.unlinked);
 		}
 
 		if (!s.nr)
@@ -502,14 +502,14 @@ static int bch2_subvolume_wait_for_pagecache_and_delete_hook(struct btree_trans 
 	struct subvolume_unlink_hook *h = container_of(_h, struct subvolume_unlink_hook, h);
 	struct bch_fs *c = trans->c;
 
-	scoped_guard(mutex, &c->snapshots_unlinked_lock)
-		if (!snapshot_list_has_id(&c->snapshots_unlinked, h->subvol))
-			try(snapshot_list_add(c, &c->snapshots_unlinked, h->subvol));
+	scoped_guard(mutex, &c->snapshots.unlinked_lock)
+		if (!snapshot_list_has_id(&c->snapshots.unlinked, h->subvol))
+			try(snapshot_list_add(c, &c->snapshots.unlinked, h->subvol));
 
 	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_snapshot_delete_pagecache))
 		return -EROFS;
 
-	if (!queue_work(c->write_ref_wq, &c->snapshot_wait_for_pagecache_and_delete_work))
+	if (!queue_work(c->write_ref_wq, &c->snapshots.wait_for_pagecache_and_delete_work))
 		enumerated_ref_put(&c->writes, BCH_WRITE_REF_snapshot_delete_pagecache);
 	return 0;
 }
@@ -661,6 +661,6 @@ int bch2_fs_upgrade_for_subvolumes(struct bch_fs *c)
 
 void bch2_fs_subvolumes_init_early(struct bch_fs *c)
 {
-	INIT_WORK(&c->snapshot_wait_for_pagecache_and_delete_work,
+	INIT_WORK(&c->snapshots.wait_for_pagecache_and_delete_work,
 		  bch2_subvolume_wait_for_pagecache_and_delete);
 }

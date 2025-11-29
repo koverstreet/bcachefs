@@ -1081,8 +1081,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	INIT_LIST_HEAD(&c->list);
 
 	mutex_init(&c->bio_bounce_pages_lock);
-	mutex_init(&c->snapshot_table_lock);
-	init_rwsem(&c->snapshot_create_lock);
 
 	spin_lock_init(&c->btree_write_error_lock);
 

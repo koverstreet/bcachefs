@@ -91,7 +91,7 @@ static bool __bch2_snapshot_is_ancestor_early(struct snapshot_table *t, u32 id, 
 bool bch2_snapshot_is_ancestor_early(struct bch_fs *c, u32 id, u32 ancestor)
 {
 	guard(rcu)();
-	return __bch2_snapshot_is_ancestor_early(rcu_dereference(c->snapshots), id, ancestor);
+	return __bch2_snapshot_is_ancestor_early(rcu_dereference(c->snapshots.table), id, ancestor);
 }
 
 static inline u32 get_ancestor_below(struct snapshot_table *t, u32 id, u32 ancestor)
@@ -125,7 +125,7 @@ bool __bch2_snapshot_is_ancestor(struct bch_fs *c, u32 id, u32 ancestor)
 #endif
 
 	guard(rcu)();
-	struct snapshot_table *t = rcu_dereference(c->snapshots);
+	struct snapshot_table *t = rcu_dereference(c->snapshots.table);
 
 	if (unlikely(recovery_pass_will_run(c, BCH_RECOVERY_PASS_check_snapshots)))
 		return __bch2_snapshot_is_ancestor_early(t, id, ancestor);
@@ -159,25 +159,23 @@ static noinline struct snapshot_t *__snapshot_t_mut(struct bch_fs *c, u32 id)
 
 	new->nr = new_size;
 
-	old = rcu_dereference_protected(c->snapshots, true);
+	old = rcu_dereference_protected(c->snapshots.table, true);
 	if (old)
 		memcpy(new->s, old->s, sizeof(old->s[0]) * old->nr);
 
-	rcu_assign_pointer(c->snapshots, new);
+	rcu_assign_pointer(c->snapshots.table, new);
 	kvfree_rcu(old, rcu);
 
-	return &rcu_dereference_protected(c->snapshots,
-				lockdep_is_held(&c->snapshot_table_lock))->s[idx];
+	return &rcu_dereference_protected(c->snapshots.table,
+				lockdep_is_held(&c->snapshots.table_lock))->s[idx];
 }
 
 struct snapshot_t *bch2_snapshot_t_mut(struct bch_fs *c, u32 id)
 {
 	size_t idx = U32_MAX - id;
 	struct snapshot_table *table =
-		rcu_dereference_protected(c->snapshots,
-				lockdep_is_held(&c->snapshot_table_lock));
-
-	lockdep_assert_held(&c->snapshot_table_lock);
+		rcu_dereference_protected(c->snapshots.table,
+				lockdep_is_held(&c->snapshots.table_lock));
 
 	if (likely(table && idx < table->nr))
 		return &table->s[idx];
@@ -278,7 +276,7 @@ static int __bch2_mark_snapshot(struct btree_trans *trans,
 	struct snapshot_t *t;
 	u32 id = new.k->p.offset;
 
-	guard(mutex)(&c->snapshot_table_lock);
+	guard(mutex)(&c->snapshots.table_lock);
 
 	t = bch2_snapshot_t_mut(c, id);
 	if (!t)
@@ -687,10 +685,10 @@ static inline u32 interior_delete_has_id(interior_delete_list *l, u32 id)
 
 static unsigned live_child(struct bch_fs *c, u32 start)
 {
-	struct snapshot_delete *d = &c->snapshot_delete;
+	struct snapshot_delete *d = &c->snapshots.delete;
 
 	guard(rcu)();
-	struct snapshot_table *t = rcu_dereference(c->snapshots);
+	struct snapshot_table *t = rcu_dereference(c->snapshots.table);
 
 	for (u32 id = bch2_snapshot_tree_next(t, start);
 	     id && id != start;
@@ -714,7 +712,7 @@ static int delete_dead_snapshots_process_key(struct btree_trans *trans,
 					     struct btree_iter *iter,
 					     struct bkey_s_c k)
 {
-	struct snapshot_delete *d = &trans->c->snapshot_delete;
+	struct snapshot_delete *d = &trans->c->snapshots.delete;
 
 	if (snapshot_list_has_id(&d->delete_leaves, k.k->p.snapshot))
 		return bch2_btree_delete_at(trans, iter,
@@ -744,7 +742,7 @@ static int delete_dead_snapshots_process_key(struct btree_trans *trans,
 static bool skip_unrelated_snapshot_tree(struct btree_trans *trans, struct btree_iter *iter, u64 *prev_inum)
 {
 	struct bch_fs *c = trans->c;
-	struct snapshot_delete *d = &c->snapshot_delete;
+	struct snapshot_delete *d = &c->snapshots.delete;
 
 	u64 inum = iter->btree_id != BTREE_ID_inodes
 		? iter->pos.inode
@@ -771,7 +769,7 @@ static bool skip_unrelated_snapshot_tree(struct btree_trans *trans, struct btree
 static int delete_dead_snapshot_keys_v1(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;
-	struct snapshot_delete *d = &c->snapshot_delete;
+	struct snapshot_delete *d = &c->snapshots.delete;
 
 	bch2_progress_init(&d->progress, c, btree_has_snapshots_mask);
 	d->progress.silent	= true;
@@ -820,7 +818,7 @@ static int delete_dead_snapshot_keys_range(struct btree_trans *trans,
 static int delete_dead_snapshot_keys_v2(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;
-	struct snapshot_delete *d = &c->snapshot_delete;
+	struct snapshot_delete *d = &c->snapshots.delete;
 	CLASS(disk_reservation, res)(c);
 	u64 prev_inum = 0;
 
@@ -893,7 +891,7 @@ static int check_should_delete_snapshot(struct btree_trans *trans, struct bkey_s
 		return 0;
 
 	struct bch_fs *c = trans->c;
-	struct snapshot_delete *d = &c->snapshot_delete;
+	struct snapshot_delete *d = &c->snapshots.delete;
 	struct bkey_s_c_snapshot s = bkey_s_c_to_snapshot(k);
 	unsigned live_children = 0;
 
@@ -937,7 +935,7 @@ static inline u32 bch2_snapshot_nth_parent_skip(struct bch_fs *c, u32 id, u32 n,
 						interior_delete_list *skip)
 {
 	guard(rcu)();
-	struct snapshot_table *t = rcu_dereference(c->snapshots);
+	struct snapshot_table *t = rcu_dereference(c->snapshots.table);
 
 	while (interior_delete_has_id(skip, id))
 		id = __bch2_snapshot_parent(t, id);
@@ -1045,7 +1043,7 @@ static int delete_dead_snapshots_locked(struct bch_fs *c)
 	try(for_each_btree_key(trans, iter, BTREE_ID_snapshots, POS_MIN, 0, k,
 		check_should_delete_snapshot(trans, k)));
 
-	struct snapshot_delete *d = &c->snapshot_delete;
+	struct snapshot_delete *d = &c->snapshots.delete;
 	if (!d->delete_leaves.nr && !d->delete_interior.nr)
 		return 0;
 
@@ -1070,7 +1068,7 @@ static int delete_dead_snapshots_locked(struct bch_fs *c)
 
 int __bch2_delete_dead_snapshots(struct bch_fs *c)
 {
-	struct snapshot_delete *d = &c->snapshot_delete;
+	struct snapshot_delete *d = &c->snapshots.delete;
 
 	if (!mutex_trylock(&d->lock))
 		return 0;
@@ -1108,7 +1106,7 @@ int bch2_delete_dead_snapshots(struct bch_fs *c)
 
 void bch2_delete_dead_snapshots_work(struct work_struct *work)
 {
-	struct bch_fs *c = container_of(work, struct bch_fs, snapshot_delete.work);
+	struct bch_fs *c = container_of(work, struct bch_fs, snapshots.delete.work);
 
 	set_worker_desc("bcachefs-delete-dead-snapshots/%s", c->name);
 
@@ -1126,13 +1124,13 @@ void bch2_delete_dead_snapshots_async(struct bch_fs *c)
 
 	BUG_ON(!test_bit(BCH_FS_may_go_rw, &c->flags));
 
-	if (!queue_work(system_long_wq, &c->snapshot_delete.work))
+	if (!queue_work(system_long_wq, &c->snapshots.delete.work))
 		enumerated_ref_put(&c->writes, BCH_WRITE_REF_delete_dead_snapshots);
 }
 
 void bch2_snapshot_delete_status_to_text(struct printbuf *out, struct bch_fs *c)
 {
-	struct snapshot_delete *d = &c->snapshot_delete;
+	struct snapshot_delete *d = &c->snapshots.delete;
 
 	if (!d->running) {
 		prt_str(out, "(not running)");
@@ -1272,13 +1270,17 @@ int bch2_snapshots_read(struct bch_fs *c)
 
 void bch2_fs_snapshots_exit(struct bch_fs *c)
 {
-	kvfree(rcu_dereference_protected(c->snapshots, true));
+	kvfree(rcu_dereference_protected(c->snapshots.table, true));
 }
 
 void bch2_fs_snapshots_init_early(struct bch_fs *c)
 {
-	INIT_WORK(&c->snapshot_delete.work, bch2_delete_dead_snapshots_work);
-	mutex_init(&c->snapshot_delete.lock);
-	mutex_init(&c->snapshot_delete.progress_lock);
-	mutex_init(&c->snapshots_unlinked_lock);
+	mutex_init(&c->snapshots.table_lock);
+	init_rwsem(&c->snapshots.create_lock);
+
+	INIT_WORK(&c->snapshots.delete.work, bch2_delete_dead_snapshots_work);
+	mutex_init(&c->snapshots.delete.lock);
+	mutex_init(&c->snapshots.delete.progress_lock);
+
+	mutex_init(&c->snapshots.unlinked_lock);
 }
