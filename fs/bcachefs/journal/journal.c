@@ -653,7 +653,7 @@ static unsigned max_dev_latency(struct bch_fs *c)
 	u64 nsecs = 0;
 
 	guard(rcu)();
-	for_each_member_device_rcu(c, ca, &c->rw_devs[BCH_DATA_journal])
+	for_each_member_device_rcu(c, ca, &c->allocator.rw_devs[BCH_DATA_journal])
 		nsecs = max(nsecs, ca->io_latency[WRITE].stats.max_duration);
 
 	return nsecs_to_jiffies(nsecs);
@@ -1137,7 +1137,7 @@ void __bch2_journal_debug_to_text(struct printbuf *out, struct journal *j)
 		       j->space[journal_space_total].total);
 	}
 
-	for_each_member_device_rcu(c, ca, &c->rw_devs[BCH_DATA_journal]) {
+	for_each_member_device_rcu(c, ca, &c->allocator.rw_devs[BCH_DATA_journal]) {
 		struct journal_device *ja = &ca->journal;
 		if (!ja->nr)
 			continue;

@@ -723,10 +723,6 @@ struct btree_transaction_stats {
 	char			*max_paths_text;
 };
 
-struct bch_fs_pcpu {
-	u64			sectors_available;
-};
-
 struct journal_seq_blacklist_table {
 	size_t			nr;
 	struct journal_seq_blacklist_table_entry {
@@ -810,6 +806,7 @@ struct bch_fs {
 	struct work_struct	read_only_work;
 
 	struct bch_dev __rcu	*devs[BCH_SB_MEMBERS_MAX];
+	struct bch_devs_mask	devs_online;
 	struct bch_devs_mask	devs_removed;
 	struct bch_devs_mask	devs_rotational;
 
@@ -870,6 +867,10 @@ struct bch_fs {
 	struct bch_fs_btree_interior_updates	btree_interior_updates;
 	struct bch_fs_btree_node_rewrites	btree_node_rewrites;
 
+	struct bch_fs_capacity			capacity;
+	struct bch_fs_allocator			allocator;
+	struct buckets_waiting_for_journal	buckets_waiting_for_journal;
+
 	/* btree_io.c: */
 	spinlock_t		btree_write_error_lock;
 	struct btree_write_stats {
@@ -893,63 +894,11 @@ struct bch_fs {
 	struct workqueue_struct *promote_wq;
 	struct semaphore __percpu *promote_limit;
 
-	/* ALLOCATION */
-	struct bch_devs_mask	online_devs;
-	struct bch_devs_mask	rw_devs[BCH_DATA_NR];
-	unsigned long		rw_devs_change_count;
-
-	u64			capacity; /* sectors */
-	u64			reserved; /* sectors */
-
-	/*
-	 * When capacity _decreases_ (due to a disk being removed), we
-	 * increment capacity_gen - this invalidates outstanding reservations
-	 * and forces them to be revalidated
-	 */
-	u32			capacity_gen;
-	unsigned		bucket_size_max;
-
-	atomic64_t		sectors_available;
-	struct mutex		sectors_available_lock;
-
-	struct bch_fs_pcpu __percpu	*pcpu;
-
-	struct percpu_rw_semaphore	mark_lock;
-
-	seqcount_t			usage_lock;
-	struct bch_fs_usage_base __percpu *usage;
-	u64 __percpu		*online_reserved;
-
-	unsigned long		allocator_last_stuck;
-
 	struct io_clock		io_clock[2];
 
 	/* JOURNAL SEQ BLACKLIST */
 	struct journal_seq_blacklist_table *
 				journal_seq_blacklist_table;
-
-	/* ALLOCATOR */
-	spinlock_t		freelist_lock;
-	struct closure_waitlist	freelist_wait;
-
-	open_bucket_idx_t	open_buckets_freelist;
-	open_bucket_idx_t	open_buckets_nr_free;
-	struct closure_waitlist	open_buckets_wait;
-	struct open_bucket	open_buckets[OPEN_BUCKETS_COUNT];
-	open_bucket_idx_t	open_buckets_hash[OPEN_BUCKETS_COUNT];
-
-	open_bucket_idx_t	open_buckets_partial[OPEN_BUCKETS_COUNT];
-	open_bucket_idx_t	open_buckets_partial_nr;
-
-	struct write_point	btree_write_point;
-	struct write_point	reconcile_write_point;
-
-	struct write_point	write_points[WRITE_POINT_MAX];
-	struct hlist_head	write_points_hash[WRITE_POINT_HASH_NR];
-	struct mutex		write_points_hash_lock;
-	unsigned		write_points_nr;
-
-	struct buckets_waiting_for_journal buckets_waiting_for_journal;
 
 	/* GARBAGE COLLECTION */
 	struct work_struct	gc_gens_work;

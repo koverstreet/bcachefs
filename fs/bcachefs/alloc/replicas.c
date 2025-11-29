@@ -286,7 +286,7 @@ bool bch2_replicas_marked_locked(struct bch_fs *c,
 bool bch2_replicas_marked(struct bch_fs *c,
 			  struct bch_replicas_entry_v1 *search)
 {
-	guard(percpu_read)(&c->mark_lock);
+	guard(percpu_read)(&c->capacity.mark_lock);
 	return bch2_replicas_marked_locked(c, search);
 }
 
@@ -331,7 +331,7 @@ static int bch2_mark_replicas_slowpath(struct bch_fs *c,
 	guard(mutex)(&c->sb_lock);
 	bool write_sb = false;
 
-	scoped_guard(percpu_write, &c->mark_lock) {
+	scoped_guard(percpu_write, &c->capacity.mark_lock) {
 		if (!replicas_entry_search(&c->replicas, new_entry)) {
 			CLASS(bch_replicas_cpu, new_r)();
 
@@ -375,7 +375,7 @@ static void __replicas_entry_kill(struct bch_fs *c, struct bch_replicas_entry_cp
 
 void bch2_replicas_entry_kill(struct bch_fs *c, struct bch_replicas_entry_v1 *kill)
 {
-	lockdep_assert_held(&c->mark_lock);
+	lockdep_assert_held(&c->capacity.mark_lock);
 	lockdep_assert_held(&c->sb_lock);
 
 	struct bch_replicas_entry_cpu *e = replicas_entry_search(&c->replicas, kill);
@@ -408,7 +408,7 @@ void bch2_replicas_entry_put_many(struct bch_fs *c, struct bch_replicas_entry_v1
 	BUG_ON(r->data_type != BCH_DATA_journal);
 	verify_replicas_entry(r);
 
-	scoped_guard(percpu_read, &c->mark_lock) {
+	scoped_guard(percpu_read, &c->capacity.mark_lock) {
 		int ret = __replicas_entry_put(c, r, nr);
 		if (!ret)
 			return;
@@ -421,7 +421,7 @@ void bch2_replicas_entry_put_many(struct bch_fs *c, struct bch_replicas_entry_v1
 	}
 
 	guard(mutex)(&c->sb_lock);
-	scoped_guard(percpu_write, &c->mark_lock) {
+	scoped_guard(percpu_write, &c->capacity.mark_lock) {
 		struct bch_replicas_entry_cpu *e = replicas_entry_search(&c->replicas, r);
 		if (e && !atomic_read(&e->ref))
 			__replicas_entry_kill(c, e);
@@ -432,7 +432,7 @@ void bch2_replicas_entry_put_many(struct bch_fs *c, struct bch_replicas_entry_v1
 
 static inline bool bch2_replicas_entry_get_inmem(struct bch_fs *c, struct bch_replicas_entry_v1 *r)
 {
-	guard(percpu_read)(&c->mark_lock);
+	guard(percpu_read)(&c->capacity.mark_lock);
 	struct bch_replicas_entry_cpu *e = replicas_entry_search(&c->replicas, r);
 	if (e)
 		atomic_inc(&e->ref);
@@ -458,7 +458,7 @@ int bch2_replicas_gc_reffed(struct bch_fs *c)
 
 	guard(mutex)(&c->sb_lock);
 
-	scoped_guard(percpu_write, &c->mark_lock) {
+	scoped_guard(percpu_write, &c->capacity.mark_lock) {
 		unsigned dst = 0;
 		for (unsigned i = 0; i < c->replicas.nr; i++) {
 			struct bch_replicas_entry_cpu *e =
@@ -576,7 +576,7 @@ int bch2_sb_replicas_to_cpu_replicas(struct bch_fs *c)
 
 	bch2_cpu_replicas_sort(&new_r);
 
-	guard(percpu_write)(&c->mark_lock);
+	guard(percpu_write)(&c->capacity.mark_lock);
 	swap(c->replicas, new_r);
 
 	return 0;
@@ -773,7 +773,7 @@ const struct bch_sb_field_ops bch_sb_field_ops_replicas_v0 = {
 bool bch2_can_read_fs_with_devs(struct bch_fs *c, struct bch_devs_mask devs,
 				unsigned flags, struct printbuf *err)
 {
-	guard(percpu_read)(&c->mark_lock);
+	guard(percpu_read)(&c->capacity.mark_lock);
 	for_each_cpu_replicas_entry(&c->replicas, i) {
 		struct bch_replicas_entry_v1 *e = &i->e;
 

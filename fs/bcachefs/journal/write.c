@@ -369,7 +369,7 @@ static CLOSURE_CALLBACK(journal_write_done)
 
 	if (last_seq_ondisk_updated) {
 		bch2_reset_alloc_cursors(c);
-		closure_wake_up(&c->freelist_wait);
+		closure_wake_up(&c->allocator.freelist_wait);
 		bch2_do_discards(c);
 	}
 
@@ -701,7 +701,7 @@ CLOSURE_CALLBACK(bch2_journal_write)
 	closure_type(w, struct journal_buf, io);
 	struct journal *j = container_of(w, struct journal, buf[w->idx]);
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
-	unsigned nr_rw_members = dev_mask_nr(&c->rw_devs[BCH_DATA_free]);
+	unsigned nr_rw_members = dev_mask_nr(&c->allocator.rw_devs[BCH_DATA_free]);
 	int ret;
 
 	BUG_ON(!w->write_started);

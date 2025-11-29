@@ -167,7 +167,7 @@ int bch2_dev_in_fs(struct bch_sb_handle *fs,
 void bch2_dev_io_ref_stop(struct bch_dev *ca, int rw)
 {
 	if (rw == READ)
-		clear_bit(ca->dev_idx, ca->fs->online_devs.d);
+		clear_bit(ca->dev_idx, ca->fs->devs_online.d);
 
 	if (!enumerated_ref_is_zero(&ca->io_ref[rw]))
 		enumerated_ref_stop(&ca->io_ref[rw],
@@ -519,7 +519,7 @@ int bch2_dev_attach_bdev(struct bch_fs *c, struct bch_sb_handle *sb, struct prin
 
 	try(__bch2_dev_attach_bdev(c, ca, sb, err));
 
-	set_bit(ca->dev_idx, c->online_devs.d);
+	set_bit(ca->dev_idx, c->devs_online.d);
 
 	bch2_dev_sysfs_online(c, ca);
 
@@ -546,7 +546,7 @@ bool bch2_dev_state_allowed(struct bch_fs *c, struct bch_dev *ca,
 
 	if (ca->mi.state	== BCH_MEMBER_STATE_rw &&
 	    new_state		!= BCH_MEMBER_STATE_rw) {
-		struct bch_devs_mask new_rw_devs = c->rw_devs[0];
+		struct bch_devs_mask new_rw_devs = c->allocator.rw_devs[0];
 		__clear_bit(ca->dev_idx, new_rw_devs.d);
 
 		return bch2_can_write_fs_with_devs(c, new_rw_devs, flags, err);
@@ -821,7 +821,7 @@ int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 			ca->disk_sb.sb->dev_idx	= dev_idx;
 			bch2_dev_attach(c, ca, dev_idx);
 
-			set_bit(ca->dev_idx, c->online_devs.d);
+			set_bit(ca->dev_idx, c->devs_online.d);
 
 			if (BCH_MEMBER_GROUP(&dev_mi)) {
 				ret = __bch2_dev_group_set(c, ca, label.buf);
@@ -960,10 +960,10 @@ int bch2_dev_online(struct bch_fs *c, const char *path, struct printbuf *err)
 
 static int bch2_dev_may_offline(struct bch_fs *c, struct bch_dev *ca, int flags, struct printbuf *err)
 {
-	struct bch_devs_mask new_devs = c->online_devs;
+	struct bch_devs_mask new_devs = c->devs_online;
 	__clear_bit(ca->dev_idx, new_devs.d);
 
-	struct bch_devs_mask new_rw_devs = c->rw_devs[0];
+	struct bch_devs_mask new_rw_devs = c->allocator.rw_devs[0];
 	__clear_bit(ca->dev_idx, new_devs.d);
 
 	if (!bch2_can_read_fs_with_devs(c, new_devs, flags, err) ||

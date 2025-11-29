@@ -230,7 +230,7 @@ static inline int bch2_accounting_mem_mod_locked(struct btree_trans *trans,
 
 static inline int bch2_accounting_mem_add(struct btree_trans *trans, struct bkey_s_c_accounting a, bool gc)
 {
-	guard(percpu_read)(&trans->c->mark_lock);
+	guard(percpu_read)(&trans->c->capacity.mark_lock);
 	return bch2_accounting_mem_mod_locked(trans, a, gc ? BCH_ACCOUNTING_gc : BCH_ACCOUNTING_normal, false);
 }
 
@@ -253,7 +253,7 @@ static inline void bch2_accounting_mem_read_counters(struct bch_accounting_mem *
 static inline void bch2_accounting_mem_read(struct bch_fs *c, struct bpos p,
 					    u64 *v, unsigned nr)
 {
-	guard(percpu_read)(&c->mark_lock);
+	guard(percpu_read)(&c->capacity.mark_lock);
 	struct bch_accounting_mem *acc = &c->accounting;
 	unsigned idx = eytzinger0_find(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
 				       accounting_pos_cmp, &p);

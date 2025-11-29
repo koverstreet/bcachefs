@@ -762,7 +762,7 @@ int bch2_can_do_write(struct bch_fs *c, struct data_update_opts *opts,
 	enum bch_watermark watermark = opts->commit_flags & BCH_WATERMARK_MASK;
 
 	if ((opts->write_flags & BCH_WRITE_alloc_nowait) &&
-	    unlikely(c->open_buckets_nr_free <= bch2_open_buckets_reserved(watermark)))
+	    unlikely(c->allocator.open_buckets_nr_free <= bch2_open_buckets_reserved(watermark)))
 		return bch_err_throw(c, data_update_fail_would_block);
 
 	guard(rcu)();

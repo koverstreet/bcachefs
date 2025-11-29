@@ -556,6 +556,9 @@ int bch2_fs_read_write_early(struct bch_fs *c)
 
 static void __bch2_fs_free(struct bch_fs *c)
 {
+	bch2_journal_keys_put_initial(c);
+	BUG_ON(atomic_read(&c->journal_keys.ref));
+
 	for (unsigned i = 0; i < BCH_TIME_STAT_NR; i++)
 		bch2_time_stats_exit(&c->times[i]);
 
@@ -587,6 +590,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_fs_compress_exit(c);
 	bch2_io_clock_exit(&c->io_clock[WRITE]);
 	bch2_io_clock_exit(&c->io_clock[READ]);
+	bch2_fs_capacity_exit(c);
 	bch2_fs_buckets_waiting_for_journal_exit(c);
 	bch2_fs_btree_write_buffer_exit(c);
 	bch2_fs_btree_key_cache_exit(&c->btree_key_cache);
@@ -595,18 +599,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_fs_btree_cache_exit(c);
 	bch2_fs_accounting_exit(c);
 	bch2_fs_async_obj_exit(c);
-	bch2_journal_keys_put_initial(c);
 
-	BUG_ON(atomic_read(&c->journal_keys.ref));
-	percpu_free_rwsem(&c->mark_lock);
-	if (c->online_reserved) {
-		u64 v = percpu_u64_get(c->online_reserved);
-		WARN(v, "online_reserved not 0 at shutdown: %lli", v);
-		free_percpu(c->online_reserved);
-	}
-
-	free_percpu(c->pcpu);
-	free_percpu(c->usage);
 	mempool_exit(&c->btree_bounce_pool);
 	bioset_exit(&c->btree_bio);
 	mempool_exit(&c->fill_iter);
@@ -1098,8 +1091,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 
 	INIT_LIST_HEAD(&c->journal_iters);
 
-	seqcount_init(&c->usage_lock);
-
 	INIT_LIST_HEAD(&c->vfs_inodes_list);
 	mutex_init(&c->vfs_inodes_lock);
 
@@ -1107,9 +1098,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	c->journal.noflush_write_time	= &c->times[BCH_TIME_journal_noflush_write];
 	c->journal.flush_seq_time	= &c->times[BCH_TIME_journal_flush_seq];
 
-	mutex_init(&c->sectors_available_lock);
-
-	try(percpu_init_rwsem(&c->mark_lock));
+	try(bch2_fs_capacity_init(c));
 
 	scoped_guard(mutex, &c->sb_lock)
 		try(bch2_sb_to_fs(c, sb));
@@ -1166,9 +1155,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 			max(offsetof(struct btree_read_bio, bio),
 			    offsetof(struct btree_write_bio, wbio.bio)),
 			BIOSET_NEED_BVECS) ||
-	    !(c->pcpu = alloc_percpu(struct bch_fs_pcpu)) ||
-	    !(c->usage = alloc_percpu(struct bch_fs_usage_base)) ||
-	    !(c->online_reserved = alloc_percpu(u64)) ||
 	    mempool_init_kvmalloc_pool(&c->btree_bounce_pool, 1,
 				       c->opts.btree_node_size))
 		return bch_err_throw(c, ENOMEM_fs_other_alloc);
@@ -1299,9 +1285,9 @@ static int bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
 	}
 	}
 
-	if (!bch2_can_read_fs_with_devs(c, c->online_devs, flags, err) ||
+	if (!bch2_can_read_fs_with_devs(c, c->devs_online, flags, err) ||
 	    (!c->opts.read_only &&
-	     !bch2_can_write_fs_with_devs(c, c->rw_devs[0], flags, err))) {
+	     !bch2_can_write_fs_with_devs(c, c->allocator.rw_devs[0], flags, err))) {
 		prt_printf(err, "Missing devices\n");
 		for_each_member_device(c, ca)
 			if (!bch2_dev_is_online(ca) && bch2_dev_has_data(c, ca)) {

@@ -1978,7 +1978,7 @@ static int bch2_reconcile_thread(void *arg)
 
 	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
 	bch2_moving_ctxt_init(&ctxt, c, NULL, &r->work_stats,
-			      writepoint_ptr(&c->reconcile_write_point),
+			      writepoint_ptr(&c->allocator.reconcile_write_point),
 			      true);
 
 	while (!kthread_should_stop() && !do_reconcile(&ctxt))

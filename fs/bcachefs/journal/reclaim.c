@@ -161,7 +161,7 @@ static struct journal_space __journal_space_available(struct journal *j, unsigne
 	size_t mem_limit = max_t(ssize_t, 0,
 			(totalram_pages() * PAGE_SIZE) / 4 - j->dirty_entry_bytes);
 
-	for_each_member_device_rcu(c, ca, &c->rw_devs[BCH_DATA_journal]) {
+	for_each_member_device_rcu(c, ca, &c->allocator.rw_devs[BCH_DATA_journal]) {
 		if (!ca->journal.nr)
 			continue;
 
@@ -209,7 +209,7 @@ void bch2_journal_space_available(struct journal *j)
 	lockdep_assert_held(&j->lock);
 	guard(rcu)();
 
-	for_each_member_device_rcu(c, ca, &c->rw_devs[BCH_DATA_journal]) {
+	for_each_member_device_rcu(c, ca, &c->allocator.rw_devs[BCH_DATA_journal]) {
 		struct journal_device *ja = &ca->journal;
 
 		if (!ja->nr)
@@ -238,7 +238,7 @@ void bch2_journal_space_available(struct journal *j)
 			prt_printf(&buf, "insufficient writeable journal devices available: have %u, need %u\n"
 				   "rw journal devs:", nr_online, metadata_replicas_required(c));
 
-			for_each_member_device_rcu(c, ca, &c->rw_devs[BCH_DATA_journal])
+			for_each_member_device_rcu(c, ca, &c->allocator.rw_devs[BCH_DATA_journal])
 				prt_printf(&buf, " %s", ca->name);
 
 			bch_err(c, "%s", buf.buf);

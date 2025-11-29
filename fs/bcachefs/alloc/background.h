@@ -377,4 +377,7 @@ void bch2_dev_allocator_background_init(struct bch_dev *);
 
 void bch2_fs_allocator_background_init(struct bch_fs *);
 
+void bch2_fs_capacity_exit(struct bch_fs *);
+int bch2_fs_capacity_init(struct bch_fs *);
+
 #endif /* _BCACHEFS_ALLOC_BACKGROUND_H */

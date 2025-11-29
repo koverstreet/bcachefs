@@ -1053,7 +1053,7 @@ int bch2_check_allocations(struct bch_fs *c)
 		bch2_gc_stripes_done(c) ?:
 		bch2_gc_reflink_done(c);
 out:
-	scoped_guard(percpu_write, &c->mark_lock) {
+	scoped_guard(percpu_write, &c->capacity.mark_lock) {
 		/* Indicates that gc is no longer in progress: */
 		__gc_pos_set(c, gc_phase(GC_PHASE_not_running));
 		bch2_gc_free(c);
@@ -1063,7 +1063,7 @@ out:
 	 * At startup, allocations can happen directly instead of via the
 	 * allocator thread - issue wakeup in case they blocked on gc_lock:
 	 */
-	closure_wake_up(&c->freelist_wait);
+	closure_wake_up(&c->allocator.freelist_wait);
 
 	if (!ret && !test_bit(BCH_FS_errors_not_fixed, &c->flags))
 		bch2_sb_members_clean_deleted(c);

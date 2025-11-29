@@ -923,7 +923,7 @@ int bch2_trigger_alloc(struct btree_trans *trans,
 
 		if (statechange(a->data_type == BCH_DATA_free) &&
 		    bucket_flushed(new_a))
-			closure_wake_up(&c->freelist_wait);
+			closure_wake_up(&c->allocator.freelist_wait);
 
 		if (statechange(a->data_type == BCH_DATA_need_discard) &&
 		    !bch2_bucket_is_open_safe(c, new.k->p.inode, new.k->p.offset) &&
@@ -1587,13 +1587,13 @@ void bch2_recalc_capacity(struct bch_fs *c)
 
 	reserved_sectors = min(reserved_sectors, capacity);
 
-	c->reserved = reserved_sectors;
-	c->capacity = capacity - reserved_sectors;
+	c->capacity.reserved = reserved_sectors;
+	c->capacity.capacity = capacity - reserved_sectors;
 
-	c->bucket_size_max = bucket_size_max;
+	c->capacity.bucket_size_max = bucket_size_max;
 
 	/* Wake up case someone was waiting for buckets */
-	closure_wake_up(&c->freelist_wait);
+	closure_wake_up(&c->allocator.freelist_wait);
 }
 
 u64 bch2_min_rw_member_capacity(struct bch_fs *c)
@@ -1610,8 +1610,8 @@ static bool bch2_dev_has_open_write_point(struct bch_fs *c, struct bch_dev *ca)
 {
 	struct open_bucket *ob;
 
-	for (ob = c->open_buckets;
-	     ob < c->open_buckets + ARRAY_SIZE(c->open_buckets);
+	for (ob = c->allocator.open_buckets;
+	     ob < c->allocator.open_buckets + ARRAY_SIZE(c->allocator.open_buckets);
 	     ob++) {
 		scoped_guard(spinlock, &ob->lock) {
 			if (ob->valid && !ob->on_partial_list &&
@@ -1627,7 +1627,7 @@ void bch2_dev_allocator_set_rw(struct bch_fs *c, struct bch_dev *ca, bool rw)
 {
 	/* BCH_DATA_free == all rw devs */
 
-	for (unsigned i = 0; i < ARRAY_SIZE(c->rw_devs); i++) {
+	for (unsigned i = 0; i < ARRAY_SIZE(c->allocator.rw_devs); i++) {
 		bool data_type_rw = rw;
 
 		if (i != BCH_DATA_free &&
@@ -1639,10 +1639,10 @@ void bch2_dev_allocator_set_rw(struct bch_fs *c, struct bch_dev *ca, bool rw)
 		    !ca->mi.durability)
 			data_type_rw = false;
 
-		mod_bit(ca->dev_idx, c->rw_devs[i].d, data_type_rw);
+		mod_bit(ca->dev_idx, c->allocator.rw_devs[i].d, data_type_rw);
 	}
 
-	c->rw_devs_change_count++;
+	c->allocator.rw_devs_change_count++;
 }
 
 /* device goes ro: */
@@ -1664,7 +1664,7 @@ void bch2_dev_allocator_remove(struct bch_fs *c, struct bch_dev *ca)
 	 * Wake up threads that were blocked on allocation, so they can notice
 	 * the device can no longer be removed and the capacity has changed:
 	 */
-	closure_wake_up(&c->freelist_wait);
+	closure_wake_up(&c->allocator.freelist_wait);
 
 	/*
 	 * journal_res_get() can block waiting for free space in the journal -
@@ -1674,7 +1674,7 @@ void bch2_dev_allocator_remove(struct bch_fs *c, struct bch_dev *ca)
 
 	/* Now wait for any in flight writes: */
 
-	closure_wait_event(&c->open_buckets_wait,
+	closure_wait_event(&c->allocator.open_buckets_wait,
 			   !bch2_dev_has_open_write_point(c, ca));
 }
 
@@ -1684,7 +1684,7 @@ void bch2_dev_allocator_add(struct bch_fs *c, struct bch_dev *ca)
 	lockdep_assert_held(&c->state_lock);
 
 	bch2_dev_allocator_set_rw(c, ca, true);
-	c->rw_devs_change_count++;
+	c->allocator.rw_devs_change_count++;
 }
 
 void bch2_dev_allocator_background_exit(struct bch_dev *ca)
@@ -1702,5 +1702,31 @@ void bch2_dev_allocator_background_init(struct bch_dev *ca)
 
 void bch2_fs_allocator_background_init(struct bch_fs *c)
 {
-	spin_lock_init(&c->freelist_lock);
+	spin_lock_init(&c->allocator.freelist_lock);
+}
+
+void bch2_fs_capacity_exit(struct bch_fs *c)
+{
+	percpu_free_rwsem(&c->capacity.mark_lock);
+	if (c->capacity.pcpu) {
+		u64 v = percpu_u64_get(&c->capacity.pcpu->online_reserved);
+		WARN(v, "online_reserved not 0 at shutdown: %lli", v);
+	}
+
+	free_percpu(c->capacity.pcpu);
+	free_percpu(c->capacity.usage);
+}
+
+int bch2_fs_capacity_init(struct bch_fs *c)
+{
+	mutex_init(&c->capacity.sectors_available_lock);
+	seqcount_init(&c->capacity.usage_lock);
+
+	try(percpu_init_rwsem(&c->capacity.mark_lock));
+
+	if (!(c->capacity.pcpu = alloc_percpu(struct bch_fs_capacity_pcpu)) ||
+	    !(c->capacity.usage = alloc_percpu(struct bch_fs_usage_base)))
+		return bch_err_throw(c, ENOMEM_fs_other_alloc);
+
+	return 0;
 }

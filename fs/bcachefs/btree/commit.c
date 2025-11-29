@@ -670,7 +670,7 @@ bch2_trans_commit_write_locked(struct btree_trans *trans,
 
 	struct bkey_i *accounting;
 
-	scoped_guard(percpu_read, &c->mark_lock)
+	scoped_guard(percpu_read, &c->capacity.mark_lock)
 		for (accounting = btree_trans_subbuf_base(trans, &trans->accounting);
 		     accounting != btree_trans_subbuf_top(trans, &trans->accounting);
 		     accounting = bkey_next(accounting)) {
@@ -973,7 +973,7 @@ do_bch2_trans_commit_to_journal_replay(struct btree_trans *trans,
 	struct bkey_i *accounting;
 retry:
 	memset(&trans->fs_usage_delta, 0, sizeof(trans->fs_usage_delta));
-	percpu_down_read(&c->mark_lock);
+	percpu_down_read(&c->capacity.mark_lock);
 	for (accounting = btree_trans_subbuf_base(trans, &trans->accounting);
 	     accounting != btree_trans_subbuf_top(trans, &trans->accounting);
 	     accounting = bkey_next(accounting)) {
@@ -984,7 +984,7 @@ retry:
 		if (ret)
 			goto revert_fs_usage;
 	}
-	percpu_up_read(&c->mark_lock);
+	percpu_up_read(&c->capacity.mark_lock);
 
 	/* Only fatal errors are possible later, so no need to revert this */
 	bch2_trans_account_disk_usage_change(trans);
@@ -1029,13 +1029,13 @@ retry:
 	return 0;
 fatal_err:
 	bch2_fs_fatal_error(c, "fatal error in transaction commit: %s", bch2_err_str(ret));
-	percpu_down_read(&c->mark_lock);
+	percpu_down_read(&c->capacity.mark_lock);
 revert_fs_usage:
 	for (struct bkey_i *i = btree_trans_subbuf_base(trans, &trans->accounting);
 	     i != accounting;
 	     i = bkey_next(i))
 		bch2_accounting_trans_commit_revert(trans, bkey_i_to_accounting(i), flags);
-	percpu_up_read(&c->mark_lock);
+	percpu_up_read(&c->capacity.mark_lock);
 
 	if (bch2_err_matches(ret, BCH_ERR_btree_insert_need_mark_replicas)) {
 		ret = drop_locks_do(trans, bch2_accounting_update_sb(trans));

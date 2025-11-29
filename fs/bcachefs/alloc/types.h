@@ -5,6 +5,8 @@
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 
+#include "init/dev_types.h"
+
 #include "util/clock_types.h"
 #include "util/fifo.h"
 
@@ -116,6 +118,62 @@ struct write_point {
 
 struct write_point_specifier {
 	unsigned long		v;
+};
+
+struct bch_fs_usage_base;
+
+struct bch_fs_capacity_pcpu {
+	u64			sectors_available;
+	u64			online_reserved;
+};
+
+struct bch_fs_capacity {
+	u64			capacity; /* sectors */
+	u64			reserved; /* sectors */
+
+	/*
+	 * When capacity _decreases_ (due to a disk being removed), we
+	 * increment capacity_gen - this invalidates outstanding reservations
+	 * and forces them to be revalidated
+	 */
+	u32			capacity_gen;
+	unsigned		bucket_size_max;
+
+	atomic64_t		sectors_available;
+	struct mutex		sectors_available_lock;
+
+	struct bch_fs_capacity_pcpu __percpu	*pcpu;
+
+	struct percpu_rw_semaphore	mark_lock;
+
+	seqcount_t			usage_lock;
+	struct bch_fs_usage_base __percpu *usage;
+};
+
+struct bch_fs_allocator {
+	struct bch_devs_mask	rw_devs[BCH_DATA_NR];
+	unsigned long		rw_devs_change_count;
+
+	spinlock_t		freelist_lock;
+	struct closure_waitlist	freelist_wait;
+	unsigned long		last_stuck;
+
+	open_bucket_idx_t	open_buckets_freelist;
+	open_bucket_idx_t	open_buckets_nr_free;
+	struct closure_waitlist	open_buckets_wait;
+	struct open_bucket	open_buckets[OPEN_BUCKETS_COUNT];
+	open_bucket_idx_t	open_buckets_hash[OPEN_BUCKETS_COUNT];
+
+	open_bucket_idx_t	open_buckets_partial[OPEN_BUCKETS_COUNT];
+	open_bucket_idx_t	open_buckets_partial_nr;
+
+	struct write_point	write_points[WRITE_POINT_MAX];
+	struct hlist_head	write_points_hash[WRITE_POINT_HASH_NR];
+	struct mutex		write_points_hash_lock;
+	unsigned		write_points_nr;
+
+	struct write_point	btree_write_point;
+	struct write_point	reconcile_write_point;
 };
 
 #endif /* _BCACHEFS_ALLOC_TYPES_H */

@@ -429,11 +429,11 @@ int bch2_accounting_mem_insert(struct bch_fs *c, struct bkey_s_c_accounting a,
 	    !bch2_replicas_marked_locked(c, &r.e))
 		return bch_err_throw(c, btree_insert_need_mark_replicas);
 
-	percpu_up_read(&c->mark_lock);
+	percpu_up_read(&c->capacity.mark_lock);
 	int ret;
-	scoped_guard(percpu_write, &c->mark_lock)
+	scoped_guard(percpu_write, &c->capacity.mark_lock)
 		ret = __bch2_accounting_mem_insert(c, a);
-	percpu_down_read(&c->mark_lock);
+	percpu_down_read(&c->capacity.mark_lock);
 	return ret;
 }
 
@@ -469,7 +469,7 @@ void __bch2_accounting_maybe_kill(struct bch_fs *c, struct bpos pos)
 		return;
 
 	guard(mutex)(&c->sb_lock);
-	scoped_guard(percpu_write, &c->mark_lock) {
+	scoped_guard(percpu_write, &c->capacity.mark_lock) {
 		struct bch_accounting_mem *acc = &c->accounting;
 
 		unsigned idx = eytzinger0_find(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
@@ -507,7 +507,7 @@ int bch2_fs_replicas_usage_read(struct bch_fs *c, darray_char *usage)
 {
 	struct bch_accounting_mem *acc = &c->accounting;
 
-	guard(percpu_read)(&c->mark_lock);
+	guard(percpu_read)(&c->capacity.mark_lock);
 	darray_for_each(acc->k, i) {
 		union {
 			u8 bytes[struct_size_t(struct bch_replicas_usage, r.devs,
@@ -539,7 +539,7 @@ int bch2_fs_accounting_read(struct bch_fs *c, darray_char *out_buf, unsigned acc
 
 	darray_init(out_buf);
 
-	guard(percpu_read)(&c->mark_lock);
+	guard(percpu_read)(&c->capacity.mark_lock);
 	darray_for_each(acc->k, i) {
 		struct disk_accounting_pos a_p;
 		bpos_to_disk_accounting_pos(&a_p, i->pos);
@@ -577,7 +577,7 @@ int bch2_gc_accounting_start(struct bch_fs *c)
 	struct bch_accounting_mem *acc = &c->accounting;
 	int ret = 0;
 
-	guard(percpu_write)(&c->mark_lock);
+	guard(percpu_write)(&c->capacity.mark_lock);
 	darray_for_each(acc->k, e) {
 		e->v[1] = __alloc_percpu_gfp(e->nr_counters * sizeof(u64),
 					     sizeof(u64), GFP_KERNEL);
@@ -600,7 +600,7 @@ int bch2_gc_accounting_done(struct bch_fs *c)
 	struct bpos pos = POS_MIN;
 	int ret = 0;
 
-	guard(percpu_write)(&c->mark_lock);
+	guard(percpu_write)(&c->capacity.mark_lock);
 	while (1) {
 		unsigned idx = eytzinger0_find_ge(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
 						  accounting_pos_cmp, &pos);
@@ -643,11 +643,11 @@ int bch2_gc_accounting_done(struct bch_fs *c)
 			bch2_trans_unlock_long(trans);
 
 			if (fsck_err(c, accounting_mismatch, "%s", buf.buf)) {
-				percpu_up_write(&c->mark_lock);
+				percpu_up_write(&c->capacity.mark_lock);
 				ret = commit_do(trans, NULL, NULL,
 						BCH_TRANS_COMMIT_skip_accounting_apply,
 						bch2_disk_accounting_mod(trans, &acc_k, src_v, nr, false));
-				percpu_down_write(&c->mark_lock);
+				percpu_down_write(&c->capacity.mark_lock);
 				if (ret)
 					goto err;
 
@@ -661,7 +661,7 @@ int bch2_gc_accounting_done(struct bch_fs *c)
 								BCH_ACCOUNTING_normal, true);
 
 					guard(preempt)();
-					struct bch_fs_usage_base *dst = this_cpu_ptr(c->usage);
+					struct bch_fs_usage_base *dst = this_cpu_ptr(c->capacity.usage);
 					struct bch_fs_usage_base *src = &trans->fs_usage_delta;
 					acc_u64s((u64 *) dst, (u64 *) src, sizeof(*src) / sizeof(u64));
 				}
@@ -681,7 +681,7 @@ static int accounting_read_key(struct btree_trans *trans, struct bkey_s_c k)
 	if (k.k->type != KEY_TYPE_accounting)
 		return 0;
 
-	guard(percpu_read)(&c->mark_lock);
+	guard(percpu_read)(&c->capacity.mark_lock);
 	return bch2_accounting_mem_mod_locked(trans, bkey_s_c_to_accounting(k),
 					      BCH_ACCOUNTING_read, false);
 }
@@ -874,7 +874,7 @@ static int accounting_read_mem_fixups(struct btree_trans *trans)
 		}
 
 		guard(preempt)();
-		struct bch_fs_usage_base *usage = this_cpu_ptr(c->usage);
+		struct bch_fs_usage_base *usage = this_cpu_ptr(c->capacity.usage);
 
 		switch (k.type) {
 		case BCH_DISK_ACCOUNTING_persistent_reserved:
@@ -934,12 +934,12 @@ int bch2_accounting_read(struct bch_fs *c)
 	 *
 	 * Instead, zero out any accounting we have:
 	 */
-	scoped_guard(percpu_write, &c->mark_lock) {
+	scoped_guard(percpu_write, &c->capacity.mark_lock) {
 		darray_for_each(acc->k, e)
 			percpu_memset(e->v[0], 0, sizeof(u64) * e->nr_counters);
 		for_each_member_device(c, ca)
 			percpu_memset(ca->usage, 0, sizeof(*ca->usage));
-		percpu_memset(c->usage, 0, sizeof(*c->usage));
+		percpu_memset(c->capacity.usage, 0, sizeof(*c->capacity.usage));
 	}
 
 	struct journal_keys *keys = &c->journal_keys;
@@ -1164,7 +1164,8 @@ void bch2_verify_accounting_clean(struct bch_fs *c)
 		0;
 	}));
 
-	acc_u64s_percpu(&base_inmem.hidden, &c->usage->hidden, sizeof(base_inmem) / sizeof(u64));
+	acc_u64s_percpu(&base_inmem.hidden, &c->capacity.usage->hidden,
+			sizeof(base_inmem) / sizeof(u64));
 
 #define check(x)										\
 	if (base.x != base_inmem.x) {								\
@@ -1183,7 +1184,7 @@ void bch2_verify_accounting_clean(struct bch_fs *c)
 
 void bch2_accounting_gc_free(struct bch_fs *c)
 {
-	lockdep_assert_held(&c->mark_lock);
+	lockdep_assert_held(&c->capacity.mark_lock);
 
 	struct bch_accounting_mem *acc = &c->accounting;
 

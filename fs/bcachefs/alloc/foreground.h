@@ -110,13 +110,13 @@ static inline void ob_push(struct bch_fs *c, struct open_buckets *obs,
 {
 	BUG_ON(obs->nr >= ARRAY_SIZE(obs->v));
 
-	obs->v[obs->nr++] = ob - c->open_buckets;
+	obs->v[obs->nr++] = ob - c->allocator.open_buckets;
 }
 
-#define open_bucket_for_each(_c, _obs, _ob, _i)				\
-	for ((_i) = 0;							\
-	     (_i) < (_obs)->nr &&					\
-	     ((_ob) = (_c)->open_buckets + (_obs)->v[_i], true);	\
+#define open_bucket_for_each(_c, _obs, _ob, _i)					\
+	for ((_i) = 0;								\
+	     (_i) < (_obs)->nr &&						\
+	     ((_ob) = (_c)->allocator.open_buckets + (_obs)->v[_i], true);	\
 	     (_i)++)
 
 static inline struct open_bucket *ec_open_bucket(struct bch_fs *c,
@@ -188,7 +188,7 @@ static inline void bch2_open_bucket_get(struct bch_fs *c,
 static inline open_bucket_idx_t *open_bucket_hashslot(struct bch_fs *c,
 						  unsigned dev, u64 bucket)
 {
-	return c->open_buckets_hash +
+	return c->allocator.open_buckets_hash +
 		(jhash_3words(dev, bucket, bucket >> 32, 0) &
 		 (OPEN_BUCKETS_COUNT - 1));
 }
@@ -198,7 +198,7 @@ static inline bool bch2_bucket_is_open(struct bch_fs *c, unsigned dev, u64 bucke
 	open_bucket_idx_t slot = *open_bucket_hashslot(c, dev, bucket);
 
 	while (slot) {
-		struct open_bucket *ob = &c->open_buckets[slot];
+		struct open_bucket *ob = &c->allocator.open_buckets[slot];
 
 		if (ob->dev == dev && ob->bucket == bucket)
 			return true;
@@ -214,7 +214,7 @@ static inline bool bch2_bucket_is_open_safe(struct bch_fs *c, unsigned dev, u64 
 	if (bch2_bucket_is_open(c, dev, bucket))
 		return true;
 
-	guard(spinlock)(&c->freelist_lock);
+	guard(spinlock)(&c->allocator.freelist_lock);
 	return bch2_bucket_is_open(c, dev, bucket);
 }
 

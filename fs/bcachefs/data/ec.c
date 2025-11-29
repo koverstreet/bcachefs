@@ -909,7 +909,7 @@ static void stripe_new_buckets_add(struct bch_fs *c, struct ec_stripe_new *s)
 		if (!s->blocks[i])
 			continue;
 
-		struct open_bucket *ob = c->open_buckets + s->blocks[i];
+		struct open_bucket *ob = c->allocator.open_buckets + s->blocks[i];
 		struct bpos bucket = POS(ob->dev, ob->bucket);
 
 		stripe_new_bucket_add(c, &s->buckets[i], bucket_to_u64(bucket));
@@ -1323,7 +1323,7 @@ static int __ec_stripe_create(struct ec_stripe_new *s)
 
 	for (unsigned i = 0; i < nr_data; i++)
 		if (s->blocks[i]) {
-			struct open_bucket *ob = c->open_buckets + s->blocks[i];
+			struct open_bucket *ob = c->allocator.open_buckets + s->blocks[i];
 
 			if (ob->sectors_free)
 				zero_out_rest_of_ec_bucket(c, s, i, ob);
@@ -1403,7 +1403,7 @@ static void ec_stripe_create(struct ec_stripe_new *s)
 
 	for (unsigned i = 0; i < v->nr_blocks; i++)
 		if (s->blocks[i]) {
-			struct open_bucket *ob = c->open_buckets + s->blocks[i];
+			struct open_bucket *ob = c->allocator.open_buckets + s->blocks[i];
 
 			if (i < nr_data) {
 				ob->ec = NULL;
@@ -1649,7 +1649,7 @@ static void ec_stripe_head_devs_update(struct bch_fs *c, struct ec_stripe_head *
 	if (h->s && !h->s->allocated && dev_mask_nr(&devs_leaving))
 		ec_stripe_new_cancel(c, h, -EINTR);
 
-	h->rw_devs_change_count = c->rw_devs_change_count;
+	h->rw_devs_change_count = c->allocator.rw_devs_change_count;
 }
 
 static struct ec_stripe_head *
@@ -1727,7 +1727,7 @@ __bch2_ec_stripe_head_get(struct btree_trans *trans,
 		goto err;
 	}
 found:
-	if (h->rw_devs_change_count != c->rw_devs_change_count)
+	if (h->rw_devs_change_count != c->allocator.rw_devs_change_count)
 		ec_stripe_head_devs_update(c, h);
 
 	if (h->insufficient_devs) {
@@ -1754,7 +1754,7 @@ static int __new_stripe_alloc_buckets(struct btree_trans *trans,
 
 	/* * We bypass the sector allocator which normally does this: */
 	bitmap_and(req->devs_may_alloc.d, req->devs_may_alloc.d,
-		   c->rw_devs[BCH_DATA_user].d, BCH_SB_MEMBERS_MAX);
+		   c->allocator.rw_devs[BCH_DATA_user].d, BCH_SB_MEMBERS_MAX);
 
 	for_each_set_bit(i, s->blocks_gotten, v->nr_blocks) {
 		/*
@@ -1907,7 +1907,7 @@ static int init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 	 * blocks from the stripe we're reusing:
 	 */
 	for_each_set_bit(i, s->blocks_gotten, new_v->nr_blocks) {
-		bch2_open_bucket_put(c, c->open_buckets + s->blocks[i]);
+		bch2_open_bucket_put(c, c->allocator.open_buckets + s->blocks[i]);
 		s->blocks[i] = 0;
 	}
 	memset(s->blocks_gotten, 0, sizeof(s->blocks_gotten));
@@ -2041,7 +2041,7 @@ static int stripe_alloc_or_reuse(struct btree_trans *trans,
 				}
 
 				/* XXX freelist_wait? */
-				closure_wait(&c->freelist_wait, cl);
+				closure_wait(&c->allocator.freelist_wait, cl);
 				*waiting = true;
 			}
 		}
@@ -2107,7 +2107,7 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 		ret = stripe_alloc_or_reuse(trans, req, cl, h, s, &waiting);
 		if (waiting &&
 		    !bch2_err_matches(ret, BCH_ERR_operation_blocked))
-			closure_wake_up(&c->freelist_wait);
+			closure_wake_up(&c->allocator.freelist_wait);
 
 		if (ret)
 			goto err;
@@ -2233,7 +2233,7 @@ static bool should_cancel_stripe(struct bch_fs *c, struct ec_stripe_new *s, stru
 		if (!s->blocks[i])
 			continue;
 
-		struct open_bucket *ob = c->open_buckets + s->blocks[i];
+		struct open_bucket *ob = c->allocator.open_buckets + s->blocks[i];
 		if (ob->dev == ca->dev_idx)
 			return true;
 	}

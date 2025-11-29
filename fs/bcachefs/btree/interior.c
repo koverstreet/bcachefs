@@ -338,7 +338,7 @@ static struct btree *__bch2_btree_node_alloc(struct btree_trans *trans,
 	BUG_ON(b->ob.nr);
 retry:
 	ret = bch2_alloc_sectors_req(trans, req,
-				      writepoint_ptr(&c->btree_write_point),
+				      writepoint_ptr(&c->allocator.btree_write_point),
 				      min(res->nr_replicas,
 					  c->opts.metadata_replicas_required),
 				      cl, &wp);
@@ -954,7 +954,7 @@ static void btree_update_nodes_written(struct btree_update *as)
 		}
 
 	for (unsigned i = 0; i < as->nr_open_buckets; i++)
-		bch2_open_bucket_put(c, c->open_buckets + as->open_buckets[i]);
+		bch2_open_bucket_put(c, c->allocator.open_buckets + as->open_buckets[i]);
 
 	bch2_btree_update_free(as, trans);
 }

@@ -298,7 +298,7 @@ static inline void bch2_disk_reservation_put(struct bch_fs *c,
 					     struct disk_reservation *res)
 {
 	if (res->sectors) {
-		this_cpu_sub(*c->online_reserved, res->sectors);
+		this_cpu_sub(c->capacity.pcpu->online_reserved, res->sectors);
 		res->sectors = 0;
 	}
 }
@@ -317,15 +317,15 @@ static inline int bch2_disk_reservation_add(struct bch_fs *c, struct disk_reserv
 #ifdef __KERNEL__
 	u64 old, new;
 
-	old = this_cpu_read(c->pcpu->sectors_available);
+	old = this_cpu_read(c->capacity.pcpu->sectors_available);
 	do {
 		if (sectors > old)
 			return __bch2_disk_reservation_add(c, res, sectors, flags);
 
 		new = old - sectors;
-	} while (!this_cpu_try_cmpxchg(c->pcpu->sectors_available, &old, new));
+	} while (!this_cpu_try_cmpxchg(c->capacity.pcpu->sectors_available, &old, new));
 
-	this_cpu_add(*c->online_reserved, sectors);
+	this_cpu_add(c->capacity.pcpu->online_reserved, sectors);
 	res->sectors			+= sectors;
 	return 0;
 #else
