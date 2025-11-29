@@ -863,14 +863,9 @@ struct bch_fs {
 	struct workqueue_struct	*btree_read_complete_wq;
 	struct workqueue_struct	*btree_write_submit_wq;
 
-	struct btree_root	btree_roots_known[BTREE_ID_NR];
-	DARRAY(struct btree_root) btree_roots_extra;
-	struct mutex		btree_root_lock;
-
-	struct btree_cache	btree_cache;
-	struct btree_key_cache	btree_key_cache;
+	struct bch_fs_btree_cache		btree_cache;
+	struct bch_fs_btree_key_cache		btree_key_cache;
 	struct bch_fs_btree_trans		btree_trans;
-
 	struct bch_fs_btree_reserve_cache	btree_reserve_cache;
 	struct bch_fs_btree_interior_updates	btree_interior_updates;
 	struct bch_fs_btree_node_rewrites	btree_node_rewrites;

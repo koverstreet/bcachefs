@@ -709,7 +709,7 @@ static u64 journal_seq_to_flush(struct journal *j)
 static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
-	struct btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree_cache;
 	bool kthread = (current->flags & PF_KTHREAD) != 0;
 	u64 seq_to_flush;
 	size_t min_nr, min_key_cache, nr_flushed;

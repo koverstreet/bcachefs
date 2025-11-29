@@ -246,7 +246,7 @@ write_attribute(perf_test);
 
 static size_t bch2_btree_cache_size(struct bch_fs *c)
 {
-	struct btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree_cache;
 	size_t ret = 0;
 	struct btree *b;
 
@@ -433,7 +433,7 @@ STORE(bch2_fs)
 		return -EROFS;
 
 	if (attr == &sysfs_trigger_btree_cache_shrink) {
-		struct btree_cache *bc = &c->btree_cache;
+		struct bch_fs_btree_cache *bc = &c->btree_cache;
 		struct shrink_control sc;
 
 		sc.gfp_mask = GFP_KERNEL;

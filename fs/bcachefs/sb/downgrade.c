@@ -212,10 +212,10 @@ UPGRADE_TABLE_INCOMPAT()
 
 static int have_stripes(struct bch_fs *c)
 {
-	if (IS_ERR_OR_NULL(c->btree_roots_known[BTREE_ID_stripes].b))
+	if (IS_ERR_OR_NULL(c->btree_cache.roots_known[BTREE_ID_stripes].b))
 		return 0;
 
-	return !btree_node_fake(c->btree_roots_known[BTREE_ID_stripes].b);
+	return !btree_node_fake(c->btree_cache.roots_known[BTREE_ID_stripes].b);
 }
 
 int bch2_sb_set_upgrade_extra(struct bch_fs *c)

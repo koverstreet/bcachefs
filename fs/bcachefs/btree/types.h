@@ -161,7 +161,21 @@ struct btree_cache_list {
 	size_t			nr;
 };
 
-struct btree_cache {
+struct btree_root {
+	struct btree		*b;
+
+	/* On disk root - see async splits: */
+	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
+	u8			level;
+	u8			alive;
+	s16			error;
+};
+
+struct bch_fs_btree_cache {
+	struct btree_root	roots_known[BTREE_ID_NR];
+	DARRAY(struct btree_root) roots_extra;
+	struct mutex		root_lock;
+
 	struct rhashtable	table;
 	bool			table_init_done;
 	/*
@@ -933,16 +947,6 @@ static inline u8 btree_trigger_order(enum btree_id btree)
 		return btree;
 	}
 }
-
-struct btree_root {
-	struct btree		*b;
-
-	/* On disk root - see async splits: */
-	__BKEY_PADDED(key, BKEY_BTREE_PTR_VAL_U64s_MAX);
-	u8			level;
-	u8			alive;
-	s16			error;
-};
 
 enum btree_gc_coalesce_fail_reason {
 	BTREE_GC_COALESCE_FAIL_RESERVE_GET,

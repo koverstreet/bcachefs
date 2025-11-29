@@ -4,7 +4,7 @@
 
 #include "util/rcu_pending.h"
 
-struct btree_key_cache {
+struct bch_fs_btree_key_cache {
 	struct rhashtable	table;
 	bool			table_init_done;
 

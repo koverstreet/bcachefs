@@ -511,8 +511,8 @@ static int journal_replay_entry_early(struct bch_fs *c,
 				entry->btree_id, BTREE_ID_NR_MAX))
 			return 0;
 
-		while (entry->btree_id >= c->btree_roots_extra.nr + BTREE_ID_NR)
-			try(darray_push(&c->btree_roots_extra, (struct btree_root) { NULL }));
+		while (entry->btree_id >= c->btree_cache.roots_extra.nr + BTREE_ID_NR)
+			try(darray_push(&c->btree_cache.roots_extra, (struct btree_root) { NULL }));
 
 		struct btree_root *r = bch2_btree_id_root(c, entry->btree_id);
 

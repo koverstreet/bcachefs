@@ -605,7 +605,6 @@ static void __bch2_fs_free(struct bch_fs *c)
 		free_percpu(c->online_reserved);
 	}
 
-	darray_exit(&c->btree_roots_extra);
 	free_percpu(c->pcpu);
 	free_percpu(c->usage);
 	mempool_exit(&c->btree_bounce_pool);
@@ -1060,7 +1059,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 
 	init_rwsem(&c->state_lock);
 	mutex_init(&c->sb_lock);
-	mutex_init(&c->btree_root_lock);
 	INIT_WORK(&c->read_only_work, bch2_fs_read_only_work);
 
 	refcount_set(&c->ro_ref, 1);

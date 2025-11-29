@@ -1008,7 +1008,7 @@ retry:
 		}
 
 		if (i->type == BCH_JSET_ENTRY_btree_root) {
-			guard(mutex)(&c->btree_root_lock);
+			guard(mutex)(&c->btree_cache.root_lock);
 
 			struct btree_root *r = bch2_btree_id_root(c, i->btree_id);
 

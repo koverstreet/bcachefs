@@ -47,11 +47,11 @@ bool bch2_btree_insert_key_cached(struct btree_trans *, unsigned,
 void bch2_btree_key_cache_drop(struct btree_trans *,
 			       struct btree_path *);
 
-void bch2_fs_btree_key_cache_exit(struct btree_key_cache *);
-void bch2_fs_btree_key_cache_init_early(struct btree_key_cache *);
-int bch2_fs_btree_key_cache_init(struct btree_key_cache *);
+void bch2_fs_btree_key_cache_exit(struct bch_fs_btree_key_cache *);
+void bch2_fs_btree_key_cache_init_early(struct bch_fs_btree_key_cache *);
+int bch2_fs_btree_key_cache_init(struct bch_fs_btree_key_cache *);
 
-void bch2_btree_key_cache_to_text(struct printbuf *, struct btree_key_cache *);
+void bch2_btree_key_cache_to_text(struct printbuf *, struct bch_fs_btree_key_cache *);
 
 void bch2_btree_key_cache_exit(void);
 int __init bch2_btree_key_cache_init(void);

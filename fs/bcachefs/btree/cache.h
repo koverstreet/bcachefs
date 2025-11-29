@@ -14,11 +14,11 @@ void bch2_recalc_btree_reserve(struct bch_fs *);
 
 void bch2_btree_node_to_freelist(struct bch_fs *, struct btree *);
 
-void __bch2_btree_node_hash_remove(struct btree_cache *, struct btree *);
-void bch2_btree_node_hash_remove(struct btree_cache *, struct btree *);
+void __bch2_btree_node_hash_remove(struct bch_fs_btree_cache *, struct btree *);
+void bch2_btree_node_hash_remove(struct bch_fs_btree_cache *, struct btree *);
 
-int __bch2_btree_node_hash_insert(struct btree_cache *, struct btree *);
-int bch2_btree_node_hash_insert(struct btree_cache *, struct btree *,
+int __bch2_btree_node_hash_insert(struct bch_fs_btree_cache *, struct btree *);
+int bch2_btree_node_hash_insert(struct bch_fs_btree_cache *, struct btree *,
 				unsigned, enum btree_id);
 
 void bch2_node_pin(struct bch_fs *, struct btree *);
@@ -48,7 +48,7 @@ void bch2_btree_node_evict(struct btree_trans *, const struct bkey_i *);
 
 void bch2_fs_btree_cache_exit(struct bch_fs *);
 int bch2_fs_btree_cache_init(struct bch_fs *);
-void bch2_fs_btree_cache_init_early(struct btree_cache *);
+void bch2_fs_btree_cache_init_early(struct bch_fs_btree_cache *);
 
 static inline u64 btree_ptr_hash_val(const struct bkey_i *k)
 {
@@ -119,21 +119,21 @@ static inline unsigned btree_blocks(const struct bch_fs *c)
 
 static inline unsigned btree_id_nr_alive(struct bch_fs *c)
 {
-	return BTREE_ID_NR + c->btree_roots_extra.nr;
+	return BTREE_ID_NR + c->btree_cache.roots_extra.nr;
 }
 
 static inline struct btree_root *bch2_btree_id_root(struct bch_fs *c, unsigned id)
 {
 	if (likely(id < BTREE_ID_NR)) {
-		return &c->btree_roots_known[id];
+		return &c->btree_cache.roots_known[id];
 	} else {
 		unsigned idx = id - BTREE_ID_NR;
 
 		/* This can happen when we're called from btree_node_scan */
-		if (idx >= c->btree_roots_extra.nr)
+		if (idx >= c->btree_cache.roots_extra.nr)
 			return NULL;
 
-		return &c->btree_roots_extra.data[idx];
+		return &c->btree_cache.roots_extra.data[idx];
 	}
 }
 
@@ -160,7 +160,7 @@ void __bch2_btree_pos_to_text(struct printbuf *, struct bch_fs *,
 			      enum btree_id, unsigned, struct bkey_s_c);
 void bch2_btree_pos_to_text(struct printbuf *, struct bch_fs *, const struct btree *);
 void bch2_btree_node_to_text(struct printbuf *, struct bch_fs *, const struct btree *);
-void bch2_btree_cache_to_text(struct printbuf *, const struct btree_cache *);
+void bch2_btree_cache_to_text(struct printbuf *, const struct bch_fs_btree_cache *);
 
 #define trace_btree_node(_c, _b, event)				\
 	event_inc_trace(c, event, buf, bch2_btree_pos_to_text(&buf, c, b))
