@@ -318,23 +318,24 @@ void __bch2_print(struct bch_fs *c, const char *fmt, ...);
 
 #define bch2_print(_c, ...) __bch2_print(maybe_dev_to_fs(_c), __VA_ARGS__)
 
-#define bch2_print_ratelimited(_c, ...)					\
-do {									\
-	static DEFINE_RATELIMIT_STATE(_rs,				\
+#define bch2_ratelimit()						\
+({									\
+	static DEFINE_RATELIMIT_STATE(rs,				\
 				      DEFAULT_RATELIMIT_INTERVAL,	\
 				      DEFAULT_RATELIMIT_BURST);		\
 									\
-	if (__ratelimit(&_rs))						\
+	!__ratelimit(&rs);						\
+})
+
+#define bch2_print_ratelimited(_c, ...)					\
+do {									\
+	if (!bch2_ratelimit())						\
 		bch2_print(_c, __VA_ARGS__);				\
 } while (0)
 
 #define bch2_print_str_ratelimited(_c, ...)				\
 do {									\
-	static DEFINE_RATELIMIT_STATE(_rs,				\
-				      DEFAULT_RATELIMIT_INTERVAL,	\
-				      DEFAULT_RATELIMIT_BURST);		\
-									\
-	if (__ratelimit(&_rs))						\
+	if (!bch2_ratelimit())						\
 		bch2_print_str(_c, __VA_ARGS__);			\
 } while (0)
 

@@ -1086,7 +1086,7 @@ void bch2_btree_node_read(struct btree_trans *trans, struct btree *b,
 					 NULL, &pick, -1);
 
 	if (ret <= 0) {
-		bool ratelimit = true;
+		bool print = !bch2_ratelimit();
 		CLASS(printbuf, buf)();
 		bch2_log_msg_start(c, &buf);
 
@@ -1097,12 +1097,9 @@ void bch2_btree_node_read(struct btree_trans *trans, struct btree *b,
 
 		if (c->recovery.passes_complete & BIT_ULL(BCH_RECOVERY_PASS_check_topology) &&
 		    bch2_fs_emergency_read_only2(c, &buf))
-			ratelimit = false;
+			print = true;
 
-		static DEFINE_RATELIMIT_STATE(rs,
-					      DEFAULT_RATELIMIT_INTERVAL,
-					      DEFAULT_RATELIMIT_BURST);
-		if (!ratelimit || __ratelimit(&rs))
+		if (print)
 			bch2_print_str(c, KERN_ERR, buf.buf);
 
 		set_btree_node_read_error(b);
