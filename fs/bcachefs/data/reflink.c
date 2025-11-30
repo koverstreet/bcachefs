@@ -548,6 +548,86 @@ static struct bkey_s_c get_next_src(struct btree_iter *iter, struct bpos end)
 	return ret ? bkey_s_c_err(ret) : bkey_s_c_null;
 }
 
+static int remap_range_iter(struct btree_trans *trans,
+			    subvol_inum dst_inum, struct btree_iter *dst_iter, struct bpos dst_end,
+			    subvol_inum src_inum, struct btree_iter *src_iter, struct bpos src_end,
+			    s64 shift, u64 new_i_size, s64 *i_sectors_delta,
+			    bool reflink_p_may_update_opts)
+{
+	if (fatal_signal_pending(current))
+		return -EINTR;
+
+	u32 src_snapshot;
+	try(bch2_subvolume_get_snapshot(trans, src_inum.subvol, &src_snapshot));
+	bch2_btree_iter_set_snapshot(src_iter, src_snapshot);
+
+	u32 dst_snapshot;
+	try(bch2_subvolume_get_snapshot(trans, dst_inum.subvol, &dst_snapshot));
+	bch2_btree_iter_set_snapshot(dst_iter, dst_snapshot);
+
+	struct bpos src_want = POS(src_inum.inum, dst_iter->pos.offset + shift);
+	bch2_btree_iter_set_pos(src_iter, src_want);
+
+	struct bkey_s_c src_k = bkey_try(get_next_src(src_iter, src_end));
+
+	if (bkey_lt(src_want, src_iter->pos)) {
+		u32 restart_count = trans->restart_count;
+		int ret = bch2_fpunch_at(trans, dst_iter, dst_inum,
+				min(dst_end.offset,
+				    dst_iter->pos.offset +
+				    src_iter->pos.offset - src_want.offset),
+				i_sectors_delta);
+		/*
+		 * Suppress restart handling check, fpunch_at() does multiple
+		 * transactions
+		 */
+		trans->restart_count = restart_count;
+		return ret;
+	}
+
+	if (src_k.k->type != KEY_TYPE_reflink_p) {
+		bch2_btree_iter_set_pos_to_extent_start(src_iter);
+
+		struct bkey_i *new_src =
+			errptr_try(bch2_trans_kmalloc_nomemzero(trans, bkey_bytes(src_k.k) +
+								sizeof(struct bch_reflink_v)));
+
+		bkey_reassemble(new_src, src_k);
+		src_k = bkey_i_to_s_c(new_src);
+
+		try(bch2_make_extent_indirect(trans, src_iter, new_src, reflink_p_may_update_opts));
+	}
+
+	BUG_ON(src_k.k->type != KEY_TYPE_reflink_p);
+
+	struct bkey_s_c_reflink_p src_p =
+		bkey_s_c_to_reflink_p(src_k);
+
+	struct bkey_i_reflink_p dst_p;
+	bkey_reflink_p_init(&dst_p.k_i);
+
+	u64 offset = REFLINK_P_IDX(src_p.v) +
+		(src_want.offset -
+		 bkey_start_offset(src_k.k));
+
+	SET_REFLINK_P_IDX(&dst_p.v, offset);
+
+	if (reflink_p_may_update_opts &&
+	    REFLINK_P_MAY_UPDATE_OPTIONS(src_p.v))
+		SET_REFLINK_P_MAY_UPDATE_OPTIONS(&dst_p.v, true);
+
+	dst_p.k.p = dst_iter->pos;
+	bch2_key_resize(&dst_p.k,
+			min(src_k.k->p.offset - src_want.offset,
+			    dst_end.offset - dst_iter->pos.offset));
+
+	CLASS(disk_reservation, res)(trans->c);
+	return bch2_extent_update(trans, dst_inum, dst_iter,
+				  &dst_p.k_i, dst_p.k.u64s, &res.r,
+				  new_i_size, i_sectors_delta,
+				  true, 0);
+}
+
 s64 bch2_remap_range(struct bch_fs *c,
 		     subvol_inum dst_inum, u64 dst_offset,
 		     subvol_inum src_inum, u64 src_offset,
@@ -555,16 +635,15 @@ s64 bch2_remap_range(struct bch_fs *c,
 		     u64 new_i_size, s64 *i_sectors_delta,
 		     bool may_change_src_io_path_opts)
 {
-	struct bkey_s_c src_k;
 	struct bpos dst_start = POS(dst_inum.inum, dst_offset);
 	struct bpos src_start = POS(src_inum.inum, src_offset);
 	struct bpos dst_end = dst_start, src_end = src_start;
-	struct bpos src_want;
 	u64 dst_done = 0;
-	u32 dst_snapshot, src_snapshot;
-	bool reflink_p_may_update_opts_field =
-		!bch2_request_incompat_feature(c, bcachefs_metadata_version_reflink_p_may_update_opts);
 	int ret = 0, ret2 = 0;
+
+	if (may_change_src_io_path_opts &&
+	    bch2_request_incompat_feature(c, bcachefs_metadata_version_reflink_p_may_update_opts))
+		may_change_src_io_path_opts = false;
 
 	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_reflink))
 		return bch_err_throw(c, erofs_no_writes);
@@ -574,110 +653,23 @@ s64 bch2_remap_range(struct bch_fs *c,
 	dst_end.offset += remap_sectors;
 	src_end.offset += remap_sectors;
 
-	struct bkey_buf new_dst __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&new_dst);
-	struct bkey_buf new_src __cleanup(bch2_bkey_buf_exit);
-	bch2_bkey_buf_init(&new_src);
-
 	CLASS(btree_trans, trans)(c);
 
 	CLASS(btree_iter, src_iter)(trans, BTREE_ID_extents, src_start, BTREE_ITER_intent);
 	CLASS(btree_iter, dst_iter)(trans, BTREE_ID_extents, dst_start, BTREE_ITER_intent);
 
-	while ((ret == 0 ||
-		bch2_err_matches(ret, BCH_ERR_transaction_restart)) &&
-	       bkey_lt(dst_iter.pos, dst_end)) {
-		bch2_trans_begin(trans);
+	s64 shift = src_offset - dst_offset;
+	while (!ret) {
+		ret = lockrestart_do(trans, ({
+			if (bkey_eq(dst_iter.pos, dst_end))
+				break;
 
-		if (fatal_signal_pending(current)) {
-			ret = -EINTR;
-			break;
-		}
-
-		ret = bch2_subvolume_get_snapshot(trans, src_inum.subvol,
-						  &src_snapshot);
-		if (ret)
-			continue;
-
-		bch2_btree_iter_set_snapshot(&src_iter, src_snapshot);
-
-		ret = bch2_subvolume_get_snapshot(trans, dst_inum.subvol,
-						  &dst_snapshot);
-		if (ret)
-			continue;
-
-		bch2_btree_iter_set_snapshot(&dst_iter, dst_snapshot);
-
-		if (dst_inum.inum < src_inum.inum) {
-			/* Avoid some lock cycle transaction restarts */
-			ret = bch2_btree_iter_traverse(&dst_iter);
-			if (ret)
-				continue;
-		}
-
-		dst_done = dst_iter.pos.offset - dst_start.offset;
-		src_want = POS(src_start.inode, src_start.offset + dst_done);
-		bch2_btree_iter_set_pos(&src_iter, src_want);
-
-		src_k = get_next_src(&src_iter, src_end);
-		ret = bkey_err(src_k);
-		if (ret)
-			continue;
-
-		if (bkey_lt(src_want, src_iter.pos)) {
-			ret = bch2_fpunch_at(trans, &dst_iter, dst_inum,
-					min(dst_end.offset,
-					    dst_iter.pos.offset +
-					    src_iter.pos.offset - src_want.offset),
-					i_sectors_delta);
-			continue;
-		}
-
-		if (src_k.k->type != KEY_TYPE_reflink_p) {
-			bch2_btree_iter_set_pos_to_extent_start(&src_iter);
-
-			bch2_bkey_buf_reassemble(&new_src, src_k);
-			src_k = bkey_i_to_s_c(new_src.k);
-
-			ret = bch2_make_extent_indirect(trans, &src_iter,
-						new_src.k,
-						reflink_p_may_update_opts_field);
-			if (ret)
-				continue;
-
-			BUG_ON(src_k.k->type != KEY_TYPE_reflink_p);
-		}
-
-		if (src_k.k->type == KEY_TYPE_reflink_p) {
-			struct bkey_s_c_reflink_p src_p =
-				bkey_s_c_to_reflink_p(src_k);
-			struct bkey_i_reflink_p *dst_p =
-				bkey_reflink_p_init(new_dst.k);
-
-			u64 offset = REFLINK_P_IDX(src_p.v) +
-				(src_want.offset -
-				 bkey_start_offset(src_k.k));
-
-			SET_REFLINK_P_IDX(&dst_p->v, offset);
-
-			if (reflink_p_may_update_opts_field &&
-			    may_change_src_io_path_opts &&
-			    REFLINK_P_MAY_UPDATE_OPTIONS(src_p.v))
-				SET_REFLINK_P_MAY_UPDATE_OPTIONS(&dst_p->v, true);
-		} else {
-			BUG();
-		}
-
-		new_dst.k->k.p = dst_iter.pos;
-		bch2_key_resize(&new_dst.k->k,
-				min(src_k.k->p.offset - src_want.offset,
-				    dst_end.offset - dst_iter.pos.offset));
-
-		CLASS(disk_reservation, res)(c);
-		ret = bch2_extent_update(trans, dst_inum, &dst_iter,
-					 new_dst.k, new_dst.k->k.u64s, &res.r,
-					 new_i_size, i_sectors_delta,
-					 true, 0);
+			remap_range_iter(trans,
+					 dst_inum, &dst_iter, dst_end,
+					 src_inum, &src_iter, src_end,
+					 shift, new_i_size, i_sectors_delta,
+					 may_change_src_io_path_opts);
+		}));
 	}
 
 	BUG_ON(!ret && !bkey_eq(dst_iter.pos, dst_end));
