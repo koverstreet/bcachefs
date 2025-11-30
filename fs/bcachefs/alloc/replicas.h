@@ -54,6 +54,7 @@ int bch2_replicas_entry_get(struct bch_fs *, struct bch_replicas_entry_v1 *);
 void bch2_replicas_entry_kill(struct bch_fs *, struct bch_replicas_entry_v1 *);
 
 int bch2_replicas_gc_reffed(struct bch_fs *);
+int bch2_replicas_gc_accounted(struct bch_fs *);
 
 static inline bool bch2_replicas_entry_has_dev(struct bch_replicas_entry_v1 *r, unsigned dev)
 {

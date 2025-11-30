@@ -904,6 +904,13 @@ use_clean:
 		bch2_fs_read_write_early(c);
 		bch2_delete_dead_snapshots_async(c);
 	}
+
+	/*
+	 * (Hopefully unnecessary) cleanup, once per mount - we should be
+	 * killing replicas entries when accounting entries go to 0, but - old
+	 * filesystems, etc.:
+	 */
+	bch2_replicas_gc_accounted(c);
 fsck_err:
 	return ret;
 }

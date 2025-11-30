@@ -484,6 +484,60 @@ int bch2_replicas_gc_reffed(struct bch_fs *c)
 	return 0;
 }
 
+int bch2_replicas_gc_accounted(struct bch_fs *c)
+{
+	int ret = 0;
+
+	bch2_accounting_mem_gc(c);
+
+	guard(mutex)(&c->sb_lock);
+	scoped_guard(percpu_write, &c->capacity.mark_lock) {
+		struct bch_replicas_cpu new = {
+			.entry_size	= c->replicas.entry_size,
+			.entries	= kcalloc(c->replicas.nr, c->replicas.entry_size, GFP_KERNEL),
+		};
+		if (!new.entries) {
+			bch_err(c, "error allocating c->replicas_gc");
+			return bch_err_throw(c, ENOMEM_replicas_gc);
+		}
+
+		for (unsigned i = 0; i < c->replicas.nr; i++) {
+			struct bch_replicas_entry_cpu *e =
+				cpu_replicas_entry(&c->replicas, i);
+
+			struct disk_accounting_pos k = {
+				.type = BCH_DISK_ACCOUNTING_replicas,
+			};
+
+			unsafe_memcpy(&k.replicas, &e->e, replicas_entry_bytes(&e->e),
+				      "embedded variable length struct");
+
+			struct bpos p = disk_accounting_pos_to_bpos(&k);
+
+			struct bch_accounting_mem *acc = &c->accounting;
+			bool kill = eytzinger0_find(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
+						    accounting_pos_cmp, &p) >= acc->k.nr;
+
+			if (e->e.data_type == BCH_DATA_journal || !kill)
+				memcpy(cpu_replicas_entry(&new, new.nr++),
+				       e, new.entry_size);
+		}
+
+		bch2_cpu_replicas_sort(&new);
+
+		ret = bch2_cpu_replicas_to_sb_replicas(c, &new);
+
+		if (!ret)
+			swap(c->replicas, new);
+
+		kfree(new.entries);
+	}
+
+	if (!ret)
+		bch2_write_super(c);
+	return ret;
+}
+
 /* Replicas tracking - superblock: */
 
 static int
