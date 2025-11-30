@@ -447,7 +447,12 @@ struct bch_ioctl_fsck_offline {
 	__u64			flags;
 	__u64			opts;		/* string */
 	__u64			nr_devs;
-	__u64			devs[] __counted_by(nr_devs);
+	/*
+	 * Do not re-add __counted_by() here: there's a compiler bug that causes
+	 * a bounds check to happen, even when it's a userspace pointer
+	 * (properly marked as __user)
+	 */
+	__u64			devs[];
 };
 
 /*
