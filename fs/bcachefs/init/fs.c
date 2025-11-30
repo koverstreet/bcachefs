@@ -1082,7 +1082,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 
 	mutex_init(&c->bio_bounce_pages_lock);
 
-	spin_lock_init(&c->btree_write_error_lock);
+	spin_lock_init(&c->write_error_lock);
 
 	INIT_LIST_HEAD(&c->journal_iters);
 

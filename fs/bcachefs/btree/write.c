@@ -12,7 +12,9 @@
 #include "debug/async_objs.h"
 #include "debug/debug.h"
 
+#include "init/dev.h"
 #include "init/error.h"
+#include "init/fs.h"
 
 #include "sb/counters.h"
 
@@ -147,15 +149,33 @@ static void btree_node_write_work(struct work_struct *work)
 
 	if (!wbio->wbio.first_btree_write || wbio->wbio.failed.nr) {
 		int ret = bch2_trans_do(c, btree_node_write_update_key(trans, wbio, b));
-		if (ret) {
+		if (ret)
 			set_btree_node_noevict(b);
 
-			if (!bch2_err_matches(ret, EROFS)) {
-				CLASS(printbuf, buf)();
-				prt_printf(&buf, "writing btree node: %s\n  ", bch2_err_str(ret));
-				bch2_btree_pos_to_text(&buf, c, b);
-				bch2_fs_fatal_error(c, "%s", buf.buf);
+		if ((ret && !bch2_err_matches(ret, EROFS)) ||
+		    wbio->wbio.failed.nr) {
+			bool print = !bch2_ratelimit();
+
+			CLASS(printbuf, buf)();
+			bch2_log_msg_start(c, &buf);
+			prt_printf(&buf, "error writing btree node at ");
+			bch2_btree_pos_to_text(&buf, c, b);
+			prt_newline(&buf);
+
+			bch2_io_failures_to_text(&buf, c, &wbio->wbio.failed);
+
+			if (!ret) {
+				prt_printf(&buf, "wrote degraded to ");
+				struct bch_devs_list d = bch2_bkey_devs(c, bkey_i_to_s_c(&b->key));
+				bch2_devs_list_to_text(&buf, c, &d);
+				prt_newline(&buf);
+			} else {
+				prt_printf(&buf, "%s\n", bch2_err_str(ret));
+				print = bch2_fs_emergency_read_only2(c, &buf);
 			}
+
+			if (print)
+				bch2_print_str(c, KERN_ERR, buf.buf);
 		}
 	}
 
@@ -174,26 +194,15 @@ static void btree_node_write_endio(struct bio *bio)
 	struct btree *b			= wbio->bio.bi_private;
 	struct bch_dev *ca		= wbio->have_ioref ? bch2_dev_have_ref(c, wbio->dev) : NULL;
 
+	/* XXX: ca can be null, stash dev_idx */
+
 	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_write,
 				   wbio->submit_time, !bio->bi_status);
 
-	if (ca && bio->bi_status) {
-		CLASS(printbuf, buf)();
-		guard(printbuf_atomic)(&buf);
-		__bch2_log_msg_start(ca->name, &buf);
-
-		prt_printf(&buf, "btree write error: %s\n",
-			   bch2_blk_status_to_str(bio->bi_status));
-		bch2_btree_pos_to_text(&buf, c, b);
-		bch2_print_str_ratelimited(c, KERN_ERR, buf.buf);
-	}
-
-	if (bio->bi_status) {
-		unsigned long flags;
-		spin_lock_irqsave(&c->btree_write_error_lock, flags);
-		bch2_dev_io_failures_mut(&orig->failed, ca->dev_idx)->errcode =
+	if (unlikely(bio->bi_status)) {
+		guard(spinlock_irqsave)(&c->write_error_lock);
+		bch2_dev_io_failures_mut(&orig->failed, wbio->dev)->errcode =
 			__bch2_err_throw(c, -blk_status_to_bch_err(bio->bi_status));
-		spin_unlock_irqrestore(&c->btree_write_error_lock, flags);
 	}
 
 	/*

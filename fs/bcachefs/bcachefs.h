@@ -872,7 +872,7 @@ struct bch_fs {
 	struct bch_fs_snapshots			snapshots;
 
 	/* btree_io.c: */
-	spinlock_t		btree_write_error_lock;
+	spinlock_t				write_error_lock;
 	struct btree_write_stats {
 		atomic64_t	nr;
 		atomic64_t	bytes;
