@@ -1925,8 +1925,7 @@ long bch2_ioctl_fsck_offline(struct bch_ioctl_fsck_offline __user *user_arg)
 {
 	struct bch_ioctl_fsck_offline arg;
 
-	if (copy_from_user(&arg, user_arg, sizeof(arg)))
-		return -EFAULT;
+	try(copy_from_user_errcode(&arg, user_arg, sizeof(arg)));
 
 	if (arg.flags)
 		return -EINVAL;
