@@ -142,6 +142,8 @@ struct bch_folio *__bch2_folio_create(struct folio *folio, gfp_t gfp)
 
 struct bch_folio *bch2_folio_create(struct folio *folio, gfp_t gfp)
 {
+	EBUG_ON(!folio_test_locked(folio));
+
 	return bch2_folio(folio) ?: __bch2_folio_create(folio, gfp);
 }
 

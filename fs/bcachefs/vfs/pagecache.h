@@ -99,16 +99,9 @@ static inline void bch2_folio_release(struct folio *folio)
 	__bch2_folio_release(folio);
 }
 
-static inline struct bch_folio *__bch2_folio(struct folio *folio)
-{
-	return folio_get_private(folio);
-}
-
 static inline struct bch_folio *bch2_folio(struct folio *folio)
 {
-	EBUG_ON(!folio_test_locked(folio));
-
-	return __bch2_folio(folio);
+	return folio_get_private(folio);
 }
 
 struct bch_folio *__bch2_folio_create(struct folio *, gfp_t);

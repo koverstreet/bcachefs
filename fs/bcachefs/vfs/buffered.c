@@ -446,7 +446,7 @@ static void bch2_writepage_io_done(struct bch_write_op *op)
 		bio_for_each_folio_all(fi, bio) {
 			mapping_set_error(fi.folio->mapping, -EIO);
 
-			struct bch_folio *s = __bch2_folio(fi.folio);
+			struct bch_folio *s = bch2_folio(fi.folio);
 			guard(spinlock)(&s->lock);
 
 			for (i = 0; i < folio_sectors(fi.folio); i++)
@@ -456,7 +456,7 @@ static void bch2_writepage_io_done(struct bch_write_op *op)
 
 	if (io->op.flags & BCH_WRITE_wrote_data_inline) {
 		bio_for_each_folio_all(fi, bio) {
-			struct bch_folio *s = __bch2_folio(fi.folio);
+			struct bch_folio *s = bch2_folio(fi.folio);
 			guard(spinlock)(&s->lock);
 
 			for (i = 0; i < folio_sectors(fi.folio); i++)
@@ -484,7 +484,7 @@ static void bch2_writepage_io_done(struct bch_write_op *op)
 	bch2_i_sectors_acct(c, io->inode, NULL, io->op.i_sectors_delta);
 
 	bio_for_each_folio_all(fi, bio) {
-		struct bch_folio *s = __bch2_folio(fi.folio);
+		struct bch_folio *s = bch2_folio(fi.folio);
 
 		if (atomic_dec_and_test(&s->write_count))
 			folio_end_writeback(fi.folio);
