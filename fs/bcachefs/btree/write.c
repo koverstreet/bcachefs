@@ -112,7 +112,7 @@ static int btree_node_write_update_key(struct btree_trans *trans,
 		bkey_i_to_btree_ptr_v2(&wbio->key)->v.sectors_written;
 
 	bch2_bkey_drop_ptrs(bkey_i_to_s(n), p, entry,
-		bch2_dev_list_has_dev(wbio->wbio.failed, p.ptr.dev));
+		bch2_dev_io_failures(&wbio->wbio.failed, p.ptr.dev));
 
 	if (!bch2_bkey_nr_dirty_ptrs(c, bkey_i_to_s_c(n)))
 		return bch_err_throw(c, btree_node_write_all_failed);
@@ -191,7 +191,8 @@ static void btree_node_write_endio(struct bio *bio)
 	if (bio->bi_status) {
 		unsigned long flags;
 		spin_lock_irqsave(&c->btree_write_error_lock, flags);
-		bch2_dev_list_add_dev(&orig->failed, wbio->dev);
+		bch2_dev_io_failures_mut(&orig->failed, ca->dev_idx)->errcode =
+			__bch2_err_throw(c, -blk_status_to_bch_err(bio->bi_status));
 		spin_unlock_irqrestore(&c->btree_write_error_lock, flags);
 	}
 

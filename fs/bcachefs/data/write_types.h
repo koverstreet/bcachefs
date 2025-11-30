@@ -49,7 +49,7 @@ struct bch_write_bio {
 	u64			inode_offset;
 	u64			nocow_bucket;
 
-	struct bch_devs_list	failed;
+	struct bch_io_failures	failed;
 	u8			dev;
 
 	unsigned		split:1,
