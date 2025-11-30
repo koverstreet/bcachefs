@@ -437,11 +437,11 @@ static int journal_entry_open(struct journal *j)
 	buf->must_flush		= c->sb.clean;
 	buf->separate_flush	= false;
 	buf->flush_time		= 0;
+	buf->failed.nr		= 0;
 	buf->need_flush_to_write_buffer = true;
 	buf->write_started	= false;
 	buf->write_allocated	= false;
 	buf->write_done		= false;
-	buf->had_error		= false;
 	buf->empty		= false;
 
 	memset(buf->data, 0, sizeof(*buf->data));

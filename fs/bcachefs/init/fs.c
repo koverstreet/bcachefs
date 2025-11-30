@@ -417,8 +417,7 @@ bool bch2_fs_emergency_read_only(struct bch_fs *c)
 	return ret;
 }
 
-static bool __bch2_fs_emergency_read_only2(struct bch_fs *c, struct printbuf *out,
-					   bool locked)
+static bool __bch2_fs_emergency_read_only2(struct bch_fs *c, struct printbuf *out, bool locked)
 {
 	bool ret = !test_and_set_bit(BCH_FS_emergency_ro, &c->flags);
 
@@ -429,11 +428,9 @@ static bool __bch2_fs_emergency_read_only2(struct bch_fs *c, struct printbuf *ou
 	bch2_fs_read_only_async(c);
 	wake_up(&bch2_read_only_wait);
 
-	if (ret) {
+	if (ret)
 		prt_printf(out, "emergency read only at seq %llu\n",
 			   journal_cur_seq(&c->journal));
-		bch2_prt_task_backtrace(out, current, 2, out->atomic ? GFP_ATOMIC : GFP_KERNEL);
-	}
 
 	return ret;
 }

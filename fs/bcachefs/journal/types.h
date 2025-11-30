@@ -7,7 +7,11 @@
 
 #include "alloc/replicas_types.h"
 #include "alloc/types.h"
+
+#include "data/extents_types.h"
+
 #include "init/dev_types.h"
+
 #include "util/fifo.h"
 
 /* btree write buffer steals 8 bits for its own purposes: */
@@ -31,6 +35,7 @@ struct journal_buf {
 
 	__BKEY_PADDED(key, BCH_REPLICAS_MAX);
 	struct bch_devs_list	devs_written;
+	struct bch_io_failures	failed;
 
 	struct closure_waitlist	wait;
 	u64			last_seq;	/* copy of data->last_seq */
@@ -49,7 +54,6 @@ struct journal_buf {
 	bool			write_started:1;
 	bool			write_allocated:1;
 	bool			write_done:1;
-	bool			had_error:1;
 	bool			empty:1;
 	u8			idx;
 };

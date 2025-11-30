@@ -11,6 +11,7 @@
 
 #include "data/checksum.h"
 
+#include "init/dev.h"
 #include "init/error.h"
 #include "init/fs.h"
 
@@ -216,7 +217,8 @@ static CLOSURE_CALLBACK(journal_write_done)
 			       : j->noflush_write_time, j->write_start_time);
 
 	struct bch_replicas_entry_v1 *r = &journal_seq_pin(j, seq_wrote)->devs.e;
-	if (w->had_error) {
+
+	if (unlikely(w->failed.nr)) {
 		bch2_replicas_entry_put(c, r);
 		r->nr_devs = 0;
 	}
@@ -228,22 +230,33 @@ static CLOSURE_CALLBACK(journal_write_done)
 			r->nr_devs = 0;
 	}
 
-	if (!w->devs_written.nr)
-		err = bch_err_throw(c, journal_write_err);
+	if (unlikely(w->failed.nr || err)) {
+		bool print = !bch2_ratelimit();
 
-	if (err && !bch2_journal_error(j)) {
 		CLASS(printbuf, buf)();
 		bch2_log_msg_start(c, &buf);
+		prt_printf(&buf, "error writing journal entry %llu\n", seq_wrote);
+		bch2_io_failures_to_text(&buf, c, &w->failed);
 
-		if (err == -BCH_ERR_journal_write_err)
-			prt_printf(&buf, "unable to write journal to sufficient devices\n");
-		else
-			prt_printf(&buf, "journal write error marking replicas: %s\n",
-				   bch2_err_str(err));
+		if (!w->devs_written.nr)
+			err = bch_err_throw(c, journal_write_err);
 
-		bch2_fs_emergency_read_only2(c, &buf);
+		if (!err) {
+			prt_printf(&buf, "wrote degraded to ");
+			bch2_devs_list_to_text(&buf, c, &w->devs_written);
+			prt_newline(&buf);
+		} else {
+			if (err == -BCH_ERR_journal_write_err)
+				prt_printf(&buf, "unable to write journal to sufficient devices\n");
+			else
+				prt_printf(&buf, "journal write error marking replicas: %s\n",
+					   bch2_err_str(err));
 
-		bch2_print_str(c, KERN_ERR, buf.buf);
+			print = bch2_fs_emergency_read_only2(c, &buf);
+		}
+
+		if (print)
+			bch2_print_str(c, KERN_ERR, buf.buf);
 	}
 
 	closure_debug_destroy(cl);
@@ -381,22 +394,17 @@ static void journal_write_endio(struct bio *bio)
 	struct journal_bio *jbio = container_of(bio, struct journal_bio, bio);
 	struct bch_dev *ca = jbio->ca;
 	struct journal *j = &ca->fs->journal;
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_buf *w = j->buf + jbio->buf_idx;
 
 	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_write,
 				   jbio->submit_time, !bio->bi_status);
 
 	if (bio->bi_status) {
-		bch_err_dev_ratelimited(ca,
-			       "error writing journal entry %llu: %s",
-			       le64_to_cpu(w->data->seq),
-			       bch2_blk_status_to_str(bio->bi_status));
-
-		unsigned long flags;
-		spin_lock_irqsave(&j->err_lock, flags);
+		guard(spinlock_irqsave)(&j->err_lock);
+		bch2_dev_io_failures_mut(&w->failed, ca->dev_idx)->errcode =
+			__bch2_err_throw(c, -blk_status_to_bch_err(bio->bi_status));
 		bch2_dev_list_drop_dev(&w->devs_written, ca->dev_idx);
-		w->had_error = true;
-		spin_unlock_irqrestore(&j->err_lock, flags);
 	}
 
 	closure_put(&w->io);
