@@ -314,6 +314,11 @@ enum fsck_err_opts {
 	  OPT_STR(bch2_degraded_actions),				\
 	  BCH_SB_DEGRADED_ACTION,	BCH_DEGRADED_ask,		\
 	  NULL,		"Allow mounting in degraded mode")		\
+	x(mount_trusts_udev,		u8,				\
+	  OPT_MOUNT,							\
+	  OPT_BOOL(),							\
+	  BCH2_NO_SB_OPT,		true,				\
+	  NULL,		"Trust udev when scanning for member devices")	\
 	x(no_splitbrain_check,		u8,				\
 	  OPT_FS|OPT_MOUNT,						\
 	  OPT_BOOL(),							\
@@ -580,14 +585,7 @@ struct bch2_opts_parse {
 	struct printbuf parse_later;
 };
 
-static const __maybe_unused struct bch_opts bch2_opts_default = {
-#define x(_name, _bits, _mode, _type, _sb_opt, _default, ...)		\
-	._name##_defined = true,					\
-	._name = _default,						\
-
-	BCH_OPTS()
-#undef x
-};
+extern const struct bch_opts bch2_opts_default;
 
 #define opt_defined(_opts, _name)	((_opts)._name##_defined)
 

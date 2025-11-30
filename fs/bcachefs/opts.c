@@ -860,6 +860,15 @@ bool bch2_opt_set_sb(struct bch_fs *c, struct bch_dev *ca,
 	return changed;
 }
 
+const __maybe_unused struct bch_opts bch2_opts_default = {
+#define x(_name, _bits, _mode, _type, _sb_opt, _default, ...)		\
+	._name##_defined = true,					\
+	._name = _default,						\
+
+	BCH_OPTS()
+#undef x
+};
+
 /* io opts: */
 
 void bch2_inode_opts_get(struct bch_fs *c, struct bch_inode_opts *ret, bool metadata)
