@@ -742,7 +742,9 @@ static noinline_for_stack int btree_node_root_err(struct btree_trans *trans, str
 	bch2_btree_pos_to_text(&buf, c, b);
 	prt_newline(&buf);
 
-	return __bch2_topology_error(c, &buf);
+	int ret = __bch2_topology_error(c, &buf);
+	bch2_print_str(trans->c, KERN_ERR, buf.buf);
+	return ret;
 }
 
 static inline int btree_path_lock_root(struct btree_trans *trans,
@@ -916,7 +918,9 @@ static noinline_for_stack int btree_node_missing_err(struct btree_trans *trans,
 	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&path_l(path)->b->key));
 	prt_newline(&buf);
 
-	return __bch2_topology_error(c, &buf);
+	int ret = __bch2_topology_error(c, &buf);
+	bch2_print_str(trans->c, KERN_ERR, buf.buf);
+	return ret;
 }
 
 static noinline_for_stack int btree_node_gap_err(struct btree_trans *trans,
@@ -934,7 +938,9 @@ static noinline_for_stack int btree_node_gap_err(struct btree_trans *trans,
 	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(k));
 	prt_newline(&buf);
 
-	return __bch2_topology_error(c, &buf);
+	int ret = __bch2_topology_error(c, &buf);
+	bch2_print_str(trans->c, KERN_ERR, buf.buf);
+	return ret;
 }
 
 static noinline int btree_node_iter_and_journal_peek(struct btree_trans *trans,

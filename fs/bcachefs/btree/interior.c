@@ -2122,8 +2122,8 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 
 	if (!bpos_eq(bpos_successor(prev->data->max_key), next->data->min_key)) {
 		CLASS(printbuf, buf)();
+		bch2_log_msg_start(c, &buf);
 
-		printbuf_indent_add_nextline(&buf, 2);
 		prt_printf(&buf, "%s(): ", __func__);
 		ret = __bch2_topology_error(c, &buf);
 		prt_newline(&buf);
@@ -2135,7 +2135,7 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 		prt_printf(&buf, "next starts at ");
 		bch2_bpos_to_text(&buf, next->data->min_key);
 
-		bch_err(c, "%s", buf.buf);
+		bch2_print_str(c, KERN_ERR, buf.buf);
 		goto err;
 	}
 
