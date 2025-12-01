@@ -209,6 +209,51 @@ static inline bool bch2_bucket_bitmap_test(struct bucket_bitmap *b, u64 i)
 	return bitmap && test_bit(i, bitmap);
 }
 
+DEFINE_DARRAY_NAMED(darray_bkey_i_backpointer, struct bkey_i_backpointer);
+
+struct progress_indicator;
+struct bp_scan_iter {
+	struct bpos			pos;
+	u64				nr_flushes;
+	struct progress_indicator	*progress;
+	darray_bkey_i_backpointer	bps;
+};
+
+DEFINE_CLASS(backpointer_scan_iter, struct bp_scan_iter,
+	     darray_exit(&_T.bps),
+	     ((struct bp_scan_iter) { .pos = pos, .progress = progress }),
+	     struct bpos pos, struct progress_indicator *progress)
+
+struct bkey_s_c_backpointer bch2_bp_scan_iter_peek(struct btree_trans *, struct bp_scan_iter *,
+						   struct bpos, struct wb_maybe_flush *);
+
+static inline void bch2_bp_scan_iter_advance(struct bp_scan_iter *iter)
+{
+	BUG_ON(!iter->bps.nr);
+	--iter->bps.nr;
+}
+
+#define backpointer_scan_for_each(_trans, _bp_iter, _start, _end,				\
+				  _last_flushed, _progress, _bp, _do)				\
+({												\
+	CLASS(backpointer_scan_iter, _bp_iter)(_start, _progress);				\
+	int _ret3 = 0;										\
+												\
+	while (true) {										\
+		_ret3 = lockrestart_do(trans, ({						\
+			struct bkey_s_c_backpointer _bp =					\
+				bch2_bp_scan_iter_peek(_trans, &_bp_iter, _end, _last_flushed);	\
+			if (!_bp.k)								\
+				break;								\
+			bkey_err(_bp) ?: (_do);							\
+		}));										\
+												\
+		bch2_bp_scan_iter_advance(&_bp_iter);						\
+	}											\
+												\
+	_ret3;											\
+})
+
 int bch2_bucket_bitmap_resize(struct bch_dev *, struct bucket_bitmap *, u64, u64);
 void bch2_bucket_bitmap_free(struct bucket_bitmap *);
 
