@@ -272,6 +272,41 @@ static inline void prt_str(struct printbuf *out, const char *str)
 	bch2_prt_bytes_indented(out, str, strlen(str));
 }
 
+static inline void reverse_bytes(void *b, size_t n)
+{
+	char *e = b + n, *s = b;
+
+	while (s < e) {
+		--e;
+		swap(*s, *e);
+		s++;
+	}
+}
+
+static inline void printbuf_reverse_from(struct printbuf *out, unsigned pos)
+{
+	reverse_bytes(out->buf + pos, out->pos - pos);
+}
+
+static inline void prt_bytes_reversed(struct printbuf *out, const void *b, unsigned n)
+{
+	bch2_printbuf_make_room(out, n);
+
+	unsigned can_print = min(n, printbuf_remaining(out));
+
+	b += n;
+
+	for (unsigned i = 0; i < can_print; i++)
+		out->buf[out->pos++] = *((char *) --b);
+
+	printbuf_nul_terminate(out);
+}
+
+static inline void prt_str_reversed(struct printbuf *out, const char *s)
+{
+	prt_bytes_reversed(out, s, strlen(s));
+}
+
 static inline void prt_hex_byte(struct printbuf *out, u8 byte)
 {
 	bch2_printbuf_make_room(out, 3);
