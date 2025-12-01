@@ -349,6 +349,7 @@ void bch2_data_update_read_done(struct data_update *u)
 	}
 
 	if (unlikely(rbio->ret)) {
+		u->op.error = rbio->ret;
 		u->op.end_io(&u->op);
 		return;
 	}
