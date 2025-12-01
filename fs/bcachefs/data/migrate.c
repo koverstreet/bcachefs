@@ -228,24 +228,21 @@ int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, unsigned dev_idx, unsig
 				       struct printbuf *err)
 {
 	CLASS(btree_trans, trans)(c);
-	CLASS(disk_reservation, res)(c);
 
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
 
+	struct progress_indicator progress;
+	bch2_progress_init(&progress, "dropping device data", c,
+			   BIT(BTREE_ID_backpointers), 0);
+
 	return bch2_btree_write_buffer_flush_sync(trans) ?:
-		for_each_btree_key_max_commit(trans, iter, BTREE_ID_backpointers,
-				POS(dev_idx, 0),
-				POS(dev_idx, U64_MAX), 0, k,
-				&res.r, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-			if (k.k->type != KEY_TYPE_backpointer)
-				continue;
-
-			wb_maybe_flush_inc(&last_flushed);
-			bch2_disk_reservation_put(c, &res.r);
-			data_drop_bp(trans, dev_idx, bkey_s_c_to_backpointer(k),
-				     &last_flushed, flags, err);
-
+		backpointer_scan_for_each(trans, iter, POS(dev_idx, 0), POS(dev_idx, U64_MAX),
+					  &last_flushed, &progress, bp, ({
+		wb_maybe_flush_inc(&last_flushed);
+		CLASS(disk_reservation, res)(c);
+		data_drop_bp(trans, dev_idx, bp, &last_flushed, flags, err) ?:
+		bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
 	}));
 }
 
