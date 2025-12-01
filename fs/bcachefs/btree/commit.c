@@ -1026,6 +1026,8 @@ retry:
 			goto fatal_err;
 	}
 
+	event_inc_trace(c, transaction_commit, buf, prt_str(&buf, trans->fn));
+
 	return 0;
 fatal_err:
 	bch2_fs_fatal_error(c, "fatal error in transaction commit: %s", bch2_err_str(ret));
