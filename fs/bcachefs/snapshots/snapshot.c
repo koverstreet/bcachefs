@@ -771,7 +771,7 @@ static int delete_dead_snapshot_keys_v1(struct btree_trans *trans)
 	struct bch_fs *c = trans->c;
 	struct snapshot_delete *d = &c->snapshots.delete;
 
-	bch2_progress_init(&d->progress, c, btree_has_snapshots_mask);
+	bch2_progress_init(&d->progress, __func__, c, btree_has_snapshots_mask, 0);
 	d->progress.silent	= true;
 	d->version		= 1;
 
@@ -786,7 +786,7 @@ static int delete_dead_snapshot_keys_v1(struct btree_trans *trans)
 				btree, POS_MIN,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
 				&res.r, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-			progress_update_iter(trans, &d->progress, &iter);
+			bch2_progress_update_iter(trans, &d->progress, &iter);
 
 			if (skip_unrelated_snapshot_tree(trans, &iter, &prev_inum))
 				continue;
@@ -822,7 +822,7 @@ static int delete_dead_snapshot_keys_v2(struct btree_trans *trans)
 	CLASS(disk_reservation, res)(c);
 	u64 prev_inum = 0;
 
-	bch2_progress_init(&d->progress, c, BIT_ULL(BTREE_ID_inodes));
+	bch2_progress_init(&d->progress, __func__, c, BIT_ULL(BTREE_ID_inodes), 0);
 	d->progress.silent	= true;
 	d->version		= 2;
 
@@ -844,7 +844,7 @@ static int delete_dead_snapshot_keys_v2(struct btree_trans *trans)
 		if (!k.k)
 			break;
 
-		progress_update_iter(trans, &d->progress, &iter);
+		bch2_progress_update_iter(trans, &d->progress, &iter);
 
 		if (skip_unrelated_snapshot_tree(trans, &iter, &prev_inum))
 			continue;

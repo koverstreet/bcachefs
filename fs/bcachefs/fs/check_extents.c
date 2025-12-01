@@ -416,13 +416,13 @@ int bch2_check_extents(struct bch_fs *c)
 	CLASS(extent_ends, extent_ends)();
 
 	struct progress_indicator progress;
-	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_extents));
+	bch2_progress_init(&progress, __func__, c, BIT_ULL(BTREE_ID_extents), 0);
 
 	return for_each_btree_key(trans, iter, BTREE_ID_extents,
 				POS(BCACHEFS_ROOT_INO, 0),
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k, ({
 		bch2_disk_reservation_put(c, &res.r);
-		progress_update_iter(trans, &progress, &iter) ?:
+		bch2_progress_update_iter(trans, &progress, &iter) ?:
 		check_extent(trans, &iter, k, &w, &s, &extent_ends, &res.r);
 	})) ?:
 	check_i_sectors_notnested(trans, &w);
@@ -434,7 +434,7 @@ int bch2_check_indirect_extents(struct bch_fs *c)
 	CLASS(btree_trans, trans)(c);
 
 	struct progress_indicator progress;
-	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_reflink));
+	bch2_progress_init(&progress, __func__, c, BIT_ULL(BTREE_ID_reflink), 0);
 
 	return for_each_btree_key_commit(trans, iter, BTREE_ID_reflink,
 				POS_MIN,
@@ -442,7 +442,7 @@ int bch2_check_indirect_extents(struct bch_fs *c)
 				&res.r, NULL,
 				BCH_TRANS_COMMIT_no_enospc, ({
 		bch2_disk_reservation_put(c, &res.r);
-		progress_update_iter(trans, &progress, &iter) ?:
+		bch2_progress_update_iter(trans, &progress, &iter) ?:
 		check_extent_overbig(trans, &iter, k) ?:
 		bch2_bkey_drop_stale_ptrs(trans, &iter, k);
 	}));

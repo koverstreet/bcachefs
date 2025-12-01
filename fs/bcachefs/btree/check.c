@@ -732,7 +732,7 @@ static int bch2_gc_btree(struct btree_trans *trans,
 
 		try(for_each_btree_key_continue(trans, iter, 0, k, ({
 			gc_pos_set(trans->c, gc_pos_btree(btree, level, k.k->p));
-			bch2_progress_update_iter(trans, progress, &iter, "check_allocations") ?:
+			bch2_progress_update_iter(trans, progress, &iter) ?:
 			bch2_gc_mark_key(trans, btree, level, &prev, &iter, k, initial);
 		})));
 	}
@@ -752,7 +752,7 @@ static int bch2_gc_btrees(struct bch_fs *c)
 	int ret = 0;
 
 	struct progress_indicator progress;
-	bch2_progress_init_inner(&progress, c, ~0ULL, ~0ULL);
+	bch2_progress_init(&progress, "check_allocations", c, ~0ULL, ~0ULL);
 
 	enum btree_id ids[BTREE_ID_NR];
 	for (unsigned i = 0; i < BTREE_ID_NR; i++)
@@ -1219,7 +1219,7 @@ static int merge_btree_node_one(struct btree_trans *trans,
 	if (!b)
 		return 1;
 
-	try(bch2_progress_update_iter(trans, progress, iter, "merge_btree_nodes"));
+	try(bch2_progress_update_iter(trans, progress, iter));
 
 	if (!btree_node_needs_merge(trans, b, 0)) {
 		if (bpos_eq(b->key.k.p, SPOS_MAX))
@@ -1238,7 +1238,7 @@ static int merge_btree_node_one(struct btree_trans *trans,
 int bch2_merge_btree_nodes(struct bch_fs *c)
 {
 	struct progress_indicator progress;
-	bch2_progress_init_inner(&progress, c, ~0ULL, ~0ULL);
+	bch2_progress_init(&progress, __func__, c, ~0ULL, ~0ULL);
 
 	CLASS(btree_trans, trans)(c);
 

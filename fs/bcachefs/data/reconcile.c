@@ -2284,7 +2284,7 @@ static int check_reconcile_work_data_btree(struct btree_trans *trans,
 	while (true) {
 		bch2_disk_reservation_put(c, &res.r);
 
-		try(bch2_progress_update_iter(trans, progress, &data_iter, "check_reconcile_work"));
+		try(bch2_progress_update_iter(trans, progress, &data_iter));
 		try(commit_do(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc,
 			      check_reconcile_work_one(trans, &data_iter, rb_w, rb_h, rb_p,
 						       snapshot_io_opts, last_flushed, &cur_pos)));
@@ -2371,7 +2371,7 @@ static int check_reconcile_work_phys(struct btree_trans *trans)
 	struct bch_fs *c = trans->c;
 
 	struct progress_indicator progress;
-	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_backpointers));
+	bch2_progress_init(&progress, __func__, c, BIT_ULL(BTREE_ID_backpointers), 0);
 	struct bpos cur_pos = POS_MIN;
 
 	CLASS(btree_iter, bp)(trans, BTREE_ID_backpointers, POS_MIN, BTREE_ITER_prefetch);
@@ -2382,7 +2382,7 @@ static int check_reconcile_work_phys(struct btree_trans *trans)
 	wb_maybe_flush_init(&last_flushed);
 
 	while (true) {
-		try(bch2_progress_update_iter(trans, &progress, &bp, "check_reconcile_work_phys"));
+		try(bch2_progress_update_iter(trans, &progress, &bp));
 
 		try(commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
 			      check_reconcile_work_phys_one(trans, &bp, &r_w, &r_h,
@@ -2477,7 +2477,7 @@ static int check_reconcile_work_btrees(struct btree_trans *trans)
 
 	CLASS(disk_reservation, res)(c);
 	struct progress_indicator progress;
-	bch2_progress_init_inner(&progress, c, 0, ~0ULL);
+	bch2_progress_init(&progress, __func__, c, 0, ~0ULL);
 
 	for (enum btree_id btree = 0; btree < btree_id_nr_alive(c); btree++) {
 		if (!bch2_btree_id_root(c, btree)->b)
@@ -2491,7 +2491,7 @@ static int check_reconcile_work_btrees(struct btree_trans *trans)
 
 			try(for_each_btree_key_continue(trans, iter, 0, k, ({
 				bch2_disk_reservation_put(c, &res.r);
-				progress_update_iter(trans, &progress, &iter) ?:
+				bch2_progress_update_iter(trans, &progress, &iter) ?:
 				check_reconcile_work_btree_key(trans, &iter, k) ?:
 				bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
 			})));
@@ -2515,12 +2515,12 @@ noinline_for_stack
 static int check_reconcile_btree_bps(struct btree_trans *trans)
 {
 	struct progress_indicator progress;
-	bch2_progress_init(&progress, trans->c, BIT_ULL(BTREE_ID_reconcile_scan));
+	bch2_progress_init(&progress, __func__, trans->c, BIT_ULL(BTREE_ID_reconcile_scan), 0);
 
 	return for_each_btree_key_max(trans, iter, BTREE_ID_reconcile_scan,
 				      POS(1, 0), POS(1, U64_MAX),
 				      BTREE_ITER_prefetch, k, ({
-		progress_update_iter(trans, &progress, &iter) ?:
+		bch2_progress_update_iter(trans, &progress, &iter) ?:
 		check_reconcile_btree_bp(trans, k);
 	}));
 }
@@ -2542,9 +2542,10 @@ int bch2_check_reconcile_work(struct bch_fs *c)
 	wb_maybe_flush_init(&last_flushed);
 
 	struct progress_indicator progress;
-	bch2_progress_init(&progress, c,
+	bch2_progress_init(&progress, __func__, c,
 			   BIT_ULL(BTREE_ID_extents)|
-			   BIT_ULL(BTREE_ID_reflink));
+			   BIT_ULL(BTREE_ID_reflink),
+			   0);
 
 	static const enum btree_id data_btrees[] = {
 		BTREE_ID_stripes,

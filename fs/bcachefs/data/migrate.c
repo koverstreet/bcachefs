@@ -141,7 +141,7 @@ static int bch2_dev_usrdata_drop(struct bch_fs *c,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
 				&res.r, NULL, BCH_TRANS_COMMIT_no_enospc, ({
 			bch2_disk_reservation_put(c, &res.r);
-			bch2_progress_update_iter(trans, progress, &iter, "dropping user data") ?:
+			bch2_progress_update_iter(trans, progress, &iter) ?:
 			bch2_dev_usrdata_drop_key(trans, &iter, k, dev_idx, flags, err);
 		})));
 	}
@@ -159,7 +159,7 @@ static int dev_metadata_drop_one(struct btree_trans *trans,
 	if (!b)
 		return 1;
 
-	try(bch2_progress_update_iter(trans, progress, iter, "dropping metadata"));
+	try(bch2_progress_update_iter(trans, progress, iter));
 	try(drop_btree_ptrs(trans, iter, b, dev_idx, flags, err));
 	return 0;
 }
@@ -251,11 +251,12 @@ int bch2_dev_data_drop(struct bch_fs *c, unsigned dev_idx,
 		       unsigned flags, struct printbuf *err)
 {
 	struct progress_indicator progress;
-	bch2_progress_init(&progress, c, btree_has_data_ptrs_mask & ~BIT_ULL(BTREE_ID_stripes));
+	bch2_progress_init(&progress, "dropping user data", c,
+			   btree_has_data_ptrs_mask & ~BIT_ULL(BTREE_ID_stripes), 0);
 
 	try(bch2_dev_usrdata_drop(c, &progress, dev_idx, flags, err));
 
-	bch2_progress_init_inner(&progress, c, 0, ~0ULL);
+	bch2_progress_init(&progress, "dropping metadata", c, 0, ~0ULL);
 
 	return bch2_dev_metadata_drop(c, &progress, dev_idx, flags, err);
 }

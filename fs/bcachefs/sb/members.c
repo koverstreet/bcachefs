@@ -637,7 +637,7 @@ static int btree_bitmap_gc_btree_level(struct btree_trans *trans,
 		if (!bch2_dev_btree_bitmap_marked(c, k))
 			bch2_dev_btree_bitmap_mark(c, k);
 
-		bch2_progress_update_iter(trans, progress, &iter, "btree_bitmap_gc");
+		bch2_progress_update_iter(trans, progress, &iter);
 	})));
 
 	return 0;
@@ -646,7 +646,7 @@ static int btree_bitmap_gc_btree_level(struct btree_trans *trans,
 int bch2_btree_bitmap_gc(struct bch_fs *c)
 {
 	struct progress_indicator progress;
-	bch2_progress_init_inner(&progress, c, 0, ~0ULL);
+	bch2_progress_init(&progress, __func__, c, 0, ~0ULL);
 
 	scoped_guard(mutex, &c->sb_lock) {
 		guard(rcu)();

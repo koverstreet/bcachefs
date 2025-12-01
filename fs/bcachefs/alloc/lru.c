@@ -204,13 +204,13 @@ int bch2_check_lrus(struct bch_fs *c)
 	wb_maybe_flush_init(&last_flushed);
 
 	struct progress_indicator progress;
-	bch2_progress_init(&progress, c, BIT_ULL(BTREE_ID_lru));
+	bch2_progress_init(&progress, __func__, c, BIT_ULL(BTREE_ID_lru), 0);
 
 	CLASS(btree_trans, trans)(c);
 	return for_each_btree_key_commit(trans, iter,
 				BTREE_ID_lru, POS_MIN, BTREE_ITER_prefetch, k,
 				NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-		progress_update_iter(trans, &progress, &iter) ?:
+		bch2_progress_update_iter(trans, &progress, &iter) ?:
 		wb_maybe_flush_inc(&last_flushed) ?:
 		bch2_check_lru_key(trans, &iter, k, &last_flushed);
 	}));
