@@ -153,11 +153,17 @@ ssize_t bch2_folio_reservation_get_partial(struct bch_fs *,
 			struct bch2_folio_reservation *,
 			size_t, size_t);
 
-void bch2_set_folio_dirty(struct bch_fs *,
+void bch2_set_folio_undirty(struct bch_fs *c,
+			    struct bch_inode_info *inode,
+			    struct folio *folio,
+			    size_t offset, size_t len);
+bool bch2_set_folio_dirty(struct bch_fs *,
 			  struct bch_inode_info *,
 			  struct folio *,
 			  struct bch2_folio_reservation *,
 			  size_t, size_t);
+
+bool bch2_vfs_dirty_folio(struct address_space *mapping, struct folio *folio);
 
 vm_fault_t bch2_page_fault(struct vm_fault *);
 vm_fault_t bch2_page_mkwrite(struct vm_fault *);

@@ -581,6 +581,7 @@ static int __bch2_writepage(struct folio *folio,
 
 	/* Is the folio fully outside i_size? (truncate in progress) */
 	if (folio_pos(folio) >= i_size) {
+		bch2_set_folio_undirty(c, inode, folio, 0, folio_size(folio));
 		folio_unlock(folio);
 		return 0;
 	}
@@ -592,9 +593,10 @@ static int __bch2_writepage(struct folio *folio,
 	 * the  folio size, the remaining memory is zeroed when mapped, and
 	 * writes to that region are not written out to the file."
 	 */
-	folio_zero_segment(folio,
-			   i_size - folio_pos(folio),
-			   folio_size(folio));
+	size_t f_offset = i_size - folio_pos(folio);
+	folio_zero_segment(folio, f_offset, folio_size(folio));
+
+	bch2_set_folio_undirty(c, inode, folio, f_offset, folio_size(folio) - f_offset);
 do_io:
 	f_sectors = folio_sectors(folio);
 	s = bch2_folio(folio);

@@ -460,6 +460,47 @@ static ssize_t __bch2_folio_reservation_get(struct bch_fs *c,
 	return partial ? reserved : 0;
 }
 
+static int bch2_folio_reservation_get_nofail(struct bch_fs *c,
+			struct bch_inode_info *inode,
+			struct folio *folio,
+			struct bch2_folio_reservation *res,
+			size_t offset, size_t len)
+{
+	struct bch_folio *s = bch2_folio(folio);
+	unsigned i, disk_sectors = 0, quota_sectors = 0;
+	struct disk_reservation disk_res = {};
+	int ret;
+
+	BUG_ON(!s);
+	BUG_ON(!s->uptodate);
+
+	for (i = round_down(offset, block_bytes(c)) >> 9;
+	     i < round_up(offset + len, block_bytes(c)) >> 9;
+	     i++) {
+		disk_sectors += sectors_to_reserve(&s->s[i], res->disk.nr_replicas);
+		quota_sectors += s->s[i].state == SECTOR_unallocated;
+	     }
+
+	if (disk_sectors) {
+		ret = bch2_disk_reservation_add(c, &disk_res, disk_sectors,
+				BCH_DISK_RESERVATION_NOFAIL);
+		if (unlikely(ret))
+			return ret;
+	}
+
+	if (quota_sectors) {
+		/* FIXME: we'll need to make sure this won't fail with -ENOMEM */
+		ret = bch2_quota_reservation_add(c, inode, &res->quota, quota_sectors, false);
+		if (unlikely(ret)) {
+			bch2_disk_reservation_put(c, &disk_res);
+			return ret;
+		}
+	}
+
+	res->disk.sectors += disk_res.sectors;
+	return 0;
+}
+
 int bch2_folio_reservation_get(struct bch_fs *c,
 			struct bch_inode_info *inode,
 			struct folio *folio,
@@ -478,35 +519,33 @@ ssize_t bch2_folio_reservation_get_partial(struct bch_fs *c,
 	return __bch2_folio_reservation_get(c, inode, folio, res, offset, len, true);
 }
 
-static void bch2_clear_folio_bits(struct folio *folio)
+void bch2_set_folio_undirty(struct bch_fs *c,
+			    struct bch_inode_info *inode,
+			    struct folio *folio,
+			    size_t offset, size_t len)
 {
-	struct bch_inode_info *inode = to_bch_ei(folio->mapping->host);
-	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch_folio *s = bch2_folio(folio);
-
 	if (!s)
 		return;
 
-	EBUG_ON(!folio_test_locked(folio));
-	EBUG_ON(folio_test_writeback(folio));
-
 	CLASS(disk_reservation, disk_res)(c);
-	int sectors = folio_sectors(folio), dirty_sectors = 0;
+	int dirty_sectors = 0;
 
-	for (unsigned i = 0; i < sectors; i++) {
-		disk_res.r.sectors += s->s[i].replicas_reserved;
-		s->s[i].replicas_reserved = 0;
+	scoped_guard(spinlock, &s->lock)
+		for (unsigned i = round_up(offset, block_bytes(c)) >> 9;
+		     i < round_down(offset + len, block_bytes(c)) >> 9;
+		     i++) {
+			disk_res.r.sectors += s->s[i].replicas_reserved;
+			s->s[i].replicas_reserved = 0;
 
-		dirty_sectors -= s->s[i].state == SECTOR_dirty;
-		bch2_folio_sector_set(folio, s, i, folio_sector_undirty(s->s[i].state));
-	}
+			dirty_sectors -= s->s[i].state == SECTOR_dirty;
+			bch2_folio_sector_set(folio, s, i, folio_sector_undirty(s->s[i].state));
+		}
 
 	bch2_i_sectors_acct(c, inode, NULL, dirty_sectors);
-
-	bch2_folio_release(folio);
 }
 
-void bch2_set_folio_dirty(struct bch_fs *c,
+bool bch2_set_folio_dirty(struct bch_fs *c,
 			  struct bch_inode_info *inode,
 			  struct folio *folio,
 			  struct bch2_folio_reservation *res,
@@ -515,8 +554,23 @@ void bch2_set_folio_dirty(struct bch_fs *c,
 	struct bch_folio *s = bch2_folio(folio);
 	unsigned i, dirty_sectors = 0;
 
-	WARN_ON((u64) folio_pos(folio) + offset + len >
-		round_up((u64) i_size_read(&inode->v), block_bytes(c)));
+	/*
+	 * We'll get called by the mm code when propagating the dirty bit from
+	 * the PTE to the folio, and address_space_operations.dirty_folio
+	 * doesn't know the difference between a page and a folio.
+	 *
+	 * Potentially a nasty performance bug, we'll be dirtying more than
+	 * we're supposed to.
+	 *
+	 * We'd like to be stricter here, we shouldn't be dirtying above i_size,
+	 * but since we're not given the correct range the uncommented warning
+	 * is the best we can do; __bch2_writepage has to fix it up.
+	 *
+	 * WARN_ON((u64) folio_pos(folio) + offset + len >
+	 *	   round_up((u64) i_size_read(&inode->v), block_bytes(c)));
+	 */
+
+	WARN_ON((u64) folio_pos(folio) >= i_size_read(&inode->v));
 
 	BUG_ON(!s);
 	BUG_ON(!s->uptodate);
@@ -546,7 +600,33 @@ void bch2_set_folio_dirty(struct bch_fs *c,
 	bch2_i_sectors_acct(c, inode, &res->quota, dirty_sectors);
 
 	if (!folio_test_dirty(folio))
-		filemap_dirty_folio(inode->v.i_mapping, folio);
+		return filemap_dirty_folio(inode->v.i_mapping, folio);
+	return false;
+}
+
+bool bch2_vfs_dirty_folio(struct address_space *mapping, struct folio *folio)
+{
+	struct bch_inode_info *inode = to_bch_ei(mapping->host);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+	struct bch2_folio_reservation res;
+
+	/*
+	 * Why are we getting called on folios above i_size?
+	 *
+	 * mm is a crazy place, of course
+	 */
+
+	u64 file_size = i_size_read(&inode->v);
+	if (folio_pos(folio) >= file_size)
+		return false;
+
+	size_t dirty_bytes =
+		round_up(min(folio_end_pos(folio), file_size) - folio_pos(folio),
+			 block_bytes(c));
+
+	bch2_folio_reservation_init(c, inode, &res);
+	BUG_ON(bch2_folio_reservation_get_nofail(c, inode, folio, &res, 0, dirty_bytes));
+	return bch2_set_folio_dirty(c, inode, folio, &res, 0, dirty_bytes);
 }
 
 vm_fault_t bch2_page_fault(struct vm_fault *vmf)
@@ -648,6 +728,16 @@ out:
 	sb_end_pagefault(inode->v.i_sb);
 
 	return ret;
+}
+
+static void bch2_clear_folio_bits(struct folio *folio)
+{
+	struct bch_inode_info *inode = to_bch_ei(folio->mapping->host);
+	struct bch_fs *c = inode->v.i_sb->s_fs_info;
+
+	bch2_set_folio_undirty(c, inode, folio, 0, folio_size(folio));
+
+	bch2_folio_release(folio);
 }
 
 void bch2_invalidate_folio(struct folio *folio, size_t offset, size_t length)
