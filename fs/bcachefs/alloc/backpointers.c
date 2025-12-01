@@ -705,13 +705,17 @@ static int check_btree_root_to_backpointers(struct btree_trans *trans,
 	return check_extent_to_backpointers(trans, s, btree_id, b->c.level + 1, k);
 }
 
-static u64 mem_may_pin_bytes(struct bch_fs *c)
+static u64 system_totalram_bytes(void)
 {
 	struct sysinfo i;
 	si_meminfo(&i);
 
-	u64 mem_bytes = i.totalram * i.mem_unit;
-	return div_u64(mem_bytes * c->opts.fsck_memory_usage_percent, 100);
+	return i.totalram * i.mem_unit;
+}
+
+static u64 mem_may_pin_bytes(struct bch_fs *c)
+{
+	return div_u64(system_totalram_bytes() * c->opts.fsck_memory_usage_percent, 100);
 }
 
 static size_t btree_nodes_fit_in_ram(struct bch_fs *c)
@@ -1216,13 +1220,9 @@ int bch2_check_bucket_backpointer_mismatch(struct btree_trans *trans,
 static int check_one_backpointer(struct btree_trans *trans,
 				 struct bbpos start,
 				 struct bbpos end,
-				 struct bkey_s_c bp_k,
+				 struct bkey_s_c_backpointer bp,
 				 struct wb_maybe_flush *last_flushed)
 {
-	if (bp_k.k->type != KEY_TYPE_backpointer)
-		return 0;
-
-	struct bkey_s_c_backpointer bp = bkey_s_c_to_backpointer(bp_k);
 	struct bbpos pos = bp_to_bbpos(*bp.v);
 
 	if (bbpos_cmp(pos, start) < 0 ||
@@ -1243,12 +1243,11 @@ static int check_bucket_backpointers_to_extents(struct btree_trans *trans,
 {
 	u32 restart_count = trans->restart_count;
 
-	int ret = for_each_btree_key_max(trans, iter, BTREE_ID_backpointers,
-				      bucket_pos_to_bp_start(ca, bucket),
-				      bucket_pos_to_bp_end(ca, bucket),
-				      0, k,
-		check_one_backpointer(trans, BBPOS_MIN, BBPOS_MAX, k, last_flushed)
-	);
+	int ret = backpointer_scan_for_each(trans, iter,
+			bucket_pos_to_bp_start(ca, bucket),
+			bucket_pos_to_bp_end(ca, bucket),
+			last_flushed, NULL, bp,
+		check_one_backpointer(trans, BBPOS_MIN, BBPOS_MAX, bp, last_flushed));
 
 	return ret ?:
 		bch2_btree_write_buffer_flush_sync(trans) ?: /* make sure bad backpointers that were deleted are visible */
@@ -1266,11 +1265,9 @@ static int bch2_check_backpointers_to_extents_pass(struct btree_trans *trans,
 	bch2_progress_init(&progress, "backpointers_to_extents", trans->c,
 			   BIT_ULL(BTREE_ID_backpointers), 0);
 
-	return for_each_btree_key(trans, iter, BTREE_ID_backpointers,
-				     POS_MIN, BTREE_ITER_prefetch, k, ({
-			bch2_progress_update_iter(trans, &progress, &iter);
-			check_one_backpointer(trans, start, end, k, &last_flushed);
-	}));
+	return backpointer_scan_for_each(trans, iter, POS_MIN, POS_MAX,
+			&last_flushed, &progress, bp,
+		check_one_backpointer(trans, start, end, bp, &last_flushed));
 }
 
 int bch2_check_backpointers_to_extents(struct bch_fs *c)
@@ -1314,6 +1311,76 @@ int bch2_check_backpointers_to_extents(struct bch_fs *c)
 
 	bch2_btree_cache_unpin(c);
 	return ret;
+}
+
+static int bkey_i_backpointer_cmp(const void *_l, const void *_r)
+{
+	const struct bkey_i_backpointer *l = _l;
+	const struct bkey_i_backpointer *r = _r;
+	struct bbpos l_pos = BBPOS(l->v.btree_id, l->v.pos);
+	struct bbpos r_pos = BBPOS(r->v.btree_id, r->v.pos);
+
+	/* Sort in reverse order, we'll be iterating in reverse order */
+	return -bbpos_cmp(l_pos, r_pos);
+}
+
+struct bkey_s_c_backpointer bch2_bp_scan_iter_peek(struct btree_trans *trans,
+						   struct bp_scan_iter *iter, struct bpos end,
+						   struct wb_maybe_flush *last_flushed)
+{
+	if (iter->nr_flushes != last_flushed->nr_flushes) {
+		if (iter->bps.nr) {
+			struct bkey_i_backpointer *prev = &darray_last(iter->bps);
+
+			CLASS(btree_iter, bp_iter)(trans, BTREE_ID_backpointers, prev->k.p, 0);
+			struct bkey_s_c k;
+			int ret = bkey_err(k = bch2_btree_iter_peek_slot(&bp_iter));
+			if (bkey_err(k))
+				return (struct bkey_s_c_backpointer) { .k = ERR_PTR(ret) };
+
+			if (k.k->type == KEY_TYPE_backpointer)
+				bkey_reassemble(&prev->k_i, k);
+			else
+				--iter->bps.nr;
+		}
+
+		iter->nr_flushes = last_flushed->nr_flushes;
+	}
+
+	if (!iter->bps.nr) {
+		size_t limit = (system_totalram_bytes() / 16) /
+			sizeof(struct bkey_i_backpointer);
+
+		u32 restart_count = trans->restart_count;
+
+		int ret = for_each_btree_key_max(trans, bp_iter, BTREE_ID_backpointers,
+					   iter->pos, end, BTREE_ITER_prefetch, k, ({
+			if (k.k->type != KEY_TYPE_backpointer)
+				continue;
+
+			struct bkey_i_backpointer bp;
+			bkey_reassemble(&bp.k_i, k);
+			if (iter->bps.nr > limit ||
+			    darray_push_gfp(&iter->bps, bp, GFP_KERNEL|__GFP_NOWARN))
+				break;
+
+			iter->pos = bpos_nosnap_successor(k.k->p);
+			(iter->progress
+			 ? bch2_progress_update_iter(trans, iter->progress, &bp_iter)
+			 : 0);
+		}));
+		trans->restart_count = restart_count;
+
+		if (ret)
+			return ((struct bkey_s_c_backpointer) { .k = ERR_PTR(ret) });
+
+		if (!iter->bps.nr)
+			return (struct bkey_s_c_backpointer) {};
+
+		darray_sort(iter->bps, bkey_i_backpointer_cmp);
+	}
+
+	return backpointer_i_to_s_c(&darray_last(iter->bps));
 }
 
 static int bch2_bucket_bitmap_set(struct bch_dev *ca, struct bucket_bitmap *b, u64 bit)
