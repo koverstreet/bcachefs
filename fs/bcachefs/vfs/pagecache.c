@@ -399,7 +399,7 @@ void bch2_folio_reservation_put(struct bch_fs *c,
 	bch2_quota_reservation_put(c, inode, &res->quota);
 }
 
-static int __bch2_folio_reservation_get(struct bch_fs *c,
+static ssize_t __bch2_folio_reservation_get(struct bch_fs *c,
 			struct bch_inode_info *inode,
 			struct folio *folio,
 			struct bch2_folio_reservation *res,
@@ -466,7 +466,7 @@ int bch2_folio_reservation_get(struct bch_fs *c,
 			struct bch2_folio_reservation *res,
 			size_t offset, size_t len)
 {
-	return __bch2_folio_reservation_get(c, inode, folio, res, offset, len, false);
+	return (int)__bch2_folio_reservation_get(c, inode, folio, res, offset, len, false);
 }
 
 ssize_t bch2_folio_reservation_get_partial(struct bch_fs *c,
