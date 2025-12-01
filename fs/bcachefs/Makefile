@@ -23,6 +23,7 @@ bcachefs-y		:=			\
 	btree/cache.o				\
 	btree/check.o				\
 	btree/commit.o				\
+	btree/init.o				\
 	btree/interior.o			\
 	btree/iter.o				\
 	btree/journal_overlay.o			\
