@@ -469,9 +469,15 @@ void bch2_submit_wbio_replicas(struct bch_write_bio *wbio, struct bch_fs *c,
 
 	const struct bch_extent_ptr *last = NULL;
 	bkey_for_each_ptr(ptrs, ptr)
-		last = ptr;
+		if (ptr->dev != BCH_SB_MEMBER_INVALID)
+			last = ptr;
+
+	BUG_ON(!last);
 
 	bkey_for_each_ptr(ptrs, ptr) {
+		if (ptr->dev == BCH_SB_MEMBER_INVALID)
+			continue;
+
 		/*
 		 * XXX: btree writes should be using io_ref[WRITE], but we
 		 * aren't retrying failed btree writes yet (due to device
