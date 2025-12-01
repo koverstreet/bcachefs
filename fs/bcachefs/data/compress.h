@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef _BCACHEFS_COMPRESS_H
-#define _BCACHEFS_COMPRESS_H
+#ifndef _BCACHEFS_DATA_COMPRESS_H
+#define _BCACHEFS_DATA_COMPRESS_H
 
 #include "extents_types.h"
 
@@ -56,4 +56,4 @@ int bch2_opt_compression_validate(u64, struct printbuf *);
 	.validate	= bch2_opt_compression_validate,	\
 }
 
-#endif /* _BCACHEFS_COMPRESS_H */
+#endif /* _BCACHEFS_DATA_COMPRESS_H */

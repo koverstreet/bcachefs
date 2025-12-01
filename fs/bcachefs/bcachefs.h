@@ -247,6 +247,7 @@
 #include "btree/node_scan_types.h"
 #include "btree/write_buffer_types.h"
 
+#include "data/compress_types.h"
 #include "data/copygc_types.h"
 #include "data/ec_types.h"
 #include "data/keylist_types.h"
@@ -904,10 +905,6 @@ struct bch_fs {
 				nocow_locks;
 	struct rhashtable	promote_table;
 
-	mempool_t		compression_bounce[2];
-	mempool_t		compress_workspace[BCH_COMPRESSION_OPT_NR];
-	size_t			zstd_workspace_size;
-
 	struct bch_key		chacha20_key;
 	bool			chacha20_key_set;
 
@@ -917,6 +914,7 @@ struct bch_fs {
 	struct list_head	moving_context_list;
 	struct mutex		moving_context_lock;
 
+	struct bch_fs_compress	compress;
 	struct bch_fs_reconcile	reconcile;
 	struct bch_fs_copygc	copygc;
 	struct bch_fs_ec	ec;

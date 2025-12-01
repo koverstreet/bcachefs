@@ -57,7 +57,7 @@ static void bbuf_exit(struct bbuf *buf)
 		kfree(buf->b);
 		break;
 	case BB_mempool:
-		mempool_free(buf->b, &buf->c->compression_bounce[buf->rw]);
+		mempool_free(buf->b, &buf->c->compress.bounce[buf->rw]);
 		break;
 	}
 }
@@ -72,7 +72,7 @@ static struct bbuf __bounce_alloc(struct bch_fs *c, unsigned size, int rw)
 	if (b)
 		return (struct bbuf) { .c = c, .b = b, .type = BB_kmalloc, .rw = rw };
 
-	b = mempool_alloc(&c->compression_bounce[rw], GFP_NOFS);
+	b = mempool_alloc(&c->compress.bounce[rw], GFP_NOFS);
 	if (b)
 		return (struct bbuf) { .c = c, .b = b, .type = BB_mempool, .rw = rw };
 
@@ -191,7 +191,7 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 	int ret2;
 
 	enum bch_compression_opts opt = bch2_compression_type_to_opt(crc.compression_type);
-	mempool_t *workspace_pool = &c->compress_workspace[opt];
+	mempool_t *workspace_pool = &c->compress.workspace[opt];
 	if (unlikely(!mempool_initialized(workspace_pool))) {
 		if (ret_fsck_err(c, compression_type_not_marked_in_sb,
 			     "compression type %s set but not marked in superblock",
@@ -388,7 +388,7 @@ static int attempt_compress(struct bch_fs *c,
 		 */
 		unsigned level = min((compression.level * 3) / 2, zstd_max_clevel());
 		ZSTD_parameters params = zstd_get_params(level, c->opts.encoded_extent_max);
-		ZSTD_CCtx *ctx = zstd_init_cctx(workspace, c->zstd_workspace_size);
+		ZSTD_CCtx *ctx = zstd_init_cctx(workspace, c->compress.zstd_workspace_size);
 
 		/*
 		 * ZSTD requires that when we decompress we pass in the exact
@@ -428,7 +428,7 @@ static unsigned __bio_compress(struct bch_fs *c,
 	/* bch2_compression_decode catches unknown compression types: */
 	BUG_ON(compression.type >= BCH_COMPRESSION_OPT_NR);
 
-	mempool_t *workspace_pool = &c->compress_workspace[compression.type];
+	mempool_t *workspace_pool = &c->compress.workspace[compression.type];
 	if (unlikely(!mempool_initialized(workspace_pool))) {
 		if (ret_fsck_err(c, compression_opt_not_marked_in_sb,
 			     "compression opt %s set but not marked in superblock",
@@ -587,10 +587,10 @@ void bch2_fs_compress_exit(struct bch_fs *c)
 {
 	unsigned i;
 
-	for (i = 0; i < ARRAY_SIZE(c->compress_workspace); i++)
-		mempool_exit(&c->compress_workspace[i]);
-	mempool_exit(&c->compression_bounce[WRITE]);
-	mempool_exit(&c->compression_bounce[READ]);
+	for (i = 0; i < ARRAY_SIZE(c->compress.workspace); i++)
+		mempool_exit(&c->compress.workspace[i]);
+	mempool_exit(&c->compress.bounce[WRITE]);
+	mempool_exit(&c->compress.bounce[READ]);
 }
 
 static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
@@ -598,7 +598,7 @@ static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
 	ZSTD_parameters params = zstd_get_params(zstd_max_clevel(),
 						 c->opts.encoded_extent_max);
 
-	c->zstd_workspace_size = zstd_cctx_workspace_bound(&params.cParams);
+	c->compress.zstd_workspace_size = zstd_cctx_workspace_bound(&params.cParams);
 
 	struct {
 		unsigned			feature;
@@ -611,7 +611,7 @@ static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
 			max(zlib_deflate_workspacesize(MAX_WBITS, DEF_MEM_LEVEL),
 			    zlib_inflate_workspacesize()) },
 		{ BCH_FEATURE_zstd, BCH_COMPRESSION_OPT_zstd,
-			max(c->zstd_workspace_size,
+			max(c->compress.zstd_workspace_size,
 			    zstd_dctx_workspace_bound()) },
 	}, *i;
 	bool have_compressed = false;
@@ -624,13 +624,13 @@ static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
 	if (!have_compressed)
 		return 0;
 
-	if (!mempool_initialized(&c->compression_bounce[READ]) &&
-	    mempool_init_kvmalloc_pool(&c->compression_bounce[READ],
+	if (!mempool_initialized(&c->compress.bounce[READ]) &&
+	    mempool_init_kvmalloc_pool(&c->compress.bounce[READ],
 				       1, c->opts.encoded_extent_max))
 		return bch_err_throw(c, ENOMEM_compression_bounce_read_init);
 
-	if (!mempool_initialized(&c->compression_bounce[WRITE]) &&
-	    mempool_init_kvmalloc_pool(&c->compression_bounce[WRITE],
+	if (!mempool_initialized(&c->compress.bounce[WRITE]) &&
+	    mempool_init_kvmalloc_pool(&c->compress.bounce[WRITE],
 				       1, c->opts.encoded_extent_max))
 		return bch_err_throw(c, ENOMEM_compression_bounce_write_init);
 
@@ -640,11 +640,11 @@ static int __bch2_fs_compress_init(struct bch_fs *c, u64 features)
 		if (!(features & (1 << i->feature)))
 			continue;
 
-		if (mempool_initialized(&c->compress_workspace[i->type]))
+		if (mempool_initialized(&c->compress.workspace[i->type]))
 			continue;
 
 		if (mempool_init_kvmalloc_pool(
-				&c->compress_workspace[i->type],
+				&c->compress.workspace[i->type],
 				1, i->compress_workspace))
 			return bch_err_throw(c, ENOMEM_compression_workspace_init);
 	}
