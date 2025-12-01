@@ -422,33 +422,37 @@ static int bch2_write_index_default(struct bch_write_op *op)
 
 /* Writes */
 
-void bch2_write_op_error(struct bch_write_op *op, u64 offset, const char *fmt, ...)
+static void bch2_log_write_error_start(struct printbuf *out, struct bch_write_op *op, u64 offset)
 {
-	CLASS(btree_trans, trans)(op->c);
-
-	CLASS(printbuf, buf)();
-	bch2_log_msg_start(op->c, &buf);
+	bch2_log_msg_start(op->c, out);
+	prt_printf(out, "error writing data at ");
 
 	struct bpos pos = op->pos;
 	pos.offset = offset;
 
-	bch2_inum_offset_err_msg_trans(trans, &buf, op->subvol, pos);
+	CLASS(btree_trans, trans)(op->c);
+	bch2_inum_offset_err_msg_trans(trans, out, op->subvol, pos);
+	prt_newline(out);
 
-	prt_str(&buf, "write error: ");
+	if (op->flags & BCH_WRITE_move) {
+		struct data_update *u = container_of(op, struct data_update, op);
+
+		prt_printf(out, "from internal move ");
+		bch2_bkey_val_to_text(out, op->c, bkey_i_to_s_c(u->k.k));
+		prt_newline(out);
+	}
+}
+
+void bch2_write_op_error(struct bch_write_op *op, u64 offset, const char *fmt, ...)
+{
+	CLASS(printbuf, buf)();
+	bch2_log_write_error_start(&buf, op, offset);
 
 	va_list args;
 	va_start(args, fmt);
 	prt_vprintf(&buf, fmt, args);
 	va_end(args);
 	prt_newline(&buf);
-
-	if (op->flags & BCH_WRITE_move) {
-		struct data_update *u = container_of(op, struct data_update, op);
-
-		prt_printf(&buf, "from internal move ");
-		bch2_bkey_val_to_text(&buf, op->c, bkey_i_to_s_c(u->k.k));
-		prt_newline(&buf);
-	}
 
 	bch2_print_str_ratelimited(op->c, KERN_ERR, buf.buf);
 }
@@ -566,7 +570,7 @@ static noinline int bch2_write_drop_io_error_ptrs(struct bch_write_op *op)
 
 		if (bkey_extent_is_direct_data(&src->k)) {
 			bch2_bkey_drop_ptrs(bkey_i_to_s(src), p, entry,
-					    test_bit(p.ptr.dev, op->failed.d));
+				bch2_dev_io_failures(&op->wbio.failed, p.ptr.dev));
 
 			if (!bch2_bkey_nr_dirty_ptrs(c, bkey_i_to_s_c(src)))
 				return bch_err_throw(c, data_write_io);
@@ -589,11 +593,30 @@ static void __bch2_write_index(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
 	struct keylist *keys = &op->insert_keys;
-	unsigned dev;
 	int ret = 0;
 
 	if (unlikely(op->io_error)) {
+		struct bkey_i *k = bch2_keylist_front(&op->insert_keys);
+		bool print;
+		CLASS(printbuf, buf)();
+		bch2_log_write_error_start(&buf, op, bkey_start_offset(&k->k));
+		bch2_io_failures_to_text(&buf, c, &op->wbio.failed);
+
 		ret = bch2_write_drop_io_error_ptrs(op);
+		if (!ret) {
+			prt_printf(&buf, "wrote degraded to ");
+			struct bch_devs_list d = bch2_bkey_devs(c, bkey_i_to_s_c(k));
+			bch2_devs_list_to_text(&buf, c, &d);
+			prt_newline(&buf);
+			print = !bch2_ratelimit(); /* Different ratelimits for hard and soft errors */
+		} else {
+			prt_printf(&buf, "all replicated writes failed\n");
+			print = !bch2_ratelimit();
+		}
+
+		if (print)
+			bch2_print_str(c, KERN_ERR, buf.buf);
+
 		if (ret)
 			goto err;
 	}
@@ -622,8 +645,9 @@ static void __bch2_write_index(struct bch_write_op *op)
 	}
 out:
 	/* If some a bucket wasn't written, we can't erasure code it: */
-	for_each_set_bit(dev, op->failed.d, BCH_SB_MEMBERS_MAX)
-		bch2_open_bucket_write_error(c, &op->open_buckets, dev, -BCH_ERR_data_write_io);
+	darray_for_each(op->wbio.failed, i)
+		bch2_open_bucket_write_error(c, &op->open_buckets, i->dev,
+					     i->errcode ?: -BCH_ERR_data_write_io);
 
 	bch2_open_buckets_put(c, &op->open_buckets);
 	return;
@@ -738,19 +762,9 @@ static void bch2_write_endio(struct bio *bio)
 				   wbio->submit_time, !bio->bi_status);
 
 	if (unlikely(bio->bi_status)) {
-		if (ca)
-			bch_err_inum_offset_ratelimited(ca,
-					    op->pos.inode,
-					    wbio->inode_offset << 9,
-					    "data write error: %s",
-					    bch2_blk_status_to_str(bio->bi_status));
-		else
-			bch_err_inum_offset_ratelimited(c,
-					    op->pos.inode,
-					    wbio->inode_offset << 9,
-					    "data write error: %s",
-					    bch2_blk_status_to_str(bio->bi_status));
-		set_bit(wbio->dev, op->failed.d);
+		guard(spinlock_irqsave)(&c->write_error_lock);
+		bch2_dev_io_failures_mut(&op->wbio.failed, wbio->dev)->errcode =
+			__bch2_err_throw(c, -blk_status_to_bch_err(bio->bi_status));
 		op->io_error = true;
 	}
 
@@ -1519,7 +1533,7 @@ static void __bch2_write(struct bch_write_op *op)
 			return;
 	}
 again:
-	memset(&op->failed, 0, sizeof(op->failed));
+	op->wbio.failed.nr = 0;
 
 	do {
 		struct bkey_i *key_to_write;
@@ -1623,7 +1637,7 @@ static void bch2_write_data_inline(struct bch_write_op *op, unsigned data_len)
 	unsigned sectors;
 	int ret;
 
-	memset(&op->failed, 0, sizeof(op->failed));
+	op->wbio.failed.nr = 0;
 
 	op->flags |= BCH_WRITE_wrote_data_inline;
 	op->flags |= BCH_WRITE_submitted;

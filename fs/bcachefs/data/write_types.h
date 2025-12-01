@@ -111,8 +111,6 @@ struct bch_write_op {
 	u64			new_i_size;
 	s64			i_sectors_delta;
 
-	struct bch_devs_mask	failed;
-
 	struct keylist		insert_keys;
 	u64			inline_keys[BKEY_EXTENT_U64s_MAX * 2];
 
