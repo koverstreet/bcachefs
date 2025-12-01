@@ -50,7 +50,7 @@ module_param_named(read_corrupt_device, bch2_read_corrupt_device, int, 0644);
 MODULE_PARM_DESC(read_corrupt_device, "");
 #endif
 
-static bool bch2_poison_extents_on_checksum_error;
+static bool bch2_poison_extents_on_checksum_error = true;
 module_param_named(poison_extents_on_checksum_error,
 		   bch2_poison_extents_on_checksum_error, bool, 0644);
 MODULE_PARM_DESC(poison_extents_on_checksum_error,
