@@ -11,6 +11,12 @@
 
 #include <linux/uio.h>
 
+struct nocow_flush {
+	struct closure	*cl;
+	struct bch_dev	*ca;
+	struct bio	bio;
+};
+
 struct folio_vec {
 	struct folio	*fv_folio;
 	size_t		fv_offset;
@@ -170,12 +176,6 @@ loff_t bch2_remap_file_range(struct file *, loff_t, struct file *,
 			     loff_t, loff_t, unsigned);
 
 loff_t bch2_llseek(struct file *, loff_t, int);
-
-void bch2_fs_fsio_exit(struct bch_fs *);
-int bch2_fs_fsio_init(struct bch_fs *);
-#else
-static inline void bch2_fs_fsio_exit(struct bch_fs *c) {}
-static inline int bch2_fs_fsio_init(struct bch_fs *c) { return 0; }
 #endif
 
 #endif /* _BCACHEFS_FS_IO_H */

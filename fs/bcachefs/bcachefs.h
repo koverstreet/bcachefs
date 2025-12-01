@@ -271,6 +271,8 @@
 #include "snapshots/snapshot_types.h"
 #include "snapshots/subvolume_types.h"
 
+#include "vfs/types.h"
+
 #define bch2_fs_init_fault(name)					\
 	dynamic_fault("bcachefs:bch_fs_init:" name)
 #define bch2_meta_read_fault(name)					\
@@ -923,18 +925,7 @@ struct bch_fs {
 	reflink_gc_table	reflink_gc_table;
 	size_t			reflink_gc_nr;
 
-	/* fs.c */
-	struct list_head	vfs_inodes_list;
-	struct mutex		vfs_inodes_lock;
-	struct rhashtable	vfs_inodes_table;
-	struct rhltable		vfs_inodes_by_inum_table;
-	struct workqueue_struct	*vfs_writeback_wq;
-
-	/* VFS IO PATH - fs-io.c */
-	struct bio_set		writepage_bioset;
-	struct bio_set		dio_write_bioset;
-	struct bio_set		dio_read_bioset;
-	struct bio_set		nocow_flush_bioset;
+	struct bch_fs_vfs	vfs;
 
 	/* QUOTAS */
 	struct bch_memquota_type quotas[QTYP_NR];

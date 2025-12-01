@@ -42,15 +42,8 @@
 
 #include <trace/events/writeback.h>
 
-struct nocow_flush {
-	struct closure	*cl;
-	struct bch_dev	*ca;
-	struct bio	bio;
-};
-
 static void nocow_flush_endio(struct bio *_bio)
 {
-
 	struct nocow_flush *bio = container_of(_bio, struct nocow_flush, bio);
 
 	closure_put(bio->cl);
@@ -63,19 +56,16 @@ void bch2_inode_flush_nocow_writes_async(struct bch_fs *c,
 					 struct bch_inode_info *inode,
 					 struct closure *cl)
 {
-	struct nocow_flush *bio;
-	struct bch_dev *ca;
-	struct bch_devs_mask devs;
-	unsigned dev;
-
-	dev = find_first_bit(inode->ei_devs_need_flush.d, BCH_SB_MEMBERS_MAX);
+	unsigned dev = find_first_bit(inode->ei_devs_need_flush.d, BCH_SB_MEMBERS_MAX);
 	if (dev == BCH_SB_MEMBERS_MAX)
 		return;
 
-	devs = inode->ei_devs_need_flush;
+	struct bch_devs_mask devs = inode->ei_devs_need_flush;
 	memset(&inode->ei_devs_need_flush, 0, sizeof(inode->ei_devs_need_flush));
 
 	for_each_set_bit(dev, devs.d, BCH_SB_MEMBERS_MAX) {
+		struct bch_dev *ca;
+
 		scoped_guard(rcu) {
 			ca = rcu_dereference(c->devs[dev]);
 			if (ca && !enumerated_ref_tryget(&ca->io_ref[WRITE],
@@ -86,11 +76,11 @@ void bch2_inode_flush_nocow_writes_async(struct bch_fs *c,
 		if (!ca)
 			continue;
 
-		bio = container_of(bio_alloc_bioset(ca->disk_sb.bdev, 0,
-						    REQ_OP_WRITE|REQ_PREFLUSH,
-						    GFP_KERNEL,
-						    &c->nocow_flush_bioset),
-				   struct nocow_flush, bio);
+		struct nocow_flush *bio = container_of(bio_alloc_bioset(ca->disk_sb.bdev, 0,
+									REQ_OP_WRITE|REQ_PREFLUSH,
+									GFP_KERNEL,
+									&c->vfs.nocow_flush_bioset),
+						       struct nocow_flush, bio);
 		bio->cl			= cl;
 		bio->ca			= ca;
 		bio->bio.bi_end_io	= nocow_flush_endio;
@@ -1087,20 +1077,6 @@ loff_t bch2_llseek(struct file *file, loff_t offset, int whence)
 	}
 
 	return bch2_err_class(ret);
-}
-
-void bch2_fs_fsio_exit(struct bch_fs *c)
-{
-	bioset_exit(&c->nocow_flush_bioset);
-}
-
-int bch2_fs_fsio_init(struct bch_fs *c)
-{
-	if (bioset_init(&c->nocow_flush_bioset,
-			1, offsetof(struct nocow_flush, bio), 0))
-		return -BCH_ERR_ENOMEM_nocow_flush_bioset_init;
-
-	return 0;
 }
 
 #endif /* NO_BCACHEFS_FS */

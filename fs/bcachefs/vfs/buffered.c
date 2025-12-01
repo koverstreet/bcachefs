@@ -401,13 +401,6 @@ int bch2_read_folio(struct file *file, struct folio *folio)
 
 /* writepages: */
 
-struct bch_writepage_io {
-	struct bch_inode_info		*inode;
-
-	/* must be last: */
-	struct bch_write_op		op;
-};
-
 struct bch_writepage_state {
 	struct bch_writepage_io	*io;
 	struct bch_inode_opts	opts;
@@ -517,7 +510,7 @@ static void bch2_writepage_io_alloc(struct bch_fs *c,
 	w->io = container_of(bio_alloc_bioset(NULL, BIO_MAX_VECS,
 					      REQ_OP_WRITE,
 					      GFP_KERNEL,
-					      &c->writepage_bioset),
+					      &c->vfs.writepage_bioset),
 			     struct bch_writepage_io, op.wbio.bio);
 
 	w->io->inode		= inode;
@@ -1163,21 +1156,6 @@ unlock:
 		ret = generic_write_sync(iocb, ret);
 out:
 	return bch2_err_class(ret);
-}
-
-void bch2_fs_fs_io_buffered_exit(struct bch_fs *c)
-{
-	bioset_exit(&c->writepage_bioset);
-}
-
-int bch2_fs_fs_io_buffered_init(struct bch_fs *c)
-{
-	if (bioset_init(&c->writepage_bioset,
-			4, offsetof(struct bch_writepage_io, op.wbio.bio),
-			BIOSET_NEED_BVECS))
-		return -BCH_ERR_ENOMEM_writepage_bioset_init;
-
-	return 0;
 }
 
 #endif /* NO_BCACHEFS_FS */

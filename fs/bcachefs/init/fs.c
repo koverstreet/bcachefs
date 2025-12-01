@@ -575,9 +575,6 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_fs_quota_exit(c);
 	bch2_fs_nocow_locking_exit(c);
 	bch2_fs_journal_exit(&c->journal);
-	bch2_fs_fs_io_direct_exit(c);
-	bch2_fs_fs_io_buffered_exit(c);
-	bch2_fs_fsio_exit(c);
 	bch2_fs_io_write_exit(c);
 	bch2_fs_io_read_exit(c);
 	bch2_fs_errors_exit(c);
@@ -765,16 +762,14 @@ int bch2_fs_init_rw(struct bch_fs *c)
 				WQ_FREEZABLE, 2)))
 		return bch_err_throw(c, ENOMEM_fs_other_alloc);
 
-	int ret = bch2_fs_btree_interior_update_init(c) ?:
-		bch2_fs_btree_write_buffer_init(c) ?:
-		bch2_fs_fs_io_buffered_init(c) ?:
-		bch2_fs_io_write_init(c) ?:
-		bch2_fs_journal_init(&c->journal) ?:
-		bch2_journal_reclaim_start(&c->journal) ?:
-		bch2_copygc_start(c) ?:
-		bch2_reconcile_start(c);
-	if (ret)
-		return ret;
+	try(bch2_fs_btree_interior_update_init(c));
+	try(bch2_fs_btree_write_buffer_init(c));
+	try(bch2_fs_io_write_init(c));
+	try(bch2_fs_journal_init(&c->journal));
+	try(bch2_fs_vfs_init_rw(c));
+	try(bch2_journal_reclaim_start(&c->journal));
+	try(bch2_copygc_start(c));
+	try(bch2_reconcile_start(c));
 
 	set_bit(BCH_FS_rw_init_done, &c->flags);
 	return 0;
@@ -1083,9 +1078,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 
 	INIT_LIST_HEAD(&c->journal_iters);
 
-	INIT_LIST_HEAD(&c->vfs_inodes_list);
-	mutex_init(&c->vfs_inodes_lock);
-
 	c->journal.flush_write_time	= &c->times[BCH_TIME_journal_flush_write];
 	c->journal.noflush_write_time	= &c->times[BCH_TIME_journal_noflush_write];
 	c->journal.flush_seq_time	= &c->times[BCH_TIME_journal_flush_seq];
@@ -1164,8 +1156,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	try(bch2_fs_ec_init(c));
 	try(bch2_fs_errors_init(c));
 	try(bch2_fs_encryption_init(c));
-	try(bch2_fs_fsio_init(c));
-	try(bch2_fs_fs_io_direct_init(c));
 	try(bch2_fs_io_read_init(c));
 	try(bch2_fs_reconcile_init(c));
 	try(bch2_fs_vfs_init(c));

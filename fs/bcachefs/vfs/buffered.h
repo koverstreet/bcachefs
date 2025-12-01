@@ -6,6 +6,15 @@
 
 #include <linux/version.h>
 
+#include "data/write_types.h"
+
+struct bch_writepage_io {
+	struct bch_inode_info		*inode;
+
+	/* must be last: */
+	struct bch_write_op		op;
+};
+
 int bch2_read_single_folio(struct folio *, struct address_space *);
 int bch2_read_folio(struct file *, struct folio *);
 
@@ -25,12 +34,6 @@ int bch2_write_end(struct file *, struct address_space *, loff_t,
 #endif
 
 ssize_t bch2_write_iter(struct kiocb *, struct iov_iter *);
-
-void bch2_fs_fs_io_buffered_exit(struct bch_fs *);
-int bch2_fs_fs_io_buffered_init(struct bch_fs *);
-#else
-static inline void bch2_fs_fs_io_buffered_exit(struct bch_fs *c) {}
-static inline int bch2_fs_fs_io_buffered_init(struct bch_fs *c) { return 0; }
 #endif
 
 #endif /* _BCACHEFS_FS_IO_BUFFERED_H */

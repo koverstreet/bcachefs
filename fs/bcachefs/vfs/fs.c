@@ -235,7 +235,7 @@ static const struct rhashtable_params bch2_vfs_inodes_by_inum_params = {
 int bch2_inode_or_descendents_is_open(struct btree_trans *trans, struct bpos p)
 {
 	struct bch_fs *c = trans->c;
-	struct rhltable *ht = &c->vfs_inodes_by_inum_table;
+	struct rhltable *ht = &c->vfs.inodes_by_inum_table;
 	u64 inum = p.offset;
 	CLASS(darray_u32, subvols)();
 
@@ -302,7 +302,7 @@ restart:
 
 static struct bch_inode_info *__bch2_inode_hash_find(struct bch_fs *c, subvol_inum inum)
 {
-	return rhashtable_lookup_fast(&c->vfs_inodes_table, &inum, bch2_vfs_inodes_params);
+	return rhashtable_lookup_fast(&c->vfs.inodes_table, &inum, bch2_vfs_inodes_params);
 }
 
 static void __wait_on_freeing_inode(struct bch_fs *c,
@@ -358,11 +358,11 @@ static void bch2_inode_hash_remove(struct bch_fs *c, struct bch_inode_info *inod
 		remove = test_and_clear_bit(EI_INODE_HASHED, &inode->ei_flags);
 
 	if (remove) {
-		int ret = rhltable_remove(&c->vfs_inodes_by_inum_table,
+		int ret = rhltable_remove(&c->vfs.inodes_by_inum_table,
 					&inode->by_inum_hash, bch2_vfs_inodes_by_inum_params);
 		BUG_ON(ret);
 
-		ret = rhashtable_remove_fast(&c->vfs_inodes_table,
+		ret = rhashtable_remove_fast(&c->vfs.inodes_table,
 					&inode->hash, bch2_vfs_inodes_params);
 		BUG_ON(ret);
 		inode->v.i_hash.pprev = NULL;
@@ -382,7 +382,7 @@ static struct bch_inode_info *bch2_inode_hash_insert(struct bch_fs *c,
 
 	set_bit(EI_INODE_HASHED, &inode->ei_flags);
 retry:
-	if (unlikely(rhashtable_lookup_insert_key(&c->vfs_inodes_table,
+	if (unlikely(rhashtable_lookup_insert_key(&c->vfs.inodes_table,
 					&inode->ei_inum,
 					&inode->hash,
 					bch2_vfs_inodes_params))) {
@@ -407,7 +407,7 @@ retry:
 		discard_new_inode(&inode->v);
 		return old;
 	} else {
-		int ret = rhltable_insert(&c->vfs_inodes_by_inum_table,
+		int ret = rhltable_insert(&c->vfs.inodes_by_inum_table,
 					  &inode->by_inum_hash,
 					  bch2_vfs_inodes_by_inum_params);
 		BUG_ON(ret);
@@ -416,8 +416,8 @@ retry:
 
 		inode_sb_list_add(&inode->v);
 
-		scoped_guard(mutex, &c->vfs_inodes_lock)
-			list_add(&inode->ei_vfs_inode_list, &c->vfs_inodes_list);
+		scoped_guard(mutex, &c->vfs.inodes_lock)
+			list_add(&inode->ei_vfs_inode_list, &c->vfs.inodes_list);
 		return inode;
 	}
 }
@@ -1853,7 +1853,7 @@ static void bch2_evict_inode(struct inode *vinode)
 		bch2_inode_hash_remove(c, inode);
 	}
 
-	scoped_guard(mutex, &c->vfs_inodes_lock)
+	scoped_guard(mutex, &c->vfs.inodes_lock)
 		list_del_init(&inode->ei_vfs_inode_list);
 }
 
@@ -1877,8 +1877,8 @@ again:
 	cond_resched();
 	this_pass_clean = true;
 
-	mutex_lock(&c->vfs_inodes_lock);
-	list_for_each_entry(inode, &c->vfs_inodes_list, ei_vfs_inode_list) {
+	mutex_lock(&c->vfs.inodes_lock);
+	list_for_each_entry(inode, &c->vfs.inodes_list, ei_vfs_inode_list) {
 		if (!snapshot_list_has_id(s, inode->ei_inum.subvol))
 			continue;
 
@@ -1898,14 +1898,14 @@ again:
 			wq_head = inode_bit_waitqueue(&wqe, &inode->v, __I_NEW);
 			prepare_to_wait_event(wq_head, &wqe.wq_entry,
 					      TASK_UNINTERRUPTIBLE);
-			mutex_unlock(&c->vfs_inodes_lock);
+			mutex_unlock(&c->vfs.inodes_lock);
 
 			schedule();
 			finish_wait(wq_head, &wqe.wq_entry);
 			goto again;
 		}
 	}
-	mutex_unlock(&c->vfs_inodes_lock);
+	mutex_unlock(&c->vfs.inodes_lock);
 
 	darray_for_each(grabbed, i) {
 		inode = *i;
@@ -2377,22 +2377,54 @@ static int bch2_init_fs_context(struct fs_context *fc)
 
 void bch2_fs_vfs_exit(struct bch_fs *c)
 {
-	if (c->vfs_writeback_wq)
-		destroy_workqueue(c->vfs_writeback_wq);
-	if (c->vfs_inodes_by_inum_table.ht.tbl)
-		rhltable_destroy(&c->vfs_inodes_by_inum_table);
-	if (c->vfs_inodes_table.tbl)
-		rhashtable_destroy(&c->vfs_inodes_table);
+	bioset_exit(&c->vfs.dio_write_bioset);
+	bioset_exit(&c->vfs.dio_read_bioset);
+	bioset_exit(&c->vfs.writepage_bioset);
+	bioset_exit(&c->vfs.nocow_flush_bioset);
+
+	if (c->vfs.writeback_wq)
+		destroy_workqueue(c->vfs.writeback_wq);
+	if (c->vfs.inodes_by_inum_table.ht.tbl)
+		rhltable_destroy(&c->vfs.inodes_by_inum_table);
+	if (c->vfs.inodes_table.tbl)
+		rhashtable_destroy(&c->vfs.inodes_table);
 }
 
 int bch2_fs_vfs_init(struct bch_fs *c)
 {
-	try(rhashtable_init(&c->vfs_inodes_table, &bch2_vfs_inodes_params));
-	try(rhltable_init(&c->vfs_inodes_by_inum_table, &bch2_vfs_inodes_by_inum_params));
+	INIT_LIST_HEAD(&c->vfs.inodes_list);
+	mutex_init(&c->vfs.inodes_lock);
 
-	c->vfs_writeback_wq = alloc_workqueue("bcachefs_vfs_writeback",
+	try(rhashtable_init(&c->vfs.inodes_table, &bch2_vfs_inodes_params));
+	try(rhltable_init(&c->vfs.inodes_by_inum_table, &bch2_vfs_inodes_by_inum_params));
+
+	if (bioset_init(&c->vfs.dio_read_bioset,
+			4, offsetof(struct dio_read, rbio.bio),
+			BIOSET_NEED_BVECS))
+		return bch_err_throw(c, ENOMEM_dio_read_bioset_init);
+
+	return 0;
+}
+
+int bch2_fs_vfs_init_rw(struct bch_fs *c)
+{
+	if (bioset_init(&c->vfs.writepage_bioset,
+			4, offsetof(struct bch_writepage_io, op.wbio.bio),
+			BIOSET_NEED_BVECS))
+		return bch_err_throw(c, ENOMEM_writepage_bioset_init);
+
+	if (bioset_init(&c->vfs.dio_write_bioset,
+			4, offsetof(struct dio_write, op.wbio.bio),
+			BIOSET_NEED_BVECS))
+		return bch_err_throw(c, ENOMEM_dio_write_bioset_init);
+
+	if (bioset_init(&c->vfs.nocow_flush_bioset,
+			1, offsetof(struct nocow_flush, bio), 0))
+		return bch_err_throw(c, ENOMEM_nocow_flush_bioset_init);
+
+	c->vfs.writeback_wq = alloc_workqueue("bcachefs_vfs_writeback",
 					      WQ_MEM_RECLAIM|WQ_FREEZABLE, 1);
-	if (!c->vfs_writeback_wq)
+	if (!c->vfs.writeback_wq)
 		return bch_err_throw(c, ENOMEM_fs_other_alloc);
 
 	return 0;
