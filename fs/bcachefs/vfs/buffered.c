@@ -598,6 +598,7 @@ static int __bch2_writepage(struct folio *folio,
 do_io:
 	f_sectors = folio_sectors(folio);
 	s = bch2_folio(folio);
+	BUG_ON(!s);
 
 	if (f_sectors > w->tmp_sectors) {
 		kfree(w->tmp);
