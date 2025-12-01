@@ -223,7 +223,7 @@ static void btree_node_write_endio(struct bio *bio)
 	smp_mb__after_atomic();
 	wake_up_bit(&b->flags, BTREE_NODE_write_in_flight_inner);
 	INIT_WORK(&wb->work, btree_node_write_work);
-	queue_work(c->btree_write_complete_wq, &wb->work);
+	queue_work(c->btree.write_complete_wq, &wb->work);
 }
 
 static int validate_bset_for_write(struct bch_fs *c, struct btree *b,
@@ -334,7 +334,7 @@ void __bch2_btree_node_write(struct bch_fs *c, struct btree *b, unsigned flags)
 do_write:
 	BUG_ON((type == BTREE_WRITE_initial) != (b->written == 0));
 
-	atomic_long_dec(&c->btree_cache.nr_dirty);
+	atomic_long_dec(&c->btree.cache.nr_dirty);
 
 	BUG_ON(btree_node_fake(b));
 	BUG_ON((b->will_make_reachable != 0) != !b->written);
@@ -495,7 +495,7 @@ do_write:
 				buf_pages(data, sectors_to_write << 9),
 				REQ_OP_WRITE|REQ_META|REQ_SYNC|REQ_IDLE,
 				GFP_NOFS,
-				&c->btree_bio),
+				&c->btree.bio),
 			    struct btree_write_bio, wbio.bio);
 	wbio_init(&wbio->wbio.bio);
 	wbio->data			= data;
@@ -518,13 +518,13 @@ do_write:
 		bkey_i_to_btree_ptr_v2(&wbio->key)->v.sectors_written =
 			cpu_to_le16(b->written);
 
-	atomic64_inc(&c->btree_write_stats[type].nr);
-	atomic64_add(bytes_to_write, &c->btree_write_stats[type].bytes);
+	atomic64_inc(&c->btree.write_stats[type].nr);
+	atomic64_add(bytes_to_write, &c->btree.write_stats[type].bytes);
 
 	async_object_list_add(c, btree_write_bio, wbio, &wbio->list_idx);
 
 	INIT_WORK(&wbio->work, btree_write_submit);
-	queue_work(c->btree_write_submit_wq, &wbio->work);
+	queue_work(c->btree.write_submit_wq, &wbio->work);
 	return;
 err:
 	set_btree_node_noevict(b);
@@ -734,8 +734,8 @@ void bch2_btree_write_stats_to_text(struct printbuf *out, struct bch_fs *c)
 	prt_printf(out, "\tnr\tsize\n");
 
 	for (unsigned i = 0; i < BTREE_WRITE_TYPE_NR; i++) {
-		u64 nr		= atomic64_read(&c->btree_write_stats[i].nr);
-		u64 bytes	= atomic64_read(&c->btree_write_stats[i].bytes);
+		u64 nr		= atomic64_read(&c->btree.write_stats[i].nr);
+		u64 bytes	= atomic64_read(&c->btree.write_stats[i].bytes);
 
 		prt_printf(out, "%s:\t%llu\t", bch2_btree_write_types[i], nr);
 		prt_human_readable_u64(out, nr ? div64_u64(bytes, nr) : 0);

@@ -122,7 +122,7 @@ static const struct min_heap_callbacks found_btree_node_heap_cbs = {
 static void try_read_btree_node(struct find_btree_nodes *f, struct bch_dev *ca,
 				struct btree *b, struct bio *bio, u64 offset)
 {
-	struct bch_fs *c = container_of(f, struct bch_fs, found_btree_nodes);
+	struct bch_fs *c = container_of(f, struct bch_fs, btree.node_scan);
 	struct btree_node *bn = b->data;
 
 	bio_reset(bio, ca->disk_sb.bdev, REQ_OP_READ);
@@ -215,7 +215,7 @@ static void try_read_btree_node(struct find_btree_nodes *f, struct bch_dev *ca,
 static int read_btree_nodes_worker(void *p)
 {
 	struct find_btree_nodes_worker *w = p;
-	struct bch_fs *c = container_of(w->f, struct bch_fs, found_btree_nodes);
+	struct bch_fs *c = container_of(w->f, struct bch_fs, btree.node_scan);
 	struct bch_dev *ca = w->ca;
 	unsigned long last_print = jiffies;
 	struct btree *b = NULL;
@@ -272,7 +272,7 @@ err:
 
 static int read_btree_nodes(struct find_btree_nodes *f)
 {
-	struct bch_fs *c = container_of(f, struct bch_fs, found_btree_nodes);
+	struct bch_fs *c = container_of(f, struct bch_fs, btree.node_scan);
 	int ret = 0;
 
 	CLASS(closure_stack, cl)();
@@ -371,7 +371,7 @@ static int handle_overwrites(struct bch_fs *c,
 
 int bch2_scan_for_btree_nodes(struct bch_fs *c)
 {
-	struct find_btree_nodes *f = &c->found_btree_nodes;
+	struct find_btree_nodes *f = &c->btree.node_scan;
 	CLASS(printbuf, buf)();
 	CLASS(darray_found_btree_node, nodes_heap)();
 	size_t dst;
@@ -491,7 +491,7 @@ static int found_btree_node_range_start_cmp(const void *_l, const void *_r)
 
 bool bch2_btree_node_is_stale(struct bch_fs *c, struct btree *b)
 {
-	struct find_btree_nodes *f = &c->found_btree_nodes;
+	struct find_btree_nodes *f = &c->btree.node_scan;
 
 	struct found_btree_node search = {
 		.btree_id	= b->c.btree_id,
@@ -517,7 +517,7 @@ int bch2_btree_has_scanned_nodes(struct bch_fs *c, enum btree_id btree, struct p
 		.max_key	= SPOS_MAX,
 	};
 
-	for_each_found_btree_node_in_range(&c->found_btree_nodes, search, idx)
+	for_each_found_btree_node_in_range(&c->btree.node_scan, search, idx)
 		return true;
 	return false;
 }
@@ -551,7 +551,7 @@ int bch2_get_scanned_nodes(struct bch_fs *c, enum btree_id btree,
 		.max_key	= node_max,
 	};
 
-	struct find_btree_nodes *f = &c->found_btree_nodes;
+	struct find_btree_nodes *f = &c->btree.node_scan;
 	for_each_found_btree_node_in_range(f, search, idx) {
 		struct found_btree_node n = f->nodes.data[idx];
 

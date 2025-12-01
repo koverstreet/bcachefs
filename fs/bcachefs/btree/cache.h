@@ -80,8 +80,8 @@ static inline bool btree_node_hashed(struct btree *b)
 }
 
 #define for_each_cached_btree(_b, _c, _tbl, _iter, _pos)		\
-	for ((_tbl) = rht_dereference_rcu((_c)->btree_cache.table.tbl,	\
-					  &(_c)->btree_cache.table),	\
+	for ((_tbl) = rht_dereference_rcu((_c)->btree.cache.table.tbl,	\
+					  &(_c)->btree.cache.table),	\
 	     _iter = 0;	_iter < (_tbl)->size; _iter++)			\
 		rht_for_each_entry_rcu((_b), (_pos), _tbl, _iter, hash)
 
@@ -119,21 +119,21 @@ static inline unsigned btree_blocks(const struct bch_fs *c)
 
 static inline unsigned btree_id_nr_alive(struct bch_fs *c)
 {
-	return BTREE_ID_NR + c->btree_cache.roots_extra.nr;
+	return BTREE_ID_NR + c->btree.cache.roots_extra.nr;
 }
 
 static inline struct btree_root *bch2_btree_id_root(struct bch_fs *c, unsigned id)
 {
 	if (likely(id < BTREE_ID_NR)) {
-		return &c->btree_cache.roots_known[id];
+		return &c->btree.cache.roots_known[id];
 	} else {
 		unsigned idx = id - BTREE_ID_NR;
 
 		/* This can happen when we're called from btree_node_scan */
-		if (idx >= c->btree_cache.roots_extra.nr)
+		if (idx >= c->btree.cache.roots_extra.nr)
 			return NULL;
 
-		return &c->btree_cache.roots_extra.data[idx];
+		return &c->btree.cache.roots_extra.data[idx];
 	}
 }
 

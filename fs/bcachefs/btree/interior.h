@@ -139,7 +139,7 @@ static inline bool btree_node_needs_merge(struct btree_trans *trans, struct btre
 		return false;
 
 	return (int) min(b->sib_u64s[0], b->sib_u64s[1]) + d <=
-		(int) trans->c->btree_foreground_merge_threshold;
+		(int) trans->c->btree.foreground_merge_threshold;
 }
 
 static inline int bch2_foreground_maybe_merge(struct btree_trans *trans,

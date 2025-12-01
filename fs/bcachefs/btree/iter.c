@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0
-
 #include "bcachefs.h"
 
 #include "alloc/replicas.h"
@@ -3344,7 +3343,7 @@ void *__bch2_trans_kmalloc(struct btree_trans *trans, size_t size, unsigned long
 	new_mem = allocate_dropping_locks_norelock(trans, lock_dropped,
 					kmalloc(new_bytes, _gfp|__GFP_NOWARN));
 	if (!new_mem) {
-		new_mem = mempool_alloc(&c->btree_trans.malloc_pool, GFP_KERNEL);
+		new_mem = mempool_alloc(&c->btree.trans.malloc_pool, GFP_KERNEL);
 		new_bytes = BTREE_TRANS_MEM_MAX;
 		trans->used_mempool = true;
 	}
@@ -3391,7 +3390,7 @@ void bch2_trans_srcu_unlock(struct btree_trans *trans)
 				path->l[0].b = ERR_PTR(-BCH_ERR_no_btree_node_srcu_reset);
 
 		check_srcu_held_too_long(trans);
-		srcu_read_unlock(&c->btree_trans.barrier, trans->srcu_idx);
+		srcu_read_unlock(&c->btree.trans.barrier, trans->srcu_idx);
 		trans->srcu_held = false;
 	}
 }
@@ -3399,7 +3398,7 @@ void bch2_trans_srcu_unlock(struct btree_trans *trans)
 static void bch2_trans_srcu_lock(struct btree_trans *trans)
 {
 	if (!trans->srcu_held) {
-		trans->srcu_idx = srcu_read_lock(&trans->c->btree_trans.barrier);
+		trans->srcu_idx = srcu_read_lock(&trans->c->btree.trans.barrier);
 		trans->srcu_lock_time	= jiffies;
 		trans->srcu_held = true;
 	}
@@ -3438,7 +3437,7 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 		(void)lock_dropped;
 
 		if (!new_mem) {
-			new_mem = mempool_alloc(&trans->c->btree_trans.malloc_pool, GFP_KERNEL);
+			new_mem = mempool_alloc(&trans->c->btree.trans.malloc_pool, GFP_KERNEL);
 			new_bytes = BTREE_TRANS_MEM_MAX;
 			trans->used_mempool = true;
 			kfree(trans->mem);
@@ -3535,24 +3534,24 @@ unsigned bch2_trans_get_fn_idx(const char *fn)
 static inline struct btree_trans *bch2_trans_alloc(struct bch_fs *c)
 {
 	if (IS_ENABLED(__KERNEL__)) {
-		struct btree_trans *trans = this_cpu_xchg(c->btree_trans.bufs->trans, NULL);
+		struct btree_trans *trans = this_cpu_xchg(c->btree.trans.bufs->trans, NULL);
 		if (trans) {
 			memset(trans, 0, offsetof(struct btree_trans, list));
 			return trans;
 		}
 	}
 
-	struct btree_trans *trans = mempool_alloc(&c->btree_trans.pool, GFP_NOFS);
+	struct btree_trans *trans = mempool_alloc(&c->btree.trans.pool, GFP_NOFS);
 	memset(trans, 0, sizeof(*trans));
 
-	seqmutex_lock(&c->btree_trans.lock);
+	seqmutex_lock(&c->btree.trans.lock);
 	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG)) {
 		struct btree_trans *pos;
 		pid_t pid = current->pid;
 
 		trans->locking_wait.task = current;
 
-		list_for_each_entry(pos, &c->btree_trans.list, list) {
+		list_for_each_entry(pos, &c->btree.trans.list, list) {
 			struct task_struct *pos_task = READ_ONCE(pos->locking_wait.task);
 			/*
 			 * We'd much prefer to be stricter here and completely
@@ -3566,14 +3565,14 @@ static inline struct btree_trans *bch2_trans_alloc(struct bch_fs *c)
 		}
 	}
 
-	list_add(&trans->list, &c->btree_trans.list);
-	seqmutex_unlock(&c->btree_trans.lock);
+	list_add(&trans->list, &c->btree.trans.list);
+	seqmutex_unlock(&c->btree.trans.lock);
 
 	return trans;
 }
 
 struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
-	__acquires(&c->btree_trans.barrier)
+	__acquires(&c->btree.trans.barrier)
 {
 	/*
 	 * No multithreaded btree access until we've gone RW and are no longer
@@ -3608,7 +3607,7 @@ struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 	if (fn_idx < BCH_TRANSACTIONS_NR) {
 		trans->fn = bch2_btree_transaction_fns[fn_idx];
 
-		struct btree_transaction_stats *s = &c->btree_trans.stats[fn_idx];
+		struct btree_transaction_stats *s = &c->btree.trans.stats[fn_idx];
 
 		if (s->max_mem) {
 			unsigned expected_mem_bytes = roundup_pow_of_two(s->max_mem);
@@ -3621,7 +3620,7 @@ struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 		trans->nr_paths_max = s->nr_max_paths;
 	}
 
-	trans->srcu_idx		= srcu_read_lock(&c->btree_trans.barrier);
+	trans->srcu_idx		= srcu_read_lock(&c->btree.trans.barrier);
 	trans->srcu_lock_time	= jiffies;
 	trans->srcu_held	= true;
 	trans_set_locked(trans, false);
@@ -3669,7 +3668,7 @@ static inline void check_btree_paths_leaked(struct btree_trans *trans) {}
 #endif
 
 void bch2_trans_put(struct btree_trans *trans)
-	__releases(&c->btree_trans.barrier)
+	__releases(&c->btree.trans.barrier)
 {
 	struct bch_fs *c = trans->c;
 
@@ -3686,7 +3685,7 @@ void bch2_trans_put(struct btree_trans *trans)
 
 	if (trans->srcu_held) {
 		check_srcu_held_too_long(trans);
-		srcu_read_unlock(&c->btree_trans.barrier, trans->srcu_idx);
+		srcu_read_unlock(&c->btree.trans.barrier, trans->srcu_idx);
 	}
 
 	if (unlikely(trans->journal_replay_not_finished))
@@ -3714,35 +3713,35 @@ void bch2_trans_put(struct btree_trans *trans)
 		kvfree_rcu_mightsleep(paths_allocated);
 
 	if (trans->used_mempool)
-		mempool_free(trans->mem, &c->btree_trans.malloc_pool);
+		mempool_free(trans->mem, &c->btree.trans.malloc_pool);
 	else
 		kfree(trans->mem);
 
 	/* Userspace doesn't have a real percpu implementation: */
 	if (IS_ENABLED(__KERNEL__))
-		trans = this_cpu_xchg(c->btree_trans.bufs->trans, trans);
+		trans = this_cpu_xchg(c->btree.trans.bufs->trans, trans);
 
 	if (trans) {
-		seqmutex_lock(&c->btree_trans.lock);
+		seqmutex_lock(&c->btree.trans.lock);
 		list_del(&trans->list);
-		seqmutex_unlock(&c->btree_trans.lock);
+		seqmutex_unlock(&c->btree.trans.lock);
 
-		mempool_free(trans, &c->btree_trans.pool);
+		mempool_free(trans, &c->btree.trans.pool);
 	}
 }
 
 bool bch2_current_has_btree_trans(struct bch_fs *c)
 {
-	seqmutex_lock(&c->btree_trans.lock);
+	seqmutex_lock(&c->btree.trans.lock);
 	struct btree_trans *trans;
 	bool ret = false;
-	list_for_each_entry(trans, &c->btree_trans.list, list)
+	list_for_each_entry(trans, &c->btree.trans.list, list)
 		if (trans->locking_wait.task == current &&
 		    trans->locked) {
 			ret = true;
 			break;
 		}
-	seqmutex_unlock(&c->btree_trans.lock);
+	seqmutex_unlock(&c->btree.trans.lock);
 	return ret;
 }
 
@@ -3837,26 +3836,26 @@ void bch2_fs_btree_iter_exit(struct bch_fs *c)
 	struct btree_trans *trans;
 	int cpu;
 
-	if (c->btree_trans.bufs)
+	if (c->btree.trans.bufs)
 		for_each_possible_cpu(cpu) {
 			struct btree_trans *trans =
-				per_cpu_ptr(c->btree_trans.bufs, cpu)->trans;
+				per_cpu_ptr(c->btree.trans.bufs, cpu)->trans;
 
 			if (trans) {
-				seqmutex_lock(&c->btree_trans.lock);
+				seqmutex_lock(&c->btree.trans.lock);
 				list_del(&trans->list);
-				seqmutex_unlock(&c->btree_trans.lock);
+				seqmutex_unlock(&c->btree.trans.lock);
 			}
 			kfree(trans);
 		}
-	free_percpu(c->btree_trans.bufs);
+	free_percpu(c->btree.trans.bufs);
 
-	trans = list_first_entry_or_null(&c->btree_trans.list, struct btree_trans, list);
+	trans = list_first_entry_or_null(&c->btree.trans.list, struct btree_trans, list);
 	if (trans)
 		panic("%s leaked btree_trans\n", trans->fn);
 
-	for (s = c->btree_trans.stats;
-	     s < c->btree_trans.stats + ARRAY_SIZE(c->btree_trans.stats);
+	for (s = c->btree.trans.stats;
+	     s < c->btree.trans.stats + ARRAY_SIZE(c->btree.trans.stats);
 	     s++) {
 #ifdef CONFIG_BCACHEFS_TRANS_KMALLOC_TRACE
 		darray_exit(&s->trans_kmalloc_trace);
@@ -3865,39 +3864,39 @@ void bch2_fs_btree_iter_exit(struct bch_fs *c)
 		bch2_time_stats_exit(&s->lock_hold_times);
 	}
 
-	if (c->btree_trans.barrier_initialized) {
-		synchronize_srcu_expedited(&c->btree_trans.barrier);
-		cleanup_srcu_struct(&c->btree_trans.barrier);
+	if (c->btree.trans.barrier_initialized) {
+		synchronize_srcu_expedited(&c->btree.trans.barrier);
+		cleanup_srcu_struct(&c->btree.trans.barrier);
 	}
-	mempool_exit(&c->btree_trans.malloc_pool);
-	mempool_exit(&c->btree_trans.pool);
+	mempool_exit(&c->btree.trans.malloc_pool);
+	mempool_exit(&c->btree.trans.pool);
 }
 
 void bch2_fs_btree_iter_init_early(struct bch_fs *c)
 {
 	struct btree_transaction_stats *s;
 
-	for (s = c->btree_trans.stats;
-	     s < c->btree_trans.stats + ARRAY_SIZE(c->btree_trans.stats);
+	for (s = c->btree.trans.stats;
+	     s < c->btree.trans.stats + ARRAY_SIZE(c->btree.trans.stats);
 	     s++) {
 		bch2_time_stats_init(&s->duration);
 		bch2_time_stats_init(&s->lock_hold_times);
 		mutex_init(&s->lock);
 	}
 
-	INIT_LIST_HEAD(&c->btree_trans.list);
-	seqmutex_init(&c->btree_trans.lock);
+	INIT_LIST_HEAD(&c->btree.trans.list);
+	seqmutex_init(&c->btree.trans.lock);
 }
 
 int bch2_fs_btree_iter_init(struct bch_fs *c)
 {
-	c->btree_trans.bufs = alloc_percpu(struct btree_trans_buf);
-	if (!c->btree_trans.bufs)
+	c->btree.trans.bufs = alloc_percpu(struct btree_trans_buf);
+	if (!c->btree.trans.bufs)
 		return -ENOMEM;
 
-	try(mempool_init_kmalloc_pool(&c->btree_trans.pool, 1, sizeof(struct btree_trans)));
-	try(mempool_init_kmalloc_pool(&c->btree_trans.malloc_pool, 1, BTREE_TRANS_MEM_MAX));
-	try(init_srcu_struct(&c->btree_trans.barrier));
+	try(mempool_init_kmalloc_pool(&c->btree.trans.pool, 1, sizeof(struct btree_trans)));
+	try(mempool_init_kmalloc_pool(&c->btree.trans.malloc_pool, 1, BTREE_TRANS_MEM_MAX));
+	try(init_srcu_struct(&c->btree.trans.barrier));
 
 	/*
 	 * static annotation (hackily done) for lock ordering of reclaim vs.
@@ -3911,7 +3910,7 @@ int bch2_fs_btree_iter_init(struct bch_fs *c)
 	fs_reclaim_release(GFP_KERNEL);
 #endif
 
-	c->btree_trans.barrier_initialized = true;
+	c->btree.trans.barrier_initialized = true;
 	return 0;
 
 }

@@ -20,13 +20,13 @@ struct btree_write_bio {
 static inline void set_btree_node_dirty_acct(struct bch_fs *c, struct btree *b)
 {
 	if (!test_and_set_bit(BTREE_NODE_dirty, &b->flags))
-		atomic_long_inc(&c->btree_cache.nr_dirty);
+		atomic_long_inc(&c->btree.cache.nr_dirty);
 }
 
 static inline void clear_btree_node_dirty_acct(struct bch_fs *c, struct btree *b)
 {
 	if (test_and_clear_bit(BTREE_NODE_dirty, &b->flags))
-		atomic_long_dec(&c->btree_cache.nr_dirty);
+		atomic_long_dec(&c->btree.cache.nr_dirty);
 }
 
 bool bch2_btree_post_write_cleanup(struct bch_fs *, struct btree *);
@@ -52,5 +52,6 @@ static inline void btree_node_write_if_need(struct btree_trans *trans, struct bt
 }
 
 void bch2_btree_write_stats_to_text(struct printbuf *, struct bch_fs *);
+bool bch2_btree_flush_all_writes(struct bch_fs *);
 
 #endif /* _BCACHEFS_BTREE_WRITE_H */

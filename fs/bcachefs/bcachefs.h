@@ -241,11 +241,8 @@
 #include "alloc/types.h"
 
 #include "btree/check_types.h"
-#include "btree/interior_types.h"
 #include "btree/journal_overlay_types.h"
 #include "btree/types.h"
-#include "btree/node_scan_types.h"
-#include "btree/write_buffer_types.h"
 
 #include "data/compress_types.h"
 #include "data/copygc_types.h"
@@ -817,7 +814,6 @@ struct bch_fs {
 	struct unicode_map	*cf_encoding;
 
 	unsigned short		block_bits;	/* ilog2(block_size) */
-	u16			btree_foreground_merge_threshold;
 
 	struct delayed_work	maybe_schedule_btree_bitmap_gc;
 
@@ -840,27 +836,7 @@ struct bch_fs {
 
 	struct bch_fs_recovery			recovery;
 
-	/* BTREE CACHE */
-	/*
-	 * A btree node on disk could have too many bsets for an iterator to fit
-	 * on the stack - have to dynamically allocate them
-	 */
-	mempool_t				fill_iter;
-	mempool_t				btree_bounce_pool;
-	struct bio_set				btree_bio;
-	struct workqueue_struct			*btree_read_complete_wq;
-	struct workqueue_struct			*btree_write_submit_wq;
-	struct journal_entry_res		btree_root_journal_res;
-	struct workqueue_struct			*btree_write_complete_wq;
-
-	struct bch_fs_btree_cache		btree_cache;
-	struct bch_fs_btree_key_cache		btree_key_cache;
-	struct bch_fs_btree_write_buffer	btree_write_buffer;
-	struct bch_fs_btree_trans		btree_trans;
-	struct bch_fs_btree_reserve_cache	btree_reserve_cache;
-	struct bch_fs_btree_interior_updates	btree_interior_updates;
-	struct bch_fs_btree_node_rewrites	btree_node_rewrites;
-	struct find_btree_nodes			found_btree_nodes;
+	struct bch_fs_btree			btree;
 
 	struct bch_fs_gc			gc;
 	struct bch_fs_gc_gens			gc_gens;
@@ -874,12 +850,7 @@ struct bch_fs {
 
 	struct bch_fs_snapshots			snapshots;
 
-	/* btree_io.c: */
 	spinlock_t				write_error_lock;
-	struct btree_write_stats {
-		atomic64_t	nr;
-		atomic64_t	bytes;
-	}			btree_write_stats[BTREE_WRITE_TYPE_NR];
 	/*
 	 * Use a dedicated wq for write ref holder tasks. Required to avoid
 	 * dependency problems with other wq tasks that can block on ref

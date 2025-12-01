@@ -1008,10 +1008,10 @@ void bch2_open_buckets_stop(struct bch_fs *c, struct bch_dev *ca,
 	bch2_writepoint_stop(c, ca, ec, &a->reconcile_write_point);
 	bch2_writepoint_stop(c, ca, ec, &a->btree_write_point);
 
-	scoped_guard(mutex, &c->btree_reserve_cache.lock)
-		while (c->btree_reserve_cache.nr) {
+	scoped_guard(mutex, &c->btree.reserve_cache.lock)
+		while (c->btree.reserve_cache.nr) {
 			struct btree_alloc *a =
-				&c->btree_reserve_cache.data[--c->btree_reserve_cache.nr];
+				&c->btree.reserve_cache.data[--c->btree.reserve_cache.nr];
 
 			bch2_open_buckets_put(c, &a->ob);
 		}
@@ -1528,7 +1528,7 @@ void bch2_fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
 	prt_printf(out, "open_buckets_wait\t%s\n",		a->open_buckets_wait.list.first ? "waiting" : "empty");
 	prt_printf(out, "open_buckets_btree\t%u\n",		nr[BCH_DATA_btree]);
 	prt_printf(out, "open_buckets_user\t%u\n",		nr[BCH_DATA_user]);
-	prt_printf(out, "btree reserve cache\t%u\n",		c->btree_reserve_cache.nr);
+	prt_printf(out, "btree reserve cache\t%u\n",		c->btree.reserve_cache.nr);
 }
 
 void bch2_dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)

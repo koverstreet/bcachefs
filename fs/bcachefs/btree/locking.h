@@ -25,8 +25,8 @@ static inline bool is_btree_node(struct btree_path *path, unsigned l)
 
 static inline struct btree_transaction_stats *btree_trans_stats(struct btree_trans *trans)
 {
-	return trans->fn_idx < ARRAY_SIZE(trans->c->btree_trans.stats)
-		? &trans->c->btree_trans.stats[trans->fn_idx]
+	return trans->fn_idx < ARRAY_SIZE(trans->c->btree.trans.stats)
+		? &trans->c->btree.trans.stats[trans->fn_idx]
 		: NULL;
 }
 

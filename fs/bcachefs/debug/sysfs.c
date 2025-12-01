@@ -246,7 +246,7 @@ write_attribute(perf_test);
 
 static size_t bch2_btree_cache_size(struct bch_fs *c)
 {
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 	size_t ret = 0;
 	struct btree *b;
 
@@ -357,10 +357,10 @@ SHOW(bch2_fs)
 		bch2_journal_debug_to_text(out, &c->journal);
 
 	if (attr == &sysfs_btree_cache)
-		bch2_btree_cache_to_text(out, &c->btree_cache);
+		bch2_btree_cache_to_text(out, &c->btree.cache);
 
 	if (attr == &sysfs_btree_key_cache)
-		bch2_btree_key_cache_to_text(out, &c->btree_key_cache);
+		bch2_btree_key_cache_to_text(out, &c->btree.key_cache);
 
 	if (attr == &sysfs_btree_reserve_cache)
 		bch2_btree_reserve_cache_to_text(out, c);
@@ -425,13 +425,13 @@ STORE(bch2_fs)
 	/* Debugging: */
 
 	if (attr == &sysfs_trigger_btree_updates)
-		queue_work(c->btree_interior_updates.worker, &c->btree_interior_updates.work);
+		queue_work(c->btree.interior_updates.worker, &c->btree.interior_updates.work);
 
 	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_sysfs))
 		return -EROFS;
 
 	if (attr == &sysfs_trigger_btree_cache_shrink) {
-		struct bch_fs_btree_cache *bc = &c->btree_cache;
+		struct bch_fs_btree_cache *bc = &c->btree.cache;
 		struct shrink_control sc;
 
 		sc.gfp_mask = GFP_KERNEL;
@@ -444,7 +444,7 @@ STORE(bch2_fs)
 
 		sc.gfp_mask = GFP_KERNEL;
 		sc.nr_to_scan = strtoul_or_return(buf);
-		c->btree_key_cache.shrink->scan_objects(c->btree_key_cache.shrink, &sc);
+		c->btree.key_cache.shrink->scan_objects(c->btree.key_cache.shrink, &sc);
 	}
 
 	if (attr == &sysfs_trigger_btree_write_buffer_flush)

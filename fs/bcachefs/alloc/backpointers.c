@@ -729,10 +729,10 @@ static int bch2_get_btree_in_memory_pos(struct btree_trans *trans,
 
 	btree_interior_mask |= btree_leaf_mask;
 
-	c->btree_cache.pinned_nodes_mask[0]		= btree_leaf_mask;
-	c->btree_cache.pinned_nodes_mask[1]		= btree_interior_mask;
-	c->btree_cache.pinned_nodes_start		= start;
-	c->btree_cache.pinned_nodes_end			= *end = BBPOS_MAX;
+	c->btree.cache.pinned_nodes_mask[0]		= btree_leaf_mask;
+	c->btree.cache.pinned_nodes_mask[1]		= btree_interior_mask;
+	c->btree.cache.pinned_nodes_start		= start;
+	c->btree.cache.pinned_nodes_end			= *end = BBPOS_MAX;
 
 	for (enum btree_id btree = start.btree;
 	     btree < BTREE_ID_NR && !ret;
@@ -748,7 +748,7 @@ static int bch2_get_btree_in_memory_pos(struct btree_trans *trans,
 				      0, depth, BTREE_ITER_prefetch, b, ({
 			mem_may_pin -= btree_buf_bytes(b);
 			if (mem_may_pin <= 0) {
-				c->btree_cache.pinned_nodes_end = *end =
+				c->btree.cache.pinned_nodes_end = *end =
 					BBPOS(btree, b->key.k.p);
 				break;
 			}

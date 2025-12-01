@@ -4,8 +4,8 @@
 
 static inline size_t bch2_nr_btree_keys_need_flush(struct bch_fs *c)
 {
-	size_t nr_dirty = atomic_long_read(&c->btree_key_cache.nr_dirty);
-	size_t nr_keys = atomic_long_read(&c->btree_key_cache.nr_keys);
+	size_t nr_dirty = atomic_long_read(&c->btree.key_cache.nr_dirty);
+	size_t nr_keys = atomic_long_read(&c->btree.key_cache.nr_keys);
 	size_t max_dirty = 1024 + nr_keys  / 2;
 
 	return max_t(ssize_t, 0, nr_dirty - max_dirty);
@@ -13,8 +13,8 @@ static inline size_t bch2_nr_btree_keys_need_flush(struct bch_fs *c)
 
 static inline ssize_t __bch2_btree_key_cache_must_wait(struct bch_fs *c)
 {
-	size_t nr_dirty = atomic_long_read(&c->btree_key_cache.nr_dirty);
-	size_t nr_keys = atomic_long_read(&c->btree_key_cache.nr_keys);
+	size_t nr_dirty = atomic_long_read(&c->btree.key_cache.nr_dirty);
+	size_t nr_keys = atomic_long_read(&c->btree.key_cache.nr_keys);
 	size_t max_dirty = 4096 + (nr_keys * 3) / 4;
 
 	return nr_dirty - max_dirty;
@@ -27,8 +27,8 @@ static inline bool bch2_btree_key_cache_must_wait(struct bch_fs *c)
 
 static inline bool bch2_btree_key_cache_wait_done(struct bch_fs *c)
 {
-	size_t nr_dirty = atomic_long_read(&c->btree_key_cache.nr_dirty);
-	size_t nr_keys = atomic_long_read(&c->btree_key_cache.nr_keys);
+	size_t nr_dirty = atomic_long_read(&c->btree.key_cache.nr_dirty);
+	size_t nr_keys = atomic_long_read(&c->btree.key_cache.nr_keys);
 	size_t max_dirty = 2048 + (nr_keys * 5) / 8;
 
 	return nr_dirty <= max_dirty;
@@ -48,7 +48,6 @@ void bch2_btree_key_cache_drop(struct btree_trans *,
 			       struct btree_path *);
 
 void bch2_fs_btree_key_cache_exit(struct bch_fs_btree_key_cache *);
-void bch2_fs_btree_key_cache_init_early(struct bch_fs_btree_key_cache *);
 int bch2_fs_btree_key_cache_init(struct bch_fs_btree_key_cache *);
 
 void bch2_btree_key_cache_to_text(struct printbuf *, struct bch_fs_btree_key_cache *);

@@ -60,7 +60,7 @@ static bool bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 			       buf_pages(n_sorted, btree_buf_bytes(b)),
 			       REQ_OP_READ|REQ_META,
 			       GFP_NOFS,
-			       &c->btree_bio);
+			       &c->btree.bio);
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bch2_bio_map(bio, n_sorted, btree_buf_bytes(b));
 
@@ -217,7 +217,7 @@ void bch2_btree_node_ondisk_to_text(struct printbuf *out, struct bch_fs *c,
 			       buf_pages(n_ondisk, btree_buf_bytes(b)),
 			       REQ_OP_READ|REQ_META,
 			       GFP_NOFS,
-			       &c->btree_bio);
+			       &c->btree.bio);
 	bio->bi_iter.bi_sector	= pick.ptr.offset;
 	bch2_bio_map(bio, n_ondisk, btree_buf_bytes(b));
 
@@ -521,8 +521,8 @@ static ssize_t bch2_cached_btree_nodes_read(struct file *file, char __user *buf,
 		scoped_guard(rcu) {
 			guard(printbuf_atomic)(&i->buf);
 			struct bucket_table *tbl =
-				rht_dereference_rcu(c->btree_cache.table.tbl,
-						    &c->btree_cache.table);
+				rht_dereference_rcu(c->btree.cache.table.tbl,
+						    &c->btree.cache.table);
 			if (i->iter < tbl->size) {
 				struct rhash_head *pos;
 				struct btree *b;
@@ -590,12 +590,12 @@ static ssize_t bch2_btree_transactions_read(struct file *file, char __user *buf,
 	i->size	= size;
 	i->ret	= 0;
 
-	int srcu_idx = srcu_read_lock(&c->btree_trans.barrier);
+	int srcu_idx = srcu_read_lock(&c->btree.trans.barrier);
 restart:
-	seqmutex_lock(&c->btree_trans.lock);
-	list_sort(&c->btree_trans.list, list_ptr_order_cmp);
+	seqmutex_lock(&c->btree.trans.lock);
+	list_sort(&c->btree.trans.list, list_ptr_order_cmp);
 
-	list_for_each_entry(trans, &c->btree_trans.list, list) {
+	list_for_each_entry(trans, &c->btree.trans.list, list) {
 		if ((ulong) trans <= i->iter)
 			continue;
 
@@ -609,7 +609,7 @@ restart:
 			continue;
 		}
 
-		u32 seq = seqmutex_unlock(&c->btree_trans.lock);
+		u32 seq = seqmutex_unlock(&c->btree.trans.lock);
 
 		bch2_btree_trans_to_text(&i->buf, trans);
 
@@ -624,12 +624,12 @@ restart:
 		if (ret)
 			goto unlocked;
 
-		if (!seqmutex_relock(&c->btree_trans.lock, seq))
+		if (!seqmutex_relock(&c->btree.trans.lock, seq))
 			goto restart;
 	}
-	seqmutex_unlock(&c->btree_trans.lock);
+	seqmutex_unlock(&c->btree.trans.lock);
 unlocked:
-	srcu_read_unlock(&c->btree_trans.barrier, srcu_idx);
+	srcu_read_unlock(&c->btree.trans.barrier, srcu_idx);
 
 	if (i->buf.allocation_failure)
 		ret = -ENOMEM;
@@ -759,7 +759,7 @@ static ssize_t btree_transaction_stats_read(struct file *file, char __user *buf,
 	i->ret  = 0;
 
 	while (1) {
-		struct btree_transaction_stats *s = &c->btree_trans.stats[i->iter];
+		struct btree_transaction_stats *s = &c->btree.trans.stats[i->iter];
 
 		err = bch2_debugfs_flush_buf(i);
 		if (err)
@@ -825,10 +825,10 @@ static void btree_deadlock_to_text(struct printbuf *out, struct bch_fs *c)
 	struct btree_trans *trans;
 	ulong iter = 0;
 restart:
-	seqmutex_lock(&c->btree_trans.lock);
-	list_sort(&c->btree_trans.list, list_ptr_order_cmp);
+	seqmutex_lock(&c->btree.trans.lock);
+	list_sort(&c->btree.trans.list, list_ptr_order_cmp);
 
-	list_for_each_entry(trans, &c->btree_trans.list, list) {
+	list_for_each_entry(trans, &c->btree.trans.list, list) {
 		if ((ulong) trans <= iter)
 			continue;
 
@@ -837,7 +837,7 @@ restart:
 		if (!closure_get_not_zero(&trans->ref))
 			continue;
 
-		u32 seq = seqmutex_unlock(&c->btree_trans.lock);
+		u32 seq = seqmutex_unlock(&c->btree.trans.lock);
 
 		bool found = bch2_check_for_deadlock(trans, out) != 0;
 
@@ -846,10 +846,10 @@ restart:
 		if (found)
 			return;
 
-		if (!seqmutex_relock(&c->btree_trans.lock, seq))
+		if (!seqmutex_relock(&c->btree.trans.lock, seq))
 			goto restart;
 	}
-	seqmutex_unlock(&c->btree_trans.lock);
+	seqmutex_unlock(&c->btree.trans.lock);
 }
 
 typedef void (*fs_to_text_fn)(struct printbuf *, struct bch_fs *);
@@ -908,7 +908,7 @@ static const struct file_operations write_points_ops = {
 
 static bool print_next_node_scan_node(struct dump_iter *i)
 {
-	struct find_btree_nodes *f = &i->c->found_btree_nodes;
+	struct find_btree_nodes *f = &i->c->btree.node_scan;
 	guard(mutex)(&f->lock);
 
 	if (i->iter >= f->nodes.nr)

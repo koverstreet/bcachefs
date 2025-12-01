@@ -36,7 +36,7 @@ void bch2_recalc_btree_reserve(struct bch_fs *c)
 {
 	unsigned reserve = 16;
 
-	if (!c->btree_cache.roots_known[0].b)
+	if (!c->btree.cache.roots_known[0].b)
 		reserve += 8;
 
 	for (unsigned i = 0; i < btree_id_nr_alive(c); i++) {
@@ -46,7 +46,7 @@ void bch2_recalc_btree_reserve(struct bch_fs *c)
 			reserve += min_t(unsigned, 1, r->b->c.level) * 8;
 	}
 
-	c->btree_cache.nr_reserve = reserve;
+	c->btree.cache.nr_reserve = reserve;
 }
 
 static inline size_t btree_cache_can_free(struct btree_cache_list *list)
@@ -81,7 +81,7 @@ static void __bch2_btree_node_to_freelist(struct bch_fs_btree_cache *bc, struct 
 
 void bch2_btree_node_to_freelist(struct bch_fs *c, struct btree *b)
 {
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 
 	scoped_guard(mutex, &bc->lock)
 		__bch2_btree_node_to_freelist(bc, b);
@@ -217,7 +217,7 @@ static inline bool __btree_node_pinned(struct bch_fs_btree_cache *bc, struct btr
 
 void bch2_node_pin(struct bch_fs *c, struct btree *b)
 {
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 
 	guard(mutex)(&bc->lock);
 	if (!btree_node_is_root(c, b) && !btree_node_pinned(b)) {
@@ -230,7 +230,7 @@ void bch2_node_pin(struct bch_fs *c, struct btree *b)
 
 void bch2_btree_cache_unpin(struct bch_fs *c)
 {
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 	struct btree *b, *n;
 
 	guard(mutex)(&bc->lock);
@@ -304,7 +304,7 @@ void bch2_btree_node_update_key_early(struct btree_trans *trans,
 				      enum btree_id btree, unsigned level,
 				      struct bkey_s_c old, struct bkey_i *new)
 {
-	struct bch_fs *c = trans->c;
+	struct bch_fs_btree_cache *bc = &trans->c->btree.cache;
 	struct btree *b;
 	struct bkey_buf tmp __cleanup(bch2_bkey_buf_exit);
 	int ret;
@@ -314,12 +314,12 @@ void bch2_btree_node_update_key_early(struct btree_trans *trans,
 
 	b = bch2_btree_node_get_noiter(trans, tmp.k, btree, level, true);
 	if (!IS_ERR_OR_NULL(b)) {
-		guard(mutex)(&c->btree_cache.lock);
+		guard(mutex)(&bc->lock);
 
-		__bch2_btree_node_hash_remove(&c->btree_cache, b);
+		__bch2_btree_node_hash_remove(bc, b);
 
 		bkey_copy(&b->key, new);
-		ret = __bch2_btree_node_hash_insert(&c->btree_cache, b);
+		ret = __bch2_btree_node_hash_insert(bc, b);
 		BUG_ON(ret);
 
 		six_unlock_read(&b->c.lock);
@@ -338,7 +338,7 @@ static inline struct btree *btree_cache_find(struct bch_fs_btree_cache *bc,
 static int __btree_node_reclaim_checks(struct bch_fs *c, struct btree *b,
 				       bool flush, bool locked)
 {
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 
 	lockdep_assert_held(&bc->lock);
 
@@ -404,7 +404,7 @@ static int __btree_node_reclaim_checks(struct bch_fs *c, struct btree *b,
  */
 static int __btree_node_reclaim(struct bch_fs *c, struct btree *b, bool flush)
 {
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 	int ret = 0;
 
 	lockdep_assert_held(&bc->lock);
@@ -458,7 +458,7 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 	struct btree_cache_list *list = shrink->private_data;
 	struct bch_fs_btree_cache *bc =
 		container_of(list, struct bch_fs_btree_cache, live[list->idx]);
-	struct bch_fs *c = container_of(bc, struct bch_fs, btree_cache);
+	struct bch_fs *c = container_of(bc, struct bch_fs, btree.cache);
 	struct btree *b, *t;
 	unsigned long nr = sc->nr_to_scan;
 	unsigned long can_free = 0;
@@ -575,7 +575,7 @@ static unsigned long bch2_btree_cache_count(struct shrinker *shrink,
 
 void bch2_fs_btree_cache_exit(struct bch_fs *c)
 {
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 	struct btree *b, *t;
 
 	shrinker_free(bc->live[1].shrink);
@@ -634,7 +634,7 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 
 int bch2_fs_btree_cache_init(struct bch_fs *c)
 {
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 	struct shrinker *shrink;
 
 	if (rhashtable_init(&bc->table, &bch_btree_cache_params))
@@ -699,7 +699,7 @@ void bch2_fs_btree_cache_init_early(struct bch_fs_btree_cache *bc)
  */
 void bch2_btree_cache_cannibalize_unlock(struct btree_trans *trans)
 {
-	struct bch_fs_btree_cache *bc = &trans->c->btree_cache;
+	struct bch_fs_btree_cache *bc = &trans->c->btree.cache;
 
 	if (bc->alloc_lock == current) {
 		event_inc_trace(trans->c, btree_cache_cannibalize_unlock, buf,
@@ -711,7 +711,7 @@ void bch2_btree_cache_cannibalize_unlock(struct btree_trans *trans)
 
 static int __btree_cache_cannibalize_lock(struct bch_fs *c, struct closure *cl)
 {
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 	struct task_struct *old;
 
 	old = NULL;
@@ -747,7 +747,7 @@ int bch2_btree_cache_cannibalize_lock(struct btree_trans *trans, struct closure 
 
 static struct btree *btree_node_cannibalize(struct bch_fs *c)
 {
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 	struct btree *b;
 
 	for (unsigned i = 0; i < ARRAY_SIZE(bc->live); i++)
@@ -773,7 +773,7 @@ static struct btree *btree_node_cannibalize(struct bch_fs *c)
 struct btree *bch2_btree_node_mem_alloc(struct btree_trans *trans, bool pcpu_read_locks)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 	struct list_head *freed = pcpu_read_locks
 		? &bc->freed_pcpu
 		: &bc->freed_nonpcpu;
@@ -899,7 +899,7 @@ static noinline struct btree *bch2_btree_node_fill(struct btree_trans *trans,
 				bool sync)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 	struct btree *b;
 
 	EBUG_ON(path && level + 1 != path->level);
@@ -1041,7 +1041,7 @@ static struct btree *__bch2_btree_node_get(struct btree_trans *trans, struct btr
 					   unsigned long trace_ip)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 	struct btree *b;
 	int ret;
 
@@ -1236,7 +1236,7 @@ struct btree *bch2_btree_node_get_noiter(struct btree_trans *trans,
 					 bool nofill)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 	struct btree *b;
 	int ret;
 
@@ -1319,7 +1319,7 @@ int bch2_btree_node_prefetch(struct btree_trans *trans,
 			     enum btree_id btree_id, unsigned level)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 
 	BUG_ON(path && !btree_node_locked(path, level + 1));
 	BUG_ON(level >= BTREE_MAX_DEPTH);
@@ -1338,7 +1338,7 @@ int bch2_btree_node_prefetch(struct btree_trans *trans,
 void bch2_btree_node_evict(struct btree_trans *trans, const struct bkey_i *k)
 {
 	struct bch_fs *c = trans->c;
-	struct bch_fs_btree_cache *bc = &c->btree_cache;
+	struct bch_fs_btree_cache *bc = &c->btree.cache;
 	struct btree *b;
 
 	b = btree_cache_find(bc, k);
@@ -1453,7 +1453,7 @@ void bch2_btree_node_to_text(struct printbuf *out, struct bch_fs *c, const struc
 	       b->nr.live_u64s * 100 / btree_max_u64s(c),
 	       b->sib_u64s[0],
 	       b->sib_u64s[1],
-	       c->btree_foreground_merge_threshold,
+	       c->btree.foreground_merge_threshold,
 	       b->nr.packed_keys,
 	       b->nr.unpacked_keys,
 	       stats.floats,
@@ -1477,7 +1477,7 @@ static const char * const bch2_btree_cache_not_freed_reasons_strs[] = {
 
 void bch2_btree_cache_to_text(struct printbuf *out, const struct bch_fs_btree_cache *bc)
 {
-	struct bch_fs *c = container_of(bc, struct bch_fs, btree_cache);
+	struct bch_fs *c = container_of(bc, struct bch_fs, btree.cache);
 
 	if (!out->nr_tabstops)
 		printbuf_tabstop_push(out, 32);

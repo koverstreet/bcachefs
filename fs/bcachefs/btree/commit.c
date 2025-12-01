@@ -918,8 +918,8 @@ static int __bch2_trans_commit_error(struct btree_trans *trans, unsigned flags,
 		event_inc_trace(c, trans_blocked_journal_reclaim, buf, ({
 			prt_printf(&buf, "%s\n", trans->fn);
 			prt_printf(&buf, "key cache dirty %lu/%lu must_wait %zu\n",
-				   atomic_long_read(&c->btree_key_cache.nr_keys),
-				   atomic_long_read(&c->btree_key_cache.nr_dirty),
+				   atomic_long_read(&c->btree.key_cache.nr_keys),
+				   atomic_long_read(&c->btree.key_cache.nr_dirty),
 				   __bch2_btree_key_cache_must_wait(c));
 		}));
 		track_event_change(&c->times[BCH_TIME_blocked_key_cache_flush], true);
@@ -1008,7 +1008,7 @@ retry:
 		}
 
 		if (i->type == BCH_JSET_ENTRY_btree_root) {
-			guard(mutex)(&c->btree_cache.root_lock);
+			guard(mutex)(&c->btree.cache.root_lock);
 
 			struct btree_root *r = bch2_btree_id_root(c, i->btree_id);
 

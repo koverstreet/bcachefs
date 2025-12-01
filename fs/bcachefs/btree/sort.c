@@ -240,7 +240,7 @@ static void verify_no_dups(struct btree *b,
 void bch2_btree_bounce_free(struct bch_fs *c, size_t size, bool used_mempool, void *p)
 {
 	if (used_mempool)
-		mempool_free(p, &c->btree_bounce_pool);
+		mempool_free(p, &c->btree.bounce_pool);
 	else
 		kvfree(p);
 }
@@ -255,7 +255,7 @@ void *bch2_btree_bounce_alloc(struct bch_fs *c, size_t size, bool *used_mempool)
 	void *p = kvmalloc(size, GFP_NOWAIT|__GFP_ACCOUNT|__GFP_RECLAIMABLE);
 	if (!p) {
 		*used_mempool = true;
-		p = mempool_alloc(&c->btree_bounce_pool, GFP_NOFS|__GFP_ACCOUNT|__GFP_RECLAIMABLE);
+		p = mempool_alloc(&c->btree.bounce_pool, GFP_NOFS|__GFP_ACCOUNT|__GFP_RECLAIMABLE);
 	}
 	return p;
 }

@@ -9,7 +9,10 @@
 #include "alloc/replicas_types.h"
 
 #include "btree/bbpos_types.h"
+#include "btree/interior_types.h"
 #include "btree/key_cache_types.h"
+#include "btree/node_scan_types.h"
+#include "btree/write_buffer_types.h"
 
 #include "journal/types.h"
 
@@ -703,6 +706,35 @@ enum btree_node_rewrite_reason {
 #define x(n)	BTREE_NODE_REWRITE_##n,
 	BTREE_NODE_REWRITE_REASON()
 #undef x
+};
+
+struct bch_fs_btree {
+	u16					foreground_merge_threshold;
+
+	mempool_t				bounce_pool;
+
+	struct btree_write_stats {
+		atomic64_t	nr;
+		atomic64_t	bytes;
+	}			write_stats[BTREE_WRITE_TYPE_NR];
+
+	struct bio_set				bio;
+	mempool_t				fill_iter;
+	struct workqueue_struct			*read_complete_wq;
+
+	struct workqueue_struct			*write_submit_wq;
+	struct workqueue_struct			*write_complete_wq;
+
+	struct journal_entry_res		root_journal_res;
+
+	struct bch_fs_btree_cache		cache;
+	struct bch_fs_btree_key_cache		key_cache;
+	struct bch_fs_btree_write_buffer	write_buffer;
+	struct bch_fs_btree_trans		trans;
+	struct bch_fs_btree_reserve_cache	reserve_cache;
+	struct bch_fs_btree_interior_updates	interior_updates;
+	struct bch_fs_btree_node_rewrites	node_rewrites;
+	struct find_btree_nodes			node_scan;
 };
 
 static inline enum btree_node_rewrite_reason btree_node_rewrite_reason(struct btree *b)
