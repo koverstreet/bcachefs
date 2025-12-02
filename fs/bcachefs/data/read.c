@@ -723,36 +723,30 @@ static void bch2_rbio_retry(struct work_struct *work)
 			ret = 0;
 
 		if (failed.nr || ret) {
-			CLASS(printbuf, buf)();
-			bch2_log_msg_start(c, &buf);
+			CLASS(bch_log_msg, msg)(c);
 
-			bch2_read_err_msg_trans(trans, &buf, rbio, read_pos);
+			/* Separate ratelimit_states for hard and soft errors */
+			msg.m.suppress = !ret
+				? bch2_ratelimit()
+				: bch2_ratelimit();
 
-			prt_str(&buf, "data read error, ");
+			bch2_read_err_msg_trans(trans, &msg.m, rbio, read_pos);
+
+			prt_str(&msg.m, "data read error, ");
 			if (!ret) {
-				prt_str(&buf, "successful retry");
+				prt_str(&msg.m, "successful retry");
 				if (rbio->self_healing)
-					prt_str(&buf, ", self healing");
+					prt_str(&msg.m, ", self healing");
 			} else
-				prt_str(&buf, bch2_err_str(ret));
-			prt_newline(&buf);
-
+				prt_str(&msg.m, bch2_err_str(ret));
+			prt_newline(&msg.m);
 
 			if (!bkey_deleted(&sk.k->k)) {
-				bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(sk.k));
-				prt_newline(&buf);
+				bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(sk.k));
+				prt_newline(&msg.m);
 			}
 
-			bch2_io_failures_to_text(&buf, c, &failed);
-
-			static struct ratelimit_state rs[2] = {
-				RATELIMIT_STATE_INIT("read_retry", DEFAULT_RATELIMIT_INTERVAL, DEFAULT_RATELIMIT_BURST),
-				RATELIMIT_STATE_INIT("read_error", DEFAULT_RATELIMIT_INTERVAL, DEFAULT_RATELIMIT_BURST),
-			};
-			struct ratelimit_state *r = &rs[ret != 0];
-
-			if (__ratelimit(r))
-				bch2_print_str(c, KERN_ERR, buf.buf);
+			bch2_io_failures_to_text(&msg.m, c, &failed);
 		}
 
 		/* drop trans before calling rbio_done() */

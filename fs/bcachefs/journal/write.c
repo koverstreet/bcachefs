@@ -231,32 +231,32 @@ static CLOSURE_CALLBACK(journal_write_done)
 	}
 
 	if (unlikely(w->failed.nr || err)) {
-		bool print = !bch2_ratelimit();
+		CLASS(bch_log_msg, msg)(c);
 
-		CLASS(printbuf, buf)();
-		bch2_log_msg_start(c, &buf);
-		prt_printf(&buf, "error writing journal entry %llu\n", seq_wrote);
-		bch2_io_failures_to_text(&buf, c, &w->failed);
+		/* Separate ratelimit_states for hard and soft errors */
+		msg.m.suppress = !err
+			? bch2_ratelimit()
+			: bch2_ratelimit();
+
+		prt_printf(&msg.m, "error writing journal entry %llu\n", seq_wrote);
+		bch2_io_failures_to_text(&msg.m, c, &w->failed);
 
 		if (!w->devs_written.nr)
 			err = bch_err_throw(c, journal_write_err);
 
 		if (!err) {
-			prt_printf(&buf, "wrote degraded to ");
-			bch2_devs_list_to_text(&buf, c, &w->devs_written);
-			prt_newline(&buf);
+			prt_printf(&msg.m, "wrote degraded to ");
+			bch2_devs_list_to_text(&msg.m, c, &w->devs_written);
+			prt_newline(&msg.m);
 		} else {
 			if (err == -BCH_ERR_journal_write_err)
-				prt_printf(&buf, "unable to write journal to sufficient devices\n");
+				prt_printf(&msg.m, "unable to write journal to sufficient devices\n");
 			else
-				prt_printf(&buf, "journal write error marking replicas: %s\n",
+				prt_printf(&msg.m, "journal write error marking replicas: %s\n",
 					   bch2_err_str(err));
 
-			print = bch2_fs_emergency_read_only2(c, &buf);
+			bch2_fs_emergency_read_only2(c, &msg.m);
 		}
-
-		if (print)
-			bch2_print_str(c, KERN_ERR, buf.buf);
 	}
 
 	closure_debug_destroy(cl);

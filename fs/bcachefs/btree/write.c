@@ -154,28 +154,28 @@ static void btree_node_write_work(struct work_struct *work)
 
 		if ((ret && !bch2_err_matches(ret, EROFS)) ||
 		    wbio->wbio.failed.nr) {
-			bool print = !bch2_ratelimit();
+			CLASS(bch_log_msg, msg)(c);
 
-			CLASS(printbuf, buf)();
-			bch2_log_msg_start(c, &buf);
-			prt_printf(&buf, "error writing btree node at ");
-			bch2_btree_pos_to_text(&buf, c, b);
-			prt_newline(&buf);
+			/* Separate ratelimit_states for hard and soft errors */
+			msg.m.suppress = !ret
+				? bch2_ratelimit()
+				: bch2_ratelimit();
 
-			bch2_io_failures_to_text(&buf, c, &wbio->wbio.failed);
+			prt_printf(&msg.m, "error writing btree node at ");
+			bch2_btree_pos_to_text(&msg.m, c, b);
+			prt_newline(&msg.m);
+
+			bch2_io_failures_to_text(&msg.m, c, &wbio->wbio.failed);
 
 			if (!ret) {
-				prt_printf(&buf, "wrote degraded to ");
+				prt_printf(&msg.m, "wrote degraded to ");
 				struct bch_devs_list d = bch2_bkey_devs(c, bkey_i_to_s_c(&b->key));
-				bch2_devs_list_to_text(&buf, c, &d);
-				prt_newline(&buf);
+				bch2_devs_list_to_text(&msg.m, c, &d);
+				prt_newline(&msg.m);
 			} else {
-				prt_printf(&buf, "%s\n", bch2_err_str(ret));
-				print = bch2_fs_emergency_read_only2(c, &buf);
+				prt_printf(&msg.m, "%s\n", bch2_err_str(ret));
+				bch2_fs_emergency_read_only2(c, &msg.m);
 			}
-
-			if (print)
-				bch2_print_str(c, KERN_ERR, buf.buf);
 		}
 	}
 

@@ -334,12 +334,6 @@ do {									\
 		bch2_print(_c, __VA_ARGS__);				\
 } while (0)
 
-#define bch2_print_str_ratelimited(_c, ...)				\
-do {									\
-	if (!bch2_ratelimit())						\
-		bch2_print_str(_c, __VA_ARGS__);			\
-} while (0)
-
 #define bch_log(c, loglevel, fmt, ...) \
 	bch2_print(c, loglevel bch2_fmt(c, fmt), ##__VA_ARGS__)
 #define bch_log_ratelimited(c, loglevel, fmt, ...) \
