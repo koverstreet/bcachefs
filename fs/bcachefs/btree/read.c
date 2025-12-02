@@ -1098,21 +1098,15 @@ void bch2_btree_node_read(struct btree_trans *trans, struct btree *b,
 					 NULL, &pick, -1);
 
 	if (ret <= 0) {
-		bool print = !bch2_ratelimit();
-		CLASS(printbuf, buf)();
-		bch2_log_msg_start(c, &buf);
+		CLASS(bch_log_msg_ratelimited, msg)(c);
 
-		prt_str(&buf, "btree node read error: no device to read from\n at ");
-		bch2_btree_pos_to_text(&buf, c, b);
-		prt_newline(&buf);
-		bch2_btree_lost_data(c, &buf, b->c.btree_id);
+		prt_str(&msg.m, "btree node read error: no device to read from\n at ");
+		bch2_btree_pos_to_text(&msg.m, c, b);
+		prt_newline(&msg.m);
+		bch2_btree_lost_data(c, &msg.m, b->c.btree_id);
 
-		if (c->recovery.passes_complete & BIT_ULL(BCH_RECOVERY_PASS_check_topology) &&
-		    bch2_fs_emergency_read_only2(c, &buf))
-			print = true;
-
-		if (print)
-			bch2_print_str(c, KERN_ERR, buf.buf);
+		if (c->recovery.passes_complete & BIT_ULL(BCH_RECOVERY_PASS_check_topology))
+			bch2_fs_emergency_read_only2(c, &msg.m);
 
 		set_btree_node_read_error(b);
 		clear_btree_node_read_in_flight(b);
