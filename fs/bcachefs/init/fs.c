@@ -101,34 +101,44 @@ const char * const bch2_write_refs[] = {
 };
 #undef x
 
-static bool should_print_loglevel(struct bch_fs *c, const char *fmt)
+static int kern_soh_to_loglevel(const char *fmt)
 {
-	unsigned loglevel_opt = c->loglevel ?: c->opts.verbose ? 7: 6;
-
-	bool have_soh = fmt[0] == KERN_SOH[0];
-	bool have_loglevel = have_soh && fmt[1] >= '0' && fmt[1] <= '9';
-
-	unsigned loglevel = have_loglevel
-		? fmt[1] - '0'
-		: c->prev_loglevel;
-
-	if (have_loglevel)
-		c->prev_loglevel = loglevel;
-
-	return loglevel <= loglevel_opt;
+	if (fmt[0] == KERN_SOH[0] &&
+	    fmt[1] >= '0' && fmt[1] <= '9')
+		return fmt[1] - '0';
+	else
+		return -1;
 }
 
-void bch2_print_str(struct bch_fs *c, const char *prefix, const char *str)
+static unsigned loglevel_opt(struct bch_fs *c)
 {
-	/* Nothing to print? Nothing to do: */
-	if (!str)
+	return c->loglevel ?: c->opts.verbose ? 7: 6;
+}
+
+void bch2_print_str_loglevel(struct bch_fs *c, int loglevel, const char *str)
+{
+	if (loglevel < 0)
+		loglevel = c->prev_loglevel;
+	else
+		c->prev_loglevel = loglevel;
+
+	if (loglevel > loglevel_opt(c))
 		return;
 
-	if (!should_print_loglevel(c, prefix))
-		return;
-
-#ifndef __KERNEL__
-	prefix = "";
+#ifdef __KERNEL__
+	static const char *prefixes[] = {
+		KERN_SOH "0",
+		KERN_SOH "1",
+		KERN_SOH "2",
+		KERN_SOH "3",
+		KERN_SOH "4",
+		KERN_SOH "5",
+		KERN_SOH "6",
+		KERN_SOH "7",
+	};
+	const char *prefix = loglevel < ARRAY_SIZE(prefixes) ? prefixes[loglevel] : KERN_SOH;
+#else
+	const char *prefix = "";
 #endif
 
 #ifdef __KERNEL__
@@ -140,6 +150,15 @@ void bch2_print_str(struct bch_fs *c, const char *prefix, const char *str)
 	}
 #endif
 	bch2_print_string_as_lines(prefix, str);
+}
+
+void bch2_print_str(struct bch_fs *c, const char *prefix, const char *str)
+{
+	/* Nothing to print? Nothing to do: */
+	if (!str)
+		return;
+
+	bch2_print_str_loglevel(c, kern_soh_to_loglevel(prefix), str);
 }
 
 __printf(2, 0)
@@ -169,7 +188,13 @@ void bch2_print_opts(struct bch_opts *opts, const char *fmt, ...)
 
 void __bch2_print(struct bch_fs *c, const char *fmt, ...)
 {
-	if (!should_print_loglevel(c, fmt))
+	int loglevel = kern_soh_to_loglevel(fmt);
+	if (loglevel < 0)
+		loglevel = c->prev_loglevel;
+	else
+		c->prev_loglevel = loglevel;
+
+	if (loglevel > loglevel_opt(c))
 		return;
 
 #ifndef __KERNEL__

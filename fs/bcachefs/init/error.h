@@ -18,13 +18,6 @@ struct work_struct;
 
 /* Error messages: */
 
-void __bch2_log_msg_start(const char *, struct printbuf *);
-
-static inline void bch2_log_msg_start(struct bch_fs *c, struct printbuf *out)
-{
-	__bch2_log_msg_start(c->name, out);
-}
-
 /*
  * Inconsistency errors: The on disk data is inconsistent. If these occur during
  * initial recovery, they don't indicate a bug in the running code - we walk all

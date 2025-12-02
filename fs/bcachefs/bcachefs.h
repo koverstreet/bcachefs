@@ -304,6 +304,7 @@
 
 #define bch2_fmt(_c, fmt)		bch2_log_msg(_c, fmt "\n")
 
+void bch2_print_str_loglevel(struct bch_fs *, int, const char *);
 void bch2_print_str(struct bch_fs *, const char *, const char *);
 
 __printf(2, 3)
@@ -1056,5 +1057,52 @@ static inline bool bch2_dev_rotational(struct bch_fs *c, unsigned dev)
 {
 	return dev != BCH_SB_MEMBER_INVALID && test_bit(dev, c->devs_rotational.d);
 }
+
+void __bch2_log_msg_start(const char *, struct printbuf *);
+
+static inline void bch2_log_msg_start(struct bch_fs *c, struct printbuf *out)
+{
+	__bch2_log_msg_start(c->name, out);
+}
+
+struct bch_log_msg {
+	struct bch_fs	*c;
+	u8		loglevel;
+	struct printbuf	m;
+};
+
+static inline void bch2_log_msg_exit(struct bch_log_msg *msg)
+{
+	if (!msg->m.suppress)
+		bch2_print_str_loglevel(msg->c, msg->loglevel, msg->m.buf);
+	printbuf_exit(&msg->m);
+}
+
+static inline struct bch_log_msg bch2_log_msg_init(struct bch_fs *c, bool suppress)
+{
+	struct printbuf buf = PRINTBUF;
+	bch2_log_msg_start(c, &buf);
+	return (struct bch_log_msg) {
+		.c		= c,
+		.loglevel	= 3, /* KERN_ERR */
+		.m		= buf,
+	};
+}
+
+DEFINE_CLASS(bch_log_msg, struct bch_log_msg,
+	     bch2_log_msg_exit(&_T),
+	     bch2_log_msg_init(c, false),
+	     struct bch_fs *c)
+
+/*
+ * Open coded EXTEND_CLASS, because we need the constructor to be a macro for
+ * ratelimiting to work correctly
+ */
+
+typedef class_bch_log_msg_t class_bch_log_msg_ratelimited_t;
+
+static inline void class_bch_log_msg_ratelimited_destructor(class_bch_log_msg_t *p)
+{ bch2_log_msg_exit(p); }
+#define class_bch_log_msg_ratelimited_constructor(_c)	bch2_log_msg_init(_c, bch2_ratelimit())
 
 #endif /* _BCACHEFS_H */
