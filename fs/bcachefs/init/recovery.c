@@ -123,8 +123,10 @@ int bch2_btree_lost_data(struct bch_fs *c,
 		break;
 	}
 
-	if (write_sb)
+	if (write_sb) {
 		bch2_write_super(c);
+		msg->suppress = false;
+	}
 	return ret;
 }
 

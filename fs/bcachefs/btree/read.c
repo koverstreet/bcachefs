@@ -1010,14 +1010,26 @@ start:
 	 * only print retry success if we read from a replica with no errors
 	 */
 	if (ret) {
+		/*
+		 * Initialize buf.suppress before btree_lost_data(); that will
+		 * clear it if it did any work (scheduling recovery passes,
+		 * marking superblock
+		 */
+		buf.suppress = bch2_ratelimit();
+
 		set_btree_node_read_error(b);
 		bch2_btree_lost_data(c, &buf, b->c.btree_id);
 		prt_printf(&buf, "ret %s", bch2_err_str(ret));
 	} else if (failed.nr) {
+		/* Separate ratelimit states for soft vs. hard errors */
+		buf.suppress = bch2_ratelimit();
+
 		if (!bch2_dev_io_failures(&failed, rb->pick.ptr.dev))
 			prt_printf(&buf, "retry success");
 		else
 			prt_printf(&buf, "repair success");
+	} else {
+		buf.suppress = true;
 	}
 
 	if ((failed.nr ||
@@ -1029,8 +1041,8 @@ start:
 	}
 	prt_newline(&buf);
 
-	if (ret || failed.nr)
-		bch2_print_str_ratelimited(c, KERN_ERR, buf.buf);
+	if (!buf.suppress)
+		bch2_print_str(c, ret ? KERN_ERR : KERN_NOTICE, buf.buf);
 
 	/*
 	 * Do this late; unlike other btree_node_need_rewrite() cases if a node

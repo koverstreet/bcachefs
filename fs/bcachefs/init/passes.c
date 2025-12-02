@@ -353,6 +353,8 @@ int __bch2_run_explicit_recovery_pass(struct bch_fs *c,
 	if (!recovery_pass_needs_set(c, pass, &flags))
 		return 0;
 
+	out->suppress = false;
+
 	bool in_recovery = test_bit(BCH_FS_in_recovery, &c->flags);
 	bool rewind = in_recovery &&
 		r->curr_pass > pass &&
