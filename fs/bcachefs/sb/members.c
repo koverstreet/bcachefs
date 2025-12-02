@@ -116,6 +116,9 @@ int bch2_sb_members_v2_init(struct bch_fs *c)
 				DIV_ROUND_UP(sizeof(*mi2) +
 					     sizeof(struct bch_member) * c->sb.nr_devices,
 					     sizeof(u64)));
+		if (!mi2)
+			return bch_err_throw(c, ENOSPC_sb_members_v2);
+
 		mi1 = bch2_sb_field_get(c->disk_sb.sb, members_v1);
 		memcpy(&mi2->_members[0], &mi1->_members[0],
 		       BCH_MEMBER_V1_BYTES * c->sb.nr_devices);
