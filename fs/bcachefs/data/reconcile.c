@@ -1465,7 +1465,7 @@ static int do_reconcile_extent(struct moving_context *ctxt,
 		reconcile_set_data_opts(trans, NULL, data_pos.btree, k, &opts, &data_opts);
 
 		struct bch_devs_list devs_have = bch2_data_update_devs_keeping(c, &data_opts, k);
-		int ret = bch2_can_do_write(c, &data_opts, k, &devs_have);
+		int ret = bch2_can_do_write(c, &opts, &data_opts, k, &devs_have);
 		if (ret) {
 			if (is_reconcile_pending_err(c, k, ret))
 				return 0;

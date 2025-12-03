@@ -730,39 +730,44 @@ static unsigned bch2_bkey_durability_on_target(struct bch_fs *c, struct bkey_s_c
 	return durability;
 }
 
-static int bch2_can_do_write_btree(struct bch_fs *c, struct data_update_opts *opts, struct bkey_s_c k)
+static int bch2_can_do_write_btree(struct bch_fs *c,
+				   struct bch_inode_opts *opts,
+				   struct data_update_opts *data_opts, struct bkey_s_c k)
 {
-	enum bch_watermark watermark = opts->commit_flags & BCH_WATERMARK_MASK;
+	enum bch_watermark watermark = data_opts->commit_flags & BCH_WATERMARK_MASK;
 
-	if (opts->target)
-		if (durability_available_on_target(c, watermark, opts->target) >
-		    bch2_bkey_durability_on_target(c, k, opts->target))
-			return 0;
+	if (durability_available_on_target(c, watermark, data_opts->target) >
+	    bch2_bkey_durability_on_target(c, k, data_opts->target))
+		return 0;
 
-	if (!opts->target || !(opts->write_flags & BCH_WRITE_only_specified_devs))
-		if (durability_available_on_target(c, watermark, 0) >
-		    bch2_bkey_durability(c, k))
+	if (!(data_opts->write_flags & BCH_WRITE_only_specified_devs)) {
+		unsigned d = bch2_bkey_durability(c, k);
+		if (d < opts->data_replicas &&
+		    d < durability_available_on_target(c, watermark, 0))
 			return 0;
+	}
 
 	return bch_err_throw(c, data_update_fail_no_rw_devs);
 }
 
-int bch2_can_do_write(struct bch_fs *c, struct data_update_opts *opts,
+int bch2_can_do_write(struct bch_fs *c,
+		      struct bch_inode_opts *opts,
+		      struct data_update_opts *data_opts,
 		      struct bkey_s_c k, struct bch_devs_list *devs_have)
 {
-	enum bch_watermark watermark = opts->commit_flags & BCH_WATERMARK_MASK;
+	enum bch_watermark watermark = data_opts->commit_flags & BCH_WATERMARK_MASK;
 
-	if ((opts->write_flags & BCH_WRITE_alloc_nowait) &&
+	if ((data_opts->write_flags & BCH_WRITE_alloc_nowait) &&
 	    unlikely(c->allocator.open_buckets_nr_free <= bch2_open_buckets_reserved(watermark)))
 		return bch_err_throw(c, data_update_fail_would_block);
 
 	guard(rcu)();
 
 	if (bkey_is_btree_ptr(k.k))
-		return bch2_can_do_write_btree(c, opts, k);
+		return bch2_can_do_write_btree(c, opts, data_opts, k);
 
-	unsigned target = opts->write_flags & BCH_WRITE_only_specified_devs
-		? opts->target
+	unsigned target = data_opts->write_flags & BCH_WRITE_only_specified_devs
+		? data_opts->target
 		: 0;
 	struct bch_devs_mask devs = target_rw_devs(c, BCH_DATA_user, target);
 
@@ -991,7 +996,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 		 *   single durability=2 device)
 		 */
 		if (data_opts.type != BCH_DATA_UPDATE_copygc) {
-			ret = bch2_can_do_write(c, &m->opts, k, &m->op.devs_have);
+			ret = bch2_can_do_write(c, io_opts, &m->opts, k, &m->op.devs_have);
 			if (ret)
 				goto out;
 		}
