@@ -889,7 +889,9 @@ struct bch_fs {
 	reflink_gc_table	reflink_gc_table;
 	size_t			reflink_gc_nr;
 
+#ifndef NO_BCACHEFS_FS
 	struct bch_fs_vfs	vfs;
+#endif
 
 	/* QUOTAS */
 	struct bch_memquota_type quotas[QTYP_NR];
