@@ -1491,10 +1491,8 @@ struct bch_fs *bch2_fs_open(darray_const_str *devices,
 		prt_printf(&msg, "error starting filesystem: %s", bch2_err_str(ret));
 		bch2_print_string_as_lines(KERN_ERR, msg.buf);
 	} else if (msg.pos) {
-		CLASS(printbuf, msg_with_prefix)();
-		bch2_log_msg_start(c, &msg_with_prefix);
-		prt_str(&msg_with_prefix, msg.buf);
-		bch2_print_str(c, KERN_INFO, msg_with_prefix.buf);
+		CLASS(bch_log_msg_level, msg_with_prefix)(c, 6);
+		prt_str(&msg_with_prefix.m, msg.buf);
 	}
 
 	return c;

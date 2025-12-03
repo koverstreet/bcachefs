@@ -718,13 +718,12 @@ static int bch2_trigger_stripe_ptr(struct btree_trans *trans,
 
 		if (!m || !m->alive) {
 			gc_stripe_unlock(m);
-			CLASS(printbuf, buf)();
-			bch2_log_msg_start(c, &buf);
-			prt_printf(&buf, "pointer to nonexistent stripe %llu\n  while marking ",
+
+			CLASS(bch_log_msg, msg)(c);
+			prt_printf(&msg.m, "pointer to nonexistent stripe %llu\n  while marking ",
 				   (u64) p.ec.idx);
-			bch2_bkey_val_to_text(&buf, c, k);
-			__bch2_inconsistent_error(c, &buf);
-			bch2_print_str(c, KERN_ERR, buf.buf);
+			bch2_bkey_val_to_text(&msg.m, c, k);
+			__bch2_inconsistent_error(c, &msg.m);
 			return bch_err_throw(c, trigger_stripe_pointer);
 		}
 
@@ -931,23 +930,20 @@ static int __bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 		return PTR_ERR(a);
 
 	if (a->v.data_type && type && a->v.data_type != type) {
-		CLASS(printbuf, buf)();
-		bch2_log_msg_start(c, &buf);
-		prt_printf(&buf, "bucket %llu:%llu gen %u different types of data in same bucket: %s, %s\n"
+		CLASS(bch_log_msg, msg)(c);
+		prt_printf(&msg.m, "bucket %llu:%llu gen %u different types of data in same bucket: %s, %s\n"
 			   "while marking %s\n",
 			   iter.pos.inode, iter.pos.offset, a->v.gen,
 			   bch2_data_type_str(a->v.data_type),
 			   bch2_data_type_str(type),
 			   bch2_data_type_str(type));
 
-		bch2_count_fsck_err(c, bucket_metadata_type_mismatch, &buf);
+		bch2_count_fsck_err(c, bucket_metadata_type_mismatch, &msg.m);
 
-		ret = bch2_run_explicit_recovery_pass(c, &buf,
-					BCH_RECOVERY_PASS_check_allocations, 0);
+		try(bch2_run_explicit_recovery_pass(c, &msg.m,
+					BCH_RECOVERY_PASS_check_allocations, 0));
 
-		/* Always print, this is always fatal */
-		bch2_print_str(c, KERN_ERR, buf.buf);
-		return ret ?: bch_err_throw(c, metadata_bucket_inconsistency);
+		return bch_err_throw(c, metadata_bucket_inconsistency);
 	}
 
 	if (a->v.data_type	!= type ||

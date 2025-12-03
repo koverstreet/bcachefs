@@ -490,13 +490,10 @@ STORE(bch2_fs)
 		__bch2_delete_dead_snapshots(c);
 
 	if (attr == &sysfs_trigger_emergency_read_only) {
-		struct printbuf buf = PRINTBUF;
-		bch2_log_msg_start(c, &buf);
+		CLASS(bch_log_msg, msg)(c);
 
-		prt_printf(&buf, "shutdown by sysfs\n");
-		bch2_fs_emergency_read_only2(c, &buf);
-		bch2_print_str(c, KERN_ERR, buf.buf);
-		printbuf_exit(&buf);
+		prt_printf(&msg.m, "shutdown by sysfs\n");
+		bch2_fs_emergency_read_only2(c, &msg.m);
 	}
 
 #ifdef CONFIG_BCACHEFS_TESTS

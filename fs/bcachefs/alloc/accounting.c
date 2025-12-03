@@ -824,7 +824,6 @@ static int accounting_read_mem_fixups(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;
 	struct bch_accounting_mem *acc = &c->accounting;
-	CLASS(printbuf, underflow_err)();
 
 	darray_for_each_reverse(acc->k, i) {
 		struct disk_accounting_pos acc_k;
@@ -863,6 +862,10 @@ static int accounting_read_mem_fixups(struct btree_trans *trans)
 	eytzinger0_sort(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
 			accounting_pos_cmp, NULL);
 
+	CLASS(bch_log_msg, underflow_err)(c);
+	prt_printf(&underflow_err.m, "Accounting underflow for\n");
+	underflow_err.m.suppress = true;
+
 	for (unsigned i = 0; i < acc->k.nr; i++) {
 		struct disk_accounting_pos k;
 		bpos_to_disk_accounting_pos(&k, acc->k.data[i].pos);
@@ -883,15 +886,12 @@ static int accounting_read_mem_fixups(struct btree_trans *trans)
 			underflow |= (s64) v[j] < 0;
 
 		if (underflow) {
-			if (!underflow_err.pos) {
-				bch2_log_msg_start(c, &underflow_err);
-				prt_printf(&underflow_err, "Accounting underflow for\n");
-			}
-			bch2_accounting_key_to_text(&underflow_err, c, &k);
+			bch2_accounting_key_to_text(&underflow_err.m, c, &k);
 
 			for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
-				prt_printf(&underflow_err, " %lli", v[j]);
-			prt_newline(&underflow_err);
+				prt_printf(&underflow_err.m, " %lli", v[j]);
+			prt_newline(&underflow_err.m);
+			underflow_err.m.suppress = false;
 		}
 
 		guard(preempt)();
@@ -922,17 +922,10 @@ static int accounting_read_mem_fixups(struct btree_trans *trans)
 		}
 	}
 
-	if (underflow_err.pos) {
-		bool print = bch2_count_fsck_err(c, accounting_key_underflow, &underflow_err);
-		unsigned pos = underflow_err.pos;
-		int ret = bch2_run_explicit_recovery_pass(c, &underflow_err,
-						      BCH_RECOVERY_PASS_check_allocations, 0);
-		print |= underflow_err.pos != pos;
-
-		if (print)
-			bch2_print_str(c, KERN_ERR, underflow_err.buf);
-		if (ret)
-			return ret;
+	if (!underflow_err.m.suppress) {
+		bch2_count_fsck_err(c, accounting_key_underflow, &underflow_err.m);
+		try(bch2_run_explicit_recovery_pass(c, &underflow_err.m,
+						    BCH_RECOVERY_PASS_check_allocations, 0));
 	}
 
 	return 0;

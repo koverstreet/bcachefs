@@ -112,17 +112,14 @@ int __bch2_topology_error(struct bch_fs *c, struct printbuf *out)
 
 int bch2_fs_topology_error(struct bch_fs *c, const char *fmt, ...)
 {
-	CLASS(printbuf, buf)();
-	bch2_log_msg_start(c, &buf);
+	CLASS(bch_log_msg, msg)(c);
 
 	va_list args;
 	va_start(args, fmt);
-	prt_vprintf(&buf, fmt, args);
+	prt_vprintf(&msg.m, fmt, args);
 	va_end(args);
 
-	int ret = __bch2_topology_error(c, &buf);
-	bch2_print_str(c, KERN_ERR, buf.buf);
-	return ret;
+	return __bch2_topology_error(c, &msg.m);
 }
 
 void bch2_fatal_error(struct bch_fs *c)

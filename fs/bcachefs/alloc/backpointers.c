@@ -897,32 +897,30 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 	    sectors[ALLOC_cached] > a->cached_sectors ||
 	    sectors[ALLOC_stripe] > a->stripe_sectors) {
 		if (*nr_iters) {
-			CLASS(printbuf, buf)();
-			bch2_log_msg_start(c, &buf);
+			CLASS(bch_log_msg, msg)(c);
 
-			prt_printf(&buf, "backpointer sectors > bucket sectors, but found no bad backpointers\n"
+			prt_printf(&msg.m, "backpointer sectors > bucket sectors, but found no bad backpointers\n"
 				   "bucket %llu:%llu data type %s, counters\n",
 				   alloc_k.k->p.inode,
 				   alloc_k.k->p.offset,
 				   __bch2_data_types[a->data_type]);
 			if (sectors[ALLOC_dirty]  > a->dirty_sectors)
-				prt_printf(&buf, "dirty: %u > %u\n",
+				prt_printf(&msg.m, "dirty: %u > %u\n",
 					   sectors[ALLOC_dirty], a->dirty_sectors);
 			if (sectors[ALLOC_cached] > a->cached_sectors)
-				prt_printf(&buf, "cached: %u > %u\n",
+				prt_printf(&msg.m, "cached: %u > %u\n",
 					   sectors[ALLOC_cached], a->cached_sectors);
 			if (sectors[ALLOC_stripe] > a->stripe_sectors)
-				prt_printf(&buf, "stripe: %u > %u\n",
+				prt_printf(&msg.m, "stripe: %u > %u\n",
 					   sectors[ALLOC_stripe], a->stripe_sectors);
 
 			for_each_btree_key_max_norestart(trans, iter, BTREE_ID_backpointers,
 						bucket_pos_to_bp_start(ca, alloc_k.k->p),
 						bucket_pos_to_bp_end(ca, alloc_k.k->p), 0, bp_k, ret) {
-				bch2_bkey_val_to_text(&buf, c, bp_k);
-				prt_newline(&buf);
+				bch2_bkey_val_to_text(&msg.m, c, bp_k);
+				prt_newline(&msg.m);
 			}
 
-			bch2_print_str(c, KERN_ERR, buf.buf);
 			__WARN();
 			return ret;
 		}

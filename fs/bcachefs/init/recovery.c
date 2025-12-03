@@ -924,13 +924,9 @@ int bch2_fs_recovery(struct bch_fs *c)
 	bch2_flush_fsck_errs(c);
 
 	if (ret) {
-		CLASS(printbuf, buf)();
-		bch2_log_msg_start(c, &buf);
-
-		prt_printf(&buf, "error in recovery: %s\n", bch2_err_str(ret));
-		bch2_fs_emergency_read_only2(c, &buf);
-
-		bch2_print_str(c, KERN_ERR, buf.buf);
+		CLASS(bch_log_msg, msg)(c);
+		prt_printf(&msg.m, "error in recovery: %s\n", bch2_err_str(ret));
+		bch2_fs_emergency_read_only2(c, &msg.m);
 	}
 	return ret;
 }

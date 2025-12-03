@@ -257,14 +257,12 @@ static inline int bch2_extent_update_i_size_sectors(struct btree_trans *trans,
 		s64 bi_sectors = le64_to_cpu(inode->v.bi_sectors);
 		if (unlikely(bi_sectors + i_sectors_delta < 0)) {
 			struct bch_fs *c = trans->c;
-			CLASS(printbuf, buf)();
-			bch2_log_msg_start(c, &buf);
-			prt_printf(&buf, "inode %llu i_sectors underflow: %lli + %lli < 0",
+
+			CLASS(bch_log_msg, msg)(c);
+			prt_printf(&msg.m, "inode %llu i_sectors underflow: %lli + %lli < 0",
 				   extent_iter->pos.inode, bi_sectors, i_sectors_delta);
 
-			bool print = bch2_count_fsck_err(c, inode_i_sectors_underflow, &buf);
-			if (print)
-				bch2_print_str(c, KERN_ERR, buf.buf);
+			msg.m.suppress = !bch2_count_fsck_err(c, inode_i_sectors_underflow, &msg.m);
 
 			if (i_sectors_delta < 0)
 				i_sectors_delta = -bi_sectors;

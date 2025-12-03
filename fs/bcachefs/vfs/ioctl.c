@@ -172,41 +172,35 @@ static int bch2_ioc_setlabel(struct bch_fs *c,
 
 static int bch2_ioc_goingdown(struct bch_fs *c, u32 __user *arg)
 {
-	u32 flags;
-	int ret = 0;
-
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 
-	if (get_user(flags, arg))
-		return -EFAULT;
+	u32 flags;
+	try(get_user(flags, arg));
 
-	CLASS(printbuf, buf)();
-	bch2_log_msg_start(c, &buf);
+	CLASS(bch_log_msg, msg)(c);
+	msg.m.suppress = true; /* cleared by ERO */
 
-	prt_printf(&buf, "shutdown by ioctl type %u", flags);
+	prt_printf(&msg.m, "shutdown by ioctl type %u", flags);
 
 	switch (flags) {
 	case FSOP_GOING_FLAGS_DEFAULT:
-		ret = bdev_freeze(c->vfs_sb->s_bdev);
-		if (ret)
-			break;
+		try(bdev_freeze(c->vfs_sb->s_bdev));
+
 		bch2_journal_flush(&c->journal);
-		bch2_fs_emergency_read_only2(c, &buf);
+		bch2_fs_emergency_read_only2(c, &msg.m);
+
 		bdev_thaw(c->vfs_sb->s_bdev);
-		break;
+		return 0;
 	case FSOP_GOING_FLAGS_LOGFLUSH:
 		bch2_journal_flush(&c->journal);
 		fallthrough;
 	case FSOP_GOING_FLAGS_NOLOGFLUSH:
-		bch2_fs_emergency_read_only2(c, &buf);
-		break;
+		bch2_fs_emergency_read_only2(c, &msg.m);
+		return 0;
 	default:
 		return -EINVAL;
 	}
-
-	bch2_print_str(c, KERN_ERR, buf.buf);
-	return ret;
 }
 
 static long __bch2_ioctl_subvolume_create(struct bch_fs *c, struct file *filp,

@@ -704,8 +704,8 @@ static void bch2_maybe_schedule_btree_bitmap_gc_work(struct work_struct *work)
 	if (bch2_recovery_pass_want_ratelimit(c, BCH_RECOVERY_PASS_btree_bitmap_gc, 1000))
 		return;
 
-	CLASS(printbuf, buf)();
-	bch2_log_msg_start(c, &buf);
+	CLASS(bch_log_msg_level, msg)(c, 5);
+	msg.m.suppress = true; /* run_explicit_recovery_pass will unsuppress */
 
 	bool want_schedule = false;
 	for_each_member_device(c, ca) {
@@ -716,21 +716,19 @@ static void bch2_maybe_schedule_btree_bitmap_gc_work(struct work_struct *work)
 		u64 bitmap_sectors = hweight64(ca->mi.btree_allocated_bitmap) << ca->mi.btree_bitmap_shift;
 
 		if (btree_sectors * 4 < bitmap_sectors) {
-			prt_printf(&buf, "%s has ", ca->name);
-			prt_human_readable_u64(&buf, btree_sectors << 9);
-			prt_printf(&buf, " btree buckets and ");
-			prt_human_readable_u64(&buf, bitmap_sectors << 9);
-			prt_printf(&buf, " marked in bitmap\n");
+			prt_printf(&msg.m, "%s has ", ca->name);
+			prt_human_readable_u64(&msg.m, btree_sectors << 9);
+			prt_printf(&msg.m, " btree buckets and ");
+			prt_human_readable_u64(&msg.m, bitmap_sectors << 9);
+			prt_printf(&msg.m, " marked in bitmap\n");
 			want_schedule = true;
 		}
 	}
 
-	if (want_schedule) {
-		bch2_run_explicit_recovery_pass(c, &buf,
+	if (want_schedule)
+		bch2_run_explicit_recovery_pass(c, &msg.m,
 			BCH_RECOVERY_PASS_btree_bitmap_gc,
 			RUN_RECOVERY_PASS_ratelimit);
-		bch2_print_str(c, KERN_NOTICE, buf.buf);
-	}
 
 	queue_delayed_work(system_long_wq, &c->maybe_schedule_btree_bitmap_gc, HZ * 60 * 60 * 24);
 }

@@ -21,17 +21,12 @@ static int bch2_subvolume_delete(struct btree_trans *, u32);
 
 static int bch2_subvolume_missing(struct bch_fs *c, u32 subvolid)
 {
-	CLASS(printbuf, buf)();
-	bch2_log_msg_start(c, &buf);
+	CLASS(bch_log_msg, msg)(c);
 
-	prt_printf(&buf, "missing subvolume %u", subvolid);
-	bool print = bch2_count_fsck_err(c, subvol_missing, &buf);
+	prt_printf(&msg.m, "missing subvolume %u", subvolid);
+	msg.m.suppress = !bch2_count_fsck_err(c, subvol_missing, &msg.m);
 
-	int ret = bch2_run_explicit_recovery_pass(c, &buf,
-					BCH_RECOVERY_PASS_check_inodes, 0);
-	if (print)
-		bch2_print_str(c, KERN_ERR, buf.buf);
-	return ret;
+	return bch2_run_explicit_recovery_pass(c, &msg.m, BCH_RECOVERY_PASS_check_inodes, 0);
 }
 
 static struct bpos subvolume_children_pos(struct bkey_s_c k)

@@ -735,16 +735,13 @@ void bch2_trans_node_reinit_iter(struct btree_trans *trans, struct btree *b)
 static noinline_for_stack int btree_node_root_err(struct btree_trans *trans, struct btree *b)
 {
 	struct bch_fs *c = trans->c;
-	CLASS(printbuf, buf)();
-	bch2_log_msg_start(c, &buf);
+	CLASS(bch_log_msg, msg)(c);
 
-	prt_str(&buf, "btree root doesn't cover expected range:\n");
-	bch2_btree_pos_to_text(&buf, c, b);
-	prt_newline(&buf);
+	prt_str(&msg.m, "btree root doesn't cover expected range:\n");
+	bch2_btree_pos_to_text(&msg.m, c, b);
+	prt_newline(&msg.m);
 
-	int ret = __bch2_topology_error(c, &buf);
-	bch2_print_str(trans->c, KERN_ERR, buf.buf);
-	return ret;
+	return __bch2_topology_error(c, &msg.m);
 }
 
 static inline int btree_path_lock_root(struct btree_trans *trans,
@@ -910,17 +907,15 @@ static noinline_for_stack int btree_node_missing_err(struct btree_trans *trans,
 						     struct btree_path *path)
 {
 	struct bch_fs *c = trans->c;
-	CLASS(printbuf, buf)();
+	CLASS(bch_log_msg, msg)(c);
 
-	prt_str(&buf, "node not found at pos: ");
-	bch2_bpos_to_text(&buf, path->pos);
-	prt_str(&buf, "\n  within parent node ");
-	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&path_l(path)->b->key));
-	prt_newline(&buf);
+	prt_str(&msg.m, "node not found at pos: ");
+	bch2_bpos_to_text(&msg.m, path->pos);
+	prt_str(&msg.m, "\n  within parent node ");
+	bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&path_l(path)->b->key));
+	prt_newline(&msg.m);
 
-	int ret = __bch2_topology_error(c, &buf);
-	bch2_print_str(trans->c, KERN_ERR, buf.buf);
-	return ret;
+	return __bch2_topology_error(c, &msg.m);
 }
 
 static noinline_for_stack int btree_node_gap_err(struct btree_trans *trans,
@@ -928,19 +923,17 @@ static noinline_for_stack int btree_node_gap_err(struct btree_trans *trans,
 						 struct bkey_i *k)
 {
 	struct bch_fs *c = trans->c;
-	CLASS(printbuf, buf)();
+	CLASS(bch_log_msg, msg)(c);
 
-	prt_str(&buf, "node doesn't cover expected range at pos: ");
-	bch2_bpos_to_text(&buf, path->pos);
-	prt_str(&buf, "\n  within parent node ");
-	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&path_l(path)->b->key));
-	prt_str(&buf, "\n  but got node: ");
-	bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(k));
-	prt_newline(&buf);
+	prt_str(&msg.m, "node doesn't cover expected range at pos: ");
+	bch2_bpos_to_text(&msg.m, path->pos);
+	prt_str(&msg.m, "\n  within parent node ");
+	bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&path_l(path)->b->key));
+	prt_str(&msg.m, "\n  but got node: ");
+	bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(k));
+	prt_newline(&msg.m);
 
-	int ret = __bch2_topology_error(c, &buf);
-	bch2_print_str(trans->c, KERN_ERR, buf.buf);
-	return ret;
+	return __bch2_topology_error(c, &msg.m);
 }
 
 static noinline int btree_node_iter_and_journal_peek(struct btree_trans *trans,
@@ -1673,13 +1666,10 @@ void bch2_trans_paths_to_text(struct printbuf *out, struct btree_trans *trans)
 static noinline __cold
 void __bch2_dump_trans_paths_updates(struct btree_trans *trans, bool nosort)
 {
-	CLASS(printbuf, buf)();
-	bch2_log_msg_start(trans->c, &buf);
+	CLASS(bch_log_msg, msg)(trans->c);
 
-	__bch2_trans_paths_to_text(&buf, trans, nosort);
-	bch2_trans_updates_to_text(&buf, trans);
-
-	bch2_print_str(trans->c, KERN_ERR, buf.buf);
+	__bch2_trans_paths_to_text(&msg.m, trans, nosort);
+	bch2_trans_updates_to_text(&msg.m, trans);
 }
 
 noinline __cold
@@ -3297,13 +3287,11 @@ void *__bch2_trans_kmalloc(struct btree_trans *trans, size_t size, unsigned long
 
 	if (WARN_ON_ONCE(new_bytes > BTREE_TRANS_MEM_MAX)) {
 #ifdef CONFIG_BCACHEFS_TRANS_KMALLOC_TRACE
-		CLASS(printbuf, buf)();
-		bch2_log_msg_start(c, &buf);
-		prt_printf(&buf, "bump allocator exceeded BTREE_TRANS_MEM_MAX (%u)\n",
+		CLASS(bch_log_msg, msg)(c);
+		prt_printf(&msg.m, "bump allocator exceeded BTREE_TRANS_MEM_MAX (%u)\n",
 			   BTREE_TRANS_MEM_MAX);
 
-		bch2_trans_kmalloc_trace_to_text(&buf, &trans->trans_kmalloc_trace);
-		bch2_print_str(c, KERN_ERR, buf.buf);
+		bch2_trans_kmalloc_trace_to_text(&msg.m, &trans->trans_kmalloc_trace);
 #endif
 	}
 
@@ -3655,18 +3643,16 @@ static void check_btree_paths_leaked(struct btree_trans *trans)
 		struct btree_path *path;
 		unsigned i;
 
-		CLASS(printbuf, buf)();
-		bch2_log_msg_start(c, &buf);
+		CLASS(bch_log_msg, msg)(c);
 
-		prt_printf(&buf, "btree paths leaked from %s!\n", trans->fn);
+		prt_printf(&msg.m, "btree paths leaked from %s!\n", trans->fn);
 		trans_for_each_path(trans, path, i)
 			if (path->ref)
-				prt_printf(&buf, "btree %s %pS\n",
+				prt_printf(&msg.m, "btree %s %pS\n",
 					   bch2_btree_id_str(path->btree_id),
 					   (void *) path->ip_allocated);
 
-		bch2_fs_emergency_read_only2(c, &buf);
-		bch2_print_str(c, KERN_ERR, buf.buf);
+		bch2_fs_emergency_read_only2(c, &msg.m);
 	}
 }
 #else

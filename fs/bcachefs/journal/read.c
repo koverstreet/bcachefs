@@ -1251,33 +1251,30 @@ err:
 noinline_for_stack
 static void bch2_journal_print_checksum_error(struct bch_fs *c, struct journal_replay *j)
 {
-	CLASS(printbuf, buf)();
-	bch2_log_msg_start(c, &buf);
+	CLASS(bch_log_msg, msg)(c);
 
 	enum bch_csum_type csum_type = JSET_CSUM_TYPE(&j->j);
 	bool have_good = false;
 
-	prt_printf(&buf, "invalid journal checksum(s) at seq %llu ", le64_to_cpu(j->j.seq));
-	bch2_journal_datetime_to_text(&buf, &j->j);
-	prt_newline(&buf);
+	prt_printf(&msg.m, "invalid journal checksum(s) at seq %llu ", le64_to_cpu(j->j.seq));
+	bch2_journal_datetime_to_text(&msg.m, &j->j);
+	prt_newline(&msg.m);
 
 	darray_for_each(j->ptrs, ptr)
 		if (!ptr->csum_good) {
-			bch2_journal_ptr_to_text(&buf, c, ptr);
-			prt_char(&buf, ' ');
-			bch2_csum_to_text(&buf, csum_type, ptr->csum);
-			prt_newline(&buf);
+			bch2_journal_ptr_to_text(&msg.m, c, ptr);
+			prt_char(&msg.m, ' ');
+			bch2_csum_to_text(&msg.m, csum_type, ptr->csum);
+			prt_newline(&msg.m);
 		} else {
 			have_good = true;
 		}
 
-	prt_printf(&buf, "should be ");
-	bch2_csum_to_text(&buf, csum_type, j->j.csum);
+	prt_printf(&msg.m, "should be ");
+	bch2_csum_to_text(&msg.m, csum_type, j->j.csum);
 
 	if (have_good)
-		prt_printf(&buf, "\n(had good copy on another device)");
-
-	bch2_print_str(c, KERN_ERR, buf.buf);
+		prt_printf(&msg.m, "\n(had good copy on another device)");
 }
 
 struct u64_range bch2_journal_entry_missing_range(struct bch_fs *c, u64 start, u64 end)

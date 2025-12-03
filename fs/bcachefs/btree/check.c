@@ -537,14 +537,10 @@ static int bch2_topology_check_root(struct btree_trans *trans, enum btree_id btr
 	if (!r->error)
 		return 0;
 
-	CLASS(printbuf, buf)();
-	bch2_log_msg_start(c, &buf);
-	prt_printf(&buf, "btree root ");
-	bch2_btree_id_to_text(&buf, btree);
-	prt_printf(&buf, " unreadable: %s\n", bch2_err_str(r->error));
-
-	int ret = 0;
-	bool print = true;
+	CLASS(bch_log_msg, msg)(c);
+	prt_printf(&msg.m, "btree root ");
+	bch2_btree_id_to_text(&msg.m, btree);
+	prt_printf(&msg.m, " unreadable: %s\n", bch2_err_str(r->error));
 
 	if (!btree_id_recovers_from_scan(btree)) {
 		r->alive = false;
@@ -552,22 +548,19 @@ static int bch2_topology_check_root(struct btree_trans *trans, enum btree_id btr
 		bch2_btree_root_alloc_fake_trans(trans, btree, 0);
 		*reconstructed_root = true;
 
-		ret = bch2_btree_lost_data(c, &buf, btree);
+		try(bch2_btree_lost_data(c, &msg.m, btree));
 	} else {
-		ret = bch2_btree_has_scanned_nodes(c, btree, &buf);
+		int ret = bch2_btree_has_scanned_nodes(c, btree, &msg.m);
+		if (ret < 0)
+			return ret;
 
-		if (ret < 0) {
-			/*
-			 * just log our message, we'll be rewinding to run
-			 * btree node scan
-			 */
-		} else if (!ret) {
-			print = false;
+		if (!ret) {
+			msg.m.suppress = true;
 
-			__fsck_err(trans,
-				   FSCK_CAN_FIX|(btree_id_can_reconstruct(btree) ? FSCK_AUTOFIX : 0),
-				   btree_root_unreadable_and_scan_found_nothing,
-				   "%sbtree node scan found no nodes, continue?", buf.buf);
+			__ret_fsck_err(trans,
+				       FSCK_CAN_FIX|(btree_id_can_reconstruct(btree) ? FSCK_AUTOFIX : 0),
+				       btree_root_unreadable_and_scan_found_nothing,
+				       "%sbtree node scan found no nodes, continue?", msg.m.buf);
 
 			r->alive = false;
 			r->error = 0;
@@ -582,15 +575,11 @@ static int bch2_topology_check_root(struct btree_trans *trans, enum btree_id btr
 			bch2_shoot_down_journal_keys(c, btree, 1, BTREE_MAX_DEPTH, POS_MIN, SPOS_MAX);
 
 			size_t nodes_found = 0;
-			try(bch2_get_scanned_nodes(c, btree, 0, POS_MIN, SPOS_MAX, &buf, &nodes_found));
+			try(bch2_get_scanned_nodes(c, btree, 0, POS_MIN, SPOS_MAX, &msg.m, &nodes_found));
 		}
 	}
 
-	if (print)
-		bch2_print_str(c, KERN_NOTICE, buf.buf);
-fsck_err:
-	bch_err_fn(c, ret);
-	return ret;
+	return 0;
 }
 
 int bch2_check_topology(struct bch_fs *c)
