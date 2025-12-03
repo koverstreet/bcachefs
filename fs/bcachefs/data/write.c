@@ -597,8 +597,8 @@ static void __bch2_write_index(struct bch_write_op *op)
 
 		/* Separate ratelimit_states for hard and soft errors */
 		msg.m.suppress = !ret
-			? bch2_ratelimit()
-			: bch2_ratelimit();
+			? bch2_ratelimit(c)
+			: bch2_ratelimit(c);
 
 		struct bkey_i *k = bch2_keylist_front(&op->insert_keys);
 		bch2_log_write_error_start(&msg.m, op, bkey_start_offset(&k->k));

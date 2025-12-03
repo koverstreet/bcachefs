@@ -235,8 +235,8 @@ static CLOSURE_CALLBACK(journal_write_done)
 
 		/* Separate ratelimit_states for hard and soft errors */
 		msg.m.suppress = !err
-			? bch2_ratelimit()
-			: bch2_ratelimit();
+			? bch2_ratelimit(c)
+			: bch2_ratelimit(c);
 
 		prt_printf(&msg.m, "error writing journal entry %llu\n", seq_wrote);
 		bch2_io_failures_to_text(&msg.m, c, &w->failed);

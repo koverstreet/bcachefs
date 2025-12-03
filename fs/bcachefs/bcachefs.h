@@ -319,18 +319,21 @@ void __bch2_print(struct bch_fs *c, const char *fmt, ...);
 
 #define bch2_print(_c, ...) __bch2_print(maybe_dev_to_fs(_c), __VA_ARGS__)
 
-#define bch2_ratelimit()						\
+#define __bch2_ratelimit(_c, _rs)					\
+	(!(_c)->opts.ratelimit_errors || !__ratelimit(_rs))
+
+#define bch2_ratelimit(_c)						\
 ({									\
 	static DEFINE_RATELIMIT_STATE(rs,				\
 				      DEFAULT_RATELIMIT_INTERVAL,	\
 				      DEFAULT_RATELIMIT_BURST);		\
 									\
-	!__ratelimit(&rs);						\
+	__bch2_ratelimit(_c, &rs);					\
 })
 
 #define bch2_print_ratelimited(_c, ...)					\
 do {									\
-	if (!bch2_ratelimit())						\
+	if (!bch2_ratelimit(_c))					\
 		bch2_print(_c, __VA_ARGS__);				\
 } while (0)
 
@@ -357,21 +360,11 @@ do {									\
 #define bch_info_dev(ca, ...)		bch_dev_log(ca, KERN_INFO, __VA_ARGS__)
 #define bch_verbose_dev(ca, ...)	bch_dev_log(ca, KERN_DEBUG, __VA_ARGS__)
 
-#define bch_err_dev_offset(ca, _offset, fmt, ...) \
-	bch2_print(c, KERN_ERR bch2_fmt_dev_offset(ca, _offset, fmt), ##__VA_ARGS__)
-#define bch_err_inum(c, _inum, fmt, ...) \
-	bch2_print(c, KERN_ERR bch2_fmt_inum(c, _inum, fmt), ##__VA_ARGS__)
-#define bch_err_inum_offset(c, _inum, _offset, fmt, ...) \
-	bch2_print(c, KERN_ERR bch2_fmt_inum_offset(c, _inum, _offset, fmt), ##__VA_ARGS__)
-
-#define bch_err_dev_ratelimited(ca, fmt, ...) \
-	bch2_print_ratelimited(ca, KERN_ERR bch2_fmt_dev(ca, fmt), ##__VA_ARGS__)
-#define bch_err_dev_offset_ratelimited(ca, _offset, fmt, ...) \
-	bch2_print_ratelimited(ca, KERN_ERR bch2_fmt_dev_offset(ca, _offset, fmt), ##__VA_ARGS__)
-#define bch_err_inum_ratelimited(c, _inum, fmt, ...) \
-	bch2_print_ratelimited(c, KERN_ERR bch2_fmt_inum(c, _inum, fmt), ##__VA_ARGS__)
-#define bch_err_inum_offset_ratelimited(c, _inum, _offset, fmt, ...) \
-	bch2_print_ratelimited(c, KERN_ERR bch2_fmt_inum_offset(c, _inum, _offset, fmt), ##__VA_ARGS__)
+#define bch_err_dev_ratelimited(ca, ...)				\
+do {									\
+	if (!bch2_ratelimit(ca->fs))					\
+		bch_err_dev(ca, __VA_ARGS__);				\
+} while (0)
 
 static inline bool should_print_err(int err)
 {
@@ -1105,6 +1098,6 @@ typedef class_bch_log_msg_t class_bch_log_msg_ratelimited_t;
 
 static inline void class_bch_log_msg_ratelimited_destructor(class_bch_log_msg_t *p)
 { bch2_log_msg_exit(p); }
-#define class_bch_log_msg_ratelimited_constructor(_c)	bch2_log_msg_init(_c, 3, bch2_ratelimit())
+#define class_bch_log_msg_ratelimited_constructor(_c)	bch2_log_msg_init(_c, 3, bch2_ratelimit(_c))
 
 #endif /* _BCACHEFS_H */

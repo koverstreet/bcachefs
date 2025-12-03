@@ -1015,14 +1015,14 @@ start:
 		 * clear it if it did any work (scheduling recovery passes,
 		 * marking superblock
 		 */
-		buf.suppress = __ratelimit(&c->btree.read_errors_hard);
+		buf.suppress = !__bch2_ratelimit(c, &c->btree.read_errors_hard);
 
 		set_btree_node_read_error(b);
 		bch2_btree_lost_data(c, &buf, b->c.btree_id);
 		prt_printf(&buf, "ret %s", bch2_err_str(ret));
 	} else if (failed.nr) {
 		/* Separate ratelimit states for soft vs. hard errors */
-		buf.suppress = __ratelimit(&c->btree.read_errors_soft);
+		buf.suppress = !__bch2_ratelimit(c, &c->btree.read_errors_soft);
 
 		if (!bch2_dev_io_failures(&failed, rb->pick.ptr.dev))
 			prt_printf(&buf, "retry success");

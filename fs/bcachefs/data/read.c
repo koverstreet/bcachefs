@@ -727,8 +727,8 @@ static void bch2_rbio_retry(struct work_struct *work)
 
 			/* Separate ratelimit_states for hard and soft errors */
 			msg.m.suppress = !ret
-				? bch2_ratelimit()
-				: bch2_ratelimit();
+				? bch2_ratelimit(c)
+				: bch2_ratelimit(c);
 
 			bch2_read_err_msg_trans(trans, &msg.m, rbio, read_pos);
 

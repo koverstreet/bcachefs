@@ -158,8 +158,8 @@ static void btree_node_write_work(struct work_struct *work)
 
 			/* Separate ratelimit_states for hard and soft errors */
 			msg.m.suppress = !ret
-				? bch2_ratelimit()
-				: bch2_ratelimit();
+				? bch2_ratelimit(c)
+				: bch2_ratelimit(c);
 
 			prt_printf(&msg.m, "error writing btree node at ");
 			bch2_btree_pos_to_text(&msg.m, c, b);
