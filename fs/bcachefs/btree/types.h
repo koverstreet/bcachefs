@@ -721,6 +721,8 @@ struct bch_fs_btree {
 	struct bio_set				bio;
 	mempool_t				fill_iter;
 	struct workqueue_struct			*read_complete_wq;
+	struct ratelimit_state			read_errors_soft;
+	struct ratelimit_state			read_errors_hard;
 
 	struct workqueue_struct			*write_submit_wq;
 	struct workqueue_struct			*write_complete_wq;

@@ -582,26 +582,32 @@ static int bch2_topology_check_root(struct btree_trans *trans, enum btree_id btr
 	return 0;
 }
 
+static void ratelimit_reset(struct ratelimit_state *rs)
+{
+	guard(raw_spinlock)(&rs->lock);
+	atomic_set(&rs->rs_n_left, 0);
+	atomic_set(&rs->missed, 0);
+	rs->flags = 0;
+	rs->begin = 0;
+}
+
 int bch2_check_topology(struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
-	int ret = 0;
 
 	bch2_trans_srcu_unlock(trans);
 
-	for (unsigned i = 0; i < btree_id_nr_alive(c) && !ret; i++) {
+	for (unsigned i = 0; i < btree_id_nr_alive(c); i++) {
 		bool reconstructed_root = false;
 recover:
-		ret = lockrestart_do(trans, bch2_topology_check_root(trans, i, &reconstructed_root));
-		if (ret)
-			break;
+		try(lockrestart_do(trans, bch2_topology_check_root(trans, i, &reconstructed_root)));
 
 		struct btree_root *r = bch2_btree_id_root(c, i);
 		struct btree *b = r->b;
 
 		btree_node_lock_nopath_nofail(trans, &b->c, SIX_LOCK_read);
-		ret =   btree_check_root_boundaries(trans, b) ?:
-			bch2_btree_repair_topology_recurse(trans, b);
+		int ret = btree_check_root_boundaries(trans, b) ?:
+			  bch2_btree_repair_topology_recurse(trans, b);
 		six_unlock_read(&b->c.lock);
 
 		if (bch2_err_matches(ret, BCH_ERR_topology_repair_drop_this_node)) {
@@ -622,9 +628,19 @@ recover:
 			r->alive = false;
 			ret = 0;
 		}
+
+		if (ret)
+			return ret;
 	}
 
-	return ret;
+	/*
+	 * post topology repair there should be no errored nodes; reset
+	 * ratelimiters so we see new unexpected errors
+	 */
+	ratelimit_reset(&c->btree.read_errors_soft);
+	ratelimit_reset(&c->btree.read_errors_hard);
+
+	return 0;
 }
 
 /* marking of btree keys/nodes: */

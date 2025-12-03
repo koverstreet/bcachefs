@@ -64,6 +64,15 @@ int bch2_fs_btree_init(struct bch_fs *c)
 	try(bch2_fs_btree_iter_init(c));
 	try(bch2_fs_btree_key_cache_init(&c->btree.key_cache));
 
+	c->btree.read_errors_soft = (struct ratelimit_state)
+		RATELIMIT_STATE_INIT(btree_read_error_soft,
+				     DEFAULT_RATELIMIT_INTERVAL,
+				     DEFAULT_RATELIMIT_BURST);
+	c->btree.read_errors_hard = (struct ratelimit_state)
+		RATELIMIT_STATE_INIT(btree_read_error_hard,
+				     DEFAULT_RATELIMIT_INTERVAL,
+				     DEFAULT_RATELIMIT_BURST);
+
 	return 0;
 }
 
