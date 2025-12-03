@@ -830,7 +830,7 @@ int bch2_write_end(
 	struct bch_inode_info *inode = to_bch_ei(mapping->host);
 	struct bch_fs *c = inode->v.i_sb->s_fs_info;
 	struct bch2_folio_reservation *res = fsdata;
-	unsigned offset = pos - folio_pos(folio);
+	size_t offset = pos - folio_pos(folio);
 
 	BUG_ON(offset + copied > folio_size(folio));
 
@@ -887,8 +887,9 @@ static int __bch2_buffered_write(struct bch_fs *c,
 	struct bch2_folio_reservation res;
 	folios fs;
 	struct folio *f;
-	unsigned copied = 0, f_offset, f_copied;
-	u64 end = pos + len, f_pos, f_len;
+	unsigned copied = 0, f_copied;
+	size_t f_offset, f_len;
+	u64 end = pos + len, f_pos;
 	loff_t last_folio_pos = inode->v.i_size;
 	int ret = 0;
 

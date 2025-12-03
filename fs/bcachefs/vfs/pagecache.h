@@ -157,7 +157,7 @@ void bch2_set_folio_dirty(struct bch_fs *,
 			  struct bch_inode_info *,
 			  struct folio *,
 			  struct bch2_folio_reservation *,
-			  unsigned, unsigned);
+			  size_t, size_t);
 
 vm_fault_t bch2_page_fault(struct vm_fault *);
 vm_fault_t bch2_page_mkwrite(struct vm_fault *);
