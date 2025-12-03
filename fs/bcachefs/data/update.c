@@ -610,21 +610,11 @@ static int bch2_extent_drop_ptrs(struct btree_trans *trans,
 
 	struct bkey_i *n = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
 
-	const union bch_extent_entry *entry;
-	struct extent_ptr_decoded p = {};
-	unsigned i = 0;
-	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs_c(k), p, entry) {
-		if (data_opts->ptrs_kill_ec & BIT(i))
-			bch2_bkey_drop_ec(c, n, p.ptr.dev);
-		i++;
-	}
+	if (data_opts->ptrs_kill_ec)
+		bch2_bkey_drop_ec_mask(c, n, data_opts->ptrs_kill_ec);
 
-	while (data_opts->ptrs_kill) {
-		unsigned i = 0, drop = __fls(data_opts->ptrs_kill);
-
-		bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(n), p, entry, i++ == drop);
-		data_opts->ptrs_kill ^= 1U << drop;
-	}
+	if (data_opts->ptrs_kill)
+		bch2_bkey_drop_ptrs_mask(c, n, data_opts->ptrs_kill);
 
 	/*
 	 * If the new extent no longer has any pointers, bch2_extent_normalize()

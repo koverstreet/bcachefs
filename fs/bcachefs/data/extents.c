@@ -985,6 +985,16 @@ void bch2_bkey_drop_ptr(const struct bch_fs *c, struct bkey_s k, struct bch_exte
 	}
 }
 
+void bch2_bkey_drop_ptrs_mask(const struct bch_fs *c, struct bkey_i *k, unsigned ptrs)
+{
+	while (ptrs) {
+		unsigned i = 0, drop = __fls(ptrs);
+
+		bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(k), p, entry, i++ == drop);
+		ptrs  ^= 1U << drop;
+	}
+}
+
 void bch2_bkey_drop_device_noerror(const struct bch_fs *c, struct bkey_s k, unsigned dev)
 {
 	bch2_bkey_drop_ptrs_noerror(k, p, entry, p.ptr.dev == dev);
@@ -995,7 +1005,7 @@ void bch2_bkey_drop_device(const struct bch_fs *c, struct bkey_s k, unsigned dev
 	bch2_bkey_drop_ptrs(k, p, entry, p.ptr.dev == dev);
 }
 
-void bch2_bkey_drop_ec(const struct bch_fs *c, struct bkey_i *k, unsigned dev)
+static void bch2_bkey_drop_ec(const struct bch_fs *c, struct bkey_i *k, unsigned dev)
 {
 	struct bkey_ptrs ptrs = bch2_bkey_ptrs(bkey_i_to_s(k));
 	union bch_extent_entry *entry, *ec = NULL;
@@ -1007,6 +1017,22 @@ void bch2_bkey_drop_ec(const struct bch_fs *c, struct bkey_i *k, unsigned dev)
 			 entry->ptr.dev == dev) {
 			bch2_bkey_extent_entry_drop(c, k, ec);
 			return;
+		}
+	}
+}
+
+void bch2_bkey_drop_ec_mask(const struct bch_fs *c, struct bkey_i *k, unsigned mask)
+{
+	while (mask) {
+		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(k));
+		unsigned ptr_bit = 1;
+		bkey_for_each_ptr(ptrs, ptr) {
+			if (mask & ptr_bit) {
+				bch2_bkey_drop_ec(c, k, ptr->dev);
+				mask &= ~ptr_bit;
+				break;
+			}
+			ptr_bit <<= 1;
 		}
 	}
 }
