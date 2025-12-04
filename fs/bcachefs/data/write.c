@@ -610,7 +610,7 @@ static void __bch2_write_index(struct bch_write_op *op)
 			bch2_devs_list_to_text(&msg.m, c, &d);
 			prt_newline(&msg.m);
 		} else {
-			prt_printf(&msg.m, "all replicated writes failed\n");
+			prt_printf(&msg.m, "error %s\n", bch2_err_str(ret));
 		}
 
 		if (ret)

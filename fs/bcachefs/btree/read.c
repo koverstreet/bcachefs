@@ -955,7 +955,7 @@ static void btree_node_read_work(struct work_struct *work)
 
 		set_btree_node_read_error(b);
 		bch2_btree_lost_data(c, &buf, b->c.btree_id);
-		prt_printf(&buf, "ret %s", bch2_err_str(ret));
+		prt_printf(&buf, "error %s\n", bch2_err_str(ret));
 	} else if (failed.nr) {
 		/* Separate ratelimit states for soft vs. hard errors */
 		buf.suppress = !__bch2_ratelimit(c, &c->btree.read_errors_soft);
@@ -964,18 +964,17 @@ static void btree_node_read_work(struct work_struct *work)
 			prt_printf(&buf, "retry success");
 		else
 			prt_printf(&buf, "repair success");
+
+		if ((failed.nr || btree_node_need_rewrite(b)) &&
+		    c->recovery.curr_pass != BCH_RECOVERY_PASS_scan_for_btree_nodes) {
+			prt_printf(&buf, " (rewriting node)");
+			bch2_btree_node_rewrite_async(c, b);
+		}
+
+		prt_newline(&buf);
 	} else {
 		buf.suppress = true;
 	}
-
-	if ((failed.nr ||
-	     btree_node_need_rewrite(b)) &&
-	    !btree_node_read_error(b) &&
-	    c->recovery.curr_pass != BCH_RECOVERY_PASS_scan_for_btree_nodes) {
-		prt_printf(&buf, " (rewriting node)");
-		bch2_btree_node_rewrite_async(c, b);
-	}
-	prt_newline(&buf);
 
 	if (!buf.suppress)
 		bch2_print_str(c, ret ? KERN_ERR : KERN_NOTICE, buf.buf);

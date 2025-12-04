@@ -738,7 +738,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 				if (rbio->self_healing)
 					prt_str(&msg.m, ", self healing");
 			} else
-				prt_str(&msg.m, bch2_err_str(ret));
+				prt_printf(&msg.m, "error %s", bch2_err_str(ret));
 			prt_newline(&msg.m);
 
 			if (!bkey_deleted(&sk.k->k)) {

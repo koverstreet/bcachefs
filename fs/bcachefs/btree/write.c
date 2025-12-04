@@ -173,7 +173,7 @@ static void btree_node_write_work(struct work_struct *work)
 				bch2_devs_list_to_text(&msg.m, c, &d);
 				prt_newline(&msg.m);
 			} else {
-				prt_printf(&msg.m, "%s\n", bch2_err_str(ret));
+				prt_printf(&msg.m, "error %s\n", bch2_err_str(ret));
 				bch2_fs_emergency_read_only2(c, &msg.m);
 			}
 		}
