@@ -402,7 +402,7 @@ static long bch2_ioctl_subvolume_destroy(struct bch_fs *c, struct file *filp,
 
 	CLASS(printbuf, err)();
 	long ret = __bch2_ioctl_subvolume_destroy(c, filp, arg_v2, &err);
-	if (ret)
+	if (ret && err.buf)
 		bch_err_msg(c, ret, "%s", err.buf);
 	return ret;
 }

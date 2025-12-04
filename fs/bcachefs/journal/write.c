@@ -249,7 +249,7 @@ static CLOSURE_CALLBACK(journal_write_done)
 			bch2_devs_list_to_text(&msg.m, c, &w->devs_written);
 			prt_newline(&msg.m);
 		} else {
-			prt_printf(&msg.m, "error %s\n", bch2_err_str(ret));
+			prt_printf(&msg.m, "error %s\n", bch2_err_str(err));
 			bch2_fs_emergency_read_only2(c, &msg.m);
 		}
 	}
