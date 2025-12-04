@@ -76,8 +76,8 @@ static inline int bset_encrypt(struct bch_fs *c, struct bset *i, unsigned offset
 
 void bch2_btree_node_drop_keys_outside_node(struct btree *);
 
-int bch2_validate_bset_keys(struct bch_fs *, struct btree *,
-			    struct bset *, int,
+int bch2_validate_bset_keys(struct bch_fs *, struct bch_dev *,
+			    struct btree *, struct bset *, int,
 			    struct bch_io_failures *,
 			    struct printbuf *);
 int bch2_validate_bset(struct bch_fs *, struct bch_dev *,

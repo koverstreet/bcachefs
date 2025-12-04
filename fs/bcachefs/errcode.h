@@ -395,11 +395,6 @@
 	x(BCH_ERR_data_read,		data_read_buffer_too_small)		\
 	x(BCH_ERR_data_read,		data_read_key_overwritten)		\
 	x(0,				rbio_narrow_crcs_fail)			\
-	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_fixable)		\
-	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_want_retry)		\
-	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_must_retry)		\
-	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_bad_node)		\
-	x(BCH_ERR_btree_node_read_err,	btree_node_read_err_incompatible)	\
 	x(0,				nopromote)				\
 	x(BCH_ERR_nopromote,		nopromote_may_not)			\
 	x(BCH_ERR_nopromote,		nopromote_no_rewrites)			\

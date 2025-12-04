@@ -241,7 +241,7 @@ static int validate_bset_for_write(struct bch_fs *c, struct btree *b,
 		return ret;
 	}
 
-	ret = bch2_validate_bset_keys(c, b, i, WRITE, NULL, NULL) ?:
+	ret = bch2_validate_bset_keys(c, NULL, b, i, WRITE, NULL, NULL) ?:
 		bch2_validate_bset(c, NULL, b, i, b->written, WRITE, NULL, NULL);
 	if (ret) {
 		bch2_inconsistent_error(c);
