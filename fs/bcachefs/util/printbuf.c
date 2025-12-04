@@ -152,7 +152,7 @@ static void __printbuf_do_indent(struct printbuf *out, unsigned pos)
 
 static inline void printbuf_do_indent(struct printbuf *out, unsigned pos)
 {
-	if (out->has_indent_or_tabstops && !out->suppress_indent_tabstop_handling)
+	if (out->has_indent_or_tabstops)
 		__printbuf_do_indent(out, pos);
 }
 
