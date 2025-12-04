@@ -313,9 +313,10 @@ cpu_replicas_add_entry(struct bch_fs *c,
 		       cpu_replicas_entry(old, i),
 		       old->entry_size);
 
-	memcpy(&cpu_replicas_entry(&new, old->nr)->e,
-	       new_entry,
-	       replicas_entry_bytes(new_entry));
+	unsafe_memcpy(&cpu_replicas_entry(&new, old->nr)->e,
+		      new_entry,
+		      replicas_entry_bytes(new_entry),
+		      "embedded variable length struct");
 
 	bch2_cpu_replicas_sort(&new);
 	return new;
@@ -564,7 +565,8 @@ __bch2_sb_replicas_to_cpu_replicas(struct bch_sb_field_replicas *sb_r,
 
 	for_each_replicas_entry(sb_r, src) {
 		struct bch_replicas_entry_cpu *dst = cpu_replicas_entry(cpu_r, idx++);
-		memcpy(&dst->e, src, replicas_entry_bytes(src));
+		unsafe_memcpy(&dst->e, src, replicas_entry_bytes(src),
+			      "embedded variable length struct");
 		bch2_replicas_entry_sort(&dst->e);
 	}
 
