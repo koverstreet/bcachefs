@@ -183,33 +183,37 @@ struct snapshot_t *bch2_snapshot_t_mut(struct bch_fs *c, u32 id)
 	return __snapshot_t_mut(c, id);
 }
 
-void bch2_snapshot_to_text(struct printbuf *out, struct bch_fs *c,
-			   struct bkey_s_c k)
+void bch2_snapshot_to_text(struct printbuf *out, struct bch_snapshot *s)
 {
-	struct bkey_s_c_snapshot s = bkey_s_c_to_snapshot(k);
-
-	if (BCH_SNAPSHOT_SUBVOL(s.v))
+	if (BCH_SNAPSHOT_SUBVOL(s))
 		prt_str(out, "subvol ");
-	if (BCH_SNAPSHOT_WILL_DELETE(s.v))
+	if (BCH_SNAPSHOT_WILL_DELETE(s))
 		prt_str(out, "will_delete ");
-	if (BCH_SNAPSHOT_DELETED(s.v))
+	if (BCH_SNAPSHOT_DELETED(s))
 		prt_str(out, "deleted ");
-	if (BCH_SNAPSHOT_NO_KEYS(s.v))
+	if (BCH_SNAPSHOT_NO_KEYS(s))
 		prt_str(out, "no_keys ");
 
 	prt_printf(out, "parent %10u children %10u %10u subvol %u tree %u",
-	       le32_to_cpu(s.v->parent),
-	       le32_to_cpu(s.v->children[0]),
-	       le32_to_cpu(s.v->children[1]),
-	       le32_to_cpu(s.v->subvol),
-	       le32_to_cpu(s.v->tree));
+	       le32_to_cpu(s->parent),
+	       le32_to_cpu(s->children[0]),
+	       le32_to_cpu(s->children[1]),
+	       le32_to_cpu(s->subvol),
+	       le32_to_cpu(s->tree));
 
-	if (bkey_val_bytes(k.k) > offsetof(struct bch_snapshot, depth))
-		prt_printf(out, " depth %u skiplist %u %u %u",
-			   le32_to_cpu(s.v->depth),
-			   le32_to_cpu(s.v->skip[0]),
-			   le32_to_cpu(s.v->skip[1]),
-			   le32_to_cpu(s.v->skip[2]));
+	prt_printf(out, " depth %u skiplist %u %u %u",
+		   le32_to_cpu(s->depth),
+		   le32_to_cpu(s->skip[0]),
+		   le32_to_cpu(s->skip[1]),
+		   le32_to_cpu(s->skip[2]));
+}
+
+void bch2_snapshot_key_to_text(struct printbuf *out, struct bch_fs *c,
+			       struct bkey_s_c k)
+{
+	struct bch_snapshot snapshot;
+	bkey_val_copy_pad(&snapshot, bkey_s_c_to_snapshot(k));
+	bch2_snapshot_to_text(out, &snapshot);
 }
 
 int bch2_snapshot_validate(struct bch_fs *c, struct bkey_s_c k,

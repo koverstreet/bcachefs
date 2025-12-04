@@ -100,7 +100,8 @@ static int check_subvol(struct btree_trans *trans,
 				subvol_children_iter.pos.inode, subvol_children_iter.pos.offset,
 				(printbuf_reset(&buf),
 				 bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
-			try(bch2_btree_bit_mod(trans, BTREE_ID_subvolume_children, subvol_children_iter.pos, true));
+			try(bch2_btree_bit_mod(trans, BTREE_ID_subvolume_children,
+					       subvol_children_iter.pos, true));
 		}
 	}
 
@@ -111,9 +112,17 @@ static int check_subvol(struct btree_trans *trans,
 	if (!ret) {
 		if (fsck_err_on(inode.bi_subvol != k.k->p.offset,
 				trans, subvol_root_wrong_bi_subvol,
-				"subvol root %llu:%u has wrong bi_subvol field: got %u, should be %llu",
+				"subvol root %llu:%u has wrong bi_subvol field: got %u, should be %llu\n%s",
 				inode.bi_inum, inode.bi_snapshot,
-				inode.bi_subvol, k.k->p.offset)) {
+				inode.bi_subvol, k.k->p.offset,
+				(printbuf_reset(&buf),
+				 bch2_bkey_val_to_text(&buf, c, k),
+				 prt_newline(&buf),
+				 prt_printf(&buf, "snapshot %u: ", snapid),
+				 bch2_snapshot_to_text(&buf, &snapshot),
+				 prt_newline(&buf),
+				 bch2_inode_unpacked_to_text(&buf, &inode),
+				 buf.buf))) {
 			inode.bi_subvol = k.k->p.offset;
 			inode.bi_snapshot = le32_to_cpu(subvol.snapshot);
 			try(__bch2_fsck_write_inode(trans, &inode));
