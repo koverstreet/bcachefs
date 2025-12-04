@@ -117,6 +117,19 @@ static unsigned loglevel_opt(struct bch_fs *c)
 
 void bch2_print_str_loglevel(struct bch_fs *c, int loglevel, const char *str)
 {
+	unsigned len = strlen(str);
+	/*
+	 * printbufs leave extra spaces from indent level after the last
+	 * newline; strip them
+	 */
+	unsigned l = len;
+	while (l && str[l - 1] == ' ')
+		--l;
+	if (!l || str[l - 1] == '\n')
+		len = l;
+	if (!len)
+		return;
+
 	if (loglevel < 0)
 		loglevel = c->prev_loglevel;
 	else
@@ -145,7 +158,7 @@ void bch2_print_str_loglevel(struct bch_fs *c, int loglevel, const char *str)
 	struct stdio_redirect *stdio = bch2_fs_stdio_redirect(c);
 
 	if (unlikely(stdio)) {
-		bch2_stdio_redirect_write(stdio, true, str, strlen(str));
+		bch2_stdio_redirect_write(stdio, true, str, len);
 		return;
 	}
 #endif
