@@ -519,11 +519,10 @@ static inline void prt_printf_reversed(struct printbuf *out, const char *fmt, ..
 	printbuf_reverse_from(out, orig_pos);
 }
 
-static int __bch2_inum_to_path(struct btree_trans *trans,
-			       u32 subvol, u64 inum, u32 snapshot,
-			       struct printbuf *path)
+static int bch2_inum_to_path_reversed(struct btree_trans *trans,
+				      u32 subvol, u64 inum, u32 snapshot,
+				      struct printbuf *path)
 {
-	unsigned orig_pos = path->pos;
 	int ret = 0;
 	DARRAY(subvol_inum) inums = {};
 
@@ -598,18 +597,10 @@ static int __bch2_inum_to_path(struct btree_trans *trans,
 
 		prt_char(path, '/');
 	}
-
-	if (orig_pos == path->pos)
-		prt_char(path, '/');
 out:
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		goto err;
 
-	ret = path->allocation_failure ? -ENOMEM : 0;
-	if (ret)
-		goto err;
-
-	printbuf_reverse_from(path, orig_pos);
 	darray_exit(&inums);
 	return 0;
 err:
@@ -618,6 +609,22 @@ err:
 disconnected:
 	prt_printf_reversed(path, "(disconnected at %llu.%u)", inum, snapshot);
 	goto out;
+}
+
+static int __bch2_inum_to_path(struct btree_trans *trans,
+			       u32 subvol, u64 inum, u32 snapshot,
+			       struct printbuf *path)
+{
+	unsigned orig_pos = path->pos;
+	int ret = bch2_inum_to_path_reversed(trans, subvol, inum, snapshot, path);
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+		path->pos = orig_pos; /* Don't leave garbage output */
+	else {
+		if (!ret && orig_pos == path->pos)
+			prt_char(path, '/');
+		printbuf_reverse_from(path, orig_pos);
+	}
+	return ret;
 }
 
 int bch2_inum_to_path(struct btree_trans *trans,
