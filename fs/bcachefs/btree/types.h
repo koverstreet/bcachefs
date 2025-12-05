@@ -200,6 +200,7 @@ struct bch_fs_btree_cache {
 	struct list_head	freed_nonpcpu;
 	struct btree_cache_list	live[2];
 
+	size_t			nr_vmalloc;
 	size_t			nr_freeable;
 	size_t			nr_reserve;
 	size_t			nr_by_btree[BTREE_ID_NR];

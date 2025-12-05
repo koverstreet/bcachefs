@@ -262,6 +262,9 @@ void __bch2_btree_node_hash_remove(struct bch_fs_btree_cache *bc, struct btree *
 	if (b->c.btree_id < BTREE_ID_NR)
 		--bc->nr_by_btree[b->c.btree_id];
 	--bc->live[btree_node_pinned(b)].nr;
+
+	bc->nr_vmalloc -= is_vmalloc_addr(b->data);
+
 	list_del_init(&b->list);
 }
 
@@ -278,6 +281,8 @@ int __bch2_btree_node_hash_insert(struct bch_fs_btree_cache *bc, struct btree *b
 
 	b->hash_val = btree_ptr_hash_val(&b->key);
 	try(rhashtable_lookup_insert_fast(&bc->table, &b->hash, bch_btree_cache_params));
+
+	bc->nr_vmalloc += is_vmalloc_addr(b->data);
 
 	if (b->c.btree_id < BTREE_ID_NR)
 		bc->nr_by_btree[b->c.btree_id]++;
@@ -1484,6 +1489,7 @@ void bch2_btree_cache_to_text(struct printbuf *out, const struct bch_fs_btree_ca
 
 	prt_btree_cache_line(out, c, "live:",		bc->live[0].nr);
 	prt_btree_cache_line(out, c, "pinned:",		bc->live[1].nr);
+	prt_btree_cache_line(out, c, "vmalloc:",	bc->nr_vmalloc);
 	prt_btree_cache_line(out, c, "reserve:",	bc->nr_reserve);
 	prt_btree_cache_line(out, c, "freed:",		bc->nr_freeable);
 	prt_btree_cache_line(out, c, "dirty:",		atomic_long_read(&bc->nr_dirty));
