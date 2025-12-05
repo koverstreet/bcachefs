@@ -110,7 +110,6 @@ static inline u32 bch2_snapshot_nth_parent(struct bch_fs *c, u32 id, u32 n)
 	return id;
 }
 
-u32 bch2_snapshot_oldest_subvol(struct bch_fs *, u32, snapshot_id_list *);
 u32 bch2_snapshot_skiplist_get(struct bch_fs *, u32);
 
 static inline u32 bch2_snapshot_root(struct bch_fs *c, u32 id)
@@ -233,6 +232,11 @@ static inline int snapshot_list_merge(struct bch_fs *c, snapshot_id_list *dst, s
 }
 
 u32 bch2_snapshot_tree_next(struct snapshot_table *, u32);
+
+#define for_each_snapshot_child(_c, _start, _id)			\
+	for (u32 _id = _start;						\
+	     _id && _id <= _start;					\
+	     _id = bch2_snapshot_tree_next(_c, _id))
 
 int bch2_snapshot_lookup(struct btree_trans *trans, u32 id,
 			 struct bch_snapshot *s);

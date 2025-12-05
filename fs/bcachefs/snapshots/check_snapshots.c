@@ -34,25 +34,22 @@ static int bch2_snapshot_tree_create(struct btree_trans *trans,
 	return 0;
 }
 
-u32 bch2_snapshot_oldest_subvol(struct bch_fs *c, u32 snapshot_root,
-				snapshot_id_list *skip)
+static u32 bch2_snapshot_oldest_subvol(struct bch_fs *c, u32 snapshot_root,
+				       snapshot_id_list *skip)
 {
 	guard(rcu)();
 	struct snapshot_table *t = rcu_dereference(c->snapshots.table);
 
 	while (true) {
-		u32 id = snapshot_root, subvol = 0;
+		u32 subvol = 0;
 
-		while (id && __bch2_snapshot_exists(t, id)) {
-			if (!(skip && snapshot_list_has_id(skip, id))) {
-				u32 s = __snapshot_t(t, id)->subvol;
+		for_each_snapshot_child(t, snapshot_root, id)  {
+			if (skip && snapshot_list_has_id(skip, id))
+				continue;
 
-				if (s && (!subvol || s < subvol))
-					subvol = s;
-			}
-			id = bch2_snapshot_tree_next(t, id);
-			if (id == snapshot_root)
-				break;
+			u32 s = __snapshot_t(t, id)->subvol;
+			if (s && (!subvol || s < subvol))
+				subvol = s;
 		}
 
 		if (subvol || !skip)

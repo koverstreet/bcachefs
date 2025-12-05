@@ -694,10 +694,9 @@ static unsigned live_child(struct bch_fs *c, u32 start)
 	guard(rcu)();
 	struct snapshot_table *t = rcu_dereference(c->snapshots.table);
 
-	for (u32 id = bch2_snapshot_tree_next(t, start);
-	     id && id != start;
-	     id = bch2_snapshot_tree_next(t, id))
-		if (bch2_snapshot_is_leaf(c, id) &&
+	for_each_snapshot_child(t, start, id)
+		if (id != start &&
+		    bch2_snapshot_is_leaf(c, id) &&
 		    bch2_snapshot_exists(c, id) &&
 		    !snapshot_list_has_id(&d->delete_leaves, id) &&
 		    !interior_delete_has_id(&d->delete_interior, id))
