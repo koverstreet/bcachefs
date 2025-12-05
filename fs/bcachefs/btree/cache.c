@@ -18,9 +18,14 @@
 
 #include "sb/counters.h"
 
+#include <linux/module.h>
 #include <linux/prefetch.h>
 #include <linux/sched/mm.h>
 #include <linux/swap.h>
+
+bool bch2_mm_avoid_compaction = true;
+module_param_named(mm_avoid_compaction, bch2_mm_avoid_compaction, bool, 0644);
+MODULE_PARM_DESC(force_read_device, "");
 
 const char * const bch2_btree_node_flags[] = {
 	"typebit",
@@ -152,35 +157,52 @@ static const struct rhashtable_params bch_btree_cache_params = {
 	.automatic_shrinking	= true,
 };
 
-static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp)
+static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp,
+				 bool avoid_compaction)
 {
-	BUG_ON(b->data || b->aux_data);
-
 	gfp |= __GFP_ACCOUNT|__GFP_RECLAIMABLE;
 
-	b->data = kvmalloc(btree_buf_bytes(b), gfp);
-	if (!b->data)
-		return bch_err_throw(c, ENOMEM_btree_node_mem_alloc);
+	if (!b->data) {
+		if (avoid_compaction && bch2_mm_avoid_compaction) {
+			/*
+			 * Cursed hack: mm doesn't know how to limit the amount of time
+			 * we spend blocked on compaction, even if we specified a
+			 * vmalloc fallback.
+			 *
+			 * So we have to do that ourselves: only try for a high order
+			 * page allocation if we're GFP_NOWAIT, otherwise straight to
+			 * vmalloc.
+			 */
+			b->data = gfp & __GFP_RECLAIM
+				? __vmalloc(btree_buf_bytes(b), gfp)
+				: kmalloc(btree_buf_bytes(b), gfp);
+		} else {
+			b->data = kvmalloc(btree_buf_bytes(b), gfp);
+		}
+		if (!b->data)
+			return bch_err_throw(c, ENOMEM_btree_node_mem_alloc);
+	}
+
+	if (!b->aux_data) {
 #ifdef __KERNEL__
-	b->aux_data = kvmalloc(btree_aux_data_bytes(b), gfp);
+		b->aux_data = kvmalloc(btree_aux_data_bytes(b), gfp);
 #else
-	b->aux_data = mmap(NULL, btree_aux_data_bytes(b),
-			   PROT_READ|PROT_WRITE|PROT_EXEC,
-			   MAP_PRIVATE|MAP_ANONYMOUS, 0, 0);
-	if (b->aux_data == MAP_FAILED)
-		b->aux_data = NULL;
+		b->aux_data = mmap(NULL, btree_aux_data_bytes(b),
+				   PROT_READ|PROT_WRITE|PROT_EXEC,
+				   MAP_PRIVATE|MAP_ANONYMOUS, 0, 0);
+		if (b->aux_data == MAP_FAILED)
+			b->aux_data = NULL;
 #endif
-	if (!b->aux_data)
-		return bch_err_throw(c, ENOMEM_btree_node_mem_alloc);
+		if (!b->aux_data)
+			return bch_err_throw(c, ENOMEM_btree_node_mem_alloc);
+	}
 
 	return 0;
 }
 
 static struct btree *__btree_node_mem_alloc(struct bch_fs *c, gfp_t gfp)
 {
-	struct btree *b;
-
-	b = kzalloc(sizeof(struct btree), gfp);
+	struct btree *b = kzalloc(sizeof(struct btree), gfp);
 	if (!b)
 		return NULL;
 
@@ -197,7 +219,7 @@ struct btree *__bch2_btree_node_mem_alloc(struct bch_fs *c)
 	if (!b)
 		return NULL;
 
-	if (btree_node_data_alloc(c, b, GFP_KERNEL)) {
+	if (btree_node_data_alloc(c, b, GFP_KERNEL, false)) {
 		__btree_node_data_free(b);
 		kfree(b);
 		return NULL;
@@ -838,9 +860,9 @@ got_node:
 
 	mutex_unlock(&bc->lock);
 
-	if (btree_node_data_alloc(c, b, GFP_NOWAIT)) {
+	if (btree_node_data_alloc(c, b, GFP_NOWAIT, true)) {
 		bch2_trans_unlock(trans);
-		if (btree_node_data_alloc(c, b, GFP_KERNEL|__GFP_NOWARN)) {
+		if (btree_node_data_alloc(c, b, GFP_KERNEL|__GFP_NOWARN, true)) {
 			__btree_node_data_free(b);
 			goto err;
 		}
