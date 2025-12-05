@@ -261,7 +261,7 @@ static int read_btree_nodes_worker(void *p)
 	}
 err:
 	if (b)
-		__btree_node_data_free(b);
+		bch2_btree_node_data_free_locked(b);
 	kfree(b);
 	bio_put(bio);
 	enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_btree_node_scan);

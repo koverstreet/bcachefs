@@ -90,7 +90,7 @@ void bch2_btree_node_to_freelist(struct bch_fs *c, struct btree *b)
 	six_unlock_intent(&b->c.lock);
 }
 
-void __btree_node_data_free(struct btree *b)
+void bch2_btree_node_data_free_locked(struct btree *b)
 {
 	BUG_ON(!list_empty(&b->list));
 	BUG_ON(btree_node_hashed(b));
@@ -119,12 +119,12 @@ void __btree_node_data_free(struct btree *b)
 	b->aux_data = NULL;
 }
 
-static void btree_node_data_free(struct bch_fs_btree_cache *bc, struct btree *b)
+static void bch2_btree_node_data_free(struct bch_fs_btree_cache *bc, struct btree *b)
 {
 	BUG_ON(list_empty(&b->list));
 	list_del_init(&b->list);
 
-	__btree_node_data_free(b);
+	bch2_btree_node_data_free_locked(b);
 
 	--bc->nr_freeable;
 	btree_node_to_freedlist(bc, b);
@@ -502,7 +502,7 @@ static unsigned long bch2_btree_cache_scan(struct shrinker *shrink,
 			goto out;
 
 		if (!btree_node_reclaim(c, b)) {
-			btree_node_data_free(bc, b);
+			bch2_btree_node_data_free(bc, b);
 			six_unlock_write(&b->c.lock);
 			six_unlock_intent(&b->c.lock);
 			freed++;
@@ -519,7 +519,7 @@ restart:
 			--touched;
 		} else if (!btree_node_reclaim(c, b)) {
 			__bch2_btree_node_hash_remove(bc, b);
-			__btree_node_data_free(b);
+			bch2_btree_node_data_free_locked(b);
 			btree_node_to_freedlist(bc, b);
 
 			freed++;
@@ -606,7 +606,7 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 		BUG_ON(btree_node_read_in_flight(b) ||
 		       btree_node_write_in_flight(b));
 
-		btree_node_data_free(bc, b);
+		bch2_btree_node_data_free(bc, b);
 		cond_resched();
 	}
 
@@ -1371,7 +1371,7 @@ wait_on_io:
 
 	mutex_lock(&bc->lock);
 	bch2_btree_node_hash_remove(bc, b);
-	btree_node_data_free(bc, b);
+	bch2_btree_node_data_free(bc, b);
 	mutex_unlock(&bc->lock);
 out:
 	six_unlock_write(&b->c.lock);
