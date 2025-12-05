@@ -519,18 +519,19 @@ static inline void prt_printf_reversed(struct printbuf *out, const char *fmt, ..
 	printbuf_reverse_from(out, orig_pos);
 }
 
+DEFINE_DARRAY(subvol_inum);
+
 static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 				      u32 subvol, u64 inum, u32 snapshot,
 				      struct printbuf *path)
 {
+	struct bch_fs *c = trans->c;
 	int ret = 0;
-	DARRAY(subvol_inum) inums = {};
+	CLASS(darray_subvol_inum, inums)();
 
 	if (!snapshot) {
 		if (subvol) {
 			ret = bch2_subvolume_get_snapshot(trans, subvol, &snapshot);
-			if (ret)
-				goto disconnected;
 		} else {
 			struct bkey_s_c k;
 			for_each_btree_key_max_norestart(trans, iter,
@@ -543,14 +544,12 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 					break;
 				}
 			}
-			if (ret)
-				return ret;
-			if (!snapshot)
-				goto disconnected;
+			if (!ret && !snapshot)
+				ret = bch_err_throw(c, ENOENT_snapshot);
 		}
 	}
 
-	while (true) {
+	while (!ret) {
 		subvol_inum n = (subvol_inum) { subvol ?: snapshot, inum };
 
 		if (darray_find_p(inums, i, i->subvol == n.subvol && i->inum == n.inum)) {
@@ -558,22 +557,20 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 			break;
 		}
 
-		ret = darray_push(&inums, n);
-		if (ret)
-			goto err;
+		try(darray_push(&inums, n));
 
 		struct bch_inode_unpacked inode;
 		ret = bch2_inode_find_by_inum_snapshot(trans, inum, snapshot, &inode, 0);
 		if (ret)
-			goto disconnected;
+			break;
 
 		if (inode.bi_subvol == BCACHEFS_ROOT_SUBVOL &&
 		    inode.bi_inum == BCACHEFS_ROOT_INO)
 			break;
 
 		if (!inode.bi_dir && !inode.bi_dir_offset) {
-			ret = bch_err_throw(trans->c, ENOENT_inode_no_backpointer);
-			goto disconnected;
+			ret = bch_err_throw(c, ENOENT_inode_no_backpointer);
+			break;
 		}
 
 		inum = inode.bi_dir;
@@ -581,7 +578,7 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 			subvol = inode.bi_parent_subvol;
 			ret = bch2_subvolume_get_snapshot(trans, inode.bi_parent_subvol, &snapshot);
 			if (ret)
-				goto disconnected;
+				break;
 		}
 
 		CLASS(btree_iter, d_iter)(trans, BTREE_ID_dirents,
@@ -589,7 +586,7 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 		struct bkey_s_c_dirent d = bch2_bkey_get_typed(&d_iter, dirent);
 		ret = bkey_err(d.s_c);
 		if (ret)
-			goto disconnected;
+			break;
 
 		struct qstr dirent_name = bch2_dirent_get_name(d);
 
@@ -597,18 +594,11 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 
 		prt_char(path, '/');
 	}
-out:
-	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-		goto err;
 
-	darray_exit(&inums);
-	return 0;
-err:
-	darray_exit(&inums);
+	if (ret && !bch2_err_matches(ret, BCH_ERR_transaction_restart))
+		prt_printf_reversed(path, "(%s: disconnected at %llu.%u)",
+				    bch2_err_str(ret), inum, snapshot);
 	return ret;
-disconnected:
-	prt_printf_reversed(path, "(disconnected at %llu.%u)", inum, snapshot);
-	goto out;
 }
 
 static int __bch2_inum_to_path(struct btree_trans *trans,

@@ -66,17 +66,15 @@ DEFINE_CLASS(_type, _type, darray_exit(&(_T)), (_type) {}, void)
 #define DEFINE_DARRAY_CLASS_FREE_ITEM(_type, _free)		\
 DEFINE_CLASS(_type, _type, darray_exit_free_item(&(_T), _free), (_type) {}, void)
 
-#define DEFINE_DARRAY(_type)						\
-typedef DARRAY(_type)	darray_##_type;					\
-DEFINE_DARRAY_CLASS(darray_##_type)
+#define DEFINE_DARRAY_NAMED(_name, _type)				\
+typedef DARRAY(_type)	_name;						\
+DEFINE_DARRAY_CLASS(_name)
+
+#define DEFINE_DARRAY(_type)	DEFINE_DARRAY_NAMED(darray_##_type, _type)
 
 #define DEFINE_DARRAY_PREALLOCATED(_type, _nr)				\
 typedef DARRAY_PREALLOCATED(_type, _nr)	darray_##_type;			\
 DEFINE_DARRAY_CLASS(darray_##_type)
-
-#define DEFINE_DARRAY_NAMED(_name, _type)				\
-typedef DARRAY(_type)	_name;						\
-DEFINE_DARRAY_CLASS(_name)
 
 #define DEFINE_DARRAY_NAMED_FREE_ITEM(_name, _type, _free)		\
 typedef DARRAY(_type)	_name;						\
