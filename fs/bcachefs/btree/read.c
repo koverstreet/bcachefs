@@ -95,6 +95,7 @@ void bch2_btree_node_wait_on_write(struct btree *b)
 		       TASK_UNINTERRUPTIBLE);
 }
 
+__printf(7, 0)
 static void btree_err_msg(struct printbuf *out, struct bch_fs *c, struct bch_dev *ca,
 			  struct btree *b, struct bset *i, struct bkey_packed *k,
 			  const char *fmt, va_list args)
