@@ -90,6 +90,19 @@ void bch2_btree_node_to_freelist(struct bch_fs *c, struct btree *b)
 	six_unlock_intent(&b->c.lock);
 }
 
+static void __btree_node_data_free(struct btree *b)
+{
+	kvfree(b->data);
+	b->data = NULL;
+#ifdef __KERNEL__
+	kvfree(b->aux_data);
+#else
+	if (b->aux_data)
+		munmap(b->aux_data, btree_aux_data_bytes(b));
+#endif
+	b->aux_data = NULL;
+}
+
 void bch2_btree_node_data_free_locked(struct btree *b)
 {
 	BUG_ON(!list_empty(&b->list));
@@ -108,15 +121,7 @@ void bch2_btree_node_data_free_locked(struct btree *b)
 	EBUG_ON(btree_node_write_in_flight(b));
 
 	clear_btree_node_just_written(b);
-
-	kvfree(b->data);
-	b->data = NULL;
-#ifdef __KERNEL__
-	kvfree(b->aux_data);
-#else
-	munmap(b->aux_data, btree_aux_data_bytes(b));
-#endif
-	b->aux_data = NULL;
+	__btree_node_data_free(b);
 }
 
 static void bch2_btree_node_data_free(struct bch_fs_btree_cache *bc, struct btree *b)
@@ -165,11 +170,8 @@ static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp)
 	if (b->aux_data == MAP_FAILED)
 		b->aux_data = NULL;
 #endif
-	if (!b->aux_data) {
-		kvfree(b->data);
-		b->data = NULL;
+	if (!b->aux_data)
 		return bch_err_throw(c, ENOMEM_btree_node_mem_alloc);
-	}
 
 	return 0;
 }
@@ -196,6 +198,7 @@ struct btree *__bch2_btree_node_mem_alloc(struct bch_fs *c)
 		return NULL;
 
 	if (btree_node_data_alloc(c, b, GFP_KERNEL)) {
+		__btree_node_data_free(b);
 		kfree(b);
 		return NULL;
 	}
@@ -837,8 +840,10 @@ got_node:
 
 	if (btree_node_data_alloc(c, b, GFP_NOWAIT)) {
 		bch2_trans_unlock(trans);
-		if (btree_node_data_alloc(c, b, GFP_KERNEL|__GFP_NOWARN))
+		if (btree_node_data_alloc(c, b, GFP_KERNEL|__GFP_NOWARN)) {
+			__btree_node_data_free(b);
 			goto err;
+		}
 	}
 
 got_mem:
