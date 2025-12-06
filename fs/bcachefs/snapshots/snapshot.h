@@ -231,12 +231,18 @@ static inline int snapshot_list_merge(struct bch_fs *c, snapshot_id_list *dst, s
 	return 0;
 }
 
-u32 bch2_snapshot_tree_next(struct snapshot_table *, u32);
+u32 __bch2_snapshot_tree_next(struct snapshot_table *, u32, unsigned *);
+u32 bch2_snapshot_tree_next(struct bch_fs *, u32, unsigned *);
 
-#define for_each_snapshot_child(_c, _start, _id)			\
+#define __for_each_snapshot_child(_t, _start, _depth, _id)		\
 	for (u32 _id = _start;						\
 	     _id && _id <= _start;					\
-	     _id = bch2_snapshot_tree_next(_c, _id))
+	     _id = __bch2_snapshot_tree_next(_t, _id, _depth))
+
+#define for_each_snapshot_child(_c, _start, _depth, _id)		\
+	for (u32 _id = _start;						\
+	     _id && _id <= _start;					\
+	     _id = bch2_snapshot_tree_next(_c, _id, _depth))
 
 int bch2_snapshot_lookup(struct btree_trans *trans, u32 id,
 			 struct bch_snapshot *s);
