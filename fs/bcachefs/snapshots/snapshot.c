@@ -446,7 +446,7 @@ static inline void normalize_snapshot_child_pointers(struct bch_snapshot *s)
 		swap(s->children[0], s->children[1]);
 }
 
-static int bch2_snapshot_node_delete(struct btree_trans *trans, u32 id)
+static int bch2_snapshot_node_delete(struct btree_trans *trans, u32 id, bool delete_interior)
 {
 	struct bch_fs *c = trans->c;
 	u32 parent_id, child_id;
@@ -493,6 +493,12 @@ static int bch2_snapshot_node_delete(struct btree_trans *trans, u32 id)
 	}
 
 	if (child_id) {
+		if (!delete_interior) {
+			CLASS(bch_log_msg, msg)(c);
+			prt_printf(&msg.m, "deleting interior node %llu at runtime:\n", s->k.p.offset);
+			return -EINVAL;
+		}
+
 		struct bkey_i_snapshot *child =
 			bch2_bkey_get_mut_typed(trans, BTREE_ID_snapshots, POS(0, child_id),
 						0, snapshot);
@@ -1060,7 +1066,7 @@ static int delete_dead_snapshots_locked(struct bch_fs *c)
 
 	darray_for_each(d->delete_leaves, i)
 		try(commit_do(trans, NULL, NULL, 0,
-			bch2_snapshot_node_delete(trans, *i)));
+			bch2_snapshot_node_delete(trans, *i, false)));
 
 	darray_for_each(d->delete_interior, i)
 		try(commit_do(trans, NULL, NULL, 0,
@@ -1215,7 +1221,7 @@ int bch2_delete_dead_interior_snapshots(struct bch_fs *c)
 
 		darray_for_each(delete, i) {
 			int ret = commit_do(trans, NULL, NULL, 0,
-				bch2_snapshot_node_delete(trans, i->id));
+				bch2_snapshot_node_delete(trans, i->id, true));
 			if (!bch2_err_matches(ret, EROFS))
 				bch_err_msg(c, ret, "deleting snapshot %u", i->id);
 			if (ret)
