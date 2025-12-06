@@ -183,7 +183,7 @@ struct snapshot_t *bch2_snapshot_t_mut(struct bch_fs *c, u32 id)
 	return __snapshot_t_mut(c, id);
 }
 
-void bch2_snapshot_to_text(struct printbuf *out, struct bch_snapshot *s)
+void bch2_snapshot_to_text(struct printbuf *out, const struct bch_snapshot *s)
 {
 	if (BCH_SNAPSHOT_SUBVOL(s))
 		prt_str(out, "subvol ");
@@ -811,24 +811,6 @@ static inline u32 interior_delete_has_id(interior_delete_list *l, u32 id)
 	return i ? i->live_child : 0;
 }
 
-static unsigned live_child(struct bch_fs *c, u32 start)
-{
-	struct snapshot_delete *d = &c->snapshots.delete;
-
-	guard(rcu)();
-	struct snapshot_table *t = rcu_dereference(c->snapshots.table);
-
-	__for_each_snapshot_child(t, start, NULL, id)
-		if (id != start &&
-		    bch2_snapshot_is_leaf(c, id) &&
-		    bch2_snapshot_exists(c, id) &&
-		    !snapshot_list_has_id(&d->delete_leaves, id) &&
-		    !interior_delete_has_id(&d->delete_interior, id))
-			return id;
-
-	return 0;
-}
-
 static bool snapshot_id_dying(struct snapshot_delete *d, unsigned id)
 {
 	return snapshot_list_has_id(&d->delete_leaves, id) ||
@@ -1018,40 +1000,42 @@ static int check_should_delete_snapshot(struct btree_trans *trans, struct bkey_s
 		return 0;
 
 	struct bch_fs *c = trans->c;
-	struct snapshot_delete *d = &c->snapshots.delete;
 	struct bkey_s_c_snapshot s = bkey_s_c_to_snapshot(k);
-	unsigned live_children = 0;
 
 	if (BCH_SNAPSHOT_SUBVOL(s.v) ||
-	    BCH_SNAPSHOT_NO_KEYS(s.v) ||
 	    BCH_SNAPSHOT_DELETED(s.v))
 		return 0;
 
+	struct snapshot_delete *d = &c->snapshots.delete;
 	guard(mutex)(&d->progress_lock);
-	for (unsigned i = 0; i < 2; i++) {
-		u32 child = le32_to_cpu(s.v->children[i]);
 
-		live_children += child &&
-			!snapshot_list_has_id(&d->delete_leaves, child);
+	u32 live_child = 0, nr_live_children = 0;
+	for (unsigned i = 0; i < 2; i++) {
+		u32 id = le32_to_cpu(s.v->children[i]);
+		if (id && !snapshot_list_has_id(&d->delete_leaves, id)) {
+			nr_live_children++;
+			live_child = interior_delete_has_id(&d->delete_interior, id) ?: id;
+		}
 	}
 
-	u32 tree = bch2_snapshot_tree(c, s.k->p.offset);
+	if (nr_live_children == 2 ||
+	    (nr_live_children == 1 && BCH_SNAPSHOT_NO_KEYS(s.v)))
+		return 0;
 
-	if (live_children == 0) {
-		try(snapshot_list_add_nodup(c, &d->deleting_from_trees, tree));
+	try(snapshot_list_add_nodup(c, &d->deleting_from_trees,
+				    bch2_snapshot_tree(c, s.k->p.offset)));
+
+	if (!nr_live_children) {
 		try(snapshot_list_add(c, &d->delete_leaves, s.k->p.offset));
-	} else if (live_children == 1) {
+	} else {
 		struct snapshot_interior_delete n = {
 			.id		= s.k->p.offset,
-			.live_child	= live_child(c, s.k->p.offset),
+			.live_child	= live_child,
 		};
 
-		if (!n.live_child) {
-			bch_err(c, "error finding live child of snapshot %u", n.id);
+		if (n.id == n.live_child) {
+			bch_err(c, "error finding live descendent of %llu", s.k->p.offset);
 			return -EINVAL;
-		} else {
-			try(snapshot_list_add_nodup(c, &d->deleting_from_trees, tree));
-			try(darray_push(&d->delete_interior, n));
 		}
 	}
 
@@ -1253,19 +1237,28 @@ int __bch2_key_has_snapshot_overwrites(struct btree_trans *trans,
 static int bch2_get_dead_interior_snapshots(struct btree_trans *trans, struct bkey_s_c k,
 					    interior_delete_list *delete)
 {
-	struct bch_fs *c = trans->c;
+	if (k.k->type != KEY_TYPE_snapshot)
+		return 0;
 
-	if (k.k->type == KEY_TYPE_snapshot &&
-	    BCH_SNAPSHOT_NO_KEYS(bkey_s_c_to_snapshot(k).v)) {
+	struct bkey_s_c_snapshot s = bkey_s_c_to_snapshot(k);
+
+	if (BCH_SNAPSHOT_NO_KEYS(s.v)) {
+		u32 live_child = 0, nr_live_children = 0;
+		for (unsigned i = 0; i < 2; i++) {
+			u32 id = le32_to_cpu(s.v->children[i]);
+			if (id) {
+				nr_live_children++;
+				live_child = interior_delete_has_id(delete, id) ?: id;
+			}
+		}
+
+		if (nr_live_children != 1)
+			return 0;
+
 		struct snapshot_interior_delete n = {
 			.id		= k.k->p.offset,
-			.live_child	= live_child(c, k.k->p.offset),
+			.live_child	= live_child,
 		};
-
-		if (!n.live_child) {
-			bch_err(c, "error finding live child of snapshot %u", n.id);
-			return -EINVAL;
-		}
 
 		return darray_push(delete, n);
 	}

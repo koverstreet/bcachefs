@@ -16,7 +16,7 @@ struct bkey_i_snapshot_tree *__bch2_snapshot_tree_create(struct btree_trans *);
 
 int bch2_snapshot_tree_lookup(struct btree_trans *, u32, struct bch_snapshot_tree *);
 
-void bch2_snapshot_to_text(struct printbuf *, struct bch_snapshot *);
+void bch2_snapshot_to_text(struct printbuf *, const struct bch_snapshot *);
 void bch2_snapshot_key_to_text(struct printbuf *, struct bch_fs *, struct bkey_s_c);
 int bch2_snapshot_validate(struct bch_fs *, struct bkey_s_c,
 			   struct bkey_validate_context);
