@@ -567,8 +567,6 @@ static inline void normalize_snapshot_child_pointers(struct bch_snapshot *s)
 static int bch2_snapshot_node_delete(struct btree_trans *trans, u32 id, bool delete_interior)
 {
 	struct bch_fs *c = trans->c;
-	u32 parent_id, child_id;
-	unsigned i;
 
 	struct bkey_i_snapshot *s =
 		bch2_bkey_get_mut_typed(trans, BTREE_ID_snapshots, POS(0, id), 0, snapshot);
@@ -589,8 +587,8 @@ static int bch2_snapshot_node_delete(struct btree_trans *trans, u32 id, bool del
 		return -EINVAL;
 	}
 
-	parent_id = le32_to_cpu(s->v.parent);
-	child_id = le32_to_cpu(s->v.children[0]);
+	u32 parent_id = le32_to_cpu(s->v.parent);
+	u32 child_id = le32_to_cpu(s->v.children[0]);
 
 	if (parent_id) {
 		struct bkey_i_snapshot *parent =
@@ -603,6 +601,7 @@ static int bch2_snapshot_node_delete(struct btree_trans *trans, u32 id, bool del
 			return ret;
 
 		/* find entry in parent->children for node being deleted */
+		unsigned i;
 		for (i = 0; i < 2; i++)
 			if (le32_to_cpu(parent->v.children[i]) == id)
 				break;
@@ -637,12 +636,6 @@ static int bch2_snapshot_node_delete(struct btree_trans *trans, u32 id, bool del
 			return ret;
 
 		child->v.parent = cpu_to_le32(parent_id);
-
-		if (!child->v.parent) {
-			child->v.skip[0] = 0;
-			child->v.skip[1] = 0;
-			child->v.skip[2] = 0;
-		}
 	}
 
 	if (!parent_id) {
@@ -651,9 +644,6 @@ static int bch2_snapshot_node_delete(struct btree_trans *trans, u32 id, bool del
 		 * snapshot_tree entry to point to the new root, or delete it if
 		 * this is the last snapshot ID in this tree:
 		 */
-
-		BUG_ON(s->v.children[1]);
-
 		struct bkey_i_snapshot_tree *s_t = errptr_try(bch2_bkey_get_mut_typed(trans,
 				BTREE_ID_snapshot_trees, POS(0, le32_to_cpu(s->v.tree)),
 				0, snapshot_tree));
