@@ -595,9 +595,12 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 		prt_char(path, '/');
 	}
 
-	if (ret && !bch2_err_matches(ret, BCH_ERR_transaction_restart))
+	if (ret && !bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
 		prt_printf_reversed(path, "(%s: disconnected at %llu.%u)",
 				    bch2_err_str(ret), inum, snapshot);
+		ret = 0;
+	}
+
 	return ret;
 }
 
