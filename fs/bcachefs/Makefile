@@ -92,6 +92,7 @@ bcachefs-y		:=			\
 	sb/io.o					\
 	sb/members.o				\
 	snapshots/check_snapshots.o		\
+	snapshots/delete.o			\
 	snapshots/snapshot.o			\
 	snapshots/subvolume.o			\
 	util/clock.o				\

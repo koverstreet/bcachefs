@@ -24,6 +24,10 @@ int bch2_mark_snapshot(struct btree_trans *, enum btree_id, unsigned,
 		       struct bkey_s_c, struct bkey_s,
 		       enum btree_iter_update_trigger_flags);
 
+int bch2_snapshot_tree_keys_to_text(struct printbuf *, struct btree_trans *, u32);
+
+int bch2_check_snapshot_needs_deletion(struct btree_trans *, struct bkey_s_c);
+
 #define bch2_bkey_ops_snapshot ((struct bkey_ops) {		\
 	.key_validate	= bch2_snapshot_validate,		\
 	.val_to_text	= bch2_snapshot_key_to_text,		\
