@@ -126,7 +126,7 @@ static int create_lostfound(struct btree_trans *trans, u32 snapshot_tree,
 	struct bch_snapshot_tree st;
 	try(bch2_snapshot_tree_lookup(trans, snapshot_tree, &st));
 
-	u32 snapshot = le32_to_cpu(st.root_snapshot);
+	u32 snapshot = bch2_snapshot_live_descendent(c, le32_to_cpu(st.root_snapshot));
 
 	CLASS(bch_log_msg_level, msg)(c, LOGLEVEL_notice);
 	prt_printf(&msg.m, "creating ");
