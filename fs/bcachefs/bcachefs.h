@@ -1080,9 +1080,20 @@ static inline struct bch_log_msg bch2_log_msg_init(struct bch_fs *c,
 	};
 }
 
+enum kern_loglevels {
+	LOGLEVEL_emerg		= 0,
+	LOGLEVEL_alert		= 1,
+	LOGLEVEL_crit		= 2,
+	LOGLEVEL_err		= 3,
+	LOGLEVEL_warning	= 4,
+	LOGLEVEL_notice		= 5,
+	LOGLEVEL_info		= 6,
+	LOGLEVEL_debug		= 7,
+};
+
 DEFINE_CLASS(bch_log_msg, struct bch_log_msg,
 	     bch2_log_msg_exit(&_T),
-	     bch2_log_msg_init(c, 3, false), /* 3 == KERN_ERR */
+	     bch2_log_msg_init(c, LOGLEVEL_err, false),
 	     struct bch_fs *c)
 
 EXTEND_CLASS(bch_log_msg, _level,
