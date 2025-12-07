@@ -1201,11 +1201,13 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 		darray_for_each(*sbs, sb)
 			try(bch2_dev_attach_bdev(c, sb, out));
 
-	/*
-	 * Do this early, so that we never expose a filesystem object that
-	 * hasn't been version downgraded
-	 */
-	try(bch2_fs_opt_version_init(c, out));
+	if (!c->opts.no_version_check) {
+		/*
+		 * Do this early, so that we never expose a filesystem object that
+		 * hasn't been version downgraded
+		 */
+		try(bch2_fs_opt_version_init(c, out));
+	}
 
 	/*
 	 * just make sure this is always allocated if we might need it - mount
@@ -1240,6 +1242,11 @@ static struct bch_fs *bch2_fs_alloc(struct bch_sb *sb, struct bch_opts *opts,
 static int bch2_fs_may_start(struct bch_fs *c, struct printbuf *err)
 {
 	unsigned flags = 0;
+
+	if (c->opts.no_version_check) {
+		prt_printf(err, "Cannot start with opts.no_version_check\n");
+		return -EINVAL;
+	}
 
 	switch (c->opts.degraded) {
 	case BCH_DEGRADED_very:
