@@ -538,7 +538,8 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 					BTREE_ID_inodes,
 					POS(0, inum),
 					SPOS(0, inum, U32_MAX),
-					BTREE_ITER_all_snapshots, k, ret) {
+					BTREE_ITER_all_snapshots|
+					BTREE_ITER_with_updates, k, ret) {
 				if (bkey_is_inode(k.k)) {
 					snapshot = k.k->p.snapshot;
 					break;
@@ -560,7 +561,8 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 		try(darray_push(&inums, n));
 
 		struct bch_inode_unpacked inode;
-		ret = bch2_inode_find_by_inum_snapshot(trans, inum, snapshot, &inode, 0);
+		ret = bch2_inode_find_by_inum_snapshot(trans, inum, snapshot, &inode,
+						       BTREE_ITER_with_updates);
 		if (ret)
 			break;
 
@@ -582,7 +584,8 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 		}
 
 		CLASS(btree_iter, d_iter)(trans, BTREE_ID_dirents,
-					  SPOS(inode.bi_dir, inode.bi_dir_offset, snapshot), 0);
+					  SPOS(inode.bi_dir, inode.bi_dir_offset, snapshot),
+					  BTREE_ITER_with_updates);
 		struct bkey_s_c_dirent d = bch2_bkey_get_typed(&d_iter, dirent);
 		ret = bkey_err(d.s_c);
 		if (ret)
