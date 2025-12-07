@@ -355,6 +355,11 @@ static inline void btree_insert_entry_checks(struct btree_trans *trans,
 		test_bit(JOURNAL_replay_done, &trans->c->journal.flags) &&
 		i->k->k.p.snapshot &&
 		bch2_snapshot_is_internal_node(trans->c, i->k->k.p.snapshot) > 0);
+	EBUG_ON(!i->level &&
+		btree_type_has_snapshots(i->btree_id) &&
+		!bkey_deleted(&i->k->k) &&
+		test_bit(JOURNAL_replay_done, &trans->c->journal.flags) &&
+		!bch2_snapshot_exists(trans->c, i->k->k.p.snapshot));
 }
 
 static __always_inline int bch2_trans_journal_res_get(struct btree_trans *trans,
