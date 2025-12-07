@@ -110,24 +110,72 @@ static int find_snapshot_tree_subvol(struct btree_trans *trans,
 	return ret ?: bch_err_throw(trans->c, ENOENT_no_snapshot_tree_subvol);
 }
 
+static struct qstr lostfound_str = QSTR("lost+found");
+
+static int create_lostfound(struct btree_trans *trans, u32 snapshot_tree,
+			    subvol_inum root_inum,
+			    struct bch_inode_unpacked *root_inode,
+			    struct bch_hash_info *root_hash_info,
+			    struct bch_inode_unpacked *lostfound)
+{
+	struct bch_fs *c = trans->c;
+	/*
+	 * We always create lost+found in the root snapshot; we don't want
+	 * different branches of the snapshot tree to have different lost+found
+	 */
+	struct bch_snapshot_tree st;
+	try(bch2_snapshot_tree_lookup(trans, snapshot_tree, &st));
+
+	u32 snapshot = le32_to_cpu(st.root_snapshot);
+
+	CLASS(bch_log_msg_level, msg)(c, LOGLEVEL_notice);
+	prt_printf(&msg.m, "creating ");
+	try(bch2_inum_to_path(trans, root_inum, &msg.m));
+	prt_printf(&msg.m, "/lost+found in subvol %llu snapshot %u", root_inum.subvol, snapshot);
+
+	u64 now = bch2_current_time(c);
+	u64 cpu = raw_smp_processor_id();
+
+	bch2_inode_init_early(c, lostfound);
+	bch2_inode_init_late(c, lostfound, now, 0, 0, S_IFDIR|0700, 0, root_inode);
+	lostfound->bi_dir = root_inode->bi_inum;
+	lostfound->bi_snapshot = snapshot;
+
+	root_inode->bi_nlink++;
+
+	CLASS(btree_iter_uninit, lostfound_iter)(trans);
+	try(bch2_inode_create(trans, &lostfound_iter, lostfound, snapshot, cpu,
+			      inode_opt_get(c, root_inode, inodes_32bit)));
+
+	bch2_btree_iter_set_snapshot(&lostfound_iter, snapshot);
+	try(bch2_btree_iter_traverse(&lostfound_iter));
+
+	try(bch2_dirent_create_snapshot(trans,
+				0, root_inode->bi_inum, snapshot, root_hash_info,
+				mode_to_type(lostfound->bi_mode),
+				&lostfound_str,
+				lostfound->bi_inum,
+				&lostfound->bi_dir_offset,
+				BTREE_UPDATE_internal_snapshot_node|
+				STR_HASH_must_create));
+
+	try(bch2_inode_write_flags(trans, &lostfound_iter, lostfound,
+				   BTREE_UPDATE_internal_snapshot_node));
+
+	return bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
+}
+
 /* Get lost+found, create if it doesn't exist: */
 static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 			    struct bch_inode_unpacked *lostfound,
 			    u64 reattaching_inum)
 {
 	struct bch_fs *c = trans->c;
-	struct qstr lostfound_str = QSTR("lost+found");
-	CLASS(btree_iter_uninit, lostfound_iter)(trans);
-	u64 inum = 0;
-	unsigned d_type = 0;
+	u32 snapshot_tree = bch2_snapshot_tree(c, snapshot);
 	int ret;
 
-	struct bch_snapshot_tree st;
-	try(bch2_snapshot_tree_lookup(trans, bch2_snapshot_tree(c, snapshot), &st));
-
 	u32 subvolid;
-	ret = find_snapshot_tree_subvol(trans,
-				bch2_snapshot_tree(c, snapshot), &subvolid);
+	ret = find_snapshot_tree_subvol(trans, snapshot_tree, &subvolid);
 	bch_err_msg(c, ret, "finding subvol associated with snapshot tree %u",
 		    bch2_snapshot_tree(c, snapshot));
 	if (ret)
@@ -162,18 +210,29 @@ static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 	struct bch_hash_info root_hash_info;
 	try(bch2_hash_info_init(c, &root_inode, &root_hash_info));
 
+	u64 inum = 0;
+	unsigned d_type = 0;
 	ret = lookup_dirent_in_snapshot(trans, root_hash_info, root_inum,
 			      &lostfound_str, &inum, &d_type, snapshot);
-	if (bch2_err_matches(ret, ENOENT))
-		goto create_lostfound;
+	if (bch2_err_matches(ret, ENOENT)) {
+		/*
+		 * We always create lost_found in its own transaction; this will
+		 * return a transaction restart:
+		 */
+		ret = create_lostfound(trans, snapshot_tree, root_inum,
+				       &root_inode, &root_hash_info, lostfound);
+		bch_err_msg(c, ret, "creating lost+found");
+		return ret;
+	}
 
 	bch_err_fn(c, ret);
 	if (ret)
 		return ret;
 
 	if (d_type != DT_DIR) {
-		bch_err(c, "error looking up lost+found: not a directory");
-		return bch_err_throw(c, ENOENT_not_directory);
+		ret = bch_err_throw(c, ENOENT_not_directory);
+		bch_err_msg(c, ret, "looking up lost+found");
+		return ret;
 	}
 
 	/*
@@ -183,59 +242,6 @@ static int lookup_lostfound(struct btree_trans *trans, u32 snapshot,
 	ret = bch2_inode_find_by_inum_snapshot(trans, inum, snapshot, lostfound, 0);
 	bch_err_msg(c, ret, "looking up lost+found %llu:%u in (root inode %llu, snapshot root %u)",
 		    inum, snapshot, root_inum.inum, bch2_snapshot_root(c, snapshot));
-	return ret;
-
-create_lostfound:
-	/*
-	 * we always create lost+found in the root snapshot; we don't want
-	 * different branches of the snapshot tree to have different lost+found
-	 */
-	snapshot = le32_to_cpu(st.root_snapshot);
-	/*
-	 * XXX: we could have a nicer log message here  if we had a nice way to
-	 * walk backpointers to print a path
-	 */
-	CLASS(printbuf, path)();
-	ret = bch2_inum_to_path(trans, root_inum, &path);
-	if (ret)
-		goto err;
-
-	bch_notice(c, "creating %s/lost+found in subvol %llu snapshot %u",
-		   path.buf, root_inum.subvol, snapshot);
-
-	u64 now = bch2_current_time(c);
-	u64 cpu = raw_smp_processor_id();
-
-	bch2_inode_init_early(c, lostfound);
-	bch2_inode_init_late(c, lostfound, now, 0, 0, S_IFDIR|0700, 0, &root_inode);
-	lostfound->bi_dir = root_inode.bi_inum;
-	lostfound->bi_snapshot = le32_to_cpu(st.root_snapshot);
-
-	root_inode.bi_nlink++;
-
-	ret = bch2_inode_create(trans, &lostfound_iter, lostfound, snapshot, cpu,
-				inode_opt_get(c, &root_inode, inodes_32bit));
-	if (ret)
-		goto err;
-
-	bch2_btree_iter_set_snapshot(&lostfound_iter, snapshot);
-	ret = bch2_btree_iter_traverse(&lostfound_iter);
-	if (ret)
-		goto err;
-
-	ret =   bch2_dirent_create_snapshot(trans,
-				0, root_inode.bi_inum, snapshot, &root_hash_info,
-				mode_to_type(lostfound->bi_mode),
-				&lostfound_str,
-				lostfound->bi_inum,
-				&lostfound->bi_dir_offset,
-				BTREE_UPDATE_internal_snapshot_node|
-				STR_HASH_must_create) ?:
-		bch2_inode_write_flags(trans, &lostfound_iter, lostfound,
-				       BTREE_UPDATE_internal_snapshot_node) ?:
-		bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
-err:
-	bch_err_msg(c, ret, "creating lost+found");
 	return ret;
 }
 
