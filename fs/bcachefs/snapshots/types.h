@@ -4,7 +4,6 @@
 
 #include "btree/bbpos_types.h"
 #include "init/progress.h"
-#include "subvolume_types.h"
 #include "util/darray.h"
 
 DEFINE_DARRAY_NAMED(snapshot_id_list, u32);
@@ -65,5 +64,11 @@ struct bch_fs_snapshots {
 	snapshot_id_list			unlinked;
 	struct mutex				unlinked_lock;
 };
+
+typedef struct {
+	/* we can't have padding in this struct: */
+	u64		subvol;
+	u64		inum;
+} subvol_inum;
 
 #endif /* _BCACHEFS_SNAPSHOT_TYPES_H */

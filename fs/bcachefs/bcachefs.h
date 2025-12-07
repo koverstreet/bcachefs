@@ -266,8 +266,7 @@
 #include "sb/io_types.h"
 #include "sb/members_types.h"
 
-#include "snapshots/snapshot_types.h"
-#include "snapshots/subvolume_types.h"
+#include "snapshots/types.h"
 
 #include "vfs/types.h"
 

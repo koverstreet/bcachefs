@@ -646,8 +646,7 @@ enum btree_id {
 #include "sb/downgrade_format.h"
 #include "sb/errors_format.h"
 #include "sb/members_format.h"
-#include "snapshots/snapshot_format.h"
-#include "snapshots/subvolume_format.h"
+#include "snapshots/format.h"
 
 enum bch_sb_field_type {
 #define x(f, nr)	BCH_SB_FIELD_##f = nr,
