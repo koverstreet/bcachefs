@@ -612,9 +612,20 @@ int bch2_snapshots_read(struct bch_fs *c)
 	 * initialized - so mark in reverse:
 	 */
 	CLASS(btree_trans, trans)(c);
-	return for_each_btree_key_reverse(trans, iter, BTREE_ID_snapshots, POS_MAX, 0, k,
+	u32 nr_empty_interior = 0;
+	try(for_each_btree_key_reverse(trans, iter, BTREE_ID_snapshots, POS_MAX, 0, k,
 		__bch2_mark_snapshot(trans, BTREE_ID_snapshots, 0, bkey_s_c_null, k, 0) ?:
-		bch2_check_snapshot_needs_deletion(trans, k));
+		bch2_check_snapshot_needs_deletion(trans, k, &nr_empty_interior)));
+
+	if (nr_empty_interior) {
+		CLASS(bch_log_msg_level, msg)(c, LOGLEVEL_notice);
+
+		prt_printf(&msg.m, "Found %u empty interior snapshot nodes\n", nr_empty_interior);
+		try(bch2_run_explicit_recovery_pass(c, &msg.m,
+				BCH_RECOVERY_PASS_delete_dead_interior_snapshots, 0));
+	}
+
+	return 0;
 }
 
 void bch2_fs_snapshots_exit(struct bch_fs *c)

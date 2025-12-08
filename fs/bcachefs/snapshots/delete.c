@@ -94,7 +94,8 @@ static int bch2_snapshot_node_set_no_keys(struct btree_trans *trans, u32 id)
 	if (unlikely(ret))
 		return ret;
 
-	SET_BCH_SNAPSHOT_NO_KEYS(&s->v, true);
+	SET_BCH_SNAPSHOT_NO_KEYS(&s->v,		true);
+	SET_BCH_SNAPSHOT_WILL_DELETE(&s->v,	false);
 	s->v.subvol = 0;
 	return 0;
 }
@@ -711,19 +712,19 @@ static bool interior_snapshot_needs_delete(struct bkey_s_c_snapshot snap)
 	return !!snap.v->children[0] + !!snap.v->children[1] == 1;
 }
 
-int bch2_check_snapshot_needs_deletion(struct btree_trans *trans, struct bkey_s_c k)
+int bch2_check_snapshot_needs_deletion(struct btree_trans *trans, struct bkey_s_c k,
+				       u32 *nr_empty_interior)
 {
-	struct bch_fs *c = trans->c;
-
 	if (k.k->type != KEY_TYPE_snapshot)
 		return 0;
 
-	struct bkey_s_c_snapshot s= bkey_s_c_to_snapshot(k);
+	struct bkey_s_c_snapshot s = bkey_s_c_to_snapshot(k);
+	struct bch_fs *c = trans->c;
 
 	if (BCH_SNAPSHOT_NO_KEYS(s.v))
-		c->recovery.passes_to_run |= BIT_ULL(BCH_RECOVERY_PASS_delete_dead_interior_snapshots);
-	if (BCH_SNAPSHOT_WILL_DELETE(s.v) ||
-	    interior_snapshot_needs_delete(s))
+		*nr_empty_interior += 1;
+	else if (BCH_SNAPSHOT_WILL_DELETE(s.v) ||
+		 interior_snapshot_needs_delete(s))
 		set_bit(BCH_FS_need_delete_dead_snapshots, &c->flags);
 
 	return 0;
