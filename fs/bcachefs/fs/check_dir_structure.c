@@ -284,12 +284,12 @@ int bch2_check_directory_structure(struct bch_fs *c)
 					  BTREE_ITER_prefetch|
 					  BTREE_ITER_all_snapshots, k,
 					  NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
-			if (!S_ISDIR(bkey_inode_mode(k)))
-				continue;
+		if (!S_ISDIR(bkey_inode_mode(k)))
+			continue;
 
-			if (bch2_inode_flags(k) & BCH_INODE_unlinked)
-				continue;
+		if (bch2_inode_flags(k) & BCH_INODE_unlinked)
+			continue;
 
-			check_path_loop(trans, k);
-		}));
+		check_path_loop(trans, k);
+	}));
 }

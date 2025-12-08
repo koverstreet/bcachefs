@@ -243,14 +243,20 @@ static int bch2_lookup_root_inode(struct bch_fs *c)
 		bch2_inode_find_by_inum_trans(trans, inum, &inode_u));
 }
 
-struct recovery_pass_fn {
+struct recovery_pass {
 	int		(*fn)(struct bch_fs *);
 	const char	*name;
 	unsigned	when;
+	u64		depends;
 };
 
-static struct recovery_pass_fn recovery_pass_fns[] = {
-#define x(_fn, _id, _when)	{ .fn = bch2_##_fn, .name = #_fn, .when = _when },
+static struct recovery_pass recovery_pass_fns[] = {
+#define x(_fn, _id, _when, _depends)	{	\
+	.fn		= bch2_##_fn,		\
+	.name		= #_fn,			\
+	.when		= _when,		\
+	.depends	= _depends,		\
+},
 	BCH_RECOVERY_PASSES()
 #undef x
 };
@@ -403,7 +409,7 @@ int __bch2_run_explicit_recovery_pass(struct bch_fs *c,
 			   bch2_recovery_passes[pass], pass,
 			   ratelimit ? " - ratelimiting" : "");
 
-		struct recovery_pass_fn *p = recovery_pass_fns + pass;
+		struct recovery_pass *p = recovery_pass_fns + pass;
 		if (!ratelimit && (p->when & PASS_ONLINE))
 			bch2_run_async_recovery_passes(c);
 	}
@@ -463,7 +469,7 @@ int bch2_require_recovery_pass(struct bch_fs *c,
 static int bch2_run_recovery_pass(struct bch_fs *c, enum bch_recovery_pass pass)
 {
 	struct bch_fs_recovery *r = &c->recovery;
-	struct recovery_pass_fn *p = recovery_pass_fns + pass;
+	struct recovery_pass *p = recovery_pass_fns + pass;
 
 	if (!(p->when & PASS_SILENT))
 		bch2_print(c, KERN_INFO bch2_log_msg(c, "%s..."),
