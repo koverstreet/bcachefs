@@ -130,7 +130,7 @@ static int __btree_err(enum bch_fsck_flags flags,
 		       struct printbuf *err_msg,
 		       const char *fmt, ...)
 {
-	if (c->recovery.curr_pass == BCH_RECOVERY_PASS_scan_for_btree_nodes)
+	if (c->recovery.current_pass == BCH_RECOVERY_PASS_scan_for_btree_nodes)
 		return flags & FSCK_CAN_FIX
 			? bch_err_throw(c, fsck_fix)
 			: bch_err_throw(c, btree_node_validate_err);
@@ -261,7 +261,7 @@ int bch2_validate_bset(struct bch_fs *c, struct bch_dev *ca,
 		     BCH_VERSION_MAJOR(version),
 		     BCH_VERSION_MINOR(version));
 
-	if (c->recovery.curr_pass != BCH_RECOVERY_PASS_scan_for_btree_nodes &&
+	if (c->recovery.current_pass != BCH_RECOVERY_PASS_scan_for_btree_nodes &&
 	    btree_err_on(version < c->sb.version_min,
 			 FSCK_CAN_FIX,
 			 c, ca, b, i, NULL,
@@ -967,7 +967,7 @@ static void btree_node_read_work(struct work_struct *work)
 			prt_printf(&buf, "repair success");
 
 		if ((failed.nr || btree_node_need_rewrite(b)) &&
-		    c->recovery.curr_pass != BCH_RECOVERY_PASS_scan_for_btree_nodes) {
+		    c->recovery.current_pass != BCH_RECOVERY_PASS_scan_for_btree_nodes) {
 			prt_printf(&buf, " (rewriting node)");
 			bch2_btree_node_rewrite_async(c, b);
 		}

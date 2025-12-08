@@ -1043,6 +1043,5 @@ int bch2_fs_initialize(struct bch_fs *c)
 		bch2_write_super(c);
 	}
 
-	c->recovery.curr_pass = BCH_RECOVERY_PASS_NR;
 	return 0;
 }
