@@ -276,22 +276,6 @@ u64 bch2_fsck_recovery_passes(void)
 	return bch2_recovery_passes_match(PASS_FSCK);
 }
 
-static void bch2_run_async_recovery_passes(struct bch_fs *c)
-{
-	if (!down_trylock(&c->recovery.run_lock))
-		return;
-
-	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_async_recovery_passes))
-		goto unlock;
-
-	if (queue_work(system_long_wq, &c->recovery.work))
-		return;
-
-	enumerated_ref_put(&c->writes, BCH_WRITE_REF_async_recovery_passes);
-unlock:
-	up(&c->recovery.run_lock);
-}
-
 static bool recovery_pass_needs_rewind(struct bch_fs *c,
 				       enum bch_recovery_pass pass)
 {
@@ -573,6 +557,22 @@ static void bch2_async_recovery_passes_work(struct work_struct *work)
 
 	up(&r->run_lock);
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_async_recovery_passes);
+}
+
+void bch2_run_async_recovery_passes(struct bch_fs *c)
+{
+	if (!down_trylock(&c->recovery.run_lock))
+		return;
+
+	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_async_recovery_passes))
+		goto unlock;
+
+	if (queue_work(system_long_wq, &c->recovery.work))
+		return;
+
+	enumerated_ref_put(&c->writes, BCH_WRITE_REF_async_recovery_passes);
+unlock:
+	up(&c->recovery.run_lock);
 }
 
 /* Set of all passes that depend on @pass, transitively */

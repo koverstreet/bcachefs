@@ -1289,6 +1289,8 @@ void bch2_sb_upgrade_incompat(struct bch_fs *c)
 
 	bch2_sb_set_upgrade_incompat(c, c->sb.version_incompat_allowed, c->sb.version);
 	bch2_write_super(c);
+
+	bch2_run_async_recovery_passes(c);
 }
 
 static int bch2_sb_ext_validate(struct bch_sb *sb, struct bch_sb_field *f,

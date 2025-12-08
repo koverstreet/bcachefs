@@ -60,6 +60,7 @@ int bch2_require_recovery_pass(struct bch_fs *, struct printbuf *,
 			       enum bch_recovery_pass);
 
 u64 bch2_recovery_passes_match(unsigned);
+void bch2_run_async_recovery_passes(struct bch_fs *);
 int bch2_run_recovery_passes(struct bch_fs *, u64, bool);
 int bch2_run_recovery_passes_startup(struct bch_fs *, enum bch_recovery_pass);
 
