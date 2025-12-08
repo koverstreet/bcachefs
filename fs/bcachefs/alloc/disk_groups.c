@@ -88,6 +88,7 @@ static int bch2_sb_disk_groups_validate(struct bch_sb *sb, struct bch_sb_field *
 }
 
 static void bch2_sb_disk_groups_to_text(struct printbuf *out,
+					struct bch_fs *c,
 					struct bch_sb *sb,
 					struct bch_sb_field *f)
 {

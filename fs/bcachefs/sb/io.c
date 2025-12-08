@@ -1302,7 +1302,9 @@ static int bch2_sb_ext_validate(struct bch_sb *sb, struct bch_sb_field *f,
 	return 0;
 }
 
-static void bch2_sb_ext_to_text(struct printbuf *out, struct bch_sb *sb,
+static void bch2_sb_ext_to_text(struct printbuf *out,
+				struct bch_fs *c,
+				struct bch_sb *sb,
 				struct bch_sb_field *f)
 {
 	struct bch_sb_field_ext *e = field_to_type(f, ext);
@@ -1363,13 +1365,15 @@ static int bch2_sb_field_validate(struct bch_sb *sb, struct bch_sb_field *f,
 		prt_printf(err, "Invalid superblock section %s: %s",
 			   bch2_sb_fields[type], field_err.buf);
 		prt_newline(err);
-		bch2_sb_field_to_text(err, sb, f);
+		bch2_sb_field_to_text(err, NULL, sb, f);
 	}
 
 	return ret;
 }
 
-void __bch2_sb_field_to_text(struct printbuf *out, struct bch_sb *sb,
+void __bch2_sb_field_to_text(struct printbuf *out,
+			     struct bch_fs *c,
+			     struct bch_sb *sb,
 			     struct bch_sb_field *f)
 {
 	unsigned type = le32_to_cpu(f->type);
@@ -1379,10 +1383,12 @@ void __bch2_sb_field_to_text(struct printbuf *out, struct bch_sb *sb,
 		printbuf_tabstop_push(out, 32);
 
 	if (ops->to_text)
-		ops->to_text(out, sb, f);
+		ops->to_text(out, c, sb, f);
 }
 
-void bch2_sb_field_to_text(struct printbuf *out, struct bch_sb *sb,
+void bch2_sb_field_to_text(struct printbuf *out,
+			   struct bch_fs *c,
+			   struct bch_sb *sb,
 			   struct bch_sb_field *f)
 {
 	unsigned type = le32_to_cpu(f->type);
@@ -1395,13 +1401,11 @@ void bch2_sb_field_to_text(struct printbuf *out, struct bch_sb *sb,
 	prt_printf(out, " (size %zu):", vstruct_bytes(f));
 	prt_newline(out);
 
-	__bch2_sb_field_to_text(out, sb, f);
+	__bch2_sb_field_to_text(out, c, sb, f);
 }
 
 void bch2_sb_layout_to_text(struct printbuf *out, struct bch_sb_layout *l)
 {
-	unsigned i;
-
 	prt_printf(out, "Type:                    %u", l->layout_type);
 	prt_newline(out);
 
@@ -1413,7 +1417,7 @@ void bch2_sb_layout_to_text(struct printbuf *out, struct bch_sb_layout *l)
 	prt_newline(out);
 
 	prt_str(out, "Offsets:                 ");
-	for (i = 0; i < l->nr_superblocks; i++) {
+	for (unsigned i = 0; i < l->nr_superblocks; i++) {
 		if (i)
 			prt_str(out, ", ");
 		prt_printf(out, "%llu", le64_to_cpu(l->sb_offset[i]));
@@ -1421,7 +1425,8 @@ void bch2_sb_layout_to_text(struct printbuf *out, struct bch_sb_layout *l)
 	prt_newline(out);
 }
 
-void bch2_sb_to_text(struct printbuf *out, struct bch_sb *sb,
+void bch2_sb_to_text(struct printbuf *out,
+		     struct bch_fs *c, struct bch_sb *sb,
 		     bool print_layout, unsigned fields)
 {
 	if (!out->nr_tabstops)
@@ -1538,6 +1543,6 @@ void bch2_sb_to_text(struct printbuf *out, struct bch_sb *sb,
 	vstruct_for_each(sb, f)
 		if (fields & (1 << le32_to_cpu(f->type))) {
 			prt_newline(out);
-			bch2_sb_field_to_text(out, sb, f);
+			bch2_sb_field_to_text(out, c, sb, f);
 		}
 }

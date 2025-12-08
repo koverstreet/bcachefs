@@ -247,6 +247,7 @@ static int bch2_sb_journal_seq_blacklist_validate(struct bch_sb *sb, struct bch_
 }
 
 static void bch2_sb_journal_seq_blacklist_to_text(struct printbuf *out,
+						  struct bch_fs *c,
 						  struct bch_sb *sb,
 						  struct bch_sb_field *f)
 {

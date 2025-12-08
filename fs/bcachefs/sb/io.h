@@ -64,7 +64,7 @@ extern const char * const bch2_sb_fields[];
 struct bch_sb_field_ops {
 	int	(*validate)(struct bch_sb *, struct bch_sb_field *,
 			    enum bch_validate_flags, struct printbuf *);
-	void	(*to_text)(struct printbuf *, struct bch_sb *, struct bch_sb_field *);
+	void	(*to_text)(struct printbuf *, struct bch_fs *, struct bch_sb *, struct bch_sb_field *);
 };
 
 static inline __le64 bch2_sb_magic(struct bch_fs *c)
@@ -109,11 +109,11 @@ bool bch2_check_version_downgrade(struct bch_fs *);
 void bch2_sb_upgrade(struct bch_fs *, unsigned, bool);
 void bch2_sb_upgrade_incompat(struct bch_fs *);
 
-void __bch2_sb_field_to_text(struct printbuf *, struct bch_sb *,
+void __bch2_sb_field_to_text(struct printbuf *, struct bch_fs *, struct bch_sb *,
 			     struct bch_sb_field *);
-void bch2_sb_field_to_text(struct printbuf *, struct bch_sb *,
+void bch2_sb_field_to_text(struct printbuf *, struct bch_fs *, struct bch_sb *,
 			   struct bch_sb_field *);
 void bch2_sb_layout_to_text(struct printbuf *, struct bch_sb_layout *);
-void bch2_sb_to_text(struct printbuf *, struct bch_sb *, bool, unsigned);
+void bch2_sb_to_text(struct printbuf *, struct bch_fs *, struct bch_sb *, bool, unsigned);
 
 #endif /* _BCACHEFS_SB_IO_H */

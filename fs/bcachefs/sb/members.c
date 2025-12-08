@@ -380,7 +380,9 @@ static int bch2_sb_members_v1_validate(struct bch_sb *sb, struct bch_sb_field *f
 	return 0;
 }
 
-static void bch2_sb_members_v1_to_text(struct printbuf *out, struct bch_sb *sb,
+static void bch2_sb_members_v1_to_text(struct printbuf *out,
+				       struct bch_fs *c,
+				       struct bch_sb *sb,
 				       struct bch_sb_field *f)
 {
 	struct bch_sb_field_members_v1 *mi = field_to_type(f, members_v1);
@@ -404,7 +406,9 @@ const struct bch_sb_field_ops bch_sb_field_ops_members_v1 = {
 	.to_text	= bch2_sb_members_v1_to_text,
 };
 
-static void bch2_sb_members_v2_to_text(struct printbuf *out, struct bch_sb *sb,
+static void bch2_sb_members_v2_to_text(struct printbuf *out,
+				       struct bch_fs *c,
+				       struct bch_sb *sb,
 				       struct bch_sb_field *f)
 {
 	struct bch_sb_field_members_v2 *mi = field_to_type(f, members_v2);

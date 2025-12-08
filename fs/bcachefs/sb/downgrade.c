@@ -380,7 +380,8 @@ static int bch2_sb_downgrade_validate(struct bch_sb *sb, struct bch_sb_field *f,
 	return 0;
 }
 
-static void bch2_sb_downgrade_to_text(struct printbuf *out, struct bch_sb *sb,
+static void bch2_sb_downgrade_to_text(struct printbuf *out,
+				      struct bch_fs *c, struct bch_sb *sb,
 				      struct bch_sb_field *f)
 {
 	struct bch_sb_field_downgrade *e = field_to_type(f, downgrade);

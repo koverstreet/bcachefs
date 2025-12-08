@@ -87,6 +87,7 @@ static int bch2_sb_recovery_passes_validate(struct bch_sb *sb, struct bch_sb_fie
 }
 
 static void bch2_sb_recovery_passes_to_text(struct printbuf *out,
+					    struct bch_fs *c,
 					    struct bch_sb *sb,
 					    struct bch_sb_field *f)
 {

@@ -226,7 +226,9 @@ static int bch2_sb_clean_validate(struct bch_sb *sb, struct bch_sb_field *f,
 	return 0;
 }
 
-static void bch2_sb_clean_to_text(struct printbuf *out, struct bch_sb *sb,
+static void bch2_sb_clean_to_text(struct printbuf *out,
+				  struct bch_fs *c,
+				  struct bch_sb *sb,
 				  struct bch_sb_field *f)
 {
 	struct bch_sb_field_clean *clean = field_to_type(f, clean);
@@ -245,7 +247,7 @@ static void bch2_sb_clean_to_text(struct printbuf *out, struct bch_sb *sb,
 		    !entry->u64s)
 			continue;
 
-		bch2_journal_entry_to_text(out, NULL, entry);
+		bch2_journal_entry_to_text(out, c, entry);
 		prt_newline(out);
 	}
 }

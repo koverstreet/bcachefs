@@ -62,7 +62,8 @@ static int bch2_sb_journal_validate(struct bch_sb *sb, struct bch_sb_field *f,
 	return 0;
 }
 
-static void bch2_sb_journal_to_text(struct printbuf *out, struct bch_sb *sb,
+static void bch2_sb_journal_to_text(struct printbuf *out,
+				    struct bch_fs *c, struct bch_sb *sb,
 				    struct bch_sb_field *f)
 {
 	struct bch_sb_field_journal *journal = field_to_type(f, journal);
@@ -152,8 +153,9 @@ static int bch2_sb_journal_v2_validate(struct bch_sb *sb, struct bch_sb_field *f
 	return 0;
 }
 
-static void bch2_sb_journal_v2_to_text(struct printbuf *out, struct bch_sb *sb,
-				    struct bch_sb_field *f)
+static void bch2_sb_journal_v2_to_text(struct printbuf *out,
+				       struct bch_fs *c, struct bch_sb *sb,
+				       struct bch_sb_field *f)
 {
 	struct bch_sb_field_journal_v2 *journal = field_to_type(f, journal_v2);
 	unsigned i, nr = bch2_sb_field_journal_v2_nr_entries(journal);

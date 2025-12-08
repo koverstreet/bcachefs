@@ -769,7 +769,7 @@ static int bch2_sb_replicas_validate(struct bch_sb *sb, struct bch_sb_field *f,
 }
 
 static void bch2_sb_replicas_to_text(struct printbuf *out,
-				     struct bch_sb *sb,
+				     struct bch_fs *c, struct bch_sb *sb,
 				     struct bch_sb_field *f)
 {
 	struct bch_sb_field_replicas *r = field_to_type(f, replicas);
@@ -803,7 +803,7 @@ static int bch2_sb_replicas_v0_validate(struct bch_sb *sb, struct bch_sb_field *
 }
 
 static void bch2_sb_replicas_v0_to_text(struct printbuf *out,
-					struct bch_sb *sb,
+					struct bch_fs *c, struct bch_sb *sb,
 					struct bch_sb_field *f)
 {
 	struct bch_sb_field_replicas_v0 *sb_r = field_to_type(f, replicas_v0);

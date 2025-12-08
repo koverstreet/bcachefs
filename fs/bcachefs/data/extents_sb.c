@@ -83,8 +83,9 @@ static int bch2_sb_extent_type_u64s_validate(struct bch_sb *sb, struct bch_sb_fi
 	return 0;
 }
 
-static void bch2_sb_extent_type_u64s_to_text(struct printbuf *out, struct bch_sb *sb,
-				      struct bch_sb_field *f)
+static void bch2_sb_extent_type_u64s_to_text(struct printbuf *out,
+					     struct bch_fs *c, struct bch_sb *sb,
+					     struct bch_sb_field *f)
 {
 	struct bch_sb_field_extent_type_u64s *e = field_to_type(f, extent_type_u64s);
 

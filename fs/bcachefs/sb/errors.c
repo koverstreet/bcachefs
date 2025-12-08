@@ -67,7 +67,9 @@ static int error_entry_cmp(const void *_l, const void *_r)
 
 DEFINE_DARRAY(bch_sb_field_error_entry);
 
-static void bch2_sb_errors_to_text(struct printbuf *out, struct bch_sb *sb,
+static void bch2_sb_errors_to_text(struct printbuf *out,
+				   struct bch_fs *c,
+				   struct bch_sb *sb,
 				   struct bch_sb_field *f)
 {
 	struct bch_sb_field_errors *e = field_to_type(f, errors);

@@ -37,7 +37,9 @@ static int bch2_sb_quota_validate(struct bch_sb *sb, struct bch_sb_field *f,
 	return 0;
 }
 
-static void bch2_sb_quota_to_text(struct printbuf *out, struct bch_sb *sb,
+static void bch2_sb_quota_to_text(struct printbuf *out,
+				  struct bch_fs *c,
+				  struct bch_sb *sb,
 				  struct bch_sb_field *f)
 {
 	struct bch_sb_field_quota *q = field_to_type(f, quota);
