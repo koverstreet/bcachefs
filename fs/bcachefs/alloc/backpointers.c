@@ -112,45 +112,41 @@ static noinline int backpointer_mod_err(struct btree_trans *trans,
 					bool insert)
 {
 	struct bch_fs *c = trans->c;
-	CLASS(printbuf, buf)();
-	bool will_check = c->recovery.passes_to_run &
-		BIT_ULL(BCH_RECOVERY_PASS_check_extents_to_backpointers);
-	int ret = 0;
 
+	if (recovery_pass_will_run(c, BCH_RECOVERY_PASS_check_extents_to_backpointers))
+		return 0;
+
+	CLASS(bch_log_msg, msg)(c);
 	if (insert) {
-		prt_printf(&buf, "existing backpointer found when inserting ");
-		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&new_bp->k_i));
-		prt_newline(&buf);
-		guard(printbuf_indent)(&buf);
+		prt_printf(&msg.m, "existing backpointer found when inserting ");
+		bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&new_bp->k_i));
+		prt_newline(&msg.m);
+		guard(printbuf_indent)(&msg.m);
 
-		prt_printf(&buf, "found ");
-		bch2_bkey_val_to_text(&buf, c, found_bp);
-		prt_newline(&buf);
+		prt_printf(&msg.m, "found ");
+		bch2_bkey_val_to_text(&msg.m, c, found_bp);
+		prt_newline(&msg.m);
 
-		prt_printf(&buf, "for ");
-		bch2_bkey_val_to_text(&buf, c, orig_k);
-	} else if (!will_check) {
-		prt_printf(&buf, "backpointer not found when deleting\n");
-		guard(printbuf_indent)(&buf);
+		prt_printf(&msg.m, "for ");
+		bch2_bkey_val_to_text(&msg.m, c, orig_k);
+	} else {
+		prt_printf(&msg.m, "backpointer not found when deleting\n");
+		guard(printbuf_indent)(&msg.m);
 
-		prt_printf(&buf, "searching for ");
-		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&new_bp->k_i));
-		prt_newline(&buf);
+		prt_printf(&msg.m, "searching for ");
+		bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&new_bp->k_i));
+		prt_newline(&msg.m);
 
-		prt_printf(&buf, "got ");
-		bch2_bkey_val_to_text(&buf, c, found_bp);
-		prt_newline(&buf);
+		prt_printf(&msg.m, "got ");
+		bch2_bkey_val_to_text(&msg.m, c, found_bp);
+		prt_newline(&msg.m);
 
-		prt_printf(&buf, "for ");
-		bch2_bkey_val_to_text(&buf, c, orig_k);
+		prt_printf(&msg.m, "for ");
+		bch2_bkey_val_to_text(&msg.m, c, orig_k);
 	}
 
-	if (!will_check && __bch2_inconsistent_error(c, &buf))
-		ret = bch_err_throw(c, erofs_unfixed_errors);
-
-	if (buf.buf)
-		bch_err(c, "%s", buf.buf);
-	return ret;
+	return bch2_run_explicit_recovery_pass(c, &msg.m,
+			BCH_RECOVERY_PASS_check_extents_to_backpointers, 0);
 }
 
 int bch2_bucket_backpointer_mod_nowritebuffer(struct btree_trans *trans,
