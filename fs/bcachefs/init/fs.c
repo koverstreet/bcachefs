@@ -1471,7 +1471,7 @@ static struct bch_fs *__bch2_fs_open(darray_const_str *devices,
 	if (ret)
 		goto err;
 
-	{
+	if (out->buf) {
 		/* Log opt_version_init() message before doing actual filesystem startup */
 		CLASS(printbuf, msg_with_prefix)();
 		prt_str(&msg_with_prefix, out->buf);
