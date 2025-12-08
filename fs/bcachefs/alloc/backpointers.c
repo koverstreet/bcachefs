@@ -872,7 +872,8 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 
 			if (nr_deletes > 256)
 				return  bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc) ?:
-					bch2_btree_write_buffer_flush_sync(trans);
+					bch2_btree_write_buffer_flush_sync(trans) ?:
+					bch_err_throw(c, transaction_restart_write_buffer_flush);
 
 			need_commit = true;
 			continue;
@@ -949,12 +950,10 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 			      sectors[ALLOC_stripe] +
 			      sectors[ALLOC_cached]) == 0;
 
-		ret = bch2_bucket_bitmap_set(ca, &ca->bucket_backpointer_mismatch,
-					     alloc_k.k->p.offset) ?:
-			(empty
-			 ? bch2_bucket_bitmap_set(ca, &ca->bucket_backpointer_empty,
-						  alloc_k.k->p.offset)
-			 : 0);
+		try(bch2_bucket_bitmap_set(ca, &ca->bucket_backpointer_mismatch, alloc_k.k->p.offset));
+
+		if (empty)
+			try(bch2_bucket_bitmap_set(ca, &ca->bucket_backpointer_empty, alloc_k.k->p.offset));
 
 		*had_mismatch = true;
 	}
