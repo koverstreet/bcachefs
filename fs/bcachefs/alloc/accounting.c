@@ -820,6 +820,51 @@ static struct journal_key *accumulate_and_read_journal_accounting(struct btree_t
 	return ret ? ERR_PTR(ret) : next;
 }
 
+static void accounting_key_check_sanity(struct printbuf *out, struct bch_fs *c,
+					struct disk_accounting_pos *k,
+					u64 *v, unsigned nr_counters)
+{
+	/* Ratelimit... */
+	if (out->pos > 2048)
+		return;
+
+	/*
+	 * Check for underflow, schedule check_allocations necessary:
+	 *
+	 * XXX - see if we can factor this out to run on a bkey
+	 * so we can check everything lazily, right now we don't
+	 * check the non in-mem counters at all
+	 */
+
+	for (unsigned i = 0; i < nr_counters; i++)
+		if ((s64) v[i] < 0) {
+			prt_printf(out, "Accounting underflow for\n");
+			bch2_accounting_key_to_text(out, c, k);
+
+			for (unsigned i = 0; i < nr_counters; i++)
+				prt_printf(out, " %lli", v[i]);
+			prt_newline(out);
+			out->suppress = false;
+		}
+
+	switch (k->type) {
+	case BCH_DISK_ACCOUNTING_dev_data_type:
+		scoped_guard(rcu) {
+			struct bch_dev *ca = bch2_dev_rcu_noerror(c, k->dev_data_type.dev);
+			if (ca && v[0] * ca->mi.bucket_size < v[1]) {
+				prt_printf(out, "Sector count > buckets (%llu > %llu)\n",
+					   v[1], v[0] * ca->mi.bucket_size);
+				bch2_accounting_key_to_text(out, c, k);
+				prt_newline(out);
+				out->suppress = false;
+				return;
+			}
+
+		}
+		break;
+	}
+}
+
 static int accounting_read_mem_fixups(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;
@@ -863,7 +908,6 @@ static int accounting_read_mem_fixups(struct btree_trans *trans)
 			accounting_pos_cmp, NULL);
 
 	CLASS(bch_log_msg, underflow_err)(c);
-	prt_printf(&underflow_err.m, "Accounting underflow for\n");
 	underflow_err.m.suppress = true;
 
 	for (unsigned i = 0; i < acc->k.nr; i++) {
@@ -873,26 +917,7 @@ static int accounting_read_mem_fixups(struct btree_trans *trans)
 		u64 v[BCH_ACCOUNTING_MAX_COUNTERS];
 		bch2_accounting_mem_read_counters(acc, i, v, ARRAY_SIZE(v), false);
 
-		/*
-		 * Check for underflow, schedule check_allocations
-		 * necessary:
-		 *
-		 * XXX - see if we can factor this out to run on a bkey
-		 * so we can check everything lazily, right now we don't
-		 * check the non in-mem counters at all
-		 */
-		bool underflow = false;
-		for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
-			underflow |= (s64) v[j] < 0;
-
-		if (underflow) {
-			bch2_accounting_key_to_text(&underflow_err.m, c, &k);
-
-			for (unsigned j = 0; j < acc->k.data[i].nr_counters; j++)
-				prt_printf(&underflow_err.m, " %lli", v[j]);
-			prt_newline(&underflow_err.m);
-			underflow_err.m.suppress = false;
-		}
+		accounting_key_check_sanity(&underflow_err.m, c, &k, v, acc->k.data[i].nr_counters);
 
 		guard(preempt)();
 		struct bch_fs_usage_base *usage = this_cpu_ptr(c->capacity.usage);
