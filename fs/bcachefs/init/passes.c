@@ -276,6 +276,38 @@ u64 bch2_fsck_recovery_passes(void)
 	return bch2_recovery_passes_match(PASS_FSCK);
 }
 
+/* Set of all passes that depend on @pass, transitively */
+static u64 pass_dependents(enum bch_recovery_pass pass)
+{
+	u64 passes = BIT_ULL(pass);
+	bool found;
+
+	do {
+		found = false;
+		for (unsigned i = 0; i < BCH_RECOVERY_PASS_NR; i++)
+			if (!(passes & BIT_ULL(i)) &&
+			    (passes & recovery_passes[i].depends)) {
+				passes |= BIT_ULL(i);
+				found = true;
+			}
+	} while (found);
+
+	return passes;
+}
+
+/* true if all passes can be run online */
+static bool passes_online(u64 passes)
+{
+	return passes == (passes & bch2_recovery_passes_match(PASS_ONLINE));
+}
+
+/* Returns true if a given pass and all scheduled dependents can run online */
+static bool recovery_pass_should_defer(enum bch_recovery_pass pass,
+				       u64 passes)
+{
+	return (passes_online(pass_dependents(pass) & passes)) != 0;
+}
+
 static bool recovery_pass_needs_rewind(struct bch_fs *c,
 				       enum bch_recovery_pass pass)
 {
@@ -372,7 +404,7 @@ int __bch2_run_explicit_recovery_pass(struct bch_fs *c,
 	else
 		r->passes_ratelimiting &= ~BIT_ULL(pass);
 
-	if (in_recovery && !ratelimit) {
+	if (in_recovery && !ratelimit && !recovery_pass_should_defer(pass, r->current_passes)) {
 		bool rewind = recovery_pass_needs_rewind(c, pass);
 
 		prt_printf(out, "running recovery pass %s (%u), currently at %s (%u)%s\n",
@@ -549,56 +581,28 @@ static void bch2_async_recovery_passes_work(struct work_struct *work)
 	struct bch_fs *c = container_of(work, struct bch_fs, recovery.work);
 	struct bch_fs_recovery *r = &c->recovery;
 
-	bch2_run_recovery_passes(c,
-		(c->sb.recovery_passes_required |
-		 r->scheduled_passes_ephemeral) &
-		~r->passes_ratelimiting &
-		bch2_recovery_passes_match(PASS_ONLINE),
-		false);
+	if (mutex_trylock(&r->run_lock)) {
+		bch2_run_recovery_passes(c,
+			(c->sb.recovery_passes_required |
+			 r->scheduled_passes_ephemeral) &
+			~r->passes_ratelimiting &
+			bch2_recovery_passes_match(PASS_ONLINE),
+			false);
 
-	up(&r->run_lock);
+		mutex_unlock(&r->run_lock);
+	}
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_async_recovery_passes);
 }
 
 void bch2_run_async_recovery_passes(struct bch_fs *c)
 {
-	if (!down_trylock(&c->recovery.run_lock))
-		return;
-
 	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_async_recovery_passes))
-		goto unlock;
+		return;
 
 	if (queue_work(system_long_wq, &c->recovery.work))
 		return;
 
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_async_recovery_passes);
-unlock:
-	up(&c->recovery.run_lock);
-}
-
-/* Set of all passes that depend on @pass, transitively */
-static u64 pass_dependents(enum bch_recovery_pass pass)
-{
-	u64 passes = BIT_ULL(pass);
-	bool found;
-
-	do {
-		found = false;
-		for (unsigned i = 0; i < BCH_RECOVERY_PASS_NR; i++)
-			if (!(passes & BIT_ULL(i)) &&
-			    (passes & recovery_passes[i].depends)) {
-				passes |= BIT_ULL(i);
-				found = true;
-			}
-	} while (found);
-
-	return passes;
-}
-
-/* true if all passes can be run online */
-static bool passes_online(u64 passes)
-{
-	return passes == (passes & bch2_recovery_passes_match(PASS_ONLINE));
 }
 
 int bch2_run_recovery_passes_startup(struct bch_fs *c, enum bch_recovery_pass from)
@@ -634,18 +638,17 @@ int bch2_run_recovery_passes_startup(struct bch_fs *c, enum bch_recovery_pass fr
 	if (!c->opts.fsck)
 		for (unsigned i = 0; i < BCH_RECOVERY_PASS_NR; i++)
 			if ((passes & BIT_ULL(i)) &&
-			    passes_online(pass_dependents(i) & passes)) {
+			    recovery_pass_should_defer(i, passes)) {
 				defer |= BIT_ULL(i);
 				passes &= ~BIT_ULL(i);
 			}
 
-	down(&r->run_lock);
-	int ret = bch2_run_recovery_passes(c, passes, true);
-	up(&r->run_lock);
+	scoped_guard(mutex, &r->run_lock)
+		try(bch2_run_recovery_passes(c, passes, true));
 
 	clear_bit(BCH_FS_in_recovery, &c->flags);
 
-	if (!ret && defer) {
+	if (defer) {
 		CLASS(bch_log_msg_level, msg)(c, LOGLEVEL_notice);
 		prt_printf(&msg.m, "Running the following recovery passes in the background:\n");
 		prt_bitflags(&msg.m, bch2_recovery_passes, defer);
@@ -654,7 +657,7 @@ int bch2_run_recovery_passes_startup(struct bch_fs *c, enum bch_recovery_pass fr
 		bch2_run_async_recovery_passes(c);
 	}
 
-	return ret;
+	return 0;
 }
 
 static void prt_passes(struct printbuf *out, const char *msg, u64 passes)
@@ -690,7 +693,7 @@ void bch2_recovery_pass_status_to_text(struct printbuf *out, struct bch_fs *c)
 void bch2_fs_recovery_passes_init(struct bch_fs *c)
 {
 	spin_lock_init(&c->recovery.lock);
-	sema_init(&c->recovery.run_lock, 1);
+	mutex_init(&c->recovery.run_lock);
 
 	INIT_WORK(&c->recovery.work, bch2_async_recovery_passes_work);
 }

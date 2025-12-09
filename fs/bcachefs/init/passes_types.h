@@ -20,7 +20,7 @@ struct bch_fs_recovery {
 	u64			passes_ratelimiting;
 
 	spinlock_t		lock;
-	struct semaphore	run_lock;
+	struct mutex		run_lock;
 	struct work_struct	work;
 };
 

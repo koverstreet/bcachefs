@@ -1992,43 +1992,48 @@ static int bch2_fsck_online_thread_fn(struct thread_with_stdio *stdio)
 {
 	struct fsck_thread *thr = container_of(stdio, struct fsck_thread, thr);
 	struct bch_fs *c = thr->c;
-
-	c->stdio_filter = current;
-	c->stdio = &thr->thr.stdio;
-
-	/*
-	 * XXX: can we figure out a way to do this without mucking with c->opts?
-	 */
-	unsigned old_fix_errors = c->opts.fix_errors;
-	if (opt_defined(thr->opts, fix_errors))
-		c->opts.fix_errors = thr->opts.fix_errors;
-	else
-		c->opts.fix_errors = FSCK_FIX_ask;
-
-	c->opts.fsck = true;
-	set_bit(BCH_FS_in_fsck, &c->flags);
-
-	int ret = bch2_run_recovery_passes(c,
-		bch2_recovery_passes_match(PASS_FSCK) &
-		bch2_recovery_passes_match(PASS_ONLINE),
-		true);
-
-	clear_bit(BCH_FS_in_fsck, &c->flags);
-
 	CLASS(printbuf, buf)();
-	if (ret)
-		prt_printf(&buf, "%s: error running recovery passes: %s\n", c->name, bch2_err_str(ret));
-	else
-		ret = bch2_fs_fsck_errcode(c, &buf);
-	if (ret)
-		bch2_stdio_redirect_write(&stdio->stdio, false, buf.buf, buf.pos);
+	int ret = -EAGAIN;
 
-	c->stdio = NULL;
-	c->stdio_filter = NULL;
-	c->opts.fix_errors = old_fix_errors;
+	if (mutex_trylock(&c->recovery.run_lock)) {
+		c->stdio_filter = current;
+		c->stdio = &thr->thr.stdio;
 
-	up(&c->recovery.run_lock);
+		/*
+		 * XXX: can we figure out a way to do this without mucking with c->opts?
+		 */
+		unsigned old_fix_errors = c->opts.fix_errors;
+		if (opt_defined(thr->opts, fix_errors))
+			c->opts.fix_errors = thr->opts.fix_errors;
+		else
+			c->opts.fix_errors = FSCK_FIX_ask;
+
+		c->opts.fsck = true;
+		set_bit(BCH_FS_in_fsck, &c->flags);
+
+		ret = bch2_run_recovery_passes(c,
+			bch2_recovery_passes_match(PASS_FSCK) &
+			bch2_recovery_passes_match(PASS_ONLINE),
+			true) ?:
+			bch2_fs_fsck_errcode(c, &buf);
+
+		clear_bit(BCH_FS_in_fsck, &c->flags);
+
+		c->stdio = NULL;
+		c->stdio_filter = NULL;
+		c->opts.fix_errors = old_fix_errors;
+
+		mutex_unlock(&c->recovery.run_lock);
+	}
 	bch2_ro_ref_put(c);
+
+	if (ret < 0) {
+		prt_printf(&buf, "%s: error running recovery passes: %s\n", c->name, bch2_err_str(ret));
+		ret = 8;
+	}
+
+	if (buf.pos)
+		bch2_stdio_redirect_write(&stdio->stdio, false, buf.buf, buf.pos);
 	return ret;
 }
 
@@ -2052,14 +2057,8 @@ long bch2_ioctl_fsck_online(struct bch_fs *c, struct bch_ioctl_fsck_online arg)
 	if (!bch2_ro_ref_tryget(c))
 		return -EROFS;
 
-	if (down_trylock(&c->recovery.run_lock)) {
-		bch2_ro_ref_put(c);
-		return -EAGAIN;
-	}
-
 	struct fsck_thread *thr = kzalloc(sizeof(*thr), GFP_KERNEL);
 	if (!thr) {
-		up(&c->recovery.run_lock);
 		bch2_ro_ref_put(c);
 		return -ENOMEM;
 	}
@@ -2071,7 +2070,6 @@ long bch2_ioctl_fsck_online(struct bch_fs *c, struct bch_ioctl_fsck_online arg)
 	if (ret < 0) {
 		bch_err_fn(c, ret);
 		bch2_fsck_thread_exit(&thr->thr);
-		up(&c->recovery.run_lock);
 		bch2_ro_ref_put(c);
 	}
 	return ret;
