@@ -471,7 +471,8 @@ static int bch2_run_recovery_pass(struct bch_fs *c, enum bch_recovery_pass pass)
 		bch2_print(c, KERN_CONT " done\n");
 	r->passes_failing = 0;
 
-	bch2_sb_recovery_pass_complete(c, pass, start_time);
+	if (!test_bit(BCH_FS_error, &c->flags))
+		bch2_sb_recovery_pass_complete(c, pass, start_time);
 
 	return 0;
 }
