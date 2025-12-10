@@ -86,10 +86,7 @@ int bch2_extent_reconcile_validate(struct bch_fs *c,
 {
 	int ret = 0;
 
-	bkey_fsck_err_on(r->pending &&
-			 !(r->need_rb & (BIT(BCH_REBALANCE_background_target)|
-					 BIT(BCH_REBALANCE_data_replicas)|
-					 BIT(BCH_REBALANCE_erasure_code))),
+	bkey_fsck_err_on(r->pending && !r->need_rb,
 			 c, extent_reconcile_bad_pending,
 			 "pending incorrectly set");
 
