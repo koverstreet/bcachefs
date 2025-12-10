@@ -3368,7 +3368,7 @@ static inline void check_srcu_held_too_long(struct btree_trans *trans)
 			   (jiffies - trans->srcu_lock_time) / HZ);
 		bch2_sb_recent_counters_to_text(&buf, &trans->c->counters);
 
-		WARN(true, "%s", buf.buf);
+		WARN_RATELIMIT(true, "%s", buf.buf);
 	}
 }
 
