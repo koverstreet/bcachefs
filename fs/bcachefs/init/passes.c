@@ -98,7 +98,7 @@ static void bch2_sb_recovery_passes_to_text(struct printbuf *out,
 	if (out->nr_tabstops < 1)
 		printbuf_tabstop_push(out, 32);
 	if (out->nr_tabstops < 2)
-		printbuf_tabstop_push(out, 16);
+		printbuf_tabstop_push(out, 32);
 
 	prt_printf(out, "Pass\tLast run\tLast runtime\n");
 
@@ -113,7 +113,7 @@ static void bch2_sb_recovery_passes_to_text(struct printbuf *out,
 		bch2_prt_datetime(out, le64_to_cpu(i->last_run));
 		prt_tab(out);
 
-		bch2_pr_time_units(out, le32_to_cpu(i->last_runtime) * NSEC_PER_SEC);
+		bch2_pr_time_units(out, (u64) le32_to_cpu(i->last_runtime) * NSEC_PER_SEC);
 
 		if (BCH_RECOVERY_PASS_NO_RATELIMIT(i))
 			prt_str(out, " (no ratelimit)");
