@@ -1133,11 +1133,23 @@ int bch2_accounting_read(struct bch_fs *c)
 	 * for the same key:
 	 */
 
+	unsigned long last_print = jiffies;
+	u64 keys_seen = 0;
+
+	pr_info("starting btree iteration");
+
 	CLASS(btree_iter, iter)(trans, BTREE_ID_accounting, POS_MIN,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots);
 	iter.flags &= ~BTREE_ITER_with_journal;
 	try(for_each_btree_key_continue(trans, iter,
 				BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k, ({
+		keys_seen++;
+		if (time_after_eq(jiffies, last_print + HZ)) {
+			CLASS(printbuf, buf)();
+			bch2_bkey_val_to_text(&buf, c, k);
+			pr_info("seen %llu at %s", keys_seen, buf.buf);
+		}
+
 		if (k.k->type != KEY_TYPE_accounting)
 			continue;
 

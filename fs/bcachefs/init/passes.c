@@ -626,6 +626,8 @@ int bch2_run_recovery_passes_startup(struct bch_fs *c, enum bch_recovery_pass fr
 		c->opts.recovery_passes |
 		c->sb.recovery_passes_required;
 
+	passes &= ~BIT_ULL(BCH_RECOVERY_PASS_check_topology);
+
 	if (c->opts.recovery_pass_last)
 		passes &= BIT_ULL(c->opts.recovery_pass_last + 1) - 1;
 
