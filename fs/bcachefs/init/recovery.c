@@ -169,6 +169,7 @@ void bch2_reconstruct_alloc(struct bch_fs *c)
 	__set_bit_le64(BCH_FSCK_ERR_alloc_key_cached_sectors_wrong, ext->errors_silent);
 	__set_bit_le64(BCH_FSCK_ERR_alloc_key_stripe_wrong, ext->errors_silent);
 	__set_bit_le64(BCH_FSCK_ERR_alloc_key_stripe_redundancy_wrong, ext->errors_silent);
+	__set_bit_le64(BCH_FSCK_ERR_alloc_key_to_missing_lru_entry, ext->errors_silent);
 	__set_bit_le64(BCH_FSCK_ERR_need_discard_key_wrong, ext->errors_silent);
 	__set_bit_le64(BCH_FSCK_ERR_freespace_key_wrong, ext->errors_silent);
 	__set_bit_le64(BCH_FSCK_ERR_bucket_gens_key_wrong, ext->errors_silent);
