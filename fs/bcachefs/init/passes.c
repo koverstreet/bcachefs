@@ -500,7 +500,8 @@ static int bch2_run_recovery_pass(struct bch_fs *c, enum bch_recovery_pass pass)
 	}
 
 	if (!(p->when & PASS_SILENT))
-		bch2_print(c, KERN_CONT " done\n");
+		bch2_print(c, KERN_CONT " done (%lli seconds)\n",
+			   ktime_get_real_seconds() - start_time);
 	r->passes_failing = 0;
 
 	if (!test_bit(BCH_FS_error, &c->flags))
