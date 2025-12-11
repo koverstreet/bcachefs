@@ -57,7 +57,10 @@ static int btree_node_topology_err(struct bch_fs *c, struct btree *b, struct pri
 {
 	bch2_btree_pos_to_text(out, c, b);
 	prt_newline(out);
-	return __bch2_topology_error(c, out);
+	int ret = __bch2_topology_error(c, out);
+
+	bch2_prt_task_backtrace(out, current, 1, GFP_KERNEL);
+	return ret;
 }
 
 /*
