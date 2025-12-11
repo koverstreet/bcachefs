@@ -1381,8 +1381,11 @@ int bch2_journal_read(struct bch_fs *c, struct journal_start_info *info)
 			set_bit(JOURNAL_degraded, &c->journal.flags);
 	}
 
-	while (closure_sync_timeout(&jlist.cl, sysctl_hung_task_timeout_secs * HZ / 2))
-		;
+	if (!sysctl_hung_task_timeout_secs)
+		closure_sync(&jlist.cl);
+	else
+		while (closure_sync_timeout(&jlist.cl, sysctl_hung_task_timeout_secs * HZ / 2))
+			;
 
 	if (jlist.ret)
 		return jlist.ret;

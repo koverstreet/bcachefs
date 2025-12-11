@@ -313,8 +313,12 @@ static int read_btree_nodes(struct find_btree_nodes *f)
 
 	bch_notice(c, "%s", buf.buf);
 err:
-	while (closure_sync_timeout(&cl, sysctl_hung_task_timeout_secs * HZ / 2))
-		;
+	if (!sysctl_hung_task_timeout_secs)
+		closure_sync(&cl);
+	else
+		while (closure_sync_timeout(&cl, sysctl_hung_task_timeout_secs * HZ / 2))
+			;
+
 	return f->ret ?: ret;
 }
 
