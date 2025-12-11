@@ -866,12 +866,6 @@ use_clean:
 			write_sb = true;
 		}
 
-		if (!test_bit(BCH_FS_error, &c->flags) &&
-		    !bch2_is_zero(ext->errors_silent, sizeof(ext->errors_silent))) {
-			memset(ext->errors_silent, 0, sizeof(ext->errors_silent));
-			write_sb = true;
-		}
-
 		if (c->opts.fsck &&
 		    !test_bit(BCH_FS_error, &c->flags) &&
 		    c->recovery.pass_done == BCH_RECOVERY_PASS_NR - 1 &&

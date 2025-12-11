@@ -154,6 +154,9 @@ static void bch2_sb_recovery_pass_complete(struct bch_fs *c,
 	__clear_bit_le64(bch2_recovery_pass_to_stable(pass),
 			 ext->recovery_passes_required);
 
+	if (bch2_is_zero(ext->recovery_passes_required, sizeof(ext->recovery_passes_required)))
+		memset(ext->errors_silent, 0, sizeof(ext->errors_silent));
+
 	struct recovery_pass_entry *e = bch2_sb_recovery_pass_entry(c, pass);
 	if (e) {
 		s64 end_time	= ktime_get_real_seconds();
