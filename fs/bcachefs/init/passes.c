@@ -298,17 +298,13 @@ static u64 pass_dependents(enum bch_recovery_pass pass)
 	return passes;
 }
 
-/* true if all passes can be run online */
-static bool passes_online(u64 passes)
-{
-	return passes == (passes & bch2_recovery_passes_match(PASS_ONLINE));
-}
-
 /* Returns true if a given pass and all scheduled dependents can run online */
 static bool recovery_pass_should_defer(enum bch_recovery_pass pass,
 				       u64 passes)
 {
-	return (passes_online(pass_dependents(pass) & passes)) != 0;
+	passes &= pass_dependents(pass);
+	passes |= BIT_ULL(pass);
+	return passes == (passes & bch2_recovery_passes_match(PASS_ONLINE));
 }
 
 static bool recovery_pass_needs_rewind(struct bch_fs *c,
