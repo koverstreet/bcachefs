@@ -218,7 +218,8 @@ static inline bool bucket_valid(const struct bch_dev *ca, u64 b)
 
 static inline struct bch_dev *bch2_dev_have_ref(const struct bch_fs *c, unsigned dev)
 {
-	EBUG_ON(!bch2_dev_exists(c, dev));
+	if (WARN(!bch2_dev_exists(c, dev), "nonexistent dev %u (nr_devices %u)", dev, c->sb.nr_devices))
+		return NULL;
 
 	return rcu_dereference_check(c->devs[dev], 1);
 }
