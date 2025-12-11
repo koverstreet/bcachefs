@@ -650,6 +650,9 @@ static int bch2_get_dead_interior_snapshots(struct btree_trans *trans, struct bk
 
 	struct bkey_s_c_snapshot s = bkey_s_c_to_snapshot(k);
 
+	if (BCH_SNAPSHOT_DELETED(s.v))
+		return 0;
+
 	if (BCH_SNAPSHOT_NO_KEYS(s.v)) {
 		u32 live_child = 0, nr_live_children = 0;
 		for (unsigned i = 0; i < 2; i++) {
@@ -679,7 +682,7 @@ int bch2_delete_dead_interior_snapshots(struct bch_fs *c)
 	CLASS(btree_trans, trans)(c);
 	CLASS(interior_delete_list, delete)();
 
-	try(for_each_btree_key(trans, iter, BTREE_ID_snapshots, POS_MAX, 0, k,
+	try(for_each_btree_key(trans, iter, BTREE_ID_snapshots, POS_MIN, 0, k,
 			       bch2_get_dead_interior_snapshots(trans, k, &delete)));
 
 	if (delete.nr) {
@@ -720,6 +723,9 @@ int bch2_check_snapshot_needs_deletion(struct btree_trans *trans, struct bkey_s_
 
 	struct bkey_s_c_snapshot s = bkey_s_c_to_snapshot(k);
 	struct bch_fs *c = trans->c;
+
+	if (BCH_SNAPSHOT_DELETED(s.v))
+		return 0;
 
 	if (BCH_SNAPSHOT_NO_KEYS(s.v))
 		*nr_empty_interior += 1;
