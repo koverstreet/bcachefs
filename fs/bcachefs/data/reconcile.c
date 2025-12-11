@@ -693,12 +693,20 @@ static int check_dev_reconcile_scan_cookie(struct btree_trans *trans, struct bke
 	struct bch_fs *c = trans->c;
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 
-	bkey_for_each_ptr(ptrs, ptr)
+	bkey_for_each_ptr(ptrs, ptr) {
+		if (ptr->dev == BCH_SB_MEMBER_INVALID)
+			continue;
+
 		if (v && test_bit(ptr->dev, v->d))
 			return 1;
+	}
 
 	bkey_for_each_ptr(ptrs, ptr) {
-		int ret = check_reconcile_scan_cookie(trans, ptr->dev + 1, NULL);
+		if (ptr->dev == BCH_SB_MEMBER_INVALID)
+			continue;
+
+		int ret = check_reconcile_scan_cookie(trans,
+				RECONCILE_SCAN_COOKIE_device + ptr->dev, NULL);
 		if (ret < 0)
 			return ret;
 		if (ret) {
