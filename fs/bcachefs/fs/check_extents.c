@@ -329,8 +329,14 @@ static int check_extent(struct btree_trans *trans, struct btree_iter *iter,
 	int ret = 0;
 
 	ret = bch2_check_key_has_snapshot(trans, iter, k);
+	if (ret < 0)
+		return ret;
+	/*
+	 * We can't use for_each_btree_key_commit() here because we have work to
+	 * do after the commit that can't handle a transaction restart
+	 */
 	if (ret)
-		return ret < 0 ? ret : 0;
+		return bch2_trans_commit(trans, res, NULL, BCH_TRANS_COMMIT_no_enospc);
 
 	if (inode->last_pos.inode != k.k->p.inode && inode->have_inodes)
 		try(check_i_sectors(trans, inode));
