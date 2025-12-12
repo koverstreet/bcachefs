@@ -396,7 +396,6 @@
 	x(BCH_ERR_data_read,		data_read_key_overwritten)		\
 	x(0,				rbio_narrow_crcs_fail)			\
 	x(0,				nopromote)				\
-	x(BCH_ERR_nopromote,		nopromote_may_not)			\
 	x(BCH_ERR_nopromote,		nopromote_no_rewrites)			\
 	x(BCH_ERR_nopromote,		nopromote_already_promoted)		\
 	x(BCH_ERR_nopromote,		nopromote_unwritten)			\

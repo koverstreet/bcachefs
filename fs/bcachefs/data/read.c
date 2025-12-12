@@ -185,11 +185,6 @@ static inline int should_promote(struct bch_fs *c, struct bkey_s_c k,
 	if (!self_healing) {
 		BUG_ON(!opts.promote_target);
 
-		if (!(flags & BCH_READ_may_promote)) {
-			event_inc(c, data_read_nopromote_may_not);
-			return bch_err_throw(c, nopromote_may_not);
-		}
-
 		if (bch2_bkey_has_target(c, k, opts.promote_target)) {
 			event_inc(c, data_read_nopromote_already_promoted);
 			return bch_err_throw(c, nopromote_already_promoted);
@@ -1073,7 +1068,9 @@ static inline struct bch_read_bio *read_extent_rbio_alloc(struct btree_trans *tr
 	struct bch_fs *c = trans->c;
 	struct bpos data_pos = bkey_start_pos(k.k);
 
-	struct bch_read_bio *rbio = orig->opts.promote_target || have_io_error(failed)
+	struct bch_read_bio *rbio =
+		(orig->opts.promote_target && (flags & BCH_READ_may_promote)) ||
+		have_io_error(failed)
 		? promote_alloc(trans, iter, k, &pick, flags, orig,
 				&bounce, &read_full, failed)
 		: NULL;
