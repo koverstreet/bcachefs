@@ -52,7 +52,6 @@ bcachefs-y		:=			\
 	data/reflink.o				\
 	data/update.o				\
 	data/write.o				\
-	debug/async_objs.o			\
 	debug/debug.o				\
 	debug/sysfs.o				\
 	debug/tests.o				\
@@ -119,7 +118,11 @@ bcachefs-y		:=			\
 	vfs/io.o				\
 	vfs/buffered.o				\
 	vfs/direct.o				\
-	vfs/pagecache.o	
+	vfs/pagecache.o
+
+ifdef CONFIG_DEBUG_FS
+	bcachefs-y += debug/async_objs.o
+endif
 
 ifndef BCACHEFS_DKMS
 	obj-$(CONFIG_MEAN_AND_VARIANCE_UNIT_TEST)   += util/mean_and_variance_test.o

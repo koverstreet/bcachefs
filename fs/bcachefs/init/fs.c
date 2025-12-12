@@ -34,7 +34,9 @@
 #include "data/reconcile.h"
 #include "data/write.h"
 
+#ifdef CONFIG_DEBUG_FS
 #include "debug/async_objs.h"
+#endif
 #include "debug/debug.h"
 #include "debug/sysfs.h"
 
@@ -609,7 +611,10 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_fs_buckets_waiting_for_journal_exit(c);
 	bch2_fs_btree_exit(c);
 	bch2_fs_accounting_exit(c);
+
+#ifdef CONFIG_DEBUG_FS
 	bch2_fs_async_obj_exit(c);
+#endif
 
 	enumerated_ref_exit(&c->writes);
 	kfree(rcu_dereference_protected(c->disk_groups, 1));
@@ -1126,7 +1131,9 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 		return bch_err_throw(c, ENOMEM_fs_other_alloc);
 
 	try(bch2_blacklist_table_initialize(c));
+#ifdef CONFIG_DEBUG_FS
 	try(bch2_fs_async_obj_init(c));
+#endif
 	try(bch2_fs_btree_init(c));
 	try(bch2_fs_buckets_waiting_for_journal_init(c));
 	try(bch2_fs_compress_init(c));
