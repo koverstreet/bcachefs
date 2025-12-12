@@ -35,7 +35,7 @@ bool __bch2_inconsistent_error(struct bch_fs *c, struct printbuf *out)
 		return false;
 	case BCH_ON_ERROR_fix_safe:
 	case BCH_ON_ERROR_ro:
-		bch2_fs_emergency_read_only2(c, out);
+		bch2_fs_emergency_read_only(c, out);
 		return true;
 	case BCH_ON_ERROR_panic:
 		bch2_print_str(c, KERN_ERR, out->buf);
@@ -134,7 +134,7 @@ void bch2_fatal_error(struct bch_fs *c, const char *func, const char *fmt, ...)
 	prt_vprintf(&msg.m, fmt, args);
 	va_end(args);
 
-	bch2_fs_emergency_read_only2(c, &msg.m);
+	bch2_fs_emergency_read_only(c, &msg.m);
 	prt_printf(&msg.m, "fatal error - emergency read only");
 }
 
@@ -166,7 +166,7 @@ void bch2_io_error_work(struct work_struct *work)
 
 		prt_printf(&buf, "setting %s ro", dev ? "device" : "filesystem");
 		if (!dev)
-			print = bch2_fs_emergency_read_only2(c, &buf);
+			print = bch2_fs_emergency_read_only(c, &buf);
 
 		if (print)
 			bch2_print_str(c, KERN_ERR, buf.buf);

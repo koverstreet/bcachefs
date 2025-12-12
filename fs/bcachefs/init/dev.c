@@ -1169,7 +1169,7 @@ static void bch2_fs_bdev_mark_dead(struct block_device *bdev, bool surprise)
 			__bch2_dev_offline(c, ca);
 		} else {
 			bch2_journal_flush(&c->journal);
-			print = bch2_fs_emergency_read_only2(c, &buf);
+			print = bch2_fs_emergency_read_only(c, &buf);
 		}
 
 		if (print)

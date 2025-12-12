@@ -168,7 +168,7 @@ static int __btree_err(enum bch_fsck_flags flags,
 		btree_err_msg(&msg.m, c, NULL, b, i, k, fmt, args);
 		va_end(args);
 
-		bch2_fs_emergency_read_only2(c, &msg.m);
+		bch2_fs_emergency_read_only(c, &msg.m);
 
 		return bch_err_throw(c, fsck_errors_not_fixed);
 	}
@@ -1042,7 +1042,7 @@ void bch2_btree_node_read(struct btree_trans *trans, struct btree *b,
 		bch2_btree_lost_data(c, &msg.m, b->c.btree_id);
 
 		if (c->recovery.passes_complete & BIT_ULL(BCH_RECOVERY_PASS_check_topology))
-			bch2_fs_emergency_read_only2(c, &msg.m);
+			bch2_fs_emergency_read_only(c, &msg.m);
 
 		set_btree_node_read_error(b);
 		clear_btree_node_read_in_flight(b);

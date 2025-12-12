@@ -3652,7 +3652,7 @@ static void check_btree_paths_leaked(struct btree_trans *trans)
 					   bch2_btree_id_str(path->btree_id),
 					   (void *) path->ip_allocated);
 
-		bch2_fs_emergency_read_only2(c, &msg.m);
+		bch2_fs_emergency_read_only(c, &msg.m);
 	}
 }
 #else

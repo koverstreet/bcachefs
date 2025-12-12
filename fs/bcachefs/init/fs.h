@@ -35,7 +35,7 @@ extern struct mutex bch2_fs_list_lock;
 struct bch_fs *__bch2_uuid_to_fs(__uuid_t uuid);
 struct bch_fs *bch2_uuid_to_fs(__uuid_t);
 
-bool bch2_fs_emergency_read_only2(struct bch_fs *, struct printbuf *);
+bool bch2_fs_emergency_read_only(struct bch_fs *, struct printbuf *);
 bool bch2_fs_emergency_read_only_locked(struct bch_fs *, struct printbuf *out);
 
 void bch2_fs_read_only(struct bch_fs *);

@@ -130,7 +130,7 @@ journal_error_check_stuck(struct journal *j, int error, unsigned flags)
 	prt_printf(&msg.m, "Journal pins:\n");
 	bch2_journal_pins_to_text(&msg.m, j);
 
-	bch2_fs_emergency_read_only2(c, &msg.m);
+	bch2_fs_emergency_read_only(c, &msg.m);
 	return true;
 }
 

@@ -1201,7 +1201,7 @@ int bch2_write_super(struct bch_fs *c)
 		scoped_guard(printbuf_indent, &err)
 			bch2_devs_mask_to_text_locked(&err, c, &sb_unwritten);
 
-		if (bch2_fs_emergency_read_only2(c, &err))
+		if (bch2_fs_emergency_read_only(c, &err))
 			bch2_print_str(c, KERN_ERR, err.buf);
 	}
 out:

@@ -250,7 +250,7 @@ static CLOSURE_CALLBACK(journal_write_done)
 			prt_newline(&msg.m);
 		} else {
 			prt_printf(&msg.m, "error %s\n", bch2_err_str(err));
-			bch2_fs_emergency_read_only2(c, &msg.m);
+			bch2_fs_emergency_read_only(c, &msg.m);
 		}
 	}
 
@@ -805,7 +805,7 @@ err:
 			   vstruct_sectors(w->data, c->block_bits),
 			   bch2_err_str(ret));
 		bch2_journal_debug_to_text(&msg.m, j);
-		bch2_fs_emergency_read_only2(c, &msg.m);
+		bch2_fs_emergency_read_only(c, &msg.m);
 	}
 no_io:
 	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {

@@ -188,7 +188,7 @@ static int bch2_ioc_goingdown(struct bch_fs *c, u32 __user *arg)
 		try(bdev_freeze(c->vfs_sb->s_bdev));
 
 		bch2_journal_flush(&c->journal);
-		bch2_fs_emergency_read_only2(c, &msg.m);
+		bch2_fs_emergency_read_only(c, &msg.m);
 
 		bdev_thaw(c->vfs_sb->s_bdev);
 		return 0;
@@ -196,7 +196,7 @@ static int bch2_ioc_goingdown(struct bch_fs *c, u32 __user *arg)
 		bch2_journal_flush(&c->journal);
 		fallthrough;
 	case FSOP_GOING_FLAGS_NOLOGFLUSH:
-		bch2_fs_emergency_read_only2(c, &msg.m);
+		bch2_fs_emergency_read_only(c, &msg.m);
 		return 0;
 	default:
 		return -EINVAL;

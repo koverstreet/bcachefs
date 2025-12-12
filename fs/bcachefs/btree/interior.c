@@ -1885,7 +1885,7 @@ static int bch2_btree_insert_node(struct btree_update *as, struct btree_trans *t
 			   __func__, b->c.level);
 		bch2_btree_update_to_text(&msg.m, as);
 		bch2_btree_path_to_text(&msg.m, trans, path_idx, path);
-		bch2_fs_emergency_read_only2(c, &msg.m);
+		bch2_fs_emergency_read_only(c, &msg.m);
 		return -EIO;
 	}
 

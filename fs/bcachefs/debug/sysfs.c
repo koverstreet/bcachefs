@@ -493,7 +493,7 @@ STORE(bch2_fs)
 		CLASS(bch_log_msg, msg)(c);
 
 		prt_printf(&msg.m, "shutdown by sysfs\n");
-		bch2_fs_emergency_read_only2(c, &msg.m);
+		bch2_fs_emergency_read_only(c, &msg.m);
 	}
 
 #ifdef CONFIG_BCACHEFS_TESTS
