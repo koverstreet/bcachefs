@@ -188,7 +188,9 @@
 #endif
 
 #ifdef __KERNEL__
+#ifdef CONFIG_DEBUG_FS
 #define CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
+#endif
 #endif
 
 #ifndef dynamic_fault
@@ -889,10 +891,12 @@ struct bch_fs {
 	struct bch_memquota_type quotas[QTYP_NR];
 
 	/* DEBUG JUNK */
+#ifdef CONFIG_DEBUG_FS
 	struct dentry		*fs_debug_dir;
 	struct dentry		*btree_debug_dir;
 	struct dentry		*async_obj_dir;
 	struct btree_debug	btree_debug[BTREE_ID_NR];
+#endif
 	struct btree		*verify_data;
 	struct btree_node	*verify_ondisk;
 	struct mutex		verify_lock;

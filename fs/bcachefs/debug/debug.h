@@ -39,12 +39,14 @@ int bch2_dump_release(struct inode *, struct file *);
 
 void bch2_fs_debug_exit(struct bch_fs *);
 void bch2_fs_debug_init(struct bch_fs *);
+void bch2_debug_exit(void);
+int bch2_debug_init(void);
 #else
 static inline void bch2_fs_debug_exit(struct bch_fs *c) {}
 static inline void bch2_fs_debug_init(struct bch_fs *c) {}
+static inline void bch2_debug_exit(void) {}
+static inline int bch2_debug_init(void) { return 0; }
 #endif
 
-void bch2_debug_exit(void);
-int bch2_debug_init(void);
 
 #endif /* _BCACHEFS_DEBUG_H */
