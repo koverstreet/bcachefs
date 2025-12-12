@@ -39,7 +39,9 @@
 #include <linux/random.h>
 #include <linux/seq_file.h>
 
+#ifdef CONFIG_DEBUG_FS
 static struct dentry *bch_debug;
+#endif
 
 static bool bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 				      struct extent_ptr_decoded pick)
