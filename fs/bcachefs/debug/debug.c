@@ -87,13 +87,13 @@ static bool bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 		struct bset *i;
 		unsigned j;
 
-		console_lock();
+		CLASS(printbuf, buf)();
 
-		printk(KERN_ERR "*** in memory:\n");
-		bch2_dump_bset(c, b, inmemory, 0);
+		prt_str(&buf, "*** in memory:\n");
+		bch2_bset_to_text(&buf, c, b, inmemory, 0);
 
-		printk(KERN_ERR "*** read back in:\n");
-		bch2_dump_bset(c, v, sorted, 0);
+		prt_str(&buf, "*** read back in:\n");
+		bch2_bset_to_text(&buf, c, b, sorted, 0);
 
 		while (offset < v->written) {
 			if (!offset) {
@@ -109,8 +109,8 @@ static bool bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 					c->block_bits;
 			}
 
-			printk(KERN_ERR "*** on disk block %u:\n", offset);
-			bch2_dump_bset(c, b, i, offset);
+			prt_printf(&buf, "*** on disk block %u:\n", offset);
+			bch2_bset_to_text(&buf, c, b, i, offset);
 
 			offset += sectors;
 		}
@@ -119,8 +119,8 @@ static bool bch2_btree_verify_replica(struct bch_fs *c, struct btree *b,
 			if (inmemory->_data[j] != sorted->_data[j])
 				break;
 
-		console_unlock();
-		bch_err(c, "verify failed at key %u", j);
+		prt_printf(&buf, "verify failed at key %u\n", j);
+		bch2_print_string_as_lines(KERN_ERR, buf.buf);
 
 		failed = true;
 	}
