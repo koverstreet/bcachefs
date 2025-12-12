@@ -844,8 +844,9 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 		u64s_delta -= i->old_btree_u64s;
 
 		if (!same_leaf_as_next(trans, i)) {
-			try(bch2_foreground_maybe_merge(trans, i->path, i->level,
-							flags, u64s_delta, NULL));
+			if (!trans->has_interior_updates)
+				try(bch2_foreground_maybe_merge(trans, i->path, i->level,
+								flags, u64s_delta, NULL));
 
 			u64s_delta = 0;
 		}
@@ -909,6 +910,10 @@ static int __bch2_trans_commit_error(struct btree_trans *trans, unsigned flags,
 	switch (ret) {
 	case -BCH_ERR_btree_insert_btree_node_full:
 		ret = bch2_btree_split_leaf(trans, i->path, flags);
+		if (!ret && trans->has_interior_updates)
+			return btree_trans_restart(trans,
+					     BCH_ERR_transaction_restart_split_with_interior_updates);
+
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			event_inc_trace(c, trans_restart_btree_node_split, buf, ({
 				prt_printf(&buf, "%s\n", trans->fn);

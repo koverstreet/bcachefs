@@ -322,6 +322,8 @@ __btree_trans_update_by_path(struct btree_trans *trans,
 		test_bit(JOURNAL_replay_done, &c->journal.flags) &&
 		!bch2_snapshot_exists(c, k->k.p.snapshot));
 
+	trans->has_interior_updates |= path->level != 0;
+
 	n = (struct btree_insert_entry) {
 		.flags		= flags,
 		.sort_order	= btree_trigger_order(path->btree_id),
