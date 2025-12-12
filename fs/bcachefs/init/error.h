@@ -210,13 +210,11 @@ do {									\
  * mode - pretty much just due to metadata IO errors:
  */
 
-void bch2_fatal_error(struct bch_fs *);
+__printf(3, 4)
+void bch2_fatal_error(struct bch_fs *c, const char *func, const char *fmt, ...);
 
-#define bch2_fs_fatal_error(c, _msg, ...)				\
-do {									\
-	bch_err(c, "%s(): fatal error " _msg, __func__, ##__VA_ARGS__);	\
-	bch2_fatal_error(c);						\
-} while (0)
+#define bch2_fs_fatal_error(c, ...)					\
+	bch2_fatal_error(c, __func__, __VA_ARGS__)
 
 #define bch2_fs_fatal_err_on(cond, c, ...)				\
 ({									\

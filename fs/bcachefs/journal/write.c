@@ -743,7 +743,7 @@ CLOSURE_CALLBACK(bch2_journal_write)
 	}
 
 	if (unlikely(ret))
-		goto err_allocate_write;
+		goto err;
 
 	ret = bch2_journal_write_checksum(j, w);
 	if (unlikely(ret))
@@ -795,19 +795,18 @@ CLOSURE_CALLBACK(bch2_journal_write)
 	else
 		continue_at(cl, journal_write_submit, j->wq);
 	return;
-err_allocate_write:
-	if (!bch2_journal_error(j)) {
-		CLASS(printbuf, buf)();
-
-		bch2_journal_debug_to_text(&buf, j);
-		prt_printf(&buf, bch2_fmt(c, "Unable to allocate journal write at seq %llu for %zu sectors: %s"),
-					  le64_to_cpu(w->data->seq),
-					  vstruct_sectors(w->data, c->block_bits),
-					  bch2_err_str(ret));
-		bch2_print_str(c, KERN_ERR, buf.buf);
-	}
 err:
-	bch2_fatal_error(c);
+	if (1) {
+		CLASS(bch_log_msg, msg)(c);
+		msg.m.suppress = true; /* only print once, when we go ERO */
+
+		prt_printf(&msg.m, "Unable to do journal write at seq %llu for %zu sectors: %s",
+			   le64_to_cpu(w->data->seq),
+			   vstruct_sectors(w->data, c->block_bits),
+			   bch2_err_str(ret));
+		bch2_journal_debug_to_text(&msg.m, j);
+		bch2_fs_emergency_read_only2(c, &msg.m);
+	}
 no_io:
 	extent_for_each_ptr(bkey_i_to_s_extent(&w->key), ptr) {
 		struct bch_dev *ca = bch2_dev_have_ref(c, ptr->dev);

@@ -110,47 +110,28 @@ static inline bool
 journal_error_check_stuck(struct journal *j, int error, unsigned flags)
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
-	bool stuck = false;
-	CLASS(printbuf, buf)();
-
-	guard(printbuf_atomic)(&buf);
 
 	if (!(error == -BCH_ERR_journal_full ||
 	      error == -BCH_ERR_journal_pin_full) ||
 	    nr_unwritten_journal_entries(j) ||
 	    (flags & BCH_WATERMARK_MASK) != BCH_WATERMARK_reclaim)
-		return stuck;
+		return false;
 
-	scoped_guard(spinlock, &j->lock) {
-		if (j->can_discard)
-			return stuck;
+	if (j->can_discard)
+		return false;
 
-		stuck = true;
+	CLASS(bch_log_msg, msg)(c);
+	msg.m.suppress = true; /* only print once, when we go ERO */
 
-		/*
-		 * The journal shutdown path will set ->err_seq, but do it here first to
-		 * serialize against concurrent failures and avoid duplicate error
-		 * reports.
-		 */
-		if (j->err_seq)
-			return stuck;
+	prt_printf(&msg.m, "Journal stuck! Hava a pre-reservation but journal full (error %s)",
+		   bch2_err_str(error));
+	bch2_journal_debug_to_text(&msg.m, j);
 
-		j->err_seq = journal_cur_seq(j);
+	prt_printf(&msg.m, "Journal pins:\n");
+	bch2_journal_pins_to_text(&msg.m, j);
 
-		__bch2_journal_debug_to_text(&buf, j);
-	}
-	prt_printf(&buf, bch2_fmt(c, "Journal stuck! Hava a pre-reservation but journal full (error %s)"),
-				  bch2_err_str(error));
-	bch2_print_str(c, KERN_ERR, buf.buf);
-
-	printbuf_reset(&buf);
-	bch2_journal_pins_to_text(&buf, j);
-	bch_err(c, "Journal pins:\n%s", buf.buf);
-
-	bch2_fatal_error(c);
-	dump_stack();
-
-	return stuck;
+	bch2_fs_emergency_read_only2(c, &msg.m);
+	return true;
 }
 
 void bch2_journal_do_writes_locked(struct journal *j)
@@ -376,9 +357,10 @@ static int journal_entry_open(struct journal *j)
 		return bch_err_throw(c, journal_max_open);
 
 	if (unlikely(journal_cur_seq(j) >= JOURNAL_SEQ_MAX)) {
-		bch_err(c, "cannot start: journal seq overflow");
-		if (bch2_fs_emergency_read_only_locked(c))
-			bch_err(c, "fatal error - emergency read only");
+		CLASS(bch_log_msg, msg)(c);
+		msg.m.suppress = true;
+		prt_printf(&msg.m, "cannot start: journal seq overflow");
+		bch2_fs_emergency_read_only_locked(c, &msg.m);
 		return bch_err_throw(c, journal_shutdown);
 	}
 
@@ -420,10 +402,11 @@ static int journal_entry_open(struct journal *j)
 	journal_pin_list_init(fifo_push_ref(&j->pin), 1);
 
 	if (unlikely(bch2_journal_seq_is_blacklisted(c, journal_cur_seq(j), false))) {
-		bch_err(c, "attempting to open blacklisted journal seq %llu",
-			journal_cur_seq(j));
-		if (bch2_fs_emergency_read_only_locked(c))
-			bch_err(c, "fatal error - emergency read only");
+		CLASS(bch_log_msg, msg)(c);
+		msg.m.suppress = true;
+		prt_printf(&msg.m, "attempting to open blacklisted journal seq %llu",
+			   journal_cur_seq(j));
+		bch2_fs_emergency_read_only_locked(c, &msg.m);
 		return bch_err_throw(c, journal_shutdown);
 	}
 

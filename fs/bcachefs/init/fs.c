@@ -442,18 +442,7 @@ static void bch2_fs_read_only_async(struct bch_fs *c)
 	queue_work(system_long_wq, &c->read_only_work);
 }
 
-bool bch2_fs_emergency_read_only(struct bch_fs *c)
-{
-	bool ret = !test_and_set_bit(BCH_FS_emergency_ro, &c->flags);
-
-	bch2_journal_halt(&c->journal);
-	bch2_fs_read_only_async(c);
-
-	wake_up(&bch2_read_only_wait);
-	return ret;
-}
-
-static bool __bch2_fs_emergency_read_only2(struct bch_fs *c, struct printbuf *out, bool locked)
+static bool __bch2_fs_emergency_read_only(struct bch_fs *c, struct printbuf *out, bool locked)
 {
 	bool ret = !test_and_set_bit(BCH_FS_emergency_ro, &c->flags);
 
@@ -476,18 +465,12 @@ static bool __bch2_fs_emergency_read_only2(struct bch_fs *c, struct printbuf *ou
 /* Returns true if going ERO, false if we already are */
 bool bch2_fs_emergency_read_only2(struct bch_fs *c, struct printbuf *out)
 {
-	return __bch2_fs_emergency_read_only2(c, out, false);
+	return __bch2_fs_emergency_read_only(c, out, false);
 }
 
-bool bch2_fs_emergency_read_only_locked(struct bch_fs *c)
+bool bch2_fs_emergency_read_only_locked(struct bch_fs *c, struct printbuf *out)
 {
-	bool ret = !test_and_set_bit(BCH_FS_emergency_ro, &c->flags);
-
-	bch2_journal_halt_locked(&c->journal);
-	bch2_fs_read_only_async(c);
-
-	wake_up(&bch2_read_only_wait);
-	return ret;
+	return __bch2_fs_emergency_read_only(c, out, true);
 }
 
 static int __bch2_fs_read_write(struct bch_fs *c, bool early)

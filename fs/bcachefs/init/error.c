@@ -122,10 +122,20 @@ int bch2_fs_topology_error(struct bch_fs *c, const char *fmt, ...)
 	return __bch2_topology_error(c, &msg.m);
 }
 
-void bch2_fatal_error(struct bch_fs *c)
+void bch2_fatal_error(struct bch_fs *c, const char *func, const char *fmt, ...)
 {
-	if (bch2_fs_emergency_read_only(c))
-		bch_err(c, "fatal error - emergency read only");
+	CLASS(bch_log_msg, msg)(c);
+	msg.m.suppress = true; /* only print if this message caused us to go RO */
+
+	prt_printf(&msg.m, "%s(): fatal error ", func);
+
+	va_list args;
+	va_start(args, fmt);
+	prt_vprintf(&msg.m, fmt, args);
+	va_end(args);
+
+	bch2_fs_emergency_read_only2(c, &msg.m);
+	prt_printf(&msg.m, "fatal error - emergency read only");
 }
 
 void bch2_io_error_work(struct work_struct *work)
