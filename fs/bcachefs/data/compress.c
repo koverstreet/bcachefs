@@ -270,7 +270,7 @@ int bch2_bio_uncompress_inplace(struct bch_write_op *op,
 	BUG_ON(DIV_ROUND_UP(crc->live_size, PAGE_SECTORS) > bio->bi_max_vecs);
 
 	if (crc->uncompressed_size << 9	> c->opts.encoded_extent_max) {
-		bch2_write_op_error(op, op->pos.offset,
+		bch2_write_op_error(op, false, op->pos.offset,
 				    "extent too big to decompress (%u > %u)",
 				    crc->uncompressed_size << 9, c->opts.encoded_extent_max);
 		return bch_err_throw(c, decompress_exceeded_max_encoded_extent);
@@ -282,7 +282,7 @@ int bch2_bio_uncompress_inplace(struct bch_write_op *op,
 	if (c->opts.no_data_io)
 		ret = 0;
 	if (ret) {
-		bch2_write_op_error(op, op->pos.offset, "%s", bch2_err_str(ret));
+		bch2_write_op_error(op, false, op->pos.offset, "%s", bch2_err_str(ret));
 		return ret;
 	}
 

@@ -420,7 +420,8 @@ static int bch2_write_index_default(struct bch_write_op *op)
 
 /* Writes */
 
-static void bch2_log_write_error_start(struct printbuf *out, struct bch_write_op *op, u64 offset)
+static void bch2_log_write_error_start(struct printbuf *out, bool full,
+				       struct bch_write_op *op, u64 offset)
 {
 	prt_printf(out, "error writing data at ");
 
@@ -431,20 +432,14 @@ static void bch2_log_write_error_start(struct printbuf *out, struct bch_write_op
 	bch2_inum_offset_err_msg_trans(trans, out, op->subvol, pos);
 	prt_newline(out);
 
-	if (op->flags & BCH_WRITE_move) {
-		struct data_update *u = container_of(op, struct data_update, op);
-
-		prt_printf(out, "from internal move ");
-		bch2_bkey_val_to_text(out, op->c, bkey_i_to_s_c(u->k.k));
-		prt_newline(out);
-	}
+	bch2_write_op_to_text(out, op);
 }
 
-void bch2_write_op_error(struct bch_write_op *op, u64 offset, const char *fmt, ...)
+void bch2_write_op_error(struct bch_write_op *op, bool full, u64 offset, const char *fmt, ...)
 {
 	CLASS(bch_log_msg_ratelimited, msg)(op->c);
 
-	bch2_log_write_error_start(&msg.m, op, offset);
+	bch2_log_write_error_start(&msg.m, full, op, offset);
 
 	va_list args;
 	va_start(args, fmt);
@@ -601,7 +596,7 @@ static void __bch2_write_index(struct bch_write_op *op)
 			: bch2_ratelimit(c);
 
 		struct bkey_i *k = bch2_keylist_front(&op->insert_keys);
-		bch2_log_write_error_start(&msg.m, op, bkey_start_offset(&k->k));
+		bch2_log_write_error_start(&msg.m, false, op, bkey_start_offset(&k->k));
 		bch2_io_failures_to_text(&msg.m, c, &op->wbio.failed);
 
 		if (!ret) {
@@ -632,7 +627,7 @@ static void __bch2_write_index(struct bch_write_op *op)
 		if (unlikely(ret && !bch2_err_matches(ret, EROFS))) {
 			struct bkey_i *insert = bch2_keylist_front(&op->insert_keys);
 
-			bch2_write_op_error(op, bkey_start_offset(&insert->k),
+			bch2_write_op_error(op, false, bkey_start_offset(&insert->k),
 					    "btree update error: %s", bch2_err_str(ret));
 		}
 
@@ -971,7 +966,7 @@ static noinline int bch2_write_prep_encoded_data(struct bch_write_op *op, struct
 
 	return 0;
 csum_err:
-	bch2_write_op_error(op, op->pos.offset,
+	bch2_write_op_error(op, false, op->pos.offset,
 		"error verifying existing checksum while moving existing data (memory corruption?)\n"
 		"  expected %0llx:%0llx got %0llx:%0llx type %s",
 		op->crc.csum.hi,
@@ -1305,7 +1300,7 @@ static void bch2_nocow_write_convert_unwritten(struct bch_write_op *op)
 
 	if (ret && !bch2_err_matches(ret, EROFS)) {
 		struct bkey_i *insert = bch2_keylist_front(&op->insert_keys);
-		bch2_write_op_error(op, bkey_start_offset(&insert->k),
+		bch2_write_op_error(op, false, bkey_start_offset(&insert->k),
 				    "btree update error: %s", bch2_err_str(ret));
 	}
 
@@ -1468,7 +1463,7 @@ err:
 
 	bch2_trans_put(trans);
 	if (ret) {
-		bch2_write_op_error(op, op->pos.offset,
+		bch2_write_op_error(op, false, op->pos.offset,
 				    "%s(): btree lookup error: %s", __func__, bch2_err_str(ret));
 		op->error = ret;
 		op->flags |= BCH_WRITE_submitted;
@@ -1581,8 +1576,9 @@ err:
 			op->flags |= BCH_WRITE_submitted;
 
 			if (unlikely(ret < 0)) {
+				/* Extra info on errors from the allocator: */
 				if (!(op->flags & BCH_WRITE_alloc_nowait))
-					bch2_write_op_error(op, op->pos.offset,
+					bch2_write_op_error(op, true, op->pos.offset,
 							    "%s(): %s", __func__, bch2_err_str(ret));
 				op->error = ret;
 				break;
@@ -1717,7 +1713,7 @@ CLOSURE_CALLBACK(bch2_write)
 	wbio_init(bio)->put_bio = false;
 
 	if (unlikely(bio->bi_iter.bi_size & (c->opts.block_size - 1))) {
-		bch2_write_op_error(op, op->pos.offset, "misaligned write");
+		bch2_write_op_error(op, false, op->pos.offset, "misaligned write");
 		op->error = bch_err_throw(c, data_write_misaligned);
 		__WARN();
 		goto err;
