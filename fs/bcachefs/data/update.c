@@ -109,17 +109,17 @@ static void count_data_update_key_fail(struct data_update *u,
 
 		bch2_data_update_opts_to_text(&buf, c, &u->op.opts, &u->opts);
 
-		prt_str_indented(&buf, "\nold:    ");
+		prt_str(&buf, "\nold:    ");
 		bch2_bkey_val_to_text(&buf, c, old);
 
-		prt_str_indented(&buf, "\nnew:    ");
+		prt_str(&buf, "\nnew:    ");
 		bch2_bkey_val_to_text(&buf, c, new);
 
-		prt_str_indented(&buf, "\nwrote:  ");
+		prt_str(&buf, "\nwrote:  ");
 		bch2_bkey_val_to_text(&buf, c, wrote);
 
 		if (insert) {
-			prt_str_indented(&buf, "\ninsert: ");
+			prt_str(&buf, "\ninsert: ");
 			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(insert));
 		}
 	}));
@@ -549,19 +549,19 @@ void bch2_data_update_opts_to_text(struct printbuf *out, struct bch_fs *c,
 	ptr_bits_to_text(out, data_opts->ptrs_kill,	"kill");
 	ptr_bits_to_text(out, data_opts->ptrs_kill_ec,	"kill ec");
 
-	prt_str_indented(out, "target:\t");
+	prt_str(out, "target:\t");
 	bch2_target_to_text(out, c, data_opts->target);
 	prt_newline(out);
 
-	prt_str_indented(out, "compression:\t");
+	prt_str(out, "compression:\t");
 	bch2_compression_opt_to_text(out, io_opts->background_compression);
 	prt_newline(out);
 
-	prt_str_indented(out, "opts.replicas:\t");
+	prt_str(out, "opts.replicas:\t");
 	prt_u64(out, io_opts->data_replicas);
 	prt_newline(out);
 
-	prt_str_indented(out, "extra replicas:\t");
+	prt_str(out, "extra replicas:\t");
 	prt_u64(out, data_opts->extra_replicas);
 	prt_newline(out);
 
@@ -574,7 +574,7 @@ void bch2_data_update_to_text(struct printbuf *out, struct data_update *m)
 	bch2_data_update_opts_to_text(out, m->op.c, &m->op.opts, &m->opts);
 	prt_newline(out);
 
-	prt_str_indented(out, "old key:\t");
+	prt_str(out, "old key:\t");
 	bch2_bkey_val_to_text(out, m->op.c, bkey_i_to_s_c(m->k.k));
 	prt_newline(out);
 

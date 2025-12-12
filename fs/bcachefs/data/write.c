@@ -1806,7 +1806,7 @@ void bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
 		bch2_data_update_opts_to_text(out, u->op.c, &u->op.opts, &u->opts);
 		prt_newline(out);
 
-		prt_str_indented(out, "old key:\t");
+		prt_str(out, "old key:\t");
 		bch2_bkey_val_to_text(out, u->op.c, bkey_i_to_s_c(u->k.k));
 	}
 }

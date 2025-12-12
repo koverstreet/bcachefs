@@ -799,7 +799,7 @@ static ssize_t btree_transaction_stats_read(struct file *file, char __user *buf,
 			prt_printf(&i->buf, "Maximum allocated btree paths (%u):\n", s->nr_max_paths);
 
 			scoped_guard(printbuf_indent, &i->buf)
-				prt_str_indented(&i->buf, s->max_paths_text);
+				prt_str(&i->buf, s->max_paths_text);
 		}
 
 		prt_newline(&i->buf);

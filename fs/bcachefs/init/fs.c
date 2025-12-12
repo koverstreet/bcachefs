@@ -808,21 +808,21 @@ static bool check_version_upgrade(struct bch_fs *c, struct printbuf *out)
 
 	if (new_version > old_version) {
 		if (old_version < bcachefs_metadata_required_upgrade_below)
-			prt_str_indented(out, "Version upgrade required:\n");
+			prt_str(out, "Version upgrade required:\n");
 
 		if (old_version != c->sb.version) {
-			prt_str_indented(out, "Version upgrade from ");
+			prt_str(out, "Version upgrade from ");
 			bch2_version_to_text(out, c->sb.version_upgrade_complete);
-			prt_str_indented(out, " to ");
+			prt_str(out, " to ");
 			bch2_version_to_text(out, c->sb.version);
-			prt_str_indented(out, " incomplete\n");
+			prt_str(out, " incomplete\n");
 		}
 
 		prt_printf(out, "Doing %s version upgrade from ",
 			   BCH_VERSION_MAJOR(old_version) != BCH_VERSION_MAJOR(new_version)
 			   ? "incompatible" : "compatible");
 		bch2_version_to_text(out, old_version);
-		prt_str_indented(out, " to ");
+		prt_str(out, " to ");
 		bch2_version_to_text(out, new_version);
 		prt_newline(out);
 
@@ -832,7 +832,7 @@ static bool check_version_upgrade(struct bch_fs *c, struct printbuf *out)
 		passes = ext->recovery_passes_required[0] & ~passes;
 
 		if (passes) {
-			prt_str_indented(out, "Upgrade requires recovery passes: ");
+			prt_str(out, "Upgrade requires recovery passes: ");
 			prt_bitflags(out, bch2_recovery_passes,
 				     bch2_recovery_passes_from_stable(le64_to_cpu(passes)));
 			prt_newline(out);
@@ -843,9 +843,9 @@ static bool check_version_upgrade(struct bch_fs *c, struct printbuf *out)
 
 	if (new_version > c->sb.version_incompat_allowed &&
 	    c->opts.version_upgrade == BCH_VERSION_UPGRADE_incompatible) {
-		prt_str_indented(out, "Now allowing incompatible features up to ");
+		prt_str(out, "Now allowing incompatible features up to ");
 		bch2_version_to_text(out, new_version);
-		prt_str_indented(out, ", previously allowed up to ");
+		prt_str(out, ", previously allowed up to ");
 		bch2_version_to_text(out, c->sb.version_incompat_allowed);
 		prt_newline(out);
 
@@ -879,7 +879,7 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 	    bch2_fs_will_resize_on_mount(c))
 		set_bit(BCH_FS_may_upgrade_downgrade, &c->flags);
 
-	prt_str_indented(out, "starting version ");
+	prt_str(out, "starting version ");
 	bch2_version_to_text(out, c->sb.version);
 	prt_newline(out);
 
@@ -894,7 +894,7 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 		if (v == bch2_opt_get_by_id(&bch2_opts_default, i))
 			continue;
 
-		prt_str_indented(out, first ? "with options: " : ",");
+		prt_str(out, first ? "with options: " : ",");
 		first = false;
 		bch2_opt_to_text(out, c, c->disk_sb.sb, opt, v, OPT_SHOW_MOUNT_STYLE);
 	}
@@ -945,21 +945,21 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 
 		u64 sb_passes = bch2_recovery_passes_from_stable(le64_to_cpu(ext->recovery_passes_required[0]));
 		if (sb_passes) {
-			prt_str_indented(out, "superblock requires following recovery passes to be run: ");
+			prt_str(out, "superblock requires following recovery passes to be run: ");
 			prt_bitflags(out, bch2_recovery_passes, sb_passes);
 			prt_newline(out);
 		}
 
 		u64 btrees_lost_data = le64_to_cpu(ext->btrees_lost_data);
 		if (btrees_lost_data) {
-			prt_str_indented(out, "superblock indicates damage to following btrees:  ");
+			prt_str(out, "superblock indicates damage to following btrees:  ");
 			prt_bitflags(out, __bch2_btree_ids, btrees_lost_data);
 			prt_newline(out);
 		}
 
 		if (test_bit(BCH_FS_may_upgrade_downgrade, &c->flags)) {
 			if (bch2_check_version_downgrade(c)) {
-				prt_str_indented(out, "Version downgrade required");
+				prt_str(out, "Version downgrade required");
 
 				__le64 passes = ext->recovery_passes_required[0];
 				bch2_sb_set_downgrade(c,
@@ -967,7 +967,7 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 						      BCH_VERSION_MINOR(c->sb.version));
 				passes = ext->recovery_passes_required[0] & ~passes;
 				if (passes) {
-					prt_str_indented(out, ", running recovery passes: ");
+					prt_str(out, ", running recovery passes: ");
 					prt_bitflags(out, bch2_recovery_passes,
 						     bch2_recovery_passes_from_stable(le64_to_cpu(passes)));
 				}
@@ -1001,13 +1001,13 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 
 	if (BCH_SB_INITIALIZED(c->disk_sb.sb)) {
 		if (!(c->sb.features & BIT_ULL(BCH_FEATURE_new_extent_overwrite))) {
-			prt_str_indented(out, "feature new_extent_overwrite not set, filesystem no longer supported\n");
+			prt_str(out, "feature new_extent_overwrite not set, filesystem no longer supported\n");
 			return -EINVAL;
 		}
 
 		if (c->sb.version_min < bcachefs_metadata_version_btree_ptr_sectors_written) {
-			prt_str_indented(out, "version_min < version_btree_ptr_sectors_written\n");
-			prt_str_indented(out, "filesystem needs upgrade from older version; run fsck from older bcachefs-tools to fix\n");
+			prt_str(out, "version_min < version_btree_ptr_sectors_written\n");
+			prt_str(out, "filesystem needs upgrade from older version; run fsck from older bcachefs-tools to fix\n");
 			return -EINVAL;
 		}
 	}
