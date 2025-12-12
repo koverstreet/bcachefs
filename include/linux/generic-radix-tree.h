@@ -155,20 +155,27 @@ void __genradix_free(struct __genradix *);
  */
 #define genradix_free(_radix)	__genradix_free(&(_radix)->tree)
 
-static inline size_t __idx_to_offset(size_t idx, size_t obj_size)
+static inline bool __idx_to_offset(size_t idx, size_t obj_size, size_t *offset)
 {
+	/*
+	 * XXX: check for overflow, we have a bug in multiple places where we
+	 * assume idx fits in 64 bits (because it's an inode number; already a
+	 * bug on 32 bit) - but we then multiply by the object size and we
+	 * overflow
+	 */
 	if (__builtin_constant_p(obj_size))
 		BUILD_BUG_ON(obj_size > GENRADIX_NODE_SIZE);
 	else
 		BUG_ON(obj_size > GENRADIX_NODE_SIZE);
 
 	if (!is_power_of_2(obj_size)) {
-		size_t objs_per_page = GENRADIX_NODE_SIZE / obj_size;
+		size_t objs_per_page = GENRADIX_NODE_SIZE / obj_size, node, node_offset;
 
-		return (idx / objs_per_page) * GENRADIX_NODE_SIZE +
-			(idx % objs_per_page) * obj_size;
+		return  check_mul_overflow(idx / objs_per_page, GENRADIX_NODE_SIZE, &node) ? true :
+			check_mul_overflow(idx % objs_per_page, obj_size, &node_offset) ? true :
+			check_add_overflow(node, node_offset, offset);
 	} else {
-		return idx * obj_size;
+		return check_mul_overflow(idx, obj_size, offset);
 	}
 }
 
@@ -179,8 +186,8 @@ static inline size_t __idx_to_offset(size_t idx, size_t obj_size)
 #define __genradix_page_remainder(_radix)			\
 	(GENRADIX_NODE_SIZE % sizeof((_radix)->type[0]))
 
-#define __genradix_idx_to_offset(_radix, _idx)			\
-	__idx_to_offset(_idx, __genradix_obj_size(_radix))
+#define __genradix_idx_to_offset(_radix, _idx, _offset)		\
+	__idx_to_offset(_idx, __genradix_obj_size(_radix), _offset)
 
 static inline void *__genradix_ptr_inlined(struct __genradix *radix, size_t offset)
 {
@@ -202,9 +209,13 @@ static inline void *__genradix_ptr_inlined(struct __genradix *radix, size_t offs
 }
 
 #define genradix_ptr_inlined(_radix, _idx)			\
-	(__genradix_cast(_radix)				\
-	 __genradix_ptr_inlined(&(_radix)->tree,		\
-			__genradix_idx_to_offset(_radix, _idx)))
+({								\
+	size_t _offset;						\
+	!__genradix_idx_to_offset(_radix, _idx, &_offset)	\
+	? __genradix_cast(_radix)				\
+	  __genradix_ptr_inlined(&(_radix)->tree, _offset)	\
+	: NULL;							\
+})
 
 void *__genradix_ptr(struct __genradix *, size_t);
 
@@ -216,28 +227,39 @@ void *__genradix_ptr(struct __genradix *, size_t);
  * Returns a pointer to entry at @_idx, or NULL if that entry does not exist.
  */
 #define genradix_ptr(_radix, _idx)				\
-	(__genradix_cast(_radix)				\
-	 __genradix_ptr(&(_radix)->tree,			\
-			__genradix_idx_to_offset(_radix, _idx)))
+({								\
+	size_t _offset;						\
+	!__genradix_idx_to_offset(_radix, _idx, &_offset)	\
+	? __genradix_cast(_radix)				\
+	  __genradix_ptr(&(_radix)->tree, _offset)		\
+	: NULL;							\
+})
 
 void *__genradix_ptr_alloc(struct __genradix *, size_t,
 			   struct genradix_node **, gfp_t);
 
-#define genradix_ptr_alloc_inlined(_radix, _idx, _gfp)			\
-	(__genradix_cast(_radix)					\
-	 (__genradix_ptr_inlined(&(_radix)->tree,			\
-			__genradix_idx_to_offset(_radix, _idx)) ?:	\
-	  __genradix_ptr_alloc(&(_radix)->tree,				\
-			__genradix_idx_to_offset(_radix, _idx),		\
-			NULL, _gfp)))
-
 #define genradix_ptr_alloc_preallocated_inlined(_radix, _idx, _new_node, _gfp)\
-	(__genradix_cast(_radix)					\
-	 (__genradix_ptr_inlined(&(_radix)->tree,			\
-			__genradix_idx_to_offset(_radix, _idx)) ?:	\
-	  __genradix_ptr_alloc(&(_radix)->tree,				\
-			__genradix_idx_to_offset(_radix, _idx),		\
-			_new_node, _gfp)))
+({								\
+	size_t _offset;						\
+	!__genradix_idx_to_offset(_radix, _idx, &_offset)	\
+	? __genradix_cast(_radix)				\
+	 (__genradix_ptr_inlined(&(_radix)->tree, _offset) ?:	\
+	  __genradix_ptr_alloc(&(_radix)->tree, _offset,	\
+			_new_node, _gfp))			\
+	: NULL;							\
+})
+
+#define genradix_ptr_alloc_inlined(_radix, _idx, _gfp)		\
+	genradix_ptr_alloc_preallocated_inlined(_radix, _idx, NULL, _gfp)
+
+#define genradix_ptr_alloc_preallocated(_radix, _idx, _new_node, _gfp)		\
+({										\
+	size_t _offset;								\
+	!__genradix_idx_to_offset(_radix, _idx, &_offset)			\
+	? __genradix_cast(_radix)						\
+	  __genradix_ptr_alloc(&(_radix)->tree, _offset, _new_node, _gfp)	\
+	: NULL;									\
+})
 
 /**
  * genradix_ptr_alloc - get a pointer to a genradix entry, allocating it
@@ -248,17 +270,8 @@ void *__genradix_ptr_alloc(struct __genradix *, size_t,
  *
  * Returns a pointer to entry at @_idx, or NULL on allocation failure
  */
-#define genradix_ptr_alloc(_radix, _idx, _gfp)			\
-	(__genradix_cast(_radix)				\
-	 __genradix_ptr_alloc(&(_radix)->tree,			\
-			__genradix_idx_to_offset(_radix, _idx),	\
-			NULL, _gfp))
-
-#define genradix_ptr_alloc_preallocated(_radix, _idx, _new_node, _gfp)\
-	(__genradix_cast(_radix)				\
-	 __genradix_ptr_alloc(&(_radix)->tree,			\
-			__genradix_idx_to_offset(_radix, _idx),	\
-			_new_node, _gfp))
+#define genradix_ptr_alloc(_radix, _idx, _gfp)				\
+	genradix_ptr_alloc_preallocated(_radix, _idx, NULL, _gfp)
 
 struct genradix_iter {
 	size_t			offset;
@@ -271,10 +284,15 @@ struct genradix_iter {
  * @_idx:	index to start iterating from
  */
 #define genradix_iter_init(_radix, _idx)			\
-	((struct genradix_iter) {				\
+({								\
+	size_t _offset;						\
+	__genradix_idx_to_offset(_radix, _idx, &_offset);	\
+								\
+	(struct genradix_iter) {				\
 		.pos	= (_idx),				\
-		.offset	= __genradix_idx_to_offset((_radix), (_idx)),\
-	})
+		.offset	= _offset,				\
+	};							\
+})
 
 void *__genradix_iter_peek(struct genradix_iter *, struct __genradix *, size_t);
 
@@ -394,9 +412,11 @@ int __genradix_prealloc(struct __genradix *, size_t, gfp_t);
  * Returns 0 on success, -ENOMEM on failure
  */
 #define genradix_prealloc(_radix, _nr, _gfp)			\
-	 __genradix_prealloc(&(_radix)->tree,			\
-			__genradix_idx_to_offset(_radix, _nr + 1),\
-			_gfp)
-
+({								\
+	size_t _offset;						\
+	!__genradix_idx_to_offset(_radix, _nr + 1, &_offset)	\
+	? __genradix_prealloc(&(_radix)->tree, _offset, _gfp)	\
+	: -ENOMEM;						\
+})
 
 #endif /* _LINUX_GENERIC_RADIX_TREE_H */

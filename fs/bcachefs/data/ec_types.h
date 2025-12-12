@@ -1,0 +1,51 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+#ifndef _BCACHEFS_EC_TYPES_H
+#define _BCACHEFS_EC_TYPES_H
+
+#include "bcachefs_format.h"
+
+struct stripe {
+	size_t			heap_idx;
+	u16			sectors;
+	u8			algorithm;
+	u8			nr_blocks;
+	u8			nr_redundant;
+	u8			blocks_nonempty;
+	u8			disk_label;
+};
+
+struct gc_stripe {
+	u8			lock;
+	unsigned		alive:1; /* does a corresponding key exist in stripes btree? */
+	u16			sectors;
+	u8			nr_blocks;
+	u8			nr_redundant;
+	u16			block_sectors[BCH_BKEY_PTRS_MAX];
+	struct bch_extent_ptr	ptrs[BCH_BKEY_PTRS_MAX];
+
+	union bch_replicas_padded r;
+};
+
+struct bch_fs_ec {
+	struct hlist_head	stripes_new[32];
+	struct hlist_head	stripes_new_buckets[64];
+	spinlock_t		stripes_new_lock;
+
+	struct list_head	stripe_head_list;
+	struct mutex		stripe_head_lock;
+
+	struct list_head	stripe_new_list;
+	struct mutex		stripe_new_lock;
+	wait_queue_head_t	stripe_new_wait;
+
+	struct work_struct	stripe_create_work;
+	u64			stripe_hint;
+
+	struct work_struct	stripe_delete_work;
+
+	struct bio_set		block_bioset;
+
+	GENRADIX(struct gc_stripe) gc_stripes;
+};
+
+#endif /* _BCACHEFS_EC_TYPES_H */

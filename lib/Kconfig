@@ -9,7 +9,9 @@ config BINARY_PRINTF
 menu "Library routines"
 
 config RAID6_PQ
-	tristate
+	tristate "Reed-solomon RAID5/6 algorithms"
+	help
+	  Provides routines for block level reed-solomon, for RAID5/6
 
 config RAID6_PQ_BENCHMARK
 	bool "Automatically choose fastest RAID6 PQ functions"
@@ -140,7 +142,7 @@ source "lib/crc/Kconfig"
 source "lib/crypto/Kconfig"
 
 config XXHASH
-	tristate
+	tristate "XXHASH checksum algorithm"
 
 config AUDIT_GENERIC
 	bool
@@ -174,10 +176,10 @@ config 842_DECOMPRESS
 	tristate
 
 config ZLIB_INFLATE
-	tristate
+	tristate "Zlib decompression"
 
 config ZLIB_DEFLATE
-	tristate
+	tristate "Zlib compression"
 	select BITREVERSE
 
 config ZLIB_DFLTCC
@@ -194,13 +196,13 @@ config LZO_DECOMPRESS
 	tristate
 
 config LZ4_COMPRESS
-	tristate
+	tristate "LZ4 compression"
 
 config LZ4HC_COMPRESS
-	tristate
+	tristate "LZ4HC compression"
 
 config LZ4_DECOMPRESS
-	tristate
+	tristate "LZC decompression"
 
 config ZSTD_COMMON
 	select XXHASH
@@ -208,11 +210,11 @@ config ZSTD_COMMON
 
 config ZSTD_COMPRESS
 	select ZSTD_COMMON
-	tristate
+	tristate "ZSTD compression"
 
 config ZSTD_DECOMPRESS
 	select ZSTD_COMMON
-	tristate
+	tristate "ZSTD decompression"
 
 source "lib/xz/Kconfig"
 
@@ -367,7 +369,7 @@ config ASSOCIATIVE_ARRAY
 	  for more information.
 
 config CLOSURES
-	bool
+	bool "bcache/bcachefs async widgets"
 
 config HAS_IOMEM
 	bool
@@ -645,4 +647,4 @@ config UNION_FIND
 	bool
 
 config MIN_HEAP
-	bool
+	bool "Generic minheap algorithm"
