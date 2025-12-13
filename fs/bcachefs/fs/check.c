@@ -1995,6 +1995,21 @@ static int bch2_fsck_online_thread_fn(struct thread_with_stdio *stdio)
 	CLASS(printbuf, buf)();
 	int ret = -EAGAIN;
 
+	u64 online = bch2_recovery_passes_match(PASS_ONLINE);
+	u64 passes = bch2_recovery_passes_match(PASS_FSCK) & online;
+
+	if (opt_defined(thr->opts, recovery_passes)) {
+		passes = thr->opts.recovery_passes;
+
+		if ((passes & online) != passes) {
+			prt_printf(&buf, "Cannot run passes ");
+			prt_bitflags(&buf, bch2_recovery_passes, passes & ~online);
+			prt_printf(&buf, " online\n");
+			bch2_stdio_redirect_write(&stdio->stdio, false, buf.buf, buf.pos);
+			return -EINVAL;
+		}
+	}
+
 	if (mutex_trylock(&c->recovery.run_lock)) {
 		c->stdio_filter = current;
 		c->stdio = &thr->thr.stdio;
@@ -2011,10 +2026,7 @@ static int bch2_fsck_online_thread_fn(struct thread_with_stdio *stdio)
 		c->opts.fsck = true;
 		set_bit(BCH_FS_in_fsck, &c->flags);
 
-		ret = bch2_run_recovery_passes(c,
-			bch2_recovery_passes_match(PASS_FSCK) &
-			bch2_recovery_passes_match(PASS_ONLINE),
-			true) ?:
+		ret = bch2_run_recovery_passes(c, passes, true) ?:
 			bch2_fs_fsck_errcode(c, &buf);
 
 		clear_bit(BCH_FS_in_fsck, &c->flags);
