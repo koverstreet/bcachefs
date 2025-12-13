@@ -1209,14 +1209,6 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 
 	BUG_ON(!path->should_be_locked);
 
-	if (watermark == BCH_WATERMARK_copygc)
-		watermark = BCH_WATERMARK_btree_copygc;
-	if (watermark < BCH_WATERMARK_btree)
-		watermark = BCH_WATERMARK_btree;
-
-	commit_flags &= ~BCH_WATERMARK_MASK;
-	commit_flags |= watermark;
-
 	if (watermark < BCH_WATERMARK_reclaim &&
 	    journal_low_on_space(&c->journal)) {
 		if (commit_flags & BCH_TRANS_COMMIT_journal_reclaim)
@@ -1958,13 +1950,15 @@ split:
 
 int bch2_btree_split_leaf(struct btree_trans *trans,
 			  btree_path_idx_t path,
-			  unsigned flags)
+			  enum bch_trans_commit_flags flags)
 {
 	/* btree_split & merge may both cause paths array to be reallocated */
 	struct btree *b = path_l(trans->paths + path)->b;
 	struct btree_update *as;
 	unsigned l;
 	int ret = 0;
+
+	flags = btree_update_set_watermark_hipri(flags);
 
 	as = bch2_btree_update_start(trans, trans->paths + path,
 				     trans->paths[path].level,
@@ -2051,7 +2045,7 @@ int bch2_btree_increase_depth(struct btree_trans *trans, btree_path_idx_t path, 
 int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 				  btree_path_idx_t path,
 				  unsigned level,
-				  unsigned flags,
+				  enum bch_trans_commit_flags flags,
 				  u64 *merge_count,
 				  enum btree_node_sibling sib)
 {
@@ -2067,6 +2061,8 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	btree_path_idx_t sib_path = 0, new_path = 0;
 	u64 start_time = local_clock();
 	int ret = 0;
+
+	flags = btree_update_set_watermark_hipri(flags);
 
 	bch2_trans_verify_not_unlocked_or_in_restart(trans);
 	BUG_ON(!trans->paths[path].should_be_locked);
