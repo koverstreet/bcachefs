@@ -1332,7 +1332,8 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 			if (extent_ec_pending(trans, ptrs))
 				return false;
 
-			data_opts->extra_replicas = r->data_replicas;
+			data_opts->extra_replicas = 1;
+			data_opts->no_devs_have = true;
 		} else {
 			unsigned ptr_bit = 1;
 			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {

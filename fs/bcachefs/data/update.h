@@ -33,7 +33,8 @@ struct data_update_opts {
 	u8				extra_replicas;
 	u16				target;
 	int				read_dev;
-	bool				checksum_paranoia;
+	bool				no_devs_have:1;
+	bool				checksum_paranoia:1;
 
 	enum bch_write_flags		write_flags;
 	enum bch_trans_commit_flags	commit_flags;

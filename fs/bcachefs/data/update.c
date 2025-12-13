@@ -221,10 +221,17 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	 * A replica that we just wrote might conflict with a replica
 	 * that we want to keep, due to racing with another move:
 	 */
-	const struct bch_extent_ptr *ptr_c;
-	bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(&new->k_i), p, entry,
-		((ptr_c = bch2_bkey_has_device_c(c, bkey_i_to_s_c(insert), p.ptr.dev)) &&
-		 !ptr_c->cached));
+	if (!u->opts.no_devs_have) {
+		const struct bch_extent_ptr *ptr_c;
+		bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(&new->k_i), p, entry,
+			((ptr_c = bch2_bkey_has_device_c(c, bkey_i_to_s_c(insert), p.ptr.dev)) &&
+			 !ptr_c->cached));
+	} else {
+		const struct bch_extent_ptr *ptr_c;
+		bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(insert), p, entry,
+			((ptr_c = bch2_bkey_has_device_c(c, bkey_i_to_s_c(&new->k_i), p.ptr.dev)) &&
+			 !ptr_c->cached));
+	}
 
 	if (!bkey_val_u64s(&new->k)) {
 		count_data_update_key_fail(u, k,
@@ -917,7 +924,8 @@ int bch2_data_update_init(struct btree_trans *trans,
 					return d;
 
 				durability_have += d;
-				bch2_dev_list_add_dev(&m->op.devs_have, p.ptr.dev);
+				if (!m->opts.no_devs_have)
+					bch2_dev_list_add_dev(&m->op.devs_have, p.ptr.dev);
 			}
 
 			if (ptr_bit & m->opts.ptrs_rewrite) {
