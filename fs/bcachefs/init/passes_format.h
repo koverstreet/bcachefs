@@ -95,6 +95,7 @@
 	  BIT_ULL(BCH_RECOVERY_PASS_check_snapshots))						\
 	x(resume_logged_ops,			23, PASS_ALWAYS,			0)	\
 	x(delete_dead_inodes,			32, PASS_ALWAYS,			0)	\
+	x(kill_i_generation_keys,		47, PASS_ONLINE,			0)	\
 	x(fix_reflink_p,			33, 0,					0)	\
 	x(set_fs_needs_reconcile,		34, 0,					0)	\
 	x(btree_bitmap_gc,			46, PASS_ONLINE,			0)	\

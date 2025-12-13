@@ -325,5 +325,6 @@ static inline bool subvol_inum_eq(subvol_inum a, subvol_inum b)
 
 int bch2_inode_rm_snapshot(struct btree_trans *, u64, u32);
 int bch2_delete_dead_inodes(struct bch_fs *);
+int bch2_kill_i_generation_keys(struct bch_fs *);
 
 #endif /* _BCACHEFS_INODE_H */

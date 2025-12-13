@@ -1395,3 +1395,19 @@ int bch2_delete_dead_inodes(struct bch_fs *c)
 		ret;
 	}));
 }
+
+int bch2_kill_i_generation_keys(struct bch_fs *c)
+{
+	struct progress_indicator progress;
+	bch2_progress_init(&progress, __func__, c, BIT_ULL(BTREE_ID_inodes), 0);
+
+	CLASS(btree_trans, trans)(c);
+	return for_each_btree_key_commit(trans, iter, BTREE_ID_deleted_inodes, POS_MIN,
+					 BTREE_ITER_prefetch|BTREE_ITER_all_snapshots, k,
+					 NULL, NULL, BCH_TRANS_COMMIT_no_enospc, ({
+		bch2_progress_update_iter(trans, &progress, &iter) ?:
+		k.k->type == KEY_TYPE_inode_generation
+		? bch2_btree_delete_at(trans, &iter, 0)
+		: 0;
+	}));
+}
