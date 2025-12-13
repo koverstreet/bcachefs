@@ -925,15 +925,28 @@ static noinline_for_stack int btree_node_gap_err(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	CLASS(bch_log_msg, msg)(c);
 
+	struct btree *b = path_l(path)->b;
+
+	prt_str(&msg.m, "lookup found topology error:\n");
 	prt_str(&msg.m, "node doesn't cover expected range at pos: ");
 	bch2_bpos_to_text(&msg.m, path->pos);
-	prt_str(&msg.m, "\n  within parent node ");
-	bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&path_l(path)->b->key));
-	prt_str(&msg.m, "\n  but got node: ");
-	bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(k));
 	prt_newline(&msg.m);
 
-	return __bch2_topology_error(c, &msg.m);
+	scoped_guard(printbuf_indent, &msg.m) {
+		prt_str(&msg.m, "within parent node ");
+		bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&path_l(path)->b->key));
+		prt_newline(&msg.m);
+
+		prt_printf(&msg.m, "but got node: ");
+		bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(k));
+		prt_newline(&msg.m);
+	}
+
+	bch2_prt_task_backtrace(&msg.m, current, 1, GFP_KERNEL);
+
+	guard(printbuf_indent)(&msg.m);
+	return bch2_btree_node_check_topology_msg(trans, b, &msg.m) ?:
+		__bch2_topology_error(c, &msg.m);
 }
 
 static noinline int btree_node_iter_and_journal_peek(struct btree_trans *trans,

@@ -9,6 +9,8 @@
 
 #define BTREE_UPDATE_NODES_MAX		((BTREE_MAX_DEPTH - 2) * 2 + GC_MERGE_NODES)
 
+int bch2_btree_node_check_topology_msg(struct btree_trans *, struct btree *,
+				       struct printbuf *);
 int bch2_btree_node_check_topology(struct btree_trans *, struct btree *);
 
 #define BTREE_UPDATE_MODES()	\

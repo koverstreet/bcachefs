@@ -55,6 +55,7 @@ static int bch2_btree_insert_node(struct btree_update *, struct btree_trans *,
 
 static int btree_node_topology_err(struct bch_fs *c, struct btree *b, struct printbuf *out)
 {
+	prt_printf(out, "in parent node:\n");
 	bch2_btree_pos_to_text(out, c, b);
 	prt_newline(out);
 	int ret = __bch2_topology_error(c, out);
@@ -66,7 +67,7 @@ static int btree_node_topology_err(struct bch_fs *c, struct btree *b, struct pri
 /*
  * Verify that child nodes correctly span parent node's range:
  */
-int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
+int bch2_btree_node_check_topology_msg(struct btree_trans *trans, struct btree *b, struct printbuf *out)
 {
 	struct bch_fs *c = trans->c;
 	struct bpos node_min = b->key.k.type == KEY_TYPE_btree_ptr_v2
@@ -89,23 +90,21 @@ int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
 	 */
 	if (b == btree_node_root(c, b)) {
 		if (!bpos_eq(b->data->min_key, POS_MIN)) {
-			CLASS(bch_log_msg, msg)(c);
-			prt_printf(&msg.m, "btree root with incorrect min_key: ");
-			bch2_bpos_to_text(&msg.m, b->data->min_key);
-			prt_newline(&msg.m);
+			prt_printf(out, "btree root with incorrect min_key: ");
+			bch2_bpos_to_text(out, b->data->min_key);
+			prt_newline(out);
 
-			bch2_count_fsck_err(c, btree_root_bad_min_key, &msg.m);
-			return btree_node_topology_err(c, b, &msg.m);
+			bch2_count_fsck_err(c, btree_root_bad_min_key, out);
+			return btree_node_topology_err(c, b, out);
 		}
 
 		if (!bpos_eq(b->data->max_key, SPOS_MAX)) {
-			CLASS(bch_log_msg, msg)(c);
-			prt_printf(&msg.m, "btree root with incorrect max_key: ");
-			bch2_bpos_to_text(&msg.m, b->data->max_key);
-			prt_newline(&msg.m);
+			prt_printf(out, "btree root with incorrect max_key: ");
+			bch2_bpos_to_text(out, b->data->max_key);
+			prt_newline(out);
 
-			bch2_count_fsck_err(c, btree_root_bad_max_key, &msg.m);
-			return btree_node_topology_err(c, b, &msg.m);
+			bch2_count_fsck_err(c, btree_root_bad_max_key, out);
+			return btree_node_topology_err(c, b, out);
 		}
 	}
 
@@ -124,16 +123,15 @@ int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
 			: bpos_successor(prev.k->k.p);
 
 		if (!bpos_eq(expected_min, bp.v->min_key)) {
-			CLASS(bch_log_msg, msg)(c);
-			prt_str(&msg.m, "end of prev node doesn't match start of next node");
-			prt_str(&msg.m, "\nprev ");
-			bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(prev.k));
-			prt_str(&msg.m, "\nnext ");
-			bch2_bkey_val_to_text(&msg.m, c, k);
-			prt_newline(&msg.m);
+			prt_str(out, "end of prev node doesn't match start of next node");
+			prt_str(out, "\nprev ");
+			bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(prev.k));
+			prt_str(out, "\nnext ");
+			bch2_bkey_val_to_text(out, c, k);
+			prt_newline(out);
 
-			bch2_count_fsck_err(c, btree_node_topology_bad_min_key, &msg.m);
-			return btree_node_topology_err(c, b, &msg.m);
+			bch2_count_fsck_err(c, btree_node_topology_bad_min_key, out);
+			return btree_node_topology_err(c, b, out);
 		}
 
 		bch2_bkey_buf_reassemble(&prev, k);
@@ -141,23 +139,29 @@ int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
 	}
 
 	if (bkey_deleted(&prev.k->k)) {
-		CLASS(bch_log_msg, msg)(c);
-		prt_printf(&msg.m, "empty interior node\n");
-		bch2_count_fsck_err(c, btree_node_topology_empty_interior_node, &msg.m);
-		return btree_node_topology_err(c, b, &msg.m);
+		prt_printf(out, "empty interior node\n");
+		bch2_count_fsck_err(c, btree_node_topology_empty_interior_node, out);
+		return btree_node_topology_err(c, b, out);
 	}
 
 	if (!bpos_eq(prev.k->k.p, b->key.k.p)) {
-		CLASS(bch_log_msg, msg)(c);
-		prt_str(&msg.m, "last child node doesn't end at end of parent node\nchild: ");
-		bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(prev.k));
-		prt_newline(&msg.m);
+		prt_str(out, "last child node doesn't end at end of parent node\nchild: ");
+		bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(prev.k));
+		prt_newline(out);
 
-		bch2_count_fsck_err(c, btree_node_topology_bad_max_key, &msg.m);
-		return btree_node_topology_err(c, b, &msg.m);
+		bch2_count_fsck_err(c, btree_node_topology_bad_max_key, out);
+		return btree_node_topology_err(c, b, out);
 	}
 
 	return 0;
+}
+
+int bch2_btree_node_check_topology(struct btree_trans *trans, struct btree *b)
+{
+	CLASS(bch_log_msg, msg)(trans->c);
+	msg.m.suppress = true;
+
+	return bch2_btree_node_check_topology_msg(trans, b, &msg.m);
 }
 
 /* Calculate ideal packed bkey format for new btree nodes: */
@@ -1492,20 +1496,23 @@ bch2_btree_insert_keys_interior(struct btree_update *as,
 	     insert = bkey_next(insert))
 		bch2_insert_fixup_btree_ptr(as, trans, path, b, &node_iter, insert);
 
-	int ret = bch2_btree_node_check_topology(trans, b);
+	CLASS(bch_log_msg, msg)(as->c);
+	msg.m.suppress = true;
+
+	int ret = bch2_btree_node_check_topology_msg(trans, b, &msg.m);
 	if (ret) {
-		CLASS(printbuf, buf)();
+		prt_str(&msg.m, "inserted keys\n");
 
-		for (struct bkey_i *k = keys->keys;
-		     k != insert;
-		     k = bkey_next(k)) {
-			bch2_bkey_val_to_text(&buf, trans->c, bkey_i_to_s_c(k));
-			prt_newline(&buf);
-		}
+		scoped_guard(printbuf_indent, &msg.m)
+			for (struct bkey_i *k = keys->keys;
+			     k != insert;
+			     k = bkey_next(k)) {
+				bch2_bkey_val_to_text(&msg.m, trans->c, bkey_i_to_s_c(k));
+				prt_newline(&msg.m);
+			}
 
-		bch2_fs_fatal_error(as->c, "%ps -> %s(): check_topology error %s: inserted keys\n%s",
-				    (void *) _RET_IP_, __func__, bch2_err_str(ret), buf.buf);
-		dump_stack();
+		bch2_prt_task_backtrace(&msg.m, current, 0, GFP_KERNEL);
+		bch2_fs_emergency_read_only(as->c, &msg.m);
 		return ret;
 	}
 
@@ -2199,6 +2206,9 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	bch2_btree_build_aux_trees(n);
 	bch2_btree_update_add_new_node(as, n);
 	six_unlock_write(&n->c.lock);
+
+	ret = bch2_btree_node_check_topology(trans, n);
+	BUG_ON(ret);
 
 	new_path = bch2_path_get_unlocked_mut(trans, btree, n->c.level, n->key.k.p);
 	six_lock_increment(&n->c.lock, SIX_LOCK_intent);

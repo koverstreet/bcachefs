@@ -21,6 +21,7 @@
 #include "journal/reclaim.h"
 
 #include "init/error.h"
+#include "init/fs.h"
 
 #include "sb/counters.h"
 
@@ -309,6 +310,19 @@ inline void bch2_btree_insert_key_leaf(struct btree_trans *trans,
 	if (unlikely(!bch2_btree_bset_insert_key(trans, path, b,
 					&path_l(path)->iter, insert)))
 		return;
+
+	if (unlikely(b->c.level)) {
+		CLASS(bch_log_msg, msg)(c);
+		msg.m.suppress = true;
+
+		int ret = bch2_btree_node_check_topology_msg(trans, b, &msg.m);
+		if (ret) {
+			prt_str(&msg.m, "Btree update created topology error:\n");
+			bch2_trans_updates_to_text(&msg.m, trans);
+			bch2_fs_emergency_read_only(c, &msg.m);
+			return;
+		}
+	}
 
 	i->journal_seq = cpu_to_le64(max(journal_seq, le64_to_cpu(i->journal_seq)));
 
