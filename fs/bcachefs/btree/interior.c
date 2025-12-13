@@ -1972,7 +1972,6 @@ int bch2_btree_split_leaf(struct btree_trans *trans,
 	unsigned l;
 	int ret = 0;
 
-	flags = btree_update_set_watermark_hipri(flags);
 
 	as = bch2_btree_update_start(trans, trans->paths + path,
 				     trans->paths[path].level,
@@ -2075,8 +2074,6 @@ int __bch2_foreground_maybe_merge(struct btree_trans *trans,
 	btree_path_idx_t sib_path = 0, new_path = 0;
 	u64 start_time = local_clock();
 	int ret = 0;
-
-	flags = btree_update_set_watermark_hipri(flags);
 
 	bch2_trans_verify_not_unlocked_or_in_restart(trans);
 	BUG_ON(!trans->paths[path].should_be_locked);
