@@ -123,17 +123,32 @@ struct btree_update {
 	u64				inline_keys[BKEY_BTREE_PTR_U64s_MAX * 3];
 };
 
+static inline enum bch_trans_commit_flags
+btree_update_set_watermark_hipri(enum bch_trans_commit_flags flags)
+{
+	enum bch_watermark watermark = flags & BCH_WATERMARK_MASK;
+	if (watermark == BCH_WATERMARK_copygc)
+		watermark = BCH_WATERMARK_btree_copygc;
+	if (watermark < BCH_WATERMARK_btree)
+		watermark = BCH_WATERMARK_btree;
+
+	flags &= ~BCH_WATERMARK_MASK;
+	flags |= watermark;
+	return flags;
+}
+
 struct btree *__bch2_btree_node_alloc_replacement(struct btree_update *,
 						  struct btree_trans *,
 						  struct btree *,
 						  struct bkey_format);
 
-int bch2_btree_split_leaf(struct btree_trans *, btree_path_idx_t, unsigned);
+int bch2_btree_split_leaf(struct btree_trans *, btree_path_idx_t, enum bch_trans_commit_flags);
 
 int bch2_btree_increase_depth(struct btree_trans *, btree_path_idx_t, unsigned);
 
 int __bch2_foreground_maybe_merge(struct btree_trans *, btree_path_idx_t,
-				  unsigned, unsigned, u64 *, enum btree_node_sibling);
+				  unsigned, enum bch_trans_commit_flags,
+				  u64 *, enum btree_node_sibling);
 
 static inline bool btree_node_needs_merge(struct btree_trans *trans, struct btree *b, int d)
 {
@@ -146,7 +161,7 @@ static inline bool btree_node_needs_merge(struct btree_trans *trans, struct btre
 
 static inline int bch2_foreground_maybe_merge(struct btree_trans *trans,
 					      btree_path_idx_t path_idx,
-					      unsigned level, unsigned flags,
+					      unsigned level, enum bch_trans_commit_flags flags,
 					      int u64s_delta,
 					      u64 *merge_count)
 {
