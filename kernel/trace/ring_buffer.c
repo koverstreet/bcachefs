@@ -7273,7 +7273,7 @@ int ring_buffer_map(struct trace_buffer *buffer, int cpu,
 		atomic_dec(&cpu_buffer->resize_disabled);
 	}
 
-	return 0;
+	return err;
 }
 
 int ring_buffer_unmap(struct trace_buffer *buffer, int cpu)
@@ -7343,6 +7343,10 @@ consume:
 			rb_advance_reader(cpu_buffer);
 		goto out;
 	}
+
+	/* Did the reader catch up with the writer? */
+	if (cpu_buffer->reader_page == cpu_buffer->commit_page)
+		goto out;
 
 	reader = rb_get_reader_page(cpu_buffer);
 	if (WARN_ON(!reader))
