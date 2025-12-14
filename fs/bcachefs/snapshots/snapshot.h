@@ -81,7 +81,7 @@ static inline u32 bch2_snapshot_parent_early(struct bch_fs *c, u32 id)
 	return __bch2_snapshot_parent_early(c, id);
 }
 
-static inline u32 __bch2_snapshot_parent(struct snapshot_table *t, u32 id)
+static inline u32 __bch2_snapshot_parent(struct bch_fs *c, struct snapshot_table *t, u32 id)
 {
 	const struct snapshot_t *s = __snapshot_t(t, id);
 	if (!s)
@@ -89,6 +89,7 @@ static inline u32 __bch2_snapshot_parent(struct snapshot_table *t, u32 id)
 
 	u32 parent = s->parent;
 	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) &&
+	    c->recovery.pass_done > BCH_RECOVERY_PASS_delete_dead_interior_snapshots &&
 	    parent &&
 	    s->depth != __snapshot_t(t, parent)->depth + 1)
 		panic("id %u depth=%u parent %u depth=%u\n",
@@ -101,7 +102,7 @@ static inline u32 __bch2_snapshot_parent(struct snapshot_table *t, u32 id)
 static inline u32 bch2_snapshot_parent(struct bch_fs *c, u32 id)
 {
 	guard(rcu)();
-	return __bch2_snapshot_parent(rcu_dereference(c->snapshots.table), id);
+	return __bch2_snapshot_parent(c, rcu_dereference(c->snapshots.table), id);
 }
 
 static inline u32 bch2_snapshot_nth_parent(struct bch_fs *c, u32 id, u32 n)
@@ -110,7 +111,7 @@ static inline u32 bch2_snapshot_nth_parent(struct bch_fs *c, u32 id, u32 n)
 	struct snapshot_table *t = rcu_dereference(c->snapshots.table);
 
 	while (n--)
-		id = __bch2_snapshot_parent(t, id);
+		id = __bch2_snapshot_parent(c, t, id);
 	return id;
 }
 
@@ -122,7 +123,7 @@ static inline u32 bch2_snapshot_root(struct bch_fs *c, u32 id)
 	struct snapshot_table *t = rcu_dereference(c->snapshots.table);
 
 	u32 parent;
-	while ((parent = __bch2_snapshot_parent(t, id)))
+	while ((parent = __bch2_snapshot_parent(c, t, id)))
 		id = parent;
 	return id;
 }
@@ -257,13 +258,13 @@ static inline int snapshot_list_merge(struct bch_fs *c, snapshot_id_list *dst, s
 	return 0;
 }
 
-u32 __bch2_snapshot_tree_next(struct snapshot_table *, u32, unsigned *);
+u32 __bch2_snapshot_tree_next(struct bch_fs *, struct snapshot_table *, u32, unsigned *);
 u32 bch2_snapshot_tree_next(struct bch_fs *, u32, unsigned *);
 
-#define __for_each_snapshot_child(_t, _start, _depth, _id)		\
+#define __for_each_snapshot_child(_c, _t, _start, _depth, _id)		\
 	for (u32 _id = _start;						\
 	     _id && _id <= _start;					\
-	     _id = __bch2_snapshot_tree_next(_t, _id, _depth))
+	     _id = __bch2_snapshot_tree_next(_c, _t, _id, _depth))
 
 #define for_each_snapshot_child(_c, _start, _depth, _id)		\
 	for (u32 _id = _start;						\

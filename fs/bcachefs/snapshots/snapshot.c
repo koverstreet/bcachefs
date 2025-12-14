@@ -354,7 +354,7 @@ static unsigned snapshot_tree_max_depth(struct bch_fs *c, u32 start)
 	guard(rcu)();
 	struct snapshot_table *t = rcu_dereference(c->snapshots.table);
 
-	__for_each_snapshot_child(t, start, &depth, id)
+	__for_each_snapshot_child(c, t, start, &depth, id)
 		max_depth = max(depth, max_depth);
 	return max_depth;
 }
@@ -396,7 +396,7 @@ static u32 bch2_snapshot_right_child(struct snapshot_table *t, u32 id)
 	return bch2_snapshot_child(t, id, 1);
 }
 
-u32 __bch2_snapshot_tree_next(struct snapshot_table *t, u32 id, unsigned *depth)
+u32 __bch2_snapshot_tree_next(struct bch_fs *c, struct snapshot_table *t, u32 id, unsigned *depth)
 {
 	int _depth;
 	if (!depth)
@@ -409,7 +409,7 @@ u32 __bch2_snapshot_tree_next(struct snapshot_table *t, u32 id, unsigned *depth)
 	}
 
 	u32 parent;
-	while ((parent = __bch2_snapshot_parent(t, id))) {
+	while ((parent = __bch2_snapshot_parent(c, t, id))) {
 		(*depth)--;
 		n = bch2_snapshot_right_child(t, parent);
 		if (n && n != id) {
@@ -425,7 +425,7 @@ u32 __bch2_snapshot_tree_next(struct snapshot_table *t, u32 id, unsigned *depth)
 u32 bch2_snapshot_tree_next(struct bch_fs *c, u32 id, unsigned *depth)
 {
 	guard(rcu)();
-	return __bch2_snapshot_tree_next(rcu_dereference(c->snapshots.table), id, depth);
+	return __bch2_snapshot_tree_next(c, rcu_dereference(c->snapshots.table), id, depth);
 }
 
 int bch2_snapshot_lookup(struct btree_trans *trans, u32 id,

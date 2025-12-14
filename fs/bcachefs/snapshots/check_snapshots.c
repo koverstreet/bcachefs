@@ -43,7 +43,7 @@ static u32 bch2_snapshot_oldest_subvol(struct bch_fs *c, u32 snapshot_root,
 	while (true) {
 		u32 subvol = 0;
 
-		__for_each_snapshot_child(t, snapshot_root, NULL, id)  {
+		__for_each_snapshot_child(c, t, snapshot_root, NULL, id)  {
 			if (skip && snapshot_list_has_id(skip, id))
 				continue;
 

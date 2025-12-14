@@ -494,11 +494,11 @@ static inline u32 bch2_snapshot_nth_parent_skip(struct bch_fs *c, u32 id, u32 n,
 	struct snapshot_table *t = rcu_dereference(c->snapshots.table);
 
 	while (interior_delete_has_id(skip, id))
-		id = __bch2_snapshot_parent(t, id);
+		id = __bch2_snapshot_parent(c, t, id);
 
 	while (n--) {
 		do {
-			id = __bch2_snapshot_parent(t, id);
+			id = __bch2_snapshot_parent(c, t, id);
 		} while (interior_delete_has_id(skip, id));
 	}
 
