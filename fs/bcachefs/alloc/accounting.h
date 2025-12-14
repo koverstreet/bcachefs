@@ -151,6 +151,7 @@ void bch2_accounting_mem_gc(struct bch_fs *);
 static inline bool bch2_accounting_is_mem(struct disk_accounting_pos *acc)
 {
 	return acc->type < BCH_DISK_ACCOUNTING_TYPE_NR &&
+		acc->type != BCH_DISK_ACCOUNTING_snapshot &&
 		acc->type != BCH_DISK_ACCOUNTING_inum;
 }
 
