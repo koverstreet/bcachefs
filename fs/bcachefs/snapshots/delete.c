@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
 
+#include "alloc/accounting.h"
 #include "alloc/buckets.h"
 
 #include "btree/bbpos.h"
@@ -213,6 +214,20 @@ static int bch2_snapshot_node_delete(struct btree_trans *trans, u32 id, bool del
 		s->k.type = KEY_TYPE_deleted;
 		set_bkey_val_u64s(&s->k, 0);
 	}
+
+	/*
+	 * Delete accounting: note that designated initializers will not
+	 * reliably cause a struct to be zeroed if it's a union:
+	 */
+
+	struct disk_accounting_pos acc;
+	memset(&acc, 0, sizeof(acc));
+	acc.type = BCH_DISK_ACCOUNTING_snapshot;
+	acc.snapshot.id = id;
+
+	try(bch2_btree_bit_mod_buffered(trans, BTREE_ID_accounting,
+					disk_accounting_pos_to_bpos(&acc),
+					false));
 
 	return 0;
 }
