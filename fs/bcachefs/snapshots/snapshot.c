@@ -3,6 +3,8 @@
 
 #include "btree/update.h"
 
+#include "fs/namei.h"
+
 #include "init/error.h"
 #include "init/passes.h"
 
@@ -341,6 +343,19 @@ static int snapshot_get_print(struct printbuf *out, struct btree_trans *trans, u
 		if (BCH_SNAPSHOT_NO_KEYS(&s))
 			prt_str(out, "no_keys ");
 		prt_printf(out, "subvol %u", le32_to_cpu(s.subvol));
+
+		if (s.subvol) {
+			prt_tab(out);
+
+			struct bch_subvolume subvol;
+			ret = lockrestart_do(trans,
+				bch2_subvolume_get(trans, le32_to_cpu(s.subvol), false, &subvol));
+			if (ret)
+				prt_str(out, bch2_err_str(ret));
+			else
+				lockrestart_do(trans,
+					bch2_inum_to_path(trans, (subvol_inum) { le32_to_cpu(s.subvol), le64_to_cpu(subvol.inode) }, out));
+		}
 	}
 
 	prt_newline(out);
@@ -361,7 +376,9 @@ static unsigned snapshot_tree_max_depth(struct bch_fs *c, u32 start)
 
 int bch2_snapshot_tree_keys_to_text(struct printbuf *out, struct btree_trans *trans, u32 start)
 {
+	printbuf_tabstops_reset(out);
 	printbuf_tabstop_push(out, out->indent + 12 + 2 * snapshot_tree_max_depth(trans->c, start));
+	printbuf_tabstop_push(out, out->indent + 40);
 
 	unsigned depth = 0, prev_depth = 0;
 	for_each_snapshot_child(trans->c, start, &depth, id) {
@@ -643,4 +660,34 @@ void bch2_fs_snapshots_init_early(struct bch_fs *c)
 	mutex_init(&c->snapshots.delete.progress_lock);
 
 	mutex_init(&c->snapshots.unlinked_lock);
+}
+
+static int bch2_snapshot_tree_to_text_full(struct printbuf *out, struct btree_trans *trans,
+				    struct bkey_s_c_snapshot_tree st)
+{
+	prt_printf(out, "snapshot tree %llu:\n", st.k->p.offset);
+	guard(printbuf_indent)(out);
+
+	/*
+	 * we need a better way of handling this sort of thing: we don't need
+	 * the outer transaction restart handling loop in for_each_btree_key()
+	 */
+	u32 restart_count = trans->restart_count;
+
+	int ret = bch2_snapshot_tree_keys_to_text(out, trans, le32_to_cpu(st.v->root_snapshot));
+
+	BUG_ON(bch2_err_matches(ret, BCH_ERR_transaction_restart));
+	trans->restart_count = restart_count;
+	return ret;
+}
+
+void bch2_snapshot_trees_to_text(struct printbuf *out, struct bch_fs *c)
+{
+	CLASS(btree_trans, trans)(c);
+	for_each_btree_key(trans, iter,
+				  BTREE_ID_snapshot_trees, POS_MIN, BTREE_ITER_prefetch, k, ({
+		if (k.k->type != KEY_TYPE_snapshot_tree)
+			continue;
+		bch2_snapshot_tree_to_text_full(out, trans, bkey_s_c_to_snapshot_tree(k));
+	}));
 }

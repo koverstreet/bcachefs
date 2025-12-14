@@ -340,4 +340,6 @@ int bch2_snapshots_read(struct bch_fs *);
 void bch2_fs_snapshots_exit(struct bch_fs *);
 void bch2_fs_snapshots_init_early(struct bch_fs *);
 
+void bch2_snapshot_trees_to_text(struct printbuf *, struct bch_fs *);
+
 #endif /* _BCACHEFS_SNAPSHOT_H */
