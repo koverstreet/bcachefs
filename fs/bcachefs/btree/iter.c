@@ -3070,11 +3070,7 @@ struct bkey_s_c bch2_btree_iter_peek_and_restart_outlined(struct btree_iter *ite
 {
 	struct bkey_s_c k;
 
-	while (btree_trans_too_many_iters(iter->trans) ||
-	       (k = bch2_btree_iter_peek_type(iter, iter->flags),
-		bch2_err_matches(bkey_err(k), BCH_ERR_transaction_restart)))
-		bch2_trans_begin(iter->trans);
-
+	lockrestart_do(iter->trans, bkey_err(k = bch2_btree_iter_peek_type(iter, iter->flags)));
 	return k;
 }
 
