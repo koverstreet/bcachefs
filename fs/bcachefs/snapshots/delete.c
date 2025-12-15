@@ -701,6 +701,14 @@ int bch2_delete_dead_interior_snapshots(struct bch_fs *c)
 			       bch2_get_dead_interior_snapshots(trans, k, &delete)));
 
 	if (delete.nr) {
+		{
+			CLASS(bch_log_msg_level, msg)(c, LOGLEVEL_notice);
+
+			prt_printf(&msg.m, "Deleting interior snapshot nodes forces check_snapshots:");
+			try(bch2_run_explicit_recovery_pass(c, &msg.m,
+					BCH_RECOVERY_PASS_check_snapshots, 0));
+		}
+
 		/*
 		 * Fixing children of deleted snapshots can't be done completely
 		 * atomically, if we crash between here and when we delete the interior
