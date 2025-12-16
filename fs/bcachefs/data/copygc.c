@@ -382,8 +382,7 @@ static u64 bch2_copygc_dev_wait_amount(struct bch_dev *ca)
 
 	for (unsigned i = 0; i < BCH_DATA_NR; i++)
 		if (data_type_movable(i))
-			fragmented += usage_full.d[i].buckets * ca->mi.bucket_size -
-				usage_full.d[i].sectors;
+			fragmented += usage_full.d[i].fragmented;
 
 	return max(0LL, fragmented_allowed - fragmented);
 }
