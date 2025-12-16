@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
 
+#include "alloc/accounting.h"
+
 #include "btree/update.h"
 
 #include "fs/namei.h"
@@ -334,19 +336,18 @@ static int snapshot_get_print(struct printbuf *out, struct btree_trans *trans, u
 	if (ret) {
 		prt_str(out, bch2_err_str(ret));
 	} else {
-		if (BCH_SNAPSHOT_SUBVOL(&s))
-			prt_str(out, "subvol ");
-		if (BCH_SNAPSHOT_WILL_DELETE(&s))
-			prt_str(out, "will_delete ");
 		if (BCH_SNAPSHOT_DELETED(&s))
 			prt_str(out, "deleted ");
 		if (BCH_SNAPSHOT_NO_KEYS(&s))
 			prt_str(out, "no_keys ");
-		prt_printf(out, "subvol %u", le32_to_cpu(s.subvol));
+		if (BCH_SNAPSHOT_WILL_DELETE(&s))
+			prt_str(out, "will_delete ");
+		if (BCH_SNAPSHOT_SUBVOL(&s))
+			prt_printf(out, "subvol %u", le32_to_cpu(s.subvol));
+
+		prt_tab(out);
 
 		if (s.subvol) {
-			prt_tab(out);
-
 			struct bch_subvolume subvol;
 			ret = lockrestart_do(trans,
 				bch2_subvolume_get(trans, le32_to_cpu(s.subvol), false, &subvol));
@@ -356,6 +357,15 @@ static int snapshot_get_print(struct printbuf *out, struct btree_trans *trans, u
 				lockrestart_do(trans,
 					bch2_inum_to_path(trans, (subvol_inum) { le32_to_cpu(s.subvol), le64_to_cpu(subvol.inode) }, out));
 		}
+
+		prt_tab(out);
+
+		u64 v[1] = { 0 };
+		lockrestart_do(trans,
+			       bch2_fs_accounting_read_key2(trans, v, snapshot, id));
+
+		prt_human_readable_u64(out, v[0] << 9);
+		prt_tab_rjust(out);
 	}
 
 	prt_newline(out);
@@ -378,7 +388,9 @@ int bch2_snapshot_tree_keys_to_text(struct printbuf *out, struct btree_trans *tr
 {
 	printbuf_tabstops_reset(out);
 	printbuf_tabstop_push(out, out->indent + 12 + 2 * snapshot_tree_max_depth(trans->c, start));
-	printbuf_tabstop_push(out, out->indent + 40);
+	printbuf_tabstop_push(out, 20);
+	printbuf_tabstop_push(out, 40);
+	printbuf_tabstop_push(out, 12);
 
 	unsigned depth = 0, prev_depth = 0;
 	for_each_snapshot_child(trans->c, start, &depth, id) {
