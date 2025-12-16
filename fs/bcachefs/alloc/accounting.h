@@ -302,6 +302,14 @@ static inline void bch2_accounting_trans_commit_revert(struct btree_trans *trans
 
 int bch2_fs_replicas_usage_read(struct bch_fs *, darray_char *);
 int bch2_fs_accounting_read(struct bch_fs *, darray_char *, unsigned);
+int bch2_fs_accounting_read_key(struct btree_trans *, struct disk_accounting_pos *, u64 *, unsigned);
+
+#define bch2_fs_accounting_read_key2(_trans, _v, ...)			\
+({									\
+	struct disk_accounting_pos pos;					\
+	disk_accounting_key_init(pos, __VA_ARGS__);			\
+	bch2_fs_accounting_read_key(trans, &pos, _v, ARRAY_SIZE(_v));	\
+})
 
 int bch2_gc_accounting_start(struct bch_fs *);
 int bch2_gc_accounting_done(struct bch_fs *);
