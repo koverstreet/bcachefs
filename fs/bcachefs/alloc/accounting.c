@@ -753,7 +753,6 @@ static int disk_accounting_invalid_dev(struct btree_trans *trans,
 	}
 }
 
-
 static int bch2_disk_accounting_validate_late(struct btree_trans *trans,
 					      struct disk_accounting_pos *acc,
 					      u64 *v, unsigned nr)
@@ -871,23 +870,6 @@ static void accounting_key_check_sanity(struct printbuf *out, struct bch_fs *c,
 			prt_newline(out);
 			out->suppress = false;
 		}
-
-	switch (k->type) {
-	case BCH_DISK_ACCOUNTING_dev_data_type:
-		scoped_guard(rcu) {
-			struct bch_dev *ca = bch2_dev_rcu_noerror(c, k->dev_data_type.dev);
-			if (ca && v[0] * ca->mi.bucket_size < v[1]) {
-				prt_printf(out, "Sector count > buckets (%llu > %llu)\n",
-					   v[1], v[0] * ca->mi.bucket_size);
-				bch2_accounting_key_to_text(out, c, k);
-				prt_newline(out);
-				out->suppress = false;
-				return;
-			}
-
-		}
-		break;
-	}
 }
 
 static int accounting_read_mem_fixups(struct btree_trans *trans)
