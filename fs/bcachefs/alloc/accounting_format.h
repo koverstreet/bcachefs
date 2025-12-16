@@ -148,6 +148,13 @@ struct bch_acct_persistent_reserved {
  * XXX: live sectors should've been done differently, you can have multiple data
  * types in the same bucket (user, stripe, cached) and this collapses them to
  * the bucket data type, and makes the internal fragmentation counter redundant
+ *
+ * It is possible for live_sectors to be greater than nr_buckets * bucket_size,
+ * due to the way compressed disk space accounting works with partially
+ * overwritten (and especially split) extents.
+ *
+ * The fragmentation counter handles this by first clamping bucket sector counts
+ * to the bucket size.
  */
 struct bch_acct_dev_data_type {
 	__u8			dev;
