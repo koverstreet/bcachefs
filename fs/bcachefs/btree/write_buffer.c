@@ -330,6 +330,10 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 
 	wb->sorted.nr = 0;
 	wb_keys_for_each(&wb->flushing, k) {
+		if (wb->sorted.nr == wb->sorted.size)
+			panic("Overflowed wb->sorted at %zu, flushing size %zu\n",
+			      wb->sorted.nr, wb->flushing.keys.nr);
+
 		struct wb_key_ref *dst = &darray_top(wb->sorted);
 		wb->sorted.nr++;
 
