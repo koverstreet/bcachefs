@@ -2027,9 +2027,8 @@ struct btree *bch2_btree_iter_peek_node_and_restart(struct btree_iter *iter)
 {
 	struct btree *b;
 
-	while (b = bch2_btree_iter_peek_node(iter),
-	       bch2_err_matches(PTR_ERR_OR_ZERO(b), BCH_ERR_transaction_restart))
-		bch2_trans_begin(iter->trans);
+	lockrestart_do(iter->trans,
+		       PTR_ERR_OR_ZERO(b = bch2_btree_iter_peek_node(iter)));
 
 	return b;
 }
