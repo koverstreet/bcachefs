@@ -199,7 +199,6 @@ static inline bool bch2_snapshot_is_ancestor(struct bch_fs *c, u32 id, u32 ances
 {
 	EBUG_ON(!id);
 	EBUG_ON(!ancestor);
-	EBUG_ON(!bch2_snapshots_same_tree(c, id, ancestor));
 
 	return id == ancestor
 		? true
