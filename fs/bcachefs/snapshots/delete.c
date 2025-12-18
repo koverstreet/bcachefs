@@ -17,6 +17,52 @@
 
 #include <linux/random.h>
 
+/*
+ * Snapshot trees:
+ *
+ * A node in a snapshot tree references keys with that snapshot ID, and all keys
+ * with ancestor snapshot IDs not overwritten by a descendent snapshot.
+ *
+ * When a subvolume is deleted, we now have dead and redundant snapshot nodes
+ * that must be cleaned up.
+ *
+ * - Dead:
+ *
+ *   A snapshot node with no children, and without a subvolume pointing to it,
+ *   is unreferenced and can be deleted
+ *
+ * - Redundant:
+ *
+ *   Interior snapshot nodes (nodes with children) are only referenced by their
+ *   child snapshot nodes. An interior node with only one child is redundant; we
+ *   can clean it up by moving all non-overwritten keys to the child snapshot
+ *   and removing it from the snapshot tree.
+ *
+ * Snapshot node states:
+ *
+ * - WILL_DELETE: this doesn't need to be a separate state bit. Indicates a leaf
+ *   node that's no longer referenced by a subvolume (bch_snapshot.subvol == 0),
+ *   so it's pending deletion
+ *
+ * - NO_KEYS: We can't remove interior nodes from the snapshot tree at runtime,
+ *   because that can require changing bch_snapshot.depth on arbitrarily many
+ *   children, and we can't do that atomically.
+ *
+ *   So instead, at runtime we'll do the heavy lifting of removing all keys that
+ *   reference that snapshot ID, leave it in a half dead state, and the next
+ *   time we start up we'll remove it from the snapshot tree.
+ *
+ *   Technically, we could, because the codepaths where this matters use the
+ *   RCU-protected snapshot table - but there's a lot of work that has to be
+ *   done for deleting interior snapshot nodes; parent/child pointers need to be
+ *   updated, skiplists need to be adjusted, and if we get any of this wrong
+ *   things can and will go horrifically wrong.
+ *
+ *   But if we defer it until recovery, when we're not yet running multithreaded,
+ *   we can also run the check_snapshots recovery pass afterwards, for extra
+ *   safety.
+ */
+
 static void bch2_snapshot_delete_nodes_to_text(struct printbuf *out, struct snapshot_delete *d, bool full)
 {
 	size_t limit = !full ? 10 : SIZE_MAX;
