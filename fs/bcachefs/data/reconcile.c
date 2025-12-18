@@ -2409,6 +2409,15 @@ static int check_reconcile_work_phys(struct btree_trans *trans)
 	}
 }
 
+static int btree_node_update_key_get_node(struct btree_trans *trans, struct btree_iter *iter,
+					  struct bkey_i *new_key)
+{
+	CLASS(btree_node_iter, iter2)(trans, iter->btree_id, iter->pos, 0, iter->min_depth - 1, 0);
+	struct btree *b = errptr_try(bch2_btree_iter_peek_node(&iter2));
+
+	return bch2_btree_node_update_key(trans, &iter2, b, new_key, BCH_TRANS_COMMIT_no_enospc, false);
+}
+
 static int check_reconcile_work_btree_key(struct btree_trans *trans,
 					  struct btree_iter *iter, struct bkey_s_c k)
 {
@@ -2434,7 +2443,7 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 		try(reconcile_bp_add(trans, iter->btree_id, iter->min_depth,
 				     bkey_i_to_s(n), &bp_pos));
 		bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), bp_pos.offset);
-		return 0;
+		return btree_node_update_key_get_node(trans, iter, n);;
 	}
 
 	if (ret_fsck_err_on(!bp_pos.inode && bp_pos.offset,
@@ -2446,8 +2455,7 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 		bkey_reassemble(n, k);
 		bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), 0);
 
-		try(bch2_trans_update(trans, iter, n, BTREE_UPDATE_internal_snapshot_node));
-		return 0;
+		return btree_node_update_key_get_node(trans, iter, n);;
 	}
 
 	if (!bpos_eq(bp_pos, POS_MIN)) {
@@ -2475,8 +2483,10 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 				struct bkey_i_backpointer *new_bp = errptr_try(bch2_bkey_alloc(trans, &rb_iter, 0, backpointer));
 				new_bp->v = bp;
 
-				struct bkey_i *n = errptr_try(bch2_bkey_make_mut(trans, iter, &k, 0));
+				struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k)));
 				bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), rb_iter.pos.offset);
+
+				return btree_node_update_key_get_node(trans, iter, n);;
 			}
 		}
 	}
