@@ -750,7 +750,7 @@ int bch2_delete_dead_interior_snapshots(struct bch_fs *c)
 		{
 			CLASS(bch_log_msg_level, msg)(c, LOGLEVEL_notice);
 
-			prt_printf(&msg.m, "Deleting interior snapshot nodes forces check_snapshots:");
+			prt_printf(&msg.m, "Deleting interior snapshot nodes forces check_snapshots:\n");
 			try(bch2_run_explicit_recovery_pass(c, &msg.m,
 					BCH_RECOVERY_PASS_check_snapshots, 0));
 		}
