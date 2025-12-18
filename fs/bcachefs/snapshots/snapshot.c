@@ -4,6 +4,7 @@
 #include "alloc/accounting.h"
 
 #include "btree/update.h"
+#include "btree/write_buffer.h"
 
 #include "fs/namei.h"
 
@@ -696,6 +697,9 @@ static int bch2_snapshot_tree_to_text_full(struct printbuf *out, struct btree_tr
 void bch2_snapshot_trees_to_text(struct printbuf *out, struct bch_fs *c)
 {
 	CLASS(btree_trans, trans)(c);
+
+	bch2_btree_write_buffer_flush_sync(trans);
+
 	for_each_btree_key(trans, iter,
 				  BTREE_ID_snapshot_trees, POS_MIN, BTREE_ITER_prefetch, k, ({
 		if (k.k->type != KEY_TYPE_snapshot_tree)
