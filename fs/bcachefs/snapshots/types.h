@@ -49,6 +49,7 @@ struct snapshot_delete {
 	snapshot_id_list		deleting_from_trees;
 	snapshot_id_list		delete_leaves;
 	interior_delete_list		delete_interior;
+	interior_delete_list		no_keys;
 
 	bool				running;
 	unsigned			version;

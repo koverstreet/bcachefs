@@ -312,7 +312,10 @@ static int delete_dead_snapshots_process_key(struct btree_trans *trans,
 					     struct btree_iter *iter,
 					     struct bkey_s_c k)
 {
-	struct snapshot_delete *d = &trans->c->snapshots.delete;
+	struct bch_fs *c = trans->c;
+	struct snapshot_delete *d = &c->snapshots.delete;
+
+	BUG_ON(!bch2_snapshot_exists(c, k.k->p.snapshot));
 
 	if (snapshot_list_has_id(&d->delete_leaves, k.k->p.snapshot))
 		return bch2_btree_delete_at(trans, iter,
@@ -320,6 +323,8 @@ static int delete_dead_snapshots_process_key(struct btree_trans *trans,
 
 	u32 live_child = interior_delete_has_id(&d->delete_interior, k.k->p.snapshot);
 	if (live_child) {
+		BUG_ON(!bch2_snapshot_exists(c, live_child));
+
 		struct bkey_i *new = errptr_try(bch2_bkey_make_mut_noupdate(trans, k));
 
 		new->k.p.snapshot = live_child;
@@ -505,16 +510,21 @@ static int check_should_delete_snapshot(struct btree_trans *trans, struct bkey_s
 		u32 id = le32_to_cpu(s.v->children[i]);
 		if (id && !snapshot_list_has_id(&d->delete_leaves, id)) {
 			nr_live_children++;
-			live_child = interior_delete_has_id(&d->delete_interior, id) ?: id;
+
+			live_child = interior_delete_has_id(&d->delete_interior, id) ?:
+				interior_delete_has_id(&d->no_keys, id) ?:
+				id;
+
+			BUG_ON(live_child && !bch2_snapshot_exists(c, live_child));
 		}
 	}
 
-	if (nr_live_children == 2 ||
-	    (nr_live_children == 1 && BCH_SNAPSHOT_NO_KEYS(s.v)))
+	if (nr_live_children == 2)
 		return 0;
 
-	try(snapshot_list_add_nodup(c, &d->deleting_from_trees,
-				    bch2_snapshot_tree(c, s.k->p.offset)));
+	if (!BCH_SNAPSHOT_NO_KEYS(s.v))
+		try(snapshot_list_add_nodup(c, &d->deleting_from_trees,
+					    bch2_snapshot_tree(c, s.k->p.offset)));
 
 	if (!nr_live_children) {
 		try(snapshot_list_add(c, &d->delete_leaves, s.k->p.offset));
@@ -524,10 +534,18 @@ static int check_should_delete_snapshot(struct btree_trans *trans, struct bkey_s
 			.live_child	= live_child,
 		};
 
-		if (n.id == n.live_child) {
-			bch_err(c, "error finding live descendent of %llu", s.k->p.offset);
-			return -EINVAL;
-		}
+		BUG_ON(n.id == n.live_child);
+		BUG_ON(!bch2_snapshot_is_ancestor(c, n.live_child, n.id));
+
+		/*
+		 * We're not doing any processing for NO_KEYS snapshot nodes,
+		 * but we still track them so that we can find the correct
+		 * live_child when deleting parents, above:
+		 */
+		if (!BCH_SNAPSHOT_NO_KEYS(s.v))
+			try(darray_push(&d->delete_interior, n));
+		else
+			try(darray_push(&d->no_keys, n));
 	}
 
 	return 0;
@@ -660,6 +678,7 @@ int __bch2_delete_dead_snapshots(struct bch_fs *c)
 
 	scoped_guard(mutex, &d->progress_lock) {
 		darray_exit(&d->deleting_from_trees);
+		darray_exit(&d->no_keys);
 		darray_exit(&d->delete_interior);
 		darray_exit(&d->delete_leaves);
 		d->running = false;
