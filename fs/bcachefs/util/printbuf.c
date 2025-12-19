@@ -46,8 +46,10 @@ int bch2_printbuf_make_room(struct printbuf *out, unsigned extra)
 
 	unsigned new_size = roundup_pow_of_two(out->size + extra);
 
+	bool may_vmalloc = out->may_vmalloc && !out->atomic;
+
 	/* Sanity check... */
-	if (new_size > PAGE_SIZE << MAX_PAGE_ORDER) {
+	if (new_size > (may_vmalloc ? INT_MAX : (PAGE_SIZE << MAX_PAGE_ORDER))) {
 		out->allocation_failure = true;
 		out->overflow = true;
 		return -ENOMEM;
@@ -57,7 +59,9 @@ int bch2_printbuf_make_room(struct printbuf *out, unsigned extra)
 	 * Note: output buffer must be freeable with kfree(), it's not required
 	 * that the user use printbuf_exit().
 	 */
-	char *buf = krealloc(out->buf, new_size, !out->atomic ? GFP_KERNEL : GFP_NOWAIT);
+	char *buf = may_vmalloc
+		? kvrealloc(out->buf, new_size, GFP_KERNEL)
+		: krealloc(out->buf, new_size, !out->atomic ? GFP_KERNEL : GFP_NOWAIT);
 
 	if (!buf) {
 		out->allocation_failure = true;
@@ -217,7 +221,7 @@ const char *bch2_printbuf_str(const struct printbuf *buf)
 void bch2_printbuf_exit(struct printbuf *buf)
 {
 	if (buf->heap_allocated) {
-		kfree(buf->buf);
+		kvfree(buf->buf);
 		buf->buf = ERR_PTR(-EINTR); /* poison value */
 	}
 }

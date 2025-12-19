@@ -346,6 +346,7 @@ static int bch2_dump_open(struct inode *inode, struct file *file)
 	i->c	= container_of(bd, struct bch_fs, btree_debug[bd->id]);
 	i->id	= bd->id;
 	i->buf	= PRINTBUF;
+	i->buf.may_vmalloc = true;
 
 	return 0;
 }
