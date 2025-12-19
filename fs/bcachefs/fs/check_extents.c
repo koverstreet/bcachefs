@@ -181,7 +181,11 @@ static int overlapping_extents_found(struct btree_trans *trans,
 				 BTREE_ITER_not_extents);
 	struct bkey_s_c k1 = bkey_try(bch2_btree_iter_peek_max(&iter1, POS(pos1.inode, U64_MAX)));
 
+	prt_printf(&buf, "overlapping extents in ");
+	try(bch2_inum_snapshot_to_path(trans, pos1.inode,
+				       min(pos1.snapshot, pos2.p.snapshot), NULL, &buf));
 	prt_newline(&buf);
+
 	bch2_bkey_val_to_text(&buf, c, k1);
 
 	if (!bpos_eq(pos1, k1.k->p)) {
@@ -216,8 +220,7 @@ static int overlapping_extents_found(struct btree_trans *trans,
 	prt_printf(&buf, "\noverwriting %s extent",
 		   pos1.snapshot >= pos2.p.snapshot ? "first" : "second");
 
-	if (fsck_err(trans, extent_overlapping,
-		     "overlapping extents%s", buf.buf)) {
+	if (fsck_err(trans, extent_overlapping, "%s", buf.buf)) {
 		struct btree_iter *old_iter = &iter1;
 
 		if (pos1.snapshot < pos2.p.snapshot) {
