@@ -218,7 +218,7 @@ enum bch_fsck_flags {
 	x(snapshot_bad_skiplist,				185,	FSCK_AUTOFIX)	\
 	x(subvol_pos_bad,					186,	0)		\
 	x(subvol_not_master_and_not_snapshot,			187,	FSCK_AUTOFIX)	\
-	x(subvol_to_missing_root,				188,	0)		\
+	x(subvol_to_missing_root,				188,	FSCK_AUTOFIX)	\
 	x(subvol_root_wrong_bi_subvol,				189,	FSCK_AUTOFIX)	\
 	x(bkey_in_missing_snapshot,				190,	0)		\
 	x(bkey_in_deleted_snapshot,				315,	FSCK_AUTOFIX)	\
