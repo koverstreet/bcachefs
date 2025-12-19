@@ -456,7 +456,7 @@ void bch2_prt_human_readable_u64(struct printbuf *out, u64 v)
 			prt_char(out, '.');
 			prev_pos = out->pos;
 			bch2_prt_printf(out, "%03u", r);
-			out->pos = prev_pos + prec;
+			out->pos = min(out->pos, prev_pos + prec);
 			out->buf[out->pos] = '\0';
 		}
 
