@@ -1161,36 +1161,32 @@ static struct bkey_packed *bset_search_tree(const struct btree *b,
 {
 	struct ro_aux_tree *base = ro_aux_tree_base(b, t);
 	struct bkey_float *f;
-	struct bkey_packed *k;
-	unsigned inorder, n = 1, l, r;
-	int cmp;
+	unsigned n = 1;
 
 	do {
 		if (likely(n << 4 < t->size))
 			prefetch(&base->f[n << 4]);
 
 		f = &base->f[n];
-		if (unlikely(f->exponent >= BFLOAT_FAILED))
-			goto slowpath;
+		if (likely(f->exponent < BFLOAT_FAILED)) {
+			unsigned l = f->mantissa;
+			unsigned r = bkey_mantissa(packed_search, f);
 
-		l = f->mantissa;
-		r = bkey_mantissa(packed_search, f);
+			if (likely(l != r) || !bkey_mantissa_bits_dropped(b, f)) {
+				n = n * 2 + (l < r);
+				continue;
+			}
+		}
 
-		if (unlikely(l == r) && bkey_mantissa_bits_dropped(b, f))
-			goto slowpath;
-
-		n = n * 2 + (l < r);
-		continue;
-slowpath:
-		k = tree_to_bkey(b, t, n);
-		cmp = bkey_cmp_p_or_unp(b, k, packed_search, search);
+		struct bkey_packed *k = tree_to_bkey(b, t, n);
+		int cmp = bkey_cmp_p_or_unp(b, k, packed_search, search);
 		if (!cmp)
 			return k;
 
 		n = n * 2 + (cmp < 0);
 	} while (n < t->size);
 
-	inorder = __eytzinger1_to_inorder(n >> 1, t->size - 1, t->extra);
+	unsigned inorder = __eytzinger1_to_inorder(n >> 1, t->size - 1, t->extra);
 
 	/*
 	 * n would have been the node we recursed to - the low bit tells us if
