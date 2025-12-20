@@ -730,11 +730,11 @@ lookup_inode_for_snapshot(struct btree_trans *trans, struct inode_walker *w, str
 		}
 
 		if (ret)
-			goto fsck_err;
+			return ERR_PTR(ret);
 
 		ret = bch2_trans_commit(trans, NULL, NULL, 0);
 		if (ret)
-			goto fsck_err;
+			return ERR_PTR(ret);
 
 		struct inode_walker_entry new_entry = *i;
 
@@ -748,10 +748,9 @@ lookup_inode_for_snapshot(struct btree_trans *trans, struct inode_walker *w, str
 		size_t pos = i - w->inodes.data;
 		ret = darray_insert_item(&w->inodes, pos, new_entry);
 		if (ret)
-			goto fsck_err;
+			return ERR_PTR(ret);
 
-		ret = bch_err_throw(c, transaction_restart_nested);
-		goto fsck_err;
+		return ERR_PTR(bch_err_throw(c, transaction_restart_nested));
 	}
 
 	return i;
@@ -896,51 +895,37 @@ static int check_inode(struct btree_trans *trans,
 	CLASS(printbuf, buf)();
 	struct bch_inode_unpacked u;
 	bool do_update = false;
-	int ret;
 
-	ret = bch2_check_key_has_snapshot(trans, iter, k);
+	int ret = bch2_check_key_has_snapshot(trans, iter, k);
 	if (ret < 0)
-		goto err;
+		return ret;
 	if (ret)
 		return 0;
 
-	ret = bch2_snapshots_seen_update(c, s, iter->btree_id, k.k->p);
-	if (ret)
-		goto err;
+	try(bch2_snapshots_seen_update(c, s, iter->btree_id, k.k->p));
 
 	if (!bkey_is_inode(k.k))
 		return 0;
 
-	ret = bch2_inode_unpack(k, &u);
-	if (ret)
-		goto err;
+	try(bch2_inode_unpack(k, &u));
 
 	if (snapshot_root->bi_inum != u.bi_inum ||
-	    !bch2_snapshot_is_ancestor(c, u.bi_snapshot, snapshot_root->bi_snapshot)) {
-		ret = bch2_inode_find_oldest_snapshot(trans, u.bi_inum, u.bi_snapshot, snapshot_root);
-		if (ret)
-			goto err;
-	}
+	    !bch2_snapshot_is_ancestor(c, u.bi_snapshot, snapshot_root->bi_snapshot))
+		try(bch2_inode_find_oldest_snapshot(trans, u.bi_inum, u.bi_snapshot, snapshot_root));
 
 	if (u.bi_hash_seed	!= snapshot_root->bi_hash_seed ||
-	    INODE_STR_HASH(&u)	!= INODE_STR_HASH(snapshot_root)) {
-		ret = bch2_repair_inode_hash_info(trans, &u, snapshot_root);
-		if (ret)
-			goto err;
-	}
+	    INODE_STR_HASH(&u)	!= INODE_STR_HASH(snapshot_root))
+		try(bch2_repair_inode_hash_info(trans, &u, snapshot_root));
 
 	ret = bch2_check_inode_has_case_insensitive(trans, &u, &s->ids, &do_update);
 	if (bch2_err_matches(ret, ENOENT)) /* disconnected inode; will be fixed by a later pass */
 		ret = 0;
 	bch_err_msg(c, ret, "bch2_check_inode_has_case_insensitive()");
 	if (ret)
-		goto err;
+		return ret;
 
-	if (bch2_inode_has_backpointer(&u)) {
-		ret = check_inode_dirent_inode(trans, &u, &do_update);
-		if (ret)
-			goto err;
-	}
+	if (bch2_inode_has_backpointer(&u))
+		try(check_inode_dirent_inode(trans, &u, &do_update));
 
 	if (fsck_err_on(bch2_inode_has_backpointer(&u) &&
 			(u.bi_flags & BCH_INODE_unlinked),
@@ -958,7 +943,7 @@ static int check_inode(struct btree_trans *trans,
 
 		ret = bch2_empty_dir_snapshot(trans, k.k->p.offset, 0, k.k->p.snapshot);
 		if (ret && ret != -BCH_ERR_ENOTEMPTY_dir_not_empty)
-			goto err;
+			return ret;
 
 		fsck_err_on(ret, trans, inode_dir_unlinked_but_not_empty,
 			    "dir unlinked but not empty\n%s",
@@ -980,7 +965,7 @@ static int check_inode(struct btree_trans *trans,
 
 	ret = bch2_inode_has_child_snapshots(trans, k.k->p);
 	if (ret < 0)
-		goto err;
+		return ret;
 
 	if (fsck_err_on(ret != !!(u.bi_flags & BCH_INODE_has_child_snapshot),
 			trans, inode_has_child_snapshots_wrong,
@@ -1019,13 +1004,11 @@ static int check_inode(struct btree_trans *trans,
 				    "inode %llu:%u unlinked, but not on deleted list",
 				    u.bi_inum, k.k->p.snapshot);
 
-			ret = bch2_btree_bit_mod_buffered(trans, BTREE_ID_deleted_inodes, k.k->p, 1);
-			if (ret)
-				goto err;
+			try(bch2_btree_bit_mod_buffered(trans, BTREE_ID_deleted_inodes, k.k->p, 1));
 		} else {
 			ret = bch2_inode_or_descendents_is_open(trans, k.k->p);
 			if (ret < 0)
-				goto err;
+				return ret;
 
 			if (fsck_err_on(!ret,
 					trans, inode_unlinked_and_not_open,
@@ -1054,7 +1037,7 @@ static int check_inode(struct btree_trans *trans,
 
 		ret = bch2_subvolume_get(trans, u.bi_subvol, false, &s);
 		if (ret && !bch2_err_matches(ret, ENOENT))
-			goto err;
+			return ret;
 
 		if (ret && (c->sb.btrees_lost_data & BIT_ULL(BTREE_ID_subvolumes))) {
 			ret = reconstruct_subvol(trans, k.k->p.snapshot, u.bi_subvol, u.bi_inum);
@@ -1096,7 +1079,6 @@ do_update:
 		if (ret)
 			return ret;
 	}
-err:
 fsck_err:
 	bch_err_fn(c, ret);
 	return ret;
