@@ -242,17 +242,12 @@ void __bch2_alloc_to_v4(struct bkey_s_c, struct bch_alloc_v4 *);
 
 static inline const struct bch_alloc_v4 *bch2_alloc_to_v4(struct bkey_s_c k, struct bch_alloc_v4 *convert)
 {
-	const struct bch_alloc_v4 *ret;
+	if (likely(k.k->type == KEY_TYPE_alloc_v4)) {
+		const struct bch_alloc_v4 *ret = bkey_s_c_to_alloc_v4(k).v;
+		if (BCH_ALLOC_V4_BACKPOINTERS_START(ret) == BCH_ALLOC_V4_U64s)
+			return ret;
+	}
 
-	if (unlikely(k.k->type != KEY_TYPE_alloc_v4))
-		goto slowpath;
-
-	ret = bkey_s_c_to_alloc_v4(k).v;
-	if (BCH_ALLOC_V4_BACKPOINTERS_START(ret) != BCH_ALLOC_V4_U64s)
-		goto slowpath;
-
-	return ret;
-slowpath:
 	__bch2_alloc_to_v4(k, convert);
 	return convert;
 }
