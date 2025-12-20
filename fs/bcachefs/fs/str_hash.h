@@ -366,7 +366,9 @@ int bch2_hash_delete(struct btree_trans *trans,
 	return bch2_hash_delete_at(trans, desc, info, &iter, 0);
 }
 
-int bch2_repair_inode_hash_info(struct btree_trans *, struct bch_inode_unpacked *);
+int bch2_repair_inode_hash_info(struct btree_trans *,
+				struct bch_inode_unpacked *,
+				struct bch_inode_unpacked *);
 
 struct snapshots_seen;
 int bch2_str_hash_repair_key(struct btree_trans *,
@@ -382,7 +384,7 @@ int __bch2_str_hash_check_key(struct btree_trans *,
 			      const struct bch_hash_desc *,
 			      struct bch_hash_info *,
 			      struct btree_iter *, struct bkey_s_c,
-			      bool *);
+			      bool *, bool *);
 
 static inline bool str_hash_key_needs_check(const struct bch_hash_desc *desc,
 					    struct bch_hash_info *info,
@@ -410,11 +412,12 @@ static inline int bch2_str_hash_check_key(struct btree_trans *trans,
 			    const struct bch_hash_desc *desc,
 			    struct bch_hash_info *hash_info,
 			    struct btree_iter *k_iter, struct bkey_s_c hash_k,
-			    bool *updated_before_k_pos)
+			    bool *updated_before_k_pos,
+			    bool *repaired_inode)
 {
 	return str_hash_key_needs_check(desc, hash_info, hash_k)
 		? __bch2_str_hash_check_key(trans, s, desc, hash_info, k_iter, hash_k,
-					    updated_before_k_pos)
+					    updated_before_k_pos, repaired_inode)
 		: 0;
 }
 

@@ -924,7 +924,7 @@ static int check_inode(struct btree_trans *trans,
 
 	if (u.bi_hash_seed	!= snapshot_root->bi_hash_seed ||
 	    INODE_STR_HASH(&u)	!= INODE_STR_HASH(snapshot_root)) {
-		ret = bch2_repair_inode_hash_info(trans, snapshot_root);
+		ret = bch2_repair_inode_hash_info(trans, &u, snapshot_root);
 		if (ret)
 			goto err;
 	}
@@ -1632,8 +1632,15 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 
 	hash_info->cf_encoding = bch2_inode_casefold(c, &i->inode) ? c->cf_encoding : NULL;
 
+	bool invalidated_inodes = false;
 	ret = bch2_str_hash_check_key(trans, s, &bch2_dirent_hash_desc, hash_info,
-				      iter, k, need_second_pass);
+				      iter, k, need_second_pass, &invalidated_inodes);
+	if (invalidated_inodes) {
+		dir->last_pos.inode = 0;
+		dir->inodes.nr = 0;
+		return bch_err_throw(c, transaction_restart_nested);
+	}
+
 	if (ret < 0)
 		return ret;
 	if (ret)
@@ -1765,8 +1772,15 @@ static int check_xattr(struct btree_trans *trans, struct btree_iter *iter,
 	inode->first_this_inode = false;
 
 	bool need_second_pass = false;
-	return bch2_str_hash_check_key(trans, NULL, &bch2_xattr_hash_desc, hash_info,
-				      iter, k, &need_second_pass);
+	bool invalidated_inodes = false;
+	ret = bch2_str_hash_check_key(trans, NULL, &bch2_xattr_hash_desc, hash_info,
+				      iter, k, &need_second_pass, &invalidated_inodes);
+	if (invalidated_inodes) {
+		inode->last_pos.inode--;
+		return bch_err_throw(c, transaction_restart_nested);
+	}
+
+	return min(ret, 0);
 }
 
 /*
