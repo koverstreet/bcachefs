@@ -906,8 +906,9 @@ static int check_inode(struct btree_trans *trans,
 	if (ret)
 		goto err;
 
-	if (snapshot_root->bi_inum != u.bi_inum) {
-		ret = bch2_inode_find_snapshot_root(trans, u.bi_inum, snapshot_root);
+	if (snapshot_root->bi_inum != u.bi_inum ||
+	    !bch2_snapshot_is_ancestor(c, u.bi_snapshot, snapshot_root->bi_snapshot)) {
+		ret = bch2_inode_find_oldest_snapshot(trans, u.bi_inum, u.bi_snapshot, snapshot_root);
 		if (ret)
 			goto err;
 	}

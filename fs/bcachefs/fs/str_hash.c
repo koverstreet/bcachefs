@@ -238,7 +238,7 @@ static noinline int check_inode_hash_info_matches_root(struct btree_trans *trans
 						       struct bch_hash_info *hash_info)
 {
 	struct bch_inode_unpacked snapshot_root;
-	try(bch2_inode_find_snapshot_root(trans, inum, &snapshot_root));
+	try(bch2_inode_find_oldest_snapshot(trans, inum, hash_info->inum_snapshot, &snapshot_root));
 
 	struct bch_hash_info hash_root = __bch2_hash_info_init(trans->c, &snapshot_root);
 	if (hash_info->type != hash_root.type ||

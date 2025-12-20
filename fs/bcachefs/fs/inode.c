@@ -400,23 +400,25 @@ int bch2_inode_find_by_inum(struct bch_fs *c, subvol_inum inum,
 	return lockrestart_do(trans, bch2_inode_find_by_inum_trans(trans, inum, inode));
 }
 
-int bch2_inode_find_snapshot_root(struct btree_trans *trans, u64 inum,
-				  struct bch_inode_unpacked *root)
+int bch2_inode_find_oldest_snapshot(struct btree_trans *trans, u64 inum, u32 snapshot,
+				    struct bch_inode_unpacked *root)
 {
 	struct bkey_s_c k;
-	int ret = 0;
+	int ret = -BCH_ERR_ENOENT_inode, ret2;
 
-	for_each_btree_key_reverse_norestart(trans, iter, BTREE_ID_inodes,
-					     SPOS(0, inum, U32_MAX),
-					     BTREE_ITER_all_snapshots, k, ret) {
+	for_each_btree_key_norestart(trans, iter, BTREE_ID_inodes,
+				     SPOS(0, inum, snapshot),
+				     BTREE_ITER_all_snapshots, k, ret2) {
 		if (k.k->p.offset != inum)
 			break;
-		if (bkey_is_inode(k.k))
-			return bch2_inode_unpack(k, root);
+		if (!bkey_is_inode(k.k) ||
+		    !bch2_snapshot_is_ancestor(trans->c, snapshot, k.k->p.snapshot))
+			continue;
+		try(bch2_inode_unpack(k, root));
+		ret = 0;
 	}
-	/* We're only called when we know we have an inode for @inum */
-	BUG_ON(!ret);
-	return ret;
+
+	return ret2 ?: ret;
 }
 
 int bch2_inode_write_flags(struct btree_trans *trans,
