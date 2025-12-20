@@ -495,7 +495,6 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
-	bool is_kthread = current->flags & PF_KTHREAD;
 	struct bkey_s_c k;
 	u64 check_mismatch_done = bucket_start;
 	int ret = 0;
@@ -527,9 +526,6 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		return ret;
 
 	while (!(ret = bch2_move_ratelimit(ctxt))) {
-		if (is_kthread && kthread_should_stop())
-			break;
-
 		bch2_trans_begin(trans);
 
 		k = bch2_btree_iter_peek(&bp_iter);
