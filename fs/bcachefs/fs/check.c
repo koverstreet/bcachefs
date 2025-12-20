@@ -517,6 +517,15 @@ static int reconstruct_inode(struct btree_trans *trans, enum btree_id btree, u32
 	new_inode.bi_inum = inum;
 	new_inode.bi_snapshot = snapshot;
 
+	struct bch_inode_unpacked ancestor;
+	int ret = bch2_inode_find_oldest_snapshot(trans, inum, snapshot, &ancestor);
+	if (ret && !bch2_err_matches(ret, ENOENT))
+		return ret;
+	if (!ret) {
+		new_inode.bi_hash_seed = ancestor.bi_hash_seed;
+		SET_INODE_STR_HASH(&new_inode, INODE_STR_HASH(&ancestor));
+	}
+
 	return __bch2_fsck_write_inode(trans, &new_inode);
 }
 
