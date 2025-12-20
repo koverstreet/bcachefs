@@ -925,7 +925,6 @@ static int check_inode(struct btree_trans *trans,
 	if (u.bi_hash_seed	!= snapshot_root->bi_hash_seed ||
 	    INODE_STR_HASH(&u)	!= INODE_STR_HASH(snapshot_root)) {
 		ret = bch2_repair_inode_hash_info(trans, snapshot_root);
-		BUG_ON(ret == -BCH_ERR_fsck_repair_unimplemented);
 		if (ret)
 			goto err;
 	}
@@ -1225,126 +1224,147 @@ static inline bool btree_matches_i_mode(enum btree_id btree, unsigned mode)
 	}
 }
 
+static int count_inode_keys(struct btree_trans *trans,
+			    struct bpos inode_pos,
+			    enum btree_id btree,
+			    struct printbuf *out)
+{
+	struct bkey_s_c k;
+	unsigned nr_keys = 0;
+	int ret = 0;
+	for_each_btree_key_max_norestart(trans, iter, btree,
+					 inode_pos,
+					 POS(inode_pos.inode, U64_MAX),
+					 0, k, ret) {
+		if (k.k->type == KEY_TYPE_error ||
+		    k.k->type == KEY_TYPE_hash_whiteout)
+			continue;
+
+		nr_keys++;
+		if (out && nr_keys <= 10) {
+			bch2_bkey_val_to_text(out, trans->c, k);
+			prt_newline(out);
+		}
+		if (nr_keys >= 100)
+			break;
+	}
+
+	return ret ?: nr_keys;
+}
+
 int bch2_check_key_has_inode(struct btree_trans *trans,
 			     struct btree_iter *iter,
 			     struct inode_walker *inode,
 			     struct inode_walker_entry *i,
 			     struct bkey_s_c k)
 {
-	struct bch_fs *c = trans->c;
-	CLASS(printbuf, buf)();
-	int ret = PTR_ERR_OR_ZERO(i);
-	if (ret)
-		return ret;
+	errptr_try(i);
 
 	if (bkey_extent_whiteout(k.k))
 		return 0;
 
 	bool have_inode = i && !i->whiteout;
 
-	if (!have_inode && (c->sb.btrees_lost_data & BIT_ULL(BTREE_ID_inodes)))
-		goto reconstruct;
-
 	if (have_inode && btree_matches_i_mode(iter->btree_id, i->inode.bi_mode))
 		return 0;
 
-	prt_printf(&buf, ", ");
+	struct bch_fs *c = trans->c;
+	CLASS(printbuf, buf)();
 
-	bool have_old_inode = false;
+	if (have_inode)
+		prt_printf(&buf, "key for wrong inode mode %o", i->inode.bi_mode);
+	else
+		prt_str(&buf, "key in missing inode");
+
+	struct inode_walker_entry *good_ancestor = NULL;
 	darray_for_each(inode->inodes, i2)
 		if (!i2->whiteout &&
 		    bch2_snapshot_is_ancestor(c, k.k->p.snapshot, i2->inode.bi_snapshot) &&
 		    btree_matches_i_mode(iter->btree_id, i2->inode.bi_mode)) {
-			prt_printf(&buf, "but found good inode in older snapshot\n");
+			prt_printf(&buf, ", but found good inode in older snapshot");
 			bch2_inode_unpacked_to_text(&buf, &i2->inode);
 			prt_newline(&buf);
-			have_old_inode = true;
+			good_ancestor = i2;
 			break;
 		}
 
-	struct bkey_s_c k2;
-	unsigned nr_keys = 0;
+	prt_printf(&buf, "\nfound keys:\n");
 
-	prt_printf(&buf, "found keys:\n");
+	struct bpos inode_pos = SPOS(k.k->p.inode, 0, k.k->p.snapshot);
+	int ret = count_inode_keys(trans, inode_pos, iter->btree_id, &buf);
+	if (ret < 0)
+		return ret;
 
-	for_each_btree_key_max_norestart(trans, iter2, iter->btree_id,
-					 SPOS(k.k->p.inode, 0, k.k->p.snapshot),
-					 POS(k.k->p.inode, U64_MAX),
-					 0, k2, ret) {
-		if (k.k->type == KEY_TYPE_error ||
-		    k.k->type == KEY_TYPE_hash_whiteout)
-			continue;
-
-		nr_keys++;
-		if (nr_keys <= 10) {
-			bch2_bkey_val_to_text(&buf, c, k2);
-			prt_newline(&buf);
-		}
-		if (nr_keys >= 100)
-			break;
+	unsigned nr_keys = ret;
+	if (!nr_keys) {
+		bch_err(c, "%s: error finding live keys in inode", __func__);
+		return bch_err_throw(c, shutdown_with_errors_unfixed);
 	}
-
-	if (ret)
-		goto err;
-
-	unsigned reconstruct_limit = iter->btree_id == BTREE_ID_extents ? 3 : 0;
 
 	if (nr_keys > 100)
-		prt_printf(&buf, "found > %u keys for this missing inode\n", nr_keys);
-	else if (nr_keys > reconstruct_limit)
-		prt_printf(&buf, "found %u keys for this missing inode\n", nr_keys);
+		prt_printf(&buf, "found > %u keys for this inode\n", nr_keys);
+	else
+		prt_printf(&buf, "found %u keys for this inode\n", nr_keys);
+
+	if (c->sb.btrees_lost_data & BIT_ULL(BTREE_ID_inodes))
+		prt_str(&buf, "data was lost in inodes btree\n");
 
 	if (!have_inode) {
-		if (fsck_err_on(!have_inode,
-				trans, key_in_missing_inode,
-				"key in missing inode%s", buf.buf)) {
-			/*
-			 * Maybe a deletion that raced with data move, or something
-			 * weird like that? But if we know the inode was deleted, or
-			 * it's just a few keys, we can safely delete them.
-			 *
-			 * If it's many keys, we should probably recreate the inode
-			 */
-			if (have_old_inode || nr_keys <= 2)
-				goto delete;
-			else
-				goto reconstruct;
+		bool inode_looks_deleted =
+			good_ancestor &&
+			nr_keys < 3 &&
+			!(c->sb.btrees_lost_data & BIT_ULL(BTREE_ID_inodes));
+		if (inode_looks_deleted)
+			prt_str(&buf, "inode was deleted, will delete key\n");
+
+		if (ret_fsck_err(trans, key_in_missing_inode, "%s", buf.buf)) {
+			if (inode_looks_deleted)
+				return bch2_btree_delete_at(trans, iter, BTREE_UPDATE_internal_snapshot_node);
+
+			if (!good_ancestor) {
+				try(reconstruct_inode(trans, iter->btree_id, k.k->p.snapshot, k.k->p.inode));
+				try(bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
+
+				inode->last_pos.inode--;
+				return bch_err_throw(c, transaction_restart_commit);
+			} else {
+				u32 snapshot = i->inode.bi_snapshot;
+				i->inode = good_ancestor->inode;
+				i->inode.bi_snapshot = snapshot;
+				try(bch2_fsck_write_inode(trans, &i->inode));
+				try(bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
+			}
 		}
 	} else {
-		/*
-		 * not autofix, this one would be a giant wtf - bit error in the
-		 * inode corrupting i_mode?
-		 *
-		 * may want to try repairing inode instead of deleting
-		 */
-		if (fsck_err_on(!btree_matches_i_mode(iter->btree_id, i->inode.bi_mode),
-				trans, key_in_wrong_inode_type,
-				"key for wrong inode mode %o%s",
-				i->inode.bi_mode, buf.buf))
-			goto delete;
-	}
-out:
-err:
-fsck_err:
-	bch_err_fn(c, ret);
-	return ret;
-delete:
-	/*
-	 * XXX: print out more info
-	 * count up extents for this inode, check if we have different inode in
-	 * an older snapshot version, perhaps decide if we want to reconstitute
-	 */
-	ret = bch2_btree_delete_at(trans, iter, BTREE_UPDATE_internal_snapshot_node);
-	goto out;
-reconstruct:
-	ret =   reconstruct_inode(trans, iter->btree_id, k.k->p.snapshot, k.k->p.inode) ?:
-		bch2_trans_commit(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc);
-	if (ret)
-		goto err;
+		if (ret_fsck_err(trans, key_in_wrong_inode_type, "%s", buf.buf)) {
+			int nr_extents = iter->btree_id == BTREE_ID_extents
+				? nr_keys : count_inode_keys(trans, inode_pos, BTREE_ID_extents, NULL);
+			if (nr_extents < 0)
+				return nr_extents;
 
-	inode->last_pos.inode--;
-	ret = bch_err_throw(c, transaction_restart_nested);
-	goto out;
+			int nr_dirents = iter->btree_id == BTREE_ID_dirents
+				? nr_keys : count_inode_keys(trans, inode_pos, BTREE_ID_dirents, NULL);
+			if (nr_dirents < 0)
+				return nr_dirents;
+
+			if (nr_extents && nr_dirents) {
+				bch_err(c, "have both extents and dirents for inode with bad mode, cannot repair");
+				return bch_err_throw(c, shutdown_with_errors_unfixed);
+			}
+
+			i->inode.bi_mode &= ~S_IFMT;
+
+			if (nr_dirents)
+				i->inode.bi_mode |= S_IFDIR;
+			else
+				i->inode.bi_mode |= S_IFREG;
+
+			try(bch2_fsck_write_inode(trans, &i->inode));
+			try(bch2_trans_commit_lazy(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc));
+		}
+	}
+
+	return 0;
 }
 
 static int maybe_reconstruct_inum_btree(struct btree_trans *trans,
