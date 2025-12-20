@@ -591,8 +591,6 @@ static void __bch2_inode_unpacked_to_text(struct printbuf *out,
 	prt_printf(out, #_name "=%llu\n", (u64) inode->_name);
 	BCH_INODE_FIELDS_v3()
 #undef  x
-
-	bch2_printbuf_strip_trailing_newline(out);
 }
 
 void bch2_inode_unpacked_to_text(struct printbuf *out, struct bch_inode_unpacked *inode)
