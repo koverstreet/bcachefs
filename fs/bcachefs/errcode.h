@@ -411,7 +411,7 @@
 	x(BCH_ERR_decompress,		decompress_lz4)				\
 	x(BCH_ERR_decompress,		decompress_gzip)			\
 	x(BCH_ERR_decompress,		decompress_zstd_src_len_bad)		\
-	x(BCH_ERR_decompress,		decompress_zstd)			\
+	x(BCH_ERR_decompress,		decompress_zstd_size_mismatch)		\
 	x(EIO,				data_write)				\
 	x(BCH_ERR_data_write,		data_write_io)				\
 	x(BCH_ERR_data_write,		data_write_csum)			\

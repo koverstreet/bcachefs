@@ -250,8 +250,10 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 		if (ret != dst_len) {
 			if (zstd_is_error(ret))
 				return __bch2_err_throw(c, zstd_err_to_bch_err(zstd_get_error_code(ret)));
-
-			return bch_err_throw(c, decompress_zstd);
+			else {
+				bch_err(c, "zstd decompress error: expected %zu bytes, got %zu", dst_len, ret);
+				return bch_err_throw(c, decompress_zstd_size_mismatch);
+			}
 		}
 		break;
 	}
