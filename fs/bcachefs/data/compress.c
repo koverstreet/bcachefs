@@ -340,6 +340,9 @@ static int attempt_compress(struct bch_fs *c,
 	enum bch_compression_type compression_type =
 		__bch2_compression_opt_to_type[compression.type];
 
+	BUG_ON(src_len & 511);
+	BUG_ON(dst_len & 511);
+
 	switch (compression_type) {
 	case BCH_COMPRESSION_TYPE_lz4:
 		if (compression.level < LZ4HC_MIN_CLEVEL) {
