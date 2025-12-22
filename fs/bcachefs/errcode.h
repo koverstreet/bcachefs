@@ -406,7 +406,7 @@
 	x(EIO,				ec_block_read)				\
 	x(EIO,				ec_block_write)				\
 	x(EIO,				recompute_checksum)			\
-	x(EIO,				decompress)				\
+	x(BCH_ERR_data_read_retry_avoid,decompress)				\
 	x(BCH_ERR_decompress,		decompress_exceeded_max_encoded_extent)	\
 	x(BCH_ERR_decompress,		decompress_lz4)				\
 	x(BCH_ERR_decompress,		decompress_gzip)			\
@@ -417,7 +417,7 @@
 	x(BCH_ERR_data_write,		data_write_csum)			\
 	x(BCH_ERR_data_write,		data_write_invalid_ptr)			\
 	x(BCH_ERR_data_write,		data_write_misaligned)			\
-	x(BCH_ERR_decompress,		data_read)				\
+	x(EIO,				data_read)				\
 	x(BCH_ERR_data_read,		no_device_to_read_from)			\
 	x(BCH_ERR_data_read,		no_devices_valid)			\
 	x(BCH_ERR_data_read,		data_read_io_err)			\
