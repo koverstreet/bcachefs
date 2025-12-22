@@ -26,13 +26,55 @@
 	BLK_STS(INVAL)				\
 	BLK_STS(REMOVED)			\
 
-#define BLK_STS(n)								\
+#define BLK_STS(n)				\
 	x(BCH_ERR_blockdev_io_error,	BLK_STS_##n)
+
+#define ZSTD_ERRS()					\
+	ZSTD_error(GENERIC)				\
+	ZSTD_error(prefix_unknown)			\
+	ZSTD_error(version_unsupported)			\
+	ZSTD_error(frameParameter_unsupported)		\
+	ZSTD_error(frameParameter_windowTooLarge)	\
+	ZSTD_error(corruption_detected)			\
+	ZSTD_error(checksum_wrong)			\
+	ZSTD_error(literals_headerWrong)		\
+	ZSTD_error(dictionary_corrupted)		\
+	ZSTD_error(dictionary_wrong)			\
+	ZSTD_error(dictionaryCreation_failed)		\
+	ZSTD_error(parameter_unsupported)		\
+	ZSTD_error(parameter_combination_unsupported)	\
+	ZSTD_error(parameter_outOfBound)		\
+	ZSTD_error(tableLog_tooLarge)			\
+	ZSTD_error(maxSymbolValue_tooLarge)		\
+	ZSTD_error(maxSymbolValue_tooSmall)		\
+	ZSTD_error(cannotProduce_uncompressedBlock)	\
+	ZSTD_error(stabilityCondition_notRespected)	\
+	ZSTD_error(stage_wrong)				\
+	ZSTD_error(init_missing)			\
+	ZSTD_error(memory_allocation)			\
+	ZSTD_error(workSpace_tooSmall)			\
+	ZSTD_error(dstSize_tooSmall)			\
+	ZSTD_error(srcSize_wrong)			\
+	ZSTD_error(dstBuffer_null)			\
+	ZSTD_error(noForwardProgress_destFull)		\
+	ZSTD_error(noForwardProgress_inputEmpty)	\
+	ZSTD_error(frameIndex_tooLarge)			\
+	ZSTD_error(seekableIO)				\
+	ZSTD_error(dstBuffer_wrong)			\
+	ZSTD_error(srcBuffer_wrong)			\
+	ZSTD_error(sequenceProducer_failed)		\
+	ZSTD_error(externalSequences_invalid)
+
+#define ZSTD_error(n)					\
+	x(BCH_ERR_zstd_error,	ZSTD_error_##n)
 
 #define BCH_ERRCODES()								\
 	x(EIO,				blockdev_io_error)			\
 	BLK_ERRS()								\
 	x(BCH_ERR_blockdev_io_error,	BLK_STS_UNKNOWN)			\
+	x(EIO,				zstd_error)				\
+	ZSTD_ERRS()								\
+	x(BCH_ERR_zstd_error,		ZSTD_error_unknown)			\
 	x(ERANGE,			ERANGE_option_too_small)		\
 	x(ERANGE,			ERANGE_option_too_big)			\
 	x(ERANGE,			projid_too_big)				\
@@ -451,5 +493,9 @@ static inline long bch2_err_class(long err)
 #include <linux/blk_types.h>
 const char *bch2_blk_status_to_str(blk_status_t);
 enum bch_errcode blk_status_to_bch_err(blk_status_t);
+
+#include <linux/zstd_errors.h>
+
+enum bch_errcode zstd_err_to_bch_err(ZSTD_ErrorCode);
 
 #endif /* _BCACHFES_ERRCODE_H */

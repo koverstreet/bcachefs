@@ -83,3 +83,17 @@ enum bch_errcode blk_status_to_bch_err(blk_status_t err)
 		default:		return BCH_ERR_BLK_STS_UNKNOWN;
 	}
 }
+
+enum bch_errcode zstd_err_to_bch_err(ZSTD_ErrorCode err)
+{
+	if (!err)
+		return 0;
+
+	switch (err) {
+#undef ZSTD_error
+#define ZSTD_error(n) case ZSTD_error_##n:	return BCH_ERR_ZSTD_error_##n;
+		ZSTD_ERRS()
+#undef ZSTD_error
+		default:		return BCH_ERR_ZSTD_error_unknown;
+	}
+}
