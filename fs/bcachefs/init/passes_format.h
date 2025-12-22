@@ -8,6 +8,7 @@
 #define PASS_ALWAYS		BIT(3)
 #define PASS_ONLINE		BIT(4)
 #define PASS_ALLOC		BIT(5)
+#define PASS_NODEFER		BIT(6)
 #define PASS_FSCK_ALLOC		(PASS_FSCK|PASS_ALLOC)
 
 #ifdef CONFIG_BCACHEFS_DEBUG
@@ -58,7 +59,7 @@
 	x(reconstruct_snapshots,		38, 0,					0)	\
 	x(check_snapshot_trees,			18, PASS_ONLINE|PASS_FSCK,			\
 	  BIT_ULL(BCH_RECOVERY_PASS_reconstruct_snapshots))					\
-	x(check_snapshots,			19, PASS_ONLINE|PASS_FSCK,			\
+	x(check_snapshots,			19, PASS_ALWAYS|PASS_ONLINE|PASS_FSCK|PASS_NODEFER,	\
 	  BIT_ULL(BCH_RECOVERY_PASS_reconstruct_snapshots)|					\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_snapshot_trees))					\
 	x(check_subvols,			20, PASS_ONLINE|PASS_FSCK,			\

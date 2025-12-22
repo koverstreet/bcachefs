@@ -639,6 +639,7 @@ int bch2_run_recovery_passes_startup(struct bch_fs *c, enum bch_recovery_pass fr
 		for (unsigned i = 0; i < BCH_RECOVERY_PASS_NR; i++)
 			if ((passes & BIT_ULL(i)) &&
 			    !(c->opts.recovery_passes & BIT_ULL(i)) &&
+			    !(recovery_passes[i].when & PASS_NODEFER) &&
 			    recovery_pass_should_defer(i, passes)) {
 				defer |= BIT_ULL(i);
 				passes &= ~BIT_ULL(i);
