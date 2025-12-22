@@ -188,7 +188,6 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 	size_t src_len = src->bi_iter.bi_size;
 	size_t dst_len = crc.uncompressed_size << 9;
 	void *workspace;
-	int ret2;
 
 	enum bch_compression_opts opt = bch2_compression_type_to_opt(crc.compression_type);
 	mempool_t *workspace_pool = &c->compress.workspace[opt];
@@ -205,12 +204,13 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 
 	switch (crc.compression_type) {
 	case BCH_COMPRESSION_TYPE_lz4_old:
-	case BCH_COMPRESSION_TYPE_lz4:
-		ret2 = LZ4_decompress_safe_partial(src_data.b, dst_data,
+	case BCH_COMPRESSION_TYPE_lz4: {
+		int ret = LZ4_decompress_safe_partial(src_data.b, dst_data,
 						   src_len, dst_len, dst_len);
-		if (ret2 != dst_len)
+		if (ret != dst_len)
 			return bch_err_throw(c, decompress_lz4);
 		break;
+	}
 	case BCH_COMPRESSION_TYPE_gzip: {
 		z_stream strm = {
 			.next_in	= src_data.b,
@@ -223,11 +223,11 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 
 		zlib_set_workspace(&strm, workspace);
 		zlib_inflateInit2(&strm, -MAX_WBITS);
-		ret2 = zlib_inflate(&strm, Z_FINISH);
+		int ret = zlib_inflate(&strm, Z_FINISH);
 
 		mempool_free(workspace, workspace_pool);
 
-		if (ret2 != Z_STREAM_END)
+		if (ret != Z_STREAM_END)
 			return bch_err_throw(c, decompress_gzip);
 		break;
 	}
@@ -241,14 +241,18 @@ static int __bio_uncompress(struct bch_fs *c, struct bio *src,
 		workspace = mempool_alloc(workspace_pool, GFP_NOFS);
 		ctx = zstd_init_dctx(workspace, zstd_dctx_workspace_bound());
 
-		ret2 = zstd_decompress_dctx(ctx,
+		size_t ret = zstd_decompress_dctx(ctx,
 				dst_data,	dst_len,
 				src_data.b + 4, real_src_len);
 
 		mempool_free(workspace, workspace_pool);
 
-		if (ret2 != dst_len)
+		if (ret != dst_len) {
+			if (zstd_is_error(ret))
+				return __bch2_err_throw(c, zstd_err_to_bch_err(zstd_get_error_code(ret)));
+
 			return bch_err_throw(c, decompress_zstd);
+		}
 		break;
 	}
 	default:
