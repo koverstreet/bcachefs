@@ -896,12 +896,15 @@ static void __bch2_read_endio(struct work_struct *work)
 	if (unlikely(rbio->narrow_crcs))
 		bch2_rbio_narrow_crcs(rbio);
 
-	if (likely(!parent->data_update)) {
+	if (likely(!parent->data_update) ||
+	    parent->data_update_verify_decompress) {
 		/* Adjust crc to point to subset of data we want: */
 		crc.offset     += rbio->offset_into_extent;
 		crc.live_size	= bvec_iter_sectors(rbio->bvec_iter);
 
 		if (crc_is_compressed(crc)) {
+			BUG_ON(!rbio->bounce);
+
 			ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
 			if (ret) {
 				bch2_rbio_error(rbio, bch_err_throw(c, data_read_decrypt_err));
@@ -913,7 +916,16 @@ static void __bch2_read_endio(struct work_struct *work)
 				bch2_rbio_error(rbio, bch_err_throw(c, data_read_decompress_err));
 				return;
 			}
-		} else {
+
+			if (unlikely(parent->data_update)) {
+				/* We decrypted to decompress; re-encrypt: */
+				ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
+				if (ret) {
+					bch2_rbio_error(rbio, bch_err_throw(c, data_read_decrypt_err));
+					return;
+				}
+			}
+		} else if (likely(!parent->data_update)) {
 			/* don't need to decrypt the entire bio: */
 			nonce = nonce_add(nonce, crc.offset << 9);
 			bio_advance(src, crc.offset << 9);
@@ -933,7 +945,9 @@ static void __bch2_read_endio(struct work_struct *work)
 				bio_copy_data_iter(dst, &dst_iter, src, &src_iter);
 			}
 		}
-	} else {
+	}
+
+	if (unlikely(parent->data_update)) {
 		if (rbio->split)
 			rbio->parent->pick = rbio->pick;
 
@@ -1330,7 +1344,7 @@ int __bch2_read_extent(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	struct extent_ptr_decoded pick;
-	bool bounce = false, read_full = false, narrow_crcs = false;
+	bool bounce = false, read_full = false;
 	struct data_update *u = rbio_data_update(orig);
 	int ret = 0;
 
@@ -1376,16 +1390,19 @@ int __bch2_read_extent(struct btree_trans *trans,
 		return read_extent_done(orig, flags, bch_err_throw(c, data_read_ptr_stale_dirty));
 	}
 
-	if (likely(!u)) {
-		if (!(flags & BCH_READ_last_fragment) ||
-		    bio_flagged(&orig->bio, BIO_CHAIN))
-			flags |= BCH_READ_must_clone;
+	if (!(flags & BCH_READ_last_fragment) ||
+	    bio_flagged(&orig->bio, BIO_CHAIN))
+		flags |= BCH_READ_must_clone;
 
-		narrow_crcs = !(flags & BCH_READ_in_retry) && can_narrow_crc(pick.crc);
+	bool narrow_crcs = !orig->data_update &&
+		!(flags & BCH_READ_in_retry) &&
+		can_narrow_crc(pick.crc);
 
-		if (narrow_crcs && (flags & BCH_READ_user_mapped))
-			flags |= BCH_READ_must_bounce;
+	if (narrow_crcs && (flags & BCH_READ_user_mapped))
+		flags |= BCH_READ_must_bounce;
 
+	if (likely(!orig->data_update) ||
+	    orig->data_update_verify_decompress) {
 		EBUG_ON(offset_into_extent + bvec_iter_sectors(iter) > k.k->size);
 
 		if (crc_is_compressed(pick.crc) ||
@@ -1397,12 +1414,14 @@ int __bch2_read_extent(struct btree_trans *trans,
 			read_full = true;
 			bounce = true;
 		}
-	} else {
+	}
+
+	if (unlikely(u)) {
 		/*
 		 * can happen if we retry, and the extent we were going to read
 		 * has been merged in the meantime:
 		 */
-		if (unlikely(pick.crc.compressed_size > u->op.wbio.bio.bi_iter.bi_size)) {
+		if (unlikely(pick.crc.uncompressed_size > u->op.wbio.bio.bi_iter.bi_size)) {
 			if (ca)
 				enumerated_ref_put(&ca->io_ref[READ],
 					BCH_DEV_READ_REF_io_read);

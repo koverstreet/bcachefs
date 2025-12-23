@@ -44,6 +44,7 @@ struct bch_read_bio {
 	union {
 	struct {
 	u16			data_update:1,
+				data_update_verify_decompress:1,
 				promote:1,
 				bounce:1,
 				split:1,

@@ -1059,6 +1059,9 @@ int bch2_data_update_init(struct btree_trans *trans,
 	ret = bch2_data_update_bios_init(m, c, io_opts, buf_bytes);
 	if (ret)
 		goto out_nocow_unlock;
+
+	m->rbio.data_update_verify_decompress = m->opts.type == BCH_DATA_UPDATE_scrub;
+
 	return 0;
 out_nocow_unlock:
 	if (c->opts.nocow_enabled)
