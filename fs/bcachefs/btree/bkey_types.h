@@ -134,20 +134,20 @@ struct bkey_s_##name {							\
 									\
 static inline struct bkey_i_##name *bkey_i_to_##name(struct bkey_i *k)	\
 {									\
-	EBUG_ON(!IS_ERR_OR_NULL(k) && k->k.type != KEY_TYPE_##name);	\
+	BUG_ON(!IS_ERR_OR_NULL(k) && k->k.type != KEY_TYPE_##name);	\
 	return container_of(&k->k, struct bkey_i_##name, k);		\
 }									\
 									\
 static inline const struct bkey_i_##name *				\
 bkey_i_to_##name##_c(const struct bkey_i *k)				\
 {									\
-	EBUG_ON(!IS_ERR_OR_NULL(k) && k->k.type != KEY_TYPE_##name);	\
+	BUG_ON(!IS_ERR_OR_NULL(k) && k->k.type != KEY_TYPE_##name);	\
 	return container_of(&k->k, struct bkey_i_##name, k);		\
 }									\
 									\
 static inline struct bkey_s_##name bkey_s_to_##name(struct bkey_s k)	\
 {									\
-	EBUG_ON(!IS_ERR_OR_NULL(k.k) && k.k->type != KEY_TYPE_##name);	\
+	BUG_ON(!IS_ERR_OR_NULL(k.k) && k.k->type != KEY_TYPE_##name);	\
 	return (struct bkey_s_##name) {					\
 		.k = k.k,						\
 		.v = container_of(k.v, struct bch_##name, v),		\
@@ -156,7 +156,7 @@ static inline struct bkey_s_##name bkey_s_to_##name(struct bkey_s k)	\
 									\
 static inline struct bkey_s_c_##name bkey_s_c_to_##name(struct bkey_s_c k)\
 {									\
-	EBUG_ON(!IS_ERR_OR_NULL(k.k) && k.k->type != KEY_TYPE_##name);	\
+	BUG_ON(!IS_ERR_OR_NULL(k.k) && k.k->type != KEY_TYPE_##name);	\
 	return (struct bkey_s_c_##name) {				\
 		.k = k.k,						\
 		.v = container_of(k.v, struct bch_##name, v),		\
@@ -182,7 +182,7 @@ name##_i_to_s_c(const struct bkey_i_##name *k)				\
 									\
 static inline struct bkey_s_##name bkey_i_to_s_##name(struct bkey_i *k)	\
 {									\
-	EBUG_ON(!IS_ERR_OR_NULL(k) && k->k.type != KEY_TYPE_##name);	\
+	BUG_ON(!IS_ERR_OR_NULL(k) && k->k.type != KEY_TYPE_##name);	\
 	return (struct bkey_s_##name) {					\
 		.k = &k->k,						\
 		.v = container_of(&k->v, struct bch_##name, v),		\
@@ -192,7 +192,7 @@ static inline struct bkey_s_##name bkey_i_to_s_##name(struct bkey_i *k)	\
 static inline struct bkey_s_c_##name					\
 bkey_i_to_s_c_##name(const struct bkey_i *k)				\
 {									\
-	EBUG_ON(!IS_ERR_OR_NULL(k) && k->k.type != KEY_TYPE_##name);	\
+	BUG_ON(!IS_ERR_OR_NULL(k) && k->k.type != KEY_TYPE_##name);	\
 	return (struct bkey_s_c_##name) {				\
 		.k = &k->k,						\
 		.v = container_of(&k->v, struct bch_##name, v),		\
