@@ -14,6 +14,12 @@
 #include <linux/zlib.h>
 #include <linux/zstd.h>
 
+#include <linux/module.h>
+
+static bool bch2_verify_compress = IS_ENABLED(CONFIG_BCACHEFS_DEBUG);
+module_param_named(verify_compress, bch2_verify_compress, bool, 0644);
+MODULE_PARM_DESC(verify_compress, "Decompress data immediately after compressing, and verify the result");
+
 static inline enum bch_compression_opts bch2_compression_type_to_opt(enum bch_compression_type type)
 {
 	switch (type) {
@@ -520,6 +526,26 @@ static unsigned __bio_compress(struct bch_fs *c,
 
 	memset(dst_data.b + *dst_len, 0, pad);
 	*dst_len += pad;
+
+	if (unlikely(bch2_verify_compress)) {
+		struct bch_extent_crc_unpacked crc = {
+			.compressed_size	= *dst_len >> 9,
+			.uncompressed_size	= *src_len >> 9,
+			.compression_type	= compression_type,
+		};
+
+		struct bbuf verify __cleanup(bbuf_exit) = __bounce_alloc(c, *src_len, WRITE);
+		ret = buf_uncompress(c, verify.b, dst_data.b, crc);
+		BUG_ON(ret);
+
+		if (memcmp(verify.b, src_data.b, *src_len)) {
+			CLASS(bch_log_msg, msg)(c);
+			prt_printf(&msg.m, "Decompressing compressed data did not produce the same result (%s)",
+				   __bch2_compression_types[compression_type]);
+			msg.m.suppress = bch2_count_fsck_err(c, compression_error, &msg.m);
+			return BCH_COMPRESSION_TYPE_incompressible;
+		}
+	}
 
 	if (dst_data.type != BB_none &&
 	    dst_data.type != BB_vmap)
