@@ -432,7 +432,13 @@ static int drop_dev_and_update(struct btree_trans *trans, enum btree_id btree,
 {
 	struct bkey_i *n = errptr_try(bch2_bkey_make_mut_noupdate(trans, extent));
 
-	bch2_bkey_drop_device(trans->c, bkey_i_to_s(n), dev);
+	bch2_bkey_drop_device_noerror(trans->c, bkey_i_to_s(n), dev);
+
+	if (!bch2_bkey_nr_dirty_ptrs(trans->c, bkey_i_to_s_c(n))) {
+		n->k.type = KEY_TYPE_error;
+		set_bkey_val_u64s(&n->k, 0);
+	}
+
 	return bch2_btree_insert_trans(trans, btree, n, 0);
 }
 

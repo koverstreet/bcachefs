@@ -993,11 +993,6 @@ void bch2_bkey_drop_ptr(const struct bch_fs *c, struct bkey_s k, struct bch_exte
 	}
 
 	bch2_bkey_drop_ptr_noerror(c, k, ptr);
-
-	if (!bch2_bkey_can_read(c, k.s_c)) {
-		k.k->type = KEY_TYPE_error;
-		set_bkey_val_u64s(k.k, 0);
-	}
 }
 
 void bch2_bkey_drop_ptrs_mask(const struct bch_fs *c, struct bkey_i *k, unsigned ptrs)

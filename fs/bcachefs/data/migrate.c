@@ -47,10 +47,7 @@ static struct bkey_i *drop_dev_ptrs(struct btree_trans *trans, struct bkey_s_c k
 		return n;
 	bkey_reassemble(n, k);
 
-	if (!metadata)
-		bch2_bkey_drop_device(c, bkey_i_to_s(n), dev_idx);
-	else
-		bch2_bkey_drop_device_noerror(c, bkey_i_to_s(n), dev_idx);
+	bch2_bkey_drop_device(c, bkey_i_to_s(n), dev_idx);
 
 	unsigned nr_good = bch2_bkey_durability(c, bkey_i_to_s_c(n));
 	if ((!nr_good && !(flags & lost)) ||
@@ -61,13 +58,16 @@ static struct bkey_i *drop_dev_ptrs(struct btree_trans *trans, struct bkey_s_c k
 		return ERR_PTR(bch_err_throw(c, remove_would_lose_data));
 	}
 
-	if (n->k.type != KEY_TYPE_error) {
+	if (bch2_bkey_nr_dirty_ptrs(c, bkey_i_to_s_c(n))) {
 		struct bch_inode_opts opts;
 		int ret = bch2_bkey_get_io_opts(trans, NULL, k, &opts) ?:
 			  bch2_bkey_set_needs_reconcile(trans, NULL, &opts, n,
 							SET_NEEDS_REBALANCE_opt_change, 0);
 		if (ret)
 			return ERR_PTR(ret);
+	} else if (!metadata) {
+		n->k.type = KEY_TYPE_error;
+		set_bkey_val_u64s(&n->k, 0);
 	}
 
 	return n;

@@ -1271,7 +1271,13 @@ static int invalidate_one_bp(struct btree_trans *trans,
 	struct bkey_i *n = errptr_try(bch2_bkey_make_mut(trans, &iter, &k,
 						BTREE_UPDATE_internal_snapshot_node));
 
-	bch2_bkey_drop_device(trans->c, bkey_i_to_s(n), ca->dev_idx);
+	bch2_bkey_drop_device_noerror(trans->c, bkey_i_to_s(n), ca->dev_idx);
+
+	if (!bch2_bkey_nr_dirty_ptrs(trans->c, bkey_i_to_s_c(n))) {
+		n->k.type = KEY_TYPE_error;
+		set_bkey_val_u64s(&n->k, 0);
+	}
+
 	return 0;
 }
 
