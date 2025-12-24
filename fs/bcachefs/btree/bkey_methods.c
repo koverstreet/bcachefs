@@ -22,6 +22,8 @@
 
 #include "init/error.h"
 
+#include "sb/io.h"
+
 #include "snapshots/snapshot.h"
 #include "snapshots/subvolume.h"
 
@@ -63,9 +65,41 @@ fsck_err:
 	return ret;
 }
 
+static int key_type_error_validate(struct bch_fs *c, struct bkey_s_c k,
+				   struct bkey_validate_context from)
+{
+	return 0;
+}
+
+static void key_type_error_to_text(struct printbuf *out, struct bch_fs *c,
+				    struct bkey_s_c k)
+{
+	struct bch_error e;
+	bkey_val_copy_pad(&e, bkey_s_c_to_error(k));
+
+	bch2_prt_key_type_error_reason(out, e.err);
+}
+
 #define bch2_bkey_ops_error ((struct bkey_ops) {	\
-	.key_validate = empty_val_key_validate,		\
+	.key_validate	= key_type_error_validate,	\
+	.val_to_text	= key_type_error_to_text,	\
 })
+
+void bch2_set_bkey_error(struct bch_fs *c, struct bkey_i *k, enum bch_key_type_errors err)
+{
+	k->k.type = KEY_TYPE_error;
+
+	if (!bch2_request_incompat_feature(c, bcachefs_metadata_version_extented_key_type_error)) {
+		set_bkey_val_bytes(&k->k, sizeof(struct bch_error));
+
+		struct bkey_i_error *e = bkey_i_to_error(k);
+
+		memset(&e->v, 0, sizeof(e->v));
+		e->v.err = err;
+	} else {
+		set_bkey_val_bytes(&k->k, 0);
+	}
+}
 
 static int key_type_cookie_validate(struct bch_fs *c, struct bkey_s_c k,
 				    struct bkey_validate_context from)

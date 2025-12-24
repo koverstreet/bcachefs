@@ -113,6 +113,11 @@ const char * const __bch2_reconcile_accounting_types[] = {
 	NULL
 };
 
+static const char * const __bch2_key_type_error_reasons[] = {
+	KEY_TYPE_ERRORS()
+	NULL
+};
+
 #undef x
 
 static void prt_str_opt_boundscheck(struct printbuf *out, const char * const opts[],
@@ -138,6 +143,7 @@ PRT_STR_OPT_BOUNDSCHECKED(csum_type,		enum bch_csum_type);
 PRT_STR_OPT_BOUNDSCHECKED(compression_type,	enum bch_compression_type);
 PRT_STR_OPT_BOUNDSCHECKED(str_hash_type,	enum bch_str_hash_type);
 PRT_STR_OPT_BOUNDSCHECKED(reconcile_accounting_type,	enum bch_reconcile_accounting_type);
+PRT_STR_OPT_BOUNDSCHECKED(key_type_error_reason,enum bch_key_type_errors);
 
 static int bch2_opt_fix_errors_parse(struct bch_fs *c, const char *val, u64 *res,
 				     struct printbuf *err)

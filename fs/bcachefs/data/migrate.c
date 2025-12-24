@@ -58,7 +58,7 @@ static struct bkey_i *drop_dev_ptrs(struct btree_trans *trans, struct bkey_s_c k
 		return ERR_PTR(bch_err_throw(c, remove_would_lose_data));
 	}
 
-	if (bch2_bkey_nr_dirty_ptrs(c, bkey_i_to_s_c(n))) {
+	if (bch2_bkey_can_read(c, bkey_i_to_s_c(n))) {
 		struct bch_inode_opts opts;
 		int ret = bch2_bkey_get_io_opts(trans, NULL, k, &opts) ?:
 			  bch2_bkey_set_needs_reconcile(trans, NULL, &opts, n,
@@ -66,8 +66,7 @@ static struct bkey_i *drop_dev_ptrs(struct btree_trans *trans, struct bkey_s_c k
 		if (ret)
 			return ERR_PTR(ret);
 	} else if (!metadata) {
-		n->k.type = KEY_TYPE_error;
-		set_bkey_val_u64s(&n->k, 0);
+		bch2_set_bkey_error(c, n, KEY_TYPE_ERROR_device_removed);
 	}
 
 	return n;

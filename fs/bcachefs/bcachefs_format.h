@@ -448,6 +448,19 @@ struct bch_extent_whiteout {
 
 struct bch_error {
 	struct bch_val		v;
+	u8			err;
+	u8			pad[7];
+};
+
+#define KEY_TYPE_ERRORS()			\
+	x(unknown,		0)		\
+	x(device_removed,	1)		\
+	x(double_allocation,	2)
+
+enum bch_key_type_errors {
+#define x(n, t)	KEY_TYPE_ERROR_##n = t,
+	KEY_TYPE_ERRORS()
+#undef x
 };
 
 struct bch_cookie {
@@ -830,7 +843,8 @@ struct bch_sb_field_ext {
 	x(31bit_dirent_offset,		BCH_VERSION(1, 30))		\
 	x(btree_node_accounting,	BCH_VERSION(1, 31))		\
 	x(sb_field_extent_type_u64s,	BCH_VERSION(1, 32))		\
-	x(reconcile,			BCH_VERSION(1, 33))
+	x(reconcile,			BCH_VERSION(1, 33))		\
+	x(extented_key_type_error,	BCH_VERSION(1, 34))
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,

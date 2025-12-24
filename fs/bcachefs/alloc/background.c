@@ -1263,6 +1263,8 @@ static int invalidate_one_bp(struct btree_trans *trans,
 			     struct bkey_s_c_backpointer bp,
 			     struct wb_maybe_flush *last_flushed)
 {
+	struct bch_fs *c = trans->c;
+
 	CLASS(btree_iter_uninit, iter)(trans);
 	struct bkey_s_c k = bkey_try(bch2_backpointer_get_key(trans, bp, &iter, 0, last_flushed));
 	if (!k.k)
@@ -1271,12 +1273,10 @@ static int invalidate_one_bp(struct btree_trans *trans,
 	struct bkey_i *n = errptr_try(bch2_bkey_make_mut(trans, &iter, &k,
 						BTREE_UPDATE_internal_snapshot_node));
 
-	bch2_bkey_drop_device_noerror(trans->c, bkey_i_to_s(n), ca->dev_idx);
+	bch2_bkey_drop_device_noerror(c, bkey_i_to_s(n), ca->dev_idx);
 
-	if (!bch2_bkey_nr_dirty_ptrs(trans->c, bkey_i_to_s_c(n))) {
-		n->k.type = KEY_TYPE_error;
-		set_bkey_val_u64s(&n->k, 0);
-	}
+	if (!bch2_bkey_can_read(c, bkey_i_to_s_c(n)))
+		bch2_set_bkey_error(c, n, KEY_TYPE_ERROR_device_removed);
 
 	return 0;
 }

@@ -133,4 +133,6 @@ static inline void bch2_bkey_compat(const struct bch_fs *c, unsigned level, enum
 
 }
 
+void bch2_set_bkey_error(struct bch_fs *c, struct bkey_i *k, enum bch_key_type_errors);
+
 #endif /* _BCACHEFS_BKEY_METHODS_H */
