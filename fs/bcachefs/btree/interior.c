@@ -654,8 +654,10 @@ static void btree_update_new_nodes_mark_sb(struct btree_update *as)
 
 static void bkey_strip_reconcile(const struct bch_fs *c, struct bkey_s k)
 {
-	bool dropped;
+	if (bkey_deleted(k.k))
+		return;
 
+	bool dropped;
 	do {
 		dropped = false;
 
@@ -670,7 +672,9 @@ static void bkey_strip_reconcile(const struct bch_fs *c, struct bkey_s k)
 			}
 	} while (dropped);
 
-	bch2_bkey_drop_ptrs(k, p, entry, p.ptr.dev == BCH_SB_MEMBER_INVALID);
+	bch2_bkey_drop_ptrs_noerror(k, p, entry, p.ptr.dev == BCH_SB_MEMBER_INVALID);
+
+	BUG_ON(!bch2_bkey_nr_dirty_ptrs(c, k.s_c));
 }
 
 static bool bkey_has_reconcile(const struct bch_fs *c, struct bkey_s_c k)

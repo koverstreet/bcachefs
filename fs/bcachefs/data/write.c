@@ -559,7 +559,7 @@ static noinline int bch2_write_drop_io_error_ptrs(struct bch_write_op *op)
 		n = bkey_next(src);
 
 		if (bkey_extent_is_direct_data(&src->k)) {
-			bch2_bkey_drop_ptrs(bkey_i_to_s(src), p, entry,
+			bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(src), p, entry,
 				bch2_dev_io_failures(&op->wbio.failed, p.ptr.dev));
 
 			if (!bch2_bkey_nr_dirty_ptrs(c, bkey_i_to_s_c(src)))

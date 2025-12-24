@@ -113,7 +113,7 @@ static int btree_node_write_update_key(struct btree_trans *trans,
 	bkey_i_to_btree_ptr_v2(n)->v.sectors_written =
 		bkey_i_to_btree_ptr_v2(&wbio->key)->v.sectors_written;
 
-	bch2_bkey_drop_ptrs(bkey_i_to_s(n), p, entry,
+	bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(n), p, entry,
 		bch2_dev_io_failures(&wbio->wbio.failed, p.ptr.dev));
 
 	if (!bch2_bkey_nr_dirty_ptrs(c, bkey_i_to_s_c(n)))

@@ -875,8 +875,9 @@ int bch2_bkey_set_needs_reconcile(struct btree_trans *trans,
 
 	if (unlikely(need_update_invalid_devs)) {
 		if (need_update_invalid_devs > 0) {
-			bch2_bkey_drop_ptrs(k, p, entry,
+			bch2_bkey_drop_ptrs_noerror(k, p, entry,
 				(p.ptr.dev == BCH_SB_MEMBER_INVALID &&
+				 !p.has_ec &&
 				 need_update_invalid_devs &&
 				 need_update_invalid_devs--));
 		} else {
