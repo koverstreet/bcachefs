@@ -1807,7 +1807,8 @@ static void reconcile_wait(struct bch_fs *c)
 
 static bool bch2_reconcile_enabled(struct bch_fs *c)
 {
-	return c->opts.reconcile_enabled &&
+	return !c->opts.read_only &&
+		c->opts.reconcile_enabled &&
 		!(c->opts.reconcile_on_ac_only &&
 		  c->reconcile.on_battery);
 }

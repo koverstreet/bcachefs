@@ -2327,6 +2327,8 @@ static int bch2_fs_reconfigure(struct fs_context *fc)
 
 	opt_set(opts->opts, read_only, (fc->sb_flags & SB_RDONLY) != 0);
 
+	bch2_reconcile_wakeup(c);
+
 	if (opts->opts.read_only != c->opts.read_only) {
 		guard(rwsem_write)(&c->state_lock);
 

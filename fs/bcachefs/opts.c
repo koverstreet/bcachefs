@@ -659,6 +659,9 @@ void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 		if (v == BCH_VERSION_UPGRADE_incompatible)
 			bch2_sb_upgrade_incompat(c);
 		break;
+	case Opt_read_only:
+		bch2_reconcile_wakeup(c);
+		break;
 	default:
 		break;
 	}
