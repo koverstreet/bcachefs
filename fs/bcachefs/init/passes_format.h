@@ -32,7 +32,6 @@
 	x(stripes_read,				 1, 0,					0)	\
 	x(initialize_subvolumes,		 2, 0,					0)	\
 	x(snapshots_read,			 3, PASS_ALWAYS,			0)	\
-	x(delete_dead_interior_snapshots,	44, 0,					0)	\
 	x(check_allocations,			 5, PASS_FSCK_ALLOC,				\
 	  BIT_ULL(BCH_RECOVERY_PASS_check_topology))						\
 	x(trans_mark_dev_sbs,			 6, PASS_ALWAYS|PASS_SILENT|PASS_ALLOC,	0)	\
@@ -57,6 +56,7 @@
 	x(fs_freespace_init,			16, PASS_ALWAYS|PASS_SILENT,		0)	\
 	x(bucket_gens_init,			17, 0,					0)	\
 	x(reconstruct_snapshots,		38, 0,					0)	\
+	x(delete_dead_interior_snapshots,	44, 0,					0)	\
 	x(check_snapshot_trees,			18, PASS_ONLINE|PASS_FSCK,			\
 	  BIT_ULL(BCH_RECOVERY_PASS_reconstruct_snapshots))					\
 	x(check_snapshots,			19, PASS_ALWAYS|PASS_ONLINE|PASS_FSCK|PASS_NODEFER,	\
