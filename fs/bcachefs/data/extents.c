@@ -839,6 +839,21 @@ unsigned bch2_bkey_durability(struct bch_fs *c, struct bkey_s_c k)
 	return durability;
 }
 
+bool bch2_bkey_can_read(const struct bch_fs *c, struct bkey_s_c k)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
+		if (!p.ptr.cached &&
+		    (p.ptr.dev != BCH_SB_MEMBER_INVALID ||
+		     p.has_ec))
+			return true;
+
+	return false;
+}
+
 static unsigned bch2_bkey_durability_safe(struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
@@ -979,7 +994,7 @@ void bch2_bkey_drop_ptr(const struct bch_fs *c, struct bkey_s k, struct bch_exte
 
 	bch2_bkey_drop_ptr_noerror(c, k, ptr);
 
-	if (!bch2_bkey_nr_dirty_ptrs(c, k.s_c)) {
+	if (!bch2_bkey_can_read(c, k.s_c)) {
 		k.k->type = KEY_TYPE_error;
 		set_bkey_val_u64s(k.k, 0);
 	}
