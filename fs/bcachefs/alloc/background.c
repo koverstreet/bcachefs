@@ -1534,6 +1534,9 @@ void bch2_recalc_capacity(struct bch_fs *c)
 		if (ca->mi.state != BCH_MEMBER_STATE_rw)
 			continue;
 
+		if (!ca->mi.durability)
+			continue;
+
 		u64 dev_reserve = 0;
 
 		/*

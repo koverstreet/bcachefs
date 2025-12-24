@@ -645,8 +645,9 @@ void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 		    ca &&
 		    bch2_dev_is_online(ca) &&
 		    ca->mi.state == BCH_MEMBER_STATE_rw) {
-			guard(rcu)();
-			bch2_dev_allocator_set_rw(c, ca, true);
+			scoped_guard(rcu)
+				bch2_dev_allocator_set_rw(c, ca, true);
+			bch2_recalc_capacity(c);
 		}
 		break;
 	case Opt_version_upgrade:
