@@ -1519,7 +1519,7 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 	unsigned nonce = UINT_MAX;
 	unsigned nr_ptrs = 0;
 	bool have_written = false, have_unwritten = false, have_ec = false, crc_since_last_ptr = false;
-	bool have_inval_dev_ptrs = false, have_non_inval_dev_ptrs = false;
+	bool have_non_inval_dev_ptrs = false;
 	int ret = 0;
 
 	if (bkey_is_btree_ptr(k.k))
@@ -1555,9 +1555,7 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 			have_ec = false;
 			crc_since_last_ptr = false;
 
-			if (entry->ptr.dev == BCH_SB_MEMBER_INVALID)
-				have_inval_dev_ptrs = true;
-			else
+			if (entry->ptr.dev != BCH_SB_MEMBER_INVALID)
 				have_non_inval_dev_ptrs = true;
 
 			nr_ptrs++;
@@ -1646,7 +1644,7 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 	 * other fields in bch_btree_ptr_v2
 	 */
 	bkey_fsck_err_on(!bkey_is_btree_ptr(k.k) &&
-			 have_inval_dev_ptrs && !have_non_inval_dev_ptrs,
+			 !have_non_inval_dev_ptrs && !have_ec,
 			 c, extent_ptrs_all_invalid,
 			 "extent ptrs all to BCH_SB_MEMBER_INVALID");
 fsck_err:
