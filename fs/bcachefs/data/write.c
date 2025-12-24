@@ -1059,7 +1059,8 @@ static int bch2_write_extent(struct bch_write_op *op, struct write_point *wp,
 			? BCH_COMPRESSION_TYPE_incompressible
 			: op->compression_opt
 			? bch2_bio_compress(c, dst, &dst_len, src, &src_len,
-					    op->compression_opt)
+					    op->compression_opt,
+					    op->pos)
 			: 0;
 		if (!crc_is_compressed(crc)) {
 			dst_len = min(dst->bi_iter.bi_size, src->bi_iter.bi_size);

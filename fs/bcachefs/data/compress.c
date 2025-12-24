@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 #include "bcachefs.h"
 
+#include "btree/iter.h"
+
 #include "data/checksum.h"
 #include "data/compress.h"
 #include "data/extents.h"
@@ -441,7 +443,8 @@ static int attempt_compress(struct bch_fs *c,
 static unsigned __bio_compress(struct bch_fs *c,
 			       struct bio *dst, size_t *dst_len,
 			       struct bio *src, size_t *src_len,
-			       union bch_compression_opt compression)
+			       union bch_compression_opt compression,
+			       struct bpos write_pos)
 {
 	enum bch_compression_type compression_type =
 		__bch2_compression_opt_to_type[compression.type];
@@ -542,6 +545,11 @@ static unsigned __bio_compress(struct bch_fs *c,
 			CLASS(bch_log_msg, msg)(c);
 			prt_printf(&msg.m, "Decompressing compressed data did not produce the same result (%s)",
 				   __bch2_compression_types[compression_type]);
+
+			CLASS(btree_trans, trans)(c);
+			bch2_inum_offset_err_msg_trans(trans, &msg.m, 0, write_pos);
+			prt_printf(&msg.m, " len %zu\n", *src_len);
+
 			msg.m.suppress = bch2_count_fsck_err(c, compression_error, &msg.m);
 			return BCH_COMPRESSION_TYPE_incompressible;
 		}
@@ -561,7 +569,8 @@ static unsigned __bio_compress(struct bch_fs *c,
 unsigned bch2_bio_compress(struct bch_fs *c,
 			   struct bio *dst, size_t *dst_len,
 			   struct bio *src, size_t *src_len,
-			   unsigned compression_opt)
+			   unsigned compression_opt,
+			   struct bpos write_pos)
 {
 	unsigned orig_dst = dst->bi_iter.bi_size;
 	unsigned orig_src = src->bi_iter.bi_size;
@@ -575,7 +584,8 @@ unsigned bch2_bio_compress(struct bch_fs *c,
 
 	compression_type =
 		__bio_compress(c, dst, dst_len, src, src_len,
-			       (union bch_compression_opt){ .value = compression_opt });
+			       (union bch_compression_opt){ .value = compression_opt },
+			       write_pos);
 
 	dst->bi_iter.bi_size = orig_dst;
 	src->bi_iter.bi_size = orig_src;

@@ -753,7 +753,7 @@ int bch2_inum_offset_err_msg_trans_norestart(struct btree_trans *trans, struct p
 		prt_printf(out, "inum %llu", pos.inode);
 	else if (ret)
 		prt_printf(out, "inum %u:%llu", subvol, pos.inode);
-	prt_printf(out, " offset %llu: ", pos.offset << 9);
+	prt_printf(out, " offset %llu", pos.offset << 9);
 	return 0;
 }
 
