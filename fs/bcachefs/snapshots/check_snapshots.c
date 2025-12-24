@@ -220,22 +220,6 @@ u32 bch2_snapshot_skiplist_get(struct bch_fs *c, u32 id)
 		: id;
 }
 
-static int snapshot_skiplist_good(struct btree_trans *trans, u32 id, struct bch_snapshot s)
-{
-	unsigned i;
-
-	for (i = 0; i < 3; i++)
-		if (!s.parent) {
-			if (s.skip[i])
-				return false;
-		} else {
-			if (!bch2_snapshot_is_ancestor_early(trans->c, id, le32_to_cpu(s.skip[i])))
-				return false;
-		}
-
-	return true;
-}
-
 /*
  * snapshot_tree pointer was incorrect: look up root snapshot node, make sure
  * its snapshot_tree pointer is correct (allocate new one if necessary), then
@@ -290,6 +274,7 @@ static int check_snapshot(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	CLASS(printbuf, buf)();
+	struct bkey_i_snapshot *u = NULL;
 	int ret = 0;
 
 	if (k.k->type != KEY_TYPE_snapshot)
@@ -361,8 +346,7 @@ static int check_snapshot(struct btree_trans *trans,
 				trans, snapshot_should_not_have_subvol,
 				"snapshot should not point to subvol:\n%s",
 				(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
-			struct bkey_i_snapshot *u =
-				errptr_try(bch2_bkey_make_mut_typed(trans, iter, &k, 0, snapshot));
+			u = u ?: errptr_try(bch2_bkey_make_mut_typed(trans, iter, &k, 0, snapshot));
 
 			u->v.subvol = 0;
 			s = u->v;
@@ -386,30 +370,45 @@ static int check_snapshot(struct btree_trans *trans,
 			trans, snapshot_bad_depth,
 			"snapshot with incorrect depth field, should be %u:\n%s",
 			real_depth, (bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
-		struct bkey_i_snapshot *u =
-			errptr_try(bch2_bkey_make_mut_typed(trans, iter, &k, 0, snapshot));
+		u = u ?: errptr_try(bch2_bkey_make_mut_typed(trans, iter, &k, 0, snapshot));
 
 		u->v.depth = cpu_to_le32(real_depth);
 		s = u->v;
 	}
 
-	ret = snapshot_skiplist_good(trans, k.k->p.offset, s);
-	if (ret < 0)
-		return ret;
+	for (unsigned i = 0; i < 3; i++) {
+		u32 skip = le32_to_cpu(s.skip[i]);
 
-	if (ret_fsck_err_on(!ret,
-			trans, snapshot_bad_skiplist,
-			"snapshot with bad skiplist field:\n%s",
-			(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
-		struct bkey_i_snapshot *u =
-			errptr_try(bch2_bkey_make_mut_typed(trans, iter, &k, 0, snapshot));
+		bool bad = !s.parent
+			? skip
+			: !bch2_snapshot_is_ancestor_early(c, k.k->p.offset, skip);
 
-		for (unsigned i = 0; i < ARRAY_SIZE(u->v.skip); i++)
-			u->v.skip[i] = cpu_to_le32(bch2_snapshot_skiplist_get(c, parent_id));
+		if (bad) {
+			printbuf_reset(&buf);
 
-		bubble_sort(u->v.skip, ARRAY_SIZE(u->v.skip), cmp_le32);
-		s = u->v;
+			prt_printf(&buf, "snapshot with bad skiplist pointer %u:\n", skip);
+			bch2_bkey_val_to_text(&buf, c, k);
+			prt_newline(&buf);
+
+			if (skip) {
+				prt_printf(&buf, "points to\n  ");
+
+				CLASS(btree_iter, skip_iter)(trans, BTREE_ID_snapshots, POS(0, skip), 0);
+				struct bkey_s_c skip_k = bkey_try(bch2_btree_iter_peek_slot(&skip_iter));
+
+				bch2_bkey_val_to_text(&buf, c, skip_k);
+				prt_newline(&buf);
+			}
+
+			if (ret_fsck_err(trans, snapshot_bad_skiplist, "%s", buf.buf)) {
+				u = u ?: errptr_try(bch2_bkey_make_mut_typed(trans, iter, &k, 0, snapshot));
+				u->v.skip[i] = cpu_to_le32(bch2_snapshot_skiplist_get(c, parent_id));
+			}
+		}
 	}
+
+	if (u)
+		bubble_sort(u->v.skip, ARRAY_SIZE(u->v.skip), cmp_le32);
 
 	return 0;
 }
