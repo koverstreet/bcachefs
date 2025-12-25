@@ -201,13 +201,17 @@ static int data_update_index_update_key(struct btree_trans *trans,
 		ptr_bit <<= 1;
 	}
 
-	if (u->opts.ptrs_rewrite &&
-	    !rewrites_found &&
-	    bch2_bkey_durability(c, k) >= opts.data_replicas) {
-		count_data_update_key_fail(u, k, bkey_i_to_s_c(&new->k_i), insert,
-					   "no rewrites found:");
-		bch2_btree_iter_advance(iter);
-		return 0;
+	if (u->opts.ptrs_rewrite && !rewrites_found) {
+		int durability = bch2_bkey_durability(trans, k);
+		if (durability < 0)
+			return durability;
+
+		if (durability >= opts.data_replicas) {
+			count_data_update_key_fail(u, k, bkey_i_to_s_c(&new->k_i), insert,
+						   "no rewrites found:");
+			bch2_btree_iter_advance(iter);
+			return 0;
+		}
 	}
 
 	/*

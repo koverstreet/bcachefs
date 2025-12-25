@@ -826,8 +826,9 @@ unsigned bch2_extent_ptr_durability(struct bch_fs *c, struct extent_ptr_decoded 
 	return __extent_ptr_durability(ca, p);
 }
 
-unsigned bch2_bkey_durability(struct bch_fs *c, struct bkey_s_c k)
+int bch2_bkey_durability(struct btree_trans *trans, struct bkey_s_c k)
 {
+	struct bch_fs *c = trans->c;
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;

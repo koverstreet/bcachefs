@@ -49,7 +49,10 @@ static struct bkey_i *drop_dev_ptrs(struct btree_trans *trans, struct bkey_s_c k
 
 	bch2_bkey_drop_device(c, bkey_i_to_s(n), dev_idx);
 
-	unsigned nr_good = bch2_bkey_durability(c, bkey_i_to_s_c(n));
+	int nr_good = bch2_bkey_durability(trans, bkey_i_to_s_c(n));
+	if (nr_good < 0)
+		return ERR_PTR(nr_good);
+
 	if ((!nr_good && !(flags & lost)) ||
 	    (nr_good < replicas && !(flags & degraded))) {
 		prt_str(err, "cannot drop device without degrading/losing data\n  ");

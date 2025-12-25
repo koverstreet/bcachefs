@@ -1272,7 +1272,10 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 	unsigned compression_type = bch2_compression_opt_to_type(r->background_compression);
 
 	if (r->need_rb & BIT(BCH_REBALANCE_data_replicas)) {
-		unsigned durability = bch2_bkey_durability(c, k);
+		int durability = bch2_bkey_durability(trans, k);
+		if (durability < 0)
+			return durability;
+
 		unsigned ptr_bit = 1;
 
 		guard(rcu)();
