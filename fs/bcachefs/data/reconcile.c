@@ -546,11 +546,12 @@ static inline bool bkey_should_have_rb_opts(struct bkey_s_c k,
 	return new.need_rb;
 }
 
-static bool bch2_bkey_needs_reconcile(struct bch_fs *c, struct bkey_s_c k,
-				      struct bch_inode_opts *opts,
-				      int *need_update_invalid_devs,
-				      struct bch_extent_reconcile *ret)
+static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c k,
+				     struct bch_inode_opts *opts,
+				     int *need_update_invalid_devs,
+				     struct bch_extent_reconcile *ret)
 {
+	struct bch_fs *c = trans->c;
 	bool btree = bkey_is_btree_ptr(k.k);
 
 	if (btree &&
@@ -852,8 +853,9 @@ int bch2_bkey_set_needs_reconcile(struct btree_trans *trans,
 	int need_update_invalid_devs;
 	struct bch_extent_reconcile new;
 
-	if (!bch2_bkey_needs_reconcile(c, k.s_c, opts, &need_update_invalid_devs, &new))
-		return 0;
+	int ret = bch2_bkey_needs_reconcile(trans, k.s_c, opts, &need_update_invalid_devs, &new);
+	if (ret <= 0)
+		return ret;
 
 	struct bch_extent_reconcile *old =
 		(struct bch_extent_reconcile *) bch2_bkey_reconcile_opts(c, k.s_c);
@@ -920,8 +922,9 @@ int bch2_update_reconcile_opts(struct btree_trans *trans,
 	int need_update_invalid_devs;
 	struct bch_extent_reconcile new;
 
-	if (!bch2_bkey_needs_reconcile(c, k, opts, &need_update_invalid_devs, &new))
-		return 0;
+	int ret = bch2_bkey_needs_reconcile(trans, k, opts, &need_update_invalid_devs, &new);
+	if (ret <= 0)
+		return ret;
 
 	if (!level) {
 		struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k) +
