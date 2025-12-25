@@ -1326,27 +1326,48 @@ void bch2_bkey_drop_extra_durability(struct bch_fs *c,
 				     struct bch_inode_opts *opts,
 				     struct bkey_s k)
 {
+	u8 ptrs_kill = 0;
+	u8 ptr_durability[BCH_BKEY_PTRS_MAX];
+	unsigned durability = 0, nr_ptrs = 0;
+
+	memset(ptr_durability, 0, sizeof(ptr_durability));
+
 	guard(rcu)();
-	unsigned durability = bch2_bkey_durability(c, k.s_c);
-	bool dropped;
 
-	do {
-		union bch_extent_entry *entry;
-		struct extent_ptr_decoded p;
-		dropped = false;
+	union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
 
-		bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs(k), p, entry) {
-			unsigned ptr_durability = bch2_extent_ptr_durability(c, &p);
+	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs(k), p, entry) {
+		BUG_ON(nr_ptrs >= ARRAY_SIZE(ptr_durability));
 
-			if (!p.ptr.cached &&
-			    durability - ptr_durability >= opts->data_replicas) {
-				bch2_extent_ptr_set_cached(c, opts, k, &entry->ptr);
-				durability -= ptr_durability;
-				dropped = true;
+		unsigned d = bch2_extent_ptr_durability(c, &p);
+		BUG_ON(d > U8_MAX);
+
+		if (!d && !p.ptr.cached)
+			ptrs_kill |= BIT(nr_ptrs);
+
+		ptr_durability[nr_ptrs++] = d;
+		durability += d;
+	}
+
+	for (unsigned i = 0; i < nr_ptrs; i++)
+		if (ptr_durability[i] &&
+		    durability - ptr_durability[i] >= opts->data_replicas) {
+			durability -= ptr_durability[i];
+			ptr_durability[i] = 0;
+			ptrs_kill |= BIT(i);
+		}
+
+	while (ptrs_kill) {
+		unsigned drop = __fls(ptrs_kill);
+		ptrs_kill &= ~BIT(drop);
+
+		bkey_for_each_ptr(bch2_bkey_ptrs(k), ptr)
+			if (!drop--) {
+				bch2_extent_ptr_set_cached(c, opts, k, ptr);
 				break;
 			}
-		}
-	} while (dropped);
+	}
 }
 
 void bch2_extent_ptr_to_text(struct printbuf *out, struct bch_fs *c, const struct bch_extent_ptr *ptr)
