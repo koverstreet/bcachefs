@@ -364,7 +364,7 @@ void bch2_data_update_read_done(struct data_update *u)
 		return;
 	}
 
-	if (u->opts.ptrs_io_error) {
+	if (unlikely(u->opts.ptrs_io_error) ){
 		struct bkey_s_c k = bkey_i_to_s_c(u->k.k);
 		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 		const union bch_extent_entry *entry;
@@ -374,7 +374,10 @@ void bch2_data_update_read_done(struct data_update *u)
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 			if ((u->opts.ptrs_io_error & ptr_bit) &&
 			    !(u->opts.ptrs_rewrite & ptr_bit)) {
-				u->op.nr_replicas += bch2_extent_ptr_durability(c, &p);
+				int d = bch2_trans_do(c, bch2_extent_ptr_durability(trans, &p));
+
+				if (d >= 0)
+					u->op.nr_replicas += d;
 				u->opts.ptrs_rewrite |= ptr_bit;
 				bch2_dev_list_drop_dev(&u->op.devs_have, p.ptr.dev);
 			}
@@ -910,15 +913,21 @@ int bch2_data_update_init(struct btree_trans *trans,
 		if (!p.ptr.cached) {
 			if (!(ptr_bit & (m->opts.ptrs_rewrite|
 					 m->opts.ptrs_kill))) {
+				int d = bch2_extent_ptr_durability(trans, &p);
+				if (d < 0)
+					return d;
+
+				durability_have += d;
 				bch2_dev_list_add_dev(&m->op.devs_have, p.ptr.dev);
-				durability_have += bch2_extent_ptr_durability(c, &p);
 			}
 
 			if (ptr_bit & m->opts.ptrs_rewrite) {
 				if (crc_is_compressed(p.crc))
 					reserve_sectors += k.k->size;
 
-				unsigned d = bch2_extent_ptr_desired_durability(c, &p);
+				int d = bch2_extent_ptr_desired_durability(trans, &p);
+				if (d < 0)
+					return d;
 
 				m->op.nr_replicas += d;
 				durability_removing += d;

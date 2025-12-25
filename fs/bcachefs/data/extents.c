@@ -828,10 +828,10 @@ static inline unsigned __extent_ptr_durability(struct bch_dev *ca, struct extent
 		: ca->mi.durability;
 }
 
-unsigned bch2_extent_ptr_desired_durability(struct bch_fs *c, struct extent_ptr_decoded *p)
+int bch2_extent_ptr_desired_durability(struct btree_trans *trans, struct extent_ptr_decoded *p)
 {
 	guard(rcu)();
-	struct bch_dev *ca = bch2_dev_rcu_noerror(c, p->ptr.dev);
+	struct bch_dev *ca = bch2_dev_rcu_noerror(trans->c, p->ptr.dev);
 
 	return ca ? __extent_ptr_durability(ca, p) : 0;
 }
@@ -846,10 +846,10 @@ static unsigned bch2_extent_ptr_durability_rcu(struct bch_fs *c, struct extent_p
 	return __extent_ptr_durability(ca, p);
 }
 
-unsigned bch2_extent_ptr_durability(struct bch_fs *c, struct extent_ptr_decoded *p)
+int bch2_extent_ptr_durability(struct btree_trans *trans, struct extent_ptr_decoded *p)
 {
 	guard(rcu)();
-	return bch2_extent_ptr_durability_rcu(c, p);
+	return bch2_extent_ptr_durability_rcu(trans->c, p);
 }
 
 int bch2_bkey_durability(struct btree_trans *trans, struct bkey_s_c k)
@@ -860,9 +860,12 @@ int bch2_bkey_durability(struct btree_trans *trans, struct bkey_s_c k)
 	struct extent_ptr_decoded p;
 	unsigned durability = 0;
 
-	guard(rcu)();
-	bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
-		durability += bch2_extent_ptr_durability_rcu(c, &p);
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		int d = bch2_extent_ptr_durability(trans, &p);
+		if (d < 0)
+			return d;
+		durability += d;
+	}
 	return durability;
 }
 
@@ -1381,7 +1384,10 @@ int bch2_bkey_drop_extra_durability(struct btree_trans *trans,
 	bkey_for_each_ptr_decode(k.k, bch2_bkey_ptrs(k), p, entry) {
 		BUG_ON(nr_ptrs >= ARRAY_SIZE(ptr_durability));
 
-		unsigned d = bch2_extent_ptr_durability(c, &p);
+		int d = bch2_extent_ptr_durability(trans, &p);
+		if (d < 0)
+			return d;
+
 		BUG_ON(d > U8_MAX);
 
 		if (!d && !p.ptr.cached)

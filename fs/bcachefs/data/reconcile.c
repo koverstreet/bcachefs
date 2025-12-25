@@ -617,7 +617,9 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 			r.ptrs_moving |= ptr_bit;
 		}
 
-		unsigned d = bch2_extent_ptr_desired_durability(c, &p);
+		int d = bch2_extent_ptr_desired_durability(trans, &p);
+		if (d < 0)
+			return d;
 
 		durability_acct += d;
 
@@ -1300,7 +1302,9 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 			data_opts->extra_replicas = r->data_replicas - durability;
 		} else {
 			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-				unsigned d = bch2_extent_ptr_durability(c, &p);
+				int d = bch2_extent_ptr_durability(trans, &p);
+				if (d < 0)
+					return d;
 
 				if (d && durability - d >= r->data_replicas) {
 					data_opts->ptrs_kill |= ptr_bit;
