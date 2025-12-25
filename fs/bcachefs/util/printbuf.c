@@ -253,7 +253,7 @@ int bch2_printbuf_tabstop_push(struct printbuf *buf, unsigned spaces)
 		? buf->_tabstops[buf->nr_tabstops - 1]
 		: 0;
 
-	if (WARN_ON(buf->nr_tabstops >= ARRAY_SIZE(buf->_tabstops)))
+	if (WARN_ON_ONCE(buf->nr_tabstops >= ARRAY_SIZE(buf->_tabstops)))
 		return -EINVAL;
 
 	buf->_tabstops[buf->nr_tabstops++] = prev_tabstop + spaces;
@@ -372,7 +372,7 @@ static void __prt_tab(struct printbuf *out)
  */
 void bch2_prt_tab(struct printbuf *out)
 {
-	if (WARN_ON(!cur_tabstop(out)))
+	if (WARN_ON_ONCE(!cur_tabstop(out)))
 		return;
 
 	__prt_tab(out);
@@ -399,7 +399,7 @@ static void __prt_tab_rjust(struct printbuf *buf)
  */
 void bch2_prt_tab_rjust(struct printbuf *buf)
 {
-	if (WARN_ON(!cur_tabstop(buf)))
+	if (WARN_ON_ONCE(!cur_tabstop(buf)))
 		return;
 
 	__prt_tab_rjust(buf);
