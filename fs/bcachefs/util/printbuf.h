@@ -102,6 +102,25 @@ struct printbuf {
 	u8			_tabstops[PRINTBUF_INLINE_TABSTOPS];
 };
 
+struct printbuf_restore {
+	unsigned		pos;
+	u8			cur_tabstop;
+};
+
+static inline struct printbuf_restore printbuf_state_save(struct printbuf *buf)
+{
+	return (struct printbuf_restore) {
+		.pos = buf->pos, .cur_tabstop = buf->cur_tabstop
+	};
+}
+
+static inline void printbuf_state_restore(struct printbuf *buf,
+					  struct printbuf_restore s)
+{
+	buf->pos		= s.pos;
+	buf->cur_tabstop	= s.cur_tabstop;
+}
+
 int bch2_printbuf_make_room(struct printbuf *, unsigned);
 __printf(2, 3) void bch2_prt_printf(struct printbuf *out, const char *fmt, ...);
 __printf(2, 0) void bch2_prt_vprintf(struct printbuf *out, const char *fmt, va_list);

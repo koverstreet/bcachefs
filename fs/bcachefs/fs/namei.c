@@ -611,10 +611,11 @@ static int __bch2_inum_to_path(struct btree_trans *trans,
 			       u32 subvol, u64 inum, u32 snapshot,
 			       struct printbuf *path)
 {
+	struct printbuf_restore restore = printbuf_state_save(path);
 	unsigned orig_pos = path->pos;
 	int ret = bch2_inum_to_path_reversed(trans, subvol, inum, snapshot, path);
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-		path->pos = orig_pos; /* Don't leave garbage output */
+		printbuf_state_restore(path, restore); /* Don't leave garbage output */
 	else {
 		if (!ret && orig_pos == path->pos)
 			prt_char(path, '/');

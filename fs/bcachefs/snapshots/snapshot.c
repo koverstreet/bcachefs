@@ -333,7 +333,10 @@ static int snapshot_get_print(struct printbuf *out, struct btree_trans *trans, u
 	prt_printf(out, "%u \t", id);
 
 	struct bch_snapshot s;
-	int ret = lockrestart_do(trans, bch2_snapshot_lookup(trans, id, &s));
+	int ret = bch2_snapshot_lookup(trans, id, &s);
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+		return ret;
+
 	if (ret) {
 		prt_str(out, bch2_err_str(ret));
 	} else {
@@ -350,20 +353,21 @@ static int snapshot_get_print(struct printbuf *out, struct btree_trans *trans, u
 
 		if (s.subvol) {
 			struct bch_subvolume subvol;
-			ret = lockrestart_do(trans,
-				bch2_subvolume_get(trans, le32_to_cpu(s.subvol), false, &subvol));
+			ret = bch2_subvolume_get(trans, le32_to_cpu(s.subvol), false, &subvol);
+			if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+				return ret;
+
 			if (ret)
 				prt_str(out, bch2_err_str(ret));
 			else
-				lockrestart_do(trans,
-					bch2_inum_to_path(trans, (subvol_inum) { le32_to_cpu(s.subvol), le64_to_cpu(subvol.inode) }, out));
+				try(bch2_inum_to_path(trans, (subvol_inum)
+					{ le32_to_cpu(s.subvol), le64_to_cpu(subvol.inode) }, out));
 		}
 
 		prt_tab(out);
 
 		u64 v[1] = { 0 };
-		lockrestart_do(trans,
-			       bch2_fs_accounting_read_key2(trans, v, snapshot, id));
+		try(bch2_fs_accounting_read_key2(trans, v, snapshot, id));
 
 		prt_human_readable_u64(out, v[0] << 9);
 		prt_tab_rjust(out);
@@ -402,7 +406,13 @@ int bch2_snapshot_tree_keys_to_text(struct printbuf *out, struct btree_trans *tr
 			printbuf_indent_sub(out, -d * 2);
 		prev_depth = depth;
 
-		try(snapshot_get_print(out, trans, id));
+		try(lockrestart_do(trans, ({
+			struct printbuf_restore restore = printbuf_state_save(out);
+			int ret = snapshot_get_print(out, trans, id);
+			if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+				printbuf_state_restore(out, restore);
+			ret;
+		})));
 	}
 
 	printbuf_indent_sub(out, prev_depth * 2);
