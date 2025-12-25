@@ -841,38 +841,71 @@ unsigned bch2_dev_durability(struct bch_fs *c, unsigned dev)
 		: 0;
 }
 
-static inline unsigned __extent_ptr_durability(struct bch_dev *ca, struct extent_ptr_decoded *p)
+static unsigned bch2_dev_durability_desired(struct bch_fs *c, unsigned dev)
+{
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
+
+	return ca ? ca->mi.durability : 0;
+}
+
+static unsigned __bch2_dev_durability(struct bch_fs *c, unsigned dev, bool desired)
+{
+	return desired
+		? bch2_dev_durability_desired(c, dev)
+		: bch2_dev_durability(c, dev);
+}
+
+static int bch2_stripe_durability(struct btree_trans *trans, u64 stripe_idx, bool desired)
+{
+	struct bch_fs *c = trans->c;
+	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, POS(0, stripe_idx), 0);
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
+
+	if (k.k->type != KEY_TYPE_stripe)
+		return 0;
+
+	struct bkey_s_c_stripe s = bkey_s_c_to_stripe(k);
+	u8 min_durability[BCH_REPLICAS_MAX], nr = 0, redundancy = s.v->nr_redundant + 1;
+
+	/*
+	 * Sum up the durability of the minimum @redundancy devices in the
+	 * stripe:
+	 */
+	guard(rcu)();
+
+	for (unsigned i = 0; i < s.v->nr_blocks; i++) {
+		unsigned dev = s.v->ptrs[i].dev;
+		unsigned d = desired
+			? bch2_dev_durability_desired(c, dev)
+			: bch2_dev_durability(c, dev);
+
+		unsigned pos = nr;
+		while (pos && d < min_durability[pos - 1]) {
+			min_durability[pos] = min_durability[pos - 1];
+			--pos;
+		}
+
+		min_durability[pos] = d;
+		nr += nr < redundancy;
+	}
+
+	unsigned ret = 0;
+	for (unsigned i = 0; i < redundancy; i++)
+		ret += min_durability[i];
+	return ret;
+}
+
+int __bch2_extent_ptr_durability(struct btree_trans *trans, struct extent_ptr_decoded *p, bool desired)
 {
 	if (p->ptr.cached)
 		return 0;
 
-	return p->has_ec
-		? p->ec.redundancy + 1
-		: ca->mi.durability;
-}
-
-int bch2_extent_ptr_desired_durability(struct btree_trans *trans, struct extent_ptr_decoded *p)
-{
-	guard(rcu)();
-	struct bch_dev *ca = bch2_dev_rcu_noerror(trans->c, p->ptr.dev);
-
-	return ca ? __extent_ptr_durability(ca, p) : 0;
-}
-
-static unsigned bch2_extent_ptr_durability_rcu(struct bch_fs *c, struct extent_ptr_decoded *p)
-{
-	struct bch_dev *ca = bch2_dev_rcu_noerror(c, p->ptr.dev);
-
-	if (!ca || ca->mi.state == BCH_MEMBER_STATE_evacuating)
-		return 0;
-
-	return __extent_ptr_durability(ca, p);
-}
-
-int bch2_extent_ptr_durability(struct btree_trans *trans, struct extent_ptr_decoded *p)
-{
-	guard(rcu)();
-	return bch2_extent_ptr_durability_rcu(trans->c, p);
+	if (likely(!p->has_ec)) {
+		guard(rcu)();
+		return __bch2_dev_durability(trans->c, p->ptr.dev, desired);
+	} else {
+		return bch2_stripe_durability(trans, p->ec.idx, desired);
+	}
 }
 
 int bch2_bkey_durability(struct btree_trans *trans, struct bkey_s_c k, struct bkey_durability *ret)
@@ -904,21 +937,18 @@ struct bkey_durability bch2_btree_ptr_durability(struct bch_fs *c, struct bkey_s
 	BUG_ON(!bkey_is_btree_ptr(k.k));
 
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	const union bch_extent_entry *entry;
-	struct extent_ptr_decoded p;
 	struct bkey_durability ret = {};
 
 	guard(rcu)();
-	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-		if (p.ptr.dev == BCH_SB_MEMBER_INVALID)
-			continue;
+	bkey_for_each_ptr(ptrs, ptr)
+		if (!ptr->cached &&
+		    ptr->dev != BCH_SB_MEMBER_INVALID) {
+			unsigned d = bch2_dev_durability(c, ptr->dev);
 
-		unsigned d = bch2_extent_ptr_durability_rcu(c, &p);
-
-		if (test_bit(p.ptr.dev, c->devs_online.d))
-			ret.online += d;
-		ret.total += d;
-	}
+			if (test_bit(p.ptr.dev, c->devs_online.d))
+				ret.online += d;
+			ret.total += d;
+		}
 	return ret;
 }
 
@@ -930,13 +960,13 @@ bool bch2_bkey_can_read(const struct bch_fs *c, struct bkey_s_c k)
 
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
 		if (!p.ptr.cached &&
-		    (p.ptr.dev != BCH_SB_MEMBER_INVALID ||
-		     p.has_ec))
+		    (p.ptr.dev != BCH_SB_MEMBER_INVALID || p.has_ec))
 			return true;
 
 	return false;
 }
 
+/* desired durability, no btree lookups for stripes: */
 static unsigned bch2_bkey_durability_safe(struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
@@ -946,8 +976,15 @@ static unsigned bch2_bkey_durability_safe(struct bch_fs *c, struct bkey_s_c k)
 
 	guard(rcu)();
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
-		if (p.ptr.dev < c->sb.nr_devices && c->devs[p.ptr.dev])
-			durability += bch2_extent_ptr_durability_rcu(c, &p);
+		if (p.ptr.cached) {
+			/* nothing */
+		} else if (p.has_ec) {
+			durability += p.ec.redundancy + 1;
+		} else {
+			struct bch_dev *ca = bch2_dev_rcu_noerror(c, p.ptr.dev);
+			durability += ca ? ca->mi.durability : 1;
+		}
+
 	return durability;
 }
 
