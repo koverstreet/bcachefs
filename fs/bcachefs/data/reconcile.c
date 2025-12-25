@@ -546,6 +546,14 @@ static inline bool bkey_should_have_rb_opts(struct bkey_s_c k,
 	return new.need_rb;
 }
 
+static inline bool dev_bad_or_evacuating(struct bch_fs *c, unsigned dev)
+{
+	guard(rcu)();
+
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
+	return !ca || ca->mi.state == BCH_MEMBER_STATE_evacuating;
+}
+
 static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c k,
 				     struct bch_inode_opts *opts,
 				     int *need_update_invalid_devs,
@@ -576,56 +584,56 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 	bool incompressible = false, unwritten = false, ec = false;
 	unsigned durability = 0, durability_acct = 0, invalid = 0, min_durability = INT_MAX;
 
-	scoped_guard(rcu) {
-		const union bch_extent_entry *entry;
-		struct extent_ptr_decoded p;
-		unsigned ptr_bit = 1;
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+	unsigned ptr_bit = 1;
 
-		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-			incompressible	|= p.crc.compression_type == BCH_COMPRESSION_TYPE_incompressible;
-			unwritten	|= p.ptr.unwritten;
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		incompressible	|= p.crc.compression_type == BCH_COMPRESSION_TYPE_incompressible;
+		unwritten	|= p.ptr.unwritten;
 
-			struct bch_dev *ca = bch2_dev_rcu_noerror(c, p.ptr.dev);
-			if (ca && !p.ptr.cached) {
-				if (!poisoned &&
-				    !btree &&
-				    p.crc.csum_type != csum_type)
-					r.need_rb |= BIT(BCH_REBALANCE_data_checksum);
+		bool evacuating = dev_bad_or_evacuating(c, p.ptr.dev);
 
-				if (!poisoned &&
-				    p.crc.compression_type != compression_type)
-					r.need_rb |= BIT(BCH_REBALANCE_background_compression);
+		if (!poisoned &&
+		    !btree &&
+		    p.crc.csum_type != csum_type)
+			r.need_rb |= BIT(BCH_REBALANCE_data_checksum);
 
-				if (!poisoned &&
-				    r.background_target &&
-				    !bch2_dev_in_target(c, p.ptr.dev, r.background_target)) {
-					r.need_rb |= BIT(BCH_REBALANCE_background_target);
-					r.ptrs_moving |= ptr_bit;
-				}
+		if (!poisoned &&
+		    p.crc.compression_type != compression_type)
+			r.need_rb |= BIT(BCH_REBALANCE_background_compression);
 
-				if (ca->mi.state == BCH_MEMBER_STATE_evacuating) {
-					r.need_rb |= BIT(BCH_REBALANCE_data_replicas);
-					r.hipri = 1;
-					r.ptrs_moving |= ptr_bit;
-				}
-
-				unsigned d = __extent_ptr_durability(ca, &p);
-
-				durability_acct += d;
-
-				if (ca->mi.state == BCH_MEMBER_STATE_evacuating)
-					d = 0;
-
-				durability += d;
-				min_durability = min(min_durability, d);
-
-				ec |= p.has_ec;
-			}
-
-			invalid += p.ptr.dev == BCH_SB_MEMBER_INVALID;
-
-			ptr_bit <<= 1;
+		if (!poisoned &&
+		    !evacuating &&
+		    r.background_target &&
+		    !bch2_dev_in_target(c, p.ptr.dev, r.background_target)) {
+			r.need_rb |= BIT(BCH_REBALANCE_background_target);
+			r.ptrs_moving |= ptr_bit;
 		}
+
+		if (!p.ptr.cached && evacuating) {
+			r.need_rb |= BIT(BCH_REBALANCE_data_replicas);
+			r.hipri = 1;
+			r.ptrs_moving |= ptr_bit;
+		}
+
+		unsigned d;
+		scoped_guard(rcu)
+			d = bch2_extent_ptr_desired_durability(c, &p);
+
+		durability_acct += d;
+
+		if (evacuating)
+			d = 0;
+
+		durability += d;
+		min_durability = min(min_durability, d);
+
+		ec |= p.has_ec;
+
+		invalid += p.ptr.dev == BCH_SB_MEMBER_INVALID;
+
+		ptr_bit <<= 1;
 	}
 
 	if (unwritten || incompressible)
