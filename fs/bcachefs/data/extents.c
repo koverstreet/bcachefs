@@ -1364,10 +1364,11 @@ void bch2_bkey_drop_extra_cached_ptrs(struct bch_fs *c,
 	} while (dropped);
 }
 
-void bch2_bkey_drop_extra_durability(struct bch_fs *c,
-				     struct bch_inode_opts *opts,
-				     struct bkey_s k)
+int bch2_bkey_drop_extra_durability(struct btree_trans *trans,
+				    struct bch_inode_opts *opts,
+				    struct bkey_s k)
 {
+	struct bch_fs *c = trans->c;
 	u8 ptrs_kill = 0;
 	u8 ptr_durability[BCH_BKEY_PTRS_MAX];
 	unsigned durability = 0, nr_ptrs = 0;
@@ -1408,6 +1409,8 @@ void bch2_bkey_drop_extra_durability(struct bch_fs *c,
 				break;
 			}
 	}
+
+	return 0;
 }
 
 void bch2_extent_ptr_to_text(struct printbuf *out, struct bch_fs *c, const struct bch_extent_ptr *ptr)

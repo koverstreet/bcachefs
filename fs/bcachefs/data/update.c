@@ -240,7 +240,8 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	extent_for_each_ptr_decode(extent_i_to_s(new), p, entry)
 		bch2_extent_ptr_decoded_append(c, insert, &p);
 
-	bch2_bkey_drop_extra_durability(c, &opts, bkey_i_to_s(insert));
+	try(bch2_bkey_drop_extra_durability(trans, &opts, bkey_i_to_s(insert)));
+
 	bch2_bkey_drop_extra_cached_ptrs(c, &opts, bkey_i_to_s(insert));
 
 	bool should_check_enospc = false;

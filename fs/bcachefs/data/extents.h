@@ -679,7 +679,7 @@ void bch2_extent_ptr_set_cached(struct bch_fs *, struct bch_inode_opts *,
 
 int bch2_bkey_drop_stale_ptrs(struct btree_trans *, struct btree_iter *, struct bkey_s_c);
 void bch2_bkey_drop_extra_cached_ptrs(struct bch_fs *, struct bch_inode_opts *, struct bkey_s);
-void bch2_bkey_drop_extra_durability(struct bch_fs *, struct bch_inode_opts *, struct bkey_s);
+int bch2_bkey_drop_extra_durability(struct btree_trans *, struct bch_inode_opts *, struct bkey_s);
 
 void bch2_extent_ptr_to_text(struct printbuf *out, struct bch_fs *, const struct bch_extent_ptr *);
 void bch2_bkey_ptrs_to_text(struct printbuf *, struct bch_fs *,
