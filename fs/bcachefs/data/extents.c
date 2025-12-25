@@ -826,6 +826,18 @@ unsigned bch2_extent_ptr_durability(struct bch_fs *c, struct extent_ptr_decoded 
 	return __extent_ptr_durability(ca, p);
 }
 
+unsigned bch2_extent_ptr_durability_noec(struct bch_fs *c, struct extent_ptr_decoded *p)
+{
+	BUG_ON(p->has_ec);
+
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, p->ptr.dev);
+
+	if (!ca || ca->mi.state == BCH_MEMBER_STATE_evacuating)
+		return 0;
+
+	return __extent_ptr_durability(ca, p);
+}
+
 int bch2_bkey_durability(struct btree_trans *trans, struct bkey_s_c k)
 {
 	struct bch_fs *c = trans->c;
