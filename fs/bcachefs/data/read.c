@@ -1345,7 +1345,6 @@ int __bch2_read_extent(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct extent_ptr_decoded pick;
 	bool bounce = false, read_full = false;
-	struct data_update *u = rbio_data_update(orig);
 	int ret = 0;
 
 	if (bkey_extent_is_inline_data(k.k))
@@ -1401,10 +1400,32 @@ int __bch2_read_extent(struct btree_trans *trans,
 	if (narrow_crcs && (flags & BCH_READ_user_mapped))
 		flags |= BCH_READ_must_bounce;
 
-	if (likely(!orig->data_update) ||
-	    orig->data_update_verify_decompress) {
-		EBUG_ON(offset_into_extent + bvec_iter_sectors(iter) > k.k->size);
 
+	if (likely(!orig->data_update)) {
+		/* Check we're not trying to read more than we have in this extent: */
+		EBUG_ON(offset_into_extent + bvec_iter_sectors(iter) > k.k->size);
+	} else {
+		/*
+		 * For data updates, iter.bi_size can be bigger than the key - it's just
+		 * the buffer size, we're not trying to read a specific amount of data
+		 * from this extent:
+		 *
+		 * If it's smaller, we raced with a merge during a retry:
+		 */
+		if (unlikely(pick.crc.uncompressed_size > bvec_iter_sectors(iter))) {
+			if (ca)
+				enumerated_ref_put(&ca->io_ref[READ],
+					BCH_DEV_READ_REF_io_read);
+			return read_extent_done(orig, flags, bch_err_throw(c, data_read_buffer_too_small));
+		}
+
+		iter.bi_size = pick.crc.compressed_size << 9;
+		read_full = true;
+	}
+
+	bool decode = !orig->data_update || orig->data_update_verify_decompress;
+
+	if (likely(decode))
 		if (crc_is_compressed(pick.crc) ||
 		    (pick.crc.csum_type != BCH_CSUM_none &&
 		     (bvec_iter_sectors(iter) != pick.crc.uncompressed_size ||
@@ -1414,23 +1435,6 @@ int __bch2_read_extent(struct btree_trans *trans,
 			read_full = true;
 			bounce = true;
 		}
-	}
-
-	if (unlikely(u)) {
-		/*
-		 * can happen if we retry, and the extent we were going to read
-		 * has been merged in the meantime:
-		 */
-		if (unlikely(pick.crc.uncompressed_size > u->op.wbio.bio.bi_iter.bi_size)) {
-			if (ca)
-				enumerated_ref_put(&ca->io_ref[READ],
-					BCH_DEV_READ_REF_io_read);
-			return read_extent_done(orig, flags, bch_err_throw(c, data_read_buffer_too_small));
-		}
-
-		iter.bi_size	= pick.crc.compressed_size << 9;
-		read_full = true;
-	}
 
 	struct bch_read_bio *rbio =
 		read_extent_rbio_alloc(trans, orig, iter, read_pos, data_btree, k,
