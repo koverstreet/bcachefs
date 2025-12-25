@@ -617,9 +617,7 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 			r.ptrs_moving |= ptr_bit;
 		}
 
-		unsigned d;
-		scoped_guard(rcu)
-			d = bch2_extent_ptr_desired_durability(c, &p);
+		unsigned d = bch2_extent_ptr_desired_durability(c, &p);
 
 		durability_acct += d;
 
@@ -1289,8 +1287,9 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 
 		unsigned ptr_bit = 1;
 
-		guard(rcu)();
 		if (durability <= r->data_replicas) {
+			guard(rcu)();
+
 			bkey_for_each_ptr(ptrs, ptr) {
 				struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
 				if (ca && !ptr->cached && !ca->mi.durability)

@@ -1216,7 +1216,9 @@ static bool bch2_extent_is_writeable(struct bch_write_op *op,
 		if (crc_is_encoded(p.crc) || p.has_ec)
 			return false;
 
-		replicas += bch2_extent_ptr_durability_noec(c, &p);
+		replicas += !p.ptr.cached
+			? bch2_dev_durability(c, p.ptr.dev)
+			: 0;
 	}
 
 	return replicas >= op->opts.data_replicas;

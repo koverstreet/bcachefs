@@ -370,7 +370,6 @@ void bch2_data_update_read_done(struct data_update *u)
 		struct extent_ptr_decoded p;
 		unsigned ptr_bit = 1;
 
-		guard(rcu)();
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 			if ((u->opts.ptrs_io_error & ptr_bit) &&
 			    !(u->opts.ptrs_rewrite & ptr_bit)) {
@@ -717,20 +716,23 @@ static unsigned durability_available_on_target(struct bch_fs *c,
 	return ret;
 }
 
-static unsigned bch2_bkey_durability_on_target(struct bch_fs *c, struct bkey_s_c k,
+static unsigned bch2_btree_ptr_durability_on_target(struct bch_fs *c, struct bkey_s_c k,
 					       unsigned target)
 {
+	/* Doesn't handle stripe pointers: */
+
 	struct bch_devs_mask devs = target_rw_devs(c, BCH_DATA_user, target);
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
 	unsigned durability = 0;
 
-	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
 		if (p.ptr.dev != BCH_SB_MEMBER_INVALID &&
+		    !p.ptr.cached &&
 		    test_bit(p.ptr.dev, devs.d))
-			durability += bch2_extent_ptr_durability(c, &p);
-	}
+			durability += bch2_dev_durability(c, p.ptr.dev);
+
 	return durability;
 }
 
@@ -741,7 +743,7 @@ static int bch2_can_do_write_btree(struct bch_fs *c,
 	enum bch_watermark watermark = data_opts->commit_flags & BCH_WATERMARK_MASK;
 
 	if (durability_available_on_target(c, watermark, data_opts->target) >
-	    bch2_bkey_durability_on_target(c, k, data_opts->target))
+	    bch2_btree_ptr_durability_on_target(c, k, data_opts->target))
 		return 0;
 
 	if (!(data_opts->write_flags & BCH_WRITE_only_specified_devs)) {
@@ -902,48 +904,48 @@ int bch2_data_update_init(struct btree_trans *trans,
 	if (m->opts.ptrs_rewrite)
 		checksummed_and_non_checksummed_handling(m, ptrs);
 
-	scoped_guard(rcu) {
-		unsigned ptr_bit = 1;
-		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-			if (!p.ptr.cached) {
-				if (!(ptr_bit & (m->opts.ptrs_rewrite|
-						 m->opts.ptrs_kill))) {
-					bch2_dev_list_add_dev(&m->op.devs_have, p.ptr.dev);
-					durability_have += bch2_extent_ptr_durability(c, &p);
-				}
-
-				if (ptr_bit & m->opts.ptrs_rewrite) {
-					if (crc_is_compressed(p.crc))
-						reserve_sectors += k.k->size;
-
-					m->op.nr_replicas += bch2_extent_ptr_desired_durability(c, &p);
-					durability_removing += bch2_extent_ptr_desired_durability(c, &p);
-				}
-			} else {
-				if (m->opts.ptrs_rewrite & ptr_bit) {
-					m->opts.ptrs_kill |= ptr_bit;
-					m->opts.ptrs_rewrite ^= ptr_bit;
-				}
+	unsigned ptr_bit = 1;
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if (!p.ptr.cached) {
+			if (!(ptr_bit & (m->opts.ptrs_rewrite|
+					 m->opts.ptrs_kill))) {
+				bch2_dev_list_add_dev(&m->op.devs_have, p.ptr.dev);
+				durability_have += bch2_extent_ptr_durability(c, &p);
 			}
 
-			/*
-			 * op->csum_type is normally initialized from the fs/file's
-			 * current options - but if an extent is encrypted, we require
-			 * that it stays encrypted:
-			 */
-			if (bch2_csum_type_is_encryption(p.crc.csum_type)) {
-				m->op.nonce	= p.crc.nonce + p.crc.offset;
-				m->op.csum_type = p.crc.csum_type;
+			if (ptr_bit & m->opts.ptrs_rewrite) {
+				if (crc_is_compressed(p.crc))
+					reserve_sectors += k.k->size;
+
+				unsigned d = bch2_extent_ptr_desired_durability(c, &p);
+
+				m->op.nr_replicas += d;
+				durability_removing += d;
 			}
-
-			if (p.crc.compression_type == BCH_COMPRESSION_TYPE_incompressible)
-				m->op.incompressible = true;
-
-			buf_bytes = max_t(unsigned, buf_bytes, p.crc.uncompressed_size << 9);
-			unwritten |= p.ptr.unwritten;
-
-			ptr_bit <<= 1;
+		} else {
+			if (m->opts.ptrs_rewrite & ptr_bit) {
+				m->opts.ptrs_kill |= ptr_bit;
+				m->opts.ptrs_rewrite ^= ptr_bit;
+			}
 		}
+
+		/*
+		 * op->csum_type is normally initialized from the fs/file's
+		 * current options - but if an extent is encrypted, we require
+		 * that it stays encrypted:
+		 */
+		if (bch2_csum_type_is_encryption(p.crc.csum_type)) {
+			m->op.nonce	= p.crc.nonce + p.crc.offset;
+			m->op.csum_type = p.crc.csum_type;
+		}
+
+		if (p.crc.compression_type == BCH_COMPRESSION_TYPE_incompressible)
+			m->op.incompressible = true;
+
+		buf_bytes = max_t(unsigned, buf_bytes, p.crc.uncompressed_size << 9);
+		unwritten |= p.ptr.unwritten;
+
+		ptr_bit <<= 1;
 	}
 
 	if (m->opts.type != BCH_DATA_UPDATE_scrub) {
