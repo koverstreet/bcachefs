@@ -741,7 +741,7 @@ static int bch2_can_do_write_btree(struct bch_fs *c,
 		return 0;
 
 	if (!(data_opts->write_flags & BCH_WRITE_only_specified_devs)) {
-		unsigned d = bch2_bkey_durability(c, k);
+		unsigned d = bch2_btree_ptr_durability(c, k);
 		if (d < opts->data_replicas &&
 		    d < durability_available_on_target(c, watermark, 0))
 			return 0;

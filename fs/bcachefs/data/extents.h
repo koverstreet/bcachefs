@@ -587,6 +587,7 @@ static inline unsigned __extent_ptr_durability(struct bch_dev *ca, struct extent
 unsigned bch2_extent_ptr_desired_durability(struct bch_fs *, struct extent_ptr_decoded *);
 unsigned bch2_extent_ptr_durability(struct bch_fs *, struct extent_ptr_decoded *);
 unsigned bch2_bkey_durability(struct bch_fs *, struct bkey_s_c);
+unsigned bch2_btree_ptr_durability(struct bch_fs *, struct bkey_s_c);
 bool bch2_bkey_can_read(const struct bch_fs *, struct bkey_s_c);
 
 const struct bch_extent_ptr *bch2_bkey_has_device_c(const struct bch_fs *,

@@ -839,6 +839,21 @@ unsigned bch2_bkey_durability(struct bch_fs *c, struct bkey_s_c k)
 	return durability;
 }
 
+unsigned bch2_btree_ptr_durability(struct bch_fs *c, struct bkey_s_c k)
+{
+	BUG_ON(!bkey_is_btree_ptr(k.k));
+
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+	unsigned durability = 0;
+
+	guard(rcu)();
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
+		durability += bch2_extent_ptr_durability(c, &p);
+	return durability;
+}
+
 bool bch2_bkey_can_read(const struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
