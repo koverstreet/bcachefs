@@ -846,7 +846,7 @@ static unsigned bch2_dev_durability_desired(struct bch_fs *c, unsigned dev)
 {
 	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
 
-	return ca ? ca->mi.durability : 0;
+	return ca ? ca->mi.durability : 1;
 }
 
 static unsigned __bch2_dev_durability(struct bch_fs *c, unsigned dev, bool desired)
