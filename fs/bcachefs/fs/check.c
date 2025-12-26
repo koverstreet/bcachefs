@@ -1616,7 +1616,7 @@ static int check_dirent(struct btree_trans *trans, struct btree_iter *iter,
 
 	bool invalidated_inodes = false;
 	ret = bch2_str_hash_check_key(trans, s, &bch2_dirent_hash_desc, hash_info,
-				      iter, k, need_second_pass, &invalidated_inodes);
+				      k, need_second_pass, &invalidated_inodes);
 	if (invalidated_inodes) {
 		dir->last_pos.inode = 0;
 		dir->inodes.nr = 0;
@@ -1756,7 +1756,7 @@ static int check_xattr(struct btree_trans *trans, struct btree_iter *iter,
 	bool need_second_pass = false;
 	bool invalidated_inodes = false;
 	ret = bch2_str_hash_check_key(trans, NULL, &bch2_xattr_hash_desc, hash_info,
-				      iter, k, &need_second_pass, &invalidated_inodes);
+				      k, &need_second_pass, &invalidated_inodes);
 	if (invalidated_inodes) {
 		inode->last_pos.inode--;
 		return bch_err_throw(c, transaction_restart_nested);

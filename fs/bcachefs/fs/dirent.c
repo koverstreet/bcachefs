@@ -632,7 +632,7 @@ int bch2_readdir(struct bch_fs *c, subvol_inum inum,
 
 			bool need_second_pass = false, repaired_inode = false;
 			int ret2 = bch2_str_hash_check_key(trans, NULL, &bch2_dirent_hash_desc,
-							   hash_info, &iter, k,
+							   hash_info, k,
 							   &need_second_pass, &repaired_inode) ?:
 				bch2_dirent_read_target(trans, inum, dirent, &target);
 			if (ret2 > 0)
