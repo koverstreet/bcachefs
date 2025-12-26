@@ -440,12 +440,19 @@ static int attempt_compress(struct bch_fs *c,
 	}
 }
 
-static unsigned __bio_compress(struct bch_fs *c,
-			       struct bio *dst, size_t *dst_len,
-			       struct bio *src, size_t *src_len,
-			       union bch_compression_opt compression,
-			       struct bpos write_pos)
+static unsigned bch2_compress(struct bch_fs *c,
+			      void *dst, size_t *dst_len,
+			      void *src, size_t *src_len,
+			      unsigned compression_opt,
+			      struct bpos write_pos)
 {
+	union bch_compression_opt compression =
+		(union bch_compression_opt) { .value = compression_opt };
+
+	/* If it's only one block, don't bother trying to compress: */
+	if (*src_len <= c->opts.block_size)
+		return BCH_COMPRESSION_TYPE_incompressible;
+
 	enum bch_compression_type compression_type =
 		__bch2_compression_opt_to_type[compression.type];
 	int ret = 0;
@@ -466,17 +473,7 @@ static unsigned __bio_compress(struct bch_fs *c,
 		}
 	}
 
-	/* If it's only one block, don't bother trying to compress: */
-	if (src->bi_iter.bi_size <= c->opts.block_size)
-		return BCH_COMPRESSION_TYPE_incompressible;
-
-	struct bbuf dst_data __cleanup(bbuf_exit) = bio_map_or_bounce(c, dst, WRITE);
-	struct bbuf src_data __cleanup(bbuf_exit) = bio_map_or_bounce(c, src, READ);
-
 	void *workspace = mempool_alloc(workspace_pool, GFP_NOFS);
-
-	*src_len = src->bi_iter.bi_size;
-	*dst_len = dst->bi_iter.bi_size;
 
 	/*
 	 * XXX: this algorithm sucks when the compression code doesn't tell us
@@ -489,8 +486,8 @@ static unsigned __bio_compress(struct bch_fs *c,
 		}
 
 		ret = attempt_compress(c, workspace,
-				       dst_data.b,	*dst_len,
-				       src_data.b,	*src_len,
+				       dst, *dst_len,
+				       src, *src_len,
 				       compression);
 		if (ret > 0) {
 			*dst_len = ret;
@@ -527,7 +524,7 @@ static unsigned __bio_compress(struct bch_fs *c,
 
 	unsigned pad = round_up(*dst_len, block_bytes(c)) - *dst_len;
 
-	memset(dst_data.b + *dst_len, 0, pad);
+	memset(dst + *dst_len, 0, pad);
 	*dst_len += pad;
 
 	if (unlikely(bch2_verify_compress)) {
@@ -538,10 +535,10 @@ static unsigned __bio_compress(struct bch_fs *c,
 		};
 
 		struct bbuf verify __cleanup(bbuf_exit) = __bounce_alloc(c, *src_len, WRITE);
-		ret = buf_uncompress(c, verify.b, dst_data.b, crc);
+		ret = buf_uncompress(c, verify.b, dst, crc);
 		BUG_ON(ret);
 
-		if (memcmp(verify.b, src_data.b, *src_len)) {
+		if (memcmp(verify.b, src, *src_len)) {
 			CLASS(bch_log_msg, msg)(c);
 			prt_printf(&msg.m, "Decompressing compressed data did not produce the same result (%s)",
 				   __bch2_compression_types[compression_type]);
@@ -555,12 +552,6 @@ static unsigned __bio_compress(struct bch_fs *c,
 		}
 	}
 
-	if (dst_data.type != BB_none &&
-	    dst_data.type != BB_vmap)
-		memcpy_to_bio(dst, dst->bi_iter, dst_data.b);
-
-	BUG_ON(!*dst_len || *dst_len > dst->bi_iter.bi_size);
-	BUG_ON(!*src_len || *src_len > src->bi_iter.bi_size);
 	BUG_ON(*dst_len & (block_bytes(c) - 1));
 	BUG_ON(*src_len & (block_bytes(c) - 1));
 	return compression_type;
@@ -572,23 +563,39 @@ unsigned bch2_bio_compress(struct bch_fs *c,
 			   unsigned compression_opt,
 			   struct bpos write_pos)
 {
-	unsigned orig_dst = dst->bi_iter.bi_size;
-	unsigned orig_src = src->bi_iter.bi_size;
-	unsigned compression_type;
-
 	/* Don't consume more than BCH_ENCODED_EXTENT_MAX from @src: */
-	src->bi_iter.bi_size = min_t(unsigned, src->bi_iter.bi_size,
-				     c->opts.encoded_extent_max);
+	unsigned consume_src = min(src->bi_iter.bi_size, c->opts.encoded_extent_max);
 	/* Don't generate a bigger output than input: */
-	dst->bi_iter.bi_size = min(dst->bi_iter.bi_size, src->bi_iter.bi_size);
+	unsigned consume_dst = min(dst->bi_iter.bi_size, consume_src);
 
-	compression_type =
-		__bio_compress(c, dst, dst_len, src, src_len,
-			       (union bch_compression_opt){ .value = compression_opt },
-			       write_pos);
+	swap(dst->bi_iter.bi_size, consume_dst);
+	swap(src->bi_iter.bi_size, consume_src);
 
-	dst->bi_iter.bi_size = orig_dst;
-	src->bi_iter.bi_size = orig_src;
+	struct bbuf dst_data __cleanup(bbuf_exit) = bio_map_or_bounce(c, dst, WRITE);
+	struct bbuf src_data __cleanup(bbuf_exit) = bio_map_or_bounce(c, src, READ);
+
+	*src_len = src->bi_iter.bi_size;
+	*dst_len = dst->bi_iter.bi_size;
+
+	unsigned compression_type =
+		bch2_compress(c,
+			      dst_data.b, dst_len,
+			      src_data.b, src_len,
+			      compression_opt,
+			      write_pos);
+
+	if (compression_type != BCH_COMPRESSION_TYPE_none &&
+	    compression_type != BCH_COMPRESSION_TYPE_incompressible) {
+		if (dst_data.type != BB_none &&
+		    dst_data.type != BB_vmap)
+			memcpy_to_bio(dst, dst->bi_iter, dst_data.b);
+
+		BUG_ON(!*dst_len || *dst_len > dst->bi_iter.bi_size);
+		BUG_ON(!*src_len || *src_len > src->bi_iter.bi_size);
+	}
+
+	swap(dst->bi_iter.bi_size, consume_dst);
+	swap(src->bi_iter.bi_size, consume_src);
 	return compression_type;
 }
 
