@@ -825,6 +825,8 @@ int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 	b->nsets = 1;
 	b->data->keys.journal_seq = cpu_to_le64(max_journal_seq);
 
+	btree_node_buf_swap_account(c, sorted, b->data);
+
 	BUG_ON(b->nr.live_u64s != le16_to_cpu(b->data->keys.u64s));
 
 	bch2_btree_bounce_free(c, btree_buf_bytes(b), used_mempool, sorted);

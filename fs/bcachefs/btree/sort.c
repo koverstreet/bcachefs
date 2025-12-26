@@ -490,6 +490,8 @@ void bch2_btree_node_sort(struct bch_fs *c, struct btree *b,
 		out->keys.u64s = cpu_to_le16(u64s);
 		swap(out, b->data);
 		set_btree_bset(b, b->set, &b->data->keys);
+
+		btree_node_buf_swap_account(c, out, b->data);
 	} else {
 		start_bset->u64s = out->keys.u64s;
 		memcpy_u64s(start_bset->start,
