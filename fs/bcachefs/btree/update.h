@@ -121,6 +121,7 @@ static inline enum bch_bkey_type extent_whiteout_type(struct bch_fs *c, enum btr
 	 */
 	return btree_id_is_extents_snapshots(btree) &&
 		bkey_deleted(k) &&
+		bch2_snapshot_is_leaf(c, k->p.snapshot) &&
 		!bch2_request_incompat_feature(c, bcachefs_metadata_version_extent_snapshot_whiteouts)
 		? KEY_TYPE_extent_whiteout
 		: KEY_TYPE_whiteout;
