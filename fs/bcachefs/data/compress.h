@@ -40,7 +40,7 @@ int bch2_bio_uncompress(struct bch_fs *, struct bio *, struct bio *,
 
 unsigned bch2_bio_compress(struct bch_fs *, struct bio *, size_t *,
 			   struct bio *, size_t *, unsigned,
-			   struct bpos);
+			   struct bpos, bool);
 
 int bch2_check_set_has_compressed_data(struct bch_fs *, unsigned);
 void bch2_fs_compress_exit(struct bch_fs *);

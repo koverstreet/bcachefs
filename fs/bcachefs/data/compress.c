@@ -561,7 +561,8 @@ unsigned bch2_bio_compress(struct bch_fs *c,
 			   struct bio *dst, size_t *dst_len,
 			   struct bio *src, size_t *src_len,
 			   unsigned compression_opt,
-			   struct bpos write_pos)
+			   struct bpos write_pos,
+			   bool bounce_source)
 {
 	/* Don't consume more than BCH_ENCODED_EXTENT_MAX from @src: */
 	unsigned consume_src = min(src->bi_iter.bi_size, c->opts.encoded_extent_max);
@@ -571,11 +572,13 @@ unsigned bch2_bio_compress(struct bch_fs *c,
 	swap(dst->bi_iter.bi_size, consume_dst);
 	swap(src->bi_iter.bi_size, consume_src);
 
-	struct bbuf dst_data __cleanup(bbuf_exit) = bio_map_or_bounce(c, dst, WRITE);
-	struct bbuf src_data __cleanup(bbuf_exit) = bio_map_or_bounce(c, src, READ);
-
 	*src_len = src->bi_iter.bi_size;
 	*dst_len = dst->bi_iter.bi_size;
+
+	struct bbuf dst_data __cleanup(bbuf_exit) = bio_map_or_bounce(c, dst, WRITE);
+	struct bbuf src_data __cleanup(bbuf_exit) = bounce_source
+		? bio_bounce(c, src, src->bi_iter, READ)
+		: bio_map_or_bounce(c, src, READ);
 
 	unsigned compression_type =
 		bch2_compress(c,
