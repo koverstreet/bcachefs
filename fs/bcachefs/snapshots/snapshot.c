@@ -374,6 +374,10 @@ static int snapshot_get_print(struct printbuf *out, struct btree_trans *trans, u
 	}
 
 	prt_newline(out);
+
+	bool lock_dropped = false;
+	allocate_dropping_locks_norelock(trans, lock_dropped,
+			!bch2_printbuf_make_room_gfp(out, 1024, _gfp));
 	return 0;
 }
 

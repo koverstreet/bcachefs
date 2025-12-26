@@ -121,6 +121,7 @@ static inline void printbuf_state_restore(struct printbuf *buf,
 	buf->cur_tabstop	= s.cur_tabstop;
 }
 
+int bch2_printbuf_make_room_gfp(struct printbuf *, unsigned, gfp_t);
 int bch2_printbuf_make_room(struct printbuf *, unsigned);
 __printf(2, 3) void bch2_prt_printf(struct printbuf *out, const char *fmt, ...);
 __printf(2, 0) void bch2_prt_vprintf(struct printbuf *out, const char *fmt, va_list);

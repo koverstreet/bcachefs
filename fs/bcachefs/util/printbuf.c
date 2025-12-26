@@ -31,7 +31,7 @@ static inline unsigned cur_tabstop(struct printbuf *buf)
 		: 0;
 }
 
-int bch2_printbuf_make_room(struct printbuf *out, unsigned extra)
+int bch2_printbuf_make_room_gfp(struct printbuf *out, unsigned extra, gfp_t gfp)
 {
 	/* Reserved space for terminating nul: */
 	extra += 1;
@@ -60,8 +60,8 @@ int bch2_printbuf_make_room(struct printbuf *out, unsigned extra)
 	 * that the user use printbuf_exit().
 	 */
 	char *buf = may_vmalloc
-		? kvrealloc(out->buf, new_size, GFP_KERNEL)
-		: krealloc(out->buf, new_size, !out->atomic ? GFP_KERNEL : GFP_NOWAIT);
+		? kvrealloc(out->buf, new_size, gfp)
+		: krealloc(out->buf, new_size, !out->atomic ? gfp : GFP_NOWAIT);
 
 	if (!buf) {
 		out->allocation_failure = true;
@@ -72,6 +72,11 @@ int bch2_printbuf_make_room(struct printbuf *out, unsigned extra)
 	out->buf	= buf;
 	out->size	= new_size;
 	return 0;
+}
+
+int bch2_printbuf_make_room(struct printbuf *out, unsigned extra)
+{
+	return bch2_printbuf_make_room_gfp(out, extra, GFP_KERNEL);
 }
 
 static void printbuf_advance_pos(struct printbuf *out, unsigned len)
