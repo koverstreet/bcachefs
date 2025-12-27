@@ -37,18 +37,14 @@
 	ZSTD_error(frameParameter_windowTooLarge)	\
 	ZSTD_error(corruption_detected)			\
 	ZSTD_error(checksum_wrong)			\
-	ZSTD_error(literals_headerWrong)		\
 	ZSTD_error(dictionary_corrupted)		\
 	ZSTD_error(dictionary_wrong)			\
 	ZSTD_error(dictionaryCreation_failed)		\
 	ZSTD_error(parameter_unsupported)		\
-	ZSTD_error(parameter_combination_unsupported)	\
 	ZSTD_error(parameter_outOfBound)		\
 	ZSTD_error(tableLog_tooLarge)			\
 	ZSTD_error(maxSymbolValue_tooLarge)		\
 	ZSTD_error(maxSymbolValue_tooSmall)		\
-	ZSTD_error(cannotProduce_uncompressedBlock)	\
-	ZSTD_error(stabilityCondition_notRespected)	\
 	ZSTD_error(stage_wrong)				\
 	ZSTD_error(init_missing)			\
 	ZSTD_error(memory_allocation)			\
@@ -56,14 +52,10 @@
 	ZSTD_error(dstSize_tooSmall)			\
 	ZSTD_error(srcSize_wrong)			\
 	ZSTD_error(dstBuffer_null)			\
-	ZSTD_error(noForwardProgress_destFull)		\
-	ZSTD_error(noForwardProgress_inputEmpty)	\
 	ZSTD_error(frameIndex_tooLarge)			\
 	ZSTD_error(seekableIO)				\
 	ZSTD_error(dstBuffer_wrong)			\
-	ZSTD_error(srcBuffer_wrong)			\
-	ZSTD_error(sequenceProducer_failed)		\
-	ZSTD_error(externalSequences_invalid)
+	ZSTD_error(srcBuffer_wrong)
 
 #define ZSTD_error(n)					\
 	x(BCH_ERR_zstd_error,	ZSTD_error_##n)
