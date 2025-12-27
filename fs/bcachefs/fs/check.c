@@ -1005,6 +1005,7 @@ static int check_inode(struct btree_trans *trans,
 				    u.bi_inum, k.k->p.snapshot);
 
 			try(bch2_btree_bit_mod_buffered(trans, BTREE_ID_deleted_inodes, k.k->p, 1));
+			ret = 0;
 		} else {
 			ret = bch2_inode_or_descendents_is_open(trans, k.k->p);
 			if (ret < 0)
