@@ -1124,7 +1124,7 @@ bool bch2_bkey_has_target(struct bch_fs *c, struct bkey_s_c k, unsigned target)
 
 	guard(rcu)();
 	bkey_for_each_ptr(ptrs, ptr)
-		if (bch2_dev_in_target(c, ptr->dev, target) &&
+		if (bch2_dev_in_target_rcu(c, ptr->dev, target) &&
 		    (ca = bch2_dev_rcu_noerror(c, ptr->dev)) &&
 		    (!ptr->cached ||
 		     !dev_ptr_stale_rcu(ca, ptr)))
@@ -1139,7 +1139,7 @@ bool bch2_bkey_in_target(struct bch_fs *c, struct bkey_s_c k, unsigned target)
 
 	guard(rcu)();
 	bkey_for_each_ptr(ptrs, ptr)
-		if (!bch2_dev_in_target(c, ptr->dev, target))
+		if (!bch2_dev_in_target_rcu(c, ptr->dev, target))
 			return false;
 
 	return true;
@@ -1238,7 +1238,7 @@ static bool want_cached_ptr(struct bch_fs *c, struct bch_inode_opts *opts,
 {
 	unsigned target = opts->promote_target ?: opts->foreground_target;
 
-	if (target && !bch2_dev_in_target(c, ptr->dev, target))
+	if (target && !bch2_dev_in_target_rcu(c, ptr->dev, target))
 		return false;
 
 	struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);

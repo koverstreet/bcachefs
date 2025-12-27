@@ -78,7 +78,13 @@ static inline bool bch2_target_accepts_data(struct bch_fs *c,
 	return !bitmap_empty(rw_devs.d, BCH_SB_MEMBERS_MAX);
 }
 
-bool bch2_dev_in_target(struct bch_fs *, unsigned, unsigned);
+bool bch2_dev_in_target_rcu(struct bch_fs *, unsigned, unsigned);
+
+static inline bool bch2_dev_in_target(struct bch_fs *c, unsigned dev, unsigned target)
+{
+	guard(rcu)();
+	return bch2_dev_in_target_rcu(c, dev, target);
+}
 
 int bch2_disk_path_find(struct bch_sb_handle *, const char *);
 
