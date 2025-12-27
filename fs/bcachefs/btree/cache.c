@@ -176,9 +176,15 @@ static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp,
 			b->data = gfp & __GFP_RECLAIM
 				? __vmalloc(btree_buf_bytes(b), gfp)
 				: kmalloc(btree_buf_bytes(b), gfp);
-		} else {
-			b->data = kvmalloc(btree_buf_bytes(b), gfp);
 		}
+		/*
+		 * mm is cursed: vmalloc can fail for no sane reason, even on 64
+		 * bit machines, so - fall back to the page allocator if that
+		 * fails
+		 */
+
+		if (!b->data)
+			b->data = kvmalloc(btree_buf_bytes(b), gfp);
 		if (!b->data)
 			return bch_err_throw(c, ENOMEM_btree_node_mem_alloc);
 	}
