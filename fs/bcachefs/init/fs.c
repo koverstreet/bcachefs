@@ -242,13 +242,24 @@ static void bch2_fs_time_stats_release(struct kobject *k)
 {
 }
 
+static struct attribute *bcachefs_files[] = {
+	NULL
+};
+
+static void bcachefs_release(struct kobject *k)
+{
+}
+
+static const struct sysfs_ops bcachefs_sysfs_ops = {};
+
+KTYPE(bcachefs);
 KTYPE(bch2_fs);
 KTYPE(bch2_fs_counters);
 KTYPE(bch2_fs_internal);
 KTYPE(bch2_fs_opts_dir);
 KTYPE(bch2_fs_time_stats);
 
-static struct kset *bcachefs_kset;
+static struct kobject bcachefs_kobj;
 
 static DECLARE_WAIT_QUEUE_HEAD(bch2_read_only_wait);
 
@@ -735,8 +746,8 @@ static int bch2_fs_online(struct bch_fs *c)
 	bch2_fs_debug_init(c);
 
 	if ((c->sb.multi_device
-	     ? kobject_add(&c->kobj, NULL, "%pU", c->sb.user_uuid.b)
-	     : kobject_add(&c->kobj, NULL, "%s", c->name)) ?:
+	     ? kobject_add(&c->kobj, &bcachefs_kobj, "%pU", c->sb.user_uuid.b)
+	     : kobject_add(&c->kobj, &bcachefs_kobj, "%s", c->name)) ?:
 	    kobject_add(&c->internal, &c->kobj, "internal") ?:
 	    kobject_add(&c->opts_dir, &c->kobj, "options") ?:
 #ifndef CONFIG_BCACHEFS_NO_LATENCY_ACCT
@@ -1035,7 +1046,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 
 	closure_init(&c->cl, NULL);
 
-	c->kobj.kset = bcachefs_kset;
 	kobject_init(&c->kobj, &bch2_fs_ktype);
 	kobject_init(&c->internal, &bch2_fs_internal_ktype);
 	kobject_init(&c->opts_dir, &bch2_fs_opts_dir_ktype);
@@ -1516,15 +1526,16 @@ static void bcachefs_exit(void)
 	bch2_vfs_exit();
 	bch2_chardev_exit();
 	bch2_btree_key_cache_exit();
-	if (bcachefs_kset)
-		kset_unregister(bcachefs_kset);
+	kobject_put(&bcachefs_kobj);
 }
 
 static int __init bcachefs_init(void)
 {
 	bch2_bkey_pack_test();
 
-	if (!(bcachefs_kset = kset_create_and_add("bcachefs", NULL, fs_kobj)) ||
+	kobject_init(&bcachefs_kobj, &bcachefs_ktype);
+
+	if (kobject_add(&bcachefs_kobj, fs_kobj, "bcachefs") ||
 	    bch2_btree_key_cache_init() ||
 	    bch2_chardev_init() ||
 	    bch2_vfs_init() ||
