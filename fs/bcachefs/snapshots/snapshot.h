@@ -280,6 +280,7 @@ int bch2_snapshot_node_create(struct btree_trans *, u32,
 			      u32 *, u32 *, unsigned);
 
 int bch2_check_snapshot_trees(struct bch_fs *);
+int bch2_check_snapshots_trans(struct btree_trans *);
 int bch2_check_snapshots(struct bch_fs *);
 int bch2_reconstruct_snapshots(struct bch_fs *);
 

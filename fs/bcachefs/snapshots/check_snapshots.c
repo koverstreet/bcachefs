@@ -413,6 +413,20 @@ static int check_snapshot(struct btree_trans *trans,
 	return 0;
 }
 
+int bch2_check_snapshots_trans(struct btree_trans *trans)
+{
+	/*
+	 * We iterate backwards as checking/fixing the depth field requires that
+	 * the parent's depth already be correct:
+	 */
+	return for_each_btree_key_reverse_commit(trans, iter,
+				BTREE_ID_snapshots, POS_MAX,
+				BTREE_ITER_prefetch, k,
+				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
+			check_snapshot(trans, &iter, k));
+}
+
+
 int bch2_check_snapshots(struct bch_fs *c)
 {
 	/*
@@ -420,11 +434,7 @@ int bch2_check_snapshots(struct bch_fs *c)
 	 * the parent's depth already be correct:
 	 */
 	CLASS(btree_trans, trans)(c);
-	return for_each_btree_key_reverse_commit(trans, iter,
-				BTREE_ID_snapshots, POS_MAX,
-				BTREE_ITER_prefetch, k,
-				NULL, NULL, BCH_TRANS_COMMIT_no_enospc,
-			check_snapshot(trans, &iter, k));
+	return bch2_check_snapshots_trans(trans);
 }
 
 static int check_snapshot_exists(struct btree_trans *trans, u32 id)

@@ -778,6 +778,8 @@ int bch2_delete_dead_interior_snapshots(struct bch_fs *c)
 					BCH_RECOVERY_PASS_check_snapshots, 0));
 		}
 
+		try(bch2_check_snapshots_trans(trans));
+
 		/*
 		 * Fixing children of deleted snapshots can't be done completely
 		 * atomically, if we crash between here and when we delete the interior
