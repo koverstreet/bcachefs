@@ -57,6 +57,7 @@
 #include <linux/blkdev.h>
 #include <linux/sort.h>
 #include <linux/sched/clock.h>
+#include <linux/sysfs.h>
 
 
 #define SYSFS_OPS(type)							\
