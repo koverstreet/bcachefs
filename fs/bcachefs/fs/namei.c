@@ -575,7 +575,6 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 			break;
 		}
 
-		inum = inode.bi_dir;
 		if (inode.bi_parent_subvol) {
 			subvol = inode.bi_parent_subvol;
 			ret = bch2_subvolume_get_snapshot(trans, inode.bi_parent_subvol, &snapshot);
@@ -594,8 +593,9 @@ static int bch2_inum_to_path_reversed(struct btree_trans *trans,
 		struct qstr dirent_name = bch2_dirent_get_name(d);
 
 		prt_bytes_reversed(path, dirent_name.name, dirent_name.len);
-
 		prt_char(path, '/');
+
+		inum = inode.bi_dir;
 	}
 
 	if (ret && !bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
