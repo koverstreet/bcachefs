@@ -56,6 +56,8 @@ static inline struct bio_vec *bio_inline_vecs(struct bio *bio)
 }
 #endif
 
+DEFINE_FREE(bio_put, struct bio *, if (_T) bio_put(_T))
+
 /* Userspace doesn't align allocations as nicely as the kernel allocators: */
 static inline size_t buf_pages(void *p, size_t len)
 {

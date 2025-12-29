@@ -441,7 +441,11 @@ static int drop_dev_and_update(struct btree_trans *trans, enum btree_id btree,
 	return bch2_btree_insert_trans(trans, btree, n, 0);
 }
 
-static int check_extent_checksum(struct btree_trans *trans,
+/*
+ * returns 0 if we didn't find a bad checksum, and did no work
+ * returns 1 if we dropped bad replica
+ */
+static int kill_replica_if_checksum_bad(struct btree_trans *trans,
 				 enum btree_id btree, struct bkey_s_c extent,
 				 enum btree_id o_btree, struct bkey_s_c extent2, unsigned dev)
 {
@@ -449,10 +453,6 @@ static int check_extent_checksum(struct btree_trans *trans,
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(extent);
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
-	CLASS(printbuf, buf)();
-	void *data_buf = NULL;
-	struct bio *bio = NULL;
-	size_t bytes;
 	int ret = 0;
 
 	if (bkey_is_btree_ptr(extent.k))
@@ -466,27 +466,35 @@ found:
 	if (!p.crc.csum_type)
 		return false;
 
-	bytes = p.crc.compressed_size << 9;
-
 	struct bch_dev *ca = bch2_dev_get_ioref(c, dev, READ,
 				BCH_DEV_READ_REF_check_extent_checksums);
 	if (!ca)
 		return false;
 
-	data_buf = kvmalloc(bytes, GFP_KERNEL);
+	size_t bytes = p.crc.compressed_size << 9;
+	void *data_buf __free(kvfree) = kvmalloc(bytes, GFP_KERNEL);
 	if (!data_buf) {
-		ret = -ENOMEM;
-		goto err;
+		enumerated_ref_put(&ca->io_ref[READ],
+				   BCH_DEV_READ_REF_check_extent_checksums);
+		return -ENOMEM;
 	}
 
-	bio = bio_alloc(ca->disk_sb.bdev, buf_pages(data_buf, bytes), REQ_OP_READ, GFP_KERNEL);
+	struct bio *bio __free(bio_put) =
+		bio_alloc(ca->disk_sb.bdev, buf_pages(data_buf, bytes), REQ_OP_READ, GFP_KERNEL);
+
 	bio->bi_iter.bi_sector = p.ptr.offset;
 	bch2_bio_map(bio, data_buf, bytes);
 	ret = submit_bio_wait(bio);
 	if (ret)
 		goto err;
 
-	prt_printf(&buf, "extents pointing to same space, but first extent checksum bad:\n");
+	struct nonce nonce = extent_nonce(extent.k->bversion, p.crc);
+	struct bch_csum csum = bch2_checksum(c, p.crc.csum_type, nonce, data_buf, bytes);
+	if (!bch2_crc_cmp(csum, p.crc.csum))
+		return false;
+
+	CLASS(printbuf, buf)();
+	prt_printf(&buf, "extents pointing to same space, but first extent checksum bad - dropping:\n");
 	bch2_btree_id_to_text(&buf, btree);
 	prt_str(&buf, " ");
 	bch2_bkey_val_to_text(&buf, c, extent);
@@ -495,17 +503,10 @@ found:
 	prt_str(&buf, " ");
 	bch2_bkey_val_to_text(&buf, c, extent2);
 
-	struct nonce nonce = extent_nonce(extent.k->bversion, p.crc);
-	struct bch_csum csum = bch2_checksum(c, p.crc.csum_type, nonce, data_buf, bytes);
-	if (fsck_err_on(bch2_crc_cmp(csum, p.crc.csum),
-			trans, dup_backpointer_to_bad_csum_extent,
-			"%s", buf.buf))
+	if (fsck_err(trans, dup_backpointer_to_bad_csum_extent, "%s", buf.buf))
 		ret = drop_dev_and_update(trans, btree, extent, dev) ?: 1;
 fsck_err:
 err:
-	if (bio)
-		bio_put(bio);
-	kvfree(data_buf);
 	enumerated_ref_put(&ca->io_ref[READ],
 			   BCH_DEV_READ_REF_check_extent_checksums);
 	return ret;
@@ -591,7 +592,7 @@ static int check_bp_dup(struct btree_trans *trans,
 			return bp_missing(trans, extent, bp, other_bp.s_c);
 		}
 	} else {
-		ret = check_extent_checksum(trans,
+		ret = kill_replica_if_checksum_bad(trans,
 					    other_bp.v->btree_id, other_extent,
 					    bp->v.btree_id, extent,
 					    bp->k.p.inode);
@@ -600,7 +601,7 @@ static int check_bp_dup(struct btree_trans *trans,
 		if (ret)
 			return bp_missing(trans, extent, bp, other_bp.s_c);
 
-		ret = check_extent_checksum(trans, bp->v.btree_id, extent,
+		ret = kill_replica_if_checksum_bad(trans, bp->v.btree_id, extent,
 					    other_bp.v->btree_id, other_extent, bp->k.p.inode);
 		if (ret < 0)
 			return ret;
