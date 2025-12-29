@@ -187,6 +187,9 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	struct extent_ptr_decoded p;
 	struct bch_extent_ptr *ptr;
 
+	if (u->opts.ptrs_kill_ec)
+		bch2_bkey_drop_ec_mask(c, insert, u->opts.ptrs_kill_ec);
+
 	unsigned rewrites_found = 0, ptr_bit = 1;
 	bkey_for_each_ptr_decode(old.k, bch2_bkey_ptrs_c(old), p, entry_c) {
 		if ((ptr_bit & u->opts.ptrs_rewrite) &&
