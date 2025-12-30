@@ -692,8 +692,9 @@ int bch2_btree_write_buffer_maybe_flush(struct btree_trans *trans,
 		bch2_bkey_buf_init(&tmp);
 		bch2_bkey_buf_reassemble(&tmp, referring_k);
 
-		if (bkey_is_btree_ptr(referring_k.k)) {
-			bch2_trans_unlock(trans);
+		if (bkey_is_btree_ptr(referring_k.k) &&
+		    bch2_btree_interior_updates_pending(c)) {
+			bch2_trans_unlock_long(trans);
 			bch2_btree_interior_updates_flush(c);
 		}
 

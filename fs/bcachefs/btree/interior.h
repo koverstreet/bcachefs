@@ -350,6 +350,12 @@ static inline bool bch2_btree_node_insert_fits(struct btree *b, unsigned u64s)
 
 void bch2_btree_updates_to_text(struct printbuf *, struct bch_fs *);
 
+static inline bool bch2_btree_interior_updates_pending(struct bch_fs *c)
+{
+	guard(mutex)(&c->btree.interior_updates.lock);
+	return !list_empty(&c->btree.interior_updates.list);
+}
+
 bool bch2_btree_interior_updates_flush(struct bch_fs *);
 
 void bch2_journal_entry_to_btree_root(struct bch_fs *, struct jset_entry *);

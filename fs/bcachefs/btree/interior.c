@@ -2740,12 +2740,6 @@ void bch2_btree_updates_to_text(struct printbuf *out, struct bch_fs *c)
 		bch2_btree_update_to_text(out, as);
 }
 
-static bool bch2_btree_interior_updates_pending(struct bch_fs *c)
-{
-	guard(mutex)(&c->btree.interior_updates.lock);
-	return !list_empty(&c->btree.interior_updates.list);
-}
-
 bool bch2_btree_interior_updates_flush(struct bch_fs *c)
 {
 	bool ret = bch2_btree_interior_updates_pending(c);
