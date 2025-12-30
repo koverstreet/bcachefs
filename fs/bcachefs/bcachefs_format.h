@@ -1019,6 +1019,9 @@ LE64_BITMASK(BCH_SB_DEGRADED_ACTION,	struct bch_sb, flags[6], 20, 22);
 LE64_BITMASK(BCH_SB_CASEFOLD,		struct bch_sb, flags[6], 22, 23);
 LE64_BITMASK(BCH_SB_REBALANCE_AC_ONLY,	struct bch_sb, flags[6], 23, 24);
 LE64_BITMASK(BCH_SB_WRITEBACK_TIMEOUT,	struct bch_sb, flags[6], 24, 40);
+LE64_BITMASK(BCH_SB_EXTENT_BP_SHIFT,	struct bch_sb, flags[6], 40, 48);
+
+#define BCH_SB_EXTENT_BP_SHIFT_DEFAULT	10
 
 static inline __u64 BCH_SB_COMPRESSION_TYPE(const struct bch_sb *sb)
 {

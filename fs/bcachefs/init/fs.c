@@ -998,6 +998,18 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 		if (c->sb.version_upgrade_complete < bcachefs_metadata_version_autofix_errors)
 			SET_BCH_SB_ERROR_ACTION(c->disk_sb.sb, BCH_ON_ERROR_fix_safe);
 
+		unsigned extent_bp_shift_needed = ilog2(c->opts.encoded_extent_max >> 9) + 1;
+		if (extent_bp_shift_needed > c->sb.extent_bp_shift) {
+			prt_printf(out, "extent_bp_shift too small: must repair backpointers\n");
+			SET_BCH_SB_EXTENT_BP_SHIFT(c->disk_sb.sb, extent_bp_shift_needed);
+			ext->recovery_passes_required[0] |=
+				cpu_to_le64(bch2_recovery_passes_to_stable(BIT_ULL(BCH_RECOVERY_PASS_check_extents_to_backpointers)));
+			ext->recovery_passes_required[0] |=
+				cpu_to_le64(bch2_recovery_passes_to_stable(BIT_ULL(BCH_RECOVERY_PASS_check_backpointers_to_extents)));
+			__set_bit_le64(BCH_FSCK_ERR_backpointer_to_missing_ptr, ext->errors_silent);
+			__set_bit_le64(BCH_FSCK_ERR_ptr_to_missing_backpointer, ext->errors_silent);
+		}
+
 		/* Don't write the superblock, defer that until we go rw */
 	}
 
@@ -1092,8 +1104,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	c->journal.flush_write_time	= &c->times[BCH_TIME_journal_flush_write];
 	c->journal.noflush_write_time	= &c->times[BCH_TIME_journal_noflush_write];
 	c->journal.flush_seq_time	= &c->times[BCH_TIME_journal_flush_seq];
-
-	c->extent_bp_shift = MAX_EXTENT_COMPRESS_RATIO_SHIFT_DEFAULT;
 
 	try(bch2_fs_capacity_init(c));
 

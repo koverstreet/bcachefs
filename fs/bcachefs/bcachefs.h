@@ -789,10 +789,6 @@ struct bch_fs {
 	struct bch_devs_mask	devs_removed;
 	struct bch_devs_mask	devs_rotational;
 
-	u8			extent_type_u64s[31];
-	u8			extent_types_known;
-	u16			extent_bp_shift;
-
 	struct bch_opts		opts;
 	atomic_t		opt_change_cookie;
 

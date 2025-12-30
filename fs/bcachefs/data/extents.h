@@ -49,8 +49,8 @@ static inline unsigned extent_entry_type(const union bch_extent_entry *e)
 static inline size_t extent_entry_u64s(const struct bch_fs *c, const union bch_extent_entry *entry)
 {
 	unsigned type = extent_entry_type(entry);
-	BUG_ON(type >= c->extent_types_known);
-	return c->extent_type_u64s[type];
+	BUG_ON(type >= c->sb.extent_types_known);
+	return c->sb.extent_type_u64s[type];
 }
 
 static inline size_t extent_entry_bytes(const struct bch_fs *c, const union bch_extent_entry *entry)
@@ -62,7 +62,7 @@ static inline size_t extent_entry_bytes(const struct bch_fs *c, const union bch_
 	((typeof(_entry)) ((void *) (_entry) + extent_entry_bytes(_c, _entry)))
 
 #define extent_entry_next_safe(_c, _entry, _end)			\
-	(likely(extent_entry_type(_entry) < (_c)->extent_types_known)	\
+	(likely(extent_entry_type(_entry) < (_c)->sb.extent_types_known)\
 	 ? extent_entry_next(_c, _entry)				\
 	 : _end)
 

@@ -63,13 +63,13 @@ void bch2_backpointer_to_text(struct printbuf *out, struct bch_fs *c, struct bke
 	if (ca)
 		prt_printf(out, "bucket=%llu:%llu:%u ", bucket.inode, bucket.offset, bucket_offset);
 	else
-		prt_printf(out, "sector=%llu:%llu ", bp.k->p.inode, bp.k->p.offset >> c->extent_bp_shift);
+		prt_printf(out, "sector=%llu:%llu ", bp.k->p.inode, bp.k->p.offset >> c->sb.extent_bp_shift);
 
 	bch2_btree_id_level_to_text(out, bp.v->btree_id, bp.v->level);
 	prt_str(out, " data_type=");
 	bch2_prt_data_type(out, bp.v->data_type);
 	prt_printf(out, " suboffset=%u len=%u gen=%u pos=",
-		   (u32) bp.k->p.offset & ~(~0U << c->extent_bp_shift),
+		   (u32) bp.k->p.offset & ~(~0U << c->sb.extent_bp_shift),
 		   bp.v->bucket_len,
 		   bp.v->bucket_gen);
 	bch2_bpos_to_text(out, bp.v->pos);

@@ -33,15 +33,13 @@ void bch2_backpointer_swab(const struct bch_fs *, struct bkey_s);
 	.min_val_size	= 32,				\
 })
 
-#define MAX_EXTENT_COMPRESS_RATIO_SHIFT_DEFAULT		10
-
 /*
  * Convert from pos in backpointer btree to pos of corresponding bucket in alloc
  * btree:
  */
 static inline struct bpos bp_pos_to_bucket(const struct bch_dev *ca, struct bpos bp_pos)
 {
-	u64 bucket_sector = bp_pos.offset >> ca->fs->extent_bp_shift;
+	u64 bucket_sector = bp_pos.offset >> ca->fs->sb.extent_bp_shift;
 
 	return POS(bp_pos.inode, sector_to_bucket(ca, bucket_sector));
 }
@@ -49,7 +47,7 @@ static inline struct bpos bp_pos_to_bucket(const struct bch_dev *ca, struct bpos
 static inline struct bpos bp_pos_to_bucket_and_offset(const struct bch_dev *ca, struct bpos bp_pos,
 						      u32 *bucket_offset)
 {
-	u64 bucket_sector = bp_pos.offset >> ca->fs->extent_bp_shift;
+	u64 bucket_sector = bp_pos.offset >> ca->fs->sb.extent_bp_shift;
 
 	return POS(bp_pos.inode, sector_to_bucket_and_offset(ca, bucket_sector, bucket_offset));
 }
@@ -69,7 +67,7 @@ static inline struct bpos bucket_pos_to_bp_noerror(const struct bch_dev *ca,
 {
 	return POS(bucket.inode,
 		   (bucket_to_sector(ca, bucket.offset) <<
-		    ca->fs->extent_bp_shift) + bucket_offset);
+		    ca->fs->sb.extent_bp_shift) + bucket_offset);
 }
 
 /*
@@ -157,7 +155,7 @@ static inline struct bpos bch2_extent_ptr_to_bp_pos(const struct bch_fs *c, stru
 {
 	if (k.k->type != KEY_TYPE_stripe)
 		return POS(p.ptr.dev,
-			   ((u64) p.ptr.offset << c->extent_bp_shift) + p.crc.offset);
+			   ((u64) p.ptr.offset << c->sb.extent_bp_shift) + p.crc.offset);
 	else {
 		/*
 		 * Put stripe backpointers where they won't collide with the
@@ -166,7 +164,7 @@ static inline struct bpos bch2_extent_ptr_to_bp_pos(const struct bch_fs *c, stru
 		struct bkey_s_c_stripe s = bkey_s_c_to_stripe(k);
 		return POS(p.ptr.dev,
 			   ((u64) (p.ptr.offset + le16_to_cpu(s.v->sectors)) <<
-			    c->extent_bp_shift) - 1);
+			    c->sb.extent_bp_shift) - 1);
 	}
 }
 

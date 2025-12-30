@@ -1608,10 +1608,10 @@ int bch2_bkey_ptrs_validate(struct bch_fs *c, struct bkey_s_c k,
 	bkey_extent_entry_for_each(ptrs, entry) {
 		unsigned type = extent_entry_type(entry);
 
-		bkey_fsck_err_on(type >= c->extent_types_known,
+		bkey_fsck_err_on(type >= c->sb.extent_types_known,
 				 c, extent_ptrs_invalid_entry,
 				 "invalid extent entry type (got %u, max %u)",
-				 type, c->extent_types_known);
+				 type, c->sb.extent_types_known);
 
 		bkey_fsck_err_on(bkey_is_btree_ptr(k.k) &&
 				 type < BCH_EXTENT_ENTRY_MAX &&

@@ -36,14 +36,14 @@ void bch2_sb_extent_type_u64s_to_cpu(struct bch_fs *c)
 	struct bch_sb_field_extent_type_u64s *e = bch2_sb_field_get(c->disk_sb.sb, extent_type_u64s);
 
 	for (unsigned i = 0; i < bch2_sb_extent_type_u64s_nr_entries(e) && e->d[i]; i++) {
-		c->extent_type_u64s[i] = e->d[i];
-		c->extent_types_known = i + 1;
+		c->sb.extent_type_u64s[i] = e->d[i];
+		c->sb.extent_types_known = i + 1;
 	}
 
 	for (unsigned i = 0; i < BCH_EXTENT_ENTRY_MAX; i++)
-		c->extent_type_u64s[i] = extent_entry_u64s_known(i);;
+		c->sb.extent_type_u64s[i] = extent_entry_u64s_known(i);;
 
-	c->extent_types_known = max(c->extent_types_known, BCH_EXTENT_ENTRY_MAX);
+	c->sb.extent_types_known = max(c->sb.extent_types_known, BCH_EXTENT_ENTRY_MAX);
 }
 
 int bch2_sb_extent_type_u64s_from_cpu(struct bch_fs *c)
