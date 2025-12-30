@@ -465,7 +465,30 @@ void bch2_disk_path_to_text(struct printbuf *out, struct bch_fs *c, unsigned v)
 {
 	guard(printbuf_atomic)(out);
 	guard(rcu)();
-	__bch2_disk_path_to_text(out, rcu_dereference(c->disk_groups), v);
+	struct bch_disk_groups_cpu *g = rcu_dereference(c->disk_groups);
+
+	__bch2_disk_path_to_text(out, g, v);
+
+	prt_str(out, " [");
+
+	const struct bch_devs_mask *devs =
+		g && v < g->nr && !g->entries[v].deleted
+		? &g->entries[v].devs
+		: NULL;
+
+	bool have_devs = false;
+	if (devs)
+		for_each_member_device_rcu(c, ca, devs) {
+			if (have_devs)
+				prt_char(out, ' ');
+			have_devs = true;
+			prt_str(out, ca->name);
+		}
+
+	if (!have_devs)
+		prt_str(out, "no devices");
+
+	prt_char(out, ']');
 }
 
 void bch2_disk_path_to_text_sb(struct printbuf *out, struct bch_sb *sb, unsigned v)
