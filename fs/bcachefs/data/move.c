@@ -539,7 +539,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
 		if (ret)
-			return ret;
+			break;
 
 		if (!k.k || bkey_gt(k.k->p, bp_end))
 			break;
@@ -573,7 +573,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
 		if (ret)
-			return ret;
+			break;
 		if (!k.k) {
 			bch2_btree_iter_advance(&bp_iter);
 			continue;
@@ -597,6 +597,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		bch2_check_bucket_backpointer_mismatch(trans, ca, check_mismatch_done++,
 						       copygc, &last_flushed);
 
+	bch_err_fn(c, ret);
 	return ret;
 }
 
