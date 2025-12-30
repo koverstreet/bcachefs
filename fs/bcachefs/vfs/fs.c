@@ -2333,6 +2333,8 @@ static int bch2_fs_reconfigure(struct fs_context *fc)
 		guard(rwsem_write)(&c->state_lock);
 
 		if (opts->opts.read_only) {
+			try(sync_filesystem(sb));
+
 			bch2_fs_read_only(c);
 
 			sb->s_flags |= SB_RDONLY;
