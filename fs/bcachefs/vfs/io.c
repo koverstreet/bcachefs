@@ -603,6 +603,9 @@ static noinline long bchfs_fcollapse_finsert(struct bch_inode_info *inode,
 		return -EINVAL;
 
 	if (insert) {
+		if (MAX_LFS_FILESIZE - inode->v.i_size < len)
+			return -EFBIG;
+
 		if (offset >= inode->v.i_size)
 			return -EINVAL;
 	} else {
