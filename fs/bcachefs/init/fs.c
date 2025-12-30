@@ -1093,6 +1093,8 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	c->journal.noflush_write_time	= &c->times[BCH_TIME_journal_noflush_write];
 	c->journal.flush_seq_time	= &c->times[BCH_TIME_journal_flush_seq];
 
+	c->extent_bp_shift = MAX_EXTENT_COMPRESS_RATIO_SHIFT_DEFAULT;
+
 	try(bch2_fs_capacity_init(c));
 
 	scoped_guard(mutex, &c->sb_lock)

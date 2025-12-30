@@ -791,6 +791,7 @@ struct bch_fs {
 
 	u8			extent_type_u64s[31];
 	u8			extent_types_known;
+	u16			extent_bp_shift;
 
 	struct bch_opts		opts;
 	atomic_t		opt_change_cookie;

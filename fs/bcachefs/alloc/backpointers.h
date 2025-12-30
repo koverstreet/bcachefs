@@ -33,7 +33,7 @@ void bch2_backpointer_swab(const struct bch_fs *, struct bkey_s);
 	.min_val_size	= 32,				\
 })
 
-#define MAX_EXTENT_COMPRESS_RATIO_SHIFT		10
+#define MAX_EXTENT_COMPRESS_RATIO_SHIFT_DEFAULT		10
 
 /*
  * Convert from pos in backpointer btree to pos of corresponding bucket in alloc
@@ -41,7 +41,7 @@ void bch2_backpointer_swab(const struct bch_fs *, struct bkey_s);
  */
 static inline struct bpos bp_pos_to_bucket(const struct bch_dev *ca, struct bpos bp_pos)
 {
-	u64 bucket_sector = bp_pos.offset >> MAX_EXTENT_COMPRESS_RATIO_SHIFT;
+	u64 bucket_sector = bp_pos.offset >> ca->fs->extent_bp_shift;
 
 	return POS(bp_pos.inode, sector_to_bucket(ca, bucket_sector));
 }
@@ -49,7 +49,7 @@ static inline struct bpos bp_pos_to_bucket(const struct bch_dev *ca, struct bpos
 static inline struct bpos bp_pos_to_bucket_and_offset(const struct bch_dev *ca, struct bpos bp_pos,
 						      u32 *bucket_offset)
 {
-	u64 bucket_sector = bp_pos.offset >> MAX_EXTENT_COMPRESS_RATIO_SHIFT;
+	u64 bucket_sector = bp_pos.offset >> ca->fs->extent_bp_shift;
 
 	return POS(bp_pos.inode, sector_to_bucket_and_offset(ca, bucket_sector, bucket_offset));
 }
@@ -69,7 +69,7 @@ static inline struct bpos bucket_pos_to_bp_noerror(const struct bch_dev *ca,
 {
 	return POS(bucket.inode,
 		   (bucket_to_sector(ca, bucket.offset) <<
-		    MAX_EXTENT_COMPRESS_RATIO_SHIFT) + bucket_offset);
+		    ca->fs->extent_bp_shift) + bucket_offset);
 }
 
 /*
@@ -152,11 +152,12 @@ static inline enum bch_data_type bch2_bkey_ptr_data_type(struct bkey_s_c k,
 	}
 }
 
-static inline struct bpos bch2_extent_ptr_to_bp_pos(struct bkey_s_c k, struct extent_ptr_decoded p)
+static inline struct bpos bch2_extent_ptr_to_bp_pos(const struct bch_fs *c, struct bkey_s_c k,
+						    struct extent_ptr_decoded p)
 {
 	if (k.k->type != KEY_TYPE_stripe)
 		return POS(p.ptr.dev,
-			   ((u64) p.ptr.offset << MAX_EXTENT_COMPRESS_RATIO_SHIFT) + p.crc.offset);
+			   ((u64) p.ptr.offset << c->extent_bp_shift) + p.crc.offset);
 	else {
 		/*
 		 * Put stripe backpointers where they won't collide with the
@@ -165,7 +166,7 @@ static inline struct bpos bch2_extent_ptr_to_bp_pos(struct bkey_s_c k, struct ex
 		struct bkey_s_c_stripe s = bkey_s_c_to_stripe(k);
 		return POS(p.ptr.dev,
 			   ((u64) (p.ptr.offset + le16_to_cpu(s.v->sectors)) <<
-			    MAX_EXTENT_COMPRESS_RATIO_SHIFT) - 1);
+			    c->extent_bp_shift) - 1);
 	}
 }
 
@@ -176,7 +177,7 @@ static inline void bch2_extent_ptr_to_bp(struct bch_fs *c,
 			   struct bkey_i_backpointer *bp)
 {
 	bkey_backpointer_init(&bp->k_i);
-	bp->k.p = bch2_extent_ptr_to_bp_pos(k, p);
+	bp->k.p = bch2_extent_ptr_to_bp_pos(c, k, p);
 	bp->v	= (struct bch_backpointer) {
 		.btree_id	= btree_id,
 		.level		= level,

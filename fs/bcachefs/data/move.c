@@ -559,7 +559,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		struct bkey_s_c_backpointer bp = bkey_s_c_to_backpointer(k);
 
 		if (ctxt->stats)
-			ctxt->stats->offset = bp.k->p.offset >> MAX_EXTENT_COMPRESS_RATIO_SHIFT;
+			ctxt->stats->offset = bp.k->p.offset >> c->extent_bp_shift;
 
 		if (!(data_types & BIT(bp.v->data_type)) ||
 		    (!bp.v->level && bp.v->btree_id == BTREE_ID_stripes)) {
