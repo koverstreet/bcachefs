@@ -569,8 +569,19 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 {
 	int ret = 0;
 
-	if (ca->mi.state == new_state)
+	bool do_reconcile_scan =
+		new_state == BCH_MEMBER_STATE_rw ||
+		new_state == BCH_MEMBER_STATE_evacuating;
+
+	struct reconcile_scan s = new_state == BCH_MEMBER_STATE_rw
+		? (struct reconcile_scan) { .type = RECONCILE_SCAN_pending }
+		: (struct reconcile_scan) { .type = RECONCILE_SCAN_device, .dev = ca->dev_idx };
+
+	if (ca->mi.state == new_state) {
+		if (new_state == BCH_MEMBER_STATE_evacuating)
+			return bch2_set_reconcile_needs_scan(c, s, true);
 		return 0;
+	}
 
 	if (!bch2_dev_state_allowed(c, ca, new_state, flags, err))
 		return bch_err_throw(c, device_state_not_allowed);
@@ -579,14 +590,6 @@ int __bch2_dev_set_state(struct bch_fs *c, struct bch_dev *ca,
 		__bch2_dev_read_only(c, ca);
 
 	bch_notice_dev(ca, "%s", bch2_member_states[new_state]);
-
-	bool do_reconcile_scan =
-		new_state == BCH_MEMBER_STATE_rw ||
-		new_state == BCH_MEMBER_STATE_evacuating;
-
-	struct reconcile_scan s = new_state == BCH_MEMBER_STATE_rw
-		? (struct reconcile_scan) { .type = RECONCILE_SCAN_pending }
-		: (struct reconcile_scan) { .type = RECONCILE_SCAN_device, .dev = ca->dev_idx };
 
 	if (do_reconcile_scan)
 		try(bch2_set_reconcile_needs_scan(c, s, false));
