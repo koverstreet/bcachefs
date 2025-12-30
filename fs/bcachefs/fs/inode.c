@@ -572,7 +572,11 @@ static void __bch2_inode_unpacked_to_text(struct printbuf *out,
 					  struct bch_inode_unpacked *inode)
 {
 	prt_newline(out);
-	prt_printf(out, "mode=%o\n", inode->bi_mode);
+
+	unsigned type = mode_to_type(inode->bi_mode);
+
+	prt_printf(out, "mode=%o (%s)\n", inode->bi_mode,
+		   type < BCH_DT_MAX ? bch2_d_types[type] : "unknown");
 
 	prt_str(out, "flags=");
 	prt_bitflags(out, bch2_inode_flag_strs, inode->bi_flags & ((1U << 20) - 1));
