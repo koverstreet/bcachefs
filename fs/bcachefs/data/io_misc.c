@@ -426,8 +426,15 @@ case LOGGED_OP_FINSERT_shift_extents:
 		if ((ret = PTR_ERR_OR_ZERO(copy)))
 			goto btree_err;
 
-		if (insert &&
-		    bkey_lt(bkey_start_pos(k.k), src_pos)) {
+		if (snapshot != k.k->p.snapshot) {
+			ret = bch2_disk_reservation_add(c, &disk_res,
+					copy->k.size *
+					bch2_bkey_nr_ptrs_allocated(c, bkey_i_to_s_c(copy)),
+					0);
+			if (ret)
+				goto btree_err;
+		} else if (insert &&
+			   bkey_lt(bkey_start_pos(k.k), src_pos)) {
 			bch2_cut_front(c, src_pos, copy);
 
 			/* Splitting compressed extent? */
