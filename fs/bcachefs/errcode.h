@@ -266,6 +266,7 @@
 	x(BCH_ERR_data_update_done,	data_update_done_no_writes_needed)	\
 	x(0,				data_update_fail)			\
 	x(BCH_ERR_data_update_fail,	data_update_fail_would_block)		\
+	x(BCH_ERR_data_update_fail,	data_update_fail_in_flight)		\
 	x(BCH_ERR_data_update_fail,	data_update_fail_no_snapshot)		\
 	x(BCH_ERR_data_update_fail,	data_update_fail_no_rw_devs)		\
 	x(EINVAL,			device_state_not_allowed)		\
@@ -437,7 +438,6 @@
 	x(BCH_ERR_nopromote,		nopromote_unwritten)			\
 	x(BCH_ERR_nopromote,		nopromote_congested)			\
 	x(BCH_ERR_nopromote,		nopromote_ratelimited)			\
-	x(BCH_ERR_nopromote,		nopromote_in_flight)			\
 	x(BCH_ERR_nopromote,		nopromote_no_writes)			\
 	x(BCH_ERR_nopromote,		nopromote_enomem)			\
 	x(0,				invalid_snapshot_node)			\

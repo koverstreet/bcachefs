@@ -46,8 +46,12 @@ struct data_update {
 	struct bkey_buf		k;
 	struct data_update_opts	opts;
 
+	bool			on_hashtable;
 	bool			read_done;
 	u8			ptrs_held;
+
+	struct rhlist_head	hash;
+	struct bpos		pos;
 
 	/* associated with @ctxt */
 	struct list_head	read_list;
@@ -68,9 +72,6 @@ struct promote_op {
 	unsigned		list_idx;
 #endif
 	int			cpu; /* for promote_limit */
-
-	struct rhash_head	hash;
-	struct bpos		pos;
 
 	struct work_struct	work;
 	struct data_update	write;
@@ -97,5 +98,8 @@ int bch2_data_update_init(struct btree_trans *, struct btree_iter *,
 			  struct write_point_specifier,
 			  struct bch_inode_opts *, struct data_update_opts,
 			  enum btree_id, struct bkey_s_c);
+
+void bch2_fs_data_update_exit(struct bch_fs *);
+int bch2_fs_data_update_init(struct bch_fs *);
 
 #endif /* _BCACHEFS_DATA_UPDATE_H */

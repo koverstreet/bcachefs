@@ -39,6 +39,13 @@ static const char * const bch2_data_update_type_strs[] = {
 	NULL
 };
 
+static const struct rhashtable_params bch_update_params = {
+	.head_offset		= offsetof(struct data_update, hash),
+	.key_offset		= offsetof(struct data_update, pos),
+	.key_len		= sizeof(struct bpos),
+	.automatic_shrinking	= true,
+};
+
 static void bkey_put_dev_refs(struct bch_fs *c, struct bkey_s_c k, unsigned ptrs_held)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
@@ -442,6 +449,12 @@ void bch2_data_update_exit(struct data_update *update, int ret)
 
 	struct bch_fs *c = update->op.c;
 	struct bkey_s_c k = bkey_i_to_s_c(update->k.k);
+
+	if (update->on_hashtable) {
+		int ret2 = rhltable_remove(&c->update_table, &update->hash, bch_update_params);
+		BUG_ON(ret2);
+		update->on_hashtable = false;
+	}
 
 	if (update->b)
 		atomic_dec(&update->b->count);
@@ -915,6 +928,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	int ret = 0;
 
+	m->pos = k.k->p;
 	bch2_bkey_buf_init(&m->k);
 	bch2_bkey_buf_reassemble(&m->k, k);
 	k = bkey_i_to_s_c(m->k.k);
@@ -1048,7 +1062,16 @@ int bch2_data_update_init(struct btree_trans *trans,
 			ret = __bch2_can_do_write(c, io_opts, &m->opts, &m->op.devs_have, k, NULL);
 			if (ret)
 				goto out;
+
+			if (rhltable_lookup(&c->update_table, &m->pos, bch_update_params)) {
+				event_inc(c, data_update_in_flight);
+				ret = bch_err_throw(c, data_update_fail_in_flight);
+				goto out;
+			}
 		}
+
+		if (!rhltable_insert_key(&c->update_table, &m->pos, &m->hash, bch_update_params))
+			m->on_hashtable = true;
 	} else {
 		if (unwritten) {
 			ret = bch_err_throw(c, data_update_done_unwritten);
@@ -1112,10 +1135,30 @@ out:
 	if (!bch2_err_matches(ret, BCH_ERR_transaction_restart))
 		data_update_trace(m, ret);
 
+	if (m->on_hashtable) {
+		int ret2 = rhltable_remove(&c->update_table, &m->hash, bch_update_params);
+		BUG_ON(ret2);
+		m->on_hashtable = false;
+	}
+
 	bkey_put_dev_refs(c, k, m->ptrs_held);
 	m->ptrs_held = 0;
 	bch2_disk_reservation_put(c, &m->op.res);
 	bch2_bkey_buf_exit(&m->k);
 
 	return ret;
+}
+
+void bch2_fs_data_update_exit(struct bch_fs *c)
+{
+	if (c->update_table.ht.tbl)
+		rhltable_destroy(&c->update_table);
+}
+
+int bch2_fs_data_update_init(struct bch_fs *c)
+{
+	if (rhltable_init(&c->update_table, &bch_update_params))
+		return bch_err_throw(c, ENOMEM_promote_table_init);
+
+	return 0;
 }

@@ -19,7 +19,6 @@ enum bch_counters_flags {
 	x(data_read_nopromote_already_promoted,		87,	TYPE_COUNTER)	\
 	x(data_read_nopromote_unwritten,		88,	TYPE_COUNTER)	\
 	x(data_read_nopromote_congested,		89,	TYPE_COUNTER)	\
-	x(data_read_nopromote_in_flight,		90,	TYPE_COUNTER)	\
 	x(data_read_bounce,				31,	TYPE_COUNTER)	\
 	x(data_read_split,				33,	TYPE_COUNTER)	\
 	x(data_read_reuse_race,				34,	TYPE_COUNTER)	\
@@ -31,6 +30,7 @@ enum bch_counters_flags {
 	x(data_update_pred,				96,	TYPE_SECTORS)	\
 	x(data_update,					2,	TYPE_SECTORS)	\
 	x(data_update_no_io,				91,	TYPE_SECTORS)	\
+	x(data_update_in_flight,			90,	TYPE_COUNTER)	\
 	x(data_update_fail,				82,	TYPE_SECTORS)	\
 	x(data_update_read,				35,	TYPE_SECTORS)	\
 	x(data_update_write,				36,	TYPE_SECTORS)	\
