@@ -848,6 +848,9 @@ bool bch2_can_read_fs_with_devs(struct bch_fs *c, struct bch_devs_mask devs,
 			nr_online += test_bit(e->devs[i], devs.d);
 		}
 
+		if (nr_invalid == e->nr_devs)
+			continue;
+
 		if (nr_online < e->nr_required)
 			dflags |= metadata
 				? BCH_FORCE_IF_METADATA_LOST
