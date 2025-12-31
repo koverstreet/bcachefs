@@ -138,13 +138,6 @@ static bool bch2_target_congested(struct bch_fs *c, u16 target)
 
 /* Cache promotion on read */
 
-static const struct rhashtable_params bch_promote_params = {
-	.head_offset		= offsetof(struct promote_op, hash),
-	.key_offset		= offsetof(struct promote_op, pos),
-	.key_len		= sizeof(struct bpos),
-	.automatic_shrinking	= true,
-};
-
 static inline bool have_io_error(struct bch_io_failures *failed)
 {
 	return failed && failed->nr;
@@ -177,34 +170,24 @@ static bool ptr_being_rewritten(struct bch_fs *c, struct bch_read_bio *orig, uns
 }
 
 static inline int should_promote(struct bch_fs *c, struct bkey_s_c k,
-				 struct bpos pos,
 				 struct bch_inode_opts opts,
-				 enum bch_read_flags flags,
-				 bool self_healing)
+				 enum bch_read_flags flags)
 {
-	if (!self_healing) {
-		BUG_ON(!opts.promote_target);
+	BUG_ON(!opts.promote_target);
 
-		if (bch2_bkey_has_target(c, k, opts.promote_target)) {
-			event_inc(c, data_read_nopromote_already_promoted);
-			return bch_err_throw(c, nopromote_already_promoted);
-		}
-
-		if (bkey_extent_is_unwritten(c, k)) {
-			event_inc(c, data_read_nopromote_unwritten);
-			return bch_err_throw(c, nopromote_unwritten);
-		}
-
-		if (bch2_target_congested(c, opts.promote_target)) {
-			event_inc(c, data_read_nopromote_congested);
-			return bch_err_throw(c, nopromote_congested);
-		}
+	if (bch2_bkey_has_target(c, k, opts.promote_target)) {
+		event_inc(c, data_read_nopromote_already_promoted);
+		return bch_err_throw(c, nopromote_already_promoted);
 	}
 
-	if (rhashtable_lookup_fast(&c->promote_table, &pos,
-				   bch_promote_params)) {
-		event_inc(c, data_read_nopromote_in_flight);
-		return bch_err_throw(c, nopromote_in_flight);
+	if (bkey_extent_is_unwritten(c, k)) {
+		event_inc(c, data_read_nopromote_unwritten);
+		return bch_err_throw(c, nopromote_unwritten);
+	}
+
+	if (bch2_target_congested(c, opts.promote_target)) {
+		event_inc(c, data_read_nopromote_congested);
+		return bch_err_throw(c, nopromote_congested);
 	}
 
 	return 0;
@@ -214,10 +197,6 @@ static noinline void promote_free(struct bch_read_bio *rbio, int ret)
 {
 	struct promote_op *op = container_of(rbio, struct promote_op, write.rbio);
 	struct bch_fs *c = rbio->c;
-
-	int ret2 = rhashtable_remove_fast(&c->promote_table, &op->hash,
-					  bch_promote_params);
-	BUG_ON(ret2);
 
 	async_object_list_del(c, promote, op->list_idx);
 	async_object_list_del(c, rbio, rbio->list_idx);
@@ -271,7 +250,9 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
-	int ret = should_promote(c, k, pos, orig->opts, flags, failed != NULL);
+	int ret = !failed
+		? should_promote(c, k, orig->opts, flags)
+		: 0;
 	if (ret)
 		return ERR_PTR(ret);
 
@@ -318,18 +299,11 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 	}
 
 	op->start_time = local_clock();
-	op->pos = pos;
 	op->cpu	= cpu;
-
-	if (rhashtable_lookup_insert_fast(&c->promote_table, &op->hash,
-					  bch_promote_params)) {
-		ret = bch_err_throw(c, nopromote_in_flight);
-		goto err;
-	}
 
 	ret = async_object_list_add(c, promote, op, &op->list_idx);
 	if (ret < 0)
-		goto err_remove_hash;
+		goto err;
 
 	ret = bch2_data_update_init(trans, NULL, NULL, &op->write,
 			writepoint_hashed((unsigned long) current),
@@ -351,9 +325,6 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 	return &op->write.rbio;
 err_remove_list:
 	async_object_list_del(c, promote, op->list_idx);
-err_remove_hash:
-	BUG_ON(rhashtable_remove_fast(&c->promote_table, &op->hash,
-				      bch_promote_params));
 err:
 	bch2_bio_free_pages_pool(c, &op->write.op.wbio.bio);
 	/* We may have added to the rhashtable and thus need rcu freeing: */
@@ -1682,8 +1653,6 @@ void bch2_read_bio_to_text(struct printbuf *out,
 
 void bch2_fs_io_read_exit(struct bch_fs *c)
 {
-	if (c->promote_table.tbl)
-		rhashtable_destroy(&c->promote_table);
 	bioset_exit(&c->bio_read_split);
 	bioset_exit(&c->bio_read);
 	mempool_exit(&c->bio_bounce_bufs);
@@ -1727,9 +1696,6 @@ int bch2_fs_io_read_init(struct bch_fs *c)
 	if (bioset_init(&c->bio_read_split, 1, offsetof(struct bch_read_bio, bio),
 			BIOSET_NEED_BVECS))
 		return bch_err_throw(c, ENOMEM_bio_read_split_init);
-
-	if (rhashtable_init(&c->promote_table, &bch_promote_params))
-		return bch_err_throw(c, ENOMEM_promote_table_init);
 
 	return 0;
 }

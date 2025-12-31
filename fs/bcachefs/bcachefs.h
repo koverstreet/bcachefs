@@ -860,7 +860,7 @@ struct bch_fs {
 	mempool_t		bio_bounce_bufs;
 	struct bucket_nocow_lock_table
 				nocow_locks;
-	struct rhashtable	promote_table;
+	struct rhltable		update_table;
 
 	struct bch_key		chacha20_key;
 	bool			chacha20_key_set;

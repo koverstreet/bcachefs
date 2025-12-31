@@ -614,6 +614,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_fs_errors_exit(c);
 	bch2_fs_encryption_exit(c);
 	bch2_fs_ec_exit(c);
+	bch2_fs_data_update_exit(c);
 	bch2_fs_counters_exit(c);
 	bch2_fs_copygc_exit(c);
 	bch2_fs_compress_exit(c);
@@ -1161,6 +1162,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	try(bch2_fs_buckets_waiting_for_journal_init(c));
 	try(bch2_fs_compress_init(c));
 	try(bch2_fs_counters_init(c));
+	try(bch2_fs_data_update_init(c));
 	try(bch2_fs_ec_init(c));
 	try(bch2_fs_errors_init(c));
 	try(bch2_fs_encryption_init(c));
