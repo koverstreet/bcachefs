@@ -482,6 +482,8 @@ found:
 	struct bio *bio __free(bio_put) =
 		bio_alloc(ca->disk_sb.bdev, buf_pages(data_buf, bytes), REQ_OP_READ, GFP_KERNEL);
 
+	CLASS(printbuf, buf)(); /* before first goto */
+
 	bio->bi_iter.bi_sector = p.ptr.offset;
 	bch2_bio_map(bio, data_buf, bytes);
 	ret = submit_bio_wait(bio);
@@ -493,7 +495,6 @@ found:
 	if (!bch2_crc_cmp(csum, p.crc.csum))
 		return false;
 
-	CLASS(printbuf, buf)();
 	prt_printf(&buf, "extents pointing to same space, but first extent checksum bad - dropping:\n");
 	bch2_btree_id_to_text(&buf, btree);
 	prt_str(&buf, " ");
