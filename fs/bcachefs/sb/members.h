@@ -61,12 +61,6 @@ static inline bool bch2_dev_idx_is_online(struct bch_fs *c, unsigned dev)
 	return ca && bch2_dev_is_online(ca);
 }
 
-static inline bool bch2_dev_is_healthy(struct bch_dev *ca)
-{
-	return bch2_dev_is_online(ca) &&
-		ca->mi.state != BCH_MEMBER_STATE_evacuating;
-}
-
 static inline unsigned dev_mask_nr(const struct bch_devs_mask *devs)
 {
 	return bitmap_weight(devs->d, BCH_SB_MEMBERS_MAX);

@@ -1233,17 +1233,41 @@ bch2_extent_has_ptr(const struct bch_fs *c, struct bkey_s_c k1,
 	return NULL;
 }
 
-static bool want_cached_ptr(struct bch_fs *c, struct bch_inode_opts *opts,
-			    struct bch_extent_ptr *ptr)
+static bool drop_cached_pointer_trace(struct bch_fs *c, struct bkey_s k,
+				      struct bch_extent_ptr *ptr, const char *msg)
 {
-	unsigned target = opts->promote_target ?: opts->foreground_target;
+	event_add_trace(c, cached_ptr_drop, k.k->size, buf, ({
+		prt_str(&buf, msg);
+		prt_str(&buf, "\ndropping pointer\n  ");
+		bch2_extent_ptr_to_text(&buf, c, ptr);
+		prt_str(&buf, "\nfrom:\n");
+		bch2_bkey_val_to_text(&buf, c, k.s_c);
+	}));
 
-	if (target && !bch2_dev_in_target_rcu(c, ptr->dev, target))
-		return false;
+	bch2_bkey_drop_ptr_noerror(c, k, ptr);
+	return true;
+}
 
-	struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
+static bool maybe_drop_cached_ptr(struct bch_fs *c, struct bch_inode_opts *opts,
+				  struct bkey_s k,
+				  struct bch_extent_ptr *ptr, bool have_cached_ptr)
+{
+	if (ptr->cached) {
+		if (have_cached_ptr)
+			return drop_cached_pointer_trace(c, k, ptr, "extent already has another cached pointer");
 
-	return ca && bch2_dev_is_healthy(ca) && !dev_ptr_stale_rcu(ca, ptr);
+		struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
+		if (ca && dev_ptr_stale_rcu(ca, ptr))
+			return drop_cached_pointer_trace(c, k, ptr, "pointer is stale");
+		if (!ca || ca->mi.state == BCH_MEMBER_STATE_evacuating)
+			return drop_cached_pointer_trace(c, k, ptr, "device bad or evacuating");
+
+		unsigned target = opts->promote_target ?: opts->foreground_target;
+		if (target && !bch2_dev_in_target_rcu(c, ptr->dev, target))
+			return drop_cached_pointer_trace(c, k, ptr, "incorrect target");
+	}
+
+	return false;
 }
 
 void bch2_extent_ptr_set_cached(struct bch_fs *c,
@@ -1267,20 +1291,18 @@ void bch2_extent_ptr_set_cached(struct bch_fs *c,
 			 * data. Possibly something we can fix in the future?
 			 */
 			if (&entry->ptr == ptr && p.has_ec) {
-				bch2_bkey_drop_ptr_noerror(c, k, ptr);
+				drop_cached_pointer_trace(c, k, ptr, "ptr->cached && ec currently incompatible");
 				return;
 			}
 
-			if (p.ptr.cached) {
-				if (have_cached_ptr || !want_cached_ptr(c, opts, &p.ptr)) {
-					bch2_bkey_drop_ptr_noerror(c, k, &entry->ptr);
-					ptr = NULL;
-					dropped = true;
-					break;
-				}
-
-				have_cached_ptr = true;
+			if (maybe_drop_cached_ptr(c, opts, k, &entry->ptr, have_cached_ptr)) {
+				/* @ptr is being invalidated; we'll have to find it again */
+				ptr = NULL;
+				dropped = true;
+				break;
 			}
+
+			have_cached_ptr |= p.ptr.cached;
 		}
 	} while (dropped);
 
@@ -1291,10 +1313,8 @@ void bch2_extent_ptr_set_cached(struct bch_fs *c,
 				ptr = ptr2;
 	}
 
-	if (have_cached_ptr || !want_cached_ptr(c, opts, ptr))
-		bch2_bkey_drop_ptr_noerror(c, k, ptr);
-	else
-		ptr->cached = true;
+	ptr->cached = true;
+	maybe_drop_cached_ptr(c, opts, k, ptr, have_cached_ptr);
 }
 
 static bool bch2_bkey_has_stale_ptrs(struct bch_fs *c, struct bkey_s_c k)
@@ -1355,15 +1375,14 @@ void bch2_bkey_drop_extra_cached_ptrs(struct bch_fs *c,
 		bool have_cached_ptr = false;
 		dropped = false;
 
-		bkey_for_each_ptr(ptrs, ptr)
-			if (ptr->cached) {
-				if (have_cached_ptr || !want_cached_ptr(c, opts, ptr)) {
-					bch2_bkey_drop_ptr_noerror(c, k, ptr);
-					dropped = true;
-					break;
-				}
-				have_cached_ptr = true;
+		bkey_for_each_ptr(ptrs, ptr) {
+			if (maybe_drop_cached_ptr(c, opts, k, ptr, have_cached_ptr)) {
+				dropped = true;
+				break;
 			}
+
+			have_cached_ptr |= ptr->cached;
+		}
 	} while (dropped);
 }
 

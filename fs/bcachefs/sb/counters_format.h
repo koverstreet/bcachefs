@@ -55,6 +55,7 @@ enum bch_counters_flags {
 	x(stripe_update_extent_fail,			100,	TYPE_COUNTER)	\
 	x(copygc,					40,	TYPE_COUNTER)	\
 	x(copygc_wait_obsolete,				41,	TYPE_COUNTER)	\
+	x(cached_ptr_drop,				121,	TYPE_SECTORS)	\
 	x(bucket_invalidate,				3,	TYPE_COUNTER)	\
 	x(bucket_discard_worker,			108,	TYPE_COUNTER)	\
 	x(bucket_discard_fast_worker,			109,	TYPE_COUNTER)	\
