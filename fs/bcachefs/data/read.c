@@ -1412,7 +1412,8 @@ int __bch2_read_extent(struct btree_trans *trans,
 		 *
 		 * If it's smaller, we raced with a merge during a retry:
 		 */
-		if (unlikely(pick.crc.uncompressed_size > bvec_iter_sectors(iter))) {
+		struct data_update *u = rbio_data_update(orig);
+		if (unlikely(pick.crc.uncompressed_size > u->op.wbio.bio.bi_iter.bi_size)) {
 			if (ca)
 				enumerated_ref_put(&ca->io_ref[READ],
 					BCH_DEV_READ_REF_io_read);
