@@ -1035,14 +1035,8 @@ struct journal_read_buf {
 static int journal_read_buf_realloc(struct bch_fs *c, struct journal_read_buf *b,
 				    size_t new_size)
 {
-	void *n;
-
-	/* the bios are sized for this many pages, max: */
-	if (new_size > JOURNAL_ENTRY_SIZE_MAX)
-		return bch_err_throw(c, ENOMEM_journal_read_buf_realloc);
-
 	new_size = roundup_pow_of_two(new_size);
-	n = kvmalloc(new_size, GFP_KERNEL);
+	void *n = kvmalloc(new_size, GFP_KERNEL);
 	if (!n)
 		return bch_err_throw(c, ENOMEM_journal_read_buf_realloc);
 
