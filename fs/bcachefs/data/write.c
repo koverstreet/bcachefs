@@ -1347,6 +1347,22 @@ static bool bkey_get_dev_iorefs(struct bch_fs *c, struct bkey_ptrs_c ptrs)
 	return true;
 }
 
+static int bch2_inode_get_i_size(struct btree_trans *trans, struct bpos inode_pos, u64 *i_size)
+{
+	CLASS(btree_iter, iter)(trans, BTREE_ID_inodes, inode_pos, BTREE_ITER_cached);
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
+
+	if (likely(k.k->type == KEY_TYPE_inode_v3)) {
+		*i_size = le64_to_cpu(bkey_s_c_to_inode_v3(k).v->bi_size);
+	} else {
+		struct bch_inode_unpacked inode_u;
+		bch2_inode_unpack(k, &inode_u);
+		*i_size = inode_u.bi_size;
+	}
+
+	return 0;
+}
+
 static void bch2_nocow_write(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
@@ -1368,6 +1384,14 @@ retry:
 	ret = bch2_subvolume_get_snapshot(trans, op->subvol, &snapshot);
 	if (unlikely(ret))
 		goto err;
+
+	u64 i_size;
+	ret = bch2_inode_get_i_size(trans, SPOS(0, op->pos.inode, snapshot), &i_size);
+	if (unlikely(ret))
+		goto err;
+
+	if (op->new_i_size > i_size)
+		op->flags |= BCH_WRITE_convert_unwritten;
 
 	bch2_trans_iter_init(trans, &iter, BTREE_ID_extents,
 			     SPOS(op->pos.inode, op->pos.offset, snapshot),
