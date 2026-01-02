@@ -611,7 +611,7 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 			r.ptrs_moving |= ptr_bit;
 		}
 
-		if (!p.ptr.cached && evacuating) {
+		if (evacuating) {
 			r.need_rb |= BIT(BCH_REBALANCE_data_replicas);
 			r.hipri = 1;
 			r.ptrs_moving |= ptr_bit;
