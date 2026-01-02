@@ -27,9 +27,10 @@ struct dev_alloc_list {
 };
 
 struct alloc_request {
-	unsigned		nr_replicas;
-	unsigned		target;
+	u8			nr_replicas;
+	u8			ec_replicas;
 	bool			ec;
+	unsigned		target;
 	enum bch_watermark	watermark;
 	enum bch_write_flags	flags;
 	enum bch_data_type	data_type;
@@ -231,6 +232,7 @@ static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
 						      unsigned erasure_code,
 						      struct bch_devs_list *devs_have,
 						      unsigned nr_replicas,
+						      unsigned ec_replicas,
 						      enum bch_watermark watermark,
 						      enum bch_write_flags flags)
 {
@@ -242,8 +244,9 @@ static inline struct alloc_request *alloc_request_get(struct btree_trans *trans,
 		erasure_code = false;
 
 	req->nr_replicas	= nr_replicas;
-	req->target		= target;
+	req->ec_replicas	= ec_replicas;
 	req->ec			= erasure_code;
+	req->target		= target;
 	req->watermark		= watermark;
 	req->flags		= flags;
 	req->devs_have		= devs_have;
@@ -257,13 +260,16 @@ static inline int bch2_alloc_sectors_start_trans(struct btree_trans *trans,
 			     struct bch_devs_list *devs_have,
 			     unsigned nr_replicas,
 			     unsigned nr_replicas_required,
+			     unsigned ec_replicas,
 			     enum bch_watermark watermark,
 			     enum bch_write_flags flags,
 			     struct closure *cl,
 			     struct write_point **wp_ret)
 {
 	struct alloc_request *req = errptr_try(alloc_request_get(trans, target, erasure_code,
-								 devs_have, nr_replicas,
+								 devs_have,
+								 nr_replicas,
+								 ec_replicas,
 								 watermark, flags));
 	return bch2_alloc_sectors_req(trans, req, write_point, nr_replicas_required, cl, wp_ret);
 }

@@ -751,7 +751,7 @@ static int bucket_alloc_from_stripe(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	int ret = 0;
 
-	if (req->nr_replicas < 2)
+	if (req->ec_replicas < 2)
 		return 0;
 
 	if (ec_open_bucket(c, &req->ptrs))
@@ -924,6 +924,11 @@ static int open_bucket_add_buckets(struct btree_trans *trans,
 		    bch2_err_matches(ret, BCH_ERR_freelist_empty) ||
 		    bch2_err_matches(ret, BCH_ERR_open_buckets_empty))
 			return ret;
+
+		if ((req->flags & BCH_WRITE_must_ec) &&
+		    bch2_err_matches(ret, BCH_ERR_insufficient_devices))
+			return ret;
+
 		if (req->nr_effective >= req->nr_replicas)
 			return 0;
 	}
@@ -1262,15 +1267,19 @@ retry:
 alloc_done:
 	BUG_ON(!ret && req->nr_effective < req->nr_replicas);
 
-	if (req->ec && !ec_open_bucket(c, &req->ptrs))
-		pr_debug("failed to get ec bucket: ret %u", ret);
-
 	if (ret == -BCH_ERR_insufficient_devices &&
 	    req->nr_effective >= nr_replicas_required)
 		ret = 0;
 
 	if (ret)
 		goto err;
+
+	if (req->ec &&
+	    (req->flags & BCH_WRITE_must_ec) &&
+	    !ec_open_bucket(c, &req->ptrs)) {
+		ret = bch_err_throw(c, ec_alloc_failed);
+		goto err;
+	}
 
 	if (req->nr_effective > req->nr_replicas)
 		deallocate_extra_replicas(c, req);

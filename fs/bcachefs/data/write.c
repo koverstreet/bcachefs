@@ -1582,6 +1582,7 @@ again:
 				&op->devs_have,
 				op->nr_replicas,
 				op->nr_replicas_required,
+				op->opts.data_replicas,
 				op->watermark,
 				op->flags,
 				&op->cl, &wp));
@@ -1603,11 +1604,12 @@ err:
 			op->flags |= BCH_WRITE_submitted;
 
 			if (unlikely(ret < 0)) {
+				op->error = ret;
+
 				/* Extra info on errors from the allocator: */
-				if (!(op->flags & BCH_WRITE_alloc_nowait))
+				if (!(op->flags & BCH_WRITE_move))
 					bch2_write_op_error(op, true, op->pos.offset,
 							    "%s(): %s", __func__, bch2_err_str(ret));
-				op->error = ret;
 				break;
 			}
 		}
@@ -1831,6 +1833,7 @@ void bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
 
 		prt_str(out, "old key:\t");
 		bch2_bkey_val_to_text(out, u->op.c, bkey_i_to_s_c(u->k.k));
+		prt_newline(out);
 	}
 }
 

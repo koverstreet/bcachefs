@@ -20,6 +20,7 @@
 	x(pages_stable)			\
 	x(pages_owned)			\
 	x(only_specified_devs)		\
+	x(must_ec)			\
 	x(wrote_data_inline)		\
 	x(check_enospc)			\
 	x(sync)				\

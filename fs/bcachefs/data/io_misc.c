@@ -93,6 +93,7 @@ int bch2_extent_fallocate(struct btree_trans *trans,
 				&devs_have,
 				opts.data_replicas,
 				opts.data_replicas,
+				opts.data_replicas,
 				BCH_WATERMARK_normal, 0, &cl, &wp);
 		if (bch2_err_matches(ret, BCH_ERR_operation_blocked))
 			ret = bch_err_throw(c, transaction_restart_nested);

@@ -1600,26 +1600,23 @@ static struct ec_stripe_new *ec_new_stripe_alloc(struct bch_fs *c, struct ec_str
 
 static void ec_stripe_head_devs_update(struct bch_fs *c, struct ec_stripe_head *h)
 {
-	struct bch_devs_mask devs = h->devs;
-	unsigned nr_devs, nr_devs_with_durability;
+	struct bch_devs_mask old_devs = h->devs;
 
 	scoped_guard(rcu) {
 		h->devs = target_rw_devs(c, BCH_DATA_user, h->disk_label
 					 ? group_to_target(h->disk_label - 1)
 					 : 0);
-		nr_devs = dev_mask_nr(&h->devs);
-
 		for_each_member_device_rcu(c, ca, &h->devs)
 			if (!ca->mi.durability)
 				__clear_bit(ca->dev_idx, h->devs.d);
-		nr_devs_with_durability = dev_mask_nr(&h->devs);
 
 		h->blocksize = pick_blocksize(c, &h->devs);
 
-		h->nr_active_devs = 0;
 		for_each_member_device_rcu(c, ca, &h->devs)
-			if (ca->mi.bucket_size == h->blocksize)
-				h->nr_active_devs++;
+			if (ca->mi.bucket_size != h->blocksize)
+				__clear_bit(ca->dev_idx, h->devs.d);
+
+		h->nr_active_devs = dev_mask_nr(&h->devs);
 	}
 
 	/*
@@ -1628,28 +1625,12 @@ static void ec_stripe_head_devs_update(struct bch_fs *c, struct ec_stripe_head *
 	 */
 	h->insufficient_devs = h->nr_active_devs < h->redundancy + 2;
 
-	if (h->insufficient_devs) {
-		const char *err;
-
-		if (nr_devs < h->redundancy + 2)
-			err = NULL;
-		else if (nr_devs_with_durability < h->redundancy + 2)
-			err = "cannot use durability=0 devices";
-		else
-			err = "mismatched bucket sizes";
-
-		if (err)
-			bch_err(c, "insufficient devices available to create stripe (have %u, need %u): %s",
-				h->nr_active_devs, h->redundancy + 2, err);
-	}
-
 	struct bch_devs_mask devs_leaving;
-	bitmap_andnot(devs_leaving.d, devs.d, h->devs.d, BCH_SB_MEMBERS_MAX);
+	bitmap_andnot(devs_leaving.d, old_devs.d, h->devs.d, BCH_SB_MEMBERS_MAX);
+
 
 	if (h->s && !h->s->allocated && dev_mask_nr(&devs_leaving))
 		ec_stripe_new_cancel(c, h, -EINTR);
-
-	h->rw_devs_change_count = c->allocator.rw_devs_change_count;
 }
 
 static struct ec_stripe_head *
@@ -1727,8 +1708,11 @@ __bch2_ec_stripe_head_get(struct btree_trans *trans,
 		goto err;
 	}
 found:
-	if (h->rw_devs_change_count != c->allocator.rw_devs_change_count)
+	unsigned long rw_devs_change_count = READ_ONCE(c->allocator.rw_devs_change_count);
+	if (h->rw_devs_change_count != rw_devs_change_count) {
 		ec_stripe_head_devs_update(c, h);
+		h->rw_devs_change_count = rw_devs_change_count;
+	}
 
 	if (h->insufficient_devs) {
 		mutex_unlock(&h->lock);
@@ -2071,7 +2055,7 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 					       struct closure *cl)
 {
 	struct bch_fs *c = trans->c;
-	unsigned redundancy = req->nr_replicas - 1;
+	unsigned redundancy = req->ec_replicas - 1;
 	unsigned disk_label = 0;
 	struct target t = target_decode(req->target);
 	int ret;

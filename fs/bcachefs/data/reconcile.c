@@ -1334,6 +1334,9 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 
 			data_opts->extra_replicas = 1;
 			data_opts->no_devs_have = true;
+
+			if (r->need_rb == BIT(BCH_REBALANCE_erasure_code))
+				data_opts->write_flags |= BCH_WRITE_must_ec;
 		} else {
 			unsigned ptr_bit = 1;
 			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {

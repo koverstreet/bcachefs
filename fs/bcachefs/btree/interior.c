@@ -1316,6 +1316,7 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 				      false,
 				      &devs_have,
 				      as->disk_res.nr_replicas,
+				      as->disk_res.nr_replicas,
 				      watermark,
 				      write_flags);
 	ret = PTR_ERR_OR_ZERO(req);
