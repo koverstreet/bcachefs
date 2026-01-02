@@ -83,6 +83,8 @@ int bch2_btree_lost_data(struct bch_fs *c,
 	write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_alloc_key_dirty_sectors_wrong, ext->errors_silent);
 	write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_need_discard_key_wrong, ext->errors_silent);
 	write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_freespace_key_wrong, ext->errors_silent);
+	write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_reconcile_work_phys_incorrectly_set, ext->errors_silent);
+	write_sb |= !__test_and_set_bit_le64(BCH_FSCK_ERR_reconcile_work_incorrectly_set, ext->errors_silent);
 
 	switch (btree) {
 	case BTREE_ID_alloc:
