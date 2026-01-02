@@ -1375,10 +1375,9 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 		    data_opts->ptrs_kill_ec ||
 		    data_opts->extra_replicas);
 	if (!ret) {
-		CLASS(printbuf, buf)();
-		prt_printf(&buf, "got extent to reconcile but nothing to do, confused\n  ");
-		bch2_bkey_val_to_text(&buf, c, k);
-		bch_err(c, "%s", buf.buf);
+		CLASS(bch_log_msg_ratelimited, msg)(c);
+		prt_printf(&msg.m, "got extent to reconcile but nothing to do, confused\n  ");
+		bch2_bkey_val_to_text(&msg.m, c, k);
 	}
 
 	return ret;
