@@ -1494,6 +1494,10 @@ static inline bool btree_id_is_alloc(enum btree_id btree)
 	case BTREE_ID_bucket_gens:
 	case BTREE_ID_lru:
 	case BTREE_ID_accounting:
+	case BTREE_ID_reconcile_work:
+	case BTREE_ID_reconcile_hipri:
+	case BTREE_ID_reconcile_pending:
+	case BTREE_ID_reconcile_scan:
 		return true;
 	default:
 		return false;
