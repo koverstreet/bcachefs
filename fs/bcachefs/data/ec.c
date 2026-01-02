@@ -468,13 +468,17 @@ static const struct bch_extent_ptr *bkey_matches_stripe(const struct bch_fs *c,
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	unsigned i, nr_data = s->nr_blocks - s->nr_redundant;
 
-	bkey_for_each_ptr(ptrs, ptr)
+	bkey_for_each_ptr(ptrs, ptr) {
+		if (ptr->dev == BCH_SB_MEMBER_INVALID)
+			continue;
+
 		for (i = 0; i < nr_data; i++)
 			if (__bch2_ptr_matches_stripe(&s->ptrs[i], ptr,
 						      le16_to_cpu(s->sectors))) {
 				*block = i;
 				return ptr;
 			}
+	}
 
 	return NULL;
 }
