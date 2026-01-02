@@ -1165,7 +1165,18 @@ static int ec_stripe_update_extent(struct btree_trans *trans,
 	bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(n), p, entry, p.ptr.dev != dev);
 
 	struct bch_extent_ptr *ec_ptr = bch2_bkey_has_device(c, bkey_i_to_s(n), dev);
-	BUG_ON(!ec_ptr);
+	if (!ec_ptr) {
+		CLASS(printbuf, buf)();
+		prt_printf(&buf, "dev %u not found (%u)\n", dev, ca->dev_idx);
+		bch2_bkey_val_to_text(&buf, c, k);
+		prt_newline(&buf);
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(n));
+		prt_newline(&buf);
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->new_stripe.key));
+		prt_newline(&buf);
+		WARN(true, "%s", buf.buf);
+		return 0;
+	}
 
 	__extent_entry_insert(c, n,
 			(union bch_extent_entry *) ec_ptr,
