@@ -1306,7 +1306,8 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 					return d;
 
 				if (dev_bad_or_evacuating(c, p.ptr.dev) ||
-				    (d && durability - d >= r->data_replicas)) {
+				    (!p.ptr.cached &&
+				     d && durability - d >= r->data_replicas)) {
 					data_opts->ptrs_kill |= ptr_bit;
 					durability -= d;
 				}
