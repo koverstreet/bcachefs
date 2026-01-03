@@ -104,13 +104,20 @@ struct printbuf {
 
 struct printbuf_restore {
 	unsigned		pos;
+	unsigned		last_newline;
+	unsigned		last_field;
+	unsigned		indent;
 	u8			cur_tabstop;
 };
 
 static inline struct printbuf_restore printbuf_state_save(struct printbuf *buf)
 {
 	return (struct printbuf_restore) {
-		.pos = buf->pos, .cur_tabstop = buf->cur_tabstop
+		.pos		= buf->pos,
+		.last_newline	= buf->last_newline,
+		.last_field	= buf->last_field,
+		.indent		= buf->indent,
+		.cur_tabstop	= buf->cur_tabstop
 	};
 }
 
@@ -118,6 +125,9 @@ static inline void printbuf_state_restore(struct printbuf *buf,
 					  struct printbuf_restore s)
 {
 	buf->pos		= s.pos;
+	buf->last_newline	= s.last_newline;
+	buf->last_field		= s.last_field;
+	buf->indent		= s.indent;
 	buf->cur_tabstop	= s.cur_tabstop;
 }
 
