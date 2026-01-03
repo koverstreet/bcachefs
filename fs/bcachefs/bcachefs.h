@@ -321,7 +321,7 @@ void __bch2_print(struct bch_fs *c, const char *fmt, ...);
 #define bch2_print(_c, ...) __bch2_print(maybe_dev_to_fs(_c), __VA_ARGS__)
 
 #define __bch2_ratelimit(_c, _rs)					\
-	(!(_c)->opts.ratelimit_errors || !__ratelimit(_rs))
+	((_c)->opts.ratelimit_errors && !__ratelimit(_rs))
 
 #define bch2_ratelimit(_c)						\
 ({									\
