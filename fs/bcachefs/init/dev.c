@@ -1179,12 +1179,12 @@ static void bch2_fs_bdev_mark_dead(struct block_device *bdev, bool surprise)
 			evict_inodes(sb);
 		}
 
-		if (dev) {
-			__bch2_dev_offline(c, ca);
-		} else {
+		if (!dev) {
 			bch2_journal_flush(&c->journal);
 			print = bch2_fs_emergency_read_only(c, &buf);
 		}
+
+		__bch2_dev_offline(c, ca);
 
 		if (print)
 			bch2_print_str(c, KERN_ERR, buf.buf);
