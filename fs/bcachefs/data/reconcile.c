@@ -628,7 +628,8 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 			d = 0;
 
 		durability += d;
-		min_durability = min(min_durability, d);
+		if (!p.ptr.cached)
+			min_durability = min(min_durability, d);
 
 		ec |= p.has_ec;
 
