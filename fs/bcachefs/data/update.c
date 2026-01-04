@@ -680,28 +680,6 @@ static int bch2_data_update_bios_init(struct data_update *m, struct bch_fs *c,
 	return 0;
 }
 
-struct bch_devs_list bch2_data_update_devs_keeping(struct bch_fs *c,
-						   struct data_update_opts *opts,
-						   struct bkey_s_c k)
-{
-	struct bch_devs_list ret = (struct bch_devs_list) { 0 };
-
-	/* We always rewrite btree nodes entirely */
-	if (bkey_is_btree_ptr(k.k) || opts->no_devs_have)
-		return ret;
-
-	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-	unsigned ptr_bit = 1;
-
-	bkey_for_each_ptr(ptrs, ptr) {
-		if (!(ptr_bit & opts->ptrs_kill))
-			ret.data[ret.nr++] = ptr->dev;
-		ptr_bit <<= 1;
-	}
-
-	return ret;
-}
-
 static unsigned durability_available_on_target(struct bch_fs *c,
 					       enum bch_watermark watermark,
 					       enum bch_data_type data_type,
@@ -772,10 +750,11 @@ static int bch2_can_do_write_btree(struct bch_fs *c,
 	return bch_err_throw(c, data_update_fail_no_rw_devs);
 }
 
-int bch2_can_do_write(struct bch_fs *c,
-		      struct bch_inode_opts *opts,
-		      struct data_update_opts *data_opts,
-		      struct bkey_s_c k, struct bch_devs_list *devs_have)
+static int __bch2_can_do_write(struct bch_fs *c,
+			       struct bch_inode_opts *opts,
+			       struct data_update_opts *data_opts,
+			       struct bch_devs_list *devs_have,
+			       struct bkey_s_c k)
 {
 	bool btree = bkey_is_btree_ptr(k.k);
 	enum bch_watermark watermark = data_opts->commit_flags & BCH_WATERMARK_MASK;
@@ -799,6 +778,28 @@ int bch2_can_do_write(struct bch_fs *c,
 					      data_opts->write_flags & BCH_WRITE_alloc_nowait)
 		? 0
 		: bch_err_throw(c, data_update_fail_no_rw_devs);
+}
+
+int bch2_can_do_write(struct bch_fs *c,
+		      struct bch_inode_opts *opts,
+		      struct data_update_opts *data_opts,
+		      struct bkey_s_c k)
+{
+	struct bch_devs_list devs_have = {};
+
+	if (!data_opts->no_devs_have) {
+		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+		unsigned ptr_bit = 1;
+
+		bkey_for_each_ptr(ptrs, ptr) {
+			if (ptr->dev != BCH_SB_MEMBER_INVALID &&
+			    !(ptr_bit & data_opts->ptrs_kill))
+				devs_have.data[devs_have.nr++] = ptr->dev;
+			ptr_bit <<= 1;
+		}
+	}
+
+	return __bch2_can_do_write(c, opts, data_opts, &devs_have, k);
 }
 
 /*
@@ -982,7 +983,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 		 *   single durability=2 device)
 		 */
 		if (data_opts.type != BCH_DATA_UPDATE_copygc) {
-			ret = bch2_can_do_write(c, io_opts, &m->opts, k, &m->op.devs_have);
+			ret = __bch2_can_do_write(c, io_opts, &m->opts, &m->op.devs_have, k);
 			if (ret)
 				goto out;
 		}

@@ -85,12 +85,8 @@ int bch2_data_update_index_update(struct bch_write_op *);
 
 void bch2_data_update_read_done(struct data_update *);
 
-struct bch_devs_list bch2_data_update_devs_keeping(struct bch_fs *,
-						   struct data_update_opts *,
-						   struct bkey_s_c);
 int bch2_can_do_write(struct bch_fs *, struct bch_inode_opts *,
-		      struct data_update_opts *,
-		      struct bkey_s_c, struct bch_devs_list *);
+		      struct data_update_opts *, struct bkey_s_c);
 
 void bch2_data_update_exit(struct data_update *, int);
 int bch2_data_update_init(struct btree_trans *, struct btree_iter *,

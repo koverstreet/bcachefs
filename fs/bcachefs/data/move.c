@@ -317,10 +317,8 @@ int bch2_move_extent(struct moving_context *ctxt,
 	if (!bkey_is_btree_ptr(k.k))
 		ret = __bch2_move_extent(ctxt, bucket_in_flight, iter, k, opts, data_opts);
 	else if (data_opts.type != BCH_DATA_UPDATE_scrub) {
-		struct bch_devs_list devs_have = bch2_data_update_devs_keeping(c, &data_opts, k);
-
 		if (data_opts.type != BCH_DATA_UPDATE_copygc)
-			try(bch2_can_do_write(c, &opts, &data_opts, k, &devs_have));
+			try(bch2_can_do_write(c, &opts, &data_opts, k));
 
 		enum bch_trans_commit_flags commit_flags = data_opts.commit_flags;
 		if ((commit_flags & BCH_WATERMARK_MASK) == BCH_WATERMARK_copygc)
