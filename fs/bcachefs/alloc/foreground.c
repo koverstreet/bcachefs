@@ -454,7 +454,7 @@ static noinline void bucket_alloc_to_text(struct printbuf *out,
 	prt_printf(out, "data type\t%s\n",	__bch2_data_types[req->data_type]);
 	prt_printf(out, "blocking\t%u\n",	cl != NULL);
 	prt_printf(out, "free\t%llu\n",	req->usage.buckets[BCH_DATA_free]);
-	prt_printf(out, "avail\t%llu\n",	dev_buckets_free(req->ca, req->usage, req->watermark));
+	prt_printf(out, "avail\t%llu\n",	__dev_buckets_free(req->ca, req->usage, req->watermark));
 	prt_printf(out, "copygc_wait\t%llu/%lli\n",
 		   bch2_copygc_wait_amount(c),
 		   c->copygc.wait - atomic64_read(&c->io_clock[WRITE].now));
@@ -496,7 +496,7 @@ static struct open_bucket *bch2_bucket_alloc_trans(struct btree_trans *trans,
 	memset(&req->counters, 0, sizeof(req->counters));
 again:
 	bch2_dev_usage_read_fast(ca, &req->usage);
-	avail = dev_buckets_free(ca, req->usage, req->watermark);
+	avail = __dev_buckets_free(ca, req->usage, req->watermark);
 
 	if (req->usage.buckets[BCH_DATA_need_discard] >
 	    min(avail, ca->mi.nbuckets >> 7))
@@ -848,7 +848,7 @@ static int bucket_alloc_set_partial(struct bch_fs *c,
 			u64 avail;
 
 			bch2_dev_usage_read_fast(ca, &req->usage);
-			avail = dev_buckets_free(ca, req->usage, req->watermark) + ca->nr_partial_buckets;
+			avail = __dev_buckets_free(ca, req->usage, req->watermark) + ca->nr_partial_buckets;
 			if (!avail)
 				continue;
 
