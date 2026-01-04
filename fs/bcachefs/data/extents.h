@@ -595,6 +595,8 @@ bool bch2_bkey_devs_rw(struct bch_fs *, struct bkey_s_c);
 bool bch2_bkey_has_target(struct bch_fs *, struct bkey_s_c, unsigned);
 bool bch2_bkey_in_target(struct bch_fs *, struct bkey_s_c, unsigned);
 
+bool bch2_bkey_has_dev_bad_or_evacuating(struct bch_fs *, struct bkey_s_c);
+
 void bch2_bkey_extent_entry_drop_s(const struct bch_fs *, struct bkey_s, union bch_extent_entry *);
 void bch2_bkey_extent_entry_drop(const struct bch_fs *, struct bkey_i *, union bch_extent_entry *);
 

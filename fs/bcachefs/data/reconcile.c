@@ -546,14 +546,6 @@ static inline bool bkey_should_have_rb_opts(struct bkey_s_c k,
 	return new.need_rb;
 }
 
-static inline bool dev_bad_or_evacuating(struct bch_fs *c, unsigned dev)
-{
-	guard(rcu)();
-
-	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
-	return !ca || ca->mi.state == BCH_MEMBER_STATE_evacuating;
-}
-
 static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c k,
 				     struct bch_inode_opts *opts,
 				     int *need_update_invalid_devs,
@@ -592,7 +584,7 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 		incompressible	|= p.crc.compression_type == BCH_COMPRESSION_TYPE_incompressible;
 		unwritten	|= p.ptr.unwritten;
 
-		bool evacuating = dev_bad_or_evacuating(c, p.ptr.dev);
+		bool evacuating = bch2_dev_bad_or_evacuating(c, p.ptr.dev);
 
 		if (!poisoned &&
 		    !btree &&
@@ -1295,7 +1287,7 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 			guard(rcu)();
 
 			bkey_for_each_ptr(ptrs, ptr) {
-				if (dev_bad_or_evacuating(c, ptr->dev))
+				if (bch2_dev_bad_or_evacuating(c, ptr->dev))
 					data_opts->ptrs_kill |= ptr_bit;
 				ptr_bit <<= 1;
 			}
@@ -1305,7 +1297,7 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 				if (d < 0)
 					return d;
 
-				if (dev_bad_or_evacuating(c, p.ptr.dev) ||
+				if (bch2_dev_bad_or_evacuating(c, p.ptr.dev) ||
 				    (!p.ptr.cached &&
 				     d && durability - d >= r->data_replicas)) {
 					data_opts->ptrs_kill |= ptr_bit;

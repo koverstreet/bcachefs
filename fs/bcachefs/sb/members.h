@@ -234,6 +234,18 @@ static inline struct bch_dev *bch2_dev_rcu_noerror(struct bch_fs *c, unsigned de
 		: NULL;
 }
 
+static inline bool bch2_dev_bad_or_evacuating_rcu(struct bch_fs *c, unsigned dev)
+{
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
+	return !ca || ca->mi.state == BCH_MEMBER_STATE_evacuating;
+}
+
+static inline bool bch2_dev_bad_or_evacuating(struct bch_fs *c, unsigned dev)
+{
+	guard(rcu)();
+	return bch2_dev_bad_or_evacuating_rcu(c, dev);
+}
+
 int bch2_dev_missing_bkey(struct bch_fs *, struct bkey_s_c, unsigned);
 
 void bch2_dev_missing_atomic(struct bch_fs *, unsigned);

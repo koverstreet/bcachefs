@@ -790,7 +790,9 @@ int bch2_can_do_write(struct bch_fs *c,
 	    unlikely(c->allocator.open_buckets_nr_free <= bch2_open_buckets_reserved(watermark)))
 		return bch_err_throw(c, data_update_fail_would_block);
 
-	if (btree)
+	if (btree &&
+	    data_opts->type == BCH_DATA_UPDATE_reconcile &&
+	    !bch2_bkey_has_dev_bad_or_evacuating(c, k))
 		return bch2_can_do_write_btree(c, opts, data_opts, k);
 
 	return durability_available_on_target(c, watermark, data_type, target, devs_have,
