@@ -10,6 +10,8 @@
 #include "fs/namei.h"
 #include "fs/xattr.h"
 
+#include "init/fs.h"
+
 #include "snapshots/subvolume.h"
 
 #include <linux/posix_acl.h>
@@ -213,9 +215,8 @@ int bch2_link_trans(struct btree_trans *trans,
 }
 
 int bch2_unlink_trans(struct btree_trans *trans,
-		      subvol_inum dir,
-		      struct bch_inode_unpacked *dir_u,
-		      struct bch_inode_unpacked *inode_u,
+		      subvol_inum dir, struct bch_inode_unpacked *dir_u,
+		      subvol_inum inode, struct bch_inode_unpacked *inode_u,
 		      const struct qstr *name,
 		      bool deleting_subvol)
 {
@@ -233,6 +234,19 @@ int bch2_unlink_trans(struct btree_trans *trans,
 	subvol_inum inum;
 	try(bch2_dirent_lookup_trans(trans, &dirent_iter, dir, &dir_hash,
 				     name, &inum, BTREE_ITER_intent));
+
+	if (!subvol_inum_eq(inode, inum)) {
+		CLASS(bch_log_msg, msg)(c);
+		prt_printf(&msg.m, "vfs did bad unlink: wanted inum %llu:%llu, got %llu:%llu\n",
+			   inode.subvol, inode.inum,
+			   inum.subvol, inum.inum);
+		prt_printf(&msg.m, "vfs d_name %s\n", name->name);
+		prt_printf(&msg.m, "path ");
+		try(bch2_inum_to_path(trans, inode, &msg.m));
+		bch2_fs_emergency_read_only(c, &msg.m);
+
+		msg.m.suppress = !bch2_count_fsck_err(c, vfs_unlink_got_wrong_inum, &msg.m);
+	}
 
 	try(bch2_inode_peek(trans, &inode_iter, inode_u, inum, BTREE_ITER_intent));
 

@@ -811,8 +811,8 @@ int __bch2_unlink(struct inode *vdir, struct dentry *dentry,
 	ret = commit_do(trans, NULL, NULL,
 			BCH_TRANS_COMMIT_no_enospc,
 		bch2_unlink_trans(trans,
-				  inode_inum(dir), &dir_u,
-				  &inode_u, &dentry->d_name,
+				  inode_inum(dir),	&dir_u,
+				  inode_inum(inode),	&inode_u, &dentry->d_name,
 				  deleting_snapshot));
 	if (unlikely(ret))
 		goto err;

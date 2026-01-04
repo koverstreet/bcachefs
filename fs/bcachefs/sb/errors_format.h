@@ -238,6 +238,7 @@ enum bch_fsck_flags {
 	x(inode_unlinked_but_nlink_nonzero,			198,	0)		\
 	x(inode_unlinked_and_not_open,				281,	0)		\
 	x(inode_unlinked_but_has_dirent,			285,	0)		\
+	x(unlinked_inode_not_on_deleted_list,			244,	FSCK_AUTOFIX)	\
 	x(inode_checksum_type_invalid,				199,	0)		\
 	x(inode_compression_type_invalid,			200,	0)		\
 	x(inode_subvol_root_but_not_dir,			201,	0)		\
@@ -297,7 +298,6 @@ enum bch_fsck_flags {
 	x(dir_loop,						241,	FSCK_AUTOFIX)	\
 	x(hash_table_key_duplicate,				242,	FSCK_AUTOFIX)	\
 	x(hash_table_key_wrong_offset,				243,	FSCK_AUTOFIX)	\
-	x(unlinked_inode_not_on_deleted_list,			244,	FSCK_AUTOFIX)	\
 	x(reflink_p_front_pad_bad,				245,	0)		\
 	x(journal_entry_dup_same_device,			246,	0)		\
 	x(inode_bi_subvol_missing,				247,	0)		\
@@ -360,7 +360,8 @@ enum bch_fsck_flags {
 	x(btree_ptr_to_bad_reconcile_bp,			337,	FSCK_AUTOFIX)	\
 	x(vfs_i_size_bad,					343,	0)		\
 	x(vfs_i_sectors_bad,					344,	0)		\
-	x(MAX,							349,	0)
+	x(vfs_unlink_got_wrong_inum,				349,	0)		\
+	x(MAX,							350,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
