@@ -780,24 +780,41 @@ static int __bch2_can_do_write(struct bch_fs *c,
 		: bch_err_throw(c, data_update_fail_no_rw_devs);
 }
 
-int bch2_can_do_write(struct bch_fs *c,
-		      struct bch_inode_opts *opts,
-		      struct data_update_opts *data_opts,
-		      struct bkey_s_c k)
+int bch2_can_do_data_update(struct btree_trans *trans,
+			    struct bch_inode_opts *opts,
+			    struct data_update_opts *data_opts,
+			    struct bkey_s_c k)
 {
+	struct bch_fs *c = trans->c;
 	struct bch_devs_list devs_have = {};
+	unsigned durability_keeping = 0;
 
-	if (!data_opts->no_devs_have) {
-		struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
-		unsigned ptr_bit = 1;
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+	unsigned ptr_bit = 1;
 
-		bkey_for_each_ptr(ptrs, ptr) {
-			if (ptr->dev != BCH_SB_MEMBER_INVALID &&
-			    !(ptr_bit & data_opts->ptrs_kill))
-				devs_have.data[devs_have.nr++] = ptr->dev;
-			ptr_bit <<= 1;
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if (p.ptr.dev != BCH_SB_MEMBER_INVALID &&
+		    !(ptr_bit & data_opts->ptrs_kill)) {
+			int d = ptr_bit & data_opts->ptrs_kill_ec
+				? bch2_dev_durability(c, p.ptr.dev)
+				: bch2_extent_ptr_durability(trans, &p);
+			if (d < 0)
+				return d;
+
+			durability_keeping += d;
+			if (!data_opts->no_devs_have)
+				devs_have.data[devs_have.nr++] = p.ptr.dev;
 		}
+
+		ptr_bit <<= 1;
 	}
+
+	if (!bkey_is_btree_ptr(k.k) &&
+	    !data_opts->extra_replicas &&
+	    durability_keeping >= opts->data_replicas)
+		return 0;
 
 	return __bch2_can_do_write(c, opts, data_opts, &devs_have, k);
 }

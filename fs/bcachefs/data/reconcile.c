@@ -1490,12 +1490,11 @@ static int do_reconcile_extent(struct moving_context *ctxt,
 		struct data_update_opts data_opts = { .read_dev = -1 };
 		reconcile_set_data_opts(trans, NULL, data_pos.btree, k, &opts, &data_opts);
 
-		int ret = bch2_can_do_write(c, &opts, &data_opts, k);
-		if (ret) {
-			if (is_reconcile_pending_err(c, k, ret))
-				return 0;
+		int ret = bch2_can_do_data_update(trans, &opts, &data_opts, k);
+		if (is_reconcile_pending_err(c, k, ret))
+			return 0;
+		if (ret)
 			return ret;
-		}
 
 		if (extent_has_rotational(c, k)) {
 			/*

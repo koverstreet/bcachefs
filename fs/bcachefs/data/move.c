@@ -318,7 +318,7 @@ int bch2_move_extent(struct moving_context *ctxt,
 		ret = __bch2_move_extent(ctxt, bucket_in_flight, iter, k, opts, data_opts);
 	else if (data_opts.type != BCH_DATA_UPDATE_scrub) {
 		if (data_opts.type != BCH_DATA_UPDATE_copygc)
-			try(bch2_can_do_write(c, &opts, &data_opts, k));
+			try(bch2_can_do_data_update(trans, &opts, &data_opts, k));
 
 		enum bch_trans_commit_flags commit_flags = data_opts.commit_flags;
 		if ((commit_flags & BCH_WATERMARK_MASK) == BCH_WATERMARK_copygc)
