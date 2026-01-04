@@ -914,14 +914,18 @@ int bch2_data_update_init(struct btree_trans *trans,
 		goto out;
 	}
 
-	unsigned durability_keeping = 0;
+	if (m->opts.extra_replicas) {
+		ret = bch2_disk_reservation_add(c, &m->op.res, k.k->size * m->opts.extra_replicas, 0);
+		if (ret)
+			goto out;
+	}
 
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(m->k.k));
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
-	unsigned reserve_sectors = k.k->size * data_opts.extra_replicas;
 	unsigned buf_bytes = 0;
 	bool unwritten = false;
+	unsigned durability_keeping = 0;
 
 	if (m->opts.ptrs_kill)
 		checksummed_and_non_checksummed_handling(m, ptrs);
@@ -932,8 +936,10 @@ int bch2_data_update_init(struct btree_trans *trans,
 			int d = ptr_bit & m->opts.ptrs_kill_ec
 				? bch2_dev_durability(c, p.ptr.dev)
 				: bch2_extent_ptr_durability(trans, &p);
-			if (d < 0)
-				return d;
+			if (d < 0) {
+				ret = d;
+				goto out;
+			}
 
 			durability_keeping += d;
 			if (!m->opts.no_devs_have)
@@ -1001,15 +1007,6 @@ int bch2_data_update_init(struct btree_trans *trans,
 		 */
 		if (data_opts.type != BCH_DATA_UPDATE_copygc) {
 			ret = __bch2_can_do_write(c, io_opts, &m->opts, &m->op.devs_have, k);
-			if (ret)
-				goto out;
-		}
-
-		if (reserve_sectors) {
-			ret = bch2_disk_reservation_add(c, &m->op.res, reserve_sectors,
-					m->opts.extra_replicas
-					? 0
-					: BCH_DISK_RESERVATION_NOFAIL);
 			if (ret)
 				goto out;
 		}
