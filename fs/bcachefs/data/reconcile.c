@@ -1299,8 +1299,6 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 					data_opts->ptrs_kill |= ptr_bit;
 				ptr_bit <<= 1;
 			}
-
-			data_opts->extra_replicas = r->data_replicas - durability;
 		} else {
 			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 				int d = bch2_extent_ptr_durability(trans, &p);
@@ -1343,10 +1341,8 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 		} else {
 			unsigned ptr_bit = 1;
 			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-				if (p.has_ec) {
+				if (p.has_ec)
 					data_opts->ptrs_kill_ec |= ptr_bit;
-					data_opts->extra_replicas += p.ec.redundancy;
-				}
 
 				ptr_bit <<= 1;
 			}

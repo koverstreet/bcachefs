@@ -903,7 +903,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 		goto out;
 	}
 
-	unsigned durability_have = 0, durability_removing = 0;
+	unsigned durability_keeping = 0;
 
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(m->k.k));
 	const union bch_extent_entry *entry;
@@ -917,34 +917,23 @@ int bch2_data_update_init(struct btree_trans *trans,
 
 	unsigned ptr_bit = 1;
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-		if (!p.ptr.cached) {
-			if (!(ptr_bit & (m->opts.ptrs_rewrite|
-					 m->opts.ptrs_kill))) {
-				int d = bch2_extent_ptr_durability(trans, &p);
-				if (d < 0)
-					return d;
+		if (p.ptr.cached &&
+		    (m->opts.ptrs_rewrite & ptr_bit)) {
+			m->opts.ptrs_kill |= ptr_bit;
+			m->opts.ptrs_rewrite ^= ptr_bit;
+		}
 
-				durability_have += d;
-				if (!m->opts.no_devs_have)
-					bch2_dev_list_add_dev(&m->op.devs_have, p.ptr.dev);
-			}
+		if (!(ptr_bit & (m->opts.ptrs_rewrite|
+				 m->opts.ptrs_kill))) {
+			int d = ptr_bit & m->opts.ptrs_kill_ec
+				? bch2_dev_durability(c, p.ptr.dev)
+				: bch2_extent_ptr_durability(trans, &p);
+			if (d < 0)
+				return d;
 
-			if (ptr_bit & m->opts.ptrs_rewrite) {
-				if (crc_is_compressed(p.crc))
-					reserve_sectors += k.k->size;
-
-				int d = bch2_extent_ptr_desired_durability(trans, &p);
-				if (d < 0)
-					return d;
-
-				m->op.nr_replicas += d;
-				durability_removing += d;
-			}
-		} else {
-			if (m->opts.ptrs_rewrite & ptr_bit) {
-				m->opts.ptrs_kill |= ptr_bit;
-				m->opts.ptrs_rewrite ^= ptr_bit;
-			}
+			durability_keeping += d;
+			if (!m->opts.no_devs_have)
+				bch2_dev_list_add_dev(&m->op.devs_have, p.ptr.dev);
 		}
 
 		/*
@@ -967,8 +956,6 @@ int bch2_data_update_init(struct btree_trans *trans,
 	}
 
 	if (m->opts.type != BCH_DATA_UPDATE_scrub) {
-		unsigned durability_required = max(0, (int) (io_opts->data_replicas - durability_have));
-
 		/*
 		 * If current extent durability is less than io_opts.data_replicas,
 		 * we're not trying to rereplicate the extent up to data_alloc/replicas.here -
@@ -977,18 +964,9 @@ int bch2_data_update_init(struct btree_trans *trans,
 		 * Increasing replication is an explicit operation triggered by
 		 * rereplicate, currently, so that users don't get an unexpected -ENOSPC
 		 */
-		m->op.nr_replicas = min(durability_removing, durability_required) +
+		m->op.nr_replicas = max(0, (int) (io_opts->data_replicas - durability_keeping)) +
 			m->opts.extra_replicas;
-
-		/*
-		 * If device(s) were set to durability=0 after data was written to them
-		 * we can end up with a duribilty=0 extent, and the normal algorithm
-		 * that tries not to increase durability doesn't work:
-		 */
-		if (!(durability_have + durability_removing))
-			m->op.nr_replicas = max((unsigned) m->op.nr_replicas, 1);
-
-		m->op.nr_replicas_required = m->op.nr_replicas;
+		m->op.nr_replicas_required = 1;
 
 		/*
 		 * It might turn out that we don't need any new replicas, if the
