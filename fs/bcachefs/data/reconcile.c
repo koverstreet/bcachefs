@@ -1511,8 +1511,17 @@ static int do_reconcile_extent(struct moving_context *ctxt,
 			return ret;
 		}
 
-		if (extent_has_rotational(c, k))
+		if (extent_has_rotational(c, k)) {
+			/*
+			 * The pending list is in logical inode:offset order,
+			 * but if the extent is on spinning rust we want do it
+			 * in device LBA order.
+			 *
+			 * Just take it off the pending list for now, and we'll
+			 * pick it up when we scan reconcile_work_phys:
+			 */
 			return bch2_extent_reconcile_pending_mod(trans, &iter, k, false);
+		}
 	}
 
 	event_add_trace(c, reconcile_data, k.k->size, buf,
