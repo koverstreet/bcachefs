@@ -688,7 +688,7 @@ struct bch_devs_list bch2_data_update_devs_keeping(struct bch_fs *c,
 	struct bch_devs_list ret = (struct bch_devs_list) { 0 };
 
 	/* We always rewrite btree nodes entirely */
-	if (bkey_is_btree_ptr(k.k))
+	if (bkey_is_btree_ptr(k.k) || opts->no_devs_have)
 		return ret;
 
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
