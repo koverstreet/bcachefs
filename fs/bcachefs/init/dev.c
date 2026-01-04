@@ -971,6 +971,17 @@ int bch2_dev_online(struct bch_fs *c, const char *path, struct printbuf *err)
 		bch2_write_super(c);
 	}
 
+	/*
+	 * We might have been unable to write because this device was offline:
+	 *
+	 * We'd like to limit reconcile pending scans, having them happen
+	 * because a device is going offline and coming back sucks - but to do
+	 * that right we need to at least note somewhere /which/ targets have
+	 * extents on the pending list:
+	 */
+	try(bch2_set_reconcile_needs_scan(c,
+		(struct reconcile_scan) { .type = RECONCILE_SCAN_pending}, true));
+
 	return 0;
 }
 
