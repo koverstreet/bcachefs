@@ -1354,23 +1354,22 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 			if ((r->need_rb & BIT(BCH_REBALANCE_data_checksum)) &&
 			    p.crc.csum_type != csum_type)
-				data_opts->ptrs_rewrite |= ptr_bit;
+				data_opts->ptrs_kill |= ptr_bit;
 
 			if ((r->need_rb & BIT(BCH_REBALANCE_background_compression)) &&
 			    p.crc.compression_type != compression_type)
-				data_opts->ptrs_rewrite |= ptr_bit;
+				data_opts->ptrs_kill |= ptr_bit;
 
 			if ((r->need_rb & BIT(BCH_REBALANCE_background_target)) &&
 			    !p.ptr.cached &&
 			    !bch2_dev_in_target_rcu(c, p.ptr.dev, r->background_target))
-				data_opts->ptrs_rewrite |= ptr_bit;
+				data_opts->ptrs_kill |= ptr_bit;
 
 			ptr_bit <<= 1;
 		}
 	}
 
-	bool ret = (data_opts->ptrs_rewrite ||
-		    data_opts->ptrs_kill ||
+	bool ret = (data_opts->ptrs_kill ||
 		    data_opts->ptrs_kill_ec ||
 		    data_opts->extra_replicas);
 	if (!ret) {

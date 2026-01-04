@@ -168,7 +168,7 @@ static bool ptr_being_rewritten(struct bch_fs *c, struct bch_read_bio *orig, uns
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(bkey_i_to_s_c(u->k.k));
 	unsigned ptr_bit = 1;
 	bkey_for_each_ptr(ptrs, ptr) {
-		if (ptr->dev == dev && (u->opts.ptrs_rewrite & ptr_bit))
+		if (ptr->dev == dev && (u->opts.ptrs_kill & ptr_bit))
 			return true;
 		ptr_bit <<= 1;
 	}
@@ -292,13 +292,13 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 		bkey_for_each_ptr(ptrs, ptr) {
 			if (bch2_dev_io_failures(failed, ptr->dev) &&
 			    !ptr_being_rewritten(c, orig, ptr->dev)) {
-				update_opts.ptrs_io_error|= ptr_bit;
-				update_opts.ptrs_rewrite|= ptr_bit;
+				update_opts.ptrs_io_error |= ptr_bit;
+				update_opts.ptrs_kill |= ptr_bit;
 			}
 			ptr_bit <<= 1;
 		}
 
-		if (!update_opts.ptrs_rewrite)
+		if (!update_opts.ptrs_kill)
 			return ERR_PTR(bch_err_throw(c, nopromote_no_rewrites));
 	}
 

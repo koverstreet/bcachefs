@@ -26,10 +26,9 @@ enum bch_data_update_types {
 
 struct data_update_opts {
 	enum bch_data_update_types	type;
-	u8				ptrs_rewrite;
+	u8				ptrs_io_error;
 	u8				ptrs_kill;
 	u8				ptrs_kill_ec;
-	u8				ptrs_io_error;
 	u8				extra_replicas;
 	u16				target;
 	int				read_dev;

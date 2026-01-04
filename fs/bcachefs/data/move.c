@@ -641,11 +641,11 @@ static int evacuate_bucket_pred(struct btree_trans *trans, void *_arg,
 		if (ptr->dev == arg->bucket.inode &&
 		    (arg->gen < 0 || arg->gen == ptr->gen) &&
 		    !ptr->cached)
-			data_opts->ptrs_rewrite |= BIT(i);
+			data_opts->ptrs_kill |= BIT(i);
 		i++;
 	}
 
-	return data_opts->ptrs_rewrite != 0;
+	return data_opts->ptrs_kill != 0;
 }
 
 int bch2_evacuate_bucket(struct moving_context *ctxt,

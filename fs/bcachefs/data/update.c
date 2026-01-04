@@ -95,7 +95,7 @@ static void count_data_update_key_fail(struct data_update *u,
 
 			unsigned ptr_bit = 1;
 			bkey_for_each_ptr_decode(old.k, bch2_bkey_ptrs_c(old), p, entry) {
-				if ((ptr_bit & u->opts.ptrs_rewrite) &&
+				if ((ptr_bit & u->opts.ptrs_kill ) &&
 				    (ptr = bch2_extent_has_ptr(c, old, p, bkey_i_to_s(insert))) &&
 				    !ptr->cached)
 					rewrites_found |= ptr_bit;
@@ -181,7 +181,7 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	 * other updates
 	 * @new: extent with new pointers that we'll be adding to @insert
 	 *
-	 * Fist, drop ptrs_rewrite from @new:
+	 * Fist, drop ptrs_kill from @new:
 	 */
 	const union bch_extent_entry *entry_c;
 	struct extent_ptr_decoded p;
@@ -192,7 +192,7 @@ static int data_update_index_update_key(struct btree_trans *trans,
 
 	unsigned rewrites_found = 0, ptr_bit = 1;
 	bkey_for_each_ptr_decode(old.k, bch2_bkey_ptrs_c(old), p, entry_c) {
-		if ((ptr_bit & u->opts.ptrs_rewrite) &&
+		if ((ptr_bit & u->opts.ptrs_kill ) &&
 		    (ptr = bch2_extent_has_ptr(c, old, p, bkey_i_to_s(insert)))) {
 			if (ptr_bit & u->opts.ptrs_io_error)
 				bch2_bkey_drop_ptr_noerror(c, bkey_i_to_s(insert), ptr);
@@ -204,7 +204,7 @@ static int data_update_index_update_key(struct btree_trans *trans,
 		ptr_bit <<= 1;
 	}
 
-	if (u->opts.ptrs_rewrite && !rewrites_found) {
+	if (u->opts.ptrs_kill && !rewrites_found) {
 		int durability = bch2_bkey_durability(trans, k);
 		if (durability < 0)
 			return durability;
@@ -383,12 +383,12 @@ void bch2_data_update_read_done(struct data_update *u)
 
 		bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 			if ((u->opts.ptrs_io_error & ptr_bit) &&
-			    !(u->opts.ptrs_rewrite & ptr_bit)) {
+			    !(u->opts.ptrs_kill & ptr_bit)) {
 				int d = bch2_trans_do(c, bch2_extent_ptr_durability(trans, &p));
 
 				if (d >= 0)
 					u->op.nr_replicas += d;
-				u->opts.ptrs_rewrite |= ptr_bit;
+				u->opts.ptrs_kill |= ptr_bit;
 				bch2_dev_list_drop_dev(&u->op.devs_have, p.ptr.dev);
 			}
 
@@ -562,7 +562,6 @@ void bch2_data_update_opts_to_text(struct printbuf *out, struct bch_fs *c,
 	prt_str(out, bch2_data_update_type_strs[data_opts->type]);
 	prt_newline(out);
 
-	ptr_bits_to_text(out, data_opts->ptrs_rewrite,	"rewrite");
 	ptr_bits_to_text(out, data_opts->ptrs_io_error,	"io error");
 	ptr_bits_to_text(out, data_opts->ptrs_kill,	"kill");
 	ptr_bits_to_text(out, data_opts->ptrs_kill_ec,	"kill ec");
@@ -695,8 +694,7 @@ struct bch_devs_list bch2_data_update_devs_keeping(struct bch_fs *c,
 	unsigned ptr_bit = 1;
 
 	bkey_for_each_ptr(ptrs, ptr) {
-		if (!(ptr_bit & (opts->ptrs_rewrite|
-				 opts->ptrs_kill)))
+		if (!(ptr_bit & opts->ptrs_kill))
 			ret.data[ret.nr++] = ptr->dev;
 		ptr_bit <<= 1;
 	}
@@ -839,12 +837,12 @@ static void checksummed_and_non_checksummed_handling(struct data_update *u, stru
 	unsigned ptr_bit = 1;
 
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-		if (ptr_bit & u->opts.ptrs_rewrite) {
+		if (ptr_bit & u->opts.ptrs_kill) {
 			if (!rewrite_found) {
 				rewrite_found = true;
 				u->opts.read_dev = p.ptr.dev;
 			} else {
-				u->opts.ptrs_rewrite &= ~ptr_bit;
+				u->opts.ptrs_kill &= ~ptr_bit;
 			}
 		}
 
@@ -912,19 +910,12 @@ int bch2_data_update_init(struct btree_trans *trans,
 	unsigned buf_bytes = 0;
 	bool unwritten = false;
 
-	if (m->opts.ptrs_rewrite)
+	if (m->opts.ptrs_kill)
 		checksummed_and_non_checksummed_handling(m, ptrs);
 
 	unsigned ptr_bit = 1;
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-		if (p.ptr.cached &&
-		    (m->opts.ptrs_rewrite & ptr_bit)) {
-			m->opts.ptrs_kill |= ptr_bit;
-			m->opts.ptrs_rewrite ^= ptr_bit;
-		}
-
-		if (!(ptr_bit & (m->opts.ptrs_rewrite|
-				 m->opts.ptrs_kill))) {
+		if (!(ptr_bit & m->opts.ptrs_kill)) {
 			int d = ptr_bit & m->opts.ptrs_kill_ec
 				? bch2_dev_durability(c, p.ptr.dev)
 				: bch2_extent_ptr_durability(trans, &p);
@@ -974,8 +965,6 @@ int bch2_data_update_init(struct btree_trans *trans,
 		 * was written:
 		 */
 		if (!m->op.nr_replicas) {
-			m->opts.ptrs_kill |= m->opts.ptrs_rewrite;
-			m->opts.ptrs_rewrite = 0;
 			/* if iter == NULL, it's just a promote */
 			if (iter)
 				ret = bch2_extent_drop_ptrs(trans, iter, k, io_opts, &m->opts);
