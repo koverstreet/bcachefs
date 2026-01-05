@@ -1437,15 +1437,30 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 				 struct per_snapshot_io_opts *snapshot_io_opts,
 				 struct btree_iter *iter, struct bkey_s_c k)
 {
+	if (!bkey_extent_is_direct_data(k.k))
+		return 0;
+
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 	u32 restart_count = trans->restart_count;
 
 	ctxt->stats = &c->reconcile.work_stats;
 
-	int ret = bch2_move_extent_pred(ctxt, NULL, snapshot_io_opts,
-					reconcile_set_data_opts, NULL,
-					iter, iter->min_depth, k);
+	struct bch_inode_opts opts;
+	try(bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts));
+	try(bch2_update_reconcile_opts(trans, snapshot_io_opts, &opts, iter, iter->min_depth, k,
+				       SET_NEEDS_REBALANCE_other));
+
+	CLASS(disk_reservation, res)(c);
+	try(bch2_trans_commit_lazy(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc));
+
+	struct data_update_opts data_opts = { .read_dev = -1 };
+	int ret = reconcile_set_data_opts(trans, NULL, iter->btree_id, k, &opts, &data_opts);
+	if (ret <= 0)
+		return ret;
+
+	ret = bch2_move_extent(ctxt, NULL, &opts, &data_opts,
+			       iter, iter->min_depth, k);
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart) ||
 	    bch2_err_matches(ret, EROFS))
 		return ret;

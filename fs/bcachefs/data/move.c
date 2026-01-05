@@ -270,11 +270,56 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 	return 0;
 }
 
-int bch2_move_extent_pred(struct moving_context *ctxt,
-			  struct move_bucket *bucket_in_flight,
-			  struct per_snapshot_io_opts *snapshot_io_opts,
-			  move_pred_fn pred, void *arg,
-			  struct btree_iter *iter, unsigned level, struct bkey_s_c k)
+int bch2_move_extent(struct moving_context *ctxt,
+		     struct move_bucket *bucket_in_flight,
+		     struct bch_inode_opts *opts,
+		     struct data_update_opts *data_opts,
+		     struct btree_iter *iter, unsigned level, struct bkey_s_c k)
+{
+	struct btree_trans *trans = ctxt->trans;
+	struct bch_fs *c = trans->c;
+	int ret = 0;
+
+	if (data_opts->type == BCH_DATA_UPDATE_scrub &&
+	    !bch2_dev_idx_is_online(c, data_opts->read_dev))
+		return bch_err_throw(c, device_offline);
+
+	if (!bkey_is_btree_ptr(k.k))
+		ret = __bch2_move_extent(ctxt, bucket_in_flight, iter, k, *opts, *data_opts);
+	else if (data_opts->type != BCH_DATA_UPDATE_scrub) {
+		if (data_opts->type != BCH_DATA_UPDATE_copygc)
+			try(bch2_can_do_data_update(trans, opts, data_opts, k, NULL));
+
+		enum bch_trans_commit_flags commit_flags = data_opts->commit_flags;
+		if ((commit_flags & BCH_WATERMARK_MASK) == BCH_WATERMARK_copygc)
+			commit_flags = btree_update_set_watermark_hipri(commit_flags);
+
+		ret = bch2_btree_node_rewrite_pos(trans, iter->btree_id, level, k.k->p,
+						  data_opts->target,
+						  data_opts->commit_flags,
+						  data_opts->write_flags);
+	} else
+		ret = bch2_btree_node_scrub(trans, iter->btree_id, level, k, data_opts->read_dev);
+
+	if (bch2_err_matches(ret, ENOMEM)) {
+		/* memory allocation failure, wait for some IO to finish */
+		bch2_move_ctxt_wait_for_io(ctxt);
+		ret = bch_err_throw(c, transaction_restart_nested);
+	}
+
+	if (!bch2_err_matches(ret, BCH_ERR_transaction_restart) && ctxt->stats)
+		atomic64_add(!bkey_is_btree_ptr(k.k)
+			     ? k.k->size
+			     : c->opts.btree_node_size >> 9, &ctxt->stats->sectors_seen);
+
+	return ret;
+}
+
+static int bch2_move_extent_pred(struct moving_context *ctxt,
+				 struct move_bucket *bucket_in_flight,
+				 struct per_snapshot_io_opts *snapshot_io_opts,
+				 move_pred_fn pred, void *arg,
+				 struct btree_iter *iter, unsigned level, struct bkey_s_c k)
 {
 	if (!bkey_extent_is_direct_data(k.k))
 		return 0;
@@ -310,39 +355,7 @@ int bch2_move_extent_pred(struct moving_context *ctxt,
 	if (ret <= 0)
 		return ret;
 
-	if (data_opts.type == BCH_DATA_UPDATE_scrub &&
-	    !bch2_dev_idx_is_online(c, data_opts.read_dev))
-		return bch_err_throw(c, device_offline);
-
-	if (!bkey_is_btree_ptr(k.k))
-		ret = __bch2_move_extent(ctxt, bucket_in_flight, iter, k, opts, data_opts);
-	else if (data_opts.type != BCH_DATA_UPDATE_scrub) {
-		if (data_opts.type != BCH_DATA_UPDATE_copygc)
-			try(bch2_can_do_data_update(trans, &opts, &data_opts, k, NULL));
-
-		enum bch_trans_commit_flags commit_flags = data_opts.commit_flags;
-		if ((commit_flags & BCH_WATERMARK_MASK) == BCH_WATERMARK_copygc)
-			commit_flags = btree_update_set_watermark_hipri(commit_flags);
-
-		ret = bch2_btree_node_rewrite_pos(trans, iter->btree_id, level, k.k->p,
-						  data_opts.target,
-						  data_opts.commit_flags,
-						  data_opts.write_flags);
-	} else
-		ret = bch2_btree_node_scrub(trans, iter->btree_id, level, k, data_opts.read_dev);
-
-	if (bch2_err_matches(ret, ENOMEM)) {
-		/* memory allocation failure, wait for some IO to finish */
-		bch2_move_ctxt_wait_for_io(ctxt);
-		ret = bch_err_throw(c, transaction_restart_nested);
-	}
-
-	if (!bch2_err_matches(ret, BCH_ERR_transaction_restart) && ctxt->stats)
-		atomic64_add(!bkey_is_btree_ptr(k.k)
-			     ? k.k->size
-			     : c->opts.btree_node_size >> 9, &ctxt->stats->sectors_seen);
-
-	return ret;
+	return bch2_move_extent(ctxt, bucket_in_flight, &opts, &data_opts, iter, level, k);
 }
 
 int bch2_move_ratelimit(struct moving_context *ctxt)

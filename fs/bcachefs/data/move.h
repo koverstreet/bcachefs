@@ -86,10 +86,11 @@ void bch2_moving_ctxt_flush_all(struct moving_context *);
 void bch2_move_ctxt_wait_for_io(struct moving_context *);
 int bch2_move_ratelimit(struct moving_context *);
 
-struct per_snapshot_io_opts;
-int bch2_move_extent_pred(struct moving_context *, struct move_bucket *,
-			  struct per_snapshot_io_opts *, move_pred_fn, void *,
-			  struct btree_iter *, unsigned, struct bkey_s_c);
+int bch2_move_extent(struct moving_context *,
+		     struct move_bucket *,
+		     struct bch_inode_opts *,
+		     struct data_update_opts *,
+		     struct btree_iter *, unsigned, struct bkey_s_c);
 
 int bch2_move_data_btree(struct moving_context *, struct bpos, struct bpos,
 			 move_pred_fn, void *, enum btree_id, unsigned);
