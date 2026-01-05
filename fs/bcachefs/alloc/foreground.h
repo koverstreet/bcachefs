@@ -346,11 +346,16 @@ void bch2_write_points_to_text(struct printbuf *, struct bch_fs *);
 void bch2_fs_alloc_debug_to_text(struct printbuf *, struct bch_fs *);
 void bch2_dev_alloc_debug_to_text(struct printbuf *, struct bch_dev *);
 
-void __bch2_wait_on_allocator(struct bch_fs *, struct closure *);
-static inline void bch2_wait_on_allocator(struct bch_fs *c, struct closure *cl)
+void __bch2_wait_on_allocator(struct bch_fs *,
+			      enum bch_watermark,
+			      struct closure *);
+
+static inline void bch2_wait_on_allocator(struct bch_fs *c,
+					  enum bch_watermark watermark,
+					  struct closure *cl)
 {
 	if (closure_nr_remaining(cl) > 1)
-		__bch2_wait_on_allocator(c, cl);
+		__bch2_wait_on_allocator(c, watermark, cl);
 }
 
 #endif /* _BCACHEFS_ALLOC_FOREGROUND_H */

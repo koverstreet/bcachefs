@@ -16,7 +16,8 @@
 /* allocate journal on a device: */
 
 static int bch2_set_nr_journal_buckets_iter(struct bch_dev *ca, unsigned nr,
-					    bool new_fs, struct closure *cl)
+					    bool new_fs, enum bch_watermark watermark,
+					    struct closure *cl)
 {
 	struct bch_fs *c = ca->fs;
 	struct journal_device *ja = &ca->journal;
@@ -38,10 +39,6 @@ static int bch2_set_nr_journal_buckets_iter(struct bch_dev *ca, unsigned nr,
 	}
 
 	for (nr_got = 0; nr_got < nr_want; nr_got++) {
-		enum bch_watermark watermark = new_fs
-			? BCH_WATERMARK_btree
-			: BCH_WATERMARK_normal;
-
 		ob[nr_got] = bch2_bucket_alloc(c, ca, watermark,
 					       BCH_DATA_journal, cl);
 		ret = PTR_ERR_OR_ZERO(ob[nr_got]);
@@ -152,6 +149,9 @@ static int bch2_set_nr_journal_buckets_loop(struct bch_fs *c, struct bch_dev *ca
 					    unsigned nr, bool new_fs)
 {
 	struct journal_device *ja = &ca->journal;
+	enum bch_watermark watermark = new_fs
+		? BCH_WATERMARK_btree
+		: BCH_WATERMARK_normal;
 	int ret = 0;
 
 	CLASS(closure_stack, cl)();
@@ -176,11 +176,11 @@ static int bch2_set_nr_journal_buckets_loop(struct bch_fs *c, struct bch_dev *ca
 			try(bch2_disk_reservation_get(c, &res.r,
 						bucket_to_sector(ca, nr - ja->nr), 1, 0));
 
-		ret = bch2_set_nr_journal_buckets_iter(ca, nr, new_fs, &cl);
+		ret = bch2_set_nr_journal_buckets_iter(ca, nr, new_fs, watermark, &cl);
 		if (ret == -BCH_ERR_open_buckets_empty)
 			ret = 0; /* wait and retry */
 
-		bch2_wait_on_allocator(c, &cl);
+		bch2_wait_on_allocator(c, watermark, &cl);
 	}
 
 	return ret;

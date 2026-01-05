@@ -1637,7 +1637,7 @@ err:
 	if ((op->flags & BCH_WRITE_sync) ||
 	    (!(op->flags & BCH_WRITE_submitted) &&
 	     !(op->flags & BCH_WRITE_in_worker))) {
-		bch2_wait_on_allocator(c, &op->cl);
+		bch2_wait_on_allocator(c, op->watermark, &op->cl);
 
 		__bch2_write_index(op);
 

@@ -129,7 +129,7 @@ err_noprint:
 
 	if (closure_nr_remaining(&cl) != 1) {
 		bch2_trans_unlock_long(trans);
-		bch2_wait_on_allocator(c, &cl);
+		bch2_wait_on_allocator(c, BCH_WATERMARK_normal, &cl);
 	}
 
 	return ret;

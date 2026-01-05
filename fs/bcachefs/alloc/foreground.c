@@ -1571,12 +1571,13 @@ void bch2_dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 		   should_invalidate_buckets(ca, bch2_dev_usage_read(ca)));
 }
 
-static noinline void bch2_print_allocator_stuck(struct bch_fs *c)
+static noinline void bch2_print_allocator_stuck(struct bch_fs *c, enum bch_watermark watermark)
 {
 	CLASS(printbuf, buf)();
 
-	prt_printf(&buf, "Allocator stuck? Waited for %u seconds\n",
-		   c->opts.allocator_stuck_timeout);
+	prt_printf(&buf, "Allocator stuck? Waited for %u seconds, watermark %s\n",
+		   c->opts.allocator_stuck_timeout,
+		   bch2_watermarks[watermark]);
 
 	prt_printf(&buf, "Allocator debug:\n");
 	scoped_guard(printbuf_indent, &buf)
@@ -1616,13 +1617,14 @@ static inline unsigned allocator_wait_timeout(struct bch_fs *c)
 	return c->opts.allocator_stuck_timeout * HZ;
 }
 
-void __bch2_wait_on_allocator(struct bch_fs *c, struct closure *cl)
+void __bch2_wait_on_allocator(struct bch_fs *c, enum bch_watermark watermark,
+			      struct closure *cl)
 {
 	unsigned t = allocator_wait_timeout(c);
 
 	if (t && closure_sync_timeout(cl, t)) {
 		c->allocator.last_stuck = jiffies;
-		bch2_print_allocator_stuck(c);
+		bch2_print_allocator_stuck(c, watermark);
 	}
 
 	closure_sync(cl);
