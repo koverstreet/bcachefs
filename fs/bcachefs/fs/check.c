@@ -908,6 +908,7 @@ static int check_inode(struct btree_trans *trans,
 		return 0;
 
 	try(bch2_inode_unpack(k, &u));
+	BUG_ON(u.bi_snapshot != k.k->p.snapshot);
 
 	if (snapshot_root->bi_inum != u.bi_inum ||
 	    !bch2_snapshot_is_ancestor(c, u.bi_snapshot, snapshot_root->bi_snapshot))
@@ -1033,7 +1034,7 @@ static int check_inode(struct btree_trans *trans,
 		do_update = true;
 	}
 
-	if (u.bi_subvol) {
+	if (u.bi_subvol && bch2_snapshot_is_leaf(c, u.bi_snapshot)) {
 		struct bch_subvolume s;
 
 		ret = bch2_subvolume_get(trans, u.bi_subvol, false, &s);
@@ -1061,6 +1062,7 @@ static int check_inode(struct btree_trans *trans,
 			u.bi_parent_subvol = 0;
 			do_update = true;
 		}
+		ret = 0;
 	}
 
 	if (fsck_err_on(u.bi_journal_seq > journal_cur_seq(&c->journal),
