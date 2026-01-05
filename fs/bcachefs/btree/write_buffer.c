@@ -136,6 +136,7 @@ static noinline int wb_flush_one_slowpath(struct btree_trans *trans,
 	return bch2_trans_update(trans, iter, &wb->k,
 				 BTREE_UPDATE_internal_snapshot_node) ?:
 		bch2_trans_commit(trans, NULL, NULL,
+				  BCH_WATERMARK_reclaim|
 				  BCH_TRANS_COMMIT_no_enospc|
 				  BCH_TRANS_COMMIT_no_check_rw|
 				  BCH_TRANS_COMMIT_no_journal_res|
