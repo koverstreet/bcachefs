@@ -270,11 +270,11 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 	return 0;
 }
 
-int bch2_move_extent(struct moving_context *ctxt,
-		     struct move_bucket *bucket_in_flight,
-		     struct per_snapshot_io_opts *snapshot_io_opts,
-		     move_pred_fn pred, void *arg,
-		     struct btree_iter *iter, unsigned level, struct bkey_s_c k)
+int bch2_move_extent_pred(struct moving_context *ctxt,
+			  struct move_bucket *bucket_in_flight,
+			  struct per_snapshot_io_opts *snapshot_io_opts,
+			  move_pred_fn pred, void *arg,
+			  struct btree_iter *iter, unsigned level, struct bkey_s_c k)
 {
 	if (!bkey_extent_is_direct_data(k.k))
 		return 0;
@@ -428,7 +428,7 @@ retry_root:
 			return 0;
 
 		k = bkey_i_to_s_c(&b->key);
-		ret = bch2_move_extent(ctxt, NULL, &snapshot_io_opts, pred, arg, &iter, level, k);
+		ret = bch2_move_extent_pred(ctxt, NULL, &snapshot_io_opts, pred, arg, &iter, level, k);
 root_err:
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			goto retry_root;
@@ -471,7 +471,7 @@ root_err:
 		if (!bkey_extent_is_direct_data(k.k))
 			goto next_nondata;
 
-		ret = bch2_move_extent(ctxt, NULL, &snapshot_io_opts, pred, arg, &iter, level, k);
+		ret = bch2_move_extent_pred(ctxt, NULL, &snapshot_io_opts, pred, arg, &iter, level, k);
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;
 		if (bch2_err_matches(ret, BCH_ERR_data_update_fail))
@@ -577,7 +577,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 			continue;
 		}
 
-		ret = bch2_move_extent(ctxt, bucket_in_flight, NULL, pred, arg, &iter, bp.v->level, k);
+		ret = bch2_move_extent_pred(ctxt, bucket_in_flight, NULL, pred, arg, &iter, bp.v->level, k);
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			continue;

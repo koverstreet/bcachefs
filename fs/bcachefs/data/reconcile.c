@@ -1443,9 +1443,9 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 
 	ctxt->stats = &c->reconcile.work_stats;
 
-	int ret = bch2_move_extent(ctxt, NULL, snapshot_io_opts,
-				   reconcile_set_data_opts, NULL,
-				   iter, iter->min_depth, k);
+	int ret = bch2_move_extent_pred(ctxt, NULL, snapshot_io_opts,
+					reconcile_set_data_opts, NULL,
+					iter, iter->min_depth, k);
 	if (bch2_err_matches(ret, BCH_ERR_transaction_restart) ||
 	    bch2_err_matches(ret, EROFS))
 		return ret;
