@@ -74,7 +74,6 @@ static int bch2_set_nr_journal_buckets_iter(struct bch_dev *ca, unsigned nr,
 	ret = 0;
 
 	if (c) {
-		bch2_journal_flush_all_pins(&c->journal);
 		bch2_journal_block(&c->journal);
 		mutex_lock(&c->sb_lock);
 	}
