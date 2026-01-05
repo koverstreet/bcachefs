@@ -1420,21 +1420,32 @@ static int bch2_extent_reconcile_pending_mod(struct btree_trans *trans, struct b
 	}
 }
 
-static bool is_reconcile_pending_err(struct bch_fs *c, struct bkey_s_c k, int err)
+static int check_reconcile_pending_err(struct btree_trans *trans,
+				       struct bch_inode_opts *opts,
+				       struct data_update_opts *data_opts,
+				       struct bkey_s_c k, int err)
 {
-	 bool ret = (bch2_err_matches(err, BCH_ERR_data_update_fail_no_rw_devs) ||
-		     bch2_err_matches(err, BCH_ERR_insufficient_devices) ||
-		     bch2_err_matches(err, ENOSPC));
-	 if (ret)
-		event_add_trace(c, reconcile_set_pending, k.k->size, buf, ({
-			prt_printf(&buf, "%s\n", bch2_err_str(err));
-			bch2_bkey_val_to_text(&buf, c, k);
-		}));
-	 return ret;
+	struct bch_fs *c = trans->c;
+
+	 if (!bch2_err_matches(err, BCH_ERR_data_update_fail_no_rw_devs) &&
+	     !bch2_err_matches(err, BCH_ERR_insufficient_devices) &&
+	     !bch2_err_matches(err, ENOSPC))
+		 return err;
+
+	event_add_trace(c, reconcile_set_pending, k.k->size, buf, ({
+		prt_printf(&buf, "%s\n", bch2_err_str(err));
+		bch2_bkey_val_to_text(&buf, c, k);
+		prt_newline(&buf);
+		int ret = bch2_can_do_data_update(trans, opts, data_opts, k, &buf);
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+			return ret;
+	}));
+	return 1;
 }
 
 static int __do_reconcile_extent(struct moving_context *ctxt,
 				 struct per_snapshot_io_opts *snapshot_io_opts,
+				 struct bbpos work,
 				 struct btree_iter *iter, struct bkey_s_c k)
 {
 	if (!bkey_extent_is_direct_data(k.k))
@@ -1459,18 +1470,32 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 	if (ret <= 0)
 		return ret;
 
+	if (work.btree == BTREE_ID_reconcile_pending) {
+		int ret = bch2_can_do_data_update(trans, &opts, &data_opts, k, NULL);
+		ret = check_reconcile_pending_err(trans, &opts, &data_opts, k, ret);
+		if (ret > 0)
+			return 0;
+		if (ret)
+			return ret;
+
+		if (extent_has_rotational(c, k)) {
+			/*
+			 * The pending list is in logical inode:offset order,
+			 * but if the extent is on spinning rust we want do it
+			 * in device LBA order.
+			 *
+			 * Just take it off the pending list for now, and we'll
+			 * pick it up when we scan reconcile_work_phys:
+			 */
+			return bch2_extent_reconcile_pending_mod(trans, iter, k, false);
+		}
+	}
+
 	ret = bch2_move_extent(ctxt, NULL, &opts, &data_opts,
 			       iter, iter->min_depth, k);
-	if (bch2_err_matches(ret, BCH_ERR_transaction_restart) ||
-	    bch2_err_matches(ret, EROFS))
-		return ret;
-	if (is_reconcile_pending_err(c, k, ret)) {
-		/*
-		 * we need actual target from reconcile_set_data_opts so we can
-		 * check for offline/ro devices
-		 */
+	ret = check_reconcile_pending_err(trans, &opts, &data_opts, k, ret);
+	if (ret > 0)
 		return bch2_extent_reconcile_pending_mod(trans, iter, k, true);
-	}
 	if (ret) {
 		WARN_ONCE(ret != -BCH_ERR_data_update_fail_no_snapshot,
 			  "unhandled error from move_extent: %s", bch2_err_str(ret));
@@ -1498,46 +1523,21 @@ static int do_reconcile_extent(struct moving_context *ctxt,
 	if (!k.k)
 		return 0;
 
-	if (work.btree == BTREE_ID_reconcile_pending) {
-		struct bch_inode_opts opts;
-		try(bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts));
-
-		struct data_update_opts data_opts = { .read_dev = -1 };
-		reconcile_set_data_opts(trans, NULL, data_pos.btree, k, &opts, &data_opts);
-
-		int ret = bch2_can_do_data_update(trans, &opts, &data_opts, k, NULL);
-		if (is_reconcile_pending_err(c, k, ret))
-			return 0;
-		if (ret)
-			return ret;
-
-		if (extent_has_rotational(c, k)) {
-			/*
-			 * The pending list is in logical inode:offset order,
-			 * but if the extent is on spinning rust we want do it
-			 * in device LBA order.
-			 *
-			 * Just take it off the pending list for now, and we'll
-			 * pick it up when we scan reconcile_work_phys:
-			 */
-			return bch2_extent_reconcile_pending_mod(trans, &iter, k, false);
-		}
-	}
-
 	event_add_trace(c, reconcile_data, k.k->size, buf,
 			bch2_bkey_val_to_text(&buf, c, k));
 
-	return __do_reconcile_extent(ctxt, snapshot_io_opts, &iter, k);
+	return __do_reconcile_extent(ctxt, snapshot_io_opts, work, &iter, k);
 }
 
 static int do_reconcile_phys(struct moving_context *ctxt,
 			     struct per_snapshot_io_opts *snapshot_io_opts,
-			     struct bpos bp_pos, struct wb_maybe_flush *last_flushed)
+			     struct bbpos work,
+			     struct wb_maybe_flush *last_flushed)
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
 
-	CLASS(btree_iter, bp_iter)(trans, BTREE_ID_backpointers, bp_pos, 0);
+	CLASS(btree_iter, bp_iter)(trans, BTREE_ID_backpointers, work.pos, 0);
 	struct bkey_s_c bp_k = bkey_try(bch2_btree_iter_peek_slot(&bp_iter));
 	if (!bp_k.k || bp_k.k->type != KEY_TYPE_backpointer) /* write buffer race */
 		return 0;
@@ -1555,12 +1555,13 @@ static int do_reconcile_phys(struct moving_context *ctxt,
 		bch2_bkey_val_to_text(&buf, c, k);
 	}));
 
-	return __do_reconcile_extent(ctxt, snapshot_io_opts, &iter, k);
+	return __do_reconcile_extent(ctxt, snapshot_io_opts, work, &iter, k);
 }
 
 noinline_for_stack
 static int do_reconcile_btree(struct moving_context *ctxt,
 			      struct per_snapshot_io_opts *snapshot_io_opts,
+			      struct bbpos work,
 			      struct bkey_s_c_backpointer bp)
 {
 	struct btree_trans *trans = ctxt->trans;
@@ -1574,7 +1575,7 @@ static int do_reconcile_btree(struct moving_context *ctxt,
 	event_add_trace(c, reconcile_btree, btree_sectors(c), buf,
 			bch2_bkey_val_to_text(&buf, c, k));
 
-	return __do_reconcile_extent(ctxt, snapshot_io_opts, &iter, k);
+	return __do_reconcile_extent(ctxt, snapshot_io_opts, work, &iter, k);
 }
 
 static int update_reconcile_opts_scan(struct btree_trans *trans,
@@ -1966,10 +1967,10 @@ static int do_reconcile(struct moving_context *ctxt)
 			}
 
 			ret = do_reconcile_btree(ctxt, &snapshot_io_opts,
-						 bkey_s_c_to_backpointer(k));
+						 r->work_pos, bkey_s_c_to_backpointer(k));
 		} else if (btree_is_reconcile_phys(r->work_pos.btree)) {
 			ret = lockrestart_do(trans,
-				do_reconcile_phys(ctxt, &snapshot_io_opts, k.k->p, &last_flushed));
+				do_reconcile_phys(ctxt, &snapshot_io_opts, r->work_pos, &last_flushed));
 		} else {
 			ret = lockrestart_do(trans,
 				do_reconcile_extent(ctxt, &snapshot_io_opts, r->work_pos));
