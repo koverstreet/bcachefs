@@ -1436,6 +1436,8 @@ static int check_reconcile_pending_err(struct btree_trans *trans,
 		prt_printf(&buf, "%s\n", bch2_err_str(err));
 		bch2_bkey_val_to_text(&buf, c, k);
 		prt_newline(&buf);
+		bch2_data_update_opts_to_text(&buf, c, opts, data_opts);
+		prt_newline(&buf);
 		int ret = bch2_can_do_data_update(trans, opts, data_opts, k, &buf);
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
 			return ret;
@@ -1445,6 +1447,8 @@ static int check_reconcile_pending_err(struct btree_trans *trans,
 
 static int __do_reconcile_extent(struct moving_context *ctxt,
 				 struct per_snapshot_io_opts *snapshot_io_opts,
+				 struct bch_inode_opts *opts,
+				 struct data_update_opts *data_opts,
 				 struct bbpos work,
 				 struct btree_iter *iter, struct bkey_s_c k)
 {
@@ -1457,22 +1461,21 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 
 	ctxt->stats = &c->reconcile.work_stats;
 
-	struct bch_inode_opts opts;
-	try(bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts));
-	try(bch2_update_reconcile_opts(trans, snapshot_io_opts, &opts, iter, iter->min_depth, k,
+	try(bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, opts));
+	try(bch2_update_reconcile_opts(trans, snapshot_io_opts, opts, iter, iter->min_depth, k,
 				       SET_NEEDS_REBALANCE_other));
 
 	CLASS(disk_reservation, res)(c);
 	try(bch2_trans_commit_lazy(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc));
 
-	struct data_update_opts data_opts = { .read_dev = -1 };
-	int ret = reconcile_set_data_opts(trans, NULL, iter->btree_id, k, &opts, &data_opts);
+	*data_opts = (struct data_update_opts) { .read_dev = -1 };
+	int ret = reconcile_set_data_opts(trans, NULL, iter->btree_id, k, opts, data_opts);
 	if (ret <= 0)
 		return ret;
 
 	if (work.btree == BTREE_ID_reconcile_pending) {
-		int ret = bch2_can_do_data_update(trans, &opts, &data_opts, k, NULL);
-		ret = check_reconcile_pending_err(trans, &opts, &data_opts, k, ret);
+		int ret = bch2_can_do_data_update(trans, opts, data_opts, k, NULL);
+		ret = check_reconcile_pending_err(trans, opts, data_opts, k, ret);
 		if (ret > 0)
 			return 0;
 		if (ret)
@@ -1491,9 +1494,9 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 		}
 	}
 
-	ret = bch2_move_extent(ctxt, NULL, &opts, &data_opts,
+	ret = bch2_move_extent(ctxt, NULL, opts, data_opts,
 			       iter, iter->min_depth, k);
-	ret = check_reconcile_pending_err(trans, &opts, &data_opts, k, ret);
+	ret = check_reconcile_pending_err(trans, opts, data_opts, k, ret);
 	if (ret > 0)
 		return bch2_extent_reconcile_pending_mod(trans, iter, k, true);
 	if (ret) {
@@ -1523,10 +1526,17 @@ static int do_reconcile_extent(struct moving_context *ctxt,
 	if (!k.k)
 		return 0;
 
-	event_add_trace(c, reconcile_data, k.k->size, buf,
-			bch2_bkey_val_to_text(&buf, c, k));
+	struct bch_inode_opts opts;
+	struct data_update_opts data_opts;
+	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter, k));
 
-	return __do_reconcile_extent(ctxt, snapshot_io_opts, work, &iter, k);
+	event_add_trace(c, reconcile_data, k.k->size, buf, ({
+		prt_newline(&buf);
+		bch2_bkey_val_to_text(&buf, c, k);
+		prt_newline(&buf);
+		bch2_data_update_opts_to_text(&buf, c, &opts, &data_opts);
+	}));
+	return 0;
 }
 
 static int do_reconcile_phys(struct moving_context *ctxt,
@@ -1548,14 +1558,20 @@ static int do_reconcile_phys(struct moving_context *ctxt,
 	if (!k.k)
 		return 0;
 
+	struct bch_inode_opts opts;
+	struct data_update_opts data_opts;
+	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter, k));
+
 	event_add_trace(c, reconcile_phys, k.k->size, buf, ({
 		prt_newline(&buf);
 		bch2_bkey_val_to_text(&buf, c, bp_k);
 		prt_newline(&buf);
 		bch2_bkey_val_to_text(&buf, c, k);
+		prt_newline(&buf);
+		bch2_data_update_opts_to_text(&buf, c, &opts, &data_opts);
 	}));
 
-	return __do_reconcile_extent(ctxt, snapshot_io_opts, work, &iter, k);
+	return 0;
 }
 
 noinline_for_stack
@@ -1572,10 +1588,18 @@ static int do_reconcile_btree(struct moving_context *ctxt,
 	if (!k.k)
 		return 0;
 
-	event_add_trace(c, reconcile_btree, btree_sectors(c), buf,
-			bch2_bkey_val_to_text(&buf, c, k));
+	struct bch_inode_opts opts;
+	struct data_update_opts data_opts;
+	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter, k));
 
-	return __do_reconcile_extent(ctxt, snapshot_io_opts, work, &iter, k);
+	event_add_trace(c, reconcile_btree, btree_sectors(c), buf, ({
+		prt_newline(&buf);
+		bch2_bkey_val_to_text(&buf, c, k);
+		prt_newline(&buf);
+		bch2_data_update_opts_to_text(&buf, c, &opts, &data_opts);
+	}));
+
+	return 0;
 }
 
 static int update_reconcile_opts_scan(struct btree_trans *trans,
