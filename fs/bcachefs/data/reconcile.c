@@ -1499,6 +1499,8 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 	ret = check_reconcile_pending_err(trans, opts, data_opts, k, ret);
 	if (ret > 0)
 		return bch2_extent_reconcile_pending_mod(trans, iter, k, true);
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+		return ret;
 	if (ret) {
 		WARN_ONCE(ret != -BCH_ERR_data_update_fail_no_snapshot,
 			  "unhandled error from move_extent: %s", bch2_err_str(ret));
