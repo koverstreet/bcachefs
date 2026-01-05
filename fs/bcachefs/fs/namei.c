@@ -235,7 +235,8 @@ int bch2_unlink_trans(struct btree_trans *trans,
 	try(bch2_dirent_lookup_trans(trans, &dirent_iter, dir, &dir_hash,
 				     name, &inum, BTREE_ITER_intent));
 
-	if (!subvol_inum_eq(inode, inum)) {
+	if ((inode.subvol || inode.inum) &&
+	    !subvol_inum_eq(inode, inum)) {
 		CLASS(bch_log_msg, msg)(c);
 		prt_printf(&msg.m, "vfs did bad unlink: wanted inum %llu:%llu, got %llu:%llu\n",
 			   inode.subvol, inode.inum,
