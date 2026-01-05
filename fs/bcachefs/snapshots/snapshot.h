@@ -154,7 +154,7 @@ static inline int bch2_snapshot_is_internal_node(struct bch_fs *c, u32 id)
 {
 	guard(rcu)();
 	const struct snapshot_t *s = snapshot_t(c, id);
-	return s ? s->children[0] : bch_err_throw(c, invalid_snapshot_node);
+	return s ? s->children[0] != 0 : bch_err_throw(c, invalid_snapshot_node);
 }
 
 static inline int bch2_snapshot_is_leaf(struct bch_fs *c, u32 id)
