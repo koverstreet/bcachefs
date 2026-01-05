@@ -21,6 +21,7 @@
 
 #include "fs/inode.h"
 
+#include "init/dev.h"
 #include "init/error.h"
 #include "init/fs.h"
 
@@ -685,8 +686,17 @@ static unsigned durability_available_on_target(struct bch_fs *c,
 					       enum bch_data_type data_type,
 					       unsigned target,
 					       struct bch_devs_list *devs_have,
-					       bool nonblocking)
+					       bool nonblocking,
+					       struct printbuf *trace)
 {
+	if (trace) {
+		prt_str(trace, "available to write on ");
+		bch2_target_to_text(trace, c, target);
+		prt_newline(trace);
+		printbuf_indent_add(trace, 2);
+		printbuf_atomic_inc(trace);
+	}
+
 	guard(rcu)();
 	struct bch_devs_mask devs = target_rw_devs(c, data_type, target);
 	unsigned durability = 0;
@@ -697,11 +707,22 @@ static unsigned durability_available_on_target(struct bch_fs *c,
 			continue;
 
 		struct bch_dev *ca = bch2_dev_rcu_noerror(c, i);
-		if (ca &&
-		    (nonblocking
-		     ? dev_buckets_free(ca, watermark)
-		     : dev_buckets_available(ca, watermark)))
+		if (!ca)
+			continue;
+
+		u64 free = nonblocking
+			? dev_buckets_free(ca, watermark)
+			: dev_buckets_available(ca, watermark);
+		if (free)
 			durability += ca->mi.durability;
+
+		if (trace)
+			prt_printf(trace, "%s: %llu\n", ca->name, free);
+	}
+
+	if (trace) {
+		printbuf_indent_sub(trace, 2);
+		printbuf_atomic_dec(trace);
 	}
 
 	return durability;
@@ -729,13 +750,15 @@ static unsigned bch2_btree_ptr_durability_on_target(struct bch_fs *c, struct bke
 
 static int bch2_can_do_write_btree(struct bch_fs *c,
 				   struct bch_inode_opts *opts,
-				   struct data_update_opts *data_opts, struct bkey_s_c k)
+				   struct data_update_opts *data_opts, struct bkey_s_c k,
+				   struct printbuf *trace)
 {
 	enum bch_watermark watermark = data_opts->commit_flags & BCH_WATERMARK_MASK;
 	struct bch_devs_list empty = {};
 
 	if (durability_available_on_target(c, watermark, BCH_DATA_btree, data_opts->target, &empty,
-					   data_opts->write_flags & BCH_WRITE_alloc_nowait) >
+					   data_opts->write_flags & BCH_WRITE_alloc_nowait,
+					   trace) >
 	    bch2_btree_ptr_durability_on_target(c, k, data_opts->target))
 		return 0;
 
@@ -743,7 +766,8 @@ static int bch2_can_do_write_btree(struct bch_fs *c,
 		unsigned d = bch2_btree_ptr_durability(c, k);
 		if (d < opts->data_replicas &&
 		    d < durability_available_on_target(c, watermark, BCH_DATA_btree, 0, &empty,
-						       data_opts->write_flags & BCH_WRITE_alloc_nowait))
+						       data_opts->write_flags & BCH_WRITE_alloc_nowait,
+						       trace))
 			return 0;
 	}
 
@@ -754,7 +778,8 @@ static int __bch2_can_do_write(struct bch_fs *c,
 			       struct bch_inode_opts *opts,
 			       struct data_update_opts *data_opts,
 			       struct bch_devs_list *devs_have,
-			       struct bkey_s_c k)
+			       struct bkey_s_c k,
+			       struct printbuf *trace)
 {
 	bool btree = bkey_is_btree_ptr(k.k);
 	enum bch_watermark watermark = data_opts->commit_flags & BCH_WATERMARK_MASK;
@@ -772,10 +797,20 @@ static int __bch2_can_do_write(struct bch_fs *c,
 	if (btree &&
 	    data_opts->type == BCH_DATA_UPDATE_reconcile &&
 	    !bch2_bkey_has_dev_bad_or_evacuating(c, k))
-		return bch2_can_do_write_btree(c, opts, data_opts, k);
+		return bch2_can_do_write_btree(c, opts, data_opts, k, trace);
+
+	if (trace) {
+		prt_str(trace, "keeping devices: ");
+		bch2_devs_list_to_text(trace, c, devs_have);
+		prt_newline(trace);
+
+		if (data_opts->write_flags & BCH_WRITE_alloc_nowait)
+			prt_str(trace, "nonblocking\n");
+	}
 
 	return durability_available_on_target(c, watermark, data_type, target, devs_have,
-					      data_opts->write_flags & BCH_WRITE_alloc_nowait)
+					      data_opts->write_flags & BCH_WRITE_alloc_nowait,
+					      trace)
 		? 0
 		: bch_err_throw(c, data_update_fail_no_rw_devs);
 }
@@ -783,7 +818,8 @@ static int __bch2_can_do_write(struct bch_fs *c,
 int bch2_can_do_data_update(struct btree_trans *trans,
 			    struct bch_inode_opts *opts,
 			    struct data_update_opts *data_opts,
-			    struct bkey_s_c k)
+			    struct bkey_s_c k,
+			    struct printbuf *trace)
 {
 	struct bch_fs *c = trans->c;
 	struct bch_devs_list devs_have = {};
@@ -816,7 +852,10 @@ int bch2_can_do_data_update(struct btree_trans *trans,
 	    durability_keeping >= opts->data_replicas)
 		return 0;
 
-	return __bch2_can_do_write(c, opts, data_opts, &devs_have, k);
+	if (trace)
+		prt_printf(trace, "need %u replicas\n", opts->data_replicas - durability_keeping);
+
+	return __bch2_can_do_write(c, opts, data_opts, &devs_have, k, trace);
 }
 
 /*
@@ -1006,7 +1045,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 		 *   single durability=2 device)
 		 */
 		if (data_opts.type != BCH_DATA_UPDATE_copygc) {
-			ret = __bch2_can_do_write(c, io_opts, &m->opts, &m->op.devs_have, k);
+			ret = __bch2_can_do_write(c, io_opts, &m->opts, &m->op.devs_have, k, NULL);
 			if (ret)
 				goto out;
 		}
