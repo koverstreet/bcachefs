@@ -141,12 +141,12 @@ void bch2_read_err_msg_trans(struct btree_trans *, struct printbuf *,
 int __bch2_read_extent(struct btree_trans *, struct bch_read_bio *,
 		       struct bvec_iter, struct bpos, enum btree_id,
 		       struct bkey_s_c, unsigned,
-		       struct bch_io_failures *, unsigned, int);
+		       struct bch_io_failures *, enum bch_read_flags, int);
 
 static inline void bch2_read_extent(struct btree_trans *trans,
 			struct bch_read_bio *rbio, struct bpos read_pos,
 			enum btree_id data_btree, struct bkey_s_c k,
-			unsigned offset_into_extent, unsigned flags)
+			unsigned offset_into_extent, enum bch_read_flags flags)
 {
 	int ret = __bch2_read_extent(trans, rbio, rbio->bio.bi_iter, read_pos,
 				     data_btree, k, offset_into_extent, NULL, flags, -1);
@@ -156,7 +156,7 @@ static inline void bch2_read_extent(struct btree_trans *trans,
 
 int __bch2_read(struct btree_trans *, struct bch_read_bio *, struct bvec_iter,
 		subvol_inum,
-		struct bch_io_failures *, struct bkey_buf *, unsigned flags);
+		struct bch_io_failures *, struct bkey_buf *, enum bch_read_flags);
 
 static inline void bch2_read(struct bch_fs *c, struct bch_read_bio *rbio,
 			     subvol_inum inum)
