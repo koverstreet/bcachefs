@@ -1468,7 +1468,6 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 	CLASS(disk_reservation, res)(c);
 	try(bch2_trans_commit_lazy(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc));
 
-	*data_opts = (struct data_update_opts) { .read_dev = -1 };
 	int ret = reconcile_set_data_opts(trans, NULL, iter->btree_id, k, opts, data_opts);
 	if (ret <= 0)
 		return ret;
@@ -1529,7 +1528,7 @@ static int do_reconcile_extent(struct moving_context *ctxt,
 		return 0;
 
 	struct bch_inode_opts opts;
-	struct data_update_opts data_opts;
+	struct data_update_opts data_opts = {};
 	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter, k));
 
 	event_add_trace(c, reconcile_data, k.k->size, buf, ({
@@ -1561,7 +1560,10 @@ static int do_reconcile_phys(struct moving_context *ctxt,
 		return 0;
 
 	struct bch_inode_opts opts;
-	struct data_update_opts data_opts;
+	struct data_update_opts data_opts = {
+		.read_dev	= work.pos.inode,
+		.read_flags	= BCH_READ_soft_require_read_device,
+	};
 	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter, k));
 
 	event_add_trace(c, reconcile_phys, k.k->size, buf, ({
@@ -1591,7 +1593,7 @@ static int do_reconcile_btree(struct moving_context *ctxt,
 		return 0;
 
 	struct bch_inode_opts opts;
-	struct data_update_opts data_opts;
+	struct data_update_opts data_opts = {};
 	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter, k));
 
 	event_add_trace(c, reconcile_btree, btree_sectors(c), buf, ({
