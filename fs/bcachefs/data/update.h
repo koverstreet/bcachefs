@@ -31,10 +31,11 @@ struct data_update_opts {
 	u8				ptrs_kill_ec;
 	u8				extra_replicas;
 	u16				target;
-	int				read_dev;
 	bool				no_devs_have:1;
 	bool				checksum_paranoia:1;
 
+	unsigned			read_dev;
+	enum bch_read_flags		read_flags;
 	enum bch_write_flags		write_flags;
 	enum bch_trans_commit_flags	commit_flags;
 };

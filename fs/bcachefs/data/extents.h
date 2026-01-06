@@ -388,7 +388,8 @@ void bch2_mark_io_failure(struct bch_io_failures *, struct extent_ptr_decoded *,
 void bch2_mark_dev_io_failure(struct bch_io_failures *, unsigned, int);
 int bch2_bkey_pick_read_device(struct bch_fs *, struct bkey_s_c,
 			       struct bch_io_failures *,
-			       struct extent_ptr_decoded *, int);
+			       struct extent_ptr_decoded *, unsigned,
+			       enum bch_read_flags);
 
 /* KEY_TYPE_btree_ptr: */
 

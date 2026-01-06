@@ -675,6 +675,8 @@ static void bch2_rbio_retry(struct work_struct *work)
 	struct bpos read_pos = rbio->read_pos;
 	struct bch_io_failures failed = { .nr = 0 };
 
+	flags &= ~BCH_READ_hard_require_read_device;
+
 	event_inc_trace(c, data_read_retry, buf,
 			bch2_read_bio_to_text_atomic(&buf, rbio));
 
@@ -1355,7 +1357,7 @@ int __bch2_read_extent(struct btree_trans *trans,
 	    !orig->data_update)
 		return read_extent_done(orig, flags, bch_err_throw(c, extent_poisoned));
 
-	ret = bch2_bkey_pick_read_device(c, k, failed, &pick, dev);
+	ret = bch2_bkey_pick_read_device(c, k, failed, &pick, dev, flags);
 
 	/* hole or reservation - just zero fill: */
 	if (unlikely(!ret))

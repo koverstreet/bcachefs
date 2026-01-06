@@ -133,7 +133,9 @@ static inline bool ptr_better(struct bch_fs *c,
 			      u64 p1_latency,
 			      struct bch_dev *ca1,
 			      const struct extent_ptr_decoded p2,
-			      u64 p2_latency)
+			      u64 p2_latency,
+			      unsigned preferred_dev,
+			      enum bch_read_flags flags)
 {
 	struct bch_dev *ca2 = bch2_dev_rcu_noerror(c, p2.ptr.dev);
 
@@ -166,6 +168,13 @@ static inline bool ptr_better(struct bch_fs *c,
 	if (unlikely(delta))
 		return delta > 0;
 
+	if (flags & BCH_READ_soft_require_read_device) {
+		if (p1.ptr.dev == preferred_dev)
+			p1_latency /= 256;
+		if (p2.ptr.dev == preferred_dev)
+			p2_latency /= 256;
+	}
+
 	/* Pick at random, biased in favor of the faster device: */
 
 	return bch2_get_random_u64_below(p1_latency + p2_latency) > p1_latency;
@@ -179,7 +188,8 @@ static inline bool ptr_better(struct bch_fs *c,
 int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 			       struct bch_io_failures *failed,
 			       struct extent_ptr_decoded *pick,
-			       int dev)
+			       unsigned preferred_dev,
+			       enum bch_read_flags flags)
 {
 	bool have_csum_errors = false, have_io_errors = false, have_missing_devs = false;
 	bool have_dirty_ptrs = false, have_pick = false;
@@ -206,7 +216,8 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 		}
 
 		/* Are we being asked to read from a specific device? */
-		if (dev >= 0 && p.ptr.dev != dev)
+		if ((flags & BCH_READ_hard_require_read_device) &&
+		    p.ptr.dev != preferred_dev)
 			continue;
 
 		struct bch_dev *ca = bch2_dev_rcu_noerror(c, p.ptr.dev);
@@ -261,7 +272,8 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 		if (!have_pick ||
 		    ptr_better(c,
 			       p, p_latency, ca,
-			       *pick, pick_latency)) {
+			       *pick, pick_latency,
+			       preferred_dev, flags)) {
 			*pick = p;
 			pick_latency = p_latency;
 			have_pick = true;

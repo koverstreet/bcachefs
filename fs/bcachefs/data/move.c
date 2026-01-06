@@ -264,7 +264,7 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 			   bkey_start_pos(k.k),
 			   iter->btree_id, k, 0,
 			   NULL,
-			   BCH_READ_last_fragment,
+			   data_opts.read_flags|BCH_READ_last_fragment,
 			   data_opts.read_dev);
 	u = NULL;
 	return 0;
@@ -706,6 +706,7 @@ static int scrub_pred(struct btree_trans *trans, void *_arg,
 
 	data_opts->type		= BCH_DATA_UPDATE_scrub;
 	data_opts->read_dev	= arg->migrate.dev;
+	data_opts->read_flags	= BCH_READ_hard_require_read_device;
 	return true;
 }
 
