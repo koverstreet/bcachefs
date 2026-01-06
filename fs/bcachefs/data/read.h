@@ -114,27 +114,6 @@ static inline int bch2_read_indirect_extent(struct btree_trans *trans,
 	return 0;
 }
 
-#define BCH_READ_FLAGS()		\
-	x(retry_if_stale)		\
-	x(may_promote)			\
-	x(user_mapped)			\
-	x(last_fragment)		\
-	x(must_bounce)			\
-	x(must_clone)			\
-	x(in_retry)
-
-enum __bch_read_flags {
-#define x(n)	__BCH_READ_##n,
-	BCH_READ_FLAGS()
-#undef x
-};
-
-enum bch_read_flags {
-#define x(n)	BCH_READ_##n = BIT(__BCH_READ_##n),
-	BCH_READ_FLAGS()
-#undef x
-};
-
 void bch2_read_err_msg_trans(struct btree_trans *, struct printbuf *,
 			     struct bch_read_bio *, struct bpos);
 
