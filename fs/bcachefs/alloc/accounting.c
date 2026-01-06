@@ -431,8 +431,11 @@ int bch2_accounting_mem_insert(struct bch_fs *c, struct bkey_s_c_accounting a,
 
 	percpu_up_read(&c->capacity.mark_lock);
 	int ret;
-	scoped_guard(percpu_write, &c->capacity.mark_lock)
+	scoped_guard(percpu_write, &c->capacity.mark_lock) {
+		guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+
 		ret = __bch2_accounting_mem_insert(c, a);
+	}
 	percpu_down_read(&c->capacity.mark_lock);
 	return ret;
 }
@@ -470,6 +473,8 @@ void __bch2_accounting_maybe_kill(struct bch_fs *c, struct bpos pos)
 
 	guard(mutex)(&c->sb_lock);
 	scoped_guard(percpu_write, &c->capacity.mark_lock) {
+		guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+
 		struct bch_accounting_mem *acc = &c->accounting;
 
 		unsigned idx = eytzinger0_find(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
@@ -624,6 +629,8 @@ int bch2_gc_accounting_start(struct bch_fs *c)
 	int ret = 0;
 
 	guard(percpu_write)(&c->capacity.mark_lock);
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+
 	darray_for_each(acc->k, e) {
 		e->v[1] = __alloc_percpu_gfp(e->nr_counters * sizeof(u64),
 					     sizeof(u64), GFP_KERNEL);
@@ -647,6 +654,8 @@ int bch2_gc_accounting_done(struct bch_fs *c)
 	int ret = 0;
 
 	guard(percpu_write)(&c->capacity.mark_lock);
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+
 	while (1) {
 		unsigned idx = eytzinger0_find_ge(acc->k.data, acc->k.nr, sizeof(acc->k.data[0]),
 						  accounting_pos_cmp, &pos);

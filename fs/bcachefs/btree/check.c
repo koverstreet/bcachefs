@@ -1057,6 +1057,8 @@ int bch2_check_allocations(struct bch_fs *c)
 		bch2_gc_reflink_done(c);
 out:
 	scoped_guard(percpu_write, &c->capacity.mark_lock) {
+		guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+
 		/* Indicates that gc is no longer in progress: */
 		__gc_pos_set(c, gc_phase(GC_PHASE_not_running));
 		bch2_gc_free(c);
