@@ -332,7 +332,7 @@ void bch2_do_discards(struct bch_fs *);
 static inline u64 should_invalidate_buckets(struct bch_dev *ca,
 					    struct bch_dev_usage u)
 {
-	u64 want_free = ca->mi.nbuckets >> 7;
+	u64 want_free = ca->mi.nbuckets >> 5;
 	u64 free = max_t(s64, 0,
 			   u.buckets[BCH_DATA_free]
 			 + u.buckets[BCH_DATA_need_discard]

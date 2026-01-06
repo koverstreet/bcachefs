@@ -1320,9 +1320,6 @@ static int invalidate_one_bucket(struct btree_trans *trans,
 	struct bch_fs *c = trans->c;
 	struct bpos bucket = u64_to_bucket(lru_k.k->p.offset);
 
-	if (*nr_to_invalidate <= 0)
-		return 1;
-
 	if (!bch2_dev_bucket_exists(c, bucket)) {
 		if (ret_fsck_err(trans, lru_entry_to_invalid_bucket,
 			     "lru key points to nonexistent device:bucket %llu:%llu",
@@ -1400,6 +1397,9 @@ static void __bch2_do_invalidates(struct bch_dev *ca)
 
 	s64 nr_to_invalidate =
 		should_invalidate_buckets(ca, bch2_dev_usage_read(ca));
+	if (!nr_to_invalidate)
+		return;
+
 	bool wrapped = false;
 
 	CLASS(btree_iter, iter)(trans, BTREE_ID_lru,
@@ -1423,6 +1423,13 @@ restart_err:
 			continue;
 		if (ret)
 			break;
+
+		if (!nr_to_invalidate) {
+			nr_to_invalidate =
+				should_invalidate_buckets(ca, bch2_dev_usage_read(ca));
+			if (!nr_to_invalidate)
+				break;
+		}
 
 		wb_maybe_flush_inc(&last_flushed);
 		bch2_btree_iter_advance(&iter);
