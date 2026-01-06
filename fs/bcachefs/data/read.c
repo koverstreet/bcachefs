@@ -179,7 +179,7 @@ static bool ptr_being_rewritten(struct bch_fs *c, struct bch_read_bio *orig, uns
 static inline int should_promote(struct bch_fs *c, struct bkey_s_c k,
 				 struct bpos pos,
 				 struct bch_inode_opts opts,
-				 unsigned flags,
+				 enum bch_read_flags flags,
 				 bool self_healing)
 {
 	if (!self_healing) {
@@ -264,7 +264,7 @@ static struct bch_read_bio *__promote_alloc(struct btree_trans *trans,
 					    struct bkey_s_c k,
 					    struct bpos pos,
 					    struct extent_ptr_decoded *pick,
-					    unsigned flags,
+					    enum bch_read_flags flags,
 					    unsigned sectors,
 					    struct bch_read_bio *orig,
 					    struct bch_io_failures *failed)
@@ -370,7 +370,7 @@ static struct bch_read_bio *promote_alloc(struct btree_trans *trans,
 					struct bvec_iter iter,
 					struct bkey_s_c k,
 					struct extent_ptr_decoded *pick,
-					unsigned flags,
+					enum bch_read_flags flags,
 					struct bch_read_bio *orig,
 					bool *bounce,
 					bool *read_full,
@@ -611,7 +611,7 @@ static noinline int bch2_read_retry_nodecode(struct btree_trans *trans,
 					struct bch_read_bio *rbio,
 					struct bvec_iter bvec_iter,
 					struct bch_io_failures *failed,
-					unsigned flags)
+					enum bch_read_flags flags)
 {
 	struct data_update *u = container_of(rbio, struct data_update, rbio);
 	int ret = 0;
@@ -667,7 +667,7 @@ static void bch2_rbio_retry(struct work_struct *work)
 		container_of(work, struct bch_read_bio, work);
 	struct bch_fs *c	= rbio->c;
 	struct bvec_iter iter	= rbio->bvec_iter;
-	unsigned flags		= rbio->flags;
+	enum bch_read_flags flags = rbio->flags;
 	subvol_inum inum = {
 		.subvol = rbio->subvol,
 		.inum	= rbio->read_pos.inode,
@@ -1076,7 +1076,7 @@ static inline struct bch_read_bio *read_extent_rbio_alloc(struct btree_trans *tr
 			struct extent_ptr_decoded pick,
 			struct bch_dev *ca,
 			unsigned offset_into_extent,
-			struct bch_io_failures *failed, unsigned flags,
+			struct bch_io_failures *failed, enum bch_read_flags flags,
 			bool bounce, bool read_full, bool narrow_crcs)
 {
 	struct bch_fs *c = trans->c;
@@ -1220,7 +1220,7 @@ static inline struct bch_read_bio *read_extent_rbio_alloc(struct btree_trans *tr
 	return rbio;
 }
 
-static inline int read_extent_done(struct bch_read_bio *rbio, unsigned flags, int ret)
+static inline int read_extent_done(struct bch_read_bio *rbio, enum bch_read_flags flags, int ret)
 {
 	if (flags & BCH_READ_in_retry)
 		return ret;
@@ -1238,7 +1238,7 @@ static noinline int read_extent_inline(struct bch_fs *c,
 				       struct bvec_iter iter,
 				       struct bkey_s_c k,
 				       unsigned offset_into_extent,
-				       unsigned flags)
+				       enum bch_read_flags flags)
 {
 	event_add_trace(c, data_read_inline, bvec_iter_sectors(iter), buf, ({
 		bch2_bkey_val_to_text(&buf, c, k);
@@ -1270,7 +1270,7 @@ static noinline int read_extent_hole(struct bch_fs *c,
 				     struct bch_read_bio *rbio,
 				     struct bvec_iter iter,
 				     struct bkey_s_c k,
-				     unsigned flags)
+				     enum bch_read_flags flags)
 {
 	event_add_trace(c, data_read_hole, bvec_iter_sectors(iter), buf, ({
 		bch2_bkey_val_to_text(&buf, c, k);
@@ -1295,7 +1295,7 @@ static noinline int read_extent_pick_err(struct btree_trans *trans,
 					 struct bch_read_bio *rbio,
 					 struct bpos read_pos,
 					 enum btree_id data_btree, struct bkey_s_c k,
-					 unsigned flags, int ret)
+					 enum bch_read_flags flags, int ret)
 {
 	struct bch_fs *c = trans->c;
 
@@ -1321,7 +1321,7 @@ static noinline int read_extent_no_encryption_key(struct btree_trans *trans,
 					 struct bch_read_bio *rbio,
 					 struct bpos read_pos,
 					 struct bkey_s_c k,
-					 unsigned flags)
+					 enum bch_read_flags flags)
 {
 	struct bch_fs *c = trans->c;
 
@@ -1340,7 +1340,8 @@ int __bch2_read_extent(struct btree_trans *trans,
 		       struct bvec_iter iter, struct bpos read_pos,
 		       enum btree_id data_btree, struct bkey_s_c k,
 		       unsigned offset_into_extent,
-		       struct bch_io_failures *failed, unsigned flags, int dev)
+		       struct bch_io_failures *failed,
+		       enum bch_read_flags flags, int dev)
 {
 	struct bch_fs *c = trans->c;
 	struct extent_ptr_decoded pick;
@@ -1505,7 +1506,7 @@ int __bch2_read(struct btree_trans *trans, struct bch_read_bio *rbio,
 		struct bvec_iter bvec_iter, subvol_inum inum,
 		struct bch_io_failures *failed,
 		struct bkey_buf *prev_read,
-		unsigned flags)
+		enum bch_read_flags flags)
 {
 	struct bch_fs *c = trans->c;
 	struct bkey_s_c k;
