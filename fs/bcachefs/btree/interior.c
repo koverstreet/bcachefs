@@ -1346,6 +1346,15 @@ bch2_btree_update_start(struct btree_trans *trans, struct btree_path *path,
 			bch2_trans_unlock(trans);
 			bch2_wait_on_allocator(c, watermark, &cl);
 		} while (1);
+
+		/*
+		 * Don't block with btree locks held
+		 *
+		 * It would be nice if we could remove closures from waitlists
+		 * without waking up the waitlist:
+		 */
+		if (closure_nr_remaining(&cl) > 1)
+			bch2_trans_unlock(trans);
 	}
 
 	if (ret) {
