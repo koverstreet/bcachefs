@@ -131,18 +131,11 @@ static inline int dev_failed(struct bch_dev *ca)
 static inline bool ptr_better(struct bch_fs *c,
 			      const struct extent_ptr_decoded p1,
 			      u64 p1_latency,
-			      struct bch_dev *ca1,
 			      const struct extent_ptr_decoded p2,
 			      u64 p2_latency,
 			      unsigned preferred_dev,
 			      enum bch_read_flags flags)
 {
-	struct bch_dev *ca2 = bch2_dev_rcu_noerror(c, p2.ptr.dev);
-
-	int failed_delta = dev_failed(ca1) - dev_failed(ca2);
-	if (unlikely(failed_delta))
-		return failed_delta < 0;
-
 	if (static_branch_unlikely(&bch2_force_reconstruct_read))
 		return p1.do_ec_reconstruct > p2.do_ec_reconstruct;
 
@@ -271,7 +264,7 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 
 		if (!have_pick ||
 		    ptr_better(c,
-			       p, p_latency, ca,
+			       p, p_latency,
 			       *pick, pick_latency,
 			       preferred_dev, flags)) {
 			*pick = p;
