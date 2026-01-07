@@ -751,26 +751,23 @@ err:
 /* Add new device to running filesystem: */
 int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 {
-	struct bch_opts opts = bch2_opts_empty();
-	struct bch_sb_handle sb __cleanup(bch2_free_super) = {};
-	struct bch_dev *ca = NULL;
-	CLASS(printbuf, label)();
 	int ret = 0;
 
+	struct bch_opts opts = bch2_opts_empty();
+	struct bch_sb_handle sb __cleanup(bch2_free_super) = {};
 	ret = bch2_read_super(path, &opts, &sb);
 	if (ret) {
 		prt_printf(err, "error reading superblock: %s\n", bch2_err_str(ret));
-		goto err;
+		return ret;
 	}
 
 	struct bch_member dev_mi = bch2_sb_member_get(sb.sb, sb.sb->dev_idx);
 
+	CLASS(printbuf, label)();
 	if (BCH_MEMBER_GROUP(&dev_mi)) {
 		bch2_disk_path_to_text_sb(&label, sb.sb, BCH_MEMBER_GROUP(&dev_mi) - 1);
-		if (label.allocation_failure) {
-			ret = -ENOMEM;
-			goto err;
-		}
+		if (label.allocation_failure)
+			return -ENOMEM;
 	}
 
 	if (list_empty(&c->list)) {
@@ -783,19 +780,15 @@ int bch2_dev_add(struct bch_fs *c, const char *path, struct printbuf *err)
 
 		if (ret) {
 			prt_printf(err, "cannot go multidevice: filesystem UUID already open\n");
-			goto err;
+			return ret;
 		}
 	}
 
-	ret = bch2_dev_may_add(sb.sb, c);
-	if (ret)
-		goto err;
+	try(bch2_dev_may_add(sb.sb, c));
 
-	ca = __bch2_dev_alloc(c, &dev_mi);
-	if (!ca) {
-		ret = -ENOMEM;
-		goto err;
-	}
+	struct bch_dev *ca = __bch2_dev_alloc(c, &dev_mi);
+	if (!ca)
+		return -ENOMEM;
 
 	ret = __bch2_dev_attach_bdev(c, ca, &sb, err);
 	if (ret)
