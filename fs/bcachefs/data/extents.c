@@ -816,6 +816,7 @@ unsigned bch2_bkey_replicas(struct bch_fs *c, struct bkey_s_c k)
 
 unsigned bch2_dev_durability(struct bch_fs *c, unsigned dev)
 {
+	guard(rcu)();
 	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
 
 	return ca && ca->mi.state != BCH_MEMBER_STATE_evacuating
