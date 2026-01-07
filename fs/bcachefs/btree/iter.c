@@ -3070,6 +3070,32 @@ struct bkey_s_c bch2_btree_iter_peek_and_restart_outlined(struct btree_iter *ite
 	return k;
 }
 
+struct bkey_s_c bch2_btree_iter_peek_root(struct btree_trans *trans, struct btree_iter *iter,
+					  enum btree_id btree, unsigned level)
+{
+	struct bch_fs *c = trans->c;
+
+	while (level == bch2_btree_id_root(c, btree)->level + 1) {
+		bch2_trans_node_iter_init(trans, iter, btree, POS_MIN, 0, level - 1,
+					  BTREE_ITER_not_extents|
+					  BTREE_ITER_all_snapshots);
+		struct btree *b = bch2_btree_iter_peek_node(iter);
+		int ret = PTR_ERR_OR_ZERO(b);
+		if (ret)
+			return bkey_s_c_err(ret);
+
+		if (b != btree_node_root(c, b))
+			continue;
+
+		if (btree_node_fake(b))
+			break;
+
+		return bkey_i_to_s_c(&b->key);
+	}
+
+	return bkey_s_c_null;
+}
+
 /* new transactional stuff: */
 
 #ifdef CONFIG_BCACHEFS_DEBUG

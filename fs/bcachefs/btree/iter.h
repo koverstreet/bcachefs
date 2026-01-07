@@ -983,6 +983,18 @@ transaction_restart:							\
 
 struct bkey_s_c bch2_btree_iter_peek_and_restart_outlined(struct btree_iter *);
 
+struct bkey_s_c bch2_btree_iter_peek_root(struct btree_trans *, struct btree_iter *,
+					  enum btree_id, unsigned);
+
+#define for_btree_root_key_at_level(_trans, _iter, _btree_id, _level, _k, _do)		\
+	lockrestart_do(trans, ({							\
+		CLASS(btree_iter_uninit, iter)(trans);					\
+		struct bkey_s_c _k;							\
+		bkey_err(k = bch2_btree_iter_peek_root(_trans, &_iter,			\
+						       _btree_id, level)) ?:		\
+		(k.k ? _do : 0);							\
+	}))
+
 #define for_each_btree_key_max_norestart(_trans, _iter, _btree_id,			\
 			   _start, _end, _flags, _k, _ret)				\
 	for (CLASS(btree_iter, _iter)((_trans), (_btree_id), (_start), (_flags));	\

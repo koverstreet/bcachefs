@@ -412,62 +412,40 @@ int bch2_move_data_btree(struct moving_context *ctxt,
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
-	struct bkey_s_c k;
-	int ret = 0;
 
 	CLASS(per_snapshot_io_opts, snapshot_io_opts)(c);
-	CLASS(btree_iter_uninit, iter)(trans);
 
 	if (ctxt->stats) {
 		ctxt->stats->data_type	= BCH_DATA_user;
 		ctxt->stats->pos	= BBPOS(btree_id, start);
 	}
 
-retry_root:
-	bch2_trans_begin(trans);
-
-	if (level == bch2_btree_id_root(c, btree_id)->level + 1) {
-		bch2_trans_node_iter_init(trans, &iter, btree_id, start, 0, level - 1,
-					  BTREE_ITER_prefetch|
-					  BTREE_ITER_not_extents|
-					  BTREE_ITER_all_snapshots);
-		struct btree *b = bch2_btree_iter_peek_node(&iter);
-		ret = PTR_ERR_OR_ZERO(b);
-		if (ret)
-			goto root_err;
-
-		if (b != btree_node_root(c, b))
-			goto retry_root;
-
-		if (btree_node_fake(b))
-			return 0;
-
-		k = bkey_i_to_s_c(&b->key);
-		ret = bch2_move_extent_pred(ctxt, NULL, &snapshot_io_opts, pred, arg, &iter, level, k);
-root_err:
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			goto retry_root;
+	try(for_btree_root_key_at_level(trans, iter, btree_id, level, k, ({
+		int ret = bch2_move_extent_pred(ctxt, NULL, &snapshot_io_opts, pred, arg, &iter, level, k);
 		if (bch2_err_matches(ret, BCH_ERR_data_update_fail))
 			ret = 0; /* failure for this extent, keep going */
 		WARN_ONCE(ret &&
+			  !bch2_err_matches(ret, BCH_ERR_transaction_restart) &&
 			  !bch2_err_matches(ret, EROFS) &&
 			  !bch2_err_matches(ret, EIO),
 			  "unhandled error from move_extent: %s", bch2_err_str(ret));
-		return ret;
-	}
+		ret;
+	})));
 
-	bch2_trans_node_iter_init(trans, &iter, btree_id, start, 0, level,
-				  BTREE_ITER_prefetch|
-				  BTREE_ITER_not_extents|
-				  BTREE_ITER_all_snapshots);
+	bch2_trans_begin(trans);
+	CLASS(btree_node_iter, iter)(trans, btree_id, start, 0, level,
+				     BTREE_ITER_prefetch|
+				     BTREE_ITER_not_extents|
+				     BTREE_ITER_all_snapshots);
 
 	if (ctxt->rate)
 		bch2_ratelimit_reset(ctxt->rate);
 
+	int ret = 0;
 	while (!(ret = bch2_move_ratelimit(ctxt))) {
 		bch2_trans_begin(trans);
 
-		k = bch2_btree_iter_peek(&iter);
+		struct bkey_s_c k = bch2_btree_iter_peek(&iter);
 		if (!k.k)
 			break;
 

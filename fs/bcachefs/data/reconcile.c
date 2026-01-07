@@ -1713,42 +1713,11 @@ static int do_reconcile_scan_btree(struct moving_context *ctxt,
 	struct bch_fs *c = trans->c;
 	struct bch_fs_reconcile *r = &c->reconcile;
 
-	/*
-	 * peek(), peek_slot() don't know how to fetch btree root keys - we
-	 * really should fix this
-	 */
-	while (level == bch2_btree_id_root(c, btree)->level + 1) {
-		bch2_trans_begin(trans);
-
-		CLASS(btree_node_iter, iter)(trans, btree, start, 0, level - 1,
-					     BTREE_ITER_prefetch|
-					     BTREE_ITER_not_extents|
-					     BTREE_ITER_all_snapshots);
-		struct btree *b = bch2_btree_iter_peek_node(&iter);
-		int ret = PTR_ERR_OR_ZERO(b);
-		if (ret)
-			goto root_err;
-
-		if (b != btree_node_root(c, b))
-			continue;
-
-		if (btree_node_fake(b))
-			return 0;
-
-		struct bkey_s_c k = bkey_i_to_s_c(&b->key);
-
+	try(for_btree_root_key_at_level(trans, iter, btree, level, k, ({
 		struct bch_inode_opts opts;
-		ret =   bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts) ?:
-			update_reconcile_opts_scan(trans, snapshot_io_opts, &opts, &iter, level, k, s);
-root_err:
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
-			continue;
-		if (bch2_err_matches(ret, BCH_ERR_data_update_fail))
-			ret = 0; /* failure for this extent, keep going */
-		WARN_ONCE(ret && !bch2_err_matches(ret, EROFS),
-			  "unhandled error from move_extent: %s", bch2_err_str(ret));
-		return ret;
-	}
+		bch2_bkey_get_io_opts(trans, snapshot_io_opts, k, &opts) ?:
+		update_reconcile_opts_scan(trans, snapshot_io_opts, &opts, &iter, level, k, s);
+	})));
 
 	bch2_trans_begin(trans);
 	CLASS(btree_node_iter, iter)(trans, btree, start, 0, level,
@@ -2637,6 +2606,13 @@ static int check_reconcile_work_btrees(struct btree_trans *trans)
 			continue;
 
 		for (unsigned level = 1; level < BTREE_MAX_DEPTH; level++) {
+			try(for_btree_root_key_at_level(trans, iter, btree, level, k, ({
+				BUG_ON(!bkey_is_btree_ptr(k.k));
+				check_reconcile_work_btree_key(trans, &iter, level, k) ?:
+				bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
+			})));
+
+			bch2_trans_begin(trans);
 			CLASS(btree_node_iter, iter)(trans, btree, POS_MIN, 0, level,
 						     BTREE_ITER_prefetch|
 						     BTREE_ITER_not_extents|
