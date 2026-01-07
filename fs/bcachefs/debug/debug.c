@@ -953,7 +953,8 @@ static ssize_t bch2_subvolumes_read(struct file *file, char __user *buf,
 {
 	struct dump_iter *i = file->private_data;
 
-	if (!test_bit(BCH_FS_may_go_rw, &i->c->flags))
+	if (!test_bit(BCH_FS_may_go_rw, &i->c->flags) ||
+	    !i->c->snapshots.table)
 		return 0;
 
 	return bch2_simple_print(file, buf, size, ppos, bch2_subvolumes_list_to_text);
@@ -971,7 +972,8 @@ static ssize_t bch2_snapshot_trees_read(struct file *file, char __user *buf,
 {
 	struct dump_iter *i = file->private_data;
 
-	if (!test_bit(BCH_FS_may_go_rw, &i->c->flags))
+	if (!test_bit(BCH_FS_may_go_rw, &i->c->flags) ||
+	    !i->c->snapshots.table)
 		return 0;
 
 	return bch2_simple_print(file, buf, size, ppos, bch2_snapshot_trees_to_text);
