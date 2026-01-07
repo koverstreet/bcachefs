@@ -553,6 +553,7 @@ static long bch2_ioctl_read_super(struct bch_fs *c,
 	    arg.pad)
 		return -EINVAL;
 
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
 
 	if (arg.flags & BCH_READ_DEV) {

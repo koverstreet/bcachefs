@@ -233,6 +233,7 @@ int bch2_sb_set_upgrade_extra(struct bch_fs *c)
 	bool write_sb = false;
 	int ret = 0;
 
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
 	struct bch_sb_field_ext *ext = bch2_sb_field_get(c->disk_sb.sb, ext);
 

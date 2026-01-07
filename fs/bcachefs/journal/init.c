@@ -66,6 +66,7 @@ static int bch2_set_nr_journal_buckets_iter(struct bch_dev *ca, unsigned nr,
 	ret = 0;
 
 	scoped_guard(journal_block, &c->journal) {
+		guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 		guard(mutex)(&c->sb_lock);
 
 		memcpy(new_buckets,	ja->buckets,	ja->nr * sizeof(u64));
@@ -187,6 +188,7 @@ int bch2_dev_journal_bucket_delete(struct bch_dev *ca, u64 b)
 	struct journal *j = &c->journal;
 	struct journal_device *ja = &ca->journal;
 
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
 	unsigned pos;
 	for (pos = 0; pos < ja->nr; pos++)

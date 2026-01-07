@@ -441,6 +441,7 @@ int bch2_bucket_ref_update(struct btree_trans *trans, struct bch_dev *ca,
 				trans, stale_ptr_with_no_stale_ptrs_feature,
 				"stale cached ptr, but have no_stale_ptrs feature\n%s",
 				(bch2_bkey_val_to_text(&buf, c, k), buf.buf))) {
+			guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 			guard(mutex)(&c->sb_lock);
 			c->disk_sb.sb->compat[0] &= ~cpu_to_le64(BIT_ULL(BCH_COMPAT_no_stale_ptrs));
 			bch2_write_super(c);

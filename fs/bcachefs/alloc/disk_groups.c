@@ -452,7 +452,6 @@ int __bch2_dev_group_set(struct bch_fs *c, struct bch_dev *ca, const char *name)
 {
 	lockdep_assert_held(&c->sb_lock);
 
-
 	if (!strlen(name) || !strcmp(name, "none")) {
 		struct bch_member *mi = bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
 		SET_BCH_MEMBER_GROUP(mi, 0);
@@ -475,7 +474,8 @@ int bch2_dev_group_set(struct bch_fs *c, struct bch_dev *ca, const char *name)
 	try(bch2_set_reconcile_needs_scan(c, s, false));
 
 	/* bch2_reconcile_wakeup_pending goes here */
-	scoped_guard(mutex,&c->sb_lock) {
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+	scoped_guard(mutex, &c->sb_lock) {
 		try(__bch2_dev_group_set(c, ca, name));
 		try(bch2_write_super(c));
 	}

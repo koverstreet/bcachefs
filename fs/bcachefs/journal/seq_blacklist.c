@@ -51,6 +51,7 @@ int bch2_journal_seq_blacklist_add(struct bch_fs *c, u64 start, u64 end)
 	struct bch_sb_field_journal_seq_blacklist *bl;
 	unsigned i = 0, nr;
 
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
 	bl = bch2_sb_field_get(c->disk_sb.sb, journal_seq_blacklist);
 	nr = blacklist_nr_entries(bl);

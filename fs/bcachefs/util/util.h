@@ -824,6 +824,11 @@ DEFINE_CLASS(memalloc_flags, struct memalloc_flags,
 	     memalloc_flags_restore(_T.flags),
 	     (struct memalloc_flags) { memalloc_flags_save(_flags) },
 	     unsigned _flags)
+__DEFINE_CLASS_IS_CONDITIONAL(memalloc_flags, false);
 
+static inline void *class_memalloc_flags_lock_ptr(class_memalloc_flags_t *_T)
+{
+	return _T;
+}
 
 #endif /* _BCACHEFS_UTIL_H */

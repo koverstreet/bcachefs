@@ -229,6 +229,7 @@ int bch2_sb_journal_sort(struct bch_fs *c)
 	BUG_ON(!c->sb.clean);
 	BUG_ON(test_bit(BCH_FS_rw, &c->flags));
 
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
 	bool write_sb = false;
 

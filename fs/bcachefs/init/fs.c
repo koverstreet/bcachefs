@@ -435,6 +435,7 @@ void bch2_fs_read_only(struct bch_fs *c)
 		bch2_verify_accounting_clean(c);
 	} else {
 		/* Make sure error counts/counters are persisted */
+		guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 		guard(mutex)(&c->sb_lock);
 		bch2_write_super(c);
 
@@ -949,7 +950,8 @@ static int bch2_fs_opt_version_init(struct bch_fs *c, struct printbuf *out)
 	if (c->opts.journal_rewind)
 		prt_printf(out, "rewinding journal, fsck required\n");
 
-	scoped_guard(mutex, &c->sb_lock) {
+	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+		guard(mutex)(&c->sb_lock);
 		struct bch_sb_field_ext *ext = bch2_sb_field_get(c->disk_sb.sb, ext);
 
 		__le64 now = cpu_to_le64(ktime_get_real_seconds());
@@ -1109,8 +1111,10 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 
 	try(bch2_fs_capacity_init(c));
 
-	scoped_guard(mutex, &c->sb_lock)
+	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+		guard(mutex)(&c->sb_lock);
 		try(bch2_sb_to_fs(c, sb));
+	}
 
 	/* Compat: */
 	if (le16_to_cpu(sb->version) <= bcachefs_metadata_version_inode_v2 &&
@@ -1204,7 +1208,8 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 			&c->clock_journal_res,
 			(sizeof(struct jset_entry_clock) / sizeof(u64)) * 2);
 
-	scoped_guard(mutex, &c->sb_lock) {
+	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+		guard(mutex)(&c->sb_lock);
 		if (!bch2_sb_field_get_minsize(&c->disk_sb, ext,
 				sizeof(struct bch_sb_field_ext) / sizeof(u64)))
 			return bch_err_throw(c, ENOSPC_sb);
@@ -1394,7 +1399,8 @@ int bch2_fs_resize_on_mount(struct bch_fs *c)
 				return ret;
 			}
 
-			scoped_guard(mutex, &c->sb_lock) {
+			scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+				guard(mutex)(&c->sb_lock);
 				struct bch_member *m =
 					bch2_members_v2_get_mut(c->disk_sb.sb, ca->dev_idx);
 				m->nbuckets = cpu_to_le64(new_nbuckets);

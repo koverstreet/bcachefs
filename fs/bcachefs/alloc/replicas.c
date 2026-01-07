@@ -329,12 +329,11 @@ static int bch2_mark_replicas_slowpath(struct bch_fs *c,
 {
 	verify_replicas_entry(new_entry);
 
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
 	bool write_sb = false;
 
 	scoped_guard(percpu_write, &c->capacity.mark_lock) {
-		guard(memalloc_flags)(PF_MEMALLOC_NOFS);
-
 		if (!replicas_entry_search(&c->replicas, new_entry)) {
 			CLASS(bch_replicas_cpu, new_r)();
 
@@ -411,9 +410,9 @@ void bch2_replicas_entry_put_many(struct bch_fs *c, struct bch_replicas_entry_v1
 	BUG_ON(r->data_type != BCH_DATA_journal);
 	verify_replicas_entry(r);
 
-	scoped_guard(percpu_read, &c->capacity.mark_lock) {
-		guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 
+	scoped_guard(percpu_read, &c->capacity.mark_lock) {
 		int ret = __replicas_entry_put(c, r, nr);
 		if (!ret)
 			return;
@@ -427,7 +426,6 @@ void bch2_replicas_entry_put_many(struct bch_fs *c, struct bch_replicas_entry_v1
 
 	guard(mutex)(&c->sb_lock);
 	scoped_guard(percpu_write, &c->capacity.mark_lock) {
-		guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 		struct bch_replicas_entry_cpu *e = replicas_entry_search(&c->replicas, r);
 		if (e && !atomic_read(&e->ref))
 			__replicas_entry_kill(c, e);
@@ -462,11 +460,9 @@ int bch2_replicas_gc_reffed(struct bch_fs *c)
 {
 	bool write_sb = false;
 
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
-
 	scoped_guard(percpu_write, &c->capacity.mark_lock) {
-		guard(memalloc_flags)(PF_MEMALLOC_NOFS);
-
 		unsigned dst = 0;
 		for (unsigned i = 0; i < c->replicas.nr; i++) {
 			struct bch_replicas_entry_cpu *e =
@@ -498,10 +494,9 @@ int bch2_replicas_gc_accounted(struct bch_fs *c)
 
 	bch2_accounting_mem_gc(c);
 
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
 	scoped_guard(percpu_write, &c->capacity.mark_lock) {
-		guard(memalloc_flags)(PF_MEMALLOC_NOFS);
-
 		struct bch_replicas_cpu new = {
 			.entry_size	= c->replicas.entry_size,
 			.entries	= kcalloc(c->replicas.nr, c->replicas.entry_size, GFP_KERNEL),
@@ -1005,6 +1000,7 @@ unsigned bch2_sb_dev_has_data(struct bch_sb *sb, unsigned dev)
 
 unsigned bch2_dev_has_data(struct bch_fs *c, struct bch_dev *ca)
 {
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
 	return bch2_sb_dev_has_data(c->disk_sb.sb, ca->dev_idx);
 }

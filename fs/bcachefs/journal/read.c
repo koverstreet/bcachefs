@@ -34,6 +34,7 @@ void bch2_journal_pos_from_member_info_set(struct bch_fs *c)
 
 void bch2_journal_pos_from_member_info_resume(struct bch_fs *c)
 {
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
 
 	for_each_member_device(c, ca) {

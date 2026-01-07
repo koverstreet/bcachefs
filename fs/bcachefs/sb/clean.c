@@ -149,6 +149,7 @@ struct bch_sb_field_clean *bch2_read_superblock_clean(struct bch_fs *c)
 	struct bch_sb_field_clean *clean, *sb_clean;
 	int ret;
 
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 	guard(mutex)(&c->sb_lock);
 	sb_clean = bch2_sb_field_get(c->disk_sb.sb, clean);
 
