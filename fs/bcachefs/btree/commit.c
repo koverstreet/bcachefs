@@ -858,9 +858,17 @@ static inline int do_bch2_trans_commit(struct btree_trans *trans,
 		u64s_delta -= i->old_btree_u64s;
 
 		if (!same_leaf_as_next(trans, i)) {
-			if (!trans->has_interior_updates)
-				try(bch2_foreground_maybe_merge(trans, i->path, i->level,
-								flags, u64s_delta, NULL));
+			if (!trans->has_interior_updates) {
+				struct btree_path *path = trans->paths + i->path;
+				struct btree *b = path->l[i->level].b;
+
+				if (unlikely(btree_node_needs_merge(trans, b, u64s_delta))) {
+					flags = btree_update_set_watermark_hipri(flags);
+
+					try(bch2_foreground_maybe_merge(trans, i->path, i->level,
+									flags, u64s_delta, NULL));
+				}
+			}
 
 			u64s_delta = 0;
 		}
@@ -899,6 +907,16 @@ static int journal_reclaim_wait_done(struct bch_fs *c)
 	return 0;
 }
 
+static bool trans_commit_has_extents(struct btree_trans *trans)
+{
+	trans_for_each_update(trans, i)
+		if (i->btree_id == BTREE_ID_extents ||
+		    i->btree_id == BTREE_ID_reflink ||
+		    i->level)
+			return true;
+	return false;
+}
+
 static int __bch2_trans_commit_error(struct btree_trans *trans, unsigned flags,
 				     struct btree_insert_entry *i,
 				     int ret, unsigned long trace_ip)
@@ -923,6 +941,9 @@ static int __bch2_trans_commit_error(struct btree_trans *trans, unsigned flags,
 
 	switch (ret) {
 	case -BCH_ERR_btree_insert_btree_node_full:
+		if (trans_commit_has_extents(trans))
+			flags = btree_update_set_watermark_hipri(flags);
+
 		ret = bch2_btree_split_leaf(trans, i->path, flags);
 		if (!ret && trans->has_interior_updates)
 			return btree_trans_restart(trans,

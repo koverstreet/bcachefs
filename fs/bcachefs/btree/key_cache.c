@@ -450,6 +450,8 @@ static int btree_key_cache_flush_pos(struct btree_trans *trans,
 		 */
 		if (ck->journal.seq == j->last_seq)
 			commit_flags |= BCH_WATERMARK_reclaim;
+		else
+			commit_flags |= BCH_WATERMARK_btree;
 
 		if (ck->journal.seq != j->last_seq ||
 		    !journal_low_on_space(&c->journal))
