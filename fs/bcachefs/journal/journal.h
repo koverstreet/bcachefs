@@ -467,6 +467,20 @@ struct bch_dev;
 
 void bch2_journal_unblock(struct journal *);
 void bch2_journal_block(struct journal *);
+
+struct journal_block { struct journal *j; };
+
+DEFINE_CLASS(journal_block, struct journal_block,
+	     bch2_journal_unblock(_T.j),
+	     ({ bch2_journal_block(j); (struct journal_block) { j }; }),
+	     struct journal *j)
+__DEFINE_CLASS_IS_CONDITIONAL(journal_block, false);
+
+static inline void *class_journal_block_lock_ptr(class_journal_block_t *_T)
+{
+	return _T;
+}
+
 struct journal_buf *bch2_next_write_buffer_flush_journal_buf(struct journal *, u64, bool *);
 
 void __bch2_journal_debug_to_text(struct printbuf *, struct journal *);
