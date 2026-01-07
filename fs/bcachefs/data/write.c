@@ -1284,22 +1284,23 @@ static int bch2_nocow_write_convert_one_unwritten(struct btree_trans *trans,
 static void bch2_nocow_write_convert_unwritten(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
-	struct btree_trans *trans = bch2_trans_get(c);
 	int ret = 0;
 
-	for_each_keylist_key(&op->insert_keys, orig) {
-		ret = for_each_btree_key_max_commit(trans, iter, BTREE_ID_extents,
-				     bkey_start_pos(&orig->k), orig->k.p,
-				     BTREE_ITER_intent, k,
-				     &op->res, NULL,
-				     BCH_TRANS_COMMIT_no_enospc, ({
-			bch2_nocow_write_convert_one_unwritten(trans, &iter, op, orig, k, op->new_i_size);
-		}));
-		if (ret)
-			break;
-	}
+	{
+		CLASS(btree_trans, trans)(c);
 
-	bch2_trans_put(trans);
+		for_each_keylist_key(&op->insert_keys, orig) {
+			ret = for_each_btree_key_max_commit(trans, iter, BTREE_ID_extents,
+					     bkey_start_pos(&orig->k), orig->k.p,
+					     BTREE_ITER_intent, k,
+					     &op->res, NULL,
+					     BCH_TRANS_COMMIT_no_enospc, ({
+				bch2_nocow_write_convert_one_unwritten(trans, &iter, op, orig, k, op->new_i_size);
+			}));
+			if (ret)
+				break;
+		}
+	}
 
 	if (ret && !bch2_err_matches(ret, EROFS)) {
 		struct bkey_i *insert = bch2_keylist_front(&op->insert_keys);
