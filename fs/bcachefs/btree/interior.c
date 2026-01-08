@@ -3227,6 +3227,11 @@ static void async_btree_node_rewrite_work(struct work_struct *work)
 		container_of(work, struct async_btree_rewrite, work);
 	struct bch_fs *c = a->c;
 
+	/*
+	 * XXX: even if we weren't asked to merge, check if the node needs to be
+	 * merged
+	 */
+
 	int ret = bch2_trans_do(c, a->op == ASYNC_BTREE_rewrite
 		? bch2_btree_node_rewrite_key(trans, a->btree_id, a->level, a->key.k, 0)
 		: bch2_btree_node_merge_key(trans, a->btree_id, a->level, a->key.k,
