@@ -320,8 +320,10 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 	bch2_trans_unlock(trans);
 	bch2_trans_begin(trans);
 
-	scoped_guard(mutex, &wb->inc.lock)
+	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+		guard(mutex)(&wb->inc.lock);
 		move_keys_from_inc_to_flushing(wb);
+	}
 
 	if (!wb->flushing.keys.nr)
 		return 0;
@@ -596,8 +598,10 @@ static int btree_write_buffer_flush_seq(struct btree_trans *trans, u64 max_seq,
 		 * On memory allocation failure, bch2_btree_write_buffer_flush_locked()
 		 * is not guaranteed to empty wb->inc:
 		 */
-		scoped_guard(mutex, &wb->flushing.lock)
+		scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+			guard(mutex)(&wb->flushing.lock);
 			ret = bch2_btree_write_buffer_flush_locked(trans);
+		}
 	} while (!ret &&
 		 (fetch_from_journal_err ||
 		  (wb->inc.pin.seq && wb->inc.pin.seq <= max_seq) ||
@@ -720,7 +724,8 @@ static void bch2_btree_write_buffer_flush_work(struct work_struct *work)
 	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer;
 	int ret;
 
-	scoped_guard(mutex, &wb->flushing.lock) {
+	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+		guard(mutex)(&wb->flushing.lock);
 		CLASS(btree_trans, trans)(c);
 		do {
 			ret = bch2_btree_write_buffer_flush_locked(trans);
