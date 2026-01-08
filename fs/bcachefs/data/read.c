@@ -206,7 +206,7 @@ static noinline void promote_free(struct bch_read_bio *rbio, int ret)
 	bch2_data_update_exit(&op->write, ret);
 
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_promote);
-	kfree_rcu(op, rcu);
+	kfree_rcu(op, write.rcu);
 }
 
 static void promote_done(struct bch_write_op *wop)
@@ -328,7 +328,7 @@ err_remove_list:
 err:
 	bch2_bio_free_pages_pool(c, &op->write.op.wbio.bio);
 	/* We may have added to the rhashtable and thus need rcu freeing: */
-	kfree_rcu(op, rcu);
+	kfree_rcu(op, write.rcu);
 err_up_limit:
 	up(per_cpu_ptr(c->promote_limit, cpu));
 err_put:

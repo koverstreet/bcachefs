@@ -41,6 +41,7 @@ struct data_update_opts {
 };
 
 struct data_update {
+	struct rcu_head		rcu;
 	/* extent being updated: */
 	enum btree_id		btree_id;
 	struct bkey_buf		k;
@@ -66,7 +67,6 @@ struct data_update {
 };
 
 struct promote_op {
-	struct rcu_head		rcu;
 	u64			start_time;
 #ifdef CONFIG_BCACHEFS_ASYNC_OBJECT_LISTS
 	unsigned		list_idx;

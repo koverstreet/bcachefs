@@ -65,7 +65,7 @@ static void move_write_done(struct bch_write_op *op)
 	atomic_dec(&ctxt->write_ios);
 
 	bch2_data_update_exit(u, op->error);
-	kfree(u);
+	kfree_rcu(u, rcu);
 	closure_put(&ctxt->cl);
 }
 
@@ -201,6 +201,8 @@ void bch2_move_stats_init(struct bch_move_stats *stats, const char *name)
 	scnprintf(stats->name, sizeof(stats->name), "%s", name);
 }
 
+DEFINE_FREE(data_update_free, struct data_update *, if (_T) kfree_rcu(_T, rcu))
+
 static int __bch2_move_extent(struct moving_context *ctxt,
 		     struct move_bucket *bucket_in_flight,
 		     struct btree_iter *iter,
@@ -215,7 +217,7 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 	if (ctxt->stats)
 		ctxt->stats->pos = BBPOS(iter->btree_id, iter->pos);
 
-	struct data_update *u __free(kfree) =
+	struct data_update *u __free(data_update_free) =
 		allocate_dropping_locks(trans, ret, kzalloc(sizeof(struct data_update), _gfp));
 	if (!u && !ret)
 		ret = bch_err_throw(c, ENOMEM_move_extent);
