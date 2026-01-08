@@ -514,6 +514,7 @@ void bch2_journal_pin_set(struct journal *j, u64 seq,
 
 	scoped_guard(spinlock, &j->lock) {
 		BUG_ON(seq < j->last_seq);
+		BUG_ON(seq > journal_cur_seq(j));
 
 		bool reclaim = __journal_pin_drop(j, pin);
 
