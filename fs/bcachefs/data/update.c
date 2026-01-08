@@ -953,7 +953,8 @@ int bch2_data_update_init(struct btree_trans *trans,
 		BCH_WRITE_move|
 		m->opts.write_flags;
 	m->op.compression_opt	= io_opts->background_compression;
-	m->op.watermark		= m->opts.commit_flags & BCH_WATERMARK_MASK;
+	m->op.watermark		= max(m->opts.commit_flags & BCH_WATERMARK_MASK,
+				      BCH_WATERMARK_normal);
 
 	if (k.k->p.snapshot &&
 	    unlikely(ret = bch2_check_key_has_snapshot(trans, iter, k))) {
