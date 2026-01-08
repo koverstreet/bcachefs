@@ -551,7 +551,8 @@ static int opt_hook_io(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_
 	case Opt_background_compression:
 	case Opt_data_checksum:
 	case Opt_data_replicas:
-	case Opt_erasure_code: {
+	case Opt_erasure_code:
+	case Opt_nocow: {
 		struct reconcile_scan s = {
 			.type = !inum ? RECONCILE_SCAN_fs : RECONCILE_SCAN_inum,
 			.inum = inum,
