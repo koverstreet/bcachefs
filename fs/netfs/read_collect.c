@@ -540,8 +540,10 @@ void netfs_read_subreq_terminated(struct netfs_io_subrequest *subreq)
 			__set_bit(NETFS_SREQ_NEED_RETRY, &subreq->flags);
 			trace_netfs_sreq(subreq, netfs_sreq_trace_partial_read);
 		} else {
+			/*
 			__set_bit(NETFS_SREQ_FAILED, &subreq->flags);
 			subreq->error = -ENODATA;
+			*/
 			trace_netfs_sreq(subreq, netfs_sreq_trace_short);
 		}
 	}

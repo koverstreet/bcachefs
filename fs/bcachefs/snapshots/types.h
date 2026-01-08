@@ -1,0 +1,75 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+#ifndef _BCACHEFS_SNAPSHOT_TYPES_H
+#define _BCACHEFS_SNAPSHOT_TYPES_H
+
+#include "btree/bbpos_types.h"
+#include "init/progress.h"
+#include "util/darray.h"
+
+DEFINE_DARRAY_NAMED(snapshot_id_list, u32);
+
+#define IS_ANCESTOR_BITMAP	128
+
+struct snapshot_t {
+	enum snapshot_id_state {
+		SNAPSHOT_ID_empty,
+		SNAPSHOT_ID_live,
+		SNAPSHOT_ID_deleted,
+	}			state;
+	u32			parent;
+	u32			skip[3];
+	u32			depth;
+	u32			children[2];
+	u32			subvol; /* Nonzero only if a subvolume points to this node: */
+	u32			tree;
+	unsigned long		is_ancestor[BITS_TO_LONGS(IS_ANCESTOR_BITMAP)];
+};
+
+struct snapshot_table {
+	struct rcu_head		rcu;
+	size_t			nr;
+#ifndef RUST_BINDGEN
+	DECLARE_FLEX_ARRAY(struct snapshot_t, s);
+#else
+	struct snapshot_t	s[0];
+#endif
+};
+
+struct snapshot_interior_delete {
+	u32	id;
+	u32	live_child;
+};
+DEFINE_DARRAY_NAMED(interior_delete_list, struct snapshot_interior_delete);
+
+struct snapshot_delete {
+	struct mutex			lock;
+	struct work_struct		work;
+
+	struct mutex			progress_lock;
+	snapshot_id_list		deleting_from_trees;
+	snapshot_id_list		delete_leaves;
+	interior_delete_list		delete_interior;
+	interior_delete_list		no_keys;
+
+	bool				running;
+	unsigned			version;
+	struct progress_indicator	progress;
+};
+
+struct bch_fs_snapshots {
+	struct snapshot_table __rcu		*table;
+	struct mutex				table_lock;
+	struct rw_semaphore			create_lock;
+	struct snapshot_delete			delete;
+	struct work_struct			wait_for_pagecache_and_delete_work;
+	snapshot_id_list			unlinked;
+	struct mutex				unlinked_lock;
+};
+
+typedef struct {
+	/* we can't have padding in this struct: */
+	u64		subvol;
+	u64		inum;
+} subvol_inum;
+
+#endif /* _BCACHEFS_SNAPSHOT_TYPES_H */

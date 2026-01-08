@@ -25,6 +25,7 @@ extern const char * const __bch2_str_hash_types[];
 extern const char * const bch2_str_hash_opts[];
 extern const char * const __bch2_data_types[];
 extern const char * const bch2_member_states[];
+extern const char * const __bch2_reconcile_accounting_types[];
 extern const char * const bch2_d_types[];
 
 void bch2_prt_jset_entry_type(struct printbuf *,	enum bch_jset_entry_type);
@@ -34,6 +35,8 @@ void bch2_prt_csum_opt(struct printbuf *,		enum bch_csum_opt);
 void bch2_prt_csum_type(struct printbuf *,		enum bch_csum_type);
 void bch2_prt_compression_type(struct printbuf *,	enum bch_compression_type);
 void bch2_prt_str_hash_type(struct printbuf *,		enum bch_str_hash_type);
+void bch2_prt_reconcile_accounting_type(struct printbuf *, enum bch_reconcile_accounting_type);
+void bch2_prt_key_type_error_reason(struct printbuf *,	enum bch_key_type_errors);
 
 static inline const char *bch2_d_type_str(unsigned d_type)
 {
@@ -66,6 +69,7 @@ enum opt_flags {
 	OPT_SB_FIELD_ILOG2	= BIT(9),	/* Superblock field is ilog2 of actual value */
 	OPT_SB_FIELD_ONE_BIAS	= BIT(10),	/* 0 means default value */
 	OPT_HIDDEN		= BIT(11),
+	OPT_MOUNT_OLD		= BIT(12),	/* May not be specified at mount time, but don't fail the mount */
 };
 
 enum opt_type {
@@ -149,13 +153,13 @@ enum fsck_err_opts {
 	  BCH_SB_WRITE_ERROR_TIMEOUT,	30,				\
 	  NULL,		"Number of consecutive write errors allowed before kicking out a device")\
 	x(metadata_replicas,		u8,				\
-	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
-	  OPT_UINT(1, BCH_REPLICAS_MAX),				\
+	  OPT_FS|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,			\
+	  OPT_UINT(1, BCH_REPLICAS_MAX + 1),				\
 	  BCH_SB_META_REPLICAS_WANT,	1,				\
 	  "#",		"Number of metadata replicas")			\
 	x(data_replicas,		u8,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
-	  OPT_UINT(1, BCH_REPLICAS_MAX),				\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,	\
+	  OPT_UINT(1, BCH_REPLICAS_MAX + 1),				\
 	  BCH_SB_DATA_REPLICAS_WANT,	1,				\
 	  "#",		"Number of data replicas")			\
 	x(metadata_replicas_required, u8,				\
@@ -165,7 +169,7 @@ enum fsck_err_opts {
 	  "#",		NULL)						\
 	x(data_replicas_required,	u8,				\
 	  OPT_FS|OPT_FORMAT|OPT_MOUNT,					\
-	  OPT_UINT(1, BCH_REPLICAS_MAX),				\
+	  OPT_UINT(1, BCH_REPLICAS_MAX + 1),				\
 	  BCH_SB_DATA_REPLICAS_REQ,	1,				\
 	  "#",		NULL)						\
 	x(encoded_extent_max,		u32,				\
@@ -175,12 +179,12 @@ enum fsck_err_opts {
 	  BCH_SB_ENCODED_EXTENT_MAX_BITS, 64 << 10,			\
 	  "size",	"Maximum size of checksummed/compressed extents")\
 	x(metadata_checksum,		u8,				\
-	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
+	  OPT_FS|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,			\
 	  OPT_STR(__bch2_csum_opts),					\
 	  BCH_SB_META_CSUM_TYPE,	BCH_CSUM_OPT_crc32c,		\
 	  NULL,		NULL)						\
 	x(data_checksum,		u8,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,	\
 	  OPT_STR(__bch2_csum_opts),					\
 	  BCH_SB_DATA_CSUM_TYPE,	BCH_CSUM_OPT_crc32c,		\
 	  NULL,		NULL)						\
@@ -190,12 +194,12 @@ enum fsck_err_opts {
 	  BCH_SB_CSUM_ERR_RETRY_NR,	3,				\
 	  NULL,		NULL)						\
 	x(compression,			u8,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,	\
 	  OPT_FN(bch2_opt_compression),					\
 	  BCH_SB_COMPRESSION_TYPE,	BCH_COMPRESSION_OPT_none,	\
 	  NULL,		NULL)						\
 	x(background_compression,	u8,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,	\
 	  OPT_FN(bch2_opt_compression),					\
 	  BCH_SB_BACKGROUND_COMPRESSION_TYPE,BCH_COMPRESSION_OPT_none,	\
 	  NULL,		NULL)						\
@@ -205,27 +209,27 @@ enum fsck_err_opts {
 	  BCH_SB_STR_HASH_TYPE,		BCH_STR_HASH_OPT_siphash,	\
 	  NULL,		"Hash function for directory entries and xattrs")\
 	x(metadata_target,		u16,				\
-	  OPT_FS|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,			\
+	  OPT_FS|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,			\
 	  OPT_FN(bch2_opt_target),					\
 	  BCH_SB_METADATA_TARGET,	0,				\
 	  "(target)",	"Device or label for metadata writes")		\
 	x(foreground_target,		u16,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,	\
 	  OPT_FN(bch2_opt_target),					\
 	  BCH_SB_FOREGROUND_TARGET,	0,				\
 	  "(target)",	"Device or label for foreground writes")	\
 	x(background_target,		u16,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,	\
 	  OPT_FN(bch2_opt_target),					\
 	  BCH_SB_BACKGROUND_TARGET,	0,				\
 	  "(target)",	"Device or label to move data to in the background")\
 	x(promote_target,		u16,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,	\
 	  OPT_FN(bch2_opt_target),					\
 	  BCH_SB_PROMOTE_TARGET,	0,				\
 	  "(target)",	"Device or label to promote data to on read")	\
 	x(erasure_code,			u16,				\
-	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
+	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT_OLD|OPT_RUNTIME,	\
 	  OPT_BOOL(),							\
 	  BCH_SB_ERASURE_CODE,		false,				\
 	  NULL,		"Enable erasure coding (DO NOT USE YET)")	\
@@ -242,18 +246,13 @@ enum fsck_err_opts {
 	x(inodes_32bit,			u8,				\
 	  OPT_FS|OPT_INODE|OPT_FORMAT|OPT_MOUNT|OPT_RUNTIME,		\
 	  OPT_BOOL(),							\
-	  BCH_SB_INODE_32BIT,		true,				\
+	  BCH_SB_INODE_32BIT,		false,				\
 	  NULL,		"Constrain inode numbers to 32 bits")		\
 	x(shard_inode_numbers_bits,	u8,				\
 	  OPT_FS|OPT_FORMAT,						\
 	  OPT_UINT(0, 8),						\
 	  BCH_SB_SHARD_INUMS_NBITS,	0,				\
 	  NULL,		"Shard new inode numbers by CPU id")		\
-	x(inodes_use_key_cache,	u8,					\
-	  OPT_FS|OPT_FORMAT|OPT_MOUNT,					\
-	  OPT_BOOL(),							\
-	  BCH_SB_INODES_USE_KEY_CACHE,	true,				\
-	  NULL,		"Use the btree key cache for the inodes btree")	\
 	x(btree_node_mem_ptr_optimization, u8,				\
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\
@@ -316,11 +315,21 @@ enum fsck_err_opts {
 	  OPT_STR(bch2_degraded_actions),				\
 	  BCH_SB_DEGRADED_ACTION,	BCH_DEGRADED_ask,		\
 	  NULL,		"Allow mounting in degraded mode")		\
+	x(mount_trusts_udev,		u8,				\
+	  OPT_MOUNT,							\
+	  OPT_BOOL(),							\
+	  BCH2_NO_SB_OPT,		true,				\
+	  NULL,		"Trust udev when scanning for member devices")	\
 	x(no_splitbrain_check,		u8,				\
 	  OPT_FS|OPT_MOUNT,						\
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,		false,				\
 	  NULL,		"Don't kick drives out when splitbrain detected")\
+	x(no_version_check,		u8,				\
+	  OPT_HIDDEN,							\
+	  OPT_BOOL(),							\
+	  BCH2_NO_SB_OPT,		false,				\
+	  NULL,		"Don't fail reading the superblock due to incompatible version")\
 	x(verbose,			u8,				\
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\
@@ -343,6 +352,11 @@ enum fsck_err_opts {
 	  OPT_UINT(0, U32_MAX),						\
 	  BCH_SB_JOURNAL_RECLAIM_DELAY,	100,				\
 	  NULL,		"Delay in milliseconds before automatic journal reclaim")\
+	x(writeback_timeout,		u16,				\
+	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
+	  OPT_UINT(0, U16_MAX),						\
+	  BCH_SB_WRITEBACK_TIMEOUT,	0,				\
+	  NULL,		"Delay seconds before writing back dirty data, overriding vm sysctls")\
 	x(move_bytes_in_flight,		u32,				\
 	  OPT_HUMAN_READABLE|OPT_FS|OPT_MOUNT|OPT_RUNTIME,		\
 	  OPT_UINT(1024, U32_MAX),					\
@@ -494,17 +508,17 @@ enum fsck_err_opts {
 	  BCH2_NO_SB_OPT,			true,			\
 	  NULL,		"Enable copygc: disable for debugging, or to\n"\
 			"quiet the system when doing performance testing\n")\
-	x(rebalance_enabled,		u8,				\
+	x(reconcile_enabled,		u8,				\
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\
 	  BCH2_NO_SB_OPT,			true,			\
-	  NULL,		"Enable rebalance: disable for debugging, or to\n"\
+	  NULL,		"Enable reconcile: disable for debugging, or to\n"\
 			"quiet the system when doing performance testing\n")\
-	x(rebalance_on_ac_only,		u8,				\
+	x(reconcile_on_ac_only,		u8,				\
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\
 	  BCH_SB_REBALANCE_AC_ONLY,		false,			\
-	  NULL,		"Enable rebalance while on mains power only\n")	\
+	  NULL,		"Enable reconcile while on mains power only\n")	\
 	x(auto_snapshot_deletion,	u8,				\
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\
@@ -529,12 +543,12 @@ enum fsck_err_opts {
 	  "size",	"Specifies the bucket size; must be greater than the btree node size")\
 	x(durability,			u8,				\
 	  OPT_DEVICE|OPT_RUNTIME|OPT_SB_FIELD_ONE_BIAS,			\
-	  OPT_UINT(0, BCH_REPLICAS_MAX),				\
+	  OPT_UINT(0, BCH_REPLICAS_MAX + 1),				\
 	  BCH_MEMBER_DURABILITY,	1,				\
 	  "n",		"Data written to this device will be considered\n"\
 			"to have already been replicated n times")	\
 	x(data_allowed,			u8,				\
-	  OPT_DEVICE,							\
+	  OPT_DEVICE|OPT_FORMAT,					\
 	  OPT_BITFIELD(__bch2_data_types),				\
 	  BCH_MEMBER_DATA_ALLOWED,	BIT(BCH_DATA_journal)|BIT(BCH_DATA_btree)|BIT(BCH_DATA_user),\
 	  "types",	"Allowed data types for this device: journal, btree, and/or user")\
@@ -543,6 +557,11 @@ enum fsck_err_opts {
 	  OPT_BOOL(),							\
 	  BCH_MEMBER_DISCARD,		true,				\
 	  NULL,		"Enable discard/TRIM support")			\
+	x(rotational,			u8,				\
+	  OPT_DEVICE|OPT_RUNTIME,					\
+	  OPT_BOOL(),							\
+	  BCH_MEMBER_ROTATIONAL,	false,				\
+	  NULL,		"Disk is rotational; different behaviour for reconcile")\
 	x(btree_node_prefetch,		u8,				\
 	  OPT_FS|OPT_MOUNT|OPT_RUNTIME,					\
 	  OPT_BOOL(),							\
@@ -567,14 +586,7 @@ struct bch2_opts_parse {
 	struct printbuf parse_later;
 };
 
-static const __maybe_unused struct bch_opts bch2_opts_default = {
-#define x(_name, _bits, _mode, _type, _sb_opt, _default, ...)		\
-	._name##_defined = true,					\
-	._name = _default,						\
-
-	BCH_OPTS()
-#undef x
-};
+extern const struct bch_opts bch2_opts_default;
 
 #define opt_defined(_opts, _name)	((_opts)._name##_defined)
 
@@ -653,10 +665,9 @@ void bch2_opts_to_text(struct printbuf *,
 		       struct bch_fs *, struct bch_sb *,
 		       unsigned, unsigned, unsigned);
 
-int bch2_opt_hook_pre_set(struct bch_fs *, struct bch_dev *, enum bch_opt_id, u64);
+int bch2_opt_hook_pre_set(struct bch_fs *, struct bch_dev *, u64, enum bch_opt_id, u64, bool);
 int bch2_opts_hooks_pre_set(struct bch_fs *);
-void bch2_opt_hook_post_set(struct bch_fs *, struct bch_dev *, u64,
-			    struct bch_opts *, enum bch_opt_id);
+void bch2_opt_hook_post_set(struct bch_fs *, struct bch_dev *, u64, enum bch_opt_id, u64);
 
 int bch2_parse_one_mount_opt(struct bch_fs *, struct bch_opts *,
 			     struct printbuf *, const char *, const char *);
@@ -665,16 +676,19 @@ int bch2_parse_mount_opts(struct bch_fs *, struct bch_opts *, struct printbuf *,
 
 /* inode opts: */
 
-struct bch_io_opts {
+struct bch_inode_opts {
 #define x(_name, _bits)	u##_bits _name;
 	BCH_INODE_OPTS()
 #undef x
+
 #define x(_name, _bits)	u64 _name##_from_inode:1;
 	BCH_INODE_OPTS()
 #undef x
+
+	u32 change_cookie;
 };
 
-static inline void bch2_io_opts_fixups(struct bch_io_opts *opts)
+static inline void bch2_io_opts_fixups(struct bch_inode_opts *opts)
 {
 	if (!opts->background_target)
 		opts->background_target = opts->foreground_target;
@@ -687,7 +701,8 @@ static inline void bch2_io_opts_fixups(struct bch_io_opts *opts)
 	}
 }
 
-struct bch_io_opts bch2_opts_to_inode_opts(struct bch_opts);
+void bch2_inode_opts_get(struct bch_fs *, struct bch_inode_opts *, bool);
 bool bch2_opt_is_inode_opt(enum bch_opt_id);
+void bch2_inode_opts_to_text(struct printbuf *, struct bch_fs *, struct bch_inode_opts);
 
 #endif /* _BCACHEFS_OPTS_H */

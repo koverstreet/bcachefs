@@ -37,6 +37,20 @@ config CRYPTO_LIB_BLAKE2S_ARCH
 	default y if X86_64
 
 config CRYPTO_LIB_CHACHA
+	tristate "Chacha encryption algorithm"
+	help
+	  Enable the ChaCha library interface. This interface may be fulfilled
+	  by either the generic implementation or an arch-specific one, if one
+	  is available and enabled.
+
+config CRYPTO_ARCH_HAVE_LIB_CURVE25519
+	bool
+	help
+	  Declares whether the architecture provides an arch-specific
+	  accelerated implementation of the Curve25519 library interface,
+	  either builtin or as a module.
+
+config CRYPTO_LIB_CURVE25519_GENERIC
 	tristate
 	select CRYPTO_LIB_UTILS
 	help
@@ -90,7 +104,7 @@ config CRYPTO_LIB_MD5_ARCH
 	default y if SPARC64
 
 config CRYPTO_LIB_POLY1305
-	tristate
+	tristate "Poly1305 authentication algorithm"
 	help
 	  The Poly1305 library functions.  Select this if your module uses any
 	  of the functions from <crypto/poly1305.h>.

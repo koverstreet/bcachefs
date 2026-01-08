@@ -4,15 +4,22 @@
 #include <linux/fs_parser.h>
 
 #include "bcachefs.h"
-#include "compress.h"
-#include "disk_groups.h"
-#include "error.h"
-#include "movinggc.h"
 #include "opts.h"
-#include "rebalance.h"
-#include "recovery_passes.h"
-#include "super-io.h"
-#include "util.h"
+
+#include "alloc/background.h"
+#include "alloc/disk_groups.h"
+
+#include "data/compress.h"
+#include "data/copygc.h"
+#include "data/reconcile.h"
+
+#include "init/dev.h"
+#include "init/error.h"
+#include "init/passes.h"
+
+#include "sb/io.h"
+
+#include "util/util.h"
 
 #define x(t, n, ...) [n] = #t,
 
@@ -101,6 +108,16 @@ static const char * const __bch2_fs_usage_types[] = {
 	NULL
 };
 
+const char * const __bch2_reconcile_accounting_types[] = {
+	BCH_REBALANCE_ACCOUNTING()
+	NULL
+};
+
+static const char * const __bch2_key_type_error_reasons[] = {
+	KEY_TYPE_ERRORS()
+	NULL
+};
+
 #undef x
 
 static void prt_str_opt_boundscheck(struct printbuf *out, const char * const opts[],
@@ -125,6 +142,8 @@ PRT_STR_OPT_BOUNDSCHECKED(csum_opt,		enum bch_csum_opt);
 PRT_STR_OPT_BOUNDSCHECKED(csum_type,		enum bch_csum_type);
 PRT_STR_OPT_BOUNDSCHECKED(compression_type,	enum bch_compression_type);
 PRT_STR_OPT_BOUNDSCHECKED(str_hash_type,	enum bch_str_hash_type);
+PRT_STR_OPT_BOUNDSCHECKED(reconcile_accounting_type,	enum bch_reconcile_accounting_type);
+PRT_STR_OPT_BOUNDSCHECKED(key_type_error_reason,enum bch_key_type_errors);
 
 static int bch2_opt_fix_errors_parse(struct bch_fs *c, const char *val, u64 *res,
 				     struct printbuf *err)
@@ -518,73 +537,106 @@ void bch2_opts_to_text(struct printbuf *out,
 	}
 }
 
-int bch2_opt_hook_pre_set(struct bch_fs *c, struct bch_dev *ca, enum bch_opt_id id, u64 v)
+static int opt_hook_io(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_opt_id id,
+		       u64 v, bool post)
 {
-	int ret = 0;
+	if (!test_bit(BCH_FS_started, &c->flags))
+		return 0;
 
 	switch (id) {
-	case Opt_state:
-		if (ca)
-			return bch2_dev_set_state(c, ca, v, BCH_FORCE_IF_DEGRADED);
-		break;
-
+	case Opt_foreground_target:
+	case Opt_background_target:
+	case Opt_promote_target:
 	case Opt_compression:
 	case Opt_background_compression:
-		ret = bch2_check_set_has_compressed_data(c, v);
+	case Opt_data_checksum:
+	case Opt_data_replicas:
+	case Opt_erasure_code: {
+		struct reconcile_scan s = {
+			.type = !inum ? RECONCILE_SCAN_fs : RECONCILE_SCAN_inum,
+			.inum = inum,
+		};
+
+		try(bch2_set_reconcile_needs_scan(c, s, post));
 		break;
-	case Opt_erasure_code:
-		if (v)
-			bch2_check_set_feature(c, BCH_FEATURE_ec);
+	}
+	case Opt_metadata_target:
+	case Opt_metadata_checksum:
+	case Opt_metadata_replicas:
+		try(bch2_set_reconcile_needs_scan(c,
+			(struct reconcile_scan) { .type = RECONCILE_SCAN_metadata, .dev = inum }, post));
+		break;
+	case Opt_durability:
+		if (!post && v > ca->mi.durability)
+			try(bch2_set_reconcile_needs_scan(c,
+				(struct reconcile_scan) { .type = RECONCILE_SCAN_pending}, post));
+
+		try(bch2_set_reconcile_needs_scan(c,
+			(struct reconcile_scan) { .type = RECONCILE_SCAN_device, .dev = inum }, post));
 		break;
 	default:
 		break;
 	}
 
-	return ret;
+	return 0;
+}
+
+int bch2_opt_hook_pre_set(struct bch_fs *c, struct bch_dev *ca, u64 inum, enum bch_opt_id id, u64 v,
+			  bool change)
+{
+	switch (id) {
+	case Opt_state:
+		if (ca)
+			return bch2_dev_set_state(c, ca, v, BCH_FORCE_IF_DEGRADED, NULL);
+		break;
+
+	case Opt_compression:
+	case Opt_background_compression:
+		try(bch2_check_set_has_compressed_data(c, v));
+		break;
+	case Opt_erasure_code:
+		if (v)
+			bch2_check_set_feature(c, BCH_FEATURE_ec);
+		break;
+	case Opt_casefold_disabled:
+		if (v && (c->sb.features & BIT_ULL(BCH_FEATURE_casefolding))) {
+			bch_err(c, "cannot mount with casefolding disabled: casefolding already in use");
+			return bch_err_throw(c, casefolding_in_use);
+		}
+		break;
+	default:
+		break;
+	}
+
+	if (change)
+		try(opt_hook_io(c, ca, inum, id, v, false));
+
+	return 0;
 }
 
 int bch2_opts_hooks_pre_set(struct bch_fs *c)
 {
-	for (unsigned i = 0; i < bch2_opts_nr; i++) {
-		int ret = bch2_opt_hook_pre_set(c, NULL, i, bch2_opt_get_by_id(&c->opts, i));
-		if (ret)
-			return ret;
-	}
+	for (unsigned i = 0; i < bch2_opts_nr; i++)
+		try(bch2_opt_hook_pre_set(c, NULL, 0, i, bch2_opt_get_by_id(&c->opts, i), false));
 
 	return 0;
 }
 
 void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
-			    struct bch_opts *new_opts, enum bch_opt_id id)
+			    enum bch_opt_id id, u64 v)
 {
+	opt_hook_io(c, ca, inum, id, v, true);
+
 	switch (id) {
-	case Opt_foreground_target:
-		if (new_opts->foreground_target &&
-		    !new_opts->background_target)
-			bch2_set_rebalance_needs_scan(c, inum);
-		break;
-	case Opt_compression:
-		if (new_opts->compression &&
-		    !new_opts->background_compression)
-			bch2_set_rebalance_needs_scan(c, inum);
-		break;
-	case Opt_background_target:
-		if (new_opts->background_target)
-			bch2_set_rebalance_needs_scan(c, inum);
-		break;
-	case Opt_background_compression:
-		if (new_opts->background_compression)
-			bch2_set_rebalance_needs_scan(c, inum);
-		break;
-	case Opt_rebalance_enabled:
-		bch2_rebalance_wakeup(c);
+	case Opt_reconcile_enabled:
+		bch2_reconcile_wakeup(c);
 		break;
 	case Opt_copygc_enabled:
 		bch2_copygc_wakeup(c);
 		break;
 	case Opt_discard:
 		if (!ca) {
-			mutex_lock(&c->sb_lock);
+			guard(mutex)(&c->sb_lock);
 			for_each_member_device(c, ca) {
 				struct bch_member *m =
 					bch2_members_v2_get_mut(ca->disk_sb.sb, ca->dev_idx);
@@ -592,7 +644,16 @@ void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 			}
 
 			bch2_write_super(c);
-			mutex_unlock(&c->sb_lock);
+		}
+		break;
+	case Opt_durability:
+		if (test_bit(BCH_FS_rw, &c->flags) &&
+		    ca &&
+		    bch2_dev_is_online(ca) &&
+		    ca->mi.state == BCH_MEMBER_STATE_rw) {
+			scoped_guard(rcu)
+				bch2_dev_allocator_set_rw(c, ca, true);
+			bch2_recalc_capacity(c);
 		}
 		break;
 	case Opt_version_upgrade:
@@ -601,19 +662,23 @@ void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 		 * upgrades at runtime as well, but right now there's nothing
 		 * that does that:
 		 */
-		if (new_opts->version_upgrade == BCH_VERSION_UPGRADE_incompatible)
+		if (v == BCH_VERSION_UPGRADE_incompatible)
 			bch2_sb_upgrade_incompat(c);
+		break;
+	case Opt_read_only:
+		bch2_reconcile_wakeup(c);
 		break;
 	default:
 		break;
 	}
+
+	atomic_inc(&c->opt_change_cookie);
 }
 
 int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
 			     struct printbuf *parse_later,
 			     const char *name, const char *val)
 {
-	struct printbuf err = PRINTBUF;
 	u64 v;
 	int ret, id;
 
@@ -637,47 +702,40 @@ int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
 
 	val = bch2_opt_val_synonym_lookup(name, val);
 
-	if (!(bch2_opt_table[id].flags & OPT_MOUNT))
-		goto bad_opt;
-
-	if (id == Opt_acl &&
-	    !IS_ENABLED(CONFIG_BCACHEFS_POSIX_ACL))
-		goto bad_opt;
+	if (!(bch2_opt_table[id].flags & OPT_MOUNT) &&
+	    !(bch2_opt_table[id].flags & OPT_MOUNT_OLD))
+		return -BCH_ERR_option_name;
 
 	if ((id == Opt_usrquota ||
 	     id == Opt_grpquota) &&
 	    !IS_ENABLED(CONFIG_BCACHEFS_QUOTA))
-		goto bad_opt;
+		return -BCH_ERR_option_name;
 
+	CLASS(printbuf, err)();
 	ret = bch2_opt_parse(c, &bch2_opt_table[id], val, &v, &err);
 	if (ret == -BCH_ERR_option_needs_open_fs) {
-		ret = 0;
-
 		if (parse_later) {
 			prt_printf(parse_later, "%s=%s,", name, val);
 			if (parse_later->allocation_failure)
-				ret = -ENOMEM;
+				return -ENOMEM;
 		}
 
-		goto out;
+		return 0;
 	}
 
 	if (ret < 0)
-		goto bad_val;
+		return -BCH_ERR_option_value;
+
+	if (bch2_opt_table[id].flags & OPT_MOUNT_OLD) {
+		pr_err("option %s may no longer be specified at mount time; set via sysfs opts dir",
+		       bch2_opt_table[id].attr.name);
+		return 0;
+	}
 
 	if (opts)
 		bch2_opt_set_by_id(opts, id, v);
 
-	ret = 0;
-out:
-	printbuf_exit(&err);
-	return ret;
-bad_opt:
-	ret = -BCH_ERR_option_name;
-	goto out;
-bad_val:
-	ret = -BCH_ERR_option_value;
-	goto out;
+	return 0;
 }
 
 int bch2_parse_mount_opts(struct bch_fs *c, struct bch_opts *opts,
@@ -805,26 +863,44 @@ bool __bch2_opt_set_sb(struct bch_sb *sb, int dev_idx,
 bool bch2_opt_set_sb(struct bch_fs *c, struct bch_dev *ca,
 		     const struct bch_option *opt, u64 v)
 {
-	mutex_lock(&c->sb_lock);
+	guard(mutex)(&c->sb_lock);
 	bool changed = __bch2_opt_set_sb(c->disk_sb.sb, ca ? ca->dev_idx : -1, opt, v);
 	if (changed)
 		bch2_write_super(c);
-	mutex_unlock(&c->sb_lock);
 	return changed;
 }
 
+const __maybe_unused struct bch_opts bch2_opts_default = {
+#define x(_name, _bits, _mode, _type, _sb_opt, _default, ...)		\
+	._name##_defined = true,					\
+	._name = _default,						\
+
+	BCH_OPTS()
+#undef x
+};
+
 /* io opts: */
 
-struct bch_io_opts bch2_opts_to_inode_opts(struct bch_opts src)
+void bch2_inode_opts_get(struct bch_fs *c, struct bch_inode_opts *ret, bool metadata)
 {
-	struct bch_io_opts opts = {
-#define x(_name, _bits)	._name = src._name,
+	memset(ret, 0, sizeof(*ret));
+
+#define x(_name, _bits)	ret->_name = c->opts._name,
 	BCH_INODE_OPTS()
 #undef x
-	};
 
-	bch2_io_opts_fixups(&opts);
-	return opts;
+	ret->change_cookie = atomic_read(&c->opt_change_cookie);
+
+	if (metadata) {
+		ret->background_target	= c->opts.metadata_target ?: c->opts.foreground_target;
+		ret->data_replicas	= c->opts.metadata_replicas;
+		ret->data_checksum	= c->opts.metadata_checksum;
+		ret->compression	= 0;
+		ret->background_compression = 0;
+		ret->erasure_code	= false;
+	} else {
+		bch2_io_opts_fixups(ret);
+	}
 }
 
 bool bch2_opt_is_inode_opt(enum bch_opt_id id)
@@ -841,4 +917,17 @@ bool bch2_opt_is_inode_opt(enum bch_opt_id id)
 			return true;
 
 	return false;
+}
+
+void bch2_inode_opts_to_text(struct printbuf *out, struct bch_fs *c, struct bch_inode_opts opts)
+{
+	bool first = true;
+
+#define x(_name, _bits)			\
+	if (!first)			\
+		prt_char(out, ',');	\
+	first = false;			\
+	bch2_opt_to_text(out, c, c->disk_sb.sb, &bch2_opt_table[Opt_##_name], opts._name, 0);
+	BCH_INODE_OPTS()
+#undef x
 }

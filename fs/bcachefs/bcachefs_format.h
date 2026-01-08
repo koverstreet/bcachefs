@@ -77,7 +77,8 @@
 #include <linux/kernel.h>
 #include <linux/uuid.h>
 #include <uapi/linux/magic.h>
-#include "vstructs.h"
+
+#include "util/vstructs.h"
 
 #ifdef __KERNEL__
 typedef uuid_t __uuid_t;
@@ -423,7 +424,8 @@ enum bch_bkey_type_flags {
 	x(logged_op_truncate,	32,	BKEY_TYPE_strict_btree_checks)	\
 	x(logged_op_finsert,	33,	BKEY_TYPE_strict_btree_checks)	\
 	x(accounting,		34,	BKEY_TYPE_strict_btree_checks)	\
-	x(inode_alloc_cursor,	35,	BKEY_TYPE_strict_btree_checks)
+	x(inode_alloc_cursor,	35,	BKEY_TYPE_strict_btree_checks)	\
+	x(extent_whiteout,	36,	BKEY_TYPE_strict_btree_checks)
 
 enum bch_bkey_type {
 #define x(name, nr, ...) KEY_TYPE_##name	= nr,
@@ -440,8 +442,25 @@ struct bch_whiteout {
 	struct bch_val		v;
 };
 
+struct bch_extent_whiteout {
+	struct bch_val		v;
+};
+
 struct bch_error {
 	struct bch_val		v;
+	u8			err;
+	u8			pad[7];
+};
+
+#define KEY_TYPE_ERRORS()			\
+	x(unknown,		0)		\
+	x(device_removed,	1)		\
+	x(double_allocation,	2)
+
+enum bch_key_type_errors {
+#define x(n, t)	KEY_TYPE_ERROR_##n = t,
+	KEY_TYPE_ERRORS()
+#undef x
 };
 
 struct bch_cookie {
@@ -469,10 +488,12 @@ struct bch_backpointer {
 	__u8			level;
 	__u8			data_type;
 	__u8			bucket_gen;
-	__u32			pad;
+	__u32			flags;
 	__u32			bucket_len;
 	struct bpos		pos;
 } __packed __aligned(8);
+
+BITMASK(BACKPOINTER_RECONCILE_PHYS,	struct bch_backpointer, flags, 0, 2);
 
 /* Optional/variable size superblock sections: */
 
@@ -498,29 +519,149 @@ struct bch_sb_field {
 	x(errors,			12)	\
 	x(ext,				13)	\
 	x(downgrade,			14)	\
-	x(recovery_passes,		15)
+	x(recovery_passes,		15)	\
+	x(extent_type_u64s,		16)
 
-#include "alloc_background_format.h"
-#include "dirent_format.h"
-#include "disk_accounting_format.h"
-#include "disk_groups_format.h"
-#include "extents_format.h"
-#include "ec_format.h"
-#include "inode_format.h"
-#include "journal_seq_blacklist_format.h"
-#include "logged_ops_format.h"
-#include "lru_format.h"
-#include "quota_format.h"
-#include "recovery_passes_format.h"
-#include "reflink_format.h"
-#include "replicas_format.h"
-#include "snapshot_format.h"
-#include "subvolume_format.h"
-#include "sb-counters_format.h"
-#include "sb-downgrade_format.h"
-#include "sb-errors_format.h"
-#include "sb-members_format.h"
-#include "xattr_format.h"
+enum btree_id_flags {
+	BTREE_IS_extents	= BIT(0),
+	BTREE_IS_snapshots	= BIT(1),
+	BTREE_IS_snapshot_field	= BIT(2),
+	BTREE_IS_data		= BIT(3),
+	BTREE_IS_write_buffer	= BIT(4),
+};
+
+#define BCH_BTREE_IDS()								\
+	x(extents,		0,						\
+	  BTREE_IS_extents|							\
+	  BTREE_IS_snapshots|							\
+	  BTREE_IS_data,							\
+	  BIT_ULL(KEY_TYPE_whiteout)|						\
+	  BIT_ULL(KEY_TYPE_extent_whiteout)|					\
+	  BIT_ULL(KEY_TYPE_error)|						\
+	  BIT_ULL(KEY_TYPE_cookie)|						\
+	  BIT_ULL(KEY_TYPE_extent)|						\
+	  BIT_ULL(KEY_TYPE_reservation)|					\
+	  BIT_ULL(KEY_TYPE_reflink_p)|						\
+	  BIT_ULL(KEY_TYPE_inline_data))					\
+	x(inodes,		1,						\
+	  BTREE_IS_snapshots,							\
+	  BIT_ULL(KEY_TYPE_whiteout)|						\
+	  BIT_ULL(KEY_TYPE_inode)|						\
+	  BIT_ULL(KEY_TYPE_inode_v2)|						\
+	  BIT_ULL(KEY_TYPE_inode_v3)|						\
+	  BIT_ULL(KEY_TYPE_inode_generation))					\
+	x(dirents,		2,						\
+	  BTREE_IS_snapshots,							\
+	  BIT_ULL(KEY_TYPE_whiteout)|						\
+	  BIT_ULL(KEY_TYPE_hash_whiteout)|					\
+	  BIT_ULL(KEY_TYPE_dirent))						\
+	x(xattrs,		3,						\
+	  BTREE_IS_snapshots,							\
+	  BIT_ULL(KEY_TYPE_whiteout)|						\
+	  BIT_ULL(KEY_TYPE_cookie)|						\
+	  BIT_ULL(KEY_TYPE_hash_whiteout)|					\
+	  BIT_ULL(KEY_TYPE_xattr))						\
+	x(alloc,		4,	0,					\
+	  BIT_ULL(KEY_TYPE_alloc)|						\
+	  BIT_ULL(KEY_TYPE_alloc_v2)|						\
+	  BIT_ULL(KEY_TYPE_alloc_v3)|						\
+	  BIT_ULL(KEY_TYPE_alloc_v4))						\
+	x(quotas,		5,	0,					\
+	  BIT_ULL(KEY_TYPE_quota))						\
+	x(stripes,		6,						\
+	  BTREE_IS_data,							\
+	  BIT_ULL(KEY_TYPE_stripe))						\
+	x(reflink,		7,						\
+	  BTREE_IS_extents|							\
+	  BTREE_IS_data,							\
+	  BIT_ULL(KEY_TYPE_reflink_v)|						\
+	  BIT_ULL(KEY_TYPE_indirect_inline_data)|				\
+	  BIT_ULL(KEY_TYPE_error))						\
+	x(subvolumes,		8,	0,					\
+	  BIT_ULL(KEY_TYPE_subvolume))						\
+	x(snapshots,		9,	0,					\
+	  BIT_ULL(KEY_TYPE_snapshot))						\
+	x(lru,			10,						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(freespace,		11,						\
+	  BTREE_IS_extents,							\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(need_discard,		12,	0,					\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(backpointers,		13,						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_backpointer))					\
+	x(bucket_gens,		14,	0,					\
+	  BIT_ULL(KEY_TYPE_bucket_gens))					\
+	x(snapshot_trees,	15,	0,					\
+	  BIT_ULL(KEY_TYPE_snapshot_tree))					\
+	x(deleted_inodes,	16,						\
+	  BTREE_IS_snapshot_field|						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(logged_ops,		17,	0,					\
+	  BIT_ULL(KEY_TYPE_logged_op_truncate)|					\
+	  BIT_ULL(KEY_TYPE_logged_op_finsert)|					\
+	  BIT_ULL(KEY_TYPE_inode_alloc_cursor))					\
+	x(reconcile_work,	18,						\
+	  BTREE_IS_snapshot_field|						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set)|BIT_ULL(KEY_TYPE_cookie))			\
+	x(subvolume_children,	19,	0,					\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(accounting,		20,						\
+	  BTREE_IS_snapshot_field|						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_accounting))						\
+	x(reconcile_hipri,	21,						\
+	  BTREE_IS_snapshot_field|						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(reconcile_pending,	22,						\
+	  BTREE_IS_snapshot_field|						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(reconcile_scan,	23,	0,					\
+	  BIT_ULL(KEY_TYPE_cookie)|						\
+	  BIT_ULL(KEY_TYPE_backpointer))					\
+	x(reconcile_work_phys,	24,						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(reconcile_hipri_phys,	25,						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(bucket_to_stripe,	26,	0,					\
+	  BIT_ULL(KEY_TYPE_set))
+
+enum btree_id {
+#define x(name, nr, ...) BTREE_ID_##name = nr,
+	BCH_BTREE_IDS()
+#undef x
+	BTREE_ID_NR
+};
+
+#include "alloc/accounting_format.h"
+#include "alloc/disk_groups_format.h"
+#include "alloc/lru_format.h"
+#include "alloc/replicas_format.h"
+#include "alloc/format.h"
+#include "data/ec_format.h"
+#include "data/extents_format.h"
+#include "data/extents_sb_format.h"
+#include "data/reflink_format.h"
+#include "fs/dirent_format.h"
+#include "fs/inode_format.h"
+#include "fs/logged_ops_format.h"
+#include "fs/quota_format.h"
+#include "fs/xattr_format.h"
+#include "init/passes_format.h"
+#include "journal/seq_blacklist_format.h"
+#include "sb/counters_format.h"
+#include "sb/downgrade_format.h"
+#include "sb/errors_format.h"
+#include "sb/members_format.h"
+#include "snapshots/format.h"
 
 enum bch_sb_field_type {
 #define x(f, nr)	BCH_SB_FIELD_##f = nr,
@@ -649,7 +790,6 @@ struct bch_sb_field_ext {
 /*
  * field 1:		version name
  * field 2:		BCH_VERSION(major, minor)
- * field 3:		recovery passess required on upgrade
  */
 #define BCH_METADATA_VERSIONS()						\
 	x(bkey_renumber,		BCH_VERSION(0, 10))		\
@@ -700,7 +840,14 @@ struct bch_sb_field_ext {
 	x(extent_flags,			BCH_VERSION(1, 25))		\
 	x(snapshot_deletion_v2,		BCH_VERSION(1, 26))		\
 	x(fast_device_removal,		BCH_VERSION(1, 27))		\
-	x(inode_has_case_insensitive,	BCH_VERSION(1, 28))
+	x(inode_has_case_insensitive,	BCH_VERSION(1, 28))		\
+	x(extent_snapshot_whiteouts,	BCH_VERSION(1, 29))		\
+	x(31bit_dirent_offset,		BCH_VERSION(1, 30))		\
+	x(btree_node_accounting,	BCH_VERSION(1, 31))		\
+	x(sb_field_extent_type_u64s,	BCH_VERSION(1, 32))		\
+	x(reconcile,			BCH_VERSION(1, 33))		\
+	x(extented_key_type_error,	BCH_VERSION(1, 34))		\
+	x(bucket_stripe_index,		BCH_VERSION(1, 35))
 
 enum bcachefs_metadata_version {
 	bcachefs_metadata_version_min = 9,
@@ -711,7 +858,7 @@ enum bcachefs_metadata_version {
 };
 
 static const __maybe_unused
-unsigned bcachefs_metadata_required_upgrade_below = bcachefs_metadata_version_rebalance_work;
+unsigned bcachefs_metadata_required_upgrade_below = bcachefs_metadata_version_btree_node_accounting;
 
 #define bcachefs_metadata_version_current	(bcachefs_metadata_version_max - 1)
 
@@ -848,7 +995,6 @@ LE64_BITMASK(BCH_SB_GC_RESERVE_BYTES,	struct bch_sb, flags[2],  4, 64);
 LE64_BITMASK(BCH_SB_ERASURE_CODE,	struct bch_sb, flags[3],  0, 16);
 LE64_BITMASK(BCH_SB_METADATA_TARGET,	struct bch_sb, flags[3], 16, 28);
 LE64_BITMASK(BCH_SB_SHARD_INUMS,	struct bch_sb, flags[3], 28, 29);
-LE64_BITMASK(BCH_SB_INODES_USE_KEY_CACHE,struct bch_sb, flags[3], 29, 30);
 LE64_BITMASK(BCH_SB_JOURNAL_FLUSH_DELAY,struct bch_sb, flags[3], 30, 62);
 LE64_BITMASK(BCH_SB_JOURNAL_FLUSH_DISABLED,struct bch_sb, flags[3], 62, 63);
 LE64_BITMASK(BCH_SB_MULTI_DEVICE,	struct bch_sb,	flags[3], 63, 64);
@@ -875,6 +1021,10 @@ LE64_BITMASK(BCH_SB_CSUM_ERR_RETRY_NR,	struct bch_sb, flags[6], 14, 20);
 LE64_BITMASK(BCH_SB_DEGRADED_ACTION,	struct bch_sb, flags[6], 20, 22);
 LE64_BITMASK(BCH_SB_CASEFOLD,		struct bch_sb, flags[6], 22, 23);
 LE64_BITMASK(BCH_SB_REBALANCE_AC_ONLY,	struct bch_sb, flags[6], 23, 24);
+LE64_BITMASK(BCH_SB_WRITEBACK_TIMEOUT,	struct bch_sb, flags[6], 24, 40);
+LE64_BITMASK(BCH_SB_EXTENT_BP_SHIFT,	struct bch_sb, flags[6], 40, 48);
+
+#define BCH_SB_EXTENT_BP_SHIFT_DEFAULT	10
 
 static inline __u64 BCH_SB_COMPRESSION_TYPE(const struct bch_sb *sb)
 {
@@ -959,7 +1109,8 @@ enum bch_sb_feature {
 	x(alloc_info,				0)	\
 	x(alloc_metadata,			1)	\
 	x(extents_above_btree_updates_done,	2)	\
-	x(bformat_overflow_done,		3)
+	x(bformat_overflow_done,		3)	\
+	x(no_stale_ptrs,			4)
 
 enum bch_sb_compat {
 #define x(f, n) BCH_COMPAT_##f,
@@ -1326,104 +1477,6 @@ LE32_BITMASK(JSET_NO_FLUSH,	struct jset, flags, 5, 6);
 
 /* Btree: */
 
-enum btree_id_flags {
-	BTREE_IS_extents	= BIT(0),
-	BTREE_IS_snapshots	= BIT(1),
-	BTREE_IS_snapshot_field	= BIT(2),
-	BTREE_IS_data		= BIT(3),
-	BTREE_IS_write_buffer	= BIT(4),
-};
-
-#define BCH_BTREE_IDS()								\
-	x(extents,		0,						\
-	  BTREE_IS_extents|							\
-	  BTREE_IS_snapshots|							\
-	  BTREE_IS_data,							\
-	  BIT_ULL(KEY_TYPE_whiteout)|						\
-	  BIT_ULL(KEY_TYPE_error)|						\
-	  BIT_ULL(KEY_TYPE_cookie)|						\
-	  BIT_ULL(KEY_TYPE_extent)|						\
-	  BIT_ULL(KEY_TYPE_reservation)|					\
-	  BIT_ULL(KEY_TYPE_reflink_p)|						\
-	  BIT_ULL(KEY_TYPE_inline_data))					\
-	x(inodes,		1,						\
-	  BTREE_IS_snapshots,							\
-	  BIT_ULL(KEY_TYPE_whiteout)|						\
-	  BIT_ULL(KEY_TYPE_inode)|						\
-	  BIT_ULL(KEY_TYPE_inode_v2)|						\
-	  BIT_ULL(KEY_TYPE_inode_v3)|						\
-	  BIT_ULL(KEY_TYPE_inode_generation))					\
-	x(dirents,		2,						\
-	  BTREE_IS_snapshots,							\
-	  BIT_ULL(KEY_TYPE_whiteout)|						\
-	  BIT_ULL(KEY_TYPE_hash_whiteout)|					\
-	  BIT_ULL(KEY_TYPE_dirent))						\
-	x(xattrs,		3,						\
-	  BTREE_IS_snapshots,							\
-	  BIT_ULL(KEY_TYPE_whiteout)|						\
-	  BIT_ULL(KEY_TYPE_cookie)|						\
-	  BIT_ULL(KEY_TYPE_hash_whiteout)|					\
-	  BIT_ULL(KEY_TYPE_xattr))						\
-	x(alloc,		4,	0,					\
-	  BIT_ULL(KEY_TYPE_alloc)|						\
-	  BIT_ULL(KEY_TYPE_alloc_v2)|						\
-	  BIT_ULL(KEY_TYPE_alloc_v3)|						\
-	  BIT_ULL(KEY_TYPE_alloc_v4))						\
-	x(quotas,		5,	0,					\
-	  BIT_ULL(KEY_TYPE_quota))						\
-	x(stripes,		6,	0,					\
-	  BIT_ULL(KEY_TYPE_stripe))						\
-	x(reflink,		7,						\
-	  BTREE_IS_extents|							\
-	  BTREE_IS_data,							\
-	  BIT_ULL(KEY_TYPE_reflink_v)|						\
-	  BIT_ULL(KEY_TYPE_indirect_inline_data)|				\
-	  BIT_ULL(KEY_TYPE_error))						\
-	x(subvolumes,		8,	0,					\
-	  BIT_ULL(KEY_TYPE_subvolume))						\
-	x(snapshots,		9,	0,					\
-	  BIT_ULL(KEY_TYPE_snapshot))						\
-	x(lru,			10,						\
-	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set))						\
-	x(freespace,		11,						\
-	  BTREE_IS_extents,							\
-	  BIT_ULL(KEY_TYPE_set))						\
-	x(need_discard,		12,	0,					\
-	  BIT_ULL(KEY_TYPE_set))						\
-	x(backpointers,		13,						\
-	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_backpointer))					\
-	x(bucket_gens,		14,	0,					\
-	  BIT_ULL(KEY_TYPE_bucket_gens))					\
-	x(snapshot_trees,	15,	0,					\
-	  BIT_ULL(KEY_TYPE_snapshot_tree))					\
-	x(deleted_inodes,	16,						\
-	  BTREE_IS_snapshot_field|						\
-	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set))						\
-	x(logged_ops,		17,	0,					\
-	  BIT_ULL(KEY_TYPE_logged_op_truncate)|					\
-	  BIT_ULL(KEY_TYPE_logged_op_finsert)|					\
-	  BIT_ULL(KEY_TYPE_inode_alloc_cursor))					\
-	x(rebalance_work,	18,						\
-	  BTREE_IS_snapshot_field|						\
-	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_set)|BIT_ULL(KEY_TYPE_cookie))			\
-	x(subvolume_children,	19,	0,					\
-	  BIT_ULL(KEY_TYPE_set))						\
-	x(accounting,		20,						\
-	  BTREE_IS_snapshot_field|						\
-	  BTREE_IS_write_buffer,						\
-	  BIT_ULL(KEY_TYPE_accounting))						\
-
-enum btree_id {
-#define x(name, nr, ...) BTREE_ID_##name = nr,
-	BCH_BTREE_IDS()
-#undef x
-	BTREE_ID_NR
-};
-
 /*
  * Maximum number of btrees that we will _ever_ have under the current scheme,
  * where we refer to them with 64 bit bitfields - and we also need a bit for
@@ -1431,9 +1484,9 @@ enum btree_id {
  */
 #define BTREE_ID_NR_MAX		63
 
-static inline bool btree_id_is_alloc(enum btree_id id)
+static inline bool btree_id_is_alloc(enum btree_id btree)
 {
-	switch (id) {
+	switch (btree) {
 	case BTREE_ID_alloc:
 	case BTREE_ID_backpointers:
 	case BTREE_ID_need_discard:
@@ -1441,10 +1494,44 @@ static inline bool btree_id_is_alloc(enum btree_id id)
 	case BTREE_ID_bucket_gens:
 	case BTREE_ID_lru:
 	case BTREE_ID_accounting:
+	case BTREE_ID_reconcile_work:
+	case BTREE_ID_reconcile_hipri:
+	case BTREE_ID_reconcile_pending:
+	case BTREE_ID_reconcile_scan:
 		return true;
 	default:
 		return false;
 	}
+}
+
+/* We can reconstruct these btrees from information in other btrees */
+static inline bool btree_id_can_reconstruct(enum btree_id btree)
+{
+	if (btree_id_is_alloc(btree))
+		return true;
+
+	switch (btree) {
+	case BTREE_ID_snapshot_trees:
+	case BTREE_ID_deleted_inodes:
+	case BTREE_ID_reconcile_work:
+	case BTREE_ID_reconcile_hipri:
+	case BTREE_ID_reconcile_pending:
+	case BTREE_ID_reconcile_scan:
+	case BTREE_ID_subvolume_children:
+		return true;
+	default:
+		return false;
+	}
+}
+
+/*
+ * We can reconstruct BTREE_ID_alloc, but reconstucting it from scratch is not
+ * so cheap and OOMs on huge filesystems (until we have online
+ * check_allocations)
+ */
+static inline bool btree_id_recovers_from_scan(enum btree_id btree)
+{
+	return btree == BTREE_ID_alloc || !btree_id_can_reconstruct(btree);
 }
 
 #define BTREE_MAX_DEPTH		4U

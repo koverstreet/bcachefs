@@ -128,14 +128,15 @@ enum closure_state {
 	 * annotate where references are being transferred.
 	 */
 
-	CLOSURE_BITS_START	= (1U << 26),
-	CLOSURE_DESTRUCTOR	= (1U << 26),
+	CLOSURE_BITS_START	= (1U << 24),
+	CLOSURE_DESTRUCTOR	= (1U << 24),
+	CLOSURE_SLEEPING	= (1U << 26),
 	CLOSURE_WAITING		= (1U << 28),
 	CLOSURE_RUNNING		= (1U << 30),
 };
 
 #define CLOSURE_GUARD_MASK					\
-	((CLOSURE_DESTRUCTOR|CLOSURE_WAITING|CLOSURE_RUNNING) << 1)
+	(((CLOSURE_DESTRUCTOR|CLOSURE_SLEEPING|CLOSURE_WAITING|CLOSURE_RUNNING) << 1)|(CLOSURE_BITS_START >> 1))
 
 #define CLOSURE_REMAINING_MASK		(CLOSURE_BITS_START - 1)
 #define CLOSURE_REMAINING_INITIALIZER	(1|CLOSURE_RUNNING)
@@ -144,7 +145,7 @@ struct closure {
 	union {
 		struct {
 			struct workqueue_struct *wq;
-			struct closure_syncer	*s;
+			struct task_struct	*sleeper;
 			struct llist_node	list;
 			closure_fn		*fn;
 		};
@@ -154,7 +155,6 @@ struct closure {
 	struct closure		*parent;
 
 	atomic_t		remaining;
-	bool			closure_get_happened;
 
 #ifdef CONFIG_DEBUG_CLOSURES
 #define CLOSURE_MAGIC_DEAD	0xc054dead
@@ -169,10 +169,17 @@ struct closure {
 };
 
 void closure_sub(struct closure *cl, int v);
-void closure_put(struct closure *cl);
 void __closure_wake_up(struct closure_waitlist *list);
 bool closure_wait(struct closure_waitlist *list, struct closure *cl);
 void __closure_sync(struct closure *cl);
+
+/*
+ * closure_put - decrement a closure's refcount
+ */
+static inline void closure_put(struct closure *cl)
+{
+	closure_sub(cl, 1);
+}
 
 static inline unsigned closure_nr_remaining(struct closure *cl)
 {
@@ -187,11 +194,7 @@ static inline unsigned closure_nr_remaining(struct closure *cl)
  */
 static inline void closure_sync(struct closure *cl)
 {
-#ifdef CONFIG_DEBUG_CLOSURES
-	BUG_ON(closure_nr_remaining(cl) != 1 && !cl->closure_get_happened);
-#endif
-
-	if (cl->closure_get_happened)
+	if (closure_nr_remaining(cl) > 1)
 		__closure_sync(cl);
 }
 
@@ -199,10 +202,7 @@ int __closure_sync_timeout(struct closure *cl, unsigned long timeout);
 
 static inline int closure_sync_timeout(struct closure *cl, unsigned long timeout)
 {
-#ifdef CONFIG_DEBUG_CLOSURES
-	BUG_ON(closure_nr_remaining(cl) != 1 && !cl->closure_get_happened);
-#endif
-	return cl->closure_get_happened
+	return closure_nr_remaining(cl) > 1
 		? __closure_sync_timeout(cl, timeout)
 		: 0;
 }
@@ -275,8 +275,6 @@ static inline void closure_queue(struct closure *cl)
  */
 static inline void closure_get(struct closure *cl)
 {
-	cl->closure_get_happened = true;
-
 #ifdef CONFIG_DEBUG_CLOSURES
 	BUG_ON((atomic_inc_return(&cl->remaining) &
 		CLOSURE_REMAINING_MASK) <= 1);
@@ -314,7 +312,6 @@ static inline void closure_init(struct closure *cl, struct closure *parent)
 		closure_get(parent);
 
 	atomic_set(&cl->remaining, CLOSURE_REMAINING_INITIALIZER);
-	cl->closure_get_happened = false;
 
 	closure_debug_create(cl);
 	closure_set_ip(cl);

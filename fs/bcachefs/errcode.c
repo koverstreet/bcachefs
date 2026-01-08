@@ -2,7 +2,6 @@
 
 #include "bcachefs.h"
 #include "errcode.h"
-#include "trace.h"
 
 #include <linux/errname.h>
 
@@ -26,7 +25,8 @@ const char *bch2_err_str(int err)
 
 	err = abs(err);
 
-	BUG_ON(err >= BCH_ERR_MAX);
+	if (err >= BCH_ERR_MAX)
+		return "(Invalid error)";
 
 	if (err >= BCH_ERR_START)
 		errstr = bch2_errcode_strs[err - BCH_ERR_START];
@@ -60,8 +60,6 @@ int __bch2_err_class(int bch_err)
 	while (std_err >= BCH_ERR_START && bch2_errcode_parents[std_err - BCH_ERR_START])
 		std_err = bch2_errcode_parents[std_err - BCH_ERR_START];
 
-	trace_error_downcast(bch_err, std_err, _RET_IP_);
-
 	return -std_err;
 }
 
@@ -70,4 +68,32 @@ const char *bch2_blk_status_to_str(blk_status_t status)
 	if (status == BLK_STS_REMOVED)
 		return "device removed";
 	return blk_status_to_str(status);
+}
+
+enum bch_errcode blk_status_to_bch_err(blk_status_t err)
+{
+	if (!err)
+		return 0;
+
+	switch (err) {
+#undef BLK_STS
+#define BLK_STS(n) case BLK_STS_##n:	return BCH_ERR_BLK_STS_##n;
+		BLK_ERRS()
+#undef BLK_STS
+		default:		return BCH_ERR_BLK_STS_UNKNOWN;
+	}
+}
+
+enum bch_errcode zstd_err_to_bch_err(ZSTD_ErrorCode err)
+{
+	if (!err)
+		return 0;
+
+	switch (err) {
+#undef ZSTD_error
+#define ZSTD_error(n) case ZSTD_error_##n:	return BCH_ERR_ZSTD_error_##n;
+		ZSTD_ERRS()
+#undef ZSTD_error
+		default:		return BCH_ERR_ZSTD_error_unknown;
+	}
 }
