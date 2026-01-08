@@ -1378,6 +1378,8 @@ static void bch2_nocow_write(struct bch_write_op *op)
 	if (op->flags & BCH_WRITE_move)
 		return;
 
+	op->flags &= ~BCH_WRITE_convert_unwritten;
+
 	trans = bch2_trans_get(c);
 retry:
 	bch2_trans_begin(trans);
@@ -1454,8 +1456,7 @@ retry:
 		}
 
 		bch2_cut_front(c, op->pos, op->insert_keys.top);
-		if (op->flags & BCH_WRITE_convert_unwritten)
-			bch2_cut_back(POS(op->pos.inode, op->pos.offset + bio_sectors(bio)), op->insert_keys.top);
+		bch2_cut_back(POS(op->pos.inode, op->pos.offset + bio_sectors(bio)), op->insert_keys.top);
 
 		bio = &op->wbio.bio;
 		if (k.k->p.offset < op->pos.offset + bio_sectors(bio)) {
@@ -1478,7 +1479,8 @@ retry:
 		bch2_submit_wbio_replicas(to_wbio(bio), c, BCH_DATA_user,
 					  op->insert_keys.top, true);
 
-		bch2_keylist_push(&op->insert_keys);
+		if (op->flags & BCH_WRITE_convert_unwritten)
+			bch2_keylist_push(&op->insert_keys);
 		if (op->flags & BCH_WRITE_submitted)
 			break;
 		bch2_btree_iter_advance(&iter);
