@@ -1063,6 +1063,7 @@ int bch2_data_update_init(struct btree_trans *trans,
 			if (ret)
 				goto out;
 
+			guard(rcu)();
 			if (rhltable_lookup(&c->update_table, &m->pos, bch_update_params)) {
 				event_inc(c, data_update_in_flight);
 				ret = bch_err_throw(c, data_update_fail_in_flight);
