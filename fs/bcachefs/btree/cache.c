@@ -618,54 +618,55 @@ void bch2_fs_btree_cache_exit(struct bch_fs *c)
 	shrinker_free(bc->live[0].shrink);
 
 	/* vfree() can allocate memory: */
-	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
-	guard(mutex)(&bc->lock);
+	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
+		guard(mutex)(&bc->lock);
 
-	if (c->verify_data)
-		list_move(&c->verify_data->list, &bc->live[0].list);
+		if (c->verify_data)
+			list_move(&c->verify_data->list, &bc->live[0].list);
 
-	kvfree(c->verify_ondisk);
+		kvfree(c->verify_ondisk);
 
-	for (unsigned i = 0; i < btree_id_nr_alive(c); i++) {
-		struct btree_root *r = bch2_btree_id_root(c, i);
+		for (unsigned i = 0; i < btree_id_nr_alive(c); i++) {
+			struct btree_root *r = bch2_btree_id_root(c, i);
 
-		if (r->b)
-			list_add(&r->b->list, &bc->live[0].list);
+			if (r->b)
+				list_add(&r->b->list, &bc->live[0].list);
+		}
+
+		list_for_each_entry_safe(b, t, &bc->live[1].list, list)
+			bch2_btree_node_hash_remove(bc, b);
+		list_for_each_entry_safe(b, t, &bc->live[0].list, list)
+			bch2_btree_node_hash_remove(bc, b);
+
+		list_for_each_entry_safe(b, t, &bc->freeable, list) {
+			BUG_ON(btree_node_read_in_flight(b) ||
+			       btree_node_write_in_flight(b));
+
+			bch2_btree_node_data_free(bc, b);
+			cond_resched();
+		}
+
+		BUG_ON(!bch2_journal_error(&c->journal) && atomic_long_read(&bc->nr_dirty));
+
+		list_splice(&bc->freed_pcpu, &bc->freed_nonpcpu);
+
+		list_for_each_entry_safe(b, t, &bc->freed_nonpcpu, list) {
+			list_del(&b->list);
+			six_lock_exit(&b->c.lock);
+			kfree(b);
+		}
+
+		for (unsigned i = 0; i < ARRAY_SIZE(bc->nr_by_btree); i++)
+			BUG_ON(bc->nr_by_btree[i]);
+		BUG_ON(bc->live[0].nr);
+		BUG_ON(bc->live[1].nr);
+		BUG_ON(bc->nr_freeable);
+
+		darray_exit(&bc->roots_extra);
 	}
-
-	list_for_each_entry_safe(b, t, &bc->live[1].list, list)
-		bch2_btree_node_hash_remove(bc, b);
-	list_for_each_entry_safe(b, t, &bc->live[0].list, list)
-		bch2_btree_node_hash_remove(bc, b);
-
-	list_for_each_entry_safe(b, t, &bc->freeable, list) {
-		BUG_ON(btree_node_read_in_flight(b) ||
-		       btree_node_write_in_flight(b));
-
-		bch2_btree_node_data_free(bc, b);
-		cond_resched();
-	}
-
-	BUG_ON(!bch2_journal_error(&c->journal) && atomic_long_read(&bc->nr_dirty));
-
-	list_splice(&bc->freed_pcpu, &bc->freed_nonpcpu);
-
-	list_for_each_entry_safe(b, t, &bc->freed_nonpcpu, list) {
-		list_del(&b->list);
-		six_lock_exit(&b->c.lock);
-		kfree(b);
-	}
-
-	for (unsigned i = 0; i < ARRAY_SIZE(bc->nr_by_btree); i++)
-		BUG_ON(bc->nr_by_btree[i]);
-	BUG_ON(bc->live[0].nr);
-	BUG_ON(bc->live[1].nr);
-	BUG_ON(bc->nr_freeable);
 
 	if (bc->table_init_done)
 		rhashtable_destroy(&bc->table);
-
-	darray_exit(&bc->roots_extra);
 }
 
 int bch2_fs_btree_cache_init(struct bch_fs *c)
