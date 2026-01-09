@@ -118,7 +118,7 @@ struct bch_ioctl_query_uuid {
  * may be either offline or offline.
  *
  * Will fail removing @dev would leave us with insufficient read write devices
- * or degraded/unavailable data, unless the approprate BCH_FORCE_IF_* flags are
+ * or degraded/unavailable data, unless the appropriate BCH_FORCE_IF_* flags are
  * set.
  */
 
@@ -141,7 +141,7 @@ struct bch_ioctl_query_uuid {
  *
  * Will fail (similarly to BCH_IOCTL_DISK_SET_STATE) if offlining @dev would
  * leave us with insufficient read write devices or degraded/unavailable data,
- * unless the approprate BCH_FORCE_IF_* flags are set.
+ * unless the appropriate BCH_FORCE_IF_* flags are set.
  */
 
 struct bch_ioctl_disk {

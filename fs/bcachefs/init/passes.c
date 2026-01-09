@@ -556,7 +556,7 @@ int bch2_run_recovery_passes(struct bch_fs *c, u64 orig_passes_to_run, bool fail
 
 		if (r->rewound_to) {
 			r->rewound_from	= max(r->rewound_from, pass);
-			/* Restore r->current_passses up to and including r->rewound_to */
+			/* Restore r->current_passes up to and including r->rewound_to */
 			r->current_passes |= orig_passes_to_run & (~0ULL << r->rewound_to);
 			r->rewound_to = 0;
 		} else if (!ret2) {

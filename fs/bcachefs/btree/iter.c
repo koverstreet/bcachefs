@@ -3519,7 +3519,7 @@ u32 bch2_trans_begin(struct btree_trans *trans)
 
 		/*
 		 * If the transaction wasn't restarted, we're presuming to be
-		 * doing something new: dont keep iterators excpt the ones that
+		 * doing something new: dont keep iterators except the ones that
 		 * are in use - except for the subvolumes btree:
 		 */
 		if (!trans->restarted && path->btree_id != BTREE_ID_subvolumes)
@@ -3664,7 +3664,7 @@ struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 
 	*trans_paths_nr(trans->paths) = BTREE_ITER_INITIAL;
 
-	/* Reserve path 0 for our sentinal value */
+	/* Reserve path 0 for our sentinel value */
 	trans->paths_allocated[0] = 1;
 
 	static struct lock_class_key lockdep_key;

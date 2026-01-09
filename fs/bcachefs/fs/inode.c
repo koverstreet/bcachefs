@@ -1365,7 +1365,7 @@ int bch2_delete_dead_inodes(struct bch_fs *c)
 	/*
 	 * if we ran check_inodes() unlinked inodes will have already been
 	 * cleaned up but the write buffer will be out of sync; therefore we
-	 * alway need a write buffer flush
+	 * always need a write buffer flush
 	 *
 	 * Weird transaction restart handling here because on successful delete,
 	 * bch2_inode_rm_snapshot() will return a nested transaction restart,

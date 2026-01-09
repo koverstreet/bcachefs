@@ -58,7 +58,7 @@ struct bch_snapshot {
  * something, key should be deleted)
  *
  * NO_KEYS: we don't remove interior snapshot nodes from snapshot trees at
- * runtime, since we can't do the adjustements for the depth/skiplist field
+ * runtime, since we can't do the adjustments for the depth/skiplist field
  * atomically - and that breaks e.g. is_ancestor(). Instead, we mark it to be
  * deleted at the next remount; this tells us that we don't need to run the full
  * delete_dead_snapshots().
@@ -78,7 +78,7 @@ LE32_BITMASK(BCH_SNAPSHOT_NO_KEYS,	struct bch_snapshot, flags,  3,  4)
 /*
  * Snapshot trees:
  *
- * The snapshot_trees btree gives us persistent indentifier for each tree of
+ * The snapshot_trees btree gives us persistent identifier for each tree of
  * bch_snapshot nodes, and allow us to record and easily find the root/master
  * subvolume that other snapshots were created from:
  */

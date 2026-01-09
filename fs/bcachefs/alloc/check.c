@@ -397,7 +397,7 @@ int __bch2_check_discard_freespace_key(struct btree_trans *trans, struct btree_i
 	if (!bch2_dev_bucket_exists(c, bucket)) {
 		if (__fsck_err(trans, fsck_flags,
 			       need_discard_freespace_key_to_invalid_dev_bucket,
-			       "entry in %s btree for nonexistant dev:bucket %llu:%llu",
+			       "entry in %s btree for nonexistent dev:bucket %llu:%llu",
 			       bch2_btree_id_str(iter->btree_id), bucket.inode, bucket.offset))
 			ret = delete_discard_freespace_key(trans, iter, async_repair);
 		else

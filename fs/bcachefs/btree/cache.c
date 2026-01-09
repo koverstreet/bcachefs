@@ -1240,7 +1240,7 @@ struct btree *bch2_btree_node_get(struct btree_trans *trans, struct btree_path *
 	/*
 	 * Check b->hash_val _before_ calling btree_node_lock() - this might not
 	 * be the node we want anymore, and trying to lock the wrong node could
-	 * cause an unneccessary transaction restart:
+	 * cause an unnecessary transaction restart:
 	 */
 	if (unlikely(!c->opts.btree_node_mem_ptr_optimization ||
 		     !b ||

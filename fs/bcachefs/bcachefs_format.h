@@ -238,7 +238,7 @@ struct bkey {
  *
  * Specifically, when i was designing bkey, I wanted the header to be no
  * bigger than necessary so that bkey_packed could use the rest. That means that
- * decently offten extent keys will fit into only 8 bytes, instead of spilling over
+ * decently often extent keys will fit into only 8 bytes, instead of spilling over
  * to 16.
  *
  * But packed_bkey treats the part after the header - the packed section -
@@ -250,7 +250,7 @@ struct bkey {
  * So that constrains the key part of a bkig endian bkey to start right
  * after the header.
  *
- * If we ever do a bkey_v2 and need to expand the hedaer by another byte for
+ * If we ever do a bkey_v2 and need to expand the header by another byte for
  * some reason - that will clean up this wart.
  */
 __aligned(8)
@@ -1037,7 +1037,7 @@ LE64_BITMASK(BCH_SB_EXT_DISCARD_BUFFER,		struct bch_sb_field_ext, flags0, 38, 42
 	x(reconcile,			BCH_VERSION(1, 33),		\
 	  "Reconcile system for IO options inheritance "		\
 	  "and background data movement",			"2025-11")	\
-	x(extented_key_type_error,	BCH_VERSION(1, 34),		\
+	x(extended_key_type_error,	BCH_VERSION(1, 34),		\
 	  "KEY_TYPE_error changed to zero-byte value",		"2025-12")	\
 	x(bucket_stripe_index,		BCH_VERSION(1, 35),			\
 	  "Stripe index in alloc keys for efficient "				\
@@ -1127,7 +1127,7 @@ struct bch_sb {
 
 /*
  * Flags:
- * BCH_SB_INITALIZED	- set on first mount
+ * BCH_SB_INITIALIZED	- set on first mount
  * BCH_SB_CLEAN		- did we shut down cleanly? Just a hint, doesn't affect
  *			  behaviour of mount/recovery path:
  * BCH_SB_INODE_32BIT	- limit inode numbers to 32 bits
@@ -1790,7 +1790,7 @@ static inline bool btree_id_can_reconstruct(enum btree_id btree)
 }
 
 /*
- * We can reconstruct BTREE_ID_alloc, but reconstucting it from scratch is not
+ * We can reconstruct BTREE_ID_alloc, but reconstructing it from scratch is not
  * so cheap and OOMs on huge filesystems (until we have online
  * check_allocations)
  */

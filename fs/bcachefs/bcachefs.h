@@ -669,7 +669,7 @@ struct bch_fs {
 	struct enumerated_ref	writes;
 
 	/*
-	 * Analagous to c->writes, for asynchronous ops that don't necessarily
+	 * Analogous to c->writes, for asynchronous ops that don't necessarily
 	 * need fs to be read-write
 	 */
 	refcount_t		ro_ref;
