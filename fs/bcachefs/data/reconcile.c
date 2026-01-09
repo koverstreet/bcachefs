@@ -1901,7 +1901,8 @@ static CLOSURE_CALLBACK(do_reconcile_phys_thread)
 	darray_make_room(&work, REBALANCE_WORK_BUF_NR);
 	if (!work.size) {
 		bch_err(c, "%s: unable to allocate memory", __func__);
-		goto out;
+		closure_return(cl);
+		return;
 	}
 
 	CLASS(per_snapshot_io_opts, snapshot_io_opts)(c);
@@ -1928,7 +1929,7 @@ static CLOSURE_CALLBACK(do_reconcile_phys_thread)
 		if (ret)
 			break;
 	}
-out:
+
 	closure_return(cl);
 }
 
