@@ -349,7 +349,7 @@ rcu_pending_enqueue_list(struct rcu_pending_pcpu *p, rcu_gp_poll_state_t seq,
 			/*
 			 * kvfree_rcu_mightsleep(): we weren't passed an
 			 * rcu_head, but we need one: use the low bit of the
-			 * ponter to free to flag that the head needs to be
+			 * pointer to free to flag that the head needs to be
 			 * freed as well:
 			 */
 			ptr = (void *)(((unsigned long) ptr)|1UL);

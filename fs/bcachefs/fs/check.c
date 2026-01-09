@@ -1885,7 +1885,7 @@ int bch2_fix_reflink_p(struct bch_fs *c)
 			fix_reflink_p_key(trans, &iter, k));
 }
 
-/* translate to return code of fsck commad - man(8) fsck */
+/* translate to return code of fsck command - man(8) fsck */
 int bch2_fs_fsck_errcode(struct bch_fs *c, struct printbuf *msg)
 {
 	int ret = 0;

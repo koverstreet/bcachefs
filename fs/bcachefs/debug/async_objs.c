@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Async obj debugging: keep asynchronous objects on (very fast) lists, make
- * them visibile in debugfs:
+ * them visible in debugfs:
  */
 
 #include "bcachefs.h"
