@@ -421,17 +421,12 @@ void bch2_promote_op_to_text(struct printbuf *out,
 void bch2_read_err_msg_trans(struct btree_trans *trans, struct printbuf *out,
 			     struct bch_read_bio *rbio, struct bpos read_pos)
 {
+	prt_str(out, "data read error at ");
 	bch2_inum_offset_err_msg_trans(trans, out, rbio->subvol, read_pos);
 
 	if (rbio->data_update)
-		prt_str(out, "(internal move) ");
-}
-
-static void bch2_read_err_msg(struct bch_fs *c, struct printbuf *out,
-			      struct bch_read_bio *rbio, struct bpos read_pos)
-{
-	CLASS(btree_trans, trans)(c);
-	bch2_read_err_msg_trans(trans, out, rbio, read_pos);
+		prt_str(out, " (internal move) ");
+	prt_str(out, ": ");
 }
 
 enum rbio_context {
@@ -700,7 +695,6 @@ static void bch2_rbio_retry(struct work_struct *work)
 
 			bch2_read_err_msg_trans(trans, &msg.m, rbio, read_pos);
 
-			prt_str(&msg.m, "data read error, ");
 			if (!ret) {
 				prt_str(&msg.m, "successful retry");
 				if (rbio->self_healing)
@@ -1646,7 +1640,11 @@ void bch2_read_bio_to_text(struct printbuf *out,
 			   struct bch_fs *c,
 			   struct bch_read_bio *rbio)
 {
-	bch2_read_err_msg(c, out, rbio, rbio->read_pos);
+	CLASS(btree_trans, trans)(c);
+	bch2_inum_offset_err_msg_trans(trans, out, rbio->subvol, rbio->read_pos);
+
+	if (rbio->data_update)
+		prt_str(out, " (internal move) ");
 	prt_newline(out);
 	__bch2_read_bio_to_text(out, rbio);
 }
