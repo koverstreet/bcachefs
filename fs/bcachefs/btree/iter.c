@@ -3475,7 +3475,7 @@ static void bch2_trans_srcu_lock(struct btree_trans *trans)
  *
  * Returns:	current restart counter, to be used with trans_was_restarted()
  *
- * While iterating over nodes or updating nodes a attempt to lock a btree node
+ * While iterating over nodes or updating nodes an attempt to lock a btree node
  * may return BCH_ERR_transaction_restart when the trylock fails. When this
  * occurs bch2_trans_begin() should be called and the transaction retried.
  */
