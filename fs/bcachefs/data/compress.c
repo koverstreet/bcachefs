@@ -320,13 +320,14 @@ int bch2_bio_uncompress(struct bch_fs *c, struct bio *src,
 			struct bio *dst, struct bvec_iter dst_iter,
 			struct bch_extent_crc_unpacked crc)
 {
+	size_t dst_len = crc.uncompressed_size << 9;
+
+	BUG_ON(dst_iter.bi_size + (crc.offset << 9) > dst_len);
 	BUG_ON(src->bi_iter.bi_size != crc.compressed_size << 9);
 
 	if (crc.uncompressed_size << 9	> c->opts.encoded_extent_max ||
 	    crc.compressed_size << 9	> c->opts.encoded_extent_max)
 		return bch_err_throw(c, decompress_exceeded_max_encoded_extent);
-
-	size_t dst_len = crc.uncompressed_size << 9;
 
 	struct bbuf dst_buf __cleanup(bbuf_exit) = dst_len == dst_iter.bi_size
 		? __bio_map_or_bounce(c, dst, dst_iter, WRITE)
