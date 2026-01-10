@@ -866,8 +866,7 @@ static int __bch2_read_endio_work(struct bch_read_bio *rbio)
 	if (unlikely(rbio->narrow_crcs))
 		bch2_rbio_narrow_crcs(rbio);
 
-	if (likely(!parent->data_update) ||
-	    parent->data_update_verify_decompress) {
+	if (likely(!parent->data_update)) {
 		/* Adjust crc to point to subset of data we want: */
 		crc.offset     += rbio->offset_into_extent;
 		crc.live_size	= bvec_iter_sectors(rbio->bvec_iter);
@@ -880,11 +879,7 @@ static int __bch2_read_endio_work(struct bch_read_bio *rbio)
 			ret = bch2_bio_uncompress(c, src, dst, dst_iter, crc);
 			if (ret && !c->opts.no_data_io)
 				return ret;
-
-			/* We decrypted to decompress; re-encrypt: */
-			if (unlikely(parent->data_update))
-				try(bch2_rbio_decrypt(c, rbio, crc, nonce));
-		} else if (likely(!parent->data_update)) {
+		} else {
 			/* don't need to decrypt the entire bio: */
 			nonce = nonce_add(nonce, crc.offset << 9);
 			bio_advance(src, crc.offset << 9);
@@ -900,9 +895,28 @@ static int __bch2_read_endio_work(struct bch_read_bio *rbio)
 				bio_copy_data_iter(dst, &dst_iter, src, &src_iter);
 			}
 		}
-	}
+	} else {
+		if (parent->data_update_verify_decompress &&
+		    crc_is_compressed(crc)) {
+			BUG_ON(!rbio->bounce);
 
-	if (unlikely(parent->data_update)) {
+			try(bch2_rbio_decrypt(c, rbio, crc, nonce));
+
+			/*
+			 * dst_iter doesn't make sense here, it refers to the
+			 * size of the compressed extent on disk (what the data
+			 * update path generally wants), and here we're just
+			 * verifying thath the data decompresses and throwing
+			 * away the result:
+			 */
+			ret = bch2_bio_uncompress(c, src, dst, (struct bvec_iter) {}, crc);
+			if (ret && !c->opts.no_data_io)
+				return ret;
+
+			/* We decrypted to decompress; re-encrypt: */
+			try(bch2_rbio_decrypt(c, rbio, crc, nonce));
+		}
+
 		if (rbio->split)
 			rbio->parent->pick = rbio->pick;
 
