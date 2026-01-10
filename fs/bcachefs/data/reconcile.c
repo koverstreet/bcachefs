@@ -2608,6 +2608,8 @@ static int check_reconcile_work_btree_key(struct btree_trans *trans,
 				new_bp->v = bp;
 
 				struct bkey_i *n = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k)));
+				bkey_reassemble(n, k);
+
 				bch2_bkey_set_reconcile_bp(c, bkey_i_to_s(n), rb_iter.pos.offset);
 
 				return btree_node_update_key_get_node(trans, iter, n);;
