@@ -317,9 +317,6 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 
 	try(bch2_journal_error(&c->journal));
 
-	bch2_trans_unlock(trans);
-	bch2_trans_begin(trans);
-
 	scoped_guard(memalloc_flags, PF_MEMALLOC_NOFS) {
 		guard(mutex)(&wb->inc.lock);
 		move_keys_from_inc_to_flushing(wb);
@@ -327,6 +324,8 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 
 	if (!wb->flushing.keys.nr)
 		return 0;
+
+	bch2_trans_begin(trans);
 
 	u64 start_time = local_clock();
 	u64 nr_flushing = wb->flushing.keys.nr;
@@ -596,7 +595,7 @@ static int btree_write_buffer_flush_seq(struct btree_trans *trans, u64 max_seq,
 	int ret = 0, fetch_from_journal_err;
 
 	do {
-		bch2_trans_unlock(trans);
+		bch2_trans_unlock_long(trans);
 
 		fetch_from_journal_err = fetch_wb_keys_from_journal(c, max_seq);
 
@@ -653,13 +652,14 @@ bool bch2_btree_write_buffer_flush_going_ro(struct bch_fs *c)
 	return did_work;
 }
 
-int bch2_btree_write_buffer_flush_nocheck_rw(struct btree_trans *trans)
+static int bch2_btree_write_buffer_flush_nocheck_rw(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;
 	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer;
 	int ret = 0;
 
 	if (mutex_trylock(&wb->flushing.lock)) {
+		bch2_trans_unlock_long(trans);
 		ret = bch2_btree_write_buffer_flush_locked(trans);
 		mutex_unlock(&wb->flushing.lock);
 	}
@@ -670,6 +670,11 @@ int bch2_btree_write_buffer_flush_nocheck_rw(struct btree_trans *trans)
 int bch2_btree_write_buffer_tryflush(struct btree_trans *trans)
 {
 	struct bch_fs *c = trans->c;
+	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer;
+
+	if (!wb->inc.keys.nr &&
+	    !wb->flushing.keys.nr)
+		return 0;
 
 	if (!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_btree_write_buffer))
 		return bch_err_throw(c, erofs_no_writes);
@@ -736,6 +741,8 @@ static void bch2_btree_write_buffer_flush_work(struct work_struct *work)
 		guard(mutex)(&wb->flushing.lock);
 		CLASS(btree_trans, trans)(c);
 		do {
+			bch2_trans_unlock_long(trans);
+
 			ret = bch2_btree_write_buffer_flush_locked(trans);
 		} while (!ret && bch2_btree_write_buffer_should_flush(c));
 	}
