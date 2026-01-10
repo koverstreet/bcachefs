@@ -331,6 +331,9 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 	u64 start_time = local_clock();
 	u64 nr_flushing = wb->flushing.keys.nr;
 
+	wb_keys_for_each(&wb->flushing, k)
+		BUG_ON(k->journal_seq > journal_cur_seq(&c->journal));
+
 	wb->sorted.nr = 0;
 	wb_keys_for_each(&wb->flushing, k) {
 		if (wb->sorted.nr == wb->sorted.size)
@@ -443,6 +446,9 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 		goto err;
 
 	if (slowpath) {
+		wb_keys_for_each(&wb->flushing, k)
+			BUG_ON(k->journal_seq > journal_cur_seq(&c->journal));
+
 		/*
 		 * Flush in the order they were present in the journal, so that
 		 * we can release journal pins:
@@ -462,6 +468,8 @@ static int bch2_btree_write_buffer_flush_locked(struct btree_trans *trans)
 			struct btree_write_buffered_key *k = wb_keys_idx(&wb->flushing, i->idx);
 			if (!k->journal_seq)
 				continue;
+
+			BUG_ON(k->journal_seq > journal_cur_seq(&c->journal));
 
 			if (!accounting_replay_done &&
 			    k->k.k.type == KEY_TYPE_accounting) {
@@ -798,6 +806,8 @@ retry:
 void bch2_journal_keys_to_write_buffer_start(struct bch_fs *c, struct journal_keys_to_wb *dst, u64 seq)
 {
 	struct bch_fs_btree_write_buffer *wb = &c->btree.write_buffer;
+
+	BUG_ON(seq > journal_cur_seq(&c->journal));
 
 	if (mutex_trylock(&wb->flushing.lock)) {
 		mutex_lock(&wb->inc.lock);
