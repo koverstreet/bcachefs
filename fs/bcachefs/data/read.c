@@ -801,11 +801,17 @@ static noinline void bch2_rbio_narrow_crcs(struct bch_read_bio *rbio)
 		}));
 }
 
-/* Inner part that may run in process context */
-static void __bch2_read_endio(struct work_struct *work)
+static int bch2_rbio_decrypt(struct bch_fs *c, struct bch_read_bio *rbio,
+			     struct bch_extent_crc_unpacked crc, struct nonce nonce)
 {
-	struct bch_read_bio *rbio =
-		container_of(work, struct bch_read_bio, work);
+	return bch2_encrypt_bio(c, crc.csum_type, nonce, &rbio->bio)
+		? bch_err_throw(c, data_read_decrypt_err)
+		: 0;
+}
+
+/* Inner part that may run in process context */
+static int __bch2_read_endio_work(struct bch_read_bio *rbio)
+{
 	struct bch_fs *c	= rbio->c;
 	struct bch_dev *ca = rbio->have_ioref ? bch2_dev_have_ref(c, rbio->pick.ptr.dev) : NULL;
 	struct bch_read_bio *parent	= bch2_rbio_parent(rbio);
@@ -842,16 +848,13 @@ static void __bch2_read_endio(struct work_struct *work)
 	 */
 	if (!csum_good && !rbio->bounce && (rbio->flags & BCH_READ_user_mapped)) {
 		rbio->flags |= BCH_READ_must_bounce;
-		bch2_rbio_error(rbio, bch_err_throw(c, data_read_retry_csum_err_maybe_userspace));
-		return;
+		return bch_err_throw(c, data_read_retry_csum_err_maybe_userspace);
 	}
 
 	bch2_account_io_completion(ca, BCH_MEMBER_ERROR_checksum, 0, csum_good);
 
-	if (!csum_good) {
-		bch2_rbio_error(rbio, bch_err_throw(c, data_read_retry_csum_err));
-		return;
-	}
+	if (!csum_good)
+		return bch_err_throw(c, data_read_retry_csum_err);
 
 	/*
 	 * XXX
@@ -872,26 +875,15 @@ static void __bch2_read_endio(struct work_struct *work)
 		if (crc_is_compressed(crc)) {
 			BUG_ON(!rbio->bounce);
 
-			ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
-			if (ret) {
-				bch2_rbio_error(rbio, bch_err_throw(c, data_read_decrypt_err));
-				return;
-			}
+			try(bch2_rbio_decrypt(c, rbio, crc, nonce));
 
 			ret = bch2_bio_uncompress(c, src, dst, dst_iter, crc);
-			if (ret && !c->opts.no_data_io) {
-				bch2_rbio_error(rbio, ret);
-				return;
-			}
+			if (ret && !c->opts.no_data_io)
+				return ret;
 
-			if (unlikely(parent->data_update)) {
-				/* We decrypted to decompress; re-encrypt: */
-				ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
-				if (ret) {
-					bch2_rbio_error(rbio, bch_err_throw(c, data_read_decrypt_err));
-					return;
-				}
-			}
+			/* We decrypted to decompress; re-encrypt: */
+			if (unlikely(parent->data_update))
+				try(bch2_rbio_decrypt(c, rbio, crc, nonce));
 		} else if (likely(!parent->data_update)) {
 			/* don't need to decrypt the entire bio: */
 			nonce = nonce_add(nonce, crc.offset << 9);
@@ -900,11 +892,7 @@ static void __bch2_read_endio(struct work_struct *work)
 			BUG_ON(src->bi_iter.bi_size < dst_iter.bi_size);
 			src->bi_iter.bi_size = dst_iter.bi_size;
 
-			ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
-			if (ret) {
-				bch2_rbio_error(rbio, bch_err_throw(c, data_read_decrypt_err));
-				return;
-			}
+			try(bch2_rbio_decrypt(c, rbio, crc, nonce));
 
 			if (rbio->bounce) {
 				struct bvec_iter src_iter = src->bi_iter;
@@ -930,17 +918,24 @@ static void __bch2_read_endio(struct work_struct *work)
 		 * Re encrypt data we decrypted, so it's consistent with
 		 * rbio->crc:
 		 */
-		ret = bch2_encrypt_bio(c, crc.csum_type, nonce, src);
-		if (ret) {
-			bch2_rbio_error(rbio, bch_err_throw(c, data_read_decrypt_err));
-			return;
-		}
+		try(bch2_rbio_decrypt(c, rbio, crc, nonce));
 	}
 
 	if (likely(!(rbio->flags & BCH_READ_in_retry))) {
 		rbio = bch2_rbio_free(rbio);
 		bch2_rbio_done(rbio);
 	}
+
+	return 0;
+}
+
+static void bch2_read_endio_work(struct work_struct *work)
+{
+	struct bch_read_bio *rbio =
+		container_of(work, struct bch_read_bio, work);
+	int ret = __bch2_read_endio_work(rbio);
+	if (ret)
+		bch2_rbio_error(rbio, ret);
 }
 
 static void bch2_read_endio(struct bio *bio)
@@ -985,7 +980,7 @@ static void bch2_read_endio(struct bio *bio)
 	else if (rbio->pick.crc.csum_type)
 		context = RBIO_CONTEXT_HIGHPRI,	wq = system_highpri_wq;
 
-	bch2_rbio_punt(rbio, __bch2_read_endio, context, wq);
+	bch2_rbio_punt(rbio, bch2_read_endio_work, context, wq);
 }
 
 static noinline void read_from_stale_dirty_pointer(struct btree_trans *trans,
