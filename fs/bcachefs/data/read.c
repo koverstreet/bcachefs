@@ -878,9 +878,9 @@ static void __bch2_read_endio(struct work_struct *work)
 				return;
 			}
 
-			if (bch2_bio_uncompress(c, src, dst, dst_iter, crc) &&
-			    !c->opts.no_data_io) {
-				bch2_rbio_error(rbio, bch_err_throw(c, data_read_decompress_err));
+			ret = bch2_bio_uncompress(c, src, dst, dst_iter, crc);
+			if (ret && !c->opts.no_data_io) {
+				bch2_rbio_error(rbio, ret);
 				return;
 			}
 
