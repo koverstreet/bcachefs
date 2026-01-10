@@ -161,11 +161,17 @@ static inline bool ptr_better(struct bch_fs *c,
 	if (unlikely(delta))
 		return delta > 0;
 
-	if (flags & BCH_READ_soft_require_read_device) {
-		if (p1.ptr.dev == preferred_dev)
+	if (unlikely(flags & BCH_READ_soft_require_read_device)) {
+		if (p1.ptr.dev == preferred_dev) {
+			if (bch2_dev_rotational(c, p2.ptr.dev))
+				return true;
 			p1_latency /= 256;
-		if (p2.ptr.dev == preferred_dev)
+		}
+		if (p2.ptr.dev == preferred_dev) {
+			if (bch2_dev_rotational(c, p1.ptr.dev))
+				return false;
 			p2_latency /= 256;
+		}
 	}
 
 	/* Pick at random, biased in favor of the faster device: */
