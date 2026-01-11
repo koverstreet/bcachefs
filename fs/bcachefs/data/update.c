@@ -10,6 +10,7 @@
 #include "btree/update.h"
 
 #include "data/compress.h"
+#include "data/copygc.h"
 #include "data/ec.h"
 #include "data/extents.h"
 #include "data/keylist.h"
@@ -426,10 +427,11 @@ void bch2_data_update_read_done(struct data_update *u)
 
 static inline bool should_trace_update_err(struct data_update *u, int ret)
 {
-	if ((u->opts.type == BCH_DATA_UPDATE_reconcile ||
-	     u->opts.type == BCH_DATA_UPDATE_promote) &&
-	    (bch2_err_matches(ret, BCH_ERR_data_update_fail_no_rw_devs) ||
-	     bch2_err_matches(ret, BCH_ERR_insufficient_devices)))
+	if (bch2_err_matches(ret, BCH_ERR_data_update_fail_need_copygc) ||
+	    ((u->opts.type == BCH_DATA_UPDATE_reconcile ||
+	      u->opts.type == BCH_DATA_UPDATE_promote) &&
+	     (bch2_err_matches(ret, BCH_ERR_data_update_fail_no_rw_devs) ||
+	      bch2_err_matches(ret, BCH_ERR_insufficient_devices))))
 		return false;
 
 	return true;
@@ -711,7 +713,8 @@ static unsigned durability_available_on_target(struct bch_fs *c,
 					       unsigned target,
 					       struct bch_devs_list *devs_have,
 					       bool nonblocking,
-					       struct printbuf *trace)
+					       struct printbuf *trace,
+					       bool *need_copygc)
 {
 	if (trace) {
 		prt_str(trace, "available to write on ");
@@ -739,6 +742,10 @@ static unsigned durability_available_on_target(struct bch_fs *c,
 			: dev_buckets_available(ca, watermark);
 		if (free)
 			durability += ca->mi.durability;
+		else if (!bch2_copygc_dev_wait_amount(ca)) {
+			*need_copygc = true;
+			bch2_copygc_wakeup(c);
+		}
 
 		if (trace)
 			prt_printf(trace, "%s: %llu\n", ca->name, free);
@@ -779,10 +786,11 @@ static int bch2_can_do_write_btree(struct bch_fs *c,
 {
 	enum bch_watermark watermark = data_opts->commit_flags & BCH_WATERMARK_MASK;
 	struct bch_devs_list empty = {};
+	bool need_copygc = false;
 
 	if (durability_available_on_target(c, watermark, BCH_DATA_btree, data_opts->target, &empty,
 					   data_opts->write_flags & BCH_WRITE_alloc_nowait,
-					   trace) >
+					   trace, &need_copygc) >
 	    bch2_btree_ptr_durability_on_target(c, k, data_opts->target))
 		return 0;
 
@@ -791,11 +799,13 @@ static int bch2_can_do_write_btree(struct bch_fs *c,
 		if (d < opts->data_replicas &&
 		    d < durability_available_on_target(c, watermark, BCH_DATA_btree, 0, &empty,
 						       data_opts->write_flags & BCH_WRITE_alloc_nowait,
-						       trace))
+						       trace, &need_copygc))
 			return 0;
 	}
 
-	return bch_err_throw(c, data_update_fail_no_rw_devs);
+	return __bch2_err_throw(c, !need_copygc
+				? -BCH_ERR_data_update_fail_no_rw_devs
+				: -BCH_ERR_data_update_fail_need_copygc);
 }
 
 static int __bch2_can_do_write(struct bch_fs *c,
@@ -832,11 +842,15 @@ static int __bch2_can_do_write(struct bch_fs *c,
 			prt_str(trace, "nonblocking\n");
 	}
 
-	return durability_available_on_target(c, watermark, data_type, target, devs_have,
-					      data_opts->write_flags & BCH_WRITE_alloc_nowait,
-					      trace)
-		? 0
-		: bch_err_throw(c, data_update_fail_no_rw_devs);
+	bool need_copygc = false;
+	if (durability_available_on_target(c, watermark, data_type, target, devs_have,
+					   data_opts->write_flags & BCH_WRITE_alloc_nowait,
+					   trace, &need_copygc))
+		return 0;
+
+	return __bch2_err_throw(c, !need_copygc
+				? -BCH_ERR_data_update_fail_no_rw_devs
+				: -BCH_ERR_data_update_fail_need_copygc);
 }
 
 int bch2_can_do_data_update(struct btree_trans *trans,

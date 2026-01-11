@@ -14,6 +14,7 @@
 #include "btree/write_buffer.h"
 
 #include "data/compress.h"
+#include "data/copygc.h"
 #include "data/ec.h"
 #include "data/move.h"
 #include "data/reconcile.h"
@@ -1494,10 +1495,12 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 	}
 
 	ret = bch2_move_extent(ctxt, NULL, opts, data_opts, iter, level, k);
+	BUG_ON(ret > 0);
 	ret = check_reconcile_pending_err(trans, opts, data_opts, k, ret);
 	if (ret > 0)
 		return bch2_extent_reconcile_pending_mod(trans, iter, level, k, true);
-	if (bch2_err_matches(ret, BCH_ERR_transaction_restart))
+	if (bch2_err_matches(ret, BCH_ERR_transaction_restart) ||
+	    bch2_err_matches(ret, BCH_ERR_data_update_fail_need_copygc))
 		return ret;
 	if (ret) {
 		WARN_ONCE(ret != -BCH_ERR_data_update_fail_no_snapshot &&
@@ -1930,6 +1933,7 @@ static int do_reconcile(struct moving_context *ctxt)
 	struct bch_fs_reconcile *r = &c->reconcile;
 	u64 sectors_scanned = 0;
 	u32 kick = r->kick;
+	u32 copygc_run_count = c->copygc.run_count;
 	int ret = 0;
 
 	CLASS(darray_reconcile_work, work)();
@@ -2027,6 +2031,16 @@ static int do_reconcile(struct moving_context *ctxt)
 		} else {
 			ret = lockrestart_do(trans,
 				do_reconcile_extent(ctxt, &snapshot_io_opts, r->work_pos));
+		}
+
+		if (bch2_err_matches(ret, BCH_ERR_data_update_fail_need_copygc)) {
+			bch2_trans_unlock_long(trans);
+			bch2_copygc_wakeup(c);
+			wait_event(c->copygc.running_wq,
+				   c->copygc.run_count != copygc_run_count ||
+				   kthread_should_stop());
+			ret = 0;
+			continue;
 		}
 
 		if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {

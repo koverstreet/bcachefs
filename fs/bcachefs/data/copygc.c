@@ -368,7 +368,7 @@ err:
 	return ret;
 }
 
-static u64 bch2_copygc_dev_wait_amount(struct bch_dev *ca)
+u64 bch2_copygc_dev_wait_amount(struct bch_dev *ca)
 {
 	struct bch_dev_usage_full usage_full = bch2_dev_usage_full_read(ca);
 	struct bch_dev_usage usage;
@@ -415,6 +415,7 @@ void bch2_copygc_wait_to_text(struct printbuf *out, struct bch_fs *c)
 {
 	printbuf_tabstop_push(out, 32);
 	prt_printf(out, "running:\t%u\n",		c->copygc.running);
+	prt_printf(out, "run count:\t%u\n",		c->copygc.run_count);
 	prt_printf(out, "copygc_wait:\t%llu\n",		c->copygc.wait);
 	prt_printf(out, "copygc_wait_at:\t%llu\n",	c->copygc.wait_at);
 
@@ -520,6 +521,7 @@ static int bch2_copygc_thread(void *arg)
 		c->copygc.running = true;
 		ret = bch2_copygc(&ctxt, &buckets, &did_work);
 		c->copygc.running = false;
+		c->copygc.run_count++;
 
 		wake_up(&c->copygc.running_wq);
 

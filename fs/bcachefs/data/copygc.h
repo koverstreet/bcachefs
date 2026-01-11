@@ -2,6 +2,7 @@
 #ifndef _BCACHEFS_COPYGC_H
 #define _BCACHEFS_COPYGC_H
 
+u64 bch2_copygc_dev_wait_amount(struct bch_dev *);
 u64 bch2_copygc_wait_amount(struct bch_fs *);
 void bch2_copygc_wait_to_text(struct printbuf *, struct bch_fs *);
 

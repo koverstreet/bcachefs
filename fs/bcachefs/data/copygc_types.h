@@ -8,6 +8,7 @@ struct bch_fs_copygc {
 	s64			wait_at;
 	s64			wait;
 	bool			running;
+	u32			run_count;
 	wait_queue_head_t	running_wq;
 
 	/* Dedicated workqueue for btree updates: */
