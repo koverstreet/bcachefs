@@ -362,7 +362,7 @@ enum bch_fsck_flags {
 	x(vfs_i_size_bad,					343,	0)		\
 	x(vfs_i_sectors_bad,					344,	0)		\
 	x(vfs_unlink_got_wrong_inum,				349,	0)		\
-	x(MAX,							350,	0)
+	x(MAX,							351,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,
