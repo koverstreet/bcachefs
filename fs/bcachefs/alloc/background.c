@@ -1399,6 +1399,7 @@ static void __bch2_do_invalidates(struct bch_dev *ca)
 
 	bool wrapped = false;
 
+	bch2_trans_begin(trans);
 	CLASS(btree_iter, iter)(trans, BTREE_ID_lru,
 				lru_pos(ca->dev_idx, 0,
 					((bch2_current_io_time(c, READ) + U32_MAX) &
