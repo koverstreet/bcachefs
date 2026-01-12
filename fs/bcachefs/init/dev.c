@@ -654,11 +654,14 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		if (!data_type_is_empty(i) &&
 		    !data_type_is_hidden(i) &&
 		    usage.buckets[i]) {
-			prt_printf(err, "Remove failed: still has data (%s, %llu buckets)\n",
-				   __bch2_data_types[i], usage.buckets[i]);
-			ret = -EBUSY;
-			goto err;
+			if (!ret) {
+				prt_printf(err, "Remove failed: still has data\n");
+				ret = -EBUSY;
+			}
+			prt_printf(err, "  %s: %llu buckets\n", __bch2_data_types[i], usage.buckets[i]);
 		}
+	if (ret)
+		goto err;
 
 	ret = bch2_dev_remove_alloc(c, ca);
 	if (ret) {
