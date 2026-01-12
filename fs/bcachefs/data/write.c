@@ -1809,6 +1809,8 @@ void __bch2_write_op_to_text(struct printbuf *out, struct bch_write_op *op)
 	prt_bitflags(out, bch2_write_flags, op->flags);
 	prt_newline(out);
 
+	prt_printf(out, "watermark:\t%s\n", bch2_watermarks[op->watermark]);
+
 	prt_printf(out, "nr_replicas:\t%u\n", op->nr_replicas);
 	prt_printf(out, "nr_replicas_required:\t%u\n", op->nr_replicas_required);
 	prt_printf(out, "devs_have:\t");
