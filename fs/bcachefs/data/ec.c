@@ -27,6 +27,7 @@
 #include "data/reconcile.h"
 
 #include "init/error.h"
+#include "init/passes.h"
 #include "init/recovery.h"
 
 #include "sb/counters.h"
@@ -266,6 +267,39 @@ static int __mark_stripe_bucket(struct btree_trans *trans,
 		a->stripe_refcount++;
 	else
 		--a->stripe_refcount;
+
+	if (data_type == BCH_DATA_parity &&
+	    !a->stripe_refcount != !a->dirty_sectors) {
+		int ret = bch2_bucket_nr_stripes(trans, bucket);
+		if (ret < 0)
+			return ret;
+
+		unsigned nr_stripes = ret;
+		ret = 0;
+
+		if (ret_fsck_err_on(a->stripe_refcount != nr_stripes,
+				trans, alloc_key_stripe_refcount_wrong,
+				"bucket %llu:%llu with incorrect stripe_refcount, should be %u",
+				bucket.inode, bucket.offset, nr_stripes))
+			a->stripe_refcount = nr_stripes;
+
+		if (!a->stripe_refcount != !a->dirty_sectors) {
+			CLASS(bch_log_msg, msg)(c);
+			prt_printf(&msg.m, "Parity bucket with dirty_sectors/stripe_refcount inconsistency at %llu:%llu\n",
+				   bucket.inode, bucket.offset);
+			prt_printf(&msg.m, "stripe_refcount %u but dirty_sectors %u\n", a->stripe_refcount, a->dirty_sectors);
+
+			bch2_run_explicit_recovery_pass(c, &msg.m,
+						BCH_RECOVERY_PASS_check_allocations, 0);
+			bch2_run_explicit_recovery_pass(c, &msg.m,
+						BCH_RECOVERY_PASS_check_alloc_info, 0);
+
+			/* Ensure the bucket isn't reused until we run proper repair: */
+			a->stripe_refcount	= max(a->stripe_refcount, 1);
+			a->dirty_sectors	= max(a->dirty_sectors, 1);
+		}
+	}
+
 
 	alloc_data_type_set(a, a->stripe_refcount ? data_type : BCH_DATA_user);
 
@@ -2461,6 +2495,22 @@ static int check_bucket_to_stripe_ref(struct btree_trans *trans, struct bpos ref
 		return bucket_stripe_ref_mod(trans, bucket, ref.offset, false);
 fsck_err:
 	return ret;
+}
+
+int bch2_bucket_nr_stripes(struct btree_trans *trans, struct bpos bucket)
+{
+	struct bkey_s_c k;
+	unsigned nr = 0;
+	int ret = 0;
+
+	for_each_btree_key_max_norestart(trans, iter,
+				  BTREE_ID_bucket_to_stripe,
+				  POS(bucket_to_u64(bucket), 0),
+				  POS(bucket_to_u64(bucket), U64_MAX),
+				  0, k, ret)
+		nr++;
+
+	return ret ?: nr;
 }
 
 int bch2_check_stripe_refs(struct btree_trans *trans)

@@ -135,22 +135,6 @@ int bch2_need_discard_or_freespace_err(struct btree_trans *trans,
 	return ret;
 }
 
-static int bucket_nr_stripes(struct btree_trans *trans, struct bpos bucket)
-{
-	struct bkey_s_c k;
-	unsigned nr = 0;
-	int ret = 0;
-
-	for_each_btree_key_max_norestart(trans, iter,
-				  BTREE_ID_bucket_to_stripe,
-				  POS(bucket_to_u64(bucket), 0),
-				  POS(bucket_to_u64(bucket), U64_MAX),
-				  0, k, ret)
-		nr++;
-
-	return ret ?: nr;
-}
-
 static noinline_for_stack
 int bch2_check_alloc_key(struct btree_trans *trans,
 			 struct bkey_s_c alloc_k,
@@ -219,7 +203,7 @@ int bch2_check_alloc_key(struct btree_trans *trans,
 		try(bch2_trans_update(trans, bucket_gens_iter, &g->k_i, 0));
 	}
 
-	ret = bucket_nr_stripes(trans, alloc_k.k->p);
+	ret = bch2_bucket_nr_stripes(trans, alloc_k.k->p);
 	if (ret < 0)
 		return ret;
 	unsigned nr_stripes = ret;
