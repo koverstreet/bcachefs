@@ -912,6 +912,7 @@ static bool trans_commit_has_extents(struct btree_trans *trans)
 	trans_for_each_update(trans, i)
 		if (i->btree_id == BTREE_ID_extents ||
 		    i->btree_id == BTREE_ID_reflink ||
+		    i->btree_id == BTREE_ID_stripes ||
 		    i->level)
 			return true;
 	return false;
