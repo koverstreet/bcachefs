@@ -579,7 +579,7 @@ static int __bch2_move_data_phys(struct moving_context *ctxt,
 		if (bch2_err_matches(ret, EROFS) ||
 		    bch2_err_matches(ret, EIO) ||
 		    bch2_err_matches(ret, BCH_ERR_device_offline))
-			return ret;
+			break;
 		WARN_ONCE(ret, "unhandled error from move_extent: %s", bch2_err_str(ret));
 		bch2_btree_iter_advance(&bp_iter);
 	}
