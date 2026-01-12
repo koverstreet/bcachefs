@@ -224,9 +224,21 @@ static int data_drop_bp(struct btree_trans *trans, unsigned dev_idx,
 		return bch2_dev_usrdata_drop_key(trans, &iter, k, dev_idx, flags, err);
 }
 
-int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, unsigned dev_idx, unsigned flags,
-				       struct printbuf *err)
+static bool dev_has_data(struct bch_fs *c, struct bch_dev *ca)
 {
+	struct bch_dev_usage usage = bch2_dev_usage_read(ca);
+	for (unsigned i = 0; i < BCH_DATA_NR; i++)
+		if (!data_type_is_empty(i) && !data_type_is_hidden(i) && usage.buckets[i])
+			return true;
+
+	return false;
+}
+
+int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, struct bch_dev *ca,
+				       unsigned flags, struct printbuf *err)
+{
+	unsigned dev_idx = ca->dev_idx;
+
 	CLASS(btree_trans, trans)(c);
 
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
@@ -236,14 +248,30 @@ int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, unsigned dev_idx, unsig
 	bch2_progress_init(&progress, "dropping device data", c,
 			   BIT(BTREE_ID_backpointers), 0);
 
-	return bch2_btree_write_buffer_flush_sync(trans) ?:
-		backpointer_scan_for_each(trans, iter, POS(dev_idx, 0), POS(dev_idx, U64_MAX),
-					  &last_flushed, &progress, bp, ({
-		wb_maybe_flush_inc(&last_flushed);
-		CLASS(disk_reservation, res)(c);
-		data_drop_bp(trans, dev_idx, bp, &last_flushed, flags, err) ?:
-		bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
-	}));
+	for (unsigned i = 0; i < 3; i++) {
+		try(bch2_btree_write_buffer_flush_sync(trans));
+
+		/*
+		 * Backpointers on RO devices may be updated (primarily via
+		 * reconcile), even when we're not updating the data on those
+		 * devices (e.g. propagating pending/hipri bits); this creates a
+		 * race with device removal that's difficult to deal with except
+		 * by retrying:
+		 */
+
+		try(backpointer_scan_for_each(trans, iter, POS(dev_idx, 0), POS(dev_idx, U64_MAX),
+						  &last_flushed, &progress, bp, ({
+			wb_maybe_flush_inc(&last_flushed);
+			CLASS(disk_reservation, res)(c);
+			data_drop_bp(trans, dev_idx, bp, &last_flushed, flags, err) ?:
+			bch2_trans_commit(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc);
+		})));
+
+		if (!dev_has_data(c, ca))
+			break;
+	}
+
+	return 0;
 }
 
 int bch2_dev_data_drop(struct bch_fs *c, unsigned dev_idx,

@@ -640,7 +640,7 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	try(__bch2_dev_set_state(c, ca, BCH_MEMBER_STATE_evacuating, flags, err));
 
 	ret = fast_device_removal
-		? bch2_dev_data_drop_by_backpointers(c, ca->dev_idx, flags, err)
+		? bch2_dev_data_drop_by_backpointers(c, ca, flags, err)
 		: (bch2_dev_data_drop(c, ca->dev_idx, flags, err) ?:
 		   bch2_dev_remove_stripes(c, ca->dev_idx, flags, err));
 	if (ret)
