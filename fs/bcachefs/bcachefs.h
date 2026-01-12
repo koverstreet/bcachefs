@@ -554,6 +554,7 @@ enum bch_dev_read_ref {
 	x(dev_do_discards)				\
 	x(discard_one_bucket_fast)			\
 	x(do_invalidates)				\
+	x(stripe_update_extents)			\
 	x(nocow_flush)					\
 	x(io_write)					\
 	x(ec_block)					\

@@ -397,6 +397,7 @@
 	x(EIO,				no_encryption_key)			\
 	x(EIO,				insufficient_journal_devices)		\
 	x(EIO,				device_offline)				\
+	x(EIO,				stripe_create_device_offline)			\
 	x(EIO,				EIO_fault_injected)			\
 	x(EIO,				ec_block_read)				\
 	x(EIO,				ec_block_write)				\

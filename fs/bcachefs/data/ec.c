@@ -1369,6 +1369,34 @@ static int __ec_stripe_create(struct ec_stripe_new *s)
 	return 0;
 }
 
+static void stripe_put_iorefs(struct bch_fs *c, struct bch_stripe *s)
+{
+	for (unsigned i = 0; i < s->nr_blocks; i++) {
+		struct bch_dev *ca = bch2_dev_have_ref(c, s->ptrs[i].dev);
+		enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_stripe_update_extents);
+	}
+}
+
+/*
+ * Guard against racing with device removal by ensuring devices are writeable
+ * while we create stripes and references to devices:
+ */
+static int stripe_get_iorefs(struct bch_fs *c, struct bch_stripe *s)
+{
+	for (unsigned i = 0; i < s->nr_blocks; i++) {
+		unsigned dev = s->ptrs[i].dev;
+		if (!bch2_dev_get_ioref(c, dev, WRITE, BCH_DEV_WRITE_REF_stripe_update_extents)) {
+			while (i--) {
+				struct bch_dev *ca = bch2_dev_have_ref(c, s->ptrs[i].dev);
+				enumerated_ref_put(&ca->io_ref[WRITE], BCH_DEV_WRITE_REF_stripe_update_extents);
+			}
+			return bch_err_throw(c, stripe_create_device_offline);
+		}
+	}
+
+	return 0;
+}
+
 /*
  * data buckets of new stripe all written: create the stripe
  */
@@ -1382,7 +1410,11 @@ static void ec_stripe_create(struct ec_stripe_new *s)
 
 	closure_sync(&s->iodone);
 
-	int ret = __ec_stripe_create(s);
+	int ret = stripe_get_iorefs(c, v);
+	if (!ret) {
+		ret = __ec_stripe_create(s);
+		stripe_put_iorefs(c, v);
+	}
 	if (ret && !s->err)
 		s->err = ret;
 
