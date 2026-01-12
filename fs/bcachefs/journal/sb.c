@@ -235,8 +235,6 @@ int bch2_sb_journal_sort(struct bch_fs *c)
 
 	for_each_online_member(c, ca, BCH_DEV_READ_REF_sb_journal_sort) {
 		struct bch_sb_field_journal_v2 *j = bch2_sb_field_get(ca->disk_sb.sb, journal_v2);
-		if (!j)
-			continue;
 
 		if ((j && journal_v2_unsorted(j)) ||
 		    bch2_sb_field_get(ca->disk_sb.sb, journal)) {
