@@ -296,6 +296,7 @@
 	x(EINVAL,			inode_has_child_snapshot)		\
 	x(EINVAL,			varint_decode_error)			\
 	x(EINVAL,			erasure_coding_found_btree_node)	\
+	x(EINVAL,			erasure_coding_stripe_update_err)	\
 	x(EINVAL,			option_negative)			\
 	x(EINVAL,			topology_repair)			\
 	x(EINVAL,			unaligned_io)				\
