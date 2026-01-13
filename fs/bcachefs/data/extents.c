@@ -1115,6 +1115,22 @@ const struct bch_extent_ptr *bch2_bkey_has_device_c(const struct bch_fs *c, stru
 	return NULL;
 }
 
+bool bch2_bkey_has_device_decode(const struct bch_fs *c, struct bkey_s_c k, unsigned dev,
+				 struct extent_ptr_decoded *ret)
+{
+	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+	const union bch_extent_entry *entry;
+	struct extent_ptr_decoded p;
+
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
+		if (p.ptr.dev == dev) {
+			*ret = p;
+			return true;
+		}
+
+	return false;
+}
+
 bool bch2_bkey_devs_rw(struct bch_fs *c, struct bkey_s_c k)
 {
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);

@@ -584,6 +584,8 @@ bool bch2_bkey_can_read(const struct bch_fs *, struct bkey_s_c);
 
 const struct bch_extent_ptr *bch2_bkey_has_device_c(const struct bch_fs *,
 						    struct bkey_s_c, unsigned);
+bool bch2_bkey_has_device_decode(const struct bch_fs *, struct bkey_s_c, unsigned,
+				 struct extent_ptr_decoded *);
 
 static inline struct bch_extent_ptr *bch2_bkey_has_device(const struct bch_fs *c,
 							  struct bkey_s k, unsigned dev)
