@@ -1028,6 +1028,9 @@ static int ec_stripe_delete(struct btree_trans *trans, u64 idx, bool warn)
 		return 0;
 	}
 
+	event_inc_trace(c, stripe_delete, buf,
+			bch2_bkey_val_to_text(&buf, c, k));
+
 	return bch2_btree_delete_at(trans, &iter, 0);
 }
 
@@ -1274,6 +1277,10 @@ static int ec_stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_n
 	})));
 
 	event_inc_trace(c, stripe_update_bucket, buf, ({
+		prt_printf(&buf, "Updating block %u\n", block);
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->new_stripe.key));
+		prt_newline(&buf);
+
 		prt_printf(&buf, "bp_to_deleted:\t%u %u\n",
 			   stats.nr_bp_to_deleted, stats.sectors_bp_to_deleted);
 		prt_printf(&buf, "no_match:\t%u %u\n",
@@ -1452,12 +1459,25 @@ static void ec_stripe_create(struct ec_stripe_new *s)
 	if (ret && !s->err)
 		s->err = ret;
 
-	if (!ret)
-		event_inc_trace(c, stripe_create, buf,
-			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->new_stripe.key)));
-	else
+	if (ret)
 		event_inc_trace(c, stripe_create_fail, buf, ({
 			prt_printf(&buf, "error %s\n", bch2_err_str(ret));
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->new_stripe.key));
+		}));
+	else if (s->have_old_stripe)
+		event_inc_trace(c, stripe_reuse, buf, ({
+			struct bch_stripe *ov = &bkey_i_to_stripe(&s->old_stripe.key)->v;
+
+			prt_printf(&buf, "Reused %u/%u data blocks\n", s->old_blocks_nr,
+				   ov->nr_blocks - ov->nr_redundant);
+			prt_printf(&buf, "\nOld: ");
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->new_stripe.key));
+			prt_printf(&buf, "\nNew: ");
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->old_stripe.key));
+		}));
+	else
+		event_inc_trace(c, stripe_create, buf, ({
+			prt_newline(&buf);
 			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->new_stripe.key));
 		}));
 
@@ -2130,7 +2150,6 @@ static int stripe_alloc_or_reuse(struct btree_trans *trans,
 					  BCH_DISK_RESERVATION_NOFAIL);
 
 	stripe_new_buckets_add(c, s);
-	s->allocated = true;
 	return 0;
 }
 
@@ -2179,6 +2198,17 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 
 		if (ret)
 			goto err;
+
+		s->allocated = true;
+
+		event_inc_trace(c, stripe_alloc, buf, ({
+			prt_printf(&buf, "\nnew: ");
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->new_stripe.key));
+			if (s->have_old_stripe) {
+				prt_printf(&buf, "\nold: ");
+				bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&s->old_stripe.key));
+			}
+		}));
 	}
 	BUG_ON(!s->new_stripe.data[0]);
 	BUG_ON(trans->restarted);

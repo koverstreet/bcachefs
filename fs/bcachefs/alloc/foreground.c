@@ -783,6 +783,11 @@ static int bucket_alloc_from_stripe(struct btree_trans *trans,
 				ec_stripe_new_get(h->s, STRIPE_REF_io);
 
 				ret = add_new_bucket(c, req, ob);
+
+				event_inc_trace(c, bucket_alloc_from_stripe, buf, ({
+					bch2_open_bucket_to_text(&buf, c, ob);
+				}));
+
 				goto out;
 			}
 		}
@@ -1277,6 +1282,7 @@ retry:
 		req->wp->sectors_free = min(req->wp->sectors_free, ob->sectors_free);
 	}
 
+	req->wp->prev_sectors_free = req->wp->sectors_free;
 	req->wp->sectors_free = rounddown(req->wp->sectors_free, block_sectors(c));
 
 	/* Did alignment use up space in an open_bucket? */

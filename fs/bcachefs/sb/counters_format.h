@@ -48,8 +48,11 @@ enum bch_counters_flags {
 	x(reconcile_phys,				120,	TYPE_SECTORS)	\
 	x(reconcile_set_pending,			83,	TYPE_SECTORS)	\
 	x(evacuate_bucket,				84,	TYPE_COUNTER)	\
+	x(stripe_alloc,					125,	TYPE_COUNTER)	\
 	x(stripe_create,				102,	TYPE_COUNTER)	\
+	x(stripe_reuse,					123,	TYPE_COUNTER)	\
 	x(stripe_create_fail,				103,	TYPE_COUNTER)	\
+	x(stripe_delete,				124,	TYPE_COUNTER)	\
 	x(stripe_update_bucket,				104,	TYPE_COUNTER)	\
 	x(stripe_update_extent,				99,	TYPE_COUNTER)	\
 	x(stripe_update_extent_fail,			100,	TYPE_COUNTER)	\
@@ -64,6 +67,8 @@ enum bch_counters_flags {
 	x(bucket_alloc,					5,	TYPE_COUNTER)	\
 	x(bucket_alloc_fail,				6,	TYPE_COUNTER)	\
 	x(open_bucket_alloc_fail,			122,	TYPE_COUNTER)	\
+	x(bucket_alloc_from_stripe,			127,	TYPE_COUNTER)	\
+	x(sectors_alloc,				126,	TYPE_SECTORS)	\
 	x(bkey_pack_pos_fail,				112,	TYPE_COUNTER)	\
 	x(btree_cache_scan,				7,	TYPE_COUNTER)	\
 	x(btree_cache_reap,				8,	TYPE_COUNTER)	\

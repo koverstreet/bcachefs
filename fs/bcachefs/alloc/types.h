@@ -94,6 +94,7 @@ struct write_point {
 
 		/* calculated based on how many pointers we're actually going to use: */
 		unsigned		sectors_free;
+		unsigned		prev_sectors_free;
 
 		struct open_buckets	ptrs;
 		struct dev_stripe_state	stripe;
