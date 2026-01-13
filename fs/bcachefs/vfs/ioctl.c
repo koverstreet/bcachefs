@@ -72,7 +72,7 @@ static int bch2_ioc_reinherit_attrs(struct bch_fs *c,
 	if (ret)
 		goto err1;
 
-	vinode = bch2_vfs_inode_get(c, inum, true);
+	vinode = bch2_vfs_inode_get(c, inum, __func__);
 	ret = PTR_ERR_OR_ZERO(vinode);
 	if (ret)
 		goto err1;

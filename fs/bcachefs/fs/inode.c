@@ -344,7 +344,7 @@ int __bch2_inode_peek(struct btree_trans *trans,
 		      struct btree_iter *iter,
 		      struct bch_inode_unpacked *inode,
 		      subvol_inum inum, unsigned flags,
-		      bool warn)
+		      const char *warn)
 {
 	u32 snapshot;
 	try(__bch2_subvolume_get_snapshot(trans, inum.subvol, &snapshot, warn));
@@ -367,7 +367,8 @@ int __bch2_inode_peek(struct btree_trans *trans,
 	return 0;
 err:
 	if (warn)
-		bch_err_msg(trans->c, ret, "looking up inum %llu:%llu:", inum.subvol, inum.inum);
+		bch_err_msg(trans->c, ret, "%s(): looking up inum %llu:%llu:",
+			    warn, inum.subvol, inum.inum);
 	return ret;
 }
 
@@ -387,7 +388,7 @@ int bch2_inode_find_by_inum_snapshot(struct btree_trans *trans,
 int __bch2_inode_find_by_inum_trans(struct btree_trans *trans,
 				    subvol_inum inum,
 				    struct bch_inode_unpacked *inode,
-				    bool warn)
+				    const char *warn)
 {
 	CLASS(btree_iter_uninit, iter)(trans);
 	return __bch2_inode_peek(trans, &iter, inode, inum, 0, warn);

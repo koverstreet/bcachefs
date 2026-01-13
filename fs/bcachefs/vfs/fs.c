@@ -497,7 +497,7 @@ static struct bch_inode_info *bch2_inode_hash_init_insert(struct btree_trans *tr
 }
 
 struct inode *bch2_vfs_inode_get(struct bch_fs *c, subvol_inum inum,
-				 bool warn)
+				 const char *warn)
 {
 	struct bch_inode_info *inode = bch2_inode_hash_find(c, NULL, inum);
 	if (inode)
@@ -1584,7 +1584,7 @@ static struct inode *bch2_nfs_get_inode(struct super_block *sb,
 	struct inode *vinode = bch2_vfs_inode_get(c, (subvol_inum) {
 				    .subvol = fid.subvol,
 				    .inum = fid.inum,
-	}, false);
+	}, NULL);
 	if (!IS_ERR(vinode) && vinode->i_generation != fid.gen) {
 		iput(vinode);
 		vinode = ERR_PTR(-ESTALE);
@@ -1626,7 +1626,7 @@ static struct dentry *bch2_get_parent(struct dentry *child)
 	};
 
 	/* needs nowarn */
-	return d_obtain_alias(bch2_vfs_inode_get(c, parent_inum, false));
+	return d_obtain_alias(bch2_vfs_inode_get(c, parent_inum, NULL));
 }
 
 static int bch2_get_name(struct dentry *parent, char *name, struct dentry *child)
@@ -2276,7 +2276,7 @@ got_sb:
 	generic_set_sb_d_ops(sb);
 #endif
 
-	vinode = bch2_vfs_inode_get(c, BCACHEFS_ROOT_SUBVOL_INUM, true);
+	vinode = bch2_vfs_inode_get(c, BCACHEFS_ROOT_SUBVOL_INUM, __func__);
 	ret = PTR_ERR_OR_ZERO(vinode);
 	bch_err_msg(c, ret, "mounting: error getting root inode");
 	if (ret)

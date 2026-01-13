@@ -46,7 +46,7 @@ static int reattach_subvol(struct btree_trans *trans, struct bkey_s_c_subvolume 
 
 	struct bch_inode_unpacked inode;
 	try(bch2_inode_find_by_inum_trans(trans,
-				(subvol_inum) { s.k->p.offset, le64_to_cpu(s.v->inode) },
+				((subvol_inum) { s.k->p.offset, le64_to_cpu(s.v->inode) }),
 				&inode));
 
 	int ret = remove_backpointer(trans, &inode);
@@ -84,7 +84,7 @@ static int check_subvol_path(struct btree_trans *trans, struct btree_iter *iter,
 
 		struct bch_inode_unpacked subvol_root;
 		ret = bch2_inode_find_by_inum_trans(trans,
-					(subvol_inum) { s.k->p.offset, le64_to_cpu(s.v->inode) },
+					((subvol_inum) { s.k->p.offset, le64_to_cpu(s.v->inode) }),
 					&subvol_root);
 		if (ret)
 			break;

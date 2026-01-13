@@ -178,7 +178,7 @@ static inline int bch2_set_projid(struct bch_fs *c,
 				      KEY_TYPE_QUOTA_PREALLOC);
 }
 
-struct inode *bch2_vfs_inode_get(struct bch_fs *, subvol_inum, bool);
+struct inode *bch2_vfs_inode_get(struct bch_fs *, subvol_inum, const char *);
 
 /* returns 0 if we want to do the update, or error is passed up */
 typedef int (*inode_set_fn)(struct btree_trans *,
