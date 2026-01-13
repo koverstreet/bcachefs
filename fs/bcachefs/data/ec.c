@@ -1898,6 +1898,27 @@ static int new_stripe_alloc_buckets(struct btree_trans *trans,
 	return ret;
 }
 
+static bool may_reuse_stripe(struct ec_stripe_head *h, const struct bch_stripe *s)
+{
+	if (s->disk_label		!= h->disk_label ||
+	    s->algorithm		!= h->algo ||
+	    s->nr_redundant		!= h->redundancy)
+		return false;
+
+	struct bch_devs_mask devs_may_alloc = h->devs;
+	unsigned nr_data = s->nr_blocks - s->nr_redundant;
+
+	for (unsigned i = 0; i < nr_data; i++)
+		if (stripe_blockcount_get(s, i)) {
+			if (s->ptrs[i].dev == BCH_SB_MEMBER_INVALID)
+				return false;
+
+			__clear_bit(s->ptrs[i].dev, devs_may_alloc.d);
+		}
+
+	return dev_mask_nr(&devs_may_alloc) > h->redundancy;
+}
+
 static int __get_old_stripe(struct btree_trans *trans,
 				 struct ec_stripe_head *head,
 				 struct ec_stripe_buf *stripe,
@@ -1916,16 +1937,11 @@ static int __get_old_stripe(struct btree_trans *trans,
 	if (stripe_lru_pos(s.v) <= 1)
 		return 0;
 
-	if (s.v->disk_label		== head->disk_label &&
-	    s.v->algorithm		== head->algo &&
-	    s.v->nr_redundant		== head->redundancy &&
-	    le16_to_cpu(s.v->sectors)	== head->blocksize &&
-	    bch2_stripe_handle_tryget(c, &head->s->old_stripe_handle, idx)) {
+	bool ret = may_reuse_stripe(head, s.v) &&
+		bch2_stripe_handle_tryget(c, &head->s->old_stripe_handle, idx);
+	if (ret)
 		bkey_reassemble(&stripe->key, k);
-		return 1;
-	}
-
-	return 0;
+	return ret;
 }
 
 static int init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
@@ -1996,12 +2012,8 @@ static int __bch2_ec_stripe_reuse(struct btree_trans *trans, struct ec_stripe_he
 		if (ret)
 			break;
 	}
-	if (!ret)
-		return bch_err_throw(c, stripe_alloc_blocked);
-	if (ret == 1)
-		ret = 0;
-	if (ret)
-		return ret;
+	if (ret <= 0)
+		return ret ?: bch_err_throw(c, stripe_alloc_blocked);
 
 	return init_new_stripe_from_old(c, s);
 }
