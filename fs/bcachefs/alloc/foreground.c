@@ -1487,14 +1487,20 @@ void bch2_fs_open_buckets_to_text(struct printbuf *out, struct bch_fs *c)
 	unsigned nr[BCH_DATA_NR];
 	memset(nr, 0, sizeof(nr));
 
-	for (unsigned i = 0; i < ARRAY_SIZE(a->open_buckets); i++)
-		nr[a->open_buckets[i].data_type]++;
+	for (struct open_bucket *ob = a->open_buckets;
+	     ob < a->open_buckets + ARRAY_SIZE(a->open_buckets);
+	     ob++)
+		if (atomic_read(&ob->pin))
+			nr[ob->data_type]++;
 
-	prt_printf(out, "open buckets allocated\t%i\n",		OPEN_BUCKETS_COUNT - c->allocator.open_buckets_nr_free);
+	prt_printf(out, "open buckets allocated\t%i\n",		OPEN_BUCKETS_COUNT - a->open_buckets_nr_free);
 	prt_printf(out, "open buckets total\t%u\n",		OPEN_BUCKETS_COUNT);
-	prt_printf(out, "open_buckets_btree\t%u\n",		nr[BCH_DATA_btree]);
-	prt_printf(out, "open_buckets_user\t%u\n",		nr[BCH_DATA_user]);
-	prt_printf(out, "open_buckets_wait\t%s\n",		c->allocator.open_buckets_wait.list.first ? "waiting" : "empty");
+
+	for (unsigned i = 0; i < ARRAY_SIZE(nr); i++)
+		if (nr[i])
+			prt_printf(out, "open_buckets %s:\t%u\n", __bch2_data_types[i], nr[i]);
+
+	prt_printf(out, "open_buckets_wait\t%s\n",		a->open_buckets_wait.list.first ? "waiting" : "empty");
 }
 
 void bch2_fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
