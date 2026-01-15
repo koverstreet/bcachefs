@@ -149,6 +149,11 @@ int bch2_fs_counters_init(struct bch_fs *c)
 	try(bch2_sb_counters_to_cpu(c));
 
 	INIT_DELAYED_WORK(&c->counters.work, bch2_sb_counters_work);
+	return 0;
+}
+
+int bch2_fs_counters_init_late(struct bch_fs *c)
+{
 	queue_delayed_work(system_unbound_wq, &c->counters.work, HZ / 2);
 	return 0;
 }

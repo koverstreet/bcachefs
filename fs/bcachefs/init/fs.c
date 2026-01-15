@@ -1171,7 +1171,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 	try(bch2_fs_errors_init(c));
 	try(bch2_fs_encryption_init(c));
 	try(bch2_fs_io_read_init(c));
-	try(bch2_fs_reconcile_init(c));
 	try(bch2_fs_vfs_init(c));
 	try(bch2_io_clock_init(&c->io_clock[READ]));
 	try(bch2_io_clock_init(&c->io_clock[WRITE]));
@@ -1228,13 +1227,6 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 		 */
 		try(bch2_fs_opt_version_init(c, out));
 	}
-
-	/*
-	 * just make sure this is always allocated if we might need it - mount
-	 * failing due to kthread_create() failing is _very_ annoying
-	 */
-	if (go_rw_in_recovery(c))
-		try(bch2_fs_init_rw(c));
 
 	scoped_guard(mutex, &bch2_fs_list_lock)
 		try(bch2_fs_online(c));
@@ -1321,6 +1313,16 @@ static int __bch2_fs_start(struct bch_fs *c, struct printbuf *err)
 	}
 
 	try(bch2_fs_may_start(c, err));
+
+	try(bch2_fs_reconcile_init(c));
+	try(bch2_fs_counters_init_late(c));
+
+	/*
+	 * just make sure this is always allocated if we might need it - mount
+	 * failing due to kthread_create() failing is _very_ annoying
+	 */
+	if (go_rw_in_recovery(c))
+		try(bch2_fs_init_rw(c));
 
 	/*
 	 * check mount options as early as possible; some can only be checked
