@@ -1,7 +1,9 @@
 
 ifdef BCACHEFS_DKMS
 	CONFIG_BCACHEFS_FS := m
-	# Enable other features here?
+	# Enable other features here
+	subdir-ccflags-$(CONFIG_BCACHEFS_QUOTA) += -DCONFIG_BCACHEFS_QUOTA=1
+	subdir-ccflags-$(CONFIG_BCACHEFS_ERASURE_CODING) += -DCONFIG_BCACHEFS_ERASURE_CODING=1
 endif
 
 obj-$(CONFIG_BCACHEFS_FS)	+= bcachefs.o
