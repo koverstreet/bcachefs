@@ -1523,8 +1523,6 @@ void bch2_fs_alloc_debug_to_text(struct printbuf *out, struct bch_fs *c)
 	prt_printf(out, "freelist_wait\t%s\n",			a->freelist_wait.list.first ? "waiting" : "empty");
 	prt_printf(out, "btree reserve cache\t%u\n",		c->btree.reserve_cache.nr);
 	prt_newline(out);
-
-	bch2_fs_open_buckets_to_text(out, c);
 }
 
 void bch2_dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
@@ -1560,6 +1558,7 @@ void bch2_dev_alloc_debug_to_text(struct printbuf *out, struct bch_dev *ca)
 
 static noinline void bch2_print_allocator_stuck(struct bch_fs *c, enum bch_watermark watermark)
 {
+	struct bch_fs_allocator *a = &c->allocator;
 	CLASS(printbuf, buf)();
 
 	prt_printf(&buf, "Allocator stuck? Waited for %u seconds, watermark %s\n",
@@ -1573,15 +1572,20 @@ static noinline void bch2_print_allocator_stuck(struct bch_fs *c, enum bch_water
 
 	bch2_printbuf_make_room(&buf, 4096);
 
-	scoped_guard(rcu) {
-		guard(printbuf_atomic)(&buf);
-		for_each_online_member_rcu(c, ca) {
-			prt_printf(&buf, "Dev %u:\n", ca->dev_idx);
-			scoped_guard(printbuf_indent, &buf)
-				bch2_dev_alloc_debug_to_text(&buf, ca);
-			prt_newline(&buf);
+	if (a->freelist_wait.list.first) {
+		scoped_guard(rcu) {
+			guard(printbuf_atomic)(&buf);
+			for_each_online_member_rcu(c, ca) {
+				prt_printf(&buf, "Dev %u:\n", ca->dev_idx);
+				scoped_guard(printbuf_indent, &buf)
+					bch2_dev_alloc_debug_to_text(&buf, ca);
+				prt_newline(&buf);
+			}
 		}
 	}
+
+	if (a->open_buckets_wait.list.first)
+		bch2_fs_open_buckets_to_text(&buf, c);
 
 	prt_printf(&buf, "Copygc debug:\n");
 	scoped_guard(printbuf_indent, &buf)

@@ -403,8 +403,10 @@ SHOW(bch2_fs)
 	if (attr == &sysfs_disk_groups)
 		bch2_disk_groups_to_text(out, c);
 
-	if (attr == &sysfs_alloc_debug)
+	if (attr == &sysfs_alloc_debug) {
 		bch2_fs_alloc_debug_to_text(out, c);
+		bch2_fs_open_buckets_to_text(out, c);
+	}
 
 	if (attr == &sysfs_usage_base)
 		bch2_fs_usage_base_to_text(out, c);
