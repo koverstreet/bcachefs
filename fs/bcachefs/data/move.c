@@ -207,8 +207,8 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 		     struct move_bucket *bucket_in_flight,
 		     struct btree_iter *iter,
 		     struct bkey_s_c k,
-		     struct bch_inode_opts io_opts,
-		     struct data_update_opts data_opts)
+		     struct bch_inode_opts *io_opts,
+		     struct data_update_opts *data_opts)
 {
 	struct btree_trans *trans = ctxt->trans;
 	struct bch_fs *c = trans->c;
@@ -225,7 +225,7 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 		return ret;
 
 	ret = bch2_data_update_init(trans, iter, ctxt, u, ctxt->wp,
-				    &io_opts, data_opts, iter->btree_id, k);
+				    io_opts, *data_opts, iter->btree_id, k);
 	if (ret)
 		return bch2_err_matches(ret, BCH_ERR_data_update_done) ? 0 : ret;
 
@@ -266,8 +266,8 @@ static int __bch2_move_extent(struct moving_context *ctxt,
 			   bkey_start_pos(k.k),
 			   iter->btree_id, k, 0,
 			   NULL,
-			   data_opts.read_flags|BCH_READ_last_fragment,
-			   data_opts.read_dev);
+			   data_opts->read_flags|BCH_READ_last_fragment,
+			   data_opts->read_dev);
 	u = NULL;
 	return 0;
 }
@@ -287,7 +287,7 @@ int bch2_move_extent(struct moving_context *ctxt,
 		return bch_err_throw(c, device_offline);
 
 	if (!bkey_is_btree_ptr(k.k))
-		ret = __bch2_move_extent(ctxt, bucket_in_flight, iter, k, *opts, *data_opts);
+		ret = __bch2_move_extent(ctxt, bucket_in_flight, iter, k, opts, data_opts);
 	else if (data_opts->type != BCH_DATA_UPDATE_scrub) {
 		if (data_opts->type != BCH_DATA_UPDATE_copygc)
 			try(bch2_can_do_data_update(trans, opts, data_opts, k, NULL));
