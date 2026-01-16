@@ -310,17 +310,31 @@ static int btree_key_cache_create(struct btree_trans *trans,
 	if (unlikely(key_u64s > ck->u64s)) {
 		mark_btree_node_locked_noreset(ck_path, 0, BTREE_NODE_UNLOCKED);
 
-		struct bkey_i *new_k = allocate_dropping_locks(trans, ret,
-				kmalloc(key_u64s * sizeof(u64), _gfp));
-		if (unlikely(!new_k && !ret)) {
-			bch_err_ratelimited(trans->c, "error allocating memory for key cache key, btree %s u64s %u",
-				bch2_btree_id_str(ck->key.btree_id), key_u64s);
-			ret = bch_err_throw(c, ENOMEM_btree_key_cache_fill);
-		}
+		struct bkey_i *new_k = kmalloc(key_u64s * sizeof(u64), GFP_NOWAIT);
+		if (unlikely(!new_k)) {
+			bch2_trans_unlock(trans);
+			new_k = kmalloc(key_u64s * sizeof(u64), GFP_KERNEL);
+			if (!unlikely(!new_k)) {
+				if (!bch2_ratelimit(c))	{
+					bch_err(c, "error allocating memory for key cache key, btree %s u64s %u\n"
+						"PF_MEMALLOC flags: %x\n",
+						bch2_btree_id_str(ck->key.btree_id), key_u64s,
+						current->flags & (PF_MEMALLOC|
+								  PF_MEMALLOC_NOFS|
+								  PF_MEMALLOC_NOIO|
+								  PF_MEMALLOC_PIN));
+					dump_stack();
+				}
 
-		if (unlikely(ret)) {
-			kfree(new_k);
-			goto err;
+				ret = bch_err_throw(c, ENOMEM_btree_key_cache_fill);
+				goto err;
+			}
+
+			ret = bch2_trans_relock(trans);
+			if (unlikely(ret)) {
+				kfree(new_k);
+				goto err;
+			}
 		}
 
 		kfree(ck->k);
