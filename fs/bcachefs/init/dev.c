@@ -5,6 +5,7 @@
 #include "alloc/background.h"
 #include "alloc/backpointers.h"
 #include "alloc/check.h"
+#include "alloc/discard.h"
 #include "alloc/replicas.h"
 
 #include "btree/interior.h"

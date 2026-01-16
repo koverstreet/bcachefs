@@ -11,6 +11,7 @@
 
 #include "alloc/backpointers.h"
 #include "alloc/buckets_waiting_for_journal.h"
+#include "alloc/discard.h"
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
 #include "alloc/replicas.h"

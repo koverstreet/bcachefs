@@ -2,6 +2,8 @@
 #ifndef _BCACHEFS_ALLOC_CHECK_H
 #define _BCACHEFS_ALLOC_CHECK_H
 
+#include "init/error.h"
+
 int bch2_need_discard_or_freespace_err(struct btree_trans *, struct bkey_s_c, bool, bool, bool);
 
 #define need_discard_or_freespace_err(...)		\

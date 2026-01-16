@@ -13,11 +13,11 @@
 
 #include "bcachefs.h"
 
-#include "alloc/background.h"
 #include "alloc/backpointers.h"
 #include "alloc/buckets_waiting_for_journal.h"
 #include "alloc/buckets.h"
 #include "alloc/check.h"
+#include "alloc/discard.h"
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
 

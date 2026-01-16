@@ -11,6 +11,7 @@
 #include "alloc/accounting.h"
 #include "alloc/background.h"
 #include "alloc/buckets.h"
+#include "alloc/discard.h"
 #include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
 #include "alloc/replicas.h"

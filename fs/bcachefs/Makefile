@@ -13,6 +13,7 @@ bcachefs-y		:=			\
 	alloc/buckets.o				\
 	alloc/buckets_waiting_for_journal.o	\
 	alloc/check.o				\
+	alloc/discard.o				\
 	alloc/disk_groups.o			\
 	alloc/foreground.o			\
 	alloc/lru.o				\

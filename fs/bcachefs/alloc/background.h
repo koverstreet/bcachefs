@@ -325,25 +325,6 @@ int bch2_trigger_alloc(struct btree_trans *, enum btree_id, unsigned,
 		       struct bkey_s_c, struct bkey_s,
 		       enum btree_iter_update_trigger_flags);
 
-void bch2_dev_do_discards(struct bch_dev *);
-void bch2_do_discards_going_ro(struct bch_fs *);
-void bch2_do_discards(struct bch_fs *);
-
-static inline u64 should_invalidate_buckets(struct bch_dev *ca,
-					    struct bch_dev_usage u)
-{
-	u64 want_free = ca->mi.nbuckets >> 5;
-	u64 free = max_t(s64, 0,
-			   u.buckets[BCH_DATA_free]
-			 + u.buckets[BCH_DATA_need_discard]
-			 - bch2_dev_buckets_reserved(ca, BCH_WATERMARK_stripe));
-
-	return clamp_t(s64, want_free - free, 0, u.buckets[BCH_DATA_cached]);
-}
-
-void bch2_dev_do_invalidates(struct bch_dev *);
-void bch2_do_invalidates(struct bch_fs *);
-
 static inline struct bch_backpointer *alloc_v4_backpointers(struct bch_alloc_v4 *a)
 {
 	return (void *) ((u64 *) &a->v +
