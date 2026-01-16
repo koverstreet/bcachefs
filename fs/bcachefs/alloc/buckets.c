@@ -961,7 +961,7 @@ int bch2_trans_mark_metadata_bucket(struct btree_trans *trans,
 	if (flags & BTREE_TRIGGER_gc)
 		return bch2_mark_metadata_bucket(trans, ca, b, type, sectors, flags);
 	else if (flags & BTREE_TRIGGER_transactional)
-		return commit_do(trans, NULL, NULL, BCH_WATERMARK_btree,
+		return commit_do(trans, NULL, NULL, (unsigned) BCH_WATERMARK_btree,
 				 __bch2_trans_mark_metadata_bucket(trans, ca, b, type, sectors));
 	else
 		BUG();
