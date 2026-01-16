@@ -553,6 +553,7 @@ struct bch_dev {
 	x(btree_running)		\
 	x(accounting_replay_done)	\
 	x(may_go_rw)			\
+	x(scrub_journal)		\
 	x(may_upgrade_downgrade)	\
 	x(rw)				\
 	x(rw_init_done)			\
@@ -760,6 +761,10 @@ struct bch_fs {
 	/* MOVE.C */
 	struct list_head	moving_context_list;
 	struct mutex		moving_context_lock;
+
+	/* Journal scrub: extents needing repair after recovery */
+	darray_scrub_journal_repair		scrub_journal_repairs;
+	struct mutex				scrub_journal_repairs_lock;
 
 	struct bch_fs_compress	compress;
 	struct bch_fs_reconcile	reconcile;

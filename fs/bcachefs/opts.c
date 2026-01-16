@@ -118,6 +118,11 @@ static const char * const __bch2_key_type_error_reasons[] = {
 	NULL
 };
 
+const char * const bch2_scrub_journal_opts[] = {
+	BCH_SCRUB_JOURNAL_OPTS()
+	NULL
+};
+
 #undef x
 
 static void prt_str_opt_boundscheck(struct printbuf *out, const char * const opts[],

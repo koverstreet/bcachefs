@@ -104,9 +104,9 @@ static unsigned ptr_remap(struct bch_fs *c, struct bkey_s_c old,
 	return 0;
 }
 
-static unsigned ptr_mask_remap(struct bch_fs *c,
-			       struct bkey_s_c old, unsigned oldmask,
-			       struct bkey_s_c new)
+unsigned ptr_mask_remap(struct bch_fs *c,
+		       struct bkey_s_c old, unsigned oldmask,
+		       struct bkey_s_c new)
 {
 	if (!oldmask)
 		return 0;
@@ -595,8 +595,22 @@ void bch2_data_update_read_done(struct data_update *u)
 		return;
 	}
 
-	if ((u->opts.type == BCH_DATA_UPDATE_scrub && !u->opts.ptrs_io_error) ||
-	    u->opts.type == BCH_DATA_UPDATE_scrub_no_repair) {
+	if (u->opts.type == BCH_DATA_UPDATE_scrub_no_repair) {
+		if (u->opts.ptrs_io_error) {
+			scrub_journal_repair r = {
+				.btree_id	= u->btree_id,
+				.bad_devs	= u->opts.ptrs_io_error,
+			};
+			bkey_copy(&r.k, u->k.k);
+			mutex_lock(&c->scrub_journal_repairs_lock);
+			darray_push(&c->scrub_journal_repairs, r);
+			mutex_unlock(&c->scrub_journal_repairs_lock);
+		}
+		u->op.end_io(&u->op);
+		return;
+	}
+
+	if (u->opts.type == BCH_DATA_UPDATE_scrub && !u->opts.ptrs_io_error) {
 		u->op.end_io(&u->op);
 		return;
 	}

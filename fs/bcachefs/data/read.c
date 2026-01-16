@@ -544,6 +544,10 @@ static noinline int maybe_poison_extent(struct btree_trans *trans, struct bch_re
 		return 0;
 
 	struct bch_fs *c = trans->c;
+
+	/* Can't commit during recovery — will be handled after going rw */
+	if (!test_bit(BCH_FS_rw, &c->flags))
+		return 0;
 	struct data_update *u = rbio_data_update(rbio);
 	if (u)
 		read_k = bkey_i_to_s_c(u->k.k);
@@ -803,6 +807,10 @@ static noinline void bch2_rbio_narrow_crcs(struct bch_read_bio *rbio)
 		bch_err(c, "error verifying existing checksum while narrowing checksum (memory corruption?)");
 		return;
 	}
+
+	/* Can't commit during recovery */
+	if (!test_bit(BCH_FS_rw, &c->flags))
+		return;
 
 	CLASS(btree_trans, trans)(c);
 	int ret = commit_do(trans, NULL, NULL, BCH_TRANS_COMMIT_no_enospc,

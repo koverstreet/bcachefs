@@ -3644,6 +3644,7 @@ struct btree_trans *__bch2_trans_get(struct bch_fs *c, unsigned fn_idx)
 	 * modifying the journal keys gap buffer
 	 */
 	EBUG_ON(!test_bit(BCH_FS_may_go_rw, &c->flags) &&
+		!test_bit(BCH_FS_scrub_journal, &c->flags) &&
 		current != c->recovery_task);
 
 	struct btree_trans *trans = bch2_trans_alloc(c);

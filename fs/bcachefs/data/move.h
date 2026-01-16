@@ -124,6 +124,9 @@ int bch2_evacuate_bucket(struct moving_context *,
 			   struct move_bucket *,
 			   struct bpos, int,
 			   struct data_update_opts);
+
+int bch2_scrub_journal(struct bch_fs *, u64 *);
+int bch2_scrub_journal_do_repairs(struct bch_fs *);
 int bch2_data_job(struct bch_fs *,
 		  struct bch_move_stats *,
 		  struct bch_ioctl_data *);
@@ -134,6 +137,7 @@ void bch2_move_stats_init(struct bch_move_stats *, const char *);
 
 void bch2_fs_moving_ctxts_to_text(struct printbuf *, struct bch_fs *);
 
+void bch2_fs_move_exit(struct bch_fs *);
 void bch2_fs_move_init(struct bch_fs *);
 
 #endif /* _BCACHEFS_MOVE_H */

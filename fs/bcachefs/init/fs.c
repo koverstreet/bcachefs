@@ -578,6 +578,7 @@ static int __bch2_fs_read_write(struct bch_fs *c, bool early)
 	bch2_do_invalidates(c);
 	bch2_do_stripe_deletes(c);
 	bch2_do_pending_node_rewrites(c);
+	bch2_scrub_journal_do_repairs(c);
 	bch2_maybe_schedule_btree_bitmap_gc(c);
 	return 0;
 }
@@ -635,6 +636,7 @@ static void __bch2_fs_free(struct bch_fs *c)
 	bch2_fs_encryption_exit(c);
 	bch2_fs_ec_exit(c);
 	bch2_fs_data_update_exit(c);
+	bch2_fs_move_exit(c);
 	bch2_fs_counters_exit(c);
 	bch2_fs_copygc_exit(c);
 	bch2_fs_compress_exit(c);

@@ -73,6 +73,14 @@ static void bch2_journal_datetime_to_text(struct printbuf *out, struct jset *j)
 		bch2_prt_datetime(out, t);
 }
 
+void bch2_journal_seq_datetime_to_text(struct printbuf *out, struct bch_fs *c, u64 seq)
+{
+	struct journal_replay **p = genradix_ptr(&c->journal_entries,
+						 journal_entry_radix_idx(c, seq));
+	if (p && *p)
+		bch2_journal_datetime_to_text(out, &(*p)->j);
+}
+
 static void bch2_journal_replay_to_text(struct printbuf *out, struct bch_fs *c,
 					struct journal_replay *j)
 {
@@ -120,7 +128,8 @@ static void journal_replay_maybe_drop_overwrites(struct bch_fs *c, struct jset *
 {
 	/* Drop overwrites, log entries if we don't need them: */
 	if (c->opts.retain_recovery_info ||
-	    c->opts.journal_rewind)
+	    c->opts.journal_rewind ||
+	    c->opts.scrub_recent_journal_entries)
 		return;
 
 	vstruct_for_each_safe(j, src)

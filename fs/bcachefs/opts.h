@@ -28,6 +28,7 @@ extern const char * const __bch2_data_types[];
 extern const char * const bch2_member_states[];
 extern const char * const __bch2_reconcile_accounting_types[];
 extern const char * const bch2_d_types[];
+extern const char * const bch2_scrub_journal_opts[];
 
 void bch2_prt_jset_entry_type(struct printbuf *,	enum bch_jset_entry_type);
 void bch2_prt_fs_usage_type(struct printbuf *,		enum bch_fs_usage_type);
@@ -395,6 +396,16 @@ enum fsck_err_opts {
 	  OPT_UINT(0, U64_MAX),						\
 	  BCH2_NO_SB_OPT,		0,				\
 	  NULL,		"Rewind journal")				\
+	x(scrub_recent_journal_entries,	u8,				\
+	  OPT_FS|OPT_MOUNT,						\
+	  OPT_STR(bch2_scrub_journal_opts),				\
+	  BCH_SB_SCRUB_JOURNAL,		0,				\
+	  NULL,		"Scrub data written in the last few journal entries during recovery")\
+	x(scrub_journal_max_rewind_secs,	u32,			\
+	  OPT_FS|OPT_MOUNT|OPT_FORMAT,					\
+	  OPT_UINT(0, 3600),						\
+	  BCH_SB_EXT_SCRUB_MAX_REWIND_SECS, 10,				\
+	  NULL,		"Maximum time in seconds the journal scrub will rewind (default 30)")\
 	x(recovery_passes,		u64,				\
 	  OPT_FS|OPT_MOUNT,						\
 	  OPT_BITFIELD(bch2_recovery_passes),				\

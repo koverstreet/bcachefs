@@ -17,7 +17,9 @@
 
 #include "data/compress.h"
 #include "data/keylist.h"
+#include "data/extents.h"
 #include "data/move.h"
+#include "data/update.h"
 #include "data/read.h"
 #include "data/reconcile/trigger.h"
 #include "data/reflink.h"
@@ -750,6 +752,220 @@ static int scrub_pred(struct btree_trans *trans, void *_arg,
 	return true;
 }
 
+#include "journal/read.h"
+#include "btree/journal_overlay.h"
+
+int bch2_scrub_journal(struct bch_fs *c, u64 *rewind_seq)
+{
+	CLASS(darray_u64, flushes)();
+	int ret = 0;
+
+	u64 last_entry_time = 0;
+	*rewind_seq = 0;
+
+	struct journal_replay **_i;
+	struct genradix_iter radix_iter;
+	genradix_for_each(&c->journal_entries, radix_iter, _i) {
+		struct journal_replay *i = *_i;
+
+		if (!journal_replay_ignore(i) &&
+		    !JSET_NO_FLUSH(&i->j)) {
+			u64 t = jset_datetime(&i->j);
+			if (!last_entry_time)
+				last_entry_time = t;
+			else if (time_before64(t + c->opts.scrub_journal_max_rewind_secs, last_entry_time))
+				break;
+
+			try(darray_push(&flushes, le64_to_cpu(i->j.seq)));
+		}
+	}
+
+	if (!flushes.nr) {
+		bch_info(c, "%s(): No journal flushes found", __func__);
+		return 0;
+	}
+
+	bch_info(c, "journal scrub: checking %zu flush ranges",
+		 flushes.nr);
+
+	struct bch_move_stats stats;
+	bch2_move_stats_init(&stats, "journal_scrub");
+
+	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
+	bch2_moving_ctxt_init(&ctxt, c, NULL, &stats, (struct write_point_specifier) {}, false);
+
+	struct btree_trans *trans = ctxt.trans;
+	struct journal_keys *keys = &c->journal_keys;
+
+	/*
+	 * Scrub one flush range at a time, newest first. Within each range,
+	 * fire off all reads asynchronously, then flush once to check for
+	 * errors. Walk backwards until we find a good range — everything
+	 * newer is tainted.
+	 *
+	 * Stop if we've gone further back than scrub_journal_max_rewind_secs seconds.
+	 */
+	unsigned nr_good = 0;
+
+	for (int f = flushes.nr - 1; f > 0; f--) {
+		u64 range_start = flushes.data[f - 1];
+		u64 range_end   = flushes.data[f];
+		u64 errors_before = atomic64_read(&stats.sectors_error_uncorrected);
+		memset(&stats.devs_error_uncorrected, 0, sizeof(stats.devs_error_uncorrected));
+		int move_ret = 0;
+
+		darray_for_each(*keys, jk) {
+			u64 seq = c->journal_entries_base_seq + jk->journal_seq_offset;
+			struct bkey_s_c k = bkey_i_to_s_c(journal_key_k(c, jk));
+
+
+			if (seq <= range_start || seq > range_end)
+				continue;
+
+			struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
+			if (!ptrs.start)
+				continue;
+
+			struct bch_inode_opts io_opts;
+			bch2_inode_opts_get(c, &io_opts, bkey_is_btree_ptr(k.k));
+
+			bkey_for_each_ptr(ptrs, ptr) {
+				struct data_update_opts data_opts = {
+					.type		= BCH_DATA_UPDATE_scrub_no_repair,
+					.read_flags	= BCH_READ_hard_require_read_device,
+					.read_dev	= ptr->dev,
+				};
+				ret = lockrestart_do(trans, ({
+					struct bkey_s_c k2;
+
+					CLASS(btree_node_iter, iter)(trans, jk->btree_id, k.k->p, 0, jk->level,
+								     BTREE_ITER_all_snapshots);
+					int ret2 = bkey_err(k2 = bch2_btree_iter_peek_slot(&iter));
+
+					BUG_ON(!ret2 && !bkey_and_val_eq(k, k2));
+
+					ret2 ?:
+					bch2_move_extent(&ctxt, NULL, &io_opts, &data_opts, &iter, jk->level, k);
+				}));
+
+				if (ret)
+					move_ret = ret;
+			}
+		}
+
+		bch2_moving_ctxt_flush_all(&ctxt);
+
+		if (move_ret)
+			bch_err(c, "journal scrub: move error %s in flush range seq %llu-%llu",
+				bch2_err_str(move_ret),
+				range_start + 1, range_end == U64_MAX ? range_start : range_end);
+
+		bool checksum_err = atomic64_read(&stats.sectors_error_uncorrected) != errors_before;
+
+		if (checksum_err) {
+			bch2_sb_error_count(c, BCH_FSCK_ERR_device_bad_flush);
+			CLASS(bch_log_msg, msg)(c);
+			prt_printf(&msg.m, "journal scrub: checksum errors in flush range seq %llu-%llu, "
+				"device(s) not honoring flush/FUA:",
+				range_start + 1, range_end == U64_MAX ? range_start : range_end);
+
+			unsigned i;
+			for_each_set_bit(i, stats.devs_error_uncorrected.d, BCH_SB_MEMBERS_MAX) {
+				CLASS(bch2_dev_tryget_noerror, ca)(c, i);
+				if (ca)
+					prt_printf(&msg.m, " %s", ca->name);
+				else
+					prt_printf(&msg.m, " dev%u", i);
+			}
+
+			guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+			guard(mutex)(&c->sb_lock);
+			for_each_set_bit(i, stats.devs_error_uncorrected.d, BCH_SB_MEMBERS_MAX) {
+				struct bch_member *m = bch2_members_v2_get_mut(c->disk_sb.sb, i);
+				if (m)
+					le64_add_cpu(&m->flush_errors, 1);
+			}
+			bch2_write_super(c);
+
+			*rewind_seq = range_start;
+			nr_good = 0;
+		} else if (++nr_good >= 2) {
+			/* Two consecutive good ranges — safe to stop */
+			break;
+		}
+	}
+
+	return 0;
+}
+
+static int scrub_journal_repair_one(struct moving_context *ctxt,
+				    scrub_journal_repair *r)
+{
+	struct btree_trans *trans = ctxt->trans;
+	struct bch_fs *c = trans->c;
+	struct bkey_s_c stashed = bkey_i_to_s_c(&r->k);
+
+	CLASS(btree_iter, iter)(trans, r->btree_id, bkey_start_pos(stashed.k),
+				BTREE_ITER_intent);
+	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
+
+	if (!bch2_extents_match(c, k, stashed))
+		return 0;
+
+	/*
+	 * Trim both keys to the overlapping range before remapping,
+	 * same as data_update_index_update_key does.
+	 */
+	struct bkey_i *trimmed = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(k.k)));
+	bkey_reassemble(trimmed, k);
+	bch2_cut_front(c, bkey_start_pos(stashed.k), trimmed);
+	bch2_cut_back(stashed.k->p, trimmed);
+
+	unsigned bad_devs = ptr_mask_remap(c, stashed, r->bad_devs, bkey_i_to_s_c(trimmed));
+	if (!bad_devs)
+		return 0;
+
+	struct bch_inode_opts io_opts;
+	bch2_inode_opts_get(c, &io_opts, bkey_is_btree_ptr(k.k));
+
+	struct data_update_opts data_opts = {
+		.type		= BCH_DATA_UPDATE_self_heal,
+		.ptrs_io_error	= bad_devs,
+		.ptrs_kill	= bad_devs,
+	};
+
+	return bch2_move_extent(ctxt, NULL, &io_opts, &data_opts, &iter, 0, k);
+}
+
+int bch2_scrub_journal_do_repairs(struct bch_fs *c)
+{
+	CLASS(darray_scrub_journal_repair, repairs)();
+
+	mutex_lock(&c->scrub_journal_repairs_lock);
+	swap(repairs, c->scrub_journal_repairs);
+	mutex_unlock(&c->scrub_journal_repairs_lock);
+
+	if (!repairs.nr)
+		return 0;
+
+	bch_info(c, "journal scrub: repairing %zu extents with bad replicas", repairs.nr);
+
+	struct bch_move_stats stats;
+	bch2_move_stats_init(&stats, "journal_scrub_repair");
+
+	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
+	bch2_moving_ctxt_init(&ctxt, c, NULL, &stats,
+			      writepoint_ptr(&c->allocator.reconcile_write_point),
+			      true);
+
+	darray_for_each(repairs, r) {
+		/* Ignore errors - don't want them blocking mount */
+		lockrestart_do(ctxt.trans, scrub_journal_repair_one(&ctxt, r));
+	}
+
+	return 0;
+}
+
 int bch2_data_job(struct bch_fs *c,
 		  struct bch_move_stats *stats,
 		  struct bch_ioctl_data *op)
@@ -848,8 +1064,15 @@ void bch2_fs_moving_ctxts_to_text(struct printbuf *out, struct bch_fs *c)
 			bch2_moving_ctxt_to_text(out, c, ctxt);
 }
 
+void bch2_fs_move_exit(struct bch_fs *c)
+{
+	darray_exit(&c->scrub_journal_repairs);
+}
+
 void bch2_fs_move_init(struct bch_fs *c)
 {
 	INIT_LIST_HEAD(&c->moving_context_list);
 	mutex_init(&c->moving_context_lock);
+	darray_init(&c->scrub_journal_repairs);
+	mutex_init(&c->scrub_journal_repairs_lock);
 }

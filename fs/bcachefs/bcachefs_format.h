@@ -882,11 +882,12 @@ struct bch_sb_field_ext {
 	__le64			recovery_passes_required[2];
 	__le64			errors_silent[8];
 	__le64			btrees_lost_data;
-	__le64			dev_readahead;		/* per-device readahead size, in sectors; 0 = default */
+	__le64			flags0;
 };
 
-LE64_BITMASK(BCH_SB_EXT_DEV_READAHEAD,		struct bch_sb_field_ext, dev_readahead, 0, 20);
-LE64_BITMASK(BCH_SB_EXT_EC_STRIPE_BUF_LIMIT,	struct bch_sb_field_ext, dev_readahead, 20, 26);
+LE64_BITMASK(BCH_SB_EXT_DEV_READAHEAD,		struct bch_sb_field_ext, flags0, 0, 20);
+LE64_BITMASK(BCH_SB_EXT_EC_STRIPE_BUF_LIMIT,	struct bch_sb_field_ext, flags0, 20, 26);
+LE64_BITMASK(BCH_SB_EXT_SCRUB_MAX_REWIND_SECS,	struct bch_sb_field_ext, flags0, 26, 38);
 
 /* Superblock: */
 
@@ -1218,6 +1219,7 @@ LE64_BITMASK(BCH_SB_CASEFOLD,		struct bch_sb, flags[6], 22, 23);
 LE64_BITMASK(BCH_SB_REBALANCE_AC_ONLY,	struct bch_sb, flags[6], 23, 24);
 LE64_BITMASK(BCH_SB_WRITEBACK_TIMEOUT,	struct bch_sb, flags[6], 24, 40);
 LE64_BITMASK(BCH_SB_EXTENT_BP_SHIFT,	struct bch_sb, flags[6], 40, 48);
+LE64_BITMASK(BCH_SB_SCRUB_JOURNAL,	struct bch_sb, flags[6], 48, 50);
 
 #define BCH_SB_EXTENT_BP_SHIFT_DEFAULT	10
 
@@ -1470,6 +1472,18 @@ enum bch_compression_opts {
 	BCH_COMPRESSION_OPTS()
 #undef x
 	BCH_COMPRESSION_OPT_NR
+};
+
+#define BCH_SCRUB_JOURNAL_OPTS()	\
+	x(unclean,	0)		\
+	x(no,		1)		\
+	x(always,	2)
+
+enum bch_scrub_journal_opts {
+#define x(t, n) BCH_SCRUB_JOURNAL_##t = n,
+	BCH_SCRUB_JOURNAL_OPTS()
+#undef x
+	BCH_SCRUB_JOURNAL_OPT_NR
 };
 
 /*
