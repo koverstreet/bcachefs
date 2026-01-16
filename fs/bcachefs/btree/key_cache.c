@@ -165,9 +165,10 @@ bkey_cached_alloc(struct btree_trans *trans, struct btree_path *path, unsigned k
 	ck = allocate_dropping_locks(trans, ret,
 				     __bkey_cached_alloc(key_u64s, _gfp));
 	if (ret) {
-		if (ck)
+		if (ck) {
 			kfree(ck->k);
-		kmem_cache_free(bch2_key_cache, ck);
+			kmem_cache_free(bch2_key_cache, ck);
+		}
 		return ERR_PTR(ret);
 	}
 
