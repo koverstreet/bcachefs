@@ -15,7 +15,7 @@
 
 #include "data/compress.h"
 #include "data/copygc.h"
-#include "data/ec.h"
+#include "data/ec/trigger.h"
 #include "data/move.h"
 #include "data/reconcile.h"
 #include "data/write.h"

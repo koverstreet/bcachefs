@@ -9,7 +9,7 @@
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 
-#include "data/ec.h"
+#include "data/ec/init.h"
 
 #include "init/error.h"
 #include "init/progress.h"

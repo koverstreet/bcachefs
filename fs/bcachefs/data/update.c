@@ -11,7 +11,6 @@
 
 #include "data/compress.h"
 #include "data/copygc.h"
-#include "data/ec.h"
 #include "data/extents.h"
 #include "data/keylist.h"
 #include "data/move.h"

@@ -23,7 +23,7 @@
 #include "btree/journal_overlay.h"
 #include "btree/read.h"
 
-#include "data/ec.h"
+#include "data/ec/trigger.h"
 #include "data/extents.h"
 #include "data/keylist.h"
 #include "data/move.h"

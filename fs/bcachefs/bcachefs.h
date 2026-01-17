@@ -248,7 +248,7 @@
 
 #include "data/compress_types.h"
 #include "data/copygc_types.h"
-#include "data/ec_types.h"
+#include "data/ec/types.h"
 #include "data/keylist_types.h"
 #include "data/nocow_locking_types.h"
 #include "data/reconcile_types.h"

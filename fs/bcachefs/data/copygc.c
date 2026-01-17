@@ -17,7 +17,7 @@
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 
-#include "data/ec.h"
+#include "data/ec/trigger.h"
 #include "data/move.h"
 #include "data/copygc.h"
 

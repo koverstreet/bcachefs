@@ -12,7 +12,7 @@
 #include "btree/node_scan.h"
 
 #include "data/copygc.h"
-#include "data/ec.h"
+#include "data/ec/init.h"
 #include "data/reconcile.h"
 
 #include "fs/check.h"

@@ -17,7 +17,7 @@
 
 #include "data/checksum.h"
 #include "data/compress.h"
-#include "data/ec.h"
+#include "data/ec/io.h"
 #include "data/io_misc.h"
 #include "data/read.h"
 #include "data/reflink.h"

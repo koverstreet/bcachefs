@@ -14,7 +14,7 @@
 #include "btree/interior.h"
 #include "btree/write_buffer.h"
 
-#include "data/ec.h"
+#include "data/ec/init.h"
 #include "data/extents.h"
 #include "data/write.h"
 #include "data/keylist.h"

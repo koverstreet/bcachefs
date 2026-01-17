@@ -646,7 +646,7 @@ enum btree_id {
 #include "alloc/lru_format.h"
 #include "alloc/replicas_format.h"
 #include "alloc/format.h"
-#include "data/ec_format.h"
+#include "data/ec/format.h"
 #include "data/extents_format.h"
 #include "data/extents_sb_format.h"
 #include "data/reflink_format.h"

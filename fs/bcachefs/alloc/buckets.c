@@ -19,7 +19,7 @@
 #include "btree/update.h"
 
 #include "data/copygc.h"
-#include "data/ec.h"
+#include "data/ec/trigger.h"
 #include "data/reconcile.h"
 #include "data/reflink.h"
 

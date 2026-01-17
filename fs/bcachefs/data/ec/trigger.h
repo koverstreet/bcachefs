@@ -1,10 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
-#ifndef _BCACHEFS_EC_H
-#define _BCACHEFS_EC_H
-
-#include "ec_types.h"
-#include "alloc/buckets_types.h"
-#include "extents_types.h"
+#ifndef _BCACHEFS_DATA_EC_TRIGGER_H
+#define _BCACHEFS_DATA_EC_TRIGGER_H
 
 int bch2_stripe_validate(struct bch_fs *, struct bkey_s_c,
 			 struct bkey_validate_context);
@@ -170,160 +166,18 @@ static inline void gc_stripe_lock(struct gc_stripe *s)
 			 TASK_UNINTERRUPTIBLE);
 }
 
-struct bch_read_bio;
-
-struct ec_stripe_buf {
-	/* might not be buffering the entire stripe: */
-	unsigned		offset;
-	unsigned		size;
-	unsigned long		valid[BITS_TO_LONGS(BCH_BKEY_PTRS_MAX)];
-
-	void			*data[BCH_BKEY_PTRS_MAX];
-
-	__BKEY_PADDED(key, 255);
-};
-
-struct ec_stripe_head;
-
-enum ec_stripe_ref {
-	STRIPE_REF_io,
-	STRIPE_REF_stripe,
-	STRIPE_REF_NR
-};
-
-struct ec_stripe_new_bucket {
-	struct hlist_node	hash;
-	u64			dev_bucket;
-};
-
-struct ec_stripe_handle {
-	struct hlist_node	hash;
-	u64			idx;
-};
-
-struct ec_stripe_new {
-	struct bch_fs		*c;
-	struct ec_stripe_head	*h;
-	struct mutex		lock;
-	struct list_head	list;
-
-	struct closure		iodone;
-
-	atomic_t		ref[STRIPE_REF_NR];
-
-	int			err;
-
-	u8			nr_data;
-	u8			nr_parity;
-	bool			allocated;
-	bool			pending;
-	bool			have_old_stripe;
-
-	unsigned long		blocks_gotten[BITS_TO_LONGS(BCH_BKEY_PTRS_MAX)];
-	unsigned long		blocks_allocated[BITS_TO_LONGS(BCH_BKEY_PTRS_MAX)];
-	open_bucket_idx_t	blocks[BCH_BKEY_PTRS_MAX];
-	struct disk_reservation	res;
-
-	struct ec_stripe_new_bucket buckets[BCH_BKEY_PTRS_MAX];
-
-	struct ec_stripe_buf	new_stripe;
-	struct ec_stripe_buf	old_stripe;
-
-	struct ec_stripe_handle	new_stripe_handle;
-	struct ec_stripe_handle	old_stripe_handle;
-
-	u8			old_block_map[BCH_BKEY_PTRS_MAX];
-	u8			old_blocks_nr;
-};
-
-struct ec_stripe_head {
-	struct list_head	list;
-	struct mutex		lock;
-
-	unsigned		disk_label;
-	unsigned		algo;
-	unsigned		redundancy;
-	enum bch_watermark	watermark;
-	bool			insufficient_devs;
-
-	unsigned long		rw_devs_change_count;
-
-	u64			nr_created;
-
-	struct bch_devs_mask	devs;
-	unsigned		nr_active_devs;
-
-	unsigned		blocksize;
-
-	struct dev_stripe_state	block_stripe;
-	struct dev_stripe_state	parity_stripe;
-
-	struct ec_stripe_new	*s;
-};
-
-int bch2_ec_read_extent(struct btree_trans *, struct bch_read_bio *, struct bkey_s_c);
+int bch2_ec_stripe_mem_alloc(struct btree_trans *, struct btree_iter *);
 
 bool bch2_bucket_has_new_stripe(struct bch_fs *, u64);
 
-void *bch2_writepoint_ec_buf(struct bch_fs *, struct write_point *);
+void bch2_stripe_new_buckets_add(struct bch_fs *c, struct ec_stripe_new *s);
+void bch2_stripe_new_buckets_del(struct bch_fs *, struct ec_stripe_new *);
 
-void bch2_ec_bucket_cancel(struct bch_fs *, struct open_bucket *, int);
+bool bch2_stripe_is_open(struct bch_fs *, u64);
 
-int bch2_ec_stripe_new_alloc(struct bch_fs *, struct ec_stripe_head *);
+struct ec_stripe_handle;
+bool bch2_stripe_handle_tryget(struct bch_fs *, struct ec_stripe_handle *, u64);
+void bch2_stripe_handle_put(struct bch_fs *, struct ec_stripe_handle *);
 
-void bch2_ec_stripe_head_put(struct bch_fs *, struct ec_stripe_head *);
+#endif /* _BCACHEFS_DATA_EC_TRIGGER_H */
 
-struct alloc_request;
-struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *,
-			struct alloc_request *, unsigned);
-
-void bch2_do_stripe_deletes(struct bch_fs *);
-void bch2_ec_do_stripe_creates(struct bch_fs *);
-void bch2_ec_stripe_new_free(struct bch_fs *, struct ec_stripe_new *);
-
-static inline void ec_stripe_new_get(struct ec_stripe_new *s,
-				     enum ec_stripe_ref ref)
-{
-	atomic_inc(&s->ref[ref]);
-}
-
-static inline void ec_stripe_new_put(struct bch_fs *c, struct ec_stripe_new *s,
-				     enum ec_stripe_ref ref)
-{
-	BUG_ON(atomic_read(&s->ref[ref]) <= 0);
-
-	if (atomic_dec_and_test(&s->ref[ref]))
-		switch (ref) {
-		case STRIPE_REF_stripe:
-			bch2_ec_stripe_new_free(c, s);
-			break;
-		case STRIPE_REF_io:
-			bch2_ec_do_stripe_creates(c);
-			break;
-		default:
-			BUG();
-		}
-}
-
-int bch2_invalidate_stripe_to_dev(struct btree_trans *, struct btree_iter *,
-				  struct bkey_s_c, unsigned,
-				  unsigned, struct printbuf *);
-int bch2_dev_remove_stripes(struct bch_fs *, unsigned, unsigned, struct printbuf *);
-
-void bch2_ec_stop_dev(struct bch_fs *, struct bch_dev *);
-void bch2_fs_ec_stop(struct bch_fs *);
-void bch2_fs_ec_flush(struct bch_fs *);
-
-int bch2_stripes_read(struct bch_fs *);
-
-void bch2_new_stripes_to_text(struct printbuf *, struct bch_fs *);
-
-void bch2_fs_ec_exit(struct bch_fs *);
-void bch2_fs_ec_init_early(struct bch_fs *);
-int bch2_fs_ec_init(struct bch_fs *);
-
-int bch2_bucket_nr_stripes(struct btree_trans *, struct bpos);
-
-int bch2_check_stripe_refs(struct btree_trans *);
-
-#endif /* _BCACHEFS_EC_H */

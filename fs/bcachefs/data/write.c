@@ -15,7 +15,7 @@
 
 #include "data/checksum.h"
 #include "data/compress.h"
-#include "data/ec.h"
+#include "data/ec/create.h"
 #include "data/extent_update.h"
 #include "data/keylist.h"
 #include "data/move.h"

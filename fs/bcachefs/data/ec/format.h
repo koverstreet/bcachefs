@@ -2,7 +2,7 @@
 #ifndef _BCACHEFS_EC_FORMAT_H
 #define _BCACHEFS_EC_FORMAT_H
 
-#include "extents_format.h"
+#include "data/extents_format.h"
 
 struct bch_stripe {
 	struct bch_val		v;

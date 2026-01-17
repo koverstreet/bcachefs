@@ -6,7 +6,6 @@
 #include "alloc/replicas.h"
 
 #include "data/checksum.h"
-#include "data/ec.h"
 #include "data/extents_sb.h"
 
 #include "journal/journal.h"

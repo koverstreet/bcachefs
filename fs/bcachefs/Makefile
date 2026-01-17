@@ -39,7 +39,10 @@ bcachefs-y		:=			\
 	data/checksum.o				\
 	data/compress.o				\
 	data/copygc.o				\
-	data/ec.o				\
+	data/ec/create.o			\
+	data/ec/init.o				\
+	data/ec/io.o				\
+	data/ec/trigger.o			\
 	data/extents.o				\
 	data/extents_sb.o			\
 	data/extent_update.o			\

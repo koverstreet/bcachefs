@@ -16,7 +16,6 @@
 #include "btree/write_buffer.h"
 
 #include "data/compress.h"
-#include "data/ec.h"
 #include "data/keylist.h"
 #include "data/move.h"
 #include "data/read.h"
