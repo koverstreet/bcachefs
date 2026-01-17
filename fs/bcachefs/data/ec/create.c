@@ -798,8 +798,10 @@ __bch2_ec_stripe_head_get(struct btree_trans *trans,
 		h = ERR_PTR(bch_err_throw(c, ENOMEM_stripe_head_alloc));
 		goto err;
 	}
+
+	unsigned long rw_devs_change_count;
 found:
-	unsigned long rw_devs_change_count = READ_ONCE(c->allocator.rw_devs_change_count);
+	rw_devs_change_count = READ_ONCE(c->allocator.rw_devs_change_count);
 	if (h->rw_devs_change_count != rw_devs_change_count) {
 		ec_stripe_head_devs_update(c, h);
 		h->rw_devs_change_count = rw_devs_change_count;
