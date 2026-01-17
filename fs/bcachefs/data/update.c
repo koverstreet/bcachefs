@@ -181,8 +181,6 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	struct bch_inode_opts opts;
 	try(bch2_bkey_get_io_opts(trans, NULL, k, &opts));
 
-	bch2_bkey_propagate_incompressible(c, insert, bkey_i_to_s_c(&new->k_i));
-
 	/*
 	 * @old: extent that we read from
 	 * @insert: key that we're going to update, initialized from
@@ -262,6 +260,8 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	try(bch2_bkey_drop_extra_durability(trans, &opts, bkey_i_to_s(insert)));
 
 	bch2_bkey_drop_extra_cached_ptrs(c, &opts, bkey_i_to_s(insert));
+
+	bch2_bkey_propagate_incompressible(c, insert, k);
 
 	bool should_check_enospc = false;
 	s64 i_sectors_delta = 0, disk_sectors_delta = 0;
