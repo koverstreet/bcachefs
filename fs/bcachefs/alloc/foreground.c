@@ -1194,14 +1194,10 @@ retry:
 
 		ret = min(ret, 0); /* We return 1 earlier to terminate allocating */
 
-		if (bch2_err_matches(ret, BCH_ERR_transaction_restart) ||
-		    bch2_err_matches(ret, BCH_ERR_operation_blocked) ||
-		    bch2_err_matches(ret, BCH_ERR_open_buckets_empty))
+		if (ret &&
+		    ret != -BCH_ERR_freelist_empty &&
+		    ret != -BCH_ERR_insufficient_devices)
 			goto err;
-
-		BUG_ON(ret &&
-		       ret != -BCH_ERR_freelist_empty &&
-		       ret != -BCH_ERR_insufficient_devices);
 
 		if (ret && req->will_retry_all_devices) {
 			/*
