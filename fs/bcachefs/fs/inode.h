@@ -143,7 +143,7 @@ static inline int bch2_inode_find_by_inum_nowarn_trans(struct btree_trans *trans
 				  subvol_inum inum,
 				  struct bch_inode_unpacked *inode)
 {
-	return __bch2_inode_find_by_inum_trans(trans, inum, inode, false);
+	return __bch2_inode_find_by_inum_trans(trans, inum, inode, NULL);
 }
 
 int bch2_inode_find_by_inum(struct bch_fs *, subvol_inum,
