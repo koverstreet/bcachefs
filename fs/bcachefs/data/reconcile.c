@@ -2040,6 +2040,7 @@ static int do_reconcile(struct moving_context *ctxt)
 			wait_event(c->copygc.running_wq,
 				   c->copygc.run_count != copygc_run_count ||
 				   kthread_should_stop());
+			copygc_run_count = c->copygc.run_count;
 			ret = 0;
 			continue;
 		}
