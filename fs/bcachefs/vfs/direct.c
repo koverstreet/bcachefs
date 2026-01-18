@@ -416,6 +416,13 @@ static __always_inline void bch2_dio_write_end(struct dio_write *dio)
 		set_bit(EI_INODE_ERROR, &inode->ei_flags);
 }
 
+static void bch2_dio_write_sync_done(struct bch_write_op *op)
+{
+	struct dio_write *dio = container_of(op, struct dio_write, op);
+
+	dio->sync_done = true;
+}
+
 static __always_inline long bch2_dio_write_loop(struct dio_write *dio)
 {
 	struct bch_fs *c = dio->op.c;
@@ -479,7 +486,7 @@ static __always_inline long bch2_dio_write_loop(struct dio_write *dio)
 
 		bch2_write_op_init(&dio->op, c, opts);
 		dio->op.end_io		= sync
-			? NULL
+			? bch2_dio_write_sync_done
 			: bch2_dio_write_loop_async;
 		dio->op.target		= dio->op.opts.foreground_target;
 		dio->op.write_point	= writepoint_hashed((unsigned long) current);
@@ -516,6 +523,9 @@ static __always_inline long bch2_dio_write_loop(struct dio_write *dio)
 
 		if (!sync)
 			return -EIOCBQUEUED;
+
+		BUG_ON(!dio->sync_done);
+		dio->sync_done = false;
 
 		bch2_dio_write_end(dio);
 

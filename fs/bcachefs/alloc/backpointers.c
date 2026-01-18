@@ -1357,6 +1357,9 @@ struct bkey_s_c_backpointer bch2_bp_scan_iter_peek(struct btree_trans *trans,
 			if (k.k->type != KEY_TYPE_backpointer)
 				continue;
 
+			/* XXX: this is a really big allocation, we should drop
+			 * srcu lock */
+
 			struct bkey_i_backpointer bp;
 			bkey_reassemble(&bp.k_i, k);
 			if (iter->bps.nr > limit ||

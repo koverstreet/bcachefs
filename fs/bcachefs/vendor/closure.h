@@ -194,7 +194,7 @@ static inline unsigned closure_nr_remaining(struct closure *cl)
  */
 static inline void closure_sync(struct closure *cl)
 {
-	if (closure_nr_remaining(cl) > 1)
+	//if (closure_nr_remaining(cl) > 1)
 		__bch2_closure_sync(cl);
 }
 

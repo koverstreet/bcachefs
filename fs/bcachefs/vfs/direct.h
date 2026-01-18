@@ -23,6 +23,7 @@ struct dio_write {
 	unsigned			loop:1,
 					extending:1,
 					sync:1,
+					sync_done:1,
 					flush:1;
 	struct quota_res		quota_res;
 	u64				written;
