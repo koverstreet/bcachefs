@@ -376,7 +376,8 @@ u64 bch2_copygc_dev_wait_amount(struct bch_dev *ca)
 	for (unsigned i = 0; i < BCH_DATA_NR; i++)
 		usage.buckets[i] = usage_full.d[i].buckets;
 
-	s64 fragmented_allowed = ((__dev_buckets_available(ca, usage, BCH_WATERMARK_stripe) *
+	s64 fragmented_allowed = (((__dev_buckets_available(ca, usage, BCH_WATERMARK_stripe) +
+				    (ca->mi.nbuckets >> 6)) * /* Copygc hard reserve */
 				   ca->mi.bucket_size) >> 1);
 	s64 fragmented = 0;
 
