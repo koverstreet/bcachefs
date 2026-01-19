@@ -204,6 +204,11 @@ int bch2_six_check_for_deadlock(struct six_lock *lock, void *p);
 static inline void trans_set_locked(struct btree_trans *trans, bool try)
 {
 	if (!trans->locked) {
+		struct task_struct *task = current;
+
+		BUG_ON(task->fs_private);
+		task->fs_private = trans;
+
 		lock_acquire_exclusive(&trans->dep_map, 0, try, NULL, _THIS_IP_);
 		trans->locked = true;
 		trans->last_unlock_ip = 0;
@@ -216,6 +221,11 @@ static inline void trans_set_locked(struct btree_trans *trans, bool try)
 static inline void trans_set_unlocked(struct btree_trans *trans)
 {
 	if (trans->locked) {
+		struct task_struct *task = current;
+
+		BUG_ON(task->fs_private != trans);
+		task->fs_private = NULL;
+
 		lock_release(&trans->dep_map, _THIS_IP_);
 		trans->locked = false;
 		trans->last_unlock_ip = _RET_IP_;

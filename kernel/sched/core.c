@@ -7045,6 +7045,8 @@ static __always_inline void __schedule_loop(int sched_mode)
 	} while (need_resched());
 }
 
+void bch2_account_sched_blocked(u64);
+
 asmlinkage __visible void __sched schedule(void)
 {
 	struct task_struct *tsk = current;
@@ -7053,10 +7055,16 @@ asmlinkage __visible void __sched schedule(void)
 	lockdep_assert(!tsk->sched_rt_mutex);
 #endif
 
-	if (!task_is_running(tsk))
+	bool running = task_is_running(tsk);
+	u64 start_time;
+	if (!running) {
 		sched_submit_work(tsk);
+		start_time = ktime_get_ns();
+	}
 	__schedule_loop(SM_NONE);
 	sched_update_worker(tsk);
+	if (!running)
+		bch2_account_sched_blocked(start_time);
 }
 EXPORT_SYMBOL(schedule);
 

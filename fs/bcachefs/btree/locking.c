@@ -953,3 +953,18 @@ void __bch2_trans_verify_locks(struct btree_trans *trans)
 	trans_for_each_path(trans, path, i)
 		__bch2_btree_path_verify_locks(trans, path);
 }
+
+void bch2_account_sched_blocked(u64 start_time)
+{
+	struct btree_trans *trans = current->fs_private;
+
+	if (trans && (trans->locked || trans->srcu_held) && !trans->locking) {
+		u64 duration = ktime_get_ns() - start_time;
+
+		event_add_trace(trans->c, blocked_with_btree_locks_held, duration, buf, ({
+			prt_str(&buf, "blocked: ");
+			bch2_pr_time_units(&buf, duration);
+		}));
+
+	}
+}

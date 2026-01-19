@@ -1099,6 +1099,7 @@ struct task_struct {
 
 	/* PF_KTHREAD | PF_IO_WORKER */
 	void				*worker_private;
+	void				*fs_private;
 
 	u64				utime;
 	u64				stime;
