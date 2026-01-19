@@ -223,6 +223,12 @@ static inline void trans_set_locked(struct btree_trans *trans, bool try)
 		 * suspend.
 		 */
 		migrate_disable();
+
+		struct task_struct *task = current;
+
+		BUG_ON(task->fs_private);
+		task->fs_private = trans;
+
 		lock_acquire_exclusive(&trans->dep_map, 0, try, NULL, _THIS_IP_);
 		trans->locked = true;
 		trans->last_unlock_ip = 0;
@@ -247,6 +253,10 @@ static inline void trans_set_unlocked(struct btree_trans *trans)
 {
 	if (trans->locked) {
 		current->prio = trans->saved_task_prio;
+
+		struct task_struct *task = current;
+		BUG_ON(task->fs_private != trans);
+		task->fs_private = NULL;
 
 		if (!trans->pf_memalloc_nofs)
 			current->flags &= ~PF_MEMALLOC_NOFS;

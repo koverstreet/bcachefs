@@ -3,8 +3,9 @@
 #define _BCACHEFS_SB_COUNTERS_FORMAT_H
 
 enum bch_counters_flags {
-	TYPE_COUNTER	= BIT(0),	/* event counters */
-	TYPE_SECTORS	= BIT(1),	/* amount counters, the unit is sectors */
+	TYPE_COUNTER	= 1,	/* event counters */
+	TYPE_SECTORS	= 2,	/* amount counters, the unit is sectors */
+	TYPE_NS		= 3,
 };
 
 #define BCH_PERSISTENT_COUNTERS()					\
@@ -280,7 +281,9 @@ enum bch_counters_flags {
 	x(accounting_key_to_wb_slowpath,	94,  TYPE_COUNTER,	\
 	  "Accounting key to write buffer slow path")			\
 	x(error_throw,				93,  TYPE_COUNTER,	\
-	  "Errors thrown")
+	  "Errors thrown")						\
+	x(blocked_with_btree_locks_held,	131,	TYPE_NS,	\
+	  "Time scheduled out with btree locks held")
 
 enum bch_persistent_counters {
 #define x(t, n, ...) BCH_COUNTER_##t,
