@@ -20,7 +20,14 @@
 #include <linux/kthread.h>
 #include <linux/sched/mm.h>
 
-static bool __should_discard_bucket(struct journal *, struct journal_device *);
+static bool __should_discard_bucket(struct journal *j, struct journal_device *ja)
+{
+	unsigned min_free = max(4, ja->nr / 8);
+
+	return bch2_journal_dev_buckets_available(j, ja, journal_space_discarded) <
+		min_free &&
+		ja->discard_idx != ja->dirty_idx_ondisk;
+}
 
 /* Free space calculations: */
 
@@ -223,10 +230,14 @@ void bch2_journal_space_available(struct journal *j)
 		       ja->bucket_seq[ja->dirty_idx_ondisk] < j->last_seq_ondisk)
 			ja->dirty_idx_ondisk = (ja->dirty_idx_ondisk + 1) % ja->nr;
 
-		can_discard |= __should_discard_bucket(j, ja);
-
 		max_entry_size = min_t(unsigned, max_entry_size, ca->mi.bucket_size);
 		nr_online++;
+
+		can_discard |= __should_discard_bucket(j, ja);
+
+		if (__should_discard_bucket(j, ja) &&
+		    test_bit(BCH_FS_rw_init_done, &c->flags))
+			queue_work(j->discard_wq, &ja->discard);
 	}
 
 	j->can_discard = can_discard;
@@ -278,15 +289,6 @@ void bch2_journal_space_available(struct journal *j)
 
 /* Discards - last part of journal reclaim: */
 
-static bool __should_discard_bucket(struct journal *j, struct journal_device *ja)
-{
-	unsigned min_free = max(4, ja->nr / 8);
-
-	return bch2_journal_dev_buckets_available(j, ja, journal_space_discarded) <
-		min_free &&
-		ja->discard_idx != ja->dirty_idx_ondisk;
-}
-
 static bool should_discard_bucket(struct journal *j, struct journal_device *ja)
 {
 	guard(spinlock)(&j->lock);
@@ -297,30 +299,33 @@ static bool should_discard_bucket(struct journal *j, struct journal_device *ja)
  * Advance ja->discard_idx as long as it points to buckets that are no longer
  * dirty, issuing discards if necessary:
  */
-void bch2_journal_do_discards(struct journal *j)
+void bch2_journal_discard_work(struct work_struct *work)
 {
-	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+	struct bch_dev *ca = container_of(work, struct bch_dev, journal.discard);
+	struct bch_fs *c = ca->fs;
+	struct journal *j = &c->journal;
+	struct journal_device *ja = &ca->journal;
 
-	guard(mutex)(&j->discard_lock);
+	if (!bch2_dev_get_ioref(c, ca->dev_idx, WRITE, BCH_DEV_WRITE_REF_journal_discard))
+		return;
 
-	for_each_rw_member(c, ca, BCH_DEV_WRITE_REF_journal_do_discards) {
-		struct journal_device *ja = &ca->journal;
+	while (should_discard_bucket(j, ja)) {
+		if (!c->opts.nochanges &&
+		    bch2_discard_opt_enabled(c, ca) &&
+		    bdev_max_discard_sectors(ca->disk_sb.bdev))
+			blkdev_issue_discard(ca->disk_sb.bdev,
+					     bucket_to_sector(ca,
+							      ja->buckets[ja->discard_idx]),
+					     ca->mi.bucket_size, GFP_NOFS);
 
-		while (should_discard_bucket(j, ja)) {
-			if (!c->opts.nochanges &&
-			    bch2_discard_opt_enabled(c, ca) &&
-			    bdev_max_discard_sectors(ca->disk_sb.bdev))
-				blkdev_issue_discard(ca->disk_sb.bdev,
-					bucket_to_sector(ca,
-						ja->buckets[ja->discard_idx]),
-					ca->mi.bucket_size, GFP_NOFS);
-
-			scoped_guard(spinlock, &j->lock) {
-				ja->discard_idx = (ja->discard_idx + 1) % ja->nr;
-				bch2_journal_space_available(j);
-			}
+		scoped_guard(spinlock, &j->lock) {
+			ja->discard_idx = (ja->discard_idx + 1) % ja->nr;
+			bch2_journal_space_available(j);
 		}
 	}
+
+	enumerated_ref_put(&ca->io_ref[WRITE],
+			   BCH_DEV_WRITE_REF_journal_discard);
 }
 
 /*
@@ -731,9 +736,6 @@ static int __bch2_journal_reclaim(struct journal *j, bool direct, bool kicked)
 		ret = bch2_journal_error(j);
 		if (ret)
 			break;
-
-		/* XXX shove journal discards off to another thread */
-		bch2_journal_do_discards(j);
 
 		seq_to_flush = journal_seq_to_flush(j);
 		min_nr = 0;

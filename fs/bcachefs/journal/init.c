@@ -321,6 +321,7 @@ static bool bch2_journal_writing_to_device(struct journal *j, unsigned dev_idx)
 void bch2_dev_journal_stop(struct journal *j, struct bch_dev *ca)
 {
 	wait_event(j->wait, !bch2_journal_writing_to_device(j, ca->dev_idx));
+	cancel_work_sync(&ca->journal.discard);
 }
 
 void bch2_fs_journal_stop(struct journal *j)
@@ -496,6 +497,11 @@ void bch2_dev_journal_exit(struct bch_dev *ca)
 	ja->bucket_seq	= NULL;
 }
 
+void bch2_dev_journal_init_early(struct bch_dev *ca)
+{
+	INIT_WORK(&ca->journal.discard, bch2_journal_discard_work);
+}
+
 int bch2_dev_journal_init(struct bch_dev *ca, struct bch_sb *sb)
 {
 	struct bch_fs *c = ca->fs;
@@ -564,6 +570,9 @@ int bch2_dev_journal_init(struct bch_dev *ca, struct bch_sb *sb)
 
 void bch2_fs_journal_exit(struct journal *j)
 {
+	if (j->discard_wq)
+		destroy_workqueue(j->discard_wq);
+
 	if (j->wq)
 		destroy_workqueue(j->wq);
 
@@ -587,7 +596,6 @@ void bch2_fs_journal_init_early(struct journal *j)
 	init_waitqueue_head(&j->reclaim_wait);
 	init_waitqueue_head(&j->pin_flush_wait);
 	mutex_init(&j->reclaim_lock);
-	mutex_init(&j->discard_lock);
 
 	lockdep_init_map(&j->res_map, "journal res", &res_key, 0);
 
@@ -611,6 +619,11 @@ int bch2_fs_journal_init(struct journal *j)
 	j->wq = alloc_workqueue("bcachefs_journal",
 				WQ_HIGHPRI|WQ_FREEZABLE|WQ_UNBOUND|WQ_MEM_RECLAIM, 512);
 	if (!j->wq)
+		return bch_err_throw(c, ENOMEM_fs_other_alloc);
+
+	j->discard_wq = alloc_workqueue("bcachefs_journal_discard",
+				WQ_HIGHPRI|WQ_FREEZABLE|WQ_UNBOUND|WQ_MEM_RECLAIM, 512);
+	if (!j->discard_wq)
 		return bch_err_throw(c, ENOMEM_fs_other_alloc);
 	return 0;
 }

@@ -237,6 +237,7 @@ struct journal {
 
 	struct delayed_work	write_work;
 	struct workqueue_struct *wq;
+	struct workqueue_struct *discard_wq;
 
 	/* Sequence number of most recent journal entry (last entry in @pin) */
 	atomic64_t		seq;
@@ -300,8 +301,6 @@ struct journal {
 	bool			flush_in_progress_dropped;
 	wait_queue_head_t	pin_flush_wait;
 
-	/* protects advancing ja->discard_idx: */
-	struct mutex		discard_lock;
 	bool			can_discard;
 
 	unsigned long		last_flush_write;
@@ -347,6 +346,8 @@ struct journal_device {
 
 	/* Bio for journal reads/writes to this device */
 	struct journal_bio	*bio[JOURNAL_BUF_NR];
+
+	struct work_struct	discard;
 
 	/* for bch_journal_read_device */
 	struct closure		read;

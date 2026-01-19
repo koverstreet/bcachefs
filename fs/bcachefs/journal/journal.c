@@ -532,7 +532,6 @@ static int __journal_res_get(struct journal *j, struct journal_res *res,
 {
 	struct bch_fs *c = container_of(j, struct bch_fs, journal);
 	struct journal_buf *buf;
-	bool can_discard;
 	int ret;
 retry:
 	if (journal_res_get_fast(j, res, flags))
@@ -547,7 +546,6 @@ retry:
 
 	if ((flags & BCH_WATERMARK_MASK) < j->watermark) {
 		ret = bch_err_throw(c, journal_full);
-		can_discard = j->can_discard;
 		goto out;
 	}
 
@@ -584,7 +582,6 @@ retry:
 	__journal_entry_close(j, JOURNAL_ENTRY_CLOSED_VAL, false);
 	ret = journal_entry_open(j) ?: -BCH_ERR_journal_retry_open;
 unlock:
-	can_discard = j->can_discard;
 	spin_unlock(&j->lock);
 out:
 	if (likely(!ret))
@@ -616,11 +613,6 @@ out:
 	if ((ret == -BCH_ERR_journal_full ||
 	     ret == -BCH_ERR_journal_pin_full) &&
 	    !(flags & JOURNAL_RES_GET_NONBLOCK)) {
-		if (can_discard) {
-			bch2_journal_do_discards(j);
-			goto retry;
-		}
-
 		if (journal_low_on_space(j) &&
 		    mutex_trylock(&j->reclaim_lock)) {
 			bch2_journal_reclaim(j);
