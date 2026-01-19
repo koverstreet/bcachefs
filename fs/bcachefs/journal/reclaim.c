@@ -22,7 +22,7 @@
 
 static bool __should_discard_bucket(struct journal *j, struct journal_device *ja)
 {
-	unsigned min_free = max(4, ja->nr / 8);
+	unsigned min_free = max(4, ja->nr / 2);
 
 	return bch2_journal_dev_buckets_available(j, ja, journal_space_discarded) <
 		min_free &&
@@ -295,19 +295,16 @@ static bool should_discard_bucket(struct journal *j, struct journal_device *ja)
 	return __should_discard_bucket(j, ja);
 }
 
-/*
- * Advance ja->discard_idx as long as it points to buckets that are no longer
- * dirty, issuing discards if necessary:
- */
-void bch2_journal_discard_work(struct work_struct *work)
+static void bch2_journal_dev_do_discards(struct journal_device *ja)
 {
-	struct bch_dev *ca = container_of(work, struct bch_dev, journal.discard);
+	struct bch_dev *ca = container_of(ja, struct bch_dev, journal);
 	struct bch_fs *c = ca->fs;
 	struct journal *j = &c->journal;
-	struct journal_device *ja = &ca->journal;
 
 	if (!bch2_dev_get_ioref(c, ca->dev_idx, WRITE, BCH_DEV_WRITE_REF_journal_discard))
 		return;
+
+	guard(mutex)(&ja->discard_lock);
 
 	while (should_discard_bucket(j, ja)) {
 		if (!c->opts.nochanges &&
@@ -326,6 +323,25 @@ void bch2_journal_discard_work(struct work_struct *work)
 
 	enumerated_ref_put(&ca->io_ref[WRITE],
 			   BCH_DEV_WRITE_REF_journal_discard);
+}
+
+/*
+ * Advance ja->discard_idx as long as it points to buckets that are no longer
+ * dirty, issuing discards if necessary:
+ */
+void bch2_journal_discard_work(struct work_struct *work)
+{
+	struct journal_device *ja = container_of(work, struct journal_device, discard);
+
+	bch2_journal_dev_do_discards(ja);
+}
+
+void bch2_journal_do_discards(struct journal *j)
+{
+	struct bch_fs *c = container_of(j, struct bch_fs, journal);
+
+	for_each_member_device(c, ca)
+		bch2_journal_dev_do_discards(&ca->journal);
 }
 
 /*

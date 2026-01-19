@@ -347,6 +347,7 @@ struct journal_device {
 	/* Bio for journal reads/writes to this device */
 	struct journal_bio	*bio[JOURNAL_BUF_NR];
 
+	struct mutex		discard_lock;
 	struct work_struct	discard;
 
 	/* for bch_journal_read_device */

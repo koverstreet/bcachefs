@@ -734,7 +734,14 @@ CLOSURE_CALLBACK(bch2_journal_write)
 		goto err;
 
 	unsigned replicas_allocated = 0;
-	ret = journal_write_alloc(j, w, &replicas_allocated);
+	while (1) {
+		ret = journal_write_alloc(j, w, &replicas_allocated);
+		if (!ret || !j->can_discard)
+			break;
+
+		bch2_journal_do_discards(j);
+	}
+
 	if (unlikely(ret))
 		goto err;
 

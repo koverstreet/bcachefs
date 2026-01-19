@@ -499,6 +499,7 @@ void bch2_dev_journal_exit(struct bch_dev *ca)
 
 void bch2_dev_journal_init_early(struct bch_dev *ca)
 {
+	mutex_init(&ca->journal.discard_lock);
 	INIT_WORK(&ca->journal.discard, bch2_journal_discard_work);
 }
 
