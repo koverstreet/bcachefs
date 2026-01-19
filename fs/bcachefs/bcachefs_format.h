@@ -164,14 +164,12 @@ __aligned(4)
 #define KEY_SNAPSHOT_MAX		((__u32)~0U)
 #define KEY_SIZE_MAX			((__u32)~0U)
 
-static inline struct bpos SPOS(__u64 inode, __u64 offset, __u32 snapshot)
-{
-	return (struct bpos) {
-		.inode		= inode,
-		.offset		= offset,
-		.snapshot	= snapshot,
-	};
-}
+#define SPOS(_inode, _offset, _snapshot)		\
+	((struct bpos) {				\
+		.inode		= _inode,		\
+		.offset		= _offset,		\
+		.snapshot	= _snapshot,		\
+	})
 
 #define POS_MIN				SPOS(0, 0, 0)
 #define POS_MAX				SPOS(KEY_INODE_MAX, KEY_OFFSET_MAX, 0)
