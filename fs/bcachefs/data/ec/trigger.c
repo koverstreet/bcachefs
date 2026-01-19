@@ -26,7 +26,7 @@
 #include "data/read.h"
 #include "data/write.h"
 #include "data/keylist.h"
-#include "data/reconcile.h"
+#include "data/reconcile/trigger.h"
 
 #include "init/error.h"
 #include "init/passes.h"

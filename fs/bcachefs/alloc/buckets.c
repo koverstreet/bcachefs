@@ -20,7 +20,7 @@
 
 #include "data/copygc.h"
 #include "data/ec/trigger.h"
-#include "data/reconcile.h"
+#include "data/reconcile/trigger.h"
 #include "data/reflink.h"
 
 #include "fs/inode.h"

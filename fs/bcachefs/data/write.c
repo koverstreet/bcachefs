@@ -20,7 +20,7 @@
 #include "data/keylist.h"
 #include "data/move.h"
 #include "data/nocow_locking.h"
-#include "data/reconcile.h"
+#include "data/reconcile/trigger.h"
 #include "data/write.h"
 
 #include "debug/async_objs.h"

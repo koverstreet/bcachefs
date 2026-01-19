@@ -224,7 +224,7 @@ struct bch_extent_flags {
 };
 
 /* bch_extent_reconcile: */
-#include "reconcile_format.h"
+#include "reconcile/format.h"
 
 union bch_extent_entry {
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__ ||  __BITS_PER_LONG == 64

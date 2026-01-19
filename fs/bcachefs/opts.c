@@ -11,7 +11,7 @@
 
 #include "data/compress.h"
 #include "data/copygc.h"
-#include "data/reconcile.h"
+#include "data/reconcile/work.h"
 
 #include "init/dev.h"
 #include "init/error.h"

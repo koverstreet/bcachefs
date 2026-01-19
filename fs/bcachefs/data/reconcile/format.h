@@ -199,5 +199,10 @@ static const enum btree_id reconcile_work_phys_btree[] = {
 	[RECONCILE_WORK_normal]		= BTREE_ID_reconcile_work_phys,
 };
 
+#define RECONCILE_SCAN_COOKIE_device	32
+#define RECONCILE_SCAN_COOKIE_pending	2
+#define RECONCILE_SCAN_COOKIE_metadata	1
+#define RECONCILE_SCAN_COOKIE_fs	0
+
 #endif /* _BCACHEFS_REBALANCE_FORMAT_H */
 

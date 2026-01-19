@@ -15,7 +15,7 @@
 #include "data/keylist.h"
 #include "data/move.h"
 #include "data/nocow_locking.h"
-#include "data/reconcile.h"
+#include "data/reconcile/trigger.h"
 #include "data/update.h"
 #include "data/write.h"
 

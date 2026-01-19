@@ -33,7 +33,7 @@
 #include "data/move.h"
 #include "data/nocow_locking.h"
 #include "data/read.h"
-#include "data/reconcile.h"
+#include "data/reconcile/work.h"
 #include "data/write.h"
 
 #ifdef CONFIG_DEBUG_FS

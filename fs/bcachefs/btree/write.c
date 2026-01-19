@@ -6,7 +6,7 @@
 #include "btree/sort.h"
 #include "btree/write.h"
 
-#include "data/reconcile.h"
+#include "data/reconcile/trigger.h"
 #include "data/write.h"
 
 #include "debug/async_objs.h"

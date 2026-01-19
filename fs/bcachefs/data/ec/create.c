@@ -3,6 +3,7 @@
 #include "bcachefs.h"
 
 #include "alloc/backpointers.h"
+#include "alloc/disk_groups.h"
 #include "alloc/foreground.h"
 #include "alloc/lru.h"
 

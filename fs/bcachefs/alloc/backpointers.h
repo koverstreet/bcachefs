@@ -8,7 +8,7 @@
 #include "btree/iter.h"
 #include "btree/update.h"
 
-#include "data/reconcile.h"
+#include "data/reconcile/trigger.h"
 
 #include "init/error.h"
 

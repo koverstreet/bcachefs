@@ -9,6 +9,7 @@
 #include "bcachefs.h"
 
 #include "alloc/buckets.h"
+#include "alloc/disk_groups.h"
 
 #include "btree/bkey_methods.h"
 #include "btree/cache.h"
@@ -19,7 +20,7 @@
 #include "data/checksum.h"
 #include "data/compress.h"
 #include "data/extents.h"
-#include "data/reconcile.h"
+#include "data/reconcile/trigger.h"
 
 #include "fs/inode.h"
 

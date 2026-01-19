@@ -20,7 +20,7 @@
 #include "data/keylist.h"
 #include "data/migrate.h"
 #include "data/move.h"
-#include "data/reconcile.h"
+#include "data/reconcile/trigger.h"
 
 #include "journal/journal.h"
 

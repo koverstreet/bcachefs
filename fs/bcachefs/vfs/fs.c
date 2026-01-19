@@ -8,7 +8,7 @@
 
 #include "btree/update.h"
 
-#include "data/reconcile.h"
+#include "data/reconcile/work.h"
 
 #include "fs/acl.h"
 #include "fs/check.h"

@@ -31,7 +31,7 @@
 #include "data/ec/create.h"
 #include "data/move.h"
 #include "data/nocow_locking.h"
-#include "data/reconcile.h"
+#include "data/reconcile/work.h"
 
 #include "debug/sysfs.h"
 #include "debug/tests.h"

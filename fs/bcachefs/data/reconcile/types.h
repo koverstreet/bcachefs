@@ -3,7 +3,7 @@
 #define _BCACHEFS_REBALANCE_TYPES_H
 
 #include "btree/bbpos_types.h"
-#include "move_types.h"
+#include "data/move_types.h"
 
 struct bch_fs_reconcile {
 	struct task_struct __rcu	*thread;

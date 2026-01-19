@@ -3,7 +3,7 @@
 
 #include "alloc/disk_groups.h"
 
-#include "data/reconcile.h"
+#include "data/reconcile/work.h"
 
 #include "init/dev.h"
 

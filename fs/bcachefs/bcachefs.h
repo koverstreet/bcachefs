@@ -251,7 +251,7 @@
 #include "data/ec/types.h"
 #include "data/keylist_types.h"
 #include "data/nocow_locking_types.h"
-#include "data/reconcile_types.h"
+#include "data/reconcile/types.h"
 
 #include "debug/async_objs_types.h"
 #include "debug/trace.h"

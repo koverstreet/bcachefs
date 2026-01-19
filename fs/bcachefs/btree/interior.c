@@ -22,7 +22,7 @@
 
 #include "data/extents.h"
 #include "data/keylist.h"
-#include "data/reconcile.h"
+#include "data/reconcile/trigger.h"
 #include "data/write.h"
 
 #include "init/error.h"

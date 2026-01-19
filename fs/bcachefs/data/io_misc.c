@@ -14,7 +14,7 @@
 #include "data/extents.h"
 #include "data/extent_update.h"
 #include "data/io_misc.h"
-#include "data/reconcile.h"
+#include "data/reconcile/trigger.h"
 #include "data/write.h"
 
 #include "fs/inode.h"
