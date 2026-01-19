@@ -257,9 +257,12 @@ static int extent_ec_pending(struct btree_trans *trans, struct bkey_ptrs_c ptrs)
 	return false;
 }
 
+static int bch2_extent_reconcile_pending_mod(struct btree_trans *, struct btree_iter *,
+					     unsigned, struct bkey_s_c, bool);
+
 static int reconcile_set_data_opts(struct btree_trans *trans,
-				   void *arg,
-				   enum btree_id btree,
+				   struct btree_iter *iter,
+				   unsigned level,
 				   struct bkey_s_c k,
 				   struct bch_inode_opts *opts,
 				   struct data_update_opts *data_opts)
@@ -413,14 +416,20 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 		    data_opts->ptrs_kill_ec ||
 		    data_opts->extra_replicas);
 	if (!ret) {
-		/*
-		 * XXX: this can happen because you have all devices set to
-		 * durability=2 and replicas set to 1, 3 - we can't exactly
-		 * matth the replicas setting
-		 */
-		CLASS(bch_log_msg_ratelimited, msg)(c);
-		prt_printf(&msg.m, "got extent to reconcile but nothing to do, confused\n  ");
-		bch2_bkey_val_to_text(&msg.m, c, k);
+		if (r->need_rb == BIT(BCH_REBALANCE_data_replicas)) {
+			/*
+			 * We can end up here because you have all devices set
+			 * to durability=2 and replicas set to 1, 3 - we can't
+			 * exactly match the replicas setting - or because we
+			 * want to drop replicas and we can't without reducing
+			 * online durability
+			 */
+			return bch2_extent_reconcile_pending_mod(trans, iter, level, k, true);
+		} else {
+			CLASS(bch_log_msg_ratelimited, msg)(c);
+			prt_printf(&msg.m, "got extent to reconcile but nothing to do, confused\n  ");
+			bch2_bkey_val_to_text(&msg.m, c, k);
+		}
 	}
 
 	return ret;
@@ -523,7 +532,7 @@ static int __do_reconcile_extent(struct moving_context *ctxt,
 	CLASS(disk_reservation, res)(c);
 	try(bch2_trans_commit_lazy(trans, &res.r, NULL, BCH_TRANS_COMMIT_no_enospc));
 
-	int ret = reconcile_set_data_opts(trans, NULL, iter->btree_id, k, opts, data_opts);
+	int ret = reconcile_set_data_opts(trans, iter, level, k, opts, data_opts);
 	if (ret <= 0)
 		return ret;
 
