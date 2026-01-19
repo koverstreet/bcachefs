@@ -1824,6 +1824,7 @@ int bch2_journal_read(struct bch_fs *c, struct journal_start_info *info)
 				   info->replay_end + 1,
 				   info->cur_seq - 1);
 		bch_info(c, "%s", buf.buf);
+		trace_printk("%s\n", buf.buf);
 	}
 
 	genradix_for_each(&c->journal_entries, radix_iter, _i) {

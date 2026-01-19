@@ -771,6 +771,8 @@ static int __bch2_fs_recovery(struct bch_fs *c)
 
 		bch_info(c, "recovering from clean shutdown, journal seq %llu",
 			 le64_to_cpu(clean->journal_seq));
+		trace_printk("recovering from clean shutdown, journal seq %llu\n",
+			     le64_to_cpu(clean->journal_seq));
 
 		try(bch2_sb_journal_sort(c));
 	} else {

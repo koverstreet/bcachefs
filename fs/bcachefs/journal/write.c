@@ -830,6 +830,12 @@ CLOSURE_CALLBACK(bch2_journal_write)
 	if (unlikely(ret))
 		goto err;
 
+	{
+		CLASS(printbuf, buf)();
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&w->key));
+		trace_printk("seq %llu\n%s\n", le64_to_cpu(w->data->seq), buf.buf);
+	}
+
 	ret = bch2_journal_write_checksum(j, w);
 	if (unlikely(ret))
 		goto err;
