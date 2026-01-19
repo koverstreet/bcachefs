@@ -21,7 +21,7 @@ long bch2_ioctl_query_counters(struct bch_fs *,
 void bch2_sb_recent_counters_to_text(struct printbuf *out, struct bch_fs_counters *c);
 
 #define counter_typecheck(_name, _type)					\
-	BUILD_BUG_ON(bch2_counter_flags[BCH_COUNTER_##_name] != _type)
+	BUILD_BUG_ON(!(bch2_counter_flags[BCH_COUNTER_##_name] & (_type)))
 
 #define event_inc(_c, _name)						\
 do {									\
@@ -31,7 +31,7 @@ do {									\
 
 #define event_add(_c, _name, _nr)					\
 do {									\
-	counter_typecheck(_name, TYPE_SECTORS);				\
+	counter_typecheck(_name, TYPE_SECTORS|TYPE_NS);			\
 	this_cpu_add((_c)->counters.now[BCH_COUNTER_##_name], _nr);	\
 } while (0)
 
