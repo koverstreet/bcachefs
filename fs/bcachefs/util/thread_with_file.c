@@ -341,11 +341,7 @@ int bch2_stdio_redirect_read(struct stdio_redirect *stdio, char *ubuf, size_t le
 	 * closed), don't want a hung task warning:
 	 */
 	do {
-		if (!sysctl_hung_task_timeout_secs)
-			wait_event(buf->wait, stdio_redirect_has_input(stdio));
-		else
-			wait_event_timeout(buf->wait, stdio_redirect_has_input(stdio),
-					   sysctl_hung_task_timeout_secs * HZ / 2);
+		wait_event_timeout(buf->wait, stdio_redirect_has_input(stdio), HZ);
 	} while (!stdio_redirect_has_input(stdio));
 
 	if (stdio->done)
@@ -378,7 +374,7 @@ int bch2_stdio_redirect_readline_timeout(struct stdio_redirect *stdio,
 			? max_t(long, until - jiffies, 0)
 			: timeout;
 
-		t = min(t, sysctl_hung_task_timeout_secs * HZ / 2);
+		t = min(t, HZ);
 
 		wait_event_timeout(buf->wait, stdio_redirect_has_more_input(stdio, seen), t);
 

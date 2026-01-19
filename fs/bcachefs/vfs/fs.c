@@ -48,6 +48,23 @@
 #include <linux/version.h>
 #include <linux/xattr.h>
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,19,0)
+static inline unsigned inode_state_read(struct inode *inode)
+{
+	return inode->i_state;
+}
+
+static inline unsigned inode_state_read_once(struct inode *inode)
+{
+	return READ_ONCE(inode->i_state);
+}
+
+static inline void inode_state_set_raw(struct inode *inode, unsigned flags)
+{
+	WRITE_ONCE(inode->i_state, inode->i_state|flags);
+}
+#endif
+
 static struct kmem_cache *bch2_inode_cache;
 
 static void bch2_vfs_inode_init(struct btree_trans *, subvol_inum,
@@ -333,7 +350,7 @@ repeat:
 			spin_unlock(&inode->v.i_lock);
 			return NULL;
 		}
-		if ((inode->v.i_state & (I_FREEING|I_WILL_FREE))) {
+		if (inode_state_read(&inode->v) & (I_FREEING|I_WILL_FREE)) {
 			if (!trans) {
 				__wait_on_freeing_inode(c, inode, inum);
 			} else {
@@ -397,7 +414,7 @@ retry:
 		 * only insert fully created inodes in the inode hash table. But
 		 * discard_new_inode() expects it to be set...
 		 */
-		inode->v.i_state |= I_NEW;
+		inode_state_set_raw(&inode->v, I_NEW);
 		/*
 		 * We don't want bch2_evict_inode() to delete the inode on disk,
 		 * we just raced and had another inode in cache. Normally new
@@ -1835,7 +1852,7 @@ static void bch2_evict_inode(struct inode *vinode)
 		write_inode_now(&inode->v, true);
 
 	if (IS_ENABLED(CONFIG_BCACHEFS_DEBUG) || !delete) {
-		BUG_ON(inode->v.i_state & I_DIRTY);
+		BUG_ON(inode_state_read_once(&inode->v) & I_DIRTY);
 
 		struct bch_inode_unpacked inode_u;
 		if (!is_bad_inode(&inode->v) &&
@@ -1916,8 +1933,7 @@ again:
 		if (!snapshot_list_has_id(s, inode->ei_inum.subvol))
 			continue;
 
-		if (!(inode->v.i_state & I_DONTCACHE) &&
-		    !(inode->v.i_state & I_FREEING) &&
+		if (!(inode_state_read_once(&inode->v) & (I_DONTCACHE|I_FREEING)) &&
 		    igrab(&inode->v)) {
 			this_pass_clean = false;
 

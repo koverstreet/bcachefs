@@ -160,7 +160,12 @@ static const struct rhashtable_params bch_btree_cache_params = {
 static int btree_node_data_alloc(struct bch_fs *c, struct btree *b, gfp_t gfp,
 				 bool avoid_compaction)
 {
-	gfp |= __GFP_ACCOUNT|__GFP_RECLAIMABLE;
+	/*
+	 * We probably ought to be using __GFP_RECLAIMABLE - but vmalloc barfs.
+	 *
+	 * Shrinkable memory accounting is fubar.
+	 */
+	gfp |= __GFP_ACCOUNT;
 
 	if (!b->data) {
 		if (avoid_compaction && bch2_mm_avoid_compaction) {

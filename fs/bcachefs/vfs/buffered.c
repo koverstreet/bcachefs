@@ -144,7 +144,11 @@ static int readpage_bio_extend(struct btree_trans *trans,
 			if (folio && !xa_is_value(folio))
 				break;
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6,19,0)
 			folio = filemap_alloc_folio(readahead_gfp_mask(iter->mapping), order);
+#else
+			folio = filemap_alloc_folio(readahead_gfp_mask(iter->mapping), order, NULL);
+#endif
 			if (!folio)
 				break;
 

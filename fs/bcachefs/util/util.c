@@ -1015,3 +1015,16 @@ err:
 	darray_exit_free_item(ret, kfree);
 	return -ENOMEM;
 }
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,19,0)
+void *mempool_kvmalloc(gfp_t gfp_mask, void *pool_data)
+{
+	size_t size = (size_t)pool_data;
+	return kvmalloc(size, gfp_mask);
+}
+
+void mempool_kvfree(void *element, void *pool_data)
+{
+	kvfree(element);
+}
+#endif

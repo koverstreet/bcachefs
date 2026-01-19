@@ -313,11 +313,9 @@ static int read_btree_nodes(struct find_btree_nodes *f)
 
 	bch_notice(c, "%s", buf.buf);
 err:
-	if (!sysctl_hung_task_timeout_secs)
-		closure_sync(&cl);
-	else
-		while (closure_sync_timeout(&cl, sysctl_hung_task_timeout_secs * HZ / 2))
-			;
+	/* Suppress hung task warning: */
+	while (closure_sync_timeout(&cl, HZ))
+		;
 
 	return f->ret ?: ret;
 }
