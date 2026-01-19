@@ -305,7 +305,7 @@ static bool can_use_btree_node(struct bch_fs *c,
 	if (target && !bch2_bkey_in_target(c, k, target))
 		return false;
 
-	unsigned durability = bch2_btree_ptr_durability(c, k);
+	unsigned durability = bch2_btree_ptr_durability(c, k).online;
 
 	if (durability >= res->nr_replicas)
 		return true;

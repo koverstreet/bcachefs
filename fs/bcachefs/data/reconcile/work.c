@@ -287,13 +287,12 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 	unsigned compression_type = bch2_compression_opt_to_type(r->background_compression);
 
 	if (r->need_rb & BIT(BCH_REBALANCE_data_replicas)) {
-		int durability = bch2_bkey_durability(trans, k);
-		if (durability < 0)
-			return durability;
+		struct bkey_durability durability;
+		try(bch2_bkey_durability(trans, k, &durability));
 
 		unsigned ptr_bit = 1;
 
-		if (durability <= r->data_replicas) {
+		if (durability.total <= r->data_replicas) {
 			guard(rcu)();
 
 			bkey_for_each_ptr(ptrs, ptr) {
@@ -302,6 +301,44 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 				ptr_bit <<= 1;
 			}
 		} else {
+			if (durability.total != durability.online) {
+				/* Try dropping offline devices first */
+				bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+					if (p.ptr.dev == BCH_SB_MEMBER_INVALID ||
+					    !test_bit(p.ptr.dev, c->devs_online.d)) {
+						int d = bch2_extent_ptr_durability(trans, &p);
+						if (d < 0)
+							return d;
+
+						if (bch2_dev_bad_or_evacuating(c, p.ptr.dev) ||
+						    (!p.ptr.cached &&
+						     d && durability.total - d >= r->data_replicas)) {
+							data_opts->ptrs_kill |= ptr_bit;
+							durability.total -= d;
+						}
+					}
+
+					ptr_bit <<= 1;
+				}
+
+				/* Stripe ec? */
+				ptr_bit = 1;
+				bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+					if (p.ptr.dev == BCH_SB_MEMBER_INVALID ||
+					    !test_bit(p.ptr.dev, c->devs_online.d)) {
+						if (p.has_ec && durability.total - p.ec.redundancy >= r->data_replicas) {
+							data_opts->ptrs_kill_ec |= ptr_bit;
+							durability.total -= p.ec.redundancy;
+						}
+					}
+
+					ptr_bit <<= 1;
+				}
+			}
+
+			/* Don't let online durability go below data_replicas */
+
+			/* Drop entire pointers? */
 			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
 				int d = bch2_extent_ptr_durability(trans, &p);
 				if (d < 0)
@@ -309,19 +346,20 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 
 				if (bch2_dev_bad_or_evacuating(c, p.ptr.dev) ||
 				    (!p.ptr.cached &&
-				     d && durability - d >= r->data_replicas)) {
+				     d && durability.online - d >= r->data_replicas)) {
 					data_opts->ptrs_kill |= ptr_bit;
-					durability -= d;
+					durability.online -= d;
 				}
 
 				ptr_bit <<= 1;
 			}
 
+			/* Stripe ec? */
 			ptr_bit = 1;
 			bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-				if (p.has_ec && durability - p.ec.redundancy >= r->data_replicas) {
+				if (p.has_ec && durability.online - p.ec.redundancy >= r->data_replicas) {
 					data_opts->ptrs_kill_ec |= ptr_bit;
-					durability -= p.ec.redundancy;
+					durability.online -= p.ec.redundancy;
 				}
 
 				ptr_bit <<= 1;
@@ -375,6 +413,11 @@ static int reconcile_set_data_opts(struct btree_trans *trans,
 		    data_opts->ptrs_kill_ec ||
 		    data_opts->extra_replicas);
 	if (!ret) {
+		/*
+		 * XXX: this can happen because you have all devices set to
+		 * durability=2 and replicas set to 1, 3 - we can't exactly
+		 * matth the replicas setting
+		 */
 		CLASS(bch_log_msg_ratelimited, msg)(c);
 		prt_printf(&msg.m, "got extent to reconcile but nothing to do, confused\n  ");
 		bch2_bkey_val_to_text(&msg.m, c, k);

@@ -865,36 +865,51 @@ int bch2_extent_ptr_durability(struct btree_trans *trans, struct extent_ptr_deco
 	return bch2_extent_ptr_durability_rcu(trans->c, p);
 }
 
-int bch2_bkey_durability(struct btree_trans *trans, struct bkey_s_c k)
+int bch2_bkey_durability(struct btree_trans *trans, struct bkey_s_c k, struct bkey_durability *ret)
 {
 	struct bch_fs *c = trans->c;
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
-	unsigned durability = 0;
+
+	*ret = (struct bkey_durability) {};
 
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if (p.ptr.dev == BCH_SB_MEMBER_INVALID)
+			continue;
+
 		int d = bch2_extent_ptr_durability(trans, &p);
 		if (d < 0)
 			return d;
-		durability += d;
+
+		if (test_bit(p.ptr.dev, c->devs_online.d))
+			ret->online += d;
+		ret->total += d;
 	}
-	return durability;
+	return 0;
 }
 
-unsigned bch2_btree_ptr_durability(struct bch_fs *c, struct bkey_s_c k)
+struct bkey_durability bch2_btree_ptr_durability(struct bch_fs *c, struct bkey_s_c k)
 {
 	BUG_ON(!bkey_is_btree_ptr(k.k));
 
 	struct bkey_ptrs_c ptrs = bch2_bkey_ptrs_c(k);
 	const union bch_extent_entry *entry;
 	struct extent_ptr_decoded p;
-	unsigned durability = 0;
+	struct bkey_durability ret = {};
 
 	guard(rcu)();
-	bkey_for_each_ptr_decode(k.k, ptrs, p, entry)
-		durability += bch2_extent_ptr_durability_rcu(c, &p);
-	return durability;
+	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
+		if (p.ptr.dev == BCH_SB_MEMBER_INVALID)
+			continue;
+
+		unsigned d = bch2_extent_ptr_durability_rcu(c, &p);
+
+		if (test_bit(p.ptr.dev, c->devs_online.d))
+			ret.online += d;
+		ret.total += d;
+	}
+	return ret;
 }
 
 bool bch2_bkey_can_read(const struct bch_fs *c, struct bkey_s_c k)

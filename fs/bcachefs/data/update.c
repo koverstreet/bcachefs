@@ -198,7 +198,7 @@ static int data_update_index_update_key(struct btree_trans *trans,
 
 	unsigned rewrites_found = 0, ptr_bit = 1;
 	bkey_for_each_ptr_decode(old.k, bch2_bkey_ptrs_c(old), p, entry_c) {
-		if ((ptr_bit & u->opts.ptrs_kill ) &&
+		if ((ptr_bit & u->opts.ptrs_kill) &&
 		    (ptr = bch2_extent_has_ptr(c, old, p, bkey_i_to_s(insert)))) {
 			if (ptr_bit & u->opts.ptrs_io_error)
 				bch2_bkey_drop_ptr_noerror(c, bkey_i_to_s(insert), ptr);
@@ -211,11 +211,10 @@ static int data_update_index_update_key(struct btree_trans *trans,
 	}
 
 	if (u->opts.ptrs_kill && !rewrites_found) {
-		int durability = bch2_bkey_durability(trans, k);
-		if (durability < 0)
-			return durability;
+		struct bkey_durability durability;
+		try(bch2_bkey_durability(trans, k, &durability));
 
-		if (durability >= opts.data_replicas) {
+		if (durability.total >= opts.data_replicas) {
 			count_data_update_key_fail(u, k, bkey_i_to_s_c(&new->k_i), insert,
 						   "no rewrites found:");
 			bch2_btree_iter_advance(iter);
@@ -793,7 +792,7 @@ static int bch2_can_do_write_btree(struct bch_fs *c,
 		return 0;
 
 	if (!(data_opts->write_flags & BCH_WRITE_only_specified_devs)) {
-		unsigned d = bch2_btree_ptr_durability(c, k);
+		unsigned d = bch2_btree_ptr_durability(c, k).total;
 		if (d < opts->data_replicas &&
 		    d < durability_available_on_target(c, watermark, BCH_DATA_btree, 0, &empty,
 						       data_opts->write_flags & BCH_WRITE_alloc_nowait,

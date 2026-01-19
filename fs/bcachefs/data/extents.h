@@ -578,8 +578,13 @@ unsigned bch2_bkey_replicas(struct bch_fs *, struct bkey_s_c);
 unsigned bch2_dev_durability(struct bch_fs *, unsigned);
 int bch2_extent_ptr_desired_durability(struct btree_trans *, struct extent_ptr_decoded *);
 int bch2_extent_ptr_durability(struct btree_trans *, struct extent_ptr_decoded *);
-int bch2_bkey_durability(struct btree_trans *, struct bkey_s_c);
-unsigned bch2_btree_ptr_durability(struct bch_fs *, struct bkey_s_c);
+
+struct bkey_durability {
+	unsigned	online, total;
+};
+
+int bch2_bkey_durability(struct btree_trans *, struct bkey_s_c, struct bkey_durability *);
+struct bkey_durability bch2_btree_ptr_durability(struct bch_fs *, struct bkey_s_c);
 bool bch2_bkey_can_read(const struct bch_fs *, struct bkey_s_c);
 
 const struct bch_extent_ptr *bch2_bkey_has_device_c(const struct bch_fs *,
