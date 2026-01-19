@@ -1364,7 +1364,8 @@ static int bch2_inode_get_i_size(struct btree_trans *trans, struct bpos inode_po
 	return 0;
 }
 
-static void bch2_nocow_write(struct bch_write_op *op)
+/* returns false if fallaback to cow write path required */
+static bool bch2_nocow_write(struct bch_write_op *op)
 {
 	struct bch_fs *c = op->c;
 	struct btree_trans *trans;
@@ -1376,7 +1377,7 @@ static void bch2_nocow_write(struct bch_write_op *op)
 	int stale, ret;
 
 	if (op->flags & BCH_WRITE_move)
-		return;
+		return false;
 
 	op->flags &= ~BCH_WRITE_convert_unwritten;
 
@@ -1499,8 +1500,9 @@ err:
 		op->flags |= BCH_WRITE_submitted;
 	}
 
-	/* fallback to cow write path? */
-	if (!(op->flags & BCH_WRITE_submitted)) {
+	bool submitted = op->flags & BCH_WRITE_submitted;
+	if (!submitted) {
+		/* fallback to cow write path */
 		closure_sync(&op->cl);
 		__bch2_nocow_write_done(op);
 		op->insert_keys.top = op->insert_keys.keys;
@@ -1515,7 +1517,7 @@ err:
 		 */
 		continue_at(&op->cl, bch2_nocow_write_done, index_update_wq(op));
 	}
-	return;
+	return submitted;
 err_bucket_stale:
 	{
 		CLASS(printbuf, buf)();
@@ -1548,11 +1550,10 @@ static void __bch2_write(struct bch_write_op *op)
 
 	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 
-	if (unlikely(op->opts.nocow && c->opts.nocow_enabled)) {
-		bch2_nocow_write(op);
-		if (op->flags & BCH_WRITE_submitted)
-			return;
-	}
+	if (unlikely(op->opts.nocow &&
+		     c->opts.nocow_enabled) &&
+	    bch2_nocow_write(op))
+		return;
 again:
 	op->wbio.failed.nr = 0;
 
