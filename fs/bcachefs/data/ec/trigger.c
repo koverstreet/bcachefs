@@ -99,6 +99,9 @@ void bch2_stripe_to_text(struct printbuf *out, struct bch_fs *c,
 		bch2_disk_path_to_text(out, c, s.disk_label - 1);
 	}
 
+	if (s.needs_reconcile)
+		prt_str(out, " needs_reconcile");
+
 	guard(printbuf_indent)(out);
 	guard(printbuf_atomic)(out);
 	guard(rcu)();
@@ -315,7 +318,8 @@ static int mark_stripe_buckets(struct btree_trans *trans,
 				try(mark_stripe_bucket(trans, bkey_s_c_to_stripe(old), i, true, flags));
 		}
 
-		if (ptr_changing &&
+		if ((ptr_changing ||
+		     new_s->needs_reconcile != old_s->needs_reconcile) &&
 		    (flags & BTREE_TRIGGER_transactional)) {
 			if (old_ptr)
 				try(mark_stripe_bp(trans, old, old_ptr, false));
@@ -326,6 +330,11 @@ static int mark_stripe_buckets(struct btree_trans *trans,
 	}
 
 	return 0;
+}
+
+static int stripe_needs_reconcile(const struct bch_stripe *s)
+{
+	return s ? s->needs_reconcile : 0;
 }
 
 int bch2_trigger_stripe(struct btree_trans *trans,
@@ -345,31 +354,60 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 		return bch2_check_fix_ptrs(trans, btree, level, _new.s_c, flags);
 
 	BUG_ON(new_s && old_s &&
-	       (new_s->nr_blocks	!= old_s->nr_blocks ||
+	       (new_s->sectors		!= old_s->sectors ||
+		new_s->nr_blocks	!= old_s->nr_blocks ||
 		new_s->nr_redundant	!= old_s->nr_redundant));
+
+	int needs_reconcile_delta =
+		stripe_needs_reconcile(new_s) -
+		stripe_needs_reconcile(old_s);
+
+	if ((flags & (BTREE_TRIGGER_atomic|BTREE_TRIGGER_gc)) == BTREE_TRIGGER_atomic) {
+		if (new_s && stripe_lru_pos(new_s) == 1)
+			bch2_do_stripe_deletes(c);
+	}
 
 	if (flags & BTREE_TRIGGER_transactional) {
 		u64 old_lru_pos = stripe_lru_pos(old_s);
 		u64 new_lru_pos = stripe_lru_pos(new_s);
 
-		if (new_lru_pos == STRIPE_LRU_POS_EMPTY	&&
+		if (unlikely(new_lru_pos == STRIPE_LRU_POS_EMPTY) &&
 		    !bch2_stripe_is_open(c, idx)) {
 			_new.k->type = KEY_TYPE_deleted;
 			set_bkey_val_u64s(_new.k, 0);
 			new_s = NULL;
 			new_lru_pos = 0;
+			needs_reconcile_delta =
+				stripe_needs_reconcile(new_s) -
+				stripe_needs_reconcile(old_s);
 		}
 
 		try(bch2_lru_change(trans,
 				    BCH_LRU_STRIPE_FRAGMENTATION, idx,
 				    old_lru_pos, new_lru_pos));
+
+		if (needs_reconcile_delta)
+			try(bch2_btree_bit_mod_buffered(trans, BTREE_ID_reconcile_hipri,
+					data_to_rb_work_pos(BTREE_ID_stripes, new.k->p),
+					needs_reconcile_delta > 0));
 	}
 
 	if (flags & (BTREE_TRIGGER_transactional|BTREE_TRIGGER_gc)) {
+		if (needs_reconcile_delta) {
+			const struct bch_stripe *s = old_s ?: new_s;
+
+			u64 v[2] = { s->nr_blocks * le16_to_cpu(s->sectors), 0 };
+			v[0] *= needs_reconcile_delta;
+
+			try(bch2_disk_accounting_mod2(trans, flags & BTREE_TRIGGER_gc, v,
+						      reconcile_work, BCH_RECONCILE_ACCOUNTING_stripes));
+		}
+
 		/*
 		 * If the pointers aren't changing, we don't need to do anything:
 		 */
 		if (new_s && old_s &&
+		    new_s->needs_reconcile == old_s->needs_reconcile &&
 		    new_s->nr_blocks	== old_s->nr_blocks &&
 		    new_s->nr_redundant	== old_s->nr_redundant &&
 		    !memcmp(old_s->ptrs, new_s->ptrs,
@@ -430,11 +468,6 @@ int bch2_trigger_stripe(struct btree_trans *trans,
 		}
 
 		try(mark_stripe_buckets(trans, old, new, flags));
-	}
-
-	if ((flags & (BTREE_TRIGGER_atomic|BTREE_TRIGGER_gc)) == BTREE_TRIGGER_atomic) {
-		if (new_s && stripe_lru_pos(new_s) == 1)
-			bch2_do_stripe_deletes(c);
 	}
 
 	return 0;

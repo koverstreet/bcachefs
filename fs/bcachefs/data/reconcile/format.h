@@ -166,6 +166,7 @@ enum bch_reconcile_opts {
 	x(target,		4)		\
 	x(high_priority,	5)		\
 	x(pending,		6)		\
+	x(stripes,		7)
 
 enum bch_reconcile_accounting_type {
 #define x(t, n) BCH_RECONCILE_ACCOUNTING_##t = n,

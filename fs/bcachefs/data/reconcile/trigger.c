@@ -62,7 +62,13 @@ const struct bch_extent_reconcile *bch2_bkey_reconcile_opts(const struct bch_fs 
 
 enum reconcile_work_id bch2_bkey_reconcile_work_id(const struct bch_fs *c, struct bkey_s_c k)
 {
-	return rb_work_id(bch2_bkey_reconcile_opts(c, k));
+	if (k.k->type == KEY_TYPE_stripe) {
+		return bkey_s_c_to_stripe(k).v->needs_reconcile
+			? RECONCILE_WORK_hipri
+			: RECONCILE_WORK_none;
+	} else {
+		return rb_work_id(bch2_bkey_reconcile_opts(c, k));
+	}
 }
 
 void bch2_extent_rebalance_v1_to_text(struct printbuf *out, struct bch_fs *c,

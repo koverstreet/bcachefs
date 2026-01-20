@@ -15,6 +15,7 @@
 #include "data/ec/init.h"
 #include "data/ec/io.h"
 #include "data/ec/trigger.h"
+#include "data/reconcile/trigger.h"
 
 #include "init/error.h"
 
@@ -31,12 +32,16 @@ int bch2_invalidate_stripe_to_dev(struct btree_trans *trans,
 	struct bkey_i_stripe *s =
 		errptr_try(bch2_bkey_make_mut_typed(trans, iter, &k, 0, stripe));
 
-	struct disk_accounting_pos acc;
+	struct bch_inode_opts opts;
+	bch2_inode_opts_get(c, &opts, false);
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, &s->k_i,
+					  SET_NEEDS_RECONCILE_opt_change, 0));
 
 	s64 sectors = 0;
 	for (unsigned i = 0; i < s->v.nr_blocks; i++)
 		sectors -= stripe_blockcount_get(&s->v, i);
 
+	struct disk_accounting_pos acc;
 	memset(&acc, 0, sizeof(acc));
 	acc.type = BCH_DISK_ACCOUNTING_replicas;
 	bch2_bkey_to_replicas(c, &acc.replicas, bkey_i_to_s_c(&s->k_i));

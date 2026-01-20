@@ -120,7 +120,15 @@ static int ec_stripe_key_update(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 
-	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, new->k.p, BTREE_ITER_intent);
+	struct bkey_i *new_mut = errptr_try(bch2_trans_kmalloc(trans, bkey_bytes(&new->k)));
+	bkey_copy(new_mut, &new->k_i);
+
+	struct bch_inode_opts opts;
+	bch2_inode_opts_get(c, &opts, false);
+	try(bch2_bkey_set_needs_reconcile(trans, NULL, &opts, new_mut,
+					  SET_NEEDS_RECONCILE_foreground, 0));
+
+	CLASS(btree_iter, iter)(trans, BTREE_ID_stripes, new_mut->k.p, BTREE_ITER_intent);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 
 	CLASS(printbuf, buf)();
@@ -129,7 +137,7 @@ static int ec_stripe_key_update(struct btree_trans *trans,
 				    (bch2_bkey_val_to_text(&buf, c, k), buf.buf)))
 		return -EINVAL;
 
-	return bch2_trans_update(trans, &iter, &new->k_i, 0);
+	return bch2_trans_update(trans, &iter, new_mut, 0);
 }
 
 struct stripe_update_bucket_stats {

@@ -7,7 +7,15 @@
 struct bch_stripe {
 	struct bch_val		v;
 	__le16			sectors;
-	__u8			algorithm;
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u8			algorithm:4;
+	__u8			needs_reconcile:1;
+	__u8			unused:3;
+#else
+	__u8			unused:3;
+	__u8			needs_reconcile:1;
+	__u8			algorithm:4;
+#endif
 	__u8			nr_blocks;
 	__u8			nr_redundant;
 
