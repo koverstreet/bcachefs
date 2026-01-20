@@ -313,7 +313,7 @@ int bch2_check_fix_ptrs(struct btree_trans *trans,
 			guard(rcu)();
 			bkey_for_each_ptr(ptrs, ptr) {
 				if (r.reset_gen & ptr_bit) {
-					struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
+					struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
 					if (ca)
 						ptr->gen = PTR_GC_BUCKET(ca, ptr)->gen;
 				}

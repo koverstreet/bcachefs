@@ -576,7 +576,7 @@ static bool btree_node_degraded(struct bch_fs *c, struct btree *b)
 		if (ptr->dev == BCH_SB_MEMBER_INVALID)
 			continue;
 
-		struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
+		struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
 		if (!ca || ca->mi.state != BCH_MEMBER_STATE_rw)
 			return true;
 	}

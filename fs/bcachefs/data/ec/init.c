@@ -54,7 +54,7 @@ int bch2_invalidate_stripe_to_dev(struct btree_trans *trans,
 			if (ptr->dev == dev_idx)
 				ptr->dev = BCH_SB_MEMBER_INVALID;
 
-			struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
+			struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
 			nr_good += ca && ca->mi.state != BCH_MEMBER_STATE_evacuating;
 		}
 

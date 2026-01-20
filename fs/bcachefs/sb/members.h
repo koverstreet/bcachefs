@@ -52,12 +52,12 @@ static inline bool bch2_dev_is_online(struct bch_dev *ca)
 	return !enumerated_ref_is_zero(&ca->io_ref[READ]);
 }
 
-static inline struct bch_dev *bch2_dev_rcu(struct bch_fs *, unsigned);
+static inline struct bch_dev *bch2_dev_rcu_noerror(struct bch_fs *, unsigned);
 
 static inline bool bch2_dev_idx_is_online(struct bch_fs *c, unsigned dev)
 {
 	guard(rcu)();
-	struct bch_dev *ca = bch2_dev_rcu(c, dev);
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
 	return ca && bch2_dev_is_online(ca);
 }
 
@@ -336,7 +336,7 @@ static inline struct bch_dev *bch2_dev_get_ioref(struct bch_fs *c, unsigned dev,
 	might_sleep();
 
 	guard(rcu)();
-	struct bch_dev *ca = bch2_dev_rcu(c, dev);
+	struct bch_dev *ca = bch2_dev_rcu_noerror(c, dev);
 	if (!ca || !enumerated_ref_tryget(&ca->io_ref[rw], ref_idx))
 		return NULL;
 
