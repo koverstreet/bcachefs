@@ -780,7 +780,8 @@ static int do_reconcile_scan_bps(struct moving_context *ctxt,
 
 	bch2_btree_write_buffer_flush_sync(trans);
 
-	return backpointer_scan_for_each(trans, iter, POS(s.dev, 0), POS(s.dev, U64_MAX),
+	return backpointer_scan_for_each(trans, iter, BTREE_ID_backpointers,
+					 POS(s.dev, 0), POS(s.dev, U64_MAX),
 				  last_flushed, NULL, bp, ({
 		ctxt->stats->pos = BBPOS(BTREE_ID_backpointers, iter.pos);
 

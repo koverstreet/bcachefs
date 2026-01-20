@@ -77,6 +77,8 @@ void bch2_backpointer_to_text(struct printbuf *out, struct bch_fs *c, struct bke
 	if (BACKPOINTER_RECONCILE_PHYS(bp.v))
 		prt_str(out, " phys");
 
+	if (BACKPOINTER_STRIPE_PTR(bp.v))
+		prt_str(out, " stripe");
 }
 
 void bch2_backpointer_swab(const struct bch_fs *c, struct bkey_s k)
@@ -158,7 +160,7 @@ int bch2_bucket_backpointer_mod_nowritebuffer(struct btree_trans *trans,
 				struct bkey_i_backpointer *bp,
 				bool insert)
 {
-	CLASS(btree_iter, bp_iter)(trans, BTREE_ID_backpointers, bp->k.p,
+	CLASS(btree_iter, bp_iter)(trans, backpointer_btree(&bp->v), bp->k.p,
 				   BTREE_ITER_intent);
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&bp_iter));
 
@@ -627,7 +629,7 @@ static int check_bp_exists(struct btree_trans *trans,
 			   struct bkey_s_c extent,
 			   struct bkey_i_backpointer *bp)
 {
-	CLASS(btree_iter, bp_iter)(trans, BTREE_ID_backpointers, bp->k.p, 0);
+	CLASS(btree_iter, bp_iter)(trans, backpointer_btree(&bp->v), bp->k.p, 0);
 	struct bkey_s_c bp_found = bkey_try(bch2_btree_iter_peek_slot(&bp_iter));
 
 	if (bp_found.k->type != KEY_TYPE_backpointer) {
@@ -652,8 +654,14 @@ static int check_extent_to_backpointers(struct btree_trans *trans,
 	struct extent_ptr_decoded p;
 
 	bkey_for_each_ptr_decode(k.k, ptrs, p, entry) {
-		if (p.ptr.dev == BCH_SB_MEMBER_INVALID)
+		struct bkey_i_backpointer bp;
+		bch2_extent_ptr_to_bp(c, btree, level, k, p, entry, &bp);
+
+		if (p.ptr.dev == BCH_SB_MEMBER_INVALID) {
+			if (p.has_ec)
+				try(check_bp_exists(trans, s, k, &bp));
 			continue;
+		}
 
 		bool empty;
 		{
@@ -672,9 +680,6 @@ static int check_extent_to_backpointers(struct btree_trans *trans,
 
 			empty = bch2_bucket_bitmap_test(&ca->bucket_backpointer_empty, b);
 		}
-
-		struct bkey_i_backpointer bp;
-		bch2_extent_ptr_to_bp(c, btree, level, k, p, entry, &bp);
 
 		if (bpos_lt(bp.k.p, s->bp_start) ||
 		    bpos_gt(bp.k.p, s->bp_end))
@@ -1253,7 +1258,7 @@ static int check_bucket_backpointers_to_extents(struct btree_trans *trans,
 {
 	u32 restart_count = trans->restart_count;
 
-	int ret = backpointer_scan_for_each(trans, iter,
+	int ret = backpointer_scan_for_each(trans, iter, BTREE_ID_backpointers,
 			bucket_pos_to_bp_start(ca, bucket),
 			bucket_pos_to_bp_end(ca, bucket),
 			last_flushed, NULL, bp,
@@ -1275,9 +1280,17 @@ static int bch2_check_backpointers_to_extents_pass(struct btree_trans *trans,
 	bch2_progress_init(&progress, "backpointers_to_extents", trans->c,
 			   BIT_ULL(BTREE_ID_backpointers), 0);
 
-	return backpointer_scan_for_each(trans, iter, POS_MIN, POS_MAX,
+	try(backpointer_scan_for_each(trans, iter, BTREE_ID_backpointers,
+				      POS_MIN, POS_MAX,
 			&last_flushed, &progress, bp,
-		check_one_backpointer(trans, start, end, bp, &last_flushed));
+		check_one_backpointer(trans, start, end, bp, &last_flushed)));
+
+	try(backpointer_scan_for_each(trans, iter, BTREE_ID_stripe_backpointers,
+				      POS_MIN, POS_MAX,
+			&last_flushed, &progress, bp,
+		check_one_backpointer(trans, start, end, bp, &last_flushed)));
+
+	return 0;
 }
 
 int bch2_check_backpointers_to_extents(struct bch_fs *c)
@@ -1342,7 +1355,7 @@ struct bkey_s_c_backpointer bch2_bp_scan_iter_peek(struct btree_trans *trans,
 		if (iter->bps.nr) {
 			struct bkey_i_backpointer *prev = &darray_last(iter->bps);
 
-			CLASS(btree_iter, bp_iter)(trans, BTREE_ID_backpointers, prev->k.p, 0);
+			CLASS(btree_iter, bp_iter)(trans, iter->btree, prev->k.p, 0);
 			struct bkey_s_c k;
 			int ret = bkey_err(k = bch2_btree_iter_peek_slot(&bp_iter));
 			if (bkey_err(k))
@@ -1363,7 +1376,7 @@ struct bkey_s_c_backpointer bch2_bp_scan_iter_peek(struct btree_trans *trans,
 
 		u32 restart_count = trans->restart_count;
 
-		int ret = for_each_btree_key_max(trans, bp_iter, BTREE_ID_backpointers,
+		int ret = for_each_btree_key_max(trans, bp_iter, iter->btree,
 					   iter->pos, end, BTREE_ITER_prefetch, k, ({
 			if (k.k->type != KEY_TYPE_backpointer)
 				continue;

@@ -260,7 +260,8 @@ int bch2_dev_data_drop_by_backpointers(struct bch_fs *c, struct bch_dev *ca,
 		 * by retrying:
 		 */
 
-		try(backpointer_scan_for_each(trans, iter, POS(dev_idx, 0), POS(dev_idx, U64_MAX),
+		try(backpointer_scan_for_each(trans, iter, BTREE_ID_backpointers,
+					      POS(dev_idx, 0), POS(dev_idx, U64_MAX),
 						  &last_flushed, &progress, bp, ({
 			wb_maybe_flush_inc(&last_flushed);
 			CLASS(disk_reservation, res)(c);

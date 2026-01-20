@@ -494,6 +494,7 @@ struct bch_backpointer {
 
 BITMASK(BACKPOINTER_RECONCILE_PHYS,	struct bch_backpointer, flags, 0, 2);
 BITMASK(BACKPOINTER_ERASURE_CODED,	struct bch_backpointer, flags, 2, 3);
+BITMASK(BACKPOINTER_STRIPE_PTR,		struct bch_backpointer, flags, 3, 4);
 
 /* Optional/variable size superblock sections: */
 
@@ -632,7 +633,10 @@ enum btree_id_flags {
 	  BTREE_IS_write_buffer,						\
 	  BIT_ULL(KEY_TYPE_set))						\
 	x(bucket_to_stripe,	26,	0,					\
-	  BIT_ULL(KEY_TYPE_set))
+	  BIT_ULL(KEY_TYPE_set))						\
+	x(stripe_backpointers,	27,						\
+	  BTREE_IS_write_buffer,						\
+	  BIT_ULL(KEY_TYPE_backpointer))					\
 
 enum btree_id {
 #define x(name, nr, ...) BTREE_ID_##name = nr,
@@ -1490,6 +1494,7 @@ static inline bool btree_id_is_alloc(enum btree_id btree)
 	switch (btree) {
 	case BTREE_ID_alloc:
 	case BTREE_ID_backpointers:
+	case BTREE_ID_stripe_backpointers:
 	case BTREE_ID_need_discard:
 	case BTREE_ID_freespace:
 	case BTREE_ID_bucket_gens:

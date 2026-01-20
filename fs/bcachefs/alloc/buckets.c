@@ -630,9 +630,21 @@ static int bch2_trigger_pointer(struct btree_trans *trans,
 
 	*sectors = insert ? bp.v.bucket_len : -(s64) bp.v.bucket_len;
 
+	if (unlikely(p.ptr.dev == BCH_SB_MEMBER_INVALID)) {
+		if ((flags & BTREE_TRIGGER_transactional) && p.has_ec) {
+			if (!insert) {
+				bp.k.type = KEY_TYPE_deleted;
+				set_bkey_val_u64s(&bp.k, 0);
+			}
+			try(bch2_trans_update_buffered(trans, BTREE_ID_stripe_backpointers, &bp.k_i));
+		}
+
+		return 0;
+	}
+
 	CLASS(bch2_dev_tryget_noerror, ca)(c, p.ptr.dev);
 	if (unlikely(!ca)) {
-		int ret = insert && p.ptr.dev != BCH_SB_MEMBER_INVALID
+		int ret = insert
 			? bch_err_throw(c, trigger_pointer)
 			: 0;
 
