@@ -185,13 +185,13 @@ DEFINE_DARRAY_NAMED(darray_reconcile_work, struct bkey_i);
 
 static struct bkey_s_c next_reconcile_entry(struct btree_trans *trans,
 					    darray_reconcile_work *buf,
-					    enum btree_id btree,
-					    struct bpos *work_pos)
+					    struct bbpos *work_pos,
+					    struct bpos end)
 {
-	if (btree == BTREE_ID_reconcile_scan) {
+	if (work_pos->btree == BTREE_ID_reconcile_scan) {
 		buf->nr = 0;
 
-		int ret = for_each_btree_key(trans, iter, btree, *work_pos,
+		int ret = for_each_btree_key_max(trans, iter, work_pos->btree, work_pos->pos, end,
 				   BTREE_ITER_all_snapshots|BTREE_ITER_prefetch, k, ({
 			bkey_reassemble(&darray_top(*buf), k);
 			return bkey_i_to_s_c(&darray_top(*buf));
@@ -206,7 +206,7 @@ static struct bkey_s_c next_reconcile_entry(struct btree_trans *trans,
 
 		BUG_ON(!buf->size);;
 
-		int ret = for_each_btree_key(trans, iter, btree, *work_pos,
+		int ret = for_each_btree_key_max(trans, iter, work_pos->btree, work_pos->pos, end,
 				   BTREE_ITER_all_snapshots|BTREE_ITER_prefetch, k, ({
 			/* There might be leftover scan cookies from rebalance, pre reconcile upgrade: */
 			if (k.k->type != KEY_TYPE_set)
@@ -218,7 +218,7 @@ static struct bkey_s_c next_reconcile_entry(struct btree_trans *trans,
 			bkey_reassemble(&darray_top(*buf), k);
 			buf->nr++;
 
-			*work_pos = bpos_successor(iter.pos);
+			work_pos->pos = bpos_successor(iter.pos);
 			if (buf->nr == buf->size)
 				break;
 			0;
@@ -911,85 +911,6 @@ static bool bch2_reconcile_enabled(struct bch_fs *c)
 		  c->reconcile.on_battery);
 }
 
-typedef struct {
-	struct bch_fs		*c;
-	unsigned		dev;
-	enum btree_id		btree;
-	struct closure		cl;
-
-	struct bch_move_stats	stats;
-} reconcile_phys_thr;
-
-DEFINE_DARRAY(reconcile_phys_thr);
-
-static CLOSURE_CALLBACK(do_reconcile_phys_thread)
-{
-	closure_type(thr, reconcile_phys_thr, cl);
-	struct bch_fs *c = thr->c;
-
-	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
-	bch2_moving_ctxt_init(&ctxt, c, NULL, &thr->stats,
-			      writepoint_ptr(&c->allocator.reconcile_write_point),
-			      true);
-
-	struct btree_trans *trans = ctxt.trans;
-
-	CLASS(darray_reconcile_work, work)();
-	darray_make_room(&work, REBALANCE_WORK_BUF_NR);
-	if (!work.size) {
-		bch_err(c, "%s: unable to allocate memory", __func__);
-		closure_return(cl);
-		return;
-	}
-
-	CLASS(per_snapshot_io_opts, snapshot_io_opts)(c);
-
-	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
-	wb_maybe_flush_init(&last_flushed);
-
-	struct bbpos work_pos = BBPOS(thr->btree, POS(thr->dev, 0));
-
-	while (!bch2_move_ratelimit(&ctxt)) {
-		if (!bch2_reconcile_enabled(c))
-			break;
-
-		bch2_trans_begin(trans);
-
-		struct bkey_s_c k = next_reconcile_entry(trans, &work, thr->btree, &work_pos.pos);
-		if (bkey_err(k) ||
-		    !k.k ||
-		    k.k->p.inode != thr->dev)
-			break;
-
-		int ret = lockrestart_do(trans,
-			do_reconcile_extent_phys(&ctxt, &snapshot_io_opts, work_pos, &last_flushed));
-		if (ret)
-			break;
-	}
-
-	closure_return(cl);
-}
-
-static int do_reconcile_phys(struct bch_fs *c, enum btree_id btree)
-{
-	CLASS(darray_reconcile_phys_thr, thrs)();
-	CLASS(closure_stack, cl)();
-
-	for_each_member_device(c, ca)
-		if (ca->mi.rotational &&
-		    bch2_dev_is_online(ca))
-			try(darray_push(&thrs, ((reconcile_phys_thr) {
-						.c	= c,
-						.dev	= ca->dev_idx,
-						.btree	= btree,
-						})));
-
-	darray_for_each(thrs, i)
-		closure_call(&i->cl, do_reconcile_phys_thread, system_unbound_wq, &cl);
-
-	return 0;
-}
-
 struct reconcile_scan_phase {
 	enum btree_id	btree;
 	struct bpos	start, end;
@@ -1028,6 +949,86 @@ static const struct reconcile_scan_phase reconcile_phases[] = {
 	{ BTREE_ID_reconcile_scan, POS(RECONCILE_WORK_pending, 0), POS(RECONCILE_WORK_pending, U64_MAX) },
 	{ BTREE_ID_reconcile_pending,		POS_MIN, SPOS_MAX },
 };
+
+typedef struct {
+	struct bch_fs		*c;
+	unsigned		dev;
+	unsigned		reconcile_phase;
+	struct closure		cl;
+
+	struct bch_move_stats	stats;
+} reconcile_phys_thr;
+
+DEFINE_DARRAY(reconcile_phys_thr);
+
+static CLOSURE_CALLBACK(do_reconcile_phys_thread)
+{
+	closure_type(thr, reconcile_phys_thr, cl);
+	struct bch_fs *c = thr->c;
+
+	struct moving_context ctxt __cleanup(bch2_moving_ctxt_exit);
+	bch2_moving_ctxt_init(&ctxt, c, NULL, &thr->stats,
+			      writepoint_ptr(&c->allocator.reconcile_write_point),
+			      true);
+
+	struct btree_trans *trans = ctxt.trans;
+
+	CLASS(darray_reconcile_work, work)();
+	darray_make_room(&work, REBALANCE_WORK_BUF_NR);
+	if (!work.size) {
+		bch_err(c, "%s: unable to allocate memory", __func__);
+		closure_return(cl);
+		return;
+	}
+
+	CLASS(per_snapshot_io_opts, snapshot_io_opts)(c);
+
+	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
+	wb_maybe_flush_init(&last_flushed);
+
+	struct bbpos work_pos = BBPOS(reconcile_phases[thr->reconcile_phase].btree,
+				      POS(thr->dev, 0));
+
+	while (!bch2_move_ratelimit(&ctxt)) {
+		if (!bch2_reconcile_enabled(c))
+			break;
+
+		bch2_trans_begin(trans);
+
+		struct bkey_s_c k = next_reconcile_entry(trans, &work, &work_pos, POS(thr->dev, U64_MAX));
+		if (bkey_err(k) ||
+		    !k.k ||
+		    k.k->p.inode != thr->dev)
+			break;
+
+		int ret = lockrestart_do(trans,
+			do_reconcile_extent_phys(&ctxt, &snapshot_io_opts, work_pos, &last_flushed));
+		if (ret)
+			break;
+	}
+
+	closure_return(cl);
+}
+
+static int do_reconcile_phys(struct bch_fs *c, unsigned reconcile_phase)
+{
+	CLASS(darray_reconcile_phys_thr, thrs)();
+	CLASS(closure_stack, cl)();
+
+	for_each_member_device(c, ca)
+		if (ca->mi.rotational &&
+		    bch2_dev_is_online(ca))
+			try(darray_push(&thrs, ((reconcile_phys_thr) {
+						.c			= c,
+						.dev			= ca->dev_idx,
+						.reconcile_phase	= reconcile_phase,
+						})));
+
+	darray_for_each(thrs, i)
+		closure_call(&i->cl, do_reconcile_phys_thread, system_unbound_wq, &cl);
+
+	return 0;
+}
 
 static struct bbpos reconcile_phase_start(unsigned i)
 {
@@ -1092,7 +1093,9 @@ static int do_reconcile(struct moving_context *ctxt)
 
 		bch2_trans_begin(trans);
 
-		struct bkey_s_c k = next_reconcile_entry(trans, &work, r->work_pos.btree, &r->work_pos.pos);
+		struct bkey_s_c k = next_reconcile_entry(trans, &work,
+							 &r->work_pos,
+							 reconcile_phases[i].end);
 		ret = bkey_err(k);
 		if (ret)
 			break;
@@ -1130,7 +1133,7 @@ static int do_reconcile(struct moving_context *ctxt)
 						 r->work_pos, bkey_s_c_to_backpointer(k));
 		} else if (btree_is_reconcile_phys(r->work_pos.btree)) {
 			bch2_trans_unlock_long(trans);
-			ret = do_reconcile_phys(c, r->work_pos.btree);
+			ret = do_reconcile_phys(c, i);
 			r->work_pos = reconcile_phase_start(++i);
 		} else {
 			ret = lockrestart_do(trans,
