@@ -246,6 +246,7 @@ static inline bool bch2_dev_bad_or_evacuating(struct bch_fs *c, unsigned dev)
 	return bch2_dev_bad_or_evacuating_rcu(c, dev);
 }
 
+int bch2_dev_missing_bkey_msg(struct bch_fs *, struct bkey_s_c, unsigned, struct printbuf *out);
 int bch2_dev_missing_bkey(struct bch_fs *, struct bkey_s_c, unsigned);
 
 void bch2_dev_missing_atomic(struct bch_fs *, unsigned);
@@ -279,9 +280,17 @@ static inline struct bch_dev *bch2_dev_tryget(struct bch_fs *c, unsigned dev)
 	return ca;
 }
 
-DEFINE_CLASS(bch2_dev_tryget, struct bch_dev *,
-	     bch2_dev_put(_T), bch2_dev_tryget(c, dev),
-	     struct bch_fs *c, unsigned dev);
+static inline struct bch_dev *bch2_dev_bkey_tryget(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
+{
+	struct bch_dev *ca = bch2_dev_tryget_noerror(c, dev);
+	if (unlikely(!ca && dev != BCH_SB_MEMBER_INVALID))
+		bch2_dev_missing_bkey(c, k, dev);
+	return ca;
+}
+
+DEFINE_CLASS(bch2_dev_bkey_tryget, struct bch_dev *,
+	     bch2_dev_put(_T), bch2_dev_bkey_tryget(c, k, dev),
+	     struct bch_fs *c, struct bkey_s_c k, unsigned dev);
 
 static inline struct bch_dev *bch2_dev_bucket_tryget_noerror(struct bch_fs *c, struct bpos bucket)
 {

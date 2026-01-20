@@ -262,7 +262,7 @@ static int stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_new 
 	struct bch_stripe *v = &bkey_i_to_stripe(&s->new_stripe.key)->v;
 	struct bch_extent_ptr ptr = v->ptrs[block];
 
-	CLASS(bch2_dev_tryget, ca)(c, ptr.dev);
+	CLASS(bch2_dev_bkey_tryget, ca)(c, bkey_i_to_s_c(&s->new_stripe.key), ptr.dev);
 	if (!ca) /* BCH_SB_MEMBER_INVALID */
 		return 0;
 

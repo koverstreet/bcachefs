@@ -232,7 +232,7 @@ static int bch2_copygc_get_stripe_buckets(struct moving_context *ctxt,
 				continue;
 
 			const struct bch_extent_ptr *ptr = s->ptrs + i;
-			CLASS(bch2_dev_tryget, ca)(trans->c, ptr->dev);
+			CLASS(bch2_dev_bkey_tryget, ca)(trans->c, s_k, ptr->dev);
 			if (unlikely(!ca))
 				continue;
 

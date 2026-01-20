@@ -1153,7 +1153,7 @@ bool bch2_bkey_devs_rw(struct bch_fs *c, struct bkey_s_c k)
 
 	guard(rcu)();
 	bkey_for_each_ptr(ptrs, ptr) {
-		CLASS(bch2_dev_tryget, ca)(c, ptr->dev);
+		struct bch_dev *ca = bch2_dev_rcu(c, ptr->dev);
 		if (!ca || ca->mi.state != BCH_MEMBER_STATE_rw)
 			return false;
 	}

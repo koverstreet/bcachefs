@@ -565,18 +565,25 @@ static int bch2_trigger_pointer(struct btree_trans *trans,
 {
 	struct bch_fs *c = trans->c;
 	bool insert = !(flags & BTREE_TRIGGER_overwrite);
-	CLASS(printbuf, buf)();
 
 	struct bkey_i_backpointer bp;
 	bch2_extent_ptr_to_bp(c, btree_id, level, k, p, entry, &bp);
 
 	*sectors = insert ? bp.v.bucket_len : -(s64) bp.v.bucket_len;
 
-	CLASS(bch2_dev_tryget, ca)(c, p.ptr.dev);
+	CLASS(bch2_dev_tryget_noerror, ca)(c, p.ptr.dev);
 	if (unlikely(!ca)) {
-		if (insert && p.ptr.dev != BCH_SB_MEMBER_INVALID)
-			return bch_err_throw(c, trigger_pointer);
-		return 0;
+		int ret = insert && p.ptr.dev != BCH_SB_MEMBER_INVALID
+			? bch_err_throw(c, trigger_pointer)
+			: 0;
+
+		if (p.ptr.dev != BCH_SB_MEMBER_INVALID) {
+			CLASS(bch_log_msg_ratelimited, msg)(c);
+			prt_printf(&msg.m, "Error while %s key:\n", insert ? "inserting" : "deleting");
+			ret = bch2_dev_missing_bkey_msg(c, k, p.ptr.dev, &msg.m);
+		}
+
+		return ret;
 	}
 
 	struct bpos bucket = PTR_BUCKET_POS(ca, &p.ptr);
@@ -595,6 +602,7 @@ static int bch2_trigger_pointer(struct btree_trans *trans,
 	}
 
 	if (flags & BTREE_TRIGGER_gc) {
+		CLASS(printbuf, buf)();
 		struct bucket *g = gc_bucket(ca, bucket.offset);
 		if (bch2_fs_inconsistent_on(!g, c, "reference to invalid bucket on device %u\n  %s",
 					    p.ptr.dev,

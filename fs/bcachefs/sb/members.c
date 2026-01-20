@@ -16,28 +16,32 @@
 #include "init/passes.h"
 #include "init/progress.h"
 
-int bch2_dev_missing_bkey(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
+int bch2_dev_missing_bkey_msg(struct bch_fs *c, struct bkey_s_c k, unsigned dev,
+			      struct printbuf *out)
 {
-	CLASS(printbuf, buf)();
-	bch2_log_msg_start(c, &buf);
+	if (dev == BCH_SB_MEMBER_INVALID)
+		return 0;
 
 	bool removed = test_bit(dev, c->devs_removed.d);
 
-	prt_printf(&buf, "pointer to %s device %u in key\n",
+	prt_printf(out, "pointer to %s device %u in key\n",
 		   removed ? "removed" : "nonexistent", dev);
-	bch2_bkey_val_to_text(&buf, c, k);
-	prt_newline(&buf);
+	bch2_bkey_val_to_text(out, c, k);
+	prt_newline(out);
 
-	bool print = removed
-		? bch2_count_fsck_err(c, ptr_to_removed_device, &buf)
-		: bch2_count_fsck_err(c, ptr_to_invalid_device, &buf);
+	if (removed)
+		bch2_count_fsck_err(c, ptr_to_removed_device, out);
+	else
+		bch2_count_fsck_err(c, ptr_to_invalid_device, out);
 
-	int ret = bch2_run_explicit_recovery_pass(c, &buf,
+	return bch2_run_explicit_recovery_pass(c, out,
 					BCH_RECOVERY_PASS_check_allocations, 0);
+}
 
-	if (print)
-		bch2_print_str(c, KERN_ERR, buf.buf);
-	return ret;
+int bch2_dev_missing_bkey(struct bch_fs *c, struct bkey_s_c k, unsigned dev)
+{
+	CLASS(bch_log_msg, msg)(c);
+	return bch2_dev_missing_bkey_msg(c, k, dev, &msg.m);
 }
 
 void bch2_dev_missing_atomic(struct bch_fs *c, unsigned dev)

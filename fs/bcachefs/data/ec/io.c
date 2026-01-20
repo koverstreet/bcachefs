@@ -224,7 +224,8 @@ void bch2_ec_validate_checksums(struct bch_fs *c, struct ec_stripe_buf *buf)
 			struct bch_csum got = ec_block_checksum(buf, i, offset);
 
 			if (bch2_crc_cmp(want, got)) {
-				CLASS(bch2_dev_tryget, ca)(c, v->ptrs[i].dev);
+				CLASS(bch2_dev_bkey_tryget, ca)(c, bkey_i_to_s_c(&buf->key),
+								v->ptrs[i].dev);
 				if (ca) {
 					CLASS(printbuf, err)();
 

@@ -235,7 +235,7 @@ static int mark_stripe_bucket(struct btree_trans *trans,
 	const struct bch_extent_ptr *ptr = s.v->ptrs + ptr_idx;
 	CLASS(printbuf, buf)();
 
-	CLASS(bch2_dev_tryget, ca)(c, ptr->dev);
+	CLASS(bch2_dev_bkey_tryget, ca)(c, s.s_c, ptr->dev);
 	if (unlikely(!ca)) {
 		if (ptr->dev != BCH_SB_MEMBER_INVALID && !(flags & BTREE_TRIGGER_overwrite))
 			return bch_err_throw(c, mark_stripe);

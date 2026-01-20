@@ -64,7 +64,7 @@ static unsigned bkey_get_dev_refs(struct bch_fs *c, struct bkey_s_c k)
 	unsigned ptrs_held = 0, ptr_bit = 1;
 
 	bkey_for_each_ptr(ptrs, ptr) {
-		if (likely(bch2_dev_tryget(c, ptr->dev)))
+		if (likely(bch2_dev_bkey_tryget(c, k, ptr->dev)))
 			ptrs_held |= ptr_bit;
 		ptr_bit <<= 1;
 	}
