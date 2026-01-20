@@ -1407,6 +1407,7 @@ retry:
 		if (ret)
 			break;
 
+		bch2_btree_iter_set_pos(&iter, SPOS(op->pos.inode, op->pos.offset, snapshot));
 		k = bch2_btree_iter_peek_slot(&iter);
 		ret = bkey_err(k);
 		if (ret)
@@ -1484,7 +1485,6 @@ retry:
 			bch2_keylist_push(&op->insert_keys);
 		if (op->flags & BCH_WRITE_submitted)
 			break;
-		bch2_btree_iter_advance(&iter);
 	}
 out:
 	bch2_trans_iter_exit(&iter);
