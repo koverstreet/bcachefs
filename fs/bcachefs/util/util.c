@@ -1016,7 +1016,7 @@ err:
 	return -ENOMEM;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6,19,0)
+#if !defined(__KERNEL__) || LINUX_VERSION_CODE >= KERNEL_VERSION(6,19,0)
 void *mempool_kvmalloc(gfp_t gfp_mask, void *pool_data)
 {
 	size_t size = (size_t)pool_data;

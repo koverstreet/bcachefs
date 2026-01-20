@@ -831,10 +831,10 @@ static inline void *class_memalloc_flags_lock_ptr(class_memalloc_flags_t *_T)
 	return _T;
 }
 
+#if !defined(__KERNEL__) || LINUX_VERSION_CODE >= KERNEL_VERSION(6,19,0)
 void *mempool_kvmalloc(gfp_t gfp_mask, void *pool_data);
 void mempool_kvfree(void *element, void *pool_data);
 
-#if !defined(__KERNEL__) || LINUX_VERSION_CODE >= KERNEL_VERSION(6,19,0)
 static inline int mempool_init_kvmalloc_pool(mempool_t *pool, int min_nr, size_t size)
 {
         return mempool_init(pool, min_nr, mempool_kvmalloc, mempool_kvfree, (void *) size);
