@@ -354,6 +354,7 @@ enum bch_fsck_flags {
 	x(reconcile_work_phys_incorrectly_set,			341,	FSCK_AUTOFIX)	\
 	x(validate_error_in_commit,				329,	0)		\
 	x(extent_io_opts_not_set,				330,	FSCK_AUTOFIX)	\
+	x(stripe_needs_reconcile_not_set,			352,	FSCK_AUTOFIX)	\
 	x(extent_io_opts_unneeded,				331,	FSCK_AUTOFIX)	\
 	x(reconcile_bp_to_missing_btree_ptr,			310,	FSCK_AUTOFIX)	\
 	x(reconcile_bp_to_leaf_node_key,			334,	FSCK_AUTOFIX)	\
@@ -363,7 +364,7 @@ enum bch_fsck_flags {
 	x(vfs_i_size_bad,					343,	0)		\
 	x(vfs_i_sectors_bad,					344,	0)		\
 	x(vfs_unlink_got_wrong_inum,				349,	0)		\
-	x(MAX,							352,	0)
+	x(MAX,							353,	0)
 
 enum bch_sb_error_id {
 #define x(t, n, ...) BCH_FSCK_ERR_##t = n,

@@ -537,6 +537,13 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 		ptr_bit <<= 1;
 	}
 
+	if (k.k->type == KEY_TYPE_stripe) {
+		*ret = r;
+
+		return (r.need_rb & BIT(BCH_RECONCILE_data_replicas)) &&
+			!bkey_s_c_to_stripe(k).v->needs_reconcile;
+	}
+
 	if (unwritten || incompressible)
 		r.need_rb &= ~BIT(BCH_RECONCILE_background_compression);
 
@@ -746,6 +753,35 @@ fsck_err:
 	return ret;
 }
 
+static int set_needs_reconcile_stripe(struct btree_trans *trans,
+				      struct per_snapshot_io_opts *snapshot_io_opts,
+				      struct bkey_i *k,
+				      bool new_needs_reconcile)
+{
+	struct bch_fs *c = trans->c;
+	struct bkey_i_stripe *s = bkey_i_to_stripe(k);
+
+	int delta = (int) new_needs_reconcile - (int) s->v.needs_reconcile;
+
+	if (delta > 0) {
+		int ret = check_dev_reconcile_scan_cookie(trans, bkey_i_to_s_c(k),
+						snapshot_io_opts ? &snapshot_io_opts->dev_cookie : NULL);
+		if (ret < 0)
+			return ret;
+
+		if (!ret) {
+			CLASS(printbuf, buf)();
+			prt_printf(&buf, "stripe with needs_reconcile incorrectly unset\n");
+			bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(k));
+
+			ret_fsck_err(trans, stripe_needs_reconcile_not_set, "%s", buf.buf);
+		}
+	}
+
+	s->v.needs_reconcile = new_needs_reconcile;
+	return 0;
+}
+
 int bch2_bkey_set_needs_reconcile(struct btree_trans *trans,
 				  struct per_snapshot_io_opts *snapshot_io_opts,
 				  struct bch_inode_opts *opts,
@@ -753,7 +789,8 @@ int bch2_bkey_set_needs_reconcile(struct btree_trans *trans,
 				  enum set_needs_reconcile_ctx ctx,
 				  u32 opt_change_cookie)
 {
-	if (!bkey_extent_is_direct_data(&_k->k))
+	if (!bkey_extent_is_direct_data(&_k->k) &&
+	    _k->k.type != KEY_TYPE_stripe)
 		return 0;
 
 	struct bch_fs *c = trans->c;
@@ -765,6 +802,10 @@ int bch2_bkey_set_needs_reconcile(struct btree_trans *trans,
 	int ret = bch2_bkey_needs_reconcile(trans, k.s_c, opts, &need_update_invalid_devs, &new);
 	if (ret <= 0)
 		return ret;
+
+	if (_k->k.type == KEY_TYPE_stripe)
+		return set_needs_reconcile_stripe(trans, snapshot_io_opts, _k,
+						  new.need_rb & BIT(BCH_RECONCILE_data_replicas));
 
 	struct bch_extent_reconcile *old =
 		(struct bch_extent_reconcile *) bch2_bkey_reconcile_opts(c, k.s_c);
@@ -824,7 +865,8 @@ int bch2_update_reconcile_opts(struct btree_trans *trans,
 	BUG_ON(iter->flags & BTREE_ITER_is_extents);
 	BUG_ON(iter->flags & BTREE_ITER_filter_snapshots);
 
-	if (!bkey_extent_is_direct_data(k.k))
+	if (!bkey_extent_is_direct_data(k.k) &&
+	    k.k->type != KEY_TYPE_stripe)
 		return 0;
 
 	struct bch_fs *c = trans->c;
