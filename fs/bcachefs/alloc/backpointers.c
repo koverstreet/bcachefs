@@ -949,8 +949,13 @@ static int check_bucket_backpointer_mismatch(struct btree_trans *trans, struct b
 		 * Pre upgrade, we expect all the buckets to be wrong, a write
 		 * buffer flush is pointless:
 		 */
-		if (c->sb.version_upgrade_complete >= bcachefs_metadata_version_backpointer_bucket_gen)
+		if (c->sb.version_upgrade_complete >= bcachefs_metadata_version_backpointer_bucket_gen) {
+			if (a->data_type == BCH_DATA_btree) {
+				bch2_trans_unlock_long(trans);
+				bch2_btree_interior_updates_flush(c);
+			}
 			try(bch2_backpointers_maybe_flush(trans, alloc_k, last_flushed));
+		}
 
 		bool empty = (sectors[ALLOC_dirty] +
 			      sectors[ALLOC_stripe] +
