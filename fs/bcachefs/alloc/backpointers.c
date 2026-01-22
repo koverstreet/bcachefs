@@ -1129,8 +1129,10 @@ int bch2_check_extents_to_backpointers(struct bch_fs *c)
 		nr_empty	+= ca->bucket_backpointer_empty.nr;
 	}
 
+#ifndef CONFIG_BCACHEFS_DEBUG
 	if (!nr_mismatches)
 		goto err;
+#endif
 
 	bch_info(c, "scanning for missing backpointers in %llu/%llu buckets, %llu buckets with no backpointers",
 		 nr_mismatches - nr_empty, nr_buckets, nr_empty);
