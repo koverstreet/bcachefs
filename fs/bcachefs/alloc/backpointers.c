@@ -73,6 +73,10 @@ void bch2_backpointer_to_text(struct printbuf *out, struct bch_fs *c, struct bke
 		   bp.v->bucket_len,
 		   bp.v->bucket_gen);
 	bch2_bpos_to_text(out, bp.v->pos);
+
+	if (BACKPOINTER_RECONCILE_PHYS(bp.v))
+		prt_str(out, " phys");
+
 }
 
 void bch2_backpointer_swab(const struct bch_fs *c, struct bkey_s k)
