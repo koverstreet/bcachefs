@@ -274,6 +274,7 @@ static int stripe_update_extent(struct btree_trans *trans,
 	ec_ptr->dev	= new_block.dev;
 	ec_ptr->offset	-= old_block.offset;
 	ec_ptr->offset	+= new_block.offset;
+	ec_ptr->gen	= new_block.gen;
 
 	bch2_bkey_drop_ptrs_noerror(bkey_i_to_s(n), p, entry, p.ptr.dev != new_block.dev);
 
@@ -315,10 +316,20 @@ static int stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_new 
 	struct bch_extent_ptr new_block = new_stripe->v.ptrs[new_blocknr];
 
 	CLASS(bch2_dev_bkey_tryget, ca)(c, bkey_i_to_s_c(&old_stripe->k_i), old_block.dev);
-	if (!ca) /* BCH_SB_MEMBER_INVALID */
-		return 0;
+	enum btree_id btree;
+	struct bpos start, end;
+	if (ca) {
+		struct bpos bucket_pos = PTR_BUCKET_POS(ca, &old_block);
 
-	struct bpos bucket_pos = PTR_BUCKET_POS(ca, &old_block);
+		btree	= BTREE_ID_backpointers;
+		start	= bucket_pos_to_bp_start(ca, bucket_pos);
+		end	= bucket_pos_to_bp_end(ca, bucket_pos);
+	} else {
+		u64 idx = old_stripe->k.p.offset;
+		btree	= BTREE_ID_stripe_backpointers;
+		start	= POS((idx << 8) | old_blocknr, 0);
+		end	= POS((idx << 8) | old_blocknr, U64_MAX);
+	}
 
 	struct wb_maybe_flush last_flushed __cleanup(wb_maybe_flush_exit);
 	wb_maybe_flush_init(&last_flushed);
@@ -327,12 +338,7 @@ static int stripe_update_bucket(struct btree_trans *trans, struct ec_stripe_new 
 
 	CLASS(disk_reservation, res)(c);
 
-	try(for_each_btree_key_max(trans, bp_iter, BTREE_ID_backpointers,
-			bucket_pos_to_bp_start(ca, bucket_pos),
-			bucket_pos_to_bp_end(ca, bucket_pos), 0, bp_k, ({
-		if (bkey_ge(bp_k.k->p, bucket_pos_to_bp(ca, bpos_nosnap_successor(bucket_pos), 0)))
-			break;
-
+	try(for_each_btree_key_max(trans, bp_iter, btree, start, end, 0, bp_k, ({
 		if (bp_k.k->type != KEY_TYPE_backpointer)
 			continue;
 
