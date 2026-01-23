@@ -1360,7 +1360,7 @@ int __bch2_read_extent(struct btree_trans *trans,
 		enumerated_ref_put(&ca->io_ref[READ], BCH_DEV_READ_REF_io_read);
 		read_from_stale_dirty_pointer(trans, ca, k, pick.ptr);
 
-		bch2_mark_io_failure(failed, &pick, ret);
+		bch2_mark_io_failure(failed, &pick, bch_err_throw(c, data_read_ptr_stale_dirty));
 		propagate_io_error_to_data_update(c, orig, &pick);
 
 		return read_extent_done(orig, flags, bch_err_throw(c, data_read_ptr_stale_dirty));
