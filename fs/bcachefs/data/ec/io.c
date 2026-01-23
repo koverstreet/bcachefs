@@ -400,6 +400,9 @@ int bch2_ec_read_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 	if (offset + bio_sectors(&rbio->bio) > le16_to_cpu(v->sectors))
 		return stripe_reconstruct_err(c, orig_k, "read is bigger than stripe");
 
+	/* Don't hold btree locks for stripe buffer allocations, or IO */
+	bch2_trans_unlock(trans);
+
 	ret = bch2_ec_stripe_buf_init(c, buf, offset, bio_sectors(&rbio->bio));
 	if (ret)
 		return stripe_reconstruct_err(c, orig_k, "-ENOMEM");
