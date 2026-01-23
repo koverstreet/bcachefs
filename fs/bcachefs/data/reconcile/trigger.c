@@ -495,13 +495,15 @@ static int bch2_bkey_needs_reconcile(struct btree_trans *trans, struct bkey_s_c 
 		    r.background_target &&
 		    !bch2_dev_in_target(c, p.ptr.dev, r.background_target)) {
 			r.need_rb |= BIT(BCH_REBALANCE_background_target);
-			r.ptrs_moving |= ptr_bit;
+			if (p.ptr.dev != BCH_SB_MEMBER_INVALID)
+				r.ptrs_moving |= ptr_bit;
 		}
 
 		if (evacuating) {
 			r.need_rb |= BIT(BCH_REBALANCE_data_replicas);
 			r.hipri = 1;
-			r.ptrs_moving |= ptr_bit;
+			if (p.ptr.dev != BCH_SB_MEMBER_INVALID)
+				r.ptrs_moving |= ptr_bit;
 		}
 
 		int d = bch2_extent_ptr_desired_durability(trans, &p);
