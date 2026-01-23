@@ -91,24 +91,25 @@ void bch2_ec_stripe_buf_exit(struct ec_stripe_buf *buf)
 {
 	if (buf->key.k.type == KEY_TYPE_stripe) {
 		struct bkey_i_stripe *s = bkey_i_to_stripe(&buf->key);
-		unsigned i;
 
-		for (i = 0; i < s->v.nr_blocks; i++) {
+		for (unsigned i = 0; i < s->v.nr_blocks; i++) {
 			kvfree(buf->data[i]);
 			buf->data[i] = NULL;
 		}
 	}
+
+	closure_sync(&buf->io);
+	closure_debug_destroy(&buf->io);
 }
 
 /* XXX: this is a non-mempoolified memory allocation: */
-int bch2_ec_stripe_buf_init(struct bch_fs *c,
-			    struct ec_stripe_buf *buf,
-			    unsigned offset, unsigned size)
+int __bch2_ec_stripe_buf_init(struct bch_fs *c,
+			      struct ec_stripe_buf *buf,
+			      unsigned offset, unsigned size)
 {
 	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
 	unsigned csum_granularity = 1U << v->csum_granularity_bits;
 	unsigned end = offset + size;
-	unsigned i;
 
 	BUG_ON(end > le16_to_cpu(v->sectors));
 
@@ -121,13 +122,15 @@ int bch2_ec_stripe_buf_init(struct bch_fs *c,
 
 	memset(buf->valid, 0xFF, sizeof(buf->valid));
 
-	for (i = 0; i < v->nr_blocks; i++) {
+	for (unsigned i = 0; i < v->nr_blocks; i++) {
 		buf->data[i] = kvmalloc(buf->size << 9, GFP_KERNEL);
 		if (!buf->data[i]) {
 			bch2_ec_stripe_buf_exit(buf);
 			return bch_err_throw(c, ENOMEM_stripe_buf);
 		}
 	}
+
+	closure_init(&buf->io, NULL);
 
 	return 0;
 }
@@ -255,7 +258,6 @@ static void ec_block_endio(struct bio *bio)
 	struct bch_stripe *v = &bkey_i_to_stripe(&ec_bio->buf->key)->v;
 	struct bch_extent_ptr *ptr = &v->ptrs[ec_bio->idx];
 	struct bch_dev *ca = ec_bio->ca;
-	struct closure *cl = bio->bi_private;
 	int rw = ec_bio->rw;
 	unsigned ref = rw == READ
 		? (unsigned) BCH_DEV_READ_REF_ec_block
@@ -282,11 +284,11 @@ static void ec_block_endio(struct bio *bio)
 
 	bio_put(&ec_bio->bio);
 	enumerated_ref_put(&ca->io_ref[rw], ref);
-	closure_put(cl);
+	closure_put(&ec_bio->buf->io);
 }
 
 void bch2_ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
-		      blk_opf_t opf, unsigned idx, struct closure *cl)
+		      blk_opf_t opf, unsigned idx)
 {
 	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
 	unsigned offset = 0, bytes = buf->size << 9;
@@ -340,11 +342,10 @@ void bch2_ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
 
 		ec_bio->bio.bi_iter.bi_sector	= ptr->offset + buf->offset + (offset >> 9);
 		ec_bio->bio.bi_end_io		= ec_block_endio;
-		ec_bio->bio.bi_private		= cl;
 
 		bch2_bio_map(&ec_bio->bio, buf->data[idx] + offset, b);
 
-		closure_get(cl);
+		closure_get(&buf->io);
 		enumerated_ref_get(&ca->io_ref[rw], ref);
 
 		submit_bio(&ec_bio->bio);
@@ -402,12 +403,10 @@ int bch2_ec_read_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 	if (ret)
 		return stripe_reconstruct_err(c, orig_k, "-ENOMEM");
 
-	CLASS(closure_stack, cl)();
-
 	for (unsigned i = 0; i < v->nr_blocks; i++)
-		bch2_ec_block_io(c, buf, REQ_OP_READ, i, &cl);
+		bch2_ec_block_io(c, buf, REQ_OP_READ, i);
 
-	closure_sync(&cl);
+	closure_sync(&buf->io);
 
 	if (ec_nr_failed(buf) > v->nr_redundant)
 		return stripe_reconstruct_err(c, orig_k, "unable to read enough blocks");

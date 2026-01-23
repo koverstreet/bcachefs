@@ -28,8 +28,6 @@ struct ec_stripe_new {
 	struct mutex		lock;
 	struct list_head	list;
 
-	struct closure		iodone;
-
 	atomic_t		ref[STRIPE_REF_NR];
 
 	int			err;

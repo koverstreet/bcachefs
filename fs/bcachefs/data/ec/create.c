@@ -381,6 +381,7 @@ static int __ec_stripe_create(struct ec_stripe_new *s)
 		}
 
 	if (s->have_old_stripe) {
+		closure_sync(&s->old_stripe.io);
 		bch2_ec_validate_checksums(c, &s->old_stripe);
 
 		if (bch2_ec_do_recov(c, &s->old_stripe)) {
@@ -402,8 +403,8 @@ static int __ec_stripe_create(struct ec_stripe_new *s)
 
 	/* write p/q: */
 	for (unsigned i = nr_data; i < v->nr_blocks; i++)
-		bch2_ec_block_io(c, &s->new_stripe, REQ_OP_WRITE, i, &s->iodone);
-	closure_sync(&s->iodone);
+		bch2_ec_block_io(c, &s->new_stripe, REQ_OP_WRITE, i);
+	closure_sync(&s->new_stripe.io);
 
 	if (ec_nr_failed(&s->new_stripe)) {
 		bch_err(c, "error creating stripe: error writing redundancy buckets");
@@ -459,8 +460,6 @@ static void ec_stripe_create(struct ec_stripe_new *s)
 
 	BUG_ON(s->h->s == s);
 
-	closure_sync(&s->iodone);
-
 	int ret = stripe_get_iorefs(c, v);
 	if (!ret) {
 		ret = __ec_stripe_create(s);
@@ -511,7 +510,6 @@ static void ec_stripe_create(struct ec_stripe_new *s)
 
 	bch2_ec_stripe_buf_exit(&s->old_stripe);
 	bch2_ec_stripe_buf_exit(&s->new_stripe);
-	closure_debug_destroy(&s->iodone);
 
 	ec_stripe_new_put(c, s, STRIPE_REF_stripe);
 }
@@ -666,16 +664,15 @@ static void ec_stripe_key_init(struct bch_fs *c,
 
 static struct ec_stripe_new *ec_new_stripe_alloc(struct bch_fs *c, struct ec_stripe_head *h)
 {
-	struct ec_stripe_new *s;
-
 	lockdep_assert_held(&h->lock);
 
-	s = kzalloc(sizeof(*s), GFP_KERNEL);
+	struct ec_stripe_new *s = kzalloc(sizeof(*s), GFP_KERNEL);
 	if (!s)
 		return NULL;
 
 	mutex_init(&s->lock);
-	closure_init(&s->iodone, NULL);
+	closure_init(&s->old_stripe.io, NULL);
+	closure_init(&s->new_stripe.io, NULL);
 	atomic_set(&s->ref[STRIPE_REF_stripe], 1);
 	atomic_set(&s->ref[STRIPE_REF_io], 1);
 	s->c		= c;
@@ -1002,7 +999,7 @@ static int init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 
 	BUG_ON(old_v->nr_redundant != s->nr_parity);
 
-	int ret = bch2_ec_stripe_buf_init(c, &s->old_stripe, 0, le16_to_cpu(old_v->sectors));
+	int ret = __bch2_ec_stripe_buf_init(c, &s->old_stripe, 0, le16_to_cpu(old_v->sectors));
 	if (ret) {
 		bch2_stripe_handle_put(c, &s->old_stripe_handle);
 		return ret;
@@ -1031,7 +1028,7 @@ static int init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 			s->old_block_map[s->old_blocks_nr++] = i;
 		}
 
-		bch2_ec_block_io(c, &s->old_stripe, READ, i, &s->iodone);
+		bch2_ec_block_io(c, &s->old_stripe, READ, i);
 	}
 
 	s->have_old_stripe = true;
@@ -1171,7 +1168,7 @@ static int stripe_alloc_or_reuse(struct btree_trans *trans,
 	 * particular write:
 	 */
 	try(new_stripe_alloc_buckets(trans, req, h, s));
-	try(bch2_ec_stripe_buf_init(c, &s->new_stripe, 0, h->blocksize));
+	try(__bch2_ec_stripe_buf_init(c, &s->new_stripe, 0, h->blocksize));
 
 	if (!s->res.sectors)
 		bch2_disk_reservation_get(c, &s->res,
