@@ -1339,6 +1339,7 @@ int __bch2_read_extent(struct btree_trans *trans,
 
 	if (unlikely(ret < 0))
 		return read_extent_pick_err(trans, orig, read_pos, data_btree, k, flags, ret);
+	ret = 0;
 
 	if (bch2_csum_type_is_encryption(pick.crc.csum_type) &&
 	    unlikely(!c->chacha20_key_set))
@@ -1465,10 +1466,12 @@ out:
 	} else {
 		bch2_trans_unlock(trans);
 
-		rbio->context = RBIO_CONTEXT_UNBOUND;
-		bch2_read_endio(&rbio->bio);
+		if (!ret) {
+			rbio->context = RBIO_CONTEXT_UNBOUND;
+			bch2_read_endio(&rbio->bio);
 
-		ret = rbio->ret;
+			ret = rbio->ret;
+		}
 		rbio = bch2_rbio_free(rbio);
 
 		if (bch2_err_matches(ret, BCH_ERR_data_read_retry_avoid) ||
