@@ -69,16 +69,16 @@ void bch2_io_failures_to_text(struct printbuf *out,
 				prt_printf(out, "(invalid device %u)", f->dev);
 		}
 
-		if (!f->csum_nr && !f->ec && !f->errcode)
+		if (!f->csum_nr && !f->ec_errcode && !f->errcode)
 			prt_str(out, " no error - confused");
 
 		if (f->csum_nr)
 			prt_printf(out, " checksum (%u)", f->csum_nr);
-		if (f->ec)
-			prt_str(out, " ec reconstruct");
 		if (f->errcode)
 			prt_printf(out, " %s", bch2_err_str(f->errcode));
 		prt_newline(out);
+		if (f->ec_errcode)
+			prt_printf(out, "  ec reconstruct %s\n", bch2_err_str(f->ec_errcode));
 	}
 }
 
@@ -106,10 +106,13 @@ struct bch_dev_io_failures *bch2_dev_io_failures_mut(struct bch_io_failures *fai
 void bch2_mark_io_failure(struct bch_io_failures *failed,
 			  struct extent_ptr_decoded *p, int err)
 {
+	BUG_ON(!err);
+	BUG_ON(bch2_err_matches(err, BCH_ERR_transaction_restart));
+
 	struct bch_dev_io_failures *f = bch2_dev_io_failures_mut(failed, p->ptr.dev);
 
 	if (p->do_ec_reconstruct)
-		f->ec = true;
+		f->ec_errcode = err;
 	else if (err == -BCH_ERR_data_read_retry_csum_err)
 		f->csum_nr++;
 	else
@@ -235,11 +238,11 @@ int bch2_bkey_pick_read_device(struct bch_fs *c, struct bkey_s_c k,
 			unlikely(failed) ? bch2_dev_io_failures(failed, p.ptr.dev) : NULL;
 		if (unlikely(f)) {
 			p.crc_retry_nr	   = f->csum_nr;
-			p.has_ec	  &= !f->ec;
+			p.has_ec	  &= !f->ec_errcode;
 
 			if (ca) {
 				have_io_errors	|= f->errcode != 0;
-				have_io_errors	|= f->ec;
+				have_io_errors	|= f->ec_errcode;
 			}
 			have_csum_errors	|= f->csum_nr != 0;
 
