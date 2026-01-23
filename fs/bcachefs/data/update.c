@@ -296,6 +296,33 @@ static int data_update_index_update_key(struct btree_trans *trans,
 					  SET_NEEDS_REBALANCE_foreground,
 					  u->op.opts.change_cookie));
 
+	if (u->op.opts.change_cookie == c->opt_change_cookie) {
+		struct bkey_durability old_durability, new_durability;
+		try(bch2_bkey_durability(trans, k, &old_durability));
+		try(bch2_bkey_durability(trans, bkey_i_to_s_c(insert), &new_durability));
+
+		if (new_durability.total < old_durability.total &&
+		    new_durability.total < min(u->op.opts.data_replicas, opts.data_replicas)) {
+			CLASS(bch_log_msg, msg)(c);
+			prt_printf(&msg.m, "Data update would have reduced extent durability:\n");
+			prt_printf(&msg.m, "Old extent %u, new %u, option specifies %u\n",
+				   old_durability.total,
+				   new_durability.total,
+				   opts.data_replicas);
+			prt_str(&msg.m, "old: ");
+			bch2_bkey_val_to_text(&msg.m, c, k);
+			prt_newline(&msg.m);
+
+			prt_str(&msg.m, "new: ");
+			bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(insert));
+			prt_newline(&msg.m);
+
+			bch2_data_update_to_text(&msg.m, u);
+			bch2_fs_emergency_read_only(c, &msg.m);
+			return bch_err_throw(c, emergency_ro);
+		}
+	}
+
 	try(bch2_trans_update(trans, iter, insert, BTREE_UPDATE_internal_snapshot_node));
 	try(bch2_trans_commit(trans, &u->op.res, NULL,
 			      BCH_TRANS_COMMIT_no_check_rw|
