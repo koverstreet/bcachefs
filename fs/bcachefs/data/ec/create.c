@@ -376,18 +376,17 @@ static int __ec_stripe_create(struct ec_stripe_new *s)
 		if (s->blocks[i]) {
 			struct open_bucket *ob = c->allocator.open_buckets + s->blocks[i];
 
-			if (ob->sectors_free)
+			if (ob->sectors_free) {
+				/* XXX: do this IO asynchronously */
 				zero_out_rest_of_ec_bucket(c, s, i, ob);
+			}
 		}
 
 	if (s->have_old_stripe) {
-		closure_sync(&s->old_stripe.io);
-		bch2_ec_validate_checksums(c, &s->old_stripe);
+		/* XXX: we might end up blocking here on reading the old stripe,
+		 * do we need to make this async? */
 
-		if (bch2_ec_do_recov(c, &s->old_stripe)) {
-			bch_err(c, "error creating stripe: error reading old stripe");
-			return bch_err_throw(c, ec_block_read);
-		}
+		try(bch2_stripe_buf_validate(c, &s->old_stripe));
 
 		for (unsigned i = 0; i < s->old_blocks_nr; i++)
 			swap(s->new_stripe.data[i],
@@ -1007,6 +1006,8 @@ static int init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 
 	BUG_ON(s->old_stripe.size != le16_to_cpu(old_v->sectors));
 
+	bch2_stripe_buf_read(c, &s->old_stripe);
+
 	/*
 	 * Free buckets we initially allocated - they might conflict with
 	 * blocks from the stripe we're reusing:
@@ -1027,8 +1028,6 @@ static int init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 
 			s->old_block_map[s->old_blocks_nr++] = i;
 		}
-
-		bch2_ec_block_io(c, &s->old_stripe, READ, i);
 	}
 
 	s->have_old_stripe = true;

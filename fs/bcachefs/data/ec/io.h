@@ -18,14 +18,13 @@ struct ec_stripe_buf {
 	unsigned		offset;
 	unsigned		size;
 	s16			err[BCH_BKEY_PTRS_MAX];
-
 	void			*data[BCH_BKEY_PTRS_MAX];
+
+	struct bch_csum		csum_good[BCH_BKEY_PTRS_MAX];
+	struct bch_csum		csum_bad[BCH_BKEY_PTRS_MAX];
 
 	__BKEY_PADDED(key, 255);
 };
-
-struct bch_read_bio;
-int bch2_ec_read_extent(struct btree_trans *, struct bch_read_bio *, struct bkey_s_c);
 
 static inline unsigned ec_nr_failed(struct ec_stripe_buf *buf)
 {
@@ -50,12 +49,16 @@ static inline int bch2_ec_stripe_buf_init(struct bch_fs *c,
 
 DEFINE_FREE(ec_stripe_buf_free, struct ec_stripe_buf *, bch2_ec_stripe_buf_exit(_T); kfree(_T));
 
-int bch2_ec_do_recov(struct bch_fs *, struct ec_stripe_buf *);
 void bch2_ec_generate_ec(struct ec_stripe_buf *);
 void bch2_ec_generate_checksums(struct ec_stripe_buf *);
-void bch2_ec_validate_checksums(struct bch_fs *, struct ec_stripe_buf *);
+
+int bch2_stripe_buf_validate(struct bch_fs *, struct ec_stripe_buf *);
 
 void bch2_ec_block_io(struct bch_fs *, struct ec_stripe_buf *, blk_opf_t, unsigned);
+void bch2_stripe_buf_read(struct bch_fs *, struct ec_stripe_buf *);
+
+struct bch_read_bio;
+int bch2_ec_read_extent(struct btree_trans *, struct bch_read_bio *, struct bkey_s_c);
 
 #endif /* _BCACHEFS_DATA_EC_IO_H */
 
