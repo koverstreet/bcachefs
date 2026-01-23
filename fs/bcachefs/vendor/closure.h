@@ -207,6 +207,8 @@ static inline int closure_sync_timeout(struct closure *cl, unsigned long timeout
 		: 0;
 }
 
+void bch2_closure_sync_unbounded(struct closure *);
+
 //#ifdef CONFIG_DEBUG_CLOSURES
 #if 0
 

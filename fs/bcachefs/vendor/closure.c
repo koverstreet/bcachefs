@@ -216,3 +216,10 @@ success:
 	__set_current_state(TASK_RUNNING);
 	return ret;
 }
+
+void bch2_closure_sync_unbounded(struct closure *cl)
+{
+	/* Avoid hung task warnings due to TASK_UNINTERRUPTIBLE */
+	while (closure_sync_timeout(cl, HZ))
+		;
+}

@@ -1027,10 +1027,7 @@ static int do_reconcile_phys(struct bch_fs *c, unsigned reconcile_phase)
 	darray_for_each(thrs, i)
 		closure_call(&i->cl, do_reconcile_phys_thread, system_unbound_wq, &cl);
 
-	/* Avoid hung task warnings */
-	while (closure_sync_timeout(&cl, HZ))
-		;
-
+	closure_sync_unbounded(&cl);
 	return 0;
 }
 
