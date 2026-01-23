@@ -665,6 +665,12 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 	if (ret)
 		goto err;
 
+	/*
+	 * Disallow reads before we remove alloc info, otherwise we'll get
+	 * spurious stale pointer errors:
+	 */
+	__bch2_dev_offline(c, ca);
+
 	ret = bch2_dev_remove_alloc(c, ca);
 	if (ret) {
 		prt_printf(err, "bch2_dev_remove_alloc() error: %s\n", bch2_err_str(ret));
@@ -712,8 +718,6 @@ int bch2_dev_remove(struct bch_fs *c, struct bch_dev *ca, int flags,
 		ret = -EBUSY;
 		goto err;
 	}
-
-	__bch2_dev_offline(c, ca);
 
 	scoped_guard(mutex, &c->sb_lock)
 		rcu_assign_pointer(c->devs[ca->dev_idx], NULL);
