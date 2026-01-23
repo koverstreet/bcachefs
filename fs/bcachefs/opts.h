@@ -700,4 +700,11 @@ void bch2_inode_opts_get(struct bch_fs *, struct bch_inode_opts *, bool);
 bool bch2_opt_is_inode_opt(enum bch_opt_id);
 void bch2_inode_opts_to_text(struct printbuf *, struct bch_fs *, struct bch_inode_opts);
 
+void bch2_opt_change_unlock(struct bch_fs *);
+void bch2_opt_change_lock(struct bch_fs *);
+
+DEFINE_GUARD(opt_change_lock, struct bch_fs *,
+	     bch2_opt_change_lock(_T),
+	     bch2_opt_change_unlock(_T))
+
 #endif /* _BCACHEFS_OPTS_H */

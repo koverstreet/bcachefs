@@ -155,7 +155,7 @@ static inline struct per_snapshot_io_opts per_snapshot_io_opts_init(struct bch_f
 {
 	return (struct per_snapshot_io_opts) {
 		/* io_opts->fs_io_opts will be initialized when we know the key type */
-		.fs_io_opts.change_cookie = atomic_read(&c->opt_change_cookie) - 1,
+		.fs_io_opts.change_cookie = c->opt_change_cookie - 1,
 	};
 }
 

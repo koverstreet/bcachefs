@@ -791,7 +791,8 @@ struct bch_fs {
 	struct bch_devs_mask	devs_rotational;
 
 	struct bch_opts		opts;
-	atomic_t		opt_change_cookie;
+	struct mutex		opt_change_lock;
+	u32			opt_change_cookie;
 	struct bch_opts_mask	mount_opts;
 
 	struct bch_sb_cpu	sb;

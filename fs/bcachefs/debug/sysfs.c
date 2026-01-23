@@ -683,6 +683,10 @@ static ssize_t sysfs_opt_store(struct bch_fs *c,
 	const struct bch_option *opt = bch2_opt_table + id;
 	int ret = 0;
 
+	char *tmp __free(kfree) = kstrdup(buf, GFP_KERNEL);
+	if (!tmp)
+		return -ENOMEM;
+
 	/*
 	 * We don't need to take c->writes for correctness, but it eliminates an
 	 * unsightly error message in the dmesg log when we're RO:
@@ -690,43 +694,39 @@ static ssize_t sysfs_opt_store(struct bch_fs *c,
 	if (unlikely(!enumerated_ref_tryget(&c->writes, BCH_WRITE_REF_sysfs)))
 		return -EROFS;
 
-	char *tmp __free(kfree) = kstrdup(buf, GFP_KERNEL);
-	if (!tmp) {
-		ret = -ENOMEM;
-		goto err;
-	}
+	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
+	guard(opt_change_lock)(c);
 
 	u64 v;
 	ret =   bch2_opt_parse(c, opt, strim(tmp), &v, NULL) ?:
 		bch2_opt_hook_pre_set(c, ca, 0, id, v, true);
 
-	if (ret < 0)
-		goto err;
+	if (!ret) {
+		bool is_sb = opt->get_sb || opt->get_member;
+		bool changed = false;
 
-	bool is_sb = opt->get_sb || opt->get_member;
-	bool changed = false;
-
-	if (is_sb) {
-		changed = bch2_opt_set_sb(c, ca, opt, v);
-	} else if (!ca) {
-		changed = bch2_opt_get_by_id(&c->opts, id) != v;
-	} else {
-		/* device options that aren't superblock options aren't
-		 * supported */
-		BUG();
-	}
-
-	if (changed) {
-		if (!ca) {
-			bch2_opt_set_by_id(&c->opts, id, v);
-			clear_bit(id, c->mount_opts.d);
+		if (is_sb) {
+			changed = bch2_opt_set_sb(c, ca, opt, v);
+		} else if (!ca) {
+			changed = bch2_opt_get_by_id(&c->opts, id) != v;
+		} else {
+			/* device options that aren't superblock options aren't
+			 * supported */
+			BUG();
 		}
 
-		bch2_opt_hook_post_set(c, ca, 0, id, v);
+		if (changed) {
+			if (!ca) {
+				bch2_opt_set_by_id(&c->opts, id, v);
+				clear_bit(id, c->mount_opts.d);
+			}
+
+			bch2_opt_hook_post_set(c, ca, 0, id, v);
+		}
+
+		ret = size;
 	}
 
-	ret = size;
-err:
 	enumerated_ref_put(&c->writes, BCH_WRITE_REF_sysfs);
 	return ret;
 }

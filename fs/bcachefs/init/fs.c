@@ -1079,6 +1079,7 @@ static int bch2_fs_init(struct bch_fs *c, struct bch_sb *sb,
 
 	refcount_set(&c->ro_ref, 1);
 	init_waitqueue_head(&c->ro_ref_wait);
+	mutex_init(&c->opt_change_lock);
 
 	for (unsigned i = 0; i < BCH_TIME_STAT_NR; i++)
 		bch2_time_stats_init(&c->times[i]);

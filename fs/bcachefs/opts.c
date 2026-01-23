@@ -677,8 +677,6 @@ void bch2_opt_hook_post_set(struct bch_fs *c, struct bch_dev *ca, u64 inum,
 	default:
 		break;
 	}
-
-	atomic_inc(&c->opt_change_cookie);
 }
 
 int bch2_parse_one_mount_opt(struct bch_fs *c, struct bch_opts *opts,
@@ -896,7 +894,7 @@ void bch2_inode_opts_get(struct bch_fs *c, struct bch_inode_opts *ret, bool meta
 	BCH_INODE_OPTS()
 #undef x
 
-	ret->change_cookie = atomic_read(&c->opt_change_cookie);
+	ret->change_cookie = c->opt_change_cookie;
 
 	if (metadata) {
 		ret->background_target	= c->opts.metadata_target ?: c->opts.foreground_target;
@@ -937,4 +935,18 @@ void bch2_inode_opts_to_text(struct printbuf *out, struct bch_fs *c, struct bch_
 	bch2_opt_to_text(out, c, c->disk_sb.sb, &bch2_opt_table[Opt_##_name], opts._name, 0);
 	BCH_INODE_OPTS()
 #undef x
+}
+
+void bch2_opt_change_unlock(struct bch_fs *c)
+{
+	BUG_ON(!(c->opt_change_cookie & 1));
+	c->opt_change_cookie++;
+	mutex_unlock(&c->opt_change_lock);
+}
+
+void bch2_opt_change_lock(struct bch_fs *c)
+{
+	mutex_lock(&c->opt_change_lock);
+	BUG_ON(c->opt_change_cookie & 1);
+	c->opt_change_cookie++;
 }

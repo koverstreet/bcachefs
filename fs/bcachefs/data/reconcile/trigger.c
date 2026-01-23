@@ -681,7 +681,7 @@ static int new_needs_rb_allowed(struct btree_trans *trans,
 		if (!new_need_rb)
 			return 0;
 
-		if (opt_change_cookie != atomic_read(&c->opt_change_cookie))
+		if (opt_change_cookie != c->opt_change_cookie)
 			return 0;
 	}
 
@@ -898,7 +898,7 @@ int bch2_bkey_get_io_opts(struct btree_trans *trans,
 		 */
 
 		bool metadata = mode == IO_OPTS_metadata;
-		if (snapshot_opts->fs_io_opts.change_cookie	!= atomic_read(&c->opt_change_cookie) ||
+		if (snapshot_opts->fs_io_opts.change_cookie	!= c->opt_change_cookie ||
 		    snapshot_opts->metadata			!= metadata) {
 			bch2_inode_opts_get(c, &snapshot_opts->fs_io_opts, metadata);
 
