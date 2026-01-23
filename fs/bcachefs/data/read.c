@@ -1344,8 +1344,11 @@ int __bch2_read_extent(struct btree_trans *trans,
 	    unlikely(!c->chacha20_key_set))
 		return read_extent_no_encryption_key(trans, orig, read_pos, k, flags);
 
-	struct bch_dev *ca = bch2_dev_get_ioref(c, pick.ptr.dev, READ,
-					BCH_DEV_READ_REF_io_read);
+	struct bch_dev *ca =
+		likely(!pick.do_ec_reconstruct)
+		? bch2_dev_get_ioref(c, pick.ptr.dev, READ,
+				     BCH_DEV_READ_REF_io_read)
+		: NULL;
 
 	/*
 	 * Stale dirty pointers are treated as IO errors, but @failed isn't
