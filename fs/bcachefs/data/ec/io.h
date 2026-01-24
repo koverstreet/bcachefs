@@ -17,7 +17,7 @@ struct ec_stripe_buf {
 	/* might not be buffering the entire stripe: */
 	unsigned		offset;
 	unsigned		size;
-	unsigned long		valid[BITS_TO_LONGS(BCH_BKEY_PTRS_MAX)];
+	s16			err[BCH_BKEY_PTRS_MAX];
 
 	void			*data[BCH_BKEY_PTRS_MAX];
 
@@ -31,7 +31,10 @@ static inline unsigned ec_nr_failed(struct ec_stripe_buf *buf)
 {
 	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
 
-	return v->nr_blocks - bitmap_weight(buf->valid, v->nr_blocks);
+	unsigned nr_failed = 0;
+	for (unsigned i = 0; i < v->nr_blocks; i++)
+		nr_failed += buf->err[i] != 0;
+	return nr_failed;
 }
 
 void bch2_ec_stripe_buf_exit(struct ec_stripe_buf *);
