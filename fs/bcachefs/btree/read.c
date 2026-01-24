@@ -569,20 +569,6 @@ fsck_err:
 	return ret;
 }
 
-static bool btree_node_degraded(struct bch_fs *c, struct btree *b)
-{
-	guard(rcu)();
-	bkey_for_each_ptr(bch2_bkey_ptrs(bkey_i_to_s(&b->key)), ptr) {
-		if (ptr->dev == BCH_SB_MEMBER_INVALID)
-			continue;
-
-		struct bch_dev *ca = bch2_dev_rcu_noerror(c, ptr->dev);
-		if (!ca || ca->mi.state != BCH_MEMBER_STATE_rw)
-			return true;
-	}
-	return false;
-}
-
 int bch2_btree_node_read_done(struct bch_fs *c, struct bch_dev *ca,
 			      struct btree *b,
 			      struct bch_io_failures *failed,
@@ -984,19 +970,10 @@ static void btree_node_read_work(struct work_struct *work)
 	if (!buf.suppress)
 		bch2_print_str(c, ret ? KERN_ERR : KERN_NOTICE, buf.buf);
 
-	/*
-	 * Do this late; unlike other btree_node_need_rewrite() cases if a node
-	 * is merely degraded we should rewrite it before we update it, but we
-	 * don't need to kick off an async rewrite now:
-	 */
-	if (btree_node_degraded(c, b)) {
-		set_btree_node_need_rewrite(b);
-		set_btree_node_need_rewrite_degraded(b);
-	}
-
 	async_object_list_del(c, btree_read_bio, rb->list_idx);
 	bch2_time_stats_update(&c->times[BCH_TIME_btree_node_read],
 			       rb->start_time);
+
 	bio_put(&rb->bio);
 	clear_btree_node_read_in_flight(b);
 	smp_mb__after_atomic();
