@@ -314,6 +314,7 @@ void bch2_ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
 				    rw == READ ? "reading from" : "writing to",
 				    stale);
 		clear_bit(idx, buf->valid);
+		enumerated_ref_put(&ca->io_ref[rw], ref);
 		return;
 	}
 
