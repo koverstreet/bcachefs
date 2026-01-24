@@ -1450,15 +1450,21 @@ int __bch2_read_extent(struct btree_trans *trans,
 		 */
 		trans->notrace_relock_fail = true;
 	} else {
+		if (!(flags & BCH_READ_in_retry)) {
+			bch2_rbio_punt(rbio, bch2_rbio_retry, RBIO_CONTEXT_UNBOUND, system_unbound_wq);
+			return 0;
+		}
+
 		/* Attempting reconstruct read: */
-		if (bch2_ec_read_extent(trans, rbio, k)) {
-			ret = bch_err_throw(c, data_read_retry_ec_reconstruct_err);
+		ret = bch2_ec_read_extent(trans, rbio, k);
+		if (bch2_err_matches(ret, BCH_ERR_transaction_restart)) {
+			bch2_rbio_free(rbio);
+			return ret;
+		}
+		if (ret) {
 			bch2_rbio_error(rbio, ret);
 			goto out;
 		}
-
-		if (likely(!(flags & BCH_READ_in_retry)))
-			bio_endio(&rbio->bio);
 	}
 out:
 	if (likely(!(flags & BCH_READ_in_retry))) {

@@ -12,6 +12,7 @@
 #include "data/read.h"
 
 #include "init/error.h"
+#include "init/passes.h"
 
 #include <linux/string_choices.h>
 
@@ -227,8 +228,11 @@ static void bch2_ec_validate_checksums(struct bch_fs *c, struct ec_stripe_buf *b
 				buf->csum_good[i] = want;
 				buf->csum_bad[i] = got;
 
-				CLASS(bch2_dev_bkey_tryget, ca)(c, bkey_i_to_s_c(&buf->key),
-								v->ptrs[i].dev);
+				/*
+				 * Can't error on invalid device, we no longer
+				 * have the bkey locked
+				 */
+				CLASS(bch2_dev_tryget_noerror, ca)(c, v->ptrs[i].dev);
 				if (ca)
 					bch2_io_error(ca, BCH_MEMBER_ERROR_checksum);
 				break;
@@ -262,7 +266,7 @@ static void stripe_buf_errs_to_text(struct printbuf *out, struct bch_fs *c, stru
 		}
 }
 
-int bch2_stripe_buf_validate(struct bch_fs *c, struct ec_stripe_buf *buf)
+int bch2_stripe_buf_validate(struct bch_fs *c, struct ec_stripe_buf *buf, bool is_open)
 {
 	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
 
@@ -273,11 +277,19 @@ int bch2_stripe_buf_validate(struct bch_fs *c, struct ec_stripe_buf *buf)
 	if (!ec_nr_failed(buf))
 		return 0;
 
-	bool offline_stale_only = true;
-	for (unsigned i = 0; i < v->nr_blocks; i++)
-		offline_stale_only &= !buf->err[i] ||
-			buf->err[i] == -BCH_ERR_stripe_read_device_offline ||
-			buf->err[i] == -BCH_ERR_stripe_read_ptr_stale;
+	bool errors_silent = true;
+	bool have_stale_race = false;
+	for (unsigned i = 0; i < v->nr_blocks; i++) {
+		bool stale_race = buf->err[i] == -BCH_ERR_stripe_read_ptr_stale &&
+			!test_bit(i, buf->stale) &&
+			!is_open;
+		have_stale_race |= stale_race;
+
+		if (buf->err[i] &&
+		    buf->err[i] != -BCH_ERR_stripe_read_device_offline &&
+		    !stale_race)
+			errors_silent = false;
+	}
 
 	CLASS(bch_log_msg, msg)(c);
 
@@ -291,7 +303,7 @@ int bch2_stripe_buf_validate(struct bch_fs *c, struct ec_stripe_buf *buf)
 	if (ret) {
 		prt_printf(&msg.m, "error: %s\n", bch2_err_str(ret));
 		/* Separate ratelimit state for hard errors */
-		msg.m.suppress = bch2_ratelimit(c);
+		msg.m.suppress = !is_open && have_stale_race ? true : bch2_ratelimit(c);
 		return ret;
 	}
 
@@ -305,7 +317,7 @@ int bch2_stripe_buf_validate(struct bch_fs *c, struct ec_stripe_buf *buf)
 	}
 
 	prt_printf(&msg.m, "successful reconstruct\n");
-	msg.m.suppress = offline_stale_only ? true : bch2_ratelimit(c);
+	msg.m.suppress = errors_silent ? true : bch2_ratelimit(c);
 	return 0;
 }
 
@@ -432,11 +444,17 @@ static int stripe_reconstruct_err(struct bch_fs *c, struct bkey_s_c orig_k, cons
 int bch2_ec_read_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 			struct bkey_s_c orig_k)
 {
+	/*
+	 * We need the original extent to read to still be locked when we check
+	 * for non-spurious stale stripe pointers
+	 */
+	try(bch2_trans_relock(trans));
+
 	struct bch_fs *c = trans->c;
 
 	BUG_ON(!rbio->pick.has_ec);
 
-	struct ec_stripe_buf *buf __free(ec_stripe_buf_free) = kzalloc(sizeof(*buf), GFP_NOFS);
+	struct ec_stripe_buf *buf __free(ec_stripe_buf_free) = kzalloc(sizeof(*buf), GFP_KERNEL);
 	if (!buf)
 		return bch_err_throw(c, ENOMEM_ec_read_extent);
 
@@ -452,6 +470,27 @@ int bch2_ec_read_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 	if (offset + bio_sectors(&rbio->bio) > le16_to_cpu(v->sectors))
 		return stripe_reconstruct_err(c, orig_k, "read is bigger than stripe");
 
+	/* Check for stale pointers while we still have btree locks held */
+	bool have_stale = false;
+	scoped_guard(rcu) {
+		for (unsigned i = 0; i < v->nr_blocks; i++) {
+			struct bch_dev *ca = bch2_dev_rcu_noerror(c, v->ptrs[i].dev);
+			if (ca && dev_ptr_stale(ca, &v->ptrs[i])) {
+				__set_bit(i, buf->stale);
+				have_stale = true;
+			}
+		}
+	}
+
+	if (have_stale) {
+		CLASS(bch_log_msg_ratelimited, msg)(c);
+		prt_printf(&msg.m, "Stripe with stale pointer(s):\n");
+		bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&buf->key));
+
+		bch2_count_fsck_err(c, stale_dirty_ptr, &msg.m);
+		bch2_run_explicit_recovery_pass(c, &msg.m, BCH_RECOVERY_PASS_check_allocations, 0);
+	}
+
 	/* Don't hold btree locks for stripe buffer allocations, or IO */
 	bch2_trans_unlock(trans);
 
@@ -461,7 +500,16 @@ int bch2_ec_read_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 
 	bch2_stripe_buf_read(c, buf);
 
-	try(bch2_stripe_buf_validate(c, buf));
+	ret = bch2_stripe_buf_validate(c, buf, false);
+	if (ret) {
+		for (unsigned i = 0; i < v->nr_blocks; i++)
+			if (buf->err[i] == -BCH_ERR_stripe_read_ptr_stale &&
+			    !test_bit(i, buf->stale))
+				ret = bch_err_throw(c, data_read_ptr_stale_race);
+		if (ret != -BCH_ERR_data_read_ptr_stale_race)
+			bch_err_fn(c, ret);
+		return ret;
+	}
 
 	memcpy_to_bio(&rbio->bio, rbio->bio.bi_iter,
 		      buf->data[rbio->pick.ec.block] + ((offset - buf->offset) << 9));

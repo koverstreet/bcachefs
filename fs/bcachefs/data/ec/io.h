@@ -20,6 +20,9 @@ struct ec_stripe_buf {
 	s16			err[BCH_BKEY_PTRS_MAX];
 	void			*data[BCH_BKEY_PTRS_MAX];
 
+	/* Stale when we read the stripe key, i.e. alloc inconsistency */
+	unsigned long		stale[BITS_TO_LONGS(BCH_BKEY_PTRS_MAX)];
+
 	struct bch_csum		csum_good[BCH_BKEY_PTRS_MAX];
 	struct bch_csum		csum_bad[BCH_BKEY_PTRS_MAX];
 
@@ -52,7 +55,7 @@ DEFINE_FREE(ec_stripe_buf_free, struct ec_stripe_buf *, bch2_ec_stripe_buf_exit(
 void bch2_ec_generate_ec(struct ec_stripe_buf *);
 void bch2_ec_generate_checksums(struct ec_stripe_buf *);
 
-int bch2_stripe_buf_validate(struct bch_fs *, struct ec_stripe_buf *);
+int bch2_stripe_buf_validate(struct bch_fs *, struct ec_stripe_buf *, bool);
 
 void bch2_ec_block_io(struct bch_fs *, struct ec_stripe_buf *, blk_opf_t, unsigned);
 void bch2_stripe_buf_read(struct bch_fs *, struct ec_stripe_buf *);
