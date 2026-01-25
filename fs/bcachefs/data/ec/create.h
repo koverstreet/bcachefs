@@ -4,7 +4,15 @@
 
 #include "io.h"
 
-struct ec_stripe_head;
+struct ec_dev_stripe_state {
+	struct list_head	list;
+	struct mutex		lock;
+
+	unsigned		disk_label;
+
+	struct dev_stripe_state	block_stripe;
+	struct dev_stripe_state	parity_stripe;
+};
 
 enum ec_stripe_ref {
 	STRIPE_REF_io,
@@ -76,8 +84,7 @@ struct ec_stripe_head {
 
 	unsigned		blocksize;
 
-	struct dev_stripe_state	block_stripe;
-	struct dev_stripe_state	parity_stripe;
+	struct ec_dev_stripe_state *dev_stripe;
 
 	struct ec_stripe_new	*s;
 };

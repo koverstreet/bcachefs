@@ -34,6 +34,9 @@ struct bch_fs_ec {
 	struct list_head	stripe_head_list;
 	struct mutex		stripe_head_lock;
 
+	struct list_head	dev_stripe_state_list;
+	struct mutex		dev_stripe_state_lock;
+
 	struct list_head	stripe_new_list;
 	struct mutex		stripe_new_lock;
 	wait_queue_head_t	stripe_new_wait;
