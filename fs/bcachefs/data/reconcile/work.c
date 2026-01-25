@@ -594,13 +594,17 @@ static int do_reconcile_extent(struct moving_context *ctxt,
 	if (!k.k)
 		return 0;
 
+	struct bkey_buf stack_k __cleanup(bch2_bkey_buf_exit);
+	bch2_bkey_buf_init(&stack_k);
+	bch2_bkey_buf_reassemble(&stack_k, k);
+
 	struct bch_inode_opts opts;
 	struct data_update_opts data_opts = {};
 	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter, 0, k));
 
-	event_add_trace(c, reconcile_data, k.k->size, buf, ({
+	event_add_trace(c, reconcile_data, stack_k.k->k.size, buf, ({
 		prt_newline(&buf);
-		bch2_bkey_val_to_text(&buf, c, k);
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(stack_k.k));
 		prt_newline(&buf);
 		bch2_data_update_opts_to_text(&buf, c, &opts, &data_opts);
 	}));
@@ -626,6 +630,14 @@ static int do_reconcile_extent_phys(struct moving_context *ctxt,
 	if (!k.k)
 		return 0;
 
+	struct bkey_buf stack_bp __cleanup(bch2_bkey_buf_exit);
+	bch2_bkey_buf_init(&stack_bp);
+	bch2_bkey_buf_reassemble(&stack_bp, bp_k);
+
+	struct bkey_buf stack_k __cleanup(bch2_bkey_buf_exit);
+	bch2_bkey_buf_init(&stack_k);
+	bch2_bkey_buf_reassemble(&stack_k, k);
+
 	struct bch_inode_opts opts;
 	struct data_update_opts data_opts = {
 		.read_dev	= work.pos.inode,
@@ -635,9 +647,9 @@ static int do_reconcile_extent_phys(struct moving_context *ctxt,
 
 	event_add_trace(c, reconcile_phys, k.k->size, buf, ({
 		prt_newline(&buf);
-		bch2_bkey_val_to_text(&buf, c, bp_k);
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(stack_bp.k));
 		prt_newline(&buf);
-		bch2_bkey_val_to_text(&buf, c, k);
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(stack_k.k));
 		prt_newline(&buf);
 		bch2_data_update_opts_to_text(&buf, c, &opts, &data_opts);
 	}));
@@ -659,13 +671,17 @@ static int do_reconcile_btree(struct moving_context *ctxt,
 	if (!k.k)
 		return 0;
 
+	struct bkey_buf stack_k __cleanup(bch2_bkey_buf_exit);
+	bch2_bkey_buf_init(&stack_k);
+	bch2_bkey_buf_reassemble(&stack_k, k);
+
 	struct bch_inode_opts opts;
 	struct data_update_opts data_opts = {};
 	try(__do_reconcile_extent(ctxt, snapshot_io_opts, &opts, &data_opts, work, &iter, bp.v->level, k));
 
 	event_add_trace(c, reconcile_btree, btree_sectors(c), buf, ({
 		prt_newline(&buf);
-		bch2_bkey_val_to_text(&buf, c, k);
+		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(stack_k.k));
 		prt_newline(&buf);
 		bch2_data_update_opts_to_text(&buf, c, &opts, &data_opts);
 	}));
