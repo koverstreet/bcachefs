@@ -669,11 +669,6 @@ static unsigned disk_label_ec_devs(struct bch_fs *c, unsigned disk_label,
 	return blocksize;
 }
 
-static bool may_create_new_stripe(struct bch_fs *c)
-{
-	return false;
-}
-
 static void ec_stripe_key_init(struct bch_fs *c,
 			       struct bkey_i *k,
 			       unsigned algorithm,
@@ -1068,14 +1063,6 @@ static int init_new_stripe_from_old(struct bch_fs *c, struct ec_stripe_new *s)
 static int stripe_reuse(struct btree_trans *trans, struct ec_stripe_new *s)
 {
 	struct bch_fs *c = trans->c;
-
-	/*
-	 * If we can't allocate a new stripe, and there's no stripes with empty
-	 * blocks for us to reuse, that means we have to wait on copygc:
-	 */
-	if (may_create_new_stripe(c))
-		return -1;
-
 	struct bkey_s_c lru_k;
 	int ret = 0;
 
