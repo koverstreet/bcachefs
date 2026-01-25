@@ -1548,6 +1548,17 @@ static void __bch2_write(struct bch_write_op *op)
 	struct bio *bio = NULL;
 	int ret;
 
+	/*
+	 * Sync or no?
+	 *
+	 * If we're running asynchronously, wne may still want to block
+	 * synchronously here if we weren't able to submit all of the IO at
+	 * once, as that signals backpressure to the caller.
+	 */
+	bool wait_on_allocator_sync = (op->flags & BCH_WRITE_sync) ||
+		(!(op->flags & BCH_WRITE_submitted) &&
+		 !(op->flags & BCH_WRITE_in_worker));
+
 	guard(memalloc_flags)(PF_MEMALLOC_NOFS);
 
 	if (unlikely(op->opts.nocow &&
@@ -1573,28 +1584,34 @@ again:
 					BKEY_EXTENT_U64s_MAX))
 			break;
 
-		/*
-		 * The copygc thread is now global, which means it's no longer
-		 * freeing up space on specific disks, which means that
-		 * allocations for specific disks may hang arbitrarily long:
-		 */
-		ret = bch2_trans_do(c,
-			bch2_alloc_sectors_start_trans(trans,
-				op->target,
-				op->opts.erasure_code && !(op->flags & BCH_WRITE_cached),
-				op->write_point,
-				&op->devs_have,
-				op->nr_replicas,
-				op->opts.data_replicas,
-				op->watermark,
-				op->flags,
-				&op->cl, &wp));
-		if (unlikely(ret)) {
-			if (bch2_err_matches(ret, BCH_ERR_operation_blocked))
+		CLASS(btree_trans, trans)(c);
+		struct alloc_request *req;
+		ret = lockrestart_do(trans, ({
+			req = alloc_request_get(trans,
+						op->target,
+						op->opts.erasure_code && !(op->flags & BCH_WRITE_cached),
+						&op->devs_have,
+						op->nr_replicas,
+						op->opts.data_replicas,
+						op->watermark,
+						op->flags,
+						&op->cl);
+			PTR_ERR_OR_ZERO(req) ?:
+			bch2_alloc_sectors_req(trans, req, op->write_point, &wp);
+		}));
+		bch2_trans_unlock_long(trans);
+		if (bch2_err_matches(ret, BCH_ERR_operation_blocked)) {
+			if (!wait_on_allocator_sync)
 				break;
 
-			goto err;
+			bch2_wait_on_allocator(c, op->watermark, &op->cl);
+			__bch2_write_index(op);
+			op->wbio.failed.nr = 0;
+			continue;
 		}
+
+		if (unlikely(ret))
+			goto err;
 
 		EBUG_ON(!wp);
 
@@ -1630,17 +1647,8 @@ err:
 					  key_to_write, false);
 	} while (ret);
 
-	/*
-	 * Sync or no?
-	 *
-	 * If we're running asynchronously, wne may still want to block
-	 * synchronously here if we weren't able to submit all of the IO at
-	 * once, as that signals backpressure to the caller.
-	 */
-	if ((op->flags & BCH_WRITE_sync) ||
-	    (!(op->flags & BCH_WRITE_submitted) &&
-	     !(op->flags & BCH_WRITE_in_worker))) {
-		bch2_wait_on_allocator(c, op->watermark, &op->cl);
+	if (op->flags & BCH_WRITE_sync) {
+		closure_sync(&op->cl);
 
 		__bch2_write_index(op);
 
