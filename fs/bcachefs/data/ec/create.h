@@ -24,7 +24,6 @@ struct ec_stripe_handle {
 
 struct ec_stripe_new {
 	struct bch_fs		*c;
-	struct ec_stripe_head	*h;
 	struct mutex		lock;
 	struct list_head	list;
 
@@ -32,6 +31,8 @@ struct ec_stripe_new {
 
 	int			err;
 
+	struct bch_devs_mask	devs;
+	enum bch_watermark	watermark;
 	u8			nr_data;
 	u8			nr_parity;
 	bool			allocated;
