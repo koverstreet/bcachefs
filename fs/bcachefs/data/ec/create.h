@@ -135,4 +135,7 @@ void bch2_ec_stripe_create_work(struct work_struct *);
 
 void bch2_new_stripes_to_text(struct printbuf *, struct bch_fs *);
 
+struct moving_context;
+int bch2_stripe_repair(struct moving_context *, struct btree_iter *, struct bkey_s_c_stripe);
+
 #endif /* _BCACHEFS_DATA_EC_CREATE_H */

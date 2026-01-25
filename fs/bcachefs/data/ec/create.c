@@ -7,12 +7,14 @@
 #include "alloc/foreground.h"
 #include "alloc/lru.h"
 
+#include "btree/locking.h"
 #include "btree/update.h"
 #include "btree/write_buffer.h"
 
 #include "data/ec/create.h"
 #include "data/ec/io.h"
 #include "data/ec/trigger.h"
+#include "data/move.h"
 
 #include "init/error.h"
 
@@ -1377,4 +1379,161 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 err:
 	bch2_ec_stripe_head_put(c, h);
 	return ERR_PTR(ret);
+}
+
+/* reconcile/resilver: */
+
+static bool stripe_degraded(struct bch_fs *c, const struct bch_stripe *s)
+{
+	for (unsigned i = 0; i < s->nr_blocks; i++)
+		if (bch2_dev_bad_or_evacuating(c, s->ptrs[i].dev))
+			return true;
+	return false;
+}
+
+int bch2_stripe_repair(struct moving_context *ctxt,
+		       struct btree_iter *iter, struct bkey_s_c_stripe s)
+{
+	struct btree_trans *trans = ctxt->trans;
+	struct bch_fs *c = trans->c;
+
+	/*
+	 * Same as get_old_stripe() -
+	 *
+	 * We require an intent lock here until we have the stripe open, for
+	 * exclusion with bch2_trigger_stripe() - which will delete empty
+	 * stripes if they're not open, but it can't actually open them:
+	 */
+	BUG_ON(!btree_node_intent_locked(btree_iter_path(trans, iter), 0));
+
+	const struct bch_stripe *old_s = s.v;
+	if (!stripe_degraded(c, old_s)) {
+		/* confused */
+		BUG();
+	}
+
+	unsigned nr_data = old_s->nr_blocks - old_s->nr_redundant;
+	unsigned nr_live_data_blocks = 0;
+	for (unsigned i = 0; i < old_s->nr_blocks; i++)
+		nr_live_data_blocks += stripe_blockcount_get(old_s, i) != 0;
+
+	if (!nr_live_data_blocks)
+		return 0;
+
+	struct bch_devs_mask devs;
+	disk_label_ec_devs(c, old_s->disk_label, &devs, le16_to_cpu(old_s->sectors));
+
+	unsigned need_evacuate = max(0,
+			(int) (nr_live_data_blocks + old_s->nr_redundant) - (int) dev_mask_nr(&devs));
+
+	if (need_evacuate) {
+		unsigned blocks_used[BCH_BKEY_PTRS_MAX], nr = 0;
+		memset(blocks_used, 0, sizeof(blocks_used));
+
+		for (unsigned i = 0; i < nr_data; i++)
+			if (stripe_blockcount_get(old_s, i))
+				blocks_used[nr++] = i;
+		BUG_ON(nr < need_evacuate);
+
+		bubble_sort(blocks_used, nr, cmp_int);
+
+		for (unsigned i = 0; i < min(nr, need_evacuate); i++) {
+			const struct bch_extent_ptr *ptr = old_s->ptrs + blocks_used[i];
+
+			try(bch2_evacuate_data(ctxt, ptr->dev, ptr->offset, ptr->offset + le16_to_cpu(old_s->sectors)));
+		}
+
+		return bch_err_throw(c, stripe_needs_block_evacuate);
+	}
+
+	struct ec_stripe_new *new_s = ec_new_stripe_alloc(c, devs, BCH_WATERMARK_normal,
+							  old_s->disk_label,
+							  old_s->algorithm,
+							  nr_live_data_blocks,
+							  old_s->nr_redundant,
+							  le16_to_cpu(old_s->sectors));
+	if (unlikely(!new_s))
+		return -ENOMEM;
+
+	if (!bch2_stripe_handle_tryget(c, &new_s->old_stripe_handle, s.k->p.offset)) {
+		/* trace this */
+		kfree(new_s);
+		return 0;
+	}
+
+	bkey_reassemble(&new_s->old_stripe.key.k_i, s.s_c);
+
+	init_new_stripe_from_old(c, new_s);
+
+	int ret = __bch2_ec_stripe_buf_init(c, &new_s->old_stripe, 0, le16_to_cpu(new_s->old_stripe.key.v.sectors)) ?:
+		  __bch2_ec_stripe_buf_init(c, &new_s->new_stripe, 0, le16_to_cpu(new_s->new_stripe.key.v.sectors)) ?:
+		  lockrestart_do(trans, stripe_idx_alloc(trans, new_s));
+	if (ret) {
+		bch2_stripe_handle_put(c, &new_s->old_stripe_handle);
+		bch2_ec_stripe_buf_exit(&new_s->new_stripe);
+		bch2_ec_stripe_buf_exit(&new_s->old_stripe);
+		return ret;
+	}
+
+	unsigned target = old_s->disk_label
+		? group_to_target(old_s->disk_label - 1)
+		: 0;
+
+	CLASS(closure_stack, cl)();
+	while (true) {
+		bch2_trans_begin(trans); /* avoid unnecessary restarts from dev_stripe_state_get() */
+
+		struct ec_dev_stripe_state *dev_stripe =
+			errptr_try(ec_dev_stripe_state_get(trans, old_s->disk_label));
+		struct alloc_request *req;
+
+		ret = lockrestart_do(trans, ({
+			req = alloc_request_get(trans, target, false, NULL,
+						0, 0, BCH_WATERMARK_normal, 0, &cl);
+
+			PTR_ERR_OR_ZERO(req) ?:
+			new_stripe_alloc_buckets(trans, req, dev_stripe, new_s);
+		}));
+		mutex_unlock(&dev_stripe->lock);
+
+		bch2_trans_unlock_long(trans);
+
+		if (!ret)
+			break;
+
+		if (!bch2_err_matches(ret, BCH_ERR_operation_blocked)) {
+			CLASS(bch_log_msg, msg)(c);
+			prt_str(&msg.m, "\nold: ");
+			bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&new_s->old_stripe.key.k_i));;
+			prt_str(&msg.m, "\nnew: ");
+			bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&new_s->new_stripe.key.k_i));;
+			prt_printf(&msg.m, "\nret %s", bch2_err_str(ret));
+
+			bch2_stripe_handle_put(c, &new_s->new_stripe_handle);
+			bch2_stripe_handle_put(c, &new_s->old_stripe_handle);
+			bch2_ec_stripe_buf_exit(&new_s->new_stripe);
+			bch2_ec_stripe_buf_exit(&new_s->old_stripe);
+			kfree(new_s);
+			return ret;
+		}
+
+		bch2_wait_on_allocator(c, req, ret, &cl);
+	}
+
+	bch2_stripe_new_buckets_add(c, new_s);
+	new_s->allocated = true;
+	new_s->pending = true;
+
+	bch2_disk_reservation_get(c, &new_s->res,
+				  le16_to_cpu(new_s->new_stripe.key.v.sectors),
+				  new_s->nr_parity,
+				  BCH_DISK_RESERVATION_NOFAIL);
+	bch2_stripe_buf_read(c, &new_s->old_stripe);
+
+	/* ec_stripe_new_set_pending */
+	scoped_guard(mutex, &c->ec.stripe_new_lock)
+		list_add(&new_s->list, &c->ec.stripe_new_list);
+
+	ec_stripe_new_put(c, new_s, STRIPE_REF_io);
+	return 0;
 }
