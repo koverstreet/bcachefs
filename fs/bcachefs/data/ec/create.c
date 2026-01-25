@@ -396,6 +396,10 @@ static int stripe_update_bucket(struct btree_trans *trans,
 				     bp, &stats, &res.r, &last_flushed);
 	})));
 
+	/* XXX: if we have an old stripe (with different idx), verify that all
+	 * block counts are zero
+	 */
+
 	event_inc_trace(c, stripe_update_bucket, buf, ({
 		prt_printf(&buf, "Updating block %u\n", new_blocknr);
 		bch2_bkey_val_to_text(&buf, c, bkey_i_to_s_c(&new_stripe->k_i));
