@@ -562,29 +562,6 @@ void bch2_ec_do_stripe_creates(struct bch_fs *c)
 		enumerated_ref_put(&c->writes, BCH_WRITE_REF_stripe_create);
 }
 
-static void ec_stripe_new_set_pending(struct bch_fs *c, struct ec_stripe_head *h)
-{
-	struct ec_stripe_new *s = h->s;
-
-	lockdep_assert_held(&h->lock);
-
-	BUG_ON(!s->allocated && !s->err);
-
-	h->s		= NULL;
-	s->pending	= true;
-
-	scoped_guard(mutex, &c->ec.stripe_new_lock)
-		list_add(&s->list, &c->ec.stripe_new_list);
-
-	ec_stripe_new_put(c, s, STRIPE_REF_io);
-}
-
-void bch2_ec_stripe_new_cancel(struct bch_fs *c, struct ec_stripe_head *h, int err)
-{
-	h->s->err = err;
-	ec_stripe_new_set_pending(c, h);
-}
-
 void bch2_ec_bucket_cancel(struct bch_fs *c, struct open_bucket *ob, int err)
 {
 	struct ec_stripe_new *s = ob->ec;
@@ -726,116 +703,6 @@ static struct ec_stripe_new *ec_new_stripe_alloc(struct bch_fs *c,
 			   s->nr_data, s->nr_parity,
 			   blocksize, disk_label);
 	return s;
-}
-
-static void ec_stripe_head_devs_update(struct bch_fs *c, struct ec_stripe_head *h)
-{
-	struct bch_devs_mask old_devs = h->devs;
-
-	h->blocksize		= disk_label_ec_devs(c, h->disk_label, &h->devs, 0);
-	h->nr_active_devs	= dev_mask_nr(&h->devs);
-
-	/*
-	 * If we only have redundancy + 1 devices, we're better off with just
-	 * replication:
-	 */
-	h->insufficient_devs = h->nr_active_devs < h->redundancy + 2;
-
-	struct bch_devs_mask devs_leaving;
-	bitmap_andnot(devs_leaving.d, old_devs.d, h->devs.d, BCH_SB_MEMBERS_MAX);
-
-	if (h->s && !h->s->allocated && dev_mask_nr(&devs_leaving))
-		bch2_ec_stripe_new_cancel(c, h, -EINTR);
-}
-
-static struct ec_stripe_head *
-ec_new_stripe_head_alloc(struct bch_fs *c, unsigned disk_label,
-			 unsigned algo, unsigned redundancy,
-			 enum bch_watermark watermark)
-{
-	struct ec_stripe_head *h = kzalloc(sizeof(*h), GFP_KERNEL);
-	if (!h)
-		return NULL;
-
-	mutex_init(&h->lock);
-	BUG_ON(!mutex_trylock(&h->lock));
-
-	h->disk_label	= disk_label;
-	h->algo		= algo;
-	h->redundancy	= redundancy;
-	h->watermark	= watermark;
-
-	list_add(&h->list, &c->ec.stripe_head_list);
-	return h;
-}
-
-void bch2_ec_stripe_head_put(struct bch_fs *c, struct ec_stripe_head *h)
-{
-	if (h->s &&
-	    h->s->allocated &&
-	    bitmap_weight(h->s->blocks_allocated,
-			  h->s->nr_data) == h->s->nr_data)
-		ec_stripe_new_set_pending(c, h);
-
-	mutex_unlock(&h->lock);
-}
-
-static struct ec_stripe_head *
-__bch2_ec_stripe_head_get(struct btree_trans *trans,
-			  unsigned disk_label,
-			  unsigned algo,
-			  unsigned redundancy,
-			  enum bch_watermark watermark)
-{
-	struct bch_fs *c = trans->c;
-	struct ec_stripe_head *h;
-
-	if (!redundancy)
-		return NULL;
-
-	int ret = bch2_trans_mutex_lock(trans, &c->ec.stripe_head_lock);
-	if (ret)
-		return ERR_PTR(ret);
-
-	if (test_bit(BCH_FS_going_ro, &c->flags)) {
-		h = ERR_PTR(bch_err_throw(c, erofs_no_writes));
-		goto err;
-	}
-
-	list_for_each_entry(h, &c->ec.stripe_head_list, list)
-		if (h->disk_label	== disk_label &&
-		    h->algo		== algo &&
-		    h->redundancy	== redundancy &&
-		    h->watermark	== watermark) {
-			ret = bch2_trans_mutex_lock(trans, &h->lock);
-			if (ret) {
-				h = ERR_PTR(ret);
-				goto err;
-			}
-			goto found;
-		}
-
-	h = ec_new_stripe_head_alloc(c, disk_label, algo, redundancy, watermark);
-	if (!h) {
-		h = ERR_PTR(bch_err_throw(c, ENOMEM_stripe_head_alloc));
-		goto err;
-	}
-
-	unsigned long rw_devs_change_count;
-found:
-	rw_devs_change_count = READ_ONCE(c->allocator.rw_devs_change_count);
-	if (h->rw_devs_change_count != rw_devs_change_count) {
-		ec_stripe_head_devs_update(c, h);
-		h->rw_devs_change_count = rw_devs_change_count;
-	}
-
-	if (h->insufficient_devs) {
-		mutex_unlock(&h->lock);
-		h = NULL;
-	}
-err:
-	mutex_unlock(&c->ec.stripe_head_lock);
-	return h;
 }
 
 static int __new_stripe_alloc_buckets(struct btree_trans *trans,
@@ -1195,6 +1062,188 @@ static int stripe_alloc_or_reuse(struct btree_trans *trans,
 	return 0;
 }
 
+static void bch2_new_stripe_to_text(struct printbuf *out, struct bch_fs *c,
+				    struct ec_stripe_new *s)
+{
+	prt_printf(out, "\tidx %llu blocks %u+%u allocated %u ref %u %u %s obs",
+		   s->new_stripe.key.k.p.offset, s->nr_data, s->nr_parity,
+		   bitmap_weight(s->blocks_allocated, s->nr_data),
+		   atomic_read(&s->ref[STRIPE_REF_io]),
+		   atomic_read(&s->ref[STRIPE_REF_stripe]),
+		   bch2_watermarks[s->watermark]);
+
+	struct bch_stripe *v = &s->new_stripe.key.v;
+	unsigned i;
+	for_each_set_bit(i, s->blocks_gotten, v->nr_blocks)
+		prt_printf(out, " %u", s->blocks[i]);
+	prt_newline(out);
+	bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(&s->new_stripe.key.k_i));
+	prt_newline(out);
+}
+
+void bch2_new_stripes_to_text(struct printbuf *out, struct bch_fs *c)
+{
+	struct ec_stripe_head *h;
+	struct ec_stripe_new *s;
+
+	scoped_guard(mutex, &c->ec.stripe_head_lock)
+		list_for_each_entry(h, &c->ec.stripe_head_list, list) {
+			prt_printf(out, "disk label %u algo %u redundancy %u %s nr created %llu:\n",
+			       h->disk_label, h->algo, h->redundancy,
+			       bch2_watermarks[h->watermark],
+			       h->nr_created);
+
+			if (h->s)
+				bch2_new_stripe_to_text(out, c, h->s);
+		}
+
+	prt_printf(out, "in flight:\n");
+
+	scoped_guard(mutex, &c->ec.stripe_new_lock)
+		list_for_each_entry(s, &c->ec.stripe_new_list, list)
+			bch2_new_stripe_to_text(out, c, s);
+}
+
+/*
+ * ec_stripe_head: interface from the sector allocator to erasure coding
+ * We have one ec_stripe_head for every combination of replication, target and
+ * watermark options, which are used for the staging of stripe creation via
+ * struct ec_stripe_new
+ */
+
+static void ec_stripe_new_set_pending(struct bch_fs *c, struct ec_stripe_head *h)
+{
+	struct ec_stripe_new *s = h->s;
+
+	lockdep_assert_held(&h->lock);
+
+	BUG_ON(!s->allocated && !s->err);
+
+	h->s		= NULL;
+	s->pending	= true;
+
+	scoped_guard(mutex, &c->ec.stripe_new_lock)
+		list_add(&s->list, &c->ec.stripe_new_list);
+
+	ec_stripe_new_put(c, s, STRIPE_REF_io);
+}
+
+void bch2_ec_stripe_new_cancel(struct bch_fs *c, struct ec_stripe_head *h, int err)
+{
+	h->s->err = err;
+	ec_stripe_new_set_pending(c, h);
+}
+
+static void ec_stripe_head_devs_update(struct bch_fs *c, struct ec_stripe_head *h)
+{
+	struct bch_devs_mask old_devs = h->devs;
+
+	h->blocksize		= disk_label_ec_devs(c, h->disk_label, &h->devs, 0);
+	h->nr_active_devs	= dev_mask_nr(&h->devs);
+
+	/*
+	 * If we only have redundancy + 1 devices, we're better off with just
+	 * replication:
+	 */
+	h->insufficient_devs = h->nr_active_devs < h->redundancy + 2;
+
+	struct bch_devs_mask devs_leaving;
+	bitmap_andnot(devs_leaving.d, old_devs.d, h->devs.d, BCH_SB_MEMBERS_MAX);
+
+	if (h->s && !h->s->allocated && dev_mask_nr(&devs_leaving))
+		bch2_ec_stripe_new_cancel(c, h, -EINTR);
+}
+
+static struct ec_stripe_head *
+ec_new_stripe_head_alloc(struct bch_fs *c, unsigned disk_label,
+			 unsigned algo, unsigned redundancy,
+			 enum bch_watermark watermark)
+{
+	struct ec_stripe_head *h = kzalloc(sizeof(*h), GFP_KERNEL);
+	if (!h)
+		return NULL;
+
+	mutex_init(&h->lock);
+	BUG_ON(!mutex_trylock(&h->lock));
+
+	h->disk_label	= disk_label;
+	h->algo		= algo;
+	h->redundancy	= redundancy;
+	h->watermark	= watermark;
+
+	list_add(&h->list, &c->ec.stripe_head_list);
+	return h;
+}
+
+void bch2_ec_stripe_head_put(struct bch_fs *c, struct ec_stripe_head *h)
+{
+	if (h->s &&
+	    h->s->allocated &&
+	    bitmap_weight(h->s->blocks_allocated,
+			  h->s->nr_data) == h->s->nr_data)
+		ec_stripe_new_set_pending(c, h);
+
+	mutex_unlock(&h->lock);
+}
+
+static struct ec_stripe_head *
+__bch2_ec_stripe_head_get(struct btree_trans *trans,
+			  unsigned disk_label,
+			  unsigned algo,
+			  unsigned redundancy,
+			  enum bch_watermark watermark)
+{
+	struct bch_fs *c = trans->c;
+	struct ec_stripe_head *h;
+
+	if (!redundancy)
+		return NULL;
+
+	int ret = bch2_trans_mutex_lock(trans, &c->ec.stripe_head_lock);
+	if (ret)
+		return ERR_PTR(ret);
+
+	if (test_bit(BCH_FS_going_ro, &c->flags)) {
+		h = ERR_PTR(bch_err_throw(c, erofs_no_writes));
+		goto err;
+	}
+
+	list_for_each_entry(h, &c->ec.stripe_head_list, list)
+		if (h->disk_label	== disk_label &&
+		    h->algo		== algo &&
+		    h->redundancy	== redundancy &&
+		    h->watermark	== watermark) {
+			ret = bch2_trans_mutex_lock(trans, &h->lock);
+			if (ret) {
+				h = ERR_PTR(ret);
+				goto err;
+			}
+			goto found;
+		}
+
+	h = ec_new_stripe_head_alloc(c, disk_label, algo, redundancy, watermark);
+	if (!h) {
+		h = ERR_PTR(bch_err_throw(c, ENOMEM_stripe_head_alloc));
+		goto err;
+	}
+
+	unsigned long rw_devs_change_count;
+found:
+	rw_devs_change_count = READ_ONCE(c->allocator.rw_devs_change_count);
+	if (h->rw_devs_change_count != rw_devs_change_count) {
+		ec_stripe_head_devs_update(c, h);
+		h->rw_devs_change_count = rw_devs_change_count;
+	}
+
+	if (h->insufficient_devs) {
+		mutex_unlock(&h->lock);
+		h = NULL;
+	}
+err:
+	mutex_unlock(&c->ec.stripe_head_lock);
+	return h;
+}
+
 struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 					       struct alloc_request *req,
 					       unsigned algo)
@@ -1267,46 +1316,4 @@ struct ec_stripe_head *bch2_ec_stripe_head_get(struct btree_trans *trans,
 err:
 	bch2_ec_stripe_head_put(c, h);
 	return ERR_PTR(ret);
-}
-
-static void bch2_new_stripe_to_text(struct printbuf *out, struct bch_fs *c,
-				    struct ec_stripe_new *s)
-{
-	prt_printf(out, "\tidx %llu blocks %u+%u allocated %u ref %u %u %s obs",
-		   s->new_stripe.key.k.p.offset, s->nr_data, s->nr_parity,
-		   bitmap_weight(s->blocks_allocated, s->nr_data),
-		   atomic_read(&s->ref[STRIPE_REF_io]),
-		   atomic_read(&s->ref[STRIPE_REF_stripe]),
-		   bch2_watermarks[s->watermark]);
-
-	struct bch_stripe *v = &s->new_stripe.key.v;
-	unsigned i;
-	for_each_set_bit(i, s->blocks_gotten, v->nr_blocks)
-		prt_printf(out, " %u", s->blocks[i]);
-	prt_newline(out);
-	bch2_bkey_val_to_text(out, c, bkey_i_to_s_c(&s->new_stripe.key.k_i));
-	prt_newline(out);
-}
-
-void bch2_new_stripes_to_text(struct printbuf *out, struct bch_fs *c)
-{
-	struct ec_stripe_head *h;
-	struct ec_stripe_new *s;
-
-	scoped_guard(mutex, &c->ec.stripe_head_lock)
-		list_for_each_entry(h, &c->ec.stripe_head_list, list) {
-			prt_printf(out, "disk label %u algo %u redundancy %u %s nr created %llu:\n",
-			       h->disk_label, h->algo, h->redundancy,
-			       bch2_watermarks[h->watermark],
-			       h->nr_created);
-
-			if (h->s)
-				bch2_new_stripe_to_text(out, c, h->s);
-		}
-
-	prt_printf(out, "in flight:\n");
-
-	scoped_guard(mutex, &c->ec.stripe_new_lock)
-		list_for_each_entry(s, &c->ec.stripe_new_list, list)
-			bch2_new_stripe_to_text(out, c, s);
 }
