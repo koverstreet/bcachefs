@@ -26,12 +26,13 @@ struct ec_stripe_buf {
 	struct bch_csum		csum_good[BCH_BKEY_PTRS_MAX];
 	struct bch_csum		csum_bad[BCH_BKEY_PTRS_MAX];
 
-	__BKEY_PADDED(key, 255);
+	struct bkey_i_stripe	key;
+	u64			pad[255];
 };
 
 static inline unsigned ec_nr_failed(struct ec_stripe_buf *buf)
 {
-	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
+	struct bch_stripe *v = &buf->key.v;
 
 	unsigned nr_failed = 0;
 	for (unsigned i = 0; i < v->nr_blocks; i++)

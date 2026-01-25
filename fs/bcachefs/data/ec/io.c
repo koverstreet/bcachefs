@@ -90,14 +90,11 @@ static void raid_rec(int nr, int *ir, int nd, int np, size_t size, void **v)
 
 void bch2_ec_stripe_buf_exit(struct ec_stripe_buf *buf)
 {
-	if (buf->key.k.type == KEY_TYPE_stripe) {
-		struct bkey_i_stripe *s = bkey_i_to_stripe(&buf->key);
-
-		for (unsigned i = 0; i < s->v.nr_blocks; i++) {
+	if (buf->key.k.type == KEY_TYPE_stripe)
+		for (unsigned i = 0; i < buf->key.v.nr_blocks; i++) {
 			kvfree(buf->data[i]);
 			buf->data[i] = NULL;
 		}
-	}
 
 	closure_sync(&buf->io);
 	closure_debug_destroy(&buf->io);
@@ -108,20 +105,19 @@ int __bch2_ec_stripe_buf_init(struct bch_fs *c,
 			      struct ec_stripe_buf *buf,
 			      unsigned offset, unsigned size)
 {
-	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
-	unsigned csum_granularity = 1U << v->csum_granularity_bits;
+	unsigned csum_granularity = 1U << buf->key.v.csum_granularity_bits;
 	unsigned end = offset + size;
 
-	BUG_ON(end > le16_to_cpu(v->sectors));
+	BUG_ON(end > le16_to_cpu(buf->key.v.sectors));
 
 	offset	= round_down(offset, csum_granularity);
-	end	= min_t(unsigned, le16_to_cpu(v->sectors),
+	end	= min_t(unsigned, le16_to_cpu(buf->key.v.sectors),
 			round_up(end, csum_granularity));
 
 	buf->offset	= offset;
 	buf->size	= end - offset;
 
-	for (unsigned i = 0; i < v->nr_blocks; i++) {
+	for (unsigned i = 0; i < buf->key.v.nr_blocks; i++) {
 		buf->data[i] = kvmalloc(buf->size << 9, GFP_KERNEL);
 		if (!buf->data[i]) {
 			bch2_ec_stripe_buf_exit(buf);
@@ -136,28 +132,26 @@ int __bch2_ec_stripe_buf_init(struct bch_fs *c,
 
 void bch2_ec_generate_ec(struct ec_stripe_buf *buf)
 {
-	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
-	unsigned nr_data = v->nr_blocks - v->nr_redundant;
-	unsigned bytes = le16_to_cpu(v->sectors) << 9;
+	unsigned nr_data = buf->key.v.nr_blocks - buf->key.v.nr_redundant;
+	unsigned bytes = le16_to_cpu(buf->key.v.sectors) << 9;
 
-	raid_gen(nr_data, v->nr_redundant, bytes, buf->data);
+	raid_gen(nr_data, buf->key.v.nr_redundant, bytes, buf->data);
 }
 
 static int bch2_ec_do_recov(struct bch_fs *c, struct ec_stripe_buf *buf)
 {
-	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
 	unsigned failed[BCH_BKEY_PTRS_MAX], nr_failed = 0;
-	unsigned nr_data = v->nr_blocks - v->nr_redundant;
+	unsigned nr_data = buf->key.v.nr_blocks - buf->key.v.nr_redundant;
 	unsigned bytes = buf->size << 9;
 
-	if (ec_nr_failed(buf) > v->nr_redundant)
+	if (ec_nr_failed(buf) > buf->key.v.nr_redundant)
 		return bch_err_throw(c, stripe_reconstruct_insufficient_blocks);
 
 	for (unsigned i = 0; i < nr_data; i++)
 		if (buf->err[i])
 			failed[nr_failed++] = i;
 
-	raid_rec(nr_failed, failed, nr_data, v->nr_redundant, bytes, buf->data);
+	raid_rec(nr_failed, failed, nr_data, buf->key.v.nr_redundant, bytes, buf->data);
 	return 0;
 }
 
@@ -166,18 +160,17 @@ static int bch2_ec_do_recov(struct bch_fs *c, struct ec_stripe_buf *buf)
 static struct bch_csum ec_block_checksum(struct ec_stripe_buf *buf,
 					 unsigned block, unsigned offset)
 {
-	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
-	unsigned csum_granularity = 1 << v->csum_granularity_bits;
+	unsigned csum_granularity = 1U << buf->key.v.csum_granularity_bits;
 	unsigned end = buf->offset + buf->size;
 	unsigned len = min(csum_granularity, end - offset);
 
 	BUG_ON(offset >= end);
 	BUG_ON(offset <  buf->offset);
 	BUG_ON(offset & (csum_granularity - 1));
-	BUG_ON(offset + len != le16_to_cpu(v->sectors) &&
+	BUG_ON(offset + len != le16_to_cpu(buf->key.v.sectors) &&
 	       (len & (csum_granularity - 1)));
 
-	return bch2_checksum(NULL, v->csum_type,
+	return bch2_checksum(NULL, buf->key.v.csum_type,
 			     null_nonce(),
 			     buf->data[block] + ((offset - buf->offset) << 9),
 			     len << 9);
@@ -185,32 +178,30 @@ static struct bch_csum ec_block_checksum(struct ec_stripe_buf *buf,
 
 void bch2_ec_generate_checksums(struct ec_stripe_buf *buf)
 {
-	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
-	unsigned i, j, csums_per_device = stripe_csums_per_device(v);
+	unsigned csums_per_device = stripe_csums_per_device(&buf->key.v);
 
-	if (!v->csum_type)
+	if (!buf->key.v.csum_type)
 		return;
 
 	BUG_ON(buf->offset);
-	BUG_ON(buf->size != le16_to_cpu(v->sectors));
+	BUG_ON(buf->size != le16_to_cpu(buf->key.v.sectors));
 
-	for (i = 0; i < v->nr_blocks; i++)
-		for (j = 0; j < csums_per_device; j++)
-			stripe_csum_set(v, i, j,
-				ec_block_checksum(buf, i, j << v->csum_granularity_bits));
+	for (unsigned i = 0; i < buf->key.v.nr_blocks; i++)
+		for (unsigned j = 0; j < csums_per_device; j++)
+			stripe_csum_set(&buf->key.v, i, j,
+				ec_block_checksum(buf, i, j << buf->key.v.csum_granularity_bits));
 }
 
 static void bch2_ec_validate_checksums(struct bch_fs *c, struct ec_stripe_buf *buf,
 				       bool data_only)
 {
-	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
-	unsigned nr_data = v->nr_blocks - v->nr_redundant;
-	unsigned csum_granularity = 1 << v->csum_granularity_bits;
+	unsigned nr_data = buf->key.v.nr_blocks - buf->key.v.nr_redundant;
+	unsigned csum_granularity = 1U << buf->key.v.csum_granularity_bits;
 
-	if (!v->csum_type)
+	if (!buf->key.v.csum_type)
 		return;
 
-	for (unsigned i = 0; i < (data_only ? nr_data : v->nr_blocks); i++) {
+	for (unsigned i = 0; i < (data_only ? nr_data : buf->key.v.nr_blocks); i++) {
 		unsigned offset = buf->offset;
 		unsigned end = buf->offset + buf->size;
 
@@ -218,9 +209,9 @@ static void bch2_ec_validate_checksums(struct bch_fs *c, struct ec_stripe_buf *b
 			continue;
 
 		while (offset < end) {
-			unsigned j = offset >> v->csum_granularity_bits;
+			unsigned j = offset >> buf->key.v.csum_granularity_bits;
 			unsigned len = min(csum_granularity, end - offset);
-			struct bch_csum want = stripe_csum_get(v, i, j);
+			struct bch_csum want = stripe_csum_get(&buf->key.v, i, j);
 			struct bch_csum got = ec_block_checksum(buf, i, offset);
 
 			if (bch2_crc_cmp(want, got)) {
@@ -232,7 +223,7 @@ static void bch2_ec_validate_checksums(struct bch_fs *c, struct ec_stripe_buf *b
 				 * Can't error on invalid device, we no longer
 				 * have the bkey locked
 				 */
-				CLASS(bch2_dev_tryget_noerror, ca)(c, v->ptrs[i].dev);
+				CLASS(bch2_dev_tryget_noerror, ca)(c, buf->key.v.ptrs[i].dev);
 				if (ca)
 					bch2_io_error(ca, BCH_MEMBER_ERROR_checksum);
 				break;
@@ -245,11 +236,9 @@ static void bch2_ec_validate_checksums(struct bch_fs *c, struct ec_stripe_buf *b
 
 static void stripe_buf_errs_to_text(struct printbuf *out, struct bch_fs *c, struct ec_stripe_buf *buf)
 {
-	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
-
-	for (unsigned i = 0; i < v->nr_blocks; i++)
+	for (unsigned i = 0; i < buf->key.v.nr_blocks; i++)
 		if (buf->err[i]) {
-			CLASS(bch2_dev_tryget_noerror, ca)(c, v->ptrs[i].dev);
+			CLASS(bch2_dev_tryget_noerror, ca)(c, buf->key.v.ptrs[i].dev);
 			prt_printf(out, "block %u %s: %s",
 				   i,
 				   ca ? ca->name : "(invalid device)",
@@ -257,9 +246,9 @@ static void stripe_buf_errs_to_text(struct printbuf *out, struct bch_fs *c, stru
 
 			if (buf->err[i] == -BCH_ERR_stripe_read_csum_err) {
 				prt_str(out, " expected ");
-				bch2_csum_to_text(out, v->csum_type, buf->csum_good[i]);
+				bch2_csum_to_text(out, buf->key.v.csum_type, buf->csum_good[i]);
 				prt_str(out, " got ");
-				bch2_csum_to_text(out, v->csum_type, buf->csum_bad[i]);
+				bch2_csum_to_text(out, buf->key.v.csum_type, buf->csum_bad[i]);
 			}
 
 			prt_newline(out);
@@ -268,8 +257,6 @@ static void stripe_buf_errs_to_text(struct printbuf *out, struct bch_fs *c, stru
 
 int bch2_stripe_buf_validate(struct bch_fs *c, struct ec_stripe_buf *buf, bool is_open)
 {
-	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
-
 	closure_sync(&buf->io);
 
 	bch2_ec_validate_checksums(c, buf, false);
@@ -279,7 +266,7 @@ int bch2_stripe_buf_validate(struct bch_fs *c, struct ec_stripe_buf *buf, bool i
 
 	bool errors_silent = true;
 	bool have_stale_race = false;
-	for (unsigned i = 0; i < v->nr_blocks; i++) {
+	for (unsigned i = 0; i < buf->key.v.nr_blocks; i++) {
 		bool stale_race = buf->err[i] == -BCH_ERR_stripe_read_ptr_stale &&
 			!test_bit(i, buf->stale) &&
 			!is_open;
@@ -294,7 +281,7 @@ int bch2_stripe_buf_validate(struct bch_fs *c, struct ec_stripe_buf *buf, bool i
 	CLASS(bch_log_msg, msg)(c);
 
 	prt_printf(&msg.m, "%ps(): error reading stripe:\n", (void *) _RET_IP_);
-	bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&buf->key));
+	bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&buf->key.k_i));
 	prt_newline(&msg.m);
 
 	stripe_buf_errs_to_text(&msg.m, c, buf);
@@ -326,8 +313,7 @@ int bch2_stripe_buf_validate(struct bch_fs *c, struct ec_stripe_buf *buf, bool i
 static void ec_block_endio(struct bio *bio)
 {
 	struct ec_bio *ec_bio = container_of(bio, struct ec_bio, bio);
-	struct bch_stripe *v = &bkey_i_to_stripe(&ec_bio->buf->key)->v;
-	struct bch_extent_ptr *ptr = &v->ptrs[ec_bio->idx];
+	struct bch_extent_ptr *ptr = &ec_bio->buf->key.v.ptrs[ec_bio->idx];
 	struct bch_dev *ca = ec_bio->ca;
 	int rw = ec_bio->rw;
 	unsigned ref = rw == READ
@@ -350,10 +336,10 @@ static void ec_block_endio(struct bio *bio)
 void bch2_ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
 		      blk_opf_t opf, unsigned idx)
 {
-	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
 	unsigned offset = 0, bytes = buf->size << 9;
-	struct bch_extent_ptr *ptr = &v->ptrs[idx];
-	enum bch_data_type data_type = idx < v->nr_blocks - v->nr_redundant
+	struct bch_extent_ptr *ptr = &buf->key.v.ptrs[idx];
+	unsigned nr_data = buf->key.v.nr_blocks - buf->key.v.nr_redundant;
+	enum bch_data_type data_type = idx < nr_data
 		? BCH_DATA_user
 		: BCH_DATA_parity;
 	int rw = op_is_write(opf);
@@ -414,9 +400,7 @@ void bch2_ec_block_io(struct bch_fs *c, struct ec_stripe_buf *buf,
 
 void bch2_stripe_buf_read(struct bch_fs *c, struct ec_stripe_buf *buf)
 {
-	struct bkey_i_stripe *s = bkey_i_to_stripe(&buf->key);
-
-	for (unsigned i = 0; i < s->v.nr_blocks; i++)
+	for (unsigned i = 0; i < buf->key.v.nr_blocks; i++)
 		bch2_ec_block_io(c, buf, REQ_OP_READ, i);
 }
 
@@ -429,7 +413,7 @@ static int get_stripe_key_trans(struct btree_trans *trans, u64 idx,
 	struct bkey_s_c k = bkey_try(bch2_btree_iter_peek_slot(&iter));
 	if (k.k->type != KEY_TYPE_stripe)
 		return -ENOENT;
-	bkey_reassemble(&stripe->key, k);
+	bkey_reassemble(&stripe->key.k_i, k);
 	return 0;
 }
 
@@ -462,20 +446,19 @@ int bch2_ec_read_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 	if (ret)
 		return stripe_reconstruct_err(c, orig_k, "stripe not found");
 
-	struct bch_stripe *v = &bkey_i_to_stripe(&buf->key)->v;
-	if (!bch2_ptr_matches_stripe(v, rbio->pick))
+	if (!bch2_ptr_matches_stripe(&buf->key.v, rbio->pick))
 		return stripe_reconstruct_err(c, orig_k, "pointer doesn't match stripe");
 
-	unsigned offset = rbio->bio.bi_iter.bi_sector - v->ptrs[rbio->pick.ec.block].offset;
-	if (offset + bio_sectors(&rbio->bio) > le16_to_cpu(v->sectors))
+	unsigned offset = rbio->bio.bi_iter.bi_sector - buf->key.v.ptrs[rbio->pick.ec.block].offset;
+	if (offset + bio_sectors(&rbio->bio) > le16_to_cpu(buf->key.v.sectors))
 		return stripe_reconstruct_err(c, orig_k, "read is bigger than stripe");
 
 	/* Check for stale pointers while we still have btree locks held */
 	bool have_stale = false;
 	scoped_guard(rcu) {
-		for (unsigned i = 0; i < v->nr_blocks; i++) {
-			struct bch_dev *ca = bch2_dev_rcu_noerror(c, v->ptrs[i].dev);
-			if (ca && dev_ptr_stale(ca, &v->ptrs[i])) {
+		for (unsigned i = 0; i < buf->key.v.nr_blocks; i++) {
+			struct bch_dev *ca = bch2_dev_rcu_noerror(c, buf->key.v.ptrs[i].dev);
+			if (ca && dev_ptr_stale(ca, &buf->key.v.ptrs[i])) {
 				__set_bit(i, buf->stale);
 				have_stale = true;
 			}
@@ -485,7 +468,7 @@ int bch2_ec_read_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 	if (have_stale) {
 		CLASS(bch_log_msg_ratelimited, msg)(c);
 		prt_printf(&msg.m, "Stripe with stale pointer(s):\n");
-		bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&buf->key));
+		bch2_bkey_val_to_text(&msg.m, c, bkey_i_to_s_c(&buf->key.k_i));
 
 		bch2_count_fsck_err(c, stale_dirty_ptr, &msg.m);
 		bch2_run_explicit_recovery_pass(c, &msg.m, BCH_RECOVERY_PASS_check_allocations, 0);
@@ -502,7 +485,7 @@ int bch2_ec_read_extent(struct btree_trans *trans, struct bch_read_bio *rbio,
 
 	ret = bch2_stripe_buf_validate(c, buf, false);
 	if (ret) {
-		for (unsigned i = 0; i < v->nr_blocks; i++)
+		for (unsigned i = 0; i < buf->key.v.nr_blocks; i++)
 			if (buf->err[i] == -BCH_ERR_stripe_read_ptr_stale &&
 			    !test_bit(i, buf->stale))
 				ret = bch_err_throw(c, data_read_ptr_stale_race);

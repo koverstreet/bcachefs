@@ -116,7 +116,7 @@ static bool should_cancel_stripe(struct bch_fs *c, struct ec_stripe_new *s, stru
 	if (!ca)
 		return true;
 
-	for (unsigned i = 0; i < bkey_i_to_stripe(&s->new_stripe.key)->v.nr_blocks; i++) {
+	for (unsigned i = 0; i < s->new_stripe.key.v.nr_blocks; i++) {
 		if (!s->blocks[i])
 			continue;
 
@@ -182,7 +182,7 @@ void bch2_fs_ec_exit(struct bch_fs *c)
 
 		if (h->s) {
 			for (unsigned i = 0;
-			     i < bkey_i_to_stripe(&h->s->new_stripe.key)->v.nr_blocks;
+			     i < h->s->new_stripe.key.v.nr_blocks;
 			     i++)
 				BUG_ON(h->s->blocks[i]);
 

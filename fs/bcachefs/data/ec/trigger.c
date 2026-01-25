@@ -495,8 +495,7 @@ void bch2_stripe_new_buckets_del(struct bch_fs *c, struct ec_stripe_new *s)
 {
 	guard(spinlock)(&c->ec.stripes_new_lock);
 
-	struct bch_stripe *v = &bkey_i_to_stripe(&s->new_stripe.key)->v;
-	for (unsigned i = 0; i < v->nr_blocks; i++)
+	for (unsigned i = 0; i < s->new_stripe.key.v.nr_blocks; i++)
 		hlist_del_init(&s->buckets[i].hash);
 }
 
